@@ -232,7 +232,7 @@ export function TerminalPane({
           )}
           <GitBranch className="w-4 h-4 md:w-3 md:h-3 text-muted-foreground shrink-0" />
           <span className="font-mono text-sm md:text-xs truncate text-sidebar-foreground">
-            {worktree?.branch || "Unknown"}
+            {worktree?.branch || session.worktreePath.substring(session.worktreePath.lastIndexOf("/") + 1)}
           </span>
         </div>
         <div className="flex items-center gap-1">

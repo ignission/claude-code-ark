@@ -196,7 +196,7 @@ export function MultiPaneLayout({
                 >
                   <div className={`w-1.5 h-1.5 rounded-full ${session.status === 'active' ? 'bg-green-500' : 'bg-muted-foreground'}`} />
                   {repoName && <span className="text-[10px] opacity-70">{repoName}</span>}
-                  <span>{wt?.branch || "Unknown"}</span>
+                  <span>{wt?.branch || getBaseName(session.worktreePath)}</span>
                 </button>
               );
             })}
