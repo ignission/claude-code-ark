@@ -242,16 +242,15 @@ async function startServer() {
           sessionOrchestrator.stopSession(session.id);
         }
 
-        // 削除前にworktree IDを取得
-        const currentWorktrees = await listWorktrees(repoPath);
-        const target = currentWorktrees.find((w) => w.path === worktreePath);
+        // worktree IDをパスから決定的に導出（listWorktreesと同じロジック）
+        const deletedWorktreeId = Buffer.from(worktreePath)
+          .toString("base64")
+          .replace(/[/+=]/g, "");
 
         await deleteWorktree(repoPath, worktreePath);
 
-        // 削除成功を個別イベントで通知
-        if (target) {
-          socket.emit("worktree:deleted", target.id);
-        }
+        // 削除成功を通知
+        socket.emit("worktree:deleted", deletedWorktreeId);
 
         const worktrees = await listWorktrees(repoPath);
         socket.emit("worktree:list", worktrees);
