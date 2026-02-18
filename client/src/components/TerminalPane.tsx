@@ -35,6 +35,7 @@ import type { ManagedSession, SpecialKey, Worktree } from "../../../shared/types
 interface TerminalPaneProps {
   session: ManagedSession;
   worktree: Worktree | undefined;
+  repoName?: string;
   onSendMessage: (message: string) => void;
   onSendKey: (key: SpecialKey) => void;
   onStopSession: () => void;
@@ -51,6 +52,7 @@ interface TerminalPaneProps {
 export function TerminalPane({
   session,
   worktree,
+  repoName,
   onSendMessage,
   onSendKey,
   onStopSession,
@@ -223,9 +225,14 @@ export function TerminalPane({
       <header className="h-14 md:h-10 border-b border-border flex items-center justify-between px-4 md:px-3 bg-sidebar shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <div className={`status-indicator ${session.status}`} />
+          {repoName && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary font-medium shrink-0">
+              {repoName}
+            </span>
+          )}
           <GitBranch className="w-4 h-4 md:w-3 md:h-3 text-muted-foreground shrink-0" />
           <span className="font-mono text-sm md:text-xs truncate text-sidebar-foreground">
-            {worktree?.branch || "Unknown"}
+            {worktree?.branch || session.worktreePath.substring(session.worktreePath.lastIndexOf("/") + 1)}
           </span>
         </div>
         <div className="flex items-center gap-1">

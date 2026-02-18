@@ -8,15 +8,16 @@
  * - Uses ttyd iframe for terminal rendering
  */
 
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
-  Columns2,
   Square,
   Grid2x2,
 } from "lucide-react";
 import { TerminalPane } from "./TerminalPane";
 import { useIsMobile } from "@/hooks/useMobile";
+import { findRepoForSession } from "@/utils/sessionUtils";
+import { getBaseName } from "@/utils/pathUtils";
 import type { ManagedSession, SpecialKey, Worktree } from "../../../shared/types";
 
 type LayoutMode = "single" | "split-2" | "grid-4";
@@ -25,6 +26,7 @@ interface MultiPaneLayoutProps {
   activePanes: string[]; // Session IDs
   sessions: Map<string, ManagedSession>;
   worktrees: Worktree[];
+  repoList?: string[];
   onSendMessage: (sessionId: string, message: string) => void;
   onSendKey: (sessionId: string, key: SpecialKey) => void;
   onStopSession: (sessionId: string) => void;
@@ -42,6 +44,7 @@ export function MultiPaneLayout({
   activePanes,
   sessions,
   worktrees,
+  repoList,
   onSendMessage,
   onSendKey,
   onStopSession,
@@ -56,12 +59,19 @@ export function MultiPaneLayout({
 }: MultiPaneLayoutProps) {
   const isMobile = useIsMobile();
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("grid-4");
+  const [activeMobilePane, setActiveMobilePane] = useState<string | null>(null);
 
   // Force single pane on mobile
   const effectiveLayoutMode = isMobile ? "single" : layoutMode;
 
   const getWorktreeForSession = (session: ManagedSession): Worktree | undefined => {
     return worktrees.find((w) => w.id === session.worktreeId);
+  };
+
+  const getRepoNameForSession = (session: ManagedSession): string | undefined => {
+    if (!repoList) return undefined;
+    const repo = findRepoForSession(session, repoList);
+    return repo ? getBaseName(repo) : undefined;
   };
 
   // If a pane is maximized, only show that pane
@@ -74,6 +84,7 @@ export function MultiPaneLayout({
           <TerminalPane
             session={session}
             worktree={worktree}
+            repoName={getRepoNameForSession(session)}
             onSendMessage={(msg) => onSendMessage(maximizedPane, msg)}
             onSendKey={(key) => onSendKey(maximizedPane, key)}
             onStopSession={() => onStopSession(maximizedPane)}
@@ -92,7 +103,19 @@ export function MultiPaneLayout({
   }
 
   // Filter to only show panes that have active sessions
-  const visiblePanes = activePanes.filter((id) => sessions.has(id));
+  const visiblePanes = useMemo(
+    () => activePanes.filter((id) => sessions.has(id)),
+    [activePanes, sessions]
+  );
+
+  // モバイル時: visiblePanesが変わったらactiveMobilePaneを自動更新
+  useEffect(() => {
+    if (isMobile && visiblePanes.length > 0) {
+      if (!activeMobilePane || !visiblePanes.includes(activeMobilePane)) {
+        setActiveMobilePane(visiblePanes[0]);
+      }
+    }
+  }, [isMobile, visiblePanes, activeMobilePane]);
 
   if (visiblePanes.length === 0) {
     return null;
@@ -106,26 +129,8 @@ export function MultiPaneLayout({
       return "grid-cols-1";
     }
 
-    if (effectiveLayoutMode === "split-2") {
-      return "grid-cols-1 md:grid-cols-2";
-    }
-
-    // grid-4モード: ペイン数に応じてグリッドを調整
-    if (effectiveLayoutMode === "grid-4") {
-      if (paneCount <= 2) return "grid-cols-1 md:grid-cols-2";
-      if (paneCount <= 4) return "grid-cols-1 md:grid-cols-2";
-      if (paneCount <= 6) return "grid-cols-1 md:grid-cols-2 xl:grid-cols-3";
-      return "grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4";
-    }
-
+    // split-2、grid-4ともに最大2列
     return "grid-cols-1 md:grid-cols-2";
-  };
-
-  // 表示するペイン数を決定
-  const getMaxPanes = () => {
-    if (effectiveLayoutMode === "single") return 1;
-    if (effectiveLayoutMode === "split-2") return 2;
-    return visiblePanes.length; // grid-4モードでは全て表示
   };
 
   return (
@@ -149,15 +154,6 @@ export function MultiPaneLayout({
             <Square className="w-4 h-4" />
           </Button>
           <Button
-            variant={layoutMode === "split-2" ? "secondary" : "ghost"}
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => setLayoutMode("split-2")}
-            title="Split view"
-          >
-            <Columns2 className="w-4 h-4" />
-          </Button>
-          <Button
             variant={layoutMode === "grid-4" ? "secondary" : "ghost"}
             size="icon"
             className="h-7 w-7"
@@ -169,41 +165,95 @@ export function MultiPaneLayout({
         </div>
       </div>
 
-      {/* Panes Grid */}
-      <div className={`flex-1 grid ${getGridClass()} gap-3 md:gap-2 p-3 md:p-2 overflow-auto auto-rows-fr`}>
-        {visiblePanes.slice(0, getMaxPanes()).map((sessionId) => {
-          const session = sessions.get(sessionId);
-          if (!session) return null;
+      {/* Mobile: タブ切り替え式 */}
+      {isMobile ? (
+        <>
+          {/* タブバー */}
+          <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border bg-sidebar overflow-x-auto shrink-0">
+            {visiblePanes.map((sessionId) => {
+              const session = sessions.get(sessionId);
+              if (!session) return null;
+              const wt = getWorktreeForSession(session);
+              const repoName = getRepoNameForSession(session);
+              const isActive = (activeMobilePane || visiblePanes[0]) === sessionId;
+              return (
+                <button
+                  key={sessionId}
+                  type="button"
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
+                    isActive
+                      ? "bg-primary/20 text-primary border border-primary/30"
+                      : "text-muted-foreground hover:bg-sidebar-accent"
+                  }`}
+                  onClick={() => setActiveMobilePane(sessionId)}
+                >
+                  <div className={`w-1.5 h-1.5 rounded-full ${session.status === 'active' ? 'bg-green-500' : 'bg-muted-foreground'}`} />
+                  {repoName && <span className="text-[10px] opacity-70">{repoName}</span>}
+                  <span>{wt?.branch || getBaseName(session.worktreePath)}</span>
+                </button>
+              );
+            })}
+          </div>
+          {/* 選択中のペイン */}
+          <div className="flex-1 min-h-0 p-2">
+            {(() => {
+              const selectedId = activeMobilePane && visiblePanes.includes(activeMobilePane) ? activeMobilePane : visiblePanes[0];
+              const session = selectedId ? sessions.get(selectedId) : undefined;
+              if (!session || !selectedId) return null;
+              const worktree = getWorktreeForSession(session);
+              return (
+                <TerminalPane
+                  key={selectedId}
+                  session={session}
+                  worktree={worktree}
+                  repoName={getRepoNameForSession(session)}
+                  onSendMessage={(msg) => onSendMessage(selectedId, msg)}
+                  onSendKey={(key) => onSendKey(selectedId, key)}
+                  onStopSession={() => onStopSession(selectedId)}
+                  onClose={() => onClosePane(selectedId)}
+                  isMaximized={false}
+                  onUploadImage={(base64, mimeType) => onUploadImage?.(selectedId, base64, mimeType)}
+                  imageUploadResult={imageUploadResult}
+                  imageUploadError={imageUploadError}
+                  onClearImageUploadState={onClearImageUploadState}
+                  onCopyBuffer={onCopyBuffer ? () => onCopyBuffer(selectedId) : undefined}
+                />
+              );
+            })()}
+          </div>
+        </>
+      ) : (
+        /* Desktop: グリッド表示 */
+        <div className={`flex-1 grid ${getGridClass()} gap-3 md:gap-2 p-3 md:p-2 overflow-y-auto auto-rows-[minmax(calc(100vh_-_10rem),1fr)]`}>
+          {visiblePanes.map((sessionId) => {
+            const session = sessions.get(sessionId);
+            if (!session) return null;
 
-          const worktree = getWorktreeForSession(session);
+            const worktree = getWorktreeForSession(session);
 
-          return (
-            <TerminalPane
-              key={sessionId}
-              session={session}
-              worktree={worktree}
-              onSendMessage={(msg) => onSendMessage(sessionId, msg)}
-              onSendKey={(key) => onSendKey(sessionId, key)}
-              onStopSession={() => onStopSession(sessionId)}
-              onClose={() => onClosePane(sessionId)}
-              onMaximize={() => onMaximizePane(sessionId)}
-              isMaximized={false}
-              onUploadImage={(base64, mimeType) => onUploadImage?.(sessionId, base64, mimeType)}
-              imageUploadResult={imageUploadResult}
-              imageUploadError={imageUploadError}
-              onClearImageUploadState={onClearImageUploadState}
-              onCopyBuffer={onCopyBuffer ? () => onCopyBuffer(sessionId) : undefined}
-            />
-          );
-        })}
-      </div>
-
-      {/* Hidden Panes Indicator */}
-      {visiblePanes.length > getMaxPanes() && (
-        <div className="h-10 md:h-8 border-t border-border flex items-center justify-center text-sm md:text-xs text-muted-foreground shrink-0">
-          +{visiblePanes.length - getMaxPanes()} more session(s) hidden
+            return (
+              <TerminalPane
+                key={sessionId}
+                session={session}
+                worktree={worktree}
+                repoName={getRepoNameForSession(session)}
+                onSendMessage={(msg) => onSendMessage(sessionId, msg)}
+                onSendKey={(key) => onSendKey(sessionId, key)}
+                onStopSession={() => onStopSession(sessionId)}
+                onClose={() => onClosePane(sessionId)}
+                onMaximize={() => onMaximizePane(sessionId)}
+                isMaximized={false}
+                onUploadImage={(base64, mimeType) => onUploadImage?.(sessionId, base64, mimeType)}
+                imageUploadResult={imageUploadResult}
+                imageUploadError={imageUploadError}
+                onClearImageUploadState={onClearImageUploadState}
+                onCopyBuffer={onCopyBuffer ? () => onCopyBuffer(sessionId) : undefined}
+              />
+            );
+          })}
         </div>
       )}
+
     </div>
   );
 }

@@ -175,6 +175,13 @@ export default function Dashboard() {
   // 現在のリポジトリのactivePanesを取得
   const activePanes = repoPath ? (activePanesPerRepo.get(repoPath) || []) : [];
 
+  // 全リポジトリ横断のactivePanes（Panesタブ用）
+  const allActivePanes = useMemo(() => {
+    const all: string[] = [];
+    activePanesPerRepo.forEach((panes) => all.push(...panes));
+    return all;
+  }, [activePanesPerRepo]);
+
   // activePanesを更新するヘルパー関数
   const setActivePanes = (updater: string[] | ((prev: string[]) => string[])) => {
     if (!repoPath) return;
@@ -216,8 +223,9 @@ export default function Dashboard() {
   useEffect(() => {
     setMaximizedPane(null);
     setSelectedWorktreeId(null);
-    const currentPanes = repoPath ? (activePanesPerRepo.get(repoPath) || []) : [];
-    setViewMode(currentPanes.length > 0 ? "panes" : "dashboard");
+    let totalPanes = 0;
+    activePanesPerRepo.forEach((panes) => { totalPanes += panes.length; });
+    setViewMode(totalPanes > 0 ? "panes" : "dashboard");
   }, [repoPath, activePanesPerRepo]);
 
   const getSessionForWorktree = (worktreeId: string): ManagedSession | undefined => {
@@ -261,9 +269,31 @@ export default function Dashboard() {
     toast.success("Session started");
   };
 
+  // セッションIDをペインリストから削除するヘルパー
+  // targetRepoが指定されていればそのリポのみ、nullならフォールバックで全リポから削除
+  const removeSessionFromPanes = (sessionId: string, targetRepo?: string | null) => {
+    setActivePanesPerRepo((prev) => {
+      const newMap = new Map(prev);
+      if (targetRepo) {
+        const currentPanes = newMap.get(targetRepo) || [];
+        newMap.set(targetRepo, currentPanes.filter((id) => id !== sessionId));
+        return newMap;
+      }
+      // フォールバック: 全リポから削除
+      Array.from(newMap.entries()).forEach(([repo, panes]) => {
+        if (panes.includes(sessionId)) {
+          newMap.set(repo, panes.filter((id: string) => id !== sessionId));
+        }
+      });
+      return newMap;
+    });
+  };
+
   const handleStopSession = (sessionId: string) => {
     stopSession(sessionId);
-    setActivePanes((prev) => prev.filter((id) => id !== sessionId));
+    const session = sessions.get(sessionId);
+    const targetRepo = session ? findRepoForSession(session, repoList) : null;
+    removeSessionFromPanes(sessionId, targetRepo);
     if (maximizedPane === sessionId) {
       setMaximizedPane(null);
     }
@@ -303,7 +333,9 @@ export default function Dashboard() {
   const handleClosePane = (sessionId: string) => {
     // ユーザーが意図的に閉じたペインとして記録
     closedPanesRef.current.add(sessionId);
-    setActivePanes((prev) => prev.filter((id) => id !== sessionId));
+    const session = sessions.get(sessionId);
+    const targetRepo = session ? findRepoForSession(session, repoList) : null;
+    removeSessionFromPanes(sessionId, targetRepo);
     if (maximizedPane === sessionId) {
       setMaximizedPane(null);
     }
@@ -315,30 +347,34 @@ export default function Dashboard() {
 
 
   useEffect(() => {
-    if (!repoPath) return;
+    if (repoList.length === 0) return;
     sessions.forEach((session, sessionId) => {
       // ユーザーが意図的に閉じたペインは再追加しない
       if (closedPanesRef.current.has(sessionId)) return;
-      if (isSessionBelongsToRepo(session, repoPath)) {
-        setActivePanes((prev) => {
-          if (prev.includes(sessionId)) return prev;
-          return [...prev, sessionId];
+      const targetRepo = findRepoForSession(session, repoList);
+      if (targetRepo) {
+        setActivePanesPerRepo((prev) => {
+          const currentPanes = prev.get(targetRepo) || [];
+          if (currentPanes.includes(sessionId)) return prev;
+          const newMap = new Map(prev);
+          newMap.set(targetRepo, [...currentPanes, sessionId]);
+          return newMap;
         });
         setViewMode("panes");
       }
     });
-  }, [sessions, repoPath]);
+  }, [sessions, repoList]);
 
   // 現在のリポジトリに属し、かつ存在するセッションのみをフィルタ
   const { filteredSessions, validActivePanes } = useMemo(() => {
     const filtered = new Map(
-      Array.from(sessions.entries()).filter(([sessionId, session]) =>
-        repoPath && isSessionBelongsToRepo(session, repoPath) && activePanes.includes(sessionId)
+      Array.from(sessions.entries()).filter(([sessionId]) =>
+        allActivePanes.includes(sessionId)
       )
     );
-    const valid = activePanes.filter((id) => filtered.has(id));
+    const valid = allActivePanes.filter((id) => filtered.has(id));
     return { filteredSessions: filtered, validActivePanes: valid };
-  }, [sessions, repoPath, activePanes]);
+  }, [sessions, allActivePanes]);
 
   const SidebarContent = () => (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -725,6 +761,7 @@ export default function Dashboard() {
               activePanes={validActivePanes}
               sessions={filteredSessions}
               worktrees={worktrees}
+              repoList={repoList}
               onSendMessage={sendMessage}
               onSendKey={sendKey}
               onStopSession={handleStopSession}
