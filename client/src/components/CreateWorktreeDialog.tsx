@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,6 +47,38 @@ export function CreateWorktreeDialog({
     setBaseBranch("");
   }, [newBranchName, baseBranch, onCreateWorktree]);
 
+  // Branch Name入力: スペース→ハイフン変換 + エンターで作成
+  const handleBranchNameKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === " ") {
+        e.preventDefault();
+        const input = e.currentTarget;
+        const pos = input.selectionStart ?? newBranchName.length;
+        const next = newBranchName.slice(0, pos) + "-" + newBranchName.slice(pos);
+        setNewBranchName(next);
+        // カーソル位置を復元するため、次のレンダー後にselectionを設定
+        requestAnimationFrame(() => {
+          input.setSelectionRange(pos + 1, pos + 1);
+        });
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        handleCreate();
+      }
+    },
+    [newBranchName, handleCreate],
+  );
+
+  // Base Branch入力: エンターで作成
+  const handleBaseBranchKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleCreate();
+      }
+    },
+    [handleCreate],
+  );
+
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
@@ -74,6 +106,7 @@ export function CreateWorktreeDialog({
               placeholder="feature/new-feature"
               value={newBranchName}
               onChange={(e) => setNewBranchName(e.target.value)}
+              onKeyDown={handleBranchNameKeyDown}
               className="font-mono h-12 md:h-10 text-base md:text-sm"
             />
           </div>
@@ -84,6 +117,7 @@ export function CreateWorktreeDialog({
               placeholder="main"
               value={baseBranch}
               onChange={(e) => setBaseBranch(e.target.value)}
+              onKeyDown={handleBaseBranchKeyDown}
               className="font-mono h-12 md:h-10 text-base md:text-sm"
             />
           </div>
