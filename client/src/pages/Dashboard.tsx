@@ -480,7 +480,7 @@ export default function Dashboard() {
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 shrink-0">
                       {session ? (
                         <>
                           <Button
