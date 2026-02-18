@@ -50,6 +50,10 @@ interface UseSocketReturn {
   deleteWorktree: (worktreePath: string) => void;
   refreshWorktrees: () => void;
 
+  // Worktree deletion notification
+  deletedWorktreeId: string | null;
+  clearDeletedWorktreeId: () => void;
+
   // Sessions
   sessions: Map<string, ManagedSession>;
   startSession: (worktreeId: string, worktreePath: string) => void;
@@ -96,6 +100,7 @@ export function useSocket(): UseSocketReturn {
     return localStorage.getItem("selectedRepoPath");
   });
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
+  const [deletedWorktreeId, setDeletedWorktreeId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<Map<string, ManagedSession>>(new Map());
 
   // Tunnel state
@@ -204,6 +209,7 @@ export function useSocket(): UseSocketReturn {
 
     socket.on("worktree:deleted", (wtId) => {
       setWorktrees((prev) => prev.filter((w) => w.id !== wtId));
+      setDeletedWorktreeId(wtId);
     });
 
     socket.on("worktree:error", (err) => {
@@ -356,6 +362,10 @@ export function useSocket(): UseSocketReturn {
     socketRef.current?.emit("worktree:list", repoPath);
   }, [repoPath]);
 
+  const clearDeletedWorktreeId = useCallback(() => {
+    setDeletedWorktreeId(null);
+  }, []);
+
   // Session actions
   const startSession = useCallback((worktreeId: string, worktreePath: string) => {
     socketRef.current?.emit("session:start", { worktreeId, worktreePath });
@@ -447,6 +457,8 @@ export function useSocket(): UseSocketReturn {
     createWorktree,
     deleteWorktree,
     refreshWorktrees,
+    deletedWorktreeId,
+    clearDeletedWorktreeId,
     sessions,
     startSession,
     stopSession,
