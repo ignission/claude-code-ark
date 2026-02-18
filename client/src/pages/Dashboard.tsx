@@ -169,6 +169,9 @@ export default function Dashboard() {
   const [activePanesPerRepo, setActivePanesPerRepo] = useState<Map<string, string[]>>(new Map());
   const [maximizedPane, setMaximizedPane] = useState<string | null>(null);
 
+  // ユーザーが意図的に閉じたペインを追跡（useEffectによる再追加を防ぐ）
+  const closedPanesRef = useRef<Set<string>>(new Set());
+
   // 現在のリポジトリのactivePanesを取得
   const activePanes = repoPath ? (activePanesPerRepo.get(repoPath) || []) : [];
 
@@ -244,6 +247,8 @@ export default function Dashboard() {
   const handleStartSession = (worktree: Worktree) => {
     const existingSession = getSessionForWorktree(worktree.id);
     if (existingSession) {
+      // ユーザーが明示的に開くので、closedPanesから除外
+      closedPanesRef.current.delete(existingSession.id);
       // Add to active panes if not already there
       if (!activePanes.includes(existingSession.id)) {
         setActivePanes((prev) => [...prev, existingSession.id]);
@@ -269,6 +274,9 @@ export default function Dashboard() {
     const session = sessions.get(sessionId);
     if (!session) return;
 
+    // ユーザーが明示的に開くので、closedPanesから除外
+    closedPanesRef.current.delete(sessionId);
+
     // セッションが属するリポジトリを特定
     const targetRepo = findRepoForSession(session, repoList);
     if (targetRepo && targetRepo !== repoPath) {
@@ -293,6 +301,8 @@ export default function Dashboard() {
   };
 
   const handleClosePane = (sessionId: string) => {
+    // ユーザーが意図的に閉じたペインとして記録
+    closedPanesRef.current.add(sessionId);
     setActivePanes((prev) => prev.filter((id) => id !== sessionId));
     if (maximizedPane === sessionId) {
       setMaximizedPane(null);
@@ -307,12 +317,17 @@ export default function Dashboard() {
   useEffect(() => {
     if (!repoPath) return;
     sessions.forEach((session, sessionId) => {
-      if (isSessionBelongsToRepo(session, repoPath) && !activePanes.includes(sessionId)) {
-        setActivePanes((prev) => [...prev, sessionId]);
+      // ユーザーが意図的に閉じたペインは再追加しない
+      if (closedPanesRef.current.has(sessionId)) return;
+      if (isSessionBelongsToRepo(session, repoPath)) {
+        setActivePanes((prev) => {
+          if (prev.includes(sessionId)) return prev;
+          return [...prev, sessionId];
+        });
         setViewMode("panes");
       }
     });
-  }, [sessions, repoPath, activePanes]);
+  }, [sessions, repoPath]);
 
   // 現在のリポジトリに属し、かつ存在するセッションのみをフィルタ
   const { filteredSessions, validActivePanes } = useMemo(() => {
