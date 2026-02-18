@@ -113,6 +113,8 @@ export default function Dashboard() {
     imageUploadError,
     clearImageUploadState,
     copyBuffer,
+    deletedWorktreeId,
+    clearDeletedWorktreeId,
   } = useSocket();
 
   const isMobile = useIsMobile();
@@ -243,13 +245,32 @@ export default function Dashboard() {
     toast.success(`Creating worktree: ${branchName}`);
   };
 
+  useEffect(() => {
+    if (deletedWorktreeId) {
+      toast.success("Worktreeを削除しました");
+      clearDeletedWorktreeId();
+    }
+  }, [deletedWorktreeId, clearDeletedWorktreeId]);
+
   const handleDeleteWorktree = (worktree: Worktree) => {
     if (worktree.isMain) {
       toast.error("Cannot delete the main worktree");
       return;
     }
+
+    // 対応するセッションがあればペインを即座に閉じる
+    const session = getSessionForWorktree(worktree.id);
+    if (session) {
+      closedPanesRef.current.add(session.id);
+      const targetRepo = findRepoForSession(session, repoList);
+      removeSessionFromPanes(session.id, targetRepo);
+      if (maximizedPane === session.id) {
+        setMaximizedPane(null);
+      }
+    }
+
     deleteWorktree(worktree.path);
-    toast.success("Worktree deleted");
+    toast.info("Worktreeを削除中...");
   };
 
   const handleStartSession = (worktree: Worktree) => {
