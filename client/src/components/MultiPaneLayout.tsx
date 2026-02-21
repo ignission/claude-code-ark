@@ -60,6 +60,7 @@ export function MultiPaneLayout({
 }: MultiPaneLayoutProps) {
   const [layoutMode, setLayoutMode] = useState<LayoutMode>(() => {
     try {
+      if (typeof window === "undefined") return "grid-4";
       const saved = localStorage.getItem(LAYOUT_MODE_STORAGE_KEY);
       if (saved === "single" || saved === "grid-4") {
         return saved;
@@ -70,6 +71,7 @@ export function MultiPaneLayout({
 
   useEffect(() => {
     try {
+      if (typeof window === "undefined") return;
       localStorage.setItem(LAYOUT_MODE_STORAGE_KEY, layoutMode);
     } catch {}
   }, [layoutMode]);

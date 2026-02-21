@@ -90,7 +90,7 @@ function loadClosedPanes(): Set<string> {
     if (saved) {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed)) {
-        return new Set(parsed);
+        return new Set(parsed.filter((v): v is string => typeof v === "string"));
       }
     }
   } catch {}
@@ -218,6 +218,7 @@ export default function Dashboard() {
 
   // ユーザーが意図的に閉じたペインを追跡（useEffectによる再追加を防ぐ）
   const closedPanesRef = useRef<Set<string>>(loadClosedPanes());
+  const viewModeHydratedRef = useRef(true);
 
   const saveClosedPanes = useCallback(() => {
     try {
@@ -292,6 +293,10 @@ export default function Dashboard() {
   }, [tunnelActive, tunnelUrl]);
 
   useEffect(() => {
+    if (viewModeHydratedRef.current) {
+      viewModeHydratedRef.current = false;
+      return;
+    }
     setMaximizedPane(null);
     setSelectedWorktreeId(null);
     let totalPanes = 0;
@@ -458,6 +463,12 @@ export default function Dashboard() {
       }
     });
   }, [sessions, repoList]);
+
+  useEffect(() => {
+    if (maximizedPane && !sessions.has(maximizedPane)) {
+      setMaximizedPane(null);
+    }
+  }, [maximizedPane, sessions]);
 
   // 現在のリポジトリに属し、かつ存在するセッションのみをフィルタ
   const { filteredSessions, validActivePanes } = useMemo(() => {
