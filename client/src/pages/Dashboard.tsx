@@ -11,17 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
+import { WorktreeContextMenu } from "@/components/WorktreeContextMenu";
 import {
   Sheet,
   SheetContent,
@@ -44,9 +34,7 @@ import {
   Plus,
   FolderOpen,
   Play,
-  Square,
   Trash2,
-  MessageSquare,
   Terminal,
   Settings,
   Wifi,
@@ -521,22 +509,35 @@ export default function Dashboard() {
               const isInPane = session && activePanes.includes(session.id);
 
               return (
-                <div
+                <WorktreeContextMenu
                   key={worktree.id}
-                  className={`group p-4 md:p-3 rounded-lg cursor-pointer transition-all ${
-                    isInPane
-                      ? "bg-sidebar-accent border border-primary/30"
-                      : isSelected
-                      ? "bg-sidebar-accent"
-                      : "hover:bg-sidebar-accent/50 active:bg-sidebar-accent/70"
-                  }`}
-                  onClick={() => {
-                    setSelectedWorktreeId(worktree.id);
-                    handleStartSession(worktree);
+                  worktree={worktree}
+                  session={session}
+                  onStartSession={(w) => {
+                    handleStartSession(w);
                     if (isMobile) setSidebarOpen(false);
                   }}
+                  onStopSession={handleStopSession}
+                  onSelectSession={(sessionId) => {
+                    handleSelectSession(sessionId);
+                    if (isMobile) setSidebarOpen(false);
+                  }}
+                  onDeleteWorktree={handleDeleteWorktree}
                 >
-                  <div className="flex items-center justify-between">
+                  <div
+                    className={`group p-4 md:p-3 rounded-lg cursor-pointer transition-all ${
+                      isInPane
+                        ? "bg-sidebar-accent border border-primary/30"
+                        : isSelected
+                        ? "bg-sidebar-accent"
+                        : "hover:bg-sidebar-accent/50 active:bg-sidebar-accent/70"
+                    }`}
+                    onClick={() => {
+                      setSelectedWorktreeId(worktree.id);
+                      handleStartSession(worktree);
+                      if (isMobile) setSidebarOpen(false);
+                    }}
+                  >
                     <div className="flex items-center gap-2 min-w-0">
                       {session && (
                         <div
@@ -554,81 +555,8 @@ export default function Dashboard() {
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {session ? (
-                        <>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-10 w-10 md:h-6 md:w-6"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSelectSession(session.id);
-                              if (isMobile) setSidebarOpen(false);
-                            }}
-                          >
-                            <MessageSquare className="w-5 h-5 md:w-3 md:h-3" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-10 w-10 md:h-6 md:w-6 text-destructive"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleStopSession(session.id);
-                            }}
-                          >
-                            <Square className="w-5 h-5 md:w-3 md:h-3" />
-                          </Button>
-                        </>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-10 w-10 md:h-6 md:w-6 text-primary"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleStartSession(worktree);
-                            if (isMobile) setSidebarOpen(false);
-                          }}
-                        >
-                          <Play className="w-5 h-5 md:w-3 md:h-3" />
-                        </Button>
-                      )}
-                      {!worktree.isMain && (
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-10 w-10 md:h-6 md:w-6 text-destructive"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <Trash2 className="w-5 h-5 md:w-3 md:h-3" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Delete Worktree</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                Are you sure you want to delete this worktree? This will also delete the associated branch.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
-                              <AlertDialogCancel className="h-12 md:h-10">Cancel</AlertDialogCancel>
-                              <AlertDialogAction
-                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-12 md:h-10"
-                                onClick={() => handleDeleteWorktree(worktree)}
-                              >
-                                Delete
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      )}
-                    </div>
                   </div>
-                </div>
+                </WorktreeContextMenu>
               );
             })}
           </div>
@@ -751,6 +679,7 @@ export default function Dashboard() {
             repoName={repoPath ? getBaseName(repoPath) : null}
             onStartSession={handleStartSession}
             onStopSession={handleStopSession}
+            onDeleteWorktree={handleDeleteWorktree}
             onSendMessage={sendMessage}
             onSendKey={sendKey}
             onSelectSession={handleSelectSession}

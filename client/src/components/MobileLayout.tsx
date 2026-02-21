@@ -16,6 +16,7 @@ interface MobileLayoutProps {
   repoName: string | null;
   onStartSession: (worktree: Worktree) => void;
   onStopSession: (sessionId: string) => void;
+  onDeleteWorktree: (worktree: Worktree) => void;
   onSendMessage: (sessionId: string, message: string) => void;
   onSendKey: (sessionId: string, key: SpecialKey) => void;
   onSelectSession: (sessionId: string) => void;
@@ -32,6 +33,7 @@ export function MobileLayout({
   repoName,
   onStartSession,
   onStopSession,
+  onDeleteWorktree,
   onSendMessage,
   onSendKey,
   onSelectSession,
@@ -86,6 +88,7 @@ export function MobileLayout({
           onOpenSession={handleOpenSession}
           onStartSession={onStartSession}
           onStopSession={onStopSession}
+          onDeleteWorktree={onDeleteWorktree}
         />
       </div>
 
