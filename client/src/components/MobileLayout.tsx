@@ -74,11 +74,11 @@ export function MobileLayout({
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col min-h-0">
       {/* 一覧画面 */}
       <div
         className={
-          activeView === "list" ? "flex-1 flex flex-col" : "hidden"
+          activeView === "list" ? "flex-1 flex flex-col min-h-0" : "hidden"
         }
       >
         <MobileSessionList
@@ -98,7 +98,7 @@ export function MobileLayout({
           key={sessionId}
           className={
             activeView === "detail" && selectedSessionId === sessionId
-              ? "flex-1 flex flex-col"
+              ? "flex-1 flex flex-col min-h-0"
               : "hidden"
           }
         >

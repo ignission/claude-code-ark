@@ -204,7 +204,7 @@ export function MobileSessionView({
 
   return (
     <div
-      className="flex-1 flex flex-col safe-area-x"
+      className="flex-1 flex flex-col min-h-0 safe-area-x"
       style={isKeyboardVisible ? { height: `${viewportHeight}px`, maxHeight: `${viewportHeight}px` } : undefined}
     >
       {/* ヘッダー: 戻る、ブランチ名、Opsドロップダウン、Stopボタン */}
