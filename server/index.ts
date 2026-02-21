@@ -173,6 +173,12 @@ async function startServer() {
     // Send allowed repos list to client on connection
     socket.emit("repos:list", allowedRepos);
 
+    // 既存セッション一覧を送信（リロード時のペイン復元用）
+    const existingSessions = sessionOrchestrator.getAllSessions();
+    if (existingSessions.length > 0) {
+      socket.emit("session:list", existingSessions);
+    }
+
     // ===== Repository Commands =====
 
     socket.on("repo:scan", async (basePath) => {

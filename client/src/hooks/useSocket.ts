@@ -221,6 +221,16 @@ export function useSocket(): UseSocketReturn {
       setSessions((prev) => new Map(prev).set(session.id, session));
     };
 
+    socket.on("session:list", (sessions: ManagedSession[]) => {
+      setSessions((prev) => {
+        const next = new Map(prev);
+        for (const session of sessions) {
+          next.set(session.id, session);
+        }
+        return next;
+      });
+    });
+
     socket.on("session:created", (session) => {
       console.log("[Socket] Session created:", session.id, "ttydUrl:", session.ttydUrl);
       updateSession(session);
