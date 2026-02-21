@@ -8,7 +8,7 @@
  * - モバイル表示は MobileLayout が担当
  */
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Square,
@@ -20,6 +20,8 @@ import { getBaseName } from "@/utils/pathUtils";
 import type { ManagedSession, SpecialKey, Worktree } from "../../../shared/types";
 
 type LayoutMode = "single" | "grid-4";
+
+const LAYOUT_MODE_STORAGE_KEY = "layoutMode";
 
 interface MultiPaneLayoutProps {
   activePanes: string[]; // Session IDs
@@ -56,7 +58,23 @@ export function MultiPaneLayout({
   onClearImageUploadState,
   onCopyBuffer,
 }: MultiPaneLayoutProps) {
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>("grid-4");
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>(() => {
+    try {
+      if (typeof window === "undefined") return "grid-4";
+      const saved = localStorage.getItem(LAYOUT_MODE_STORAGE_KEY);
+      if (saved === "single" || saved === "grid-4") {
+        return saved;
+      }
+    } catch {}
+    return "grid-4";
+  });
+
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      localStorage.setItem(LAYOUT_MODE_STORAGE_KEY, layoutMode);
+    } catch {}
+  }, [layoutMode]);
 
   const getWorktreeForSession = (session: ManagedSession): Worktree | undefined => {
     return worktrees.find((w) => w.id === session.worktreeId);

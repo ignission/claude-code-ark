@@ -67,6 +67,23 @@ const SIDEBAR_MIN_WIDTH = 200;
 const SIDEBAR_MAX_WIDTH = 400;
 const SIDEBAR_DEFAULT_WIDTH = 320;
 const SIDEBAR_WIDTH_STORAGE_KEY = "sidebar-width";
+const ACTIVE_PANES_STORAGE_KEY = "activePanesPerRepo";
+const VIEW_MODE_STORAGE_KEY = "viewMode";
+const MAXIMIZED_PANE_STORAGE_KEY = "maximizedPane";
+const CLOSED_PANES_STORAGE_KEY = "closedPanes";
+
+function loadClosedPanes(): Set<string> {
+  try {
+    const saved = localStorage.getItem(CLOSED_PANES_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        return new Set(parsed.filter((v): v is string => typeof v === "string"));
+      }
+    }
+  } catch {}
+  return new Set();
+}
 
 export default function Dashboard() {
   const {
@@ -156,12 +173,64 @@ export default function Dashboard() {
     };
   }, [isResizing, sidebarWidth]);
 
-  const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
-  const [activePanesPerRepo, setActivePanesPerRepo] = useState<Map<string, string[]>>(new Map());
-  const [maximizedPane, setMaximizedPane] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    try {
+      const saved = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+      if (saved === "dashboard" || saved === "panes") {
+        return saved;
+      }
+    } catch {}
+    return "dashboard";
+  });
+  const [activePanesPerRepo, setActivePanesPerRepo] = useState<Map<string, string[]>>(() => {
+    try {
+      const saved = localStorage.getItem(ACTIVE_PANES_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return new Map(parsed);
+        }
+      }
+    } catch {}
+    return new Map();
+  });
+  const [maximizedPane, setMaximizedPane] = useState<string | null>(() => {
+    try {
+      const saved = localStorage.getItem(MAXIMIZED_PANE_STORAGE_KEY);
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch {}
+    return null;
+  });
 
   // ユーザーが意図的に閉じたペインを追跡（useEffectによる再追加を防ぐ）
-  const closedPanesRef = useRef<Set<string>>(new Set());
+  const closedPanesRef = useRef<Set<string>>(loadClosedPanes());
+  const viewModeHydratedRef = useRef(true);
+
+  const saveClosedPanes = useCallback(() => {
+    try {
+      localStorage.setItem(CLOSED_PANES_STORAGE_KEY, JSON.stringify(Array.from(closedPanesRef.current)));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ACTIVE_PANES_STORAGE_KEY, JSON.stringify(Array.from(activePanesPerRepo.entries())));
+    } catch {}
+  }, [activePanesPerRepo]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+    } catch {}
+  }, [viewMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(MAXIMIZED_PANE_STORAGE_KEY, JSON.stringify(maximizedPane));
+    } catch {}
+  }, [maximizedPane]);
 
   // 現在のリポジトリのactivePanesを取得
   const activePanes = repoPath ? (activePanesPerRepo.get(repoPath) || []) : [];
@@ -212,6 +281,10 @@ export default function Dashboard() {
   }, [tunnelActive, tunnelUrl]);
 
   useEffect(() => {
+    if (viewModeHydratedRef.current) {
+      viewModeHydratedRef.current = false;
+      return;
+    }
     setMaximizedPane(null);
     setSelectedWorktreeId(null);
     let totalPanes = 0;
@@ -251,6 +324,7 @@ export default function Dashboard() {
     const session = getSessionForWorktree(worktree.id);
     if (session) {
       closedPanesRef.current.add(session.id);
+      saveClosedPanes();
       const targetRepo = findRepoForSession(session, repoList);
       removeSessionFromPanes(session.id, targetRepo);
       if (maximizedPane === session.id) {
@@ -267,6 +341,7 @@ export default function Dashboard() {
     if (existingSession) {
       // ユーザーが明示的に開くので、closedPanesから除外
       closedPanesRef.current.delete(existingSession.id);
+      saveClosedPanes();
       // Add to active panes if not already there
       if (!activePanes.includes(existingSession.id)) {
         setActivePanes((prev) => [...prev, existingSession.id]);
@@ -316,6 +391,7 @@ export default function Dashboard() {
 
     // ユーザーが明示的に開くので、closedPanesから除外
     closedPanesRef.current.delete(sessionId);
+    saveClosedPanes();
 
     // セッションが属するリポジトリを特定
     const targetRepo = findRepoForSession(session, repoList);
@@ -343,6 +419,7 @@ export default function Dashboard() {
   const handleClosePane = (sessionId: string) => {
     // ユーザーが意図的に閉じたペインとして記録
     closedPanesRef.current.add(sessionId);
+    saveClosedPanes();
     const session = sessions.get(sessionId);
     const targetRepo = session ? findRepoForSession(session, repoList) : null;
     removeSessionFromPanes(sessionId, targetRepo);
@@ -374,6 +451,12 @@ export default function Dashboard() {
       }
     });
   }, [sessions, repoList]);
+
+  useEffect(() => {
+    if (maximizedPane && !sessions.has(maximizedPane)) {
+      setMaximizedPane(null);
+    }
+  }, [maximizedPane, sessions]);
 
   // 現在のリポジトリに属し、かつ存在するセッションのみをフィルタ
   const { filteredSessions, validActivePanes } = useMemo(() => {
