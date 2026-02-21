@@ -86,6 +86,7 @@ export interface ServerToClientEvents {
   "worktree:error": (error: string) => void;
 
   // Session events（ManagedSessionを使用）
+  "session:list": (sessions: ManagedSession[]) => void;
   "session:created": (session: ManagedSession) => void;
   "session:updated": (session: ManagedSession) => void;
   "session:stopped": (sessionId: string) => void;
