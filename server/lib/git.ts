@@ -19,7 +19,7 @@ function validatePath(inputPath: string): string {
   const resolved = path.resolve(inputPath);
   
   // Check for dangerous characters
-  if (/[;&|`$(){}[\]<>!]/.test(resolved)) {
+  if (/[;&|`$(){}[\]<>!"']/.test(resolved)) {
     throw new Error("Invalid characters in path");
   }
   

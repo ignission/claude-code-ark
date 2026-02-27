@@ -5,10 +5,13 @@
  * 各セッションはattach/detach可能で、サーバー再起動後も維持される。
  */
 
-import { execSync, exec } from "node:child_process";
+import { execSync, exec, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { nanoid } from "nanoid";
 import type { SpecialKey } from "../../shared/types.js";
+
+/** 送信を許可する特殊キーのホワイトリスト */
+const ALLOWED_SPECIAL_KEYS = new Set<SpecialKey>(["Enter", "C-c", "C-d", "y", "n", "S-Tab", "Escape"]);
 
 export interface TmuxSession {
   id: string;
@@ -22,12 +25,22 @@ export interface TmuxSession {
 export class TmuxManager extends EventEmitter {
   private sessions: Map<string, TmuxSession> = new Map();
   private readonly SESSION_PREFIX = "ccm-";
+  /** パーミッションスキップフラグ（--dangerously-skip-permissions を付与するか） */
+  private skipPermissions = false;
 
   constructor() {
     super();
     this.checkTmuxInstalled();
     this.discoverExistingSessions();
     this.setCopyCommand();
+  }
+
+  /**
+   * パーミッションスキップフラグを設定
+   * trueの場合、claudeコマンドに --dangerously-skip-permissions を付与する
+   */
+  setSkipPermissions(value: boolean): void {
+    this.skipPermissions = value;
   }
 
   /**
@@ -119,20 +132,23 @@ export class TmuxManager extends EventEmitter {
 
     try {
       // tmuxセッションを作成（detached mode）- シェルだけを起動
-      execSync(
-        `tmux new-session -d -s "${tmuxSessionName}" -c "${worktreePath}"`,
-        { stdio: "pipe" }
-      );
-      execSync(
-        `tmux set-option -t "${tmuxSessionName}" mouse on`,
-        { stdio: "pipe" }
-      );
+      const newSessionResult = spawnSync("tmux", ["new-session", "-d", "-s", tmuxSessionName, "-c", worktreePath], { stdio: "pipe" });
+      if (newSessionResult.error) throw newSessionResult.error;
+      if (newSessionResult.status !== 0) throw new Error(`tmux new-session exited with status ${newSessionResult.status}`);
+
+      // マウスモードを有効化
+      const setOptionResult = spawnSync("tmux", ["set-option", "-t", tmuxSessionName, "mouse", "on"], { stdio: "pipe" });
+      if (setOptionResult.error) throw setOptionResult.error;
+      if (setOptionResult.status !== 0) throw new Error(`tmux set-option exited with status ${setOptionResult.status}`);
+
       // claudeコマンドを送信（終了後もシェルが残るのでvimなども使える）
       // CLAUDECODE環境変数をunsetしてからclaudeを起動（ネストされたセッション検出を回避）
-      execSync(
-        `tmux send-keys -t "${tmuxSessionName}" "unset CLAUDECODE && claude --dangerously-skip-permissions" Enter`,
-        { stdio: "pipe" }
-      );
+      const claudeCmd = this.skipPermissions
+        ? "unset CLAUDECODE && claude --dangerously-skip-permissions"
+        : "unset CLAUDECODE && claude";
+      const sendKeysResult = spawnSync("tmux", ["send-keys", "-t", tmuxSessionName, claudeCmd, "Enter"], { stdio: "pipe" });
+      if (sendKeysResult.error) throw sendKeysResult.error;
+      if (sendKeysResult.status !== 0) throw new Error(`tmux send-keys exited with status ${sendKeysResult.status}`);
     } catch (error) {
       throw new Error(`Failed to create tmux session: ${error}`);
     }
@@ -161,21 +177,15 @@ export class TmuxManager extends EventEmitter {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error("Session not found");
 
-    // エスケープ処理: シングルクォートとバックスラッシュを適切に処理
-    const escapedInput = input
-      .replace(/\\/g, "\\\\")
-      .replace(/'/g, "'\\''");
-
-    // send-keys -l でリテラル送信
-    execSync(
-      `tmux send-keys -t "${session.tmuxSessionName}" -l '${escapedInput}'`,
-      { stdio: "pipe" }
-    );
+    // send-keys -l でリテラル送信（spawnSyncなのでシェルエスケープ不要）
+    const literalResult = spawnSync("tmux", ["send-keys", "-t", session.tmuxSessionName, "-l", input], { stdio: "pipe" });
+    if (literalResult.error) throw literalResult.error;
+    if (literalResult.status !== 0) throw new Error(`tmux send-keys -l exited with status ${literalResult.status}`);
 
     // Enterキーを別途送信
-    execSync(`tmux send-keys -t "${session.tmuxSessionName}" Enter`, {
-      stdio: "pipe",
-    });
+    const enterResult = spawnSync("tmux", ["send-keys", "-t", session.tmuxSessionName, "Enter"], { stdio: "pipe" });
+    if (enterResult.error) throw enterResult.error;
+    if (enterResult.status !== 0) throw new Error(`tmux send-keys Enter exited with status ${enterResult.status}`);
 
     session.lastActivity = new Date();
   }
@@ -187,11 +197,16 @@ export class TmuxManager extends EventEmitter {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error("Session not found");
 
+    // ホワイトリストに含まれないキーは拒否
+    if (!ALLOWED_SPECIAL_KEYS.has(key)) {
+      throw new Error(`許可されていない特殊キーです: ${key}`);
+    }
+
     // S-Tab はtmuxでは "BTab" として送信
     const tmuxKey = key === "S-Tab" ? "BTab" : key;
-    execSync(`tmux send-keys -t "${session.tmuxSessionName}" ${tmuxKey}`, {
-      stdio: "pipe",
-    });
+    const result = spawnSync("tmux", ["send-keys", "-t", session.tmuxSessionName, tmuxKey], { stdio: "pipe" });
+    if (result.error) throw result.error;
+    if (result.status !== 0) throw new Error(`tmux send-keys exited with status ${result.status}`);
 
     session.lastActivity = new Date();
   }

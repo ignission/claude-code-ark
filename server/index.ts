@@ -37,6 +37,7 @@ import type {
 const args = process.argv.slice(2);
 const enableRemote = args.includes("--remote") || args.includes("-r");
 const enableQuick = args.includes("--quick") || args.includes("-q");
+const skipPermissions = args.includes("--skip-permissions");
 
 // Parse --repos option: --repos /path1,/path2
 let allowedRepos: string[] = [];
@@ -62,6 +63,12 @@ async function startServer() {
   const server = createServer(app);
   const port = Number(process.env.PORT) || 3001;
 
+  // --skip-permissions が指定された場合、Claudeを --dangerously-skip-permissions 付きで起動
+  if (skipPermissions) {
+    tmuxManager.setSkipPermissions(true);
+    console.log("Skip permissions mode enabled - Claude will run with --dangerously-skip-permissions");
+  }
+
   // Create proxy for ttyd WebSocket connections
   const ttydProxy = httpProxy.createProxyServer({
     ws: true,
@@ -85,13 +92,46 @@ async function startServer() {
     console.log("Quick Tunnel mode enabled - using temporary *.trycloudflare.com URL with token authentication");
   }
 
+  // セキュリティヘッダー
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    next();
+  });
+
   // Apply HTTP authentication middleware
   app.use(authManager.httpMiddleware());
 
   // Initialize Socket.IO
   const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
     cors: {
-      origin: "*",
+      origin: (origin, callback) => {
+        // originがundefined = 同一オリジンリクエスト（許可）
+        if (!origin) {
+          callback(null, true);
+          return;
+        }
+        try {
+          const url = new URL(origin);
+          const hostname = url.hostname;
+          // localhostは常に許可
+          if (hostname === "localhost" || hostname === "127.0.0.1") {
+            callback(null, true);
+            return;
+          }
+          // トンネル時の許可ドメイン
+          if (authManager.isEnabled()) {
+            if (hostname.endsWith(".trycloudflare.com") || hostname === "ccm.ignission.tech") {
+              callback(null, true);
+              return;
+            }
+          }
+          callback(new Error("CORS not allowed"), false);
+        } catch {
+          callback(new Error("Invalid origin"), false);
+        }
+      },
       methods: ["GET", "POST"],
     },
   });
@@ -140,6 +180,20 @@ async function startServer() {
   server.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url || "", `http://${req.headers.host}`);
     const pathname = url.pathname;
+
+    // ttyd WebSocket接続の認証チェック
+    if (pathname.match(/^\/ttyd\//) && authManager.isEnabled()) {
+      const host = (req.headers["x-forwarded-host"] as string) || req.headers.host;
+      // Quick Tunnel経由のアクセスのみ認証を要求
+      const hostname = host?.split(":")[0] || "";
+      if (hostname.endsWith(".trycloudflare.com") || hostname === "ccm.ignission.tech") {
+        const token = url.searchParams.get("token");
+        if (!authManager.validateToken(token || undefined)) {
+          socket.destroy();
+          return;
+        }
+      }
+    }
 
     // Handle ttyd WebSocket connections
     const ttydMatch = pathname.match(/^\/ttyd\/([^/]+)/);
