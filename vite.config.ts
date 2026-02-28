@@ -27,7 +27,6 @@ export default defineConfig({
     allowedHosts: [
       "localhost",
       "127.0.0.1",
-      "ccm.ignission.tech",
     ],
     // APIとSocket.IOをバックエンドにプロキシ
     proxy: {

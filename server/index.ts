@@ -39,6 +39,9 @@ const enableRemote = args.includes("--remote") || args.includes("-r");
 const enableQuick = args.includes("--quick") || args.includes("-q");
 const skipPermissions = args.includes("--skip-permissions");
 
+// 公開ドメイン（Named Tunnel / CORS許可用）
+const publicDomain = process.env.CCM_PUBLIC_DOMAIN;
+
 // Parse --repos option: --repos /path1,/path2
 let allowedRepos: string[] = [];
 const reposIndex = args.findIndex((arg) => arg === "--repos");
@@ -125,8 +128,8 @@ async function startServer() {
             callback(null, true);
             return;
           }
-          // Named Tunnel時の許可ドメイン（--remote モードの場合のみ）
-          if (hostname === "ccm.ignission.tech" && enableRemote) {
+          // Named Tunnel時の許可ドメイン（Named TunnelはCCMサーバーとは独立稼働）
+          if (publicDomain && hostname === publicDomain) {
             callback(null, true);
             return;
           }
@@ -189,7 +192,7 @@ async function startServer() {
       const host = (req.headers["x-forwarded-host"] as string) || req.headers.host;
       // Quick Tunnel経由のアクセスのみ認証を要求
       const hostname = host?.split(":")[0] || "";
-      if (hostname.endsWith(".trycloudflare.com") || hostname === "ccm.ignission.tech") {
+      if (hostname.endsWith(".trycloudflare.com") || (publicDomain && hostname === publicDomain)) {
         const token = url.searchParams.get("token");
         if (!authManager.validateToken(token || undefined)) {
           socket.destroy();
@@ -551,15 +554,15 @@ async function startServer() {
       }
     }
 
-    // Start Named Tunnel if remote access is enabled
-    if (enableRemote) {
+    // Named Tunnel起動（publicDomainが設定されている場合のみ）
+    if (enableRemote && publicDomain) {
       console.log("Starting Cloudflare Tunnel...");
       const tunnel = new TunnelManager({
         localPort: port,
         mode: "named",
         namedTunnelOptions: {
           tunnelName: "claude-code-manager",
-          publicUrl: "https://ccm.ignission.tech",
+          publicUrl: `https://${publicDomain}`,
         },
       });
 
