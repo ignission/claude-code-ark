@@ -5,7 +5,7 @@
  * Generates a random token on startup that must be included in requests.
  */
 
-import { randomBytes } from "crypto";
+import { randomBytes, timingSafeEqual } from "crypto";
 import type { Request, Response, NextFunction } from "express";
 import type { Socket } from "socket.io";
 
@@ -68,7 +68,16 @@ export class AuthManager {
     if (!this.enabled) {
       return true;
     }
-    return token === this.token;
+    if (!token) {
+      return false;
+    }
+    // timingSafeEqualはバッファ長が異なるとエラーになるため、バイト長で比較
+    const received = Buffer.from(token, "utf8");
+    const expected = Buffer.from(this.token, "utf8");
+    if (received.length !== expected.length) {
+      return false;
+    }
+    return timingSafeEqual(received, expected);
   }
 
   /**
