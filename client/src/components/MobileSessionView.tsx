@@ -277,7 +277,7 @@ export function MobileSessionView({
       </header>
 
       {/* ttyd iframe（残り全スペース） */}
-      <div className="flex-1 min-h-0 bg-[#1a1b26]">
+      <div className="flex-1 min-h-0 bg-[#1a1b26] overflow-hidden">
         {session.ttydUrl || session.ttydPort ? (
           <iframe
             key={iframeKey}

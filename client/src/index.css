@@ -127,9 +127,16 @@
   * {
     @apply border-border outline-ring/50;
   }
-  body {
+  html, body {
     @apply bg-background text-foreground;
     font-family: "Inter", system-ui, -apple-system, sans-serif;
+    height: 100dvh;
+    overflow: clip;
+    overscroll-behavior: none;
+  }
+  #root {
+    height: 100%;
+    overflow: clip;
   }
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]),
