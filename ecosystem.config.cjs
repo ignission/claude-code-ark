@@ -5,7 +5,7 @@ module.exports = {
       script: 'dist/index.js',
       cwd: __dirname,
       node_args: '--env-file=.env.production',
-      args: '--remote --skip-permissions',
+      args: '--remote',
       instances: 1,
       autorestart: true,
       watch: false,
