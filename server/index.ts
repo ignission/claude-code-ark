@@ -414,12 +414,6 @@ async function startServer() {
       sessionOrchestrator.on(event, handler);
     }
 
-    // セッション一括復元完了イベント → session:list として転送
-    const restoredAllHandler = (sessions: unknown) => {
-      socket.emit("session:list", sessions as ManagedSession[]);
-    };
-    sessionOrchestrator.on("sessions:restored-all", restoredAllHandler);
-
     // ===== Port Scan Commands =====
 
     // ポートスキャン
@@ -516,7 +510,6 @@ async function startServer() {
       forwardHandlers.forEach((handler, event) => {
         sessionOrchestrator.off(event, handler);
       });
-      sessionOrchestrator.off("sessions:restored-all", restoredAllHandler);
     });
   });
 

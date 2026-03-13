@@ -57,14 +57,8 @@ export function useComposition<
   });
 
   const onKeyDown = usePersistFn((e: React.KeyboardEvent<T>) => {
-    // モバイルではEnter/Escをブロックしない
-    // （iOSの予測変換がcompositionイベントを生成するためisComposingが常にtrueになる。
-    //   モバイルのIME確定はタップで行うため、Enterキーは常に送信の意図）
-    // デスクトップではc.currentでcomposition中のEnter/Escをブロック
-    // （Safari compositionEnd→keydown順序問題のワークアラウンド）
-    const isTouchDevice = navigator.maxTouchPoints > 0;
+    // 在 composition 状态下，阻止 ESC 和 Enter（非 shift+Enter）事件的冒泡
     if (
-      !isTouchDevice &&
       c.current &&
       (e.key === "Escape" || (e.key === "Enter" && !e.shiftKey))
     ) {

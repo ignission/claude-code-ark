@@ -46,7 +46,8 @@ export class SessionOrchestrator extends EventEmitter {
   private restoreExistingSessions(): void {
     const tmuxSessions = tmuxManager.getAllSessions();
 
-    const restorePromises = tmuxSessions.map(async (tmuxSession) => {
+    for (const tmuxSession of tmuxSessions) {
+      // DBにセッション情報があれば更新
       const dbSession = db.getSessionByWorktreePath(tmuxSession.worktreePath);
       if (dbSession) {
         console.log(
@@ -54,20 +55,19 @@ export class SessionOrchestrator extends EventEmitter {
         );
       }
 
-      try {
-        await ttydManager.startInstance(tmuxSession.id, tmuxSession.tmuxSessionName);
-        console.log(`[Orchestrator] Started ttyd for restored session: ${tmuxSession.id}`);
-      } catch (err) {
-        console.error(`[Orchestrator] Failed to start ttyd for ${tmuxSession.id}:`, (err as Error).message);
-      }
-    });
-
-    Promise.allSettled(restorePromises).then(() => {
-      const allSessions = this.getAllSessions();
-      if (allSessions.length > 0) {
-        this.emit("sessions:restored-all", allSessions);
-      }
-    });
+      // ttydも自動起動（起動完了後にクライアントへ通知）
+      ttydManager.startInstance(tmuxSession.id, tmuxSession.tmuxSessionName)
+        .then(() => {
+          console.log(`[Orchestrator] Started ttyd for restored session: ${tmuxSession.id}`);
+          // ttyd起動完了をクライアントに通知（ttydPort/ttydUrlを含む最新情報を送信）
+          const dbSession = db.getSessionByWorktreePath(tmuxSession.worktreePath);
+          const managed = this.toManagedSession(tmuxSession, dbSession?.worktreeId || "");
+          this.emit("session:updated", managed);
+        })
+        .catch((err) => {
+          console.error(`[Orchestrator] Failed to start ttyd for ${tmuxSession.id}:`, err.message);
+        });
+    }
   }
 
   /**
