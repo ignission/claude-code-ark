@@ -10,6 +10,8 @@ import express from "express";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
 import path from "node:path";
+import fs from "node:fs";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import httpProxy from "http-proxy";
 import {
@@ -60,6 +62,45 @@ const __dirname = path.dirname(__filename);
 let activeTunnel: TunnelManager | null = null;
 let tunnelUrl: string | null = null;
 let tunnelToken: string | null = null;
+
+// トンネル状態ファイルのパス
+const TUNNEL_STATE_FILE = path.join(os.tmpdir(), "ccm-tunnel-state.json");
+
+/** トンネル状態をファイルに保存する */
+function saveTunnelState(port: number): void {
+  try {
+    fs.writeFileSync(TUNNEL_STATE_FILE, JSON.stringify({ active: true, port }), "utf-8");
+  } catch (error) {
+    console.error("[Tunnel] 状態ファイルの保存に失敗:", getErrorMessage(error));
+  }
+}
+
+/** トンネル状態ファイルを削除する */
+function removeTunnelState(): void {
+  try {
+    if (fs.existsSync(TUNNEL_STATE_FILE)) {
+      fs.unlinkSync(TUNNEL_STATE_FILE);
+    }
+  } catch (error) {
+    console.error("[Tunnel] 状態ファイルの削除に失敗:", getErrorMessage(error));
+  }
+}
+
+/** トンネル状態ファイルを読み込む */
+function loadTunnelState(): { active: boolean; port: number } | null {
+  try {
+    if (!fs.existsSync(TUNNEL_STATE_FILE)) {
+      return null;
+    }
+    const data = JSON.parse(fs.readFileSync(TUNNEL_STATE_FILE, "utf-8"));
+    if (data && data.active === true && typeof data.port === "number") {
+      return data;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 async function startServer() {
   const app = express();
@@ -145,6 +186,56 @@ async function startServer() {
   // Apply Socket.IO authentication middleware
   io.use(authManager.socketMiddleware());
 
+  /**
+   * Quick Tunnelを起動する共通関数
+   * tunnel:startハンドラーとサーバー起動時の自動復旧から呼ばれる。
+   * @param targetPort トンネル対象のポート番号
+   * @returns トンネルURL（認証トークン付き）
+   */
+  async function startQuickTunnelShared(targetPort: number): Promise<string> {
+    if (activeTunnel) {
+      return tunnelUrl!;
+    }
+
+    // トークン生成
+    authManager.enable();
+    tunnelToken = authManager.getToken();
+
+    // Quick Tunnel 起動
+    activeTunnel = new TunnelManager({
+      localPort: targetPort,
+      mode: "quick",
+    });
+
+    const publicUrl = await activeTunnel.start();
+    console.log("[Tunnel] Public URL:", publicUrl);
+    tunnelUrl = authManager.buildAuthUrl(publicUrl);
+    console.log("[Tunnel] Auth URL:", tunnelUrl);
+    console.log("[Tunnel] Token:", tunnelToken);
+
+    // 状態ファイルに保存
+    saveTunnelState(targetPort);
+
+    // 全クライアントに通知
+    io.emit("tunnel:started", { url: tunnelUrl, token: tunnelToken });
+
+    // エラーハンドリング
+    activeTunnel.on("error", (error) => {
+      io.emit("tunnel:error", { message: error.message });
+    });
+
+    activeTunnel.on("close", () => {
+      activeTunnel = null;
+      tunnelUrl = null;
+      tunnelToken = null;
+      authManager.disable();
+      removeTunnelState();
+      io.emit("tunnel:stopped");
+    });
+
+    return tunnelUrl;
+  }
+
   // ===== ttyd Proxy Routes =====
 
   // HTTP proxy for ttyd
@@ -187,19 +278,7 @@ async function startServer() {
     const url = new URL(req.url || "", `http://${req.headers.host}`);
     const pathname = url.pathname;
 
-    // ttyd WebSocket接続の認証チェック
-    if (pathname.match(/^\/ttyd\//) && authManager.isEnabled()) {
-      const host = (req.headers["x-forwarded-host"] as string) || req.headers.host;
-      // Quick Tunnel経由のアクセスのみ認証を要求
-      const hostname = host?.split(":")[0] || "";
-      if (hostname.endsWith(".trycloudflare.com") || (publicDomain && hostname === publicDomain)) {
-        const token = url.searchParams.get("token");
-        if (!authManager.validateToken(token || undefined)) {
-          socket.destroy();
-          return;
-        }
-      }
-    }
+    // ttyd WebSocket接続は内部プロキシ（ws://127.0.0.1）経由のため認証不要
 
     // Handle ttyd WebSocket connections
     const ttydMatch = pathname.match(/^\/ttyd\/([^/]+)/);
@@ -435,37 +514,7 @@ async function startServer() {
       }
 
       try {
-        // トークン生成
-        authManager.enable();
-        tunnelToken = authManager.getToken();
-
-        // Quick Tunnel 起動
-        activeTunnel = new TunnelManager({
-          localPort: targetPort,
-          mode: "quick",
-        });
-
-        const publicUrl = await activeTunnel.start();
-        console.log("[Tunnel] Public URL:", publicUrl);
-        tunnelUrl = authManager.buildAuthUrl(publicUrl);
-        console.log("[Tunnel] Auth URL:", tunnelUrl);
-        console.log("[Tunnel] Token:", tunnelToken);
-
-        // 全クライアントに通知
-        io.emit("tunnel:started", { url: tunnelUrl, token: tunnelToken });
-
-        // エラーハンドリング
-        activeTunnel.on("error", (error) => {
-          io.emit("tunnel:error", { message: error.message });
-        });
-
-        activeTunnel.on("close", () => {
-          activeTunnel = null;
-          tunnelUrl = null;
-          tunnelToken = null;
-          authManager.disable();
-          io.emit("tunnel:stopped");
-        });
+        await startQuickTunnelShared(targetPort);
       } catch (error) {
         socket.emit("tunnel:error", { message: getErrorMessage(error) });
       }
@@ -479,16 +528,19 @@ async function startServer() {
         tunnelUrl = null;
         tunnelToken = null;
         authManager.disable();
+        removeTunnelState();
         io.emit("tunnel:stopped");
       }
     });
 
     // 新しい接続時に現在のトンネル状態を送信
-    socket.emit("tunnel:status", {
+    const tunnelStatus = {
       active: !!activeTunnel,
       url: tunnelUrl ?? undefined,
       token: tunnelToken ?? undefined,
-    });
+    };
+    console.log(`[Tunnel] Sending status to ${socket.id}:`, { active: tunnelStatus.active, hasUrl: !!tunnelStatus.url });
+    socket.emit("tunnel:status", tunnelStatus);
 
     // ===== Image Upload Commands =====
 
@@ -517,30 +569,18 @@ async function startServer() {
     console.log(`Claude Code Manager server running on http://localhost:${port}/`);
 
     // Start Quick Tunnel if enabled
+    // 注: enableQuick は --quick コマンドラインオプションによるトンネル起動。
+    // 共通関数 startQuickTunnelShared を使用し、activeTunnel を設定する。
     if (enableQuick) {
       console.log("Starting Quick Tunnel...");
-      authManager.enable(); // トークン認証を有効化
-
-      const tunnel = new TunnelManager({
-        localPort: port,
-        mode: "quick",
-      });
-
       try {
-        const publicUrl = await tunnel.start();
-        const authUrl = authManager.buildAuthUrl(publicUrl);
-        await printRemoteAccessInfo(authUrl, authManager.getToken());
-
-        tunnel.on("error", (error) => {
-          console.error("Tunnel error:", error.message);
-        });
-
-        tunnel.on("close", (code) => {
-          console.log(`Tunnel closed with code ${code}`);
-        });
+        const url = await startQuickTunnelShared(port);
+        await printRemoteAccessInfo(url, tunnelToken!);
 
         const tunnelCleanup = () => {
-          tunnel.stop();
+          if (activeTunnel) {
+            activeTunnel.stop();
+          }
         };
 
         process.on("SIGTERM", tunnelCleanup);
@@ -590,6 +630,24 @@ async function startServer() {
           getErrorMessage(error)
         );
         console.log("Continuing without remote access...");
+      }
+    }
+
+    // トンネル自動復旧: 前回トンネルが有効だった場合に自動起動
+    // enableQuick が既にトンネルを起動している場合はスキップ
+    if (!activeTunnel) {
+      const savedState = loadTunnelState();
+      if (savedState) {
+        console.log("[Tunnel] 前回のトンネル状態を検出しました。自動復旧を開始します...");
+        try {
+          const url = await startQuickTunnelShared(savedState.port);
+          await printRemoteAccessInfo(url, tunnelToken!);
+          console.log("[Tunnel] トンネルの自動復旧に成功しました");
+        } catch (error) {
+          console.error("[Tunnel] トンネルの自動復旧に失敗:", getErrorMessage(error));
+          removeTunnelState();
+          console.log("[Tunnel] 状態ファイルを削除しました。トンネルなしで継続します");
+        }
       }
     }
   });

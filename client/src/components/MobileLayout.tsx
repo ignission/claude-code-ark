@@ -45,12 +45,14 @@ export function MobileLayout({
 }: MobileLayoutProps) {
   const [activeView, setActiveView] = useState<"list" | "detail">("list");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [openedSessions, setOpenedSessions] = useState<Set<string>>(new Set());
 
   // セッションを選択して詳細画面に遷移
   const handleOpenSession = useCallback(
     (sessionId: string) => {
       setSelectedSessionId(sessionId);
       setActiveView("detail");
+      setOpenedSessions((prev) => new Set(prev).add(sessionId));
       onSelectSession(sessionId);
     },
     [onSelectSession]
@@ -92,8 +94,8 @@ export function MobileLayout({
         />
       </div>
 
-      {/* 詳細画面 - 各セッションのビューを保持（iframe再マウント防止） */}
-      {Array.from(sessions.entries()).map(([sessionId, session]) => (
+      {/* 詳細画面 - 一度でも開いたセッションのみ描画（iframe再マウント防止） */}
+      {Array.from(sessions.entries()).filter(([sessionId]) => openedSessions.has(sessionId)).map(([sessionId, session]) => (
         <div
           key={sessionId}
           className={

@@ -110,8 +110,10 @@ export default function Dashboard() {
     tunnelUrl,
     tunnelToken,
     tunnelLoading,
+    tunnelJustStarted,
     startTunnel,
     stopTunnel,
+    clearTunnelJustStarted,
     listeningPorts,
     scanPorts,
     uploadImage,
@@ -259,7 +261,7 @@ export default function Dashboard() {
   const [showTunnelDialog, setShowTunnelDialog] = useState(false);
   const [selectedPort, setSelectedPort] = useState<number | null>(null);
   const [showPortSelector, setShowPortSelector] = useState(false);
-  const prevTunnelActive = useRef(false);
+
 
   const copyToClipboard = (text: string | null) => {
     if (text) {
@@ -272,13 +274,13 @@ export default function Dashboard() {
     if (error) toast.error(error);
   }, [error]);
 
-  // トンネル接続成功時に自動でダイアログを表示
+  // トンネル新規起動時のみ自動でダイアログを表示（リロード時の復元では表示しない）
   useEffect(() => {
-    if (tunnelActive && tunnelUrl && !prevTunnelActive.current) {
+    if (tunnelJustStarted) {
       setShowTunnelDialog(true);
+      clearTunnelJustStarted();
     }
-    prevTunnelActive.current = tunnelActive;
-  }, [tunnelActive, tunnelUrl]);
+  }, [tunnelJustStarted, clearTunnelJustStarted]);
 
   useEffect(() => {
     if (viewModeHydratedRef.current) {

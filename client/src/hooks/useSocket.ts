@@ -67,8 +67,10 @@ interface UseSocketReturn {
   tunnelUrl: string | null;
   tunnelToken: string | null;
   tunnelLoading: boolean;
+  tunnelJustStarted: boolean;
   startTunnel: (port?: number) => void;
   stopTunnel: () => void;
+  clearTunnelJustStarted: () => void;
 
   // Ports
   listeningPorts: Array<{ port: number; process: string; pid: number }>;
@@ -108,6 +110,7 @@ export function useSocket(): UseSocketReturn {
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
   const [tunnelToken, setTunnelToken] = useState<string | null>(null);
   const [tunnelLoading, setTunnelLoading] = useState(false);
+  const [tunnelJustStarted, setTunnelJustStarted] = useState(false);
 
   // Ports state
   const [listeningPorts, setListeningPorts] = useState<Array<{ port: number; process: string; pid: number }>>([]);
@@ -276,6 +279,7 @@ export function useSocket(): UseSocketReturn {
       setTunnelUrl(url);
       setTunnelToken(token);
       setTunnelLoading(false);
+      setTunnelJustStarted(true);
     });
 
     socket.on("tunnel:stopped", () => {
@@ -411,6 +415,10 @@ export function useSocket(): UseSocketReturn {
     socketRef.current?.emit("tunnel:stop");
   }, []);
 
+  const clearTunnelJustStarted = useCallback(() => {
+    setTunnelJustStarted(false);
+  }, []);
+
   // Ports actions
   const scanPorts = useCallback(() => {
     socketRef.current?.emit("ports:scan");
@@ -479,8 +487,10 @@ export function useSocket(): UseSocketReturn {
     tunnelUrl,
     tunnelToken,
     tunnelLoading,
+    tunnelJustStarted,
     startTunnel,
     stopTunnel,
+    clearTunnelJustStarted,
     // Ports
     listeningPorts,
     scanPorts,

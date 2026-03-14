@@ -72,10 +72,17 @@ export function MobileSessionView({
     typeof window !== "undefined" &&
     (window.location.hostname === "localhost" ||
       window.location.hostname === "127.0.0.1");
+  // トンネル経由のアクセス時はURLのトークンをiframeにも付与
+  const urlToken = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("token")
+    : null;
+  const ttydBasePath = `/ttyd/${session.id}/`;
   const ttydIframeSrc =
     isLocalAccess && session.ttydPort
-      ? `http://127.0.0.1:${session.ttydPort}/ttyd/${session.id}/`
-      : `/ttyd/${session.id}/`;
+      ? `http://127.0.0.1:${session.ttydPort}${ttydBasePath}`
+      : urlToken
+        ? `${ttydBasePath}?token=${urlToken}`
+        : ttydBasePath;
 
   // メッセージ送信（空文字でもEnterとして送信 = ターミナルへの空行送信）
   const handleSubmit = (e: React.FormEvent) => {
