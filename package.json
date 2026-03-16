@@ -13,7 +13,7 @@
     "dev:full:remote": "concurrently \"pnpm dev\" \"pnpm dev:remote\"",
     "dev:remote": "tsx watch server/index.ts --remote",
     "dev:quick": "tsx watch server/index.ts --quick",
-    "build": "vite build && esbuild server/index.ts server/lib/git.ts server/lib/tmux-manager.ts server/lib/ttyd-manager.ts server/lib/session-orchestrator.ts server/lib/tunnel.ts server/lib/auth.ts server/lib/qrcode.ts server/lib/database.ts server/lib/port-scanner.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
+    "build": "vite build && esbuild server/index.ts server/lib/*.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
     "start": "NODE_ENV=production node dist/index.js",
     "start:remote": "NODE_ENV=production node dist/index.js --remote",
     "start:quick": "NODE_ENV=production node dist/index.js --quick",
