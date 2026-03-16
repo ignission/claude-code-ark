@@ -120,7 +120,9 @@ export class TtydManager extends EventEmitter {
         "-p",
         port.toString(),
         "-i",
-        "lo0", // macOS loopback interface
+        // ループバックインターフェース名はOSによって異なる
+        // macOS: lo0, Linux: lo
+        process.platform === "darwin" ? "lo0" : "lo",
         "--base-path",
         basePath, // プロキシ経由でのWebSocket接続に必要
         "-t",
