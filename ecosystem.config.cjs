@@ -6,7 +6,7 @@ module.exports = {
       cwd: __dirname,
       node_args: '--env-file=.env.production',
       args: '--remote',
-      instances: 1,
+      exec_mode: 'fork',
       autorestart: true,
       watch: false,
       env: {
