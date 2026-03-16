@@ -22,10 +22,12 @@ export class TtydManager extends EventEmitter {
   /** 起動中のPromiseを保持し、同じセッションに対する重複起動を防ぐ */
   private pendingStarts: Map<string, Promise<TtydInstance>> = new Map();
   private nextPort: number;
+  private readonly MIN_PORT: number;
   private readonly MAX_PORT: number;
 
   constructor(startPort = TTYD_PORT_START, maxPort = TTYD_PORT_END) {
     super();
+    this.MIN_PORT = startPort;
     this.nextPort = startPort;
     this.MAX_PORT = maxPort;
     this.checkTtydInstalled();
@@ -59,7 +61,7 @@ export class TtydManager extends EventEmitter {
       if (!usedPorts.has(port)) {
         this.nextPort = port + 1;
         if (this.nextPort > this.MAX_PORT) {
-          this.nextPort = TTYD_PORT_START; // ラップアラウンド
+          this.nextPort = this.MIN_PORT; // ラップアラウンド
         }
         return port;
       }
