@@ -631,7 +631,7 @@ async function startServer() {
         localPort: port,
         mode: "named",
         namedTunnelOptions: {
-          tunnelName: "claude-code-manager",
+          tunnelName: process.env.CCM_TUNNEL_NAME || "claude-code-manager",
           publicUrl: `https://${publicDomain}`,
         },
       });
