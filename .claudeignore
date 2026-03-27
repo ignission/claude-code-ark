@@ -1,0 +1,24 @@
+# 依存関係
+node_modules/
+
+# ビルド出力
+dist/
+
+# データベース
+data/
+
+# 環境変数
+.env
+.env.*
+!.env.example
+
+# ロックファイル
+*.lock
+pnpm-lock.yaml
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
