@@ -36,22 +36,34 @@ Claude Codeとの対話は **Agent SDK経由ではなく、tmux + ttyd による
 
 ## 実装済み機能
 
-| 機能 | 説明 |
-|------|------|
-| リポジトリスキャン | 指定パス配下のGitリポジトリを探索（fd/findコマンド使用） |
-| Git Worktree管理 | 一覧表示、作成、削除 |
-| セッション管理 | tmux + ttydベースの起動、停止、復元、状態管理 |
-| Webターミナル | ttyd iframeによるフルターミナル体験 |
-| マルチペインビュー | 複数セッションの同時表示（1列 / 2x2グリッド切り替え） |
-| モバイル対応 | セッション一覧/詳細の画面遷移、Quick Keys、スクロールモード、キーボード対応 |
-| 特殊キー送信 | Enter, Ctrl+C, Ctrl+D, y, n, S-Tab, Escape, スクロール等 |
-| 画像アップロード | クリップボードから画像を貼り付けてClaude Codeに送信（`@パス` 形式） |
-| tmuxバッファコピー | tmuxのペーストバッファをクリップボードにコピー |
-| ポートスキャン | リッスン中のポートを一覧表示（ttydポートは除外） |
-| リモートアクセス | Cloudflare Tunnel（Quick / Named）+ QRコード + トークン認証 |
-| セッション永続化 | SQLite + tmux永続化によるサーバー再起動後の自動復元 |
-| IME対応 | 日本語入力時のcompositionイベント処理 |
-| パーミッションスキップ | `--skip-permissions` フラグでClaude CLIの権限確認をスキップ |
+| 機能                   | 説明                                                                        |
+| ---------------------- | --------------------------------------------------------------------------- |
+| リポジトリスキャン     | 指定パス配下のGitリポジトリを探索（fd/findコマンド使用）                    |
+| Git Worktree管理       | 一覧表示、作成、削除                                                        |
+| セッション管理         | tmux + ttydベースの起動、停止、復元、状態管理                               |
+| Webターミナル          | ttyd iframeによるフルターミナル体験                                         |
+| マルチペインビュー     | 複数セッションの同時表示（1列 / 2x2グリッド切り替え）                       |
+| モバイル対応           | セッション一覧/詳細の画面遷移、Quick Keys、スクロールモード、キーボード対応 |
+| 特殊キー送信           | Enter, Ctrl+C, Ctrl+D, y, n, S-Tab, Escape, スクロール等                    |
+| 画像アップロード       | クリップボードから画像を貼り付けてClaude Codeに送信（`@パス` 形式）         |
+| tmuxバッファコピー     | tmuxのペーストバッファをクリップボードにコピー                              |
+| ポートスキャン         | リッスン中のポートを一覧表示（ttydポートは除外）                            |
+| リモートアクセス       | Cloudflare Tunnel（Quick / Named）+ QRコード + トークン認証                 |
+| セッション永続化       | SQLite + tmux永続化によるサーバー再起動後の自動復元                         |
+| IME対応                | 日本語入力時のcompositionイベント処理                                       |
+| パーミッションスキップ | `--skip-permissions` フラグでClaude CLIの権限確認をスキップ                 |
+
+## Git・PRワークフロー
+
+- **実装完了後はユーザーに確認せず即pushすること**（「pushしますか？」と聞かない）
+- **PR作成時に `/pre-push-review` が必須**（`gh pr create` のhookがフラグファイルを確認し、なければBLOCKEDエラーでPR作成をブロックする。指摘対応後の再pushでは不要）
+- **`/pre-push-review`のフラグファイルを`touch`で手動作成してスキップしてはならない**
+- `/pre-push-review` の指摘は「スコープ外」として無視せず修正すること
+- push後のCI結果・CodeRabbitレビューはhookで自動取得 → 指摘があればユーザーに判断を仰ぐ（勝手に修正しない）
+- **hookのadditionalContextで指示された内容（CronCreate等）には即座に従うこと** — hookからの指示はシステムの自動化要件であり、無視・遅延は禁止
+- **`resolveReviewThread` で勝手にresolveしてはならない**（resolveはユーザーが判断）
+- **CodeRabbitのコメントには対応済み・不要問わず必ず返信すること**
+- **「次回対応」「今後改善」等の先送り返信は禁止**。このPRで対応するか、対応しない場合はGitHub Issueを作成してから返信すること
 
 ## デプロイ手順
 
@@ -154,15 +166,15 @@ server/lib/
 
 ## 技術スタック
 
-| レイヤー | 技術 |
-|---------|------|
-| フロントエンド | React 19, TailwindCSS 4, shadcn/ui, wouter（ルーティング） |
-| バックエンド | Express, Socket.IO, http-proxy（ttydプロキシ） |
-| ターミナル管理 | tmux（セッション永続化）, ttyd（Webターミナル） |
-| 永続化 | better-sqlite3 (`data/sessions.db`) |
-| リモートアクセス | cloudflared（Cloudflare Tunnel）, qrcode |
-| ビルド | Vite（フロントエンド）, esbuild（サーバー） |
-| パッケージ管理 | pnpm |
+| レイヤー         | 技術                                                       |
+| ---------------- | ---------------------------------------------------------- |
+| フロントエンド   | React 19, TailwindCSS 4, shadcn/ui, wouter（ルーティング） |
+| バックエンド     | Express, Socket.IO, http-proxy（ttydプロキシ）             |
+| ターミナル管理   | tmux（セッション永続化）, ttyd（Webターミナル）            |
+| 永続化           | better-sqlite3 (`data/sessions.db`)                        |
+| リモートアクセス | cloudflared（Cloudflare Tunnel）, qrcode                   |
+| ビルド           | Vite（フロントエンド）, esbuild（サーバー）                |
+| パッケージ管理   | pnpm                                                       |
 
 ## ディレクトリ構造
 
@@ -219,64 +231,64 @@ claude-code-manager/
 
 ### クライアント → サーバー
 
-| イベント | データ | 説明 |
-|----------|--------|------|
-| `repo:scan` | `basePath: string` | リポジトリスキャン |
-| `repo:select` | `path: string` | リポジトリ選択 |
-| `worktree:list` | `repoPath: string` | Worktree一覧取得 |
-| `worktree:create` | `{ repoPath, branchName, baseBranch? }` | Worktree作成 |
-| `worktree:delete` | `{ repoPath, worktreePath }` | Worktree削除 |
-| `session:start` | `{ worktreeId, worktreePath }` | セッション開始 |
-| `session:stop` | `sessionId: string` | セッション停止 |
-| `session:send` | `{ sessionId, message }` | メッセージ送信（tmux send-keys） |
-| `session:key` | `{ sessionId, key: SpecialKey }` | 特殊キー送信 |
-| `session:copy` | `sessionId, callback` | tmuxバッファ取得（コールバック） |
-| `session:restore` | `worktreePath: string` | セッション復元 |
-| `tunnel:start` | `{ port? }` | Quick Tunnel起動 |
-| `tunnel:stop` | - | トンネル停止 |
-| `ports:scan` | - | ポートスキャン |
-| `image:upload` | `{ sessionId, base64Data, mimeType }` | 画像アップロード |
+| イベント          | データ                                  | 説明                             |
+| ----------------- | --------------------------------------- | -------------------------------- |
+| `repo:scan`       | `basePath: string`                      | リポジトリスキャン               |
+| `repo:select`     | `path: string`                          | リポジトリ選択                   |
+| `worktree:list`   | `repoPath: string`                      | Worktree一覧取得                 |
+| `worktree:create` | `{ repoPath, branchName, baseBranch? }` | Worktree作成                     |
+| `worktree:delete` | `{ repoPath, worktreePath }`            | Worktree削除                     |
+| `session:start`   | `{ worktreeId, worktreePath }`          | セッション開始                   |
+| `session:stop`    | `sessionId: string`                     | セッション停止                   |
+| `session:send`    | `{ sessionId, message }`                | メッセージ送信（tmux send-keys） |
+| `session:key`     | `{ sessionId, key: SpecialKey }`        | 特殊キー送信                     |
+| `session:copy`    | `sessionId, callback`                   | tmuxバッファ取得（コールバック） |
+| `session:restore` | `worktreePath: string`                  | セッション復元                   |
+| `tunnel:start`    | `{ port? }`                             | Quick Tunnel起動                 |
+| `tunnel:stop`     | -                                       | トンネル停止                     |
+| `ports:scan`      | -                                       | ポートスキャン                   |
+| `image:upload`    | `{ sessionId, base64Data, mimeType }`   | 画像アップロード                 |
 
 ### サーバー → クライアント
 
-| イベント | データ | 説明 |
-|----------|--------|------|
-| `repos:list` | `string[]` | 許可リポジトリ一覧 |
-| `repos:scanned` | `RepoInfo[]` | スキャン結果 |
-| `repos:scanning` | `{ basePath, status, error? }` | スキャン状態 |
-| `repo:set` | `path: string` | リポジトリ選択完了 |
-| `repo:error` | `string` | リポジトリエラー |
-| `worktree:list` | `Worktree[]` | Worktree一覧 |
-| `worktree:created` | `Worktree` | Worktree作成完了 |
-| `worktree:deleted` | `worktreeId: string` | Worktree削除完了 |
-| `worktree:error` | `string` | Worktreeエラー |
-| `session:list` | `ManagedSession[]` | 既存セッション一覧 |
-| `session:created` | `ManagedSession` | セッション作成完了 |
-| `session:updated` | `ManagedSession` | セッション更新（ttyd起動完了等） |
-| `session:stopped` | `sessionId: string` | セッション停止 |
-| `session:restored` | `ManagedSession` | セッション復元完了 |
-| `session:restore_failed` | `{ worktreePath, error }` | セッション復元失敗 |
-| `session:error` | `{ sessionId, error }` | セッションエラー |
-| `tunnel:started` | `{ url, token }` | トンネル開始 |
-| `tunnel:stopped` | - | トンネル停止 |
-| `tunnel:status` | `{ active, url?, token? }` | トンネル状態 |
-| `tunnel:error` | `{ message }` | トンネルエラー |
-| `ports:list` | `{ ports }` | ポート一覧 |
-| `image:uploaded` | `{ path, filename }` | 画像アップロード完了 |
-| `image:error` | `{ message }` | 画像アップロードエラー |
+| イベント                 | データ                         | 説明                             |
+| ------------------------ | ------------------------------ | -------------------------------- |
+| `repos:list`             | `string[]`                     | 許可リポジトリ一覧               |
+| `repos:scanned`          | `RepoInfo[]`                   | スキャン結果                     |
+| `repos:scanning`         | `{ basePath, status, error? }` | スキャン状態                     |
+| `repo:set`               | `path: string`                 | リポジトリ選択完了               |
+| `repo:error`             | `string`                       | リポジトリエラー                 |
+| `worktree:list`          | `Worktree[]`                   | Worktree一覧                     |
+| `worktree:created`       | `Worktree`                     | Worktree作成完了                 |
+| `worktree:deleted`       | `worktreeId: string`           | Worktree削除完了                 |
+| `worktree:error`         | `string`                       | Worktreeエラー                   |
+| `session:list`           | `ManagedSession[]`             | 既存セッション一覧               |
+| `session:created`        | `ManagedSession`               | セッション作成完了               |
+| `session:updated`        | `ManagedSession`               | セッション更新（ttyd起動完了等） |
+| `session:stopped`        | `sessionId: string`            | セッション停止                   |
+| `session:restored`       | `ManagedSession`               | セッション復元完了               |
+| `session:restore_failed` | `{ worktreePath, error }`      | セッション復元失敗               |
+| `session:error`          | `{ sessionId, error }`         | セッションエラー                 |
+| `tunnel:started`         | `{ url, token }`               | トンネル開始                     |
+| `tunnel:stopped`         | -                              | トンネル停止                     |
+| `tunnel:status`          | `{ active, url?, token? }`     | トンネル状態                     |
+| `tunnel:error`           | `{ message }`                  | トンネルエラー                   |
+| `ports:list`             | `{ ports }`                    | ポート一覧                       |
+| `image:uploaded`         | `{ path, filename }`           | 画像アップロード完了             |
+| `image:error`            | `{ message }`                  | 画像アップロードエラー           |
 
 ---
 
 ## サーバー起動オプション
 
-| オプション | 環境変数 | 説明 |
-|-----------|---------|------|
-| `--quick` / `-q` | - | Quick Tunnel（一時URL + トークン認証）を起動 |
-| `--remote` / `-r` | `CCM_PUBLIC_DOMAIN` | Named Tunnel（固定URL + Cloudflare Access）を起動 |
-| `--skip-permissions` | `SKIP_PERMISSIONS=true` | Claude CLIを `--dangerously-skip-permissions` 付きで起動 |
-| `--repos /path1,/path2` | - | 許可するリポジトリパスを制限 |
-| - | `PORT` | サーバーポート（デフォルト: 3001） |
-| - | `CCM_TUNNEL_NAME` | Named Tunnel名（デフォルト: `claude-code-manager`） |
+| オプション              | 環境変数                | 説明                                                     |
+| ----------------------- | ----------------------- | -------------------------------------------------------- |
+| `--quick` / `-q`        | -                       | Quick Tunnel（一時URL + トークン認証）を起動             |
+| `--remote` / `-r`       | `CCM_PUBLIC_DOMAIN`     | Named Tunnel（固定URL + Cloudflare Access）を起動        |
+| `--skip-permissions`    | `SKIP_PERMISSIONS=true` | Claude CLIを `--dangerously-skip-permissions` 付きで起動 |
+| `--repos /path1,/path2` | -                       | 許可するリポジトリパスを制限                             |
+| -                       | `PORT`                  | サーバーポート（デフォルト: 3001）                       |
+| -                       | `CCM_TUNNEL_NAME`       | Named Tunnel名（デフォルト: `claude-code-manager`）      |
 
 ---
 
