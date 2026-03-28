@@ -321,7 +321,8 @@ export async function listWorktrees(repoPath: string): Promise<Worktree[]> {
     });
   }
   
-  return worktrees;
+  // ディレクトリが存在しないworktreeを除外（削除済みworktreeのゴミ防止）
+  return worktrees.filter((w) => w.isBare || fs.existsSync(w.path));
 }
 
 // Create a new worktree

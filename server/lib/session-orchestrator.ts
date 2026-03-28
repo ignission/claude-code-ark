@@ -6,10 +6,15 @@
  */
 
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
 import { tmuxManager, type TmuxSession } from "./tmux-manager.js";
 import { ttydManager, type TtydInstance } from "./ttyd-manager.js";
 import { db } from "./database.js";
-import type { ManagedSession, SessionStatus, SpecialKey } from "../../shared/types.js";
+import type {
+  ManagedSession,
+  SessionStatus,
+  SpecialKey,
+} from "../../shared/types.js";
 
 export type { ManagedSession };
 
@@ -47,6 +52,22 @@ export class SessionOrchestrator extends EventEmitter {
     const tmuxSessions = tmuxManager.getAllSessions();
 
     for (const tmuxSession of tmuxSessions) {
+      // worktreeディレクトリが存在しないセッションはクリーンアップ
+      if (
+        tmuxSession.worktreePath &&
+        !fs.existsSync(tmuxSession.worktreePath)
+      ) {
+        console.log(
+          `[Orchestrator] Cleaning up orphaned session (worktree deleted): ${tmuxSession.tmuxSessionName} -> ${tmuxSession.worktreePath}`
+        );
+        tmuxManager.killSession(tmuxSession.id);
+        const dbSession = db.getSessionByWorktreePath(tmuxSession.worktreePath);
+        if (dbSession) {
+          db.updateSessionStatus(dbSession.id, "stopped");
+        }
+        continue;
+      }
+
       // DBにセッション情報があれば更新
       const dbSession = db.getSessionByWorktreePath(tmuxSession.worktreePath);
       if (dbSession) {
@@ -56,16 +77,27 @@ export class SessionOrchestrator extends EventEmitter {
       }
 
       // ttydも自動起動（起動完了後にクライアントへ通知）
-      ttydManager.startInstance(tmuxSession.id, tmuxSession.tmuxSessionName)
+      ttydManager
+        .startInstance(tmuxSession.id, tmuxSession.tmuxSessionName)
         .then(() => {
-          console.log(`[Orchestrator] Started ttyd for restored session: ${tmuxSession.id}`);
+          console.log(
+            `[Orchestrator] Started ttyd for restored session: ${tmuxSession.id}`
+          );
           // ttyd起動完了をクライアントに通知（ttydPort/ttydUrlを含む最新情報を送信）
-          const dbSession = db.getSessionByWorktreePath(tmuxSession.worktreePath);
-          const managed = this.toManagedSession(tmuxSession, dbSession?.worktreeId || "");
+          const dbSession = db.getSessionByWorktreePath(
+            tmuxSession.worktreePath
+          );
+          const managed = this.toManagedSession(
+            tmuxSession,
+            dbSession?.worktreeId || ""
+          );
           this.emit("session:updated", managed);
         })
-        .catch((err) => {
-          console.error(`[Orchestrator] Failed to start ttyd for ${tmuxSession.id}:`, err.message);
+        .catch(err => {
+          console.error(
+            `[Orchestrator] Failed to start ttyd for ${tmuxSession.id}:`,
+            err.message
+          );
         });
     }
   }
@@ -93,9 +125,7 @@ export class SessionOrchestrator extends EventEmitter {
   /**
    * tmuxのステータスをSessionStatusにマップ
    */
-  private mapTmuxStatus(
-    status: TmuxSession["status"]
-  ): SessionStatus {
+  private mapTmuxStatus(status: TmuxSession["status"]): SessionStatus {
     switch (status) {
       case "running":
         return "active";
@@ -230,7 +260,9 @@ export class SessionOrchestrator extends EventEmitter {
   /**
    * 既存セッションを復元（ttydが起動していなければ起動）
    */
-  async restoreSession(worktreePath: string): Promise<ManagedSession | undefined> {
+  async restoreSession(
+    worktreePath: string
+  ): Promise<ManagedSession | undefined> {
     const tmuxSession = tmuxManager.getSessionByWorktree(worktreePath);
     if (!tmuxSession) return undefined;
 
@@ -255,7 +287,23 @@ export class SessionOrchestrator extends EventEmitter {
    * 全セッションを取得
    */
   getAllSessions(): ManagedSession[] {
-    return tmuxManager.getAllSessions().map((s) => {
+    const allSessions = tmuxManager.getAllSessions();
+    // 孤立セッション（worktree削除済み）をクリーンアップ
+    for (const s of allSessions) {
+      if (s.worktreePath && !fs.existsSync(s.worktreePath)) {
+        console.log(
+          `[Orchestrator] Cleaning up orphaned session: ${s.tmuxSessionName} -> ${s.worktreePath}`
+        );
+        ttydManager.stopInstance(s.id);
+        tmuxManager.killSession(s.id);
+        const dbSession = db.getSessionByWorktreePath(s.worktreePath);
+        if (dbSession) {
+          db.updateSessionStatus(dbSession.id, "stopped");
+        }
+        this.emit("session:stopped", s.id);
+      }
+    }
+    return tmuxManager.getAllSessions().map(s => {
       const dbSession = db.getSessionByWorktreePath(s.worktreePath);
       return this.toManagedSession(s, dbSession?.worktreeId || "");
     });

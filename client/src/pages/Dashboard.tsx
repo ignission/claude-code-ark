@@ -47,6 +47,7 @@ import {
   Globe,
   Copy,
   Loader2,
+  MessageSquare,
 } from "lucide-react";
 import { useIsMobile } from "@/hooks/useMobile";
 import { toast } from "sonner";
@@ -57,6 +58,7 @@ import { MobileLayout } from "@/components/MobileLayout";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { isSessionBelongsToRepo, findRepoForSession } from "@/utils/sessionUtils";
+import { MobileChatView } from "@/components/MobileChatView";
 import { getBaseName } from "@/utils/pathUtils";
 import type { Worktree, ManagedSession } from "../../../shared/types";
 
@@ -123,6 +125,13 @@ export default function Dashboard() {
     copyBuffer,
     deletedWorktreeId,
     clearDeletedWorktreeId,
+    beaconMessages,
+    beaconStreaming,
+    beaconStreamText,
+    beaconSend,
+    beaconLoadHistory,
+    beaconClose,
+    beaconClear,
   } = useSocket();
 
   const isMobile = useIsMobile();
@@ -261,6 +270,7 @@ export default function Dashboard() {
   const [showTunnelDialog, setShowTunnelDialog] = useState(false);
   const [selectedPort, setSelectedPort] = useState<number | null>(null);
   const [showPortSelector, setShowPortSelector] = useState(false);
+  const [showBeaconDialog, setShowBeaconDialog] = useState(false);
 
 
   const copyToClipboard = (text: string | null) => {
@@ -273,6 +283,11 @@ export default function Dashboard() {
   useEffect(() => {
     if (error) toast.error(error);
   }, [error]);
+
+  // Beacon履歴をマウント時に読み込む
+  useEffect(() => {
+    beaconLoadHistory();
+  }, [beaconLoadHistory]);
 
   // トンネル新規起動時のみ自動でダイアログを表示（リロード時の復元では表示しない）
   useEffect(() => {
@@ -648,6 +663,25 @@ export default function Dashboard() {
         </ScrollArea>
       </div>
 
+      {/* Beaconボタン */}
+      <div className="border-t border-border p-4">
+        <Button
+          variant="outline"
+          className="w-full justify-start gap-2 h-10 text-sm"
+          onClick={() => setShowBeaconDialog(true)}
+        >
+          <MessageSquare className="h-4 w-4" />
+          Beacon
+          {beaconStreaming && (
+            <span className="ml-auto flex gap-0.5">
+              <span className="w-1 h-1 bg-primary rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+              <span className="w-1 h-1 bg-primary rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+              <span className="w-1 h-1 bg-primary rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+            </span>
+          )}
+        </Button>
+      </div>
+
       <div className="p-4 border-t border-sidebar-border space-y-2">
         <Button
           variant={tunnelActive ? "default" : "outline"}
@@ -762,6 +796,7 @@ export default function Dashboard() {
             sessions={sessions}
             worktrees={worktrees}
             repoName={repoPath ? getBaseName(repoPath) : null}
+            repoPath={repoPath}
             onStartSession={handleStartSession}
             onStopSession={handleStopSession}
             onDeleteWorktree={handleDeleteWorktree}
@@ -773,6 +808,13 @@ export default function Dashboard() {
             imageUploadError={imageUploadError}
             onClearImageUploadState={clearImageUploadState}
             onCopyBuffer={copyBuffer}
+            beaconMessages={beaconMessages}
+            beaconStreaming={beaconStreaming}
+            beaconStreamText={beaconStreamText}
+            onBeaconSend={(message) => {
+              beaconSend(message);
+            }}
+            onBeaconClear={beaconClear}
           />
         ) : (
           <>
@@ -988,6 +1030,26 @@ export default function Dashboard() {
               Stop Tunnel
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Beaconチャットダイアログ */}
+      <Dialog open={showBeaconDialog} onOpenChange={setShowBeaconDialog}>
+        <DialogContent className="max-w-2xl h-[80vh] p-0 flex flex-col overflow-hidden" showCloseButton={false}>
+          {/* アクセシビリティ用（非表示） */}
+          <DialogHeader className="sr-only">
+            <DialogTitle>Beacon</DialogTitle>
+            <DialogDescription>全リポジトリを横断して操作できます</DialogDescription>
+          </DialogHeader>
+          <MobileChatView
+            messages={beaconMessages}
+            isStreaming={beaconStreaming}
+            streamingText={beaconStreamText}
+            onSendMessage={(message) => {
+              beaconSend(message);
+            }}
+            onClear={beaconClear}
+          />
         </DialogContent>
       </Dialog>
 

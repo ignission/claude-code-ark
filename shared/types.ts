@@ -115,6 +115,12 @@ export interface ServerToClientEvents {
   // Image events
   "image:uploaded": (data: { path: string; filename: string }) => void;
   "image:error": (data: { message: string }) => void;
+
+  // Beacon events
+  "beacon:message": (message: ChatMessage) => void;
+  "beacon:stream": (data: BeaconStreamChunk) => void;
+  "beacon:history": (data: { messages: ChatMessage[] }) => void;
+  "beacon:error": (data: { error: string }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -145,4 +151,33 @@ export interface ClientToServerEvents {
 
   // Image commands
   "image:upload": (data: { sessionId: string; base64Data: string; mimeType: string }) => void;
+
+  // Beacon commands
+  "beacon:send": (data: { message: string }) => void;
+  "beacon:history": () => void;
+  "beacon:close": () => void;
+}
+
+/** Beaconチャットのメッセージ */
+export interface ChatMessage {
+  id: string;
+  repoPath?: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: Date;
+  /** ツール使用情報（Bash実行結果など） */
+  toolUse?: {
+    toolName: string;
+    input: string;
+    result?: string;
+  };
+}
+
+/** Beaconストリーミングチャンク */
+export interface BeaconStreamChunk {
+  repoPath?: string;
+  /** 部分テキスト */
+  chunk: string;
+  /** ストリーミング完了フラグ */
+  done: boolean;
 }

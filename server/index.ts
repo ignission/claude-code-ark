@@ -8,7 +8,10 @@
 
 import express from "express";
 import { createServer } from "node:http";
-import { Server } from "socket.io";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+const execAsync = promisify(exec);
+import { Server, type Socket } from "socket.io";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
@@ -29,6 +32,7 @@ import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { imageManager, ImageManagerError } from "./lib/image-manager.js";
 import { getErrorMessage } from "./lib/errors.js";
+import { beaconManager } from "./lib/beacon-manager.js";
 import type {
   ServerToClientEvents,
   ClientToServerEvents,
@@ -39,21 +43,26 @@ import type {
 const args = process.argv.slice(2);
 const enableRemote = args.includes("--remote") || args.includes("-r");
 const enableQuick = args.includes("--quick") || args.includes("-q");
-const skipPermissions = args.includes("--skip-permissions") || process.env.SKIP_PERMISSIONS === "true";
+const skipPermissions =
+  args.includes("--skip-permissions") ||
+  process.env.SKIP_PERMISSIONS === "true";
 
 // 公開ドメイン（Named Tunnel / CORS許可用）
 const publicDomain = process.env.CCM_PUBLIC_DOMAIN;
 
 // Parse --repos option: --repos /path1,/path2
 let allowedRepos: string[] = [];
-const reposIndex = args.findIndex((arg) => arg === "--repos");
+const reposIndex = args.findIndex(arg => arg === "--repos");
 if (reposIndex !== -1 && args[reposIndex + 1]) {
   allowedRepos = args[reposIndex + 1]
     .split(",")
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0);
+    .map(p => p.trim())
+    .filter(p => p.length > 0);
   console.log(`Allowed repositories: ${allowedRepos.join(", ")}`);
 }
+
+// クライアントが選択・スキャンしたリポジトリを追跡（Beaconが参照する）
+const knownRepos = new Set<string>(allowedRepos);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -69,7 +78,11 @@ const TUNNEL_STATE_FILE = path.join(os.tmpdir(), "ccm-tunnel-state.json");
 /** トンネル状態をファイルに保存する */
 function saveTunnelState(port: number): void {
   try {
-    fs.writeFileSync(TUNNEL_STATE_FILE, JSON.stringify({ active: true, port }), "utf-8");
+    fs.writeFileSync(
+      TUNNEL_STATE_FILE,
+      JSON.stringify({ active: true, port }),
+      "utf-8"
+    );
   } catch (error) {
     console.error("[Tunnel] 状態ファイルの保存に失敗:", getErrorMessage(error));
   }
@@ -110,7 +123,9 @@ async function startServer() {
   // --skip-permissions が指定された場合、Claudeを --dangerously-skip-permissions 付きで起動
   if (skipPermissions) {
     tmuxManager.setSkipPermissions(true);
-    console.log("Skip permissions mode enabled - Claude will run with --dangerously-skip-permissions");
+    console.log(
+      "Skip permissions mode enabled - Claude will run with --dangerously-skip-permissions"
+    );
   }
 
   // Create proxy for ttyd WebSocket connections
@@ -129,11 +144,15 @@ async function startServer() {
   });
 
   if (enableRemote) {
-    console.log("Remote access mode enabled - using Cloudflare Access for authentication");
+    console.log(
+      "Remote access mode enabled - using Cloudflare Access for authentication"
+    );
   }
 
   if (enableQuick) {
-    console.log("Quick Tunnel mode enabled - using temporary *.trycloudflare.com URL with token authentication");
+    console.log(
+      "Quick Tunnel mode enabled - using temporary *.trycloudflare.com URL with token authentication"
+    );
   }
 
   // セキュリティヘッダー
@@ -165,7 +184,10 @@ async function startServer() {
             return;
           }
           // Quick Tunnel時の許可ドメイン（トークン認証が有効な場合のみ）
-          if (hostname.endsWith(".trycloudflare.com") && authManager.isEnabled()) {
+          if (
+            hostname.endsWith(".trycloudflare.com") &&
+            authManager.isEnabled()
+          ) {
             callback(null, true);
             return;
           }
@@ -185,6 +207,68 @@ async function startServer() {
 
   // Apply Socket.IO authentication middleware
   io.use(authManager.socketMiddleware());
+
+  // BeaconにCCM操作の依存を注入（MCPツールで利用）
+  beaconManager.configure({
+    getAllSessions: () => sessionOrchestrator.getAllSessions(),
+    startSession: (worktreeId, worktreePath) =>
+      sessionOrchestrator.startSession(worktreeId, worktreePath),
+    stopSession: sessionId => sessionOrchestrator.stopSession(sessionId),
+    sendMessage: (sessionId, message) =>
+      sessionOrchestrator.sendMessage(sessionId, message),
+    sendKey: (sessionId, key) =>
+      sessionOrchestrator.sendSpecialKey(sessionId, key),
+    capturePane: (sessionId, lines) =>
+      tmuxManager.capturePane(sessionId, lines),
+    listWorktrees: repoPath => listWorktrees(repoPath),
+    createWorktree: (repoPath, branchName, baseBranch) =>
+      createWorktree(repoPath, branchName, baseBranch),
+    deleteWorktree: (repoPath, worktreePath) =>
+      deleteWorktree(repoPath, worktreePath),
+    listAllWorktrees: async repos => {
+      const all: unknown[] = [];
+      for (const repo of repos) {
+        try {
+          const wts = await listWorktrees(repo);
+          all.push(...wts.map(w => ({ ...w, repoPath: repo })));
+        } catch {
+          // 個別リポジトリのエラーはスキップ
+        }
+      }
+      return all;
+    },
+    getRepos: () => Array.from(knownRepos),
+    getPrUrl: async worktreePath => {
+      try {
+        const { stdout } = await execAsync("gh pr view --json url -q .url", {
+          cwd: worktreePath,
+        });
+        return stdout.trim() || null;
+      } catch {
+        return null;
+      }
+    },
+  });
+
+  // Beaconイベントを要求元のSocket.IOクライアントのみに転送
+  type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
+  let activeBeaconSocket: TypedSocket | null = null;
+
+  beaconManager.on("beacon:message", message => {
+    if (activeBeaconSocket?.connected) {
+      activeBeaconSocket.emit("beacon:message", message);
+    }
+  });
+  beaconManager.on("beacon:stream", data => {
+    if (activeBeaconSocket?.connected) {
+      activeBeaconSocket.emit("beacon:stream", data);
+    }
+  });
+  beaconManager.on("beacon:error", data => {
+    if (activeBeaconSocket?.connected) {
+      activeBeaconSocket.emit("beacon:error", data);
+    }
+  });
 
   /**
    * Quick Tunnelを起動する共通関数
@@ -220,7 +304,7 @@ async function startServer() {
     io.emit("tunnel:started", { url: tunnelUrl, token: tunnelToken });
 
     // エラーハンドリング
-    activeTunnel.on("error", (error) => {
+    activeTunnel.on("error", error => {
       io.emit("tunnel:error", { message: error.message });
     });
 
@@ -309,7 +393,7 @@ async function startServer() {
   // 複数クライアント同時接続時の重複復元を防ぐ（セッションID → 復元中のPromise）
   const pendingAutoRestores = new Map<string, Promise<void>>();
 
-  io.on("connection", (socket) => {
+  io.on("connection", socket => {
     console.log(`Client connected: ${socket.id}`);
 
     // Send allowed repos list to client on connection
@@ -319,13 +403,24 @@ async function startServer() {
     // sessionOrchestrator のイベントをそのまま Socket.IO クライアントへ転送する
     // 注意: session:list送信やttyd自動復元より前に登録する必要がある
     // （自動復元で発行されるsession:restoredイベントを転送するため）
-    const forwardedEvents = ["session:created", "session:restored", "session:stopped", "session:updated"] as const;
+    const forwardedEvents = [
+      "session:created",
+      "session:restored",
+      "session:stopped",
+      "session:updated",
+    ] as const;
     type ForwardedEvent = (typeof forwardedEvents)[number];
 
-    const forwardHandlers = new Map<ForwardedEvent, (...args: unknown[]) => void>();
+    const forwardHandlers = new Map<
+      ForwardedEvent,
+      (...args: unknown[]) => void
+    >();
     for (const event of forwardedEvents) {
       const handler = (...args: unknown[]) => {
-        (socket.emit as (event: string, ...args: unknown[]) => void)(event, ...args);
+        (socket.emit as (event: string, ...args: unknown[]) => void)(
+          event,
+          ...args
+        );
       };
       forwardHandlers.set(event, handler);
       sessionOrchestrator.on(event, handler);
@@ -353,8 +448,11 @@ async function startServer() {
         pendingAutoRestores.set(session.id, recovery);
       }
 
-      recovery.catch((err) => {
-        console.error(`[Socket] ttyd自動復元失敗 (${session.id}):`, getErrorMessage(err));
+      recovery.catch(err => {
+        console.error(
+          `[Socket] ttyd自動復元失敗 (${session.id}):`,
+          getErrorMessage(err)
+        );
         socket.emit("session:error", {
           sessionId: session.id,
           error: `ターミナルの起動に失敗しました: ${getErrorMessage(err)}`,
@@ -364,10 +462,14 @@ async function startServer() {
 
     // ===== Repository Commands =====
 
-    socket.on("repo:scan", async (basePath) => {
+    socket.on("repo:scan", async basePath => {
       try {
         socket.emit("repos:scanning", { basePath, status: "start" });
         const repos = await scanRepositories(basePath);
+        // スキャンで見つかったリポジトリをknownReposに追加
+        for (const repo of repos) {
+          knownRepos.add(repo.path);
+        }
         socket.emit("repos:scanned", repos);
         socket.emit("repos:scanning", { basePath, status: "complete" });
       } catch (error) {
@@ -379,7 +481,7 @@ async function startServer() {
       }
     });
 
-    socket.on("repo:select", async (repoPath) => {
+    socket.on("repo:select", async repoPath => {
       try {
         if (allowedRepos.length > 0 && !allowedRepos.includes(repoPath)) {
           socket.emit("repo:error", "Repository not in allowed list");
@@ -392,6 +494,7 @@ async function startServer() {
           return;
         }
         socket.emit("repo:set", repoPath);
+        knownRepos.add(repoPath);
 
         const worktrees = await listWorktrees(repoPath);
         socket.emit("worktree:list", worktrees);
@@ -402,7 +505,7 @@ async function startServer() {
 
     // ===== Worktree Commands =====
 
-    socket.on("worktree:list", async (repoPath) => {
+    socket.on("worktree:list", async repoPath => {
       try {
         const worktrees = await listWorktrees(repoPath);
         socket.emit("worktree:list", worktrees);
@@ -411,17 +514,24 @@ async function startServer() {
       }
     });
 
-    socket.on("worktree:create", async ({ repoPath, branchName, baseBranch }) => {
-      try {
-        const worktree = await createWorktree(repoPath, branchName, baseBranch);
-        socket.emit("worktree:created", worktree);
+    socket.on(
+      "worktree:create",
+      async ({ repoPath, branchName, baseBranch }) => {
+        try {
+          const worktree = await createWorktree(
+            repoPath,
+            branchName,
+            baseBranch
+          );
+          socket.emit("worktree:created", worktree);
 
-        const worktrees = await listWorktrees(repoPath);
-        socket.emit("worktree:list", worktrees);
-      } catch (error) {
-        socket.emit("worktree:error", getErrorMessage(error));
+          const worktrees = await listWorktrees(repoPath);
+          socket.emit("worktree:list", worktrees);
+        } catch (error) {
+          socket.emit("worktree:error", getErrorMessage(error));
+        }
       }
-    });
+    );
 
     socket.on("worktree:delete", async ({ repoPath, worktreePath }) => {
       try {
@@ -452,7 +562,10 @@ async function startServer() {
 
     socket.on("session:start", async ({ worktreeId, worktreePath }) => {
       try {
-        const session = await sessionOrchestrator.startSession(worktreeId, worktreePath);
+        const session = await sessionOrchestrator.startSession(
+          worktreeId,
+          worktreePath
+        );
         socket.emit("session:created", session);
       } catch (error) {
         socket.emit("session:error", {
@@ -462,7 +575,7 @@ async function startServer() {
       }
     });
 
-    socket.on("session:restore", async (worktreePath) => {
+    socket.on("session:restore", async worktreePath => {
       try {
         // 既存セッションを復元（ttydが起動していなければ起動）
         const session = await sessionOrchestrator.restoreSession(worktreePath);
@@ -482,7 +595,7 @@ async function startServer() {
       }
     });
 
-    socket.on("session:stop", (sessionId) => {
+    socket.on("session:stop", sessionId => {
       sessionOrchestrator.stopSession(sessionId);
     });
 
@@ -539,7 +652,11 @@ async function startServer() {
 
       if (activeTunnel) {
         // 既にアクティブなら現在の情報を返す
-        socket.emit("tunnel:status", { active: true, url: tunnelUrl ?? undefined, token: tunnelToken ?? undefined });
+        socket.emit("tunnel:status", {
+          active: true,
+          url: tunnelUrl ?? undefined,
+          token: tunnelToken ?? undefined,
+        });
         return;
       }
 
@@ -569,20 +686,62 @@ async function startServer() {
       url: tunnelUrl ?? undefined,
       token: tunnelToken ?? undefined,
     };
-    console.log(`[Tunnel] Sending status to ${socket.id}:`, { active: tunnelStatus.active, hasUrl: !!tunnelStatus.url });
+    console.log(`[Tunnel] Sending status to ${socket.id}:`, {
+      active: tunnelStatus.active,
+      hasUrl: !!tunnelStatus.url,
+    });
     socket.emit("tunnel:status", tunnelStatus);
 
     // ===== Image Upload Commands =====
 
     socket.on("image:upload", async ({ sessionId, base64Data, mimeType }) => {
       try {
-        const result = await imageManager.saveImage(sessionId, base64Data, mimeType);
+        const result = await imageManager.saveImage(
+          sessionId,
+          base64Data,
+          mimeType
+        );
         socket.emit("image:uploaded", result);
       } catch (error) {
         socket.emit("image:error", {
-          message: error instanceof ImageManagerError ? error.message : "画像のアップロードに失敗しました",
+          message:
+            error instanceof ImageManagerError
+              ? error.message
+              : "画像のアップロードに失敗しました",
         });
       }
+    });
+
+    // ===== Beacon Commands =====
+
+    // Beaconメッセージ送信
+    socket.on("beacon:send", async (data: { message: string }) => {
+      // 入力検証
+      if (
+        typeof data?.message !== "string" ||
+        data.message.trim().length === 0
+      ) {
+        socket.emit("beacon:error", { error: "メッセージが空です" });
+        return;
+      }
+      activeBeaconSocket = socket;
+      try {
+        await beaconManager.sendMessage(data.message.trim());
+      } catch (error) {
+        socket.emit("beacon:error", { error: getErrorMessage(error) });
+      }
+    });
+
+    // Beacon履歴取得
+    socket.on("beacon:history", () => {
+      // activeBeaconSocketは設定しない（ストリーミング中の横取り防止）
+      const messages = beaconManager.getHistory();
+      socket.emit("beacon:history", { messages });
+    });
+
+    // Beaconセッション終了
+    socket.on("beacon:close", () => {
+      beaconManager.closeSession();
     });
 
     // Cleanup on disconnect
@@ -596,7 +755,9 @@ async function startServer() {
   });
 
   server.listen(port, async () => {
-    console.log(`Claude Code Manager server running on http://localhost:${port}/`);
+    console.log(
+      `Claude Code Manager server running on http://localhost:${port}/`
+    );
 
     // Start Quick Tunnel if enabled
     // 注: enableQuick は --quick コマンドラインオプションによるトンネル起動。
@@ -616,10 +777,7 @@ async function startServer() {
         process.on("SIGTERM", tunnelCleanup);
         process.on("SIGINT", tunnelCleanup);
       } catch (error) {
-        console.error(
-          "Failed to start tunnel:",
-          getErrorMessage(error)
-        );
+        console.error("Failed to start tunnel:", getErrorMessage(error));
         console.log("Continuing without remote access...");
       }
     }
@@ -640,11 +798,11 @@ async function startServer() {
         const publicUrl = await tunnel.start();
         await printRemoteAccessInfo(publicUrl, "");
 
-        tunnel.on("error", (error) => {
+        tunnel.on("error", error => {
           console.error("Tunnel error:", error.message);
         });
 
-        tunnel.on("close", (code) => {
+        tunnel.on("close", code => {
           console.log(`Tunnel closed with code ${code}`);
         });
 
@@ -655,10 +813,7 @@ async function startServer() {
         process.on("SIGTERM", tunnelCleanup);
         process.on("SIGINT", tunnelCleanup);
       } catch (error) {
-        console.error(
-          "Failed to start tunnel:",
-          getErrorMessage(error)
-        );
+        console.error("Failed to start tunnel:", getErrorMessage(error));
         console.log("Continuing without remote access...");
       }
     }
@@ -668,15 +823,22 @@ async function startServer() {
     if (!activeTunnel) {
       const savedState = loadTunnelState();
       if (savedState) {
-        console.log("[Tunnel] 前回のトンネル状態を検出しました。自動復旧を開始します...");
+        console.log(
+          "[Tunnel] 前回のトンネル状態を検出しました。自動復旧を開始します..."
+        );
         try {
           const url = await startQuickTunnelShared(savedState.port);
           await printRemoteAccessInfo(url, tunnelToken!);
           console.log("[Tunnel] トンネルの自動復旧に成功しました");
         } catch (error) {
-          console.error("[Tunnel] トンネルの自動復旧に失敗:", getErrorMessage(error));
+          console.error(
+            "[Tunnel] トンネルの自動復旧に失敗:",
+            getErrorMessage(error)
+          );
           removeTunnelState();
-          console.log("[Tunnel] 状態ファイルを削除しました。トンネルなしで継続します");
+          console.log(
+            "[Tunnel] 状態ファイルを削除しました。トンネルなしで継続します"
+          );
         }
       }
     }
@@ -686,6 +848,7 @@ async function startServer() {
   const shutdown = () => {
     console.log("Shutting down...");
     sessionOrchestrator.cleanup();
+    beaconManager.cleanup();
     server.close(() => {
       process.exit(0);
     });

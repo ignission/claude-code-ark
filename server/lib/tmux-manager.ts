@@ -5,7 +5,7 @@
  * 各セッションはattach/detach可能で、サーバー再起動後も維持される。
  */
 
-import { execSync, exec, spawnSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { nanoid } from "nanoid";
 import type { SpecialKey } from "../../shared/types.js";
@@ -282,6 +282,26 @@ export class TmuxManager extends EventEmitter {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
       }).trimEnd();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * tmux capture-paneでターミナルの現在の表示内容を取得する
+   * @param sessionId セッションID
+   * @param lines 取得する行数（デフォルト: 100）
+   */
+  capturePane(sessionId: string, lines = 100): string | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    try {
+      // -p: stdoutに出力、-S: 開始行（負数で過去の行）
+      const result = spawnSync("tmux", [
+        "capture-pane", "-t", session.tmuxSessionName, "-p", "-S", `-${lines}`,
+      ], { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+      if (result.status !== 0) return null;
+      return (result.stdout ?? "").trimEnd();
     } catch {
       return null;
     }

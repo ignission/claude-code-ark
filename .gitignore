@@ -109,6 +109,10 @@ temp/
 # Application data
 data/
 
+# Playwright
+playwright-report/
+test-results/
+
 # Claude Code runtime files
 .claude/push-completed.marker
 .claude/scheduled_tasks.lock

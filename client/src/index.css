@@ -40,15 +40,17 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  
+
   /* Terminal-inspired custom colors */
   --color-terminal-green: oklch(0.85 0.25 145);
   --color-terminal-cyan: oklch(0.8 0.2 200);
   --color-terminal-yellow: oklch(0.85 0.2 85);
   --color-terminal-red: oklch(0.7 0.25 25);
-  
+
   /* Custom font */
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --font-mono:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    monospace;
 }
 
 :root {
@@ -127,9 +129,14 @@
   * {
     @apply border-border outline-ring/50;
   }
-  html, body {
+  html,
+  body {
     @apply bg-background text-foreground;
-    font-family: "Inter", system-ui, -apple-system, sans-serif;
+    font-family:
+      "Inter",
+      system-ui,
+      -apple-system,
+      sans-serif;
     height: 100dvh;
     overflow: hidden;
     overscroll-behavior: none;
@@ -149,9 +156,11 @@
   input[type="radio"]:not(:disabled) {
     @apply cursor-pointer;
   }
-  
+
   /* Terminal-style code blocks */
-  code, pre, .font-mono {
+  code,
+  pre,
+  .font-mono {
     font-family: var(--font-mono);
   }
 }
@@ -184,41 +193,42 @@
       max-width: 1280px;
     }
   }
-  
+
   /* Terminal-inspired components */
   .terminal-prompt {
     @apply font-mono text-terminal-green;
   }
-  
+
   .terminal-prompt::before {
     content: ">_ ";
     @apply text-terminal-cyan;
   }
-  
+
   /* Status indicator with pulse animation */
   .status-indicator {
     @apply w-2 h-2 rounded-full;
   }
-  
+
   .status-indicator.active {
     @apply bg-terminal-green;
     animation: pulse-glow 2s ease-in-out infinite;
   }
-  
+
   .status-indicator.idle {
     @apply bg-terminal-yellow;
   }
-  
+
   .status-indicator.error {
     @apply bg-terminal-red;
   }
-  
+
   .status-indicator.stopped {
     @apply bg-muted-foreground;
   }
-  
+
   @keyframes pulse-glow {
-    0%, 100% {
+    0%,
+    100% {
       opacity: 1;
       box-shadow: 0 0 4px currentColor;
     }
@@ -227,14 +237,27 @@
       box-shadow: 0 0 12px currentColor;
     }
   }
-  
+
   /* Glow effect for primary elements */
   .glow-green {
     box-shadow: 0 0 20px oklch(0.85 0.25 145 / 0.3);
   }
-  
+
   .glow-cyan {
     box-shadow: 0 0 20px oklch(0.8 0.2 200 / 0.3);
+  }
+}
+
+@keyframes beacon-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1.2);
   }
 }
 
@@ -244,7 +267,7 @@
     padding-top: env(safe-area-inset-top);
   }
   .safe-area-bottom {
-    padding-bottom: env(safe-area-inset-bottom);
+    padding-bottom: max(env(safe-area-inset-bottom), 1rem);
   }
   .safe-area-x {
     padding-left: env(safe-area-inset-left);

@@ -1,19 +1,22 @@
 /**
  * MobileLayout - モバイル専用ルートコンポーネント
  *
- * 「セッション一覧」と「セッション詳細」を画面遷移で切り替える。
+ * 「セッション一覧」「セッション詳細」「Beaconチャット」を
+ * ボトムナビゲーションと画面遷移で切り替える。
  * iframe再マウント防止のため、display:none/blockで表示を切り替える。
  */
 
 import { useState, useCallback, useEffect } from "react";
 import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
-import type { ManagedSession, SpecialKey, Worktree } from "../../../shared/types";
+import { MobileChatView } from "@/components/MobileChatView";
+import type { ManagedSession, SpecialKey, Worktree, ChatMessage } from "../../../shared/types";
 
 interface MobileLayoutProps {
   sessions: Map<string, ManagedSession>;
   worktrees: Worktree[];
   repoName: string | null;
+  repoPath: string | null;
   onStartSession: (worktree: Worktree) => void;
   onStopSession: (sessionId: string) => void;
   onDeleteWorktree: (worktree: Worktree) => void;
@@ -25,12 +28,19 @@ interface MobileLayoutProps {
   imageUploadError?: string | null;
   onClearImageUploadState?: () => void;
   onCopyBuffer?: (sessionId: string) => Promise<string | null>;
+  // Beaconチャット
+  beaconMessages: ChatMessage[];
+  beaconStreaming: boolean;
+  beaconStreamText: string;
+  onBeaconSend: (message: string) => void;
+  onBeaconClear?: () => void;
 }
 
 export function MobileLayout({
   sessions,
   worktrees,
   repoName,
+  repoPath,
   onStartSession,
   onStopSession,
   onDeleteWorktree,
@@ -42,8 +52,13 @@ export function MobileLayout({
   imageUploadError,
   onClearImageUploadState,
   onCopyBuffer,
+  beaconMessages,
+  beaconStreaming,
+  beaconStreamText,
+  onBeaconSend,
+  onBeaconClear,
 }: MobileLayoutProps) {
-  const [activeView, setActiveView] = useState<"list" | "detail">("list");
+  const [activeView, setActiveView] = useState<"list" | "detail" | "beacon">("list");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [openedSessions, setOpenedSessions] = useState<Set<string>>(new Set());
 
@@ -75,12 +90,17 @@ export function MobileLayout({
     return worktrees.find((w) => w.id === session.worktreeId);
   };
 
+  // ボトムナビゲーションの表示判定（セッション詳細画面以外で表示）
+  const showBottomNav = activeView !== "detail";
+
   return (
     <div className="h-full flex flex-col min-h-0 overflow-hidden">
       {/* 一覧画面 */}
       <div
         className={
-          activeView === "list" ? "flex-1 flex flex-col min-h-0" : "hidden"
+          activeView === "list"
+            ? "flex-1 flex flex-col min-h-0 pb-14"
+            : "hidden"
         }
       >
         <MobileSessionList
@@ -126,6 +146,49 @@ export function MobileLayout({
           />
         </div>
       ))}
+
+      {/* Beaconチャットビュー */}
+      <div
+        className={
+          activeView === "beacon"
+            ? "flex-1 flex flex-col min-h-0 pb-14"
+            : "hidden"
+        }
+      >
+        <MobileChatView
+          messages={beaconMessages}
+          isStreaming={beaconStreaming}
+          streamingText={beaconStreamText}
+          onSendMessage={onBeaconSend}
+          onClear={onBeaconClear}
+        />
+      </div>
+
+      {/* ボトムナビゲーション（セッション詳細画面以外で表示） */}
+      {showBottomNav && (
+        <nav className="fixed bottom-0 left-0 right-0 border-t border-border bg-background z-50 flex">
+          <button
+            className={`flex-1 py-3 text-center text-sm font-medium ${
+              activeView !== "beacon"
+                ? "text-primary border-t-2 border-primary"
+                : "text-muted-foreground"
+            }`}
+            onClick={() => setActiveView("list")}
+          >
+            セッション
+          </button>
+          <button
+            className={`flex-1 py-3 text-center text-sm font-medium ${
+              activeView === "beacon"
+                ? "text-primary border-t-2 border-primary"
+                : "text-muted-foreground"
+            }`}
+            onClick={() => setActiveView("beacon")}
+          >
+            Beacon
+          </button>
+        </nav>
+      )}
     </div>
   );
 }

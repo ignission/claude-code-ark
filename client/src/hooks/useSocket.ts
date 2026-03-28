@@ -16,6 +16,8 @@ import type {
   Message,
   RepoInfo,
   SpecialKey,
+  ChatMessage,
+  BeaconStreamChunk,
 } from "../../../shared/types";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -84,6 +86,15 @@ interface UseSocketReturn {
 
   // Copy buffer
   copyBuffer: (sessionId: string) => Promise<string | null>;
+
+  // Beacon
+  beaconMessages: ChatMessage[];
+  beaconStreaming: boolean;
+  beaconStreamText: string;
+  beaconSend: (message: string) => void;
+  beaconLoadHistory: () => void;
+  beaconClose: () => void;
+  beaconClear: () => void;
 }
 
 export function useSocket(): UseSocketReturn {
@@ -118,6 +129,11 @@ export function useSocket(): UseSocketReturn {
   // Image upload state
   const [imageUploadResult, setImageUploadResult] = useState<{ path: string; filename: string } | null>(null);
   const [imageUploadError, setImageUploadError] = useState<string | null>(null);
+
+  // Beacon状態
+  const [beaconMessages, setBeaconMessages] = useState<ChatMessage[]>([]);
+  const [beaconStreaming, setBeaconStreaming] = useState(false);
+  const [beaconStreamText, setBeaconStreamText] = useState("");
 
   // Initialize socket connection
   useEffect(() => {
@@ -321,11 +337,44 @@ export function useSocket(): UseSocketReturn {
       setImageUploadResult(null);
     });
 
+    // Beaconイベント
+    socket.on("beacon:message", (message: ChatMessage) => {
+      setBeaconMessages((prev) => [...prev, message]);
+      if (message.role === "assistant") {
+        setBeaconStreaming(false);
+        setBeaconStreamText("");
+      }
+    });
+
+    socket.on("beacon:stream", (data: BeaconStreamChunk) => {
+      if (data.done) {
+        setBeaconStreaming(false);
+        setBeaconStreamText("");
+      } else {
+        setBeaconStreaming(true);
+        setBeaconStreamText((prev) => prev + data.chunk);
+      }
+    });
+
+    socket.on("beacon:history", (data: { messages: ChatMessage[] }) => {
+      setBeaconMessages(data.messages);
+    });
+
+    socket.on("beacon:error", (data: { error: string }) => {
+      console.error("[Beacon] Error:", data.error);
+      setBeaconStreaming(false);
+      setBeaconStreamText("");
+    });
+
     // Cleanup on unmount
     return () => {
       socket.off("ports:list");
       socket.off("image:uploaded");
       socket.off("image:error");
+      socket.off("beacon:message");
+      socket.off("beacon:stream");
+      socket.off("beacon:history");
+      socket.off("beacon:error");
       socket.disconnect();
     };
   }, []);
@@ -439,6 +488,31 @@ export function useSocket(): UseSocketReturn {
     setImageUploadError(null);
   }, []);
 
+  // Beaconメッセージ送信
+  const beaconSend = useCallback((message: string) => {
+    socketRef.current?.emit("beacon:send", { message });
+  }, []);
+
+  // Beacon履歴取得
+  const beaconLoadHistory = useCallback(() => {
+    socketRef.current?.emit("beacon:history");
+  }, []);
+
+  // Beaconセッション終了
+  const beaconClose = useCallback(() => {
+    socketRef.current?.emit("beacon:close");
+    setBeaconMessages([]);
+    setBeaconStreaming(false);
+    setBeaconStreamText("");
+  }, []);
+
+  // Beaconチャット履歴クリア（セッションは維持、サーバーには送信しない）
+  const beaconClear = useCallback(() => {
+    setBeaconMessages([]);
+    setBeaconStreaming(false);
+    setBeaconStreamText("");
+  }, []);
+
   // Copy buffer action
   const copyBuffer = useCallback(
     (sessionId: string): Promise<string | null> => {
@@ -501,5 +575,13 @@ export function useSocket(): UseSocketReturn {
     clearImageUploadState,
     // Copy buffer
     copyBuffer,
+    // Beacon
+    beaconMessages,
+    beaconStreaming,
+    beaconStreamText,
+    beaconSend,
+    beaconLoadHistory,
+    beaconClose,
+    beaconClear,
   };
 }
