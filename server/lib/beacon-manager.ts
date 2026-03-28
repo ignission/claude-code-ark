@@ -32,8 +32,8 @@ CCM内部の操作にはMCPツールを使用してください:
 - create_worktree: worktree作成（リポジトリパス、ブランチ名、ベースブランチ）
 - delete_worktree: worktree削除
 
-git/ghコマンドが必要な場合はBashツールを使用してください。
-worktreeの作成・削除はMCPツールを使ってください（Bashではなく）。
+git/gh操作はMCPツールを通じて実行してください。
+worktreeの作成・削除はMCPツールを使ってください。
 
 ## コマンドフロー
 
@@ -419,7 +419,7 @@ export class BeaconManager extends EventEmitter {
         cwd,
         model: "sonnet",
         allowedTools: [
-          "Bash", "Read", "Grep", "Glob",
+          "Read", "Grep", "Glob",
           // MCPツールを自動承認
           "mcp__ccm-beacon__list_repositories",
           "mcp__ccm-beacon__list_worktrees",
@@ -432,7 +432,7 @@ export class BeaconManager extends EventEmitter {
           "mcp__ccm-beacon__create_worktree",
           "mcp__ccm-beacon__delete_worktree",
         ],
-        permissionMode: "acceptEdits",
+        permissionMode: "default",
         systemPrompt: BEACON_SYSTEM_PROMPT,
         maxTurns: 50,
         abortController,

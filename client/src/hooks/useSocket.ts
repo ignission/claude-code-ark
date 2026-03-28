@@ -506,9 +506,8 @@ export function useSocket(): UseSocketReturn {
     setBeaconStreamText("");
   }, []);
 
-  // Beaconチャット履歴クリア（セッションは維持）
+  // Beaconチャット履歴クリア（セッションは維持、サーバーには送信しない）
   const beaconClear = useCallback(() => {
-    socketRef.current?.emit("beacon:close");
     setBeaconMessages([]);
     setBeaconStreaming(false);
     setBeaconStreamText("");

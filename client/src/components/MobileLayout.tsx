@@ -156,8 +156,6 @@ export function MobileLayout({
         }
       >
         <MobileChatView
-          repoPath={repoPath}
-          repoName={repoName ?? undefined}
           messages={beaconMessages}
           isStreaming={beaconStreaming}
           streamingText={beaconStreamText}

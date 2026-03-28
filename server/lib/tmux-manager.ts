@@ -5,7 +5,7 @@
  * 各セッションはattach/detach可能で、サーバー再起動後も維持される。
  */
 
-import { execSync, exec, spawnSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { nanoid } from "nanoid";
 import type { SpecialKey } from "../../shared/types.js";

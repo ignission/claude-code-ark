@@ -8,7 +8,7 @@
 
 import express from "express";
 import { createServer } from "node:http";
-import { Server } from "socket.io";
+import { Server, type Socket } from "socket.io";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
@@ -219,15 +219,24 @@ async function startServer() {
     getRepos: () => Array.from(knownRepos),
   });
 
-  // BeaconイベントをSocket.IOクライアントに転送
+  // Beaconイベントを要求元のSocket.IOクライアントのみに転送
+  type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
+  let activeBeaconSocket: TypedSocket | null = null;
+
   beaconManager.on("beacon:message", (message) => {
-    io.emit("beacon:message", message);
+    if (activeBeaconSocket?.connected) {
+      activeBeaconSocket.emit("beacon:message", message);
+    }
   });
   beaconManager.on("beacon:stream", (data) => {
-    io.emit("beacon:stream", data);
+    if (activeBeaconSocket?.connected) {
+      activeBeaconSocket.emit("beacon:stream", data);
+    }
   });
   beaconManager.on("beacon:error", (data) => {
-    io.emit("beacon:error", data);
+    if (activeBeaconSocket?.connected) {
+      activeBeaconSocket.emit("beacon:error", data);
+    }
   });
 
   /**
@@ -638,6 +647,7 @@ async function startServer() {
 
     // Beaconメッセージ送信
     socket.on("beacon:send", async (data: { message: string }) => {
+      activeBeaconSocket = socket;
       try {
         await beaconManager.sendMessage(data.message);
       } catch (error) {
@@ -647,6 +657,7 @@ async function startServer() {
 
     // Beacon履歴取得
     socket.on("beacon:history", () => {
+      activeBeaconSocket = socket;
       const messages = beaconManager.getHistory();
       socket.emit("beacon:history", { messages });
     });

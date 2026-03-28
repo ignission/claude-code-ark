@@ -21,10 +21,6 @@ import { useComposition } from "../hooks/useComposition";
 // --- 型定義 ---
 
 interface MobileChatViewProps {
-  /** 対象リポジトリのパス（表示用、省略可能） */
-  repoPath?: string | null;
-  /** リポジトリの表示名 */
-  repoName?: string;
   /** チャット履歴メッセージ */
   messages: ChatMessage[];
   /** ストリーミング中かどうか */
@@ -369,8 +365,6 @@ function EmptyState() {
 // --- メインコンポーネント ---
 
 export function MobileChatView({
-  repoPath,
-  repoName,
   messages,
   isStreaming,
   streamingText,
