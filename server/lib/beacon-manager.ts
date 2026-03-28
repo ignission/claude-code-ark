@@ -11,7 +11,7 @@ import type { Query, SDKUserMessage, SDKMessage } from "@anthropic-ai/claude-age
 import { z } from "zod";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import type { ChatMessage, BeaconStreamChunk } from "../../shared/types.js";
+import type { ChatMessage, BeaconStreamChunk, SpecialKey } from "../../shared/types.js";
 import { getErrorMessage } from "./errors.js";
 
 /** Beaconのシステムプロンプト */
@@ -188,7 +188,7 @@ export interface BeaconDeps {
   startSession: (worktreeId: string, worktreePath: string) => Promise<unknown>;
   stopSession: (sessionId: string) => void;
   sendMessage: (sessionId: string, message: string) => void;
-  sendKey: (sessionId: string, key: string) => void;
+  sendKey: (sessionId: string, key: SpecialKey) => void;
   capturePane: (sessionId: string, lines?: number) => string | null;
   listWorktrees: (repoPath: string) => Promise<unknown[]>;
   listAllWorktrees: (repos: string[]) => Promise<unknown[]>;
@@ -308,8 +308,13 @@ export class BeaconManager extends EventEmitter {
             key: z.string().describe("送信するキー（y, n, C-c, Escape, Enter, S-Tab）"),
           },
           handler: async (args) => {
-            deps.sendKey(args.sessionId as string, args.key as string);
-            return { content: [{ type: "text" as const, text: `セッション ${args.sessionId} にキー「${args.key}」を送信しました` }] };
+            const validKeys = new Set(["Enter", "C-c", "C-d", "y", "n", "S-Tab", "Escape", "scroll-up", "scroll-down", "copy-mode", "q"]);
+            const key = args.key as string;
+            if (!validKeys.has(key)) {
+              return { content: [{ type: "text" as const, text: `無効なキー: ${key}。使用可能: ${Array.from(validKeys).join(", ")}` }] };
+            }
+            deps.sendKey(args.sessionId as string, key as SpecialKey);
+            return { content: [{ type: "text" as const, text: `セッション ${args.sessionId} にキー「${key}」を送信しました` }] };
           },
         },
         {
@@ -580,8 +585,11 @@ export class BeaconManager extends EventEmitter {
           };
           this.emit("beacon:stream", doneChunk);
 
-          // このターンの処理完了
-          break;
+          // このターンの処理完了。ループを継続して次のターンの出力を待つ
+          // （キューに新しいメッセージがpushされるとquery()が新しい出力を生成する）
+          assistantText = "";
+          lastToolUse = undefined;
+          continue;
         }
 
         // system, tool_progress 等のメッセージは現時点ではスキップ
