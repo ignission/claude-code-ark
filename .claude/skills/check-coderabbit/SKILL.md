@@ -29,7 +29,7 @@ gh pr checks $PR_NUM 2>&1 | grep CodeRabbit
 # 未解決スレッドの取得（GraphQL API）
 gh api graphql -f query='
 {
-  repository(owner: "ignission", name: "claude-code-manager") {
+  repository(owner: "ignission", name: "claude-code-ark") {
     pullRequest(number: '$PR_NUM') {
       reviewThreads(first: 100) {
         nodes {

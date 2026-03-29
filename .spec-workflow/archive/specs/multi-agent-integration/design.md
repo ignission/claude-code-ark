@@ -2,7 +2,7 @@
 
 ## Overview
 
-multi-agent-shogunをclaude-code-managerにフル統合し、将軍-家老-足軽の階層構造で複数のClaude Codeインスタンスを協調動作させる「将軍モード」を実装する。
+multi-agent-shogunをclaude-code-arkにフル統合し、将軍-家老-足軽の階層構造で複数のClaude Codeインスタンスを協調動作させる「将軍モード」を実装する。
 
 既存のTmuxManager、SessionOrchestrator、TtydManagerを再利用・拡張し、新たにShogunOrchestratorとFileWatcherを追加する。
 
@@ -259,12 +259,12 @@ type Role =
 
 | Role  | Session Name Pattern | Example          |
 | ----- | -------------------- | ---------------- |
-| 将軍  | `ccm-shg-{shortId}`  | `ccm-shg-abc123` |
-| 家老  | `ccm-kro-{shortId}`  | `ccm-kro-abc123` |
-| 足軽1 | `ccm-as1-{shortId}`  | `ccm-as1-abc123` |
-| 足軽2 | `ccm-as2-{shortId}`  | `ccm-as2-abc123` |
-| 足軽3 | `ccm-as3-{shortId}`  | `ccm-as3-abc123` |
-| 足軽4 | `ccm-as4-{shortId}`  | `ccm-as4-abc123` |
+| 将軍  | `ark-shg-{shortId}`  | `ark-shg-abc123` |
+| 家老  | `ark-kro-{shortId}`  | `ark-kro-abc123` |
+| 足軽1 | `ark-as1-{shortId}`  | `ark-as1-abc123` |
+| 足軽2 | `ark-as2-{shortId}`  | `ark-as2-abc123` |
+| 足軽3 | `ark-as3-{shortId}`  | `ark-as3-abc123` |
+| 足軽4 | `ark-as4-{shortId}`  | `ark-as4-abc123` |
 
 ## File Structure (New/Modified)
 

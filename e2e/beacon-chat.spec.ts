@@ -8,8 +8,7 @@ import { test, expect } from "@playwright/test";
  */
 
 // テスト用のリポジトリパス（サーバーで管理されている実際のパス）
-const TEST_REPO_PATH =
-  "/home/admin/dev/github.com/ignission/claude-code-manager";
+const TEST_REPO_PATH = "/home/admin/dev/github.com/ignission/claude-code-ark";
 
 /**
  * localStorageにリポジトリ選択状態を事前設定し、

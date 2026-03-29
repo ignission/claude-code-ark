@@ -1,5 +1,5 @@
 /**
- * Claude Code Manager - Server
+ * Ark - Server
  *
  * Express server with Socket.IO for real-time communication.
  * Handles git worktree operations and ttyd/tmux-based Claude Code sessions.
@@ -48,7 +48,7 @@ const skipPermissions =
   process.env.SKIP_PERMISSIONS === "true";
 
 // 公開ドメイン（Named Tunnel / CORS許可用）
-const publicDomain = process.env.CCM_PUBLIC_DOMAIN;
+const publicDomain = process.env.ARK_PUBLIC_DOMAIN;
 
 // Parse --repos option: --repos /path1,/path2
 let allowedRepos: string[] = [];
@@ -73,7 +73,7 @@ let tunnelUrl: string | null = null;
 let tunnelToken: string | null = null;
 
 // トンネル状態ファイルのパス
-const TUNNEL_STATE_FILE = path.join(os.tmpdir(), "ccm-tunnel-state.json");
+const TUNNEL_STATE_FILE = path.join(os.tmpdir(), "ark-tunnel-state.json");
 
 /** トンネル状態をファイルに保存する */
 function saveTunnelState(port: number): void {
@@ -191,7 +191,7 @@ async function startServer() {
             callback(null, true);
             return;
           }
-          // Named Tunnel時の許可ドメイン（Named TunnelはCCMサーバーとは独立稼働）
+          // Named Tunnel時の許可ドメイン（Named TunnelはArkサーバーとは独立稼働）
           if (publicDomain && hostname === publicDomain) {
             callback(null, true);
             return;
@@ -208,7 +208,7 @@ async function startServer() {
   // Apply Socket.IO authentication middleware
   io.use(authManager.socketMiddleware());
 
-  // BeaconにCCM操作の依存を注入（MCPツールで利用）
+  // BeaconにArk操作の依存を注入（MCPツールで利用）
   beaconManager.configure({
     getAllSessions: () => sessionOrchestrator.getAllSessions(),
     startSession: (worktreeId, worktreePath) =>
@@ -783,9 +783,7 @@ async function startServer() {
   });
 
   server.listen(port, async () => {
-    console.log(
-      `Claude Code Manager server running on http://localhost:${port}/`
-    );
+    console.log(`Ark server running on http://localhost:${port}/`);
 
     // Start Quick Tunnel if enabled
     // 注: enableQuick は --quick コマンドラインオプションによるトンネル起動。
@@ -817,7 +815,7 @@ async function startServer() {
         localPort: port,
         mode: "named",
         namedTunnelOptions: {
-          tunnelName: process.env.CCM_TUNNEL_NAME || "claude-code-manager",
+          tunnelName: process.env.ARK_TUNNEL_NAME || "claude-code-ark",
           publicUrl: `https://${publicDomain}`,
         },
       });

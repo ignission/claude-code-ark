@@ -3,7 +3,7 @@
 # 過去N日間のPR・CI・レビュー指摘を集計する
 
 DAYS="${1:-30}"
-REPO="ignission/claude-code-manager"
+REPO="ignission/claude-code-ark"
 
 # 日付計算（Linux/macOS両対応）
 SINCE=$(date -d "${DAYS} days ago" +%Y-%m-%d 2>/dev/null || date -v-"${DAYS}"d +%Y-%m-%d 2>/dev/null)

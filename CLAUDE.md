@@ -1,10 +1,10 @@
-# Claude Code Manager - 開発引き継ぎ資料
+# Ark - 開発引き継ぎ資料
 
 このドキュメントはClaude Codeが開発を引き継ぐための資料です。
 
 ## プロジェクト概要
 
-**Claude Code Manager (CCM)** は、ローカルで稼働する複数のClaude Codeインスタンスを管理するWebUIアプリケーションです。ユーザーがgitリポジトリとworktreeを選択し、各worktreeに対してClaude Codeセッション（tmux + ttyd）を起動・管理できます。
+**Ark** は、ローカルで稼働する複数のClaude Codeインスタンスを管理するWebUIアプリケーションです。ユーザーがgitリポジトリとworktreeを選択し、各worktreeに対してClaude Codeセッション（tmux + ttyd）を起動・管理できます。
 
 ## アーキテクチャ
 
@@ -32,7 +32,7 @@ Claude Codeとの対話は **Agent SDK経由ではなく、tmux + ttyd による
 
 - **tmuxセッション**: サーバー再起動後も維持される（`cleanup()`でttydのみ停止、tmuxは残す）
 - **SQLite (data/sessions.db)**: セッションのメタデータ（worktreeId、status等）を永続化
-- **サーバー起動時の自動復元**: 既存のtmuxセッション（`ccm-` プレフィックス）を検出し、ttydを再起動
+- **サーバー起動時の自動復元**: 既存のtmuxセッション（`ark-` プレフィックス）を検出し、ttydを再起動
 
 ## 実装済み機能
 
@@ -80,7 +80,7 @@ pkill -f ttyd
 pnpm build
 
 # 3. pm2で再起動（サーバー起動時にttydも自動で再起動される）
-pm2 restart claude-code-manager
+pm2 restart claude-code-ark
 ```
 
 **注意**: `pkill -f ttyd` を省略するとttydのポート(7680〜)が競合し、ターミナルが表示されなくなる。
@@ -100,7 +100,7 @@ pm2 restart claude-code-manager
 
 ### 概要
 
-Cloudflare Tunnelを使用したリモートアクセス機能。スマートフォンや外部デバイスからClaude Code Managerにアクセスできる。
+Cloudflare Tunnelを使用したリモートアクセス機能。スマートフォンや外部デバイスからArkにアクセスできる。
 
 ### 使用方法
 
@@ -134,7 +134,7 @@ brew install cloudflared
 ### 仕組み
 
 1. `--quick` フラグで起動するとトークン認証が有効化され、Quick Tunnelが自動起動
-2. `--remote` + `CCM_PUBLIC_DOMAIN` 環境変数で Named Tunnel を起動（Cloudflare Access認証）
+2. `--remote` + `ARK_PUBLIC_DOMAIN` 環境変数で Named Tunnel を起動（Cloudflare Access認証）
 3. ターミナルにQRコードとURLが表示される
 4. スマホでQRコードをスキャン、または URLをブラウザで開く
 
@@ -147,7 +147,7 @@ brew install cloudflared
 
 ### トンネル自動復旧
 
-サーバー再起動時、前回トンネルが有効だった場合は自動的に再起動する（`/tmp/ccm-tunnel-state.json` で状態管理）
+サーバー再起動時、前回トンネルが有効だった場合は自動的に再起動する（`/tmp/ark-tunnel-state.json` で状態管理）
 
 ### 関連ファイル
 
@@ -179,7 +179,7 @@ server/lib/
 ## ディレクトリ構造
 
 ```
-claude-code-manager/
+claude-code-ark/
 ├── client/
 │   └── src/
 │       ├── components/
@@ -284,11 +284,11 @@ claude-code-manager/
 | オプション              | 環境変数                | 説明                                                     |
 | ----------------------- | ----------------------- | -------------------------------------------------------- |
 | `--quick` / `-q`        | -                       | Quick Tunnel（一時URL + トークン認証）を起動             |
-| `--remote` / `-r`       | `CCM_PUBLIC_DOMAIN`     | Named Tunnel（固定URL + Cloudflare Access）を起動        |
+| `--remote` / `-r`       | `ARK_PUBLIC_DOMAIN`     | Named Tunnel（固定URL + Cloudflare Access）を起動        |
 | `--skip-permissions`    | `SKIP_PERMISSIONS=true` | Claude CLIを `--dangerously-skip-permissions` 付きで起動 |
 | `--repos /path1,/path2` | -                       | 許可するリポジトリパスを制限                             |
 | -                       | `PORT`                  | サーバーポート（デフォルト: 3001）                       |
-| -                       | `CCM_TUNNEL_NAME`       | Named Tunnel名（デフォルト: `claude-code-manager`）      |
+| -                       | `ARK_TUNNEL_NAME`       | Named Tunnel名（デフォルト: `claude-code-ark`）          |
 
 ---
 

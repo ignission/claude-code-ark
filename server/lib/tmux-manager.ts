@@ -36,7 +36,7 @@ export interface TmuxSession {
 
 export class TmuxManager extends EventEmitter {
   private sessions: Map<string, TmuxSession> = new Map();
-  private readonly SESSION_PREFIX = "ccm-";
+  private readonly SESSION_PREFIX = "ark-";
   /** パーミッションスキップフラグ（--dangerously-skip-permissions を付与するか） */
   private skipPermissions = false;
 

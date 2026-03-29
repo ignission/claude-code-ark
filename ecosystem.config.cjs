@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: "claude-code-manager",
+      name: "claude-code-ark",
       script: "dist/index.js",
       cwd: __dirname,
       node_args: "--env-file=.env.production",
