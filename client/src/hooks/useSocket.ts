@@ -6,18 +6,17 @@
  * - ttyd/tmux-based Claude Code session management
  */
 
-import { useEffect, useRef, useCallback, useState } from "react";
-import { io, Socket } from "socket.io-client";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { io, type Socket } from "socket.io-client";
 import type {
-  ServerToClientEvents,
-  ClientToServerEvents,
-  Worktree,
-  ManagedSession,
-  Message,
-  RepoInfo,
-  SpecialKey,
-  ChatMessage,
   BeaconStreamChunk,
+  ChatMessage,
+  ClientToServerEvents,
+  ManagedSession,
+  RepoInfo,
+  ServerToClientEvents,
+  SpecialKey,
+  Worktree,
 } from "../../../shared/types";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;

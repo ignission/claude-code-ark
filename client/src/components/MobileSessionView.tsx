@@ -5,10 +5,18 @@
  * Opsドロップダウンで追加操作（Copy Buffer, Paste Image, Reload, スラッシュコマンド）。
  */
 
-import { useRef, useState, useEffect, useCallback } from "react";
+import {
+  ChevronLeft,
+  Copy,
+  GitBranch,
+  ImageIcon,
+  MoreVertical,
+  RefreshCw,
+  Send,
+  Square,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,16 +24,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  ChevronLeft,
-  Square,
-  Send,
-  MoreVertical,
-  GitBranch,
-  Copy,
-  ImageIcon,
-  RefreshCw,
-} from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import type {
   ManagedSession,
   SpecialKey,

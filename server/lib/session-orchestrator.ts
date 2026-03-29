@@ -7,14 +7,14 @@
 
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
-import { tmuxManager, type TmuxSession } from "./tmux-manager.js";
-import { ttydManager, type TtydInstance } from "./ttyd-manager.js";
-import { db } from "./database.js";
 import type {
   ManagedSession,
   SessionStatus,
   SpecialKey,
 } from "../../shared/types.js";
+import { db } from "./database.js";
+import { type TmuxSession, tmuxManager } from "./tmux-manager.js";
+import { ttydManager } from "./ttyd-manager.js";
 
 export type { ManagedSession };
 
@@ -29,7 +29,7 @@ export class SessionOrchestrator extends EventEmitter {
    * 下位マネージャーからのイベントを転送
    */
   private setupEventForwarding(): void {
-    tmuxManager.on("session:created", (tmuxSession: TmuxSession) => {
+    tmuxManager.on("session:created", (_tmuxSession: TmuxSession) => {
       // セッション作成時はstartSession内で処理するのでここでは何もしない
     });
 
@@ -39,7 +39,7 @@ export class SessionOrchestrator extends EventEmitter {
       ttydManager.stopInstance(sessionId);
     });
 
-    ttydManager.on("instance:stopped", (sessionId: string) => {
+    ttydManager.on("instance:stopped", (_sessionId: string) => {
       // ttydが停止してもtmuxセッションは維持
       // セッション削除もしない（明示的なstopSession呼び出し時のみ削除）
     });
@@ -181,7 +181,7 @@ export class SessionOrchestrator extends EventEmitter {
         worktreePath,
         status: "active",
       });
-    } catch (error) {
+    } catch (_error) {
       // 既存エントリがある場合はステータスを更新
       db.updateSessionStatus(tmuxSession.id, "active");
     }

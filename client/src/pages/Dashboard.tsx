@@ -1,24 +1,30 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import {
+  AlertCircle,
+  Copy,
+  FolderOpen,
+  GitBranch,
+  Globe,
+  Loader2,
+  Menu,
+  MessageSquare,
+  Play,
+  Plus,
+  RefreshCw,
+  Settings,
+  Terminal,
+  Trash2,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
+import { MobileChatView } from "@/components/MobileChatView";
+import { MobileLayout } from "@/components/MobileLayout";
+import { MultiPaneLayout } from "@/components/MultiPaneLayout";
+import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
-
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { WorktreeContextMenu } from "@/components/WorktreeContextMenu";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
 import {
   Dialog,
   DialogContent,
@@ -28,40 +34,29 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { QRCodeSVG } from "qrcode.react";
+import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  GitBranch,
-  Plus,
-  FolderOpen,
-  Play,
-  Trash2,
-  Terminal,
-  Settings,
-  Wifi,
-  WifiOff,
-  RefreshCw,
-  AlertCircle,
-  Menu,
-  Globe,
-  Copy,
-  Loader2,
-  MessageSquare,
-} from "lucide-react";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { WorktreeContextMenu } from "@/components/WorktreeContextMenu";
 import { useIsMobile } from "@/hooks/useMobile";
-import { toast } from "sonner";
 import { useSocket } from "@/hooks/useSocket";
-import { MultiPaneLayout } from "@/components/MultiPaneLayout";
-
-import { MobileLayout } from "@/components/MobileLayout";
-import { RepoSelectDialog } from "@/components/RepoSelectDialog";
-import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
-import {
-  isSessionBelongsToRepo,
-  findRepoForSession,
-} from "@/utils/sessionUtils";
-import { MobileChatView } from "@/components/MobileChatView";
 import { getBaseName } from "@/utils/pathUtils";
-import type { Worktree, ManagedSession } from "../../../shared/types";
+import { findRepoForSession } from "@/utils/sessionUtils";
+import type { ManagedSession, Worktree } from "../../../shared/types";
 
 // サイドバーの幅の定数
 const SIDEBAR_MIN_WIDTH = 200;
@@ -143,7 +138,7 @@ export default function Dashboard() {
     if (saved) {
       const parsed = parseInt(saved, 10);
       if (
-        !isNaN(parsed) &&
+        !Number.isNaN(parsed) &&
         parsed >= SIDEBAR_MIN_WIDTH &&
         parsed <= SIDEBAR_MAX_WIDTH
       ) {
@@ -305,7 +300,7 @@ export default function Dashboard() {
   useEffect(() => {
     setMaximizedPane(null);
     setSelectedWorktreeId(null);
-  }, [repoPath, activePanesPerRepo]);
+  }, []);
 
   const getSessionForWorktree = (
     worktreeId: string

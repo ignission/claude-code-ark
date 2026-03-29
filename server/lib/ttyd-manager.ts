@@ -5,9 +5,9 @@
  * 各ttydインスタンスは1つのtmuxセッションを担当する。
  */
 
-import { spawn, execSync, type ChildProcess } from "node:child_process";
+import { type ChildProcess, execSync, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { TTYD_PORT_START, TTYD_PORT_END } from "./constants.js";
+import { TTYD_PORT_END, TTYD_PORT_START } from "./constants.js";
 
 export interface TtydInstance {
   sessionId: string;

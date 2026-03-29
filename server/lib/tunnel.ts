@@ -6,8 +6,8 @@
  * - Named Tunnel: 事前設定されたトンネルを使用（固定URL）
  */
 
-import { spawn, type ChildProcess, execSync } from "child_process";
-import { EventEmitter } from "events";
+import { type ChildProcess, execSync, spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 
 /** トンネルモード */
 export type TunnelMode = "quick" | "named";
@@ -279,9 +279,7 @@ export class TunnelManager extends EventEmitter {
           stdio: "ignore",
         });
         return path;
-      } catch {
-        continue;
-      }
+      } catch {}
     }
 
     // whichコマンドで探す

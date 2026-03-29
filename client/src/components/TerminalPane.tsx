@@ -8,27 +8,27 @@
  * - Quick command buttons for common operations
  */
 
-import { useRef, useState, useEffect, useCallback } from "react";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import {
-  Square,
-  X,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronUp,
+  Copy,
+  GitBranch,
+  ImageIcon,
+  Keyboard,
   Maximize2,
   Minimize2,
-  Send,
-  StopCircle,
-  GitBranch,
-  Keyboard,
-  ChevronDown,
-  ChevronUp,
-  ChevronLeft,
   RefreshCw,
+  Send,
+  Square,
+  StopCircle,
+  X,
   XCircle,
-  ImageIcon,
-  Copy,
-  Check,
 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import type {
   ManagedSession,
   SpecialKey,

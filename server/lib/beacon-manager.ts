@@ -6,20 +6,20 @@
  * マルチターン会話を実現する。全リポジトリを横断して操作可能。
  */
 
-import { query, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
+import { promisify } from "node:util";
 import type {
   Query,
-  SDKUserMessage,
   SDKMessage,
+  SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { createSdkMcpServer, query } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { EventEmitter } from "node:events";
-import { randomUUID } from "node:crypto";
 import type {
-  ChatMessage,
   BeaconStreamChunk,
+  ChatMessage,
   SpecialKey,
 } from "../../shared/types.js";
 import { getErrorMessage } from "./errors.js";
@@ -853,7 +853,7 @@ export class BeaconManager extends EventEmitter {
       // テキスト結合時に改行が欠けている場合を補完するヘルパー
       const appendWithNewline = (base: string, chunk: string): string => {
         if (base && !base.endsWith("\n") && !chunk.startsWith("\n")) {
-          return base + "\n" + chunk;
+          return `${base}\n${chunk}`;
         }
         return base + chunk;
       };
@@ -940,7 +940,6 @@ export class BeaconManager extends EventEmitter {
           // （キューに新しいメッセージがpushされるとquery()が新しい出力を生成する）
           assistantText = "";
           lastToolUse = undefined;
-          continue;
         }
 
         // system, tool_progress 等のメッセージは現時点ではスキップ

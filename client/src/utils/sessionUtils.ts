@@ -1,5 +1,5 @@
 import type { ManagedSession } from "../../../shared/types";
-import { getParentPath, getBaseName } from "./pathUtils";
+import { getBaseName, getParentPath } from "./pathUtils";
 
 /**
  * セッションが指定されたリポジトリに属するかどうかを判定する

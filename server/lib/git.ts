@@ -5,11 +5,11 @@
  * All paths are validated to prevent command injection.
  */
 
-import { exec, execSync } from "child_process";
-import { promisify } from "util";
-import path from "path";
-import fs from "fs";
-import type { Worktree, RepoInfo } from "../../shared/types.js";
+import { exec } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { promisify } from "node:util";
+import type { RepoInfo, Worktree } from "../../shared/types.js";
 
 const execAsync = promisify(exec);
 

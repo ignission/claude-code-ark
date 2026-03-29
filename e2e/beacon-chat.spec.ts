@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 /**
  * Beaconチャット機能のE2Eテスト
@@ -152,7 +152,7 @@ test("デスクトップ: Beaconモーダルで入力操作できる", async ({ 
 // ---------------------------------------------------------------------------
 test("Beacon: メッセージ送信でレスポンスが返る", async ({ page }) => {
   // ANTHROPIC_API_KEYがない環境ではスキップ
-  const hasApiKey = await page.evaluate(() => true); // サーバー側にキーがあるか確認不可のため常に実行
+  const _hasApiKey = await page.evaluate(() => true); // サーバー側にキーがあるか確認不可のため常に実行
 
   await setupRepoSelection(page);
   await page.goto("/");

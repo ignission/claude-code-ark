@@ -6,15 +6,15 @@
  * iframe再マウント防止のため、display:none/blockで表示を切り替える。
  */
 
-import { useState, useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { MobileChatView } from "@/components/MobileChatView";
 import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
-import { MobileChatView } from "@/components/MobileChatView";
 import type {
+  ChatMessage,
   ManagedSession,
   SpecialKey,
   Worktree,
-  ChatMessage,
 } from "../../../shared/types";
 
 interface MobileLayoutProps {
