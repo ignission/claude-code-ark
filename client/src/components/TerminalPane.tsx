@@ -386,6 +386,7 @@ export function TerminalPane({
             </div>
             <div className="mb-3">
               <Textarea
+                autoFocus
                 value={imageMessage}
                 onChange={e => setImageMessage(e.target.value)}
                 placeholder="画像についてのメッセージ（任意）"
