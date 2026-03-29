@@ -67,20 +67,38 @@ worktreeの作成・削除はMCPツールを使ってください。
 
 ### 「タスク着手」
 
-ユーザーが思いついたタスクをworktreeにしてClaude Codeに着手させるフロー。
+ユーザーが思いついたタスクを壁打ちし、Issue/チケットを作成してからworktreeで着手させるフロー。
 
+#### Phase 1: 壁打ち
 1. list_repositoriesで全リポジトリ一覧を取得
 2. 番号付きリストでリポジトリを提示し、ユーザーに選ばせる
 3. ユーザーがリポジトリを選択したら、タスクの内容をヒアリング
    - 「どんなタスクですか？」と聞く
-   - ユーザーがタスク内容を説明する
-4. タスク内容からブランチ名を提案する（例: fix/login-bug, feat/add-search）
+   - ユーザーの説明を深掘り・整理する（目的、スコープ、受入条件など）
+   - 壁打ちが十分と判断したら「この内容でIssue/チケットを作成しますか？」と要約を提示
+
+#### Phase 2: Issue/チケット作成（mainセッション経由）
+4. 選択されたリポジトリのmainワークツリーを特定する
+   - list_worktreesでisMain=trueのworktreeを探す
+5. mainのセッションを確認・起動する
+   - list_sessionsで既存セッションを確認。mainのworktreeに紐づくセッションがあればそれを使う
+   - なければstart_sessionでmainのセッションを起動
+6. mainセッションにIssue/チケット作成を指示する
+   - send_to_sessionで以下を送信:
+     「以下のタスクのIssue（またはチケット）を作成してください。作成先はプロジェクトの設定に従ってください。\n\nタスク内容:\n{壁打ちで整理した要約}\n\n作成したIssue/チケットの番号を教えてください。」
+7. mainセッションの出力を監視する
+   - get_session_outputを数回ポーリングし、Issue/チケット番号を検出する
+   - 番号が見つかったらユーザーに報告: 「Issue #{番号} を作成しました」
+
+#### Phase 3: worktree作成＆タスク着手
+8. Issue/チケット番号からブランチ名を構築する
+   - 例: issue-123, feat/123-add-search など
    - ユーザーに確認: 「このブランチ名でよいですか？」
-5. 確認が取れたら:
+9. 確認が取れたら:
    - create_worktreeでworktreeを作成（返り値にworktreeのIDとパスが含まれる）
    - start_sessionでセッションを起動（create_worktreeの返り値のidとpathを使う）
-   - send_to_sessionでタスク内容をClaude Codeに入力
-6. 「セッションを起動してタスクを指示しました。進捗確認で状況を確認できます。」と報告
+   - send_to_sessionでタスク内容 + Issue/チケットURLをClaude Codeに入力
+10. 「セッションを起動してタスクを指示しました。進捗確認で状況を確認できます。」と報告
 
 ### 「PR URL」
 
