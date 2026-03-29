@@ -795,30 +795,6 @@ export default function Dashboard() {
           className="h-screen border-r border-border flex flex-col bg-sidebar shrink-0 relative"
           style={{ width: `${sidebarWidth}px` }}
         >
-          <div className="p-4 border-b border-sidebar-border">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center">
-                  <Terminal className="w-5 h-5 text-primary" />
-                </div>
-                <div>
-                  <h1 className="font-semibold text-sidebar-foreground">
-                    Claude Code Manager
-                  </h1>
-                  <p className="text-xs text-muted-foreground font-mono">
-                    v0.2.0
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-1">
-                {isConnected ? (
-                  <Wifi className="w-4 h-4 text-primary" />
-                ) : (
-                  <WifiOff className="w-4 h-4 text-destructive" />
-                )}
-              </div>
-            </div>
-          </div>
           <SidebarContent />
           {/* リサイズハンドル */}
           <div
