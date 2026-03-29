@@ -61,21 +61,21 @@ pnpm start
 
 ### 起動オプション
 
-| オプション | 説明 |
-| --- | --- |
-| `--skip-permissions` | Claude CLIの権限確認をスキップ |
-| `--repos /path1,/path2` | 許可するリポジトリパスを制限 |
-| `--quick` / `-q` | Quick Tunnel（一時URL + トークン認証）を起動 |
-| `--remote` / `-r` | Named Tunnel（固定URL + Cloudflare Access）を起動 |
+| オプション              | 説明                                              |
+| ----------------------- | ------------------------------------------------- |
+| `--skip-permissions`    | Claude CLIの権限確認をスキップ                    |
+| `--repos /path1,/path2` | 許可するリポジトリパスを制限                      |
+| `--quick` / `-q`        | Quick Tunnel（一時URL + トークン認証）を起動      |
+| `--remote` / `-r`       | Named Tunnel（固定URL + Cloudflare Access）を起動 |
 
 ### 環境変数
 
-| 環境変数 | 説明 |
-| --- | --- |
-| `PORT` | サーバーポート（デフォルト: 3001） |
-| `SKIP_PERMISSIONS` | `true` で権限確認スキップ |
-| `ARK_PUBLIC_DOMAIN` | Named Tunnel用の固定ドメイン |
-| `ARK_TUNNEL_NAME` | Named Tunnel名（デフォルト: `claude-code-ark`） |
+| 環境変数            | 説明                                            |
+| ------------------- | ----------------------------------------------- |
+| `PORT`              | サーバーポート（デフォルト: 3001）              |
+| `SKIP_PERMISSIONS`  | `true` で権限確認スキップ                       |
+| `ARK_PUBLIC_DOMAIN` | Named Tunnel用の固定ドメイン                    |
+| `ARK_TUNNEL_NAME`   | Named Tunnel名（デフォルト: `claude-code-ark`） |
 
 ## リモートアクセス
 
