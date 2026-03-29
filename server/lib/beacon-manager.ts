@@ -88,18 +88,21 @@ worktreeの作成・削除はMCPツールを使ってください。
 4. 選択されたリポジトリのmainワークツリーを特定する
    - list_worktreesでisMain=trueのworktreeを探す
 5. mainのセッションを確認・起動する
-   - list_sessionsで既存セッションを確認。mainのworktreeに紐づくセッションがあればそれを使う
-   - なければstart_sessionでmainのセッションを起動
+   - list_sessionsで既存セッションを確認。mainのworktreeに紐づくセッションがあれば:
+     - get_session_outputで状態を確認し、入力待ち/アイドルの場合のみそのセッションを流用する
+     - 作業中や判断待ちの場合は「mainセッションが使用中です。中断してよいですか？」とユーザーに確認する
+   - セッションがなければstart_sessionでmainのセッションを起動
 6. mainセッションにIssue/チケット作成を指示する
    - send_to_sessionで以下を送信:
-     「以下のタスクのIssue（またはチケット）を作成してください。作成先はプロジェクトの設定に従ってください。\n\nタスク内容:\n{壁打ちで整理した要約}\n\n作成したIssue/チケットの番号を教えてください。」
+     「以下のタスクのIssue（またはチケット）を作成してください。作成先はプロジェクトの設定に従ってください。\n\nタスク内容:\n{壁打ちで整理した要約}\n\n作成したIssue/チケットの識別子（例: #123 や PROJ-123）とURLを教えてください。」
 7. mainセッションの出力を監視する
-   - get_session_outputを数回ポーリングし、Issue/チケット番号を検出する
-   - 番号が見つかったらユーザーに報告: 「Issue #{番号} を作成しました」
+   - get_session_outputを数回ポーリングし、Issue/チケットの識別子とURLを検出する
+   - 見つかったらユーザーに報告: 「{識別子} を作成しました」
 
 #### Phase 3: worktree作成＆タスク着手
-8. Issue/チケット番号からブランチ名を構築する
-   - 例: issue-123, feat/123-add-search など
+8. Issue/チケットの識別子からブランチ名を構築する
+   - GitHub Issue: feat/123-slug（例: feat/123-add-search）
+   - Jira: feat/PROJ-123-slug（例: feat/PMDEV-325-supplier-password）
    - ユーザーに確認: 「このブランチ名でよいですか？」
 9. 確認が取れたら:
    - create_worktreeでworktreeを作成（返り値にworktreeのIDとパスが含まれる）
@@ -841,6 +844,14 @@ export class BeaconManager extends EventEmitter {
       // ツール使用情報を保持する
       let lastToolUse: ChatMessage["toolUse"] | undefined;
 
+      // テキスト結合時に改行が欠けている場合を補完するヘルパー
+      const appendWithNewline = (base: string, chunk: string): string => {
+        if (base && !base.endsWith("\n") && !chunk.startsWith("\n")) {
+          return base + "\n" + chunk;
+        }
+        return base + chunk;
+      };
+
       while (true) {
         const { value, done } = await session.outputIterator.next();
         if (done) break;
@@ -854,15 +865,9 @@ export class BeaconManager extends EventEmitter {
               const chunk = block.text;
               // テキストブロック間に改行が欠けている場合を補完
               // （ツール実行前後のテキストが直結されるとMarkdownの行頭パターンが壊れる）
-              let effectiveChunk = chunk;
-              if (
-                assistantText &&
-                !assistantText.endsWith("\n") &&
-                !chunk.startsWith("\n")
-              ) {
-                effectiveChunk = "\n" + chunk;
-              }
-              assistantText += effectiveChunk;
+              const prevLen = assistantText.length;
+              assistantText = appendWithNewline(assistantText, chunk);
+              const effectiveChunk = assistantText.slice(prevLen);
 
               // ストリーミングチャンクを送信
               const streamChunk: BeaconStreamChunk = {
@@ -894,9 +899,11 @@ export class BeaconManager extends EventEmitter {
           if (msg.subtype === "success" && "result" in msg && msg.result) {
             // resultのテキストがassistantTextに含まれていない場合のみ追加
             if (!assistantText.includes(msg.result)) {
-              assistantText += msg.result;
+              const prevLen = assistantText.length;
+              assistantText = appendWithNewline(assistantText, msg.result);
+              const effectiveChunk = assistantText.slice(prevLen);
               const streamChunk: BeaconStreamChunk = {
-                chunk: msg.result,
+                chunk: effectiveChunk,
                 done: false,
               };
               this.emit("beacon:stream", streamChunk);

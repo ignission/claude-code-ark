@@ -269,9 +269,9 @@ function renderSegments(
         );
       case "list-item":
         return (
-          <li key={i} className="ml-4 list-disc my-0.5">
-            {renderSegments(seg.children, onAction)}
-          </li>
+          <ul key={i} className="list-disc ml-4">
+            <li className="my-0.5">{renderSegments(seg.children, onAction)}</li>
+          </ul>
         );
       case "numbered-item":
         return (

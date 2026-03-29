@@ -223,10 +223,14 @@ async function startServer() {
     listWorktrees: repoPath => listWorktrees(repoPath),
     createWorktree: async (repoPath, branchName, baseBranch) => {
       const worktree = await createWorktree(repoPath, branchName, baseBranch);
-      // Beacon経由の操作を全クライアントに通知
-      io.emit("worktree:created", worktree);
-      const worktrees = await listWorktrees(repoPath);
-      io.emit("worktree:list", worktrees);
+      // 通知は操作の成否に影響させない
+      try {
+        io.emit("worktree:created", worktree);
+        const worktrees = await listWorktrees(repoPath);
+        io.emit("worktree:list", worktrees);
+      } catch {
+        console.error("[Beacon] worktree通知に失敗しました");
+      }
       return worktree;
     },
     deleteWorktree: async (repoPath, worktreePath) => {
@@ -240,10 +244,14 @@ async function startServer() {
         .toString("base64")
         .replace(/[/+=]/g, "");
       await deleteWorktree(repoPath, worktreePath);
-      // Beacon経由の操作を全クライアントに通知
-      io.emit("worktree:deleted", deletedWorktreeId);
-      const worktrees = await listWorktrees(repoPath);
-      io.emit("worktree:list", worktrees);
+      // 通知は操作の成否に影響させない
+      try {
+        io.emit("worktree:deleted", deletedWorktreeId);
+        const worktrees = await listWorktrees(repoPath);
+        io.emit("worktree:list", worktrees);
+      } catch {
+        console.error("[Beacon] worktree通知に失敗しました");
+      }
     },
     listAllWorktrees: async repos => {
       const all: unknown[] = [];
