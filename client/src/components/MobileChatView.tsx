@@ -472,6 +472,15 @@ export function MobileChatView({
     [isStreaming, onSendMessage]
   );
 
+  // 選択肢（番号付きリスト）タップ時のハンドラー
+  const handleAction = useCallback(
+    (message: string) => {
+      isNearBottom.current = true;
+      onSendMessage(message);
+    },
+    [onSendMessage]
+  );
+
   // 自動スクロール（ユーザーが上にスクロール中は抑制）
   const isNearBottom = useRef(true);
   const handleScroll = useCallback(() => {
@@ -552,7 +561,7 @@ export function MobileChatView({
                 ) : (
                   <AssistantBubble
                     content={msg.content}
-                    onAction={onSendMessage}
+                    onAction={handleAction}
                   />
                 )}
                 {msg.toolUse && (
