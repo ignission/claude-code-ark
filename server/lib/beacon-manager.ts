@@ -12,6 +12,8 @@ import type {
   SDKUserMessage,
   SDKMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { z } from "zod";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
@@ -21,6 +23,8 @@ import type {
   SpecialKey,
 } from "../../shared/types.js";
 import { getErrorMessage } from "./errors.js";
+
+const execFileAsync = promisify(execFile);
 
 /** Beaconのシステムプロンプト */
 const BEACON_SYSTEM_PROMPT = `あなたはClaude Code ManagerのBeaconです。
@@ -40,6 +44,7 @@ CCM内部の操作にはMCPツールを使用してください:
 - create_worktree: worktree作成（リポジトリパス、ブランチ名、ベースブランチ）
 - delete_worktree: worktree削除
 - get_pr_url: worktreeのブランチに紐づくPR URLを取得
+- gh_exec: gh CLIコマンドを実行（pr view, issue list, api等）
 
 git/gh操作はMCPツールを通じて実行してください。
 worktreeの作成・削除はMCPツールを使ってください。
@@ -268,6 +273,18 @@ export class BeaconManager extends EventEmitter {
       throw new Error("BeaconManager が configure() されていません");
     }
     const deps = this.deps;
+
+    const ALLOWED_GH_SUBCOMMANDS = new Set([
+      "pr",
+      "issue",
+      "search",
+      "run",
+      "workflow",
+      "release",
+      "label",
+      "status",
+      "repo",
+    ]);
 
     return createSdkMcpServer({
       name: "ccm-beacon",
@@ -557,6 +574,57 @@ export class BeaconManager extends EventEmitter {
             };
           },
         },
+        {
+          name: "gh_exec",
+          description: `gh CLIコマンドを実行する（許可サブコマンド: ${Array.from(ALLOWED_GH_SUBCOMMANDS).join(", ")}）`,
+          inputSchema: {
+            args: z
+              .array(z.string())
+              .describe(
+                'ghサブコマンドと引数（例: ["pr", "view", "--json", "url"]）'
+              ),
+            cwd: z
+              .string()
+              .optional()
+              .describe("実行ディレクトリ（省略時はHOME）"),
+          },
+          handler: async params => {
+            const args = params.args as string[];
+            if (args.length === 0 || !ALLOWED_GH_SUBCOMMANDS.has(args[0])) {
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: `許可されていないサブコマンドです。使用可能: ${Array.from(ALLOWED_GH_SUBCOMMANDS).join(", ")}`,
+                  },
+                ],
+              };
+            }
+            try {
+              const cwd = (params.cwd as string) || process.env.HOME || "/home";
+              const { stdout, stderr } = await execFileAsync("gh", args, {
+                cwd,
+                timeout: 30_000,
+                maxBuffer: 512 * 1024,
+              });
+              const output = stdout || "(出力なし)";
+              return {
+                content: [{ type: "text" as const, text: output }],
+              };
+            } catch (e: unknown) {
+              const stderr = (e as { stderr?: string }).stderr;
+              const errorMsg = stderr || getErrorMessage(e);
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: `gh コマンド実行エラー: ${errorMsg}`,
+                  },
+                ],
+              };
+            }
+          },
+        },
       ],
     });
   }
@@ -629,6 +697,7 @@ export class BeaconManager extends EventEmitter {
           "mcp__ccm-beacon__create_worktree",
           "mcp__ccm-beacon__delete_worktree",
           "mcp__ccm-beacon__get_pr_url",
+          "mcp__ccm-beacon__gh_exec",
         ],
         permissionMode: "default",
         systemPrompt: BEACON_SYSTEM_PROMPT,
