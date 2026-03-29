@@ -27,12 +27,12 @@ import { getErrorMessage } from "./errors.js";
 const execFileAsync = promisify(execFile);
 
 /** Beaconのシステムプロンプト */
-const BEACON_SYSTEM_PROMPT = `あなたはClaude Code ManagerのBeaconです。
+const BEACON_SYSTEM_PROMPT = `あなたはArkのBeaconです。
 複数のリポジトリを横断して管理するアシスタントです。
 
 ## MCPツール
 
-CCM内部の操作にはMCPツールを使用してください:
+Ark内部の操作にはMCPツールを使用してください:
 - list_repositories: 全リポジトリ一覧
 - list_worktrees: worktree一覧（全リポジトリまたは指定リポジトリ）
 - list_sessions: アクティブセッション一覧
@@ -273,7 +273,7 @@ interface BeaconSession {
 // BeaconManager: 単一のグローバルBeaconセッションを管理する
 // ---------------------------------------------------------------------------
 
-/** Beaconが利用するCCM操作の依存インターフェース */
+/** Beaconが利用するArk操作の依存インターフェース */
 export interface BeaconDeps {
   getAllSessions: () => unknown[];
   startSession: (worktreeId: string, worktreePath: string) => Promise<unknown>;
@@ -304,7 +304,7 @@ export class BeaconManager extends EventEmitter {
   }
 
   /**
-   * MCPツールが呼び出すCCM操作の依存を注入する。
+   * MCPツールが呼び出すArk操作の依存を注入する。
    * server/index.ts でサーバー初期化後に呼び出すこと。
    */
   configure(deps: BeaconDeps): void {
@@ -314,7 +314,7 @@ export class BeaconManager extends EventEmitter {
 
   /**
    * MCPサーバーを作成する。
-   * BeaconエージェントがCCm操作をネイティブツールとして呼び出せるようにする。
+   * BeaconエージェントがArk操作をネイティブツールとして呼び出せるようにする。
    */
   private createMcpServer() {
     if (!this.deps) {
@@ -346,12 +346,12 @@ export class BeaconManager extends EventEmitter {
     ]);
 
     return createSdkMcpServer({
-      name: "ccm-beacon",
+      name: "ark-beacon",
       version: "1.0.0",
       tools: [
         {
           name: "list_repositories",
-          description: "CCMに登録されている全リポジトリを一覧する",
+          description: "Arkに登録されている全リポジトリを一覧する",
           inputSchema: {},
           handler: async () => ({
             content: [
@@ -746,7 +746,7 @@ export class BeaconManager extends EventEmitter {
 
     // MCPサーバーを作成（依存が注入されている場合のみ）
     const mcpServers = this.deps
-      ? { "ccm-beacon": this.createMcpServer() }
+      ? { "ark-beacon": this.createMcpServer() }
       : undefined;
 
     // V1 query() にAsyncIterableを渡してマルチターン会話を確立する
@@ -760,18 +760,18 @@ export class BeaconManager extends EventEmitter {
           "Grep",
           "Glob",
           // MCPツールを自動承認
-          "mcp__ccm-beacon__list_repositories",
-          "mcp__ccm-beacon__list_worktrees",
-          "mcp__ccm-beacon__list_sessions",
-          "mcp__ccm-beacon__start_session",
-          "mcp__ccm-beacon__stop_session",
-          "mcp__ccm-beacon__send_to_session",
-          "mcp__ccm-beacon__send_key_to_session",
-          "mcp__ccm-beacon__get_session_output",
-          "mcp__ccm-beacon__create_worktree",
-          "mcp__ccm-beacon__delete_worktree",
-          "mcp__ccm-beacon__get_pr_url",
-          "mcp__ccm-beacon__gh_exec",
+          "mcp__ark-beacon__list_repositories",
+          "mcp__ark-beacon__list_worktrees",
+          "mcp__ark-beacon__list_sessions",
+          "mcp__ark-beacon__start_session",
+          "mcp__ark-beacon__stop_session",
+          "mcp__ark-beacon__send_to_session",
+          "mcp__ark-beacon__send_key_to_session",
+          "mcp__ark-beacon__get_session_output",
+          "mcp__ark-beacon__create_worktree",
+          "mcp__ark-beacon__delete_worktree",
+          "mcp__ark-beacon__get_pr_url",
+          "mcp__ark-beacon__gh_exec",
         ],
         permissionMode: "default",
         systemPrompt: BEACON_SYSTEM_PROMPT,

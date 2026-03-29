@@ -2,13 +2,13 @@
 
 ## Introduction
 
-multi-agent-shogunをclaude-code-managerにフル統合する。現在の独立したworktreeセッション管理に加え、将軍-家老-足軽の階層構造で複数のClaude Codeインスタンスを協調動作させる「将軍モード」を実装する。
+multi-agent-shogunをclaude-code-arkにフル統合する。現在の独立したworktreeセッション管理に加え、将軍-家老-足軽の階層構造で複数のClaude Codeインスタンスを協調動作させる「将軍モード」を実装する。
 
 これにより、ユーザーは大規模なタスクを効率的に並列処理できるようになる。
 
 ## Alignment with Product Vision
 
-claude-code-managerは「複数のClaude Codeインスタンスを効率的に管理するWebUI」を目指している。将軍モードの追加により、単なる並列管理から、**階層的な協調動作**へと機能を拡張する。
+claude-code-arkは「複数のClaude Codeインスタンスを効率的に管理するWebUI」を目指している。将軍モードの追加により、単なる並列管理から、**階層的な協調動作**へと機能を拡張する。
 
 ## Requirements
 

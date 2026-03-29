@@ -62,7 +62,7 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const IMAGE_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
 /** 画像保存のベースディレクトリ（グローバルな一時ディレクトリ） */
-const BASE_DIR = "/tmp/ccm-images";
+const BASE_DIR = "/tmp/ark-images";
 
 export class ImageManager {
   private readonly baseDir: string;

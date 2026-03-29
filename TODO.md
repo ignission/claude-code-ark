@@ -1,4 +1,4 @@
-# Claude Code Manager - TODO
+# Ark - TODO
 
 ## 🚨 最優先: 会話継続の実装
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Claude Code Manager - PM2 デプロイスクリプト
+# Ark - PM2 デプロイスクリプト
 #
 # 使用方法:
 #   ./deploy.sh           - 更新デプロイ（git pull, install, build, pm2 restart）
@@ -124,7 +124,7 @@ pm2_start() {
     cd "${PROJECT_DIR}"
 
     # 既に起動している場合は警告
-    if pm2 describe claude-code-manager &> /dev/null; then
+    if pm2 describe claude-code-ark &> /dev/null; then
         log_warn "アプリケーションは既に起動しています。restart を実行します。"
         pm2 restart ecosystem.config.cjs
     else
@@ -144,7 +144,7 @@ pm2_restart() {
     cd "${PROJECT_DIR}"
 
     # プロセスが存在するか確認
-    if pm2 describe claude-code-manager &> /dev/null; then
+    if pm2 describe claude-code-ark &> /dev/null; then
         pm2 restart ecosystem.config.cjs
     else
         log_warn "プロセスが存在しません。新規起動します。"
@@ -187,7 +187,7 @@ main() {
 
     echo ""
     echo "========================================"
-    echo "  Claude Code Manager - Deploy Script"
+    echo "  Ark - Deploy Script"
     echo "========================================"
     echo ""
 
@@ -215,9 +215,9 @@ main() {
     echo "アクセス URL: http://localhost:3000"
     echo ""
     echo "便利なコマンド:"
-    echo "  pm2 logs claude-code-manager  # ログを表示"
+    echo "  pm2 logs claude-code-ark  # ログを表示"
     echo "  pm2 monit                     # モニタリング"
-    echo "  pm2 stop claude-code-manager  # 停止"
+    echo "  pm2 stop claude-code-ark  # 停止"
     echo ""
 }
 

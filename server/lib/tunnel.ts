@@ -16,7 +16,7 @@ export type TunnelMode = "quick" | "named";
 export interface NamedTunnelOptions {
   /** トンネル名（cloudflaredで作成したトンネル名） */
   tunnelName: string;
-  /** 公開URL（例: https://ccm.example.com） */
+  /** 公開URL（例: https://ark.example.com） */
   publicUrl: string;
 }
 

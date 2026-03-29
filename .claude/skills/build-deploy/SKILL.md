@@ -1,6 +1,6 @@
 ---
 name: build-deploy
-description: CCMをビルドしてpm2で再起動する
+description: Arkをビルドしてpm2で再起動する
 allowed-tools: Bash
 ---
 
@@ -27,7 +27,7 @@ pnpm build
 ### 3. pm2で再起動
 
 ```bash
-pm2 restart claude-code-manager
+pm2 restart claude-code-ark
 ```
 
 ### 4. 結果報告

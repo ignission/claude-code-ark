@@ -1,4 +1,4 @@
-# Claude Code Manager - デザインアイデア
+# Ark - デザインアイデア
 
 ## 概要
 
