@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -41,8 +41,6 @@ import {
   WifiOff,
   RefreshCw,
   AlertCircle,
-  LayoutGrid,
-  Columns2,
   Menu,
   Globe,
   Copy,
@@ -53,7 +51,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { toast } from "sonner";
 import { useSocket } from "@/hooks/useSocket";
 import { MultiPaneLayout } from "@/components/MultiPaneLayout";
-import { SessionDashboard } from "@/components/SessionDashboard";
+
 import { MobileLayout } from "@/components/MobileLayout";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
@@ -65,15 +63,12 @@ import { MobileChatView } from "@/components/MobileChatView";
 import { getBaseName } from "@/utils/pathUtils";
 import type { Worktree, ManagedSession } from "../../../shared/types";
 
-type ViewMode = "dashboard" | "panes";
-
 // サイドバーの幅の定数
 const SIDEBAR_MIN_WIDTH = 200;
 const SIDEBAR_MAX_WIDTH = 400;
 const SIDEBAR_DEFAULT_WIDTH = 320;
 const SIDEBAR_WIDTH_STORAGE_KEY = "sidebar-width";
 const ACTIVE_PANES_STORAGE_KEY = "activePanesPerRepo";
-const VIEW_MODE_STORAGE_KEY = "viewMode";
 const MAXIMIZED_PANE_STORAGE_KEY = "maximizedPane";
 const CLOSED_PANES_STORAGE_KEY = "closedPanes";
 
@@ -196,15 +191,6 @@ export default function Dashboard() {
     };
   }, [isResizing, sidebarWidth]);
 
-  const [viewMode, setViewMode] = useState<ViewMode>(() => {
-    try {
-      const saved = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
-      if (saved === "dashboard" || saved === "panes") {
-        return saved;
-      }
-    } catch {}
-    return "dashboard";
-  });
   const [activePanesPerRepo, setActivePanesPerRepo] = useState<
     Map<string, string[]>
   >(() => {
@@ -231,8 +217,6 @@ export default function Dashboard() {
 
   // ユーザーが意図的に閉じたペインを追跡（useEffectによる再追加を防ぐ）
   const closedPanesRef = useRef<Set<string>>(loadClosedPanes());
-  const viewModeHydratedRef = useRef(true);
-
   const saveClosedPanes = useCallback(() => {
     try {
       localStorage.setItem(
@@ -250,12 +234,6 @@ export default function Dashboard() {
       );
     } catch {}
   }, [activePanesPerRepo]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
-    } catch {}
-  }, [viewMode]);
 
   useEffect(() => {
     try {
@@ -325,17 +303,8 @@ export default function Dashboard() {
   }, [tunnelJustStarted, clearTunnelJustStarted]);
 
   useEffect(() => {
-    if (viewModeHydratedRef.current) {
-      viewModeHydratedRef.current = false;
-      return;
-    }
     setMaximizedPane(null);
     setSelectedWorktreeId(null);
-    let totalPanes = 0;
-    activePanesPerRepo.forEach(panes => {
-      totalPanes += panes.length;
-    });
-    setViewMode(totalPanes > 0 ? "panes" : "dashboard");
   }, [repoPath, activePanesPerRepo]);
 
   const getSessionForWorktree = (
@@ -397,7 +366,6 @@ export default function Dashboard() {
           "このWorktreeには既にセッションが存在するため、既存セッションを開きます"
         );
       }
-      setViewMode("panes");
       return;
     }
     startSession(worktree.id, worktree.path);
@@ -471,8 +439,6 @@ export default function Dashboard() {
         return newMap;
       });
     }
-
-    setViewMode("panes");
   };
 
   const handleClosePane = (sessionId: string) => {
@@ -505,7 +471,6 @@ export default function Dashboard() {
           newMap.set(targetRepo, [...currentPanes, sessionId]);
           return newMap;
         });
-        setViewMode("panes");
       }
     });
   }, [sessions, repoList]);
@@ -893,52 +858,15 @@ export default function Dashboard() {
           />
         ) : (
           <>
-            <div className="h-14 md:h-12 border-b border-border flex items-center justify-between px-4 bg-sidebar shrink-0">
-              <Tabs
-                value={viewMode}
-                onValueChange={v => setViewMode(v as ViewMode)}
-              >
-                <TabsList className="bg-sidebar-accent h-10 md:h-9">
-                  <TabsTrigger
-                    value="dashboard"
-                    className="gap-2 h-8 md:h-7 px-3 md:px-2 text-sm md:text-xs"
-                  >
-                    <LayoutGrid className="w-4 h-4 md:w-4 md:h-4" />
-                    <span className="hidden sm:inline">Dashboard</span>
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="panes"
-                    className="gap-2 h-8 md:h-7 px-3 md:px-2 text-sm md:text-xs"
-                  >
-                    <Columns2 className="w-4 h-4 md:w-4 md:h-4" />
-                    <span className="hidden sm:inline">Panes</span>
-                    {validActivePanes.length > 0 && (
-                      <span className="ml-1 text-xs bg-primary/20 text-primary px-1.5 py-0.5 rounded">
-                        {validActivePanes.length}
-                      </span>
-                    )}
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
-
-              {!isConnected && (
-                <div className="flex items-center gap-2 text-destructive text-sm">
-                  <AlertCircle className="w-5 h-5 md:w-4 md:h-4" />
-                  <span className="hidden sm:inline">
-                    Not connected to server
-                  </span>
-                </div>
-              )}
-            </div>
+            {!isConnected && (
+              <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 flex items-center gap-2 text-destructive text-sm shrink-0">
+                <AlertCircle className="w-4 h-4" />
+                <span>Not connected to server</span>
+              </div>
+            )}
 
             <div className="flex-1 overflow-hidden">
-              {viewMode === "dashboard" ? (
-                <SessionDashboard
-                  sessions={sessions}
-                  onSelectSession={handleSelectSession}
-                  onStopSession={handleStopSession}
-                />
-              ) : validActivePanes.length > 0 ? (
+              {validActivePanes.length > 0 ? (
                 <MultiPaneLayout
                   activePanes={validActivePanes}
                   sessions={filteredSessions}
