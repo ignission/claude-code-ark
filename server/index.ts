@@ -221,10 +221,30 @@ async function startServer() {
     capturePane: (sessionId, lines) =>
       tmuxManager.capturePane(sessionId, lines),
     listWorktrees: repoPath => listWorktrees(repoPath),
-    createWorktree: (repoPath, branchName, baseBranch) =>
-      createWorktree(repoPath, branchName, baseBranch),
-    deleteWorktree: (repoPath, worktreePath) =>
-      deleteWorktree(repoPath, worktreePath),
+    createWorktree: async (repoPath, branchName, baseBranch) => {
+      const worktree = await createWorktree(repoPath, branchName, baseBranch);
+      // Beacon経由の操作を全クライアントに通知
+      io.emit("worktree:created", worktree);
+      const worktrees = await listWorktrees(repoPath);
+      io.emit("worktree:list", worktrees);
+      return worktree;
+    },
+    deleteWorktree: async (repoPath, worktreePath) => {
+      // 削除前にworktreeのセッションを停止
+      const session = sessionOrchestrator.getSessionByWorktree(worktreePath);
+      if (session) {
+        sessionOrchestrator.stopSession(session.id);
+      }
+      // worktreeのIDをパスから決定的に導出（listWorktreesと同じロジック）
+      const deletedWorktreeId = Buffer.from(worktreePath)
+        .toString("base64")
+        .replace(/[/+=]/g, "");
+      await deleteWorktree(repoPath, worktreePath);
+      // Beacon経由の操作を全クライアントに通知
+      io.emit("worktree:deleted", deletedWorktreeId);
+      const worktrees = await listWorktrees(repoPath);
+      io.emit("worktree:list", worktrees);
+    },
     listAllWorktrees: async repos => {
       const all: unknown[] = [];
       for (const repo of repos) {
