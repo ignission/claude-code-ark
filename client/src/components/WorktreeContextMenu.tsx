@@ -1,4 +1,22 @@
+import {
+  MessageSquare,
+  MoreVertical,
+  Play,
+  Square,
+  Trash2,
+} from "lucide-react";
 import { useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -13,26 +31,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/useMobile";
-import {
-  MessageSquare,
-  Play,
-  Square,
-  Trash2,
-  MoreVertical,
-} from "lucide-react";
-import type { Worktree, ManagedSession } from "../../../shared/types";
+import type { ManagedSession, Worktree } from "../../../shared/types";
 
 interface WorktreeContextMenuProps {
   children: React.ReactNode;

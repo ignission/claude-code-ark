@@ -1,7 +1,6 @@
-import { useState, useCallback, type KeyboardEvent } from "react";
+import { Plus } from "lucide-react";
+import { type KeyboardEvent, useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -11,7 +10,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Plus } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 interface CreateWorktreeDialogProps {
   open: boolean;
@@ -57,8 +57,7 @@ export function CreateWorktreeDialog({
         e.preventDefault();
         const input = e.currentTarget;
         const pos = input.selectionStart ?? newBranchName.length;
-        const next =
-          newBranchName.slice(0, pos) + "-" + newBranchName.slice(pos);
+        const next = `${newBranchName.slice(0, pos)}-${newBranchName.slice(pos)}`;
         setNewBranchName(next);
         // カーソル位置を復元するため、次のレンダー後にselectionを設定
         requestAnimationFrame(() => {

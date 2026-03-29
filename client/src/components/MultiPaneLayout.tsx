@@ -9,14 +9,14 @@
  */
 
 import { useMemo } from "react";
-import { TerminalPane } from "./TerminalPane";
-import { findRepoForSession } from "@/utils/sessionUtils";
 import { getBaseName } from "@/utils/pathUtils";
+import { findRepoForSession } from "@/utils/sessionUtils";
 import type {
   ManagedSession,
   SpecialKey,
   Worktree,
 } from "../../../shared/types";
+import { TerminalPane } from "./TerminalPane";
 
 interface MultiPaneLayoutProps {
   activePanes: string[]; // Session IDs

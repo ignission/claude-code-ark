@@ -5,8 +5,8 @@
  * Generates a random token on startup that must be included in requests.
  */
 
-import { randomBytes, timingSafeEqual } from "crypto";
-import type { Request, Response, NextFunction } from "express";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import type { NextFunction, Request, Response } from "express";
 import type { Socket } from "socket.io";
 
 export class AuthManager {
@@ -121,7 +121,7 @@ export class AuthManager {
 
     // プライベートIP範囲のチェック
     const parts = ipv4.split(".").map(Number);
-    if (parts.length !== 4 || parts.some(isNaN)) return false;
+    if (parts.length !== 4 || parts.some(Number.isNaN)) return false;
 
     // 10.0.0.0/8
     if (parts[0] === 10) return true;

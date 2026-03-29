@@ -106,15 +106,15 @@ if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+(.+[[:space:]]+)?push([[:space:]
   LOG=""
 
   CHANGED_FILES=$(git diff --name-only origin/main...HEAD 2>/dev/null) || CHANGED_FILES=""
-  HAS_SOURCE_CHANGES=$(echo "$CHANGED_FILES" | grep -qE '\.(ts|tsx|js|jsx)$' && echo "1" || echo "0")
+  HAS_SOURCE_CHANGES=$(echo "$CHANGED_FILES" | grep -qE '(^biome\.json$|^package\.json$|\.(ts|tsx|js|jsx|json|css)$)' && echo "1" || echo "0")
 
   if [ "$HAS_SOURCE_CHANGES" = "1" ]; then
-    LOG="${LOG}pre-bash-guard: ソースコードに変更あり。prettier・型チェックを実行します...\n"
+    LOG="${LOG}pre-bash-guard: ソースコードに変更あり。biome・型チェックを実行します...\n"
 
-    LOG="${LOG}pre-bash-guard: prettier --check を実行中...\n"
-    if ! CMD_OUTPUT=$(cd "$PROJECT_ROOT" && npx prettier --check "**/*.{ts,tsx,js,jsx}" --ignore-path .gitignore 2>&1); then
+    LOG="${LOG}pre-bash-guard: biome check を実行中...\n"
+    if ! CMD_OUTPUT=$(cd "$PROJECT_ROOT" && npx biome check . 2>&1); then
       echo "$CMD_OUTPUT" >&2
-      echo "BLOCKED: prettier --check が失敗しました。'pnpm format'を実行してからpushしてください" >&2
+      echo "BLOCKED: biome check が失敗しました。'pnpm format'を実行してからpushしてください" >&2
       exit 2
     fi
 

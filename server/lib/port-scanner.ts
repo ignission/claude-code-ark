@@ -1,5 +1,5 @@
-import { execSync } from "child_process";
-import { TTYD_PORT_START, TTYD_PORT_END } from "./constants.js";
+import { execSync } from "node:child_process";
+import { TTYD_PORT_END, TTYD_PORT_START } from "./constants.js";
 
 export interface ListeningPort {
   port: number;

@@ -1,8 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
+import { FolderOpen, RefreshCw, Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import {
   Dialog,
   DialogContent,
@@ -17,8 +15,10 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "@/components/ui/drawer";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
 import { useIsMobile } from "@/hooks/useMobile";
-import { FolderOpen, RefreshCw, Search } from "lucide-react";
 import type { RepoInfo } from "../../../shared/types";
 
 interface RepoSelectDialogProps {

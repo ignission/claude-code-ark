@@ -5,15 +5,15 @@
  * タップターゲットは最低48pxを確保。
  */
 
-import { useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  GitBranch,
+  MessageSquare,
+  MoreVertical,
+  Play,
+  Square,
+  Trash2,
+} from "lucide-react";
+import { useMemo, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,14 +24,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 import {
-  GitBranch,
-  Play,
-  Square,
-  MessageSquare,
-  Trash2,
-  MoreVertical,
-} from "lucide-react";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { ManagedSession, Worktree } from "../../../shared/types";
 
 interface MobileSessionListProps {

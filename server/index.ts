@@ -6,38 +6,39 @@
  * Supports remote access via Cloudflare Tunnel.
  */
 
-import express from "express";
-import { createServer } from "node:http";
 import { exec } from "node:child_process";
+import { createServer } from "node:http";
 import { promisify } from "node:util";
+import express from "express";
+
 const execAsync = promisify(exec);
-import { Server, type Socket } from "socket.io";
-import path from "node:path";
+
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import httpProxy from "http-proxy";
+import { Server, type Socket } from "socket.io";
+import type {
+  ClientToServerEvents,
+  ServerToClientEvents,
+} from "../shared/types.js";
+import { authManager } from "./lib/auth.js";
+import { beaconManager } from "./lib/beacon-manager.js";
+import { getErrorMessage } from "./lib/errors.js";
 import {
-  listWorktrees,
   createWorktree,
   deleteWorktree,
   isGitRepository,
+  listWorktrees,
   scanRepositories,
 } from "./lib/git.js";
+import { ImageManagerError, imageManager } from "./lib/image-manager.js";
+import { getListeningPorts } from "./lib/port-scanner.js";
+import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import { sessionOrchestrator } from "./lib/session-orchestrator.js";
 import { tmuxManager } from "./lib/tmux-manager.js";
 import { TunnelManager } from "./lib/tunnel.js";
-import { authManager } from "./lib/auth.js";
-import { printRemoteAccessInfo } from "./lib/qrcode.js";
-import { getListeningPorts } from "./lib/port-scanner.js";
-import { imageManager, ImageManagerError } from "./lib/image-manager.js";
-import { getErrorMessage } from "./lib/errors.js";
-import { beaconManager } from "./lib/beacon-manager.js";
-import type {
-  ServerToClientEvents,
-  ClientToServerEvents,
-  ManagedSession,
-} from "../shared/types.js";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -52,7 +53,7 @@ const publicDomain = process.env.ARK_PUBLIC_DOMAIN;
 
 // Parse --repos option: --repos /path1,/path2
 let allowedRepos: string[] = [];
-const reposIndex = args.findIndex(arg => arg === "--repos");
+const reposIndex = args.indexOf("--repos");
 if (reposIndex !== -1 && args[reposIndex + 1]) {
   allowedRepos = args[reposIndex + 1]
     .split(",")
@@ -355,7 +356,7 @@ async function startServer() {
     const { sessionId } = req.params;
     const session = sessionOrchestrator.getSession(sessionId);
 
-    if (!session || !session.ttydPort) {
+    if (!session?.ttydPort) {
       res.status(404).json({ error: "Session not found or ttyd not running" });
       return;
     }

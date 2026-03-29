@@ -7,10 +7,10 @@
  * - 外部キー制約を有効化
  */
 
-import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
 import type {
   Message,
   MessageType,

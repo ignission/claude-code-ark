@@ -7,31 +7,31 @@
  */
 
 import {
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  Radar,
+  Send,
+  Terminal,
+  Trash2,
+} from "lucide-react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
   useRef,
   useState,
-  useEffect,
-  useCallback,
-  useMemo,
-  type ReactNode,
 } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
-  CollapsibleTrigger,
   CollapsibleContent,
+  CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import {
-  ChevronLeft,
-  Send,
-  ChevronRight,
-  Terminal,
-  Radar,
-  Loader2,
-  Trash2,
-} from "lucide-react";
 import type { ChatMessage } from "../../../shared/types";
-import { useVisualViewport } from "../hooks/useVisualViewport";
 import { useComposition } from "../hooks/useComposition";
+import { useVisualViewport } from "../hooks/useVisualViewport";
 
 // --- 型定義 ---
 
@@ -490,6 +490,7 @@ export function MobileChatView({
       el.scrollTop + el.clientHeight >= el.scrollHeight - 80;
   }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: メッセージ到着時に自動スクロールする意図的な依存配列
   useEffect(() => {
     if (isNearBottom.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
