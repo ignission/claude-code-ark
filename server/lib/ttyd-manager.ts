@@ -45,22 +45,29 @@ export class TtydManager extends EventEmitter {
         "[TtydManager] ttyd not found. Install it:\n" +
           "  macOS: brew install ttyd\n" +
           "  Ubuntu: apt install ttyd\n" +
-          "  Or from: https://github.com/tsl0922/ttyd"
+          "  Or from: https://github.com/tsl0922/ttyd",
       );
     }
   }
 
   /**
    * 指定ポートがOSレベルで使用可能かチェック
-   * 127.0.0.1にbindを試みて確認する
+   * 127.0.0.1にbindを試みて確認する（3秒タイムアウト付き）
    */
   private checkPortAvailable(port: number): Promise<boolean> {
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        server.close();
+        resolve(false);
+      }, 3000);
+
       const server = net.createServer();
       server.once("error", () => {
+        clearTimeout(timeout);
         resolve(false);
       });
       server.once("listening", () => {
+        clearTimeout(timeout);
         server.close(() => resolve(true));
       });
       server.listen(port, "127.0.0.1");
@@ -73,23 +80,27 @@ export class TtydManager extends EventEmitter {
    */
   private async findAvailablePort(): Promise<number> {
     const usedPorts = new Set(
-      Array.from(this.instances.values()).map(i => i.port)
+      Array.from(this.instances.values()).map((i) => i.port),
     );
 
-    for (let port = this.nextPort; port <= this.MAX_PORT; port++) {
+    // nextPortからMAX_PORTまで探し、見つからなければMIN_PORTからnextPort-1まで探索
+    const totalPorts = this.MAX_PORT - this.MIN_PORT + 1;
+    for (let i = 0; i < totalPorts; i++) {
+      const port =
+        this.MIN_PORT + ((this.nextPort - this.MIN_PORT + i) % totalPorts);
       if (usedPorts.has(port)) {
         continue;
       }
       const available = await this.checkPortAvailable(port);
       if (!available) {
         console.log(
-          `[TtydManager] Port ${port} is in use by another process, skipping`
+          `[TtydManager] Port ${port} is in use by another process, skipping`,
         );
         continue;
       }
       this.nextPort = port + 1;
       if (this.nextPort > this.MAX_PORT) {
-        this.nextPort = this.MIN_PORT; // ラップアラウンド
+        this.nextPort = this.MIN_PORT;
       }
       return port;
     }
@@ -102,7 +113,7 @@ export class TtydManager extends EventEmitter {
    */
   async startInstance(
     sessionId: string,
-    tmuxSessionName: string
+    tmuxSessionName: string,
   ): Promise<TtydInstance> {
     // 既に起動済み
     const existing = this.instances.get(sessionId);
@@ -132,7 +143,7 @@ export class TtydManager extends EventEmitter {
    */
   private async _startInstanceInternal(
     sessionId: string,
-    tmuxSessionName: string
+    tmuxSessionName: string,
   ): Promise<TtydInstance> {
     const port = await this.findAvailablePort();
     const basePath = `/ttyd/${sessionId}`;
@@ -169,7 +180,7 @@ export class TtydManager extends EventEmitter {
       {
         stdio: ["ignore", "pipe", "pipe"],
         detached: false,
-      }
+      },
     );
 
     const instance: TtydInstance = {
@@ -197,12 +208,12 @@ export class TtydManager extends EventEmitter {
         }
       });
 
-      ttydProcess.on("error", error => {
+      ttydProcess.on("error", (error) => {
         clearTimeout(timeout);
         reject(error);
       });
 
-      ttydProcess.on("exit", code => {
+      ttydProcess.on("exit", (code) => {
         if (code !== 0 && code !== null) {
           clearTimeout(timeout);
           reject(new Error(`ttyd exited with code ${code}: ${stderr}`));
@@ -214,13 +225,13 @@ export class TtydManager extends EventEmitter {
     this.emit("instance:started", instance);
 
     console.log(
-      `[TtydManager] Started ttyd for ${tmuxSessionName} on port ${port}`
+      `[TtydManager] Started ttyd for ${tmuxSessionName} on port ${port}`,
     );
 
     // プロセス終了時の処理
-    ttydProcess.on("exit", code => {
+    ttydProcess.on("exit", (code) => {
       console.log(
-        `[TtydManager] ttyd for session ${sessionId} exited with code ${code}`
+        `[TtydManager] ttyd for session ${sessionId} exited with code ${code}`,
       );
       this.instances.delete(sessionId);
       this.emit("instance:stopped", sessionId);
