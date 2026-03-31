@@ -171,7 +171,7 @@ class SessionDatabase {
       session.worktreePath,
       session.status,
       now,
-      now,
+      now
     );
   }
 
@@ -198,7 +198,7 @@ class SessionDatabase {
       session.worktreePath,
       session.status,
       now,
-      now,
+      now
     );
   }
 
@@ -222,7 +222,7 @@ class SessionDatabase {
    */
   getSessionByWorktreePath(worktreePath: string): Session | null {
     const stmt = this.db.prepare(
-      "SELECT * FROM sessions WHERE worktree_path = ?",
+      "SELECT * FROM sessions WHERE worktree_path = ?"
     );
     const row = stmt.get(worktreePath) as SessionRow | undefined;
     return row ? this.rowToSession(row) : null;
@@ -237,7 +237,7 @@ class SessionDatabase {
   updateSessionStatus(id: string, status: SessionStatus): void {
     const now = new Date().toISOString();
     const stmt = this.db.prepare(
-      "UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?",
+      "UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?"
     );
     stmt.run(status, now, id);
   }
@@ -259,10 +259,10 @@ class SessionDatabase {
    */
   getAllSessions(): Session[] {
     const stmt = this.db.prepare(
-      "SELECT * FROM sessions ORDER BY created_at DESC",
+      "SELECT * FROM sessions ORDER BY created_at DESC"
     );
     const rows = stmt.all() as SessionRow[];
-    return rows.map((row) => this.rowToSession(row));
+    return rows.map(row => this.rowToSession(row));
   }
 
   // ============================================================
@@ -286,7 +286,7 @@ class SessionDatabase {
       message.role,
       message.content,
       message.type ?? "text",
-      message.timestamp.toISOString(),
+      message.timestamp.toISOString()
     );
   }
 
@@ -298,10 +298,10 @@ class SessionDatabase {
    */
   getMessagesBySession(sessionId: string): Message[] {
     const stmt = this.db.prepare(
-      "SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC",
+      "SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC"
     );
     const rows = stmt.all(sessionId) as MessageRow[];
-    return rows.map((row) => this.rowToMessage(row));
+    return rows.map(row => this.rowToMessage(row));
   }
 
   /**

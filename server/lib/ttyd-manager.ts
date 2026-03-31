@@ -45,7 +45,7 @@ export class TtydManager extends EventEmitter {
         "[TtydManager] ttyd not found. Install it:\n" +
           "  macOS: brew install ttyd\n" +
           "  Ubuntu: apt install ttyd\n" +
-          "  Or from: https://github.com/tsl0922/ttyd",
+          "  Or from: https://github.com/tsl0922/ttyd"
       );
     }
   }
@@ -55,7 +55,7 @@ export class TtydManager extends EventEmitter {
    * 127.0.0.1にbindを試みて確認する（3秒タイムアウト付き）
    */
   private checkPortAvailable(port: number): Promise<boolean> {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       const timeout = setTimeout(() => {
         server.close();
         resolve(false);
@@ -80,7 +80,7 @@ export class TtydManager extends EventEmitter {
    */
   private async findAvailablePort(): Promise<number> {
     const usedPorts = new Set(
-      Array.from(this.instances.values()).map((i) => i.port),
+      Array.from(this.instances.values()).map(i => i.port)
     );
 
     // nextPortからMAX_PORTまで探し、見つからなければMIN_PORTからnextPort-1まで探索
@@ -94,7 +94,7 @@ export class TtydManager extends EventEmitter {
       const available = await this.checkPortAvailable(port);
       if (!available) {
         console.log(
-          `[TtydManager] Port ${port} is in use by another process, skipping`,
+          `[TtydManager] Port ${port} is in use by another process, skipping`
         );
         continue;
       }
@@ -113,7 +113,7 @@ export class TtydManager extends EventEmitter {
    */
   async startInstance(
     sessionId: string,
-    tmuxSessionName: string,
+    tmuxSessionName: string
   ): Promise<TtydInstance> {
     // 既に起動済み
     const existing = this.instances.get(sessionId);
@@ -143,7 +143,7 @@ export class TtydManager extends EventEmitter {
    */
   private async _startInstanceInternal(
     sessionId: string,
-    tmuxSessionName: string,
+    tmuxSessionName: string
   ): Promise<TtydInstance> {
     const port = await this.findAvailablePort();
     const basePath = `/ttyd/${sessionId}`;
@@ -180,7 +180,7 @@ export class TtydManager extends EventEmitter {
       {
         stdio: ["ignore", "pipe", "pipe"],
         detached: false,
-      },
+      }
     );
 
     const instance: TtydInstance = {
@@ -208,12 +208,12 @@ export class TtydManager extends EventEmitter {
         }
       });
 
-      ttydProcess.on("error", (error) => {
+      ttydProcess.on("error", error => {
         clearTimeout(timeout);
         reject(error);
       });
 
-      ttydProcess.on("exit", (code) => {
+      ttydProcess.on("exit", code => {
         if (code !== 0 && code !== null) {
           clearTimeout(timeout);
           reject(new Error(`ttyd exited with code ${code}: ${stderr}`));
@@ -225,13 +225,13 @@ export class TtydManager extends EventEmitter {
     this.emit("instance:started", instance);
 
     console.log(
-      `[TtydManager] Started ttyd for ${tmuxSessionName} on port ${port}`,
+      `[TtydManager] Started ttyd for ${tmuxSessionName} on port ${port}`
     );
 
     // プロセス終了時の処理
-    ttydProcess.on("exit", (code) => {
+    ttydProcess.on("exit", code => {
       console.log(
-        `[TtydManager] ttyd for session ${sessionId} exited with code ${code}`,
+        `[TtydManager] ttyd for session ${sessionId} exited with code ${code}`
       );
       this.instances.delete(sessionId);
       this.emit("instance:stopped", sessionId);
