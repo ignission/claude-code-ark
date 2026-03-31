@@ -71,6 +71,12 @@ export function MultiPaneLayout({
     return repo ? getBaseName(repo) : undefined;
   };
 
+  // Filter to only show panes that have active sessions
+  const visiblePanes = useMemo(
+    () => activePanes.filter(id => sessions.has(id)),
+    [activePanes, sessions]
+  );
+
   // If a pane is maximized, only show that pane
   if (maximizedPane) {
     const session = sessions.get(maximizedPane);
@@ -102,12 +108,6 @@ export function MultiPaneLayout({
       );
     }
   }
-
-  // Filter to only show panes that have active sessions
-  const visiblePanes = useMemo(
-    () => activePanes.filter(id => sessions.has(id)),
-    [activePanes, sessions]
-  );
 
   if (visiblePanes.length === 0) {
     return null;
