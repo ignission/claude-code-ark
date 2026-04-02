@@ -75,16 +75,40 @@ worktreeの作成・削除はMCPツールを使ってください。
 ### 「タスク着手」
 
 ユーザーが思いついたタスクを壁打ちし、Issue/チケットを作成してからworktreeで着手させるフロー。
+ユーザーの入力にURL（http:// または https://）が含まれる場合は Phase 1b（URL経由）に進む。含まれない場合は Phase 1a（壁打ち）に進む。
 
-#### Phase 1: 壁打ち
+#### Phase 1a: 壁打ち（URLなしの場合）
 1. list_repositoriesで全リポジトリ一覧を取得
 2. 番号付きリストでリポジトリを提示し、ユーザーに選ばせる
 3. ユーザーがリポジトリを選択したら、タスクの内容をヒアリング
    - 「どんなタスクですか？」と聞く
    - ユーザーの説明を深掘り・整理する（目的、スコープ、受入条件など）
    - 壁打ちが十分と判断したら「この内容でIssue/チケットを作成しますか？」と要約を提示
+4. → Phase 2へ進む
 
-#### Phase 2: Issue/チケット作成（mainセッション経由）
+#### Phase 1b: URL経由（URLありの場合）
+ユーザーがチケット/IssueのURLを貼って着手を依頼した場合のフロー。チケット内容の取得とブランチ名提案はmainセッションのClaude Codeに委譲する（mainはJira MCP、gh CLI等のフルツールアクセスを持つため）。
+
+1. list_repositoriesで全リポジトリ一覧を取得
+2. 番号付きリストでリポジトリを提示し、ユーザーに選ばせる
+3. 選択されたリポジトリのmainワークツリーを特定する
+   - list_worktreesでisMain=trueのworktreeを探す
+4. mainのセッションを確認・起動する
+   - list_sessionsで既存セッションを確認。mainのworktreeに紐づくセッションがあれば:
+     - get_session_outputで状態を確認し、入力待ち/アイドルの場合のみそのセッションを流用する
+     - 作業中や判断待ちの場合は「mainセッションが使用中です。中断してよいですか？」とユーザーに確認する
+   - セッションがなければstart_sessionでmainのセッションを起動
+5. mainセッションにチケット内容取得とブランチ名提案を指示する
+   - send_to_sessionで以下を送信:
+     「以下のURLのチケット/Issue内容を取得し、以下の形式で回答してください。\n\n## タスク要約\n- タイトル: ...\n- 説明: ...\n- 受入条件: ...（あれば）\n\n## ブランチ名提案\nfeat/xxx/slug の形式で1つ提案してください。\n\nURL: {ユーザーが貼ったURL}」
+6. mainセッションの出力を監視する
+   - get_session_outputを数回ポーリングし、タスク要約とブランチ名提案を検出する
+   - 検出できない場合は「内容を取得できませんでした。mainセッションの状態を確認してください」と報告して終了
+7. 取得した内容をユーザーに表示して確認する
+   - タスク要約とブランチ名案を表示し、「この内容で着手しますか？」と確認
+8. 確認OK → Phase 3へ進む（壁打ちで整理した要約の代わりに、mainから取得したタスク要約を使う。ブランチ名もmainの提案を使う）
+
+#### Phase 2: Issue/チケット作成（mainセッション経由、Phase 1aからのみ）
 4. 選択されたリポジトリのmainワークツリーを特定する
    - list_worktreesでisMain=trueのworktreeを探す
 5. mainのセッションを確認・起動する
@@ -94,21 +118,18 @@ worktreeの作成・削除はMCPツールを使ってください。
    - セッションがなければstart_sessionでmainのセッションを起動
 6. mainセッションにIssue/チケット作成を指示する
    - send_to_sessionで以下を送信:
-     「以下のタスクのIssue（またはチケット）を作成してください。作成先はプロジェクトの設定に従ってください。\n\nタスク内容:\n{壁打ちで整理した要約}\n\n作成したIssue/チケットの識別子（例: #123 や PROJ-123）とURLを教えてください。」
+     「以下のタスクのIssue（またはチケット）を作成してください。作成先はプロジェクトの設定に従ってください。\n\nタスク内容:\n{壁打ちで整理した要約}\n\n作成したIssue/チケットの識別子（例: #123 や PROJ-123）とURLを教えてください。\nまた、適切なブランチ名をfeat/xxx/slug の形式で1つ提案してください。」
 7. mainセッションの出力を監視する
-   - get_session_outputを数回ポーリングし、Issue/チケットの識別子とURLを検出する
+   - get_session_outputを数回ポーリングし、Issue/チケットの識別子・URLとブランチ名提案を検出する
    - 見つかったらユーザーに報告: 「{識別子} を作成しました」
 
-#### Phase 3: worktree作成＆タスク着手
-8. Issue/チケットの識別子からブランチ名を構築する
-   - チケット番号とslugの区切りはハイフンではなくスラッシュ（/）を使う（slug内のハイフンは可）
-   - GitHub Issue: feat/123/slug（例: feat/123/add-search）
-   - Jira: feat/PROJ-123/slug（例: feat/PMDEV-325/supplier-password）
-   - ユーザーに確認: 「このブランチ名でよいですか？」
+#### Phase 3: worktree作成＆タスク着手（Phase 1b / Phase 2 共通）
+8. mainセッションが提案したブランチ名をユーザーに確認する
+   - 「このブランチ名でよいですか？ {ブランチ名}」
 9. 確認が取れたら:
    - create_worktreeでworktreeを作成（返り値にworktreeのIDとパスが含まれる）
    - start_sessionでセッションを起動（create_worktreeの返り値のidとpathを使う）
-   - send_to_sessionでタスク内容 + Issue/チケットURLをClaude Codeに入力
+   - send_to_sessionでタスク内容 + チケットURLをClaude Codeに入力
 10. 「セッションを起動してタスクを指示しました。進捗確認で状況を確認できます。」と報告
 
 ### 「PR URL」
@@ -238,7 +259,7 @@ class MessageQueue {
       if (this.messages.length > 0) {
         yield this.messages.shift()!;
       } else {
-        const msg = await new Promise<SDKUserMessage>(resolve => {
+        const msg = await new Promise<SDKUserMessage>((resolve) => {
           this.waiting = resolve;
         });
         // close()で解決された場合はyieldせずにループを抜ける
@@ -288,7 +309,7 @@ export interface BeaconDeps {
   createWorktree: (
     repoPath: string,
     branchName: string,
-    baseBranch?: string
+    baseBranch?: string,
   ) => Promise<unknown>;
   deleteWorktree: (repoPath: string, worktreePath: string) => Promise<void>;
   getRepos: () => string[];
@@ -373,7 +394,7 @@ export class BeaconManager extends EventEmitter {
               .optional()
               .describe("リポジトリパス（省略時は全リポジトリ）"),
           },
-          handler: async args => {
+          handler: async (args) => {
             const repoPath = args.repoPath as string | undefined;
             if (repoPath) {
               const worktrees = await deps.listWorktrees(repoPath);
@@ -419,7 +440,7 @@ export class BeaconManager extends EventEmitter {
             worktreeId: z.string().describe("worktreeのID"),
             worktreePath: z.string().describe("worktreeのパス"),
           },
-          handler: async args => {
+          handler: async (args) => {
             const worktreeId = args.worktreeId as string;
             const worktreePath = args.worktreePath as string;
             const session = await deps.startSession(worktreeId, worktreePath);
@@ -439,7 +460,7 @@ export class BeaconManager extends EventEmitter {
           inputSchema: {
             sessionId: z.string().describe("セッションID"),
           },
-          handler: async args => {
+          handler: async (args) => {
             const sessionId = args.sessionId as string;
             deps.stopSession(sessionId);
             return {
@@ -460,7 +481,7 @@ export class BeaconManager extends EventEmitter {
             sessionId: z.string().describe("セッションID"),
             message: z.string().describe("送信するテキスト"),
           },
-          handler: async args => {
+          handler: async (args) => {
             deps.sendMessage(args.sessionId as string, args.message as string);
             return {
               content: [
@@ -482,7 +503,7 @@ export class BeaconManager extends EventEmitter {
               .string()
               .describe("送信するキー（y, n, C-c, Escape, Enter, S-Tab）"),
           },
-          handler: async args => {
+          handler: async (args) => {
             const validKeys = new Set([
               "Enter",
               "C-c",
@@ -529,10 +550,10 @@ export class BeaconManager extends EventEmitter {
               .optional()
               .describe("取得する行数（デフォルト: 100）"),
           },
-          handler: async args => {
+          handler: async (args) => {
             const output = deps.capturePane(
               args.sessionId as string,
-              (args.lines as number | undefined) ?? 100
+              (args.lines as number | undefined) ?? 100,
             );
             if (output === null) {
               return {
@@ -560,12 +581,12 @@ export class BeaconManager extends EventEmitter {
               .optional()
               .describe("ベースブランチ（省略時はHEAD）"),
           },
-          handler: async args => {
+          handler: async (args) => {
             try {
               const worktree = await deps.createWorktree(
                 args.repoPath as string,
                 args.branchName as string,
-                args.baseBranch as string | undefined
+                args.baseBranch as string | undefined,
               );
               return {
                 content: [
@@ -591,11 +612,11 @@ export class BeaconManager extends EventEmitter {
             repoPath: z.string().describe("リポジトリのパス"),
             worktreePath: z.string().describe("削除するworktreeのパス"),
           },
-          handler: async args => {
+          handler: async (args) => {
             try {
               await deps.deleteWorktree(
                 args.repoPath as string,
-                args.worktreePath as string
+                args.worktreePath as string,
               );
               return {
                 content: [
@@ -617,7 +638,7 @@ export class BeaconManager extends EventEmitter {
           inputSchema: {
             worktreePath: z.string().describe("worktreeのパス"),
           },
-          handler: async args => {
+          handler: async (args) => {
             const url = await deps.getPrUrl(args.worktreePath as string);
             if (url) {
               return {
@@ -642,14 +663,14 @@ export class BeaconManager extends EventEmitter {
             args: z
               .array(z.string())
               .describe(
-                'ghサブコマンドと引数（例: ["pr", "view", "--json", "url"]）'
+                'ghサブコマンドと引数（例: ["pr", "view", "--json", "url"]）',
               ),
             cwd: z
               .string()
               .optional()
               .describe("実行ディレクトリ（省略時はHOME）"),
           },
-          handler: async params => {
+          handler: async (params) => {
             const args = params.args as string[];
             // コマンドキーを構築（"pr view", "status" 等）
             const commandKey =
@@ -722,7 +743,7 @@ export class BeaconManager extends EventEmitter {
     const idleMs = now - this.session.lastActivity.getTime();
     if (idleMs > IDLE_TIMEOUT_MS) {
       console.log(
-        `[BeaconManager] セッションがアイドルタイムアウト (${Math.round(idleMs / 60000)}分)`
+        `[BeaconManager] セッションがアイドルタイムアウト (${Math.round(idleMs / 60000)}分)`,
       );
       this.closeSession();
     }
