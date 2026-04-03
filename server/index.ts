@@ -25,6 +25,7 @@ import type {
 } from "../shared/types.js";
 import { authManager } from "./lib/auth.js";
 import { beaconManager } from "./lib/beacon-manager.js";
+import { db } from "./lib/database.js";
 import { getErrorMessage } from "./lib/errors.js";
 import {
   createWorktree,
@@ -155,6 +156,9 @@ async function startServer() {
       "Quick Tunnel mode enabled - using temporary *.trycloudflare.com URL with token authentication"
     );
   }
+
+  // JSON body parser（Settings API用）
+  app.use(express.json());
 
   // セキュリティヘッダー
   app.use((_req, res, next) => {
@@ -348,6 +352,72 @@ async function startServer() {
 
     return tunnelUrl;
   }
+
+  // ===== Settings API =====
+
+  // 全設定を取得
+  app.get("/api/settings", (_req, res) => {
+    try {
+      const settings = db.getAllSettings();
+      res.json(settings);
+    } catch (e) {
+      res.status(500).json({ error: getErrorMessage(e) });
+    }
+  });
+
+  // 特定キーの設定を取得
+  app.get("/api/settings/:key", (req, res) => {
+    try {
+      const value = db.getSetting(req.params.key);
+      if (value === undefined) {
+        res.status(404).json({ error: "Setting not found" });
+        return;
+      }
+      res.json({ value });
+    } catch (e) {
+      res.status(500).json({ error: getErrorMessage(e) });
+    }
+  });
+
+  // 複数キーを一括更新
+  app.put("/api/settings", (req, res) => {
+    try {
+      const entries = req.body;
+      if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
+        res.status(400).json({ error: "Body must be a JSON object" });
+        return;
+      }
+      db.setSettings(entries);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: getErrorMessage(e) });
+    }
+  });
+
+  // 単一キーを更新
+  app.put("/api/settings/:key", (req, res) => {
+    try {
+      const { value } = req.body;
+      if (value === undefined) {
+        res.status(400).json({ error: "Body must have a 'value' field" });
+        return;
+      }
+      db.setSetting(req.params.key, value);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: getErrorMessage(e) });
+    }
+  });
+
+  // 設定を削除
+  app.delete("/api/settings/:key", (req, res) => {
+    try {
+      db.deleteSetting(req.params.key);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: getErrorMessage(e) });
+    }
+  });
 
   // ===== ttyd Proxy Routes =====
 
