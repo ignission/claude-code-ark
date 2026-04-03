@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState } from "react";
 import { MessageSquare, Square, Trash2 } from "lucide-react";
-import type { ManagedSession, Worktree } from "../../../shared/types";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,6 +17,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import type { ManagedSession, Worktree } from "../../../shared/types";
 
 /** プレビュー無変化でアイドル判定するまでの秒数 */
 const IDLE_THRESHOLD_MS = 10_000;
