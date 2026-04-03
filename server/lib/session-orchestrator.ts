@@ -337,6 +337,7 @@ export class SessionOrchestrator extends EventEmitter {
     sessionId: string;
     text: string;
     activityText: string;
+    status: SessionStatus;
     timestamp: number;
   }> {
     const allSessions = tmuxManager.getAllSessions();
@@ -344,6 +345,7 @@ export class SessionOrchestrator extends EventEmitter {
       sessionId: string;
       text: string;
       activityText: string;
+      status: SessionStatus;
       timestamp: number;
     }> = [];
 
@@ -384,23 +386,16 @@ export class SessionOrchestrator extends EventEmitter {
       // ✢✻行（アイドル時表示用）
       const activityLine = allLines.findLast(line => /[✢✻]/.test(line)) || "";
 
-      // Claude Codeのアクティビティ記号でステータスを判定
-      // ✢ = 稼働中（スピナー）、✻ = 待機中（Baked for ...）
-      const hasActiveSpinner = allLines.some(line => /✢/.test(line));
-      const hasIdleIndicator = allLines.some(line => /✻/.test(line));
-
-      if (hasActiveSpinner) {
-        db.updateSessionStatus(session.id, "active");
-      } else if (hasIdleIndicator || text === "") {
-        // ✻表示（待機中）またはコンテンツなし（起動中等）→ idle
-        db.updateSessionStatus(session.id, "idle");
-      }
-      // どちらの記号もなくコンテンツありの場合はDB状態を維持（許可待ち等）
+      // コンテンツ行が空 → idle（起動中アニメーションやno content）
+      // コンテンツ行あり → active
+      const status: SessionStatus = text === "" ? "idle" : "active";
+      db.updateSessionStatus(session.id, status);
 
       previews.push({
         sessionId: session.id,
         text,
         activityText: activityLine,
+        status,
         timestamp: Date.now(),
       });
     }

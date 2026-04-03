@@ -430,6 +430,17 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     });
 
     socket.on("session:previews", previews => {
+      // セッションのstatusをプレビューから更新
+      setSessions(prev => {
+        const next = new Map(prev);
+        for (const p of previews) {
+          const existing = next.get(p.sessionId);
+          if (existing && existing.status !== p.status) {
+            next.set(p.sessionId, { ...existing, status: p.status });
+          }
+        }
+        return next;
+      });
       setSessionPreviews(prev => {
         const next = new Map(prev);
         for (const p of previews) {

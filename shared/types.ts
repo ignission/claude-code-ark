@@ -123,6 +123,7 @@ export interface ServerToClientEvents {
       sessionId: string;
       text: string;
       activityText: string;
+      status: SessionStatus;
       timestamp: number;
     }>
   ) => void;

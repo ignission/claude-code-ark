@@ -875,7 +875,7 @@ async function startServer() {
       beaconManager.closeSession();
     });
 
-    // セッションプレビューのポーリング（3秒間隔）
+    // セッションプレビューのポーリング（1秒間隔）
     const previewInterval = setInterval(() => {
       try {
         const previews = sessionOrchestrator.getAllPreviews();
@@ -885,7 +885,7 @@ async function startServer() {
       } catch (err) {
         console.error("[Preview] Error:", getErrorMessage(err));
       }
-    }, 3000);
+    }, 1000);
 
     // 接続時に初回プレビューを送信
     try {
