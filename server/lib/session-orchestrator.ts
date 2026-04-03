@@ -357,9 +357,7 @@ export class SessionOrchestrator extends EventEmitter {
         if (line.includes("shift+tab to cycle")) return true;
         if (line.includes("auto mode")) return true;
         if (line.includes("plan mode")) return true;
-        // 対話UIのヒント行
-        if (line.includes("Enter to select")) return true;
-        if (line.includes("to navigate")) return true;
+        // 対話UIのヒント行（Enter to selectは選択待ちなので除外しない）
         if (line.includes("Baked for")) return true;
         if (line.includes("Chat about this")) return true;
         // メニュー選択肢（"1. ...", "S. ...", "a. ..." 等の短い行）
