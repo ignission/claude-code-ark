@@ -127,6 +127,8 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [repoPath, setRepoPath] = useState<string | null>(
     options.initialRepoPath ?? null
   );
+  // 再接続時に最新のrepoPathを参照するためのref
+  const repoPathRef = useRef(options.initialRepoPath ?? null);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [deletedWorktreeId, setDeletedWorktreeId] = useState<string | null>(
     null
@@ -167,6 +169,25 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [beaconStreaming, setBeaconStreaming] = useState(false);
   const [beaconStreamText, setBeaconStreamText] = useState("");
 
+  // repoPathRefをrepoPathの変化に同期させる
+  useEffect(() => {
+    repoPathRef.current = repoPath;
+  }, [repoPath]);
+
+  // repoPath変更時にコールバック通知（setState外で呼ぶことでStrictModeの二重実行を回避）
+  useEffect(() => {
+    optionsRef.current.onRepoPathChange?.(repoPath);
+  }, [repoPath]);
+
+  // repoList変更時にコールバック通知
+  const prevRepoListRef = useRef(repoList);
+  useEffect(() => {
+    if (prevRepoListRef.current !== repoList) {
+      prevRepoListRef.current = repoList;
+      optionsRef.current.onRepoListChange?.(repoList);
+    }
+  }, [repoList]);
+
   // Initialize socket connection
   useEffect(() => {
     const serverUrl = import.meta.env.DEV
@@ -187,9 +208,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       setIsConnected(true);
       setError(null);
 
-      // 保存されたリポジトリを自動復元（optionsから取得）
-      if (optionsRef.current.initialRepoPath) {
-        socket.emit("repo:select", optionsRef.current.initialRepoPath);
+      // 保存されたリポジトリを自動復元（再接続時は最新のrepoPathRefを使用）
+      if (repoPathRef.current) {
+        socket.emit("repo:select", repoPathRef.current);
       }
     });
 
@@ -213,14 +234,12 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     // Repository events
     socket.on("repo:set", path => {
       setRepoPath(path);
-      optionsRef.current.onRepoPathChange?.(path);
 
       // リポジトリリストに追加（重複しない場合）
+      // コールバック通知はuseEffectで行う（StrictMode二重実行対策）
       setRepoList(prev => {
         if (prev.includes(path)) return prev;
-        const newList = [...prev, path];
-        optionsRef.current.onRepoListChange?.(newList);
-        return newList;
+        return [...prev, path];
       });
 
       setError(null);
@@ -448,17 +467,13 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
   const removeRepo = useCallback(
     (path: string) => {
-      setRepoList(prev => {
-        const newList = prev.filter(p => p !== path);
-        optionsRef.current.onRepoListChange?.(newList);
-        return newList;
-      });
+      // コールバック通知はuseEffectで行う（StrictMode二重実行対策）
+      setRepoList(prev => prev.filter(p => p !== path));
 
       // 削除したリポジトリが選択中の場合はクリア
       if (repoPath === path) {
         setRepoPath(null);
         setWorktrees([]);
-        optionsRef.current.onRepoPathChange?.(null);
       }
     },
     [repoPath]

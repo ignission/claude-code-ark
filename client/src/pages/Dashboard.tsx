@@ -108,6 +108,16 @@ export default function Dashboard() {
     }
   }, [isSettingsLoading, getSetting]);
 
+  // 設定読み込み完了後にリポジトリを復元（Socket接続が設定読み込みより先に完了する場合の対策）
+  useEffect(() => {
+    if (!isSettingsLoading && settingsInitializedRef.current) {
+      const repoPath = getSetting<string | null>("selectedRepoPath", null);
+      if (repoPath) {
+        selectRepo(repoPath);
+      }
+    }
+  }, [isSettingsLoading, getSetting, selectRepo]);
+
   // selectedSessionIdのサーバー永続化
   useEffect(() => {
     if (settingsInitializedRef.current) {
