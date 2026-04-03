@@ -36,7 +36,7 @@ export function CreateWorktreeDialog({
       }
       onOpenChange(isOpen);
     },
-    [onOpenChange],
+    [onOpenChange]
   );
 
   const handleCreate = useCallback(() => {
@@ -66,7 +66,7 @@ export function CreateWorktreeDialog({
         handleCreate();
       }
     },
-    [newBranchName, handleCreate],
+    [newBranchName, handleCreate]
   );
 
   // Base Branch入力: エンターで作成
@@ -77,7 +77,7 @@ export function CreateWorktreeDialog({
         handleCreate();
       }
     },
-    [handleCreate],
+    [handleCreate]
   );
 
   return (
@@ -96,7 +96,7 @@ export function CreateWorktreeDialog({
               id="branch"
               placeholder="feature/new-feature"
               value={newBranchName}
-              onChange={(e) => setNewBranchName(e.target.value)}
+              onChange={e => setNewBranchName(e.target.value)}
               onKeyDown={handleBranchNameKeyDown}
               className="font-mono h-12 md:h-10 text-base md:text-sm"
             />
@@ -107,7 +107,7 @@ export function CreateWorktreeDialog({
               id="baseBranch"
               placeholder="main"
               value={baseBranch}
-              onChange={(e) => setBaseBranch(e.target.value)}
+              onChange={e => setBaseBranch(e.target.value)}
               onKeyDown={handleBaseBranchKeyDown}
               className="font-mono h-12 md:h-10 text-base md:text-sm"
             />

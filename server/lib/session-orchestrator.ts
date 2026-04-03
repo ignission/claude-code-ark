@@ -59,7 +59,7 @@ export class SessionOrchestrator extends EventEmitter {
         !fs.existsSync(tmuxSession.worktreePath)
       ) {
         console.log(
-          `[Orchestrator] Cleaning up orphaned session (worktree deleted): ${tmuxSession.tmuxSessionName} -> ${tmuxSession.worktreePath}`,
+          `[Orchestrator] Cleaning up orphaned session (worktree deleted): ${tmuxSession.tmuxSessionName} -> ${tmuxSession.worktreePath}`
         );
         tmuxManager.killSession(tmuxSession.id);
         const dbSession = db.getSessionByWorktreePath(tmuxSession.worktreePath);
@@ -73,7 +73,7 @@ export class SessionOrchestrator extends EventEmitter {
       const dbSession = db.getSessionByWorktreePath(tmuxSession.worktreePath);
       if (dbSession) {
         console.log(
-          `[Orchestrator] Restored session: ${tmuxSession.tmuxSessionName} -> ${dbSession.id}`,
+          `[Orchestrator] Restored session: ${tmuxSession.tmuxSessionName} -> ${dbSession.id}`
         );
       }
 
@@ -82,22 +82,22 @@ export class SessionOrchestrator extends EventEmitter {
         .startInstance(tmuxSession.id, tmuxSession.tmuxSessionName)
         .then(() => {
           console.log(
-            `[Orchestrator] Started ttyd for restored session: ${tmuxSession.id}`,
+            `[Orchestrator] Started ttyd for restored session: ${tmuxSession.id}`
           );
           // ttyd起動完了をクライアントに通知（ttydPort/ttydUrlを含む最新情報を送信）
           const dbSession = db.getSessionByWorktreePath(
-            tmuxSession.worktreePath,
+            tmuxSession.worktreePath
           );
           const managed = this.toManagedSession(
             tmuxSession,
-            dbSession?.worktreeId || "",
+            dbSession?.worktreeId || ""
           );
           this.emit("session:updated", managed);
         })
-        .catch((err) => {
+        .catch(err => {
           console.error(
             `[Orchestrator] Failed to start ttyd for ${tmuxSession.id}:`,
-            err.message,
+            err.message
           );
         });
     }
@@ -108,7 +108,7 @@ export class SessionOrchestrator extends EventEmitter {
    */
   private toManagedSession(
     tmuxSession: TmuxSession,
-    worktreeId: string,
+    worktreeId: string
   ): ManagedSession {
     const ttydInstance = ttydManager.getInstance(tmuxSession.id);
     return {
@@ -146,7 +146,7 @@ export class SessionOrchestrator extends EventEmitter {
    */
   async startSession(
     worktreeId: string,
-    worktreePath: string,
+    worktreePath: string
   ): Promise<ManagedSession> {
     // 既存セッションがあれば再利用
     const existingTmux = tmuxManager.getSessionByWorktree(worktreePath);
@@ -156,7 +156,7 @@ export class SessionOrchestrator extends EventEmitter {
       if (!ttydInstance) {
         ttydInstance = await ttydManager.startInstance(
           existingTmux.id,
-          existingTmux.tmuxSessionName,
+          existingTmux.tmuxSessionName
         );
       }
 
@@ -171,7 +171,7 @@ export class SessionOrchestrator extends EventEmitter {
     // ttydインスタンスを起動
     const ttydInstance = await ttydManager.startInstance(
       tmuxSession.id,
-      tmuxSession.tmuxSessionName,
+      tmuxSession.tmuxSessionName
     );
 
     // DBに保存（既存レコードがあればupsertで更新）
@@ -257,7 +257,7 @@ export class SessionOrchestrator extends EventEmitter {
    * 既存セッションを復元（ttydが起動していなければ起動）
    */
   async restoreSession(
-    worktreePath: string,
+    worktreePath: string
   ): Promise<ManagedSession | undefined> {
     const tmuxSession = tmuxManager.getSessionByWorktree(worktreePath);
     if (!tmuxSession) return undefined;
@@ -267,7 +267,7 @@ export class SessionOrchestrator extends EventEmitter {
     if (!ttydInstance) {
       ttydInstance = await ttydManager.startInstance(
         tmuxSession.id,
-        tmuxSession.tmuxSessionName,
+        tmuxSession.tmuxSessionName
       );
     }
 
@@ -288,7 +288,7 @@ export class SessionOrchestrator extends EventEmitter {
     for (const s of allSessions) {
       if (s.worktreePath && !fs.existsSync(s.worktreePath)) {
         console.log(
-          `[Orchestrator] Cleaning up orphaned session: ${s.tmuxSessionName} -> ${s.worktreePath}`,
+          `[Orchestrator] Cleaning up orphaned session: ${s.tmuxSessionName} -> ${s.worktreePath}`
         );
         ttydManager.stopInstance(s.id);
         tmuxManager.killSession(s.id);
@@ -299,7 +299,7 @@ export class SessionOrchestrator extends EventEmitter {
         this.emit("session:stopped", s.id);
       }
     }
-    return tmuxManager.getAllSessions().map((s) => {
+    return tmuxManager.getAllSessions().map(s => {
       const dbSession = db.getSessionByWorktreePath(s.worktreePath);
       return this.toManagedSession(s, dbSession?.worktreeId || "");
     });
@@ -344,8 +344,8 @@ export class SessionOrchestrator extends EventEmitter {
       if (raw === null) continue;
       const allLines = stripAnsi(raw)
         .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line !== "");
+        .map(line => line.trim())
+        .filter(line => line !== "");
 
       // Claude Code UI行を判定する関数
       const isUiLine = (line: string): boolean => {
@@ -370,11 +370,11 @@ export class SessionOrchestrator extends EventEmitter {
       };
 
       // UI行を除外した最後の行を取得
-      const contentLines = allLines.filter((line) => !isUiLine(line));
+      const contentLines = allLines.filter(line => !isUiLine(line));
       const text =
         contentLines.length > 0 ? contentLines[contentLines.length - 1] : "";
       // ✢✻行（アイドル時表示用）
-      const activityLine = allLines.findLast((line) => /[✢✻]/.test(line)) || "";
+      const activityLine = allLines.findLast(line => /[✢✻]/.test(line)) || "";
       previews.push({
         sessionId: session.id,
         text,

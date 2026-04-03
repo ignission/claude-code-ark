@@ -88,7 +88,7 @@ export default function Dashboard() {
       } catch {
         return null;
       }
-    },
+    }
   );
 
   // selectedSessionIdのlocalStorage永続化
@@ -96,7 +96,7 @@ export default function Dashboard() {
     try {
       localStorage.setItem(
         SELECTED_SESSION_STORAGE_KEY,
-        JSON.stringify(selectedSessionId),
+        JSON.stringify(selectedSessionId)
       );
     } catch {}
   }, [selectedSessionId]);
@@ -159,9 +159,7 @@ export default function Dashboard() {
   }, [deletedWorktreeId, clearDeletedWorktreeId]);
 
   const getSessionForWorktree = (worktreeId: string) => {
-    return Array.from(sessions.values()).find(
-      (s) => s.worktreeId === worktreeId,
-    );
+    return Array.from(sessions.values()).find(s => s.worktreeId === worktreeId);
   };
 
   const handleSelectRepo = (path: string) => {
@@ -200,7 +198,7 @@ export default function Dashboard() {
     stopSession(sessionId);
     if (selectedSessionId === sessionId) {
       const remaining = Array.from(sessions.values()).filter(
-        (s) => s.id !== sessionId,
+        s => s.id !== sessionId
       );
       setSelectedSessionId(remaining.length > 0 ? remaining[0].id : null);
     }
@@ -225,7 +223,7 @@ export default function Dashboard() {
           onDeleteWorktree={handleDeleteWorktree}
           onSendMessage={sendMessage}
           onSendKey={sendKey}
-          onSelectSession={(sessionId) => setSelectedSessionId(sessionId)}
+          onSelectSession={sessionId => setSelectedSessionId(sessionId)}
           onUploadImage={uploadImage}
           imageUploadResult={imageUploadResult}
           imageUploadError={imageUploadError}
@@ -261,9 +259,9 @@ export default function Dashboard() {
                 </div>
               )}
               <div className="flex-1 overflow-hidden relative">
-                {Array.from(sessions.values()).map((session) => {
+                {Array.from(sessions.values()).map(session => {
                   const isActive = selectedSessionId === session.id;
-                  const wt = worktrees.find((w) => w.id === session.worktreeId);
+                  const wt = worktrees.find(w => w.id === session.worktreeId);
                   const rn = (() => {
                     if (repoList.length === 0) return undefined;
                     const repo = findRepoForSession(session, repoList);
@@ -278,8 +276,8 @@ export default function Dashboard() {
                         session={session}
                         worktree={wt}
                         repoName={rn}
-                        onSendMessage={(msg) => sendMessage(session.id, msg)}
-                        onSendKey={(key) => sendKey(session.id, key)}
+                        onSendMessage={msg => sendMessage(session.id, msg)}
+                        onSendKey={key => sendKey(session.id, key)}
                         onStopSession={() => handleStopSession(session.id)}
                         onUploadImage={(base64, mimeType) =>
                           uploadImage(session.id, base64, mimeType)
@@ -334,13 +332,13 @@ export default function Dashboard() {
               <Label>Port</Label>
               <Select
                 value={selectedPort?.toString() ?? ""}
-                onValueChange={(v) => setSelectedPort(Number(v))}
+                onValueChange={v => setSelectedPort(Number(v))}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="ポートを選択..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {listeningPorts.map((p) => (
+                  {listeningPorts.map(p => (
                     <SelectItem key={p.port} value={p.port.toString()}>
                       {p.port} ({p.process})
                     </SelectItem>
@@ -354,9 +352,9 @@ export default function Dashboard() {
                 type="number"
                 placeholder="3000"
                 value={selectedPort ?? ""}
-                onChange={(e) =>
+                onChange={e =>
                   setSelectedPort(
-                    e.target.value ? Number(e.target.value) : null,
+                    e.target.value ? Number(e.target.value) : null
                   )
                 }
               />

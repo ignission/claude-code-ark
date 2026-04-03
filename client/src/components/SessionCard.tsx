@@ -69,7 +69,7 @@ export function SessionCard({
           : "hover:bg-sidebar-accent/50"
       }`}
       onClick={onClick}
-      onContextMenu={(e) => {
+      onContextMenu={e => {
         e.preventDefault();
         onStop();
       }}

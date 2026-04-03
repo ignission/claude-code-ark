@@ -81,7 +81,7 @@ interface UseSocketReturn {
   uploadImage: (
     sessionId: string,
     base64Data: string,
-    mimeType: string,
+    mimeType: string
   ) => void;
   imageUploadResult: { path: string; filename: string } | null;
   imageUploadError: string | null;
@@ -121,10 +121,10 @@ export function useSocket(): UseSocketReturn {
   });
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [deletedWorktreeId, setDeletedWorktreeId] = useState<string | null>(
-    null,
+    null
   );
   const [sessions, setSessions] = useState<Map<string, ManagedSession>>(
-    new Map(),
+    new Map()
   );
 
   // Tunnel state
@@ -148,7 +148,7 @@ export function useSocket(): UseSocketReturn {
 
   // Session previews state
   const [sessionPreviews, setSessionPreviews] = useState<Map<string, string>>(
-    new Map(),
+    new Map()
   );
   const [sessionActivityTexts, setSessionActivityTexts] = useState<
     Map<string, string>
@@ -191,25 +191,25 @@ export function useSocket(): UseSocketReturn {
       setIsConnected(false);
     });
 
-    socket.on("connect_error", (err) => {
+    socket.on("connect_error", err => {
       console.error("Socket connection error:", err);
       setError("Failed to connect to server");
       setIsConnected(false);
     });
 
     // Allowed repositories list
-    socket.on("repos:list", (repos) => {
+    socket.on("repos:list", repos => {
       console.log("Allowed repos received:", repos);
       setAllowedRepos(repos);
     });
 
     // Repository events
-    socket.on("repo:set", (path) => {
+    socket.on("repo:set", path => {
       setRepoPath(path);
       localStorage.setItem("selectedRepoPath", path);
 
       // リポジトリリストに追加（重複しない場合）
-      setRepoList((prev) => {
+      setRepoList(prev => {
         if (prev.includes(path)) return prev;
         const newList = [...prev, path];
         localStorage.setItem("repoList", JSON.stringify(newList));
@@ -219,12 +219,12 @@ export function useSocket(): UseSocketReturn {
       setError(null);
     });
 
-    socket.on("repo:error", (err) => {
+    socket.on("repo:error", err => {
       setError(err);
     });
 
     // Repository scanning events
-    socket.on("repos:scanned", (repos) => {
+    socket.on("repos:scanned", repos => {
       console.log("Scanned repos:", repos.length);
       setScannedRepos(repos);
     });
@@ -242,30 +242,30 @@ export function useSocket(): UseSocketReturn {
     });
 
     // Worktree events
-    socket.on("worktree:list", (wts) => {
+    socket.on("worktree:list", wts => {
       setWorktrees(wts);
     });
 
-    socket.on("worktree:created", (wt) => {
-      setWorktrees((prev) => [...prev, wt]);
+    socket.on("worktree:created", wt => {
+      setWorktrees(prev => [...prev, wt]);
     });
 
-    socket.on("worktree:deleted", (wtId) => {
-      setWorktrees((prev) => prev.filter((w) => w.id !== wtId));
+    socket.on("worktree:deleted", wtId => {
+      setWorktrees(prev => prev.filter(w => w.id !== wtId));
       setDeletedWorktreeId(wtId);
     });
 
-    socket.on("worktree:error", (err) => {
+    socket.on("worktree:error", err => {
       setError(err);
     });
 
     // Session events (ttyd-based)
     const updateSession = (session: ManagedSession): void => {
-      setSessions((prev) => new Map(prev).set(session.id, session));
+      setSessions(prev => new Map(prev).set(session.id, session));
     };
 
     socket.on("session:list", (sessions: ManagedSession[]) => {
-      setSessions((prev) => {
+      setSessions(prev => {
         const next = new Map(prev);
         for (const session of sessions) {
           next.set(session.id, session);
@@ -274,32 +274,32 @@ export function useSocket(): UseSocketReturn {
       });
     });
 
-    socket.on("session:created", (session) => {
+    socket.on("session:created", session => {
       console.log(
         "[Socket] Session created:",
         session.id,
         "ttydUrl:",
-        session.ttydUrl,
+        session.ttydUrl
       );
       updateSession(session);
     });
 
     socket.on("session:updated", updateSession);
 
-    socket.on("session:stopped", (sessionId) => {
-      setSessions((prev) => {
+    socket.on("session:stopped", sessionId => {
+      setSessions(prev => {
         const next = new Map(prev);
         next.delete(sessionId);
         return next;
       });
     });
 
-    socket.on("session:restored", (session) => {
+    socket.on("session:restored", session => {
       console.log(
         "[Socket] Session restored:",
         session.id,
         "ttydUrl:",
-        session.ttydUrl,
+        session.ttydUrl
       );
       updateSession(session);
     });
@@ -308,13 +308,13 @@ export function useSocket(): UseSocketReturn {
       "session:restore_failed",
       ({ worktreePath: _path, error: err }) => {
         console.log("[Socket] Session restore failed:", err);
-      },
+      }
     );
 
     socket.on("session:error", ({ sessionId, error: err }) => {
       setError(err);
       if (sessionId) {
-        setSessions((prev) => {
+        setSessions(prev => {
           const next = new Map(prev);
           const session = next.get(sessionId);
           if (session) {
@@ -362,7 +362,7 @@ export function useSocket(): UseSocketReturn {
     });
 
     // Image upload events
-    socket.on("image:uploaded", (data) => {
+    socket.on("image:uploaded", data => {
       console.log("[Socket] Image uploaded:", data.path);
       setImageUploadResult(data);
       setImageUploadError(null);
@@ -376,7 +376,7 @@ export function useSocket(): UseSocketReturn {
 
     // Beaconイベント
     socket.on("beacon:message", (message: ChatMessage) => {
-      setBeaconMessages((prev) => [...prev, message]);
+      setBeaconMessages(prev => [...prev, message]);
       if (message.role === "assistant") {
         setBeaconStreaming(false);
         setBeaconStreamText("");
@@ -389,7 +389,7 @@ export function useSocket(): UseSocketReturn {
         setBeaconStreamText("");
       } else {
         setBeaconStreaming(true);
-        setBeaconStreamText((prev) => prev + data.chunk);
+        setBeaconStreamText(prev => prev + data.chunk);
       }
     });
 
@@ -403,15 +403,15 @@ export function useSocket(): UseSocketReturn {
       setBeaconStreamText("");
     });
 
-    socket.on("session:previews", (previews) => {
-      setSessionPreviews((prev) => {
+    socket.on("session:previews", previews => {
+      setSessionPreviews(prev => {
         const next = new Map(prev);
         for (const p of previews) {
           next.set(p.sessionId, p.text);
         }
         return next;
       });
-      setSessionActivityTexts((prev) => {
+      setSessionActivityTexts(prev => {
         const next = new Map(prev);
         for (const p of previews) {
           next.set(p.sessionId, p.activityText);
@@ -441,8 +441,8 @@ export function useSocket(): UseSocketReturn {
 
   const removeRepo = useCallback(
     (path: string) => {
-      setRepoList((prev) => {
-        const newList = prev.filter((p) => p !== path);
+      setRepoList(prev => {
+        const newList = prev.filter(p => p !== path);
         localStorage.setItem("repoList", JSON.stringify(newList));
         return newList;
       });
@@ -454,7 +454,7 @@ export function useSocket(): UseSocketReturn {
         localStorage.removeItem("selectedRepoPath");
       }
     },
-    [repoPath],
+    [repoPath]
   );
 
   const scanRepos = useCallback((basePath: string) => {
@@ -471,7 +471,7 @@ export function useSocket(): UseSocketReturn {
         baseBranch,
       });
     },
-    [repoPath],
+    [repoPath]
   );
 
   const deleteWorktree = useCallback(
@@ -479,7 +479,7 @@ export function useSocket(): UseSocketReturn {
       if (!repoPath) return;
       socketRef.current?.emit("worktree:delete", { repoPath, worktreePath });
     },
-    [repoPath],
+    [repoPath]
   );
 
   const refreshWorktrees = useCallback(() => {
@@ -496,7 +496,7 @@ export function useSocket(): UseSocketReturn {
     (worktreeId: string, worktreePath: string) => {
       socketRef.current?.emit("session:start", { worktreeId, worktreePath });
     },
-    [],
+    []
   );
 
   const stopSession = useCallback((sessionId: string) => {
@@ -546,7 +546,7 @@ export function useSocket(): UseSocketReturn {
         mimeType,
       });
     },
-    [],
+    []
   );
 
   const clearImageUploadState = useCallback(() => {
@@ -582,7 +582,7 @@ export function useSocket(): UseSocketReturn {
   // Copy buffer action
   const copyBuffer = useCallback(
     (sessionId: string): Promise<string | null> => {
-      return new Promise((resolve) => {
+      return new Promise(resolve => {
         if (!socketRef.current) {
           resolve(null);
           return;
@@ -599,11 +599,11 @@ export function useSocket(): UseSocketReturn {
               console.error("[Socket] Copy buffer error:", response.error);
               resolve(null);
             }
-          },
+          }
         );
       });
     },
-    [],
+    []
   );
 
   return {

@@ -54,7 +54,7 @@ export function SidebarMainLayout({
     const handleMouseMove = (e: MouseEvent) => {
       const newWidth = Math.min(
         SIDEBAR_MAX_WIDTH,
-        Math.max(SIDEBAR_MIN_WIDTH, e.clientX),
+        Math.max(SIDEBAR_MIN_WIDTH, e.clientX)
       );
       widthRef.current = newWidth;
       setSidebarWidth(newWidth);
