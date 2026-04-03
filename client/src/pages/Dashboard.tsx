@@ -87,7 +87,7 @@ export default function Dashboard() {
       } catch {
         return null;
       }
-    }
+    },
   );
 
   // selectedSessionIdのlocalStorage永続化
@@ -95,7 +95,7 @@ export default function Dashboard() {
     try {
       localStorage.setItem(
         SELECTED_SESSION_STORAGE_KEY,
-        JSON.stringify(selectedSessionId)
+        JSON.stringify(selectedSessionId),
       );
     } catch {}
   }, [selectedSessionId]);
@@ -116,6 +116,14 @@ export default function Dashboard() {
   useEffect(() => {
     if (error) toast.error(error);
   }, [error]);
+
+  // 旧レイアウトのlocalStorageキーをクリーンアップ
+  useEffect(() => {
+    localStorage.removeItem("activePanesPerRepo");
+    localStorage.removeItem("maximizedPane");
+    localStorage.removeItem("closedPanes");
+    localStorage.removeItem("sidebar-width");
+  }, []);
 
   // Beacon履歴をマウント時に読み込む
   useEffect(() => {
@@ -150,7 +158,9 @@ export default function Dashboard() {
   }, [deletedWorktreeId, clearDeletedWorktreeId]);
 
   const getSessionForWorktree = (worktreeId: string) => {
-    return Array.from(sessions.values()).find(s => s.worktreeId === worktreeId);
+    return Array.from(sessions.values()).find(
+      (s) => s.worktreeId === worktreeId,
+    );
   };
 
   const handleSelectRepo = (path: string) => {
@@ -187,7 +197,7 @@ export default function Dashboard() {
     stopSession(sessionId);
     if (selectedSessionId === sessionId) {
       const remaining = Array.from(sessions.values()).filter(
-        s => s.id !== sessionId
+        (s) => s.id !== sessionId,
       );
       setSelectedSessionId(remaining.length > 0 ? remaining[0].id : null);
     }
@@ -206,7 +216,7 @@ export default function Dashboard() {
     ? sessions.get(selectedSessionId)
     : undefined;
   const selectedWorktree = selectedSession
-    ? worktrees.find(w => w.id === selectedSession.worktreeId)
+    ? worktrees.find((w) => w.id === selectedSession.worktreeId)
     : undefined;
   const selectedRepoName = (() => {
     if (!selectedSession || repoList.length === 0) return undefined;
@@ -227,7 +237,7 @@ export default function Dashboard() {
           onDeleteWorktree={handleDeleteWorktree}
           onSendMessage={sendMessage}
           onSendKey={sendKey}
-          onSelectSession={sessionId => setSelectedSessionId(sessionId)}
+          onSelectSession={(sessionId) => setSelectedSessionId(sessionId)}
           onUploadImage={uploadImage}
           imageUploadResult={imageUploadResult}
           imageUploadError={imageUploadError}
@@ -267,8 +277,10 @@ export default function Dashboard() {
                     session={selectedSession}
                     worktree={selectedWorktree}
                     repoName={selectedRepoName}
-                    onSendMessage={msg => sendMessage(selectedSession.id, msg)}
-                    onSendKey={key => sendKey(selectedSession.id, key)}
+                    onSendMessage={(msg) =>
+                      sendMessage(selectedSession.id, msg)
+                    }
+                    onSendKey={(key) => sendKey(selectedSession.id, key)}
                     onStopSession={() => handleStopSession(selectedSession.id)}
                     onUploadImage={(base64, mimeType) =>
                       uploadImage(selectedSession.id, base64, mimeType)
@@ -321,13 +333,13 @@ export default function Dashboard() {
               <Label>Port</Label>
               <Select
                 value={selectedPort?.toString() ?? ""}
-                onValueChange={v => setSelectedPort(Number(v))}
+                onValueChange={(v) => setSelectedPort(Number(v))}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="ポートを選択..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {listeningPorts.map(p => (
+                  {listeningPorts.map((p) => (
                     <SelectItem key={p.port} value={p.port.toString()}>
                       {p.port} ({p.process})
                     </SelectItem>
@@ -341,9 +353,9 @@ export default function Dashboard() {
                 type="number"
                 placeholder="3000"
                 value={selectedPort ?? ""}
-                onChange={e =>
+                onChange={(e) =>
                   setSelectedPort(
-                    e.target.value ? Number(e.target.value) : null
+                    e.target.value ? Number(e.target.value) : null,
                   )
                 }
               />
