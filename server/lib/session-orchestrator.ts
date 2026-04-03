@@ -392,8 +392,14 @@ export class SessionOrchestrator extends EventEmitter {
       // コンテンツ行あり → active
       const status: SessionStatus = text === "" ? "idle" : "active";
       // ステータス変化時のみDB更新（不要なI/Oを回避）
+      // stopped/errorはライフサイクル駆動のstatusなので上書きしない
       const dbSession = db.getSessionByWorktreePath(session.worktreePath);
-      if (!dbSession || dbSession.status !== status) {
+      if (
+        dbSession &&
+        dbSession.status !== "stopped" &&
+        dbSession.status !== "error" &&
+        dbSession.status !== status
+      ) {
         db.updateSessionStatus(session.id, status);
       }
 
