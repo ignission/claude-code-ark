@@ -345,8 +345,8 @@ export class SessionOrchestrator extends EventEmitter {
         .map((line) => line.trim())
         .filter((line) => line !== "");
 
-      // ✢✻行（活動/完了ステータス）を最優先で取得
-      const activityLine = allLines.findLast((line) => /[✢✻]/.test(line));
+      // ✢行（作業中）のみ最優先で表示
+      const activityLine = allLines.findLast((line) => line.includes("✢"));
       if (activityLine) {
         previews.push({
           sessionId: session.id,
@@ -358,6 +358,8 @@ export class SessionOrchestrator extends EventEmitter {
 
       // Claude Code UI行を判定する関数
       const isUiLine = (line: string): boolean => {
+        // 完了ステータス行（✻）はUI行として除外→直上のコンテンツを表示
+        if (line.includes("✻")) return true;
         // ステータスバー・モード表示
         if (line.includes("⏵")) return true;
         if (line.includes("bypass permissions")) return true;
