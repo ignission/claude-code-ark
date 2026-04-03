@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # PostToolUse (Write|Edit) フック
-# ファイル編集後に自動フォーマットを実行
+# ファイル編集後に自動リント・フォーマットを実行し、残った違反をadditionalContextとしてClaudeに返す
+# 自動修正を先に行い、残った違反だけを報告する方針
 # リントエラーでスクリプト自体が終了しないよう set -eo pipefail は使わない
 
 # プロジェクトルート
@@ -30,7 +31,7 @@ case "$EXT" in
   ts|tsx|js|jsx)
     # --- TypeScript/JavaScriptファイル ---
 
-    # biomeで自動フォーマット（出力は捨てる）
+    # biome formatで自動フォーマット（出力は捨てる）
     (cd "$PROJECT_ROOT" && npx biome format --write "$FILE_PATH" >/dev/null 2>&1) || true
 
     # フォーマットが変更されたか確認（git diffで検出）
@@ -39,6 +40,19 @@ case "$EXT" in
         "hookSpecificOutput": {
           "hookEventName": "PostToolUse",
           "additionalContext": "biomeによりフォーマットが自動修正されました。変更内容を確認してください。"
+        }
+      }'
+    fi
+
+    # biome checkで残りの違反を取得
+    LINT_OUTPUT=$(cd "$PROJECT_ROOT" && npx biome check "$FILE_PATH" 2>&1 | head -20) || true
+
+    # biomeの出力にエラーや警告が含まれている場合のみ報告
+    if echo "$LINT_OUTPUT" | grep -qE '(diagnostics|FIXABLE|error|×)'; then
+      jq -n --arg violations "$LINT_OUTPUT" '{
+        "hookSpecificOutput": {
+          "hookEventName": "PostToolUse",
+          "additionalContext": ("リント違反が検出されました。修正してください:\n" + $violations)
         }
       }'
     fi

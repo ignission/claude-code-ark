@@ -29,7 +29,7 @@ basename="$(basename "$file")"
 
 # 保護対象の判定（basename判定）
 case "$basename" in
-  .prettierrc|.prettierrc.*|prettier.config.*) ;;
+  biome.json|biome.jsonc) ;;
   .eslintrc*|eslint.config.*) ;;
   .editorconfig) ;;
   tsconfig.json) ;;

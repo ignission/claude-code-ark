@@ -15,6 +15,10 @@ IS_GH_PR_CREATE=false
 # git push の検出（git stash push 等の誤検出を防ぐ）
 if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+(.+[[:space:]]+)?push([[:space:]]|$) ]] && ! [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+(stash|submodule)[[:space:]] ]]; then
   IS_GIT_PUSH=true
+  # dry-run（-n/--dry-run）は実際にpushしないため全処理をスキップ
+  if [[ "$COMMAND" =~ (^|[[:space:]])(-n|--dry-run)([[:space:]]|$) ]]; then
+    exit 0
+  fi
 fi
 
 # gh pr create の検出（gh -R owner/repo pr create 等、オプションが間に入るケースにも対応）
@@ -39,10 +43,26 @@ CHECK_SCRIPT="$PROJECT_DIR/.claude/hooks/check-ci-coderabbit.sh"
 # CodeRabbit返信はpush完了後にのみ許可するため、push成功の証跡を残す
 # -------------------------------------------------------------------
 if $IS_GIT_PUSH; then
-  # dry-run（-n/--dry-run）は実際にpushしないためマーカー作成をスキップ
-  if ! [[ "$COMMAND" =~ (^|[[:space:]])(-n|--dry-run)([[:space:]]|$) ]]; then
-    # マーカーにpush時のHEAD commit SHAを記録（push完了の証跡+SHA一致検証用）
-    git rev-parse HEAD > "$PROJECT_DIR/.claude/push-completed.marker"
+  UNRESOLVED_CONTEXT=""
+  # マーカーにpush時のHEAD commit SHAを記録（push完了の証跡+SHA一致検証用）
+  git rev-parse HEAD > "$PROJECT_DIR/.claude/push-completed.marker"
+
+  # 未解決CodeRabbitスレッドの取得（push直後に一覧表示するため）
+  source "$PROJECT_DIR/.claude/hooks/fetch-unresolved-threads.sh"
+  fetch_unresolved_threads
+
+  if [[ "$UNRESOLVED_THREADS_ERROR" == "true" ]]; then
+    UNRESOLVED_CONTEXT="[CodeRabbit未解決スレッド: 取得失敗]\n"
+    UNRESOLVED_CONTEXT="${UNRESOLVED_CONTEXT}未解決スレッドの取得に失敗しました。/check-coderabbit で再確認してください。\n\n"
+  elif [[ "$UNRESOLVED_THREADS_COUNT" -gt 0 ]]; then
+    PUSH_UNRESOLVED_LIST=$(printf '%s\n' "$UNRESOLVED_THREADS_JSON" | jq -r '
+      [.[] | "- " + (.path // "(no path)") + (if .line == null then "" else ":" + (.line | tostring) end) + " — " + ((.body // "") | split("\n")[0] | .[0:120])]
+      | join("\n")
+    ' 2>/dev/null) || PUSH_UNRESOLVED_LIST=""
+
+    UNRESOLVED_CONTEXT="[CodeRabbit未解決スレッド: ${UNRESOLVED_THREADS_COUNT}件]\n"
+    UNRESOLVED_CONTEXT="${UNRESOLVED_CONTEXT}以下のスレッドが未解決です。修正コミットをpushした場合は、各スレッドへの返信を忘れないでください。\n"
+    UNRESOLVED_CONTEXT="${UNRESOLVED_CONTEXT}${PUSH_UNRESOLVED_LIST}\n\n"
   fi
 fi
 
@@ -53,6 +73,8 @@ CONTEXT=""
 
 if $IS_GIT_PUSH; then
   CONTEXT="[CI・CodeRabbit監視 - push後]\n"
+  # 未解決スレッド一覧を追加（0件の場合はUNRESOLVED_CONTEXTが空なので何も追加されない）
+  CONTEXT="${CONTEXT}${UNRESOLVED_CONTEXT}"
 elif $IS_GH_PR_CREATE; then
   PR_NUMBER=$(gh pr view --json number -q '.number' 2>/dev/null) || true
   CONTEXT="[CI・CodeRabbit監視 - PR #${PR_NUMBER:-?} 作成後]\n"

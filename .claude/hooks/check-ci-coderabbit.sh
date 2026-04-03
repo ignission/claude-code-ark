@@ -76,63 +76,21 @@ fi
 # === 3. 未解決レビュースレッド取得（GraphQL API） ===
 # PUSH_TIMEベースのフィルタは不要。未解決スレッド数がCodeRabbit指摘の判定基準。
 
-CR_UNRESOLVED=0
-CR_COMMENTS_JSON="[]"
-CR_GQL_ERROR="false"
-REPO_OWNER=$(printf '%s\n' "$REPO_INFO" | cut -d'/' -f1)
-REPO_NAME=$(printf '%s\n' "$REPO_INFO" | cut -d'/' -f2)
-PR_NUM=$(gh pr view --json number -q '.number' 2>/dev/null) || PR_NUM=""
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/fetch-unresolved-threads.sh"
+fetch_unresolved_threads
 
-if [[ -n "$PR_NUM" ]]; then
-  UNRESOLVED_DATA=$(gh api graphql -f query="
-    {
-      repository(owner: \"${REPO_OWNER}\", name: \"${REPO_NAME}\") {
-        pullRequest(number: ${PR_NUM}) {
-          reviewThreads(first: 100) {
-            nodes {
-              isResolved
-              comments(first: 1) {
-                nodes {
-                  author { login }
-                  body
-                  path
-                  line
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  " 2>/dev/null) || UNRESOLVED_DATA=""
+CR_UNRESOLVED="$UNRESOLVED_THREADS_COUNT"
+CR_GQL_ERROR="$UNRESOLVED_THREADS_ERROR"
 
-  if [[ -z "$UNRESOLVED_DATA" ]]; then
-    CR_GQL_ERROR="true"
-  else
-    CR_UNRESOLVED=$(printf '%s\n' "$UNRESOLVED_DATA" | jq '
-      [
-        .data.repository.pullRequest.reviewThreads.nodes[]
-        | select(.isResolved == false)
-        | select(.comments.nodes[0].author.login == "coderabbitai")
-      ] | length
-    ' 2>/dev/null) || CR_UNRESOLVED=0
-
-    CR_COMMENTS_JSON=$(printf '%s\n' "$UNRESOLVED_DATA" | jq '
-      [
-        .data.repository.pullRequest.reviewThreads.nodes[]
-        | select(.isResolved == false)
-        | .comments.nodes[0]
-        | select(.author.login == "coderabbitai")
-        | {
-            path: .path,
-            line: (.line // 0),
-            body_preview: (.body | .[0:100])
-          }
-      ]
-    ' 2>/dev/null) || CR_COMMENTS_JSON="[]"
-
-  fi
-fi
+# 監視スクリプト用のJSON形式に変換
+CR_COMMENTS_JSON=$(printf '%s\n' "$UNRESOLVED_THREADS_JSON" | jq '
+  [.[] | {
+    path: .path,
+    line: (.line // 0),
+    body_preview: (.body | .[0:100])
+  }]
+' 2>/dev/null) || CR_COMMENTS_JSON="[]"
 
 # === 4. 総合判定と出力 ===
 
