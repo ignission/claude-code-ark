@@ -49,7 +49,7 @@ export function MobileLayout({
   sessions,
   worktrees,
   repoName,
-  repoPath,
+  repoPath: _repoPath,
   onStartSession,
   onStopSession,
   onDeleteWorktree,
@@ -189,6 +189,7 @@ export function MobileLayout({
       {showBottomNav && (
         <nav className="fixed bottom-0 left-0 right-0 border-t border-border bg-background z-50 flex">
           <button
+            type="button"
             className={`flex-1 py-3 text-center text-sm font-medium ${
               activeView !== "beacon"
                 ? "text-primary border-t-2 border-primary"
@@ -199,6 +200,7 @@ export function MobileLayout({
             セッション
           </button>
           <button
+            type="button"
             className={`flex-1 py-3 text-center text-sm font-medium ${
               activeView === "beacon"
                 ? "text-primary border-t-2 border-primary"
