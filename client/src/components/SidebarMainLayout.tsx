@@ -16,32 +16,39 @@ import {
 const SIDEBAR_MIN_WIDTH = 180;
 const SIDEBAR_MAX_WIDTH = 450;
 const SIDEBAR_DEFAULT_WIDTH = 250;
-const SIDEBAR_WIDTH_KEY = "ark-sidebar-width";
 
 interface SidebarMainLayoutProps {
   sidebar: ReactNode;
   main: ReactNode;
   beacon: ReactNode;
+  initialSidebarWidth?: number;
+  onSidebarWidthChange?: (width: number) => void;
 }
 
 export function SidebarMainLayout({
   sidebar,
   main,
   beacon,
+  initialSidebarWidth = SIDEBAR_DEFAULT_WIDTH,
+  onSidebarWidthChange,
 }: SidebarMainLayoutProps) {
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    try {
-      const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
-      if (saved) {
-        const parsed = Number.parseInt(saved, 10);
-        if (parsed >= SIDEBAR_MIN_WIDTH && parsed <= SIDEBAR_MAX_WIDTH)
-          return parsed;
-      }
-    } catch {}
-    return SIDEBAR_DEFAULT_WIDTH;
-  });
+  const [sidebarWidth, setSidebarWidth] = useState(
+    Math.min(
+      SIDEBAR_MAX_WIDTH,
+      Math.max(SIDEBAR_MIN_WIDTH, initialSidebarWidth)
+    )
+  );
   const [isResizing, setIsResizing] = useState(false);
   const widthRef = useRef(sidebarWidth);
+
+  useEffect(() => {
+    const clamped = Math.min(
+      SIDEBAR_MAX_WIDTH,
+      Math.max(SIDEBAR_MIN_WIDTH, initialSidebarWidth)
+    );
+    setSidebarWidth(clamped);
+    widthRef.current = clamped;
+  }, [initialSidebarWidth]);
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -62,7 +69,7 @@ export function SidebarMainLayout({
 
     const handleMouseUp = () => {
       setIsResizing(false);
-      localStorage.setItem(SIDEBAR_WIDTH_KEY, widthRef.current.toString());
+      onSidebarWidthChange?.(widthRef.current);
     };
 
     document.addEventListener("mousemove", handleMouseMove);
@@ -76,7 +83,7 @@ export function SidebarMainLayout({
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-  }, [isResizing]);
+  }, [isResizing, onSidebarWidthChange]);
 
   return (
     <div className="h-[100dvh] flex relative">

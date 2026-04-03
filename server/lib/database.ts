@@ -147,6 +147,15 @@ class SessionDatabase {
       CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
       CREATE INDEX IF NOT EXISTS idx_sessions_worktree_path ON sessions(worktree_path);
     `);
+
+    // 設定テーブルの作成（汎用KVストア）
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
   }
 
   // ============================================================
@@ -344,6 +353,80 @@ class SessionDatabase {
       type: row.type as MessageType,
       timestamp: new Date(row.timestamp),
     };
+  }
+
+  // ============================================================
+  // 設定CRUD操作
+  // ============================================================
+
+  /**
+   * 全ての設定を取得
+   */
+  getAllSettings(): Record<string, unknown> {
+    const stmt = this.db.prepare("SELECT key, value FROM settings");
+    const rows = stmt.all() as Array<{ key: string; value: string }>;
+    const result: Record<string, unknown> = {};
+    for (const row of rows) {
+      try {
+        result[row.key] = JSON.parse(row.value);
+      } catch {
+        result[row.key] = row.value;
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 特定キーの設定を取得
+   */
+  getSetting(key: string): unknown | undefined {
+    const stmt = this.db.prepare("SELECT value FROM settings WHERE key = ?");
+    const row = stmt.get(key) as { value: string } | undefined;
+    if (!row) return undefined;
+    try {
+      return JSON.parse(row.value);
+    } catch {
+      return row.value;
+    }
+  }
+
+  /**
+   * 設定を保存（UPSERT）
+   */
+  setSetting(key: string, value: unknown): void {
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(`
+      INSERT INTO settings (key, value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `);
+    stmt.run(key, JSON.stringify(value), now);
+  }
+
+  /**
+   * 複数の設定を一括保存（トランザクション）
+   */
+  setSettings(entries: Record<string, unknown>): void {
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(`
+      INSERT INTO settings (key, value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `);
+    const transaction = this.db.transaction(() => {
+      for (const [key, value] of Object.entries(entries)) {
+        stmt.run(key, JSON.stringify(value), now);
+      }
+    });
+    transaction();
+  }
+
+  /**
+   * 設定を削除
+   */
+  deleteSetting(key: string): void {
+    const stmt = this.db.prepare("DELETE FROM settings WHERE key = ?");
+    stmt.run(key);
   }
 
   /**

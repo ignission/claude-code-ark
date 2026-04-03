@@ -25,6 +25,7 @@ import type {
 } from "../shared/types.js";
 import { authManager } from "./lib/auth.js";
 import { beaconManager } from "./lib/beacon-manager.js";
+import { db } from "./lib/database.js";
 import { getErrorMessage } from "./lib/errors.js";
 import {
   createWorktree,
@@ -155,6 +156,9 @@ async function startServer() {
       "Quick Tunnel mode enabled - using temporary *.trycloudflare.com URL with token authentication"
     );
   }
+
+  // JSON body parser（Settings API用）
+  app.use(express.json({ limit: "10kb" }));
 
   // セキュリティヘッダー
   app.use((_req, res, next) => {
@@ -348,6 +352,104 @@ async function startServer() {
 
     return tunnelUrl;
   }
+
+  // ===== Settings API =====
+
+  // Settings APIのキー名バリデーション
+  const isValidSettingKey = (key: string): boolean =>
+    /^[a-zA-Z0-9_\-:.]+$/.test(key) && key.length <= 64;
+
+  // 全設定を取得
+  app.get("/api/settings", (_req, res) => {
+    try {
+      const settings = db.getAllSettings();
+      res.json(settings);
+    } catch (e) {
+      console.error("Settings API error:", getErrorMessage(e));
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // 特定キーの設定を取得
+  app.get("/api/settings/:key", (req, res) => {
+    if (!isValidSettingKey(req.params.key)) {
+      res.status(400).json({ error: "Invalid setting key" });
+      return;
+    }
+    try {
+      const value = db.getSetting(req.params.key);
+      if (value === undefined) {
+        res.status(404).json({ error: "Setting not found" });
+        return;
+      }
+      res.json({ value });
+    } catch (e) {
+      console.error("Settings API error:", getErrorMessage(e));
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // 複数キーを一括更新
+  app.put("/api/settings", (req, res) => {
+    try {
+      const entries = req.body;
+      if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
+        res.status(400).json({ error: "Body must be a JSON object" });
+        return;
+      }
+      const keys = Object.keys(entries);
+      if (keys.length > 50) {
+        res.status(400).json({ error: "Too many keys (max 50)" });
+        return;
+      }
+      for (const key of keys) {
+        if (!isValidSettingKey(key)) {
+          res.status(400).json({ error: "Invalid setting key" });
+          return;
+        }
+      }
+      db.setSettings(entries);
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("Settings API error:", getErrorMessage(e));
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // 単一キーを更新
+  app.put("/api/settings/:key", (req, res) => {
+    if (!isValidSettingKey(req.params.key)) {
+      res.status(400).json({ error: "Invalid setting key" });
+      return;
+    }
+    try {
+      const { value } = req.body;
+      if (value === undefined) {
+        res.status(400).json({ error: "Body must have a 'value' field" });
+        return;
+      }
+      db.setSetting(req.params.key, value);
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("Settings API error:", getErrorMessage(e));
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // 設定を削除
+  app.delete("/api/settings/:key", (req, res) => {
+    if (!isValidSettingKey(req.params.key)) {
+      res.status(400).json({ error: "Invalid setting key" });
+      return;
+    }
+    try {
+      db.deleteSetting(req.params.key);
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("Settings API error:", getErrorMessage(e));
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
 
   // ===== ttyd Proxy Routes =====
 

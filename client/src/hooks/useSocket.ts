@@ -27,6 +27,13 @@ function getTokenFromUrl(): string | null {
   return params.get("token");
 }
 
+interface UseSocketOptions {
+  initialRepoList?: string[];
+  initialRepoPath?: string | null;
+  onRepoListChange?: (list: string[]) => void;
+  onRepoPathChange?: (path: string | null) => void;
+}
+
 interface UseSocketReturn {
   isConnected: boolean;
   error: string | null;
@@ -104,21 +111,24 @@ interface UseSocketReturn {
   beaconClear: () => void;
 }
 
-export function useSocket(): UseSocketReturn {
+export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const socketRef = useRef<TypedSocket | null>(null);
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [allowedRepos, setAllowedRepos] = useState<string[]>([]);
   const [scannedRepos, setScannedRepos] = useState<RepoInfo[]>([]);
   const [isScanning, setIsScanning] = useState(false);
 
-  const [repoList, setRepoList] = useState<string[]>(() => {
-    const saved = localStorage.getItem("repoList");
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [repoPath, setRepoPath] = useState<string | null>(() => {
-    return localStorage.getItem("selectedRepoPath");
-  });
+  const [repoList, setRepoList] = useState<string[]>(
+    options.initialRepoList ?? []
+  );
+  const [repoPath, setRepoPath] = useState<string | null>(
+    options.initialRepoPath ?? null
+  );
+  // 再接続時に最新のrepoPathを参照するためのref
+  const repoPathRef = useRef(options.initialRepoPath ?? null);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [deletedWorktreeId, setDeletedWorktreeId] = useState<string | null>(
     null
@@ -159,6 +169,25 @@ export function useSocket(): UseSocketReturn {
   const [beaconStreaming, setBeaconStreaming] = useState(false);
   const [beaconStreamText, setBeaconStreamText] = useState("");
 
+  // repoPathRefをrepoPathの変化に同期させる
+  useEffect(() => {
+    repoPathRef.current = repoPath;
+  }, [repoPath]);
+
+  // repoPath変更時にコールバック通知（setState外で呼ぶことでStrictModeの二重実行を回避）
+  useEffect(() => {
+    optionsRef.current.onRepoPathChange?.(repoPath);
+  }, [repoPath]);
+
+  // repoList変更時にコールバック通知
+  const prevRepoListRef = useRef(repoList);
+  useEffect(() => {
+    if (prevRepoListRef.current !== repoList) {
+      prevRepoListRef.current = repoList;
+      optionsRef.current.onRepoListChange?.(repoList);
+    }
+  }, [repoList]);
+
   // Initialize socket connection
   useEffect(() => {
     const serverUrl = import.meta.env.DEV
@@ -179,10 +208,9 @@ export function useSocket(): UseSocketReturn {
       setIsConnected(true);
       setError(null);
 
-      // 保存されたリポジトリを自動復元
-      const savedRepoPath = localStorage.getItem("selectedRepoPath");
-      if (savedRepoPath) {
-        socket.emit("repo:select", savedRepoPath);
+      // 保存されたリポジトリを自動復元（再接続時は最新のrepoPathRefを使用）
+      if (repoPathRef.current) {
+        socket.emit("repo:select", repoPathRef.current);
       }
     });
 
@@ -206,14 +234,12 @@ export function useSocket(): UseSocketReturn {
     // Repository events
     socket.on("repo:set", path => {
       setRepoPath(path);
-      localStorage.setItem("selectedRepoPath", path);
 
       // リポジトリリストに追加（重複しない場合）
+      // コールバック通知はuseEffectで行う（StrictMode二重実行対策）
       setRepoList(prev => {
         if (prev.includes(path)) return prev;
-        const newList = [...prev, path];
-        localStorage.setItem("repoList", JSON.stringify(newList));
-        return newList;
+        return [...prev, path];
       });
 
       setError(null);
@@ -441,17 +467,13 @@ export function useSocket(): UseSocketReturn {
 
   const removeRepo = useCallback(
     (path: string) => {
-      setRepoList(prev => {
-        const newList = prev.filter(p => p !== path);
-        localStorage.setItem("repoList", JSON.stringify(newList));
-        return newList;
-      });
+      // コールバック通知はuseEffectで行う（StrictMode二重実行対策）
+      setRepoList(prev => prev.filter(p => p !== path));
 
       // 削除したリポジトリが選択中の場合はクリア
       if (repoPath === path) {
         setRepoPath(null);
         setWorktrees([]);
-        localStorage.removeItem("selectedRepoPath");
       }
     },
     [repoPath]
