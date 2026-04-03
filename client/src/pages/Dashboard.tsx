@@ -210,18 +210,6 @@ export default function Dashboard() {
     }
   };
 
-  const selectedSession = selectedSessionId
-    ? sessions.get(selectedSessionId)
-    : undefined;
-  const selectedWorktree = selectedSession
-    ? worktrees.find(w => w.id === selectedSession.worktreeId)
-    : undefined;
-  const selectedRepoName = (() => {
-    if (!selectedSession || repoList.length === 0) return undefined;
-    const repo = findRepoForSession(selectedSession, repoList);
-    return repo ? getBaseName(repo) : undefined;
-  })();
-
   return (
     <>
       {isMobile ? (
@@ -269,28 +257,41 @@ export default function Dashboard() {
                   <span>Not connected to server</span>
                 </div>
               )}
-              <div className="flex-1 overflow-hidden">
-                {selectedSession ? (
-                  <TerminalPane
-                    session={selectedSession}
-                    worktree={selectedWorktree}
-                    repoName={selectedRepoName}
-                    onSendMessage={msg => sendMessage(selectedSession.id, msg)}
-                    onSendKey={key => sendKey(selectedSession.id, key)}
-                    onStopSession={() => handleStopSession(selectedSession.id)}
-                    onUploadImage={(base64, mimeType) =>
-                      uploadImage(selectedSession.id, base64, mimeType)
-                    }
-                    imageUploadResult={imageUploadResult}
-                    imageUploadError={imageUploadError}
-                    onClearImageUploadState={clearImageUploadState}
-                    onCopyBuffer={
-                      copyBuffer
-                        ? () => copyBuffer(selectedSession.id)
-                        : undefined
-                    }
-                  />
-                ) : (
+              <div className="flex-1 overflow-hidden relative">
+                {Array.from(sessions.values()).map(session => {
+                  const isActive = selectedSessionId === session.id;
+                  const wt = worktrees.find(w => w.id === session.worktreeId);
+                  const rn = (() => {
+                    if (repoList.length === 0) return undefined;
+                    const repo = findRepoForSession(session, repoList);
+                    return repo ? getBaseName(repo) : undefined;
+                  })();
+                  return (
+                    <div
+                      key={session.id}
+                      className={isActive ? "h-full flex flex-col" : "hidden"}
+                    >
+                      <TerminalPane
+                        session={session}
+                        worktree={wt}
+                        repoName={rn}
+                        onSendMessage={msg => sendMessage(session.id, msg)}
+                        onSendKey={key => sendKey(session.id, key)}
+                        onStopSession={() => handleStopSession(session.id)}
+                        onUploadImage={(base64, mimeType) =>
+                          uploadImage(session.id, base64, mimeType)
+                        }
+                        imageUploadResult={imageUploadResult}
+                        imageUploadError={imageUploadError}
+                        onClearImageUploadState={clearImageUploadState}
+                        onCopyBuffer={
+                          copyBuffer ? () => copyBuffer(session.id) : undefined
+                        }
+                      />
+                    </div>
+                  );
+                })}
+                {sessions.size === 0 && (
                   <div className="h-full flex items-center justify-center">
                     <div className="text-center">
                       <Terminal className="w-12 h-12 text-muted-foreground/50 mx-auto mb-4" />
