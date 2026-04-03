@@ -214,19 +214,22 @@ function renderSegments(
   onAction?: (text: string) => void
 ): ReactNode[] {
   return segments.map((seg, i) => {
+    const key = `${seg.type}-${i}-${
+      "content" in seg && seg.content ? seg.content.slice(0, 10) : ""
+    }`;
     switch (seg.type) {
       case "text":
-        return <span key={i}>{seg.content}</span>;
+        return <span key={key}>{seg.content}</span>;
       case "bold":
         return (
-          <strong key={i} className="text-foreground font-semibold">
+          <strong key={key} className="text-foreground font-semibold">
             {seg.content}
           </strong>
         );
       case "link":
         return (
           <a
-            key={i}
+            key={key}
             href={seg.url}
             target="_blank"
             rel="noopener noreferrer"
@@ -238,7 +241,7 @@ function renderSegments(
       case "code-inline":
         return (
           <code
-            key={i}
+            key={key}
             className="bg-primary/10 text-primary rounded px-1.5 py-0.5 text-[13px] font-mono"
           >
             {seg.content}
@@ -247,7 +250,7 @@ function renderSegments(
       case "code-block":
         return (
           <pre
-            key={i}
+            key={key}
             className="bg-background/80 rounded-md p-3 my-2 overflow-x-auto text-xs font-mono whitespace-pre-wrap break-words border border-border/40"
           >
             {seg.lang && (
@@ -261,7 +264,7 @@ function renderSegments(
       case "heading":
         return (
           <div
-            key={i}
+            key={key}
             className={`font-semibold mt-3 mb-1 tracking-tight ${seg.level <= 2 ? "text-[15px] text-foreground" : "text-sm text-foreground/90"}`}
           >
             {renderSegments(seg.children, onAction)}
@@ -269,14 +272,14 @@ function renderSegments(
         );
       case "list-item":
         return (
-          <ul key={i} className="list-disc ml-4">
+          <ul key={key} className="list-disc ml-4">
             <li className="my-0.5">{renderSegments(seg.children, onAction)}</li>
           </ul>
         );
       case "numbered-item":
         return (
           <button
-            key={i}
+            key={key}
             type="button"
             className="group flex items-center gap-2.5 w-full text-left my-0.5 px-3 py-2.5 rounded-lg border border-border/40 bg-card/50 hover:bg-primary/5 hover:border-primary/30 active:bg-primary/10 text-sm transition-all min-h-[44px]"
             onClick={() => onAction?.(seg.plainText)}
@@ -293,7 +296,7 @@ function renderSegments(
         return (
           <button
             type="button"
-            key={i}
+            key={key}
             className="group flex items-center gap-2.5 w-full text-left my-0.5 px-3 py-2.5 rounded-lg border border-border/40 bg-card/50 hover:bg-primary/5 hover:border-primary/30 active:bg-primary/10 text-sm transition-all min-h-[44px]"
             onClick={() => onAction?.(seg.plainText)}
           >
@@ -308,7 +311,7 @@ function renderSegments(
           </button>
         );
       case "break":
-        return <div key={i} className="h-2" />;
+        return <div key={key} className="h-2" />;
       default:
         return null;
     }
