@@ -1,5 +1,3 @@
-import { getBaseName } from "@/utils/pathUtils";
-import { findRepoForSession } from "@/utils/sessionUtils";
 import type { ManagedSession, Worktree } from "../../../shared/types";
 
 interface SessionCardProps {
@@ -30,18 +28,15 @@ function statusColor(status: ManagedSession["status"]): string {
 export function SessionCard({
   session,
   worktree,
-  repoList,
   isSelected,
   previewText,
   onClick,
   onStop,
 }: SessionCardProps) {
-  const repo = findRepoForSession(session, repoList);
-  const repoName = repo ? getBaseName(repo) : "";
+  // ブランチ名のみ表示（リポジトリ名はサイドバーのグループヘッダーで表示）
   const branch =
     worktree?.branch ||
     session.worktreePath.substring(session.worktreePath.lastIndexOf("/") + 1);
-  const label = repoName ? `${repoName}/${branch}` : branch;
 
   return (
     <button
@@ -52,19 +47,17 @@ export function SessionCard({
           : "hover:bg-sidebar-accent/50"
       }`}
       onClick={onClick}
-      onContextMenu={e => {
+      onContextMenu={(e) => {
         e.preventDefault();
         onStop();
       }}
     >
       <div className="flex items-center gap-2 min-w-0">
         <div
-          className={`w-2 h-2 rounded-full shrink-0 ${statusColor(
-            session.status
-          )}`}
+          className={`w-2 h-2 rounded-full shrink-0 ${statusColor(session.status)}`}
         />
         <span className="text-sm font-mono truncate text-sidebar-foreground">
-          {label}
+          {branch}
         </span>
         {isSelected && (
           <span className="ml-auto text-xs text-primary shrink-0">◀</span>

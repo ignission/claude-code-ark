@@ -1,13 +1,16 @@
 /**
- * SessionSidebar - 全セッションをフラット表示するサイドバー
+ * SessionSidebar - リポジトリ別にグルーピングしたセッション一覧サイドバー
  *
  * セッション一覧（SessionCard） + 新規作成「+」ボタンを提供。
- * リポジトリ横断で全セッションを表示する。
+ * リポジトリごとにヘッダーで区切って表示する。
  */
 
-import { Plus, Terminal } from "lucide-react";
+import { useMemo } from "react";
+import { FolderOpen, Plus, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { getBaseName } from "@/utils/pathUtils";
+import { findRepoForSession } from "@/utils/sessionUtils";
 import type { ManagedSession, Worktree } from "../../../shared/types";
 import { SessionCard } from "./SessionCard";
 
@@ -32,11 +35,22 @@ export function SessionSidebar({
   onStopSession,
   onNewSession,
 }: SessionSidebarProps) {
-  const sessionList = Array.from(sessions.values());
-
   const getWorktree = (session: ManagedSession): Worktree | undefined => {
-    return worktrees.find(w => w.id === session.worktreeId);
+    return worktrees.find((w) => w.id === session.worktreeId);
   };
+
+  // リポジトリ別にセッションをグルーピング
+  const groupedSessions = useMemo(() => {
+    const groups = new Map<string, ManagedSession[]>();
+    for (const session of sessions.values()) {
+      const repo = findRepoForSession(session, repoList);
+      const repoName = repo ? getBaseName(repo) : "unknown";
+      const existing = groups.get(repoName) || [];
+      existing.push(session);
+      groups.set(repoName, existing);
+    }
+    return groups;
+  }, [sessions, repoList]);
 
   return (
     <div className="h-full flex flex-col bg-sidebar">
@@ -59,26 +73,42 @@ export function SessionSidebar({
 
       {/* セッション一覧 */}
       <ScrollArea className="flex-1">
-        <div className="p-2 space-y-1">
-          {sessionList.length === 0 ? (
+        <div className="p-2">
+          {sessions.size === 0 ? (
             <div className="p-8 text-center text-muted-foreground text-sm">
               <Terminal className="w-8 h-8 mx-auto mb-3 opacity-50" />
               <p>セッションがありません</p>
               <p className="text-xs mt-1">「+」から新規作成</p>
             </div>
           ) : (
-            sessionList.map(session => (
-              <SessionCard
-                key={session.id}
-                session={session}
-                worktree={getWorktree(session)}
-                repoList={repoList}
-                isSelected={selectedSessionId === session.id}
-                previewText={sessionPreviews.get(session.id) || ""}
-                onClick={() => onSelectSession(session.id)}
-                onStop={() => onStopSession(session.id)}
-              />
-            ))
+            Array.from(groupedSessions.entries()).map(
+              ([repoName, repoSessions]) => (
+                <div key={repoName} className="mb-3">
+                  {/* リポジトリヘッダー */}
+                  <div className="flex items-center gap-1.5 px-2 py-1.5">
+                    <FolderOpen className="w-3 h-3 text-muted-foreground" />
+                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">
+                      {repoName}
+                    </span>
+                  </div>
+                  {/* そのリポジトリのセッション */}
+                  <div className="space-y-1">
+                    {repoSessions.map((session) => (
+                      <SessionCard
+                        key={session.id}
+                        session={session}
+                        worktree={getWorktree(session)}
+                        repoList={repoList}
+                        isSelected={selectedSessionId === session.id}
+                        previewText={sessionPreviews.get(session.id) || ""}
+                        onClick={() => onSelectSession(session.id)}
+                        onStop={() => onStopSession(session.id)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ),
+            )
           )}
         </div>
       </ScrollArea>
