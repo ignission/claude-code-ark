@@ -35,7 +35,7 @@ export function SessionSidebar({
   const sessionList = Array.from(sessions.values());
 
   const getWorktree = (session: ManagedSession): Worktree | undefined => {
-    return worktrees.find((w) => w.id === session.worktreeId);
+    return worktrees.find(w => w.id === session.worktreeId);
   };
 
   return (
@@ -67,7 +67,7 @@ export function SessionSidebar({
               <p className="text-xs mt-1">「+」から新規作成</p>
             </div>
           ) : (
-            sessionList.map((session) => (
+            sessionList.map(session => (
               <SessionCard
                 key={session.id}
                 session={session}
