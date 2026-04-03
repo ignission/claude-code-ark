@@ -49,7 +49,10 @@ export function useSettings() {
       .then(res => {
         if (res.ok) {
           for (const key of Object.keys(entries)) {
-            pendingRef.current.delete(key);
+            // flush中に新しい値が書き込まれていない場合のみ削除
+            if (pendingRef.current.get(key) === entries[key]) {
+              pendingRef.current.delete(key);
+            }
           }
         }
       })
