@@ -32,20 +32,22 @@ export function SidebarMainLayout({
   initialSidebarWidth = SIDEBAR_DEFAULT_WIDTH,
   onSidebarWidthChange,
 }: SidebarMainLayoutProps) {
-  const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
+  const [sidebarWidth, setSidebarWidth] = useState(
+    Math.min(
+      SIDEBAR_MAX_WIDTH,
+      Math.max(SIDEBAR_MIN_WIDTH, initialSidebarWidth)
+    )
+  );
   const [isResizing, setIsResizing] = useState(false);
   const widthRef = useRef(sidebarWidth);
 
-  const initializedRef = useRef(false);
   useEffect(() => {
-    if (
-      !initializedRef.current &&
-      initialSidebarWidth !== SIDEBAR_DEFAULT_WIDTH
-    ) {
-      initializedRef.current = true;
-      setSidebarWidth(initialSidebarWidth);
-      widthRef.current = initialSidebarWidth;
-    }
+    const clamped = Math.min(
+      SIDEBAR_MAX_WIDTH,
+      Math.max(SIDEBAR_MIN_WIDTH, initialSidebarWidth)
+    );
+    setSidebarWidth(clamped);
+    widthRef.current = clamped;
   }, [initialSidebarWidth]);
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
