@@ -20,6 +20,9 @@ import { ttydManager } from "./ttyd-manager.js";
 export type { ManagedSession };
 
 export class SessionOrchestrator extends EventEmitter {
+  /** プレビューテキストの前回値を保持し、変化検出に使用 */
+  private previousPreviews: Map<string, string> = new Map();
+
   constructor() {
     super();
     this.setupEventForwarding();
@@ -69,12 +72,13 @@ export class SessionOrchestrator extends EventEmitter {
         continue;
       }
 
-      // DBにセッション情報があれば更新
+      // DBにセッション情報があればstatusを尊重（idle等の永続化された状態を維持）
       const dbSession = db.getSessionByWorktreePath(tmuxSession.worktreePath);
       if (dbSession) {
         console.log(
-          `[Orchestrator] Restored session: ${tmuxSession.tmuxSessionName} -> ${dbSession.id}`
+          `[Orchestrator] Restored session: ${tmuxSession.tmuxSessionName} -> ${dbSession.id} (status: ${dbSession.status})`
         );
+        // DBのstatusがidle等の場合はそのまま維持し、activeで上書きしない
       }
 
       // ttydも自動起動（起動完了後にクライアントへ通知）
@@ -105,17 +109,24 @@ export class SessionOrchestrator extends EventEmitter {
 
   /**
    * TmuxSessionをManagedSessionに変換
+   * tmuxがrunning状態の場合はDBのstatusを優先し、idle状態をリロード後も維持する
    */
   private toManagedSession(
     tmuxSession: TmuxSession,
     worktreeId: string
   ): ManagedSession {
     const ttydInstance = ttydManager.getInstance(tmuxSession.id);
+    // tmuxがrunning状態の場合、DBのstatusを優先（idle等の永続化された状態を反映）
+    const dbSession = db.getSessionByWorktreePath(tmuxSession.worktreePath);
+    const status =
+      tmuxSession.status === "running"
+        ? (dbSession?.status as SessionStatus) || "active"
+        : this.mapTmuxStatus(tmuxSession.status);
     return {
       id: tmuxSession.id,
       worktreeId,
       worktreePath: tmuxSession.worktreePath,
-      status: this.mapTmuxStatus(tmuxSession.status),
+      status,
       createdAt: tmuxSession.createdAt,
       tmuxSessionName: tmuxSession.tmuxSessionName,
       ttydPort: ttydInstance?.port || null,
@@ -375,6 +386,20 @@ export class SessionOrchestrator extends EventEmitter {
         contentLines.length > 0 ? contentLines[contentLines.length - 1] : "";
       // ✢✻行（アイドル時表示用）
       const activityLine = allLines.findLast(line => /[✢✻]/.test(line)) || "";
+
+      // プレビューテキストの変化を追跡し、DBのstatusを更新
+      const previousText = this.previousPreviews.get(session.id);
+      if (previousText !== undefined) {
+        // 前回と比較して変化がなければidle、変化があればactive
+        if (text === previousText) {
+          db.updateSessionStatus(session.id, "idle");
+        } else {
+          db.updateSessionStatus(session.id, "active");
+        }
+      }
+      // 今回のプレビューテキストを保存
+      this.previousPreviews.set(session.id, text);
+
       previews.push({
         sessionId: session.id,
         text,
