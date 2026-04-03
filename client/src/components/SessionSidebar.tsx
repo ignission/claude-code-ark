@@ -20,6 +20,7 @@ interface SessionSidebarProps {
   repoList: string[];
   selectedSessionId: string | null;
   sessionPreviews: Map<string, string>;
+  sessionActivityTexts: Map<string, string>;
   onSelectSession: (sessionId: string) => void;
   onStopSession: (sessionId: string) => void;
   onNewSession: () => void;
@@ -31,6 +32,7 @@ export function SessionSidebar({
   repoList,
   selectedSessionId,
   sessionPreviews,
+  sessionActivityTexts,
   onSelectSession,
   onStopSession,
   onNewSession,
@@ -101,6 +103,9 @@ export function SessionSidebar({
                         repoList={repoList}
                         isSelected={selectedSessionId === session.id}
                         previewText={sessionPreviews.get(session.id) || ""}
+                        activityText={
+                          sessionActivityTexts.get(session.id) || ""
+                        }
                         onClick={() => onSelectSession(session.id)}
                         onStop={() => onStopSession(session.id)}
                       />

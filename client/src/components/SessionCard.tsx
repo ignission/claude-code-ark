@@ -10,6 +10,7 @@ interface SessionCardProps {
   repoList: string[];
   isSelected: boolean;
   previewText: string;
+  activityText: string;
   onClick: () => void;
   onStop: () => void;
 }
@@ -19,6 +20,7 @@ export function SessionCard({
   worktree,
   isSelected,
   previewText,
+  activityText,
   onClick,
   onStop,
 }: SessionCardProps) {
@@ -47,13 +49,16 @@ export function SessionCard({
     return () => clearInterval(timer);
   }, []);
 
-  // セッション自体が停止していれば赤、動作中でもプレビュー無変化なら赤
+  // セッション停止は赤、アイドルは赤、アクティブは緑
   const dotColor =
     session.status === "stopped" || session.status === "error"
       ? "bg-red-500"
       : isIdle
         ? "bg-red-500"
         : "bg-green-500";
+
+  // アイドル時はactivityText（✻ Baked for ...）、アクティブ時はコンテンツ行
+  const displayText = isIdle && activityText ? activityText : previewText;
 
   return (
     <button
@@ -78,9 +83,9 @@ export function SessionCard({
           <span className="ml-auto text-xs text-primary shrink-0">◀</span>
         )}
       </div>
-      {previewText && (
+      {displayText && (
         <p className="mt-1 text-xs text-muted-foreground truncate pl-4">
-          {previewText}
+          {displayText}
         </p>
       )}
     </button>

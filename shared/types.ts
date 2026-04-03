@@ -119,7 +119,12 @@ export interface ServerToClientEvents {
 
   // Session preview events
   "session:previews": (
-    previews: Array<{ sessionId: string; text: string; timestamp: number }>
+    previews: Array<{
+      sessionId: string;
+      text: string;
+      activityText: string;
+      timestamp: number;
+    }>,
   ) => void;
 
   // Message events
@@ -178,7 +183,7 @@ export interface ClientToServerEvents {
   "session:key": (data: { sessionId: string; key: SpecialKey }) => void;
   "session:copy": (
     sessionId: string,
-    callback: (response: { text?: string; error?: string }) => void
+    callback: (response: { text?: string; error?: string }) => void,
   ) => void;
   "session:restore": (worktreePath: string) => void;
 

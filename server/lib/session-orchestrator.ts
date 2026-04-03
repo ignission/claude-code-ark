@@ -328,12 +328,14 @@ export class SessionOrchestrator extends EventEmitter {
   getAllPreviews(): Array<{
     sessionId: string;
     text: string;
+    activityText: string;
     timestamp: number;
   }> {
     const allSessions = tmuxManager.getAllSessions();
     const previews: Array<{
       sessionId: string;
       text: string;
+      activityText: string;
       timestamp: number;
     }> = [];
 
@@ -373,7 +375,14 @@ export class SessionOrchestrator extends EventEmitter {
       const contentLines = allLines.filter((line) => !isUiLine(line));
       const text =
         contentLines.length > 0 ? contentLines[contentLines.length - 1] : "";
-      previews.push({ sessionId: session.id, text, timestamp: Date.now() });
+      // ✢✻行（アイドル時表示用）
+      const activityLine = allLines.findLast((line) => /[✢✻]/.test(line)) || "";
+      previews.push({
+        sessionId: session.id,
+        text,
+        activityText: activityLine,
+        timestamp: Date.now(),
+      });
     }
 
     return previews;
