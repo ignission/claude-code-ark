@@ -773,9 +773,32 @@ async function startServer() {
       beaconManager.closeSession();
     });
 
+    // セッションプレビューのポーリング（3秒間隔）
+    const previewInterval = setInterval(() => {
+      try {
+        const previews = sessionOrchestrator.getAllPreviews();
+        if (previews.length > 0) {
+          socket.emit("session:previews", previews);
+        }
+      } catch (err) {
+        console.error("[Preview] Error:", getErrorMessage(err));
+      }
+    }, 3000);
+
+    // 接続時に初回プレビューを送信
+    try {
+      const initialPreviews = sessionOrchestrator.getAllPreviews();
+      if (initialPreviews.length > 0) {
+        socket.emit("session:previews", initialPreviews);
+      }
+    } catch (err) {
+      console.error("[Preview] Initial error:", getErrorMessage(err));
+    }
+
     // Cleanup on disconnect
     socket.on("disconnect", () => {
       console.log(`Client disconnected: ${socket.id}`);
+      clearInterval(previewInterval);
 
       forwardHandlers.forEach((handler, event) => {
         sessionOrchestrator.off(event, handler);

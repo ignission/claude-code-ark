@@ -117,6 +117,16 @@ export interface ServerToClientEvents {
     error: string;
   }) => void;
 
+  // Session preview events
+  "session:previews": (
+    previews: Array<{
+      sessionId: string;
+      text: string;
+      activityText: string;
+      timestamp: number;
+    }>
+  ) => void;
+
   // Message events
   "message:received": (message: Message) => void;
   "message:stream": (data: {

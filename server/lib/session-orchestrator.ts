@@ -12,6 +12,7 @@ import type {
   SessionStatus,
   SpecialKey,
 } from "../../shared/types.js";
+import { stripAnsi } from "./ansi.js";
 import { db } from "./database.js";
 import { type TmuxSession, tmuxManager } from "./tmux-manager.js";
 import { ttydManager } from "./ttyd-manager.js";
@@ -319,6 +320,70 @@ export class SessionOrchestrator extends EventEmitter {
   getTtydPort(sessionId: string): number | null {
     const instance = ttydManager.getInstance(sessionId);
     return instance?.port || null;
+  }
+
+  /**
+   * 全アクティブセッションのプレビューテキストを取得
+   */
+  getAllPreviews(): Array<{
+    sessionId: string;
+    text: string;
+    activityText: string;
+    timestamp: number;
+  }> {
+    const allSessions = tmuxManager.getAllSessions();
+    const previews: Array<{
+      sessionId: string;
+      text: string;
+      activityText: string;
+      timestamp: number;
+    }> = [];
+
+    for (const session of allSessions) {
+      const raw = tmuxManager.capturePane(session.id, 200);
+      if (raw === null) continue;
+      const allLines = stripAnsi(raw)
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => line !== "");
+
+      // Claude Code UI行を判定する関数
+      const isUiLine = (line: string): boolean => {
+        // アニメーション記号行（✢ ✻ 等）は常にUI行として除外
+        if (/[✢✻]/.test(line)) return true;
+        // ステータスバー・モード表示
+        if (line.includes("⏵")) return true;
+        if (line.includes("bypass permissions")) return true;
+        if (line.includes("shift+tab to cycle")) return true;
+        if (line.includes("auto mode")) return true;
+        if (line.includes("plan mode")) return true;
+        // 対話UIのヒント行（Enter to selectは選択待ちなので除外しない）
+        if (line.includes("Baked for")) return true;
+        if (line.includes("Chat about this")) return true;
+        // メニュー選択肢（"1. ...", "S. ...", "a. ..." 等の短い行）
+        if (/^[A-Za-z0-9]\.\s/.test(line) && line.length < 60) return true;
+        // プロンプト記号のみ
+        if (/^[>❯$%#]\s*$/.test(line)) return true;
+        // ─ や ━ のみの区切り線
+        if (/^[─━═▔▁]{3,}$/.test(line)) return true;
+        return false;
+      };
+
+      // UI行を除外した最後の行を取得
+      const contentLines = allLines.filter(line => !isUiLine(line));
+      const text =
+        contentLines.length > 0 ? contentLines[contentLines.length - 1] : "";
+      // ✢✻行（アイドル時表示用）
+      const activityLine = allLines.findLast(line => /[✢✻]/.test(line)) || "";
+      previews.push({
+        sessionId: session.id,
+        text,
+        activityText: activityLine,
+        timestamp: Date.now(),
+      });
+    }
+
+    return previews;
   }
 
   /**

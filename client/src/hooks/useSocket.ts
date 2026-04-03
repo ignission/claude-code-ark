@@ -90,6 +90,10 @@ interface UseSocketReturn {
   // Copy buffer
   copyBuffer: (sessionId: string) => Promise<string | null>;
 
+  // Session previews
+  sessionPreviews: Map<string, string>;
+  sessionActivityTexts: Map<string, string>;
+
   // Beacon
   beaconMessages: ChatMessage[];
   beaconStreaming: boolean;
@@ -141,6 +145,14 @@ export function useSocket(): UseSocketReturn {
     filename: string;
   } | null>(null);
   const [imageUploadError, setImageUploadError] = useState<string | null>(null);
+
+  // Session previews state
+  const [sessionPreviews, setSessionPreviews] = useState<Map<string, string>>(
+    new Map()
+  );
+  const [sessionActivityTexts, setSessionActivityTexts] = useState<
+    Map<string, string>
+  >(new Map());
 
   // Beacon状態
   const [beaconMessages, setBeaconMessages] = useState<ChatMessage[]>([]);
@@ -391,6 +403,23 @@ export function useSocket(): UseSocketReturn {
       setBeaconStreamText("");
     });
 
+    socket.on("session:previews", previews => {
+      setSessionPreviews(prev => {
+        const next = new Map(prev);
+        for (const p of previews) {
+          next.set(p.sessionId, p.text);
+        }
+        return next;
+      });
+      setSessionActivityTexts(prev => {
+        const next = new Map(prev);
+        for (const p of previews) {
+          next.set(p.sessionId, p.activityText);
+        }
+        return next;
+      });
+    });
+
     // Cleanup on unmount
     return () => {
       socket.off("ports:list");
@@ -400,6 +429,7 @@ export function useSocket(): UseSocketReturn {
       socket.off("beacon:stream");
       socket.off("beacon:history");
       socket.off("beacon:error");
+      socket.off("session:previews");
       socket.disconnect();
     };
   }, []);
@@ -617,6 +647,9 @@ export function useSocket(): UseSocketReturn {
     clearImageUploadState,
     // Copy buffer
     copyBuffer,
+    // Session previews
+    sessionPreviews,
+    sessionActivityTexts,
     // Beacon
     beaconMessages,
     beaconStreaming,

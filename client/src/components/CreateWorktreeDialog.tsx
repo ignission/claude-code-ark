@@ -1,4 +1,3 @@
-import { Plus } from "lucide-react";
 import { type KeyboardEvent, useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,7 +7,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -84,16 +82,6 @@ export function CreateWorktreeDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-10 w-10 md:h-7 md:w-7"
-          disabled={!selectedRepoPath}
-        >
-          <Plus className="w-5 h-5 md:w-4 md:h-4" />
-        </Button>
-      </DialogTrigger>
       <DialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
         <DialogHeader>
           <DialogTitle>Create New Worktree</DialogTitle>
