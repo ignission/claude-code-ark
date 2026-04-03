@@ -17,13 +17,10 @@ import {
   GitBranch,
   ImageIcon,
   Keyboard,
-  Maximize2,
-  Minimize2,
   RefreshCw,
   Send,
   Square,
   StopCircle,
-  X,
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -43,9 +40,6 @@ interface TerminalPaneProps {
   onSendMessage: (message: string) => void;
   onSendKey: (key: SpecialKey) => void;
   onStopSession: () => void;
-  onClose: () => void;
-  onMaximize?: () => void;
-  isMaximized?: boolean;
   onUploadImage?: (base64Data: string, mimeType: string) => void;
   imageUploadResult?: { path: string; filename: string } | null;
   imageUploadError?: string | null;
@@ -60,9 +54,6 @@ export function TerminalPane({
   onSendMessage,
   onSendKey,
   onStopSession,
-  onClose,
-  onMaximize,
-  isMaximized = false,
   onUploadImage,
   imageUploadResult,
   imageUploadError,
@@ -317,20 +308,6 @@ export function TerminalPane({
               className={`w-5 h-5 md:w-3 md:h-3 ${showInput ? "text-primary" : ""}`}
             />
           </Button>
-          {onMaximize && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-10 w-10 md:h-6 md:w-6"
-              onClick={onMaximize}
-            >
-              {isMaximized ? (
-                <Minimize2 className="w-5 h-5 md:w-3 md:h-3" />
-              ) : (
-                <Maximize2 className="w-5 h-5 md:w-3 md:h-3" />
-              )}
-            </Button>
-          )}
           <Button
             variant="ghost"
             size="icon"
@@ -339,14 +316,6 @@ export function TerminalPane({
             title="Stop session (kills tmux)"
           >
             <Square className="w-5 h-5 md:w-3 md:h-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10 md:h-6 md:w-6"
-            onClick={onClose}
-          >
-            <X className="w-5 h-5 md:w-3 md:h-3" />
           </Button>
         </div>
       </header>
