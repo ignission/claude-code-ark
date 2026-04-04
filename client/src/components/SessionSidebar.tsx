@@ -110,10 +110,6 @@ export function SessionSidebar({
                         }
                         onClick={() => onSelectSession(session.id)}
                         onStop={() => onStopSession(session.id)}
-                        onDeleteWorktree={() => {
-                          const wt = getWorktree(session);
-                          onDeleteWorktree(wt?.path ?? session.worktreePath);
-                        }}
                       />
                     ))}
                   </div>

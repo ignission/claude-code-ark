@@ -751,6 +751,10 @@ async function startServer() {
           console.error(
             `[Session] Failed to delete worktree: ${getErrorMessage(error)}`
           );
+          socket.emit("session:error", {
+            sessionId,
+            error: `Worktreeの削除に失敗しました: ${getErrorMessage(error)}`,
+          });
         }
       }
     });

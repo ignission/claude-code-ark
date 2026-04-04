@@ -313,7 +313,7 @@ export function TerminalPane({
             size="icon"
             className="h-10 w-10 md:h-6 md:w-6 text-destructive hover:text-destructive"
             onClick={onStopSession}
-            title="セッションを削除"
+            title="Delete session"
           >
             <Trash2 className="w-5 h-5 md:w-3 md:h-3" />
           </Button>

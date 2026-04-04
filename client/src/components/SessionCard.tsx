@@ -1,6 +1,16 @@
 import { MessageSquare, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
@@ -21,7 +31,6 @@ interface SessionCardProps {
   activityText: string;
   onClick: () => void;
   onStop: () => void;
-  onDeleteWorktree: () => void;
 }
 
 export function SessionCard({
@@ -32,7 +41,6 @@ export function SessionCard({
   activityText,
   onClick,
   onStop,
-  onDeleteWorktree,
 }: SessionCardProps) {
   const branch =
     worktree?.branch ||
@@ -43,6 +51,7 @@ export function SessionCard({
   const prevActivityRef = useRef(activityText);
   const lastChangedRef = useRef(Date.now());
   const [isIdle, setIsIdle] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   useEffect(() => {
     if (
@@ -119,13 +128,37 @@ export function SessionCard({
           <ContextMenuSeparator />
           <ContextMenuItem
             className="text-destructive focus:text-destructive"
-            onSelect={onStop}
+            onSelect={() => setShowDeleteDialog(true)}
           >
             <Trash2 className="w-4 h-4 mr-2" />
             セッションを削除
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle>セッションを削除</AlertDialogTitle>
+            <AlertDialogDescription>
+              このセッションとWorktreeを削除しますか？関連するブランチも削除されます。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
+            <AlertDialogCancel className="h-12 md:h-10">
+              キャンセル
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-12 md:h-10"
+              onClick={() => {
+                onStop();
+                setShowDeleteDialog(false);
+              }}
+            >
+              削除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
