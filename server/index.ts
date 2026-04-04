@@ -662,6 +662,13 @@ async function startServer() {
 
           const worktrees = await listWorktrees(repoPath);
           socket.emit("worktree:list", worktrees);
+
+          // worktree作成後にセッションを自動起動
+          const managed = await sessionOrchestrator.startSession(
+            worktree.id,
+            worktree.path
+          );
+          socket.emit("session:created", managed);
         } catch (error) {
           socket.emit("worktree:error", getErrorMessage(error));
         }
