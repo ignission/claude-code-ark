@@ -652,25 +652,30 @@ async function startServer() {
     socket.on(
       "worktree:create",
       async ({ repoPath, branchName, baseBranch }) => {
+        let worktree: Awaited<ReturnType<typeof createWorktree>>;
         try {
-          const worktree = await createWorktree(
-            repoPath,
-            branchName,
-            baseBranch
-          );
+          worktree = await createWorktree(repoPath, branchName, baseBranch);
           socket.emit("worktree:created", worktree);
 
           const worktrees = await listWorktrees(repoPath);
           socket.emit("worktree:list", worktrees);
-
-          // worktree作成後にセッションを自動起動
-          const managed = await sessionOrchestrator.startSession(
-            worktree.id,
-            worktree.path
-          );
-          socket.emit("session:created", managed);
         } catch (error) {
           socket.emit("worktree:error", getErrorMessage(error));
+          return;
+        }
+
+        // worktree作成後にセッションを自動起動（orchestratorのイベント転送に委ねる）
+        try {
+          await sessionOrchestrator.startSession(
+            worktree.id,
+            worktree.path,
+            repoPath
+          );
+        } catch (error) {
+          socket.emit("session:error", {
+            sessionId: "",
+            error: getErrorMessage(error),
+          });
         }
       }
     );
@@ -739,30 +744,27 @@ async function startServer() {
     });
 
     socket.on("session:stop", async sessionId => {
-      const result = sessionOrchestrator.stopSession(sessionId);
+      try {
+        const result = sessionOrchestrator.stopSession(sessionId);
 
-      // worktreeも削除（メインworktreeは除外）
-      if (result?.worktreePath && result.repoPath) {
-        try {
+        // worktreeも削除（メインworktreeは除外）
+        if (result?.worktreePath && result.repoPath) {
           const isMain = result.worktreePath === result.repoPath;
           if (!isMain) {
             const deletedWorktreeId = Buffer.from(result.worktreePath)
               .toString("base64")
               .replace(/[/+=]/g, "");
             await deleteWorktree(result.repoPath, result.worktreePath);
-            io.emit("worktree:deleted", deletedWorktreeId);
+            socket.emit("worktree:deleted", deletedWorktreeId);
             const worktrees = await listWorktrees(result.repoPath);
-            io.emit("worktree:list", worktrees);
+            socket.emit("worktree:list", worktrees);
           }
-        } catch (error) {
-          console.error(
-            `[Session] Failed to delete worktree: ${getErrorMessage(error)}`
-          );
-          socket.emit("session:error", {
-            sessionId,
-            error: `Worktreeの削除に失敗しました: ${getErrorMessage(error)}`,
-          });
         }
+      } catch (error) {
+        socket.emit("session:error", {
+          sessionId,
+          error: getErrorMessage(error),
+        });
       }
     });
 
