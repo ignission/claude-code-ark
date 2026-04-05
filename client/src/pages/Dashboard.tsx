@@ -233,7 +233,7 @@ export default function Dashboard() {
         <MobileLayout
           sessions={sessions}
           worktrees={worktrees}
-          repoName={repoPath ? getBaseName(repoPath) : null}
+          repoList={repoList}
           repoPath={repoPath}
           onStartSession={handleStartSession}
           onStopSession={handleStopSession}
@@ -246,6 +246,7 @@ export default function Dashboard() {
           imageUploadError={imageUploadError}
           onClearImageUploadState={clearImageUploadState}
           onCopyBuffer={copyBuffer}
+          onNewSession={handleNewSession}
           beaconMessages={beaconMessages}
           beaconStreaming={beaconStreaming}
           beaconStreamText={beaconStreamText}

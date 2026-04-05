@@ -20,7 +20,7 @@ import type {
 interface MobileLayoutProps {
   sessions: Map<string, ManagedSession>;
   worktrees: Worktree[];
-  repoName: string | null;
+  repoList: string[];
   repoPath: string | null;
   onStartSession: (worktree: Worktree) => void;
   onStopSession: (sessionId: string) => void;
@@ -37,6 +37,7 @@ interface MobileLayoutProps {
   imageUploadError?: string | null;
   onClearImageUploadState?: () => void;
   onCopyBuffer?: (sessionId: string) => Promise<string | null>;
+  onNewSession: () => void;
   // Beaconチャット
   beaconMessages: ChatMessage[];
   beaconStreaming: boolean;
@@ -48,7 +49,7 @@ interface MobileLayoutProps {
 export function MobileLayout({
   sessions,
   worktrees,
-  repoName,
+  repoList,
   repoPath: _repoPath,
   onStartSession,
   onStopSession,
@@ -61,6 +62,7 @@ export function MobileLayout({
   imageUploadError,
   onClearImageUploadState,
   onCopyBuffer,
+  onNewSession,
   beaconMessages,
   beaconStreaming,
   beaconStreamText,
@@ -125,11 +127,12 @@ export function MobileLayout({
         <MobileSessionList
           sessions={sessions}
           worktrees={worktrees}
-          repoName={repoName}
+          repoList={repoList}
           onOpenSession={handleOpenSession}
           onStartSession={onStartSession}
           onStopSession={onStopSession}
           onDeleteWorktree={onDeleteWorktree}
+          onNewSession={onNewSession}
         />
       </div>
 

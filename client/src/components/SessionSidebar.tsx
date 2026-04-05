@@ -7,11 +7,9 @@
  */
 
 import { FolderOpen, Plus, Terminal } from "lucide-react";
-import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { getBaseName } from "@/utils/pathUtils";
-import { findRepoForSession } from "@/utils/sessionUtils";
+import { useGroupedWorktreeItems } from "@/hooks/useGroupedWorktreeItems";
 import type { ManagedSession, Worktree } from "../../../shared/types";
 import { SessionCard } from "./SessionCard";
 
@@ -28,11 +26,6 @@ interface SessionSidebarProps {
   onNewSession: () => void;
 }
 
-type SidebarItem = {
-  worktree: Worktree | null;
-  session: ManagedSession | null;
-};
-
 export function SessionSidebar({
   sessions,
   worktrees,
@@ -45,50 +38,11 @@ export function SessionSidebar({
   onStartSession,
   onNewSession,
 }: SessionSidebarProps) {
-  // worktreeId → session のマップ
-  const sessionByWorktreeId = useMemo(() => {
-    const map = new Map<string, ManagedSession>();
-    sessions.forEach(session => {
-      map.set(session.worktreeId, session);
-    });
-    return map;
-  }, [sessions]);
-
-  // worktree中心のリポジトリ別グルーピング
-  const groupedItems = useMemo(() => {
-    const groups = new Map<string, SidebarItem[]>();
-    const worktreeSessionIds = new Set<string>();
-
-    // 1. 選択中リポのworktreeを表示（セッションの有無問わず）
-    for (const wt of worktrees) {
-      const session = sessionByWorktreeId.get(wt.id) ?? null;
-      if (session) worktreeSessionIds.add(session.id);
-      // worktreeからrepo名を導出
-      const repoName = (() => {
-        if (session?.repoPath) return getBaseName(session.repoPath);
-        // worktreeのパスからリポジトリを特定
-        const matchedRepo = repoList.find(repo => wt.path.startsWith(repo));
-        if (matchedRepo) return getBaseName(matchedRepo);
-        // worktreeのパスから親ディレクトリ名を使う（フォールバック）
-        return getBaseName(wt.path.split("/.worktrees/")[0] || wt.path);
-      })();
-      const existing = groups.get(repoName) || [];
-      existing.push({ worktree: wt, session });
-      groups.set(repoName, existing);
-    }
-
-    // 2. 他リポジトリのセッション（worktreesに含まれないもの）
-    for (const session of Array.from(sessions.values())) {
-      if (worktreeSessionIds.has(session.id)) continue;
-      const repo = session.repoPath ?? findRepoForSession(session, repoList);
-      const repoName = repo ? getBaseName(repo) : "unknown";
-      const existing = groups.get(repoName) || [];
-      existing.push({ worktree: null, session });
-      groups.set(repoName, existing);
-    }
-
-    return groups;
-  }, [worktrees, sessions, sessionByWorktreeId, repoList]);
+  const { groupedItems } = useGroupedWorktreeItems(
+    worktrees,
+    sessions,
+    repoList
+  );
 
   return (
     <div className="h-full flex flex-col bg-sidebar">
