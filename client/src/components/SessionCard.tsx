@@ -23,7 +23,7 @@ import type { ManagedSession, Worktree } from "../../../shared/types";
 const IDLE_THRESHOLD_MS = 10_000;
 
 interface SessionCardProps {
-  session: ManagedSession;
+  session: ManagedSession | null;
   worktree: Worktree | undefined;
   repoList: string[];
   isSelected: boolean;
@@ -31,6 +31,7 @@ interface SessionCardProps {
   activityText: string;
   onClick: () => void;
   onStop: () => void;
+  onStart?: () => void;
 }
 
 export function SessionCard({
@@ -41,10 +42,15 @@ export function SessionCard({
   activityText,
   onClick,
   onStop,
+  onStart,
 }: SessionCardProps) {
   const branch =
     worktree?.branch ||
-    session.worktreePath.substring(session.worktreePath.lastIndexOf("/") + 1);
+    (session
+      ? session.worktreePath.substring(
+          session.worktreePath.lastIndexOf("/") + 1
+        )
+      : "unknown");
 
   // プレビュー/アクティビティの変化を追跡してアイドル判定
   const prevTextRef = useRef(previewText);
@@ -73,15 +79,43 @@ export function SessionCard({
     return () => clearInterval(timer);
   }, []);
 
-  // ✢✻はどちらもClaude Codeの動作中アニメーション記号
-  const hasActivitySymbol = /[✢✻]/.test(activityText);
+  // セッション未起動の場合はシンプルなカードを表示
+  if (!session) {
+    return (
+      <button
+        type="button"
+        className={`w-full text-left p-3 rounded-lg transition-colors group ${
+          isSelected
+            ? "bg-primary/15 border border-primary/30"
+            : "hover:bg-sidebar-accent/50"
+        }`}
+        onClick={onStart ?? onClick}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-2 h-2 rounded-full shrink-0 bg-muted-foreground/30" />
+          <span className="text-sm font-mono truncate text-sidebar-foreground/60">
+            {branch}
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground truncate pl-4">
+          セッション未起動
+        </p>
+      </button>
+    );
+  }
 
-  // 緑: 動作中（✢✻+変化あり）、青: 起動直後/clear後（コンテンツなし）、赤: それ以外
+  // ✢✻はアニメーション記号、◼◻はタスク表示記号、"* verb…"は処理中表示
+  const hasActivitySymbol =
+    /[✢✻◼◻]/.test(activityText) || /\S+…/.test(activityText);
+  // タスク記号・処理中表示はidle判定を無視する
+  const hasTaskSymbol = /[◼◻]/.test(activityText) || /\S+…/.test(activityText);
+
+  // 緑: 動作中（✢✻+変化あり or タスク進行中）、青: 起動直後/clear後、赤: それ以外
   const hasVisibleContent =
     previewText.trim().length > 0 || activityText.trim().length > 0;
 
   const dotColor =
-    hasActivitySymbol && !isIdle
+    hasActivitySymbol && (!isIdle || hasTaskSymbol)
       ? "bg-green-500"
       : !hasVisibleContent
         ? "bg-blue-500"
