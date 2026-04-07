@@ -32,6 +32,21 @@ import type {
   Worktree,
 } from "../../../shared/types";
 import { useIsMobile } from "../hooks/useMobile";
+import { FileViewerPane } from "./FileViewerPane";
+import { BrowserPane } from "./BrowserPane";
+
+export type ViewerTab =
+  | { type: "terminal" }
+  | {
+      type: "file";
+      filePath: string;
+      content: string;
+      mimeType: string;
+      size: number;
+      targetLine?: number | null;
+      error?: string;
+    }
+  | { type: "browser"; url: string };
 
 interface TerminalPaneProps {
   session: ManagedSession;
@@ -45,6 +60,10 @@ interface TerminalPaneProps {
   imageUploadError?: string | null;
   onClearImageUploadState?: () => void;
   onCopyBuffer?: () => Promise<string | null>;
+  tabs: ViewerTab[];
+  activeTabIndex: number;
+  onTabSelect: (index: number) => void;
+  onTabClose: (index: number) => void;
 }
 
 export function TerminalPane({
@@ -59,6 +78,10 @@ export function TerminalPane({
   imageUploadError,
   onClearImageUploadState,
   onCopyBuffer,
+  tabs,
+  activeTabIndex,
+  onTabSelect,
+  onTabClose,
 }: TerminalPaneProps) {
   const isMobile = useIsMobile();
   const [inputValue, setInputValue] = useState("");
@@ -74,6 +97,115 @@ export function TerminalPane({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [iframeKey, setIframeKey] = useState(0);
+
+  // ttyd iframe内のxterm.jsにリンク検出をインジェクト
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    const injectLinkProvider = () => {
+      try {
+        const iframeWindow = iframe.contentWindow;
+        if (!iframeWindow) return;
+
+        const checkTerm = setInterval(() => {
+          // biome-ignore lint/suspicious/noExplicitAny: ttyd iframe内のxterm.jsオブジェクトにアクセスするため
+          const term = (iframeWindow as any).term;
+          if (!term || !term.registerLinkProvider) return;
+          clearInterval(checkTerm);
+
+          // biome-ignore lint/suspicious/noExplicitAny: ttyd iframe内の状態管理フラグ
+          if ((iframeWindow as any).__arkLinkInjected) return;
+          // biome-ignore lint/suspicious/noExplicitAny: ttyd iframe内の状態管理フラグ
+          (iframeWindow as any).__arkLinkInjected = true;
+
+          term.registerLinkProvider({
+            // biome-ignore lint/suspicious/noExplicitAny: xterm.js link provider API
+            provideLinks(
+              lineNumber: number,
+              callback: (links: any[] | undefined) => void
+            ) {
+              const line = term.buffer.active.getLine(lineNumber - 1);
+              if (!line) {
+                callback(undefined);
+                return;
+              }
+              const text = line.translateToString();
+              // biome-ignore lint/suspicious/noExplicitAny: xterm.js link objects
+              const links: any[] = [];
+
+              // ファイルパス検出
+              const fileRegex =
+                /(?:file:)?([a-zA-Z0-9_.\-/]+\.[a-zA-Z0-9]+)(?::(\d+))?/g;
+              let match: RegExpExecArray | null;
+              while ((match = fileRegex.exec(text)) !== null) {
+                const fullMatch = match[0];
+                const filePath = match[1];
+                const lineNum = match[2] ? Number.parseInt(match[2]) : null;
+                if (!filePath.includes("/") && !fullMatch.startsWith("file:"))
+                  continue;
+                links.push({
+                  range: {
+                    start: { x: match.index + 1, y: lineNumber },
+                    end: {
+                      x: match.index + fullMatch.length + 1,
+                      y: lineNumber,
+                    },
+                  },
+                  text: fullMatch,
+                  activate() {
+                    window.parent.postMessage(
+                      { type: "ark:open-file", path: filePath, line: lineNum },
+                      window.location.origin
+                    );
+                  },
+                });
+              }
+
+              // localhost URL検出
+              const urlRegex =
+                /https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?[/\w.\-?&=%#]*/g;
+              while ((match = urlRegex.exec(text)) !== null) {
+                const matchedUrl = match[0];
+                links.push({
+                  range: {
+                    start: { x: match.index + 1, y: lineNumber },
+                    end: {
+                      x: match.index + matchedUrl.length + 1,
+                      y: lineNumber,
+                    },
+                  },
+                  text: matchedUrl,
+                  activate() {
+                    window.parent.postMessage(
+                      { type: "ark:open-url", url: matchedUrl },
+                      window.location.origin
+                    );
+                  },
+                });
+              }
+
+              callback(links.length > 0 ? links : undefined);
+            },
+          });
+        }, 500);
+
+        setTimeout(() => clearInterval(checkTerm), 10000);
+      } catch {
+        // クロスオリジンエラー等は無視
+      }
+    };
+
+    iframe.addEventListener("load", injectLinkProvider);
+    if (iframe.contentDocument?.readyState === "complete") {
+      injectLinkProvider();
+    }
+
+    return () => {
+      iframe.removeEventListener("load", injectLinkProvider);
+    };
+  }, [iframeKey]);
+
   const [pastedImage, setPastedImage] = useState<{
     base64: string;
     mimeType: string;
@@ -320,8 +452,53 @@ export function TerminalPane({
         </div>
       </header>
 
+      {/* タブバー */}
+      {tabs.length > 1 && (
+        <div className="flex items-center border-b border-border bg-muted/30 overflow-x-auto shrink-0">
+          {tabs.map((tab, i) => {
+            const isActive = i === activeTabIndex;
+            const label =
+              tab.type === "terminal"
+                ? "Terminal"
+                : tab.type === "file"
+                  ? (tab.filePath.split("/").pop() ?? "File")
+                  : new URL(tab.url).host;
+            return (
+              <div
+                key={`${tab.type}-${i}`}
+                className={`flex items-center gap-1 px-3 py-1.5 text-xs cursor-pointer border-r border-border whitespace-nowrap ${
+                  isActive
+                    ? "bg-background text-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+                onClick={() => onTabSelect(i)}
+              >
+                <span>{label}</span>
+                {tab.type !== "terminal" && (
+                  <button
+                    className="ml-1 hover:text-destructive"
+                    onClick={e => {
+                      e.stopPropagation();
+                      onTabClose(i);
+                    }}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* ttyd iframe */}
-      <div className="flex-1 min-h-0 bg-[#1a1b26] overflow-hidden">
+      <div
+        className="flex-1 min-h-0 bg-[#1a1b26] overflow-hidden"
+        style={{
+          display:
+            tabs[activeTabIndex]?.type === "terminal" ? undefined : "none",
+        }}
+      >
         {session.ttydUrl || session.ttydPort ? (
           <iframe
             key={iframeKey}
@@ -340,6 +517,33 @@ export function TerminalPane({
           </div>
         )}
       </div>
+
+      {/* ファイルビューワー / ブラウザ */}
+      {tabs[activeTabIndex]?.type === "file" &&
+        (() => {
+          const tab = tabs[activeTabIndex] as ViewerTab & { type: "file" };
+          return (
+            <div className="flex-1 min-h-0">
+              <FileViewerPane
+                filePath={tab.filePath}
+                content={tab.content}
+                mimeType={tab.mimeType}
+                size={tab.size}
+                targetLine={tab.targetLine}
+                error={tab.error}
+              />
+            </div>
+          );
+        })()}
+      {tabs[activeTabIndex]?.type === "browser" &&
+        (() => {
+          const tab = tabs[activeTabIndex] as ViewerTab & { type: "browser" };
+          return (
+            <div className="flex-1 min-h-0">
+              <BrowserPane url={tab.url} />
+            </div>
+          );
+        })()}
 
       {/* Image paste preview dialog */}
       {pastedImage && (
