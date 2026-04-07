@@ -195,6 +195,11 @@ export interface ClientToServerEvents {
     sessionId: string,
     callback: (response: { text?: string; error?: string }) => void
   ) => void;
+  "session:scroll": (data: {
+    sessionId: string;
+    direction: "up" | "down";
+    lines: number;
+  }) => void;
   "session:restore": (worktreePath: string) => void;
 
   // Repository commands

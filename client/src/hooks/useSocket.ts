@@ -37,6 +37,8 @@ interface UseSocketOptions {
 }
 
 interface UseSocketReturn {
+  /** Socket.IOインスタンスへの参照（モバイルスクロール等で直接使用） */
+  socket: TypedSocket | null;
   isConnected: boolean;
   error: string | null;
 
@@ -687,6 +689,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   );
 
   return {
+    socket: socketRef.current,
     isConnected,
     error,
     allowedRepos,

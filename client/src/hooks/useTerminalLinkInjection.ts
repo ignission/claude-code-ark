@@ -110,16 +110,15 @@ export function useTerminalLinkInjection(
           };
 
           // モバイルスワイプスクロール
-          // xterm.jsのネイティブタッチスクロールが動作しない環境向けに、
-          // iframe document全体のtouchイベントをキャプチャフェーズで捕捉し、
-          // term.scrollLines()で直接スクロールする。
-          // passive: falseでpreventDefaultを呼び、ページ全体のスクロールを防ぐ。
+          // iframe内のtouchイベントを検知し、postMessageで親ウィンドウに通知する。
+          // 親側でSocket.IO経由のtmux copy-modeスクロールに変換する。
+          // オーバーレイ不要のため、リンクタップもそのまま動作する。
           const iframeDoc = iframeWindow.document;
           let touchStartY = 0;
           let touchSentLines = 0;
           let isSwiping = false;
           const SWIPE_LINE_HEIGHT = 20;
-          const SWIPE_THRESHOLD = 5; // px: スワイプ判定閾値
+          const SWIPE_THRESHOLD = 5;
 
           iframeDoc.addEventListener(
             "touchstart",
@@ -138,14 +137,11 @@ export function useTerminalLinkInjection(
               const te = e as TouchEvent;
               const deltaY = touchStartY - te.touches[0].clientY;
 
-              // スワイプ閾値を超えたらスクロール開始
               if (!isSwiping && Math.abs(deltaY) > SWIPE_THRESHOLD) {
                 isSwiping = true;
               }
-
               if (!isSwiping) return;
 
-              // ページスクロールを防止
               e.preventDefault();
 
               const totalLines = Math.floor(
@@ -153,9 +149,11 @@ export function useTerminalLinkInjection(
               );
               const newLines = totalLines - touchSentLines;
               if (newLines > 0) {
-                // 上にスワイプ = 過去を見る = scrollLines(-n)
-                // 下にスワイプ = 最新へ = scrollLines(n)
-                term.scrollLines(deltaY > 0 ? -newLines : newLines);
+                const direction = deltaY > 0 ? "up" : "down";
+                iframeWindow.parent.postMessage(
+                  { type: "ark:scroll", direction, lines: newLines },
+                  "*"
+                );
                 touchSentLines = totalLines;
               }
             },

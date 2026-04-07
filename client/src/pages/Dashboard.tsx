@@ -46,6 +46,7 @@ export default function Dashboard() {
   const savedRepoPath = getSetting<string | null>("selectedRepoPath", null);
 
   const {
+    socket,
     isConnected,
     error,
     repoList,
@@ -241,6 +242,7 @@ export default function Dashboard() {
     <>
       {isMobile ? (
         <MobileLayout
+          socket={socket}
           sessions={sessions}
           worktrees={worktrees}
           repoList={repoList}

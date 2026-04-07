@@ -26,12 +26,16 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import type { Socket } from "socket.io-client";
 import type {
+  ClientToServerEvents,
   ManagedSession,
+  ServerToClientEvents,
   SpecialKey,
   Worktree,
 } from "../../../shared/types";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
+import { useTerminalSwipeScroll } from "../hooks/useTerminalSwipeScroll";
 import { useVisualViewport } from "../hooks/useVisualViewport";
 import { BrowserPane } from "./BrowserPane";
 import { FileViewerPane } from "./FileViewerPane";
@@ -41,6 +45,7 @@ import { ViewerTabBar } from "./ViewerTabBar";
 interface MobileSessionViewProps {
   session: ManagedSession;
   worktree: Worktree | undefined;
+  socket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
   onBack: () => void;
   onSendMessage: (message: string) => void;
   onSendKey: (key: SpecialKey) => void;
@@ -59,6 +64,7 @@ interface MobileSessionViewProps {
 export function MobileSessionView({
   session,
   worktree,
+  socket,
   onBack,
   onSendMessage,
   onSendKey,
@@ -216,6 +222,9 @@ export function MobileSessionView({
   // ttyd iframe内のxterm.jsにリンク検出をインジェクト（共通フック）
   useTerminalLinkInjection(iframeRef, iframeKey);
 
+  // モバイル用スワイプスクロール（iframe内のpostMessageを受けてtmux copy-modeスクロール）
+  useTerminalSwipeScroll(socket, session.id);
+
   // スラッシュコマンド
   const slashCommands = [
     { label: "/resume", cmd: "/resume" },
@@ -312,7 +321,7 @@ export function MobileSessionView({
         onTabClose={onTabClose}
       />
 
-      {/* ttyd iframe + スクロールモード時のオーバーレイ */}
+      {/* ttyd iframe */}
       <div
         className="flex-1 min-h-0 bg-[#1a1b26] overflow-hidden relative"
         style={{

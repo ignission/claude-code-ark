@@ -10,15 +10,19 @@ import { useCallback, useEffect, useState } from "react";
 import { MobileChatView } from "@/components/MobileChatView";
 import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
+import type { Socket } from "socket.io-client";
 import type {
   ChatMessage,
+  ClientToServerEvents,
   ManagedSession,
+  ServerToClientEvents,
   SpecialKey,
   Worktree,
 } from "../../../shared/types";
 import { useViewerTabs } from "../hooks/useViewerTabs";
 
 interface MobileLayoutProps {
+  socket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
   sessions: Map<string, ManagedSession>;
   worktrees: Worktree[];
   repoList: string[];
@@ -57,6 +61,7 @@ interface MobileLayoutProps {
 }
 
 export function MobileLayout({
+  socket,
   sessions,
   worktrees,
   repoList,
@@ -171,6 +176,7 @@ export function MobileLayout({
             <MobileSessionView
               session={session}
               worktree={getWorktreeForSession(session)}
+              socket={socket}
               onBack={handleBack}
               onSendMessage={message => onSendMessage(sessionId, message)}
               onSendKey={key => onSendKey(sessionId, key)}

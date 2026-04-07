@@ -280,6 +280,66 @@ export class TmuxManager extends EventEmitter {
   }
 
   /**
+   * tmux copy-modeでスクロール。
+   * copy-modeに自動的に入り、指定行数スクロールする。
+   * 一定時間操作がなければ自動的にcopy-modeを抜ける。
+   */
+  private scrollExitTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  scrollInCopyMode(
+    sessionId: string,
+    direction: "up" | "down",
+    lines: number
+  ): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error("Session not found");
+
+    // copy-modeに入る（既にcopy-mode中でもエラーにならない）
+    spawnSync("tmux", ["copy-mode", "-t", session.tmuxSessionName], {
+      stdio: "pipe",
+    });
+
+    // スクロール（-N でリピートカウント指定）
+    const scrollCmd = direction === "up" ? "scroll-up" : "scroll-down";
+    const result = spawnSync(
+      "tmux",
+      [
+        "send-keys",
+        "-t",
+        session.tmuxSessionName,
+        "-X",
+        "-N",
+        String(lines),
+        scrollCmd,
+      ],
+      { stdio: "pipe" }
+    );
+    if (result.error) throw result.error;
+
+    // 自動退出タイマーをリセット（3秒後にcopy-modeを抜ける）
+    const existingTimer = this.scrollExitTimers.get(sessionId);
+    if (existingTimer) clearTimeout(existingTimer);
+
+    this.scrollExitTimers.set(
+      sessionId,
+      setTimeout(() => {
+        try {
+          spawnSync(
+            "tmux",
+            ["send-keys", "-t", session.tmuxSessionName, "-X", "cancel"],
+            { stdio: "pipe" }
+          );
+        } catch {
+          // セッションが既に終了していても無視
+        }
+        this.scrollExitTimers.delete(sessionId);
+      }, 3000)
+    );
+
+    session.lastActivity = new Date();
+  }
+
+  /**
    * tmuxセッションが存在するか確認
    */
   sessionExists(sessionId: string): boolean {

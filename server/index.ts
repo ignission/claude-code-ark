@@ -869,6 +869,18 @@ async function startServer() {
       }
     });
 
+    // スクロール: tmux copy-modeでスクロール
+    socket.on("session:scroll", ({ sessionId, direction, lines }) => {
+      try {
+        sessionOrchestrator.scrollSession(sessionId, direction, lines);
+      } catch (error) {
+        socket.emit("session:error", {
+          sessionId,
+          error: getErrorMessage(error),
+        });
+      }
+    });
+
     // コピー: tmuxバッファの内容をクライアントに返す（コールバックパターン）
     socket.on("session:copy", (sessionId, callback) => {
       try {
