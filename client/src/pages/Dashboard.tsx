@@ -388,6 +388,8 @@ export default function Dashboard() {
           onClearImageUploadState={clearImageUploadState}
           onCopyBuffer={copyBuffer}
           onNewSession={handleNewSession}
+          readFile={readFile}
+          fileContent={fileContent}
           beaconMessages={beaconMessages}
           beaconStreaming={beaconStreaming}
           beaconStreamText={beaconStreamText}
