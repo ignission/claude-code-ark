@@ -8,7 +8,7 @@ import type { ViewerTab } from "../components/TerminalPane";
 export function useViewerTabs(
   selectedSessionId: string | null,
   sessions: Map<string, { worktreePath: string }>,
-  readFile: (worktreePath: string, filePath: string) => void,
+  readFile: (sessionId: string, filePath: string) => void,
   fileContent: {
     filePath: string;
     content: string;
@@ -61,6 +61,7 @@ export function useViewerTabs(
 
   const openFileTab = useCallback(
     (sessionId: string, filePath: string, targetLine?: number | null) => {
+      let newActiveIndex: number | null = null;
       setSessionTabs(prev => {
         const tabs = [
           ...(prev[sessionId] ?? [
@@ -75,7 +76,7 @@ export function useViewerTabs(
           if (tab.type === "file") {
             tabs[existing] = { ...tab, targetLine };
           }
-          setSessionActiveTab(p => ({ ...p, [sessionId]: existing }));
+          newActiveIndex = existing;
           return { ...prev, [sessionId]: tabs };
         }
         tabs.push({
@@ -87,14 +88,18 @@ export function useViewerTabs(
           size: 0,
           targetLine,
         });
-        setSessionActiveTab(p => ({ ...p, [sessionId]: tabs.length - 1 }));
+        newActiveIndex = tabs.length - 1;
         return { ...prev, [sessionId]: tabs };
       });
+      if (newActiveIndex !== null) {
+        setSessionActiveTab(p => ({ ...p, [sessionId]: newActiveIndex }));
+      }
     },
     []
   );
 
   const openBrowserTab = useCallback((sessionId: string, url: string) => {
+    let newActiveIndex: number | null = null;
     setSessionTabs(prev => {
       const tabs = [
         ...(prev[sessionId] ?? [{ type: "terminal" as const, id: "terminal" }]),
@@ -103,13 +108,16 @@ export function useViewerTabs(
         t => t.type === "browser" && t.url === url
       );
       if (existing >= 0) {
-        setSessionActiveTab(p => ({ ...p, [sessionId]: existing }));
+        newActiveIndex = existing;
         return prev;
       }
       tabs.push({ type: "browser", id: `browser-${Date.now()}`, url });
-      setSessionActiveTab(p => ({ ...p, [sessionId]: tabs.length - 1 }));
+      newActiveIndex = tabs.length - 1;
       return { ...prev, [sessionId]: tabs };
     });
+    if (newActiveIndex !== null) {
+      setSessionActiveTab(p => ({ ...p, [sessionId]: newActiveIndex }));
+    }
   }, []);
 
   // postMessageリスナー（ttyd iframe内のリンククリックを受信）
@@ -123,10 +131,23 @@ export function useViewerTabs(
 
       if (type === "ark:open-file") {
         const { path: filePath, line } = event.data;
-        openFileTab(selectedSessionId, filePath, line);
-        readFile(session.worktreePath, filePath);
+        if (typeof filePath !== "string" || !filePath) return;
+        openFileTab(
+          selectedSessionId,
+          filePath,
+          typeof line === "number" ? line : undefined
+        );
+        readFile(selectedSessionId, filePath);
       } else if (type === "ark:open-url") {
         const { url } = event.data;
+        if (typeof url !== "string" || !url) return;
+        try {
+          const parsed = new URL(url);
+          if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+            return;
+        } catch {
+          return;
+        }
         openBrowserTab(selectedSessionId, url);
       }
     };

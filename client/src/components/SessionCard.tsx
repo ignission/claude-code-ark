@@ -106,9 +106,14 @@ export function SessionCard({
 
   // ✢✻はアニメーション記号、◼◻はタスク表示記号、"* verb…"は処理中表示
   const hasActivitySymbol =
-    /[✢✻◼◻]/.test(activityText) || /\S+…/.test(activityText);
+    /[✢✻◼◻]/.test(activityText) ||
+    /[◼◻]/.test(previewText) ||
+    /\S+…/.test(activityText);
   // タスク記号・処理中表示はidle判定を無視する
-  const hasTaskSymbol = /[◼◻]/.test(activityText) || /\S+…/.test(activityText);
+  const hasTaskSymbol =
+    /[◼◻]/.test(activityText) ||
+    /[◼◻]/.test(previewText) ||
+    /\S+…/.test(activityText);
 
   // 緑: 動作中（✢✻+変化あり or タスク進行中）、青: 起動直後/clear後、赤: それ以外
   const hasVisibleContent =

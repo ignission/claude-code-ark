@@ -84,7 +84,11 @@ function ImageRenderer({
 }) {
   if (mimeType === "image/svg+xml") {
     // SVGは<img>タグでdata URLとして表示し、スクリプト実行をブロック
-    const dataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(content)))}`;
+    const utf8Bytes = new TextEncoder().encode(content);
+    const binaryString = Array.from(utf8Bytes, byte =>
+      String.fromCharCode(byte)
+    ).join("");
+    const dataUrl = `data:image/svg+xml;base64,${btoa(binaryString)}`;
     return (
       <div className="p-4 flex items-center justify-center h-full">
         <img
@@ -138,15 +142,24 @@ function CodeRenderer({
       lineEl.scrollIntoView({ block: "center" });
       (lineEl as HTMLElement).style.backgroundColor = "rgba(59, 130, 246, 0.2)";
     }
+    return () => {
+      if (lineEl) {
+        (lineEl as HTMLElement).style.backgroundColor = "";
+      }
+    };
   }, [targetLine, highlightedHtml]);
 
   if (highlightedHtml) {
-    // ShikiのHTML出力はサニタイズ済みのコードハイライト
+    // Shiki出力からscriptタグを除去（安全策）
+    const sanitized = highlightedHtml.replace(
+      /<script[\s\S]*?<\/script>/gi,
+      ""
+    );
     return (
       <div
         ref={containerRef}
         className="p-0 text-sm [&_pre]:p-4 [&_pre]:m-0 [&_code]:text-sm"
-        dangerouslySetInnerHTML={{ __html: highlightedHtml }}
+        dangerouslySetInnerHTML={{ __html: sanitized }}
       />
     );
   }

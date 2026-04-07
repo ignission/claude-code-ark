@@ -9,7 +9,7 @@ interface ViewerTabBarProps {
 
 function getTabLabel(tab: ViewerTab): string {
   if (tab.type === "terminal") return "Terminal";
-  if (tab.type === "file") return tab.filePath.split("/").pop() ?? "File";
+  if (tab.type === "file") return tab.filePath.split("/").pop() || "File";
   try {
     return new URL(tab.url).host;
   } catch {

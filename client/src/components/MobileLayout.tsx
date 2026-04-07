@@ -40,7 +40,7 @@ interface MobileLayoutProps {
   onCopyBuffer?: (sessionId: string) => Promise<string | null>;
   onNewSession: () => void;
   // ファイルビューワー
-  readFile: (worktreePath: string, filePath: string) => void;
+  readFile: (sessionId: string, filePath: string) => void;
   fileContent: {
     filePath: string;
     content: string;

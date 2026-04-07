@@ -16,7 +16,8 @@ function resolveUrl(url: string): string {
   try {
     const parsed = new URL(url);
     if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
-      return `/proxy/${parsed.port || "80"}${parsed.pathname}${parsed.search}`;
+      const defaultPort = parsed.protocol === "https:" ? "443" : "80";
+      return `/proxy/${parsed.port || defaultPort}${parsed.pathname}${parsed.search}`;
     }
   } catch {
     // パース失敗時はそのまま返す
@@ -44,7 +45,13 @@ export function BrowserPane({ url }: BrowserPaneProps) {
           variant="ghost"
           size="icon"
           className="h-6 w-6"
-          onClick={() => iframeRef.current?.contentWindow?.history.back()}
+          onClick={() => {
+            try {
+              iframeRef.current?.contentWindow?.history.back();
+            } catch {
+              // クロスオリジンiframe
+            }
+          }}
           title="戻る"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
@@ -53,7 +60,13 @@ export function BrowserPane({ url }: BrowserPaneProps) {
           variant="ghost"
           size="icon"
           className="h-6 w-6"
-          onClick={() => iframeRef.current?.contentWindow?.history.forward()}
+          onClick={() => {
+            try {
+              iframeRef.current?.contentWindow?.history.forward();
+            } catch {
+              // クロスオリジンiframe
+            }
+          }}
           title="進む"
         >
           <ArrowRight className="h-3.5 w-3.5" />
@@ -87,7 +100,7 @@ export function BrowserPane({ url }: BrowserPaneProps) {
           src={resolvedUrl}
           className="w-full h-full border-0"
           title={`Browser - ${url}`}
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+          sandbox="allow-scripts allow-same-origin allow-forms"
         />
       </div>
     </div>

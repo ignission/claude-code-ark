@@ -226,7 +226,7 @@ export interface ClientToServerEvents {
   "beacon:close": () => void;
 
   // ファイルビューワー
-  "file:read": (data: { worktreePath: string; filePath: string }) => void;
+  "file:read": (data: { sessionId: string; filePath: string }) => void;
 }
 
 /** Beaconチャットのメッセージ */

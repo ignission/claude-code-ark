@@ -21,6 +21,16 @@ export function useTerminalLinkInjection(
         const iframeWindow = iframe.contentWindow;
         if (!iframeWindow) return;
 
+        // 既存のinterval/timeoutをクリア（重複防止）
+        if (checkTermInterval) {
+          clearInterval(checkTermInterval);
+          checkTermInterval = null;
+        }
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+
         checkTermInterval = setInterval(() => {
           // biome-ignore lint/suspicious/noExplicitAny: ttyd iframe内のxterm.jsオブジェクトにアクセスするため
           const term = (iframeWindow as any).term;
@@ -130,9 +140,9 @@ export function useTerminalLinkInjection(
                   },
                   text: fullMatch,
                   activate() {
-                    window.parent.postMessage(
+                    arkWindow.postMessage(
                       { type: "ark:open-file", path: filePath, line: lineNum },
-                      window.location.origin
+                      arkWindow.location.origin
                     );
                   },
                 });
@@ -153,9 +163,9 @@ export function useTerminalLinkInjection(
                   },
                   text: matchedUrl,
                   activate() {
-                    window.parent.postMessage(
+                    arkWindow.postMessage(
                       { type: "ark:open-url", url: matchedUrl },
-                      window.location.origin
+                      arkWindow.location.origin
                     );
                   },
                 });

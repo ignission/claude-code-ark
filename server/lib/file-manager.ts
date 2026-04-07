@@ -84,10 +84,10 @@ async function resolveSafePath(
   filePath: string
 ): Promise<string> {
   if (path.isAbsolute(filePath)) {
-    throw new Error(`絶対パスは指定できません: ${filePath}`);
+    throw new Error("ファイルへのアクセスが拒否されました");
   }
   if (filePath.includes("..")) {
-    throw new Error(`不正なパスです: ${filePath}`);
+    throw new Error("ファイルへのアクセスが拒否されました");
   }
 
   const resolvedWorktree = await realpath(worktreePath);
@@ -97,16 +97,14 @@ async function resolveSafePath(
   try {
     realResolved = await realpath(resolved);
   } catch {
-    realResolved = resolved;
+    throw new Error(`ファイルが見つかりません: ${filePath}`);
   }
 
   if (
     !realResolved.startsWith(resolvedWorktree + path.sep) &&
     realResolved !== resolvedWorktree
   ) {
-    throw new Error(
-      `worktreeルート外へのアクセスは拒否されました: ${filePath}`
-    );
+    throw new Error("ファイルへのアクセスが拒否されました");
   }
 
   return realResolved;

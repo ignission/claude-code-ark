@@ -551,12 +551,21 @@ async function startServer() {
     // Handle proxy WebSocket connections（ローカルポートプロキシ用）
     const proxyMatch = pathname.match(/^\/proxy\/(\d+)(\/.*)?$/);
     if (proxyMatch) {
-      const port = parseInt(proxyMatch[1], 10);
-      if (port >= 1 && port <= 65535) {
+      const proxyPort = parseInt(proxyMatch[1], 10);
+      if (proxyPort >= 1 && proxyPort <= 65535) {
+        // SSRF対策: Ark自体のポートとttydポート範囲をブロック
+        const serverPort = parseInt(process.env.PORT || "3001", 10);
+        if (
+          proxyPort === serverPort ||
+          (proxyPort >= TTYD_PORT_START && proxyPort <= TTYD_PORT_END)
+        ) {
+          socket.destroy();
+          return;
+        }
         const targetPath = proxyMatch[2] || "/";
         req.url = targetPath;
         ttydProxy.ws(req, socket, head, {
-          target: `ws://127.0.0.1:${port}`,
+          target: `ws://127.0.0.1:${proxyPort}`,
         });
         return;
       }
@@ -951,24 +960,41 @@ async function startServer() {
     });
 
     // ===== File Viewer =====
-    socket.on("file:read", async ({ worktreePath, filePath }) => {
+    // レート制限: ソケットごとに最後のリクエスト時間を記録
+    let lastFileReadTime = 0;
+
+    socket.on("file:read", async ({ sessionId, filePath }) => {
+      // レート制限チェック（100ms未満の間隔のリクエストを拒否）
+      const now = Date.now();
+      if (now - lastFileReadTime < 100) {
+        socket.emit("file:content", {
+          filePath,
+          content: "",
+          mimeType: "application/octet-stream",
+          size: 0,
+          error: "リクエストが多すぎます",
+        });
+        return;
+      }
+      lastFileReadTime = now;
+
       try {
-        // worktreePathが既知のセッションに属するか検証
-        const knownSessions = sessionOrchestrator.getAllSessions();
-        const isKnownWorktree = knownSessions.some(
-          s => s.worktreePath === worktreePath
-        );
-        if (!isKnownWorktree) {
+        // sessionIdからworktreePathをサーバー側で解決
+        const session = sessionOrchestrator.getSession(sessionId);
+        if (!session?.worktreePath) {
           socket.emit("file:content", {
             filePath,
             content: "",
             mimeType: "application/octet-stream",
             size: 0,
-            error: "不明なworktreeパスです",
+            error: "セッションが見つかりません",
           });
           return;
         }
-        const result = await readFileFromWorktree(worktreePath, filePath);
+        const result = await readFileFromWorktree(
+          session.worktreePath,
+          filePath
+        );
         socket.emit("file:content", result);
       } catch (error) {
         socket.emit("file:content", {

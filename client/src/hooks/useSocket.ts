@@ -104,7 +104,7 @@ interface UseSocketReturn {
     size: number;
     error?: string;
   } | null;
-  readFile: (worktreePath: string, filePath: string) => void;
+  readFile: (sessionId: string, filePath: string) => void;
 
   // Copy buffer
   copyBuffer: (sessionId: string) => Promise<string | null>;
@@ -629,9 +629,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   }, []);
 
   // File read action
-  const readFile = useCallback((worktreePath: string, filePath: string) => {
+  const readFile = useCallback((sessionId: string, filePath: string) => {
     if (!socketRef.current?.connected) return;
-    socketRef.current.emit("file:read", { worktreePath, filePath });
+    socketRef.current.emit("file:read", { sessionId, filePath });
   }, []);
 
   // Beaconメッセージ送信
