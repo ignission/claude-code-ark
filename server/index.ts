@@ -476,14 +476,33 @@ async function startServer() {
     });
   });
 
+  // ===== ローカルポートプロキシ（リモートアクセス時にlocalhost URLを表示するため） =====
+
+  app.all("/proxy/:port/*", (req, res) => {
+    const port = parseInt(req.params.port, 10);
+    if (isNaN(port) || port < 1 || port > 65535) {
+      res.status(400).json({ error: "Invalid port" });
+      return;
+    }
+
+    const targetPath = req.url.replace(`/proxy/${port}`, "") || "/";
+    req.url = targetPath;
+
+    ttydProxy.web(req, res, { target: `http://127.0.0.1:${port}` }, err => {
+      if (!res.headersSent) {
+        res.status(502).json({ error: "Proxy error" });
+      }
+    });
+  });
+
   // Serve static files from dist/public in production only
   if (process.env.NODE_ENV === "production") {
     const staticPath = path.resolve(__dirname, "public");
     app.use(express.static(staticPath));
 
     // Handle client-side routing - serve index.html for all routes
-    // Exclude ttyd routes
-    app.get(/^(?!\/ttyd\/).*$/, (_req, res) => {
+    // Exclude ttyd and proxy routes
+    app.get(/^(?!\/ttyd\/|\/proxy\/).*$/, (_req, res) => {
       res.sendFile(path.join(staticPath, "index.html"));
     });
   }
@@ -514,6 +533,22 @@ async function startServer() {
         socket.destroy();
         return;
       }
+    }
+
+    // Handle proxy WebSocket connections（ローカルポートプロキシ用）
+    const proxyMatch = pathname.match(/^\/proxy\/(\d+)(\/.*)?$/);
+    if (proxyMatch) {
+      const port = parseInt(proxyMatch[1], 10);
+      if (port >= 1 && port <= 65535) {
+        const targetPath = proxyMatch[2] || "/";
+        req.url = targetPath;
+        ttydProxy.ws(req, socket, head, {
+          target: `ws://127.0.0.1:${port}`,
+        });
+        return;
+      }
+      socket.destroy();
+      return;
     }
 
     // Let Socket.IO handle other WebSocket connections
