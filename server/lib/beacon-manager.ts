@@ -514,10 +514,6 @@ export class BeaconManager extends EventEmitter {
               "n",
               "S-Tab",
               "Escape",
-              "scroll-up",
-              "scroll-down",
-              "copy-mode",
-              "q",
             ]);
             const key = args.key as string;
             if (!validKeys.has(key)) {

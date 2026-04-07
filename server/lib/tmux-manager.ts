@@ -19,10 +19,6 @@ const ALLOWED_SPECIAL_KEYS = new Set<SpecialKey>([
   "n",
   "S-Tab",
   "Escape",
-  "scroll-up",
-  "scroll-down",
-  "copy-mode",
-  "q",
   "Up",
   "Down",
 ]);
@@ -264,26 +260,9 @@ export class TmuxManager extends EventEmitter {
       throw new Error(`許可されていない特殊キーです: ${key}`);
     }
 
-    // copy-mode はtmuxのcopy-modeコマンドを使用
-    if (key === "copy-mode") {
-      const result = spawnSync(
-        "tmux",
-        ["copy-mode", "-t", session.tmuxSessionName],
-        { stdio: "pipe" }
-      );
-      if (result.error) throw result.error;
-      if (result.status !== 0)
-        throw new Error(`tmux copy-mode exited with status ${result.status}`);
-      session.lastActivity = new Date();
-      return;
-    }
-
     // S-Tab はtmuxでは "BTab" として送信
-    // scroll-up/scroll-down はcopy-mode内でUp/Downキーとして送信
     const keyMap: Partial<Record<SpecialKey, string>> = {
       "S-Tab": "BTab",
-      "scroll-up": "Up",
-      "scroll-down": "Down",
       Up: "Up",
       Down: "Down",
     };

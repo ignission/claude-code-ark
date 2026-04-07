@@ -216,53 +216,6 @@ export function MobileSessionView({
   // ttyd iframe内のxterm.jsにリンク検出をインジェクト（共通フック）
   useTerminalLinkInjection(iframeRef, iframeKey);
 
-  // スワイプスクロールモード
-  const [scrollMode, setScrollMode] = useState(false);
-  const swipeStateRef = useRef<{ startY: number; sentLines: number } | null>(
-    null
-  );
-  const LINE_HEIGHT = 20; // 1行あたりのpx閾値
-
-  // スクロールモードON時にcopy-modeに入り、OFF時にqで抜ける
-  const toggleScrollMode = useCallback(() => {
-    if (scrollMode) {
-      onSendKey("q");
-      setScrollMode(false);
-    } else {
-      onSendKey("copy-mode");
-      setScrollMode(true);
-    }
-  }, [scrollMode, onSendKey]);
-
-  const handleOverlayTouchStart = useCallback((e: React.TouchEvent) => {
-    const touch = e.touches[0];
-    swipeStateRef.current = { startY: touch.clientY, sentLines: 0 };
-  }, []);
-
-  const handleOverlayTouchMove = useCallback(
-    (e: React.TouchEvent) => {
-      const state = swipeStateRef.current;
-      if (!state) return;
-      e.preventDefault();
-      const touch = e.touches[0];
-      const deltaY = state.startY - touch.clientY;
-      const totalLines = Math.floor(Math.abs(deltaY) / LINE_HEIGHT);
-      const newLines = totalLines - state.sentLines;
-      if (newLines > 0) {
-        const key: SpecialKey = deltaY > 0 ? "scroll-up" : "scroll-down";
-        for (let i = 0; i < newLines; i++) {
-          onSendKey(key);
-        }
-        state.sentLines = totalLines;
-      }
-    },
-    [onSendKey]
-  );
-
-  const handleOverlayTouchEnd = useCallback(() => {
-    swipeStateRef.current = null;
-  }, []);
-
   // スラッシュコマンド
   const slashCommands = [
     { label: "/resume", cmd: "/resume" },
@@ -368,27 +321,14 @@ export function MobileSessionView({
         }}
       >
         {session.ttydUrl || session.ttydPort ? (
-          <>
-            <iframe
-              key={iframeKey}
-              ref={iframeRef}
-              src={ttydIframeSrc}
-              className="w-full h-full border-0"
-              title={`Terminal - ${worktree?.branch || session.id}`}
-              allow="clipboard-read; clipboard-write; keyboard-map"
-            />
-            {/* スクロールモード中のみ表示されるスワイプ検出オーバーレイ */}
-            {scrollMode && (
-              <div
-                className="absolute inset-0 bg-primary/5"
-                style={{ touchAction: "none" }}
-                onTouchStart={handleOverlayTouchStart}
-                onTouchMove={handleOverlayTouchMove}
-                onTouchEnd={handleOverlayTouchEnd}
-                onTouchCancel={handleOverlayTouchEnd}
-              />
-            )}
-          </>
+          <iframe
+            key={iframeKey}
+            ref={iframeRef}
+            src={ttydIframeSrc}
+            className="w-full h-full border-0"
+            title={`Terminal - ${worktree?.branch || session.id}`}
+            allow="clipboard-read; clipboard-write; keyboard-map"
+          />
         ) : (
           <div className="flex items-center justify-center h-full text-muted-foreground">
             <div className="text-center">
@@ -477,21 +417,8 @@ export function MobileSessionView({
         </div>
       )}
 
-      {/* Quick Keys: スクロールモードトグル + ↑/↓/Esc/Ctrl+C/S-Tab 常時表示 */}
+      {/* Quick Keys: ↑/↓/Esc/Ctrl+C/S-Tab 常時表示 */}
       <div className="flex items-center gap-1 px-3 py-1.5 border-t border-border/50 bg-sidebar overflow-x-auto select-none">
-        {/* スクロールモードトグル: ON=スワイプでスクロール、OFF=通常操作 */}
-        <Button
-          type="button"
-          variant={scrollMode ? "default" : "ghost"}
-          size="sm"
-          className={`h-8 px-3 text-xs shrink-0 ${scrollMode ? "bg-primary text-primary-foreground" : ""}`}
-          onClick={toggleScrollMode}
-        >
-          {scrollMode ? "Scroll ✓" : "Scroll"}
-        </Button>
-        {/* 区切り線 */}
-        <div className="w-px h-5 bg-border/50 mx-1" />
-        {/* 既存のQuick Keys */}
         <Button
           type="button"
           variant="ghost"

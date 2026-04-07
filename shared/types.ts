@@ -85,10 +85,6 @@ export type SpecialKey =
   | "n"
   | "S-Tab"
   | "Escape"
-  | "scroll-up"
-  | "scroll-down"
-  | "copy-mode"
-  | "q"
   | "Up"
   | "Down";
 

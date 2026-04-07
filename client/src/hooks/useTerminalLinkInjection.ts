@@ -109,6 +109,56 @@ export function useTerminalLinkInjection(
             return fakeWindow as any;
           };
 
+          // モバイルスワイプスクロール（xterm.js APIを直接呼び出し、tmuxにキーを送らない）
+          if ("ontouchstart" in iframeWindow) {
+            const iframeDoc = iframeWindow.document;
+            const termEl =
+              iframeDoc.querySelector(".xterm-screen") ||
+              iframeDoc.querySelector(".xterm");
+            if (termEl) {
+              let touchStartY = 0;
+              let sentLines = 0;
+              const SWIPE_LINE_HEIGHT = 20;
+
+              termEl.addEventListener(
+                "touchstart",
+                (e: Event) => {
+                  const te = e as TouchEvent;
+                  touchStartY = te.touches[0].clientY;
+                  sentLines = 0;
+                },
+                { passive: true }
+              );
+
+              termEl.addEventListener(
+                "touchmove",
+                (e: Event) => {
+                  const te = e as TouchEvent;
+                  const deltaY = touchStartY - te.touches[0].clientY;
+                  const totalLines = Math.floor(
+                    Math.abs(deltaY) / SWIPE_LINE_HEIGHT
+                  );
+                  const newLines = totalLines - sentLines;
+                  if (newLines > 0) {
+                    // 上にスワイプ = 上にスクロール（過去を見る）= scrollLines(-n)
+                    // 下にスワイプ = 下にスクロール（最新へ）= scrollLines(n)
+                    term.scrollLines(deltaY > 0 ? -newLines : newLines);
+                    sentLines = totalLines;
+                  }
+                },
+                { passive: true }
+              );
+
+              termEl.addEventListener(
+                "touchend",
+                () => {
+                  sentLines = 0;
+                },
+                { passive: true }
+              );
+            }
+          }
+
           term.registerLinkProvider({
             provideLinks(
               lineNumber: number,
