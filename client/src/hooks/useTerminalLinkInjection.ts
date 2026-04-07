@@ -35,15 +35,18 @@ export function useTerminalLinkInjection(
 
           // ttydのWebLinksAddonがlocalhost URLをwindow.openで開くのを阻止し、
           // 代わりにpostMessageでArkのタブとして開く
+          // 注: この関数は親ウィンドウのコンテキストで作成されるため、
+          //      windowは親ウィンドウ（Ark）を指す
+          const arkWindow = window;
           const originalOpen = iframeWindow.open.bind(iframeWindow);
           iframeWindow.open = (url?: string | URL, ...args: any[]) => {
             const urlStr = String(url ?? "");
             if (
               /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/.test(urlStr)
             ) {
-              window.parent.postMessage(
+              arkWindow.postMessage(
                 { type: "ark:open-url", url: urlStr },
-                window.location.origin
+                arkWindow.location.origin
               );
               return null;
             }
