@@ -236,7 +236,7 @@ L42-44の`getWorktree`関数は不要になるので削除する。
 - [ ] **Step 6: 型チェック実行**
 
 Run: `cd /home/admin/dev/github.com/ignission/claude-code-manager && pnpm check`
-Expected: FAIL — Dashboard.tsxがonStartSessionを渡していないため
+Expected: FAIL（中間状態） — Dashboard.tsxがonStartSessionを渡していないため（Task 3で解消）
 
 - [ ] **Step 7: コミット（WIP）**
 

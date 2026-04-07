@@ -77,7 +77,7 @@ git commit -m "deps: shiki, react-markdown, remark-gfmを追加"
 
 ```typescript
   // ファイルビューワー
-  "file:read": (data: { worktreePath: string; filePath: string }) => void;
+  "file:read": (data: { sessionId: string; filePath: string }) => void;
 ```
 
 - [ ] **Step 2: ビルド確認**
@@ -302,9 +302,11 @@ import { readFileFromWorktree } from "./lib/file-manager.js";
 
 ```typescript
     // ===== File Viewer =====
-    socket.on("file:read", async ({ worktreePath, filePath }) => {
+    socket.on("file:read", async ({ sessionId, filePath }) => {
       try {
-        const result = await readFileFromWorktree(worktreePath, filePath);
+        const session = orchestrator.getSession(sessionId);
+        if (!session) throw new Error(`セッションが見つかりません: ${sessionId}`);
+        const result = await readFileFromWorktree(session.worktreePath, filePath);
         socket.emit("file:content", result);
       } catch (error) {
         socket.emit("file:content", {
@@ -369,9 +371,9 @@ git commit -m "feat: file:readハンドラーをSocket.IOに追加"
 
 ```typescript
   const readFile = useCallback(
-    (worktreePath: string, filePath: string) => {
+    (sessionId: string, filePath: string) => {
       if (!socketRef.current?.connected) return;
-      socketRef.current.emit("file:read", { worktreePath, filePath });
+      socketRef.current.emit("file:read", { sessionId, filePath });
     },
     []
   );

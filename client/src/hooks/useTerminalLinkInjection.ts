@@ -138,15 +138,16 @@ export function useTerminalLinkInjection(
               const links: any[] = [];
 
               // ファイルパス検出
+              // 1. file:プレフィックス付き（拡張子不問）: file:Dockerfile, file:src/main.rs:42
+              // 2. パス区切り+拡張子付き: src/App.tsx:10
               const fileRegex =
-                /(?:file:)?([a-zA-Z0-9_.\-/]+\.[a-zA-Z0-9]+)(?::(\d+))?/g;
+                /(?:file:([a-zA-Z0-9_.\-/]+)|([a-zA-Z0-9_.\-/]+\/[a-zA-Z0-9_.\-]+\.[a-zA-Z0-9]+))(?::(\d+))?/g;
               let match: RegExpExecArray | null;
               while ((match = fileRegex.exec(text)) !== null) {
                 const fullMatch = match[0];
-                const filePath = match[1];
-                const lineNum = match[2] ? Number.parseInt(match[2], 10) : null;
-                if (!filePath.includes("/") && !fullMatch.startsWith("file:"))
-                  continue;
+                const filePath = match[1] || match[2]; // group1: file:付き, group2: パス付き
+                const lineNum = match[3] ? Number.parseInt(match[3], 10) : null;
+                if (!filePath) continue;
                 links.push({
                   range: {
                     start: { x: match.index + 1, y: lineNumber },

@@ -155,12 +155,28 @@ function CodeRenderer({
       /<script[\s\S]*?<\/script>/gi,
       ""
     );
+    const lineCount = content.split("\n").length;
     return (
-      <div
-        ref={containerRef}
-        className="p-0 text-sm [&_pre]:p-4 [&_pre]:m-0 [&_code]:text-sm"
-        dangerouslySetInnerHTML={{ __html: sanitized }}
-      />
+      <div ref={containerRef} className="flex text-sm">
+        <div
+          className="shrink-0 select-none text-muted-foreground text-right pr-4 py-4 pl-2"
+          style={{ minWidth: "3rem" }}
+        >
+          {Array.from({ length: lineCount }, (_, i) => (
+            <div
+              key={`line-${i}`}
+              className={targetLine === i + 1 ? "bg-blue-500/20" : ""}
+            >
+              {i + 1}
+            </div>
+          ))}
+        </div>
+        <div
+          className="flex-1 [&_pre]:p-4 [&_pre]:m-0 [&_code]:text-sm overflow-x-auto"
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: Shiki出力はscriptタグ除去済み
+          dangerouslySetInnerHTML={{ __html: sanitized }}
+        />
+      </div>
     );
   }
 
@@ -170,7 +186,7 @@ function CodeRenderer({
       <pre className="p-4 m-0">
         {lines.map((line, i) => (
           <div
-            key={i}
+            key={`line-${i}`}
             className={`flex ${targetLine === i + 1 ? "bg-blue-500/20" : ""}`}
           >
             <span className="inline-block w-12 text-right pr-4 text-muted-foreground select-none shrink-0">

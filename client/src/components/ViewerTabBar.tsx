@@ -30,7 +30,8 @@ export function ViewerTabBar({
       {tabs.map((tab, i) => {
         const isActive = i === activeTabIndex;
         return (
-          <div
+          <button
+            type="button"
             key={tab.id}
             className={`flex items-center gap-1 px-3 py-1.5 text-xs cursor-pointer border-r border-border whitespace-nowrap ${
               isActive
@@ -42,16 +43,18 @@ export function ViewerTabBar({
             <span>{getTabLabel(tab)}</span>
             {tab.type !== "terminal" && (
               <button
+                type="button"
                 className="ml-1 hover:text-destructive"
                 onClick={e => {
                   e.stopPropagation();
                   onTabClose(i);
                 }}
+                aria-label={`Close ${getTabLabel(tab)}`}
               >
                 ×
               </button>
             )}
-          </div>
+          </button>
         );
       })}
     </div>

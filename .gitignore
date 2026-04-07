@@ -117,3 +117,6 @@ test-results/
 .claude/push-completed.marker
 .claude/scheduled_tasks.lock
 .claude/stop_hook_active
+
+# Superpowers
+.superpowers/

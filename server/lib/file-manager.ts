@@ -66,7 +66,32 @@ const EXTENSION_MIME_MAP: Record<string, string> = {
   ".svelte": "text/x-svelte",
 };
 
+// ファイル名ベースのMIMEマッピング（dotfileや拡張子なしファイル用）
+const FILENAME_MIME_MAP: Record<string, string> = {
+  ".env": "text/plain",
+  ".gitignore": "text/plain",
+  ".dockerignore": "text/plain",
+  ".editorconfig": "text/plain",
+  ".prettierrc": "application/json",
+  ".eslintrc": "application/json",
+  ".babelrc": "application/json",
+  Dockerfile: "text/x-dockerfile",
+  Makefile: "text/x-makefile",
+  Rakefile: "text/x-ruby",
+  Gemfile: "text/x-ruby",
+  LICENSE: "text/plain",
+  README: "text/plain",
+  CHANGELOG: "text/plain",
+  "CLAUDE.md": "text/markdown",
+};
+
 function detectMimeType(filePath: string): string {
+  const basename = path.basename(filePath);
+  // ファイル名全体でマッチ（dotfileや拡張子なしファイル用）
+  if (FILENAME_MIME_MAP[basename]) {
+    return FILENAME_MIME_MAP[basename];
+  }
+  // 拡張子でマッチ
   const ext = path.extname(filePath).toLowerCase();
   return EXTENSION_MIME_MAP[ext] ?? "application/octet-stream";
 }
