@@ -85,11 +85,6 @@ export function MobileSessionView({
   const inputRef = useRef<HTMLInputElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // ttyd iframe URL構築
-  const isLocalAccess =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" ||
-      window.location.hostname === "127.0.0.1");
   // トンネル経由のアクセス時はURLのトークンをiframeにも付与
   const urlToken =
     typeof window !== "undefined"

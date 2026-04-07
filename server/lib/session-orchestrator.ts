@@ -448,7 +448,7 @@ export class SessionOrchestrator extends EventEmitter {
         if (/context\)/.test(line) && /Opus|Sonnet|Haiku/.test(line))
           return true;
         // リポジトリパス表示（~/path や /path でスペースなし）
-        if (/^[~\/][\w.\-\/]+$/.test(line)) return true;
+        if (/^[~/][\w.\-/]+$/.test(line)) return true;
         // Claude Codeスラッシュコマンド（/clear等）
         if (/^\/[a-z][\w-]*$/.test(line)) return true;
         // (no content)表示

@@ -249,11 +249,6 @@ export function TerminalPane({
   ]);
 
   // Construct ttyd iframe URL
-  // ローカル開発時のみ直接接続、リモートアクセス時はプロキシ経由
-  const isLocalAccess =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" ||
-      window.location.hostname === "127.0.0.1");
   // トンネル経由のアクセス時はURLのトークンをiframeにも付与
   const urlToken =
     typeof window !== "undefined"

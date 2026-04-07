@@ -9,7 +9,6 @@ import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
 import { TerminalPane } from "@/components/TerminalPane";
-import { useViewerTabs } from "@/hooks/useViewerTabs";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -31,6 +30,7 @@ import {
 import { useIsMobile } from "@/hooks/useMobile";
 import { useSettings } from "@/hooks/useSettings";
 import { useSocket } from "@/hooks/useSocket";
+import { useViewerTabs } from "@/hooks/useViewerTabs";
 import { getBaseName } from "@/utils/pathUtils";
 import { findRepoForSession } from "@/utils/sessionUtils";
 import type { Worktree } from "../../../shared/types";

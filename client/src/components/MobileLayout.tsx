@@ -10,13 +10,13 @@ import { useCallback, useEffect, useState } from "react";
 import { MobileChatView } from "@/components/MobileChatView";
 import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
-import { useViewerTabs } from "../hooks/useViewerTabs";
 import type {
   ChatMessage,
   ManagedSession,
   SpecialKey,
   Worktree,
 } from "../../../shared/types";
+import { useViewerTabs } from "../hooks/useViewerTabs";
 
 interface MobileLayoutProps {
   sessions: Map<string, ManagedSession>;

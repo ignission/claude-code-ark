@@ -1,0 +1,140 @@
+<h2>ファイルビューワーのレイアウト</h2>
+<p class="subtitle">IDEライクなディレクトリツリー + ファイルビューワーの配置</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>左サイドバー統合型</h3>
+      <p>既存のセッションサイドバーにディレクトリツリータブを追加。ファイルビューワーはターミナルとタブ切り替え。</p>
+      <div class="mockup" style="margin-top:12px">
+        <div class="mockup-header">レイアウト A</div>
+        <div class="mockup-body" style="display:flex;gap:2px;height:200px;font-size:11px">
+          <div style="width:180px;background:#1a1a2e;padding:8px;border-radius:4px;overflow:hidden">
+            <div style="display:flex;gap:4px;margin-bottom:8px">
+              <span style="padding:2px 6px;background:#3b82f6;border-radius:3px;font-size:10px">Sessions</span>
+              <span style="padding:2px 6px;background:#333;border-radius:3px;font-size:10px">Files</span>
+            </div>
+            <div style="color:#888;font-size:10px">
+              📁 src/<br>
+              &nbsp;&nbsp;📁 components/<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;📄 App.tsx<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;📄 Header.tsx<br>
+              &nbsp;&nbsp;📁 hooks/<br>
+              📁 server/<br>
+              📄 package.json<br>
+              📄 README.md
+            </div>
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;gap:2px">
+            <div style="display:flex;gap:4px;padding:4px;background:#1a1a2e;border-radius:4px">
+              <span style="padding:2px 8px;background:#3b82f6;border-radius:3px;font-size:10px">Terminal</span>
+              <span style="padding:2px 8px;background:#333;border-radius:3px;font-size:10px">App.tsx</span>
+            </div>
+            <div style="flex:1;background:#0a0a1a;border-radius:4px;padding:8px;color:#4ade80;font-size:10px">
+              $ claude<br>
+              ──────────<br>
+              Editing src/components/App.tsx...<br>
+              <span style="color:#60a5fa">file:src/components/App.tsx:42</span>
+            </div>
+          </div>
+          <div style="width:160px;background:#1a1a2e;padding:8px;border-radius:4px;font-size:10px;color:#888">
+            <div style="color:#fff;margin-bottom:4px">🤖 Beacon</div>
+            チャットエリア
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>右パネル切替型</h3>
+      <p>Beacon / ファイルビューワーを右パネルでタブ切り替え。ディレクトリツリーはビューワー内に組み込み。</p>
+      <div class="mockup" style="margin-top:12px">
+        <div class="mockup-header">レイアウト B</div>
+        <div class="mockup-body" style="display:flex;gap:2px;height:200px;font-size:11px">
+          <div style="width:160px;background:#1a1a2e;padding:8px;border-radius:4px;font-size:10px;color:#888">
+            <div style="color:#fff;margin-bottom:4px">Sessions</div>
+            repo-a/<br>
+            &nbsp;&nbsp;🟢 main<br>
+            &nbsp;&nbsp;⚡ feat/auth<br>
+            repo-b/<br>
+            &nbsp;&nbsp;🟢 main
+          </div>
+          <div style="flex:1;background:#0a0a1a;border-radius:4px;padding:8px;color:#4ade80;font-size:10px">
+            $ claude<br>
+            ──────────<br>
+            Editing src/components/App.tsx...<br>
+            <span style="color:#60a5fa">file:src/components/App.tsx:42</span>
+          </div>
+          <div style="width:220px;background:#1a1a2e;padding:8px;border-radius:4px;font-size:10px">
+            <div style="display:flex;gap:4px;margin-bottom:8px">
+              <span style="padding:2px 6px;background:#333;border-radius:3px">Beacon</span>
+              <span style="padding:2px 6px;background:#3b82f6;border-radius:3px">Files</span>
+            </div>
+            <div style="display:flex;height:calc(100% - 30px);gap:2px">
+              <div style="width:80px;color:#888;font-size:9px;border-right:1px solid #333;padding-right:4px">
+                📁 src/<br>
+                &nbsp;&nbsp;📁 comp./<br>
+                &nbsp;&nbsp;📁 hooks/<br>
+                📁 server/<br>
+                📄 README
+              </div>
+              <div style="flex:1;padding-left:4px;color:#c4b5fd;font-size:9px">
+                # README<br><br>
+                ## Ark<br>
+                Claude Code<br>
+                マネージャー...
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>独立ペイン型（4カラム）</h3>
+      <p>ファイルツリー + ビューワーを専用列として追加。最も広い表示領域だが画面幅が必要。</p>
+      <div class="mockup" style="margin-top:12px">
+        <div class="mockup-header">レイアウト C</div>
+        <div class="mockup-body" style="display:flex;gap:2px;height:200px;font-size:11px">
+          <div style="width:130px;background:#1a1a2e;padding:8px;border-radius:4px;font-size:10px;color:#888">
+            <div style="color:#fff;margin-bottom:4px">Sessions</div>
+            repo-a/<br>
+            &nbsp;&nbsp;🟢 main<br>
+            &nbsp;&nbsp;⚡ feat/auth
+          </div>
+          <div style="flex:1;background:#0a0a1a;border-radius:4px;padding:8px;color:#4ade80;font-size:10px">
+            Terminal<br>
+            ──────<br>
+            $ claude<br>
+            <span style="color:#60a5fa">file:src/App.tsx:42</span>
+          </div>
+          <div style="width:200px;display:flex;flex-direction:column;gap:2px">
+            <div style="height:40%;background:#1a1a2e;padding:6px;border-radius:4px;font-size:9px;color:#888">
+              <div style="color:#fff;margin-bottom:2px">📂 Files</div>
+              📁 src/<br>
+              &nbsp;&nbsp;📄 App.tsx ←<br>
+              📁 server/
+            </div>
+            <div style="flex:1;background:#1e1e3a;padding:6px;border-radius:4px;font-size:9px;color:#c4b5fd">
+              <div style="color:#fff;margin-bottom:2px">App.tsx</div>
+              <span style="color:#f59e0b">import</span> React...<br>
+              <span style="color:#f59e0b">function</span> App() {<br>
+              &nbsp;&nbsp;<span style="color:#4ade80">return</span> ...
+            </div>
+          </div>
+          <div style="width:130px;background:#1a1a2e;padding:8px;border-radius:4px;font-size:10px;color:#888">
+            <div style="color:#fff;margin-bottom:4px">🤖 Beacon</div>
+            チャット
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

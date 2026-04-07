@@ -25,8 +25,10 @@ import type {
 } from "../shared/types.js";
 import { authManager } from "./lib/auth.js";
 import { beaconManager } from "./lib/beacon-manager.js";
+import { TTYD_PORT_END, TTYD_PORT_START } from "./lib/constants.js";
 import { db } from "./lib/database.js";
 import { getErrorMessage } from "./lib/errors.js";
+import { readFileFromWorktree } from "./lib/file-manager.js";
 import {
   createWorktree,
   deleteWorktree,
@@ -34,14 +36,12 @@ import {
   listWorktrees,
   scanRepositories,
 } from "./lib/git.js";
-import { readFileFromWorktree } from "./lib/file-manager.js";
 import { ImageManagerError, imageManager } from "./lib/image-manager.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import { sessionOrchestrator } from "./lib/session-orchestrator.js";
 import { tmuxManager } from "./lib/tmux-manager.js";
 import { TunnelManager } from "./lib/tunnel.js";
-import { TTYD_PORT_START, TTYD_PORT_END } from "./lib/constants.js";
 
 // Parse command line arguments
 const args = process.argv.slice(2);

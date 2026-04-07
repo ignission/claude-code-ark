@@ -53,7 +53,7 @@ export function useTerminalLinkInjection(
           // localhost URLを検出し、postMessageに変換する。
           const arkWindow = window;
           const origOpen = iframeWindow.open;
-          iframeWindow.open = function (...args: any[]) {
+          iframeWindow.open = (...args: any[]) => {
             // 引数ありの呼び出し（URL直接指定）
             if (args.length > 0 && args[0]) {
               const urlStr = String(args[0]);
