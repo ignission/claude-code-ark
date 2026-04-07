@@ -7,10 +7,10 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import type { Socket } from "socket.io-client";
 import { MobileChatView } from "@/components/MobileChatView";
 import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
-import type { Socket } from "socket.io-client";
 import type {
   ChatMessage,
   ClientToServerEvents,

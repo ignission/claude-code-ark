@@ -872,7 +872,13 @@ async function startServer() {
     // スクロール: tmux copy-modeでスクロール
     socket.on("session:scroll", ({ sessionId, direction, lines }) => {
       try {
-        sessionOrchestrator.scrollSession(sessionId, direction, lines);
+        // 入力バリデーション
+        if (direction !== "up" && direction !== "down") return;
+        if (typeof lines !== "number" || !Number.isFinite(lines) || lines < 1)
+          return;
+        const clampedLines = Math.min(lines, 500);
+
+        sessionOrchestrator.scrollSession(sessionId, direction, clampedLines);
       } catch (error) {
         socket.emit("session:error", {
           sessionId,

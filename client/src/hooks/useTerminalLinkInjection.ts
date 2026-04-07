@@ -43,16 +43,23 @@ export function useTerminalLinkInjection(
           // biome-ignore lint/suspicious/noExplicitAny: ttyd iframe内の状態管理フラグ
           (iframeWindow as any).__arkLinkInjected = true;
 
-          // モバイルでターミナルタップ時の仮想キーボードを防止
-          // 入力は専用の入力バーで行うため、xterm.jsの入力用textareaは不要
-          const xtermTextarea = iframeWindow.document.querySelector(
-            ".xterm-helper-textarea"
-          );
-          if (xtermTextarea) {
-            (xtermTextarea as HTMLTextAreaElement).setAttribute(
-              "inputmode",
-              "none"
+          // モバイル判定（touchイベント対応デバイスのみ）
+          const isMobile =
+            "ontouchstart" in iframeWindow ||
+            iframeWindow.navigator.maxTouchPoints > 0;
+
+          if (isMobile) {
+            // モバイルでターミナルタップ時の仮想キーボードを防止
+            // 入力は専用の入力バーで行うため、xterm.jsの入力用textareaは不要
+            const xtermTextarea = iframeWindow.document.querySelector(
+              ".xterm-helper-textarea"
             );
+            if (xtermTextarea) {
+              (xtermTextarea as HTMLTextAreaElement).setAttribute(
+                "inputmode",
+                "none"
+              );
+            }
           }
 
           // xterm.js WebLinksAddonのlocalhost URLを横取りする。
@@ -125,61 +132,71 @@ export function useTerminalLinkInjection(
           // iframe内のtouchイベントを検知し、postMessageで親ウィンドウに通知する。
           // 親側でSocket.IO経由のtmux copy-modeスクロールに変換する。
           // オーバーレイ不要のため、リンクタップもそのまま動作する。
-          const iframeDoc = iframeWindow.document;
-          let touchStartY = 0;
-          let touchSentLines = 0;
-          let isSwiping = false;
-          const SWIPE_LINE_HEIGHT = 8; // 8pxで1行スクロール（高感度）
-          const SWIPE_THRESHOLD = 3;
+          if (isMobile) {
+            const iframeDoc = iframeWindow.document;
+            let touchStartY = 0;
+            let touchSentLines = 0;
+            let isSwiping = false;
+            const SWIPE_LINE_HEIGHT = 8; // 8pxで1行スクロール（高感度）
+            const SWIPE_THRESHOLD = 3;
 
-          iframeDoc.addEventListener(
-            "touchstart",
-            (e: Event) => {
-              const te = e as TouchEvent;
-              touchStartY = te.touches[0].clientY;
-              touchSentLines = 0;
-              isSwiping = false;
-            },
-            { capture: true, passive: true }
-          );
+            // parentOriginの取得（修正5で定義済み）
+            let parentOrigin = "*";
+            try {
+              parentOrigin = iframeWindow.parent.location.origin;
+            } catch {
+              // cross-originの場合はフォールバック
+            }
 
-          iframeDoc.addEventListener(
-            "touchmove",
-            (e: Event) => {
-              const te = e as TouchEvent;
-              const deltaY = touchStartY - te.touches[0].clientY;
+            iframeDoc.addEventListener(
+              "touchstart",
+              (e: Event) => {
+                const te = e as TouchEvent;
+                touchStartY = te.touches[0].clientY;
+                touchSentLines = 0;
+                isSwiping = false;
+              },
+              { capture: true, passive: true }
+            );
 
-              if (!isSwiping && Math.abs(deltaY) > SWIPE_THRESHOLD) {
-                isSwiping = true;
-              }
-              if (!isSwiping) return;
+            iframeDoc.addEventListener(
+              "touchmove",
+              (e: Event) => {
+                const te = e as TouchEvent;
+                const deltaY = touchStartY - te.touches[0].clientY;
 
-              e.preventDefault();
+                if (!isSwiping && Math.abs(deltaY) > SWIPE_THRESHOLD) {
+                  isSwiping = true;
+                }
+                if (!isSwiping) return;
 
-              const totalLines = Math.floor(
-                Math.abs(deltaY) / SWIPE_LINE_HEIGHT
-              );
-              const newLines = totalLines - touchSentLines;
-              if (newLines > 0) {
-                const direction = deltaY > 0 ? "up" : "down";
-                iframeWindow.parent.postMessage(
-                  { type: "ark:scroll", direction, lines: newLines },
-                  "*"
+                e.preventDefault();
+
+                const totalLines = Math.floor(
+                  Math.abs(deltaY) / SWIPE_LINE_HEIGHT
                 );
-                touchSentLines = totalLines;
-              }
-            },
-            { capture: true, passive: false }
-          );
+                const newLines = totalLines - touchSentLines;
+                if (newLines > 0) {
+                  const direction = deltaY > 0 ? "up" : "down";
+                  iframeWindow.parent.postMessage(
+                    { type: "ark:scroll", direction, lines: newLines },
+                    parentOrigin
+                  );
+                  touchSentLines = totalLines;
+                }
+              },
+              { capture: true, passive: false }
+            );
 
-          iframeDoc.addEventListener(
-            "touchend",
-            () => {
-              touchSentLines = 0;
-              isSwiping = false;
-            },
-            { capture: true, passive: true }
-          );
+            iframeDoc.addEventListener(
+              "touchend",
+              () => {
+                touchSentLines = 0;
+                isSwiping = false;
+              },
+              { capture: true, passive: true }
+            );
+          }
 
           term.registerLinkProvider({
             provideLinks(
@@ -200,7 +217,7 @@ export function useTerminalLinkInjection(
               // 1. file:プレフィックス付き（拡張子不問）: file:Dockerfile, file:src/main.rs:42
               // 2. パス区切り+拡張子付き: src/App.tsx:10
               const fileRegex =
-                /(?:file:([a-zA-Z0-9_.\-/]+)|([a-zA-Z0-9_.\-/]+\/[a-zA-Z0-9_.\-]+\.[a-zA-Z0-9]+))(?::(\d+))?/g;
+                /(?:file:([a-zA-Z0-9_.\-/]+)|([a-zA-Z0-9_.\-/]+\/[a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+))(?::(\d+))?/g;
               let match: RegExpExecArray | null;
               while ((match = fileRegex.exec(text)) !== null) {
                 const fullMatch = match[0];

@@ -18,6 +18,8 @@ export function useTerminalSwipeScroll(
     if (!socket) return;
 
     const onMessage = (e: MessageEvent) => {
+      // 同一オリジンからのメッセージのみ受け付ける
+      if (e.origin !== window.location.origin) return;
       if (e.data?.type === "ark:scroll") {
         socket.emit("session:scroll", {
           sessionId,
