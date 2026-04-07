@@ -96,6 +96,16 @@ interface UseSocketReturn {
   imageUploadError: string | null;
   clearImageUploadState: () => void;
 
+  // File viewer
+  fileContent: {
+    filePath: string;
+    content: string;
+    mimeType: string;
+    size: number;
+    error?: string;
+  } | null;
+  readFile: (worktreePath: string, filePath: string) => void;
+
   // Copy buffer
   copyBuffer: (sessionId: string) => Promise<string | null>;
 
@@ -158,6 +168,15 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     filename: string;
   } | null>(null);
   const [imageUploadError, setImageUploadError] = useState<string | null>(null);
+
+  // File viewer state
+  const [fileContent, setFileContent] = useState<{
+    filePath: string;
+    content: string;
+    mimeType: string;
+    size: number;
+    error?: string;
+  } | null>(null);
 
   // Session previews state
   const [sessionPreviews, setSessionPreviews] = useState<Map<string, string>>(
@@ -415,6 +434,12 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       setImageUploadResult(null);
     });
 
+    // File viewer events
+    socket.on("file:content", data => {
+      console.log("[Socket] File content received:", data.filePath);
+      setFileContent(data);
+    });
+
     // Beaconイベント
     socket.on("beacon:message", (message: ChatMessage) => {
       setBeaconMessages(prev => [...prev, message]);
@@ -477,6 +502,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       socket.off("ports:list");
       socket.off("image:uploaded");
       socket.off("image:error");
+      socket.off("file:content");
       socket.off("beacon:message");
       socket.off("beacon:stream");
       socket.off("beacon:history");
@@ -602,6 +628,12 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     setImageUploadError(null);
   }, []);
 
+  // File read action
+  const readFile = useCallback((worktreePath: string, filePath: string) => {
+    if (!socketRef.current?.connected) return;
+    socketRef.current.emit("file:read", { worktreePath, filePath });
+  }, []);
+
   // Beaconメッセージ送信
   const beaconSend = useCallback((message: string) => {
     socketRef.current?.emit("beacon:send", { message });
@@ -693,6 +725,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     imageUploadResult,
     imageUploadError,
     clearImageUploadState,
+    // File viewer
+    fileContent,
+    readFile,
     // Copy buffer
     copyBuffer,
     // Session previews
