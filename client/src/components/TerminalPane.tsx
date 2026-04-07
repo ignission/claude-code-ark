@@ -260,12 +260,11 @@ export function TerminalPane({
       ? new URLSearchParams(window.location.search).get("token")
       : null;
   const ttydBasePath = `/ttyd/${session.id}/`;
-  const ttydIframeSrc =
-    isLocalAccess && session.ttydPort
-      ? `http://127.0.0.1:${session.ttydPort}${ttydBasePath}`
-      : urlToken
-        ? `${ttydBasePath}?token=${urlToken}`
-        : ttydBasePath;
+  // 常にプロキシ経由でアクセスし同一オリジンを維持する
+  // （リンクインジェクト等でiframe内DOMにアクセスするため必須）
+  const ttydIframeSrc = urlToken
+    ? `${ttydBasePath}?token=${urlToken}`
+    : ttydBasePath;
 
   // Quick commands for mobile
   const quickCommands = [

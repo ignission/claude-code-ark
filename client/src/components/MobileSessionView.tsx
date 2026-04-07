@@ -96,12 +96,10 @@ export function MobileSessionView({
       ? new URLSearchParams(window.location.search).get("token")
       : null;
   const ttydBasePath = `/ttyd/${session.id}/`;
-  const ttydIframeSrc =
-    isLocalAccess && session.ttydPort
-      ? `http://127.0.0.1:${session.ttydPort}${ttydBasePath}`
-      : urlToken
-        ? `${ttydBasePath}?token=${urlToken}`
-        : ttydBasePath;
+  // 常にプロキシ経由でアクセスし同一オリジンを維持する
+  const ttydIframeSrc = urlToken
+    ? `${ttydBasePath}?token=${urlToken}`
+    : ttydBasePath;
 
   // メッセージ送信（空文字でもEnterとして送信 = ターミナルへの空行送信）
   const handleSubmit = (e: React.FormEvent) => {
