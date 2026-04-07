@@ -52,11 +52,16 @@ export function useTerminalLinkInjection(
           // そのため、フェイクWindowオブジェクトを返してlocation.hrefのセッターで
           // localhost URLを検出し、postMessageに変換する。
           const arkWindow = window;
-          const origOpen = iframeWindow.open;
-          iframeWindow.open = (...args: any[]) => {
+          const origOpen = iframeWindow.open.bind(iframeWindow);
+          // biome-ignore lint/suspicious/noExplicitAny: ttyd iframe内のwindow.openをオーバーライドするため型を緩める
+          (iframeWindow as any).open = (
+            url?: string | URL,
+            target?: string,
+            features?: string
+          ): Window | null => {
             // 引数ありの呼び出し（URL直接指定）
-            if (args.length > 0 && args[0]) {
-              const urlStr = String(args[0]);
+            if (url) {
+              const urlStr = String(url);
               if (
                 /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/.test(urlStr)
               ) {
@@ -66,33 +71,31 @@ export function useTerminalLinkInjection(
                 );
                 return null;
               }
-              return origOpen.apply(iframeWindow, args);
+              return origOpen(url, target, features);
             }
 
             // 引数なしの呼び出し（WebLinksAddonパターン）
             // フェイクWindowを返し、location.hrefセッターでURLを横取り
-            let intercepted = false;
             const fakeWindow = {
               opener: null,
               location: {
                 _href: "",
-                set href(url: string) {
+                set href(u: string) {
                   if (
-                    /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/.test(url)
+                    /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/.test(u)
                   ) {
-                    intercepted = true;
                     arkWindow.postMessage(
-                      { type: "ark:open-url", url },
+                      { type: "ark:open-url", url: u },
                       arkWindow.location.origin
                     );
                   } else {
                     // localhost以外は実際に新しいウィンドウで開く
-                    const real = origOpen.apply(iframeWindow, args);
+                    const real = origOpen();
                     if (real) {
                       try {
                         real.opener = null;
                       } catch {}
-                      real.location.href = url;
+                      real.location.href = u;
                     }
                   }
                 },
@@ -102,7 +105,8 @@ export function useTerminalLinkInjection(
               },
               close() {},
             };
-            return fakeWindow;
+            // biome-ignore lint/suspicious/noExplicitAny: xterm.js WebLinksAddonが期待するwindowのサブセットのみ実装
+            return fakeWindow as any;
           };
 
           term.registerLinkProvider({

@@ -92,7 +92,8 @@ export function useViewerTabs(
         return { ...prev, [sessionId]: tabs };
       });
       if (newActiveIndex !== null) {
-        setSessionActiveTab(p => ({ ...p, [sessionId]: newActiveIndex }));
+        const idx = newActiveIndex;
+        setSessionActiveTab(p => ({ ...p, [sessionId]: idx }));
       }
     },
     []
@@ -116,7 +117,8 @@ export function useViewerTabs(
       return { ...prev, [sessionId]: tabs };
     });
     if (newActiveIndex !== null) {
-      setSessionActiveTab(p => ({ ...p, [sessionId]: newActiveIndex }));
+      const idx = newActiveIndex;
+      setSessionActiveTab(p => ({ ...p, [sessionId]: idx }));
     }
   }, []);
 
