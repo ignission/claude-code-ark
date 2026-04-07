@@ -34,6 +34,7 @@ import {
   listWorktrees,
   scanRepositories,
 } from "./lib/git.js";
+import { readFileFromWorktree } from "./lib/file-manager.js";
 import { ImageManagerError, imageManager } from "./lib/image-manager.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
@@ -897,6 +898,22 @@ async function startServer() {
             error instanceof ImageManagerError
               ? error.message
               : "画像のアップロードに失敗しました",
+        });
+      }
+    });
+
+    // ===== File Viewer =====
+    socket.on("file:read", async ({ worktreePath, filePath }) => {
+      try {
+        const result = await readFileFromWorktree(worktreePath, filePath);
+        socket.emit("file:content", result);
+      } catch (error) {
+        socket.emit("file:content", {
+          filePath,
+          content: "",
+          mimeType: "application/octet-stream",
+          size: 0,
+          error: getErrorMessage(error),
         });
       }
     });
