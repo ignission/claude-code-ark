@@ -33,24 +33,46 @@ export function useTerminalLinkInjection(
           // biome-ignore lint/suspicious/noExplicitAny: ttyd iframe内の状態管理フラグ
           (iframeWindow as any).__arkLinkInjected = true;
 
-          // ttydのWebLinksAddonがlocalhost URLをwindow.openで開くのを阻止し、
-          // 代わりにpostMessageでArkのタブとして開く
-          // 注: この関数は親ウィンドウのコンテキストで作成されるため、
-          //      windowは親ウィンドウ（Ark）を指す
-          const arkWindow = window;
-          const originalOpen = iframeWindow.open.bind(iframeWindow);
-          iframeWindow.open = (url?: string | URL, ...args: any[]) => {
+          // ttydのWebLinksAddonがlocalhost URLを新規タブで開くのを阻止する。
+          // WebLinksAddonは初期化時にwindow.openの参照をキャプチャするため、
+          // window.openのオーバーライドでは捕捉できない。
+          // 代わりに、iframe document上でclickイベントをキャプチャフェーズで
+          // インターセプトし、localhost URLへのリンククリックをpostMessageに変換する。
+          const iframeDoc = iframeWindow.document;
+          iframeDoc.addEventListener(
+            "click",
+            (e: MouseEvent) => {
+              const anchor = (e.target as HTMLElement).closest?.("a");
+              if (!anchor) return;
+              const href = anchor.getAttribute("href") || "";
+              if (
+                /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/.test(href)
+              ) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.postMessage(
+                  { type: "ark:open-url", url: href },
+                  window.location.origin
+                );
+              }
+            },
+            true // キャプチャフェーズで先に処理
+          );
+
+          // window.openも念のためオーバーライド（一部環境でwindow.openが使われる場合）
+          const origOpen = iframeWindow.open;
+          iframeWindow.open = function (url?: string | URL, ...args: any[]) {
             const urlStr = String(url ?? "");
             if (
               /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/.test(urlStr)
             ) {
-              arkWindow.postMessage(
+              window.postMessage(
                 { type: "ark:open-url", url: urlStr },
-                arkWindow.location.origin
+                window.location.origin
               );
               return null;
             }
-            return originalOpen(url, ...args);
+            return origOpen.apply(iframeWindow, [url, ...args] as any);
           };
 
           term.registerLinkProvider({
