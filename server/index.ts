@@ -1023,7 +1023,18 @@ async function startServer() {
       try {
         // /tmp配下のファイルはsessionに依存せず直接読み取り
         if (filePath.startsWith("/tmp/")) {
-          const result = await readFileFromWorktree("", filePath);
+          const normalizedPath = path.resolve(filePath);
+          if (!normalizedPath.startsWith("/tmp/")) {
+            socket.emit("file:content", {
+              filePath,
+              content: "",
+              mimeType: "application/octet-stream",
+              size: 0,
+              error: "不正なパスです",
+            });
+            return;
+          }
+          const result = await readFileFromWorktree("", normalizedPath);
           socket.emit("file:content", result);
           return;
         }
