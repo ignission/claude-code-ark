@@ -248,12 +248,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       if (repoPathRef.current) {
         socket.emit("repo:select", repoPathRef.current);
       }
-
-      // localStorageに保存済みのbasePathがあれば自動スキャン
-      const savedBasePath = localStorage.getItem("scanBasePath");
-      if (savedBasePath) {
-        socket.emit("repo:scan", savedBasePath);
-      }
     });
 
     socket.on("disconnect", () => {
