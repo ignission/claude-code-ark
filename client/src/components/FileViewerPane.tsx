@@ -82,8 +82,8 @@ function ImageRenderer({
   mimeType: string;
   filePath: string;
 }) {
+  // SVGはテキストコンテンツからdata URLを生成
   if (mimeType === "image/svg+xml") {
-    // SVGは<img>タグでdata URLとして表示し、スクリプト実行をブロック
     const utf8Bytes = new TextEncoder().encode(content);
     const binaryString = Array.from(utf8Bytes, byte =>
       String.fromCharCode(byte)
@@ -99,6 +99,20 @@ function ImageRenderer({
       </div>
     );
   }
+
+  // PNG/JPG/GIF/WebP等はサーバーからdata URLとして受信済み
+  if (content) {
+    return (
+      <div className="p-4 flex items-center justify-center h-full">
+        <img
+          src={content}
+          alt={filePath.split("/").pop()}
+          className="max-w-full max-h-full object-contain"
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center justify-center h-full text-muted-foreground">
       <p>画像ファイル: {filePath.split("/").pop()}</p>

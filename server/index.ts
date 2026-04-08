@@ -1021,6 +1021,13 @@ async function startServer() {
       lastFileReadTime = now;
 
       try {
+        // /tmp配下のファイルはsessionに依存せず直接読み取り
+        if (filePath.startsWith("/tmp/")) {
+          const result = await readFileFromWorktree("", filePath);
+          socket.emit("file:content", result);
+          return;
+        }
+
         // sessionIdからworktreePathをサーバー側で解決
         const session = sessionOrchestrator.getSession(sessionId);
         if (!session?.worktreePath) {
