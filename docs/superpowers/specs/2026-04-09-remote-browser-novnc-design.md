@@ -80,7 +80,13 @@ iframe src="/proxy/3330/"
 | ポート範囲 | 7680-7780 (ttyd) | 5900-5999 (VNC) + 6080-6179 (websockify) |
 | プロキシパス | `/ttyd/:sessionId` | `/browser/:browserId` |
 | iframe src | `/ttyd/{id}/` | `/browser/{id}/vnc.html` |
-| 統合 | `SessionOrchestrator` | `SessionOrchestrator`に追加 |
+| 統合 | `SessionOrchestrator` | 独立管理（後述） |
+
+### SessionOrchestratorとの連携
+
+BrowserManagerはSessionOrchestratorには統合しない。BrowserSessionはtmuxセッションとは独立したライフサイクルを持ち、ポートごとのオンデマンド起動・停止で管理される。
+
+ただし、SessionOrchestrator.cleanup()時にbrowserManager.cleanup()も呼び出し、サーバー終了時に全ブラウザセッションが確実にクリーンアップされるようにする。
 
 ## サーバー側設計
 
@@ -158,7 +164,6 @@ server.on("upgrade", (req, socket, head) => {
 |------|---------|--------|------|
 | C→S | `browser:start` | `{ port, url? }` | ブラウザセッション起動 |
 | C→S | `browser:stop` | `{ browserId }` | ブラウザセッション停止 |
-| C→S | `browser:navigate` | `{ browserId, url }` | URL変更 |
 | S→C | `browser:started` | `BrowserSession` | 起動完了 |
 | S→C | `browser:stopped` | `{ browserId }` | 停止完了 |
 | S→C | `browser:error` | `{ message }` | エラー |
@@ -263,13 +268,16 @@ UIにはトグルスイッチを用意:
 - x11vncもループバックのみ
 - 外部からのアクセスはArkのプロキシ経由のみ（既存の認証が適用される）
 - SSRF対策: `/browser/:browserId` ルートはBrowserManagerに登録されたセッションのみ許可
+- SSRF対策（URLバリデーション）: `browser:start` の `url` パラメータが指定された場合、ホスト名が `localhost` / `127.0.0.1` でありプロトコルが `http:` / `https:` であることを検証する。それ以外のURLはエラーとして拒否する
+- `--no-sandbox` フラグ: Xvfb環境ではカーネルnamespaceが利用できない場合があるため必要。Chromiumはlocalhostのみにアクセスする前提であり、追加のセキュリティフラグ（`--disable-background-networking`, `--disable-extensions`, `--disable-sync`, `--disable-translate`, `--no-first-run`, `--disable-default-apps`）で攻撃面を最小化する
+- x11vnc `-nopw`: シングルユーザー前提の設定。マルチユーザー環境ではVNCパスワード設定を推奨する
 
 ## ファイル構成（変更・新規）
 
 ```
 server/lib/
 ├── browser-manager.ts      # 新規: Xvfb + Chromium + x11vnc + websockify管理
-├── session-orchestrator.ts  # 変更: BrowserManager統合
+├── session-orchestrator.ts  # 変更: cleanup()時にbrowserManager.cleanup()を呼び出し
 └── constants.ts             # 変更: VNC/WebSocketポート範囲定数追加
 
 server/index.ts              # 変更: /browser/:browserId プロキシルート追加
