@@ -665,6 +665,11 @@ async function startServer() {
           })
           .catch(err => {
             console.error("[Socket] 自動スキャン失敗:", getErrorMessage(err));
+            socket.emit("repos:scanning", {
+              basePath: savedBasePath,
+              status: "error",
+              error: getErrorMessage(err),
+            });
           });
       }
     }
