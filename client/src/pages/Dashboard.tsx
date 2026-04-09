@@ -1,7 +1,7 @@
 import { AlertCircle, Copy, Loader2, Terminal } from "lucide-react";
 import { BrowserPane } from "@/components/BrowserPane";
 import { QRCodeSVG } from "qrcode.react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { MobileChatView } from "@/components/MobileChatView";
