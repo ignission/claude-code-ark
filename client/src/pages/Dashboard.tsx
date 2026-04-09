@@ -316,9 +316,16 @@ export default function Dashboard() {
                 </div>
               )}
               <div className="flex-1 overflow-hidden relative">
-                {selectedSessionId === "browser" && activeBrowserSession && (
+                {selectedSessionId === "browser" && (
                   <div className="h-full">
-                    <BrowserPane browserSession={activeBrowserSession} />
+                    {activeBrowserSession ? (
+                      <BrowserPane browserSession={activeBrowserSession} />
+                    ) : (
+                      <div className="h-full flex items-center justify-center text-muted-foreground">
+                        <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                        ブラウザを起動中...
+                      </div>
+                    )}
                   </div>
                 )}
                 {Array.from(sessions.values()).map(session => {
