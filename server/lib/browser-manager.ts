@@ -668,27 +668,62 @@ export class BrowserManager extends EventEmitter {
 
   /**
    * CDP経由でChromiumを指定URLにナビゲート
+   * WebSocket DevTools Protocol の Page.navigate を使用
    */
   async navigate(url: string): Promise<void> {
     if (!this.singletonSession) {
       throw new Error("ブラウザセッションが起動していません");
     }
 
-    // CDP: アクティブなタブを取得
+    // CDP: ページ型のタブを取得
     const res = await fetch(`http://127.0.0.1:${CDP_PORT}/json`);
     const tabs = (await res.json()) as Array<{
       id: string;
+      type: string;
       webSocketDebuggerUrl: string;
+      url: string;
     }>;
-    if (tabs.length === 0) {
-      throw new Error("Chromiumのタブが見つかりません");
+    const pageTab = tabs.find(t => t.type === "page");
+    if (!pageTab) {
+      throw new Error("Chromiumのページタブが見つかりません");
     }
 
-    // 最初のタブにナビゲート
-    const tabId = tabs[0].id;
-    await fetch(
-      `http://127.0.0.1:${CDP_PORT}/json/navigate?${tabId}&url=${encodeURIComponent(url)}`
-    );
+    // WebSocketでPage.navigateコマンドを送信
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(pageTab.webSocketDebuggerUrl);
+      const timeout = setTimeout(() => {
+        ws.close();
+        reject(new Error("CDP navigate タイムアウト"));
+      }, 5000);
+
+      ws.addEventListener("open", () => {
+        ws.send(
+          JSON.stringify({
+            id: 1,
+            method: "Page.navigate",
+            params: { url },
+          })
+        );
+      });
+
+      ws.addEventListener("message", event => {
+        const msg = JSON.parse(event.data.toString());
+        if (msg.id === 1) {
+          clearTimeout(timeout);
+          ws.close();
+          if (msg.error) {
+            reject(new Error(`CDP navigate エラー: ${msg.error.message}`));
+          } else {
+            resolve();
+          }
+        }
+      });
+
+      ws.addEventListener("error", err => {
+        clearTimeout(timeout);
+        reject(new Error(`CDP WebSocket エラー: ${err}`));
+      });
+    });
 
     console.log(`[BrowserManager] ナビゲート: ${url}`);
   }
