@@ -174,6 +174,7 @@ export function MobileLayout({
   const handleOpenBrowser = useCallback(() => {
     onSelectBrowser();
     setActiveView("browser");
+    setHasBrowserOpened(true);
   }, [onSelectBrowser]);
 
   // ボトムナビゲーションの表示判定（セッション詳細画面・ブラウザ画面以外で表示）
@@ -258,9 +259,14 @@ export function MobileLayout({
         />
       </div>
 
-      {/* ブラウザビュー（noVNC） */}
-      {activeView === "browser" && (
-        <div className="flex-1 flex flex-col min-h-0">
+      {/* ブラウザビュー（noVNC）- 一度開いたら常に描画し、display:hiddenで切り替え。
+          BrowserPaneの再マウントによるVNC再接続を防ぐ。 */}
+      {hasBrowserOpened && (
+        <div
+          className={
+            activeView === "browser" ? "flex-1 flex flex-col min-h-0" : "hidden"
+          }
+        >
           <div className="h-12 border-b border-border flex items-center px-4 shrink-0">
             <button
               type="button"

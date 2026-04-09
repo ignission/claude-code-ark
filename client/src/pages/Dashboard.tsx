@@ -112,6 +112,9 @@ export default function Dashboard() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null
   );
+  // ブラウザビューを一度でも開いたかどうかのフラグ
+  // 一度開いたら常に描画してdisplay:hiddenで切り替え、BrowserPaneの再マウント（VNC再接続）を防ぐ
+  const [hasBrowserOpened, setHasBrowserOpened] = useState(false);
 
   /** ブラウザを選択（未起動なら起動） */
   const handleSelectBrowser = useCallback(() => {
@@ -119,6 +122,7 @@ export default function Dashboard() {
       startBrowser();
     }
     setSelectedSessionId("browser");
+    setHasBrowserOpened(true);
   }, [activeBrowserSession, startBrowser]);
 
   /** localhost URLクリック時: ブラウザに遷移して選択 */
@@ -127,8 +131,9 @@ export default function Dashboard() {
       if (isRemote) {
         navigateBrowser(url);
         setSelectedSessionId("browser");
+        setHasBrowserOpened(true);
       } else {
-        window.open(url, "_blank");
+        window.open(url, "_blank", "noopener");
       }
     },
     [isRemote, navigateBrowser]
@@ -341,8 +346,14 @@ export default function Dashboard() {
                 </div>
               )}
               <div className="flex-1 overflow-hidden relative">
-                {selectedSessionId === "browser" && (
-                  <div className="h-full">
+                {/* ブラウザビュー: 一度開いたら常に描画してdisplay:hiddenで切り替え。
+                    BrowserPaneの再マウント（VNC再接続）を防ぐ */}
+                {hasBrowserOpened && (
+                  <div
+                    className={
+                      selectedSessionId === "browser" ? "h-full" : "hidden"
+                    }
+                  >
                     {activeBrowserSession ? (
                       <BrowserPane browserSession={activeBrowserSession} />
                     ) : (

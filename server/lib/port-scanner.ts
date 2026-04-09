@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import {
+  CDP_PORT,
   TTYD_PORT_END,
   TTYD_PORT_START,
   VNC_PORT_END,
@@ -55,7 +56,8 @@ function collectPorts(
 
       const { port, processName, pid } = parsed;
 
-      // ttyd/VNC/WebSocketポートを除外（内部用ポートのため表示しない）
+      // ttyd/VNC/WebSocket/CDPポートを除外（内部用ポートのため表示しない）
+      if (port === CDP_PORT) continue;
       if (port >= TTYD_PORT_START && port <= TTYD_PORT_END) continue;
       if (port >= VNC_PORT_START && port <= VNC_PORT_END) continue;
       if (port >= WS_PORT_START && port <= WS_PORT_END) continue;

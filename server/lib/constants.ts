@@ -25,3 +25,12 @@ export const WS_PORT_END = 6179;
  * （上記VNC_PORT_STARTのコメント参照）。
  */
 export const DISPLAY_START = 99;
+
+/**
+ * CDP（Chrome DevTools Protocol）リモートデバッグポート
+ *
+ * browser-manager.tsが起動するChromiumの `--remote-debugging-port` として使用する。
+ * このポートはローカル127.0.0.1のみでリッスンされるが、`/proxy/:port/*` や
+ * ポートスキャンから露出しないようブロックリストに含める必要がある。
+ */
+export const CDP_PORT = 9222;

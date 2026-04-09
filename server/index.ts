@@ -27,6 +27,7 @@ import { authManager } from "./lib/auth.js";
 import { beaconManager } from "./lib/beacon-manager.js";
 import { browserManager } from "./lib/browser-manager.js";
 import {
+  CDP_PORT,
   TTYD_PORT_END,
   TTYD_PORT_START,
   VNC_PORT_END,
@@ -516,9 +517,9 @@ async function startServer() {
       return;
     }
 
-    // Ark自体のポートとttydポート範囲をブロック（SSRF対策）
+    // Ark自体のポート・CDPポート・ttydポート範囲をブロック（SSRF対策）
     const serverPort = parseInt(process.env.PORT || "3001", 10);
-    if (port === serverPort) {
+    if (port === serverPort || port === CDP_PORT) {
       res.status(403).json({ error: "This port is not accessible via proxy" });
       return;
     }
@@ -652,10 +653,11 @@ async function startServer() {
 
       const proxyPort = parseInt(proxyMatch[1], 10);
       if (proxyPort >= 1 && proxyPort <= 65535) {
-        // SSRF対策: Ark自体のポート、ttydポート範囲、VNC/WSポート範囲をブロック
+        // SSRF対策: Ark自体のポート、CDPポート、ttydポート範囲、VNC/WSポート範囲をブロック
         const serverPort = parseInt(process.env.PORT || "3001", 10);
         if (
           proxyPort === serverPort ||
+          proxyPort === CDP_PORT ||
           (proxyPort >= TTYD_PORT_START && proxyPort <= TTYD_PORT_END) ||
           (proxyPort >= VNC_PORT_START && proxyPort <= VNC_PORT_END) ||
           (proxyPort >= WS_PORT_START && proxyPort <= WS_PORT_END)

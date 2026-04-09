@@ -14,6 +14,7 @@ import net from "node:net";
 import os from "node:os";
 import type { BrowserSession } from "../../shared/types.js";
 import {
+  CDP_PORT,
   DISPLAY_START,
   VNC_PORT_END,
   VNC_PORT_START,
@@ -33,9 +34,6 @@ const KILL_GRACE_PERIOD = 3000;
 
 /** Xvfb仮想ディスプレイの解像度 */
 const DISPLAY_RESOLUTION = "1280x900x24";
-
-/** CDPリモートデバッグポート */
-const CDP_PORT = 9222;
 
 /** Chromiumの起動フラグ */
 const CHROMIUM_FLAGS = [
@@ -793,6 +791,9 @@ export class BrowserManager extends EventEmitter {
     } finally {
       clearTimeout(fetchTimeout);
     }
+    if (!res.ok) {
+      throw new Error(`CDPエンドポイント応答エラー: ${res.status}`);
+    }
     const tabs = (await res.json()) as Array<{
       id: string;
       type: string;
@@ -861,8 +862,18 @@ export class BrowserManager extends EventEmitter {
 
   /**
    * 全セッションを停止
+   * 起動中のセッションがある場合は完了を待ってからクリーンアップする
+   * （起動完了後にプロセスが残留するのを防ぐ）
    */
   async cleanup(): Promise<void> {
+    // 起動中のセッションがあれば完了を待つ
+    if (this.pendingStart) {
+      try {
+        await this.pendingStart;
+      } catch {
+        // 起動失敗時は無視（プロセスは_startInternal側で既にクリーンアップ済み）
+      }
+    }
     const ids = Array.from(this.sessions.keys());
     await Promise.all(ids.map(id => this.stop(id)));
     this.singletonSession = null;

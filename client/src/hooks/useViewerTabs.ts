@@ -119,7 +119,7 @@ export function useViewerTabs(
         if (onOpenUrl) {
           onOpenUrl(url);
         } else {
-          window.open(url, "_blank");
+          window.open(url, "_blank", "noopener");
         }
         return;
       }
