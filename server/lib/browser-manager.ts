@@ -25,7 +25,11 @@ import { getErrorMessage } from "./errors.js";
 
 /** 各プロセスの起動タイムアウト（ミリ秒） */
 const XVFB_TIMEOUT = 5000;
-const CHROMIUM_DELAY = 2000;
+const CHROMIUM_TIMEOUT = 10000;
+/** CDP readinessチェックのポーリング間隔（ミリ秒） */
+const CHROMIUM_POLL_INTERVAL = 200;
+/** CDP readinessチェックの1回あたりのfetchタイムアウト（ミリ秒） */
+const CHROMIUM_FETCH_TIMEOUT = 500;
 const X11VNC_TIMEOUT = 5000;
 const WEBSOCKIFY_TIMEOUT = 5000;
 
@@ -209,6 +213,18 @@ export class BrowserManager extends EventEmitter {
    */
   isAvailable(): boolean {
     return this.available;
+  }
+
+  /**
+   * 現在アクティブなブラウザセッションが使用中のポート一覧を返す
+   * port-scannerで内部ポートのみを除外するために使用する
+   */
+  getUsedPorts(): number[] {
+    const ports: number[] = [CDP_PORT];
+    for (const session of Array.from(this.sessions.values())) {
+      ports.push(session.vncPort, session.wsPort);
+    }
+    return ports;
   }
 
   /**
@@ -448,8 +464,53 @@ export class BrowserManager extends EventEmitter {
       });
       startedProcesses.push(chromium);
 
-      // Chromiumはreadiness出力がないため固定ディレイで待機
-      await new Promise<void>(resolve => setTimeout(resolve, CHROMIUM_DELAY));
+      // CDPエンドポイントが応答するまでポーリングしてChromium readinessを検出
+      // 早期exitやerrorも検出してreject
+      await new Promise<void>((resolve, reject) => {
+        const overallTimeout = setTimeout(() => {
+          chromium.off("exit", onEarlyExit);
+          chromium.off("error", onEarlyError);
+          reject(new Error("Chromium起動タイムアウト"));
+        }, 10000);
+
+        const onEarlyExit = (code: number | null) => {
+          clearTimeout(overallTimeout);
+          reject(new Error(`Chromiumが予期せず終了しました (code: ${code})`));
+        };
+        const onEarlyError = (err: Error) => {
+          clearTimeout(overallTimeout);
+          reject(new Error(`Chromium起動エラー: ${err.message}`));
+        };
+        chromium.once("exit", onEarlyExit);
+        chromium.once("error", onEarlyError);
+
+        const cleanup = () => {
+          clearTimeout(overallTimeout);
+          chromium.off("exit", onEarlyExit);
+          chromium.off("error", onEarlyError);
+        };
+
+        const checkReady = async () => {
+          try {
+            const controller = new AbortController();
+            const fetchTimeout = setTimeout(() => controller.abort(), 500);
+            const res = await fetch(
+              `http://127.0.0.1:${CDP_PORT}/json/version`,
+              { signal: controller.signal }
+            );
+            clearTimeout(fetchTimeout);
+            if (res.ok) {
+              cleanup();
+              resolve();
+              return;
+            }
+          } catch {
+            // まだ起動していない
+          }
+          setTimeout(checkReady, 200);
+        };
+        checkReady();
+      });
 
       console.log(
         `[BrowserManager] Chromium起動完了: ${targetUrl} (DISPLAY=:${displayNum})`
@@ -773,6 +834,20 @@ export class BrowserManager extends EventEmitter {
     // singletonSessionが残っているがsessionsには無い場合（stale）はクリア
     if (this.singletonSession && !this.sessions.has(this.singletonSession.id)) {
       this.singletonSession = null;
+    }
+
+    // 起動中（pendingStart）の場合、そのstart()が終わるのを待ってから
+    // 改めてnavigate()を実行する。
+    // これをしないと、先行のstart(about:blank)が返ってきた時点で
+    // 既にsingletonSessionが存在するため、新しいURLへのCDPナビゲートが
+    // 実行されず、URLが飲み込まれてしまう。
+    if (this.pendingStart) {
+      try {
+        await this.pendingStart;
+      } catch {
+        // 起動失敗時は以下の通常フローでstart(url)が呼ばれる
+      }
+      return this.navigate(url);
     }
 
     // セッションがなければ初期URLとして起動

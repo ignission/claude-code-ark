@@ -116,7 +116,7 @@ export function MobileLayout({
         setHasBrowserOpened(true);
         navigateBrowser(url);
       } else {
-        window.open(url, "_blank");
+        window.open(url, "_blank", "noopener");
       }
     },
     [isRemote, onSelectBrowser, navigateBrowser]

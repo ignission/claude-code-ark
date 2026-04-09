@@ -180,6 +180,16 @@ export default function Dashboard() {
     }
   }, [selectedSessionId, setSetting]);
 
+  // リロード時にブラウザ選択状態を維持:
+  // selectedSessionIdが"browser"のまま復元された場合、
+  // browserSessionがまだなければ自動的に起動する。
+  useEffect(() => {
+    if (selectedSessionId === "browser" && !activeBrowserSession && isRemote) {
+      startBrowser();
+      setHasBrowserOpened(true);
+    }
+  }, [selectedSessionId, activeBrowserSession, isRemote, startBrowser]);
+
   const [isCreateWorktreeOpen, setIsCreateWorktreeOpen] = useState(false);
   const [isSelectRepoOpen, setIsSelectRepoOpen] = useState(false);
   const [showTunnelDialog, setShowTunnelDialog] = useState(false);

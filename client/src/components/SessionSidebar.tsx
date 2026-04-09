@@ -68,6 +68,10 @@ export function SessionSidebar({
               size="icon"
               className="h-8 w-8"
               onClick={onSelectBrowser}
+              aria-label={
+                isBrowserSelected ? "ブラウザを選択中" : "ブラウザを開く"
+              }
+              aria-pressed={isBrowserSelected}
               title="ブラウザ"
             >
               <Globe className="w-4 h-4" />
@@ -78,6 +82,7 @@ export function SessionSidebar({
             size="icon"
             className="h-8 w-8"
             onClick={onNewSession}
+            aria-label="新規セッション"
             title="新規セッション"
           >
             <Plus className="w-4 h-4" />

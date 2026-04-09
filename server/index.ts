@@ -1200,7 +1200,9 @@ async function startServer() {
         }
 
         const session = await browserManager.start();
-        socket.emit("browser:started", session);
+        // シングルトンブラウザは全クライアントで共有されるため、
+        // 他の接続クライアントにも同期する。
+        io.emit("browser:started", session);
       } catch (error) {
         socket.emit("browser:error", { message: getErrorMessage(error) });
       }
@@ -1209,7 +1211,8 @@ async function startServer() {
     socket.on("browser:stop", async data => {
       try {
         await browserManager.stop(data.browserId);
-        socket.emit("browser:stopped", { browserId: data.browserId });
+        // 全クライアントにブラウザ停止を通知
+        io.emit("browser:stopped", { browserId: data.browserId });
       } catch (error) {
         socket.emit("browser:error", { message: getErrorMessage(error) });
       }
@@ -1218,9 +1221,10 @@ async function startServer() {
     socket.on("browser:navigate", async data => {
       try {
         const session = await browserManager.navigate(data.url);
-        // 呼び出し元のクライアントには常にbrowser:startedを通知する
-        // （当該クライアントがまだセッションを知らない場合の初期同期）
-        socket.emit("browser:started", session);
+        // 全クライアントに通知
+        // （セッションを知らないクライアントの初期同期、および
+        //  他クライアントにもナビゲーション結果を共有する）
+        io.emit("browser:started", session);
       } catch (error) {
         socket.emit("browser:error", { message: getErrorMessage(error) });
       }
