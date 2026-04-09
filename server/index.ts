@@ -1164,7 +1164,12 @@ async function startServer() {
 
     socket.on("browser:navigate", async data => {
       try {
-        await browserManager.navigate(data.url);
+        const session = await browserManager.navigate(data.url);
+        // セッションが新規起動された場合（クライアントがまだ知らない場合）はbrowser:startedも発火
+        if (!socketBrowserSessions.has(session.id)) {
+          socketBrowserSessions.add(session.id);
+          socket.emit("browser:started", session);
+        }
       } catch (error) {
         socket.emit("browser:error", { message: getErrorMessage(error) });
       }

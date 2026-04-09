@@ -110,28 +110,29 @@ export default function Dashboard() {
 
   const activeBrowserSession = Array.from(browserSessions.values())[0] ?? null;
 
-  /** ブラウザを選択（未起動なら起動してから選択） */
-  const handleSelectBrowser = () => {
-    if (!activeBrowserSession) {
-      startBrowser();
-    }
-    setSelectedSessionId("browser");
-  };
-
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null
   );
 
+  /** ブラウザを選択（未起動なら起動） */
+  const handleSelectBrowser = useCallback(() => {
+    if (!activeBrowserSession) {
+      startBrowser();
+    }
+    setSelectedSessionId("browser");
+  }, [activeBrowserSession, startBrowser]);
+
+  /** localhost URLクリック時: ブラウザに遷移して選択 */
   const handleOpenUrl = useCallback(
     (url: string) => {
       if (isRemote) {
-        handleSelectBrowser();
         navigateBrowser(url);
+        setSelectedSessionId("browser");
       } else {
         window.open(url, "_blank");
       }
     },
-    [isRemote, handleSelectBrowser, navigateBrowser]
+    [isRemote, navigateBrowser]
   );
 
   const {

@@ -314,7 +314,7 @@ export class BrowserManager extends EventEmitter {
    * ブラウザセッションを開始（シングルトン）
    * 既にセッションがあればそのまま返す。起動中なら待つ。
    */
-  async start(): Promise<BrowserSession> {
+  async start(initialUrl = "about:blank"): Promise<BrowserSession> {
     if (!this.available) {
       throw new Error(
         "ブラウザタブ機能は無効です。依存パッケージをインストールしてください。"
@@ -331,7 +331,7 @@ export class BrowserManager extends EventEmitter {
       return this.pendingStart;
     }
 
-    const promise = this._startInternal();
+    const promise = this._startInternal(initialUrl);
     this.pendingStart = promise;
 
     try {
@@ -347,8 +347,10 @@ export class BrowserManager extends EventEmitter {
    * ブラウザセッションの実際の起動処理（内部用）
    * 起動順: Xvfb → Chromium → x11vnc → websockify
    */
-  private async _startInternal(): Promise<BrowserSession> {
-    const targetUrl = "about:blank";
+  private async _startInternal(
+    initialUrl = "about:blank"
+  ): Promise<BrowserSession> {
+    const targetUrl = initialUrl;
     const targetPort = 0;
     const devtools = false;
     const id = randomUUID();
@@ -670,9 +672,10 @@ export class BrowserManager extends EventEmitter {
    * CDP経由でChromiumを指定URLにナビゲート
    * WebSocket DevTools Protocol の Page.navigate を使用
    */
-  async navigate(url: string): Promise<void> {
+  async navigate(url: string): Promise<BrowserSession> {
+    // セッションがなければ初期URLとして起動
     if (!this.singletonSession) {
-      throw new Error("ブラウザセッションが起動していません");
+      return this.start(url);
     }
 
     // CDP: ページ型のタブを取得
@@ -726,6 +729,7 @@ export class BrowserManager extends EventEmitter {
     });
 
     console.log(`[BrowserManager] ナビゲート: ${url}`);
+    return this.singletonSession;
   }
 
   /**
