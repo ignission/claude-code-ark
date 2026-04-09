@@ -123,7 +123,8 @@ export function BrowserPane({ url, port, socket }: BrowserPaneProps) {
     if (!browserSession) return null;
     const token = getUrlToken();
     const tokenParam = token ? `&token=${encodeURIComponent(token)}` : "";
-    return `/browser/${browserSession.id}/vnc.html?autoconnect=true&resize=scale${tokenParam}`;
+    const wsPath = `browser/${browserSession.id}/websockify`;
+    return `/browser/${browserSession.id}/vnc.html?autoconnect=true&resize=scale&path=${encodeURIComponent(wsPath)}${tokenParam}`;
   };
 
   // ローディング状態（リモートのみ）
