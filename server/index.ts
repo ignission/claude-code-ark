@@ -1134,55 +1134,17 @@ async function startServer() {
     // ソケットごとのブラウザセッション追跡（disconnect時のクリーンアップ用）
     const socketBrowserSessions = new Set<string>();
 
-    socket.on("browser:start", async data => {
+    socket.on("browser:start", async () => {
       try {
-        // 依存チェック
         if (!browserManager.isAvailable()) {
           socket.emit("browser:error", {
             message:
-              "リモートブラウザ機能の依存が不足しています。サーバーログを確認してください。",
+              "ブラウザタブ機能は無効です。依存パッケージをインストールしてください。",
           });
           return;
         }
 
-        // ポート範囲チェック
-        const { port: targetPort, url, devtools } = data;
-        if (
-          typeof targetPort !== "number" ||
-          !Number.isFinite(targetPort) ||
-          targetPort < 1 ||
-          targetPort > 65535
-        ) {
-          socket.emit("browser:error", {
-            message: "無効なポート番号です（1-65535）",
-          });
-          return;
-        }
-
-        // ブロックリスト: サーバーポート、ttyd範囲、VNC範囲、WS範囲
-        const serverPort = parseInt(process.env.PORT || "3001", 10);
-        if (
-          targetPort === serverPort ||
-          (targetPort >= TTYD_PORT_START && targetPort <= TTYD_PORT_END) ||
-          (targetPort >= VNC_PORT_START && targetPort <= VNC_PORT_END) ||
-          (targetPort >= WS_PORT_START && targetPort <= WS_PORT_END)
-        ) {
-          socket.emit("browser:error", {
-            message: "このポートはブラウザセッションの対象外です",
-          });
-          return;
-        }
-
-        // per-socket上限チェック
-        if (socketBrowserSessions.size >= 3) {
-          socket.emit("browser:error", {
-            message:
-              "ブラウザセッションの上限（3）に達しています。不要なセッションを停止してください。",
-          });
-          return;
-        }
-
-        const session = await browserManager.start(targetPort, url, devtools);
+        const session = await browserManager.start();
         socketBrowserSessions.add(session.id);
         socket.emit("browser:started", session);
       } catch (error) {

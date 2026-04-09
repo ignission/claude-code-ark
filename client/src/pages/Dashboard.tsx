@@ -1,4 +1,5 @@
 import { AlertCircle, Copy, Loader2, Terminal } from "lucide-react";
+import { BrowserPane } from "@/components/BrowserPane";
 import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -88,6 +89,9 @@ export default function Dashboard() {
     sessionActivityTexts,
     readFile,
     fileContent,
+    browserSessions,
+    startBrowser,
+    stopBrowser,
   } = useSocket({
     enabled: !isSettingsLoading,
     initialRepoList: savedRepoList,
@@ -97,6 +101,24 @@ export default function Dashboard() {
   });
 
   const isMobile = useIsMobile();
+
+  const isRemote =
+    typeof window !== "undefined" &&
+    window.location.hostname !== "localhost" &&
+    window.location.hostname !== "127.0.0.1";
+
+  const [showBrowser, setShowBrowser] = useState(false);
+  const activeBrowserSession = Array.from(browserSessions.values())[0] ?? null;
+
+  const handleToggleBrowser = () => {
+    if (activeBrowserSession) {
+      stopBrowser(activeBrowserSession.id);
+      setShowBrowser(false);
+    } else {
+      startBrowser();
+      setShowBrowser(true);
+    }
+  };
 
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null
@@ -283,6 +305,9 @@ export default function Dashboard() {
               onStopSession={handleStopSession}
               onStartSession={handleStartSession}
               onNewSession={handleNewSession}
+              onToggleBrowser={handleToggleBrowser}
+              isBrowserActive={!!activeBrowserSession}
+              isRemote={isRemote}
             />
           }
           main={
@@ -294,44 +319,51 @@ export default function Dashboard() {
                 </div>
               )}
               <div className="flex-1 overflow-hidden relative">
-                {Array.from(sessions.values()).map(session => {
-                  const isActive = selectedSessionId === session.id;
-                  const wt = worktrees.find(w => w.id === session.worktreeId);
-                  const rn = (() => {
-                    if (repoList.length === 0) return undefined;
-                    const repo = findRepoForSession(session, repoList);
-                    return repo ? getBaseName(repo) : undefined;
-                  })();
-                  return (
-                    <div
-                      key={session.id}
-                      className={isActive ? "h-full flex flex-col" : "hidden"}
-                    >
-                      <TerminalPane
-                        session={session}
-                        worktree={wt}
-                        repoName={rn}
-                        socket={socket}
-                        tabs={getTabsForSession(session.id)}
-                        activeTabIndex={getActiveTabForSession(session.id)}
-                        onTabSelect={idx => handleTabSelect(session.id, idx)}
-                        onTabClose={idx => handleTabClose(session.id, idx)}
-                        onSendMessage={msg => sendMessage(session.id, msg)}
-                        onSendKey={key => sendKey(session.id, key)}
-                        onStopSession={() => handleStopSession(session.id)}
-                        onUploadImage={(base64, mimeType) =>
-                          uploadImage(session.id, base64, mimeType)
-                        }
-                        imageUploadResult={imageUploadResult}
-                        imageUploadError={imageUploadError}
-                        onClearImageUploadState={clearImageUploadState}
-                        onCopyBuffer={
-                          copyBuffer ? () => copyBuffer(session.id) : undefined
-                        }
-                      />
-                    </div>
-                  );
-                })}
+                {showBrowser && activeBrowserSession && (
+                  <div className="h-full">
+                    <BrowserPane browserSession={activeBrowserSession} />
+                  </div>
+                )}
+                {(!showBrowser || !activeBrowserSession) &&
+                  Array.from(sessions.values()).map(session => {
+                    const isActive = selectedSessionId === session.id;
+                    const wt = worktrees.find(w => w.id === session.worktreeId);
+                    const rn = (() => {
+                      if (repoList.length === 0) return undefined;
+                      const repo = findRepoForSession(session, repoList);
+                      return repo ? getBaseName(repo) : undefined;
+                    })();
+                    return (
+                      <div
+                        key={session.id}
+                        className={isActive ? "h-full flex flex-col" : "hidden"}
+                      >
+                        <TerminalPane
+                          session={session}
+                          worktree={wt}
+                          repoName={rn}
+                          tabs={getTabsForSession(session.id)}
+                          activeTabIndex={getActiveTabForSession(session.id)}
+                          onTabSelect={idx => handleTabSelect(session.id, idx)}
+                          onTabClose={idx => handleTabClose(session.id, idx)}
+                          onSendMessage={msg => sendMessage(session.id, msg)}
+                          onSendKey={key => sendKey(session.id, key)}
+                          onStopSession={() => handleStopSession(session.id)}
+                          onUploadImage={(base64, mimeType) =>
+                            uploadImage(session.id, base64, mimeType)
+                          }
+                          imageUploadResult={imageUploadResult}
+                          imageUploadError={imageUploadError}
+                          onClearImageUploadState={clearImageUploadState}
+                          onCopyBuffer={
+                            copyBuffer
+                              ? () => copyBuffer(session.id)
+                              : undefined
+                          }
+                        />
+                      </div>
+                    );
+                  })}
                 {sessions.size === 0 && (
                   <div className="h-full flex items-center justify-center">
                     <div className="text-center">

@@ -20,9 +20,6 @@ import {
   WS_PORT_START,
 } from "./constants.js";
 
-/** ブラウザセッションの最大同時数 */
-const MAX_SESSIONS = 10;
-
 /** 各プロセスの起動タイムアウト（ミリ秒） */
 const XVFB_TIMEOUT = 5000;
 const CHROMIUM_DELAY = 2000;
@@ -34,11 +31,6 @@ const KILL_GRACE_PERIOD = 3000;
 
 /** Xvfb仮想ディスプレイの解像度 */
 const DISPLAY_RESOLUTION = "1280x900x24";
-
-/** 許可するURLのプロトコル */
-const ALLOWED_PROTOCOLS = ["http:", "https:"];
-/** 許可するホスト名（SSRF対策） */
-const ALLOWED_HOSTNAMES = ["localhost", "127.0.0.1"];
 
 /** Chromiumの起動フラグ */
 const CHROMIUM_FLAGS = [
@@ -73,8 +65,10 @@ interface BrowserProcessSet {
 
 export class BrowserManager extends EventEmitter {
   private sessions: Map<string, BrowserProcessSet> = new Map();
-  /** 起動中のPromiseを保持し、同じポートへの重複起動を防ぐ */
-  private pendingStarts: Map<number, Promise<BrowserSession>> = new Map();
+  /** シングルトンセッション（1つだけ起動） */
+  private singletonSession: BrowserSession | null = null;
+  /** 起動中のPromiseを保持し、重複起動を防ぐ */
+  private pendingStart: Promise<BrowserSession> | null = null;
   private nextVncPort: number;
   private nextWsPort: number;
   private nextDisplay: number;
@@ -313,62 +307,35 @@ export class BrowserManager extends EventEmitter {
   }
 
   /**
-   * URLのSSRF検証
-   * localhost/127.0.0.1 かつ http/https のみ許可
+   * ブラウザセッションを開始（シングルトン）
+   * 既にセッションがあればそのまま返す。起動中なら待つ。
    */
-  private validateUrl(url: string): void {
-    const parsed = new URL(url);
-    if (!ALLOWED_PROTOCOLS.includes(parsed.protocol)) {
-      throw new Error(
-        `許可されていないプロトコルです: ${parsed.protocol} (http/httpsのみ許可)`
-      );
-    }
-    if (!ALLOWED_HOSTNAMES.includes(parsed.hostname)) {
-      throw new Error(
-        `許可されていないホスト名です: ${parsed.hostname} (localhost/127.0.0.1のみ許可)`
-      );
-    }
-  }
-
-  /**
-   * ブラウザセッションを開始
-   * 重複起動ガード付き: 同じポートに対する並行起動を防ぐ
-   */
-  async start(
-    port: number,
-    url?: string,
-    devtools?: boolean
-  ): Promise<BrowserSession> {
+  async start(): Promise<BrowserSession> {
     if (!this.available) {
       throw new Error(
-        "リモートブラウザ機能の依存が不足しています。サーバーログを確認してください。"
+        "ブラウザタブ機能は無効です。依存パッケージをインストールしてください。"
       );
     }
 
-    // セッション上限チェック
-    if (this.sessions.size >= MAX_SESSIONS) {
-      throw new Error(
-        `ブラウザセッションの上限（${MAX_SESSIONS}）に達しています`
-      );
+    // 既にセッションがあればそのまま返す
+    if (this.singletonSession) {
+      return this.singletonSession;
     }
 
-    // URL検証（SSRF対策）
-    const targetUrl = url || `http://localhost:${port}`;
-    this.validateUrl(targetUrl);
-
-    // 同じポートへの重複起動防止
-    const pending = this.pendingStarts.get(port);
-    if (pending) {
-      return pending;
+    // 起動中なら待つ
+    if (this.pendingStart) {
+      return this.pendingStart;
     }
 
-    const promise = this._startInternal(port, targetUrl, devtools ?? false);
-    this.pendingStarts.set(port, promise);
+    const promise = this._startInternal();
+    this.pendingStart = promise;
 
     try {
-      return await promise;
+      const session = await promise;
+      this.singletonSession = session;
+      return session;
     } finally {
-      this.pendingStarts.delete(port);
+      this.pendingStart = null;
     }
   }
 
@@ -376,11 +343,10 @@ export class BrowserManager extends EventEmitter {
    * ブラウザセッションの実際の起動処理（内部用）
    * 起動順: Xvfb → Chromium → x11vnc → websockify
    */
-  private async _startInternal(
-    targetPort: number,
-    targetUrl: string,
-    devtools: boolean
-  ): Promise<BrowserSession> {
+  private async _startInternal(): Promise<BrowserSession> {
+    const targetUrl = "about:blank";
+    const targetPort = 0;
+    const devtools = false;
     const id = randomUUID();
     const displayNum = this.findAvailableDisplay();
     const vncPort = await this.findAvailableVncPort();
@@ -679,6 +645,11 @@ export class BrowserManager extends EventEmitter {
     // 先にMapから削除して、異常終了監視のハンドラが再度stopを呼ばないようにする
     this.sessions.delete(browserId);
 
+    // シングルトンセッションをクリア
+    if (this.singletonSession?.id === browserId) {
+      this.singletonSession = null;
+    }
+
     console.log(`[BrowserManager] ブラウザセッション停止中: ${browserId}`);
 
     // 逆順でプロセスを停止
@@ -697,6 +668,8 @@ export class BrowserManager extends EventEmitter {
   async cleanup(): Promise<void> {
     const ids = Array.from(this.sessions.keys());
     await Promise.all(ids.map(id => this.stop(id)));
+    this.singletonSession = null;
+    this.pendingStart = null;
     console.log(
       "[BrowserManager] 全ブラウザセッションをクリーンアップしました"
     );

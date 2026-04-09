@@ -246,11 +246,7 @@ export interface ClientToServerEvents {
   "file:read": (data: { sessionId: string; filePath: string }) => void;
 
   // ブラウザセッション（noVNC）
-  "browser:start": (data: {
-    port: number;
-    url?: string;
-    devtools?: boolean;
-  }) => void;
+  "browser:start": () => void;
   "browser:stop": (data: { browserId: string }) => void;
 }
 

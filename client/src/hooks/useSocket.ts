@@ -128,7 +128,7 @@ interface UseSocketReturn {
   // Browser sessions
   browserSessions: Map<string, BrowserSession>;
   browserError: string | null;
-  startBrowser: (port: number, url?: string, devtools?: boolean) => void;
+  startBrowser: () => void;
   stopBrowser: (browserId: string) => void;
 }
 
@@ -730,12 +730,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   );
 
   // Browser session actions
-  const startBrowser = useCallback(
-    (port: number, url?: string, devtools?: boolean) => {
-      socketRef.current?.emit("browser:start", { port, url, devtools });
-    },
-    []
-  );
+  const startBrowser = useCallback(() => {
+    socketRef.current?.emit("browser:start");
+  }, []);
 
   const stopBrowser = useCallback((browserId: string) => {
     socketRef.current?.emit("browser:stop", { browserId });

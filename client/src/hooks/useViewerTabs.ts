@@ -99,29 +99,6 @@ export function useViewerTabs(
     []
   );
 
-  const openBrowserTab = useCallback((sessionId: string, url: string) => {
-    let newActiveIndex: number | null = null;
-    setSessionTabs(prev => {
-      const tabs = [
-        ...(prev[sessionId] ?? [{ type: "terminal" as const, id: "terminal" }]),
-      ];
-      const existing = tabs.findIndex(
-        t => t.type === "browser" && t.url === url
-      );
-      if (existing >= 0) {
-        newActiveIndex = existing;
-        return prev;
-      }
-      tabs.push({ type: "browser", id: `browser-${Date.now()}`, url });
-      newActiveIndex = tabs.length - 1;
-      return { ...prev, [sessionId]: tabs };
-    });
-    if (newActiveIndex !== null) {
-      const idx = newActiveIndex;
-      setSessionActiveTab(p => ({ ...p, [sessionId]: idx }));
-    }
-  }, []);
-
   // postMessageリスナー（ttyd iframe内のリンククリックを受信）
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -150,13 +127,14 @@ export function useViewerTabs(
         } catch {
           return;
         }
-        openBrowserTab(selectedSessionId, url);
+        // ブラウザタブはシングルトンnoVNC内で開くため、新しいウィンドウで開く
+        window.open(url, "_blank");
       }
     };
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [selectedSessionId, sessions, openFileTab, openBrowserTab, readFile]);
+  }, [selectedSessionId, sessions, openFileTab, readFile]);
 
   // fileContent受信時にタブを更新（全セッションを検索してレースコンディション対策）
   useEffect(() => {
@@ -199,6 +177,5 @@ export function useViewerTabs(
     handleTabSelect,
     handleTabClose,
     openFileTab,
-    openBrowserTab,
   };
 }

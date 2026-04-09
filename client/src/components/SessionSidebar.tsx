@@ -6,7 +6,7 @@
  * worktree中心のイテレーション: セッション未起動のworktreeも表示する。
  */
 
-import { FolderOpen, Plus, Terminal } from "lucide-react";
+import { FolderOpen, Globe, Plus, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useGroupedWorktreeItems } from "@/hooks/useGroupedWorktreeItems";
@@ -24,6 +24,12 @@ interface SessionSidebarProps {
   onStopSession: (sessionId: string) => void;
   onStartSession: (worktree: Worktree) => void;
   onNewSession: () => void;
+  /** ブラウザ起動/停止コールバック（リモートアクセス時のみ使用） */
+  onToggleBrowser?: () => void;
+  /** ブラウザセッションがアクティブか */
+  isBrowserActive?: boolean;
+  /** リモートアクセス中か */
+  isRemote?: boolean;
 }
 
 export function SessionSidebar({
@@ -37,6 +43,9 @@ export function SessionSidebar({
   onStopSession,
   onStartSession,
   onNewSession,
+  onToggleBrowser,
+  isBrowserActive = false,
+  isRemote = false,
 }: SessionSidebarProps) {
   const { groupedItems } = useGroupedWorktreeItems(
     worktrees,
@@ -52,15 +61,28 @@ export function SessionSidebar({
           <Terminal className="w-4 h-4 text-primary" />
           <h1 className="font-semibold text-sm text-sidebar-foreground">Ark</h1>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={onNewSession}
-          title="新規セッション"
-        >
-          <Plus className="w-4 h-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {isRemote && onToggleBrowser && (
+            <Button
+              variant={isBrowserActive ? "default" : "ghost"}
+              size="icon"
+              className="h-8 w-8"
+              onClick={onToggleBrowser}
+              title={isBrowserActive ? "ブラウザを閉じる" : "ブラウザを開く"}
+            >
+              <Globe className="w-4 h-4" />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={onNewSession}
+            title="新規セッション"
+          >
+            <Plus className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
 
       {/* セッション一覧 */}
