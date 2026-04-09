@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import type { BrowserSession } from "../../shared/types.js";
 import {
   DISPLAY_START,
@@ -19,6 +20,7 @@ import {
   WS_PORT_END,
   WS_PORT_START,
 } from "./constants.js";
+import { getErrorMessage } from "./errors.js";
 
 /** 各プロセスの起動タイムアウト（ミリ秒） */
 const XVFB_TIMEOUT = 5000;
@@ -49,6 +51,7 @@ const CHROMIUM_FLAGS = [
   "--window-size=1280,900",
   "--window-position=0,0",
   `--remote-debugging-port=${CDP_PORT}`,
+  "--remote-debugging-address=127.0.0.1",
 ];
 
 /** セッションに紐づく4プロセスの組 */
@@ -158,7 +161,7 @@ export class BrowserManager extends EventEmitter {
    */
   private findChromiumBinary(): string | null {
     // 1. Playwright版Chromium（snap制約なし）
-    const homeDir = process.env.HOME || "/root";
+    const homeDir = process.env.HOME || os.homedir();
     const playwrightDir = `${homeDir}/.cache/ms-playwright`;
     if (fs.existsSync(playwrightDir)) {
       try {
@@ -208,6 +211,28 @@ export class BrowserManager extends EventEmitter {
    */
   isAvailable(): boolean {
     return this.available;
+  }
+
+  /**
+   * URLスキーマ検証
+   * - http://またはhttps://のみ許可
+   * - ホスト名はlocalhost/127.0.0.1のみ許可
+   * - about:blankは特例で許可
+   */
+  private validateUrl(url: string): void {
+    if (url === "about:blank") return;
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new Error("無効なURL形式です");
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("http://またはhttps://のみ許可されています");
+    }
+    if (parsed.hostname !== "localhost" && parsed.hostname !== "127.0.0.1") {
+      throw new Error("localhost/127.0.0.1のみ許可されています");
+    }
   }
 
   /**
@@ -289,6 +314,8 @@ export class BrowserManager extends EventEmitter {
 
   /**
    * 利用可能なディスプレイ番号を探す
+   * 内部sessionsマップだけでなく、OSレベルでX11ソケットの存在も確認する
+   * （他プロセスが使用中のディスプレイ番号を避ける）
    */
   private findAvailableDisplay(): number {
     const usedDisplays = new Set(
@@ -301,6 +328,8 @@ export class BrowserManager extends EventEmitter {
         DISPLAY_START +
         ((this.nextDisplay - DISPLAY_START + i) % totalDisplays);
       if (usedDisplays.has(display)) continue;
+      // OSレベルでX11ソケットの存在を確認
+      if (fs.existsSync(`/tmp/.X11-unix/X${display}`)) continue;
       this.nextDisplay = display + 1;
       if (this.nextDisplay > maxDisplay) {
         this.nextDisplay = DISPLAY_START;
@@ -315,6 +344,8 @@ export class BrowserManager extends EventEmitter {
    * 既にセッションがあればそのまま返す。起動中なら待つ。
    */
   async start(initialUrl = "about:blank"): Promise<BrowserSession> {
+    this.validateUrl(initialUrl);
+
     if (!this.available) {
       throw new Error(
         "ブラウザタブ機能は無効です。依存パッケージをインストールしてください。"
@@ -405,7 +436,9 @@ export class BrowserManager extends EventEmitter {
       if (devtools) {
         chromiumFlags.push("--auto-open-devtools-for-tabs");
       }
-      chromiumFlags.push(targetUrl);
+      // `--`（フラグ終端子）を付けることでtargetUrlが`--`で始まる場合も
+      // 位置引数として安全に解釈される（引数インジェクション対策）
+      chromiumFlags.push("--", targetUrl);
 
       const chromium = spawn(this.chromiumCmd, chromiumFlags, {
         stdio: ["ignore", "pipe", "pipe"],
@@ -445,6 +478,7 @@ export class BrowserManager extends EventEmitter {
 
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
+          cleanup();
           reject(new Error("x11vnc起動タイムアウト"));
         }, X11VNC_TIMEOUT);
 
@@ -455,26 +489,44 @@ export class BrowserManager extends EventEmitter {
           // x11vncは起動時に "PORT=XXXX" を stdout に出力する
           if (outputData.includes("PORT=")) {
             clearTimeout(timeout);
+            cleanup();
             resolve();
           }
         };
 
-        x11vnc.stdout?.on("data", onData);
-        x11vnc.stderr?.on("data", onData);
-
-        x11vnc.on("error", error => {
+        const onError = (error: Error) => {
           clearTimeout(timeout);
+          cleanup();
           reject(error);
-        });
+        };
 
-        x11vnc.on("exit", code => {
+        const onExit = (code: number | null) => {
           if (code !== 0 && code !== null) {
             clearTimeout(timeout);
+            cleanup();
             reject(
               new Error(`x11vncが終了しました (code: ${code}): ${outputData}`)
             );
           }
-        });
+        };
+
+        // resolve/reject後にリスナーを除去してメモリリークを防ぐ。
+        // ただしstdout/stderrはパイプバッファが詰まらないよう
+        // 軽量なドレインリスナーを残す必要がある。
+        const drain = () => {};
+        const cleanup = () => {
+          x11vnc.stdout?.off("data", onData);
+          x11vnc.stderr?.off("data", onData);
+          x11vnc.off("error", onError);
+          x11vnc.off("exit", onExit);
+          x11vnc.stdout?.on("data", drain);
+          x11vnc.stderr?.on("data", drain);
+        };
+
+        x11vnc.stdout?.on("data", onData);
+        x11vnc.stderr?.on("data", onData);
+        x11vnc.on("error", onError);
+        x11vnc.on("exit", onExit);
       });
 
       console.log(`[BrowserManager] x11vnc起動完了: ポート ${vncPort}`);
@@ -494,6 +546,7 @@ export class BrowserManager extends EventEmitter {
 
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
+          cleanup();
           reject(new Error("websockify起動タイムアウト"));
         }, WEBSOCKIFY_TIMEOUT);
 
@@ -506,28 +559,45 @@ export class BrowserManager extends EventEmitter {
             outputData.includes("listening")
           ) {
             clearTimeout(timeout);
+            cleanup();
             resolve();
           }
         };
 
-        websockify.stdout?.on("data", onData);
-        websockify.stderr?.on("data", onData);
-
-        websockify.on("error", error => {
+        const onError = (error: Error) => {
           clearTimeout(timeout);
+          cleanup();
           reject(error);
-        });
+        };
 
-        websockify.on("exit", code => {
+        const onExit = (code: number | null) => {
           if (code !== 0 && code !== null) {
             clearTimeout(timeout);
+            cleanup();
             reject(
               new Error(
                 `websockifyが終了しました (code: ${code}): ${outputData}`
               )
             );
           }
-        });
+        };
+
+        // resolve/reject後にリスナーを除去してメモリリークを防ぐ。
+        // stdout/stderrは軽量なドレインリスナーを残してパイプバッファ詰まりを防ぐ。
+        const drain = () => {};
+        const cleanup = () => {
+          websockify.stdout?.off("data", onData);
+          websockify.stderr?.off("data", onData);
+          websockify.off("error", onError);
+          websockify.off("exit", onExit);
+          websockify.stdout?.on("data", drain);
+          websockify.stderr?.on("data", drain);
+        };
+
+        websockify.stdout?.on("data", onData);
+        websockify.stderr?.on("data", onData);
+        websockify.on("error", onError);
+        websockify.on("exit", onExit);
       });
 
       console.log(
@@ -599,34 +669,42 @@ export class BrowserManager extends EventEmitter {
     } catch (error) {
       // 起動失敗時: 既に起動したプロセスをクリーンアップ
       console.error(
-        `[BrowserManager] ブラウザセッション起動失敗。プロセスをクリーンアップします。`
+        "[BrowserManager] ブラウザセッション起動失敗。プロセスをクリーンアップします。"
       );
-      for (const proc of startedProcesses) {
-        try {
-          proc.kill("SIGTERM");
-        } catch {
-          // killに失敗しても無視
-        }
+      // 起動順とは逆順でkillProcessを呼ぶ
+      for (let i = startedProcesses.length - 1; i >= 0; i--) {
+        await this.killProcess(startedProcesses[i], `process${i}`).catch(() => {
+          // 失敗は無視（既に死んでいる可能性）
+        });
       }
       throw error;
     }
   }
 
   /**
-   * プロセスを安全に停止（SIGTERM→待機→SIGKILL）
+   * プロセスを安全に停止（SIGTERM→待機→SIGKILL→再待機）
    */
   private async killProcess(proc: ChildProcess, name: string): Promise<void> {
-    if (proc.exitCode !== null) {
+    if (proc.exitCode !== null || proc.killed) {
       // 既に終了している
       return;
     }
 
-    proc.kill("SIGTERM");
+    try {
+      proc.kill("SIGTERM");
+    } catch {
+      // killに失敗（既に死んでいる等）は無視
+      return;
+    }
 
     // SIGTERM後の猶予時間を待つ
     const exited = await new Promise<boolean>(resolve => {
+      if (proc.exitCode !== null || proc.killed) {
+        resolve(true);
+        return;
+      }
       const timeout = setTimeout(() => resolve(false), KILL_GRACE_PERIOD);
-      proc.on("exit", () => {
+      proc.once("exit", () => {
         clearTimeout(timeout);
         resolve(true);
       });
@@ -636,13 +714,30 @@ export class BrowserManager extends EventEmitter {
       console.warn(
         `[BrowserManager] ${name}がSIGTERMで停止しなかったためSIGKILLを送信`
       );
-      proc.kill("SIGKILL");
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        // 既に死んでいる
+        return;
+      }
+      // SIGKILL後もexitを待つ（プロセステーブルからの削除確認）
+      await new Promise<void>(resolve => {
+        if (proc.exitCode !== null || proc.killed) {
+          resolve();
+          return;
+        }
+        const timeout = setTimeout(() => resolve(), 1000);
+        proc.once("exit", () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
     }
   }
 
   /**
    * ブラウザセッションを停止
-   * 逆順停止: websockify → x11vnc → chromium → xvfb
+   * 並列停止で速度を優先（プロセス間の依存順序は致命的ではない）
    */
   async stop(browserId: string): Promise<void> {
     const processSet = this.sessions.get(browserId);
@@ -658,11 +753,13 @@ export class BrowserManager extends EventEmitter {
 
     console.log(`[BrowserManager] ブラウザセッション停止中: ${browserId}`);
 
-    // 逆順でプロセスを停止
-    await this.killProcess(processSet.websockify, "websockify");
-    await this.killProcess(processSet.x11vnc, "x11vnc");
-    await this.killProcess(processSet.chromium, "chromium");
-    await this.killProcess(processSet.xvfb, "xvfb");
+    // 並列停止（依存関係は致命的ではなく、停止時間の短縮を優先）
+    await Promise.all([
+      this.killProcess(processSet.websockify, "websockify"),
+      this.killProcess(processSet.x11vnc, "x11vnc"),
+      this.killProcess(processSet.chromium, "chromium"),
+      this.killProcess(processSet.xvfb, "xvfb"),
+    ]);
 
     this.emit("session:stopped", browserId);
     console.log(`[BrowserManager] ブラウザセッション停止完了: ${browserId}`);
@@ -673,13 +770,29 @@ export class BrowserManager extends EventEmitter {
    * WebSocket DevTools Protocol の Page.navigate を使用
    */
   async navigate(url: string): Promise<BrowserSession> {
+    this.validateUrl(url);
+
+    // singletonSessionが残っているがsessionsには無い場合（stale）はクリア
+    if (this.singletonSession && !this.sessions.has(this.singletonSession.id)) {
+      this.singletonSession = null;
+    }
+
     // セッションがなければ初期URLとして起動
     if (!this.singletonSession) {
       return this.start(url);
     }
 
-    // CDP: ページ型のタブを取得
-    const res = await fetch(`http://127.0.0.1:${CDP_PORT}/json`);
+    // CDP: ページ型のタブを取得（タイムアウト付き）
+    const controller = new AbortController();
+    const fetchTimeout = setTimeout(() => controller.abort(), 5000);
+    let res: Response;
+    try {
+      res = await fetch(`http://127.0.0.1:${CDP_PORT}/json`, {
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(fetchTimeout);
+    }
     const tabs = (await res.json()) as Array<{
       id: string;
       type: string;
@@ -689,6 +802,13 @@ export class BrowserManager extends EventEmitter {
     const pageTab = tabs.find(t => t.type === "page");
     if (!pageTab) {
       throw new Error("Chromiumのページタブが見つかりません");
+    }
+
+    // webSocketDebuggerUrl が期待するCDPエンドポイント（ws://127.0.0.1:CDP_PORT/）
+    // で始まることを検証（SSRF/CDP乗っ取り対策）
+    const expectedPrefix = `ws://127.0.0.1:${CDP_PORT}/`;
+    if (!pageTab.webSocketDebuggerUrl.startsWith(expectedPrefix)) {
+      throw new Error("不正なCDPエンドポイント");
     }
 
     // WebSocketでPage.navigateコマンドを送信
@@ -710,21 +830,28 @@ export class BrowserManager extends EventEmitter {
       });
 
       ws.addEventListener("message", event => {
-        const msg = JSON.parse(event.data.toString());
-        if (msg.id === 1) {
+        try {
+          const msg = JSON.parse(event.data.toString());
+          if (msg.id === 1) {
+            clearTimeout(timeout);
+            ws.close();
+            if (msg.error) {
+              reject(new Error(`CDP navigate エラー: ${msg.error.message}`));
+            } else {
+              resolve();
+            }
+          }
+        } catch (e) {
           clearTimeout(timeout);
           ws.close();
-          if (msg.error) {
-            reject(new Error(`CDP navigate エラー: ${msg.error.message}`));
-          } else {
-            resolve();
-          }
+          reject(new Error(`CDP応答パースエラー: ${getErrorMessage(e)}`));
         }
       });
 
-      ws.addEventListener("error", err => {
+      ws.addEventListener("error", () => {
         clearTimeout(timeout);
-        reject(new Error(`CDP WebSocket エラー: ${err}`));
+        ws.close();
+        reject(new Error("CDP WebSocket エラー"));
       });
     });
 
