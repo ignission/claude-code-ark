@@ -116,20 +116,12 @@ export class BrowserManager extends EventEmitter {
     }
 
     // Chromium（複数の候補から探す）
-    const chromiumCandidates = [
-      "chromium-browser",
-      "chromium",
-      "google-chrome",
-    ];
-    let found = false;
-    for (const cmd of chromiumCandidates) {
-      if (this.commandExists(cmd)) {
-        this.chromiumCmd = cmd;
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
+    // snap版chromium-browserはpm2/systemd環境でX11にアクセスできないため、
+    // Playwright版のchromiumバイナリを優先的に使用する
+    const chromiumFound = this.findChromiumBinary();
+    if (chromiumFound) {
+      this.chromiumCmd = chromiumFound;
+    } else {
       missing.push("chromium-browser/chromium/google-chrome");
     }
 
@@ -159,6 +151,46 @@ export class BrowserManager extends EventEmitter {
           "  Ubuntu: apt install xvfb x11vnc novnc websockify chromium-browser"
       );
     }
+  }
+
+  /**
+   * Chromiumバイナリを検索する
+   * snap版はpm2/systemd環境でX11にアクセスできないため、
+   * Playwright版のバイナリパスを優先的に探す
+   */
+  private findChromiumBinary(): string | null {
+    // 1. Playwright版Chromium（snap制約なし）
+    const homeDir = process.env.HOME || "/root";
+    const playwrightDir = `${homeDir}/.cache/ms-playwright`;
+    if (fs.existsSync(playwrightDir)) {
+      try {
+        const dirs = fs
+          .readdirSync(playwrightDir)
+          .filter(d => d.startsWith("chromium-"))
+          .sort()
+          .reverse(); // 最新版を優先
+        for (const dir of dirs) {
+          const chromePath = `${playwrightDir}/${dir}/chrome-linux/chrome`;
+          if (fs.existsSync(chromePath)) {
+            console.log(
+              `[BrowserManager] Playwright Chromium検出: ${chromePath}`
+            );
+            return chromePath;
+          }
+        }
+      } catch {
+        // ディレクトリ読み取り失敗は無視
+      }
+    }
+
+    // 2. システムのChromium（snap版でないもの）
+    for (const cmd of ["chromium-browser", "chromium", "google-chrome"]) {
+      if (this.commandExists(cmd)) {
+        return cmd;
+      }
+    }
+
+    return null;
   }
 
   /**
