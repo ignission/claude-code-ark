@@ -63,6 +63,7 @@ interface MobileLayoutProps {
   // ブラウザ（noVNC）
   activeBrowserSession: BrowserSession | null;
   onSelectBrowser: () => void;
+  navigateBrowser: (url: string) => void;
   isRemote: boolean;
 }
 
@@ -93,6 +94,7 @@ export function MobileLayout({
   onBeaconClear,
   activeBrowserSession,
   onSelectBrowser,
+  navigateBrowser,
   isRemote,
 }: MobileLayoutProps) {
   const [activeView, setActiveView] = useState<
@@ -103,13 +105,32 @@ export function MobileLayout({
   );
   const [openedSessions, setOpenedSessions] = useState<Set<string>>(new Set());
 
+  const handleOpenUrl = useCallback(
+    (url: string) => {
+      if (isRemote) {
+        onSelectBrowser();
+        setActiveView("browser");
+        navigateBrowser(url);
+      } else {
+        window.open(url, "_blank");
+      }
+    },
+    [isRemote, onSelectBrowser, navigateBrowser]
+  );
+
   // タブ状態管理（共通フック）
   const {
     getTabsForSession,
     getActiveTabForSession,
     handleTabSelect,
     handleTabClose,
-  } = useViewerTabs(selectedSessionId, sessions, readFile, fileContent);
+  } = useViewerTabs(
+    selectedSessionId,
+    sessions,
+    readFile,
+    fileContent,
+    handleOpenUrl
+  );
 
   // セッションを選択して詳細画面に遷移
   const handleOpenSession = useCallback(

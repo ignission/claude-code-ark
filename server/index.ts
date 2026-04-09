@@ -1162,6 +1162,14 @@ async function startServer() {
       }
     });
 
+    socket.on("browser:navigate", async data => {
+      try {
+        await browserManager.navigate(data.url);
+      } catch (error) {
+        socket.emit("browser:error", { message: getErrorMessage(error) });
+      }
+    });
+
     // ===== Beacon Commands =====
 
     // Beaconメッセージ送信

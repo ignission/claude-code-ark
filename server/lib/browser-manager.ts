@@ -32,6 +32,9 @@ const KILL_GRACE_PERIOD = 3000;
 /** Xvfb仮想ディスプレイの解像度 */
 const DISPLAY_RESOLUTION = "1280x900x24";
 
+/** CDPリモートデバッグポート */
+const CDP_PORT = 9222;
+
 /** Chromiumの起動フラグ */
 const CHROMIUM_FLAGS = [
   "--no-sandbox",
@@ -45,6 +48,7 @@ const CHROMIUM_FLAGS = [
   "--disable-default-apps",
   "--window-size=1280,900",
   "--window-position=0,0",
+  `--remote-debugging-port=${CDP_PORT}`,
 ];
 
 /** セッションに紐づく4プロセスの組 */
@@ -660,6 +664,33 @@ export class BrowserManager extends EventEmitter {
 
     this.emit("session:stopped", browserId);
     console.log(`[BrowserManager] ブラウザセッション停止完了: ${browserId}`);
+  }
+
+  /**
+   * CDP経由でChromiumを指定URLにナビゲート
+   */
+  async navigate(url: string): Promise<void> {
+    if (!this.singletonSession) {
+      throw new Error("ブラウザセッションが起動していません");
+    }
+
+    // CDP: アクティブなタブを取得
+    const res = await fetch(`http://127.0.0.1:${CDP_PORT}/json`);
+    const tabs = (await res.json()) as Array<{
+      id: string;
+      webSocketDebuggerUrl: string;
+    }>;
+    if (tabs.length === 0) {
+      throw new Error("Chromiumのタブが見つかりません");
+    }
+
+    // 最初のタブにナビゲート
+    const tabId = tabs[0].id;
+    await fetch(
+      `http://127.0.0.1:${CDP_PORT}/json/navigate?${tabId}&url=${encodeURIComponent(url)}`
+    );
+
+    console.log(`[BrowserManager] ナビゲート: ${url}`);
   }
 
   /**

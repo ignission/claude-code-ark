@@ -248,6 +248,7 @@ export interface ClientToServerEvents {
   // ブラウザセッション（noVNC）
   "browser:start": () => void;
   "browser:stop": (data: { browserId: string }) => void;
+  "browser:navigate": (data: { url: string }) => void;
 }
 
 /** Beaconチャットのメッセージ */

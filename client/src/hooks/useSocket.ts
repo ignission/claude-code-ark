@@ -130,6 +130,7 @@ interface UseSocketReturn {
   browserError: string | null;
   startBrowser: () => void;
   stopBrowser: (browserId: string) => void;
+  navigateBrowser: (url: string) => void;
 }
 
 export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
@@ -738,6 +739,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socketRef.current?.emit("browser:stop", { browserId });
   }, []);
 
+  const navigateBrowser = useCallback((url: string) => {
+    socketRef.current?.emit("browser:navigate", { url });
+  }, []);
+
   return {
     socket: socketRef.current,
     isConnected,
@@ -799,5 +804,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     browserError,
     startBrowser,
     stopBrowser,
+    navigateBrowser,
   };
 }

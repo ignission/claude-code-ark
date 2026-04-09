@@ -92,6 +92,7 @@ export default function Dashboard() {
     browserSessions,
     startBrowser,
     stopBrowser,
+    navigateBrowser,
   } = useSocket({
     enabled: !isSettingsLoading,
     initialRepoList: savedRepoList,
@@ -121,12 +122,30 @@ export default function Dashboard() {
     null
   );
 
+  const handleOpenUrl = useCallback(
+    (url: string) => {
+      if (isRemote) {
+        handleSelectBrowser();
+        navigateBrowser(url);
+      } else {
+        window.open(url, "_blank");
+      }
+    },
+    [isRemote, handleSelectBrowser, navigateBrowser]
+  );
+
   const {
     getTabsForSession,
     getActiveTabForSession,
     handleTabSelect,
     handleTabClose,
-  } = useViewerTabs(selectedSessionId, sessions, readFile, fileContent);
+  } = useViewerTabs(
+    selectedSessionId,
+    sessions,
+    readFile,
+    fileContent,
+    handleOpenUrl
+  );
 
   // サーバーからの設定が読み込まれたらセッションIDを復元
   const settingsInitializedRef = useRef(false);
@@ -289,6 +308,7 @@ export default function Dashboard() {
           onBeaconClear={beaconClear}
           activeBrowserSession={activeBrowserSession}
           onSelectBrowser={handleSelectBrowser}
+          navigateBrowser={navigateBrowser}
           isRemote={isRemote}
         />
       ) : (

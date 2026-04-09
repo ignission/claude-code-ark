@@ -15,7 +15,8 @@ export function useViewerTabs(
     mimeType: string;
     size: number;
     error?: string;
-  } | null
+  } | null,
+  onOpenUrl?: (url: string) => void
 ) {
   const [sessionTabs, setSessionTabs] = useState<Record<string, ViewerTab[]>>(
     {}
@@ -127,14 +128,17 @@ export function useViewerTabs(
         } catch {
           return;
         }
-        // ブラウザタブはシングルトンnoVNC内で開くため、新しいウィンドウで開く
-        window.open(url, "_blank");
+        if (onOpenUrl) {
+          onOpenUrl(url);
+        } else {
+          window.open(url, "_blank");
+        }
       }
     };
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [selectedSessionId, sessions, openFileTab, readFile]);
+  }, [selectedSessionId, sessions, openFileTab, readFile, onOpenUrl]);
 
   // fileContent受信時にタブを更新（全セッションを検索してレースコンディション対策）
   useEffect(() => {
