@@ -105,20 +105,8 @@ export function useViewerTabs(
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
       const { type } = event.data ?? {};
-      if (!selectedSessionId) return;
-      const session = sessions.get(selectedSessionId);
-      if (!session) return;
 
-      if (type === "ark:open-file") {
-        const { path: filePath, line } = event.data;
-        if (typeof filePath !== "string" || !filePath) return;
-        openFileTab(
-          selectedSessionId,
-          filePath,
-          typeof line === "number" ? line : undefined
-        );
-        readFile(selectedSessionId, filePath);
-      } else if (type === "ark:open-url") {
+      if (type === "ark:open-url") {
         const { url } = event.data;
         if (typeof url !== "string" || !url) return;
         try {
@@ -133,6 +121,23 @@ export function useViewerTabs(
         } else {
           window.open(url, "_blank");
         }
+        return;
+      }
+
+      // 以下はセッション選択中のみ有効（ファイルビューワー）
+      if (!selectedSessionId) return;
+      const session = sessions.get(selectedSessionId);
+      if (!session) return;
+
+      if (type === "ark:open-file") {
+        const { path: filePath, line } = event.data;
+        if (typeof filePath !== "string" || !filePath) return;
+        openFileTab(
+          selectedSessionId,
+          filePath,
+          typeof line === "number" ? line : undefined
+        );
+        readFile(selectedSessionId, filePath);
       }
     };
 
