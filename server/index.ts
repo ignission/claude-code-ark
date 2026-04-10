@@ -543,7 +543,15 @@ async function startServer() {
       return;
     }
 
-    const targetPath = req.url.replace(`/proxy/${port}`, "") || "/";
+    // req.params.splatはpath-to-regexp v8の{*splat}パターンにマッチしたパスセグメント配列
+    const splatSegments = req.params.splat;
+    const basePath = Array.isArray(splatSegments)
+      ? `/${splatSegments.join("/")}`
+      : "/";
+    // クエリストリングを保持（req.urlには含まれるがreq.params.splatには含まれない）
+    const queryIndex = req.url.indexOf("?");
+    const query = queryIndex !== -1 ? req.url.slice(queryIndex) : "";
+    const targetPath = basePath + query;
     req.url = targetPath;
 
     ttydProxy.web(req, res, { target: `http://127.0.0.1:${port}` }, _err => {
