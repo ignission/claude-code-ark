@@ -10,9 +10,14 @@ import { cn } from "@/lib/utils";
 // Format: { THEME_NAME: CSS_SELECTOR }
 const THEMES = { light: "", dark: ".dark" } as const;
 
+// recharts v3でValueType/NameTypeはトップレベルからエクスポートされていないため、
+// 型定義と一致するローカル型エイリアスを定義
+type ValueType = number | string | Array<number | string>;
+type NameType = number | string;
+
 // recharts v3の内部型をpublicな型から抽出
 type TooltipPayloadEntry = NonNullable<
-  DefaultTooltipContentProps["payload"]
+  DefaultTooltipContentProps<ValueType, NameType>["payload"]
 >[number];
 type LegendPayloadEntry = NonNullable<
   DefaultLegendContentProps["payload"]
@@ -128,10 +133,10 @@ function ChartTooltipContent({
   color,
   nameKey,
   labelKey,
-}: Partial<DefaultTooltipContentProps> & {
+}: Partial<DefaultTooltipContentProps<ValueType, NameType>> & {
   active?: boolean;
-  payload?: DefaultTooltipContentProps["payload"];
-  label?: DefaultTooltipContentProps["label"];
+  payload?: DefaultTooltipContentProps<ValueType, NameType>["payload"];
+  label?: DefaultTooltipContentProps<ValueType, NameType>["label"];
 } & React.ComponentProps<"div"> & {
     hideLabel?: boolean;
     hideIndicator?: boolean;
