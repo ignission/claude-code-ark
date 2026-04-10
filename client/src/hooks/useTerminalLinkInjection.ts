@@ -277,12 +277,13 @@ export function useTerminalLinkInjection(
                       // 前行からの続きが確定しているため、URL文字を結合する
                       const contMatch = nextText.match(/^[^\s<>"'()]+/);
                       if (!contMatch) break;
+                      // URL継続部分の直後に他のテキストがあれば結合しない
+                      // （URL末尾の実スペースがtrimされたケースで誤結合を防止）
+                      const afterCont = nextText.substring(contMatch[0].length);
+                      if (!/^\s*$/.test(afterCont)) break;
                       matchedUrl += contMatch[0];
                       endY = nextIdx + 1;
                       endX = contMatch[0].length + 1;
-                      // URL継続部分の直後に他のテキストがあれば、ここでURLは終了
-                      const afterCont = nextText.substring(contMatch[0].length);
-                      if (!/^\s*$/.test(afterCont)) break;
                       continue;
                     }
 
