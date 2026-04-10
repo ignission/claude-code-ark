@@ -206,7 +206,7 @@ export function useTerminalLinkInjection(
                 callback(undefined);
                 return;
               }
-              const text = line.translateToString();
+              const text = line.translateToString(true);
               // biome-ignore lint/suspicious/noExplicitAny: xterm.js link objects
               const links: any[] = [];
               let match: RegExpExecArray | null;
@@ -270,7 +270,24 @@ export function useTerminalLinkInjection(
                   ) {
                     const nextLine = term.buffer.active.getLine(nextIdx);
                     if (!nextLine) break;
-                    const nextText = nextLine.translateToString();
+                    const nextText = nextLine.translateToString(true);
+
+                    if (nextLine.isWrapped) {
+                      // ターミナル幅での自動折り返し（ハードラップ）:
+                      // 前行からの続きが確定しているため、URL文字を結合する
+                      const contMatch = nextText.match(/^[^\s<>"'()]+/);
+                      if (!contMatch) break;
+                      matchedUrl += contMatch[0];
+                      endY = nextIdx + 1;
+                      endX = contMatch[0].length + 1;
+                      // URL継続部分の直後に他のテキストがあれば、ここでURLは終了
+                      const afterCont = nextText.substring(contMatch[0].length);
+                      if (!/^\s*$/.test(afterCont)) break;
+                      continue;
+                    }
+
+                    // Claude Codeによる明示的改行（ソフトラップ）:
+                    // 先頭空白 + URL文字で継続を判定
                     const trimmedNext = nextText.trimStart();
                     if (trimmedNext.length === 0) break;
                     const contMatch = trimmedNext.match(/^[^\s<>"'()]+/);
