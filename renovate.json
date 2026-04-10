@@ -1,0 +1,130 @@
+{
+  // Renovate 設定スキーマ
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+
+  // 推奨プリセット（config:recommended は :dependencyDashboard を含む）
+  "extends": [
+    "config:recommended"
+  ],
+
+  // タイムゾーン: 日本時間で動作させる
+  "timezone": "Asia/Tokyo",
+
+  // スケジュール: 平日の早朝（9時前）にのみPRを作成する
+  "schedule": [
+    "before 9am every weekday"
+  ],
+
+  // セマンティックコミット: 有効（Renovateデフォルトの英語形式）
+  "semanticCommits": "enabled",
+
+  // コンフリクト発生時のみrebaseする（CIの無駄な再実行を防ぐ）
+  "rebaseWhen": "conflicted",
+
+  // PRの同時作成数: 最大10件に制限してレビュー負荷を抑える
+  "prConcurrentLimit": 10,
+
+  // ラベル: 全PRに付与する共通ラベル
+  "labels": [
+    "dependencies"
+  ],
+
+  "packageRules": [
+    // =======================================================
+    // === npm (root package.json) ===
+    // Node/pnpm プロジェクトの依存関係管理ルール
+    // =======================================================
+
+    // npm devDependencies パッチ: グループ化してPR数を削減し、自動マージ
+    {
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["patch"],
+      "groupName": "npm devDependencies (patch)",
+      "automerge": true,
+      "minimumReleaseAge": "3 days",
+      "addLabels": ["dev-dependencies", "automerge"]
+    },
+
+    // npm devDependencies マイナー・メジャー: グループ化するが自動マージしない
+    {
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "major"],
+      "groupName": "npm devDependencies",
+      "automerge": false,
+      "addLabels": ["dev-dependencies"]
+    },
+
+    // npm dependencies パッチ: 自動マージ（3日間の安定期間を設ける）
+    {
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["dependencies"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "minimumReleaseAge": "3 days",
+      "addLabels": ["automerge"]
+    },
+
+    // npm dependencies マイナー更新: 手動レビュー必須
+    {
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["dependencies"],
+      "matchUpdateTypes": ["minor"],
+      "automerge": false,
+      "addLabels": ["minor-update"]
+    },
+
+    // npm dependencies メジャー更新: 手動レビュー必須 + breaking-change ラベルで注意喚起
+    {
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["dependencies"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "addLabels": ["breaking-change"]
+    },
+
+    // =======================================================
+    // === GitHub Actions ===
+    // CI/CDワークフローの依存関係管理ルール
+    // =======================================================
+
+    // GitHub Actions マイナー・パッチ: グループ化して自動マージ
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "github-actions",
+      "automerge": true,
+      "addLabels": ["github-actions"]
+    },
+
+    // GitHub Actions メジャー: 手動レビュー必須 + breaking-change ラベル
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "addLabels": ["github-actions", "breaking-change"]
+    },
+
+    // =======================================================
+    // === mise ===
+    // ツールチェーン（Node/pnpm等）のバージョン管理ルール
+    // =======================================================
+
+    // mise 全更新: 手動レビュー必須 + toolchain ラベル
+    {
+      "matchManagers": ["mise"],
+      "automerge": false,
+      "addLabels": ["toolchain"]
+    }
+  ],
+
+  // lockFileMaintenance: pnpm-lock.yaml の定期メンテナンスを有効化 + 自動マージ
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true,
+    "addLabels": [
+      "lock-file-maintenance"
+    ]
+  }
+}
