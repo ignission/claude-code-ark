@@ -71,7 +71,7 @@
     "react-dom": "^19.2.1",
     "react-hook-form": "^7.64.0",
     "react-markdown": "^10.1.0",
-    "react-resizable-panels": "^3.0.6",
+    "react-resizable-panels": "^4.0.0",
     "recharts": "^3.0.0",
     "remark-gfm": "^4.0.1",
     "shiki": "^4.0.2",
