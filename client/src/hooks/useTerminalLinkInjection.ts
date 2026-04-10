@@ -67,6 +67,12 @@ export function useTerminalLinkInjection(
           // WebLinksAddonが優先的にactivateされても、ここで完全URLに復元できる。
           const urlExtensionMap = new Map<string, string>();
 
+          // registerLinkProviderのactivateで処理済みのURLを記録するSet。
+          // window.openオーバーライド側でこのSetに含まれるURLをスキップすることで、
+          // WebLinksAddonとregisterLinkProviderの二重発火を防止する。
+          // setTimeout(, 0)でマイクロタスク後にクリアするため、同一クリックイベント内でのみ有効。
+          const handledUrls = new Set<string>();
+
           // xterm.js WebLinksAddonのURLを横取りする。
           // WebLinksAddonは window.open() を引数なしで呼び、返されたウィンドウの
           // location.href にURLを設定するパターン:
@@ -83,9 +89,10 @@ export function useTerminalLinkInjection(
             features?: string
           ): Window | null => {
             // 引数ありの呼び出し（URL直接指定）
-            // 全URLをpostMessage経由で親ウィンドウに委譲（二重タブ防止）
+            // registerLinkProviderで処理済みのURLはスキップ（二重タブ防止）
             if (url) {
               const urlStr = urlExtensionMap.get(String(url)) || String(url);
+              if (handledUrls.has(urlStr)) return null;
               arkWindow.postMessage(
                 { type: "ark:open-url", url: urlStr },
                 arkWindow.location.origin
@@ -100,8 +107,9 @@ export function useTerminalLinkInjection(
               location: {
                 _href: "",
                 set href(u: string) {
-                  // 全URLをpostMessage経由で親ウィンドウに委譲（二重タブ防止）
+                  // registerLinkProviderで処理済みのURLはスキップ（二重タブ防止）
                   const resolved = urlExtensionMap.get(u) || u;
+                  if (handledUrls.has(resolved)) return;
                   arkWindow.postMessage(
                     { type: "ark:open-url", url: resolved },
                     arkWindow.location.origin
@@ -303,6 +311,9 @@ export function useTerminalLinkInjection(
                   },
                   text: finalUrl,
                   activate() {
+                    // 処理済みURLとして記録し、WebLinksAddonのwindow.open側をスキップさせる
+                    handledUrls.add(finalUrl);
+                    setTimeout(() => handledUrls.delete(finalUrl), 0);
                     arkWindow.postMessage(
                       { type: "ark:open-url", url: finalUrl },
                       arkWindow.location.origin

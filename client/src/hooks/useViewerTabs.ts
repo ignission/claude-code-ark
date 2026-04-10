@@ -102,10 +102,6 @@ export function useViewerTabs(
 
   // postMessageリスナー（ttyd iframe内のリンククリックを受信）
   useEffect(() => {
-    // 同一URLの重複オープン防止（WebLinksAddonとregisterLinkProviderの両方が発火した場合）
-    let lastOpenedUrl = "";
-    let lastOpenedTime = 0;
-
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
       const { type } = event.data ?? {};
@@ -113,12 +109,6 @@ export function useViewerTabs(
       if (type === "ark:open-url") {
         const { url } = event.data;
         if (typeof url !== "string" || !url) return;
-
-        // 同一URL/500ms以内の重複を無視
-        const now = Date.now();
-        if (url === lastOpenedUrl && now - lastOpenedTime < 500) return;
-        lastOpenedUrl = url;
-        lastOpenedTime = now;
 
         try {
           const parsed = new URL(url);
