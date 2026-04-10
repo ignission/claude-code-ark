@@ -57,7 +57,7 @@ pnpm build
 pnpm start
 ```
 
-ブラウザで http://localhost:3001 を開く。
+ブラウザで http://localhost:4001 を開く。
 
 ### 起動オプション
 
@@ -72,7 +72,7 @@ pnpm start
 
 | 環境変数            | 説明                                            |
 | ------------------- | ----------------------------------------------- |
-| `PORT`              | サーバーポート（デフォルト: 3001）              |
+| `PORT`              | サーバーポート（デフォルト: 4001）              |
 | `SKIP_PERMISSIONS`  | `true` で権限確認スキップ                       |
 | `ARK_PUBLIC_DOMAIN` | Named Tunnel用の固定ドメイン                    |
 | `ARK_TUNNEL_NAME`   | Named Tunnel名（デフォルト: `claude-code-ark`） |

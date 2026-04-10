@@ -21,23 +21,23 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    port: 3000,
-    strictPort: false, // Will find next available port if 3000 is busy
+    port: 4000,
+    strictPort: false, // Will find next available port if 4000 is busy
     host: true,
     allowedHosts: ["localhost", "127.0.0.1"],
     // APIとSocket.IOをバックエンドにプロキシ
     proxy: {
       "/api": {
-        target: process.env.VITE_API_URL || "http://localhost:3001",
+        target: process.env.VITE_API_URL || "http://localhost:4001",
         changeOrigin: true,
       },
       "/socket.io": {
-        target: process.env.VITE_API_URL || "http://localhost:3001",
+        target: process.env.VITE_API_URL || "http://localhost:4001",
         ws: true,
         changeOrigin: true,
       },
       "/ttyd": {
-        target: process.env.VITE_API_URL || "http://localhost:3001",
+        target: process.env.VITE_API_URL || "http://localhost:4001",
         ws: true,
         changeOrigin: true,
       },

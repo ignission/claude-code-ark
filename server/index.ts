@@ -131,7 +131,7 @@ function loadTunnelState(): { active: boolean; port: number } | null {
 async function startServer() {
   const app = express();
   const server = createServer(app);
-  const port = Number(process.env.PORT) || 3001;
+  const port = Number(process.env.PORT) || 4001;
 
   // --skip-permissions が指定された場合、Claudeを --dangerously-skip-permissions 付きで起動
   if (skipPermissions) {
@@ -523,7 +523,7 @@ async function startServer() {
     }
 
     // Ark自体のポート・CDPポート・ttydポート範囲をブロック（SSRF対策）
-    const serverPort = parseInt(process.env.PORT || "3001", 10);
+    const serverPort = parseInt(process.env.PORT || "4001", 10);
     if (port === serverPort || port === CDP_PORT) {
       res.status(403).json({ error: "This port is not accessible via proxy" });
       return;
@@ -659,7 +659,7 @@ async function startServer() {
       const proxyPort = parseInt(proxyMatch[1], 10);
       if (proxyPort >= 1 && proxyPort <= 65535) {
         // SSRF対策: Ark自体のポート、CDPポート、ttydポート範囲、VNC/WSポート範囲をブロック
-        const serverPort = parseInt(process.env.PORT || "3001", 10);
+        const serverPort = parseInt(process.env.PORT || "4001", 10);
         if (
           proxyPort === serverPort ||
           proxyPort === CDP_PORT ||
