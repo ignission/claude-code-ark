@@ -4,7 +4,7 @@ import { Group, Panel, Separator } from "react-resizable-panels";
 
 import { cn } from "@/lib/utils";
 
-function ResizableGroup({
+function ResizablePanelGroup({
   className,
   ...props
 }: React.ComponentProps<typeof Group>) {
@@ -46,4 +46,4 @@ function ResizableHandle({
   );
 }
 
-export { ResizableHandle, ResizablePanel, ResizableGroup };
+export { ResizableHandle, ResizablePanel, ResizablePanelGroup };
