@@ -274,16 +274,16 @@ export function useTerminalLinkInjection(
 
                     if (nextLine.isWrapped) {
                       // ターミナル幅での自動折り返し（ハードラップ）:
-                      // 前行からの続きが確定しているため、URL文字を結合する
+                      // 前行からの続きが確定しているため、URL文字を先に結合する。
+                      // 結合後にafterContを確認し、後続テキストがあればURL終端とする。
+                      // （例: "k/pull/112 successfully!" → "k/pull/112"を結合、breakで終了）
                       const contMatch = nextText.match(/^[^\s<>"'()]+/);
                       if (!contMatch) break;
-                      // URL継続部分の直後に他のテキストがあれば結合しない
-                      // （URL末尾の実スペースがtrimされたケースで誤結合を防止）
-                      const afterCont = nextText.substring(contMatch[0].length);
-                      if (!/^\s*$/.test(afterCont)) break;
                       matchedUrl += contMatch[0];
                       endY = nextIdx + 1;
                       endX = contMatch[0].length + 1;
+                      const afterCont = nextText.substring(contMatch[0].length);
+                      if (!/^\s*$/.test(afterCont)) break;
                       continue;
                     }
 
