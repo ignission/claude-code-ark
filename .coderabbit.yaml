@@ -3,8 +3,8 @@
 # レビューコメントの言語（日本語）
 language: "ja"
 
-# 実験的機能を無効化
-early_access: false
+# 実験的機能を有効化
+early_access: true
 
 reviews:
   # レビューの厳しさ（chill: 重要な問題のみ指摘、assertive: 細かい改善点も指摘）
