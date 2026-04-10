@@ -67,12 +67,6 @@ export function useTerminalLinkInjection(
           // WebLinksAddonが優先的にactivateされても、ここで完全URLに復元できる。
           const urlExtensionMap = new Map<string, string>();
 
-          // registerLinkProviderのactivateで処理済みのURLを記録するSet。
-          // window.openオーバーライド側でこのSetに含まれるURLをスキップすることで、
-          // WebLinksAddonとregisterLinkProviderの二重発火を防止する。
-          // setTimeout(, 0)でマイクロタスク後にクリアするため、同一クリックイベント内でのみ有効。
-          const handledUrls = new Set<string>();
-
           // xterm.js WebLinksAddonのURLを横取りする。
           // WebLinksAddonは window.open() を引数なしで呼び、返されたウィンドウの
           // location.href にURLを設定するパターン:
@@ -82,6 +76,7 @@ export function useTerminalLinkInjection(
           // そのため、フェイクWindowオブジェクトを返してlocation.hrefのセッターで
           // URLを検出し、postMessageに変換する。
           const arkWindow = window;
+          const origOpen = iframeWindow.open.bind(iframeWindow);
           // biome-ignore lint/suspicious/noExplicitAny: ttyd iframe内のwindow.openをオーバーライドするため型を緩める
           (iframeWindow as any).open = (
             url?: string | URL,
@@ -89,15 +84,18 @@ export function useTerminalLinkInjection(
             features?: string
           ): Window | null => {
             // 引数ありの呼び出し（URL直接指定）
-            // registerLinkProviderで処理済みのURLはスキップ（二重タブ防止）
             if (url) {
               const urlStr = urlExtensionMap.get(String(url)) || String(url);
-              if (handledUrls.has(urlStr)) return null;
-              arkWindow.postMessage(
-                { type: "ark:open-url", url: urlStr },
-                arkWindow.location.origin
-              );
-              return null;
+              if (
+                /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/.test(urlStr)
+              ) {
+                arkWindow.postMessage(
+                  { type: "ark:open-url", url: urlStr },
+                  arkWindow.location.origin
+                );
+                return null;
+              }
+              return origOpen(urlStr, target, features);
             }
 
             // 引数なしの呼び出し（WebLinksAddonパターン）
@@ -107,13 +105,27 @@ export function useTerminalLinkInjection(
               location: {
                 _href: "",
                 set href(u: string) {
-                  // registerLinkProviderで処理済みのURLはスキップ（二重タブ防止）
+                  // URL拡張マップで折り返しURLを完全URLに復元
                   const resolved = urlExtensionMap.get(u) || u;
-                  if (handledUrls.has(resolved)) return;
-                  arkWindow.postMessage(
-                    { type: "ark:open-url", url: resolved },
-                    arkWindow.location.origin
-                  );
+                  if (
+                    /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/.test(
+                      resolved
+                    )
+                  ) {
+                    arkWindow.postMessage(
+                      { type: "ark:open-url", url: resolved },
+                      arkWindow.location.origin
+                    );
+                  } else {
+                    // localhost以外は実際に新しいウィンドウで開く
+                    const real = origOpen();
+                    if (real) {
+                      try {
+                        real.opener = null;
+                      } catch {}
+                      real.location.href = resolved;
+                    }
+                  }
                 },
                 get href() {
                   return this._href;
@@ -311,9 +323,6 @@ export function useTerminalLinkInjection(
                   },
                   text: finalUrl,
                   activate() {
-                    // 処理済みURLとして記録し、WebLinksAddonのwindow.open側をスキップさせる
-                    handledUrls.add(finalUrl);
-                    setTimeout(() => handledUrls.delete(finalUrl), 0);
                     arkWindow.postMessage(
                       { type: "ark:open-url", url: finalUrl },
                       arkWindow.location.origin
