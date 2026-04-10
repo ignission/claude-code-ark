@@ -184,20 +184,21 @@ export function MobileSessionList({
                     );
                   }
                   // worktreeがない他リポのセッション
+                  if (!session) return null;
                   return (
                     <div
-                      key={session!.id}
+                      key={session?.id}
                       className="bg-card border border-border rounded-lg p-4 active:bg-accent/50 transition-colors"
-                      onClick={() => onOpenSession(session!.id)}
+                      onClick={() => onOpenSession(session?.id)}
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 min-w-0">
                           <div
-                            className={`status-indicator ${session!.status}`}
+                            className={`status-indicator ${session?.status}`}
                           />
                           <GitBranch className="w-4 h-4 text-muted-foreground shrink-0" />
                           <span className="font-mono text-sm truncate">
-                            {getBaseName(session!.worktreePath)}
+                            {getBaseName(session?.worktreePath)}
                           </span>
                         </div>
                         <div
@@ -218,7 +219,7 @@ export function MobileSessionList({
                             <DropdownMenuContent align="end" className="w-48">
                               <DropdownMenuItem
                                 className="text-destructive focus:text-destructive"
-                                onSelect={() => onStopSession(session!.id)}
+                                onSelect={() => onStopSession(session?.id)}
                               >
                                 <Square className="w-4 h-4 mr-2" />
                                 セッションを停止

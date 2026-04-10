@@ -512,7 +512,7 @@ async function startServer() {
 
   app.all("/proxy/:port/*", (req, res) => {
     const port = parseInt(req.params.port, 10);
-    if (isNaN(port) || port < 1 || port > 65535) {
+    if (Number.isNaN(port) || port < 1 || port > 65535) {
       res.status(400).json({ error: "Invalid port" });
       return;
     }
@@ -541,7 +541,7 @@ async function startServer() {
     const targetPath = req.url.replace(`/proxy/${port}`, "") || "/";
     req.url = targetPath;
 
-    ttydProxy.web(req, res, { target: `http://127.0.0.1:${port}` }, err => {
+    ttydProxy.web(req, res, { target: `http://127.0.0.1:${port}` }, _err => {
       if (!res.headersSent) {
         res.status(502).json({ error: "Proxy error" });
       }
