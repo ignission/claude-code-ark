@@ -25,11 +25,6 @@ import { getErrorMessage } from "./errors.js";
 
 /** 各プロセスの起動タイムアウト（ミリ秒） */
 const XVFB_TIMEOUT = 5000;
-const CHROMIUM_TIMEOUT = 10000;
-/** CDP readinessチェックのポーリング間隔（ミリ秒） */
-const CHROMIUM_POLL_INTERVAL = 200;
-/** CDP readinessチェックの1回あたりのfetchタイムアウト（ミリ秒） */
-const CHROMIUM_FETCH_TIMEOUT = 500;
 const X11VNC_TIMEOUT = 5000;
 const WEBSOCKIFY_TIMEOUT = 5000;
 
