@@ -7,7 +7,7 @@ allowed-tools: Bash, Read, Grep, Glob, Agent
 ## 手順
 
 1. `git diff --name-only origin/main...HEAD` で変更ファイル一覧を取得する（未コミットの場合は `git diff --name-only HEAD`）
-2. 以下の4つのレビューを **全て並列** で実行する:
+2. 以下の3つのレビューを **全て並列** で実行する:
 
 ### code-simplifier（品質レビュー）— サブエージェント
 
@@ -27,11 +27,6 @@ allowed-tools: Bash, Read, Grep, Glob, Agent
   - セキュリティヘッダー
 - コードは変更しないこと。報告のみ
 
-### CodeRabbit レビュー — スキル実行
-
-- `coderabbit:review` スキルを実行する
-- 結果をテーブルに統合する
-
 ### /security-review スキル — スキル実行
 
 - `security-review` スキルを実行する（HIGH CONFIDENCE の脆弱性のみ検出）
@@ -46,7 +41,7 @@ allowed-tools: Bash, Read, Grep, Glob, Agent
 | #   | レビュー元 | 深刻度 | 対象ファイル | 指摘内容 | 対応方針案 |
 | --- | ---------- | ------ | ------------ | -------- | ---------- |
 
-- レビュー元: code-simplifier / security-auditor / CodeRabbit / security-review
+- レビュー元: code-simplifier / security-auditor / security-review
 - 深刻度は HIGH / MEDIUM / LOW の3段階
 
 ## 判断基準

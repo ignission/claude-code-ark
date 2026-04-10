@@ -510,7 +510,7 @@ async function startServer() {
 
   // ===== ローカルポートプロキシ（リモートアクセス時にlocalhost URLを表示するため） =====
 
-  app.all("/proxy/:port/*path", (req, res) => {
+  app.all("/proxy/:port/{*splat}", (req, res) => {
     const rawPort = req.params.port;
     if (!/^\d+$/.test(rawPort)) {
       res.status(400).json({ error: "Invalid port" });
@@ -543,7 +543,15 @@ async function startServer() {
       return;
     }
 
-    const targetPath = req.url.replace(`/proxy/${port}`, "") || "/";
+    // req.params.splatはpath-to-regexp v8の{*splat}パターンにマッチしたパスセグメント配列
+    const splatSegments = req.params.splat;
+    const basePath = Array.isArray(splatSegments)
+      ? `/${splatSegments.join("/")}`
+      : "/";
+    // クエリストリングを保持（req.urlには含まれるがreq.params.splatには含まれない）
+    const queryIndex = req.url.indexOf("?");
+    const query = queryIndex !== -1 ? req.url.slice(queryIndex) : "";
+    const targetPath = basePath + query;
     req.url = targetPath;
 
     ttydProxy.web(req, res, { target: `http://127.0.0.1:${port}` }, _err => {
@@ -845,7 +853,7 @@ async function startServer() {
         let worktree: Awaited<ReturnType<typeof createWorktree>>;
         try {
           worktree = await createWorktree(repoPath, branchName, baseBranch);
-          socket.emit("worktree:created", worktree);
+          io.emit("worktree:created", worktree);
         } catch (error) {
           socket.emit("worktree:error", getErrorMessage(error));
           return;
@@ -853,7 +861,7 @@ async function startServer() {
 
         try {
           const worktrees = await listWorktrees(repoPath);
-          socket.emit("worktree:list", worktrees);
+          io.emit("worktree:list", worktrees);
         } catch {
           // worktree一覧の更新失敗はセッション起動をブロックしない
         }
@@ -890,10 +898,10 @@ async function startServer() {
         await deleteWorktree(repoPath, worktreePath);
 
         // 削除成功を通知
-        socket.emit("worktree:deleted", deletedWorktreeId);
+        io.emit("worktree:deleted", deletedWorktreeId);
 
         const worktrees = await listWorktrees(repoPath);
-        socket.emit("worktree:list", worktrees);
+        io.emit("worktree:list", worktrees);
       } catch (error) {
         socket.emit("worktree:error", getErrorMessage(error));
       }
