@@ -26,8 +26,8 @@ reviews:
     # PR作成時に自動でレビューを実行
     enabled: true
 
-    # ドラフトPRはレビューしない
-    drafts: false
+    # ドラフトPRもレビューする
+    drafts: true
 
     # push毎にインクリメンタルレビューを実行
     auto_incremental_review: true
