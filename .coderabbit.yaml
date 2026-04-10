@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+# レビューコメントの言語（日本語）
+language: "ja"
+
+# 実験的機能を有効化
+early_access: true
+
+reviews:
+  # レビューの厳しさ（chill: 重要な問題のみ指摘、assertive: 細かい改善点も指摘）
+  profile: "chill"
+
+  # PR全体の変更サマリーを生成
+  high_level_summary: true
+
+  # ウォークスルーにポエムを生成しない
+  poem: false
+
+  # レビュー完了ステータスをPRに表示
+  review_status: true
+
+  # ウォークスルーを折りたたみ表示
+  collapse_walkthrough: true
+
+  auto_review:
+    # PR作成時に自動でレビューを実行
+    enabled: true
+
+    # ドラフトPRもレビューする
+    drafts: true
+
+    # push毎にインクリメンタルレビューを実行
+    auto_incremental_review: true
+
+  # レビュー対象外のパス
+  path_filters:
+    - "!dist/**"
+    - "!pnpm-lock.yaml"
+
+chat:
+  # @メンションなしでもコメントに自動返信
+  auto_reply: true
