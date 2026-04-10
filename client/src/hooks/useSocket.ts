@@ -241,7 +241,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     }
 
     const serverUrl = import.meta.env.DEV
-      ? "http://localhost:3001"
+      ? import.meta.env.VITE_API_URL || "http://localhost:3001"
       : window.location.origin;
 
     const token = getTokenFromUrl();

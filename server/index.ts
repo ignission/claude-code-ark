@@ -510,7 +510,7 @@ async function startServer() {
 
   // ===== ローカルポートプロキシ（リモートアクセス時にlocalhost URLを表示するため） =====
 
-  app.all("/proxy/:port/*", (req, res) => {
+  app.all("/proxy/:port/{*splat}", (req, res) => {
     const rawPort = req.params.port;
     if (!/^\d+$/.test(rawPort)) {
       res.status(400).json({ error: "Invalid port" });
@@ -845,7 +845,7 @@ async function startServer() {
         let worktree: Awaited<ReturnType<typeof createWorktree>>;
         try {
           worktree = await createWorktree(repoPath, branchName, baseBranch);
-          socket.emit("worktree:created", worktree);
+          io.emit("worktree:created", worktree);
         } catch (error) {
           socket.emit("worktree:error", getErrorMessage(error));
           return;
@@ -853,7 +853,7 @@ async function startServer() {
 
         try {
           const worktrees = await listWorktrees(repoPath);
-          socket.emit("worktree:list", worktrees);
+          io.emit("worktree:list", worktrees);
         } catch {
           // worktree一覧の更新失敗はセッション起動をブロックしない
         }
@@ -890,10 +890,10 @@ async function startServer() {
         await deleteWorktree(repoPath, worktreePath);
 
         // 削除成功を通知
-        socket.emit("worktree:deleted", deletedWorktreeId);
+        io.emit("worktree:deleted", deletedWorktreeId);
 
         const worktrees = await listWorktrees(repoPath);
-        socket.emit("worktree:list", worktrees);
+        io.emit("worktree:list", worktrees);
       } catch (error) {
         socket.emit("worktree:error", getErrorMessage(error));
       }
