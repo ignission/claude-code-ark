@@ -4,7 +4,7 @@ import { defineConfig, devices } from "@playwright/test";
  * Playwright E2Eテスト設定
  *
  * サーバーはpm2で既に稼働しているため、webServer設定は不要。
- * localhost:3001 に対してテストを実行する。
+ * localhost:4001 に対してテストを実行する。
  */
 export default defineConfig({
   testDir: "./e2e",
@@ -16,7 +16,7 @@ export default defineConfig({
   timeout: 30_000,
 
   use: {
-    baseURL: "http://localhost:3001",
+    baseURL: "http://localhost:4001",
     trace: "on-first-retry",
   },
 

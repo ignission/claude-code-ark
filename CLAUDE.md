@@ -287,7 +287,7 @@ claude-code-ark/
 | `--remote` / `-r`       | `ARK_PUBLIC_DOMAIN`     | Named Tunnel（固定URL + Cloudflare Access）を起動        |
 | `--skip-permissions`    | `SKIP_PERMISSIONS=true` | Claude CLIを `--dangerously-skip-permissions` 付きで起動 |
 | `--repos /path1,/path2` | -                       | 許可するリポジトリパスを制限                             |
-| -                       | `PORT`                  | サーバーポート（デフォルト: 3001）                       |
+| -                       | `PORT`                  | サーバーポート（デフォルト: 4001）                       |
 | -                       | `ARK_TUNNEL_NAME`       | Named Tunnel名（デフォルト: `claude-code-ark`）          |
 
 ---

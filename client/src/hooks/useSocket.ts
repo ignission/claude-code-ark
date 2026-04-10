@@ -241,7 +241,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     }
 
     const serverUrl = import.meta.env.DEV
-      ? "http://localhost:3001"
+      ? "http://localhost:4001"
       : window.location.origin;
 
     const token = getTokenFromUrl();

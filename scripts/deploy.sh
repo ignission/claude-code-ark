@@ -212,7 +212,7 @@ main() {
     echo ""
     log_success "デプロイが完了しました!"
     echo ""
-    echo "アクセス URL: http://localhost:3000"
+    echo "アクセス URL: http://localhost:4001"
     echo ""
     echo "便利なコマンド:"
     echo "  pm2 logs claude-code-ark  # ログを表示"
