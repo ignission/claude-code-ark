@@ -403,8 +403,15 @@ async function startServer() {
     }
 
     try {
-      await fs.promises.access(normalized, fs.constants.R_OK);
-      const content = await fs.promises.readFile(normalized, "utf-8");
+      // symlink経由のパス制限回避を防止: 実体パスを解決して再チェック
+      const realPath = await fs.promises.realpath(normalized);
+      if (!allowedPrefixes.some(prefix => realPath.startsWith(prefix))) {
+        res.status(403).json({ error: "Access to this path is not allowed" });
+        return;
+      }
+
+      await fs.promises.access(realPath, fs.constants.R_OK);
+      const content = await fs.promises.readFile(realPath, "utf-8");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.setHeader("Content-Security-Policy", "sandbox allow-scripts");
       res.send(content);
