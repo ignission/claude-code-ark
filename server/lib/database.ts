@@ -8,8 +8,7 @@
  */
 
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import Database from "better-sqlite3";
 import type {
   Message,
@@ -18,13 +17,9 @@ import type {
   SessionStatus,
 } from "../../shared/types.js";
 
-// ESM環境での__dirname相当を取得
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
 // プロジェクトルートからの相対パスでDBファイルを配置
-const PROJECT_ROOT = join(__dirname, "..", "..");
-const DATA_DIR = join(PROJECT_ROOT, "data");
+// NOTE: esbuildバンドル時にimport.meta.urlのパスが変わるため、process.cwd()を使用
+const DATA_DIR = join(process.cwd(), "data");
 const DB_PATH = join(DATA_DIR, "sessions.db");
 
 /** データベースに保存されるセッションの行データ */
