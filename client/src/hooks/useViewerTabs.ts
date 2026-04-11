@@ -63,7 +63,7 @@ export function useViewerTabs(
   const openFileTab = useCallback(
     (sessionId: string, filePath: string, targetLine?: number | null) => {
       let newActiveIndex: number | null = null;
-      const isHtml = /\.html?$/i.test(filePath);
+      const isHtml = /\.html?$/i.test(filePath) && filePath.startsWith("/");
       setSessionTabs(prev => {
         const tabs = [
           ...(prev[sessionId] ?? [
@@ -156,8 +156,8 @@ export function useViewerTabs(
           filePath,
           typeof line === "number" ? line : undefined
         );
-        // HTMLファイルはiframeで直接表示するのでreadFile不要
-        if (!/\.html?$/i.test(filePath)) {
+        // 絶対パスのHTMLファイルはiframeで直接表示するのでreadFile不要
+        if (!/\.html?$/i.test(filePath) || !filePath.startsWith("/")) {
           readFile(selectedSessionId, filePath);
         }
       }
