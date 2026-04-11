@@ -406,16 +406,19 @@ async function startServer() {
         allowedPrefixes.push(`${p}/`);
       }
     }
-    if (!allowedPrefixes.some(prefix => normalized.startsWith(prefix))) {
-      res.status(403).json({ error: "Access to this path is not allowed" });
-      return;
-    }
 
     let fd: import("node:fs/promises").FileHandle | null = null;
     try {
-      // TOCTOU防止: openでfdを取得し、実体パスを検証してからfdで読み取り
+      // TOCTOU防止: open→fstat→realpath+stat でinode一致を検証してからfd経由で読み取り
       fd = await fs.promises.open(normalized, fs.constants.O_RDONLY);
+      const fdStat = await fd.stat();
       const realPath = await fs.promises.realpath(normalized);
+      const realStat = await fs.promises.stat(realPath);
+      // inode/deviceの一致でopen済みfdとrealpath結果が同一ファイルであることを保証
+      if (fdStat.ino !== realStat.ino || fdStat.dev !== realStat.dev) {
+        res.status(403).json({ error: "Access to this path is not allowed" });
+        return;
+      }
       if (!allowedPrefixes.some(prefix => realPath.startsWith(prefix))) {
         res.status(403).json({ error: "Access to this path is not allowed" });
         return;
