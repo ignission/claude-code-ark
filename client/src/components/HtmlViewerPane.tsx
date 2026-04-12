@@ -14,19 +14,36 @@ export function HtmlViewerPane({ filePath }: HtmlViewerPaneProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // filePath変更時にステート状態をリセット（古いコンテンツ/エラーの残留を防止）
+    setHtmlContent(null);
+    setError(null);
+
+    const controller = new AbortController();
     const token = new URLSearchParams(window.location.search).get("token");
     let url = `/api/html-file?path=${encodeURIComponent(filePath)}`;
     if (token) {
       url += `&token=${encodeURIComponent(token)}`;
     }
 
-    fetch(url)
+    fetch(url, { signal: controller.signal })
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.text();
       })
-      .then(setHtmlContent)
-      .catch(e => setError(e.message));
+      .then(html => {
+        // 中断済みの場合はステート更新をスキップ
+        if (!controller.signal.aborted) {
+          setHtmlContent(html);
+        }
+      })
+      .catch(e => {
+        // AbortErrorは正常なキャンセルなので無視
+        if (e.name !== "AbortError") {
+          setError(e.message);
+        }
+      });
+
+    return () => controller.abort();
   }, [filePath]);
 
   if (error) {

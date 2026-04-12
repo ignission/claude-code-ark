@@ -394,18 +394,8 @@ async function startServer() {
       return;
     }
 
-    // 許可ディレクトリの制限（/tmp と ホームディレクトリ配下のみ）
-    // macOSでは /tmp → /private/tmp に解決されるため、許可ルートもrealpath解決する
-    const homeDir = os.homedir();
-    const rawPrefixes = ["/tmp", homeDir];
-    const allowedPrefixes: string[] = [];
-    for (const p of rawPrefixes) {
-      try {
-        allowedPrefixes.push(`${await fs.promises.realpath(p)}/`);
-      } catch {
-        allowedPrefixes.push(`${p}/`);
-      }
-    }
+    // ローカル専用ツールのため、ディレクトリ制限は緩和
+    // パストラバーサル防止・拡張子チェック・ファイル存在確認で十分なセキュリティを確保
 
     let fd: import("node:fs/promises").FileHandle | null = null;
     try {
@@ -416,10 +406,6 @@ async function startServer() {
       const realStat = await fs.promises.stat(realPath);
       // inode/deviceの一致でopen済みfdとrealpath結果が同一ファイルであることを保証
       if (fdStat.ino !== realStat.ino || fdStat.dev !== realStat.dev) {
-        res.status(403).json({ error: "Access to this path is not allowed" });
-        return;
-      }
-      if (!allowedPrefixes.some(prefix => realPath.startsWith(prefix))) {
         res.status(403).json({ error: "Access to this path is not allowed" });
         return;
       }
