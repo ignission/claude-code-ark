@@ -30,7 +30,8 @@ interface MobileLayoutProps {
   repoList: string[];
   repoPath: string | null;
   onStartSession: (worktree: Worktree) => void;
-  onStopSession: (sessionId: string) => void;
+  /** セッション削除（停止 + メイン以外のWorktree削除） */
+  onDeleteSession: (sessionId: string, worktree: Worktree | undefined) => void;
   onDeleteWorktree: (worktree: Worktree) => void;
   onSendMessage: (sessionId: string, message: string) => void;
   onSendKey: (sessionId: string, key: SpecialKey) => void;
@@ -74,7 +75,7 @@ export function MobileLayout({
   repoList,
   repoPath: _repoPath,
   onStartSession,
-  onStopSession,
+  onDeleteSession,
   onDeleteWorktree,
   onSendMessage,
   onSendKey,
@@ -196,7 +197,7 @@ export function MobileLayout({
           repoList={repoList}
           onOpenSession={handleOpenSession}
           onStartSession={onStartSession}
-          onStopSession={onStopSession}
+          onDeleteSession={onDeleteSession}
           onDeleteWorktree={onDeleteWorktree}
           onNewSession={onNewSession}
         />
@@ -221,7 +222,9 @@ export function MobileLayout({
               onBack={handleBack}
               onSendMessage={message => onSendMessage(sessionId, message)}
               onSendKey={key => onSendKey(sessionId, key)}
-              onStopSession={() => onStopSession(sessionId)}
+              onDeleteSession={() =>
+                onDeleteSession(sessionId, getWorktreeForSession(session))
+              }
               onUploadImage={
                 onUploadImage
                   ? (base64Data, mimeType) =>

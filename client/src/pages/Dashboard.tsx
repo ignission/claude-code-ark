@@ -290,6 +290,28 @@ export default function Dashboard() {
     toast.info("Session stopped");
   };
 
+  /**
+   * セッションを削除（統合アクション）
+   * - セッションを停止
+   * - 関連Worktreeがメイン以外なら削除
+   * - 選択中セッションなら残りのセッションへフォーカスを移す
+   */
+  const handleDeleteSession = (
+    sessionId: string,
+    worktree: Worktree | undefined
+  ) => {
+    stopSession(sessionId);
+    // server側の session:stop ハンドラが !isMain のworktreeを自動削除するため、
+    // クライアント側で deleteWorktree を呼ぶと重複リクエストになる。
+    // 選択セッションの切り替えは sessions 変化を検出する useEffect に任せる
+    // （削除失敗時に optimistic update で別セッションへ誤遷移するのを防ぐため）。
+    if (worktree && !worktree.isMain) {
+      toast.success("セッションを削除しました");
+    } else {
+      toast.info("セッションを停止しました");
+    }
+  };
+
   const handleNewSession = () => {
     // まずリポジトリ選択（なければスキャン、あれば選択→worktree作成へ）
     setIsSelectRepoOpen(true);
@@ -305,7 +327,7 @@ export default function Dashboard() {
           repoList={repoList}
           repoPath={repoPath}
           onStartSession={handleStartSession}
-          onStopSession={handleStopSession}
+          onDeleteSession={handleDeleteSession}
           onDeleteWorktree={handleDeleteWorktree}
           onSendMessage={sendMessage}
           onSendKey={sendKey}
@@ -339,7 +361,7 @@ export default function Dashboard() {
               sessionPreviews={sessionPreviews}
               sessionActivityTexts={sessionActivityTexts}
               onSelectSession={setSelectedSessionId}
-              onStopSession={handleStopSession}
+              onDeleteSession={handleDeleteSession}
               onStartSession={handleStartSession}
               onNewSession={handleNewSession}
               onSelectBrowser={handleSelectBrowser}
@@ -397,7 +419,9 @@ export default function Dashboard() {
                         onTabClose={idx => handleTabClose(session.id, idx)}
                         onSendMessage={msg => sendMessage(session.id, msg)}
                         onSendKey={key => sendKey(session.id, key)}
-                        onStopSession={() => handleStopSession(session.id)}
+                        onDeleteSession={() =>
+                          handleDeleteSession(session.id, wt)
+                        }
                         onUploadImage={(base64, mimeType) =>
                           uploadImage(session.id, base64, mimeType)
                         }

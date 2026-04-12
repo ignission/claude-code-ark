@@ -12,7 +12,6 @@ import {
   MoreVertical,
   Play,
   Plus,
-  Square,
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
@@ -44,10 +43,27 @@ interface MobileSessionListProps {
   repoList: string[];
   onOpenSession: (sessionId: string) => void;
   onStartSession: (worktree: Worktree) => void;
-  onStopSession: (sessionId: string) => void;
+  /** セッション削除（停止 + メイン以外のWorktree削除） */
+  onDeleteSession: (sessionId: string, worktree: Worktree | undefined) => void;
   onDeleteWorktree: (worktree: Worktree) => void;
   onNewSession: () => void;
 }
+
+/**
+ * 削除確認ダイアログのターゲット。
+ * - type=session: セッションあり（worktree有無はworktreeフィールドで判定）
+ * - type=worktree: セッションなしでworktree単体を削除
+ */
+type DeleteTarget =
+  | {
+      type: "session";
+      sessionId: string;
+      worktree: Worktree | undefined;
+    }
+  | {
+      type: "worktree";
+      worktree: Worktree;
+    };
 
 export function MobileSessionList({
   sessions,
@@ -55,11 +71,11 @@ export function MobileSessionList({
   repoList,
   onOpenSession,
   onStartSession,
-  onStopSession,
+  onDeleteSession,
   onDeleteWorktree,
   onNewSession,
 }: MobileSessionListProps) {
-  const [deleteTarget, setDeleteTarget] = useState<Worktree | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const { groupedItems } = useGroupedWorktreeItems(
     worktrees,
     sessions,
@@ -151,29 +167,42 @@ export function MobileSessionList({
                                 {session ? (
                                   <DropdownMenuItem
                                     className="text-destructive focus:text-destructive"
-                                    onSelect={() => onStopSession(session.id)}
+                                    onSelect={() =>
+                                      setDeleteTarget({
+                                        type: "session",
+                                        sessionId: session.id,
+                                        worktree,
+                                      })
+                                    }
                                   >
-                                    <Square className="w-4 h-4 mr-2" />
-                                    セッションを停止
+                                    <Trash2 className="w-4 h-4 mr-2" />
+                                    セッションを削除
                                   </DropdownMenuItem>
                                 ) : (
-                                  <DropdownMenuItem
-                                    onSelect={() => onStartSession(worktree)}
-                                  >
-                                    <Play className="w-4 h-4 mr-2" />
-                                    セッションを開始
-                                  </DropdownMenuItem>
-                                )}
-                                {!worktree.isMain && (
                                   <>
-                                    <DropdownMenuSeparator />
                                     <DropdownMenuItem
-                                      className="text-destructive focus:text-destructive"
-                                      onSelect={() => setDeleteTarget(worktree)}
+                                      onSelect={() => onStartSession(worktree)}
                                     >
-                                      <Trash2 className="w-4 h-4 mr-2" />
-                                      Worktreeを削除
+                                      <Play className="w-4 h-4 mr-2" />
+                                      セッションを開始
                                     </DropdownMenuItem>
+                                    {!worktree.isMain && (
+                                      <>
+                                        <DropdownMenuSeparator />
+                                        <DropdownMenuItem
+                                          className="text-destructive focus:text-destructive"
+                                          onSelect={() =>
+                                            setDeleteTarget({
+                                              type: "worktree",
+                                              worktree,
+                                            })
+                                          }
+                                        >
+                                          <Trash2 className="w-4 h-4 mr-2" />
+                                          Worktreeを削除
+                                        </DropdownMenuItem>
+                                      </>
+                                    )}
                                   </>
                                 )}
                               </DropdownMenuContent>
@@ -219,10 +248,16 @@ export function MobileSessionList({
                             <DropdownMenuContent align="end" className="w-48">
                               <DropdownMenuItem
                                 className="text-destructive focus:text-destructive"
-                                onSelect={() => onStopSession(session.id)}
+                                onSelect={() =>
+                                  setDeleteTarget({
+                                    type: "session",
+                                    sessionId: session.id,
+                                    worktree: undefined,
+                                  })
+                                }
                               >
-                                <Square className="w-4 h-4 mr-2" />
-                                セッションを停止
+                                <Trash2 className="w-4 h-4 mr-2" />
+                                セッションを削除
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -245,9 +280,19 @@ export function MobileSessionList({
       >
         <AlertDialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
           <AlertDialogHeader>
-            <AlertDialogTitle>Worktreeを削除</AlertDialogTitle>
+            <AlertDialogTitle>
+              {deleteTarget?.type === "session"
+                ? "セッションを削除"
+                : "Worktreeを削除"}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              このWorktreeを削除しますか？関連するブランチも削除されます。
+              {deleteTarget?.type === "session"
+                ? deleteTarget.worktree === undefined
+                  ? "このセッションを削除しますか？"
+                  : deleteTarget.worktree.isMain
+                    ? "このセッションを削除しますか？メインWorktreeは削除されません。"
+                    : "このセッションとWorktreeを削除しますか？関連するブランチも削除されます。"
+                : "このWorktreeを削除しますか？関連するブランチも削除されます。"}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
@@ -255,7 +300,16 @@ export function MobileSessionList({
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-12"
               onClick={() => {
-                if (deleteTarget) onDeleteWorktree(deleteTarget);
+                if (deleteTarget) {
+                  if (deleteTarget.type === "session") {
+                    onDeleteSession(
+                      deleteTarget.sessionId,
+                      deleteTarget.worktree
+                    );
+                  } else {
+                    onDeleteWorktree(deleteTarget.worktree);
+                  }
+                }
                 setDeleteTarget(null);
               }}
             >

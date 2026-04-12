@@ -17,6 +17,16 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -48,7 +58,8 @@ interface MobileSessionViewProps {
   onBack: () => void;
   onSendMessage: (message: string) => void;
   onSendKey: (key: SpecialKey) => void;
-  onStopSession: () => void;
+  /** セッション削除（停止 + メイン以外のWorktree削除） */
+  onDeleteSession: () => void;
   onUploadImage?: (base64Data: string, mimeType: string) => void;
   imageUploadResult?: { path: string; filename: string } | null;
   imageUploadError?: string | null;
@@ -67,7 +78,7 @@ export function MobileSessionView({
   onBack,
   onSendMessage,
   onSendKey,
-  onStopSession,
+  onDeleteSession,
   onUploadImage,
   imageUploadResult,
   imageUploadError,
@@ -87,6 +98,7 @@ export function MobileSessionView({
     preview: string;
   } | null>(null);
   const [imageMessage, setImageMessage] = useState("");
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -299,12 +311,12 @@ export function MobileSessionView({
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
-          {/* 削除ボタン */}
+          {/* 削除ボタン（セッション停止 + メイン以外のWorktree削除） */}
           <Button
             variant="ghost"
             size="icon"
             className="h-10 w-10 text-destructive hover:text-destructive"
-            onClick={onStopSession}
+            onClick={() => setShowDeleteDialog(true)}
             title="セッションを削除"
           >
             <Trash2 className="w-5 h-5" />
@@ -491,6 +503,36 @@ export function MobileSessionView({
           </Button>
         </div>
       </form>
+
+      {/* 削除確認ダイアログ */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle>セッションを削除</AlertDialogTitle>
+            <AlertDialogDescription>
+              {worktree === undefined
+                ? "このセッションを削除しますか？"
+                : worktree.isMain
+                  ? "このセッションを削除しますか？メインWorktreeは削除されません。"
+                  : "このセッションとWorktreeを削除しますか？関連するブランチも削除されます。"}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
+            <AlertDialogCancel className="h-12 md:h-10">
+              キャンセル
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-12 md:h-10"
+              onClick={() => {
+                onDeleteSession();
+                setShowDeleteDialog(false);
+              }}
+            >
+              削除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

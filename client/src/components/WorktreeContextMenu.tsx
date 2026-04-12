@@ -1,10 +1,4 @@
-import {
-  MessageSquare,
-  MoreVertical,
-  Play,
-  Square,
-  Trash2,
-} from "lucide-react";
+import { MessageSquare, MoreVertical, Play, Trash2 } from "lucide-react";
 import { useState } from "react";
 import {
   AlertDialog,
@@ -39,8 +33,10 @@ interface WorktreeContextMenuProps {
   worktree: Worktree;
   session: ManagedSession | undefined;
   onStartSession: (worktree: Worktree) => void;
-  onStopSession: (sessionId: string) => void;
+  /** セッション削除（停止 + メイン以外のWorktree削除） */
+  onDeleteSession: (sessionId: string, worktree: Worktree) => void;
   onSelectSession: (sessionId: string) => void;
+  /** セッションなし状態でのWorktree単体削除 */
   onDeleteWorktree: (worktree: Worktree) => void;
 }
 
@@ -49,21 +45,30 @@ export function WorktreeContextMenu({
   worktree,
   session,
   onStartSession,
-  onStopSession,
+  onDeleteSession,
   onSelectSession,
   onDeleteWorktree,
 }: WorktreeContextMenuProps) {
   const isMobile = useIsMobile();
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
+  // セッション有無で削除対象が変わる:
+  // - セッションあり: stopSession + (メイン以外なら)deleteWorktree
+  // - セッションなし(非mainのみ表示): deleteWorktreeのみ
+  const hasSession = session !== undefined;
+  const dialogTitle = hasSession ? "セッションを削除" : "Worktreeを削除";
+  const dialogDescription = hasSession
+    ? worktree.isMain
+      ? "このセッションを削除しますか？メインWorktreeは削除されません。"
+      : "このセッションとWorktreeを削除しますか？関連するブランチも削除されます。"
+    : "このWorktreeを削除しますか？関連するブランチも削除されます。";
+
   const deleteDialog = (
     <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
       <AlertDialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
         <AlertDialogHeader>
-          <AlertDialogTitle>Worktreeを削除</AlertDialogTitle>
-          <AlertDialogDescription>
-            このWorktreeを削除しますか？関連するブランチも削除されます。
-          </AlertDialogDescription>
+          <AlertDialogTitle>{dialogTitle}</AlertDialogTitle>
+          <AlertDialogDescription>{dialogDescription}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
           <AlertDialogCancel className="h-12 md:h-10">
@@ -72,7 +77,11 @@ export function WorktreeContextMenu({
           <AlertDialogAction
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-12 md:h-10"
             onClick={() => {
-              onDeleteWorktree(worktree);
+              if (session) {
+                onDeleteSession(session.id, worktree);
+              } else {
+                onDeleteWorktree(worktree);
+              }
               setShowDeleteDialog(false);
             }}
           >
@@ -109,30 +118,33 @@ export function WorktreeContextMenu({
                     <MessageSquare className="w-4 h-4 mr-2" />
                     セッションを開く
                   </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onSelect={() => onStopSession(session.id)}
-                  >
-                    <Square className="w-4 h-4 mr-2" />
-                    セッションを停止
-                  </DropdownMenuItem>
-                </>
-              ) : (
-                <DropdownMenuItem onSelect={() => onStartSession(worktree)}>
-                  <Play className="w-4 h-4 mr-2" />
-                  セッションを開始
-                </DropdownMenuItem>
-              )}
-              {!worktree.isMain && (
-                <>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     className="text-destructive focus:text-destructive"
                     onSelect={() => setShowDeleteDialog(true)}
                   >
                     <Trash2 className="w-4 h-4 mr-2" />
-                    Worktreeを削除
+                    セッションを削除
                   </DropdownMenuItem>
+                </>
+              ) : (
+                <>
+                  <DropdownMenuItem onSelect={() => onStartSession(worktree)}>
+                    <Play className="w-4 h-4 mr-2" />
+                    セッションを開始
+                  </DropdownMenuItem>
+                  {!worktree.isMain && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        className="text-destructive focus:text-destructive"
+                        onSelect={() => setShowDeleteDialog(true)}
+                      >
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        Worktreeを削除
+                      </DropdownMenuItem>
+                    </>
+                  )}
                 </>
               )}
             </DropdownMenuContent>
@@ -154,30 +166,33 @@ export function WorktreeContextMenu({
                 <MessageSquare className="w-4 h-4 mr-2" />
                 セッションを開く
               </ContextMenuItem>
-              <ContextMenuItem
-                className="text-destructive focus:text-destructive"
-                onSelect={() => onStopSession(session.id)}
-              >
-                <Square className="w-4 h-4 mr-2" />
-                セッションを停止
-              </ContextMenuItem>
-            </>
-          ) : (
-            <ContextMenuItem onSelect={() => onStartSession(worktree)}>
-              <Play className="w-4 h-4 mr-2" />
-              セッションを開始
-            </ContextMenuItem>
-          )}
-          {!worktree.isMain && (
-            <>
               <ContextMenuSeparator />
               <ContextMenuItem
                 className="text-destructive focus:text-destructive"
                 onSelect={() => setShowDeleteDialog(true)}
               >
                 <Trash2 className="w-4 h-4 mr-2" />
-                Worktreeを削除
+                セッションを削除
               </ContextMenuItem>
+            </>
+          ) : (
+            <>
+              <ContextMenuItem onSelect={() => onStartSession(worktree)}>
+                <Play className="w-4 h-4 mr-2" />
+                セッションを開始
+              </ContextMenuItem>
+              {!worktree.isMain && (
+                <>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onSelect={() => setShowDeleteDialog(true)}
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Worktreeを削除
+                  </ContextMenuItem>
+                </>
+              )}
             </>
           )}
         </ContextMenuContent>

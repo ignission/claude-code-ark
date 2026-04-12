@@ -30,7 +30,8 @@ interface SessionCardProps {
   previewText: string;
   activityText: string;
   onClick: () => void;
-  onStop: () => void;
+  /** セッション削除（停止 + メイン以外のWorktree削除） */
+  onDelete: () => void;
   onStart?: () => void;
 }
 
@@ -41,7 +42,7 @@ export function SessionCard({
   previewText,
   activityText,
   onClick,
-  onStop,
+  onDelete,
   onStart,
 }: SessionCardProps) {
   const branch =
@@ -191,7 +192,7 @@ export function SessionCard({
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-12 md:h-10"
               onClick={() => {
-                onStop();
+                onDelete();
                 setShowDeleteDialog(false);
               }}
             >

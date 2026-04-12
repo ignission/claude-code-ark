@@ -24,6 +24,16 @@ import {
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type {
@@ -61,7 +71,8 @@ interface TerminalPaneProps {
   repoName?: string;
   onSendMessage: (message: string) => void;
   onSendKey: (key: SpecialKey) => void;
-  onStopSession: () => void;
+  /** セッション削除（停止 + メイン以外のWorktree削除） */
+  onDeleteSession: () => void;
   onUploadImage?: (base64Data: string, mimeType: string) => void;
   imageUploadResult?: { path: string; filename: string } | null;
   imageUploadError?: string | null;
@@ -79,7 +90,7 @@ export function TerminalPane({
   repoName,
   onSendMessage,
   onSendKey,
-  onStopSession,
+  onDeleteSession,
   onUploadImage,
   imageUploadResult,
   imageUploadError,
@@ -94,6 +105,7 @@ export function TerminalPane({
   const [inputValue, setInputValue] = useState("");
   const [showInput, setShowInput] = useState(true);
   const [showQuickCommands, setShowQuickCommands] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   // PCでは入力バーをデフォルト非表示にする
   useEffect(() => {
@@ -340,8 +352,8 @@ export function TerminalPane({
             variant="ghost"
             size="icon"
             className="h-10 w-10 md:h-6 md:w-6 text-destructive hover:text-destructive"
-            onClick={onStopSession}
-            title="Delete session"
+            onClick={() => setShowDeleteDialog(true)}
+            title="セッションを削除"
           >
             <Trash2 className="w-5 h-5 md:w-3 md:h-3" />
           </Button>
@@ -579,6 +591,36 @@ export function TerminalPane({
           </form>
         </div>
       )}
+
+      {/* 削除確認ダイアログ */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle>セッションを削除</AlertDialogTitle>
+            <AlertDialogDescription>
+              {worktree === undefined
+                ? "このセッションを削除しますか？"
+                : worktree.isMain
+                  ? "このセッションを削除しますか？メインWorktreeは削除されません。"
+                  : "このセッションとWorktreeを削除しますか？関連するブランチも削除されます。"}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
+            <AlertDialogCancel className="h-12 md:h-10">
+              キャンセル
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-12 md:h-10"
+              onClick={() => {
+                onDeleteSession();
+                setShowDeleteDialog(false);
+              }}
+            >
+              削除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

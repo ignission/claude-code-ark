@@ -21,7 +21,8 @@ interface SessionSidebarProps {
   sessionPreviews: Map<string, string>;
   sessionActivityTexts: Map<string, string>;
   onSelectSession: (sessionId: string) => void;
-  onStopSession: (sessionId: string) => void;
+  /** セッション削除（停止 + メイン以外のWorktree削除） */
+  onDeleteSession: (sessionId: string, worktree: Worktree | undefined) => void;
   onStartSession: (worktree: Worktree) => void;
   onNewSession: () => void;
   /** ブラウザ選択コールバック（リモートアクセス時のみ使用） */
@@ -40,7 +41,7 @@ export function SessionSidebar({
   sessionPreviews,
   sessionActivityTexts,
   onSelectSession,
-  onStopSession,
+  onDeleteSession,
   onStartSession,
   onNewSession,
   onSelectBrowser,
@@ -129,7 +130,9 @@ export function SessionSidebar({
                           : ""
                       }
                       onClick={() => session && onSelectSession(session.id)}
-                      onStop={() => session && onStopSession(session.id)}
+                      onDelete={() =>
+                        session && onDeleteSession(session.id, wt ?? undefined)
+                      }
                       onStart={() => (wt ? onStartSession(wt) : undefined)}
                     />
                   ))}
