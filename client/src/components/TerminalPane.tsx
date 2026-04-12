@@ -34,6 +34,7 @@ import type {
 import { useIsMobile } from "../hooks/useMobile";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { FileViewerPane } from "./FileViewerPane";
+import { HtmlViewerPane } from "./HtmlViewerPane";
 import { ViewerTabBar } from "./ViewerTabBar";
 
 export type ViewerTab =
@@ -47,6 +48,11 @@ export type ViewerTab =
       size: number;
       targetLine?: number | null;
       error?: string;
+    }
+  | {
+      type: "html";
+      id: string;
+      filePath: string;
     };
 
 interface TerminalPaneProps {
@@ -391,6 +397,15 @@ export function TerminalPane({
                 targetLine={tab.targetLine}
                 error={tab.error}
               />
+            </div>
+          );
+        })()}
+      {tabs[activeTabIndex]?.type === "html" &&
+        (() => {
+          const tab = tabs[activeTabIndex] as ViewerTab & { type: "html" };
+          return (
+            <div className="flex-1 min-h-0">
+              <HtmlViewerPane filePath={tab.filePath} />
             </div>
           );
         })()}
