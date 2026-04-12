@@ -371,55 +371,6 @@ async function startServer() {
     return tunnelUrl;
   }
 
-  // ===== HTML ファイル配信API =====
-
-  app.get("/api/html-file", async (req, res) => {
-    const filePath = req.query.path;
-    if (typeof filePath !== "string" || !filePath) {
-      res.status(400).json({ error: "path query parameter is required" });
-      return;
-    }
-
-    // セキュリティ: 絶対パスのみ許可、パストラバーサル防止
-    const normalized = path.resolve(filePath);
-    if (normalized !== filePath || filePath.includes("..")) {
-      res.status(400).json({ error: "Invalid file path" });
-      return;
-    }
-
-    // .html / .htm 拡張子のみ許可
-    const ext = path.extname(normalized).toLowerCase();
-    if (ext !== ".html" && ext !== ".htm") {
-      res.status(400).json({ error: "Only HTML files are allowed" });
-      return;
-    }
-
-    // ローカル専用ツールのため、ディレクトリ制限は緩和
-    // パストラバーサル防止・拡張子チェック・ファイル存在確認で十分なセキュリティを確保
-
-    let fd: import("node:fs/promises").FileHandle | null = null;
-    try {
-      // TOCTOU防止: open→fstat→realpath+stat でinode一致を検証してからfd経由で読み取り
-      fd = await fs.promises.open(normalized, fs.constants.O_RDONLY);
-      const fdStat = await fd.stat();
-      const realPath = await fs.promises.realpath(normalized);
-      const realStat = await fs.promises.stat(realPath);
-      // inode/deviceの一致でopen済みfdとrealpath結果が同一ファイルであることを保証
-      if (fdStat.ino !== realStat.ino || fdStat.dev !== realStat.dev) {
-        res.status(403).json({ error: "Access to this path is not allowed" });
-        return;
-      }
-      const content = await fd.readFile("utf-8");
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.setHeader("Content-Security-Policy", "sandbox allow-scripts");
-      res.send(content);
-    } catch {
-      res.status(404).json({ error: "File not found" });
-    } finally {
-      await fd?.close();
-    }
-  });
-
   // ===== Settings API =====
 
   // Settings APIのキー名バリデーション

@@ -63,31 +63,12 @@ export function useViewerTabs(
   const openFileTab = useCallback(
     (sessionId: string, filePath: string, targetLine?: number | null) => {
       let newActiveIndex: number | null = null;
-      const isHtml = /\.html?$/i.test(filePath) && filePath.startsWith("/");
       setSessionTabs(prev => {
         const tabs = [
           ...(prev[sessionId] ?? [
             { type: "terminal" as const, id: "terminal" },
           ]),
         ];
-        // HTMLタブ: filePathで既存タブを検索
-        if (isHtml) {
-          const existing = tabs.findIndex(
-            t => t.type === "html" && t.filePath === filePath
-          );
-          if (existing >= 0) {
-            newActiveIndex = existing;
-            return { ...prev, [sessionId]: tabs };
-          }
-          tabs.push({
-            type: "html",
-            id: `html-${Date.now()}`,
-            filePath,
-          });
-          newActiveIndex = tabs.length - 1;
-          return { ...prev, [sessionId]: tabs };
-        }
-        // ファイルタブ: 既存のロジック
         const existing = tabs.findIndex(
           t => t.type === "file" && t.filePath === filePath
         );
@@ -156,10 +137,7 @@ export function useViewerTabs(
           filePath,
           typeof line === "number" ? line : undefined
         );
-        // 絶対パスのHTMLファイルはiframeで直接表示するのでreadFile不要
-        if (!/\.html?$/i.test(filePath) || !filePath.startsWith("/")) {
-          readFile(selectedSessionId, filePath);
-        }
+        readFile(selectedSessionId, filePath);
       }
     };
 
