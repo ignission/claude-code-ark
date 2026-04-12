@@ -190,8 +190,15 @@ export function useTerminalLinkInjection(
                     iframeDoc.querySelector(".xterm-screen") ||
                     iframeDoc.querySelector(".xterm");
                   if (xtermEl) {
+                    // WheelEvent は iframe 側のコンストラクタで生成する。
+                    // 親 realm の `new WheelEvent(...)` は Firefox の realm 検証で
+                    // dispatch が失敗しうる、Safari ではプロパティが正しく機能しない
+                    // 可能性があるため、同一 realm で生成する。
+                    const IframeWheelEvent = (
+                      iframeWindow as unknown as typeof globalThis
+                    ).WheelEvent;
                     xtermEl.dispatchEvent(
-                      new WheelEvent("wheel", {
+                      new IframeWheelEvent("wheel", {
                         deltaY: wheelDeltaY,
                         deltaMode: 0, // DOM_DELTA_PIXEL
                         bubbles: true,
