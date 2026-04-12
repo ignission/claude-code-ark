@@ -301,17 +301,15 @@ export default function Dashboard() {
     worktree: Worktree | undefined
   ) => {
     stopSession(sessionId);
-    const shouldDeleteWorktree = worktree && !worktree.isMain;
-    if (shouldDeleteWorktree) {
-      deleteWorktree(worktree.path);
-    }
+    // server側の session:stop ハンドラが !isMain のworktreeを自動削除するため、
+    // クライアント側で deleteWorktree を呼ぶと重複リクエストになる
     if (selectedSessionId === sessionId) {
       const remaining = Array.from(sessions.values()).filter(
         s => s.id !== sessionId
       );
       setSelectedSessionId(remaining.length > 0 ? remaining[0].id : null);
     }
-    if (shouldDeleteWorktree) {
+    if (worktree && !worktree.isMain) {
       toast.success("セッションを削除しました");
     } else {
       toast.info("セッションを停止しました");
