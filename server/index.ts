@@ -760,6 +760,13 @@ async function startServer() {
   });
   petManager.startExpTicker();
 
+  // 既存セッションにペットが紐付いていない場合は補完
+  const allSessions = sessionOrchestrator.getAllSessions();
+  const newPets = petManager.backfillExistingSessions(allSessions);
+  if (newPets.length > 0) {
+    console.log(`[pets] ${newPets.length}匹のペットを既存セッションに補完`);
+  }
+
   // ===== Socket.IO Connection Handler =====
 
   // 複数クライアント同時接続時の重複復元を防ぐ（セッションID → 復元中のPromise）

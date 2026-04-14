@@ -169,6 +169,22 @@ export class PetManager {
     db.deletePetBySessionId(sessionId);
   }
 
+  /**
+   * サーバー起動時に既存セッションへペットを補完する
+   * 循環依存を避けるため、セッション一覧を引数として受け取る
+   */
+  backfillExistingSessions(sessions: { id: string }[]): Pet[] {
+    const created: Pet[] = [];
+    for (const session of sessions) {
+      const existing = db.getPetBySessionId(session.id);
+      if (!existing) {
+        const pet = this.createPetForSession(session.id);
+        created.push(pet);
+      }
+    }
+    return created;
+  }
+
   // --- Private ---
 
   /** レアリティに基づく重み付きランダム抽選 */
