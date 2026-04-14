@@ -38,8 +38,20 @@ export function usePets(socket: ArkSocket | null) {
     socket.on("pet:updated", handleUpdated);
     socket.on("pet:level_up", handleLevelUp);
 
-    // 初回ロード
-    socket.emit("pet:list");
+    // 接続済みならすぐemit、未接続なら接続時にemit
+    if (socket.connected) {
+      socket.emit("pet:list");
+    } else {
+      const onConnect = () => socket.emit("pet:list");
+      socket.on("connect", onConnect);
+      return () => {
+        socket.off("pet:list", handleList);
+        socket.off("pet:created", handleCreated);
+        socket.off("pet:updated", handleUpdated);
+        socket.off("pet:level_up", handleLevelUp);
+        socket.off("connect", onConnect);
+      };
+    }
 
     return () => {
       socket.off("pet:list", handleList);

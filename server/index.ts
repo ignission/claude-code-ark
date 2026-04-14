@@ -1381,6 +1381,12 @@ async function startServer() {
       }
     });
 
+    // 接続時にペット一覧を自動送信
+    const initialPets = petManager.getAllPets();
+    if (initialPets.length > 0) {
+      socket.emit("pet:list", initialPets);
+    }
+
     // ペットとインタラクション（撫でる/エサ）
     socket.on("pet:interact", ({ petId, action }) => {
       try {
