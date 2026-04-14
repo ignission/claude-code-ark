@@ -23,6 +23,9 @@ interface SidebarMainLayoutProps {
   beacon: ReactNode;
   initialSidebarWidth?: number;
   onSidebarWidthChange?: (width: number) => void;
+  petsPanel?: ReactNode;
+  showPets?: boolean;
+  onTogglePets?: () => void;
 }
 
 export function SidebarMainLayout({
@@ -31,6 +34,9 @@ export function SidebarMainLayout({
   beacon,
   initialSidebarWidth = SIDEBAR_DEFAULT_WIDTH,
   onSidebarWidthChange,
+  petsPanel,
+  showPets,
+  onTogglePets,
 }: SidebarMainLayoutProps) {
   const [sidebarWidth, setSidebarWidth] = useState(
     Math.min(
@@ -102,10 +108,21 @@ export function SidebarMainLayout({
       {isResizing && <div className="fixed inset-0 z-50 cursor-col-resize" />}
       {/* サイドバー */}
       <div
-        className="shrink-0 border-r border-border relative"
+        className="shrink-0 border-r border-border relative flex flex-col"
         style={{ width: `${sidebarWidth}px` }}
       >
-        {sidebar}
+        <div className="flex-1 min-h-0 overflow-hidden">{sidebar}</div>
+        {onTogglePets && (
+          <button
+            type="button"
+            onClick={onTogglePets}
+            className={`w-full py-2 text-sm hover:text-foreground border-t border-border transition-colors ${
+              showPets ? "text-primary" : "text-muted-foreground"
+            }`}
+          >
+            🚢 箱舟
+          </button>
+        )}
         {/* biome-ignore lint/a11y/noStaticElementInteractions: リサイズハンドルはマウス操作専用 */}
         <div
           className={`absolute top-0 -right-1 w-3 h-full cursor-col-resize hover:bg-primary/50 transition-colors ${
@@ -117,6 +134,13 @@ export function SidebarMainLayout({
 
       {/* メインエリア */}
       <div className="flex-1 min-w-0 flex flex-col">{main}</div>
+
+      {/* ペットパネル */}
+      {showPets && petsPanel && (
+        <div className="w-[300px] shrink-0 border-l border-border overflow-y-auto">
+          {petsPanel}
+        </div>
+      )}
 
       {/* Beacon */}
       <div className="w-[350px] shrink-0 border-l border-border">{beacon}</div>

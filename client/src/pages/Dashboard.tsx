@@ -6,6 +6,7 @@ import { BrowserPane } from "@/components/BrowserPane";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { MobileChatView } from "@/components/MobileChatView";
 import { MobileLayout } from "@/components/MobileLayout";
+import { ArkPetsPage } from "@/components/pets/ArkPetsPage";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
@@ -98,7 +99,14 @@ export default function Dashboard() {
     onRepoPathChange: path => setSetting("selectedRepoPath", path),
   });
 
-  const { getPetForSession } = usePets(socket);
+  const {
+    pets,
+    totalLevel,
+    interactWithPet,
+    renamePet,
+    submitGameResult,
+    getPetForSession,
+  } = usePets(socket);
 
   const isMobile = useIsMobile();
 
@@ -195,6 +203,17 @@ export default function Dashboard() {
   const [showTunnelDialog, setShowTunnelDialog] = useState(false);
   const [selectedPort, setSelectedPort] = useState<number | null>(null);
   const [showPortSelector, setShowPortSelector] = useState(false);
+  const [showPets, setShowPets] = useState(false);
+
+  const petsContent = (
+    <ArkPetsPage
+      pets={pets}
+      totalLevel={totalLevel}
+      onInteract={interactWithPet}
+      onRename={renamePet}
+      onGameResult={submitGameResult}
+    />
+  );
 
   const copyToClipboard = (text: string | null) => {
     if (text) {
@@ -346,6 +365,7 @@ export default function Dashboard() {
           onSelectBrowser={handleSelectBrowser}
           navigateBrowser={navigateBrowser}
           isRemote={isRemote}
+          petsContent={petsContent}
         />
       ) : (
         <SidebarMainLayout
@@ -454,6 +474,9 @@ export default function Dashboard() {
           }
           initialSidebarWidth={getSetting<number>("ark-sidebar-width", 250)}
           onSidebarWidthChange={w => setSetting("ark-sidebar-width", w)}
+          petsPanel={petsContent}
+          showPets={showPets}
+          onTogglePets={() => setShowPets(!showPets)}
         />
       )}
 
