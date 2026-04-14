@@ -39,13 +39,16 @@ import { db } from "./lib/database.js";
 import { getErrorMessage } from "./lib/errors.js";
 import { readFileFromWorktree } from "./lib/file-manager.js";
 import {
+  FileUploadManagerError,
+  fileUploadManager,
+} from "./lib/file-upload-manager.js";
+import {
   createWorktree,
   deleteWorktree,
   isGitRepository,
   listWorktrees,
   scanRepositories,
 } from "./lib/git.js";
-import { ImageManagerError, imageManager } from "./lib/image-manager.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import { sessionOrchestrator } from "./lib/session-orchestrator.js";
@@ -191,6 +194,8 @@ async function startServer() {
 
   // Initialize Socket.IO
   const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
+    // 10MBファイル（base64化で約13.3MB）のアップロードに対応するためデフォルト1MBを拡張
+    maxHttpBufferSize: 15 * 1024 * 1024,
     cors: {
       origin: (origin, callback) => {
         // originがundefined = 同一オリジンリクエスト（許可）
@@ -1128,25 +1133,48 @@ async function startServer() {
     });
     socket.emit("tunnel:status", tunnelStatus);
 
-    // ===== Image Upload Commands =====
+    // ===== File Upload Commands =====
 
-    socket.on("image:upload", async ({ sessionId, base64Data, mimeType }) => {
-      try {
-        const result = await imageManager.saveImage(
-          sessionId,
-          base64Data,
-          mimeType
-        );
-        socket.emit("image:uploaded", result);
-      } catch (error) {
-        socket.emit("image:error", {
-          message:
-            error instanceof ImageManagerError
-              ? error.message
-              : "画像のアップロードに失敗しました",
-        });
+    socket.on(
+      "file-upload:upload",
+      async ({
+        sessionId,
+        base64Data,
+        mimeType,
+        originalFilename,
+        requestId,
+      }) => {
+        try {
+          // セッションの実在確認（未知のsessionIdで /tmp/ark-files/ 配下にゴミを作らない）
+          if (!sessionOrchestrator.getSession(sessionId)) {
+            socket.emit("file-upload:error", {
+              requestId,
+              message: "無効なセッションIDです",
+              code: "INVALID_SESSION_ID",
+            });
+            return;
+          }
+          const result = await fileUploadManager.saveFile(
+            sessionId,
+            base64Data,
+            mimeType,
+            originalFilename
+          );
+          socket.emit("file-upload:uploaded", { requestId, ...result });
+        } catch (error) {
+          const code =
+            error instanceof FileUploadManagerError ? error.code : undefined;
+          socket.emit("file-upload:error", {
+            requestId,
+            message:
+              error instanceof FileUploadManagerError
+                ? error.message
+                : "ファイルのアップロードに失敗しました",
+            code,
+          });
+        }
       }
-    });
+    );
 
     // ===== File Viewer =====
     // レート制限: ソケットごとに最後のリクエスト時間を記録
@@ -1342,6 +1370,28 @@ async function startServer() {
     });
   });
 
+  // ファイルアップロード: 24h経過ファイルの定期クリーンアップ（1時間ごと）
+  const fileUploadCleanupInterval = setInterval(
+    async () => {
+      try {
+        const deleted = await fileUploadManager.cleanup();
+        if (deleted > 0) {
+          console.log(
+            `[FileUpload] 期限切れファイル ${deleted} 件を削除しました`
+          );
+        }
+      } catch (error) {
+        console.error("[FileUpload] クリーンアップに失敗:", error);
+      }
+    },
+    60 * 60 * 1000 // 1時間
+  );
+
+  // 起動時に1回クリーンアップ
+  fileUploadManager.cleanup().catch(error => {
+    console.error("[FileUpload] 起動時クリーンアップに失敗:", error);
+  });
+
   server.listen(port, async () => {
     console.log(`Ark server running on http://localhost:${port}/`);
 
@@ -1433,6 +1483,7 @@ async function startServer() {
   // Graceful shutdown
   const shutdown = () => {
     console.log("Shutting down...");
+    clearInterval(fileUploadCleanupInterval);
     sessionOrchestrator.cleanup();
     beaconManager.cleanup();
     browserManager.cleanup();

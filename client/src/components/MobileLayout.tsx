@@ -36,14 +36,16 @@ interface MobileLayoutProps {
   onSendMessage: (sessionId: string, message: string) => void;
   onSendKey: (sessionId: string, key: SpecialKey) => void;
   onSelectSession: (sessionId: string) => void;
-  onUploadImage?: (
-    sessionId: string,
-    base64Data: string,
-    mimeType: string
-  ) => void;
-  imageUploadResult?: { path: string; filename: string } | null;
-  imageUploadError?: string | null;
-  onClearImageUploadState?: () => void;
+  onUploadFile?: (data: {
+    sessionId: string;
+    base64Data: string;
+    mimeType: string;
+    originalFilename?: string;
+  }) => Promise<{
+    path: string;
+    filename: string;
+    originalFilename?: string;
+  }>;
   onCopyBuffer?: (sessionId: string) => Promise<string | null>;
   onNewSession: () => void;
   // ファイルビューワー
@@ -80,10 +82,7 @@ export function MobileLayout({
   onSendMessage,
   onSendKey,
   onSelectSession,
-  onUploadImage,
-  imageUploadResult,
-  imageUploadError,
-  onClearImageUploadState,
+  onUploadFile,
   onCopyBuffer,
   onNewSession,
   readFile,
@@ -224,15 +223,11 @@ export function MobileLayout({
               onDeleteSession={() =>
                 onDeleteSession(sessionId, getWorktreeForSession(session))
               }
-              onUploadImage={
-                onUploadImage
-                  ? (base64Data, mimeType) =>
-                      onUploadImage(sessionId, base64Data, mimeType)
+              onUploadFile={
+                onUploadFile
+                  ? data => onUploadFile({ sessionId, ...data })
                   : undefined
               }
-              imageUploadResult={imageUploadResult}
-              imageUploadError={imageUploadError}
-              onClearImageUploadState={onClearImageUploadState}
               onCopyBuffer={
                 onCopyBuffer ? () => onCopyBuffer(sessionId) : undefined
               }

@@ -89,15 +89,17 @@ interface UseSocketReturn {
   listeningPorts: Array<{ port: number; process: string; pid: number }>;
   scanPorts: () => void;
 
-  // Image upload
-  uploadImage: (
-    sessionId: string,
-    base64Data: string,
-    mimeType: string
-  ) => void;
-  imageUploadResult: { path: string; filename: string } | null;
-  imageUploadError: string | null;
-  clearImageUploadState: () => void;
+  // File upload（Promiseベース: 1回のアップロードにつきリスナーを付け外して結果を解決）
+  uploadFile: (data: {
+    sessionId: string;
+    base64Data: string;
+    mimeType: string;
+    originalFilename?: string;
+  }) => Promise<{
+    path: string;
+    filename: string;
+    originalFilename?: string;
+  }>;
 
   // File viewer
   fileContent: {
@@ -171,13 +173,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [listeningPorts, setListeningPorts] = useState<
     Array<{ port: number; process: string; pid: number }>
   >([]);
-
-  // Image upload state
-  const [imageUploadResult, setImageUploadResult] = useState<{
-    path: string;
-    filename: string;
-  } | null>(null);
-  const [imageUploadError, setImageUploadError] = useState<string | null>(null);
 
   // File viewer state
   const [fileContent, setFileContent] = useState<{
@@ -439,18 +434,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       setListeningPorts(ports);
     });
 
-    // Image upload events
-    socket.on("image:uploaded", data => {
-      console.log("[Socket] Image uploaded:", data.path);
-      setImageUploadResult(data);
-      setImageUploadError(null);
-    });
-
-    socket.on("image:error", ({ message }) => {
-      console.error("[Socket] Image upload error:", message);
-      setImageUploadError(message);
-      setImageUploadResult(null);
-    });
+    // File upload events は uploadFile(Promise版) 内で都度 on/off して扱う
 
     // File viewer events
     socket.on("file:content", data => {
@@ -540,8 +524,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     // Cleanup on unmount
     return () => {
       socket.off("ports:list");
-      socket.off("image:uploaded");
-      socket.off("image:error");
       socket.off("file:content");
       socket.off("beacon:message");
       socket.off("beacon:stream");
@@ -653,24 +635,65 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socketRef.current?.emit("ports:scan");
   }, []);
 
-  // Image upload actions
-  const uploadImage = useCallback(
-    (sessionId: string, base64Data: string, mimeType: string) => {
-      setImageUploadResult(null);
-      setImageUploadError(null);
-      socketRef.current?.emit("image:upload", {
-        sessionId,
-        base64Data,
-        mimeType,
+  // File upload actions（Promiseベース: 1回のアップロードで都度リスナーを付けて結果を解決）
+  const uploadFile = useCallback(
+    (data: {
+      sessionId: string;
+      base64Data: string;
+      mimeType: string;
+      originalFilename?: string;
+    }): Promise<{
+      path: string;
+      filename: string;
+      originalFilename?: string;
+    }> => {
+      return new Promise((resolve, reject) => {
+        const socket = socketRef.current;
+        if (!socket?.connected) {
+          reject(new Error("ソケットが切断されています"));
+          return;
+        }
+        // 複数アップロードの同時実行で誤った Promise が解決されないよう requestId で紐付ける
+        const requestId =
+          typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const timeoutId = window.setTimeout(() => {
+          socket.off("file-upload:uploaded", onUploaded);
+          socket.off("file-upload:error", onError);
+          reject(new Error("アップロードがタイムアウトしました"));
+        }, 30000);
+        const onUploaded = (result: {
+          requestId: string;
+          path: string;
+          filename: string;
+          originalFilename?: string;
+        }) => {
+          if (result.requestId !== requestId) return;
+          window.clearTimeout(timeoutId);
+          socket.off("file-upload:uploaded", onUploaded);
+          socket.off("file-upload:error", onError);
+          const { requestId: _omitted, ...rest } = result;
+          resolve(rest);
+        };
+        const onError = (err: {
+          requestId: string;
+          message: string;
+          code?: string;
+        }) => {
+          if (err.requestId !== requestId) return;
+          window.clearTimeout(timeoutId);
+          socket.off("file-upload:uploaded", onUploaded);
+          socket.off("file-upload:error", onError);
+          reject(new Error(err.message));
+        };
+        socket.on("file-upload:uploaded", onUploaded);
+        socket.on("file-upload:error", onError);
+        socket.emit("file-upload:upload", { ...data, requestId });
       });
     },
     []
   );
-
-  const clearImageUploadState = useCallback(() => {
-    setImageUploadResult(null);
-    setImageUploadError(null);
-  }, []);
 
   // File read action
   const readFile = useCallback((sessionId: string, filePath: string) => {
@@ -778,11 +801,8 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     // Ports
     listeningPorts,
     scanPorts,
-    // Image upload
-    uploadImage,
-    imageUploadResult,
-    imageUploadError,
-    clearImageUploadState,
+    // File upload
+    uploadFile,
     // File viewer
     fileContent,
     readFile,

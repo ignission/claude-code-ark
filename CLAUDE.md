@@ -45,7 +45,7 @@ Claude Codeとの対話は **Agent SDK経由ではなく、tmux + ttyd による
 | マルチペインビュー     | 複数セッションの同時表示（1列 / 2x2グリッド切り替え）                       |
 | モバイル対応           | セッション一覧/詳細の画面遷移、Quick Keys、スクロールモード、キーボード対応 |
 | 特殊キー送信           | Enter, Ctrl+C, Ctrl+D, y, n, S-Tab, Escape, スクロール等                    |
-| 画像アップロード       | クリップボードから画像を貼り付けてClaude Codeに送信（`@パス` 形式）         |
+| ファイルアップロード   | D&D・ファイル選択・クリップボード貼り付けで画像/PDF/テキストを送信（`@パス` 形式） |
 | tmuxバッファコピー     | tmuxのペーストバッファをクリップボードにコピー                              |
 | ポートスキャン         | リッスン中のポートを一覧表示（ttydポートは除外）                            |
 | リモートアクセス       | Cloudflare Tunnel（Quick / Named）+ QRコード + トークン認証                 |
@@ -230,7 +230,8 @@ claude-code-ark/
 │       ├── auth.ts                     # トークン認証
 │       ├── qrcode.ts                   # QRコード生成
 │       ├── port-scanner.ts             # ポートスキャン
-│       ├── image-manager.ts            # 画像アップロード管理
+│       ├── file-manager.ts             # ファイル管理
+│       ├── file-upload-manager.ts      # ファイルアップロード管理
 │       ├── constants.ts                # 定数定義
 │       └── errors.ts                   # エラーユーティリティ
 ├── shared/
@@ -262,7 +263,7 @@ claude-code-ark/
 | `tunnel:start`    | `{ port? }`                             | Quick Tunnel起動                 |
 | `tunnel:stop`     | -                                       | トンネル停止                     |
 | `ports:scan`      | -                                       | ポートスキャン                   |
-| `image:upload`    | `{ sessionId, base64Data, mimeType }`   | 画像アップロード                 |
+| `file-upload:upload` | `{ sessionId, base64Data, mimeType, originalFilename?, requestId }` | ファイルアップロード |
 
 ### サーバー → クライアント
 
@@ -289,8 +290,8 @@ claude-code-ark/
 | `tunnel:status`          | `{ active, url?, token? }`     | トンネル状態                     |
 | `tunnel:error`           | `{ message }`                  | トンネルエラー                   |
 | `ports:list`             | `{ ports }`                    | ポート一覧                       |
-| `image:uploaded`         | `{ path, filename }`           | 画像アップロード完了             |
-| `image:error`            | `{ message }`                  | 画像アップロードエラー           |
+| `file-upload:uploaded`   | `{ requestId, path, filename, originalFilename? }` | ファイルアップロード完了 |
+| `file-upload:error`      | `{ requestId, message, code? }`           | ファイルアップロードエラー       |
 
 ---
 

@@ -8,12 +8,14 @@
 import {
   ChevronLeft,
   Copy,
+  File as FileIcon,
   GitBranch,
   ImageIcon,
   MoreVertical,
   RefreshCw,
   Send,
   Trash2,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -41,11 +43,22 @@ import type {
   SpecialKey,
   Worktree,
 } from "../../../shared/types";
+import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { useVisualViewport } from "../hooks/useVisualViewport";
 import { FileViewerPane } from "./FileViewerPane";
 import type { ViewerTab } from "./TerminalPane";
 import { ViewerTabBar } from "./ViewerTabBar";
+
+/** プレビューダイアログに蓄積する添付ファイル */
+interface PendingFile {
+  base64: string;
+  mimeType: string;
+  filename: string;
+  /** 画像の場合のdataURL、非画像の場合はnull */
+  preview: string | null;
+  size: number;
+}
 
 interface MobileSessionViewProps {
   session: ManagedSession;
@@ -55,10 +68,15 @@ interface MobileSessionViewProps {
   onSendKey: (key: SpecialKey) => void;
   /** セッション削除（停止 + メイン以外のWorktree削除） */
   onDeleteSession: () => void;
-  onUploadImage?: (base64Data: string, mimeType: string) => void;
-  imageUploadResult?: { path: string; filename: string } | null;
-  imageUploadError?: string | null;
-  onClearImageUploadState?: () => void;
+  onUploadFile?: (data: {
+    base64Data: string;
+    mimeType: string;
+    originalFilename?: string;
+  }) => Promise<{
+    path: string;
+    filename: string;
+    originalFilename?: string;
+  }>;
   onCopyBuffer?: () => Promise<string | null>;
   tabs: ViewerTab[];
   activeTabIndex: number;
@@ -73,10 +91,7 @@ export function MobileSessionView({
   onSendMessage,
   onSendKey,
   onDeleteSession,
-  onUploadImage,
-  imageUploadResult,
-  imageUploadError,
-  onClearImageUploadState,
+  onUploadFile,
   onCopyBuffer,
   tabs,
   activeTabIndex,
@@ -86,12 +101,11 @@ export function MobileSessionView({
   const { height: viewportHeight, isKeyboardVisible } = useVisualViewport();
   const [inputValue, setInputValue] = useState("");
   const [iframeKey, setIframeKey] = useState(0);
-  const [pastedImage, setPastedImage] = useState<{
-    base64: string;
-    mimeType: string;
-    preview: string;
-  } | null>(null);
-  const [imageMessage, setImageMessage] = useState("");
+  // 全ての添付ファイル（画像/非画像）を共通でプレビューダイアログに集約する
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
+  const [uploadMessage, setUploadMessage] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -127,33 +141,57 @@ export function MobileSessionView({
     setIframeKey(prev => prev + 1);
   };
 
-  // クリップボードから画像を読み取り
+  // 受け取ったFileをpendingFilesへ追加（画像/非画像共通）
+  // 部分失敗の場合でもエラーを握りつぶさず、まとめて表示する
+  const addPendingFiles = useCallback(async (files: File[]) => {
+    const next: PendingFile[] = [];
+    const errors: string[] = [];
+    for (const file of files) {
+      const v = validateFile(file);
+      if (!v.ok) {
+        console.warn(v.reason);
+        errors.push(`${file.name}: ${v.reason ?? "未対応のファイルです"}`);
+        continue;
+      }
+      try {
+        const { base64, mimeType, filename } = await fileToBase64(file);
+        const isImage = mimeType.startsWith("image/");
+        const preview = isImage ? `data:${mimeType};base64,${base64}` : null;
+        next.push({ base64, mimeType, filename, preview, size: file.size });
+      } catch (err) {
+        console.error("ファイル読み込みに失敗:", err);
+        errors.push(`${file.name}: 読み込みに失敗しました`);
+      }
+    }
+    if (next.length > 0) {
+      setPendingFiles(prev => [...prev, ...next]);
+    }
+    if (errors.length > 0) {
+      setUploadError(errors.join("\n"));
+    } else {
+      setUploadError(null);
+    }
+  }, []);
+
+  // クリップボードから画像/ファイルを読み取り
   const handlePaste = useCallback(
     (e: React.ClipboardEvent | ClipboardEvent) => {
-      if (!onUploadImage) return;
+      if (!onUploadFile) return;
       const items = e.clipboardData?.items;
       if (!items) return;
-
-      const itemsArray = Array.from(items);
-      for (const item of itemsArray) {
-        if (item.type.startsWith("image/")) {
-          e.preventDefault();
-          const file = item.getAsFile();
-          if (!file) continue;
-
-          const reader = new FileReader();
-          reader.onload = event => {
-            const dataUrl = event.target?.result as string;
-            const [header, base64] = dataUrl.split(",");
-            const mimeType = header.match(/data:(.*?);/)?.[1] || "image/png";
-            setPastedImage({ base64, mimeType, preview: dataUrl });
-          };
-          reader.readAsDataURL(file);
-          break;
+      const files: File[] = [];
+      for (const item of Array.from(items)) {
+        if (item.kind === "file") {
+          const f = item.getAsFile();
+          if (f) files.push(f);
         }
       }
+      if (files.length > 0) {
+        e.preventDefault();
+        addPendingFiles(files);
+      }
     },
-    [onUploadImage]
+    [onUploadFile, addPendingFiles]
   );
 
   // ペーストイベントのリスナー
@@ -168,48 +206,74 @@ export function MobileSessionView({
   }, [handlePaste]);
 
   // クリップボードからの画像ペーストボタン
-  const handlePasteButtonClick = async () => {
-    if (!onUploadImage) return;
+  const handlePasteButtonClick = useCallback(async () => {
+    if (!onUploadFile) return;
     try {
       const clipboardItems = await navigator.clipboard.read();
+      const files: File[] = [];
       for (const item of clipboardItems) {
         const imageType = item.types.find(type => type.startsWith("image/"));
         if (imageType) {
           const blob = await item.getType(imageType);
-          const reader = new FileReader();
-          reader.onload = event => {
-            const dataUrl = event.target?.result as string;
-            const [header, base64] = dataUrl.split(",");
-            const mimeType = header.match(/data:(.*?);/)?.[1] || "image/png";
-            setPastedImage({ base64, mimeType, preview: dataUrl });
-          };
-          reader.readAsDataURL(blob);
-          break;
+          const ext = imageType.split("/")[1] || "png";
+          files.push(
+            new File([blob], `pasted-image.${ext}`, { type: imageType })
+          );
         }
+      }
+      if (files.length > 0) {
+        await addPendingFiles(files);
       }
     } catch (err) {
       console.error("Failed to read clipboard:", err);
     }
-  };
+  }, [onUploadFile, addPendingFiles]);
 
-  // 画像アップロード成功時に自動送信
-  useEffect(() => {
-    if (imageUploadResult && pastedImage) {
-      const message = imageMessage.trim()
-        ? `@${imageUploadResult.path} ${imageMessage}`
-        : `@${imageUploadResult.path}`;
+  // ファイル選択ハンドラ
+  const handleFilesSelected = useCallback(
+    async (files: File[]) => {
+      await addPendingFiles(files);
+    },
+    [addPendingFiles]
+  );
+
+  // 「送信」押下: 全ファイルを順次アップロードし、@path1 @path2 ... {msg} 形式で送信
+  const handleSendWithFiles = useCallback(async () => {
+    if (pendingFiles.length === 0 || !onUploadFile) return;
+    setIsSending(true);
+    setUploadError(null);
+    try {
+      const paths: string[] = [];
+      for (const pf of pendingFiles) {
+        const result = await onUploadFile({
+          base64Data: pf.base64,
+          mimeType: pf.mimeType,
+          originalFilename: pf.filename,
+        });
+        paths.push(result.path);
+      }
+      const refs = paths.map(p => `@${p}`).join(" ");
+      const trimmed = uploadMessage.trim();
+      const message = trimmed ? `${refs} ${trimmed}` : refs;
       onSendMessage(message);
-      setPastedImage(null);
-      setImageMessage("");
-      onClearImageUploadState?.();
+      setPendingFiles([]);
+      setUploadMessage("");
+    } catch (err) {
+      console.error("ファイルアップロード失敗:", err);
+      setUploadError(
+        err instanceof Error ? err.message : "アップロードに失敗しました"
+      );
+    } finally {
+      setIsSending(false);
     }
-  }, [
-    imageUploadResult,
-    pastedImage,
-    imageMessage,
-    onSendMessage,
-    onClearImageUploadState,
-  ]);
+  }, [pendingFiles, uploadMessage, onUploadFile, onSendMessage]);
+
+  // 「キャンセル」押下
+  const handleCancelPending = useCallback(() => {
+    setPendingFiles([]);
+    setUploadMessage("");
+    setUploadError(null);
+  }, []);
 
   // tmuxバッファコピー
   const handleCopyBuffer = async () => {
@@ -280,10 +344,28 @@ export function MobileSessionView({
                   Copy Buffer
                 </DropdownMenuItem>
               )}
-              {onUploadImage && (
+              {onUploadFile && (
                 <DropdownMenuItem onClick={handlePasteButtonClick}>
                   <ImageIcon className="w-4 h-4 mr-2" />
                   Paste Image
+                </DropdownMenuItem>
+              )}
+              {onUploadFile && (
+                <DropdownMenuItem asChild>
+                  <label className="cursor-pointer flex items-center w-full">
+                    <input
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={async e => {
+                        const files = Array.from(e.target.files ?? []);
+                        await handleFilesSelected(files);
+                        e.target.value = "";
+                      }}
+                    />
+                    <FileIcon className="mr-2 h-4 w-4" />
+                    ファイルを添付
+                  </label>
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem onClick={handleReloadIframe}>
@@ -368,54 +450,96 @@ export function MobileSessionView({
           );
         })()}
 
-      {/* 画像ペーストプレビュー */}
-      {pastedImage && (
-        <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-card border border-border rounded-lg p-4 max-w-md w-full mx-4">
-            <h3 className="text-sm font-semibold mb-3">画像を送信</h3>
-            <div className="mb-3">
-              <img
-                src={pastedImage.preview}
-                alt="Pasted"
-                className="max-h-48 mx-auto rounded border border-border"
-              />
+      {/* 添付ファイル プレビューダイアログ（画像/非画像共通） */}
+      {pendingFiles.length > 0 && (
+        <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-card border border-border rounded-lg p-4 max-w-md w-full">
+            <h3 className="text-sm font-semibold mb-3">
+              ファイルを送信（{pendingFiles.length}件）
+            </h3>
+            <div className="space-y-2 max-h-60 overflow-y-auto mb-3">
+              {pendingFiles.map((pf, idx) => (
+                <div
+                  key={`${pf.filename}-${idx}`}
+                  className="flex items-center gap-2 text-sm border border-border rounded p-2"
+                >
+                  {pf.preview ? (
+                    <img
+                      src={pf.preview}
+                      alt={pf.filename}
+                      className="w-12 h-12 object-cover rounded shrink-0"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 flex items-center justify-center bg-muted rounded shrink-0">
+                      <FileIcon className="w-6 h-6 text-muted-foreground" />
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate" title={pf.filename}>
+                      {pf.filename}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {(pf.size / 1024).toFixed(1)} KB
+                    </div>
+                  </div>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 shrink-0"
+                    onClick={() =>
+                      setPendingFiles(prev => prev.filter((_, i) => i !== idx))
+                    }
+                    disabled={isSending}
+                    title="このファイルを取り除く"
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              ))}
             </div>
-            <div className="mb-3">
-              <Textarea
-                value={imageMessage}
-                onChange={e => setImageMessage(e.target.value)}
-                placeholder="画像についてのメッセージ（任意）"
-                className="min-h-[60px] resize-none text-sm"
-                rows={2}
-              />
-            </div>
-            {imageUploadError && (
-              <p className="text-destructive text-xs mb-3">
-                {imageUploadError}
-              </p>
+            <Textarea
+              value={uploadMessage}
+              onChange={e => setUploadMessage(e.target.value)}
+              placeholder="メッセージを追加（任意）"
+              className="min-h-[60px] resize-none text-sm mb-3"
+              rows={2}
+              disabled={isSending}
+            />
+            {uploadError && (
+              <p className="text-destructive text-xs mb-3">{uploadError}</p>
             )}
             <div className="flex gap-2 justify-end">
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => {
-                  setPastedImage(null);
-                  setImageMessage("");
-                  onClearImageUploadState?.();
-                }}
+                onClick={handleCancelPending}
+                disabled={isSending}
               >
                 キャンセル
               </Button>
               <Button
                 size="sm"
-                onClick={() => {
-                  onUploadImage?.(pastedImage.base64, pastedImage.mimeType);
-                }}
+                onClick={handleSendWithFiles}
+                disabled={isSending}
               >
-                送信
+                {isSending ? "送信中..." : "送信"}
               </Button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 添付ファイル エラートースト（モーダル未表示時の全件失敗や検証失敗を表示） */}
+      {uploadError && pendingFiles.length === 0 && (
+        <div className="px-3 py-2 bg-destructive/10 text-destructive text-sm border-t border-destructive/20 whitespace-pre-line flex items-start justify-between gap-2">
+          <span className="flex-1">{uploadError}</span>
+          <button
+            type="button"
+            className="text-xs underline shrink-0"
+            onClick={() => setUploadError(null)}
+          >
+            閉じる
+          </button>
         </div>
       )}
 
