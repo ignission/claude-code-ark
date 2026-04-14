@@ -225,7 +225,6 @@ export class PetManager {
 
   /** 撫でた後の気分算出 */
   private calculateMoodAfterPet(pet: Pet): PetMood {
-    if (pet.hp > 80) return "happy";
     if (pet.hp > 50) return "happy";
     return "neutral";
   }

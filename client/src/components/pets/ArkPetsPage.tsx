@@ -7,7 +7,6 @@ import { PetSprite } from "./PetSprite";
 
 interface ArkPetsPageProps {
   pets: Pet[];
-  totalLevel: number;
   onInteract: (petId: string, action: PetAction) => void;
   onRename: (petId: string, name: string) => void;
   onGameResult: (petId: string, game: PetGame, score: number) => void;
@@ -15,7 +14,6 @@ interface ArkPetsPageProps {
 
 export function ArkPetsPage({
   pets,
-  totalLevel,
   onInteract,
   onRename,
   onGameResult,
@@ -151,7 +149,6 @@ export function ArkPetsPage({
       {showGame && (
         <GameMenu
           pet={showGame.pet}
-          onSelectGame={game => setShowGame({ ...showGame, game })}
           onGameResult={score => {
             onGameResult(showGame.pet.id, showGame.game, score);
             setShowGame(null);

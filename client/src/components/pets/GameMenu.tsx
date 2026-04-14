@@ -6,7 +6,6 @@ import { FeedingGame } from "./FeedingGame";
 
 interface GameMenuProps {
   pet: Pet;
-  onSelectGame: (game: PetGame) => void;
   onGameResult: (score: number) => void;
   onClose: () => void;
 }
@@ -17,7 +16,13 @@ export function GameMenu({ pet, onGameResult, onClose }: GameMenuProps) {
   if (activeGame === "feeding") {
     return (
       <div className="fixed inset-0 z-50 bg-background/95 flex flex-col items-center justify-center p-4">
-        <FeedingGame pet={pet} onFinish={onGameResult} />
+        <FeedingGame
+          pet={pet}
+          onFinish={score => {
+            onGameResult(score);
+            setActiveGame(null);
+          }}
+        />
       </div>
     );
   }
@@ -25,7 +30,13 @@ export function GameMenu({ pet, onGameResult, onClose }: GameMenuProps) {
   if (activeGame === "arkdash") {
     return (
       <div className="fixed inset-0 z-50 bg-background/95 flex flex-col items-center justify-center p-4">
-        <ArkDashGame pet={pet} onFinish={onGameResult} />
+        <ArkDashGame
+          pet={pet}
+          onFinish={score => {
+            onGameResult(score);
+            setActiveGame(null);
+          }}
+        />
       </div>
     );
   }

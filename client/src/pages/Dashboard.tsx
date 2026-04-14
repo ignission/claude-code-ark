@@ -208,7 +208,6 @@ export default function Dashboard() {
   const petsContent = (
     <ArkPetsPage
       pets={pets}
-      totalLevel={totalLevel}
       onInteract={interactWithPet}
       onRename={renamePet}
       onGameResult={submitGameResult}
