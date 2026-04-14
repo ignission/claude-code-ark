@@ -1352,6 +1352,28 @@ async function startServer() {
     });
   });
 
+  // ファイルアップロード: 24h経過ファイルの定期クリーンアップ（1時間ごと）
+  const fileUploadCleanupInterval = setInterval(
+    async () => {
+      try {
+        const deleted = await fileUploadManager.cleanup();
+        if (deleted > 0) {
+          console.log(
+            `[FileUpload] 期限切れファイル ${deleted} 件を削除しました`
+          );
+        }
+      } catch (error) {
+        console.error("[FileUpload] クリーンアップに失敗:", error);
+      }
+    },
+    60 * 60 * 1000 // 1時間
+  );
+
+  // 起動時に1回クリーンアップ
+  fileUploadManager.cleanup().catch(error => {
+    console.error("[FileUpload] 起動時クリーンアップに失敗:", error);
+  });
+
   server.listen(port, async () => {
     console.log(`Ark server running on http://localhost:${port}/`);
 
@@ -1443,6 +1465,7 @@ async function startServer() {
   // Graceful shutdown
   const shutdown = () => {
     console.log("Shutting down...");
+    clearInterval(fileUploadCleanupInterval);
     sessionOrchestrator.cleanup();
     beaconManager.cleanup();
     browserManager.cleanup();

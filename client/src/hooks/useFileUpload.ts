@@ -1,3 +1,8 @@
+/**
+ * クライアント側MIMEチェックは意図的にサーバー側より緩い。
+ * 最終的な受理可否はサーバー（server/lib/file-upload-manager.ts）のホワイトリストが決定する。
+ * クライアントチェックは「明らかに送っても無駄なファイル」を早期に弾くための事前防御。
+ */
 const ALLOWED_MIME_PREFIXES = ["image/", "text/"];
 const ALLOWED_MIME_EXACT = new Set([
   "application/pdf",
