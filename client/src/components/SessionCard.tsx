@@ -149,34 +149,47 @@ export function SessionCard({
             onClick={onClick}
           >
             <div className="flex items-center gap-2 min-w-0">
-              <div className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
+              {pet ? (
+                <span className="shrink-0 text-sm leading-none">
+                  {pet.species === "dog"
+                    ? "🐕"
+                    : pet.species === "cat"
+                      ? "🐈"
+                      : pet.species === "rabbit"
+                        ? "🐇"
+                        : pet.species === "bird"
+                          ? "🐦"
+                          : pet.species === "turtle"
+                            ? "🐢"
+                            : pet.species === "penguin"
+                              ? "🐧"
+                              : pet.species === "fox"
+                                ? "🦊"
+                                : "🦉"}
+                </span>
+              ) : (
+                <div className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
+              )}
               <span className="text-sm font-mono truncate text-sidebar-foreground">
                 {branch}
               </span>
-              {pet && (
-                <div className="ml-auto flex items-center gap-1 shrink-0">
-                  <PetSprite
-                    species={pet.species}
-                    mood={pet.mood}
-                    isActive={session?.status === "active"}
-                    size={20}
-                  />
-                  <span className="text-[10px] text-muted-foreground">
-                    Lv{pet.level}
-                  </span>
-                </div>
-              )}
-              {!pet && isSelected && (
+              {isSelected && (
                 <span className="ml-auto text-xs text-primary shrink-0">◀</span>
               )}
-              {pet && isSelected && (
-                <span className="text-xs text-primary shrink-0">◀</span>
-              )}
             </div>
-            {displayText && (
-              <p className="mt-1 text-xs text-muted-foreground truncate pl-4">
-                {displayText}
-              </p>
+            {(displayText || pet) && (
+              <div className="mt-1 flex items-center gap-1 pl-6 min-w-0">
+                {displayText && (
+                  <p className="text-xs text-muted-foreground truncate">
+                    {displayText}
+                  </p>
+                )}
+                {pet && (
+                  <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
+                    Lv.{pet.level}
+                  </span>
+                )}
+              </div>
             )}
           </button>
         </ContextMenuTrigger>
