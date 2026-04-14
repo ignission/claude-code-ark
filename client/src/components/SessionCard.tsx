@@ -150,23 +150,12 @@ export function SessionCard({
           >
             <div className="flex items-center gap-2 min-w-0">
               {pet ? (
-                <span className="shrink-0 text-sm leading-none">
-                  {pet.species === "dog"
-                    ? "🐕"
-                    : pet.species === "cat"
-                      ? "🐈"
-                      : pet.species === "rabbit"
-                        ? "🐇"
-                        : pet.species === "bird"
-                          ? "🐦"
-                          : pet.species === "turtle"
-                            ? "🐢"
-                            : pet.species === "penguin"
-                              ? "🐧"
-                              : pet.species === "fox"
-                                ? "🦊"
-                                : "🦉"}
-                </span>
+                <PetSprite
+                  species={pet.species}
+                  mood={pet.mood}
+                  isActive={dotColor === "bg-green-500"}
+                  size={16}
+                />
               ) : (
                 <div className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
               )}
