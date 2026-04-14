@@ -49,6 +49,7 @@ import {
   listWorktrees,
   scanRepositories,
 } from "./lib/git.js";
+import { frontlineManager } from "./lib/frontline-manager.js";
 import { petManager } from "./lib/pet-manager.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
@@ -1435,6 +1436,41 @@ async function startServer() {
       } catch (error) {
         console.error(
           `[Pet] pet:game_result エラー: ${getErrorMessage(error)}`
+        );
+      }
+    });
+
+    // ===== Frontline Commands =====
+
+    socket.on("frontline:get_stats", () => {
+      try {
+        const stats = frontlineManager.getStats();
+        socket.emit("frontline:stats", stats);
+      } catch (error) {
+        console.error(
+          `[Frontline] get_stats エラー: ${getErrorMessage(error)}`
+        );
+      }
+    });
+
+    socket.on("frontline:get_records", data => {
+      try {
+        const records = frontlineManager.getRecords(data?.limit);
+        socket.emit("frontline:records", records);
+      } catch (error) {
+        console.error(
+          `[Frontline] get_records エラー: ${getErrorMessage(error)}`
+        );
+      }
+    });
+
+    socket.on("frontline:save_record", record => {
+      try {
+        const result = frontlineManager.saveRecord(record);
+        io.emit("frontline:record_saved", result);
+      } catch (error) {
+        console.error(
+          `[Frontline] save_record エラー: ${getErrorMessage(error)}`
         );
       }
     });

@@ -206,6 +206,11 @@ export interface ServerToClientEvents {
   "pet:updated": (pet: Pet) => void;
   "pet:deleted": (data: { petId: string }) => void;
   "pet:level_up": (data: { petId: string; newLevel: number }) => void;
+
+  // フロントライン
+  "frontline:stats": (stats: FrontlineStats) => void;
+  "frontline:records": (records: FrontlineRecord[]) => void;
+  "frontline:record_saved": (data: FrontlineRecordSaved) => void;
 }
 
 export interface ClientToServerEvents {
@@ -268,6 +273,13 @@ export interface ClientToServerEvents {
   "pet:interact": (data: { petId: string; action: PetAction }) => void;
   "pet:rename": (data: { petId: string; name: string }) => void;
   "pet:game_result": (result: PetGameResult) => void;
+
+  // フロントライン
+  "frontline:save_record": (
+    record: Omit<FrontlineRecord, "id" | "createdAt">
+  ) => void;
+  "frontline:get_stats": () => void;
+  "frontline:get_records": (data?: { limit?: number }) => void;
 }
 
 /** Beaconチャットのメッセージ */
@@ -336,4 +348,42 @@ export interface PetGameResult {
   petId: string;
   game: PetGame;
   score: number;
+}
+
+// ============================================================
+// フロントライン（ゲーム）
+// ============================================================
+
+export interface FrontlineRecord {
+  id: string;
+  distance: number;
+  kills: number;
+  headshots: number;
+  totalShots: number;
+  playTime: number;
+  meritPoints: number;
+  blocks: number;
+  heliKills: number;
+  createdAt: string;
+}
+
+export interface FrontlineStats {
+  totalPlays: number;
+  totalPlayTime: number;
+  totalKills: number;
+  totalHeadshots: number;
+  totalShots: number;
+  totalMeritPoints: number;
+  bestDistance: number;
+  bestKills: number;
+  rank: string;
+  playHours: Record<string, number>;
+  medals: string[];
+  deathPositions: number[];
+}
+
+export interface FrontlineRecordSaved {
+  record: FrontlineRecord;
+  stats: FrontlineStats;
+  newMedals: string[];
 }
