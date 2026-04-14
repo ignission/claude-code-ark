@@ -69,6 +69,21 @@ export function useTerminalLinkInjection(
           // 場合に備えて引き続き構築する。
           const urlExtensionMap = new Map<string, string>();
 
+          // localhost/127.0.0.1 の厳密判定（hostname完全一致）。
+          // 前方一致正規表現だと localhost.evil.example 等が誤判定されるため、
+          // URL#hostname で厳密に比較する。プロトコルも http/https に限定する。
+          const isLoopbackUrl = (urlStr: string): boolean => {
+            try {
+              const { protocol, hostname } = new URL(urlStr);
+              return (
+                (protocol === "http:" || protocol === "https:") &&
+                (hostname === "localhost" || hostname === "127.0.0.1")
+              );
+            } catch {
+              return false;
+            }
+          };
+
           // URL open のdedupトークン。
           // 同一URLが短時間に2回開かれる（独自provider + WebLinksAddon の両発火）
           // のを防ぐ。独自providerのactivateで先にセットされ、WebLinksAddonの
@@ -97,9 +112,7 @@ export function useTerminalLinkInjection(
 
           // URL実オープン処理（localhost→postMessage / 非localhost→origOpen）
           const openUrl = (urlStr: string) => {
-            if (
-              /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/.test(urlStr)
-            ) {
+            if (isLoopbackUrl(urlStr)) {
               arkWindow.postMessage(
                 { type: "ark:open-url", url: urlStr },
                 arkWindow.location.origin
@@ -139,16 +152,25 @@ export function useTerminalLinkInjection(
               const urlStr = urlExtensionMap.get(rawStr) || rawStr;
               if (isRecentlyOpened(urlStr)) return null;
               markOpened(urlStr);
-              if (
-                /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/.test(urlStr)
-              ) {
+              if (isLoopbackUrl(urlStr)) {
                 arkWindow.postMessage(
                   { type: "ark:open-url", url: urlStr },
                   arkWindow.location.origin
                 );
                 return null;
               }
-              return origOpen(urlStr, target, features);
+              // 非localhostは空window経由で opener=null を保証してから
+              // location.href に代入する（fakeWindow分岐と同じパターン）。
+              // window.open(url, "_blank") 直呼びでは window.opener === null が
+              // 保証されず、reverse tabnabbing のリスクがある。
+              const real = origOpen("", target, features);
+              if (real) {
+                try {
+                  real.opener = null;
+                } catch {}
+                real.location.href = urlStr;
+              }
+              return real;
             }
 
             // 引数なしの呼び出し（WebLinksAddonパターン）
