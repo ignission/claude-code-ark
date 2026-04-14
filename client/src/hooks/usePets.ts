@@ -22,6 +22,9 @@ export function usePets(socket: ArkSocket | null, isConnected: boolean) {
     const handleCreated = (pet: Pet) => setPets(prev => [...prev, pet]);
     const handleUpdated = (pet: Pet) =>
       setPets(prev => prev.map(p => (p.id === pet.id ? pet : p)));
+    const handleDeleted = ({ petId }: { petId: string }) => {
+      setPets(prev => prev.filter(p => p.id !== petId));
+    };
     const handleLevelUp = ({
       petId,
       newLevel,
@@ -37,12 +40,14 @@ export function usePets(socket: ArkSocket | null, isConnected: boolean) {
     socket.on("pet:list", handleList);
     socket.on("pet:created", handleCreated);
     socket.on("pet:updated", handleUpdated);
+    socket.on("pet:deleted", handleDeleted);
     socket.on("pet:level_up", handleLevelUp);
 
     return () => {
       socket.off("pet:list", handleList);
       socket.off("pet:created", handleCreated);
       socket.off("pet:updated", handleUpdated);
+      socket.off("pet:deleted", handleDeleted);
       socket.off("pet:level_up", handleLevelUp);
     };
   }, [socket]);

@@ -942,11 +942,21 @@ async function startServer() {
 
         // worktree作成後にセッションを自動起動（orchestratorのイベント転送に委ねる）
         try {
-          await sessionOrchestrator.startSession(
+          const session = await sessionOrchestrator.startSession(
             worktree.id,
             worktree.path,
             repoPath
           );
+
+          // セッション作成成功後にペットを自動生成
+          try {
+            const pet = petManager.createPetForSession(session.id);
+            io.emit("pet:created", pet);
+          } catch (petError) {
+            console.error(
+              `[Pet] worktree:create後のペット生成に失敗しました: ${getErrorMessage(petError)}`
+            );
+          }
         } catch (error) {
           socket.emit("session:error", {
             sessionId: "",
@@ -1047,7 +1057,11 @@ async function startServer() {
               await deleteWorktree(result.repoPath, result.worktreePath);
               socket.emit("worktree:deleted", deletedWorktreeId);
               // worktree削除成功時はペットも削除
+              const deletedPet = petManager.getPetBySessionId(sessionId);
               petManager.onSessionDeleted(sessionId);
+              if (deletedPet) {
+                io.emit("pet:deleted", { petId: deletedPet.id });
+              }
             } catch (wtError) {
               console.error(
                 `[Session] Worktree削除に失敗（セッションは削除済み）: ${getErrorMessage(wtError)}`

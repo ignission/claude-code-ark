@@ -204,6 +204,7 @@ export interface ServerToClientEvents {
   "pet:list": (pets: Pet[]) => void;
   "pet:created": (pet: Pet) => void;
   "pet:updated": (pet: Pet) => void;
+  "pet:deleted": (data: { petId: string }) => void;
   "pet:level_up": (data: { petId: string; newLevel: number }) => void;
 }
 

@@ -230,18 +230,20 @@ export class PetManager {
     return "neutral";
   }
 
-  /** レベルアップ判定（EXP >= level * 10） */
+  /** レベルアップ判定（EXP >= level * 10、大量EXP獲得時の複数レベルアップに対応） */
   private checkLevelUp(petId: string): void {
-    const pet = db.getPet(petId);
+    let pet = db.getPet(petId);
     if (!pet) return;
-    const requiredExp = pet.level * 10;
-    if (pet.exp >= requiredExp) {
+    while (pet.exp >= pet.level * 10) {
+      const requiredExp = pet.level * 10;
       const newLevel = pet.level + 1;
       const remainingExp = pet.exp - requiredExp;
       db.updatePet(petId, { level: newLevel, exp: remainingExp });
       if (this.onLevelUp) {
         this.onLevelUp(petId, newLevel);
       }
+      pet = db.getPet(petId);
+      if (!pet) return;
     }
   }
 }

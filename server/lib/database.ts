@@ -204,7 +204,7 @@ class SessionDatabase {
       }
     }
 
-    // ペットテーブルの作成
+    // ペットテーブルの作成（ON DELETE CASCADEなし — ペット削除はpetManager.onSessionDeleted()で明示的に行う）
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS pets (
         id TEXT PRIMARY KEY,
@@ -217,9 +217,13 @@ class SessionDatabase {
         mood TEXT NOT NULL DEFAULT 'happy',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        FOREIGN KEY (session_id) REFERENCES sessions(id)
       )
     `);
+
+    // マイグレーション: 既存のpetsテーブルにON DELETE CASCADEが付いている場合はテーブル再作成
+    // SQLiteはFKの変更をサポートしないため、テーブル再作成で対応する
+    this.migratePetsRemoveCascade();
 
     // ペットテーブルのインデックス作成
     this.db.exec(`
@@ -650,6 +654,49 @@ class SessionDatabase {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
+  }
+
+  /**
+   * petsテーブルからON DELETE CASCADEを除去するマイグレーション
+   *
+   * 既存DBのpetsテーブルにON DELETE CASCADEが付いている場合、
+   * テーブル再作成（pets_new作成→データコピー→旧テーブル削除→リネーム）で対応する。
+   * SQLiteはFKの変更をサポートしないためこの方法を取る。
+   */
+  private migratePetsRemoveCascade(): void {
+    // petsテーブルのCREATE文を取得してCASCADEが含まれているか確認
+    const tableInfo = this.db
+      .prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='pets'"
+      )
+      .get() as { sql: string } | undefined;
+
+    if (!tableInfo || !tableInfo.sql.includes("ON DELETE CASCADE")) {
+      return; // CASCADEなし、またはテーブルが存在しない場合はスキップ
+    }
+
+    console.log(
+      "[DB] petsテーブルからON DELETE CASCADEを除去するマイグレーションを実行"
+    );
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS pets_new (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL UNIQUE,
+        species TEXT NOT NULL,
+        name TEXT,
+        level INTEGER NOT NULL DEFAULT 1,
+        exp INTEGER NOT NULL DEFAULT 0,
+        hp INTEGER NOT NULL DEFAULT 100,
+        mood TEXT NOT NULL DEFAULT 'happy',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES sessions(id)
+      );
+      INSERT INTO pets_new SELECT * FROM pets;
+      DROP TABLE pets;
+      ALTER TABLE pets_new RENAME TO pets;
+    `);
   }
 
   /**
