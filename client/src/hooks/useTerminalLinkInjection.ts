@@ -1,5 +1,11 @@
 import { type RefObject, useEffect } from "react";
 
+// トークン全体がファイルパスらしいか判定する正規表現。
+// 使用箇所: URL継続行判定の除外条件（status行やファイルパス行を
+// URL継続と誤認するのを防ぐ）。fileRegex本体とは異なり完全一致 (^$) にする。
+const FILE_PATH_TOKEN_REGEX =
+  /^(?:file:[a-zA-Z0-9_.\-/]+|[a-zA-Z0-9_.\-/]+\/[a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)(?::\d+)?$/;
+
 /**
  * ttyd iframe内のxterm.jsにリンク検出プロバイダーをインジェクトするカスタムフック。
  * TerminalPane.tsx と MobileSessionView.tsx で共通利用する。
@@ -329,6 +335,11 @@ export function useTerminalLinkInjection(
                     );
                     if (!/^\s*$/.test(afterCont)) break;
 
+                    // トークンがファイルパスパターンに一致する場合はURL継続と
+                    // みなさず打ち切る（"src/App.tsx:10" のような status行の
+                    // 誤結合で壊れたURL生成を防ぐ）
+                    if (FILE_PATH_TOKEN_REGEX.test(contMatch[0])) break;
+
                     matchedUrl += contMatch[0];
                   }
                 }
@@ -386,8 +397,18 @@ export function useTerminalLinkInjection(
                   const afterToken = tokenMatch
                     ? text.substring(leadingSpaces + tokenMatch[0].length)
                     : "";
-                  // 継続行の条件: 先頭にURL不可文字なし + トークンの直後が行末（空白のみ）
-                  if (tokenMatch && /^\s*$/.test(afterToken)) {
+                  // 継続行の条件:
+                  //   1. 先頭にURL不可文字なし + トークンの直後が行末（空白のみ）
+                  //   2. トークンがファイルパスパターンに一致しない
+                  //      (例: "src/App.tsx:10" のようなstatus行を誤ってURL継続と
+                  //      判定してしまう問題への対策)
+                  const looksLikeFilePath =
+                    tokenMatch && FILE_PATH_TOKEN_REGEX.test(tokenMatch[0]);
+                  if (
+                    tokenMatch &&
+                    !looksLikeFilePath &&
+                    /^\s*$/.test(afterToken)
+                  ) {
                     const maxLookback = 10;
                     let urlStartLine = -1;
                     let urlStartMatch = "";
@@ -457,6 +478,9 @@ export function useTerminalLinkInjection(
                           contLeading + contTokenMatch[0].length
                         );
                         if (!/^\s*$/.test(afterContToken)) break;
+                        // ファイルパスパターンに一致するtokenは継続扱いしない
+                        if (FILE_PATH_TOKEN_REGEX.test(contTokenMatch[0]))
+                          break;
                         fullUrl += contTokenMatch[0];
                         lastJ = j;
                         if (j === lineNumber - 1) {
