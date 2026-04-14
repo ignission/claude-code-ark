@@ -324,11 +324,6 @@ export function useTerminalLinkInjection(
 
                     // 継続部分の直後が行末でなければ、この行はURL継続ではない
                     const leadingSpaces = nextText.length - trimmedNext.length;
-                    // Claude CLIの折り返しURLは必ず継続行の先頭に空白(インデント)が
-                    // 入る。先頭にインデントがない行は通常のstatus行/出力行と
-                    // 見なしてURL継続扱いしない（"Done" "OK" "src/App.tsx:10" 等
-                    // の単独tokenが誤結合されて壊れたURLが生成されるのを防ぐ）。
-                    if (leadingSpaces === 0) break;
                     const afterCont = nextText.substring(
                       leadingSpaces + contMatch[0].length
                     );
@@ -391,16 +386,8 @@ export function useTerminalLinkInjection(
                   const afterToken = tokenMatch
                     ? text.substring(leadingSpaces + tokenMatch[0].length)
                     : "";
-                  // 継続行の条件:
-                  //   1. 先頭にURL不可文字なし + トークンの直後が行末（空白のみ）
-                  //   2. 先頭に空白(インデント)がある = Claude CLI の折り返しマーカー
-                  //      (leadingSpaces === 0 の行は通常のstatus行/出力行なので
-                  //      URL継続扱いしない。例: "Done" "OK" "src/App.tsx:10")
-                  if (
-                    tokenMatch &&
-                    leadingSpaces > 0 &&
-                    /^\s*$/.test(afterToken)
-                  ) {
+                  // 継続行の条件: 先頭にURL不可文字なし + トークンの直後が行末（空白のみ）
+                  if (tokenMatch && /^\s*$/.test(afterToken)) {
                     const maxLookback = 10;
                     let urlStartLine = -1;
                     let urlStartMatch = "";
@@ -430,13 +417,10 @@ export function useTerminalLinkInjection(
                         }
                         break; // URLが見つかれば、継続か否かに関わらず探索終了
                       }
-                      // URLなし行: 継続行候補かチェック
-                      // 条件: 先頭にインデント(空白)あり + 先頭トークン + 行末空白
-                      // インデントなしの行はURL継続とみなさない
+                      // URLなし行: 継続行候補かチェック（先頭トークン + 行末空白）
                       const prevTokenMatch = prevTrimmed.match(/^[^\s<>"'()]+/);
                       if (!prevTokenMatch) break;
                       const prevLeading = prevText.length - prevTrimmed.length;
-                      if (prevLeading === 0) break;
                       const afterPrevToken = prevText.substring(
                         prevLeading + prevTokenMatch[0].length
                       );
@@ -473,9 +457,6 @@ export function useTerminalLinkInjection(
                           contLeading + contTokenMatch[0].length
                         );
                         if (!/^\s*$/.test(afterContToken)) break;
-                        // 先頭にインデントがない行はURL継続扱いしない
-                        // (Claude CLIの折り返しURLは継続行の先頭に必ず空白が入る)
-                        if (contLeading === 0) break;
                         fullUrl += contTokenMatch[0];
                         lastJ = j;
                         if (j === lineNumber - 1) {
