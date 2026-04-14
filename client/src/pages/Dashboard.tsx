@@ -6,6 +6,7 @@ import { BrowserPane } from "@/components/BrowserPane";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { MobileChatView } from "@/components/MobileChatView";
 import { MobileLayout } from "@/components/MobileLayout";
+import { ArkPetsPage } from "@/components/pets/ArkPetsPage";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
@@ -29,6 +30,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useIsMobile } from "@/hooks/useMobile";
+import { usePets } from "@/hooks/usePets";
 import { useSettings } from "@/hooks/useSettings";
 import { useSocket } from "@/hooks/useSocket";
 import { useViewerTabs } from "@/hooks/useViewerTabs";
@@ -96,6 +98,15 @@ export default function Dashboard() {
     onRepoListChange: list => setSetting("repoList", list),
     onRepoPathChange: path => setSetting("selectedRepoPath", path),
   });
+
+  const {
+    pets,
+    totalLevel,
+    interactWithPet,
+    renamePet,
+    submitGameResult,
+    getPetForSession,
+  } = usePets(socket, isConnected);
 
   const isMobile = useIsMobile();
 
@@ -192,6 +203,16 @@ export default function Dashboard() {
   const [showTunnelDialog, setShowTunnelDialog] = useState(false);
   const [selectedPort, setSelectedPort] = useState<number | null>(null);
   const [showPortSelector, setShowPortSelector] = useState(false);
+  const [showPets, setShowPets] = useState(false);
+
+  const petsContent = (
+    <ArkPetsPage
+      pets={pets}
+      onInteract={interactWithPet}
+      onRename={renamePet}
+      onGameResult={submitGameResult}
+    />
+  );
 
   const copyToClipboard = (text: string | null) => {
     if (text) {
@@ -343,6 +364,7 @@ export default function Dashboard() {
           onSelectBrowser={handleSelectBrowser}
           navigateBrowser={navigateBrowser}
           isRemote={isRemote}
+          petsContent={petsContent}
         />
       ) : (
         <SidebarMainLayout
@@ -361,6 +383,7 @@ export default function Dashboard() {
               onSelectBrowser={handleSelectBrowser}
               isBrowserSelected={selectedSessionId === "browser"}
               isRemote={isRemote}
+              getPetForSession={getPetForSession}
             />
           }
           main={
@@ -450,6 +473,9 @@ export default function Dashboard() {
           }
           initialSidebarWidth={getSetting<number>("ark-sidebar-width", 250)}
           onSidebarWidthChange={w => setSetting("ark-sidebar-width", w)}
+          petsPanel={petsContent}
+          showPets={showPets}
+          onTogglePets={() => setShowPets(!showPets)}
         />
       )}
 

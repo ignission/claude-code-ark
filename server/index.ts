@@ -49,6 +49,7 @@ import {
   listWorktrees,
   scanRepositories,
 } from "./lib/git.js";
+import { petManager } from "./lib/pet-manager.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import { sessionOrchestrator } from "./lib/session-orchestrator.js";
@@ -747,6 +748,25 @@ async function startServer() {
     // (Socket.IO has its own upgrade handler)
   });
 
+  // ===== PetManager 初期化 =====
+
+  petManager.setCallbacks({
+    onPetUpdated: pet => {
+      io.emit("pet:updated", pet);
+    },
+    onLevelUp: (petId, newLevel) => {
+      io.emit("pet:level_up", { petId, newLevel });
+    },
+  });
+  petManager.startExpTicker();
+
+  // 既存セッションにペットが紐付いていない場合は補完
+  const allSessions = sessionOrchestrator.getAllSessions();
+  const newPets = petManager.backfillExistingSessions(allSessions);
+  if (newPets.length > 0) {
+    console.log(`[pets] ${newPets.length}匹のペットを既存セッションに補完`);
+  }
+
   // ===== Socket.IO Connection Handler =====
 
   // 複数クライアント同時接続時の重複復元を防ぐ（セッションID → 復元中のPromise）
@@ -922,11 +942,21 @@ async function startServer() {
 
         // worktree作成後にセッションを自動起動（orchestratorのイベント転送に委ねる）
         try {
-          await sessionOrchestrator.startSession(
+          const session = await sessionOrchestrator.startSession(
             worktree.id,
             worktree.path,
             repoPath
           );
+
+          // セッション作成成功後にペットを自動生成
+          try {
+            const pet = petManager.createPetForSession(session.id);
+            io.emit("pet:created", pet);
+          } catch (petError) {
+            console.error(
+              `[Pet] worktree:create後のペット生成に失敗しました: ${getErrorMessage(petError)}`
+            );
+          }
         } catch (error) {
           socket.emit("session:error", {
             sessionId: "",
@@ -971,6 +1001,16 @@ async function startServer() {
           currentRepoPath ?? undefined
         );
         socket.emit("session:created", session);
+
+        // セッション作成成功後にペットを自動生成
+        try {
+          const pet = petManager.createPetForSession(session.id);
+          io.emit("pet:created", pet);
+        } catch (petError) {
+          console.error(
+            `[Pet] ペット生成に失敗しました: ${getErrorMessage(petError)}`
+          );
+        }
       } catch (error) {
         socket.emit("session:error", {
           sessionId: "",
@@ -1003,6 +1043,9 @@ async function startServer() {
       try {
         const result = sessionOrchestrator.stopSession(sessionId);
 
+        // セッション停止時のペット処理（気分をsleepyに）
+        petManager.onSessionStopped(sessionId);
+
         // worktreeも削除（メインworktreeは除外）
         if (result?.worktreePath && result.repoPath) {
           const isMain = result.worktreePath === result.repoPath;
@@ -1013,6 +1056,12 @@ async function startServer() {
                 .replace(/[/+=]/g, "");
               await deleteWorktree(result.repoPath, result.worktreePath);
               socket.emit("worktree:deleted", deletedWorktreeId);
+              // worktree削除成功時はペットも削除
+              const deletedPet = petManager.getPetBySessionId(sessionId);
+              petManager.onSessionDeleted(sessionId);
+              if (deletedPet) {
+                io.emit("pet:deleted", { petId: deletedPet.id });
+              }
             } catch (wtError) {
               console.error(
                 `[Session] Worktree削除に失敗（セッションは削除済み）: ${getErrorMessage(wtError)}`
@@ -1332,6 +1381,62 @@ async function startServer() {
     // Beaconセッション終了
     socket.on("beacon:close", () => {
       beaconManager.closeSession();
+    });
+
+    // ===== Pet Commands =====
+
+    // ペット一覧取得
+    socket.on("pet:list", () => {
+      try {
+        const pets = petManager.getAllPets();
+        socket.emit("pet:list", pets);
+      } catch (error) {
+        console.error(`[Pet] pet:list エラー: ${getErrorMessage(error)}`);
+      }
+    });
+
+    // 接続時にペット一覧を自動送信
+    const initialPets = petManager.getAllPets();
+    if (initialPets.length > 0) {
+      socket.emit("pet:list", initialPets);
+    }
+
+    // ペットとインタラクション（撫でる/エサ）
+    socket.on("pet:interact", ({ petId, action }) => {
+      try {
+        const pet = petManager.interact(petId, action);
+        if (pet) {
+          io.emit("pet:updated", pet);
+        }
+      } catch (error) {
+        console.error(`[Pet] pet:interact エラー: ${getErrorMessage(error)}`);
+      }
+    });
+
+    // ペット名前変更
+    socket.on("pet:rename", ({ petId, name }) => {
+      try {
+        const pet = petManager.rename(petId, name);
+        if (pet) {
+          io.emit("pet:updated", pet);
+        }
+      } catch (error) {
+        console.error(`[Pet] pet:rename エラー: ${getErrorMessage(error)}`);
+      }
+    });
+
+    // ミニゲーム結果反映
+    socket.on("pet:game_result", ({ petId, game, score }) => {
+      try {
+        const pet = petManager.applyGameResult(petId, game, score);
+        if (pet) {
+          io.emit("pet:updated", pet);
+        }
+      } catch (error) {
+        console.error(
+          `[Pet] pet:game_result エラー: ${getErrorMessage(error)}`
+        );
+      }
     });
 
     // セッションプレビューのポーリング（1秒間隔）

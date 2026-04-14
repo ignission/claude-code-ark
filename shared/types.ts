@@ -199,6 +199,13 @@ export interface ServerToClientEvents {
   "browser:started": (session: BrowserSession) => void;
   "browser:stopped": (data: { browserId: string }) => void;
   "browser:error": (data: { message: string }) => void;
+
+  // ペットイベント
+  "pet:list": (pets: Pet[]) => void;
+  "pet:created": (pet: Pet) => void;
+  "pet:updated": (pet: Pet) => void;
+  "pet:deleted": (data: { petId: string }) => void;
+  "pet:level_up": (data: { petId: string; newLevel: number }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -255,6 +262,12 @@ export interface ClientToServerEvents {
   "browser:start": () => void;
   "browser:stop": (data: { browserId: string }) => void;
   "browser:navigate": (data: { url: string }) => void;
+
+  // ペットコマンド
+  "pet:list": () => void;
+  "pet:interact": (data: { petId: string; action: PetAction }) => void;
+  "pet:rename": (data: { petId: string; name: string }) => void;
+  "pet:game_result": (result: PetGameResult) => void;
 }
 
 /** Beaconチャットのメッセージ */
@@ -279,4 +292,48 @@ export interface BeaconStreamChunk {
   chunk: string;
   /** ストリーミング完了フラグ */
   done: boolean;
+}
+
+/** ペットの動物種 */
+export type PetSpecies =
+  | "dog"
+  | "cat"
+  | "rabbit"
+  | "bird"
+  | "turtle"
+  | "penguin"
+  | "fox"
+  | "owl";
+
+/** ペットのレアリティ */
+export type PetRarity = "common" | "uncommon" | "rare";
+
+/** ペットの気分 */
+export type PetMood = "happy" | "neutral" | "sleepy" | "hungry" | "sad";
+
+/** ペットデータ */
+export interface Pet {
+  id: string;
+  sessionId: string;
+  species: PetSpecies;
+  name: string | null;
+  level: number;
+  exp: number;
+  hp: number;
+  mood: PetMood;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** ペットインタラクション種別 */
+export type PetAction = "pet" | "feed";
+
+/** ミニゲーム種別 */
+export type PetGame = "feeding" | "arkdash";
+
+/** ミニゲーム結果 */
+export interface PetGameResult {
+  petId: string;
+  game: PetGame;
+  score: number;
 }
