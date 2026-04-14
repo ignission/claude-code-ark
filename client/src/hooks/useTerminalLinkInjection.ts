@@ -63,9 +63,57 @@ export function useTerminalLinkInjection(
           }
 
           // URL拡張マップ: 折り返しで切れた1行目URL → 複数行結合後の完全URL
-          // provideLinksで構築し、fakeWindowのURL横取り処理で参照する。
-          // WebLinksAddonが優先的にactivateされても、ここで完全URLに復元できる。
+          // WebLinksAddon fallback経路（独自providerが拾えなかった場合）で
+          // 完全URLに復元するために使う。独自providerのactivateは finalUrl を
+          // 直接open()に渡すためmapに依存しないが、WebLinksAddonが先に発火した
+          // 場合に備えて引き続き構築する。
           const urlExtensionMap = new Map<string, string>();
+
+          // URL open のdedupトークン。
+          // 同一URLが短時間に2回開かれる（独自provider + WebLinksAddon の両発火）
+          // のを防ぐ。独自providerのactivateで先にセットされ、WebLinksAddonの
+          // fakeWindow.href設定時に同じURLなら無視する。
+          const recentlyOpened = new Map<string, number>();
+          const DEDUP_WINDOW_MS = 300;
+          const markOpened = (u: string) => {
+            recentlyOpened.set(u, Date.now());
+            // 定期的に古いエントリをクリーンアップ（メモリ防衛）
+            if (recentlyOpened.size > 50) {
+              const now = Date.now();
+              for (const [k, t] of recentlyOpened) {
+                if (now - t > DEDUP_WINDOW_MS) recentlyOpened.delete(k);
+              }
+            }
+          };
+          const isRecentlyOpened = (u: string) => {
+            const t = recentlyOpened.get(u);
+            if (t === undefined) return false;
+            if (Date.now() - t > DEDUP_WINDOW_MS) {
+              recentlyOpened.delete(u);
+              return false;
+            }
+            return true;
+          };
+
+          // URL実オープン処理（localhost→postMessage / 非localhost→origOpen）
+          const openUrl = (urlStr: string) => {
+            if (
+              /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/.test(urlStr)
+            ) {
+              arkWindow.postMessage(
+                { type: "ark:open-url", url: urlStr },
+                arkWindow.location.origin
+              );
+            } else {
+              const real = origOpen();
+              if (real) {
+                try {
+                  real.opener = null;
+                } catch {}
+                real.location.href = urlStr;
+              }
+            }
+          };
 
           // xterm.js WebLinksAddonのURLを横取りする。
           // WebLinksAddonは window.open() を引数なしで呼び、返されたウィンドウの
@@ -83,9 +131,14 @@ export function useTerminalLinkInjection(
             target?: string,
             features?: string
           ): Window | null => {
-            // 引数ありの呼び出し（URL直接指定）
+            // 引数ありの呼び出し（独自provider側activate or URL直接指定）
             if (url) {
-              const urlStr = urlExtensionMap.get(String(url)) || String(url);
+              const rawStr = String(url);
+              // urlExtensionMap経由の復元は独自provider側で済んでいるが、
+              // 外部呼び出し互換のため引き続きmap参照を行う
+              const urlStr = urlExtensionMap.get(rawStr) || rawStr;
+              if (isRecentlyOpened(urlStr)) return null;
+              markOpened(urlStr);
               if (
                 /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/.test(urlStr)
               ) {
@@ -107,25 +160,9 @@ export function useTerminalLinkInjection(
                 set href(u: string) {
                   // URL拡張マップで折り返しURLを完全URLに復元
                   const resolved = urlExtensionMap.get(u) || u;
-                  if (
-                    /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/.test(
-                      resolved
-                    )
-                  ) {
-                    arkWindow.postMessage(
-                      { type: "ark:open-url", url: resolved },
-                      arkWindow.location.origin
-                    );
-                  } else {
-                    // localhost以外は実際に新しいウィンドウで開く
-                    const real = origOpen();
-                    if (real) {
-                      try {
-                        real.opener = null;
-                      } catch {}
-                      real.location.href = resolved;
-                    }
-                  }
+                  if (isRecentlyOpened(resolved)) return;
+                  markOpened(resolved);
+                  openUrl(resolved);
                 },
                 get href() {
                   return this._href;
@@ -305,9 +342,25 @@ export function useTerminalLinkInjection(
                   urlExtensionMap.set(originalUrl, matchedUrl);
                 }
 
-                // 1行目（このprovideLinks呼び出し）はWebLinksAddon任せのため
-                // ここではlinks.pushしない（2タブ防止）。継続行のリンク登録は
-                // 後段の「継続行スキャン」ブロックで行う。
+                // 1行目のリンクを登録する。activate は fakeWindow override を
+                // 経由し、recentlyOpened による dedup で WebLinksAddon の両発火を
+                // 防ぐ。finalUrl を直接渡すため urlExtensionMap 依存はなく、
+                // prefix衝突や100件制限によるprefix退避の影響も受けない。
+                const finalUrl = matchedUrl;
+                links.push({
+                  range: {
+                    start: { x: match.index + 1, y: lineNumber },
+                    end: {
+                      x: match.index + originalUrl.length + 1,
+                      y: lineNumber,
+                    },
+                  },
+                  text: finalUrl,
+                  activate() {
+                    // biome-ignore lint/suspicious/noExplicitAny: overrideされたopenを呼ぶため型を緩める
+                    (iframeWindow as any).open(finalUrl, "_blank");
+                  },
+                });
               }
 
               // 継続行検出: この行(lineNumber)にURLが見つからなかった場合でも、
