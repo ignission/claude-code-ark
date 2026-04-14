@@ -63,15 +63,13 @@ export function useTerminalLinkInjection(
           }
 
           // URL拡張マップ: 折り返しで切れた1行目URL → 複数行結合後の完全URL
-          // WebLinksAddon fallback経路（独自providerが拾えなかった場合）で
-          // 完全URLに復元するために使う。独自providerのactivateは finalUrl を
-          // 直接open()に渡すためmapに依存しないが、WebLinksAddonが先に発火した
-          // 場合に備えて引き続き構築する。
+          // provideLinksで構築し、fakeWindowのURL横取り処理で参照する。
+          // WebLinksAddonが優先的にactivateされても、ここで完全URLに復元できる。
           const urlExtensionMap = new Map<string, string>();
 
-          // localhost/127.0.0.1 の厳密判定（hostname完全一致）。
-          // 前方一致正規表現だと localhost.evil.example 等が誤判定されるため、
-          // URL#hostname で厳密に比較する。プロトコルも http/https に限定する。
+          // localhost 判定を URL パーサで厳密化する。
+          // 正規表現では `http://localhost.evil.example/` のようなサブドメインで
+          // trueになる可能性があるため、hostname を完全一致で比較する。
           const isLoopbackUrl = (urlStr: string): boolean => {
             try {
               const { protocol, hostname } = new URL(urlStr);
@@ -81,50 +79,6 @@ export function useTerminalLinkInjection(
               );
             } catch {
               return false;
-            }
-          };
-
-          // URL open のdedupトークン。
-          // 同一URLが短時間に2回開かれる（独自provider + WebLinksAddon の両発火）
-          // のを防ぐ。独自providerのactivateで先にセットされ、WebLinksAddonの
-          // fakeWindow.href設定時に同じURLなら無視する。
-          const recentlyOpened = new Map<string, number>();
-          const DEDUP_WINDOW_MS = 300;
-          const markOpened = (u: string) => {
-            recentlyOpened.set(u, Date.now());
-            // 定期的に古いエントリをクリーンアップ（メモリ防衛）
-            if (recentlyOpened.size > 50) {
-              const now = Date.now();
-              for (const [k, t] of recentlyOpened) {
-                if (now - t > DEDUP_WINDOW_MS) recentlyOpened.delete(k);
-              }
-            }
-          };
-          const isRecentlyOpened = (u: string) => {
-            const t = recentlyOpened.get(u);
-            if (t === undefined) return false;
-            if (Date.now() - t > DEDUP_WINDOW_MS) {
-              recentlyOpened.delete(u);
-              return false;
-            }
-            return true;
-          };
-
-          // URL実オープン処理（localhost→postMessage / 非localhost→origOpen）
-          const openUrl = (urlStr: string) => {
-            if (isLoopbackUrl(urlStr)) {
-              arkWindow.postMessage(
-                { type: "ark:open-url", url: urlStr },
-                arkWindow.location.origin
-              );
-            } else {
-              const real = origOpen();
-              if (real) {
-                try {
-                  real.opener = null;
-                } catch {}
-                real.location.href = urlStr;
-              }
             }
           };
 
@@ -144,14 +98,9 @@ export function useTerminalLinkInjection(
             target?: string,
             features?: string
           ): Window | null => {
-            // 引数ありの呼び出し（独自provider側activate or URL直接指定）
+            // 引数ありの呼び出し（URL直接指定）
             if (url) {
-              const rawStr = String(url);
-              // urlExtensionMap経由の復元は独自provider側で済んでいるが、
-              // 外部呼び出し互換のため引き続きmap参照を行う
-              const urlStr = urlExtensionMap.get(rawStr) || rawStr;
-              if (isRecentlyOpened(urlStr)) return null;
-              markOpened(urlStr);
+              const urlStr = urlExtensionMap.get(String(url)) || String(url);
               if (isLoopbackUrl(urlStr)) {
                 arkWindow.postMessage(
                   { type: "ark:open-url", url: urlStr },
@@ -159,10 +108,8 @@ export function useTerminalLinkInjection(
                 );
                 return null;
               }
-              // 非localhostは空window経由で opener=null を保証してから
-              // location.href に代入する（fakeWindow分岐と同じパターン）。
-              // window.open(url, "_blank") 直呼びでは window.opener === null が
-              // 保証されず、reverse tabnabbing のリスクがある。
+              // 非localhost: 空URLで新タブを開き opener=null を付与してから
+              // location.href を設定する（タブナビゲーション攻撃対策）
               const real = origOpen("", target, features);
               if (real) {
                 try {
@@ -182,9 +129,21 @@ export function useTerminalLinkInjection(
                 set href(u: string) {
                   // URL拡張マップで折り返しURLを完全URLに復元
                   const resolved = urlExtensionMap.get(u) || u;
-                  if (isRecentlyOpened(resolved)) return;
-                  markOpened(resolved);
-                  openUrl(resolved);
+                  if (isLoopbackUrl(resolved)) {
+                    arkWindow.postMessage(
+                      { type: "ark:open-url", url: resolved },
+                      arkWindow.location.origin
+                    );
+                  } else {
+                    // localhost以外は実際に新しいウィンドウで開く
+                    const real = origOpen();
+                    if (real) {
+                      try {
+                        real.opener = null;
+                      } catch {}
+                      real.location.href = resolved;
+                    }
+                  }
                 },
                 get href() {
                   return this._href;
@@ -297,15 +256,14 @@ export function useTerminalLinkInjection(
               const links: any[] = [];
               let match: RegExpExecArray | null;
 
-              // URL範囲を記録する配列。ファイルパス検出時にURL内部の部分文字列が
-              // 誤マッチするのを防ぐため、URL検出を先に走らせて範囲を収集しておく。
-              const urlRanges: Array<[number, number]> = [];
-              const inUrlRange = (idx: number) =>
-                urlRanges.some(([s, e]) => idx >= s && idx < e);
-
-              // URL検出 + 複数行にまたがるURL延長
-              // Claude Codeは長いURLを折り返す際、次行の先頭に空白を入れる。
-              // URLの直後が行末（空白のみ）の場合、次行以降を先頭空白除去して結合する。
+              // URL検出を先に実行し、1行目の URL 範囲を urlRanges に記録する。
+              // 後続の file 検出でこの範囲内のマッチを除外することで、
+              // URL 内部の部分文字列（例: `https://example.com/path/foo.js`）が
+              // file リンクとして独立登録されるのを防ぐ。
+              // URL クリック自体は WebLinksAddon に一本化するため、ここでは
+              // links.push はせず、折り返し完全URL復元用の urlExtensionMap
+              // のみを維持する。
+              //
               // Mapサイズ上限（メモリリーク防止。clearはprovideLinksが行ごとに
               // 呼ばれるためクリック時にマッピングが消失する問題がある）
               if (urlExtensionMap.size > 100) {
@@ -313,18 +271,17 @@ export function useTerminalLinkInjection(
                 if (firstKey !== undefined) urlExtensionMap.delete(firstKey);
               }
 
+              const urlRanges: Array<{ start: number; end: number }> = [];
               const urlRegex = /https?:\/\/[^\s<>"'()]+/g;
               while ((match = urlRegex.exec(text)) !== null) {
                 let matchedUrl = match[0];
                 const originalUrl = match[0];
 
-                // 1行目のURL範囲を記録（ファイルパス検出時の除外判定に使用）
-                urlRanges.push([match.index, match.index + originalUrl.length]);
-
-                // main既存仕様に合わせ、折り返しURLは multi-line range で
-                // リンクを登録する。endY/endX を継続行まで拡張する。
-                let endY = lineNumber;
-                let endX = match.index + matchedUrl.length + 1;
+                // 1 行目の URL 範囲を記録（file 検出で重複を避けるため）
+                urlRanges.push({
+                  start: match.index,
+                  end: match.index + originalUrl.length,
+                });
 
                 // URLの直後から行末まで空白のみか確認（URLが行の最後のトークン）
                 const afterUrl = text.substring(
@@ -354,53 +311,30 @@ export function useTerminalLinkInjection(
                     if (!/^\s*$/.test(afterCont)) break;
 
                     matchedUrl += contMatch[0];
-                    endY = nextIdx + 1;
-                    endX = leadingSpaces + contMatch[0].length + 1;
                   }
                 }
 
                 // 末尾の句読点を除去（文中のURL: "See https://example.com." 等）
-                const beforeTrim = matchedUrl.length;
                 matchedUrl = matchedUrl.replace(/[.,;:!?]+$/, "");
-                const trimmedChars = beforeTrim - matchedUrl.length;
-                if (trimmedChars > 0) {
-                  endX -= trimmedChars;
-                }
 
                 // 拡張された場合、元URL→完全URLの対応をMapに記録
-                // WebLinksAddonのactivate時にfakeWindowで完全URLに復元する
+                // WebLinksAddonが activate された際、fakeWindow で完全URLに復元する
                 if (matchedUrl !== originalUrl) {
                   urlExtensionMap.set(originalUrl, matchedUrl);
                 }
-
-                // 1行目のリンクを登録する。activate は fakeWindow override を
-                // 経由し、recentlyOpened による dedup で WebLinksAddon の両発火を
-                // 防ぐ。finalUrl を直接渡すため urlExtensionMap 依存はなく、
-                // prefix衝突や100件制限によるprefix退避の影響も受けない。
-                const finalUrl = matchedUrl;
-                links.push({
-                  range: {
-                    start: { x: match.index + 1, y: lineNumber },
-                    end: { x: endX, y: endY },
-                  },
-                  text: finalUrl,
-                  activate() {
-                    // biome-ignore lint/suspicious/noExplicitAny: overrideされたopenを呼ぶため型を緩める
-                    (iframeWindow as any).open(finalUrl, "_blank");
-                  },
-                });
               }
+
+              const inUrlRange = (idx: number): boolean =>
+                urlRanges.some(r => idx >= r.start && idx < r.end);
 
               // ファイルパス検出
               // 1. file:プレフィックス付き（拡張子不問）: file:Dockerfile, file:src/main.rs:42
               // 2. パス区切り+拡張子付き: src/App.tsx:10
-              // URL内部の部分文字列にマッチしないよう urlRanges で除外する
               const fileRegex =
                 /(?:file:([a-zA-Z0-9_.\-/]+)|([a-zA-Z0-9_.\-/]+\/[a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+))(?::(\d+))?/g;
               while ((match = fileRegex.exec(text)) !== null) {
-                // マッチ先頭がURL範囲内ならスキップ（URL内部の誤検出を防ぐ）
+                // URL 内部の部分文字列マッチはスキップ
                 if (inUrlRange(match.index)) continue;
-
                 const fullMatch = match[0];
                 // file:///path の場合、先頭の余分なスラッシュを除去して /path にする
                 const rawPath = match[1] || match[2];
