@@ -67,6 +67,15 @@ export function useTerminalLinkInjection(
           // WebLinksAddonが優先的にactivateされても、ここで完全URLに復元できる。
           const urlExtensionMap = new Map<string, string>();
 
+          // 同一URLの重複open抑制用（WebLinksAddonと独自provider両発火対策）
+          // 1クリックで両経路が発火するため、先に処理した方がマーク、後発はskipする
+          const handledUrls = new Set<string>();
+          const markHandled = (u: string) => {
+            handledUrls.add(u);
+            // 同期的に発火した2経路をカバーしつつ、連続クリックは妨げない
+            setTimeout(() => handledUrls.delete(u), 200);
+          };
+
           // xterm.js WebLinksAddonのURLを横取りする。
           // WebLinksAddonは window.open() を引数なしで呼び、返されたウィンドウの
           // location.href にURLを設定するパターン:
@@ -86,6 +95,8 @@ export function useTerminalLinkInjection(
             // 引数ありの呼び出し（URL直接指定）
             if (url) {
               const urlStr = urlExtensionMap.get(String(url)) || String(url);
+              if (handledUrls.has(urlStr)) return null;
+              markHandled(urlStr);
               if (
                 /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/.test(urlStr)
               ) {
@@ -107,6 +118,8 @@ export function useTerminalLinkInjection(
                 set href(u: string) {
                   // URL拡張マップで折り返しURLを完全URLに復元
                   const resolved = urlExtensionMap.get(u) || u;
+                  if (handledUrls.has(resolved)) return;
+                  markHandled(resolved);
                   if (
                     /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/.test(
                       resolved
@@ -340,10 +353,10 @@ export function useTerminalLinkInjection(
                   },
                   text: finalUrl,
                   activate() {
-                    arkWindow.postMessage(
-                      { type: "ark:open-url", url: finalUrl },
-                      arkWindow.location.origin
-                    );
+                    // iframeWindow.open override にURL種別判定とdedupを委譲。
+                    // 非localhost URLは override 内で origOpen() 経由で実ウィンドウに開かれる。
+                    // biome-ignore lint/suspicious/noExplicitAny: overrideされたopenを呼ぶため型を緩める
+                    (iframeWindow as any).open(finalUrl, "_blank");
                   },
                 });
               }
