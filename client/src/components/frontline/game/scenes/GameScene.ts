@@ -298,6 +298,15 @@ export class GameScene extends Phaser.Scene {
     this.enemies = this.physics.add.group();
     this.playerBullets = this.physics.add.group();
     this.enemyBullets = this.physics.add.group();
+
+    // 弾丸 vs 敵の衝突判定（永続的オーバーラップ）
+    this.physics.add.overlap(
+      this.playerBullets,
+      this.enemies,
+      this.onBulletHitEnemy,
+      undefined,
+      this
+    );
   }
 
   // ============================
@@ -910,108 +919,6 @@ export class GameScene extends Phaser.Scene {
     const pointer = this.input.activePointer;
     this.crosshair.setPosition(pointer.worldX, pointer.worldY);
 
-    // プレイヤー弾 vs 敵
-    this.physics.overlap(
-      this.playerBullets,
-      this.enemies,
-      (_bulletObj, _enemyObj) => {
-        const bullet = _bulletObj as Phaser.Physics.Arcade.Image;
-        const enemy = _enemyObj as Phaser.Physics.Arcade.Image;
-
-        if (!bullet.active || !enemy.active) return;
-
-        const damage = bullet.getData("damage") as number;
-        bullet.destroy();
-
-        // ヘッドショット判定
-        let finalDamage = damage;
-        const enemyTop = enemy.y - enemy.displayHeight / 2;
-        const headZoneBottom = enemyTop + enemy.displayHeight * HEADSHOT_ZONE;
-        if (bullet.y < headZoneBottom) {
-          finalDamage *= HEADSHOT_MULTIPLIER;
-          this.headshots++;
-          SoundSynth.headshot();
-
-          const hsText = this.add
-            .text(enemy.x, enemy.y - 20, "HEADSHOT", {
-              fontSize: "10px",
-              color: "#ff4444",
-              fontFamily: "monospace",
-              fontStyle: "bold",
-            })
-            .setOrigin(0.5)
-            .setDepth(90);
-          this.tweens.add({
-            targets: hsText,
-            y: hsText.y - 20,
-            alpha: 0,
-            duration: 600,
-            onComplete: () => hsText.destroy(),
-          });
-        }
-
-        // ダメージ適用
-        let hp = enemy.getData("hp") as number;
-        hp -= finalDamage;
-        enemy.setData("hp", hp);
-
-        if (hp <= 0) {
-          // 撃破
-          SoundSynth.hit();
-          const enemyX = enemy.x;
-          const enemyY = enemy.y;
-          const ft = enemy.getData("fireTimer") as
-            | Phaser.Time.TimerEvent
-            | undefined;
-          ft?.destroy();
-          const hpBarRef = enemy.getData("hpBar") as
-            | Phaser.GameObjects.Rectangle
-            | undefined;
-          hpBarRef?.destroy();
-          enemy.destroy();
-          this.kills++;
-          if (enemy.getData("isHeli")) {
-            this.heliKills++;
-          }
-          this.killsSinceAdvance++;
-          this.checkAdvance();
-
-          // キル数ポップアップ
-          const killPopup = this.add
-            .text(enemyX, enemyY, `${this.kills} KILL`, {
-              fontSize: "14px",
-              color: "#ffcc00",
-              fontFamily: "monospace",
-              fontStyle: "bold",
-            })
-            .setOrigin(0.5)
-            .setDepth(91);
-          this.tweens.add({
-            targets: killPopup,
-            scaleX: 1.5,
-            scaleY: 1.5,
-            duration: 150,
-            yoyo: true,
-            onComplete: () => {
-              this.tweens.add({
-                targets: killPopup,
-                alpha: 0,
-                y: killPopup.y - 20,
-                duration: 400,
-                onComplete: () => killPopup.destroy(),
-              });
-            },
-          });
-        } else {
-          // 被弾エフェクト
-          enemy.setTint(0xff0000);
-          this.time.delayedCall(100, () => {
-            if (enemy.active) enemy.clearTint();
-          });
-        }
-      }
-    );
-
     // 敵弾 vs プレイヤー（近接判定）
     const eBullets =
       this.enemyBullets.getChildren() as Phaser.Physics.Arcade.Image[];
@@ -1154,5 +1061,114 @@ export class GameScene extends Phaser.Scene {
       };
       this.scene.start("ResultScene", data);
     });
+  }
+
+  /** 弾丸が敵にヒットした時のコールバック（physics.add.overlapから呼ばれる） */
+  private onBulletHitEnemy(
+    bulletObj: Phaser.Types.Physics.Arcade.GameObjectWithBody,
+    enemyObj: Phaser.Types.Physics.Arcade.GameObjectWithBody
+  ): void {
+    const bullet = bulletObj as Phaser.Physics.Arcade.Image;
+    const enemy = enemyObj as Phaser.Physics.Arcade.Image;
+
+    if (!bullet.active || !enemy.active) return;
+
+    const damage = bullet.getData("damage") as number;
+    bullet.destroy();
+
+    // ヘッドショット判定
+    let finalDamage = damage;
+    const enemyTop = enemy.y - enemy.displayHeight / 2;
+    const headZoneBottom = enemyTop + enemy.displayHeight * HEADSHOT_ZONE;
+    if (bullet.y < headZoneBottom) {
+      finalDamage *= HEADSHOT_MULTIPLIER;
+      this.headshots++;
+      SoundSynth.headshot();
+
+      const hsText = this.add
+        .text(enemy.x, enemy.y - 20, "HEADSHOT", {
+          fontSize: "10px",
+          color: "#ff4444",
+          fontFamily: "monospace",
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5)
+        .setDepth(90);
+      this.tweens.add({
+        targets: hsText,
+        y: hsText.y - 20,
+        alpha: 0,
+        duration: 600,
+        onComplete: () => hsText.destroy(),
+      });
+    }
+
+    // ダメージ適用
+    let hp = enemy.getData("hp") as number;
+    hp -= finalDamage;
+    enemy.setData("hp", hp);
+
+    // HPバー更新
+    const hpBar = enemy.getData("hpBar") as
+      | Phaser.GameObjects.Rectangle
+      | undefined;
+    if (hpBar) {
+      const maxHp = 30; // 最大HP（簡易）
+      const ratio = Math.max(0, hp / maxHp);
+      hpBar.width = 30 * ratio;
+      hpBar.setFillStyle(ratio > 0.5 ? 0xff0000 : 0xff4444);
+    }
+
+    if (hp <= 0) {
+      // 撃破
+      SoundSynth.hit();
+      const enemyX = enemy.x;
+      const enemyY = enemy.y;
+      const ft = enemy.getData("fireTimer") as
+        | Phaser.Time.TimerEvent
+        | undefined;
+      ft?.destroy();
+      hpBar?.destroy();
+      enemy.destroy();
+      this.kills++;
+      if (enemy.getData("isHeli")) {
+        this.heliKills++;
+      }
+      this.killsSinceAdvance++;
+      this.checkAdvance();
+
+      // キル数ポップアップ
+      const killPopup = this.add
+        .text(enemyX, enemyY, `${this.kills} KILL`, {
+          fontSize: "14px",
+          color: "#ffcc00",
+          fontFamily: "monospace",
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5)
+        .setDepth(91);
+      this.tweens.add({
+        targets: killPopup,
+        scaleX: 1.5,
+        scaleY: 1.5,
+        duration: 150,
+        yoyo: true,
+        onComplete: () => {
+          this.tweens.add({
+            targets: killPopup,
+            alpha: 0,
+            y: killPopup.y - 20,
+            duration: 400,
+            onComplete: () => killPopup.destroy(),
+          });
+        },
+      });
+    } else {
+      // 被弾エフェクト
+      enemy.setTint(0xff0000);
+      this.time.delayedCall(100, () => {
+        if (enemy.active) enemy.clearTint();
+      });
+    }
   }
 }
