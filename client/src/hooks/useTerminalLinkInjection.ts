@@ -100,10 +100,20 @@ export function useTerminalLinkInjection(
           const openUrl = (rawUrl: string): void => {
             const resolved = urlExtensionMap.get(rawUrl) || rawUrl;
             if (!tryClaimOpen()) return;
-            arkWindow.postMessage(
-              { type: "ark:open-url", url: resolved },
-              arkWindow.location.origin
-            );
+            if (isLoopbackUrl(resolved)) {
+              // localhost URL は postMessage 経由（リモートモードでは埋め込みブラウザに表示）
+              arkWindow.postMessage(
+                { type: "ark:open-url", url: resolved },
+                arkWindow.location.origin
+              );
+            } else {
+              // 非localhost URL は常に新タブで直接開く（リモートモードでもハイジャックしない）
+              const a = arkWindow.document.createElement("a");
+              a.href = resolved;
+              a.target = "_blank";
+              a.rel = "noopener noreferrer";
+              a.click();
+            }
           };
 
           // OscLinkProvider の confirm ダイアログを自動承認
@@ -176,8 +186,13 @@ export function useTerminalLinkInjection(
           // かつテキスト選択機能を維持）。
           // _currentLink は hover 時に設定済みなので mouseup 時点で参照可能。
           const handleMouseUpIntercept = (e: Event): void => {
+            // 左クリックのみ処理（右クリック・中クリックは通す）
+            if (e instanceof MouseEvent && e.button !== 0) return;
             const url = extractCurrentLinkUrl();
             if (!url) return;
+            // ファイルパスリンクはxterm.jsのactivateに委譲（ark:open-file経由で処理）
+            if (!url.startsWith("http://") && !url.startsWith("https://"))
+              return;
             e.stopImmediatePropagation();
             e.preventDefault();
             // mouseup でのみ URL を開く（Linkifier2 と同じタイミング）
