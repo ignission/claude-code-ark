@@ -82,6 +82,59 @@ export function useTerminalLinkInjection(
             }
           };
 
+          // URL重複発火のdedup。
+          // xterm.js は WebLinksAddon（正規表現）と組み込みの OscLinkProvider
+          // （OSC 8 ハイパーリンク）を両方登録している。Claude CLI が URL を
+          // OSC 8 で包んで出力すると、両プロバイダが同じ範囲にリンクを張り、
+          // 1回のクリックで両方の activate が発火 → iframeWindow.open が
+          // 2回呼ばれて2タブ開く問題が発生する（OscLinkProvider 側は
+          // confirm() 経由のため時間差がつく）。
+          // 同一URLへのopen要求が短時間に重複した場合は2回目以降を無視する。
+          const recentlyOpenedUrls = new Map<string, number>();
+          const DEDUP_WINDOW_MS = 500;
+          const isRecentlyOpened = (u: string): boolean => {
+            const t = recentlyOpenedUrls.get(u);
+            if (t === undefined) return false;
+            if (Date.now() - t > DEDUP_WINDOW_MS) {
+              recentlyOpenedUrls.delete(u);
+              return false;
+            }
+            return true;
+          };
+          const markOpened = (u: string): void => {
+            recentlyOpenedUrls.set(u, Date.now());
+            // 古いエントリを掃除（メモリリーク防止）
+            if (recentlyOpenedUrls.size > 50) {
+              const now = Date.now();
+              for (const [key, ts] of recentlyOpenedUrls) {
+                if (now - ts > DEDUP_WINDOW_MS) recentlyOpenedUrls.delete(key);
+              }
+            }
+          };
+
+          // xterm.js 組み込みの OscLinkProvider は URL クリック時に
+          // `confirm("Do you want to navigate to ${uri}?\n\nWARNING: This link could potentially be dangerous")`
+          // を表示し、ユーザ応答後に window.open を呼ぶ。この confirm がユーザ操作
+          // で任意の時間ブロックするため、WebLinksAddon → OSC の順で fire した
+          // 場合に下流の時間窓 dedup が失効する可能性がある。
+          // Claude CLI の OSC 8 はリンクテキスト=URL で phishing リスクがない
+          // ため、このメッセージに一致する confirm のみ自動承認し、OSC 経路を
+          // 同期的に fire させて dedup の timing を決定論的にする。
+          // （他のコードパスが confirm を使う場合は origConfirm に委譲）
+          const origConfirm = iframeWindow.confirm.bind(iframeWindow);
+          const OSC_CONFIRM_MARKER =
+            "WARNING: This link could potentially be dangerous";
+          // biome-ignore lint/suspicious/noExplicitAny: iframe window の confirm を上書き
+          (iframeWindow as any).confirm = (message?: string): boolean => {
+            if (
+              typeof message === "string" &&
+              message.includes(OSC_CONFIRM_MARKER)
+            ) {
+              return true;
+            }
+            return origConfirm(message);
+          };
+
           // xterm.js WebLinksAddonのURLを横取りする。
           // WebLinksAddonは window.open() を引数なしで呼び、返されたウィンドウの
           // location.href にURLを設定するパターン:
@@ -101,6 +154,8 @@ export function useTerminalLinkInjection(
             // 引数ありの呼び出し（URL直接指定）
             if (url) {
               const urlStr = urlExtensionMap.get(String(url)) || String(url);
+              if (isRecentlyOpened(urlStr)) return null;
+              markOpened(urlStr);
               if (isLoopbackUrl(urlStr)) {
                 arkWindow.postMessage(
                   { type: "ark:open-url", url: urlStr },
@@ -129,6 +184,8 @@ export function useTerminalLinkInjection(
                 set href(u: string) {
                   // URL拡張マップで折り返しURLを完全URLに復元
                   const resolved = urlExtensionMap.get(u) || u;
+                  if (isRecentlyOpened(resolved)) return;
+                  markOpened(resolved);
                   if (isLoopbackUrl(resolved)) {
                     arkWindow.postMessage(
                       { type: "ark:open-url", url: resolved },
