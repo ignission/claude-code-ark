@@ -62,6 +62,9 @@ export class GameScene extends Phaser.Scene {
   private gameTimer = 0;
   private lastFireTime = 0;
   private killsSinceAdvance = 0;
+  private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
+  private keyA!: Phaser.Input.Keyboard.Key;
+  private keyD!: Phaser.Input.Keyboard.Key;
 
   // --- Phaser オブジェクト ---
   private player!: Phaser.GameObjects.Image;
@@ -317,6 +320,11 @@ export class GameScene extends Phaser.Scene {
     // キーボード
     const keyboard = this.input.keyboard;
     if (!keyboard) return;
+
+    // 移動キー（矢印 + A/D）
+    this.cursors = keyboard.createCursorKeys();
+    this.keyA = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A);
+    this.keyD = keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D);
 
     keyboard.on("keydown-ONE", () => this.switchWeapon(0));
     keyboard.on("keydown-TWO", () => this.switchWeapon(1));
@@ -884,6 +892,19 @@ export class GameScene extends Phaser.Scene {
     // タイマー
     this.gameTimer += delta;
     this.playTime = Math.floor(this.gameTimer / 1000);
+
+    // プレイヤー移動（A/D or 矢印キー）
+    const moveSpeed = 150; // px/s
+    const dt = delta / 1000;
+    if (this.cursors?.left?.isDown || this.keyA?.isDown) {
+      this.player.x = Math.max(20, this.player.x - moveSpeed * dt);
+    }
+    if (this.cursors?.right?.isDown || this.keyD?.isDown) {
+      this.player.x = Math.min(
+        GAME_WIDTH * 0.6,
+        this.player.x + moveSpeed * dt
+      );
+    }
 
     // 照準
     const pointer = this.input.activePointer;

@@ -44,7 +44,7 @@ export class TitleScene extends Phaser.Scene {
       .text(
         GAME_WIDTH / 2,
         GAME_HEIGHT - 20,
-        "操作: マウスで照準 / クリックで射撃 / 1-4:武器切替 / R:リロード / Space:防御",
+        "操作: A/D:移動 / マウス:照準 / クリック:射撃 / 1-4:武器 / R:リロード / Space:防御",
         {
           fontSize: "10px",
           color: "#666666",
