@@ -82,45 +82,44 @@ export function useTerminalLinkInjection(
             }
           };
 
-          // URL重複発火のdedup。
+          // クリック世代ベースのdedup。
           // xterm.js は WebLinksAddon（正規表現）と組み込みの OscLinkProvider
           // （OSC 8 ハイパーリンク）を両方登録している。Claude CLI が URL を
           // OSC 8 で包んで出力すると、両プロバイダが同じ範囲にリンクを張り、
           // 1回のクリックで両方の activate が発火 → iframeWindow.open が
-          // 2回呼ばれて2タブ開く問題が発生する（OscLinkProvider 側は
-          // confirm() 経由のため時間差がつく）。
-          // 同一URLへのopen要求が短時間に重複した場合は2回目以降を無視する。
-          const recentlyOpenedUrls = new Map<string, number>();
-          const DEDUP_WINDOW_MS = 500;
-          const isRecentlyOpened = (u: string): boolean => {
-            const t = recentlyOpenedUrls.get(u);
-            if (t === undefined) return false;
-            if (Date.now() - t > DEDUP_WINDOW_MS) {
-              recentlyOpenedUrls.delete(u);
-              return false;
-            }
-            return true;
+          // 2回呼ばれて2タブ開く。
+          // URL文字列ベースの dedup では、両プロバイダが渡す文字列が末尾句読点・
+          // URLエンコーディング・表示文字列/href 差等で1文字でも異なると素通り
+          // するため、より頑健な「1クリック=1タブ」の世代カウンタ方式を採用する。
+          // pointerdown/click を capture フェーズで捕捉し世代を進め、
+          // window.open override 側で「この世代でまだ open していなければ許可、
+          // 既に open 済みなら拒否」とする。
+          let clickGeneration = 0;
+          let openedInGeneration = -1;
+          const bumpGeneration = () => {
+            clickGeneration++;
           };
-          const markOpened = (u: string): void => {
-            recentlyOpenedUrls.set(u, Date.now());
-            // 古いエントリを掃除（メモリリーク防止）
-            if (recentlyOpenedUrls.size > 50) {
-              const now = Date.now();
-              for (const [key, ts] of recentlyOpenedUrls) {
-                if (now - ts > DEDUP_WINDOW_MS) recentlyOpenedUrls.delete(key);
-              }
-            }
+          const iframeDocForClicks = iframeWindow.document;
+          iframeDocForClicks.addEventListener("pointerdown", bumpGeneration, {
+            capture: true,
+            passive: true,
+          });
+          iframeDocForClicks.addEventListener("click", bumpGeneration, {
+            capture: true,
+            passive: true,
+          });
+          const tryClaimOpen = (): boolean => {
+            if (openedInGeneration === clickGeneration) return false;
+            openedInGeneration = clickGeneration;
+            return true;
           };
 
           // xterm.js 組み込みの OscLinkProvider は URL クリック時に
           // `confirm("Do you want to navigate to ${uri}?\n\nWARNING: This link could potentially be dangerous")`
-          // を表示し、ユーザ応答後に window.open を呼ぶ。この confirm がユーザ操作
-          // で任意の時間ブロックするため、WebLinksAddon → OSC の順で fire した
-          // 場合に下流の時間窓 dedup が失効する可能性がある。
-          // Claude CLI の OSC 8 はリンクテキスト=URL で phishing リスクがない
-          // ため、このメッセージに一致する confirm のみ自動承認し、OSC 経路を
-          // 同期的に fire させて dedup の timing を決定論的にする。
-          // （他のコードパスが confirm を使う場合は origConfirm に委譲）
+          // を表示する。UX としてこのダイアログを出したくないのと、Claude CLI の
+          // OSC 8 はリンクテキスト=URL で phishing リスクがないため、該当メッセージ
+          // に一致する confirm のみ自動承認する。他のコードパスが confirm を使う
+          // 場合は origConfirm に委譲。
           const origConfirm = iframeWindow.confirm.bind(iframeWindow);
           const OSC_CONFIRM_MARKER =
             "WARNING: This link could potentially be dangerous";
@@ -154,8 +153,7 @@ export function useTerminalLinkInjection(
             // 引数ありの呼び出し（URL直接指定）
             if (url) {
               const urlStr = urlExtensionMap.get(String(url)) || String(url);
-              if (isRecentlyOpened(urlStr)) return null;
-              markOpened(urlStr);
+              if (!tryClaimOpen()) return null;
               if (isLoopbackUrl(urlStr)) {
                 arkWindow.postMessage(
                   { type: "ark:open-url", url: urlStr },
@@ -184,8 +182,7 @@ export function useTerminalLinkInjection(
                 set href(u: string) {
                   // URL拡張マップで折り返しURLを完全URLに復元
                   const resolved = urlExtensionMap.get(u) || u;
-                  if (isRecentlyOpened(resolved)) return;
-                  markOpened(resolved);
+                  if (!tryClaimOpen()) return;
                   if (isLoopbackUrl(resolved)) {
                     arkWindow.postMessage(
                       { type: "ark:open-url", url: resolved },
