@@ -27,8 +27,27 @@ export function FrontLineGame({ socket }: FrontLineGameProps) {
 
     const game = new Phaser.Game(createGameConfig(containerRef.current));
     gameRef.current = game;
-    // デバッグ用: ゲームインスタンスをwindowに公開
     (window as unknown as Record<string, unknown>).__FRONTLINE_GAME__ = game;
+
+    const onMobileAction = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      gameRef.current?.events.emit("mobile:action", detail);
+    };
+
+    window.addEventListener("frontline:mobile", onMobileAction);
+
+    return () => {
+      window.removeEventListener("frontline:mobile", onMobileAction);
+      game.destroy(true);
+      gameRef.current = null;
+      (window as unknown as Record<string, unknown>).__FRONTLINE_GAME__ =
+        undefined;
+    };
+  }, []);
+
+  useEffect(() => {
+    const game = gameRef.current;
+    if (!game) return;
 
     // --- Bridge: game.events → socket ---
 
@@ -53,26 +72,23 @@ export function FrontLineGame({ socket }: FrontLineGameProps) {
       game.events.emit("frontline:record_saved_received", data);
     };
 
-    socket?.on("frontline:stats", onStatsReceived);
-    socket?.on("frontline:record_saved", onRecordSaved);
-
-    // --- Bridge: window CustomEvent → game.events ---
-
-    const onMobileAction = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      game.events.emit("mobile:action", detail);
+    const onFrontlineError = (data: {
+      action: "get_stats" | "get_records" | "save_record";
+      message: string;
+    }) => {
+      game.events.emit("frontline:error_received", data);
     };
 
-    window.addEventListener("frontline:mobile", onMobileAction);
+    socket?.on("frontline:stats", onStatsReceived);
+    socket?.on("frontline:record_saved", onRecordSaved);
+    socket?.on("frontline:error", onFrontlineError);
 
     return () => {
-      window.removeEventListener("frontline:mobile", onMobileAction);
       socket?.off("frontline:stats", onStatsReceived);
       socket?.off("frontline:record_saved", onRecordSaved);
+      socket?.off("frontline:error", onFrontlineError);
       game.events.off("frontline:save_record", onSaveRecord);
       game.events.off("frontline:get_stats", onGetStats);
-      game.destroy(true);
-      gameRef.current = null;
     };
   }, [socket]);
 

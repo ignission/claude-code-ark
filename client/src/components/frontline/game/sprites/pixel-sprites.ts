@@ -2949,9 +2949,16 @@ export function renderPixelGrid(
   grid: PixelGrid,
   scale = 1
 ): { width: number; height: number; canvas: HTMLCanvasElement } {
-  const h = grid.length;
-  const w = grid[0].length;
   const canvas = document.createElement("canvas");
+  const h = grid.length;
+  const w = grid[0]?.length ?? 0;
+
+  if (h === 0 || w === 0) {
+    canvas.width = 0;
+    canvas.height = 0;
+    return { width: 0, height: 0, canvas };
+  }
+
   canvas.width = w * scale;
   canvas.height = h * scale;
   const ctx = canvas.getContext("2d");

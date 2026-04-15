@@ -53,7 +53,6 @@ const MEDAL_CHECKS: readonly MedalCheck[] = [
     id: "precision",
     check: (_record, stats) =>
       stats.totalShots >= 20 &&
-      stats.totalShots > 0 &&
       stats.totalHeadshots / stats.totalShots >= 0.5,
   },
   {
@@ -100,13 +99,12 @@ function createDefaultStats(): FrontlineStats {
  * 累積功績ポイントから階級を算出
  */
 function calcRank(totalMeritPoints: number): string {
-  let rank = RANKS[0].name;
-  for (const r of RANKS) {
-    if (totalMeritPoints >= r.threshold) {
-      rank = r.name;
+  for (let i = RANKS.length - 1; i >= 0; i--) {
+    if (totalMeritPoints >= RANKS[i].threshold) {
+      return RANKS[i].name;
     }
   }
-  return rank;
+  return RANKS[0].name;
 }
 
 class FrontlineManager {

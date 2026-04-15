@@ -5,6 +5,12 @@ import type { FrontlineStats } from "../../../../../../shared/types";
 import { GAME_HEIGHT, GAME_WIDTH, MEDALS } from "../constants";
 
 export class RecordsScene extends Phaser.Scene {
+  private onStatsReceived?: (stats: FrontlineStats) => void;
+  private onFrontlineError?: (payload: {
+    action: "get_stats" | "get_records" | "save_record";
+    message: string;
+  }) => void;
+
   constructor() {
     super({ key: "RecordsScene" });
   }
@@ -40,20 +46,30 @@ export class RecordsScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this.game.events.off("frontline:stats_received");
+      if (this.onStatsReceived) {
+        this.game.events.off("frontline:stats_received", this.onStatsReceived);
+      }
+      if (this.onFrontlineError) {
+        this.game.events.off("frontline:error_received", this.onFrontlineError);
+      }
     });
 
     // 統計取得リクエスト
     this.game.events.emit("frontline:get_stats");
 
     // 統計受信
-    this.game.events.once(
-      "frontline:stats_received",
-      (stats: FrontlineStats) => {
-        loadingText.destroy();
-        this.showStats(stats);
-      }
-    );
+    this.onStatsReceived = (stats: FrontlineStats) => {
+      loadingText.destroy();
+      this.showStats(stats);
+    };
+    this.game.events.once("frontline:stats_received", this.onStatsReceived);
+
+    this.onFrontlineError = payload => {
+      if (payload.action !== "get_stats") return;
+      loadingText.setText(`読込失敗: ${payload.message}`);
+      loadingText.setColor("#ff7b7b");
+    };
+    this.game.events.on("frontline:error_received", this.onFrontlineError);
 
     // タイトルへ戻るボタン（即表示）
     this.createButton(

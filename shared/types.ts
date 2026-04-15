@@ -211,6 +211,7 @@ export interface ServerToClientEvents {
   "frontline:stats": (stats: FrontlineStats) => void;
   "frontline:records": (records: FrontlineRecord[]) => void;
   "frontline:record_saved": (data: FrontlineRecordSaved) => void;
+  "frontline:error": (data: FrontlineError) => void;
 }
 
 export interface ClientToServerEvents {
@@ -388,4 +389,9 @@ export interface FrontlineRecordSaved {
   newMedals: string[];
   newBestDistance: boolean;
   newBestKills: boolean;
+}
+
+export interface FrontlineError {
+  action: "get_stats" | "get_records" | "save_record";
+  message: string;
 }

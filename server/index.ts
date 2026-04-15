@@ -1442,24 +1442,41 @@ async function startServer() {
 
     // ===== Frontline Commands =====
 
+    const emitFrontlineError = (
+      action: "get_stats" | "get_records" | "save_record",
+      error: unknown
+    ) => {
+      const message = getErrorMessage(error);
+      socket.emit("frontline:error", { action, message });
+      return message;
+    };
+
     socket.on("frontline:get_stats", () => {
       try {
         const stats = frontlineManager.getStats();
         socket.emit("frontline:stats", stats);
       } catch (error) {
         console.error(
-          `[Frontline] get_stats エラー: ${getErrorMessage(error)}`
+          `[Frontline] get_stats エラー: ${emitFrontlineError("get_stats", error)}`
         );
       }
     });
 
     socket.on("frontline:get_records", data => {
       try {
-        const records = frontlineManager.getRecords(data?.limit);
+        const rawLimit =
+          typeof data?.limit === "string"
+            ? Number.parseInt(data.limit, 10)
+            : data?.limit;
+        const limit =
+          typeof rawLimit === "number" && Number.isFinite(rawLimit)
+            ? Math.min(100, Math.max(1, Math.floor(rawLimit)))
+            : 50;
+        const records = frontlineManager.getRecords(limit);
         socket.emit("frontline:records", records);
       } catch (error) {
         console.error(
-          `[Frontline] get_records エラー: ${getErrorMessage(error)}`
+          `[Frontline] get_records エラー: ${emitFrontlineError("get_records", error)}`
         );
       }
     });
@@ -1470,7 +1487,7 @@ async function startServer() {
         io.emit("frontline:record_saved", result);
       } catch (error) {
         console.error(
-          `[Frontline] save_record エラー: ${getErrorMessage(error)}`
+          `[Frontline] save_record エラー: ${emitFrontlineError("save_record", error)}`
         );
       }
     });

@@ -114,6 +114,9 @@ export class GameScene extends Phaser.Scene {
   private paraSpawnTimer?: Phaser.Time.TimerEvent;
   private artilleryTimer?: Phaser.Time.TimerEvent;
   private reloadTimer?: Phaser.Time.TimerEvent;
+  private rainTimer?: Phaser.Time.TimerEvent;
+  private rainGraphics?: Phaser.GameObjects.Graphics;
+  private onStatsReceived?: (stats: FrontlineStats) => void;
 
   constructor() {
     super({ key: "GameScene" });
@@ -122,6 +125,7 @@ export class GameScene extends Phaser.Scene {
   create(): void {
     console.log("[GameScene] create() start");
     try {
+      this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.shutdown, this);
       this.resetState();
       console.log("[GameScene] resetState done");
       this.createBackground();
@@ -157,20 +161,23 @@ export class GameScene extends Phaser.Scene {
 
   /** 雨エフェクト — 斜めの線を描画し続ける */
   private startRain(): void {
-    const rainGfx = this.add.graphics().setDepth(90);
-    this.time.addEvent({
+    this.rainGraphics?.destroy();
+    this.rainTimer?.remove(false);
+
+    this.rainGraphics = this.add.graphics().setDepth(90);
+    this.rainTimer = this.time.addEvent({
       delay: 50,
       loop: true,
       callback: () => {
-        rainGfx.clear();
-        rainGfx.lineStyle(1, 0x6688aa, 0.3);
+        this.rainGraphics?.clear();
+        this.rainGraphics?.lineStyle(1, 0x6688aa, 0.3);
         for (let i = 0; i < 40; i++) {
           const x = Math.random() * GAME_WIDTH;
           const y = Math.random() * GROUND_Y;
-          rainGfx.beginPath();
-          rainGfx.moveTo(x, y);
-          rainGfx.lineTo(x - 4, y + 10);
-          rainGfx.strokePath();
+          this.rainGraphics?.beginPath();
+          this.rainGraphics?.moveTo(x, y);
+          this.rainGraphics?.lineTo(x - 4, y + 10);
+          this.rainGraphics?.strokePath();
         }
       },
     });
@@ -178,7 +185,13 @@ export class GameScene extends Phaser.Scene {
 
   shutdown(): void {
     this.game.events.off("mobile:action", this.handleMobileAction, this);
-    this.game.events.off("frontline:stats_received");
+    if (this.onStatsReceived) {
+      this.game.events.off("frontline:stats_received", this.onStatsReceived);
+    }
+    this.rainTimer?.remove(false);
+    this.rainTimer = undefined;
+    this.rainGraphics?.destroy();
+    this.rainGraphics = undefined;
     this.input.setDefaultCursor("default");
   }
 
@@ -403,12 +416,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private loadDeathMarkers(): void {
-    this.game.events.once(
-      "frontline:stats_received",
-      (stats: FrontlineStats) => {
-        this.renderDeathMarkers(stats.deathPositions);
-      }
-    );
+    this.onStatsReceived = (stats: FrontlineStats) => {
+      this.renderDeathMarkers(stats.deathPositions);
+    };
+    this.game.events.once("frontline:stats_received", this.onStatsReceived);
     this.game.events.emit("frontline:get_stats");
   }
 

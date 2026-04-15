@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Link } from "wouter";
 
 const SIDEBAR_MIN_WIDTH = 180;
 const SIDEBAR_MAX_WIDTH = 450;
@@ -112,12 +113,12 @@ export function SidebarMainLayout({
         style={{ width: `${sidebarWidth}px` }}
       >
         <div className="flex-1 min-h-0 overflow-hidden">{sidebar}</div>
-        <a
+        <Link
           href="/frontline"
           className="w-full py-2 text-sm text-muted-foreground hover:text-foreground border-t border-border transition-colors block text-center"
         >
           🎯 FrontLine
-        </a>
+        </Link>
         {onTogglePets && (
           <button
             type="button"

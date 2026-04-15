@@ -12,7 +12,7 @@
 - ピクセルアートはコード内定義（pixel-sprites.ts）
 
 ## ファイル構成
-```
+```text
 client/src/components/frontline/
 ├── FrontLinePage.tsx         # ルートページ
 ├── FrontLineGame.tsx         # Phaser↔React↔Socket.IOブリッジ

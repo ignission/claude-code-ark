@@ -261,9 +261,18 @@ class SessionDatabase {
         play_hours TEXT NOT NULL DEFAULT '{}',
         medals TEXT NOT NULL DEFAULT '[]',
         death_positions TEXT NOT NULL DEFAULT '[]',
-        updated_at TEXT NOT NULL DEFAULT ''
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `);
+  }
+
+  private safeJsonParse<T>(json: string, fallback: T, fieldName: string): T {
+    try {
+      return JSON.parse(json) as T;
+    } catch {
+      console.warn(`[DB] Failed to parse frontline_stats.${fieldName}:`, json);
+      return fallback;
+    }
   }
 
   // ============================================================
@@ -820,9 +829,17 @@ class SessionDatabase {
       bestDistance: row.best_distance,
       bestKills: row.best_kills,
       rank: row.rank,
-      playHours: JSON.parse(row.play_hours) as Record<string, number>,
-      medals: JSON.parse(row.medals) as string[],
-      deathPositions: JSON.parse(row.death_positions) as number[],
+      playHours: this.safeJsonParse<Record<string, number>>(
+        row.play_hours,
+        {},
+        "play_hours"
+      ),
+      medals: this.safeJsonParse<string[]>(row.medals, [], "medals"),
+      deathPositions: this.safeJsonParse<number[]>(
+        row.death_positions,
+        [],
+        "death_positions"
+      ),
     };
   }
 

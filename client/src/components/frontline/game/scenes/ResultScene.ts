@@ -13,6 +13,11 @@ import type { GameResultData } from "./GameScene";
 
 export class ResultScene extends Phaser.Scene {
   private saveStatusText?: Phaser.GameObjects.Text;
+  private onRecordSaved?: (payload: FrontlineRecordSaved) => void;
+  private onFrontlineError?: (payload: {
+    action: "get_stats" | "get_records" | "save_record";
+    message: string;
+  }) => void;
 
   constructor() {
     super({ key: "ResultScene" });
@@ -20,7 +25,15 @@ export class ResultScene extends Phaser.Scene {
 
   create(data: GameResultData): void {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this.game.events.off("frontline:record_saved_received");
+      if (this.onRecordSaved) {
+        this.game.events.off(
+          "frontline:record_saved_received",
+          this.onRecordSaved
+        );
+      }
+      if (this.onFrontlineError) {
+        this.game.events.off("frontline:error_received", this.onFrontlineError);
+      }
     });
 
     // レコード保存イベント発火（Reactラッパーが受け取ってSocket.IOへ転送）
@@ -111,12 +124,17 @@ export class ResultScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    this.game.events.once(
-      "frontline:record_saved_received",
-      (payload: FrontlineRecordSaved) => {
-        this.renderSaveResult(payload, data);
-      }
-    );
+    this.onRecordSaved = (payload: FrontlineRecordSaved) => {
+      this.renderSaveResult(payload, data);
+    };
+    this.game.events.once("frontline:record_saved_received", this.onRecordSaved);
+
+    this.onFrontlineError = payload => {
+      if (payload.action !== "save_record") return;
+      this.saveStatusText?.setText(`戦績の保存に失敗しました: ${payload.message}`);
+      this.saveStatusText?.setColor("#ff7b7b");
+    };
+    this.game.events.on("frontline:error_received", this.onFrontlineError);
 
     // ボタン
     this.createButton(
