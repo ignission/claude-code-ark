@@ -4,6 +4,7 @@ module.exports = {
       name: "claude-code-ark",
       script: "dist/index.js",
       cwd: __dirname,
+      interpreter: "node",
       node_args: "--env-file=.env.production",
       args: "--remote",
       exec_mode: "fork",

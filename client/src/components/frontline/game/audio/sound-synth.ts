@@ -1,118 +1,113 @@
-// FrontLine サウンド合成 — Web Audio APIによる効果音生成
+// FrontLine サウンド — fetch+decodeAudioDataで事前デコード、即時再生（ラグなし）
 
-let audioCtx: AudioContext | null = null;
+const buffers = new Map<string, AudioBuffer>();
+let ctx: AudioContext | null = null;
+let initPromise: Promise<void> | null = null;
 
 function getCtx(): AudioContext {
-  if (!audioCtx) audioCtx = new AudioContext();
-  return audioCtx;
+  if (!ctx) ctx = new AudioContext();
+  return ctx;
 }
 
-/** オシレーターでトーンを再生 */
-function playTone(
-  freq: number,
-  duration: number,
-  type: OscillatorType,
-  volume: number
-): void {
-  const ctx = getCtx();
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
+const SOUND_FILES: Record<string, string> = {
+  handgun: "/sounds/handgun.ogg",
+  machinegun: "/sounds/machinegun.ogg",
+  shotgun: "/sounds/shotgun.ogg",
+  sniper: "/sounds/sniper.ogg",
+  reload: "/sounds/reload.ogg",
+  explosion: "/sounds/explosion.ogg",
+  hit: "/sounds/hit.ogg",
+  headshot: "/sounds/headshot.ogg",
+  defend: "/sounds/defend.ogg",
+  grenade_throw: "/sounds/grenade_throw.ogg",
+};
 
-  osc.type = type;
-  osc.frequency.value = freq;
-  gain.gain.value = volume;
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
-
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.start(ctx.currentTime);
-  osc.stop(ctx.currentTime + duration);
+/** GameScene create()で呼び出し。全サウンドをfetch+デコードしてバッファに格納（一度だけ） */
+export function initSoundSystem(): Promise<void> {
+  if (initPromise) return initPromise;
+  const audioCtx = getCtx();
+  initPromise = Promise.all(
+    Object.entries(SOUND_FILES).map(([key, url]) =>
+      fetch(url)
+        .then(r => r.arrayBuffer())
+        .then(ab => audioCtx.decodeAudioData(ab))
+        .then(buf => buffers.set(key, buf))
+        .catch(() => {})
+    )
+  ).then(() => {});
+  return initPromise;
 }
 
-/** ホワイトノイズを再生（線形減衰） */
-function playNoise(duration: number, volume: number): void {
-  const ctx = getCtx();
-  const sampleRate = ctx.sampleRate;
-  const length = Math.floor(sampleRate * duration);
-  const buffer = ctx.createBuffer(1, length, sampleRate);
-  const data = buffer.getChannelData(0);
-
-  for (let i = 0; i < length; i++) {
-    data[i] = (Math.random() * 2 - 1) * (1 - i / length);
-  }
-
-  const source = ctx.createBufferSource();
-  const gain = ctx.createGain();
-  source.buffer = buffer;
+function play(key: string, volume = 0.5, rate = 1.0): void {
+  const buf = buffers.get(key);
+  if (!buf) return;
+  const audioCtx = getCtx();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  const src = audioCtx.createBufferSource();
+  const gain = audioCtx.createGain();
+  src.buffer = buf;
+  src.playbackRate.value = rate;
   gain.gain.value = volume;
-
-  source.connect(gain);
-  gain.connect(ctx.destination);
-  source.start(ctx.currentTime);
+  src.connect(gain).connect(audioCtx.destination);
+  src.start(0);
 }
 
 export const SoundSynth = {
-  /** 拳銃 — 200Hz square 0.08s + noise 0.05s */
   handgunShot(): void {
-    playTone(200, 0.08, "square", 0.3);
-    playNoise(0.05, 0.2);
+    play("handgun", 0.4);
   },
 
-  /** 機関銃 — 300Hz square 0.04s + noise 0.03s */
   machinegunShot(): void {
-    playTone(300, 0.04, "square", 0.25);
-    playNoise(0.03, 0.15);
+    play("machinegun", 0.35, 1.0 + Math.random() * 0.15);
   },
 
-  /** 散弾銃 — noise 0.12s + 100Hz sawtooth 0.1s */
   shotgunShot(): void {
-    playNoise(0.12, 0.35);
-    playTone(100, 0.1, "sawtooth", 0.3);
+    play("shotgun", 0.5);
   },
 
-  /** 狙撃銃 — 150Hz sawtooth 0.15s + noise 0.08s */
   sniperShot(): void {
-    playTone(150, 0.15, "sawtooth", 0.35);
-    playNoise(0.08, 0.25);
+    play("sniper", 0.5);
   },
 
-  /** リロード — 800Hz 0.05s → 100ms gap → 600Hz 0.05s */
   reload(): void {
-    playTone(800, 0.05, "sine", 0.2);
-    setTimeout(() => {
-      playTone(600, 0.05, "sine", 0.2);
-    }, 100);
+    play("reload", 0.35);
   },
 
-  /** 被弾 — noise 0.04s */
   hit(): void {
-    playNoise(0.04, 0.3);
+    play("hit", 0.4, 0.9 + Math.random() * 0.2);
   },
 
-  /** 爆発 — noise 0.4s + 60Hz sawtooth 0.3s */
   explosion(): void {
-    playNoise(0.4, 0.4);
-    playTone(60, 0.3, "sawtooth", 0.35);
+    play("explosion", 0.6);
   },
 
-  /** ヘッドショット — 1200Hz sine 0.15s */
   headshot(): void {
-    playTone(1200, 0.15, "sine", 0.3);
+    play("headshot", 0.5);
   },
 
-  /** 防御 — 200Hz triangle 0.08s */
   defend(): void {
-    playTone(200, 0.08, "triangle", 0.25);
+    play("defend", 0.4, 0.9 + Math.random() * 0.2);
   },
 
-  /** 勲章取得 — 523Hz→659Hz→784Hz sine カスケード (150ms間隔) */
+  grenadeThrow(): void {
+    play("grenade_throw", 0.3);
+  },
+
   medal(): void {
-    playTone(523, 0.15, "sine", 0.25);
-    setTimeout(() => {
-      playTone(659, 0.15, "sine", 0.25);
-    }, 150);
-    setTimeout(() => {
-      playTone(784, 0.15, "sine", 0.25);
-    }, 300);
+    const audioCtx = getCtx();
+    const notes = [523, 659, 784];
+    for (let i = 0; i < notes.length; i++) {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const t = audioCtx.currentTime + i * 0.15;
+      osc.type = "sine";
+      osc.frequency.value = notes[i];
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.25, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + 0.25);
+    }
   },
 } as const;

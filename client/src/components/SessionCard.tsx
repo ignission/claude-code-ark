@@ -17,8 +17,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import type { ManagedSession, Pet, Worktree } from "../../../shared/types";
-import { PetSprite } from "./pets/PetSprite";
+import type { ManagedSession, Worktree } from "../../../shared/types";
 
 /** プレビュー無変化でアイドル判定するまでの秒数 */
 const IDLE_THRESHOLD_MS = 10_000;
@@ -34,8 +33,6 @@ interface SessionCardProps {
   /** セッション削除（停止 + メイン以外のWorktree削除） */
   onDelete: () => void;
   onStart?: () => void;
-  /** セッションに紐づくペット */
-  pet?: Pet;
 }
 
 export function SessionCard({
@@ -47,7 +44,6 @@ export function SessionCard({
   onClick,
   onDelete,
   onStart,
-  pet,
 }: SessionCardProps) {
   const branch =
     worktree?.branch ||
@@ -135,24 +131,6 @@ export function SessionCard({
   const idle = session.status === "idle" || isIdle;
   const displayText = idle && activityText ? activityText : previewText;
 
-  // ペットの吹き出し: セッション状態に応じたメッセージ
-  const petBubble = pet
-    ? (() => {
-        // 確認待ち（パーミッション・ユーザー入力）
-        if (/bypass permissions|Allow|Deny|press Enter/i.test(previewText))
-          return "❓";
-        // エラー状態
-        if (dotColor === "bg-red-500" && idle) return "💤";
-        // 作業中
-        if (dotColor === "bg-green-500") return null; // アニメーションで表現
-        // 起動直後
-        if (dotColor === "bg-blue-500") return "✨";
-        // その他アイドル
-        if (idle) return "💤";
-        return null;
-      })()
-    : null;
-
   return (
     <>
       <ContextMenu>
@@ -167,23 +145,7 @@ export function SessionCard({
             onClick={onClick}
           >
             <div className="flex items-center gap-2 min-w-0">
-              {pet ? (
-                <div className="relative shrink-0">
-                  <PetSprite
-                    species={pet.species}
-                    mood={pet.mood}
-                    isActive={dotColor === "bg-green-500"}
-                    size={16}
-                  />
-                  {petBubble && (
-                    <span className="absolute -top-2.5 -right-1.5 text-[9px] leading-none">
-                      {petBubble}
-                    </span>
-                  )}
-                </div>
-              ) : (
-                <div className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
-              )}
+              <div className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
               <span className="text-sm font-mono truncate text-sidebar-foreground">
                 {branch}
               </span>
@@ -191,18 +153,11 @@ export function SessionCard({
                 <span className="ml-auto text-xs text-primary shrink-0">◀</span>
               )}
             </div>
-            {(displayText || pet) && (
-              <div className="mt-1 flex items-center gap-1 pl-6 min-w-0">
-                {displayText && (
-                  <p className="text-xs text-muted-foreground truncate">
-                    {displayText}
-                  </p>
-                )}
-                {pet && (
-                  <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
-                    Lv.{pet.level}
-                  </span>
-                )}
+            {displayText && (
+              <div className="mt-1 flex items-center gap-1 pl-4 min-w-0">
+                <p className="text-xs text-muted-foreground truncate">
+                  {displayText}
+                </p>
               </div>
             )}
           </button>

@@ -32,6 +32,9 @@ export function createGameConfig(
     scene: [BootScene, TitleScene, GameScene, ResultScene, RecordsScene],
     input: {
       activePointers: 2,
+      keyboard: {
+        target: window,
+      },
     },
   };
 }

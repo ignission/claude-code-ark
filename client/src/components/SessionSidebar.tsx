@@ -10,7 +10,7 @@ import { FolderOpen, Globe, Plus, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useGroupedWorktreeItems } from "@/hooks/useGroupedWorktreeItems";
-import type { ManagedSession, Pet, Worktree } from "../../../shared/types";
+import type { ManagedSession, Worktree } from "../../../shared/types";
 import { SessionCard } from "./SessionCard";
 
 interface SessionSidebarProps {
@@ -31,8 +31,6 @@ interface SessionSidebarProps {
   isBrowserSelected?: boolean;
   /** リモートアクセス中か */
   isRemote?: boolean;
-  /** セッションIDからペットを取得する関数 */
-  getPetForSession?: (sessionId: string) => Pet | undefined;
 }
 
 export function SessionSidebar({
@@ -49,7 +47,6 @@ export function SessionSidebar({
   onSelectBrowser,
   isBrowserSelected = false,
   isRemote = false,
-  getPetForSession,
 }: SessionSidebarProps) {
   const { groupedItems } = useGroupedWorktreeItems(
     worktrees,
@@ -137,11 +134,6 @@ export function SessionSidebar({
                         session && onDeleteSession(session.id, wt ?? undefined)
                       }
                       onStart={() => (wt ? onStartSession(wt) : undefined)}
-                      pet={
-                        session && getPetForSession
-                          ? getPetForSession(session.id)
-                          : undefined
-                      }
                     />
                   ))}
                 </div>

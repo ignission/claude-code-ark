@@ -12,7 +12,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { Link } from "wouter";
 
 const SIDEBAR_MIN_WIDTH = 180;
 const SIDEBAR_MAX_WIDTH = 450;
@@ -24,9 +23,7 @@ interface SidebarMainLayoutProps {
   beacon: ReactNode;
   initialSidebarWidth?: number;
   onSidebarWidthChange?: (width: number) => void;
-  petsPanel?: ReactNode;
-  showPets?: boolean;
-  onTogglePets?: () => void;
+  onOpenFrontLine?: () => void;
 }
 
 export function SidebarMainLayout({
@@ -35,9 +32,7 @@ export function SidebarMainLayout({
   beacon,
   initialSidebarWidth = SIDEBAR_DEFAULT_WIDTH,
   onSidebarWidthChange,
-  petsPanel,
-  showPets,
-  onTogglePets,
+  onOpenFrontLine,
 }: SidebarMainLayoutProps) {
   const [sidebarWidth, setSidebarWidth] = useState(
     Math.min(
@@ -113,21 +108,13 @@ export function SidebarMainLayout({
         style={{ width: `${sidebarWidth}px` }}
       >
         <div className="flex-1 min-h-0 overflow-hidden">{sidebar}</div>
-        <Link
-          href="/frontline"
-          className="w-full py-2 text-sm text-muted-foreground hover:text-foreground border-t border-border transition-colors block text-center"
-        >
-          🎯 FrontLine
-        </Link>
-        {onTogglePets && (
+        {onOpenFrontLine && (
           <button
             type="button"
-            onClick={onTogglePets}
-            className={`w-full py-2 text-sm hover:text-foreground border-t border-border transition-colors ${
-              showPets ? "text-primary" : "text-muted-foreground"
-            }`}
+            onClick={onOpenFrontLine}
+            className="w-full py-2 text-sm text-muted-foreground hover:text-foreground border-t border-border transition-colors block text-center"
           >
-            🚢 箱舟
+            🎯 FrontLine
           </button>
         )}
         {/* biome-ignore lint/a11y/noStaticElementInteractions: リサイズハンドルはマウス操作専用 */}
@@ -141,13 +128,6 @@ export function SidebarMainLayout({
 
       {/* メインエリア */}
       <div className="flex-1 min-w-0 flex flex-col">{main}</div>
-
-      {/* ペットパネル */}
-      {showPets && petsPanel && (
-        <div className="w-[300px] shrink-0 border-l border-border overflow-y-auto">
-          {petsPanel}
-        </div>
-      )}
 
       {/* Beacon */}
       <div className="w-[350px] shrink-0 border-l border-border">{beacon}</div>

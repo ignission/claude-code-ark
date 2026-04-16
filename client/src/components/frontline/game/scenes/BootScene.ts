@@ -11,6 +11,12 @@ import {
   ENEMY_HIT,
   ENEMY_SHOOT,
   ENEMY_WALK,
+  GRENADE_PROJECTILE,
+  GUN_GRENADE,
+  GUN_HANDGUN,
+  GUN_MACHINEGUN,
+  GUN_SHOTGUN,
+  GUN_SNIPER,
   HELICOPTER,
   HELICOPTER_DAMAGED,
   PARACHUTE_FALL,
@@ -101,6 +107,14 @@ export class BootScene extends Phaser.Scene {
     this.registerTexture("crosshair", CROSSHAIR, SCALE);
     this.registerTexture("sandbag", SANDBAG, SCALE);
     this.registerTexture("cross", CROSS_MARKER, SCALE);
+
+    // 武器スプライト
+    this.registerTexture("gun_handgun", GUN_HANDGUN, SCALE);
+    this.registerTexture("gun_machinegun", GUN_MACHINEGUN, SCALE);
+    this.registerTexture("gun_shotgun", GUN_SHOTGUN, SCALE);
+    this.registerTexture("gun_sniper", GUN_SNIPER, SCALE);
+    this.registerTexture("gun_grenade", GUN_GRENADE, SCALE);
+    this.registerTexture("grenade_proj", GRENADE_PROJECTILE, SCALE);
 
     // 弾丸テクスチャ (4x4 黄色)
     this.createSolidTexture(SPRITE_KEYS.bullet, 4, 4, "#ffcc00");
