@@ -3,7 +3,7 @@
 import Phaser from "phaser";
 import type { FrontlineStats } from "../../../../../../shared/types";
 
-import { SoundSynth, initSoundSystem } from "../audio/sound-synth";
+import { initSoundSystem, SoundSynth } from "../audio/sound-synth";
 import {
   ADVANCE_DISTANCE,
   ARTILLERY_DAMAGE,
@@ -29,6 +29,8 @@ import {
   PARA_MIN_DISTANCE,
   PLAYER_MAX_HP,
   PLAYER_X,
+  SNIPER_PENETRATION,
+  SNIPER_PENETRATION_DAMAGE_DECAY,
   SPRITE_KEYS,
   WEAPONS,
 } from "../constants";
@@ -231,9 +233,10 @@ export class GameScene extends Phaser.Scene {
 
   private onModalResume = (): void => {
     if (!this.modalPaused) return;
+    // sceneを一時的にresumeしてオーバーレイを描画、その後再pauseして入力待ち
     this.scene.resume();
-    // physicsはresumeGameで任意キー押下後に再開
     this.showPauseOverlay();
+    this.scene.pause();
   };
 
   private showPauseOverlay(): void {
@@ -265,10 +268,11 @@ export class GameScene extends Phaser.Scene {
       .setDepth(9999)
       .setScrollFactor(0);
 
-    // 任意キーまたはクリックで再開
+    // 任意キーまたはクリックでscene+physicsを再開
     const resumeGame = () => {
       this.removePauseOverlay();
       this.modalPaused = false;
+      this.scene.resume();
       this.physics.resume();
     };
     this.input.keyboard?.once("keydown", resumeGame);
@@ -902,6 +906,10 @@ export class GameScene extends Phaser.Scene {
       bullet.setData("damage", weapon.damage);
       bullet.setData("vx", vx);
       bullet.setData("vy", vy);
+      bullet.setData("weaponIndex", this.currentWeapon);
+      bullet.setData("penetrationCount", 0);
+      bullet.setData("currentDamage", weapon.damage);
+      bullet.setData("hitEnemies", [] as Phaser.GameObjects.Image[]);
       this.playerBulletList.push(bullet);
 
       // 2秒後に自動破棄
@@ -1742,18 +1750,27 @@ export class GameScene extends Phaser.Scene {
 
       // 敵との衝突判定
       let hit = false;
+      const weaponIdx = (bullet.getData("weaponIndex") as number) ?? 0;
+      const isSniper = WEAPONS[weaponIdx]?.name === "Sniper";
+      const hitEnemies =
+        (bullet.getData("hitEnemies") as Phaser.GameObjects.Image[]) ?? [];
+      let currentDamage =
+        (bullet.getData("currentDamage") as number) ??
+        (bullet.getData("damage") as number) ??
+        15;
+      let penetrationCount =
+        (bullet.getData("penetrationCount") as number) ?? 0;
+
       for (const enemy of allEnemiesForHit) {
         if (!enemy.active) continue;
+        if (isSniper && hitEnemies.includes(enemy)) continue;
         const dx = Math.abs(bullet.x - enemy.x);
         const dy = Math.abs(bullet.y - enemy.y);
         if (dx < 20 && dy < 30) {
           hit = true;
-          const damage = (bullet.getData("damage") as number) ?? 15;
-          bullet.destroy();
-          this.playerBulletList.splice(bi, 1);
 
           // ヘッドショット判定
-          let finalDamage = damage;
+          let finalDamage = currentDamage;
           const enemyTop = enemy.y - enemy.displayHeight / 2;
           const headZoneBottom = enemyTop + enemy.displayHeight * HEADSHOT_ZONE;
           if (bullet.y < headZoneBottom) {
@@ -1839,10 +1856,108 @@ export class GameScene extends Phaser.Scene {
               if (enemy.active) enemy.clearTint();
             });
           }
+
+          // 狙撃銃: 貫通処理（弾を消さず次の敵へ）
+          if (isSniper) {
+            hitEnemies.push(enemy);
+            penetrationCount++;
+            currentDamage *= SNIPER_PENETRATION_DAMAGE_DECAY;
+            bullet.setData("hitEnemies", hitEnemies);
+            bullet.setData("penetrationCount", penetrationCount);
+            bullet.setData("currentDamage", currentDamage);
+            if (penetrationCount >= SNIPER_PENETRATION) {
+              bullet.destroy();
+              this.playerBulletList.splice(bi, 1);
+              break;
+            }
+            // 貫通エフェクト（弾が少し透明に）
+            bullet.setAlpha(1 - penetrationCount * 0.25);
+          } else {
+            bullet.destroy();
+            this.playerBulletList.splice(bi, 1);
+            break;
+          }
+        }
+      }
+      if (hit && !isSniper) continue;
+      if (
+        isSniper &&
+        penetrationCount > 0 &&
+        penetrationCount >= SNIPER_PENETRATION
+      )
+        continue;
+    }
+
+    // 手榴弾の物理更新（放物線+着弾爆発）
+    for (let gi = this.grenadeList.length - 1; gi >= 0; gi--) {
+      const g = this.grenadeList[gi];
+      if (!g.sprite.active) {
+        this.grenadeList.splice(gi, 1);
+        continue;
+      }
+      g.sprite.x += g.vx * dt;
+      g.vy += GRENADE_GRAVITY * dt;
+      g.sprite.y += g.vy * dt;
+      g.sprite.setRotation(g.sprite.rotation + 5 * dt); // 回転
+
+      // 地面衝突 or 画面外
+      const groundY = this.getGroundYAtX(g.sprite.x);
+      if (
+        g.sprite.y >= groundY - 4 ||
+        g.sprite.x > GAME_WIDTH + 20 ||
+        g.sprite.x < -20
+      ) {
+        this.explodeGrenade(
+          g.sprite.x,
+          Math.min(g.sprite.y, groundY - 4),
+          g.damage
+        );
+        g.sprite.destroy();
+        this.grenadeList.splice(gi, 1);
+      }
+    }
+
+    // 破片の物理更新と敵衝突判定（当たれば即死）
+    for (let si = this.shrapnelList.length - 1; si >= 0; si--) {
+      const s = this.shrapnelList[si];
+      if (!s.sprite.active) {
+        this.shrapnelList.splice(si, 1);
+        continue;
+      }
+      s.sprite.x += s.vx * dt;
+      s.vy += 200 * dt; // 軽い重力
+      s.sprite.y += s.vy * dt;
+      s.sprite.setRotation(s.sprite.rotation + 8 * dt);
+
+      // 画面外 or 地面で消滅
+      const groundY = this.getGroundYAtX(s.sprite.x);
+      if (
+        s.sprite.x < -20 ||
+        s.sprite.x > GAME_WIDTH + 20 ||
+        s.sprite.y >= groundY
+      ) {
+        s.sprite.destroy();
+        this.shrapnelList.splice(si, 1);
+        continue;
+      }
+
+      // 敵との衝突判定
+      const enemies =
+        this.enemies.getChildren() as Phaser.Physics.Arcade.Image[];
+      let shrapnelHit = false;
+      for (const enemy of enemies) {
+        if (!enemy.active) continue;
+        const dx = Math.abs(enemy.x - s.sprite.x);
+        const dy = Math.abs(enemy.y - s.sprite.y);
+        if (dx < 20 && dy < 30) {
+          this.killEnemyByShrapnel(enemy);
+          s.sprite.destroy();
+          this.shrapnelList.splice(si, 1);
+          shrapnelHit = true;
           break;
         }
       }
-      if (hit) continue;
+      if (shrapnelHit) continue;
     }
 
     // 手榴弾の物理更新（放物線+着弾爆発）

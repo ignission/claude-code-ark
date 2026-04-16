@@ -93,6 +93,9 @@ export function FrontLineModal({ open, onClose, socket }: FrontLineModalProps) {
   return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="frontline-modal-title"
       style={open ? undefined : { visibility: "hidden", pointerEvents: "none" }}
     >
       {/* biome-ignore lint/a11y/noStaticElementInteractions: モーダルオーバーレイのクリック閉じ */}
@@ -105,7 +108,10 @@ export function FrontLineModal({ open, onClose, socket }: FrontLineModalProps) {
       />
       <div className="relative bg-black rounded-lg shadow-2xl border border-white/10 max-w-[700px] w-[95vw] max-h-[90vh] overflow-auto">
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <h2 className="text-lg font-bold font-mono tracking-wider text-white">
+          <h2
+            id="frontline-modal-title"
+            className="text-lg font-bold font-mono tracking-wider text-white"
+          >
             FRONT LINE
           </h2>
           <button

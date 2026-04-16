@@ -2,6 +2,7 @@
 
 const buffers = new Map<string, AudioBuffer>();
 let ctx: AudioContext | null = null;
+let initPromise: Promise<void> | null = null;
 
 function getCtx(): AudioContext {
   if (!ctx) ctx = new AudioContext();
@@ -21,16 +22,20 @@ const SOUND_FILES: Record<string, string> = {
   grenade_throw: "/sounds/grenade_throw.ogg",
 };
 
-/** GameScene create()で呼び出し。全サウンドをfetch+デコードしてバッファに格納 */
-export function initSoundSystem(): void {
+/** GameScene create()で呼び出し。全サウンドをfetch+デコードしてバッファに格納（一度だけ） */
+export function initSoundSystem(): Promise<void> {
+  if (initPromise) return initPromise;
   const audioCtx = getCtx();
-  for (const [key, url] of Object.entries(SOUND_FILES)) {
-    fetch(url)
-      .then(r => r.arrayBuffer())
-      .then(ab => audioCtx.decodeAudioData(ab))
-      .then(buf => buffers.set(key, buf))
-      .catch(() => {});
-  }
+  initPromise = Promise.all(
+    Object.entries(SOUND_FILES).map(([key, url]) =>
+      fetch(url)
+        .then(r => r.arrayBuffer())
+        .then(ab => audioCtx.decodeAudioData(ab))
+        .then(buf => buffers.set(key, buf))
+        .catch(() => {})
+    )
+  ).then(() => {});
+  return initPromise;
 }
 
 function play(key: string, volume = 0.5, rate = 1.0): void {

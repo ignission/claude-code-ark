@@ -108,13 +108,15 @@ export function SidebarMainLayout({
         style={{ width: `${sidebarWidth}px` }}
       >
         <div className="flex-1 min-h-0 overflow-hidden">{sidebar}</div>
-        <button
-          type="button"
-          onClick={onOpenFrontLine}
-          className="w-full py-2 text-sm text-muted-foreground hover:text-foreground border-t border-border transition-colors block text-center"
-        >
-          🎯 FrontLine
-        </button>
+        {onOpenFrontLine && (
+          <button
+            type="button"
+            onClick={onOpenFrontLine}
+            className="w-full py-2 text-sm text-muted-foreground hover:text-foreground border-t border-border transition-colors block text-center"
+          >
+            🎯 FrontLine
+          </button>
+        )}
         {/* biome-ignore lint/a11y/noStaticElementInteractions: リサイズハンドルはマウス操作専用 */}
         <div
           className={`absolute top-0 -right-1 w-3 h-full cursor-col-resize hover:bg-primary/50 transition-colors ${
