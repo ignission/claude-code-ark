@@ -29,6 +29,8 @@ import {
   PARA_MIN_DISTANCE,
   PLAYER_MAX_HP,
   PLAYER_X,
+  SNIPER_PENETRATION,
+  SNIPER_PENETRATION_DAMAGE_DECAY,
   SPRITE_KEYS,
   WEAPONS,
 } from "../constants";
@@ -902,6 +904,7 @@ export class GameScene extends Phaser.Scene {
       bullet.setData("damage", weapon.damage);
       bullet.setData("vx", vx);
       bullet.setData("vy", vy);
+      bullet.setData("weaponIndex", this.currentWeapon);
       this.playerBulletList.push(bullet);
 
       // 2秒後に自動破棄
@@ -1742,18 +1745,20 @@ export class GameScene extends Phaser.Scene {
 
       // 敵との衝突判定
       let hit = false;
+      const weaponIdx = (bullet.getData("weaponIndex") as number) ?? 0;
+      const isSniper = WEAPONS[weaponIdx]?.name === "Sniper";
+      let penetrationCount = 0;
+      let currentDamage = (bullet.getData("damage") as number) ?? 15;
+
       for (const enemy of allEnemiesForHit) {
         if (!enemy.active) continue;
         const dx = Math.abs(bullet.x - enemy.x);
         const dy = Math.abs(bullet.y - enemy.y);
         if (dx < 20 && dy < 30) {
           hit = true;
-          const damage = (bullet.getData("damage") as number) ?? 15;
-          bullet.destroy();
-          this.playerBulletList.splice(bi, 1);
 
           // ヘッドショット判定
-          let finalDamage = damage;
+          let finalDamage = currentDamage;
           const enemyTop = enemy.y - enemy.displayHeight / 2;
           const headZoneBottom = enemyTop + enemy.displayHeight * HEADSHOT_ZONE;
           if (bullet.y < headZoneBottom) {
@@ -1839,10 +1844,32 @@ export class GameScene extends Phaser.Scene {
               if (enemy.active) enemy.clearTint();
             });
           }
-          break;
+
+          // 狙撃銃: 貫通処理（弾を消さず次の敵へ）
+          if (isSniper) {
+            penetrationCount++;
+            currentDamage *= SNIPER_PENETRATION_DAMAGE_DECAY;
+            if (penetrationCount >= SNIPER_PENETRATION) {
+              bullet.destroy();
+              this.playerBulletList.splice(bi, 1);
+              break;
+            }
+            // 貫通エフェクト（弾が少し透明に）
+            bullet.setAlpha(1 - penetrationCount * 0.25);
+          } else {
+            bullet.destroy();
+            this.playerBulletList.splice(bi, 1);
+            break;
+          }
         }
       }
-      if (hit) continue;
+      if (hit && !isSniper) continue;
+      if (
+        isSniper &&
+        penetrationCount > 0 &&
+        penetrationCount >= SNIPER_PENETRATION
+      )
+        continue;
     }
 
     // 手榴弾の物理更新（放物線+着弾爆発）

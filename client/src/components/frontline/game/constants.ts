@@ -64,8 +64,8 @@ export const WEAPONS: readonly WeaponDef[] = [
     magSize: 12,
     reserveAmmo: Infinity,
     reloadTime: 1500,
-    fireRate: 300,
-    damage: 15,
+    fireRate: 250,
+    damage: 18,
     bulletSpeed: 800,
     spread: 0.02,
     pellets: 1,
@@ -77,12 +77,12 @@ export const WEAPONS: readonly WeaponDef[] = [
     nameJa: "機関銃",
     key: "2",
     magSize: 30,
-    reserveAmmo: 90,
+    reserveAmmo: 60,
     reloadTime: 2000,
     fireRate: 80,
-    damage: 8,
+    damage: 7,
     bulletSpeed: 900,
-    spread: 0.06,
+    spread: 0.08,
     pellets: 1,
     bulletSize: 2,
     bulletColor: "#ffaa00",
@@ -95,9 +95,9 @@ export const WEAPONS: readonly WeaponDef[] = [
     reserveAmmo: 24,
     reloadTime: 2500,
     fireRate: 600,
-    damage: 12,
+    damage: 14,
     bulletSpeed: 700,
-    spread: 0.12,
+    spread: 0.1,
     pellets: 5,
     bulletSize: 3,
     bulletColor: "#ff6600",
@@ -107,10 +107,10 @@ export const WEAPONS: readonly WeaponDef[] = [
     nameJa: "狙撃銃",
     key: "4",
     magSize: 5,
-    reserveAmmo: 15,
+    reserveAmmo: 20,
     reloadTime: 3000,
     fireRate: 1000,
-    damage: 50,
+    damage: 55,
     bulletSpeed: 1200,
     spread: 0.005,
     pellets: 1,
@@ -133,6 +133,10 @@ export const WEAPONS: readonly WeaponDef[] = [
     bulletColor: "#336633",
   },
 ] as const;
+
+// --- 狙撃銃貫通 ---
+export const SNIPER_PENETRATION = 3; // 最大貫通数（3体まで貫通）
+export const SNIPER_PENETRATION_DAMAGE_DECAY = 0.7; // 貫通ごとのダメージ減衰率
 
 // --- 手榴弾定数 ---
 export const GRENADE_GRAVITY = 400;
