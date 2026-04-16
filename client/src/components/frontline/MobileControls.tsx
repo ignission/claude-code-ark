@@ -95,7 +95,7 @@ export function MobileControls() {
         </button>
         {/* 武器選択 + リロード */}
         <div className="flex flex-row gap-1">
-          {[1, 2, 3, 4].map(i => (
+          {[1, 2, 3, 4, 5].map(i => (
             <button
               key={i}
               type="button"

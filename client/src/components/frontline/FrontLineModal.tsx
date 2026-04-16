@@ -64,7 +64,7 @@ export function FrontLineModal({ open, onClose, socket }: FrontLineModalProps) {
   if (isMobile) {
     return (
       <div
-        className="fixed inset-0 z-[100] bg-black flex flex-col"
+        className="fixed inset-0 z-40 bg-black flex flex-col pb-14"
         style={
           open ? undefined : { visibility: "hidden", pointerEvents: "none" }
         }

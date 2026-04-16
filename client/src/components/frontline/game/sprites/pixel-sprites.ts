@@ -3532,3 +3532,36 @@ export const GUN_SNIPER: PixelGrid = [
     null,
   ],
 ];
+
+// 手榴弾（手持ち表示用） (10x8)
+const Gr = {
+  body: "#336633",
+  bodyLt: "#447744",
+  bodyDk: "#224422",
+  lever: "#888888",
+  leverDk: "#666666",
+  pin: "#cccc44",
+};
+
+export const GUN_GRENADE: PixelGrid = [
+  [null, null, null, null, null, Gr.pin, Gr.pin, null, null, null],
+  [null, null, null, null, Gr.lever, Gr.leverDk, Gr.lever, null, null, null],
+  [null, null, null, null, null, Gr.bodyDk, Gr.body, Gr.bodyLt, null, null],
+  [null, null, null, null, Gr.bodyDk, Gr.body, Gr.body, Gr.bodyLt, null, null],
+  [null, null, null, null, Gr.bodyDk, Gr.body, Gr.bodyLt, Gr.bodyLt, null, null],
+  [null, null, null, null, Gr.bodyDk, Gr.body, Gr.body, Gr.bodyLt, null, null],
+  [null, null, null, null, null, Gr.bodyDk, Gr.body, null, null, null],
+  [null, null, null, null, null, null, null, null, null, null],
+];
+
+// 手榴弾（飛翔中） (8x8)
+export const GRENADE_PROJECTILE: PixelGrid = [
+  [null, null, null, null, null, null, null, null],
+  [null, null, null, Gr.bodyDk, Gr.body, null, null, null],
+  [null, null, Gr.bodyDk, Gr.body, Gr.bodyLt, Gr.bodyLt, null, null],
+  [null, Gr.bodyDk, Gr.body, Gr.body, Gr.bodyLt, Gr.bodyLt, null, null],
+  [null, Gr.bodyDk, Gr.body, Gr.bodyLt, Gr.bodyLt, Gr.bodyLt, null, null],
+  [null, null, Gr.bodyDk, Gr.body, Gr.bodyLt, null, null, null],
+  [null, null, null, Gr.bodyDk, null, null, null, null],
+  [null, null, null, null, null, null, null, null],
+];

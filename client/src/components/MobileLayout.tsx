@@ -6,10 +6,12 @@
  * iframe再マウント防止のため、display:none/blockで表示を切り替える。
  */
 
-import { useCallback, useEffect, useState } from "react";
+import type Phaser from "phaser";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { BrowserPane } from "@/components/BrowserPane";
-import { FrontLineModal } from "@/components/frontline/FrontLineModal";
+import { FrontLineGame } from "@/components/frontline/FrontLineGame";
+import { MobileControls } from "@/components/frontline/MobileControls";
 import { MobileChatView } from "@/components/MobileChatView";
 import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
@@ -99,9 +101,9 @@ export function MobileLayout({
   isRemote,
 }: MobileLayoutProps) {
   const [activeView, setActiveView] = useState<
-    "list" | "detail" | "beacon" | "browser"
+    "list" | "detail" | "beacon" | "browser" | "frontline"
   >("list");
-  const [showFrontLine, setShowFrontLine] = useState(false);
+  const [frontlineOpened, setFrontlineOpened] = useState(false);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null
   );
@@ -183,8 +185,27 @@ export function MobileLayout({
     setHasBrowserOpened(true);
   }, [onSelectBrowser]);
 
-  // ボトムナビゲーションの表示判定（セッション詳細画面・ブラウザ画面以外で表示）
-  const showBottomNav = activeView !== "detail" && activeView !== "browser";
+  const showBottomNav = true;
+
+  // FrontLineタブ離脱/復帰時にpause/resume
+  const prevActiveViewRef = useRef(activeView);
+  useEffect(() => {
+    const prev = prevActiveViewRef.current;
+    prevActiveViewRef.current = activeView;
+    if (prev === activeView) return;
+
+    const game = (window as unknown as Record<string, unknown>)
+      .__FRONTLINE_GAME__ as Phaser.Game | undefined;
+    if (!game) return;
+
+    if (prev === "frontline" && activeView !== "frontline") {
+      game.events.emit("modal:pause");
+      game.loop.sleep();
+    } else if (prev !== "frontline" && activeView === "frontline") {
+      game.loop.wake();
+      game.events.emit("modal:resume");
+    }
+  }, [activeView]);
 
   return (
     <div className="h-full flex flex-col min-h-0 overflow-hidden">
@@ -216,7 +237,7 @@ export function MobileLayout({
             key={sessionId}
             className={
               activeView === "detail" && selectedSessionId === sessionId
-                ? "flex-1 flex flex-col min-h-0"
+                ? "flex-1 flex flex-col min-h-0 pb-14"
                 : "hidden"
             }
           >
@@ -267,7 +288,9 @@ export function MobileLayout({
       {hasBrowserOpened && (
         <div
           className={
-            activeView === "browser" ? "flex-1 flex flex-col min-h-0" : "hidden"
+            activeView === "browser"
+              ? "flex-1 flex flex-col min-h-0 pb-14"
+              : "hidden"
           }
         >
           <div className="h-12 border-b border-border flex items-center px-4 shrink-0">
@@ -317,8 +340,15 @@ export function MobileLayout({
           )}
           <button
             type="button"
-            className="flex-1 py-3 text-center text-sm font-medium text-muted-foreground"
-            onClick={() => setShowFrontLine(true)}
+            className={`flex-1 py-3 text-center text-sm font-medium ${
+              activeView === "frontline"
+                ? "text-primary border-t-2 border-primary"
+                : "text-muted-foreground"
+            }`}
+            onClick={() => {
+              setActiveView("frontline");
+              setFrontlineOpened(true);
+            }}
           >
             🎯
           </button>
@@ -336,23 +366,23 @@ export function MobileLayout({
         </nav>
       )}
 
-      {/* セッション詳細・ブラウザ画面用のFrontLine FAB */}
-      {!showBottomNav && (
-        <button
-          type="button"
-          className="fixed bottom-4 right-4 z-50 w-12 h-12 rounded-full bg-muted/80 backdrop-blur text-lg flex items-center justify-center shadow-lg active:scale-95 transition-transform"
-          onClick={() => setShowFrontLine(true)}
+      {/* FrontLine ビュー — 一度開いたら常に描画（ゲーム状態保持） */}
+      {frontlineOpened && (
+        <div
+          className={
+            activeView === "frontline"
+              ? "flex-1 flex flex-col min-h-0 pb-14 bg-black"
+              : "hidden"
+          }
         >
-          🎯
-        </button>
+          <div className="flex-1 flex items-center justify-center min-h-0">
+            <FrontLineGame socket={socket} />
+          </div>
+          <div className="shrink-0">
+            <MobileControls />
+          </div>
+        </div>
       )}
-
-      {/* FrontLine モーダル */}
-      <FrontLineModal
-        open={showFrontLine}
-        onClose={() => setShowFrontLine(false)}
-        socket={socket}
-      />
     </div>
   );
 }
