@@ -233,9 +233,10 @@ export class GameScene extends Phaser.Scene {
 
   private onModalResume = (): void => {
     if (!this.modalPaused) return;
+    // sceneを一時的にresumeしてオーバーレイを描画、その後再pauseして入力待ち
     this.scene.resume();
-    // physicsはresumeGameで任意キー押下後に再開
     this.showPauseOverlay();
+    this.scene.pause();
   };
 
   private showPauseOverlay(): void {
@@ -267,10 +268,11 @@ export class GameScene extends Phaser.Scene {
       .setDepth(9999)
       .setScrollFactor(0);
 
-    // 任意キーまたはクリックで再開
+    // 任意キーまたはクリックでscene+physicsを再開
     const resumeGame = () => {
       this.removePauseOverlay();
       this.modalPaused = false;
+      this.scene.resume();
       this.physics.resume();
     };
     this.input.keyboard?.once("keydown", resumeGame);

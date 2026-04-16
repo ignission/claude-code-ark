@@ -8,6 +8,40 @@ function emitAction(action: string, value?: number) {
   );
 }
 
+// タッチ+ポインター共通ハンドラ（キーボード・マウス操作にも対応）
+function pressHandlers(startAction: string, endAction?: string) {
+  const handlers: Record<string, (e: React.SyntheticEvent) => void> = {
+    onTouchStart: e => {
+      e.preventDefault();
+      emitAction(startAction);
+    },
+    onPointerDown: e => {
+      // タッチイベントが先に発火する場合の重複防止
+      if ((e as React.PointerEvent).pointerType === "touch") return;
+      emitAction(startAction);
+    },
+  };
+  if (endAction) {
+    handlers.onTouchEnd = e => {
+      e.preventDefault();
+      emitAction(endAction);
+    };
+    handlers.onTouchCancel = e => {
+      e.preventDefault();
+      emitAction(endAction);
+    };
+    handlers.onPointerUp = e => {
+      if ((e as React.PointerEvent).pointerType === "touch") return;
+      emitAction(endAction);
+    };
+    handlers.onPointerCancel = e => {
+      if ((e as React.PointerEvent).pointerType === "touch") return;
+      emitAction(endAction);
+    };
+  }
+  return handlers;
+}
+
 const smallBtn =
   "bg-white/10 rounded px-3 py-2 text-white text-xs font-mono select-none touch-manipulation active:bg-white/25 transition-colors";
 
@@ -22,18 +56,7 @@ export function MobileControls() {
         <button
           type="button"
           className="w-full bg-red-900/40 rounded-lg py-4 text-white text-lg font-bold font-mono select-none touch-manipulation active:bg-red-700/50 transition-colors border border-red-800/30"
-          onTouchStart={e => {
-            e.preventDefault();
-            emitAction("fire");
-          }}
-          onTouchEnd={e => {
-            e.preventDefault();
-            emitAction("fireEnd");
-          }}
-          onTouchCancel={e => {
-            e.preventDefault();
-            emitAction("fireEnd");
-          }}
+          {...pressHandlers("fire", "fireEnd")}
         >
           射撃
         </button>
@@ -41,36 +64,14 @@ export function MobileControls() {
           <button
             type="button"
             className={`${largeBtn} flex-1`}
-            onTouchStart={e => {
-              e.preventDefault();
-              emitAction("moveLeft");
-            }}
-            onTouchEnd={e => {
-              e.preventDefault();
-              emitAction("moveLeftEnd");
-            }}
-            onTouchCancel={e => {
-              e.preventDefault();
-              emitAction("moveLeftEnd");
-            }}
+            {...pressHandlers("moveLeft", "moveLeftEnd")}
           >
             ◀
           </button>
           <button
             type="button"
             className={`${largeBtn} flex-1`}
-            onTouchStart={e => {
-              e.preventDefault();
-              emitAction("moveRight");
-            }}
-            onTouchEnd={e => {
-              e.preventDefault();
-              emitAction("moveRightEnd");
-            }}
-            onTouchCancel={e => {
-              e.preventDefault();
-              emitAction("moveRightEnd");
-            }}
+            {...pressHandlers("moveRight", "moveRightEnd")}
           >
             ▶
           </button>
@@ -78,18 +79,7 @@ export function MobileControls() {
         <button
           type="button"
           className={`${largeBtn} w-full`}
-          onTouchStart={e => {
-            e.preventDefault();
-            emitAction("defend");
-          }}
-          onTouchEnd={e => {
-            e.preventDefault();
-            emitAction("defendEnd");
-          }}
-          onTouchCancel={e => {
-            e.preventDefault();
-            emitAction("defendEnd");
-          }}
+          {...pressHandlers("defend", "defendEnd")}
         >
           防御
         </button>
@@ -100,8 +90,13 @@ export function MobileControls() {
               key={i}
               type="button"
               className={smallBtn}
+              {...pressHandlers("weapon")}
               onTouchStart={e => {
                 e.preventDefault();
+                emitAction("weapon", i);
+              }}
+              onPointerDown={e => {
+                if (e.pointerType === "touch") return;
                 emitAction("weapon", i);
               }}
             >
@@ -111,10 +106,7 @@ export function MobileControls() {
           <button
             type="button"
             className={smallBtn}
-            onTouchStart={e => {
-              e.preventDefault();
-              emitAction("reload");
-            }}
+            {...pressHandlers("reload")}
           >
             R
           </button>
@@ -128,36 +120,14 @@ export function MobileControls() {
           <button
             type="button"
             className="flex-1 bg-white/10 rounded-t-lg text-white text-xl font-mono select-none touch-manipulation active:bg-white/25 transition-colors flex items-center justify-center"
-            onTouchStart={e => {
-              e.preventDefault();
-              emitAction("aimUp");
-            }}
-            onTouchEnd={e => {
-              e.preventDefault();
-              emitAction("aimUpEnd");
-            }}
-            onTouchCancel={e => {
-              e.preventDefault();
-              emitAction("aimUpEnd");
-            }}
+            {...pressHandlers("aimUp", "aimUpEnd")}
           >
             ▲
           </button>
           <button
             type="button"
             className="flex-1 bg-white/10 rounded-b-lg text-white text-xl font-mono select-none touch-manipulation active:bg-white/25 transition-colors flex items-center justify-center border-t border-white/5"
-            onTouchStart={e => {
-              e.preventDefault();
-              emitAction("aimDown");
-            }}
-            onTouchEnd={e => {
-              e.preventDefault();
-              emitAction("aimDownEnd");
-            }}
-            onTouchCancel={e => {
-              e.preventDefault();
-              emitAction("aimDownEnd");
-            }}
+            {...pressHandlers("aimDown", "aimDownEnd")}
           >
             ▼
           </button>
@@ -166,18 +136,7 @@ export function MobileControls() {
         <button
           type="button"
           className="flex-1 bg-red-900/40 rounded-lg text-white text-lg font-bold font-mono select-none touch-manipulation active:bg-red-700/50 transition-colors border border-red-800/30 flex items-center justify-center min-w-[64px]"
-          onTouchStart={e => {
-            e.preventDefault();
-            emitAction("fire");
-          }}
-          onTouchEnd={e => {
-            e.preventDefault();
-            emitAction("fireEnd");
-          }}
-          onTouchCancel={e => {
-            e.preventDefault();
-            emitAction("fireEnd");
-          }}
+          {...pressHandlers("fire", "fireEnd")}
         >
           射撃
         </button>
