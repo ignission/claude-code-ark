@@ -15,9 +15,6 @@ import type {
   FrontlineStats,
   Message,
   MessageType,
-  Pet,
-  PetMood,
-  PetSpecies,
   Session,
   SessionStatus,
 } from "../../shared/types.js";
@@ -65,41 +62,6 @@ interface CreateMessageInput {
   readonly content: string;
   readonly type?: MessageType;
   readonly timestamp: Date;
-}
-
-/** データベースに保存されるペットの行データ */
-interface PetRow {
-  id: string;
-  session_id: string;
-  species: string;
-  name: string | null;
-  level: number;
-  exp: number;
-  hp: number;
-  mood: string;
-  created_at: string;
-  updated_at: string;
-}
-
-/** ペット作成時の入力データ */
-interface CreatePetInput {
-  readonly id: string;
-  readonly sessionId: string;
-  readonly species: PetSpecies;
-  readonly name?: string | null;
-  readonly level?: number;
-  readonly exp?: number;
-  readonly hp?: number;
-  readonly mood?: PetMood;
-}
-
-/** ペット更新時の入力データ */
-interface UpdatePetInput {
-  readonly name?: string | null;
-  readonly level?: number;
-  readonly exp?: number;
-  readonly hp?: number;
-  readonly mood?: PetMood;
 }
 
 /**
@@ -206,31 +168,8 @@ class SessionDatabase {
       }
     }
 
-    // ペットテーブルの作成（ON DELETE CASCADEなし — ペット削除はpetManager.onSessionDeleted()で明示的に行う）
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS pets (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL UNIQUE,
-        species TEXT NOT NULL,
-        name TEXT,
-        level INTEGER NOT NULL DEFAULT 1,
-        exp INTEGER NOT NULL DEFAULT 0,
-        hp INTEGER NOT NULL DEFAULT 100,
-        mood TEXT NOT NULL DEFAULT 'happy',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        FOREIGN KEY (session_id) REFERENCES sessions(id)
-      )
-    `);
-
-    // マイグレーション: 既存のpetsテーブルにON DELETE CASCADEが付いている場合はテーブル再作成
-    // SQLiteはFKの変更をサポートしないため、テーブル再作成で対応する
-    this.migratePetsRemoveCascade();
-
-    // ペットテーブルのインデックス作成
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_pets_session_id ON pets(session_id);
-    `);
+    // 既存のpetsテーブルを破棄（pet機能はサーバー側を廃止済み）
+    this.db.exec("DROP TABLE IF EXISTS pets;");
 
     // フロントライン記録テーブル
     this.db.exec(`
@@ -562,185 +501,6 @@ class SessionDatabase {
   deleteSetting(key: string): void {
     const stmt = this.db.prepare("DELETE FROM settings WHERE key = ?");
     stmt.run(key);
-  }
-
-  // ============================================================
-  // ペットCRUD操作
-  // ============================================================
-
-  /**
-   * 新しいペットを作成
-   *
-   * @param pet - ペット作成データ
-   */
-  createPet(pet: CreatePetInput): void {
-    const now = new Date().toISOString();
-    const stmt = this.db.prepare(`
-      INSERT INTO pets (id, session_id, species, name, level, exp, hp, mood, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-      pet.id,
-      pet.sessionId,
-      pet.species,
-      pet.name ?? null,
-      pet.level ?? 1,
-      pet.exp ?? 0,
-      pet.hp ?? 100,
-      pet.mood ?? "happy",
-      now,
-      now
-    );
-  }
-
-  /**
-   * IDでペットを取得
-   *
-   * @param id - ペットID
-   * @returns ペットオブジェクト、存在しない場合はnull
-   */
-  getPet(id: string): Pet | null {
-    const stmt = this.db.prepare("SELECT * FROM pets WHERE id = ?");
-    const row = stmt.get(id) as PetRow | undefined;
-    return row ? this.toPet(row) : null;
-  }
-
-  /**
-   * セッションIDでペットを取得
-   *
-   * @param sessionId - セッションID
-   * @returns ペットオブジェクト、存在しない場合はnull
-   */
-  getPetBySessionId(sessionId: string): Pet | null {
-    const stmt = this.db.prepare("SELECT * FROM pets WHERE session_id = ?");
-    const row = stmt.get(sessionId) as PetRow | undefined;
-    return row ? this.toPet(row) : null;
-  }
-
-  /**
-   * 全てのペットを取得
-   *
-   * @returns ペットの配列
-   */
-  getAllPets(): Pet[] {
-    const stmt = this.db.prepare("SELECT * FROM pets ORDER BY created_at DESC");
-    const rows = stmt.all() as PetRow[];
-    return rows.map(row => this.toPet(row));
-  }
-
-  /**
-   * ペットを更新
-   *
-   * @param id - ペットID
-   * @param updates - 更新するフィールド
-   */
-  updatePet(id: string, updates: UpdatePetInput): void {
-    const now = new Date().toISOString();
-    const fields: string[] = [];
-    const values: unknown[] = [];
-
-    if (updates.name !== undefined) {
-      fields.push("name = ?");
-      values.push(updates.name);
-    }
-    if (updates.level !== undefined) {
-      fields.push("level = ?");
-      values.push(updates.level);
-    }
-    if (updates.exp !== undefined) {
-      fields.push("exp = ?");
-      values.push(updates.exp);
-    }
-    if (updates.hp !== undefined) {
-      fields.push("hp = ?");
-      values.push(updates.hp);
-    }
-    if (updates.mood !== undefined) {
-      fields.push("mood = ?");
-      values.push(updates.mood);
-    }
-
-    if (fields.length === 0) return;
-
-    fields.push("updated_at = ?");
-    values.push(now);
-    values.push(id);
-
-    const stmt = this.db.prepare(
-      `UPDATE pets SET ${fields.join(", ")} WHERE id = ?`
-    );
-    stmt.run(...values);
-  }
-
-  /**
-   * セッションIDでペットを削除
-   *
-   * @param sessionId - セッションID
-   */
-  deletePetBySessionId(sessionId: string): void {
-    const stmt = this.db.prepare("DELETE FROM pets WHERE session_id = ?");
-    stmt.run(sessionId);
-  }
-
-  /**
-   * データベース行をPetオブジェクトに変換
-   */
-  private toPet(row: PetRow): Pet {
-    return {
-      id: row.id,
-      sessionId: row.session_id,
-      species: row.species as PetSpecies,
-      name: row.name,
-      level: row.level,
-      exp: row.exp,
-      hp: row.hp,
-      mood: row.mood as PetMood,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
-  }
-
-  /**
-   * petsテーブルからON DELETE CASCADEを除去するマイグレーション
-   *
-   * 既存DBのpetsテーブルにON DELETE CASCADEが付いている場合、
-   * テーブル再作成（pets_new作成→データコピー→旧テーブル削除→リネーム）で対応する。
-   * SQLiteはFKの変更をサポートしないためこの方法を取る。
-   */
-  private migratePetsRemoveCascade(): void {
-    // petsテーブルのCREATE文を取得してCASCADEが含まれているか確認
-    const tableInfo = this.db
-      .prepare(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='pets'"
-      )
-      .get() as { sql: string } | undefined;
-
-    if (!tableInfo?.sql.includes("ON DELETE CASCADE")) {
-      return; // CASCADEなし、またはテーブルが存在しない場合はスキップ
-    }
-
-    console.log(
-      "[DB] petsテーブルからON DELETE CASCADEを除去するマイグレーションを実行"
-    );
-
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS pets_new (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL UNIQUE,
-        species TEXT NOT NULL,
-        name TEXT,
-        level INTEGER NOT NULL DEFAULT 1,
-        exp INTEGER NOT NULL DEFAULT 0,
-        hp INTEGER NOT NULL DEFAULT 100,
-        mood TEXT NOT NULL DEFAULT 'happy',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        FOREIGN KEY (session_id) REFERENCES sessions(id)
-      );
-      INSERT INTO pets_new SELECT * FROM pets;
-      DROP TABLE pets;
-      ALTER TABLE pets_new RENAME TO pets;
-    `);
   }
 
   // ============================================================
