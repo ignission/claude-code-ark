@@ -76,11 +76,11 @@ export class SessionOrchestrator extends EventEmitter {
         console.log(
           `[Orchestrator] Restored session: ${tmuxSession.tmuxSessionName} -> ${dbSession.id} (status: ${dbSession.status})`
         );
-        // repoPathが未設定ならgitから導出して保存
-        if (!dbSession.repoPath && tmuxSession.worktreePath) {
-          const repoPath = this.deriveRepoPath(tmuxSession.worktreePath);
-          if (repoPath) {
-            db.updateSessionRepoPath(dbSession.id, repoPath);
+        // DBのrepoPathがworktreePathと不整合なら上書き修正する
+        if (tmuxSession.worktreePath) {
+          const derived = this.deriveRepoPath(tmuxSession.worktreePath);
+          if (derived && dbSession.repoPath !== derived) {
+            db.updateSessionRepoPath(dbSession.id, derived);
           }
         }
       }
@@ -127,13 +127,18 @@ export class SessionOrchestrator extends EventEmitter {
         ? (dbSession?.status as SessionStatus) || "active"
         : this.mapTmuxStatus(tmuxSession.status);
 
-    // repoPathがDBにない場合はgitから導出して保存
-    let repoPath = dbSession?.repoPath;
-    if (!repoPath && tmuxSession.worktreePath) {
-      repoPath = this.deriveRepoPath(tmuxSession.worktreePath);
-      if (repoPath && dbSession) {
-        db.updateSessionRepoPath(dbSession.id, repoPath);
-      }
+    // worktreePathから導出したrepoPathを正として扱い、
+    // DBとの不整合があれば修正する
+    const derivedRepoPath = tmuxSession.worktreePath
+      ? this.deriveRepoPath(tmuxSession.worktreePath)
+      : undefined;
+    const repoPath = derivedRepoPath ?? dbSession?.repoPath;
+    if (
+      derivedRepoPath &&
+      dbSession &&
+      dbSession.repoPath !== derivedRepoPath
+    ) {
+      db.updateSessionRepoPath(dbSession.id, derivedRepoPath);
     }
 
     return {
@@ -195,14 +200,19 @@ export class SessionOrchestrator extends EventEmitter {
     worktreePath: string,
     repoPath?: string
   ): Promise<ManagedSession> {
+    // worktreePathから導出したrepoPathを優先する。
+    // 呼び出し側の `currentRepoPath` はソケット状態に依存するため、
+    // 別リポジトリのworktreeに対して誤った値が渡るケースがある。
+    const resolvedRepoPath = this.deriveRepoPath(worktreePath) ?? repoPath;
+
     // 既存セッションがあれば再利用
     const existingTmux = tmuxManager.getSessionByWorktree(worktreePath);
     if (existingTmux) {
-      // repoPathが渡された場合はDBを更新（既存セッションにrepoPath情報を補完）
-      if (repoPath) {
+      // repoPathが解決できた場合はDBを更新（既存セッションにrepoPath情報を補完）
+      if (resolvedRepoPath) {
         const dbSession = db.getSessionByWorktreePath(worktreePath);
-        if (dbSession && !dbSession.repoPath) {
-          db.updateSessionRepoPath(dbSession.id, repoPath);
+        if (dbSession && dbSession.repoPath !== resolvedRepoPath) {
+          db.updateSessionRepoPath(dbSession.id, resolvedRepoPath);
         }
       }
 
@@ -234,7 +244,7 @@ export class SessionOrchestrator extends EventEmitter {
       id: tmuxSession.id,
       worktreeId,
       worktreePath,
-      repoPath,
+      repoPath: resolvedRepoPath,
       status: "active",
     });
 
@@ -242,7 +252,7 @@ export class SessionOrchestrator extends EventEmitter {
       id: tmuxSession.id,
       worktreeId,
       worktreePath,
-      repoPath,
+      repoPath: resolvedRepoPath,
       status: "active",
       createdAt: tmuxSession.createdAt,
       tmuxSessionName: tmuxSession.tmuxSessionName,

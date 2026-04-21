@@ -762,6 +762,9 @@ async function startServer() {
     // Send allowed repos list to client on connection
     socket.emit("repos:list", allowedRepos);
 
+    // Beaconのチャット履歴を接続時に自動送信（クライアント側の取得タイミング問題を回避）
+    socket.emit("beacon:history", { messages: beaconManager.getHistory() });
+
     // ===== Session Orchestrator Event Handlers =====
     // sessionOrchestrator のイベントをそのまま Socket.IO クライアントへ転送する
     // 注意: session:list送信やttyd自動復元より前に登録する必要がある
@@ -1333,6 +1336,13 @@ async function startServer() {
     // Beaconセッション終了
     socket.on("beacon:close", () => {
       beaconManager.closeSession();
+    });
+
+    // Beacon履歴クリア（LLMコンテキスト・DB履歴もリセット）
+    // 履歴は全接続クライアントで共有されるため、broadcastで他タブ・他端末も同期する
+    socket.on("beacon:clear", () => {
+      beaconManager.clearHistory();
+      io.emit("beacon:history", { messages: [] });
     });
 
     // ===== Frontline Commands =====

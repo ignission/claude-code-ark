@@ -703,7 +703,13 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
   // Beaconメッセージ送信
   const beaconSend = useCallback((message: string) => {
-    socketRef.current?.emit("beacon:send", { message });
+    // 切断時は楽観更新を起こさない（streamingイベントが届かず入力欄が永久ロックされるため）
+    const socket = socketRef.current;
+    if (!socket?.connected) return;
+    // 楽観的にストリーミング状態を立てる（ツール実行先行ターンは最初のチャンクが遅れるため）
+    setBeaconStreaming(true);
+    setBeaconStreamText("");
+    socket.emit("beacon:send", { message });
   }, []);
 
   // Beacon履歴取得
@@ -719,8 +725,13 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     setBeaconStreamText("");
   }, []);
 
-  // Beaconチャット履歴クリア（セッションは維持、サーバーには送信しない）
+  // Beaconチャット履歴クリア（サーバー側のセッション・DB履歴も完全にリセット）
+  // 切断時はサーバーに届かないため何もしない（ローカルだけ消すと
+  // 次の再接続時にサーバー履歴が戻ってきて不整合になる）
   const beaconClear = useCallback(() => {
+    const socket = socketRef.current;
+    if (!socket?.connected) return;
+    socket.emit("beacon:clear");
     setBeaconMessages([]);
     setBeaconStreaming(false);
     setBeaconStreamText("");

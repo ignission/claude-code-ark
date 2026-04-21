@@ -11,6 +11,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import type {
+  ChatMessage,
   FrontlineRecord,
   FrontlineStats,
   Message,
@@ -61,6 +62,28 @@ interface CreateMessageInput {
   readonly role: "user" | "assistant" | "system";
   readonly content: string;
   readonly type?: MessageType;
+  readonly timestamp: Date;
+}
+
+/** Beacon履歴の行データ */
+interface BeaconMessageRow {
+  id: string;
+  role: string;
+  content: string;
+  tool_use_json: string | null;
+  timestamp: string;
+}
+
+/** Beacon履歴追加時の入力データ */
+interface BeaconMessageInput {
+  readonly id: string;
+  readonly role: "user" | "assistant";
+  readonly content: string;
+  readonly toolUse?: {
+    toolName: string;
+    input: string;
+    result?: string;
+  };
   readonly timestamp: Date;
 }
 
@@ -170,6 +193,18 @@ class SessionDatabase {
 
     // 既存のpetsテーブルを破棄（pet機能はサーバー側を廃止済み）
     this.db.exec("DROP TABLE IF EXISTS pets;");
+
+    // Beacon履歴テーブル（グローバルチャット用・1セッションのみ）
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS beacon_messages (
+        id TEXT PRIMARY KEY,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        tool_use_json TEXT,
+        timestamp TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_beacon_messages_timestamp ON beacon_messages(timestamp);
+    `);
 
     // フロントライン記録テーブル
     this.db.exec(`
@@ -395,6 +430,63 @@ class SessionDatabase {
   clearMessages(sessionId: string): void {
     const stmt = this.db.prepare("DELETE FROM messages WHERE session_id = ?");
     stmt.run(sessionId);
+  }
+
+  // ============================================================
+  // Beacon履歴CRUD操作
+  // ============================================================
+
+  /**
+   * Beaconチャット履歴にメッセージを追加
+   */
+  addBeaconMessage(message: BeaconMessageInput): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO beacon_messages (id, role, content, tool_use_json, timestamp)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    stmt.run(
+      message.id,
+      message.role,
+      message.content,
+      message.toolUse ? JSON.stringify(message.toolUse) : null,
+      message.timestamp.toISOString()
+    );
+  }
+
+  /**
+   * Beaconチャット履歴を全件取得（タイムスタンプ昇順）
+   */
+  getBeaconMessages(): ChatMessage[] {
+    const stmt = this.db.prepare(
+      "SELECT * FROM beacon_messages ORDER BY timestamp ASC"
+    );
+    const rows = stmt.all() as BeaconMessageRow[];
+    return rows.map(row => {
+      let toolUse: ChatMessage["toolUse"];
+      if (row.tool_use_json) {
+        try {
+          toolUse = JSON.parse(row.tool_use_json);
+        } catch {
+          console.warn(
+            `[DB] Failed to parse beacon_messages.tool_use_json for ${row.id}`
+          );
+        }
+      }
+      return {
+        id: row.id,
+        role: row.role as "user" | "assistant",
+        content: row.content,
+        timestamp: new Date(row.timestamp),
+        toolUse,
+      };
+    });
+  }
+
+  /**
+   * Beaconチャット履歴を全削除
+   */
+  clearBeaconMessages(): void {
+    this.db.exec("DELETE FROM beacon_messages");
   }
 
   // ============================================================
