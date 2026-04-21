@@ -704,8 +704,12 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   // Beaconメッセージ送信
   const beaconSend = useCallback((message: string) => {
     // 切断時は楽観更新を起こさない（streamingイベントが届かず入力欄が永久ロックされるため）
+    // 無通知で消えるとUX上「送信したのに何も起きない」に見えるのでエラー通知する
     const socket = socketRef.current;
-    if (!socket?.connected) return;
+    if (!socket?.connected) {
+      setError("サーバーに接続していません。再接続後に再送してください。");
+      return;
+    }
     // 楽観的にストリーミング状態を立てる（ツール実行先行ターンは最初のチャンクが遅れるため）
     setBeaconStreaming(true);
     setBeaconStreamText("");

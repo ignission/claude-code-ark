@@ -436,8 +436,14 @@ class SessionDatabase {
   // Beacon履歴CRUD操作
   // ============================================================
 
+  /** Beacon履歴の保持上限（UI表示・WebSocket送信のペイロード抑制用） */
+  private static readonly BEACON_MESSAGES_RETENTION = 500;
+
   /**
    * Beaconチャット履歴にメッセージを追加
+   *
+   * 追加後、保持上限 (BEACON_MESSAGES_RETENTION) を超えた古いレコードを
+   * LRU的にトリムしてDB無限成長を防ぐ。
    */
   addBeaconMessage(message: BeaconMessageInput): void {
     const stmt = this.db.prepare(`
@@ -451,27 +457,38 @@ class SessionDatabase {
       message.toolUse ? JSON.stringify(message.toolUse) : null,
       message.timestamp.toISOString()
     );
+
+    // 古いメッセージをトリム（直近 RETENTION 件のみ保持）
+    const trim = this.db.prepare(`
+      DELETE FROM beacon_messages
+      WHERE id NOT IN (
+        SELECT id FROM beacon_messages ORDER BY timestamp DESC LIMIT ?
+      )
+    `);
+    trim.run(SessionDatabase.BEACON_MESSAGES_RETENTION);
   }
 
   /**
-   * Beaconチャット履歴を全件取得（タイムスタンプ昇順）
+   * Beaconチャット履歴を取得（タイムスタンプ昇順、直近 limit 件）
+   *
+   * limit のデフォルトは保持上限と同じ。UI/WebSocket送信で全件返す必要がある想定。
    */
-  getBeaconMessages(): ChatMessage[] {
+  getBeaconMessages(
+    limit: number = SessionDatabase.BEACON_MESSAGES_RETENTION
+  ): ChatMessage[] {
+    // 直近 limit 件を時刻降順で取って、表示用に昇順に戻す
     const stmt = this.db.prepare(
-      "SELECT * FROM beacon_messages ORDER BY timestamp ASC"
+      "SELECT * FROM (SELECT * FROM beacon_messages ORDER BY timestamp DESC LIMIT ?) ORDER BY timestamp ASC"
     );
-    const rows = stmt.all() as BeaconMessageRow[];
+    const rows = stmt.all(limit) as BeaconMessageRow[];
     return rows.map(row => {
-      let toolUse: ChatMessage["toolUse"];
-      if (row.tool_use_json) {
-        try {
-          toolUse = JSON.parse(row.tool_use_json);
-        } catch {
-          console.warn(
-            `[DB] Failed to parse beacon_messages.tool_use_json for ${row.id}`
-          );
-        }
-      }
+      const toolUse = row.tool_use_json
+        ? this.safeJsonParse<ChatMessage["toolUse"]>(
+            row.tool_use_json,
+            undefined,
+            `beacon_messages.tool_use_json[${row.id}]`
+          )
+        : undefined;
       return {
         id: row.id,
         role: row.role as "user" | "assistant",
