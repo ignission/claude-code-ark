@@ -21,6 +21,16 @@ import { ttydManager } from "./ttyd-manager.js";
 export type { ManagedSession };
 
 export class SessionOrchestrator extends EventEmitter {
+  /**
+   * worktreePath → repoPath のキャッシュ
+   *
+   * deriveRepoPath() は execFileSync(git) で同期子プロセスを起動するため、
+   * getAllSessions/toManagedSession のhot pathでN回呼ばれると接続時応答が遅れる。
+   * worktreeは削除イベント時のみ変更されるので、生存期間中はキャッシュして良い。
+   * stopSession / 孤立セッションクリーンアップ時に invalidate する。
+   */
+  private repoPathCache = new Map<string, string | undefined>();
+
   constructor() {
     super();
     this.setupEventForwarding();
@@ -67,22 +77,18 @@ export class SessionOrchestrator extends EventEmitter {
         if (dbSession) {
           db.deleteSession(dbSession.id);
         }
+        this.repoPathCache.delete(tmuxSession.worktreePath);
         continue;
       }
 
       // DBにセッション情報があればstatusを尊重（idle等の永続化された状態を維持）
+      // repoPathの不整合はttyd起動完了時のtoManagedSession()が修正するので
+      // ここで二度execFileSyncを走らせない
       const dbSession = db.getSessionByWorktreePath(tmuxSession.worktreePath);
       if (dbSession) {
         console.log(
           `[Orchestrator] Restored session: ${tmuxSession.tmuxSessionName} -> ${dbSession.id} (status: ${dbSession.status})`
         );
-        // repoPathが未設定ならgitから導出して保存
-        if (!dbSession.repoPath && tmuxSession.worktreePath) {
-          const repoPath = this.deriveRepoPath(tmuxSession.worktreePath);
-          if (repoPath) {
-            db.updateSessionRepoPath(dbSession.id, repoPath);
-          }
-        }
       }
 
       // ttydも自動起動（起動完了後にクライアントへ通知）
@@ -127,13 +133,18 @@ export class SessionOrchestrator extends EventEmitter {
         ? (dbSession?.status as SessionStatus) || "active"
         : this.mapTmuxStatus(tmuxSession.status);
 
-    // repoPathがDBにない場合はgitから導出して保存
-    let repoPath = dbSession?.repoPath;
-    if (!repoPath && tmuxSession.worktreePath) {
-      repoPath = this.deriveRepoPath(tmuxSession.worktreePath);
-      if (repoPath && dbSession) {
-        db.updateSessionRepoPath(dbSession.id, repoPath);
-      }
+    // worktreePathから導出したrepoPathを正として扱い、
+    // DBとの不整合があれば修正する
+    const derivedRepoPath = tmuxSession.worktreePath
+      ? this.deriveRepoPath(tmuxSession.worktreePath)
+      : undefined;
+    const repoPath = derivedRepoPath ?? dbSession?.repoPath;
+    if (
+      derivedRepoPath &&
+      dbSession &&
+      dbSession.repoPath !== derivedRepoPath
+    ) {
+      db.updateSessionRepoPath(dbSession.id, derivedRepoPath);
     }
 
     return {
@@ -149,8 +160,16 @@ export class SessionOrchestrator extends EventEmitter {
     };
   }
 
-  /** worktreePathからメインリポジトリのパスを導出 */
+  /**
+   * worktreePathからメインリポジトリのパスを導出
+   *
+   * `repoPathCache` でメモ化する。ヒット時はgitプロセスを起動しない。
+   * 失敗結果 (undefined) も再試行を避けるためキャッシュする。
+   */
   private deriveRepoPath(worktreePath: string): string | undefined {
+    if (this.repoPathCache.has(worktreePath)) {
+      return this.repoPathCache.get(worktreePath);
+    }
     try {
       const gitCommonDir = execFileSync(
         "git",
@@ -163,8 +182,11 @@ export class SessionOrchestrator extends EventEmitter {
         ],
         { encoding: "utf-8" }
       ).trim();
-      return gitCommonDir.replace(/\/\.git\/?$/, "") || undefined;
+      const repo = gitCommonDir.replace(/\/\.git\/?$/, "") || undefined;
+      this.repoPathCache.set(worktreePath, repo);
+      return repo;
     } catch {
+      this.repoPathCache.set(worktreePath, undefined);
       return undefined;
     }
   }
@@ -195,14 +217,19 @@ export class SessionOrchestrator extends EventEmitter {
     worktreePath: string,
     repoPath?: string
   ): Promise<ManagedSession> {
+    // worktreePathから導出したrepoPathを優先する。
+    // 呼び出し側の `currentRepoPath` はソケット状態に依存するため、
+    // 別リポジトリのworktreeに対して誤った値が渡るケースがある。
+    const resolvedRepoPath = this.deriveRepoPath(worktreePath) ?? repoPath;
+
     // 既存セッションがあれば再利用
     const existingTmux = tmuxManager.getSessionByWorktree(worktreePath);
     if (existingTmux) {
-      // repoPathが渡された場合はDBを更新（既存セッションにrepoPath情報を補完）
-      if (repoPath) {
+      // repoPathが解決できた場合はDBを更新（既存セッションにrepoPath情報を補完）
+      if (resolvedRepoPath) {
         const dbSession = db.getSessionByWorktreePath(worktreePath);
-        if (dbSession && !dbSession.repoPath) {
-          db.updateSessionRepoPath(dbSession.id, repoPath);
+        if (dbSession && dbSession.repoPath !== resolvedRepoPath) {
+          db.updateSessionRepoPath(dbSession.id, resolvedRepoPath);
         }
       }
 
@@ -234,7 +261,7 @@ export class SessionOrchestrator extends EventEmitter {
       id: tmuxSession.id,
       worktreeId,
       worktreePath,
-      repoPath,
+      repoPath: resolvedRepoPath,
       status: "active",
     });
 
@@ -242,7 +269,7 @@ export class SessionOrchestrator extends EventEmitter {
       id: tmuxSession.id,
       worktreeId,
       worktreePath,
-      repoPath,
+      repoPath: resolvedRepoPath,
       status: "active",
       createdAt: tmuxSession.createdAt,
       tmuxSessionName: tmuxSession.tmuxSessionName,
@@ -293,6 +320,9 @@ export class SessionOrchestrator extends EventEmitter {
     ttydManager.stopInstance(sessionId);
     tmuxManager.killSession(sessionId);
     db.deleteSession(sessionId);
+    if (worktreePath) {
+      this.repoPathCache.delete(worktreePath);
+    }
     this.emit("session:stopped", sessionId);
 
     return worktreePath ? { worktreePath, repoPath } : null;
@@ -368,6 +398,7 @@ export class SessionOrchestrator extends EventEmitter {
         if (dbSession) {
           db.deleteSession(dbSession.id);
         }
+        this.repoPathCache.delete(s.worktreePath);
         this.emit("session:stopped", s.id);
       }
     }

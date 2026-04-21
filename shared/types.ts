@@ -253,6 +253,7 @@ export interface ClientToServerEvents {
   "beacon:send": (data: { message: string }) => void;
   "beacon:history": () => void;
   "beacon:close": () => void;
+  "beacon:clear": () => void;
 
   // ファイルビューワー
   "file:read": (data: { sessionId: string; filePath: string }) => void;

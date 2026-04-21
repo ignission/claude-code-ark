@@ -11,6 +11,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import type {
+  ChatMessage,
   FrontlineRecord,
   FrontlineStats,
   Message,
@@ -61,6 +62,28 @@ interface CreateMessageInput {
   readonly role: "user" | "assistant" | "system";
   readonly content: string;
   readonly type?: MessageType;
+  readonly timestamp: Date;
+}
+
+/** Beacon履歴の行データ */
+interface BeaconMessageRow {
+  id: string;
+  role: string;
+  content: string;
+  tool_use_json: string | null;
+  timestamp: string;
+}
+
+/** Beacon履歴追加時の入力データ */
+interface BeaconMessageInput {
+  readonly id: string;
+  readonly role: "user" | "assistant";
+  readonly content: string;
+  readonly toolUse?: {
+    toolName: string;
+    input: string;
+    result?: string;
+  };
   readonly timestamp: Date;
 }
 
@@ -170,6 +193,18 @@ class SessionDatabase {
 
     // 既存のpetsテーブルを破棄（pet機能はサーバー側を廃止済み）
     this.db.exec("DROP TABLE IF EXISTS pets;");
+
+    // Beacon履歴テーブル（グローバルチャット用・1セッションのみ）
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS beacon_messages (
+        id TEXT PRIMARY KEY,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        tool_use_json TEXT,
+        timestamp TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_beacon_messages_timestamp ON beacon_messages(timestamp);
+    `);
 
     // フロントライン記録テーブル
     this.db.exec(`
@@ -395,6 +430,80 @@ class SessionDatabase {
   clearMessages(sessionId: string): void {
     const stmt = this.db.prepare("DELETE FROM messages WHERE session_id = ?");
     stmt.run(sessionId);
+  }
+
+  // ============================================================
+  // Beacon履歴CRUD操作
+  // ============================================================
+
+  /** Beacon履歴の保持上限（UI表示・WebSocket送信のペイロード抑制用） */
+  private static readonly BEACON_MESSAGES_RETENTION = 500;
+
+  /**
+   * Beaconチャット履歴にメッセージを追加
+   *
+   * 追加後、保持上限 (BEACON_MESSAGES_RETENTION) を超えた古いレコードを
+   * LRU的にトリムしてDB無限成長を防ぐ。
+   */
+  addBeaconMessage(message: BeaconMessageInput): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO beacon_messages (id, role, content, tool_use_json, timestamp)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    stmt.run(
+      message.id,
+      message.role,
+      message.content,
+      message.toolUse ? JSON.stringify(message.toolUse) : null,
+      message.timestamp.toISOString()
+    );
+
+    // 古いメッセージをトリム（直近 RETENTION 件のみ保持）
+    const trim = this.db.prepare(`
+      DELETE FROM beacon_messages
+      WHERE id NOT IN (
+        SELECT id FROM beacon_messages ORDER BY timestamp DESC LIMIT ?
+      )
+    `);
+    trim.run(SessionDatabase.BEACON_MESSAGES_RETENTION);
+  }
+
+  /**
+   * Beaconチャット履歴を取得（タイムスタンプ昇順、直近 limit 件）
+   *
+   * limit のデフォルトは保持上限と同じ。UI/WebSocket送信で全件返す必要がある想定。
+   */
+  getBeaconMessages(
+    limit: number = SessionDatabase.BEACON_MESSAGES_RETENTION
+  ): ChatMessage[] {
+    // 直近 limit 件を時刻降順で取って、表示用に昇順に戻す
+    const stmt = this.db.prepare(
+      "SELECT * FROM (SELECT * FROM beacon_messages ORDER BY timestamp DESC LIMIT ?) ORDER BY timestamp ASC"
+    );
+    const rows = stmt.all(limit) as BeaconMessageRow[];
+    return rows.map(row => {
+      const toolUse = row.tool_use_json
+        ? this.safeJsonParse<ChatMessage["toolUse"]>(
+            row.tool_use_json,
+            undefined,
+            `beacon_messages.tool_use_json[${row.id}]`
+          )
+        : undefined;
+      return {
+        id: row.id,
+        role: row.role as "user" | "assistant",
+        content: row.content,
+        timestamp: new Date(row.timestamp),
+        toolUse,
+      };
+    });
+  }
+
+  /**
+   * Beaconチャット履歴を全削除
+   */
+  clearBeaconMessages(): void {
+    this.db.exec("DELETE FROM beacon_messages");
   }
 
   // ============================================================

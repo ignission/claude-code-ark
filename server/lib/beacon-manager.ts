@@ -22,6 +22,7 @@ import type {
   ChatMessage,
   SpecialKey,
 } from "../../shared/types.js";
+import { db } from "./database.js";
 import { getErrorMessage } from "./errors.js";
 
 const execFileAsync = promisify(execFile);
@@ -801,11 +802,14 @@ export class BeaconManager extends EventEmitter {
       },
     });
 
+    // DBから既存の履歴をロード（UI表示用・LLMコンテキストは引き継がない）
+    const messages = db.getBeaconMessages();
+
     const session: BeaconSession = {
       queue,
       outputIterator: q[Symbol.asyncIterator](),
       queryInstance: q,
-      messages: [],
+      messages,
       lastActivity: new Date(),
       processing: false,
       abortController,
@@ -841,6 +845,7 @@ export class BeaconManager extends EventEmitter {
       timestamp: new Date(),
     };
     session.messages.push(userMessage);
+    db.addBeaconMessage(userMessage);
     this.emit("beacon:message", userMessage);
 
     // キューにメッセージをpush（query()のAsyncIterableに供給される）
@@ -937,7 +942,9 @@ export class BeaconManager extends EventEmitter {
           }
 
           // 最終的なアシスタントメッセージをチャット履歴に追加
-          if (assistantText) {
+          // clearHistory等でセッションが差し替わっている場合はDB書き込みしない
+          // （消した履歴が in-flight のresult書き込みで復活するのを防ぐ）
+          if (assistantText && this.session === session) {
             const assistantMessage: ChatMessage = {
               id: randomUUID(),
               role: "assistant",
@@ -946,6 +953,7 @@ export class BeaconManager extends EventEmitter {
               toolUse: lastToolUse,
             };
             session.messages.push(assistantMessage);
+            db.addBeaconMessage(assistantMessage);
             this.emit("beacon:message", assistantMessage);
           }
 
@@ -985,9 +993,24 @@ export class BeaconManager extends EventEmitter {
 
   /**
    * チャット履歴を取得する
+   *
+   * セッション未開始時はDBから直接ロードする（サーバー再起動・アイドルタイムアウト後も履歴を保持するため）
    */
   getHistory(): ChatMessage[] {
-    return this.session ? [...this.session.messages] : [];
+    if (this.session) return [...this.session.messages];
+    return db.getBeaconMessages();
+  }
+
+  /**
+   * チャット履歴を全削除する
+   *
+   * サーバー側のセッション（LLMコンテキスト）も閉じてDB履歴もクリアする。
+   * 次のメッセージ送信時に新規セッションが開始される。
+   */
+  clearHistory(): void {
+    this.closeSession();
+    db.clearBeaconMessages();
+    console.log("[BeaconManager] 履歴をクリアしました");
   }
 
   /**

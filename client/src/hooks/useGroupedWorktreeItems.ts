@@ -31,7 +31,11 @@ export function useGroupedWorktreeItems(
     const groups = new Map<string, GroupedItem[]>();
     const worktreeSessionIds = new Set<string>();
 
-    for (const wt of worktrees) {
+    // worktreePath昇順で処理することでリロード間の並び順を安定させる
+    const sortedWorktrees = [...worktrees].sort((a, b) =>
+      a.path.localeCompare(b.path)
+    );
+    for (const wt of sortedWorktrees) {
       const session = sessionByWorktreeId.get(wt.id) ?? null;
       if (session) worktreeSessionIds.add(session.id);
       const repoName = (() => {
@@ -45,7 +49,10 @@ export function useGroupedWorktreeItems(
       groups.set(repoName, existing);
     }
 
-    for (const session of Array.from(sessions.values())) {
+    const sortedSessions = Array.from(sessions.values()).sort((a, b) =>
+      a.worktreePath.localeCompare(b.worktreePath)
+    );
+    for (const session of sortedSessions) {
       if (worktreeSessionIds.has(session.id)) continue;
       const repo = session.repoPath ?? findRepoForSession(session, repoList);
       const repoName = repo ? getBaseName(repo) : "unknown";
@@ -54,7 +61,10 @@ export function useGroupedWorktreeItems(
       groups.set(repoName, existing);
     }
 
-    return groups;
+    // リポジトリ名でも安定ソートする
+    return new Map(
+      Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b))
+    );
   }, [worktrees, sessions, sessionByWorktreeId, repoList]);
 
   return { groupedItems, sessionByWorktreeId };
