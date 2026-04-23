@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  tailwindcss>nanoid: 5.1.7
+  tailwindcss>nanoid: 5.1.9
 
 patchedDependencies:
   wouter@3.7.1:
