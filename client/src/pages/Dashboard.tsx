@@ -473,6 +473,10 @@ export default function Dashboard() {
           initialSidebarWidth={getSetting<number>("ark-sidebar-width", 250)}
           onSidebarWidthChange={w => setSetting("ark-sidebar-width", w)}
           onOpenFrontLine={() => setShowFrontLine(true)}
+          beaconVisible={getSetting<boolean>("ark-beacon-visible", true)}
+          onBeaconVisibleChange={v => setSetting("ark-beacon-visible", v)}
+          initialBeaconWidth={getSetting<number>("ark-beacon-width", 350)}
+          onBeaconWidthChange={w => setSetting("ark-beacon-width", w)}
         />
       )}
 
