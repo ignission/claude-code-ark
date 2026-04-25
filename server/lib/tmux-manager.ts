@@ -32,6 +32,24 @@ export interface TmuxSession {
   status: "starting" | "running" | "stopped" | "error";
 }
 
+/**
+ * createSessionの拡張オプション。
+ * 全フィールド省略時は既存挙動（互換維持）。
+ */
+export interface CreateSessionOptions {
+  /** 追加で注入する環境変数。tmux new-sessionの -e KEY=VALUE として展開される */
+  env?: Record<string, string>;
+  /** 起動コマンド。デフォルト: "claude" (skipPermissions有効時は "claude --dangerously-skip-permissions") */
+  commandLine?: string;
+  /** セッション名のプレフィックス。デフォルト: SESSION_PREFIX ("ark-") */
+  namePrefix?: string;
+  /**
+   * trueの場合、this.sessionsに登録し session:created を emit する（既存挙動、デフォルト）。
+   * falseの場合、登録もemitもしない（ログイン用など、SessionOrchestratorの管理外で使うケース）。
+   */
+  autoDiscover?: boolean;
+}
+
 export class TmuxManager extends EventEmitter {
   private sessions: Map<string, TmuxSession> = new Map();
   private readonly SESSION_PREFIX = "ark-";
@@ -137,10 +155,30 @@ export class TmuxManager extends EventEmitter {
 
   /**
    * 新しいtmuxセッションを作成してclaude-codeを起動
+   *
+   * @param worktreePath 作業ディレクトリ
+   * @param options 互換維持の拡張オプション。省略時は従来挙動。
    */
-  async createSession(worktreePath: string): Promise<TmuxSession> {
+  async createSession(
+    worktreePath: string,
+    options?: CreateSessionOptions
+  ): Promise<TmuxSession> {
     const id = nanoid(8);
-    const tmuxSessionName = `${this.SESSION_PREFIX}${id}`;
+    const namePrefix = options?.namePrefix ?? this.SESSION_PREFIX;
+    const tmuxSessionName = `${namePrefix}${id}`;
+    const autoDiscover = options?.autoDiscover ?? true;
+
+    // 追加の環境変数を -e KEY=VALUE 形式で展開（既存の -e の後ろに付与）
+    const extraEnvArgs: string[] = options?.env
+      ? Object.entries(options.env).flatMap(([k, v]) => ["-e", `${k}=${v}`])
+      : [];
+
+    // 起動コマンド（commandLine が指定されていればそれを優先）
+    const claudeCmd =
+      options?.commandLine ??
+      (this.skipPermissions
+        ? "claude --dangerously-skip-permissions"
+        : "claude");
 
     let tmuxCreated = false;
 
@@ -162,6 +200,7 @@ export class TmuxManager extends EventEmitter {
           "CLAUDECODE=",
           "-e",
           "CLAUDE_CODE_NO_FLICKER=1",
+          ...extraEnvArgs,
         ],
         { stdio: "pipe" }
       );
@@ -184,10 +223,8 @@ export class TmuxManager extends EventEmitter {
           `tmux set-option exited with status ${setOptionResult.status}`
         );
 
-      // claudeコマンドを送信（終了後もシェルが残るのでvimなども使える）
-      const claudeCmd = this.skipPermissions
-        ? "claude --dangerously-skip-permissions"
-        : "claude";
+      // claudeコマンド（または options.commandLine）を送信
+      // 終了後もシェルが残るのでvimなども使える
       const sendKeysResult = spawnSync(
         "tmux",
         ["send-keys", "-t", tmuxSessionName, claudeCmd, "Enter"],
@@ -217,8 +254,11 @@ export class TmuxManager extends EventEmitter {
       status: "running",
     };
 
-    this.sessions.set(id, session);
-    this.emit("session:created", session);
+    // autoDiscover=falseの場合は管理対象に含めない（ログイン用セッションなど）
+    if (autoDiscover) {
+      this.sessions.set(id, session);
+      this.emit("session:created", session);
+    }
 
     console.log(
       `[TmuxManager] Created session: ${tmuxSessionName} at ${worktreePath}`

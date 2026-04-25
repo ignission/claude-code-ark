@@ -45,6 +45,46 @@ export interface ManagedSession extends Session {
   ttydPort: number | null;
   /** ttydのURL（未起動時はnull） */
   ttydUrl: string | null;
+  /** セッション起動時に確定したアカウントプロファイルID（未紐付けはnull/undefined） */
+  accountProfileId?: string | null;
+  /** 現在のリポジトリ紐付けと不一致（再起動が必要） */
+  staleAccount?: boolean;
+  /** 起動時の警告コード（例: "config_dir_missing"） */
+  warning?: string;
+}
+
+/**
+ * 複数Anthropicアカウント切替機能 (Linux限定) で使うプロファイル
+ * Claude CLIの認証情報ディレクトリ (CLAUDE_CONFIG_DIR) を抽象化する
+ */
+export interface AccountProfile {
+  id: string;
+  name: string;
+  /** 絶対パス。チルダはサーバ側で展開済 */
+  configDir: string;
+  /** pending=登録済だが未認証, authenticated=ログイン完了 */
+  status: "pending" | "authenticated";
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * リポジトリとアカウントプロファイルの紐付け
+ * 1リポジトリ=1プロファイル（多重紐付けは未サポート）
+ */
+export interface RepoAccountLink {
+  repoPath: string;
+  accountProfileId: string;
+  updatedAt: number;
+}
+
+/**
+ * 実行環境の機能フラグ
+ * クライアントは初期化時に受け取り、UI表示の可否を判断する
+ */
+export interface SystemCapabilities {
+  /** 複数アカウント切替が利用可能か（Linux + claudeコマンド存在 で true） */
+  multiAccountSupported: boolean;
 }
 
 export type SessionStatus = "active" | "idle" | "error" | "stopped";
@@ -205,6 +245,29 @@ export interface ServerToClientEvents {
   "frontline:records": (records: FrontlineRecord[]) => void;
   "frontline:record_saved": (data: FrontlineRecordSaved) => void;
   "frontline:error": (data: FrontlineError) => void;
+
+  // 複数アカウント切替 (Linux限定)
+  "system:capabilities": (caps: SystemCapabilities) => void;
+  "account:list": (profiles: AccountProfile[]) => void;
+  "account:created": (profile: AccountProfile) => void;
+  "account:updated": (profile: AccountProfile) => void;
+  "account:deleted": (data: { id: string }) => void;
+  "account:login-started": (data: {
+    profileId: string;
+    ttydUrl: string;
+  }) => void;
+  "account:login-completed": (data: { profileId: string }) => void;
+  "account:login-failed": (data: { profileId: string; reason: string }) => void;
+  "account:error": (data: { message: string; code?: string }) => void;
+  "repo:account-changed": (data: {
+    repoPath: string;
+    accountProfileId: string | null;
+  }) => void;
+  "session:warning": (data: {
+    sessionId: string;
+    code: string;
+    profileId?: string;
+  }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -269,6 +332,23 @@ export interface ClientToServerEvents {
   ) => void;
   "frontline:get_stats": () => void;
   "frontline:get_records": (data?: { limit?: number }) => void;
+
+  // 複数アカウント切替 (Linux限定)
+  "account:list": () => void;
+  "account:create": (data: { name: string; configDir: string }) => void;
+  "account:update": (data: {
+    id: string;
+    name?: string;
+    configDir?: string;
+  }) => void;
+  "account:delete": (data: { id: string }) => void;
+  "account:start-login": (data: { profileId: string }) => void;
+  "account:cancel-login": (data: { profileId: string }) => void;
+  "repo:set-account": (data: {
+    repoPath: string;
+    accountProfileId: string | null;
+  }) => void;
+  "session:restart-with-account": (data: { sessionId: string }) => void;
 }
 
 /** Beaconチャットのメッセージ */

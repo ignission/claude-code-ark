@@ -8,14 +8,17 @@
  */
 
 import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
+import { nanoid } from "nanoid";
 import type {
+  AccountProfile,
   ChatMessage,
   FrontlineRecord,
   FrontlineStats,
   Message,
   MessageType,
+  RepoAccountLink,
   Session,
   SessionStatus,
 } from "../../shared/types.js";
@@ -112,21 +115,26 @@ interface BeaconMessageInput {
  * });
  * ```
  */
-class SessionDatabase {
+export class SessionDatabase {
   private readonly db: Database.Database;
 
-  constructor() {
-    this.ensureDataDirectory();
-    this.db = new Database(DB_PATH);
+  /**
+   * @param dbPath - DBファイルのパス。省略時はデフォルトの `data/sessions.db` を使用
+   */
+  constructor(dbPath?: string) {
+    const resolvedPath = dbPath ?? DB_PATH;
+    this.ensureDataDirectory(resolvedPath);
+    this.db = new Database(resolvedPath);
     this.initialize();
   }
 
   /**
-   * data/ディレクトリが存在しない場合は作成
+   * DBファイルの親ディレクトリが存在しない場合は作成
    */
-  private ensureDataDirectory(): void {
-    if (!existsSync(DATA_DIR)) {
-      mkdirSync(DATA_DIR, { recursive: true });
+  private ensureDataDirectory(dbPath: string): void {
+    const dir = dirname(dbPath);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
     }
   }
 
@@ -204,6 +212,27 @@ class SessionDatabase {
         timestamp TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_beacon_messages_timestamp ON beacon_messages(timestamp);
+    `);
+
+    // 複数Anthropicアカウント切替機能 (Linux限定) のテーブル
+    // - account_profiles: 各アカウントの configDir / 認証ステータス
+    // - repo_account_links: リポジトリパスとプロファイルの紐付け (1:1)
+    // プロファイル削除時は CASCADE で紐付けも自動削除する
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS account_profiles (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        config_dir TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS repo_account_links (
+        repo_path TEXT PRIMARY KEY,
+        account_profile_id TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (account_profile_id) REFERENCES account_profiles(id) ON DELETE CASCADE
+      );
     `);
 
     // フロントライン記録テーブル
@@ -536,6 +565,195 @@ class SessionDatabase {
       type: row.type as MessageType,
       timestamp: new Date(row.timestamp),
     };
+  }
+
+  // ============================================================
+  // アカウントプロファイルCRUD操作 (複数Anthropicアカウント切替機能)
+  // ============================================================
+
+  /**
+   * account_profiles テーブルの行データ
+   */
+  private rowToAccountProfile(row: {
+    id: string;
+    name: string;
+    config_dir: string;
+    status: string;
+    created_at: number;
+    updated_at: number;
+  }): AccountProfile {
+    return {
+      id: row.id,
+      name: row.name,
+      configDir: row.config_dir,
+      status: row.status as AccountProfile["status"],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * 登録済みアカウントプロファイルを全件取得（作成順）
+   */
+  listAccountProfiles(): AccountProfile[] {
+    const stmt = this.db.prepare(
+      "SELECT * FROM account_profiles ORDER BY created_at ASC"
+    );
+    const rows = stmt.all() as Array<{
+      id: string;
+      name: string;
+      config_dir: string;
+      status: string;
+      created_at: number;
+      updated_at: number;
+    }>;
+    return rows.map(row => this.rowToAccountProfile(row));
+  }
+
+  /**
+   * IDでアカウントプロファイルを取得
+   */
+  getAccountProfile(id: string): AccountProfile | null {
+    const stmt = this.db.prepare("SELECT * FROM account_profiles WHERE id = ?");
+    const row = stmt.get(id) as
+      | {
+          id: string;
+          name: string;
+          config_dir: string;
+          status: string;
+          created_at: number;
+          updated_at: number;
+        }
+      | undefined;
+    return row ? this.rowToAccountProfile(row) : null;
+  }
+
+  /**
+   * 新規アカウントプロファイルを作成（status='pending'）
+   *
+   * @throws name が既存と重複している場合（UNIQUE制約違反）
+   */
+  createAccountProfile(input: {
+    name: string;
+    configDir: string;
+  }): AccountProfile {
+    const id = nanoid();
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      INSERT INTO account_profiles (id, name, config_dir, status, created_at, updated_at)
+      VALUES (?, ?, ?, 'pending', ?, ?)
+    `);
+    stmt.run(id, input.name, input.configDir, now, now);
+    const created = this.getAccountProfile(id);
+    if (!created) {
+      throw new Error(`Failed to create account profile: ${id}`);
+    }
+    return created;
+  }
+
+  /**
+   * アカウントプロファイルの一部フィールドを更新
+   * undefined のフィールドはスキップ。statusはmarkAccountAuthenticated経由で更新する
+   */
+  updateAccountProfile(
+    id: string,
+    patch: { name?: string; configDir?: string }
+  ): AccountProfile {
+    const setClauses: string[] = [];
+    const params: Array<string | number> = [];
+    if (patch.name !== undefined) {
+      setClauses.push("name = ?");
+      params.push(patch.name);
+    }
+    if (patch.configDir !== undefined) {
+      setClauses.push("config_dir = ?");
+      params.push(patch.configDir);
+    }
+    setClauses.push("updated_at = ?");
+    params.push(Date.now());
+    params.push(id);
+    const stmt = this.db.prepare(
+      `UPDATE account_profiles SET ${setClauses.join(", ")} WHERE id = ?`
+    );
+    const result = stmt.run(...params);
+    if (result.changes === 0) {
+      throw new Error(`Account profile not found: ${id}`);
+    }
+    const updated = this.getAccountProfile(id);
+    if (!updated) {
+      throw new Error(`Account profile not found after update: ${id}`);
+    }
+    return updated;
+  }
+
+  /**
+   * アカウントの認証完了を記録（status='authenticated'）
+   */
+  markAccountAuthenticated(id: string): void {
+    const now = Date.now();
+    const stmt = this.db.prepare(
+      "UPDATE account_profiles SET status = 'authenticated', updated_at = ? WHERE id = ?"
+    );
+    stmt.run(now, id);
+  }
+
+  /**
+   * アカウントプロファイルを削除（紐付けはCASCADEで自動削除）
+   */
+  deleteAccountProfile(id: string): void {
+    const stmt = this.db.prepare("DELETE FROM account_profiles WHERE id = ?");
+    stmt.run(id);
+  }
+
+  // ============================================================
+  // リポジトリ ↔ アカウント紐付けCRUD操作
+  // ============================================================
+
+  /**
+   * リポジトリパスから紐付けを取得
+   */
+  getRepoAccountLink(repoPath: string): RepoAccountLink | null {
+    const stmt = this.db.prepare(
+      "SELECT * FROM repo_account_links WHERE repo_path = ?"
+    );
+    const row = stmt.get(repoPath) as
+      | {
+          repo_path: string;
+          account_profile_id: string;
+          updated_at: number;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      repoPath: row.repo_path,
+      accountProfileId: row.account_profile_id,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * リポジトリとアカウントプロファイルを紐付け（UPSERT）
+   */
+  setRepoAccountLink(repoPath: string, accountProfileId: string): void {
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      INSERT INTO repo_account_links (repo_path, account_profile_id, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(repo_path) DO UPDATE SET
+        account_profile_id = excluded.account_profile_id,
+        updated_at = excluded.updated_at
+    `);
+    stmt.run(repoPath, accountProfileId, now);
+  }
+
+  /**
+   * リポジトリの紐付けを解除
+   */
+  removeRepoAccountLink(repoPath: string): void {
+    const stmt = this.db.prepare(
+      "DELETE FROM repo_account_links WHERE repo_path = ?"
+    );
+    stmt.run(repoPath);
   }
 
   // ============================================================
