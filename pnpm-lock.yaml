@@ -21,7 +21,7 @@ importers:
         version: 0.2.114(zod@4.3.6)
       '@hookform/resolvers':
         specifier: ^5.2.2
-        version: 5.2.2(react-hook-form@7.72.1(react@19.2.5))
+        version: 5.2.2(react-hook-form@7.74.0(react@19.2.5))
       '@radix-ui/react-accordion':
         specifier: ^1.2.12
         version: 1.2.12(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -156,7 +156,7 @@ importers:
         version: 19.2.5(react@19.2.5)
       react-hook-form:
         specifier: ^7.64.0
-        version: 7.72.1(react@19.2.5)
+        version: 7.74.0(react@19.2.5)
       react-markdown:
         specifier: ^10.1.0
         version: 10.1.0(@types/react@19.2.14)(react@19.2.5)
@@ -2957,8 +2957,8 @@ packages:
     peerDependencies:
       react: ^19.2.5
 
-  react-hook-form@7.72.1:
-    resolution: {integrity: sha512-RhwBoy2ygeVZje+C+bwJ8g0NjTdBmDlJvAUHTxRjTmSUKPYsKfMphkS2sgEMotsY03bP358yEYlnUeZy//D9Ig==}
+  react-hook-form@7.74.0:
+    resolution: {integrity: sha512-yR6wHr99p9wFv686jhRWVSFhUvDvNbdUf2dKlbno8/VKOCuoNobDGC6S+M2dua9A9Yo8vpcrp8assIYbsZCQ9g==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       react: ^16.8.0 || ^17 || ^18 || ^19
@@ -3851,10 +3851,10 @@ snapshots:
     dependencies:
       hono: 4.12.14
 
-  '@hookform/resolvers@5.2.2(react-hook-form@7.72.1(react@19.2.5))':
+  '@hookform/resolvers@5.2.2(react-hook-form@7.74.0(react@19.2.5))':
     dependencies:
       '@standard-schema/utils': 0.3.0
-      react-hook-form: 7.72.1(react@19.2.5)
+      react-hook-form: 7.74.0(react@19.2.5)
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -6274,7 +6274,7 @@ snapshots:
       react: 19.2.5
       scheduler: 0.27.0
 
-  react-hook-form@7.72.1(react@19.2.5):
+  react-hook-form@7.74.0(react@19.2.5):
     dependencies:
       react: 19.2.5
 
