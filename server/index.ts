@@ -1633,23 +1633,14 @@ async function startServer() {
         }
         io.emit("repo:profile-changed", { repoPath, profileId });
 
-        // 該当 repoPath 配下の稼働中セッションについて staleProfile を再計算
-        // 変化したセッションは session:updated を再 emit してクライアントに反映
-        const allSessions = sessionOrchestrator.getAllSessions();
-        for (const session of allSessions) {
-          if (session.repoPath !== repoPath) continue;
-          const previousStale = session.staleProfile === true;
-          const currentStale = sessionOrchestrator.recomputeStaleProfile(
-            session.id
-          );
-          if (previousStale !== currentStale) {
-            const updated = sessionOrchestrator.getSession(session.id);
-            if (updated) {
-              io.emit("session:updated", {
-                ...updated,
-                staleProfile: currentStale,
-              });
-            }
+        // 該当 repoPath 配下の稼働中セッションは紐付け変更で staleProfile が
+        // 切り替わっている可能性があるため、最新の ManagedSession を再 emit する。
+        // (getAllSessions() は toManagedSession 経由で staleProfile を再計算済。
+        //  「変更前/変更後」の比較で発火制御してしまうと、紐付けは既に新値に
+        //  なっているため両者が一致して emit されない再発バグの原因になる)
+        for (const session of sessionOrchestrator.getAllSessions()) {
+          if (session.repoPath === repoPath) {
+            io.emit("session:updated", session);
           }
         }
       } catch (e) {
