@@ -36,7 +36,12 @@ type Mode = { kind: "list" } | { kind: "add" } | { kind: "edit"; id: string };
 /**
  * 入力値検証
  * - 名前: trim後に非空
- * - configDir: trim後に非空、かつ絶対パス（"/"）またはチルダ（"~"）始まり
+ * - configDir: trim後に非空、かつ絶対パス("/") または "~/" / "~" 始まり
+ *
+ * 注: サーバ側の validateConfigDir は `expanded === "~"` か
+ * `expanded.startsWith("~/")` のみチルダ展開する。`~user/...` 形式は
+ * 別ユーザのhome を指し展開対象外で、サーバ側で拒否されるため、
+ * クライアントもここで弾いて UX 不整合を防ぐ。
  */
 function validateForm(
   name: string,
@@ -54,11 +59,13 @@ function validateForm(
       message: "設定ディレクトリを入力してください",
     };
   }
-  if (!trimmedDir.startsWith("/") && !trimmedDir.startsWith("~")) {
+  const isAbsolute = trimmedDir.startsWith("/");
+  const isHomeRelative = trimmedDir === "~" || trimmedDir.startsWith("~/");
+  if (!isAbsolute && !isHomeRelative) {
     return {
       ok: false,
       field: "configDir",
-      message: "絶対パス（/ または ~ で始まる）を指定してください",
+      message: "絶対パス（/ または ~/ で始まる）を指定してください",
     };
   }
   return { ok: true };
