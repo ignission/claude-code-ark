@@ -240,6 +240,7 @@ describe("AccountLoginManager", () => {
   });
 
   it('credentialsWatcher の "authenticated" で "completed" emit + cleanup', async () => {
+    vi.useFakeTimers();
     const tmux = makeTmuxStub();
     const ttyd = makeTtydStub();
     const mgr = new AccountLoginManager(tmux as never, ttyd as never);
@@ -254,6 +255,9 @@ describe("AccountLoginManager", () => {
     // watcher が認証成功イベントを発火
     const watcher = getLastWatcher();
     watcher.emit("authenticated");
+
+    // grace period (5秒) を進めて completed を発火させる
+    await vi.advanceTimersByTimeAsync(6000);
 
     const completedId = await completedPromise;
     expect(completedId).toBe(profile.id);

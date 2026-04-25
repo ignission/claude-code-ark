@@ -48,6 +48,11 @@ interface ActiveLogin {
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const URL_DETECT_INTERVAL_MS = 1000;
+// credentials.json 検知後にtmux killまで待つ猶予 (ms)。
+// claude /login は credentials 書き込み直後に onboarding 完了マーク
+// (`hasCompletedOnboarding=true` 等) を `.claude.json` に書く。これらを
+// 書き終わる前に kill すると次回起動で theme picker が再表示される。
+const COMPLETION_GRACE_MS = 5000;
 // OAuth URL の起点（`claude /login` が出す URL のホスト部）。
 // 実機 (Claude CLI 2.1.x) では `claude.com/cai/oauth/...` を出す。
 // 過去/将来バージョン互換のため、claude.* と anthropic.com の主要サブドメインを許容する。
@@ -266,11 +271,18 @@ export class AccountLoginManager extends EventEmitter {
 
   /**
    * 認証成功時のハンドラ。watcher の "authenticated" イベントから呼ばれる。
+   *
+   * 重要: credentials.json 書き込み直後に claude /login を kill すると、
+   * onboarding 完了フラグ (`.claude.json` の `hasCompletedOnboarding`) や
+   * theme 設定が書かれず、次回起動で theme picker が再表示される。
+   * 後続書き込みのため数秒の grace period を取ってから destroy する。
    */
   private handleCompleted(profileId: string): void {
     const record = this.active.get(profileId);
     if (!record) return;
-    void this.destroy(profileId, "completed");
+    setTimeout(() => {
+      void this.destroy(profileId, "completed");
+    }, COMPLETION_GRACE_MS);
   }
 
   /**
