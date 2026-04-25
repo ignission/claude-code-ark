@@ -288,11 +288,17 @@ export default function Dashboard() {
     // 選択中セッションが今回の sessions Map から消えた瞬間に、
     // 直前 snapshot から worktreePath を取り出して restart pending として扱う。
     // (initiating tab は handleRestartSession で先に値を入れているため上書きしない)
+    //
+    // restart 由来かどうかの推定は「直前snapshot で staleProfile=true だった」
+    // ことを条件にする。restart は staleProfile セッションに対してのみ実行され
+    // るため、stale でないセッションが消えるのは通常停止 (別タブからのstop等)
+    // とみなして migration を発動させない。
     if (
       !restartingWorktreePathRef.current &&
       selectedSessionId &&
       !sessions.has(selectedSessionId) &&
-      lastSelectedSessionRef.current?.id === selectedSessionId
+      lastSelectedSessionRef.current?.id === selectedSessionId &&
+      lastSelectedSessionRef.current?.staleProfile === true
     ) {
       restartingWorktreePathRef.current =
         lastSelectedSessionRef.current.worktreePath;

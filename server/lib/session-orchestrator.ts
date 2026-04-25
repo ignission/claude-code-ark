@@ -263,6 +263,13 @@ export class SessionOrchestrator extends EventEmitter {
    *
    * configDir/.credentials.json の存在チェックは行わない。claude CLI が
    * 必要なら自動で /login を促す。
+   *
+   * lookup 戦略:
+   * - まず受信した repoPath で getRepoProfileLink を試す
+   * - 見つからなければ fs.realpathSync で正規化したパスで再試行
+   *   (クライアントは symlink path で送ってくる場合と、git rev-parse 経由
+   *    で正規化した path で送ってくる場合の両方があり、保存と lookup の key
+   *    が食い違う可能性があるため)
    */
   private resolveProfileForRepo(repoPath: string | undefined): {
     env: Record<string, string> | undefined;
@@ -271,7 +278,17 @@ export class SessionOrchestrator extends EventEmitter {
     if (!repoPath) {
       return { env: undefined, snapshot: null };
     }
-    const link = db.getRepoProfileLink(repoPath);
+    let link = db.getRepoProfileLink(repoPath);
+    if (!link) {
+      try {
+        const real = fs.realpathSync(repoPath);
+        if (real !== repoPath) {
+          link = db.getRepoProfileLink(real);
+        }
+      } catch {
+        // realpath 解決失敗 → 受信値のままで紐付けなし扱い
+      }
+    }
     if (!link) {
       return { env: undefined, snapshot: null };
     }
