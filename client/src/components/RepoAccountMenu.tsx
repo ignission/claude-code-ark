@@ -38,9 +38,15 @@ export function colorFor(id: string): string {
   return PROFILE_COLORS[id.charCodeAt(0) % PROFILE_COLORS.length];
 }
 
-/** プロファイル名から最大4文字のバッジ表示用ラベルを生成 */
+/**
+ * バッジ表示用ラベル。短い名前はそのまま、長い場合は12文字+ellipsisで切り詰める。
+ * コードポイント単位で扱う（絵文字や日本語が4文字で切れないように）。
+ */
+const BADGE_MAX_CHARS = 12;
 export function badgeLabel(name: string): string {
-  return Array.from(name).slice(0, 4).join("");
+  const chars = Array.from(name);
+  if (chars.length <= BADGE_MAX_CHARS) return name;
+  return `${chars.slice(0, BADGE_MAX_CHARS).join("")}…`;
 }
 
 interface RepoAccountMenuProps {
