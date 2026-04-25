@@ -2,6 +2,8 @@ import { AlertCircle, Copy, Loader2, Terminal } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { AccountLoginModal } from "@/components/AccountLoginModal";
+import { AccountManagerDialog } from "@/components/AccountManagerDialog";
 import { BrowserPane } from "@/components/BrowserPane";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { FrontLineModal } from "@/components/frontline/FrontLineModal";
@@ -91,6 +93,18 @@ export default function Dashboard() {
     browserSessions,
     startBrowser,
     navigateBrowser,
+    accounts,
+    repoAccountLinks,
+    capabilities,
+    activeLogin,
+    loadAccounts,
+    createAccount,
+    updateAccount,
+    deleteAccount,
+    startLogin,
+    cancelLogin,
+    setRepoAccount,
+    restartSessionWithAccount,
   } = useSocket({
     enabled: !isSettingsLoading,
     initialRepoList: savedRepoList,
@@ -199,6 +213,39 @@ export default function Dashboard() {
   const [showTunnelDialog, setShowTunnelDialog] = useState(false);
   const [selectedPort, setSelectedPort] = useState<number | null>(null);
   const [showPortSelector, setShowPortSelector] = useState(false);
+  const [showAccountManager, setShowAccountManager] = useState(false);
+  // 新規追加直後にログインモーダルを起動するため、追加した最後のプロファイルIDを記憶
+  const lastCreatedAccountIdRef = useRef<string | null>(null);
+  // 新規追加した直後だけログイン起動を仕掛けるための「次に来た新規プロファイルでログイン」フラグ
+  const startLoginOnNextCreateRef = useRef(false);
+
+  // account:created を受信したらログイン自動起動 (AccountManagerDialogの「追加してログイン」)
+  useEffect(() => {
+    if (!startLoginOnNextCreateRef.current || accounts.length === 0) return;
+    // 最後の (最新追加) プロファイルを取得
+    const newest = [...accounts].sort((a, b) => b.createdAt - a.createdAt)[0];
+    if (
+      newest &&
+      newest.id !== lastCreatedAccountIdRef.current &&
+      newest.status === "pending"
+    ) {
+      lastCreatedAccountIdRef.current = newest.id;
+      startLoginOnNextCreateRef.current = false;
+      startLogin(newest.id);
+    }
+  }, [accounts, startLogin]);
+
+  const handleCreateAccount = useCallback(
+    (name: string, configDir: string) => {
+      startLoginOnNextCreateRef.current = true;
+      createAccount(name, configDir);
+    },
+    [createAccount]
+  );
+
+  const accountForActiveLogin = activeLogin
+    ? (accounts.find(a => a.id === activeLogin.profileId) ?? null)
+    : null;
   const copyToClipboard = (text: string | null) => {
     if (text) {
       navigator.clipboard.writeText(text);
@@ -383,6 +430,12 @@ export default function Dashboard() {
               onSelectBrowser={handleSelectBrowser}
               isBrowserSelected={selectedSessionId === "browser"}
               isRemote={isRemote}
+              accounts={accounts}
+              repoAccountLinks={repoAccountLinks}
+              capabilities={capabilities}
+              onSetRepoAccount={setRepoAccount}
+              onOpenAccountManager={() => setShowAccountManager(true)}
+              onRestartSession={restartSessionWithAccount}
             />
           }
           main={
@@ -647,6 +700,29 @@ export default function Dashboard() {
         onClose={() => setShowFrontLine(false)}
         socket={socket}
       />
+
+      {/* アカウント管理 (Linux限定) */}
+      {capabilities.multiAccountSupported && (
+        <>
+          <AccountManagerDialog
+            open={showAccountManager}
+            onOpenChange={setShowAccountManager}
+            accounts={accounts}
+            onCreate={handleCreateAccount}
+            onUpdate={updateAccount}
+            onDelete={deleteAccount}
+            onStartLogin={startLogin}
+          />
+          <AccountLoginModal
+            open={activeLogin !== null}
+            profile={accountForActiveLogin}
+            ttydUrl={activeLogin?.ttydUrl ?? null}
+            onCancel={() => {
+              if (activeLogin) cancelLogin(activeLogin.profileId);
+            }}
+          />
+        </>
+      )}
     </>
   );
 }
