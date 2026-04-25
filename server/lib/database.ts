@@ -215,7 +215,7 @@ export class SessionDatabase {
     `);
 
     // 複数Anthropicアカウント切替機能 (Linux限定) のテーブル
-    // - account_profiles: 各アカウントの configDir / 認証ステータス
+    // - account_profiles: 各アカウントの configDir
     // - repo_account_links: リポジトリパスとプロファイルの紐付け (1:1)
     // プロファイル削除時は CASCADE で紐付けも自動削除する
     this.db.exec(`
@@ -223,7 +223,6 @@ export class SessionDatabase {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
         config_dir TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -234,6 +233,13 @@ export class SessionDatabase {
         FOREIGN KEY (account_profile_id) REFERENCES account_profiles(id) ON DELETE CASCADE
       );
     `);
+
+    // マイグレーション: 旧 status 列を削除（認証ダイアログ廃止）
+    try {
+      this.db.exec("ALTER TABLE account_profiles DROP COLUMN status");
+    } catch {
+      // 既に削除済み
+    }
 
     // フロントライン記録テーブル
     this.db.exec(`
@@ -578,7 +584,6 @@ export class SessionDatabase {
     id: string;
     name: string;
     config_dir: string;
-    status: string;
     created_at: number;
     updated_at: number;
   }): AccountProfile {
@@ -586,7 +591,6 @@ export class SessionDatabase {
       id: row.id,
       name: row.name,
       configDir: row.config_dir,
-      status: row.status as AccountProfile["status"],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -603,7 +607,6 @@ export class SessionDatabase {
       id: string;
       name: string;
       config_dir: string;
-      status: string;
       created_at: number;
       updated_at: number;
     }>;
@@ -620,7 +623,6 @@ export class SessionDatabase {
           id: string;
           name: string;
           config_dir: string;
-          status: string;
           created_at: number;
           updated_at: number;
         }
@@ -629,7 +631,7 @@ export class SessionDatabase {
   }
 
   /**
-   * 新規アカウントプロファイルを作成（status='pending'）
+   * 新規アカウントプロファイルを作成
    *
    * @throws name が既存と重複している場合（UNIQUE制約違反）
    */
@@ -640,8 +642,8 @@ export class SessionDatabase {
     const id = nanoid();
     const now = Date.now();
     const stmt = this.db.prepare(`
-      INSERT INTO account_profiles (id, name, config_dir, status, created_at, updated_at)
-      VALUES (?, ?, ?, 'pending', ?, ?)
+      INSERT INTO account_profiles (id, name, config_dir, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
     `);
     stmt.run(id, input.name, input.configDir, now, now);
     const created = this.getAccountProfile(id);
@@ -653,7 +655,7 @@ export class SessionDatabase {
 
   /**
    * アカウントプロファイルの一部フィールドを更新
-   * undefined のフィールドはスキップ。statusはmarkAccountAuthenticated経由で更新する
+   * undefined のフィールドはスキップ
    */
   updateAccountProfile(
     id: string,
@@ -684,17 +686,6 @@ export class SessionDatabase {
       throw new Error(`Account profile not found after update: ${id}`);
     }
     return updated;
-  }
-
-  /**
-   * アカウントの認証完了を記録（status='authenticated'）
-   */
-  markAccountAuthenticated(id: string): void {
-    const now = Date.now();
-    const stmt = this.db.prepare(
-      "UPDATE account_profiles SET status = 'authenticated', updated_at = ? WHERE id = ?"
-    );
-    stmt.run(now, id);
   }
 
   /**

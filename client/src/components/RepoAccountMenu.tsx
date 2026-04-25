@@ -2,7 +2,7 @@
  * RepoAccountMenu - リポジトリ右クリックメニュー内に表示する
  * 「アカウントを変更」サブメニューのコンテンツ
  *
- * - 登録アカウント一覧 (pendingはdisabled)
+ * - 登録アカウント一覧
  * - 既定 (~/.claude) で紐付け解除
  * - アカウント管理ダイアログを開く
  *
@@ -16,11 +16,6 @@ import {
   ContextMenuLabel,
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import type { AccountProfile } from "../../../shared/types";
 
 /** プロファイルバッジのカラーパレット (5色) */
@@ -68,18 +63,14 @@ export function RepoAccountMenu({
         アカウント
       </ContextMenuLabel>
       {accounts.map(account => {
-        const isPending = account.status === "pending";
         const isCurrent = account.id === currentAccountId;
         const colorClass = colorFor(account.id);
         const label = badgeLabel(account.name);
 
-        const item = (
+        return (
           <ContextMenuItem
             key={account.id}
-            disabled={isPending}
-            onSelect={() => {
-              if (!isPending) onSelect(account.id);
-            }}
+            onSelect={() => onSelect(account.id)}
             className="flex items-center justify-between gap-2"
           >
             <span className="flex items-center gap-2 min-w-0">
@@ -97,21 +88,6 @@ export function RepoAccountMenu({
             </span>
           </ContextMenuItem>
         );
-
-        if (isPending) {
-          return (
-            <Tooltip key={account.id}>
-              <TooltipTrigger asChild>
-                {/* disabledのMenuItemはeventsを受けないため、wrap divでhover検知 */}
-                <div>{item}</div>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                ログイン未完了 — 先にログインしてください
-              </TooltipContent>
-            </Tooltip>
-          );
-        }
-        return item;
       })}
       <ContextMenuSeparator />
       <ContextMenuItem

@@ -2,7 +2,6 @@ import { AlertCircle, Copy, Loader2, Terminal } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { AccountLoginModal } from "@/components/AccountLoginModal";
 import { AccountManagerDialog } from "@/components/AccountManagerDialog";
 import { BrowserPane } from "@/components/BrowserPane";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
@@ -96,13 +95,10 @@ export default function Dashboard() {
     accounts,
     repoAccountLinks,
     capabilities,
-    activeLogin,
     loadAccounts,
     createAccount,
     updateAccount,
     deleteAccount,
-    startLogin,
-    cancelLogin,
     setRepoAccount,
     restartSessionWithAccount,
   } = useSocket({
@@ -214,38 +210,7 @@ export default function Dashboard() {
   const [selectedPort, setSelectedPort] = useState<number | null>(null);
   const [showPortSelector, setShowPortSelector] = useState(false);
   const [showAccountManager, setShowAccountManager] = useState(false);
-  // 新規追加直後にログインモーダルを起動するため、追加した最後のプロファイルIDを記憶
-  const lastCreatedAccountIdRef = useRef<string | null>(null);
-  // 新規追加した直後だけログイン起動を仕掛けるための「次に来た新規プロファイルでログイン」フラグ
-  const startLoginOnNextCreateRef = useRef(false);
 
-  // account:created を受信したらログイン自動起動 (AccountManagerDialogの「追加してログイン」)
-  useEffect(() => {
-    if (!startLoginOnNextCreateRef.current || accounts.length === 0) return;
-    // 最後の (最新追加) プロファイルを取得
-    const newest = [...accounts].sort((a, b) => b.createdAt - a.createdAt)[0];
-    if (
-      newest &&
-      newest.id !== lastCreatedAccountIdRef.current &&
-      newest.status === "pending"
-    ) {
-      lastCreatedAccountIdRef.current = newest.id;
-      startLoginOnNextCreateRef.current = false;
-      startLogin(newest.id);
-    }
-  }, [accounts, startLogin]);
-
-  const handleCreateAccount = useCallback(
-    (name: string, configDir: string) => {
-      startLoginOnNextCreateRef.current = true;
-      createAccount(name, configDir);
-    },
-    [createAccount]
-  );
-
-  const accountForActiveLogin = activeLogin
-    ? (accounts.find(a => a.id === activeLogin.profileId) ?? null)
-    : null;
   const copyToClipboard = (text: string | null) => {
     if (text) {
       navigator.clipboard.writeText(text);
@@ -713,26 +678,14 @@ export default function Dashboard() {
 
       {/* アカウント管理 (Linux限定) */}
       {capabilities.multiAccountSupported && (
-        <>
-          <AccountManagerDialog
-            open={showAccountManager}
-            onOpenChange={setShowAccountManager}
-            accounts={accounts}
-            onCreate={handleCreateAccount}
-            onUpdate={updateAccount}
-            onDelete={deleteAccount}
-            onStartLogin={startLogin}
-          />
-          <AccountLoginModal
-            open={activeLogin !== null}
-            profile={accountForActiveLogin}
-            ttydUrl={activeLogin?.ttydUrl ?? null}
-            detectedUrl={activeLogin?.detectedUrl ?? null}
-            onCancel={() => {
-              if (activeLogin) cancelLogin(activeLogin.profileId);
-            }}
-          />
-        </>
+        <AccountManagerDialog
+          open={showAccountManager}
+          onOpenChange={setShowAccountManager}
+          accounts={accounts}
+          onCreate={createAccount}
+          onUpdate={updateAccount}
+          onDelete={deleteAccount}
+        />
       )}
     </>
   );

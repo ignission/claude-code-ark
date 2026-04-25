@@ -49,8 +49,6 @@ export interface ManagedSession extends Session {
   accountProfileId?: string | null;
   /** 現在のリポジトリ紐付けと不一致（再起動が必要） */
   staleAccount?: boolean;
-  /** 起動時の警告コード（例: "config_dir_missing"） */
-  warning?: string;
 }
 
 /**
@@ -62,8 +60,6 @@ export interface AccountProfile {
   name: string;
   /** 絶対パス。チルダはサーバ側で展開済 */
   configDir: string;
-  /** pending=登録済だが未認証, authenticated=ログイン完了 */
-  status: "pending" | "authenticated";
   createdAt: number;
   updatedAt: number;
 }
@@ -253,25 +249,10 @@ export interface ServerToClientEvents {
   "account:created": (profile: AccountProfile) => void;
   "account:updated": (profile: AccountProfile) => void;
   "account:deleted": (data: { id: string }) => void;
-  "account:login-started": (data: {
-    profileId: string;
-    ttydUrl: string;
-  }) => void;
-  "account:login-url-detected": (data: {
-    profileId: string;
-    url: string;
-  }) => void;
-  "account:login-completed": (data: { profileId: string }) => void;
-  "account:login-failed": (data: { profileId: string; reason: string }) => void;
   "account:error": (data: { message: string; code?: string }) => void;
   "repo:account-changed": (data: {
     repoPath: string;
     accountProfileId: string | null;
-  }) => void;
-  "session:warning": (data: {
-    sessionId: string;
-    code: string;
-    profileId?: string;
   }) => void;
 }
 
@@ -347,8 +328,6 @@ export interface ClientToServerEvents {
     configDir?: string;
   }) => void;
   "account:delete": (data: { id: string }) => void;
-  "account:start-login": (data: { profileId: string }) => void;
-  "account:cancel-login": (data: { profileId: string }) => void;
   "repo:set-account": (data: {
     repoPath: string;
     accountProfileId: string | null;

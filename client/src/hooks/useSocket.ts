@@ -142,12 +142,6 @@ interface UseSocketReturn {
   /** repoPath → accountProfileId のマップ */
   repoAccountLinks: Map<string, string>;
   capabilities: SystemCapabilities;
-  /** 現在進行中のログイン情報（モーダル表示用） */
-  activeLogin: {
-    profileId: string;
-    ttydUrl: string;
-    detectedUrl: string | null;
-  } | null;
   loadAccounts: () => void;
   createAccount: (name: string, configDir: string) => void;
   updateAccount: (
@@ -155,8 +149,6 @@ interface UseSocketReturn {
     patch: { name?: string; configDir?: string }
   ) => void;
   deleteAccount: (id: string) => void;
-  startLogin: (profileId: string) => void;
-  cancelLogin: (profileId: string) => void;
   setRepoAccount: (repoPath: string, accountProfileId: string | null) => void;
   restartSessionWithAccount: (sessionId: string) => void;
 }
@@ -236,11 +228,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [capabilities, setCapabilities] = useState<SystemCapabilities>({
     multiAccountSupported: false,
   });
-  const [activeLogin, setActiveLogin] = useState<{
-    profileId: string;
-    ttydUrl: string;
-    detectedUrl: string | null;
-  } | null>(null);
 
   // repoPathRefをrepoPathの変化に同期させる
   useEffect(() => {
@@ -589,39 +576,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       setAccounts(prev => prev.filter(p => p.id !== id));
     });
 
-    socket.on("account:login-started", ({ profileId, ttydUrl }) => {
-      setActiveLogin({ profileId, ttydUrl, detectedUrl: null });
-    });
-
-    socket.on("account:login-url-detected", ({ profileId, url }) => {
-      setActiveLogin(prev =>
-        prev && prev.profileId === profileId
-          ? { ...prev, detectedUrl: url }
-          : prev
-      );
-    });
-
-    socket.on("account:login-completed", ({ profileId }) => {
-      // 別クライアント/タブの完了で自分のモーダルを閉じないよう profileId で絞る
-      setActiveLogin(prev => {
-        if (prev && prev.profileId === profileId) {
-          toast.success("アカウント認証が完了しました");
-          return null;
-        }
-        return prev;
-      });
-    });
-
-    socket.on("account:login-failed", ({ profileId, reason }) => {
-      setActiveLogin(prev => {
-        if (prev && prev.profileId === profileId) {
-          toast.error("アカウント認証に失敗しました", { description: reason });
-          return null;
-        }
-        return prev;
-      });
-    });
-
     socket.on("account:error", ({ message, code }) => {
       console.error("[Socket] Account error:", message, code);
       toast.error(message);
@@ -644,16 +598,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       const next = new Map<string, string>();
       for (const link of links) next.set(link.repoPath, link.accountProfileId);
       setRepoAccountLinks(next);
-    });
-
-    socket.on("session:warning", ({ sessionId: _sessionId, code }) => {
-      if (code === "config_dir_missing") {
-        toast.warning("アカウント設定ディレクトリが見つかりません", {
-          description: "再ログインが必要です",
-        });
-      } else {
-        toast.warning(`セッション警告: ${code}`);
-      }
     });
 
     // Cleanup on unmount
@@ -936,14 +880,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socketRef.current?.emit("account:delete", { id });
   }, []);
 
-  const startLogin = useCallback((profileId: string) => {
-    socketRef.current?.emit("account:start-login", { profileId });
-  }, []);
-
-  const cancelLogin = useCallback((profileId: string) => {
-    socketRef.current?.emit("account:cancel-login", { profileId });
-  }, []);
-
   const setRepoAccount = useCallback(
     (repoPath: string, accountProfileId: string | null) => {
       socketRef.current?.emit("repo:set-account", {
@@ -1021,13 +957,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     accounts,
     repoAccountLinks,
     capabilities,
-    activeLogin,
     loadAccounts,
     createAccount,
     updateAccount,
     deleteAccount,
-    startLogin,
-    cancelLogin,
     setRepoAccount,
     restartSessionWithAccount,
   };

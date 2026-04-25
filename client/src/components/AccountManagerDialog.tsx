@@ -1,14 +1,4 @@
-import {
-  Check,
-  CircleAlert,
-  Info,
-  LogIn,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Trash2,
-  UsersRound,
-} from "lucide-react";
+import { Info, Pencil, Plus, Trash2, UsersRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   AlertDialog,
@@ -39,7 +29,6 @@ interface AccountManagerDialogProps {
   onCreate: (name: string, configDir: string) => void;
   onUpdate: (id: string, patch: { name?: string; configDir?: string }) => void;
   onDelete: (id: string) => void;
-  onStartLogin: (profileId: string) => void;
 }
 
 type Mode = { kind: "list" } | { kind: "add" } | { kind: "edit"; id: string };
@@ -82,7 +71,6 @@ export function AccountManagerDialog({
   onCreate,
   onUpdate,
   onDelete,
-  onStartLogin,
 }: AccountManagerDialogProps) {
   const [mode, setMode] = useState<Mode>({ kind: "list" });
   const [pendingDelete, setPendingDelete] = useState<AccountProfile | null>(
@@ -119,7 +107,6 @@ export function AccountManagerDialog({
               onAdd={() => setMode({ kind: "add" })}
               onEdit={id => setMode({ kind: "edit", id })}
               onAskDelete={acc => setPendingDelete(acc)}
-              onStartLogin={onStartLogin}
               onClose={() => onOpenChange(false)}
             />
           )}
@@ -130,10 +117,6 @@ export function AccountManagerDialog({
               initialConfigDir=""
               onCancel={() => setMode({ kind: "list" })}
               onSubmit={(name, configDir) => {
-                // NOTE: 新規作成後の `account:created` を受信した親 (Dashboard) が
-                // `onStartLogin(newProfileId)` を呼ぶ想定。
-                // 新規プロファイルIDは同期的に取得できないため、ここでは
-                // onCreate のみ呼び出して即座に list モードに戻す。
                 onCreate(name.trim(), configDir.trim());
                 setMode({ kind: "list" });
               }}
@@ -202,14 +185,12 @@ function ListView({
   onAdd,
   onEdit,
   onAskDelete,
-  onStartLogin,
   onClose,
 }: {
   accounts: AccountProfile[];
   onAdd: () => void;
   onEdit: (id: string) => void;
   onAskDelete: (acc: AccountProfile) => void;
-  onStartLogin: (profileId: string) => void;
   onClose: () => void;
 }) {
   return (
@@ -263,7 +244,6 @@ function ListView({
                 account={account}
                 onEdit={() => onEdit(account.id)}
                 onAskDelete={() => onAskDelete(account)}
-                onStartLogin={() => onStartLogin(account.id)}
               />
             ))}
           </div>
@@ -283,64 +263,23 @@ function AccountRow({
   account,
   onEdit,
   onAskDelete,
-  onStartLogin,
 }: {
   account: AccountProfile;
   onEdit: () => void;
   onAskDelete: () => void;
-  onStartLogin: () => void;
 }) {
-  const isAuthenticated = account.status === "authenticated";
-
   return (
-    <div
-      className={`bg-background border rounded-md p-3 transition-colors ${
-        isAuthenticated
-          ? "border-border hover:border-muted-foreground/40"
-          : "border-amber-500/20 hover:border-amber-500/40"
-      }`}
-    >
+    <div className="bg-background border border-border hover:border-muted-foreground/40 rounded-md p-3 transition-colors">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-medium text-sm">{account.name}</span>
-            {isAuthenticated ? (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                <Check className="w-2.5 h-2.5" />
-                認証済み
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                <CircleAlert className="w-2.5 h-2.5" />
-                未認証
-              </span>
-            )}
           </div>
           <p className="text-xs text-muted-foreground mt-1 font-mono truncate">
             {account.configDir}
           </p>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {isAuthenticated ? (
-            <button
-              type="button"
-              onClick={onStartLogin}
-              title="再ログイン"
-              className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
-          ) : (
-            <Button
-              type="button"
-              size="sm"
-              onClick={onStartLogin}
-              className="text-xs h-7 px-2.5 bg-blue-600/15 hover:bg-blue-600/25 text-blue-300 border border-blue-500/30"
-              variant="outline"
-            >
-              ログイン
-            </Button>
-          )}
           <button
             type="button"
             onClick={onEdit}
@@ -404,7 +343,7 @@ function AddOrEditView({
     <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
       <DialogHeader className="px-5 py-4 border-b border-border">
         <DialogTitle className="flex items-center gap-2">
-          <LogIn className="w-4 h-4 text-blue-400" />
+          <UsersRound className="w-4 h-4 text-blue-400" />
           {isAdd ? "新規アカウント追加" : "アカウント編集"}
         </DialogTitle>
       </DialogHeader>
@@ -471,8 +410,8 @@ function AddOrEditView({
             <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
             <div className="text-xs text-blue-200/80">
               <p>
-                「追加してログイン」を押すと、Ark内でClaude
-                CLIのログイン画面が起動します。ターミナルを離れる必要はありません。
+                追加後、このアカウントを紐付けたリポジトリでセッションを起動すると、
+                claude CLIが自動でログイン画面を表示します。
               </p>
             </div>
           </div>
@@ -490,8 +429,8 @@ function AddOrEditView({
         >
           {isAdd ? (
             <>
-              <LogIn className="w-3.5 h-3.5 mr-1" />
-              追加してログイン
+              <Plus className="w-3.5 h-3.5 mr-1" />
+              追加
             </>
           ) : (
             "保存"

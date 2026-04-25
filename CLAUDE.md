@@ -52,7 +52,7 @@ Claude Codeとの対話は **Agent SDK経由ではなく、tmux + ttyd による
 | セッション永続化       | SQLite + tmux永続化によるサーバー再起動後の自動復元                         |
 | IME対応                | 日本語入力時のcompositionイベント処理                                       |
 | パーミッションスキップ | `--skip-permissions` フラグでClaude CLIの権限確認をスキップ                 |
-| 複数アカウント切替（Linux限定） | リポジトリ単位で別々のAnthropicアカウント(`CLAUDE_CONFIG_DIR`)を使用。Ark内蔵ターミナルで`/login`完結 |
+| 複数アカウント切替（Linux限定） | リポジトリ単位で別々のAnthropicアカウント(`CLAUDE_CONFIG_DIR`)を使用。認証は通常セッション内で `claude /login` 実行 |
 
 ## Git・PRワークフロー
 
@@ -217,7 +217,6 @@ claude-code-ark/
 │       │   ├── CreateWorktreeDialog.tsx # Worktree作成ダイアログ
 │       │   ├── WorktreeContextMenu.tsx # Worktreeコンテキストメニュー
 │       │   ├── AccountManagerDialog.tsx # アカウント管理ダイアログ（Linux限定）
-│       │   ├── AccountLoginModal.tsx   # ログイン用ttyd埋め込みモーダル
 │       │   ├── RepoAccountMenu.tsx     # リポジトリのアカウント切替サブメニュー
 │       │   ├── ErrorBoundary.tsx       # エラーバウンダリ
 │       │   └── ui/                     # shadcn/ui コンポーネント群
@@ -236,9 +235,6 @@ claude-code-ark/
 │       ├── session-orchestrator.ts     # tmux + ttyd 統合管理
 │       ├── tmux-manager.ts             # tmuxセッション管理
 │       ├── ttyd-manager.ts             # ttyd Webターミナル管理
-│       ├── ttyd-login-manager.ts       # ログイン専用ttyd管理（Linux限定）
-│       ├── account-login-manager.ts    # アカウント認証フロー（tmux+ttyd+watcher統合）
-│       ├── credentials-watcher.ts      # `.credentials.json`の認証完了検知
 │       ├── system.ts                   # 実行環境の機能判定（multiAccountSupported等）
 │       ├── database.ts                 # SQLite永続化
 │       ├── git.ts                      # Git worktree操作
@@ -284,8 +280,6 @@ claude-code-ark/
 | `account:create`  | `{ name, configDir }`                   | アカウントプロファイル作成 |
 | `account:update`  | `{ id, name?, configDir? }`             | アカウントプロファイル更新 |
 | `account:delete`  | `{ id }`                                | アカウントプロファイル削除（CASCADEで紐付けも削除） |
-| `account:start-login` | `{ profileId }`                     | ログインフロー開始（tmux+ttyd経由で `claude /login`） |
-| `account:cancel-login` | `{ profileId }`                    | アクティブログインのキャンセル |
 | `repo:set-account` | `{ repoPath, accountProfileId \| null }` | リポジトリにアカウントを紐付け（nullで解除） |
 | `session:restart-with-account` | `{ sessionId }`            | セッションをkill→新envで再起動 |
 
@@ -321,12 +315,8 @@ claude-code-ark/
 | `account:created`        | `AccountProfile`                          | プロファイル作成完了 |
 | `account:updated`        | `AccountProfile`                          | プロファイル更新完了 |
 | `account:deleted`        | `{ id }`                                  | プロファイル削除完了 |
-| `account:login-started`  | `{ profileId, ttydUrl }`                  | ログインモーダル用ttyd URL |
-| `account:login-completed` | `{ profileId }`                          | ログイン成功（クライアントはモーダル閉じる） |
-| `account:login-failed`   | `{ profileId, reason }`                   | ログイン失敗（cancelled / timeout / error） |
 | `account:error`          | `{ message, code? }`                      | アカウント操作エラー |
 | `repo:account-changed`   | `{ repoPath, accountProfileId \| null }`  | 紐付け変更通知（バッジ更新用） |
-| `session:warning`        | `{ sessionId, code, profileId? }`         | セッション警告（例: `config_dir_missing`） |
 
 ---
 

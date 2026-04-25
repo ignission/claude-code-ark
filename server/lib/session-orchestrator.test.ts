@@ -2,7 +2,6 @@
  * SessionOrchestrator のアカウント切替まわりのテスト
  *
  * - CLAUDE_CONFIG_DIR の env 注入条件
- * - configDir 不在時のpreflight (P1)
  * - 既存セッション再利用時の staleAccount 判定
  * - restartSession の kill→再作成
  *
@@ -11,20 +10,6 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-// fs.existsSync をテストごとに切り替えたいので spy 化する。
-// パスベースで存在/不在を判定するため、デフォルト挙動を beforeEach で差し替える。
-vi.mock("node:fs", async () => {
-  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
-  return {
-    ...actual,
-    default: {
-      ...actual,
-      existsSync: vi.fn(() => true),
-    },
-    existsSync: vi.fn(() => true),
-  };
-});
 
 // TmuxManager / TtydManager / SessionDatabase のシングルトンをモック化。
 // SessionOrchestrator は constructor で `tmuxManager.getAllSessions()` を呼ぶため、
@@ -87,7 +72,6 @@ vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(() => "/repo/.git\n"),
 }));
 
-import fs from "node:fs";
 import { db } from "./database.js";
 import { SessionOrchestrator } from "./session-orchestrator.js";
 import { tmuxManager } from "./tmux-manager.js";
@@ -96,7 +80,6 @@ import { ttydManager } from "./ttyd-manager.js";
 const mockedDb = vi.mocked(db);
 const mockedTmux = vi.mocked(tmuxManager);
 const mockedTtyd = vi.mocked(ttydManager);
-const mockedExistsSync = vi.mocked(fs.existsSync);
 
 /**
  * テスト用のtmuxセッション雛形
@@ -118,9 +101,6 @@ describe("SessionOrchestrator - アカウント切替", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-
-    // デフォルト: existsSyncはtrue（preflightをパスさせる）
-    mockedExistsSync.mockReturnValue(true);
 
     // tmux: 既存セッションなし、createSessionは新規セッションを返す
     mockedTmux.getAllSessions.mockReturnValue([]);
@@ -160,15 +140,13 @@ describe("SessionOrchestrator - アカウント切替", () => {
       );
 
       expect(mockedTmux.createSession).toHaveBeenCalledTimes(1);
-      // 第2引数は省略（undefined）またはoptions無し
       const callArgs = mockedTmux.createSession.mock.calls[0];
       expect(callArgs[0]).toBe("/path/to/work");
       expect(callArgs[1]).toBeUndefined();
       expect(managed.accountProfileId).toBeNull();
-      expect(managed.warning).toBeUndefined();
     });
 
-    it("紐付けあり (authenticated + .credentials.json存在): env 注入される", async () => {
+    it("紐付けあり: env 注入される (configDir 存在チェックは行わない)", async () => {
       mockedDb.getRepoAccountLink.mockReturnValue({
         repoPath: "/repo",
         accountProfileId: "prof-1",
@@ -178,11 +156,9 @@ describe("SessionOrchestrator - アカウント切替", () => {
         id: "prof-1",
         name: "work",
         configDir: "/home/user/.claude-work",
-        status: "authenticated",
         createdAt: 0,
         updatedAt: 0,
       });
-      mockedExistsSync.mockReturnValue(true);
 
       const managed = await orchestrator.startSession(
         "wt-1",
@@ -196,73 +172,6 @@ describe("SessionOrchestrator - アカウント切替", () => {
         env: { CLAUDE_CONFIG_DIR: "/home/user/.claude-work" },
       });
       expect(managed.accountProfileId).toBe("prof-1");
-      expect(managed.warning).toBeUndefined();
-    });
-
-    it("紐付けあり (pending): env 無しで起動 (silent fallback)", async () => {
-      mockedDb.getRepoAccountLink.mockReturnValue({
-        repoPath: "/repo",
-        accountProfileId: "prof-pending",
-        updatedAt: 0,
-      });
-      mockedDb.getAccountProfile.mockReturnValue({
-        id: "prof-pending",
-        name: "pending",
-        configDir: "/home/user/.claude-pending",
-        status: "pending",
-        createdAt: 0,
-        updatedAt: 0,
-      });
-
-      const managed = await orchestrator.startSession(
-        "wt-1",
-        "/path/to/work",
-        "/repo"
-      );
-
-      const callArgs = mockedTmux.createSession.mock.calls[0];
-      expect(callArgs[1]).toBeUndefined();
-      expect(managed.accountProfileId).toBeNull();
-      expect(managed.warning).toBeUndefined();
-    });
-
-    it("紐付けあり (authenticated) だが .credentials.json 不在: env 無し + warning付与", async () => {
-      mockedDb.getRepoAccountLink.mockReturnValue({
-        repoPath: "/repo",
-        accountProfileId: "prof-1",
-        updatedAt: 0,
-      });
-      mockedDb.getAccountProfile.mockReturnValue({
-        id: "prof-1",
-        name: "work",
-        configDir: "/home/user/.claude-work",
-        status: "authenticated",
-        createdAt: 0,
-        updatedAt: 0,
-      });
-      // configDir/.credentials.json が存在しない (P1 preflight)
-      mockedExistsSync.mockImplementation(
-        (p: fs.PathLike) => !String(p).endsWith(".credentials.json")
-      );
-
-      const warningEmitted = vi.fn();
-      orchestrator.on("session:warning", warningEmitted);
-
-      const managed = await orchestrator.startSession(
-        "wt-1",
-        "/path/to/work",
-        "/repo"
-      );
-
-      const callArgs = mockedTmux.createSession.mock.calls[0];
-      expect(callArgs[1]).toBeUndefined();
-      expect(managed.accountProfileId).toBeNull();
-      expect(managed.warning).toBe("config_dir_missing");
-      expect(warningEmitted).toHaveBeenCalledWith({
-        sessionId: "sess-id-1",
-        code: "config_dir_missing",
-        profileId: "prof-1",
-      });
     });
 
     it("紐付けあるがプロファイルが削除済 (取得null): env 無し", async () => {
@@ -282,7 +191,6 @@ describe("SessionOrchestrator - アカウント切替", () => {
       const callArgs = mockedTmux.createSession.mock.calls[0];
       expect(callArgs[1]).toBeUndefined();
       expect(managed.accountProfileId).toBeNull();
-      expect(managed.warning).toBeUndefined();
     });
   });
 
@@ -302,7 +210,6 @@ describe("SessionOrchestrator - アカウント切替", () => {
         id: "prof-1",
         name: "work",
         configDir: "/home/user/.claude-work",
-        status: "authenticated",
         createdAt: 0,
         updatedAt: 0,
       });
@@ -340,7 +247,6 @@ describe("SessionOrchestrator - アカウント切替", () => {
         id: "prof-1",
         name: "work",
         configDir: "/home/user/.claude-work",
-        status: "authenticated",
         createdAt: 0,
         updatedAt: 0,
       });
@@ -398,7 +304,6 @@ describe("SessionOrchestrator - アカウント切替", () => {
             id: "prof-1",
             name: "work",
             configDir: "/home/user/.claude-work",
-            status: "authenticated",
             createdAt: 0,
             updatedAt: 0,
           };
@@ -408,7 +313,6 @@ describe("SessionOrchestrator - アカウント切替", () => {
             id: "prof-2",
             name: "personal",
             configDir: "/home/user/.claude-personal",
-            status: "authenticated",
             createdAt: 0,
             updatedAt: 0,
           };

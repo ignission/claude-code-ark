@@ -6,7 +6,7 @@
  * Supports remote access via Cloudflare Tunnel.
  */
 
-import { exec, execSync, spawnSync } from "node:child_process";
+import { exec } from "node:child_process";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
 import express from "express";
@@ -24,7 +24,6 @@ import type {
   ServerToClientEvents,
   SystemCapabilities,
 } from "../shared/types.js";
-import { AccountLoginManager } from "./lib/account-login-manager.js";
 import { authManager } from "./lib/auth.js";
 import { beaconManager } from "./lib/beacon-manager.js";
 import { browserManager } from "./lib/browser-manager.js";
@@ -57,7 +56,6 @@ import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import { sessionOrchestrator } from "./lib/session-orchestrator.js";
 import { detectMultiAccountSupported } from "./lib/system.js";
 import { tmuxManager } from "./lib/tmux-manager.js";
-import { TtydLoginManager } from "./lib/ttyd-login-manager.js";
 import { TunnelManager } from "./lib/tunnel.js";
 
 // Parse command line arguments
@@ -157,29 +155,6 @@ async function startServer() {
     `[Capabilities] multiAccountSupported = ${capabilities.multiAccountSupported}`
   );
 
-  // ttyd ログイン用マネージャ + アカウントログインオーケストレータ
-  const ttydLoginManager = new TtydLoginManager();
-  const accountLoginManager = new AccountLoginManager(
-    tmuxManager,
-    ttydLoginManager
-  );
-
-  // 起動時クリーンアップ: 前回プロセスから残留した arklogin-* tmux セッションを除去
-  try {
-    const r = execSync("tmux list-sessions -F '#{session_name}'", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    for (const name of r.trim().split("\n").filter(Boolean)) {
-      if (name.startsWith("arklogin-")) {
-        spawnSync("tmux", ["kill-session", "-t", name], { stdio: "pipe" });
-        console.log(`[AccountLogin] Killed orphan tmux session: ${name}`);
-      }
-    }
-  } catch {
-    // tmux 未起動 / list-sessions が空 → 無視
-  }
-
   // Create proxy for ttyd WebSocket connections
   const ttydProxy = httpProxy.createProxyServer({
     ws: true,
@@ -271,42 +246,6 @@ async function startServer() {
 
   // Apply Socket.IO authentication middleware
   io.use(authManager.socketMiddleware());
-
-  // ===== AccountLoginManager のイベントを Socket.IO にブリッジ =====
-
-  // socket.id → このソケットが開始したアクティブログインの profileId 集合
-  // connection 内で参照する変数だが、ログイン完了/失敗 event ハンドラからも
-  // 解除する必要があるため、connection 外側 (startServer スコープ) に置く。
-  const socketActiveLogins = new Map<string, Set<string>>();
-
-  /** ログイン終了時に socketActiveLogins から該当 profileId を除去する */
-  const removeProfileFromTracking = (profileId: string) => {
-    for (const set of socketActiveLogins.values()) {
-      set.delete(profileId);
-    }
-  };
-
-  accountLoginManager.on("completed", (profileId: string) => {
-    try {
-      db.markAccountAuthenticated(profileId);
-    } catch (error) {
-      console.error(
-        `[AccountLogin] markAccountAuthenticated 失敗: ${getErrorMessage(error)}`
-      );
-    }
-    removeProfileFromTracking(profileId);
-    io.emit("account:login-completed", { profileId });
-    io.emit("account:list", db.listAccountProfiles());
-  });
-
-  accountLoginManager.on("failed", (profileId: string, reason: string) => {
-    removeProfileFromTracking(profileId);
-    io.emit("account:login-failed", { profileId, reason });
-  });
-
-  accountLoginManager.on("url-detected", (profileId: string, url: string) => {
-    io.emit("account:login-url-detected", { profileId, url });
-  });
 
   // BeaconにArk操作の依存を注入（MCPツールで利用）
   beaconManager.configure({
@@ -619,40 +558,6 @@ async function startServer() {
     });
   });
 
-  // ===== ttyd Login Proxy Routes (マルチアカウント機能用) =====
-
-  // HTTP proxy for ttyd login sessions
-  // 通常の `/ttyd/:sessionId` と独立し、`arklogin-*` tmux セッションを attach する。
-  // セキュリティ: profileId は account:list 経由で他クライアントに漏れるため、
-  // per-login token (cookie or query) で発行元クライアントだけが接続できるよう絞る。
-  app.use("/ttyd-login/:profileId", (req, res) => {
-    const { profileId } = req.params;
-    const token = extractArkLoginToken(req);
-    const port = accountLoginManager.authorizeAndGetPort(profileId, token);
-    if (port === null) {
-      res
-        .status(404)
-        .json({ error: "Login session not found or unauthorized" });
-      return;
-    }
-    // 初回 GET でトークン Cookie を発行 (ttyd 内サブリソースも認可するため)
-    if (
-      req.method === "GET" &&
-      !(req.headers.cookie || "").includes("arklogin_token_")
-    ) {
-      res.setHeader(
-        "Set-Cookie",
-        `arklogin_token_${profileId}=${token}; Path=/ttyd-login/${profileId}; HttpOnly; SameSite=Strict`
-      );
-    }
-    // ttyd は --base-path=/ttyd-login/<profileId> で起動しており、
-    // Express がマウントパスを削除するため originalUrl で復元する。
-    req.url = req.originalUrl;
-    ttydProxy.web(req, res, {
-      target: `http://127.0.0.1:${port}`,
-    });
-  });
-
   // ===== noVNC Browser Proxy Routes =====
 
   app.use("/browser/:browserId", (req, res) => {
@@ -741,28 +646,6 @@ async function startServer() {
    * ローカル/プライベートIPは認証スキップ。
    * @returns 認証OKならtrue、失敗時はfalse（呼び出し側でsocket.destroy()する）
    */
-  /**
-   * `/ttyd-login/:profileId` 用の per-login token を req から取り出す。
-   * 優先順: クエリ `arklogin_token` → Cookie `arklogin_token_<profileId>`。
-   * (初回 GET でクエリ → サーバが Cookie 発行 → 後続のサブリソース/WS は Cookie で認可)
-   */
-  function extractArkLoginToken(
-    req: import("node:http").IncomingMessage
-  ): string {
-    const urlStr = req.url ?? "";
-    const profileMatch = urlStr.match(/^\/ttyd-login\/([^/?]+)/);
-    const profileId = profileMatch?.[1] ?? "";
-    // クエリ
-    const qMatch = urlStr.match(/[?&]arklogin_token=([^&#]+)/);
-    if (qMatch) return decodeURIComponent(qMatch[1]);
-    // Cookie
-    const cookie = req.headers.cookie ?? "";
-    const cookieMatch = cookie.match(
-      new RegExp(`(?:^|;\\s*)arklogin_token_${profileId}=([^;]+)`)
-    );
-    return cookieMatch ? decodeURIComponent(cookieMatch[1]) : "";
-  }
-
   function authorizeWebSocketUpgrade(
     req: import("node:http").IncomingMessage,
     url: URL
@@ -807,33 +690,6 @@ async function startServer() {
         // req.urlはそのまま転送する（パスの変更不要）。
         ttydProxy.ws(req, socket, head, {
           target: `ws://127.0.0.1:${session.ttydPort}`,
-        });
-        return;
-      }
-      socket.destroy();
-      return;
-    }
-
-    // Handle ttyd-login WebSocket connections (マルチアカウント機能用)
-    const ttydLoginMatch = pathname.match(/^\/ttyd-login\/([^/]+)/);
-    if (ttydLoginMatch) {
-      // 認証検証（Quick Tunnel時のみ）
-      if (!authorizeWebSocketUpgrade(req, url)) {
-        socket.destroy();
-        return;
-      }
-
-      const profileId = ttydLoginMatch[1];
-      // per-login token 認可: profileId だけでは他クライアントが乗っ取れるため
-      const token = extractArkLoginToken(req);
-      const port = accountLoginManager.authorizeAndGetPort(profileId, token);
-
-      if (port !== null) {
-        // ttyd は --base-path=/ttyd-login/<profileId> で起動しており、
-        // /ttyd-login/<profileId>/ws で WebSocket 接続を待ち受ける。
-        // req.url はそのまま転送する（パスの変更不要）。
-        ttydProxy.ws(req, socket, head, {
-          target: `ws://127.0.0.1:${port}`,
         });
         return;
       }
@@ -931,7 +787,6 @@ async function startServer() {
       "session:restored",
       "session:stopped",
       "session:updated",
-      "session:warning",
     ] as const;
     type ForwardedEvent = (typeof forwardedEvents)[number];
 
@@ -1690,16 +1545,12 @@ async function startServer() {
       }
     });
 
-    socket.on("account:delete", async ({ id }) => {
+    socket.on("account:delete", ({ id }) => {
       if (!capabilities.multiAccountSupported) {
         emitUnsupported();
         return;
       }
       try {
-        // アクティブなログインがあれば先にキャンセル
-        if (accountLoginManager.isActive(id)) {
-          await accountLoginManager.cancelLogin(id, "cancelled");
-        }
         // 削除前に該当紐付け一覧をスナップショット (CASCADE でDB上は消えるため)
         const affectedRepoPaths = db
           .listRepoAccountLinks()
@@ -1724,50 +1575,6 @@ async function startServer() {
             }
           }
         }
-      } catch (e) {
-        socket.emit("account:error", { message: getErrorMessage(e) });
-      }
-    });
-
-    socket.on("account:start-login", async ({ profileId }) => {
-      if (!capabilities.multiAccountSupported) {
-        emitUnsupported();
-        return;
-      }
-      try {
-        const profile = db.getAccountProfile(profileId);
-        if (!profile) {
-          socket.emit("account:error", {
-            message: "プロファイルが見つかりません",
-            code: "not_found",
-          });
-          return;
-        }
-        // socket → profileId の対応を記録（disconnect 時のクリーンアップ用）
-        let activeSet = socketActiveLogins.get(socket.id);
-        if (!activeSet) {
-          activeSet = new Set();
-          socketActiveLogins.set(socket.id, activeSet);
-        }
-        activeSet.add(profileId);
-
-        const { ttydUrl } = await accountLoginManager.startLogin(profile);
-        socket.emit("account:login-started", { profileId, ttydUrl });
-      } catch (e) {
-        // 失敗時はトラッキングから外す
-        socketActiveLogins.get(socket.id)?.delete(profileId);
-        socket.emit("account:error", { message: getErrorMessage(e) });
-      }
-    });
-
-    socket.on("account:cancel-login", async ({ profileId }) => {
-      if (!capabilities.multiAccountSupported) {
-        emitUnsupported();
-        return;
-      }
-      try {
-        await accountLoginManager.cancelLogin(profileId, "cancelled");
-        socketActiveLogins.get(socket.id)?.delete(profileId);
       } catch (e) {
         socket.emit("account:error", { message: getErrorMessage(e) });
       }
@@ -1863,19 +1670,6 @@ async function startServer() {
       forwardHandlers.forEach((handler, event) => {
         sessionOrchestrator.off(event, handler);
       });
-
-      // このソケットが開始したアクティブログインを全てキャンセル
-      const activeSet = socketActiveLogins.get(socket.id);
-      if (activeSet && activeSet.size > 0) {
-        for (const profileId of activeSet) {
-          accountLoginManager.cancelLogin(profileId, "cancelled").catch(err => {
-            console.error(
-              `[AccountLogin] disconnect cleanup 失敗 (${profileId}): ${getErrorMessage(err)}`
-            );
-          });
-        }
-      }
-      socketActiveLogins.delete(socket.id);
 
       // ブラウザセッションはシングルトンのため、socket切断では停止しない。
       // 明示的なbrowser:stopまたはSIGTERM/SIGINT時のcleanup()で停止する。

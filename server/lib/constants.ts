@@ -5,17 +5,6 @@ export const TTYD_PORT_START = 7680;
 export const TTYD_PORT_END = 7780;
 
 /**
- * ttyd ログインインスタンス用ポート範囲（開始）
- *
- * `claude /login` を tmux 内で実行する `arklogin-*` セッションに対する
- * ttyd インスタンス専用のポート範囲。通常セッション用の `TTYD_PORT_*`
- * と衝突しないよう独立した範囲を確保する。
- */
-export const TTYD_LOGIN_PORT_START = 7800;
-/** ttyd ログインインスタンス用ポート範囲（終了） */
-export const TTYD_LOGIN_PORT_END = 7819;
-
-/**
  * VNCポート範囲の開始ポート（x11vnc用）
  *
  * 注: x11vncには `-rfbport <port>` で明示的にポートを指定して起動しているため、

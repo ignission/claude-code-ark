@@ -41,7 +41,6 @@ describe("SessionDatabase - account_profiles / repo_account_links", () => {
       expect(profile.id).toBeTruthy();
       expect(profile.name).toBe("仕事Max");
       expect(profile.configDir).toBe("/home/user/.claude-work");
-      expect(profile.status).toBe("pending");
       expect(typeof profile.createdAt).toBe("number");
       expect(typeof profile.updatedAt).toBe("number");
       expect(profile.createdAt).toBeLessThanOrEqual(Date.now());
@@ -131,19 +130,6 @@ describe("SessionDatabase - account_profiles / repo_account_links", () => {
       expect(() =>
         testDb.updateAccountProfile("nonexistent", { name: "X" })
       ).toThrow();
-    });
-  });
-
-  describe("markAccountAuthenticated", () => {
-    it("status を authenticated に更新する", () => {
-      const created = testDb.createAccountProfile({
-        name: "Auth",
-        configDir: "/home/user/.claude-auth",
-      });
-      expect(created.status).toBe("pending");
-      testDb.markAccountAuthenticated(created.id);
-      const refetched = testDb.getAccountProfile(created.id);
-      expect(refetched?.status).toBe("authenticated");
     });
   });
 

@@ -8,7 +8,6 @@
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
-import path from "node:path";
 import type {
   ManagedSession,
   SessionStatus,
@@ -232,48 +231,33 @@ export class SessionOrchestrator extends EventEmitter {
   }
 
   /**
-   * 紐付けアカウントから env / accountProfileId / warning を解決する。
+   * 紐付けアカウントから env / accountProfileId を解決する。
    *
-   * - 紐付け無し → null env / null id / no warning
-   * - 紐付けあるが profile が無い（削除済等）→ null env / null id / no warning
-   * - 紐付けあり、profile.status !== "authenticated" → null env / null id / no warning
-   * - 紐付けあり、authenticatedだが .credentials.json が無い（外部削除等）
-   *   → null env / null id / warning="config_dir_missing" (P1 preflight)
-   * - 紐付けあり、authenticatedかつ .credentials.json 存在
-   *   → env={CLAUDE_CONFIG_DIR}, accountProfileId, no warning
+   * - 紐付け無し → null env / null id
+   * - 紐付けあるが profile が無い（削除済等）→ null env / null id
+   * - 紐付けあり → env={CLAUDE_CONFIG_DIR}, accountProfileId
+   *
+   * configDir/.credentials.json の存在チェックは行わない。claude CLI が
+   * 必要なら自動で /login を促す。
    */
   private resolveAccountForRepo(repoPath: string | undefined): {
     env: Record<string, string> | undefined;
     accountProfileId: string | null;
-    warning: string | undefined;
   } {
     if (!repoPath) {
-      return { env: undefined, accountProfileId: null, warning: undefined };
+      return { env: undefined, accountProfileId: null };
     }
     const link = db.getRepoAccountLink(repoPath);
     if (!link) {
-      return { env: undefined, accountProfileId: null, warning: undefined };
+      return { env: undefined, accountProfileId: null };
     }
     const profile = db.getAccountProfile(link.accountProfileId);
-    if (!profile || profile.status !== "authenticated") {
-      return { env: undefined, accountProfileId: null, warning: undefined };
-    }
-    // Preflight (Plan Eng Review P1):
-    // configDir / .credentials.json の存在を同期チェック。
-    // 外部削除や手動cleanup等で消えていた場合は env 注入をスキップし、
-    // ManagedSessionに warning="config_dir_missing" を付与する。
-    const credentialsPath = path.join(profile.configDir, ".credentials.json");
-    if (!fs.existsSync(credentialsPath)) {
-      return {
-        env: undefined,
-        accountProfileId: null,
-        warning: "config_dir_missing",
-      };
+    if (!profile) {
+      return { env: undefined, accountProfileId: null };
     }
     return {
       env: { CLAUDE_CONFIG_DIR: profile.configDir },
       accountProfileId: profile.id,
-      warning: undefined,
     };
   }
 
@@ -317,8 +301,8 @@ export class SessionOrchestrator extends EventEmitter {
       return managed;
     }
 
-    // 新規作成パス: 紐付けアカウントから env / profileId / warning を解決
-    const { env, accountProfileId, warning } =
+    // 新規作成パス: 紐付けアカウントから env / profileId を解決
+    const { env, accountProfileId } =
       this.resolveAccountForRepo(resolvedRepoPath);
 
     // 新規tmuxセッションを作成（envがあれば注入）
@@ -356,20 +340,7 @@ export class SessionOrchestrator extends EventEmitter {
       ttydPort: ttydInstance.port,
       ttydUrl: `/ttyd/${tmuxSession.id}/`,
       accountProfileId,
-      ...(warning ? { warning } : {}),
     };
-
-    // configDir消失時はクライアントへ警告を通知
-    if (warning === "config_dir_missing") {
-      const link = resolvedRepoPath
-        ? db.getRepoAccountLink(resolvedRepoPath)
-        : null;
-      this.emit("session:warning", {
-        sessionId: tmuxSession.id,
-        code: warning,
-        profileId: link?.accountProfileId,
-      });
-    }
 
     this.emit("session:created", managed);
     return managed;

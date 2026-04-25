@@ -149,10 +149,7 @@ export function SessionSidebar({
     if (linkedId) {
       const profile = accountById.get(linkedId);
       if (profile) {
-        const isPending = profile.status === "pending";
-        const colorClass = isPending
-          ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
-          : colorFor(profile.id);
+        const colorClass = colorFor(profile.id);
         return (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -166,7 +163,6 @@ export function SessionSidebar({
               <div className="text-xs">
                 <div className="font-medium">{profile.name}</div>
                 <div className="opacity-70">{profile.configDir}</div>
-                {isPending && <div className="text-amber-400 mt-1">未認証</div>}
               </div>
             </TooltipContent>
           </Tooltip>
