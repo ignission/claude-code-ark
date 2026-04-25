@@ -367,6 +367,15 @@ export default function Dashboard() {
     setIsSelectRepoOpen(true);
   };
 
+  /** 既存リポジトリの右クリック等から直接Worktree作成 */
+  const handleCreateWorktreeForRepo = (path: string) => {
+    selectRepo(path);
+    // selectRepo の反映を待ってから作成ダイアログを開く
+    setTimeout(() => {
+      setIsCreateWorktreeOpen(true);
+    }, 50);
+  };
+
   /**
    * リポジトリをサイドバーから除外する。
    * 現在選択中のrepoを除外する場合、残りrepoListの先頭に切り替えてから除外することで
@@ -436,6 +445,7 @@ export default function Dashboard() {
               onSetRepoAccount={setRepoAccount}
               onOpenAccountManager={() => setShowAccountManager(true)}
               onRestartSession={restartSessionWithAccount}
+              onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
             />
           }
           main={

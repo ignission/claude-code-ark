@@ -89,6 +89,8 @@ interface SessionSidebarProps {
   ) => void;
   onOpenAccountManager?: () => void;
   onRestartSession?: (sessionId: string) => void;
+  /** リポジトリで新規Worktree作成を要求 */
+  onCreateWorktreeForRepo?: (repoPath: string) => void;
 }
 
 export function SessionSidebar({
@@ -112,6 +114,7 @@ export function SessionSidebar({
   onSetRepoAccount,
   onOpenAccountManager,
   onRestartSession,
+  onCreateWorktreeForRepo,
 }: SessionSidebarProps) {
   const { groupedItems } = useGroupedWorktreeItems(
     worktrees,
@@ -274,6 +277,12 @@ export function SessionSidebar({
                 !!repoPath &&
                 !!onSetRepoAccount &&
                 !!onOpenAccountManager;
+              const canCreateWorktree = !!onCreateWorktreeForRepo && !!repoPath;
+              // Worktree作成 / アカウント変更 / サイドバーから除外
+              // のいずれかが可能なら repoヘッダに ContextMenu を付ける
+              const showRepoContextMenu =
+                !!repoPath &&
+                (canCreateWorktree || showAccountSubmenu || canRemove);
 
               const repoHeader = (
                 <div className="sticky left-0 flex items-center gap-1.5 px-2 py-1.5">
@@ -282,11 +291,23 @@ export function SessionSidebar({
                     {repoName}
                   </span>
                   {renderRepoAccountBadge(repoPath)}
+                  {canCreateWorktree && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-5 w-5 shrink-0 ml-auto text-sidebar-foreground/70 hover:text-foreground hover:bg-sidebar-accent"
+                      onClick={() => onCreateWorktreeForRepo?.(repoPath)}
+                      aria-label={`${repoName} に新規Worktreeを作成`}
+                      title="新規Worktreeを作成"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
                   {canRemove && (
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-5 w-5 shrink-0 ml-auto text-sidebar-foreground/70 hover:text-destructive hover:bg-destructive/15"
+                      className={`h-5 w-5 shrink-0 ${canCreateWorktree ? "" : "ml-auto"} text-sidebar-foreground/70 hover:text-destructive hover:bg-destructive/15`}
                       onClick={() => setRemoveTargetRepoPath(repoPath)}
                       aria-label={`${repoName} をサイドバーから除外`}
                       title="サイドバーから除外"
@@ -299,39 +320,54 @@ export function SessionSidebar({
 
               return (
                 <div key={repoName} className="mb-3">
-                  {/* リポジトリヘッダー (右クリックでアカウント変更メニュー) */}
-                  {showAccountSubmenu && repoPath ? (
+                  {/* リポジトリヘッダー (右クリックでアクションメニュー) */}
+                  {showRepoContextMenu && repoPath ? (
                     <ContextMenu>
                       <ContextMenuTrigger asChild>
                         {repoHeader}
                       </ContextMenuTrigger>
                       <ContextMenuContent className="w-56">
-                        {canRemove && (
+                        {canCreateWorktree && (
                           <>
                             <ContextMenuItem
-                              onSelect={() => setRemoveTargetRepoPath(repoPath)}
+                              onSelect={() =>
+                                onCreateWorktreeForRepo?.(repoPath)
+                              }
                             >
-                              <X className="w-3.5 h-3.5 mr-2" />
-                              サイドバーから除外
+                              <Plus className="w-3.5 h-3.5 mr-2" />
+                              新規Worktreeを作成
                             </ContextMenuItem>
                             <ContextMenuSeparator />
                           </>
                         )}
-                        <ContextMenuSub>
-                          <ContextMenuSubTrigger>
-                            アカウントを変更
-                          </ContextMenuSubTrigger>
-                          <ContextMenuSubContent className="w-56">
-                            <RepoAccountMenu
-                              accounts={accountList}
-                              currentAccountId={currentLinkId}
-                              onSelect={profileId =>
-                                onSetRepoAccount?.(repoPath, profileId)
-                              }
-                              onOpenManager={() => onOpenAccountManager?.()}
-                            />
-                          </ContextMenuSubContent>
-                        </ContextMenuSub>
+                        {showAccountSubmenu && (
+                          <>
+                            <ContextMenuSub>
+                              <ContextMenuSubTrigger>
+                                アカウントを変更
+                              </ContextMenuSubTrigger>
+                              <ContextMenuSubContent className="w-56">
+                                <RepoAccountMenu
+                                  accounts={accountList}
+                                  currentAccountId={currentLinkId}
+                                  onSelect={profileId =>
+                                    onSetRepoAccount?.(repoPath, profileId)
+                                  }
+                                  onOpenManager={() => onOpenAccountManager?.()}
+                                />
+                              </ContextMenuSubContent>
+                            </ContextMenuSub>
+                            {canRemove && <ContextMenuSeparator />}
+                          </>
+                        )}
+                        {canRemove && (
+                          <ContextMenuItem
+                            onSelect={() => setRemoveTargetRepoPath(repoPath)}
+                          >
+                            <X className="w-3.5 h-3.5 mr-2" />
+                            サイドバーから除外
+                          </ContextMenuItem>
+                        )}
                       </ContextMenuContent>
                     </ContextMenu>
                   ) : (
