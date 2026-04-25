@@ -249,6 +249,7 @@ export interface ServerToClientEvents {
   // 複数アカウント切替 (Linux限定)
   "system:capabilities": (caps: SystemCapabilities) => void;
   "account:list": (profiles: AccountProfile[]) => void;
+  "repo:account-links": (links: RepoAccountLink[]) => void;
   "account:created": (profile: AccountProfile) => void;
   "account:updated": (profile: AccountProfile) => void;
   "account:deleted": (data: { id: string }) => void;

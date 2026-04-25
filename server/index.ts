@@ -1581,6 +1581,8 @@ async function startServer() {
       }
       try {
         socket.emit("account:list", db.listAccountProfiles());
+        // リポジトリ紐付けも同梱送信（リロード時の初期同期用）
+        socket.emit("repo:account-links", db.listRepoAccountLinks());
       } catch (e) {
         socket.emit("account:error", { message: getErrorMessage(e) });
       }

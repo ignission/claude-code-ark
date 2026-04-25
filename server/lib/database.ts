@@ -710,6 +710,25 @@ export class SessionDatabase {
   // ============================================================
 
   /**
+   * すべてのリポジトリ紐付けを取得（クライアントの初期同期用）
+   */
+  listRepoAccountLinks(): RepoAccountLink[] {
+    const stmt = this.db.prepare(
+      "SELECT * FROM repo_account_links ORDER BY updated_at DESC"
+    );
+    const rows = stmt.all() as Array<{
+      repo_path: string;
+      account_profile_id: string;
+      updated_at: number;
+    }>;
+    return rows.map(row => ({
+      repoPath: row.repo_path,
+      accountProfileId: row.account_profile_id,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  /**
    * リポジトリパスから紐付けを取得
    */
   getRepoAccountLink(repoPath: string): RepoAccountLink | null {

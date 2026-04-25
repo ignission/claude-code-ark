@@ -630,6 +630,13 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       });
     });
 
+    // 初期同期: 接続時に全紐付けをまとめて受信 (リロード時のバッジ復元用)
+    socket.on("repo:account-links", links => {
+      const next = new Map<string, string>();
+      for (const link of links) next.set(link.repoPath, link.accountProfileId);
+      setRepoAccountLinks(next);
+    });
+
     socket.on("session:warning", ({ sessionId: _sessionId, code }) => {
       if (code === "config_dir_missing") {
         toast.warning("アカウント設定ディレクトリが見つかりません", {
