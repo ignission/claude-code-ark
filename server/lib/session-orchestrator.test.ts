@@ -221,6 +221,13 @@ describe("SessionOrchestrator - プロファイル切替", () => {
         profileId: "prof-2",
         updatedAt: 0,
       });
+      mockedDb.getProfile.mockReturnValue({
+        id: "prof-2",
+        name: "personal",
+        configDir: "/home/user/.claude-personal",
+        createdAt: 0,
+        updatedAt: 0,
+      });
 
       // 既存セッションが返されるよう設定
       const existing = makeTmuxSession();
@@ -316,6 +323,45 @@ describe("SessionOrchestrator - プロファイル切替", () => {
 
       expect(managed.staleProfile).toBe(true);
       expect(managed.profileId).toBeNull();
+    });
+
+    it("同じprofileIdでもconfigDirが変わると staleProfile=true", async () => {
+      // 1. prof-1 (configDir=A) で新規作成
+      mockedDb.getRepoProfileLink.mockReturnValue({
+        repoPath: "/repo",
+        profileId: "prof-1",
+        updatedAt: 0,
+      });
+      mockedDb.getProfile.mockReturnValue({
+        id: "prof-1",
+        name: "work",
+        configDir: "/home/user/.claude-A",
+        createdAt: 0,
+        updatedAt: 0,
+      });
+      await orchestrator.startSession("wt-1", "/path/to/work", "/repo");
+
+      // 2. プロファイルのconfigDirを編集 (idは同じ、configDirが変わる)
+      mockedDb.getProfile.mockReturnValue({
+        id: "prof-1",
+        name: "work",
+        configDir: "/home/user/.claude-B",
+        createdAt: 0,
+        updatedAt: 1,
+      });
+
+      // 既存セッション再利用: 起動時のスナップショットは A、現在は B → stale
+      const existing = makeTmuxSession();
+      mockedTmux.getSessionByWorktree.mockReturnValue(existing);
+
+      const managed = await orchestrator.startSession(
+        "wt-1",
+        "/path/to/work",
+        "/repo"
+      );
+
+      expect(managed.staleProfile).toBe(true);
+      expect(managed.profileId).toBe("prof-1");
     });
   });
 

@@ -36,6 +36,7 @@ interface SessionRow {
   repo_path: string | null;
   status: string;
   profile_id: string | null;
+  profile_config_dir: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -59,6 +60,8 @@ interface CreateSessionInput {
   readonly status: SessionStatus;
   /** プロファイルID（未紐付けはnull/undefined） */
   readonly profileId?: string | null;
+  /** 起動時に確定したプロファイルのconfigDir（profile_id とペア） */
+  readonly profileConfigDir?: string | null;
 }
 
 /** メッセージ作成時の入力データ */
@@ -158,6 +161,7 @@ export class SessionDatabase {
         worktree_path TEXT NOT NULL UNIQUE,
         status TEXT NOT NULL DEFAULT 'idle',
         profile_id TEXT,
+        profile_config_dir TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )
@@ -207,6 +211,17 @@ export class SessionDatabase {
     // (server再起動後のセッション復元時に sessionProfiles Map を再構築するため)
     try {
       this.db.exec("ALTER TABLE sessions ADD COLUMN profile_id TEXT");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("duplicate column name")) {
+        throw e;
+      }
+    }
+
+    // マイグレーション: sessionsテーブルにprofile_config_dir列を追加
+    // (起動時のCLAUDE_CONFIG_DIRを記録し、profile.configDir変更を検出するため)
+    try {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN profile_config_dir TEXT");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (!msg.includes("duplicate column name")) {
@@ -336,8 +351,8 @@ export class SessionDatabase {
   createSession(session: CreateSessionInput): void {
     const now = new Date().toISOString();
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, profile_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, profile_id, profile_config_dir, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       session.id,
@@ -346,6 +361,7 @@ export class SessionDatabase {
       session.repoPath ?? null,
       session.status,
       session.profileId ?? null,
+      session.profileConfigDir ?? null,
       now,
       now
     );
@@ -354,21 +370,23 @@ export class SessionDatabase {
   /**
    * セッションをupsert（存在すれば更新、なければ作成）
    *
-   * worktree_pathのUNIQUE制約に基づき、競合時はid, worktree_id, status, profile_id を更新する
+   * worktree_pathのUNIQUE制約に基づき、競合時はid, worktree_id, status,
+   * profile_id, profile_config_dir を更新する
    *
    * @param session - セッション作成データ
    */
   upsertSession(session: CreateSessionInput): void {
     const now = new Date().toISOString();
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, profile_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, profile_id, profile_config_dir, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(worktree_path) DO UPDATE SET
         id = excluded.id,
         worktree_id = excluded.worktree_id,
         repo_path = COALESCE(excluded.repo_path, repo_path),
         status = excluded.status,
         profile_id = excluded.profile_id,
+        profile_config_dir = excluded.profile_config_dir,
         updated_at = excluded.updated_at
     `);
     stmt.run(
@@ -378,6 +396,7 @@ export class SessionDatabase {
       session.repoPath ?? null,
       session.status,
       session.profileId ?? null,
+      session.profileConfigDir ?? null,
       now,
       now
     );
@@ -599,6 +618,7 @@ export class SessionDatabase {
       status: row.status as SessionStatus,
       createdAt: new Date(row.created_at),
       profileId: row.profile_id,
+      profileConfigDir: row.profile_config_dir,
     };
   }
 

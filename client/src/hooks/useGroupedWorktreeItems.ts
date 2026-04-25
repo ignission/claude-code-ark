@@ -2,10 +2,13 @@
  * useGroupedWorktreeItems - worktreeをリポジトリ別にグルーピングするカスタムフック
  *
  * SessionSidebarとMobileSessionListで共通のグルーピングロジックを提供する。
+ *
+ * グループキーは絶対パス (repoPath)。同じbasenameのリポジトリ（例:
+ * `/work/a/app` と `/work/b/app`）が衝突しないようにするため、
+ * UIで表示する短縮名はキーから getBaseName で都度導出する。
  */
 
 import { useMemo } from "react";
-import { getBaseName } from "@/utils/pathUtils";
 import { findRepoForSession } from "@/utils/sessionUtils";
 import type { ManagedSession, Worktree } from "../../../shared/types";
 
@@ -49,14 +52,14 @@ export function useGroupedWorktreeItems(
         : false;
       if (!matchedRepo && !sessionRepoMatched) continue;
       if (session) worktreeSessionIds.add(session.id);
-      const repoName = (() => {
-        if (session?.repoPath) return getBaseName(session.repoPath);
-        if (matchedRepo) return getBaseName(matchedRepo);
-        return getBaseName(wt.path.split("/.worktrees/")[0] || wt.path);
+      const repoPath = (() => {
+        if (session?.repoPath) return session.repoPath;
+        if (matchedRepo) return matchedRepo;
+        return wt.path.split("/.worktrees/")[0] || wt.path;
       })();
-      const existing = groups.get(repoName) || [];
+      const existing = groups.get(repoPath) || [];
       existing.push({ worktree: wt, session });
-      groups.set(repoName, existing);
+      groups.set(repoPath, existing);
     }
 
     const sortedSessions = Array.from(sessions.values()).sort((a, b) =>
@@ -67,13 +70,12 @@ export function useGroupedWorktreeItems(
       if (worktreeSessionIds.has(session.id)) continue;
       const repo = session.repoPath ?? findRepoForSession(session, repoList);
       if (!repo || !repoList.includes(repo)) continue;
-      const repoName = getBaseName(repo);
-      const existing = groups.get(repoName) || [];
+      const existing = groups.get(repo) || [];
       existing.push({ worktree: null, session });
-      groups.set(repoName, existing);
+      groups.set(repo, existing);
     }
 
-    // リポジトリ名でも安定ソートする
+    // repoPathでも安定ソートする
     return new Map(
       Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b))
     );

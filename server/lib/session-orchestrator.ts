@@ -32,14 +32,17 @@ export class SessionOrchestrator extends EventEmitter {
   private repoPathCache = new Map<string, string | undefined>();
 
   /**
-   * sessionId → profileId（起動時に確定したプロファイルID）
+   * sessionId → 起動時に確定したプロファイルのスナップショット
    *
-   * tmuxセッション自体はprofileIdを持たないため、SessionOrchestratorで
+   * tmuxセッション自体はprofile情報を持たないため、SessionOrchestratorで
    * セッションごとに記憶しておく。restartSession時の再解決や、
-   * staleProfile判定に使う。
+   * staleProfile判定（プロファイル切替・configDir変更）に使う。
    * 値がnullなら「プロファイル未紐付け」、未設定（mapにキーなし）も同義。
    */
-  private sessionProfiles = new Map<string, string | null>();
+  private sessionProfiles = new Map<
+    string,
+    { id: string; configDir: string } | null
+  >();
 
   constructor() {
     super();
@@ -99,9 +102,13 @@ export class SessionOrchestrator extends EventEmitter {
         console.log(
           `[Orchestrator] Restored session: ${tmuxSession.tmuxSessionName} -> ${dbSession.id} (status: ${dbSession.status})`
         );
-        // 永続化されたprofileIdを sessionProfiles Map に復元
+        // 永続化されたprofileスナップショットを sessionProfiles Map に復元
         // (サーバ再起動後でも staleProfile 判定が正しく動くため)
-        this.sessionProfiles.set(dbSession.id, dbSession.profileId ?? null);
+        const restoredProfile =
+          dbSession.profileId && dbSession.profileConfigDir
+            ? { id: dbSession.profileId, configDir: dbSession.profileConfigDir }
+            : null;
+        this.sessionProfiles.set(dbSession.id, restoredProfile);
       }
 
       // ttydも自動起動（起動完了後にクライアントへ通知）
@@ -160,15 +167,15 @@ export class SessionOrchestrator extends EventEmitter {
       db.updateSessionRepoPath(dbSession.id, derivedRepoPath);
     }
 
-    // 起動時に確定したプロファイルと、現在のリポジトリ紐付けを比較して
-    // staleProfile を判定する。session:list / session:restored 経由でも
-    // 整合性を保つため、再接続/別クライアントでもバッジが復元される。
-    // null → profileId への遷移 (デフォルト ~/.claude で起動 → 後から紐付け)
-    // も staleProfile=true として扱う。
-    const currentProfileId = this.sessionProfiles.get(tmuxSession.id) ?? null;
+    // 起動時に確定したプロファイルと、現在のリポジトリ紐付け+プロファイル状態
+    // を比較して staleProfile を判定する。
+    // - profileId 切替 (null↔id、id↔別id) → stale
+    // - 同一profileIdでも configDir が変わった場合も stale
+    //   (tmux env は起動時に固定されるため再起動しないと反映されない)
+    const current = this.sessionProfiles.get(tmuxSession.id) ?? null;
     const link = repoPath ? db.getRepoProfileLink(repoPath) : null;
-    const desiredProfileId = link?.profileId ?? null;
-    const staleProfile = currentProfileId !== desiredProfileId;
+    const desiredProfile = link ? db.getProfile(link.profileId) : null;
+    const staleProfile = !this.profileSnapshotsEqual(current, desiredProfile);
 
     return {
       id: tmuxSession.id,
@@ -180,9 +187,22 @@ export class SessionOrchestrator extends EventEmitter {
       tmuxSessionName: tmuxSession.tmuxSessionName,
       ttydPort: ttydInstance?.port || null,
       ttydUrl: ttydInstance ? `/ttyd/${tmuxSession.id}/` : null,
-      profileId: currentProfileId,
+      profileId: current?.id ?? null,
       staleProfile,
     };
+  }
+
+  /**
+   * 起動時のプロファイルスナップショットと現在のプロファイルが一致するか。
+   * 両方null（紐付けなし）も一致とみなす。
+   */
+  private profileSnapshotsEqual(
+    current: { id: string; configDir: string } | null,
+    desired: { id: string; configDir: string } | null
+  ): boolean {
+    if (current === null && desired === null) return true;
+    if (current === null || desired === null) return false;
+    return current.id === desired.id && current.configDir === desired.configDir;
   }
 
   /**
@@ -235,33 +255,33 @@ export class SessionOrchestrator extends EventEmitter {
   }
 
   /**
-   * 紐付けプロファイルから env / profileId を解決する。
+   * 紐付けプロファイルから env / プロファイルスナップショットを解決する。
    *
-   * - 紐付け無し → null env / null id
-   * - 紐付けあるが profile が無い（削除済等）→ null env / null id
-   * - 紐付けあり → env={CLAUDE_CONFIG_DIR}, profileId
+   * - 紐付け無し → null env / null snapshot
+   * - 紐付けあるが profile が無い（削除済等）→ null env / null snapshot
+   * - 紐付けあり → env={CLAUDE_CONFIG_DIR}, snapshot={id, configDir}
    *
    * configDir/.credentials.json の存在チェックは行わない。claude CLI が
    * 必要なら自動で /login を促す。
    */
   private resolveProfileForRepo(repoPath: string | undefined): {
     env: Record<string, string> | undefined;
-    profileId: string | null;
+    snapshot: { id: string; configDir: string } | null;
   } {
     if (!repoPath) {
-      return { env: undefined, profileId: null };
+      return { env: undefined, snapshot: null };
     }
     const link = db.getRepoProfileLink(repoPath);
     if (!link) {
-      return { env: undefined, profileId: null };
+      return { env: undefined, snapshot: null };
     }
     const profile = db.getProfile(link.profileId);
     if (!profile) {
-      return { env: undefined, profileId: null };
+      return { env: undefined, snapshot: null };
     }
     return {
       env: { CLAUDE_CONFIG_DIR: profile.configDir },
-      profileId: profile.id,
+      snapshot: { id: profile.id, configDir: profile.configDir },
     };
   }
 
@@ -305,8 +325,8 @@ export class SessionOrchestrator extends EventEmitter {
       return managed;
     }
 
-    // 新規作成パス: 紐付けプロファイルから env / profileId を解決
-    const { env, profileId } = this.resolveProfileForRepo(resolvedRepoPath);
+    // 新規作成パス: 紐付けプロファイルから env / スナップショットを解決
+    const { env, snapshot } = this.resolveProfileForRepo(resolvedRepoPath);
 
     // 新規tmuxセッションを作成（envがあれば注入）
     const tmuxSession = await tmuxManager.createSession(
@@ -327,11 +347,13 @@ export class SessionOrchestrator extends EventEmitter {
       worktreePath,
       repoPath: resolvedRepoPath,
       status: "active",
-      profileId,
+      profileId: snapshot?.id ?? null,
+      profileConfigDir: snapshot?.configDir ?? null,
     });
 
-    // profileId をsession-id毎に記憶（restartSession / staleProfile判定用）
-    this.sessionProfiles.set(tmuxSession.id, profileId);
+    // プロファイルスナップショットをsession-id毎に記憶
+    // (restartSession / staleProfile判定用)
+    this.sessionProfiles.set(tmuxSession.id, snapshot);
 
     const managed: ManagedSession = {
       id: tmuxSession.id,
@@ -343,7 +365,7 @@ export class SessionOrchestrator extends EventEmitter {
       tmuxSessionName: tmuxSession.tmuxSessionName,
       ttydPort: ttydInstance.port,
       ttydUrl: `/ttyd/${tmuxSession.id}/`,
-      profileId,
+      profileId: snapshot?.id ?? null,
     };
 
     this.emit("session:created", managed);
@@ -405,9 +427,9 @@ export class SessionOrchestrator extends EventEmitter {
       ? this.deriveRepoPath(tmuxSession.worktreePath)
       : undefined;
     const link = repoPath ? db.getRepoProfileLink(repoPath) : null;
-    const desiredProfileId = link?.profileId ?? null;
-    const currentProfileId = this.sessionProfiles.get(sessionId) ?? null;
-    return currentProfileId !== desiredProfileId;
+    const desired = link ? db.getProfile(link.profileId) : null;
+    const current = this.sessionProfiles.get(sessionId) ?? null;
+    return !this.profileSnapshotsEqual(current, desired);
   }
 
   /**

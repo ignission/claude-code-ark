@@ -107,13 +107,13 @@ export function MobileSessionList({
             ワークツリーがありません
           </div>
         ) : (
-          Array.from(groupedItems.entries()).map(([repoName, items]) => (
-            <div key={repoName}>
+          Array.from(groupedItems.entries()).map(([repoPath, items]) => (
+            <div key={repoPath}>
               {/* リポジトリヘッダー（PC版SessionSidebarと同じFolderOpenアイコン付き） */}
               <div className="flex items-center gap-1.5 px-1 py-1.5 mb-2">
                 <FolderOpen className="w-3 h-3 text-muted-foreground" />
                 <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">
-                  {repoName}
+                  {getBaseName(repoPath)}
                 </span>
               </div>
               {/* アイテム一覧 */}

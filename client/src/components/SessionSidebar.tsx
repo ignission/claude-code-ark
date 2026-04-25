@@ -83,10 +83,7 @@ interface SessionSidebarProps {
   profiles?: Profile[];
   repoProfileLinks?: Map<string, string>;
   capabilities?: SystemCapabilities;
-  onSetRepoProfile?: (
-    repoPath: string,
-    profileId: string | null
-  ) => void;
+  onSetRepoProfile?: (repoPath: string, profileId: string | null) => void;
   onOpenProfileManager?: () => void;
   onRestartSession?: (sessionId: string) => void;
   /** リポジトリで新規Worktree作成を要求 */
@@ -120,12 +117,6 @@ export function SessionSidebar({
     worktrees,
     sessions,
     repoList
-  );
-
-  // basename → repoPath の対応表（同名repoは衝突する点に注意。既存ロジックも同前提）
-  const repoPathByName = useMemo(
-    () => new Map(repoList.map(p => [getBaseName(p), p])),
-    [repoList]
   );
 
   const [removeTargetRepoPath, setRemoveTargetRepoPath] = useState<
@@ -262,23 +253,19 @@ export function SessionSidebar({
               <p className="text-xs mt-1">「+」から新規作成</p>
             </div>
           ) : (
-            Array.from(groupedItems.entries()).map(([repoName, items]) => {
-              const repoPath = repoPathByName.get(repoName);
-              const canRemove = !!onRemoveRepo && !!repoPath;
-              const currentLinkId = repoPath
-                ? (repoProfileLinks?.get(repoPath) ?? null)
-                : null;
+            Array.from(groupedItems.entries()).map(([repoPath, items]) => {
+              const repoName = getBaseName(repoPath);
+              const canRemove = !!onRemoveRepo;
+              const currentLinkId = repoProfileLinks?.get(repoPath) ?? null;
               const showProfileSubmenu =
                 multiProfileEnabled &&
-                !!repoPath &&
                 !!onSetRepoProfile &&
                 !!onOpenProfileManager;
-              const canCreateWorktree = !!onCreateWorktreeForRepo && !!repoPath;
+              const canCreateWorktree = !!onCreateWorktreeForRepo;
               // Worktree作成 / プロファイル変更 / サイドバーから除外
               // のいずれかが可能なら repoヘッダに ContextMenu を付ける
               const showRepoContextMenu =
-                !!repoPath &&
-                (canCreateWorktree || showProfileSubmenu || canRemove);
+                canCreateWorktree || showProfileSubmenu || canRemove;
 
               const repoHeader = (
                 <div className="sticky left-0 flex items-center gap-1.5 px-2 py-1.5">
@@ -315,9 +302,9 @@ export function SessionSidebar({
               );
 
               return (
-                <div key={repoName} className="mb-3">
+                <div key={repoPath} className="mb-3">
                   {/* リポジトリヘッダー (右クリックでアクションメニュー) */}
-                  {showRepoContextMenu && repoPath ? (
+                  {showRepoContextMenu ? (
                     <ContextMenu>
                       <ContextMenuTrigger asChild>
                         {repoHeader}
