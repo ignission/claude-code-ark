@@ -151,9 +151,16 @@ export function AccountLoginModal({
                 <p className="text-xs font-medium text-blue-300 mb-1">
                   認証URLを検出しました
                 </p>
-                <p className="text-xs text-muted-foreground font-mono truncate">
+                {/* URL自体もクリック可能なリンクにする */}
+                <a
+                  href={detectedUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-blue-400 hover:text-blue-300 hover:underline font-mono truncate block"
+                  title={detectedUrl}
+                >
                   {detectedUrl}
-                </p>
+                </a>
               </div>
               <div className="flex gap-1.5 shrink-0">
                 <Button
@@ -161,29 +168,48 @@ export function AccountLoginModal({
                   size="sm"
                   variant="secondary"
                   onClick={async () => {
+                    // Clipboard API → fallback (execCommand) の二段構え
+                    // navigator.clipboard はsecure context + 親window focus 必須。
+                    // モーダル内Radix Dialog のfocus trap や Cloudflare Tunnel 経由
+                    // (HTTPS) でも基本動くが、稀に失敗するためfallbackを用意する
+                    let ok = false;
                     try {
                       await navigator.clipboard.writeText(detectedUrl);
-                      toast.success("URLをコピーしました");
+                      ok = true;
                     } catch {
-                      toast.error("コピーに失敗しました");
+                      // Fallback: 一時的な textarea を作成してexecCommand
+                      try {
+                        const ta = document.createElement("textarea");
+                        ta.value = detectedUrl;
+                        ta.style.position = "fixed";
+                        ta.style.opacity = "0";
+                        document.body.appendChild(ta);
+                        ta.focus();
+                        ta.select();
+                        ok = document.execCommand("copy");
+                        document.body.removeChild(ta);
+                      } catch {
+                        ok = false;
+                      }
                     }
+                    if (ok) toast.success("URLをコピーしました");
+                    else toast.error("コピーに失敗しました");
                   }}
                   className="h-7 px-2 text-xs"
                   title="URLをコピー"
                 >
                   <Copy className="w-3 h-3" />
                 </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => {
-                    window.open(detectedUrl, "_blank", "noopener,noreferrer");
-                  }}
-                  className="h-7 px-2.5 text-xs"
+                {/* ブラウザで開くボタン: アンカータグでブラウザネイティブの遷移を使う */}
+                <a
+                  href={detectedUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-1 h-7 px-2.5 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
                 >
-                  <ExternalLink className="w-3 h-3 mr-1" />
+                  <ExternalLink className="w-3 h-3" />
                   ブラウザで開く
-                </Button>
+                </a>
               </div>
             </div>
           </div>
