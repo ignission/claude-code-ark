@@ -269,14 +269,14 @@ export class SessionDatabase {
     }
 
     // CLAUDE_CONFIG_DIR プロファイル機能 (Linux限定) のテーブル
-    // - profiles: 各プロファイルの configDir
+    // - profiles: 各プロファイルの configDir (name と config_dir はそれぞれ UNIQUE)
     // - repo_profile_links: リポジトリパスとプロファイルの紐付け (1:1)
     // プロファイル削除時は CASCADE で紐付けも自動削除する
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS profiles (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
-        config_dir TEXT NOT NULL,
+        config_dir TEXT NOT NULL UNIQUE,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -287,6 +287,14 @@ export class SessionDatabase {
         FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
       );
     `);
+
+    // マイグレーション: 既存DBにも config_dir の UNIQUE INDEX を追加。
+    // 旧スキーマ (UNIQUE なし) で起動していたインスタンスでも、複数プロファイル
+    // が同じconfigDirを指す状態を防ぐ。
+    // 既に重複データがあると失敗するが、起動を止めるべき不整合なので throw する。
+    this.db.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS profiles_config_dir_unique ON profiles(config_dir)"
+    );
 
     // マイグレーション: 旧 status 列を削除（認証ダイアログ廃止）
     try {

@@ -58,6 +58,20 @@ describe("SessionDatabase - profiles / repo_profile_links", () => {
         })
       ).toThrow();
     });
+
+    it("同一configDirのプロファイルを作成すると例外が投げられる", () => {
+      testDb.createProfile({
+        name: "First",
+        configDir: "/home/user/.claude-shared",
+      });
+      // 別nameでも config_dir 重複は不可（隔離が破れるため）
+      expect(() =>
+        testDb.createProfile({
+          name: "Second",
+          configDir: "/home/user/.claude-shared",
+        })
+      ).toThrow();
+    });
   });
 
   describe("listProfiles", () => {
@@ -129,6 +143,21 @@ describe("SessionDatabase - profiles / repo_profile_links", () => {
     it("存在しないIDの更新は例外を投げる", () => {
       expect(() =>
         testDb.updateProfile("nonexistent", { name: "X" })
+      ).toThrow();
+    });
+
+    it("既存と同じconfigDirへの更新は例外を投げる", () => {
+      testDb.createProfile({
+        name: "A",
+        configDir: "/home/user/.claude-A",
+      });
+      const b = testDb.createProfile({
+        name: "B",
+        configDir: "/home/user/.claude-B",
+      });
+      // BのconfigDirを A と同じに更新しようとして失敗
+      expect(() =>
+        testDb.updateProfile(b.id, { configDir: "/home/user/.claude-A" })
       ).toThrow();
     });
   });
