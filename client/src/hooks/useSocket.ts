@@ -143,7 +143,11 @@ interface UseSocketReturn {
   repoAccountLinks: Map<string, string>;
   capabilities: SystemCapabilities;
   /** 現在進行中のログイン情報（モーダル表示用） */
-  activeLogin: { profileId: string; ttydUrl: string } | null;
+  activeLogin: {
+    profileId: string;
+    ttydUrl: string;
+    detectedUrl: string | null;
+  } | null;
   loadAccounts: () => void;
   createAccount: (name: string, configDir: string) => void;
   updateAccount: (
@@ -235,6 +239,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [activeLogin, setActiveLogin] = useState<{
     profileId: string;
     ttydUrl: string;
+    detectedUrl: string | null;
   } | null>(null);
 
   // repoPathRefをrepoPathの変化に同期させる
@@ -585,7 +590,15 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     });
 
     socket.on("account:login-started", ({ profileId, ttydUrl }) => {
-      setActiveLogin({ profileId, ttydUrl });
+      setActiveLogin({ profileId, ttydUrl, detectedUrl: null });
+    });
+
+    socket.on("account:login-url-detected", ({ profileId, url }) => {
+      setActiveLogin(prev =>
+        prev && prev.profileId === profileId
+          ? { ...prev, detectedUrl: url }
+          : prev
+      );
     });
 
     socket.on("account:login-completed", ({ profileId: _profileId }) => {

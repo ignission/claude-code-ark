@@ -16,8 +16,9 @@
  *   （xterm.jsが折り返し済URLを論理的に1リンクとして認識するので、`claude /login`
  *   が出すOAuth URLが折り返されていてもクリックで新タブで開ける）
  */
-import { CircleCheck, Loader2 } from "lucide-react";
+import { CircleCheck, Copy, ExternalLink, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -36,6 +37,13 @@ interface AccountLoginModalProps {
   profile: AccountProfile | null;
   /** AccountLoginManager から返るパス（例: "/ttyd-login/<id>/"） */
   ttydUrl: string | null;
+  /**
+   * サーバ側で tmux capture-pane から抽出した OAuth 認証用 URL。
+   * ttyd のターミナル幅で URL が折り返され、tmux コピーモードでは
+   * クリップボード連携が効かないため、サーバ側で URL を抽出して
+   * クライアントへ送信し、ボタンで直接ブラウザを開けるようにする。
+   */
+  detectedUrl: string | null;
   onCancel: () => void;
 }
 
@@ -53,6 +61,7 @@ export function AccountLoginModal({
   open,
   profile,
   ttydUrl,
+  detectedUrl,
   onCancel,
 }: AccountLoginModalProps) {
   // open になった瞬間を起点にカウントダウンを開始する
@@ -133,6 +142,52 @@ export function AccountLoginModal({
             残り {formatRemaining(remaining)}
           </span>
         </DialogHeader>
+
+        {/* OAuth URL バナー: ターミナル内で折り返されてクリックできない問題への対処 */}
+        {detectedUrl && (
+          <div className="px-5 py-3 bg-blue-500/5 border-b border-blue-500/20">
+            <div className="flex items-start gap-2">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-blue-300 mb-1">
+                  認証URLを検出しました
+                </p>
+                <p className="text-xs text-muted-foreground font-mono truncate">
+                  {detectedUrl}
+                </p>
+              </div>
+              <div className="flex gap-1.5 shrink-0">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(detectedUrl);
+                      toast.success("URLをコピーしました");
+                    } catch {
+                      toast.error("コピーに失敗しました");
+                    }
+                  }}
+                  className="h-7 px-2 text-xs"
+                  title="URLをコピー"
+                >
+                  <Copy className="w-3 h-3" />
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    window.open(detectedUrl, "_blank", "noopener,noreferrer");
+                  }}
+                  className="h-7 px-2.5 text-xs"
+                >
+                  <ExternalLink className="w-3 h-3 mr-1" />
+                  ブラウザで開く
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Body: ttyd iframe */}
         <div className="bg-black h-80 w-full">

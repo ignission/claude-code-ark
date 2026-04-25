@@ -42,9 +42,19 @@ interface ActiveLogin {
   ttydPort: number;
   watcher: CredentialsWatcher;
   timeoutHandle: NodeJS.Timeout;
+  urlDetectorHandle: NodeJS.Timeout | null;
+  detectedUrl: string | null;
 }
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+const URL_DETECT_INTERVAL_MS = 1000;
+// `claude /login` が表示する OAuth URL を検出する正規表現
+// 例: https://claude.ai/oauth/authorize?... / https://console.anthropic.com/oauth/...
+const OAUTH_URL_PATTERN =
+  /https?:\/\/(?:claude\.ai|console\.anthropic\.com)\/[A-Za-z0-9._~:/?#@!$&'()*+,;=%-]+/;
+// ANSIエスケープシーケンス除去用
+// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSIエスケープシーケンス除去のため
+const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*[A-Za-z]/g;
 
 export class AccountLoginManager extends EventEmitter {
   private readonly active = new Map<string, ActiveLogin>();
@@ -128,7 +138,15 @@ export class AccountLoginManager extends EventEmitter {
         ttydPort: ttydInstance.port,
         watcher,
         timeoutHandle,
+        urlDetectorHandle: null,
+        detectedUrl: null,
       });
+
+      // 6. OAuth URL 検出ループ起動
+      // ttyd内のターミナルは折り返し+tmuxコピーモードでクリップボード連携が
+      // 効かないため、サーバ側で tmux capture-pane の出力からURLを抽出して
+      // クライアントへ送信し、ボタンから直接ブラウザで開けるようにする
+      this.startUrlDetector(profile.id);
 
       return { ttydUrl: ttydInstance.url };
     } catch (error) {
@@ -186,6 +204,57 @@ export class AccountLoginManager extends EventEmitter {
   }
 
   /**
+   * URL 検出ループを起動する。
+   * tmux capture-pane で画面内容を取得し、改行やANSIで分断されたURLを
+   * 復元してから OAuth URL パターンに一致する最初のURLを emit する。
+   * 検出後はループを停止（再表示時にも対応するため `detectedUrl` を保持）。
+   */
+  private startUrlDetector(profileId: string): void {
+    const record = this.active.get(profileId);
+    if (!record) return;
+
+    const tick = () => {
+      const cur = this.active.get(profileId);
+      if (!cur) return;
+      try {
+        const r = spawnSync(
+          "tmux",
+          ["capture-pane", "-p", "-J", "-t", cur.tmuxSessionName],
+          { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+        );
+        if (r.status !== 0) return;
+        // ANSIエスケープを除去（色やカーソル制御）
+        const cleaned = (r.stdout || "")
+          .replace(ANSI_ESCAPE_PATTERN, "")
+          // ターミナル幅で改行されたURL断片を結合（claude /login は URL を1行で書くが、
+          // ttyd の幅で物理改行される。-J オプションで連結を試みるが、改行コードは残るので除去）
+          .replace(/\r/g, "")
+          // 改行+空白のパターンは折り返しと判断して連結
+          .replace(/\n\s*/g, "");
+        const m = cleaned.match(OAUTH_URL_PATTERN);
+        if (m) {
+          const url = m[0];
+          if (cur.detectedUrl !== url) {
+            cur.detectedUrl = url;
+            this.emit("url-detected", profileId, url);
+            // 検出済みなのでループを止めて負荷を下げる
+            if (cur.urlDetectorHandle) {
+              clearInterval(cur.urlDetectorHandle);
+              cur.urlDetectorHandle = null;
+            }
+          }
+        }
+      } catch {
+        // capture-pane が失敗（セッション破棄直後など）→ 次回ティックに委ねる
+      }
+    };
+
+    record.urlDetectorHandle = setInterval(tick, URL_DETECT_INTERVAL_MS);
+    // 1回だけ即座に実行
+    tick();
+  }
+
+  /**
    * リソース解放 + イベント emit を一元化する内部メソッド。
    */
   private async destroy(
@@ -207,6 +276,11 @@ export class AccountLoginManager extends EventEmitter {
 
     // タイムアウト解除
     clearTimeout(record.timeoutHandle);
+
+    // URL検出ループ停止
+    if (record.urlDetectorHandle) {
+      clearInterval(record.urlDetectorHandle);
+    }
 
     // ttyd 停止
     try {

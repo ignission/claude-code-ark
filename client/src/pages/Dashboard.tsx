@@ -717,6 +717,7 @@ export default function Dashboard() {
             open={activeLogin !== null}
             profile={accountForActiveLogin}
             ttydUrl={activeLogin?.ttydUrl ?? null}
+            detectedUrl={activeLogin?.detectedUrl ?? null}
             onCancel={() => {
               if (activeLogin) cancelLogin(activeLogin.profileId);
             }}

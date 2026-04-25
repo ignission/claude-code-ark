@@ -304,6 +304,10 @@ async function startServer() {
     io.emit("account:login-failed", { profileId, reason });
   });
 
+  accountLoginManager.on("url-detected", (profileId: string, url: string) => {
+    io.emit("account:login-url-detected", { profileId, url });
+  });
+
   // BeaconにArk操作の依存を注入（MCPツールで利用）
   beaconManager.configure({
     getAllSessions: () => sessionOrchestrator.getAllSessions(),

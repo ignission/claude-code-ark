@@ -256,6 +256,10 @@ export interface ServerToClientEvents {
     profileId: string;
     ttydUrl: string;
   }) => void;
+  "account:login-url-detected": (data: {
+    profileId: string;
+    url: string;
+  }) => void;
   "account:login-completed": (data: { profileId: string }) => void;
   "account:login-failed": (data: { profileId: string; reason: string }) => void;
   "account:error": (data: { message: string; code?: string }) => void;
