@@ -235,10 +235,44 @@ export default function Dashboard() {
     }
   }, [tunnelJustStarted, clearTunnelJustStarted]);
 
+  // restart進行中の対象worktreePath。
+  // 再起動するとサーバ側で sessionId が変わるため、新IDで session:created
+  // が届くまで selectedSessionId を「同じ worktreePath を持つ新セッション」
+  // に自動migrateするための一時記録。
+  const restartingWorktreePathRef = useRef<string | null>(null);
+
+  const handleRestartSession = useCallback(
+    (sessionId: string) => {
+      // 再起動対象が選択中ならworktreePathを覚えておき、
+      // 新セッション到着時に selectedSessionId を新IDへ追従させる
+      if (selectedSessionId === sessionId) {
+        const target = sessions.get(sessionId);
+        if (target) {
+          restartingWorktreePathRef.current = target.worktreePath;
+        }
+      }
+      restartSessionWithProfile(sessionId);
+    },
+    [selectedSessionId, sessions, restartSessionWithProfile]
+  );
+
   // セッション自動選択
   useEffect(() => {
     // ブラウザ選択中はリセットしない
     if (selectedSessionId === "browser") return;
+
+    // 再起動進行中: 新セッションが届いていれば selectedSessionId を新IDへ移す
+    if (restartingWorktreePathRef.current) {
+      const replacement = Array.from(sessions.values()).find(
+        s => s.worktreePath === restartingWorktreePathRef.current
+      );
+      if (replacement && replacement.id !== selectedSessionId) {
+        setSelectedSessionId(replacement.id);
+        restartingWorktreePathRef.current = null;
+        return;
+      }
+    }
+
     if (!selectedSessionId && sessions.size > 0) {
       const first = Array.from(sessions.values())[0];
       setSelectedSessionId(first.id);
@@ -409,7 +443,7 @@ export default function Dashboard() {
               capabilities={capabilities}
               onSetRepoProfile={setRepoProfile}
               onOpenProfileManager={() => setShowProfileManager(true)}
-              onRestartSession={restartSessionWithProfile}
+              onRestartSession={handleRestartSession}
               onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
             />
           }

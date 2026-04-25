@@ -376,39 +376,90 @@ export class SessionOrchestrator extends EventEmitter {
    * 稼働中セッションを kill して、現在の紐付けで再起動する。
    * staleProfile となったセッションをユーザが「再起動」した際に呼ぶ。
    *
+   * 失敗時の安全性: 新セッションの起動 (tmux/ttyd) が成功するまで旧セッション
+   * には触らない。新側で失敗したら旧は無傷で残り、エラーが上に伝播するだけ。
+   * 旧tmux/ttyd は「新セッションが usable と確認できた後」にだけ停止する。
+   *
    * 内部処理:
-   * 1. ttyd 停止 / tmux kill / sessionProfiles/repoPathCacheクリア
-   * 2. startSession を再呼び出し（env が再解決される）
+   * 1. プロファイル解決 (envと configDir スナップショット)
+   * 2. 新tmuxセッションを **別ID** で作成 (旧と並走)
+   * 3. 新ttydを起動。失敗時は新tmuxを kill して throw
+   * 4. 旧 ttyd 停止 / 旧 tmux kill / sessionProfiles/repoPathCache クリア
+   * 5. DB を upsert (worktree_path UNIQUE により旧行が新IDで上書きされる)
+   * 6. session:stopped (旧ID) → session:created (新ID) を emit
    *
    * @throws sessionId に対応する tmux セッションが見つからない場合
+   * @throws 新セッション起動失敗 (旧セッションは無傷)
    */
   async restartSession(sessionId: string): Promise<ManagedSession> {
-    const tmuxSession = tmuxManager.getSession(sessionId);
-    if (!tmuxSession) {
+    const oldTmux = tmuxManager.getSession(sessionId);
+    if (!oldTmux) {
       throw new Error(`Session not found: ${sessionId}`);
     }
 
-    const worktreePath = tmuxSession.worktreePath;
+    const worktreePath = oldTmux.worktreePath;
     const dbSession = db.getSessionByWorktreePath(worktreePath);
     const worktreeId = dbSession?.worktreeId || "";
-    // repoPathはDBからの値もしくはgit導出を優先（startSessionで再解決される）
     const repoPath =
       dbSession?.repoPath ||
       (worktreePath ? this.deriveRepoPath(worktreePath) : undefined);
 
-    // 既存リソースを停止 + DB エントリ削除
-    // (新セッションは別の sessionId で作成されるため、古い ID をクライアントから
-    // 消さないと「再起動」のたびにセッション一覧に古いエントリが残ってしまう)
+    // 1. 新プロファイルを解決
+    const { env, snapshot } = this.resolveProfileForRepo(repoPath);
+
+    // 2. 新tmuxセッションを別IDで作成 (失敗時は旧セッション無傷)
+    const newTmux = await tmuxManager.createSession(
+      worktreePath,
+      env ? { env } : undefined
+    );
+
+    // 3. 新ttydを起動 (失敗時は新tmuxを後始末してから throw、旧は無傷)
+    let newTtyd: Awaited<ReturnType<typeof ttydManager.startInstance>>;
+    try {
+      newTtyd = await ttydManager.startInstance(
+        newTmux.id,
+        newTmux.tmuxSessionName
+      );
+    } catch (e) {
+      tmuxManager.killSession(newTmux.id);
+      throw e;
+    }
+
+    // 4. ここまで成功 → 旧セッションをクリーンアップ
     ttydManager.stopInstance(sessionId);
     tmuxManager.killSession(sessionId);
-    db.deleteSession(sessionId);
     this.sessionProfiles.delete(sessionId);
     this.repoPathCache.delete(worktreePath);
-    // 古いセッション ID の停止をクライアントへ通知 → UI から消える
+
+    // 5. DB を新セッションIDで upsert
+    //    (worktree_path UNIQUE により旧行が新内容で上書きされる)
+    db.upsertSession({
+      id: newTmux.id,
+      worktreeId,
+      worktreePath,
+      repoPath,
+      status: "active",
+      profileId: snapshot?.id ?? null,
+      profileConfigDir: snapshot?.configDir ?? null,
+    });
+    this.sessionProfiles.set(newTmux.id, snapshot);
+
+    // 6. クライアント通知
     this.emit("session:stopped", sessionId);
 
-    // 新しい env で再起動 (新しい sessionId で session:created が発火)
-    const managed = await this.startSession(worktreeId, worktreePath, repoPath);
+    const managed: ManagedSession = {
+      id: newTmux.id,
+      worktreeId,
+      worktreePath,
+      repoPath,
+      status: "active",
+      createdAt: newTmux.createdAt,
+      tmuxSessionName: newTmux.tmuxSessionName,
+      ttydPort: newTtyd.port,
+      ttydUrl: `/ttyd/${newTmux.id}/`,
+      profileId: snapshot?.id ?? null,
+    };
+    this.emit("session:created", managed);
     return managed;
   }
 
