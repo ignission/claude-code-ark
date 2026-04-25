@@ -7,6 +7,7 @@ import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { FrontLineModal } from "@/components/frontline/FrontLineModal";
 import { MobileChatView } from "@/components/MobileChatView";
 import { MobileLayout } from "@/components/MobileLayout";
+import { ProfileManagerDialog } from "@/components/ProfileManagerDialog";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
@@ -35,7 +36,7 @@ import { useSocket } from "@/hooks/useSocket";
 import { useViewerTabs } from "@/hooks/useViewerTabs";
 import { getBaseName } from "@/utils/pathUtils";
 import { findRepoForSession } from "@/utils/sessionUtils";
-import type { Worktree } from "../../../shared/types";
+import type { ManagedSession, Worktree } from "../../../shared/types";
 
 export default function Dashboard() {
   const {
@@ -91,6 +92,15 @@ export default function Dashboard() {
     browserSessions,
     startBrowser,
     navigateBrowser,
+    profiles,
+    repoProfileLinks,
+    capabilities,
+    loadProfiles,
+    createProfile,
+    updateProfile,
+    deleteProfile,
+    setRepoProfile,
+    restartSessionWithProfile,
   } = useSocket({
     enabled: !isSettingsLoading,
     initialRepoList: savedRepoList,
@@ -199,6 +209,8 @@ export default function Dashboard() {
   const [showTunnelDialog, setShowTunnelDialog] = useState(false);
   const [selectedPort, setSelectedPort] = useState<number | null>(null);
   const [showPortSelector, setShowPortSelector] = useState(false);
+  const [showProfileManager, setShowProfileManager] = useState(false);
+
   const copyToClipboard = (text: string | null) => {
     if (text) {
       navigator.clipboard.writeText(text);
@@ -223,10 +235,91 @@ export default function Dashboard() {
     }
   }, [tunnelJustStarted, clearTunnelJustStarted]);
 
+  // restart進行中の対象worktreePath。
+  // 再起動するとサーバ側で sessionId が変わるため、新IDで session:created
+  // が届くまで selectedSessionId を「同じ worktreePath を持つ新セッション」
+  // に自動migrateするための一時記録。
+  const restartingWorktreePathRef = useRef<string | null>(null);
+  // 直近選択中だった ManagedSession のスナップショット。
+  // 別タブで再起動が起きた場合 (initiating tab以外) でも、
+  // selectedSessionId が消えたタイミングで worktreePath を取り出して
+  // restartingWorktreePathRef に保存し、新セッションへ追従できるようにする。
+  const lastSelectedSessionRef = useRef<ManagedSession | null>(null);
+
+  // selectedSessionId に対応する ManagedSession を毎回スナップショット
+  useEffect(() => {
+    if (selectedSessionId && selectedSessionId !== "browser") {
+      const s = sessions.get(selectedSessionId);
+      if (s) lastSelectedSessionRef.current = s;
+    } else {
+      lastSelectedSessionRef.current = null;
+    }
+  }, [selectedSessionId, sessions]);
+
+  const handleRestartSession = useCallback(
+    (sessionId: string) => {
+      // 再起動対象が選択中ならworktreePathを覚えておき、
+      // 新セッション到着時に selectedSessionId を新IDへ追従させる
+      if (selectedSessionId === sessionId) {
+        const target = sessions.get(sessionId);
+        if (target) {
+          restartingWorktreePathRef.current = target.worktreePath;
+        }
+      }
+      restartSessionWithProfile(sessionId);
+    },
+    [selectedSessionId, sessions, restartSessionWithProfile]
+  );
+
+  // ユーザー操作によるセッション選択。restart pending 中にユーザーが
+  // 別セッションを手動で選んだ場合、新セッション到着時に元の worktree
+  // へ自動移動させない (= migration を破棄する)。
+  const handleSelectSession = useCallback((id: string | null) => {
+    restartingWorktreePathRef.current = null;
+    setSelectedSessionId(id);
+  }, []);
+
   // セッション自動選択
   useEffect(() => {
     // ブラウザ選択中はリセットしない
     if (selectedSessionId === "browser") return;
+
+    // 別タブで再起動が起きた場合のフォールバック:
+    // 選択中セッションが今回の sessions Map から消えた瞬間に、
+    // 直前 snapshot から worktreePath を取り出して restart pending として扱う。
+    // (initiating tab は handleRestartSession で先に値を入れているため上書きしない)
+    //
+    // restart 由来かどうかの推定は「直前snapshot で staleProfile=true だった」
+    // ことを条件にする。restart は staleProfile セッションに対してのみ実行され
+    // るため、stale でないセッションが消えるのは通常停止 (別タブからのstop等)
+    // とみなして migration を発動させない。
+    if (
+      !restartingWorktreePathRef.current &&
+      selectedSessionId &&
+      !sessions.has(selectedSessionId) &&
+      lastSelectedSessionRef.current?.id === selectedSessionId &&
+      lastSelectedSessionRef.current?.staleProfile === true
+    ) {
+      restartingWorktreePathRef.current =
+        lastSelectedSessionRef.current.worktreePath;
+    }
+
+    // 再起動進行中: 新セッションが届いていれば selectedSessionId を新IDへ移す
+    if (restartingWorktreePathRef.current) {
+      const replacement = Array.from(sessions.values()).find(
+        s => s.worktreePath === restartingWorktreePathRef.current
+      );
+      if (replacement && replacement.id !== selectedSessionId) {
+        setSelectedSessionId(replacement.id);
+        restartingWorktreePathRef.current = null;
+        return;
+      }
+      // まだ届いていない: 通常のフォールバックを抑制して新session到着を待つ
+      if (selectedSessionId && !sessions.has(selectedSessionId)) {
+        return;
+      }
+    }
+
     if (!selectedSessionId && sessions.size > 0) {
       const first = Array.from(sessions.values())[0];
       setSelectedSessionId(first.id);
@@ -320,6 +413,15 @@ export default function Dashboard() {
     setIsSelectRepoOpen(true);
   };
 
+  /** 既存リポジトリの右クリック等から直接Worktree作成 */
+  const handleCreateWorktreeForRepo = (path: string) => {
+    selectRepo(path);
+    // selectRepo の反映を待ってから作成ダイアログを開く
+    setTimeout(() => {
+      setIsCreateWorktreeOpen(true);
+    }, 50);
+  };
+
   /**
    * リポジトリをサイドバーから除外する。
    * 現在選択中のrepoを除外する場合、残りrepoListの先頭に切り替えてから除外することで
@@ -349,7 +451,7 @@ export default function Dashboard() {
           onDeleteWorktree={handleDeleteWorktree}
           onSendMessage={sendMessage}
           onSendKey={sendKey}
-          onSelectSession={sessionId => setSelectedSessionId(sessionId)}
+          onSelectSession={handleSelectSession}
           onUploadFile={uploadFile}
           onCopyBuffer={copyBuffer}
           onNewSession={handleNewSession}
@@ -375,7 +477,7 @@ export default function Dashboard() {
               selectedSessionId={selectedSessionId}
               sessionPreviews={sessionPreviews}
               sessionActivityTexts={sessionActivityTexts}
-              onSelectSession={setSelectedSessionId}
+              onSelectSession={handleSelectSession}
               onDeleteSession={handleDeleteSession}
               onStartSession={handleStartSession}
               onNewSession={handleNewSession}
@@ -383,6 +485,13 @@ export default function Dashboard() {
               onSelectBrowser={handleSelectBrowser}
               isBrowserSelected={selectedSessionId === "browser"}
               isRemote={isRemote}
+              profiles={profiles}
+              repoProfileLinks={repoProfileLinks}
+              capabilities={capabilities}
+              onSetRepoProfile={setRepoProfile}
+              onOpenProfileManager={() => setShowProfileManager(true)}
+              onRestartSession={handleRestartSession}
+              onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
             />
           }
           main={
@@ -647,6 +756,18 @@ export default function Dashboard() {
         onClose={() => setShowFrontLine(false)}
         socket={socket}
       />
+
+      {/* プロファイル管理 (Linux限定) */}
+      {capabilities.multiProfileSupported && (
+        <ProfileManagerDialog
+          open={showProfileManager}
+          onOpenChange={setShowProfileManager}
+          profiles={profiles}
+          onCreate={createProfile}
+          onUpdate={updateProfile}
+          onDelete={deleteProfile}
+        />
+      )}
     </>
   );
 }

@@ -8,15 +8,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
+import { toast } from "sonner";
 import type {
   BeaconStreamChunk,
   BrowserSession,
   ChatMessage,
   ClientToServerEvents,
   ManagedSession,
+  Profile,
   RepoInfo,
   ServerToClientEvents,
   SpecialKey,
+  SystemCapabilities,
   Worktree,
 } from "../../../shared/types";
 
@@ -133,6 +136,21 @@ interface UseSocketReturn {
   startBrowser: () => void;
   stopBrowser: (browserId: string) => void;
   navigateBrowser: (url: string) => void;
+
+  // プロファイル切替 (Linux限定)
+  profiles: Profile[];
+  /** repoPath → profileId のマップ */
+  repoProfileLinks: Map<string, string>;
+  capabilities: SystemCapabilities;
+  loadProfiles: () => void;
+  createProfile: (name: string, configDir: string) => void;
+  updateProfile: (
+    id: string,
+    patch: { name?: string; configDir?: string }
+  ) => void;
+  deleteProfile: (id: string) => void;
+  setRepoProfile: (repoPath: string, profileId: string | null) => void;
+  restartSessionWithProfile: (sessionId: string) => void;
 }
 
 export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
@@ -201,6 +219,15 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [beaconMessages, setBeaconMessages] = useState<ChatMessage[]>([]);
   const [beaconStreaming, setBeaconStreaming] = useState(false);
   const [beaconStreamText, setBeaconStreamText] = useState("");
+
+  // プロファイル切替 (Linux限定)
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [repoProfileLinks, setRepoProfileLinks] = useState<Map<string, string>>(
+    new Map()
+  );
+  const [capabilities, setCapabilities] = useState<SystemCapabilities>({
+    multiProfileSupported: false,
+  });
 
   // repoPathRefをrepoPathの変化に同期させる
   useEffect(() => {
@@ -521,6 +548,58 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       setBrowserError(message);
     });
 
+    // プロファイル切替 (Linux限定) ----------------------------------
+    socket.on("system:capabilities", caps => {
+      setCapabilities(caps);
+      // 機能利用可能ならプロファイル一覧を初回取得
+      if (caps.multiProfileSupported) {
+        socket.emit("profile:list");
+      }
+    });
+
+    socket.on("profile:list", list => {
+      setProfiles(list);
+    });
+
+    socket.on("profile:created", profile => {
+      // サーバー側でも profile:list を再emitするが、即時反映のため楽観更新
+      setProfiles(prev =>
+        prev.some(p => p.id === profile.id) ? prev : [...prev, profile]
+      );
+    });
+
+    socket.on("profile:updated", profile => {
+      setProfiles(prev => prev.map(p => (p.id === profile.id ? profile : p)));
+    });
+
+    socket.on("profile:deleted", ({ id }) => {
+      setProfiles(prev => prev.filter(p => p.id !== id));
+    });
+
+    socket.on("profile:error", ({ message, code }) => {
+      console.error("[Socket] Profile error:", message, code);
+      toast.error(message);
+    });
+
+    socket.on("repo:profile-changed", ({ repoPath, profileId }) => {
+      setRepoProfileLinks(prev => {
+        const next = new Map(prev);
+        if (profileId) {
+          next.set(repoPath, profileId);
+        } else {
+          next.delete(repoPath);
+        }
+        return next;
+      });
+    });
+
+    // 初期同期: 接続時に全紐付けをまとめて受信 (リロード時のバッジ復元用)
+    socket.on("repo:profile-links", links => {
+      const next = new Map<string, string>();
+      for (const link of links) next.set(link.repoPath, link.profileId);
+      setRepoProfileLinks(next);
+    });
+
     // Cleanup on unmount
     return () => {
       socket.off("ports:list");
@@ -781,6 +860,40 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socketRef.current?.emit("browser:navigate", { url });
   }, []);
 
+  // プロファイル切替 (Linux限定) actions
+  const loadProfiles = useCallback(() => {
+    socketRef.current?.emit("profile:list");
+  }, []);
+
+  const createProfile = useCallback((name: string, configDir: string) => {
+    socketRef.current?.emit("profile:create", { name, configDir });
+  }, []);
+
+  const updateProfile = useCallback(
+    (id: string, patch: { name?: string; configDir?: string }) => {
+      socketRef.current?.emit("profile:update", { id, ...patch });
+    },
+    []
+  );
+
+  const deleteProfile = useCallback((id: string) => {
+    socketRef.current?.emit("profile:delete", { id });
+  }, []);
+
+  const setRepoProfile = useCallback(
+    (repoPath: string, profileId: string | null) => {
+      socketRef.current?.emit("repo:set-profile", {
+        repoPath,
+        profileId,
+      });
+    },
+    []
+  );
+
+  const restartSessionWithProfile = useCallback((sessionId: string) => {
+    socketRef.current?.emit("session:restart-with-profile", { sessionId });
+  }, []);
+
   return {
     socket: socketRef.current,
     isConnected,
@@ -840,5 +953,15 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     startBrowser,
     stopBrowser,
     navigateBrowser,
+    // プロファイル切替 (Linux限定)
+    profiles,
+    repoProfileLinks,
+    capabilities,
+    loadProfiles,
+    createProfile,
+    updateProfile,
+    deleteProfile,
+    setRepoProfile,
+    restartSessionWithProfile,
   };
 }

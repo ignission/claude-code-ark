@@ -22,6 +22,7 @@ import { Server, type Socket } from "socket.io";
 import type {
   ClientToServerEvents,
   ServerToClientEvents,
+  SystemCapabilities,
 } from "../shared/types.js";
 import { authManager } from "./lib/auth.js";
 import { beaconManager } from "./lib/beacon-manager.js";
@@ -53,6 +54,7 @@ import {
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import { sessionOrchestrator } from "./lib/session-orchestrator.js";
+import { detectMultiProfileSupported } from "./lib/system.js";
 import { tmuxManager } from "./lib/tmux-manager.js";
 import { TunnelManager } from "./lib/tunnel.js";
 
@@ -144,6 +146,14 @@ async function startServer() {
       "Skip permissions mode enabled - Claude will run with --dangerously-skip-permissions"
     );
   }
+
+  // ===== プロファイル切替機能 (Linux限定) =====
+  const capabilities: SystemCapabilities = {
+    multiProfileSupported: detectMultiProfileSupported(),
+  };
+  console.log(
+    `[Capabilities] multiProfileSupported = ${capabilities.multiProfileSupported}`
+  );
 
   // Create proxy for ttyd WebSocket connections
   const ttydProxy = httpProxy.createProxyServer({
@@ -758,6 +768,9 @@ async function startServer() {
 
     // このソケット接続で選択中のリポジトリパス
     let currentRepoPath: string | null = null;
+
+    // プロファイル切替機能のサポート状況を最初に通知
+    socket.emit("system:capabilities", capabilities);
 
     // Send allowed repos list to client on connection
     socket.emit("repos:list", allowedRepos);
@@ -1394,6 +1407,306 @@ async function startServer() {
         console.error(
           `[Frontline] save_record エラー: ${emitFrontlineError("save_record", error)}`
         );
+      }
+    });
+
+    // ===== Profile Commands (Linux限定) =====
+
+    /** プロファイル切替機能未サポート時の共通レスポンス */
+    const emitUnsupported = () => {
+      socket.emit("profile:error", {
+        message: "プロファイル切替機能は Linux + claude CLI 必須です",
+        code: "unsupported",
+      });
+    };
+
+    /**
+     * link.repoPath が session.repoPath と論理的に一致するか判定する。
+     * 新規保存は canonical 形式に揃えているが、旧データ (symlink path で
+     * 保存されているもの) が DB に残っているケースを realpath fallback で救済。
+     */
+    const repoPathMatchesSession = (
+      linkPath: string,
+      sessionRepoPath: string | undefined
+    ): boolean => {
+      if (!sessionRepoPath) return false;
+      if (sessionRepoPath === linkPath) return true;
+      try {
+        return fs.realpathSync(linkPath) === sessionRepoPath;
+      } catch {
+        return false;
+      }
+    };
+
+    /**
+     * configDir のバリデーション。
+     * @returns 正規化済み configDir、または null（エラーは socket に emit 済み）
+     */
+    const validateConfigDir = (configDir: string): string | null => {
+      if (typeof configDir !== "string" || configDir.trim().length === 0) {
+        socket.emit("profile:error", {
+          message: "configDir は必須です",
+          code: "invalid_path",
+        });
+        return null;
+      }
+      // チルダ展開: 先頭の `~` を $HOME に置換
+      let expanded = configDir.trim();
+      if (expanded === "~" || expanded.startsWith("~/")) {
+        expanded = path.join(os.homedir(), expanded.slice(1));
+      }
+      // 絶対パス必須
+      if (!path.isAbsolute(expanded)) {
+        socket.emit("profile:error", {
+          message: "configDir は絶対パスで指定してください",
+          code: "invalid_path",
+        });
+        return null;
+      }
+      // 危険文字チェック (git.ts validatePath と同等)
+      if (/[;&|`$(){}[\]<>!"'\\]/.test(expanded)) {
+        socket.emit("profile:error", {
+          message: "configDir に使用できない文字が含まれています",
+          code: "invalid_path",
+        });
+        return null;
+      }
+      // 禁止パス: ルート/システムディレクトリ
+      const normalized = path.resolve(expanded);
+      const forbidden = ["/", "/etc", "/usr", "/var", "/bin", "/sbin"];
+      for (const f of forbidden) {
+        if (normalized === f || normalized.startsWith(`${f}/`)) {
+          socket.emit("profile:error", {
+            message: `configDir に禁止パス (${f}) は使用できません`,
+            code: "forbidden_path",
+          });
+          return null;
+        }
+      }
+      return normalized;
+    };
+
+    socket.on("profile:list", () => {
+      if (!capabilities.multiProfileSupported) {
+        emitUnsupported();
+        return;
+      }
+      try {
+        socket.emit("profile:list", db.listProfiles());
+        // リポジトリ紐付けも同梱送信（リロード時の初期同期用）
+        socket.emit("repo:profile-links", db.listRepoProfileLinks());
+      } catch (e) {
+        socket.emit("profile:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on("profile:create", ({ name, configDir }) => {
+      if (!capabilities.multiProfileSupported) {
+        emitUnsupported();
+        return;
+      }
+      if (typeof name !== "string" || name.trim().length === 0) {
+        socket.emit("profile:error", {
+          message: "name は必須です",
+          code: "invalid_name",
+        });
+        return;
+      }
+      const normalized = validateConfigDir(configDir);
+      if (!normalized) return;
+      try {
+        const profile = db.createProfile({
+          name: name.trim(),
+          configDir: normalized,
+        });
+        io.emit("profile:created", profile);
+        io.emit("profile:list", db.listProfiles());
+      } catch (e) {
+        socket.emit("profile:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on("profile:update", ({ id, name, configDir }) => {
+      if (!capabilities.multiProfileSupported) {
+        emitUnsupported();
+        return;
+      }
+      if (typeof id !== "string" || id.length === 0) {
+        socket.emit("profile:error", {
+          message: "id は必須です",
+          code: "invalid_id",
+        });
+        return;
+      }
+      const patch: { name?: string; configDir?: string } = {};
+      if (name !== undefined) {
+        if (typeof name !== "string" || name.trim().length === 0) {
+          socket.emit("profile:error", {
+            message: "name は空にできません",
+            code: "invalid_name",
+          });
+          return;
+        }
+        patch.name = name.trim();
+      }
+      if (configDir !== undefined) {
+        const normalized = validateConfigDir(configDir);
+        if (!normalized) return;
+        patch.configDir = normalized;
+      }
+      try {
+        const profile = db.updateProfile(id, patch);
+        io.emit("profile:updated", profile);
+        io.emit("profile:list", db.listProfiles());
+
+        // configDirが変わった場合、このプロファイルを使っている稼働中セッションは
+        // 古いCLAUDE_CONFIG_DIRで動作している → staleProfile を再計算して通知。
+        // (nameのみ変更でも稼働セッションには影響しないが、副作用は無害なので
+        //  常に再計算する。configDir差分判定はprofileSnapshotsEqualが行う)
+        const affectedRepoPaths = db
+          .listRepoProfileLinks()
+          .filter(link => link.profileId === id)
+          .map(link => link.repoPath);
+        for (const sess of sessionOrchestrator.getAllSessions()) {
+          if (
+            affectedRepoPaths.some(p =>
+              repoPathMatchesSession(p, sess.repoPath)
+            )
+          ) {
+            io.emit("session:updated", sess);
+          }
+        }
+      } catch (e) {
+        socket.emit("profile:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on("profile:delete", ({ id }) => {
+      if (!capabilities.multiProfileSupported) {
+        emitUnsupported();
+        return;
+      }
+      try {
+        // 削除前に該当紐付け一覧をスナップショット (CASCADE でDB上は消えるため)
+        const affectedRepoPaths = db
+          .listRepoProfileLinks()
+          .filter(link => link.profileId === id)
+          .map(link => link.repoPath);
+
+        db.deleteProfile(id);
+        io.emit("profile:deleted", { id });
+        io.emit("profile:list", db.listProfiles());
+
+        // 紐付けが切れた各リポジトリについて、クライアントのバッジ + 稼働中
+        // セッションの staleProfile を更新する
+        for (const repoPath of affectedRepoPaths) {
+          io.emit("repo:profile-changed", {
+            repoPath,
+            profileId: null,
+          });
+          // そのリポジトリで稼働中のセッションを列挙して staleProfile 再計算
+          // (link 側 = 受信値 / 旧 symlink、session 側 = canonical の可能性が
+          //  あるため realpath fallback で判定する)
+          for (const sess of sessionOrchestrator.getAllSessions()) {
+            if (repoPathMatchesSession(repoPath, sess.repoPath)) {
+              io.emit("session:updated", sess);
+            }
+          }
+        }
+      } catch (e) {
+        socket.emit("profile:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on("repo:set-profile", async ({ repoPath, profileId }) => {
+      if (!capabilities.multiProfileSupported) {
+        emitUnsupported();
+        return;
+      }
+      if (typeof repoPath !== "string" || repoPath.length === 0) {
+        socket.emit("profile:error", {
+          message: "repoPath は必須です",
+          code: "invalid_repo",
+        });
+        return;
+      }
+      // 全レイヤーで repoPath を canonical (realpath) に統一する。
+      // ManagedSession.repoPath は git rev-parse 由来で常に canonical なので、
+      // ここを揃えることで client 側の repoProfileLinks Map と
+      // session.repoPath を直接比較できる (lookup の不整合を防ぐ)。
+      let canonicalRepoPath: string;
+      try {
+        canonicalRepoPath = fs.realpathSync(repoPath);
+      } catch {
+        socket.emit("profile:error", {
+          message: "リポジトリパスが解決できません",
+          code: "invalid_repo",
+        });
+        return;
+      }
+      // repo:select と同等の境界検証: 任意のpathへの書き込みを防ぐ。
+      // allowedRepos が指定されている場合のみ「元 path / canonical path」
+      // どちらかが含まれているかを確認する。
+      if (
+        allowedRepos.length > 0 &&
+        !allowedRepos.includes(repoPath) &&
+        !allowedRepos.includes(canonicalRepoPath)
+      ) {
+        socket.emit("profile:error", {
+          message: "リポジトリが許可リストに含まれていません",
+          code: "repo_not_allowed",
+        });
+        return;
+      }
+      try {
+        if (!(await isGitRepository(canonicalRepoPath))) {
+          socket.emit("profile:error", {
+            message: "リポジトリパスが有効なgitリポジトリではありません",
+            code: "invalid_repo",
+          });
+          return;
+        }
+        if (profileId === null) {
+          db.removeRepoProfileLink(canonicalRepoPath);
+        } else {
+          db.setRepoProfileLink(canonicalRepoPath, profileId);
+        }
+        // broadcast も canonical で送る (クライアントの Map キーが canonical で
+        // 揃うため、SessionSidebar の lookup と整合する)
+        io.emit("repo:profile-changed", {
+          repoPath: canonicalRepoPath,
+          profileId,
+        });
+
+        // 該当 repoPath 配下の稼働中セッションを再emit
+        // (session.repoPath は canonical なので canonicalRepoPath で直接比較可能)
+        for (const session of sessionOrchestrator.getAllSessions()) {
+          if (session.repoPath === canonicalRepoPath) {
+            io.emit("session:updated", session);
+          }
+        }
+      } catch (e) {
+        socket.emit("profile:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on("session:restart-with-profile", async ({ sessionId }) => {
+      if (!capabilities.multiProfileSupported) {
+        emitUnsupported();
+        return;
+      }
+      try {
+        // restartSession 自身が orchestrator.emit("session:stopped") と
+        // session:created を発行し、forwardedEvents 経由で全接続クライアントに
+        // 旧IDの停止と新IDの作成が届く。ここで重ねて io.emit("session:updated")
+        // を流すと、別タブが session:stopped を取りこぼした幻シナリオで旧IDが
+        // 残ったまま新IDが追加される懸念があるため、追加 emit はしない。
+        await sessionOrchestrator.restartSession(sessionId);
+      } catch (e) {
+        socket.emit("session:error", {
+          sessionId,
+          error: getErrorMessage(e),
+        });
       }
     });
 

@@ -30,6 +30,10 @@ export interface Session {
   repoPath?: string;
   status: SessionStatus;
   createdAt: Date;
+  /** 起動時に確定したプロファイルID（未紐付けはnull/undefined） */
+  profileId?: string | null;
+  /** 起動時に確定したプロファイルのconfigDir（configDir変更検出用） */
+  profileConfigDir?: string | null;
 }
 
 /**
@@ -45,6 +49,42 @@ export interface ManagedSession extends Session {
   ttydPort: number | null;
   /** ttydのURL（未起動時はnull） */
   ttydUrl: string | null;
+  /** セッション起動時に確定したプロファイルID（未紐付けはnull/undefined） */
+  profileId?: string | null;
+  /** 現在のリポジトリ紐付けと不一致（再起動が必要） */
+  staleProfile?: boolean;
+}
+
+/**
+ * Claude CLIの設定ディレクトリ (CLAUDE_CONFIG_DIR) プロファイル (Linux限定)
+ * リポジトリ単位で別々のディレクトリを使い分けるための抽象化
+ */
+export interface Profile {
+  id: string;
+  name: string;
+  /** 絶対パス。チルダはサーバ側で展開済 */
+  configDir: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * リポジトリとプロファイルの紐付け
+ * 1リポジトリ=1プロファイル（多重紐付けは未サポート）
+ */
+export interface RepoProfileLink {
+  repoPath: string;
+  profileId: string;
+  updatedAt: number;
+}
+
+/**
+ * 実行環境の機能フラグ
+ * クライアントは初期化時に受け取り、UI表示の可否を判断する
+ */
+export interface SystemCapabilities {
+  /** プロファイル切替が利用可能か（Linux + claudeコマンド存在 で true） */
+  multiProfileSupported: boolean;
 }
 
 export type SessionStatus = "active" | "idle" | "error" | "stopped";
@@ -205,6 +245,19 @@ export interface ServerToClientEvents {
   "frontline:records": (records: FrontlineRecord[]) => void;
   "frontline:record_saved": (data: FrontlineRecordSaved) => void;
   "frontline:error": (data: FrontlineError) => void;
+
+  // プロファイル切替 (Linux限定)
+  "system:capabilities": (caps: SystemCapabilities) => void;
+  "profile:list": (profiles: Profile[]) => void;
+  "repo:profile-links": (links: RepoProfileLink[]) => void;
+  "profile:created": (profile: Profile) => void;
+  "profile:updated": (profile: Profile) => void;
+  "profile:deleted": (data: { id: string }) => void;
+  "profile:error": (data: { message: string; code?: string }) => void;
+  "repo:profile-changed": (data: {
+    repoPath: string;
+    profileId: string | null;
+  }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -269,6 +322,21 @@ export interface ClientToServerEvents {
   ) => void;
   "frontline:get_stats": () => void;
   "frontline:get_records": (data?: { limit?: number }) => void;
+
+  // プロファイル切替 (Linux限定)
+  "profile:list": () => void;
+  "profile:create": (data: { name: string; configDir: string }) => void;
+  "profile:update": (data: {
+    id: string;
+    name?: string;
+    configDir?: string;
+  }) => void;
+  "profile:delete": (data: { id: string }) => void;
+  "repo:set-profile": (data: {
+    repoPath: string;
+    profileId: string | null;
+  }) => void;
+  "session:restart-with-profile": (data: { sessionId: string }) => void;
 }
 
 /** Beaconチャットのメッセージ */

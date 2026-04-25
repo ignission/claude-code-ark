@@ -4,9 +4,22 @@
  * セッション一覧（SessionCard） + 新規作成「+」ボタンを提供。
  * リポジトリごとにヘッダーで区切って表示する。
  * worktree中心のイテレーション: セッション未起動のworktreeも表示する。
+ *
+ * プロファイル切替機能 (Linux限定):
+ * - capabilities.multiProfileSupported === true のときのみ
+ *   プロファイルバッジ・staleProfile警告・再起動ボタン・右クリックメニュー追加項目を表示する
+ * - false の場合は従来通りの挙動 (関連UI完全非表示)
  */
 
-import { FolderOpen, Globe, Plus, Terminal, X } from "lucide-react";
+import {
+  AlertTriangle,
+  FolderOpen,
+  Globe,
+  Plus,
+  RotateCw,
+  Terminal,
+  X,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   AlertDialog,
@@ -19,10 +32,31 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useGroupedWorktreeItems } from "@/hooks/useGroupedWorktreeItems";
 import { getBaseName } from "@/utils/pathUtils";
-import type { ManagedSession, Worktree } from "../../../shared/types";
+import type {
+  ManagedSession,
+  Profile,
+  SystemCapabilities,
+  Worktree,
+} from "../../../shared/types";
+import { badgeLabel, colorFor, RepoProfileMenu } from "./RepoProfileMenu";
 import { SessionCard } from "./SessionCard";
 
 interface SessionSidebarProps {
@@ -45,6 +79,15 @@ interface SessionSidebarProps {
   isBrowserSelected?: boolean;
   /** リモートアクセス中か */
   isRemote?: boolean;
+  /** プロファイル切替機能用 (Linux限定) */
+  profiles?: Profile[];
+  repoProfileLinks?: Map<string, string>;
+  capabilities?: SystemCapabilities;
+  onSetRepoProfile?: (repoPath: string, profileId: string | null) => void;
+  onOpenProfileManager?: () => void;
+  onRestartSession?: (sessionId: string) => void;
+  /** リポジトリで新規Worktree作成を要求 */
+  onCreateWorktreeForRepo?: (repoPath: string) => void;
 }
 
 export function SessionSidebar({
@@ -62,6 +105,13 @@ export function SessionSidebar({
   onSelectBrowser,
   isBrowserSelected = false,
   isRemote = false,
+  profiles,
+  repoProfileLinks,
+  capabilities,
+  onSetRepoProfile,
+  onOpenProfileManager,
+  onRestartSession,
+  onCreateWorktreeForRepo,
 }: SessionSidebarProps) {
   const { groupedItems } = useGroupedWorktreeItems(
     worktrees,
@@ -69,15 +119,92 @@ export function SessionSidebar({
     repoList
   );
 
-  // basename → repoPath の対応表（同名repoは衝突する点に注意。既存ロジックも同前提）
-  const repoPathByName = useMemo(
-    () => new Map(repoList.map(p => [getBaseName(p), p])),
-    [repoList]
-  );
-
   const [removeTargetRepoPath, setRemoveTargetRepoPath] = useState<
     string | null
   >(null);
+  const [restartTargetSessionId, setRestartTargetSessionId] = useState<
+    string | null
+  >(null);
+
+  const multiProfileEnabled = capabilities?.multiProfileSupported === true;
+  const profileList = profiles ?? [];
+  const profileById = useMemo(
+    () => new Map(profileList.map(a => [a.id, a])),
+    [profileList]
+  );
+
+  // リポジトリ行に表示するプロファイルバッジを描画する
+  const renderRepoProfileBadge = (repoPath: string | undefined) => {
+    if (!multiProfileEnabled || !repoPath) return null;
+    const linkedId = repoProfileLinks?.get(repoPath);
+    if (linkedId) {
+      const profile = profileById.get(linkedId);
+      if (profile) {
+        const colorClass = colorFor(profile.id);
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={`shrink-0 inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium rounded border ${colorClass}`}
+              >
+                {badgeLabel(profile.name)}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              <div className="text-xs">
+                <div className="font-medium">{profile.name}</div>
+                <div className="opacity-70">{profile.configDir}</div>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        );
+      }
+    }
+    // 紐付けなし: 既定バッジ
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium rounded border bg-neutral-800 text-neutral-400 border-neutral-700">
+            既定
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="right">
+          紐付けなし (~/.claude を使用)
+        </TooltipContent>
+      </Tooltip>
+    );
+  };
+
+  // 古い設定 警告バッジ + 再起動ボタン
+  const renderStaleProfileControls = (session: ManagedSession) => {
+    if (!multiProfileEnabled || session.staleProfile !== true) return null;
+    return (
+      <div className="flex items-center gap-1 px-2 pb-1.5 pl-7">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded border bg-amber-500/10 text-amber-400 border-amber-500/30">
+              <AlertTriangle className="w-3 h-3" />
+              古い設定
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="right">
+            リポジトリのプロファイル紐付けが変更されました。このセッションは元の設定で動作中です
+          </TooltipContent>
+        </Tooltip>
+        {onRestartSession && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-[10px] gap-1 text-amber-400 hover:text-amber-300 hover:bg-amber-500/10"
+            onClick={() => setRestartTargetSessionId(session.id)}
+          >
+            <RotateCw className="w-3 h-3" />
+            再起動
+          </Button>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="h-full flex flex-col bg-sidebar">
@@ -126,56 +253,137 @@ export function SessionSidebar({
               <p className="text-xs mt-1">「+」から新規作成</p>
             </div>
           ) : (
-            Array.from(groupedItems.entries()).map(([repoName, items]) => {
-              const repoPath = repoPathByName.get(repoName);
-              const canRemove = !!onRemoveRepo && !!repoPath;
+            Array.from(groupedItems.entries()).map(([repoPath, items]) => {
+              const repoName = getBaseName(repoPath);
+              const canRemove = !!onRemoveRepo;
+              const currentLinkId = repoProfileLinks?.get(repoPath) ?? null;
+              const showProfileSubmenu =
+                multiProfileEnabled &&
+                !!onSetRepoProfile &&
+                !!onOpenProfileManager;
+              const canCreateWorktree = !!onCreateWorktreeForRepo;
+              // Worktree作成 / プロファイル変更 / サイドバーから除外
+              // のいずれかが可能なら repoヘッダに ContextMenu を付ける
+              const showRepoContextMenu =
+                canCreateWorktree || showProfileSubmenu || canRemove;
+
+              const repoHeader = (
+                <div className="sticky left-0 flex items-center gap-1.5 px-2 py-1.5">
+                  <FolderOpen className="w-3 h-3 text-muted-foreground shrink-0" />
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">
+                    {repoName}
+                  </span>
+                  {renderRepoProfileBadge(repoPath)}
+                  {canCreateWorktree && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-5 w-5 shrink-0 ml-auto text-sidebar-foreground/70 hover:text-foreground hover:bg-sidebar-accent"
+                      onClick={() => onCreateWorktreeForRepo?.(repoPath)}
+                      aria-label={`${repoName} に新規Worktreeを作成`}
+                      title="新規Worktreeを作成"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                  {canRemove && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={`h-5 w-5 shrink-0 ${canCreateWorktree ? "" : "ml-auto"} text-sidebar-foreground/70 hover:text-destructive hover:bg-destructive/15`}
+                      onClick={() => setRemoveTargetRepoPath(repoPath)}
+                      aria-label={`${repoName} をサイドバーから除外`}
+                      title="サイドバーから除外"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                </div>
+              );
+
               return (
-                <div key={repoName} className="mb-3">
-                  {/* リポジトリヘッダー */}
-                  <div className="sticky left-0 flex items-center gap-1.5 px-2 py-1.5">
-                    <FolderOpen className="w-3 h-3 text-muted-foreground shrink-0" />
-                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">
-                      {repoName}
-                    </span>
-                    {canRemove && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-5 w-5 shrink-0 text-sidebar-foreground/70 hover:text-destructive hover:bg-destructive/15"
-                        onClick={() => setRemoveTargetRepoPath(repoPath)}
-                        aria-label={`${repoName} をサイドバーから除外`}
-                        title="サイドバーから除外"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </Button>
-                    )}
-                  </div>
+                <div key={repoPath} className="mb-3">
+                  {/* リポジトリヘッダー (右クリックでアクションメニュー) */}
+                  {showRepoContextMenu ? (
+                    <ContextMenu>
+                      <ContextMenuTrigger asChild>
+                        {repoHeader}
+                      </ContextMenuTrigger>
+                      <ContextMenuContent className="w-56">
+                        {canCreateWorktree && (
+                          <>
+                            <ContextMenuItem
+                              onSelect={() =>
+                                onCreateWorktreeForRepo?.(repoPath)
+                              }
+                            >
+                              <Plus className="w-3.5 h-3.5 mr-2" />
+                              新規Worktreeを作成
+                            </ContextMenuItem>
+                            <ContextMenuSeparator />
+                          </>
+                        )}
+                        {showProfileSubmenu && (
+                          <>
+                            <ContextMenuSub>
+                              <ContextMenuSubTrigger>
+                                プロファイルを変更
+                              </ContextMenuSubTrigger>
+                              <ContextMenuSubContent className="w-56">
+                                <RepoProfileMenu
+                                  profiles={profileList}
+                                  currentProfileId={currentLinkId}
+                                  onSelect={profileId =>
+                                    onSetRepoProfile?.(repoPath, profileId)
+                                  }
+                                  onOpenManager={() => onOpenProfileManager?.()}
+                                />
+                              </ContextMenuSubContent>
+                            </ContextMenuSub>
+                            {canRemove && <ContextMenuSeparator />}
+                          </>
+                        )}
+                        {canRemove && (
+                          <ContextMenuItem
+                            onSelect={() => setRemoveTargetRepoPath(repoPath)}
+                          >
+                            <X className="w-3.5 h-3.5 mr-2" />
+                            サイドバーから除外
+                          </ContextMenuItem>
+                        )}
+                      </ContextMenuContent>
+                    </ContextMenu>
+                  ) : (
+                    repoHeader
+                  )}
                   {/* アイテム一覧 */}
                   <div className="space-y-1">
                     {items.map(({ worktree: wt, session }) => (
-                      <SessionCard
-                        key={session?.id ?? wt?.id ?? "unknown"}
-                        session={session}
-                        worktree={wt ?? undefined}
-                        repoList={repoList}
-                        isSelected={
-                          session ? selectedSessionId === session.id : false
-                        }
-                        previewText={
-                          session ? sessionPreviews.get(session.id) || "" : ""
-                        }
-                        activityText={
-                          session
-                            ? sessionActivityTexts.get(session.id) || ""
-                            : ""
-                        }
-                        onClick={() => session && onSelectSession(session.id)}
-                        onDelete={() =>
-                          session &&
-                          onDeleteSession(session.id, wt ?? undefined)
-                        }
-                        onStart={() => (wt ? onStartSession(wt) : undefined)}
-                      />
+                      <div key={session?.id ?? wt?.id ?? "unknown"}>
+                        <SessionCard
+                          session={session}
+                          worktree={wt ?? undefined}
+                          repoList={repoList}
+                          isSelected={
+                            session ? selectedSessionId === session.id : false
+                          }
+                          previewText={
+                            session ? sessionPreviews.get(session.id) || "" : ""
+                          }
+                          activityText={
+                            session
+                              ? sessionActivityTexts.get(session.id) || ""
+                              : ""
+                          }
+                          onClick={() => session && onSelectSession(session.id)}
+                          onDelete={() =>
+                            session &&
+                            onDeleteSession(session.id, wt ?? undefined)
+                          }
+                          onStart={() => (wt ? onStartSession(wt) : undefined)}
+                        />
+                        {session && renderStaleProfileControls(session)}
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -211,6 +419,36 @@ export function SessionSidebar({
               }}
             >
               除外
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* セッション再起動 確認ダイアログ (staleProfile対応) */}
+      <AlertDialog
+        open={restartTargetSessionId !== null}
+        onOpenChange={open => {
+          if (!open) setRestartTargetSessionId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>セッションを再起動しますか？</AlertDialogTitle>
+            <AlertDialogDescription>
+              このセッションを再起動するとClaude会話履歴・実行中コマンド・ターミナル内容がすべて失われます。続行しますか？
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>キャンセル</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (restartTargetSessionId && onRestartSession) {
+                  onRestartSession(restartTargetSessionId);
+                }
+                setRestartTargetSessionId(null);
+              }}
+            >
+              再起動
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

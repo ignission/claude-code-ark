@@ -52,6 +52,7 @@ Claude Codeとの対話は **Agent SDK経由ではなく、tmux + ttyd による
 | セッション永続化       | SQLite + tmux永続化によるサーバー再起動後の自動復元                         |
 | IME対応                | 日本語入力時のcompositionイベント処理                                       |
 | パーミッションスキップ | `--skip-permissions` フラグでClaude CLIの権限確認をスキップ                 |
+| プロファイル切替（Linux限定） | リポジトリ単位で別々の `CLAUDE_CONFIG_DIR` を使用。認証は通常セッション内で `claude /login` 実行 |
 
 ## Git・PRワークフロー
 
@@ -99,6 +100,14 @@ pm2 restart claude-code-ark
 
 - **コマンド実行を依頼されたら即実行する。** コマンドの説明や注意点だけ述べて実行しない、という振る舞いは禁止。「実行しますか？」の確認も不要（CLAUDE.mdで明示的に確認を求めている場合を除く）
 - **曖昧な指示（「リファクタリングして」「修正して」「改善して」等）を受けた場合、実装前にやることを2文で要約しユーザーの確認を得ること。** 明確な指示（具体的な修正内容記載）の場合は確認不要
+
+## 既知の制約
+
+### プロファイル切替（Linux限定）
+
+- **C-1: プロファイル変更は新規セッションにのみ適用される**。tmuxセッションは起動時に確定したenvを保持する。リポジトリのプロファイル紐付けを変えても、稼働中のセッションは元のプロファイルで動作し続ける。UIは`staleProfile`バッジ + 「再起動」ボタンを表示する（再起動はClaude会話履歴を破壊するので確認ダイアログ必須）
+- **C-2: 同一プロファイルの並行セッションは非推奨**。1プロファイル=1`.credentials.json`を共有するため、複数セッション同時稼働でリフレッシュトークン競合が発生する可能性あり（[claude-code#24317](https://github.com/anthropics/claude-code/issues/24317) 等）
+- **C-3: macOS / Windows非対応**。macOSはOAuth credentialsをKeychainに保存するため、`CLAUDE_CONFIG_DIR`分離だけではプロファイル切替できない。`multiProfileSupported=false`でUIを完全非表示
 
 ## 開発原則
 
@@ -207,6 +216,8 @@ claude-code-ark/
 │       │   ├── RepoSelectDialog.tsx    # リポジトリ選択ダイアログ
 │       │   ├── CreateWorktreeDialog.tsx # Worktree作成ダイアログ
 │       │   ├── WorktreeContextMenu.tsx # Worktreeコンテキストメニュー
+│       │   ├── ProfileManagerDialog.tsx # プロファイル管理ダイアログ（Linux限定）
+│       │   ├── RepoProfileMenu.tsx     # リポジトリのプロファイル切替サブメニュー
 │       │   ├── ErrorBoundary.tsx       # エラーバウンダリ
 │       │   └── ui/                     # shadcn/ui コンポーネント群
 │       ├── hooks/
@@ -224,6 +235,7 @@ claude-code-ark/
 │       ├── session-orchestrator.ts     # tmux + ttyd 統合管理
 │       ├── tmux-manager.ts             # tmuxセッション管理
 │       ├── ttyd-manager.ts             # ttyd Webターミナル管理
+│       ├── system.ts                   # 実行環境の機能判定（multiProfileSupported等）
 │       ├── database.ts                 # SQLite永続化
 │       ├── git.ts                      # Git worktree操作
 │       ├── tunnel.ts                   # Cloudflare Tunnel管理
@@ -264,6 +276,12 @@ claude-code-ark/
 | `tunnel:stop`     | -                                       | トンネル停止                     |
 | `ports:scan`      | -                                       | ポートスキャン                   |
 | `file-upload:upload` | `{ sessionId, base64Data, mimeType, originalFilename?, requestId }` | ファイルアップロード |
+| `profile:list`    | -                                       | プロファイル一覧取得（Linux限定） |
+| `profile:create`  | `{ name, configDir }`                   | プロファイル作成 |
+| `profile:update`  | `{ id, name?, configDir? }`             | プロファイル更新 |
+| `profile:delete`  | `{ id }`                                | プロファイル削除（CASCADEで紐付けも削除） |
+| `repo:set-profile` | `{ repoPath, profileId \| null }` | リポジトリにプロファイルを紐付け（nullで解除） |
+| `session:restart-with-profile` | `{ sessionId }`            | セッションをkill→新envで再起動 |
 
 ### サーバー → クライアント
 
@@ -292,6 +310,13 @@ claude-code-ark/
 | `ports:list`             | `{ ports }`                    | ポート一覧                       |
 | `file-upload:uploaded`   | `{ requestId, path, filename, originalFilename? }` | ファイルアップロード完了 |
 | `file-upload:error`      | `{ requestId, message, code? }`           | ファイルアップロードエラー       |
+| `system:capabilities`    | `{ multiProfileSupported }`               | 機能フラグ（接続時に1回emit） |
+| `profile:list`           | `Profile[]`                        | プロファイル一覧 |
+| `profile:created`        | `Profile`                          | プロファイル作成完了 |
+| `profile:updated`        | `Profile`                          | プロファイル更新完了 |
+| `profile:deleted`        | `{ id }`                                  | プロファイル削除完了 |
+| `profile:error`          | `{ message, code? }`                      | プロファイル操作エラー |
+| `repo:profile-changed`   | `{ repoPath, profileId \| null }`  | 紐付け変更通知（バッジ更新用） |
 
 ---
 
