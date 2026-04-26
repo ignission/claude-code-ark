@@ -86,8 +86,12 @@ function FolderBrowserContent({
     e => showHidden || !e.isHidden
   );
 
+  // エラー発生時はconfirm不可。listingは前回値が残るため
+  // pathDraft（テキスト欄表示）と乖離したまま誤選択するのを防ぐ。
+  const isConfirmDisabled = !listing || error !== null;
+
   const handleConfirm = () => {
-    if (!listing) return;
+    if (isConfirmDisabled || !listing) return;
     onConfirm(listing.path);
     onClose();
   };
@@ -211,7 +215,7 @@ function FolderBrowserContent({
           <Button
             type="button"
             onClick={handleConfirm}
-            disabled={!listing}
+            disabled={isConfirmDisabled}
             className="glow-green h-12"
           >
             <FolderOpen className="mr-2 h-4 w-4" />
@@ -234,7 +238,7 @@ function FolderBrowserContent({
           <Button
             type="button"
             onClick={handleConfirm}
-            disabled={!listing}
+            disabled={isConfirmDisabled}
             className="glow-green"
           >
             <FolderOpen className="mr-2 h-4 w-4" />
