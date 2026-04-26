@@ -433,7 +433,11 @@ export class BrowserManager extends EventEmitter {
    * 指定pidが「Arkサーバープロセスとして生存しているか」を判定する。
    * 単なる kill -0 だけだとpid再利用された別プロセスを「生存」と誤判定して
    * 旧サーバーのpidfileがcleanup対象から永久に漏れる。ps cmd でArkサーバー
-   * のentry point (`dist/index.js`) パターンを確認する。
+   * のentry point パターンを確認する。
+   *
+   * 対応する起動モード:
+   * - 本番 (pm2 fork): `node /path/to/dist/index.js [args]`
+   * - 開発 (pnpm dev:server / dev:remote 等): `tsx /path/to/server/index.ts`
    */
   private isArkServerAlive(serverPid: number): boolean {
     try {
@@ -441,8 +445,9 @@ export class BrowserManager extends EventEmitter {
         encoding: "utf-8",
       }).trim();
       if (!cmd) return false;
-      // pm2 fork mode: `node /path/to/dist/index.js [args]`
-      return /\bnode\b/.test(cmd) && /\bdist\/index\.js\b/.test(cmd);
+      const hasEntry = /\b(dist\/index\.js|server\/index\.ts)\b/.test(cmd);
+      const hasRuntime = /\b(node|tsx)\b/.test(cmd);
+      return hasEntry && hasRuntime;
     } catch {
       // ps失敗（pid死亡またはpermission denied）
       return false;
