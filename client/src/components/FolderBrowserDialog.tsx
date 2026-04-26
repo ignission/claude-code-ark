@@ -1,5 +1,5 @@
 import { ArrowUp, Folder, FolderOpen, Loader2, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -60,19 +60,26 @@ function FolderBrowserContent({
   // パス入力は編集中のdraftを別持ちし、keystrokeごとにloadしない。
   // Enter / blurで確定したときだけload。中間パスの解決失敗でスナップバックを防ぐ。
   const [pathDraft, setPathDraft] = useState("");
+  // load()の重複呼び出しでレスポンス順序が前後しても、最新のリクエスト結果のみを反映するための世代番号
+  const generationRef = useRef(0);
 
   const load = useCallback(
     async (targetPath?: string) => {
+      const myGeneration = ++generationRef.current;
       setError(null);
       setIsLoading(true);
       try {
         const res = await listDirectory(targetPath);
+        if (myGeneration !== generationRef.current) return;
         setListing(res);
         setPathDraft(res.path);
       } catch (err) {
+        if (myGeneration !== generationRef.current) return;
         setError(err instanceof Error ? err.message : String(err));
       } finally {
-        setIsLoading(false);
+        if (myGeneration === generationRef.current) {
+          setIsLoading(false);
+        }
       }
     },
     [listDirectory]

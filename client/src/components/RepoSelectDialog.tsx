@@ -32,10 +32,11 @@ interface RepoSelectDialogProps {
   onScanRepos: (basePath: string) => void;
   onSelectRepo: (path: string) => void;
   listDirectory: (path?: string) => Promise<FsListResult>;
-  /** 前回スキャンしたパス（サーバーDB由来、クロスデバイス共有） */
+  /**
+   * 前回スキャンしたパス（サーバーDB由来、クロスデバイス共有）。
+   * 失敗パスを保存しないため、保存はサーバー側のスキャン成功時のみで行われる。
+   */
   initialScanBasePath: string;
-  /** スキャン実行時にサーバーDBへ永続化するためのコールバック */
-  onScanBasePathChange: (path: string) => void;
 }
 
 // --- 共通コンテンツ ---
@@ -49,7 +50,6 @@ function RepoSelectContent({
   onOpenChange,
   listDirectory,
   initialScanBasePath,
-  onScanBasePathChange,
 }: {
   variant: "dialog" | "drawer";
   allowedRepos: string[];
@@ -60,7 +60,6 @@ function RepoSelectContent({
   onOpenChange: (open: boolean) => void;
   listDirectory: (path?: string) => Promise<FsListResult>;
   initialScanBasePath: string;
-  onScanBasePathChange: (path: string) => void;
 }) {
   const [scanBasePath, setScanBasePath] = useState(initialScanBasePath);
   const [repoInput, setRepoInput] = useState("");
@@ -106,9 +105,10 @@ function RepoSelectContent({
     onOpenChange(false);
   };
 
+  // scanBasePath はサーバー側のスキャン成功時のみDBに永続化される（失敗パスを残さないため）。
+  // クライアント側ではローカルstateだけ更新し、本セッション中の表示用に保持する。
   const handleFolderConfirm = (path: string) => {
     setScanBasePath(path);
-    onScanBasePathChange(path);
     onScanRepos(path);
   };
 
@@ -283,7 +283,6 @@ function RepoSelectDialogDesktop({
   onSelectRepo,
   listDirectory,
   initialScanBasePath,
-  onScanBasePathChange,
 }: RepoSelectDialogProps) {
   const isAllowlistMode = allowedRepos.length > 0;
   return (
@@ -307,7 +306,6 @@ function RepoSelectDialogDesktop({
           onOpenChange={onOpenChange}
           listDirectory={listDirectory}
           initialScanBasePath={initialScanBasePath}
-          onScanBasePathChange={onScanBasePathChange}
         />
       </DialogContent>
     </Dialog>
@@ -325,7 +323,6 @@ function RepoSelectDrawerMobile({
   onSelectRepo,
   listDirectory,
   initialScanBasePath,
-  onScanBasePathChange,
 }: RepoSelectDialogProps) {
   const isAllowlistMode = allowedRepos.length > 0;
   return (
@@ -350,7 +347,6 @@ function RepoSelectDrawerMobile({
             onOpenChange={onOpenChange}
             listDirectory={listDirectory}
             initialScanBasePath={initialScanBasePath}
-            onScanBasePathChange={onScanBasePathChange}
           />
         </div>
       </DrawerContent>

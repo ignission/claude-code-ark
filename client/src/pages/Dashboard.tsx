@@ -746,7 +746,6 @@ export default function Dashboard() {
         onSelectRepo={handleSelectRepo}
         listDirectory={listDirectory}
         initialScanBasePath={savedScanBasePath}
-        onScanBasePathChange={path => setSetting("scanBasePath", path)}
       />
 
       {/* Worktree作成ダイアログ */}
