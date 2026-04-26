@@ -268,9 +268,12 @@ export class BrowserManager extends EventEmitter {
         // 使えなくなるが、誤動作よりは安全側を優先）
         if (!cmd) continue;
 
-        // Xvfb: マーカー(-fbdir XVFB_FB_DIR)とdisplayレンジで判定
+        // Xvfb: pidfile経由でArk由来と確認済み。cmd binary名と
+        // displayレンジでpid再利用を検知する（マーカー -fbdir は信頼度を
+        // 上げるが、旧版でマーカー無しに起動された残留プロセスも回収できる
+        // よう必須にはしない）
         const xvfbMatch = cmd.match(/^Xvfb\s+:(\d+)\b/);
-        if (xvfbMatch && cmd.includes(XVFB_FB_DIR)) {
+        if (xvfbMatch) {
           const display = Number.parseInt(xvfbMatch[1], 10);
           if (display >= minDisplay && display <= maxDisplay) {
             orphanPids.push(c.pid);
@@ -279,9 +282,11 @@ export class BrowserManager extends EventEmitter {
           continue;
         }
 
-        // x11vnc: マーカー(-desktop ARK_DESKTOP)とdisplayレンジで判定
+        // x11vnc: pidfile経由でArk由来と確認済み。cmd binary名と
+        // displayレンジでpid再利用を検知する（マーカー -desktop ARK_DESKTOP
+        // は任意で旧版互換を保つ）
         const x11vncMatch = cmd.match(/\bx11vnc\b.*?-display\s+:(\d+)\b/);
-        if (x11vncMatch && cmd.includes(`-desktop ${ARK_DESKTOP}`)) {
+        if (x11vncMatch) {
           const display = Number.parseInt(x11vncMatch[1], 10);
           if (display >= minDisplay && display <= maxDisplay) {
             orphanPids.push(c.pid);
@@ -614,8 +619,10 @@ export class BrowserManager extends EventEmitter {
       // サーバーの live socket を破壊するリスクがあるため）
       if (!cmd) continue;
 
+      // Xvfb/x11vnc: pidfile経由でArk由来と確認済み。cmd binary名と
+      // displayレンジでpid再利用を検知（マーカー -fbdir/-desktop は任意）
       const xvfbMatch = cmd.match(/^Xvfb\s+:(\d+)\b/);
-      if (xvfbMatch && cmd.includes(XVFB_FB_DIR)) {
+      if (xvfbMatch) {
         const display = Number.parseInt(xvfbMatch[1], 10);
         if (display >= minDisplay && display <= maxDisplay) {
           reapPids.push(e.pid);
@@ -625,7 +632,7 @@ export class BrowserManager extends EventEmitter {
       }
 
       const x11vncMatch = cmd.match(/\bx11vnc\b.*?-display\s+:(\d+)\b/);
-      if (x11vncMatch && cmd.includes(`-desktop ${ARK_DESKTOP}`)) {
+      if (x11vncMatch) {
         const display = Number.parseInt(x11vncMatch[1], 10);
         if (display >= minDisplay && display <= maxDisplay) {
           reapPids.push(e.pid);
