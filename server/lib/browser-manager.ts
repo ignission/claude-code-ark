@@ -168,7 +168,7 @@ export class BrowserManager extends EventEmitter {
         return; // pidfile未作成 = 過去にArkが起動していない
       }
       if (candidatePids.length === 0) {
-        this.clearPidFile();
+        this.writePidFile([]);
         return;
       }
 
@@ -187,7 +187,7 @@ export class BrowserManager extends EventEmitter {
         }
       } catch {
         // 全pidが既に死んでいると ps は非0を返すことがある → pidfileのみクリア
-        this.clearPidFile();
+        this.writePidFile([]);
         return;
       }
 
@@ -240,7 +240,7 @@ export class BrowserManager extends EventEmitter {
       }
 
       if (orphanPids.length === 0) {
-        this.clearPidFile();
+        this.writePidFile([]);
         return;
       }
 
@@ -303,17 +303,27 @@ export class BrowserManager extends EventEmitter {
         }
       }
 
-      // プロセスが消えたことを確認した後でX11ソケット残骸を削除する
-      for (const display of orphanDisplays) {
-        try {
-          fs.unlinkSync(`/tmp/.X11-unix/X${display}`);
-        } catch {
-          // 残存しない/権限なしは無視
+      const survivors = Array.from(remainingPids);
+      if (survivors.length === 0) {
+        // 全プロセスが終了した → ソケット残骸を削除し、pidfileをクリア
+        for (const display of orphanDisplays) {
+          try {
+            fs.unlinkSync(`/tmp/.X11-unix/X${display}`);
+          } catch {
+            // 残存しない/権限なしは無視
+          }
         }
+        this.writePidFile([]);
+      } else {
+        // SIGKILL後も生存しているpidがある → 次回起動時の再試行候補として
+        // pidfileに残存pidだけを書き戻す。ソケット削除も生存Xvfbが所有して
+        // いる可能性があるためスキップする（findAvailableDisplay() の誤判定防止）
+        console.warn(
+          `[BrowserManager] 一部の孤立プロセスが終了しませんでした: pids=${survivors.join(",")} ` +
+            "（次回起動時に再試行します）"
+        );
+        this.writePidFile(survivors);
       }
-
-      // 掃除完了 → 古い候補を流すためpidfileを空にする
-      this.clearPidFile();
     } catch (err) {
       console.warn(
         `[BrowserManager] 孤立プロセス掃除に失敗: ${getErrorMessage(err)}`
@@ -322,25 +332,36 @@ export class BrowserManager extends EventEmitter {
   }
 
   /**
-   * 起動した子プロセスのpidをBROWSER_PIDFILEに追記する。
-   * 次回起動時の cleanupOrphanedProcesses() がこのpidを候補として読む。
+   * 現在アクティブなセッションのpidをBROWSER_PIDFILEに書き戻す。
+   * sessions Mapが「現在管理中のArkプロセス」の単一の真実なので、
+   * stop/cleanup/start_internal完了時にこれを呼べばpidfileが常に同期する。
    */
-  private recordPid(pid: number | undefined): void {
-    if (pid === undefined) return;
-    try {
-      fs.mkdirSync(path.dirname(BROWSER_PIDFILE), { recursive: true });
-      fs.appendFileSync(BROWSER_PIDFILE, `${pid}\n`);
-    } catch (err) {
-      console.warn(`[BrowserManager] pidfile記録失敗: ${getErrorMessage(err)}`);
+  private syncPidFile(): void {
+    const activePids: number[] = [];
+    for (const session of this.sessions.values()) {
+      const pids = [
+        session.xvfb.pid,
+        session.chromium.pid,
+        session.x11vnc.pid,
+        session.websockify.pid,
+      ];
+      for (const pid of pids) {
+        if (pid !== undefined) activePids.push(pid);
+      }
     }
+    this.writePidFile(activePids);
   }
 
-  /** BROWSER_PIDFILEを空にする（cleanup完了時に呼ぶ） */
-  private clearPidFile(): void {
+  /** BROWSER_PIDFILEに任意のpid配列を書き戻す */
+  private writePidFile(pids: number[]): void {
     try {
-      fs.writeFileSync(BROWSER_PIDFILE, "");
-    } catch {
-      // ファイル未作成等は無視
+      fs.mkdirSync(path.dirname(BROWSER_PIDFILE), { recursive: true });
+      const content = pids.length === 0 ? "" : `${pids.join("\n")}\n`;
+      fs.writeFileSync(BROWSER_PIDFILE, content);
+    } catch (err) {
+      console.warn(
+        `[BrowserManager] pidfile書き込み失敗: ${getErrorMessage(err)}`
+      );
     }
   }
 
@@ -669,7 +690,6 @@ export class BrowserManager extends EventEmitter {
         { stdio: ["ignore", "pipe", "pipe"], detached: false }
       );
       startedProcesses.push(xvfb);
-      this.recordPid(xvfb.pid);
 
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -720,7 +740,6 @@ export class BrowserManager extends EventEmitter {
         },
       });
       startedProcesses.push(chromium);
-      this.recordPid(chromium.pid);
 
       // CDPエンドポイントが応答するまでポーリングしてChromium readinessを検出
       // 早期exitやerrorも検出してreject
@@ -795,7 +814,6 @@ export class BrowserManager extends EventEmitter {
         { stdio: ["ignore", "pipe", "pipe"], detached: false }
       );
       startedProcesses.push(x11vnc);
-      this.recordPid(x11vnc.pid);
 
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -864,7 +882,6 @@ export class BrowserManager extends EventEmitter {
         { stdio: ["ignore", "pipe", "pipe"], detached: false }
       );
       startedProcesses.push(websockify);
-      this.recordPid(websockify.pid);
 
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -942,6 +959,9 @@ export class BrowserManager extends EventEmitter {
         createdAt: new Date(),
       };
       this.sessions.set(id, processSet);
+      // pidfileを最新のアクティブセッション一覧で更新
+      // （次回起動時のcleanupOrphanedProcesses()がこれを参照する）
+      this.syncPidFile();
 
       // プロセスの異常終了監視: いずれかが終了したらセッション全体をstop
       const processNames = [
@@ -1067,6 +1087,8 @@ export class BrowserManager extends EventEmitter {
 
     // 先にMapから削除して、異常終了監視のハンドラが再度stopを呼ばないようにする
     this.sessions.delete(browserId);
+    // pidfileから当該セッションのpidを除去（古いpidの累積を防ぐ）
+    this.syncPidFile();
 
     // シングルトンセッションをクリア
     if (this.singletonSession?.id === browserId) {
