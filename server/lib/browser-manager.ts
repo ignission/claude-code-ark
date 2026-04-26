@@ -31,6 +31,22 @@ const WEBSOCKIFY_TIMEOUT = 5000;
 /** stop時のSIGTERM→SIGKILL待機時間（ミリ秒） */
 const KILL_GRACE_PERIOD = 3000;
 
+/** 孤立プロセス掃除時のSIGTERM→SIGKILL待機時間（ミリ秒） */
+const ORPHAN_TERM_TIMEOUT_MS = 1500;
+
+/**
+ * Ark識別マーカー: Xvfbのフレームバッファ保存ディレクトリ
+ * cleanupOrphanedProcesses() でこの文字列を含むXvfbのみをArk由来と判定する
+ */
+const XVFB_FB_DIR = "/tmp/.ark-xvfb-fb";
+
+/**
+ * Ark識別マーカー: x11vncのデスクトップ名
+ * cleanupOrphanedProcesses() でこの値を `-desktop` 引数に持つx11vncのみを
+ * Ark由来と判定する
+ */
+const ARK_DESKTOP = "ark-browser";
+
 /** Xvfb仮想ディスプレイの解像度 */
 const DISPLAY_RESOLUTION = "1280x900x24";
 
@@ -90,25 +106,50 @@ export class BrowserManager extends EventEmitter {
     this.nextDisplay = DISPLAY_START;
     this.checkDependencies();
     if (this.available) {
+      try {
+        fs.mkdirSync(XVFB_FB_DIR, { recursive: true });
+      } catch (err) {
+        console.warn(
+          `[BrowserManager] ${XVFB_FB_DIR} 作成失敗: ${getErrorMessage(err)}`
+        );
+      }
       this.cleanupOrphanedProcesses();
     }
   }
 
   /**
-   * 過去のArkプロセスが残した孤立Xvfb/x11vnc/websockifyを掃除する。
+   * 過去のArkプロセスが残した孤立Xvfb/x11vnc/websockify/Chromiumを掃除する。
    *
    * pm2 restart 等でサーバーが再起動するとシングルトンは消えるが、
    * Xvfb等の子プロセスは生存し続ける。次回起動時 findAvailableDisplay() が
    * 残存ディスプレイを避けて :100 等に逃げる一方、Chromium readiness 判定は
    * 固定CDPポート(9222)を fetch するため、既存 :99 Chromiumのレスポンスを
    * 自プロセスのreadinessと誤認 → Chromiumのいない空ディスプレイが量産される。
-   * 起動時にArk管理範囲のXvfb系を一掃して再発を防ぐ。
+   * 起動時にArk由来プロセスを一掃して再発を防ぐ。
+   *
+   * 識別方針:
+   * - 同一uidのプロセスのみ対象（クロスユーザーで他サービスを誤killしない）
+   * - Xvfb: 起動時に付与する `-fbdir XVFB_FB_DIR` をマーカーとする
+   * - x11vnc: 起動時に付与する `-desktop ARK_DESKTOP` をマーカーとする
+   * - Chromium: Ark専用固定CDPポート(`--remote-debugging-port=9222`)で識別
+   * - websockify: uid限定 + Ark管理ポート範囲で識別
+   *
+   * 終了確認:
+   * - SIGTERM後、最大 ORPHAN_TERM_TIMEOUT_MS まで `kill -0` で終了をポーリング
+   * - 残存プロセスは SIGKILL で強制終了
+   * - 全プロセスが消えたことを確認した後で X11 ソケットを削除する
+   *   （Xvfb生存中にソケットを消すと findAvailableDisplay() が誤判定する）
    */
   private cleanupOrphanedProcesses(): void {
     try {
-      const psOutput = execFileSync("ps", ["-eo", "pid=,cmd="], {
-        encoding: "utf-8",
-      });
+      const ownUid = process.getuid?.();
+      if (ownUid === undefined) return; // POSIX外環境では何もしない
+
+      const psOutput = execFileSync(
+        "ps",
+        ["-o", "pid=,cmd=", "-u", String(ownUid)],
+        { encoding: "utf-8" }
+      );
       const orphanPids: number[] = [];
       const orphanDisplays: number[] = [];
       const minDisplay = DISPLAY_START;
@@ -120,8 +161,9 @@ export class BrowserManager extends EventEmitter {
         const pid = Number.parseInt(m[1], 10);
         const cmd = m[2];
 
+        // Xvfb: Ark識別マーカー(-fbdir XVFB_FB_DIR)とdisplayレンジで判定
         const xvfbMatch = cmd.match(/^Xvfb\s+:(\d+)\b/);
-        if (xvfbMatch) {
+        if (xvfbMatch && cmd.includes(XVFB_FB_DIR)) {
           const display = Number.parseInt(xvfbMatch[1], 10);
           if (display >= minDisplay && display <= maxDisplay) {
             orphanPids.push(pid);
@@ -130,8 +172,9 @@ export class BrowserManager extends EventEmitter {
           continue;
         }
 
-        const x11vncMatch = cmd.match(/\bx11vnc\b.*-display\s+:(\d+)\b/);
-        if (x11vncMatch) {
+        // x11vnc: Ark識別マーカー(-desktop ARK_DESKTOP)とdisplayレンジで判定
+        const x11vncMatch = cmd.match(/\bx11vnc\b.*?-display\s+:(\d+)\b/);
+        if (x11vncMatch && cmd.includes(`-desktop ${ARK_DESKTOP}`)) {
           const display = Number.parseInt(x11vncMatch[1], 10);
           if (display >= minDisplay && display <= maxDisplay) {
             orphanPids.push(pid);
@@ -139,6 +182,7 @@ export class BrowserManager extends EventEmitter {
           continue;
         }
 
+        // websockify: uid限定済みなのでArk管理ポート範囲のみで判定
         const wsMatch = cmd.match(
           /\bwebsockify\b.*?127\.0\.0\.1:(\d+)\s+127\.0\.0\.1:(\d+)/
         );
@@ -151,6 +195,15 @@ export class BrowserManager extends EventEmitter {
           ) {
             orphanPids.push(pid);
           }
+          continue;
+        }
+
+        // Chromium: Ark固定CDPポートを使うものはArk由来とみなす
+        if (
+          /\b(chrome|chromium)\b/.test(cmd) &&
+          cmd.includes(`--remote-debugging-port=${CDP_PORT}`)
+        ) {
+          orphanPids.push(pid);
         }
       }
 
@@ -167,8 +220,55 @@ export class BrowserManager extends EventEmitter {
         }
       }
 
-      // Xvfbを停止しても /tmp/.X11-unix/X<num> ソケットが残ると
-      // findAvailableDisplay() が誤って「使用中」と判定するので削除する
+      // SIGTERM後、終了をポーリング待機（最大ORPHAN_TERM_TIMEOUT_MS）
+      const remainingPids = new Set(orphanPids);
+      const deadline = Date.now() + ORPHAN_TERM_TIMEOUT_MS;
+      while (remainingPids.size > 0 && Date.now() < deadline) {
+        for (const pid of Array.from(remainingPids)) {
+          try {
+            process.kill(pid, 0); // 存在確認のみ
+          } catch {
+            remainingPids.delete(pid); // ESRCH → 既に終了
+          }
+        }
+        if (remainingPids.size > 0) {
+          try {
+            execFileSync("sleep", ["0.1"]);
+          } catch {
+            break;
+          }
+        }
+      }
+
+      // 残ったプロセスはSIGKILLで強制終了し、消えるまで再待機
+      if (remainingPids.size > 0) {
+        for (const pid of remainingPids) {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {
+            // 既に終了済み
+          }
+        }
+        const killDeadline = Date.now() + ORPHAN_TERM_TIMEOUT_MS;
+        while (remainingPids.size > 0 && Date.now() < killDeadline) {
+          for (const pid of Array.from(remainingPids)) {
+            try {
+              process.kill(pid, 0);
+            } catch {
+              remainingPids.delete(pid);
+            }
+          }
+          if (remainingPids.size > 0) {
+            try {
+              execFileSync("sleep", ["0.1"]);
+            } catch {
+              break;
+            }
+          }
+        }
+      }
+
+      // プロセスが消えたことを確認した後でX11ソケット残骸を削除する
       for (const display of orphanDisplays) {
         try {
           fs.unlinkSync(`/tmp/.X11-unix/X${display}`);
@@ -494,9 +594,17 @@ export class BrowserManager extends EventEmitter {
 
     try {
       // 1. Xvfb起動
+      // -fbdir はArk由来プロセス識別マーカーを兼ねる（cleanupOrphanedProcesses 参照）
       const xvfb = spawn(
         "Xvfb",
-        [`:${displayNum}`, "-screen", "0", DISPLAY_RESOLUTION],
+        [
+          `:${displayNum}`,
+          "-screen",
+          "0",
+          DISPLAY_RESOLUTION,
+          "-fbdir",
+          XVFB_FB_DIR,
+        ],
         { stdio: ["ignore", "pipe", "pipe"], detached: false }
       );
       startedProcesses.push(xvfb);
@@ -604,6 +712,7 @@ export class BrowserManager extends EventEmitter {
       );
 
       // 3. x11vnc起動
+      // -desktop はArk由来プロセス識別マーカーを兼ねる（cleanupOrphanedProcesses 参照）
       const x11vnc = spawn(
         "x11vnc",
         [
@@ -617,6 +726,8 @@ export class BrowserManager extends EventEmitter {
           "-forever",
           "-nopw",
           "-noxdamage",
+          "-desktop",
+          ARK_DESKTOP,
         ],
         { stdio: ["ignore", "pipe", "pipe"], detached: false }
       );
