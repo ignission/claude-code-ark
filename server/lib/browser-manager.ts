@@ -36,6 +36,16 @@ const KILL_GRACE_PERIOD = 3000;
 const ORPHAN_TERM_TIMEOUT_MS = 1500;
 
 /**
+ * 起動後の孤立プロセス再掃除までの遅延（ミリ秒）。
+ *
+ * pm2 reload 等で旧サーバーが新サーバー起動と一定期間共存するケースに対応する。
+ * 初回 cleanup では旧 serverPid が「生存中」として skip されるが、reload 完了
+ * (旧プロセス終了) 後に再 cleanup を走らせることで、旧サーバーの管理対象だった
+ * 孤立子プロセスを次回restartを待たずに回収する。
+ */
+const ORPHAN_RECLEAN_DELAY_MS = 10000;
+
+/**
  * Ark識別マーカー: Xvfbのフレームバッファ保存ディレクトリ
  * cleanupOrphanedProcesses() でこの文字列を含むXvfbのみをArk由来と判定する
  */
@@ -124,6 +134,12 @@ export class BrowserManager extends EventEmitter {
         );
       }
       this.cleanupOrphanedProcesses();
+      // pm2 reload等で旧サーバーが起動直後にはまだ生存中の場合、初回cleanup
+      // ではそのpidfileがskipされる。一定遅延後に再実行して旧サーバー死亡後の
+      // 孤立を回収する。unref()でevent loopをブロックしないようにする。
+      setTimeout(() => {
+        this.cleanupOrphanedProcesses();
+      }, ORPHAN_RECLEAN_DELAY_MS).unref();
     }
   }
 
@@ -1084,6 +1100,21 @@ export class BrowserManager extends EventEmitter {
           // 失敗は無視（既に死んでいる可能性）
         });
       }
+      // killProcessが殺しきれず生き残った子pidを survivors として pidfile に
+      // 残し、次回起動時のcleanup候補とする（startup失敗で孤立が永続化するのを防ぐ）
+      const partialSurvivors: number[] = [];
+      for (const child of startedProcesses) {
+        if (child.pid === undefined) continue;
+        try {
+          process.kill(child.pid, 0);
+          partialSurvivors.push(child.pid);
+        } catch {
+          // 死亡 → 含めない
+        }
+      }
+      if (partialSurvivors.length > 0) {
+        this.syncPidFile(partialSurvivors);
+      }
       throw error;
     }
   }
@@ -1092,7 +1123,9 @@ export class BrowserManager extends EventEmitter {
    * プロセスを安全に停止（SIGTERM→待機→SIGKILL→再待機）
    */
   private async killProcess(proc: ChildProcess, name: string): Promise<void> {
-    if (proc.exitCode !== null || proc.killed) {
+    // proc.killed はsignal送信済み(=killメソッド呼出済み)を示すだけで、
+    // 実プロセス終了とは無関係なので exitCode のみで判定する。
+    if (proc.exitCode !== null) {
       // 既に終了している
       return;
     }
@@ -1104,9 +1137,9 @@ export class BrowserManager extends EventEmitter {
       return;
     }
 
-    // SIGTERM後の猶予時間を待つ
+    // SIGTERM後の猶予時間を待つ（実プロセス終了まで）
     const exited = await new Promise<boolean>(resolve => {
-      if (proc.exitCode !== null || proc.killed) {
+      if (proc.exitCode !== null) {
         resolve(true);
         return;
       }
@@ -1129,7 +1162,7 @@ export class BrowserManager extends EventEmitter {
       }
       // SIGKILL後もexitを待つ（プロセステーブルからの削除確認）
       await new Promise<void>(resolve => {
-        if (proc.exitCode !== null || proc.killed) {
+        if (proc.exitCode !== null) {
           resolve();
           return;
         }
