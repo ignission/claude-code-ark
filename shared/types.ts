@@ -22,6 +22,26 @@ export interface RepoInfo {
   branch: string;
 }
 
+/** フォルダブラウザ: ディレクトリエントリ */
+export interface FsEntry {
+  /** ディレクトリ名 */
+  name: string;
+  /** 絶対パス */
+  path: string;
+  /** `.` 始まりかどうか */
+  isHidden: boolean;
+}
+
+/** フォルダブラウザ: ディレクトリ一覧結果 */
+export interface FsListResult {
+  /** 正規化済みの現在パス */
+  path: string;
+  /** 親ディレクトリパス（ルート時はnull） */
+  parent: string | null;
+  /** サブディレクトリ一覧 */
+  entries: FsEntry[];
+}
+
 export interface Session {
   id: string;
   worktreeId: string;
@@ -285,6 +305,12 @@ export interface ClientToServerEvents {
   "repo:scan": (basePath: string) => void;
   "repo:select": (path: string) => void;
   "repo:browse": () => void;
+
+  // ファイルシステムブラウザ（フォルダ選択ダイアログ用）
+  "fs:list": (
+    data: { path?: string },
+    callback: (response: { result?: FsListResult; error?: string }) => void
+  ) => void;
 
   // Tunnel commands
   "tunnel:start": (data?: { port?: number }) => void;

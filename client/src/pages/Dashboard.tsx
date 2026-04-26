@@ -47,6 +47,7 @@ export default function Dashboard() {
 
   const savedRepoList = getSetting<string[]>("repoList", []);
   const savedRepoPath = getSetting<string | null>("selectedRepoPath", null);
+  const savedScanBasePath = getSetting<string>("scanBasePath", "");
 
   const {
     socket,
@@ -59,6 +60,7 @@ export default function Dashboard() {
     scannedRepos,
     isScanning,
     scanRepos,
+    listDirectory,
     worktrees,
     createWorktree,
     deleteWorktree,
@@ -740,6 +742,9 @@ export default function Dashboard() {
         isScanning={isScanning}
         onScanRepos={scanRepos}
         onSelectRepo={handleSelectRepo}
+        listDirectory={listDirectory}
+        initialScanBasePath={savedScanBasePath}
+        onScanBasePathChange={path => setSetting("scanBasePath", path)}
       />
 
       {/* Worktree作成ダイアログ */}

@@ -44,6 +44,7 @@ import {
   fileUploadManager,
 } from "./lib/file-upload-manager.js";
 import { frontlineManager } from "./lib/frontline-manager.js";
+import { listDirectory } from "./lib/fs-browser.js";
 import {
   createWorktree,
   deleteWorktree,
@@ -881,6 +882,16 @@ async function startServer() {
           status: "error",
           error: getErrorMessage(error),
         });
+      }
+    });
+
+    // フォルダ選択ダイアログ用: 指定パス配下のサブディレクトリを返却（コールバックパターン）
+    socket.on("fs:list", async (data, callback) => {
+      try {
+        const result = await listDirectory(data?.path);
+        callback({ result });
+      } catch (error) {
+        callback({ error: getErrorMessage(error) });
       }
     });
 

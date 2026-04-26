@@ -19,7 +19,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { useIsMobile } from "@/hooks/useMobile";
-import type { RepoInfo } from "../../../shared/types";
+import type { FsListResult, RepoInfo } from "../../../shared/types";
+import { FolderBrowserDialog } from "./FolderBrowserDialog";
 
 interface RepoSelectDialogProps {
   isOpen: boolean;
@@ -28,6 +29,11 @@ interface RepoSelectDialogProps {
   isScanning: boolean;
   onScanRepos: (basePath: string) => void;
   onSelectRepo: (path: string) => void;
+  listDirectory: (path?: string) => Promise<FsListResult>;
+  /** 前回スキャンしたパス（サーバーDB由来、クロスデバイス共有） */
+  initialScanBasePath: string;
+  /** スキャン実行時にサーバーDBへ永続化するためのコールバック */
+  onScanBasePathChange: (path: string) => void;
 }
 
 // --- 共通コンテンツ ---
@@ -38,6 +44,9 @@ function RepoSelectContent({
   onScanRepos,
   onSelectRepo,
   onOpenChange,
+  listDirectory,
+  initialScanBasePath,
+  onScanBasePathChange,
 }: {
   variant: "dialog" | "drawer";
   scannedRepos: RepoInfo[];
@@ -45,12 +54,19 @@ function RepoSelectContent({
   onScanRepos: (basePath: string) => void;
   onSelectRepo: (path: string) => void;
   onOpenChange: (open: boolean) => void;
+  listDirectory: (path?: string) => Promise<FsListResult>;
+  initialScanBasePath: string;
+  onScanBasePathChange: (path: string) => void;
 }) {
-  const [scanBasePath, setScanBasePath] = useState(() => {
-    return localStorage.getItem("scanBasePath") || "";
-  });
+  const [scanBasePath, setScanBasePath] = useState(initialScanBasePath);
   const [repoInput, setRepoInput] = useState("");
   const [filterQuery, setFilterQuery] = useState("");
+  const [isFolderBrowserOpen, setIsFolderBrowserOpen] = useState(false);
+
+  // ダイアログを開き直したときに最新のサーバー値を反映
+  useEffect(() => {
+    setScanBasePath(initialScanBasePath);
+  }, [initialScanBasePath]);
 
   const filteredRepos = useMemo(() => {
     if (!filterQuery.trim()) {
@@ -64,55 +80,41 @@ function RepoSelectContent({
     );
   }, [scannedRepos, filterQuery]);
 
-  useEffect(() => {
-    if (scanBasePath) {
-      localStorage.setItem("scanBasePath", scanBasePath);
-    }
-  }, [scanBasePath]);
-
-  const handleScanRepos = () => {
-    if (!scanBasePath.trim()) return;
-    onScanRepos(scanBasePath.trim());
-  };
-
   const handleSelectRepo = () => {
     if (!repoInput.trim()) return;
     onSelectRepo(repoInput.trim());
     onOpenChange(false);
   };
 
+  const handleFolderConfirm = (path: string) => {
+    setScanBasePath(path);
+    onScanBasePathChange(path);
+    onScanRepos(path);
+  };
+
   const isDrawer = variant === "drawer";
 
   return (
     <div className="space-y-4 py-4 flex-1 overflow-hidden flex flex-col">
-      {/* スキャン用入力 */}
+      {/* スキャンパス選択 */}
       <div className="space-y-2 px-1">
-        <Label htmlFor="scanPath">スキャンするパス</Label>
-        <div className="flex gap-2">
-          <Input
-            id="scanPath"
-            placeholder="/Users/username/dev"
-            value={scanBasePath}
-            onChange={e => setScanBasePath(e.target.value)}
-            autoFocus={!isDrawer}
-            onKeyDown={e => {
-              if (e.key === "Enter") handleScanRepos();
-            }}
-            className="font-mono h-12 md:h-10 text-base md:text-sm flex-1"
-          />
-          <Button
-            type="button"
-            onClick={handleScanRepos}
-            disabled={isScanning}
-            className="h-12 md:h-10 shrink-0"
-          >
-            {isScanning ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
-            ) : (
-              "スキャン"
-            )}
-          </Button>
-        </div>
+        <Label>スキャンするパス</Label>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => setIsFolderBrowserOpen(true)}
+          disabled={isScanning}
+          className="w-full justify-start gap-2 h-12 md:h-10 font-mono text-base md:text-sm"
+        >
+          {isScanning ? (
+            <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
+          ) : (
+            <FolderOpen className="w-4 h-4 shrink-0" />
+          )}
+          <span className="truncate flex-1 text-left">
+            {scanBasePath || "フォルダを選択..."}
+          </span>
+        </Button>
       </div>
 
       {/* スキャン結果リスト */}
@@ -231,6 +233,17 @@ function RepoSelectContent({
           </Button>
         </div>
       )}
+
+      {/* フォルダ選択ダイアログ */}
+      <FolderBrowserDialog
+        isOpen={isFolderBrowserOpen}
+        onOpenChange={setIsFolderBrowserOpen}
+        initialPath={scanBasePath || undefined}
+        title="スキャンするフォルダを選択"
+        description="このフォルダ配下のGitリポジトリをスキャンします。"
+        listDirectory={listDirectory}
+        onConfirm={handleFolderConfirm}
+      />
     </div>
   );
 }
@@ -243,6 +256,9 @@ function RepoSelectDialogDesktop({
   isScanning,
   onScanRepos,
   onSelectRepo,
+  listDirectory,
+  initialScanBasePath,
+  onScanBasePathChange,
 }: RepoSelectDialogProps) {
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
@@ -250,7 +266,7 @@ function RepoSelectDialogDesktop({
         <DialogHeader>
           <DialogTitle>リポジトリを選択</DialogTitle>
           <DialogDescription>
-            ディレクトリパスを入力してスキャンするか、直接リポジトリパスを入力してください。
+            スキャンするフォルダを選択するか、直接リポジトリパスを入力してください。
           </DialogDescription>
         </DialogHeader>
         <RepoSelectContent
@@ -260,6 +276,9 @@ function RepoSelectDialogDesktop({
           onScanRepos={onScanRepos}
           onSelectRepo={onSelectRepo}
           onOpenChange={onOpenChange}
+          listDirectory={listDirectory}
+          initialScanBasePath={initialScanBasePath}
+          onScanBasePathChange={onScanBasePathChange}
         />
       </DialogContent>
     </Dialog>
@@ -274,6 +293,9 @@ function RepoSelectDrawerMobile({
   isScanning,
   onScanRepos,
   onSelectRepo,
+  listDirectory,
+  initialScanBasePath,
+  onScanBasePathChange,
 }: RepoSelectDialogProps) {
   return (
     <Drawer open={isOpen} onOpenChange={onOpenChange}>
@@ -281,7 +303,7 @@ function RepoSelectDrawerMobile({
         <DrawerHeader>
           <DrawerTitle>リポジトリを選択</DrawerTitle>
           <DrawerDescription>
-            ディレクトリパスを入力してスキャンするか、直接リポジトリパスを入力してください。
+            スキャンするフォルダを選択するか、直接リポジトリパスを入力してください。
           </DrawerDescription>
         </DrawerHeader>
         <div className="flex-1 overflow-hidden flex flex-col px-4">
@@ -292,6 +314,9 @@ function RepoSelectDrawerMobile({
             onScanRepos={onScanRepos}
             onSelectRepo={onSelectRepo}
             onOpenChange={onOpenChange}
+            listDirectory={listDirectory}
+            initialScanBasePath={initialScanBasePath}
+            onScanBasePathChange={onScanBasePathChange}
           />
         </div>
       </DrawerContent>

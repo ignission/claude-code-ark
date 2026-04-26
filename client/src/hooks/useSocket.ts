@@ -14,6 +14,7 @@ import type {
   BrowserSession,
   ChatMessage,
   ClientToServerEvents,
+  FsListResult,
   ManagedSession,
   Profile,
   RepoInfo,
@@ -53,6 +54,9 @@ interface UseSocketReturn {
   scannedRepos: RepoInfo[];
   isScanning: boolean;
   scanRepos: (basePath: string) => void;
+
+  // Folder browser
+  listDirectory: (path?: string) => Promise<FsListResult>;
 
   // Repository
   repoList: string[];
@@ -640,6 +644,28 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socketRef.current?.emit("repo:scan", basePath);
   }, []);
 
+  // フォルダ選択ダイアログ用: 指定パス配下のサブディレクトリを取得
+  const listDirectory = useCallback((path?: string): Promise<FsListResult> => {
+    return new Promise((resolve, reject) => {
+      const socket = socketRef.current;
+      if (!socket?.connected) {
+        reject(new Error("ソケットが切断されています"));
+        return;
+      }
+      const timeoutId = window.setTimeout(() => {
+        reject(new Error("ディレクトリ取得がタイムアウトしました"));
+      }, 10000);
+      socket.emit("fs:list", { path }, response => {
+        window.clearTimeout(timeoutId);
+        if (response.result) {
+          resolve(response.result);
+        } else {
+          reject(new Error(response.error ?? "ディレクトリ取得に失敗しました"));
+        }
+      });
+    });
+  }, []);
+
   // Worktree actions
   const createWorktree = useCallback(
     (branchName: string, baseBranch?: string) => {
@@ -902,6 +928,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     scannedRepos,
     isScanning,
     scanRepos,
+    listDirectory,
     repoList,
     repoPath,
     selectRepo,
