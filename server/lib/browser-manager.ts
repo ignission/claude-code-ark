@@ -570,6 +570,201 @@ export class BrowserManager extends EventEmitter {
   }
 
   /**
+   * 自身のpidfileに記録された pid のうち、現在の sessions Map で管理されて
+   * いない（過去の killProcess timeout/start失敗で残った）pid を再 kill する。
+   *
+   * cleanupOrphanedProcesses は自身の serverPid を skip するため、同一プロセス
+   * 内の leak はここで処理する必要がある。start() の各回前に呼び出すことで、
+   * 次セッションが leaked DISPLAY/CDPポートと衝突するのを防ぐ。
+   */
+  private reapOwnSurvivors(): void {
+    let entries: PidEntry[] = [];
+    try {
+      const content = fs.readFileSync(this.ownPidFile(), "utf-8");
+      entries = this.parsePidEntries(content);
+    } catch {
+      return; // ファイル未作成
+    }
+    if (entries.length === 0) return;
+
+    // 現在の sessions Map のpid（=管理中で触ってはいけない）を集める
+    const activePids = new Set<number>();
+    for (const session of this.sessions.values()) {
+      for (const child of [
+        session.xvfb,
+        session.chromium,
+        session.x11vnc,
+        session.websockify,
+      ]) {
+        if (child.pid !== undefined) activePids.add(child.pid);
+      }
+    }
+    const survivorEntries = entries.filter(e => !activePids.has(e.pid));
+    if (survivorEntries.length === 0) return;
+
+    const minDisplay = DISPLAY_START;
+    const maxDisplay = DISPLAY_START + 100;
+
+    // ps で対象pidのcmdを取得
+    const candidatePids = survivorEntries.map(e => e.pid);
+    const pidToCmd = new Map<number, string>();
+    try {
+      const psOutput = execFileSync(
+        "ps",
+        ["-o", "pid=,cmd=", "-p", candidatePids.join(",")],
+        { encoding: "utf-8" }
+      );
+      for (const line of psOutput.split("\n")) {
+        const m = line.trim().match(/^(\d+)\s+(.*)$/);
+        if (!m) continue;
+        pidToCmd.set(Number.parseInt(m[1], 10), m[2]);
+      }
+    } catch {
+      // 全pid死亡 → display情報のあるpidについてはソケット削除して、pidfile再sync
+      const deadDisplays = new Set<number>();
+      for (const e of survivorEntries) {
+        if (
+          e.display !== undefined &&
+          e.display >= minDisplay &&
+          e.display <= maxDisplay
+        ) {
+          deadDisplays.add(e.display);
+        }
+      }
+      for (const display of deadDisplays) {
+        try {
+          fs.unlinkSync(`/tmp/.X11-unix/X${display}`);
+        } catch {
+          // 残存しない/権限なしは無視
+        }
+      }
+      this.syncPidFile();
+      return;
+    }
+
+    const reapPids: number[] = [];
+    const reapDisplays = new Set<number>();
+
+    for (const e of survivorEntries) {
+      const cmd = pidToCmd.get(e.pid);
+      if (!cmd) {
+        // 死亡pid → display情報があればソケット削除候補
+        if (
+          e.display !== undefined &&
+          e.display >= minDisplay &&
+          e.display <= maxDisplay
+        ) {
+          reapDisplays.add(e.display);
+        }
+        continue;
+      }
+
+      const xvfbMatch = cmd.match(/^Xvfb\s+:(\d+)\b/);
+      if (xvfbMatch && cmd.includes(XVFB_FB_DIR)) {
+        const display = Number.parseInt(xvfbMatch[1], 10);
+        if (display >= minDisplay && display <= maxDisplay) {
+          reapPids.push(e.pid);
+          reapDisplays.add(display);
+        }
+        continue;
+      }
+
+      const x11vncMatch = cmd.match(/\bx11vnc\b.*?-display\s+:(\d+)\b/);
+      if (x11vncMatch && cmd.includes(`-desktop ${ARK_DESKTOP}`)) {
+        const display = Number.parseInt(x11vncMatch[1], 10);
+        if (display >= minDisplay && display <= maxDisplay) {
+          reapPids.push(e.pid);
+        }
+        continue;
+      }
+
+      if (
+        /\bwebsockify\b/.test(cmd) &&
+        /127\.0\.0\.1:\d+\s+127\.0\.0\.1:\d+/.test(cmd)
+      ) {
+        reapPids.push(e.pid);
+        continue;
+      }
+
+      if (
+        /\b(chrome|chromium)\b/.test(cmd) &&
+        cmd.includes(`--remote-debugging-port=${CDP_PORT}`)
+      ) {
+        reapPids.push(e.pid);
+      }
+    }
+
+    if (reapPids.length > 0) {
+      console.log(
+        `[BrowserManager] 自プロセスsurvivorを掃除: pids=${reapPids.join(",")}`
+      );
+      for (const pid of reapPids) {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {
+          // 既に終了済み
+        }
+      }
+      const remaining = new Set(reapPids);
+      const deadline = Date.now() + ORPHAN_TERM_TIMEOUT_MS;
+      while (remaining.size > 0 && Date.now() < deadline) {
+        for (const pid of Array.from(remaining)) {
+          try {
+            process.kill(pid, 0);
+          } catch {
+            remaining.delete(pid);
+          }
+        }
+        if (remaining.size > 0) {
+          try {
+            execFileSync("sleep", ["0.1"]);
+          } catch {
+            break;
+          }
+        }
+      }
+      if (remaining.size > 0) {
+        for (const pid of remaining) {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {
+            // 既に終了済み
+          }
+        }
+        const killDeadline = Date.now() + ORPHAN_TERM_TIMEOUT_MS;
+        while (remaining.size > 0 && Date.now() < killDeadline) {
+          for (const pid of Array.from(remaining)) {
+            try {
+              process.kill(pid, 0);
+            } catch {
+              remaining.delete(pid);
+            }
+          }
+          if (remaining.size > 0) {
+            try {
+              execFileSync("sleep", ["0.1"]);
+            } catch {
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // killしたXvfbのソケット削除
+    for (const display of reapDisplays) {
+      try {
+        fs.unlinkSync(`/tmp/.X11-unix/X${display}`);
+      } catch {
+        // 残存しない/権限なしは無視
+      }
+    }
+
+    // pidfileを再sync。生存中pidがあれば pidfile に survivor として残る
+    this.syncPidFile();
+  }
+
+  /**
    * 依存コマンド・パスの存在チェック
    * 不足時はavailable=falseにしてログ警告（Ark全体の起動は妨げない）
    */
@@ -848,6 +1043,11 @@ export class BrowserManager extends EventEmitter {
     if (this.pendingStart) {
       return this.pendingStart;
     }
+
+    // 過去のkillProcess timeoutで残った自プロセス内のleakを掃除する。
+    // 自身のpidfile由来のsurvivorsは cleanupOrphanedProcesses が
+    // 自serverPidをskipするため、別経路で再killしないとDISPLAY/CDP衝突が残る。
+    this.reapOwnSurvivors();
 
     const promise = this._startInternal(initialUrl);
     this.pendingStart = promise;
