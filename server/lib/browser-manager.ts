@@ -89,6 +89,98 @@ export class BrowserManager extends EventEmitter {
     this.nextWsPort = WS_PORT_START;
     this.nextDisplay = DISPLAY_START;
     this.checkDependencies();
+    if (this.available) {
+      this.cleanupOrphanedProcesses();
+    }
+  }
+
+  /**
+   * 過去のArkプロセスが残した孤立Xvfb/x11vnc/websockifyを掃除する。
+   *
+   * pm2 restart 等でサーバーが再起動するとシングルトンは消えるが、
+   * Xvfb等の子プロセスは生存し続ける。次回起動時 findAvailableDisplay() が
+   * 残存ディスプレイを避けて :100 等に逃げる一方、Chromium readiness 判定は
+   * 固定CDPポート(9222)を fetch するため、既存 :99 Chromiumのレスポンスを
+   * 自プロセスのreadinessと誤認 → Chromiumのいない空ディスプレイが量産される。
+   * 起動時にArk管理範囲のXvfb系を一掃して再発を防ぐ。
+   */
+  private cleanupOrphanedProcesses(): void {
+    try {
+      const psOutput = execFileSync("ps", ["-eo", "pid=,cmd="], {
+        encoding: "utf-8",
+      });
+      const orphanPids: number[] = [];
+      const orphanDisplays: number[] = [];
+      const minDisplay = DISPLAY_START;
+      const maxDisplay = DISPLAY_START + 100;
+
+      for (const line of psOutput.split("\n")) {
+        const m = line.trim().match(/^(\d+)\s+(.*)$/);
+        if (!m) continue;
+        const pid = Number.parseInt(m[1], 10);
+        const cmd = m[2];
+
+        const xvfbMatch = cmd.match(/^Xvfb\s+:(\d+)\b/);
+        if (xvfbMatch) {
+          const display = Number.parseInt(xvfbMatch[1], 10);
+          if (display >= minDisplay && display <= maxDisplay) {
+            orphanPids.push(pid);
+            orphanDisplays.push(display);
+          }
+          continue;
+        }
+
+        const x11vncMatch = cmd.match(/\bx11vnc\b.*-display\s+:(\d+)\b/);
+        if (x11vncMatch) {
+          const display = Number.parseInt(x11vncMatch[1], 10);
+          if (display >= minDisplay && display <= maxDisplay) {
+            orphanPids.push(pid);
+          }
+          continue;
+        }
+
+        const wsMatch = cmd.match(
+          /\bwebsockify\b.*?127\.0\.0\.1:(\d+)\s+127\.0\.0\.1:(\d+)/
+        );
+        if (wsMatch) {
+          const wsPort = Number.parseInt(wsMatch[1], 10);
+          const vncPort = Number.parseInt(wsMatch[2], 10);
+          if (
+            (wsPort >= WS_PORT_START && wsPort <= WS_PORT_END) ||
+            (vncPort >= VNC_PORT_START && vncPort <= VNC_PORT_END)
+          ) {
+            orphanPids.push(pid);
+          }
+        }
+      }
+
+      if (orphanPids.length === 0) return;
+
+      console.log(
+        `[BrowserManager] 孤立プロセスを掃除: pids=${orphanPids.join(",")}`
+      );
+      for (const pid of orphanPids) {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {
+          // 既に終了済み
+        }
+      }
+
+      // Xvfbを停止しても /tmp/.X11-unix/X<num> ソケットが残ると
+      // findAvailableDisplay() が誤って「使用中」と判定するので削除する
+      for (const display of orphanDisplays) {
+        try {
+          fs.unlinkSync(`/tmp/.X11-unix/X${display}`);
+        } catch {
+          // 残存しない/権限なしは無視
+        }
+      }
+    } catch (err) {
+      console.warn(
+        `[BrowserManager] 孤立プロセス掃除に失敗: ${getErrorMessage(err)}`
+      );
+    }
   }
 
   /**
