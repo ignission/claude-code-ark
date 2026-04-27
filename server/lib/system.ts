@@ -248,6 +248,7 @@ export function resolveTmuxPath(): string | null {
   const candidates = [
     "/usr/bin/tmux",
     "/usr/local/bin/tmux",
+    "/bin/tmux",
     "/opt/homebrew/bin/tmux",
     "/home/linuxbrew/.linuxbrew/bin/tmux",
   ];

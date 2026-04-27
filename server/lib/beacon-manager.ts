@@ -1150,15 +1150,22 @@ export class BeaconManager extends EventEmitter {
    *
    * サーバー側のセッション（LLMコンテキスト）も閉じてDB履歴もクリアする。
    * 次のメッセージ送信時に新規セッションが開始される。
-   * historyVersion を増やすことで、進行中の /usage 等が完了時に
-   * postExternalMessage で履歴を復活させないようにする。
+   *
+   * 順序が重要:
+   * 1. historyVersion を先に上げる
+   *    → 進行中の /usage が postExternalMessage を呼んでも version mismatch
+   *      で skip される。
+   * 2. pendingExternalMessages を捨てる
+   *    → closeSession 内の flushPendingExternalMessages が emit/persist しない
+   *      ようにする (= cleared chat への stale message 復活を防ぐ)。
+   * 3. closeSession (LLMコンテキスト中断、queue空なので flush は no-op)。
+   * 4. DB クリア。
    */
   clearHistory(): void {
+    this.historyVersion += 1;
+    this.pendingExternalMessages = [];
     this.closeSession();
     db.clearBeaconMessages();
-    this.historyVersion += 1;
-    // pending の外部メッセージも捨てる (clearHistory で消したい意図と一致)
-    this.pendingExternalMessages = [];
     console.log("[BeaconManager] 履歴をクリアしました");
   }
 
