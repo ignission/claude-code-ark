@@ -220,12 +220,37 @@ function formatResetTimestamp(resets: string): string {
     }
   }
 
+  // 時刻のみのケース (例 "8:20pm") は日付情報が無いので、JST 現在時刻と
+  // 比較して today/tomorrow を判定し、`M/D HH:MM` 形式に揃える。
+  // (週次リセットの "M/D HH:MM" 形式とカラムを揃えるため)
   const timeOnly = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i.exec(stripped);
   if (timeOnly) {
-    return to24Hour(timeOnly[1], timeOnly[2], timeOnly[3]);
+    const time24 = to24Hour(timeOnly[1], timeOnly[2], timeOnly[3]);
+    return appendJstDate(time24);
   }
 
   return stripped;
+}
+
+/**
+ * `HH:MM` 形式の時刻に JST の日付を補って `M/D HH:MM` を返す。
+ * 現在 JST 時刻と比較し、与えられた時刻が今日中ならtoday、過ぎていれば
+ * tomorrow を採用する (claude /usage が示す reset は常に「次回」)。
+ */
+function appendJstDate(time24: string): string {
+  const [hStr, mStr] = time24.split(":");
+  const targetH = Number.parseInt(hStr, 10);
+  const targetM = Number.parseInt(mStr, 10);
+  const targetMinutes = targetH * 60 + targetM;
+
+  const jstNow = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" })
+  );
+  const nowMinutes = jstNow.getHours() * 60 + jstNow.getMinutes();
+  const isTomorrow = targetMinutes <= nowMinutes;
+  const target = new Date(jstNow);
+  if (isTomorrow) target.setDate(target.getDate() + 1);
+  return `${target.getMonth() + 1}/${target.getDate()} ${time24}`;
 }
 
 function to24Hour(
