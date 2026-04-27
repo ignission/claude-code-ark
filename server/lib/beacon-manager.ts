@@ -1026,6 +1026,11 @@ export class BeaconManager extends EventEmitter {
     } finally {
       if (session) {
         session.processing = false;
+        // activeTurn は通常 result message 受信時に false になるが、
+        // query() throw / abort / iterator 終了などでそこへ到達できない
+        // ケースもある。finally で必ず false に戻し、後続 postExternalMessage
+        // が「streaming中」と誤判定して queue 滞留しないようにする。
+        session.activeTurn = false;
       }
       // エラー / 中断パスでも pending external messages が滞留しないよう
       // 必ず flush。assistant 応答が無くても外部メッセージはユーザに届ける。
