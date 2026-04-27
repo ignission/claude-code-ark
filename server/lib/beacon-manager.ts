@@ -1000,6 +1000,9 @@ export class BeaconManager extends EventEmitter {
       if (session) {
         session.processing = false;
       }
+      // エラー / 中断パスでも pending external messages が滞留しないよう
+      // 必ず flush。assistant 応答が無くても外部メッセージはユーザに届ける。
+      this.flushPendingExternalMessages();
     }
   }
 
@@ -1028,21 +1031,32 @@ export class BeaconManager extends EventEmitter {
     };
     // LLM が応答 streaming 中の場合、assistantMessage の timestamp は turn
     // 完了時に設定されるため、ここで先に DB 保存すると履歴順序が逆転する。
-    // pending queue に入れて turn 完了後に flush する。
+    // pending queue に入れて turn 完了後に flush する。emit も遅延させて
+    // live UI と DB reload で順序が一致するようにする。
     if (this.session?.processing) {
       this.pendingExternalMessages.push(message);
     } else {
-      db.addBeaconMessage(message);
-      if (this.session) {
-        this.session.messages.push(message);
-      }
+      this.persistAndEmitExternal(message);
     }
     return message;
   }
 
   /**
+   * 外部メッセージを DB / session.messages へ保存し、
+   * `beacon:external-message` イベントで通知する。
+   */
+  private persistAndEmitExternal(message: ChatMessage): void {
+    db.addBeaconMessage(message);
+    if (this.session) {
+      this.session.messages.push(message);
+    }
+    this.emit("beacon:external-message", message);
+  }
+
+  /**
    * postExternalMessage で待機中の外部メッセージを DB と session.messages に
-   * 反映する。LLM turn 完了時に呼び出す。
+   * 反映し、`beacon:external-message` イベントで配信する。
+   * LLM turn 完了時 / セッション close 時 / エラー時に呼び出す。
    */
   private flushPendingExternalMessages(): void {
     if (this.pendingExternalMessages.length === 0) return;
@@ -1051,10 +1065,7 @@ export class BeaconManager extends EventEmitter {
     for (const message of queued) {
       // 確実に assistantMessage より後の timestamp になるよう更新
       message.timestamp = new Date();
-      db.addBeaconMessage(message);
-      if (this.session) {
-        this.session.messages.push(message);
-      }
+      this.persistAndEmitExternal(message);
     }
   }
 
@@ -1094,6 +1105,10 @@ export class BeaconManager extends EventEmitter {
     if (!this.session) return;
 
     console.log("[BeaconManager] セッション終了");
+
+    // 滞留中の外部メッセージを必ず DB に確定させる
+    // (idle close / clearHistory 経由でも消失しないように)
+    this.flushPendingExternalMessages();
 
     // query()を中断する
     this.session.abortController.abort();

@@ -396,6 +396,12 @@ async function startServer() {
       activeBeaconSocket.emit("beacon:error", data);
     }
   });
+  // 外部メッセージ (Usage取得結果など) は LLM streaming 中の場合に
+  // BeaconManager 側で flush タイミングを制御してから emit する。
+  // ここで全クライアントへブロードキャスト (Beacon利用状況に関わらず共有)。
+  beaconManager.on("beacon:external-message", message => {
+    io.emit("beacon:external-message", message);
+  });
 
   /**
    * Quick Tunnelを起動する共通関数
@@ -1849,12 +1855,11 @@ async function startServer() {
       try {
         const report = await usageCollector.collect(profiles);
         const markdown = formatUsageMarkdown(report);
-        const message = beaconManager.postExternalMessage(markdown);
-        // 専用の `beacon:external-message` イベントで全クライアントに配信する。
-        // 通常の `beacon:message` を使うと、Beacon が LLM応答を streaming 中に
-        // 到着した場合に client 側の assistant-message ハンドラが
-        // beaconStreamText を強制クリアし、進行中の応答が切り捨てられるため。
-        io.emit("beacon:external-message", message);
+        // postExternalMessage は LLM streaming 中なら pending queue に入れ、
+        // turn 完了 / セッション close 時に "beacon:external-message" を emit
+        // する。emit を購読する beaconManager.on(...) → io.emit が全クライ
+        // アントへブロードキャストする (live UI と DB reload の順序を一致)。
+        beaconManager.postExternalMessage(markdown);
         io.emit("usage:complete", report);
         console.log(
           `[UsageCollector] 完了: ok=${report.entries.filter(e => e.status === "ok").length}/${report.entries.length}`
