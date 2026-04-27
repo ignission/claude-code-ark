@@ -17,7 +17,7 @@
 
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -284,19 +284,19 @@ export class UsageCollector extends EventEmitter {
       configDir: profile.configDir,
     };
 
-    // claude を HOME で起動すると trust 自動承諾が「HOME 全体」に
-    // 永続化されてしまい、後続の通常 Claude セッションで HOME 配下の
-    // 任意のリポジトリの trust 確認がスキップされる副作用があるため、
-    // 毎回ユニークな一時ディレクトリを作って起動する。一時ディレクトリは
-    // finally で削除するので trust state は実質無害（存在しないパスへの
-    // trust エントリが該当 CLAUDE_CONFIG_DIR に残るが、参照されることはない）。
+    // claude を HOME で起動すると trust 自動承諾が HOME 全体に永続化される
+    // 副作用がある。一方、毎回ユニーク dir を作ると毎回 trust dialog が出る
+    // (数秒遅延 + プロファイルの trust store に死んだエントリが蓄積)。
     //
-    // mkdtempSync は try ブロック内で呼ぶ。/tmp 書き込み失敗等の例外で
-    // collect() ループ全体を中断させず、当該プロファイルだけ error にする。
+    // 折衷案: プロファイル毎の固定スクラッチ dir を使う。初回のみ trust
+    // dialog が出て自動承諾され、2回目以降は skip される。trust scope も
+    // この dir 限定なので HOME 全体への影響はない。
+    const sanitized = profile.id.replace(/[^A-Za-z0-9_-]/g, "_");
     let cwd: string | null = null;
 
     try {
-      cwd = mkdtempSync(path.join(os.tmpdir(), "ark-usage-"));
+      cwd = path.join(os.tmpdir(), `ark-usage-cwd-${sanitized}`);
+      mkdirSync(cwd, { recursive: true });
       // configDir が空文字 = デフォルトプロファイル指定。
       // CLAUDE_CONFIG_DIR を明示すると、たとえ ~/.claude を指していても claude が
       // 「カスタム設定」扱いし、テーマ未選択のオンボーディング画面が出てしまう
@@ -433,13 +433,9 @@ export class UsageCollector extends EventEmitter {
       } catch {
         // already gone
       }
-      if (cwd) {
-        try {
-          rmSync(cwd, { recursive: true, force: true });
-        } catch {
-          // tmpdir削除失敗は無視（次回起動時にOSが自動掃除する）
-        }
-      }
+      // cwd は次回再利用するため削除しない (trust dialog の繰り返しを避ける)
+      // OS の tmpdir 掃除に任せる
+      void cwd;
     }
   }
 

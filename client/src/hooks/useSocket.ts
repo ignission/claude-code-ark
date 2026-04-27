@@ -648,8 +648,14 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       setUsageReport(report);
       setUsageRequesting(false);
       setUsageProgress(null);
-      // 取得結果はBeaconメッセージとしてpostExternalMessage経由で配信されるため、
-      // ここでは toast を出さない (Beacon履歴に出る通知でユーザーに伝わる)
+      // 取得結果は通常 Beacon履歴に投稿されるが、Beacon履歴がクリア
+      // された場合などで投稿が skip されるケースもあるため、要求元には
+      // 必ず toast で完了通知する。Beacon に出ている時は二重通知になるが、
+      // 短い情報のみで邪魔にならない。
+      const okCount = report.entries.filter(e => e.status === "ok").length;
+      toast.success(
+        `Usage取得完了: ${okCount}/${report.entries.length} プロファイル`
+      );
     });
 
     socket.on("usage:error", ({ message }) => {

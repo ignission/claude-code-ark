@@ -1992,19 +1992,9 @@ async function startServer() {
         // アントへブロードキャストする (live UI と DB reload の順序を一致)。
         // expectedVersion を渡すことで、開始後に clearHistory された場合は
         // 投稿スキップ (cleared chat 復活防止)。
-        const posted = beaconManager.postExternalMessage(
-          markdown,
-          beaconVersionAtStart
-        );
-        if (!posted) {
-          // 投稿は skip されたが、要求元クライアントには結果が見えなくなる
-          // ので usage:report-text で markdown を直接返してフォールバック表示
-          // (clearHistory レース時のみ。通常パスには影響しない)
-          socket.emit("usage:error", {
-            message:
-              "Beacon履歴がクリアされたためチャットには投稿しませんでした。取得結果は usage:complete を参照してください",
-          });
-        }
+        // null が返っても client は usage:complete + toast.success で結果を
+        // 認識できるので、ここでエラー扱いはしない。
+        beaconManager.postExternalMessage(markdown, beaconVersionAtStart);
         io.emit("usage:complete", report);
         console.log(
           `[UsageCollector] 完了: ok=${report.entries.filter(e => e.status === "ok").length}/${report.entries.length}`
