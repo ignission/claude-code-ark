@@ -286,8 +286,18 @@ interface BeaconSession {
   messages: ChatMessage[];
   /** 最終アクティビティ時刻 */
   lastActivity: Date;
-  /** 出力処理が進行中かどうか */
+  /**
+   * 出力処理ループが起動中かどうか (processOutput の再入防止用)。
+   * Beacon セッションが生きている間はずっと true。
+   * postExternalMessage の defer 判定には使えない (常時 true のため queue が
+   * 永遠に flush されない) → activeTurn を見ること。
+   */
   processing: boolean;
+  /**
+   * ユーザメッセージ送信後、assistant の `result` が来るまで true。
+   * postExternalMessage はこのフラグを見て LLM streaming 中か判定する。
+   */
+  activeTurn: boolean;
   /** AbortController（セッション終了時にquery()を中断するため） */
   abortController: AbortController;
 }
@@ -825,6 +835,7 @@ export class BeaconManager extends EventEmitter {
       messages,
       lastActivity: new Date(),
       processing: false,
+      activeTurn: false,
       abortController,
     };
 
@@ -863,6 +874,10 @@ export class BeaconManager extends EventEmitter {
 
     // キューにメッセージをpush（query()のAsyncIterableに供給される）
     session.queue.push(message);
+
+    // この turn が完了 (result message 受信) するまで activeTurn=true。
+    // postExternalMessage はこれを見て LLM streaming 中なら queue する。
+    session.activeTurn = true;
 
     // 出力の処理を開始
     await this.processOutput();
@@ -982,6 +997,12 @@ export class BeaconManager extends EventEmitter {
           };
           this.emit("beacon:stream", doneChunk);
 
+          // turn 完了 → activeTurn=false。次の sendMessage で再び true になる。
+          // (この期間中に postExternalMessage が来たら即時に persistAndEmit する)
+          if (this.session === session) {
+            session.activeTurn = false;
+          }
+
           // このターンの処理完了。ループを継続して次のターンの出力を待つ
           // （キューに新しいメッセージがpushされるとquery()が新しい出力を生成する）
           assistantText = "";
@@ -1063,11 +1084,13 @@ export class BeaconManager extends EventEmitter {
       content,
       timestamp: new Date(),
     };
-    if (this.session?.processing) {
-      // LLM が応答 streaming 中の場合、live emit と DB 永続化を両方 defer する。
-      // 即時 live emit すると「live UI: external→assistant」「DB reload:
-      // assistant→external」と順序が食い違うため、turn 完了後にまとめて行う。
-      // 要求元クライアントは数秒〜turn完了まで待つが、順序整合性を優先する。
+    if (this.session?.activeTurn) {
+      // LLM が応答 streaming 中 (= activeTurn) の場合、live emit と DB
+      // 永続化を両方 defer する。即時 live emit すると「live UI: external
+      // →assistant」「DB reload: assistant→external」と順序が食い違うため、
+      // turn 完了後にまとめて行う。
+      // ※ session.processing は session 生存期間中ずっと true のため判定に
+      //   使えない。activeTurn が「現在 LLM が応答中か」の正確なシグナル。
       this.pendingExternalMessages.push(message);
     } else {
       this.persistAndEmitExternal(message);

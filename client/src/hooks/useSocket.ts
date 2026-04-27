@@ -646,16 +646,20 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
     socket.on("usage:complete", report => {
       setUsageReport(report);
-      setUsageRequesting(false);
       setUsageProgress(null);
-      // 取得結果は通常 Beacon履歴に投稿されるが、Beacon履歴がクリア
-      // された場合などで投稿が skip されるケースもあるため、要求元には
-      // 必ず toast で完了通知する。Beacon に出ている時は二重通知になるが、
-      // 短い情報のみで邪魔にならない。
-      const okCount = report.entries.filter(e => e.status === "ok").length;
-      toast.success(
-        `Usage取得完了: ${okCount}/${report.entries.length} プロファイル`
-      );
+      // 完了 toast は要求元クライアントだけに出す。
+      // server は io.emit でブロードキャストしているため、別タブ/別デバイス
+      // にも届くが、それらは usageRequesting=false なので toast を出さない。
+      // (functional setState で前値を読み取り、true→false 遷移時のみ通知)
+      setUsageRequesting(prev => {
+        if (prev) {
+          const okCount = report.entries.filter(e => e.status === "ok").length;
+          toast.success(
+            `Usage取得完了: ${okCount}/${report.entries.length} プロファイル`
+          );
+        }
+        return false;
+      });
     });
 
     socket.on("usage:error", ({ message }) => {
