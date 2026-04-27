@@ -563,9 +563,13 @@ describe("UsageCollector.collect", () => {
 
     await collector.collect([profileA, profileB]);
 
+    // 各プロファイルで「開始時 (completed=i)」と「完了時 (completed=i+1)」の
+    // 2回 progress を emit する。最後に completed=total が必ず届く
     expect(progressEvents).toEqual([
       { name: "personal", completed: 0 },
+      { name: "personal", completed: 1 },
       { name: "work", completed: 1 },
+      { name: "work", completed: 2 },
     ]);
   });
 });

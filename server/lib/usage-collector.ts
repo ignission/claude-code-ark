@@ -132,7 +132,10 @@ export function parseUsage(raw: string): UsageEntry["parsed"] | null {
   if (!session || !weeklyAll || !weeklySonnet) return null;
 
   const totalCostMatch = /Total cost:\s+(\$[\d.]+)/.exec(stripped);
-  const wallDurationMatch = /Total duration \(wall\):\s+(\S+)/.exec(stripped);
+  // 「1m 7s」「2h 3m」のような複数トークン値を切り詰めないよう行末まで取る
+  const wallDurationMatch = /Total duration \(wall\):\s+([^\n\r]+)/.exec(
+    stripped
+  );
 
   return {
     sessionPercent: session.percent,
@@ -142,7 +145,7 @@ export function parseUsage(raw: string): UsageEntry["parsed"] | null {
     weeklyAllResets: weeklyAll.resets,
     weeklySonnetResets: weeklySonnet.resets,
     totalCost: totalCostMatch ? totalCostMatch[1] : undefined,
-    wallDuration: wallDurationMatch ? wallDurationMatch[1] : undefined,
+    wallDuration: wallDurationMatch ? wallDurationMatch[1].trim() : undefined,
   };
 }
 
@@ -230,15 +233,23 @@ export class UsageCollector extends EventEmitter {
 
     for (let i = 0; i < profiles.length; i++) {
       const profile = profiles[i];
-      const progress: UsageProgress = {
+      // 開始時: 「i 件完了済み、これから profile.name を処理開始」
+      this.emit("usage:progress", {
         currentProfileName: profile.name,
         completed: i,
         total,
-      };
-      this.emit("usage:progress", progress);
+      });
 
       const entry = await this.collectOne(profile);
       entries.push(entry);
+
+      // 完了時: 「i+1 件完了」(typed event を信頼する consumer 用に正確な
+      // completed 件数も配信。最後のループ終了時に completed=total が届く)
+      this.emit("usage:progress", {
+        currentProfileName: profile.name,
+        completed: i + 1,
+        total,
+      });
     }
 
     return {

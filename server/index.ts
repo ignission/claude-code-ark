@@ -139,10 +139,24 @@ function loadTunnelState(): { active: boolean; port: number } | null {
   }
 }
 
+/** 進捗バーの幅 (文字数) */
+const USAGE_BAR_WIDTH = 24;
+
+/**
+ * 0-100 の percent から `█████░░░░░...` 形式のバー文字列を生成する。
+ * モバイル幅を考慮して 24 文字幅 (= 約4%/char)。
+ */
+function renderUsageBar(percent: number): string {
+  const clamped = Math.max(0, Math.min(100, percent));
+  const filled = Math.round((clamped / 100) * USAGE_BAR_WIDTH);
+  return "█".repeat(filled) + "░".repeat(USAGE_BAR_WIDTH - filled);
+}
+
 /**
  * UsageReport をBeaconチャットに表示するMarkdownへ変換する。
- * 既存のBeacon Markdownレンダラはテーブル非対応の可能性があるため、
- * 見出し + ビュレットリスト形式で出力する。
+ *
+ * code block (monospace) でバーを描画してプロファイル間の使用率を視覚的に
+ * 比較できるようにする。週次 (Sonnetのみ) は省略 (主要シグナルのみ表示)。
  */
 function formatUsageMarkdown(report: UsageReport): string {
   const lines: string[] = ["## Claude Code 使用量サマリ", ""];
@@ -164,20 +178,18 @@ function formatUsageMarkdown(report: UsageReport): string {
 function formatUsageEntryLines(entry: UsageEntry): string[] {
   if (entry.status === "ok" && entry.parsed) {
     const p = entry.parsed;
-    // Sonnet only は Team プランで 0% 時に Resets が無い → "Resets ..." を省略
-    const sonnetSuffix = p.weeklySonnetResets
-      ? ` (Resets ${p.weeklySonnetResets})`
-      : "";
-    const out = [
-      `- セッション: ${p.sessionPercent}% (Resets ${p.sessionResets})`,
-      `- 週次 (全モデル): ${p.weeklyAllPercent}% (Resets ${p.weeklyAllResets})`,
-      `- 週次 (Sonnetのみ): ${p.weeklySonnetPercent}%${sonnetSuffix}`,
+    const sessionPct = p.sessionPercent.toString().padStart(3, " ");
+    const weeklyPct = p.weeklyAllPercent.toString().padStart(3, " ");
+    // code block でバー表示 (monospace で揃える)
+    const bars = [
+      "```",
+      `セッション   ${renderUsageBar(p.sessionPercent)} ${sessionPct}%`,
+      `週次(全)     ${renderUsageBar(p.weeklyAllPercent)} ${weeklyPct}%`,
+      "```",
     ];
-    if (p.totalCost || p.wallDuration) {
-      const cost = p.totalCost ?? "-";
-      const dur = p.wallDuration ?? "-";
-      out.push(`- コスト: ${cost} / 経過時間: ${dur}`);
-    }
+    const out = [...bars];
+    out.push(`- セッションリセット: ${p.sessionResets}`);
+    out.push(`- 週次リセット: ${p.weeklyAllResets}`);
     return out;
   }
   if (entry.status === "unauthenticated") {
