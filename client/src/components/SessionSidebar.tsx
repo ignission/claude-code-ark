@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   FolderOpen,
   Globe,
+  MoreVertical,
   Plus,
   RotateCw,
   Terminal,
@@ -42,6 +43,16 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Tooltip,
@@ -286,7 +297,7 @@ export function SessionSidebar({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-5 w-5 shrink-0 ml-auto text-sidebar-foreground/70 hover:text-foreground hover:bg-sidebar-accent"
+                      className="h-5 w-5 shrink-0 ml-auto text-primary hover:text-primary hover:bg-primary/15"
                       onClick={() => onCreateWorktreeForRepo?.(repoPath)}
                       aria-label={`${repoName} に新規Worktreeを作成`}
                       title="新規Worktreeを作成"
@@ -298,13 +309,74 @@ export function SessionSidebar({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className={`h-5 w-5 shrink-0 ${canCreateWorktree ? "" : "ml-auto"} text-sidebar-foreground/70 hover:text-destructive hover:bg-destructive/15`}
+                      className={`h-5 w-5 shrink-0 ${canCreateWorktree ? "" : "ml-auto"} text-destructive hover:text-destructive hover:bg-destructive/15`}
                       onClick={() => setRemoveTargetRepoPath(repoPath)}
                       aria-label={`${repoName} をサイドバーから除外`}
                       title="サイドバーから除外"
                     >
                       <X className="w-3.5 h-3.5" />
                     </Button>
+                  )}
+                  {showRepoContextMenu && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={`h-5 w-5 shrink-0 ${canCreateWorktree || canRemove ? "" : "ml-auto"} text-sidebar-foreground/70 hover:text-foreground hover:bg-sidebar-accent`}
+                          aria-label={`${repoName} のメニュー`}
+                          title="メニュー"
+                        >
+                          <MoreVertical className="w-3.5 h-3.5" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-56">
+                        {canCreateWorktree && (
+                          <>
+                            <DropdownMenuItem
+                              onSelect={() =>
+                                onCreateWorktreeForRepo?.(repoPath)
+                              }
+                            >
+                              <Plus className="w-3.5 h-3.5 mr-2" />
+                              新規Worktreeを作成
+                            </DropdownMenuItem>
+                            {(showProfileSubmenu || canRemove) && (
+                              <DropdownMenuSeparator />
+                            )}
+                          </>
+                        )}
+                        {showProfileSubmenu && (
+                          <>
+                            <DropdownMenuSub>
+                              <DropdownMenuSubTrigger>
+                                プロファイルを変更
+                              </DropdownMenuSubTrigger>
+                              <DropdownMenuSubContent className="w-56">
+                                <RepoProfileMenu
+                                  variant="dropdown"
+                                  profiles={profileList}
+                                  currentProfileId={currentLinkId}
+                                  onSelect={profileId =>
+                                    onSetRepoProfile?.(repoPath, profileId)
+                                  }
+                                  onOpenManager={() => onOpenProfileManager?.()}
+                                />
+                              </DropdownMenuSubContent>
+                            </DropdownMenuSub>
+                            {canRemove && <DropdownMenuSeparator />}
+                          </>
+                        )}
+                        {canRemove && (
+                          <DropdownMenuItem
+                            onSelect={() => setRemoveTargetRepoPath(repoPath)}
+                          >
+                            <X className="w-3.5 h-3.5 mr-2" />
+                            サイドバーから除外
+                          </DropdownMenuItem>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
                 </div>
               );

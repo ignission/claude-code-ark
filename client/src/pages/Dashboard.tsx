@@ -211,6 +211,8 @@ export default function Dashboard() {
    * サイドバー+ボタンで他repoに切り替えた際の元repoPath。
    * ダイアログキャンセル時に元に戻すために保持する。
    * 作成確定時はnullにしてリセットし、新しいrepoに留まらせる。
+   * （未選択状態 repoPath===null からの+クリックは「単純選択」として扱い、
+   *   復元対象とせず previousRepoPath は更新しない）
    */
   const [previousRepoPath, setPreviousRepoPath] = useState<string | null>(null);
   const [isSelectRepoOpen, setIsSelectRepoOpen] = useState(false);
@@ -431,6 +433,14 @@ export default function Dashboard() {
    * キャンセル時は元のrepoに戻すため previousRepoPath を保存しておく。
    */
   const handleCreateWorktreeForRepo = (path: string) => {
+    if (repoPath === null) {
+      // 未選択状態からの+クリック: 単純選択として扱う（復元なし）
+      selectRepo(path);
+      setTimeout(() => {
+        setIsCreateWorktreeOpen(true);
+      }, 50);
+      return;
+    }
     if (repoPath !== path) {
       setPreviousRepoPath(repoPath);
       selectRepo(path);
@@ -446,7 +456,7 @@ export default function Dashboard() {
   /** Worktree作成ダイアログの open/close ハンドラ。close時にrepo復元する */
   const handleCreateWorktreeOpenChange = (open: boolean) => {
     setIsCreateWorktreeOpen(open);
-    if (!open && previousRepoPath) {
+    if (!open && previousRepoPath !== null) {
       selectRepo(previousRepoPath);
       setPreviousRepoPath(null);
     }
