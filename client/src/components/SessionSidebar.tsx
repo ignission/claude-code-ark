@@ -280,57 +280,20 @@ export function SessionSidebar({
 
               const repoHeader = (
                 <div className="sticky left-0 flex items-center gap-1.5 px-2 py-1.5">
-                  <FolderOpen className="w-3 h-3 text-muted-foreground shrink-0" />
-                  <span
-                    className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate"
-                    title={repoPath}
-                  >
-                    {repoName}
-                    {disambiguator && (
-                      <span className="ml-1 text-muted-foreground/70 normal-case">
-                        ({disambiguator})
-                      </span>
-                    )}
-                  </span>
-                  {renderRepoProfileBadge(repoPath)}
-                  {canCreateWorktree && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-5 w-5 shrink-0 ml-auto text-primary hover:text-primary hover:bg-primary/15"
-                      onClick={() => onCreateWorktreeForRepo?.(repoPath)}
-                      aria-label={`${repoName} に新規Worktreeを作成`}
-                      title="新規Worktreeを作成"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                    </Button>
-                  )}
-                  {canRemove && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className={`h-5 w-5 shrink-0 ${canCreateWorktree ? "" : "ml-auto"} text-destructive hover:text-destructive hover:bg-destructive/15`}
-                      onClick={() => setRemoveTargetRepoPath(repoPath)}
-                      aria-label={`${repoName} をサイドバーから除外`}
-                      title="サイドバーから除外"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </Button>
-                  )}
-                  {showRepoContextMenu && (
+                  {showRepoContextMenu ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
                           variant="ghost"
                           size="icon"
-                          className={`h-5 w-5 shrink-0 ${canCreateWorktree || canRemove ? "" : "ml-auto"} text-sidebar-foreground/70 hover:text-foreground hover:bg-sidebar-accent`}
+                          className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent"
                           aria-label={`${repoName} のメニュー`}
                           title="メニュー"
                         >
                           <MoreVertical className="w-3.5 h-3.5" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-56">
+                      <DropdownMenuContent align="start" className="w-56">
                         {canCreateWorktree && (
                           <>
                             <DropdownMenuItem
@@ -377,7 +340,21 @@ export function SessionSidebar({
                         )}
                       </DropdownMenuContent>
                     </DropdownMenu>
+                  ) : (
+                    <FolderOpen className="w-3 h-3 text-muted-foreground shrink-0" />
                   )}
+                  <span
+                    className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate"
+                    title={repoPath}
+                  >
+                    {repoName}
+                    {disambiguator && (
+                      <span className="ml-1 text-muted-foreground/70 normal-case">
+                        ({disambiguator})
+                      </span>
+                    )}
+                  </span>
+                  {renderRepoProfileBadge(repoPath)}
                 </div>
               );
 

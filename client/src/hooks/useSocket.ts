@@ -297,6 +297,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
       // 保存されたリポジトリを自動復元（再接続時は最新のrepoPathRefを使用）
       if (repoPathRef.current) {
+        // 切断中に未確定のpendingが残っているとre-emit後の repo:set を stale 判定で
+        // 落としてしまうため、pendingを復元対象pathに揃える
+        pendingRepoPathRef.current = repoPathRef.current;
         socket.emit("repo:select", repoPathRef.current);
       }
     });
@@ -344,22 +347,21 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     });
 
     socket.on("repo:error", ({ repoPath: errorRepoPath, error: errMsg }) => {
+      // 全般エラー(repoに紐付かないerror)は選択状態に触らずエラー表示のみ。
+      // selectRepo楽観更新のロールバックは特定repoに対するerrorに限定する
+      if (errorRepoPath === null) {
+        setError(errMsg);
+        return;
+      }
       // stale error: 新しい選択がすでに成功している場合、古いエラーのロールバックを適用しない
       const pending = pendingRepoPathRef.current;
-      if (
-        errorRepoPath !== null &&
-        pending !== null &&
-        errorRepoPath !== pending
-      ) {
+      if (pending !== null && errorRepoPath !== pending) {
         return;
       }
       // 同一pathに対する重複selectで、既にserver確認済み（confirmedRepoPathRef==errorRepoPath）の
       // 場合は後続エラーをロールバックしない。repoPathRefは楽観更新値も含むため、
       // 確認済みstateを表す confirmedRepoPathRef で判定する必要がある。
-      if (
-        errorRepoPath !== null &&
-        errorRepoPath === confirmedRepoPathRef.current
-      ) {
+      if (errorRepoPath === confirmedRepoPathRef.current) {
         setError(errMsg);
         // server側がrepo:set後にworktree取得で失敗するケース（listWorktrees throw 等）。
         // worktreesは前repoのstaleデータが残るため、確認済みrepoには有効データがない事を表すため空にする。
