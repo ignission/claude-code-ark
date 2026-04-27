@@ -175,6 +175,17 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   );
   // 再接続時に最新のrepoPathを参照するためのref
   const repoPathRef = useRef(options.initialRepoPath ?? null);
+  /**
+   * 直近のクライアント選択。`repo:set` 応答の out-of-order 適用を抑制するのに使う。
+   * selectRepoで更新し、repo:set受信時に一致しなければ無視する（stale応答）。
+   */
+  const pendingRepoPathRef = useRef<string | null>(null);
+  /**
+   * server側が確認(`repo:set`)を返したrepoPath。
+   * 同一pathの重複selectで一方が失敗してもロールバックしないよう、
+   * `repo:error` のロールバック判定で「確認済みstate」と「楽観state」を区別するために使う。
+   */
+  const confirmedRepoPathRef = useRef<string | null>(null);
 
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [deletedWorktreeId, setDeletedWorktreeId] = useState<string | null>(
@@ -286,6 +297,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
       // 保存されたリポジトリを自動復元（再接続時は最新のrepoPathRefを使用）
       if (repoPathRef.current) {
+        // 切断中に未確定のpendingが残っているとre-emit後の repo:set を stale 判定で
+        // 落としてしまうため、pendingを復元対象pathに揃える
+        pendingRepoPathRef.current = repoPathRef.current;
         socket.emit("repo:select", repoPathRef.current);
       }
     });
@@ -309,6 +323,17 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
     // Repository events
     socket.on("repo:set", path => {
+      // stale応答を無視: 直近の selectRepo 呼び出しの期待pathと一致しない場合、
+      // これはより古い selectRepo の遅延応答なのでスキップする。
+      // pendingは一致してもクリアしない（後から到着する古い応答で上書きされないようにするため）。
+      const pending = pendingRepoPathRef.current;
+      if (pending !== null && pending !== path) return;
+
+      // server側で repo:set 直後に worktree:list が emit されるため、refをuseEffect待たず
+      // 同期更新する。これがないと続く worktree:list が古いrefと比較されdropされる。
+      repoPathRef.current = path;
+      // server確認済みstateを記録（重複selectの後続エラーでロールバックしないために使用）
+      confirmedRepoPathRef.current = path;
       setRepoPath(path);
 
       // リポジトリリストに追加（重複しない場合）
@@ -321,9 +346,34 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       setError(null);
     });
 
-    socket.on("repo:error", err => {
-      setError(err);
+    socket.on("repo:error", ({ repoPath: errorRepoPath, error: errMsg }) => {
+      // 全般エラー(repoに紐付かないerror)は選択状態に触らずエラー表示のみ。
+      // selectRepo楽観更新のロールバックは特定repoに対するerrorに限定する
+      if (errorRepoPath === null) {
+        setError(errMsg);
+        return;
+      }
+      // stale error: 新しい選択がすでに成功している場合、古いエラーのロールバックを適用しない
+      const pending = pendingRepoPathRef.current;
+      if (pending !== null && errorRepoPath !== pending) {
+        return;
+      }
+      // 同一pathに対する重複selectで、既にserver確認済み（confirmedRepoPathRef==errorRepoPath）の
+      // 場合は後続エラーをロールバックしない。repoPathRefは楽観更新値も含むため、
+      // 確認済みstateを表す confirmedRepoPathRef で判定する必要がある。
+      if (errorRepoPath === confirmedRepoPathRef.current) {
+        setError(errMsg);
+        // server側がrepo:set後にworktree取得で失敗するケース（listWorktrees throw 等）。
+        // worktreesは前repoのstaleデータが残るため、確認済みrepoには有効データがない事を表すため空にする。
+        setWorktrees([]);
+        return;
+      }
+      setError(errMsg);
       // 楽観的更新のロールバック（selectRepoで先行設定したrepoPathを戻す）
+      // pendingもクリアし以降のworktreeイベントをデフォルト判定（refベース）に戻す
+      repoPathRef.current = null;
+      pendingRepoPathRef.current = null;
+      confirmedRepoPathRef.current = null;
       setRepoPath(null);
     });
 
@@ -345,18 +395,33 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       }
     });
 
+    /**
+     * worktree系イベントの受け入れ判定。
+     * ユーザーの最新意図 (pendingRepoPathRef) を最優先で使用し、未設定時は確認済み (repoPathRef) で判定する。
+     * pendingベースで判定する理由: 直前のselectRepo(B)後にA向け遅延応答が届いた場合、
+     * refはまだAだが意図はBなので、Aのlistを誤って適用しないようにする。
+     */
+    const eventTargetRepoPath = (): string | null =>
+      pendingRepoPathRef.current ?? repoPathRef.current;
+
     // Worktree events
-    socket.on("worktree:list", wts => {
+    socket.on("worktree:list", ({ repoPath: listRepoPath, worktrees: wts }) => {
+      const target = eventTargetRepoPath();
+      if (target !== null && listRepoPath !== target) return;
       setWorktrees(wts);
     });
 
-    socket.on("worktree:created", wt => {
-      setWorktrees(prev => [...prev, wt]);
+    socket.on("worktree:created", ({ repoPath: eventRepoPath, worktree }) => {
+      const target = eventTargetRepoPath();
+      if (target !== null && eventRepoPath !== target) return;
+      setWorktrees(prev => [...prev, worktree]);
     });
 
-    socket.on("worktree:deleted", wtId => {
-      setWorktrees(prev => prev.filter(w => w.id !== wtId));
-      setDeletedWorktreeId(wtId);
+    socket.on("worktree:deleted", ({ repoPath: eventRepoPath, worktreeId }) => {
+      const target = eventTargetRepoPath();
+      if (target !== null && eventRepoPath !== target) return;
+      setWorktrees(prev => prev.filter(w => w.id !== worktreeId));
+      setDeletedWorktreeId(worktreeId);
     });
 
     socket.on("worktree:error", err => {
@@ -622,6 +687,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
   // Repository actions
   const selectRepo = useCallback((path: string) => {
+    // repo:setハンドラがstale応答を無視できるよう、直近の期待pathを記録する。
+    // repoPathRef は repo:set 確定時に useEffect 経由で同期する（楽観更新しない理由は、
+    // 切り替えが拒否された場合に古いrepoのworktree更新を誤って捨てないため）。
+    pendingRepoPathRef.current = path;
     setRepoPath(path);
     socketRef.current?.emit("repo:select", path);
   }, []);
@@ -633,6 +702,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
       // 削除したリポジトリが選択中の場合はクリア
       if (repoPath === path) {
+        // 全refを同期クリア（pendingが残ると以降のworktree:listが古いpathで誤フィルタされる）
+        repoPathRef.current = null;
+        pendingRepoPathRef.current = null;
+        confirmedRepoPathRef.current = null;
         setRepoPath(null);
         setWorktrees([]);
       }

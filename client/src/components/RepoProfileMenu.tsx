@@ -1,21 +1,29 @@
 /**
- * RepoProfileMenu - リポジトリ右クリックメニュー内に表示する
+ * RepoProfileMenu - リポジトリ右クリック / ⋮ メニュー内に表示する
  * 「プロファイルを変更」サブメニューのコンテンツ
  *
  * - 登録プロファイル一覧
  * - 既定 (~/.claude) で紐付け解除
  * - プロファイル管理ダイアログを開く
  *
- * NOTE: ContextMenuSubContentにラップする内側のItem群のみを描画する。
+ * NOTE: ContextMenu / DropdownMenu のどちらにも組み込めるよう、Item/Label/Separator
+ *       コンポーネントをpropで受け取る（Radixはmenuタイプ毎に内部スコープが分離されるため、
+ *       ContextMenuItemをDropdownMenu内で使うと動作しない）。
  *       SubTriggerは呼び出し側 (SessionSidebar) が担う。
  */
 
 import { Check, Settings } from "lucide-react";
+import type { ComponentType } from "react";
 import {
   ContextMenuItem,
   ContextMenuLabel,
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
+import {
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import type { Profile } from "../../../shared/types";
 
 /** プロファイルバッジのカラーパレット (5色) */
@@ -49,26 +57,50 @@ interface RepoProfileMenuProps {
   currentProfileId: string | null;
   onSelect: (profileId: string | null) => void;
   onOpenManager: () => void;
+  /** どのメニューに組み込むか。デフォルトは context */
+  variant?: "context" | "dropdown";
 }
+
+// 各variantで使用するMenu primitiveの組
+type MenuPrimitives = {
+  Item: ComponentType<React.ComponentProps<typeof ContextMenuItem>>;
+  Label: ComponentType<React.ComponentProps<typeof ContextMenuLabel>>;
+  Separator: ComponentType<React.ComponentProps<typeof ContextMenuSeparator>>;
+};
+
+const PRIMITIVES_BY_VARIANT: Record<"context" | "dropdown", MenuPrimitives> = {
+  context: {
+    Item: ContextMenuItem,
+    Label: ContextMenuLabel,
+    Separator: ContextMenuSeparator,
+  },
+  dropdown: {
+    Item: DropdownMenuItem as MenuPrimitives["Item"],
+    Label: DropdownMenuLabel as MenuPrimitives["Label"],
+    Separator: DropdownMenuSeparator as MenuPrimitives["Separator"],
+  },
+};
 
 export function RepoProfileMenu({
   profiles,
   currentProfileId,
   onSelect,
   onOpenManager,
+  variant = "context",
 }: RepoProfileMenuProps) {
+  const { Item, Label, Separator } = PRIMITIVES_BY_VARIANT[variant];
   return (
     <>
-      <ContextMenuLabel className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+      <Label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
         プロファイル
-      </ContextMenuLabel>
+      </Label>
       {profiles.map(profile => {
         const isCurrent = profile.id === currentProfileId;
         const colorClass = colorFor(profile.id);
         const label = badgeLabel(profile.name);
 
         return (
-          <ContextMenuItem
+          <Item
             key={profile.id}
             onSelect={() => onSelect(profile.id)}
             className="flex items-center justify-between gap-2"
@@ -86,29 +118,26 @@ export function RepoProfileMenu({
             >
               {label}
             </span>
-          </ContextMenuItem>
+          </Item>
         );
       })}
-      <ContextMenuSeparator />
-      <ContextMenuItem
-        onSelect={() => onSelect(null)}
-        className="flex items-center gap-2"
-      >
+      <Separator />
+      <Item onSelect={() => onSelect(null)} className="flex items-center gap-2">
         {currentProfileId === null ? (
           <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
         ) : (
           <span className="w-3.5 h-3.5 shrink-0" aria-hidden />
         )}
         <span className="truncate text-muted-foreground">既定 (~/.claude)</span>
-      </ContextMenuItem>
-      <ContextMenuSeparator />
-      <ContextMenuItem
+      </Item>
+      <Separator />
+      <Item
         onSelect={() => onOpenManager()}
         className="flex items-center gap-2"
       >
         <Settings className="w-3.5 h-3.5" />
         <span>プロファイル管理を開く...</span>
-      </ContextMenuItem>
+      </Item>
     </>
   );
 }

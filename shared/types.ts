@@ -171,9 +171,27 @@ export interface ServerToClientEvents {
   }) => void;
 
   // Worktree events
-  "worktree:list": (worktrees: Worktree[]) => void;
-  "worktree:created": (worktree: Worktree) => void;
-  "worktree:deleted": (worktreeId: string) => void;
+  /**
+   * 対象repoのworktree一覧を通知する。
+   * クライアントは repoPath と自分が選択中のrepoPathを比較し、mismatchなら無視する
+   * （rapid selectRepoによるout-of-order応答でworktrees stateが取り違えられるのを防ぐ）。
+   */
+  "worktree:list": (payload: {
+    repoPath: string;
+    worktrees: Worktree[];
+  }) => void;
+  /**
+   * worktree:created / worktree:deleted は io.emit で全クライアントにブロードキャストされるため、
+   * 別repoのクライアントで誤適用されないよう repoPath を添付する（クライアントで完全一致判定）。
+   */
+  "worktree:created": (payload: {
+    repoPath: string;
+    worktree: Worktree;
+  }) => void;
+  "worktree:deleted": (payload: {
+    repoPath: string;
+    worktreeId: string;
+  }) => void;
   "worktree:error": (error: string) => void;
 
   // Session events（ManagedSessionを使用）
@@ -210,7 +228,11 @@ export interface ServerToClientEvents {
 
   // Repository events
   "repo:set": (path: string) => void;
-  "repo:error": (error: string) => void;
+  /**
+   * repo選択エラーの通知。クライアントはrepoPathを見てstale応答を判定する。
+   * repoPathがnullのエラー（repoに紐付かない全般エラー）もあり得る。
+   */
+  "repo:error": (payload: { repoPath: string | null; error: string }) => void;
 
   // Tunnel events
   "tunnel:started": (data: { url: string; token: string }) => void;

@@ -207,6 +207,14 @@ export default function Dashboard() {
   }, [selectedSessionId, activeBrowserSession, isRemote, startBrowser]);
 
   const [isCreateWorktreeOpen, setIsCreateWorktreeOpen] = useState(false);
+  /**
+   * サイドバー+ボタンで他repoに切り替えた際の元repoPath。
+   * ダイアログキャンセル時に元に戻すために保持する。
+   * 作成確定時はnullにしてリセットし、新しいrepoに留まらせる。
+   * （未選択状態 repoPath===null からの+クリックは「単純選択」として扱い、
+   *   復元対象とせず previousRepoPath は更新しない）
+   */
+  const [previousRepoPath, setPreviousRepoPath] = useState<string | null>(null);
   const [isSelectRepoOpen, setIsSelectRepoOpen] = useState(false);
   const [showFrontLine, setShowFrontLine] = useState(false);
   const [showTunnelDialog, setShowTunnelDialog] = useState(false);
@@ -356,6 +364,8 @@ export default function Dashboard() {
   const handleCreateWorktree = (branchName: string, baseBranch?: string) => {
     createWorktree(branchName, baseBranch);
     setIsCreateWorktreeOpen(false);
+    // 作成確定時は元repoへの復元をキャンセルし、作成先repoに留まる
+    setPreviousRepoPath(null);
     toast.success(`Creating worktree: ${branchName}`);
   };
 
@@ -416,13 +426,40 @@ export default function Dashboard() {
     setIsSelectRepoOpen(true);
   };
 
-  /** 既存リポジトリの右クリック等から直接Worktree作成 */
+  /**
+   * 既存リポジトリの右クリック / +ボタンから直接Worktree作成。
+   * server側の worktree:list 配信が repoを問わず worktrees stateを上書きするため、
+   * 作成前にrepoPathを切り替えておく必要がある。
+   * キャンセル時は元のrepoに戻すため previousRepoPath を保存しておく。
+   */
   const handleCreateWorktreeForRepo = (path: string) => {
-    selectRepo(path);
-    // selectRepo の反映を待ってから作成ダイアログを開く
-    setTimeout(() => {
+    if (repoPath === null) {
+      // 未選択状態からの+クリック: 単純選択として扱う（復元なし）
+      selectRepo(path);
+      setTimeout(() => {
+        setIsCreateWorktreeOpen(true);
+      }, 50);
+      return;
+    }
+    if (repoPath !== path) {
+      setPreviousRepoPath(repoPath);
+      selectRepo(path);
+      // selectRepo の反映を待ってから作成ダイアログを開く
+      setTimeout(() => {
+        setIsCreateWorktreeOpen(true);
+      }, 50);
+    } else {
       setIsCreateWorktreeOpen(true);
-    }, 50);
+    }
+  };
+
+  /** Worktree作成ダイアログの open/close ハンドラ。close時にrepo復元する */
+  const handleCreateWorktreeOpenChange = (open: boolean) => {
+    setIsCreateWorktreeOpen(open);
+    if (!open && previousRepoPath !== null) {
+      selectRepo(previousRepoPath);
+      setPreviousRepoPath(null);
+    }
   };
 
   /**
@@ -751,7 +788,7 @@ export default function Dashboard() {
       {/* Worktree作成ダイアログ */}
       <CreateWorktreeDialog
         open={isCreateWorktreeOpen}
-        onOpenChange={setIsCreateWorktreeOpen}
+        onOpenChange={handleCreateWorktreeOpenChange}
         selectedRepoPath={repoPath}
         onCreateWorktree={handleCreateWorktree}
       />
