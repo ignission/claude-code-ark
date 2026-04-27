@@ -253,8 +253,8 @@ export function SessionSidebar({
               <p className="text-xs mt-1">「+」から新規作成</p>
             </div>
           ) : (
-            Array.from(groupedItems.entries()).map(([repoPath, items]) => {
-              const repoName = getBaseName(repoPath);
+            Array.from(groupedItems.entries()).map(([repoPath, group]) => {
+              const { repoName, disambiguator, items } = group;
               const canRemove = !!onRemoveRepo;
               const currentLinkId = repoProfileLinks?.get(repoPath) ?? null;
               const showProfileSubmenu =
@@ -270,8 +270,16 @@ export function SessionSidebar({
               const repoHeader = (
                 <div className="sticky left-0 flex items-center gap-1.5 px-2 py-1.5">
                   <FolderOpen className="w-3 h-3 text-muted-foreground shrink-0" />
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">
+                  <span
+                    className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate"
+                    title={repoPath}
+                  >
                     {repoName}
+                    {disambiguator && (
+                      <span className="ml-1 text-muted-foreground/70 normal-case">
+                        ({disambiguator})
+                      </span>
+                    )}
                   </span>
                   {renderRepoProfileBadge(repoPath)}
                   {canCreateWorktree && (

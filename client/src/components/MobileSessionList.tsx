@@ -107,18 +107,26 @@ export function MobileSessionList({
             ワークツリーがありません
           </div>
         ) : (
-          Array.from(groupedItems.entries()).map(([repoPath, items]) => (
+          Array.from(groupedItems.entries()).map(([repoPath, group]) => (
             <div key={repoPath}>
               {/* リポジトリヘッダー（PC版SessionSidebarと同じFolderOpenアイコン付き） */}
               <div className="flex items-center gap-1.5 px-1 py-1.5 mb-2">
                 <FolderOpen className="w-3 h-3 text-muted-foreground" />
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate">
-                  {getBaseName(repoPath)}
+                <span
+                  className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate"
+                  title={repoPath}
+                >
+                  {group.repoName}
+                  {group.disambiguator && (
+                    <span className="ml-1 text-muted-foreground/70 normal-case">
+                      ({group.disambiguator})
+                    </span>
+                  )}
                 </span>
               </div>
               {/* アイテム一覧 */}
               <div className="space-y-3">
-                {items.map(({ worktree, session }) => {
+                {group.items.map(({ worktree, session }) => {
                   // worktreeがあるアイテム
                   if (worktree) {
                     return (
