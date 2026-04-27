@@ -111,8 +111,19 @@ export class TmuxManager extends EventEmitter {
       for (const name of sessionNames) {
         if (name.startsWith(this.SESSION_PREFIX)) {
           // ark-usage-* は UsageCollector が一時的に作る短命セッション。
-          // 起動時に拾うとttydを起動しようとして競合する。
-          if (name.startsWith("ark-usage-")) continue;
+          // サーバ crash/restart で finally の kill-session が走らずに残った
+          // 場合、claude プロセスごと永遠に残留するため、起動時に kill する。
+          if (name.startsWith("ark-usage-")) {
+            const killResult = spawnSync("tmux", ["kill-session", "-t", name], {
+              stdio: "pipe",
+            });
+            if (killResult.status === 0) {
+              console.log(
+                `[TmuxManager] Cleaned up orphan usage session: ${name}`
+              );
+            }
+            continue;
+          }
           const id = name.replace(this.SESSION_PREFIX, "");
           const cwd = this.getTmuxSessionCwd(name);
 

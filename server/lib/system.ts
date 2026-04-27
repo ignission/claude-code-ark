@@ -121,6 +121,10 @@ export function checkClaudeCommandExists(): boolean {
 
 /**
  * `tmux` コマンドが利用可能か。
+ * 1. `which tmux` (PATH チェック)
+ * 2. process.env.PATH を分解して各 dir で確認
+ *    (pm2 等で which が機能しない / login PATH と異なる場合をカバー)
+ * 3. 既知の候補ディレクトリ
  */
 export function checkTmuxCommandExists(): boolean {
   try {
@@ -129,7 +133,20 @@ export function checkTmuxCommandExists(): boolean {
   } catch {
     // fallthrough
   }
-  // 既知の場所も確認
+
+  // process.env.PATH を辿る (which が使えない環境向けの補完)
+  const envPath = process.env.PATH ?? "";
+  for (const dir of envPath.split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, "tmux");
+    try {
+      if (existsSync(candidate)) return true;
+    } catch {
+      // ignore
+    }
+  }
+
+  // 既知の候補ディレクトリ
   const candidates = [
     "/usr/bin/tmux",
     "/usr/local/bin/tmux",
