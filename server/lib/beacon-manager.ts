@@ -1029,46 +1029,48 @@ export class BeaconManager extends EventEmitter {
       content,
       timestamp: new Date(),
     };
-    // 要求元クライアントに即座に結果を表示するため、live emit は常に行う。
-    // (Beacon turn streaming 中でもユーザに「結果が来た」ことを伝える)
-    this.emit("beacon:external-message", message);
-
     if (this.session?.processing) {
-      // LLM が応答 streaming 中の場合、assistantMessage の DB 永続化は
-      // turn 完了時に行われる。ここで即座に DB 保存すると次回履歴ロード時に
-      // 「assistant より前に external が出る」順序逆転が起きる。
-      // pending queue に入れて、turn 完了後に timestamp を更新して保存する。
+      // LLM が応答 streaming 中の場合、live emit と DB 永続化を両方 defer する。
+      // 即時 live emit すると「live UI: external→assistant」「DB reload:
+      // assistant→external」と順序が食い違うため、turn 完了後にまとめて行う。
+      // 要求元クライアントは数秒〜turn完了まで待つが、順序整合性を優先する。
       this.pendingExternalMessages.push(message);
     } else {
-      this.persistExternal(message);
+      this.persistAndEmitExternal(message);
     }
     return message;
   }
 
   /**
-   * 外部メッセージを DB / session.messages に保存する (live emit はしない)。
+   * 外部メッセージを DB / session.messages へ保存し、
+   * `beacon:external-message` イベントで通知する。
    */
-  private persistExternal(message: ChatMessage): void {
+  private persistAndEmitExternal(message: ChatMessage): void {
     db.addBeaconMessage(message);
     if (this.session) {
       this.session.messages.push(message);
     }
+    this.emit("beacon:external-message", message);
   }
 
   /**
-   * postExternalMessage で待機中の外部メッセージを DB と session.messages に
-   * 反映する。LLM turn 完了時 / セッション close 時 / エラー時に呼び出す。
-   * live emit は postExternalMessage 時点で既に行っているため再emitしない。
+   * postExternalMessage で待機中の外部メッセージを DB / session.messages に
+   * 反映し、`beacon:external-message` を emit する。
+   * LLM turn 完了時 / セッション close 時 / エラー時に呼び出す。
+   *
+   * 確実に assistantMessage より後で、互いも strict ordering になるよう
+   * `Date.now() + 1` を起点に index 毎に +1ms ずらした timestamp を設定する。
+   * (同一ミリ秒に着地して timestamp ソートが不安定になるのを回避)
    */
   private flushPendingExternalMessages(): void {
     if (this.pendingExternalMessages.length === 0) return;
     const queued = this.pendingExternalMessages;
     this.pendingExternalMessages = [];
-    for (const message of queued) {
-      // 確実に assistantMessage より後の timestamp になるよう更新
-      message.timestamp = new Date();
-      this.persistExternal(message);
-    }
+    const baseMs = Date.now() + 1;
+    queued.forEach((message, i) => {
+      message.timestamp = new Date(baseMs + i);
+      this.persistAndEmitExternal(message);
+    });
   }
 
   /**
