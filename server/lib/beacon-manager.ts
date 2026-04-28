@@ -990,13 +990,6 @@ export class BeaconManager extends EventEmitter {
             this.emit("beacon:message", assistantMessage);
           }
 
-          // turn 終了後、活性 turn がもう無くなった場合のみ flush。
-          // 複数 turn が queue されている場合は次の result まで保留する
-          // (multi-client で external message が途中で挟まらないように)。
-          if (this.session === session && session.activeTurnCount === 0) {
-            this.flushPendingExternalMessages();
-          }
-
           // 完了チャンクを送信
           const doneChunk: BeaconStreamChunk = {
             chunk: "",
@@ -1004,12 +997,17 @@ export class BeaconManager extends EventEmitter {
           };
           this.emit("beacon:stream", doneChunk);
 
-          // turn 完了 → activeTurnCount を 1 減らす。multi-client で複数
-          // turn が queue されている場合、最後の result が来るまで count > 0
-          // のままなので、後続 turn 中の postExternalMessage は引き続き
-          // pending queue に入る (順序保護)。
+          // turn 完了 → activeTurnCount を 1 減らす。decrement 後に 0 なら
+          // flushPendingExternalMessages を呼ぶ。順序が逆だと 1→0 遷移時に
+          // flush されず pending が滞留する (CodeRabbit 指摘)。
+          // multi-client で複数 turn が queue されている場合、最後の
+          // result まで count > 0 のままなので、後続 turn 中の
+          // postExternalMessage は引き続き pending queue に入る (順序保護)。
           if (this.session === session) {
             session.activeTurnCount = Math.max(0, session.activeTurnCount - 1);
+            if (session.activeTurnCount === 0) {
+              this.flushPendingExternalMessages();
+            }
           }
 
           // このターンの処理完了。ループを継続して次のターンの出力を待つ

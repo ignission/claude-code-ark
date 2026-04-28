@@ -403,6 +403,7 @@ describe("UsageCollector.collectOne", () => {
           return {
             status: 0,
             stdout: "Quick safety check: Is this a project you trust?",
+            stderr: "",
           };
         if (captureCount === 3)
           return { status: 0, stdout: "? for shortcuts", stderr: "" };

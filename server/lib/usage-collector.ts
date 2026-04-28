@@ -224,9 +224,16 @@ const CLAUDE_LAUNCH_COMMAND = resolveClaudePath() ?? "claude";
 
 const defaultDeps: UsageCollectorDeps = {
   tmuxExec: args => {
+    // tmux ハング時に collect() が無期限ブロックして usageInFlight ガードで
+    // 後続要求が永遠に詰まらないよう、各 spawnSync に 5秒 timeout を設定。
+    // タイムアウト時は r.signal が "SIGKILL" / r.error に ETIMEDOUT が入る。
+    // status は null になるが、capturePane 等の上位関数が status !== 0 の
+    // 扱いとして次回ポーリングへ進む。
     const r = spawnSync(TMUX_BINARY, args, {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
+      timeout: 5_000,
+      killSignal: "SIGKILL",
     });
     return {
       status: r.status,
