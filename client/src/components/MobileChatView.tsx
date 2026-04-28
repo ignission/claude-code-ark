@@ -29,7 +29,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import type { ChatMessage } from "../../../shared/types";
+import type { ChatMessage, UsageProgress } from "../../../shared/types";
 import { useComposition } from "../hooks/useComposition";
 import { useVisualViewport } from "../hooks/useVisualViewport";
 
@@ -48,13 +48,20 @@ interface MobileChatViewProps {
   onBack?: () => void;
   /** チャットクリアコールバック */
   onClear?: () => void;
+  /** Usage取得（Linux + multiProfileSupported のみ表示） */
+  onRequestUsage?: () => void;
+  /** Usage取得中フラグ（ボタンdisable + ローディング） */
+  usageRequesting?: boolean;
+  /** Usage取得進捗（取得中のみ非null） */
+  usageProgress?: UsageProgress | null;
+  /** プロファイル機能が有効か（falseならUsageボタン非表示） */
+  multiProfileSupported?: boolean;
 }
 
 /** クイックコマンドの定義 */
-interface QuickCommand {
-  label: string;
-  message: string;
-}
+type QuickCommand =
+  | { kind?: "send"; label: string; message: string }
+  | { kind: "usage"; label: string };
 
 /** パース済みマークダウンの各セグメント */
 type MarkdownSegment =
@@ -86,6 +93,7 @@ const QUICK_COMMANDS: QuickCommand[] = [
   { label: "判断", message: "判断" },
   { label: "タスク着手", message: "タスク着手" },
   { label: "PR URL", message: "PR URL" },
+  { kind: "usage", label: "Usage" },
 ];
 
 // --- 簡易マークダウンパーサー ---
@@ -433,6 +441,10 @@ export function MobileChatView({
   onSendMessage,
   onBack,
   onClear,
+  onRequestUsage,
+  usageRequesting = false,
+  usageProgress = null,
+  multiProfileSupported = false,
 }: MobileChatViewProps) {
   const { height: viewportHeight, isKeyboardVisible } = useVisualViewport();
   const [inputValue, setInputValue] = useState("");
@@ -592,19 +604,56 @@ export function MobileChatView({
       {/* クイックコマンド */}
       {QUICK_COMMANDS.length > 0 && (
         <div className="flex items-center gap-1.5 px-3 py-1.5 border-t border-border/30 bg-sidebar overflow-x-auto select-none scrollbar-none">
-          {QUICK_COMMANDS.map(cmd => (
-            <Button
-              key={cmd.label}
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 px-3 text-xs shrink-0 rounded-full border-border/50 text-muted-foreground hover:text-primary hover:border-primary/40 transition-colors"
-              disabled={isInputDisabled}
-              onClick={() => handleQuickCommand(cmd.message)}
-            >
-              {cmd.label}
-            </Button>
-          ))}
+          {QUICK_COMMANDS.map(cmd => {
+            // Usageボタン: multiProfileSupported のときのみ表示
+            if (cmd.kind === "usage") {
+              if (!multiProfileSupported || !onRequestUsage) return null;
+              // 進捗中のラベル: 「取得中 (1/2 personal)」のように表示。
+              // completed=N (=total) は最後の取得完了直後にのみ届くため、
+              // ここでは「処理中の index = completed + 1」で表示する
+              const currentIdx = usageProgress
+                ? Math.min(usageProgress.completed + 1, usageProgress.total)
+                : 0;
+              const progressLabel = usageProgress
+                ? `${currentIdx}/${usageProgress.total} ${usageProgress.currentProfileName}`
+                : "取得中";
+              // Beacon streaming 中でも Usage は実行可能 (server側で
+              // beacon:external-message を queue 制御し streaming を阻害しない)
+              return (
+                <Button
+                  key={cmd.label}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-3 text-xs shrink-0 rounded-full border-border/50 text-muted-foreground hover:text-primary hover:border-primary/40 transition-colors"
+                  disabled={usageRequesting}
+                  onClick={onRequestUsage}
+                >
+                  {usageRequesting ? (
+                    <>
+                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                      {progressLabel}
+                    </>
+                  ) : (
+                    cmd.label
+                  )}
+                </Button>
+              );
+            }
+            return (
+              <Button
+                key={cmd.label}
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 px-3 text-xs shrink-0 rounded-full border-border/50 text-muted-foreground hover:text-primary hover:border-primary/40 transition-colors"
+                disabled={isInputDisabled}
+                onClick={() => handleQuickCommand(cmd.message)}
+              >
+                {cmd.label}
+              </Button>
+            );
+          })}
         </div>
       )}
 

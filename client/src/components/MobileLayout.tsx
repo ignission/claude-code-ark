@@ -22,6 +22,7 @@ import type {
   ManagedSession,
   ServerToClientEvents,
   SpecialKey,
+  UsageProgress,
   Worktree,
 } from "../../../shared/types";
 import { useViewerTabs } from "../hooks/useViewerTabs";
@@ -66,6 +67,11 @@ interface MobileLayoutProps {
   beaconStreamText: string;
   onBeaconSend: (message: string) => void;
   onBeaconClear?: () => void;
+  // Usage取得（Linux + multiProfileSupported のみ）
+  onRequestUsage?: () => void;
+  usageRequesting?: boolean;
+  usageProgress?: UsageProgress | null;
+  multiProfileSupported?: boolean;
   // ブラウザ（noVNC）
   activeBrowserSession: BrowserSession | null;
   onSelectBrowser: () => void;
@@ -95,6 +101,10 @@ export function MobileLayout({
   beaconStreamText,
   onBeaconSend,
   onBeaconClear,
+  onRequestUsage,
+  usageRequesting,
+  usageProgress,
+  multiProfileSupported,
   activeBrowserSession,
   onSelectBrowser,
   navigateBrowser,
@@ -280,6 +290,10 @@ export function MobileLayout({
           streamingText={beaconStreamText}
           onSendMessage={onBeaconSend}
           onClear={onBeaconClear}
+          onRequestUsage={onRequestUsage}
+          usageRequesting={usageRequesting}
+          usageProgress={usageProgress}
+          multiProfileSupported={multiProfileSupported}
         />
       </div>
 

@@ -5,10 +5,15 @@
  * 各セッションはattach/detach可能で、サーバー再起動後も維持される。
  */
 
-import { execSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { nanoid } from "nanoid";
 import type { SpecialKey } from "../../shared/types.js";
+import { resolveTmuxPath } from "./system.js";
+
+// tmux 絶対パス (pm2/systemd で PATH に tmux が無くても動作させるため)。
+// 解決不能なら "tmux" にフォールバック (PATH依存)。
+const TMUX_BINARY_PATH = resolveTmuxPath() ?? "tmux";
 
 /** 送信を許可する特殊キーのホワイトリスト */
 const ALLOWED_SPECIAL_KEYS = new Set<SpecialKey>([
@@ -76,19 +81,23 @@ export class TmuxManager extends EventEmitter {
    */
   private setCopyCommand(): void {
     try {
-      execSync('tmux set-option -s copy-command "pbcopy"', { stdio: "pipe" });
+      spawnSync(
+        TMUX_BINARY_PATH,
+        ["set-option", "-s", "copy-command", "pbcopy"],
+        { stdio: "pipe" }
+      );
     } catch {
       // tmuxサーバーが起動していない場合は設定不要
     }
   }
 
   /**
-   * tmuxがインストールされているか確認
+   * tmuxがインストールされているか確認 (起動時にログ出すだけ)
+   * 実際の解決パスは TMUX_BINARY_PATH (resolveTmuxPath) で取得済み。
    */
   private checkTmuxInstalled(): void {
-    try {
-      execSync("which tmux", { stdio: "pipe" });
-    } catch {
+    if (TMUX_BINARY_PATH === "tmux") {
+      // resolveTmuxPath が解決できなかった (= 多くの環境で見つからない)
       console.error(
         "[TmuxManager] tmux not found. Install it:\n" +
           "  macOS: brew install tmux\n" +
@@ -102,14 +111,33 @@ export class TmuxManager extends EventEmitter {
    */
   private discoverExistingSessions(): void {
     try {
-      const output = execSync('tmux list-sessions -F "#{session_name}"', {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+      const result = spawnSync(
+        TMUX_BINARY_PATH,
+        ["list-sessions", "-F", "#{session_name}"],
+        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+      );
+      if (result.status !== 0) return;
+      const output = result.stdout ?? "";
       const sessionNames = output.trim().split("\n").filter(Boolean);
 
       for (const name of sessionNames) {
         if (name.startsWith(this.SESSION_PREFIX)) {
+          // ark-usage-* は UsageCollector が一時的に作る短命セッション。
+          // サーバ crash/restart で finally の kill-session が走らずに残った
+          // 場合、claude プロセスごと永遠に残留するため、起動時に kill する。
+          if (name.startsWith("ark-usage-")) {
+            const killResult = spawnSync(
+              TMUX_BINARY_PATH,
+              ["kill-session", "-t", name],
+              { stdio: "pipe" }
+            );
+            if (killResult.status === 0) {
+              console.log(
+                `[TmuxManager] Cleaned up orphan usage session: ${name}`
+              );
+            }
+            continue;
+          }
           const id = name.replace(this.SESSION_PREFIX, "");
           const cwd = this.getTmuxSessionCwd(name);
 
@@ -124,9 +152,11 @@ export class TmuxManager extends EventEmitter {
 
           // マウスモードを有効化（再起動時に設定を再適用）
           try {
-            execSync(`tmux set-option -t "${name}" mouse on`, {
-              stdio: "pipe",
-            });
+            spawnSync(
+              TMUX_BINARY_PATH,
+              ["set-option", "-t", name, "mouse", "on"],
+              { stdio: "pipe" }
+            );
           } catch {
             // セッションが利用不可の場合は無視
           }
@@ -144,10 +174,13 @@ export class TmuxManager extends EventEmitter {
    */
   private getTmuxSessionCwd(sessionName: string): string | null {
     try {
-      return execSync(
-        `tmux display-message -p -t "${sessionName}" "#{pane_current_path}"`,
+      const result = spawnSync(
+        TMUX_BINARY_PATH,
+        ["display-message", "-p", "-t", sessionName, "#{pane_current_path}"],
         { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
-      ).trim();
+      );
+      if (result.status !== 0) return null;
+      return (result.stdout ?? "").trim();
     } catch {
       return null;
     }
@@ -188,7 +221,7 @@ export class TmuxManager extends EventEmitter {
       // CLAUDECODE を空にしてネストされたセッション検出を回避
       // CLAUDE_CODE_NO_FLICKER=1 でttydフリッカー抑制
       const newSessionResult = spawnSync(
-        "tmux",
+        TMUX_BINARY_PATH,
         [
           "new-session",
           "-d",
@@ -213,7 +246,7 @@ export class TmuxManager extends EventEmitter {
 
       // マウスモードを有効化
       const setOptionResult = spawnSync(
-        "tmux",
+        TMUX_BINARY_PATH,
         ["set-option", "-t", tmuxSessionName, "mouse", "on"],
         { stdio: "pipe" }
       );
@@ -226,7 +259,7 @@ export class TmuxManager extends EventEmitter {
       // claudeコマンド（または options.commandLine）を送信
       // 終了後もシェルが残るのでvimなども使える
       const sendKeysResult = spawnSync(
-        "tmux",
+        TMUX_BINARY_PATH,
         ["send-keys", "-t", tmuxSessionName, claudeCmd, "Enter"],
         { stdio: "pipe" }
       );
@@ -238,7 +271,7 @@ export class TmuxManager extends EventEmitter {
     } catch (error) {
       // 作成済みのtmuxセッションをクリーンアップ
       if (tmuxCreated) {
-        spawnSync("tmux", ["kill-session", "-t", tmuxSessionName], {
+        spawnSync(TMUX_BINARY_PATH, ["kill-session", "-t", tmuxSessionName], {
           stdio: "pipe",
         });
       }
@@ -276,7 +309,7 @@ export class TmuxManager extends EventEmitter {
 
     // send-keys -l でリテラル送信（spawnSyncなのでシェルエスケープ不要）
     const literalResult = spawnSync(
-      "tmux",
+      TMUX_BINARY_PATH,
       ["send-keys", "-t", session.tmuxSessionName, "-l", input],
       { stdio: "pipe" }
     );
@@ -288,7 +321,7 @@ export class TmuxManager extends EventEmitter {
 
     // Enterキーを別途送信
     const enterResult = spawnSync(
-      "tmux",
+      TMUX_BINARY_PATH,
       ["send-keys", "-t", session.tmuxSessionName, "Enter"],
       { stdio: "pipe" }
     );
@@ -321,7 +354,7 @@ export class TmuxManager extends EventEmitter {
     };
     const tmuxKey = keyMap[key] ?? key;
     const result = spawnSync(
-      "tmux",
+      TMUX_BINARY_PATH,
       ["send-keys", "-t", session.tmuxSessionName, tmuxKey],
       { stdio: "pipe" }
     );
@@ -339,14 +372,12 @@ export class TmuxManager extends EventEmitter {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
 
-    try {
-      execSync(`tmux has-session -t "${session.tmuxSessionName}"`, {
-        stdio: "pipe",
-      });
-      return true;
-    } catch {
-      return false;
-    }
+    const result = spawnSync(
+      TMUX_BINARY_PATH,
+      ["has-session", "-t", session.tmuxSessionName],
+      { stdio: "pipe" }
+    );
+    return result.status === 0;
   }
 
   /**
@@ -356,13 +387,13 @@ export class TmuxManager extends EventEmitter {
     const session = this.sessions.get(sessionId);
     if (!session) return;
 
-    try {
-      execSync(`tmux kill-session -t "${session.tmuxSessionName}"`, {
-        stdio: "pipe",
-      });
+    const result = spawnSync(
+      TMUX_BINARY_PATH,
+      ["kill-session", "-t", session.tmuxSessionName],
+      { stdio: "pipe" }
+    );
+    if (result.status === 0) {
       console.log(`[TmuxManager] Killed session: ${session.tmuxSessionName}`);
-    } catch {
-      // セッションが既に終了している場合
     }
 
     session.status = "stopped";
@@ -376,14 +407,12 @@ export class TmuxManager extends EventEmitter {
   getBuffer(sessionId: string): string | null {
     const session = this.sessions.get(sessionId);
     if (!session) return null;
-    try {
-      return execSync(`tmux show-buffer`, {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      }).trimEnd();
-    } catch {
-      return null;
-    }
+    const result = spawnSync(TMUX_BINARY_PATH, ["show-buffer"], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    if (result.status !== 0) return null;
+    return (result.stdout ?? "").trimEnd();
   }
 
   /**
@@ -397,7 +426,7 @@ export class TmuxManager extends EventEmitter {
     try {
       // -p: stdoutに出力、-S: 開始行（負数で過去の行）
       const result = spawnSync(
-        "tmux",
+        TMUX_BINARY_PATH,
         [
           "capture-pane",
           "-t",

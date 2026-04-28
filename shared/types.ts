@@ -264,9 +264,20 @@ export interface ServerToClientEvents {
 
   // Beacon events
   "beacon:message": (message: ChatMessage) => void;
+  /**
+   * Beacon履歴UIにのみ追加される外部メッセージ (Usage取得結果など)。
+   * `beacon:message` と異なり client 側の streaming state には影響しない。
+   * (LLM streaming 中に到着しても応答が切り捨てられないようにするため)
+   */
+  "beacon:external-message": (message: ChatMessage) => void;
   "beacon:stream": (data: BeaconStreamChunk) => void;
   "beacon:history": (data: { messages: ChatMessage[] }) => void;
   "beacon:error": (data: { error: string }) => void;
+
+  // Usage取得
+  "usage:progress": (data: UsageProgress) => void;
+  "usage:complete": (report: UsageReport) => void;
+  "usage:error": (data: { message: string }) => void;
 
   // ファイルビューワー
   "file:content": (data: {
@@ -385,6 +396,50 @@ export interface ClientToServerEvents {
     profileId: string | null;
   }) => void;
   "session:restart-with-profile": (data: { sessionId: string }) => void;
+
+  // Usage取得 (Linux + multiProfileSupported 限定)
+  "usage:request": () => void;
+}
+
+/** Usage取得結果（プロファイル単位） */
+export interface UsageEntry {
+  profileId: string;
+  profileName: string;
+  configDir: string;
+  status: "ok" | "unauthenticated" | "timeout" | "error";
+  parsed?: {
+    sessionPercent: number;
+    weeklyAllPercent: number;
+    weeklySonnetPercent: number;
+    /** "8:20pm (Asia/Tokyo)" のような表示用文字列 */
+    sessionResets: string;
+    weeklyAllResets: string;
+    weeklySonnetResets: string;
+    /** "$0.0000" のような表示用文字列 */
+    totalCost?: string;
+    /** "7s" のような表示用文字列 */
+    wallDuration?: string;
+  };
+  /** デバッグ用（NODE_ENV=development 時のみ含める） */
+  rawOutput?: string;
+  errorMessage?: string;
+}
+
+/** Usage取得結果（全プロファイル分） */
+export interface UsageReport {
+  entries: UsageEntry[];
+  /** UNIXタイムスタンプ(ms) */
+  collectedAt: number;
+}
+
+/** Usage取得進捗 */
+export interface UsageProgress {
+  /** 現在処理中のプロファイル名 */
+  currentProfileName: string;
+  /** 完了済み件数 */
+  completed: number;
+  /** 全体件数 */
+  total: number;
 }
 
 /** Beaconチャットのメッセージ */

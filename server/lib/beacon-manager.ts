@@ -286,8 +286,22 @@ interface BeaconSession {
   messages: ChatMessage[];
   /** 最終アクティビティ時刻 */
   lastActivity: Date;
-  /** 出力処理が進行中かどうか */
+  /**
+   * 出力処理ループが起動中かどうか (processOutput の再入防止用)。
+   * Beacon セッションが生きている間はずっと true。
+   * postExternalMessage の defer 判定には使えない (常時 true のため queue が
+   * 永遠に flush されない) → activeTurn を見ること。
+   */
   processing: boolean;
+  /**
+   * 進行中の turn 数 (queue+streaming中の合計)。
+   * sendMessage で +1、processOutput の result message ごとに -1。
+   * 多数 turn が queue されているケース (multi-client) でも、count > 0 の
+   * 間は postExternalMessage を defer する必要がある。boolean では
+   * 1回目の result で false になってしまい、後続 turn 中の usage 投稿が
+   * 即時 emit/persist されて順序崩壊するため counter を使う。
+   */
+  activeTurnCount: number;
   /** AbortController（セッション終了時にquery()を中断するため） */
   abortController: AbortController;
 }
@@ -322,6 +336,19 @@ export class BeaconManager extends EventEmitter {
   private session: BeaconSession | null = null;
   private idleCheckTimer: ReturnType<typeof setInterval> | null = null;
   private deps: BeaconDeps | null = null;
+  /**
+   * Beacon が assistant 応答を streaming 中に postExternalMessage が呼ばれた場合
+   * のキュー。LLM turn の timestamp は完了時に確定するため、turn 完了前に
+   * 外部メッセージを保存すると DB 上の順序が逆転する。turn 完了後にまとめて
+   * flush する。
+   */
+  private pendingExternalMessages: ChatMessage[] = [];
+  /**
+   * 履歴の世代カウンタ。clearHistory で +1 する。
+   * /usage のような長時間バックグラウンド処理が、終了時点で
+   * 履歴がクリア済みかを判定するために使う (capture → complete 時に比較)。
+   */
+  private historyVersion = 0;
 
   constructor() {
     super();
@@ -812,6 +839,7 @@ export class BeaconManager extends EventEmitter {
       messages,
       lastActivity: new Date(),
       processing: false,
+      activeTurnCount: 0,
       abortController,
     };
 
@@ -850,6 +878,11 @@ export class BeaconManager extends EventEmitter {
 
     // キューにメッセージをpush（query()のAsyncIterableに供給される）
     session.queue.push(message);
+
+    // この turn が完了 (result message 受信) するまで activeTurnCount を
+    // 増やす。multi-client で複数 turn が queue されると count が積まれ、
+    // 全 turn の result が揃って 0 に戻るまで postExternalMessage は defer。
+    session.activeTurnCount += 1;
 
     // 出力の処理を開始
     await this.processOutput();
@@ -964,6 +997,19 @@ export class BeaconManager extends EventEmitter {
           };
           this.emit("beacon:stream", doneChunk);
 
+          // turn 完了 → activeTurnCount を 1 減らす。decrement 後に 0 なら
+          // flushPendingExternalMessages を呼ぶ。順序が逆だと 1→0 遷移時に
+          // flush されず pending が滞留する (CodeRabbit 指摘)。
+          // multi-client で複数 turn が queue されている場合、最後の
+          // result まで count > 0 のままなので、後続 turn 中の
+          // postExternalMessage は引き続き pending queue に入る (順序保護)。
+          if (this.session === session) {
+            session.activeTurnCount = Math.max(0, session.activeTurnCount - 1);
+            if (session.activeTurnCount === 0) {
+              this.flushPendingExternalMessages();
+            }
+          }
+
           // このターンの処理完了。ループを継続して次のターンの出力を待つ
           // （キューに新しいメッセージがpushされるとquery()が新しい出力を生成する）
           assistantText = "";
@@ -987,8 +1033,114 @@ export class BeaconManager extends EventEmitter {
     } finally {
       if (session) {
         session.processing = false;
+        // activeTurnCount は通常 result message 受信時に decrement するが、
+        // query() throw / abort / iterator 終了などでそこへ到達できない
+        // ケースもある。finally で必ず 0 に戻し、後続 postExternalMessage
+        // が「streaming中」と誤判定して queue 滞留しないようにする。
+        session.activeTurnCount = 0;
       }
+      // エラー / 中断パスでも pending external messages が滞留しないよう
+      // 必ず flush。assistant 応答が無くても外部メッセージはユーザに届ける。
+      this.flushPendingExternalMessages();
     }
+  }
+
+  /**
+   * 外部システム（Usage取得など）からassistantメッセージを投稿する。
+   *
+   * 用途: LLM経由ではなく、Arkの内部処理結果（例: 全プロファイル使用量サマリ）を
+   * Beaconの履歴UIに表示するためのバイパスAPI。
+   *
+   * 注意1: このメソッドで投稿したメッセージは LLMコンテキストには注入されない。
+   * BeaconManagerは履歴UIをDBから読み出すので、このメッセージは履歴画面には残るが、
+   * 次回のBeacon会話で参照されることはない（履歴をリセットして新規セッションを
+   * 開始する設計のため）。
+   *
+   * 注意2: `beacon:message` イベントは emit しない。BeaconManagerの通常emitは
+   * activeBeaconSocket にしか転送されないため、Usage取得時のように Beacon未利用
+   * 状態でも全クライアントに届けたい用途では呼び出し側が io.emit で broadcast
+   * する責務を持つ。返り値の ChatMessage を使って呼び出し側で配信すること。
+   */
+  /**
+   * 現在の履歴世代を取得する。
+   * /usage のような長時間バックグラウンド処理は開始時にこの値を capture
+   * しておき、完了時に `postExternalMessage(content, expectedVersion)` を
+   * 呼ぶことで、その間に clearHistory された場合の汚染を回避できる。
+   */
+  getHistoryVersion(): number {
+    return this.historyVersion;
+  }
+
+  /**
+   * 外部メッセージを Beacon 履歴に投稿する。
+   * @param expectedVersion 開始時の `getHistoryVersion()` 値。指定時、現在の
+   *   世代と異なれば (= clearHistory 経由で履歴がリセット済み) 何もせず null
+   *   を返す。指定なしなら無条件で投稿する (旧API互換)。
+   */
+  postExternalMessage(
+    content: string,
+    expectedVersion?: number
+  ): ChatMessage | null {
+    if (
+      expectedVersion !== undefined &&
+      expectedVersion !== this.historyVersion
+    ) {
+      console.log(
+        `[BeaconManager] postExternalMessage skipped (history reset during background task: expected v${expectedVersion}, current v${this.historyVersion})`
+      );
+      return null;
+    }
+    const message: ChatMessage = {
+      id: randomUUID(),
+      role: "assistant",
+      content,
+      timestamp: new Date(),
+    };
+    if (this.session && this.session.activeTurnCount > 0) {
+      // LLM が応答 streaming 中 (= activeTurnCount > 0) の場合、live emit と
+      // DB 永続化を両方 defer する。即時 live emit すると「live UI: external
+      // →assistant」「DB reload: assistant→external」と順序が食い違うため、
+      // turn 完了後にまとめて行う。
+      // ※ session.processing は session 生存期間中ずっと true のため判定に
+      //   使えない。activeTurnCount が「現在進行中の turn 数」の正確な
+      //   シグナル (multi-client で複数 turn が queue されていても安全)。
+      this.pendingExternalMessages.push(message);
+    } else {
+      this.persistAndEmitExternal(message);
+    }
+    return message;
+  }
+
+  /**
+   * 外部メッセージを DB / session.messages へ保存し、
+   * `beacon:external-message` イベントで通知する。
+   */
+  private persistAndEmitExternal(message: ChatMessage): void {
+    db.addBeaconMessage(message);
+    if (this.session) {
+      this.session.messages.push(message);
+    }
+    this.emit("beacon:external-message", message);
+  }
+
+  /**
+   * postExternalMessage で待機中の外部メッセージを DB / session.messages に
+   * 反映し、`beacon:external-message` を emit する。
+   * LLM turn 完了時 / セッション close 時 / エラー時に呼び出す。
+   *
+   * 確実に assistantMessage より後で、互いも strict ordering になるよう
+   * `Date.now() + 1` を起点に index 毎に +1ms ずらした timestamp を設定する。
+   * (同一ミリ秒に着地して timestamp ソートが不安定になるのを回避)
+   */
+  private flushPendingExternalMessages(): void {
+    if (this.pendingExternalMessages.length === 0) return;
+    const queued = this.pendingExternalMessages;
+    this.pendingExternalMessages = [];
+    const baseMs = Date.now() + 1;
+    queued.forEach((message, i) => {
+      message.timestamp = new Date(baseMs + i);
+      this.persistAndEmitExternal(message);
+    });
   }
 
   /**
@@ -1006,8 +1158,20 @@ export class BeaconManager extends EventEmitter {
    *
    * サーバー側のセッション（LLMコンテキスト）も閉じてDB履歴もクリアする。
    * 次のメッセージ送信時に新規セッションが開始される。
+   *
+   * 順序が重要:
+   * 1. historyVersion を先に上げる
+   *    → 進行中の /usage が postExternalMessage を呼んでも version mismatch
+   *      で skip される。
+   * 2. pendingExternalMessages を捨てる
+   *    → closeSession 内の flushPendingExternalMessages が emit/persist しない
+   *      ようにする (= cleared chat への stale message 復活を防ぐ)。
+   * 3. closeSession (LLMコンテキスト中断、queue空なので flush は no-op)。
+   * 4. DB クリア。
    */
   clearHistory(): void {
+    this.historyVersion += 1;
+    this.pendingExternalMessages = [];
     this.closeSession();
     db.clearBeaconMessages();
     console.log("[BeaconManager] 履歴をクリアしました");
@@ -1027,6 +1191,10 @@ export class BeaconManager extends EventEmitter {
     if (!this.session) return;
 
     console.log("[BeaconManager] セッション終了");
+
+    // 滞留中の外部メッセージを必ず DB に確定させる
+    // (idle close / clearHistory 経由でも消失しないように)
+    this.flushPendingExternalMessages();
 
     // query()を中断する
     this.session.abortController.abort();

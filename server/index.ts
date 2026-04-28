@@ -23,6 +23,9 @@ import type {
   ClientToServerEvents,
   ServerToClientEvents,
   SystemCapabilities,
+  UsageEntry,
+  UsageProgress,
+  UsageReport,
 } from "../shared/types.js";
 import { authManager } from "./lib/auth.js";
 import { beaconManager } from "./lib/beacon-manager.js";
@@ -58,6 +61,7 @@ import { sessionOrchestrator } from "./lib/session-orchestrator.js";
 import { detectMultiProfileSupported } from "./lib/system.js";
 import { tmuxManager } from "./lib/tmux-manager.js";
 import { TunnelManager } from "./lib/tunnel.js";
+import { UsageCollector } from "./lib/usage-collector.js";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -135,6 +139,187 @@ function loadTunnelState(): { active: boolean; port: number } | null {
   }
 }
 
+/** 進捗バーの幅 (文字数) */
+const USAGE_BAR_WIDTH = 24;
+
+/**
+ * 0-100 の percent から `█████░░░░░...` 形式のバー文字列を生成する。
+ * モバイル幅を考慮して 24 文字幅 (= 約4%/char)。
+ */
+function renderUsageBar(percent: number): string {
+  const clamped = Math.max(0, Math.min(100, percent));
+  const filled = Math.round((clamped / 100) * USAGE_BAR_WIDTH);
+  return "█".repeat(filled) + "░".repeat(USAGE_BAR_WIDTH - filled);
+}
+
+/**
+ * UsageReport をBeaconチャットに表示するMarkdownへ変換する。
+ *
+ * code block (monospace) でバーを描画してプロファイル間の使用率を視覚的に
+ * 比較できるようにする。週次 (Sonnetのみ) は省略 (主要シグナルのみ表示)。
+ */
+function formatUsageMarkdown(report: UsageReport): string {
+  const lines: string[] = ["## Claude Code 使用量サマリ", ""];
+  for (const entry of report.entries) {
+    lines.push(`### ${entry.profileName}`);
+    lines.push(...formatUsageEntryLines(entry, report.collectedAt));
+    lines.push("");
+  }
+  const collected = new Date(report.collectedAt).toLocaleString("ja-JP", {
+    timeZone: "Asia/Tokyo",
+  });
+  const okCount = report.entries.filter(e => e.status === "ok").length;
+  lines.push(
+    `取得時刻: ${collected} (${report.entries.length}件中${okCount}件取得成功)`
+  );
+  return lines.join("\n");
+}
+
+/**
+ * Claude /usage の Resets 文字列を `M/D HH:MM` (時刻のみなら `HH:MM`)
+ * の 24時間表記に変換する。Ark は JST 前提のため `(Asia/Tokyo)` は除去。
+ *
+ * 入力例:
+ *   `8:20pm (Asia/Tokyo)`         -> `20:20`
+ *   `3am (Asia/Tokyo)`            -> `03:00`
+ *   `May 4, 1pm (Asia/Tokyo)`     -> `5/4 13:00`
+ *   `May 4, 11:30am (Asia/Tokyo)` -> `5/4 11:30`
+ *
+ * パース不能なものは `(Asia/Tokyo)` だけ除いて返す (フォールバック)。
+ */
+const MONTH_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+function formatResetTimestamp(resets: string, refMs: number): string {
+  const stripped = resets.replace(/\s*\(Asia\/Tokyo\)\s*$/, "").trim();
+
+  const dated =
+    /^([A-Za-z]+)\s+(\d{1,2}),\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i.exec(
+      stripped
+    );
+  if (dated) {
+    const monthIdx = MONTH_NAMES.findIndex(
+      m => m.toLowerCase() === dated[1].slice(0, 3).toLowerCase()
+    );
+    if (monthIdx >= 0) {
+      const day = Number.parseInt(dated[2], 10);
+      const time24 = to24Hour(dated[3], dated[4], dated[5]);
+      return `${monthIdx + 1}/${day} ${time24}`;
+    }
+  }
+
+  // 時刻のみのケース (例 "8:20pm") は日付情報が無いので、refMs 時点の JST
+  // 時刻と比較して today/tomorrow を判定し、`M/D HH:MM` 形式に揃える。
+  // refMs には report.collectedAt を渡すことで深夜跨ぎ時の整合性を担保。
+  const timeOnly = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i.exec(stripped);
+  if (timeOnly) {
+    const time24 = to24Hour(timeOnly[1], timeOnly[2], timeOnly[3]);
+    return appendJstDate(time24, refMs);
+  }
+
+  return stripped;
+}
+
+/**
+ * `HH:MM` 形式の時刻に JST の日付を補って `M/D HH:MM` を返す。
+ * `refMs` 時点 (collectedAt) の JST と比較し、与えられた時刻が refMs 以後
+ * 今日中ならtoday、過ぎていれば tomorrow を採用する (claude /usage が示す
+ * reset は常に「次回」)。
+ *
+ * refMs を引数で受け取ることで、render 時刻ではなく capture 時刻を基準に
+ * できる (深夜跨ぎ時の整合性確保)。
+ *
+ * 注: host TZ に依存しないよう Intl.DateTimeFormat.formatToParts で
+ * JST の年/月/日/時/分を直接取得する。`new Date(toLocaleString)` 経由だと
+ * UTC コンテナ等で再パース時に host TZ で解釈され翌日判定がズレる。
+ */
+function appendJstDate(time24: string, refMs: number): string {
+  const [hStr, mStr] = time24.split(":");
+  const targetH = Number.parseInt(hStr, 10);
+  const targetM = Number.parseInt(mStr, 10);
+  const targetMinutes = targetH * 60 + targetM;
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  }).formatToParts(new Date(refMs));
+  const getPart = (type: string) =>
+    Number.parseInt(parts.find(p => p.type === type)?.value ?? "0", 10);
+  // hour=24 になるケース (formatToParts の en-US 仕様) を 0 に補正
+  const nowH = getPart("hour") % 24;
+  const nowM = getPart("minute");
+  const nowMinutes = nowH * 60 + nowM;
+  const isTomorrow = targetMinutes <= nowMinutes;
+
+  // JST のローカル年/月/日 として扱える Date を構築 (UTC 値で持ちながら
+  // 表示時は JST 換算ではなく getMonth/getDate で参照する。
+  // ※ Date.UTC で組み立てることで host TZ に依存しない)
+  const target = new Date(
+    Date.UTC(getPart("year"), getPart("month") - 1, getPart("day"))
+  );
+  if (isTomorrow) target.setUTCDate(target.getUTCDate() + 1);
+  return `${target.getUTCMonth() + 1}/${target.getUTCDate()} ${time24}`;
+}
+
+function to24Hour(
+  hourStr: string,
+  minuteStr: string | undefined,
+  ampm: string
+): string {
+  let h = Number.parseInt(hourStr, 10);
+  const m = minuteStr ? Number.parseInt(minuteStr, 10) : 0;
+  const isPm = ampm.toLowerCase() === "pm";
+  if (h === 12) {
+    h = isPm ? 12 : 0;
+  } else if (isPm) {
+    h += 12;
+  }
+  return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
+}
+
+function formatUsageEntryLines(entry: UsageEntry, refMs: number): string[] {
+  if (entry.status === "ok" && entry.parsed) {
+    const p = entry.parsed;
+    const sessionPct = p.sessionPercent.toString().padStart(3, " ");
+    const weeklyPct = p.weeklyAllPercent.toString().padStart(3, " ");
+    const sessionReset = formatResetTimestamp(p.sessionResets, refMs);
+    const weeklyReset = formatResetTimestamp(p.weeklyAllResets, refMs);
+    // ラベル / バー / % / リセット時刻 を 1 行に並べる。
+    // 「セ」「週」は両方 1 文字 (ほとんどの monospace 環境で同じセル幅で
+    // 描画される) なので column 整列が壊れない。
+    return [
+      "```",
+      `セ ${renderUsageBar(p.sessionPercent)} ${sessionPct}% ${sessionReset}`,
+      `週 ${renderUsageBar(p.weeklyAllPercent)} ${weeklyPct}% ${weeklyReset}`,
+      "```",
+    ];
+  }
+  if (entry.status === "unauthenticated") {
+    return ["- 状態: 未認証 (オンボーディング画面)"];
+  }
+  if (entry.status === "timeout") {
+    return ["- 状態: タイムアウト"];
+  }
+  return [`- 状態: エラー (${entry.errorMessage ?? "詳細不明"})`];
+}
+
 async function startServer() {
   const app = express();
   const server = createServer(app);
@@ -155,6 +340,11 @@ async function startServer() {
   console.log(
     `[Capabilities] multiProfileSupported = ${capabilities.multiProfileSupported}`
   );
+
+  // ===== Usage取得 =====
+  const usageCollector = new UsageCollector();
+  // 全クライアント横断で同時実行を1件に制限する
+  let usageInFlight = false;
 
   // Create proxy for ttyd WebSocket connections
   const ttydProxy = httpProxy.createProxyServer({
@@ -339,6 +529,12 @@ async function startServer() {
     if (activeBeaconSocket?.connected) {
       activeBeaconSocket.emit("beacon:error", data);
     }
+  });
+  // 外部メッセージ (Usage取得結果など) は LLM streaming 中の場合に
+  // BeaconManager 側で flush タイミングを制御してから emit する。
+  // ここで全クライアントへブロードキャスト (Beacon利用状況に関わらず共有)。
+  beaconManager.on("beacon:external-message", message => {
+    io.emit("beacon:external-message", message);
   });
 
   /**
@@ -1746,6 +1942,106 @@ async function startServer() {
           sessionId,
           error: getErrorMessage(e),
         });
+      }
+    });
+
+    socket.on("usage:request", async () => {
+      if (!capabilities.multiProfileSupported) {
+        socket.emit("usage:error", {
+          message: "この環境ではプロファイル機能が使えません",
+        });
+        return;
+      }
+      if (usageInFlight) {
+        socket.emit("usage:error", {
+          message: "Usage取得が既に進行中です",
+        });
+        return;
+      }
+      const registeredProfiles = db.listProfiles();
+      // デフォルトアカウント (CLAUDE_CONFIG_DIR を設定しないときの ~/.claude) も
+      // 集計対象に含める。configDir 空文字 = デフォルト指定として UsageCollector
+      // 側で「CLAUDE_CONFIG_DIR を渡さない」分岐を選ぶ。
+      // 注: ユーザが ~/.claude を明示プロファイル登録している場合、そのまま
+      // CLAUDE_CONFIG_DIR=~/.claude で起動するとオンボーディング画面に詰まるため
+      // (UsageCollector のコメント参照)、ここで configDir を空に正規化する。
+      // 比較は fs.realpathSync で canonical 化して symlink / bind mount 経由で
+      // 同じ実体を指す経路でも検出できるようにする。
+      const defaultConfigDir = path.join(os.homedir(), ".claude");
+      let canonicalDefaultDir = defaultConfigDir;
+      try {
+        canonicalDefaultDir = fs.realpathSync(defaultConfigDir);
+      } catch {
+        // ~/.claude が無い環境ではそのまま使う (どのプロファイルとも一致しない)
+      }
+      const isDefaultPath = (configDir: string): boolean => {
+        if (configDir === defaultConfigDir) return true;
+        try {
+          return fs.realpathSync(configDir) === canonicalDefaultDir;
+        } catch {
+          return false;
+        }
+      };
+      const normalizedRegistered = registeredProfiles.map(p =>
+        isDefaultPath(p.configDir) ? { ...p, configDir: "" } : p
+      );
+      const hasDefaultProfile = normalizedRegistered.some(
+        p => p.configDir === ""
+      );
+      const profiles = hasDefaultProfile
+        ? normalizedRegistered
+        : [
+            {
+              id: "__default__",
+              name: "デフォルト",
+              configDir: "",
+              createdAt: 0,
+              updatedAt: 0,
+            },
+            ...normalizedRegistered,
+          ];
+
+      if (profiles.length === 0) {
+        socket.emit("usage:error", {
+          message: "プロファイルが登録されていません",
+        });
+        return;
+      }
+
+      usageInFlight = true;
+      const onProgress = (data: UsageProgress) => {
+        io.emit("usage:progress", data);
+      };
+      usageCollector.on("usage:progress", onProgress);
+      console.log(
+        `[UsageCollector] 開始: ${profiles.length} プロファイル (要求元: ${socket.id})`
+      );
+
+      // 完了時に Beacon履歴がクリアされていないか判定するため、開始時の
+      // 世代をcaptureする。背景処理 (~30s) 中に clearHistory されていたら
+      // postExternalMessage は no-op になり、新しい transcript を汚染しない。
+      const beaconVersionAtStart = beaconManager.getHistoryVersion();
+      try {
+        const report = await usageCollector.collect(profiles);
+        const markdown = formatUsageMarkdown(report);
+        // postExternalMessage は LLM streaming 中なら pending queue に入れ、
+        // turn 完了 / セッション close 時に "beacon:external-message" を emit
+        // する。emit を購読する beaconManager.on(...) → io.emit が全クライ
+        // アントへブロードキャストする (live UI と DB reload の順序を一致)。
+        // expectedVersion を渡すことで、開始後に clearHistory された場合は
+        // 投稿スキップ (cleared chat 復活防止)。
+        // null が返っても client は usage:complete + toast.success で結果を
+        // 認識できるので、ここでエラー扱いはしない。
+        beaconManager.postExternalMessage(markdown, beaconVersionAtStart);
+        io.emit("usage:complete", report);
+        console.log(
+          `[UsageCollector] 完了: ok=${report.entries.filter(e => e.status === "ok").length}/${report.entries.length}`
+        );
+      } catch (e) {
+        socket.emit("usage:error", { message: getErrorMessage(e) });
+      } finally {
+        usageCollector.off("usage:progress", onProgress);
+        usageInFlight = false;
       }
     });
 

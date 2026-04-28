@@ -21,6 +21,8 @@ import type {
   ServerToClientEvents,
   SpecialKey,
   SystemCapabilities,
+  UsageProgress,
+  UsageReport,
   Worktree,
 } from "../../../shared/types";
 
@@ -155,6 +157,20 @@ interface UseSocketReturn {
   deleteProfile: (id: string) => void;
   setRepoProfile: (repoPath: string, profileId: string | null) => void;
   restartSessionWithProfile: (sessionId: string) => void;
+
+  // Usage取得 (Linux + multiProfileSupported 限定)
+  /** /usage 取得が進行中か（全クライアント横断ではなく、自身が依頼中の状態） */
+  usageRequesting: boolean;
+  /** 直近の取得進捗（取得開始まで null） */
+  usageProgress: UsageProgress | null;
+  /** 直近の取得結果（成功時のみ更新） */
+  usageReport: UsageReport | null;
+  /** 直近の usage:error メッセージ */
+  usageError: string | null;
+  /** Usage取得を要求する */
+  requestUsage: () => void;
+  /** UI側で表示済みのusageErrorをクリア */
+  clearUsageError: () => void;
 }
 
 export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
@@ -244,6 +260,14 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     multiProfileSupported: false,
   });
 
+  // Usage取得
+  const [usageRequesting, setUsageRequesting] = useState(false);
+  const [usageProgress, setUsageProgress] = useState<UsageProgress | null>(
+    null
+  );
+  const [usageReport, setUsageReport] = useState<UsageReport | null>(null);
+  const [usageError, setUsageError] = useState<string | null>(null);
+
   // repoPathRefをrepoPathの変化に同期させる
   useEffect(() => {
     repoPathRef.current = repoPath;
@@ -307,6 +331,11 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socket.on("disconnect", () => {
       console.log("Socket disconnected");
       setIsConnected(false);
+      // 切断中に usage:complete/usage:error を受け損ねるとボタンが永遠に
+      // disabled になるため、進行中フラグもリセットする。
+      // (再接続後に再度 requestUsage を呼べる状態に戻す)
+      setUsageRequesting(false);
+      setUsageProgress(null);
     });
 
     socket.on("connect_error", err => {
@@ -547,6 +576,12 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       }
     });
 
+    // 外部メッセージ (Usage取得結果など)。streaming state には影響させない
+    // (LLM応答 streaming 中に到着しても応答を切り捨てない)。
+    socket.on("beacon:external-message", (message: ChatMessage) => {
+      setBeaconMessages(prev => [...prev, message]);
+    });
+
     socket.on("beacon:stream", (data: BeaconStreamChunk) => {
       if (data.done) {
         setBeaconStreaming(false);
@@ -669,11 +704,42 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       setRepoProfileLinks(next);
     });
 
+    // Usage取得イベント
+    socket.on("usage:progress", progress => {
+      setUsageProgress(progress);
+    });
+
+    socket.on("usage:complete", report => {
+      setUsageReport(report);
+      setUsageProgress(null);
+      // 完了 toast は要求元クライアントだけに出す。
+      // server は io.emit でブロードキャストしているため、別タブ/別デバイス
+      // にも届くが、それらは usageRequesting=false なので toast を出さない。
+      // (functional setState で前値を読み取り、true→false 遷移時のみ通知)
+      setUsageRequesting(prev => {
+        if (prev) {
+          const okCount = report.entries.filter(e => e.status === "ok").length;
+          toast.success(
+            `Usage取得完了: ${okCount}/${report.entries.length} プロファイル`
+          );
+        }
+        return false;
+      });
+    });
+
+    socket.on("usage:error", ({ message }) => {
+      setUsageError(message);
+      setUsageRequesting(false);
+      setUsageProgress(null);
+      toast.error(`Usage取得に失敗: ${message}`);
+    });
+
     // Cleanup on unmount
     return () => {
       socket.off("ports:list");
       socket.off("file:content");
       socket.off("beacon:message");
+      socket.off("beacon:external-message");
       socket.off("beacon:stream");
       socket.off("beacon:history");
       socket.off("beacon:error");
@@ -681,6 +747,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       socket.off("browser:started");
       socket.off("browser:stopped");
       socket.off("browser:error");
+      socket.off("usage:progress");
+      socket.off("usage:complete");
+      socket.off("usage:error");
       socket.disconnect();
     };
   }, [enabled]);
@@ -993,6 +1062,28 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socketRef.current?.emit("session:restart-with-profile", { sessionId });
   }, []);
 
+  // Usage取得
+  const requestUsage = useCallback(() => {
+    if (usageRequesting) return;
+    // 未接続でemitすると永遠に応答が返らず、ボタンがリロードまでdisabledになる。
+    // socket未確立 or 切断中なら何もせずユーザに通知する。
+    if (!socketRef.current?.connected) {
+      toast.error(
+        "サーバーに接続されていません。少し待ってから再試行してください"
+      );
+      return;
+    }
+    setUsageError(null);
+    setUsageRequesting(true);
+    setUsageProgress(null);
+    socketRef.current.emit("usage:request");
+    toast.info("Usage取得を開始しました（数十秒かかります）");
+  }, [usageRequesting]);
+
+  const clearUsageError = useCallback(() => {
+    setUsageError(null);
+  }, []);
+
   return {
     socket: socketRef.current,
     isConnected,
@@ -1063,5 +1154,12 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     deleteProfile,
     setRepoProfile,
     restartSessionWithProfile,
+    // Usage取得
+    usageRequesting,
+    usageProgress,
+    usageReport,
+    usageError,
+    requestUsage,
+    clearUsageError,
   };
 }
