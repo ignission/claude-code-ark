@@ -256,10 +256,15 @@ export class UsageCollector extends EventEmitter {
    *
    * ※ 以前は完了時にも emit していたが、UI が次のプロファイルを先取りして
    *   「2/2 personal」と誤表示する問題があったため廃止。
+   *
+   * `collectedAt` は loop 開始時 (capture が始まる時刻) に確定する。
+   * loop 終了後にすると深夜跨ぎ collect で先頭プロファイルの reset 日付
+   * 判定が render 時刻にズレる問題を避けるため。
    */
   async collect(profiles: Profile[]): Promise<UsageReport> {
     const entries: UsageEntry[] = [];
     const total = profiles.length;
+    const collectedAt = this.deps.now();
 
     for (let i = 0; i < profiles.length; i++) {
       const profile = profiles[i];
@@ -275,7 +280,7 @@ export class UsageCollector extends EventEmitter {
 
     return {
       entries,
-      collectedAt: this.deps.now(),
+      collectedAt,
     };
   }
 

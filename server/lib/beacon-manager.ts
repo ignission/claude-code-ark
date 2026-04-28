@@ -990,10 +990,12 @@ export class BeaconManager extends EventEmitter {
             this.emit("beacon:message", assistantMessage);
           }
 
-          // turn 終了後に pending external メッセージを flush。
-          // assistant text の有無に関わらず flush することで、tool-only turn
-          // (text無し) でも queue 滞留を解消する。
-          this.flushPendingExternalMessages();
+          // turn 終了後、活性 turn がもう無くなった場合のみ flush。
+          // 複数 turn が queue されている場合は次の result まで保留する
+          // (multi-client で external message が途中で挟まらないように)。
+          if (this.session === session && session.activeTurnCount === 0) {
+            this.flushPendingExternalMessages();
+          }
 
           // 完了チャンクを送信
           const doneChunk: BeaconStreamChunk = {
