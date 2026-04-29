@@ -410,11 +410,17 @@ export interface UsageEntry {
   parsed?: {
     sessionPercent: number;
     weeklyAllPercent: number;
-    weeklySonnetPercent: number;
+    /**
+     * Per-model 集計が取得できなかった場合 null。
+     * - API rate limit (画面に「Per-model breakdown unavailable」表示)
+     * - claude 2.1.123 以降の新UIで Sonnet 区画がスクロール下方に押し出される
+     */
+    weeklySonnetPercent: number | null;
     /** "8:20pm (Asia/Tokyo)" のような表示用文字列 */
     sessionResets: string;
     weeklyAllResets: string;
-    weeklySonnetResets: string;
+    /** Sonnet 取得不可時は null。 */
+    weeklySonnetResets: string | null;
     /** "$0.0000" のような表示用文字列 */
     totalCost?: string;
     /** "7s" のような表示用文字列 */

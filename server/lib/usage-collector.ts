@@ -74,8 +74,29 @@ const USAGE_RESULT_TIMEOUT_MS = 10_000;
 /** 1プロファイルあたりの全体タイムアウト（起動 + 送信 + 結果待ち） */
 const TOTAL_TIMEOUT_MS = 20_000;
 
-/** /usage結果に必要な "% used" の出現回数（session, weekly all, weekly sonnet） */
-const REQUIRED_USAGE_MARKERS = 3;
+/**
+ * 完了判定に必要な必須セクション数 (session + weekly all)。
+ * `% used` と `Resets` が最低この数だけ揃っていれば数値表示は可能。
+ */
+const REQUIRED_USAGE_MARKERS = 2;
+
+/** 旧UI 完了アンカー: Sonnet only セクションの見出し */
+const OLD_UI_SONNET_ANCHOR = "Current week (Sonnet only)";
+
+/**
+ * Sonnet 区画が「Per-model breakdown unavailable」or 新UI で観測できない
+ * パターンの完了アンカー。これらが見えた時点で session + weekly all より
+ * 後ろの要素が描画済みなので、上2セクションの数値は確定している。
+ *
+ * - `Per-model breakdown unavailable` : Sonnet 区画が rate limit で欠落した版
+ * - `What's contributing to your limits usage?` : 新UI (claude 2.1.123 で確認)。
+ *   Session / Weekly all の直後に表示される breakdown 説明セクション。
+ *   Sonnet 区画が画面下方にスクロールアウトしているケースもこれで完了判定する。
+ */
+const SONNET_OPTIONAL_ANCHORS = [
+  "Per-model breakdown unavailable",
+  "What's contributing to your limits usage?",
+];
 
 const sleep = (ms: number): Promise<void> =>
   new Promise(resolve => setTimeout(resolve, ms));
@@ -131,10 +152,11 @@ export function parseUsage(raw: string): UsageEntry["parsed"] | null {
   // Session と weekly all は必須・Resets も必須
   const session = extractSection(sessionSection, true);
   const weeklyAll = extractSection(weeklyAllSection, true);
-  // Sonnet only は Resets が任意 (0% 時は表示されない Team プラン仕様)
+  // Sonnet only は Resets が任意 (0% 時は表示されない Team プラン仕様)。
+  // さらに API rate limit 時は Sonnet セクション自体が欠落するため null 許容。
   const weeklySonnet = extractSection(weeklySonnetSection, false);
 
-  if (!session || !weeklyAll || !weeklySonnet) return null;
+  if (!session || !weeklyAll) return null;
 
   const totalCostMatch = /Total cost:\s+(\$[\d.]+)/.exec(stripped);
   // 「1m 7s」「2h 3m」のような複数トークン値を切り詰めないよう行末まで取る
@@ -145,10 +167,10 @@ export function parseUsage(raw: string): UsageEntry["parsed"] | null {
   return {
     sessionPercent: session.percent,
     weeklyAllPercent: weeklyAll.percent,
-    weeklySonnetPercent: weeklySonnet.percent,
+    weeklySonnetPercent: weeklySonnet ? weeklySonnet.percent : null,
     sessionResets: session.resets,
     weeklyAllResets: weeklyAll.resets,
-    weeklySonnetResets: weeklySonnet.resets,
+    weeklySonnetResets: weeklySonnet ? weeklySonnet.resets : null,
     totalCost: totalCostMatch ? totalCostMatch[1] : undefined,
     wallDuration: wallDurationMatch ? wallDurationMatch[1].trim() : undefined,
   };
@@ -178,22 +200,36 @@ export function isTrustDialog(raw: string): boolean {
 /**
  * /usage 結果が画面に表示されているかを判定する。
  *
- * 描画途中の検出を避けるため、(a) `% used` が3つ揃い、(b) Sonnet only セクションの
- * 前にある `Resets` 行が2つ以上揃っていること、を要求する。
+ * パターン1 (旧UI 全描画完了):
+ *   `Current week (Sonnet only)` 見出しがあり、かつ `% used` が3個以上ある。
+ *   旧UIでは見出しが先に描画され、Sonnet 行は遅れて描画されるため、見出し
+ *   単独だと Sonnet 値が空のまま脱出するレースがある。3個目の `% used` を
+ *   必須にして Sonnet 行が確定するまで待つ。
  *
- * 注: Sonnet only セクションは Team プランで 0% 利用時に Resets 行が表示されない
- * ため、3つ目の Resets は要求しない。代わりに Sonnet 区画の見出しが見えていれば
- * 描画完了とみなす。
+ * パターン2 (Sonnet 区画が見えない確定状態):
+ *   `Per-model breakdown unavailable` (rate limit) または `What's contributing
+ *   to your limits usage?` (新UI) が描画されている。これらは session + weekly
+ *   all セクションの後に出る要素なので、`% used` 2個 + Resets 2個で完了。
+ *
+ * いずれにせよ session + weekly all の数値が確定している必要があるため、
+ * `% used` ≥ 2 と `Resets` ≥ 2 を共通の必須条件とする。
  */
 export function hasUsageResult(raw: string): boolean {
   const stripped = stripAnsi(raw);
   const usedMatches = stripped.match(/% used/g);
   const resetsMatches = stripped.match(/Resets\s+/g);
-  if ((usedMatches?.length ?? 0) < REQUIRED_USAGE_MARKERS) return false;
-  // Sonnet only 区画の見出しが描画されていることを確認
-  if (!stripped.includes("Current week (Sonnet only)")) return false;
-  // Session + weekly all の Resets は必ず存在する
-  return (resetsMatches?.length ?? 0) >= 2;
+  const usedCount = usedMatches?.length ?? 0;
+  const resetsCount = resetsMatches?.length ?? 0;
+  if (usedCount < REQUIRED_USAGE_MARKERS) return false;
+  if (resetsCount < 2) return false;
+
+  // 旧UI: Sonnet 行が描画されるまで待つ (% used 3個以上)
+  if (stripped.includes(OLD_UI_SONNET_ANCHOR)) {
+    return usedCount >= 3;
+  }
+
+  // 新UI / rate limit: Sonnet 区画が無いことが確定する終端アンカーが必要
+  return SONNET_OPTIONAL_ANCHORS.some(anchor => stripped.includes(anchor));
 }
 
 /** UsageCollectorの依存（テスト時に差し替え可能にする） */
