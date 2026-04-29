@@ -48,6 +48,61 @@ const ONBOARDING_OUTPUT = `Welcome to Claude Code
   Choose the text style that looks best with your terminal:
 `;
 
+/**
+ * Per-model 集計が API rate limit にぶつかった場合の旧UI出力。
+ * Sonnet only セクションごと「Per-model breakdown unavailable」に置き換わる。
+ * 実機 (Knowbe Team プラン・2026-04-29) で再現確認済み。
+ */
+const RATE_LIMITED_USAGE_OUTPUT = `    Status   Config   Usage   Stats
+
+   Session
+   Total cost:            $0.0000
+   Total duration (API):  0s
+   Total duration (wall): 4s
+   Total code changes:    0 lines added, 0 lines removed
+   Usage:                 0 input, 0 output, 0 cache read, 0 cache write
+
+   Current session
+                                                      0% used
+   Resets 6:10pm (Asia/Tokyo)
+
+   Current week (all models)
+   ███████████                                        22% used
+   Resets May 4, 1pm (Asia/Tokyo)
+
+   Per-model breakdown unavailable (rate limited — try again in a moment)
+
+   r to retry · Esc to cancel
+`;
+
+/**
+ * 新UI (claude 2.1.123 で確認) の `/usage` 画面初期表示。
+ * Session / Weekly all の直後に「What's contributing to your limits usage?」
+ * 説明セクションが入る。Sonnet only 見出しは画面下方にスクロールしないと
+ * 見えないため、capture-pane では取れない前提で完了判定する。
+ */
+const NEW_UI_USAGE_OUTPUT = `    Status   Config   Usage   Stats
+
+   Session
+   Total cost:            $0.0000
+   Total duration (API):  0s
+   Total duration (wall): 4s
+   Total code changes:    0 lines added, 0 lines removed
+   Usage:                 0 input, 0 output, 0 cache read, 0 cache write
+
+   Current session
+   ██████                                             12% used
+   Resets 5:40pm (Asia/Tokyo)
+
+   Current week (all models)
+   ██████                                             12% used
+   Resets May 5, 3am (Asia/Tokyo)
+
+   What's contributing to your limits usage?
+   Approximate, based on local sessions on this machine — does not include
+   other devices or claude.ai
+`;
+
 const ANSI_USAGE_OUTPUT = `\x1b[2J\x1b[H\x1b[1m   Current session\x1b[0m
    \x1b[36m██\x1b[0m                                                 4% used
    Resets 8:20pm (Asia/Tokyo)
@@ -101,6 +156,26 @@ describe("parseUsage", () => {
 
   it("オンボーディング画面では null を返す", () => {
     expect(parseUsage(ONBOARDING_OUTPUT)).toBeNull();
+  });
+
+  it("rate limit 時は Sonnet 関連を null にしつつパース成功", () => {
+    const parsed = parseUsage(RATE_LIMITED_USAGE_OUTPUT);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.sessionPercent).toBe(0);
+    expect(parsed?.weeklyAllPercent).toBe(22);
+    expect(parsed?.weeklySonnetPercent).toBeNull();
+    expect(parsed?.sessionResets).toBe("6:10pm (Asia/Tokyo)");
+    expect(parsed?.weeklyAllResets).toBe("May 4, 1pm (Asia/Tokyo)");
+    expect(parsed?.weeklySonnetResets).toBeNull();
+  });
+
+  it("新UI (Sonnet 区画なし) でも session + weekly all をパース成功", () => {
+    const parsed = parseUsage(NEW_UI_USAGE_OUTPUT);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.sessionPercent).toBe(12);
+    expect(parsed?.weeklyAllPercent).toBe(12);
+    expect(parsed?.weeklySonnetPercent).toBeNull();
+    expect(parsed?.weeklySonnetResets).toBeNull();
   });
 
   it("Team プラン (Sonnet 0% で Resets行欠落) も Sonnet resets を空文字でパース成功", () => {
@@ -207,7 +282,31 @@ Current week (Sonnet only)
     expect(hasUsageResult(teamPlanOutput)).toBe(true);
   });
 
-  it("Sonnet only 見出しがない描画途中の画面では false", () => {
+  it("rate limit 完了 ('Per-model breakdown unavailable' + % used 2つ + Resets 2つ) → true", () => {
+    expect(hasUsageResult(RATE_LIMITED_USAGE_OUTPUT)).toBe(true);
+  });
+
+  it("新UI ('What's contributing' アンカー + % used 2つ + Resets 2つ) → true", () => {
+    expect(hasUsageResult(NEW_UI_USAGE_OUTPUT)).toBe(true);
+  });
+
+  it("旧UI で Sonnet 見出しは描画されたが Sonnet 行が未描画 → false (mid-render race防止)", () => {
+    // 見出しが先に出て % used 行が遅れて描画されるレースケース。
+    // Sonnet 値を null で確定させないため 3個目の `% used` を待つ必要がある。
+    const sonnetHeaderOnly = `Current session
+4% used
+Resets 8:00pm
+
+Current week (all models)
+31% used
+Resets 3am
+
+Current week (Sonnet only)
+`;
+    expect(hasUsageResult(sonnetHeaderOnly)).toBe(false);
+  });
+
+  it("完了アンカーが無い描画途中の画面では false", () => {
     const midRender = `Current session
 4% used
 Resets 8:00pm
