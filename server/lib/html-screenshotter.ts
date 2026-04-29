@@ -5,6 +5,7 @@
  * PNG バイナリを返す。シングルトンで Chromium ブラウザを使い回し、idle 5分で自動 close。
  */
 
+import { pathToFileURL } from "node:url";
 import { type Browser, chromium } from "playwright-core";
 import { findChromiumExecutable } from "./browser-manager.js";
 import { getErrorMessage } from "./errors.js";
@@ -39,7 +40,8 @@ class HtmlScreenshotter {
       const page = await context.newPage();
       // file:// で読み込み（self-contained HTML を前提）
       // networkidle ではフォント読み込み等を待つが、外部リソース無しの HTML では即時完了する
-      await page.goto(`file://${filePath}`, {
+      // pathToFileURL を使うことで # や ? を含むパスでも正しい file URL になる
+      await page.goto(pathToFileURL(filePath).href, {
         waitUntil: "networkidle",
         timeout: 30_000,
       });

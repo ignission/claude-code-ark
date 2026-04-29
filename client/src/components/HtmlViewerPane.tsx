@@ -59,16 +59,19 @@ export function HtmlViewerPane({ filePath }: HtmlViewerPaneProps) {
   async function handleCopyImage() {
     setExporting(true);
     try {
-      const res = await fetch(
+      // Safari/Firefox の user-activation 要件のため、await fetch を挟まず
+      // ClipboardItem に Promise<Blob> を直接渡してクリップボード書き込みを開始する
+      const blobPromise = fetch(
         buildScreenshotUrl(filePath, { mode: "screenshot" })
-      );
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `HTTP ${res.status}`);
-      }
-      const blob = await res.blob();
+      ).then(async res => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `HTTP ${res.status}`);
+        }
+        return res.blob();
+      });
       await navigator.clipboard.write([
-        new ClipboardItem({ "image/png": blob }),
+        new ClipboardItem({ "image/png": blobPromise }),
       ]);
       toast.success("画像をクリップボードにコピーしました");
     } catch (e) {
