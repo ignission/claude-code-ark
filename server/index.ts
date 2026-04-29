@@ -48,8 +48,6 @@ import {
 } from "./lib/file-upload-manager.js";
 import { frontlineManager } from "./lib/frontline-manager.js";
 import { listDirectory } from "./lib/fs-browser.js";
-import { validateHtmlPath } from "./lib/html-path-validator.js";
-import { htmlScreenshotter } from "./lib/html-screenshotter.js";
 import {
   createWorktree,
   deleteWorktree,
@@ -57,6 +55,8 @@ import {
   listWorktrees,
   scanRepositories,
 } from "./lib/git.js";
+import { validateHtmlPath } from "./lib/html-path-validator.js";
+import { htmlScreenshotter } from "./lib/html-screenshotter.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import { sessionOrchestrator } from "./lib/session-orchestrator.js";
