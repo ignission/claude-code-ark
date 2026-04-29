@@ -29,6 +29,68 @@ const XVFB_TIMEOUT = 5000;
 const X11VNC_TIMEOUT = 5000;
 const WEBSOCKIFY_TIMEOUT = 5000;
 
+/**
+ * Chromiumバイナリを検索する
+ * snap版はpm2/systemd環境でX11にアクセスできないため、
+ * Playwright版のバイナリパス（chromium-* および chromium_headless_shell-*）を優先的に探す。
+ *
+ * BrowserManager（noVNC、可視GUI）と HtmlScreenshotter（headless shell）の両方から呼ばれる。
+ */
+export function findChromiumExecutable(
+  options: { headlessShell?: boolean } = {}
+): string | null {
+  const homeDir = process.env.HOME || os.homedir();
+  const playwrightDir = `${homeDir}/.cache/ms-playwright`;
+  if (fs.existsSync(playwrightDir)) {
+    try {
+      const allDirs = fs.readdirSync(playwrightDir);
+      // headlessShell=true の場合は chromium_headless_shell-* を優先
+      // false の場合は通常の chromium-* を優先（noVNC等の可視GUI用途）
+      const prefix = options.headlessShell
+        ? "chromium_headless_shell-"
+        : "chromium-";
+      const fallbackPrefix = options.headlessShell
+        ? "chromium-"
+        : "chromium_headless_shell-";
+      const tryFind = (p: string): string | null => {
+        const dirs = allDirs
+          .filter(d => d.startsWith(p))
+          .sort()
+          .reverse(); // 最新版を優先
+        for (const dir of dirs) {
+          const binName = options.headlessShell ? "headless_shell" : "chrome";
+          const binPath = `${playwrightDir}/${dir}/chrome-linux/${binName}`;
+          if (fs.existsSync(binPath)) {
+            return binPath;
+          }
+          // headless_shell ディレクトリの中に chrome がある場合や逆ケースに対応
+          const altPath = `${playwrightDir}/${dir}/chrome-linux/chrome`;
+          if (fs.existsSync(altPath)) {
+            return altPath;
+          }
+        }
+        return null;
+      };
+      const found = tryFind(prefix) ?? tryFind(fallbackPrefix);
+      if (found) return found;
+    } catch {
+      // ディレクトリ読み取り失敗は無視
+    }
+  }
+
+  // システムの Chromium（snap版でないもの）
+  for (const cmd of ["chromium-browser", "chromium", "google-chrome"]) {
+    try {
+      execFileSync("which", [cmd], { stdio: "pipe" });
+      return cmd;
+    } catch {
+      // 見つからない
+    }
+  }
+
+  return null;
+}
+
 /** stop時のSIGTERM→SIGKILL待機時間（ミリ秒） */
 const KILL_GRACE_PERIOD = 3000;
 
@@ -832,9 +894,10 @@ export class BrowserManager extends EventEmitter {
     // Chromium（複数の候補から探す）
     // snap版chromium-browserはpm2/systemd環境でX11にアクセスできないため、
     // Playwright版のchromiumバイナリを優先的に使用する
-    const chromiumFound = this.findChromiumBinary();
+    const chromiumFound = findChromiumExecutable();
     if (chromiumFound) {
       this.chromiumCmd = chromiumFound;
+      console.log(`[BrowserManager] Chromium検出: ${chromiumFound}`);
     } else {
       missing.push("chromium-browser/chromium/google-chrome");
     }
@@ -865,46 +928,6 @@ export class BrowserManager extends EventEmitter {
           "  Ubuntu: apt install xvfb x11vnc novnc websockify chromium-browser"
       );
     }
-  }
-
-  /**
-   * Chromiumバイナリを検索する
-   * snap版はpm2/systemd環境でX11にアクセスできないため、
-   * Playwright版のバイナリパスを優先的に探す
-   */
-  private findChromiumBinary(): string | null {
-    // 1. Playwright版Chromium（snap制約なし）
-    const homeDir = process.env.HOME || os.homedir();
-    const playwrightDir = `${homeDir}/.cache/ms-playwright`;
-    if (fs.existsSync(playwrightDir)) {
-      try {
-        const dirs = fs
-          .readdirSync(playwrightDir)
-          .filter(d => d.startsWith("chromium-"))
-          .sort()
-          .reverse(); // 最新版を優先
-        for (const dir of dirs) {
-          const chromePath = `${playwrightDir}/${dir}/chrome-linux/chrome`;
-          if (fs.existsSync(chromePath)) {
-            console.log(
-              `[BrowserManager] Playwright Chromium検出: ${chromePath}`
-            );
-            return chromePath;
-          }
-        }
-      } catch {
-        // ディレクトリ読み取り失敗は無視
-      }
-    }
-
-    // 2. システムのChromium（snap版でないもの）
-    for (const cmd of ["chromium-browser", "chromium", "google-chrome"]) {
-      if (this.commandExists(cmd)) {
-        return cmd;
-      }
-    }
-
-    return null;
   }
 
   /**

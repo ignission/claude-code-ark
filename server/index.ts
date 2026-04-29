@@ -48,6 +48,8 @@ import {
 } from "./lib/file-upload-manager.js";
 import { frontlineManager } from "./lib/frontline-manager.js";
 import { listDirectory } from "./lib/fs-browser.js";
+import { validateHtmlPath } from "./lib/html-path-validator.js";
+import { htmlScreenshotter } from "./lib/html-screenshotter.js";
 import {
   createWorktree,
   deleteWorktree,
@@ -591,48 +593,48 @@ async function startServer() {
 
   app.get("/api/html-file", async (req, res) => {
     const filePath = req.query.path;
-    if (typeof filePath !== "string" || !filePath) {
+    if (typeof filePath !== "string") {
       res.status(400).json({ error: "path query parameter is required" });
       return;
     }
-
-    // セキュリティ: 絶対パスのみ許可、パストラバーサル防止
-    const normalized = path.resolve(filePath);
-    if (normalized !== filePath || filePath.includes("..")) {
-      res.status(400).json({ error: "Invalid file path" });
+    const validated = await validateHtmlPath(filePath);
+    if (!validated.ok) {
+      res.status(validated.status).json({ error: validated.error });
       return;
     }
-
-    // .html / .htm 拡張子のみ許可
-    const ext = path.extname(normalized).toLowerCase();
-    if (ext !== ".html" && ext !== ".htm") {
-      res.status(400).json({ error: "Only HTML files are allowed" });
-      return;
-    }
-
-    // ローカル専用ツールのため、ディレクトリ制限は緩和
-    // パストラバーサル防止・拡張子チェック・ファイル存在確認で十分なセキュリティを確保
-
-    let fd: import("node:fs/promises").FileHandle | null = null;
     try {
-      // TOCTOU防止: open→fstat→realpath+stat でinode一致を検証してからfd経由で読み取り
-      fd = await fs.promises.open(normalized, fs.constants.O_RDONLY);
-      const fdStat = await fd.stat();
-      const realPath = await fs.promises.realpath(normalized);
-      const realStat = await fs.promises.stat(realPath);
-      // inode/deviceの一致でopen済みfdとrealpath結果が同一ファイルであることを保証
-      if (fdStat.ino !== realStat.ino || fdStat.dev !== realStat.dev) {
-        res.status(403).json({ error: "Access to this path is not allowed" });
-        return;
-      }
-      const content = await fd.readFile("utf-8");
+      const content = await fs.promises.readFile(validated.path, "utf-8");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.setHeader("Content-Security-Policy", "sandbox allow-scripts");
       res.send(content);
     } catch {
       res.status(404).json({ error: "File not found" });
-    } finally {
-      await fd?.close();
+    }
+  });
+
+  // HTML をレンダリングして PNG スクリーンショットを返す
+  app.get("/api/html-file/screenshot", async (req, res) => {
+    const filePath = req.query.path;
+    const fullPageRaw = req.query.fullPage;
+    if (typeof filePath !== "string") {
+      res.status(400).json({ error: "path query parameter is required" });
+      return;
+    }
+    const validated = await validateHtmlPath(filePath);
+    if (!validated.ok) {
+      res.status(validated.status).json({ error: validated.error });
+      return;
+    }
+    try {
+      const png = await htmlScreenshotter.screenshot(validated.path, {
+        fullPage: fullPageRaw !== "false",
+      });
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cache-Control", "no-store");
+      res.send(png);
+    } catch (e) {
+      console.error("[Screenshot] エラー:", getErrorMessage(e));
+      res.status(500).json({ error: getErrorMessage(e) });
     }
   });
 
@@ -2198,6 +2200,9 @@ async function startServer() {
     sessionOrchestrator.cleanup();
     beaconManager.cleanup();
     browserManager.cleanup();
+    htmlScreenshotter.shutdown().catch(() => {
+      // close 失敗は無視（プロセス終了直前なので）
+    });
     server.close(() => {
       process.exit(0);
     });
