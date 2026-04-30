@@ -340,6 +340,12 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         pendingRepoPathRef.current = repoPathRef.current;
         socket.emit("repo:select", repoPathRef.current);
       }
+
+      // grid 購読中だった場合は再購読する。
+      // サーバ側は disconnect 時に interval を破棄するので、再接続後は再 emit が必須。
+      if (gridSubscribedRef.current) {
+        socket.emit("session:grid:subscribe");
+      }
     });
 
     socket.on("disconnect", () => {
@@ -1113,11 +1119,17 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   }, []);
 
   // Repo Grid View 購読
+  // 再接続対応: サーバ側は disconnect 時に interval を破棄するので、
+  // クライアント側で「現在購読中か」を ref に持ち、connect 時に都度 re-emit する。
+  const gridSubscribedRef = useRef(false);
+
   const subscribeGrid = useCallback(() => {
+    gridSubscribedRef.current = true;
     socketRef.current?.emit("session:grid:subscribe");
   }, []);
 
   const unsubscribeGrid = useCallback(() => {
+    gridSubscribedRef.current = false;
     socketRef.current?.emit("session:grid:unsubscribe");
     setGridSnapshots(new Map());
   }, []);

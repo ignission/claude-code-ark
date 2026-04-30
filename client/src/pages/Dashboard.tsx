@@ -36,7 +36,10 @@ import { useSettings } from "@/hooks/useSettings";
 import { useSocket } from "@/hooks/useSocket";
 import { useViewerTabs } from "@/hooks/useViewerTabs";
 import { getBaseName } from "@/utils/pathUtils";
-import { findRepoForSession } from "@/utils/sessionUtils";
+import {
+  findRepoForSession,
+  isSessionBelongsToRepo,
+} from "@/utils/sessionUtils";
 import type {
   BridgeSessionStatus,
   ManagedSession,
@@ -605,9 +608,17 @@ export default function Dashboard() {
                 {gridRepoPath && !selectedSessionId ? (
                   <RepoGridView
                     repoPath={gridRepoPath}
-                    sessions={Array.from(sessions.values()).filter(
-                      s => (s.repoPath ?? "") === gridRepoPath
-                    )}
+                    sessions={Array.from(sessions.values()).filter(s => {
+                      // useGroupedWorktreeItems と同じフォールバック判定:
+                      //  1. session.repoPath が gridRepoPath に一致
+                      //  2. worktreePath が gridRepoPath で始まる (worktree)
+                      //  3. isSessionBelongsToRepo で姉妹worktreeを判定
+                      if (s.repoPath === gridRepoPath) return true;
+                      if (s.worktreePath.startsWith(`${gridRepoPath}/`))
+                        return true;
+                      if (s.worktreePath === gridRepoPath) return true;
+                      return isSessionBelongsToRepo(s, gridRepoPath);
+                    })}
                     worktreeBranchById={
                       new Map(worktrees.map(w => [w.id, w.branch]))
                     }

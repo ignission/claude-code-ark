@@ -33,7 +33,6 @@ import {
   buildTunnelEntries,
   collectBridgeSessions,
   collectGridSnapshots,
-  collectStreamLines,
 } from "./lib/bridge-collector.js";
 import { browserManager } from "./lib/browser-manager.js";
 import {
@@ -971,6 +970,48 @@ async function startServer() {
 
   // 複数クライアント同時接続時の重複復元を防ぐ（セッションID → 復元中のPromise）
   const pendingAutoRestores = new Map<string, Promise<void>>();
+
+  // ===== Bridge / Grid 共有サンプリング =====
+  // hostMetrics.sample() / capturePane は前回値との差分や時間あたりレートを内部状態で
+  // 持つ。クライアントごとに setInterval を回すと、複数クライアントで差分計算の基準が
+  // 乱れて不正な値になる。サーバ全体で 1本のループに統一して、購読中のクライアント
+  // (Socket.IO room) にブロードキャストする。
+  const BRIDGE_ROOM = "bridge:subscribers";
+  const GRID_ROOM = "grid:subscribers";
+
+  const broadcastBridgeSnapshot = async () => {
+    if (io.sockets.adapter.rooms.get(BRIDGE_ROOM)?.size === undefined) return;
+    try {
+      const metrics = await hostMetrics.sample();
+      const sessions = collectBridgeSessions();
+      const tunnels = buildTunnelEntries({ primaryUrl: tunnelUrl });
+      io.to(BRIDGE_ROOM).emit("bridge:snapshot", {
+        metrics,
+        sessions,
+        tunnels,
+        collectedAt: Date.now(),
+      });
+    } catch (err) {
+      console.error("[Bridge] スナップショット失敗:", getErrorMessage(err));
+    }
+  };
+
+  const broadcastGridSnapshot = () => {
+    if (io.sockets.adapter.rooms.get(GRID_ROOM)?.size === undefined) return;
+    try {
+      io.to(GRID_ROOM).emit("session:grid:snapshot", collectGridSnapshots());
+    } catch (err) {
+      console.error("[Grid] スナップショット失敗:", getErrorMessage(err));
+    }
+  };
+
+  // 購読クライアントがいるときだけ実行する (idle 時は no-op)
+  const bridgeBroadcastInterval = setInterval(() => {
+    void broadcastBridgeSnapshot();
+  }, 1000);
+  const gridBroadcastInterval = setInterval(() => {
+    broadcastGridSnapshot();
+  }, 1500);
 
   io.on("connection", socket => {
     console.log(`Client connected: ${socket.id}`);
@@ -2077,29 +2118,12 @@ async function startServer() {
     }
 
     // ===== Bridge Dashboard =====
-    // Bridge ダッシュボード（5インチ常駐表示）専用のサブスクリプション。
-    // クライアントが /bridge を開いたら subscribe し、毎秒スナップショットを送る。
-    let bridgeSnapshotInterval: NodeJS.Timeout | null = null;
-    let bridgeStreamInterval: NodeJS.Timeout | null = null;
-    let bridgeFocusSessionId: string | null = null;
-
-    const stopBridge = () => {
-      if (bridgeSnapshotInterval) {
-        clearInterval(bridgeSnapshotInterval);
-        bridgeSnapshotInterval = null;
-      }
-      if (bridgeStreamInterval) {
-        clearInterval(bridgeStreamInterval);
-        bridgeStreamInterval = null;
-      }
-      bridgeFocusSessionId = null;
-    };
-
-    socket.on("bridge:subscribe", async data => {
-      stopBridge();
-      bridgeFocusSessionId = data?.focusSessionId ?? null;
-
-      // 初回スナップショットは即送る（履歴が空なので CPU 0% になるのは許容）
+    // 購読は Socket.IO room (BRIDGE_ROOM) で管理。
+    // 実際のサンプリング/送信はサーバ共有の broadcastBridgeSnapshot が行う。
+    socket.on("bridge:subscribe", async () => {
+      socket.join(BRIDGE_ROOM);
+      // 初回スナップショットだけは購読開始の即時応答として個別送信する
+      // (履歴が空なので CPU 0% になるのは許容)
       try {
         const metrics = await hostMetrics.sample();
         const sessions = collectBridgeSessions();
@@ -2116,80 +2140,34 @@ async function startServer() {
           getErrorMessage(err)
         );
       }
-
-      // 1秒間隔のスナップショット
-      bridgeSnapshotInterval = setInterval(async () => {
-        try {
-          const metrics = await hostMetrics.sample();
-          const sessions = collectBridgeSessions();
-          const tunnels = buildTunnelEntries({ primaryUrl: tunnelUrl });
-          socket.emit("bridge:snapshot", {
-            metrics,
-            sessions,
-            tunnels,
-            collectedAt: Date.now(),
-          });
-        } catch (err) {
-          console.error("[Bridge] スナップショット失敗:", getErrorMessage(err));
-        }
-      }, 1000);
-
-      // フォーカス中セッションのライブストリームは 1.5秒間隔で送る
-      bridgeStreamInterval = setInterval(() => {
-        if (!bridgeFocusSessionId) return;
-        try {
-          const lines = collectStreamLines(bridgeFocusSessionId, 24);
-          socket.emit("bridge:stream", {
-            sessionId: bridgeFocusSessionId,
-            lines,
-          });
-        } catch (err) {
-          console.error("[Bridge] ストリーム取得失敗:", getErrorMessage(err));
-        }
-      }, 1500);
     });
 
     socket.on("bridge:unsubscribe", () => {
-      stopBridge();
+      socket.leave(BRIDGE_ROOM);
     });
 
     // ===== Repo Grid View =====
-    // 主 Dashboard でリポジトリ選択時に表示するセッショングリッド用の購読。
-    // Bridge と独立して購読/解除できる。
-    let gridInterval: NodeJS.Timeout | null = null;
-
-    const stopGrid = () => {
-      if (gridInterval) {
-        clearInterval(gridInterval);
-        gridInterval = null;
-      }
-    };
-
-    const emitGridSnapshot = () => {
+    // 同じく room (GRID_ROOM) で購読管理。Bridge と独立して購読/解除できる。
+    socket.on("session:grid:subscribe", () => {
+      socket.join(GRID_ROOM);
+      // 初回は即送る
       try {
         socket.emit("session:grid:snapshot", collectGridSnapshots());
       } catch (err) {
-        console.error("[Grid] スナップショット失敗:", getErrorMessage(err));
+        console.error("[Grid] 初回スナップショット失敗:", getErrorMessage(err));
       }
-    };
-
-    socket.on("session:grid:subscribe", () => {
-      stopGrid();
-      // 初回は即送る
-      emitGridSnapshot();
-      gridInterval = setInterval(emitGridSnapshot, 1500);
     });
 
     socket.on("session:grid:unsubscribe", () => {
-      stopGrid();
+      socket.leave(GRID_ROOM);
     });
 
     // Cleanup on disconnect
     socket.on("disconnect", () => {
       console.log(`Client disconnected: ${socket.id}`);
       clearInterval(previewInterval);
-      stopBridge();
-      stopGrid();
+      // socket.leave は disconnect 時に Socket.IO が自動で行うので room の明示的な
+      // クリーンアップは不要
 
       forwardHandlers.forEach((handler, event) => {
         sessionOrchestrator.off(event, handler);
@@ -2314,6 +2292,8 @@ async function startServer() {
   const shutdown = () => {
     console.log("Shutting down...");
     clearInterval(fileUploadCleanupInterval);
+    clearInterval(bridgeBroadcastInterval);
+    clearInterval(gridBroadcastInterval);
     sessionOrchestrator.cleanup();
     beaconManager.cleanup();
     browserManager.cleanup();
