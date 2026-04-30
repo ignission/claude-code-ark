@@ -40,9 +40,10 @@ export default function Bridge() {
   // Socket.IO 接続 (1回だけ確立)
   useEffect(() => {
     const token = getTokenFromUrl();
+    // transports は default (polling + websocket) のまま。
+    // WebSocket upgrade をブロックするリバースプロキシ等でも繋がるよう polling fallback を残す。
     const socket: TypedSocket = io({
       auth: token ? { token } : undefined,
-      transports: ["websocket"],
     });
     socketRef.current = socket;
 

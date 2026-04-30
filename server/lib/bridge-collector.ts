@@ -434,7 +434,10 @@ function isUiLine(line: string): boolean {
   if (line.includes("bypass permissions")) return true;
   if (line.includes("shift+tab to cycle")) return true;
   if (line.includes("almost done thinking")) return true;
-  if (/^[A-Za-z0-9]\.\s/.test(line) && line.length < 60) return true;
+  // 番号付きリストの行除外は撤廃。Claude が生成した短い箇条書き
+  // (例: "1. ファイルを読む") まで preview から消えてしまい、
+  // READY を誤判定していた。AWAITING (許諾メニュー) は detectAwaiting() で
+  // 別途検出されるためここで preview から外す必要はない。
   // プロンプト行 (❯ で始まる行は中身があってもユーザー入力エリアなので UI 扱い)
   if (/^❯/.test(line)) return true;
   // 他シェルの空プロンプト
