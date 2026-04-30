@@ -34,8 +34,9 @@ interface NetSnapshot {
   ms: number;
 }
 
-const HISTORY_CPU_SAMPLES = 36; // 60秒分(=1.6秒間隔×36 ≒ 60s)：UI上は単純に直近60秒として扱う
-const HISTORY_MEM_SAMPLES = 18; // 10分分(33s間隔×18≒10m)：CPUより低頻度で間引き
+// sample() は 1秒間隔で呼ばれる前提。UI 軸ラベル ("−60s" / "−10m") と整合させる。
+const HISTORY_CPU_SAMPLES = 60; // 1秒×60 = 60秒
+const HISTORY_MEM_SAMPLES = 18; // 33秒間隔×18 ≒ 10分 (memSampleCount で33tick毎に1回push)
 
 export class HostMetricsCollector {
   private prevCpu: CpuSnapshot | null = null;
