@@ -17,7 +17,11 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import type { ManagedSession, Worktree } from "../../../shared/types";
+import type {
+  BridgeSessionStatus,
+  ManagedSession,
+  Worktree,
+} from "../../../shared/types";
 
 /** プレビュー無変化でアイドル判定するまでの秒数 */
 const IDLE_THRESHOLD_MS = 10_000;
@@ -29,6 +33,12 @@ interface SessionCardProps {
   isSelected: boolean;
   previewText: string;
   activityText: string;
+  /**
+   * Bridge collector が判定した最新のセッション状態 (グリッドビューと同じソース)。
+   * 渡されればこれを優先してドット色を決定し、サイドバーとグリッドで表示が一致する。
+   * 未取得 (snapshot 未着信) の場合は activityText/previewText 由来のフォールバックを使う。
+   */
+  gridStatus?: BridgeSessionStatus;
   onClick: () => void;
   /** セッション削除（停止 + メイン以外のWorktree削除） */
   onDelete: () => void;
@@ -41,6 +51,7 @@ export function SessionCard({
   isSelected,
   previewText,
   activityText,
+  gridStatus,
   onClick,
   onDelete,
   onStart,
@@ -105,27 +116,11 @@ export function SessionCard({
     );
   }
 
-  // ✢✻はアニメーション記号、◼◻はタスク表示記号、"* verb…"は処理中表示
-  const hasActivitySymbol =
-    /[✢✻◼◻]/.test(activityText) ||
-    /[◼◻]/.test(previewText) ||
-    /\S+…/.test(activityText);
-  // タスク記号・処理中表示はidle判定を無視する
-  const hasTaskSymbol =
-    /[◼◻]/.test(activityText) ||
-    /[◼◻]/.test(previewText) ||
-    /\S+…/.test(activityText);
-
-  // 緑: 動作中（✢✻+変化あり or タスク進行中）、青: 起動直後/clear後、赤: それ以外
-  const hasVisibleContent =
-    previewText.trim().length > 0 || activityText.trim().length > 0;
-
-  const dotColor =
-    hasActivitySymbol && (!isIdle || hasTaskSymbol)
-      ? "bg-green-500"
-      : !hasVisibleContent
-        ? "bg-blue-500"
-        : "bg-red-500";
+  // ドット色はグリッドビューと統一するため BridgeSessionStatus を優先する。
+  // gridStatus が未着信のときだけ既存ヒューリスティック (✢✻ / ◼◻ / …) にフォールバック。
+  const dotColor = gridStatus
+    ? statusToDotColor(gridStatus)
+    : fallbackDotColor(previewText, activityText, isIdle);
 
   // アイドル時はactivityText（✻ Baked for ...）、アクティブ時はコンテンツ行
   const idle = session.status === "idle" || isIdle;
@@ -205,4 +200,55 @@ export function SessionCard({
       </AlertDialog>
     </>
   );
+}
+
+/**
+ * Bridge の状態判定 → サイドバードット色のマップ。
+ * グリッドビュー側 (RepoGridView の STATUS_CONFIG) と色を揃える。
+ *
+ *   TOOL/THINK = 緑     (動作中)
+ *   AWAITING   = 橙     (判断要)
+ *   IDLE/ERR   = 赤     (アクション必要)
+ *   READY/STOP = グレー (アイドル相当)
+ */
+function statusToDotColor(status: BridgeSessionStatus): string {
+  switch (status) {
+    case "TOOL":
+    case "THINK":
+      return "bg-green-500";
+    case "AWAITING":
+      return "bg-orange-500";
+    case "IDLE":
+    case "ERR":
+      return "bg-red-500";
+    case "READY":
+    case "STOP":
+      return "bg-neutral-500";
+  }
+}
+
+/**
+ * gridStatus が未着信の間だけ使う旧ロジックのフォールバック。
+ *   - 緑: 活動記号 (✢✻◼◻ / `…`) あり、かつ idle でない or タスク記号
+ *   - 青: 出力なし (起動直後/clear 後)
+ *   - 赤: それ以外
+ */
+function fallbackDotColor(
+  previewText: string,
+  activityText: string,
+  isIdle: boolean
+): string {
+  const hasActivitySymbol =
+    /[✢✻◼◻]/.test(activityText) ||
+    /[◼◻]/.test(previewText) ||
+    /\S+…/.test(activityText);
+  const hasTaskSymbol =
+    /[◼◻]/.test(activityText) ||
+    /[◼◻]/.test(previewText) ||
+    /\S+…/.test(activityText);
+  const hasVisibleContent =
+    previewText.trim().length > 0 || activityText.trim().length > 0;
+  if (hasActivitySymbol && (!isIdle || hasTaskSymbol)) return "bg-green-500";
+  if (!hasVisibleContent) return "bg-neutral-500";
+  return "bg-red-500";
 }

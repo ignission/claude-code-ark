@@ -1,6 +1,6 @@
 import { AlertCircle, Copy, Loader2, Terminal } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { BrowserPane } from "@/components/BrowserPane";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
@@ -8,6 +8,7 @@ import { FrontLineModal } from "@/components/frontline/FrontLineModal";
 import { MobileChatView } from "@/components/MobileChatView";
 import { MobileLayout } from "@/components/MobileLayout";
 import { ProfileManagerDialog } from "@/components/ProfileManagerDialog";
+import { RepoGridView } from "@/components/RepoGridView";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
@@ -36,7 +37,11 @@ import { useSocket } from "@/hooks/useSocket";
 import { useViewerTabs } from "@/hooks/useViewerTabs";
 import { getBaseName } from "@/utils/pathUtils";
 import { findRepoForSession } from "@/utils/sessionUtils";
-import type { ManagedSession, Worktree } from "../../../shared/types";
+import type {
+  BridgeSessionStatus,
+  ManagedSession,
+  Worktree,
+} from "../../../shared/types";
 
 export default function Dashboard() {
   const {
@@ -90,6 +95,9 @@ export default function Dashboard() {
     beaconClear,
     sessionPreviews,
     sessionActivityTexts,
+    gridSnapshots,
+    subscribeGrid,
+    unsubscribeGrid,
     readFile,
     fileContent,
     browserSessions,
@@ -130,6 +138,33 @@ export default function Dashboard() {
   // ブラウザビューを一度でも開いたかどうかのフラグ
   // 一度開いたら常に描画してdisplay:hiddenで切り替え、BrowserPaneの再マウント（VNC再接続）を防ぐ
   const [hasBrowserOpened, setHasBrowserOpened] = useState(false);
+
+  // リポジトリ別セッショングリッドビュー (B案: スナップショット型)
+  // null 以外のとき main 領域は RepoGridView に切り替わる。
+  // selectedSessionId とは独立。セルクリックで selectedSessionId に切替えてターミナル表示に潜る
+  const [gridRepoPath, setGridRepoPath] = useState<string | null>(null);
+
+  /** リポジトリヘッダクリック時: グリッドビューを開く */
+  const handleSelectRepoGrid = useCallback((repoPath: string) => {
+    setGridRepoPath(repoPath);
+    setSelectedSessionId(null);
+  }, []);
+
+  /** グリッドのセルクリック時: ターミナル表示に切替 */
+  const handleSelectSessionFromGrid = useCallback((sessionId: string) => {
+    setGridRepoPath(null);
+    setSelectedSessionId(sessionId);
+  }, []);
+
+  // gridSnapshots (sessionId → SessionGridSnapshot) からサイドバードット用の
+  // (sessionId → BridgeSessionStatus) Map を導出。SessionCard のドット色判定に渡す。
+  const gridStatusesMap = useMemo(() => {
+    const m = new Map<string, BridgeSessionStatus>();
+    gridSnapshots.forEach((snap, id) => {
+      m.set(id, snap.status);
+    });
+    return m;
+  }, [gridSnapshots]);
 
   /** ブラウザを選択（未起動なら起動） */
   const handleSelectBrowser = useCallback(() => {
@@ -198,6 +233,17 @@ export default function Dashboard() {
       setSetting("selectedSessionId", selectedSessionId);
     }
   }, [selectedSessionId, setSetting]);
+
+  // セッショングリッドのスナップショット購読を常時 ON にする。
+  // RepoGridView 表示時だけでなく、サイドバーの状態ドット (緑/橙/赤/グレー) も
+  // BridgeSessionStatus を使うため、Dashboard マウント中は常に購読する。
+  useEffect(() => {
+    if (isSettingsLoading) return;
+    subscribeGrid();
+    return () => {
+      unsubscribeGrid();
+    };
+  }, [isSettingsLoading, subscribeGrid, unsubscribeGrid]);
 
   // リロード時にブラウザ選択状態を維持:
   // selectedSessionIdが"browser"のまま復元された場合、
@@ -334,7 +380,8 @@ export default function Dashboard() {
       }
     }
 
-    if (!selectedSessionId && sessions.size > 0) {
+    // グリッドビュー表示中は自動選択を抑制 (ユーザーがセルクリックで明示的に選ぶ)
+    if (!selectedSessionId && sessions.size > 0 && !gridRepoPath) {
       const first = Array.from(sessions.values())[0];
       setSelectedSessionId(first.id);
     }
@@ -342,7 +389,7 @@ export default function Dashboard() {
       const remaining = Array.from(sessions.values());
       setSelectedSessionId(remaining.length > 0 ? remaining[0].id : null);
     }
-  }, [sessions, selectedSessionId]);
+  }, [sessions, selectedSessionId, gridRepoPath]);
 
   useEffect(() => {
     if (deletedWorktreeId) {
@@ -539,6 +586,9 @@ export default function Dashboard() {
               onOpenProfileManager={() => setShowProfileManager(true)}
               onRestartSession={handleRestartSession}
               onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
+              onSelectRepoGrid={handleSelectRepoGrid}
+              gridRepoPath={gridRepoPath}
+              gridStatuses={gridStatusesMap}
             />
           }
           main={
@@ -550,6 +600,21 @@ export default function Dashboard() {
                 </div>
               )}
               <div className="flex-1 overflow-hidden relative">
+                {/* リポジトリグリッドビュー: gridRepoPath が設定されているとき
+                    全 TerminalPane と独立して表示する (ttyd iframe は非マウント) */}
+                {gridRepoPath && !selectedSessionId ? (
+                  <RepoGridView
+                    repoPath={gridRepoPath}
+                    sessions={Array.from(sessions.values()).filter(
+                      s => (s.repoPath ?? "") === gridRepoPath
+                    )}
+                    worktreeBranchById={
+                      new Map(worktrees.map(w => [w.id, w.branch]))
+                    }
+                    snapshots={gridSnapshots}
+                    onSelectSession={handleSelectSessionFromGrid}
+                  />
+                ) : null}
                 {/* ブラウザビュー: 一度開いたら常に描画してdisplay:hiddenで切り替え。
                     BrowserPaneの再マウント（VNC再接続）を防ぐ */}
                 {hasBrowserOpened && (

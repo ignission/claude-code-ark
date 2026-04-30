@@ -29,6 +29,12 @@ import type {
 } from "../shared/types.js";
 import { authManager } from "./lib/auth.js";
 import { beaconManager } from "./lib/beacon-manager.js";
+import {
+  buildTunnelEntries,
+  collectBridgeSessions,
+  collectGridSnapshots,
+  collectStreamLines,
+} from "./lib/bridge-collector.js";
 import { browserManager } from "./lib/browser-manager.js";
 import {
   CDP_PORT,
@@ -55,6 +61,7 @@ import {
   listWorktrees,
   scanRepositories,
 } from "./lib/git.js";
+import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
 import { htmlScreenshotter } from "./lib/html-screenshotter.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
@@ -2069,10 +2076,120 @@ async function startServer() {
       console.error("[Preview] Initial error:", getErrorMessage(err));
     }
 
+    // ===== Bridge Dashboard =====
+    // Bridge ダッシュボード（5インチ常駐表示）専用のサブスクリプション。
+    // クライアントが /bridge を開いたら subscribe し、毎秒スナップショットを送る。
+    let bridgeSnapshotInterval: NodeJS.Timeout | null = null;
+    let bridgeStreamInterval: NodeJS.Timeout | null = null;
+    let bridgeFocusSessionId: string | null = null;
+
+    const stopBridge = () => {
+      if (bridgeSnapshotInterval) {
+        clearInterval(bridgeSnapshotInterval);
+        bridgeSnapshotInterval = null;
+      }
+      if (bridgeStreamInterval) {
+        clearInterval(bridgeStreamInterval);
+        bridgeStreamInterval = null;
+      }
+      bridgeFocusSessionId = null;
+    };
+
+    socket.on("bridge:subscribe", async data => {
+      stopBridge();
+      bridgeFocusSessionId = data?.focusSessionId ?? null;
+
+      // 初回スナップショットは即送る（履歴が空なので CPU 0% になるのは許容）
+      try {
+        const metrics = await hostMetrics.sample();
+        const sessions = collectBridgeSessions();
+        const tunnels = buildTunnelEntries({ primaryUrl: tunnelUrl });
+        socket.emit("bridge:snapshot", {
+          metrics,
+          sessions,
+          tunnels,
+          collectedAt: Date.now(),
+        });
+      } catch (err) {
+        console.error(
+          "[Bridge] 初回スナップショット失敗:",
+          getErrorMessage(err)
+        );
+      }
+
+      // 1秒間隔のスナップショット
+      bridgeSnapshotInterval = setInterval(async () => {
+        try {
+          const metrics = await hostMetrics.sample();
+          const sessions = collectBridgeSessions();
+          const tunnels = buildTunnelEntries({ primaryUrl: tunnelUrl });
+          socket.emit("bridge:snapshot", {
+            metrics,
+            sessions,
+            tunnels,
+            collectedAt: Date.now(),
+          });
+        } catch (err) {
+          console.error("[Bridge] スナップショット失敗:", getErrorMessage(err));
+        }
+      }, 1000);
+
+      // フォーカス中セッションのライブストリームは 1.5秒間隔で送る
+      bridgeStreamInterval = setInterval(() => {
+        if (!bridgeFocusSessionId) return;
+        try {
+          const lines = collectStreamLines(bridgeFocusSessionId, 24);
+          socket.emit("bridge:stream", {
+            sessionId: bridgeFocusSessionId,
+            lines,
+          });
+        } catch (err) {
+          console.error("[Bridge] ストリーム取得失敗:", getErrorMessage(err));
+        }
+      }, 1500);
+    });
+
+    socket.on("bridge:unsubscribe", () => {
+      stopBridge();
+    });
+
+    // ===== Repo Grid View =====
+    // 主 Dashboard でリポジトリ選択時に表示するセッショングリッド用の購読。
+    // Bridge と独立して購読/解除できる。
+    let gridInterval: NodeJS.Timeout | null = null;
+
+    const stopGrid = () => {
+      if (gridInterval) {
+        clearInterval(gridInterval);
+        gridInterval = null;
+      }
+    };
+
+    const emitGridSnapshot = () => {
+      try {
+        socket.emit("session:grid:snapshot", collectGridSnapshots());
+      } catch (err) {
+        console.error("[Grid] スナップショット失敗:", getErrorMessage(err));
+      }
+    };
+
+    socket.on("session:grid:subscribe", () => {
+      stopGrid();
+      // 初回は即送る
+      emitGridSnapshot();
+      gridInterval = setInterval(emitGridSnapshot, 1500);
+    });
+
+    socket.on("session:grid:unsubscribe", () => {
+      stopGrid();
+    });
+
     // Cleanup on disconnect
     socket.on("disconnect", () => {
       console.log(`Client disconnected: ${socket.id}`);
       clearInterval(previewInterval);
+      stopBridge();
+      stopGrid();
 
       forwardHandlers.forEach((handler, event) => {
         sessionOrchestrator.off(event, handler);

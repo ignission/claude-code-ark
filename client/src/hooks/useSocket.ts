@@ -19,6 +19,7 @@ import type {
   Profile,
   RepoInfo,
   ServerToClientEvents,
+  SessionGridSnapshot,
   SpecialKey,
   SystemCapabilities,
   UsageProgress,
@@ -126,6 +127,14 @@ interface UseSocketReturn {
   // Session previews
   sessionPreviews: Map<string, string>;
   sessionActivityTexts: Map<string, string>;
+
+  // Repo Grid View (主 Dashboard 用、購読中のみ更新される)
+  /** sessionId → 最新スナップショット。購読していなければ空 */
+  gridSnapshots: Map<string, SessionGridSnapshot>;
+  /** RepoGridView マウント時に呼ぶ。購読中は 1.5秒ごとに gridSnapshots が更新される */
+  subscribeGrid: () => void;
+  /** RepoGridView アンマウント時に呼ぶ */
+  unsubscribeGrid: () => void;
 
   // Beacon
   beaconMessages: ChatMessage[];
@@ -238,6 +247,11 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   );
   const [sessionActivityTexts, setSessionActivityTexts] = useState<
     Map<string, string>
+  >(new Map());
+
+  // Repo Grid View 用 (主 Dashboard が購読中のみ更新)
+  const [gridSnapshots, setGridSnapshots] = useState<
+    Map<string, SessionGridSnapshot>
   >(new Map());
 
   // Browser session state
@@ -630,6 +644,19 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       });
     });
 
+    // Repo Grid View
+    socket.on("session:grid:snapshot", snapshots => {
+      setGridSnapshots(prev => {
+        const next = new Map(prev);
+        // 配信は「現在の全セッション」なので、購読中のスナップショットで全置換する
+        next.clear();
+        for (const s of snapshots) {
+          next.set(s.sessionId, s);
+        }
+        return next;
+      });
+    });
+
     // Browser session events (noVNC)
     socket.on("browser:started", (session: BrowserSession) => {
       setBrowserSessions(prev => {
@@ -744,6 +771,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       socket.off("beacon:history");
       socket.off("beacon:error");
       socket.off("session:previews");
+      socket.off("session:grid:snapshot");
       socket.off("browser:started");
       socket.off("browser:stopped");
       socket.off("browser:error");
@@ -1084,6 +1112,16 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     setUsageError(null);
   }, []);
 
+  // Repo Grid View 購読
+  const subscribeGrid = useCallback(() => {
+    socketRef.current?.emit("session:grid:subscribe");
+  }, []);
+
+  const unsubscribeGrid = useCallback(() => {
+    socketRef.current?.emit("session:grid:unsubscribe");
+    setGridSnapshots(new Map());
+  }, []);
+
   return {
     socket: socketRef.current,
     isConnected,
@@ -1130,6 +1168,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     // Session previews
     sessionPreviews,
     sessionActivityTexts,
+    gridSnapshots,
+    subscribeGrid,
+    unsubscribeGrid,
     // Beacon
     beaconMessages,
     beaconStreaming,

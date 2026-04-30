@@ -4,12 +4,14 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import Bridge from "./pages/Bridge";
 import Dashboard from "./pages/Dashboard";
 
 function Router() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
+      <Route path="/bridge" component={Bridge} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
