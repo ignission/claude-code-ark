@@ -20,8 +20,10 @@ import { fileURLToPath } from "node:url";
 import httpProxy from "http-proxy";
 import { Server, type Socket } from "socket.io";
 import type {
+  BridgeSnapshot,
   ClientToServerEvents,
   ServerToClientEvents,
+  SessionGridSnapshot,
   SystemCapabilities,
   UsageEntry,
   UsageProgress,
@@ -979,18 +981,26 @@ async function startServer() {
   const BRIDGE_ROOM = "bridge:subscribers";
   const GRID_ROOM = "grid:subscribers";
 
+  // 直近のブロードキャスト結果。新規 subscribe 時に即時応答として送る
+  // (subscribe ハンドラ内で hostMetrics.sample() を再実行すると、内部の prev*
+  // 状態が乱れて次回 broadcast の差分計算が崩れるためキャッシュ参照に絞る)
+  let lastBridgeSnapshot: BridgeSnapshot | null = null;
+  let lastGridSnapshots: SessionGridSnapshot[] | null = null;
+
   const broadcastBridgeSnapshot = async () => {
     if (io.sockets.adapter.rooms.get(BRIDGE_ROOM)?.size === undefined) return;
     try {
       const metrics = await hostMetrics.sample();
       const sessions = collectBridgeSessions();
       const tunnels = buildTunnelEntries({ primaryUrl: tunnelUrl });
-      io.to(BRIDGE_ROOM).emit("bridge:snapshot", {
+      const snapshot = {
         metrics,
         sessions,
         tunnels,
         collectedAt: Date.now(),
-      });
+      };
+      lastBridgeSnapshot = snapshot;
+      io.to(BRIDGE_ROOM).emit("bridge:snapshot", snapshot);
     } catch (err) {
       console.error("[Bridge] スナップショット失敗:", getErrorMessage(err));
     }
@@ -999,7 +1009,9 @@ async function startServer() {
   const broadcastGridSnapshot = () => {
     if (io.sockets.adapter.rooms.get(GRID_ROOM)?.size === undefined) return;
     try {
-      io.to(GRID_ROOM).emit("session:grid:snapshot", collectGridSnapshots());
+      const snapshots = collectGridSnapshots();
+      lastGridSnapshots = snapshots;
+      io.to(GRID_ROOM).emit("session:grid:snapshot", snapshots);
     } catch (err) {
       console.error("[Grid] スナップショット失敗:", getErrorMessage(err));
     }
@@ -2120,26 +2132,13 @@ async function startServer() {
     // ===== Bridge Dashboard =====
     // 購読は Socket.IO room (BRIDGE_ROOM) で管理。
     // 実際のサンプリング/送信はサーバ共有の broadcastBridgeSnapshot が行う。
-    socket.on("bridge:subscribe", async () => {
+    // 初回応答はキャッシュ参照のみ (sample() を呼ぶと共有 prev* 状態が乱れる)。
+    socket.on("bridge:subscribe", () => {
       socket.join(BRIDGE_ROOM);
-      // 初回スナップショットだけは購読開始の即時応答として個別送信する
-      // (履歴が空なので CPU 0% になるのは許容)
-      try {
-        const metrics = await hostMetrics.sample();
-        const sessions = collectBridgeSessions();
-        const tunnels = buildTunnelEntries({ primaryUrl: tunnelUrl });
-        socket.emit("bridge:snapshot", {
-          metrics,
-          sessions,
-          tunnels,
-          collectedAt: Date.now(),
-        });
-      } catch (err) {
-        console.error(
-          "[Bridge] 初回スナップショット失敗:",
-          getErrorMessage(err)
-        );
+      if (lastBridgeSnapshot) {
+        socket.emit("bridge:snapshot", lastBridgeSnapshot);
       }
+      // キャッシュ未着の場合 (起動直後) は次回 broadcastBridgeSnapshot で受け取る
     });
 
     socket.on("bridge:unsubscribe", () => {
@@ -2150,11 +2149,8 @@ async function startServer() {
     // 同じく room (GRID_ROOM) で購読管理。Bridge と独立して購読/解除できる。
     socket.on("session:grid:subscribe", () => {
       socket.join(GRID_ROOM);
-      // 初回は即送る
-      try {
-        socket.emit("session:grid:snapshot", collectGridSnapshots());
-      } catch (err) {
-        console.error("[Grid] 初回スナップショット失敗:", getErrorMessage(err));
+      if (lastGridSnapshots) {
+        socket.emit("session:grid:snapshot", lastGridSnapshots);
       }
     });
 

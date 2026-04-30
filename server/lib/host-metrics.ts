@@ -316,10 +316,7 @@ async function readDiskBytesPerSec(
     const parts = raw.trim().split(/\s+/);
     if (parts.length < 14) continue;
     const name = parts[2];
-    // ループバック / RAM / パーティション (sda1 等数字尾) は除外
-    if (name.startsWith("loop")) continue;
-    if (name.startsWith("ram")) continue;
-    if (/\d+$/.test(name)) continue;
+    if (!isWholeDiskDevice(name)) continue;
     const readSectors = Number(parts[5]);
     const writeSectors = Number(parts[9]);
     if (Number.isFinite(readSectors)) sectors += readSectors;
@@ -333,6 +330,31 @@ async function readDiskBytesPerSec(
   const bytes = (sectors - prev.sectors) * 512;
   const ioMBs = Math.max(0, bytes / 1024 / 1024 / dt);
   return { ioMBs, snapshot: { sectors, ms: now } };
+}
+
+/**
+ * /proc/diskstats のデバイス名から、集計対象とすべき「ホールデバイス」かを判定する。
+ *
+ * 単純に「末尾が数字 → パーティション」とすると、`nvme0n1` や `mmcblk0`
+ * などのデバイス本体を誤って除外してしまう (これらの数字は識別子の一部)。
+ *
+ * 含める: sda / sdb / hda / vda / xvda / nvme0n1 / mmcblk0 / md0 / dm-0
+ * 除外:   sda1 / nvme0n1p1 / mmcblk0p1 / loop* / ram*
+ */
+function isWholeDiskDevice(name: string): boolean {
+  if (name.startsWith("loop")) return false;
+  if (name.startsWith("ram")) return false;
+  // SCSI/SATA/IDE/Xen/VirtIO: sda, hdb, vdc, xvda 等。"sda1" 等のパーティションは除外
+  if (/^(s|h|v|xv)d[a-z]+$/.test(name)) return true;
+  // NVMe: "nvme<ctrl>n<ns>"。partition は "...p<n>"
+  if (/^nvme\d+n\d+$/.test(name)) return true;
+  // eMMC/SD: "mmcblk<n>"。partition は "...p<n>"
+  if (/^mmcblk\d+$/.test(name)) return true;
+  // RAID
+  if (/^md\d+$/.test(name)) return true;
+  // Device mapper (LVM 等)
+  if (/^dm-\d+$/.test(name)) return true;
+  return false;
 }
 
 async function readNetBytesPerSec(
