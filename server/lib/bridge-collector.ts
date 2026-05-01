@@ -255,10 +255,12 @@ function isWorktreeOfRepo(worktreePath: string, repoPath: string): boolean {
 function readUserRepoList(): Set<string> | null {
   try {
     const raw = db.getSetting("repoList");
-    if (!Array.isArray(raw) || raw.length === 0) return null;
-    const list = raw.filter((p): p is string => typeof p === "string");
-    if (list.length === 0) return null;
-    return new Set(list);
+    // 未設定/型不正 → null (= フィルタなし、全件表示)
+    if (!Array.isArray(raw)) return null;
+    // 空配列はユーザーが「全 repo を非表示にした」状態を表すため、
+    // 空 Set を返してすべてのセッションを除外する。
+    // (useGroupedWorktreeItems の repoListEmpty 分岐と同じ意味づけ)
+    return new Set(raw.filter((p): p is string => typeof p === "string"));
   } catch {
     return null;
   }
