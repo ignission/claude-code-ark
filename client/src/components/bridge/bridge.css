@@ -168,28 +168,31 @@
 .bridge-grid-body {
   padding: 6px;
   height: 100%;
-  overflow: hidden;
+  /* 7+ セッション時に下行が切れないよう縦スクロールを許可 */
+  overflow-y: auto;
+  overflow-x: hidden;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  grid-auto-rows: 1fr;
+  /* セルは最低 180px 確保。それを下回るほど詰まったら 2行に積む */
+  grid-auto-rows: minmax(180px, 1fr);
   gap: 6px;
 }
 
-/* 4セッション以下なら 2 列、それ以上は 3 列にして詰めすぎを防ぐ */
+/* 4セッション以下なら 2 列以下にして詰めすぎを防ぐ */
 .bridge-grid-body[data-count="1"] {
   grid-template-columns: 1fr;
-  grid-template-rows: 1fr;
+  grid-auto-rows: 1fr;
 }
 .bridge-grid-body[data-count="2"] {
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr;
+  grid-auto-rows: 1fr;
 }
 .bridge-grid-body[data-count="3"],
 .bridge-grid-body[data-count="4"] {
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
+  grid-auto-rows: 1fr;
 }
-/* 5以上は 3列固定 (デフォルト) */
+/* 5以上は 3列固定 (デフォルト)、行数は内容に合わせて伸びる */
 
 .bridge-cell {
   background: var(--wt);

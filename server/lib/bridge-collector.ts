@@ -48,11 +48,11 @@ export function collectBridgeSessions(): BridgeSession[] {
     allowedRepos === null
       ? managedSessions
       : managedSessions.filter(ms => {
-          // repoPath が無い古いセッションは worktreePath を repoList の prefix と
-          // 突き合わせる（useGroupedWorktreeItems と同じロジック）
           if (ms.repoPath) return allowedRepos.has(ms.repoPath);
+          // legacy session (repoPath 未設定): repo 境界を意識した判定でフィルタ。
+          // 単純な startsWith だと "app" が "app-old" などの兄弟 repo にも誤マッチする
           return Array.from(allowedRepos).some(r =>
-            ms.worktreePath.startsWith(r)
+            isWorktreeOfRepo(ms.worktreePath, r)
           );
         });
   const result: BridgeSession[] = [];
@@ -133,7 +133,7 @@ export function collectGridSnapshots(maxLines = 12): SessionGridSnapshot[] {
       : managedSessions.filter(ms => {
           if (ms.repoPath) return allowedRepos.has(ms.repoPath);
           return Array.from(allowedRepos).some(r =>
-            ms.worktreePath.startsWith(r)
+            isWorktreeOfRepo(ms.worktreePath, r)
           );
         });
 
@@ -233,6 +233,25 @@ const EMPTY_ANALYSIS: PaneAnalysis = {
  * 主UI（Dashboard）が `setSetting("repoList", paths)` で書き込んでいる値を、
  * Bridge は読み取り専用で参照する。
  */
+/**
+ * worktreePath が repoPath の worktree (本体 or 兄弟ディレクトリ) かを判定する。
+ *
+ * 単純な `worktreePath.startsWith(repoPath)` だと "app" と "app-old" が誤マッチする。
+ * クライアント側 sessionUtils.ts の isSessionBelongsToRepo と同等のロジック:
+ *   1. 完全一致 (本体)
+ *   2. 親ディレクトリが一致 + worktree名が "<repo名>-..." で始まる (兄弟 worktree)
+ */
+function isWorktreeOfRepo(worktreePath: string, repoPath: string): boolean {
+  if (worktreePath === repoPath) return true;
+  const repoParent = path.dirname(repoPath);
+  const repoName = path.basename(repoPath);
+  const worktreeParent = path.dirname(worktreePath);
+  const worktreeName = path.basename(worktreePath);
+  return (
+    worktreeParent === repoParent && worktreeName.startsWith(`${repoName}-`)
+  );
+}
+
 function readUserRepoList(): Set<string> | null {
   try {
     const raw = db.getSetting("repoList");
