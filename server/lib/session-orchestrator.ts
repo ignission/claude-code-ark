@@ -9,11 +9,13 @@ import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import type {
+  BridgeSessionStatus,
   ManagedSession,
   SessionStatus,
   SpecialKey,
 } from "../../shared/types.js";
 import { stripAnsi } from "./ansi.js";
+import { analyzeBridgeStatus } from "./bridge-collector.js";
 import { db } from "./database.js";
 import { type TmuxSession, tmuxManager } from "./tmux-manager.js";
 import { ttydManager } from "./ttyd-manager.js";
@@ -674,6 +676,7 @@ export class SessionOrchestrator extends EventEmitter {
     text: string;
     activityText: string;
     status: SessionStatus;
+    bridgeStatus: BridgeSessionStatus;
     timestamp: number;
   }> {
     const allSessions = tmuxManager.getAllSessions();
@@ -682,12 +685,22 @@ export class SessionOrchestrator extends EventEmitter {
       text: string;
       activityText: string;
       status: SessionStatus;
+      bridgeStatus: BridgeSessionStatus;
       timestamp: number;
     }> = [];
 
     for (const session of allSessions) {
-      const raw = tmuxManager.capturePane(session.id, 200);
+      // 可視範囲のみ取得 (scrollback 込みだと /clear 後にも過去ログが残り、
+      // BridgeSessionStatus の READY 判定や preview 表示が壊れる)
+      const raw = tmuxManager.capturePaneVisible(session.id);
       if (raw === null) continue;
+      // Bridge dashboard / サイドバードット / RepoGridView で共通利用する状態判定。
+      // 既存の text/activityText/status (legacy SessionStatus) と同じ raw から
+      // 派生させて、tmux capture を1回で済ませる
+      const { status: bridgeStatus } = analyzeBridgeStatus(
+        raw,
+        session.status === "stopped"
+      );
       const allLines = stripAnsi(raw)
         .split("\n")
         .map(line => line.trim())
@@ -757,6 +770,7 @@ export class SessionOrchestrator extends EventEmitter {
         text,
         activityText: activityLine,
         status,
+        bridgeStatus,
         timestamp: Date.now(),
       });
     }

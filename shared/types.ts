@@ -213,6 +213,11 @@ export interface ServerToClientEvents {
       text: string;
       activityText: string;
       status: SessionStatus;
+      /**
+       * Bridge collector が判定した詳細ステータス。
+       * サイドバードット色 (SessionCard) や RepoGridView と表示を統一するための情報。
+       */
+      bridgeStatus: BridgeSessionStatus;
       timestamp: number;
     }>
   ) => void;
@@ -311,6 +316,16 @@ export interface ServerToClientEvents {
     repoPath: string;
     profileId: string | null;
   }) => void;
+
+  // Bridge ダッシュボード
+  "bridge:snapshot": (snapshot: BridgeSnapshot) => void;
+  "bridge:stream": (data: {
+    sessionId: string;
+    lines: BridgeStreamLine[];
+  }) => void;
+
+  // 主 Dashboard の Repo グリッドビュー
+  "session:grid:snapshot": (snapshots: SessionGridSnapshot[]) => void;
 }
 
 export interface ClientToServerEvents {
@@ -399,6 +414,23 @@ export interface ClientToServerEvents {
 
   // Usage取得 (Linux + multiProfileSupported 限定)
   "usage:request": () => void;
+
+  // Bridge ダッシュボード
+  /**
+   * Bridgeダッシュボードを購読する。
+   * サーバ側で定期ポーリングを開始し、bridge:snapshot を emit する。
+   * トラッキング対象セッションを指定するとそのライブストリームも配信される。
+   */
+  "bridge:subscribe": (data: { focusSessionId?: string | null }) => void;
+  "bridge:unsubscribe": () => void;
+
+  // 主 Dashboard の Repo グリッドビュー
+  /**
+   * セッショングリッド購読。サーバ側で 1.5秒間隔で session:grid:snapshot を emit する。
+   * 主 Dashboard の RepoGridView がマウントされている間だけ購読する想定。
+   */
+  "session:grid:subscribe": () => void;
+  "session:grid:unsubscribe": () => void;
 }
 
 /** Usage取得結果（プロファイル単位） */
@@ -515,4 +547,160 @@ export interface FrontlineRecordSaved {
 export interface FrontlineError {
   action: "get_stats" | "get_records" | "save_record";
   message: string;
+}
+
+// ============================================================
+// Bridge ダッシュボード（5インチサブディスプレイ常駐）
+// ============================================================
+
+/**
+ * Bridge 上で表示するセッションの状態。
+ * Claude Code v2 のターミナル出力 (⏺/⎿/✻/❯ + Sautéed/Wibbling 等) を解析して判定する。
+ *
+ * 優先度 (高→低): ERR > AWAITING > TOOL > THINK > IDLE > READY
+ */
+export type BridgeSessionStatus =
+  | "TOOL" // ツール実行中 (⏺ Tool(...) 直近、⎿ 結果未到着)
+  | "THINK" // 思考中 (✻ Wibbling… / esc to interrupt)
+  | "AWAITING" // ユーザー判断待ち (1./2. メニュー or y/n プロンプト)
+  | "IDLE" // 入力待ち (出力あり、アクション要)
+  | "READY" // 空 / クリア直後 (画面に意味あるテキストなし)
+  | "ERR" // エラー検出
+  | "STOP"; // tmux セッション停止
+
+/** Bridge ダッシュボードに渡すセッション情報 */
+export interface BridgeSession {
+  /** ManagedSession.id と一致 */
+  id: string;
+  /** worktree のディレクトリ名（短縮表示用） */
+  name: string;
+  /** ステータスバッジ用 */
+  status: BridgeSessionStatus;
+  /** tmux pane インデックス表示用（"%3" など。取得不可なら null） */
+  paneId: string | null;
+  /** トークン数概算（"2.1k" 等の表示文字列を含む数値） */
+  tokens: number;
+  /** 経過時間 ms */
+  elapsedMs: number;
+  /** 現在タスクの1行サマリ（capture-pane の最終非UI行） */
+  currentTask: string;
+  /**
+   * capture-pane 末尾のプレーンテキスト（改行込み、UI装飾行は除外済み）。
+   * Bridge のセッショングリッドでターミナル中身プレビュー表示用。
+   */
+  previewText: string;
+}
+
+/** Bridge ライブストリームの1行 */
+export interface BridgeStreamLine {
+  /** プロンプト / ツールコール / 思考 / 出力 などの分類 */
+  kind: "prompt" | "tool" | "think" | "ok" | "error" | "result" | "text";
+  /** 表示テキスト（ANSI 除去済み） */
+  text: string;
+}
+
+/** ホストシステムのリソースメトリクス（毎秒スナップショット） */
+export interface HostMetrics {
+  /** 0-100 全体CPU使用率 */
+  cpuPercent: number;
+  /** load average [1m, 5m, 15m] */
+  loadAvg: [number, number, number];
+  /** 物理メモリ */
+  memory: {
+    /** 全体 GB */
+    totalGB: number;
+    /** 使用中 GB */
+    usedGB: number;
+    /** Wired 相当 GB（Linux の場合 Slab + KernelStack 概算） */
+    wiredGB: number;
+    /** App / Active GB */
+    appGB: number;
+    /** Cached GB */
+    cachedGB: number;
+    /** 圧縮 GB（取得不可なら 0） */
+    compressGB: number;
+    /** 空き GB */
+    freeGB: number;
+    /** swap GB */
+    swapGB: number;
+  };
+  /** コアごと使用率 0-100。配列長 = 物理コア数 */
+  cores: number[];
+  /** ストレージボリューム */
+  volumes: Array<{
+    name: string;
+    mount: string;
+    /** 使用率 0-100 */
+    usedPercent: number;
+    /** 全体 GB */
+    totalGB: number;
+    /** 使用 GB */
+    usedGB: number;
+  }>;
+  /** Network 集計（MB/s） */
+  network: {
+    txMBs: number;
+    rxMBs: number;
+  };
+  /** Disk I/O 集計 (MB/s) */
+  diskIOMBs: number;
+  /** VM温度 °C（取れなければ null） */
+  tempC: number | null;
+  /** GPU使用率 0-100（取れなければ null） */
+  gpuPercent: number | null;
+  /** 直近60秒の総CPU使用率履歴（古い→新しい） */
+  cpuHistory: number[];
+  /** 直近10分のメモリ使用率履歴 0-100 */
+  memHistory: number[];
+}
+
+/** Cloudflare Tunnel エントリ（Bridge 表示用） */
+export interface BridgeTunnelEntry {
+  /** 表示名（例: Gangway） */
+  name: string;
+  /** ホスト名 / URL */
+  host: string;
+  /** ステータス LED */
+  status: "on" | "warn" | "off";
+  /** 統計テキスト（"18ms · 142/h" 等） */
+  stat: string;
+}
+
+/** Bridge ダッシュボードへの全データを1メッセージにまとめたスナップショット */
+export interface BridgeSnapshot {
+  metrics: HostMetrics;
+  sessions: BridgeSession[];
+  tunnels: BridgeTunnelEntry[];
+  /** UNIX ms */
+  collectedAt: number;
+}
+
+// ============================================================
+// 主 Dashboard の Repo グリッドビュー
+// ============================================================
+
+/**
+ * 主 Dashboard でリポジトリ選択時に表示する「セッションのグリッド」用スナップショット。
+ *
+ * 各セッションの状態と末尾プレビュー (プレーンテキスト) を返す。
+ * Bridge の BridgeSession と似ているが、こちらはターミナル中身のプレビュー行を
+ * 含む点が異なる (Bridge は構造化された BridgeStreamLine をフォーカスセッションのみ別経路で送る)。
+ */
+export interface SessionGridSnapshot {
+  /** ManagedSession.id */
+  sessionId: string;
+  /** リポジトリの絶対パス。フィルタとグルーピングに使う */
+  repoPath: string;
+  /** worktree のディレクトリ名 (短縮表示) */
+  name: string;
+  /** ステータスバッジ用 */
+  status: BridgeSessionStatus;
+  /** capture-pane 末尾のプレーンテキスト (改行込み、UI装飾行は除外済み) */
+  previewText: string;
+  /** 直近1行サマリ (UIヘッダーなど用、currentTask と同じ) */
+  currentTask: string;
+  /** 経過時間 ms */
+  elapsedMs: number;
+  /** 取得時刻 UNIX ms */
+  capturedAt: number;
 }

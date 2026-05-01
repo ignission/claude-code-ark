@@ -11,6 +11,7 @@ import { io, type Socket } from "socket.io-client";
 import { toast } from "sonner";
 import type {
   BeaconStreamChunk,
+  BridgeSessionStatus,
   BrowserSession,
   ChatMessage,
   ClientToServerEvents,
@@ -19,6 +20,7 @@ import type {
   Profile,
   RepoInfo,
   ServerToClientEvents,
+  SessionGridSnapshot,
   SpecialKey,
   SystemCapabilities,
   UsageProgress,
@@ -126,6 +128,20 @@ interface UseSocketReturn {
   // Session previews
   sessionPreviews: Map<string, string>;
   sessionActivityTexts: Map<string, string>;
+
+  // Repo Grid View (主 Dashboard 用、購読中のみ更新される)
+  /** sessionId → 最新スナップショット。購読していなければ空 */
+  gridSnapshots: Map<string, SessionGridSnapshot>;
+  /** RepoGridView マウント時に呼ぶ。購読中は 1.5秒ごとに gridSnapshots が更新される */
+  subscribeGrid: () => void;
+  /** RepoGridView アンマウント時に呼ぶ */
+  unsubscribeGrid: () => void;
+
+  /**
+   * sessionId → BridgeSessionStatus。session:previews ペイロードから派生。
+   * RepoGridView 購読の有無に関わらず常に最新化されるので、サイドバードット色等で利用する。
+   */
+  sessionStatuses: Map<string, BridgeSessionStatus>;
 
   // Beacon
   beaconMessages: ChatMessage[];
@@ -240,6 +256,17 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     Map<string, string>
   >(new Map());
 
+  // Repo Grid View 用 (主 Dashboard が購読中のみ更新)
+  const [gridSnapshots, setGridSnapshots] = useState<
+    Map<string, SessionGridSnapshot>
+  >(new Map());
+
+  // BridgeSessionStatus を session:previews から取り出して保持。
+  // サイドバードット色用。RepoGridView 購読の有無に関わらず常時更新される。
+  const [sessionStatuses, setSessionStatuses] = useState<
+    Map<string, BridgeSessionStatus>
+  >(new Map());
+
   // Browser session state
   const [browserSessions, setBrowserSessions] = useState<
     Map<string, BrowserSession>
@@ -325,6 +352,12 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         // 落としてしまうため、pendingを復元対象pathに揃える
         pendingRepoPathRef.current = repoPathRef.current;
         socket.emit("repo:select", repoPathRef.current);
+      }
+
+      // grid 購読中だった場合は再購読する。
+      // サーバ側は disconnect 時に interval を破棄するので、再接続後は再 emit が必須。
+      if (gridSubscribedRef.current) {
+        socket.emit("session:grid:subscribe");
       }
     });
 
@@ -628,6 +661,28 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         }
         return next;
       });
+      // BridgeSessionStatus は Bridge collector の判定結果。サイドバードット色を
+      // RepoGridView と揃えるために sessionStatuses Map に保持する。
+      setSessionStatuses(prev => {
+        const next = new Map(prev);
+        for (const p of previews) {
+          next.set(p.sessionId, p.bridgeStatus);
+        }
+        return next;
+      });
+    });
+
+    // Repo Grid View
+    socket.on("session:grid:snapshot", snapshots => {
+      setGridSnapshots(prev => {
+        const next = new Map(prev);
+        // 配信は「現在の全セッション」なので、購読中のスナップショットで全置換する
+        next.clear();
+        for (const s of snapshots) {
+          next.set(s.sessionId, s);
+        }
+        return next;
+      });
     });
 
     // Browser session events (noVNC)
@@ -744,6 +799,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       socket.off("beacon:history");
       socket.off("beacon:error");
       socket.off("session:previews");
+      socket.off("session:grid:snapshot");
       socket.off("browser:started");
       socket.off("browser:stopped");
       socket.off("browser:error");
@@ -1084,6 +1140,22 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     setUsageError(null);
   }, []);
 
+  // Repo Grid View 購読
+  // 再接続対応: サーバ側は disconnect 時に interval を破棄するので、
+  // クライアント側で「現在購読中か」を ref に持ち、connect 時に都度 re-emit する。
+  const gridSubscribedRef = useRef(false);
+
+  const subscribeGrid = useCallback(() => {
+    gridSubscribedRef.current = true;
+    socketRef.current?.emit("session:grid:subscribe");
+  }, []);
+
+  const unsubscribeGrid = useCallback(() => {
+    gridSubscribedRef.current = false;
+    socketRef.current?.emit("session:grid:unsubscribe");
+    setGridSnapshots(new Map());
+  }, []);
+
   return {
     socket: socketRef.current,
     isConnected,
@@ -1130,6 +1202,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     // Session previews
     sessionPreviews,
     sessionActivityTexts,
+    gridSnapshots,
+    subscribeGrid,
+    unsubscribeGrid,
+    sessionStatuses,
     // Beacon
     beaconMessages,
     beaconStreaming,

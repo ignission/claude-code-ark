@@ -1,0 +1,514 @@
+/**
+ * Bridge Dashboard — 1280x720 1bit Mac OS 風モニタリングUI
+ *
+ * モック (docs/superpowers の HTML) をそのまま React コンポーネント化したもの。
+ * すべてのセクションで `bridge-` prefix の CSS を使う。
+ */
+
+import { useMemo } from "react";
+import type {
+  BridgeSession,
+  BridgeSessionStatus,
+  BridgeSnapshot,
+  HostMetrics,
+} from "../../../../shared/types";
+import "./bridge.css";
+
+interface BridgeDashboardProps {
+  /** Socket.IO から受信した最新スナップショット (未着なら null) */
+  snapshot: BridgeSnapshot | null;
+  /** 現在時刻 (秒精度の表示用) */
+  now: Date;
+}
+
+export function BridgeDashboard({ snapshot, now }: BridgeDashboardProps) {
+  return (
+    <div className="bridge-root">
+      <div className="bridge-stage">
+        <MenuBar now={now} />
+
+        <SessionsGridWindow sessions={snapshot?.sessions ?? []} />
+
+        <SystemMonitorWindow metrics={snapshot?.metrics ?? null} />
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// メニューバー
+// ─────────────────────────────────────────────────────────────────
+
+function MenuBar({ now }: { now: Date }) {
+  const day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][now.getDay()];
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  return (
+    <div className="bridge-menubar">
+      <span className="apple"></span>
+      <span>
+        <b>Ark Bridge</b>
+      </span>
+      <span>File</span>
+      <span>Edit</span>
+      <span>View</span>
+      <span>Sessions</span>
+      <span>Special</span>
+      <span className="clock">
+        {day} {hh}:{mm}
+      </span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Sessions Grid (Bridge メイン: 全セッションを 1bit セルで並べる)
+// ─────────────────────────────────────────────────────────────────
+
+function SessionsGridWindow({ sessions }: { sessions: BridgeSession[] }) {
+  const count = sessions.length;
+  return (
+    <Window
+      className="bridge-w-grid"
+      title={count > 0 ? `Sessions — ${count}` : "Sessions"}
+    >
+      {count === 0 ? (
+        <EmptyHint text="no active sessions" />
+      ) : (
+        <div className="bridge-grid-body" data-count={String(count)}>
+          {sessions.map(s => (
+            <SessionCell key={s.id} session={s} />
+          ))}
+        </div>
+      )}
+    </Window>
+  );
+}
+
+function SessionCell({ session }: { session: BridgeSession }) {
+  return (
+    <div className="bridge-cell">
+      <div className="bridge-cell-titlebar">
+        <span className="bridge-cell-title" title={session.name}>
+          {session.name}
+        </span>
+      </div>
+      <div className="bridge-cell-head">
+        <span className={`bridge-cell-status${statusClass(session.status)}`}>
+          {formatStatusBadge(session.status)}
+        </span>
+        <span className="bridge-cell-elapsed">
+          {formatElapsed(session.elapsedMs)}
+        </span>
+      </div>
+      <div className="bridge-cell-body">
+        {session.previewText ? (
+          session.previewText
+        ) : (
+          <span className="bridge-cell-empty">— no output —</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function formatStatusBadge(status: BridgeSessionStatus): string {
+  if (status === "ERR") return "!! ERR";
+  if (status === "AWAITING") return "!! WAIT";
+  return status;
+}
+
+/**
+ * セルの status バッジに付ける CSS クラスを返す。
+ * 1bit デザインを破って状態ごとに色付け (CSS 側 .s-<status> で配色)。
+ */
+function statusClass(status: BridgeSessionStatus): string {
+  return ` s-${status.toLowerCase()}`;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// System Monitor (CPU / Cores / Memory / Storage) — 4カラム
+// ─────────────────────────────────────────────────────────────────
+
+function SystemMonitorWindow({ metrics }: { metrics: HostMetrics | null }) {
+  return (
+    <Window
+      className="bridge-w-monitor"
+      title={`System Monitor — ${metrics ? `${metrics.cores.length} cores` : "loading"}`}
+    >
+      <div className="bridge-monitor-body">
+        <CpuSection metrics={metrics} />
+        <CoresSection metrics={metrics} />
+        <MemorySection metrics={metrics} />
+        <StorageSection metrics={metrics} />
+      </div>
+    </Window>
+  );
+}
+
+function StorageSection({ metrics }: { metrics: HostMetrics | null }) {
+  const volumes = metrics?.volumes ?? [];
+  // 容量大きい順に host-metrics 側でソート済み。先頭を主ボリュームとして大きく表示する。
+  const primary = volumes[0];
+  const others = volumes.slice(1);
+  const percent = primary ? Math.round(primary.usedPercent) : 0;
+  return (
+    <div className="bridge-mon-section">
+      <div className="bridge-mon-title">
+        <span>Storage</span>
+        <span className="sub">
+          {primary ? primary.name : `${volumes.length} volumes`}
+        </span>
+      </div>
+      {!primary ? (
+        <EmptyHint text="no volumes" />
+      ) : (
+        <>
+          <div className="bridge-storage-pie-wrap">
+            <div
+              className="bridge-storage-pie"
+              style={{
+                background: `conic-gradient(#000 0 ${primary.usedPercent}%, #fff ${primary.usedPercent}% 100%)`,
+              }}
+            />
+          </div>
+          <div className="bridge-gauge-readout">{percent} %</div>
+          <div className="bridge-gauge-label">
+            {formatGB(primary.usedGB)} / {formatGB(primary.totalGB)}
+          </div>
+          {others.length > 0 ? (
+            <div className="bridge-storage-others">+ {others.length} more</div>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+function CpuSection({ metrics }: { metrics: HostMetrics | null }) {
+  const percent = metrics?.cpuPercent ?? 0;
+  const loadAvg = metrics?.loadAvg ?? [0, 0, 0];
+  // 0%→-90deg、100%→+90deg
+  const angle = -90 + (clamp(percent, 0, 100) / 100) * 180;
+  return (
+    <div className="bridge-mon-section">
+      <div className="bridge-mon-title">
+        <span>CPU</span>
+        <span className="sub">
+          {metrics ? `${metrics.cores.length} cores` : "—"}
+        </span>
+      </div>
+      <div className="bridge-gauge">
+        <svg viewBox="0 0 200 110" preserveAspectRatio="xMidYMid meet">
+          <title>CPU usage gauge</title>
+          {/* outer arc */}
+          <path
+            d="M 10 100 A 90 90 0 0 1 190 100"
+            fill="none"
+            stroke="#000"
+            strokeWidth="1.5"
+          />
+          {/* tick marks */}
+          <g stroke="#000" strokeWidth="1">
+            <line x1="10" y1="100" x2="18" y2="100" />
+            <line x1="22" y1="63" x2="29" y2="68" />
+            <line x1="51" y1="32" x2="56" y2="39" />
+            <line x1="100" y1="14" x2="100" y2="22" />
+            <line x1="149" y1="32" x2="144" y2="39" />
+            <line x1="178" y1="63" x2="171" y2="68" />
+            <line x1="190" y1="100" x2="182" y2="100" />
+          </g>
+          <g stroke="#000" strokeWidth="0.5">
+            <line x1="14" y1="80" x2="20" y2="82" />
+            <line x1="34" y1="48" x2="40" y2="52" />
+            <line x1="73" y1="20" x2="76" y2="27" />
+            <line x1="127" y1="20" x2="124" y2="27" />
+            <line x1="166" y1="48" x2="160" y2="52" />
+            <line x1="186" y1="80" x2="180" y2="82" />
+          </g>
+          <g
+            fontFamily="Chicago, Charcoal, sans-serif"
+            fontSize="9"
+            textAnchor="middle"
+          >
+            <text x="10" y="112">
+              0
+            </text>
+            <text x="100" y="9">
+              50
+            </text>
+            <text x="190" y="112">
+              100
+            </text>
+          </g>
+          {/* needle */}
+          <g transform={`rotate(${angle} 100 100)`}>
+            <line
+              x1="100"
+              y1="100"
+              x2="100"
+              y2="22"
+              stroke="#000"
+              strokeWidth="2"
+            />
+            <polygon points="96,30 100,18 104,30" fill="#000" />
+          </g>
+          <circle
+            cx="100"
+            cy="100"
+            r="5"
+            fill="#fff"
+            stroke="#000"
+            strokeWidth="1.5"
+          />
+          <circle cx="100" cy="100" r="1.5" fill="#000" />
+        </svg>
+      </div>
+      <div className="bridge-gauge-readout">{Math.round(percent)} %</div>
+      <div className="bridge-gauge-label">
+        load avg {loadAvg[0].toFixed(2)} · {loadAvg[1].toFixed(2)} ·{" "}
+        {loadAvg[2].toFixed(2)}
+      </div>
+    </div>
+  );
+}
+
+function CoresSection({ metrics }: { metrics: HostMetrics | null }) {
+  const cores = metrics?.cores ?? [];
+  // 表示は最大12コアまで
+  const displayed = cores.slice(0, 12);
+  // 履歴は最大36サンプル前提で 0-100 → 0-100% の高さに
+  const history = metrics?.cpuHistory ?? [];
+  return (
+    <div className="bridge-mon-section">
+      <div className="bridge-mon-title">
+        <span>Cores</span>
+        <span className="sub">{cores.length} total</span>
+      </div>
+      <div className="bridge-core-grid">
+        {displayed.length === 0
+          ? Array.from({ length: 4 }).map((_, i) => (
+              <CoreRow key={`p-${i}`} label={`P${i}`} percent={0} />
+            ))
+          : displayed.map((p, i) => (
+              <CoreRow
+                key={`c-${i}`}
+                label={i < 8 ? `P${i}` : `E${i - 8}`}
+                percent={p}
+                dense={i >= 8}
+              />
+            ))}
+      </div>
+      <div className="bridge-strip">
+        {(history.length > 0
+          ? history
+          : Array.from({ length: 36 }).fill(0)
+        ).map((h, i) => (
+          <div
+            key={`s-${i}`}
+            className="s"
+            style={{ height: `${clamp(h as number, 0, 100)}%` }}
+          />
+        ))}
+      </div>
+      <div className="bridge-strip-axis">
+        <span>−60s</span>
+        <span>now</span>
+      </div>
+    </div>
+  );
+}
+
+function CoreRow({
+  label,
+  percent,
+  dense,
+}: {
+  label: string;
+  percent: number;
+  dense?: boolean;
+}) {
+  const p = clamp(percent, 0, 100);
+  return (
+    <div className="bridge-core-row">
+      <span className="lbl">{label}</span>
+      <div className="bridge-core-bar">
+        <div className={dense ? "dense" : ""} style={{ width: `${p}%` }} />
+      </div>
+      <span className="v">{Math.round(p)}%</span>
+    </div>
+  );
+}
+
+function MemorySection({ metrics }: { metrics: HostMetrics | null }) {
+  const mem = metrics?.memory;
+  const segments = useMemo(() => {
+    if (!mem || mem.totalGB <= 0) {
+      return [
+        { kind: "solid" as const, percent: 0, label: "Wired", value: 0 },
+        { kind: "dense" as const, percent: 0, label: "App", value: 0 },
+        { kind: "sparse" as const, percent: 0, label: "Cached", value: 0 },
+        { kind: "blank" as const, percent: 0, label: "Free", value: 0 },
+      ];
+    }
+    const total = mem.totalGB;
+    const wiredPct = (mem.wiredGB / total) * 100;
+    const appPct = (mem.appGB / total) * 100;
+    const cachedPct = (mem.cachedGB / total) * 100;
+    const compressPct = (mem.compressGB / total) * 100;
+    const freePct = (mem.freeGB / total) * 100;
+    return [
+      {
+        kind: "solid" as const,
+        percent: wiredPct,
+        label: "Wired",
+        value: mem.wiredGB,
+      },
+      {
+        kind: "dense" as const,
+        percent: appPct,
+        label: "App",
+        value: mem.appGB,
+      },
+      {
+        kind: "sparse" as const,
+        percent: cachedPct,
+        label: "Cached",
+        value: mem.cachedGB,
+      },
+      {
+        kind: "sparse" as const,
+        percent: compressPct,
+        label: "Compress",
+        value: mem.compressGB,
+      },
+      {
+        kind: "blank" as const,
+        percent: freePct,
+        label: "Free",
+        value: mem.freeGB,
+      },
+    ];
+  }, [mem]);
+
+  const memHistory = metrics?.memHistory ?? [];
+
+  return (
+    <div className="bridge-mon-section">
+      <div className="bridge-mon-title">
+        <span>Memory</span>
+        <span className="sub">
+          {mem
+            ? `${mem.usedGB.toFixed(1)} / ${mem.totalGB.toFixed(0)} GB`
+            : "—"}
+        </span>
+      </div>
+      <div className="bridge-mem-segments">
+        {segments.map((s, i) => (
+          <div
+            key={`seg-${i}`}
+            className={`bridge-mem-seg${s.kind === "blank" ? "" : ` ${s.kind}`}`}
+            style={{ width: `${clamp(s.percent, 0, 100)}%` }}
+          />
+        ))}
+      </div>
+      <div className="bridge-mem-legend">
+        {segments.map((s, i) => (
+          <div key={`lg-${i}`} className="bridge-mem-legend-row">
+            <span
+              className={`bridge-legend-swatch${
+                s.kind === "blank" ? "" : ` ${s.kind}`
+              }`}
+            />
+            <span>{s.label}</span>
+            <span className="v">{s.value.toFixed(1)}</span>
+          </div>
+        ))}
+        <div className="bridge-mem-legend-row">
+          <span />
+          <span>Swap</span>
+          <span className="v">{mem ? `${mem.swapGB.toFixed(1)} GB` : "—"}</span>
+        </div>
+      </div>
+      <div className="bridge-strip" style={{ marginTop: "auto" }}>
+        {(memHistory.length > 0
+          ? memHistory
+          : Array.from({ length: 18 }).fill(0)
+        ).map((h, i) => (
+          <div
+            key={`m-${i}`}
+            className="s"
+            style={{ height: `${clamp(h as number, 0, 100)}%` }}
+          />
+        ))}
+      </div>
+      <div className="bridge-strip-axis">
+        <span>−10m</span>
+        <span>now</span>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 共通
+// ─────────────────────────────────────────────────────────────────
+
+function Window({
+  className,
+  title,
+  children,
+}: {
+  className: string;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`bridge-window ${className}`}>
+      <div className="bridge-titlebar">
+        <span className="bridge-close-box" />
+        <span className="bridge-title-text">{title}</span>
+        <span className="bridge-zoom-box" />
+      </div>
+      <div className="bridge-window-body">{children}</div>
+    </div>
+  );
+}
+
+function EmptyHint({ text }: { text: string }) {
+  return (
+    <div
+      style={{
+        padding: "10px 12px",
+        fontSize: 11,
+        fontStyle: "italic",
+        opacity: 0.7,
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  if (h > 0) return `${h}:${pad(m)}:${pad(s)}`;
+  return `${pad(m)}:${pad(s)}`;
+}
+
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function formatGB(gb: number): string {
+  if (gb >= 1024) return `${(gb / 1024).toFixed(2)} TB`;
+  if (gb >= 100) return `${gb.toFixed(0)} GB`;
+  return `${gb.toFixed(1)} GB`;
+}

@@ -445,6 +445,28 @@ export class TmuxManager extends EventEmitter {
   }
 
   /**
+   * tmux capture-pane で「現在画面に表示されている範囲のみ」を取得する。
+   *
+   * `capturePane` は -S -N で scrollback を含むが、こちらは引数なしで visible 範囲のみ。
+   * 用途: /clear 後に「現状の見え方」を取りたい場合、scrollback を含まないことが必要。
+   */
+  capturePaneVisible(sessionId: string): string | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    try {
+      const result = spawnSync(
+        TMUX_BINARY_PATH,
+        ["capture-pane", "-t", session.tmuxSessionName, "-p"],
+        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+      );
+      if (result.status !== 0) return null;
+      return (result.stdout ?? "").trimEnd();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * IDでセッションを取得
    */
   getSession(sessionId: string): TmuxSession | undefined {

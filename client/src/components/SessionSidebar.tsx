@@ -62,6 +62,7 @@ import {
 import { useGroupedWorktreeItems } from "@/hooks/useGroupedWorktreeItems";
 import { getBaseName } from "@/utils/pathUtils";
 import type {
+  BridgeSessionStatus,
   ManagedSession,
   Profile,
   SystemCapabilities,
@@ -99,6 +100,16 @@ interface SessionSidebarProps {
   onRestartSession?: (sessionId: string) => void;
   /** リポジトリで新規Worktree作成を要求 */
   onCreateWorktreeForRepo?: (repoPath: string) => void;
+  /** リポジトリヘッダクリック時: メイン領域をセッショングリッドビューに切替える */
+  onSelectRepoGrid?: (repoPath: string) => void;
+  /** 現在グリッド表示中のリポジトリパス（ヘッダのハイライト判定用） */
+  gridRepoPath?: string | null;
+  /**
+   * 各セッションの BridgeSessionStatus スナップショット (sessionId → status)。
+   * SessionCard のドット色を統一するために渡す。
+   * 未設定 (Map empty) の場合は SessionCard 側のフォールバック判定が使われる。
+   */
+  gridStatuses?: Map<string, BridgeSessionStatus>;
 }
 
 export function SessionSidebar({
@@ -123,6 +134,9 @@ export function SessionSidebar({
   onOpenProfileManager,
   onRestartSession,
   onCreateWorktreeForRepo,
+  onSelectRepoGrid,
+  gridRepoPath,
+  gridStatuses,
 }: SessionSidebarProps) {
   const { groupedItems } = useGroupedWorktreeItems(
     worktrees,
@@ -343,17 +357,37 @@ export function SessionSidebar({
                   ) : (
                     <FolderOpen className="w-3 h-3 text-muted-foreground shrink-0" />
                   )}
-                  <span
-                    className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate"
-                    title={repoPath}
-                  >
-                    {repoName}
-                    {disambiguator && (
-                      <span className="ml-1 text-muted-foreground/70 normal-case">
-                        ({disambiguator})
-                      </span>
-                    )}
-                  </span>
+                  {onSelectRepoGrid ? (
+                    <button
+                      type="button"
+                      onClick={() => onSelectRepoGrid(repoPath)}
+                      className={`text-xs font-medium uppercase tracking-wider truncate text-left hover:text-foreground transition-colors ${
+                        gridRepoPath === repoPath
+                          ? "text-foreground"
+                          : "text-muted-foreground"
+                      }`}
+                      title={`${repoPath} (クリックでセッション一覧)`}
+                    >
+                      {repoName}
+                      {disambiguator && (
+                        <span className="ml-1 text-muted-foreground/70 normal-case">
+                          ({disambiguator})
+                        </span>
+                      )}
+                    </button>
+                  ) : (
+                    <span
+                      className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate"
+                      title={repoPath}
+                    >
+                      {repoName}
+                      {disambiguator && (
+                        <span className="ml-1 text-muted-foreground/70 normal-case">
+                          ({disambiguator})
+                        </span>
+                      )}
+                    </span>
+                  )}
                   {renderRepoProfileBadge(repoPath)}
                 </div>
               );
@@ -431,6 +465,9 @@ export function SessionSidebar({
                             session
                               ? sessionActivityTexts.get(session.id) || ""
                               : ""
+                          }
+                          gridStatus={
+                            session ? gridStatuses?.get(session.id) : undefined
                           }
                           onClick={() => session && onSelectSession(session.id)}
                           onDelete={() =>

@@ -1,0 +1,601 @@
+/*
+ * Ark Bridge — Classic Mac OS (System 1-6) style 1bit dashboard
+ * 1280x720 固定。1bit デザイン (黒/白のみ + ディザリング) を厳守。
+ *
+ * すべてのクラスは .bridge-root スコープ下に閉じ込めている。
+ * Tailwind/index.css との競合を避けるため変数も :where(.bridge-root) で定義する。
+ */
+
+.bridge-root {
+  --bk: #000000;
+  --wt: #ffffff;
+}
+
+/* リセット相当（既存 index.css の box-sizing と被らないように上書き） */
+.bridge-root,
+.bridge-root *,
+.bridge-root *::before,
+.bridge-root *::after {
+  box-sizing: border-box;
+}
+
+/* ステージ全体（外枠コンテナ） */
+.bridge-stage {
+  width: 1280px;
+  height: 720px;
+  position: relative;
+  background: var(--wt);
+  color: var(--bk);
+  font-family:
+    "ChicagoFLF", "Chicago", "Charcoal", "Geneva", "Helvetica", sans-serif;
+  font-size: 12px;
+  line-height: 1.2;
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+  overflow: hidden;
+
+  /* デスクトップ: 50% ディザリング */
+  background-image:
+    linear-gradient(
+      45deg,
+      var(--bk) 25%,
+      transparent 25%,
+      transparent 75%,
+      var(--bk) 75%
+    ),
+    linear-gradient(
+      45deg,
+      var(--bk) 25%,
+      transparent 25%,
+      transparent 75%,
+      var(--bk) 75%
+    );
+  background-size: 2px 2px;
+  background-position:
+    0 0,
+    1px 1px;
+  background-color: var(--wt);
+}
+
+/* メニューバー */
+.bridge-menubar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 20px;
+  background: var(--wt);
+  border-bottom: 1px solid var(--bk);
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  gap: 18px;
+  font-size: 12px;
+  z-index: 10;
+}
+
+.bridge-menubar .apple {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.bridge-menubar .clock {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ウィンドウ */
+.bridge-window {
+  position: absolute;
+  background: var(--wt);
+  border: 1px solid var(--bk);
+  box-shadow: 1px 1px 0 var(--bk);
+}
+
+.bridge-titlebar {
+  height: 18px;
+  border-bottom: 1px solid var(--bk);
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  position: relative;
+  background-image: repeating-linear-gradient(
+    0deg,
+    var(--bk) 0,
+    var(--bk) 1px,
+    var(--wt) 1px,
+    var(--wt) 2px
+  );
+}
+
+.bridge-close-box,
+.bridge-zoom-box {
+  width: 11px;
+  height: 11px;
+  border: 1px solid var(--bk);
+  background: var(--wt);
+  flex-shrink: 0;
+}
+
+.bridge-zoom-box {
+  margin-left: auto;
+  position: relative;
+}
+
+.bridge-zoom-box::after {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border: 1px solid var(--bk);
+}
+
+.bridge-title-text {
+  background: var(--wt);
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 1;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 50%;
+  margin-top: -6px;
+  white-space: nowrap;
+}
+
+.bridge-window-body {
+  background: var(--wt);
+  overflow: hidden;
+  height: calc(100% - 19px);
+  position: relative;
+}
+
+/* レイアウト座標 */
+.bridge-w-grid {
+  top: 30px;
+  left: 12px;
+  width: 1256px;
+  height: 410px;
+}
+
+.bridge-w-monitor {
+  top: 452px;
+  left: 12px;
+  width: 1256px;
+  height: 256px;
+}
+
+/* SESSIONS GRID — Bridge メインの全セッション一覧 */
+.bridge-grid-body {
+  padding: 6px;
+  height: 100%;
+  /* 7+ セッション時に下行が切れないよう縦スクロールを許可 */
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  /* セルは最低 180px 確保。それを下回るほど詰まったら 2行に積む */
+  grid-auto-rows: minmax(180px, 1fr);
+  gap: 6px;
+}
+
+/* 4セッション以下なら 2 列以下にして詰めすぎを防ぐ */
+.bridge-grid-body[data-count="1"] {
+  grid-template-columns: 1fr;
+  grid-auto-rows: 1fr;
+}
+.bridge-grid-body[data-count="2"] {
+  grid-template-columns: 1fr 1fr;
+  grid-auto-rows: 1fr;
+}
+.bridge-grid-body[data-count="3"],
+.bridge-grid-body[data-count="4"] {
+  grid-template-columns: 1fr 1fr;
+  grid-auto-rows: 1fr;
+}
+/* 5以上は 3列固定 (デフォルト)、行数は内容に合わせて伸びる */
+
+.bridge-cell {
+  background: var(--wt);
+  border: 1px solid var(--bk);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* セルもMac OSウィンドウ風のドロップシャドウ */
+  box-shadow: 1px 1px 0 var(--bk);
+}
+
+.bridge-cell-titlebar {
+  height: 18px;
+  border-bottom: 1px solid var(--bk);
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  position: relative;
+  background-image: repeating-linear-gradient(
+    0deg,
+    var(--bk) 0,
+    var(--bk) 1px,
+    var(--wt) 1px,
+    var(--wt) 2px
+  );
+  flex-shrink: 0;
+}
+
+.bridge-cell-title {
+  background: var(--wt);
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 1;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 50%;
+  margin-top: -5px;
+  white-space: nowrap;
+  max-width: 80%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* セルヘッダ (status badge + 経過時間) */
+.bridge-cell-head {
+  border-bottom: 1px solid var(--bk);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+/*
+ * セルの状態バッジ。視認性を優先して 1bit を破って色を入れる
+ * (フレーム/タイトルバー/プレビューは 1bit のまま維持)。
+ *
+ * 全バッジ共通: 太字 + tracking + 黒文字輪郭線 (1bit ベースに馴染ませる)
+ */
+.bridge-cell-status {
+  font-weight: bold;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border: 1px solid var(--bk);
+  background: var(--wt);
+  color: var(--bk);
+}
+
+.bridge-cell-status.s-tool,
+.bridge-cell-status.s-think {
+  background: #1a7f37; /* green */
+  color: var(--wt);
+}
+
+.bridge-cell-status.s-awaiting {
+  background: #fb8500; /* vivid orange */
+  color: var(--wt);
+  border: 2px solid var(--bk);
+  padding: 1px 7px;
+  animation: bridge-status-blink 1s steps(2) infinite;
+}
+
+.bridge-cell-status.s-idle {
+  background: #d73a49; /* vivid red */
+  color: var(--wt);
+}
+
+.bridge-cell-status.s-err {
+  background: #991b1b; /* darker red */
+  color: var(--wt);
+  border: 2px solid var(--bk);
+  padding: 1px 7px;
+}
+
+.bridge-cell-status.s-ready,
+.bridge-cell-status.s-stop {
+  background: #737373; /* neutral gray */
+  color: var(--wt);
+}
+
+@keyframes bridge-status-blink {
+  50% {
+    background: var(--wt);
+    color: var(--bk);
+  }
+}
+
+.bridge-cell-elapsed {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* プレビュー本体 */
+.bridge-cell-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 4px 8px;
+  font-family: "Monaco", "Courier New", monospace;
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: pre;
+}
+
+.bridge-cell-empty {
+  color: var(--bk);
+  opacity: 0.4;
+  font-style: italic;
+  font-family: inherit;
+  white-space: normal;
+}
+
+/* SYSTEM MONITOR (4 sections: CPU / Cores / Memory / Storage) */
+.bridge-monitor-body {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 320px 1fr 290px 320px;
+  gap: 0;
+}
+
+.bridge-mon-section {
+  border-right: 1px solid var(--bk);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.bridge-mon-section:last-child {
+  border-right: none;
+}
+
+.bridge-mon-title {
+  font-size: 11px;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--bk);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.bridge-mon-title .sub {
+  font-size: 10px;
+}
+
+/* CPU gauge */
+.bridge-gauge {
+  width: 200px;
+  height: 110px;
+  margin: 4px auto 6px;
+  position: relative;
+}
+
+.bridge-gauge svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.bridge-gauge-readout {
+  text-align: center;
+  font-size: 22px;
+  line-height: 1;
+  margin-top: -8px;
+}
+
+.bridge-gauge-label {
+  text-align: center;
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+/* Cores */
+.bridge-core-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 10px;
+  margin-top: 8px;
+  font-size: 10px;
+}
+
+.bridge-core-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bridge-core-row .lbl {
+  width: 32px;
+}
+
+.bridge-core-row .v {
+  width: 28px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.bridge-core-bar {
+  flex: 1;
+  height: 7px;
+  border: 1px solid var(--bk);
+  background: var(--wt);
+  position: relative;
+}
+
+.bridge-core-bar > div {
+  position: absolute;
+  inset: 0;
+  background: var(--bk);
+}
+
+.bridge-core-bar > div.dense {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--bk) 0,
+    var(--bk) 1px,
+    var(--wt) 1px,
+    var(--wt) 2px
+  );
+  background-color: var(--wt);
+}
+
+/* Memory */
+.bridge-mem-segments {
+  display: flex;
+  height: 22px;
+  border: 1px solid var(--bk);
+  margin: 4px 0 8px;
+}
+
+.bridge-mem-seg {
+  border-right: 1px solid var(--bk);
+  position: relative;
+  overflow: hidden;
+}
+
+.bridge-mem-seg:last-child {
+  border-right: none;
+}
+
+.bridge-mem-seg.solid {
+  background: var(--bk);
+}
+
+.bridge-mem-seg.dense {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--bk) 0,
+    var(--bk) 1px,
+    var(--wt) 1px,
+    var(--wt) 2px
+  );
+}
+
+.bridge-mem-seg.sparse {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--bk) 0,
+    var(--bk) 1px,
+    var(--wt) 1px,
+    var(--wt) 4px
+  );
+}
+
+.bridge-mem-legend {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 10px;
+  font-size: 10px;
+}
+
+.bridge-mem-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bridge-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--bk);
+  flex-shrink: 0;
+}
+
+.bridge-legend-swatch.solid {
+  background: var(--bk);
+}
+
+.bridge-legend-swatch.dense {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--bk) 0,
+    var(--bk) 1px,
+    var(--wt) 1px,
+    var(--wt) 2px
+  );
+}
+
+.bridge-legend-swatch.sparse {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--bk) 0,
+    var(--bk) 1px,
+    var(--wt) 1px,
+    var(--wt) 4px
+  );
+}
+
+.bridge-mem-legend-row .v {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Stripchart (CPU/Memory 履歴) */
+.bridge-strip {
+  flex: 1;
+  margin-top: 8px;
+  border: 1px solid var(--bk);
+  padding: 2px;
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  min-height: 50px;
+}
+
+.bridge-strip .s {
+  flex: 1;
+  background: var(--bk);
+  margin-right: 1px;
+}
+
+.bridge-strip .s:last-child {
+  margin-right: 0;
+}
+
+.bridge-strip-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  margin-top: 2px;
+}
+
+/* Storage (System Monitor 4カラム目, CPU の gauge と同等のサイズ感で中央配置) */
+.bridge-storage-pie-wrap {
+  margin: 4px auto 16px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.bridge-storage-pie {
+  width: 140px;
+  height: 140px;
+  border: 1px solid var(--bk);
+  border-radius: 50%;
+  position: relative;
+}
+
+/* パイ中央の白丸 (ドーナツ風) - 数値は表示せず外部読み取り側に集約 */
+.bridge-storage-pie::after {
+  content: "";
+  position: absolute;
+  inset: 36px;
+  background: var(--wt);
+  border: 1px solid var(--bk);
+  border-radius: 50%;
+}
+
+/*
+ * CPU の .bridge-gauge-readout は半円ゲージ前提で margin-top: -8px が入っている。
+ * Storage は円形パイなので詰まって見えるため、隣接時は余白をリセットする。
+ */
+.bridge-storage-pie-wrap + .bridge-gauge-readout {
+  margin-top: 0;
+}
+
+.bridge-storage-others {
+  text-align: center;
+  font-size: 9px;
+  margin-top: 4px;
+  opacity: 0.6;
+}

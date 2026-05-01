@@ -20,8 +20,10 @@ import { fileURLToPath } from "node:url";
 import httpProxy from "http-proxy";
 import { Server, type Socket } from "socket.io";
 import type {
+  BridgeSnapshot,
   ClientToServerEvents,
   ServerToClientEvents,
+  SessionGridSnapshot,
   SystemCapabilities,
   UsageEntry,
   UsageProgress,
@@ -29,6 +31,11 @@ import type {
 } from "../shared/types.js";
 import { authManager } from "./lib/auth.js";
 import { beaconManager } from "./lib/beacon-manager.js";
+import {
+  buildTunnelEntries,
+  collectBridgeSessions,
+  collectGridSnapshots,
+} from "./lib/bridge-collector.js";
 import { browserManager } from "./lib/browser-manager.js";
 import {
   CDP_PORT,
@@ -55,6 +62,7 @@ import {
   listWorktrees,
   scanRepositories,
 } from "./lib/git.js";
+import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
 import { htmlScreenshotter } from "./lib/html-screenshotter.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
@@ -964,6 +972,58 @@ async function startServer() {
 
   // 複数クライアント同時接続時の重複復元を防ぐ（セッションID → 復元中のPromise）
   const pendingAutoRestores = new Map<string, Promise<void>>();
+
+  // ===== Bridge / Grid 共有サンプリング =====
+  // hostMetrics.sample() / capturePane は前回値との差分や時間あたりレートを内部状態で
+  // 持つ。クライアントごとに setInterval を回すと、複数クライアントで差分計算の基準が
+  // 乱れて不正な値になる。サーバ全体で 1本のループに統一して、購読中のクライアント
+  // (Socket.IO room) にブロードキャストする。
+  const BRIDGE_ROOM = "bridge:subscribers";
+  const GRID_ROOM = "grid:subscribers";
+
+  // 直近のブロードキャスト結果。新規 subscribe 時に即時応答として送る
+  // (subscribe ハンドラ内で hostMetrics.sample() を再実行すると、内部の prev*
+  // 状態が乱れて次回 broadcast の差分計算が崩れるためキャッシュ参照に絞る)
+  let lastBridgeSnapshot: BridgeSnapshot | null = null;
+  let lastGridSnapshots: SessionGridSnapshot[] | null = null;
+
+  const broadcastBridgeSnapshot = async () => {
+    if (io.sockets.adapter.rooms.get(BRIDGE_ROOM)?.size === undefined) return;
+    try {
+      const metrics = await hostMetrics.sample();
+      const sessions = collectBridgeSessions();
+      const tunnels = buildTunnelEntries({ primaryUrl: tunnelUrl });
+      const snapshot = {
+        metrics,
+        sessions,
+        tunnels,
+        collectedAt: Date.now(),
+      };
+      lastBridgeSnapshot = snapshot;
+      io.to(BRIDGE_ROOM).emit("bridge:snapshot", snapshot);
+    } catch (err) {
+      console.error("[Bridge] スナップショット失敗:", getErrorMessage(err));
+    }
+  };
+
+  const broadcastGridSnapshot = () => {
+    if (io.sockets.adapter.rooms.get(GRID_ROOM)?.size === undefined) return;
+    try {
+      const snapshots = collectGridSnapshots();
+      lastGridSnapshots = snapshots;
+      io.to(GRID_ROOM).emit("session:grid:snapshot", snapshots);
+    } catch (err) {
+      console.error("[Grid] スナップショット失敗:", getErrorMessage(err));
+    }
+  };
+
+  // 購読クライアントがいるときだけ実行する (idle 時は no-op)
+  const bridgeBroadcastInterval = setInterval(() => {
+    void broadcastBridgeSnapshot();
+  }, 1000);
+  const gridBroadcastInterval = setInterval(() => {
+    broadcastGridSnapshot();
+  }, 1500);
 
   io.on("connection", socket => {
     console.log(`Client connected: ${socket.id}`);
@@ -2069,10 +2129,41 @@ async function startServer() {
       console.error("[Preview] Initial error:", getErrorMessage(err));
     }
 
+    // ===== Bridge Dashboard =====
+    // 購読は Socket.IO room (BRIDGE_ROOM) で管理。
+    // 実際のサンプリング/送信はサーバ共有の broadcastBridgeSnapshot が行う。
+    // 初回応答はキャッシュ参照のみ (sample() を呼ぶと共有 prev* 状態が乱れる)。
+    socket.on("bridge:subscribe", () => {
+      socket.join(BRIDGE_ROOM);
+      if (lastBridgeSnapshot) {
+        socket.emit("bridge:snapshot", lastBridgeSnapshot);
+      }
+      // キャッシュ未着の場合 (起動直後) は次回 broadcastBridgeSnapshot で受け取る
+    });
+
+    socket.on("bridge:unsubscribe", () => {
+      socket.leave(BRIDGE_ROOM);
+    });
+
+    // ===== Repo Grid View =====
+    // 同じく room (GRID_ROOM) で購読管理。Bridge と独立して購読/解除できる。
+    socket.on("session:grid:subscribe", () => {
+      socket.join(GRID_ROOM);
+      if (lastGridSnapshots) {
+        socket.emit("session:grid:snapshot", lastGridSnapshots);
+      }
+    });
+
+    socket.on("session:grid:unsubscribe", () => {
+      socket.leave(GRID_ROOM);
+    });
+
     // Cleanup on disconnect
     socket.on("disconnect", () => {
       console.log(`Client disconnected: ${socket.id}`);
       clearInterval(previewInterval);
+      // socket.leave は disconnect 時に Socket.IO が自動で行うので room の明示的な
+      // クリーンアップは不要
 
       forwardHandlers.forEach((handler, event) => {
         sessionOrchestrator.off(event, handler);
@@ -2197,6 +2288,8 @@ async function startServer() {
   const shutdown = () => {
     console.log("Shutting down...");
     clearInterval(fileUploadCleanupInterval);
+    clearInterval(bridgeBroadcastInterval);
+    clearInterval(gridBroadcastInterval);
     sessionOrchestrator.cleanup();
     beaconManager.cleanup();
     browserManager.cleanup();

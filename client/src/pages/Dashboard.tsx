@@ -8,6 +8,7 @@ import { FrontLineModal } from "@/components/frontline/FrontLineModal";
 import { MobileChatView } from "@/components/MobileChatView";
 import { MobileLayout } from "@/components/MobileLayout";
 import { ProfileManagerDialog } from "@/components/ProfileManagerDialog";
+import { RepoGridView } from "@/components/RepoGridView";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
@@ -35,7 +36,10 @@ import { useSettings } from "@/hooks/useSettings";
 import { useSocket } from "@/hooks/useSocket";
 import { useViewerTabs } from "@/hooks/useViewerTabs";
 import { getBaseName } from "@/utils/pathUtils";
-import { findRepoForSession } from "@/utils/sessionUtils";
+import {
+  findRepoForSession,
+  isSessionBelongsToRepo,
+} from "@/utils/sessionUtils";
 import type { ManagedSession, Worktree } from "../../../shared/types";
 
 export default function Dashboard() {
@@ -90,6 +94,10 @@ export default function Dashboard() {
     beaconClear,
     sessionPreviews,
     sessionActivityTexts,
+    gridSnapshots,
+    subscribeGrid,
+    unsubscribeGrid,
+    sessionStatuses,
     readFile,
     fileContent,
     browserSessions,
@@ -130,6 +138,23 @@ export default function Dashboard() {
   // ブラウザビューを一度でも開いたかどうかのフラグ
   // 一度開いたら常に描画してdisplay:hiddenで切り替え、BrowserPaneの再マウント（VNC再接続）を防ぐ
   const [hasBrowserOpened, setHasBrowserOpened] = useState(false);
+
+  // リポジトリ別セッショングリッドビュー (B案: スナップショット型)
+  // null 以外のとき main 領域は RepoGridView に切り替わる。
+  // selectedSessionId とは独立。セルクリックで selectedSessionId に切替えてターミナル表示に潜る
+  const [gridRepoPath, setGridRepoPath] = useState<string | null>(null);
+
+  /** リポジトリヘッダクリック時: グリッドビューを開く */
+  const handleSelectRepoGrid = useCallback((repoPath: string) => {
+    setGridRepoPath(repoPath);
+    setSelectedSessionId(null);
+  }, []);
+
+  /** グリッドのセルクリック時: ターミナル表示に切替 */
+  const handleSelectSessionFromGrid = useCallback((sessionId: string) => {
+    setGridRepoPath(null);
+    setSelectedSessionId(sessionId);
+  }, []);
 
   /** ブラウザを選択（未起動なら起動） */
   const handleSelectBrowser = useCallback(() => {
@@ -198,6 +223,12 @@ export default function Dashboard() {
       setSetting("selectedSessionId", selectedSessionId);
     }
   }, [selectedSessionId, setSetting]);
+
+  // 注: 以前はここで subscribeGrid を常時 ON にしていたが、サーバ側で
+  // collectGridSnapshots() が 1.5秒ごとに走り session:previews と pane polling が
+  // 二重化していた。サイドバードット色は session:previews が運ぶ
+  // bridgeStatus (sessionStatuses) を使うので、grid 購読は RepoGridView 内で
+  // mount/unmount に紐付ける形に戻している。
 
   // リロード時にブラウザ選択状態を維持:
   // selectedSessionIdが"browser"のまま復元された場合、
@@ -334,7 +365,8 @@ export default function Dashboard() {
       }
     }
 
-    if (!selectedSessionId && sessions.size > 0) {
+    // グリッドビュー表示中は自動選択を抑制 (ユーザーがセルクリックで明示的に選ぶ)
+    if (!selectedSessionId && sessions.size > 0 && !gridRepoPath) {
       const first = Array.from(sessions.values())[0];
       setSelectedSessionId(first.id);
     }
@@ -342,7 +374,7 @@ export default function Dashboard() {
       const remaining = Array.from(sessions.values());
       setSelectedSessionId(remaining.length > 0 ? remaining[0].id : null);
     }
-  }, [sessions, selectedSessionId]);
+  }, [sessions, selectedSessionId, gridRepoPath]);
 
   useEffect(() => {
     if (deletedWorktreeId) {
@@ -539,6 +571,9 @@ export default function Dashboard() {
               onOpenProfileManager={() => setShowProfileManager(true)}
               onRestartSession={handleRestartSession}
               onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
+              onSelectRepoGrid={handleSelectRepoGrid}
+              gridRepoPath={gridRepoPath}
+              gridStatuses={sessionStatuses}
             />
           }
           main={
@@ -550,6 +585,31 @@ export default function Dashboard() {
                 </div>
               )}
               <div className="flex-1 overflow-hidden relative">
+                {/* リポジトリグリッドビュー: gridRepoPath が設定されているとき
+                    全 TerminalPane と独立して表示する (ttyd iframe は非マウント) */}
+                {gridRepoPath && !selectedSessionId ? (
+                  <RepoGridView
+                    repoPath={gridRepoPath}
+                    sessions={Array.from(sessions.values()).filter(s => {
+                      // useGroupedWorktreeItems と同じフォールバック判定:
+                      //  1. session.repoPath が gridRepoPath に一致
+                      //  2. worktreePath が gridRepoPath で始まる (worktree)
+                      //  3. isSessionBelongsToRepo で姉妹worktreeを判定
+                      if (s.repoPath === gridRepoPath) return true;
+                      if (s.worktreePath.startsWith(`${gridRepoPath}/`))
+                        return true;
+                      if (s.worktreePath === gridRepoPath) return true;
+                      return isSessionBelongsToRepo(s, gridRepoPath);
+                    })}
+                    worktreeBranchById={
+                      new Map(worktrees.map(w => [w.id, w.branch]))
+                    }
+                    snapshots={gridSnapshots}
+                    onSubscribe={subscribeGrid}
+                    onUnsubscribe={unsubscribeGrid}
+                    onSelectSession={handleSelectSessionFromGrid}
+                  />
+                ) : null}
                 {/* ブラウザビュー: 一度開いたら常に描画してdisplay:hiddenで切り替え。
                     BrowserPaneの再マウント（VNC再接続）を防ぐ */}
                 {hasBrowserOpened && (
