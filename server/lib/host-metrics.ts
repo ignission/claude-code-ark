@@ -10,10 +10,13 @@
  * 差分で算出する。履歴は内部リングバッファで保持する。
  */
 
-import { execSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promises as fs, readFileSync, statSync } from "node:fs";
 import os from "node:os";
+import { promisify } from "node:util";
 import type { HostMetrics } from "../../shared/types.js";
+
+const execFileAsync = promisify(execFile);
 
 /** /proc/stat の cpu 行を集計したスナップショット */
 interface CpuSnapshot {
@@ -55,7 +58,7 @@ export class HostMetricsCollector {
     this.prevCpu = cpu;
 
     const memory = await readMemory();
-    const volumes = readVolumes();
+    const volumes = await readVolumes();
     const disk = await readDiskBytesPerSec(this.prevDisk);
     if (disk.snapshot) this.prevDisk = disk.snapshot;
     const net = await readNetBytesPerSec(this.prevNet);
@@ -193,20 +196,31 @@ async function readMemory(): Promise<HostMetrics["memory"]> {
     const text = await readFileAsyncSafe("/proc/meminfo");
     if (text) {
       const m = parseMeminfo(text);
-      const totalGB = kbToGB(m.MemTotal);
-      const freeGB = kbToGB(m.MemAvailable ?? m.MemFree);
-      const cachedGB = kbToGB((m.Cached ?? 0) + (m.Buffers ?? 0));
-      const wiredGB = kbToGB((m.Slab ?? 0) + (m.KernelStack ?? 0));
-      // App ≒ Active - Cached - Wired を概算（負値は0クランプ）
-      const appGB = Math.max(
-        0,
-        kbToGB(m.Active ?? m.MemTotal - (m.MemFree ?? 0) - (m.Cached ?? 0)) -
-          cachedGB -
-          wiredGB
-      );
+      // Wired / App / Cached / Free の4セグメントが MemTotal にきっちり積み上がるよう、
+      // 引き算ベースで導出する。
+      //   Free   = MemFree                               (純粋に未使用)
+      //   Cached = Buffers + Cached                      (再利用可能なファイルキャッシュ)
+      //   Wired  = Slab + KernelStack                    (カーネルの非ページ可能領域)
+      //   App    = MemTotal − Free − Cached − Wired      (残り = ユーザプロセス匿名メモリ)
+      const memTotalKB = m.MemTotal ?? 0;
+      const memFreeKB = m.MemFree ?? 0;
+      const cachedKB = (m.Cached ?? 0) + (m.Buffers ?? 0);
+      const wiredKB = (m.Slab ?? 0) + (m.KernelStack ?? 0);
+      const appKB = Math.max(0, memTotalKB - memFreeKB - cachedKB - wiredKB);
+
+      const totalGB = kbToGB(memTotalKB);
+      const freeGB = kbToGB(memFreeKB);
+      const cachedGB = kbToGB(cachedKB);
+      const wiredGB = kbToGB(wiredKB);
+      const appGB = kbToGB(appKB);
+
+      // usedGB はサマリ表示用 (reclaimable cache を含む実質使用感)。
+      // MemAvailable があればそれ基準、無ければ Total - MemFree。
+      const availableGB = kbToGB(m.MemAvailable ?? memFreeKB);
+      const usedGB = Math.max(0, totalGB - availableGB);
+
       const swapTotal = kbToGB(m.SwapTotal ?? 0);
       const swapFree = kbToGB(m.SwapFree ?? 0);
-      const usedGB = Math.max(0, totalGB - freeGB);
       return {
         totalGB,
         usedGB,
@@ -246,13 +260,14 @@ function parseMeminfo(text: string): Record<string, number> {
   return out;
 }
 
-function readVolumes(): HostMetrics["volumes"] {
+async function readVolumes(): Promise<HostMetrics["volumes"]> {
   // df は Linux/macOS で共通。-P で POSIX フォーマット、-k で KB 単位。
   // 対象は / と $HOME とユーザのデータディレクトリ程度に絞る
+  // 非同期 (execFile) を使って Node の event loop を毎秒ブロックしないようにする。
+  // df がスタックしたマウントで応答しない場合に備え 2秒で timeout する。
   try {
-    const out = execSync("df -Pk", {
+    const { stdout: out } = await execFileAsync("df", ["-Pk"], {
       encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
       timeout: 2000,
     });
     const lines = out.split("\n").slice(1).filter(Boolean);
