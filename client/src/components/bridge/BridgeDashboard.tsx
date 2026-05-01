@@ -13,6 +13,7 @@ import type {
   HostMetrics,
 } from "../../../../shared/types";
 import "./bridge.css";
+import { clamp, formatGB } from "./utils";
 
 interface BridgeDashboardProps {
   /** Socket.IO から受信した最新スナップショット (未着なら null) */
@@ -490,10 +491,6 @@ function EmptyHint({ text }: { text: string }) {
   );
 }
 
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
-}
-
 function formatElapsed(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const h = Math.floor(totalSeconds / 3600);
@@ -505,10 +502,4 @@ function formatElapsed(ms: number): string {
 
 function pad(n: number): string {
   return String(n).padStart(2, "0");
-}
-
-function formatGB(gb: number): string {
-  if (gb >= 1024) return `${(gb / 1024).toFixed(2)} TB`;
-  if (gb >= 100) return `${gb.toFixed(0)} GB`;
-  return `${gb.toFixed(1)} GB`;
 }
