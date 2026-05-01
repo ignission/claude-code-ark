@@ -13,6 +13,8 @@ import {
   useRef,
   useState,
 } from "react";
+import type { HostMetrics } from "../../../shared/types";
+import { SystemStatusBar } from "./bridge/SystemStatusBar";
 
 const SIDEBAR_MIN_WIDTH = 180;
 const SIDEBAR_MAX_WIDTH = 450;
@@ -32,6 +34,7 @@ interface SidebarMainLayoutProps {
   initialSidebarWidth?: number;
   onSidebarWidthChange?: (width: number) => void;
   onOpenFrontLine?: () => void;
+  hostMetrics?: HostMetrics | null;
   beaconVisible?: boolean;
   onBeaconVisibleChange?: (visible: boolean) => void;
   initialBeaconWidth?: number;
@@ -57,6 +60,7 @@ export function SidebarMainLayout({
   initialSidebarWidth = SIDEBAR_DEFAULT_WIDTH,
   onSidebarWidthChange,
   onOpenFrontLine,
+  hostMetrics = null,
   beaconVisible = true,
   onBeaconVisibleChange,
   initialBeaconWidth = BEACON_DEFAULT_WIDTH,
@@ -235,6 +239,7 @@ export function SidebarMainLayout({
             🎯 FrontLine
           </button>
         )}
+        <SystemStatusBar metrics={hostMetrics} />
         {/* biome-ignore lint/a11y/noStaticElementInteractions: リサイズハンドルはマウス操作専用 */}
         <div
           className={`absolute top-0 -right-1 w-3 h-full cursor-col-resize hover:bg-primary/50 transition-colors ${

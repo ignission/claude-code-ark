@@ -31,6 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useBridgeSnapshot } from "@/hooks/useBridgeSnapshot";
 import { useIsMobile } from "@/hooks/useMobile";
 import { useSettings } from "@/hooks/useSettings";
 import { useSocket } from "@/hooks/useSocket";
@@ -124,6 +125,9 @@ export default function Dashboard() {
   });
 
   const isMobile = useIsMobile();
+
+  // PCサイドバー下部のシステムステータスバー用に bridge:snapshot を購読
+  const bridgeSnapshot = useBridgeSnapshot(socket, !isMobile);
 
   const isRemote =
     typeof window !== "undefined" &&
@@ -693,6 +697,7 @@ export default function Dashboard() {
           initialSidebarWidth={getSetting<number>("ark-sidebar-width", 250)}
           onSidebarWidthChange={w => setSetting("ark-sidebar-width", w)}
           onOpenFrontLine={() => setShowFrontLine(true)}
+          hostMetrics={bridgeSnapshot?.metrics ?? null}
           beaconVisible={getSetting<boolean>("ark-beacon-visible", true)}
           onBeaconVisibleChange={v => setSetting("ark-beacon-visible", v)}
           initialBeaconWidth={getSetting<number>("ark-beacon-width", 350)}
