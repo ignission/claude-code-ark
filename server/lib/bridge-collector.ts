@@ -100,6 +100,31 @@ export function collectBridgeSessions(): BridgeSession[] {
 }
 
 /**
+ * 既に取得済みの capture-pane 出力から BridgeSessionStatus + 末尾プレビューを解析する。
+ *
+ * session-orchestrator から呼んで session:previews ペイロードに status を載せ、
+ * Bridge と主 Dashboard の重複ポーリングを避けるためのヘルパー。
+ *
+ * raw は capturePaneVisible() の戻り値を渡すこと。scrollback 込みだと READY 判定が壊れる。
+ */
+export function analyzeBridgeStatus(
+  raw: string,
+  sessionStopped: boolean
+): { status: BridgeSessionStatus; previewText: string } {
+  const analysis = analyzePane(raw);
+  const previewText = extractPreviewText(raw, 12);
+  let status: BridgeSessionStatus;
+  if (sessionStopped) {
+    status = "STOP";
+  } else if (analysis.status === "IDLE" && previewText.trim().length === 0) {
+    status = "READY";
+  } else {
+    status = analysis.status;
+  }
+  return { status, previewText };
+}
+
+/**
  * フォーカス中セッションのライブストリームを取得する。
  * 直近 N 行を構造化して返す。
  */

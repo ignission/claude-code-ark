@@ -1,6 +1,6 @@
 import { AlertCircle, Copy, Loader2, Terminal } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { BrowserPane } from "@/components/BrowserPane";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
@@ -40,11 +40,7 @@ import {
   findRepoForSession,
   isSessionBelongsToRepo,
 } from "@/utils/sessionUtils";
-import type {
-  BridgeSessionStatus,
-  ManagedSession,
-  Worktree,
-} from "../../../shared/types";
+import type { ManagedSession, Worktree } from "../../../shared/types";
 
 export default function Dashboard() {
   const {
@@ -101,6 +97,7 @@ export default function Dashboard() {
     gridSnapshots,
     subscribeGrid,
     unsubscribeGrid,
+    sessionStatuses,
     readFile,
     fileContent,
     browserSessions,
@@ -158,16 +155,6 @@ export default function Dashboard() {
     setGridRepoPath(null);
     setSelectedSessionId(sessionId);
   }, []);
-
-  // gridSnapshots (sessionId → SessionGridSnapshot) からサイドバードット用の
-  // (sessionId → BridgeSessionStatus) Map を導出。SessionCard のドット色判定に渡す。
-  const gridStatusesMap = useMemo(() => {
-    const m = new Map<string, BridgeSessionStatus>();
-    gridSnapshots.forEach((snap, id) => {
-      m.set(id, snap.status);
-    });
-    return m;
-  }, [gridSnapshots]);
 
   /** ブラウザを選択（未起動なら起動） */
   const handleSelectBrowser = useCallback(() => {
@@ -237,16 +224,11 @@ export default function Dashboard() {
     }
   }, [selectedSessionId, setSetting]);
 
-  // セッショングリッドのスナップショット購読を常時 ON にする。
-  // RepoGridView 表示時だけでなく、サイドバーの状態ドット (緑/橙/赤/グレー) も
-  // BridgeSessionStatus を使うため、Dashboard マウント中は常に購読する。
-  useEffect(() => {
-    if (isSettingsLoading) return;
-    subscribeGrid();
-    return () => {
-      unsubscribeGrid();
-    };
-  }, [isSettingsLoading, subscribeGrid, unsubscribeGrid]);
+  // 注: 以前はここで subscribeGrid を常時 ON にしていたが、サーバ側で
+  // collectGridSnapshots() が 1.5秒ごとに走り session:previews と pane polling が
+  // 二重化していた。サイドバードット色は session:previews が運ぶ
+  // bridgeStatus (sessionStatuses) を使うので、grid 購読は RepoGridView 内で
+  // mount/unmount に紐付ける形に戻している。
 
   // リロード時にブラウザ選択状態を維持:
   // selectedSessionIdが"browser"のまま復元された場合、
@@ -591,7 +573,7 @@ export default function Dashboard() {
               onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
               onSelectRepoGrid={handleSelectRepoGrid}
               gridRepoPath={gridRepoPath}
-              gridStatuses={gridStatusesMap}
+              gridStatuses={sessionStatuses}
             />
           }
           main={
@@ -623,6 +605,8 @@ export default function Dashboard() {
                       new Map(worktrees.map(w => [w.id, w.branch]))
                     }
                     snapshots={gridSnapshots}
+                    onSubscribe={subscribeGrid}
+                    onUnsubscribe={unsubscribeGrid}
                     onSelectSession={handleSelectSessionFromGrid}
                   />
                 ) : null}

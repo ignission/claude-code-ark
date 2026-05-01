@@ -11,6 +11,7 @@ import { io, type Socket } from "socket.io-client";
 import { toast } from "sonner";
 import type {
   BeaconStreamChunk,
+  BridgeSessionStatus,
   BrowserSession,
   ChatMessage,
   ClientToServerEvents,
@@ -136,6 +137,12 @@ interface UseSocketReturn {
   /** RepoGridView アンマウント時に呼ぶ */
   unsubscribeGrid: () => void;
 
+  /**
+   * sessionId → BridgeSessionStatus。session:previews ペイロードから派生。
+   * RepoGridView 購読の有無に関わらず常に最新化されるので、サイドバードット色等で利用する。
+   */
+  sessionStatuses: Map<string, BridgeSessionStatus>;
+
   // Beacon
   beaconMessages: ChatMessage[];
   beaconStreaming: boolean;
@@ -252,6 +259,12 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   // Repo Grid View 用 (主 Dashboard が購読中のみ更新)
   const [gridSnapshots, setGridSnapshots] = useState<
     Map<string, SessionGridSnapshot>
+  >(new Map());
+
+  // BridgeSessionStatus を session:previews から取り出して保持。
+  // サイドバードット色用。RepoGridView 購読の有無に関わらず常時更新される。
+  const [sessionStatuses, setSessionStatuses] = useState<
+    Map<string, BridgeSessionStatus>
   >(new Map());
 
   // Browser session state
@@ -645,6 +658,15 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         const next = new Map(prev);
         for (const p of previews) {
           next.set(p.sessionId, p.activityText);
+        }
+        return next;
+      });
+      // BridgeSessionStatus は Bridge collector の判定結果。サイドバードット色を
+      // RepoGridView と揃えるために sessionStatuses Map に保持する。
+      setSessionStatuses(prev => {
+        const next = new Map(prev);
+        for (const p of previews) {
+          next.set(p.sessionId, p.bridgeStatus);
         }
         return next;
       });
@@ -1183,6 +1205,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     gridSnapshots,
     subscribeGrid,
     unsubscribeGrid,
+    sessionStatuses,
     // Beacon
     beaconMessages,
     beaconStreaming,

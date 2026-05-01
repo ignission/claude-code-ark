@@ -14,6 +14,7 @@
  */
 
 import { Activity, AlertTriangle, Brain, Loader2, Pause } from "lucide-react";
+import { useEffect } from "react";
 import type {
   BridgeSessionStatus,
   ManagedSession,
@@ -27,8 +28,11 @@ interface RepoGridViewProps {
   sessions: ManagedSession[];
   /** Worktree マップ (worktreeId → branch名) */
   worktreeBranchById: Map<string, string>;
-  /** サーバから配信中のスナップショット (Dashboard が常時購読しているもの) */
+  /** サーバから配信中のスナップショット (mount 中だけ購読) */
   snapshots: Map<string, SessionGridSnapshot>;
+  /** マウント時に購読、アンマウント時に解除 */
+  onSubscribe: () => void;
+  onUnsubscribe: () => void;
   /** セルクリックでフルターミナル表示に切替 */
   onSelectSession: (sessionId: string) => void;
 }
@@ -38,8 +42,17 @@ export function RepoGridView({
   sessions,
   worktreeBranchById,
   snapshots,
+  onSubscribe,
+  onUnsubscribe,
   onSelectSession,
 }: RepoGridViewProps) {
+  // RepoGridView 表示中だけ session:grid:snapshot を購読する
+  // (常時購読すると pane polling が二重化するため)
+  useEffect(() => {
+    onSubscribe();
+    return () => onUnsubscribe();
+  }, [onSubscribe, onUnsubscribe]);
+
   const repoName = repoPath.split("/").filter(Boolean).pop() ?? repoPath;
 
   return (

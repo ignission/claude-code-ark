@@ -213,6 +213,11 @@ export interface ServerToClientEvents {
       text: string;
       activityText: string;
       status: SessionStatus;
+      /**
+       * Bridge collector が判定した詳細ステータス。
+       * サイドバードット色 (SessionCard) や RepoGridView と表示を統一するための情報。
+       */
+      bridgeStatus: BridgeSessionStatus;
       timestamp: number;
     }>
   ) => void;
