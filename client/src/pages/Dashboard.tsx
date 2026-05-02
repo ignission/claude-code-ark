@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { BrowserPane } from "@/components/BrowserPane";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { FrontLineModal } from "@/components/frontline/FrontLineModal";
+import { McpManagerDialog } from "@/components/McpManagerDialog";
 import { MobileChatView } from "@/components/MobileChatView";
 import { MobileLayout } from "@/components/MobileLayout";
 import { ProfileManagerDialog } from "@/components/ProfileManagerDialog";
@@ -114,6 +115,14 @@ export default function Dashboard() {
     deleteProfile,
     setRepoProfile,
     restartSessionWithProfile,
+    mcpCatalog,
+    mcpConnections,
+    mcpPendingAuthUrls,
+    mcpConnect,
+    mcpSubmitRedirect,
+    mcpDisconnect,
+    mcpAuthCancel,
+    mcpRename,
     usageRequesting,
     usageProgress,
     requestUsage,
@@ -260,6 +269,7 @@ export default function Dashboard() {
   const [selectedPort, setSelectedPort] = useState<number | null>(null);
   const [showPortSelector, setShowPortSelector] = useState(false);
   const [showProfileManager, setShowProfileManager] = useState(false);
+  const [showMcpManager, setShowMcpManager] = useState(false);
 
   const copyToClipboard = (text: string | null) => {
     if (text) {
@@ -705,6 +715,7 @@ export default function Dashboard() {
           initialSidebarWidth={getSetting<number>("ark-sidebar-width", 250)}
           onSidebarWidthChange={w => setSetting("ark-sidebar-width", w)}
           onOpenFrontLine={() => setShowFrontLine(true)}
+          onOpenMcpManager={() => setShowMcpManager(true)}
           hostMetrics={bridgeSnapshot?.metrics ?? null}
           beaconVisible={getSetting<boolean>("ark-beacon-visible", true)}
           onBeaconVisibleChange={v => setSetting("ark-beacon-visible", v)}
@@ -895,6 +906,20 @@ export default function Dashboard() {
           onDelete={deleteProfile}
         />
       )}
+
+      {/* MCP server (Beacon の外部 OAuth MCP) 管理 */}
+      <McpManagerDialog
+        open={showMcpManager}
+        onOpenChange={setShowMcpManager}
+        catalog={mcpCatalog}
+        connections={mcpConnections}
+        pendingAuthUrls={mcpPendingAuthUrls}
+        onConnect={mcpConnect}
+        onSubmitRedirect={mcpSubmitRedirect}
+        onDisconnect={mcpDisconnect}
+        onAuthCancel={mcpAuthCancel}
+        onRename={mcpRename}
+      />
     </>
   );
 }

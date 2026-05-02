@@ -34,6 +34,8 @@ interface SidebarMainLayoutProps {
   initialSidebarWidth?: number;
   onSidebarWidthChange?: (width: number) => void;
   onOpenFrontLine?: () => void;
+  /** Beacon の外部 MCP server (OAuth) 管理ダイアログを開く */
+  onOpenMcpManager?: () => void;
   hostMetrics?: HostMetrics | null;
   beaconVisible?: boolean;
   onBeaconVisibleChange?: (visible: boolean) => void;
@@ -60,6 +62,7 @@ export function SidebarMainLayout({
   initialSidebarWidth = SIDEBAR_DEFAULT_WIDTH,
   onSidebarWidthChange,
   onOpenFrontLine,
+  onOpenMcpManager,
   hostMetrics = null,
   beaconVisible = true,
   onBeaconVisibleChange,
@@ -230,6 +233,15 @@ export function SidebarMainLayout({
         style={{ width: `${sidebarWidth}px` }}
       >
         <div className="flex-1 min-h-0 overflow-hidden">{sidebar}</div>
+        {onOpenMcpManager && (
+          <button
+            type="button"
+            onClick={onOpenMcpManager}
+            className="w-full py-2 text-sm text-muted-foreground hover:text-foreground border-t border-border transition-colors block text-center"
+          >
+            🔌 MCP server
+          </button>
+        )}
         {onOpenFrontLine && (
           <button
             type="button"

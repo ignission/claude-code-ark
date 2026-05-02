@@ -17,6 +17,9 @@ import type {
   ClientToServerEvents,
   FsListResult,
   ManagedSession,
+  McpConnectionInfo,
+  McpProviderCatalog,
+  McpProvidersSnapshot,
   Profile,
   RepoInfo,
   ServerToClientEvents,
@@ -175,6 +178,21 @@ interface UseSocketReturn {
   setRepoProfile: (repoPath: string, profileId: string | null) => void;
   restartSessionWithProfile: (sessionId: string) => void;
 
+  // MCP server (Beacon の外部 OAuth MCP) — マルチアカウント
+  mcpCatalog: McpProviderCatalog[];
+  mcpConnections: McpConnectionInfo[];
+  /** 認可フロー進行中の connectionId → authorizationUrl */
+  mcpPendingAuthUrls: Record<string, string>;
+  mcpRefresh: () => void;
+  mcpConnect: (
+    providerId: string,
+    options?: { label?: string; connectionId?: string }
+  ) => void;
+  mcpSubmitRedirect: (redirectUrl: string) => void;
+  mcpDisconnect: (connectionId: string) => void;
+  mcpAuthCancel: (connectionId: string) => void;
+  mcpRename: (connectionId: string, label: string) => void;
+
   // Usage取得 (Linux + multiProfileSupported 限定)
   /** /usage 取得が進行中か（全クライアント横断ではなく、自身が依頼中の状態） */
   usageRequesting: boolean;
@@ -291,6 +309,20 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [capabilities, setCapabilities] = useState<SystemCapabilities>({
     multiProfileSupported: false,
   });
+
+  // MCP server (Beacon の外部 OAuth MCP) — マルチアカウント
+  const [mcpCatalog, setMcpCatalog] = useState<McpProviderCatalog[]>([]);
+  const [mcpConnections, setMcpConnections] = useState<McpConnectionInfo[]>([]);
+  // 認可フロー進行中の connectionId → authorize URL。
+  // ポップアップブロック時のフォールバックでダイアログから手動でリンクを開けるようにするため保持する。
+  const [mcpPendingAuthUrls, setMcpPendingAuthUrls] = useState<
+    Record<string, string>
+  >({});
+  // toast 内で connection の label を解決するための安定参照
+  const mcpConnectionsRef = useRef<McpConnectionInfo[]>([]);
+  useEffect(() => {
+    mcpConnectionsRef.current = mcpConnections;
+  }, [mcpConnections]);
 
   // Usage取得
   const [usageRequesting, setUsageRequesting] = useState(false);
@@ -791,6 +823,58 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       toast.error(`Usage取得に失敗: ${message}`);
     });
 
+    // MCP server (Beacon の外部 OAuth MCP) ----------------------------
+    socket.on("mcp:state", (snapshot: McpProvidersSnapshot) => {
+      setMcpCatalog(snapshot.catalog);
+      setMcpConnections(snapshot.connections);
+    });
+    socket.on("mcp:auth-started", ({ connectionId, authorizationUrl }) => {
+      // ポップアップブロック等で window.open が落ちても、ダイアログ内に
+      // クリック可能なリンクで authorizationUrl を残せるよう state に保持
+      setMcpPendingAuthUrls(prev => ({
+        ...prev,
+        [connectionId]: authorizationUrl,
+      }));
+      const opened = window.open(authorizationUrl, "_blank", "noopener");
+      if (!opened) {
+        toast.error("ポップアップがブロックされました", {
+          description:
+            "ダイアログ内の「認可ページを開く」リンクから手動で開いてください",
+        });
+      } else {
+        toast.success("認可ページを開きました", {
+          description: "ブラウザで認証を完了してください",
+        });
+      }
+    });
+    socket.on("mcp:auth-completed", ({ connectionId }) => {
+      setMcpPendingAuthUrls(prev => {
+        const next = { ...prev };
+        delete next[connectionId];
+        return next;
+      });
+      const label =
+        mcpConnectionsRef.current.find(c => c.id === connectionId)?.label ??
+        connectionId;
+      toast.success(`${label} を認証しました`);
+    });
+    socket.on("mcp:auth-failed", ({ connectionId, message }) => {
+      setMcpPendingAuthUrls(prev => {
+        const next = { ...prev };
+        delete next[connectionId];
+        return next;
+      });
+      const label =
+        mcpConnectionsRef.current.find(c => c.id === connectionId)?.label ??
+        connectionId;
+      toast.error(`${label} の認証に失敗`, { description: message });
+    });
+    socket.on("mcp:error", ({ message }) => {
+      toast.error(message);
+    });
+    // 接続時にカタログ + connection 一覧を取得
+    socket.emit("mcp:state");
+
     // Cleanup on unmount
     return () => {
       socket.off("ports:list");
@@ -1120,6 +1204,38 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socketRef.current?.emit("session:restart-with-profile", { sessionId });
   }, []);
 
+  // MCP server (Beacon の外部 OAuth MCP) actions
+  const mcpRefresh = useCallback(() => {
+    socketRef.current?.emit("mcp:state");
+  }, []);
+  const mcpConnect = useCallback(
+    (
+      providerId: string,
+      options?: { label?: string; connectionId?: string }
+    ) => {
+      socketRef.current?.emit("mcp:connect", {
+        providerId,
+        ...(options?.label !== undefined ? { label: options.label } : {}),
+        ...(options?.connectionId !== undefined
+          ? { connectionId: options.connectionId }
+          : {}),
+      });
+    },
+    []
+  );
+  const mcpSubmitRedirect = useCallback((redirectUrl: string) => {
+    socketRef.current?.emit("mcp:submit-redirect", { redirectUrl });
+  }, []);
+  const mcpDisconnect = useCallback((connectionId: string) => {
+    socketRef.current?.emit("mcp:disconnect", { connectionId });
+  }, []);
+  const mcpAuthCancel = useCallback((connectionId: string) => {
+    socketRef.current?.emit("mcp:auth-cancel", { connectionId });
+  }, []);
+  const mcpRename = useCallback((connectionId: string, label: string) => {
+    socketRef.current?.emit("mcp:rename", { connectionId, label });
+  }, []);
+
   // Usage取得
   const requestUsage = useCallback(() => {
     if (usageRequesting) return;
@@ -1233,6 +1349,16 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     deleteProfile,
     setRepoProfile,
     restartSessionWithProfile,
+    // MCP server (Beacon の外部 OAuth MCP) — マルチアカウント
+    mcpCatalog,
+    mcpConnections,
+    mcpPendingAuthUrls,
+    mcpRefresh,
+    mcpConnect,
+    mcpSubmitRedirect,
+    mcpDisconnect,
+    mcpAuthCancel,
+    mcpRename,
     // Usage取得
     usageRequesting,
     usageProgress,
