@@ -24,6 +24,7 @@ import type {
 } from "../../shared/types.js";
 import { db } from "./database.js";
 import { getErrorMessage } from "./errors.js";
+import { resolvePm2Path } from "./system.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -723,22 +724,30 @@ export class BeaconManager extends EventEmitter {
               const load = os.loadavg();
               const cpus = os.cpus().length;
               const fmtMb = (n: number) => `${(n / 1024 / 1024).toFixed(0)}MB`;
-              // ps でCPU使用率上位を取得
+              // ps でCPU使用率上位を取得。
+              // GNU/BSD両対応のため `--sort` `--no-headers` は使わず、
+              // ヘッダ行をJS側で除外しpcpu降順ソートする。
               const { stdout } = await execFileAsync(
                 "ps",
-                [
-                  "-eo",
-                  "pid,pcpu,pmem,etime,comm",
-                  "--sort=-pcpu",
-                  "--no-headers",
-                ],
-                { timeout: 10_000, maxBuffer: 256 * 1024 }
+                ["-eo", "pid,pcpu,pmem,etime,comm"],
+                { timeout: 10_000, maxBuffer: 1024 * 1024 }
               );
-              const procLines = stdout
-                .trim()
-                .split("\n")
+              const allLines = stdout.split("\n").filter(l => l.trim());
+              // 先頭行はヘッダ（`PID %CPU ...`）の可能性があるので、
+              // 数値で始まらない行は捨てる。
+              const dataLines = allLines.filter(l => /^\s*\d/.test(l));
+              const sorted = dataLines
+                .map(l => {
+                  const parts = l.trim().split(/\s+/);
+                  const pcpu = Number.parseFloat(parts[1] ?? "0");
+                  return {
+                    line: l.trim(),
+                    pcpu: Number.isFinite(pcpu) ? pcpu : 0,
+                  };
+                })
+                .sort((a, b) => b.pcpu - a.pcpu)
                 .slice(0, topN)
-                .map(l => l.trim());
+                .map(p => p.line);
               const summary = [
                 `CPU cores: ${cpus}`,
                 `Load average: ${load.map(n => n.toFixed(2)).join(", ")} (1/5/15min)`,
@@ -746,7 +755,7 @@ export class BeaconManager extends EventEmitter {
                 "",
                 `Top ${topN} processes by CPU:`,
                 "PID    %CPU %MEM ELAPSED  COMMAND",
-                ...procLines,
+                ...sorted,
               ].join("\n");
               return {
                 content: [{ type: "text" as const, text: summary }],
@@ -778,12 +787,17 @@ export class BeaconManager extends EventEmitter {
           handler: async args => {
             try {
               const pattern = args.pattern as string | undefined;
+              // `args` 列はGNU/BSD両対応（`cmd` はGNU専用）。
+              // `--no-headers` も非対応のためJS側でヘッダ行を除外する。
               const { stdout } = await execFileAsync(
                 "ps",
-                ["-eo", "pid,pcpu,pmem,etime,cmd", "--no-headers"],
+                ["-eo", "pid,pcpu,pmem,etime,args"],
                 { timeout: 10_000, maxBuffer: 1024 * 1024 }
               );
-              let lines = stdout.trim().split("\n");
+              let lines = stdout
+                .split("\n")
+                .filter(l => l.trim())
+                .filter(l => /^\s*\d/.test(l));
               if (pattern) {
                 const lower = pattern.toLowerCase();
                 lines = lines.filter(l => l.toLowerCase().includes(lower));
@@ -817,7 +831,20 @@ export class BeaconManager extends EventEmitter {
           inputSchema: {},
           handler: async () => {
             try {
-              const { stdout } = await execFileAsync("pm2", ["jlist"], {
+              // pm2/systemd 経由起動時はサービスPATHにpm2が無いことがあるため
+              // resolvePm2Path()で絶対パスを解決する。
+              const pm2Path = resolvePm2Path();
+              if (!pm2Path) {
+                return {
+                  content: [
+                    {
+                      type: "text" as const,
+                      text: "pm2 が見つかりません（PATHにも既知の候補ディレクトリにも存在しない）",
+                    },
+                  ],
+                };
+              }
+              const { stdout } = await execFileAsync(pm2Path, ["jlist"], {
                 timeout: 10_000,
                 maxBuffer: 1024 * 1024,
               });
@@ -875,6 +902,18 @@ export class BeaconManager extends EventEmitter {
               };
             }
             try {
+              // pm2の絶対パスを先に解決（pm2/systemd起動時のPATH問題対策）
+              const pm2Path = resolvePm2Path();
+              if (!pm2Path) {
+                return {
+                  content: [
+                    {
+                      type: "text" as const,
+                      text: "pm2 が見つかりません（PATHにも既知の候補ディレクトリにも存在しない）",
+                    },
+                  ],
+                };
+              }
               // pkill は対象なし(exit 1)でもエラー扱いしない
               await execFileAsync("pkill", ["-f", "ttyd"], {
                 timeout: 5_000,
@@ -885,7 +924,7 @@ export class BeaconManager extends EventEmitter {
               // 短い待機後にpm2 restart
               await new Promise(r => setTimeout(r, 1500));
               const { stdout } = await execFileAsync(
-                "pm2",
+                pm2Path,
                 ["restart", "claude-code-ark"],
                 { timeout: 30_000 }
               );
