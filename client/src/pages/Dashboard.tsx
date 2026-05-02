@@ -295,6 +295,16 @@ export default function Dashboard() {
   // restartingWorktreePathRef に保存し、新セッションへ追従できるようにする。
   const lastSelectedSessionRef = useRef<ManagedSession | null>(null);
 
+  // session:list を一度でも受信したか (sessions が初めて非空になった時点で true)。
+  // リロード直後は設定復元 → selectedSessionId=savedId と同時に sessions={} の
+  // 状態で auto-select effect が走るため、!sessions.has(savedId) のフォールバック
+  // が即座に発火して savedId が消失する。session:list 受信前は dangling 判定を
+  // 行わないことで、savedId を保持したまま sessions の到着を待つ。
+  const sessionsLoadedOnceRef = useRef(false);
+  useEffect(() => {
+    if (sessions.size > 0) sessionsLoadedOnceRef.current = true;
+  }, [sessions]);
+
   // selectedSessionId に対応する ManagedSession を毎回スナップショット
   useEffect(() => {
     if (selectedSessionId && selectedSessionId !== "browser") {
@@ -374,7 +384,12 @@ export default function Dashboard() {
       const first = Array.from(sessions.values())[0];
       setSelectedSessionId(first.id);
     }
-    if (selectedSessionId && !sessions.has(selectedSessionId)) {
+    // session:list を未受信のうちは dangling 判定をスキップ (savedId 復元保護)
+    if (
+      sessionsLoadedOnceRef.current &&
+      selectedSessionId &&
+      !sessions.has(selectedSessionId)
+    ) {
       const remaining = Array.from(sessions.values());
       setSelectedSessionId(remaining.length > 0 ? remaining[0].id : null);
     }
