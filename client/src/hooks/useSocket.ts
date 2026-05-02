@@ -501,13 +501,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     };
 
     socket.on("session:list", (sessions: ManagedSession[]) => {
-      setSessions(prev => {
-        const next = new Map(prev);
-        for (const session of sessions) {
-          next.set(session.id, session);
-        }
-        return next;
-      });
+      // session:list はサーバ側の権威ある全件スナップショット。
+      // 再接続時に死んだセッションが残らないよう、マージではなく置き換える。
+      setSessions(new Map(sessions.map(s => [s.id, s])));
       setSessionsLoaded(true);
     });
 
