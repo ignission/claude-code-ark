@@ -71,6 +71,7 @@ export default function Dashboard() {
     createWorktree,
     deleteWorktree,
     sessions,
+    sessionsLoaded,
     startSession,
     stopSession,
     sendMessage,
@@ -374,11 +375,18 @@ export default function Dashboard() {
       const first = Array.from(sessions.values())[0];
       setSelectedSessionId(first.id);
     }
-    if (selectedSessionId && !sessions.has(selectedSessionId)) {
+    // session:list を未受信のうちは dangling 判定をスキップ (savedId 復元保護)。
+    // sessionsLoaded は空配列の session:list でも true になるため、
+    // 「全セッション停止後にリロード」のケースでも savedId を null にリセットできる。
+    if (
+      sessionsLoaded &&
+      selectedSessionId &&
+      !sessions.has(selectedSessionId)
+    ) {
       const remaining = Array.from(sessions.values());
       setSelectedSessionId(remaining.length > 0 ? remaining[0].id : null);
     }
-  }, [sessions, selectedSessionId, gridRepoPath]);
+  }, [sessions, sessionsLoaded, selectedSessionId, gridRepoPath]);
 
   useEffect(() => {
     if (deletedWorktreeId) {

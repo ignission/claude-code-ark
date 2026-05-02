@@ -1067,11 +1067,12 @@ async function startServer() {
       sessionOrchestrator.on(event, handler);
     }
 
-    // 既存セッション一覧を送信（リロード時のペイン復元用）
+    // 既存セッション一覧を送信（リロード時のペイン復元用）。
+    // クライアント側で「session:list 受信完了」を正確に判定できるよう、
+    // 0件でも必ず emit する。0件で emit しないと、savedId 復元時の
+    // dangling cleanup が動かず stale な selectedSessionId が残り続ける。
     const existingSessions = sessionOrchestrator.getAllSessions();
-    if (existingSessions.length > 0) {
-      socket.emit("session:list", existingSessions);
-    }
+    socket.emit("session:list", existingSessions);
 
     // ttydが未起動のセッションを自動復元（非同期）
     // 複数クライアント同時接続でも同一セッションの復元は1回だけ実行される

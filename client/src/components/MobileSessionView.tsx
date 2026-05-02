@@ -109,6 +109,10 @@ export function MobileSessionView({
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  // ファイル選択input は DropdownMenuContent (Radix Portal) の外に配置する。
+  // 内部に置くとメニューを閉じた瞬間に Portal が unmount され、
+  // OS のファイル選択画面から戻った時に input が DOM に存在せず onChange が発火しない。
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // トンネル経由のアクセス時はURLのトークンをiframeにも付与
   const urlToken =
@@ -351,21 +355,9 @@ export function MobileSessionView({
                 </DropdownMenuItem>
               )}
               {onUploadFile && (
-                <DropdownMenuItem asChild>
-                  <label className="cursor-pointer flex items-center w-full">
-                    <input
-                      type="file"
-                      multiple
-                      className="hidden"
-                      onChange={async e => {
-                        const files = Array.from(e.target.files ?? []);
-                        await handleFilesSelected(files);
-                        e.target.value = "";
-                      }}
-                    />
-                    <FileIcon className="mr-2 h-4 w-4" />
-                    ファイルを添付
-                  </label>
+                <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
+                  <FileIcon className="mr-2 h-4 w-4" />
+                  ファイルを添付
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem onClick={handleReloadIframe}>
@@ -618,6 +610,23 @@ export function MobileSessionView({
           </Button>
         </div>
       </form>
+
+      {/* 添付ファイル選択用の隠しinput
+          DropdownMenuContent の外に置くことで、メニューが閉じても DOM に残り続け、
+          OS のファイル選択画面から戻った時に onChange が確実に発火する。 */}
+      {onUploadFile && (
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={async e => {
+            const files = Array.from(e.target.files ?? []);
+            await handleFilesSelected(files);
+            e.target.value = "";
+          }}
+        />
+      )}
 
       {/* 削除確認ダイアログ */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>

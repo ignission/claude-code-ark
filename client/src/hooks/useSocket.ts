@@ -80,6 +80,7 @@ interface UseSocketReturn {
 
   // Sessions
   sessions: Map<string, ManagedSession>;
+  sessionsLoaded: boolean;
   startSession: (worktreeId: string, worktreePath: string) => void;
   stopSession: (sessionId: string) => void;
   sendMessage: (sessionId: string, message: string) => void;
@@ -226,6 +227,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [sessions, setSessions] = useState<Map<string, ManagedSession>>(
     new Map()
   );
+  // session:list を一度でも受信したか。
+  // 空配列でも true になるため、リロード直後の savedId 復元処理で
+  // 「サーバ側にセッションが存在しない」ことを判定できる。
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
 
   // Tunnel state
   const [tunnelActive, setTunnelActive] = useState(false);
@@ -496,13 +501,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     };
 
     socket.on("session:list", (sessions: ManagedSession[]) => {
-      setSessions(prev => {
-        const next = new Map(prev);
-        for (const session of sessions) {
-          next.set(session.id, session);
-        }
-        return next;
-      });
+      // session:list はサーバ側の権威ある全件スナップショット。
+      // 再接続時に死んだセッションが残らないよう、マージではなく置き換える。
+      setSessions(new Map(sessions.map(s => [s.id, s])));
+      setSessionsLoaded(true);
     });
 
     socket.on("session:created", session => {
@@ -1176,6 +1178,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     deletedWorktreeId,
     clearDeletedWorktreeId,
     sessions,
+    sessionsLoaded,
     startSession,
     stopSession,
     sendMessage,
