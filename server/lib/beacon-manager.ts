@@ -362,6 +362,14 @@ export class BeaconManager extends EventEmitter {
   private idleCheckTimer: ReturnType<typeof setInterval> | null = null;
   private deps: BeaconDeps | null = null;
   /**
+   * 進行中の startSession Promise。
+   * startSession() が外部 MCP 構築のため await を含むようになり、その間に
+   * 2 件目の beacon:send が来ると `if (this.session)` ガードを擦り抜けて
+   * 二重に query() インスタンスが作られる race があった。
+   * pendingStart があれば後続呼び出しはそれを待つ (ttyd-manager と同パターン)。
+   */
+  private pendingStart: Promise<BeaconSession> | null = null;
+  /**
    * Beacon が assistant 応答を streaming 中に postExternalMessage が呼ばれた場合
    * のキュー。LLM turn の timestamp は完了時に確定するため、turn 完了前に
    * 外部メッセージを保存すると DB 上の順序が逆転する。turn 完了後にまとめて
@@ -1045,16 +1053,27 @@ export class BeaconManager extends EventEmitter {
   }
 
   /**
-   * 新しいBeaconセッションを開始する
+   * 新しいBeaconセッションを開始する。
    *
-   * 既にセッションが存在する場合はそのまま返す。
+   * - 既にセッションが存在する場合はそのまま返す
+   * - 起動中 (pendingStart) なら同 Promise を返す (二重起動防止)
    */
-  async startSession(): Promise<BeaconSession> {
+  startSession(): Promise<BeaconSession> {
     if (this.session) {
       console.log("[BeaconManager] 既存セッションを再利用");
-      return this.session;
+      return Promise.resolve(this.session);
     }
+    if (this.pendingStart) {
+      console.log("[BeaconManager] 起動中の Promise を再利用");
+      return this.pendingStart;
+    }
+    this.pendingStart = this._initSession().finally(() => {
+      this.pendingStart = null;
+    });
+    return this.pendingStart;
+  }
 
+  private async _initSession(): Promise<BeaconSession> {
     const cwd = process.env.HOME || "/home";
     console.log(`[BeaconManager] 新規グローバルセッション開始 (cwd: ${cwd})`);
 
@@ -1075,7 +1094,9 @@ export class BeaconManager extends EventEmitter {
       for (const entry of externalMcps) {
         mcpServers[entry.connectionId] = entry.config;
         // 認証済み外部 MCP は全 tool を自動承認 (ユーザーが明示的に登録した先なので)。
-        externalAllowedTools.push(`mcp__${entry.connectionId}`);
+        // tool 名は事前列挙できないため `mcp__<connectionId>__*` のワイルドカードで全許可
+        // (`mcp__<id>` 単体だと tool 名 (`mcp__<id>__<tool>`) と一致せず実質 deny になる)
+        externalAllowedTools.push(`mcp__${entry.connectionId}__*`);
         // ベース行 + accountHint があればインデント付きで複数行追加 (URL→connection 判定用)
         const base = `- ${entry.label} (provider=${entry.providerId}, prefix=mcp__${entry.connectionId}__)`;
         connectionHints.push(
