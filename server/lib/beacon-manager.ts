@@ -24,6 +24,7 @@ import type {
 } from "../../shared/types.js";
 import { db } from "./database.js";
 import { getErrorMessage } from "./errors.js";
+import { resolvePm2Path } from "./system.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -46,6 +47,10 @@ Ark内部の操作にはMCPツールを使用してください:
 - delete_worktree: worktree削除
 - get_pr_url: worktreeのブランチに紐づくPR URLを取得
 - gh_exec: gh CLIコマンドを実行（pr view, issue list, search等）
+- get_system_status: ホストのCPU/load/メモリ/CPU上位プロセスを取得
+- list_processes: 実行中プロセスを一覧（pattern指定で絞り込み）
+- get_pm2_status: pm2管理プロセスの状態を取得
+- restart_service: 運用サービスを再起動（'ttyd' のみ。Beacon自身も一時切断される）
 
 git/gh操作はMCPツールを通じて実行してください。
 worktreeの作成・削除はMCPツールを使ってください。
@@ -72,6 +77,24 @@ worktreeの作成・削除はMCPツールを使ってください。
 3. **稼働中セッションがない場合**:
    - 「稼働中のセッションはありません」と報告
    - list_worktreesで全リポジトリのworktreeを取得し、番号付きリストで表示して「セッションを起動しますか？」と提案
+
+### 「ホスト確認」「CPU高い」「重い」等の調査依頼
+
+ホストの負荷状況を調査するフロー。ユーザーが「CPU高い」「ホスト重い」「動作が遅い」等と訴えた場合に発動する。
+
+1. get_system_statusで現在のCPU/load/メモリと上位プロセスを取得
+2. 異常を検出した場合、原因プロセスを特定:
+   - ttyd系が暴走している場合は list_processes(pattern: "ttyd") で詳細確認
+   - pm2管理プロセスの状態は get_pm2_status で確認
+3. 結果を以下の形式で報告:
+   ### ホスト状態
+   - **load average**: x.xx / x.xx / x.xx
+   - **CPU使用率上位**: 上位3件をビュレットで列挙
+   - **判定**: 正常 / 要対処
+   - **原因と推測**: ttyd暴走 / claude実行中 / 不明 等
+4. **要対処** かつ **ttyd暴走** が原因の場合のみ、次のアクションを番号付きリストで提示:
+   1. ttydを再起動する（restart_service("ttyd") を実行・Arkサーバーが一時的に再起動される）
+5. それ以外の場合は推測に留め、勝手に再起動してはならない
 
 ### 「タスク着手」
 
@@ -682,6 +705,250 @@ export class BeaconManager extends EventEmitter {
           },
         },
         {
+          name: "get_system_status",
+          description:
+            "ホストのCPU使用率/load average/メモリ/CPU上位プロセスを取得する。「CPU高い」「ホスト重い」等の調査に使う。",
+          inputSchema: {
+            topN: z
+              .number()
+              .optional()
+              .describe("CPU使用率上位N件のプロセスを表示（デフォルト: 10）"),
+          },
+          handler: async args => {
+            try {
+              const topN = (args.topN as number | undefined) ?? 10;
+              const os = await import("node:os");
+              const total = os.totalmem();
+              const free = os.freemem();
+              const used = total - free;
+              const load = os.loadavg();
+              const cpus = os.cpus().length;
+              const fmtMb = (n: number) => `${(n / 1024 / 1024).toFixed(0)}MB`;
+              // ps でCPU使用率上位を取得。
+              // GNU/BSD両対応のため `--sort` `--no-headers` は使わず、
+              // ヘッダ行をJS側で除外しpcpu降順ソートする。
+              const { stdout } = await execFileAsync(
+                "ps",
+                ["-eo", "pid,pcpu,pmem,etime,comm"],
+                { timeout: 10_000, maxBuffer: 1024 * 1024 }
+              );
+              const allLines = stdout.split("\n").filter(l => l.trim());
+              // 先頭行はヘッダ（`PID %CPU ...`）の可能性があるので、
+              // 数値で始まらない行は捨てる。
+              const dataLines = allLines.filter(l => /^\s*\d/.test(l));
+              const sorted = dataLines
+                .map(l => {
+                  const parts = l.trim().split(/\s+/);
+                  const pcpu = Number.parseFloat(parts[1] ?? "0");
+                  return {
+                    line: l.trim(),
+                    pcpu: Number.isFinite(pcpu) ? pcpu : 0,
+                  };
+                })
+                .sort((a, b) => b.pcpu - a.pcpu)
+                .slice(0, topN)
+                .map(p => p.line);
+              const summary = [
+                `CPU cores: ${cpus}`,
+                `Load average: ${load.map(n => n.toFixed(2)).join(", ")} (1/5/15min)`,
+                `Memory: used ${fmtMb(used)} / total ${fmtMb(total)} (free ${fmtMb(free)})`,
+                "",
+                `Top ${topN} processes by CPU:`,
+                "PID    %CPU %MEM ELAPSED  COMMAND",
+                ...sorted,
+              ].join("\n");
+              return {
+                content: [{ type: "text" as const, text: summary }],
+              };
+            } catch (e) {
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: `system status取得エラー: ${getErrorMessage(e)}`,
+                  },
+                ],
+              };
+            }
+          },
+        },
+        {
+          name: "list_processes",
+          description:
+            "実行中プロセスを一覧する。pattern指定で特定プロセス（ttyd等）に絞り込み可能。",
+          inputSchema: {
+            pattern: z
+              .string()
+              .optional()
+              .describe(
+                "プロセス名/コマンドラインの部分一致パターン（例: ttyd, tmux）"
+              ),
+          },
+          handler: async args => {
+            try {
+              const pattern = args.pattern as string | undefined;
+              // `args` 列はGNU/BSD両対応（`cmd` はGNU専用）。
+              // `--no-headers` も非対応のためJS側でヘッダ行を除外する。
+              const { stdout } = await execFileAsync(
+                "ps",
+                ["-eo", "pid,pcpu,pmem,etime,args"],
+                { timeout: 10_000, maxBuffer: 1024 * 1024 }
+              );
+              let lines = stdout
+                .split("\n")
+                .filter(l => l.trim())
+                .filter(l => /^\s*\d/.test(l));
+              if (pattern) {
+                const lower = pattern.toLowerCase();
+                lines = lines.filter(l => l.toLowerCase().includes(lower));
+              }
+              // 上位50件に制限（出力サイズ抑制）
+              const limited = lines.slice(0, 50);
+              const text =
+                limited.length === 0
+                  ? "該当プロセスなし"
+                  : ["PID    %CPU %MEM ELAPSED  COMMAND", ...limited].join(
+                      "\n"
+                    );
+              return {
+                content: [{ type: "text" as const, text }],
+              };
+            } catch (e) {
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: `プロセス一覧取得エラー: ${getErrorMessage(e)}`,
+                  },
+                ],
+              };
+            }
+          },
+        },
+        {
+          name: "get_pm2_status",
+          description: "pm2で管理されているプロセス一覧と状態を取得する。",
+          inputSchema: {},
+          handler: async () => {
+            try {
+              // pm2/systemd 経由起動時はサービスPATHにpm2が無いことがあるため
+              // resolvePm2Path()で絶対パスを解決する。
+              const pm2Path = resolvePm2Path();
+              if (!pm2Path) {
+                return {
+                  content: [
+                    {
+                      type: "text" as const,
+                      text: "pm2 が見つかりません（PATHにも既知の候補ディレクトリにも存在しない）",
+                    },
+                  ],
+                };
+              }
+              const { stdout } = await execFileAsync(pm2Path, ["jlist"], {
+                timeout: 10_000,
+                maxBuffer: 1024 * 1024,
+              });
+              const procs = JSON.parse(stdout) as Array<{
+                name: string;
+                pid: number;
+                pm2_env?: {
+                  status?: string;
+                  pm_uptime?: number;
+                  restart_time?: number;
+                };
+                monit?: { cpu?: number; memory?: number };
+              }>;
+              const summary = procs.map(p => {
+                const status = p.pm2_env?.status ?? "unknown";
+                const cpu = p.monit?.cpu ?? 0;
+                const memMb = ((p.monit?.memory ?? 0) / 1024 / 1024).toFixed(1);
+                const restarts = p.pm2_env?.restart_time ?? 0;
+                return `- ${p.name} (pid ${p.pid}): ${status}, CPU ${cpu}%, MEM ${memMb}MB, restarts ${restarts}`;
+              });
+              const text =
+                procs.length === 0 ? "pm2管理プロセスなし" : summary.join("\n");
+              return {
+                content: [{ type: "text" as const, text }],
+              };
+            } catch (e) {
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: `pm2状態取得エラー: ${getErrorMessage(e)}`,
+                  },
+                ],
+              };
+            }
+          },
+        },
+        {
+          name: "restart_service",
+          description:
+            "事前定義された運用サービスを再起動する。許可: 'ttyd' のみ（pkill -f ttyd 後にArkサーバーをpm2 restartする。Beacon自身も一時的に切断される）。",
+          inputSchema: {
+            service: z.string().describe("再起動対象。現在は 'ttyd' のみ許可"),
+          },
+          handler: async args => {
+            const service = args.service as string;
+            if (service !== "ttyd") {
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: `許可されていないサービス: ${service}。現在は 'ttyd' のみ許可`,
+                  },
+                ],
+              };
+            }
+            try {
+              // pm2の絶対パスを先に解決（pm2/systemd起動時のPATH問題対策）
+              const pm2Path = resolvePm2Path();
+              if (!pm2Path) {
+                return {
+                  content: [
+                    {
+                      type: "text" as const,
+                      text: "pm2 が見つかりません（PATHにも既知の候補ディレクトリにも存在しない）",
+                    },
+                  ],
+                };
+              }
+              // pkill は対象なし(exit 1)でもエラー扱いしない
+              await execFileAsync("pkill", ["-f", "ttyd"], {
+                timeout: 5_000,
+              }).catch(err => {
+                const code = (err as { code?: number }).code;
+                if (code !== 1) throw err;
+              });
+              // 短い待機後にpm2 restart
+              await new Promise(r => setTimeout(r, 1500));
+              const { stdout } = await execFileAsync(
+                pm2Path,
+                ["restart", "claude-code-ark"],
+                { timeout: 30_000 }
+              );
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: `ttydを停止しArkサーバーを再起動しました\n${stdout.trim()}`,
+                  },
+                ],
+              };
+            } catch (e) {
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: `再起動失敗: ${getErrorMessage(e)}`,
+                  },
+                ],
+              };
+            }
+          },
+        },
+        {
           name: "gh_exec",
           description:
             "gh CLIコマンドを実行する（読み取り専用コマンドのみ許可）",
@@ -820,6 +1087,10 @@ export class BeaconManager extends EventEmitter {
           "mcp__ark-beacon__delete_worktree",
           "mcp__ark-beacon__get_pr_url",
           "mcp__ark-beacon__gh_exec",
+          "mcp__ark-beacon__get_system_status",
+          "mcp__ark-beacon__list_processes",
+          "mcp__ark-beacon__get_pm2_status",
+          "mcp__ark-beacon__restart_service",
         ],
         permissionMode: "default",
         systemPrompt: BEACON_SYSTEM_PROMPT,

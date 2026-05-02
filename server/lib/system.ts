@@ -268,6 +268,60 @@ export function checkTmuxCommandExists(): boolean {
 }
 
 /**
+ * `pm2` コマンドの絶対パスを解決する。利用不可なら null。
+ * pm2 自身が pm2/systemd 経由でArkを起動しているケースでも、
+ * 子プロセスのPATHにユーザーローカルのpm2が含まれないことがあるため、
+ * resolveClaudePath / resolveTmuxPath と同じ多段フォールバックで解決する。
+ */
+export function resolvePm2Path(): string | null {
+  try {
+    const r = spawnSync("which", ["pm2"], {
+      stdio: "pipe",
+      encoding: "utf-8",
+    });
+    if (r.status === 0 && r.stdout) {
+      const resolved = r.stdout.trim();
+      if (resolved) return resolved;
+    }
+  } catch {
+    // fallthrough
+  }
+
+  const envPath = process.env.PATH ?? "";
+  for (const dir of envPath.split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, "pm2");
+    try {
+      if (existsSync(candidate)) return candidate;
+    } catch {
+      // ignore
+    }
+  }
+
+  const home = os.homedir();
+  const candidates = [
+    path.join(home, ".local/bin/pm2"),
+    path.join(home, ".local/share/mise/shims/pm2"),
+    path.join(home, ".npm-global/bin/pm2"),
+    path.join(home, ".volta/bin/pm2"),
+    "/usr/local/bin/pm2",
+    "/usr/bin/pm2",
+    "/opt/pm2/bin/pm2",
+    "/home/linuxbrew/.linuxbrew/bin/pm2",
+    "/opt/homebrew/bin/pm2",
+  ];
+  for (const p of candidates) {
+    try {
+      if (existsSync(p)) return p;
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
+}
+
+/**
  * プロファイル切替機能のサポート判定。
  * Linux + claude CLI + tmux が3つ揃った時のみ true。
  * (UsageCollector も tmux を必要とするため tmux チェックも含める)
