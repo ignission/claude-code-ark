@@ -556,13 +556,14 @@ async function startServer() {
   });
 
   // MCP OAuth フローの完了/失敗を全クライアントに通知。
-  // 認証成功時は稼働中 Beacon セッションを close する: startSession で構築済みの
-  // mcpServers map / Bearer token は freeze されているため、新しい connection を
-  // 反映させるには次の send で新セッションに作り直す必要がある (P2 codex 指摘)。
+  // 認証成功時は Beacon セッションに stale マークを付ける: startSession で
+  // 構築済みの mcpServers map / Bearer token は freeze されているため、
+  // 次の send 時に idle なら新セッションに作り直して反映する。
+  // 進行中ターンを途中で中断しないために close は呼ばない。
   mcpOAuthOrchestrator.on("auth-completed", data => {
     io.emit("mcp:auth-completed", { connectionId: data.connectionId });
     io.emit("mcp:state", buildMcpSnapshot());
-    beaconManager.closeSession();
+    beaconManager.markMcpConfigStale();
   });
   mcpOAuthOrchestrator.on("auth-failed", data => {
     io.emit("mcp:auth-failed", {
@@ -1878,8 +1879,8 @@ async function startServer() {
         mcpOAuthOrchestrator.clearFlow(connectionId);
         db.deleteMcpServer(connectionId);
         // 稼働中 Beacon セッションは旧 mcpServers map (削除済み connection 含む) を
-        // 保持しているため close → 次回 send で新構成で再起動させる
-        beaconManager.closeSession();
+        // 保持しているため stale マーク → 次回 send で idle なら再構成
+        beaconManager.markMcpConfigStale();
         io.emit("mcp:state", buildMcpSnapshot());
       } catch (e) {
         socket.emit("mcp:error", { message: getErrorMessage(e) });

@@ -27,6 +27,12 @@ export interface McpProviderEntry {
   /** MCP server の HTTP エンドポイント。discovery の起点 */
   url: string;
   /**
+   * SDK transport の種別。
+   * - "sse": MCP 1.0 (SSE) — URL が `/sse` 終わりの provider はこちら (例: Atlassian)
+   * - "http": MCP streamable-HTTP (2025-) — 新しい仕様の provider はこちら
+   */
+  transport: "sse" | "http";
+  /**
    * authorization request の prompt パラメータ。
    * 既定は consent (provider が refresh_token を確実に返すよう促す)。
    */
@@ -98,6 +104,7 @@ export const MCP_PROVIDERS: Record<string, McpProviderEntry> = {
     name: "Atlassian",
     description: "Jira / Confluence (Cloud)",
     url: "https://mcp.atlassian.com/v1/sse",
+    transport: "sse",
     prompt: "consent",
     resolveAccountLabel: atlassianResolveAccountLabel,
   },

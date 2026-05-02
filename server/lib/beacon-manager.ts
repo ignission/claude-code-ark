@@ -370,6 +370,12 @@ export class BeaconManager extends EventEmitter {
    */
   private pendingStart: Promise<BeaconSession> | null = null;
   /**
+   * MCP 構成 (mcp_servers / mcp_tokens) が変わったフラグ。
+   * 認証完了 / 接続削除 などで true になり、次の sendMessage で idle なら
+   * セッションを作り直す。進行中ターンを途中で abort しないため、即時 close は避ける。
+   */
+  private mcpConfigStale = false;
+  /**
    * Beacon が assistant 応答を streaming 中に postExternalMessage が呼ばれた場合
    * のキュー。LLM turn の timestamp は完了時に確定するため、turn 完了前に
    * 外部メッセージを保存すると DB 上の順序が逆転する。turn 完了後にまとめて
@@ -1183,6 +1189,13 @@ export class BeaconManager extends EventEmitter {
    * 3. 出力イテレータからSDKMessageを読み取り、ストリーミングで通知
    */
   async sendMessage(message: string): Promise<void> {
+    // MCP 構成が変わっていて、かつ idle (前ターンの processing が終わっている)
+    // ならセッションを作り直して新 mcpServers を反映する。進行中ならスキップ
+    // (現ターンを abort しない; 次の send 時に idle なら反映される)。
+    if (this.mcpConfigStale && this.session && !this.session.processing) {
+      this.closeSession();
+      this.mcpConfigStale = false;
+    }
     if (!this.session) {
       // セッションが存在しない場合は自動的に開始する
       await this.startSession();
@@ -1530,6 +1543,15 @@ export class BeaconManager extends EventEmitter {
     this.session.queue.close();
     // セッションをクリア
     this.session = null;
+  }
+
+  /**
+   * MCP 構成が変わったことをマークする (server/index.ts の auth-completed /
+   * disconnect ハンドラから呼ばれる)。次の sendMessage で idle なら
+   * セッションを作り直して新 mcpServers を反映する。
+   */
+  markMcpConfigStale(): void {
+    this.mcpConfigStale = true;
   }
 
   /**

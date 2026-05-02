@@ -10,6 +10,7 @@
 import type { McpServerConfig as SdkMcpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { db } from "../database.js";
 import { mcpOAuthOrchestrator } from "./oauth-flow-orchestrator.js";
+import { getProvider } from "./providers.js";
 
 export interface ExternalMcpEntry {
   /** connection ID (SDK の mcpServers Record キー、tool prefix の <id> 部分) */
@@ -43,19 +44,25 @@ export async function buildAuthenticatedExternalMcps(): Promise<
     if (!ok) continue;
     const token = db.getMcpToken(server.id);
     if (!token) continue;
+    // provider 定義から transport (sse / http) を引く。
+    // 万一 provider が registry から消えていれば skip (ホワイトリスト外なので使わせない)。
+    const provider = getProvider(server.providerId);
+    if (!provider) continue;
+
+    const headers = {
+      Authorization: `${token.tokenType} ${token.accessToken}`,
+    };
+    const config: SdkMcpServerConfig =
+      provider.transport === "sse"
+        ? { type: "sse", url: server.url, headers }
+        : { type: "http", url: server.url, headers };
 
     entries.push({
       connectionId: server.id,
       label: server.label,
       providerId: server.providerId,
       ...(server.accountHint ? { accountHint: server.accountHint } : {}),
-      config: {
-        type: "http",
-        url: server.url,
-        headers: {
-          Authorization: `${token.tokenType} ${token.accessToken}`,
-        },
-      },
+      config,
     });
   }
 
