@@ -1912,6 +1912,9 @@ async function startServer() {
         }
         db.updateMcpServer(connectionId, { label: label.trim() });
         io.emit("mcp:state", buildMcpSnapshot());
+        // Beacon system prompt が旧 label を保持しているため stale マーク
+        // (次の send で idle なら新 label で再構成される)
+        beaconManager.markMcpConfigStale();
       } catch (e) {
         socket.emit("mcp:error", { message: getErrorMessage(e) });
       }

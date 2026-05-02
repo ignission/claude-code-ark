@@ -831,6 +831,22 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socket.on("mcp:state", (snapshot: McpProvidersSnapshot) => {
       setMcpCatalog(snapshot.catalog);
       setMcpConnections(snapshot.connections);
+      // pendingAuthUrls から「もう authenticating でない / 削除された」connectionId
+      // のエントリを掃除する。cancel / disconnect は mcp:auth-failed/completed を
+      // 出さず mcp:state だけ送るため、ここで掃除しないと dead な認可リンクが
+      // ダイアログに残ってしまう。
+      const authenticatingIds = new Set(
+        snapshot.connections
+          .filter(c => c.status === "authenticating")
+          .map(c => c.id)
+      );
+      setMcpPendingAuthUrls(prev => {
+        const next: Record<string, string> = {};
+        for (const [cid, url] of Object.entries(prev)) {
+          if (authenticatingIds.has(cid)) next[cid] = url;
+        }
+        return next;
+      });
     });
     socket.on("mcp:auth-started", ({ connectionId, authorizationUrl }) => {
       // ポップアップブロック等で window.open が落ちても、ダイアログ内に
