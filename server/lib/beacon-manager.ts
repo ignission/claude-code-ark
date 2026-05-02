@@ -1189,10 +1189,16 @@ export class BeaconManager extends EventEmitter {
    * 3. 出力イテレータからSDKMessageを読み取り、ストリーミングで通知
    */
   async sendMessage(message: string): Promise<void> {
-    // MCP 構成が変わっていて、かつ idle (前ターンの processing が終わっている)
-    // ならセッションを作り直して新 mcpServers を反映する。進行中ならスキップ
-    // (現ターンを abort しない; 次の send 時に idle なら反映される)。
-    if (this.mcpConfigStale && this.session && !this.session.processing) {
+    // MCP 構成が変わっていて、かつ idle (queue 中の turn が無い) ならセッションを
+    // 作り直して新 mcpServers を反映する。
+    // 注: session.processing は session 生存期間中ずっと true (前述コメント参照)
+    // なので idle 判定には使えない。activeTurnCount === 0 が正しいシグナル
+    // (multi-client で複数 turn が queue されていても安全)。
+    if (
+      this.mcpConfigStale &&
+      this.session &&
+      this.session.activeTurnCount === 0
+    ) {
       this.closeSession();
       this.mcpConfigStale = false;
     }
