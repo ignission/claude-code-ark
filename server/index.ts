@@ -572,6 +572,10 @@ async function startServer() {
     });
     io.emit("mcp:state", buildMcpSnapshot());
   });
+  // refresh 失敗で token が無効化されたとき UI に再認証を促せるよう state を再送
+  mcpOAuthOrchestrator.on("token-invalidated", () => {
+    io.emit("mcp:state", buildMcpSnapshot());
+  });
 
   /**
    * カタログ (registry) + 全 connection スナップショット。

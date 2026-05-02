@@ -179,11 +179,35 @@ async function fetchProtectedResourceMetadata(
 async function fetchAuthorizationServerMetadata(
   issuer: string
 ): Promise<AuthorizationServerMetadata> {
-  const base = issuer.replace(/\/$/, "");
-  const candidates = [
-    `${base}/.well-known/oauth-authorization-server`,
-    `${base}/.well-known/openid-configuration`,
-  ];
+  // RFC 8414 §3 準拠の URL 組み立て:
+  // - origin issuer: `<origin>/.well-known/oauth-authorization-server`
+  // - path 付き issuer (例: https://idp.example/tenant/a):
+  //   `<origin>/.well-known/oauth-authorization-server/tenant/a` (path を suffix)
+  // openid-configuration も同様の規則 (歴史的経緯で path を suffix にしない実装も
+  // あるため、互換性のため両形式を試す)。
+  let issuerUrl: URL;
+  try {
+    issuerUrl = new URL(issuer);
+  } catch {
+    throw new Error(`invalid issuer URL: ${issuer}`);
+  }
+  const issuerPath = issuerUrl.pathname.replace(/\/$/, "");
+  const candidates: string[] = [];
+  if (issuerPath && issuerPath !== "") {
+    // path 付き issuer は spec 準拠の suffix 形式を優先
+    candidates.push(
+      `${issuerUrl.origin}/.well-known/oauth-authorization-server${issuerPath}`,
+      `${issuerUrl.origin}/.well-known/openid-configuration${issuerPath}`,
+      // 一部実装が採用している legacy 形式 (path/.well-known/...) もフォールバック
+      `${issuerUrl.origin}${issuerPath}/.well-known/oauth-authorization-server`,
+      `${issuerUrl.origin}${issuerPath}/.well-known/openid-configuration`
+    );
+  } else {
+    candidates.push(
+      `${issuerUrl.origin}/.well-known/oauth-authorization-server`,
+      `${issuerUrl.origin}/.well-known/openid-configuration`
+    );
+  }
   let lastErr = "";
   for (const url of candidates) {
     try {

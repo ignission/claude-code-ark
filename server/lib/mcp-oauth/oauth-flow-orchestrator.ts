@@ -399,6 +399,8 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
     if (!needsRefresh) return true;
     if (!token.refreshToken) {
       db.deleteMcpToken(server.id);
+      // UI に状態反映を促す (manager dialog のバッジが「期限切れ」/「未認証」に切り替わる)
+      this.emit("token-invalidated", { connectionId: server.id });
       return false;
     }
 
@@ -425,6 +427,7 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
         `[mcp-oauth] refresh failed for ${server.id}: ${getErrorMessage(err)}`
       );
       db.deleteMcpToken(server.id);
+      this.emit("token-invalidated", { connectionId: server.id });
       return false;
     }
   }

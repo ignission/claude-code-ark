@@ -1178,6 +1178,10 @@ export class BeaconManager extends EventEmitter {
     };
 
     this.session = session;
+    // セッション起動時の MCP 構成は最新なので stale フラグをリセットする。
+    // (session が null の状態で markMcpConfigStale された後、初回 send で
+    // 起動したセッションを 2 回目 send で即 close してしまう race を防ぐ)
+    this.mcpConfigStale = false;
     return session;
   }
 
