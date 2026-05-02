@@ -94,6 +94,12 @@ export interface McpConnectionInfo {
 export interface McpProvidersSnapshot {
   catalog: McpProviderCatalog[];
   connections: McpConnectionInfo[];
+  /**
+   * 認可フロー進行中の connectionId → authorize URL。
+   * リロード / 再接続後に popup ブロックされたケースの「認可ページを開く」リンクを
+   * 復元するため、サーバ側で覚えておいて snapshot で配信する。
+   */
+  pendingAuthUrls: Record<string, string>;
 }
 
 /** OAuth フロー起動結果 */

@@ -163,14 +163,12 @@ async function fetchProtectedResourceMetadata(
       });
       if (!res.ok) continue;
       const json = (await res.json()) as ProtectedResourceMetadata;
-      if (
-        json &&
-        typeof json === "object" &&
-        Array.isArray(json.authorization_servers) &&
-        json.authorization_servers.length > 0
-      ) {
-        return json;
-      }
+      // PRM が JSON object なら採用する。RFC 9728 では `authorization_servers` は
+      // 必須ではなく、`resource` / `scopes_supported` だけ載った same-origin PRM も
+      // 有効。authorization_servers が無い場合は origin を auth server として fallback
+      // するが、resource (audience) と scopes_supported はここで取得しないと OAuth
+      // が機能しないので、JSON 構造があればそのまま返す。
+      if (json && typeof json === "object") return json;
     } catch {
       // try next
     }

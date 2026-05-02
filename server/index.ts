@@ -609,10 +609,10 @@ async function startServer() {
     });
     // 新規 connection 起動直後は DB に行が無い (token 受領時に作る)。
     // pending flow を別ソースから合成して、UI から「認証中」が見える + paste UI が出るようにする。
+    const pending = mcpOAuthOrchestrator.listPendingFlows();
     const dbIds = new Set(dbConnections.map(c => c.id));
     const pendingConnections: import("../shared/types.js").McpConnectionInfo[] =
-      mcpOAuthOrchestrator
-        .listPendingFlows()
+      pending
         .filter(f => !dbIds.has(f.connectionId))
         .map(f => ({
           id: f.connectionId,
@@ -620,9 +620,15 @@ async function startServer() {
           label: f.label,
           status: "authenticating" as const,
         }));
+    // 認可 URL を再接続/リロード後にも UI から開けるよう snapshot に同梱する
+    const pendingAuthUrls: Record<string, string> = {};
+    for (const f of pending) {
+      pendingAuthUrls[f.connectionId] = f.authorizationUrl;
+    }
     return {
       catalog,
       connections: [...dbConnections, ...pendingConnections],
+      pendingAuthUrls,
     };
   }
 

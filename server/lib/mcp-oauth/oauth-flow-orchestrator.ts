@@ -342,11 +342,14 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
   /**
    * pending な flow の minimal info を返す (UI snapshot 用)。
    * DB 行が無い段階の connection も UI で「認証中」として見せたい。
+   * authorizationUrl も同梱: リロード / 再接続後に popup ブロック時の
+   * 「認可ページを開く」リンクを復元するため。
    */
   listPendingFlows(): Array<{
     connectionId: string;
     providerId: string;
     label: string;
+    authorizationUrl: string;
   }> {
     return [...this.flows.values()]
       .filter(f => f.status === "pending")
@@ -354,6 +357,7 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
         connectionId: f.connectionId,
         providerId: f.provider.id,
         label: f.label,
+        authorizationUrl: f.authorizationUrl,
       }));
   }
 
