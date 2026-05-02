@@ -396,6 +396,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       if (gridSubscribedRef.current) {
         socket.emit("session:grid:subscribe");
       }
+
+      // MCP server スナップショットを再取得 (切断中に他クライアントが追加/削除した
+      // 変更や、進行中フローの完了通知をミスっている可能性があるため)。
+      socket.emit("mcp:state");
     });
 
     socket.on("disconnect", () => {

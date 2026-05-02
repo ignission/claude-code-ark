@@ -1808,8 +1808,9 @@ async function startServer() {
             const trimmed =
               typeof label === "string" && label.trim() ? label.trim() : null;
             resolvedLabel = trimmed ?? existing.label;
-            // 古いトークンを掃除 (新 client_id に紐づけ直すため)
-            db.deleteMcpToken(connectionId);
+            // 古いトークンは破棄しない: ユーザがブラウザ認可を中断/失敗した場合に
+            // 既存の有効トークンを失わないように、orchestrator の _processCallback での
+            // upsertMcpToken 成功時にのみ上書きする方針。
           } else {
             // 新規 connection ID を生成
             connectionId = `${provider.id}-${nanoid(6)}`;

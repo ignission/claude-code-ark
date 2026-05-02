@@ -290,19 +290,23 @@ export function McpManagerDialog({
                                         再認証
                                       </Button>
                                     )}
-                                    <Button
-                                      size="icon"
-                                      variant="ghost"
-                                      onClick={() =>
-                                        setRenameTarget({
-                                          id: c.id,
-                                          draft: c.label,
-                                        })
-                                      }
-                                      title="名前を変更"
-                                    >
-                                      <Pencil className="size-3.5" />
-                                    </Button>
+                                    {/* authenticating 中は DB 行が無い (synthetic) ことがあるので
+                                        rename を出さない。完了後に通常表示される */}
+                                    {c.status !== "authenticating" && (
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        onClick={() =>
+                                          setRenameTarget({
+                                            id: c.id,
+                                            draft: c.label,
+                                          })
+                                        }
+                                        title="名前を変更"
+                                      >
+                                        <Pencil className="size-3.5" />
+                                      </Button>
+                                    )}
                                     <Button
                                       size="icon"
                                       variant="ghost"
