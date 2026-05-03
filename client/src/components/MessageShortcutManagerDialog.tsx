@@ -102,25 +102,36 @@ export function MessageShortcutManagerDialog({
     onUpdate(s.id, { message: trimmed });
   };
 
-  // 新規作成: ack 待ちのため、shortcuts 配列の長さが増えたタイミングで textarea をクリアする
-  const pendingCreateRef = useRef(false);
-  const prevShortcutsLenRef = useRef(shortcuts.length);
+  // 新規作成の ack 待ち: 「自分が送信した本文と一致する 新規 ID」が現れたら textarea をクリアする。
+  // 件数だけで判定すると、別タブが先に追加した場合に textarea が誤クリアされる。
+  const pendingCreateRef = useRef<{
+    message: string;
+    submittedAt: number;
+  } | null>(null);
+  const prevShortcutIdsRef = useRef(new Set(shortcuts.map(s => s.id)));
   useEffect(() => {
-    if (
-      pendingCreateRef.current &&
-      shortcuts.length > prevShortcutsLenRef.current
-    ) {
-      setNewMessage("");
-      pendingCreateRef.current = false;
+    const pending = pendingCreateRef.current;
+    if (pending) {
+      const ackedByNewId = shortcuts.some(
+        s =>
+          !prevShortcutIdsRef.current.has(s.id) && s.message === pending.message
+      );
+      // 5秒経過しても新規 ID 観測がなければ ack 諦め (失敗 toast は server 側 shortcut:error で出す)
+      const timedOut = Date.now() - pending.submittedAt > 5000;
+      if (ackedByNewId) {
+        setNewMessage("");
+        pendingCreateRef.current = null;
+      } else if (timedOut) {
+        pendingCreateRef.current = null;
+      }
     }
-    prevShortcutsLenRef.current = shortcuts.length;
-  }, [shortcuts.length]);
+    prevShortcutIdsRef.current = new Set(shortcuts.map(s => s.id));
+  }, [shortcuts]);
 
   const handleCreate = () => {
     const m = newMessage.trim();
     if (m.length === 0 || m.length > MESSAGE_SHORTCUT_MAX_LENGTH) return;
-    // ack 待ち: shortcut:created で配列が増えるまで textarea を保持する
-    pendingCreateRef.current = true;
+    pendingCreateRef.current = { message: m, submittedAt: Date.now() };
     onCreate(m);
   };
 

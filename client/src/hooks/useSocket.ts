@@ -841,6 +841,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
     socket.on("shortcut:error", ({ message, code }) => {
       console.error(`[shortcut] ${code ?? "error"}: ${message}`);
+      toast.error(`ショートカット操作に失敗: ${message}`);
     });
 
     // Usage取得イベント
