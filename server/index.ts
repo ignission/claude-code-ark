@@ -20,15 +20,16 @@ import { fileURLToPath } from "node:url";
 import httpProxy from "http-proxy";
 import { nanoid } from "nanoid";
 import { Server, type Socket } from "socket.io";
-import type {
-  BridgeSnapshot,
-  ClientToServerEvents,
-  ServerToClientEvents,
-  SessionGridSnapshot,
-  SystemCapabilities,
-  UsageEntry,
-  UsageProgress,
-  UsageReport,
+import {
+  type BridgeSnapshot,
+  type ClientToServerEvents,
+  MESSAGE_SHORTCUT_MAX_LENGTH,
+  type ServerToClientEvents,
+  type SessionGridSnapshot,
+  type SystemCapabilities,
+  type UsageEntry,
+  type UsageProgress,
+  type UsageReport,
 } from "../shared/types.js";
 import { authManager } from "./lib/auth.js";
 import { beaconManager } from "./lib/beacon-manager.js";
@@ -1140,6 +1141,13 @@ async function startServer() {
     // Beaconのチャット履歴を接続時に自動送信（クライアント側の取得タイミング問題を回避）
     socket.emit("beacon:history", { messages: beaconManager.getHistory() });
 
+    // 接続時にショートカット一覧を即時送信（クライアント側のキャッシュ初期化用）
+    try {
+      socket.emit("shortcut:list", db.listMessageShortcuts());
+    } catch (e) {
+      socket.emit("shortcut:error", { message: getErrorMessage(e) });
+    }
+
     // ===== Session Orchestrator Event Handlers =====
     // sessionOrchestrator のイベントをそのまま Socket.IO クライアントへ転送する
     // 注意: session:list送信やttyd自動復元より前に登録する必要がある
@@ -2240,6 +2248,149 @@ async function startServer() {
         }
       } catch (e) {
         socket.emit("profile:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    // ============================================================
+    // メッセージショートカット
+    // ============================================================
+    socket.on("shortcut:list", () => {
+      try {
+        socket.emit("shortcut:list", db.listMessageShortcuts());
+      } catch (e) {
+        socket.emit("shortcut:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    // メッセージショートカットは設計上「全クライアント共通（グローバル）」で、
+    // io.emit により接続中の全ソケットへ broadcast する。
+    //
+    // なぜ per-user / per-session スコープを持たないか:
+    // - Ark の運用前提は「単一開発者が自分のローカル / Cloudflare Tunnel 経由で利用」
+    //   する開発支援ツール。マルチテナント運用は想定外。
+    // - 認可境界は接続レベルの token 認証 (server/lib/auth.ts) が担っている。
+    //   トンネル越しのアクセスはトークン必須、ローカル / プライベート IP はスキップ。
+    //   つまり「同じ開発者の複数デバイスからの並行接続」しか到達しない。
+    // - マルチアカウント機能 (CLAUDE_CONFIG_DIR profile) はあくまで Claude CLI の
+    //   プロセス分離 / 認証情報分離が目的で、UI 状態の共有とは独立。
+    // - 将来複数ユーザー運用に切り替える場合は、ここに加えて auth.ts のトークン
+    //   モデル自体を再設計する必要がある (per-user token / session scope)。
+    //
+    // 設計書: docs/superpowers/specs/2026-05-03-message-shortcuts-design.md
+    socket.on("shortcut:create", payload => {
+      if (typeof payload !== "object" || payload === null) {
+        socket.emit("shortcut:error", {
+          message: "payload が不正です",
+          code: "invalid_payload",
+        });
+        return;
+      }
+      const { message } = payload as { message?: unknown };
+      const trimmedMessage = typeof message === "string" ? message.trim() : "";
+      if (
+        trimmedMessage.length === 0 ||
+        trimmedMessage.length > MESSAGE_SHORTCUT_MAX_LENGTH
+      ) {
+        socket.emit("shortcut:error", {
+          message: `message は 1〜${MESSAGE_SHORTCUT_MAX_LENGTH} 文字で入力してください`,
+          code: "invalid_message",
+        });
+        return;
+      }
+      try {
+        const shortcut = db.createMessageShortcut({
+          message: trimmedMessage,
+        });
+        io.emit("shortcut:created", shortcut);
+        io.emit("shortcut:list", db.listMessageShortcuts());
+      } catch (e) {
+        socket.emit("shortcut:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on("shortcut:update", payload => {
+      if (typeof payload !== "object" || payload === null) {
+        socket.emit("shortcut:error", {
+          message: "payload が不正です",
+          code: "invalid_payload",
+        });
+        return;
+      }
+      const { id, message, sortOrder } = payload as {
+        id?: unknown;
+        message?: unknown;
+        sortOrder?: unknown;
+      };
+      if (typeof id !== "string" || id.length === 0) {
+        socket.emit("shortcut:error", {
+          message: "id は必須です",
+          code: "invalid_id",
+        });
+        return;
+      }
+      const patch: { message?: string; sortOrder?: number } = {};
+      if (message !== undefined) {
+        const trimmed = typeof message === "string" ? message.trim() : "";
+        if (
+          trimmed.length === 0 ||
+          trimmed.length > MESSAGE_SHORTCUT_MAX_LENGTH
+        ) {
+          socket.emit("shortcut:error", {
+            message: `message は 1〜${MESSAGE_SHORTCUT_MAX_LENGTH} 文字で入力してください`,
+            code: "invalid_message",
+          });
+          return;
+        }
+        patch.message = trimmed;
+      }
+      if (sortOrder !== undefined) {
+        if (!Number.isInteger(sortOrder)) {
+          socket.emit("shortcut:error", {
+            message: "sortOrder は整数で指定してください",
+            code: "invalid_sort_order",
+          });
+          return;
+        }
+        patch.sortOrder = sortOrder as number;
+      }
+      if (Object.keys(patch).length === 0) {
+        socket.emit("shortcut:error", {
+          message: "更新する項目を指定してください",
+          code: "empty_patch",
+        });
+        return;
+      }
+      try {
+        const shortcut = db.updateMessageShortcut(id, patch);
+        io.emit("shortcut:updated", shortcut);
+        io.emit("shortcut:list", db.listMessageShortcuts());
+      } catch (e) {
+        socket.emit("shortcut:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on("shortcut:delete", payload => {
+      if (typeof payload !== "object" || payload === null) {
+        socket.emit("shortcut:error", {
+          message: "payload が不正です",
+          code: "invalid_payload",
+        });
+        return;
+      }
+      const { id } = payload as { id?: unknown };
+      if (typeof id !== "string" || id.length === 0) {
+        socket.emit("shortcut:error", {
+          message: "id は必須です",
+          code: "invalid_id",
+        });
+        return;
+      }
+      try {
+        db.deleteMessageShortcut(id);
+        io.emit("shortcut:deleted", { id });
+        io.emit("shortcut:list", db.listMessageShortcuts());
+      } catch (e) {
+        socket.emit("shortcut:error", { message: getErrorMessage(e) });
       }
     });
 

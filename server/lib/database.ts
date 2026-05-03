@@ -11,18 +11,20 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { nanoid } from "nanoid";
-import type {
-  ChatMessage,
-  FrontlineRecord,
-  FrontlineStats,
-  McpServerConfig,
-  McpServerConfigInput,
-  Message,
-  MessageType,
-  Profile,
-  RepoProfileLink,
-  Session,
-  SessionStatus,
+import {
+  type ChatMessage,
+  type FrontlineRecord,
+  type FrontlineStats,
+  type McpServerConfig,
+  type McpServerConfigInput,
+  MESSAGE_SHORTCUT_MAX_LENGTH,
+  type Message,
+  type MessageShortcut,
+  type MessageType,
+  type Profile,
+  type RepoProfileLink,
+  type Session,
+  type SessionStatus,
 } from "../../shared/types.js";
 
 // プロジェクトルートからの相対パスでDBファイルを配置
@@ -303,6 +305,47 @@ export class SessionDatabase {
       this.db.exec("ALTER TABLE profiles DROP COLUMN status");
     } catch {
       // 既に削除済み
+    }
+
+    // メッセージショートカット（全リポジトリ共通の定型送信メッセージ）
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS message_shortcuts (
+        id TEXT PRIMARY KEY,
+        message TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_message_shortcuts_sort
+        ON message_shortcuts (sort_order, created_at);
+    `);
+
+    // マイグレーション: 旧 label 列を削除する。
+    // 1) 列が無ければ何もしない (新規 DB / 既に削除済み)
+    // 2) DROP COLUMN は SQLite 3.35+ で対応。古いバージョンでは syntax error
+    //    (near "DROP") を返すので、その場合は warn してスキップする。
+    //    現行 DDL は label を持たないので、新規挿入は問題ない。
+    try {
+      const hasLabel = this.db
+        .prepare(
+          "SELECT 1 FROM pragma_table_info('message_shortcuts') WHERE name = 'label'"
+        )
+        .get();
+      if (hasLabel) {
+        try {
+          this.db.exec("ALTER TABLE message_shortcuts DROP COLUMN label");
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.warn(
+            "[DB] DROP COLUMN label failed (SQLite version too old?):",
+            msg
+          );
+        }
+      }
+    } catch (e) {
+      // pragma_table_info 自体が失敗したら新規 DB の可能性が高い、warn で継続
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn("[DB] pragma_table_info check failed:", msg);
     }
 
     // ============================================================
@@ -1371,6 +1414,143 @@ export class SessionDatabase {
   deleteMcpToken(serverId: string): void {
     const stmt = this.db.prepare("DELETE FROM mcp_tokens WHERE server_id = ?");
     stmt.run(serverId);
+  }
+
+  // ============================================================
+  // メッセージショートカットCRUD操作
+  // ============================================================
+
+  private rowToMessageShortcut(row: {
+    id: string;
+    message: string;
+    sort_order: number;
+    created_at: number;
+    updated_at: number;
+  }): MessageShortcut {
+    return {
+      id: row.id,
+      message: row.message,
+      sortOrder: row.sort_order,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /** ショートカットを並び順 → 作成順で全件取得 */
+  listMessageShortcuts(): MessageShortcut[] {
+    const stmt = this.db.prepare(
+      "SELECT * FROM message_shortcuts ORDER BY sort_order ASC, created_at ASC"
+    );
+    const rows = stmt.all() as Array<{
+      id: string;
+      message: string;
+      sort_order: number;
+      created_at: number;
+      updated_at: number;
+    }>;
+    return rows.map(row => this.rowToMessageShortcut(row));
+  }
+
+  getMessageShortcut(id: string): MessageShortcut | null {
+    const stmt = this.db.prepare(
+      "SELECT * FROM message_shortcuts WHERE id = ?"
+    );
+    const row = stmt.get(id) as
+      | {
+          id: string;
+          message: string;
+          sort_order: number;
+          created_at: number;
+          updated_at: number;
+        }
+      | undefined;
+    return row ? this.rowToMessageShortcut(row) : null;
+  }
+
+  /**
+   * message を trim 後に検証する。
+   * 上位レイヤー (server handler) も trim しているが、SessionDatabase は public API
+   * なので別経路から呼ばれた際にも invariant を保つよう DB 層でも正規化する。
+   */
+  private normalizeShortcutMessage(value: unknown): string {
+    if (typeof value !== "string") {
+      throw new Error("message は文字列で指定してください");
+    }
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      throw new Error("message は空にできません");
+    }
+    if (trimmed.length > MESSAGE_SHORTCUT_MAX_LENGTH) {
+      throw new Error(
+        `message は ${MESSAGE_SHORTCUT_MAX_LENGTH} 文字以内で指定してください`
+      );
+    }
+    return trimmed;
+  }
+
+  /** 新規作成（sortOrderは既存の最大+1で末尾追加） */
+  createMessageShortcut(input: { message: string }): MessageShortcut {
+    const message = this.normalizeShortcutMessage(input.message);
+    const id = nanoid();
+    const now = Date.now();
+    const maxStmt = this.db.prepare(
+      "SELECT COALESCE(MAX(sort_order), 0) AS m FROM message_shortcuts"
+    );
+    const { m } = maxStmt.get() as { m: number };
+    const stmt = this.db.prepare(`
+      INSERT INTO message_shortcuts (id, message, sort_order, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    stmt.run(id, message, m + 1, now, now);
+    const created = this.getMessageShortcut(id);
+    if (!created) {
+      throw new Error(`Failed to create message shortcut: ${id}`);
+    }
+    return created;
+  }
+
+  /** 部分更新。undefined のフィールドはスキップ */
+  updateMessageShortcut(
+    id: string,
+    patch: { message?: string; sortOrder?: number }
+  ): MessageShortcut {
+    let normalizedMessage: string | undefined;
+    if (patch.message !== undefined) {
+      normalizedMessage = this.normalizeShortcutMessage(patch.message);
+    }
+    if (patch.sortOrder !== undefined && !Number.isInteger(patch.sortOrder)) {
+      throw new Error("sortOrder は整数で指定してください");
+    }
+    const setClauses: string[] = [];
+    const params: Array<string | number> = [];
+    if (normalizedMessage !== undefined) {
+      setClauses.push("message = ?");
+      params.push(normalizedMessage);
+    }
+    if (patch.sortOrder !== undefined) {
+      setClauses.push("sort_order = ?");
+      params.push(patch.sortOrder);
+    }
+    setClauses.push("updated_at = ?");
+    params.push(Date.now());
+    params.push(id);
+    const stmt = this.db.prepare(
+      `UPDATE message_shortcuts SET ${setClauses.join(", ")} WHERE id = ?`
+    );
+    const result = stmt.run(...params);
+    if (result.changes === 0) {
+      throw new Error(`Message shortcut not found: ${id}`);
+    }
+    const updated = this.getMessageShortcut(id);
+    if (!updated) {
+      throw new Error(`Message shortcut not found after update: ${id}`);
+    }
+    return updated;
+  }
+
+  deleteMessageShortcut(id: string): void {
+    const stmt = this.db.prepare("DELETE FROM message_shortcuts WHERE id = ?");
+    stmt.run(id);
   }
 
   /**

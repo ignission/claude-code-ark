@@ -40,6 +40,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type {
   ManagedSession,
+  MessageShortcut,
   SpecialKey,
   Worktree,
 } from "../../../shared/types";
@@ -47,6 +48,8 @@ import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { useVisualViewport } from "../hooks/useVisualViewport";
 import { FileViewerPane } from "./FileViewerPane";
+import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
+import { MessageShortcutMenu } from "./MessageShortcutMenu";
 import type { ViewerTab } from "./TerminalPane";
 import { ViewerTabBar } from "./ViewerTabBar";
 
@@ -82,6 +85,10 @@ interface MobileSessionViewProps {
   activeTabIndex: number;
   onTabSelect: (index: number) => void;
   onTabClose: (index: number) => void;
+  messageShortcuts: MessageShortcut[];
+  onCreateShortcut: (message: string) => void;
+  onUpdateShortcut: (id: string, patch: { message?: string }) => void;
+  onDeleteShortcut: (id: string) => void;
 }
 
 export function MobileSessionView({
@@ -97,6 +104,10 @@ export function MobileSessionView({
   activeTabIndex,
   onTabSelect,
   onTabClose,
+  messageShortcuts,
+  onCreateShortcut,
+  onUpdateShortcut,
+  onDeleteShortcut,
 }: MobileSessionViewProps) {
   const { height: viewportHeight, isKeyboardVisible } = useVisualViewport();
   const [inputValue, setInputValue] = useState("");
@@ -107,6 +118,7 @@ export function MobileSessionView({
   const [isSending, setIsSending] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showShortcutManager, setShowShortcutManager] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   // ファイル選択input は DropdownMenuContent (Radix Portal) の外に配置する。
@@ -334,6 +346,12 @@ export function MobileSessionView({
           </span>
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          <MessageShortcutMenu
+            shortcuts={messageShortcuts}
+            onSendMessage={onSendMessage}
+            onOpenManager={() => setShowShortcutManager(true)}
+            size="lg"
+          />
           {/* Opsドロップダウン */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -657,6 +675,15 @@ export function MobileSessionView({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <MessageShortcutManagerDialog
+        open={showShortcutManager}
+        onOpenChange={setShowShortcutManager}
+        shortcuts={messageShortcuts}
+        onCreate={onCreateShortcut}
+        onUpdate={onUpdateShortcut}
+        onDelete={onDeleteShortcut}
+      />
     </div>
   );
 }

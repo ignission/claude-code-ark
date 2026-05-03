@@ -20,6 +20,7 @@ import type {
   McpConnectionInfo,
   McpProviderCatalog,
   McpProvidersSnapshot,
+  MessageShortcut,
   Profile,
   RepoInfo,
   ServerToClientEvents,
@@ -178,6 +179,15 @@ interface UseSocketReturn {
   setRepoProfile: (repoPath: string, profileId: string | null) => void;
   restartSessionWithProfile: (sessionId: string) => void;
 
+  // メッセージショートカット
+  messageShortcuts: MessageShortcut[];
+  createShortcut: (message: string) => void;
+  updateShortcut: (
+    id: string,
+    patch: { message?: string; sortOrder?: number }
+  ) => void;
+  deleteShortcut: (id: string) => void;
+
   // MCP server (Beacon の外部 OAuth MCP) — マルチアカウント
   mcpCatalog: McpProviderCatalog[];
   mcpConnections: McpConnectionInfo[];
@@ -309,6 +319,11 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [capabilities, setCapabilities] = useState<SystemCapabilities>({
     multiProfileSupported: false,
   });
+
+  // メッセージショートカット（全リポジトリ共通）
+  const [messageShortcuts, setMessageShortcuts] = useState<MessageShortcut[]>(
+    []
+  );
 
   // MCP server (Beacon の外部 OAuth MCP) — マルチアカウント
   const [mcpCatalog, setMcpCatalog] = useState<McpProviderCatalog[]>([]);
@@ -803,6 +818,32 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       setRepoProfileLinks(next);
     });
 
+    // メッセージショートカット ----------------------------------
+    socket.on("shortcut:list", list => {
+      setMessageShortcuts(list);
+    });
+
+    socket.on("shortcut:created", shortcut => {
+      setMessageShortcuts(prev =>
+        prev.some(s => s.id === shortcut.id) ? prev : [...prev, shortcut]
+      );
+    });
+
+    socket.on("shortcut:updated", shortcut => {
+      setMessageShortcuts(prev =>
+        prev.map(s => (s.id === shortcut.id ? shortcut : s))
+      );
+    });
+
+    socket.on("shortcut:deleted", ({ id }) => {
+      setMessageShortcuts(prev => prev.filter(s => s.id !== id));
+    });
+
+    socket.on("shortcut:error", ({ message, code }) => {
+      console.error(`[shortcut] ${code ?? "error"}: ${message}`);
+      toast.error(`ショートカット操作に失敗: ${message}`);
+    });
+
     // Usage取得イベント
     socket.on("usage:progress", progress => {
       setUsageProgress(progress);
@@ -1241,6 +1282,22 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socketRef.current?.emit("session:restart-with-profile", { sessionId });
   }, []);
 
+  // メッセージショートカット actions
+  const createShortcut = useCallback((message: string) => {
+    socketRef.current?.emit("shortcut:create", { message });
+  }, []);
+
+  const updateShortcut = useCallback(
+    (id: string, patch: { message?: string; sortOrder?: number }) => {
+      socketRef.current?.emit("shortcut:update", { id, ...patch });
+    },
+    []
+  );
+
+  const deleteShortcut = useCallback((id: string) => {
+    socketRef.current?.emit("shortcut:delete", { id });
+  }, []);
+
   // MCP server (Beacon の外部 OAuth MCP) actions
   const mcpRefresh = useCallback(() => {
     socketRef.current?.emit("mcp:state");
@@ -1416,6 +1473,11 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     deleteProfile,
     setRepoProfile,
     restartSessionWithProfile,
+    // メッセージショートカット
+    messageShortcuts,
+    createShortcut,
+    updateShortcut,
+    deleteShortcut,
     // MCP server (Beacon の外部 OAuth MCP) — マルチアカウント
     mcpCatalog,
     mcpConnections,
