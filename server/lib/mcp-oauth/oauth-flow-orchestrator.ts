@@ -392,7 +392,17 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
     this.flows.delete(connectionId);
   }
 
-  /** Beacon 接続前に呼ばれる token refresh */
+  /**
+   * Beacon 接続前に呼ばれる token refresh。
+   *
+   * トークン保持戦略 (= 不要に削除しない):
+   * - 完全に expired (margin なし) かつ refresh_token が無い場合のみ削除する
+   *   (どうやっても使えないので)
+   * - margin 以内だがまだ valid な場合: refresh_token があれば refresh を試行、
+   *   無ければ既存 token をそのまま使い続ける (実 expiry までは有効)
+   * - refresh が transient error (network / 5xx) で失敗した場合: 既存 token を残す
+   *   (次回呼び出しで再試行する; 永続切断にしないため)
+   */
   async refreshIfNeeded(server: {
     id: string;
     tokenEndpoint: string;
@@ -400,17 +410,25 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
   }): Promise<boolean> {
     const token = db.getMcpToken(server.id);
     if (!token) return false;
+    const now = Date.now();
 
-    const margin = 60 * 1000;
-    const needsRefresh =
-      token.expiresAt !== null && token.expiresAt - margin <= Date.now();
-    if (!needsRefresh) return true;
-    if (!token.refreshToken) {
+    // 実 expiry を過ぎている (= access token は確実に使えない)
+    const fullyExpired = token.expiresAt !== null && token.expiresAt <= now;
+    if (fullyExpired && !token.refreshToken) {
+      // 復旧不可能なので削除して UI に再認証を促す
       db.deleteMcpToken(server.id);
-      // UI に状態反映を促す (manager dialog のバッジが「期限切れ」/「未認証」に切り替わる)
       this.emit("token-invalidated", { connectionId: server.id });
       return false;
     }
+
+    const margin = 60 * 1000;
+    const needsRefresh =
+      token.expiresAt !== null && token.expiresAt - margin <= now;
+    if (!needsRefresh) return true;
+    // refresh_token が無い場合: 削除はせず既存 access token をそのまま使い続ける
+    // (実 expiry まではまだ有効。Beacon の MCP 呼び出しが 401 になったら次回ループで
+    // fullyExpired 判定で削除される)
+    if (!token.refreshToken) return true;
 
     try {
       const result = await refreshAccessToken({
@@ -418,7 +436,6 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
         clientId: server.clientId,
         refreshToken: token.refreshToken,
       });
-      const now = Date.now();
       db.upsertMcpToken({
         serverId: server.id,
         accessToken: result.accessToken,
@@ -431,12 +448,14 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
       });
       return true;
     } catch (err) {
+      // refresh の failure は transient (network / 5xx / レート制限等) の可能性が
+      // 高いので、token を即削除しない。ログ + 既存 token を継続使用する。
+      // 次回 refreshIfNeeded で再試行される。permanent な失敗 (revoked refresh)
+      // は MCP 呼び出し時の 401 で気付く運用とする。
       console.warn(
-        `[mcp-oauth] refresh failed for ${server.id}: ${getErrorMessage(err)}`
+        `[mcp-oauth] refresh failed for ${server.id} (keeping existing token): ${getErrorMessage(err)}`
       );
-      db.deleteMcpToken(server.id);
-      this.emit("token-invalidated", { connectionId: server.id });
-      return false;
+      return true;
     }
   }
 
