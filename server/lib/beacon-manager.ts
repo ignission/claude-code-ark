@@ -1231,11 +1231,18 @@ export class BeaconManager extends EventEmitter {
       }
     }
 
-    // (2) MCP 構成が変わっていればセッションを作り直して system prompt と allowedTools を
-    // 新 connection リストで再構築する。busy 時でも close する (新メッセージ = fresh state 期待)。
-    // 注: auth-completed イベント自体は close を呼ばず stale フラグだけ立てる
-    //   (長い response 途中で MCP 認証が完了してもユーザの会話は中断されない)。
-    if (this.mcpConfigStale && this.session) {
+    // (2) MCP 構成が変わっていてかつ idle (進行中ターンなし) の場合のみセッションを
+    // 作り直して system prompt と allowedTools を新 connection リストで再構築する。
+    // busy (multi-client で他タブが streaming 中) のときに close すると他クライアントの
+    // response を途中で abort するため、idle まで rebuild を defer する。
+    // 副作用: busy のまま新メッセージを送ると、その turn は古い system prompt で動く
+    // (setMcpServers で tool 一覧は最新に差し替わるが systemPrompt の文言は古い)。
+    // multi-client で頻繁に MCP を弄る運用は想定外なのでこのトレードオフを許容する。
+    if (
+      this.mcpConfigStale &&
+      this.session &&
+      this.session.activeTurnCount === 0
+    ) {
       this.closeSession();
       this.mcpConfigStale = false;
       preflightMcps = []; // 新セッション用に再フェッチさせる

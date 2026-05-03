@@ -906,6 +906,21 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     });
     socket.on("mcp:error", ({ message }) => {
       toast.error(message);
+      // 接続失敗 (discovery / DCR エラー等) では `mcp:auth-started` が来ないため、
+      // mcpConnect で開いた空 popup がキューに残ったままになる。次回 retry で
+      // stale tab に navigate しないよう、全 provider の popup キューをここで drain する。
+      // (どの connect 由来の error か特定不能なので安全側に倒す)
+      const popups = mcpPendingPopupsRef.current;
+      for (const queue of Object.values(popups)) {
+        while (queue.length > 0) {
+          const p = queue.shift();
+          try {
+            p?.close();
+          } catch {
+            /* ignore */
+          }
+        }
+      }
     });
     // 接続時にカタログ + connection 一覧を取得
     socket.emit("mcp:state");
