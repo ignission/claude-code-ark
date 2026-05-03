@@ -1805,10 +1805,28 @@ async function startServer() {
      */
     socket.on(
       "mcp:connect",
-      async ({ providerId, label, connectionId: existingId }) => {
+      async ({ providerId, label, connectionId: existingId, requestId }) => {
         try {
-          const provider = requireProvider(providerId);
-          if (!provider) return;
+          // requireProvider は失敗時に mcp:error を emit するが requestId を持たない。
+          // popup correlation のため、ここでは inline で provider を検証する。
+          if (typeof providerId !== "string" || providerId.length === 0) {
+            socket.emit("mcp:error", {
+              message: "providerId は必須です",
+              code: "invalid_provider_id",
+              ...(requestId ? { requestId } : {}),
+            });
+            return;
+          }
+          const provider = getProvider(providerId);
+          if (!provider) {
+            socket.emit("mcp:error", {
+              message: `サポート対象外のプロバイダ: ${providerId}`,
+              code: "unknown_provider",
+              providerId,
+              ...(requestId ? { requestId } : {}),
+            });
+            return;
+          }
 
           // connectionId が指定されていれば再認証 (in-place 更新)。指定なら新規作成。
           let connectionId: string;
@@ -1866,23 +1884,28 @@ async function startServer() {
           socket.emit("mcp:auth-started", {
             connectionId,
             providerId: provider.id,
+            ...(requestId ? { requestId } : {}),
             authorizationUrl: result.authorizationUrl,
           });
           io.emit("mcp:state", buildMcpSnapshot());
         } catch (e) {
-          // providerId を含めることで client が該当 provider の popup queue を
-          // 該当 provider のみで drain できるようにする (他 provider の進行中フローへの
-          // 巻き添えを防ぐ)
+          // providerId / requestId を同梱して client 側で popup correlation する。
+          // requestId が含まれていれば該当 popup のみ close、無ければ provider の
+          // FIFO キューから最古を close する fallback。
+          const base: { providerId: string; requestId?: string } = {
+            providerId,
+            ...(requestId ? { requestId } : {}),
+          };
           if (e instanceof DiscoveryError) {
             socket.emit("mcp:error", {
               message: `自動登録に失敗 (${e.stage}): ${e.message}`,
               code: e.stage,
-              providerId,
+              ...base,
             });
           } else {
             socket.emit("mcp:error", {
               message: getErrorMessage(e),
-              providerId,
+              ...base,
             });
           }
         }

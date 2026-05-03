@@ -40,14 +40,14 @@ export async function buildAuthenticatedExternalMcps(): Promise<
   const entries: ExternalMcpEntry[] = [];
 
   for (const server of servers) {
+    // provider whitelist 判定を先に行う (refresh より前)。
+    // ホワイトリストから外れた provider に refresh token を外部送信しないため。
+    const provider = getProvider(server.providerId);
+    if (!provider) continue;
     const ok = await mcpOAuthOrchestrator.refreshIfNeeded(server);
     if (!ok) continue;
     const token = db.getMcpToken(server.id);
     if (!token) continue;
-    // provider 定義から transport (sse / http) を引く。
-    // 万一 provider が registry から消えていれば skip (ホワイトリスト外なので使わせない)。
-    const provider = getProvider(server.providerId);
-    if (!provider) continue;
 
     const headers = {
       Authorization: `${token.tokenType} ${token.accessToken}`,

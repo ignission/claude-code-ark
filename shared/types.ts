@@ -108,6 +108,8 @@ export interface McpAuthFlow {
   connectionId: string;
   /** どの provider のフローか (popup マッチング用) */
   providerId: string;
+  /** クライアント発行の request ID (popup 関連付け用、複数並列対応) */
+  requestId?: string;
   /** ブラウザで開く認可URL */
   authorizationUrl: string;
 }
@@ -445,11 +447,15 @@ export interface ServerToClientEvents {
   "mcp:auth-started": (data: McpAuthFlow) => void;
   "mcp:auth-completed": (data: { connectionId: string }) => void;
   "mcp:auth-failed": (data: { connectionId: string; message: string }) => void;
-  /** providerId: connect 失敗で開いた popup を該当 provider のみ drain するため */
+  /**
+   * providerId / requestId: connect 失敗で開いた popup を該当リクエストのみ drain するため。
+   * requestId が含まれていれば優先的に使い、無ければ providerId の最古キューを drain する。
+   */
   "mcp:error": (data: {
     message: string;
     code?: string;
     providerId?: string;
+    requestId?: string;
   }) => void;
 }
 
@@ -573,6 +579,11 @@ export interface ClientToServerEvents {
     providerId: string;
     label?: string;
     connectionId?: string;
+    /**
+     * クライアント発行の request ID。並行する複数の mcp:connect リクエストを
+     * mcp:auth-started / mcp:error と correlate して popup を正しく navigate するため。
+     */
+    requestId?: string;
   }) => void;
   /**
    * リモート接続時のフォールバック。

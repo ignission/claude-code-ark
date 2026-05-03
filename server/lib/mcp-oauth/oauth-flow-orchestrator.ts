@@ -70,6 +70,12 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
   private readonly flows = new Map<string, FlowEntry>();
   /** state → connectionId の index (paste 時の検索用) */
   private readonly stateIndex = new Map<string, string>();
+  /**
+   * 起動処理中 (discovery / DCR の await 中) の connectionId を保持する synchronous な
+   * reservation。flows.set は discovery/DCR 完了後に行われるため、ユーザの連打で 2 本目の
+   * flow が並走する race を防ぐために await 前に確保する。
+   */
+  private readonly startingConnections = new Set<string>();
 
   /**
    * 新規 connection に対して OAuth フローを開始する。
@@ -88,16 +94,30 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
     connectionId: string,
     label: string
   ): Promise<{ authorizationUrl: string }> {
+    // synchronous reservation: 同一 connectionId の二重起動を await 前に弾く。
+    // 既存 pending flow があれば clearFlow してから新規 reserve する。
+    if (this.startingConnections.has(connectionId)) {
+      throw new Error(
+        `OAuth flow already starting for "${connectionId}" (rapid re-click を抑止)`
+      );
+    }
     if (this.flows.get(connectionId)?.status === "pending") {
       this.clearFlow(connectionId);
     }
+    this.startingConnections.add(connectionId);
 
     const runId = randomUUID();
     const pkce = generatePkcePair();
     const state = generateOAuthState();
 
     // 1. loopback 起動 → redirect_uri 確定
-    const callbackHandle = await startLoopbackCallbackServer();
+    let callbackHandle: LoopbackCallbackHandle;
+    try {
+      callbackHandle = await startLoopbackCallbackServer();
+    } catch (err) {
+      this.startingConnections.delete(connectionId);
+      throw err;
+    }
 
     // 2-3. discovery + DCR
     let endpoints: DiscoveredEndpoints;
@@ -111,6 +131,7 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
       );
     } catch (err) {
       await callbackHandle.close().catch(() => {});
+      this.startingConnections.delete(connectionId);
       throw err;
     }
 
@@ -145,6 +166,8 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
     };
     this.flows.set(connectionId, entry);
     this.stateIndex.set(state, connectionId);
+    // flows に登録できたので reservation を解除 (以降は flows.has で判定可能)
+    this.startingConnections.delete(connectionId);
 
     // 5. bg で loopback callback を待つ
     callbackHandle

@@ -85,6 +85,8 @@ async function atlassianResolveAccountLabel(
   accessToken: string
 ): Promise<{ label: string; hint: string } | null> {
   try {
+    // タイムアウト 10 秒: ハングすると OAuth callback 処理全体が返らず connection が
+    // authenticating のまま残るため、上限を設けて null フォールバックさせる。
     const res = await fetch(
       "https://api.atlassian.com/oauth/token/accessible-resources",
       {
@@ -92,6 +94,7 @@ async function atlassianResolveAccountLabel(
           Authorization: `Bearer ${accessToken}`,
           Accept: "application/json",
         },
+        signal: AbortSignal.timeout(10_000),
       }
     );
     if (!res.ok) return null;
