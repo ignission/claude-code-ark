@@ -376,6 +376,12 @@ export class BeaconManager extends EventEmitter {
    */
   private mcpConfigStale = false;
   /**
+   * MCP 構成バージョン。markMcpConfigStale 毎に +1 する。
+   * `_initSession` の async 中に config が変わったかを判定するために使う:
+   * 開始時の version を保持し、終了時に変化していれば stale フラグを残す。
+   */
+  private mcpConfigVersion = 0;
+  /**
    * Beacon が assistant 応答を streaming 中に postExternalMessage が呼ばれた場合
    * のキュー。LLM turn の timestamp は完了時に確定するため、turn 完了前に
    * 外部メッセージを保存すると DB 上の順序が逆転する。turn 完了後にまとめて
@@ -1080,6 +1086,8 @@ export class BeaconManager extends EventEmitter {
   }
 
   private async _initSession(): Promise<BeaconSession> {
+    // init 中に markMcpConfigStale が呼ばれたか検出するための version 値を捕捉
+    const startVersion = this.mcpConfigVersion;
     const cwd = process.env.HOME || "/home";
     console.log(`[BeaconManager] 新規グローバルセッション開始 (cwd: ${cwd})`);
 
@@ -1190,9 +1198,12 @@ export class BeaconManager extends EventEmitter {
 
     this.session = session;
     // セッション起動時の MCP 構成は最新なので stale フラグをリセットする。
-    // (session が null の状態で markMcpConfigStale された後、初回 send で
-    // 起動したセッションを 2 回目 send で即 close してしまう race を防ぐ)
-    this.mcpConfigStale = false;
+    // ただし async init 中に markMcpConfigStale が呼ばれていたら (= version が
+    // 変化していたら) 反映漏れになるため、その場合は stale を残す: 次の
+    // sendMessage で即 rebuild される。
+    if (this.mcpConfigVersion === startVersion) {
+      this.mcpConfigStale = false;
+    }
     return session;
   }
 
@@ -1204,19 +1215,30 @@ export class BeaconManager extends EventEmitter {
    * 3. 出力イテレータからSDKMessageを読み取り、ストリーミングで通知
    */
   async sendMessage(message: string): Promise<void> {
-    // MCP 構成が変わっていればセッションを作り直して system prompt と allowedTools を
-    // 新 connection リストで再構築する。busy (進行中ターンあり) の場合でも close する:
-    // - ユーザが新メッセージを送った時点で fresh state を期待している
-    // - setMcpServers では systemPrompt / allowedTools が更新されないため、新規追加
-    //   connection が不可視になる / 削除済み connection の指示が残る
-    // 進行中ターンは犠牲になるが、その response は既に streaming 済みで UI/DB には残る
-    // (close 後の新セッションが履歴を再 load する)。
-    // 注: auth-completed のイベント時は close せず stale フラグだけ立てる。長い response
-    // の途中で MCP 認証が完了してもユーザの会話は中断されない (sendMessage 経路でのみ
-    // rebuild する)。
+    // (1) Pre-flight: 外部 MCP token を refresh する。refresh 失敗時は orchestrator が
+    // token-invalidated を emit → markMcpConfigStale が呼ばれる。これを (2) の stale
+    // チェックで拾うため、必ず先に走らせる必要がある。
+    // 戻り値 (refreshed entries) は (3) の setMcpServers で使い回す。
+    let preflightMcps: import("./mcp-oauth/build-mcp-servers.js").ExternalMcpEntry[] =
+      [];
+    if (this.session) {
+      try {
+        preflightMcps = await buildAuthenticatedExternalMcps();
+      } catch (err) {
+        console.warn(
+          `[BeaconManager] preflight refresh failed: ${getErrorMessage(err)}`
+        );
+      }
+    }
+
+    // (2) MCP 構成が変わっていればセッションを作り直して system prompt と allowedTools を
+    // 新 connection リストで再構築する。busy 時でも close する (新メッセージ = fresh state 期待)。
+    // 注: auth-completed イベント自体は close を呼ばず stale フラグだけ立てる
+    //   (長い response 途中で MCP 認証が完了してもユーザの会話は中断されない)。
     if (this.mcpConfigStale && this.session) {
       this.closeSession();
       this.mcpConfigStale = false;
+      preflightMcps = []; // 新セッション用に再フェッチさせる
     }
     if (!this.session) {
       // セッションが存在しない場合は自動的に開始する
@@ -1225,20 +1247,20 @@ export class BeaconManager extends EventEmitter {
 
     const session = this.session!;
 
-    // 既存セッションでも turn 開始前に外部 MCP の token を refresh して
-    // setMcpServers で fresh headers を push する。
+    // (3) turn 開始前に外部 MCP の fresh headers を setMcpServers で push する。
     // - startSession 時に headers が焼き込まれるため、長いターン中に token TTL を跨ぐと 401
     // - 各 turn 開始時に header 差し替え (system prompt は変えない) することで、
-    //   1 turn 内の expiry はカバーできない (turn 中に expire するケースは稀)
-    //   が、turn 単位での token rotation は安定する
+    //   turn 単位での token rotation が安定する
     try {
-      const externalMcps = await buildAuthenticatedExternalMcps();
+      const externalMcps =
+        preflightMcps.length > 0
+          ? preflightMcps
+          : await buildAuthenticatedExternalMcps();
       const refreshedMap: Record<string, SdkMcpServerConfig> = {};
       if (this.deps) refreshedMap["ark-beacon"] = this.createMcpServer();
       for (const entry of externalMcps) {
         refreshedMap[entry.connectionId] = entry.config;
       }
-      // SDK は変更があった server のみ reconnect する想定。同一 config なら no-op
       await session.queryInstance.setMcpServers(refreshedMap);
     } catch (err) {
       console.warn(
@@ -1595,6 +1617,7 @@ export class BeaconManager extends EventEmitter {
    */
   markMcpConfigStale(): void {
     this.mcpConfigStale = true;
+    this.mcpConfigVersion++;
   }
 
   /**
