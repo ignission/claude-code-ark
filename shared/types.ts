@@ -1,5 +1,119 @@
 // Shared types between client and server
 
+/**
+ * Beacon が外部 MCP server に OAuth で接続するための設定 (1 connection)。
+ *
+ * マルチアカウント対応:
+ * - id: connection ごとに一意 (例: `atlassian-x4z9k1`)。`mcp__<id>__<tool>` のプレフィックス。
+ * - providerId: `MCP_PROVIDERS` registry のキー (例: `atlassian`)。同 provider に複数 connection を持てる。
+ * - label: UI 表示用の人間可読ラベル (例: 「Atlassian #1」「仕事用」)。
+ *
+ * Ark がホワイトリストで公式サポートしているプロバイダのみ登録される。
+ * provider 定義 (URL / endpoints) は `server/lib/mcp-oauth/providers.ts` にハードコード。
+ * connection 作成時は provider 既定値 + DCR で動的取得した clientId が保存される。
+ */
+export interface McpServerConfig {
+  /** connection 固有 ID (auto-generated)。`mcp__<id>__<tool>` の <id> 部分 */
+  id: string;
+  /** どの provider のインスタンスか (registry key) */
+  providerId: string;
+  /** UI 表示用ラベル (人間可読) */
+  label: string;
+  /** UI 表示名 (provider の name と通常一致) */
+  name: string;
+  /** MCP server の HTTP エンドポイント */
+  url: string;
+  /** OAuth authorization endpoint */
+  authorizationEndpoint: string;
+  /** OAuth token endpoint */
+  tokenEndpoint: string;
+  /** OAuth クライアントID (DCR で動的取得した値) */
+  clientId: string;
+  /** 要求するスコープ */
+  scopes: string[];
+  /** authorization request の audience パラメータ */
+  audience?: string;
+  /** authorization request の prompt パラメータ */
+  prompt?: string;
+  /**
+   * provider 固有のアカウント詳細 (Beacon system prompt に注入される)。
+   * 例: Atlassian なら "Atlassian sites accessible by this connection: host=... cloudId=..."
+   */
+  accountHint?: string;
+  /** 作成・更新時刻 (UNIX ms) */
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** McpServerConfig の DB upsert 入力 (内部のみ。UIには露出しない) */
+export type McpServerConfigInput = Omit<
+  McpServerConfig,
+  "createdAt" | "updatedAt"
+>;
+
+/** OAuth 認証状態（UI バッジ用） */
+export type McpAuthStatus =
+  | "unauthenticated" // token 無し
+  | "authenticated" // 有効な token あり
+  | "expired" // token 期限切れ・要 refresh
+  | "authenticating"; // フロー進行中
+
+/**
+ * 公式サポートする MCP プロバイダのカタログエントリ (registry の view)。
+ * 不変情報のみ。connection 状態は McpConnectionInfo に分離。
+ */
+export interface McpProviderCatalog {
+  /** プロバイダ ID (例: "atlassian") */
+  id: string;
+  /** UI 表示名 */
+  name: string;
+  /** UI に表示する短い説明 */
+  description: string;
+}
+
+/**
+ * UI に表示する 1 connection のスナップショット (config + 認証状態)。
+ * 同 providerId に複数の connection が存在し得る (マルチアカウント)。
+ */
+export interface McpConnectionInfo {
+  /** connection 固有 ID */
+  id: string;
+  /** どの provider に属するか (registry key) */
+  providerId: string;
+  /** UI 表示ラベル */
+  label: string;
+  /** 認証状態 */
+  status: McpAuthStatus;
+  /** トークン取得時刻 (UNIX ms) */
+  acquiredAt?: number;
+  /** トークン期限 (UNIX ms) */
+  expiresAt?: number;
+}
+
+/** Catalog + Connections のスナップショット (UI が一括受信) */
+export interface McpProvidersSnapshot {
+  catalog: McpProviderCatalog[];
+  connections: McpConnectionInfo[];
+  /**
+   * 認可フロー進行中の connectionId → authorize URL。
+   * リロード / 再接続後に popup ブロックされたケースの「認可ページを開く」リンクを
+   * 復元するため、サーバ側で覚えておいて snapshot で配信する。
+   */
+  pendingAuthUrls: Record<string, string>;
+}
+
+/** OAuth フロー起動結果 */
+export interface McpAuthFlow {
+  /** 起動した connection の ID */
+  connectionId: string;
+  /** どの provider のフローか (popup マッチング用) */
+  providerId: string;
+  /** クライアント発行の request ID (popup 関連付け用、複数並列対応) */
+  requestId?: string;
+  /** ブラウザで開く認可URL */
+  authorizationUrl: string;
+}
+
 export interface Worktree {
   id: string;
   path: string;
@@ -326,6 +440,23 @@ export interface ServerToClientEvents {
 
   // 主 Dashboard の Repo グリッドビュー
   "session:grid:snapshot": (snapshots: SessionGridSnapshot[]) => void;
+
+  // MCP server 管理 (Beacon の外部 OAuth MCP, マルチアカウント対応)
+  /** カタログ + 全 connection のスナップショット */
+  "mcp:state": (snapshot: McpProvidersSnapshot) => void;
+  "mcp:auth-started": (data: McpAuthFlow) => void;
+  "mcp:auth-completed": (data: { connectionId: string }) => void;
+  "mcp:auth-failed": (data: { connectionId: string; message: string }) => void;
+  /**
+   * providerId / requestId: connect 失敗で開いた popup を該当リクエストのみ drain するため。
+   * requestId が含まれていれば優先的に使い、無ければ providerId の最古キューを drain する。
+   */
+  "mcp:error": (data: {
+    message: string;
+    code?: string;
+    providerId?: string;
+    requestId?: string;
+  }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -431,6 +562,42 @@ export interface ClientToServerEvents {
    */
   "session:grid:subscribe": () => void;
   "session:grid:unsubscribe": () => void;
+
+  // MCP server 管理 (Beacon の外部 OAuth MCP, マルチアカウント対応)
+  /** スナップショット (catalog + connections) を要求 */
+  "mcp:state": () => void;
+  /**
+   * 公式サポートプロバイダに connection を作成 / 再認証する。
+   * - connectionId 省略時: 新規 connection を生成 (`<providerId>-<nanoid>`)
+   * - connectionId 指定時: 既存 connection を再認証 (in-place 更新)
+   * - label 省略時は新規作成のみ「<provider name> #<連番>」を自動採番
+   *
+   * ローカル接続なら loopback が自動受信して完了。
+   * リモート接続は user が mcp:submit-redirect で完了させる。
+   */
+  "mcp:connect": (data: {
+    providerId: string;
+    label?: string;
+    connectionId?: string;
+    /**
+     * クライアント発行の request ID。並行する複数の mcp:connect リクエストを
+     * mcp:auth-started / mcp:error と correlate して popup を正しく navigate するため。
+     */
+    requestId?: string;
+  }) => void;
+  /**
+   * リモート接続時のフォールバック。
+   * 認可後にブラウザが loopback (`http://127.0.0.1:NNN/callback?...`) に
+   * 飛んだものの user の手元からは到達できないとき、URL バーの内容を
+   * そのままペーストして送る。state ベースで flow を検索して完了させる。
+   */
+  "mcp:submit-redirect": (data: { redirectUrl: string }) => void;
+  /** connection を削除。token も CASCADE で消える */
+  "mcp:disconnect": (data: { connectionId: string }) => void;
+  /** OAuth フロー中断（やり直し時） */
+  "mcp:auth-cancel": (data: { connectionId: string }) => void;
+  /** label を変更 (UI 上の名前のみ変更; 認証情報は触らない) */
+  "mcp:rename": (data: { connectionId: string; label: string }) => void;
 }
 
 /** Usage取得結果（プロファイル単位） */

@@ -18,6 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import httpProxy from "http-proxy";
+import { nanoid } from "nanoid";
 import { Server, type Socket } from "socket.io";
 import type {
   BridgeSnapshot,
@@ -65,6 +66,13 @@ import {
 import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
 import { htmlScreenshotter } from "./lib/html-screenshotter.js";
+import { DiscoveryError } from "./lib/mcp-oauth/discovery.js";
+import { mcpOAuthOrchestrator } from "./lib/mcp-oauth/oauth-flow-orchestrator.js";
+import {
+  getProvider,
+  listProviders,
+  type McpProviderEntry,
+} from "./lib/mcp-oauth/providers.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import { sessionOrchestrator } from "./lib/session-orchestrator.js";
@@ -546,6 +554,98 @@ async function startServer() {
   beaconManager.on("beacon:external-message", message => {
     io.emit("beacon:external-message", message);
   });
+
+  // MCP OAuth フローの完了/失敗を全クライアントに通知。
+  // 認証成功時は Beacon セッションに stale マークを付ける: startSession で
+  // 構築済みの mcpServers map / Bearer token は freeze されているため、
+  // 次の send 時に idle なら新セッションに作り直して反映する。
+  // 進行中ターンを途中で中断しないために close は呼ばない。
+  mcpOAuthOrchestrator.on("auth-completed", data => {
+    io.emit("mcp:auth-completed", { connectionId: data.connectionId });
+    io.emit("mcp:state", buildMcpSnapshot());
+    beaconManager.markMcpConfigStale();
+  });
+  mcpOAuthOrchestrator.on("auth-failed", data => {
+    io.emit("mcp:auth-failed", {
+      connectionId: data.connectionId,
+      message: data.message,
+    });
+    io.emit("mcp:state", buildMcpSnapshot());
+  });
+  // refresh 失敗で token が無効化されたとき UI に再認証を促せるよう state を再送 +
+  // Beacon にも stale マーク (systemPrompt / allowedTools 内の死んだ connection を消す)
+  mcpOAuthOrchestrator.on("token-invalidated", () => {
+    io.emit("mcp:state", buildMcpSnapshot());
+    beaconManager.markMcpConfigStale();
+  });
+
+  /**
+   * カタログ (registry) + 全 connection スナップショット。
+   * 同 providerId に複数 connection が存在し得る (マルチアカウント)。
+   */
+  function buildMcpSnapshot(): import("../shared/types.js").McpProvidersSnapshot {
+    const now = Date.now();
+    const catalog = listProviders().map(p => ({
+      id: p.id,
+      name: p.name,
+      description: p.description,
+    }));
+    const dbConnections = db.listMcpServers().map(config => {
+      const token = db.getMcpToken(config.id);
+      let status: import("../shared/types.js").McpAuthStatus;
+      if (mcpOAuthOrchestrator.getStatus(config.id)?.status === "pending") {
+        status = "authenticating";
+      } else if (!token) {
+        status = "unauthenticated";
+      } else if (token.expiresAt !== null && token.expiresAt <= now) {
+        status = "expired";
+      } else {
+        status = "authenticated";
+      }
+      return {
+        id: config.id,
+        providerId: config.providerId,
+        label: config.label,
+        status,
+        ...(token ? { acquiredAt: token.acquiredAt } : {}),
+        ...(token?.expiresAt !== null && token?.expiresAt !== undefined
+          ? { expiresAt: token.expiresAt }
+          : {}),
+      };
+    });
+    // 新規 connection 起動直後は DB に行が無い (token 受領時に作る)。
+    // pending flow を別ソースから合成して、UI から「認証中」が見える + paste UI が出るようにする。
+    const pending = mcpOAuthOrchestrator.listPendingFlows();
+    const dbIds = new Set(dbConnections.map(c => c.id));
+    const pendingConnections: import("../shared/types.js").McpConnectionInfo[] =
+      pending
+        .filter(f => !dbIds.has(f.connectionId))
+        .map(f => ({
+          id: f.connectionId,
+          providerId: f.providerId,
+          label: f.label,
+          status: "authenticating" as const,
+        }));
+    // 認可 URL を再接続/リロード後にも UI から開けるよう snapshot に同梱する
+    const pendingAuthUrls: Record<string, string> = {};
+    for (const f of pending) {
+      pendingAuthUrls[f.connectionId] = f.authorizationUrl;
+    }
+    return {
+      catalog,
+      connections: [...dbConnections, ...pendingConnections],
+      pendingAuthUrls,
+    };
+  }
+
+  /**
+   * provider 別のラベル予約カウンタ。
+   * mcp:connect ハンドラ内で discovery / DCR の await 前に同期的にインクリメントし、
+   * 同 provider に並列で「アカウント追加」されても重複 #N にならないようにする
+   * (DB 件数 + orchestrator の pending flow 件数だけでは、await 開始前に複数の
+   *  ハンドラが同じ count を読んでしまう競合がある)。
+   */
+  const mcpLabelReservation = new Map<string, number>();
 
   /**
    * Quick Tunnelを起動する共通関数
@@ -1654,6 +1754,233 @@ async function startServer() {
     socket.on("beacon:clear", () => {
       beaconManager.clearHistory();
       io.emit("beacon:history", { messages: [] });
+    });
+
+    // ===== MCP OAuth Commands (whitelist 形式) =====
+
+    /** http(s) URL のみ許可 (callback origin の検証用) */
+    const isValidHttpUrl = (s: unknown): s is string => {
+      if (typeof s !== "string") return false;
+      try {
+        const u = new URL(s);
+        return u.protocol === "http:" || u.protocol === "https:";
+      } catch {
+        return false;
+      }
+    };
+
+    /** providerId で provider を引き当てつつ存在チェック */
+    const requireProvider = (providerId: unknown): McpProviderEntry | null => {
+      if (typeof providerId !== "string" || providerId.length === 0) {
+        socket.emit("mcp:error", {
+          message: "providerId は必須です",
+          code: "invalid_provider_id",
+        });
+        return null;
+      }
+      const p = getProvider(providerId);
+      if (!p) {
+        socket.emit("mcp:error", {
+          message: `サポート対象外のプロバイダ: ${providerId}`,
+          code: "unknown_provider",
+        });
+        return null;
+      }
+      return p;
+    };
+
+    socket.on("mcp:state", () => {
+      try {
+        socket.emit("mcp:state", buildMcpSnapshot());
+      } catch (e) {
+        socket.emit("mcp:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    /**
+     * 新しい connection を作成して接続を開始する。
+     * - サーバが connection ID を `<providerId>-<nanoid>` で生成
+     * - label 省略時は `<provider.name> #<index>` を自動採番
+     * - discovery + DCR で client_id を取得 → loopback callback サーバ起動
+     */
+    socket.on(
+      "mcp:connect",
+      async ({ providerId, label, connectionId: existingId, requestId }) => {
+        try {
+          // requireProvider は失敗時に mcp:error を emit するが requestId を持たない。
+          // popup correlation のため、ここでは inline で provider を検証する。
+          if (typeof providerId !== "string" || providerId.length === 0) {
+            socket.emit("mcp:error", {
+              message: "providerId は必須です",
+              code: "invalid_provider_id",
+              ...(requestId ? { requestId } : {}),
+            });
+            return;
+          }
+          const provider = getProvider(providerId);
+          if (!provider) {
+            socket.emit("mcp:error", {
+              message: `サポート対象外のプロバイダ: ${providerId}`,
+              code: "unknown_provider",
+              providerId,
+              ...(requestId ? { requestId } : {}),
+            });
+            return;
+          }
+
+          // connectionId が指定されていれば再認証 (in-place 更新)。指定なら新規作成。
+          let connectionId: string;
+          let resolvedLabel: string;
+          if (typeof existingId === "string" && existingId.length > 0) {
+            const existing = db.getMcpServer(existingId);
+            if (!existing) {
+              socket.emit("mcp:error", {
+                message: `connection が見つかりません: ${existingId}`,
+                code: "not_found",
+              });
+              return;
+            }
+            if (existing.providerId !== provider.id) {
+              socket.emit("mcp:error", {
+                message: "connection の provider 種別が一致しません",
+                code: "provider_mismatch",
+              });
+              return;
+            }
+            connectionId = existingId;
+            // 再認証時は既存 label を維持 (resolveAccountLabel が後で上書きする可能性あり)
+            const trimmed =
+              typeof label === "string" && label.trim() ? label.trim() : null;
+            resolvedLabel = trimmed ?? existing.label;
+            // 古いトークンは破棄しない: ユーザがブラウザ認可を中断/失敗した場合に
+            // 既存の有効トークンを失わないように、orchestrator の _processCallback での
+            // upsertMcpToken 成功時にのみ上書きする方針。
+          } else {
+            // 新規 connection ID を生成
+            connectionId = `${provider.id}-${nanoid(6)}`;
+            const trimmed =
+              typeof label === "string" && label.trim() ? label.trim() : null;
+            // 連番採番: 競合を避けるため synchronous な予約カウンタで採番する。
+            // 初回呼び出し時のみ DB count + pending flow count で初期化し、以降は
+            // インクリメントだけ。同 provider への並列 connect でも重複しない。
+            const counter = mcpLabelReservation;
+            if (!counter.has(provider.id)) {
+              const dbCount = db.countMcpServersByProvider(provider.id);
+              const pendingCount = mcpOAuthOrchestrator
+                .listPendingFlows()
+                .filter(f => f.providerId === provider.id).length;
+              counter.set(provider.id, dbCount + pendingCount);
+            }
+            const next = (counter.get(provider.id) ?? 0) + 1;
+            counter.set(provider.id, next);
+            resolvedLabel = trimmed ?? `${provider.name} #${next}`;
+          }
+
+          const result = await mcpOAuthOrchestrator.startFlowForConnection(
+            provider,
+            connectionId,
+            resolvedLabel
+          );
+          socket.emit("mcp:auth-started", {
+            connectionId,
+            providerId: provider.id,
+            ...(requestId ? { requestId } : {}),
+            authorizationUrl: result.authorizationUrl,
+          });
+          io.emit("mcp:state", buildMcpSnapshot());
+        } catch (e) {
+          // providerId / requestId を同梱して client 側で popup correlation する。
+          // requestId が含まれていれば該当 popup のみ close、無ければ provider の
+          // FIFO キューから最古を close する fallback。
+          const base: { providerId: string; requestId?: string } = {
+            providerId,
+            ...(requestId ? { requestId } : {}),
+          };
+          if (e instanceof DiscoveryError) {
+            socket.emit("mcp:error", {
+              message: `自動登録に失敗 (${e.stage}): ${e.message}`,
+              code: e.stage,
+              ...base,
+            });
+          } else {
+            socket.emit("mcp:error", {
+              message: getErrorMessage(e),
+              ...base,
+            });
+          }
+        }
+      }
+    );
+
+    /** リモート接続時のフォールバック (URL ペースト) */
+    socket.on("mcp:submit-redirect", async ({ redirectUrl }) => {
+      try {
+        if (
+          typeof redirectUrl !== "string" ||
+          redirectUrl.trim().length === 0
+        ) {
+          socket.emit("mcp:error", {
+            message: "URL が空です",
+            code: "invalid_redirect_url",
+          });
+          return;
+        }
+        await mcpOAuthOrchestrator.submitPastedRedirect(redirectUrl.trim());
+        // 成功時は orchestrator の auth-completed イベントが mcp:state を再送する
+      } catch (e) {
+        socket.emit("mcp:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on("mcp:disconnect", ({ connectionId }) => {
+      try {
+        if (typeof connectionId !== "string" || !connectionId) {
+          socket.emit("mcp:error", { message: "connectionId は必須です" });
+          return;
+        }
+        // pending な OAuth フローがあれば中断 (loopback server を閉じる)
+        mcpOAuthOrchestrator.clearFlow(connectionId);
+        db.deleteMcpServer(connectionId);
+        // 稼働中 Beacon セッションは旧 mcpServers map (削除済み connection 含む) を
+        // 保持しているため stale マーク → 次回 send で idle なら再構成
+        beaconManager.markMcpConfigStale();
+        io.emit("mcp:state", buildMcpSnapshot());
+      } catch (e) {
+        socket.emit("mcp:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on("mcp:auth-cancel", ({ connectionId }) => {
+      try {
+        if (typeof connectionId !== "string" || !connectionId) {
+          socket.emit("mcp:error", { message: "connectionId は必須です" });
+          return;
+        }
+        mcpOAuthOrchestrator.clearFlow(connectionId);
+        io.emit("mcp:state", buildMcpSnapshot());
+      } catch (e) {
+        socket.emit("mcp:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on("mcp:rename", ({ connectionId, label }) => {
+      try {
+        if (typeof connectionId !== "string" || !connectionId) {
+          socket.emit("mcp:error", { message: "connectionId は必須です" });
+          return;
+        }
+        if (typeof label !== "string" || !label.trim()) {
+          socket.emit("mcp:error", { message: "label は必須です" });
+          return;
+        }
+        db.updateMcpServer(connectionId, { label: label.trim() });
+        io.emit("mcp:state", buildMcpSnapshot());
+        // Beacon system prompt が旧 label を保持しているため stale マーク
+        // (次の send で idle なら新 label で再構成される)
+        beaconManager.markMcpConfigStale();
+      } catch (e) {
+        socket.emit("mcp:error", { message: getErrorMessage(e) });
+      }
     });
 
     // ===== Frontline Commands =====

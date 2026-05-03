@@ -15,6 +15,8 @@ import type {
   ChatMessage,
   FrontlineRecord,
   FrontlineStats,
+  McpServerConfig,
+  McpServerConfigInput,
   Message,
   MessageType,
   Profile,
@@ -302,6 +304,73 @@ export class SessionDatabase {
     } catch {
       // 既に削除済み
     }
+
+    // ============================================================
+    // MCP server 管理 (Beacon が外部 OAuth MCP に接続するため)
+    // ============================================================
+    // mcp_servers: ユーザーが登録した外部 MCP server 設定
+    // mcp_tokens: OAuth で取得した access/refresh token (1 server 1 token)
+    //
+    // 暗号化はしない (MVP)。data/sessions.db のファイル mode に依存する。
+    // ADR-0012 相当の keychain 統合は将来課題。
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS mcp_servers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        authorization_endpoint TEXT NOT NULL,
+        token_endpoint TEXT NOT NULL,
+        client_id TEXT NOT NULL,
+        scopes TEXT NOT NULL DEFAULT '[]',
+        audience TEXT,
+        prompt TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS mcp_tokens (
+        server_id TEXT PRIMARY KEY,
+        access_token TEXT NOT NULL,
+        refresh_token TEXT,
+        token_type TEXT NOT NULL DEFAULT 'Bearer',
+        scopes TEXT NOT NULL DEFAULT '[]',
+        acquired_at INTEGER NOT NULL,
+        expires_at INTEGER,
+        FOREIGN KEY (server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+      );
+    `);
+
+    // マイグレーション: マルチアカウント対応のため provider_id / label を追加。
+    // - provider_id: ホワイトリスト registry の id (atlassian, linear, ...)
+    // - label: UI 表示用 (「Atlassian #1」「仕事用」等、ユーザ識別用)
+    // 既存行 (id="atlassian" 等の単一接続データ) は provider_id <- id の値で backfill する。
+    try {
+      this.db.exec("ALTER TABLE mcp_servers ADD COLUMN provider_id TEXT");
+      // 既存行の provider_id を id (旧スキーマでは provider と一致してた) で埋める
+      this.db.exec(
+        "UPDATE mcp_servers SET provider_id = id WHERE provider_id IS NULL"
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("duplicate column name")) throw e;
+    }
+    try {
+      this.db.exec("ALTER TABLE mcp_servers ADD COLUMN label TEXT");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("duplicate column name")) throw e;
+    }
+    // account_hint: provider 固有のアカウント詳細 (例: Atlassian なら site の cloudId + URL)。
+    // Beacon の system prompt に注入してモデルが URL から connection を選べるようにする。
+    try {
+      this.db.exec("ALTER TABLE mcp_servers ADD COLUMN account_hint TEXT");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("duplicate column name")) throw e;
+    }
+    // provider_id 検索を高速化 (UI のグループ表示で頻繁に集計するため)
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_mcp_servers_provider_id ON mcp_servers(provider_id)"
+    );
 
     // フロントライン記録テーブル
     this.db.exec(`
@@ -1060,6 +1129,248 @@ export class SessionDatabase {
       JSON.stringify(stats.deathPositions),
       now
     );
+  }
+
+  // ============================================================
+  // MCP server / OAuth token CRUD
+  // ============================================================
+
+  private rowToMcpServer(row: {
+    id: string;
+    name: string;
+    url: string;
+    authorization_endpoint: string;
+    token_endpoint: string;
+    client_id: string;
+    scopes: string;
+    audience: string | null;
+    prompt: string | null;
+    provider_id: string | null;
+    label: string | null;
+    account_hint: string | null;
+    created_at: number;
+    updated_at: number;
+  }): McpServerConfig {
+    return {
+      id: row.id,
+      // 旧スキーマ互換: provider_id 列が無い (NULL) なら id をそのまま使う
+      providerId: row.provider_id || row.id,
+      label: row.label || row.name,
+      name: row.name,
+      url: row.url,
+      authorizationEndpoint: row.authorization_endpoint,
+      tokenEndpoint: row.token_endpoint,
+      clientId: row.client_id,
+      scopes: this.safeJsonParse<string[]>(
+        row.scopes,
+        [],
+        "mcp_servers.scopes"
+      ),
+      audience: row.audience ?? undefined,
+      prompt: row.prompt ?? undefined,
+      accountHint: row.account_hint ?? undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /** 登録済み MCP server connection を一覧 (作成順) */
+  listMcpServers(): McpServerConfig[] {
+    const stmt = this.db.prepare(
+      "SELECT * FROM mcp_servers ORDER BY created_at ASC"
+    );
+    return (stmt.all() as Parameters<typeof this.rowToMcpServer>[0][]).map(
+      row => this.rowToMcpServer(row)
+    );
+  }
+
+  /** connection ID で MCP server を取得 */
+  getMcpServer(id: string): McpServerConfig | null {
+    const stmt = this.db.prepare("SELECT * FROM mcp_servers WHERE id = ?");
+    const row = stmt.get(id) as
+      | Parameters<typeof this.rowToMcpServer>[0]
+      | undefined;
+    return row ? this.rowToMcpServer(row) : null;
+  }
+
+  /** 同 provider に属する connection 数 (label 自動採番に使う) */
+  countMcpServersByProvider(providerId: string): number {
+    const stmt = this.db.prepare(
+      "SELECT COUNT(*) as n FROM mcp_servers WHERE provider_id = ?"
+    );
+    const row = stmt.get(providerId) as { n: number };
+    return row.n;
+  }
+
+  /** MCP server connection を新規作成 */
+  createMcpServer(input: McpServerConfigInput): McpServerConfig {
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      INSERT INTO mcp_servers (id, provider_id, label, name, url, authorization_endpoint, token_endpoint, client_id, scopes, audience, prompt, account_hint, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(
+      input.id,
+      input.providerId,
+      input.label,
+      input.name,
+      input.url,
+      input.authorizationEndpoint,
+      input.tokenEndpoint,
+      input.clientId,
+      JSON.stringify(input.scopes),
+      input.audience ?? null,
+      input.prompt ?? null,
+      input.accountHint ?? null,
+      now,
+      now
+    );
+    const created = this.getMcpServer(input.id);
+    if (!created) throw new Error(`Failed to create MCP server: ${input.id}`);
+    return created;
+  }
+
+  /**
+   * MCP server を部分更新。undefined のフィールドはスキップする。
+   * id は変更不可。
+   */
+  updateMcpServer(
+    id: string,
+    patch: Partial<McpServerConfigInput>
+  ): McpServerConfig {
+    const setClauses: string[] = [];
+    const params: Array<string | number | null> = [];
+    if (patch.name !== undefined) {
+      setClauses.push("name = ?");
+      params.push(patch.name);
+    }
+    if (patch.url !== undefined) {
+      setClauses.push("url = ?");
+      params.push(patch.url);
+    }
+    if (patch.authorizationEndpoint !== undefined) {
+      setClauses.push("authorization_endpoint = ?");
+      params.push(patch.authorizationEndpoint);
+    }
+    if (patch.tokenEndpoint !== undefined) {
+      setClauses.push("token_endpoint = ?");
+      params.push(patch.tokenEndpoint);
+    }
+    if (patch.clientId !== undefined) {
+      setClauses.push("client_id = ?");
+      params.push(patch.clientId);
+    }
+    if (patch.scopes !== undefined) {
+      setClauses.push("scopes = ?");
+      params.push(JSON.stringify(patch.scopes));
+    }
+    if (patch.audience !== undefined) {
+      setClauses.push("audience = ?");
+      params.push(patch.audience || null);
+    }
+    if (patch.prompt !== undefined) {
+      setClauses.push("prompt = ?");
+      params.push(patch.prompt || null);
+    }
+    if (patch.label !== undefined) {
+      setClauses.push("label = ?");
+      params.push(patch.label);
+    }
+    if (patch.accountHint !== undefined) {
+      setClauses.push("account_hint = ?");
+      params.push(patch.accountHint || null);
+    }
+    setClauses.push("updated_at = ?");
+    params.push(Date.now());
+    params.push(id);
+    const stmt = this.db.prepare(
+      `UPDATE mcp_servers SET ${setClauses.join(", ")} WHERE id = ?`
+    );
+    const result = stmt.run(...params);
+    if (result.changes === 0) {
+      throw new Error(`MCP server not found: ${id}`);
+    }
+    const updated = this.getMcpServer(id);
+    if (!updated) throw new Error(`MCP server not found after update: ${id}`);
+    return updated;
+  }
+
+  /** MCP server を削除（token も CASCADE で削除される） */
+  deleteMcpServer(id: string): void {
+    const stmt = this.db.prepare("DELETE FROM mcp_servers WHERE id = ?");
+    stmt.run(id);
+  }
+
+  /** MCP server に紐づく OAuth token */
+  getMcpToken(serverId: string): {
+    accessToken: string;
+    refreshToken: string | null;
+    tokenType: string;
+    scopes: string[];
+    acquiredAt: number;
+    expiresAt: number | null;
+  } | null {
+    const stmt = this.db.prepare(
+      "SELECT * FROM mcp_tokens WHERE server_id = ?"
+    );
+    const row = stmt.get(serverId) as
+      | {
+          server_id: string;
+          access_token: string;
+          refresh_token: string | null;
+          token_type: string;
+          scopes: string;
+          acquired_at: number;
+          expires_at: number | null;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      accessToken: row.access_token,
+      refreshToken: row.refresh_token,
+      tokenType: row.token_type,
+      scopes: this.safeJsonParse<string[]>(row.scopes, [], "mcp_tokens.scopes"),
+      acquiredAt: row.acquired_at,
+      expiresAt: row.expires_at,
+    };
+  }
+
+  /** OAuth token を upsert */
+  upsertMcpToken(input: {
+    serverId: string;
+    accessToken: string;
+    refreshToken?: string | null;
+    tokenType?: string;
+    scopes?: string[];
+    acquiredAt: number;
+    expiresAt?: number | null;
+  }): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO mcp_tokens (server_id, access_token, refresh_token, token_type, scopes, acquired_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(server_id) DO UPDATE SET
+        access_token = excluded.access_token,
+        refresh_token = excluded.refresh_token,
+        token_type = excluded.token_type,
+        scopes = excluded.scopes,
+        acquired_at = excluded.acquired_at,
+        expires_at = excluded.expires_at
+    `);
+    stmt.run(
+      input.serverId,
+      input.accessToken,
+      input.refreshToken ?? null,
+      input.tokenType ?? "Bearer",
+      JSON.stringify(input.scopes ?? []),
+      input.acquiredAt,
+      input.expiresAt ?? null
+    );
+  }
+
+  /** OAuth token を削除（再認証時に呼ぶ） */
+  deleteMcpToken(serverId: string): void {
+    const stmt = this.db.prepare("DELETE FROM mcp_tokens WHERE server_id = ?");
+    stmt.run(serverId);
   }
 
   /**

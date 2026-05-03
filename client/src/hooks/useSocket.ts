@@ -17,6 +17,9 @@ import type {
   ClientToServerEvents,
   FsListResult,
   ManagedSession,
+  McpConnectionInfo,
+  McpProviderCatalog,
+  McpProvidersSnapshot,
   Profile,
   RepoInfo,
   ServerToClientEvents,
@@ -175,6 +178,21 @@ interface UseSocketReturn {
   setRepoProfile: (repoPath: string, profileId: string | null) => void;
   restartSessionWithProfile: (sessionId: string) => void;
 
+  // MCP server (Beacon の外部 OAuth MCP) — マルチアカウント
+  mcpCatalog: McpProviderCatalog[];
+  mcpConnections: McpConnectionInfo[];
+  /** 認可フロー進行中の connectionId → authorizationUrl */
+  mcpPendingAuthUrls: Record<string, string>;
+  mcpRefresh: () => void;
+  mcpConnect: (
+    providerId: string,
+    options?: { label?: string; connectionId?: string }
+  ) => void;
+  mcpSubmitRedirect: (redirectUrl: string) => void;
+  mcpDisconnect: (connectionId: string) => void;
+  mcpAuthCancel: (connectionId: string) => void;
+  mcpRename: (connectionId: string, label: string) => void;
+
   // Usage取得 (Linux + multiProfileSupported 限定)
   /** /usage 取得が進行中か（全クライアント横断ではなく、自身が依頼中の状態） */
   usageRequesting: boolean;
@@ -292,6 +310,26 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     multiProfileSupported: false,
   });
 
+  // MCP server (Beacon の外部 OAuth MCP) — マルチアカウント
+  const [mcpCatalog, setMcpCatalog] = useState<McpProviderCatalog[]>([]);
+  const [mcpConnections, setMcpConnections] = useState<McpConnectionInfo[]>([]);
+  // 認可フロー進行中の connectionId → authorize URL。
+  // ポップアップブロック時のフォールバックでダイアログから手動でリンクを開けるようにするため保持する。
+  const [mcpPendingAuthUrls, setMcpPendingAuthUrls] = useState<
+    Record<string, string>
+  >({});
+  // toast 内で connection の label を解決するための安定参照
+  const mcpConnectionsRef = useRef<McpConnectionInfo[]>([]);
+  useEffect(() => {
+    mcpConnectionsRef.current = mcpConnections;
+  }, [mcpConnections]);
+  /**
+   * `mcpConnect` 呼び出し時にユーザクリック由来で開いた空ポップアップ。
+   * client 発行 requestId をキーに保持し、`mcp:auth-started` 到着時に同じ requestId の
+   * popup を navigate する。並列の connect が完了順入れ替わっても誤関連付けが起きない。
+   */
+  const mcpPendingPopupsRef = useRef<Record<string, Window>>({});
+
   // Usage取得
   const [usageRequesting, setUsageRequesting] = useState(false);
   const [usageProgress, setUsageProgress] = useState<UsageProgress | null>(
@@ -364,6 +402,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       if (gridSubscribedRef.current) {
         socket.emit("session:grid:subscribe");
       }
+
+      // MCP server スナップショットを再取得 (切断中に他クライアントが追加/削除した
+      // 変更や、進行中フローの完了通知をミスっている可能性があるため)。
+      socket.emit("mcp:state");
     });
 
     socket.on("disconnect", () => {
@@ -791,6 +833,85 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       toast.error(`Usage取得に失敗: ${message}`);
     });
 
+    // MCP server (Beacon の外部 OAuth MCP) ----------------------------
+    socket.on("mcp:state", (snapshot: McpProvidersSnapshot) => {
+      setMcpCatalog(snapshot.catalog);
+      setMcpConnections(snapshot.connections);
+      // 認可 URL は server snapshot を source of truth にする。
+      // - リロード / 再接続後でも進行中フローの URL を復元できる
+      // - cancel / disconnect 後は server 側で消えているのでクライアントも自動掃除
+      setMcpPendingAuthUrls(snapshot.pendingAuthUrls);
+    });
+    socket.on(
+      "mcp:auth-started",
+      ({ connectionId, requestId, authorizationUrl }) => {
+        // ポップアップブロック等のフォールバック用にダイアログ内のリンクへ残す
+        setMcpPendingAuthUrls(prev => ({
+          ...prev,
+          [connectionId]: authorizationUrl,
+        }));
+        // requestId に対応する popup を取り出して navigate する。
+        // 並列の別 connect の popup には影響しない。
+        const popup = requestId
+          ? mcpPendingPopupsRef.current[requestId]
+          : undefined;
+        if (requestId) delete mcpPendingPopupsRef.current[requestId];
+        if (popup && !popup.closed) {
+          try {
+            popup.location.href = authorizationUrl;
+            toast.success("認可ページを開きました", {
+              description: "ブラウザで認証を完了してください",
+            });
+            return;
+          } catch {
+            // クロスオリジンで location 設定を弾かれた等 → fallback 経路へ
+          }
+        }
+        toast.error("ポップアップがブロックされました", {
+          description:
+            "ダイアログ内の「認可ページを開く」リンクから手動で開いてください",
+        });
+      }
+    );
+    socket.on("mcp:auth-completed", ({ connectionId }) => {
+      setMcpPendingAuthUrls(prev => {
+        const next = { ...prev };
+        delete next[connectionId];
+        return next;
+      });
+      const label =
+        mcpConnectionsRef.current.find(c => c.id === connectionId)?.label ??
+        connectionId;
+      toast.success(`${label} を認証しました`);
+    });
+    socket.on("mcp:auth-failed", ({ connectionId, message }) => {
+      setMcpPendingAuthUrls(prev => {
+        const next = { ...prev };
+        delete next[connectionId];
+        return next;
+      });
+      const label =
+        mcpConnectionsRef.current.find(c => c.id === connectionId)?.label ??
+        connectionId;
+      toast.error(`${label} の認証に失敗`, { description: message });
+    });
+    socket.on("mcp:error", ({ message, requestId }) => {
+      toast.error(message);
+      // 該当 requestId の popup のみ close (並列の別フローには影響しない)。
+      // requestId が無い error (mcp:connect 以外) ではどの popup も触らない。
+      if (requestId) {
+        const popup = mcpPendingPopupsRef.current[requestId];
+        delete mcpPendingPopupsRef.current[requestId];
+        try {
+          popup?.close();
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+    // 接続時にカタログ + connection 一覧を取得
+    socket.emit("mcp:state");
+
     // Cleanup on unmount
     return () => {
       socket.off("ports:list");
@@ -1120,6 +1241,68 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socketRef.current?.emit("session:restart-with-profile", { sessionId });
   }, []);
 
+  // MCP server (Beacon の外部 OAuth MCP) actions
+  const mcpRefresh = useCallback(() => {
+    socketRef.current?.emit("mcp:state");
+  }, []);
+  const mcpConnect = useCallback(
+    (
+      providerId: string,
+      options?: { label?: string; connectionId?: string }
+    ) => {
+      // socket 未接続時は popup を開かない (server に届かず mcp:auth-started も
+      // mcp:error も来ないため、空 popup が永久に残ってしまう)。
+      const sock = socketRef.current;
+      if (!sock?.connected) {
+        toast.error("サーバーに接続されていません", {
+          description: "少し待ってから再試行してください",
+        });
+        return;
+      }
+      // 並列 connect の correlation のため requestId を生成
+      const requestId =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `req-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      // ポップアップブロック対策: ボタンクリック由来の同期文脈で window.open する。
+      // authorize URL は非同期で返るので先に about:blank で空ウィンドウを開いておき、
+      // `mcp:auth-started` 受信時に requestId で popup を引いて location を差し替える。
+      // 注: `noopener` を付けると detached / null が返る browser があるので付けない。
+      // セキュリティ: same-origin (about:blank) のうちに popup.opener = null を設定し、
+      // 外部認可ページから親ウィンドウへアクセスできないようにする。
+      const popup = window.open("about:blank", "_blank");
+      if (popup) {
+        try {
+          popup.opener = null;
+        } catch {
+          /* ignore: ブラウザによっては既に detach されているケース */
+        }
+        mcpPendingPopupsRef.current[requestId] = popup;
+      }
+      sock.emit("mcp:connect", {
+        providerId,
+        requestId,
+        ...(options?.label !== undefined ? { label: options.label } : {}),
+        ...(options?.connectionId !== undefined
+          ? { connectionId: options.connectionId }
+          : {}),
+      });
+    },
+    []
+  );
+  const mcpSubmitRedirect = useCallback((redirectUrl: string) => {
+    socketRef.current?.emit("mcp:submit-redirect", { redirectUrl });
+  }, []);
+  const mcpDisconnect = useCallback((connectionId: string) => {
+    socketRef.current?.emit("mcp:disconnect", { connectionId });
+  }, []);
+  const mcpAuthCancel = useCallback((connectionId: string) => {
+    socketRef.current?.emit("mcp:auth-cancel", { connectionId });
+  }, []);
+  const mcpRename = useCallback((connectionId: string, label: string) => {
+    socketRef.current?.emit("mcp:rename", { connectionId, label });
+  }, []);
+
   // Usage取得
   const requestUsage = useCallback(() => {
     if (usageRequesting) return;
@@ -1233,6 +1416,16 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     deleteProfile,
     setRepoProfile,
     restartSessionWithProfile,
+    // MCP server (Beacon の外部 OAuth MCP) — マルチアカウント
+    mcpCatalog,
+    mcpConnections,
+    mcpPendingAuthUrls,
+    mcpRefresh,
+    mcpConnect,
+    mcpSubmitRedirect,
+    mcpDisconnect,
+    mcpAuthCancel,
+    mcpRename,
     // Usage取得
     usageRequesting,
     usageProgress,

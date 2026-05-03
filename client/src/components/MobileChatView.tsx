@@ -56,12 +56,15 @@ interface MobileChatViewProps {
   usageProgress?: UsageProgress | null;
   /** プロファイル機能が有効か（falseならUsageボタン非表示） */
   multiProfileSupported?: boolean;
+  /** MCP server マネージャを開く */
+  onOpenMcpManager?: () => void;
 }
 
 /** クイックコマンドの定義 */
 type QuickCommand =
   | { kind?: "send"; label: string; message: string }
-  | { kind: "usage"; label: string };
+  | { kind: "usage"; label: string }
+  | { kind: "mcp"; label: string };
 
 /** パース済みマークダウンの各セグメント */
 type MarkdownSegment =
@@ -94,6 +97,7 @@ const QUICK_COMMANDS: QuickCommand[] = [
   { label: "タスク着手", message: "タスク着手" },
   { label: "PR URL", message: "PR URL" },
   { kind: "usage", label: "Usage" },
+  { kind: "mcp", label: "MCP" },
 ];
 
 // --- 簡易マークダウンパーサー ---
@@ -445,6 +449,7 @@ export function MobileChatView({
   usageRequesting = false,
   usageProgress = null,
   multiProfileSupported = false,
+  onOpenMcpManager,
 }: MobileChatViewProps) {
   const { height: viewportHeight, isKeyboardVisible } = useVisualViewport();
   const [inputValue, setInputValue] = useState("");
@@ -637,6 +642,22 @@ export function MobileChatView({
                   ) : (
                     cmd.label
                   )}
+                </Button>
+              );
+            }
+            // MCP server マネージャを開くボタン
+            if (cmd.kind === "mcp") {
+              if (!onOpenMcpManager) return null;
+              return (
+                <Button
+                  key={cmd.label}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-3 text-xs shrink-0 rounded-full border-border/50 text-muted-foreground hover:text-primary hover:border-primary/40 transition-colors"
+                  onClick={onOpenMcpManager}
+                >
+                  {cmd.label}
                 </Button>
               );
             }
