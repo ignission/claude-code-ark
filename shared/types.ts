@@ -202,10 +202,13 @@ export interface Profile {
   updatedAt: number;
 }
 
+/** メッセージショートカットの本文最大長（文字数） */
+export const MESSAGE_SHORTCUT_MAX_LENGTH = 4000;
+
 /** UIから登録する定型メッセージのショートカット（全リポジトリ共通） */
 export interface MessageShortcut {
   id: string;
-  /** 送信本文（1〜4000字、複数行可）。ドロップダウン表示は先頭行を切り詰めて使う */
+  /** 送信本文（1文字以上、上限は MESSAGE_SHORTCUT_MAX_LENGTH 参照、複数行可）。ドロップダウン表示は先頭行を切り詰めて使う */
   message: string;
   /** 並び順（MVPはMAX+1で末尾追加） */
   sortOrder: number;

@@ -11,19 +11,20 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { nanoid } from "nanoid";
-import type {
-  ChatMessage,
-  FrontlineRecord,
-  FrontlineStats,
-  McpServerConfig,
-  McpServerConfigInput,
-  Message,
-  MessageShortcut,
-  MessageType,
-  Profile,
-  RepoProfileLink,
-  Session,
-  SessionStatus,
+import {
+  type ChatMessage,
+  type FrontlineRecord,
+  type FrontlineStats,
+  type McpServerConfig,
+  type McpServerConfigInput,
+  type Message,
+  MESSAGE_SHORTCUT_MAX_LENGTH,
+  type MessageShortcut,
+  type MessageType,
+  type Profile,
+  type RepoProfileLink,
+  type Session,
+  type SessionStatus,
 } from "../../shared/types.js";
 
 // プロジェクトルートからの相対パスでDBファイルを配置
@@ -319,20 +320,32 @@ export class SessionDatabase {
         ON message_shortcuts (sort_order, created_at);
     `);
 
-    // マイグレーション: 旧スキーマで作られた label 列を削除する
-    // (label を廃止し、本文 message のみへ統一したため)
+    // マイグレーション: 旧 label 列を削除する。
+    // 1) 列が無ければ何もしない (新規 DB / 既に削除済み)
+    // 2) DROP COLUMN は SQLite 3.35+ で対応。古いバージョンでは syntax error
+    //    (near "DROP") を返すので、その場合は warn してスキップする。
+    //    現行 DDL は label を持たないので、新規挿入は問題ない。
     try {
-      this.db.exec("ALTER TABLE message_shortcuts DROP COLUMN label");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      // 想定: 列が既に削除済み or テーブルが新規作成 (= no such column)
-      if (
-        !msg.includes("no such column") &&
-        !msg.includes("duplicate column name") &&
-        !msg.includes("no such table")
-      ) {
-        throw e;
+      const hasLabel = this.db
+        .prepare(
+          "SELECT 1 FROM pragma_table_info('message_shortcuts') WHERE name = 'label'"
+        )
+        .get();
+      if (hasLabel) {
+        try {
+          this.db.exec("ALTER TABLE message_shortcuts DROP COLUMN label");
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.warn(
+            "[DB] DROP COLUMN label failed (SQLite version too old?):",
+            msg
+          );
+        }
       }
+    } catch (e) {
+      // pragma_table_info 自体が失敗したら新規 DB の可能性が高い、warn で継続
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn("[DB] pragma_table_info check failed:", msg);
     }
 
     // ============================================================
@@ -1456,6 +1469,14 @@ export class SessionDatabase {
 
   /** 新規作成（sortOrderは既存の最大+1で末尾追加） */
   createMessageShortcut(input: { message: string }): MessageShortcut {
+    if (typeof input.message !== "string" || input.message.length === 0) {
+      throw new Error("message は必須です");
+    }
+    if (input.message.length > MESSAGE_SHORTCUT_MAX_LENGTH) {
+      throw new Error(
+        `message は ${MESSAGE_SHORTCUT_MAX_LENGTH} 文字以内で指定してください`
+      );
+    }
     const id = nanoid();
     const now = Date.now();
     const maxStmt = this.db.prepare(
@@ -1479,6 +1500,19 @@ export class SessionDatabase {
     id: string,
     patch: { message?: string; sortOrder?: number }
   ): MessageShortcut {
+    if (patch.message !== undefined) {
+      if (typeof patch.message !== "string" || patch.message.length === 0) {
+        throw new Error("message は空にできません");
+      }
+      if (patch.message.length > MESSAGE_SHORTCUT_MAX_LENGTH) {
+        throw new Error(
+          `message は ${MESSAGE_SHORTCUT_MAX_LENGTH} 文字以内で指定してください`
+        );
+      }
+    }
+    if (patch.sortOrder !== undefined && !Number.isInteger(patch.sortOrder)) {
+      throw new Error("sortOrder は整数で指定してください");
+    }
     const setClauses: string[] = [];
     const params: Array<string | number> = [];
     if (patch.message !== undefined) {

@@ -20,15 +20,16 @@ import { fileURLToPath } from "node:url";
 import httpProxy from "http-proxy";
 import { nanoid } from "nanoid";
 import { Server, type Socket } from "socket.io";
-import type {
-  BridgeSnapshot,
-  ClientToServerEvents,
-  ServerToClientEvents,
-  SessionGridSnapshot,
-  SystemCapabilities,
-  UsageEntry,
-  UsageProgress,
-  UsageReport,
+import {
+  type BridgeSnapshot,
+  type ClientToServerEvents,
+  MESSAGE_SHORTCUT_MAX_LENGTH,
+  type ServerToClientEvents,
+  type SessionGridSnapshot,
+  type SystemCapabilities,
+  type UsageEntry,
+  type UsageProgress,
+  type UsageReport,
 } from "../shared/types.js";
 import { authManager } from "./lib/auth.js";
 import { beaconManager } from "./lib/beacon-manager.js";
@@ -2261,10 +2262,21 @@ async function startServer() {
       }
     });
 
-    // メッセージショートカットは設計上「全クライアント共通（グローバル）」
-    // (docs/superpowers/specs/2026-05-03-message-shortcuts-design.md 参照)。
-    // io.emit で全ソケットへ broadcast する。
-    // 複数アカウント対応が必要になった時点でスコープ追加を検討する。
+    // メッセージショートカットは設計上「全クライアント共通（グローバル）」で、
+    // io.emit により接続中の全ソケットへ broadcast する。
+    //
+    // なぜ per-user / per-session スコープを持たないか:
+    // - Ark の運用前提は「単一開発者が自分のローカル / Cloudflare Tunnel 経由で利用」
+    //   する開発支援ツール。マルチテナント運用は想定外。
+    // - 認可境界は接続レベルの token 認証 (server/lib/auth.ts) が担っている。
+    //   トンネル越しのアクセスはトークン必須、ローカル / プライベート IP はスキップ。
+    //   つまり「同じ開発者の複数デバイスからの並行接続」しか到達しない。
+    // - マルチアカウント機能 (CLAUDE_CONFIG_DIR profile) はあくまで Claude CLI の
+    //   プロセス分離 / 認証情報分離が目的で、UI 状態の共有とは独立。
+    // - 将来複数ユーザー運用に切り替える場合は、ここに加えて auth.ts のトークン
+    //   モデル自体を再設計する必要がある (per-user token / session scope)。
+    //
+    // 設計書: docs/superpowers/specs/2026-05-03-message-shortcuts-design.md
     socket.on("shortcut:create", payload => {
       if (typeof payload !== "object" || payload === null) {
         socket.emit("shortcut:error", {
@@ -2275,9 +2287,12 @@ async function startServer() {
       }
       const { message } = payload as { message?: unknown };
       const trimmedMessage = typeof message === "string" ? message.trim() : "";
-      if (trimmedMessage.length === 0 || trimmedMessage.length > 4000) {
+      if (
+        trimmedMessage.length === 0 ||
+        trimmedMessage.length > MESSAGE_SHORTCUT_MAX_LENGTH
+      ) {
         socket.emit("shortcut:error", {
-          message: "message は 1〜4000 文字で入力してください",
+          message: `message は 1〜${MESSAGE_SHORTCUT_MAX_LENGTH} 文字で入力してください`,
           code: "invalid_message",
         });
         return;
@@ -2316,9 +2331,12 @@ async function startServer() {
       const patch: { message?: string; sortOrder?: number } = {};
       if (message !== undefined) {
         const trimmed = typeof message === "string" ? message.trim() : "";
-        if (trimmed.length === 0 || trimmed.length > 4000) {
+        if (
+          trimmed.length === 0 ||
+          trimmed.length > MESSAGE_SHORTCUT_MAX_LENGTH
+        ) {
           socket.emit("shortcut:error", {
-            message: "message は 1〜4000 文字で入力してください",
+            message: `message は 1〜${MESSAGE_SHORTCUT_MAX_LENGTH} 文字で入力してください`,
             code: "invalid_message",
           });
           return;

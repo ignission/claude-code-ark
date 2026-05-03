@@ -23,7 +23,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import type { MessageShortcut } from "../../../shared/types";
+import {
+  MESSAGE_SHORTCUT_MAX_LENGTH,
+  type MessageShortcut,
+} from "../../../shared/types";
 
 interface Props {
   open: boolean;
@@ -33,8 +36,6 @@ interface Props {
   onUpdate: (id: string, patch: { message?: string }) => void;
   onDelete: (id: string) => void;
 }
-
-const MAX_MESSAGE = 4000;
 
 /** 削除確認ダイアログ等で本文の先頭行を 40 字に切り詰めて表示する */
 function previewOf(message: string): string {
@@ -69,37 +70,44 @@ export function MessageShortcutManagerDialog({
   const isDirty = (s: MessageShortcut) => {
     const d = drafts[s.id];
     if (!d) return false;
-    return d.message !== s.message;
+    // trim 済み値で比較し、空白のみの差分で no-op update を発火しない
+    return d.message.trim() !== s.message.trim();
   };
 
   const isValidDraft = (d: { message: string }) => {
     const m = d.message.trim();
-    return m.length > 0 && m.length <= MAX_MESSAGE;
+    return m.length > 0 && m.length <= MESSAGE_SHORTCUT_MAX_LENGTH;
   };
 
   const handleSave = (s: MessageShortcut) => {
     const d = getDraft(s);
     if (!isValidDraft(d)) return;
-    const patch: { message?: string } = {};
-    if (d.message !== s.message) patch.message = d.message.trim();
-    if (Object.keys(patch).length === 0) return;
-    onUpdate(s.id, patch);
-    setDrafts(prev => {
-      const next = { ...prev };
-      delete next[s.id];
-      return next;
-    });
+    const trimmed = d.message.trim();
+    const clearDraft = () =>
+      setDrafts(prev => {
+        const next = { ...prev };
+        delete next[s.id];
+        return next;
+      });
+    // 正規化後の値が同一なら no-op update を抑止する
+    if (trimmed === s.message.trim()) {
+      clearDraft();
+      return;
+    }
+    onUpdate(s.id, { message: trimmed });
+    clearDraft();
   };
 
   const handleCreate = () => {
     const m = newMessage.trim();
-    if (m.length === 0 || m.length > MAX_MESSAGE) return;
+    if (m.length === 0 || m.length > MESSAGE_SHORTCUT_MAX_LENGTH) return;
     onCreate(m);
     setNewMessage("");
   };
 
   const newDraftValid =
-    newMessage.trim().length > 0 && newMessage.trim().length <= MAX_MESSAGE;
+    newMessage.trim().length > 0 &&
+    newMessage.trim().length <= MESSAGE_SHORTCUT_MAX_LENGTH;
 
   return (
     <>

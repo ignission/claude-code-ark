@@ -79,4 +79,28 @@ describe("SessionDatabase: message shortcuts", () => {
     const got = db.getMessageShortcut(created.id);
     expect(got?.message).toBe(multi);
   });
+
+  it("createMessageShortcut: 空文字は拒否", () => {
+    expect(() => db.createMessageShortcut({ message: "" })).toThrow(/必須/);
+  });
+
+  it("createMessageShortcut: 上限超は拒否", () => {
+    expect(() =>
+      db.createMessageShortcut({ message: "x".repeat(4001) })
+    ).toThrow(/4000/);
+  });
+
+  it("updateMessageShortcut: 空文字は拒否", () => {
+    const created = db.createMessageShortcut({ message: "ok" });
+    expect(() => db.updateMessageShortcut(created.id, { message: "" })).toThrow(
+      /空/
+    );
+  });
+
+  it("updateMessageShortcut: 上限超は拒否", () => {
+    const created = db.createMessageShortcut({ message: "ok" });
+    expect(() =>
+      db.updateMessageShortcut(created.id, { message: "x".repeat(4001) })
+    ).toThrow(/4000/);
+  });
 });
