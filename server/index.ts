@@ -1140,6 +1140,13 @@ async function startServer() {
     // Beaconのチャット履歴を接続時に自動送信（クライアント側の取得タイミング問題を回避）
     socket.emit("beacon:history", { messages: beaconManager.getHistory() });
 
+    // 接続時にショートカット一覧を即時送信（クライアント側のキャッシュ初期化用）
+    try {
+      socket.emit("shortcut:list", db.listMessageShortcuts());
+    } catch (e) {
+      socket.emit("shortcut:error", { message: getErrorMessage(e) });
+    }
+
     // ===== Session Orchestrator Event Handlers =====
     // sessionOrchestrator のイベントをそのまま Socket.IO クライアントへ転送する
     // 注意: session:list送信やttyd自動復元より前に登録する必要がある
@@ -2240,6 +2247,114 @@ async function startServer() {
         }
       } catch (e) {
         socket.emit("profile:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    // ============================================================
+    // メッセージショートカット
+    // ============================================================
+    socket.on("shortcut:list", () => {
+      try {
+        socket.emit("shortcut:list", db.listMessageShortcuts());
+      } catch (e) {
+        socket.emit("shortcut:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on("shortcut:create", ({ label, message }) => {
+      const trimmedLabel = typeof label === "string" ? label.trim() : "";
+      const trimmedMessage = typeof message === "string" ? message.trim() : "";
+      if (trimmedLabel.length === 0 || trimmedLabel.length > 60) {
+        socket.emit("shortcut:error", {
+          message: "label は 1〜60 文字で入力してください",
+          code: "invalid_label",
+        });
+        return;
+      }
+      if (trimmedMessage.length === 0 || trimmedMessage.length > 4000) {
+        socket.emit("shortcut:error", {
+          message: "message は 1〜4000 文字で入力してください",
+          code: "invalid_message",
+        });
+        return;
+      }
+      try {
+        const shortcut = db.createMessageShortcut({
+          label: trimmedLabel,
+          message: trimmedMessage,
+        });
+        io.emit("shortcut:created", shortcut);
+        io.emit("shortcut:list", db.listMessageShortcuts());
+      } catch (e) {
+        socket.emit("shortcut:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on("shortcut:update", ({ id, label, message, sortOrder }) => {
+      if (typeof id !== "string" || id.length === 0) {
+        socket.emit("shortcut:error", {
+          message: "id は必須です",
+          code: "invalid_id",
+        });
+        return;
+      }
+      const patch: { label?: string; message?: string; sortOrder?: number } =
+        {};
+      if (label !== undefined) {
+        const trimmed = typeof label === "string" ? label.trim() : "";
+        if (trimmed.length === 0 || trimmed.length > 60) {
+          socket.emit("shortcut:error", {
+            message: "label は 1〜60 文字で入力してください",
+            code: "invalid_label",
+          });
+          return;
+        }
+        patch.label = trimmed;
+      }
+      if (message !== undefined) {
+        const trimmed = typeof message === "string" ? message.trim() : "";
+        if (trimmed.length === 0 || trimmed.length > 4000) {
+          socket.emit("shortcut:error", {
+            message: "message は 1〜4000 文字で入力してください",
+            code: "invalid_message",
+          });
+          return;
+        }
+        patch.message = trimmed;
+      }
+      if (sortOrder !== undefined) {
+        if (!Number.isInteger(sortOrder)) {
+          socket.emit("shortcut:error", {
+            message: "sortOrder は整数で指定してください",
+            code: "invalid_sort_order",
+          });
+          return;
+        }
+        patch.sortOrder = sortOrder;
+      }
+      try {
+        const shortcut = db.updateMessageShortcut(id, patch);
+        io.emit("shortcut:updated", shortcut);
+        io.emit("shortcut:list", db.listMessageShortcuts());
+      } catch (e) {
+        socket.emit("shortcut:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on("shortcut:delete", ({ id }) => {
+      if (typeof id !== "string" || id.length === 0) {
+        socket.emit("shortcut:error", {
+          message: "id は必須です",
+          code: "invalid_id",
+        });
+        return;
+      }
+      try {
+        db.deleteMessageShortcut(id);
+        io.emit("shortcut:deleted", { id });
+        io.emit("shortcut:list", db.listMessageShortcuts());
+      } catch (e) {
+        socket.emit("shortcut:error", { message: getErrorMessage(e) });
       }
     });
 
