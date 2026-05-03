@@ -1467,16 +1467,30 @@ export class SessionDatabase {
     return row ? this.rowToMessageShortcut(row) : null;
   }
 
-  /** 新規作成（sortOrderは既存の最大+1で末尾追加） */
-  createMessageShortcut(input: { message: string }): MessageShortcut {
-    if (typeof input.message !== "string" || input.message.length === 0) {
-      throw new Error("message は必須です");
+  /**
+   * message を trim 後に検証する。
+   * 上位レイヤー (server handler) も trim しているが、SessionDatabase は public API
+   * なので別経路から呼ばれた際にも invariant を保つよう DB 層でも正規化する。
+   */
+  private normalizeShortcutMessage(value: unknown): string {
+    if (typeof value !== "string") {
+      throw new Error("message は文字列で指定してください");
     }
-    if (input.message.length > MESSAGE_SHORTCUT_MAX_LENGTH) {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      throw new Error("message は空にできません");
+    }
+    if (trimmed.length > MESSAGE_SHORTCUT_MAX_LENGTH) {
       throw new Error(
         `message は ${MESSAGE_SHORTCUT_MAX_LENGTH} 文字以内で指定してください`
       );
     }
+    return trimmed;
+  }
+
+  /** 新規作成（sortOrderは既存の最大+1で末尾追加） */
+  createMessageShortcut(input: { message: string }): MessageShortcut {
+    const message = this.normalizeShortcutMessage(input.message);
     const id = nanoid();
     const now = Date.now();
     const maxStmt = this.db.prepare(
@@ -1487,7 +1501,7 @@ export class SessionDatabase {
       INSERT INTO message_shortcuts (id, message, sort_order, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?)
     `);
-    stmt.run(id, input.message, m + 1, now, now);
+    stmt.run(id, message, m + 1, now, now);
     const created = this.getMessageShortcut(id);
     if (!created) {
       throw new Error(`Failed to create message shortcut: ${id}`);
@@ -1500,24 +1514,18 @@ export class SessionDatabase {
     id: string,
     patch: { message?: string; sortOrder?: number }
   ): MessageShortcut {
+    let normalizedMessage: string | undefined;
     if (patch.message !== undefined) {
-      if (typeof patch.message !== "string" || patch.message.length === 0) {
-        throw new Error("message は空にできません");
-      }
-      if (patch.message.length > MESSAGE_SHORTCUT_MAX_LENGTH) {
-        throw new Error(
-          `message は ${MESSAGE_SHORTCUT_MAX_LENGTH} 文字以内で指定してください`
-        );
-      }
+      normalizedMessage = this.normalizeShortcutMessage(patch.message);
     }
     if (patch.sortOrder !== undefined && !Number.isInteger(patch.sortOrder)) {
       throw new Error("sortOrder は整数で指定してください");
     }
     const setClauses: string[] = [];
     const params: Array<string | number> = [];
-    if (patch.message !== undefined) {
+    if (normalizedMessage !== undefined) {
       setClauses.push("message = ?");
-      params.push(patch.message);
+      params.push(normalizedMessage);
     }
     if (patch.sortOrder !== undefined) {
       setClauses.push("sort_order = ?");

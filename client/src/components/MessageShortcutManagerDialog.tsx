@@ -3,7 +3,7 @@
  */
 
 import { Plus, Save, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -79,30 +79,49 @@ export function MessageShortcutManagerDialog({
     return m.length > 0 && m.length <= MESSAGE_SHORTCUT_MAX_LENGTH;
   };
 
+  const clearDraft = (id: string) =>
+    setDrafts(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+
   const handleSave = (s: MessageShortcut) => {
     const d = getDraft(s);
     if (!isValidDraft(d)) return;
     const trimmed = d.message.trim();
-    const clearDraft = () =>
-      setDrafts(prev => {
-        const next = { ...prev };
-        delete next[s.id];
-        return next;
-      });
-    // 正規化後の値が同一なら no-op update を抑止する
+    // 正規化後の値が同一なら no-op update を抑止して draft も破棄する
     if (trimmed === s.message.trim()) {
-      clearDraft();
+      clearDraft(s.id);
       return;
     }
+    // ack 待ち: onUpdate 実行後すぐに draft を消すと、サーバ失敗時に入力が消失する。
+    // server から shortcut:updated が届くと props.shortcuts[].message が trimmed に変わり、
+    // isDirty で trim 比較しているため自動的に「保存」ボタンが非活性化する。
+    // ダイアログを閉じれば state 自体が解放されるので明示的なクリアは不要。
     onUpdate(s.id, { message: trimmed });
-    clearDraft();
   };
+
+  // 新規作成: ack 待ちのため、shortcuts 配列の長さが増えたタイミングで textarea をクリアする
+  const pendingCreateRef = useRef(false);
+  const prevShortcutsLenRef = useRef(shortcuts.length);
+  useEffect(() => {
+    if (
+      pendingCreateRef.current &&
+      shortcuts.length > prevShortcutsLenRef.current
+    ) {
+      setNewMessage("");
+      pendingCreateRef.current = false;
+    }
+    prevShortcutsLenRef.current = shortcuts.length;
+  }, [shortcuts.length]);
 
   const handleCreate = () => {
     const m = newMessage.trim();
     if (m.length === 0 || m.length > MESSAGE_SHORTCUT_MAX_LENGTH) return;
+    // ack 待ち: shortcut:created で配列が増えるまで textarea を保持する
+    pendingCreateRef.current = true;
     onCreate(m);
-    setNewMessage("");
   };
 
   const newDraftValid =

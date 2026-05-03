@@ -81,7 +81,7 @@ describe("SessionDatabase: message shortcuts", () => {
   });
 
   it("createMessageShortcut: 空文字は拒否", () => {
-    expect(() => db.createMessageShortcut({ message: "" })).toThrow(/必須/);
+    expect(() => db.createMessageShortcut({ message: "" })).toThrow(/空/);
   });
 
   it("createMessageShortcut: 上限超は拒否", () => {
@@ -102,5 +102,14 @@ describe("SessionDatabase: message shortcuts", () => {
     expect(() =>
       db.updateMessageShortcut(created.id, { message: "x".repeat(4001) })
     ).toThrow(/4000/);
+  });
+
+  it("createMessageShortcut: 空白のみは拒否", () => {
+    expect(() => db.createMessageShortcut({ message: "   " })).toThrow(/空/);
+  });
+
+  it("createMessageShortcut: 前後の空白は trim される", () => {
+    const created = db.createMessageShortcut({ message: "  hello  " });
+    expect(created.message).toBe("hello");
   });
 });
