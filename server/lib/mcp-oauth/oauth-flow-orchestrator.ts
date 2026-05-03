@@ -486,6 +486,9 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
     this.stateIndex.delete(cur.state);
     cur.callbackHandle.close().catch(() => {});
     this.emit("auth-completed", { connectionId });
+    // terminal 状態は in-memory に保持しない (UI の status は DB token から派生する)。
+    // 残すと長期稼働で flows Map が膨らむ。
+    this.flows.delete(connectionId);
   }
 
   private markFailed(
@@ -500,6 +503,7 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
     this.stateIndex.delete(cur.state);
     cur.callbackHandle.close().catch(() => {});
     this.emit("auth-failed", { connectionId, message });
+    this.flows.delete(connectionId);
   }
 }
 
