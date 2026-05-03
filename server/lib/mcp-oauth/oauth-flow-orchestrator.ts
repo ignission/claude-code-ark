@@ -449,12 +449,16 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
       return true;
     } catch (err) {
       // refresh の failure は transient (network / 5xx / レート制限等) の可能性が
-      // 高いので、token を即削除しない。ログ + 既存 token を継続使用する。
-      // 次回 refreshIfNeeded で再試行される。permanent な失敗 (revoked refresh)
-      // は MCP 呼び出し時の 401 で気付く運用とする。
+      // 高いので、token を即削除しない (次回 refreshIfNeeded で再試行)。
+      // ただし access token が実 expiry を過ぎている場合は確実に使えないため、
+      // この turn は skip する (false 返却 → buildAuthenticatedExternalMcps が
+      // entry を含めない)。token 自体は DB に残し、後続 turn で refresh を retry させる。
       console.warn(
-        `[mcp-oauth] refresh failed for ${server.id} (keeping existing token): ${getErrorMessage(err)}`
+        `[mcp-oauth] refresh failed for ${server.id}: ${getErrorMessage(err)}`
       );
+      if (token.expiresAt !== null && token.expiresAt <= now) {
+        return false;
+      }
       return true;
     }
   }
