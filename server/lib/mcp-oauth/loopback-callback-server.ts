@@ -108,7 +108,9 @@ export async function startLoopbackCallbackServer(
 
   return {
     redirectUri,
-    async awaitCallback(timeoutMs = 5 * 60 * 1000): Promise<LoopbackCallback> {
+    // 30 分: SSO / MFA / 別タブの paste-back に必要な余裕を確保。
+    // タイムアウト後は orchestrator がフローを failed にし、UI で「再認証」可能になる。
+    async awaitCallback(timeoutMs = 30 * 60 * 1000): Promise<LoopbackCallback> {
       if (closed) {
         throw new Error("OAuth callback server is already closed");
       }

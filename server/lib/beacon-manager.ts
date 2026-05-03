@@ -1204,17 +1204,17 @@ export class BeaconManager extends EventEmitter {
    * 3. 出力イテレータからSDKMessageを読み取り、ストリーミングで通知
    */
   async sendMessage(message: string): Promise<void> {
-    // MCP 構成が変わっていて、かつ idle (queue 中の turn が無い) ならセッションを
-    // 作り直して system prompt も新 connection リストで再構築する。
-    // (connection 追加 / 削除 / rename / label 解決時)
-    // 注: session.processing は session 生存期間中ずっと true (前述コメント参照)
-    // なので idle 判定には使えない。activeTurnCount === 0 が正しいシグナル
-    // (multi-client で複数 turn が queue されていても安全)。
-    if (
-      this.mcpConfigStale &&
-      this.session &&
-      this.session.activeTurnCount === 0
-    ) {
+    // MCP 構成が変わっていればセッションを作り直して system prompt と allowedTools を
+    // 新 connection リストで再構築する。busy (進行中ターンあり) の場合でも close する:
+    // - ユーザが新メッセージを送った時点で fresh state を期待している
+    // - setMcpServers では systemPrompt / allowedTools が更新されないため、新規追加
+    //   connection が不可視になる / 削除済み connection の指示が残る
+    // 進行中ターンは犠牲になるが、その response は既に streaming 済みで UI/DB には残る
+    // (close 後の新セッションが履歴を再 load する)。
+    // 注: auth-completed のイベント時は close せず stale フラグだけ立てる。長い response
+    // の途中で MCP 認証が完了してもユーザの会話は中断されない (sendMessage 経路でのみ
+    // rebuild する)。
+    if (this.mcpConfigStale && this.session) {
       this.closeSession();
       this.mcpConfigStale = false;
     }
