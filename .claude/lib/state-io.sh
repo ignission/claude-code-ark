@@ -19,13 +19,16 @@ set -euo pipefail
 
 # === 内部ヘルパー ===
 
-# work_id (issue-<N> or slug) と merge-base から SCOPE_KEY を計算する。
+# work_id から SCOPE_KEY を計算する。
 # 引数: $1 work_id  例) "issue-123" / "html-viewer-tab"
+#
+# 過去の検討では merge-base を含めて stale 誤継承を防ぐ方針もあったが、ark は短命
+# feature ブランチが基本で main が進むと SCOPE_KEY が変わって `--resume` / hook
+# resume が効かなくなる方が痛い (codex review [P2] 指摘)。WORK_ID 単独に統一する。
+# stale 防止は flow_state_is_stale (1h + owner_pid 死亡) で行う。
 _flow_scope_key() {
   local work_id="$1"
-  local merge_base
-  merge_base=$(git merge-base origin/main HEAD 2>/dev/null | cut -c1-12) || merge_base="nobase"
-  printf '%s-%s\n' "${work_id:-no-work}" "$merge_base"
+  printf '%s\n' "${work_id:-no-work}"
 }
 
 _flow_state_file() {

@@ -67,10 +67,10 @@ source "$CLAUDE_PROJECT_DIR/.claude/lib/worktree/setup-worktree.sh"
 # 未初期化変数を参照すると abort する。MODE / FROM_PHASE / TARGET を必ず初期化してから判定する。
 MODE=""
 FROM_PHASE=""
-TARGET=""           # ユーザー指定の引数 (#NNN または slug)
+TARGET=""           # ユーザー指定の引数 (#NNN, slug, または "#501,#502")
 ISSUE_NUMBER=""     # 数値のみ。Issue 紐付けなしなら空
 WORK_ID=""          # state SCOPE_KEY のベース。issue-<N> または slug
-TICKETS_LIST=""
+TARGETS_LIST=""     # --plan-only モード時の複数指定 ("#501,#502" 等)
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --resume)    MODE="--resume" ;;
@@ -78,13 +78,36 @@ while [ "$#" -gt 0 ]; do
     --dry-run)   MODE="--dry-run" ;;
     --plan-only) MODE="--plan-only" ;;
     --kpi)       MODE="--kpi" ;;
-    --tickets)   TICKETS_LIST="$2"; shift ;;
+    --tickets)   TARGETS_LIST="$2"; shift ;;
     *)           [ -z "$TARGET" ] && TARGET="$1" || halt "unexpected arg: $1" ;;
   esac
   shift
 done
 
-# TARGET から WORK_ID と ISSUE_NUMBER を導出
+# --kpi は state を作らずに集計→ exit するモード。WORK_ID 不要。
+# 通常 flow に進むと WORK_ID 空で flow_state_exists が偽になり P-1 を再走するので、
+# 早期 short-circuit する (codex review [P2] 指摘への対応)。
+if [ "${MODE:-}" = "--kpi" ]; then
+  # /tmp/flow-kpi-*.json を集計して markdown table を出して exit
+  # （実装本体は /flow --kpi セクション参照）
+  exec_kpi_aggregation_and_exit
+fi
+
+# --plan-only かつ comma 区切りの TARGET (例: "#501,#502") は TARGETS_LIST に詰め替える。
+# 単一 TARGET でも plan-only なら TARGETS_LIST にコピーして共通ループで扱う
+# (codex review [P2] 指摘への対応: 複数指定がパース不能だった点を修正)。
+if [ "${MODE:-}" = "--plan-only" ]; then
+  if [ -n "$TARGET" ] && [ -z "$TARGETS_LIST" ]; then
+    TARGETS_LIST="$TARGET"
+  fi
+  if [ -z "$TARGETS_LIST" ]; then
+    halt "--plan-only は --tickets <#A,#B,...> または #N を指定してください"
+  fi
+  exec_plan_only_for_targets "$TARGETS_LIST"
+  exit 0
+fi
+
+# 単一 TARGET から WORK_ID と ISSUE_NUMBER を導出 (通常モード)
 if [[ "$TARGET" =~ ^#?([0-9]+)$ ]]; then
   ISSUE_NUMBER="${BASH_REMATCH[1]}"
   WORK_ID="issue-${ISSUE_NUMBER}"

@@ -15,11 +15,19 @@ _cr_hooks_dir() {
 # 出力変数:
 #   CR_STATE_JSON - check-ci-coderabbit.sh が返す JSON 全体
 #   CR_ACTION     - .action フィールド
+#
+# check-ci-coderabbit.sh は repo/auth/branch エラー時に exit 1 だが
+# 構造化 JSON ({status:error, action:stop_monitoring_failure}) は stdout に出している。
+# `set -e` 下でコマンド置換が exit 1 だと caller も即死して JSON を失うため、
+# `|| true` で吸収する (codex review [P2] 指摘への対応)。
 check_cr_action_state() {
   local hooks
   hooks=$(_cr_hooks_dir)
-  CR_STATE_JSON=$(bash "$hooks/check-ci-coderabbit.sh")
-  CR_ACTION=$(printf '%s' "$CR_STATE_JSON" | jq -r '.action')
+  CR_STATE_JSON=$(bash "$hooks/check-ci-coderabbit.sh" || true)
+  if [ -z "$CR_STATE_JSON" ]; then
+    CR_STATE_JSON='{"status":"error","ci":{"status":"error","details":"check-ci-coderabbit.sh から JSON を取得できませんでした"},"coderabbit":{"status":"error","unresolved":0,"comments":[]},"action":"stop_monitoring_failure"}'
+  fi
+  CR_ACTION=$(printf '%s' "$CR_STATE_JSON" | jq -r '.action // "stop_monitoring_failure"' 2>/dev/null || echo "stop_monitoring_failure")
 }
 
 # CodeRabbit の未解決スレッドを取得する。
