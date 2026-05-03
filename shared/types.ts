@@ -202,6 +202,19 @@ export interface Profile {
   updatedAt: number;
 }
 
+/** UIから登録する定型メッセージのショートカット（全リポジトリ共通） */
+export interface MessageShortcut {
+  id: string;
+  /** 表示用ラベル（1〜60字） */
+  label: string;
+  /** 送信本文（1〜4000字、複数行可） */
+  message: string;
+  /** 並び順（MVPはMAX+1で末尾追加） */
+  sortOrder: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /**
  * リポジトリとプロファイルの紐付け
  * 1リポジトリ=1プロファイル（多重紐付けは未サポート）
@@ -431,6 +444,13 @@ export interface ServerToClientEvents {
     profileId: string | null;
   }) => void;
 
+  // メッセージショートカット
+  "shortcut:list": (shortcuts: MessageShortcut[]) => void;
+  "shortcut:created": (shortcut: MessageShortcut) => void;
+  "shortcut:updated": (shortcut: MessageShortcut) => void;
+  "shortcut:deleted": (data: { id: string }) => void;
+  "shortcut:error": (data: { message: string; code?: string }) => void;
+
   // Bridge ダッシュボード
   "bridge:snapshot": (snapshot: BridgeSnapshot) => void;
   "bridge:stream": (data: {
@@ -542,6 +562,17 @@ export interface ClientToServerEvents {
     profileId: string | null;
   }) => void;
   "session:restart-with-profile": (data: { sessionId: string }) => void;
+
+  // メッセージショートカット
+  "shortcut:list": () => void;
+  "shortcut:create": (data: { label: string; message: string }) => void;
+  "shortcut:update": (data: {
+    id: string;
+    label?: string;
+    message?: string;
+    sortOrder?: number;
+  }) => void;
+  "shortcut:delete": (data: { id: string }) => void;
 
   // Usage取得 (Linux + multiProfileSupported 限定)
   "usage:request": () => void;
