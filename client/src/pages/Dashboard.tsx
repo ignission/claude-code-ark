@@ -605,6 +605,7 @@ export default function Dashboard() {
           sessionSubView={mobileSessionSubView}
           onChangeActiveTab={setMobileActiveTab}
           onChangeSessionSubView={setMobileSessionSubView}
+          sessionsLoaded={sessionsLoaded}
         />
       ) : (
         <SidebarMainLayout

@@ -94,6 +94,8 @@ interface MobileLayoutProps {
   sessionSubView: SessionSubView;
   onChangeActiveTab: (tab: MobileTab) => void;
   onChangeSessionSubView: (view: SessionSubView) => void;
+  /** session:list を受信済みか。フォールバック判定で使う（復元中の誤list遷移を防ぐ） */
+  sessionsLoaded: boolean;
 }
 
 export function MobileLayout({
@@ -136,6 +138,7 @@ export function MobileLayout({
   sessionSubView,
   onChangeActiveTab,
   onChangeSessionSubView,
+  sessionsLoaded,
 }: MobileLayoutProps) {
   const [frontlineOpened, setFrontlineOpened] = useState(false);
   const [openedSessions, setOpenedSessions] = useState<Set<string>>(() =>
@@ -205,8 +208,11 @@ export function MobileLayout({
   }, [onChangeSessionSubView]);
 
   // 選択中のセッションが削除された/復元できなかった場合、一覧画面にフォールバック
+  // sessionsLoaded を待たないと、復元直後 sessions Map がまだ空のときに
+  // 誤って list へ戻してしまう（リロード時に detail が一瞬で list に消える原因）
   useEffect(() => {
     if (
+      sessionsLoaded &&
       activeTab === "session" &&
       sessionSubView === "detail" &&
       (!selectedSessionId || !sessions.has(selectedSessionId))
@@ -214,6 +220,7 @@ export function MobileLayout({
       onChangeSessionSubView("list");
     }
   }, [
+    sessionsLoaded,
     activeTab,
     sessionSubView,
     selectedSessionId,
