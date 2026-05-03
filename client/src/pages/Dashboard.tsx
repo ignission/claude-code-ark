@@ -126,6 +126,10 @@ export default function Dashboard() {
     usageRequesting,
     usageProgress,
     requestUsage,
+    messageShortcuts,
+    createShortcut,
+    updateShortcut,
+    deleteShortcut,
   } = useSocket({
     enabled: !isSettingsLoading,
     initialRepoList: savedRepoList,
@@ -568,6 +572,10 @@ export default function Dashboard() {
           navigateBrowser={navigateBrowser}
           isRemote={isRemote}
           onOpenMcpManager={() => setShowMcpManager(true)}
+          messageShortcuts={messageShortcuts}
+          onCreateShortcut={createShortcut}
+          onUpdateShortcut={updateShortcut}
+          onDeleteShortcut={deleteShortcut}
         />
       ) : (
         <SidebarMainLayout
@@ -683,6 +691,10 @@ export default function Dashboard() {
                         onCopyBuffer={
                           copyBuffer ? () => copyBuffer(session.id) : undefined
                         }
+                        messageShortcuts={messageShortcuts}
+                        onCreateShortcut={createShortcut}
+                        onUpdateShortcut={updateShortcut}
+                        onDeleteShortcut={deleteShortcut}
                       />
                     </div>
                   );
