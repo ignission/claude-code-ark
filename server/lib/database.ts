@@ -18,6 +18,7 @@ import type {
   McpServerConfig,
   McpServerConfigInput,
   Message,
+  MessageShortcut,
   MessageType,
   Profile,
   RepoProfileLink,
@@ -304,6 +305,20 @@ export class SessionDatabase {
     } catch {
       // 既に削除済み
     }
+
+    // メッセージショートカット（全リポジトリ共通の定型送信メッセージ）
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS message_shortcuts (
+        id TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        message TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_message_shortcuts_sort
+        ON message_shortcuts (sort_order, created_at);
+    `);
 
     // ============================================================
     // MCP server 管理 (Beacon が外部 OAuth MCP に接続するため)
@@ -1371,6 +1386,125 @@ export class SessionDatabase {
   deleteMcpToken(serverId: string): void {
     const stmt = this.db.prepare("DELETE FROM mcp_tokens WHERE server_id = ?");
     stmt.run(serverId);
+  }
+
+  // ============================================================
+  // メッセージショートカットCRUD操作
+  // ============================================================
+
+  private rowToMessageShortcut(row: {
+    id: string;
+    label: string;
+    message: string;
+    sort_order: number;
+    created_at: number;
+    updated_at: number;
+  }): MessageShortcut {
+    return {
+      id: row.id,
+      label: row.label,
+      message: row.message,
+      sortOrder: row.sort_order,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /** ショートカットを並び順 → 作成順で全件取得 */
+  listMessageShortcuts(): MessageShortcut[] {
+    const stmt = this.db.prepare(
+      "SELECT * FROM message_shortcuts ORDER BY sort_order ASC, created_at ASC"
+    );
+    const rows = stmt.all() as Array<{
+      id: string;
+      label: string;
+      message: string;
+      sort_order: number;
+      created_at: number;
+      updated_at: number;
+    }>;
+    return rows.map(row => this.rowToMessageShortcut(row));
+  }
+
+  getMessageShortcut(id: string): MessageShortcut | null {
+    const stmt = this.db.prepare(
+      "SELECT * FROM message_shortcuts WHERE id = ?"
+    );
+    const row = stmt.get(id) as
+      | {
+          id: string;
+          label: string;
+          message: string;
+          sort_order: number;
+          created_at: number;
+          updated_at: number;
+        }
+      | undefined;
+    return row ? this.rowToMessageShortcut(row) : null;
+  }
+
+  /** 新規作成（sortOrderは既存の最大+1で末尾追加） */
+  createMessageShortcut(input: {
+    label: string;
+    message: string;
+  }): MessageShortcut {
+    const id = nanoid();
+    const now = Date.now();
+    const maxStmt = this.db.prepare(
+      "SELECT COALESCE(MAX(sort_order), 0) AS m FROM message_shortcuts"
+    );
+    const { m } = maxStmt.get() as { m: number };
+    const stmt = this.db.prepare(`
+      INSERT INTO message_shortcuts (id, label, message, sort_order, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(id, input.label, input.message, m + 1, now, now);
+    const created = this.getMessageShortcut(id);
+    if (!created) {
+      throw new Error(`Failed to create message shortcut: ${id}`);
+    }
+    return created;
+  }
+
+  /** 部分更新。undefined のフィールドはスキップ */
+  updateMessageShortcut(
+    id: string,
+    patch: { label?: string; message?: string; sortOrder?: number }
+  ): MessageShortcut {
+    const setClauses: string[] = [];
+    const params: Array<string | number> = [];
+    if (patch.label !== undefined) {
+      setClauses.push("label = ?");
+      params.push(patch.label);
+    }
+    if (patch.message !== undefined) {
+      setClauses.push("message = ?");
+      params.push(patch.message);
+    }
+    if (patch.sortOrder !== undefined) {
+      setClauses.push("sort_order = ?");
+      params.push(patch.sortOrder);
+    }
+    setClauses.push("updated_at = ?");
+    params.push(Date.now());
+    params.push(id);
+    const stmt = this.db.prepare(
+      `UPDATE message_shortcuts SET ${setClauses.join(", ")} WHERE id = ?`
+    );
+    const result = stmt.run(...params);
+    if (result.changes === 0) {
+      throw new Error(`Message shortcut not found: ${id}`);
+    }
+    const updated = this.getMessageShortcut(id);
+    if (!updated) {
+      throw new Error(`Message shortcut not found after update: ${id}`);
+    }
+    return updated;
+  }
+
+  deleteMessageShortcut(id: string): void {
+    const stmt = this.db.prepare("DELETE FROM message_shortcuts WHERE id = ?");
+    stmt.run(id);
   }
 
   /**
