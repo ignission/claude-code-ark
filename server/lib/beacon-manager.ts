@@ -1248,6 +1248,15 @@ export class BeaconManager extends EventEmitter {
       await this.startSession();
     }
 
+    // startSession の await 中に markMcpConfigStale が呼ばれていた場合
+    // (_initSession 側で flag を保持してくれている) は、もう一度 close + 再起動して
+    // 新 MCP 構成を反映する。1 回の余分な session 作成で済む (再起動中は同じ)。
+    if (this.mcpConfigStale && this.session) {
+      this.closeSession();
+      this.mcpConfigStale = false;
+      await this.startSession();
+    }
+
     const session = this.session!;
 
     // (3) turn 開始前に外部 MCP の fresh headers を setMcpServers で push する。

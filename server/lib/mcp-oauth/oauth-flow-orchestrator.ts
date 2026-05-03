@@ -445,8 +445,13 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
         tokenType: result.tokenType,
         scopes: result.scope?.split(/\s+/).filter(Boolean) ?? token.scopes,
         acquiredAt: now,
+        // refresh response が expires_in を省略した場合は旧 expiresAt を維持する
+        // (null にすると以降 needsRefresh が常に false になり、新 access token が
+        //  実際に expire しても永遠に再利用されてしまう)
         expiresAt:
-          result.expiresIn !== undefined ? now + result.expiresIn * 1000 : null,
+          result.expiresIn !== undefined
+            ? now + result.expiresIn * 1000
+            : token.expiresAt,
       });
       return true;
     } catch (err) {
