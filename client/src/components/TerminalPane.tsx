@@ -41,6 +41,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type {
   ManagedSession,
+  MessageShortcut,
   SpecialKey,
   Worktree,
 } from "../../../shared/types";
@@ -49,6 +50,8 @@ import { useIsMobile } from "../hooks/useMobile";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { FileViewerPane } from "./FileViewerPane";
 import { HtmlViewerPane } from "./HtmlViewerPane";
+import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
+import { MessageShortcutMenu } from "./MessageShortcutMenu";
 import { ViewerTabBar } from "./ViewerTabBar";
 
 /** プレビューダイアログに蓄積する添付ファイル */
@@ -101,6 +104,13 @@ interface TerminalPaneProps {
   activeTabIndex: number;
   onTabSelect: (index: number) => void;
   onTabClose: (index: number) => void;
+  messageShortcuts: MessageShortcut[];
+  onCreateShortcut: (label: string, message: string) => void;
+  onUpdateShortcut: (
+    id: string,
+    patch: { label?: string; message?: string }
+  ) => void;
+  onDeleteShortcut: (id: string) => void;
 }
 
 export function TerminalPane({
@@ -116,6 +126,10 @@ export function TerminalPane({
   activeTabIndex,
   onTabSelect,
   onTabClose,
+  messageShortcuts,
+  onCreateShortcut,
+  onUpdateShortcut,
+  onDeleteShortcut,
 }: TerminalPaneProps) {
   const isMobile = useIsMobile();
   const [inputValue, setInputValue] = useState("");
@@ -123,6 +137,7 @@ export function TerminalPane({
   const [showQuickCommands, setShowQuickCommands] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [showShortcutManager, setShowShortcutManager] = useState(false);
 
   // PCでは入力バーをデフォルト非表示にする
   useEffect(() => {
@@ -465,6 +480,11 @@ export function TerminalPane({
               <Paperclip className="w-5 h-5 md:w-3 md:h-3" />
             </label>
           )}
+          <MessageShortcutMenu
+            shortcuts={messageShortcuts}
+            onSendMessage={onSendMessage}
+            onOpenManager={() => setShowShortcutManager(true)}
+          />
           <Button
             variant="ghost"
             size="icon"
@@ -770,6 +790,15 @@ export function TerminalPane({
           </form>
         </div>
       )}
+
+      <MessageShortcutManagerDialog
+        open={showShortcutManager}
+        onOpenChange={setShowShortcutManager}
+        shortcuts={messageShortcuts}
+        onCreate={onCreateShortcut}
+        onUpdate={onUpdateShortcut}
+        onDelete={onDeleteShortcut}
+      />
 
       {/* 削除確認ダイアログ */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
