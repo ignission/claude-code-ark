@@ -1262,6 +1262,15 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       providerId: string,
       options?: { label?: string; connectionId?: string }
     ) => {
+      // socket 未接続時は popup を開かない (server に届かず mcp:auth-started も
+      // mcp:error も来ないため、空 popup が永久に残ってしまう)。
+      const sock = socketRef.current;
+      if (!sock?.connected) {
+        toast.error("サーバーに接続されていません", {
+          description: "少し待ってから再試行してください",
+        });
+        return;
+      }
       // ポップアップブロック対策: ボタンクリック由来 (この関数の同期実行コンテキスト) で
       // window.open する必要がある。authorize URL は server から非同期で返ってくるので
       // 先に about:blank で空ウィンドウを開いておき、`mcp:auth-started` 受信時に
@@ -1274,7 +1283,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         const queue = (mcpPendingPopupsRef.current[providerId] ??= []);
         queue.push(popup);
       }
-      socketRef.current?.emit("mcp:connect", {
+      sock.emit("mcp:connect", {
         providerId,
         ...(options?.label !== undefined ? { label: options.label } : {}),
         ...(options?.connectionId !== undefined
