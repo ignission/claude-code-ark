@@ -20,6 +20,7 @@ import type {
   ChatMessage,
   ClientToServerEvents,
   ManagedSession,
+  MessageShortcut,
   ServerToClientEvents,
   SpecialKey,
   UsageProgress,
@@ -79,6 +80,14 @@ interface MobileLayoutProps {
   onSelectBrowser: () => void;
   navigateBrowser: (url: string) => void;
   isRemote: boolean;
+  // メッセージショートカット
+  messageShortcuts: MessageShortcut[];
+  onCreateShortcut: (label: string, message: string) => void;
+  onUpdateShortcut: (
+    id: string,
+    patch: { label?: string; message?: string }
+  ) => void;
+  onDeleteShortcut: (id: string) => void;
 }
 
 export function MobileLayout({
@@ -112,6 +121,10 @@ export function MobileLayout({
   onSelectBrowser,
   navigateBrowser,
   isRemote,
+  messageShortcuts,
+  onCreateShortcut,
+  onUpdateShortcut,
+  onDeleteShortcut,
 }: MobileLayoutProps) {
   const [activeView, setActiveView] = useState<
     "list" | "detail" | "beacon" | "browser" | "frontline"
@@ -275,6 +288,10 @@ export function MobileLayout({
               activeTabIndex={getActiveTabForSession(sessionId)}
               onTabSelect={idx => handleTabSelect(sessionId, idx)}
               onTabClose={idx => handleTabClose(sessionId, idx)}
+              messageShortcuts={messageShortcuts}
+              onCreateShortcut={onCreateShortcut}
+              onUpdateShortcut={onUpdateShortcut}
+              onDeleteShortcut={onDeleteShortcut}
             />
           </div>
         ))}
