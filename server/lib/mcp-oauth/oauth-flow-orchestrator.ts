@@ -185,18 +185,26 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
     }
     const error = parsed.searchParams.get("error");
     const errorDescription = parsed.searchParams.get("error_description");
-    if (error) {
-      throw new Error(
-        `OAuth callback error: ${error}${errorDescription ? ` (${errorDescription})` : ""}`
-      );
-    }
     const code = parsed.searchParams.get("code");
     const state = parsed.searchParams.get("state");
+
+    // state で flow を先に引き当てる: error 付き callback の場合でもフローを
+    // 「失敗」としてクリアしないと UI が「認証中」のまま 30 分残ってしまう。
+    const connectionIdForState = state ? this.stateIndex.get(state) : undefined;
+
+    if (error) {
+      const message = `OAuth callback error: ${error}${errorDescription ? ` (${errorDescription})` : ""}`;
+      if (connectionIdForState) {
+        const entry = this.flows.get(connectionIdForState);
+        if (entry) this.markFailed(connectionIdForState, entry.runId, message);
+      }
+      throw new Error(message);
+    }
     if (!code || !state) {
       throw new Error("貼り付けた URL に code または state が含まれていません");
     }
 
-    const connectionId = this.stateIndex.get(state);
+    const connectionId = connectionIdForState;
     if (!connectionId) {
       throw new Error(
         "state に紐づく flow が見つかりません (期限切れ・キャンセル済み・不正)"

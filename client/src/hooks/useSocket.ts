@@ -324,12 +324,12 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     mcpConnectionsRef.current = mcpConnections;
   }, [mcpConnections]);
   /**
-   * `mcpConnect` 呼び出し時にユーザクリック由来で開いた空ポップアップ。
-   * providerId / connectionId をキーに保持し、`mcp:auth-started` 到着時に
-   * authorizationUrl へ navigate することで「非同期 window.open はブロック」
-   * 制約を回避する。
+   * `mcpConnect` 呼び出し時にユーザクリック由来で開いた空ポップアップの FIFO キュー。
+   * providerId をキーに配列で保持する: 同 provider に対して短時間に複数 connect が
+   * 走った場合、後勝ちで上書きすると先のリクエストの popup ref が失われるため。
+   * `mcp:auth-started` 到着時に該当 provider の最古エントリを取り出して navigate する。
    */
-  const mcpPendingPopupRef = useRef<Record<string, Window>>({});
+  const mcpPendingPopupsRef = useRef<Record<string, Window[]>>({});
 
   // Usage取得
   const [usageRequesting, setUsageRequesting] = useState(false);
@@ -849,25 +849,32 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         ...prev,
         [connectionId]: authorizationUrl,
       }));
-      // mcpConnect で同期文脈で開いた空ポップアップが残っていれば、それを navigate
-      // (非同期 window.open はブラウザにブロックされる)。
-      // popup は providerId / connectionId のどちらでも引けるよう両方をキーで試す。
-      const popups = mcpPendingPopupRef.current;
+      // mcpConnect で同期文脈で開いた空ポップアップ FIFO キューから最古エントリを取り出し、
+      // authorizationUrl へ navigate する (非同期 window.open はブロックされるため)。
+      // connectionId 形式: `<providerId>-<nanoid>`。再認証では既存 connectionId なので
+      // providerId 部分のみ取り出してキュー検索。
       const providerId = connectionId.split("-")[0];
-      const popup =
-        popups[connectionId] ?? (providerId ? popups[providerId] : undefined);
-      if (popup && !popup.closed) {
+      const queue =
+        providerId !== undefined
+          ? mcpPendingPopupsRef.current[providerId]
+          : undefined;
+      let navigated = false;
+      while (queue && queue.length > 0) {
+        const popup = queue.shift();
+        if (!popup || popup.closed) continue;
         try {
           popup.location.href = authorizationUrl;
-          delete popups[connectionId];
-          if (providerId) delete popups[providerId];
-          toast.success("認可ページを開きました", {
-            description: "ブラウザで認証を完了してください",
-          });
-          return;
+          navigated = true;
+          break;
         } catch {
-          // クロスオリジンで location 設定を弾かれたケース等は fallback へ
+          // クロスオリジンで弾かれた等 → 次の候補を試す
         }
+      }
+      if (navigated) {
+        toast.success("認可ページを開きました", {
+          description: "ブラウザで認証を完了してください",
+        });
+        return;
       }
       // popup ref が無い (= ブロックされた) → ユーザに手動オープンを促す
       toast.error("ポップアップがブロックされました", {
@@ -1244,10 +1251,11 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       // ポップアップブロック対策: ボタンクリック由来 (この関数の同期実行コンテキスト) で
       // window.open する必要がある。authorize URL は server から非同期で返ってくるので
       // 先に about:blank で空ウィンドウを開いておき、`mcp:auth-started` 受信時に
-      // location を差し替える。
+      // location を差し替える。同 provider に複数 connect が並走しうるため FIFO キューで保持。
       const popup = window.open("about:blank", "_blank", "noopener");
       if (popup) {
-        mcpPendingPopupRef.current[providerId] = popup;
+        const queue = (mcpPendingPopupsRef.current[providerId] ??= []);
+        queue.push(popup);
       }
       socketRef.current?.emit("mcp:connect", {
         providerId,
