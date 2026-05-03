@@ -28,6 +28,9 @@ import type {
 } from "../../../shared/types";
 import { useViewerTabs } from "../hooks/useViewerTabs";
 
+export type MobileTab = "session" | "browser" | "frontline" | "beacon";
+export type SessionSubView = "list" | "detail";
+
 interface MobileLayoutProps {
   socket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
   sessions: Map<string, ManagedSession>;
@@ -85,6 +88,12 @@ interface MobileLayoutProps {
   onCreateShortcut: (message: string) => void;
   onUpdateShortcut: (id: string, patch: { message?: string }) => void;
   onDeleteShortcut: (id: string) => void;
+  // モバイル UI 状態（Dashboard が永続化）
+  selectedSessionId: string | null;
+  activeTab: MobileTab;
+  sessionSubView: SessionSubView;
+  onChangeActiveTab: (tab: MobileTab) => void;
+  onChangeSessionSubView: (view: SessionSubView) => void;
 }
 
 export function MobileLayout({
@@ -122,15 +131,27 @@ export function MobileLayout({
   onCreateShortcut,
   onUpdateShortcut,
   onDeleteShortcut,
+  selectedSessionId,
+  activeTab,
+  sessionSubView,
+  onChangeActiveTab,
+  onChangeSessionSubView,
 }: MobileLayoutProps) {
-  const [activeView, setActiveView] = useState<
-    "list" | "detail" | "beacon" | "browser" | "frontline"
-  >("list");
   const [frontlineOpened, setFrontlineOpened] = useState(false);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
-    null
+  const [openedSessions, setOpenedSessions] = useState<Set<string>>(() =>
+    selectedSessionId ? new Set([selectedSessionId]) : new Set()
   );
-  const [openedSessions, setOpenedSessions] = useState<Set<string>>(new Set());
+
+  // 復元/外部更新で selectedSessionId が変わったとき openedSessions に追加
+  useEffect(() => {
+    if (selectedSessionId) {
+      setOpenedSessions(prev =>
+        prev.has(selectedSessionId)
+          ? prev
+          : new Set(prev).add(selectedSessionId)
+      );
+    }
+  }, [selectedSessionId]);
   // ブラウザビューを一度でも開いたかどうかのフラグ
   // 一度開いたらdisplay:hiddenで切り替え、BrowserPaneの再マウント（WebSocket再接続）を防ぐ
   const [hasBrowserOpened, setHasBrowserOpened] = useState(false);
@@ -139,7 +160,7 @@ export function MobileLayout({
     (url: string) => {
       if (isRemote) {
         onSelectBrowser();
-        setActiveView("browser");
+        onChangeActiveTab("browser");
         setHasBrowserOpened(true);
         navigateBrowser(url);
       } else {
@@ -150,7 +171,7 @@ export function MobileLayout({
         a.click();
       }
     },
-    [isRemote, onSelectBrowser, navigateBrowser]
+    [isRemote, onSelectBrowser, navigateBrowser, onChangeActiveTab]
   );
 
   // タブ状態管理（共通フック）
@@ -170,29 +191,35 @@ export function MobileLayout({
   // セッションを選択して詳細画面に遷移
   const handleOpenSession = useCallback(
     (sessionId: string) => {
-      setSelectedSessionId(sessionId);
-      setActiveView("detail");
+      onChangeActiveTab("session");
+      onChangeSessionSubView("detail");
       setOpenedSessions(prev => new Set(prev).add(sessionId));
       onSelectSession(sessionId);
     },
-    [onSelectSession]
+    [onSelectSession, onChangeActiveTab, onChangeSessionSubView]
   );
 
   // 一覧画面に戻る
   const handleBack = useCallback(() => {
-    setActiveView("list");
-  }, []);
+    onChangeSessionSubView("list");
+  }, [onChangeSessionSubView]);
 
-  // 選択中のセッションが削除された場合、一覧画面にフォールバック
+  // 選択中のセッションが削除された/復元できなかった場合、一覧画面にフォールバック
   useEffect(() => {
     if (
-      activeView === "detail" &&
-      selectedSessionId &&
-      !sessions.has(selectedSessionId)
+      activeTab === "session" &&
+      sessionSubView === "detail" &&
+      (!selectedSessionId || !sessions.has(selectedSessionId))
     ) {
-      setActiveView("list");
+      onChangeSessionSubView("list");
     }
-  }, [activeView, selectedSessionId, sessions]);
+  }, [
+    activeTab,
+    sessionSubView,
+    selectedSessionId,
+    sessions,
+    onChangeSessionSubView,
+  ]);
 
   // ワークツリーのIDからWorktreeを取得するヘルパー
   const getWorktreeForSession = (
@@ -204,38 +231,38 @@ export function MobileLayout({
   // ブラウザを選択して画面遷移
   const handleOpenBrowser = useCallback(() => {
     onSelectBrowser();
-    setActiveView("browser");
+    onChangeActiveTab("browser");
     setHasBrowserOpened(true);
-  }, [onSelectBrowser]);
+  }, [onSelectBrowser, onChangeActiveTab]);
 
   const showBottomNav = true;
 
   // FrontLineタブ離脱/復帰時にpause/resume
-  const prevActiveViewRef = useRef(activeView);
+  const prevActiveTabRef = useRef(activeTab);
   useEffect(() => {
-    const prev = prevActiveViewRef.current;
-    prevActiveViewRef.current = activeView;
-    if (prev === activeView) return;
+    const prev = prevActiveTabRef.current;
+    prevActiveTabRef.current = activeTab;
+    if (prev === activeTab) return;
 
     const game = (window as unknown as Record<string, unknown>)
       .__FRONTLINE_GAME__ as Phaser.Game | undefined;
     if (!game) return;
 
-    if (prev === "frontline" && activeView !== "frontline") {
+    if (prev === "frontline" && activeTab !== "frontline") {
       game.events.emit("modal:pause");
       game.loop.sleep();
-    } else if (prev !== "frontline" && activeView === "frontline") {
+    } else if (prev !== "frontline" && activeTab === "frontline") {
       game.loop.wake();
       game.events.emit("modal:resume");
     }
-  }, [activeView]);
+  }, [activeTab]);
 
   return (
     <div className="h-full flex flex-col min-h-0 overflow-hidden">
       {/* 一覧画面 */}
       <div
         className={
-          activeView === "list"
+          activeTab === "session" && sessionSubView === "list"
             ? "flex-1 flex flex-col min-h-0 pb-14"
             : "hidden"
         }
@@ -259,7 +286,9 @@ export function MobileLayout({
           <div
             key={sessionId}
             className={
-              activeView === "detail" && selectedSessionId === sessionId
+              activeTab === "session" &&
+              sessionSubView === "detail" &&
+              selectedSessionId === sessionId
                 ? "flex-1 flex flex-col min-h-0 pb-14"
                 : "hidden"
             }
@@ -296,7 +325,7 @@ export function MobileLayout({
       {/* Beaconチャットビュー */}
       <div
         className={
-          activeView === "beacon"
+          activeTab === "beacon"
             ? "flex-1 flex flex-col min-h-0 pb-14"
             : "hidden"
         }
@@ -320,7 +349,7 @@ export function MobileLayout({
       {hasBrowserOpened && (
         <div
           className={
-            activeView === "browser"
+            activeTab === "browser"
               ? "flex-1 flex flex-col min-h-0 pb-14"
               : "hidden"
           }
@@ -329,7 +358,7 @@ export function MobileLayout({
             <button
               type="button"
               className="text-sm text-muted-foreground mr-3"
-              onClick={handleBack}
+              onClick={() => onChangeActiveTab("session")}
             >
               ← 戻る
             </button>
@@ -347,24 +376,28 @@ export function MobileLayout({
         </div>
       )}
 
-      {/* ボトムナビゲーション（セッション詳細画面・ブラウザ画面以外で表示） */}
+      {/* ボトムナビゲーション */}
       {showBottomNav && (
         <nav className="fixed bottom-0 left-0 right-0 border-t border-border bg-background z-50 flex">
           <button
             type="button"
             className={`flex-1 py-3 text-center text-sm font-medium ${
-              activeView === "list"
+              activeTab === "session"
                 ? "text-primary border-t-2 border-primary"
                 : "text-muted-foreground"
             }`}
-            onClick={() => setActiveView("list")}
+            onClick={() => onChangeActiveTab("session")}
           >
             セッション
           </button>
           {isRemote && (
             <button
               type="button"
-              className="flex-1 py-3 text-center text-sm font-medium text-muted-foreground"
+              className={`flex-1 py-3 text-center text-sm font-medium ${
+                activeTab === "browser"
+                  ? "text-primary border-t-2 border-primary"
+                  : "text-muted-foreground"
+              }`}
               onClick={handleOpenBrowser}
             >
               ブラウザ
@@ -373,12 +406,12 @@ export function MobileLayout({
           <button
             type="button"
             className={`flex-1 py-3 text-center text-sm font-medium ${
-              activeView === "frontline"
+              activeTab === "frontline"
                 ? "text-primary border-t-2 border-primary"
                 : "text-muted-foreground"
             }`}
             onClick={() => {
-              setActiveView("frontline");
+              onChangeActiveTab("frontline");
               setFrontlineOpened(true);
             }}
           >
@@ -387,11 +420,11 @@ export function MobileLayout({
           <button
             type="button"
             className={`flex-1 py-3 text-center text-sm font-medium ${
-              activeView === "beacon"
+              activeTab === "beacon"
                 ? "text-primary border-t-2 border-primary"
                 : "text-muted-foreground"
             }`}
-            onClick={() => setActiveView("beacon")}
+            onClick={() => onChangeActiveTab("beacon")}
           >
             Beacon
           </button>
@@ -402,7 +435,7 @@ export function MobileLayout({
       {frontlineOpened && (
         <div
           className={
-            activeView === "frontline"
+            activeTab === "frontline"
               ? "flex-1 flex flex-col min-h-0 pb-14 bg-black"
               : "hidden"
           }

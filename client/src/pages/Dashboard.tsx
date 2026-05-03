@@ -7,7 +7,11 @@ import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { FrontLineModal } from "@/components/frontline/FrontLineModal";
 import { McpManagerDialog } from "@/components/McpManagerDialog";
 import { MobileChatView } from "@/components/MobileChatView";
-import { MobileLayout } from "@/components/MobileLayout";
+import {
+  MobileLayout,
+  type MobileTab,
+  type SessionSubView,
+} from "@/components/MobileLayout";
 import { ProfileManagerDialog } from "@/components/ProfileManagerDialog";
 import { RepoGridView } from "@/components/RepoGridView";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
@@ -153,6 +157,9 @@ export default function Dashboard() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null
   );
+  const [mobileActiveTab, setMobileActiveTab] = useState<MobileTab>("session");
+  const [mobileSessionSubView, setMobileSessionSubView] =
+    useState<SessionSubView>("list");
   // ブラウザビューを一度でも開いたかどうかのフラグ
   // 一度開いたら常に描画してdisplay:hiddenで切り替え、BrowserPaneの再マウント（VNC再接続）を防ぐ
   const [hasBrowserOpened, setHasBrowserOpened] = useState(false);
@@ -222,6 +229,10 @@ export default function Dashboard() {
       setSelectedSessionId(
         getSetting<string | null>("selectedSessionId", null)
       );
+      setMobileActiveTab(getSetting<MobileTab>("mobile.activeTab", "session"));
+      setMobileSessionSubView(
+        getSetting<SessionSubView>("mobile.sessionSubView", "list")
+      );
     }
   }, [isSettingsLoading, getSetting]);
 
@@ -241,6 +252,19 @@ export default function Dashboard() {
       setSetting("selectedSessionId", selectedSessionId);
     }
   }, [selectedSessionId, setSetting]);
+
+  // モバイル UI 状態の永続化
+  useEffect(() => {
+    if (settingsInitializedRef.current) {
+      setSetting("mobile.activeTab", mobileActiveTab);
+    }
+  }, [mobileActiveTab, setSetting]);
+
+  useEffect(() => {
+    if (settingsInitializedRef.current) {
+      setSetting("mobile.sessionSubView", mobileSessionSubView);
+    }
+  }, [mobileSessionSubView, setSetting]);
 
   // 注: 以前はここで subscribeGrid を常時 ON にしていたが、サーバ側で
   // collectGridSnapshots() が 1.5秒ごとに走り session:previews と pane polling が
@@ -576,6 +600,11 @@ export default function Dashboard() {
           onCreateShortcut={createShortcut}
           onUpdateShortcut={updateShortcut}
           onDeleteShortcut={deleteShortcut}
+          selectedSessionId={selectedSessionId}
+          activeTab={mobileActiveTab}
+          sessionSubView={mobileSessionSubView}
+          onChangeActiveTab={setMobileActiveTab}
+          onChangeSessionSubView={setMobileSessionSubView}
         />
       ) : (
         <SidebarMainLayout
