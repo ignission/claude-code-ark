@@ -2261,16 +2261,8 @@ async function startServer() {
       }
     });
 
-    socket.on("shortcut:create", ({ label, message }) => {
-      const trimmedLabel = typeof label === "string" ? label.trim() : "";
+    socket.on("shortcut:create", ({ message }) => {
       const trimmedMessage = typeof message === "string" ? message.trim() : "";
-      if (trimmedLabel.length === 0 || trimmedLabel.length > 60) {
-        socket.emit("shortcut:error", {
-          message: "label は 1〜60 文字で入力してください",
-          code: "invalid_label",
-        });
-        return;
-      }
       if (trimmedMessage.length === 0 || trimmedMessage.length > 4000) {
         socket.emit("shortcut:error", {
           message: "message は 1〜4000 文字で入力してください",
@@ -2280,7 +2272,6 @@ async function startServer() {
       }
       try {
         const shortcut = db.createMessageShortcut({
-          label: trimmedLabel,
           message: trimmedMessage,
         });
         io.emit("shortcut:created", shortcut);
@@ -2290,7 +2281,7 @@ async function startServer() {
       }
     });
 
-    socket.on("shortcut:update", ({ id, label, message, sortOrder }) => {
+    socket.on("shortcut:update", ({ id, message, sortOrder }) => {
       if (typeof id !== "string" || id.length === 0) {
         socket.emit("shortcut:error", {
           message: "id は必須です",
@@ -2298,19 +2289,7 @@ async function startServer() {
         });
         return;
       }
-      const patch: { label?: string; message?: string; sortOrder?: number } =
-        {};
-      if (label !== undefined) {
-        const trimmed = typeof label === "string" ? label.trim() : "";
-        if (trimmed.length === 0 || trimmed.length > 60) {
-          socket.emit("shortcut:error", {
-            message: "label は 1〜60 文字で入力してください",
-            code: "invalid_label",
-          });
-          return;
-        }
-        patch.label = trimmed;
-      }
+      const patch: { message?: string; sortOrder?: number } = {};
       if (message !== undefined) {
         const trimmed = typeof message === "string" ? message.trim() : "";
         if (trimmed.length === 0 || trimmed.length > 4000) {

@@ -82,11 +82,8 @@ interface MobileLayoutProps {
   isRemote: boolean;
   // メッセージショートカット
   messageShortcuts: MessageShortcut[];
-  onCreateShortcut: (label: string, message: string) => void;
-  onUpdateShortcut: (
-    id: string,
-    patch: { label?: string; message?: string }
-  ) => void;
+  onCreateShortcut: (message: string) => void;
+  onUpdateShortcut: (id: string, patch: { message?: string }) => void;
   onDeleteShortcut: (id: string) => void;
 }
 

@@ -22,7 +22,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { MessageShortcut } from "../../../shared/types";
 
@@ -30,13 +29,18 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   shortcuts: MessageShortcut[];
-  onCreate: (label: string, message: string) => void;
-  onUpdate: (id: string, patch: { label?: string; message?: string }) => void;
+  onCreate: (message: string) => void;
+  onUpdate: (id: string, patch: { message?: string }) => void;
   onDelete: (id: string) => void;
 }
 
-const MAX_LABEL = 60;
 const MAX_MESSAGE = 4000;
+
+/** 削除確認ダイアログ等で本文の先頭行を 40 字に切り詰めて表示する */
+function previewOf(message: string): string {
+  const firstLine = message.split("\n")[0];
+  return firstLine.length > 40 ? `${firstLine.slice(0, 40)}…` : firstLine;
+}
 
 export function MessageShortcutManagerDialog({
   open,
@@ -46,50 +50,37 @@ export function MessageShortcutManagerDialog({
   onUpdate,
   onDelete,
 }: Props) {
-  const [drafts, setDrafts] = useState<
-    Record<string, { label: string; message: string }>
-  >({});
-  const [newLabel, setNewLabel] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, { message: string }>>({});
   const [newMessage, setNewMessage] = useState("");
   const [pendingDelete, setPendingDelete] = useState<MessageShortcut | null>(
     null
   );
 
   const getDraft = (s: MessageShortcut) =>
-    drafts[s.id] ?? { label: s.label, message: s.message };
+    drafts[s.id] ?? { message: s.message };
 
-  const setDraft = (
-    id: string,
-    patch: Partial<{ label: string; message: string }>
-  ) => {
+  const setDraft = (id: string, patch: Partial<{ message: string }>) => {
     setDrafts(prev => ({
       ...prev,
-      [id]: { ...(prev[id] ?? { label: "", message: "" }), ...patch },
+      [id]: { ...(prev[id] ?? { message: "" }), ...patch },
     }));
   };
 
   const isDirty = (s: MessageShortcut) => {
     const d = drafts[s.id];
     if (!d) return false;
-    return d.label !== s.label || d.message !== s.message;
+    return d.message !== s.message;
   };
 
-  const isValidDraft = (d: { label: string; message: string }) => {
-    const l = d.label.trim();
+  const isValidDraft = (d: { message: string }) => {
     const m = d.message.trim();
-    return (
-      l.length > 0 &&
-      l.length <= MAX_LABEL &&
-      m.length > 0 &&
-      m.length <= MAX_MESSAGE
-    );
+    return m.length > 0 && m.length <= MAX_MESSAGE;
   };
 
   const handleSave = (s: MessageShortcut) => {
     const d = getDraft(s);
     if (!isValidDraft(d)) return;
-    const patch: { label?: string; message?: string } = {};
-    if (d.label !== s.label) patch.label = d.label.trim();
+    const patch: { message?: string } = {};
     if (d.message !== s.message) patch.message = d.message.trim();
     if (Object.keys(patch).length === 0) return;
     onUpdate(s.id, patch);
@@ -101,20 +92,14 @@ export function MessageShortcutManagerDialog({
   };
 
   const handleCreate = () => {
-    const l = newLabel.trim();
     const m = newMessage.trim();
-    if (l.length === 0 || l.length > MAX_LABEL) return;
     if (m.length === 0 || m.length > MAX_MESSAGE) return;
-    onCreate(l, m);
-    setNewLabel("");
+    onCreate(m);
     setNewMessage("");
   };
 
   const newDraftValid =
-    newLabel.trim().length > 0 &&
-    newLabel.trim().length <= MAX_LABEL &&
-    newMessage.trim().length > 0 &&
-    newMessage.trim().length <= MAX_MESSAGE;
+    newMessage.trim().length > 0 && newMessage.trim().length <= MAX_MESSAGE;
 
   return (
     <>
@@ -143,12 +128,6 @@ export function MessageShortcutManagerDialog({
                   key={s.id}
                   className="border border-border rounded-md p-3 space-y-2"
                 >
-                  <Input
-                    value={d.label}
-                    maxLength={MAX_LABEL}
-                    onChange={e => setDraft(s.id, { label: e.target.value })}
-                    placeholder="ラベル（1〜60字）"
-                  />
                   <Textarea
                     value={d.message}
                     onChange={e => setDraft(s.id, { message: e.target.value })}
@@ -180,12 +159,6 @@ export function MessageShortcutManagerDialog({
 
             <div className="border-t border-border pt-4 mt-4 space-y-2">
               <h4 className="text-sm font-semibold">新規追加</h4>
-              <Input
-                value={newLabel}
-                maxLength={MAX_LABEL}
-                onChange={e => setNewLabel(e.target.value)}
-                placeholder="ラベル（例: 進捗確認）"
-              />
               <Textarea
                 value={newMessage}
                 onChange={e => setNewMessage(e.target.value)}
@@ -217,7 +190,9 @@ export function MessageShortcutManagerDialog({
           <AlertDialogHeader>
             <AlertDialogTitle>ショートカットを削除</AlertDialogTitle>
             <AlertDialogDescription>
-              「{pendingDelete?.label}」を削除します。よろしいですか？
+              {pendingDelete
+                ? `「${previewOf(pendingDelete.message)}」を削除します。よろしいですか？`
+                : "このショートカットを削除します。よろしいですか？"}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-col gap-2 sm:flex-row">

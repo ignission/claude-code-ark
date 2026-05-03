@@ -310,7 +310,6 @@ export class SessionDatabase {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS message_shortcuts (
         id TEXT PRIMARY KEY,
-        label TEXT NOT NULL,
         message TEXT NOT NULL,
         sort_order INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
@@ -319,6 +318,14 @@ export class SessionDatabase {
       CREATE INDEX IF NOT EXISTS idx_message_shortcuts_sort
         ON message_shortcuts (sort_order, created_at);
     `);
+
+    // マイグレーション: 旧スキーマで作られた label 列を削除する
+    // (label を廃止し、本文 message のみへ統一したため)
+    try {
+      this.db.exec("ALTER TABLE message_shortcuts DROP COLUMN label");
+    } catch {
+      // 既に削除済み or 新規DB
+    }
 
     // ============================================================
     // MCP server 管理 (Beacon が外部 OAuth MCP に接続するため)
@@ -1394,7 +1401,6 @@ export class SessionDatabase {
 
   private rowToMessageShortcut(row: {
     id: string;
-    label: string;
     message: string;
     sort_order: number;
     created_at: number;
@@ -1402,7 +1408,6 @@ export class SessionDatabase {
   }): MessageShortcut {
     return {
       id: row.id,
-      label: row.label,
       message: row.message,
       sortOrder: row.sort_order,
       createdAt: row.created_at,
@@ -1417,7 +1422,6 @@ export class SessionDatabase {
     );
     const rows = stmt.all() as Array<{
       id: string;
-      label: string;
       message: string;
       sort_order: number;
       created_at: number;
@@ -1433,7 +1437,6 @@ export class SessionDatabase {
     const row = stmt.get(id) as
       | {
           id: string;
-          label: string;
           message: string;
           sort_order: number;
           created_at: number;
@@ -1444,10 +1447,7 @@ export class SessionDatabase {
   }
 
   /** 新規作成（sortOrderは既存の最大+1で末尾追加） */
-  createMessageShortcut(input: {
-    label: string;
-    message: string;
-  }): MessageShortcut {
+  createMessageShortcut(input: { message: string }): MessageShortcut {
     const id = nanoid();
     const now = Date.now();
     const maxStmt = this.db.prepare(
@@ -1455,10 +1455,10 @@ export class SessionDatabase {
     );
     const { m } = maxStmt.get() as { m: number };
     const stmt = this.db.prepare(`
-      INSERT INTO message_shortcuts (id, label, message, sort_order, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO message_shortcuts (id, message, sort_order, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
     `);
-    stmt.run(id, input.label, input.message, m + 1, now, now);
+    stmt.run(id, input.message, m + 1, now, now);
     const created = this.getMessageShortcut(id);
     if (!created) {
       throw new Error(`Failed to create message shortcut: ${id}`);
@@ -1469,14 +1469,10 @@ export class SessionDatabase {
   /** 部分更新。undefined のフィールドはスキップ */
   updateMessageShortcut(
     id: string,
-    patch: { label?: string; message?: string; sortOrder?: number }
+    patch: { message?: string; sortOrder?: number }
   ): MessageShortcut {
     const setClauses: string[] = [];
     const params: Array<string | number> = [];
-    if (patch.label !== undefined) {
-      setClauses.push("label = ?");
-      params.push(patch.label);
-    }
     if (patch.message !== undefined) {
       setClauses.push("message = ?");
       params.push(patch.message);

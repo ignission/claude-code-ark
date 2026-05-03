@@ -181,10 +181,10 @@ interface UseSocketReturn {
 
   // メッセージショートカット
   messageShortcuts: MessageShortcut[];
-  createShortcut: (label: string, message: string) => void;
+  createShortcut: (message: string) => void;
   updateShortcut: (
     id: string,
-    patch: { label?: string; message?: string; sortOrder?: number }
+    patch: { message?: string; sortOrder?: number }
   ) => void;
   deleteShortcut: (id: string) => void;
 
@@ -1282,15 +1282,12 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   }, []);
 
   // メッセージショートカット actions
-  const createShortcut = useCallback((label: string, message: string) => {
-    socketRef.current?.emit("shortcut:create", { label, message });
+  const createShortcut = useCallback((message: string) => {
+    socketRef.current?.emit("shortcut:create", { message });
   }, []);
 
   const updateShortcut = useCallback(
-    (
-      id: string,
-      patch: { label?: string; message?: string; sortOrder?: number }
-    ) => {
+    (id: string, patch: { message?: string; sortOrder?: number }) => {
       socketRef.current?.emit("shortcut:update", { id, ...patch });
     },
     []

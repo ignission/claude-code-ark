@@ -86,11 +86,8 @@ interface MobileSessionViewProps {
   onTabSelect: (index: number) => void;
   onTabClose: (index: number) => void;
   messageShortcuts: MessageShortcut[];
-  onCreateShortcut: (label: string, message: string) => void;
-  onUpdateShortcut: (
-    id: string,
-    patch: { label?: string; message?: string }
-  ) => void;
+  onCreateShortcut: (message: string) => void;
+  onUpdateShortcut: (id: string, patch: { message?: string }) => void;
   onDeleteShortcut: (id: string) => void;
 }
 

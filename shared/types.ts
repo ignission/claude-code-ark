@@ -205,9 +205,7 @@ export interface Profile {
 /** UIから登録する定型メッセージのショートカット（全リポジトリ共通） */
 export interface MessageShortcut {
   id: string;
-  /** 表示用ラベル（1〜60字） */
-  label: string;
-  /** 送信本文（1〜4000字、複数行可） */
+  /** 送信本文（1〜4000字、複数行可）。ドロップダウン表示は先頭行を切り詰めて使う */
   message: string;
   /** 並び順（MVPはMAX+1で末尾追加） */
   sortOrder: number;
@@ -565,10 +563,9 @@ export interface ClientToServerEvents {
 
   // メッセージショートカット
   "shortcut:list": () => void;
-  "shortcut:create": (data: { label: string; message: string }) => void;
+  "shortcut:create": (data: { message: string }) => void;
   "shortcut:update": (data: {
     id: string;
-    label?: string;
     message?: string;
     sortOrder?: number;
   }) => void;
