@@ -450,14 +450,24 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
       });
       return true;
     } catch (err) {
-      // refresh の failure は transient (network / 5xx / レート制限等) の可能性が
-      // 高いので、token を即削除しない (次回 refreshIfNeeded で再試行)。
-      // ただし access token が実 expiry を過ぎている場合は確実に使えないため、
-      // この turn は skip する (false 返却 → buildAuthenticatedExternalMcps が
-      // entry を含めない)。token 自体は DB に残し、後続 turn で refresh を retry させる。
-      console.warn(
-        `[mcp-oauth] refresh failed for ${server.id}: ${getErrorMessage(err)}`
-      );
+      const msg = getErrorMessage(err);
+      console.warn(`[mcp-oauth] refresh failed for ${server.id}: ${msg}`);
+      // permanent な失敗 (revoked / invalid_grant / 400 や 401) は token を削除して
+      // UI で再認証を促す。これをやらないと毎 turn 同じ refresh を試みてレイテンシが
+      // 積み上がる。判定はエラー文言の heuristic で行う:
+      // - oauth-client が `token endpoint failed (400): {"error":"invalid_grant"...}` の
+      //   形式で throw する
+      // - 400 / 401 / `invalid_grant` / `invalid_request` を permanent と扱う
+      const isPermanent =
+        /invalid_grant|invalid_request|invalid_client/i.test(msg) ||
+        /\b40[01]\b/.test(msg);
+      if (isPermanent) {
+        db.deleteMcpToken(server.id);
+        this.emit("token-invalidated", { connectionId: server.id });
+        return false;
+      }
+      // transient (network / 5xx / レート制限等) は token 保持して次回 retry。
+      // ただし access token が実 expiry を過ぎていれば今 turn は skip。
       if (token.expiresAt !== null && token.expiresAt <= now) {
         return false;
       }
