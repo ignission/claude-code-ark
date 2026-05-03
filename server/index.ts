@@ -639,6 +639,15 @@ async function startServer() {
   }
 
   /**
+   * provider 別のラベル予約カウンタ。
+   * mcp:connect ハンドラ内で discovery / DCR の await 前に同期的にインクリメントし、
+   * 同 provider に並列で「アカウント追加」されても重複 #N にならないようにする
+   * (DB 件数 + orchestrator の pending flow 件数だけでは、await 開始前に複数の
+   *  ハンドラが同じ count を読んでしまう競合がある)。
+   */
+  const mcpLabelReservation = new Map<string, number>();
+
+  /**
    * Quick Tunnelを起動する共通関数
    * tunnel:startハンドラーとサーバー起動時の自動復旧から呼ばれる。
    * @param targetPort トンネル対象のポート番号
@@ -1833,15 +1842,20 @@ async function startServer() {
             connectionId = `${provider.id}-${nanoid(6)}`;
             const trimmed =
               typeof label === "string" && label.trim() ? label.trim() : null;
-            // 連番採番: DB の既存件数 + orchestrator の pending flow 数を合算する
-            // (同 provider に同時接続すると pending flow は DB に未書込みなので
-            //  両方が同じ番号 #1 になってしまう)
-            const dbCount = db.countMcpServersByProvider(provider.id);
-            const pendingCount = mcpOAuthOrchestrator
-              .listPendingFlows()
-              .filter(f => f.providerId === provider.id).length;
-            resolvedLabel =
-              trimmed ?? `${provider.name} #${dbCount + pendingCount + 1}`;
+            // 連番採番: 競合を避けるため synchronous な予約カウンタで採番する。
+            // 初回呼び出し時のみ DB count + pending flow count で初期化し、以降は
+            // インクリメントだけ。同 provider への並列 connect でも重複しない。
+            const counter = mcpLabelReservation;
+            if (!counter.has(provider.id)) {
+              const dbCount = db.countMcpServersByProvider(provider.id);
+              const pendingCount = mcpOAuthOrchestrator
+                .listPendingFlows()
+                .filter(f => f.providerId === provider.id).length;
+              counter.set(provider.id, dbCount + pendingCount);
+            }
+            const next = (counter.get(provider.id) ?? 0) + 1;
+            counter.set(provider.id, next);
+            resolvedLabel = trimmed ?? `${provider.name} #${next}`;
           }
 
           const result = await mcpOAuthOrchestrator.startFlowForConnection(
@@ -1856,13 +1870,20 @@ async function startServer() {
           });
           io.emit("mcp:state", buildMcpSnapshot());
         } catch (e) {
+          // providerId を含めることで client が該当 provider の popup queue を
+          // 該当 provider のみで drain できるようにする (他 provider の進行中フローへの
+          // 巻き添えを防ぐ)
           if (e instanceof DiscoveryError) {
             socket.emit("mcp:error", {
               message: `自動登録に失敗 (${e.stage}): ${e.message}`,
               code: e.stage,
+              providerId,
             });
           } else {
-            socket.emit("mcp:error", { message: getErrorMessage(e) });
+            socket.emit("mcp:error", {
+              message: getErrorMessage(e),
+              providerId,
+            });
           }
         }
       }

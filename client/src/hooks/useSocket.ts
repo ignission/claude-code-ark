@@ -903,11 +903,23 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         connectionId;
       toast.error(`${label} の認証に失敗`, { description: message });
     });
-    socket.on("mcp:error", ({ message }) => {
+    socket.on("mcp:error", ({ message, providerId }) => {
       toast.error(message);
-      // 接続失敗 (discovery / DCR エラー等) で popup がキューに残った場合、
-      // 同 provider の別フローの popup まで巻き添えで close するのを避けるため、
-      // global drain は行わない。残った空 popup はユーザが手動 close する想定。
+      // server が providerId を含めてくれた場合 (= mcp:connect 起因の失敗) は、
+      // その provider の popup queue から最古の 1 件だけ close する
+      // (FIFO 順なので失敗したフローに対応する popup が先頭にいる)。
+      // 並列の別フローの popup は残す。
+      if (providerId) {
+        const queue = mcpPendingPopupsRef.current[providerId];
+        if (queue && queue.length > 0) {
+          const popup = queue.shift();
+          try {
+            popup?.close();
+          } catch {
+            /* ignore */
+          }
+        }
+      }
     });
     // 接続時にカタログ + connection 一覧を取得
     socket.emit("mcp:state");

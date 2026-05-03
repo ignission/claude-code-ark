@@ -445,7 +445,12 @@ export interface ServerToClientEvents {
   "mcp:auth-started": (data: McpAuthFlow) => void;
   "mcp:auth-completed": (data: { connectionId: string }) => void;
   "mcp:auth-failed": (data: { connectionId: string; message: string }) => void;
-  "mcp:error": (data: { message: string; code?: string }) => void;
+  /** providerId: connect 失敗で開いた popup を該当 provider のみ drain するため */
+  "mcp:error": (data: {
+    message: string;
+    code?: string;
+    providerId?: string;
+  }) => void;
 }
 
 export interface ClientToServerEvents {
