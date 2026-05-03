@@ -283,10 +283,12 @@ export class McpOAuthFlowOrchestrator extends EventEmitter {
         }
       }
 
-      // McpServerConfig を upsert (再認証時は client_id 更新)
-      if (db.getMcpServer(connectionId)) {
+      // 再認証時はユーザがリネームした label を保持する (provider 解決値で上書きしない)。
+      // 新規作成時のみ resolvedLabel を初期 label として採用する。
+      const existingConfig = db.getMcpServer(connectionId);
+      if (existingConfig) {
         db.updateMcpServer(connectionId, {
-          label: resolvedLabel,
+          // label は既存値を維持 (rename UI で設定したラベルが消えないように)
           url: entry.provider.url,
           authorizationEndpoint: entry.endpoints.authorizationEndpoint,
           tokenEndpoint: entry.endpoints.tokenEndpoint,

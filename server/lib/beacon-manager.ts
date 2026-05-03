@@ -1231,18 +1231,14 @@ export class BeaconManager extends EventEmitter {
       }
     }
 
-    // (2) MCP 構成が変わっていてかつ idle (進行中ターンなし) の場合のみセッションを
-    // 作り直して system prompt と allowedTools を新 connection リストで再構築する。
-    // busy (multi-client で他タブが streaming 中) のときに close すると他クライアントの
-    // response を途中で abort するため、idle まで rebuild を defer する。
-    // 副作用: busy のまま新メッセージを送ると、その turn は古い system prompt で動く
-    // (setMcpServers で tool 一覧は最新に差し替わるが systemPrompt の文言は古い)。
-    // multi-client で頻繁に MCP を弄る運用は想定外なのでこのトレードオフを許容する。
-    if (
-      this.mcpConfigStale &&
-      this.session &&
-      this.session.activeTurnCount === 0
-    ) {
+    // (2) MCP 構成が変わっていればセッションを作り直して system prompt と
+    // allowedTools を新 connection リストで再構築する。busy (進行中ターンあり) でも
+    // close する: SDK の allowedTools は query() 起動時に freeze されるため、
+    // setMcpServers では新 connection の `mcp__<id>__*` パターンが追加されず、
+    // 新規 MCP のツールが拒否されてしまう。
+    // 副作用: 進行中ターン (multi-client で他タブの response stream 等) は abort される。
+    // ただし streaming 済みの内容は UI/DB に残るので致命的ではない。
+    if (this.mcpConfigStale && this.session) {
       this.closeSession();
       this.mcpConfigStale = false;
       preflightMcps = []; // 新セッション用に再フェッチさせる
