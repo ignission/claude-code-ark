@@ -1252,7 +1252,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       // window.open する必要がある。authorize URL は server から非同期で返ってくるので
       // 先に about:blank で空ウィンドウを開いておき、`mcp:auth-started` 受信時に
       // location を差し替える。同 provider に複数 connect が並走しうるため FIFO キューで保持。
-      const popup = window.open("about:blank", "_blank", "noopener");
+      // 注: `noopener` を付けると window 仕様で detached / null が返る browser がある
+      // (後で popup.location.href を設定できなくなる)。
+      // 開いたあと navigate するまでは opener が必要なので features 文字列は空にする。
+      const popup = window.open("about:blank", "_blank");
       if (popup) {
         const queue = (mcpPendingPopupsRef.current[providerId] ??= []);
         queue.push(popup);
