@@ -843,45 +843,44 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       // - cancel / disconnect 後は server 側で消えているのでクライアントも自動掃除
       setMcpPendingAuthUrls(snapshot.pendingAuthUrls);
     });
-    socket.on("mcp:auth-started", ({ connectionId, authorizationUrl }) => {
-      // ポップアップブロック等のフォールバック用にダイアログ内のリンクへ残す
-      setMcpPendingAuthUrls(prev => ({
-        ...prev,
-        [connectionId]: authorizationUrl,
-      }));
-      // mcpConnect で同期文脈で開いた空ポップアップ FIFO キューから最古エントリを取り出し、
-      // authorizationUrl へ navigate する (非同期 window.open はブロックされるため)。
-      // connectionId 形式: `<providerId>-<nanoid>`。再認証では既存 connectionId なので
-      // providerId 部分のみ取り出してキュー検索。
-      const providerId = connectionId.split("-")[0];
-      const queue =
-        providerId !== undefined
-          ? mcpPendingPopupsRef.current[providerId]
-          : undefined;
-      let navigated = false;
-      while (queue && queue.length > 0) {
-        const popup = queue.shift();
-        if (!popup || popup.closed) continue;
-        try {
-          popup.location.href = authorizationUrl;
-          navigated = true;
-          break;
-        } catch {
-          // クロスオリジンで弾かれた等 → 次の候補を試す
+    socket.on(
+      "mcp:auth-started",
+      ({ connectionId, providerId, authorizationUrl }) => {
+        // ポップアップブロック等のフォールバック用にダイアログ内のリンクへ残す
+        setMcpPendingAuthUrls(prev => ({
+          ...prev,
+          [connectionId]: authorizationUrl,
+        }));
+        // mcpConnect で同期文脈で開いた空ポップアップ FIFO キューから最古エントリを取り出し、
+        // authorizationUrl へ navigate する (非同期 window.open はブロックされるため)。
+        // providerId はサーバが提供する (connectionId からの derivation だと
+        // ハイフン含み providerId 例: "google-drive" が壊れる)。
+        const queue = mcpPendingPopupsRef.current[providerId];
+        let navigated = false;
+        while (queue && queue.length > 0) {
+          const popup = queue.shift();
+          if (!popup || popup.closed) continue;
+          try {
+            popup.location.href = authorizationUrl;
+            navigated = true;
+            break;
+          } catch {
+            // クロスオリジンで弾かれた等 → 次の候補を試す
+          }
         }
-      }
-      if (navigated) {
-        toast.success("認可ページを開きました", {
-          description: "ブラウザで認証を完了してください",
+        if (navigated) {
+          toast.success("認可ページを開きました", {
+            description: "ブラウザで認証を完了してください",
+          });
+          return;
+        }
+        // popup ref が無い (= ブロックされた) → ユーザに手動オープンを促す
+        toast.error("ポップアップがブロックされました", {
+          description:
+            "ダイアログ内の「認可ページを開く」リンクから手動で開いてください",
         });
-        return;
       }
-      // popup ref が無い (= ブロックされた) → ユーザに手動オープンを促す
-      toast.error("ポップアップがブロックされました", {
-        description:
-          "ダイアログ内の「認可ページを開く」リンクから手動で開いてください",
-      });
-    });
+    );
     socket.on("mcp:auth-completed", ({ connectionId }) => {
       setMcpPendingAuthUrls(prev => {
         const next = { ...prev };

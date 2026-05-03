@@ -1833,9 +1833,15 @@ async function startServer() {
             connectionId = `${provider.id}-${nanoid(6)}`;
             const trimmed =
               typeof label === "string" && label.trim() ? label.trim() : null;
+            // 連番採番: DB の既存件数 + orchestrator の pending flow 数を合算する
+            // (同 provider に同時接続すると pending flow は DB に未書込みなので
+            //  両方が同じ番号 #1 になってしまう)
+            const dbCount = db.countMcpServersByProvider(provider.id);
+            const pendingCount = mcpOAuthOrchestrator
+              .listPendingFlows()
+              .filter(f => f.providerId === provider.id).length;
             resolvedLabel =
-              trimmed ??
-              `${provider.name} #${db.countMcpServersByProvider(provider.id) + 1}`;
+              trimmed ?? `${provider.name} #${dbCount + pendingCount + 1}`;
           }
 
           const result = await mcpOAuthOrchestrator.startFlowForConnection(
@@ -1845,6 +1851,7 @@ async function startServer() {
           );
           socket.emit("mcp:auth-started", {
             connectionId,
+            providerId: provider.id,
             authorizationUrl: result.authorizationUrl,
           });
           io.emit("mcp:state", buildMcpSnapshot());

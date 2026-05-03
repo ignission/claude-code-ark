@@ -106,6 +106,8 @@ export interface McpProvidersSnapshot {
 export interface McpAuthFlow {
   /** 起動した connection の ID */
   connectionId: string;
+  /** どの provider のフローか (popup マッチング用) */
+  providerId: string;
   /** ブラウザで開く認可URL */
   authorizationUrl: string;
 }
