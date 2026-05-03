@@ -572,9 +572,11 @@ async function startServer() {
     });
     io.emit("mcp:state", buildMcpSnapshot());
   });
-  // refresh 失敗で token が無効化されたとき UI に再認証を促せるよう state を再送
+  // refresh 失敗で token が無効化されたとき UI に再認証を促せるよう state を再送 +
+  // Beacon にも stale マーク (systemPrompt / allowedTools 内の死んだ connection を消す)
   mcpOAuthOrchestrator.on("token-invalidated", () => {
     io.emit("mcp:state", buildMcpSnapshot());
+    beaconManager.markMcpConfigStale();
   });
 
   /**
