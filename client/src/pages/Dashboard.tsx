@@ -567,6 +567,7 @@ export default function Dashboard() {
           onSelectBrowser={handleSelectBrowser}
           navigateBrowser={navigateBrowser}
           isRemote={isRemote}
+          onOpenMcpManager={() => setShowMcpManager(true)}
         />
       ) : (
         <SidebarMainLayout

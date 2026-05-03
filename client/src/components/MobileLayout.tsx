@@ -72,6 +72,8 @@ interface MobileLayoutProps {
   usageRequesting?: boolean;
   usageProgress?: UsageProgress | null;
   multiProfileSupported?: boolean;
+  /** MCP server (Beacon の OAuth MCP) マネージャを開く */
+  onOpenMcpManager?: () => void;
   // ブラウザ（noVNC）
   activeBrowserSession: BrowserSession | null;
   onSelectBrowser: () => void;
@@ -105,6 +107,7 @@ export function MobileLayout({
   usageRequesting,
   usageProgress,
   multiProfileSupported,
+  onOpenMcpManager,
   activeBrowserSession,
   onSelectBrowser,
   navigateBrowser,
@@ -294,6 +297,7 @@ export function MobileLayout({
           usageRequesting={usageRequesting}
           usageProgress={usageProgress}
           multiProfileSupported={multiProfileSupported}
+          onOpenMcpManager={onOpenMcpManager}
         />
       </div>
 
