@@ -2261,7 +2261,19 @@ async function startServer() {
       }
     });
 
-    socket.on("shortcut:create", ({ message }) => {
+    // メッセージショートカットは設計上「全クライアント共通（グローバル）」
+    // (docs/superpowers/specs/2026-05-03-message-shortcuts-design.md 参照)。
+    // io.emit で全ソケットへ broadcast する。
+    // 複数アカウント対応が必要になった時点でスコープ追加を検討する。
+    socket.on("shortcut:create", payload => {
+      if (typeof payload !== "object" || payload === null) {
+        socket.emit("shortcut:error", {
+          message: "payload が不正です",
+          code: "invalid_payload",
+        });
+        return;
+      }
+      const { message } = payload as { message?: unknown };
       const trimmedMessage = typeof message === "string" ? message.trim() : "";
       if (trimmedMessage.length === 0 || trimmedMessage.length > 4000) {
         socket.emit("shortcut:error", {
@@ -2281,7 +2293,19 @@ async function startServer() {
       }
     });
 
-    socket.on("shortcut:update", ({ id, message, sortOrder }) => {
+    socket.on("shortcut:update", payload => {
+      if (typeof payload !== "object" || payload === null) {
+        socket.emit("shortcut:error", {
+          message: "payload が不正です",
+          code: "invalid_payload",
+        });
+        return;
+      }
+      const { id, message, sortOrder } = payload as {
+        id?: unknown;
+        message?: unknown;
+        sortOrder?: unknown;
+      };
       if (typeof id !== "string" || id.length === 0) {
         socket.emit("shortcut:error", {
           message: "id は必須です",
@@ -2309,7 +2333,14 @@ async function startServer() {
           });
           return;
         }
-        patch.sortOrder = sortOrder;
+        patch.sortOrder = sortOrder as number;
+      }
+      if (Object.keys(patch).length === 0) {
+        socket.emit("shortcut:error", {
+          message: "更新する項目を指定してください",
+          code: "empty_patch",
+        });
+        return;
       }
       try {
         const shortcut = db.updateMessageShortcut(id, patch);
@@ -2320,7 +2351,15 @@ async function startServer() {
       }
     });
 
-    socket.on("shortcut:delete", ({ id }) => {
+    socket.on("shortcut:delete", payload => {
+      if (typeof payload !== "object" || payload === null) {
+        socket.emit("shortcut:error", {
+          message: "payload が不正です",
+          code: "invalid_payload",
+        });
+        return;
+      }
+      const { id } = payload as { id?: unknown };
       if (typeof id !== "string" || id.length === 0) {
         socket.emit("shortcut:error", {
           message: "id は必須です",

@@ -323,8 +323,16 @@ export class SessionDatabase {
     // (label を廃止し、本文 message のみへ統一したため)
     try {
       this.db.exec("ALTER TABLE message_shortcuts DROP COLUMN label");
-    } catch {
-      // 既に削除済み or 新規DB
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // 想定: 列が既に削除済み or テーブルが新規作成 (= no such column)
+      if (
+        !msg.includes("no such column") &&
+        !msg.includes("duplicate column name") &&
+        !msg.includes("no such table")
+      ) {
+        throw e;
+      }
     }
 
     // ============================================================
