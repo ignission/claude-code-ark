@@ -231,14 +231,32 @@ flow_state_is_stale() {
 
 flow_state_cleanup_stale() {
   local key="$1"
-  local lock
+  local lock progress_file
   lock=$(_flow_lock_file "$key")
+  progress_file=$(_flow_state_file progress "$key")
   : > "$lock"
   (
     flock -x 9
-    if flow_state_is_stale "$key"; then
+    # 排他ロック保持中に flow_state_is_stale を呼ぶと、process substitution 内の
+    # `flock -s "$lock"` が同じパスを別 fd で再ロックしようとしてデッドロックする
+    # (codex review [P2] 指摘)。ロック取得済みなので、ファイルを直接読んで判定する。
+    [ -f "$progress_file" ] || exit 0
+    local updated_at owner_pid now
+    if ! { read -r updated_at; read -r owner_pid; } < <(
+      jq -r '.updated_at, .owner_pid' "$progress_file" 2>/dev/null
+    ); then
+      # 読めない state は破壊済みとみなして削除
       rm -f \
-        "$(_flow_state_file progress "$key")" \
+        "$progress_file" \
+        "$(_flow_state_file kpi "$key")" \
+        "$(_flow_state_file context "$key")"
+      echo "corrupt state removed: $key" >&2
+      exit 0
+    fi
+    now=$(date +%s)
+    if [ $((now - updated_at)) -ge 3600 ] && ! kill -0 "$owner_pid" 2>/dev/null; then
+      rm -f \
+        "$progress_file" \
         "$(_flow_state_file kpi "$key")" \
         "$(_flow_state_file context "$key")"
       echo "stale state removed: $key" >&2

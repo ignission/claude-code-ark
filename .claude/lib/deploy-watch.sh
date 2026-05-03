@@ -59,6 +59,13 @@ DEPLOY_WATCH_TICK_INTERVAL=${DEPLOY_WATCH_TICK_INTERVAL:-30}         # 30 秒間
 DEPLOY_WATCH_MAX_POLL_FAILURES=${DEPLOY_WATCH_MAX_POLL_FAILURES:-5}
 DEPLOY_WATCH_MAX_WALL_SECONDS=${DEPLOY_WATCH_MAX_WALL_SECONDS:-180}  # 3 分
 
+# pnpm build / pm2 restart の個別タイムアウト (秒)。
+# これを超えるとコマンドが kill され failure として扱われる。
+# 設定しないと build/restart のハングで P12 が wall-clock cap に到達できず無限待機になる
+# (codex review [P1] 指摘)。
+DEPLOY_WATCH_BUILD_TIMEOUT=${DEPLOY_WATCH_BUILD_TIMEOUT:-120}
+DEPLOY_WATCH_RESTART_TIMEOUT=${DEPLOY_WATCH_RESTART_TIMEOUT:-30}
+
 # === 内部ヘルパー ===
 
 _deploy_watch_load_state_io() {
@@ -202,15 +209,18 @@ deploy_watch_run_pm2_deploy() {
   echo "[deploy-watch] pkill -f ttyd"
   pkill -f ttyd || true  # ttyd プロセス無しは正常
 
-  echo "[deploy-watch] cd $main_root && pnpm build"
-  if ! (cd "$main_root" && pnpm build 2>&1); then
-    echo "ERROR: pnpm build に失敗しました" >&2
+  # pnpm build / pm2 restart はハング可能性があるため timeout で囲む。
+  # cap 内に終わらないと kill され、tick は terminal=failure を返す
+  # (codex review [P1] 指摘への対応)。
+  echo "[deploy-watch] cd $main_root && timeout ${DEPLOY_WATCH_BUILD_TIMEOUT}s pnpm build"
+  if ! (cd "$main_root" && timeout "${DEPLOY_WATCH_BUILD_TIMEOUT}s" pnpm build 2>&1); then
+    echo "ERROR: pnpm build に失敗または ${DEPLOY_WATCH_BUILD_TIMEOUT}s でタイムアウト" >&2
     return 1
   fi
 
-  echo "[deploy-watch] pm2 restart $DEPLOY_WATCH_PM2_APP"
-  if ! pm2 restart "$DEPLOY_WATCH_PM2_APP" 2>&1; then
-    echo "ERROR: pm2 restart に失敗しました" >&2
+  echo "[deploy-watch] timeout ${DEPLOY_WATCH_RESTART_TIMEOUT}s pm2 restart $DEPLOY_WATCH_PM2_APP"
+  if ! timeout "${DEPLOY_WATCH_RESTART_TIMEOUT}s" pm2 restart "$DEPLOY_WATCH_PM2_APP" 2>&1; then
+    echo "ERROR: pm2 restart に失敗または ${DEPLOY_WATCH_RESTART_TIMEOUT}s でタイムアウト" >&2
     return 1
   fi
 
@@ -230,27 +240,43 @@ deploy_watch_run_pm2_deploy() {
 # stdout には人間可読のサマリと最終行 `RESULT=<value> CRON_ID=<id> FIRES=<n>` を出す。
 deploy_watch_tick() {
   local scope_key="$1"
+  # 引数欠落は cron 設定ミスで「自分で復帰しようがない」ので poll-error として
+  # terminal を即座に出す (codex review [P2] 指摘: 早期エラーは RESULT 行を必ず出す)。
   if [ -z "$scope_key" ]; then
-    echo "ERROR: scope_key が必要です" >&2
-    return 1
+    echo "ERROR: scope_key が必要です (deploy_watch_tick)" >&2
+    DEPLOY_WATCH_RESULT="poll-error"
+    DEPLOY_WATCH_DETAIL='{"reason":"scope_key が deploy_watch_tick に渡されていない"}'
+    DEPLOY_WATCH_CRON_ID="null"
+    printf 'RESULT=poll-error CRON_ID=null FIRES=0\n'
+    return 0
   fi
   _deploy_watch_load_state_io
 
   local merge_sha has_target pm2_online health_url fires max_fires cron_id
-  merge_sha=$(flow_state_read context '.deploy_watch.merge_sha' "$scope_key")
-  has_target=$(flow_state_read context '.deploy_watch.has_target' "$scope_key")
-  pm2_online=$(flow_state_read context '.deploy_watch.pm2_online' "$scope_key")
-  health_url=$(flow_state_read context '.deploy_watch.health_url' "$scope_key")
-  fires=$(flow_state_read context '.deploy_watch.fires' "$scope_key")
-  max_fires=$(flow_state_read context '.deploy_watch.max_fires' "$scope_key")
-  cron_id=$(flow_state_read context '.deploy_watch.cron_id' "$scope_key")
-
-  if [ -z "$merge_sha" ] || [ "$merge_sha" = "null" ]; then
-    echo "ERROR: deploy_watch が未初期化です: $scope_key" >&2
-    return 1
-  fi
+  # state read は pipefail で失敗するとサイレントに function 全体を落とす。
+  # 失敗時は poll-error を terminal で出して cron を止めるため `|| true` で耐える
+  # (codex review [P2] 指摘への対応)。
+  merge_sha=$(flow_state_read context '.deploy_watch.merge_sha' "$scope_key" 2>/dev/null) || merge_sha=""
+  has_target=$(flow_state_read context '.deploy_watch.has_target' "$scope_key" 2>/dev/null) || has_target=""
+  pm2_online=$(flow_state_read context '.deploy_watch.pm2_online' "$scope_key" 2>/dev/null) || pm2_online=""
+  health_url=$(flow_state_read context '.deploy_watch.health_url' "$scope_key" 2>/dev/null) || health_url=""
+  fires=$(flow_state_read context '.deploy_watch.fires' "$scope_key" 2>/dev/null) || fires=0
+  max_fires=$(flow_state_read context '.deploy_watch.max_fires' "$scope_key" 2>/dev/null) || max_fires=0
+  cron_id=$(flow_state_read context '.deploy_watch.cron_id' "$scope_key" 2>/dev/null) || cron_id="null"
 
   DEPLOY_WATCH_CRON_ID="$cron_id"
+
+  # state ファイル不在 / 破損 / 未初期化 → poll-error で terminal 化。
+  # ここで return 1 すると cron が永遠に再試行する (codex review [P2] 指摘)。
+  if [ -z "$merge_sha" ] || [ "$merge_sha" = "null" ]; then
+    echo "ERROR: deploy_watch が未初期化または state 読み取り失敗: $scope_key" >&2
+    DEPLOY_WATCH_RESULT="poll-error"
+    DEPLOY_WATCH_DETAIL='{"reason":"deploy_watch state が読み取れない (未初期化 / 破損 / 削除)"}'
+    # state が無い可能性があるので update は best-effort
+    flow_state_update context '.deploy_watch.result = "poll-error"' "$scope_key" 2>/dev/null || true
+    printf 'RESULT=poll-error CRON_ID=%s FIRES=%s\n' "${cron_id:-null}" "${fires:-0}"
+    return 0
+  fi
 
   # has_target=false → no-target finalize
   if [ "$has_target" != "true" ]; then
