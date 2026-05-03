@@ -32,8 +32,8 @@ if [[ "$COMMAND" =~ claude-pre-push-review-done ]]; then
     exit 0
   fi
   echo "BLOCKED: pre-push-reviewフラグファイルの手動作成は禁止されています" >&2
-  echo "  WHY: /pre-push-review スキルを実行せずにPR作成ガードをバイパスするのを防止" >&2
-  echo "  FIX: /pre-push-review を実行してください。スキルが完了時にフラグを自動作成します" >&2
+  echo "  WHY: /flow の P5 (push 前 codex ゲート) を経ずに PR 作成ガードをバイパスするのを防止" >&2
+  echo "  FIX: /flow を実行してください。P5 PASS 時にフラグを自動作成します" >&2
   exit 2
 fi
 
@@ -100,12 +100,12 @@ if [[ "$COMMAND" =~ git[[:space:]]+(.+[[:space:]]+)?push[[:space:]]+.*--force ]]
   fi
 fi
 
-# --no-verify: git hooksのバイパスを禁止（エージェントがLefthookをスキップするのを防ぐ）
+# --no-verify: git hooksのバイパスを禁止（エージェントが品質チェックをスキップするのを防ぐ）
 # git push --no-verify もpre-pushフックをバイパスするためブロック対象
 if [[ "$COMMAND" =~ git[[:space:]]+.+--no-verify ]]; then
   echo "BLOCKED: --no-verify によるgit hookのバイパスは禁止されています" >&2
-  echo "  WHY: Lefthookによる品質チェック（fmt/lint/test）がスキップされ、CIで失敗するコードがpushされる" >&2
-  echo "  FIX: Lefthookの問題はlefthook.ymlの設定を確認" >&2
+  echo "  WHY: pre-bash-guard の biome check / tsc --noEmit ゲート、または flow P4/P5 のローカル検証がスキップされ、CI で失敗するコードが push される" >&2
+  echo "  FIX: 失敗の根本原因 (型エラー / lint 違反 / テスト失敗) を修正してから push" >&2
   exit 2
 fi
 
@@ -116,8 +116,8 @@ if [[ "$COMMAND" =~ git[[:space:]]+.+-n([[:space:]]|$) ]]; then
     : # git push -n はdry-run、許可
   else
     echo "BLOCKED: -n（--no-verify短縮形）によるgit hookのバイパスは禁止されています" >&2
-    echo "  WHY: Lefthookによる品質チェック（fmt/lint/test）がスキップされ、CIで失敗するコードがpushされる" >&2
-    echo "  FIX: Lefthookの問題はlefthook.ymlの設定を確認" >&2
+    echo "  WHY: pre-bash-guard の biome check / tsc --noEmit ゲート、または flow P4/P5 のローカル検証がスキップされ、CI で失敗するコードが push される" >&2
+    echo "  FIX: 失敗の根本原因 (型エラー / lint 違反 / テスト失敗) を修正してからコミット" >&2
     exit 2
   fi
 fi
@@ -191,7 +191,9 @@ if [[ "$COMMAND" =~ ^[[:space:]]*gh[[:space:]]+pr[[:space:]]+create([[:space:]]|
     fi
   fi
 
-  echo "BLOCKED: PR作成前に /pre-push-review を実行してください（CLAUDE.mdルール）" >&2
+  echo "BLOCKED: PR作成前に /flow (P5 push 前 codex ゲート) を実行してください" >&2
+  echo "  WHY: codex review でのセキュリティ・品質チェックを通さずに PR を作成するのを防止" >&2
+  echo "  FIX: /flow を実行 → P5 PASS でフラグ自動作成、または既存 flow なら /flow <#issue|slug> --resume --from P5" >&2
   exit 2
 fi
 

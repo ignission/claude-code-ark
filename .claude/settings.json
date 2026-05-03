@@ -1,4 +1,13 @@
 {
+  "permissions": {
+    "deny": [
+      "Read(./pnpm-lock.yaml)",
+      "Read(./data/sessions.db)",
+      "Read(./dist/**)",
+      "Read(./logs/**)",
+      "Read(./tsconfig.tsbuildinfo)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {
