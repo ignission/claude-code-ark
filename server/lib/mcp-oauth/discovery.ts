@@ -143,19 +143,19 @@ export async function discoverEndpoints(
 async function fetchProtectedResourceMetadata(
   mcpUrl: URL
 ): Promise<ProtectedResourceMetadata | null> {
-  // RFC 9728 §3 / RFC 8414 §3 準拠の URL 組み立て:
-  // - resource origin の場合 (mcpUrl が "/" or 空 path): `<origin>/.well-known/oauth-protected-resource`
-  // - path 付き resource の場合: `<origin>/.well-known/oauth-protected-resource<path>`
-  //   (path は suffix として well-known の後に置く。`<path>/.well-known/...` ではない)
+  // RFC 9728 §3 準拠の URL 組み立て (path-scoped を優先):
+  // - path 付き resource (例: /v1/sse): `<origin>/.well-known/oauth-protected-resource<path>`
+  //   が path-scoped でより具体的な audience / scopes を返すので最初に試す。
+  // - 取れなければ `<origin>/.well-known/oauth-protected-resource` を origin-wide
+  //   fallback として試す。
   const trimmedPath = mcpUrl.pathname.replace(/\/$/, "");
-  const candidates: string[] = [
-    `${mcpUrl.origin}/.well-known/oauth-protected-resource`,
-  ];
+  const candidates: string[] = [];
   if (trimmedPath && trimmedPath !== "") {
     candidates.push(
       `${mcpUrl.origin}/.well-known/oauth-protected-resource${trimmedPath}`
     );
   }
+  candidates.push(`${mcpUrl.origin}/.well-known/oauth-protected-resource`);
   for (const url of candidates) {
     try {
       const res = await fetch(url, {

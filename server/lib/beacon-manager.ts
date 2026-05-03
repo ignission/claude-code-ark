@@ -1204,22 +1204,9 @@ export class BeaconManager extends EventEmitter {
    * 3. 出力イテレータからSDKMessageを読み取り、ストリーミングで通知
    */
   async sendMessage(message: string): Promise<void> {
-    // 外部 MCP の Bearer token は startSession 時に headers に焼き込まれるため、
-    // session が長期生存して token TTL を超えると MCP 呼び出しが 401 で失敗する。
-    // 各 token の expiry を 60秒マージンでチェックし、期限近のものがあれば stale を
-    // マーク → 下の rebuild ブロックで idle なら作り直す (rebuild 内の
-    // refreshIfNeeded が新 token を DB に書き、新 headers が反映される)。
-    if (this.session) {
-      const now = Date.now();
-      const margin = 60 * 1000;
-      const hasExpiringToken = db.listMcpServers().some(s => {
-        const t = db.getMcpToken(s.id);
-        return t && t.expiresAt !== null && t.expiresAt - margin <= now;
-      });
-      if (hasExpiringToken) this.mcpConfigStale = true;
-    }
     // MCP 構成が変わっていて、かつ idle (queue 中の turn が無い) ならセッションを
-    // 作り直して新 mcpServers を反映する。
+    // 作り直して system prompt も新 connection リストで再構築する。
+    // (connection 追加 / 削除 / rename / label 解決時)
     // 注: session.processing は session 生存期間中ずっと true (前述コメント参照)
     // なので idle 判定には使えない。activeTurnCount === 0 が正しいシグナル
     // (multi-client で複数 turn が queue されていても安全)。
@@ -1237,6 +1224,27 @@ export class BeaconManager extends EventEmitter {
     }
 
     const session = this.session!;
+
+    // 既存セッションでも turn 開始前に外部 MCP の token を refresh して
+    // setMcpServers で fresh headers を push する。
+    // - startSession 時に headers が焼き込まれるため、長いターン中に token TTL を跨ぐと 401
+    // - 各 turn 開始時に header 差し替え (system prompt は変えない) することで、
+    //   1 turn 内の expiry はカバーできない (turn 中に expire するケースは稀)
+    //   が、turn 単位での token rotation は安定する
+    try {
+      const externalMcps = await buildAuthenticatedExternalMcps();
+      const refreshedMap: Record<string, SdkMcpServerConfig> = {};
+      if (this.deps) refreshedMap["ark-beacon"] = this.createMcpServer();
+      for (const entry of externalMcps) {
+        refreshedMap[entry.connectionId] = entry.config;
+      }
+      // SDK は変更があった server のみ reconnect する想定。同一 config なら no-op
+      await session.queryInstance.setMcpServers(refreshedMap);
+    } catch (err) {
+      console.warn(
+        `[BeaconManager] setMcpServers failed: ${getErrorMessage(err)}`
+      );
+    }
 
     // アクティビティ時刻を更新
     session.lastActivity = new Date();
