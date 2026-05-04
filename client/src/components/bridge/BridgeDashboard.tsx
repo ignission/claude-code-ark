@@ -5,7 +5,7 @@
  * すべてのセクションで `bridge-` prefix の CSS を使う。
  */
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   BridgeSession,
   BridgeSessionStatus,
@@ -187,10 +187,23 @@ function StorageSection({ metrics }: { metrics: HostMetrics | null }) {
 }
 
 function CpuSection({ metrics }: { metrics: HostMetrics | null }) {
-  const percent = metrics?.cpuPercent ?? 0;
+  // 異常値 (NaN / Infinity / 範囲外 / undefined) を 1 箇所で 0..100 に正規化し、
+  // 針 (補間値) と数値表示 (実測値) の両方で共有する。針の hook 内でも同じ
+  // 防御を入れているが、call site でも揃えることで `NaN %` / `140 %` といった
+  // 表示が出ない契約を局所で読める形にする。
+  const rawTargetPercent = metrics?.cpuPercent;
+  const targetPercent =
+    typeof rawTargetPercent === "number" && Number.isFinite(rawTargetPercent)
+      ? clamp(rawTargetPercent, 0, 100)
+      : 0;
   const loadAvg = metrics?.loadAvg ?? [0, 0, 0];
+  // 針位置はサーバー値の 1s 離散→滑らかに補間する。上昇はタコメーター風
+  // (軽オーバーシュート)、下降はゆっくり吸い付くように降りる非対称挙動。
+  // 数値表示は実測値をそのまま出すため targetPercent をそのまま使う
+  // (補間値を表示すると上昇オーバーシュート時に実測より大きい % が見えてしまう)。
+  const needlePercent = useGaugeNeedleValue(targetPercent);
   // 0%→-90deg、100%→+90deg
-  const angle = -90 + (clamp(percent, 0, 100) / 100) * 180;
+  const angle = -90 + (clamp(needlePercent, 0, 100) / 100) * 180;
   return (
     <div className="bridge-mon-section">
       <div className="bridge-mon-title">
@@ -265,7 +278,7 @@ function CpuSection({ metrics }: { metrics: HostMetrics | null }) {
           <circle cx="100" cy="100" r="1.5" fill="#000" />
         </svg>
       </div>
-      <div className="bridge-gauge-readout">{Math.round(percent)} %</div>
+      <div className="bridge-gauge-readout">{Math.round(targetPercent)} %</div>
       <div className="bridge-gauge-label">
         load avg {loadAvg[0].toFixed(2)} · {loadAvg[1].toFixed(2)} ·{" "}
         {loadAvg[2].toFixed(2)}
@@ -502,4 +515,83 @@ function formatElapsed(ms: number): string {
 
 function pad(n: number): string {
   return String(n).padStart(2, "0");
+}
+
+/**
+ * ゲージ針が target に追従するときの値を返す。上昇 / 下降で減衰特性を変えた
+ * バネ - ダンパー挙動。
+ *
+ * - 上昇時: 弱めの減衰 (比 0.61) で軽くオーバーシュートしてすぐ落ち着くタコ
+ *   メーター風
+ * - 下降時: 強めの減衰 + 弱いバネ (比 0.82) で overshoot をほぼ消し、ゆっくり
+ *   target に吸い付くように降りる
+ *
+ * 入力はサーバー由来の数値なので NaN / Infinity / 範囲外値が来ても内部状態
+ * と表示が壊れないよう入口で有限数 + 0..100 に正規化し、収束後は rAF を停止
+ * して常時実行コストを抱え込まない。
+ */
+function useGaugeNeedleValue(rawTarget: number): number {
+  // ゲージのドメインは 0..100。NaN / Infinity / 範囲外値が来ても
+  // 内部状態と表示が壊れないよう入口で正規化する。
+  const target = Number.isFinite(rawTarget) ? clamp(rawTarget, 0, 100) : 0;
+  const [displayed, setDisplayed] = useState(target);
+  const positionRef = useRef(target);
+  const velocityRef = useRef(0);
+  // 直近の target 変化方向。次の変化が来るまでこのモードで物理を回す。
+  const modeRef = useRef<"up" | "down">("up");
+  const lastTargetRef = useRef(target);
+
+  useEffect(() => {
+    const prev = lastTargetRef.current;
+    if (target < prev) modeRef.current = "down";
+    else if (target > prev) modeRef.current = "up";
+    lastTargetRef.current = target;
+
+    if (
+      Math.abs(positionRef.current - target) < 0.02 &&
+      Math.abs(velocityRef.current) < 0.02
+    ) {
+      return;
+    }
+
+    let raf = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      // タブ復帰時の巨大 dt で暴れないようクランプ (~50ms)
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+
+      const x = positionRef.current;
+
+      // どちらのモードでもバネ - ダンパー。減衰比でキャラクターを変える:
+      //   上昇: 比 0.61 で軽くオーバーシュートするタコメーター挙動
+      //   下降: 比 0.82 でほぼ overshoot 無し、ゆっくり target に吸い付く
+      //         (一定速度の線形だと小さな drop が「ピタッ」と一瞬で動いて
+      //          デジタル感が出るため、バネで微かな間を入れる)
+      const isDown = modeRef.current === "down";
+      const stiffness = isDown ? 30 : 80;
+      const damping = isDown ? 9 : 11;
+      const v = velocityRef.current;
+      const a = stiffness * (target - x) - damping * v;
+      velocityRef.current = v + a * dt;
+      positionRef.current = x + velocityRef.current * dt;
+
+      // 収束したらスナップして rAF を停止 (次の target 変化で再開)
+      if (
+        Math.abs(target - positionRef.current) < 0.02 &&
+        Math.abs(velocityRef.current) < 0.02
+      ) {
+        positionRef.current = target;
+        velocityRef.current = 0;
+        setDisplayed(target);
+        return;
+      }
+      setDisplayed(positionRef.current);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target]);
+
+  return displayed;
 }
