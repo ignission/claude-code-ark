@@ -1,6 +1,23 @@
 import { type RefObject, useEffect } from "react";
 
 /**
+ * 端末出力由来のファイルパスを `ark:open-file` で送信して良いかを判定する。
+ * サーバ側 `resolveSafePath` (server/lib/file-manager.ts) のポリシーに合わせ、
+ * クライアント側でも defense in depth として弾く。
+ *
+ * - `..` を含むパス (パストラバーサル) は拒否
+ * - 絶対パスは `/tmp/` 配下のみ許可 (任意ファイル open を防ぐ)
+ * - 相対パスは許可 (サーバ側で worktree 配下に解決される)
+ */
+function isAllowedFilePath(filePath: string): boolean {
+  if (filePath.includes("..")) return false;
+  if (filePath.startsWith("/")) {
+    return filePath.startsWith("/tmp/");
+  }
+  return true;
+}
+
+/**
  * ttyd iframe内のxterm.jsにリンク検出プロバイダーをインジェクトするカスタムフック。
  * TerminalPane.tsx と MobileSessionView.tsx で共通利用する。
  *
@@ -27,6 +44,10 @@ export function useTerminalLinkInjection(
 
     let checkTermInterval: ReturnType<typeof setInterval> | null = null;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    // injectLinkProvider 内で動的に追加した listener / observer の解除を集約。
+    // effect 再実行や iframe リロード時に確実に teardown し、二重登録による
+    // 入力抑止やタップ二重起動を防ぐ。
+    const innerCleanups: Array<() => void> = [];
 
     const injectLinkProvider = () => {
       try {
@@ -204,6 +225,14 @@ export function useTerminalLinkInjection(
           });
           iframeDoc.addEventListener("click", handleMouseUpIntercept, {
             capture: true,
+          });
+          innerCleanups.push(() => {
+            iframeDoc.removeEventListener("mouseup", handleMouseUpIntercept, {
+              capture: true,
+            } as EventListenerOptions);
+            iframeDoc.removeEventListener("click", handleMouseUpIntercept, {
+              capture: true,
+            } as EventListenerOptions);
           });
 
           // ── ファイルパス・URL リンク検出ヘルパー ──
@@ -439,6 +468,12 @@ export function useTerminalLinkInjection(
               const filePath = rawPath?.replace(/^\/{2,}/, "/");
               const lineNum = mFile[3] ? Number.parseInt(mFile[3], 10) : null;
               if (!filePath) continue;
+              // クライアント側パスバリデーション (defense in depth)。
+              // サーバ側 resolveSafePath のポリシーに合わせる:
+              //   - パストラバーサル `..` を含むパスは拒否
+              //   - 絶対パスは /tmp/ 配下のみ許可 (任意ファイル open を防ぐ)
+              //   - 相対パスはサーバ側で worktree 配下に解決される
+              if (!isAllowedFilePath(filePath)) continue;
               pushVisibleLink(
                 mFile.index,
                 mFile.index + fullMatch.length,
@@ -513,89 +548,90 @@ export function useTerminalLinkInjection(
             const SWIPE_LINE_HEIGHT = 8;
             const SWIPE_THRESHOLD = 3;
 
-            iframeDoc.addEventListener(
-              "touchstart",
-              (e: Event) => {
-                const te = e as TouchEvent;
-                touchStartY = te.touches[0].clientY;
-                touchStartX = te.touches[0].clientX;
-                touchSentLines = 0;
-                isSwiping = false;
-              },
-              { capture: true, passive: true }
-            );
-
-            iframeDoc.addEventListener(
-              "touchmove",
-              (e: Event) => {
-                const te = e as TouchEvent;
-                const deltaY = touchStartY - te.touches[0].clientY;
-
-                if (!isSwiping && Math.abs(deltaY) > SWIPE_THRESHOLD) {
-                  isSwiping = true;
-                }
-                if (!isSwiping) return;
-
-                e.preventDefault();
-
-                const totalLines = Math.floor(
-                  Math.abs(deltaY) / SWIPE_LINE_HEIGHT
+            // モバイル分岐で追加した listener を innerCleanups に集約。
+            // effect 再実行や iframe リロード時に確実に対で外す。
+            const addMobileListener = (
+              evt: string,
+              handler: EventListener,
+              opts: AddEventListenerOptions
+            ) => {
+              iframeDoc.addEventListener(evt, handler, opts);
+              innerCleanups.push(() => {
+                iframeDoc.removeEventListener(
+                  evt,
+                  handler,
+                  opts as EventListenerOptions
                 );
-                const newLines = totalLines - touchSentLines;
-                if (newLines > 0) {
-                  const wheelDeltaY =
-                    deltaY > 0 ? -newLines * 16 : newLines * 16;
-                  const xtermEl =
-                    iframeDoc.querySelector(".xterm-viewport") ||
-                    iframeDoc.querySelector(".xterm-screen") ||
-                    iframeDoc.querySelector(".xterm");
-                  if (xtermEl) {
-                    const IframeWheelEvent = (
-                      iframeWindow as unknown as typeof globalThis
-                    ).WheelEvent;
-                    xtermEl.dispatchEvent(
-                      new IframeWheelEvent("wheel", {
-                        deltaY: wheelDeltaY,
-                        deltaMode: 0,
-                        bubbles: true,
-                        cancelable: true,
-                      })
-                    );
-                  }
-                  touchSentLines = totalLines;
+              });
+            };
+
+            const onTouchStart = (e: Event) => {
+              const te = e as TouchEvent;
+              touchStartY = te.touches[0].clientY;
+              touchStartX = te.touches[0].clientX;
+              touchSentLines = 0;
+              isSwiping = false;
+            };
+            const onTouchMove = (e: Event) => {
+              const te = e as TouchEvent;
+              const deltaY = touchStartY - te.touches[0].clientY;
+
+              if (!isSwiping && Math.abs(deltaY) > SWIPE_THRESHOLD) {
+                isSwiping = true;
+              }
+              if (!isSwiping) return;
+
+              e.preventDefault();
+
+              const totalLines = Math.floor(
+                Math.abs(deltaY) / SWIPE_LINE_HEIGHT
+              );
+              const newLines = totalLines - touchSentLines;
+              if (newLines > 0) {
+                const wheelDeltaY = deltaY > 0 ? -newLines * 16 : newLines * 16;
+                const xtermEl =
+                  iframeDoc.querySelector(".xterm-viewport") ||
+                  iframeDoc.querySelector(".xterm-screen") ||
+                  iframeDoc.querySelector(".xterm");
+                if (xtermEl) {
+                  const IframeWheelEvent = (
+                    iframeWindow as unknown as typeof globalThis
+                  ).WheelEvent;
+                  xtermEl.dispatchEvent(
+                    new IframeWheelEvent("wheel", {
+                      deltaY: wheelDeltaY,
+                      deltaMode: 0,
+                      bubbles: true,
+                      cancelable: true,
+                    })
+                  );
                 }
-              },
-              { capture: true, passive: false }
-            );
+                touchSentLines = totalLines;
+              }
+            };
+            const onTouchEnd = (e: Event) => {
+              const wasSwiping = isSwiping;
+              touchSentLines = 0;
+              isSwiping = false;
+              if (wasSwiping) return;
 
-            iframeDoc.addEventListener(
-              "touchend",
-              (e: Event) => {
-                const wasSwiping = isSwiping;
-                touchSentLines = 0;
-                isSwiping = false;
-                if (wasSwiping) return;
+              const te = e as TouchEvent;
+              const touch = te.changedTouches[0];
+              if (!touch) return;
 
-                const te = e as TouchEvent;
-                const touch = te.changedTouches[0];
-                if (!touch) return;
+              // タップ位置と開始位置の距離が閾値内のときのみリンク判定
+              const dx = touch.clientX - touchStartX;
+              const dy = touch.clientY - touchStartY;
+              if (Math.hypot(dx, dy) > 12) return;
 
-                // タップ位置と開始位置の距離が閾値内のときのみリンク判定
-                const dx = touch.clientX - touchStartX;
-                const dy = touch.clientY - touchStartY;
-                if (Math.hypot(dx, dy) > 12) return;
+              const link = findLinkAtTouchPoint(touch.clientX, touch.clientY);
+              if (!link) return;
 
-                const link = findLinkAtTouchPoint(touch.clientX, touch.clientY);
-                if (!link) return;
-
-                e.preventDefault();
-                e.stopImmediatePropagation();
-                link.activate();
-                lastLinkTapAt = Date.now();
-              },
-              { capture: true, passive: false }
-            );
-
+              e.preventDefault();
+              e.stopImmediatePropagation();
+              link.activate();
+              lastLinkTapAt = Date.now();
+            };
             // synthesized mouse events を抑制
             // - mouseup: xterm Linkifier2 が activate() を二重実行するのを防ぐ
             // - mousedown / click: textarea フォーカス（キーボード表示）を防ぐ
@@ -605,8 +641,21 @@ export function useTerminalLinkInjection(
                 e.stopImmediatePropagation();
               }
             };
+
+            addMobileListener("touchstart", onTouchStart, {
+              capture: true,
+              passive: true,
+            });
+            addMobileListener("touchmove", onTouchMove, {
+              capture: true,
+              passive: false,
+            });
+            addMobileListener("touchend", onTouchEnd, {
+              capture: true,
+              passive: false,
+            });
             for (const evt of ["mousedown", "mouseup", "click"]) {
-              iframeDoc.addEventListener(evt, suppressIfRecentLinkTap, {
+              addMobileListener(evt, suppressIfRecentLinkTap, {
                 capture: true,
               });
             }
@@ -645,6 +694,14 @@ export function useTerminalLinkInjection(
       iframe.removeEventListener("load", injectLinkProvider);
       if (checkTermInterval) clearInterval(checkTermInterval);
       if (timeoutId) clearTimeout(timeoutId);
+      while (innerCleanups.length > 0) {
+        const fn = innerCleanups.pop();
+        try {
+          fn?.();
+        } catch {
+          // iframe が既に破棄されている場合などは無視
+        }
+      }
     };
   }, [iframeRef, iframeKey]);
 }
