@@ -8,10 +8,11 @@ import { FrontLineModal } from "@/components/frontline/FrontLineModal";
 import { McpManagerDialog } from "@/components/McpManagerDialog";
 import { MobileChatView } from "@/components/MobileChatView";
 import {
-  asMobileTab,
-  asSessionSubView,
   MobileLayout,
   type MobileTab,
+  normalizeMobileTab,
+  normalizeSessionId,
+  normalizeSessionSubView,
   type SessionSubView,
 } from "@/components/MobileLayout";
 import { ProfileManagerDialog } from "@/components/ProfileManagerDialog";
@@ -228,15 +229,19 @@ export default function Dashboard() {
   useEffect(() => {
     if (!isSettingsLoading && !settingsInitializedRef.current) {
       settingsInitializedRef.current = true;
+      // 永続化ストアから読んだ値は runtime で正規化（壊れた値・型不一致対策）。
+      // selectedSessionId も string-or-null に正規化しないと openedSessions の
+      // Set<string> に汚染値が入る恐れがある。
       setSelectedSessionId(
-        getSetting<string | null>("selectedSessionId", null)
+        normalizeSessionId(getSetting<unknown>("selectedSessionId", null))
       );
-      // 永続化ストアから読んだ値は runtime で whitelist 正規化（壊れた値・型不一致対策）
       setMobileActiveTab(
-        asMobileTab(getSetting<unknown>("mobile.activeTab", "session"))
+        normalizeMobileTab(getSetting<unknown>("mobile.activeTab", "session"))
       );
       setMobileSessionSubView(
-        asSessionSubView(getSetting<unknown>("mobile.sessionSubView", "list"))
+        normalizeSessionSubView(
+          getSetting<unknown>("mobile.sessionSubView", "list")
+        )
       );
     }
   }, [isSettingsLoading, getSetting]);

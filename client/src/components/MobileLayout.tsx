@@ -40,17 +40,23 @@ const MOBILE_TABS: readonly MobileTab[] = [
 const SESSION_SUB_VIEWS: readonly SessionSubView[] = ["list", "detail"];
 
 /** 永続化ストアから読んだ任意値を MobileTab に正規化（不正値は "session"） */
-export function asMobileTab(value: unknown): MobileTab {
+export function normalizeMobileTab(value: unknown): MobileTab {
   return MOBILE_TABS.includes(value as MobileTab)
     ? (value as MobileTab)
     : "session";
 }
 
 /** 永続化ストアから読んだ任意値を SessionSubView に正規化（不正値は "list"） */
-export function asSessionSubView(value: unknown): SessionSubView {
+export function normalizeSessionSubView(value: unknown): SessionSubView {
   return SESSION_SUB_VIEWS.includes(value as SessionSubView)
     ? (value as SessionSubView)
     : "list";
+}
+
+/** 永続化ストアから読んだ任意値を sessionId (string) に正規化（不正値は null）。
+ * 壊れた値が openedSessions の Set<string> を汚染するのを防ぐ。 */
+export function normalizeSessionId(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 interface MobileLayoutProps {
@@ -65,6 +71,8 @@ interface MobileLayoutProps {
   onDeleteWorktree: (worktree: Worktree) => void;
   onSendMessage: (sessionId: string, message: string) => void;
   onSendKey: (sessionId: string, key: SpecialKey) => void;
+  /** セッション選択通知。**親側で `selectedSessionId` プロップ更新まで責任を持つ契約**。
+   * これが満たされないと canShowDetail/effectiveSessionSubView が detail を表示できない */
   onSelectSession: (sessionId: string) => void;
   onUploadFile?: (data: {
     sessionId: string;
