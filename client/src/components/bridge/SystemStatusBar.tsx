@@ -19,9 +19,13 @@ export function SystemStatusBar({ metrics }: SystemStatusBarProps) {
     : null;
   const cpuHistory = metrics?.cpuHistory ?? [];
 
+  // Quick Tunnel 等のトークン認証下でも新タブで Bridge にアクセスできるよう
+  // 現在の URL の token クエリを引き継ぐ
+  const bridgeHref = buildBridgeHref();
+
   return (
     <a
-      href="/bridge"
+      href={bridgeHref}
       target="_blank"
       rel="noopener noreferrer"
       title="Bridge を別タブで開く"
@@ -49,6 +53,12 @@ function Metric({ label, percent }: { label: string; percent: number | null }) {
       </span>
     </span>
   );
+}
+
+function buildBridgeHref(): string {
+  if (typeof window === "undefined") return "/bridge";
+  const token = new URLSearchParams(window.location.search).get("token");
+  return token ? `/bridge?token=${encodeURIComponent(token)}` : "/bridge";
 }
 
 function Sparkline({ values }: { values: number[] }) {
