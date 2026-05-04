@@ -6,13 +6,14 @@ import { type RefObject, useEffect } from "react";
  * クライアント側でも defense in depth として弾く。
  *
  * - `..` を含むパス (パストラバーサル) は拒否
- * - 絶対パスは `/tmp/` 配下のみ許可 (任意ファイル open を防ぐ)
+ * - 絶対パスは `/tmp/` または `/private/tmp/` 配下のみ許可
+ *   (macOS では realpath が `/tmp/...` を `/private/tmp/...` に解決するため両方対応)
  * - 相対パスは許可 (サーバ側で worktree 配下に解決される)
  */
 function isAllowedFilePath(filePath: string): boolean {
   if (filePath.includes("..")) return false;
   if (filePath.startsWith("/")) {
-    return filePath.startsWith("/tmp/");
+    return filePath.startsWith("/tmp/") || filePath.startsWith("/private/tmp/");
   }
   return true;
 }
