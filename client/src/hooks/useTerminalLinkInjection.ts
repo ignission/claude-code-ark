@@ -305,8 +305,17 @@ export function useTerminalLinkInjection(
           /**
            * 指定した1-indexed バッファ行に表示されるリンクを検出する。
            * provideLinks とモバイルタップ検出の両方から呼ぶ。
+           *
+           * @param includeUrlStartLine
+           *   true: URL の開始セグメント (1行目に収まる URL を含む) も自前リンクとして登録する。
+           *         モバイルタップ検出から呼ぶ場合は WebLinksAddon が機能しないため必須。
+           *   false: URL の開始セグメントは WebLinksAddon に委譲してスキップする。
+           *          PC の provideLinks (xterm Linkifier2) から呼ぶ場合のデフォルト。
            */
-          const detectLinksForLine = (lineNumber: number) => {
+          const detectLinksForLine = (
+            lineNumber: number,
+            includeUrlStartLine = false
+          ) => {
             const bufferIdx = lineNumber - 1;
             const line = getLineSafe(bufferIdx);
             if (!line) return [];
@@ -387,7 +396,11 @@ export function useTerminalLinkInjection(
                 if (truncatedOnFirst.length > 0 && truncatedOnFirst !== m.url) {
                   urlExtensionMap.set(truncatedOnFirst, m.url);
                 }
-                if (startSeg.bufferIdx === bufferIdx) continue; // 1行目 = WebLinksAddon に委譲
+                // 1行目は WebLinksAddon に委譲 (PC ホバー)。モバイルタップ
+                // (includeUrlStartLine=true) では WebLinksAddon が機能しないため自前で登録。
+                if (!includeUrlStartLine && startSeg.bufferIdx === bufferIdx) {
+                  continue;
+                }
               }
               pushVisibleLink(m.start, m.end, () => openUrl(m.url));
             }
@@ -458,7 +471,9 @@ export function useTerminalLinkInjection(
             const viewportY = term.buffer.active.viewportY;
             const lineNumber = viewportY + visibleRow + 1;
 
-            const links = detectLinksForLine(lineNumber);
+            // モバイルタップでは WebLinksAddon が機能しないため、URL の1行目も
+            // 含めて自前で検出する (includeUrlStartLine=true)。
+            const links = detectLinksForLine(lineNumber, true);
             for (const link of links) {
               if (
                 link.range.start.y === lineNumber &&
