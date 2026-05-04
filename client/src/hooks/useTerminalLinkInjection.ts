@@ -239,7 +239,16 @@ export function useTerminalLinkInjection(
             const tokenMatch = trimmed.match(/^[^\s<>"'()]+/);
             if (!tokenMatch) return false;
             const after = trimmed.substring(tokenMatch[0].length);
-            return /^\s*$/.test(after);
+            if (!/^\s*$/.test(after)) return false;
+            // 前行末トークンが URL or file path の途中であることを必須化。
+            // 通常の段落 (例: "This is a test\n  word") を誤って論理行に
+            // 連結しないようにし、擬似リンク生成を抑止する。
+            const prevTailMatch = prevText.match(/[^\s<>"'()]+$/);
+            if (!prevTailMatch) return false;
+            const prevTail = prevTailMatch[0];
+            const looksLikeUrl = /^https?:\/\//i.test(prevTail);
+            const looksLikePath = prevTail.includes("/");
+            return looksLikeUrl || looksLikePath;
           };
 
           /** 現在行が属する論理行の先頭バッファインデックスを返す */
