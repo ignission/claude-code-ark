@@ -20,7 +20,13 @@ export function SystemStatusBar({ metrics }: SystemStatusBarProps) {
   const cpuHistory = metrics?.cpuHistory ?? [];
 
   return (
-    <div className="flex items-center gap-5 px-3 py-2 border-t border-white/10 bg-black/60 text-sm font-mono text-gray-200 select-none">
+    <a
+      href="/bridge"
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Bridge を別タブで開く"
+      className="flex items-center gap-5 px-3 py-2 border-t border-white/10 bg-black/60 text-sm font-mono text-gray-200 select-none hover:bg-black/80 hover:text-white transition-colors cursor-pointer"
+    >
       <span className="flex items-center gap-2 flex-1 min-w-0">
         <span className="text-gray-500 shrink-0">CPU</span>
         <Sparkline values={cpuHistory} />
@@ -30,7 +36,7 @@ export function SystemStatusBar({ metrics }: SystemStatusBarProps) {
       </span>
       <Metric label="MEM" percent={mem} />
       <Metric label="DISK" percent={disk} />
-    </div>
+    </a>
   );
 }
 
