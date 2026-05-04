@@ -28,16 +28,13 @@ import type {
 } from "../../../shared/types";
 import { useViewerTabs } from "../hooks/useViewerTabs";
 
-export type MobileTab = "session" | "browser" | "frontline" | "beacon";
-export type SessionSubView = "list" | "detail";
-
-const MOBILE_TABS: readonly MobileTab[] = [
-  "session",
-  "browser",
-  "frontline",
-  "beacon",
-];
-const SESSION_SUB_VIEWS: readonly SessionSubView[] = ["list", "detail"];
+// MobileTab / SessionSubView は配列を真実源にし、union 型を派生させる。
+// こうしないと runtime 検証配列と型が二重化し、union に値を足したとき配列更新を
+// 忘れても型エラーにならず正当な値が静かに潰れる。
+const MOBILE_TABS = ["session", "browser", "frontline", "beacon"] as const;
+const SESSION_SUB_VIEWS = ["list", "detail"] as const;
+export type MobileTab = (typeof MOBILE_TABS)[number];
+export type SessionSubView = (typeof SESSION_SUB_VIEWS)[number];
 
 /** 永続化ストアから読んだ任意値を MobileTab に正規化（不正値は "session"） */
 export function normalizeMobileTab(value: unknown): MobileTab {
@@ -245,16 +242,16 @@ export function MobileLayout({
   const effectiveSessionSubView: SessionSubView =
     sessionSubView === "detail" && !canShowDetail ? "list" : sessionSubView;
 
-  // 選択中のセッションが恒久的に存在しない（削除等）場合のみ永続化state を list に戻す。
+  // 選択中のセッションが恒久的に存在しない（削除等）場合は、永続化state も
+  // 全てクリアする（sessionSubView=list + 不在 selectedSessionId の解除）。
   // sessionsLoaded を待たないと、復元直後 sessions Map がまだ空のときに
   // 誤って "list" を保存してしまい、次回リロード時 detail が復元されなくなる。
+  // Dashboard 側にも自動セッション選択ロジックがあるが、MobileLayout 側でも
+  // invariant を明示しておく（assertive）。
   useEffect(() => {
-    if (
-      sessionsLoaded &&
-      activeTab === "session" &&
-      sessionSubView === "detail" &&
-      (!selectedSessionId || !sessions.has(selectedSessionId))
-    ) {
+    if (!sessionsLoaded || activeTab !== "session") return;
+    const hasStaleId = selectedSessionId && !sessions.has(selectedSessionId);
+    if (sessionSubView === "detail" && (!selectedSessionId || hasStaleId)) {
       onChangeSessionSubView("list");
     }
   }, [
