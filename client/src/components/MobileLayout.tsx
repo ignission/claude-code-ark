@@ -31,6 +31,28 @@ import { useViewerTabs } from "../hooks/useViewerTabs";
 export type MobileTab = "session" | "browser" | "frontline" | "beacon";
 export type SessionSubView = "list" | "detail";
 
+const MOBILE_TABS: readonly MobileTab[] = [
+  "session",
+  "browser",
+  "frontline",
+  "beacon",
+];
+const SESSION_SUB_VIEWS: readonly SessionSubView[] = ["list", "detail"];
+
+/** 永続化ストアから読んだ任意値を MobileTab に正規化（不正値は "session"） */
+export function asMobileTab(value: unknown): MobileTab {
+  return MOBILE_TABS.includes(value as MobileTab)
+    ? (value as MobileTab)
+    : "session";
+}
+
+/** 永続化ストアから読んだ任意値を SessionSubView に正規化（不正値は "list"） */
+export function asSessionSubView(value: unknown): SessionSubView {
+  return SESSION_SUB_VIEWS.includes(value as SessionSubView)
+    ? (value as SessionSubView)
+    : "list";
+}
+
 interface MobileLayoutProps {
   socket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
   sessions: Map<string, ManagedSession>;
@@ -207,9 +229,17 @@ export function MobileLayout({
     onChangeSessionSubView("list");
   }, [onChangeSessionSubView]);
 
-  // 選択中のセッションが削除された/復元できなかった場合、一覧画面にフォールバック
+  // detail が表示可能か (= selectedSessionId が sessions に存在するか) を render 時に導出。
+  // 復元直後に sessions Map がまだ空でも、永続化state は触らずに list 表示にフォールバックできる。
+  const canShowDetail = !!(
+    selectedSessionId && sessions.has(selectedSessionId)
+  );
+  const effectiveSessionSubView: SessionSubView =
+    sessionSubView === "detail" && !canShowDetail ? "list" : sessionSubView;
+
+  // 選択中のセッションが恒久的に存在しない（削除等）場合のみ永続化state を list に戻す。
   // sessionsLoaded を待たないと、復元直後 sessions Map がまだ空のときに
-  // 誤って list へ戻してしまう（リロード時に detail が一瞬で list に消える原因）
+  // 誤って "list" を保存してしまい、次回リロード時 detail が復元されなくなる。
   useEffect(() => {
     if (
       sessionsLoaded &&
@@ -269,7 +299,7 @@ export function MobileLayout({
       {/* 一覧画面 */}
       <div
         className={
-          activeTab === "session" && sessionSubView === "list"
+          activeTab === "session" && effectiveSessionSubView === "list"
             ? "flex-1 flex flex-col min-h-0 pb-14"
             : "hidden"
         }
@@ -294,7 +324,7 @@ export function MobileLayout({
             key={sessionId}
             className={
               activeTab === "session" &&
-              sessionSubView === "detail" &&
+              effectiveSessionSubView === "detail" &&
               selectedSessionId === sessionId
                 ? "flex-1 flex flex-col min-h-0 pb-14"
                 : "hidden"

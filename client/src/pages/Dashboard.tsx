@@ -8,6 +8,8 @@ import { FrontLineModal } from "@/components/frontline/FrontLineModal";
 import { McpManagerDialog } from "@/components/McpManagerDialog";
 import { MobileChatView } from "@/components/MobileChatView";
 import {
+  asMobileTab,
+  asSessionSubView,
   MobileLayout,
   type MobileTab,
   type SessionSubView,
@@ -229,9 +231,12 @@ export default function Dashboard() {
       setSelectedSessionId(
         getSetting<string | null>("selectedSessionId", null)
       );
-      setMobileActiveTab(getSetting<MobileTab>("mobile.activeTab", "session"));
+      // 永続化ストアから読んだ値は runtime で whitelist 正規化（壊れた値・型不一致対策）
+      setMobileActiveTab(
+        asMobileTab(getSetting<unknown>("mobile.activeTab", "session"))
+      );
       setMobileSessionSubView(
-        getSetting<SessionSubView>("mobile.sessionSubView", "list")
+        asSessionSubView(getSetting<unknown>("mobile.sessionSubView", "list"))
       );
     }
   }, [isSettingsLoading, getSetting]);

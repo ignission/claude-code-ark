@@ -13,6 +13,19 @@ import { expect, test } from "@playwright/test";
 
 const MOBILE_VIEWPORT = { width: 375, height: 812 };
 
+// settings は1つのDBを共有するため、テストをシリアル実行して相互干渉を防ぐ
+test.describe.configure({ mode: "serial" });
+
+// 各テスト前にモバイル UI 設定を初期化（前テストの永続化値を持ち越さない）
+test.beforeEach(async ({ request }) => {
+  await request.put("/api/settings", {
+    data: {
+      "mobile.activeTab": "session",
+      "mobile.sessionSubView": "list",
+    },
+  });
+});
+
 test("モバイル: ボトムナビでタブ切替するとアクティブタブがハイライトされる", async ({
   page,
 }) => {
@@ -62,23 +75,60 @@ test("モバイル: リロードしても最後のタブが復元される (Beac
   await expect(beaconTab).toHaveClass(/text-primary/, { timeout: 5_000 });
 });
 
-test("モバイル: セッションタブ連打しても detail 状態を保持できる構造になっている", async ({
+test("モバイル: Beacon→セッションタブ往復で sessionSubView が detail のまま保持される", async ({
   page,
+  request,
 }) => {
-  // 実セッションがない環境では detail を表示できないので、
-  // ボトムナビが「セッション」タブを連打したときに状態が変化しないことを
-  // クリック前後の DOM スナップショットで確認する
+  // sessionSubView=detail を直接サーバー設定に書き込んで、
+  // Beacon タブへ遷移→セッションタブへ戻った後も detail が保持されることを検証する
+  // (実セッション無しでも sessionSubView の永続化値は保持される必要がある)
+  await request.put("/api/settings", {
+    data: {
+      "mobile.activeTab": "session",
+      "mobile.sessionSubView": "detail",
+    },
+  });
+
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  await page.goto("/");
+
+  const sessionTab = page.locator("nav button", { hasText: "セッション" });
+  const beaconTab = page.locator("nav button", { hasText: "Beacon" });
+  await expect(sessionTab).toBeVisible({ timeout: 15_000 });
+
+  // 設定の load を待つ
+  await page.waitForTimeout(500);
+
+  // Beacon に切替 → セッションに戻す
+  await beaconTab.click();
+  await expect(beaconTab).toHaveClass(/text-primary/);
+  await sessionTab.click();
+  await expect(sessionTab).toHaveClass(/text-primary/);
+
+  // サーバーの sessionSubView 設定が "detail" を保ったままであることを確認
+  // (Beacon 遷移で list に flip されないことが回帰防止の本質)
+  await page.waitForTimeout(500);
+  const settings = await request.get("/api/settings").then(r => r.json());
+  expect(settings["mobile.sessionSubView"]).toBe("detail");
+});
+
+test("モバイル: 不正な永続化値を受信しても安全な値にフォールバックする", async ({
+  page,
+  request,
+}) => {
+  // 壊れた値が settings に入ってもクラッシュせず default にフォールバック
+  await request.put("/api/settings", {
+    data: {
+      "mobile.activeTab": "garbage",
+      "mobile.sessionSubView": 42,
+    },
+  });
+
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto("/");
 
   const sessionTab = page.locator("nav button", { hasText: "セッション" });
   await expect(sessionTab).toBeVisible({ timeout: 15_000 });
-
-  // セッションタブを3回連打
-  await sessionTab.click();
-  await sessionTab.click();
-  await sessionTab.click();
-
-  // セッションタブはまだアクティブ
+  // 不正値は "session" にフォールバックするはず
   await expect(sessionTab).toHaveClass(/text-primary/);
 });
