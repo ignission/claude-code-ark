@@ -187,11 +187,19 @@ function StorageSection({ metrics }: { metrics: HostMetrics | null }) {
 }
 
 function CpuSection({ metrics }: { metrics: HostMetrics | null }) {
-  const targetPercent = metrics?.cpuPercent ?? 0;
+  // 異常値 (NaN / Infinity / 範囲外 / undefined) を 1 箇所で 0..100 に正規化し、
+  // 針 (補間値) と数値表示 (実測値) の両方で共有する。針の hook 内でも同じ
+  // 防御を入れているが、call site でも揃えることで `NaN %` / `140 %` といった
+  // 表示が出ない契約を局所で読める形にする。
+  const rawTargetPercent = metrics?.cpuPercent;
+  const targetPercent =
+    typeof rawTargetPercent === "number" && Number.isFinite(rawTargetPercent)
+      ? clamp(rawTargetPercent, 0, 100)
+      : 0;
   const loadAvg = metrics?.loadAvg ?? [0, 0, 0];
-  // 針位置だけサーバー値の 1s 離散→滑らかに補間する。
-  // 上昇はタコメーター風 (軽オーバーシュート)、下降は一定速度で線形に下がる
-  // 非対称挙動。数値表示は実測値をそのまま出すため targetPercent をそのまま使う
+  // 針位置はサーバー値の 1s 離散→滑らかに補間する。上昇はタコメーター風
+  // (軽オーバーシュート)、下降はゆっくり吸い付くように降りる非対称挙動。
+  // 数値表示は実測値をそのまま出すため targetPercent をそのまま使う
   // (補間値を表示すると上昇オーバーシュート時に実測より大きい % が見えてしまう)。
   const needlePercent = useGaugeNeedleValue(targetPercent);
   // 0%→-90deg、100%→+90deg
