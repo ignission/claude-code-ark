@@ -230,9 +230,11 @@ export function useTerminalLinkInjection(
           const isContinuation = (cur: any, prev: any): boolean => {
             if (!cur || !prev) return false;
             if (cur.isWrapped) return true;
+            // translateToString(true) は末尾空白を trim するため、
+            // 「末尾が non-whitespace で終わる」ことは結果文字列が
+            // 空でないことで保証される (prevTail マッチで再確認)。
             const prevText = prev.translateToString(true);
             if (prevText.length === 0) return false;
-            if (/\s$/.test(prevText)) return false;
             const curText = cur.translateToString(true);
             const trimmed = curText.trimStart();
             if (trimmed.length === 0) return false;
@@ -251,10 +253,16 @@ export function useTerminalLinkInjection(
             return looksLikeUrl || looksLikePath;
           };
 
+          // 論理行の最大行数。findLogicalLineStart と buildLogicalLine で
+          // 同一値を共有し、双方向の探索ウィンドウを対称にする。
+          // 非対称だと「currentLine が segments に含まれず無言で失敗」する回帰になる。
+          const LOGICAL_LINE_MAX = 1000;
+
           /** 現在行が属する論理行の先頭バッファインデックスを返す */
           const findLogicalLineStart = (lineIdx: number): number => {
             let i = lineIdx;
-            while (i > 0) {
+            const lowerBound = Math.max(0, lineIdx - LOGICAL_LINE_MAX + 1);
+            while (i > lowerBound) {
               if (!isContinuation(getLineSafe(i), getLineSafe(i - 1))) break;
               i--;
             }
@@ -275,7 +283,7 @@ export function useTerminalLinkInjection(
           };
           const buildLogicalLine = (
             startIdx: number,
-            maxLines = 20
+            maxLines = LOGICAL_LINE_MAX
           ): { joined: string; segments: LineSegment[] } => {
             const segments: LineSegment[] = [];
             const first = getLineSafe(startIdx);
