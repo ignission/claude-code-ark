@@ -221,7 +221,8 @@ export default function Dashboard() {
     sessions,
     readFile,
     fileContent,
-    handleOpenUrl
+    handleOpenUrl,
+    !isMobile
   );
 
   // サーバーからの設定が読み込まれたらセッションIDを復元

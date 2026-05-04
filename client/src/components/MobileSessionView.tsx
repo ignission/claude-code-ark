@@ -48,6 +48,7 @@ import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { useVisualViewport } from "../hooks/useVisualViewport";
 import { FileViewerPane } from "./FileViewerPane";
+import { HtmlViewerPane } from "./HtmlViewerPane";
 import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
 import { MessageShortcutMenu } from "./MessageShortcutMenu";
 import type { ViewerTab } from "./TerminalPane";
@@ -456,6 +457,15 @@ export function MobileSessionView({
                 targetLine={tab.targetLine}
                 error={tab.error}
               />
+            </div>
+          );
+        })()}
+      {tabs[activeTabIndex]?.type === "html" &&
+        (() => {
+          const tab = tabs[activeTabIndex] as ViewerTab & { type: "html" };
+          return (
+            <div className="flex-1 min-h-0">
+              <HtmlViewerPane filePath={tab.filePath} />
             </div>
           );
         })()}

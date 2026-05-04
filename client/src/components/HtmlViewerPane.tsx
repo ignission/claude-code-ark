@@ -154,7 +154,7 @@ export function HtmlViewerPane({ filePath }: HtmlViewerPaneProps) {
         ) : (
           <iframe
             srcDoc={htmlContent}
-            className="w-full h-full border-0"
+            className="w-full h-full border-0 bg-white"
             sandbox="allow-scripts"
             title={filename}
           />

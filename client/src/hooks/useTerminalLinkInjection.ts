@@ -206,11 +206,278 @@ export function useTerminalLinkInjection(
             capture: true,
           });
 
-          // ── モバイルスワイプスクロール ──
+          // ── ファイルパス・URL リンク検出ヘルパー ──
+          //
+          // xterm.js は折り返し行を別バッファ行として保持し、継続行に
+          // isWrapped = true を立てる。1行単位で regex を走らせると、
+          // 折り返されたパス/URL は「拡張子なし」「スキーム/スラッシュなし」で
+          // どちらの行でもマッチしない。
+          // 対策: 論理行（isWrapped 継続を全て連結）を再構築してから検出し、
+          // マッチが現在行に重なる範囲にのみリンクを登録する。
+
+          // biome-ignore lint/suspicious/noExplicitAny: xterm.js Buffer line API
+          const getLineSafe = (idx: number): any =>
+            term.buffer.active.getLine(idx) ?? null;
+
+          /**
+           * cur が prev の継続行かどうか判定。
+           * - xterm 自動折り返し: cur.isWrapped === true
+           * - Claude/CLI のインデント折り返し:
+           *     prev が末尾に空白なくトークンで終わる
+           *     かつ cur が「先頭空白 + 1トークン + 末尾空白なし or 空のみ」
+           */
+          // biome-ignore lint/suspicious/noExplicitAny: xterm.js Buffer line objects
+          const isContinuation = (cur: any, prev: any): boolean => {
+            if (!cur || !prev) return false;
+            if (cur.isWrapped) return true;
+            const prevText = prev.translateToString(true);
+            if (prevText.length === 0) return false;
+            if (/\s$/.test(prevText)) return false;
+            const curText = cur.translateToString(true);
+            const trimmed = curText.trimStart();
+            if (trimmed.length === 0) return false;
+            const tokenMatch = trimmed.match(/^[^\s<>"'()]+/);
+            if (!tokenMatch) return false;
+            const after = trimmed.substring(tokenMatch[0].length);
+            return /^\s*$/.test(after);
+          };
+
+          /** 現在行が属する論理行の先頭バッファインデックスを返す */
+          const findLogicalLineStart = (lineIdx: number): number => {
+            let i = lineIdx;
+            while (i > 0) {
+              if (!isContinuation(getLineSafe(i), getLineSafe(i - 1))) break;
+              i--;
+            }
+            return i;
+          };
+
+          /**
+           * startIdx から継続行を全て連結したセグメント情報を返す。
+           * 各セグメントは表示行（バッファ1行）に対応し、継続行のリーディング
+           * 空白は除去されるが、セグメントは visibleColOffset でその空白幅を保持する。
+           */
+          type LineSegment = {
+            bufferIdx: number;
+            visibleColOffset: number;
+            segmentText: string;
+            startInJoined: number;
+            endInJoined: number;
+          };
+          const buildLogicalLine = (
+            startIdx: number,
+            maxLines = 20
+          ): { joined: string; segments: LineSegment[] } => {
+            const segments: LineSegment[] = [];
+            const first = getLineSafe(startIdx);
+            if (!first) return { joined: "", segments: [] };
+            const firstText = first.translateToString(true);
+            segments.push({
+              bufferIdx: startIdx,
+              visibleColOffset: 0,
+              segmentText: firstText,
+              startInJoined: 0,
+              endInJoined: firstText.length,
+            });
+            let cursor = firstText.length;
+            for (let i = startIdx + 1; i < startIdx + maxLines; i++) {
+              const ln = getLineSafe(i);
+              const prev = getLineSafe(i - 1);
+              if (!isContinuation(ln, prev)) break;
+              const lineText = ln.translateToString(true);
+              const stripped = lineText.trimStart();
+              const visibleColOffset = lineText.length - stripped.length;
+              segments.push({
+                bufferIdx: i,
+                visibleColOffset,
+                segmentText: stripped,
+                startInJoined: cursor,
+                endInJoined: cursor + stripped.length,
+              });
+              cursor += stripped.length;
+            }
+            return {
+              joined: segments.map(s => s.segmentText).join(""),
+              segments,
+            };
+          };
+
+          /**
+           * 指定した1-indexed バッファ行に表示されるリンクを検出する。
+           * provideLinks とモバイルタップ検出の両方から呼ぶ。
+           */
+          const detectLinksForLine = (lineNumber: number) => {
+            const bufferIdx = lineNumber - 1;
+            const line = getLineSafe(bufferIdx);
+            if (!line) return [];
+
+            if (urlExtensionMap.size > 100) {
+              const firstKey = urlExtensionMap.keys().next().value;
+              if (firstKey !== undefined) urlExtensionMap.delete(firstKey);
+            }
+
+            const logicalStart = findLogicalLineStart(bufferIdx);
+            const { joined, segments } = buildLogicalLine(logicalStart);
+            const mySegment = segments.find(s => s.bufferIdx === bufferIdx);
+            if (!mySegment) return [];
+
+            type DetectedLink = {
+              range: {
+                start: { x: number; y: number };
+                end: { x: number; y: number };
+              };
+              text: string;
+              activate: () => void;
+            };
+            const links: DetectedLink[] = [];
+
+            const pushVisibleLink = (
+              matchStart: number,
+              matchEnd: number,
+              activate: () => void
+            ) => {
+              const visStart = Math.max(matchStart, mySegment.startInJoined);
+              const visEnd = Math.min(matchEnd, mySegment.endInJoined);
+              if (visEnd <= visStart) return;
+              const startCol =
+                mySegment.visibleColOffset +
+                (visStart - mySegment.startInJoined) +
+                1;
+              const endCol =
+                mySegment.visibleColOffset +
+                (visEnd - mySegment.startInJoined) +
+                1;
+              links.push({
+                range: {
+                  start: { x: startCol, y: lineNumber },
+                  end: { x: endCol, y: lineNumber },
+                },
+                text: joined.slice(visStart, visEnd),
+                activate,
+              });
+            };
+
+            // ── URL 検出（論理行全体 = joined） ──
+            type UrlMatch = { start: number; end: number; url: string };
+            const urlMatches: UrlMatch[] = [];
+            const urlRegex = /https?:\/\/[^\s<>"'()]+/g;
+            for (
+              let mUrl = urlRegex.exec(joined);
+              mUrl !== null;
+              mUrl = urlRegex.exec(joined)
+            ) {
+              const cleaned = mUrl[0].replace(/[.,;:!?]+$/, "");
+              urlMatches.push({
+                start: mUrl.index,
+                end: mUrl.index + cleaned.length,
+                url: cleaned,
+              });
+            }
+
+            for (const m of urlMatches) {
+              // URL 開始セグメント = WebLinksAddon が見える URL 範囲
+              const startSeg = segments.find(
+                s => m.start >= s.startInJoined && m.start < s.endInJoined
+              );
+              if (startSeg) {
+                const truncatedOnFirst = joined.slice(
+                  m.start,
+                  Math.min(m.end, startSeg.endInJoined)
+                );
+                if (truncatedOnFirst.length > 0 && truncatedOnFirst !== m.url) {
+                  urlExtensionMap.set(truncatedOnFirst, m.url);
+                }
+                if (startSeg.bufferIdx === bufferIdx) continue; // 1行目 = WebLinksAddon に委譲
+              }
+              pushVisibleLink(m.start, m.end, () => openUrl(m.url));
+            }
+
+            const inUrlRange = (idx: number): boolean =>
+              urlMatches.some(r => idx >= r.start && idx < r.end);
+
+            // ── ファイルパス検出（論理行全体 = joined） ──
+            const fileRegex =
+              /(?:file:([a-zA-Z0-9_.\-/]+)|([a-zA-Z0-9_.\-/]+\/[a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+))(?::(\d+))?/g;
+            for (
+              let mFile = fileRegex.exec(joined);
+              mFile !== null;
+              mFile = fileRegex.exec(joined)
+            ) {
+              if (inUrlRange(mFile.index)) continue;
+              const fullMatch = mFile[0];
+              const rawPath = mFile[1] || mFile[2];
+              const filePath = rawPath?.replace(/^\/{2,}/, "/");
+              const lineNum = mFile[3] ? Number.parseInt(mFile[3], 10) : null;
+              if (!filePath) continue;
+              pushVisibleLink(
+                mFile.index,
+                mFile.index + fullMatch.length,
+                () => {
+                  arkWindow.postMessage(
+                    { type: "ark:open-file", path: filePath, line: lineNum },
+                    arkWindow.location.origin
+                  );
+                }
+              );
+            }
+
+            return links;
+          };
+
+          /**
+           * モバイル: タップ座標から (line, col) を計算し、その位置にあるリンクを返す。
+           */
+          const findLinkAtTouchPoint = (
+            clientX: number,
+            clientY: number
+          ): { activate: () => void } | null => {
+            const screen = iframeDoc.querySelector(
+              ".xterm-screen"
+            ) as HTMLElement | null;
+            if (!screen) return null;
+            const rect = screen.getBoundingClientRect();
+            const xRel = clientX - rect.left;
+            const yRel = clientY - rect.top;
+            if (
+              xRel < 0 ||
+              yRel < 0 ||
+              xRel >= rect.width ||
+              yRel >= rect.height
+            )
+              return null;
+
+            // biome-ignore lint/suspicious/noExplicitAny: xterm.js 内部 API
+            const dim = (term as any)._core?._renderService?.dimensions?.css
+              ?.cell;
+            const cellWidth: number = dim?.width ?? rect.width / term.cols;
+            const cellHeight: number = dim?.height ?? rect.height / term.rows;
+            if (!cellWidth || !cellHeight) return null;
+
+            const col = Math.floor(xRel / cellWidth) + 1; // 1-indexed
+            const visibleRow = Math.floor(yRel / cellHeight); // 0-indexed
+            const viewportY = term.buffer.active.viewportY;
+            const lineNumber = viewportY + visibleRow + 1;
+
+            const links = detectLinksForLine(lineNumber);
+            for (const link of links) {
+              if (
+                link.range.start.y === lineNumber &&
+                col >= link.range.start.x &&
+                col < link.range.end.x
+              ) {
+                return link;
+              }
+            }
+            return null;
+          };
+
+          // ── モバイルスワイプスクロール + タップでリンク起動 ──
           if (isMobile) {
             let touchStartY = 0;
+            let touchStartX = 0;
             let touchSentLines = 0;
             let isSwiping = false;
+            let lastLinkTapAt = 0;
             const SWIPE_LINE_HEIGHT = 8;
             const SWIPE_THRESHOLD = 3;
 
@@ -219,6 +486,7 @@ export function useTerminalLinkInjection(
               (e: Event) => {
                 const te = e as TouchEvent;
                 touchStartY = te.touches[0].clientY;
+                touchStartX = te.touches[0].clientX;
                 touchSentLines = 0;
                 isSwiping = false;
               },
@@ -270,112 +538,56 @@ export function useTerminalLinkInjection(
 
             iframeDoc.addEventListener(
               "touchend",
-              () => {
+              (e: Event) => {
+                const wasSwiping = isSwiping;
                 touchSentLines = 0;
                 isSwiping = false;
+                if (wasSwiping) return;
+
+                const te = e as TouchEvent;
+                const touch = te.changedTouches[0];
+                if (!touch) return;
+
+                // タップ位置と開始位置の距離が閾値内のときのみリンク判定
+                const dx = touch.clientX - touchStartX;
+                const dy = touch.clientY - touchStartY;
+                if (Math.hypot(dx, dy) > 12) return;
+
+                const link = findLinkAtTouchPoint(touch.clientX, touch.clientY);
+                if (!link) return;
+
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                link.activate();
+                lastLinkTapAt = Date.now();
               },
-              { capture: true, passive: true }
+              { capture: true, passive: false }
             );
+
+            // synthesized mouse events を抑制
+            // - mouseup: xterm Linkifier2 が activate() を二重実行するのを防ぐ
+            // - mousedown / click: textarea フォーカス（キーボード表示）を防ぐ
+            const suppressIfRecentLinkTap = (e: Event) => {
+              if (Date.now() - lastLinkTapAt < 700) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+              }
+            };
+            for (const evt of ["mousedown", "mouseup", "click"]) {
+              iframeDoc.addEventListener(evt, suppressIfRecentLinkTap, {
+                capture: true,
+              });
+            }
           }
 
-          // ── ファイルパスリンクプロバイダー ──
+          // ── xterm.js リンクプロバイダー登録（PC のホバー → クリック用） ──
           term.registerLinkProvider({
             provideLinks(
               lineNumber: number,
               // biome-ignore lint/suspicious/noExplicitAny: xterm.js link provider API
               callback: (links: any[] | undefined) => void
             ) {
-              const line = term.buffer.active.getLine(lineNumber - 1);
-              if (!line) {
-                callback(undefined);
-                return;
-              }
-              const text = line.translateToString();
-              // biome-ignore lint/suspicious/noExplicitAny: xterm.js link objects
-              const links: any[] = [];
-              let match: RegExpExecArray | null;
-
-              if (urlExtensionMap.size > 100) {
-                const firstKey = urlExtensionMap.keys().next().value;
-                if (firstKey !== undefined) urlExtensionMap.delete(firstKey);
-              }
-
-              const urlRanges: Array<{ start: number; end: number }> = [];
-              const urlRegex = /https?:\/\/[^\s<>"'()]+/g;
-              while ((match = urlRegex.exec(text)) !== null) {
-                let matchedUrl = match[0];
-                const originalUrl = match[0];
-
-                urlRanges.push({
-                  start: match.index,
-                  end: match.index + originalUrl.length,
-                });
-
-                const afterUrl = text.substring(
-                  match.index + matchedUrl.length
-                );
-                if (/^\s*$/.test(afterUrl)) {
-                  const maxExtensionLines = 10;
-                  for (
-                    let nextIdx = lineNumber;
-                    nextIdx < lineNumber + maxExtensionLines;
-                    nextIdx++
-                  ) {
-                    const nextLine = term.buffer.active.getLine(nextIdx);
-                    if (!nextLine) break;
-                    const nextText = nextLine.translateToString();
-                    const trimmedNext = nextText.trimStart();
-                    if (trimmedNext.length === 0) break;
-                    const contMatch = trimmedNext.match(/^[^\s<>"'()]+/);
-                    if (!contMatch) break;
-
-                    const leadingSpaces = nextText.length - trimmedNext.length;
-                    const afterCont = nextText.substring(
-                      leadingSpaces + contMatch[0].length
-                    );
-                    if (!/^\s*$/.test(afterCont)) break;
-
-                    matchedUrl += contMatch[0];
-                  }
-                }
-
-                matchedUrl = matchedUrl.replace(/[.,;:!?]+$/, "");
-
-                if (matchedUrl !== originalUrl) {
-                  urlExtensionMap.set(originalUrl, matchedUrl);
-                }
-              }
-
-              const inUrlRange = (idx: number): boolean =>
-                urlRanges.some(r => idx >= r.start && idx < r.end);
-
-              const fileRegex =
-                /(?:file:([a-zA-Z0-9_.\-/]+)|([a-zA-Z0-9_.\-/]+\/[a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+))(?::(\d+))?/g;
-              while ((match = fileRegex.exec(text)) !== null) {
-                if (inUrlRange(match.index)) continue;
-                const fullMatch = match[0];
-                const rawPath = match[1] || match[2];
-                const filePath = rawPath?.replace(/^\/{2,}/, "/");
-                const lineNum = match[3] ? Number.parseInt(match[3], 10) : null;
-                if (!filePath) continue;
-                links.push({
-                  range: {
-                    start: { x: match.index + 1, y: lineNumber },
-                    end: {
-                      x: match.index + fullMatch.length + 1,
-                      y: lineNumber,
-                    },
-                  },
-                  text: fullMatch,
-                  activate() {
-                    arkWindow.postMessage(
-                      { type: "ark:open-file", path: filePath, line: lineNum },
-                      arkWindow.location.origin
-                    );
-                  },
-                });
-              }
-
+              const links = detectLinksForLine(lineNumber);
               callback(links.length > 0 ? links : undefined);
             },
           });
