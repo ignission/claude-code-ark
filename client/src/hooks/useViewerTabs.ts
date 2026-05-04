@@ -4,6 +4,10 @@ import type { ViewerTab } from "../components/TerminalPane";
 /**
  * セッションごとのタブ状態管理を提供するカスタムフック。
  * Dashboard.tsx と MobileLayout.tsx で共通利用する。
+ *
+ * `enabled` は postMessage リスナー（リンクタップ受信）の有効化フラグ。
+ * Dashboard と MobileLayout の双方が同時にマウントされるため、片方のみで
+ * 受信するように呼び出し側で排他制御する。
  */
 export function useViewerTabs(
   selectedSessionId: string | null,
@@ -16,7 +20,8 @@ export function useViewerTabs(
     size: number;
     error?: string;
   } | null,
-  onOpenUrl?: (url: string) => void
+  onOpenUrl?: (url: string) => void,
+  enabled = true
 ) {
   const [sessionTabs, setSessionTabs] = useState<Record<string, ViewerTab[]>>(
     {}
@@ -121,6 +126,7 @@ export function useViewerTabs(
 
   // postMessageリスナー（ttyd iframe内のリンククリックを受信）
   useEffect(() => {
+    if (!enabled) return;
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
       const { type } = event.data ?? {};
@@ -171,7 +177,7 @@ export function useViewerTabs(
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [selectedSessionId, sessions, openFileTab, readFile, onOpenUrl]);
+  }, [selectedSessionId, sessions, openFileTab, readFile, onOpenUrl, enabled]);
 
   // fileContent受信時にタブを更新（全セッションを検索してレースコンディション対策）
   useEffect(() => {

@@ -215,7 +215,10 @@ export function MobileLayout({
     sessions,
     readFile,
     fileContent,
-    handleOpenUrl
+    handleOpenUrl,
+    // モバイルでは MobileLayout 側がリンクタップ受信を担う (Dashboard 側は無効化)。
+    // 排他制御を呼び出し側両方で明示することで意図を契約レベルで完結させる。
+    true
   );
 
   // セッションを選択して詳細画面に遷移
