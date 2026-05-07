@@ -156,6 +156,7 @@ interface UseSocketReturn {
   beaconLoadHistory: () => void;
   beaconClose: () => void;
   beaconClear: () => void;
+  beaconStopAndReset: () => void;
 
   // Browser sessions
   browserSessions: Map<string, BrowserSession>;
@@ -1208,6 +1209,19 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     setBeaconStreamText("");
   }, []);
 
+  // Beacon応答停止 + セッションリセット (進行中の query を abort する)
+  // 楽観的なローカル state クリアは行わない。サーバ側の closeSession() の
+  // catch/finally で必ず beacon:stream(done) と beacon:error が emit されるため
+  // それを受信して streaming state が解除される。先回りクリアは race を生む
+  // (停止直前まで in-flight だった chunk が遅れて届くと、空の streamText に
+  // chunk が積もり「止めたのに新しい応答が始まる」ように見える)。
+  // 切断時はそもそも UI 側でボタンを disabled にする想定 (isConnected を expose 済)。
+  const beaconStopAndReset = useCallback(() => {
+    const socket = socketRef.current;
+    if (!socket?.connected) return;
+    socket.emit("beacon:stop-and-reset");
+  }, []);
+
   // Copy buffer action
   const copyBuffer = useCallback(
     (sessionId: string): Promise<string | null> => {
@@ -1457,6 +1471,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     beaconLoadHistory,
     beaconClose,
     beaconClear,
+    beaconStopAndReset,
     // Browser sessions
     browserSessions,
     browserError,

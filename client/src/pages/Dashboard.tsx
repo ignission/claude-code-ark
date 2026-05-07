@@ -102,6 +102,7 @@ export default function Dashboard() {
     beaconSend,
     beaconLoadHistory,
     beaconClear,
+    beaconStopAndReset,
     sessionPreviews,
     sessionActivityTexts,
     gridSnapshots,
@@ -598,6 +599,8 @@ export default function Dashboard() {
           beaconStreamText={beaconStreamText}
           onBeaconSend={beaconSend}
           onBeaconClear={beaconClear}
+          onBeaconStopAndReset={beaconStopAndReset}
+          isSocketConnected={isConnected}
           onRequestUsage={requestUsage}
           usageRequesting={usageRequesting}
           usageProgress={usageProgress}
@@ -759,6 +762,8 @@ export default function Dashboard() {
               isStreaming={beaconStreaming}
               streamingText={beaconStreamText}
               onSendMessage={beaconSend}
+              onStopAndReset={beaconStopAndReset}
+              isConnected={isConnected}
               onClear={beaconClear}
               onRequestUsage={requestUsage}
               usageRequesting={usageRequesting}
