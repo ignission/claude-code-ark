@@ -70,9 +70,9 @@ test("モバイル: ボトムナビゲーションにセッション・Beaconタ
   // Beaconタブをクリック
   await beaconTab.click();
 
-  // クイックコマンドチップスが表示される
-  const progressChip = page.locator('button:has-text("進捗確認")');
-  await expect(progressChip).toBeVisible({ timeout: 5_000 });
+  // クイックコマンドチップス（Usage）が表示される
+  const usageChip = page.locator('button:has-text("Usage")');
+  await expect(usageChip).toBeVisible({ timeout: 5_000 });
 });
 
 // ---------------------------------------------------------------------------
@@ -100,8 +100,8 @@ test("モバイル: BeaconチャットUIの各要素が表示される", async (
   const sendButton = page.locator("form button[type='submit']");
   await expect(sendButton).toBeVisible();
 
-  // クイックコマンドチップスが全て表示される
-  const expectedChips = ["進捗確認"];
+  // クイックコマンドチップス（Usage）が表示される
+  const expectedChips = ["Usage"];
   for (const chipLabel of expectedChips) {
     const chip = page.locator(`button:has-text("${chipLabel}")`);
     await expect(chip).toBeVisible();

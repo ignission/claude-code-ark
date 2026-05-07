@@ -94,6 +94,16 @@ export function useTerminalLinkInjection(
 
           // URL拡張マップ: 折り返しで切れた1行目URL → 複数行結合後の完全URL
           const urlExtensionMap = new Map<string, string>();
+          // バッファ行番号 (1-indexed: link.range.start.y / bufferIdx+1 と整合) →
+          // その行に登録された完全URL候補リスト。WebLinksAddon の link.text が
+          // 当方の truncatedOnFirst と微妙に一致せず urlExtensionMap が
+          // miss するケース (regex差異・後置句読点ストリップ差異等) に備えて、
+          // URL が覆う各行に完全URLを登録しておく。
+          // 1:1 map ではなく candidates[] にすることで、同一行に複数URLがある
+          // 場合は曖昧として fail closed (フォールバック自体を無効化) できる。
+          // 安全弁: 候補が exactly 1 件 かつ rawUrl と origin が一致する
+          // path-extension のときだけ採用する (openUrl の判定参照)。
+          const urlCandidatesByBufferLine = new Map<number, string[]>();
 
           const isLoopbackUrl = (urlStr: string): boolean => {
             try {
@@ -118,9 +128,71 @@ export function useTerminalLinkInjection(
             return true;
           };
 
-          /** URL を親ウィンドウ経由で開く */
-          const openUrl = (rawUrl: string): void => {
-            const resolved = urlExtensionMap.get(rawUrl) || rawUrl;
+          /**
+           * URL 拡張候補が rawUrl の安全な「折り返し補完」かを検証する。
+           * 単純 startsWith では `https://trusted.example` に対して
+           * `https://trusted.example.evil.tld` や `...@evil.tld` でも通ってしまう
+           * (URL 境界を見ていないため)。URL parse して厳密に比較する:
+           *   - origin (scheme + host + port) が完全一致
+           *   - userinfo (username / password) が両者とも空 (= rawUrl からの補完で
+           *     資格情報が"後付け"されることを完全拒否)
+           *   - candidate.pathname が rawUrl.pathname の prefix で、かつ次の文字が
+           *     `/` (path segment 境界) または完全一致 (`/foo` → `/foobar` を弾く)
+           *   - search / hash は完全一致のみ許可 (`?token=1` を `?token=2` や
+           *     `?token=1&extra=evil` に差し替えるのを防ぐ。rawUrl が `?` を
+           *     持たない場合は candidate 側も持たないことが必須)
+           * のいずれも満たさなければ採用しない (fail closed)。
+           */
+          const isSafeUrlExtension = (
+            rawUrl: string,
+            candidate: string
+          ): boolean => {
+            if (candidate === rawUrl) return true;
+            try {
+              const a = new URL(rawUrl);
+              const b = new URL(candidate);
+              if (a.origin !== b.origin) return false;
+              // userinfo 拒否: 同一 origin でも認証情報の付与は別 URL とみなす
+              if (a.username || a.password || b.username || b.password) {
+                return false;
+              }
+              const aPath = a.pathname;
+              const bPath = b.pathname;
+              if (!bPath.startsWith(aPath)) return false;
+              if (bPath.length > aPath.length && bPath[aPath.length] !== "/") {
+                return false;
+              }
+              if (b.search !== a.search) return false;
+              if (b.hash !== a.hash) return false;
+              return true;
+            } catch {
+              return false;
+            }
+          };
+
+          /** URL を親ウィンドウ経由で開く
+           *
+           * 解決順:
+           * 1. urlExtensionMap (rawUrl exact match) — ホバー文字列がそのまま
+           *    完全URLに紐付く正規パス。同一行に複数URLがあっても干渉しない。
+           * 2. urlCandidatesByBufferLine (buffer 行ベース) — exact match が miss した時のみ
+           *    フォールバック。安全条件:
+           *      a. 候補が exactly 1 件 (同一行に複数URLがある行は曖昧として除外)
+           *      b. isSafeUrlExtension(rawUrl, candidate) で origin / path 検証 PASS
+           *    どちらか満たさなければ rawUrl のままにする (fail closed)。
+           */
+          const openUrl = (rawUrl: string, lineY?: number): void => {
+            const candidates =
+              typeof lineY === "number"
+                ? urlCandidatesByBufferLine.get(lineY)
+                : undefined;
+            const safeLineCandidate =
+              candidates?.length === 1 &&
+              isSafeUrlExtension(rawUrl, candidates[0])
+                ? candidates[0]
+                : undefined;
+            const resolved =
+              urlExtensionMap.get(rawUrl) || safeLineCandidate || rawUrl;
             if (!tryClaimOpen()) return;
             if (isLoopbackUrl(resolved)) {
               // localhost URL は postMessage 経由（リモートモードでは埋め込みブラウザに表示）
@@ -188,15 +260,24 @@ export function useTerminalLinkInjection(
           // _currentLink から URL を抽出して自前で1回だけ開く。
           const iframeDoc = iframeWindow.document;
 
-          const extractCurrentLinkUrl = (): string | null => {
+          const extractCurrentLink = (): {
+            text: string;
+            lineY: number | undefined;
+          } | null => {
             try {
               // biome-ignore lint/suspicious/noExplicitAny: xterm.js 内部 API
               const core = (term as any)._core;
               const linkifier =
                 core?.linkifier ?? core?._linkifier2 ?? core?.linkifier2;
               const currentLink = linkifier?._currentLink;
-              const text = currentLink?.link?.text;
-              if (typeof text === "string" && text.length > 0) return text;
+              const link = currentLink?.link;
+              const text = link?.text;
+              if (typeof text !== "string" || text.length === 0) return null;
+              const startY = link?.range?.start?.y;
+              return {
+                text,
+                lineY: typeof startY === "number" ? startY : undefined,
+              };
             } catch {
               // 内部構造変更時は無視
             }
@@ -210,15 +291,17 @@ export function useTerminalLinkInjection(
           const handleMouseUpIntercept = (e: Event): void => {
             // 左クリックのみ処理（右クリック・中クリックは通す）
             if (e instanceof MouseEvent && e.button !== 0) return;
-            const url = extractCurrentLinkUrl();
-            if (!url) return;
+            const current = extractCurrentLink();
+            if (!current) return;
+            const { text, lineY } = current;
             // ファイルパスリンクはxterm.jsのactivateに委譲（ark:open-file経由で処理）
-            if (!url.startsWith("http://") && !url.startsWith("https://"))
+            if (!text.startsWith("http://") && !text.startsWith("https://"))
               return;
             e.stopImmediatePropagation();
             e.preventDefault();
             // mouseup でのみ URL を開く（Linkifier2 と同じタイミング）
-            if (e.type === "mouseup") openUrl(url);
+            // lineY を渡して urlCandidatesByBufferLine による完全URL解決を試みる
+            if (e.type === "mouseup") openUrl(text, lineY);
           };
 
           iframeDoc.addEventListener("mouseup", handleMouseUpIntercept, {
@@ -377,6 +460,16 @@ export function useTerminalLinkInjection(
             const mySegment = segments.find(s => s.bufferIdx === bufferIdx);
             if (!mySegment) return [];
 
+            // 再スキャンする行の古いエントリを先に削除する。
+            // urlCandidatesByBufferLine は injectLinkProvider のクロージャ寿命中に
+            // 全行の候補を蓄積するため、ターミナルがスクロール / 出力で
+            // 同じバッファ行に別 URL が載ったとき、stale な候補が残ると
+            // openUrl で誤解決のリスクがある。今スキャンする segments の行は
+            // 再構築するので、登録前に必ず無効化しておく。
+            for (const seg of segments) {
+              urlCandidatesByBufferLine.delete(seg.bufferIdx + 1);
+            }
+
             type DetectedLink = {
               range: {
                 start: { x: number; y: number };
@@ -443,6 +536,21 @@ export function useTerminalLinkInjection(
                 if (truncatedOnFirst.length > 0 && truncatedOnFirst !== m.url) {
                   urlExtensionMap.set(truncatedOnFirst, m.url);
                 }
+                // URL が覆う各行に完全URLを candidates[] として登録
+                // (handleMouseUpIntercept の行番号フォールバック用)。
+                // 同一行に複数URLが登録された場合は openUrl で「候補が exactly 1 件」
+                // 判定により曖昧として除外される (fail closed)。
+                for (const seg of segments) {
+                  if (seg.startInJoined < m.end && seg.endInJoined > m.start) {
+                    const key = seg.bufferIdx + 1;
+                    const existing = urlCandidatesByBufferLine.get(key);
+                    if (existing) {
+                      if (!existing.includes(m.url)) existing.push(m.url);
+                    } else {
+                      urlCandidatesByBufferLine.set(key, [m.url]);
+                    }
+                  }
+                }
                 // 1行目は WebLinksAddon に委譲 (PC ホバー)。モバイルタップ
                 // (includeUrlStartLine=true) では WebLinksAddon が機能しないため自前で登録。
                 if (!includeUrlStartLine && startSeg.bufferIdx === bufferIdx) {
@@ -450,6 +558,16 @@ export function useTerminalLinkInjection(
                 }
               }
               pushVisibleLink(m.start, m.end, () => openUrl(m.url));
+            }
+
+            // urlCandidatesByBufferLine の上限 (= 200 行) を超えたら古い順に削除する。
+            // 1ループ内で urlMatches × seg ぶん追加するため、単発削除では
+            // size が増え続ける。while で詰めて確実に cap を維持する。
+            const URL_BY_BUFFER_LINE_LIMIT = 200;
+            while (urlCandidatesByBufferLine.size > URL_BY_BUFFER_LINE_LIMIT) {
+              const firstKey = urlCandidatesByBufferLine.keys().next().value;
+              if (firstKey === undefined) break;
+              urlCandidatesByBufferLine.delete(firstKey);
             }
 
             const inUrlRange = (idx: number): boolean =>
