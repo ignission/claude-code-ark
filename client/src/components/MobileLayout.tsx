@@ -98,6 +98,7 @@ interface MobileLayoutProps {
   beaconStreamText: string;
   onBeaconSend: (message: string) => void;
   onBeaconClear?: () => void;
+  onBeaconCancel?: () => void;
   // Usage取得（Linux + multiProfileSupported のみ）
   onRequestUsage?: () => void;
   usageRequesting?: boolean;
@@ -147,6 +148,7 @@ export function MobileLayout({
   beaconStreamText,
   onBeaconSend,
   onBeaconClear,
+  onBeaconCancel,
   onRequestUsage,
   usageRequesting,
   usageProgress,
@@ -380,6 +382,7 @@ export function MobileLayout({
           isStreaming={beaconStreaming}
           streamingText={beaconStreamText}
           onSendMessage={onBeaconSend}
+          onCancel={onBeaconCancel}
           onClear={onBeaconClear}
           onRequestUsage={onRequestUsage}
           usageRequesting={usageRequesting}

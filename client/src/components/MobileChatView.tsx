@@ -12,6 +12,7 @@ import {
   Loader2,
   Radar,
   Send,
+  Square,
   Terminal,
   Trash2,
 } from "lucide-react";
@@ -44,6 +45,8 @@ interface MobileChatViewProps {
   streamingText: string;
   /** メッセージ送信コールバック */
   onSendMessage: (message: string) => void;
+  /** 応答キャンセルコールバック（ストリーミング中の query を中断） */
+  onCancel?: () => void;
   /** 戻るボタンコールバック */
   onBack?: () => void;
   /** チャットクリアコールバック */
@@ -91,14 +94,7 @@ type MarkdownSegment =
 
 // --- クイックコマンド定義 ---
 
-const QUICK_COMMANDS: QuickCommand[] = [
-  { label: "進捗確認", message: "進捗確認" },
-  { label: "判断", message: "判断" },
-  { label: "タスク着手", message: "タスク着手" },
-  { label: "PR URL", message: "PR URL" },
-  { kind: "usage", label: "Usage" },
-  { kind: "mcp", label: "MCP" },
-];
+const QUICK_COMMANDS: QuickCommand[] = [{ kind: "usage", label: "Usage" }];
 
 // --- 簡易マークダウンパーサー ---
 
@@ -443,6 +439,7 @@ export function MobileChatView({
   isStreaming,
   streamingText,
   onSendMessage,
+  onCancel,
   onBack,
   onClear,
   onRequestUsage,
@@ -698,18 +695,32 @@ export function MobileChatView({
               className="w-full h-11 bg-input border border-border/50 rounded-xl px-4 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all disabled:opacity-50"
             />
           </div>
-          <Button
-            type="submit"
-            size="icon"
-            className="h-11 w-11 shrink-0 rounded-xl shadow-sm shadow-primary/20"
-            disabled={isInputDisabled || !inputValue.trim()}
-          >
-            {isStreaming ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
-            ) : (
-              <Send className="w-5 h-5" />
-            )}
-          </Button>
+          {isStreaming && onCancel ? (
+            <Button
+              type="button"
+              size="icon"
+              variant="destructive"
+              aria-label="応答をキャンセル"
+              className="h-11 w-11 shrink-0 rounded-xl shadow-sm shadow-destructive/20"
+              onClick={onCancel}
+            >
+              <Square className="w-4 h-4 fill-current" />
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              size="icon"
+              aria-label="メッセージ送信"
+              className="h-11 w-11 shrink-0 rounded-xl shadow-sm shadow-primary/20"
+              disabled={isInputDisabled || !inputValue.trim()}
+            >
+              {isStreaming ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <Send className="w-5 h-5" />
+              )}
+            </Button>
+          )}
         </div>
       </form>
     </div>

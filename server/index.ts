@@ -1757,6 +1757,13 @@ async function startServer() {
       beaconManager.closeSession();
     });
 
+    // Beacon応答キャンセル（進行中の query を abort する）
+    // closeSession は session を null にするため次の sendMessage は新規 session で開始される。
+    // 履歴 (DB / messages) は残るので、UI 上のチャット表示は維持される。
+    socket.on("beacon:cancel", () => {
+      beaconManager.closeSession();
+    });
+
     // Beacon履歴クリア（LLMコンテキスト・DB履歴もリセット）
     // 履歴は全接続クライアントで共有されるため、broadcastで他タブ・他端末も同期する
     socket.on("beacon:clear", () => {
