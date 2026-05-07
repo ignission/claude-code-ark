@@ -98,7 +98,10 @@ interface MobileLayoutProps {
   beaconStreamText: string;
   onBeaconSend: (message: string) => void;
   onBeaconClear?: () => void;
-  onBeaconCancel?: () => void;
+  /** 応答停止 + セッションリセット。required: 型で「停止不能」を防ぐ */
+  onBeaconStopAndReset: () => void;
+  /** Socket.IO 接続状態。停止ボタンを切断時に disabled にするために使う */
+  isSocketConnected: boolean;
   // Usage取得（Linux + multiProfileSupported のみ）
   onRequestUsage?: () => void;
   usageRequesting?: boolean;
@@ -148,7 +151,8 @@ export function MobileLayout({
   beaconStreamText,
   onBeaconSend,
   onBeaconClear,
-  onBeaconCancel,
+  onBeaconStopAndReset,
+  isSocketConnected,
   onRequestUsage,
   usageRequesting,
   usageProgress,
@@ -382,7 +386,8 @@ export function MobileLayout({
           isStreaming={beaconStreaming}
           streamingText={beaconStreamText}
           onSendMessage={onBeaconSend}
-          onCancel={onBeaconCancel}
+          onStopAndReset={onBeaconStopAndReset}
+          isConnected={isSocketConnected}
           onClear={onBeaconClear}
           onRequestUsage={onRequestUsage}
           usageRequesting={usageRequesting}

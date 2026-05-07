@@ -45,8 +45,17 @@ interface MobileChatViewProps {
   streamingText: string;
   /** メッセージ送信コールバック */
   onSendMessage: (message: string) => void;
-  /** 応答キャンセルコールバック（ストリーミング中の query を中断） */
-  onCancel?: () => void;
+  /**
+   * 応答停止コールバック（abort + セッションリセット）。
+   * required: 「isStreaming のときに止める手段が無い」状態を型レベルで防ぐ。
+   */
+  onStopAndReset: () => void;
+  /**
+   * Socket.IO 接続状態。停止ボタンの活殺判定に使う。
+   * 切断中は emit がサーバに届かないので、ボタンを disabled にしてユーザーに
+   * 「今は止められない」を視覚的に伝える (Assertive Programming: 失敗を黙らせない)。
+   */
+  isConnected: boolean;
   /** 戻るボタンコールバック */
   onBack?: () => void;
   /** チャットクリアコールバック */
@@ -439,7 +448,8 @@ export function MobileChatView({
   isStreaming,
   streamingText,
   onSendMessage,
-  onCancel,
+  onStopAndReset,
+  isConnected,
   onBack,
   onClear,
   onRequestUsage,
@@ -695,14 +705,22 @@ export function MobileChatView({
               className="w-full h-11 bg-input border border-border/50 rounded-xl px-4 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all disabled:opacity-50"
             />
           </div>
-          {isStreaming && onCancel ? (
+          {isStreaming ? (
             <Button
               type="button"
               size="icon"
               variant="destructive"
-              aria-label="応答をキャンセル"
+              aria-label={
+                isConnected
+                  ? "応答を停止 (セッションリセット)"
+                  : "サーバ未接続のため停止できません"
+              }
+              title={
+                isConnected ? undefined : "サーバ未接続のため停止できません"
+              }
               className="h-11 w-11 shrink-0 rounded-xl shadow-sm shadow-destructive/20"
-              onClick={onCancel}
+              onClick={onStopAndReset}
+              disabled={!isConnected}
             >
               <Square className="w-4 h-4 fill-current" />
             </Button>
@@ -714,11 +732,7 @@ export function MobileChatView({
               className="h-11 w-11 shrink-0 rounded-xl shadow-sm shadow-primary/20"
               disabled={isInputDisabled || !inputValue.trim()}
             >
-              {isStreaming ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <Send className="w-5 h-5" />
-              )}
+              <Send className="w-5 h-5" />
             </Button>
           )}
         </div>

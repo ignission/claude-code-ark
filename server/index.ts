@@ -1757,10 +1757,24 @@ async function startServer() {
       beaconManager.closeSession();
     });
 
-    // Beacon応答キャンセル（進行中の query を abort する）
-    // closeSession は session を null にするため次の sendMessage は新規 session で開始される。
-    // 履歴 (DB / messages) は残るので、UI 上のチャット表示は維持される。
-    socket.on("beacon:cancel", () => {
+    // Beacon応答停止 + セッションリセット (UI の停止ボタン)
+    //
+    // 名前で意図を明示: 単なる「キャンセル」ではなく、abort + session 破棄を伴う。
+    // SDK の AbortController が単発 (一度 abort すると同じ query を再開不可) のため
+    // 次の sendMessage は新規 session で起動し、LLM の multi-turn 中間状態は失われる。
+    // チャット履歴 (DB / messages) は残るので UI 上の見た目は連続するが、
+    // モデル側の文脈は仕切り直しになる。「応答が止まらない」よりは ましという判断。
+    //
+    // ガード: 進行中の session が無いときの誤送信は no-op にする。idle 状態で
+    // closeSession を呼んでもメソッド側の `if (!this.session) return;` で安全だが、
+    // ここで明示的に弾くことで「destructive 操作は条件成立時のみ受理」を契約として
+    // 表明する (Assertive Programming)。
+    //
+    // セキュリティ: payload なしで停止できるが、これは既存 beacon:close /
+    // beacon:clear と同じ trust model (Beacon は接続クライアント間で共有資源)。
+    // Cloudflare Tunnel + token 認証の後ろにある前提で、追加の所有者制御は持たない。
+    socket.on("beacon:stop-and-reset", () => {
+      if (!beaconManager.hasSession()) return;
       beaconManager.closeSession();
     });
 

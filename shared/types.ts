@@ -533,7 +533,13 @@ export interface ClientToServerEvents {
   "beacon:history": () => void;
   "beacon:close": () => void;
   "beacon:clear": () => void;
-  "beacon:cancel": () => void;
+  /**
+   * 進行中の query を abort し、内部 session を破棄する。
+   * 命名で「単に止めるだけではなくセッションリセットも伴う」ことを明示。
+   * (SDK の AbortController は単発のため abort 後は session 再構築が必須。
+   * その結果 LLM の multi-turn コンテキストは失われる。)
+   */
+  "beacon:stop-and-reset": () => void;
 
   // ファイルビューワー
   "file:read": (data: { sessionId: string; filePath: string }) => void;
