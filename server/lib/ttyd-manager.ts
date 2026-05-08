@@ -32,6 +32,12 @@ export class TtydManager extends EventEmitter {
 
   constructor(startPort = TTYD_PORT_START, maxPort = TTYD_PORT_END) {
     super();
+    // モジュール初期化時に上限値の不変条件を一度だけ検証する
+    if (!Number.isInteger(TTYD_MAX_CONNECTIONS) || TTYD_MAX_CONNECTIONS < 1) {
+      throw new Error(
+        `TTYD_MAX_CONNECTIONS must be an integer >= 1, got ${TTYD_MAX_CONNECTIONS}`
+      );
+    }
     this.MIN_PORT = startPort;
     this.nextPort = startPort;
     this.MAX_PORT = maxPort;
@@ -149,13 +155,6 @@ export class TtydManager extends EventEmitter {
     sessionId: string,
     tmuxSessionName: string
   ): Promise<TtydInstance> {
-    // 上限値の妥当性検証（将来 0 や負値が混入しても fail-fast させる）
-    if (!Number.isInteger(TTYD_MAX_CONNECTIONS) || TTYD_MAX_CONNECTIONS < 1) {
-      throw new Error(
-        `TTYD_MAX_CONNECTIONS must be an integer >= 1, got ${TTYD_MAX_CONNECTIONS}`
-      );
-    }
-
     const port = await this.findAvailablePort();
     const basePath = `/ttyd/${sessionId}`;
 
