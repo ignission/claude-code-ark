@@ -9,7 +9,7 @@ import { type ChildProcess, execSync, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import net from "node:net";
 import {
-  TTYD_MAX_CLIENTS,
+  TTYD_MAX_CONNECTIONS,
   TTYD_PORT_END,
   TTYD_PORT_START,
 } from "./constants.js";
@@ -149,6 +149,13 @@ export class TtydManager extends EventEmitter {
     sessionId: string,
     tmuxSessionName: string
   ): Promise<TtydInstance> {
+    // 上限値の妥当性検証（将来 0 や負値が混入しても fail-fast させる）
+    if (!Number.isInteger(TTYD_MAX_CONNECTIONS) || TTYD_MAX_CONNECTIONS < 1) {
+      throw new Error(
+        `TTYD_MAX_CONNECTIONS must be an integer >= 1, got ${TTYD_MAX_CONNECTIONS}`
+      );
+    }
+
     const port = await this.findAvailablePort();
     const basePath = `/ttyd/${sessionId}`;
 
@@ -166,7 +173,7 @@ export class TtydManager extends EventEmitter {
         "-p",
         port.toString(),
         "-m",
-        TTYD_MAX_CLIENTS.toString(),
+        TTYD_MAX_CONNECTIONS.toString(),
         "-i",
         // ループバックインターフェース名はOSによって異なる
         // macOS: lo0, Linux: lo
@@ -232,7 +239,7 @@ export class TtydManager extends EventEmitter {
     this.emit("instance:started", instance);
 
     console.log(
-      `[TtydManager] Started ttyd for ${tmuxSessionName} on port ${port}`
+      `[TtydManager] Started ttyd for ${tmuxSessionName} on port ${port} (max connections: ${TTYD_MAX_CONNECTIONS})`
     );
 
     // プロセス終了時の処理

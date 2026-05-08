@@ -12,9 +12,12 @@ export const TTYD_PORT_END = 7780;
  *      が累積すると ttyd が epoll_wait を空回りして %sys CPU を浴び続ける。
  *      `-m` で接続数に上限を設けて累積を頭打ちにする。
  * 想定: PC + iPhone + 別タブ + リモートトンネル越し = 最大4接続を想定し、
- *      余裕分を1足して5。
+ *      余裕分を1足して5。1ユーザが複数接続を消費しうるため "client" ではなく
+ *      "connection" の語を採用。
+ * 注: これは症状の天井化であり stale 接続自体は残る。idle 接続のクリーンアップ
+ *     や接続上限到達時の退避策はフォローアップ Issue で対応する。
  */
-export const TTYD_MAX_CLIENTS = 5;
+export const TTYD_MAX_CONNECTIONS = 5;
 
 /**
  * VNCポート範囲の開始ポート（x11vnc用）
