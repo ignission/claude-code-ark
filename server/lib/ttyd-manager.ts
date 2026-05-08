@@ -9,7 +9,7 @@ import { type ChildProcess, execSync, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import net from "node:net";
 import {
-  TTYD_MAX_CONNECTIONS,
+  TTYD_MAX_CONNECTIONS_PER_INSTANCE,
   TTYD_PORT_END,
   TTYD_PORT_START,
 } from "./constants.js";
@@ -32,10 +32,14 @@ export class TtydManager extends EventEmitter {
 
   constructor(startPort = TTYD_PORT_START, maxPort = TTYD_PORT_END) {
     super();
-    // モジュール初期化時に上限値の不変条件を一度だけ検証する
-    if (!Number.isInteger(TTYD_MAX_CONNECTIONS) || TTYD_MAX_CONNECTIONS < 1) {
+    // TtydManager のコンストラクタ実行時に上限値の不変条件を一度だけ検証する
+    // (TtydManager はシングルトン export なので実質的に起動時 1 回)
+    if (
+      !Number.isInteger(TTYD_MAX_CONNECTIONS_PER_INSTANCE) ||
+      TTYD_MAX_CONNECTIONS_PER_INSTANCE < 1
+    ) {
       throw new Error(
-        `TTYD_MAX_CONNECTIONS must be an integer >= 1, got ${TTYD_MAX_CONNECTIONS}`
+        `TTYD_MAX_CONNECTIONS_PER_INSTANCE must be an integer >= 1, got ${TTYD_MAX_CONNECTIONS_PER_INSTANCE}`
       );
     }
     this.MIN_PORT = startPort;
@@ -172,7 +176,7 @@ export class TtydManager extends EventEmitter {
         "-p",
         port.toString(),
         "-m",
-        TTYD_MAX_CONNECTIONS.toString(),
+        TTYD_MAX_CONNECTIONS_PER_INSTANCE.toString(),
         "-i",
         // ループバックインターフェース名はOSによって異なる
         // macOS: lo0, Linux: lo
@@ -238,7 +242,7 @@ export class TtydManager extends EventEmitter {
     this.emit("instance:started", instance);
 
     console.log(
-      `[TtydManager] Started ttyd for ${tmuxSessionName} on port ${port} (max connections: ${TTYD_MAX_CONNECTIONS})`
+      `[TtydManager] Started ttyd for ${tmuxSessionName} on port ${port} (max connections: ${TTYD_MAX_CONNECTIONS_PER_INSTANCE})`
     );
 
     // プロセス終了時の処理
