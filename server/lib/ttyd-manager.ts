@@ -8,7 +8,11 @@
 import { type ChildProcess, execSync, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import net from "node:net";
-import { TTYD_PORT_END, TTYD_PORT_START } from "./constants.js";
+import {
+  TTYD_MAX_CLIENTS,
+  TTYD_PORT_END,
+  TTYD_PORT_START,
+} from "./constants.js";
 
 export interface TtydInstance {
   sessionId: string;
@@ -151,6 +155,7 @@ export class TtydManager extends EventEmitter {
     // ttydオプション:
     // -W: クライアント入力を許可
     // -p: ポート番号
+    // -m: 同時接続数の上限（stale接続の累積によるCPU浴びを防ぐ。constants.ts参照）
     // --base-path: WebSocket接続のベースパス（プロキシ経由用）
     // -t: ターミナルオプション（テーマ設定）
     // -i: バインドインターフェース（lo0でローカルのみ）
@@ -160,6 +165,8 @@ export class TtydManager extends EventEmitter {
         "-W", // Writable
         "-p",
         port.toString(),
+        "-m",
+        TTYD_MAX_CLIENTS.toString(),
         "-i",
         // ループバックインターフェース名はOSによって異なる
         // macOS: lo0, Linux: lo
