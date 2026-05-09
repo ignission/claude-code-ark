@@ -2,18 +2,24 @@ import { type RefObject, useEffect } from "react";
 
 /**
  * 端末出力由来のファイルパスを `ark:open-file` で送信して良いかを判定する。
- * サーバ側 `resolveSafePath` (server/lib/file-manager.ts) のポリシーに合わせ、
- * クライアント側でも defense in depth として弾く。
+ * サーバ側 2 系統のポリシーと整合させる (defense in depth):
  *
- * - `..` を含むパス (パストラバーサル) は拒否
- * - 絶対パスは `/tmp/` または `/private/tmp/` 配下のみ許可
- *   (macOS では realpath が `/tmp/...` を `/private/tmp/...` に解決するため両方対応)
+ * - 非HTML 絶対パス: `socket.on("file:read")` → `resolveSafePath` が
+ *   `/tmp/` (macOS は realpath で `/private/tmp/`) 配下のみ許可
+ * - HTML 絶対パス: `/api/html-file` → `validateHtmlPath` は worktree 制限なし
+ *   (絶対パス + `..` なし + `.html/.htm` のみチェック)。クライアントも
+ *   useViewerTabs.ts で HTML 絶対パスは iframe 描画にルーティングする
  * - 相対パスは許可 (サーバ側で worktree 配下に解決される)
+ * - `..` を含むパス (パストラバーサル) は常に拒否
  */
 function isAllowedFilePath(filePath: string): boolean {
   if (filePath.includes("..")) return false;
   if (filePath.startsWith("/")) {
-    return filePath.startsWith("/tmp/") || filePath.startsWith("/private/tmp/");
+    if (filePath.startsWith("/tmp/") || filePath.startsWith("/private/tmp/")) {
+      return true;
+    }
+    // HTML 絶対パスは /api/html-file 経由で iframe 表示するため許可
+    return /\.html?$/i.test(filePath);
   }
   return true;
 }

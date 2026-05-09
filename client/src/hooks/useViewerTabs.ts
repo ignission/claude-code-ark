@@ -67,7 +67,14 @@ export function useViewerTabs(
 
   const openFileTab = useCallback(
     (sessionId: string, filePath: string, targetLine?: number | null) => {
-      let newActiveIndex: number | null = null;
+      // 注意: 以前は setSessionTabs の updater 内で closure 変数 newActiveIndex を
+      // 代入し、updater 外で setSessionActiveTab を呼んでいた。React の useState
+      // updater は eager bailout 最適化が効くときだけ同期実行され、保留 update が
+      // ある等の条件で render phase まで遅延されると closure 変数が null のまま
+      // 条件分岐に落ちて active tab が切り替わらない (= タブは追加されるが遷移しない)
+      // 回帰が発生する。両方の setState を同じ updater 内に閉じ込めることで
+      // closure timing 依存を排除する。strict mode の二重実行でも同じ idx を
+      // 書き込むだけで idempotent。
       const isHtml = /\.html?$/i.test(filePath) && filePath.startsWith("/");
       setSessionTabs(prev => {
         const tabs = [
@@ -75,13 +82,16 @@ export function useViewerTabs(
             { type: "terminal" as const, id: "terminal" },
           ]),
         ];
+        const setActive = (idx: number) => {
+          setSessionActiveTab(p => ({ ...p, [sessionId]: idx }));
+        };
         // HTMLタブ: filePathで既存タブを検索
         if (isHtml) {
           const existing = tabs.findIndex(
             t => t.type === "html" && t.filePath === filePath
           );
           if (existing >= 0) {
-            newActiveIndex = existing;
+            setActive(existing);
             return { ...prev, [sessionId]: tabs };
           }
           tabs.push({
@@ -89,7 +99,7 @@ export function useViewerTabs(
             id: `html-${Date.now()}`,
             filePath,
           });
-          newActiveIndex = tabs.length - 1;
+          setActive(tabs.length - 1);
           return { ...prev, [sessionId]: tabs };
         }
         // ファイルタブ: 既存のロジック
@@ -101,7 +111,7 @@ export function useViewerTabs(
           if (tab.type === "file") {
             tabs[existing] = { ...tab, targetLine };
           }
-          newActiveIndex = existing;
+          setActive(existing);
           return { ...prev, [sessionId]: tabs };
         }
         tabs.push({
@@ -113,13 +123,9 @@ export function useViewerTabs(
           size: 0,
           targetLine,
         });
-        newActiveIndex = tabs.length - 1;
+        setActive(tabs.length - 1);
         return { ...prev, [sessionId]: tabs };
       });
-      if (newActiveIndex !== null) {
-        const idx = newActiveIndex;
-        setSessionActiveTab(p => ({ ...p, [sessionId]: idx }));
-      }
     },
     []
   );
