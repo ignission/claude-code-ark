@@ -392,8 +392,21 @@ export async function startServer(
   // ===== オプション展開 =====
   // CLI から呼ばれた場合は cli.ts で argv → options に変換済み。
   // Electron 等の埋め込み起動からは TS の型経由で直接渡される。
-  const enableRemote = options.enableRemote ?? false;
-  const enableQuick = options.enableQuick ?? false;
+  //
+  // F4 (決定事項 #12): Cloudflare Tunnel 機能は MVP スコープ外。
+  // `ARK_FEATURE_TUNNEL === "false"` のとき以下を全て disabled にする:
+  //   - `--quick` / `--remote` 起動時の tunnel 自動起動
+  //   - `tunnel:start` / `tunnel:stop` Socket.IO イベント
+  //   - サーバー起動時の tunnel 自動復旧
+  // それ以外 (unset / "true" / 任意値) は enabled (後方互換)。
+  const tunnelFeatureEnabled = process.env.ARK_FEATURE_TUNNEL !== "false";
+  if (!tunnelFeatureEnabled) {
+    console.log(
+      "[Feature] ARK_FEATURE_TUNNEL=false: Cloudflare Tunnel disabled"
+    );
+  }
+  const enableRemote = tunnelFeatureEnabled && (options.enableRemote ?? false);
+  const enableQuick = tunnelFeatureEnabled && (options.enableQuick ?? false);
   const skipPermissions = options.skipPermissions ?? false;
   const publicDomain = options.publicDomain;
   const allowedRepos = options.allowedRepos ?? [];
@@ -1584,50 +1597,60 @@ export async function startServer(
     });
 
     // ===== Tunnel Commands =====
+    // F4: ARK_FEATURE_TUNNEL=false の場合は tunnel:start/stop ハンドラを
+    // 登録しない (no-op)。クライアント側は tunnel:status で active=false を
+    // 受け取って UI を非表示にする想定。
 
-    // トンネル起動
-    socket.on("tunnel:start", async (data?: { port?: number }) => {
-      const targetPort = data?.port ?? port; // デフォルトはサーバーポート
+    if (tunnelFeatureEnabled) {
+      // トンネル起動
+      socket.on("tunnel:start", async (data?: { port?: number }) => {
+        const targetPort = data?.port ?? port; // デフォルトはサーバーポート
 
-      if (activeTunnel) {
-        // 既にアクティブなら現在の情報を返す
-        socket.emit("tunnel:status", {
-          active: true,
-          url: tunnelUrl ?? undefined,
-          token: tunnelToken ?? undefined,
-        });
-        return;
-      }
+        if (activeTunnel) {
+          // 既にアクティブなら現在の情報を返す
+          socket.emit("tunnel:status", {
+            active: true,
+            url: tunnelUrl ?? undefined,
+            token: tunnelToken ?? undefined,
+          });
+          return;
+        }
 
-      try {
-        await startQuickTunnelShared(targetPort);
-      } catch (error) {
-        socket.emit("tunnel:error", { message: getErrorMessage(error) });
-      }
-    });
+        try {
+          await startQuickTunnelShared(targetPort);
+        } catch (error) {
+          socket.emit("tunnel:error", { message: getErrorMessage(error) });
+        }
+      });
 
-    // トンネル停止
-    socket.on("tunnel:stop", () => {
-      if (activeTunnel) {
-        activeTunnel.stop();
-        activeTunnel = null;
-        tunnelUrl = null;
-        tunnelToken = null;
-        authManager.disable();
-        removeTunnelState();
-        io.emit("tunnel:stopped");
-      }
-    });
+      // トンネル停止
+      socket.on("tunnel:stop", () => {
+        if (activeTunnel) {
+          activeTunnel.stop();
+          activeTunnel = null;
+          tunnelUrl = null;
+          tunnelToken = null;
+          authManager.disable();
+          removeTunnelState();
+          io.emit("tunnel:stopped");
+        }
+      });
+    }
 
     // 新しい接続時に現在のトンネル状態を送信
-    const tunnelStatus = {
-      active: !!activeTunnel,
-      url: tunnelUrl ?? undefined,
-      token: tunnelToken ?? undefined,
-    };
+    // F4: 機能 disable 時は常に active=false を返す (UI 側で remote access の
+    // ボタンが非表示になる)。
+    const tunnelStatus = tunnelFeatureEnabled
+      ? {
+          active: !!activeTunnel,
+          url: tunnelUrl ?? undefined,
+          token: tunnelToken ?? undefined,
+        }
+      : { active: false };
     console.log(`[Tunnel] Sending status to ${socket.id}:`, {
       active: tunnelStatus.active,
       hasUrl: !!tunnelStatus.url,
+      featureEnabled: tunnelFeatureEnabled,
     });
     socket.emit("tunnel:status", tunnelStatus);
 
@@ -2837,7 +2860,12 @@ export async function startServer(
   // enableQuick が既にトンネルを起動している場合はスキップ
   // ephemeral port 環境 (Electron) では port が毎回変わるため、
   // disableTunnelAutoRecovery=true で自動復旧自体をスキップする。
-  if (!activeTunnel && !options.disableTunnelAutoRecovery) {
+  // F4: ARK_FEATURE_TUNNEL=false でも skip (機能 disable)。
+  if (
+    tunnelFeatureEnabled &&
+    !activeTunnel &&
+    !options.disableTunnelAutoRecovery
+  ) {
     const savedState = loadTunnelState();
     if (savedState) {
       console.log(

@@ -89,6 +89,12 @@ function configureAppPaths(): void {
   if (!process.env.ARK_LOGS_DIR) {
     process.env.ARK_LOGS_DIR = app.getPath("logs");
   }
+  // F4 (決定事項 #12): Cloudflare Tunnel 機能を MVP スコープ外に。
+  // `.app` 版ではリモートアクセス機能を無効化する。
+  // 既に環境変数が set されている (例: 開発時に明示的に "true" にしたい) 場合は尊重。
+  if (!process.env.ARK_FEATURE_TUNNEL) {
+    process.env.ARK_FEATURE_TUNNEL = "false";
+  }
 
   // electron-log の書き出し先を ARK_LOGS_DIR (override or Electron default) に揃える。
   // v5 系の resolvePathFn signature を使う。
