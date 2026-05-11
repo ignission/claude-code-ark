@@ -2,7 +2,8 @@
  * Ark Desktop - Electron メインプロセス
  *
  * `.app` 起動時に空きポートを確保し、`@ark/server` を同一プロセスで起動して
- * BrowserWindow に UI を表示する。Phase 2 の最小実装。
+ * BrowserWindow に UI を表示する。Phase 3 でアプリメニュー / Tray / Dock /
+ * macOS Application Support 配下へのデータパス移行を追加。
  *
  * 動作モード:
  *   - dev (ARK_DEV=1): サーバーを bootstrap で起動せず、Vite dev server
@@ -11,19 +12,30 @@
  *     hardcode されているため、別途 `pnpm dev:server` を 4001 で起動する前提。
  *   - prod: 空きポートで `@ark/server` を埋め込み起動し、同 URL の UI を読み込む。
  *
+ * データパス:
+ *   - `app.setName("Ark")` を `app.whenReady()` 前に呼んで userData パスを
+ *     `~/Library/Application Support/Ark/` に確定。
+ *   - `process.env.ARK_DATA_DIR = app.getPath("userData")` を設定し、
+ *     `@ark/server` 側の `paths.ts:getDataDir()` がそれを参照する。
+ *   - これで F2 [P1-2]（Finder 起動 .app で `process.cwd()` が "/" になり書き込み
+ *     不可になる問題）が解消される。
+ *
+ * ライフサイクル:
+ *   - ウィンドウクローズ → メニューバー (Tray) からの復帰のため hide のみ
+ *   - 明示的な Quit (メニュー / Tray / Cmd+Q) のみで `before-quit` 経由で停止
+ *
  * フェーズ別 TODO:
- *   - F3 macOS 統合: app.dock / Tray / `app.getPath('userData')` を dataDir
- *     としてサーバーに渡す。**現状 startServer は process.cwd() ベースで
- *     SQLite/PID ファイルを作成するため、Finder からの .app 起動では cwd が
- *     書き込み不可になり起動失敗する**。F3 で `app.getPath("userData")` を
- *     dataDir として注入することで解消する。
  *   - F4 tmux/ttyd 同梱: extraResources の bin/ パスを binPaths として渡す
+ *   - F4 PORT 安定化: `<userData>/server-port.json` で前回ポートを再利用
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ServerHandle, startServer } from "@ark/server";
-import { app, BrowserWindow } from "electron";
+import log from "electron-log";
+import { app, BrowserWindow, Menu } from "electron";
 import { getAvailablePort } from "./getAvailablePort.js";
+import { buildAppMenu } from "./menu.js";
+import { createTray, destroyTray } from "./tray.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,11 +48,58 @@ const isDev = process.env.ARK_DEV === "1";
 
 let serverHandle: ServerHandle | null = null;
 let mainWindow: BrowserWindow | null = null;
+/** before-quit → quit の流れか、close でのウィンドウ非表示かを区別するフラグ */
+let isQuitting = false;
+
+/**
+ * `app.whenReady()` を待たずに有効な初期化処理。
+ *
+ * - `app.setName("Ark")`: `app.getPath("userData")` の末尾を `Ark/` に確定。
+ *   これは `app.getPath` が呼ばれるより前に行う必要がある。
+ * - `ARK_DATA_DIR` / `ARK_LOGS_DIR`: `@ark/server` が `paths.ts` 経由でこの
+ *   環境変数を参照するため、`startServer()` 呼び出しより前に必ず設定する。
+ */
+function configureAppPaths(): void {
+  app.setName("Ark");
+  // app.getPath は Electron の sync API。ready 前から userData / logs は有効。
+  process.env.ARK_DATA_DIR = app.getPath("userData");
+  process.env.ARK_LOGS_DIR = app.getPath("logs");
+
+  // electron-log の書き出し先を macOS 標準ロケーションに揃える。
+  // v5 系の resolvePathFn signature を使う。
+  log.transports.file.resolvePathFn = () =>
+    path.join(app.getPath("logs"), "main.log");
+  log.info("[Ark Desktop] configureAppPaths", {
+    userData: process.env.ARK_DATA_DIR,
+    logs: process.env.ARK_LOGS_DIR,
+    platform: process.platform,
+  });
+}
+
+/**
+ * メインウィンドウへの参照を外部 (tray.ts など) から取得するためのアクセサ。
+ * ウィンドウ未生成 / 破棄済みの場合は再構築する。
+ */
+export function showMainWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+  // ウィンドウが破棄されている場合は再生成。
+  // serverHandle が無い (dev mode / 未起動) ケースでは dev 用 4001 で開く。
+  const port = serverHandle?.port ?? 4001;
+  mainWindow = createWindow(port);
+}
 
 /**
  * BrowserWindow を生成し、UI をロードする。
  * dev: Vite が `http://localhost:4000` で配信する index.html を読み込む
  * prod: 同梱サーバーがリッスンする `http://127.0.0.1:<port>/` を読み込む
+ *
+ * クローズボタンは「Tray 常駐で hide のみ」とし、`before-quit` セットの
+ * `isQuitting` が立った時のみ実際に終了させる。
  */
 function createWindow(port: number): BrowserWindow {
   const win = new BrowserWindow({
@@ -55,6 +114,14 @@ function createWindow(port: number): BrowserWindow {
 
   const url = isDev ? "http://localhost:4000/" : `http://127.0.0.1:${port}/`;
   void win.loadURL(url);
+
+  win.on("close", event => {
+    // Quit 経路でなければ閉じずに hide。Tray から復帰可能。
+    if (!isQuitting) {
+      event.preventDefault();
+      win.hide();
+    }
+  });
 
   win.on("closed", () => {
     if (mainWindow === win) {
@@ -87,6 +154,22 @@ function resolveWebStaticDir(): string | undefined {
 }
 
 async function bootstrap(): Promise<void> {
+  // アプリメニュー / Dock メニュー / Tray を ready 後に組み立てる。
+  Menu.setApplicationMenu(
+    buildAppMenu({ showMainWindow, quit: () => app.quit() })
+  );
+
+  if (process.platform === "darwin" && app.dock) {
+    app.dock.setMenu(
+      Menu.buildFromTemplate([
+        { label: "Open Ark", click: () => showMainWindow() },
+      ])
+    );
+  }
+
+  // Tray は globalref しないと GC で消えるため tray.ts 側で module-level に保持。
+  createTray({ showMainWindow, quit: () => app.quit() });
+
   if (isDev) {
     // dev mode: 別途 `pnpm dev:server` が 4001 で起動している前提。
     // useSocket.ts の dev 分岐が `http://localhost:4001` に hardcode で
@@ -106,36 +189,42 @@ async function bootstrap(): Promise<void> {
     // 存在しない port を指してリモートアクセスが切れる。
     // よって auto-recovery 自体を無効化する。
     disableTunnelAutoRecovery: true,
-    // F3/F4 で dataDir / binPaths を渡す
+    // F4 で binPaths を渡す
   });
-  // NODE_ENV=production にしていないため、index.ts 側の旧パス fallback は
-  // 走らない。`isDev=false` で Vite を経由しない場合は webStaticDir を渡す
-  // 必要があるが、Electron 起動経路はすべてここで明示しているので OK。
+  log.info("[Ark Desktop] server started", { port: serverHandle.port });
 
   mainWindow = createWindow(serverHandle.port);
 }
+
+// `app.whenReady()` 前に呼ぶ必要のあるパス系初期化を即時実行。
+configureAppPaths();
 
 app
   .whenReady()
   .then(bootstrap)
   .catch(error => {
+    log.error("[Ark Desktop] Failed to bootstrap:", error);
     console.error("[Ark Desktop] Failed to bootstrap:", error);
     app.quit();
   });
 
-// macOS の慣習 (Dock に残す) はフェーズ 3 で実装する。
-// 現状は全ウィンドウ閉鎖でアプリ終了。
+// macOS では Dock / Tray から復帰できるよう、全ウィンドウ閉鎖でも quit しない。
+// その他プラットフォームは従来通り。
 app.on("window-all-closed", () => {
-  app.quit();
-});
-
-app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0 && serverHandle) {
-    mainWindow = createWindow(serverHandle.port);
+  if (process.platform !== "darwin") {
+    app.quit();
   }
 });
 
+app.on("activate", () => {
+  // Dock アイコンクリック等での復帰。
+  showMainWindow();
+});
+
 app.on("before-quit", async event => {
+  isQuitting = true;
+  destroyTray();
+
   // 既に停止済みなら何もしない。stop() は idempotent。
   if (!serverHandle) return;
   // stop は非同期だが before-quit は同期前提のため、event.preventDefault()
@@ -146,6 +235,7 @@ app.on("before-quit", async event => {
   try {
     await handle.stop();
   } catch (error) {
+    log.error("[Ark Desktop] Failed to stop server:", error);
     console.error("[Ark Desktop] Failed to stop server:", error);
   }
   app.quit();
