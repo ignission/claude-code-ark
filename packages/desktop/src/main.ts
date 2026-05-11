@@ -106,6 +106,9 @@ function configureAppPaths(): void {
  * ウィンドウ未生成 / 破棄済みの場合は再構築する。
  */
 export function showMainWindow(): void {
+  // bootstrap 未完了時は tray/Dock/menu からの呼び出しでも空ウィンドウを開かない。
+  // bootstrap が完了して createWindow が走るのを待つ (Electron の activate と同じガード)。
+  if (!bootstrapped) return;
   if (mainWindow && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
