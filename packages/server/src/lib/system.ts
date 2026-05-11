@@ -18,6 +18,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { getBundledBinDir } from "./paths.js";
 
 /**
  * `<baseDir>/<version>/<suffix>` の形式で claude が存在するかを走査する。
@@ -210,6 +211,8 @@ export function checkClaudeCommandExists(): boolean {
 
 /**
  * `tmux` コマンドの絶対パスを解決する。利用不可なら null。
+ * 0. `getBundledBinDir()` 配下の `tmux` を最優先で確認
+ *    （Electron packaged アプリでは `.app/Contents/Resources/bin/tmux` を使う）
  * 1. `which tmux` (PATH チェック)
  * 2. process.env.PATH を分解して各 dir で確認
  *    (pm2 等で which が機能しない / login PATH と異なる場合をカバー)
@@ -219,6 +222,17 @@ export function checkClaudeCommandExists(): boolean {
  * 含まれていない環境でも spawnSync が ENOENT にならない。
  */
 export function resolveTmuxPath(): string | null {
+  // 0. 同梱バイナリ優先 (F4: Electron packaged 環境向け)
+  const bundledDir = getBundledBinDir();
+  if (bundledDir) {
+    const bundled = path.join(bundledDir, "tmux");
+    try {
+      if (existsSync(bundled)) return bundled;
+    } catch {
+      // ignore: 通常の解決ロジックにフォールバック
+    }
+  }
+
   try {
     const r = spawnSync("which", ["tmux"], {
       stdio: "pipe",

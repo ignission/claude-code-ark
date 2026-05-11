@@ -7,12 +7,40 @@
 
 import { type ChildProcess, execSync, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
 import net from "node:net";
+import path from "node:path";
 import {
   TTYD_MAX_CONNECTIONS_PER_INSTANCE,
   TTYD_PORT_END,
   TTYD_PORT_START,
 } from "./constants.js";
+import { getBundledBinDir } from "./paths.js";
+
+/**
+ * ttyd の実体パスを解決する。
+ *
+ * 優先順:
+ *   1. 環境変数 `ARK_TTYD_PATH`（テスト・開発で差し替えやすくする）
+ *   2. `getBundledBinDir()/ttyd`（Electron packaged: `.app/Contents/Resources/bin/ttyd`）
+ *   3. "ttyd" 文字列 (システム PATH に依存)
+ *
+ * spawn が ENOENT になるかどうかは呼び出し側が起動時に検出する。
+ */
+function resolveTtydPath(): string {
+  const override = process.env.ARK_TTYD_PATH;
+  if (override) return override;
+  const bundledDir = getBundledBinDir();
+  if (bundledDir) {
+    const bundled = path.join(bundledDir, "ttyd");
+    try {
+      if (existsSync(bundled)) return bundled;
+    } catch {
+      // ignore: fallback to PATH
+    }
+  }
+  return "ttyd";
+}
 
 export interface TtydInstance {
   sessionId: string;
@@ -50,8 +78,31 @@ export class TtydManager extends EventEmitter {
 
   /**
    * ttydがインストールされているか確認
+   *
+   * F4: 同梱版 ttyd（getBundledBinDir）が存在すればそれを優先し、
+   * which が空でも warning を抑制する。Electron packaged 環境では
+   * システム PATH に ttyd が無くても `Resources/bin/ttyd` で動く。
    */
   private checkTtydInstalled(): void {
+    // 1. ARK_TTYD_PATH override
+    const override = process.env.ARK_TTYD_PATH;
+    if (override) {
+      try {
+        if (existsSync(override)) return;
+      } catch {
+        // ignore: fall back to other checks
+      }
+    }
+    // 2. 同梱版 (Electron packaged)
+    const bundledDir = getBundledBinDir();
+    if (bundledDir) {
+      try {
+        if (existsSync(path.join(bundledDir, "ttyd"))) return;
+      } catch {
+        // ignore
+      }
+    }
+    // 3. システム PATH
     try {
       execSync("which ttyd", { stdio: "pipe" });
     } catch {
@@ -169,8 +220,12 @@ export class TtydManager extends EventEmitter {
     // --base-path: WebSocket接続のベースパス（プロキシ経由用）
     // -t: ターミナルオプション（テーマ設定）
     // -i: バインドインターフェース（lo0でローカルのみ）
+    //
+    // F4: 同梱版 ttyd 優先 (Electron packaged: .app/Contents/Resources/bin/ttyd)。
+    // resolveTtydPath() が string を返すので spawn に絶対パス / "ttyd" のいずれかが渡る。
+    const resolvedBin = resolveTtydPath();
     const ttydProcess = spawn(
-      "ttyd",
+      resolvedBin,
       [
         "-W", // Writable
         "-p",

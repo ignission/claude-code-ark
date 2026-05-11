@@ -55,10 +55,31 @@ export function getUploadsDir(): string {
 /**
  * Electron 環境で同梱バイナリ（tmux / ttyd 等）の配置ディレクトリ。
  *
- * F4 で `.app/Contents/Resources/bin` を `process.resourcesPath` 経由で返す実装に置き換える。
- * Phase 3 ではまだ同梱していないため常に null を返し、呼び出し側はシステム PATH に
- * フォールバックする。
+ * F4 で実装: Electron packaged 環境では `process.resourcesPath` が
+ * `.app/Contents/Resources` を指すため、`Resources/bin` を返す。CLI / PM2 等の
+ * 通常起動（process.resourcesPath が未定義）では null を返し、呼び出し側は
+ * システム PATH にフォールバックする。
+ *
+ * 加えて、テスト/開発で同梱バイナリパスを差し替えたい場合のため
+ * 環境変数 `ARK_BUNDLED_BIN_DIR` でも上書き可能とする（指定があれば最優先）。
+ *
+ * 注意: Electron の `process.resourcesPath` は packaged アプリでのみ有効。
+ * `electron .` のような開発実行や、Electron 以外の Node プロセスでは
+ * `process.resourcesPath` 自体は string として空文字または親プロセスから
+ * 引き継がれた値を持つことがあるため、Electron であることを `process.versions.electron`
+ * で同時に検証する。
  */
 export function getBundledBinDir(): string | null {
+  const override = process.env.ARK_BUNDLED_BIN_DIR;
+  if (override) return override;
+
+  // Electron 環境判定: `process.versions.electron` が存在し、かつ
+  // `process.resourcesPath` が有効な文字列であれば packaged Electron とみなす。
+  const isElectron = Boolean(process.versions?.electron);
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
+    .resourcesPath;
+  if (isElectron && resourcesPath && typeof resourcesPath === "string") {
+    return path.join(resourcesPath, "bin");
+  }
   return null;
 }
