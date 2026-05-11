@@ -5,9 +5,9 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "dev:remote": "tsx watch src/index.ts --remote",
-    "dev:quick": "tsx watch src/index.ts --quick",
+    "dev": "NODE_OPTIONS=\"--conditions=development\" tsx watch src/index.ts",
+    "dev:remote": "NODE_OPTIONS=\"--conditions=development\" tsx watch src/index.ts --remote",
+    "dev:quick": "NODE_OPTIONS=\"--conditions=development\" tsx watch src/index.ts --quick",
     "build": "esbuild src/index.ts src/lib/*.ts src/lib/mcp-oauth/*.ts --platform=node --packages=external --bundle --format=esm --outdir=dist --out-extension:.js=.js",
     "start": "NODE_ENV=production node dist/index.js",
     "start:remote": "NODE_ENV=production node dist/index.js --remote",
