@@ -352,6 +352,17 @@ function formatUsageEntryLines(entry: UsageEntry, refMs: number): string[] {
   return [`- 状態: エラー (${entry.errorMessage ?? "詳細不明"})`];
 }
 
+/**
+ * Ark サーバーを起動し、ハンドルを返す。
+ *
+ * **重要**: このサーバーは module-level singleton (sessionOrchestrator, beaconManager,
+ * browserManager, htmlScreenshotter) を内部で使用するため、**同一プロセスで複数回呼び
+ * 出すことはできない**。`stop()` 後に再度 `startServer()` を呼ぶと、破壊済み singleton
+ * が再利用され予期しない挙動になる。再起動が必要な場合は別プロセスを起動すること。
+ *
+ * @param options サーバー設定。詳細は StartServerOptions 参照
+ * @returns サーバーハンドル。`stop()` でグレースフルシャットダウン
+ */
 export async function startServer(
   options: StartServerOptions = {}
 ): Promise<ServerHandle> {
@@ -2761,7 +2772,9 @@ export async function startServer(
     console.log("Starting Quick Tunnel...");
     try {
       const url = await startQuickTunnelShared(port);
-      await printRemoteAccessInfo(url, tunnelToken!);
+      // tunnelToken は startQuickTunnelShared の副作用でセットされるが、
+      // 型システムからは保証できないので ?? "" で defensive にフォールバックする。
+      await printRemoteAccessInfo(url, tunnelToken ?? "");
     } catch (error) {
       console.error("Failed to start tunnel:", getErrorMessage(error));
       console.log("Continuing without remote access...");
@@ -2811,7 +2824,9 @@ export async function startServer(
       );
       try {
         const url = await startQuickTunnelShared(savedState.port);
-        await printRemoteAccessInfo(url, tunnelToken!);
+        // tunnelToken は startQuickTunnelShared の副作用でセットされるが、
+        // 型システムからは保証できないので ?? "" で defensive にフォールバックする。
+        await printRemoteAccessInfo(url, tunnelToken ?? "");
         console.log("[Tunnel] トンネルの自動復旧に成功しました");
       } catch (error) {
         console.error(

@@ -4,6 +4,13 @@
  * `.app` 起動時に空きポートを確保し、`@ark/server` を同一プロセスで起動して
  * BrowserWindow に UI を表示する。Phase 2 の最小実装。
  *
+ * 動作モード:
+ *   - dev (ARK_DEV=1): サーバーを bootstrap で起動せず、Vite dev server
+ *     (http://localhost:4000) のみ読み込む。Socket.IO 接続先は
+ *     `packages/web/src/hooks/useSocket.ts` 内で `http://localhost:4001` に
+ *     hardcode されているため、別途 `pnpm dev:server` を 4001 で起動する前提。
+ *   - prod: 空きポートで `@ark/server` を埋め込み起動し、同 URL の UI を読み込む。
+ *
  * フェーズ別 TODO:
  *   - F3 macOS 統合: app.dock / Tray / `app.getPath('userData')` を dataDir
  *     としてサーバーに渡す
@@ -77,6 +84,16 @@ function resolveWebStaticDir(): string | undefined {
 }
 
 async function bootstrap(): Promise<void> {
+  if (isDev) {
+    // dev mode: 別途 `pnpm dev:server` が 4001 で起動している前提。
+    // useSocket.ts の dev 分岐が `http://localhost:4001` に hardcode で
+    // 接続するため、ここで ephemeral port にサーバーを起動すると
+    // Socket.IO の接続先がミスマッチして UI が空になる。
+    mainWindow = createWindow(4001);
+    return;
+  }
+
+  // production: サーバーを埋め込み起動する
   const port = await getAvailablePort();
   serverHandle = await startServer({
     port,
