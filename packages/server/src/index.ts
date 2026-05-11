@@ -923,6 +923,83 @@ export async function startServer(
     }
   });
 
+  // ===== Licenses API (F4 Step 8) =====
+  //
+  // 同梱バイナリ (tmux/ttyd と依存ライブラリ) の LICENSE / NOTICE を返す。
+  // 配置元は electron-builder の extraResources で
+  // `.app/Contents/Resources/licenses/` に展開される build-bin/collect-licenses.sh
+  // の出力。CLI / PM2 起動など packaged でない環境では空配列を返す (=> AboutDialog
+  // の「同梱コンポーネント」セクションは「Bundled binaries are not packaged in this
+  // build.」のような表示になる)。
+  app.get("/api/licenses", async (_req, res) => {
+    try {
+      // process.resourcesPath は Electron packaged のみ有効。
+      // それ以外では undefined / 空文字を許容して空応答する。
+      const resourcesPath = (
+        process as NodeJS.Process & { resourcesPath?: string }
+      ).resourcesPath;
+      if (!resourcesPath) {
+        res.json({ packages: [], available: false });
+        return;
+      }
+      const licensesDir = path.join(resourcesPath, "licenses");
+      if (!fs.existsSync(licensesDir)) {
+        res.json({ packages: [], available: false });
+        return;
+      }
+
+      // INDEX.json (collect-licenses.sh 生成) を優先的に読む
+      const indexPath = path.join(licensesDir, "INDEX.json");
+      let metadata: {
+        packages: Array<{ name: string; version?: string; license?: string }>;
+      } = { packages: [] };
+      if (fs.existsSync(indexPath)) {
+        try {
+          metadata = JSON.parse(fs.readFileSync(indexPath, "utf-8"));
+        } catch (e) {
+          console.warn(
+            "[Licenses] INDEX.json parse failed:",
+            getErrorMessage(e)
+          );
+        }
+      }
+
+      // 各 package の LICENSE 本文を読み出す。
+      // パストラバーサル対策: name は英数 / _-. のみ許容し、
+      // resolveしたパスが licensesDir 配下であることを再検証する。
+      const safeName = /^[a-zA-Z0-9_.-]+$/;
+      const results: Array<{
+        name: string;
+        version?: string;
+        license?: string;
+        text: string;
+      }> = [];
+      for (const pkg of metadata.packages ?? []) {
+        if (!pkg.name || !safeName.test(pkg.name)) continue;
+        const licensePath = path.join(licensesDir, pkg.name, "LICENSE");
+        const resolved = path.resolve(licensePath);
+        if (!resolved.startsWith(path.resolve(licensesDir) + path.sep))
+          continue;
+        let text = "";
+        try {
+          text = fs.readFileSync(resolved, "utf-8");
+        } catch {
+          text = "";
+        }
+        results.push({
+          name: pkg.name,
+          version: pkg.version,
+          license: pkg.license,
+          text,
+        });
+      }
+      res.json({ packages: results, available: true });
+    } catch (e) {
+      console.error("[Licenses API] error:", getErrorMessage(e));
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // ===== ttyd Proxy Routes =====
 
   // HTTP proxy for ttyd
