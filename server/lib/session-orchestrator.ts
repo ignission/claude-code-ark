@@ -169,14 +169,16 @@ export class SessionOrchestrator extends EventEmitter {
       db.updateSessionRepoPath(dbSession.id, derivedRepoPath);
     }
 
-    // 起動時に確定したプロファイルと、現在のリポジトリ紐付け+プロファイル状態
-    // を比較して staleProfile を判定する。
+    // 起動時に確定したプロファイルと、現在の (worktree個別 or repoデフォルト)
+    // 紐付けの解決結果を比較して staleProfile を判定する。
     // - profileId 切替 (null↔id、id↔別id) → stale
     // - 同一profileIdでも configDir が変わった場合も stale
     //   (tmux env は起動時に固定されるため再起動しないと反映されない)
     const current = this.sessionProfiles.get(tmuxSession.id) ?? null;
-    const link = repoPath ? db.getRepoProfileLink(repoPath) : null;
-    const desiredProfile = link ? db.getProfile(link.profileId) : null;
+    const { snapshot: desiredProfile } = this.resolveProfileForWorktree(
+      tmuxSession.worktreePath,
+      repoPath
+    );
     const staleProfile = !this.profileSnapshotsEqual(current, desiredProfile);
 
     return {
@@ -259,42 +261,70 @@ export class SessionOrchestrator extends EventEmitter {
   /**
    * 紐付けプロファイルから env / プロファイルスナップショットを解決する。
    *
-   * - 紐付け無し → null env / null snapshot
-   * - 紐付けあるが profile が無い（削除済等）→ null env / null snapshot
-   * - 紐付けあり → env={CLAUDE_CONFIG_DIR}, snapshot={id, configDir}
+   * 解決順序:
+   * 1. worktree_profile_links[worktreePath] (worktree個別の紐付けが優先)
+   * 2. repo_profile_links[repoPath] (リポジトリのデフォルト)
+   * 3. どちらも無ければ null env / null snapshot
    *
+   * 紐付けはあるが profile が無い (削除済等) 場合も null 扱い。
    * configDir/.credentials.json の存在チェックは行わない。claude CLI が
    * 必要なら自動で /login を促す。
    *
    * lookup 戦略:
-   * - まず受信した repoPath で getRepoProfileLink を試す
+   * - まず受信した path で lookup を試す
    * - 見つからなければ fs.realpathSync で正規化したパスで再試行
    *   (クライアントは symlink path で送ってくる場合と、git rev-parse 経由
    *    で正規化した path で送ってくる場合の両方があり、保存と lookup の key
    *    が食い違う可能性があるため)
    */
-  private resolveProfileForRepo(repoPath: string | undefined): {
+  private resolveProfileForWorktree(
+    worktreePath: string | undefined,
+    repoPath: string | undefined
+  ): {
     env: Record<string, string> | undefined;
     snapshot: { id: string; configDir: string } | null;
   } {
-    if (!repoPath) {
-      return { env: undefined, snapshot: null };
-    }
-    let link = db.getRepoProfileLink(repoPath);
-    if (!link) {
-      try {
-        const real = fs.realpathSync(repoPath);
-        if (real !== repoPath) {
-          link = db.getRepoProfileLink(real);
+    // 1. worktree個別の紐付け
+    let profileId: string | null = null;
+    if (worktreePath) {
+      let wtLink = db.getWorktreeProfileLink(worktreePath);
+      if (!wtLink) {
+        try {
+          const real = fs.realpathSync(worktreePath);
+          if (real !== worktreePath) {
+            wtLink = db.getWorktreeProfileLink(real);
+          }
+        } catch {
+          // realpath 解決失敗 → 受信値のままで紐付けなし扱い
         }
-      } catch {
-        // realpath 解決失敗 → 受信値のままで紐付けなし扱い
+      }
+      if (wtLink) {
+        profileId = wtLink.profileId;
       }
     }
-    if (!link) {
+
+    // 2. リポジトリのデフォルト紐付け
+    if (!profileId && repoPath) {
+      let repoLink = db.getRepoProfileLink(repoPath);
+      if (!repoLink) {
+        try {
+          const real = fs.realpathSync(repoPath);
+          if (real !== repoPath) {
+            repoLink = db.getRepoProfileLink(real);
+          }
+        } catch {
+          // realpath 解決失敗 → 受信値のままで紐付けなし扱い
+        }
+      }
+      if (repoLink) {
+        profileId = repoLink.profileId;
+      }
+    }
+
+    if (!profileId) {
       return { env: undefined, snapshot: null };
     }
-    const profile = db.getProfile(link.profileId);
+    const profile = db.getProfile(profileId);
     if (!profile) {
       return { env: undefined, snapshot: null };
     }
@@ -345,7 +375,11 @@ export class SessionOrchestrator extends EventEmitter {
     }
 
     // 新規作成パス: 紐付けプロファイルから env / スナップショットを解決
-    const { env, snapshot } = this.resolveProfileForRepo(resolvedRepoPath);
+    // (worktree個別 → repoデフォルト の順で解決)
+    const { env, snapshot } = this.resolveProfileForWorktree(
+      worktreePath,
+      resolvedRepoPath
+    );
 
     // 新規tmuxセッションを作成（envがあれば注入）
     const tmuxSession = await tmuxManager.createSession(
@@ -423,8 +457,11 @@ export class SessionOrchestrator extends EventEmitter {
       dbSession?.repoPath ||
       (worktreePath ? this.deriveRepoPath(worktreePath) : undefined);
 
-    // 1. 新プロファイルを解決
-    const { env, snapshot } = this.resolveProfileForRepo(repoPath);
+    // 1. 新プロファイルを解決 (worktree個別 → repoデフォルト の順)
+    const { env, snapshot } = this.resolveProfileForWorktree(
+      worktreePath,
+      repoPath
+    );
 
     // 2. 新tmuxセッションを別IDで作成 (失敗時は旧セッション無傷)
     const newTmux = await tmuxManager.createSession(
@@ -505,8 +542,9 @@ export class SessionOrchestrator extends EventEmitter {
   /**
    * 指定セッションの staleProfile を再評価する。
    *
-   * `repo:set-profile` 等で紐付けが変わった際に、稼働中セッションの
-   * staleProfile を再計算してクライアントへ反映するためのヘルパー。
+   * `repo:set-profile` / `worktree:set-profile` 等で紐付けが変わった際に、
+   * 稼働中セッションの staleProfile を再計算してクライアントへ反映するための
+   * ヘルパー。
    *
    * @returns 現在 staleProfile かどうか（セッション不存在時は false）
    */
@@ -516,8 +554,10 @@ export class SessionOrchestrator extends EventEmitter {
     const repoPath = tmuxSession.worktreePath
       ? this.deriveRepoPath(tmuxSession.worktreePath)
       : undefined;
-    const link = repoPath ? db.getRepoProfileLink(repoPath) : null;
-    const desired = link ? db.getProfile(link.profileId) : null;
+    const { snapshot: desired } = this.resolveProfileForWorktree(
+      tmuxSession.worktreePath,
+      repoPath
+    );
     const current = this.sessionProfiles.get(sessionId) ?? null;
     return !this.profileSnapshotsEqual(current, desired);
   }

@@ -116,12 +116,16 @@ export default function Dashboard() {
     navigateBrowser,
     profiles,
     repoProfileLinks,
+    worktreeProfileLinks,
     capabilities,
     loadProfiles,
     createProfile,
     updateProfile,
     deleteProfile,
     setRepoProfile,
+    setWorktreeProfile,
+    worktreeDisplayNames,
+    setWorktreeDisplayName,
     restartSessionWithProfile,
     mcpCatalog,
     mcpConnections,
@@ -641,8 +645,12 @@ export default function Dashboard() {
               isRemote={isRemote}
               profiles={profiles}
               repoProfileLinks={repoProfileLinks}
+              worktreeProfileLinks={worktreeProfileLinks}
               capabilities={capabilities}
               onSetRepoProfile={setRepoProfile}
+              onSetWorktreeProfile={setWorktreeProfile}
+              worktreeDisplayNames={worktreeDisplayNames}
+              onSetWorktreeDisplayName={setWorktreeDisplayName}
               onOpenProfileManager={() => setShowProfileManager(true)}
               onRestartSession={handleRestartSession}
               onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
