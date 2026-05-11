@@ -483,16 +483,26 @@ async function startServer() {
       return worktree;
     },
     listProfiles: () =>
-      db.listProfiles().map(p => ({
-        id: p.id,
-        name: p.name,
-        configDir: p.configDir,
-      })),
-    setWorktreeProfile: (worktreePath, profileId) => {
+      // configDir はサーバ内部の filesystem path であり、UI / モデルの
+      // 選択には id と name のみで十分。最小権限の観点で公開しない。
+      db.listProfiles().map(p => ({ id: p.id, name: p.name })),
+    linkWorktreeProfile: (worktreePath, profileId) => {
+      // 無効な profileId / worktreePath で DB に書き込んで UI 側だけ
+      // 「成功した」状態になるのを防ぐため、書き込み前に存在確認する。
+      // worktreePath は実 directory が存在することで確認する
+      // (worktree_profile_links は FK 制約を持たないため明示チェックが必要)。
+      if (!db.getProfile(profileId)) return false;
+      try {
+        const stat = fs.statSync(worktreePath);
+        if (!stat.isDirectory()) return false;
+      } catch {
+        return false;
+      }
       db.setWorktreeProfileLink(worktreePath, profileId);
       // UIの worktreeProfileLinks マップ / プロファイルバッジを更新するため
       // 全クライアントに通知する。worktree:set-profile ハンドラと同じイベント。
       io.emit("worktree:profile-changed", { worktreePath, profileId });
+      return true;
     },
     deleteWorktree: async (repoPath, worktreePath) => {
       // 削除前にworktreeのセッションを停止

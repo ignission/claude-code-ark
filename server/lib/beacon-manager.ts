@@ -369,10 +369,14 @@ export interface BeaconDeps {
   ) => Promise<unknown>;
   deleteWorktree: (repoPath: string, worktreePath: string) => Promise<void>;
   getRepos: () => string[];
-  /** プロファイル一覧を取得（Linux + claude + tmux 環境のみ非空） */
-  listProfiles: () => Array<{ id: string; name: string; configDir: string }>;
-  /** worktree にプロファイルを紐付け (CLAUDE_CONFIG_DIR をセッション env に注入) */
-  setWorktreeProfile: (worktreePath: string, profileId: string) => void;
+  /** プロファイル一覧を取得（Linux + claude + tmux 環境のみ非空）。
+   * configDir は内部実装詳細のため返さない (UI 選択に必要なのは id と name のみ)。 */
+  listProfiles: () => Array<{ id: string; name: string }>;
+  /** worktree にプロファイルを DB link として紐付ける。
+   * 次回セッション起動時に resolveProfileForWorktree でこの link が解決され、
+   * tmux env に CLAUDE_CONFIG_DIR が注入される (即時反映ではない)。
+   * profileId が存在しない場合は false を返し、呼び出し側で失敗扱いにする。 */
+  linkWorktreeProfile: (worktreePath: string, profileId: string) => boolean;
 }
 
 export class BeaconManager extends EventEmitter {
@@ -700,28 +704,56 @@ export class BeaconManager extends EventEmitter {
                 args.repoPath as string,
                 args.branchName as string,
                 args.baseBranch as string | undefined
-              )) as { path?: string } | null;
+              )) as { id?: string; path?: string } | null;
+              // createWorktree が null / id 欠落 / path 欠落で返してきた場合は
+              // 後続の start_session が成立しないため、ここで明示的に失敗扱いする
+              if (!worktree || !worktree.path || !worktree.id) {
+                return {
+                  content: [
+                    {
+                      type: "text" as const,
+                      text: JSON.stringify({
+                        ok: false,
+                        error: "create_worktree_invalid_response",
+                        detail:
+                          "createWorktreeが worktree.path / worktree.id を返さなかった",
+                        received: worktree,
+                      }),
+                    },
+                  ],
+                };
+              }
               const profileId = args.profileId as string | undefined;
-              if (profileId && worktree?.path) {
-                try {
-                  deps.setWorktreeProfile(worktree.path, profileId);
-                } catch (e) {
+              let linkedProfileId: string | null = null;
+              if (profileId) {
+                const ok = deps.linkWorktreeProfile(worktree.path, profileId);
+                if (!ok) {
                   return {
                     content: [
                       {
                         type: "text" as const,
-                        text: `worktreeは作成されたがプロファイル紐付けに失敗: ${e}\nworktree: ${JSON.stringify(worktree, null, 2)}`,
+                        text: JSON.stringify({
+                          ok: false,
+                          error: "link_profile_failed",
+                          detail:
+                            "profileIdに該当するプロファイルが見つからないか、worktreePathが無効です",
+                          worktree,
+                          profileId,
+                        }),
                       },
                     ],
                   };
                 }
+                linkedProfileId = profileId;
               }
               return {
                 content: [
                   {
                     type: "text" as const,
                     text: JSON.stringify(
-                      profileId ? { ...worktree, profileId } : (worktree ?? {}),
+                      linkedProfileId
+                        ? { ...worktree, profileId: linkedProfileId }
+                        : worktree,
                       null,
                       2
                     ),
@@ -1234,12 +1266,14 @@ export class BeaconManager extends EventEmitter {
           ...externalAllowedTools,
         ],
         permissionMode: "default",
-        // claude.ai アカウントの Connector (mcp__claude_ai_<Provider>__*) は
-        // SDKの allowedTools wildcard が <server>__* 形式しか効かないため
-        // canUseTool で動的承認する。ユーザが claude.ai 側で明示的に有効化した
-        // 先なので無条件 allow する。それ以外の未許可 tool は deny。
+        // claude.ai アカウントの Connector tool (mcp__claude_ai_<Provider>__*)
+        // は SDKの allowedTools wildcard が <server>__* 形式しか効かないため
+        // ここで canUseTool 経由で動的承認する。
+        // 権限境界を限定するため、現在の Beacon ユースケース (Phase 1b の
+        // チケット取得) で必要な Atlassian のみを許可する。他 provider が
+        // 必要になったらここに明示的に追加する (allow-list 方式)。
         canUseTool: async (toolName, input) => {
-          if (toolName.startsWith("mcp__claude_ai_")) {
+          if (toolName.startsWith("mcp__claude_ai_Atlassian_")) {
             return { behavior: "allow", updatedInput: input };
           }
           return {
