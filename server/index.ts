@@ -6,7 +6,7 @@
  * Supports remote access via Cloudflare Tunnel.
  */
 
-import { exec, execSync } from "node:child_process";
+import { exec, execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
 import express from "express";
@@ -506,8 +506,17 @@ async function startServer() {
       if (allowedRepos.length > 0) {
         let derivedRepoPath: string | undefined;
         try {
-          const stdout = execSync(
-            `git -C "${worktreePath}" rev-parse --path-format=absolute --git-common-dir`,
+          // execFileSync は shell を介さないため worktreePath のメタ文字
+          // (`、$()、;、空白) によるコマンド注入を防げる。
+          const stdout = execFileSync(
+            "git",
+            [
+              "-C",
+              worktreePath,
+              "rev-parse",
+              "--path-format=absolute",
+              "--git-common-dir",
+            ],
             { stdio: ["ignore", "pipe", "ignore"] }
           ).toString();
           const gitCommonDir = stdout.trim();

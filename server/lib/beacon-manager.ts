@@ -30,6 +30,18 @@ import { resolvePm2Path } from "./system.js";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * canUseTool で動的承認する claude.ai Connector tool の allow-list。
+ * SDK の allowedTools wildcard が <server>__* 形式しか効かないため、
+ * mcp__claude_ai_<Provider>__* 系は allowedTools には載せず、ここで
+ * 個別承認する。Phase 1b の Jira チケット取得に必要な read tool のみ。
+ * 別 tool / 別 provider が必要になったらここに明示追加する。
+ */
+const BEACON_ALLOWED_CLAUDE_AI_TOOLS = new Set<string>([
+  "mcp__claude_ai_Atlassian__getJiraIssue",
+  "mcp__claude_ai_Atlassian__getAccessibleAtlassianResources",
+]);
+
 /** Beaconのシステムプロンプト */
 const BEACON_SYSTEM_PROMPT = `あなたはArkのBeaconです。
 複数のリポジトリを横断して管理するアシスタントです。
@@ -693,9 +705,10 @@ export class BeaconManager extends EventEmitter {
               .describe("ベースブランチ（省略時はHEAD）"),
             profileId: z
               .string()
+              .min(1)
               .optional()
               .describe(
-                "Claudeプロファイルのid (list_profilesの結果から選ぶ)。省略時はリポジトリのデフォルト紐付けを使用"
+                "Claudeプロファイルのid (list_profilesの結果から選ぶ)。省略時はリポジトリのデフォルト紐付けを使用。空文字は受け付けない (未指定なら省略すること)"
               ),
           },
           handler: async args => {
@@ -751,8 +764,16 @@ export class BeaconManager extends EventEmitter {
                 if (!ok) {
                   // 事前検証を通過した profileId と新規作成 worktree なのに link 失敗
                   // = profile が直前に削除された / worktree path 検証が拒否したケース。
-                  // 呼び出し側 (Sonnet) が後続の start_session を中止できるよう
-                  // 明示的に失敗を返す。worktree 自体は残るが、ユーザに伝える。
+                  // 副作用を残さないため worktree を自動 rollback して原子性を保つ。
+                  let rollback: "deleted" | "delete_failed" = "deleted";
+                  try {
+                    await deps.deleteWorktree(
+                      args.repoPath as string,
+                      worktree.path
+                    );
+                  } catch {
+                    rollback = "delete_failed";
+                  }
                   return {
                     content: [
                       {
@@ -761,7 +782,8 @@ export class BeaconManager extends EventEmitter {
                           ok: false,
                           error: "link_profile_failed",
                           detail:
-                            "worktree作成後の link に失敗しました。worktreeは作成済みなので、再試行する場合は delete_worktreeでクリーンアップしてから create_worktree を再実行してください",
+                            "worktree作成後の link に失敗しました。worktreeはrollbackで削除を試みました",
+                          rollback,
                           worktree,
                           profileId,
                         }),
@@ -1292,13 +1314,11 @@ export class BeaconManager extends EventEmitter {
         ],
         permissionMode: "default",
         // claude.ai アカウントの Connector tool (mcp__claude_ai_<Provider>__*)
-        // は SDKの allowedTools wildcard が <server>__* 形式しか効かないため
-        // ここで canUseTool 経由で動的承認する。
-        // 権限境界を限定するため、現在の Beacon ユースケース (Phase 1b の
-        // チケット取得) で必要な Atlassian のみを許可する。他 provider が
-        // 必要になったらここに明示的に追加する (allow-list 方式)。
+        // は SDKの allowedTools wildcard が <server>__* 形式しか効かないため、
+        // canUseTool 経由で BEACON_ALLOWED_CLAUDE_AI_TOOLS の個別 allow-list
+        // にだけマッチさせて動的承認する。それ以外は deny。
         canUseTool: async (toolName, input) => {
-          if (toolName.startsWith("mcp__claude_ai_Atlassian__")) {
+          if (BEACON_ALLOWED_CLAUDE_AI_TOOLS.has(toolName)) {
             return { behavior: "allow", updatedInput: input };
           }
           return {
