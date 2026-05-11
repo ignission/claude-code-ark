@@ -6,7 +6,7 @@
   "main": "./dist/index.js",
   "scripts": {
     "build": "tsc -b",
-    "check": "tsc --noEmit"
+    "check": "tsc -b"
   },
   "dependencies": {
     "@ark/shared": "workspace:*"

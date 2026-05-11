@@ -10,6 +10,6 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "check": "tsc --noEmit"
+    "check": "tsc -b"
   }
 }

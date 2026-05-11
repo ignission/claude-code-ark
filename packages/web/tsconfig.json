@@ -2,6 +2,7 @@
   "compilerOptions": {
     "composite": true,
     "declaration": true,
+    "emitDeclarationOnly": true,
     "outDir": "./dist-types",
     "rootDir": ".",
     "module": "ESNext",
@@ -14,7 +15,6 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "allowImportingTsExtensions": true,
-    "noEmit": true,
     "types": ["node", "vite/client"],
     "incremental": true,
     "tsBuildInfoFile": "./node_modules/.cache/tsbuildinfo",
@@ -23,6 +23,12 @@
     }
   },
   "include": ["src/**/*", "vite.config.ts"],
-  "exclude": ["dist", "node_modules", "**/*.test.ts", "**/*.test.tsx"],
+  "exclude": [
+    "dist",
+    "dist-types",
+    "node_modules",
+    "**/*.test.ts",
+    "**/*.test.tsx"
+  ],
   "references": [{ "path": "../shared" }]
 }

@@ -12,7 +12,7 @@
     "start": "NODE_ENV=production node dist/index.js",
     "start:remote": "NODE_ENV=production node dist/index.js --remote",
     "start:quick": "NODE_ENV=production node dist/index.js --quick",
-    "check": "tsc --noEmit",
+    "check": "tsc -b",
     "test": "vitest run"
   },
   "dependencies": {
