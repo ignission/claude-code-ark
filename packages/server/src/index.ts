@@ -82,38 +82,51 @@ import { tmuxManager } from "./lib/tmux-manager.js";
 import { TunnelManager } from "./lib/tunnel.js";
 import { UsageCollector } from "./lib/usage-collector.js";
 
-// Parse command line arguments
-const args = process.argv.slice(2);
-const enableRemote = args.includes("--remote") || args.includes("-r");
-const enableQuick = args.includes("--quick") || args.includes("-q");
-const skipPermissions =
-  args.includes("--skip-permissions") ||
-  process.env.SKIP_PERMISSIONS === "true";
-
-// 公開ドメイン（Named Tunnel / CORS許可用）
-const publicDomain = process.env.ARK_PUBLIC_DOMAIN;
-
-// Parse --repos option: --repos /path1,/path2
-let allowedRepos: string[] = [];
-const reposIndex = args.indexOf("--repos");
-if (reposIndex !== -1 && args[reposIndex + 1]) {
-  allowedRepos = args[reposIndex + 1]
-    .split(",")
-    .map(p => p.trim())
-    .filter(p => p.length > 0);
-  console.log(`Allowed repositories: ${allowedRepos.join(", ")}`);
-}
-
-// クライアントが選択・スキャンしたリポジトリを追跡（Beaconが参照する）
-const knownRepos = new Set<string>(allowedRepos);
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// トンネル状態管理
-let activeTunnel: TunnelManager | null = null;
-let tunnelUrl: string | null = null;
-let tunnelToken: string | null = null;
+/**
+ * `startServer()` のオプション。
+ *
+ * - `port`: 待ち受けポート。未指定の場合は `process.env.PORT` または 4001。
+ * - `enableRemote` / `enableQuick`: Cloudflare Tunnel 関連スイッチ（既存 CLI 互換）。
+ * - `skipPermissions`: Claude CLI を `--dangerously-skip-permissions` 付きで起動する。
+ * - `publicDomain`: Named Tunnel の固定ドメイン。CLI では `ARK_PUBLIC_DOMAIN` から取得。
+ * - `allowedRepos`: `--repos` オプション相当の許可リスト。
+ * - `webStaticDir`: 本番モード時に静的配信する Web ビルド成果物のパス。
+ *   未指定時は CLI 起動時の旧パス互換 (`<__dirname>/../../web/dist`) で解決する。
+ *   Electron からは `app/web` のような同梱パスを渡す。
+ */
+export interface StartServerOptions {
+  port?: number;
+  enableRemote?: boolean;
+  enableQuick?: boolean;
+  skipPermissions?: boolean;
+  publicDomain?: string;
+  allowedRepos?: string[];
+  webStaticDir?: string;
+  /**
+   * 将来 Electron から実データ保存ディレクトリ (`app.getPath('userData')`)
+   * を渡すための予約オプション。Phase 2 では未使用 (Phase 3 で本実装予定)。
+   */
+  dataDir?: string;
+  /**
+   * tmux / ttyd / claude のバイナリ探索 PATH を上書きするための予約オプション。
+   * Phase 4 で `.app` 同梱バイナリパスを差し込むのに使う。
+   */
+  binPaths?: string[];
+}
+
+/**
+ * サーバー停止用のハンドル。Electron のメインプロセスが `before-quit` で
+ * 呼んで Express / Socket.IO を綺麗に閉じるのに使う。
+ */
+export interface ServerHandle {
+  /** 待ち受け中のポート (動的割当時の確認用)。 */
+  readonly port: number;
+  /** HTTP サーバーを閉じ、間隔タイマーや tmux/ttyd を停止する。 */
+  stop: () => Promise<void>;
+}
 
 // トンネル状態ファイルのパス
 const TUNNEL_STATE_FILE = path.join(os.tmpdir(), "ark-tunnel-state.json");
@@ -339,10 +352,32 @@ function formatUsageEntryLines(entry: UsageEntry, refMs: number): string[] {
   return [`- 状態: エラー (${entry.errorMessage ?? "詳細不明"})`];
 }
 
-async function startServer() {
+export async function startServer(
+  options: StartServerOptions = {}
+): Promise<ServerHandle> {
   const app = express();
   const server = createServer(app);
-  const port = Number(process.env.PORT) || 4001;
+  const port = options.port ?? (Number(process.env.PORT) || 4001);
+
+  // ===== オプション展開 =====
+  // CLI から呼ばれた場合は cli.ts で argv → options に変換済み。
+  // Electron 等の埋め込み起動からは TS の型経由で直接渡される。
+  const enableRemote = options.enableRemote ?? false;
+  const enableQuick = options.enableQuick ?? false;
+  const skipPermissions = options.skipPermissions ?? false;
+  const publicDomain = options.publicDomain;
+  const allowedRepos = options.allowedRepos ?? [];
+  if (allowedRepos.length > 0) {
+    console.log(`Allowed repositories: ${allowedRepos.join(", ")}`);
+  }
+
+  // クライアントが選択・スキャンしたリポジトリを追跡（Beaconが参照する）
+  const knownRepos = new Set<string>(allowedRepos);
+
+  // トンネル状態管理 (startServer のライフタイム内に閉じ込める)
+  let activeTunnel: TunnelManager | null = null;
+  let tunnelUrl: string | null = null;
+  let tunnelToken: string | null = null;
 
   // --skip-permissions が指定された場合、Claudeを --dangerously-skip-permissions 付きで起動
   if (skipPermissions) {
@@ -937,17 +972,25 @@ async function startServer() {
     });
   });
 
-  // Serve static files from the web package's dist in production only
-  // server compiled path: packages/server/dist/index.js
-  // web build output:     packages/web/dist
-  if (process.env.NODE_ENV === "production") {
-    const staticPath = path.resolve(__dirname, "../../web/dist");
-    app.use(express.static(staticPath));
+  // ===== 静的ファイル配信 =====
+  // 配信パスは以下の優先順位で解決する:
+  //   1. options.webStaticDir (Electron 同梱版・テスト等から明示)
+  //   2. NODE_ENV=production 時のみ、旧 CLI と同じ既定パス
+  //      (`packages/server/dist/index.js` から見て `../../web/dist`)
+  // どちらにも該当しない開発時 (`pnpm dev:server`) は Vite が別ポートで
+  // 配信するため、Express では静的配信を行わない。
+  const resolvedStaticDir =
+    options.webStaticDir ??
+    (process.env.NODE_ENV === "production"
+      ? path.resolve(__dirname, "../../web/dist")
+      : null);
+  if (resolvedStaticDir) {
+    app.use(express.static(resolvedStaticDir));
 
     // Handle client-side routing - serve index.html for all routes
     // Exclude ttyd, proxy, and browser routes
     app.get(/^(?!\/ttyd\/|\/proxy\/|\/browser\/).*$/, (_req, res) => {
-      res.sendFile(path.join(staticPath, "index.html"));
+      res.sendFile(path.join(resolvedStaticDir, "index.html"));
     });
   }
 
@@ -2698,96 +2741,99 @@ async function startServer() {
     console.error("[FileUpload] 起動時クリーンアップに失敗:", error);
   });
 
-  server.listen(port, async () => {
-    console.log(`Ark server running on http://localhost:${port}/`);
-
-    // Start Quick Tunnel if enabled
-    // 注: enableQuick は --quick コマンドラインオプションによるトンネル起動。
-    // 共通関数 startQuickTunnelShared を使用し、activeTunnel を設定する。
-    if (enableQuick) {
-      console.log("Starting Quick Tunnel...");
-      try {
-        const url = await startQuickTunnelShared(port);
-        await printRemoteAccessInfo(url, tunnelToken!);
-
-        const tunnelCleanup = () => {
-          if (activeTunnel) {
-            activeTunnel.stop();
-          }
-        };
-
-        process.on("SIGTERM", tunnelCleanup);
-        process.on("SIGINT", tunnelCleanup);
-      } catch (error) {
-        console.error("Failed to start tunnel:", getErrorMessage(error));
-        console.log("Continuing without remote access...");
-      }
-    }
-
-    // Named Tunnel起動（publicDomainが設定されている場合のみ）
-    if (enableRemote && publicDomain) {
-      console.log("Starting Cloudflare Tunnel...");
-      const tunnel = new TunnelManager({
-        localPort: port,
-        mode: "named",
-        namedTunnelOptions: {
-          tunnelName: process.env.ARK_TUNNEL_NAME || "claude-code-ark",
-          publicUrl: `https://${publicDomain}`,
-        },
-      });
-
-      try {
-        const publicUrl = await tunnel.start();
-        await printRemoteAccessInfo(publicUrl, "");
-
-        tunnel.on("error", error => {
-          console.error("Tunnel error:", error.message);
-        });
-
-        tunnel.on("close", code => {
-          console.log(`Tunnel closed with code ${code}`);
-        });
-
-        const tunnelCleanup = () => {
-          tunnel.stop();
-        };
-
-        process.on("SIGTERM", tunnelCleanup);
-        process.on("SIGINT", tunnelCleanup);
-      } catch (error) {
-        console.error("Failed to start tunnel:", getErrorMessage(error));
-        console.log("Continuing without remote access...");
-      }
-    }
-
-    // トンネル自動復旧: 前回トンネルが有効だった場合に自動起動
-    // enableQuick が既にトンネルを起動している場合はスキップ
-    if (!activeTunnel) {
-      const savedState = loadTunnelState();
-      if (savedState) {
-        console.log(
-          "[Tunnel] 前回のトンネル状態を検出しました。自動復旧を開始します..."
-        );
-        try {
-          const url = await startQuickTunnelShared(savedState.port);
-          await printRemoteAccessInfo(url, tunnelToken!);
-          console.log("[Tunnel] トンネルの自動復旧に成功しました");
-        } catch (error) {
-          console.error(
-            "[Tunnel] トンネルの自動復旧に失敗:",
-            getErrorMessage(error)
-          );
-          removeTunnelState();
-          console.log(
-            "[Tunnel] 状態ファイルを削除しました。トンネルなしで継続します"
-          );
-        }
-      }
-    }
+  // server.listen を Promise 化し、リスニング開始まで startServer を解決しない。
+  // これにより呼び出し側 (cli.ts / Electron) は「ポートが開いた」状態を確実に
+  // 得てから次の処理 (UI 表示等) に進める。
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, () => {
+      server.off("error", reject);
+      resolve();
+    });
   });
 
-  // Graceful shutdown
-  const shutdown = () => {
+  console.log(`Ark server running on http://localhost:${port}/`);
+
+  // Start Quick Tunnel if enabled
+  // 注: enableQuick は --quick コマンドラインオプションによるトンネル起動。
+  // 共通関数 startQuickTunnelShared を使用し、activeTunnel を設定する。
+  if (enableQuick) {
+    console.log("Starting Quick Tunnel...");
+    try {
+      const url = await startQuickTunnelShared(port);
+      await printRemoteAccessInfo(url, tunnelToken!);
+    } catch (error) {
+      console.error("Failed to start tunnel:", getErrorMessage(error));
+      console.log("Continuing without remote access...");
+    }
+  }
+
+  // Named Tunnel起動（publicDomainが設定されている場合のみ）
+  // 起動した tunnel はクロージャ経由で stop ハンドルに登録する。
+  let namedTunnel: TunnelManager | null = null;
+  if (enableRemote && publicDomain) {
+    console.log("Starting Cloudflare Tunnel...");
+    const tunnel = new TunnelManager({
+      localPort: port,
+      mode: "named",
+      namedTunnelOptions: {
+        tunnelName: process.env.ARK_TUNNEL_NAME || "claude-code-ark",
+        publicUrl: `https://${publicDomain}`,
+      },
+    });
+
+    try {
+      const publicUrl = await tunnel.start();
+      await printRemoteAccessInfo(publicUrl, "");
+
+      tunnel.on("error", error => {
+        console.error("Tunnel error:", error.message);
+      });
+
+      tunnel.on("close", code => {
+        console.log(`Tunnel closed with code ${code}`);
+      });
+
+      namedTunnel = tunnel;
+    } catch (error) {
+      console.error("Failed to start tunnel:", getErrorMessage(error));
+      console.log("Continuing without remote access...");
+    }
+  }
+
+  // トンネル自動復旧: 前回トンネルが有効だった場合に自動起動
+  // enableQuick が既にトンネルを起動している場合はスキップ
+  if (!activeTunnel) {
+    const savedState = loadTunnelState();
+    if (savedState) {
+      console.log(
+        "[Tunnel] 前回のトンネル状態を検出しました。自動復旧を開始します..."
+      );
+      try {
+        const url = await startQuickTunnelShared(savedState.port);
+        await printRemoteAccessInfo(url, tunnelToken!);
+        console.log("[Tunnel] トンネルの自動復旧に成功しました");
+      } catch (error) {
+        console.error(
+          "[Tunnel] トンネルの自動復旧に失敗:",
+          getErrorMessage(error)
+        );
+        removeTunnelState();
+        console.log(
+          "[Tunnel] 状態ファイルを削除しました。トンネルなしで継続します"
+        );
+      }
+    }
+  }
+
+  // ===== Graceful shutdown =====
+  // 内部実装は「停止しか実行しない」。プロセス終了 (`process.exit`) は呼び出し
+  // 側 (cli.ts のシグナルハンドラ) の責務とし、Electron 等の埋め込み起動では
+  // メインプロセスのライフサイクルに任せる。
+  let stopped = false;
+  const stop = async (): Promise<void> => {
+    if (stopped) return;
+    stopped = true;
     console.log("Shutting down...");
     clearInterval(fileUploadCleanupInterval);
     clearInterval(bridgeBroadcastInterval);
@@ -2795,16 +2841,29 @@ async function startServer() {
     sessionOrchestrator.cleanup();
     beaconManager.cleanup();
     browserManager.cleanup();
-    htmlScreenshotter.shutdown().catch(() => {
+    if (activeTunnel) {
+      try {
+        activeTunnel.stop();
+      } catch (error) {
+        console.error("[Tunnel] stop に失敗:", getErrorMessage(error));
+      }
+    }
+    if (namedTunnel) {
+      try {
+        namedTunnel.stop();
+      } catch (error) {
+        console.error("[Tunnel] named stop に失敗:", getErrorMessage(error));
+      }
+    }
+    try {
+      await htmlScreenshotter.shutdown();
+    } catch {
       // close 失敗は無視（プロセス終了直前なので）
-    });
-    server.close(() => {
-      process.exit(0);
+    }
+    await new Promise<void>(resolve => {
+      server.close(() => resolve());
     });
   };
 
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  return { port, stop };
 }
-
-startServer().catch(console.error);

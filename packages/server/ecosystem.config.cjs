@@ -8,9 +8,9 @@ module.exports = {
   apps: [
     {
       name: "claude-code-ark",
-      // packages/server/dist/index.js を実行する。
+      // packages/server/dist/cli.js を実行する。
       // cwd は projectRoot に固定し、data/ などのパス解決を維持する。
-      script: path.join(__dirname, "dist", "index.js"),
+      script: path.join(__dirname, "dist", "cli.js"),
       cwd: projectRoot,
       interpreter: "node",
       node_args: "--env-file=.env.production",

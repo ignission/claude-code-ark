@@ -10,7 +10,12 @@ const externals = Object.keys(pkg.dependencies ?? {}).filter(
 );
 
 await build({
-  entryPoints: ["src/index.ts", "src/lib/*.ts", "src/lib/mcp-oauth/*.ts"],
+  entryPoints: [
+    "src/index.ts",
+    "src/cli.ts",
+    "src/lib/*.ts",
+    "src/lib/mcp-oauth/*.ts",
+  ],
   outdir: "dist",
   bundle: true,
   format: "esm",
