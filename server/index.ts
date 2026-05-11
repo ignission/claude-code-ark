@@ -482,6 +482,18 @@ async function startServer() {
       }
       return worktree;
     },
+    listProfiles: () =>
+      db.listProfiles().map(p => ({
+        id: p.id,
+        name: p.name,
+        configDir: p.configDir,
+      })),
+    setWorktreeProfile: (worktreePath, profileId) => {
+      db.setWorktreeProfileLink(worktreePath, profileId);
+      // UIの worktreeProfileLinks マップ / プロファイルバッジを更新するため
+      // 全クライアントに通知する。worktree:set-profile ハンドラと同じイベント。
+      io.emit("worktree:profile-changed", { worktreePath, profileId });
+    },
     deleteWorktree: async (repoPath, worktreePath) => {
       // 削除前にworktreeのセッションを停止
       const session = sessionOrchestrator.getSessionByWorktree(worktreePath);
