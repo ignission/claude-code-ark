@@ -13,7 +13,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, Menu, nativeImage, Tray } from "electron";
+import { app, Menu, nativeImage, shell, Tray } from "electron";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,6 +21,12 @@ const __dirname = path.dirname(__filename);
 interface TrayOptions {
   showMainWindow: () => void;
   quit: () => void;
+  /**
+   * 現在の埋め込みサーバ URL (`http://127.0.0.1:<port>/`) を返す。
+   * サーバ未起動 / dev モードで該当 URL が確定していない場合は null。
+   * Tray から「Open Web URL...」でシステムデフォルトブラウザを開く際に使う。
+   */
+  getServerUrl: () => string | null;
 }
 
 // GC で消えるのを防ぐため module-level に保持。
@@ -78,6 +84,16 @@ export function createTray(options: TrayOptions): Tray {
     {
       label: "Show Ark",
       click: () => options.showMainWindow(),
+    },
+    {
+      label: "Open Web URL...",
+      click: () => {
+        // 埋め込みサーバ URL をシステムデフォルトブラウザで開く。
+        // サーバ未起動時は no-op (メニュー上で grey-out するほどでもないため
+        // クリック時に静かに無視する)。
+        const url = options.getServerUrl();
+        if (url) void shell.openExternal(url);
+      },
     },
     { type: "separator" },
     {

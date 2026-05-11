@@ -31,8 +31,8 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ServerHandle, startServer } from "@ark/server";
-import log from "electron-log";
 import { app, BrowserWindow, Menu } from "electron";
+import log from "electron-log";
 import { getAvailablePort } from "./getAvailablePort.js";
 import { buildAppMenu } from "./menu.js";
 import { createTray, destroyTray } from "./tray.js";
@@ -168,7 +168,14 @@ async function bootstrap(): Promise<void> {
   }
 
   // Tray は globalref しないと GC で消えるため tray.ts 側で module-level に保持。
-  createTray({ showMainWindow, quit: () => app.quit() });
+  createTray({
+    showMainWindow,
+    quit: () => app.quit(),
+    // 埋め込みサーバ URL を Tray の「Open Web URL...」から開けるよう露出する。
+    // dev mode (`ARK_DEV=1`) / サーバ未起動時は null を返し、Tray 側で no-op になる。
+    getServerUrl: () =>
+      serverHandle ? `http://127.0.0.1:${serverHandle.port}/` : null,
+  });
 
   if (isDev) {
     // dev mode: 別途 `pnpm dev:server` が 4001 で起動している前提。

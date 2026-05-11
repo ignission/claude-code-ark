@@ -19,6 +19,10 @@ mac:
   identity: null
   gatekeeperAssess: false
   category: public.app-category.developer-tools
+  # F4 で正式 icon.icns に差し替えた段階で有効化する。
+  # 現状 build-assets/icon.icns は 0byte placeholder のため electron-builder が
+  # invalid icon でエラーになる。コメントアウトで意図を残す。
+  # icon: build-assets/icon.icns
 
 directories:
   # CI と手動ビルドどちらでも release/ を成果物置き場とする。

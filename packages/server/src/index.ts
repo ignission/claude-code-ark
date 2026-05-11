@@ -85,6 +85,16 @@ import { UsageCollector } from "./lib/usage-collector.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// パス解決ヘルパを公開。Electron main プロセス (packages/desktop) など、
+// `ARK_DATA_DIR` / `ARK_LOGS_DIR` の override を尊重した実体パスを必要とする
+// 呼び出し元から参照する。
+export {
+  getBundledBinDir,
+  getDataDir,
+  getLogsDir,
+  getUploadsDir,
+} from "./lib/paths.js";
+
 /**
  * `startServer()` のオプション。
  *

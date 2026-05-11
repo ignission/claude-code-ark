@@ -9,6 +9,7 @@
  * 同じテンプレートで動くようにしている（macOS のみ先頭の App メニューを追加）。
  */
 import path from "node:path";
+import { getDataDir, getLogsDir } from "@ark/server";
 import {
   app,
   dialog,
@@ -106,7 +107,10 @@ export function buildAppMenu(options: AppMenuOptions): Menu {
     {
       label: "Open Logs Folder",
       click: async () => {
-        const logsDir = app.getPath("logs");
+        // `ARK_LOGS_DIR` の override を尊重するため `@ark/server` の解決器を使う。
+        // `app.getPath("logs")` を直に使うとサーバー側が書き出している実体パスと
+        // ずれる可能性がある。
+        const logsDir = getLogsDir();
         const result = await shell.openPath(logsDir);
         if (result) {
           // 失敗時のみ非空文字列でエラーメッセージが返る。
@@ -117,7 +121,8 @@ export function buildAppMenu(options: AppMenuOptions): Menu {
     {
       label: "Open Data Folder",
       click: async () => {
-        const dataDir = app.getPath("userData");
+        // `ARK_DATA_DIR` の override を尊重するため `@ark/server` の解決器を使う。
+        const dataDir = getDataDir();
         const result = await shell.openPath(dataDir);
         if (result) {
           dialog.showErrorBox("Open Data Folder Failed", result);
@@ -128,7 +133,7 @@ export function buildAppMenu(options: AppMenuOptions): Menu {
     {
       label: "Reset Data...",
       click: async () => {
-        const dataDir = app.getPath("userData");
+        const dataDir = getDataDir();
         const { response } = await dialog.showMessageBox({
           type: "warning",
           buttons: ["Cancel", "Reset"],
