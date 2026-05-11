@@ -15,6 +15,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.7",
     "better-sqlite3": "^12.6.2",
+    "electron-log": "^5.4.3",
     "playwright-core": "^1.59.1"
   },
   "devDependencies": {
@@ -24,7 +25,6 @@
     "concurrently": "^9.2.1",
     "electron": "^33.4.7",
     "electron-builder": "^25.1.8",
-    "electron-log": "^5.4.3",
     "esbuild": "^0.28.0",
     "tsx": "^4.19.1",
     "typescript": "6.0.3",

@@ -42,6 +42,15 @@ extraResources:
     to: app/web
     filter:
       - "**/*"
+  # tray.ts:resolveTrayIconPath() は packaged 時に
+  # `process.resourcesPath/build-assets/tray-icon.png` を参照する。
+  # ここで配置していないと nativeImage.createEmpty() fallback で
+  # メニューバーアイコンが空になる。
+  # icon.icns は 0byte placeholder のため F4 まで含めない。
+  - from: build-assets
+    to: build-assets
+    filter:
+      - "tray-icon*.png"
 
 # asar はデフォルト true (明示)。
 asar: true

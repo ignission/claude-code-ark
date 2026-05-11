@@ -55,6 +55,13 @@ let serverHandle: ServerHandle | null = null;
 let mainWindow: BrowserWindow | null = null;
 /** before-quit → quit の流れか、close でのウィンドウ非表示かを区別するフラグ */
 let isQuitting = false;
+/**
+ * bootstrap 完了フラグ。
+ * `app.on("activate", ...)` が bootstrap 完了前に発火すると、
+ * showMainWindow() 内で serverHandle 未設定のまま dev fallback port (4001) を
+ * 使って空ウィンドウを生成してしまうのを防ぐ。
+ */
+let bootstrapped = false;
 
 /**
  * `app.whenReady()` を待たずに有効な初期化処理。
@@ -205,6 +212,7 @@ async function bootstrap(): Promise<void> {
     // 接続するため、ここで ephemeral port にサーバーを起動すると
     // Socket.IO の接続先がミスマッチして UI が空になる。
     mainWindow = createWindow(4001);
+    bootstrapped = true;
     return;
   }
 
@@ -230,6 +238,7 @@ async function bootstrap(): Promise<void> {
   log.info("[Ark Desktop] server started", { port: serverHandle.port });
 
   mainWindow = createWindow(serverHandle.port);
+  bootstrapped = true;
 }
 
 // `app.whenReady()` 前に呼ぶ必要のあるパス系初期化を即時実行。
@@ -254,6 +263,11 @@ app.on("window-all-closed", () => {
 
 app.on("activate", () => {
   // Dock アイコンクリック等での復帰。
+  // bootstrap 未完了時は何もしない。serverHandle 未設定のまま showMainWindow()
+  // を呼ぶと dev fallback の 4001 で BrowserWindow を生成してしまい、
+  // production の埋め込みサーバ port を取り逃して空ウィンドウになる。
+  // bootstrap 完了後に自前で mainWindow を作るので無視で問題ない。
+  if (!bootstrapped) return;
   showMainWindow();
 });
 

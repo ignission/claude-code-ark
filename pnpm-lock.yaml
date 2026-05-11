@@ -46,6 +46,9 @@ importers:
       better-sqlite3:
         specifier: ^12.6.2
         version: 12.9.0
+      electron-log:
+        specifier: ^5.4.3
+        version: 5.4.3
       playwright-core:
         specifier: ^1.59.1
         version: 1.59.1
@@ -68,9 +71,6 @@ importers:
       electron-builder:
         specifier: ^25.1.8
         version: 25.1.8(electron-builder-squirrel-windows@25.1.8)
-      electron-log:
-        specifier: ^5.4.3
-        version: 5.4.3
       esbuild:
         specifier: ^0.28.0
         version: 0.28.0
