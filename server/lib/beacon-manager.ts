@@ -142,16 +142,19 @@ worktreeの作成・削除はMCPツールを使ってください。
 #### Phase 1b: URL経由（URLありの場合）
 ユーザーがチケット/IssueのURLを貼って着手を依頼した場合のフロー。Beacon自身がMCP/gh_execで直接チケット内容を取得する（mainセッションには委譲しない）。
 
-1. list_repositoriesで全リポジトリ一覧を取得
-2. 番号付きリストでリポジトリを提示し、ユーザーに選ばせる
-3. URLの種別を判定し、チケット内容を取得する:
+1. **URL の厳格検証 (fail-fast)**: 入力URL を以下のいずれかの正規表現に必ず一致させる。一致しなければ「Jira / GitHub issue 以外のURLには対応していません」とユーザに伝えて中断する。
+   - Jira: \`^https://[a-z0-9-]+\\.atlassian\\.net/browse/[A-Z][A-Z0-9]*-[0-9]+/?$\`
+   - GitHub issue: \`^https://github\\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/issues/[0-9]+/?$\`
+2. list_repositoriesで全リポジトリ一覧を取得
+3. 番号付きリストでリポジトリを提示し、ユーザーに選ばせる
+4. URLの種別を判定し、チケット内容を取得する:
    - **Jira URL** (例: https://*.atlassian.net/browse/<KEY>): mcp__claude_ai_Atlassian__getJiraIssue を使用。cloudId が必要なら mcp__claude_ai_Atlassian__getAccessibleAtlassianResources で host → cloudId を先に解決する
    - **GitHub issue URL** (https://github.com/<owner>/<repo>/issues/<N>): gh_exec で \`gh issue view <URL> --json title,body,labels\` を実行（cwd は選択リポジトリのworktreeパス）
-4. ブランチ名ルールを取得する
+5. ブランチ名ルールを取得する
    - list_worktreesで選択リポジトリの isMain=true のworktreeパスを特定
    - Read で \`<worktreePath>/CLAUDE.md\` を読み、ブランチ名規約を抽出する
    - 規約が見つからない場合は標準形式（Jira: \`<KEY>-<英小文字スラッグ>\` / GitHub: \`<issue番号>-<英小文字スラッグ>\`）でフォールバック
-5. 取得した情報をユーザーに表示して確認する:
+6. 取得した情報をユーザーに表示して確認する:
    ## タスク要約
    - **タイトル**: ...
    - **説明**: ...
@@ -1288,48 +1291,55 @@ export class BeaconManager extends EventEmitter {
     }
     const hasMcpServers = Object.keys(mcpServers).length > 0;
 
+    // allowedTools と canUseTool の defensive mirror が divergeしないよう
+    // ひとつの const から両方の定義を導出する。新規 tool は必ずここに足す。
+    const beaconBuiltinTools = ["Read", "Grep", "Glob"] as const;
+    const beaconArkMcpTools = [
+      "mcp__ark-beacon__list_repositories",
+      "mcp__ark-beacon__list_worktrees",
+      "mcp__ark-beacon__list_sessions",
+      "mcp__ark-beacon__start_session",
+      "mcp__ark-beacon__stop_session",
+      "mcp__ark-beacon__send_to_session",
+      "mcp__ark-beacon__send_key_to_session",
+      "mcp__ark-beacon__get_session_output",
+      "mcp__ark-beacon__list_profiles",
+      "mcp__ark-beacon__create_worktree",
+      "mcp__ark-beacon__delete_worktree",
+      "mcp__ark-beacon__get_pr_url",
+      "mcp__ark-beacon__gh_exec",
+      "mcp__ark-beacon__get_system_status",
+      "mcp__ark-beacon__list_processes",
+      "mcp__ark-beacon__get_pm2_status",
+      "mcp__ark-beacon__restart_service",
+    ] as const;
+    const allowedToolsList: string[] = [
+      ...beaconBuiltinTools,
+      ...beaconArkMcpTools,
+      ...externalAllowedTools,
+    ];
+    const allowedToolsSet = new Set<string>([
+      ...beaconBuiltinTools,
+      ...beaconArkMcpTools,
+    ]);
+
     // V1 query() にAsyncIterableを渡してマルチターン会話を確立する
     const q = query({
       prompt: queue,
       options: {
         cwd,
         model: "sonnet",
-        allowedTools: [
-          "Read",
-          "Grep",
-          "Glob",
-          // MCPツールを自動承認
-          "mcp__ark-beacon__list_repositories",
-          "mcp__ark-beacon__list_worktrees",
-          "mcp__ark-beacon__list_sessions",
-          "mcp__ark-beacon__start_session",
-          "mcp__ark-beacon__stop_session",
-          "mcp__ark-beacon__send_to_session",
-          "mcp__ark-beacon__send_key_to_session",
-          "mcp__ark-beacon__get_session_output",
-          "mcp__ark-beacon__list_profiles",
-          "mcp__ark-beacon__create_worktree",
-          "mcp__ark-beacon__delete_worktree",
-          "mcp__ark-beacon__get_pr_url",
-          "mcp__ark-beacon__gh_exec",
-          "mcp__ark-beacon__get_system_status",
-          "mcp__ark-beacon__list_processes",
-          "mcp__ark-beacon__get_pm2_status",
-          "mcp__ark-beacon__restart_service",
-          ...externalAllowedTools,
-        ],
+        allowedTools: allowedToolsList,
         permissionMode: "default",
-        // canUseTool は SDK 仕様上 allowedTools に含まれない tool 呼び出しに
-        // ついて発火する。ただし将来 SDK が全 tool 呼び出しを経由させる挙動に
-        // 変わる可能性を考え、defensive に「allowedTools 相当の prefix なら
-        // 明示 allow」「BEACON_ALLOWED_CLAUDE_AI_TOOLS に該当なら allow」
-        // 「それ以外は deny」の3段で書く。
+        // canUseTool は SDK 仕様上 allowedTools に含まれない tool 呼び出し
+        // について発火する。defensive に「allowedTools と同じ const から
+        // 導出した allow-list (set + externalAllowedTools wildcard)」
+        // 「BEACON_ALLOWED_CLAUDE_AI_TOOLS に該当」「それ以外は deny」の
+        // 3段で書く。allowedTools とは同じ definition source から派生
+        // するので diverge しない。
         canUseTool: async (toolName, input) => {
           const isAllowedToolPattern =
-            toolName === "Read" ||
-            toolName === "Grep" ||
-            toolName === "Glob" ||
-            toolName.startsWith("mcp__ark-beacon__") ||
+            allowedToolsSet.has(toolName) ||
             externalAllowedTools.some(p =>
               p.endsWith("__*")
                 ? toolName.startsWith(p.slice(0, -1))
