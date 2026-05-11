@@ -57,7 +57,13 @@ fetch_and_extract() {
   if [[ "${sha256}" != "PLACEHOLDER_"* ]]; then
     echo "${sha256}  ${archive}" | shasum -a 256 -c -
   else
-    echo "[warn] ${name}: SHA256 is placeholder, skipping verification"
+    # PLACEHOLDER SHA256 は skeleton 段階の dev build 用。
+    # ARK_BUILD_STRICT_CHECKSUM=1 (tag push 等) では integrity guard を強制し fail させる。
+    if [[ "${ARK_BUILD_STRICT_CHECKSUM:-0}" == "1" ]]; then
+      echo "[error] ${name}: PLACEHOLDER SHA256 not allowed in strict mode (ARK_BUILD_STRICT_CHECKSUM=1)" >&2
+      return 1
+    fi
+    echo "[warn] ${name}: SHA256 is placeholder, skipping verification (development only)"
   fi
 
   # 既に展開済み (configure ファイルがある) ならスキップ

@@ -72,9 +72,16 @@ jobs:
           key: build-bin-${{ runner.os }}-${{ env.ARCH }}-${{ steps.cache-key.outputs.hash }}
 
       - name: Build tmux
+        # tag push (release) では PLACEHOLDER の SHA256 を許容しないため
+        # ARK_BUILD_STRICT_CHECKSUM=1 を渡し common.sh の verification を強制する。
+        # workflow_dispatch / PR では従来通り warning のみで進行する。
+        env:
+          ARK_BUILD_STRICT_CHECKSUM: ${{ startsWith(github.ref, 'refs/tags/') && '1' || '0' }}
         run: bash packages/desktop/scripts/build-bin/build-tmux.sh
 
       - name: Build ttyd
+        env:
+          ARK_BUILD_STRICT_CHECKSUM: ${{ startsWith(github.ref, 'refs/tags/') && '1' || '0' }}
         run: bash packages/desktop/scripts/build-bin/build-ttyd.sh
 
       - name: Collect LICENSE files
@@ -118,6 +125,23 @@ jobs:
             echo "==> otool -L ${bin}"
             otool -L "${bin}" || true
           done
+
+      - name: Verify produced binaries
+        # tmux / ttyd の実バイナリが build-assets/bin に揃っていることを必ず検証する。
+        # skeleton 段階の build はマージ前に SHA256 を埋めて実 build を確認する前提なので、
+        # workflow_dispatch / tag push / PR いずれの trigger でも常に strict に fail させる。
+        run: |
+          set -e
+          PREFIX="${{ github.workspace }}/packages/desktop/build-assets"
+          for bin in tmux ttyd; do
+            if [ ! -f "$PREFIX/bin/$bin" ]; then
+              echo "::error::Required binary missing: $PREFIX/bin/$bin"
+              echo "::error::Build script for $bin failed to produce output. Check build logs above."
+              exit 1
+            fi
+            file "$PREFIX/bin/$bin"
+          done
+          echo "::notice::Binaries verified: tmux, ttyd"
 
       - name: Upload bin artifact
         uses: actions/upload-artifact@v4
