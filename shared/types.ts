@@ -238,6 +238,16 @@ export interface WorktreeProfileLink {
 }
 
 /**
+ * worktreeのカスタム表示名
+ * 未設定時はクライアント側で branch 名にフォールバックする。
+ */
+export interface WorktreeDisplayName {
+  worktreePath: string;
+  displayName: string;
+  updatedAt: number;
+}
+
+/**
  * 実行環境の機能フラグ
  * クライアントは初期化時に受け取り、UI表示の可否を判断する
  */
@@ -460,6 +470,11 @@ export interface ServerToClientEvents {
     worktreePath: string;
     profileId: string | null;
   }) => void;
+  "worktree:display-names": (names: WorktreeDisplayName[]) => void;
+  "worktree:display-name-changed": (data: {
+    worktreePath: string;
+    displayName: string | null;
+  }) => void;
 
   // メッセージショートカット
   "shortcut:list": (shortcuts: MessageShortcut[]) => void;
@@ -588,6 +603,11 @@ export interface ClientToServerEvents {
   "worktree:set-profile": (data: {
     worktreePath: string;
     profileId: string | null;
+  }) => void;
+  "worktree:set-display-name": (data: {
+    worktreePath: string;
+    /** null / 空文字でクリア（branch名にフォールバック） */
+    displayName: string | null;
   }) => void;
   "session:restart-with-profile": (data: { sessionId: string }) => void;
 

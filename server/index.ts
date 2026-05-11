@@ -1213,6 +1213,17 @@ async function startServer() {
       socket.emit("shortcut:error", { message: getErrorMessage(e) });
     }
 
+    // worktree表示名（カスタム名）の一覧を初期同期。
+    // プロファイル機能と独立した汎用機能のため capabilities に依存しない。
+    try {
+      socket.emit("worktree:display-names", db.listWorktreeDisplayNames());
+    } catch (e) {
+      console.error(
+        "[Socket] failed to emit worktree:display-names:",
+        getErrorMessage(e)
+      );
+    }
+
     // ===== Session Orchestrator Event Handlers =====
     // sessionOrchestrator のイベントをそのまま Socket.IO クライアントへ転送する
     // 注意: session:list送信やttyd自動復元より前に登録する必要がある
@@ -2158,6 +2169,24 @@ async function startServer() {
     };
 
     /**
+     * link.worktreePath が session.worktreePath と論理的に一致するか判定する。
+     * 新規保存は canonical 形式に揃えているが、symlink 経由で異なる文字列に
+     * なっているケースを realpath fallback で救済。
+     */
+    const worktreePathMatchesSession = (
+      linkPath: string,
+      sessionWorktreePath: string | undefined
+    ): boolean => {
+      if (!sessionWorktreePath) return false;
+      if (sessionWorktreePath === linkPath) return true;
+      try {
+        return fs.realpathSync(linkPath) === sessionWorktreePath;
+      } catch {
+        return false;
+      }
+    };
+
+    /**
      * configDir のバリデーション。
      * @returns 正規化済み configDir、または null（エラーは socket に emit 済み）
      */
@@ -2212,8 +2241,9 @@ async function startServer() {
       }
       try {
         socket.emit("profile:list", db.listProfiles());
-        // リポジトリ紐付けも同梱送信（リロード時の初期同期用）
+        // リポジトリ / worktree 紐付けも同梱送信（リロード時の初期同期用）
         socket.emit("repo:profile-links", db.listRepoProfileLinks());
+        socket.emit("worktree:profile-links", db.listWorktreeProfileLinks());
       } catch (e) {
         socket.emit("profile:error", { message: getErrorMessage(e) });
       }
@@ -2286,12 +2316,18 @@ async function startServer() {
           .listRepoProfileLinks()
           .filter(link => link.profileId === id)
           .map(link => link.repoPath);
+        const affectedWorktreePaths = db
+          .listWorktreeProfileLinks()
+          .filter(link => link.profileId === id)
+          .map(link => link.worktreePath);
         for (const sess of sessionOrchestrator.getAllSessions()) {
-          if (
-            affectedRepoPaths.some(p =>
-              repoPathMatchesSession(p, sess.repoPath)
-            )
-          ) {
+          const repoMatches = affectedRepoPaths.some(p =>
+            repoPathMatchesSession(p, sess.repoPath)
+          );
+          const wtMatches = affectedWorktreePaths.some(p =>
+            worktreePathMatchesSession(p, sess.worktreePath)
+          );
+          if (repoMatches || wtMatches) {
             io.emit("session:updated", sess);
           }
         }
@@ -2311,6 +2347,10 @@ async function startServer() {
           .listRepoProfileLinks()
           .filter(link => link.profileId === id)
           .map(link => link.repoPath);
+        const affectedWorktreePaths = db
+          .listWorktreeProfileLinks()
+          .filter(link => link.profileId === id)
+          .map(link => link.worktreePath);
 
         db.deleteProfile(id);
         io.emit("profile:deleted", { id });
@@ -2323,13 +2363,24 @@ async function startServer() {
             repoPath,
             profileId: null,
           });
-          // そのリポジトリで稼働中のセッションを列挙して staleProfile 再計算
-          // (link 側 = 受信値 / 旧 symlink、session 側 = canonical の可能性が
-          //  あるため realpath fallback で判定する)
-          for (const sess of sessionOrchestrator.getAllSessions()) {
-            if (repoPathMatchesSession(repoPath, sess.repoPath)) {
-              io.emit("session:updated", sess);
-            }
+        }
+        for (const worktreePath of affectedWorktreePaths) {
+          io.emit("worktree:profile-changed", {
+            worktreePath,
+            profileId: null,
+          });
+        }
+        // 稼働中セッションを再emit。worktree個別 / repoデフォルト どちらか
+        // 一方でも該当すれば staleProfile が変化し得るため両方を見る。
+        for (const sess of sessionOrchestrator.getAllSessions()) {
+          const repoMatches = affectedRepoPaths.some(p =>
+            repoPathMatchesSession(p, sess.repoPath)
+          );
+          const wtMatches = affectedWorktreePaths.some(p =>
+            worktreePathMatchesSession(p, sess.worktreePath)
+          );
+          if (repoMatches || wtMatches) {
+            io.emit("session:updated", sess);
           }
         }
       } catch (e) {
@@ -2542,6 +2593,9 @@ async function startServer() {
 
         // 該当 repoPath 配下の稼働中セッションを再emit
         // (session.repoPath は canonical なので canonicalRepoPath で直接比較可能)
+        // worktree個別の紐付けがあるセッションは resolveProfileForWorktree が
+        // worktree側を優先するため、staleProfile が変化しないことを期待する
+        // (toManagedSession 内で再評価されるので別途分岐は不要)
         for (const session of sessionOrchestrator.getAllSessions()) {
           if (session.repoPath === canonicalRepoPath) {
             io.emit("session:updated", session);
@@ -2551,6 +2605,174 @@ async function startServer() {
         socket.emit("profile:error", { message: getErrorMessage(e) });
       }
     });
+
+    socket.on("worktree:set-profile", async ({ worktreePath, profileId }) => {
+      if (!capabilities.multiProfileSupported) {
+        emitUnsupported();
+        return;
+      }
+      if (typeof worktreePath !== "string" || worktreePath.length === 0) {
+        socket.emit("profile:error", {
+          message: "worktreePath は必須です",
+          code: "invalid_worktree",
+        });
+        return;
+      }
+      // ManagedSession.worktreePath は tmux 起動時の引数を保存しているため、
+      // 必ずしも canonical ではない。そこで保存も lookup も canonical に揃える。
+      let canonicalWorktreePath: string;
+      try {
+        canonicalWorktreePath = fs.realpathSync(worktreePath);
+      } catch {
+        socket.emit("profile:error", {
+          message: "worktreeパスが解決できません",
+          code: "invalid_worktree",
+        });
+        return;
+      }
+      try {
+        if (!(await isGitRepository(canonicalWorktreePath))) {
+          socket.emit("profile:error", {
+            message: "worktreeパスがgit working treeではありません",
+            code: "invalid_worktree",
+          });
+          return;
+        }
+
+        // 境界検証: worktree が属する repoPath を導出し、allowedRepos に
+        // 含まれているか確認。任意 path への書き込みを防ぐ。
+        if (allowedRepos.length > 0) {
+          let derivedRepoPath: string | undefined;
+          try {
+            const { stdout } = await execAsync(
+              `git -C "${canonicalWorktreePath}" rev-parse --path-format=absolute --git-common-dir`
+            );
+            const gitCommonDir = stdout.trim();
+            derivedRepoPath =
+              gitCommonDir.replace(/\/\.git\/?$/, "") || undefined;
+          } catch {
+            // 導出失敗 → 許可リストありなら拒否
+          }
+          const allowedMatch = (() => {
+            if (!derivedRepoPath) return false;
+            if (allowedRepos.includes(derivedRepoPath)) return true;
+            try {
+              const real = fs.realpathSync(derivedRepoPath);
+              return allowedRepos.includes(real);
+            } catch {
+              return false;
+            }
+          })();
+          if (!allowedMatch) {
+            socket.emit("profile:error", {
+              message: "リポジトリが許可リストに含まれていません",
+              code: "repo_not_allowed",
+            });
+            return;
+          }
+        }
+
+        if (profileId === null) {
+          db.removeWorktreeProfileLink(canonicalWorktreePath);
+        } else {
+          db.setWorktreeProfileLink(canonicalWorktreePath, profileId);
+        }
+        io.emit("worktree:profile-changed", {
+          worktreePath: canonicalWorktreePath,
+          profileId,
+        });
+
+        // 該当worktreeの稼働中セッションを再emit (staleProfile再評価)
+        for (const session of sessionOrchestrator.getAllSessions()) {
+          if (
+            worktreePathMatchesSession(
+              canonicalWorktreePath,
+              session.worktreePath
+            )
+          ) {
+            io.emit("session:updated", session);
+          }
+        }
+      } catch (e) {
+        socket.emit("profile:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on(
+      "worktree:set-display-name",
+      async ({ worktreePath, displayName }) => {
+        if (typeof worktreePath !== "string" || worktreePath.length === 0) {
+          // エラー専用 channel が無いので silent reject (UI 側は不変表示のまま)
+          return;
+        }
+        // canonical 化して保存と broadcast の key を統一する
+        let canonicalWorktreePath: string;
+        try {
+          canonicalWorktreePath = fs.realpathSync(worktreePath);
+        } catch {
+          return;
+        }
+        // git working tree であることを確認 (任意 path への書き込みを防ぐ)
+        try {
+          if (!(await isGitRepository(canonicalWorktreePath))) return;
+        } catch {
+          return;
+        }
+
+        // 境界検証: allowedRepos が指定されていれば、worktree の親 repo が
+        // 含まれているかチェック。worktree:set-profile と同じ防御。
+        if (allowedRepos.length > 0) {
+          let derivedRepoPath: string | undefined;
+          try {
+            const { stdout } = await execAsync(
+              `git -C "${canonicalWorktreePath}" rev-parse --path-format=absolute --git-common-dir`
+            );
+            const gitCommonDir = stdout.trim();
+            derivedRepoPath =
+              gitCommonDir.replace(/\/\.git\/?$/, "") || undefined;
+          } catch {
+            // 導出失敗 → 許可リストありなら拒否
+          }
+          const allowedMatch = (() => {
+            if (!derivedRepoPath) return false;
+            if (allowedRepos.includes(derivedRepoPath)) return true;
+            try {
+              const real = fs.realpathSync(derivedRepoPath);
+              return allowedRepos.includes(real);
+            } catch {
+              return false;
+            }
+          })();
+          if (!allowedMatch) return;
+        }
+
+        // 入力正規化: trim 後に空 / null なら削除、それ以外は upsert
+        const trimmed =
+          typeof displayName === "string" ? displayName.trim() : "";
+        const MAX_LEN = 200;
+        try {
+          if (trimmed.length === 0) {
+            db.removeWorktreeDisplayName(canonicalWorktreePath);
+            io.emit("worktree:display-name-changed", {
+              worktreePath: canonicalWorktreePath,
+              displayName: null,
+            });
+          } else {
+            const value = trimmed.slice(0, MAX_LEN);
+            db.setWorktreeDisplayName(canonicalWorktreePath, value);
+            io.emit("worktree:display-name-changed", {
+              worktreePath: canonicalWorktreePath,
+              displayName: value,
+            });
+          }
+        } catch (e) {
+          console.error(
+            "[Socket] worktree:set-display-name failed:",
+            getErrorMessage(e)
+          );
+        }
+      }
+    );
 
     socket.on("session:restart-with-profile", async ({ sessionId }) => {
       if (!capabilities.multiProfileSupported) {
