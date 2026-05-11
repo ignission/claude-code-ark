@@ -57,6 +57,7 @@ Ark内部の操作にはMCPツールを使用してください:
 - send_to_session: セッション内のClaude Codeにテキスト入力（Enter付き）
 - send_key_to_session: セッションに特殊キー送信（y, n, C-c, Escape等）
 - get_session_output: セッションのターミナル表示内容を取得（進捗確認に使用）
+- validate_issue_url: Phase 1b で URL を サーバ側で fail-fast 検証（Jira / GitHub issue 以外は拒否）
 - list_profiles: 登録済みClaudeプロファイル一覧（Linux環境のみ、空ならスキップ）
 - create_worktree: worktree作成（リポジトリパス、ブランチ名、ベースブランチ、profileId）
 - delete_worktree: worktree削除
@@ -142,9 +143,10 @@ worktreeの作成・削除はMCPツールを使ってください。
 #### Phase 1b: URL経由（URLありの場合）
 ユーザーがチケット/IssueのURLを貼って着手を依頼した場合のフロー。Beacon自身がMCP/gh_execで直接チケット内容を取得する（mainセッションには委譲しない）。
 
-1. **URL の厳格検証 (fail-fast)**: 入力URL を以下のいずれかの正規表現に必ず一致させる。一致しなければ「Jira / GitHub issue 以外のURLには対応していません」とユーザに伝えて中断する。
-   - Jira: \`^https://[a-z0-9-]+\\.atlassian\\.net/browse/[A-Z][A-Z0-9]*-[0-9]+/?$\`
-   - GitHub issue: \`^https://github\\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/issues/[0-9]+/?$\`
+1. **URL の厳格検証 (fail-fast)**: 必ず最初に \`validate_issue_url\` MCP tool を呼び出し、サーバ側で URL を検証する。
+   - \`ok: true\` なら返却された kind / parsed フィールド (issueKey, owner/repo/issueNumber 等) を以降の step で使う
+   - \`ok: false\` なら「Jira / GitHub issue 以外のURLには対応していません」とユーザに伝えて中断する
+   - 検証を skip して \`gh_exec\` / \`mcp__claude_ai_Atlassian__*\` を直接呼ぶことは禁止
 2. list_repositoriesで全リポジトリ一覧を取得
 3. 番号付きリストでリポジトリを提示し、ユーザーに選ばせる
 4. URLの種別を判定し、チケット内容を取得する:
@@ -680,6 +682,68 @@ export class BeaconManager extends EventEmitter {
               };
             }
             return { content: [{ type: "text" as const, text: output }] };
+          },
+        },
+        {
+          name: "validate_issue_url",
+          description:
+            "Phase 1b で渡された URL が Jira / GitHub issue として有効かを *サーバ側で* 正規表現検証する。Phase 1b の最初に必ず呼び出すこと。OK なら kind ('jira'|'github') と parsed フィールドを返す。NG なら ok:false と理由。サーバ側で fail-fast に弾くため、検証を skip して gh_exec / mcp__claude_ai_Atlassian__* を呼ぶことは禁止。",
+          inputSchema: {
+            url: z.string().describe("Phase 1b でユーザが貼り付けたURL"),
+          },
+          handler: async args => {
+            const url = String(args.url ?? "");
+            const jiraRe =
+              /^https:\/\/([a-z0-9-]+)\.atlassian\.net\/browse\/([A-Z][A-Z0-9]*-[0-9]+)\/?$/;
+            const ghRe =
+              /^https:\/\/github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)\/issues\/([0-9]+)\/?$/;
+            const jm = url.match(jiraRe);
+            if (jm) {
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: JSON.stringify({
+                      ok: true,
+                      kind: "jira",
+                      host: `${jm[1]}.atlassian.net`,
+                      issueKey: jm[2],
+                    }),
+                  },
+                ],
+              };
+            }
+            const gm = url.match(ghRe);
+            if (gm) {
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: JSON.stringify({
+                      ok: true,
+                      kind: "github",
+                      owner: gm[1],
+                      repo: gm[2],
+                      issueNumber: Number(gm[3]),
+                    }),
+                  },
+                ],
+              };
+            }
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: JSON.stringify({
+                    ok: false,
+                    error: "unsupported_url",
+                    detail:
+                      "Jira (https://*.atlassian.net/browse/<KEY>) または GitHub issue (https://github.com/<owner>/<repo>/issues/<N>) のみ受け付けます",
+                    received: url,
+                  }),
+                },
+              ],
+            };
           },
         },
         {
@@ -1303,6 +1367,7 @@ export class BeaconManager extends EventEmitter {
       "mcp__ark-beacon__send_to_session",
       "mcp__ark-beacon__send_key_to_session",
       "mcp__ark-beacon__get_session_output",
+      "mcp__ark-beacon__validate_issue_url",
       "mcp__ark-beacon__list_profiles",
       "mcp__ark-beacon__create_worktree",
       "mcp__ark-beacon__delete_worktree",

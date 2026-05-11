@@ -482,10 +482,15 @@ async function startServer() {
       }
       return worktree;
     },
-    listProfiles: () =>
+    listProfiles: () => {
+      // multiProfileSupported が false (Linux 以外 / claude or tmux 未検出)
+      // の環境では DB の内容を返さず空配列にする。Beacon 側でこれを見て
+      // プロファイル選択 step をスキップできるようにする。
+      if (!capabilities.multiProfileSupported) return [];
       // configDir はサーバ内部の filesystem path であり、UI / モデルの
       // 選択には id と name のみで十分。最小権限の観点で公開しない。
-      db.listProfiles().map(p => ({ id: p.id, name: p.name })),
+      return db.listProfiles().map(p => ({ id: p.id, name: p.name }));
+    },
     linkWorktreeProfile: (worktreePath, profileId) => {
       // 無効な profileId / worktreePath で DB に書き込んで UI 側だけ
       // 「成功した」状態になるのを防ぐため、書き込み前に存在確認する。
