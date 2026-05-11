@@ -30,7 +30,12 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { type ServerHandle, startServer } from "@ark/server";
+// 型のみ import: ESM では `import type` は erase されるため、`@ark/server` の
+// module-level singleton (db / fileUploadManager / browserManager) が import 評価
+// 時に即時構築されない。`startServer` は `bootstrap()` 内で dynamic import で取得し、
+// その時点では `configureAppPaths()` により `ARK_DATA_DIR` / `ARK_LOGS_DIR` が
+// 設定済みであることを保証する。
+import type { ServerHandle } from "@ark/server";
 import { app, BrowserWindow, Menu } from "electron";
 import log from "electron-log";
 import { getAvailablePort } from "./getAvailablePort.js";
@@ -67,13 +72,21 @@ let isQuitting = false;
 function configureAppPaths(): void {
   app.setName("Ark");
   // app.getPath は Electron の sync API。ready 前から userData / logs は有効。
-  process.env.ARK_DATA_DIR = app.getPath("userData");
-  process.env.ARK_LOGS_DIR = app.getPath("logs");
+  // 明示的に set された ARK_DATA_DIR / ARK_LOGS_DIR を尊重する。
+  // 未設定時のみ Electron のデフォルトパスにフォールバック。
+  // (テストや support reproduction で `ARK_DATA_DIR=/custom/path` を渡された際に
+  //  silent に上書きされてしまうのを防ぐ)
+  if (!process.env.ARK_DATA_DIR) {
+    process.env.ARK_DATA_DIR = app.getPath("userData");
+  }
+  if (!process.env.ARK_LOGS_DIR) {
+    process.env.ARK_LOGS_DIR = app.getPath("logs");
+  }
 
-  // electron-log の書き出し先を macOS 標準ロケーションに揃える。
+  // electron-log の書き出し先を ARK_LOGS_DIR (override or Electron default) に揃える。
   // v5 系の resolvePathFn signature を使う。
   log.transports.file.resolvePathFn = () =>
-    path.join(app.getPath("logs"), "main.log");
+    path.join(process.env.ARK_LOGS_DIR ?? app.getPath("logs"), "main.log");
   log.info("[Ark Desktop] configureAppPaths", {
     userData: process.env.ARK_DATA_DIR,
     logs: process.env.ARK_LOGS_DIR,
@@ -197,6 +210,13 @@ async function bootstrap(): Promise<void> {
 
   // production: サーバーを埋め込み起動する
   const port = await getAvailablePort();
+  // dynamic import: ここで初めて `@ark/server` を評価することで、
+  // module-level singleton (db / fileUploadManager / browserManager) が
+  // `configureAppPaths()` で set 済みの `ARK_DATA_DIR` / `ARK_LOGS_DIR` を
+  // 読み取った状態で構築される。static import にすると import 評価が
+  // module top で走り、`configureAppPaths()` より前に singleton が
+  // `process.cwd()/data` (Finder 起動時は `/data`) に紐付いてしまう。
+  const { startServer } = await import("@ark/server");
   serverHandle = await startServer({
     port,
     webStaticDir: resolveWebStaticDir(),
