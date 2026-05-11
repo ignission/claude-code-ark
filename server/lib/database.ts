@@ -25,6 +25,7 @@ import {
   type RepoProfileLink,
   type Session,
   type SessionStatus,
+  type WorktreeProfileLink,
 } from "../../shared/types.js";
 
 // プロジェクトルートからの相対パスでDBファイルを配置
@@ -286,6 +287,12 @@ export class SessionDatabase {
       );
       CREATE TABLE IF NOT EXISTS repo_profile_links (
         repo_path TEXT PRIMARY KEY,
+        profile_id TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS worktree_profile_links (
+        worktree_path TEXT PRIMARY KEY,
         profile_id TEXT NOT NULL,
         updated_at INTEGER NOT NULL,
         FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
@@ -961,6 +968,77 @@ export class SessionDatabase {
       "DELETE FROM repo_profile_links WHERE repo_path = ?"
     );
     stmt.run(repoPath);
+  }
+
+  // ============================================================
+  // Worktree ↔ プロファイル紐付けCRUD操作
+  // worktree個別の紐付けが優先され、無い場合は repo_profile_links がデフォルト
+  // ============================================================
+
+  /**
+   * すべてのworktree紐付けを取得（クライアントの初期同期用）
+   */
+  listWorktreeProfileLinks(): WorktreeProfileLink[] {
+    const stmt = this.db.prepare(
+      "SELECT * FROM worktree_profile_links ORDER BY updated_at DESC"
+    );
+    const rows = stmt.all() as Array<{
+      worktree_path: string;
+      profile_id: string;
+      updated_at: number;
+    }>;
+    return rows.map(row => ({
+      worktreePath: row.worktree_path,
+      profileId: row.profile_id,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  /**
+   * worktreeパスから紐付けを取得
+   */
+  getWorktreeProfileLink(worktreePath: string): WorktreeProfileLink | null {
+    const stmt = this.db.prepare(
+      "SELECT * FROM worktree_profile_links WHERE worktree_path = ?"
+    );
+    const row = stmt.get(worktreePath) as
+      | {
+          worktree_path: string;
+          profile_id: string;
+          updated_at: number;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      worktreePath: row.worktree_path,
+      profileId: row.profile_id,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * worktreeとプロファイルを紐付け（UPSERT）
+   */
+  setWorktreeProfileLink(worktreePath: string, profileId: string): void {
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      INSERT INTO worktree_profile_links (worktree_path, profile_id, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(worktree_path) DO UPDATE SET
+        profile_id = excluded.profile_id,
+        updated_at = excluded.updated_at
+    `);
+    stmt.run(worktreePath, profileId, now);
+  }
+
+  /**
+   * worktreeの紐付けを解除
+   */
+  removeWorktreeProfileLink(worktreePath: string): void {
+    const stmt = this.db.prepare(
+      "DELETE FROM worktree_profile_links WHERE worktree_path = ?"
+    );
+    stmt.run(worktreePath);
   }
 
   // ============================================================

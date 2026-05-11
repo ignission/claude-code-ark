@@ -6,7 +6,7 @@
  * Supports remote access via Cloudflare Tunnel.
  */
 
-import { exec } from "node:child_process";
+import { exec, execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
 import express from "express";
@@ -481,6 +481,71 @@ async function startServer() {
         console.error("[Beacon] worktree通知に失敗しました");
       }
       return worktree;
+    },
+    listProfiles: () => {
+      // multiProfileSupported が false (Linux 以外 / claude or tmux 未検出)
+      // の環境では DB の内容を返さず空配列にする。Beacon 側でこれを見て
+      // プロファイル選択 step をスキップできるようにする。
+      if (!capabilities.multiProfileSupported) return [];
+      // configDir はサーバ内部の filesystem path であり、UI / モデルの
+      // 選択には id と name のみで十分。最小権限の観点で公開しない。
+      return db.listProfiles().map(p => ({ id: p.id, name: p.name }));
+    },
+    linkWorktreeProfile: (worktreePath, profileId) => {
+      // 無効な profileId / worktreePath で DB に書き込んで UI 側だけ
+      // 「成功した」状態になるのを防ぐため、書き込み前に存在確認する。
+      // (worktree_profile_links は FK 制約を持たないため明示チェックが必要)
+      if (!db.getProfile(profileId)) return false;
+      // 1) 実在 directory であること
+      // 2) git worktree であること (.git ファイル/ディレクトリの存在で判定)
+      //    任意ディレクトリへの link 書き込みを防ぐ trust boundary。
+      // 3) (allowedRepos 設定時) repoPath が許可リストに含まれること
+      //    socket側 worktree:set-profile と同じ防御を維持する。
+      try {
+        const stat = fs.statSync(worktreePath);
+        if (!stat.isDirectory()) return false;
+      } catch {
+        return false;
+      }
+      if (!fs.existsSync(`${worktreePath}/.git`)) return false;
+      if (allowedRepos.length > 0) {
+        let derivedRepoPath: string | undefined;
+        try {
+          // execFileSync は shell を介さないため worktreePath のメタ文字
+          // (`、$()、;、空白) によるコマンド注入を防げる。
+          const stdout = execFileSync(
+            "git",
+            [
+              "-C",
+              worktreePath,
+              "rev-parse",
+              "--path-format=absolute",
+              "--git-common-dir",
+            ],
+            { stdio: ["ignore", "pipe", "ignore"] }
+          ).toString();
+          const gitCommonDir = stdout.trim();
+          derivedRepoPath =
+            gitCommonDir.replace(/\/\.git\/?$/, "") || undefined;
+        } catch {
+          return false;
+        }
+        if (!derivedRepoPath) return false;
+        let inAllowed = allowedRepos.includes(derivedRepoPath);
+        if (!inAllowed) {
+          try {
+            inAllowed = allowedRepos.includes(fs.realpathSync(derivedRepoPath));
+          } catch {
+            inAllowed = false;
+          }
+        }
+        if (!inAllowed) return false;
+      }
+      db.setWorktreeProfileLink(worktreePath, profileId);
+      // UIの worktreeProfileLinks マップ / プロファイルバッジを更新するため
+      // 全クライアントに通知する。worktree:set-profile ハンドラと同じイベント。
+      io.emit("worktree:profile-changed", { worktreePath, profileId });
+      return true;
     },
     deleteWorktree: async (repoPath, worktreePath) => {
       // 削除前にworktreeのセッションを停止
