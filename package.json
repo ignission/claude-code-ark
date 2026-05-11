@@ -9,10 +9,10 @@
   },
   "scripts": {
     "dev": "pnpm --filter @ark/web dev",
-    "dev:server": "pnpm --filter @ark/server dev",
+    "dev:server": "tsx watch packages/server/src/index.ts",
     "dev:full": "concurrently \"pnpm dev\" \"pnpm dev:server\"",
-    "dev:remote": "pnpm --filter @ark/server dev:remote",
-    "dev:quick": "pnpm --filter @ark/server dev:quick",
+    "dev:remote": "tsx watch packages/server/src/index.ts --remote",
+    "dev:quick": "tsx watch packages/server/src/index.ts --quick",
     "dev:full:remote": "concurrently \"pnpm dev\" \"pnpm dev:remote\"",
     "build": "pnpm -r build",
     "start": "pnpm --filter @ark/server start",

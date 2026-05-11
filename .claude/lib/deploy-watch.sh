@@ -47,11 +47,8 @@ _DEPLOY_WATCH_PATHS=(
   "packages/server/ecosystem.config.cjs"
   "package.json"
   "pnpm-lock.yaml"
-  "vite.config.ts"
   "biome.json"
   "tsconfig.json"
-  "tsconfig.server.json"
-  "tsconfig.client.json"
 )
 
 DEPLOY_WATCH_MAX_FIRES=${DEPLOY_WATCH_MAX_FIRES:-5}                  # 30 秒 × 5 = 2.5 分

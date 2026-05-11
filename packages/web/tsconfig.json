@@ -19,8 +19,7 @@
     "incremental": true,
     "tsBuildInfoFile": "./node_modules/.cache/tsbuildinfo",
     "paths": {
-      "@/*": ["./src/*"],
-      "@shared/*": ["../shared/src/*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["src/**/*", "vite.config.ts"],
