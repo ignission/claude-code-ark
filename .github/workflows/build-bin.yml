@@ -3,8 +3,12 @@ name: build-bin (macOS arm64 tmux/ttyd)
 # F4: tmux/ttyd 同梱バイナリのクロスビルドワークフロー。
 # macos-14 (Apple Silicon) runner で arm64 native build を行い、
 # packages/desktop/build-assets/{bin,Frameworks,licenses}/ に成果物を配置する。
-# tag push (v*) と workflow_dispatch (手動) で起動可能。
 # manifest.json の hash でビルド成果物を actions/cache にキャッシュする。
+#
+# **現状は workflow_dispatch (手動起動) 限定**。build-tmux.sh / build-ttyd.sh は
+# skeleton 状態で実 build ステップ (configure/make/install_name_tool 等) が未実装。
+# 自動起動 (push tag, pull_request) を有効化するのは F4-followup で実 build スクリプトを
+# 完成させてから (現状のままだと skeleton の verify step が必ず fail するため)。
 
 on:
   workflow_dispatch:
@@ -14,13 +18,14 @@ on:
         required: false
         default: "false"
         type: string
-  push:
-    tags:
-      - "v*"
-  pull_request:
-    paths:
-      - "packages/desktop/scripts/build-bin/**"
-      - ".github/workflows/build-bin.yml"
+  # 以下は build-tmux.sh / build-ttyd.sh の skeleton を実装で置き換えた後に有効化。
+  # push:
+  #   tags:
+  #     - "v*"
+  # pull_request:
+  #   paths:
+  #     - "packages/desktop/scripts/build-bin/**"
+  #     - ".github/workflows/build-bin.yml"
 
 jobs:
   build:
