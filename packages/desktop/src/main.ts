@@ -13,7 +13,10 @@
  *
  * フェーズ別 TODO:
  *   - F3 macOS 統合: app.dock / Tray / `app.getPath('userData')` を dataDir
- *     としてサーバーに渡す
+ *     としてサーバーに渡す。**現状 startServer は process.cwd() ベースで
+ *     SQLite/PID ファイルを作成するため、Finder からの .app 起動では cwd が
+ *     書き込み不可になり起動失敗する**。F3 で `app.getPath("userData")` を
+ *     dataDir として注入することで解消する。
  *   - F4 tmux/ttyd 同梱: extraResources の bin/ パスを binPaths として渡す
  */
 import path from "node:path";

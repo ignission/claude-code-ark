@@ -43,9 +43,6 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.7
         version: 0.2.120(zod@4.3.6)
-      '@ark/shared':
-        specifier: workspace:*
-        version: link:../shared
       better-sqlite3:
         specifier: ^12.6.2
         version: 12.9.0
@@ -56,6 +53,9 @@ importers:
       '@ark/server':
         specifier: workspace:*
         version: link:../server
+      '@ark/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@ark/web':
         specifier: workspace:*
         version: link:../web

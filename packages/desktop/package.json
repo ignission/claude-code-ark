@@ -14,12 +14,12 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.7",
-    "@ark/shared": "workspace:*",
     "better-sqlite3": "^12.6.2",
     "playwright-core": "^1.59.1"
   },
   "devDependencies": {
     "@ark/server": "workspace:*",
+    "@ark/shared": "workspace:*",
     "@ark/web": "workspace:*",
     "concurrently": "^9.2.1",
     "electron": "^33.4.7",
