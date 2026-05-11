@@ -10,6 +10,7 @@
 import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { getUploadsDir } from "./paths.js";
 
 export interface SaveFileResult {
   path: string;
@@ -89,12 +90,16 @@ const SAFE_EXTENSION_WHITELIST = new Set([
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const FILE_EXPIRY_MS = 24 * 60 * 60 * 1000;
-const BASE_DIR = "/tmp/ark-files";
 
 export class FileUploadManager {
   private readonly baseDir: string;
 
-  constructor(baseDir: string = BASE_DIR) {
+  /**
+   * @param baseDir 省略時は `getUploadsDir()`（`<dataDir>/files`）を使用。
+   * 旧 `/tmp/ark-files` から `~/Library/Application Support/Ark/files`
+   * もしくは `<repo-root>/data/files` への移行を行った（F3 Step 2）。
+   */
+  constructor(baseDir: string = getUploadsDir()) {
     this.baseDir = path.resolve(baseDir);
   }
 

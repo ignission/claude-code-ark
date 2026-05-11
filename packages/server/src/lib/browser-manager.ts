@@ -23,6 +23,7 @@ import {
   WS_PORT_START,
 } from "./constants.js";
 import { getErrorMessage } from "./errors.js";
+import { getDataDir } from "./paths.js";
 
 /** 各プロセスの起動タイムアウト（ミリ秒） */
 const XVFB_TIMEOUT = 5000;
@@ -130,7 +131,9 @@ const ARK_DESKTOP = "ark-browser";
  * ファイル形式: 1行1エントリ。`<pid>` または `<pid>:<display>`。
  * Xvfbのみdisplay情報を併記してプロセス死亡後もソケット残骸を回収できる。
  */
-const BROWSER_PIDFILE_DIR = path.join(process.cwd(), "data", "browser-pids");
+// getDataDir() 経由で macOS/Linux の Application Support / cwd ベースに自動切り替え。
+// 直接の process.cwd() 直書きは Finder 起動の .app で cwd が "/" になり破綻するため除去。
+const BROWSER_PIDFILE_DIR = path.join(getDataDir(), "browser-pids");
 
 interface PidEntry {
   pid: number;

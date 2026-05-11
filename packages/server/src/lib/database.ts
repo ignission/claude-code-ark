@@ -26,10 +26,13 @@ import {
 } from "@ark/shared";
 import Database from "better-sqlite3";
 import { nanoid } from "nanoid";
+import { getDataDir } from "./paths.js";
 
-// プロジェクトルートからの相対パスでDBファイルを配置
-// NOTE: esbuildバンドル時にimport.meta.urlのパスが変わるため、process.cwd()を使用
-const DATA_DIR = join(process.cwd(), "data");
+// データディレクトリの解決は `paths.ts` の `getDataDir()` に一元化。
+// ARK_DATA_DIR 環境変数 / macOS の Application Support / Linux の cwd ベースを順に判定する。
+// 旧: `path.join(process.cwd(), "data")` 直書きだったが、Finder から起動した .app では
+// cwd が "/" になり書き込み失敗するため抽象化した。
+const DATA_DIR = getDataDir();
 const DB_PATH = join(DATA_DIR, "sessions.db");
 
 /** データベースに保存されるセッションの行データ */
