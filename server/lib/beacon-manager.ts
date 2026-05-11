@@ -700,6 +700,28 @@ export class BeaconManager extends EventEmitter {
           },
           handler: async args => {
             try {
+              const profileId = args.profileId as string | undefined;
+              // profileId が指定されている場合は worktree 作成 *前* に存在確認する。
+              // 作成後に link 失敗してロールバックできずに worktree だけ残るのを防ぐ。
+              if (profileId) {
+                const known = deps.listProfiles().some(p => p.id === profileId);
+                if (!known) {
+                  return {
+                    content: [
+                      {
+                        type: "text" as const,
+                        text: JSON.stringify({
+                          ok: false,
+                          error: "unknown_profile_id",
+                          detail:
+                            "list_profiles に存在しない profileId です。worktreeは作成していません",
+                          profileId,
+                        }),
+                      },
+                    ],
+                  };
+                }
+              }
               const worktree = (await deps.createWorktree(
                 args.repoPath as string,
                 args.branchName as string,
@@ -723,11 +745,14 @@ export class BeaconManager extends EventEmitter {
                   ],
                 };
               }
-              const profileId = args.profileId as string | undefined;
               let linkedProfileId: string | null = null;
               if (profileId) {
                 const ok = deps.linkWorktreeProfile(worktree.path, profileId);
                 if (!ok) {
+                  // 事前検証を通過した profileId と新規作成 worktree なのに link 失敗
+                  // = profile が直前に削除された / worktree path 検証が拒否したケース。
+                  // 呼び出し側 (Sonnet) が後続の start_session を中止できるよう
+                  // 明示的に失敗を返す。worktree 自体は残るが、ユーザに伝える。
                   return {
                     content: [
                       {
@@ -736,7 +761,7 @@ export class BeaconManager extends EventEmitter {
                           ok: false,
                           error: "link_profile_failed",
                           detail:
-                            "profileIdに該当するプロファイルが見つからないか、worktreePathが無効です",
+                            "worktree作成後の link に失敗しました。worktreeは作成済みなので、再試行する場合は delete_worktreeでクリーンアップしてから create_worktree を再実行してください",
                           worktree,
                           profileId,
                         }),
@@ -1273,7 +1298,7 @@ export class BeaconManager extends EventEmitter {
         // チケット取得) で必要な Atlassian のみを許可する。他 provider が
         // 必要になったらここに明示的に追加する (allow-list 方式)。
         canUseTool: async (toolName, input) => {
-          if (toolName.startsWith("mcp__claude_ai_Atlassian_")) {
+          if (toolName.startsWith("mcp__claude_ai_Atlassian__")) {
             return { behavior: "allow", updatedInput: input };
           }
           return {
