@@ -3,12 +3,11 @@
  *
  * 環境による配置先:
  *   - 環境変数 `ARK_DATA_DIR` / `ARK_LOGS_DIR` が指定されればそれを優先
- *   - macOS（Electron `.app`）: `~/Library/Application Support/Ark/` / `~/Library/Logs/Ark/`
- *   - Linux / Windows: `process.cwd()/data` 配下（既存互換、pm2 + repo-root 起動）
- *
- * Electron main プロセスは `app.getPath("userData")` / `app.getPath("logs")` を
- * `process.env.ARK_DATA_DIR` / `process.env.ARK_LOGS_DIR` に setEnv することで
- * 同梱サーバーの全データ書き込みを Application Support 配下に逃がす。
+ *   - Electron では `configureAppPaths()` 経由で
+ *     `ARK_DATA_DIR = app.getPath("userData")` /
+ *     `ARK_LOGS_DIR = app.getPath("logs")` が明示的に設定される
+ *   - CLI / PM2 等の通常起動（Linux + macOS + Windows）: `<cwd>/data` 配下
+ *     （legacy 互換）
  *
  * 関連:
  *   - `database.ts` の DATA_DIR / DB_PATH
@@ -17,42 +16,31 @@
  *   - `packages/desktop/src/main.ts`（環境変数注入元）
  */
 
-import os from "node:os";
 import path from "node:path";
 
 /**
  * データ保存先ディレクトリを返す。
  *
  * 優先順:
- *   1. `ARK_DATA_DIR` 環境変数（CLI 起動時に env を set した場合）
- *   2. macOS: `~/Library/Application Support/Ark/`
- *   3. Linux/Windows: `<cwd>/data`
- *
- * **Electron 環境での注意**: `@ark/server` の singleton (`db`, `fileUploadManager`) は
- * module import 時に評価される。Electron では `app.whenReady()` 以前の import 評価
- * タイミングで `ARK_DATA_DIR` が未設定なため、env override は機能しない。
- * macOS では darwin branch が `app.getPath("userData")` と同じパスを返すため
- * 偶然一致して動作する。**Linux/Windows Electron は scope 外** (arm64-mac only)。
+ *   1. `ARK_DATA_DIR` 環境変数（Electron は `configureAppPaths()` で明示設定）
+ *   2. CLI / PM2 等 env unset 時: `<cwd>/data`（legacy 互換）
  */
 export function getDataDir(): string {
   const envDir = process.env.ARK_DATA_DIR;
   if (envDir) return envDir;
-  if (process.platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Application Support", "Ark");
-  }
   return path.join(process.cwd(), "data");
 }
 
 /**
  * Ark のログ出力先。
- * 環境変数 `ARK_LOGS_DIR` > macOS 標準 > データディレクトリ配下 logs/ の順で決定する。
+ *
+ * 優先順:
+ *   1. `ARK_LOGS_DIR` 環境変数（Electron は `configureAppPaths()` で明示設定）
+ *   2. `getDataDir()/logs` （CLI / PM2 等の env unset 時）
  */
 export function getLogsDir(): string {
   const envDir = process.env.ARK_LOGS_DIR;
   if (envDir) return envDir;
-  if (process.platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Logs", "Ark");
-  }
   return path.join(getDataDir(), "logs");
 }
 

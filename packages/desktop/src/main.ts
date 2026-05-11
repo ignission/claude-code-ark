@@ -59,11 +59,10 @@ let isQuitting = false;
  * - `ARK_DATA_DIR` / `ARK_LOGS_DIR`: `@ark/server` が `paths.ts` 経由でこの
  *   環境変数を参照するため、`startServer()` 呼び出しより前に必ず設定する。
  *
- * **重要な制約**: この関数は ESM import 評価後に呼ばれるため、`@ark/server` 内の
- * singleton (`db`, `fileUploadManager`) は既に旧 env で construct 済み。
- * macOS では `paths.ts` の darwin branch が `app.getPath("userData")` と同じ
- * `~/Library/Application Support/Ark/` を返すため偶然動作するが、
- * **Linux/Windows Electron では env override は機能しない (scope 外)**。
+ * **重要**: `@ark/server` 側の singleton (`db`, `fileUploadManager`) は
+ * 構築時に `getDataDir()` / `getUploadsDir()` を遅延評価する作りになっており、
+ * `startServer()` 呼び出し前に env を set すれば全プラットフォームで
+ * Application Support / userData 配下に書き込みを向けられる。
  */
 function configureAppPaths(): void {
   app.setName("Ark");
