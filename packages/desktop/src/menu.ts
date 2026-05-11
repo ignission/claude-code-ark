@@ -2,13 +2,15 @@
  * Ark Desktop - アプリケーションメニュー (macOS Menu Bar)
  *
  * macOS の慣習に従い、App / File / Edit / View / Window / Help の標準構造を組む。
- * Help から「Open Logs Folder」「Reset Data...」を提供する。Reset Data は破壊的操作
- * のため `dialog.showMessageBox` で確認を取る。
+ * Help から「Open Logs Folder」「Open Data Folder」を提供する。
  *
  * F3 Step 5 で導入。クロスプラットフォーム互換のため Linux / Windows でも
  * 同じテンプレートで動くようにしている（macOS のみ先頭の App メニューを追加）。
+ *
+ * 「Reset Data」相当の自動削除機能は F4 以降で実装予定。Phase 3 では Folder を
+ * 開いてユーザーに手動削除を促すのみだったため、誤解を招く `Reset Data...` ラベル
+ * を撤去して `Open Data Folder` 単独に整理した（F3 review 指摘事項）。
  */
-import path from "node:path";
 import { getDataDir, getLogsDir } from "@ark/server";
 import {
   app,
@@ -122,32 +124,13 @@ export function buildAppMenu(options: AppMenuOptions): Menu {
       label: "Open Data Folder",
       click: async () => {
         // `ARK_DATA_DIR` の override を尊重するため `@ark/server` の解決器を使う。
+        // 自動削除 (Reset Data) 機能は F4 以降で別途実装するため、現状は Folder を
+        // 開くだけにとどめる。F3 review でラベルと挙動の乖離を指摘されたため、
+        // 旧「Reset Data...」エントリは撤去した。
         const dataDir = getDataDir();
         const result = await shell.openPath(dataDir);
         if (result) {
           dialog.showErrorBox("Open Data Folder Failed", result);
-        }
-      },
-    },
-    { type: "separator" },
-    {
-      label: "Reset Data...",
-      click: async () => {
-        const dataDir = getDataDir();
-        const { response } = await dialog.showMessageBox({
-          type: "warning",
-          buttons: ["Cancel", "Reset"],
-          defaultId: 0,
-          cancelId: 0,
-          title: "Reset Ark Data",
-          message:
-            "Ark の全データ（セッション履歴・アップロード等）を削除しますか?",
-          detail: `${path.join(dataDir, "sessions.db")} とその周辺ファイルが削除されます。実行後はアプリを再起動してください。\n\nこの操作は元に戻せません。`,
-        });
-        if (response === 1) {
-          // 実削除は F4 以降で実装する（tmux セッション側との整合確認が必要）。
-          // Phase 3 では Folder を開いて手動削除を促す。
-          await shell.openPath(dataDir);
         }
       },
     },

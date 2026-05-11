@@ -32,8 +32,13 @@ import { getDataDir } from "./paths.js";
 // ARK_DATA_DIR 環境変数 / macOS の Application Support / Linux の cwd ベースを順に判定する。
 // 旧: `path.join(process.cwd(), "data")` 直書きだったが、Finder から起動した .app では
 // cwd が "/" になり書き込み失敗するため抽象化した。
-const DATA_DIR = getDataDir();
-const DB_PATH = join(DATA_DIR, "sessions.db");
+//
+// 注意: モジュール評価時には ARK_DATA_DIR がまだ未設定の場合があるため
+// (Electron の `configureAppPaths()` が import 後に走るケース)、
+// const で固定せず `getDbPath()` 経由で都度評価する。これは F3 review 指摘事項。
+function getDbPath(): string {
+  return join(getDataDir(), "sessions.db");
+}
 
 /** データベースに保存されるセッションの行データ */
 interface SessionRow {
@@ -132,10 +137,12 @@ export class SessionDatabase {
   private readonly db: Database.Database;
 
   /**
-   * @param dbPath - DBファイルのパス。省略時はデフォルトの `data/sessions.db` を使用
+   * @param dbPath - DBファイルのパス。省略時はデフォルトの `<dataDir>/sessions.db` を使用
+   * デフォルトパスは constructor 呼び出し時点で評価するため、
+   * import 後に process.env.ARK_DATA_DIR を override する Electron 用途でも追従する。
    */
   constructor(dbPath?: string) {
-    const resolvedPath = dbPath ?? DB_PATH;
+    const resolvedPath = dbPath ?? getDbPath();
     this.ensureDataDirectory(resolvedPath);
     this.db = new Database(resolvedPath);
     this.initialize();

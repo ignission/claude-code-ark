@@ -133,7 +133,13 @@ const ARK_DESKTOP = "ark-browser";
  */
 // getDataDir() 経由で macOS/Linux の Application Support / cwd ベースに自動切り替え。
 // 直接の process.cwd() 直書きは Finder 起動の .app で cwd が "/" になり破綻するため除去。
-const BROWSER_PIDFILE_DIR = path.join(getDataDir(), "browser-pids");
+//
+// 注意: モジュール評価時には ARK_DATA_DIR がまだ未設定の場合があるため
+// (Electron の `configureAppPaths()` が import 後に走るケース)、
+// const で固定せず関数経由で都度評価する。これは F3 review 指摘事項。
+function getBrowserPidfileDir(): string {
+  return path.join(getDataDir(), "browser-pids");
+}
 
 interface PidEntry {
   pid: number;
@@ -244,10 +250,11 @@ export class BrowserManager extends EventEmitter {
    *   スキップする（findAvailableDisplay() の誤判定防止 + 次回起動時の再試行）
    */
   private cleanupOrphanedProcesses(): void {
+    const pidfileDir = getBrowserPidfileDir();
     try {
       let entries: string[];
       try {
-        entries = fs.readdirSync(BROWSER_PIDFILE_DIR);
+        entries = fs.readdirSync(pidfileDir);
       } catch {
         return; // ディレクトリ未作成 = 過去にArkが起動していない
       }
@@ -271,10 +278,7 @@ export class BrowserManager extends EventEmitter {
       const entryByPid = new Map<number, PidEntry>();
       for (const file of orphanFiles) {
         try {
-          const content = fs.readFileSync(
-            path.join(BROWSER_PIDFILE_DIR, file),
-            "utf-8"
-          );
+          const content = fs.readFileSync(path.join(pidfileDir, file), "utf-8");
           for (const e of this.parsePidEntries(content)) {
             const existing = entryByPid.get(e.pid);
             if (
@@ -477,7 +481,7 @@ export class BrowserManager extends EventEmitter {
         }));
         try {
           fs.writeFileSync(
-            path.join(BROWSER_PIDFILE_DIR, orphanFiles[0]),
+            path.join(pidfileDir, orphanFiles[0]),
             this.serializePidEntries(survivorEntries)
           );
         } catch (err) {
@@ -487,7 +491,7 @@ export class BrowserManager extends EventEmitter {
         }
         for (let i = 1; i < orphanFiles.length; i++) {
           try {
-            fs.unlinkSync(path.join(BROWSER_PIDFILE_DIR, orphanFiles[i]));
+            fs.unlinkSync(path.join(pidfileDir, orphanFiles[i]));
           } catch {
             // 既に削除されているなどは無視
           }
@@ -552,9 +556,10 @@ export class BrowserManager extends EventEmitter {
 
   /** orphan扱いのpidfileを一括削除する */
   private deleteOrphanFiles(orphanFiles: string[]): void {
+    const pidfileDir = getBrowserPidfileDir();
     for (const file of orphanFiles) {
       try {
-        fs.unlinkSync(path.join(BROWSER_PIDFILE_DIR, file));
+        fs.unlinkSync(path.join(pidfileDir, file));
       } catch {
         // 既に削除されているなどは無視
       }
@@ -563,7 +568,7 @@ export class BrowserManager extends EventEmitter {
 
   /** 自身のpidfileのパス */
   private ownPidFile(): string {
-    return path.join(BROWSER_PIDFILE_DIR, String(process.pid));
+    return path.join(getBrowserPidfileDir(), String(process.pid));
   }
 
   /**
@@ -683,7 +688,7 @@ export class BrowserManager extends EventEmitter {
     }
 
     try {
-      fs.mkdirSync(BROWSER_PIDFILE_DIR, { recursive: true });
+      fs.mkdirSync(getBrowserPidfileDir(), { recursive: true });
       fs.writeFileSync(this.ownPidFile(), this.serializePidEntries(entries));
     } catch (err) {
       console.warn(

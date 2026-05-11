@@ -98,9 +98,14 @@ export class FileUploadManager {
    * @param baseDir 省略時は `getUploadsDir()`（`<dataDir>/files`）を使用。
    * 旧 `/tmp/ark-files` から `~/Library/Application Support/Ark/files`
    * もしくは `<repo-root>/data/files` への移行を行った（F3 Step 2）。
+   *
+   * デフォルト値は **constructor 実行時** に解決する。
+   * モジュール評価時の `getUploadsDir()` 即時実行を避けることで、
+   * 後から設定される `process.env.ARK_DATA_DIR`（Electron の
+   * `configureAppPaths()` 等）にも追従する（F3 review 指摘事項）。
    */
-  constructor(baseDir: string = getUploadsDir()) {
-    this.baseDir = path.resolve(baseDir);
+  constructor(baseDir?: string) {
+    this.baseDir = path.resolve(baseDir ?? getUploadsDir());
   }
 
   async saveFile(
