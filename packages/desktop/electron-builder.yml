@@ -35,7 +35,7 @@ files:
   - package.json
 
 # Phase 4 (tmux / ttyd / cloudflared 同梱) と Phase 5 (Claude CLI ローダ) で
-# 追加する想定の段。Phase 2 では web 静的ファイルのみ。
+# 追加する想定の段。F4 で bin/licenses を extraResources に追加。
 # from は packages/desktop/ からの相対パス、to は app の Contents/Resources/ 配下の相対パス。
 extraResources:
   - from: ../web/dist
@@ -51,6 +51,32 @@ extraResources:
     to: build-assets
     filter:
       - "tray-icon*.png"
+  # F4: GitHub Actions build-bin.yml の成果物。
+  # build-assets/bin/{tmux,ttyd} → .app/Contents/Resources/bin/{tmux,ttyd}
+  # server/lib/paths.ts:getBundledBinDir() が
+  # `path.join(process.resourcesPath, "bin")` で参照する。
+  # CI で build-assets/bin が空の場合 (skeleton 状態) は filter にマッチせず、
+  # extraResources エントリは silent に no-op になる。
+  - from: build-assets/bin
+    to: bin
+    filter:
+      - "**/*"
+  # F4: 依存ライブラリの LICENSE / NOTICE。
+  # AboutDialog の `/api/licenses` ハンドラがここから読み出す。
+  - from: build-assets/licenses
+    to: licenses
+    filter:
+      - "**/*"
+
+# F4: tmux / ttyd の動的依存 dylib (libssl, libcrypto, libwebsockets 等)。
+# extraFiles は `.app/Contents/` 直下に配置されるため、
+# `install_name_tool -add_rpath @loader_path/../../Frameworks` 済みの bin から
+# 解決できる。ファイルが存在しない場合 electron-builder は warning のみ。
+extraFiles:
+  - from: build-assets/Frameworks
+    to: Frameworks
+    filter:
+      - "**/*"
 
 # asar はデフォルト true (明示)。
 asar: true
