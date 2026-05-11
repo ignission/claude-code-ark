@@ -5,11 +5,15 @@ productName: Ark
 # (plans/macos-app-design.md 参照)。dmg と zip 両方生成して
 # Homebrew Cask が cask :type で選べるようにしておく。
 mac:
+  # electron-builder 25 では top-level の `arch` プロパティは未サポート。
+  # target ごとに arch を明示する形式 ({ target, arch }) を使う。
   target:
-    - dmg
-    - zip
-  arch:
-    - arm64
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
   # Apple Developer 登録なしの未署名配布。
   # F0 ブロッカー検証で Gatekeeper 挙動の許容範囲が決まれば見直す。
   identity: null
