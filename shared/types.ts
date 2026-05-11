@@ -218,10 +218,21 @@ export interface MessageShortcut {
 
 /**
  * リポジトリとプロファイルの紐付け
- * 1リポジトリ=1プロファイル（多重紐付けは未サポート）
+ * 1リポジトリ=1プロファイル（多重紐付けは未サポート）。
+ * worktree個別の紐付けが無いセッションのデフォルトとして使われる。
  */
 export interface RepoProfileLink {
   repoPath: string;
+  profileId: string;
+  updatedAt: number;
+}
+
+/**
+ * worktreeとプロファイルの紐付け
+ * 1worktree=1プロファイル。指定された場合はリポジトリのデフォルトより優先される。
+ */
+export interface WorktreeProfileLink {
+  worktreePath: string;
   profileId: string;
   updatedAt: number;
 }
@@ -436,12 +447,17 @@ export interface ServerToClientEvents {
   "system:capabilities": (caps: SystemCapabilities) => void;
   "profile:list": (profiles: Profile[]) => void;
   "repo:profile-links": (links: RepoProfileLink[]) => void;
+  "worktree:profile-links": (links: WorktreeProfileLink[]) => void;
   "profile:created": (profile: Profile) => void;
   "profile:updated": (profile: Profile) => void;
   "profile:deleted": (data: { id: string }) => void;
   "profile:error": (data: { message: string; code?: string }) => void;
   "repo:profile-changed": (data: {
     repoPath: string;
+    profileId: string | null;
+  }) => void;
+  "worktree:profile-changed": (data: {
+    worktreePath: string;
     profileId: string | null;
   }) => void;
 
@@ -567,6 +583,10 @@ export interface ClientToServerEvents {
   "profile:delete": (data: { id: string }) => void;
   "repo:set-profile": (data: {
     repoPath: string;
+    profileId: string | null;
+  }) => void;
+  "worktree:set-profile": (data: {
+    worktreePath: string;
     profileId: string | null;
   }) => void;
   "session:restart-with-profile": (data: { sessionId: string }) => void;
