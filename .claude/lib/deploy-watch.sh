@@ -6,7 +6,7 @@
 # `pkill -f ttyd && pnpm build && pm2 restart claude-code-ark` で再起動する運用 (CLAUDE.md 参照)。
 # 本ヘルパーは P11 のマージ完了後に呼ばれ、以下を行う:
 #
-#   1. deploy 対象パス変更を検出 (server/, client/, shared/, packages/server/ecosystem.config.cjs, package.json)
+#   1. deploy 対象パス変更を検出 (packages/server/src/, packages/web/, packages/shared/src/, packages/server/ecosystem.config.cjs, package.json)
 #      → 変更が無ければ no-target finalize
 #   2. pm2 で claude-code-ark プロセスが稼働しているかを判定
 #      → 稼働していなければ "pnpm dev で動いている" とみなして no-target finalize
@@ -41,9 +41,9 @@ DEPLOY_WATCH_HEALTH_URL=${DEPLOY_WATCH_HEALTH_URL:-http://localhost:4001/api/set
 # deploy 対象とする path glob (改行区切り)。
 # 1 つでも変更ファイルにマッチすれば deploy 対象とみなす。
 _DEPLOY_WATCH_PATHS=(
-  "server/**"
-  "client/**"
-  "shared/**"
+  "packages/server/src/**"
+  "packages/web/**"
+  "packages/shared/src/**"
   "packages/server/ecosystem.config.cjs"
   "package.json"
   "pnpm-lock.yaml"
@@ -284,7 +284,7 @@ deploy_watch_tick() {
     flow_state_update context ".deploy_watch.fires = $fires | .deploy_watch.result = \"no-target\"" "$scope_key"
     DEPLOY_WATCH_RESULT="no-target"
     DEPLOY_WATCH_DETAIL='{"reason":"merge commit に deploy 対象 path への変更が無い"}'
-    printf '[deploy-watch] no-target: server/ client/ shared/ 等を含まない (merge_sha=%s)\n' "$merge_sha"
+    printf '[deploy-watch] no-target: packages/server/src/ packages/web/ packages/shared/src/ 等を含まない (merge_sha=%s)\n' "$merge_sha"
     printf 'RESULT=no-target CRON_ID=%s FIRES=%s\n' "${cron_id:-null}" "$fires"
     return 0
   fi
