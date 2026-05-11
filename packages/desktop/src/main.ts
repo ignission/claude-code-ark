@@ -98,6 +98,11 @@ async function bootstrap(): Promise<void> {
   serverHandle = await startServer({
     port,
     webStaticDir: resolveWebStaticDir(),
+    // Electron は ephemeral port で毎回 port が変わるため、
+    // `/tmp/ark-tunnel-state.json` の port を信用して proxy すると
+    // 存在しない port を指してリモートアクセスが切れる。
+    // よって auto-recovery 自体を無効化する。
+    disableTunnelAutoRecovery: true,
     // F3/F4 で dataDir / binPaths を渡す
   });
   // NODE_ENV=production にしていないため、index.ts 側の旧パス fallback は

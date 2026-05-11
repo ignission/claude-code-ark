@@ -115,6 +115,15 @@ export interface StartServerOptions {
    * Phase 4 で `.app` 同梱バイナリパスを差し込むのに使う。
    */
   binPaths?: string[];
+  /**
+   * tunnel auto-recovery を無効化 (ephemeral port 環境用、Electron からは true)。
+   *
+   * `/tmp/ark-tunnel-state.json` に保存された port は CLI (固定 port) では
+   * 有効だが、Electron の ephemeral port では port が毎回変わるため
+   * recovery 時に存在しない port を proxy してしまいリモートアクセスが
+   * 切れる。Electron からは true を渡して auto-recovery 自体をスキップする。
+   */
+  disableTunnelAutoRecovery?: boolean;
 }
 
 /**
@@ -2816,7 +2825,9 @@ export async function startServer(
 
   // トンネル自動復旧: 前回トンネルが有効だった場合に自動起動
   // enableQuick が既にトンネルを起動している場合はスキップ
-  if (!activeTunnel) {
+  // ephemeral port 環境 (Electron) では port が毎回変わるため、
+  // disableTunnelAutoRecovery=true で自動復旧自体をスキップする。
+  if (!activeTunnel && !options.disableTunnelAutoRecovery) {
     const savedState = loadTunnelState();
     if (savedState) {
       console.log(

@@ -8,9 +8,9 @@
     "build": "node build.mjs",
     "check": "tsc -b",
     "dev": "concurrently -k -n vite,server,electron -c \"cyan,yellow,magenta\" \"pnpm --filter @ark/web dev\" \"cd ../.. && pnpm dev:server\" \"wait-on http://localhost:4001 http://localhost:4000 && pnpm dev:electron\"",
-    "dev:electron": "pnpm build && ARK_DEV=1 electron dist/main.js",
-    "package:dir": "electron-builder --dir",
-    "package:mac": "electron-builder --mac --arm64"
+    "dev:electron": "pnpm --filter @ark/server build && pnpm build && ARK_DEV=1 electron dist/main.js",
+    "package:dir": "pnpm --filter @ark/web build && pnpm --filter @ark/server build && pnpm build && electron-builder --dir",
+    "package:mac": "pnpm --filter @ark/web build && pnpm --filter @ark/server build && pnpm build && electron-builder --mac --arm64"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.7",
