@@ -36,6 +36,8 @@ interface SidebarMainLayoutProps {
   onOpenFrontLine?: () => void;
   /** Beacon の外部 MCP server (OAuth) 管理ダイアログを開く */
   onOpenMcpManager?: () => void;
+  /** About ダイアログを開く (同梱バイナリの LICENSE 一覧) */
+  onOpenAboutDialog?: () => void;
   hostMetrics?: HostMetrics | null;
   beaconVisible?: boolean;
   onBeaconVisibleChange?: (visible: boolean) => void;
@@ -63,6 +65,7 @@ export function SidebarMainLayout({
   onSidebarWidthChange,
   onOpenFrontLine,
   onOpenMcpManager,
+  onOpenAboutDialog,
   hostMetrics = null,
   beaconVisible = true,
   onBeaconVisibleChange,
@@ -249,6 +252,15 @@ export function SidebarMainLayout({
             className="w-full py-2 text-sm text-muted-foreground hover:text-foreground border-t border-border transition-colors block text-center"
           >
             🎯 FrontLine
+          </button>
+        )}
+        {onOpenAboutDialog && (
+          <button
+            type="button"
+            onClick={onOpenAboutDialog}
+            className="w-full py-2 text-sm text-muted-foreground hover:text-foreground border-t border-border transition-colors block text-center"
+          >
+            ℹ About Ark
           </button>
         )}
         <SystemStatusBar metrics={hostMetrics} />

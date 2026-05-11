@@ -3,6 +3,7 @@ import { AlertCircle, Copy, Loader2, Terminal } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { AboutDialog } from "@/components/AboutDialog";
 import { BrowserPane } from "@/components/BrowserPane";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { FrontLineModal } from "@/components/frontline/FrontLineModal";
@@ -310,6 +311,7 @@ export default function Dashboard() {
   const [showPortSelector, setShowPortSelector] = useState(false);
   const [showProfileManager, setShowProfileManager] = useState(false);
   const [showMcpManager, setShowMcpManager] = useState(false);
+  const [showAboutDialog, setShowAboutDialog] = useState(false);
 
   const copyToClipboard = (text: string | null) => {
     if (text) {
@@ -775,6 +777,7 @@ export default function Dashboard() {
           onSidebarWidthChange={w => setSetting("ark-sidebar-width", w)}
           onOpenFrontLine={() => setShowFrontLine(true)}
           onOpenMcpManager={() => setShowMcpManager(true)}
+          onOpenAboutDialog={() => setShowAboutDialog(true)}
           hostMetrics={bridgeSnapshot?.metrics ?? null}
           beaconVisible={getSetting<boolean>("ark-beacon-visible", true)}
           onBeaconVisibleChange={v => setSetting("ark-beacon-visible", v)}
@@ -979,6 +982,9 @@ export default function Dashboard() {
         onAuthCancel={mcpAuthCancel}
         onRename={mcpRename}
       />
+
+      {/* About Ark (同梱バイナリ LICENSE 一覧) */}
+      <AboutDialog open={showAboutDialog} onOpenChange={setShowAboutDialog} />
     </>
   );
 }
