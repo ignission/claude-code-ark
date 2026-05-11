@@ -10,9 +10,13 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "src"),
+      "@ark/shared": path.resolve(
+        import.meta.dirname,
+        "../shared/src/types.ts"
+      ),
     },
   },
-  envDir: path.resolve(import.meta.dirname),
+  envDir: path.resolve(import.meta.dirname, "../.."),
   root: path.resolve(import.meta.dirname),
   build: {
     outDir: path.resolve(import.meta.dirname, "dist"),
