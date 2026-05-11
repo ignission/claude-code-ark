@@ -72,11 +72,17 @@ worktreeの作成・削除はMCPツールを使ってください。
 
 ## 外部provider tool の選択
 
-外部provider (Atlassian / Linear / Notion 等) のtoolには2系統があり得る:
-- \`mcp__claude_ai_<Provider>__*\` (例: \`mcp__claude_ai_Atlassian__getJiraIssue\`): claude.ai アカウントの Connector
-- \`mcp__<providerId>-<id>__*\` (例: \`mcp__atlassian-XXX__*\`): Ark UI 経由で OAuth 接続した外部 MCP
+外部provider のtoolには2系統があり得る:
+- \`mcp__claude_ai_<Provider>__*\` (claude.ai アカウントの Connector)
+- \`mcp__<providerId>-<id>__*\` (Ark UI 経由で OAuth 接続した外部 MCP)
 
-**同じproviderについて両方が利用可能な場合は \`mcp__claude_ai_*\` を優先すること。** \`mcp__<providerId>-<id>__*\` 側は \`authenticate\` のようなauth系toolのみ露出している場合があり、その場合は無視してclaude.ai側のtoolを使う。
+**同じproviderについて両方が利用可能な場合は \`mcp__claude_ai_*\` を優先する。** \`mcp__<providerId>-<id>__*\` 側は \`authenticate\` のようなauth系toolのみ露出している場合があり、その場合は無視してclaude.ai側を使う。
+
+**現状の許可tool**: Beacon サーバ側で許可されているのは Atlassian の read tool 2件のみ:
+- \`mcp__claude_ai_Atlassian__getJiraIssue\`
+- \`mcp__claude_ai_Atlassian__getAccessibleAtlassianResources\`
+
+他provider (Linear / Notion / Slack 等) の tool は実行時に deny されるので呼び出さないこと。必要なら Ark UI 経由で OAuth 登録した \`mcp__<providerId>-<id>__*\` 系を使う。
 
 ## コマンドフロー
 
@@ -1313,11 +1319,25 @@ export class BeaconManager extends EventEmitter {
           ...externalAllowedTools,
         ],
         permissionMode: "default",
-        // claude.ai アカウントの Connector tool (mcp__claude_ai_<Provider>__*)
-        // は SDKの allowedTools wildcard が <server>__* 形式しか効かないため、
-        // canUseTool 経由で BEACON_ALLOWED_CLAUDE_AI_TOOLS の個別 allow-list
-        // にだけマッチさせて動的承認する。それ以外は deny。
+        // canUseTool は SDK 仕様上 allowedTools に含まれない tool 呼び出しに
+        // ついて発火する。ただし将来 SDK が全 tool 呼び出しを経由させる挙動に
+        // 変わる可能性を考え、defensive に「allowedTools 相当の prefix なら
+        // 明示 allow」「BEACON_ALLOWED_CLAUDE_AI_TOOLS に該当なら allow」
+        // 「それ以外は deny」の3段で書く。
         canUseTool: async (toolName, input) => {
+          const isAllowedToolPattern =
+            toolName === "Read" ||
+            toolName === "Grep" ||
+            toolName === "Glob" ||
+            toolName.startsWith("mcp__ark-beacon__") ||
+            externalAllowedTools.some(p =>
+              p.endsWith("__*")
+                ? toolName.startsWith(p.slice(0, -1))
+                : toolName === p
+            );
+          if (isAllowedToolPattern) {
+            return { behavior: "allow", updatedInput: input };
+          }
           if (BEACON_ALLOWED_CLAUDE_AI_TOOLS.has(toolName)) {
             return { behavior: "allow", updatedInput: input };
           }
