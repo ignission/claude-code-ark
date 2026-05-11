@@ -6,7 +6,7 @@
 # `pkill -f ttyd && pnpm build && pm2 restart claude-code-ark` で再起動する運用 (CLAUDE.md 参照)。
 # 本ヘルパーは P11 のマージ完了後に呼ばれ、以下を行う:
 #
-#   1. deploy 対象パス変更を検出 (server/, client/, shared/, ecosystem.config.cjs, package.json)
+#   1. deploy 対象パス変更を検出 (server/, client/, shared/, packages/server/ecosystem.config.cjs, package.json)
 #      → 変更が無ければ no-target finalize
 #   2. pm2 で claude-code-ark プロセスが稼働しているかを判定
 #      → 稼働していなければ "pnpm dev で動いている" とみなして no-target finalize
@@ -31,7 +31,7 @@ set -euo pipefail
 
 # === 内部設定 ===
 
-# ark の pm2 プロセス名 (ecosystem.config.cjs に従う)
+# ark の pm2 プロセス名 (packages/server/ecosystem.config.cjs に従う)
 DEPLOY_WATCH_PM2_APP=${DEPLOY_WATCH_PM2_APP:-claude-code-ark}
 
 # health check に使うエンドポイント。Express の `/api/settings` は GET で必ず JSON を返すので
@@ -44,7 +44,7 @@ _DEPLOY_WATCH_PATHS=(
   "server/**"
   "client/**"
   "shared/**"
-  "ecosystem.config.cjs"
+  "packages/server/ecosystem.config.cjs"
   "package.json"
   "pnpm-lock.yaml"
   "vite.config.ts"
