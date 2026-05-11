@@ -58,6 +58,12 @@ let isQuitting = false;
  *   これは `app.getPath` が呼ばれるより前に行う必要がある。
  * - `ARK_DATA_DIR` / `ARK_LOGS_DIR`: `@ark/server` が `paths.ts` 経由でこの
  *   環境変数を参照するため、`startServer()` 呼び出しより前に必ず設定する。
+ *
+ * **重要な制約**: この関数は ESM import 評価後に呼ばれるため、`@ark/server` 内の
+ * singleton (`db`, `fileUploadManager`) は既に旧 env で construct 済み。
+ * macOS では `paths.ts` の darwin branch が `app.getPath("userData")` と同じ
+ * `~/Library/Application Support/Ark/` を返すため偶然動作するが、
+ * **Linux/Windows Electron では env override は機能しない (scope 外)**。
  */
 function configureAppPaths(): void {
   app.setName("Ark");
@@ -116,6 +122,10 @@ function createWindow(port: number): BrowserWindow {
   void win.loadURL(url);
 
   win.on("close", event => {
+    // close-to-tray は macOS のみ。Linux/Windows では従来通り close で終了。
+    if (process.platform !== "darwin") {
+      return; // 通常クローズに任せる
+    }
     // Quit 経路でなければ閉じずに hide。Tray から復帰可能。
     if (!isQuitting) {
       event.preventDefault();

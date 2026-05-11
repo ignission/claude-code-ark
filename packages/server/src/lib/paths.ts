@@ -21,8 +21,18 @@ import os from "node:os";
 import path from "node:path";
 
 /**
- * Ark の永続データ（SQLite, アップロード, ブラウザ pidfile 等）の置き場所。
- * 環境変数 `ARK_DATA_DIR` > macOS 標準 > Linux/Windows fallback（cwd ベース）の順で決定する。
+ * データ保存先ディレクトリを返す。
+ *
+ * 優先順:
+ *   1. `ARK_DATA_DIR` 環境変数（CLI 起動時に env を set した場合）
+ *   2. macOS: `~/Library/Application Support/Ark/`
+ *   3. Linux/Windows: `<cwd>/data`
+ *
+ * **Electron 環境での注意**: `@ark/server` の singleton (`db`, `fileUploadManager`) は
+ * module import 時に評価される。Electron では `app.whenReady()` 以前の import 評価
+ * タイミングで `ARK_DATA_DIR` が未設定なため、env override は機能しない。
+ * macOS では darwin branch が `app.getPath("userData")` と同じパスを返すため
+ * 偶然一致して動作する。**Linux/Windows Electron は scope 外** (arm64-mac only)。
  */
 export function getDataDir(): string {
   const envDir = process.env.ARK_DATA_DIR;
