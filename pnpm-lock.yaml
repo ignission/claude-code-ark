@@ -43,9 +43,6 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.7
         version: 0.2.120(zod@4.3.6)
-      '@ark/server':
-        specifier: workspace:*
-        version: link:../server
       '@ark/shared':
         specifier: workspace:*
         version: link:../shared
@@ -56,6 +53,9 @@ importers:
         specifier: ^1.59.1
         version: 1.59.1
     devDependencies:
+      '@ark/server':
+        specifier: workspace:*
+        version: link:../server
       '@ark/web':
         specifier: workspace:*
         version: link:../web
