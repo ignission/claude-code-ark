@@ -3,15 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "main": "./dist/types.js",
-  "types": "./dist/types.d.ts",
+  "main": "./src/types.ts",
+  "types": "./src/types.ts",
   "exports": {
-    ".": {
-      "development": "./src/types.ts",
-      "types": "./dist/types.d.ts",
-      "import": "./dist/types.js",
-      "default": "./dist/types.js"
-    }
+    ".": "./src/types.ts"
   },
   "scripts": {
     "build": "tsc -b",
