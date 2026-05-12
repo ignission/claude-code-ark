@@ -28,4 +28,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.removeListener("ark:update-available", listener);
     };
   },
+  /**
+   * 外部 URL をデフォルトブラウザで開く。Electron 内ウィンドウを開かせない。
+   * shell.openExternal は main プロセス側にあるため IPC で委譲する。
+   */
+  openExternal: (url: string): Promise<void> =>
+    ipcRenderer.invoke("ark:open-external", url),
 });

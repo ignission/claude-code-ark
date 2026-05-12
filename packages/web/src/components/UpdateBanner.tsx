@@ -25,6 +25,7 @@ declare global {
   interface Window {
     electronAPI?: {
       onUpdateAvailable: (callback: (info: UpdateInfo) => void) => () => void;
+      openExternal?: (url: string) => Promise<void>;
     };
   }
 }
@@ -33,26 +34,34 @@ const BREW_UPGRADE_COMMAND = "brew upgrade --cask ark";
 
 export function UpdateBanner() {
   const [info, setInfo] = useState<UpdateInfo | null>(null);
-  const [dismissed, setDismissed] = useState(false);
+  // dismissed 状態は version 文字列で持つ: 同じ version では同一セッション中に
+  // 再表示しない (24h poll で同じ release を再受信した場合の重複通知を防ぐ)。
+  const [dismissedVersion, setDismissedVersion] = useState<string | null>(null);
 
   useEffect(() => {
     // ブラウザ版では electronAPI が undefined。何も購読しない。
     if (!window.electronAPI) return;
     const unsubscribe = window.electronAPI.onUpdateAvailable(newInfo => {
       setInfo(newInfo);
-      setDismissed(false);
     });
     return unsubscribe;
   }, []);
 
-  if (!info || dismissed) return null;
+  if (!info) return null;
+  if (dismissedVersion === info.latestVersion) return null;
 
   const handleCopy = () => {
     void navigator.clipboard.writeText(BREW_UPGRADE_COMMAND);
   };
 
   const handleOpenChangelog = () => {
-    window.open(info.htmlUrl, "_blank", "noopener,noreferrer");
+    // Electron では shell.openExternal 経由でデフォルトブラウザに飛ばす。
+    // 未 expose (preload 未更新時) もしくはブラウザ版では window.open に fallback。
+    if (window.electronAPI?.openExternal) {
+      void window.electronAPI.openExternal(info.htmlUrl);
+    } else {
+      window.open(info.htmlUrl, "_blank", "noopener,noreferrer");
+    }
   };
 
   return (
@@ -69,7 +78,11 @@ export function UpdateBanner() {
         <Button size="sm" variant="ghost" onClick={handleOpenChangelog}>
           変更点
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => setDismissed(true)}>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setDismissedVersion(info.latestVersion)}
+        >
           ×
         </Button>
       </AlertDescription>

@@ -36,7 +36,7 @@ import { fileURLToPath } from "node:url";
 // その時点では `configureAppPaths()` により `ARK_DATA_DIR` / `ARK_LOGS_DIR` が
 // 設定済みであることを保証する。
 import type { ServerHandle } from "@ark/server";
-import { app, BrowserWindow, Menu } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, shell } from "electron";
 import log from "electron-log";
 import { getAvailablePort } from "./getAvailablePort.js";
 import { buildAppMenu } from "./menu.js";
@@ -206,6 +206,16 @@ function resolveWebStaticDir(): string | undefined {
 }
 
 async function bootstrap(): Promise<void> {
+  // F8: preload から外部 URL 起動を受け取って shell.openExternal に委譲する。
+  // 同一 channel は重複登録不可のため、idempotent に register。
+  ipcMain.handle("ark:open-external", async (_event, url: string) => {
+    if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+      log.warn("[Ark Desktop] open-external rejected non-http(s):", url);
+      return;
+    }
+    await shell.openExternal(url);
+  });
+
   // アプリメニュー / Dock メニュー / Tray を ready 後に組み立てる。
   Menu.setApplicationMenu(
     buildAppMenu({ showMainWindow, quit: () => app.quit() })
