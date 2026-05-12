@@ -84,6 +84,46 @@ check_prerequisites() {
     log_success "前提条件のチェック完了"
 }
 
+# Node の絶対パスを解決して PM2_INTERPRETER を export する。
+#
+# pm2 の interpreter:"node" は spawn 時の PATH に依存する。
+# 過去 /usr/bin/node v18.19.1 が PATH 先頭に来て --env-file=.env.production を
+# 受け付けず、本番がクラッシュループに陥った（2026-05-13）。
+# `mise which node` で mise が解決する絶対パスを取得し、ecosystem.config.cjs に
+# 環境変数経由で渡す。mise 非利用環境では `command -v node` にフォールバック。
+resolve_node_interpreter() {
+    log_info "node の絶対パスを解決しています..."
+
+    local node_path=""
+
+    if command -v mise &> /dev/null; then
+        node_path="$(mise which node 2>/dev/null || true)"
+    fi
+
+    if [[ -z "${node_path}" ]]; then
+        node_path="$(command -v node || true)"
+    fi
+
+    if [[ -z "${node_path}" || ! -x "${node_path}" ]]; then
+        log_error "node の絶対パスを解決できませんでした (mise which / command -v 双方失敗)"
+    fi
+
+    # 解決した node が 20.6+ であることを確認（--env-file 必須要件）。
+    local node_version
+    node_version="$("${node_path}" --version)"
+    local major
+    major="$(echo "${node_version}" | sed -E 's/^v([0-9]+)\..*/\1/')"
+    local minor
+    minor="$(echo "${node_version}" | sed -E 's/^v[0-9]+\.([0-9]+)\..*/\1/')"
+
+    if [[ "${major}" -lt 20 ]] || { [[ "${major}" -eq 20 ]] && [[ "${minor}" -lt 6 ]]; }; then
+        log_error "node ${node_version} は要件 (>=20.6) を満たしません: ${node_path}"
+    fi
+
+    export PM2_INTERPRETER="${node_path}"
+    log_success "PM2_INTERPRETER=${PM2_INTERPRETER} (${node_version})"
+}
+
 # Git pull
 git_pull() {
     log_info "最新のコードを取得しています..."
@@ -196,6 +236,9 @@ main() {
 
     # 前提条件チェック
     check_prerequisites
+
+    # node 絶対パスを解決し PM2_INTERPRETER として export
+    resolve_node_interpreter
 
     # デプロイ処理
     git_pull

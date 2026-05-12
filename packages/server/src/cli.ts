@@ -9,6 +9,24 @@
  * このファイルは経由しない。
  */
 
+// Node バージョンガード: --env-file は 20.6+ で利用可。古い Node が PATH 先頭に
+// 紛れ込むと "bad option: --env-file" でクラッシュループするため、import より
+// 前に明示的なエラーを出して exit する。
+{
+  const required = { major: 20, minor: 6 };
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (
+    major < required.major ||
+    (major === required.major && minor < required.minor)
+  ) {
+    process.stderr.write(
+      `Ark requires Node.js >= ${required.major}.${required.minor} ` +
+        `but got ${process.versions.node} at ${process.execPath}\n`
+    );
+    process.exit(1);
+  }
+}
+
 import { startServer } from "./index.js";
 
 function parseArgs(): {
