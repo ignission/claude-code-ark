@@ -15,9 +15,15 @@ name: release
 on:
   workflow_dispatch:
     inputs:
+      ref:
+        description: "Ref to build (branch or commit SHA). Tag を打つ前のドライラン用。"
+        required: false
+        default: ""
+        type: string
       tag:
-        description: "Release tag (e.g. v0.1.0). Required when triggered manually."
-        required: true
+        description: "Release tag for upload (e.g. v0.1.0)。指定すると Release を作成・上書き、空ならドライラン (artifact のみ作成、upload skip)"
+        required: false
+        default: ""
         type: string
   push:
     tags:
@@ -36,9 +42,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          # workflow_dispatch で tag を指定された場合はそれを使う。
-          # push trigger では GITHUB_REF (refs/tags/...) が既に正しい ref。
-          ref: ${{ inputs.tag || github.ref }}
+          # push (tag) trigger: GITHUB_REF (refs/tags/...) が tag を指す → そのまま
+          # workflow_dispatch: inputs.ref があれば branch/SHA、なければ caller ref。
+          # inputs.tag を ref にしない (まだ存在しない可能性がある)。
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Verify tag matches package version
+        # tag 経由の release で artifact 名 (Ark-<package.json.version>-arm64.zip) と
+        # tag (v<X.Y.Z>) がずれると Cask の url / sha256 が解決できなくなるため、
+        # 一致しない場合は build 前に fail させる。dry-run (inputs.tag 空) は skip。
+        if: ${{ github.event_name == 'push' || inputs.tag != '' }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag || github.ref_name }}"
+          # v 接頭辞を取り除いた値を semver として扱う
+          TAG_VERSION="${TAG#v}"
+          PKG_VERSION=$(node -p "require('./packages/desktop/package.json').version")
+          if [[ "${TAG_VERSION}" != "${PKG_VERSION}" ]]; then
+            echo "::error::Tag (${TAG} → ${TAG_VERSION}) does not match packages/desktop/package.json version (${PKG_VERSION})."
+            echo "::error::Bump packages/desktop/package.json version to ${TAG_VERSION} (or push the matching tag) before releasing."
+            exit 1
+          fi
+          echo "::notice::Tag ${TAG} matches package version ${PKG_VERSION}"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -93,7 +118,9 @@ jobs:
 
       - name: Upload to GitHub Releases
         # push trigger (tag) では release を新規作成し、zip を upload する。
-        # workflow_dispatch では inputs.tag を tag_name として使う。
+        # workflow_dispatch では inputs.tag が空ならドライラン (upload skip)、
+        # 指定があれば release を作成・上書きする。
+        if: ${{ github.event_name == 'push' || inputs.tag != '' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
