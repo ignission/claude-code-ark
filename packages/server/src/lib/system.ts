@@ -37,6 +37,12 @@ import { getBundledBinDir } from "./paths.js";
  *
  * Note: server コードは Electron module を import しない設計のため、
  * userData パスは環境変数経由でしか取得できない。
+ *
+ * F5 known limitation (F0:B-2 / mac 実機検証待ち):
+ * 同梱版 `<claude-runtime>/bin/claude` は npm install で生成される
+ * Node shim (shebang `#!/usr/bin/env node`)。System PATH に node が
+ * 無いと実行不能。Bundled Node を使う wrapping は F5-followup で対応。
+ * 詳細は `packages/desktop/src/claude-installer.ts` 冒頭コメント参照。
  */
 function getClaudeRuntimeBinPath(): string | null {
   const runtimeDir =

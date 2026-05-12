@@ -22,9 +22,24 @@
  *   - 本ファイルは skeleton: 実際の Node 同梱は F0:B-2 結果待ちで F5-followup へ
  *     deferred。skeleton 段階では packaged 時に同梱 node が見つからなければ
  *     system claude (`@ark/server` の system.ts) にフォールバックする。
+ *
+ * F5 known limitation (F0:B-2 / mac 実機検証待ち):
+ *
+ * npm install で生成される `<claude-runtime>/bin/claude` は
+ * `#!/usr/bin/env node` shebang を持つ shim script。
+ * System PATH に node が無い環境では実行できない。
+ *
+ * 解決案 (F5-followup):
+ *   1. wrapper script を同梱: `bin/claude` を上書きして
+ *      `#!/<bundled-node-path>` に書き換える
+ *   2. spawn 時に `<bundled-node> <claude-shim>` で起動する形に
+ *      ttyd-manager / tmux-manager 等を改修
+ *   3. Anthropic から bundled binary distribution が出るのを待つ
+ *
+ * mac 実機検証で実 install 後の `bin/claude` 内容を確認してから決定。
  */
 
-import { spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { app } from "electron";
@@ -148,6 +163,30 @@ export function detectClaudeCommand(): string | null {
 }
 
 /**
+ * System PATH 上に `claude` が既にインストール済みかを検出する。
+ *
+ * `which claude` の出力を見て、存在するパスを返す。`which` が無い環境や
+ * `claude` が PATH に無い場合は null。
+ *
+ * server 側の `system.ts:checkClaudeCommandExists()` はより広い候補を探す
+ * が、ここでは installer の早期 skip 判定用なので `which` ベースで十分。
+ * import 循環を避けるため server module は使わない。
+ */
+export function detectSystemClaude(): string | null {
+  try {
+    const result = execSync("which claude", {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const resolved = result.trim();
+    if (!resolved) return null;
+    return fs.existsSync(resolved) ? resolved : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Claude CLI を同梱 Node 経由で npm install する (skeleton)。
  *
  * 振る舞い:
@@ -176,6 +215,17 @@ export async function installClaudeCli(
   const existingPath = detectClaudeCommand();
   if (existingPath) {
     onProgress?.({ type: "already-installed", path: existingPath });
+    return;
+  }
+
+  // 1.5) system PATH 上に claude があれば auto-install を skip し system 版を使う。
+  // ユーザが既に brew / mise / npm 等で claude を入れている場合に
+  // 二重インストールを避ける。server 側の resolveClaudePath() は同梱版が
+  // 無ければ system 版を見つけられるため、ここで return しても起動は問題ない。
+  const systemPath = detectSystemClaude();
+  if (systemPath) {
+    onProgress?.({ type: "already-installed", path: systemPath });
+    log.info("[claude-installer] Using system claude:", systemPath);
     return;
   }
 
