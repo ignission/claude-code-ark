@@ -87,11 +87,14 @@ export function resolveBundledNodePath(): string | null {
  * 期待する path が崩れないように注意する。
  */
 export function resolveBundledNpmCliPath(nodeBin: string): string | null {
-  // node が `<base>/bin/node` にあるとき、npm-cli.js は
-  // `<base>/lib/node_modules/npm/bin/npm-cli.js` にある。
-  const base = path.dirname(path.dirname(nodeBin));
+  // build-assets/README.md の想定レイアウト:
+  //   `<process.resourcesPath>/bin/node`
+  //   `<process.resourcesPath>/bin/lib/node_modules/npm/bin/npm-cli.js`
+  // すなわち node と同階層の `bin/` 配下に `lib/` がぶら下がる構造。
+  // `path.dirname(nodeBin)` = `<resources>/bin` を起点に lib/... を join する。
+  const binDir = path.dirname(nodeBin);
   const candidate = path.join(
-    base,
+    binDir,
     "lib",
     "node_modules",
     "npm",
@@ -109,8 +112,22 @@ export function resolveBundledNpmCliPath(nodeBin: string): string | null {
  * Claude CLI の同梱インストール先ディレクトリ。
  * 同名のディレクトリは server 側の `getClaudeRuntimeBinPath()` でも参照される
  * （`ARK_CLAUDE_RUNTIME_DIR` 経由）。
+ *
+ * server 側 `system.ts:getClaudeRuntimeBinPath()` と解決順を一致させる:
+ *   1. `ARK_CLAUDE_RUNTIME_DIR` (明示的 override) を最優先
+ *   2. `ARK_DATA_DIR/claude-runtime` (`configureAppPaths` でセットされる場合)
+ *   3. `app.getPath("userData")/claude-runtime` (Electron default)
+ *
+ * env override が無視されると「installer は A に install、server は B を探す」
+ * という不整合が発生するため、両者で同じロジックを使う。
  */
 export function getClaudeRuntimeDir(): string {
+  if (process.env.ARK_CLAUDE_RUNTIME_DIR) {
+    return process.env.ARK_CLAUDE_RUNTIME_DIR;
+  }
+  if (process.env.ARK_DATA_DIR) {
+    return path.join(process.env.ARK_DATA_DIR, "claude-runtime");
+  }
   return path.join(app.getPath("userData"), "claude-runtime");
 }
 
