@@ -167,8 +167,10 @@ interface UseSocketReturn {
 
   // プロファイル切替 (Linux限定)
   profiles: Profile[];
-  /** repoPath → profileId のマップ */
+  /** repoPath → profileId のマップ (リポジトリのデフォルト) */
   repoProfileLinks: Map<string, string>;
+  /** worktreePath → profileId のマップ (個別override、worktree個別が優先) */
+  worktreeProfileLinks: Map<string, string>;
   capabilities: SystemCapabilities;
   loadProfiles: () => void;
   createProfile: (name: string, configDir: string) => void;
@@ -178,6 +180,13 @@ interface UseSocketReturn {
   ) => void;
   deleteProfile: (id: string) => void;
   setRepoProfile: (repoPath: string, profileId: string | null) => void;
+  setWorktreeProfile: (worktreePath: string, profileId: string | null) => void;
+  /** worktreePath → カスタム表示名 のマップ。未設定の worktree は branch にフォールバック */
+  worktreeDisplayNames: Map<string, string>;
+  setWorktreeDisplayName: (
+    worktreePath: string,
+    displayName: string | null
+  ) => void;
   restartSessionWithProfile: (sessionId: string) => void;
 
   // メッセージショートカット
@@ -317,6 +326,13 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [repoProfileLinks, setRepoProfileLinks] = useState<Map<string, string>>(
     new Map()
   );
+  const [worktreeProfileLinks, setWorktreeProfileLinks] = useState<
+    Map<string, string>
+  >(new Map());
+  // worktreePath → カスタム表示名。プロファイル機能とは独立 (capabilities 不要)。
+  const [worktreeDisplayNames, setWorktreeDisplayNames] = useState<
+    Map<string, string>
+  >(new Map());
   const [capabilities, setCapabilities] = useState<SystemCapabilities>({
     multiProfileSupported: false,
   });
@@ -819,6 +835,46 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       setRepoProfileLinks(next);
     });
 
+    socket.on("worktree:profile-changed", ({ worktreePath, profileId }) => {
+      setWorktreeProfileLinks(prev => {
+        const next = new Map(prev);
+        if (profileId) {
+          next.set(worktreePath, profileId);
+        } else {
+          next.delete(worktreePath);
+        }
+        return next;
+      });
+    });
+
+    socket.on("worktree:profile-links", links => {
+      const next = new Map<string, string>();
+      for (const link of links) next.set(link.worktreePath, link.profileId);
+      setWorktreeProfileLinks(next);
+    });
+
+    // worktree カスタム表示名 ----------------------------------
+    socket.on("worktree:display-names", names => {
+      const next = new Map<string, string>();
+      for (const n of names) next.set(n.worktreePath, n.displayName);
+      setWorktreeDisplayNames(next);
+    });
+
+    socket.on(
+      "worktree:display-name-changed",
+      ({ worktreePath, displayName }) => {
+        setWorktreeDisplayNames(prev => {
+          const next = new Map(prev);
+          if (displayName) {
+            next.set(worktreePath, displayName);
+          } else {
+            next.delete(worktreePath);
+          }
+          return next;
+        });
+      }
+    );
+
     // メッセージショートカット ----------------------------------
     socket.on("shortcut:list", list => {
       setMessageShortcuts(list);
@@ -1292,6 +1348,26 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
+  const setWorktreeProfile = useCallback(
+    (worktreePath: string, profileId: string | null) => {
+      socketRef.current?.emit("worktree:set-profile", {
+        worktreePath,
+        profileId,
+      });
+    },
+    []
+  );
+
+  const setWorktreeDisplayName = useCallback(
+    (worktreePath: string, displayName: string | null) => {
+      socketRef.current?.emit("worktree:set-display-name", {
+        worktreePath,
+        displayName,
+      });
+    },
+    []
+  );
+
   const restartSessionWithProfile = useCallback((sessionId: string) => {
     socketRef.current?.emit("session:restart-with-profile", { sessionId });
   }, []);
@@ -1481,12 +1557,16 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     // プロファイル切替 (Linux限定)
     profiles,
     repoProfileLinks,
+    worktreeProfileLinks,
     capabilities,
     loadProfiles,
     createProfile,
     updateProfile,
     deleteProfile,
     setRepoProfile,
+    setWorktreeProfile,
+    worktreeDisplayNames,
+    setWorktreeDisplayName,
     restartSessionWithProfile,
     // メッセージショートカット
     messageShortcuts,

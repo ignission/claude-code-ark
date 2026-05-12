@@ -55,6 +55,7 @@ vi.mock("./ttyd-manager.js", async () => {
 vi.mock("./database.js", () => {
   const db = {
     getRepoProfileLink: vi.fn(),
+    getWorktreeProfileLink: vi.fn(),
     getProfile: vi.fn(),
     getSessionByWorktreePath: vi.fn(),
     upsertSession: vi.fn(),
@@ -120,6 +121,7 @@ describe("SessionOrchestrator - プロファイル切替", () => {
 
     // db: link / profile / sessionは未設定
     mockedDb.getRepoProfileLink.mockReturnValue(null);
+    mockedDb.getWorktreeProfileLink.mockReturnValue(null);
     mockedDb.getProfile.mockReturnValue(null);
     mockedDb.getSessionByWorktreePath.mockReturnValue(null);
 

@@ -3,8 +3,8 @@ import type {
   ManagedSession,
   Worktree,
 } from "@ark/shared";
-import { MessageSquare, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { MessageSquare, Pencil, Trash2 } from "lucide-react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,6 +43,23 @@ interface SessionCardProps {
   /** セッション削除（停止 + メイン以外のWorktree削除） */
   onDelete: () => void;
   onStart?: () => void;
+  /**
+   * ステータスドットと worktree名 (branch) の間に挿入するバッジ等のスロット。
+   * worktree個別のプロファイル選択メニューを差し込むのに使う。
+   * 自身が `<button>` 等のインタラクティブ要素を含む場合があるため、
+   * SessionCard 外側のクリック領域は `<button>` ではなく role=button な div で実装する
+   * (HTML では button の入れ子が許されない)。
+   */
+  profileBadgeSlot?: ReactNode;
+  /**
+   * worktree のカスタム表示名 (未設定なら null、UI 側で branch にフォールバック)。
+   */
+  customDisplayName?: string | null;
+  /**
+   * 表示名を保存。null / 空文字でクリア (branch 名へのフォールバックに戻る)。
+   * 渡されたときだけ編集UI (鉛筆アイコン) が表示される。
+   */
+  onSetCustomDisplayName?: (displayName: string | null) => void;
 }
 
 export function SessionCard({
@@ -55,6 +72,9 @@ export function SessionCard({
   onClick,
   onDelete,
   onStart,
+  profileBadgeSlot,
+  customDisplayName,
+  onSetCustomDisplayName,
 }: SessionCardProps) {
   const branch =
     worktree?.branch ||
@@ -63,6 +83,11 @@ export function SessionCard({
           session.worktreePath.lastIndexOf("/") + 1
         )
       : "unknown");
+  const effectiveName = customDisplayName?.trim()
+    ? customDisplayName.trim()
+    : branch;
+  const isCustomName = !!customDisplayName?.trim();
+  const canRename = !!onSetCustomDisplayName;
 
   // プレビュー/アクティビティの変化を追跡してアイドル判定
   const prevTextRef = useRef(previewText);
@@ -70,6 +95,111 @@ export function SessionCard({
   const lastChangedRef = useRef(Date.now());
   const [isIdle, setIsIdle] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+
+  // インライン編集モード
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState("");
+  const editInputRef = useRef<HTMLInputElement | null>(null);
+
+  const startEditing = () => {
+    if (!canRename) return;
+    setEditValue(effectiveName);
+    setIsEditing(true);
+  };
+
+  const commitEditing = () => {
+    if (!canRename) {
+      setIsEditing(false);
+      return;
+    }
+    const trimmed = editValue.trim();
+    // 空文字 or branch と同一ならカスタム名をクリア (= branch にフォールバック)
+    if (trimmed.length === 0 || trimmed === branch) {
+      onSetCustomDisplayName?.(null);
+    } else if (trimmed !== effectiveName || !isCustomName) {
+      onSetCustomDisplayName?.(trimmed);
+    }
+    setIsEditing(false);
+  };
+
+  const cancelEditing = () => {
+    setIsEditing(false);
+    setEditValue("");
+  };
+
+  // 編集モード突入時に input にフォーカス + 全選択
+  useEffect(() => {
+    if (isEditing) {
+      const el = editInputRef.current;
+      if (el) {
+        el.focus();
+        el.select();
+      }
+    }
+  }, [isEditing]);
+
+  // worktree名スロットを描画。編集モードならテキスト入力、通常時は span + 鉛筆。
+  // 鉛筆は親 (role=button) のクリックを横取りしないように stopPropagation する。
+  const renderNameSlot = (textColorClass: string) => {
+    if (isEditing) {
+      return (
+        <input
+          ref={editInputRef}
+          type="text"
+          // size=1 で input の intrinsic min-width を 1ch まで縮められるようにする。
+          // 既定 size=20 だと長い既存名や狭いサイドバーで親 flex を押し広げてしまい、
+          // 結果としてコンテナ全体が水平スクロール状態になり左端が見切れる事象が起きた。
+          size={1}
+          value={editValue}
+          onChange={e => setEditValue(e.target.value)}
+          onClick={e => e.stopPropagation()}
+          onKeyDown={e => {
+            e.stopPropagation();
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitEditing();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              cancelEditing();
+            }
+          }}
+          onBlur={commitEditing}
+          className="text-sm font-mono bg-background/40 border border-input rounded px-1 py-0 min-w-0 w-0 flex-1 outline-none focus:border-primary"
+          maxLength={200}
+          aria-label="worktree表示名を編集"
+        />
+      );
+    }
+    return (
+      <>
+        <span
+          // flex item としては default で min-width: auto なので、長い名前を入れると
+          // 内容幅まで span が広がり親 flex を押し広げる → サイドバー全体に水平
+          // スクロールが発生して「左端が切れる」事象になる。min-w-0 で縮められる
+          // ようにし、truncate で末尾を ellipsis で打ち切る。
+          className={`text-sm font-mono truncate min-w-0 ${textColorClass}`}
+          title={isCustomName ? `branch: ${branch}` : undefined}
+        >
+          {effectiveName}
+        </span>
+        {canRename && (
+          <button
+            type="button"
+            onClick={e => {
+              e.stopPropagation();
+              startEditing();
+            }}
+            onKeyDown={e => e.stopPropagation()}
+            className="opacity-0 group-hover:opacity-100 focus:opacity-100 shrink-0 p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-opacity"
+            aria-label="表示名を変更"
+            title="表示名を変更"
+          >
+            <Pencil className="w-3 h-3" />
+          </button>
+        )}
+      </>
+    );
+  };
 
   useEffect(() => {
     if (
@@ -91,28 +221,38 @@ export function SessionCard({
     return () => clearInterval(timer);
   }, []);
 
-  // セッション未起動の場合はシンプルなカードを表示
+  const handleStartClick = onStart ?? onClick;
+
+  // セッション未起動の場合はシンプルなカードを表示。
+  // profileBadgeSlot がインタラクティブ要素 (button 等) を含むため
+  // 外側は role=button な div として実装する (HTML の button 入れ子回避)。
   if (!session) {
     return (
-      <button
-        type="button"
-        className={`w-full text-left p-3 rounded-lg transition-colors group ${
+      <div
+        role="button"
+        tabIndex={0}
+        className={`w-full text-left p-3 rounded-lg transition-colors group cursor-pointer min-w-0 overflow-hidden ${
           isSelected
             ? "bg-primary/15 border border-primary/30"
             : "hover:bg-sidebar-accent/50"
         }`}
-        onClick={onStart ?? onClick}
+        onClick={handleStartClick}
+        onKeyDown={e => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleStartClick();
+          }
+        }}
       >
         <div className="flex items-center gap-2 min-w-0">
           <div className="w-2 h-2 rounded-full shrink-0 bg-muted-foreground/30" />
-          <span className="text-sm font-mono truncate text-sidebar-foreground/60">
-            {branch}
-          </span>
+          {profileBadgeSlot}
+          {renderNameSlot("text-sidebar-foreground/60")}
         </div>
         <p className="mt-1 text-xs text-muted-foreground truncate pl-4">
           セッション未起動
         </p>
-      </button>
+      </div>
     );
   }
 
@@ -130,21 +270,27 @@ export function SessionCard({
     <>
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <button
-            type="button"
-            className={`w-full text-left p-3 rounded-lg transition-colors group ${
+          <div
+            role="button"
+            tabIndex={0}
+            className={`w-full text-left p-3 rounded-lg transition-colors group cursor-pointer min-w-0 overflow-hidden ${
               isSelected
                 ? "bg-primary/15 border border-primary/30"
                 : "hover:bg-sidebar-accent/50"
             }`}
             onClick={onClick}
+            onKeyDown={e => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick();
+              }
+            }}
           >
             <div className="flex items-center gap-2 min-w-0">
               <div className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
-              <span className="text-sm font-mono truncate text-sidebar-foreground">
-                {branch}
-              </span>
-              {isSelected && (
+              {profileBadgeSlot}
+              {renderNameSlot("text-sidebar-foreground")}
+              {isSelected && !isEditing && (
                 <span className="ml-auto text-xs text-primary shrink-0">◀</span>
               )}
             </div>
@@ -155,13 +301,19 @@ export function SessionCard({
                 </p>
               </div>
             )}
-          </button>
+          </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-48">
           <ContextMenuItem onSelect={onClick}>
             <MessageSquare className="w-4 h-4 mr-2" />
             セッションを開く
           </ContextMenuItem>
+          {canRename && (
+            <ContextMenuItem onSelect={() => startEditing()}>
+              <Pencil className="w-4 h-4 mr-2" />
+              表示名を変更
+            </ContextMenuItem>
+          )}
           <ContextMenuSeparator />
           <ContextMenuItem
             className="text-destructive focus:text-destructive"

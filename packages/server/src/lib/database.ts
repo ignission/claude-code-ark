@@ -23,6 +23,8 @@ import {
   type RepoProfileLink,
   type Session,
   type SessionStatus,
+  type WorktreeDisplayName,
+  type WorktreeProfileLink,
 } from "@ark/shared";
 import Database from "better-sqlite3";
 import { nanoid } from "nanoid";
@@ -299,6 +301,17 @@ export class SessionDatabase {
         profile_id TEXT NOT NULL,
         updated_at INTEGER NOT NULL,
         FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS worktree_profile_links (
+        worktree_path TEXT PRIMARY KEY,
+        profile_id TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS worktree_display_names (
+        worktree_path TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
       );
     `);
 
@@ -971,6 +984,148 @@ export class SessionDatabase {
       "DELETE FROM repo_profile_links WHERE repo_path = ?"
     );
     stmt.run(repoPath);
+  }
+
+  // ============================================================
+  // Worktree ↔ プロファイル紐付けCRUD操作
+  // worktree個別の紐付けが優先され、無い場合は repo_profile_links がデフォルト
+  // ============================================================
+
+  /**
+   * すべてのworktree紐付けを取得（クライアントの初期同期用）
+   */
+  listWorktreeProfileLinks(): WorktreeProfileLink[] {
+    const stmt = this.db.prepare(
+      "SELECT * FROM worktree_profile_links ORDER BY updated_at DESC"
+    );
+    const rows = stmt.all() as Array<{
+      worktree_path: string;
+      profile_id: string;
+      updated_at: number;
+    }>;
+    return rows.map(row => ({
+      worktreePath: row.worktree_path,
+      profileId: row.profile_id,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  /**
+   * worktreeパスから紐付けを取得
+   */
+  getWorktreeProfileLink(worktreePath: string): WorktreeProfileLink | null {
+    const stmt = this.db.prepare(
+      "SELECT * FROM worktree_profile_links WHERE worktree_path = ?"
+    );
+    const row = stmt.get(worktreePath) as
+      | {
+          worktree_path: string;
+          profile_id: string;
+          updated_at: number;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      worktreePath: row.worktree_path,
+      profileId: row.profile_id,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * worktreeとプロファイルを紐付け（UPSERT）
+   */
+  setWorktreeProfileLink(worktreePath: string, profileId: string): void {
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      INSERT INTO worktree_profile_links (worktree_path, profile_id, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(worktree_path) DO UPDATE SET
+        profile_id = excluded.profile_id,
+        updated_at = excluded.updated_at
+    `);
+    stmt.run(worktreePath, profileId, now);
+  }
+
+  /**
+   * worktreeの紐付けを解除
+   */
+  removeWorktreeProfileLink(worktreePath: string): void {
+    const stmt = this.db.prepare(
+      "DELETE FROM worktree_profile_links WHERE worktree_path = ?"
+    );
+    stmt.run(worktreePath);
+  }
+
+  // ============================================================
+  // Worktree カスタム表示名CRUD操作
+  // 未設定時は UI 側で branch 名にフォールバックする
+  // ============================================================
+
+  /**
+   * すべてのworktree表示名を取得（クライアントの初期同期用）
+   */
+  listWorktreeDisplayNames(): WorktreeDisplayName[] {
+    const stmt = this.db.prepare(
+      "SELECT * FROM worktree_display_names ORDER BY updated_at DESC"
+    );
+    const rows = stmt.all() as Array<{
+      worktree_path: string;
+      display_name: string;
+      updated_at: number;
+    }>;
+    return rows.map(row => ({
+      worktreePath: row.worktree_path,
+      displayName: row.display_name,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  /**
+   * worktreeパスから表示名を取得
+   */
+  getWorktreeDisplayName(worktreePath: string): WorktreeDisplayName | null {
+    const stmt = this.db.prepare(
+      "SELECT * FROM worktree_display_names WHERE worktree_path = ?"
+    );
+    const row = stmt.get(worktreePath) as
+      | {
+          worktree_path: string;
+          display_name: string;
+          updated_at: number;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      worktreePath: row.worktree_path,
+      displayName: row.display_name,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * worktreeにカスタム表示名を設定（UPSERT）
+   */
+  setWorktreeDisplayName(worktreePath: string, displayName: string): void {
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      INSERT INTO worktree_display_names (worktree_path, display_name, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(worktree_path) DO UPDATE SET
+        display_name = excluded.display_name,
+        updated_at = excluded.updated_at
+    `);
+    stmt.run(worktreePath, displayName, now);
+  }
+
+  /**
+   * worktreeの表示名を解除（branch名にフォールバック）
+   */
+  removeWorktreeDisplayName(worktreePath: string): void {
+    const stmt = this.db.prepare(
+      "DELETE FROM worktree_display_names WHERE worktree_path = ?"
+    );
+    stmt.run(worktreePath);
   }
 
   // ============================================================
