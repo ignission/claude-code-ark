@@ -399,12 +399,13 @@ export function resolvePm2Path(): string | null {
 export function detectMultiProfileSupported(): boolean {
   if (process.platform === "darwin") {
     // F6 (F0:B-3 検証待ち): デフォルト false。
-    // ARK_MULTI_PROFILE_MACOS=1 で強制 enable (検証用 / Keychain bridge 実装後に
-    // デフォルト判定へ移行する想定)。
-    if (process.env.ARK_MULTI_PROFILE_MACOS === "1") {
-      return checkClaudeCommandExists() && checkTmuxCommandExists();
-    }
-    return false; // F6-followup で false 削除予定
+    // 旧 ARK_MULTI_PROFILE_MACOS env override は **削除**:
+    // bridge が unsupported のまま enable すると CLAUDE_CONFIG_DIR だけ
+    // 切り替わり Keychain credentials は固定のままで、wrong account で
+    // session が走る silent regression を起こすため。
+    // F6-followup で `keychain-profile-bridge.ts` の mode に応じた判定に
+    // 置き換える (例: bridge.mode !== "unsupported" なら true)。
+    return false;
   }
   if (process.platform !== "linux") return false;
   return checkClaudeCommandExists() && checkTmuxCommandExists();
