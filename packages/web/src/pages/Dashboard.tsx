@@ -23,6 +23,7 @@ import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
 import { TerminalPane } from "@/components/TerminalPane";
+import { UpdateBanner } from "@/components/UpdateBanner";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -578,6 +579,8 @@ export default function Dashboard() {
 
   return (
     <>
+      {/* F8: 更新通知バナー (Electron 経由のみ。ブラウザ版では何もレンダリングしない) */}
+      <UpdateBanner />
       {isMobile ? (
         <MobileLayout
           socket={socket}
