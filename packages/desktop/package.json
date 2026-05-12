@@ -1,0 +1,33 @@
+{
+  "name": "@ark/desktop",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "tsc -b",
+    "dev": "concurrently -k -n vite,server,electron -c \"cyan,yellow,magenta\" \"pnpm --filter @ark/web dev\" \"cd ../.. && pnpm dev:server\" \"wait-on http://localhost:4001 http://localhost:4000 && pnpm dev:electron\"",
+    "dev:electron": "pnpm --filter @ark/server build && pnpm build && ARK_DEV=1 electron dist/main.js",
+    "package:dir": "pnpm --filter @ark/web build && pnpm --filter @ark/server build && pnpm build && electron-builder --dir",
+    "package:mac": "pnpm --filter @ark/web build && pnpm --filter @ark/server build && pnpm build && electron-builder --mac --arm64"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.7",
+    "better-sqlite3": "^12.6.2",
+    "electron-log": "^5.4.3",
+    "playwright-core": "^1.59.1"
+  },
+  "devDependencies": {
+    "@ark/server": "workspace:*",
+    "@ark/shared": "workspace:*",
+    "@ark/web": "workspace:*",
+    "concurrently": "^9.2.1",
+    "electron": "^33.4.7",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.28.0",
+    "tsx": "^4.19.1",
+    "typescript": "6.0.3",
+    "wait-on": "^8.0.1"
+  }
+}

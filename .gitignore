@@ -4,8 +4,10 @@
 
 # Build outputs
 dist/
+dist-types/
 build/
 *.dist
+release/
 
 # Environment variables
 .env

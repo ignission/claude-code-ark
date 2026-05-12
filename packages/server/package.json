@@ -1,0 +1,42 @@
+{
+  "name": "@ark/server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist-types/index.d.ts",
+  "scripts": {
+    "dev": "tsx watch src/cli.ts",
+    "dev:remote": "tsx watch src/cli.ts --remote",
+    "dev:quick": "tsx watch src/cli.ts --quick",
+    "build": "node build.mjs",
+    "start": "NODE_ENV=production node dist/cli.js",
+    "start:remote": "NODE_ENV=production node dist/cli.js --remote",
+    "start:quick": "NODE_ENV=production node dist/cli.js --quick",
+    "check": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.7",
+    "@ark/shared": "workspace:*",
+    "better-sqlite3": "^12.6.2",
+    "express": "^5.0.0",
+    "http-proxy": "^1.18.1",
+    "nanoid": "^5.1.5",
+    "playwright-core": "^1.59.1",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.3",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "5.0.6",
+    "@types/http-proxy": "^1.17.17",
+    "@types/node": "^24.7.0",
+    "@types/qrcode": "^1.5.5",
+    "esbuild": "^0.28.0",
+    "tsx": "^4.19.1",
+    "typescript": "6.0.3",
+    "vitest": "^4.0.0"
+  }
+}

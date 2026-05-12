@@ -9,7 +9,7 @@
 # 前提条件:
 #   - pnpm がインストールされていること
 #   - pm2 がグローバルにインストールされていること
-#   - ecosystem.config.cjs がプロジェクトルートに存在すること
+#   - ecosystem.config.cjs が packages/server/ に存在すること
 #
 
 set -euo pipefail
@@ -17,6 +17,9 @@ set -euo pipefail
 # スクリプトのディレクトリを取得
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# ecosystem.config.cjs のパス（monorepo 化により packages/server/ 配下）
+ECOSYSTEM_FILE="${PROJECT_DIR}/packages/server/ecosystem.config.cjs"
 
 # 色付き出力
 RED='\033[0;31m'
@@ -74,8 +77,8 @@ check_prerequisites() {
     fi
 
     # ecosystem.config.cjs が存在するかチェック
-    if [[ ! -f "${PROJECT_DIR}/ecosystem.config.cjs" ]]; then
-        log_error "ecosystem.config.cjs が見つかりません: ${PROJECT_DIR}/ecosystem.config.cjs"
+    if [[ ! -f "${ECOSYSTEM_FILE}" ]]; then
+        log_error "ecosystem.config.cjs が見つかりません: ${ECOSYSTEM_FILE}"
     fi
 
     log_success "前提条件のチェック完了"
@@ -126,9 +129,9 @@ pm2_start() {
     # 既に起動している場合は警告
     if pm2 describe claude-code-ark &> /dev/null; then
         log_warn "アプリケーションは既に起動しています。restart を実行します。"
-        pm2 restart ecosystem.config.cjs
+        pm2 restart "${ECOSYSTEM_FILE}"
     else
-        pm2 start ecosystem.config.cjs
+        pm2 start "${ECOSYSTEM_FILE}"
     fi
 
     # PM2の保存（再起動時に自動復旧）
@@ -145,10 +148,10 @@ pm2_restart() {
 
     # プロセスが存在するか確認
     if pm2 describe claude-code-ark &> /dev/null; then
-        pm2 restart ecosystem.config.cjs
+        pm2 restart "${ECOSYSTEM_FILE}"
     else
         log_warn "プロセスが存在しません。新規起動します。"
-        pm2 start ecosystem.config.cjs
+        pm2 start "${ECOSYSTEM_FILE}"
     fi
 
     # PM2の保存

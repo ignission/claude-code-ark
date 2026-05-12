@@ -1,0 +1,160 @@
+name: build-bin (macOS arm64 tmux/ttyd)
+
+# F4: tmux/ttyd 同梱バイナリのクロスビルドワークフロー。
+# macos-14 (Apple Silicon) runner で arm64 native build を行い、
+# packages/desktop/build-assets/{bin,Frameworks,licenses}/ に成果物を配置する。
+# manifest.json の hash でビルド成果物を actions/cache にキャッシュする。
+#
+# **現状は workflow_dispatch (手動起動) 限定**。build-tmux.sh / build-ttyd.sh は
+# skeleton 状態で実 build ステップ (configure/make/install_name_tool 等) が未実装。
+# 自動起動 (push tag, pull_request) を有効化するのは F4-followup で実 build スクリプトを
+# 完成させてから (現状のままだと skeleton の verify step が必ず fail するため)。
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: "Skip cache and rebuild from scratch"
+        required: false
+        default: "false"
+        type: string
+  # 以下は build-tmux.sh / build-ttyd.sh の skeleton を実装で置き換えた後に有効化。
+  # push:
+  #   tags:
+  #     - "v*"
+  # pull_request:
+  #   paths:
+  #     - "packages/desktop/scripts/build-bin/**"
+  #     - ".github/workflows/build-bin.yml"
+
+jobs:
+  build:
+    name: Build tmux/ttyd for macOS arm64
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    env:
+      BUILD_DIR: ${{ github.workspace }}/packages/desktop/scripts/build-bin/build
+      PREFIX: ${{ github.workspace }}/packages/desktop/scripts/build-bin/build/prefix
+      ARCH: arm64
+      DEPLOYMENT_TARGET: "14.0"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Verify runner is arm64
+        run: |
+          arch=$(uname -m)
+          echo "Runner arch: ${arch}"
+          if [[ "${arch}" != "arm64" ]]; then
+            echo "::error::Expected arm64 runner, got ${arch}"
+            exit 1
+          fi
+
+      - name: Install build tools
+        # macOS 14 runner には Xcode CLT が既にインストール済み。
+        # jq / cmake / autoconf / automake / pkg-config を Homebrew で追加導入。
+        run: |
+          brew update
+          brew install jq cmake autoconf automake libtool pkg-config
+
+      - name: Compute manifest cache key
+        id: cache-key
+        run: |
+          hash=$(shasum -a 256 packages/desktop/scripts/build-bin/manifest.json | cut -d' ' -f1)
+          echo "hash=${hash}" >> "${GITHUB_OUTPUT}"
+          echo "Computed cache key from manifest.json: ${hash}"
+
+      - name: Restore build cache
+        if: ${{ inputs.force_rebuild != 'true' }}
+        id: restore-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.BUILD_DIR }}/prefix
+            ${{ env.BUILD_DIR }}/archives
+          key: build-bin-${{ runner.os }}-${{ env.ARCH }}-${{ steps.cache-key.outputs.hash }}
+
+      - name: Build tmux
+        # tag push (release) では PLACEHOLDER の SHA256 を許容しないため
+        # ARK_BUILD_STRICT_CHECKSUM=1 を渡し common.sh の verification を強制する。
+        # workflow_dispatch / PR では従来通り warning のみで進行する。
+        env:
+          ARK_BUILD_STRICT_CHECKSUM: ${{ startsWith(github.ref, 'refs/tags/') && '1' || '0' }}
+        run: bash packages/desktop/scripts/build-bin/build-tmux.sh
+
+      - name: Build ttyd
+        env:
+          ARK_BUILD_STRICT_CHECKSUM: ${{ startsWith(github.ref, 'refs/tags/') && '1' || '0' }}
+        run: bash packages/desktop/scripts/build-bin/build-ttyd.sh
+
+      - name: Collect LICENSE files
+        run: bash packages/desktop/scripts/build-bin/collect-licenses.sh
+
+      - name: Layout build-assets
+        # build-tmux.sh / build-ttyd.sh の成果物を
+        # packages/desktop/build-assets/{bin,Frameworks}/ に layout する。
+        # electron-builder.yml の extraResources / extraFiles からこのディレクトリを参照する。
+        run: |
+          set -euo pipefail
+          ASSETS="packages/desktop/build-assets"
+          mkdir -p "${ASSETS}/bin" "${ASSETS}/Frameworks" "${ASSETS}/licenses"
+
+          if [[ -x "${PREFIX}/bin/tmux" ]]; then
+            cp "${PREFIX}/bin/tmux" "${ASSETS}/bin/tmux"
+            echo "[layout] copied tmux"
+          else
+            echo "::warning::tmux binary missing - skeleton run?"
+          fi
+          if [[ -x "${PREFIX}/bin/ttyd" ]]; then
+            cp "${PREFIX}/bin/ttyd" "${ASSETS}/bin/ttyd"
+            echo "[layout] copied ttyd"
+          else
+            echo "::warning::ttyd binary missing - skeleton run?"
+          fi
+
+          # 動的依存 dylib があれば Frameworks/ にコピー
+          if [[ -d "${PREFIX}/Frameworks" ]]; then
+            cp -R "${PREFIX}/Frameworks/." "${ASSETS}/Frameworks/" || true
+          fi
+
+          # LICENSE 一式
+          if [[ -d "${BUILD_DIR}/licenses" ]]; then
+            cp -R "${BUILD_DIR}/licenses/." "${ASSETS}/licenses/"
+          fi
+
+          # 検証用の otool -L 出力
+          for bin in "${ASSETS}/bin"/*; do
+            [[ -x "${bin}" ]] || continue
+            echo "==> otool -L ${bin}"
+            otool -L "${bin}" || true
+          done
+
+      - name: Verify produced binaries
+        # tmux / ttyd の実バイナリが build-assets/bin に揃っていることを必ず検証する。
+        # skeleton 段階の build はマージ前に SHA256 を埋めて実 build を確認する前提なので、
+        # workflow_dispatch / tag push / PR いずれの trigger でも常に strict に fail させる。
+        run: |
+          set -e
+          PREFIX="${{ github.workspace }}/packages/desktop/build-assets"
+          for bin in tmux ttyd; do
+            if [ ! -f "$PREFIX/bin/$bin" ]; then
+              echo "::error::Required binary missing: $PREFIX/bin/$bin"
+              echo "::error::Build script for $bin failed to produce output. Check build logs above."
+              exit 1
+            fi
+            file "$PREFIX/bin/$bin"
+          done
+          echo "::notice::Binaries verified: tmux, ttyd"
+
+      - name: Upload bin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ark-bin-macos-arm64
+          path: |
+            packages/desktop/build-assets/bin
+            packages/desktop/build-assets/Frameworks
+            packages/desktop/build-assets/licenses
+          if-no-files-found: warn
+          retention-days: 30

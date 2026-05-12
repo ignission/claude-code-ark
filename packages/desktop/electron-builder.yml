@@ -1,0 +1,102 @@
+appId: app.ark.local
+productName: Ark
+
+# 配布対象は arm64 (Apple Silicon) のみ。Intel 切り捨ては設計判断
+# (plans/macos-app-design.md 参照)。dmg と zip 両方生成して
+# Homebrew Cask が cask :type で選べるようにしておく。
+mac:
+  # electron-builder 25 では top-level の `arch` プロパティは未サポート。
+  # target ごとに arch を明示する形式 ({ target, arch }) を使う。
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+  # Apple Developer 登録なしの未署名配布。
+  # F0 ブロッカー検証で Gatekeeper 挙動の許容範囲が決まれば見直す。
+  identity: null
+  gatekeeperAssess: false
+  category: public.app-category.developer-tools
+  # F4 で正式 icon.icns に差し替えた段階で有効化する。
+  # 現状 build-assets/icon.icns は 0byte placeholder のため electron-builder が
+  # invalid icon でエラーになる。コメントアウトで意図を残す。
+  # icon: build-assets/icon.icns
+
+directories:
+  # CI と手動ビルドどちらでも release/ を成果物置き場とする。
+  output: release
+
+# `pnpm --filter @ark/desktop build` で esbuild が dist/main.js を生成する想定。
+# package.json は asar 内で require/import 解決に必要なので含める。
+files:
+  - dist/**
+  - package.json
+
+# Phase 4 (tmux / ttyd / cloudflared 同梱) と Phase 5 (Claude CLI ローダ) で
+# 追加する想定の段。F4 で bin/licenses を extraResources に追加。
+# from は packages/desktop/ からの相対パス、to は app の Contents/Resources/ 配下の相対パス。
+extraResources:
+  - from: ../web/dist
+    to: app/web
+    filter:
+      - "**/*"
+  # tray.ts:resolveTrayIconPath() は packaged 時に
+  # `process.resourcesPath/build-assets/tray-icon.png` を参照する。
+  # ここで配置していないと nativeImage.createEmpty() fallback で
+  # メニューバーアイコンが空になる。
+  # icon.icns は 0byte placeholder のため F4 まで含めない。
+  - from: build-assets
+    to: build-assets
+    filter:
+      - "tray-icon*.png"
+  # F4: GitHub Actions build-bin.yml の成果物。
+  # build-assets/bin/{tmux,ttyd} → .app/Contents/Resources/bin/{tmux,ttyd}
+  # server/lib/paths.ts:getBundledBinDir() が
+  # `path.join(process.resourcesPath, "bin")` で参照する。
+  # CI で build-assets/bin が空の場合 (skeleton 状態) は filter にマッチせず、
+  # extraResources エントリは silent に no-op になる。
+  - from: build-assets/bin
+    to: bin
+    filter:
+      - "**/*"
+  # F4: 依存ライブラリの LICENSE / NOTICE。
+  # AboutDialog の `/api/licenses` ハンドラがここから読み出す。
+  - from: build-assets/licenses
+    to: licenses
+    filter:
+      - "**/*"
+  # F5: Node.js arm64 バイナリ + 同梱 npm (F0:B-2 で実装方式確定後に有効化)。
+  # `claude-installer.ts` が `<process.resourcesPath>/bin/node` を起動して
+  # `<userData>/claude-runtime/` に `@anthropic-ai/claude-code` を install する。
+  # 配置レイアウト (期待):
+  #   build-assets/node/
+  #     ├── bin/node
+  #     └── lib/node_modules/npm/**     (npm 同梱)
+  # CI で build-assets/node が空の場合 (skeleton 状態) は filter にマッチせず、
+  # extraResources エントリは silent に no-op になる。
+  # - from: build-assets/node
+  #   to: bin
+  #   filter:
+  #     - "node"
+  #     - "lib/node_modules/npm/**"
+
+# F4: tmux / ttyd の動的依存 dylib (libssl, libcrypto, libwebsockets 等)。
+# extraFiles は `.app/Contents/` 直下に配置されるため、
+# `install_name_tool -add_rpath @loader_path/../../Frameworks` 済みの bin から
+# 解決できる。ファイルが存在しない場合 electron-builder は warning のみ。
+extraFiles:
+  - from: build-assets/Frameworks
+    to: Frameworks
+    filter:
+      - "**/*"
+
+# asar はデフォルト true (明示)。
+asar: true
+# native module / 動的ロード対象は asar 内では動かないため unpack する。
+# better-sqlite3 は SQLite の .node binding を持ち、playwright-core は
+# Chromium バイナリの起動経路で fs アクセスをする。
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+  - "**/node_modules/playwright-core/**"

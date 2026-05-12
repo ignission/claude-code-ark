@@ -1,0 +1,51 @@
+{
+  "_comment": "F4: tmux / ttyd 同梱バイナリの依存ライブラリのバージョン pin。各 SHA256 は手動 curl で計算 (shasum -a 256 <tarball>)。Renovate では更新しない (CI 実行時の build cache が無効化される)。",
+  "target": {
+    "arch": "arm64",
+    "platform": "darwin",
+    "deployment_target": "14.0"
+  },
+  "tmux": {
+    "version": "3.5a",
+    "url": "https://github.com/tmux/tmux/releases/download/3.5a/tmux-3.5a.tar.gz",
+    "sha256": "PLACEHOLDER_TMUX_SHA256"
+  },
+  "ttyd": {
+    "version": "1.7.7",
+    "url": "https://github.com/tsl0922/ttyd/archive/refs/tags/1.7.7.tar.gz",
+    "sha256": "PLACEHOLDER_TTYD_SHA256"
+  },
+  "dependencies": {
+    "openssl": {
+      "version": "3.3.2",
+      "url": "https://www.openssl.org/source/openssl-3.3.2.tar.gz",
+      "sha256": "PLACEHOLDER_OPENSSL_SHA256"
+    },
+    "zlib": {
+      "version": "1.3.1",
+      "url": "https://zlib.net/zlib-1.3.1.tar.gz",
+      "sha256": "PLACEHOLDER_ZLIB_SHA256"
+    },
+    "libwebsockets": {
+      "_note": "ttyd 1.7.x は libwebsockets 4.3 系を要求。OpenSSL 3.x と組む際は --no-shared 必須",
+      "version": "4.3.3",
+      "url": "https://github.com/warmcat/libwebsockets/archive/refs/tags/v4.3.3.tar.gz",
+      "sha256": "PLACEHOLDER_LWS_SHA256"
+    },
+    "libuv": {
+      "version": "1.49.2",
+      "url": "https://dist.libuv.org/dist/v1.49.2/libuv-v1.49.2.tar.gz",
+      "sha256": "PLACEHOLDER_LIBUV_SHA256"
+    },
+    "libevent": {
+      "version": "2.1.12-stable",
+      "url": "https://github.com/libevent/libevent/releases/download/release-2.1.12-stable/libevent-2.1.12-stable.tar.gz",
+      "sha256": "PLACEHOLDER_LIBEVENT_SHA256"
+    },
+    "ncurses": {
+      "version": "6.5",
+      "url": "https://invisible-mirror.net/archives/ncurses/ncurses-6.5.tar.gz",
+      "sha256": "PLACEHOLDER_NCURSES_SHA256"
+    }
+  }
+}
