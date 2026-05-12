@@ -53,3 +53,35 @@ Ark Desktop (Electron) の配布アイコン / Tray アイコンを置くディ�
 - 進捗 IPC bridge (`packages/web/src/components/ClaudeInstallProgressDialog.tsx`
   に実状態を配信) の実装
 - 失敗時のリトライ UI / 手動 install 案内
+
+## F6 (Keychain プロファイル bridge) 同梱物
+
+| ファイル        | 用途                                            | 状態     |
+| --------------- | ----------------------------------------------- | -------- |
+| `keytar` (npm)  | macOS Keychain 連携 (方式 α 採用時のみ必要)     | 未追加   |
+
+### 配置経路
+
+- `packages/desktop/src/keychain-profile-bridge.ts:createKeychainProfileBridge()`
+  が macOS 上で動作する想定。skeleton 段階では F0:B-3 未検証のため
+  `"unsupported"` モードのみで動作する。
+- F0:B-3 の検証結果 (Keychain entry の service/account 名が
+  `CLAUDE_CONFIG_DIR` から派生するか固定か) に応じて以下のいずれかへ分岐:
+  - **方式 β/γ**: `createPassthroughBridge()` (bridge は no-op で良い)。
+    keytar 追加は不要。
+  - **方式 α**: `createKeytarBridge()` で credentials を Keychain ↔
+    `<configDir>/.credentials.json` で同期する。**この場合のみ keytar が必要**。
+- `packages/server/src/lib/system.ts:detectMultiProfileSupported()` は
+  `ARK_MULTI_PROFILE_MACOS=1` で macOS でも true を返せるように env override
+  対応済み (検証/開発用)。
+
+### F6 残課題（F6-followup）
+
+- F0:B-3 実機検証 (Keychain entry の保存先 service/account 名の確認)
+- 検証結果に応じて `createPassthroughBridge()` または `createKeytarBridge()` の実装
+- 方式 α 採用時のみ keytar を `dependencies` に追加 (`"keytar": "^7.x"`)
+- server (`packages/server/src/index.ts`) の profile:* / session:restart-with-profile
+  ハンドラから bridge を呼び出す連携実装
+- `system.ts:detectMultiProfileSupported()` の env override (`ARK_MULTI_PROFILE_MACOS`)
+  を削除し、bridge mode に応じた判定へ移行
+- CLAUDE.md の C-3 セクション更新 (実装方式確定後)
