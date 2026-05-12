@@ -111,10 +111,14 @@ resolve_node_interpreter() {
     # 解決した node が 20.6+ であることを確認（--env-file 必須要件）。
     local node_version
     node_version="$("${node_path}" --version)"
-    local major
-    major="$(echo "${node_version}" | sed -E 's/^v([0-9]+)\..*/\1/')"
-    local minor
-    minor="$(echo "${node_version}" | sed -E 's/^v[0-9]+\.([0-9]+)\..*/\1/')"
+
+    # `vX.Y.Z` 形式を厳密にパース。壊れた shim や予期せぬ出力時に分かりにくい
+    # shell エラーにならないよう、major/minor が数値であることを正規表現で確認。
+    if [[ ! "${node_version}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+        log_error "node --version の出力を解釈できません: ${node_version} (${node_path})"
+    fi
+    local major="${BASH_REMATCH[1]}"
+    local minor="${BASH_REMATCH[2]}"
 
     if [[ "${major}" -lt 20 ]] || { [[ "${major}" -eq 20 ]] && [[ "${minor}" -lt 6 ]]; }; then
         log_error "node ${node_version} は要件 (>=20.6) を満たしません: ${node_path}"
