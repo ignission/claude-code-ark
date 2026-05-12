@@ -82,12 +82,49 @@ function existsInVersionedDirs(baseDir: string, suffix: string): boolean {
 }
 
 /**
+ * `@anthropic-ai/claude-agent-sdk` の query() に `pathToClaudeCodeExecutable`
+ * として渡す claude バイナリの絶対パスを返す。Electron .app の
+ * `app.asar.unpacked/` 配下に同梱されている SDK 付属バイナリを最優先する。
+ *
+ * SDK は内部で `require.resolve("@anthropic-ai/claude-agent-sdk-<platform>-<arch>")`
+ * から binary パスを得るが、Electron .app では `app.asar/...` を返す。Electron は
+ * `child_process.spawn` に対して asar 透過化を **行わない** ため、その path を
+ * spawn すると ENOTDIR で fail する (asar は単一ファイルなので path component
+ * として辿れない)。`app.asar.unpacked/` 側の実体パスを明示的に渡す必要がある。
+ *
+ * Linux サーバ版 / non-Electron では `process.resourcesPath` が undefined のため
+ * このフォールバックはスキップされる。
+ */
+function resolveBundledSdkClaudePath(): string | null {
+  const resourcesPath = (process as { resourcesPath?: string }).resourcesPath;
+  if (!resourcesPath) return null;
+  const candidate = path.join(
+    resourcesPath,
+    "app.asar.unpacked",
+    "node_modules",
+    "@anthropic-ai",
+    `claude-agent-sdk-${process.platform}-${process.arch}`,
+    "claude"
+  );
+  try {
+    return existsSync(candidate) ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * `claude` コマンドの絶対パスを解決する。利用不可なら null。
  * 解決ロジックは checkClaudeCommandExists と同じ順序。tmux send-keys に
  * 絶対パスで claude を送ることで、pm2/systemd の PATH に claude が無い
  * 環境でも「command not found」にならないようにする。
  */
 export function resolveClaudePath(): string | null {
+  // -1. Electron .app の `app.asar.unpacked` に同梱された SDK 付属バイナリ。
+  // SDK と version が揃っており、prompt protocol (JSONL) 互換性が保証される。
+  const bundledSdkBin = resolveBundledSdkClaudePath();
+  if (bundledSdkBin) return bundledSdkBin;
+
   // 0. F5 同梱版: `<userData>/claude-runtime/bin/claude` を最優先
   // Electron desktop でユーザに余計なセットアップを求めずに済むよう、
   // システム claude より前に同梱インストール版をチェックする。

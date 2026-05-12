@@ -22,7 +22,7 @@ import { z } from "zod";
 import { db } from "./database.js";
 import { getErrorMessage } from "./errors.js";
 import { buildAuthenticatedExternalMcps } from "./mcp-oauth/build-mcp-servers.js";
-import { resolvePm2Path } from "./system.js";
+import { resolveClaudePath, resolvePm2Path } from "./system.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -1384,7 +1384,17 @@ export class BeaconManager extends EventEmitter {
       ...beaconArkMcpTools,
     ]);
 
-    // V1 query() にAsyncIterableを渡してマルチターン会話を確立する
+    // V1 query() にAsyncIterableを渡してマルチターン会話を確立する。
+    //
+    // pathToClaudeCodeExecutable: 未指定だと SDK は
+    // `require.resolve("@anthropic-ai/claude-agent-sdk-<platform>-<arch>")`
+    // で同梱バイナリを解決する。Electron .app 配下では `app.asar/...` を返すが、
+    // Electron は `child_process.spawn` を asar 透過化しないため ENOTDIR で fail
+    // する (asar は単一ファイルなので path component として辿れない)。
+    // `system.ts:resolveClaudePath()` が `app.asar.unpacked/` 側の実体パス →
+    // F5 同梱版 → system claude の優先順で解決する。Linux サーバ版では
+    // resourcesPath が未設定なので従来通り system claude にフォールバックする。
+    const claudeExecutable = resolveClaudePath() ?? undefined;
     const q = query({
       prompt: queue,
       options: {
@@ -1392,6 +1402,9 @@ export class BeaconManager extends EventEmitter {
         model: "sonnet",
         allowedTools: allowedToolsList,
         permissionMode: "default",
+        ...(claudeExecutable
+          ? { pathToClaudeCodeExecutable: claudeExecutable }
+          : {}),
         // canUseTool は SDK 仕様上 allowedTools に含まれない tool 呼び出し
         // について発火する。defensive に「allowedTools と同じ const から
         // 導出した allow-list (set + externalAllowedTools wildcard)」
