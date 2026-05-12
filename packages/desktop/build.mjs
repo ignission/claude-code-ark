@@ -50,3 +50,16 @@ await build({
     "fsevents",
   ],
 });
+
+// F8: preload script を別エントリで bundle する。
+// Electron は preload を CJS (require) で読み込むため、main.js (ESM) とは
+// format を分ける必要がある。contextIsolation=true で renderer に inject される。
+await build({
+  entryPoints: ["src/preload.ts"],
+  outfile: "dist/preload.js",
+  bundle: true,
+  format: "cjs",
+  platform: "node",
+  target: "node20",
+  external: ["electron"],
+});

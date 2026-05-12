@@ -152,8 +152,11 @@ function createWindow(port: number): BrowserWindow {
     height: 900,
     webPreferences: {
       contextIsolation: true,
-      // Phase 2 では preload は使わない。F3 以降で IPC を追加する場合に導入。
+      // F8: preload を有効化。renderer に `window.electronAPI` を inject し、
+      // `ark:update-available` の IPC 受信を可能にする。
+      // preload は CJS (dist/preload.js)、main は ESM (dist/main.js)。
       sandbox: false,
+      preload: path.join(__dirname, "preload.js"),
     },
   });
 
@@ -296,6 +299,17 @@ async function bootstrap(): Promise<void> {
 
   mainWindow = createWindow(serverHandle.port);
   bootstrapped = true;
+
+  // F8: 更新通知システムを起動。GitHub Releases API を 24h ごとに polling し、
+  // 新版があれば mainWindow に `ark:update-available` IPC を送信する。
+  // mainWindow は閉じる/再生成されうるため、最新参照を返すクロージャを渡す。
+  // `ARK_DISABLE_UPDATE_CHECK=1` で無効化可能 (preferences 永続化は F8-followup)。
+  try {
+    const { startUpdateChecker } = await import("./update-checker.js");
+    startUpdateChecker(() => mainWindow);
+  } catch (err) {
+    log.error("[Ark Desktop] update-checker init threw", err);
+  }
 }
 
 // `app.whenReady()` 前に呼ぶ必要のあるパス系初期化を即時実行。
@@ -331,6 +345,15 @@ app.on("activate", () => {
 app.on("before-quit", async event => {
   isQuitting = true;
   destroyTray();
+
+  // F8: 更新チェッカーの timer を停止。間隔タイマーが残ると quit 後も
+  // event loop が抜けず、プロセスが終了しない可能性がある。
+  try {
+    const { stopUpdateChecker } = await import("./update-checker.js");
+    stopUpdateChecker();
+  } catch (err) {
+    log.error("[Ark Desktop] update-checker stop threw", err);
+  }
 
   // 既に停止済みなら何もしない。stop() は idempotent。
   if (!serverHandle) return;
