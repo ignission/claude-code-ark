@@ -390,8 +390,22 @@ export function resolvePm2Path(): string | null {
  * プロファイル切替機能のサポート判定。
  * Linux + claude CLI + tmux が3つ揃った時のみ true。
  * (UsageCollector も tmux を必要とするため tmux チェックも含める)
+ *
+ * F6 (F0:B-3 検証待ち): macOS は既存制約 C-3 のためデフォルト false。
+ * `ARK_MULTI_PROFILE_MACOS=1` で強制 enable できる (検証/開発用)。
+ * 本実装 (検証結果に応じた分岐) は F6-followup で
+ * `packages/desktop/src/keychain-profile-bridge.ts` と連携して追加する。
  */
 export function detectMultiProfileSupported(): boolean {
+  if (process.platform === "darwin") {
+    // F6 (F0:B-3 検証待ち): デフォルト false。
+    // ARK_MULTI_PROFILE_MACOS=1 で強制 enable (検証用 / Keychain bridge 実装後に
+    // デフォルト判定へ移行する想定)。
+    if (process.env.ARK_MULTI_PROFILE_MACOS === "1") {
+      return checkClaudeCommandExists() && checkTmuxCommandExists();
+    }
+    return false; // F6-followup で false 削除予定
+  }
   if (process.platform !== "linux") return false;
   return checkClaudeCommandExists() && checkTmuxCommandExists();
 }
