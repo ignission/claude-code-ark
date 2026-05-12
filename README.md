@@ -40,14 +40,33 @@ Arkは、Agent SDKではなく **tmux + ttyd によるターミナル転送方�
 
 ## Quick Start
 
-### 前提条件
+### macOS (.app, Apple Silicon)
+
+> [!NOTE]
+> .app 配布は実装中 (F1-F7 進行中)。実 release tag は F4-F6 完了後に公開予定。
+> 詳細は `plans/macos-app-implementation-plan.md` を参照。
+
+```bash
+# Homebrew tap 経由 (推奨)
+brew tap ignission/tap
+brew install --cask ark
+
+# または GitHub Releases から直接ダウンロード:
+# https://github.com/ignission/claude-code-ark/releases
+```
+
+要件: macOS 14 (Sonoma) 以降、arm64 (Apple Silicon)。
+
+### Linux / 開発環境 (ソースから起動)
+
+#### 前提条件
 
 - Node.js >= 20.6.0
 - [pnpm](https://pnpm.io/)
 - [tmux](https://github.com/tmux/tmux)
 - [ttyd](https://github.com/tsl0922/ttyd)
 
-### インストールと起動
+#### インストールと起動
 
 ```bash
 git clone https://github.com/ignission/claude-code-ark.git

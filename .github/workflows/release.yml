@@ -1,0 +1,123 @@
+name: release
+
+# tag push (v*.*.*) で .app をビルドし、GitHub Releases に upload する。
+# 別 repo (`<user>/homebrew-tap`) の Caskfile も自動更新する (要 HOMEBREW_TAP_TOKEN)。
+#
+# 前提:
+#   - F4 (build-bin) で tmux/ttyd の artifact が揃っている (現状未生成のため
+#     skip 可能な構造にしている)
+#   - F5 (Claude CLI loader) は未実装。.app 単体で動作する状態を想定
+#   - F0:B-1 確定済み: Apple Developer 登録なし (未署名配布)
+#
+# 実 release tag を打つのは F4-F6 完了後。それまでは手動 (workflow_dispatch) で
+# 動作確認のみ実施する想定。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0). Required when triggered manually."
+        required: true
+        type: string
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build .app (macOS arm64)
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          # workflow_dispatch で tag を指定された場合はそれを使う。
+          # push trigger では GITHUB_REF (refs/tags/...) が既に正しい ref。
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      # F4 (build-bin.yml) の artifact から tmux/ttyd を取得する想定。
+      # build-bin.yml は現状 workflow_dispatch 限定で artifact 未生成のため、
+      # 取得失敗時も build を継続できる構造 (continue-on-error) にしている。
+      # F4 完了後に actions/download-artifact@v4 で取得する形に書き換える。
+      #
+      # - name: Download tmux/ttyd artifact
+      #   uses: actions/download-artifact@v4
+      #   with:
+      #     name: ark-bin-macos-arm64
+      #     path: packages/desktop/build-assets
+      #   continue-on-error: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web + server + desktop
+        run: pnpm -r build
+
+      - name: Package .app (arm64 zip)
+        env:
+          # F0:B-1 確定: 未署名配布 (Apple Developer 登録なし)。
+          # electron-builder の auto signing を無効化し、identity 探索をスキップする。
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: pnpm --filter @ark/desktop exec electron-builder --mac --arm64 zip
+
+      - name: Compute artifact metadata
+        id: artifact
+        # release/Ark-{version}-arm64.zip の絶対パスと SHA256 を抽出する。
+        # update-cask ジョブで Caskfile の sha256 を置換するために GITHUB_OUTPUT に書き込む。
+        run: |
+          set -euo pipefail
+          ZIP=$(ls packages/desktop/release/Ark-*-arm64.zip | head -n1)
+          if [[ -z "${ZIP}" ]] || [[ ! -f "${ZIP}" ]]; then
+            echo "::error::Expected zip artifact not found in packages/desktop/release/"
+            ls -la packages/desktop/release/ || true
+            exit 1
+          fi
+          SHA=$(shasum -a 256 "${ZIP}" | awk '{print $1}')
+          echo "zip=${ZIP}" >> "${GITHUB_OUTPUT}"
+          echo "sha256=${SHA}" >> "${GITHUB_OUTPUT}"
+          echo "::notice::Built ${ZIP} (sha256=${SHA})"
+
+      - name: Upload to GitHub Releases
+        # push trigger (tag) では release を新規作成し、zip を upload する。
+        # workflow_dispatch では inputs.tag を tag_name として使う。
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: ${{ steps.artifact.outputs.zip }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
+
+  # update-cask ジョブは別リポジトリ `<user>/homebrew-tap` の `Casks/ark.rb` を
+  # 新リリースの version / sha256 に書き換える。HOMEBREW_TAP_TOKEN (PAT or
+  # GitHub App token) が必要なため、secret 未設定でも release 自体は失敗
+  # させない構造 (if: secrets が利用可能な時のみ実行) にする。
+  #
+  # F7 では雛形のみ。実有効化は別 repo 作成 + token 設定後に行う。
+  # update-cask:
+  #   name: Bump Cask in homebrew-tap
+  #   needs: build
+  #   if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: dawidd6/action-homebrew-bump-formula@v4
+  #       with:
+  #         token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+  #         tap: ignission/homebrew-tap
+  #         formula: ark
+  #         tag: ${{ inputs.tag || github.ref_name }}
