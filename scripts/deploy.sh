@@ -114,7 +114,7 @@ resolve_node_interpreter() {
 
     # `vX.Y.Z` 形式を厳密にパース。壊れた shim や予期せぬ出力時に分かりにくい
     # shell エラーにならないよう、major/minor が数値であることを正規表現で確認。
-    if [[ ! "${node_version}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+    if [[ ! "${node_version}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
         log_error "node --version の出力を解釈できません: ${node_version} (${node_path})"
     fi
     local major="${BASH_REMATCH[1]}"
