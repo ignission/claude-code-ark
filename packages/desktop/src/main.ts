@@ -96,6 +96,17 @@ function configureAppPaths(): void {
     process.env.ARK_FEATURE_TUNNEL = "false";
   }
 
+  // F5: Claude CLI 同梱インストール先を server に伝える。
+  // `@ark/server` 側 `system.ts:getClaudeRuntimeBinPath()` が
+  // `<ARK_CLAUDE_RUNTIME_DIR>/bin/claude` を最優先で探す。
+  // server は Electron module を import しない設計のため、env 経由で渡す。
+  if (!process.env.ARK_CLAUDE_RUNTIME_DIR) {
+    process.env.ARK_CLAUDE_RUNTIME_DIR = path.join(
+      process.env.ARK_DATA_DIR ?? app.getPath("userData"),
+      "claude-runtime"
+    );
+  }
+
   // electron-log の書き出し先を ARK_LOGS_DIR (override or Electron default) に揃える。
   // v5 系の resolvePathFn signature を使う。
   log.transports.file.resolvePathFn = () =>
@@ -214,6 +225,25 @@ async function bootstrap(): Promise<void> {
     getServerUrl: () =>
       serverHandle ? `http://127.0.0.1:${serverHandle.port}/` : null,
   });
+
+  // F5: Claude CLI 自動インストール (skeleton)
+  // packaged 環境かつ未インストール時のみ実行。dev / unpackaged では skip。
+  // 失敗してもアプリ起動は継続させる方針 (system claude へのフォールバックは
+  // server 側の system.ts:resolveClaudePath() に委ねる)。
+  // F5-followup: onProgress を IPC で renderer に転送し、
+  // `ClaudeInstallProgressDialog.tsx` を表示する。
+  try {
+    const { installClaudeCli } = await import("./claude-installer.js");
+    await installClaudeCli({
+      onProgress: event => {
+        log.info("[Ark Desktop] claude-installer", event);
+        // F5-followup: mainWindow?.webContents.send("ark:claude-install-progress", event);
+      },
+    });
+  } catch (err) {
+    // installClaudeCli は内部で reject しない設計だが、防御的に catch。
+    log.error("[Ark Desktop] claude-installer threw", err);
+  }
 
   if (isDev) {
     // dev mode: 別途 `pnpm dev:server` が 4001 で起動している前提。

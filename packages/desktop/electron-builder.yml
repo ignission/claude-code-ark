@@ -67,6 +67,20 @@ extraResources:
     to: licenses
     filter:
       - "**/*"
+  # F5: Node.js arm64 バイナリ + 同梱 npm (F0:B-2 で実装方式確定後に有効化)。
+  # `claude-installer.ts` が `<process.resourcesPath>/bin/node` を起動して
+  # `<userData>/claude-runtime/` に `@anthropic-ai/claude-code` を install する。
+  # 配置レイアウト (期待):
+  #   build-assets/node/
+  #     ├── bin/node
+  #     └── lib/node_modules/npm/**     (npm 同梱)
+  # CI で build-assets/node が空の場合 (skeleton 状態) は filter にマッチせず、
+  # extraResources エントリは silent に no-op になる。
+  # - from: build-assets/node
+  #   to: bin
+  #   filter:
+  #     - "node"
+  #     - "lib/node_modules/npm/**"
 
 # F4: tmux / ttyd の動的依存 dylib (libssl, libcrypto, libwebsockets 等)。
 # extraFiles は `.app/Contents/` 直下に配置されるため、

@@ -21,6 +21,39 @@ import path from "node:path";
 import { getBundledBinDir } from "./paths.js";
 
 /**
+ * F5: Claude CLI 自動インストーラー (`packages/desktop/src/claude-installer.ts`)
+ * によって `<userData>/claude-runtime/bin/claude` に同梱インストールされた
+ * Claude CLI の絶対パスを返す。
+ *
+ * 解決順:
+ *   1. `ARK_CLAUDE_RUNTIME_DIR` 環境変数（Electron main 側で
+ *      `app.getPath("userData")/claude-runtime` を明示注入する想定）
+ *   2. `ARK_DATA_DIR/claude-runtime`（フォールバック: ARK_DATA_DIR が
+ *      Electron 経由で set 済みの場合、明示的な ARK_CLAUDE_RUNTIME_DIR が
+ *      無くても同梱版を見つけられるようにする）
+ *
+ * いずれも未 set または `bin/claude` が存在しない場合は null を返し、
+ * 呼び出し側は既存の検索ロジック（PATH / npm global / mise 等）にフォールバック。
+ *
+ * Note: server コードは Electron module を import しない設計のため、
+ * userData パスは環境変数経由でしか取得できない。
+ */
+function getClaudeRuntimeBinPath(): string | null {
+  const runtimeDir =
+    process.env.ARK_CLAUDE_RUNTIME_DIR ??
+    (process.env.ARK_DATA_DIR
+      ? path.join(process.env.ARK_DATA_DIR, "claude-runtime")
+      : null);
+  if (!runtimeDir) return null;
+  const candidate = path.join(runtimeDir, "bin", "claude");
+  try {
+    return existsSync(candidate) ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * `<baseDir>/<version>/<suffix>` の形式で claude が存在するかを走査する。
  * nvm / fnm のように Node.js バージョンごとに bin が別ディレクトリになる
  * 場合の検出に使う。
@@ -49,6 +82,12 @@ function existsInVersionedDirs(baseDir: string, suffix: string): boolean {
  * 環境でも「command not found」にならないようにする。
  */
 export function resolveClaudePath(): string | null {
+  // 0. F5 同梱版: `<userData>/claude-runtime/bin/claude` を最優先
+  // Electron desktop でユーザに余計なセットアップを求めずに済むよう、
+  // システム claude より前に同梱インストール版をチェックする。
+  const runtimeBin = getClaudeRuntimeBinPath();
+  if (runtimeBin) return runtimeBin;
+
   try {
     const r = spawnSync("which", ["claude"], {
       stdio: "pipe",
@@ -139,6 +178,12 @@ function scanVersionedDir(baseDir: string, suffix: string): string | null {
  * 3. 既知の候補ディレクトリ (mise shims, npm global, apt/dpkg, brew 等)
  */
 export function checkClaudeCommandExists(): boolean {
+  // 0. F5 同梱版: `<userData>/claude-runtime/bin/claude`
+  // resolveClaudePath() と同じく最優先でチェックし、Electron desktop で
+  // システム claude 未インストールでもプロファイル切替が利用可能になる
+  // ようにする。
+  if (getClaudeRuntimeBinPath()) return true;
+
   try {
     const r = spawnSync("which", ["claude"], { stdio: "pipe" });
     if (r.status === 0) return true;

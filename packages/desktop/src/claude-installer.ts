@@ -1,0 +1,263 @@
+/**
+ * F5: Claude CLI 自動インストーラー (skeleton)
+ *
+ * 起動時に `claude` の存在を検出し、未インストールなら同梱 Node.js 経由で
+ * `npm install -g @anthropic-ai/claude-code` を実行する。
+ *
+ * インストール先:
+ *   - npm prefix: `<userData>/claude-runtime/`
+ *   - 結果: `<userData>/claude-runtime/bin/claude` が生成される
+ *
+ * 同梱 Node.js:
+ *   - production (packaged): `<process.resourcesPath>/bin/node`
+ *     かつ `<process.resourcesPath>/bin/lib/node_modules/npm/bin/npm-cli.js`
+ *   - dev / unpackaged: skip (system claude / system node に依存)
+ *
+ * 設計上の注記:
+ *   - server コードは Electron module を import しない設計のため、
+ *     インストール先パス情報は ARK_CLAUDE_RUNTIME_DIR 環境変数で server に渡す
+ *     (`packages/server/src/lib/system.ts` の `getClaudeRuntimeBinPath()` が読む)
+ *   - F0:B-2 の検証結果次第で方式 B (スタンドアロンバイナリ) や方式 C (brew install)
+ *     に切り替え可能な作りにしておく (interface ベース)
+ *   - 本ファイルは skeleton: 実際の Node 同梱は F0:B-2 結果待ちで F5-followup へ
+ *     deferred。skeleton 段階では packaged 時に同梱 node が見つからなければ
+ *     system claude (`@ark/server` の system.ts) にフォールバックする。
+ */
+
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { app } from "electron";
+import log from "electron-log";
+
+/**
+ * インストーラー呼び出し時のオプション。
+ *
+ * `onProgress` は renderer 側に IPC 経由で進捗を伝えるための callback。
+ * F5 skeleton 段階では main 側で electron-log に出力するのみで、
+ * F5-followup で IPC bridge を介して `ClaudeInstallProgressDialog.tsx` に
+ * 配信する想定。
+ */
+export interface ClaudeInstallerOptions {
+  /** 進捗イベント callback (renderer に IPC 経由で送る用) */
+  onProgress?: (event: ClaudeInstallProgressEvent) => void;
+}
+
+/**
+ * インストール進捗イベント。renderer 側の状態機械と一致するよう、
+ * `ClaudeInstallProgressDialog.tsx` で同名の discriminated union を再現する。
+ */
+export type ClaudeInstallProgressEvent =
+  | { type: "checking" }
+  | { type: "already-installed"; path: string }
+  | { type: "node-missing"; message: string }
+  | { type: "installing"; output: string }
+  | { type: "completed"; path: string }
+  | { type: "failed"; error: string };
+
+/**
+ * 同梱 Node.js バイナリのパスを返す。
+ *
+ * - production (packaged): `<process.resourcesPath>/bin/node`
+ * - dev / unpackaged: 常に null（system node 依存で OK）
+ *
+ * 存在チェック付き。`Resources/bin/node` を CI で配置する仕組みは F0:B-2 確定後に
+ * F5-followup で実装する想定。
+ */
+export function resolveBundledNodePath(): string | null {
+  if (!app.isPackaged) return null;
+  const candidate = path.join(process.resourcesPath, "bin", "node");
+  try {
+    return fs.existsSync(candidate) ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 同梱 npm CLI (`npm-cli.js`) のパスを返す。
+ *
+ * Node.js 公式 distribution には npm が同梱されており、tarball の構造は
+ *   `node-v<X>-darwin-arm64/`
+ *     ├── bin/node
+ *     └── lib/node_modules/npm/bin/npm-cli.js
+ * となっている。Resources/bin/ に node + lib/ をまるごと展開する前提。
+ *
+ * F5-followup で `build-assets/node/` 配置レイアウトを確定する際に、ここで
+ * 期待する path が崩れないように注意する。
+ */
+export function resolveBundledNpmCliPath(nodeBin: string): string | null {
+  // node が `<base>/bin/node` にあるとき、npm-cli.js は
+  // `<base>/lib/node_modules/npm/bin/npm-cli.js` にある。
+  const base = path.dirname(path.dirname(nodeBin));
+  const candidate = path.join(
+    base,
+    "lib",
+    "node_modules",
+    "npm",
+    "bin",
+    "npm-cli.js"
+  );
+  try {
+    return fs.existsSync(candidate) ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Claude CLI の同梱インストール先ディレクトリ。
+ * 同名のディレクトリは server 側の `getClaudeRuntimeBinPath()` でも参照される
+ * （`ARK_CLAUDE_RUNTIME_DIR` 経由）。
+ */
+export function getClaudeRuntimeDir(): string {
+  return path.join(app.getPath("userData"), "claude-runtime");
+}
+
+/**
+ * Claude CLI の検出 (F5 同梱版のみ)。
+ *
+ * server 側の `system.ts:resolveClaudePath()` がより広い候補（PATH, mise, brew, nvm 等）
+ * を探すため、main プロセス側ではまず同梱版のみチェックし、
+ * 見つからなければ「インストールが必要 or system claude を使う」を判定する。
+ */
+export function detectClaudeCommand(): string | null {
+  const runtimeBin = path.join(getClaudeRuntimeDir(), "bin", "claude");
+  try {
+    return fs.existsSync(runtimeBin) ? runtimeBin : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Claude CLI を同梱 Node 経由で npm install する (skeleton)。
+ *
+ * 振る舞い:
+ *   1. `checking` イベントを発火
+ *   2. 既にインストール済みなら `already-installed` で早期 return
+ *   3. 同梱 Node が無ければ `node-missing` を発火し、resolve(silent)
+ *      (system claude へのフォールバックは server 側で行う)
+ *   4. 同梱 npm-cli.js が無ければ `failed` を発火し、reject せず resolve
+ *      (起動を継続させる)
+ *   5. `<nodeBin> <npmCli> install -g --prefix <runtimeDir> @anthropic-ai/claude-code` を spawn
+ *   6. 進捗 stdout/stderr を `installing` で逐次配信
+ *   7. exit 0 かつ `bin/claude` 生成成功なら `completed`、それ以外は `failed`
+ *
+ * F5 skeleton では fatal な失敗でも reject しない方針: アプリ起動を止めないため、
+ * 失敗時は log + onProgress のみで上位に伝え、呼び出し側 (`main.ts:bootstrap`) は
+ * try/catch で全て吸収する。本格的なリトライ UI は F5-followup で `ClaudeInstallProgressDialog`
+ * 側に実装する。
+ */
+export async function installClaudeCli(
+  options: ClaudeInstallerOptions = {}
+): Promise<void> {
+  const { onProgress } = options;
+  onProgress?.({ type: "checking" });
+
+  // 1) 既にインストール済み (F5 同梱版) の場合は早期 return
+  const existingPath = detectClaudeCommand();
+  if (existingPath) {
+    onProgress?.({ type: "already-installed", path: existingPath });
+    return;
+  }
+
+  // 2) 同梱 Node が無い場合 (dev mode / unpackaged / Resources/bin/node 未配置) は skip
+  const nodeBin = resolveBundledNodePath();
+  if (!nodeBin) {
+    const message = app.isPackaged
+      ? "Bundled Node.js not found at Resources/bin/node. F5 installer requires Node distribution to be bundled in CI (deferred to F5-followup). Falling back to system claude."
+      : "Skipping bundled Node.js install in dev/unpackaged mode. Using system claude.";
+    onProgress?.({ type: "node-missing", message });
+    log.info("[claude-installer] node-missing", { message });
+    return;
+  }
+
+  // 3) 同梱 npm-cli.js が無い場合は明示的に failed (起動は継続)
+  const npmCli = resolveBundledNpmCliPath(nodeBin);
+  if (!npmCli) {
+    const error = `Bundled npm not found near ${nodeBin}. Need to bundle full Node distribution including lib/node_modules/npm.`;
+    onProgress?.({ type: "failed", error });
+    log.error("[claude-installer] failed", { error });
+    return;
+  }
+
+  // 4) runtime ディレクトリを mkdir -p
+  const runtimeDir = getClaudeRuntimeDir();
+  try {
+    fs.mkdirSync(runtimeDir, { recursive: true });
+  } catch (err) {
+    const error = `Failed to create runtime dir ${runtimeDir}: ${err instanceof Error ? err.message : String(err)}`;
+    onProgress?.({ type: "failed", error });
+    log.error("[claude-installer] mkdir failed", { error });
+    return;
+  }
+
+  // 5) npm install を spawn
+  log.info("[claude-installer] starting install", {
+    nodeBin,
+    npmCli,
+    runtimeDir,
+  });
+
+  await new Promise<void>(resolve => {
+    const proc = spawn(
+      nodeBin,
+      [
+        npmCli,
+        "install",
+        "-g",
+        "--prefix",
+        runtimeDir,
+        "@anthropic-ai/claude-code",
+      ],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        // PATH に system node が含まれていても、`spawn(nodeBin, ...)` で
+        // 同梱 node を直接指定しているため衝突しない。env はそのまま継承。
+        env: { ...process.env },
+      }
+    );
+
+    let stdout = "";
+    let stderr = "";
+    proc.stdout?.on("data", chunk => {
+      const text = chunk.toString();
+      stdout += text;
+      onProgress?.({ type: "installing", output: text });
+    });
+    proc.stderr?.on("data", chunk => {
+      const text = chunk.toString();
+      stderr += text;
+      onProgress?.({ type: "installing", output: text });
+    });
+
+    proc.on("close", code => {
+      if (code === 0) {
+        const installedPath = path.join(runtimeDir, "bin", "claude");
+        if (fs.existsSync(installedPath)) {
+          onProgress?.({ type: "completed", path: installedPath });
+          log.info("[claude-installer] completed", { path: installedPath });
+        } else {
+          const error = `npm install completed but ${installedPath} not found`;
+          onProgress?.({ type: "failed", error });
+          log.error("[claude-installer] post-install verification failed", {
+            error,
+          });
+        }
+      } else {
+        const error = `npm install failed with exit code ${code}: ${stderr || stdout}`;
+        onProgress?.({ type: "failed", error });
+        log.error("[claude-installer] install failed", { code, stderr });
+      }
+      resolve();
+    });
+
+    proc.on("error", err => {
+      const error = err instanceof Error ? err.message : String(err);
+      onProgress?.({ type: "failed", error });
+      log.error("[claude-installer] spawn error", { error });
+      resolve();
+    });
+  });
+}
