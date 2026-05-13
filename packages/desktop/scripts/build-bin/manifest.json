@@ -22,9 +22,9 @@
       "sha256": "2e8a40b01979afe8be0bbfb3de5dc1c6709fedb46d6c89c10da114ab5fc3d281"
     },
     "zlib": {
-      "_note": "1.3.1 は zlib.net/fossils/ に retire 済み (最新は zlib.net 直下にミラー)。fossils URL を pin して将来の retire でも壊れないようにする。",
+      "_note": "GitHub release ミラー経由で取得 (zlib.net は GHA runner からの DNS 解決が時々失敗するため)。tarball の sha256 は zlib.net/fossils/ 配下と同一。",
       "version": "1.3.1",
-      "url": "https://zlib.net/fossils/zlib-1.3.1.tar.gz",
+      "url": "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz",
       "sha256": "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
     },
     "libwebsockets": {
