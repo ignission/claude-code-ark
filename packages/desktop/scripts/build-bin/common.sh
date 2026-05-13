@@ -138,7 +138,12 @@ build_autoconf() {
 # cmake 系 (mkdir build && cmake && make && make install) の標準ビルダ。
 # 引数: $1 name, $2.. cmake -D flags
 # CMAKE_BUILD_TYPE / CMAKE_OSX_DEPLOYMENT_TARGET / CMAKE_OSX_ARCHITECTURES /
-# CMAKE_INSTALL_PREFIX は固定で付与。
+# CMAKE_INSTALL_PREFIX / CMAKE_POLICY_VERSION_MINIMUM は固定で付与。
+# CMAKE_POLICY_VERSION_MINIMUM=3.5: 現代の cmake (4.x) は < 3.5 互換を完全に削除し、
+# `cmake_minimum_required(VERSION 2.x)` を持つ古い CMakeLists.txt が
+# "Compatibility with CMake < 3.5 has been removed from CMake" で fail する。
+# json-c 0.18 の apps/ subdir、libwebsockets 4.3.3 等が該当。本 build は全 deps の
+# 互換 policy を 3.5 に持ち上げて configure を通す (実害なし、API 動作は同じ)。
 build_cmake() {
   local name="$1"
   shift
@@ -158,6 +163,7 @@ build_cmake() {
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET}" \
     -DCMAKE_OSX_ARCHITECTURES="${ARCH}" \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     "$@" \
     ..
   make -j"$(build_jobs)"
