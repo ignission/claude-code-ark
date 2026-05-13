@@ -106,13 +106,17 @@ TMUX_URL=$(manifest_get '.tmux.url')
 TMUX_SHA=$(manifest_get '.tmux.sha256')
 fetch_and_extract "tmux" "${TMUX_URL}" "${TMUX_SHA}"
 
-# tmux の configure に渡す追加フラグを export 経由で組み立てる。
-# CFLAGS は common.sh で既に -arch / -I${PREFIX}/include を持つ。
-# tmux configure は `libevent` を pkg-config or 環境変数で見つける必要あり。
+# tmux の configure に渡す追加フラグ。
+# `--enable-static` は **明示的に外す**: tmux の configure は macOS で
+# このオプションを「全 syslib も含めて static link せよ」と解釈し
+# `static linking is not supported on macOS` で fail する (macOS は libSystem の
+# dynamic link が必須なため、本来的に fully-static binary は作れない)。
+# LIBEVENT_LIBS / LIBNCURSES_LIBS が .a への絶対パス相当を指しているので、
+# tmux の link 時にこれらの static archive が選択され、bundled deps は自動的に
+# 静的リンクされる構成になる (system libSystem 等のみ dynamic、これは設計通り)。
 # LIBTINFO_LIBS は libtinfo.a が ncurses build で生成された場合のみ渡す
 # (生成されない構成では `-ltinfo` 解決がホスト側に流れる事故を避けるため空のまま)。
 TMUX_CONFIG_FLAGS=(
-  --enable-static
   LIBEVENT_CFLAGS="-I${PREFIX}/include"
   LIBEVENT_LIBS="-L${PREFIX}/lib -levent"
   LIBNCURSES_CFLAGS="-I${PREFIX}/include -I${PREFIX}/include/ncurses"
