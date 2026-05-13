@@ -38,6 +38,14 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 60
 
+    # update-cask ジョブから参照するメタデータ。
+    # sha256 は Cask の sha256 値を更新するため必須。
+    # zip_basename は zip filename が Cask の url パターン (Ark-{version}-arm64-mac.zip) と
+    # 整合しているかを update-cask 側で再確認するために露出する。
+    outputs:
+      sha256: ${{ steps.artifact.outputs.sha256 }}
+      zip_basename: ${{ steps.artifact.outputs.zip_basename }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -307,10 +315,12 @@ jobs:
             echo "::error::Matched path is not a regular file: ${ZIP}"
             exit 1
           fi
-          SHA=$(shasum -a 256 "${ZIP}" | awk '{print $1}')
+          SHA256=$(shasum -a 256 "${ZIP}" | awk '{print $1}')
+          ZIP_BASENAME=$(basename "${ZIP}")
           echo "zip=${ZIP}" >> "${GITHUB_OUTPUT}"
-          echo "sha256=${SHA}" >> "${GITHUB_OUTPUT}"
-          echo "::notice::Built ${ZIP} (sha256=${SHA})"
+          echo "zip_basename=${ZIP_BASENAME}" >> "${GITHUB_OUTPUT}"
+          echo "sha256=${SHA256}" >> "${GITHUB_OUTPUT}"
+          echo "::notice::Built ${ZIP} (sha256=${SHA256})"
 
       - name: Upload to GitHub Releases
         # push trigger (tag) では release を新規作成し、zip を upload する。
@@ -326,21 +336,197 @@ jobs:
           draft: false
           prerelease: false
 
-  # update-cask ジョブは別リポジトリ `<user>/homebrew-tap` の `Casks/ark.rb` を
-  # 新リリースの version / sha256 に書き換える。HOMEBREW_TAP_TOKEN (PAT or
-  # GitHub App token) が必要なため、secret 未設定でも release 自体は失敗
-  # させない構造 (if: secrets が利用可能な時のみ実行) にする。
+  # update-cask は別リポジトリ `ignission/homebrew-tap` の `Casks/ark.rb` を
+  # 新リリースの version / sha256 に書き換えて main に直接 commit する。
   #
-  # F7 では雛形のみ。実有効化は別 repo 作成 + token 設定後に行う。
-  # update-cask:
-  #   name: Bump Cask in homebrew-tap
-  #   needs: build
-  #   if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: dawidd6/action-homebrew-bump-formula@v4
-  #       with:
-  #         token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-  #         tap: ignission/homebrew-tap
-  #         formula: ark
-  #         tag: ${{ inputs.tag || github.ref_name }}
+  # 前提:
+  #   - `ignission/homebrew-tap` に `Casks/ark.rb` が存在すること
+  #     (v1.2.0 で初期版を手動 PR で投入済み)
+  #   - claude-code-ark repo の secret `HOMEBREW_TAP_TOKEN` に
+  #     ignission/homebrew-tap への write 権限を持つ PAT (fine-grained 推奨) を設定
+  #
+  # secret 未設定でも release 自体は失敗させないため、token チェックを
+  # 第 1 step で行い、未設定時は後続 step を全て skip する。
+  update-cask:
+    name: Bump Cask in homebrew-tap
+    needs: build
+    # 入口条件: tag (refs/tags/v*) push、または workflow_dispatch で inputs.tag が指定された場合のみ。
+    # 内部の TAG sanity check (`^v[0-9]+\.[0-9]+\.[0-9]+$`) と意図を揃え、想定外の起動経路で
+    # `git push origin HEAD:main` まで進ませない。
+    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify HOMEBREW_TAP_TOKEN is set
+        id: token_check
+        env:
+          TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TOKEN}" ]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN が未設定のため、Cask 更新を skip します"
+            echo "has_token=0" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has_token=1" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Checkout homebrew-tap
+        if: steps.token_check.outputs.has_token == '1'
+        uses: actions/checkout@v5
+        with:
+          repository: ignission/homebrew-tap
+          # checkout 対象を publish 先と一致させる。tap 側の default branch
+          # 変更やズレで意図しないブランチ内容を main に流し込むのを防ぐ。
+          ref: main
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Bump version + sha256 in Casks/ark.rb
+        if: steps.token_check.outputs.has_token == '1'
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+          SHA256: ${{ needs.build.outputs.sha256 }}
+          ZIP_BASENAME: ${{ needs.build.outputs.zip_basename }}
+        run: |
+          set -euo pipefail
+          # tag 形式の sanity check (v<X.Y.Z> のみ許容、sed 引数注入を防ぐ)
+          if ! [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Unexpected TAG format: ${TAG} (expected v<major>.<minor>.<patch>)"
+            exit 1
+          fi
+          # sha256 は 64 桁 hex のみ許容
+          if ! [[ "${SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Unexpected SHA256 format: ${SHA256}"
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          # zip basename が Cask の url パターンと整合していることを確認
+          EXPECTED_BASENAME="Ark-${VERSION}-arm64-mac.zip"
+          if [ "${ZIP_BASENAME}" != "${EXPECTED_BASENAME}" ]; then
+            echo "::error::zip basename mismatch: got '${ZIP_BASENAME}', expected '${EXPECTED_BASENAME}'"
+            echo "::error::Cask の url パターン (Ark-#{version}-arm64-mac.zip) が崩れている可能性あり"
+            exit 1
+          fi
+          CASK="homebrew-tap/Casks/ark.rb"
+          if [ ! -f "${CASK}" ]; then
+            echo "::error::Cask not found: ${CASK}"
+            exit 1
+          fi
+          # Cask の url 行に `Ark-#{version}-arm64-mac.zip` パターンが厳密に 1 件存在することを確認。
+          # url テンプレートが壊れている / 別アーキ命名に変わっている / 複数 url 化されている場合は
+          # version/sha256 だけ更新しても download URL が壊れたまま push されてしまうため、ここで防御する。
+          URL_PATTERN_COUNT=$(grep -cF 'Ark-#{version}-arm64-mac.zip' "${CASK}" || true)
+          if [ "${URL_PATTERN_COUNT}" != "1" ]; then
+            echo "::error::Cask url の期待パターン 'Ark-#{version}-arm64-mac.zip' が ${URL_PATTERN_COUNT} 件 (期待: 1 件)"
+            # ファイル全体を流出させず、関連行のみログに出す
+            grep -E '^  (version|sha256|url)' "${CASK}" || true
+            exit 1
+          fi
+          # 置換前に「version 行 / sha256 行が 1 件ずつ存在する」ことを assert。
+          # 将来 multi-arch 化等で対象行が複数になった場合に一括置換で破壊するのを防ぐ。
+          VERSION_BEFORE_COUNT=$(grep -cE '^  version "[^"]*"$' "${CASK}" || true)
+          SHA_BEFORE_COUNT=$(grep -cE '^  sha256 "[^"]*"$' "${CASK}" || true)
+          if [ "${VERSION_BEFORE_COUNT}" != "1" ]; then
+            echo "::error::Cask に version 行が ${VERSION_BEFORE_COUNT} 件 (期待: 1 件)"
+            # ファイル全体を流出させず、関連行のみログに出す
+            grep -E '^  (version|sha256|url)' "${CASK}" || true
+            exit 1
+          fi
+          if [ "${SHA_BEFORE_COUNT}" != "1" ]; then
+            echo "::error::Cask に sha256 行が ${SHA_BEFORE_COUNT} 件 (期待: 1 件)"
+            # ファイル全体を流出させず、関連行のみログに出す
+            grep -E '^  (version|sha256|url)' "${CASK}" || true
+            exit 1
+          fi
+          # downgrade 防止: 現 Cask version <= 新 VERSION でなければ拒否。
+          # 同 version (idempotent rerun) は許容し、commit step の git diff --cached --quiet
+          # で no-op skip される。
+          CURRENT_VERSION=$(grep -E '^  version "[^"]*"$' "${CASK}" | sed -E 's/^  version "([^"]*)"$/\1/')
+          if ! printf '%s\n%s\n' "${CURRENT_VERSION}" "${VERSION}" | sort -V -C; then
+            echo "::error::version downgrade を拒否: 現 Cask=${CURRENT_VERSION}, 新 VERSION=${VERSION}"
+            exit 1
+          fi
+          # GNU sed (ubuntu-latest)。`  version "..."` と `  sha256 "..."` の 2 行を置換。
+          sed -i -E "s/^(  version )\".*\"\$/\\1\"${VERSION}\"/" "${CASK}"
+          sed -i -E "s/^(  sha256 )\".*\"\$/\\1\"${SHA256}\"/" "${CASK}"
+          # Assertive: 置換後に期待値の行が 1 件存在することを fixed-string 一致で検証
+          # (-Fx で行全体の固定文字列一致。VERSION 中の `.` が正規表現メタとして解釈
+          # されることを防ぐ)。
+          VERSION_AFTER_COUNT=$(grep -cFx "  version \"${VERSION}\"" "${CASK}" || true)
+          SHA_AFTER_COUNT=$(grep -cFx "  sha256 \"${SHA256}\"" "${CASK}" || true)
+          if [ "${VERSION_AFTER_COUNT}" != "1" ] || [ "${SHA_AFTER_COUNT}" != "1" ]; then
+            echo "::error::Cask 更新後の検証失敗 (version=${VERSION_AFTER_COUNT} sha256=${SHA_AFTER_COUNT})"
+            # ファイル全体を流出させず、関連行のみログに出す
+            grep -E '^  (version|sha256|url)' "${CASK}" || true
+            exit 1
+          fi
+          echo "::notice::Cask bumped to ${VERSION} (sha256=${SHA256})"
+
+      - name: Commit + push to homebrew-tap main
+        if: steps.token_check.outputs.has_token == '1'
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+          SHA256: ${{ needs.build.outputs.sha256 }}
+        working-directory: homebrew-tap
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          CASK="Casks/ark.rb"
+          # Cask の invariant を post-rebase でも再検証するための共通関数。
+          # 並行更新で remote 側の `url` テンプレや構造が変わった場合に、当初の前提が
+          # 崩れた状態で push しないようリトライ毎に呼び出す。
+          assert_cask_invariants() {
+            local url_count version_count sha_count
+            url_count=$(grep -cF 'Ark-#{version}-arm64-mac.zip' "${CASK}" || true)
+            version_count=$(grep -cFx "  version \"${VERSION}\"" "${CASK}" || true)
+            sha_count=$(grep -cFx "  sha256 \"${SHA256}\"" "${CASK}" || true)
+            if [ "${url_count}" != "1" ] || [ "${version_count}" != "1" ] || [ "${sha_count}" != "1" ]; then
+              echo "::error::Cask invariant 違反 (url=${url_count} version=${version_count} sha256=${sha_count})"
+              grep -E '^  (version|sha256|url)' "${CASK}" || true
+              return 1
+            fi
+          }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${CASK}"
+          if git diff --cached --quiet; then
+            echo "::notice::Cask に差分なし (既に ${VERSION} が反映済み)。push を skip"
+            exit 0
+          fi
+          git commit -m "chore: Bump ark Cask to ${VERSION}"
+          # tap main が並行更新されると非 fast-forward で push が落ちるため、
+          # pull --rebase で同期してから push を最大 3 回まで再試行する。
+          # autostash は無用なローカル差分が無い前提だが、保険として有効化。
+          # rebase 後は invariant が崩れていないかを再検証し、崩れていれば abort。
+          # push 失敗のうち non-fast-forward 系のみリトライ対象とする。
+          # 認可不備 / branch protection / token 権限不足 / ネットワーク断などの非リトライ系で
+          # pull --rebase を走らせると原因をぼかすため、stderr から rejection 種別を判定する。
+          MAX_ATTEMPTS=3
+          PUSH_LOG=$(mktemp)
+          for attempt in $(seq 1 ${MAX_ATTEMPTS}); do
+            if git push origin HEAD:main 2> "${PUSH_LOG}"; then
+              echo "::notice::push 成功 (attempt=${attempt})"
+              exit 0
+            fi
+            cat "${PUSH_LOG}" >&2
+            if ! grep -qE '(non-fast-forward|fetch first|stale info|rejected)' "${PUSH_LOG}"; then
+              echo "::error::push が non-fast-forward 以外のエラーで失敗 (認可・権限・接続を確認)"
+              exit 1
+            fi
+            if [ "${attempt}" -lt "${MAX_ATTEMPTS}" ]; then
+              echo "::warning::push 失敗 (attempt=${attempt}, NFF 系) - pull --rebase で同期して再試行"
+              if ! git pull --rebase --autostash origin main; then
+                echo "::error::pull --rebase でコンフリクトが解消できず abort"
+                git rebase --abort 2>/dev/null || true
+                exit 1
+              fi
+              # rebase 後の作業ツリーで Cask invariant を再確認 (codex [高] 指摘対応)
+              if ! assert_cask_invariants; then
+                echo "::error::pull --rebase 後に Cask invariant 違反、abort"
+                exit 1
+              fi
+            fi
+          done
+          echo "::error::push が ${MAX_ATTEMPTS} 回連続で失敗"
+          exit 1
