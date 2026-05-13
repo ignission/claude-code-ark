@@ -117,6 +117,12 @@ fetch_and_extract "tmux" "${TMUX_URL}" "${TMUX_SHA}"
 # LIBTINFO_LIBS は libtinfo.a が ncurses build で生成された場合のみ渡す
 # (生成されない構成では `-ltinfo` 解決がホスト側に流れる事故を避けるため空のまま)。
 TMUX_CONFIG_FLAGS=(
+  # tmux 3.5a は utf8proc 連携の有無を configure 時に明示要求する
+  # (default が無いと configure が fail する)。
+  # --disable-utf8proc で内蔵 UTF-8 解析にフォールバック (一部絵文字の幅判定が
+  # ライブラリ版より粗い程度で、ターミナル運用には実害なし)。utf8proc を同梱
+  # する場合は manifest に追加して --enable-utf8proc に差し替える。
+  --disable-utf8proc
   LIBEVENT_CFLAGS="-I${PREFIX}/include"
   LIBEVENT_LIBS="-L${PREFIX}/lib -levent"
   LIBNCURSES_CFLAGS="-I${PREFIX}/include -I${PREFIX}/include/ncurses"
