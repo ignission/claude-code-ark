@@ -123,6 +123,22 @@ build_cmake "libwebsockets" \
 TTYD_URL=$(manifest_get '.ttyd.url')
 TTYD_SHA=$(manifest_get '.ttyd.sha256')
 fetch_and_extract "ttyd" "${TTYD_URL}" "${TTYD_SHA}"
+
+# ttyd 1.7.7 の CMakeLists.txt は `target_link_libraries(ttyd PRIVATE websockets_shared)`
+# と書かれているが、`LWS_WITH_SHARED=OFF` で組んだ libwebsockets には
+# `websockets_shared` ターゲットが存在せず ld でリンク失敗する (静的版の
+# ターゲット名は `websockets`)。ttyd の静的ビルドで一般的な workaround として
+# CMakeLists.txt の `websockets_shared` → `websockets` を sed 書換する。
+# (idempotent: build_cmake stamp で 2 回目以降は skip されるが、明示的に check)
+if [[ ! -f "${PREFIX}/.built.ttyd" ]]; then
+  TTYD_SRC=$(source_dir "ttyd")
+  TTYD_CMAKELIST="${TTYD_SRC}/CMakeLists.txt"
+  if grep -qF 'websockets_shared' "${TTYD_CMAKELIST}"; then
+    # macOS BSD sed は `-i` の引数に空文字を要求する (`sed -i '' ...`)
+    sed -i '' 's/websockets_shared/websockets/g' "${TTYD_CMAKELIST}"
+    echo "[patch] ttyd CMakeLists.txt: websockets_shared -> websockets (static link)"
+  fi
+fi
 build_cmake "ttyd" \
   -DCMAKE_PREFIX_PATH="${PREFIX}" \
   -DCMAKE_FIND_LIBRARY_SUFFIXES=".a" \
