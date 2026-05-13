@@ -117,6 +117,26 @@ build_cmake "libwebsockets" \
   -DZLIB_INCLUDE_DIR="${PREFIX}/include" \
   -DCMAKE_PREFIX_PATH="${PREFIX}"
 
+# libwebsockets が install する exported cmake config (libwebsockets-config.cmake) は
+# `set(LIBWEBSOCKETS_LIBRARIES websockets websockets_shared)` と shared/static 両方を
+# 列挙する。`LWS_WITH_SHARED=OFF` でビルドした静的版には `websockets_shared` ターゲットが
+# 存在せず、ttyd の find_package(Libwebsockets) が解決した結果として
+# `-lwebsockets_shared` が linker に渡って `library not found` で失敗する。
+# 静的ビルドのみが必要なため、install 済みの config から `websockets_shared` を除去する。
+# 配置場所は libwebsockets バージョンによって異なる (lib/cmake/, share/cmake/, lib/cmake/libwebsockets/ 等)
+# ため find ベースで対象ファイルを列挙する。
+LWS_CONFIG_FILES=$(find "${PREFIX}" -name 'libwebsockets-config.cmake' 2>/dev/null || true)
+if [[ -n "${LWS_CONFIG_FILES}" ]]; then
+  echo "${LWS_CONFIG_FILES}" | while read -r cfg; do
+    if grep -qF 'websockets_shared' "${cfg}"; then
+      # macOS BSD sed: in-place 編集は `-i ''` が必須。
+      # `websockets websockets_shared` または `websockets_shared` 単独どちらも `websockets` に正規化。
+      sed -i '' -E 's/websockets[[:space:]]+websockets_shared/websockets/g; s/websockets_shared/websockets/g' "${cfg}"
+      echo "[patch] ${cfg}: removed websockets_shared (static-only build)"
+    fi
+  done
+fi
+
 # 6. ttyd 本体
 #    cmake で libwebsockets/json-c/zlib を ${PREFIX} から拾わせる。
 #    static link を強制するため CMAKE_FIND_LIBRARY_SUFFIXES を .a 限定にする。
@@ -124,21 +144,6 @@ TTYD_URL=$(manifest_get '.ttyd.url')
 TTYD_SHA=$(manifest_get '.ttyd.sha256')
 fetch_and_extract "ttyd" "${TTYD_URL}" "${TTYD_SHA}"
 
-# ttyd 1.7.7 の CMakeLists.txt は `target_link_libraries(ttyd PRIVATE websockets_shared)`
-# と書かれているが、`LWS_WITH_SHARED=OFF` で組んだ libwebsockets には
-# `websockets_shared` ターゲットが存在せず ld でリンク失敗する (静的版の
-# ターゲット名は `websockets`)。ttyd の静的ビルドで一般的な workaround として
-# CMakeLists.txt の `websockets_shared` → `websockets` を sed 書換する。
-# (idempotent: build_cmake stamp で 2 回目以降は skip されるが、明示的に check)
-if [[ ! -f "${PREFIX}/.built.ttyd" ]]; then
-  TTYD_SRC=$(source_dir "ttyd")
-  TTYD_CMAKELIST="${TTYD_SRC}/CMakeLists.txt"
-  if grep -qF 'websockets_shared' "${TTYD_CMAKELIST}"; then
-    # macOS BSD sed は `-i` の引数に空文字を要求する (`sed -i '' ...`)
-    sed -i '' 's/websockets_shared/websockets/g' "${TTYD_CMAKELIST}"
-    echo "[patch] ttyd CMakeLists.txt: websockets_shared -> websockets (static link)"
-  fi
-fi
 build_cmake "ttyd" \
   -DCMAKE_PREFIX_PATH="${PREFIX}" \
   -DCMAKE_FIND_LIBRARY_SUFFIXES=".a" \
