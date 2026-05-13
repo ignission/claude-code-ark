@@ -49,6 +49,15 @@ await build({
     // Node 標準モジュール代替の有無を esbuild に判断させない
     "fsevents",
   ],
+  // ESM 出力に CJS の `require` shim を埋め込む。
+  // bundle 対象の依存 (electron-log 等) が内部で `require("electron")` を
+  // 呼ぶ場合、esbuild が生成する `__require2` shim では dynamic require が
+  // サポートされず "Dynamic require of \"electron\" is not supported" で
+  // 起動時に throw する。`createRequire(import.meta.url)` で本物の CJS
+  // require を再生して電子モジュール解決を担保する。
+  banner: {
+    js: "import { createRequire as __arkCreateRequire } from 'node:module';const require = __arkCreateRequire(import.meta.url);",
+  },
 });
 
 // F8: preload script を別エントリで bundle する。

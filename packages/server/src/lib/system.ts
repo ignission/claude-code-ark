@@ -15,7 +15,13 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  readdirSync,
+  statSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getBundledBinDir } from "./paths.js";
@@ -82,12 +88,66 @@ function existsInVersionedDirs(baseDir: string, suffix: string): boolean {
 }
 
 /**
+ * `@anthropic-ai/claude-agent-sdk` の query() に `pathToClaudeCodeExecutable`
+ * として渡す、Electron .app の `app.asar.unpacked/` 配下に同梱された SDK
+ * 付属 claude バイナリの絶対パスを返す。**spawn 可能であることが確認できた
+ * 場合のみ非 null を返す** (existsSync + isFile + X_OK)。
+ *
+ * SDK は内部で `require.resolve("@anthropic-ai/claude-agent-sdk-<platform>-<arch>")`
+ * から binary パスを得るが、Electron .app では `app.asar/...` を返す。Electron は
+ * `child_process.spawn` に対して asar 透過化を **行わない** ため、その path を
+ * spawn すると ENOTDIR で fail する (asar は単一ファイルなので path component
+ * として辿れない)。`app.asar.unpacked/` 側の実体パスを明示的に渡す必要がある。
+ *
+ * Linux サーバ版 / non-Electron では `process.resourcesPath` が undefined のため
+ * このフォールバックはスキップされる。
+ *
+ * spawn 可能性まで確認することで、`pathToClaudeCodeExecutable` を信用する側
+ * (`@ark/server` の query() 呼び出し) が「return non-null = spawn 安全」と
+ * 仮定できる。candidate が directory / 権限なし / 壊れたリンクの場合は null
+ * を返し、上位の system claude フォールバックに委ねる。
+ *
+ * Windows (`.exe` サフィックス) は現状 Ark .app の build target に含まれない
+ * ため未対応。将来 Windows 版を出す際は `.exe` を加味した分岐をここに追加する。
+ */
+function resolveUnpackedSdkClaudeExecutablePath(): string | null {
+  const resourcesPath = (process as { resourcesPath?: string }).resourcesPath;
+  if (!resourcesPath) return null;
+  // Windows ターゲットは未サポート (Ark .app は darwin / linux のみ build する)
+  if (process.platform !== "darwin" && process.platform !== "linux") {
+    return null;
+  }
+  const candidate = path.join(
+    resourcesPath,
+    "app.asar.unpacked",
+    "node_modules",
+    "@anthropic-ai",
+    `claude-agent-sdk-${process.platform}-${process.arch}`,
+    "claude"
+  );
+  try {
+    if (!existsSync(candidate)) return null;
+    if (!statSync(candidate).isFile()) return null;
+    accessSync(candidate, constants.X_OK);
+    return candidate;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * `claude` コマンドの絶対パスを解決する。利用不可なら null。
  * 解決ロジックは checkClaudeCommandExists と同じ順序。tmux send-keys に
  * 絶対パスで claude を送ることで、pm2/systemd の PATH に claude が無い
  * 環境でも「command not found」にならないようにする。
  */
 export function resolveClaudePath(): string | null {
+  // -1. Electron .app の `app.asar.unpacked` に同梱された SDK 付属バイナリ。
+  // SDK と version が揃っており、prompt protocol (JSONL) 互換性が保証される。
+  // 戻り値は spawn 可能性まで確認済み (isFile + X_OK)、null なら下流に委譲。
+  const bundledSdkBin = resolveUnpackedSdkClaudeExecutablePath();
+  if (bundledSdkBin) return bundledSdkBin;
+
   // 0. F5 同梱版: `<userData>/claude-runtime/bin/claude` を最優先
   // Electron desktop でユーザに余計なセットアップを求めずに済むよう、
   // システム claude より前に同梱インストール版をチェックする。
