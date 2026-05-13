@@ -63,12 +63,24 @@ jobs:
           brew update
           brew install jq cmake autoconf automake libtool pkg-config
 
-      - name: Compute manifest cache key
+      - name: Compute cache key
         id: cache-key
+        # manifest.json (依存バージョン + SHA256) と build スクリプト群 (common.sh /
+        # build-tmux.sh / build-ttyd.sh / collect-licenses.sh) の両方を hash 対象に
+        # 含める。スクリプトを変えただけで manifest が同じ場合に古い
+        # ${PREFIX}/.built.<name> stamp を再利用して新しい configure flag が
+        # 効かないままになる事故を防ぐ (codex review P1 指摘対応)。
         run: |
-          hash=$(shasum -a 256 packages/desktop/scripts/build-bin/manifest.json | cut -d' ' -f1)
+          hash=$(shasum -a 256 \
+            packages/desktop/scripts/build-bin/manifest.json \
+            packages/desktop/scripts/build-bin/common.sh \
+            packages/desktop/scripts/build-bin/build-tmux.sh \
+            packages/desktop/scripts/build-bin/build-ttyd.sh \
+            packages/desktop/scripts/build-bin/collect-licenses.sh \
+            | shasum -a 256 \
+            | cut -d' ' -f1)
           echo "hash=${hash}" >> "${GITHUB_OUTPUT}"
-          echo "Computed cache key from manifest.json: ${hash}"
+          echo "Computed cache key (manifest + scripts): ${hash}"
 
       - name: Restore build cache
         if: ${{ inputs.force_rebuild != 'true' }}

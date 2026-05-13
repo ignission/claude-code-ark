@@ -55,6 +55,21 @@ if [[ -d "${PREFIX}/include/ncursesw" && ! -d "${PREFIX}/include/ncurses" ]]; th
   ln -sf "ncursesw" "${PREFIX}/include/ncurses"
 fi
 
+# ncurses build の出力を assertive に確認: tmux 側で -lncurses を解決するために
+# libncurses.a (上の symlink 後の名前) が ${PREFIX}/lib に存在する必要がある。
+# libtinfo は ncurses build の構成によっては libncurses.a に内蔵される場合があるため、
+# 存在しない場合は LIBTINFO_LIBS を空に倒して `-ltinfo` 解決のためにホスト側を
+# 探索する経路を完全に塞ぐ (assert_self_contained の検証で漏れも検知される)。
+if [[ ! -f "${PREFIX}/lib/libncurses.a" ]]; then
+  echo "[error] libncurses.a not found after ncurses build" >&2
+  ls -la "${PREFIX}/lib/" >&2
+  exit 1
+fi
+HAS_TINFO=0
+if [[ -f "${PREFIX}/lib/libtinfo.a" ]]; then
+  HAS_TINFO=1
+fi
+
 # 2. libevent
 #    --disable-shared でstatic only。
 #    --disable-openssl: tmux 経路では SSL 不要なので絞り込み。
@@ -80,15 +95,21 @@ fetch_and_extract "tmux" "${TMUX_URL}" "${TMUX_SHA}"
 # tmux の configure に渡す追加フラグを export 経由で組み立てる。
 # CFLAGS は common.sh で既に -arch / -I${PREFIX}/include を持つ。
 # tmux configure は `libevent` を pkg-config or 環境変数で見つける必要あり。
+# LIBTINFO_LIBS は libtinfo.a が ncurses build で生成された場合のみ渡す
+# (生成されない構成では `-ltinfo` 解決がホスト側に流れる事故を避けるため空のまま)。
 TMUX_CONFIG_FLAGS=(
   --enable-static
   LIBEVENT_CFLAGS="-I${PREFIX}/include"
   LIBEVENT_LIBS="-L${PREFIX}/lib -levent"
   LIBNCURSES_CFLAGS="-I${PREFIX}/include -I${PREFIX}/include/ncurses"
   LIBNCURSES_LIBS="-L${PREFIX}/lib -lncurses"
-  LIBTINFO_CFLAGS="-I${PREFIX}/include"
-  LIBTINFO_LIBS="-L${PREFIX}/lib -ltinfo"
 )
+if [[ "${HAS_TINFO}" = "1" ]]; then
+  TMUX_CONFIG_FLAGS+=(
+    LIBTINFO_CFLAGS="-I${PREFIX}/include"
+    LIBTINFO_LIBS="-L${PREFIX}/lib -ltinfo"
+  )
+fi
 build_autoconf "tmux" "${TMUX_CONFIG_FLAGS[@]}"
 
 # ----- 出力検証 -----

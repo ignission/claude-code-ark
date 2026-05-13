@@ -93,15 +93,24 @@ build_jobs() {
 # 展開済みディレクトリのパス。`fetch_and_extract` 直後のソース木 (configure / CMakeLists.txt
 # を持つ第 1 階層) を返す。tarball によって直下構成が異なる (e.g. libuv は
 # `libuv-v1.49.2/`、ttyd は `ttyd-1.7.7/`) ので一意に解決する。
+# 候補ディレクトリが 0 件 / 2 件以上はビルド状態の異常なので fail させる
+# (非決定性を回避し、cache 汚染や二重展開で誤ったソース木を選ぶリスクを排除)。
 source_dir() {
   local name="$1"
-  local src
-  src=$(find "${SRC_DIR}/${name}" -mindepth 1 -maxdepth 1 -type d | head -n1)
-  if [[ -z "${src}" ]]; then
+  local candidates
+  candidates=$(find "${SRC_DIR}/${name}" -mindepth 1 -maxdepth 1 -type d)
+  local count
+  count=$(printf '%s\n' "${candidates}" | grep -c . || true)
+  if [[ "${count}" -eq 0 ]]; then
     echo "[error] source_dir(${name}): no extracted directory under ${SRC_DIR}/${name}" >&2
     return 1
   fi
-  printf '%s\n' "${src}"
+  if [[ "${count}" -gt 1 ]]; then
+    echo "[error] source_dir(${name}): expected exactly 1 extracted dir, got ${count}:" >&2
+    printf '  %s\n' ${candidates} >&2
+    return 1
+  fi
+  printf '%s\n' "${candidates}"
 }
 
 # autoconf 系 (configure && make && make install) の標準ビルダ。
@@ -158,9 +167,12 @@ build_cmake() {
 }
 
 # 同梱バイナリの dyld 依存をチェック。
-# system path (`/usr/lib/*`, `/System/Library/*`) 以外の dylib が混入していたら
-# それは static link の漏れか rpath 解決失敗を意味するので fail させる。
-# self-contained な binary であることを assertive に保証する。
+# `/usr/lib/*` および `/System/Library/*` (= Apple 純正の system dylib) のみを
+# 許可し、他はすべて fail させる。`@rpath/`、`@loader_path/`、`@executable_path/`
+# も拒否する: これらは Frameworks/ 同梱が前提の解決経路で、本ビルドは「全 deps を
+# static link で纏める」設計なので絶対に出現してはならない (出ているなら
+# build スクリプトの static-only 設定が破れている)。
+# 自身の install_name (otool -L の 1 行目) は対象外として除外する。
 assert_self_contained() {
   local bin="$1"
   echo "==> assert_self_contained ${bin}"
@@ -168,18 +180,25 @@ assert_self_contained() {
     echo "[error] ${bin} not executable"
     return 1
   fi
+  # otool -L 出力は最初の行が header (path:)、2 行目が install_name (自身)、
+  # 3 行目以降が外部依存。実行可能バイナリは install_name を持たないことが多いが、
+  # 念のため abs path + バイナリ自身の basename と一致する行も除外する。
+  local self_basename
+  self_basename=$(basename "${bin}")
   local nonsystem
-  # otool -L は header 行を出すので tail で除去。インデント先頭がパス。
   nonsystem=$(otool -L "${bin}" \
     | tail -n +2 \
     | awk '{print $1}' \
-    | grep -vE '^(/usr/lib/|/System/Library/|@rpath/|@loader_path/|@executable_path/)' \
+    | grep -vE '^(/usr/lib/|/System/Library/)' \
+    | grep -v "/${self_basename}:?\$" \
     || true)
   if [[ -n "${nonsystem}" ]]; then
-    echo "[error] ${bin} has non-system dylib deps:"
+    echo "[error] ${bin} has non-system / non-static dylib deps:"
     printf '  %s\n' "${nonsystem}"
-    echo "static link が漏れているか rpath 未解決。build スクリプトを見直すこと。"
+    echo "本ビルドは全依存 static link を契約としているため、@rpath/@loader_path"
+    echo "経由の解決も含めて非 system 依存は全て拒否します。"
+    echo "static link が漏れているか build script の構成を見直してください。"
     return 1
   fi
-  echo "OK: ${bin} は self-contained (system dylib のみに依存)"
+  echo "OK: ${bin} は self-contained (Apple system dylib のみに依存)"
 }

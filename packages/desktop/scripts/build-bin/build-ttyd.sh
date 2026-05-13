@@ -75,7 +75,19 @@ build_autoconf "libuv" \
   --disable-shared \
   --enable-static
 
-# 4. libwebsockets (4.3 系)
+# 4. json-c (ttyd 1.7.x の必須依存)
+#    cmake、static lib のみ。BUILD_SHARED_LIBS=OFF + DISABLE_WERROR=ON で
+#    macos の -Werror=deprecated を回避。
+JSONC_URL=$(manifest_get '."json-c".url')
+JSONC_SHA=$(manifest_get '."json-c".sha256')
+fetch_and_extract "json-c" "${JSONC_URL}" "${JSONC_SHA}"
+build_cmake "json-c" \
+  -DBUILD_SHARED_LIBS=OFF \
+  -DBUILD_STATIC_LIBS=ON \
+  -DDISABLE_WERROR=ON \
+  -DBUILD_TESTING=OFF
+
+# 5. libwebsockets (4.3 系)
 #    cmake + OpenSSL/zlib/libuv 指定 + STATIC のみ。
 #    LWS_WITH_SHARED=OFF: .dylib を出力しない。
 #    LWS_WITH_STATIC=ON: .a を出力。
@@ -105,7 +117,7 @@ build_cmake "libwebsockets" \
   -DZLIB_INCLUDE_DIR="${PREFIX}/include" \
   -DCMAKE_PREFIX_PATH="${PREFIX}"
 
-# 5. ttyd 本体
+# 6. ttyd 本体
 #    cmake で libwebsockets/json-c/zlib を ${PREFIX} から拾わせる。
 #    static link を強制するため CMAKE_FIND_LIBRARY_SUFFIXES を .a 限定にする。
 TTYD_URL=$(manifest_get '.ttyd.url')
@@ -116,6 +128,8 @@ build_cmake "ttyd" \
   -DCMAKE_FIND_LIBRARY_SUFFIXES=".a" \
   -DLIBWEBSOCKETS_INCLUDE_DIRS="${PREFIX}/include" \
   -DLIBWEBSOCKETS_LIBRARIES="${PREFIX}/lib/libwebsockets.a" \
+  -DJSON-C_INCLUDE_DIRS="${PREFIX}/include/json-c" \
+  -DJSON-C_LIBRARIES="${PREFIX}/lib/libjson-c.a" \
   -DOPENSSL_ROOT_DIR="${PREFIX}" \
   -DOPENSSL_SSL_LIBRARY="${PREFIX}/lib/libssl.a" \
   -DOPENSSL_CRYPTO_LIBRARY="${PREFIX}/lib/libcrypto.a" \

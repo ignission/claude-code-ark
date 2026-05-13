@@ -57,6 +57,10 @@ fetch_license "libevent" \
 fetch_license "openssl" \
   "https://raw.githubusercontent.com/openssl/openssl/openssl-3.3.2/LICENSE.txt"
 
+JSONC_VERSION=$(manifest_get '."json-c".version')
+fetch_license "json-c" \
+  "https://raw.githubusercontent.com/json-c/json-c/json-c-${JSONC_VERSION}-20240915/COPYING"
+
 # zlib (本家 README に license 全文がある)
 fetch_license "zlib" \
   "https://raw.githubusercontent.com/madler/zlib/v1.3.1/LICENSE"
@@ -74,6 +78,7 @@ cat > "${LICENSES_DIR}/INDEX.json" <<EOF
     { "name": "ttyd", "version": "${TTYD_VERSION}", "license": "MIT" },
     { "name": "libwebsockets", "version": "${LWS_VERSION}", "license": "MIT" },
     { "name": "libuv", "version": "${LIBUV_VERSION}", "license": "MIT" },
+    { "name": "json-c", "version": "${JSONC_VERSION}", "license": "MIT" },
     { "name": "libevent", "version": "${LIBEVENT_VERSION}", "license": "3-clause BSD" },
     { "name": "openssl", "version": "$(manifest_get '.dependencies.openssl.version')", "license": "Apache-2.0" },
     { "name": "ncurses", "version": "$(manifest_get '.dependencies.ncurses.version')", "license": "MIT-like" },

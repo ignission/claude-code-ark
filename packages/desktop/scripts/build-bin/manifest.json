@@ -38,6 +38,12 @@
       "url": "https://dist.libuv.org/dist/v1.49.2/libuv-v1.49.2.tar.gz",
       "sha256": "8c10706bd2cf129045c42b94799a92df9aaa75d05f07e99cf083507239bae5a8"
     },
+    "json-c": {
+      "_note": "ttyd 1.7.x の必須依存。CMake で組み LWS が解決時に拾うパスへ install する。",
+      "version": "0.18",
+      "url": "https://s3.amazonaws.com/json-c_releases/releases/json-c-0.18.tar.gz",
+      "sha256": "876ab046479166b869afc6896d288183bbc0e5843f141200c677b3e8dfb11724"
+    },
     "libevent": {
       "version": "2.1.12-stable",
       "url": "https://github.com/libevent/libevent/releases/download/release-2.1.12-stable/libevent-2.1.12-stable.tar.gz",
