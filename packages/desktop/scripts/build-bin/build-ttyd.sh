@@ -85,7 +85,8 @@ build_cmake "json-c" \
   -DBUILD_SHARED_LIBS=OFF \
   -DBUILD_STATIC_LIBS=ON \
   -DDISABLE_WERROR=ON \
-  -DBUILD_TESTING=OFF
+  -DBUILD_TESTING=OFF \
+  -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
 # 5. libwebsockets (4.3 系)
 #    cmake + OpenSSL/zlib/libuv 指定 + STATIC のみ。
