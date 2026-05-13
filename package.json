@@ -1,6 +1,6 @@
 {
   "name": "claude-code-ark",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "type": "module",
   "license": "MIT",
   "private": true,
