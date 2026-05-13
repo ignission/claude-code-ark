@@ -32,14 +32,28 @@ echo "===== build-tmux.sh: macOS ${ARCH} =====" >&2
 NCURSES_URL=$(manifest_get '.dependencies.ncurses.url')
 NCURSES_SHA=$(manifest_get '.dependencies.ncurses.sha256')
 fetch_and_extract "ncurses" "${NCURSES_URL}" "${NCURSES_SHA}"
-build_autoconf "ncurses" \
-  --without-shared \
-  --enable-static \
-  --without-debug \
-  --without-ada \
-  --enable-widec \
-  --with-default-terminfo-dir=/usr/share/terminfo \
-  --with-terminfo-dirs="/usr/share/terminfo:/usr/share/lib/terminfo:/usr/lib/terminfo:/usr/local/share/terminfo:/etc/terminfo"
+# ncurses は `make install` で /usr/share/terminfo へ tic 経由で書き込もうとして
+# permission denied で fail する (--with-default-terminfo-dir に system path を
+# 指定すると `make install.data` の install target がそこを使う)。
+# runtime は --with-default-terminfo-dir で指定した system terminfo を読みに行く
+# ので、ビルド時に terminfo を埋める必要はない。よって install を
+# `install.libs + install.includes` に絞り込み、terminfo install をスキップする。
+if [[ ! -f "${PREFIX}/.built.ncurses" ]]; then
+  NCURSES_SRC=$(source_dir "ncurses")
+  pushd "${NCURSES_SRC}" >/dev/null
+  ./configure --prefix="${PREFIX}" \
+    --without-shared \
+    --enable-static \
+    --without-debug \
+    --without-ada \
+    --enable-widec \
+    --with-default-terminfo-dir=/usr/share/terminfo \
+    --with-terminfo-dirs="/usr/share/terminfo:/usr/share/lib/terminfo:/usr/lib/terminfo:/usr/local/share/terminfo:/etc/terminfo"
+  make -j"$(build_jobs)"
+  make install.libs install.includes
+  popd >/dev/null
+  : > "${PREFIX}/.built.ncurses"
+fi
 
 # ncurses widec ABI は libncursesw.a / libtinfow.a を出力するが、tmux の configure は
 # libncurses / libtinfo を探す。後者を前者へ symlink して configure を通す。
