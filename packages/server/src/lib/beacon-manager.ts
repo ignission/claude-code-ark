@@ -1394,6 +1394,12 @@ export class BeaconManager extends EventEmitter {
     // `system.ts:resolveClaudePath()` が `app.asar.unpacked/` 側の実体パス →
     // F5 同梱版 → system claude の優先順で解決する。Linux サーバ版では
     // resourcesPath が未設定なので従来通り system claude にフォールバックする。
+    //
+    // 契約: `resolveClaudePath()` は **存在するパス** を返す保証はあるが
+    // **spawn 可能性** までは保証しない (PATH 由来 / candidate 配列等は
+    // existsSync のみ)。`app.asar.unpacked` 経路だけは isFile + X_OK まで
+    // assert 済み。null なら SDK の auto-resolve に委ねる (=Electron .app では
+    // 失敗するが、その場合は claude-installer が同梱版を入れる方針)。
     const claudeExecutable = resolveClaudePath() ?? undefined;
     const q = query({
       prompt: queue,

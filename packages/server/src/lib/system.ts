@@ -15,7 +15,13 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  readdirSync,
+  statSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getBundledBinDir } from "./paths.js";
@@ -83,8 +89,9 @@ function existsInVersionedDirs(baseDir: string, suffix: string): boolean {
 
 /**
  * `@anthropic-ai/claude-agent-sdk` の query() に `pathToClaudeCodeExecutable`
- * として渡す claude バイナリの絶対パスを返す。Electron .app の
- * `app.asar.unpacked/` 配下に同梱されている SDK 付属バイナリを最優先する。
+ * として渡す、Electron .app の `app.asar.unpacked/` 配下に同梱された SDK
+ * 付属 claude バイナリの絶対パスを返す。**spawn 可能であることが確認できた
+ * 場合のみ非 null を返す** (existsSync + isFile + X_OK)。
  *
  * SDK は内部で `require.resolve("@anthropic-ai/claude-agent-sdk-<platform>-<arch>")`
  * から binary パスを得るが、Electron .app では `app.asar/...` を返す。Electron は
@@ -94,10 +101,22 @@ function existsInVersionedDirs(baseDir: string, suffix: string): boolean {
  *
  * Linux サーバ版 / non-Electron では `process.resourcesPath` が undefined のため
  * このフォールバックはスキップされる。
+ *
+ * spawn 可能性まで確認することで、`pathToClaudeCodeExecutable` を信用する側
+ * (`@ark/server` の query() 呼び出し) が「return non-null = spawn 安全」と
+ * 仮定できる。candidate が directory / 権限なし / 壊れたリンクの場合は null
+ * を返し、上位の system claude フォールバックに委ねる。
+ *
+ * Windows (`.exe` サフィックス) は現状 Ark .app の build target に含まれない
+ * ため未対応。将来 Windows 版を出す際は `.exe` を加味した分岐をここに追加する。
  */
-function resolveBundledSdkClaudePath(): string | null {
+function resolveUnpackedSdkClaudeExecutablePath(): string | null {
   const resourcesPath = (process as { resourcesPath?: string }).resourcesPath;
   if (!resourcesPath) return null;
+  // Windows ターゲットは未サポート (Ark .app は darwin / linux のみ build する)
+  if (process.platform !== "darwin" && process.platform !== "linux") {
+    return null;
+  }
   const candidate = path.join(
     resourcesPath,
     "app.asar.unpacked",
@@ -107,7 +126,10 @@ function resolveBundledSdkClaudePath(): string | null {
     "claude"
   );
   try {
-    return existsSync(candidate) ? candidate : null;
+    if (!existsSync(candidate)) return null;
+    if (!statSync(candidate).isFile()) return null;
+    accessSync(candidate, constants.X_OK);
+    return candidate;
   } catch {
     return null;
   }
@@ -122,7 +144,8 @@ function resolveBundledSdkClaudePath(): string | null {
 export function resolveClaudePath(): string | null {
   // -1. Electron .app の `app.asar.unpacked` に同梱された SDK 付属バイナリ。
   // SDK と version が揃っており、prompt protocol (JSONL) 互換性が保証される。
-  const bundledSdkBin = resolveBundledSdkClaudePath();
+  // 戻り値は spawn 可能性まで確認済み (isFile + X_OK)、null なら下流に委譲。
+  const bundledSdkBin = resolveUnpackedSdkClaudeExecutablePath();
   if (bundledSdkBin) return bundledSdkBin;
 
   // 0. F5 同梱版: `<userData>/claude-runtime/bin/claude` を最優先
