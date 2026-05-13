@@ -57,7 +57,7 @@ fetch_license "libevent" \
 fetch_license "openssl" \
   "https://raw.githubusercontent.com/openssl/openssl/openssl-3.3.2/LICENSE.txt"
 
-JSONC_VERSION=$(manifest_get '."json-c".version')
+JSONC_VERSION=$(manifest_get '.dependencies."json-c".version')
 fetch_license "json-c" \
   "https://raw.githubusercontent.com/json-c/json-c/json-c-${JSONC_VERSION}-20240915/COPYING"
 

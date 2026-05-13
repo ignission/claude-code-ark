@@ -78,8 +78,8 @@ build_autoconf "libuv" \
 # 4. json-c (ttyd 1.7.x の必須依存)
 #    cmake、static lib のみ。BUILD_SHARED_LIBS=OFF + DISABLE_WERROR=ON で
 #    macos の -Werror=deprecated を回避。
-JSONC_URL=$(manifest_get '."json-c".url')
-JSONC_SHA=$(manifest_get '."json-c".sha256')
+JSONC_URL=$(manifest_get '.dependencies."json-c".url')
+JSONC_SHA=$(manifest_get '.dependencies."json-c".sha256')
 fetch_and_extract "json-c" "${JSONC_URL}" "${JSONC_SHA}"
 build_cmake "json-c" \
   -DBUILD_SHARED_LIBS=OFF \
