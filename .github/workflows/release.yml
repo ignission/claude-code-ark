@@ -97,7 +97,13 @@ jobs:
           # F0:B-1 確定: 未署名配布 (Apple Developer 登録なし)。
           # electron-builder の auto signing を無効化し、identity 探索をスキップする。
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: pnpm --filter @ark/desktop exec electron-builder --mac --arm64 zip
+        # target は electron-builder.yml の mac.target で dmg + zip を定義済み。
+        # arch は CLI フラグ (--arm64) で渡す (electron-builder 25 の慣例的な指定)。
+        # 旧コマンドは末尾に `zip` を位置引数として渡していたが、electron-builder 25 の
+        # yargs は target 名を位置引数で受けず `Unknown argument: zip` で exit 1 する。
+        # zip 成果物の欠落は下流 `Compute artifact metadata` step が
+        # `ls packages/desktop/release/Ark-*-arm64.zip` で検出して fail する。
+        run: pnpm --filter @ark/desktop exec electron-builder --mac --arm64
 
       - name: Smoke test .app bootstrap
         # PR #180 で fix した 2 系統のバグの regression を tag release 前に検知する:
