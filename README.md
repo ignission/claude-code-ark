@@ -42,20 +42,49 @@ Arkは、Agent SDKではなく **tmux + ttyd によるターミナル転送方�
 
 ### macOS (.app, Apple Silicon)
 
-> [!NOTE]
-> .app 配布は実装中 (F1-F7 進行中)。実 release tag は F4-F6 完了後に公開予定。
-> 詳細は `plans/macos-app-implementation-plan.md` を参照。
+Homebrew Cask:
 
 ```bash
-# Homebrew tap 経由 (推奨)
-brew tap ignission/tap
-brew install --cask ark
-
-# または GitHub Releases から直接ダウンロード:
-# https://github.com/ignission/claude-code-ark/releases
+brew install --cask ignission/tap/ark
 ```
 
-要件: macOS 14 (Sonoma) 以降、arm64 (Apple Silicon)。
+または GitHub Releases から直接ダウンロード: <https://github.com/ignission/claude-code-ark/releases>
+
+要件: macOS 12 (Monterey) 以降、arm64 (Apple Silicon)。Cask の `depends_on macos: ">= :monterey"` に合わせており、これ未満は未検証です。
+
+#### 初回起動で「Ark は壊れているため開けません」と表示された場合
+
+現在の `.app` は **Developer ID 署名・Apple notarization が未対応** (追跡 issue: [#193](https://github.com/ignission/claude-code-ark/issues/193))。
+このため macOS は Homebrew 経由でダウンロードした `.app` を quarantine 対象として "damaged" 判定します。
+
+> [!CAUTION]
+> 以下の手順は Gatekeeper の検証を意図的に迂回します。実行前に **入手元が正規であること** を必ず確認してください:
+>
+> - 配布元が `https://github.com/ignission/claude-code-ark/releases` であること
+> - Homebrew Cask 経由でインストールした場合、`brew` が `.zip` の sha256 を Cask 定義 ([`Casks/ark.rb`](https://github.com/ignission/homebrew-tap/blob/main/Casks/ark.rb)) と自動照合しているため、改ざんは検知されています
+> - 直接ダウンロードした場合は GitHub Releases ページ掲載の sha256 と `shasum -a 256 Ark-*.zip` 出力を手元で比較してください
+
+署名対応完了までは以下のいずれかで対処してください:
+
+**対処 A: quarantine 属性を事後削除**
+
+```bash
+# Cask の install 先 (/Applications/Ark.app) 前提。別パスにある場合は読み替え。
+APP="/Applications/Ark.app"
+if [ ! -d "$APP" ]; then
+  echo "ERROR: $APP が見つかりません。インストール先を確認してください。" >&2
+  exit 1
+fi
+xattr -dr com.apple.quarantine "$APP"
+```
+
+**対処 B: 再インストール時に quarantine を付けない**
+
+```bash
+brew reinstall --cask --no-quarantine ignission/tap/ark
+```
+
+`--no-quarantine` は Homebrew Cask が install 時に quarantine 属性付与を skip するフラグです。
 
 ### Linux / 開発環境 (ソースから起動)
 
