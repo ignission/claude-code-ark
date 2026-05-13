@@ -279,14 +279,32 @@ jobs:
 
       - name: Compute artifact metadata
         id: artifact
-        # release/Ark-{version}-arm64.zip の絶対パスと SHA256 を抽出する。
+        # electron-builder 25 の macOS zip target はデフォルトで
+        # `Ark-{version}-arm64-mac.zip` (`-mac` 接尾辞付き) を出力する。
+        # 旧 glob `Ark-*-arm64.zip` ではこのファイル名にマッチせず
+        # `ls: No such file or directory` で fail していたため、
+        # `Ark-*-arm64-mac.zip` を期待値として明示する。
+        # 同じディレクトリに `.blockmap` も生成されるが拡張子で除外される。
         # update-cask ジョブで Caskfile の sha256 を置換するために GITHUB_OUTPUT に書き込む。
         run: |
           set -euo pipefail
-          ZIP=$(ls packages/desktop/release/Ark-*-arm64.zip | head -n1)
-          if [[ -z "${ZIP}" ]] || [[ ! -f "${ZIP}" ]]; then
+          shopt -s nullglob
+          # 期待 zip は 1 件のみ。0 件 or 2 件以上はビルド設定崩れの兆候として fail させる
+          # (2 件以上を黙って先頭採用すると意図しない artifact の sha256 を Cask に流す)。
+          ZIPS=(packages/desktop/release/Ark-*-arm64-mac.zip)
+          if [[ "${#ZIPS[@]}" -eq 0 ]]; then
             echo "::error::Expected zip artifact not found in packages/desktop/release/"
             ls -la packages/desktop/release/ || true
+            exit 1
+          fi
+          if [[ "${#ZIPS[@]}" -gt 1 ]]; then
+            echo "::error::Multiple zip artifacts matched (count=${#ZIPS[@]}). 期待は 1 件のみ。"
+            printf '  %s\n' "${ZIPS[@]}"
+            exit 1
+          fi
+          ZIP="${ZIPS[0]}"
+          if [[ ! -f "${ZIP}" ]]; then
+            echo "::error::Matched path is not a regular file: ${ZIP}"
             exit 1
           fi
           SHA=$(shasum -a 256 "${ZIP}" | awk '{print $1}')
