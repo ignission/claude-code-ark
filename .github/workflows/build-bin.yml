@@ -5,12 +5,20 @@ name: build-bin (macOS arm64 tmux/ttyd)
 # packages/desktop/build-assets/{bin,Frameworks,licenses}/ に成果物を配置する。
 # manifest.json の hash でビルド成果物を actions/cache にキャッシュする。
 #
-# **現状は workflow_dispatch (手動起動) 限定**。build-tmux.sh / build-ttyd.sh は
-# skeleton 状態で実 build ステップ (configure/make/install_name_tool 等) が未実装。
-# 自動起動 (push tag, pull_request) を有効化するのは F4-followup で実 build スクリプトを
-# 完成させてから (現状のままだと skeleton の verify step が必ず fail するため)。
+# 呼び出し経路:
+#   - workflow_call: release.yml の Build .app job が依存ジョブとして呼ぶ。
+#     成果物は actions/upload-artifact で公開され、呼び出し側 job が download する。
+#   - pull_request: build-bin スクリプト / manifest 変更時のみ自動 build (パス filter で限定)。
+#   - workflow_dispatch: 開発時の手動再ビルド用 (cache bust も可)。
 
 on:
+  workflow_call:
+    inputs:
+      force_rebuild:
+        description: "Skip cache and rebuild from scratch"
+        required: false
+        default: "false"
+        type: string
   workflow_dispatch:
     inputs:
       force_rebuild:
@@ -18,14 +26,10 @@ on:
         required: false
         default: "false"
         type: string
-  # 以下は build-tmux.sh / build-ttyd.sh の skeleton を実装で置き換えた後に有効化。
-  # push:
-  #   tags:
-  #     - "v*"
-  # pull_request:
-  #   paths:
-  #     - "packages/desktop/scripts/build-bin/**"
-  #     - ".github/workflows/build-bin.yml"
+  pull_request:
+    paths:
+      - "packages/desktop/scripts/build-bin/**"
+      - ".github/workflows/build-bin.yml"
 
 jobs:
   build:
