@@ -99,6 +99,178 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: pnpm --filter @ark/desktop exec electron-builder --mac --arm64 zip
 
+      - name: Smoke test .app bootstrap
+        # PR #180 で fix した 2 系統のバグの regression を tag release 前に検知する:
+        #   1. `Dynamic require of "electron" is not supported` (build.mjs banner 欠落) →
+        #      bootstrap で main.js が throw、server.listen に到達できないので
+        #      下記の "Ark server running" ログが出ない → step が exit 1
+        #   2. 同梱 claude バイナリの asarUnpack 配置ずれ・実行権限欠落 → 次 step で検知
+        # ヘルスチェック target は HTTP root (Vite 静的配信 + Socket.IO setup の
+        # 両方を踏まないと 200 にならないため bootstrap 到達確認として最小)。
+        # 外部入力 (github.event.*) は使わず固定文字列のみ参照。
+        run: |
+          set -euo pipefail
+          APP="packages/desktop/release/mac-arm64/Ark.app"
+          # 同一 runner で並列 step / 既存ファイルとの衝突を避けるため固定名は避ける。
+          LOG=$(mktemp -t ark-smoke.log.XXXXXX)
+          if [ ! -d "$APP" ]; then
+            echo "::error::Ark.app not found at $APP"
+            ls -la packages/desktop/release/ || true
+            exit 1
+          fi
+          "$APP/Contents/MacOS/Ark" > "$LOG" 2>&1 &
+          PID=$!
+          echo "Started Ark (pid=$PID, log=$LOG)"
+
+          # 異常終了経路でもプロセス残留させない (early exit / errexit / wait の
+          # 戻り値が想定外でも cleanup 確実に走らせる)。
+          # 順序: 生存判定 → TERM → poll → KILL → 最後に wait で reap する。
+          # `wait` は生存中の子に対してブロックするので、必ず kill が先 (先に
+          # wait すると HTTP smoke 成功後の trap 経路で永久待機する)。
+          cleanup() {
+            if kill -0 "$PID" 2>/dev/null; then
+              kill -TERM "$PID" 2>/dev/null || true
+              for _ in $(seq 1 10); do
+                kill -0 "$PID" 2>/dev/null || break
+                sleep 1
+              done
+              kill -KILL "$PID" 2>/dev/null || true
+            fi
+            wait "$PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          # bootstrap + server.listen に必要な時間 (Helper プロセス起動 + better-sqlite3
+          # binding + paths 初期化 + Express bind)。GHA macos-14 は最大 60s で十分。
+          # ループ内で early crash を検知し、60s 待たずに即 fail させる
+          # (バグ (1) の Dynamic require は bootstrap 開始直後に throw するため)。
+          PORT=""
+          for i in $(seq 1 60); do
+            if ! kill -0 "$PID" 2>/dev/null; then
+              # 実 exit code を確実に拾う: `|| true` を間に挟むと $? が常に 0 になる。
+              # errexit 配下では non-zero で abort するので set +e で抑止する。
+              set +e
+              wait "$PID"
+              EXIT_CODE=$?
+              set -e
+              echo "::error::Ark exited prematurely (exit=$EXIT_CODE) before server listen"
+              END_TOKEN="ark-log-$(uuidgen)"
+              echo "::stop-commands::${END_TOKEN}"
+              echo "--- Ark stdout/stderr ---"
+              cat "$LOG"
+              echo "::${END_TOKEN}::"
+              exit 1
+            fi
+            # awk 1 プロセスで抽出 (grep | head | grep の pipefail 不安定さを回避)。
+            PORT=$(awk 'match($0, /Ark server running on http:\/\/localhost:[0-9]+/) {
+              p=substr($0, RSTART, RLENGTH); sub(/.*:/, "", p); print p; exit
+            }' "$LOG")
+            if [ -n "$PORT" ]; then
+              break
+            fi
+            sleep 1
+          done
+
+          if [ -z "$PORT" ]; then
+            echo "::error::Server did not listen within 60s (likely bootstrap failure)"
+            END_TOKEN="ark-log-$(uuidgen)"
+            echo "::stop-commands::${END_TOKEN}"
+            echo "--- Ark stdout/stderr ---"
+            cat "$LOG"
+            echo "::${END_TOKEN}::"
+            exit 1
+          fi
+          # PORT のサニティチェック: 1..65535 でないなら ログ破損 / unexpected stdout。
+          if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+            echo "::error::Extracted port out of range: '$PORT' (expected 1..65535)"
+            END_TOKEN="ark-log-$(uuidgen)"
+            echo "::stop-commands::${END_TOKEN}"
+            echo "--- Ark stdout/stderr ---"
+            cat "$LOG"
+            echo "::${END_TOKEN}::"
+            exit 1
+          fi
+          echo "Server listening on port $PORT"
+
+          # HTTP root の到達確認。--max-time で curl 自体を timeout させる。
+          # exit code と http code を分離して保持する (`|| echo "000"` を `-w` の
+          # 出力に連結すると "404000" 等の壊れた診断値になる)。
+          set +e
+          HTTP=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 10 "http://localhost:$PORT/")
+          CURL_EXIT=$?
+          set -e
+          if [ "$CURL_EXIT" -ne 0 ] || [ "$HTTP" != "200" ]; then
+            echo "::error::HTTP root returned http=$HTTP curl_exit=$CURL_EXIT (expected http=200 curl_exit=0)"
+            # 依存 binary / app の stdout が workflow command (::warning:: 等) を
+            # 含む可能性に備えて stop-commands で escape する。
+            END_TOKEN="ark-log-$(uuidgen)"
+            echo "::stop-commands::${END_TOKEN}"
+            echo "--- Ark stdout/stderr ---"
+            cat "$LOG"
+            echo "::${END_TOKEN}::"
+            exit 1
+          fi
+          echo "Bootstrap smoke passed (port=${PORT} http=${HTTP})"
+          # cleanup は trap EXIT に委譲
+
+      - name: Smoke test bundled SDK claude binary
+        # PR #180 の root cause だった「SDK 付属 claude バイナリが asar 内パスで
+        # spawn ENOTDIR」を防ぐため、`.unpacked` 配下に **実行ファイルとして** 配置
+        # されていることを `--version` 起動で確認する。
+        # `asarUnpack` ルール変更・SDK バージョン更新で binary 配置が変わった場合に
+        # ここで fail する想定。Ark .app の target は darwin-arm64 のみのためパスは固定。
+        # 外部入力 (github.event.*) は使わず固定文字列のみ参照。
+        run: |
+          set -euo pipefail
+          BIN="packages/desktop/release/mac-arm64/Ark.app/Contents/Resources/app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude"
+          if [ ! -x "$BIN" ]; then
+            echo "::error::Bundled SDK claude binary missing or not executable: $BIN"
+            ls -la "$(dirname "$BIN")" 2>&1 || echo "(directory not found)"
+            exit 1
+          fi
+          # `--version` は network / auth 不要で即終了する safe な smoke 用 subcommand。
+          # 壊れたバイナリ / dyld loader 問題で hang した場合に job timeout (60min) まで
+          # 走らせないよう、background + sleep race で 15s で kill する。
+          # macos runner には GNU `timeout` が無いので bash プリミティブで実装する。
+          OUT_FILE=$(mktemp -t ark-claude-version.XXXXXX)
+          "$BIN" --version > "$OUT_FILE" 2>&1 &
+          BIN_PID=$!
+          # killer 子プロセス: 15s で TERM、追加 3s 待っても残っていれば KILL を
+          # 確実に強制する。TERM を無視するバイナリでも timeout を enforce できる。
+          (
+            sleep 15
+            if kill -0 "$BIN_PID" 2>/dev/null; then
+              kill -TERM "$BIN_PID" 2>/dev/null || true
+              sleep 3
+              kill -KILL "$BIN_PID" 2>/dev/null || true
+            fi
+          ) &
+          KILLER_PID=$!
+          # `if ! wait ...; then $?` だと `$?` が `!` 経由後の結果を拾ってしまう。
+          # errexit 配下で wait の戻り値を直接取れるよう set +e/-e で挟む。
+          set +e
+          wait "$BIN_PID"
+          BIN_EXIT=$?
+          set -e
+          kill "$KILLER_PID" 2>/dev/null || true
+          wait "$KILLER_PID" 2>/dev/null || true
+          if [ "$BIN_EXIT" -ne 0 ]; then
+            echo "::error::Bundled SDK claude --version failed or timed out (exit=$BIN_EXIT)"
+            # bundled binary 出力に workflow command が混入する可能性に備えて escape。
+            END_TOKEN="ark-claude-version-$(uuidgen)"
+            echo "::stop-commands::${END_TOKEN}"
+            cat "$OUT_FILE" 2>&1 || true
+            echo "::${END_TOKEN}::"
+            exit 1
+          fi
+          # 成功時の VERSION も plain stdout 上で workflow command として解釈
+          # され得るため、stop-commands で囲んで escape する。
+          VERSION=$(head -1 "$OUT_FILE")
+          END_TOKEN="ark-claude-version-ok-$(uuidgen)"
+          echo "::stop-commands::${END_TOKEN}"
+          echo "Bundled SDK claude binary OK: ${VERSION}"
+          echo "::${END_TOKEN}::"
+
       - name: Compute artifact metadata
         id: artifact
         # release/Ark-{version}-arm64.zip の絶対パスと SHA256 を抽出する。
