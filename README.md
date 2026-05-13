@@ -64,9 +64,7 @@ brew install --cask ignission/tap/ark
 > - Homebrew Cask 経由でインストールした場合、`brew` が `.zip` の sha256 を Cask 定義 ([`Casks/ark.rb`](https://github.com/ignission/homebrew-tap/blob/main/Casks/ark.rb)) と自動照合しているため、改ざんは検知されています
 > - 直接ダウンロードした場合は GitHub Releases ページ掲載の sha256 と `shasum -a 256 Ark-*.zip` 出力を手元で比較してください
 
-署名対応完了までは以下のいずれかで対処してください:
-
-**対処 A: quarantine 属性を事後削除**
+署名対応完了までは、**上記 CAUTION の真正性確認 (Cask 経由なら自動 sha256 照合済み、それ以外なら手動照合) を済ませた上で**、インストール後に quarantine 属性を手動で削除してください:
 
 ```bash
 # Cask の install 先 (/Applications/Ark.app) 前提。別パスにある場合は読み替え。
@@ -78,13 +76,9 @@ fi
 xattr -dr com.apple.quarantine "$APP"
 ```
 
-**対処 B: 再インストール時に quarantine を付けない**
-
-```bash
-brew reinstall --cask --no-quarantine ignission/tap/ark
-```
-
-`--no-quarantine` は Homebrew Cask が install 時に quarantine 属性付与を skip するフラグです。
+> [!NOTE]
+> Homebrew 4.5 で `--no-quarantine` switch および `HOMEBREW_CASK_OPTS=--no-quarantine` 環境変数が **代替なしで廃止** されたため、現状 install 時点での回避はできません。`xattr -dr` で事後削除する手順のみが残された対処です。
+> 参考: <https://github.com/Homebrew/brew/pull/19046>
 
 ### Linux / 開発環境 (ソースから起動)
 
