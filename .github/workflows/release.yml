@@ -117,11 +117,25 @@ jobs:
         # PR #180 で fix した 2 系統のバグの regression を tag release 前に検知する:
         #   1. `Dynamic require of "electron" is not supported` (build.mjs banner 欠落) →
         #      bootstrap で main.js が throw、server.listen に到達できないので
-        #      下記の "Ark server running" ログが出ない → step が exit 1
+        #      readiness probe がタイムアウト → step が exit 1
         #   2. 同梱 claude バイナリの asarUnpack 配置ずれ・実行権限欠落 → 次 step で検知
         # ヘルスチェック target は HTTP root (Vite 静的配信 + Socket.IO setup の
         # 両方を踏まないと 200 にならないため bootstrap 到達確認として最小)。
         # 外部入力 (github.event.*) は使わず固定文字列のみ参照。
+        #
+        # issue #181: 旧実装は stdout から `Ark server running on http://localhost:<port>`
+        # を grep して PORT を抽出していたが、ログに偽 URL が混入すると runner 内
+        # 別 listen process に curl してしまう抜けがあった。
+        # ARK_PORT を fixed value で渡し、workflow 側も同じ値を直接 curl する経路に変更。
+        # grep 経由の port 抽出を撤廃し、ログ依存リスクを低減。
+        # (TOCTOU 残: lsof の事前確認後に別 process が同 port を掴むケースまでは保証外。
+        # GHA runner の隔離性で実害は無視できる。)
+        env:
+          # 4042 は GHA macos runner のデフォルト listen 域 (3000 / 4000 / 5000 系)
+          # と十分離れており、Vite dev / pnpm preview / monitoring agent 等との
+          # 衝突を避けるため使用。値は workflow と smoke test だけで完結するため、
+          # 別 step の固定値とは独立に変更可能。
+          ARK_PORT: "4042"
         run: |
           set -euo pipefail
           APP="packages/desktop/release/mac-arm64/Ark.app"
@@ -132,9 +146,16 @@ jobs:
             ls -la packages/desktop/release/ || true
             exit 1
           fi
+          # ARK_PORT が main runner に既に listen している process と衝突していないかを
+          # 起動前に検出する (検出時は CI を fail させて runner image 側の状況を可視化)。
+          if lsof -nP -iTCP:"${ARK_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+            echo "::error::ARK_PORT=${ARK_PORT} は既に他プロセスが listen 中"
+            lsof -nP -iTCP:"${ARK_PORT}" -sTCP:LISTEN || true
+            exit 1
+          fi
           "$APP/Contents/MacOS/Ark" > "$LOG" 2>&1 &
           PID=$!
-          echo "Started Ark (pid=$PID, log=$LOG)"
+          echo "Started Ark (pid=$PID, log=$LOG, ARK_PORT=${ARK_PORT})"
 
           # 異常終了経路でもプロセス残留させない (early exit / errexit / wait の
           # 戻り値が想定外でも cleanup 確実に走らせる)。
@@ -154,11 +175,13 @@ jobs:
           }
           trap cleanup EXIT
 
-          # bootstrap + server.listen に必要な時間 (Helper プロセス起動 + better-sqlite3
-          # binding + paths 初期化 + Express bind)。GHA macos-14 は最大 60s で十分。
-          # ループ内で early crash を検知し、60s 待たずに即 fail させる
-          # (バグ (1) の Dynamic require は bootstrap 開始直後に throw するため)。
-          PORT=""
+          # readiness probe: 固定 ARK_PORT に対して curl で listen 到達を確認する。
+          # bootstrap + server.listen に必要な時間 (Helper プロセス起動 +
+          # better-sqlite3 binding + paths 初期化 + Express bind)。
+          # GHA macos-14 は最大 60s で十分。ループ内で early crash を検知して
+          # 60s 待たずに即 fail させる (Dynamic require 系のクラッシュは bootstrap
+          # 開始直後に throw するため)。
+          READY=0
           for i in $(seq 1 60); do
             if ! kill -0 "$PID" 2>/dev/null; then
               # 実 exit code を確実に拾う: `|| true` を間に挟むと $? が常に 0 になる。
@@ -175,18 +198,25 @@ jobs:
               echo "::${END_TOKEN}::"
               exit 1
             fi
-            # awk 1 プロセスで抽出 (grep | head | grep の pipefail 不安定さを回避)。
-            PORT=$(awk 'match($0, /Ark server running on http:\/\/localhost:[0-9]+/) {
-              p=substr($0, RSTART, RLENGTH); sub(/.*:/, "", p); print p; exit
-            }' "$LOG")
-            if [ -n "$PORT" ]; then
+            # --max-time 1 で 1 秒以内に応答が無ければ次の試行へ。
+            # ready 判定は HTTP 200 を要求する: 4xx/5xx で curl exit 0 になっても
+            # 部分初期化や誤配線を見逃すので、ここで bootstrap 完了 (= Vite 静的
+            # 配信 + Socket.IO setup の両方が成立) まで踏み込む。次 step の最終
+            # HTTP probe と一致した条件にすることで、ready ↔ smoke のずれを排除。
+            set +e
+            PROBE_HTTP=$(curl -sS -o /dev/null -w "%{http_code}" \
+              --max-time 1 "http://localhost:${ARK_PORT}/" 2>/dev/null)
+            PROBE_EXIT=$?
+            set -e
+            if [ "$PROBE_EXIT" -eq 0 ] && [ "$PROBE_HTTP" = "200" ]; then
+              READY=1
               break
             fi
             sleep 1
           done
 
-          if [ -z "$PORT" ]; then
-            echo "::error::Server did not listen within 60s (likely bootstrap failure)"
+          if [ "$READY" != "1" ]; then
+            echo "::error::Server did not listen on port ${ARK_PORT} within 60s (likely bootstrap failure)"
             END_TOKEN="ark-log-$(uuidgen)"
             echo "::stop-commands::${END_TOKEN}"
             echo "--- Ark stdout/stderr ---"
@@ -194,23 +224,53 @@ jobs:
             echo "::${END_TOKEN}::"
             exit 1
           fi
-          # PORT のサニティチェック: 1..65535 でないなら ログ破損 / unexpected stdout。
-          if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
-            echo "::error::Extracted port out of range: '$PORT' (expected 1..65535)"
-            END_TOKEN="ark-log-$(uuidgen)"
-            echo "::stop-commands::${END_TOKEN}"
-            echo "--- Ark stdout/stderr ---"
-            cat "$LOG"
-            echo "::${END_TOKEN}::"
-            exit 1
-          fi
-          echo "Server listening on port $PORT"
+          echo "Server listening on port ${ARK_PORT}"
 
-          # HTTP root の到達確認。--max-time で curl 自体を timeout させる。
+          # PID-port binding 検証: 応答している listener が今起動した Ark 自身
+          # (= $PID とその子プロセス群) であることを assert。
+          # readiness probe が 200 を返したのに、その port を握っているのが
+          # 別 process だった (Ark は別 port で listen / Ark は未 bind のまま
+          # 生存し別 process が後から port を掴んだ) ケースを検知する。
+          # Electron は Helper / Renderer 等で複数プロセスに分かれるため、
+          # `$PID` 直下ではなく **同じ process group** に listen process が
+          # いることを確認する (Ark は detached 起動していないので親 PID 由来)。
+          # lsof 出力に PID 列があれば OK と判定する単純パターン。
+          set +e
+          BINDING=$(lsof -nP -iTCP:"${ARK_PORT}" -sTCP:LISTEN 2>/dev/null)
+          set -e
+          if [ -z "$BINDING" ]; then
+            echo "::error::No listener on port ${ARK_PORT} after readiness probe (TOCTOU 経路)"
+            exit 1
+          fi
+          # PID 列に $PID または同 process group の子 PID が含まれているか確認。
+          # Electron の親 PID は $PID で、Helper は $PID から fork されるため
+          # 同じ pgid。pgrep -g で当該 pgid 配下の全 PID を列挙する。
+          PGID=$(ps -o pgid= -p "$PID" 2>/dev/null | tr -d ' ' || echo "")
+          if [ -z "$PGID" ]; then
+            echo "::error::Failed to resolve PGID for PID=$PID"
+            exit 1
+          fi
+          ARK_PIDS=$(pgrep -g "$PGID" 2>/dev/null | tr '\n' '|' | sed 's/|$//')
+          if [ -z "$ARK_PIDS" ]; then
+            echo "::error::No PIDs in process group $PGID"
+            exit 1
+          fi
+          # lsof 出力の 2 列目 (PID) を抽出し、ARK_PIDS のいずれかに一致するか確認。
+          LISTENER_PID=$(echo "$BINDING" | awk 'NR>1 {print $2; exit}')
+          if [ -z "$LISTENER_PID" ] || ! echo "$LISTENER_PID" | grep -qE "^(${ARK_PIDS})$"; then
+            echo "::error::Port ${ARK_PORT} listener PID=${LISTENER_PID:-unknown} is not in Ark process group (pgid=$PGID, ark_pids=$ARK_PIDS)"
+            echo "--- lsof output ---"
+            echo "$BINDING"
+            exit 1
+          fi
+          echo "Verified: port ${ARK_PORT} owned by Ark (listener PID=$LISTENER_PID, pgid=$PGID)"
+
+          # HTTP root の到達確認 (binding 検証済の listener に対して 200 を再確認)。
+          # --max-time で curl 自体を timeout させる。
           # exit code と http code を分離して保持する (`|| echo "000"` を `-w` の
           # 出力に連結すると "404000" 等の壊れた診断値になる)。
           set +e
-          HTTP=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 10 "http://localhost:$PORT/")
+          HTTP=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 10 "http://localhost:${ARK_PORT}/")
           CURL_EXIT=$?
           set -e
           if [ "$CURL_EXIT" -ne 0 ] || [ "$HTTP" != "200" ]; then
@@ -224,7 +284,7 @@ jobs:
             echo "::${END_TOKEN}::"
             exit 1
           fi
-          echo "Bootstrap smoke passed (port=${PORT} http=${HTTP})"
+          echo "Bootstrap smoke passed (port=${ARK_PORT} http=${HTTP})"
           # cleanup は trap EXIT に委譲
 
       - name: Smoke test bundled SDK claude binary

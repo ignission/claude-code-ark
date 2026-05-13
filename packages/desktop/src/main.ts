@@ -287,7 +287,33 @@ async function bootstrap(): Promise<void> {
   }
 
   // production: サーバーを埋め込み起動する
-  const port = await getAvailablePort();
+  // ARK_PORT 環境変数があれば固定ポート、未指定なら動的取得 (通常起動)。
+  // 公開された設定項目として扱い、リバースプロキシ前提のセットアップや CI smoke
+  // test (issue #181) など、外側から listen ポートを固定したい全ユースケースで使う。
+  //
+  // バリデーションは「十進数字のみ (`1e3` / `0x50` / `1.5` は不可) かつ 1..65535」
+  // を厳格に課す (`Number()` 単独だと指数表記や 16 進表記を通してしまうため)。
+  // 明示設定が不正なら静かに動的取得へ落とさず throw する: silent fallback だと
+  // reverse proxy が固定ポートを前提にしているのに別ポートで listen して壊れる。
+  const envPortRaw = process.env.ARK_PORT;
+  let port: number;
+  if (envPortRaw === undefined) {
+    port = await getAvailablePort();
+  } else {
+    // 空文字も「明示的に不正値が入った」と見なして fail-fast する。
+    // 設定テンプレートの埋め込みミス (`ARK_PORT=""`) を silent fallback で
+    // 隠さず、利用側に固定ポート前提が崩れたことを即座に伝える。
+    if (!/^[1-9][0-9]*$/.test(envPortRaw)) {
+      throw new Error(
+        `Invalid ARK_PORT: '${envPortRaw}'. 要件: 1..65535 の十進整数 (空文字 / 先頭 0 / 指数表記 / 16 進表記は不可)`
+      );
+    }
+    const parsed = Number(envPortRaw);
+    if (parsed < 1 || parsed > 65535) {
+      throw new Error(`ARK_PORT out of range: ${parsed}. 要件: 1..65535`);
+    }
+    port = parsed;
+  }
   // dynamic import: ここで初めて `@ark/server` を評価することで、
   // module-level singleton (db / fileUploadManager / browserManager) が
   // `configureAppPaths()` で set 済みの `ARK_DATA_DIR` / `ARK_LOGS_DIR` を
