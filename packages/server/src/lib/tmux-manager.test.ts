@@ -219,7 +219,7 @@ describe("TmuxManager.createSession - options互換", () => {
     expect(sendKeys[3]).toBe("claude --dangerously-skip-permissions");
   });
 
-  it("resolveClaudePath が絶対パスを返したら send-keys に double-quote 付きで渡る (issue #186)", async () => {
+  it("resolveClaudePath が絶対パスを返したら send-keys に POSIX single-quote 付きで渡る (issue #186)", async () => {
     // .app 同梱 SDK の typical path を返すように mock を上書き
     const bundledClaudePath =
       "/Applications/Ark.app/Contents/Resources/app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude";
@@ -229,11 +229,12 @@ describe("TmuxManager.createSession - options互換", () => {
 
     const sendKeys = findCommandSendKeysArgs();
     if (!sendKeys) throw new Error("send-keys args not found");
-    // double-quote で wrap した絶対パスがそのまま送られる
-    expect(sendKeys[3]).toBe(`"${bundledClaudePath}"`);
+    // POSIX single-quote で wrap した絶対パスがそのまま送られる
+    // ($, `, \, " 等の shell メタ文字解釈を完全に抑止するため double-quote ではなく single-quote)
+    expect(sendKeys[3]).toBe(`'${bundledClaudePath}'`);
   });
 
-  it("resolveClaudePath が絶対パスを返した状態で skipPermissions=true なら quote 付きパス + フラグ (issue #186)", async () => {
+  it("空白を含むパス + skipPermissions=true で single-quote + フラグが付く (issue #186)", async () => {
     // ~/Library/Application Support/... の空白を含むパスでも壊れないことを併せて確認
     const bundledClaudePath =
       "/Users/test/Library/Application Support/Ark/claude-runtime/bin/claude";
@@ -245,7 +246,50 @@ describe("TmuxManager.createSession - options互換", () => {
     const sendKeys = findCommandSendKeysArgs();
     if (!sendKeys) throw new Error("send-keys args not found");
     expect(sendKeys[3]).toBe(
-      `"${bundledClaudePath}" --dangerously-skip-permissions`
+      `'${bundledClaudePath}' --dangerously-skip-permissions`
     );
+  });
+
+  it("パスに single-quote を含む場合は POSIX 流の '\\'' エスケープが入る (shell injection 防御)", async () => {
+    // 入力パス: /tmp/it's a/claude  →  '/tmp/it'\''s a/claude'
+    const trickyPath = "/tmp/it's a/claude";
+    vi.mocked(resolveClaudePath).mockReturnValueOnce(trickyPath);
+
+    await manager.createSession("/path/to/worktree");
+
+    const sendKeys = findCommandSendKeysArgs();
+    if (!sendKeys) throw new Error("send-keys args not found");
+    expect(sendKeys[3]).toBe("'/tmp/it'\\''s a/claude'");
+  });
+
+  it('resolveClaudePath が相対パスを返した場合は fallback して "claude" になる (assertive guard)', async () => {
+    // 相対パスは shell コンテキストでは予期しない解決経路に乗るため、assert で弾く
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(resolveClaudePath).mockReturnValueOnce("./bin/claude");
+
+    await manager.createSession("/path/to/worktree");
+
+    const sendKeys = findCommandSendKeysArgs();
+    if (!sendKeys) throw new Error("send-keys args not found");
+    expect(sendKeys[3]).toBe("claude");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("non-absolute path")
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('resolveClaudePath が改行を含むパスを返した場合は fallback して "claude" になる (shell injection 防御)', async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(resolveClaudePath).mockReturnValueOnce("/tmp/evil\npwn/claude");
+
+    await manager.createSession("/path/to/worktree");
+
+    const sendKeys = findCommandSendKeysArgs();
+    if (!sendKeys) throw new Error("send-keys args not found");
+    expect(sendKeys[3]).toBe("claude");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("control char")
+    );
+    warnSpy.mockRestore();
   });
 });

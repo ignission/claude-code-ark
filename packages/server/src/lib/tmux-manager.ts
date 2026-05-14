@@ -7,6 +7,7 @@
 
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import path from "node:path";
 import type { SpecialKey } from "@ark/shared";
 import { nanoid } from "nanoid";
 import { resolveClaudePath, resolveTmuxPath } from "./system.js";
@@ -14,6 +15,54 @@ import { resolveClaudePath, resolveTmuxPath } from "./system.js";
 // tmux 絶対パス (pm2/systemd で PATH に tmux が無くても動作させるため)。
 // 解決不能なら "tmux" にフォールバック (PATH依存)。
 const TMUX_BINARY_PATH = resolveTmuxPath() ?? "tmux";
+
+/**
+ * POSIX shell の single-quote 文字列にエスケープする。
+ * 'foo bar' のように wrap し、入力中の `'` は `'\''` (single quote を抜けて
+ * リテラル single quote を入れ再度入る) に置き換える。
+ * tmux send-keys に渡す文字列は shell が解釈するため、`$VAR` / バッククォート
+ * / `\n` / `"` 等のメタ文字を完全に止めるには single-quote が最も堅牢。
+ */
+function posixShellQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * resolveClaudePath() の結果を tmux send-keys に渡す前段で検証する。
+ * 戻り値は以下のいずれか:
+ *   - 検証通過した絶対パス
+ *   - "claude" (resolver が null、または検証失敗時の安全フォールバック)
+ *
+ * 検証項目:
+ *   - 絶対パス (path.isAbsolute) であること
+ *   - 改行 / NUL / shell メタ文字 (single-quote 含む) を含まないこと
+ *     (posixShellQuote で single-quote 自体はエスケープできるが、改行や
+ *      NUL は tmux send-keys にとっても危険なので resolver の異常として扱う)
+ *
+ * 検証失敗時は console.warn でログに残し "claude" にフォールバックする。
+ * resolver 側で逸脱が起きても shell injection に発展せず、かつ silent fail も避ける。
+ */
+function resolveSafeClaudeBinaryForShell(): string {
+  const resolved = resolveClaudePath();
+  if (resolved === null) return "claude";
+  if (!path.isAbsolute(resolved)) {
+    console.warn(
+      `[TmuxManager] resolveClaudePath returned non-absolute path: ${JSON.stringify(resolved)}, falling back to "claude"`
+    );
+    return "claude";
+  }
+  // 改行 / NUL を含む path は shell に渡す前に拒否する。
+  // POSIX path に正規には許される文字だが、tmux send-keys に流すと
+  // 直接コマンド注入になり得る。
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: shell injection 防御のため制御文字を明示拒否
+  if (/[\n\r\0]/.test(resolved)) {
+    console.warn(
+      `[TmuxManager] resolveClaudePath returned path containing control char, falling back to "claude"`
+    );
+    return "claude";
+  }
+  return resolved;
+}
 
 /** 送信を許可する特殊キーのホワイトリスト */
 const ALLOWED_SPECIAL_KEYS = new Set<SpecialKey>([
@@ -210,15 +259,20 @@ export class TmuxManager extends EventEmitter {
     // claude binary は resolveClaudePath() で絶対パスを取得する。これにより:
     //   - .app 配布で system PATH に claude が無い環境でも、同梱 SDK 付属の
     //     claude (`app.asar.unpacked/node_modules/@anthropic-ai/.../claude`) を起動できる
-    //   - F5 (`<userData>/claude-runtime/bin/claude`) も自動的に優先される
     //   - 解決できない場合は "claude" 文字列にフォールバック (PATH 解決を shell に委譲)
-    // 絶対パスは shell 内で空白文字を含む可能性に備えて double-quote で wrap する
-    // (Electron .app は `/Applications/Ark.app/...` のように空白は無いが、
-    //  ユーザ管理の `~/Library/Application Support/Ark/claude-runtime/...` には
-    //  Application Support の空白が含まれるため必須)。
-    const claudeBinary = resolveClaudePath() ?? "claude";
+    //
+    // 解決結果は shell に渡す文字列になるので以下を assert する:
+    //   - 絶対パス (path.isAbsolute) であること
+    //   - 改行 / NUL / shell metachar を含まないこと
+    //     ( ' " ` $ \ \n 等が含まれていれば双方向に injection 余地が出る)
+    // assertion 違反時は "claude" フォールバックして resolver 側の異常を握りつぶさず
+    // ログに残す。
+    // shell quoting は POSIX 互換の single-quote で wrap する: 全シェルで文字列内
+    // のメタ文字解釈が止まるため、double-quote で `$` `` ` `` `\` `"` が解釈される
+    // リスクを避けられる (codex P1 指摘対応)。
+    const claudeBinary = resolveSafeClaudeBinaryForShell();
     const claudeArg =
-      claudeBinary === "claude" ? "claude" : `"${claudeBinary}"`;
+      claudeBinary === "claude" ? "claude" : posixShellQuote(claudeBinary);
     const claudeCmd =
       options?.commandLine ??
       (this.skipPermissions

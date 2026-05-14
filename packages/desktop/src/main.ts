@@ -28,6 +28,7 @@
  *   - F4 tmux/ttyd 同梱: extraResources の bin/ パスを binPaths として渡す
  *   - F4 PORT 安定化: `<userData>/server-port.json` で前回ポートを再利用
  */
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 // 型のみ import: ESM では `import type` は erase されるため、`@ark/server` の
@@ -245,6 +246,43 @@ async function bootstrap(): Promise<void> {
   // に常に同梱されており、tmux send-keys 経路でも resolveClaudePath() 経由で
   // 絶対パスで起動されるため、ユーザーへの追加 install (Node bundle + npm install)
   // は不要になった。system claude へのフォールバックも resolveClaudePath() が担う。
+  //
+  // bootstrap 時 verify: packaged 環境で SDK binary が見当たらない場合は早期検知して
+  // ログに残す (asarUnpack ルール変更や配布物の取り込み漏れで起動後に遅延障害になるのを防ぐ)。
+  // packaged でない (dev / unpackaged) ケースでは SDK binary は存在しないので skip。
+  if (app.isPackaged) {
+    try {
+      const sdkBinaryPath = path.join(
+        process.resourcesPath,
+        "app.asar.unpacked",
+        "node_modules",
+        "@anthropic-ai",
+        `claude-agent-sdk-${process.platform}-${process.arch}`,
+        "claude"
+      );
+      const stat = fs.statSync(sdkBinaryPath);
+      if (!stat.isFile()) {
+        log.error(
+          `[Ark Desktop] bundled SDK claude binary is not a file: ${sdkBinaryPath}`
+        );
+      } else {
+        // X_OK 確認: chmod 抜けや権限ビットの誤りも検知する。
+        fs.accessSync(sdkBinaryPath, fs.constants.X_OK);
+        log.info(
+          `[Ark Desktop] bundled SDK claude binary verified: ${sdkBinaryPath}`
+        );
+      }
+    } catch (err) {
+      // 起動自体は止めない (server 側の resolveClaudePath が system claude
+      // にフォールバックする経路は残っている)。ただしユーザーが PATH に
+      // claude を持っていない場合は tmux で起動失敗するので、ログで観測できるよう
+      // error レベルで明記する。
+      log.error(
+        "[Ark Desktop] bundled SDK claude binary not found or not executable - terminal session may fall back to system PATH:",
+        err
+      );
+    }
+  }
 
   // F6: Keychain プロファイル bridge 初期化 (skeleton)
   // 現状 skeleton のため "unsupported" モードで動作。F0:B-3 検証結果次第で
