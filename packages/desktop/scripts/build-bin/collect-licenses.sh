@@ -79,9 +79,10 @@ fetch_license "json-c" \
 fetch_license "zlib" \
   "https://raw.githubusercontent.com/madler/zlib/v1.3.1/LICENSE"
 
-# ncurses (invisible-mirror が一次配布元; GitHub mirror から取得)
+# ncurses (Thomas Dickey が upstream maintainer; GitHub mirror に v6.5 tag が無く 404 になるため
+# Thomas の snapshots リポジトリ master の COPYING を取得。license は MIT-like で長期安定。)
 fetch_license "ncurses" \
-  "https://raw.githubusercontent.com/mirror/ncurses/v6.5/COPYING"
+  "https://raw.githubusercontent.com/ThomasDickey/ncurses-snapshots/master/COPYING"
 
 # 各 package の SUMMARY.json を生成 (UI 側 AboutDialog 用)
 cat > "${LICENSES_DIR}/INDEX.json" <<EOF
