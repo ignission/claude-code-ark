@@ -25,13 +25,27 @@ LICENSES_DIR="${BUILD_DIR}/licenses"
 mkdir -p "${LICENSES_DIR}"
 
 # fetch_license <name> <url>
+# LICENSE を取得できなかった場合は **必ず fail させる**。
+# 旧実装は `|| echo "[warn]"` で curl 失敗を黙って継続していたが、それでは
+# LICENSE 未収集のまま INDEX.json に package を列挙し、コンプライアンス上の
+# リスクが残る (CodeRabbit Major 指摘)。
+# URL の version / 日付サフィックスが間違っている / 上流リポジトリ構造が変わった
+# 等の検知漏れも防ぐ。
 fetch_license() {
   local name="$1"
   local url="$2"
+  local out="${LICENSES_DIR}/${name}/LICENSE"
   mkdir -p "${LICENSES_DIR}/${name}"
   echo "[license] ${name}: ${url}"
-  curl -fsSL --retry 3 -o "${LICENSES_DIR}/${name}/LICENSE" "${url}" || \
-    echo "[warn] ${name}: failed to fetch LICENSE (network?)"
+  if ! curl -fsSL --retry 3 -o "${out}" "${url}"; then
+    echo "[error] ${name}: LICENSE 取得失敗 (url=${url})" >&2
+    exit 1
+  fi
+  # `curl -f` は HTTP エラーで非 0 終了するが、念のため空ファイルを assert。
+  if [[ ! -s "${out}" ]]; then
+    echo "[error] ${name}: LICENSE ファイルが空 (url=${url})" >&2
+    exit 1
+  fi
 }
 
 # 各 license は GitHub tag URL から raw 取得する (manifest.json のバージョンと整合)。
@@ -57,13 +71,18 @@ fetch_license "libevent" \
 fetch_license "openssl" \
   "https://raw.githubusercontent.com/openssl/openssl/openssl-3.3.2/LICENSE.txt"
 
+JSONC_VERSION=$(manifest_get '.dependencies."json-c".version')
+fetch_license "json-c" \
+  "https://raw.githubusercontent.com/json-c/json-c/json-c-${JSONC_VERSION}-20240915/COPYING"
+
 # zlib (本家 README に license 全文がある)
 fetch_license "zlib" \
   "https://raw.githubusercontent.com/madler/zlib/v1.3.1/LICENSE"
 
-# ncurses (invisible-mirror が一次配布元; GitHub mirror から取得)
+# ncurses (Thomas Dickey が upstream maintainer; GitHub mirror に v6.5 tag が無く 404 になるため
+# Thomas の snapshots リポジトリ master の COPYING を取得。license は MIT-like で長期安定。)
 fetch_license "ncurses" \
-  "https://raw.githubusercontent.com/mirror/ncurses/v6.5/COPYING"
+  "https://raw.githubusercontent.com/ThomasDickey/ncurses-snapshots/master/COPYING"
 
 # 各 package の SUMMARY.json を生成 (UI 側 AboutDialog 用)
 cat > "${LICENSES_DIR}/INDEX.json" <<EOF
@@ -74,6 +93,7 @@ cat > "${LICENSES_DIR}/INDEX.json" <<EOF
     { "name": "ttyd", "version": "${TTYD_VERSION}", "license": "MIT" },
     { "name": "libwebsockets", "version": "${LWS_VERSION}", "license": "MIT" },
     { "name": "libuv", "version": "${LIBUV_VERSION}", "license": "MIT" },
+    { "name": "json-c", "version": "${JSONC_VERSION}", "license": "MIT" },
     { "name": "libevent", "version": "${LIBEVENT_VERSION}", "license": "3-clause BSD" },
     { "name": "openssl", "version": "$(manifest_get '.dependencies.openssl.version')", "license": "Apache-2.0" },
     { "name": "ncurses", "version": "$(manifest_get '.dependencies.ncurses.version')", "license": "MIT-like" },

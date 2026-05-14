@@ -1,5 +1,5 @@
 {
-  "_comment": "F4: tmux / ttyd 同梱バイナリの依存ライブラリのバージョン pin。各 SHA256 は手動 curl で計算 (shasum -a 256 <tarball>)。Renovate では更新しない (CI 実行時の build cache が無効化される)。",
+  "_comment": "F4: tmux / ttyd 同梱バイナリの依存ライブラリのバージョン pin。各 SHA256 は `curl -fsSL <url> | shasum -a 256` で計算済み。Renovate では更新しない (CI 実行時の build cache が無効化される)。",
   "target": {
     "arch": "arm64",
     "platform": "darwin",
@@ -8,44 +8,51 @@
   "tmux": {
     "version": "3.5a",
     "url": "https://github.com/tmux/tmux/releases/download/3.5a/tmux-3.5a.tar.gz",
-    "sha256": "PLACEHOLDER_TMUX_SHA256"
+    "sha256": "16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951"
   },
   "ttyd": {
     "version": "1.7.7",
     "url": "https://github.com/tsl0922/ttyd/archive/refs/tags/1.7.7.tar.gz",
-    "sha256": "PLACEHOLDER_TTYD_SHA256"
+    "sha256": "039dd995229377caee919898b7bd54484accec3bba49c118e2d5cd6ec51e3650"
   },
   "dependencies": {
     "openssl": {
       "version": "3.3.2",
       "url": "https://www.openssl.org/source/openssl-3.3.2.tar.gz",
-      "sha256": "PLACEHOLDER_OPENSSL_SHA256"
+      "sha256": "2e8a40b01979afe8be0bbfb3de5dc1c6709fedb46d6c89c10da114ab5fc3d281"
     },
     "zlib": {
+      "_note": "GitHub release ミラー経由で取得 (zlib.net は GHA runner からの DNS 解決が時々失敗するため)。tarball の sha256 は zlib.net/fossils/ 配下と同一。",
       "version": "1.3.1",
-      "url": "https://zlib.net/zlib-1.3.1.tar.gz",
-      "sha256": "PLACEHOLDER_ZLIB_SHA256"
+      "url": "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz",
+      "sha256": "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
     },
     "libwebsockets": {
       "_note": "ttyd 1.7.x は libwebsockets 4.3 系を要求。OpenSSL 3.x と組む際は --no-shared 必須",
       "version": "4.3.3",
       "url": "https://github.com/warmcat/libwebsockets/archive/refs/tags/v4.3.3.tar.gz",
-      "sha256": "PLACEHOLDER_LWS_SHA256"
+      "sha256": "6fd33527b410a37ebc91bb64ca51bdabab12b076bc99d153d7c5dd405e4bdf90"
     },
     "libuv": {
       "version": "1.49.2",
       "url": "https://dist.libuv.org/dist/v1.49.2/libuv-v1.49.2.tar.gz",
-      "sha256": "PLACEHOLDER_LIBUV_SHA256"
+      "sha256": "8c10706bd2cf129045c42b94799a92df9aaa75d05f07e99cf083507239bae5a8"
+    },
+    "json-c": {
+      "_note": "ttyd 1.7.x の必須依存。CMake で組み LWS が解決時に拾うパスへ install する。",
+      "version": "0.18",
+      "url": "https://s3.amazonaws.com/json-c_releases/releases/json-c-0.18.tar.gz",
+      "sha256": "876ab046479166b869afc6896d288183bbc0e5843f141200c677b3e8dfb11724"
     },
     "libevent": {
       "version": "2.1.12-stable",
       "url": "https://github.com/libevent/libevent/releases/download/release-2.1.12-stable/libevent-2.1.12-stable.tar.gz",
-      "sha256": "PLACEHOLDER_LIBEVENT_SHA256"
+      "sha256": "92e6de1be9ec176428fd2367677e61ceffc2ee1cb119035037a27d346b0403bb"
     },
     "ncurses": {
       "version": "6.5",
       "url": "https://invisible-mirror.net/archives/ncurses/ncurses-6.5.tar.gz",
-      "sha256": "PLACEHOLDER_NCURSES_SHA256"
+      "sha256": "136d91bc269a9a5785e5f9e980bc76ab57428f604ce3e5a5a90cebc767971cc6"
     }
   }
 }

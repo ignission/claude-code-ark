@@ -84,3 +84,127 @@ inspect_deps() {
   echo "==> otool -L ${bin}"
   otool -L "${bin}" || true
 }
+
+# build スレッド数。GHA macos-14 runner では sysctl で取得した値を使う。
+build_jobs() {
+  sysctl -n hw.ncpu 2>/dev/null || echo "4"
+}
+
+# 展開済みディレクトリのパス。`fetch_and_extract` 直後のソース木 (configure / CMakeLists.txt
+# を持つ第 1 階層) を返す。tarball によって直下構成が異なる (e.g. libuv は
+# `libuv-v1.49.2/`、ttyd は `ttyd-1.7.7/`) ので一意に解決する。
+# 候補ディレクトリが 0 件 / 2 件以上はビルド状態の異常なので fail させる
+# (非決定性を回避し、cache 汚染や二重展開で誤ったソース木を選ぶリスクを排除)。
+source_dir() {
+  local name="$1"
+  local candidates
+  candidates=$(find "${SRC_DIR}/${name}" -mindepth 1 -maxdepth 1 -type d)
+  local count
+  count=$(printf '%s\n' "${candidates}" | grep -c . || true)
+  if [[ "${count}" -eq 0 ]]; then
+    echo "[error] source_dir(${name}): no extracted directory under ${SRC_DIR}/${name}" >&2
+    return 1
+  fi
+  if [[ "${count}" -gt 1 ]]; then
+    echo "[error] source_dir(${name}): expected exactly 1 extracted dir, got ${count}:" >&2
+    printf '  %s\n' ${candidates} >&2
+    return 1
+  fi
+  printf '%s\n' "${candidates}"
+}
+
+# autoconf 系 (configure && make && make install) の標準ビルダ。
+# 引数: $1 name (manifest キーと一致), $2.. configure flags
+# 既に ${PREFIX}/.built.<name> が存在すれば skip (cache hit 時の重複 build 防止)。
+build_autoconf() {
+  local name="$1"
+  shift
+  local stamp="${PREFIX}/.built.${name}"
+  if [[ -f "${stamp}" ]]; then
+    echo "[skip] ${name}: already built (stamp=${stamp})"
+    return 0
+  fi
+  local src
+  src=$(source_dir "${name}") || return 1
+  echo "===== build_autoconf ${name} (src=${src}) ====="
+  pushd "${src}" >/dev/null
+  ./configure --prefix="${PREFIX}" "$@"
+  make -j"$(build_jobs)"
+  make install
+  popd >/dev/null
+  : > "${stamp}"
+}
+
+# cmake 系 (mkdir build && cmake && make && make install) の標準ビルダ。
+# 引数: $1 name, $2.. cmake -D flags
+# CMAKE_BUILD_TYPE / CMAKE_OSX_DEPLOYMENT_TARGET / CMAKE_OSX_ARCHITECTURES /
+# CMAKE_INSTALL_PREFIX / CMAKE_POLICY_VERSION_MINIMUM は固定で付与。
+# CMAKE_POLICY_VERSION_MINIMUM=3.5: 現代の cmake (4.x) は < 3.5 互換を完全に削除し、
+# `cmake_minimum_required(VERSION 2.x)` を持つ古い CMakeLists.txt が
+# "Compatibility with CMake < 3.5 has been removed from CMake" で fail する。
+# json-c 0.18 の apps/ subdir、libwebsockets 4.3.3 等が該当。本 build は全 deps の
+# 互換 policy を 3.5 に持ち上げて configure を通す (実害なし、API 動作は同じ)。
+build_cmake() {
+  local name="$1"
+  shift
+  local stamp="${PREFIX}/.built.${name}"
+  if [[ -f "${stamp}" ]]; then
+    echo "[skip] ${name}: already built (stamp=${stamp})"
+    return 0
+  fi
+  local src
+  src=$(source_dir "${name}") || return 1
+  echo "===== build_cmake ${name} (src=${src}) ====="
+  local builddir="${src}/build"
+  mkdir -p "${builddir}"
+  pushd "${builddir}" >/dev/null
+  cmake \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET}" \
+    -DCMAKE_OSX_ARCHITECTURES="${ARCH}" \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    "$@" \
+    ..
+  make -j"$(build_jobs)"
+  make install
+  popd >/dev/null
+  : > "${stamp}"
+}
+
+# 同梱バイナリの dyld 依存をチェック。
+# `/usr/lib/*` および `/System/Library/*` (= Apple 純正の system dylib) のみを
+# 許可し、他はすべて fail させる。`@rpath/`、`@loader_path/`、`@executable_path/`
+# も拒否する: これらは Frameworks/ 同梱が前提の解決経路で、本ビルドは「全 deps を
+# static link で纏める」設計なので絶対に出現してはならない (出ているなら
+# build スクリプトの static-only 設定が破れている)。
+# 自身の install_name (otool -L の 1 行目) は対象外として除外する。
+assert_self_contained() {
+  local bin="$1"
+  echo "==> assert_self_contained ${bin}"
+  if [[ ! -x "${bin}" ]]; then
+    echo "[error] ${bin} not executable"
+    return 1
+  fi
+  # otool -L 出力は最初の行が header (path:)、2 行目が install_name (自身)、
+  # 3 行目以降が外部依存。実行可能バイナリは install_name を持たないことが多いが、
+  # 念のため abs path + バイナリ自身の basename と一致する行も除外する。
+  local self_basename
+  self_basename=$(basename "${bin}")
+  local nonsystem
+  nonsystem=$(otool -L "${bin}" \
+    | tail -n +2 \
+    | awk '{print $1}' \
+    | grep -vE '^(/usr/lib/|/System/Library/)' \
+    | grep -v "/${self_basename}:?\$" \
+    || true)
+  if [[ -n "${nonsystem}" ]]; then
+    echo "[error] ${bin} has non-system / non-static dylib deps:"
+    printf '  %s\n' "${nonsystem}"
+    echo "本ビルドは全依存 static link を契約としているため、@rpath/@loader_path"
+    echo "経由の解決も含めて非 system 依存は全て拒否します。"
+    echo "static link が漏れているか build script の構成を見直してください。"
+    return 1
+  fi
+  echo "OK: ${bin} は self-contained (Apple system dylib のみに依存)"
+}

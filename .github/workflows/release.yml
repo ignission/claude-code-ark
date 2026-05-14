@@ -33,10 +33,23 @@ permissions:
   contents: write
 
 jobs:
+  # tmux / ttyd / 関連 OSS deps を arm64 native build し
+  # ark-bin-macos-arm64 artifact を生成する依存ジョブ。
+  # build-bin.yml の workflow_call トリガーで起動し、manifest.json hash で
+  # actions/cache を共有するため、変更が無い限り 2 回目以降は高速 (~1 分)。
+  build-bin:
+    name: Build tmux/ttyd binaries
+    uses: ./.github/workflows/build-bin.yml
+
   build:
     name: Build .app (macOS arm64)
     runs-on: macos-14
     timeout-minutes: 60
+    # tmux/ttyd 同梱バイナリを取得した後でないと electron-builder が
+    # extraResources で参照する build-assets/bin が空になり、配布した .app から
+    # bundled tmux/ttyd が解決できなくなる (system PATH の Homebrew tmux に
+    # 暗黙フォールバックして、非エンジニア向け配布の前提が崩れる) ため必須。
+    needs: build-bin
 
     # update-cask ジョブから参照するメタデータ。
     # sha256 は Cask の sha256 値を更新するため必須。
@@ -82,17 +95,35 @@ jobs:
           node-version: "20"
           cache: "pnpm"
 
-      # F4 (build-bin.yml) の artifact から tmux/ttyd を取得する想定。
-      # build-bin.yml は現状 workflow_dispatch 限定で artifact 未生成のため、
-      # 取得失敗時も build を継続できる構造 (continue-on-error) にしている。
-      # F4 完了後に actions/download-artifact@v4 で取得する形に書き換える。
-      #
-      # - name: Download tmux/ttyd artifact
-      #   uses: actions/download-artifact@v4
-      #   with:
-      #     name: ark-bin-macos-arm64
-      #     path: packages/desktop/build-assets
-      #   continue-on-error: true
+      # build-bin ジョブが upload した artifact (tmux / ttyd / Frameworks / licenses)
+      # を packages/desktop/build-assets/ 直下に展開する。
+      # electron-builder.yml の extraResources / extraFiles はここを参照する想定なので、
+      # download 後はファイル系構造が以下になっている必要がある:
+      #   packages/desktop/build-assets/bin/{tmux,ttyd}
+      #   packages/desktop/build-assets/licenses/{INDEX.json, <pkg>/LICENSE}
+      #   packages/desktop/build-assets/Frameworks/* (静的リンク済なら空)
+      # artifact 名 (ark-bin-macos-arm64) は build-bin.yml の upload-artifact name と一致。
+      - name: Download tmux/ttyd artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ark-bin-macos-arm64
+          path: packages/desktop/build-assets
+
+      # 同梱バイナリが揃っていることを electron-builder 起動前に assert する
+      # (build-bin の verify step を二重チェック)。
+      - name: Verify bundled binaries
+        run: |
+          set -euo pipefail
+          for bin in tmux ttyd; do
+            BIN_PATH="packages/desktop/build-assets/bin/${bin}"
+            if [ ! -x "${BIN_PATH}" ]; then
+              echo "::error::Bundled ${bin} missing or not executable at ${BIN_PATH}"
+              ls -la packages/desktop/build-assets/bin/ || true
+              exit 1
+            fi
+            file "${BIN_PATH}"
+          done
+          echo "::notice::Bundled tmux/ttyd ready for electron-builder"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -286,6 +317,36 @@ jobs:
           fi
           echo "Bootstrap smoke passed (port=${ARK_PORT} http=${HTTP})"
           # cleanup は trap EXIT に委譲
+
+      - name: Smoke test bundled tmux/ttyd binaries
+        # issue #185: .app に同梱した tmux / ttyd が
+        # `Resources/bin/` 配下で実行可能であることを確認する。
+        # asarUnpack ルール変更・extraResources パス変更で binary 配置が崩れた場合に
+        # ここで fail させる。version 出力で起動経路自体も smoke 検証する。
+        # 同梱が無いと server 側の resolveTmuxPath は PATH の tmux に
+        # 暗黙フォールバックするため、非エンジニア向け配布の前提が崩れる。
+        run: |
+          set -euo pipefail
+          BIN_ROOT="packages/desktop/release/mac-arm64/Ark.app/Contents/Resources/bin"
+          for tool in tmux ttyd; do
+            BIN="${BIN_ROOT}/${tool}"
+            if [ ! -x "${BIN}" ]; then
+              echo "::error::Bundled ${tool} not found at ${BIN}"
+              ls -la "${BIN_ROOT}" 2>&1 || echo "(bin directory not found)"
+              exit 1
+            fi
+            file "${BIN}"
+            # tmux は `-V`、ttyd は `--version`。両方とも network/auth 不要で即終了する safe な smoke。
+            if [ "${tool}" = "tmux" ]; then
+              VER=$("${BIN}" -V 2>&1 | head -1)
+            else
+              VER=$("${BIN}" --version 2>&1 | head -1)
+            fi
+            END_TOKEN="ark-${tool}-version-$(uuidgen)"
+            echo "::stop-commands::${END_TOKEN}"
+            echo "Bundled ${tool} OK: ${VER}"
+            echo "::${END_TOKEN}::"
+          done
 
       - name: Smoke test bundled SDK claude binary
         # PR #180 の root cause だった「SDK 付属 claude バイナリが asar 内パスで
