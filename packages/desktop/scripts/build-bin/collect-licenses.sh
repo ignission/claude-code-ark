@@ -25,13 +25,27 @@ LICENSES_DIR="${BUILD_DIR}/licenses"
 mkdir -p "${LICENSES_DIR}"
 
 # fetch_license <name> <url>
+# LICENSE を取得できなかった場合は **必ず fail させる**。
+# 旧実装は `|| echo "[warn]"` で curl 失敗を黙って継続していたが、それでは
+# LICENSE 未収集のまま INDEX.json に package を列挙し、コンプライアンス上の
+# リスクが残る (CodeRabbit Major 指摘)。
+# URL の version / 日付サフィックスが間違っている / 上流リポジトリ構造が変わった
+# 等の検知漏れも防ぐ。
 fetch_license() {
   local name="$1"
   local url="$2"
+  local out="${LICENSES_DIR}/${name}/LICENSE"
   mkdir -p "${LICENSES_DIR}/${name}"
   echo "[license] ${name}: ${url}"
-  curl -fsSL --retry 3 -o "${LICENSES_DIR}/${name}/LICENSE" "${url}" || \
-    echo "[warn] ${name}: failed to fetch LICENSE (network?)"
+  if ! curl -fsSL --retry 3 -o "${out}" "${url}"; then
+    echo "[error] ${name}: LICENSE 取得失敗 (url=${url})" >&2
+    exit 1
+  fi
+  # `curl -f` は HTTP エラーで非 0 終了するが、念のため空ファイルを assert。
+  if [[ ! -s "${out}" ]]; then
+    echo "[error] ${name}: LICENSE ファイルが空 (url=${url})" >&2
+    exit 1
+  fi
 }
 
 # 各 license は GitHub tag URL から raw 取得する (manifest.json のバージョンと整合)。
