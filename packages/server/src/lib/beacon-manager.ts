@@ -1398,8 +1398,8 @@ export class BeaconManager extends EventEmitter {
     // 契約: `resolveClaudePath()` は **存在するパス** を返す保証はあるが
     // **spawn 可能性** までは保証しない (PATH 由来 / candidate 配列等は
     // existsSync のみ)。`app.asar.unpacked` 経路だけは isFile + X_OK まで
-    // assert 済み。null なら SDK の auto-resolve に委ねる (=Electron .app では
-    // 失敗するが、その場合は claude-installer が同梱版を入れる方針)。
+    // assert 済み。null なら SDK の auto-resolve に委ねる (Electron .app では
+    // app.asar.unpacked 内の SDK 付属 claude が常時存在するので実害なし)。
     const claudeExecutable = resolveClaudePath() ?? undefined;
     const q = query({
       prompt: queue,

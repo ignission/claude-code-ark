@@ -7,13 +7,66 @@
 
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import path from "node:path";
 import type { SpecialKey } from "@ark/shared";
 import { nanoid } from "nanoid";
-import { resolveTmuxPath } from "./system.js";
+import { resolveClaudePath, resolveTmuxPath } from "./system.js";
 
 // tmux 絶対パス (pm2/systemd で PATH に tmux が無くても動作させるため)。
 // 解決不能なら "tmux" にフォールバック (PATH依存)。
 const TMUX_BINARY_PATH = resolveTmuxPath() ?? "tmux";
+
+/**
+ * POSIX shell の single-quote 文字列にエスケープする。
+ * 'foo bar' のように wrap し、入力中の `'` は `'\''` (single quote を抜けて
+ * リテラル single quote を入れ再度入る) に置き換える。
+ * tmux send-keys に渡す文字列は shell が解釈するため、`$VAR` / バッククォート
+ * / `\n` / `"` 等のメタ文字を完全に止めるには single-quote が最も堅牢。
+ */
+function posixShellQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * resolveClaudePath() の結果を tmux send-keys 用に検証する。
+ *
+ * 戻り値は以下のいずれか:
+ *   - 検証通過した絶対パス (呼び出し側で posixShellQuote() するための原文字列)
+ *   - "claude" (resolver が null を返した = claude binary が見つからない正当な状態)
+ *
+ * 「resolver が非 null を返したが invalid」ケースは throw する:
+ *   resolver が壊れた値 (相対パス / 制御文字付きパス) を返した状態で
+ *   "claude" にフォールバックすると、信頼境界が PATH に広がり、PATH 汚染時に
+ *   意図しない claude を起動する。fail-fast でセッション作成を拒否する方が
+ *   セキュリティ + Assertive Programming として一貫している。
+ *
+ * 検証項目 (非 null path 入力時):
+ *   - 絶対パス (path.isAbsolute) であること
+ *   - 制御文字 (U+0000..U+001F, U+007F) を一切含まないこと
+ *     POSIX path に formal には許される文字だが、`\n` `\r` `\0` は send-keys / shell
+ *     コマンド注入になり、`ESC` (0x1B) や `BS` / `DEL` は端末側で解釈されて
+ *     入力行や terminal state を壊し得る。single-quote 済みでも readline 経路で
+ *     脱出される余地があるため、全 control char を一律拒否する。
+ */
+function resolveValidatedClaudePath(): string {
+  const resolved = resolveClaudePath();
+  if (resolved === null) return "claude";
+  if (!path.isAbsolute(resolved)) {
+    throw new Error(
+      `resolveClaudePath returned non-absolute path: ${JSON.stringify(resolved)}`
+    );
+  }
+  // 全 ASCII 制御文字 (`\x00`-`\x1F` + `\x7F`) を一律拒否。
+  // 個別列挙でなく範囲指定にすることで、将来も terminal / shell エスケープ
+  // 経路を増やさないよう assertive に保つ。
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: shell/terminal injection 防御のため制御文字を明示拒否
+  if (/[\x00-\x1F\x7F]/.test(resolved)) {
+    throw new Error(
+      "resolveClaudePath returned path containing control char (rejected for shell/terminal injection safety)"
+    );
+  }
+  return resolved;
+}
 
 /** 送信を許可する特殊キーのホワイトリスト */
 const ALLOWED_SPECIAL_KEYS = new Set<SpecialKey>([
@@ -207,11 +260,28 @@ export class TmuxManager extends EventEmitter {
       : [];
 
     // 起動コマンド（commandLine が指定されていればそれを優先）
+    // claude binary は resolveClaudePath() で絶対パスを取得する。これにより:
+    //   - .app 配布で system PATH に claude が無い環境でも、同梱 SDK 付属の
+    //     claude (`app.asar.unpacked/node_modules/@anthropic-ai/.../claude`) を起動できる
+    //   - 解決できない場合は "claude" 文字列にフォールバック (PATH 解決を shell に委譲)
+    //
+    // 解決結果は shell に渡す文字列になるので以下を assert する:
+    //   - 絶対パス (path.isAbsolute) であること
+    //   - 改行 / NUL / shell metachar を含まないこと
+    //     ( ' " ` $ \ \n 等が含まれていれば双方向に injection 余地が出る)
+    // assertion 違反時は "claude" フォールバックして resolver 側の異常を握りつぶさず
+    // ログに残す。
+    // shell quoting は POSIX 互換の single-quote で wrap する: 全シェルで文字列内
+    // のメタ文字解釈が止まるため、double-quote で `$` `` ` `` `\` `"` が解釈される
+    // リスクを避けられる (codex P1 指摘対応)。
+    const claudeBinary = resolveValidatedClaudePath();
+    const claudeArg =
+      claudeBinary === "claude" ? "claude" : posixShellQuote(claudeBinary);
     const claudeCmd =
       options?.commandLine ??
       (this.skipPermissions
-        ? "claude --dangerously-skip-permissions"
-        : "claude");
+        ? `${claudeArg} --dangerously-skip-permissions`
+        : claudeArg);
 
     let tmuxCreated = false;
 

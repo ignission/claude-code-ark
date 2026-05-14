@@ -28,6 +28,7 @@
  *   - F4 tmux/ttyd 同梱: extraResources の bin/ パスを binPaths として渡す
  *   - F4 PORT 安定化: `<userData>/server-port.json` で前回ポートを再利用
  */
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 // 型のみ import: ESM では `import type` は erase されるため、`@ark/server` の
@@ -206,6 +207,56 @@ function resolveWebStaticDir(): string | undefined {
 }
 
 async function bootstrap(): Promise<void> {
+  // === fail-fast 前提条件チェック (bootstrap 副作用前) ===
+  // 配布物不整合 (.app 同梱 SDK claude binary 欠落) は ここで検知する。
+  // installer 削除後は SDK 同梱が唯一の保証経路で、欠落していると tmux セッション
+  // 作成時まで障害が遅延する。さらに resolveClaudePath() が PATH 経由 system claude
+  // (ユーザーが別途入れた version) にフォールバックし、SDK と version が乖離した
+  // 状態で動く危険もある。配布物不整合 (asarUnpack ルール変更 / 取り込み漏れ /
+  // chmod 抜け) は配布側のバグなので、起動時点で確実に検知 + ユーザー通知する。
+  // dev / unpackaged モードでは SDK binary は存在しないので skip。
+  //
+  // 配置: tray / menu / server を起こす前に置くことで、半初期化状態を作らない
+  // (codex P1 指摘対応)。
+  if (app.isPackaged) {
+    const sdkBinaryPath = path.join(
+      process.resourcesPath,
+      "app.asar.unpacked",
+      "node_modules",
+      "@anthropic-ai",
+      `claude-agent-sdk-${process.platform}-${process.arch}`,
+      "claude"
+    );
+    try {
+      const stat = fs.statSync(sdkBinaryPath);
+      if (!stat.isFile()) {
+        throw new Error(
+          `bundled SDK claude binary is not a regular file: ${sdkBinaryPath}`
+        );
+      }
+      // X_OK: chmod 抜けや権限ビットの誤りも検知する。
+      fs.accessSync(sdkBinaryPath, fs.constants.X_OK);
+      log.info(
+        `[Ark Desktop] bundled SDK claude binary verified: ${sdkBinaryPath}`
+      );
+    } catch (err) {
+      log.error(
+        `[Ark Desktop] bundled SDK claude binary missing or not executable at ${sdkBinaryPath}:`,
+        err
+      );
+      try {
+        const { dialog } = await import("electron");
+        dialog.showErrorBox(
+          "Ark: bundled Claude CLI が見つかりません",
+          `配布物の取り込み漏れが疑われます。Ark.app の再インストールをお試しください。\n\n参照パス: ${sdkBinaryPath}\n\n詳細はログを確認してください。`
+        );
+      } catch {
+        // dialog 表示自体に失敗しても fail-fast 自体は継続する
+      }
+      throw err;
+    }
+  }
+
   // F8: preload から外部 URL 起動を受け取って shell.openExternal に委譲する。
   // 同一 channel は重複登録不可のため、idempotent に register。
   ipcMain.handle("ark:open-external", async (_event, url: string) => {
@@ -239,24 +290,12 @@ async function bootstrap(): Promise<void> {
       serverHandle ? `http://127.0.0.1:${serverHandle.port}/` : null,
   });
 
-  // F5: Claude CLI 自動インストール (skeleton)
-  // packaged 環境かつ未インストール時のみ実行。dev / unpackaged では skip。
-  // 失敗してもアプリ起動は継続させる方針 (system claude へのフォールバックは
-  // server 側の system.ts:resolveClaudePath() に委ねる)。
-  // F5-followup: onProgress を IPC で renderer に転送し、
-  // `ClaudeInstallProgressDialog.tsx` を表示する。
-  try {
-    const { installClaudeCli } = await import("./claude-installer.js");
-    await installClaudeCli({
-      onProgress: event => {
-        log.info("[Ark Desktop] claude-installer", event);
-        // F5-followup: mainWindow?.webContents.send("ark:claude-install-progress", event);
-      },
-    });
-  } catch (err) {
-    // installClaudeCli は内部で reject しない設計だが、防御的に catch。
-    log.error("[Ark Desktop] claude-installer threw", err);
-  }
+  // F5 (Claude CLI 自動インストール) は廃止 (issue #183 close, #186 で代替):
+  // SDK 付属の standalone claude binary が
+  // `app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude`
+  // に常に同梱されており、tmux send-keys 経路でも resolveClaudePath() 経由で
+  // 絶対パスで起動されるため、ユーザーへの追加 install (Node bundle + npm install)
+  // は不要になった。配布物不整合の早期検知は bootstrap 冒頭の SDK binary verify で実施。
 
   // F6: Keychain プロファイル bridge 初期化 (skeleton)
   // 現状 skeleton のため "unsupported" モードで動作。F0:B-3 検証結果次第で

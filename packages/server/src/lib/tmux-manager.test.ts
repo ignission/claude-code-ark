@@ -17,7 +17,17 @@ vi.mock("nanoid", () => ({
   nanoid: vi.fn(() => "testid01"),
 }));
 
+// system.js をモック化して resolveTmuxPath / resolveClaudePath を決定論的にする
+// (実環境の PATH に依存して非決定的にならないように)。
+// resolveClaudePath は default で null を返し、tmux-manager 側の "claude" フォールバックが
+// 効くようにする。絶対パス挙動の検証は個別 test で mockReturnValue で上書きする。
+vi.mock("./system.js", () => ({
+  resolveTmuxPath: vi.fn(() => null),
+  resolveClaudePath: vi.fn(() => null),
+}));
+
 import { execSync, spawnSync } from "node:child_process";
+import { resolveClaudePath } from "./system.js";
 import { TmuxManager } from "./tmux-manager.js";
 
 const mockedSpawnSync = vi.mocked(spawnSync);
@@ -207,5 +217,81 @@ describe("TmuxManager.createSession - options互換", () => {
     const sendKeys = findCommandSendKeysArgs();
     if (!sendKeys) throw new Error("send-keys args not found");
     expect(sendKeys[3]).toBe("claude --dangerously-skip-permissions");
+  });
+
+  it("resolveClaudePath が絶対パスを返したら send-keys に POSIX single-quote 付きで渡る (issue #186)", async () => {
+    // .app 同梱 SDK の typical path を返すように mock を上書き
+    const bundledClaudePath =
+      "/Applications/Ark.app/Contents/Resources/app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude";
+    vi.mocked(resolveClaudePath).mockReturnValueOnce(bundledClaudePath);
+
+    await manager.createSession("/path/to/worktree");
+
+    const sendKeys = findCommandSendKeysArgs();
+    if (!sendKeys) throw new Error("send-keys args not found");
+    // POSIX single-quote で wrap した絶対パスがそのまま送られる
+    // ($, `, \, " 等の shell メタ文字解釈を完全に抑止するため double-quote ではなく single-quote)
+    expect(sendKeys[3]).toBe(`'${bundledClaudePath}'`);
+  });
+
+  it("空白を含むパス + skipPermissions=true で single-quote + フラグが付く (issue #186)", async () => {
+    // ~/Library/Application Support/... の空白を含むパスでも壊れないことを併せて確認
+    const bundledClaudePath =
+      "/Users/test/Library/Application Support/Ark/claude-runtime/bin/claude";
+    vi.mocked(resolveClaudePath).mockReturnValueOnce(bundledClaudePath);
+
+    manager.setSkipPermissions(true);
+    await manager.createSession("/path/to/worktree");
+
+    const sendKeys = findCommandSendKeysArgs();
+    if (!sendKeys) throw new Error("send-keys args not found");
+    expect(sendKeys[3]).toBe(
+      `'${bundledClaudePath}' --dangerously-skip-permissions`
+    );
+  });
+
+  it("パスに single-quote を含む場合は POSIX 流の '\\'' エスケープが入る (shell injection 防御)", async () => {
+    // 入力パス: /tmp/it's a/claude  →  '/tmp/it'\''s a/claude'
+    const trickyPath = "/tmp/it's a/claude";
+    vi.mocked(resolveClaudePath).mockReturnValueOnce(trickyPath);
+
+    await manager.createSession("/path/to/worktree");
+
+    const sendKeys = findCommandSendKeysArgs();
+    if (!sendKeys) throw new Error("send-keys args not found");
+    expect(sendKeys[3]).toBe("'/tmp/it'\\''s a/claude'");
+  });
+
+  it("resolveClaudePath が相対パスを返した場合はセッション作成自体を throw する (PATH 汚染への信頼境界拡張を拒否)", async () => {
+    // 旧実装は "claude" にフォールバックしていたが、これは PATH 信頼境界を広げて
+    // PATH 汚染時に意図しない claude を起動する余地を残す。
+    // resolver が非 null で invalid を返す = resolver 側のバグ or 攻撃可能性なので、
+    // セッション作成自体を fail-fast に倒す (codex P1 指摘対応)。
+    vi.mocked(resolveClaudePath).mockReturnValueOnce("./bin/claude");
+
+    await expect(manager.createSession("/path/to/worktree")).rejects.toThrow(
+      /non-absolute path/
+    );
+  });
+
+  it("resolveClaudePath が改行を含むパスを返した場合はセッション作成自体を throw する (shell injection 防御)", async () => {
+    vi.mocked(resolveClaudePath).mockReturnValueOnce("/tmp/evil\npwn/claude");
+
+    await expect(manager.createSession("/path/to/worktree")).rejects.toThrow(
+      /control char/
+    );
+  });
+
+  it.each([
+    ["NUL (\\x00)", "/tmp/x\x00claude"],
+    ["BS (\\x08)", "/tmp/x\x08claude"],
+    ["ESC (\\x1B)", "/tmp/x\x1bclaude"],
+    ["DEL (\\x7F)", "/tmp/x\x7fclaude"],
+  ])("resolveClaudePath が %s を含むパスを返した場合は throw (control char 一括拒否)", async (_label, evilPath) => {
+    vi.mocked(resolveClaudePath).mockReturnValueOnce(evilPath);
+
+    await expect(manager.createSession("/path/to/worktree")).rejects.toThrow(
+      /control char/
+    );
   });
 });
