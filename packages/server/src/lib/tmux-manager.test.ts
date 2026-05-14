@@ -292,4 +292,24 @@ describe("TmuxManager.createSession - options互換", () => {
     );
     warnSpy.mockRestore();
   });
+
+  it.each([
+    ["NUL (\\x00)", "/tmp/x\x00claude"],
+    ["BS (\\x08)", "/tmp/x\x08claude"],
+    ["ESC (\\x1B)", "/tmp/x\x1bclaude"],
+    ["DEL (\\x7F)", "/tmp/x\x7fclaude"],
+  ])("resolveClaudePath が %s を含むパスを返した場合は fallback (control char 一括拒否)", async (_label, evilPath) => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(resolveClaudePath).mockReturnValueOnce(evilPath);
+
+    await manager.createSession("/path/to/worktree");
+
+    const sendKeys = findCommandSendKeysArgs();
+    if (!sendKeys) throw new Error("send-keys args not found");
+    expect(sendKeys[3]).toBe("claude");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("control char")
+    );
+    warnSpy.mockRestore();
+  });
 });
