@@ -239,24 +239,12 @@ async function bootstrap(): Promise<void> {
       serverHandle ? `http://127.0.0.1:${serverHandle.port}/` : null,
   });
 
-  // F5: Claude CLI 自動インストール (skeleton)
-  // packaged 環境かつ未インストール時のみ実行。dev / unpackaged では skip。
-  // 失敗してもアプリ起動は継続させる方針 (system claude へのフォールバックは
-  // server 側の system.ts:resolveClaudePath() に委ねる)。
-  // F5-followup: onProgress を IPC で renderer に転送し、
-  // `ClaudeInstallProgressDialog.tsx` を表示する。
-  try {
-    const { installClaudeCli } = await import("./claude-installer.js");
-    await installClaudeCli({
-      onProgress: event => {
-        log.info("[Ark Desktop] claude-installer", event);
-        // F5-followup: mainWindow?.webContents.send("ark:claude-install-progress", event);
-      },
-    });
-  } catch (err) {
-    // installClaudeCli は内部で reject しない設計だが、防御的に catch。
-    log.error("[Ark Desktop] claude-installer threw", err);
-  }
+  // F5 (Claude CLI 自動インストール) は廃止 (issue #183 close, #186 で代替):
+  // SDK 付属の standalone claude binary が
+  // `app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude`
+  // に常に同梱されており、tmux send-keys 経路でも resolveClaudePath() 経由で
+  // 絶対パスで起動されるため、ユーザーへの追加 install (Node bundle + npm install)
+  // は不要になった。system claude へのフォールバックも resolveClaudePath() が担う。
 
   // F6: Keychain プロファイル bridge 初期化 (skeleton)
   // 現状 skeleton のため "unsupported" モードで動作。F0:B-3 検証結果次第で

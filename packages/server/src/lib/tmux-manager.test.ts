@@ -17,7 +17,17 @@ vi.mock("nanoid", () => ({
   nanoid: vi.fn(() => "testid01"),
 }));
 
+// system.js をモック化して resolveTmuxPath / resolveClaudePath を決定論的にする
+// (実環境の PATH に依存して非決定的にならないように)。
+// resolveClaudePath は default で null を返し、tmux-manager 側の "claude" フォールバックが
+// 効くようにする。絶対パス挙動の検証は個別 test で mockReturnValue で上書きする。
+vi.mock("./system.js", () => ({
+  resolveTmuxPath: vi.fn(() => null),
+  resolveClaudePath: vi.fn(() => null),
+}));
+
 import { execSync, spawnSync } from "node:child_process";
+import { resolveClaudePath } from "./system.js";
 import { TmuxManager } from "./tmux-manager.js";
 
 const mockedSpawnSync = vi.mocked(spawnSync);
@@ -207,5 +217,35 @@ describe("TmuxManager.createSession - options互換", () => {
     const sendKeys = findCommandSendKeysArgs();
     if (!sendKeys) throw new Error("send-keys args not found");
     expect(sendKeys[3]).toBe("claude --dangerously-skip-permissions");
+  });
+
+  it("resolveClaudePath が絶対パスを返したら send-keys に double-quote 付きで渡る (issue #186)", async () => {
+    // .app 同梱 SDK の typical path を返すように mock を上書き
+    const bundledClaudePath =
+      "/Applications/Ark.app/Contents/Resources/app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude";
+    vi.mocked(resolveClaudePath).mockReturnValueOnce(bundledClaudePath);
+
+    await manager.createSession("/path/to/worktree");
+
+    const sendKeys = findCommandSendKeysArgs();
+    if (!sendKeys) throw new Error("send-keys args not found");
+    // double-quote で wrap した絶対パスがそのまま送られる
+    expect(sendKeys[3]).toBe(`"${bundledClaudePath}"`);
+  });
+
+  it("resolveClaudePath が絶対パスを返した状態で skipPermissions=true なら quote 付きパス + フラグ (issue #186)", async () => {
+    // ~/Library/Application Support/... の空白を含むパスでも壊れないことを併せて確認
+    const bundledClaudePath =
+      "/Users/test/Library/Application Support/Ark/claude-runtime/bin/claude";
+    vi.mocked(resolveClaudePath).mockReturnValueOnce(bundledClaudePath);
+
+    manager.setSkipPermissions(true);
+    await manager.createSession("/path/to/worktree");
+
+    const sendKeys = findCommandSendKeysArgs();
+    if (!sendKeys) throw new Error("send-keys args not found");
+    expect(sendKeys[3]).toBe(
+      `"${bundledClaudePath}" --dangerously-skip-permissions`
+    );
   });
 });

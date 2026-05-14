@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import type { SpecialKey } from "@ark/shared";
 import { nanoid } from "nanoid";
-import { resolveTmuxPath } from "./system.js";
+import { resolveClaudePath, resolveTmuxPath } from "./system.js";
 
 // tmux 絶対パス (pm2/systemd で PATH に tmux が無くても動作させるため)。
 // 解決不能なら "tmux" にフォールバック (PATH依存)。
@@ -207,11 +207,23 @@ export class TmuxManager extends EventEmitter {
       : [];
 
     // 起動コマンド（commandLine が指定されていればそれを優先）
+    // claude binary は resolveClaudePath() で絶対パスを取得する。これにより:
+    //   - .app 配布で system PATH に claude が無い環境でも、同梱 SDK 付属の
+    //     claude (`app.asar.unpacked/node_modules/@anthropic-ai/.../claude`) を起動できる
+    //   - F5 (`<userData>/claude-runtime/bin/claude`) も自動的に優先される
+    //   - 解決できない場合は "claude" 文字列にフォールバック (PATH 解決を shell に委譲)
+    // 絶対パスは shell 内で空白文字を含む可能性に備えて double-quote で wrap する
+    // (Electron .app は `/Applications/Ark.app/...` のように空白は無いが、
+    //  ユーザ管理の `~/Library/Application Support/Ark/claude-runtime/...` には
+    //  Application Support の空白が含まれるため必須)。
+    const claudeBinary = resolveClaudePath() ?? "claude";
+    const claudeArg =
+      claudeBinary === "claude" ? "claude" : `"${claudeBinary}"`;
     const claudeCmd =
       options?.commandLine ??
       (this.skipPermissions
-        ? "claude --dangerously-skip-permissions"
-        : "claude");
+        ? `${claudeArg} --dangerously-skip-permissions`
+        : claudeArg);
 
     let tmuxCreated = false;
 
