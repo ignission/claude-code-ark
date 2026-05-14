@@ -28,44 +28,42 @@ function posixShellQuote(s: string): string {
 }
 
 /**
- * resolveClaudePath() の結果を tmux send-keys に渡す前段で検証し、
- * shell に渡す形 (絶対パス もしくは "claude" コマンドトークン) を返す。
+ * resolveClaudePath() の結果を tmux send-keys 用に検証する。
  *
  * 戻り値は以下のいずれか:
  *   - 検証通過した絶対パス (呼び出し側で posixShellQuote() するための原文字列)
- *   - "claude" (resolver が null、または検証失敗時の安全フォールバック。
- *     既存テスト互換性のため quote せず素のコマンドとして扱う想定)
+ *   - "claude" (resolver が null を返した = claude binary が見つからない正当な状態)
  *
- * 検証項目:
+ * 「resolver が非 null を返したが invalid」ケースは throw する:
+ *   resolver が壊れた値 (相対パス / 制御文字付きパス) を返した状態で
+ *   "claude" にフォールバックすると、信頼境界が PATH に広がり、PATH 汚染時に
+ *   意図しない claude を起動する。fail-fast でセッション作成を拒否する方が
+ *   セキュリティ + Assertive Programming として一貫している。
+ *
+ * 検証項目 (非 null path 入力時):
  *   - 絶対パス (path.isAbsolute) であること
  *   - 制御文字 (U+0000..U+001F, U+007F) を一切含まないこと
- *     POSIX path に formal には許される文字だが、`\n` `\r` `\0` は send-keys/shell
+ *     POSIX path に formal には許される文字だが、`\n` `\r` `\0` は send-keys / shell
  *     コマンド注入になり、`ESC` (0x1B) や `BS` / `DEL` は端末側で解釈されて
  *     入力行や terminal state を壊し得る。single-quote 済みでも readline 経路で
  *     脱出される余地があるため、全 control char を一律拒否する。
- *
- * 検証失敗時は console.warn でログを残し "claude" にフォールバックする。
- * resolver 側の逸脱が shell / terminal injection に発展するのを防ぎつつ、
- * silent fail も避ける。
  */
-function resolveClaudeCommandForShell(): string {
+function resolveValidatedClaudePath(): string {
   const resolved = resolveClaudePath();
   if (resolved === null) return "claude";
   if (!path.isAbsolute(resolved)) {
-    console.warn(
-      `[TmuxManager] resolveClaudePath returned non-absolute path: ${JSON.stringify(resolved)}, falling back to "claude"`
+    throw new Error(
+      `resolveClaudePath returned non-absolute path: ${JSON.stringify(resolved)}`
     );
-    return "claude";
   }
   // 全 ASCII 制御文字 (`\x00`-`\x1F` + `\x7F`) を一律拒否。
   // 個別列挙でなく範囲指定にすることで、将来も terminal / shell エスケープ
   // 経路を増やさないよう assertive に保つ。
   // biome-ignore lint/suspicious/noControlCharactersInRegex: shell/terminal injection 防御のため制御文字を明示拒否
   if (/[\x00-\x1F\x7F]/.test(resolved)) {
-    console.warn(
-      `[TmuxManager] resolveClaudePath returned path containing control char, falling back to "claude"`
+    throw new Error(
+      "resolveClaudePath returned path containing control char (rejected for shell/terminal injection safety)"
     );
-    return "claude";
   }
   return resolved;
 }
@@ -276,7 +274,7 @@ export class TmuxManager extends EventEmitter {
     // shell quoting は POSIX 互換の single-quote で wrap する: 全シェルで文字列内
     // のメタ文字解釈が止まるため、double-quote で `$` `` ` `` `\` `"` が解釈される
     // リスクを避けられる (codex P1 指摘対応)。
-    const claudeBinary = resolveClaudeCommandForShell();
+    const claudeBinary = resolveValidatedClaudePath();
     const claudeArg =
       claudeBinary === "claude" ? "claude" : posixShellQuote(claudeBinary);
     const claudeCmd =

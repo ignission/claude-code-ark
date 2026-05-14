@@ -207,6 +207,56 @@ function resolveWebStaticDir(): string | undefined {
 }
 
 async function bootstrap(): Promise<void> {
+  // === fail-fast 前提条件チェック (bootstrap 副作用前) ===
+  // 配布物不整合 (.app 同梱 SDK claude binary 欠落) は ここで検知する。
+  // installer 削除後は SDK 同梱が唯一の保証経路で、欠落していると tmux セッション
+  // 作成時まで障害が遅延する。さらに resolveClaudePath() が PATH 経由 system claude
+  // (ユーザーが別途入れた version) にフォールバックし、SDK と version が乖離した
+  // 状態で動く危険もある。配布物不整合 (asarUnpack ルール変更 / 取り込み漏れ /
+  // chmod 抜け) は配布側のバグなので、起動時点で確実に検知 + ユーザー通知する。
+  // dev / unpackaged モードでは SDK binary は存在しないので skip。
+  //
+  // 配置: tray / menu / server を起こす前に置くことで、半初期化状態を作らない
+  // (codex P1 指摘対応)。
+  if (app.isPackaged) {
+    const sdkBinaryPath = path.join(
+      process.resourcesPath,
+      "app.asar.unpacked",
+      "node_modules",
+      "@anthropic-ai",
+      `claude-agent-sdk-${process.platform}-${process.arch}`,
+      "claude"
+    );
+    try {
+      const stat = fs.statSync(sdkBinaryPath);
+      if (!stat.isFile()) {
+        throw new Error(
+          `bundled SDK claude binary is not a regular file: ${sdkBinaryPath}`
+        );
+      }
+      // X_OK: chmod 抜けや権限ビットの誤りも検知する。
+      fs.accessSync(sdkBinaryPath, fs.constants.X_OK);
+      log.info(
+        `[Ark Desktop] bundled SDK claude binary verified: ${sdkBinaryPath}`
+      );
+    } catch (err) {
+      log.error(
+        `[Ark Desktop] bundled SDK claude binary missing or not executable at ${sdkBinaryPath}:`,
+        err
+      );
+      try {
+        const { dialog } = await import("electron");
+        dialog.showErrorBox(
+          "Ark: bundled Claude CLI が見つかりません",
+          `配布物の取り込み漏れが疑われます。Ark.app の再インストールをお試しください。\n\n参照パス: ${sdkBinaryPath}\n\n詳細はログを確認してください。`
+        );
+      } catch {
+        // dialog 表示自体に失敗しても fail-fast 自体は継続する
+      }
+      throw err;
+    }
+  }
+
   // F8: preload から外部 URL 起動を受け取って shell.openExternal に委譲する。
   // 同一 channel は重複登録不可のため、idempotent に register。
   ipcMain.handle("ark:open-external", async (_event, url: string) => {
@@ -245,55 +295,7 @@ async function bootstrap(): Promise<void> {
   // `app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude`
   // に常に同梱されており、tmux send-keys 経路でも resolveClaudePath() 経由で
   // 絶対パスで起動されるため、ユーザーへの追加 install (Node bundle + npm install)
-  // は不要になった。system claude へのフォールバックも resolveClaudePath() が担う。
-  //
-  // bootstrap 時 verify: packaged 環境で SDK binary が無ければ fail-fast する。
-  // installer 削除後は SDK 同梱が唯一の保証経路で、欠落していると tmux セッション
-  // 作成時まで障害が遅延する。さらに resolveClaudePath() が PATH 経由 system claude
-  // (ユーザーが別途入れた version) にフォールバックし、SDK と version が乖離した
-  // 状態で動く危険もある。配布物不整合 (asarUnpack ルール変更 / 取り込み漏れ /
-  // chmod 抜け) は配布側のバグなので、起動時点で確実に検知 + ユーザー通知する。
-  // dev / unpackaged モードでは SDK binary は存在しないので skip。
-  if (app.isPackaged) {
-    const sdkBinaryPath = path.join(
-      process.resourcesPath,
-      "app.asar.unpacked",
-      "node_modules",
-      "@anthropic-ai",
-      `claude-agent-sdk-${process.platform}-${process.arch}`,
-      "claude"
-    );
-    try {
-      const stat = fs.statSync(sdkBinaryPath);
-      if (!stat.isFile()) {
-        throw new Error(
-          `bundled SDK claude binary is not a regular file: ${sdkBinaryPath}`
-        );
-      }
-      // X_OK: chmod 抜けや権限ビットの誤りも検知する。
-      fs.accessSync(sdkBinaryPath, fs.constants.X_OK);
-      log.info(
-        `[Ark Desktop] bundled SDK claude binary verified: ${sdkBinaryPath}`
-      );
-    } catch (err) {
-      // packaged 時の SDK 欠落は配布物バグ。起動を止めて再インストールを促す。
-      // electron の dialog を使ってユーザーに通知してから throw する。
-      log.error(
-        `[Ark Desktop] bundled SDK claude binary missing or not executable at ${sdkBinaryPath}:`,
-        err
-      );
-      try {
-        const { dialog } = await import("electron");
-        dialog.showErrorBox(
-          "Ark: bundled Claude CLI が見つかりません",
-          `配布物の取り込み漏れが疑われます。Ark.app の再インストールをお試しください。\n\n参照パス: ${sdkBinaryPath}\n\n詳細はログを確認してください。`
-        );
-      } catch {
-        // dialog 表示自体に失敗しても fail-fast 自体は継続する
-      }
-      throw err;
-    }
-  }
+  // は不要になった。配布物不整合の早期検知は bootstrap 冒頭の SDK binary verify で実施。
 
   // F6: Keychain プロファイル bridge 初期化 (skeleton)
   // 現状 skeleton のため "unsupported" モードで動作。F0:B-3 検証結果次第で

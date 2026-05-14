@@ -262,35 +262,24 @@ describe("TmuxManager.createSession - options互換", () => {
     expect(sendKeys[3]).toBe("'/tmp/it'\\''s a/claude'");
   });
 
-  it('resolveClaudePath が相対パスを返した場合は fallback して "claude" になる (assertive guard)', async () => {
-    // 相対パスは shell コンテキストでは予期しない解決経路に乗るため、assert で弾く
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("resolveClaudePath が相対パスを返した場合はセッション作成自体を throw する (PATH 汚染への信頼境界拡張を拒否)", async () => {
+    // 旧実装は "claude" にフォールバックしていたが、これは PATH 信頼境界を広げて
+    // PATH 汚染時に意図しない claude を起動する余地を残す。
+    // resolver が非 null で invalid を返す = resolver 側のバグ or 攻撃可能性なので、
+    // セッション作成自体を fail-fast に倒す (codex P1 指摘対応)。
     vi.mocked(resolveClaudePath).mockReturnValueOnce("./bin/claude");
 
-    await manager.createSession("/path/to/worktree");
-
-    const sendKeys = findCommandSendKeysArgs();
-    if (!sendKeys) throw new Error("send-keys args not found");
-    expect(sendKeys[3]).toBe("claude");
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("non-absolute path")
+    await expect(manager.createSession("/path/to/worktree")).rejects.toThrow(
+      /non-absolute path/
     );
-    warnSpy.mockRestore();
   });
 
-  it('resolveClaudePath が改行を含むパスを返した場合は fallback して "claude" になる (shell injection 防御)', async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("resolveClaudePath が改行を含むパスを返した場合はセッション作成自体を throw する (shell injection 防御)", async () => {
     vi.mocked(resolveClaudePath).mockReturnValueOnce("/tmp/evil\npwn/claude");
 
-    await manager.createSession("/path/to/worktree");
-
-    const sendKeys = findCommandSendKeysArgs();
-    if (!sendKeys) throw new Error("send-keys args not found");
-    expect(sendKeys[3]).toBe("claude");
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("control char")
+    await expect(manager.createSession("/path/to/worktree")).rejects.toThrow(
+      /control char/
     );
-    warnSpy.mockRestore();
   });
 
   it.each([
@@ -298,18 +287,11 @@ describe("TmuxManager.createSession - options互換", () => {
     ["BS (\\x08)", "/tmp/x\x08claude"],
     ["ESC (\\x1B)", "/tmp/x\x1bclaude"],
     ["DEL (\\x7F)", "/tmp/x\x7fclaude"],
-  ])("resolveClaudePath が %s を含むパスを返した場合は fallback (control char 一括拒否)", async (_label, evilPath) => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  ])("resolveClaudePath が %s を含むパスを返した場合は throw (control char 一括拒否)", async (_label, evilPath) => {
     vi.mocked(resolveClaudePath).mockReturnValueOnce(evilPath);
 
-    await manager.createSession("/path/to/worktree");
-
-    const sendKeys = findCommandSendKeysArgs();
-    if (!sendKeys) throw new Error("send-keys args not found");
-    expect(sendKeys[3]).toBe("claude");
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("control char")
+    await expect(manager.createSession("/path/to/worktree")).rejects.toThrow(
+      /control char/
     );
-    warnSpy.mockRestore();
   });
 });
