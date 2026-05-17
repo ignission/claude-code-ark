@@ -290,6 +290,11 @@ export class TmuxManager extends EventEmitter {
       // -e で環境変数をシェルに直接渡す（set-environmentと異なり即座に反映）
       // CLAUDECODE を空にしてネストされたセッション検出を回避
       // CLAUDE_CODE_NO_FLICKER=1 でttydフリッカー抑制
+      // NODE_ENV を空文字でリセットして、Ark を PM2 で起動した際の
+      // NODE_ENV=production が子セッション (claude → shell → pnpm 等) に
+      // 継承されるのを防ぐ。Storybook dev mode 等が development 前提で
+      // 動作するため、production が継承されると DefinePlugin の NODE_ENV
+      // conflict 等で React Refresh が壊れる ($RefreshSig$ is not defined)
       const newSessionResult = spawnSync(
         TMUX_BINARY_PATH,
         [
@@ -303,6 +308,8 @@ export class TmuxManager extends EventEmitter {
           "CLAUDECODE=",
           "-e",
           "CLAUDE_CODE_NO_FLICKER=1",
+          "-e",
+          "NODE_ENV=",
           ...extraEnvArgs,
         ],
         { stdio: "pipe" }
