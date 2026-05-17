@@ -118,6 +118,8 @@ describe("TmuxManager.createSession - options互換", () => {
       "CLAUDECODE=",
       "-e",
       "CLAUDE_CODE_NO_FLICKER=1",
+      "-e",
+      "NODE_ENV=",
     ]);
 
     // send-keysにclaudeが渡される
@@ -160,6 +162,29 @@ describe("TmuxManager.createSession - options互換", () => {
     // 各 KEY=VALUE の直前は -e
     expect(args[fooIdx - 1]).toBe("-e");
     expect(args[bazIdx - 1]).toBe("-e");
+  });
+
+  it("NODE_ENV= でリセットされ、options.env で明示上書きすれば last-wins で反映される", async () => {
+    // tmux の -e は同じキーが複数指定された場合 last-wins で評価される (man tmux)。
+    // デフォルトでベースの -e NODE_ENV= (空文字) が入り、その後ろに
+    // 利用者が options.env で NODE_ENV=test を指定した場合は last-wins で test が
+    // 採用される。これにより、特殊なテスト用セッションでは値を上書きできる。
+    await manager.createSession("/path/to/worktree", {
+      env: { NODE_ENV: "test" },
+    });
+
+    const args = findNewSessionArgs();
+    if (!args) throw new Error("new-session args not found");
+
+    // ベースの -e NODE_ENV= が含まれる
+    const baseNodeEnvIdx = args.indexOf("NODE_ENV=");
+    expect(baseNodeEnvIdx).toBeGreaterThan(-1);
+    expect(args[baseNodeEnvIdx - 1]).toBe("-e");
+
+    // 利用者指定の -e NODE_ENV=test が後に追加される
+    const overrideIdx = args.indexOf("NODE_ENV=test");
+    expect(overrideIdx).toBeGreaterThan(baseNodeEnvIdx);
+    expect(args[overrideIdx - 1]).toBe("-e");
   });
 
   it("options.namePrefix でセッション名のプレフィックスが変わる", async () => {
