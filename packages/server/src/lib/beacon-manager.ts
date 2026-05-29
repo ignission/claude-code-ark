@@ -29,7 +29,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { BeaconStreamChunk, ChatMessage, SpecialKey } from "@ark/shared";
 import { ArkMcpServer } from "./ark-mcp-server.js";
 import { db } from "./database.js";
@@ -651,11 +651,14 @@ export class BeaconManager extends EventEmitter {
     // cwd は中立ディレクトリ (§getBeaconCwd) なので、登録リポジトリ / worktree への
     // Read/Grep/Glob アクセスは --add-dir で明示許可する必要がある。
     // - 登録 repo パス (HOME 外 /srv,/opt 等もあり得る)
-    // - 各 repo の全 worktree パス + その親ディレクトリ。create_worktree は git root の
-    //   *兄弟* (`dirname(gitRoot)/<repoName>-<branch>`) に worktree を作るため、worktree
-    //   の親 = sibling 置き場を加えることで、既存だけでなく **同一ターン内で新規作成
-    //   される worktree** も Read/Grep/Glob できる (snapshot 漏れを防ぐ)。main worktree
-    //   のパス = git root なので nested 登録時の root も自然にカバーする。
+    // - 各 repo の全 worktree パス (実パスのみ)。create_worktree は git root の兄弟
+    //   (`dirname(gitRoot)/<repoName>-<branch>`) に作るため、main worktree (=git root) と
+    //   linked worktree の実パスを列挙して許可する。main worktree のパス = git root なので
+    //   nested 登録時の root も自然にカバーする。
+    //   注: 親ディレクトリ (dirname) は **加えない**。加えると兄弟全体 (最悪 `/`) への
+    //   Read/Grep/Glob を過剰付与してしまう。同一ターン内で新規作成した worktree は次
+    //   ターンで列挙されるまで対象外 (タスク着手フローは新 worktree を別 session に委譲し、
+    //   Beacon ターン内で直接 Read しないため実害は小さい)。
     const repos = deps
       .getRepos()
       .filter(p => typeof p === "string" && p && existsSync(p));
@@ -671,9 +674,6 @@ export class BeaconManager extends EventEmitter {
       for (const wt of worktrees) {
         if (typeof wt?.path === "string" && wt.path && existsSync(wt.path)) {
           addDirs.add(wt.path);
-          // sibling 置き場 (= dirname(gitRoot)) を加えて将来の worktree もカバー
-          const parent = dirname(wt.path);
-          if (parent && existsSync(parent)) addDirs.add(parent);
         }
       }
     } catch (err) {
@@ -1220,6 +1220,15 @@ export class BeaconManager extends EventEmitter {
           } satisfies BeaconStreamChunk);
           reject(new Error(errMsg));
         });
+      });
+
+      // stdin の error (claude が即終了した場合の EPIPE 等) を握る。リスナーが無いと
+      // 'error' が uncaught exception になり Ark サーバ全体を落とす。ターンの成否は
+      // child の close/error ハンドラが決めるので、ここではログのみ。
+      child.stdin?.on("error", err => {
+        console.warn(
+          `[BeaconManager] stdin 書き込みエラー (無視): ${getErrorMessage(err)}`
+        );
       });
 
       // user メッセージ 1 件を stdin に書いて EOF。claude は応答後に終了する。

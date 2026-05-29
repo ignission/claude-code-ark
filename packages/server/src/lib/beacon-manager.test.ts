@@ -54,10 +54,14 @@ const mockedSpawn = vi.mocked(spawn);
 const mockedBuildExternal = vi.mocked(buildAuthenticatedExternalMcps);
 
 /** fake な claude 子プロセス (EventEmitter + stdout/stderr/stdin) */
+interface FakeStdin extends EventEmitter {
+  write: (s: string, cb?: () => void) => boolean;
+  end: () => void;
+}
 interface FakeChild extends EventEmitter {
   stdout: EventEmitter;
   stderr: EventEmitter;
-  stdin: { write: (s: string, cb?: () => void) => boolean; end: () => void };
+  stdin: FakeStdin;
   kill: (signal?: string) => boolean;
   killed: boolean;
 }
@@ -75,13 +79,13 @@ function makeFakeChild(): FakeChild {
   const child = new EventEmitter() as FakeChild;
   child.stdout = makeStreamEmitter();
   child.stderr = makeStreamEmitter();
-  child.stdin = {
-    write: (_s: string, cb?: () => void) => {
-      cb?.();
-      return true;
-    },
-    end: vi.fn(),
+  const stdin = new EventEmitter() as FakeStdin;
+  stdin.write = (_s: string, cb?: () => void) => {
+    cb?.();
+    return true;
   };
+  stdin.end = vi.fn();
+  child.stdin = stdin;
   child.killed = false;
   child.kill = vi.fn((_signal?: string) => {
     child.killed = true;
@@ -321,6 +325,31 @@ describe("BeaconManager (CLI stream-json)", () => {
     await beaconManager.sendMessage("second");
     const args2 = mockedSpawn.mock.calls[1]?.[1] as string[];
     expect(args2).not.toContain("mcp__jira-1__*");
+  });
+
+  it("stdin の error (EPIPE 等) を握りつぶしクラッシュさせない", async () => {
+    const child = makeFakeChild();
+    mockedSpawn.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        // claude が即終了して stdin write が EPIPE になる状況を再現
+        child.stdin.emit("error", new Error("write EPIPE"));
+        child.stdout.emit(
+          "data",
+          `${initLine("sid-p")}\n${assistantLine("ok")}\n${resultLine("ok")}\n`
+        );
+        child.emit("close", 0);
+      });
+      return child as unknown as ReturnType<typeof spawn>;
+    });
+
+    const messages: string[] = [];
+    beaconManager.on("beacon:message", m => {
+      if (m.role === "assistant") messages.push(m.content);
+    });
+
+    // stdin error が uncaught にならず、turn は正常に解決する
+    await expect(beaconManager.sendMessage("test")).resolves.toBeUndefined();
+    expect(messages).toContain("ok");
   });
 
   it("既存 cliSessionId があれば spawn 引数に --resume が含まれる", async () => {
