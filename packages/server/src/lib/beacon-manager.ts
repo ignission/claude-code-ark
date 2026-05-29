@@ -29,7 +29,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { BeaconStreamChunk, ChatMessage, SpecialKey } from "@ark/shared";
 import { ArkMcpServer } from "./ark-mcp-server.js";
 import { db } from "./database.js";
@@ -648,30 +648,37 @@ export class BeaconManager extends EventEmitter {
       systemPrompt += `\n\n## 重要: 司令塔ツールが利用できません\n\n現在 Ark の MCP server に接続できないため、リポジトリ/worktree/セッション管理系の\nツール (list_repositories, list_sessions, start_session, create_worktree, gh_exec,\nget_system_status 等) は **すべて利用できません**。これらを使うコマンド (進捗確認 /\nタスク着手 / 判断 / ホスト確認 / PR URL 等) は実行できない旨をユーザに伝え、Ark の\n再起動を案内してください。Read/Grep/Glob と接続済み外部 MCP のみ利用できます。`;
     }
 
-    // cwd は中立ディレクトリ (後述 §cwd) なので、登録リポジトリ / worktree への
+    // cwd は中立ディレクトリ (§getBeaconCwd) なので、登録リポジトリ / worktree への
     // Read/Grep/Glob アクセスは --add-dir で明示許可する必要がある。
     // - 登録 repo パス (HOME 外 /srv,/opt 等もあり得る)
-    // - 各 repo の全 worktree パス。create_worktree は repo root の *兄弟* (例
-    //   /repo-feature) に worktree を作るため、list_worktrees / create_worktree が
-    //   返す worktreePath は getRepos() の外にある。これを含めないと Phase 1b の
-    //   `Read <worktreePath>/CLAUDE.md` や worktree 内検査が拒否される。
-    //   (main worktree のパス = git root なので nested 登録時の root も自然にカバー)
+    // - 各 repo の全 worktree パス + その親ディレクトリ。create_worktree は git root の
+    //   *兄弟* (`dirname(gitRoot)/<repoName>-<branch>`) に worktree を作るため、worktree
+    //   の親 = sibling 置き場を加えることで、既存だけでなく **同一ターン内で新規作成
+    //   される worktree** も Read/Grep/Glob できる (snapshot 漏れを防ぐ)。main worktree
+    //   のパス = git root なので nested 登録時の root も自然にカバーする。
     const repos = deps
       .getRepos()
       .filter(p => typeof p === "string" && p && existsSync(p));
     const addDirs = new Set<string>(repos);
     try {
-      const worktrees = (await deps.listAllWorktrees(repos)) as Array<{
-        path?: unknown;
-      }>;
+      // listAllWorktrees は git worktree list を shell out する。dead mount / wedged
+      // git で send が無限 wedge しない (activeChild 未生成で interrupt 不可) よう timeout。
+      const worktrees = (await withTimeout(
+        deps.listAllWorktrees(repos),
+        EXTERNAL_MCP_REFRESH_TIMEOUT_MS,
+        "listAllWorktrees"
+      )) as Array<{ path?: unknown }>;
       for (const wt of worktrees) {
         if (typeof wt?.path === "string" && wt.path && existsSync(wt.path)) {
           addDirs.add(wt.path);
+          // sibling 置き場 (= dirname(gitRoot)) を加えて将来の worktree もカバー
+          const parent = dirname(wt.path);
+          if (parent && existsSync(parent)) addDirs.add(parent);
         }
       }
     } catch (err) {
       console.warn(
-        `[BeaconManager] worktree 一覧の取得に失敗 (--add-dir はrepoのみ): ${getErrorMessage(err)}`
+        `[BeaconManager] worktree 一覧の取得に失敗/タイムアウト (--add-dir はrepoのみ): ${getErrorMessage(err)}`
       );
     }
 
