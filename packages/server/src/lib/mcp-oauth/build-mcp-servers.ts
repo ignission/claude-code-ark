@@ -1,10 +1,9 @@
 /**
- * Beacon の query() に渡す mcpServers Record を構築する。
+ * Beacon の claude CLI に渡す `--mcp-config` 用の外部 MCP server 定義を構築する。
  *
- * ark-beacon (in-process カスタム tool) に加え、認証済みの全 connection を
- * `{ type: 'http', url, headers: { Authorization: Bearer ... } }` で混ぜ込む。
- * 同じ provider に複数 connection があれば全部別 MCP server として登録される
- * (マルチアカウント対応)。SDK MCP server name = connection.id。
+ * 認証済みの全 connection を `{ type: 'http'|'sse', url, headers: { Authorization:
+ * Bearer ... } }` で返す。同じ provider に複数 connection があれば全部別 MCP server
+ * として登録される (マルチアカウント対応)。MCP server name = connection.id。
  */
 
 import { db } from "../database.js";
