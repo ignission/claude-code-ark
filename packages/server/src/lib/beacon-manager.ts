@@ -36,6 +36,7 @@ import { db } from "./database.js";
 import { getErrorMessage } from "./errors.js";
 import {
   buildAuthenticatedExternalMcps,
+  type ExternalMcpEntry,
   type McpServerHttpConfig,
 } from "./mcp-oauth/build-mcp-servers.js";
 import { getDataDir } from "./paths.js";
@@ -363,6 +364,12 @@ export class BeaconManager extends EventEmitter {
   /** 現在実行中ターンの claude 子プロセス (closeSession/stop で kill する) */
   private activeChild: ChildProcess | null = null;
   /**
+   * 直近成功した外部 OAuth MCP 接続のスナップショット。
+   * buildAuthenticatedExternalMcps が一時的に失敗したターンで、全 provider が
+   * 消えないよう last-known-good として再利用する。
+   */
+  private lastExternalMcps: ExternalMcpEntry[] = [];
+  /**
    * ターンを直列化するための mutex。
    * メッセージ毎に claude を --resume で起動するため、同じ会話に対して
    * 2 つの claude を同時に走らせると会話履歴が壊れる。前ターンの完了 (プロセス
@@ -511,38 +518,45 @@ export class BeaconManager extends EventEmitter {
       );
     }
 
+    // 認証済み外部 OAuth MCP を取得する。一時的な失敗 (OAuth refresh の瞬断 / DB
+    // hiccup 等) で全 provider が消えると、ターン毎再構築の本方式では Jira/Linear 等が
+    // 突然使えなくなる。直近成功分 (lastExternalMcps) を保持し、失敗時はそれを再利用する。
+    let externalMcps: ExternalMcpEntry[];
+    try {
+      externalMcps = await buildAuthenticatedExternalMcps();
+      this.lastExternalMcps = externalMcps;
+    } catch (err) {
+      externalMcps = this.lastExternalMcps;
+      console.warn(
+        `[BeaconManager] 外部 MCP server の構築に失敗 (直近成功分 ${externalMcps.length} 件を再利用): ${getErrorMessage(err)}`
+      );
+    }
+
     const externalAllowedTools: string[] = [];
     /** モデルへ案内するための connection 一覧 (system prompt 末尾に注入) */
     const connectionHints: string[] = [];
-    try {
-      const externalMcps = await buildAuthenticatedExternalMcps();
-      // provider 制御の文字列 (label / accountHint) を systemPrompt に注入する前に
-      // サニタイズする (ユーザの rename / provider 管理者による prompt injection 抑制)。
-      const stripControl = (s: string, maxLen: number) =>
-        s
-          .replace(/[\x00-\x1f\x7f]/g, " ")
-          .replace(/\s+/g, " ")
-          .trim()
-          .slice(0, maxLen);
-      for (const entry of externalMcps) {
-        mcpServers[entry.connectionId] = entry.config;
-        // 認証済み外部 MCP は全 tool を `mcp__<connectionId>__*` で許可
-        externalAllowedTools.push(`mcp__${entry.connectionId}__*`);
-        const safeLabel = stripControl(entry.label, 60);
-        const safeHint = entry.accountHint
-          ? stripControl(entry.accountHint, 1024)
-          : "";
-        const base = `- ${safeLabel} (provider=${entry.providerId}, prefix=mcp__${entry.connectionId}__)`;
-        connectionHints.push(safeHint ? `${base}\n  ${safeHint}` : base);
-      }
-      if (externalMcps.length > 0) {
-        console.log(
-          `[BeaconManager] 外部 MCP server を ${externalMcps.length} 件接続: ${externalMcps.map(e => `${e.label}(${e.connectionId})`).join(", ")}`
-        );
-      }
-    } catch (err) {
-      console.warn(
-        `[BeaconManager] 外部 MCP server の構築に失敗: ${getErrorMessage(err)}`
+    // provider 制御の文字列 (label / accountHint) を systemPrompt に注入する前に
+    // サニタイズする (ユーザの rename / provider 管理者による prompt injection 抑制)。
+    const stripControl = (s: string, maxLen: number) =>
+      s
+        .replace(/[\x00-\x1f\x7f]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, maxLen);
+    for (const entry of externalMcps) {
+      mcpServers[entry.connectionId] = entry.config;
+      // 認証済み外部 MCP は全 tool を `mcp__<connectionId>__*` で許可
+      externalAllowedTools.push(`mcp__${entry.connectionId}__*`);
+      const safeLabel = stripControl(entry.label, 60);
+      const safeHint = entry.accountHint
+        ? stripControl(entry.accountHint, 1024)
+        : "";
+      const base = `- ${safeLabel} (provider=${entry.providerId}, prefix=mcp__${entry.connectionId}__)`;
+      connectionHints.push(safeHint ? `${base}\n  ${safeHint}` : base);
+    }
+    if (externalMcps.length > 0) {
+      console.log(
+        `[BeaconManager] 外部 MCP server を ${externalMcps.length} 件接続: ${externalMcps.map(e => `${e.label}(${e.connectionId})`).join(", ")}`
       );
     }
 
@@ -808,6 +822,9 @@ export class BeaconManager extends EventEmitter {
         "Read",
         "Grep",
         "Glob",
+        // host 導入の skill / slash command を無効化する。--tools は built-in tool 集合を
+        // 絞るが、skill (/skill-name) は別経路で resolve されるため明示的に無効化する。
+        "--disable-slash-commands",
         // 権限モードを明示固定する (旧 SDK の permissionMode:"default" 相当)。
         // operator の Claude Code 設定 (plan / acceptEdits 等) を継承すると、Beacon が
         // ツールを呼べなくなったり逆に過剰な権限を得たりするため、毎ターン default に固定。

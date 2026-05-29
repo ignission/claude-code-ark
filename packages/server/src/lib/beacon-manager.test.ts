@@ -241,6 +241,30 @@ describe("BeaconManager (CLI stream-json)", () => {
     expect(messages).toContain("正常応答");
   });
 
+  it("外部MCP取得が一時失敗しても直近成功分を再利用する", async () => {
+    const jiraEntry = {
+      connectionId: "jira-1",
+      label: "Jira",
+      providerId: "atlassian",
+      config: { type: "http" as const, url: "https://jira.example/mcp" },
+    };
+    // turn1: 成功 (キャッシュされる)
+    mockedBuildExternal.mockResolvedValueOnce([jiraEntry]);
+    programChild([initLine("sid-1"), assistantLine("ok"), resultLine("ok")]);
+    await beaconManager.sendMessage("first");
+    const args1 = mockedSpawn.mock.calls[0]?.[1] as string[];
+    expect(args1).toContain("mcp__jira-1__*");
+
+    // turn2: 取得失敗 → 直近成功分 (jira-1) を再利用する
+    mockedBuildExternal.mockRejectedValueOnce(
+      new Error("transient OAuth fail")
+    );
+    programChild([initLine("sid-1"), assistantLine("ok2"), resultLine("ok2")]);
+    await beaconManager.sendMessage("second");
+    const args2 = mockedSpawn.mock.calls[1]?.[1] as string[];
+    expect(args2).toContain("mcp__jira-1__*");
+  });
+
   it("ArkMcpServer 起動失敗時も ark-beacon ツール無しでチャット継続する", async () => {
     arkStartMock.mockRejectedValueOnce(new Error("EPERM: listen denied"));
     programChild([initLine("sid-d"), assistantLine("ok"), resultLine("ok")]);
