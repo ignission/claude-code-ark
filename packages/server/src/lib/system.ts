@@ -118,8 +118,19 @@ function existsInVersionedDirs(baseDir: string, suffix: string): boolean {
  * (実際に install / 存在する方だけが解決される)。
  */
 export function claudeCodePlatformPkgNames(): string[] {
-  const base = `claude-code-${process.platform}-${process.arch}`;
-  return process.platform === "linux" ? [base, `${base}-musl`] : [base];
+  const { platform, arch } = process;
+  if (platform === "darwin") {
+    // Apple Silicon を x64 Node/Electron (Rosetta) で動かすと process.arch=x64 になるが、
+    // claude-code は darwin-arm64 を install する (x64 バイナリは Apple Silicon で動かない)。
+    // arm64 を優先候補にし、実際に install された方を解決する。Intel Mac では arm64 が
+    // 未 install なので x64 にフォールバックする。
+    return ["claude-code-darwin-arm64", "claude-code-darwin-x64"];
+  }
+  if (platform === "linux") {
+    const base = `claude-code-linux-${arch}`;
+    return [base, `${base}-musl`];
+  }
+  return [`claude-code-${platform}-${arch}`];
 }
 
 /** path が spawn 可能な実行ファイル (存在 + 通常ファイル + X_OK) なら返す。でなければ null */

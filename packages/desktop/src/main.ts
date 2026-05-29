@@ -219,11 +219,20 @@ async function bootstrap(): Promise<void> {
   // 配置: tray / menu / server を起こす前に置くことで、半初期化状態を作らない
   // (codex P1 指摘対応)。
   if (app.isPackaged) {
-    // glibc / musl (Alpine) で platform パッケージ名が異なるため両候補を確認する。
-    // electron-builder の smartUnpack で install 済みの方だけが存在する。
-    const base = `claude-code-${process.platform}-${process.arch}`;
+    // platform パッケージ名の候補。install 済みの方だけが存在する。
+    // - linux: glibc / musl (Alpine) で名前が異なるため両方
+    // - darwin: Rosetta (Apple Silicon を x64 で実行) では process.arch=x64 でも
+    //   claude-code は darwin-arm64 を使うため arm64 優先で両 arch を確認
+    // (system.ts:claudeCodePlatformPkgNames と同一ロジック)
     const pkgNames =
-      process.platform === "linux" ? [base, `${base}-musl`] : [base];
+      process.platform === "darwin"
+        ? ["claude-code-darwin-arm64", "claude-code-darwin-x64"]
+        : process.platform === "linux"
+          ? [
+              `claude-code-linux-${process.arch}`,
+              `claude-code-linux-${process.arch}-musl`,
+            ]
+          : [`claude-code-${process.platform}-${process.arch}`];
     const nmDir = path.join(
       process.resourcesPath,
       "app.asar.unpacked",
