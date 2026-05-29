@@ -282,6 +282,47 @@ describe("BeaconManager (CLI stream-json)", () => {
     expect(sysPrompt).toContain("司令塔ツールが利用できません");
   });
 
+  it("子プロセスの env から CLAUDECODE / CLAUDE_CONFIG_DIR を unset する", async () => {
+    process.env.CLAUDECODE = "1";
+    process.env.CLAUDE_CONFIG_DIR = "/some/profile/dir";
+    try {
+      programChild([initLine("sid-e"), assistantLine("ok"), resultLine("ok")]);
+      await beaconManager.sendMessage("test");
+      const opts = mockedSpawn.mock.calls[0]?.[2] as {
+        env?: NodeJS.ProcessEnv;
+      };
+      // nested 検出回避 + 誤プロファイル回避のため両方 unset (undefined)
+      expect(opts.env?.CLAUDECODE).toBeUndefined();
+      expect(opts.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
+    } finally {
+      process.env.CLAUDECODE = undefined;
+      process.env.CLAUDE_CONFIG_DIR = undefined;
+    }
+  });
+
+  it("markMcpConfigStale は外部MCPキャッシュを無効化する (disconnect後にstale token再露出しない)", async () => {
+    const jiraEntry = {
+      connectionId: "jira-1",
+      label: "Jira",
+      providerId: "atlassian",
+      config: { type: "http" as const, url: "https://jira.example/mcp" },
+    };
+    // turn1: 成功してキャッシュ
+    mockedBuildExternal.mockResolvedValueOnce([jiraEntry]);
+    programChild([initLine("sid-1"), assistantLine("ok"), resultLine("ok")]);
+    await beaconManager.sendMessage("first");
+
+    // disconnect 相当: キャッシュを無効化
+    beaconManager.markMcpConfigStale();
+
+    // turn2: 取得失敗 → だがキャッシュは無効化済みなので jira を再利用しない
+    mockedBuildExternal.mockRejectedValueOnce(new Error("transient"));
+    programChild([initLine("sid-1"), assistantLine("ok2"), resultLine("ok2")]);
+    await beaconManager.sendMessage("second");
+    const args2 = mockedSpawn.mock.calls[1]?.[1] as string[];
+    expect(args2).not.toContain("mcp__jira-1__*");
+  });
+
   it("既存 cliSessionId があれば spawn 引数に --resume が含まれる", async () => {
     dbMock.getSetting.mockReturnValue("existing-sid");
     programChild([

@@ -918,6 +918,16 @@ export class BeaconManager extends EventEmitter {
       // --allowedTools は variadic。後続に別フラグが来ないよう最後に置く。
       args.push("--allowedTools", ...opts.allowedTools);
 
+      // 子 claude に渡す env を sanitize する (tmux-manager / usage-collector と同様)。
+      // - NODE_ENV: PM2 の production が claude→shell→pnpm 等に伝播するのを防ぐため空に
+      // - CLAUDECODE: Ark を既存 claude セッション内から起動した場合の nested 検出を回避
+      //   (これが残ると Beacon の子 claude が起動/応答に失敗し得る)
+      // - CLAUDE_CONFIG_DIR: プロファイル固有 config を継承すると Beacon が誤アカウントで
+      //   動くため削除しデフォルトプロファイルで動かす (空文字は claude を壊すので unset)
+      const childEnv: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "" };
+      childEnv.CLAUDECODE = undefined;
+      childEnv.CLAUDE_CONFIG_DIR = undefined;
+
       const child = spawn(claudeBin, args, {
         // cwd は HOME ではなく専用の中立ディレクトリにする。HOME を cwd にすると
         // claude が `~/CLAUDE.md` を project 指示として自動ロードし、operator 個人の
@@ -925,8 +935,7 @@ export class BeaconManager extends EventEmitter {
         // へのアクセスは --add-dir で明示許可済み。
         cwd: this.getBeaconCwd(),
         stdio: ["pipe", "pipe", "pipe"],
-        // NODE_ENV=production が子 claude に伝播すると不都合なため空にする
-        env: { ...process.env, NODE_ENV: "" },
+        env: childEnv,
       });
       this.activeChild = child;
 
@@ -1413,11 +1422,13 @@ export class BeaconManager extends EventEmitter {
    * disconnect ハンドラから呼ばれる)。
    *
    * 現方式では mcp-config をターン毎に再生成するため、MCP 接続の追加/再認証/削除は
-   * 次ターンで自動的に反映される。したがってこのメソッドは no-op で、後方互換のため
-   * シグネチャのみ維持している (旧 SDK の setMcpServers/stale 機構の置き換え)。
+   * 次ターンの buildAuthenticatedExternalMcps で自動反映される。ただし last-known-good
+   * キャッシュ (lastExternalMcps) は無効化する必要がある: 無効化しないと、disconnect
+   * 直後に refresh が一時失敗したターンでキャッシュ済みの (削除済み connection の) token
+   * を Claude に再露出してしまい、disconnect の意味が失われる。
    */
   markMcpConfigStale(): void {
-    // no-op (ターン毎に mcp-config を再構築するため)
+    this.lastExternalMcps = [];
   }
 
   /**
