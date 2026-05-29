@@ -18,7 +18,7 @@
  *   自動的に反映される (旧 setMcpServers/stale 機構は不要になった)。
  */
 
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -313,6 +313,33 @@ class ResumeFailedError extends Error {
   }
 }
 
+/**
+ * repoPath が属する git の共通ルート (メイン作業ツリーのトップ) を返す。解決不可なら null。
+ * nested path 登録時に worktree パス (git root 正規化済み) を --add-dir に含めるために使う。
+ * execFileSync は shell を介さないため repoPath のメタ文字によるコマンド注入は起きない。
+ */
+function resolveGitCommonRoot(repoPath: string): string | null {
+  try {
+    const stdout = execFileSync(
+      "git",
+      [
+        "-C",
+        repoPath,
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+      ],
+      { stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }
+    ).toString();
+    const gitCommonDir = stdout.trim();
+    if (!gitCommonDir) return null;
+    // `<root>/.git` → `<root>` (bare repo 等で `.git` が付かない場合はそのまま)
+    return gitCommonDir.replace(/\/\.git\/?$/, "") || null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // BeaconManager: 単一のグローバルBeaconセッションを管理する
 // ---------------------------------------------------------------------------
@@ -549,11 +576,26 @@ export class BeaconManager extends EventEmitter {
     // cwd は HOME だが、登録リポジトリは HOME 外 (/srv, /opt 等) にあり得る。
     // Read/Grep/Glob でそれらにアクセスできるよう、実在する repo ルートを
     // --add-dir で workspace に追加する (Phase 1b の CLAUDE.md 読取に必要)。
-    const addDirs = deps
-      .getRepos()
-      .filter(p => typeof p === "string" && p && existsSync(p));
+    //
+    // さらに、repo が git root の *サブディレクトリ* として登録されている場合
+    // (repo:select は nested path を許可)、list_worktrees / create_worktree が返す
+    // worktreePath は git root に正規化される。getRepos() の値だけだとその root が
+    // --add-dir に含まれず Phase 1b の `Read <worktreePath>/CLAUDE.md` が拒否される。
+    // 各 repo の git common root も解決して追加する。
+    const addDirs = new Set<string>();
+    for (const repo of deps.getRepos()) {
+      if (typeof repo !== "string" || !repo || !existsSync(repo)) continue;
+      addDirs.add(repo);
+      const root = resolveGitCommonRoot(repo);
+      if (root && existsSync(root)) addDirs.add(root);
+    }
 
-    return { mcpServers, allowedTools, systemPrompt, addDirs };
+    return {
+      mcpServers,
+      allowedTools,
+      systemPrompt,
+      addDirs: [...addDirs],
+    };
   }
 
   /** mcp-config を一時ファイルに書き出す (token を含むため 0600)。返り値はパス。 */
@@ -1187,6 +1229,12 @@ export class BeaconManager extends EventEmitter {
     if (this.activeChild) {
       this.activeChild.kill("SIGTERM");
       this.activeChild = null;
+      // 進行中ターンを中断した = 会話が result 前の中途半端な状態。cliSessionId は
+      // init 時点で永続化済みのため、放置すると次の sendMessage がこの未完了会話を
+      // --resume して半端な user/tool 状態を引き継ぐ。中断時は会話を破棄して
+      // 次回を新規会話にする (idle close でも進行中ターンがあれば同様)。
+      if (this.session) this.session.cliSessionId = null;
+      this.clearPersistedSessionId();
     }
 
     // セッションをクリア

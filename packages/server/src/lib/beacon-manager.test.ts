@@ -349,6 +349,32 @@ describe("BeaconManager (CLI stream-json)", () => {
     expect(chunks).not.toContain("LEAK");
   });
 
+  it("進行中ターンを kill する closeSession は cliSessionId を破棄する", async () => {
+    dbMock.getSetting.mockReturnValue("inflight-sid");
+    const childA = makeFakeChild();
+    mockedSpawn.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        // init は出すが result は出さず保留 (ターン進行中)
+        childA.stdout.emit(
+          "data",
+          Buffer.from(`${initLine("inflight-sid")}\n`)
+        );
+      });
+      return childA as unknown as ReturnType<typeof spawn>;
+    });
+
+    const send = beaconManager.sendMessage("A");
+    await new Promise(r => setTimeout(r, 20)); // spawn + init 済み (turn 進行中)
+
+    beaconManager.closeSession(); // resetConversation なしでも進行中なら破棄
+
+    childA.emit("close", null);
+    await send;
+
+    // 中途半端な会話を次回 --resume しないよう cliSessionId は破棄される
+    expect(dbMock.deleteSetting).toHaveBeenCalledWith("beacon_cli_session_id");
+  });
+
   it("起動準備 (buildLaunchConfig) の最中に reset されたら spawn しない", async () => {
     // buildAuthenticatedExternalMcps を遅延させ、その await 中に closeSession する
     mockedBuildExternal.mockImplementationOnce(async () => {
