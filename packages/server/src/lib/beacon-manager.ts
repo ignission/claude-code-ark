@@ -1118,6 +1118,15 @@ export class BeaconManager extends EventEmitter {
    *   サーバー再起動後も次回 --resume で会話を継続できる。
    */
   closeSession(opts: { resetConversation?: boolean } = {}): void {
+    // 「仕切り直し」は live session の有無に関わらず実行する。
+    // サーバー再起動 / idle close 後は this.session が null でも cliSessionId が
+    // settings に残るため、ここで破棄しないと次の sendMessage が --resume で
+    // 破棄したはずの文脈を復活させてしまう。
+    if (opts.resetConversation) {
+      if (this.session) this.session.cliSessionId = null;
+      this.clearPersistedSessionId();
+    }
+
     if (!this.session) return;
 
     console.log(
@@ -1133,12 +1142,6 @@ export class BeaconManager extends EventEmitter {
     if (this.activeChild) {
       this.activeChild.kill("SIGTERM");
       this.activeChild = null;
-    }
-
-    // 「仕切り直し」指定時は CLI 会話 ID も破棄して次回を新規会話にする。
-    if (opts.resetConversation) {
-      this.session.cliSessionId = null;
-      this.clearPersistedSessionId();
     }
 
     // セッションをクリア

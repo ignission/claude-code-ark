@@ -290,6 +290,14 @@ describe("BeaconManager (CLI stream-json)", () => {
     expect(dbMock.deleteSetting).toHaveBeenCalledWith("beacon_cli_session_id");
   });
 
+  it("live session が無くても resetConversation は cliSessionId を破棄する (restart/idle 後)", () => {
+    // beforeEach の closeSession で this.session は null の状態
+    expect(beaconManager.hasSession()).toBe(false);
+    beaconManager.closeSession({ resetConversation: true });
+    // live session が無くても settings の cliSessionId は破棄される
+    expect(dbMock.deleteSetting).toHaveBeenCalledWith("beacon_cli_session_id");
+  });
+
   it("起動準備 (buildLaunchConfig) の最中に reset されたら spawn しない", async () => {
     // buildAuthenticatedExternalMcps を遅延させ、その await 中に closeSession する
     mockedBuildExternal.mockImplementationOnce(async () => {

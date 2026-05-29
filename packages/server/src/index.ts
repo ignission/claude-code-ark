@@ -2025,9 +2025,11 @@ export async function startServer(
     // beacon:clear と同じ trust model (Beacon は接続クライアント間で共有資源)。
     // Cloudflare Tunnel + token 認証の後ろにある前提で、追加の所有者制御は持たない。
     socket.on("beacon:stop-and-reset", () => {
-      if (!beaconManager.hasSession()) return;
       // 「仕切り直し」: CLI 会話 (cliSessionId) も破棄し、次の sendMessage は
       // --resume せず新規会話で開始する (モデル側の文脈をリセットする)。
+      // hasSession() ガードは付けない: サーバー再起動 / idle close 後は live session が
+      // 無くても cliSessionId が settings に残るため、その状態でも破棄する必要がある
+      // (closeSession 内で resetConversation を live session の有無に関わらず処理する)。
       beaconManager.closeSession({ resetConversation: true });
     });
 

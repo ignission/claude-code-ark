@@ -175,14 +175,32 @@ function resolveNodeModulesClaudeBinary(): string | null {
   if (process.platform !== "darwin" && process.platform !== "linux") {
     return null;
   }
+  // platform パッケージ (`claude-code-<platform>-<arch>`) は主パッケージ
+  // `@anthropic-ai/claude-code` の optionalDependency。`@ark/server` の直接依存は
+  // 主パッケージのみなので、まず主パッケージを解決し、その文脈 (optionalDep を
+  // 宣言している場所) から platform パッケージを解決する。これで pnpm の isolated
+  // レイアウトでも確実に platform バイナリへ辿り着ける。
   const require = createRequire(import.meta.url);
+  const requireFroms: NodeJS.Require[] = [require];
+  try {
+    const mainPkgJson = require.resolve(
+      "@anthropic-ai/claude-code/package.json"
+    );
+    requireFroms.push(createRequire(mainPkgJson));
+  } catch {
+    // 主パッケージが見つからなければ root からの解決のみ試す
+  }
   for (const pkg of claudeCodePlatformPkgNames()) {
-    try {
-      const pkgJson = require.resolve(`@anthropic-ai/${pkg}/package.json`);
-      const bin = executableOrNull(path.join(path.dirname(pkgJson), "claude"));
-      if (bin) return bin;
-    } catch {
-      // この候補は未 install → 次の候補へ
+    for (const req of requireFroms) {
+      try {
+        const pkgJson = req.resolve(`@anthropic-ai/${pkg}/package.json`);
+        const bin = executableOrNull(
+          path.join(path.dirname(pkgJson), "claude")
+        );
+        if (bin) return bin;
+      } catch {
+        // この候補/解決元では見つからない → 次へ
+      }
     }
   }
   return null;
