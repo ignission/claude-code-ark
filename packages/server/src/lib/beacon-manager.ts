@@ -724,7 +724,10 @@ export class BeaconManager extends EventEmitter {
         // 未列挙ツールは allowedTools で deny されるので、設定外 MCP の混入リスクは低い。
         "--mcp-config",
         opts.mcpConfigPath,
-        "--system-prompt",
+        // Claude Code の標準 system prompt (ツールガイダンス / CLAUDE.md 等の
+        // context loading) を保持しつつ Beacon の指示を *追記* する。--system-prompt
+        // (置換) だと標準の動作指針が失われるため append を使う。
+        "--append-system-prompt",
         opts.systemPrompt,
       ];
       if (opts.useResume && session.cliSessionId) {

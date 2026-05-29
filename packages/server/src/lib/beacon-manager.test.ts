@@ -216,6 +216,9 @@ describe("BeaconManager (CLI stream-json)", () => {
     expect(args).toContain("--include-partial-messages");
     // claude.ai connector を無効化しないよう --strict-mcp-config は付けない
     expect(args).not.toContain("--strict-mcp-config");
+    // 標準プロンプトを保持するため置換ではなく append を使う
+    expect(args).toContain("--append-system-prompt");
+    expect(args).not.toContain("--system-prompt");
   });
 
   it("session reset 後にキューされた turn は spawn せず破棄される", async () => {

@@ -86,6 +86,9 @@ importers:
 
   packages/server:
     dependencies:
+      '@anthropic-ai/claude-code':
+        specifier: ^2.1.156
+        version: 2.1.156
       '@ark/shared':
         specifier: workspace:*
         version: link:../shared

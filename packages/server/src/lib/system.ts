@@ -22,6 +22,7 @@ import {
   readdirSync,
   statSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { getBundledBinDir } from "./paths.js";
@@ -136,6 +137,39 @@ function resolveUnpackedBundledClaudeExecutablePath(): string | null {
 }
 
 /**
+ * node_modules に install された `@anthropic-ai/claude-code-<platform>-<arch>`
+ * パッケージ同梱の claude バイナリを Node モジュール解決で見つけて返す。
+ * **spawn 可能な場合のみ非 null** (isFile + X_OK)。
+ *
+ * standalone な `@ark/server` 実行 (`pnpm dev:server` / pm2 `node dist/cli.js`)
+ * で system に claude が無くても動くようにするフォールバック。
+ *
+ * 重要: `which claude` より **前** で解決する。`@anthropic-ai/claude-code` の
+ * 主パッケージは `node_modules/.bin/claude` に launcher を作るが、これは
+ * postinstall (native binary 取得) が走っていないと壊れている。`which claude`
+ * を先に引くとこの壊れた launcher を掴む恐れがあるため、platform パッケージの
+ * 実体バイナリを直接解決して優先する。
+ */
+function resolveNodeModulesClaudeBinary(): string | null {
+  if (process.platform !== "darwin" && process.platform !== "linux") {
+    return null;
+  }
+  try {
+    const require = createRequire(import.meta.url);
+    const pkgJson = require.resolve(
+      `@anthropic-ai/claude-code-${process.platform}-${process.arch}/package.json`
+    );
+    const candidate = path.join(path.dirname(pkgJson), "claude");
+    if (!existsSync(candidate)) return null;
+    if (!statSync(candidate).isFile()) return null;
+    accessSync(candidate, constants.X_OK);
+    return candidate;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * `claude` コマンドの絶対パスを解決する。利用不可なら null。
  * 解決ロジックは checkClaudeCommandExists と同じ順序。tmux send-keys に
  * 絶対パスで claude を送ることで、pm2/systemd の PATH に claude が無い
@@ -148,6 +182,12 @@ export function resolveClaudePath(): string | null {
   // 戻り値は spawn 可能性まで確認済み (isFile + X_OK)、null なら下流に委譲。
   const bundledBin = resolveUnpackedBundledClaudeExecutablePath();
   if (bundledBin) return bundledBin;
+
+  // -0.5. node_modules に install された platform パッケージ同梱バイナリ。
+  // standalone server で system claude 不在でも動くようにする。
+  // `which claude` より前に引いて、壊れた .bin/claude launcher の誤検出を避ける。
+  const nodeModulesBin = resolveNodeModulesClaudeBinary();
+  if (nodeModulesBin) return nodeModulesBin;
 
   // 0. F5 同梱版: `<userData>/claude-runtime/bin/claude` を最優先
   // Electron desktop でユーザに余計なセットアップを求めずに済むよう、
