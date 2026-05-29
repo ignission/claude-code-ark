@@ -366,6 +366,76 @@ describe("BeaconManager (CLI stream-json)", () => {
     expect(mockedSpawn).not.toHaveBeenCalled();
   });
 
+  it("resume 先が見つからない result エラーは新規会話で再試行する", async () => {
+    dbMock.getSetting.mockReturnValue("stale-sid");
+    // 1 回目 (--resume stale-sid): No conversation found エラー result
+    const childA = makeFakeChild();
+    mockedSpawn.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        childA.stdout.emit(
+          "data",
+          Buffer.from(
+            `${JSON.stringify({
+              type: "result",
+              subtype: "error_during_execution",
+              is_error: true,
+              errors: ["No conversation found with session ID: stale-sid"],
+            })}\n`
+          )
+        );
+        childA.emit("close", 1);
+      });
+      return childA as unknown as ReturnType<typeof spawn>;
+    });
+    // 2 回目 (新規会話): 正常応答
+    programChild([initLine("new-sid"), assistantLine("ok"), resultLine("ok")]);
+
+    const errors: string[] = [];
+    beaconManager.on("beacon:error", e => errors.push(e.error));
+
+    await beaconManager.sendMessage("test");
+
+    // 2 回 spawn され、1 回目は --resume 付き、2 回目は無し
+    expect(mockedSpawn).toHaveBeenCalledTimes(2);
+    const args1 = mockedSpawn.mock.calls[0]?.[1] as string[];
+    const args2 = mockedSpawn.mock.calls[1]?.[1] as string[];
+    expect(args1).toContain("--resume");
+    expect(args2).not.toContain("--resume");
+    // resume 失敗自体は beacon:error として表面化しない (retry で回復)
+    expect(errors).not.toContain(
+      "No conversation found with session ID: stale-sid"
+    );
+    // 古い cliSessionId は破棄される
+    expect(dbMock.deleteSetting).toHaveBeenCalledWith("beacon_cli_session_id");
+  });
+
+  it("resume 以外の result エラーは beacon:error を出し cliSessionId を消さない", async () => {
+    dbMock.getSetting.mockReturnValue("keep-sid");
+    programChild([
+      initLine("keep-sid"),
+      JSON.stringify({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["Tool execution failed"],
+      }),
+    ]);
+
+    const errors: string[] = [];
+    beaconManager.on("beacon:error", e => errors.push(e.error));
+
+    await beaconManager.sendMessage("test");
+
+    // 再試行しない (spawn は 1 回)
+    expect(mockedSpawn).toHaveBeenCalledTimes(1);
+    // エラーは通知される
+    expect(errors).toContain("Tool execution failed");
+    // cliSessionId は保持 (resume 失敗ではないため消さない)
+    expect(dbMock.deleteSetting).not.toHaveBeenCalledWith(
+      "beacon_cli_session_id"
+    );
+  });
+
   it("result を受信せず非0終了したら beacon:error を emit する (新規会話時)", async () => {
     // 新規会話 (cliSessionId なし) かつ init も来ずに異常終了
     const child = makeFakeChild();

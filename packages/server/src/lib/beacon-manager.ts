@@ -293,6 +293,7 @@ interface CliStreamMessage {
   session_id?: string;
   result?: string;
   is_error?: boolean;
+  errors?: string[];
   message?: { content?: unknown[] };
   /** --include-partial-messages で来る逐次イベント */
   event?: {
@@ -599,7 +600,10 @@ export class BeaconManager extends EventEmitter {
       await this.withTurnLock(() => this.runTurn(session, message));
     } finally {
       session.activeTurnCount = Math.max(0, session.activeTurnCount - 1);
-      if (session.activeTurnCount === 0) {
+      // flush は current session のターンが全て終わった時のみ。reset 後に stale な
+      // 旧ターンが settle した際に新セッションの pending queue を早期 drain しないよう
+      // this.session === session でガードする (manager-wide queue の順序保護)。
+      if (this.session === session && session.activeTurnCount === 0) {
         this.flushPendingExternalMessages();
       }
     }
@@ -764,10 +768,16 @@ export class BeaconManager extends EventEmitter {
       let buffer = "";
       let assistantText = "";
       let lastToolUse: ChatMessage["toolUse"] | undefined;
-      let gotInit = false;
       let sawResult = false;
+      // result が「resume 先の会話が見つからない」エラーだった場合に立てる。
+      // この時のみ新規会話で再試行する (他の起動失敗では cliSessionId を消さない)。
+      let resumeFailed = false;
       let stderrBuf = "";
       let settled = false;
+
+      /** claude の「指定 session が resume できない」固有エラーかを判定する */
+      const isResumeNotFound = (reason: string): boolean =>
+        /no conversation found|cannot resume|unknown session/i.test(reason);
 
       const settle = (fn: () => void) => {
         if (settled) return;
@@ -787,11 +797,9 @@ export class BeaconManager extends EventEmitter {
 
       const handleMessage = (msg: CliStreamMessage) => {
         if (msg.type === "system" && msg.subtype === "init") {
-          gotInit = true;
           // session 差し替え/close (stop-and-reset / clear) 後に遅延 init が届いた
           // 場合に cliSessionId を書き戻すと、破棄したはずの会話が次ターンで --resume
           // されてしまう。current session の時だけ永続化する。
-          // gotInit は close ハンドラの resume 失敗判定に使うため上で立てておく。
           if (
             this.session === session &&
             typeof msg.session_id === "string" &&
@@ -880,13 +888,25 @@ export class BeaconManager extends EventEmitter {
             db.addBeaconMessage(assistantMessage);
             this.emit("beacon:message", assistantMessage);
           }
-          // 非 success の result (permission 拒否 / max_turns / 実行エラー等) は
-          // そのままだと「無言で正常終了」に見えるため beacon:error で理由を通知する。
+          // 非 success の result (permission 拒否 / max_turns / 実行エラー等)
           if (msg.subtype !== "success" || msg.is_error) {
             const reason =
-              typeof msg.result === "string" && msg.result
+              msg.errors?.[0] ||
+              (typeof msg.result === "string" && msg.result
                 ? msg.result
-                : `claude が異常終了しました (subtype=${msg.subtype ?? "unknown"})`;
+                : `claude が異常終了しました (subtype=${msg.subtype ?? "unknown"})`);
+            // 「resume 先の会話が見つからない」エラー時のみ新規会話で再試行する
+            // (close ハンドラが ResumeFailedError を投げ runTurn が retry)。
+            // ここでは beacon:error / done を出さない (retry が出すため)。
+            // それ以外の本物のエラーは「無言で正常終了」に見えないよう通知する。
+            if (
+              opts.useResume &&
+              session.cliSessionId &&
+              isResumeNotFound(reason)
+            ) {
+              resumeFailed = true;
+              return;
+            }
             this.emit("beacon:error", { error: reason });
           }
           this.emit("beacon:stream", {
@@ -946,8 +966,14 @@ export class BeaconManager extends EventEmitter {
 
       child.on("close", code => {
         settle(() => {
+          if (resumeFailed) {
+            // resume 先の会話が見つからない → runTurn が新規会話で再試行する。
+            // (result も来ているが sawResult より先に判定する)
+            reject(new ResumeFailedError(stderrBuf.trim()));
+            return;
+          }
           if (sawResult) {
-            // 正常完了 (result 受信済み)
+            // 正常完了 / 通知済みエラー (result 受信済み)
             resolve();
             return;
           }
@@ -961,12 +987,9 @@ export class BeaconManager extends EventEmitter {
             resolve();
             return;
           }
-          if (opts.useResume && session.cliSessionId && !gotInit) {
-            // --resume したが init すら来ずに失敗 → resume 失敗とみなし再試行へ
-            reject(new ResumeFailedError(stderrBuf.trim()));
-            return;
-          }
-          // それ以外は本物のエラー: クライアントの loading を解除して通知
+          // result 未受信での異常終了 (起動失敗 / crash 等)。resume 失敗とは限らない
+          // (auth / mcp-config 不正 / 一時的失敗) ため cliSessionId は消さず、本物の
+          // エラーとして通知するだけ。クライアントの loading を解除する。
           const errMsg =
             stderrBuf.trim() ||
             `claude プロセスが異常終了しました (code=${code})`;
