@@ -1001,37 +1001,51 @@ export class BeaconManager extends EventEmitter {
         // stream_event の text_delta 以外 (message_start 等) はスキップする
       };
 
-      child.stdout?.on("data", (d: Buffer) => {
-        buffer += d.toString();
+      const dispatchLine = (line: string) => {
+        let msg: CliStreamMessage | null = null;
+        try {
+          msg = JSON.parse(line) as CliStreamMessage;
+        } catch {
+          console.warn(`[BeaconManager] JSON 解析失敗: ${line.slice(0, 120)}`);
+        }
+        if (!msg) return;
+        try {
+          handleMessage(msg);
+        } catch (e) {
+          console.error(
+            `[BeaconManager] メッセージ処理エラー: ${getErrorMessage(e)}`
+          );
+        }
+      };
+
+      // 完全な行 (\n 区切り) を処理する。flush=true で末尾の改行なし残余も処理する
+      // (claude が最終 JSON を trailing newline なしで書いて終了するケース)。
+      const drainBuffer = (flush: boolean) => {
         let idx = buffer.indexOf("\n");
         while (idx >= 0) {
           const line = buffer.slice(0, idx).trim();
           buffer = buffer.slice(idx + 1);
-          if (line) {
-            let msg: CliStreamMessage | null = null;
-            try {
-              msg = JSON.parse(line) as CliStreamMessage;
-            } catch {
-              console.warn(
-                `[BeaconManager] JSON 解析失敗: ${line.slice(0, 120)}`
-              );
-            }
-            if (msg) {
-              try {
-                handleMessage(msg);
-              } catch (e) {
-                console.error(
-                  `[BeaconManager] メッセージ処理エラー: ${getErrorMessage(e)}`
-                );
-              }
-            }
-          }
+          if (line) dispatchLine(line);
           idx = buffer.indexOf("\n");
         }
+        if (flush) {
+          const rest = buffer.trim();
+          buffer = "";
+          if (rest) dispatchLine(rest);
+        }
+      };
+
+      // multibyte UTF-8 (日本語応答等) が data チャンク境界で分断され文字化け
+      // (`d.toString()` だと `�` 置換) するのを防ぐため文字列デコードに任せる。
+      child.stdout?.setEncoding("utf8");
+      child.stdout?.on("data", (chunk: string) => {
+        buffer += chunk;
+        drainBuffer(false);
       });
 
-      child.stderr?.on("data", (d: Buffer) => {
-        stderrBuf += d.toString();
+      child.stderr?.setEncoding("utf8");
+      child.stderr?.on("data", (chunk: string) => {
+        stderrBuf += chunk;
       });
 
       child.on("error", err => {
@@ -1048,6 +1062,9 @@ export class BeaconManager extends EventEmitter {
 
       child.on("close", code => {
         settle(() => {
+          // 末尾に改行が無い最終 JSON (result 等) が buffer に残っている場合に処理する。
+          // これを忘れると sawResult が false のままになり正常応答を異常終了扱いする。
+          drainBuffer(true);
           if (resumeFailed) {
             // resume 先の会話が見つからない → runTurn が新規会話で再試行する。
             // (result も来ているが sawResult より先に判定する)

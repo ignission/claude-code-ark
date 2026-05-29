@@ -57,10 +57,19 @@ interface FakeChild extends EventEmitter {
   killed: boolean;
 }
 
+/** EventEmitter に stream 風の setEncoding (no-op) を生やす */
+function makeStreamEmitter(): EventEmitter {
+  const e = new EventEmitter() as EventEmitter & {
+    setEncoding: (enc: string) => void;
+  };
+  e.setEncoding = () => {};
+  return e;
+}
+
 function makeFakeChild(): FakeChild {
   const child = new EventEmitter() as FakeChild;
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
+  child.stdout = makeStreamEmitter();
+  child.stderr = makeStreamEmitter();
   child.stdin = {
     write: (_s: string, cb?: () => void) => {
       cb?.();
@@ -168,6 +177,32 @@ describe("BeaconManager (CLI stream-json)", () => {
     // delta がライブ配信され、最後に done (空 chunk) が来る
     expect(streams.join("")).toContain("こんにちは");
     expect(streams[streams.length - 1]).toBe("");
+  });
+
+  it("末尾改行なしの最終 result でも応答を確定する", async () => {
+    const child = makeFakeChild();
+    mockedSpawn.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        // init と assistant は \n 区切り、最終 result は trailing newline 無し
+        child.stdout.emit(
+          "data",
+          `${initLine("sid-nl")}\n${assistantLine("結果です")}\n`
+        );
+        child.stdout.emit("data", resultLine("結果です")); // \n なし
+        child.emit("close", 0);
+      });
+      return child as unknown as ReturnType<typeof spawn>;
+    });
+
+    const messages: { role: string; content: string }[] = [];
+    beaconManager.on("beacon:message", m =>
+      messages.push({ role: m.role, content: m.content })
+    );
+
+    await beaconManager.sendMessage("test");
+
+    // close 時に buffer を flush して result を処理 → assistant メッセージが確定する
+    expect(messages).toContainEqual({ role: "assistant", content: "結果です" });
   });
 
   it("init message の session_id を settings に永続化する (--resume 用)", async () => {
