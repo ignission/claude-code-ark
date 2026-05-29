@@ -475,7 +475,7 @@ describe("BeaconManager (CLI stream-json)", () => {
     );
   });
 
-  it("result を受信せず非0終了したら beacon:error を emit する (新規会話時)", async () => {
+  it("result を受信せず非0終了したら reject する (beacon:error は socket 側が emit)", async () => {
     // 新規会話 (cliSessionId なし) かつ init も来ずに異常終了
     const child = makeFakeChild();
     mockedSpawn.mockImplementationOnce(() => {
@@ -489,9 +489,10 @@ describe("BeaconManager (CLI stream-json)", () => {
     const errors: string[] = [];
     beaconManager.on("beacon:error", e => errors.push(e.error));
 
-    await expect(beaconManager.sendMessage("test")).rejects.toThrow();
-    expect(errors.length).toBeGreaterThan(0);
-    expect(errors[0]).toContain("boom");
+    // reject パスではエラー理由を rejection に載せる (二重通知防止のため manager は
+    // beacon:error を emit せず、socket ハンドラの catch が emit する)
+    await expect(beaconManager.sendMessage("test")).rejects.toThrow(/boom/);
+    expect(errors).toHaveLength(0);
     // launch 失敗 (init 未受信) では user message を履歴に記録しない
     const recorded = dbMock.addBeaconMessage.mock.calls.map(
       c => (c[0] as { content?: string }).content

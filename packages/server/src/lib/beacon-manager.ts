@@ -1025,11 +1025,12 @@ export class BeaconManager extends EventEmitter {
 
       child.on("error", err => {
         settle(() => {
+          // loading 解除のため done だけ emit。beacon:error は reject 経由で
+          // sendMessage→socket ハンドラの catch が emit する (二重通知防止)。
           this.emit("beacon:stream", {
             chunk: "",
             done: true,
           } satisfies BeaconStreamChunk);
-          this.emit("beacon:error", { error: getErrorMessage(err) });
           reject(err);
         });
       });
@@ -1058,8 +1059,9 @@ export class BeaconManager extends EventEmitter {
             return;
           }
           // result 未受信での異常終了 (起動失敗 / crash 等)。resume 失敗とは限らない
-          // (auth / mcp-config 不正 / 一時的失敗) ため cliSessionId は消さず、本物の
-          // エラーとして通知するだけ。クライアントの loading を解除する。
+          // (auth / mcp-config 不正 / 一時的失敗) ため cliSessionId は消さない。
+          // loading 解除のため done だけ emit。beacon:error は reject 経由で
+          // socket ハンドラの catch が emit する (二重通知防止)。
           const errMsg =
             stderrBuf.trim() ||
             `claude プロセスが異常終了しました (code=${code})`;
@@ -1067,7 +1069,6 @@ export class BeaconManager extends EventEmitter {
             chunk: "",
             done: true,
           } satisfies BeaconStreamChunk);
-          this.emit("beacon:error", { error: errMsg });
           reject(new Error(errMsg));
         });
       });
