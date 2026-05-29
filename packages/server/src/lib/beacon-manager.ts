@@ -788,7 +788,15 @@ export class BeaconManager extends EventEmitter {
       const handleMessage = (msg: CliStreamMessage) => {
         if (msg.type === "system" && msg.subtype === "init") {
           gotInit = true;
-          if (typeof msg.session_id === "string" && msg.session_id) {
+          // session 差し替え/close (stop-and-reset / clear) 後に遅延 init が届いた
+          // 場合に cliSessionId を書き戻すと、破棄したはずの会話が次ターンで --resume
+          // されてしまう。current session の時だけ永続化する。
+          // gotInit は close ハンドラの resume 失敗判定に使うため上で立てておく。
+          if (
+            this.session === session &&
+            typeof msg.session_id === "string" &&
+            msg.session_id
+          ) {
             session.cliSessionId = msg.session_id;
             this.setPersistedSessionId(msg.session_id);
           }

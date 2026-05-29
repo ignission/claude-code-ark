@@ -274,39 +274,9 @@ async function bootstrap(): Promise<void> {
       }
       if (verified) break;
     }
-    // platform パッケージが見つからない場合の最終手段: 主パッケージ
-    // @anthropic-ai/claude-code の public entrypoint (bin/claude.exe)。
-    if (!verified) {
-      const mainBinCandidates = [
-        path.join(nmDir, "@anthropic-ai", "claude-code", "bin", "claude.exe"),
-      ];
-      try {
-        const pnpmDir = path.join(nmDir, ".pnpm");
-        for (const entry of fs.readdirSync(pnpmDir)) {
-          if (!entry.startsWith("@anthropic-ai+claude-code@")) continue;
-          mainBinCandidates.push(
-            path.join(
-              pnpmDir,
-              entry,
-              "node_modules",
-              "@anthropic-ai",
-              "claude-code",
-              "bin",
-              "claude.exe"
-            )
-          );
-        }
-      } catch {
-        // .pnpm 無し → 無視
-      }
-      for (const p of mainBinCandidates) {
-        candidatePaths.push(p);
-        if (isExecutable(p)) {
-          verified = p;
-          break;
-        }
-      }
-    }
+    // 注: 主パッケージ @anthropic-ai/claude-code の public bin (bin/claude.exe) は
+    // 検証に使わない。postinstall 未実行時はエラー表示して exit 1 する stub であり、
+    // X_OK は通っても起動しないため (native 実体を持つ platform パッケージのみ信頼)。
     if (verified) {
       log.info(`[Ark Desktop] bundled claude binary verified: ${verified}`);
     } else {

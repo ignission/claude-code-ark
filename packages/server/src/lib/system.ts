@@ -20,7 +20,6 @@ import {
   constants,
   existsSync,
   readdirSync,
-  readFileSync,
   statSync,
 } from "node:fs";
 import { createRequire } from "node:module";
@@ -171,27 +170,10 @@ export function findBundledClaudeBinary(nodeModulesDir: string): string | null {
       // .pnpm ディレクトリ無し (flat レイアウト) → 無視
     }
   }
-  // 3) platform パッケージが見つからない場合の最終手段: 主パッケージ
-  // `@anthropic-ai/claude-code` の public entrypoint (bin/claude.exe)。
-  // hoisting / packing で platform パッケージが省かれ public bin のみ残る構成向け。
-  for (const base of ["@anthropic-ai/claude-code"]) {
-    const flatBin = executableOrNull(
-      path.join(nodeModulesDir, base, "bin", "claude.exe")
-    );
-    if (flatBin) return flatBin;
-    const pnpmDir = path.join(nodeModulesDir, ".pnpm");
-    try {
-      for (const entry of readdirSync(pnpmDir)) {
-        if (!entry.startsWith("@anthropic-ai+claude-code@")) continue;
-        const bin = executableOrNull(
-          path.join(pnpmDir, entry, "node_modules", base, "bin", "claude.exe")
-        );
-        if (bin) return bin;
-      }
-    } catch {
-      // .pnpm 無し → 無視
-    }
-  }
+  // 注: 主パッケージ `@anthropic-ai/claude-code` の public bin (bin/claude.exe) は
+  // フォールバックに使わない。postinstall 未実行時 (pnpm の ignored build scripts 等)
+  // この bin は「claude native binary not installed」と表示して exit 1 する stub であり、
+  // X_OK は通るが起動しない。native 実体を持つ platform パッケージのみを信頼する。
   return null;
 }
 
@@ -343,43 +325,7 @@ export function resolveClaudePath(): string | null {
   );
   if (fnm) return fnm;
 
-  // 最終手段: 主パッケージ `@anthropic-ai/claude-code` の public entrypoint
-  // (bin/claude.exe)。platform パッケージが省かれ public bin のみ残る install
-  // (hoisting / packing 後) 向け。system claude 等より後に置くことで、壊れた
-  // launcher が正規の claude を shadow しないようにする。
-  const mainBin = resolveMainPackageClaudeBin();
-  if (mainBin) return mainBin;
-
   return null;
-}
-
-/**
- * `@anthropic-ai/claude-code` 主パッケージの public bin (`bin/claude.exe`) を
- * Node モジュール解決で見つけて返す。**spawn 可能な場合のみ非 null**。
- */
-function resolveMainPackageClaudeBin(): string | null {
-  try {
-    const require = createRequire(import.meta.url);
-    const pkgJsonPath = require.resolve(
-      "@anthropic-ai/claude-code/package.json"
-    );
-    const pkgDir = path.dirname(pkgJsonPath);
-    // package.json の bin.claude を尊重しつつ、既定の bin/claude.exe にフォールバック
-    let binRel = "bin/claude.exe";
-    try {
-      const pkg = JSON.parse(readFileSync(pkgJsonPath, "utf-8")) as {
-        bin?: Record<string, string> | string;
-      };
-      if (pkg.bin && typeof pkg.bin === "object" && pkg.bin.claude) {
-        binRel = pkg.bin.claude;
-      }
-    } catch {
-      // bin 解析失敗時は既定値を使う
-    }
-    return executableOrNull(path.join(pkgDir, binRel));
-  } catch {
-    return null;
-  }
 }
 
 /** versioned dir 配下から最初に見つかった絶対パスを返す */
