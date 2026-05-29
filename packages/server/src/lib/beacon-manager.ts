@@ -634,19 +634,28 @@ export class BeaconManager extends EventEmitter {
     session: BeaconSession,
     message: string
   ): Promise<void> {
-    // turnLock で待機中に closeSession() / clearHistory() が走り、セッションが
-    // 差し替え / 破棄された場合、このターンは「ユーザーが破棄した」プロンプトなので
-    // 実行しない。spawn せずに即破棄する (古い cliSessionId で会話が復活したり、
-    // stale な応答が UI に流れるのを防ぐ)。done を emit して client の loading を解除。
-    if (this.session !== session) {
+    // turnLock で待機中 / 起動準備の await 中に closeSession() / clearHistory() が
+    // 走り、セッションが差し替え / 破棄された場合、このターンは「ユーザーが破棄した」
+    // プロンプトなので実行しない。spawn せずに即破棄する (古い cliSessionId で会話が
+    // 復活したり、stale な応答が UI に流れるのを防ぐ)。done を emit して loading を解除。
+    const discardIfReset = (): boolean => {
+      if (this.session === session) return false;
       this.emit("beacon:stream", {
         chunk: "",
         done: true,
       } satisfies BeaconStreamChunk);
-      return;
-    }
+      return true;
+    };
+    if (discardIfReset()) return;
+
     const { mcpServers, allowedTools, systemPrompt } =
       await this.buildLaunchConfig();
+
+    // buildLaunchConfig の await 中 (arkMcp 起動 / 外部 MCP refresh) に reset された
+    // 可能性を再チェックする。この時点ではまだ activeChild が null のため
+    // closeSession() は kill できず、ここで止めないと stale な spawn が起きる。
+    if (discardIfReset()) return;
+
     const mcpConfigPath = this.writeMcpConfig(mcpServers);
     try {
       await this.attemptTurn(session, message, {
@@ -1081,12 +1090,19 @@ export class BeaconManager extends EventEmitter {
   /**
    * セッションを閉じてリソースを解放する。
    * 実行中の claude 子プロセスがあれば kill する (進行中ターンの abort)。
-   * cliSessionId は settings に永続化済みなので、idle close 後も次回 --resume できる。
+   *
+   * @param opts.resetConversation true の場合、CLI 会話 (cliSessionId) も破棄する。
+   *   stop-and-reset / clear のような「仕切り直し」操作で指定する。次の sendMessage は
+   *   --resume せず新規会話で開始する。
+   *   既定 (false) では cliSessionId を settings に残すため、idle close / panel close /
+   *   サーバー再起動後も次回 --resume で会話を継続できる。
    */
-  closeSession(): void {
+  closeSession(opts: { resetConversation?: boolean } = {}): void {
     if (!this.session) return;
 
-    console.log("[BeaconManager] セッション終了");
+    console.log(
+      `[BeaconManager] セッション終了${opts.resetConversation ? " (会話リセット)" : ""}`
+    );
 
     // 滞留中の外部メッセージを必ず DB に確定させる
     // (idle close / clearHistory 経由でも消失しないように)
@@ -1098,6 +1114,13 @@ export class BeaconManager extends EventEmitter {
       this.activeChild.kill("SIGTERM");
       this.activeChild = null;
     }
+
+    // 「仕切り直し」指定時は CLI 会話 ID も破棄して次回を新規会話にする。
+    if (opts.resetConversation) {
+      this.session.cliSessionId = null;
+      this.clearPersistedSessionId();
+    }
+
     // セッションをクリア
     this.session = null;
   }

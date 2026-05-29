@@ -43,8 +43,10 @@ vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
 
 import { spawn } from "node:child_process";
 import { beaconManager } from "./beacon-manager.js";
+import { buildAuthenticatedExternalMcps } from "./mcp-oauth/build-mcp-servers.js";
 
 const mockedSpawn = vi.mocked(spawn);
+const mockedBuildExternal = vi.mocked(buildAuthenticatedExternalMcps);
 
 /** fake な claude 子プロセス (EventEmitter + stdout/stderr/stdin) */
 interface FakeChild extends EventEmitter {
@@ -109,6 +111,11 @@ function programChild(lines: string[], opts: { closeCode?: number } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // queue 済み mockImplementationOnce が次テストに漏れないよう実装ごとリセットする
+  // (spawn が discard されたテストでは once-impl が未消費のまま残るため)
+  mockedSpawn.mockReset();
+  mockedBuildExternal.mockReset();
+  mockedBuildExternal.mockResolvedValue([]);
   dbMock.getBeaconMessages.mockReturnValue([]);
   dbMock.getSetting.mockReturnValue(undefined);
   beaconManager.removeAllListeners();
@@ -238,6 +245,34 @@ describe("BeaconManager (CLI stream-json)", () => {
 
     // B は破棄され、2 回目の spawn は起きない
     expect(mockedSpawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("closeSession({resetConversation:true}) は cliSessionId を破棄する (stop-and-reset)", async () => {
+    programChild([initLine("sid-R"), assistantLine("ok"), resultLine("ok")]);
+    await beaconManager.sendMessage("x");
+    expect(dbMock.setSetting).toHaveBeenCalledWith(
+      "beacon_cli_session_id",
+      "sid-R"
+    );
+    beaconManager.closeSession({ resetConversation: true });
+    expect(dbMock.deleteSetting).toHaveBeenCalledWith("beacon_cli_session_id");
+  });
+
+  it("起動準備 (buildLaunchConfig) の最中に reset されたら spawn しない", async () => {
+    // buildAuthenticatedExternalMcps を遅延させ、その await 中に closeSession する
+    mockedBuildExternal.mockImplementationOnce(async () => {
+      await new Promise(r => setTimeout(r, 40));
+      return [];
+    });
+    programChild([initLine("sid-x"), assistantLine("ok"), resultLine("ok")]);
+
+    const p = beaconManager.sendMessage("x"); // 起動準備に入る
+    await new Promise(r => setTimeout(r, 10)); // buildLaunchConfig の await 中
+    beaconManager.closeSession(); // activeChild はまだ null
+    await p;
+
+    // 準備完了後に reset を検知し、spawn には到達しない
+    expect(mockedSpawn).not.toHaveBeenCalled();
   });
 
   it("result を受信せず非0終了したら beacon:error を emit する (新規会話時)", async () => {

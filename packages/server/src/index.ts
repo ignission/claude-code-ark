@@ -2026,7 +2026,9 @@ export async function startServer(
     // Cloudflare Tunnel + token 認証の後ろにある前提で、追加の所有者制御は持たない。
     socket.on("beacon:stop-and-reset", () => {
       if (!beaconManager.hasSession()) return;
-      beaconManager.closeSession();
+      // 「仕切り直し」: CLI 会話 (cliSessionId) も破棄し、次の sendMessage は
+      // --resume せず新規会話で開始する (モデル側の文脈をリセットする)。
+      beaconManager.closeSession({ resetConversation: true });
     });
 
     // Beacon履歴クリア（LLMコンテキスト・DB履歴もリセット）
