@@ -265,6 +265,44 @@ const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 /** アイドルチェック間隔: 5分 */
 const IDLE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
+/**
+ * 1 ターン (claude 子プロセス) の wall-clock 上限。ツールループや stalled な MCP
+ * 通信で無限に走り turnLock を占有し続けるのを防ぐ安全弁 (旧 SDK の maxTurns 相当)。
+ * 通常の長い agentic ターン (多数の get_session_output 等) を妨げない余裕を持たせる。
+ */
+const TURN_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * 外部 OAuth MCP refresh (buildAuthenticatedExternalMcps) の待機上限。
+ * provider の token endpoint が stall した場合に sendMessage が spawn 前で wedge し
+ * turnLock を占有するのを防ぐ。超過時は直近成功分 (lastExternalMcps) で続行する。
+ */
+const EXTERNAL_MCP_REFRESH_TIMEOUT_MS = 15 * 1000;
+
+/** promise が ms 以内に解決しなければ reject する (元の promise は中断しない) */
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms}ms`)),
+      ms
+    );
+    promise.then(
+      v => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      e => {
+        clearTimeout(timer);
+        reject(e);
+      }
+    );
+  });
+}
+
 // ---------------------------------------------------------------------------
 // BeaconSession: グローバルに1つの論理セッション
 // ---------------------------------------------------------------------------
@@ -523,12 +561,17 @@ export class BeaconManager extends EventEmitter {
     // 突然使えなくなる。直近成功分 (lastExternalMcps) を保持し、失敗時はそれを再利用する。
     let externalMcps: ExternalMcpEntry[];
     try {
-      externalMcps = await buildAuthenticatedExternalMcps();
+      // refresh が stall しても turnLock を無限占有しないよう timeout を被せる。
+      externalMcps = await withTimeout(
+        buildAuthenticatedExternalMcps(),
+        EXTERNAL_MCP_REFRESH_TIMEOUT_MS,
+        "buildAuthenticatedExternalMcps"
+      );
       this.lastExternalMcps = externalMcps;
     } catch (err) {
       externalMcps = this.lastExternalMcps;
       console.warn(
-        `[BeaconManager] 外部 MCP server の構築に失敗 (直近成功分 ${externalMcps.length} 件を再利用): ${getErrorMessage(err)}`
+        `[BeaconManager] 外部 MCP server の構築に失敗/タイムアウト (直近成功分 ${externalMcps.length} 件を再利用): ${getErrorMessage(err)}`
       );
     }
 
@@ -889,6 +932,7 @@ export class BeaconManager extends EventEmitter {
       let resumeFailed = false;
       let stderrBuf = "";
       let settled = false;
+      let watchdog: ReturnType<typeof setTimeout> | undefined;
 
       /** claude の「指定 session が resume できない」固有エラーかを判定する */
       const isResumeNotFound = (reason: string): boolean =>
@@ -897,9 +941,32 @@ export class BeaconManager extends EventEmitter {
       const settle = (fn: () => void) => {
         if (settled) return;
         settled = true;
+        if (watchdog) clearTimeout(watchdog);
         if (this.activeChild === child) this.activeChild = null;
         fn();
       };
+
+      // wall-clock 安全弁: ツールループ / stalled MCP で無限に走り turnLock を占有
+      // し続けるのを防ぐ。超過したら child を kill して done を emit し reject する
+      // (beacon:error は reject 経由で socket ハンドラが emit)。settle で clear される。
+      watchdog = setTimeout(() => {
+        settle(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // already exited
+          }
+          this.emit("beacon:stream", {
+            chunk: "",
+            done: true,
+          } satisfies BeaconStreamChunk);
+          reject(
+            new Error(
+              `claude ターンが ${Math.round(TURN_TIMEOUT_MS / 60000)} 分でタイムアウトしました`
+            )
+          );
+        });
+      }, TURN_TIMEOUT_MS);
 
       // テキスト結合時に改行が欠けている場合を補完する
       // (tool 実行前後のテキストが直結して Markdown 行頭パターンが壊れるのを防ぐ)
