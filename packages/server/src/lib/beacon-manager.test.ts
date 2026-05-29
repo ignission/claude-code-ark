@@ -277,6 +277,9 @@ describe("BeaconManager (CLI stream-json)", () => {
     expect(args.some(a => a.startsWith("mcp__ark-beacon__"))).toBe(false);
     // 組込ツール (Read 等) は残る
     expect(args).toContain("Read");
+    // systemPrompt に司令塔ツール利用不可の degradation 通知が入る
+    const sysPrompt = args[args.indexOf("--append-system-prompt") + 1];
+    expect(sysPrompt).toContain("司令塔ツールが利用できません");
   });
 
   it("既存 cliSessionId があれば spawn 引数に --resume が含まれる", async () => {
@@ -445,7 +448,7 @@ describe("BeaconManager (CLI stream-json)", () => {
     expect(chunks).not.toContain("LEAK");
   });
 
-  it("進行中ターンを kill する closeSession は cliSessionId を破棄する", async () => {
+  it("進行中ターンを kill する closeSession は cliSessionId を破棄しない (resume維持)", async () => {
     dbMock.getSetting.mockReturnValue("inflight-sid");
     const childA = makeFakeChild();
     mockedSpawn.mockImplementationOnce(() => {
@@ -462,13 +465,16 @@ describe("BeaconManager (CLI stream-json)", () => {
     const send = beaconManager.sendMessage("A");
     await new Promise(r => setTimeout(r, 20)); // spawn + init 済み (turn 進行中)
 
-    beaconManager.closeSession(); // resetConversation なしでも進行中なら破棄
+    beaconManager.closeSession(); // resetConversation なし
 
     childA.emit("close", null);
     await send;
 
-    // 中途半端な会話を次回 --resume しないよう cliSessionId は破棄される
-    expect(dbMock.deleteSetting).toHaveBeenCalledWith("beacon_cli_session_id");
+    // 進行中ターンの中断でも cliSessionId は保持される (DB履歴と文脈の一致のため。
+    // 破棄するのは明示的な reset/clear のみ)
+    expect(dbMock.deleteSetting).not.toHaveBeenCalledWith(
+      "beacon_cli_session_id"
+    );
   });
 
   it("起動準備 (buildLaunchConfig) の最中に reset されたら spawn しない", async () => {
