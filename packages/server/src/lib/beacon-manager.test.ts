@@ -320,6 +320,35 @@ describe("BeaconManager (CLI stream-json)", () => {
     expect(dbMock.deleteSetting).toHaveBeenCalledWith("beacon_cli_session_id");
   });
 
+  it("close 後にバッファ残留した stream_event delta は emit されない", async () => {
+    const childA = makeFakeChild();
+    mockedSpawn.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        childA.stdout.emit("data", Buffer.from(`${initLine("sid-c")}\n`));
+        // result は出さず保留 (turn 進行中)
+      });
+      return childA as unknown as ReturnType<typeof spawn>;
+    });
+
+    const chunks: string[] = [];
+    beaconManager.on("beacon:stream", e => {
+      if (e.chunk) chunks.push(e.chunk);
+    });
+
+    const send = beaconManager.sendMessage("A");
+    await new Promise(r => setTimeout(r, 20)); // spawn + init 済み
+
+    beaconManager.closeSession(); // this.session=null, child を kill
+
+    // close 後に stdout バッファ残留 delta が届く状況を再現
+    childA.stdout.emit("data", Buffer.from(`${deltaLine("LEAK")}\n`));
+    childA.emit("close", null);
+    await send;
+
+    // canceled turn の delta は UI に漏れない
+    expect(chunks).not.toContain("LEAK");
+  });
+
   it("起動準備 (buildLaunchConfig) の最中に reset されたら spawn しない", async () => {
     // buildAuthenticatedExternalMcps を遅延させ、その await 中に closeSession する
     mockedBuildExternal.mockImplementationOnce(async () => {

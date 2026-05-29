@@ -656,8 +656,10 @@ export class BeaconManager extends EventEmitter {
         addDirs,
         useResume: true,
       }).catch(async err => {
-        // --resume 失敗 (claude 側に該当 session が無い等) → 新規会話で再試行
+        // --resume 失敗 (claude 側に該当 session が無い等) → 新規会話で再試行。
+        // ただし retry 中に close/clear されていたら respawn しない (discardIfReset)。
         if (err instanceof ResumeFailedError && session.cliSessionId) {
+          if (discardIfReset()) return;
           console.warn(
             "[BeaconManager] --resume に失敗。新規会話で再試行します"
           );
@@ -793,6 +795,8 @@ export class BeaconManager extends EventEmitter {
         if (msg.type === "stream_event") {
           const ev = msg.event;
           if (
+            // session 差し替え/close 後にバッファ残留 delta が UI へ漏れるのを防ぐ
+            this.session === session &&
             ev?.type === "content_block_delta" &&
             ev.delta?.type === "text_delta" &&
             typeof ev.delta.text === "string" &&
@@ -831,6 +835,9 @@ export class BeaconManager extends EventEmitter {
         }
         if (msg.type === "result") {
           sawResult = true;
+          // session 差し替え/close 後は emit/永続化しない (canceled turn の漏洩防止)。
+          // sawResult は close ハンドラの解決判定に使うため上で立てておく。
+          if (this.session !== session) return;
           // result 自体に result テキストが含まれ、未 stream の場合のみ追加
           if (
             msg.subtype === "success" &&
