@@ -7,10 +7,21 @@
  * (マルチアカウント対応)。SDK MCP server name = connection.id。
  */
 
-import type { McpServerConfig as SdkMcpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { db } from "../database.js";
 import { mcpOAuthOrchestrator } from "./oauth-flow-orchestrator.js";
 import { getProvider } from "./providers.js";
+
+/**
+ * claude CLI の `--mcp-config` に渡す remote MCP server の設定。
+ * Claude Code の `.mcp.json` 形式 (`{ type, url, headers }`) と一致しており、
+ * そのまま mcp-config JSON に埋め込める。
+ * (旧 Agent SDK の `McpServerConfig` の http/sse 部分と同一スキーマ)
+ */
+export interface McpServerHttpConfig {
+  type: "http" | "sse";
+  url: string;
+  headers?: Record<string, string>;
+}
 
 export interface ExternalMcpEntry {
   /** connection ID (SDK の mcpServers Record キー、tool prefix の <id> 部分) */
@@ -24,7 +35,7 @@ export interface ExternalMcpEntry {
    * モデルが URL host から正しい connection を選ぶ判断材料 + tool 引数 (cloudId 等) に流用。
    */
   accountHint?: string;
-  config: SdkMcpServerConfig;
+  config: McpServerHttpConfig;
 }
 
 /**
@@ -52,7 +63,7 @@ export async function buildAuthenticatedExternalMcps(): Promise<
     const headers = {
       Authorization: `${token.tokenType} ${token.accessToken}`,
     };
-    const config: SdkMcpServerConfig =
+    const config: McpServerHttpConfig =
       provider.transport === "sse"
         ? { type: "sse", url: server.url, headers }
         : { type: "http", url: server.url, headers };

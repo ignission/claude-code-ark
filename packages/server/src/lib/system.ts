@@ -88,29 +88,29 @@ function existsInVersionedDirs(baseDir: string, suffix: string): boolean {
 }
 
 /**
- * `@anthropic-ai/claude-agent-sdk` の query() に `pathToClaudeCodeExecutable`
- * として渡す、Electron .app の `app.asar.unpacked/` 配下に同梱された SDK
- * 付属 claude バイナリの絶対パスを返す。**spawn 可能であることが確認できた
- * 場合のみ非 null を返す** (existsSync + isFile + X_OK)。
+ * Electron .app の `app.asar.unpacked/` 配下に同梱された claude バイナリの
+ * 絶対パスを返す。**spawn 可能であることが確認できた場合のみ非 null を返す**
+ * (existsSync + isFile + X_OK)。
  *
- * SDK は内部で `require.resolve("@anthropic-ai/claude-agent-sdk-<platform>-<arch>")`
- * から binary パスを得るが、Electron .app では `app.asar/...` を返す。Electron は
- * `child_process.spawn` に対して asar 透過化を **行わない** ため、その path を
- * spawn すると ENOTDIR で fail する (asar は単一ファイルなので path component
- * として辿れない)。`app.asar.unpacked/` 側の実体パスを明示的に渡す必要がある。
+ * `@anthropic-ai/claude-code` の platform 依存パッケージ
+ * (`@anthropic-ai/claude-code-<platform>-<arch>`) が standalone な `claude`
+ * 実行ファイルを同梱しており、electron-builder の smartUnpack が native バイナリ
+ * として自動的に `app.asar.unpacked/` 側へ展開する。Electron は
+ * `child_process.spawn` に対して asar 透過化を **行わない** (asar は単一ファイル
+ * なので path component として辿れず ENOTDIR) ため、unpacked 側の実体パスを
+ * 明示的に解決する必要がある。
  *
  * Linux サーバ版 / non-Electron では `process.resourcesPath` が undefined のため
  * このフォールバックはスキップされる。
  *
- * spawn 可能性まで確認することで、`pathToClaudeCodeExecutable` を信用する側
- * (`@ark/server` の query() 呼び出し) が「return non-null = spawn 安全」と
- * 仮定できる。candidate が directory / 権限なし / 壊れたリンクの場合は null
- * を返し、上位の system claude フォールバックに委ねる。
+ * spawn 可能性まで確認することで、戻り値を信用する側が「return non-null = spawn
+ * 安全」と仮定できる。candidate が directory / 権限なし / 壊れたリンクの場合は
+ * null を返し、上位の system claude フォールバックに委ねる。
  *
  * Windows (`.exe` サフィックス) は現状 Ark .app の build target に含まれない
  * ため未対応。将来 Windows 版を出す際は `.exe` を加味した分岐をここに追加する。
  */
-function resolveUnpackedSdkClaudeExecutablePath(): string | null {
+function resolveUnpackedBundledClaudeExecutablePath(): string | null {
   const resourcesPath = (process as { resourcesPath?: string }).resourcesPath;
   if (!resourcesPath) return null;
   // Windows ターゲットは未サポート (Ark .app は darwin / linux のみ build する)
@@ -122,7 +122,7 @@ function resolveUnpackedSdkClaudeExecutablePath(): string | null {
     "app.asar.unpacked",
     "node_modules",
     "@anthropic-ai",
-    `claude-agent-sdk-${process.platform}-${process.arch}`,
+    `claude-code-${process.platform}-${process.arch}`,
     "claude"
   );
   try {
@@ -142,11 +142,12 @@ function resolveUnpackedSdkClaudeExecutablePath(): string | null {
  * 環境でも「command not found」にならないようにする。
  */
 export function resolveClaudePath(): string | null {
-  // -1. Electron .app の `app.asar.unpacked` に同梱された SDK 付属バイナリ。
-  // SDK と version が揃っており、prompt protocol (JSONL) 互換性が保証される。
+  // -1. Electron .app の `app.asar.unpacked` に同梱された claude バイナリ
+  // (`@anthropic-ai/claude-code-<platform>-<arch>`)。配布物に常に含まれるため、
+  // system PATH に claude が無い .app 環境でも確実に解決できる。
   // 戻り値は spawn 可能性まで確認済み (isFile + X_OK)、null なら下流に委譲。
-  const bundledSdkBin = resolveUnpackedSdkClaudeExecutablePath();
-  if (bundledSdkBin) return bundledSdkBin;
+  const bundledBin = resolveUnpackedBundledClaudeExecutablePath();
+  if (bundledBin) return bundledBin;
 
   // 0. F5 同梱版: `<userData>/claude-runtime/bin/claude` を最優先
   // Electron desktop でユーザに余計なセットアップを求めずに済むよう、
