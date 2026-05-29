@@ -200,6 +200,35 @@ describe("BeaconManager (CLI stream-json)", () => {
     expect(args).toContain("--strict-mcp-config");
   });
 
+  it("session reset 後にキューされた turn は spawn せず破棄される", async () => {
+    // turn A: result を出さず保留する child (turnLock を握り続ける)
+    const childA = makeFakeChild();
+    mockedSpawn.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        childA.stdout.emit("data", Buffer.from(`${initLine("sid-A")}\n`));
+        // result を出さない → ターン進行中のまま
+      });
+      return childA as unknown as ReturnType<typeof spawn>;
+    });
+
+    const sendA = beaconManager.sendMessage("A"); // 進行中
+    const sendB = beaconManager.sendMessage("B"); // turnLock 待ちで queue される
+
+    // A が spawn 済み・B が lock 待ちになるまで待つ
+    await new Promise(r => setTimeout(r, 20));
+    expect(mockedSpawn).toHaveBeenCalledTimes(1); // A のみ起動
+
+    // セッションを破棄 (clearHistory / stop-and-reset 相当)
+    beaconManager.closeSession();
+    // A の child は kill された扱いで close する
+    childA.emit("close", null);
+
+    await Promise.allSettled([sendA, sendB]);
+
+    // B は破棄され、2 回目の spawn は起きない
+    expect(mockedSpawn).toHaveBeenCalledTimes(1);
+  });
+
   it("result を受信せず非0終了したら beacon:error を emit する (新規会話時)", async () => {
     // 新規会話 (cliSessionId なし) かつ init も来ずに異常終了
     const child = makeFakeChild();

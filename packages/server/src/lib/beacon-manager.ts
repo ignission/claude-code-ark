@@ -629,6 +629,17 @@ export class BeaconManager extends EventEmitter {
     session: BeaconSession,
     message: string
   ): Promise<void> {
+    // turnLock で待機中に closeSession() / clearHistory() が走り、セッションが
+    // 差し替え / 破棄された場合、このターンは「ユーザーが破棄した」プロンプトなので
+    // 実行しない。spawn せずに即破棄する (古い cliSessionId で会話が復活したり、
+    // stale な応答が UI に流れるのを防ぐ)。done を emit して client の loading を解除。
+    if (this.session !== session) {
+      this.emit("beacon:stream", {
+        chunk: "",
+        done: true,
+      } satisfies BeaconStreamChunk);
+      return;
+    }
     const { mcpServers, allowedTools, systemPrompt } =
       await this.buildLaunchConfig();
     const mcpConfigPath = this.writeMcpConfig(mcpServers);
