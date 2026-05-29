@@ -214,11 +214,33 @@ describe("BeaconManager (CLI stream-json)", () => {
     expect(args).toContain("stream-json");
     // 逐次ストリーミング有効化フラグ
     expect(args).toContain("--include-partial-messages");
-    // claude.ai connector を無効化しないよう --strict-mcp-config は付けない
-    expect(args).not.toContain("--strict-mcp-config");
+    // operator のグローバル MCP 設定を読み込ませないよう isolate する
+    expect(args).toContain("--strict-mcp-config");
+    // 権限モードを default に固定する
+    expect(args).toContain("--permission-mode");
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe("default");
     // 標準プロンプトを保持するため置換ではなく append を使う
     expect(args).toContain("--append-system-prompt");
     expect(args).not.toContain("--system-prompt");
+  });
+
+  it("非 success の result は beacon:error を emit する", async () => {
+    programChild([
+      initLine("sid-e"),
+      JSON.stringify({
+        type: "result",
+        subtype: "error_max_turns",
+        is_error: true,
+        result: "ターン上限に達しました",
+      }),
+    ]);
+
+    const errors: string[] = [];
+    beaconManager.on("beacon:error", e => errors.push(e.error));
+
+    await beaconManager.sendMessage("test");
+
+    expect(errors).toContain("ターン上限に達しました");
   });
 
   it("実在する登録リポジトリは --add-dir で workspace に追加される", async () => {

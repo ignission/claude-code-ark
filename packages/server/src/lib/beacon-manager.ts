@@ -310,6 +310,7 @@ interface CliStreamMessage {
   subtype?: string;
   session_id?: string;
   result?: string;
+  is_error?: boolean;
   message?: { content?: unknown[] };
   /** --include-partial-messages で来る逐次イベント */
   event?: {
@@ -731,9 +732,19 @@ export class BeaconManager extends EventEmitter {
         "--include-partial-messages",
         "--model",
         "sonnet",
-        // 注: --strict-mcp-config は付けない。付けると claude.ai connector
-        // (mcp__claude_ai_Atlassian__* 等。Jira Phase 1b で使用) まで無効化されるため。
-        // 未列挙ツールは allowedTools で deny されるので、設定外 MCP の混入リスクは低い。
+        // 権限モードを明示固定する (旧 SDK の permissionMode:"default" 相当)。
+        // operator の Claude Code 設定 (plan / acceptEdits 等) を継承すると、Beacon が
+        // ツールを呼べなくなったり逆に過剰な権限を得たりするため、毎ターン default に固定。
+        "--permission-mode",
+        "default",
+        // operator のグローバル / プロジェクト MCP 設定 (~/.claude.json, .mcp.json 等) を
+        // 読み込ませない。これが無いと毎ターン外部 MCP server (stdio バイナリ) が Ark の
+        // プロセス内で spawn され、セキュリティ/運用上のリスクになる。Beacon が使う MCP は
+        // 生成した mcp-config (ark-beacon + Ark UI 登録の OAuth MCP) に限定する。
+        // 注: これにより claude.ai アカウントの connector (mcp__claude_ai_*) は使えないが、
+        // 外部 provider は Ark UI 経由で OAuth 登録した MCP (mcp__<connectionId>__*) を正規の
+        // 経路とする (Jira Phase 1b もそちらで解決できる)。
+        "--strict-mcp-config",
         "--mcp-config",
         opts.mcpConfigPath,
         // Claude Code の標準 system prompt (ツールガイダンス / CLAUDE.md 等の
@@ -866,6 +877,15 @@ export class BeaconManager extends EventEmitter {
             session.messages.push(assistantMessage);
             db.addBeaconMessage(assistantMessage);
             this.emit("beacon:message", assistantMessage);
+          }
+          // 非 success の result (permission 拒否 / max_turns / 実行エラー等) は
+          // そのままだと「無言で正常終了」に見えるため beacon:error で理由を通知する。
+          if (msg.subtype !== "success" || msg.is_error) {
+            const reason =
+              typeof msg.result === "string" && msg.result
+                ? msg.result
+                : `claude が異常終了しました (subtype=${msg.subtype ?? "unknown"})`;
+            this.emit("beacon:error", { error: reason });
           }
           this.emit("beacon:stream", {
             chunk: "",
