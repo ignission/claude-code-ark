@@ -111,21 +111,19 @@ function existsInVersionedDirs(baseDir: string, suffix: string): boolean {
  * Windows (`.exe` サフィックス) は現状 Ark .app の build target に含まれない
  * ため未対応。将来 Windows 版を出す際は `.exe` を加味した分岐をここに追加する。
  */
-function resolveUnpackedBundledClaudeExecutablePath(): string | null {
-  const resourcesPath = (process as { resourcesPath?: string }).resourcesPath;
-  if (!resourcesPath) return null;
-  // Windows ターゲットは未サポート (Ark .app は darwin / linux のみ build する)
-  if (process.platform !== "darwin" && process.platform !== "linux") {
-    return null;
-  }
-  const candidate = path.join(
-    resourcesPath,
-    "app.asar.unpacked",
-    "node_modules",
-    "@anthropic-ai",
-    `claude-code-${process.platform}-${process.arch}`,
-    "claude"
-  );
+/**
+ * `@anthropic-ai/claude-code` の platform 依存パッケージ名 (拡張子なし) の候補。
+ * musl 環境 (Alpine 等) では `claude-code-linux-<arch>-musl` が install されるため、
+ * glibc/musl の確実な判定が難しいことを踏まえ両方を候補として返す
+ * (実際に install / 存在する方だけが解決される)。
+ */
+export function claudeCodePlatformPkgNames(): string[] {
+  const base = `claude-code-${process.platform}-${process.arch}`;
+  return process.platform === "linux" ? [base, `${base}-musl`] : [base];
+}
+
+/** path が spawn 可能な実行ファイル (存在 + 通常ファイル + X_OK) なら返す。でなければ null */
+function executableOrNull(candidate: string): string | null {
   try {
     if (!existsSync(candidate)) return null;
     if (!statSync(candidate).isFile()) return null;
@@ -134,6 +132,29 @@ function resolveUnpackedBundledClaudeExecutablePath(): string | null {
   } catch {
     return null;
   }
+}
+
+function resolveUnpackedBundledClaudeExecutablePath(): string | null {
+  const resourcesPath = (process as { resourcesPath?: string }).resourcesPath;
+  if (!resourcesPath) return null;
+  // Windows ターゲットは未サポート (Ark .app は darwin / linux のみ build する)
+  if (process.platform !== "darwin" && process.platform !== "linux") {
+    return null;
+  }
+  for (const pkg of claudeCodePlatformPkgNames()) {
+    const bin = executableOrNull(
+      path.join(
+        resourcesPath,
+        "app.asar.unpacked",
+        "node_modules",
+        "@anthropic-ai",
+        pkg,
+        "claude"
+      )
+    );
+    if (bin) return bin;
+  }
+  return null;
 }
 
 /**
@@ -154,19 +175,17 @@ function resolveNodeModulesClaudeBinary(): string | null {
   if (process.platform !== "darwin" && process.platform !== "linux") {
     return null;
   }
-  try {
-    const require = createRequire(import.meta.url);
-    const pkgJson = require.resolve(
-      `@anthropic-ai/claude-code-${process.platform}-${process.arch}/package.json`
-    );
-    const candidate = path.join(path.dirname(pkgJson), "claude");
-    if (!existsSync(candidate)) return null;
-    if (!statSync(candidate).isFile()) return null;
-    accessSync(candidate, constants.X_OK);
-    return candidate;
-  } catch {
-    return null;
+  const require = createRequire(import.meta.url);
+  for (const pkg of claudeCodePlatformPkgNames()) {
+    try {
+      const pkgJson = require.resolve(`@anthropic-ai/${pkg}/package.json`);
+      const bin = executableOrNull(path.join(path.dirname(pkgJson), "claude"));
+      if (bin) return bin;
+    } catch {
+      // この候補は未 install → 次の候補へ
+    }
   }
+  return null;
 }
 
 /**
@@ -285,6 +304,13 @@ function scanVersionedDir(baseDir: string, suffix: string): string | null {
  * 3. 既知の候補ディレクトリ (mise shims, npm global, apt/dpkg, brew 等)
  */
 export function checkClaudeCommandExists(): boolean {
+  // resolveClaudePath() の高優先解決と整合させる。これらを見ないと、
+  // 同梱バイナリのみが claude 供給源の環境 (.app / standalone server で
+  // node_modules 同梱版のみ) で session は動くのに multiProfileSupported が
+  // false になり、UI がプロファイル/usage 機能を誤って隠してしまう。
+  if (resolveUnpackedBundledClaudeExecutablePath()) return true;
+  if (resolveNodeModulesClaudeBinary()) return true;
+
   // 0. F5 同梱版: `<userData>/claude-runtime/bin/claude`
   // resolveClaudePath() と同じく最優先でチェックし、Electron desktop で
   // システム claude 未インストールでもプロファイル切替が利用可能になる

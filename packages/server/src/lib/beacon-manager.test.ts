@@ -221,6 +221,35 @@ describe("BeaconManager (CLI stream-json)", () => {
     expect(args).not.toContain("--system-prompt");
   });
 
+  it("実在する登録リポジトリは --add-dir で workspace に追加される", async () => {
+    // getRepos が実在ディレクトリ (/tmp) と非実在を返すケース
+    beaconManager.configure({
+      getAllSessions: () => [],
+      startSession: async () => ({}),
+      stopSession: () => null,
+      sendMessage: () => {},
+      sendKey: () => {},
+      capturePane: () => null,
+      getPrUrl: async () => null,
+      listWorktrees: async () => [],
+      listAllWorktrees: async () => [],
+      createWorktree: async () => ({}),
+      deleteWorktree: async () => {},
+      getRepos: () => ["/tmp", "/nonexistent/repo/path/xyz"],
+      listProfiles: () => [],
+      linkWorktreeProfile: () => true,
+    });
+    programChild([initLine("sid-d"), assistantLine("ok"), resultLine("ok")]);
+
+    await beaconManager.sendMessage("test");
+
+    const args = mockedSpawn.mock.calls[0]?.[1] as string[];
+    // 実在する /tmp は追加され、存在しないパスは除外される
+    expect(args).toContain("--add-dir");
+    expect(args[args.indexOf("--add-dir") + 1]).toBe("/tmp");
+    expect(args).not.toContain("/nonexistent/repo/path/xyz");
+  });
+
   it("session reset 後にキューされた turn は spawn せず破棄される", async () => {
     // turn A: result を出さず保留する child (turnLock を握り続ける)
     const childA = makeFakeChild();

@@ -219,41 +219,50 @@ async function bootstrap(): Promise<void> {
   // 配置: tray / menu / server を起こす前に置くことで、半初期化状態を作らない
   // (codex P1 指摘対応)。
   if (app.isPackaged) {
-    const claudeBinaryPath = path.join(
-      process.resourcesPath,
-      "app.asar.unpacked",
-      "node_modules",
-      "@anthropic-ai",
-      `claude-code-${process.platform}-${process.arch}`,
-      "claude"
+    // glibc / musl (Alpine) で platform パッケージ名が異なるため両候補を確認する。
+    // electron-builder の smartUnpack で install 済みの方だけが存在する。
+    const base = `claude-code-${process.platform}-${process.arch}`;
+    const pkgNames =
+      process.platform === "linux" ? [base, `${base}-musl`] : [base];
+    const candidatePaths = pkgNames.map(pkg =>
+      path.join(
+        process.resourcesPath,
+        "app.asar.unpacked",
+        "node_modules",
+        "@anthropic-ai",
+        pkg,
+        "claude"
+      )
     );
-    try {
-      const stat = fs.statSync(claudeBinaryPath);
-      if (!stat.isFile()) {
-        throw new Error(
-          `bundled claude binary is not a regular file: ${claudeBinaryPath}`
-        );
+    const verified = candidatePaths.find(p => {
+      try {
+        if (!fs.statSync(p).isFile()) return false;
+        // X_OK: chmod 抜けや権限ビットの誤りも検知する。
+        fs.accessSync(p, fs.constants.X_OK);
+        return true;
+      } catch {
+        return false;
       }
-      // X_OK: chmod 抜けや権限ビットの誤りも検知する。
-      fs.accessSync(claudeBinaryPath, fs.constants.X_OK);
-      log.info(
-        `[Ark Desktop] bundled claude binary verified: ${claudeBinaryPath}`
-      );
-    } catch (err) {
+    });
+    if (verified) {
+      log.info(`[Ark Desktop] bundled claude binary verified: ${verified}`);
+    } else {
+      const detail = candidatePaths.join("\n");
       log.error(
-        `[Ark Desktop] bundled claude binary missing or not executable at ${claudeBinaryPath}:`,
-        err
+        `[Ark Desktop] bundled claude binary missing or not executable. checked:\n${detail}`
       );
       try {
         const { dialog } = await import("electron");
         dialog.showErrorBox(
           "Ark: bundled Claude CLI が見つかりません",
-          `配布物の取り込み漏れが疑われます。Ark.app の再インストールをお試しください。\n\n参照パス: ${claudeBinaryPath}\n\n詳細はログを確認してください。`
+          `配布物の取り込み漏れが疑われます。Ark.app の再インストールをお試しください。\n\n参照パス:\n${detail}\n\n詳細はログを確認してください。`
         );
       } catch {
         // dialog 表示自体に失敗しても fail-fast 自体は継続する
       }
-      throw err;
+      throw new Error(
+        `bundled claude binary not found in any of: ${candidatePaths.join(", ")}`
+      );
     }
   }
 
