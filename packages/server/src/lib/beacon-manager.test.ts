@@ -488,5 +488,10 @@ describe("BeaconManager (CLI stream-json)", () => {
     await expect(beaconManager.sendMessage("test")).rejects.toThrow();
     expect(errors.length).toBeGreaterThan(0);
     expect(errors[0]).toContain("boom");
+    // launch 失敗 (init 未受信) では user message を履歴に記録しない
+    const recorded = dbMock.addBeaconMessage.mock.calls.map(
+      c => (c[0] as { content?: string }).content
+    );
+    expect(recorded).not.toContain("test");
   });
 });

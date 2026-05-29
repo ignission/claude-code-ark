@@ -2003,9 +2003,12 @@ export async function startServer(
       socket.emit("beacon:history", { messages });
     });
 
-    // Beaconセッション終了
+    // Beaconセッション終了 (明示的な close)
+    // close は「セッションを終える」ユーザー操作なので CLI 会話もリセットする
+    // (次の sendMessage は --resume せず新規会話)。resume を維持するのは
+    // idle timeout / サーバー再起動のような非ユーザー起因のケースのみ。
     socket.on("beacon:close", () => {
-      beaconManager.closeSession();
+      beaconManager.closeSession({ resetConversation: true });
     });
 
     // Beacon応答停止 + セッションリセット (UI の停止ボタン)

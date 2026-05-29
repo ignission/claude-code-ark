@@ -686,19 +686,25 @@ export class BeaconManager extends EventEmitter {
     // closeSession() は kill できず、ここで止めないと stale な spawn が起きる。
     if (discardIfReset()) return;
 
-    // ここまで来れば spawn が確定 = Claude にこの user message を渡す。reset で
-    // 破棄され得る区間 (turnLock 待機 / buildLaunchConfig) を抜けてから履歴に記録する
-    // ことで、「Claude が見ていない user message」が残るのを防ぐ。複数 turn が直列の
-    // 場合も userA→assistantA→userB→assistantB の順序になる。
-    const userMessage: ChatMessage = {
-      id: randomUUID(),
-      role: "user",
-      content: message,
-      timestamp: new Date(),
+    // user message は CLI が起動した (init 受信 = launch 成功) 時点で初めて履歴に
+    // 記録する。spawn 前に記録すると、claude binary 不正 / 一時ファイル書込失敗 /
+    // spawn エラーで Claude が一度も見ていない user message が履歴に残るため。
+    // 一度だけ記録する (resume 失敗→新規会話 retry でも二重記録しない)。複数 turn
+    // 直列時の順序も userA→assistantA→userB→assistantB になる。
+    let userRecorded = false;
+    const recordUserMessage = () => {
+      if (userRecorded || this.session !== session) return;
+      userRecorded = true;
+      const userMessage: ChatMessage = {
+        id: randomUUID(),
+        role: "user",
+        content: message,
+        timestamp: new Date(),
+      };
+      session.messages.push(userMessage);
+      db.addBeaconMessage(userMessage);
+      this.emit("beacon:message", userMessage);
     };
-    session.messages.push(userMessage);
-    db.addBeaconMessage(userMessage);
-    this.emit("beacon:message", userMessage);
 
     const mcpConfigPath = this.writeMcpConfig(mcpServers);
     try {
@@ -708,6 +714,7 @@ export class BeaconManager extends EventEmitter {
         systemPrompt,
         addDirs,
         useResume: true,
+        onLaunched: recordUserMessage,
       }).catch(async err => {
         // --resume 失敗 (claude 側に該当 session が無い等) → 新規会話で再試行。
         // ただし retry 中に close/clear されていたら respawn しない (discardIfReset)。
@@ -724,6 +731,7 @@ export class BeaconManager extends EventEmitter {
             systemPrompt,
             addDirs,
             useResume: false,
+            onLaunched: recordUserMessage,
           });
           return;
         }
@@ -753,6 +761,8 @@ export class BeaconManager extends EventEmitter {
       systemPrompt: string;
       addDirs: string[];
       useResume: boolean;
+      /** CLI 起動成功 (init 受信) 時に呼ぶ。user message 記録に使う */
+      onLaunched: () => void;
     }
   ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
@@ -857,6 +867,10 @@ export class BeaconManager extends EventEmitter {
             session.cliSessionId = msg.session_id;
             this.setPersistedSessionId(msg.session_id);
           }
+          // CLI 起動成功 = この turn は確実に Claude に届く。ここで user message を
+          // 記録する (launch 失敗時は init が来ないので記録されない)。assistant 応答
+          // より前に記録されるため履歴順序も保たれる。
+          opts.onLaunched();
           return;
         }
         // 逐次ストリーミング (--include-partial-messages): text_delta を
