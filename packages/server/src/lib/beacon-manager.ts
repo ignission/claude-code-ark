@@ -311,6 +311,11 @@ interface CliStreamMessage {
   session_id?: string;
   result?: string;
   message?: { content?: unknown[] };
+  /** --include-partial-messages で来る逐次イベント */
+  event?: {
+    type?: string;
+    delta?: { type?: string; text?: string };
+  };
 }
 
 /**
@@ -701,9 +706,13 @@ export class BeaconManager extends EventEmitter {
         "stream-json",
         "--output-format",
         "stream-json",
+        // 逐次ストリーミング (text_delta) を有効化し、Beacon のライブ描画を滑らかにする
+        "--include-partial-messages",
         "--model",
         "sonnet",
-        "--strict-mcp-config",
+        // 注: --strict-mcp-config は付けない。付けると claude.ai connector
+        // (mcp__claude_ai_Atlassian__* 等。Jira Phase 1b で使用) まで無効化されるため。
+        // 未列挙ツールは allowedTools で deny されるので、設定外 MCP の混入リスクは低い。
         "--mcp-config",
         opts.mcpConfigPath,
         "--system-prompt",
@@ -756,7 +765,28 @@ export class BeaconManager extends EventEmitter {
           }
           return;
         }
+        // 逐次ストリーミング (--include-partial-messages): text_delta を
+        // **ライブ描画用** にそのまま emit する。確定テキストは下の assistant
+        // メッセージ (完全な block) から組み立てるため、ここでは accumulate しない
+        // (delta は語の途中で切れるため appendWithNewline を適用できない)。
+        if (msg.type === "stream_event") {
+          const ev = msg.event;
+          if (
+            ev?.type === "content_block_delta" &&
+            ev.delta?.type === "text_delta" &&
+            typeof ev.delta.text === "string" &&
+            ev.delta.text
+          ) {
+            this.emit("beacon:stream", {
+              chunk: ev.delta.text,
+              done: false,
+            } satisfies BeaconStreamChunk);
+          }
+          return;
+        }
         if (msg.type === "assistant" && msg.message?.content) {
+          // 確定テキストを block 単位で組み立てる (tool 前後の改行を補完)。
+          // ライブ描画は stream_event 側で済んでいるので、ここでは emit しない。
           for (const block of msg.message.content) {
             const b = block as {
               type?: string;
@@ -765,12 +795,7 @@ export class BeaconManager extends EventEmitter {
               input?: unknown;
             };
             if (b.type === "text" && typeof b.text === "string") {
-              const prevLen = assistantText.length;
               assistantText = appendWithNewline(assistantText, b.text);
-              this.emit("beacon:stream", {
-                chunk: assistantText.slice(prevLen),
-                done: false,
-              } satisfies BeaconStreamChunk);
             } else if (b.type === "tool_use") {
               lastToolUse = {
                 toolName: String(b.name ?? ""),
@@ -821,7 +846,7 @@ export class BeaconManager extends EventEmitter {
           lastToolUse = undefined;
         }
         // system(init以外) / user(tool_result echo) / rate_limit_event /
-        // stream_event 等はスキップする
+        // stream_event の text_delta 以外 (message_start 等) はスキップする
       };
 
       child.stdout?.on("data", (d: Buffer) => {

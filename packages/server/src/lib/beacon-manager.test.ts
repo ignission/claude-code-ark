@@ -83,6 +83,11 @@ const assistantLine = (text: string) =>
   });
 const resultLine = (result: string) =>
   JSON.stringify({ type: "result", subtype: "success", result });
+const deltaLine = (text: string) =>
+  JSON.stringify({
+    type: "stream_event",
+    event: { type: "content_block_delta", delta: { type: "text_delta", text } },
+  });
 
 /**
  * spawn が呼ばれたら fake child を返し、指定の stream-json 行を順次 emit して
@@ -127,9 +132,13 @@ beforeEach(() => {
 });
 
 describe("BeaconManager (CLI stream-json)", () => {
-  it("assistant テキストを beacon:stream で流し、result で beacon:message を確定する", async () => {
+  it("stream_event の text_delta をライブ配信し、result で beacon:message を確定する", async () => {
     programChild([
       initLine("sid-1"),
+      // 逐次 delta (ライブ描画用)
+      deltaLine("こんに"),
+      deltaLine("ちは"),
+      // 完全な assistant block (確定テキスト用)
       assistantLine("こんにちは"),
       resultLine("こんにちは"),
     ]);
@@ -143,15 +152,14 @@ describe("BeaconManager (CLI stream-json)", () => {
 
     await beaconManager.sendMessage("やあ");
 
-    // user メッセージ + assistant メッセージが emit される
+    // user メッセージ + assistant メッセージ (確定テキストは assistant block 由来) が emit される
     expect(messages).toContainEqual({ role: "user", content: "やあ" });
     expect(messages).toContainEqual({
       role: "assistant",
       content: "こんにちは",
     });
-    // streaming chunk が流れ、最後に done (空 chunk) が来る
+    // delta がライブ配信され、最後に done (空 chunk) が来る
     expect(streams.join("")).toContain("こんにちは");
-    // 最後の beacon:stream は done=true (空文字)
     expect(streams[streams.length - 1]).toBe("");
   });
 
@@ -197,7 +205,10 @@ describe("BeaconManager (CLI stream-json)", () => {
     // stream-json 駆動の必須フラグも確認
     expect(args).toContain("--input-format");
     expect(args).toContain("stream-json");
-    expect(args).toContain("--strict-mcp-config");
+    // 逐次ストリーミング有効化フラグ
+    expect(args).toContain("--include-partial-messages");
+    // claude.ai connector を無効化しないよう --strict-mcp-config は付けない
+    expect(args).not.toContain("--strict-mcp-config");
   });
 
   it("session reset 後にキューされた turn は spawn せず破棄される", async () => {
