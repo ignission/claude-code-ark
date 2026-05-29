@@ -2003,12 +2003,12 @@ export async function startServer(
       socket.emit("beacon:history", { messages });
     });
 
-    // Beaconセッション終了 (明示的な close)
-    // close は「セッションを終える」ユーザー操作なので CLI 会話もリセットする
-    // (次の sendMessage は --resume せず新規会話)。resume を維持するのは
-    // idle timeout / サーバー再起動のような非ユーザー起因のケースのみ。
+    // Beaconセッション終了 (明示的な close)。
+    // CLI 会話 (cliSessionId) は破棄しない: DB のチャット履歴は残り再接続時に
+    // 再表示されるため、resume を維持して「UI 履歴 = LLM 文脈」を一致させる。
+    // 文脈を完全に捨てたい場合は beacon:clear (履歴ごと削除) を使う。
     socket.on("beacon:close", () => {
-      beaconManager.closeSession({ resetConversation: true });
+      beaconManager.closeSession();
     });
 
     // Beacon応答停止 + セッションリセット (UI の停止ボタン)

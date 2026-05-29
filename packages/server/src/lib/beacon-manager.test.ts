@@ -24,12 +24,17 @@ const dbMock = vi.hoisted(() => ({
 }));
 vi.mock("./database.js", () => ({ db: dbMock }));
 
+// ArkMcpServer.start を全インスタンスで共有する hoisted mock にして、
+// テストから起動失敗 (graceful degradation) を注入できるようにする。
+const arkStartMock = vi.hoisted(() =>
+  vi.fn(async () => ({
+    url: "http://127.0.0.1:65000/mcp",
+    token: "test-token",
+  }))
+);
 vi.mock("./ark-mcp-server.js", () => ({
   ArkMcpServer: class {
-    start = vi.fn(async () => ({
-      url: "http://127.0.0.1:65000/mcp",
-      token: "test-token",
-    }));
+    start = arkStartMock;
     stop = vi.fn();
     getEndpoint = vi.fn(() => null);
   },
@@ -125,6 +130,11 @@ beforeEach(() => {
   mockedSpawn.mockReset();
   mockedBuildExternal.mockReset();
   mockedBuildExternal.mockResolvedValue([]);
+  arkStartMock.mockReset();
+  arkStartMock.mockResolvedValue({
+    url: "http://127.0.0.1:65000/mcp",
+    token: "test-token",
+  });
   dbMock.getBeaconMessages.mockReturnValue([]);
   dbMock.getSetting.mockReturnValue(undefined);
   beaconManager.removeAllListeners();
@@ -229,6 +239,20 @@ describe("BeaconManager (CLI stream-json)", () => {
 
     await beaconManager.sendMessage("test");
     expect(messages).toContain("正常応答");
+  });
+
+  it("ArkMcpServer 起動失敗時も ark-beacon ツール無しでチャット継続する", async () => {
+    arkStartMock.mockRejectedValueOnce(new Error("EPERM: listen denied"));
+    programChild([initLine("sid-d"), assistantLine("ok"), resultLine("ok")]);
+
+    // 司令塔ツール起動失敗でも turn は成立する (reject しない)
+    await expect(beaconManager.sendMessage("test")).resolves.toBeUndefined();
+
+    const args = mockedSpawn.mock.calls[0]?.[1] as string[];
+    // ark-beacon ツールは allowedTools に列挙されない
+    expect(args.some(a => a.startsWith("mcp__ark-beacon__"))).toBe(false);
+    // 組込ツール (Read 等) は残る
+    expect(args).toContain("Read");
   });
 
   it("既存 cliSessionId があれば spawn 引数に --resume が含まれる", async () => {

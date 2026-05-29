@@ -492,15 +492,24 @@ export class BeaconManager extends EventEmitter {
       throw new Error("BeaconManager が configure() されていません");
     }
     const deps = this.deps;
-    // 司令塔ツールの HTTP MCP server を起動 (冪等)
-    const ark = await this.arkMcp.start(deps);
-    const mcpServers: Record<string, McpServerHttpConfig> = {
-      "ark-beacon": {
+    // 司令塔ツールの HTTP MCP server を起動 (冪等)。loopback の listen が拒否される
+    // 等で失敗しても、Beacon 自体は (司令塔ツール無しで) チャット継続できるよう
+    // 致命的にはしない。Ark は本来メインポートを bind するサーバなので通常は成功する。
+    const mcpServers: Record<string, McpServerHttpConfig> = {};
+    let arkMcpAvailable = false;
+    try {
+      const ark = await this.arkMcp.start(deps);
+      mcpServers["ark-beacon"] = {
         type: "http",
         url: ark.url,
         headers: { Authorization: `Bearer ${ark.token}` },
-      },
-    };
+      };
+      arkMcpAvailable = true;
+    } catch (err) {
+      console.warn(
+        `[BeaconManager] ArkMcpServer 起動失敗 (司令塔ツール無しで継続): ${getErrorMessage(err)}`
+      );
+    }
 
     const externalAllowedTools: string[] = [];
     /** モデルへ案内するための connection 一覧 (system prompt 末尾に注入) */
@@ -540,28 +549,34 @@ export class BeaconManager extends EventEmitter {
     // allowedTools: builtin (Read/Grep/Glob) + ark-beacon ツール + Ark UI 登録の
     // 外部 OAuth MCP。CLI には canUseTool が無いため、許可したい tool を全て
     // --allowedTools に列挙する (未列挙はヘッドレスで自動 deny)。
+    // ark-beacon ツールは ArkMcpServer が起動できた時のみ列挙する。
+    const arkBeaconTools = arkMcpAvailable
+      ? [
+          "mcp__ark-beacon__list_repositories",
+          "mcp__ark-beacon__list_worktrees",
+          "mcp__ark-beacon__list_sessions",
+          "mcp__ark-beacon__start_session",
+          "mcp__ark-beacon__stop_session",
+          "mcp__ark-beacon__send_to_session",
+          "mcp__ark-beacon__send_key_to_session",
+          "mcp__ark-beacon__get_session_output",
+          "mcp__ark-beacon__validate_issue_url",
+          "mcp__ark-beacon__list_profiles",
+          "mcp__ark-beacon__create_worktree",
+          "mcp__ark-beacon__delete_worktree",
+          "mcp__ark-beacon__get_pr_url",
+          "mcp__ark-beacon__gh_exec",
+          "mcp__ark-beacon__get_system_status",
+          "mcp__ark-beacon__list_processes",
+          "mcp__ark-beacon__get_pm2_status",
+          "mcp__ark-beacon__restart_service",
+        ]
+      : [];
     const allowedTools: string[] = [
       "Read",
       "Grep",
       "Glob",
-      "mcp__ark-beacon__list_repositories",
-      "mcp__ark-beacon__list_worktrees",
-      "mcp__ark-beacon__list_sessions",
-      "mcp__ark-beacon__start_session",
-      "mcp__ark-beacon__stop_session",
-      "mcp__ark-beacon__send_to_session",
-      "mcp__ark-beacon__send_key_to_session",
-      "mcp__ark-beacon__get_session_output",
-      "mcp__ark-beacon__validate_issue_url",
-      "mcp__ark-beacon__list_profiles",
-      "mcp__ark-beacon__create_worktree",
-      "mcp__ark-beacon__delete_worktree",
-      "mcp__ark-beacon__get_pr_url",
-      "mcp__ark-beacon__gh_exec",
-      "mcp__ark-beacon__get_system_status",
-      "mcp__ark-beacon__list_processes",
-      "mcp__ark-beacon__get_pm2_status",
-      "mcp__ark-beacon__restart_service",
+      ...arkBeaconTools,
       ...externalAllowedTools,
     ];
 
