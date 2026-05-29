@@ -720,6 +720,12 @@ export class BeaconManager extends EventEmitter {
         // ツールを呼べなくなったり逆に過剰な権限を得たりするため、毎ターン default に固定。
         "--permission-mode",
         "default",
+        // settings source を空にして operator の ~/.claude / project の settings.json
+        // (hooks / plugins / 権限設定等) を一切読み込ませない (旧 SDK の settingSources:[]
+        // 相当)。これが無いと Beacon の各ターンでホストの hook (任意ローカルコマンド) が
+        // 実行されたり、tool 可用性/権限が書き換えられる恐れがある。
+        "--setting-sources",
+        "",
         // operator のグローバル / プロジェクト MCP 設定 (~/.claude.json, .mcp.json 等) を
         // 読み込ませない。これが無いと毎ターン外部 MCP server (stdio バイナリ) が Ark の
         // プロセス内で spawn され、セキュリティ/運用上のリスクになる。Beacon が使う MCP は
