@@ -222,6 +222,10 @@ describe("BeaconManager (CLI stream-json)", () => {
     // 標準プロンプトを保持するため置換ではなく append を使う
     expect(args).toContain("--append-system-prompt");
     expect(args).not.toContain("--system-prompt");
+    // 組込ツールを Read/Grep/Glob に限定する (Bash/Write/Skill 等を排除)
+    expect(args).toContain("--tools");
+    // settings ベース認証を壊さないよう --setting-sources は付けない
+    expect(args).not.toContain("--setting-sources");
   });
 
   it("非 success の result は beacon:error を emit する", async () => {

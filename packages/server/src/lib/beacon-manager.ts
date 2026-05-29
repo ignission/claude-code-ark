@@ -778,17 +778,24 @@ export class BeaconManager extends EventEmitter {
         "--include-partial-messages",
         "--model",
         "sonnet",
+        // 組込ツールを Read/Grep/Glob のみに絞る。--allowedTools は permission を
+        // 制御するだけで built-in tool 自体は session に載るため、Bash / Write / Edit /
+        // Task / Skill 等が露出して host 導入の skill 等を呼べてしまう。--tools で
+        // 利用可能な built-in を明示制限する (MCP tool は mcp-config 側で別管理)。
+        "--tools",
+        "Read",
+        "Grep",
+        "Glob",
         // 権限モードを明示固定する (旧 SDK の permissionMode:"default" 相当)。
         // operator の Claude Code 設定 (plan / acceptEdits 等) を継承すると、Beacon が
         // ツールを呼べなくなったり逆に過剰な権限を得たりするため、毎ターン default に固定。
         "--permission-mode",
         "default",
-        // settings source を空にして operator の ~/.claude / project の settings.json
-        // (hooks / plugins / 権限設定等) を一切読み込ませない (旧 SDK の settingSources:[]
-        // 相当)。これが無いと Beacon の各ターンでホストの hook (任意ローカルコマンド) が
-        // 実行されたり、tool 可用性/権限が書き換えられる恐れがある。
-        "--setting-sources",
-        "",
+        // 注: --setting-sources は指定しない。空にすると hooks/plugins を隔離できる一方、
+        // settings.json ベースの認証/プロバイダ設定 (apiKeyHelper / Bedrock / Vertex 等) も
+        // 失われ、その方式で認証している環境で Beacon が全ターン失敗する。Ark はサブスク
+        // 認証 (settings.json と独立した credentials) が主だが、認証を壊さない方を優先し
+        // operator の settings は読み込ませる (hooks は operator 自身の信頼済み設定)。
         // operator のグローバル / プロジェクト MCP 設定 (~/.claude.json, .mcp.json 等) を
         // 読み込ませない。これが無いと毎ターン外部 MCP server (stdio バイナリ) が Ark の
         // プロセス内で spawn され、セキュリティ/運用上のリスクになる。Beacon が使う MCP は
