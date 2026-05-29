@@ -134,6 +134,45 @@ function executableOrNull(candidate: string): string | null {
   }
 }
 
+/**
+ * 指定 node_modules ディレクトリ配下から `@anthropic-ai/claude-code-<platform>`
+ * 同梱 claude バイナリを探す。flat レイアウト (electron-builder が hoist した場合) と
+ * pnpm の isolated レイアウト (`.pnpm/@anthropic-ai+<pkg>@<ver>/node_modules/...`) の
+ * 両方を探索する。**spawn 可能な実体のみ返す**。
+ *
+ * desktop bootstrap (`main.ts`) でも同じ判定が必要なため export する。
+ */
+export function findBundledClaudeBinary(nodeModulesDir: string): string | null {
+  for (const pkg of claudeCodePlatformPkgNames()) {
+    // 1) flat レイアウト
+    const flat = executableOrNull(
+      path.join(nodeModulesDir, "@anthropic-ai", pkg, "claude")
+    );
+    if (flat) return flat;
+    // 2) pnpm isolated レイアウト (`.pnpm/@anthropic-ai+<pkg>@<ver>/node_modules/...`)
+    const pnpmDir = path.join(nodeModulesDir, ".pnpm");
+    try {
+      for (const entry of readdirSync(pnpmDir)) {
+        if (!entry.startsWith(`@anthropic-ai+${pkg}@`)) continue;
+        const bin = executableOrNull(
+          path.join(
+            pnpmDir,
+            entry,
+            "node_modules",
+            "@anthropic-ai",
+            pkg,
+            "claude"
+          )
+        );
+        if (bin) return bin;
+      }
+    } catch {
+      // .pnpm ディレクトリ無し (flat レイアウト) → 無視
+    }
+  }
+  return null;
+}
+
 function resolveUnpackedBundledClaudeExecutablePath(): string | null {
   const resourcesPath = (process as { resourcesPath?: string }).resourcesPath;
   if (!resourcesPath) return null;
@@ -141,20 +180,9 @@ function resolveUnpackedBundledClaudeExecutablePath(): string | null {
   if (process.platform !== "darwin" && process.platform !== "linux") {
     return null;
   }
-  for (const pkg of claudeCodePlatformPkgNames()) {
-    const bin = executableOrNull(
-      path.join(
-        resourcesPath,
-        "app.asar.unpacked",
-        "node_modules",
-        "@anthropic-ai",
-        pkg,
-        "claude"
-      )
-    );
-    if (bin) return bin;
-  }
-  return null;
+  return findBundledClaudeBinary(
+    path.join(resourcesPath, "app.asar.unpacked", "node_modules")
+  );
 }
 
 /**

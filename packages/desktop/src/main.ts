@@ -224,17 +224,12 @@ async function bootstrap(): Promise<void> {
     const base = `claude-code-${process.platform}-${process.arch}`;
     const pkgNames =
       process.platform === "linux" ? [base, `${base}-musl`] : [base];
-    const candidatePaths = pkgNames.map(pkg =>
-      path.join(
-        process.resourcesPath,
-        "app.asar.unpacked",
-        "node_modules",
-        "@anthropic-ai",
-        pkg,
-        "claude"
-      )
+    const nmDir = path.join(
+      process.resourcesPath,
+      "app.asar.unpacked",
+      "node_modules"
     );
-    const verified = candidatePaths.find(p => {
+    const isExecutable = (p: string): boolean => {
       try {
         if (!fs.statSync(p).isFile()) return false;
         // X_OK: chmod 抜けや権限ビットの誤りも検知する。
@@ -243,7 +238,42 @@ async function bootstrap(): Promise<void> {
       } catch {
         return false;
       }
-    });
+    };
+    // flat レイアウトと pnpm isolated レイアウト (.pnpm/...) の両方を探索する。
+    // (system.ts:findBundledClaudeBinary と同じ判定。@ark/server の早期 import を
+    //  避けるためここでは inline で実装する)
+    const candidatePaths: string[] = [];
+    let verified: string | undefined;
+    for (const pkg of pkgNames) {
+      const flat = path.join(nmDir, "@anthropic-ai", pkg, "claude");
+      candidatePaths.push(flat);
+      if (isExecutable(flat)) {
+        verified = flat;
+        break;
+      }
+      try {
+        const pnpmDir = path.join(nmDir, ".pnpm");
+        for (const entry of fs.readdirSync(pnpmDir)) {
+          if (!entry.startsWith(`@anthropic-ai+${pkg}@`)) continue;
+          const nested = path.join(
+            pnpmDir,
+            entry,
+            "node_modules",
+            "@anthropic-ai",
+            pkg,
+            "claude"
+          );
+          candidatePaths.push(nested);
+          if (isExecutable(nested)) {
+            verified = nested;
+            break;
+          }
+        }
+      } catch {
+        // .pnpm ディレクトリ無し (flat レイアウト) → 無視
+      }
+      if (verified) break;
+    }
     if (verified) {
       log.info(`[Ark Desktop] bundled claude binary verified: ${verified}`);
     } else {

@@ -37,18 +37,6 @@ import { resolveClaudePath } from "./system.js";
 /** settings テーブルに CLI セッションID を保存するキー (--resume 用) */
 const BEACON_CLI_SESSION_KEY = "beacon_cli_session_id";
 
-/**
- * canUseTool で動的承認する claude.ai Connector tool の allow-list。
- * SDK の allowedTools wildcard が <server>__* 形式しか効かないため、
- * mcp__claude_ai_<Provider>__* 系は allowedTools には載せず、ここで
- * 個別承認する。Phase 1b の Jira チケット取得に必要な read tool のみ。
- * 別 tool / 別 provider が必要になったらここに明示追加する。
- */
-const BEACON_ALLOWED_CLAUDE_AI_TOOLS = new Set<string>([
-  "mcp__claude_ai_Atlassian__getJiraIssue",
-  "mcp__claude_ai_Atlassian__getAccessibleAtlassianResources",
-]);
-
 /** Beaconのシステムプロンプト */
 const BEACON_SYSTEM_PROMPT = `あなたはArkのBeaconです。
 複数のリポジトリを横断して管理するアシスタントです。
@@ -80,17 +68,11 @@ worktreeの作成・削除はMCPツールを使ってください。
 
 ## 外部provider tool の選択
 
-外部provider のtoolには2系統があり得る:
-- \`mcp__claude_ai_<Provider>__*\` (claude.ai アカウントの Connector)
-- \`mcp__<providerId>-<id>__*\` (Ark UI 経由で OAuth 接続した外部 MCP)
+外部provider (Jira / Linear / Notion 等) の操作には、**Ark UI 経由で OAuth 接続した外部 MCP** の tool (\`mcp__<connectionId>__*\`) を使う。利用可能な connection は後述の「接続済み外部 MCP」リストに列挙される (空の場合は外部 provider 連携が未設定)。
 
-**同じproviderについて両方が利用可能な場合は \`mcp__claude_ai_*\` を優先する。** \`mcp__<providerId>-<id>__*\` 側は \`authenticate\` のようなauth系toolのみ露出している場合があり、その場合は無視してclaude.ai側を使う。
-
-**現状の許可tool**: Beacon サーバ側で許可されているのは Atlassian の read tool 2件のみ:
-- \`mcp__claude_ai_Atlassian__getJiraIssue\`
-- \`mcp__claude_ai_Atlassian__getAccessibleAtlassianResources\`
-
-他provider (Linear / Notion / Slack 等) の tool は実行時に deny されるので呼び出さないこと。必要なら Ark UI 経由で OAuth 登録した \`mcp__<providerId>-<id>__*\` 系を使う。
+- 各 connection の prefix (\`mcp__<connectionId>__\`) と provider 種別はそのリストで確認する。
+- URL の host を connection のヒントと照合して、使用する connection を判定する。判定できない場合はユーザに確認する。
+- 「接続済み外部 MCP」リストに該当 provider が無い場合は、その provider の操作はできない旨をユーザに伝え、Ark UI からの OAuth 登録を案内する (claude.ai connector 等の外部 MCP 設定は読み込まれない)。
 
 ## コマンドフロー
 
@@ -153,11 +135,11 @@ worktreeの作成・削除はMCPツールを使ってください。
 1. **URL の厳格検証 (fail-fast)**: 必ず最初に \`validate_issue_url\` MCP tool を呼び出し、サーバ側で URL を検証する。
    - \`ok: true\` なら返却された kind / parsed フィールド (issueKey, owner/repo/issueNumber 等) を以降の step で使う
    - \`ok: false\` なら「Jira / GitHub issue 以外のURLには対応していません」とユーザに伝えて中断する
-   - 検証を skip して \`gh_exec\` / \`mcp__claude_ai_Atlassian__*\` を直接呼ぶことは禁止
+   - 検証を skip して \`gh_exec\` / 外部 MCP tool を直接呼ぶことは禁止
 2. list_repositoriesで全リポジトリ一覧を取得
 3. 番号付きリストでリポジトリを提示し、ユーザーに選ばせる
 4. URLの種別を判定し、チケット内容を取得する:
-   - **Jira URL** (例: https://*.atlassian.net/browse/<KEY>): mcp__claude_ai_Atlassian__getJiraIssue を使用。cloudId が必要なら mcp__claude_ai_Atlassian__getAccessibleAtlassianResources で host → cloudId を先に解決する
+   - **Jira URL** (例: https://*.atlassian.net/browse/<KEY>): 「接続済み外部 MCP」リストから host が一致する Atlassian connection を選び、その connection の MCP tool (\`mcp__<connectionId>__*\` の getJiraIssue 等) で issue を取得する。Atlassian connection が無い場合は「Atlassian を Ark UI から OAuth 接続してください」と案内して中断する
    - **GitHub issue URL** (https://github.com/<owner>/<repo>/issues/<N>): gh_exec で \`gh issue view <URL> --json title,body,labels\` を実行（cwd は選択リポジトリのworktreeパス）
 5. ブランチ名ルールを取得する
    - list_worktreesで選択リポジトリの isMain=true のworktreeパスを特定
@@ -530,9 +512,9 @@ export class BeaconManager extends EventEmitter {
       );
     }
 
-    // allowedTools: builtin (Read/Grep/Glob) + ark-beacon ツール + 外部 MCP +
-    // claude.ai connector の許可 tool。CLI には canUseTool が無いため、許可したい
-    // tool を全て --allowedTools に列挙する (未列挙はヘッドレスで自動 deny)。
+    // allowedTools: builtin (Read/Grep/Glob) + ark-beacon ツール + Ark UI 登録の
+    // 外部 OAuth MCP。CLI には canUseTool が無いため、許可したい tool を全て
+    // --allowedTools に列挙する (未列挙はヘッドレスで自動 deny)。
     const allowedTools: string[] = [
       "Read",
       "Grep",
@@ -556,7 +538,6 @@ export class BeaconManager extends EventEmitter {
       "mcp__ark-beacon__get_pm2_status",
       "mcp__ark-beacon__restart_service",
       ...externalAllowedTools,
-      ...BEACON_ALLOWED_CLAUDE_AI_TOOLS,
     ];
 
     const systemPrompt =
