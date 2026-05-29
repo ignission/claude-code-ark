@@ -622,16 +622,9 @@ export class BeaconManager extends EventEmitter {
     const session = this.session ?? (await this.startSession());
     session.lastActivity = new Date();
 
-    // ユーザーメッセージをチャット履歴に追加して通知
-    const userMessage: ChatMessage = {
-      id: randomUUID(),
-      role: "user",
-      content: message,
-      timestamp: new Date(),
-    };
-    session.messages.push(userMessage);
-    db.addBeaconMessage(userMessage);
-    this.emit("beacon:message", userMessage);
+    // 注: ユーザーメッセージの履歴記録は runTurn 内 (reset 判定を通過し spawn が
+    // 確定した時点) で行う。ここで記録すると、turnLock 待機中に reset され turn が
+    // 破棄された場合に「Claude が見ていない user message」が履歴に残るため。
 
     // この turn が完了するまで activeTurnCount を増やす。
     // multi-client で複数 turn が queue されると count が積まれ、全 turn 完了で
@@ -692,6 +685,20 @@ export class BeaconManager extends EventEmitter {
     // 可能性を再チェックする。この時点ではまだ activeChild が null のため
     // closeSession() は kill できず、ここで止めないと stale な spawn が起きる。
     if (discardIfReset()) return;
+
+    // ここまで来れば spawn が確定 = Claude にこの user message を渡す。reset で
+    // 破棄され得る区間 (turnLock 待機 / buildLaunchConfig) を抜けてから履歴に記録する
+    // ことで、「Claude が見ていない user message」が残るのを防ぐ。複数 turn が直列の
+    // 場合も userA→assistantA→userB→assistantB の順序になる。
+    const userMessage: ChatMessage = {
+      id: randomUUID(),
+      role: "user",
+      content: message,
+      timestamp: new Date(),
+    };
+    session.messages.push(userMessage);
+    db.addBeaconMessage(userMessage);
+    this.emit("beacon:message", userMessage);
 
     const mcpConfigPath = this.writeMcpConfig(mcpServers);
     try {

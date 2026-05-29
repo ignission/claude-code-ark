@@ -283,6 +283,10 @@ describe("BeaconManager (CLI stream-json)", () => {
       return childA as unknown as ReturnType<typeof spawn>;
     });
 
+    // セッションを事前確立して sendMessage が startSession を await しないようにする
+    // (await すると A の sendMessage だけ 1 microtask 遅れ、ロック取得順が逆転する)
+    await beaconManager.startSession();
+
     const sendA = beaconManager.sendMessage("A"); // 進行中
     const sendB = beaconManager.sendMessage("B"); // turnLock 待ちで queue される
 
@@ -299,6 +303,11 @@ describe("BeaconManager (CLI stream-json)", () => {
 
     // B は破棄され、2 回目の spawn は起きない
     expect(mockedSpawn).toHaveBeenCalledTimes(1);
+    // 破棄された B の user message は履歴に記録されない (Claude が見ていないため)
+    const recorded = dbMock.addBeaconMessage.mock.calls.map(
+      c => (c[0] as { content?: string }).content
+    );
+    expect(recorded).not.toContain("B");
   });
 
   it("closeSession({resetConversation:true}) は cliSessionId を破棄する (stop-and-reset)", async () => {
