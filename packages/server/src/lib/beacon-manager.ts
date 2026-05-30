@@ -3,35 +3,34 @@
  *
  * Beaconチャット (全リポジトリ横断の司令塔) のセッション管理。
  *
- * エンジンは Agent SDK ではなく `claude` CLI 子プロセスで駆動する
- * (SDK 有料化に伴う移行。CLI はサブスク認証で動くため追加課金なし)。
+ * エンジンは Agent SDK / `claude -p` ではなく、**tmux で常駐起動した対話版 claude**
+ * で駆動する。2026/6/15 以降 Agent SDK / `claude -p` はプラン枠ではなく別枠の
+ * Agent SDK クレジット課金になるため、プラン枠のまま使える対話版 claude を使う。
  *
- * 動作方式: **メッセージごとに claude CLI を `--resume` 付きで起動する**。
- * - `claude --print --input-format stream-json --output-format stream-json`
- *   に user メッセージ 1 件を stdin で渡し、stdout の stream-json を解析して
- *   `beacon:stream` / `beacon:message` を emit する (Beacon 風の独自描画)。
- * - 会話の継続は `--resume <cliSessionId>` で行う。cliSessionId は init message
- *   から取得して settings テーブルに永続化し、サーバー再起動後も継続できる。
- * - 司令塔ツール (旧 ark-beacon MCP) は ArkMcpServer (HTTP) として公開し、
- *   CLI の `--mcp-config` から接続させる。外部 OAuth MCP も同じ mcp-config に合成。
- * - mcp-config はターン毎に再生成するため、MCP 接続の追加/再認証/削除は次ターンで
- *   自動的に反映される (旧 setMcpServers/stale 機構は不要になった)。
+ * 動作方式 (詳細は beacon-cli-session.ts):
+ * - 専用 tmux セッション `ark-beacon` で対話版 claude を 1 つ常駐起動する。
+ *   会話文脈は claude 自身が保持するため `--resume`/cliSessionId は不要。
+ * - 応答は `~/.claude/projects/<cwd>/<session>.jsonl` (構造化 transcript) を tail
+ *   して `beacon:stream` / `beacon:message` を emit する (Beacon 風の独自描画)。
+ *   生 ANSI ターミナルのパースはしない。
+ * - 司令塔ツール (ark-beacon MCP) は ArkMcpServer (HTTP) として公開し、
+ *   起動時の `--mcp-config` から接続させる。外部 OAuth MCP も同じ mcp-config に合成。
+ * - 常駐 claude は起動時の mcp-config を保持し続けるため、ark-beacon MCP は
+ *   **再起動後も同じ port + token** に bind し直す (settings に永続化)。
+ *   MCP 接続の追加/削除 (markMcpConfigStale) は次ターンで tmux セッションを
+ *   貼り直して反映する (= その操作で Beacon の会話文脈はリセットされる)。
  */
 
-import { type ChildProcess, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BeaconStreamChunk, ChatMessage, SpecialKey } from "@ark/shared";
 import { ArkMcpServer } from "./ark-mcp-server.js";
+import {
+  BeaconCliSession,
+  type BeaconTurnResult,
+} from "./beacon-cli-session.js";
 import { db } from "./database.js";
 import { getErrorMessage } from "./errors.js";
 import {
@@ -40,10 +39,25 @@ import {
   type McpServerHttpConfig,
 } from "./mcp-oauth/build-mcp-servers.js";
 import { getDataDir } from "./paths.js";
-import { resolveClaudePath } from "./system.js";
 
-/** settings テーブルに CLI セッションID を保存するキー (--resume 用) */
-const BEACON_CLI_SESSION_KEY = "beacon_cli_session_id";
+/** ark-beacon MCP の bearer token を保存する settings キー (再起動後も同一値を使う) */
+const BEACON_ARK_MCP_TOKEN_KEY = "beacon_ark_mcp_token";
+
+/** ark-beacon MCP の listen ポートを保存する settings キー (再起動後も同一ポートに bind) */
+const BEACON_ARK_MCP_PORT_KEY = "beacon_ark_mcp_port";
+
+/**
+ * 直近 launch 時に ark-beacon MCP が利用可能だったかを保存する settings キー。
+ * サーバー再起動後も degraded セッションを検出して自己回復するため永続化する。
+ */
+const BEACON_LAUNCH_ARK_KEY = "beacon_launch_ark_available";
+
+/**
+ * 直近ターン終了時の JSONL transcript オフセット ({ path, lines }) を保存する settings キー。
+ * サーバー再起動後の初回 attach で、停止中に claude が裏で完走した応答を DB へ
+ * 取り込む (取りこぼし回収) ために使う。
+ */
+const BEACON_JSONL_OFFSET_KEY = "beacon_jsonl_offset";
 
 /** Beaconのシステムプロンプト */
 const BEACON_SYSTEM_PROMPT = `あなたはArkのBeaconです。
@@ -273,6 +287,12 @@ const IDLE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const TURN_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
+ * 対話版 claude の tmux 起動完了 (入力プロンプト表示) を待つ上限。
+ * 初回起動は MCP 接続確立 / trust ダイアログ自動承認を含むため余裕を持たせる。
+ */
+const READY_TIMEOUT_MS = 60 * 1000;
+
+/**
  * 外部 OAuth MCP refresh (buildAuthenticatedExternalMcps) の待機上限。
  * provider の token endpoint が stall した場合に sendMessage が spawn 前で wedge し
  * turnLock を占有するのを防ぐ。超過時は直近成功分 (lastExternalMcps) で続行する。
@@ -309,54 +329,14 @@ function withTimeout<T>(
 
 /**
  * Beacon の論理セッション。
- * CLI プロセス自体はターン毎に起動/終了するため、ここはターンをまたいで
- * 保持する状態 (会話の継続情報 + UI 履歴) のみを持つ。
+ * 実際の対話版 claude は tmux セッション (BeaconCliSession) が常駐保持する。
+ * ここはターンをまたいで保持する UI 状態のみを持つ。
  */
 interface BeaconSession {
-  /**
-   * claude CLI の会話セッションID (`--resume` 用)。
-   * 各ターンの init message から取得して更新し、settings テーブルにも永続化する。
-   * null の場合は新規会話として起動する。
-   */
-  cliSessionId: string | null;
   /** チャット履歴 (UI 表示用。DB と同期) */
   messages: ChatMessage[];
-  /** 最終アクティビティ時刻 (アイドルタイムアウト判定用) */
+  /** 最終アクティビティ時刻 */
   lastActivity: Date;
-  /**
-   * 進行中の turn 数。
-   * sendMessage で +1、ターン完了 (finally) で -1。
-   * multi-client で複数 turn が直列実行待ちのケースでも、count > 0 の間は
-   * postExternalMessage を defer する必要がある (順序保護)。
-   */
-  activeTurnCount: number;
-}
-
-/** claude CLI の stream-json 出力 1 行分 (必要なフィールドのみ) */
-interface CliStreamMessage {
-  type?: string;
-  subtype?: string;
-  session_id?: string;
-  result?: string;
-  is_error?: boolean;
-  errors?: string[];
-  message?: { content?: unknown[] };
-  /** --include-partial-messages で来る逐次イベント */
-  event?: {
-    type?: string;
-    delta?: { type?: string; text?: string };
-  };
-}
-
-/**
- * `--resume` での起動に失敗した (claude 側に該当 session が無い等) ことを示す。
- * runTurn がこれを捕捉して新規会話で再試行する。
- */
-class ResumeFailedError extends Error {
-  constructor(detail: string) {
-    super(`--resume に失敗しました: ${detail || "(詳細なし)"}`);
-    this.name = "ResumeFailedError";
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -399,8 +379,48 @@ export class BeaconManager extends EventEmitter {
   private deps: BeaconDeps | null = null;
   /** 司令塔ツールを公開する HTTP MCP server (CLI が --mcp-config で接続) */
   private readonly arkMcp = new ArkMcpServer();
-  /** 現在実行中ターンの claude 子プロセス (closeSession/stop で kill する) */
-  private activeChild: ChildProcess | null = null;
+  /** 対話版 claude を常駐させる tmux セッション + JSONL tail (遅延生成) */
+  private cliSession: BeaconCliSession | null = null;
+  /**
+   * MCP 構成が変わった (auth-completed / disconnect) ことを示すフラグ。
+   * 対話版 claude は起動時の mcp-config を保持し続けるため、次ターンで tmux
+   * セッションを貼り直して新しい MCP 構成を反映する必要がある。
+   */
+  private mcpStale = false;
+  /**
+   * 直近の launch 時に ark-beacon MCP (司令塔ツール) が利用可能だったか。
+   * false (= ArkMcpServer 起動失敗時に degraded 起動) の場合、その対話セッションは
+   * 司令塔ツールが一切使えず実質機能しない。次ターンで ark MCP が回復していれば
+   * セッションを貼り直して自己回復する (文脈リセットのデメリットより回復を優先)。
+   * サーバー再起動を跨いでも degraded を検出できるよう settings に永続化する。
+   */
+  private launchArkAvailable = true;
+  /**
+   * このプロセスで再接続時の取りこぼし回収を実施済みか。
+   * getHistory (read-only 再接続) からの回収をプロセス毎 1 回に絞るためのガード。
+   */
+  private reconnectRecovered = false;
+  /**
+   * busy な常駐セッションへ reconnect した際、ready 化を待って取りこぼし回収を再試行する
+   * バックグラウンドタイマー。クライアントは beacon:history を mount 時 1 回しか要求しない
+   * ため、サーバー側から ready 後に history を push する必要がある。
+   */
+  private reconnectRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** reconcile の flush race 対策の遅延 settle パス用タイマー (cleanup/reset で解除) */
+  private reconcileSettleTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * 構成変更/復旧で tmux を kill し、置き換えセッションの start 成功後に UI 履歴を
+   * リセットすべきことを示す。start が失敗しても履歴を即失わないよう、reset は
+   * start 成功まで遅延させる (失敗時はフラグを保持し、次の成功時に reset する)。
+   */
+  private pendingHistoryReset = false;
+  /**
+   * 会話の世代カウンタ。resetConversation (stop-and-reset / clear) で +1 する。
+   * turn は開始時の値を capture し、変化していたら「ユーザが会話を破棄した」と判断して
+   * 破棄する。**plain close (beacon:close / idle) では +1 しない** ため、送信直後に
+   * パネルを閉じても turn は破棄されず裏で完走する (新設計の意図)。
+   */
+  private conversationGeneration = 0;
   /**
    * 直近成功した外部 OAuth MCP 接続のスナップショット。
    * buildAuthenticatedExternalMcps が一時的に失敗したターンで、全 provider が
@@ -409,9 +429,8 @@ export class BeaconManager extends EventEmitter {
   private lastExternalMcps: ExternalMcpEntry[] = [];
   /**
    * ターンを直列化するための mutex。
-   * メッセージ毎に claude を --resume で起動するため、同じ会話に対して
-   * 2 つの claude を同時に走らせると会話履歴が壊れる。前ターンの完了 (プロセス
-   * 終了 = 会話の永続化完了) を待ってから次ターンを起動する。
+   * 常駐 claude は 1 つの対話セッションなので、2 つの send-keys を重ねると入力が
+   * 混ざる。前ターンの完了 (ターン完了検出) を待ってから次の send-keys を行う。
    */
   private turnLock: Promise<unknown> = Promise.resolve();
   /**
@@ -422,6 +441,13 @@ export class BeaconManager extends EventEmitter {
    */
   private pendingExternalMessages: ChatMessage[] = [];
   /**
+   * 進行中の turn 数 (manager-global)。sendMessage で +1、完了 (finally) で -1。
+   * count > 0 の間は postExternalMessage を defer する (順序保護)。
+   * 対話版では turn が close を跨いで継続するため、session 単位ではなく manager 単位で
+   * 数える (close→reopen 中に in-flight turn の順序保護が外れないように)。
+   */
+  private activeTurnCount = 0;
+  /**
    * 履歴の世代カウンタ。clearHistory で +1 する。
    * /usage のような長時間バックグラウンド処理が、終了時点で
    * 履歴がクリア済みかを判定するために使う (capture → complete 時に比較)。
@@ -430,6 +456,9 @@ export class BeaconManager extends EventEmitter {
 
   constructor() {
     super();
+    // 直近 launch の ark 可用性を復元する (サーバー再起動を跨いだ degraded 検出用)。
+    // 未保存なら true (健全) 扱い。
+    this.launchArkAvailable = db.getSetting(BEACON_LAUNCH_ARK_KEY) !== false;
     this.startIdleCheck();
   }
 
@@ -467,9 +496,9 @@ export class BeaconManager extends EventEmitter {
   }
 
   /**
-   * 新しいBeaconセッション (論理セッション) を開始する。
-   * CLI プロセスはターン毎に起動するため、ここでは会話継続情報 (cliSessionId) と
-   * UI 履歴を保持する論理セッションを生成するだけ (同期処理、二重起動 race なし)。
+   * 新しい Beacon 論理セッション (UI 状態) を開始する。
+   * 対話版 claude の tmux セッションは最初の sendMessage 時に遅延起動する
+   * (ここでは同期処理、二重起動 race なし)。
    */
   startSession(): Promise<BeaconSession> {
     if (this.session) return Promise.resolve(this.session);
@@ -479,30 +508,80 @@ export class BeaconManager extends EventEmitter {
       );
     }
     const session: BeaconSession = {
-      cliSessionId: this.getPersistedSessionId(),
       messages: db.getBeaconMessages(),
       lastActivity: new Date(),
-      activeTurnCount: 0,
     };
     this.session = session;
-    console.log(
-      `[BeaconManager] 論理セッション開始 (resume: ${session.cliSessionId ?? "なし"})`
-    );
+    console.log("[BeaconManager] 論理セッション開始");
     return Promise.resolve(session);
   }
 
-  /** settings から CLI セッションID を読む (--resume 用) */
-  private getPersistedSessionId(): string | null {
-    const v = db.getSetting(BEACON_CLI_SESSION_KEY);
-    return typeof v === "string" && v.length > 0 ? v : null;
+  /**
+   * ark-beacon MCP の bearer token を取得する (なければ生成して永続化)。
+   * 常駐 claude の mcp-config に焼き込まれるため、再起動後も同じ値を使う。
+   */
+  private getArkMcpToken(): string {
+    const v = db.getSetting(BEACON_ARK_MCP_TOKEN_KEY);
+    if (typeof v === "string" && v.length >= 32) return v;
+    const token = randomBytes(32).toString("hex");
+    db.setSetting(BEACON_ARK_MCP_TOKEN_KEY, token);
+    return token;
   }
 
-  private setPersistedSessionId(id: string): void {
-    db.setSetting(BEACON_CLI_SESSION_KEY, id);
+  /** ark-beacon MCP の永続化済み listen ポート (未確定なら undefined) */
+  private getArkMcpPort(): number | undefined {
+    const v = db.getSetting(BEACON_ARK_MCP_PORT_KEY);
+    return typeof v === "number" && v > 0 ? v : undefined;
   }
 
-  private clearPersistedSessionId(): void {
-    db.deleteSetting(BEACON_CLI_SESSION_KEY);
+  /** start() で確定した実ポートを永続化する (次回起動で同じポートに bind するため) */
+  private persistArkMcpPort(url: string): void {
+    try {
+      const port = Number(new URL(url).port);
+      if (port > 0 && port !== this.getArkMcpPort()) {
+        db.setSetting(BEACON_ARK_MCP_PORT_KEY, port);
+      }
+    } catch {
+      // URL parse 失敗は無視 (次回 ephemeral にフォールバック)
+    }
+  }
+
+  /**
+   * ark-beacon MCP の HTTP server を起動する (冪等)。永続化済みの port + token に
+   * bind し直すため、サーバー再起動後に既存の常駐 claude へ再接続する場合でも、
+   * claude の mcp-config に焼き込まれた endpoint が再び有効になる。
+   * listen 拒否等で失敗しても致命的にはせず null を返す (司令塔ツール無しで継続)。
+   */
+  private async ensureArkMcpStarted(): Promise<{
+    url: string;
+    token: string;
+  } | null> {
+    if (!this.deps) return null;
+    try {
+      const ark = await this.arkMcp.start(this.deps, {
+        port: this.getArkMcpPort(),
+        token: this.getArkMcpToken(),
+      });
+      this.persistArkMcpPort(ark.url);
+      return ark;
+    } catch (err) {
+      console.warn(
+        `[BeaconManager] ArkMcpServer 起動失敗 (司令塔ツール無しで継続): ${getErrorMessage(err)}`
+      );
+      return null;
+    }
+  }
+
+  /**
+   * cliSession インスタンスを遅延生成して返す。
+   * インスタンスは tmux セッション名 (ark-beacon) で実体に紐づくため、プロセス
+   * 再起動後でも生成すれば既存の常駐セッションを kill / 再接続できる。
+   */
+  private getCliSession(): BeaconCliSession {
+    if (!this.cliSession) {
+      this.cliSession = new BeaconCliSession(this.getBeaconCwd());
+    }
+    return this.cliSession;
   }
 
   /**
@@ -527,7 +606,9 @@ export class BeaconManager extends EventEmitter {
    * 司令塔 MCP (ArkMcpServer) を起動し、認証済み外部 OAuth MCP と合成する。
    * ターン毎に呼ぶことで、MCP 接続の追加/再認証/削除を常に最新で反映する。
    */
-  private async buildLaunchConfig(): Promise<{
+  private async buildLaunchConfig(
+    ark: { url: string; token: string } | null
+  ): Promise<{
     mcpServers: Record<string, McpServerHttpConfig>;
     allowedTools: string[];
     systemPrompt: string;
@@ -537,23 +618,16 @@ export class BeaconManager extends EventEmitter {
       throw new Error("BeaconManager が configure() されていません");
     }
     const deps = this.deps;
-    // 司令塔ツールの HTTP MCP server を起動 (冪等)。loopback の listen が拒否される
-    // 等で失敗しても、Beacon 自体は (司令塔ツール無しで) チャット継続できるよう
-    // 致命的にはしない。Ark は本来メインポートを bind するサーバなので通常は成功する。
+    // ark は呼び出し側 (ensureCliStarted) が ensureArkMcpStarted() で起動済みの
+    // endpoint を渡す (二重起動を避ける)。null は起動失敗 = 司令塔ツール無しで継続。
     const mcpServers: Record<string, McpServerHttpConfig> = {};
-    let arkMcpAvailable = false;
-    try {
-      const ark = await this.arkMcp.start(deps);
+    const arkMcpAvailable = ark !== null;
+    if (ark) {
       mcpServers["ark-beacon"] = {
         type: "http",
         url: ark.url,
         headers: { Authorization: `Bearer ${ark.token}` },
       };
-      arkMcpAvailable = true;
-    } catch (err) {
-      console.warn(
-        `[BeaconManager] ArkMcpServer 起動失敗 (司令塔ツール無しで継続): ${getErrorMessage(err)}`
-      );
     }
 
     // 認証済み外部 OAuth MCP を取得する。一時的な失敗 (OAuth refresh の瞬断 / DB
@@ -665,7 +739,7 @@ export class BeaconManager extends EventEmitter {
     const addDirs = new Set<string>(repos);
     try {
       // listAllWorktrees は git worktree list を shell out する。dead mount / wedged
-      // git で send が無限 wedge しない (activeChild 未生成で interrupt 不可) よう timeout。
+      // git で起動準備が無限に wedge して turnLock を占有しないよう timeout を被せる。
       const worktrees = (await withTimeout(
         deps.listAllWorktrees(repos),
         EXTERNAL_MCP_REFRESH_TIMEOUT_MS,
@@ -690,21 +764,233 @@ export class BeaconManager extends EventEmitter {
     };
   }
 
-  /** mcp-config を一時ファイルに書き出す (token を含むため 0600)。返り値はパス。 */
-  private writeMcpConfig(
-    mcpServers: Record<string, McpServerHttpConfig>
-  ): string {
-    const dir = mkdtempSync(join(tmpdir(), "ark-beacon-mcp-"));
-    const file = join(dir, "mcp-config.json");
-    writeFileSync(file, JSON.stringify({ mcpServers }), { mode: 0o600 });
-    return file;
+  /** 起動ファイル (mcp-config / system-prompt) を置く安定ディレクトリ */
+  private getLaunchDir(): string {
+    const dir = join(getDataDir(), "beacon-launch");
+    try {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+    } catch {
+      // 既存 / 権限エラーは writeFileSync 側で顕在化させる
+    }
+    return dir;
   }
 
   /**
-   * メッセージを送信し、claude CLI を起動して応答をストリーミングで返す。
+   * 対話版 claude の起動ファイル (mcp-config / system-prompt) を**安定パス**に書く。
+   * 一時ディレクトリではなく getLaunchDir() に置く: 常駐 claude は起動時に読んだ
+   * パスを保持し続けるため、ファイルを消すと再起動後の参照が壊れる。
+   * mcp-config は OAuth token を含むため 0600 で書く。返り値は両ファイルのパス。
+   */
+  private writeLaunchFiles(
+    mcpServers: Record<string, McpServerHttpConfig>,
+    systemPrompt: string
+  ): { mcpConfigPath: string; systemPromptFile: string } {
+    const dir = this.getLaunchDir();
+    const mcpConfigPath = join(dir, "mcp-config.json");
+    const systemPromptFile = join(dir, "system-prompt.txt");
+    writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers }), {
+      mode: 0o600,
+    });
+    writeFileSync(systemPromptFile, systemPrompt, { mode: 0o600 });
+    return { mcpConfigPath, systemPromptFile };
+  }
+
+  /**
+   * 対話版 claude の tmux セッションを起動済みにする (冪等)。
+   * - 既に起動済み (tmux セッション生存) ならそのまま再利用する (文脈継続)。
+   * - mcpStale (MCP 接続変更) の場合は一度 kill して新しい mcp-config で貼り直す
+   *   (= その操作で会話文脈はリセットされる)。
+   * 起動 (または再開) 後の BeaconCliSession を返す。未認証等で失敗時は例外。
+   * @param isAborted 起動待ち中に true を返すと start() の readiness ループを早期に
+   *   抜ける (stop-and-reset / clear で待機が最大数十秒〜分ブロックするのを防ぐ)。
+   */
+  private async ensureCliStarted(
+    isAborted?: () => boolean
+  ): Promise<BeaconCliSession> {
+    const cli = this.getCliSession();
+    // 入口時点で常駐セッションが生きていたか。false = セッションが (我々の kill 以外で)
+    // 消えていた = この後の起動は文脈ゼロの fresh claude になる、という判定に使う。
+    const wasRunningAtEntry = cli.isRunning();
+
+    // ark-beacon MCP の HTTP server を起動保証する。再接続パス (サーバー再起動後に
+    // 既存の常駐 claude を再利用) でも、claude の mcp-config が指す endpoint を
+    // 再び有効にする必要があるため、attachIfRunning の前に必ず起動する。
+    // 起動前の希望ポートを控えておき、ephemeral fallback (ポート競合) を検出する。
+    const intendedPort = this.getArkMcpPort();
+    const ark = await this.ensureArkMcpStarted();
+    const actualPort = this.getArkMcpPort();
+
+    // 貼り直しが必要かを **判定だけ** する (ここでは kill しない)。kill は置き換え用の
+    // 起動ファイル生成後・start 直前まで遅延させる: 先に kill して buildLaunchConfig 等が
+    // 失敗すると、置き換えも無いまま会話を失う (data loss) ため。
+    let needsRelaunch = false;
+    let relaunchReason = "";
+    if (this.mcpStale && cli.isRunning()) {
+      needsRelaunch = true;
+      relaunchReason = "MCP 構成変更";
+    } else if (cli.isRunning() && !this.launchArkAvailable && ark !== null) {
+      // degraded で起動したが ark MCP が回復 → 正常構成で貼り直す。
+      needsRelaunch = true;
+      relaunchReason = "ark-beacon MCP 回復";
+    } else if (cli.isRunning() && this.launchArkAvailable && ark === null) {
+      // ark 有りで起動したが今は ark MCP が死亡 (bind 失敗等)。旧 endpoint を指す
+      // mcp-config のままでは ark ツールが沈黙して失敗するため degraded で貼り直す。
+      // 貼り直し後 launchArkAvailable=false になり、ark 死亡継続時はこの条件が偽になって
+      // 再接続に切り替わるため毎ターン kill する thrash を防ぐ。
+      needsRelaunch = true;
+      relaunchReason = "ark-beacon MCP 起動不可 (degraded)";
+    } else if (
+      // ark MCP のポートが希望値から変化 (再起動時の競合で ephemeral fallback)。
+      // 常駐 claude の mcp-config は旧ポートを指したままなので新ポートで貼り直す (C-B3)。
+      cli.isRunning() &&
+      ark !== null &&
+      intendedPort !== undefined &&
+      actualPort !== intendedPort
+    ) {
+      needsRelaunch = true;
+      relaunchReason = `ark-beacon MCP ポート変化 (${intendedPort}→${actualPort})`;
+    }
+    // 注: mcpStale / launchArkAvailable の確定 (クリア / 永続化) は **start 成功後** に行う。
+    // ここで先に確定すると、buildLaunchConfig / start が失敗した場合に「貼り直し済み」と
+    // 誤認し、次ターンで stale な構成のセッションへ再接続して固着する (codex P1)。
+
+    // 貼り直し不要かつ常駐中なら再接続する。post-restart の初回 attach
+    // (hasTranscript=false) では、停止中に claude が裏で完走した応答を DB へ
+    // 取り込む (取りこぼし回収)。2 ターン目以降は hasTranscript=true で skip する。
+    if (!needsRelaunch && cli.attachIfRunning()) {
+      this.mcpStale = false; // 再接続成立 = stale 解消済み (構成変更が無かった)
+      if (!cli.hasTranscript()) this.reconcileMissedReply(cli);
+      return cli;
+    }
+
+    // 新規起動 / 貼り直し: 最新の MCP/allowedTools/systemPrompt/addDirs で起動ファイルを書く。
+    // 注: 登録リポジトリ / worktree の --add-dir と外部 OAuth MCP は **この launch 時点**
+    // で確定し、対話セッションの生存中は固定される。起動後に追加された repo/worktree や
+    // 回復した外部 MCP を反映するには Beacon をリセット (stop-and-reset / clear) する
+    // 必要がある (既知の制約 C-B1。ark MCP の degraded のみ上記で自己回復する)。
+    const arkAvailableNow = ark !== null;
+    const { mcpServers, allowedTools, systemPrompt, addDirs } =
+      await this.buildLaunchConfig(ark);
+    const { mcpConfigPath, systemPromptFile } = this.writeLaunchFiles(
+      mcpServers,
+      systemPrompt
+    );
+    // 起動直前に reset/clear を再確認する。config 構築 / 待機中に reset されていたら、
+    // ここで新セッションを起こさず即抜ける (起こすと、reset したのに blank セッションが
+    // 残り次 send が誤って再接続してしまう)。kill はまだなので既存セッションは reset 側の
+    // closeSession が処理済み。
+    if (isAborted?.()) return cli;
+
+    // 起動ファイルが揃った **直後** に旧セッションを kill して start に入る。
+    // ここまで失敗が無ければ kill→start の窓は最小で、kill 後に消える唯一の失敗要因は
+    // start 自体 (= 新構成でも同様に失敗するもの)。会話文脈リセットは start 成功後に行う。
+    if (needsRelaunch && cli.isRunning()) {
+      console.log(
+        `[BeaconManager] ${relaunchReason}。Beacon セッションを貼り直します (会話文脈リセット)`
+      );
+      cli.kill();
+      this.pendingHistoryReset = true;
+    } else if (!wasRunningAtEntry && (this.session?.messages.length ?? 0) > 0) {
+      // 入口で既にセッションが消えていた (外部 kill / host 再起動 / claude crash 等) のに
+      // 履歴が残っている。この後 fresh claude (文脈ゼロ) を起動するため、履歴を残すと
+      // 「モデルが覚えていない過去会話」を表示し続けることになる。start 成功後にリセットする。
+      this.pendingHistoryReset = true;
+    }
+    await cli.start(
+      { mcpConfigPath, systemPromptFile, allowedTools, addDirs },
+      READY_TIMEOUT_MS,
+      isAborted
+    );
+    // start 中に reset/clear された場合: 新セッションが起動済みなので **kill して破棄** する
+    // (reset を真に destructive にする。残すと次 send が blank セッションへ再接続する)。
+    // 構成状態は確定せず据え置く (次 send が fresh に起動し直す)。
+    if (isAborted?.()) {
+      cli.kill();
+      return cli;
+    }
+    // start 成功 → ここで構成状態を確定する。失敗時はここに到達せず mcpStale /
+    // launchArkAvailable が据え置かれ、次ターンで貼り直しが再試行される (固着しない)。
+    this.mcpStale = false;
+    this.launchArkAvailable = arkAvailableNow;
+    db.setSetting(BEACON_LAUNCH_ARK_KEY, arkAvailableNow);
+    // 構成変更/復旧 (kill) による UI 履歴リセットは **start 成功後のここ** で行う。
+    // claude 文脈は消えたので履歴を空にして整合させる (C-B4)。start 失敗時はここに
+    // 到達せずフラグが残り、次の start 成功時にリセットされる (会話の即時 data loss を防ぐ)。
+    if (this.pendingHistoryReset) {
+      this.pendingHistoryReset = false;
+      this.resetHistoryForRelaunch();
+    }
+    // start() は transcript を baseline しない。ここで reconcile する:
+    // - 新規 new-session: 新しい jsonl は保存オフセットと path 不一致 → baseline のみ
+    // - resume (busy で attach できず start に来たケース): 同一 jsonl の保存オフセット
+    //   から、サーバー停止中に完走した応答を回収する (取りこぼし回収)
+    this.reconcileMissedReply(cli);
+    return cli;
+  }
+
+  /**
+   * 再起動跨ぎの取りこぼし応答を回収する。
+   * サーバー停止中に常駐 claude が裏で完走した assistant 応答が JSONL にあれば、
+   * 永続化済みオフセットと突き合わせて DB へ取り込み、UI = claude 文脈を一致させる。
+   * post-restart の初回 attach でのみ呼ぶこと (2 ターン目以降は二重記録になる)。
+   */
+  private reconcileMissedReply(cli: BeaconCliSession): void {
+    // 取りこぼし回収を試みたら、getHistory からの再接続回収はこのプロセスで打ち切る。
+    this.reconnectRecovered = true;
+    this.recoverPass(cli);
+    // flush race 対策: claude が ready に戻った直後はまだ最終 assistant 行が JSONL に
+    // flush されていないことがある (sendTurn の settle と同じ race)。1 回の read だけだと
+    // pre-flush EOF までオフセットを進めて応答を取り逃すため、短い遅延後にもう一度だけ
+    // 回収パスを走らせて遅延 flush 分を拾う (保存オフセットからの差分を見るので二重記録しない)。
+    if (this.reconcileSettleTimer) clearTimeout(this.reconcileSettleTimer);
+    this.reconcileSettleTimer = setTimeout(() => {
+      this.reconcileSettleTimer = null;
+      // 新しい turn が始まっている場合はスキップする: 遅延回収した (古い) assistant 応答を
+      // 新しい user プロンプトの **後ろ** に append すると履歴順序が claude 文脈とズレる。
+      // (sendMessage は新規 turn 開始時にこの timer を解除するが、競合の保険でも確認する)
+      if (this.activeTurnCount > 0) return;
+      this.recoverPass(cli);
+    }, 2000);
+  }
+
+  /**
+   * 保存オフセット以降に flush 済みの assistant 応答を 1 回分回収して履歴へ取り込む。
+   * 回収が無ければ何もしない (オフセットだけ現在地へ更新する)。
+   */
+  private recoverPass(cli: BeaconCliSession): void {
+    const saved = db.getSetting(BEACON_JSONL_OFFSET_KEY) as
+      | { path: string | null; lines: number }
+      | undefined;
+    // live emit はしない (UI は beacon:history / external-message で取得する)
+    const recovered = cli.recoverPending(saved ?? null, { onText: () => {} });
+    // 回収有無に関わらず、現在地でオフセットを更新する
+    db.setSetting(BEACON_JSONL_OFFSET_KEY, cli.getTranscriptOffset());
+    if (!recovered?.text && !recovered?.toolUse) return;
+    const message: ChatMessage = {
+      id: randomUUID(),
+      role: "assistant",
+      content: recovered.text,
+      timestamp: new Date(),
+      toolUse: recovered.toolUse,
+    };
+    if (this.session) this.session.messages.push(message);
+    db.addBeaconMessage(message);
+    // 全クライアントへ履歴を再同期する (beacon:history broadcast)。サーバー再起動を跨いだ
+    // ターンでは activeBeaconSocket が null で単発 message/done が届かないため、broadcast で
+    // 回収した応答を反映しつつ、クライアント側が beacon:history 受信で streaming 状態も解除する
+    // (loading 固着の解消)。
+    this.broadcastHistory();
+    console.log(
+      "[BeaconManager] 再起動跨ぎの取りこぼし応答を回収して履歴に取り込みました"
+    );
+  }
+
+  /**
+   * メッセージを送信し、常駐 claude の応答をストリーミングで返す。
    *
-   * 1. ユーザーメッセージを履歴に追加・通知
-   * 2. turnLock で直列化しつつ runTurn を実行 (CLI 起動 → stream-json 解析)
+   * 1. turnLock で直列化しつつ runTurn を実行
+   *    (tmux セッション起動保証 → send-keys → JSONL tail でターン完了待ち)
+   * 2. ユーザーメッセージは起動確定後に記録する (runTurn 内)
    * 3. activeTurnCount を増減し、0 になったら pending external message を flush
    */
   async sendMessage(message: string): Promise<void> {
@@ -714,23 +1000,34 @@ export class BeaconManager extends EventEmitter {
     const session = this.session ?? (await this.startSession());
     session.lastActivity = new Date();
 
-    // 注: ユーザーメッセージの履歴記録は runTurn 内 (reset 判定を通過し spawn が
+    // 新規 turn が始まるので、保留中の reconnect settle 回収を解除する。遅延回収が
+    // この turn の後に古い応答を append して履歴順序を壊すのを防ぐ (codex P2)。
+    if (this.reconcileSettleTimer) {
+      clearTimeout(this.reconcileSettleTimer);
+      this.reconcileSettleTimer = null;
+    }
+
+    // 注: ユーザーメッセージの履歴記録は runTurn 内 (reset 判定を通過し tmux 起動が
     // 確定した時点) で行う。ここで記録すると、turnLock 待機中に reset され turn が
     // 破棄された場合に「Claude が見ていない user message」が履歴に残るため。
 
-    // この turn が完了するまで activeTurnCount を増やす。
+    // この turn が完了するまで activeTurnCount を増やす (manager-global)。
     // multi-client で複数 turn が queue されると count が積まれ、全 turn 完了で
     // 0 に戻るまで postExternalMessage を defer する (順序保護)。
-    session.activeTurnCount += 1;
+    // close→reopen を跨いでも in-flight turn が count に乗り続けるため、
+    // 旧ターン完了前の external message が assistant より先に確定するのを防ぐ。
+    // 会話世代を **enqueue 時点** で capture する。turnLock 待機中に reset されたら、
+    // dequeue 後の runTurn がこの世代と現在値を比較して破棄判定できる
+    // (runTurn 開始時に capture すると、待機中の reset を取り逃す)。
+    const enqueueGen = this.conversationGeneration;
+    this.activeTurnCount += 1;
     try {
       // turnLock: 前ターン (= 会話の永続化) 完了を待ってから起動して直列化する
-      await this.withTurnLock(() => this.runTurn(session, message));
+      await this.withTurnLock(() => this.runTurn(session, message, enqueueGen));
     } finally {
-      session.activeTurnCount = Math.max(0, session.activeTurnCount - 1);
-      // flush は current session のターンが全て終わった時のみ。reset 後に stale な
-      // 旧ターンが settle した際に新セッションの pending queue を早期 drain しないよう
-      // this.session === session でガードする (manager-wide queue の順序保護)。
-      if (this.session === session && session.activeTurnCount === 0) {
+      this.activeTurnCount = Math.max(0, this.activeTurnCount - 1);
+      // 全 turn が終わったら pending external message を flush する (assistant→external 順)。
+      if (this.activeTurnCount === 0) {
         this.flushPendingExternalMessages();
       }
     }
@@ -748,20 +1045,21 @@ export class BeaconManager extends EventEmitter {
   }
 
   /**
-   * 1 ターンを実行する。mcp-config を生成して claude CLI を起動し、
-   * stream-json を解析して beacon イベントを emit する。
-   * --resume 失敗時は新規会話で 1 度だけ再試行する。
+   * 1 ターンを実行する。tmux セッションの起動を保証し、send-keys でメッセージを
+   * 送って JSONL transcript を tail し、ターン完了まで待って beacon イベントを emit する。
    */
   private async runTurn(
     session: BeaconSession,
-    message: string
+    message: string,
+    enqueueGen: number
   ): Promise<void> {
-    // turnLock で待機中 / 起動準備の await 中に closeSession() / clearHistory() が
-    // 走り、セッションが差し替え / 破棄された場合、このターンは「ユーザーが破棄した」
-    // プロンプトなので実行しない。spawn せずに即破棄する (古い cliSessionId で会話が
-    // 復活したり、stale な応答が UI に流れるのを防ぐ)。done を emit して loading を解除。
+    // turnLock 待機中 / 起動準備中に **reset/clear** (resetConversation) が走ったら、
+    // このターンは「ユーザーが破棄した」プロンプトなので実行しない。
+    // plain close (beacon:close / idle) は破棄ではないので、ここでは止めず裏で完走させる
+    // (enqueue 時点の会話世代との差分だけを破棄シグナルにする)。
+    const wasReset = (): boolean => this.conversationGeneration !== enqueueGen;
     const discardIfReset = (): boolean => {
-      if (this.session === session) return false;
+      if (!wasReset()) return false;
       this.emit("beacon:stream", {
         chunk: "",
         done: true,
@@ -770,476 +1068,148 @@ export class BeaconManager extends EventEmitter {
     };
     if (discardIfReset()) return;
 
-    const { mcpServers, allowedTools, systemPrompt, addDirs } =
-      await this.buildLaunchConfig();
+    // 対話版 claude の tmux セッションを起動保証する (初回は MCP 接続確立 + trust
+    // ダイアログ自動承認を含む)。未認証等で失敗したら done を emit して reject する
+    // (beacon:error は sendMessage→socket ハンドラの catch が emit する。二重通知防止)。
+    let cli: BeaconCliSession;
+    try {
+      // 起動待ち中に reset/clear されたら待機を打ち切る (plain close では打ち切らない)。
+      cli = await this.ensureCliStarted(wasReset);
+    } catch (err) {
+      this.emit("beacon:stream", {
+        chunk: "",
+        done: true,
+      } satisfies BeaconStreamChunk);
+      throw err;
+    }
 
-    // buildLaunchConfig の await 中 (arkMcp 起動 / 外部 MCP refresh) に reset された
-    // 可能性を再チェックする。この時点ではまだ activeChild が null のため
-    // closeSession() は kill できず、ここで止めないと stale な spawn が起きる。
+    // 起動の await 中に reset された可能性を再チェックする。
     if (discardIfReset()) return;
 
-    // user message は CLI が起動した (init 受信 = launch 成功) 時点で初めて履歴に
-    // 記録する。spawn 前に記録すると、claude binary 不正 / 一時ファイル書込失敗 /
-    // spawn エラーで Claude が一度も見ていない user message が履歴に残るため。
-    // 一度だけ記録する (resume 失敗→新規会話 retry でも二重記録しない)。複数 turn
-    // 直列時の順序も userA→assistantA→userB→assistantB になる。
-    let userRecorded = false;
-    const recordUserMessage = () => {
-      if (userRecorded || this.session !== session) return;
-      userRecorded = true;
-      const userMessage: ChatMessage = {
-        id: randomUUID(),
-        role: "user",
-        content: message,
-        timestamp: new Date(),
-      };
-      session.messages.push(userMessage);
-      db.addBeaconMessage(userMessage);
-      this.emit("beacon:message", userMessage);
+    // 起動成功 = この turn は確実に claude に届く。ここで user message を記録する
+    // (起動失敗時は記録されない)。assistant 応答より前に記録され履歴順序も保たれる。
+    const userMessage: ChatMessage = {
+      id: randomUUID(),
+      role: "user",
+      content: message,
+      timestamp: new Date(),
     };
+    // 履歴は **現在の** this.session に積む。close→reopen を跨ぐと captured `session` は
+    // 旧オブジェクトになり、reopen 後の getHistory に反映されないため (DB は別途確定)。
+    this.session?.messages.push(userMessage);
+    db.addBeaconMessage(userMessage);
+    this.emit("beacon:message", userMessage);
 
-    const mcpConfigPath = this.writeMcpConfig(mcpServers);
+    // send-keys → JSONL tail。逐次 text は live 描画用にそのまま emit する。
+    // ターン完了 (または中断/タイムアウト) で result を確定する。
+    let result: BeaconTurnResult;
     try {
-      await this.attemptTurn(session, message, {
-        mcpConfigPath,
-        allowedTools,
-        systemPrompt,
-        addDirs,
-        useResume: true,
-        onLaunched: recordUserMessage,
-      }).catch(async err => {
-        // --resume 失敗 (claude 側に該当 session が無い等) → 新規会話で再試行。
-        // ただし retry 中に close/clear されていたら respawn しない (discardIfReset)。
-        if (err instanceof ResumeFailedError && session.cliSessionId) {
-          if (discardIfReset()) return;
-          console.warn(
-            "[BeaconManager] --resume に失敗。新規会話で再試行します"
-          );
-          session.cliSessionId = null;
-          this.clearPersistedSessionId();
-          await this.attemptTurn(session, message, {
-            mcpConfigPath,
-            allowedTools,
-            systemPrompt,
-            addDirs,
-            useResume: false,
-            onLaunched: recordUserMessage,
-          });
-          return;
-        }
-        throw err;
-      });
-    } finally {
-      // token / OAuth ヘッダを含む一時ファイル (とディレクトリ) を必ず削除
-      try {
-        rmSync(join(mcpConfigPath, ".."), { recursive: true, force: true });
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-  /**
-   * claude CLI を 1 回起動し、user メッセージ 1 件を stdin で渡して
-   * stream-json 出力を解析する。result を受信したら resolve。
-   * --resume したのに init が来ず非0終了した場合は ResumeFailedError で reject。
-   */
-  private attemptTurn(
-    session: BeaconSession,
-    message: string,
-    opts: {
-      mcpConfigPath: string;
-      allowedTools: string[];
-      systemPrompt: string;
-      addDirs: string[];
-      useResume: boolean;
-      /** CLI 起動成功 (init 受信) 時に呼ぶ。user message 記録に使う */
-      onLaunched: () => void;
-    }
-  ): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      const claudeBin = resolveClaudePath() ?? "claude";
-      const args = [
-        "--print",
-        "--verbose",
-        "--input-format",
-        "stream-json",
-        "--output-format",
-        "stream-json",
-        // 逐次ストリーミング (text_delta) を有効化し、Beacon のライブ描画を滑らかにする
-        "--include-partial-messages",
-        "--model",
-        "sonnet",
-        // 組込ツールを Read/Grep/Glob のみに絞る。--allowedTools は permission を
-        // 制御するだけで built-in tool 自体は session に載るため、Bash / Write / Edit /
-        // Task / Skill 等が露出して host 導入の skill 等を呼べてしまう。--tools で
-        // 利用可能な built-in を明示制限する (MCP tool は mcp-config 側で別管理)。
-        "--tools",
-        "Read",
-        "Grep",
-        "Glob",
-        // host 導入の skill / slash command を無効化する。--tools は built-in tool 集合を
-        // 絞るが、skill (/skill-name) は別経路で resolve されるため明示的に無効化する。
-        "--disable-slash-commands",
-        // 権限モードを明示固定する (旧 SDK の permissionMode:"default" 相当)。
-        // operator の Claude Code 設定 (plan / acceptEdits 等) を継承すると、Beacon が
-        // ツールを呼べなくなったり逆に過剰な権限を得たりするため、毎ターン default に固定。
-        "--permission-mode",
-        "default",
-        // 注: --setting-sources は指定しない。空にすると hooks/plugins を隔離できる一方、
-        // settings.json ベースの認証/プロバイダ設定 (apiKeyHelper / Bedrock / Vertex 等) も
-        // 失われ、その方式で認証している環境で Beacon が全ターン失敗する。Ark はサブスク
-        // 認証 (settings.json と独立した credentials) が主だが、認証を壊さない方を優先し
-        // operator の settings は読み込ませる (hooks は operator 自身の信頼済み設定)。
-        // operator のグローバル / プロジェクト MCP 設定 (~/.claude.json, .mcp.json 等) を
-        // 読み込ませない。これが無いと毎ターン外部 MCP server (stdio バイナリ) が Ark の
-        // プロセス内で spawn され、セキュリティ/運用上のリスクになる。Beacon が使う MCP は
-        // 生成した mcp-config (ark-beacon + Ark UI 登録の OAuth MCP) に限定する。
-        // 注: これにより claude.ai アカウントの connector (mcp__claude_ai_*) は使えないが、
-        // 外部 provider は Ark UI 経由で OAuth 登録した MCP (mcp__<connectionId>__*) を正規の
-        // 経路とする (Jira Phase 1b もそちらで解決できる)。
-        "--strict-mcp-config",
-        "--mcp-config",
-        opts.mcpConfigPath,
-        // Claude Code の標準 system prompt (ツールガイダンス / CLAUDE.md 等の
-        // context loading) を保持しつつ Beacon の指示を *追記* する。--system-prompt
-        // (置換) だと標準の動作指針が失われるため append を使う。
-        "--append-system-prompt",
-        opts.systemPrompt,
-      ];
-      if (opts.useResume && session.cliSessionId) {
-        args.push("--resume", session.cliSessionId);
-      }
-      // cwd (HOME) 外の登録リポジトリへ Read/Grep/Glob でアクセスできるよう workspace へ追加。
-      // (--add-dir は variadic ではなく繰り返し指定する)
-      for (const dir of opts.addDirs) {
-        args.push("--add-dir", dir);
-      }
-      // --allowedTools は variadic。後続に別フラグが来ないよう最後に置く。
-      args.push("--allowedTools", ...opts.allowedTools);
-
-      // 子 claude に渡す env を sanitize する (tmux-manager / usage-collector と同様)。
-      // - NODE_ENV: PM2 の production が claude→shell→pnpm 等に伝播するのを防ぐため空に
-      // - CLAUDECODE: Ark を既存 claude セッション内から起動した場合の nested 検出を回避
-      //   (これが残ると Beacon の子 claude が起動/応答に失敗し得る)
-      // - CLAUDE_CONFIG_DIR: プロファイル固有 config を継承すると Beacon が誤アカウントで
-      //   動くため削除しデフォルトプロファイルで動かす (空文字は claude を壊すので unset)
-      const childEnv: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "" };
-      childEnv.CLAUDECODE = undefined;
-      childEnv.CLAUDE_CONFIG_DIR = undefined;
-
-      const child = spawn(claudeBin, args, {
-        // cwd は HOME ではなく専用の中立ディレクトリにする。HOME を cwd にすると
-        // claude が `~/CLAUDE.md` を project 指示として自動ロードし、operator 個人の
-        // 指示が全 Beacon チャットに混入して挙動が非決定的になるため。repo/worktree
-        // へのアクセスは --add-dir で明示許可済み。
-        cwd: this.getBeaconCwd(),
-        stdio: ["pipe", "pipe", "pipe"],
-        env: childEnv,
-      });
-      this.activeChild = child;
-
-      let buffer = "";
-      let assistantText = "";
-      let lastToolUse: ChatMessage["toolUse"] | undefined;
-      let sawResult = false;
-      // result が「resume 先の会話が見つからない」エラーだった場合に立てる。
-      // この時のみ新規会話で再試行する (他の起動失敗では cliSessionId を消さない)。
-      let resumeFailed = false;
-      let stderrBuf = "";
-      let settled = false;
-      let watchdog: ReturnType<typeof setTimeout> | undefined;
-
-      /** claude の「指定 session が resume できない」固有エラーかを判定する */
-      const isResumeNotFound = (reason: string): boolean =>
-        /no conversation found|cannot resume|unknown session/i.test(reason);
-
-      const settle = (fn: () => void) => {
-        if (settled) return;
-        settled = true;
-        if (watchdog) clearTimeout(watchdog);
-        if (this.activeChild === child) this.activeChild = null;
-        fn();
-      };
-
-      // wall-clock 安全弁: ツールループ / stalled MCP で無限に走り turnLock を占有
-      // し続けるのを防ぐ。超過したら child を kill して done を emit し reject する
-      // (beacon:error は reject 経由で socket ハンドラが emit)。settle で clear される。
-      watchdog = setTimeout(() => {
-        settle(() => {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            // already exited
-          }
-          this.emit("beacon:stream", {
-            chunk: "",
-            done: true,
-          } satisfies BeaconStreamChunk);
-          reject(
-            new Error(
-              `claude ターンが ${Math.round(TURN_TIMEOUT_MS / 60000)} 分でタイムアウトしました`
-            )
-          );
-        });
-      }, TURN_TIMEOUT_MS);
-
-      // テキスト結合時に改行が欠けている場合を補完する
-      // (tool 実行前後のテキストが直結して Markdown 行頭パターンが壊れるのを防ぐ)
-      const appendWithNewline = (base: string, chunk: string): string => {
-        if (base && !base.endsWith("\n") && !chunk.startsWith("\n")) {
-          return `${base}\n${chunk}`;
-        }
-        return base + chunk;
-      };
-
-      const handleMessage = (msg: CliStreamMessage) => {
-        if (msg.type === "system" && msg.subtype === "init") {
-          // session 差し替え/close (stop-and-reset / clear) 後に遅延 init が届いた
-          // 場合に cliSessionId を書き戻すと、破棄したはずの会話が次ターンで --resume
-          // されてしまう。current session の時だけ永続化する。
-          if (
-            this.session === session &&
-            typeof msg.session_id === "string" &&
-            msg.session_id
-          ) {
-            session.cliSessionId = msg.session_id;
-            this.setPersistedSessionId(msg.session_id);
-          }
-          // CLI 起動成功 = この turn は確実に Claude に届く。ここで user message を
-          // 記録する (launch 失敗時は init が来ないので記録されない)。assistant 応答
-          // より前に記録されるため履歴順序も保たれる。
-          opts.onLaunched();
-          return;
-        }
-        // 逐次ストリーミング (--include-partial-messages): text_delta を
-        // **ライブ描画用** にそのまま emit する。確定テキストは下の assistant
-        // メッセージ (完全な block) から組み立てるため、ここでは accumulate しない
-        // (delta は語の途中で切れるため appendWithNewline を適用できない)。
-        if (msg.type === "stream_event") {
-          const ev = msg.event;
-          if (
-            // session 差し替え/close 後にバッファ残留 delta が UI へ漏れるのを防ぐ
-            this.session === session &&
-            ev?.type === "content_block_delta" &&
-            ev.delta?.type === "text_delta" &&
-            typeof ev.delta.text === "string" &&
-            ev.delta.text
-          ) {
+      result = await cli.sendTurn(
+        message,
+        {
+          onText: chunk => {
+            // session 差し替え/close 後に残留 chunk が UI へ漏れるのを防ぐ
+            if (this.session !== session) return;
             this.emit("beacon:stream", {
-              chunk: ev.delta.text,
+              chunk,
               done: false,
             } satisfies BeaconStreamChunk);
-          }
-          return;
-        }
-        if (msg.type === "assistant" && msg.message?.content) {
-          // 確定テキストを block 単位で組み立てる (tool 前後の改行を補完)。
-          // ライブ描画は stream_event 側で済んでいるので、ここでは emit しない。
-          for (const block of msg.message.content) {
-            const b = block as {
-              type?: string;
-              text?: string;
-              name?: string;
-              input?: unknown;
-            };
-            if (b.type === "text" && typeof b.text === "string") {
-              assistantText = appendWithNewline(assistantText, b.text);
-            } else if (b.type === "tool_use") {
-              lastToolUse = {
-                toolName: String(b.name ?? ""),
-                input:
-                  typeof b.input === "string"
-                    ? b.input
-                    : JSON.stringify(b.input),
-              };
-            }
-          }
-          return;
-        }
-        if (msg.type === "result") {
-          sawResult = true;
-          // session 差し替え/close 後は emit/永続化しない (canceled turn の漏洩防止)。
-          // sawResult は close ハンドラの解決判定に使うため上で立てておく。
-          if (this.session !== session) return;
-          // result 自体に result テキストが含まれ、未 stream の場合のみ追加
-          if (
-            msg.subtype === "success" &&
-            typeof msg.result === "string" &&
-            msg.result &&
-            !assistantText.includes(msg.result)
-          ) {
-            const prevLen = assistantText.length;
-            assistantText = appendWithNewline(assistantText, msg.result);
-            this.emit("beacon:stream", {
-              chunk: assistantText.slice(prevLen),
-              done: false,
-            } satisfies BeaconStreamChunk);
-          }
-          // 最終 assistant メッセージを履歴に追加 (セッション差し替え時は書かない:
-          // clearHistory 等で消した履歴が in-flight の result で復活するのを防ぐ)
-          if (assistantText && this.session === session) {
-            const assistantMessage: ChatMessage = {
-              id: randomUUID(),
-              role: "assistant",
-              content: assistantText,
-              timestamp: new Date(),
-              toolUse: lastToolUse,
-            };
-            session.messages.push(assistantMessage);
-            db.addBeaconMessage(assistantMessage);
-            this.emit("beacon:message", assistantMessage);
-          }
-          // 非 success の result (permission 拒否 / max_turns / 実行エラー等)
-          if (msg.subtype !== "success" || msg.is_error) {
-            const reason =
-              msg.errors?.[0] ||
-              (typeof msg.result === "string" && msg.result
-                ? msg.result
-                : `claude が異常終了しました (subtype=${msg.subtype ?? "unknown"})`);
-            // 「resume 先の会話が見つからない」エラー時のみ新規会話で再試行する
-            // (close ハンドラが ResumeFailedError を投げ runTurn が retry)。
-            // ここでは beacon:error / done を出さない (retry が出すため)。
-            // それ以外の本物のエラーは「無言で正常終了」に見えないよう通知する。
-            if (
-              opts.useResume &&
-              session.cliSessionId &&
-              isResumeNotFound(reason)
-            ) {
-              resumeFailed = true;
-              return;
-            }
-            this.emit("beacon:error", { error: reason });
-          }
-          this.emit("beacon:stream", {
-            chunk: "",
-            done: true,
-          } satisfies BeaconStreamChunk);
-          assistantText = "";
-          lastToolUse = undefined;
-        }
-        // system(init以外) / user(tool_result echo) / rate_limit_event /
-        // stream_event の text_delta 以外 (message_start 等) はスキップする
+          },
+        },
+        TURN_TIMEOUT_MS,
+        // tmux セッションが kill された (stop-and-reset / clear) 場合のみ早期に打ち切る。
+        // 通常の close (beacon:close / idle) では claude は裏で生成を完走するため、
+        // ここで打ち切らず最後まで JSONL を tail して DB に確定させる (UI=claude 文脈の維持)。
+        () => !cli.isRunning()
+      );
+    } catch (err) {
+      // sendTurn が送信前/途中で throw (tmux load-buffer 失敗 / send-keys エラー等)。
+      // claude はメッセージを受け取っていないので、記録済みの user プロンプトを取り消し、
+      // done を emit して loading を解除してからエラーを伝播する
+      // (beacon:error は sendMessage→socket ハンドラの catch が emit)。
+      this.discardUserMessage(userMessage, session);
+      this.emit("beacon:stream", {
+        chunk: "",
+        done: true,
+      } satisfies BeaconStreamChunk);
+      throw err;
+    }
+
+    // タイムアウト (completed=false) はツールループ/hang で 10 分を超えた runaway。
+    // tmux 上の claude は裏で走り続け、遅れて届く応答は次ターンの baseline で握り潰され
+    // DB/UI と claude 文脈がズレる。旧 -p の watchdog (SIGKILL) と同様にここで kill して
+    // ターンを確定中断する (文脈リセットを伴うが、10 分 hang したセッションの継続より安全)。
+    // ただし既に reset (stop-and-reset/clear) で kill 済みなら二重 kill しない。
+    if (!result.completed && cli.isRunning()) {
+      cli.kill();
+    }
+
+    // tmux が kill された = claude 文脈も破棄された (stop-and-reset / clear / timeout)。
+    // この場合 claude は応答を保持しないので DB にも記録しない (両者を一致させる)。
+    const killed = !cli.isRunning();
+    // UI へ live で流すのは、この session がまだ前面 (差し替え/close されていない) の時だけ。
+    const live = this.session === session;
+
+    // kill された場合、claude 文脈はリセットされたのに user プロンプトだけ DB に残ると、
+    // 再 open 時に「モデルが知らないプロンプト」が履歴に出る。先に記録した user メッセージを
+    // 取り消して履歴を claude 文脈と一致させる (clear は別途全削除するので二重でも無害)。
+    // captured session と (reopen された) this.session の両方から id で除去する。
+    if (killed) {
+      this.discardUserMessage(userMessage, session);
+    }
+
+    // 確定 assistant メッセージは「claude が実際に保持した応答」を基準に DB へ記録する。
+    // close (非 reset) で UI から外れていても、claude は応答を文脈に持つため DB にも
+    // 残し、再 open 時に beacon:history で復元できるようにする (UI 履歴 = claude 文脈)。
+    // in-memory は **現在の** this.session に積む (close→reopen 後も getHistory に反映)。
+    if (result.text && !killed) {
+      const assistantMessage: ChatMessage = {
+        id: randomUUID(),
+        role: "assistant",
+        content: result.text,
+        timestamp: new Date(),
+        toolUse: result.toolUse,
       };
+      this.session?.messages.push(assistantMessage);
+      db.addBeaconMessage(assistantMessage);
+      if (live) {
+        this.emit("beacon:message", assistantMessage);
+      } else {
+        // close→reopen を跨いだ in-flight turn の完了。active socket への単発 message は
+        // 届かないため、履歴を再同期して reopen 後のクライアントにも応答を反映する。
+        this.broadcastHistory();
+      }
+    }
 
-      const dispatchLine = (line: string) => {
-        let msg: CliStreamMessage | null = null;
-        try {
-          msg = JSON.parse(line) as CliStreamMessage;
-        } catch {
-          console.warn(`[BeaconManager] JSON 解析失敗: ${line.slice(0, 120)}`);
-        }
-        if (!msg) return;
-        try {
-          handleMessage(msg);
-        } catch (e) {
-          console.error(
-            `[BeaconManager] メッセージ処理エラー: ${getErrorMessage(e)}`
-          );
-        }
-      };
+    // ターン後の JSONL オフセットを永続化する (再起動跨ぎの取りこぼし回収の基準点)。
+    // kill 済み (reset) の場合は次回新規 launch で初期化されるため更新しない。
+    if (!killed) {
+      db.setSetting(BEACON_JSONL_OFFSET_KEY, cli.getTranscriptOffset());
+    }
 
-      // 完全な行 (\n 区切り) を処理する。flush=true で末尾の改行なし残余も処理する
-      // (claude が最終 JSON を trailing newline なしで書いて終了するケース)。
-      const drainBuffer = (flush: boolean) => {
-        let idx = buffer.indexOf("\n");
-        while (idx >= 0) {
-          const line = buffer.slice(0, idx).trim();
-          buffer = buffer.slice(idx + 1);
-          if (line) dispatchLine(line);
-          idx = buffer.indexOf("\n");
-        }
-        if (flush) {
-          const rest = buffer.trim();
-          buffer = "";
-          if (rest) dispatchLine(rest);
-        }
-      };
-
-      // multibyte UTF-8 (日本語応答等) が data チャンク境界で分断され文字化け
-      // (`d.toString()` だと `�` 置換) するのを防ぐため文字列デコードに任せる。
-      child.stdout?.setEncoding("utf8");
-      child.stdout?.on("data", (chunk: string) => {
-        buffer += chunk;
-        drainBuffer(false);
+    // エラー/done の通知は前面の UI にのみ行う。
+    // stop-and-reset / clear は this.session を差し替えるため live=false で静かに終了する。
+    // エラー通知は前面 (live) かつエラー条件成立時のみ。
+    // - timeout: kill 済みだが前面なら runaway 中断を通知。
+    //   ただし stop-and-reset / clear (= live=false) はユーザ自身のキャンセルなので
+    //   エラーは出さない (この場合 completed=false でも黙って終える)。
+    if (live && !result.completed) {
+      this.emit("beacon:error", {
+        error: `claude ターンが ${Math.round(TURN_TIMEOUT_MS / 60000)} 分でタイムアウトしました (応答が完了せず中断しました)`,
       });
-
-      child.stderr?.setEncoding("utf8");
-      child.stderr?.on("data", (chunk: string) => {
-        stderrBuf += chunk;
+    } else if (live && !killed && !result.text && !result.toolUse) {
+      this.emit("beacon:error", {
+        error: "claude から応答を取得できませんでした",
       });
-
-      child.on("error", err => {
-        settle(() => {
-          // loading 解除のため done だけ emit。beacon:error は reject 経由で
-          // sendMessage→socket ハンドラの catch が emit する (二重通知防止)。
-          this.emit("beacon:stream", {
-            chunk: "",
-            done: true,
-          } satisfies BeaconStreamChunk);
-          reject(err);
-        });
-      });
-
-      child.on("close", code => {
-        settle(() => {
-          // 末尾に改行が無い最終 JSON (result 等) が buffer に残っている場合に処理する。
-          // これを忘れると sawResult が false のままになり正常応答を異常終了扱いする。
-          drainBuffer(true);
-          if (resumeFailed) {
-            // resume 先の会話が見つからない → runTurn が新規会話で再試行する。
-            // (result も来ているが sawResult より先に判定する)
-            reject(new ResumeFailedError(stderrBuf.trim()));
-            return;
-          }
-          if (sawResult) {
-            // 正常完了 / 通知済みエラー (result 受信済み)
-            resolve();
-            return;
-          }
-          if (child.killed) {
-            // closeSession / stop-and-reset による意図的な kill → 静かに終了
-            // (loading 解除のため done だけ emit)
-            this.emit("beacon:stream", {
-              chunk: "",
-              done: true,
-            } satisfies BeaconStreamChunk);
-            resolve();
-            return;
-          }
-          // result 未受信での異常終了 (起動失敗 / crash 等)。resume 失敗とは限らない
-          // (auth / mcp-config 不正 / 一時的失敗) ため cliSessionId は消さない。
-          // loading 解除のため done だけ emit。beacon:error は reject 経由で
-          // socket ハンドラの catch が emit する (二重通知防止)。
-          const errMsg =
-            stderrBuf.trim() ||
-            `claude プロセスが異常終了しました (code=${code})`;
-          this.emit("beacon:stream", {
-            chunk: "",
-            done: true,
-          } satisfies BeaconStreamChunk);
-          reject(new Error(errMsg));
-        });
-      });
-
-      // stdin の error (claude が即終了した場合の EPIPE 等) を握る。リスナーが無いと
-      // 'error' が uncaught exception になり Ark サーバ全体を落とす。ターンの成否は
-      // child の close/error ハンドラが決めるので、ここではログのみ。
-      child.stdin?.on("error", err => {
-        console.warn(
-          `[BeaconManager] stdin 書き込みエラー (無視): ${getErrorMessage(err)}`
-        );
-      });
-
-      // user メッセージ 1 件を stdin に書いて EOF。claude は応答後に終了する。
-      const payload = `${JSON.stringify({
-        type: "user",
-        message: { role: "user", content: message },
-      })}\n`;
-      child.stdin?.write(payload, () => {
-        child.stdin?.end();
-      });
-    });
+    }
+    // done は **常に** emit する。これは送信側 UI の loading 解除シグナルであり、
+    // stop-and-reset で this.session が差し替わった (live=false) ケースでも、Stop を
+    // 押した送信者の streaming 状態を解除するため発火させる必要がある
+    // (index.ts は activeBeaconSocket へ転送する。session 同一性には依存しない)。
+    this.emit("beacon:stream", {
+      chunk: "",
+      done: true,
+    } satisfies BeaconStreamChunk);
   }
 
   /**
@@ -1258,6 +1228,40 @@ export class BeaconManager extends EventEmitter {
    * 状態でも全クライアントに届けたい用途では呼び出し側が io.emit で broadcast
    * する責務を持つ。返り値の ChatMessage を使って呼び出し側で配信すること。
    */
+  /**
+   * 現在の履歴スナップショットを全クライアントへ再同期する (`beacon:history` を emit)。
+   * index.ts が io.emit でブロードキャストする。kill による user プロンプト除去や、
+   * close→reopen を跨いだ応答確定など、単発 message では追従できない変化に使う。
+   * getHistory と違い再接続回収 (maybeRecoverOnReconnect) は起動しない (re-entrancy 回避)。
+   */
+  private broadcastHistory(): void {
+    const messages = this.session
+      ? [...this.session.messages]
+      : db.getBeaconMessages();
+    this.emit("beacon:history", { messages });
+  }
+
+  /**
+   * 記録済みの user プロンプトを取り消す (kill / sendTurn 失敗時)。claude が受け取って
+   * いない / 文脈が破棄された場合に、DB・captured session・現在の this.session から id で
+   * 除去し、接続中クライアントの表示も再同期する (既に beacon:message で出した分を消す)。
+   */
+  private discardUserMessage(
+    msg: ChatMessage,
+    capturedSession: BeaconSession
+  ): void {
+    db.deleteBeaconMessage(msg.id);
+    const removeById = (arr: ChatMessage[]) => {
+      const i = arr.findIndex(m => m.id === msg.id);
+      if (i >= 0) arr.splice(i, 1);
+    };
+    removeById(capturedSession.messages);
+    if (this.session && this.session !== capturedSession) {
+      removeById(this.session.messages);
+    }
+    this.broadcastHistory();
+  }
+
   /**
    * 現在の履歴世代を取得する。
    * /usage のような長時間バックグラウンド処理は開始時にこの値を capture
@@ -1293,12 +1297,12 @@ export class BeaconManager extends EventEmitter {
       content,
       timestamp: new Date(),
     };
-    if (this.session && this.session.activeTurnCount > 0) {
-      // LLM が応答 streaming 中 (= activeTurnCount > 0) の場合、live emit と
-      // DB 永続化を両方 defer する。即時 live emit すると「live UI: external
-      // →assistant」「DB reload: assistant→external」と順序が食い違うため、
-      // turn 完了後にまとめて行う。activeTurnCount が「現在進行中の turn 数」の
-      // 正確なシグナル (multi-client で複数 turn が直列実行待ちでも安全)。
+    if (this.activeTurnCount > 0) {
+      // LLM が応答中 (= activeTurnCount > 0) の場合、live emit と DB 永続化を両方
+      // defer する。即時 emit すると「live UI: external→assistant」「DB reload:
+      // assistant→external」と順序が食い違うため、turn 完了後にまとめて行う。
+      // activeTurnCount は manager-global なので、close→reopen 中の in-flight turn でも
+      // 正しく defer される (session の有無に依存しない)。
       this.pendingExternalMessages.push(message);
     } else {
       this.persistAndEmitExternal(message);
@@ -1341,37 +1345,112 @@ export class BeaconManager extends EventEmitter {
   /**
    * チャット履歴を取得する
    *
-   * セッション未開始時はDBから直接ロードする（サーバー再起動・アイドルタイムアウト後も履歴を保持するため）
+   * セッション未開始時はDBから直接ロードする（サーバー再起動・アイドルタイムアウト後も履歴を保持するため）。
+   * read-only な再接続 (beacon:history) でも、停止中に常駐 claude が裏で完走した応答を
+   * 取り込んでから返す (send を待たずに最新の履歴を表示する)。
    */
   getHistory(): ChatMessage[] {
+    this.maybeRecoverOnReconnect();
     if (this.session) return [...this.session.messages];
     return db.getBeaconMessages();
   }
 
   /**
+   * サーバー再起動後の最初の reconnect で、停止中に完走した取りこぼし応答を回収する。
+   * send (ensureCliStarted) を待たず getHistory からも呼べるようにし、read-only 再接続でも
+   * 最新履歴を返す。プロセス毎に 1 度だけ実行する (準備完了の常駐セッションを掴めた時点で確定)。
+   */
+  private maybeRecoverOnReconnect(): void {
+    if (this.reconnectRecovered) return;
+    const cli = this.getCliSession();
+    if (cli.hasTranscript()) {
+      // 既に send 経由で reconcile 済み → 以後 getHistory では何もしない
+      this.reconnectRecovered = true;
+      return;
+    }
+    if (cli.attachIfRunning()) {
+      this.reconcileMissedReply(cli);
+      return;
+    }
+    // ready でない (busy / 未起動)。常駐セッションが生きていれば ready 化を待って
+    // バックグラウンドで再試行する (クライアントは history を再要求しないため)。
+    if (cli.isRunning()) {
+      this.scheduleReconnectRetry(0);
+      return;
+    }
+    // 常駐セッションが消えている (host 再起動 / 外部 kill / claude crash) のに履歴が残る。
+    // 次の sendMessage は fresh claude (文脈ゼロ) を起動するので、read-only 再接続の時点で
+    // stale 履歴をリセットして「モデルが覚えていない会話」を表示し続けないようにする
+    // (UI 履歴 = claude 文脈 の維持)。
+    if (db.getBeaconMessages().length > 0) {
+      this.reconnectRecovered = true;
+      this.resetHistoryForRelaunch();
+    }
+  }
+
+  /** busy な常駐セッションが ready になるのを待って取りこぼし回収を再試行する (上限付き)。 */
+  private scheduleReconnectRetry(attempt: number): void {
+    if (this.reconnectRecovered || this.reconnectRetryTimer) return;
+    // 3 秒間隔 × 最大 ~220 回 ≒ 11 分 (BUSY_RESUME 相当)。それ以降は諦める。
+    if (attempt > 220) return;
+    this.reconnectRetryTimer = setTimeout(() => {
+      this.reconnectRetryTimer = null;
+      if (this.reconnectRecovered) return;
+      const cli = this.getCliSession();
+      if (cli.hasTranscript()) {
+        this.reconnectRecovered = true;
+        return;
+      }
+      if (!cli.isRunning()) return; // セッション消滅 → 諦め (次の send が新規起動する)
+      if (cli.attachIfRunning()) {
+        this.reconcileMissedReply(cli); // ready 化 → 回収 + history/done を push
+        return;
+      }
+      this.scheduleReconnectRetry(attempt + 1);
+    }, 3000);
+  }
+
+  /**
    * チャット履歴を全削除する
    *
-   * サーバー側のセッション（LLMコンテキスト）も閉じてDB履歴もクリアする。
-   * 次のメッセージ送信時に新規セッションが開始される。
+   * サーバー側のセッション (UI 状態) を閉じ、対話版 claude の tmux セッションも
+   * kill して会話文脈を破棄し、DB 履歴もクリアする。
+   * 次のメッセージ送信時に新規の tmux セッション (新規 claude) が開始される。
    *
    * 順序が重要:
    * 1. historyVersion を先に上げる
-   *    → 進行中の /usage が postExternalMessage を呼んでも version mismatch
-   *      で skip される。
+   *    → 進行中の /usage が postExternalMessage を呼んでも version mismatch で skip。
    * 2. pendingExternalMessages を捨てる
    *    → closeSession 内の flushPendingExternalMessages が emit/persist しない
    *      ようにする (= cleared chat への stale message 復活を防ぐ)。
-   * 3. closeSession (LLMコンテキスト中断、queue空なので flush は no-op)。
+   * 3. closeSession({ resetConversation: true }) (UI 状態 + tmux セッションを破棄)。
    * 4. DB クリア。
    */
   clearHistory(): void {
     this.historyVersion += 1;
     this.pendingExternalMessages = [];
-    this.closeSession();
-    // CLI 会話も破棄する: 次メッセージは --resume せず新規会話で開始する
-    this.clearPersistedSessionId();
+    this.closeSession({ resetConversation: true });
     db.clearBeaconMessages();
+    // 取りこぼし回収オフセットも破棄する (次回は新規 jsonl で baseline される)。
+    db.deleteSetting(BEACON_JSONL_OFFSET_KEY);
     console.log("[BeaconManager] 履歴をクリアしました");
+  }
+
+  /**
+   * 構成変更/復旧で tmux セッションを貼り直した際に、UI 履歴を claude 文脈 (空) に合わせて
+   * リセットする。clearHistory と違い tmux kill は呼び出し側で済んでいる前提
+   * (ここでは DB / in-memory / pending / オフセットの破棄と再同期のみ行う)。
+   */
+  private resetHistoryForRelaunch(): void {
+    this.historyVersion += 1;
+    this.pendingExternalMessages = [];
+    db.clearBeaconMessages();
+    db.deleteSetting(BEACON_JSONL_OFFSET_KEY);
+    if (this.session) this.session.messages = [];
+    this.broadcastHistory(); // クライアントの表示も空にする
+    console.log(
+      "[BeaconManager] セッション貼り直しに伴い Beacon 履歴をリセットしました"
+    );
   }
 
   /**
@@ -1382,23 +1461,45 @@ export class BeaconManager extends EventEmitter {
   }
 
   /**
-   * セッションを閉じてリソースを解放する。
-   * 実行中の claude 子プロセスがあれば kill する (進行中ターンの abort)。
+   * セッションを閉じる。
    *
-   * @param opts.resetConversation true の場合、CLI 会話 (cliSessionId) も破棄する。
-   *   stop-and-reset / clear のような「仕切り直し」操作で指定する。次の sendMessage は
-   *   --resume せず新規会話で開始する。
-   *   既定 (false) では cliSessionId を settings に残すため、idle close / panel close /
-   *   サーバー再起動後も次回 --resume で会話を継続できる。
+   * @param opts.resetConversation true の場合、対話版 claude の tmux セッションを
+   *   kill して会話文脈を破棄する (stop-and-reset / clear の「仕切り直し」)。
+   *   次の sendMessage は新規 claude を起動する。
+   *   既定 (false) では tmux セッションを残すため、idle close / panel close /
+   *   サーバー再起動後も次回 sendMessage で同じ claude が会話を継続できる。
+   *   どちらの場合も進行中ターンのポーリングは runTurn 側の isAborted で打ち切られる。
    */
   closeSession(opts: { resetConversation?: boolean } = {}): void {
-    // 「仕切り直し」は live session の有無に関わらず実行する。
-    // サーバー再起動 / idle close 後は this.session が null でも cliSessionId が
-    // settings に残るため、ここで破棄しないと次の sendMessage が --resume で
-    // 破棄したはずの文脈を復活させてしまう。
+    // 「仕切り直し」は live session / cliSession インスタンスの有無に関わらず実行する。
+    // サーバー再起動後は this.session も this.cliSession も null だが、detached な
+    // ark-beacon tmux セッションは生存し得る。getCliSession() で実体に紐づく
+    // インスタンスを生成して kill しないと、次の sendMessage が破棄したはずの
+    // 文脈へ再接続してしまう (kill は固定名 ark-beacon を対象にするため起動不要)。
     if (opts.resetConversation) {
-      if (this.session) this.session.cliSessionId = null;
-      this.clearPersistedSessionId();
+      // 会話世代を上げる: 進行中/待機中の turn はこれを検知して破棄する
+      // (plain close では上げないので turn は完走する)。
+      this.conversationGeneration += 1;
+      this.getCliSession().kill();
+      // 会話を破棄したので reconnect 取りこぼし回収は不要。retry を止める。
+      this.reconnectRecovered = true;
+      if (this.reconnectRetryTimer) {
+        clearTimeout(this.reconnectRetryTimer);
+        this.reconnectRetryTimer = null;
+      }
+      if (this.reconcileSettleTimer) {
+        clearTimeout(this.reconcileSettleTimer);
+        this.reconcileSettleTimer = null;
+      }
+      // turn 進行中に queue された external message を破棄する。残すと、中断した turn が
+      // unwind する際の flushPendingExternalMessages で stale な message が新会話に混入する。
+      this.pendingExternalMessages = [];
+      // 明示的な reset/clear は履歴状態を確定させるため、保留中の relaunch リセットは取り消す。
+      this.pendingHistoryReset = false;
+      // 取りこぼし回収オフセットも破棄する。残すと、置き換え会話の初回ターン中に
+      // サーバー再起動した際、recoverPending が旧会話の JSONL (保存 path) を信用して
+      // 誤って前会話に attach してしまう。次回 launch 後に現在地で再初期化される。
+      db.deleteSetting(BEACON_JSONL_OFFSET_KEY);
     }
 
     if (!this.session) return;
@@ -1407,22 +1508,19 @@ export class BeaconManager extends EventEmitter {
       `[BeaconManager] セッション終了${opts.resetConversation ? " (会話リセット)" : ""}`
     );
 
-    // 滞留中の外部メッセージを必ず DB に確定させる
-    // (idle close / clearHistory 経由でも消失しないように)
-    this.flushPendingExternalMessages();
-
-    // 実行中ターンの claude プロセスを中断する。
-    // child.killed が立つので close ハンドラは「意図的停止」として静かに終了する。
-    // 注: 進行中ターンの中断であっても cliSessionId は破棄しない。DB のチャット履歴は
-    // 残り再接続時に再表示されるため、resume を維持して「UI 履歴 = LLM 文脈」を一致
-    // させる (中断された turn は claude の resume が回復する)。会話を捨てるのは明示的な
-    // reset/clear (opts.resetConversation) のみ。
-    if (this.activeChild) {
-      this.activeChild.kill("SIGTERM");
-      this.activeChild = null;
+    // 滞留中の外部メッセージの扱い:
+    // - in-flight turn が無ければ即 flush して取りこぼさない (idle close / clear 経由)。
+    // - in-flight turn がある場合 (非 reset close で claude が裏で継続) は flush しない。
+    //   ここで flush すると assistant 確定前に external が入り「external→assistant」と
+    //   順序が逆転する。turn 完了時 (sendMessage finally, manager-global count) に
+    //   flush されるので、ここでは queue に残す。
+    if (this.activeTurnCount === 0) {
+      this.flushPendingExternalMessages();
     }
 
-    // セッションをクリア
+    // UI 論理セッションをクリアする。非 reset close では tmux セッションを kill せず、
+    // claude は裏で生成を継続する (DB は turn 完了時に確定 = UI 履歴 = claude 文脈)。
+    // 会話を捨てるのは明示的な reset/clear (resetConversation) のみ。
     this.session = null;
   }
 
@@ -1430,18 +1528,22 @@ export class BeaconManager extends EventEmitter {
    * MCP 構成が変わったことをマークする (server/index.ts の auth-completed /
    * disconnect ハンドラから呼ばれる)。
    *
-   * 現方式では mcp-config をターン毎に再生成するため、MCP 接続の追加/再認証/削除は
-   * 次ターンの buildAuthenticatedExternalMcps で自動反映される。ただし last-known-good
-   * キャッシュ (lastExternalMcps) は無効化する必要がある: 無効化しないと、disconnect
-   * 直後に refresh が一時失敗したターンでキャッシュ済みの (削除済み connection の) token
-   * を Claude に再露出してしまい、disconnect の意味が失われる。
+   * 対話版 claude は起動時の mcp-config を保持し続けるため、次ターンの
+   * ensureCliStarted で tmux セッションを貼り直して新しい MCP 構成を反映する
+   * (= その操作で Beacon の会話文脈はリセットされる)。last-known-good キャッシュ
+   * (lastExternalMcps) も無効化する: 無効化しないと、disconnect 直後に refresh が
+   * 一時失敗したターンでキャッシュ済みの (削除済み connection の) token を再露出して
+   * しまい、disconnect の意味が失われる。
    */
   markMcpConfigStale(): void {
     this.lastExternalMcps = [];
+    this.mcpStale = true;
   }
 
   /**
-   * 全セッションを閉じてクリーンアップする
+   * UI セッションを閉じてリソースを解放する (サーバー終了時)。
+   * tmux セッション (ark-beacon) は **kill しない**: 通常セッション同様、サーバー
+   * 再起動後も detached で生存させ会話文脈を保つ。ArkMcpServer (HTTP) は停止する。
    */
   cleanup(): void {
     this.closeSession();
@@ -1449,6 +1551,14 @@ export class BeaconManager extends EventEmitter {
     if (this.idleCheckTimer) {
       clearInterval(this.idleCheckTimer);
       this.idleCheckTimer = null;
+    }
+    if (this.reconnectRetryTimer) {
+      clearTimeout(this.reconnectRetryTimer);
+      this.reconnectRetryTimer = null;
+    }
+    if (this.reconcileSettleTimer) {
+      clearTimeout(this.reconcileSettleTimer);
+      this.reconcileSettleTimer = null;
     }
     console.log("[BeaconManager] クリーンアップしました");
   }

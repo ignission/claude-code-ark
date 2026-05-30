@@ -698,6 +698,11 @@ export async function startServer(
   beaconManager.on("beacon:external-message", message => {
     io.emit("beacon:external-message", message);
   });
+  // 履歴の再同期。kill による user プロンプト除去 / close→reopen を跨いだ応答確定など、
+  // 単発の beacon:message では追従できない変化を全クライアントへ反映する。
+  beaconManager.on("beacon:history", data => {
+    io.emit("beacon:history", data);
+  });
 
   // MCP OAuth フローの完了/失敗を全クライアントに通知。
   // 認証成功時は Beacon セッションに stale マークを付ける: startSession で

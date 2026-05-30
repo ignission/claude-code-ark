@@ -703,6 +703,11 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
     socket.on("beacon:history", (data: { messages: ChatMessage[] }) => {
       setBeaconMessages(data.messages);
+      // 履歴の完全同期は権威的な状態更新 (kill / reset / 再起動跨ぎの取りこぼし回収 等)。
+      // サーバー再起動を跨いだターンでは done が activeBeaconSocket 経由で届かないため、
+      // ここで streaming 状態も解除して入力を再有効化する (loading 固着を防ぐ)。
+      setBeaconStreaming(false);
+      setBeaconStreamText("");
     });
 
     socket.on("beacon:error", (data: { error: string }) => {

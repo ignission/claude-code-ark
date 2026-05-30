@@ -762,6 +762,15 @@ export class SessionDatabase {
     this.db.exec("DELETE FROM beacon_messages");
   }
 
+  /**
+   * Beaconメッセージを id 指定で1件削除する。
+   * ターンが kill (timeout / stop-and-reset) された際、応答が捨てられたのに残る
+   * user プロンプトを除去して履歴を claude 文脈と一致させるために使う。
+   */
+  deleteBeaconMessage(id: string): void {
+    this.db.prepare("DELETE FROM beacon_messages WHERE id = ?").run(id);
+  }
+
   // ============================================================
   // ユーティリティメソッド
   // ============================================================

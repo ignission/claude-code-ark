@@ -668,14 +668,26 @@ export class ArkMcpServer {
 
   /**
    * HTTP MCP server を起動する (冪等)。起動済みなら既存 endpoint を返す。
-   * 127.0.0.1 の ephemeral port で listen し、bearer token を発行する。
+   * 127.0.0.1 で listen し、bearer token を要求する。
+   *
+   * @param opts.port  bind するポート (省略/0 で ephemeral)。対話版 Beacon は
+   *   常駐 claude が起動時の mcp-config (url=port を含む) を保持し続けるため、
+   *   サーバー再起動後も **同じポート** に bind し直す必要がある。BeaconManager が
+   *   永続化したポートを渡す。bind に失敗した場合は ephemeral にフォールバックする。
+   * @param opts.token  使用する bearer token (省略でランダム生成)。再起動後も
+   *   常駐 claude の mcp-config に焼き込まれた token と一致させるため、
+   *   BeaconManager が永続化した token を渡す。
    */
-  start(deps: BeaconDeps): Promise<ArkMcpEndpoint> {
+  start(
+    deps: BeaconDeps,
+    opts: { port?: number; token?: string } = {}
+  ): Promise<ArkMcpEndpoint> {
     if (this.endpoint) return Promise.resolve(this.endpoint);
     if (this.starting) return this.starting;
 
+    const preferredPort = opts.port;
     this.starting = new Promise<ArkMcpEndpoint>((resolve, reject) => {
-      const token = randomBytes(32).toString("hex");
+      const token = opts.token ?? randomBytes(32).toString("hex");
       const app = express();
       app.use(express.json({ limit: "8mb" }));
 
@@ -731,11 +743,11 @@ export class ArkMcpServer {
       app.delete("/mcp", (_req, res) => res.status(405).end());
 
       const httpServer = createServer(app);
-      httpServer.on("error", err => {
-        this.starting = null;
-        reject(err);
-      });
-      httpServer.listen(0, "127.0.0.1", () => {
+      // 希望ポートが埋まっていた場合 (EADDRINUSE) は ephemeral に 1 度だけ
+      // フォールバックする。フォールバックすると常駐 claude の mcp-config と
+      // ポートがズレるため、その会話の ark-beacon ツールは次のリセットまで失敗する。
+      let triedFallback = false;
+      const onListening = () => {
         const addr = httpServer.address();
         if (!addr || typeof addr === "string") {
           httpServer.close();
@@ -750,7 +762,24 @@ export class ArkMcpServer {
           `[ArkMcpServer] HTTP MCP server を起動: ${this.endpoint.url}`
         );
         resolve(this.endpoint);
+      };
+      httpServer.on("error", err => {
+        if (
+          !triedFallback &&
+          preferredPort &&
+          (err as NodeJS.ErrnoException).code === "EADDRINUSE"
+        ) {
+          triedFallback = true;
+          console.warn(
+            `[ArkMcpServer] 希望ポート ${preferredPort} が使用中。ephemeral にフォールバックします`
+          );
+          httpServer.listen(0, "127.0.0.1", onListening);
+          return;
+        }
+        this.starting = null;
+        reject(err);
       });
+      httpServer.listen(preferredPort ?? 0, "127.0.0.1", onListening);
     });
     return this.starting;
   }

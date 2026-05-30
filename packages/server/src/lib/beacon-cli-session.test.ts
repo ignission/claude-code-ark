@@ -1,0 +1,438 @@
+/**
+ * BeaconCliSession (tmux 対話版 claude 起動) のユニットテスト。
+ *
+ * 最重要: **対話版で起動している (= `claude -p` / stream-json を使っていない)** ことを
+ * 起動コマンドのフラグ構成で保証する。2026/6/15 以降 `claude -p` / Agent SDK は
+ * プラン枠ではなく別枠の Agent SDK クレジット課金になるため、ここが崩れると課金区分が
+ * 変わってしまう (plan の検証項目 #3)。
+ */
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const spawnSyncMock = vi.hoisted(() => vi.fn());
+vi.mock("node:child_process", () => ({ spawnSync: spawnSyncMock }));
+
+const fsMock = vi.hoisted(() => ({
+  readdirSync: vi.fn(() => [] as string[]),
+  readFileSync: vi.fn(() => ""),
+  statSync: vi.fn(() => ({ mtimeMs: 0 })),
+}));
+vi.mock("node:fs", () => fsMock);
+
+vi.mock("node:os", () => ({ homedir: () => "/home/tester" }));
+
+vi.mock("./system.js", () => ({
+  resolveTmuxPath: () => "/usr/bin/tmux",
+}));
+
+// resolveValidatedClaudePath は tmux-manager から共有 (検証付き resolver)。
+// 重い tmux-manager 実体をロードせずスタブする。
+vi.mock("./tmux-manager.js", () => ({
+  resolveValidatedClaudePath: () => "/opt/claude/bin/claude",
+}));
+
+import { BeaconCliSession } from "./beacon-cli-session.js";
+
+/** send-keys でセッションへ送られた「起動コマンド」文字列を取り出す */
+function launchCommand(): string {
+  const calls = spawnSyncMock.mock.calls as Array<[string, string[]]>;
+  for (const [, args] of calls) {
+    if (
+      args[0] === "send-keys" &&
+      typeof args[3] === "string" &&
+      args[3].includes("claude")
+    ) {
+      return args[3];
+    }
+  }
+  return "";
+}
+
+beforeEach(() => {
+  spawnSyncMock.mockReset();
+  // has-session: 未起動 (status 1)。capture-pane: 即 ready。それ以外: 成功。
+  spawnSyncMock.mockImplementation(
+    (_bin: string, args: string[] | undefined) => {
+      if (args?.[0] === "has-session") return { status: 1 };
+      if (args?.[0] === "capture-pane") {
+        return {
+          stdout: "  > type your message\n  ? for shortcuts",
+          status: 0,
+        };
+      }
+      return { status: 0, stdout: "" };
+    }
+  );
+  fsMock.readdirSync.mockReturnValue([]);
+});
+
+describe("BeaconCliSession.start (対話版起動コマンド)", () => {
+  const cfg = {
+    mcpConfigPath: "/data/beacon-launch/mcp-config.json",
+    systemPromptFile: "/data/beacon-launch/system-prompt.txt",
+    allowedTools: [
+      "Read",
+      "Grep",
+      "Glob",
+      "mcp__ark-beacon__list_repositories",
+    ],
+    addDirs: ["/srv/repo-a", "/srv/repo-b"],
+  };
+
+  it("対話版フラグで起動し、-p / --print / stream-json を一切使わない", async () => {
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await session.start(cfg, 5000);
+    const cmd = launchCommand();
+
+    expect(cmd).toContain("claude");
+    // 課金区分を変える -p / ヘッドレス系フラグが無いこと (プラン枠維持の要)
+    expect(cmd).not.toMatch(/(^|\s)-p(\s|$)/);
+    expect(cmd).not.toContain("--print");
+    expect(cmd).not.toContain("stream-json");
+    expect(cmd).not.toContain("--input-format");
+    expect(cmd).not.toContain("--output-format");
+  });
+
+  it("MCP / ツール制限 / system-prompt-file の必須フラグを含む", async () => {
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await session.start(cfg, 5000);
+    const cmd = launchCommand();
+
+    expect(cmd).toContain("--mcp-config");
+    expect(cmd).toContain("--strict-mcp-config");
+    expect(cmd).toContain("--permission-mode");
+    expect(cmd).toContain("--tools");
+    expect(cmd).toContain("--disable-slash-commands");
+    // 巨大 system prompt は file 渡し (send-keys のコマンド長/エスケープ回避)
+    expect(cmd).toContain("--append-system-prompt-file");
+    // CLAUDE_CONFIG_DIR を unset してデフォルトプロファイルで起動
+    expect(cmd).toContain("unset CLAUDE_CONFIG_DIR");
+  });
+
+  it("addDirs を --add-dir で列挙し、--allowedTools を最後に置く", async () => {
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await session.start(cfg, 5000);
+    const cmd = launchCommand();
+
+    expect(cmd).toContain("--add-dir");
+    expect(cmd).toContain("/srv/repo-a");
+    expect(cmd).toContain("/srv/repo-b");
+    // --allowedTools は variadic なので後続フラグが来ないよう末尾
+    const idx = cmd.indexOf("--allowedTools");
+    expect(idx).toBeGreaterThan(-1);
+    expect(cmd.slice(idx)).not.toContain("--add-dir");
+  });
+
+  it("既に起動済み (has-session 成功) なら再起動せず new-session を呼ばない", async () => {
+    spawnSyncMock.mockImplementation(
+      (_bin: string, args: string[] | undefined) => {
+        if (args?.[0] === "has-session") return { status: 0 }; // 起動済み
+        if (args?.[0] === "capture-pane") {
+          return { stdout: "? for shortcuts", status: 0 };
+        }
+        return { status: 0, stdout: "" };
+      }
+    );
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await session.start(cfg, 5000);
+
+    const newSessionCalled = (
+      spawnSyncMock.mock.calls as Array<[string, string[]]>
+    ).some(([, args]) => args?.[0] === "new-session");
+    expect(newSessionCalled).toBe(false);
+  });
+
+  it("準備プロンプトが出ないまま timeout したら例外を投げる (黙って続行しない)", async () => {
+    spawnSyncMock.mockImplementation(
+      (_bin: string, args: string[] | undefined) => {
+        if (args?.[0] === "has-session") return { status: 1 };
+        // ずっと未準備 (起動途中の画面が残り続ける)
+        if (args?.[0] === "capture-pane") {
+          return { stdout: "Loading…", status: 0 };
+        }
+        return { status: 0, stdout: "" };
+      }
+    );
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await expect(session.start(cfg, 1500)).rejects.toThrow(
+      /起動完了|タイムアウト/
+    );
+  });
+
+  it("attachIfRunning: 生存かつ準備完了なら true (再接続)", () => {
+    spawnSyncMock.mockImplementation(
+      (_bin: string, args: string[] | undefined) => {
+        if (args?.[0] === "has-session") return { status: 0 };
+        if (args?.[0] === "capture-pane") {
+          return { stdout: "? for shortcuts", status: 0 };
+        }
+        return { status: 0, stdout: "" };
+      }
+    );
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    expect(session.attachIfRunning()).toBe(true);
+  });
+
+  it("attachIfRunning: 生存していても未準備 (login 画面のまま) なら false", () => {
+    spawnSyncMock.mockImplementation(
+      (_bin: string, args: string[] | undefined) => {
+        if (args?.[0] === "has-session") return { status: 0 }; // セッションは残存
+        if (args?.[0] === "capture-pane") {
+          // 起動失敗で login 画面のまま wedge
+          return { stdout: "Welcome to Claude Code\n/login", status: 0 };
+        }
+        return { status: 0, stdout: "" };
+      }
+    );
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    // 未準備の pane に send-keys しないよう再接続を拒否する
+    expect(session.attachIfRunning()).toBe(false);
+  });
+
+  it("tmux はあるが claude が死んでいる (stale) なら kill して作り直す", async () => {
+    let killed = false;
+    spawnSyncMock.mockImplementation(
+      (_bin: string, args: string[] | undefined) => {
+        if (args?.[0] === "has-session") return { status: killed ? 1 : 0 };
+        if (args?.[0] === "kill-session") {
+          killed = true;
+          return { status: 0 };
+        }
+        if (args?.[0] === "capture-pane") {
+          // kill 前: shell プロンプト (claude 死亡)。kill→再起動後: ready
+          return {
+            stdout: killed ? "? for shortcuts" : "user@host:~/work$ ",
+            status: 0,
+          };
+        }
+        return { status: 0, stdout: "" };
+      }
+    );
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await session.start(cfg, 5000);
+
+    const calls = spawnSyncMock.mock.calls as Array<[string, string[]]>;
+    expect(calls.some(([, a]) => a?.[0] === "kill-session")).toBe(true);
+    expect(calls.some(([, a]) => a?.[0] === "new-session")).toBe(true);
+  });
+
+  it("isAborted が true なら起動待ちを即打ち切る (timeout/throw しない)", async () => {
+    // 準備プロンプトは永遠に出ない (常に Loading)。中断が無ければ throw するはず。
+    spawnSyncMock.mockImplementation(
+      (_bin: string, args: string[] | undefined) => {
+        if (args?.[0] === "has-session") return { status: 1 };
+        if (args?.[0] === "capture-pane") {
+          return { stdout: "Loading…", status: 0 };
+        }
+        return { status: 0, stdout: "" };
+      }
+    );
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    // isAborted=true → 待たずに静かに return (例外なし)
+    await expect(
+      session.start(cfg, 60_000, () => true)
+    ).resolves.toBeUndefined();
+  });
+
+  it("未認証 (オンボーディング画面) なら例外を投げる", async () => {
+    spawnSyncMock.mockImplementation(
+      (_bin: string, args: string[] | undefined) => {
+        if (args?.[0] === "has-session") return { status: 1 };
+        if (args?.[0] === "capture-pane") {
+          return { stdout: "Welcome to Claude Code\n/login", status: 0 };
+        }
+        return { status: 0, stdout: "" };
+      }
+    );
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await expect(session.start(cfg, 1500)).rejects.toThrow(/未認証|login/i);
+  });
+});
+
+describe("BeaconCliSession.sendTurn 入力送信", () => {
+  beforeEach(() => {
+    spawnSyncMock.mockReset();
+    spawnSyncMock.mockImplementation(
+      (_bin: string, args: string[] | undefined) => {
+        if (args?.[0] === "capture-pane") {
+          return { stdout: "? for shortcuts", status: 0 };
+        }
+        return { status: 0, stdout: "" };
+      }
+    );
+    fsMock.readdirSync.mockReturnValue([]);
+  });
+
+  it("単一行は send-keys -l で送る (load-buffer を使わない)", async () => {
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await session.sendTurn("hello world", { onText: () => {} }, 50);
+    const calls = spawnSyncMock.mock.calls as Array<[string, string[]]>;
+    expect(
+      calls.some(
+        ([, a]) => a?.[0] === "send-keys" && a?.includes("hello world")
+      )
+    ).toBe(true);
+    expect(calls.some(([, a]) => a?.[0] === "load-buffer")).toBe(false);
+  });
+
+  it("制御文字を除去してから送信する (端末注入防止。\\t/\\n は維持)", async () => {
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    // ESC / C-c / DEL を含む単一行
+    await session.sendTurn("hithere!", { onText: () => {} }, 50);
+    const calls = spawnSyncMock.mock.calls as Array<[string, string[]]>;
+    const sk = calls.find(
+      ([, a]) => a?.[0] === "send-keys" && a?.includes("-l")
+    );
+    const sent = sk?.[1]?.[(sk[1]?.indexOf("-l") ?? -1) + 1];
+    expect(sent).toBe("hithere!"); // 制御文字のみ除去
+  });
+
+  it("送信後にセッションが消えていたら即 completed=false で返す (turn timeout を待たない)", async () => {
+    spawnSyncMock.mockImplementation(
+      (_bin: string, args: string[] | undefined) => {
+        if (args?.[0] === "has-session") return { status: 1 }; // 消滅
+        return { status: 0, stdout: "" };
+      }
+    );
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    // turn timeout を 10 分にしても即返ることを確認 (実時間で検証)
+    const r = await session.sendTurn("hi", { onText: () => {} }, 600_000);
+    expect(r.completed).toBe(false);
+  });
+
+  it("複数行で load-buffer が失敗したら例外を投げる (空 turn を黙って送らない)", async () => {
+    spawnSyncMock.mockImplementation(
+      (_bin: string, args: string[] | undefined) => {
+        if (args?.[0] === "capture-pane") {
+          return { stdout: "? for shortcuts", status: 0 };
+        }
+        if (args?.[0] === "load-buffer") return { status: 1 }; // 失敗
+        return { status: 0, stdout: "" };
+      }
+    );
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await expect(
+      session.sendTurn("a\nb\nc", { onText: () => {} }, 50)
+    ).rejects.toThrow(/load-buffer/);
+  });
+
+  it("複数行は load-buffer(stdin) + paste-buffer -p で 1 入力として送る", async () => {
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await session.sendTurn("line1\nline2\nline3", { onText: () => {} }, 50);
+    const calls = spawnSyncMock.mock.calls as Array<
+      [string, string[], { input?: string }?]
+    >;
+    // 本文は stdin (input) で渡す (argv 上限回避)
+    const load = calls.find(([, a]) => a?.[0] === "load-buffer");
+    expect(load).toBeDefined();
+    expect(load?.[2]?.input).toBe("line1\nline2\nline3");
+    const paste = calls.find(([, a]) => a?.[0] === "paste-buffer");
+    expect(paste?.[1]).toContain("-p"); // bracketed paste
+    // 生 send-keys -l で複数行を送らない (各行が Enter として確定されるのを防ぐ)
+    expect(
+      calls.some(
+        ([, a]) => a?.[0] === "send-keys" && a?.includes("line1\nline2\nline3")
+      )
+    ).toBe(false);
+  });
+});
+
+describe("BeaconCliSession.recoverPending (取りこぼし回収)", () => {
+  const JSONL_PATH = "/home/tester/.claude/projects/-data-beacon-cwd/s.jsonl";
+  const lines = [
+    JSON.stringify({ type: "user", cwd: "/data/beacon-cwd" }),
+    JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "古い応答" }] },
+    }),
+    JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "停止中に完走した応答" }] },
+    }),
+  ];
+
+  beforeEach(() => {
+    spawnSyncMock.mockReset();
+    // セッションは生存 (has-session 成功)
+    spawnSyncMock.mockImplementation(
+      (_bin: string, args: string[] | undefined) => {
+        if (args?.[0] === "has-session") return { status: 0 };
+        return { status: 0, stdout: "" };
+      }
+    );
+    fsMock.readdirSync.mockReturnValue(["s.jsonl"]);
+    fsMock.statSync.mockReturnValue({ mtimeMs: 1, size: 100 });
+    // 実在するのは JSONL_PATH のみ。他パスは ENOENT で読めない (resume は保存パスを直接読む)。
+    // 実 transcript と同様に各行 (最終行含む) は改行で終端する (= 完全な行)。
+    fsMock.readFileSync.mockImplementation((p: string) => {
+      if (String(p) === JSONL_PATH) return `${lines.join("\n")}\n`;
+      throw new Error("ENOENT");
+    });
+  });
+
+  it("保存オフセット以降の未処理 assistant を回収する", () => {
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    const texts: string[] = [];
+    const r = session.recoverPending(
+      { path: JSONL_PATH, lines: 2 }, // 行 0,1 は処理済み → 行 2 が取りこぼし
+      { onText: c => texts.push(c) }
+    );
+    expect(r?.text).toBe("停止中に完走した応答");
+    expect(texts).toContain("停止中に完走した応答");
+  });
+
+  it("保存パスが現在の JSONL と一致しなければ baseline のみで null を返す", () => {
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    const r = session.recoverPending(
+      { path: "/other/path.jsonl", lines: 0 },
+      { onText: () => {} }
+    );
+    // 別会話のオフセットでは過去会話全体を誤って回収しない
+    expect(r).toBeNull();
+  });
+
+  it("fresh launch では保存オフセットを無視する (古い transcript を再利用しない)", async () => {
+    // start() が new-session を作る = wasFreshLaunch=true。has-session は作成前 1 / 作成後 0。
+    let created = false;
+    spawnSyncMock.mockImplementation(
+      (_bin: string, args: string[] | undefined) => {
+        if (args?.[0] === "has-session") return { status: created ? 0 : 1 };
+        if (args?.[0] === "new-session") {
+          created = true;
+          return { status: 0 };
+        }
+        if (args?.[0] === "capture-pane") {
+          return { stdout: "? for shortcuts", status: 0 };
+        }
+        return { status: 0, stdout: "" };
+      }
+    );
+    const cfg = {
+      mcpConfigPath: "/x/mcp.json",
+      systemPromptFile: "/x/sp.txt",
+      allowedTools: ["Read"],
+      addDirs: [],
+    };
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await session.start(cfg, 5000); // new-session → wasFreshLaunch=true
+
+    const texts: string[] = [];
+    // 古い JSONL_PATH は実在するが、fresh なので保存オフセットを使ってはいけない
+    const r = session.recoverPending(
+      { path: JSONL_PATH, lines: 0 },
+      { onText: c => texts.push(c) }
+    );
+    expect(r).toBeNull();
+    expect(texts).toEqual([]); // 古い会話を再生しない
+  });
+
+  it("保存オフセット無し + 既存セッション再接続 (非 fresh) なら既存 transcript を baseline し再生しない", () => {
+    // wasFreshLaunch は start() 未呼び出しなら false (= attach / 再接続相当)
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    const texts: string[] = [];
+    const r = session.recoverPending(null, { onText: c => texts.push(c) });
+    expect(r).toBeNull(); // 回収はしない
+    // 過去会話全体を新規行として再生しない (P1: rollout 直後 / settings 消失時の重複防止)
+    expect(texts).toEqual([]);
+  });
+});

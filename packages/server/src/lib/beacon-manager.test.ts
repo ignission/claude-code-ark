@@ -1,41 +1,52 @@
 /**
- * BeaconManager (claude CLI stream-json 駆動) のユニットテスト。
+ * BeaconManager (tmux 対話版 claude + JSONL tail 駆動) のユニットテスト。
  *
- * child_process.spawn をモックして fake な claude プロセスの stream-json 出力を
- * 流し込み、beacon:stream / beacon:message の emit と cliSessionId 永続化を検証する。
+ * BeaconCliSession (tmux/JSONL の実体) をモックし、manager レイヤの責務を検証する:
+ * - send-keys 相当 (cliSession.sendTurn) の結果を beacon:stream / beacon:message に変換
+ * - ターン完了/タイムアウト/無応答のハンドリング
+ * - ark-beacon MCP を永続 port + token で起動 (再起動後も同一エンドポイント)
+ * - MCP 構成変更 (markMcpConfigStale) 時の tmux 貼り直し + stale token 非再露出
+ * - clear / stop-and-reset / close での tmux セッション kill 方針
+ * - 起動準備中 reset 時の turn 破棄
  */
 
-import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // --- モック (vi.mock は hoist される) ---
-vi.mock("./system.js", () => ({
-  resolveClaudePath: vi.fn(() => "/usr/bin/claude"),
-}));
 
-// dbMock は vi.mock factory より先に評価される必要があるため vi.hoisted で生成する
+// 起動ファイルの実書き込みを避け、内容を検査できるようにする
+const fsMock = vi.hoisted(() => ({
+  existsSync: vi.fn(() => true),
+  mkdirSync: vi.fn(),
+  writeFileSync: vi.fn(),
+}));
+vi.mock("node:fs", () => fsMock);
+
+vi.mock("./paths.js", () => ({ getDataDir: () => "/tmp/ark-test-data" }));
+
 const dbMock = vi.hoisted(() => ({
   getBeaconMessages: vi.fn(() => [] as unknown[]),
   addBeaconMessage: vi.fn(),
   clearBeaconMessages: vi.fn(),
+  deleteBeaconMessage: vi.fn(),
   getSetting: vi.fn(() => undefined as unknown),
   setSetting: vi.fn(),
   deleteSetting: vi.fn(),
 }));
 vi.mock("./database.js", () => ({ db: dbMock }));
 
-// ArkMcpServer.start を全インスタンスで共有する hoisted mock にして、
-// テストから起動失敗 (graceful degradation) を注入できるようにする。
+// ArkMcpServer.start を全インスタンス共有の hoisted mock にする
 const arkStartMock = vi.hoisted(() =>
-  vi.fn(async () => ({
+  vi.fn(async (_deps: unknown, _opts?: unknown) => ({
     url: "http://127.0.0.1:65000/mcp",
     token: "test-token",
   }))
 );
+const arkStopMock = vi.hoisted(() => vi.fn());
 vi.mock("./ark-mcp-server.js", () => ({
   ArkMcpServer: class {
     start = arkStartMock;
-    stop = vi.fn();
+    stop = arkStopMock;
     getEndpoint = vi.fn(() => null);
   },
 }));
@@ -44,94 +55,136 @@ vi.mock("./mcp-oauth/build-mcp-servers.js", () => ({
   buildAuthenticatedExternalMcps: vi.fn(async () => []),
 }));
 
-vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
+// BeaconCliSession (tmux + JSONL) のモック。module-level state を介して制御する。
+const cliMock = vi.hoisted(() => ({
+  running: false,
+  startConfigs: [] as Array<Record<string, unknown>>,
+  sendTurnCalls: [] as Array<{
+    message: string;
+    isAborted?: () => boolean;
+  }>,
+  killCount: 0,
+  /** attachIfRunning の戻り (running かつ ready 相当)。false で start パスへ誘導 */
+  attachable: true,
+  /** JSONL transcript を特定済みか (post-restart 初回 attach のみ false) */
+  hasTranscript: false,
+  /** recoverPending の戻り値 (取りこぼし回収の注入用)。null なら回収なし */
+  recoverResult: null as null | {
+    text: string;
+    toolUse?: { toolName: string; input: string };
+    completed: boolean;
+  },
+  /** start() の挙動を差し替える (未認証エラー注入等)。null なら running=true にするだけ */
+  startImpl: null as null | ((cfg: Record<string, unknown>) => Promise<void>),
+  /** sendTurn() の挙動を差し替える。null ならデフォルト応答 */
+  sendTurnImpl: null as
+    | null
+    | ((
+        message: string,
+        handlers: { onText: (c: string) => void }
+      ) => Promise<{
+        text: string;
+        toolUse?: { toolName: string; input: string };
+        completed: boolean;
+      }>),
+}));
+vi.mock("./beacon-cli-session.js", () => ({
+  BEACON_TMUX_SESSION: "ark-beacon",
+  BeaconCliSession: class {
+    isRunning() {
+      return cliMock.running;
+    }
+    attachIfRunning() {
+      return cliMock.running && cliMock.attachable;
+    }
+    hasTranscript() {
+      return cliMock.hasTranscript;
+    }
+    getTranscriptOffset() {
+      return { path: "ark-beacon.jsonl", lines: 0 };
+    }
+    recoverPending(
+      _saved: unknown,
+      _handlers: { onText: (c: string) => void }
+    ) {
+      cliMock.hasTranscript = true;
+      return cliMock.recoverResult;
+    }
+    async start(cfg: Record<string, unknown>, _timeout: number) {
+      cliMock.startConfigs.push(cfg);
+      if (cliMock.startImpl) {
+        await cliMock.startImpl(cfg);
+        return;
+      }
+      cliMock.running = true;
+      // transcript の baseline/特定は reconcile (recoverPending) 側で行う (実体と同じ)
+    }
+    kill() {
+      cliMock.killCount += 1;
+      cliMock.running = false;
+      cliMock.hasTranscript = false;
+    }
+    async sendTurn(
+      message: string,
+      handlers: { onText: (c: string) => void },
+      _timeout: number,
+      isAborted?: () => boolean
+    ) {
+      cliMock.sendTurnCalls.push({ message, isAborted });
+      if (cliMock.sendTurnImpl) return cliMock.sendTurnImpl(message, handlers);
+      handlers.onText("応答");
+      return { text: "応答", toolUse: undefined, completed: true };
+    }
+  },
+}));
 
-import { spawn } from "node:child_process";
-import { beaconManager } from "./beacon-manager.js";
+import type { ChatMessage } from "@ark/shared";
+import { BeaconManager, beaconManager } from "./beacon-manager.js";
 import { buildAuthenticatedExternalMcps } from "./mcp-oauth/build-mcp-servers.js";
 
-const mockedSpawn = vi.mocked(spawn);
 const mockedBuildExternal = vi.mocked(buildAuthenticatedExternalMcps);
 
-/** fake な claude 子プロセス (EventEmitter + stdout/stderr/stdin) */
-interface FakeStdin extends EventEmitter {
-  write: (s: string, cb?: () => void) => boolean;
-  end: () => void;
-}
-interface FakeChild extends EventEmitter {
-  stdout: EventEmitter;
-  stderr: EventEmitter;
-  stdin: FakeStdin;
-  kill: (signal?: string) => boolean;
-  killed: boolean;
-}
-
-/** EventEmitter に stream 風の setEncoding (no-op) を生やす */
-function makeStreamEmitter(): EventEmitter {
-  const e = new EventEmitter() as EventEmitter & {
-    setEncoding: (enc: string) => void;
+/** beacon イベントを収集する */
+function collect() {
+  const events = {
+    stream: [] as Array<{ chunk: string; done: boolean }>,
+    message: [] as ChatMessage[],
+    error: [] as Array<{ error: string }>,
+    external: [] as ChatMessage[],
+    history: [] as Array<{ messages: ChatMessage[] }>,
   };
-  e.setEncoding = () => {};
-  return e;
+  beaconManager.on("beacon:stream", e => events.stream.push(e));
+  beaconManager.on("beacon:message", e => events.message.push(e));
+  beaconManager.on("beacon:error", e => events.error.push(e));
+  beaconManager.on("beacon:external-message", e => events.external.push(e));
+  beaconManager.on("beacon:history", e => events.history.push(e));
+  return events;
 }
 
-function makeFakeChild(): FakeChild {
-  const child = new EventEmitter() as FakeChild;
-  child.stdout = makeStreamEmitter();
-  child.stderr = makeStreamEmitter();
-  const stdin = new EventEmitter() as FakeStdin;
-  stdin.write = (_s: string, cb?: () => void) => {
-    cb?.();
-    return true;
-  };
-  stdin.end = vi.fn();
-  child.stdin = stdin;
-  child.killed = false;
-  child.kill = vi.fn((_signal?: string) => {
-    child.killed = true;
-    return true;
-  });
-  return child;
+/** writeFileSync に書かれた mcp-config.json をパースして返す (新しい順ではなく呼び出し順) */
+function mcpConfigWrites(): Array<{ mcpServers: Record<string, unknown> }> {
+  return fsMock.writeFileSync.mock.calls
+    .filter(c => String(c[0]).endsWith("mcp-config.json"))
+    .map(c => JSON.parse(String(c[1])));
 }
 
-const initLine = (sessionId: string) =>
-  JSON.stringify({ type: "system", subtype: "init", session_id: sessionId });
-const assistantLine = (text: string) =>
-  JSON.stringify({
-    type: "assistant",
-    message: { content: [{ type: "text", text }] },
-  });
-const resultLine = (result: string) =>
-  JSON.stringify({ type: "result", subtype: "success", result });
-const deltaLine = (text: string) =>
-  JSON.stringify({
-    type: "stream_event",
-    event: { type: "content_block_delta", delta: { type: "text_delta", text } },
-  });
-
-/**
- * spawn が呼ばれたら fake child を返し、指定の stream-json 行を順次 emit して
- * close する。各 emit は microtask で非同期に行う (実際の stdout 挙動に近づける)。
- */
-function programChild(lines: string[], opts: { closeCode?: number } = {}) {
-  const child = makeFakeChild();
-  mockedSpawn.mockImplementationOnce(() => {
-    queueMicrotask(() => {
-      for (const line of lines) {
-        child.stdout.emit("data", Buffer.from(`${line}\n`));
-      }
-      child.emit("close", opts.closeCode ?? 0);
-    });
-    return child as unknown as ReturnType<typeof spawn>;
-  });
-  return child;
+async function waitFor(cond: () => boolean, timeoutMs = 1000): Promise<void> {
+  const start = Date.now();
+  while (!cond()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor timeout");
+    await new Promise(r => setTimeout(r, 5));
+  }
 }
+
+const EXTERNAL_E = {
+  connectionId: "conn-jira",
+  label: "My Jira",
+  providerId: "atlassian",
+  config: { type: "http" as const, url: "https://x.atlassian.net/mcp" },
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // queue 済み mockImplementationOnce が次テストに漏れないよう実装ごとリセットする
-  // (spawn が discard されたテストでは once-impl が未消費のまま残るため)
-  mockedSpawn.mockReset();
   mockedBuildExternal.mockReset();
   mockedBuildExternal.mockResolvedValue([]);
   arkStartMock.mockReset();
@@ -141,6 +194,43 @@ beforeEach(() => {
   });
   dbMock.getBeaconMessages.mockReturnValue([]);
   dbMock.getSetting.mockReturnValue(undefined);
+
+  cliMock.running = false;
+  cliMock.startConfigs.length = 0;
+  cliMock.sendTurnCalls.length = 0;
+  cliMock.killCount = 0;
+  cliMock.attachable = true;
+  cliMock.hasTranscript = false;
+  cliMock.recoverResult = null;
+  cliMock.startImpl = null;
+  cliMock.sendTurnImpl = null;
+
+  // シングルトンの in-memory フラグはテスト間で leak するため明示的にリセットする
+  // (launchArkAvailable は constructor 時に DB から読むだけで再評価されないため)。
+  const internals = beaconManager as unknown as {
+    launchArkAvailable: boolean;
+    mcpStale: boolean;
+    activeTurnCount: number;
+    pendingExternalMessages: unknown[];
+    reconnectRecovered: boolean;
+    pendingHistoryReset: boolean;
+    reconnectRetryTimer: ReturnType<typeof setTimeout> | null;
+    reconcileSettleTimer: ReturnType<typeof setTimeout> | null;
+  };
+  // 前テストが仕掛けた遅延タイマーを解除する (firing が後続テストに漏れないように)
+  if (internals.reconnectRetryTimer)
+    clearTimeout(internals.reconnectRetryTimer);
+  if (internals.reconcileSettleTimer)
+    clearTimeout(internals.reconcileSettleTimer);
+  internals.reconnectRetryTimer = null;
+  internals.reconcileSettleTimer = null;
+  internals.launchArkAvailable = true;
+  internals.mcpStale = false;
+  internals.activeTurnCount = 0;
+  internals.pendingExternalMessages = [];
+  internals.reconnectRecovered = false;
+  internals.pendingHistoryReset = false;
+
   beaconManager.removeAllListeners();
   beaconManager.closeSession();
   beaconManager.configure({
@@ -161,250 +251,96 @@ beforeEach(() => {
   });
 });
 
-describe("BeaconManager (CLI stream-json)", () => {
-  it("stream_event の text_delta をライブ配信し、result で beacon:message を確定する", async () => {
-    programChild([
-      initLine("sid-1"),
-      // 逐次 delta (ライブ描画用)
-      deltaLine("こんに"),
-      deltaLine("ちは"),
-      // 完全な assistant block (確定テキスト用)
-      assistantLine("こんにちは"),
-      resultLine("こんにちは"),
-    ]);
+describe("BeaconManager (tmux 対話版)", () => {
+  it("応答を beacon:stream(live) で配信し beacon:message(確定) で締める", async () => {
+    const ev = collect();
+    await beaconManager.sendMessage("こんにちは");
 
-    const streams: string[] = [];
-    const messages: { role: string; content: string }[] = [];
-    beaconManager.on("beacon:stream", e => streams.push(e.chunk));
-    beaconManager.on("beacon:message", m =>
-      messages.push({ role: m.role, content: m.content })
-    );
-
-    await beaconManager.sendMessage("やあ");
-
-    // user メッセージ + assistant メッセージ (確定テキストは assistant block 由来) が emit される
-    expect(messages).toContainEqual({ role: "user", content: "やあ" });
-    expect(messages).toContainEqual({
-      role: "assistant",
-      content: "こんにちは",
-    });
-    // delta がライブ配信され、最後に done (空 chunk) が来る
-    expect(streams.join("")).toContain("こんにちは");
-    expect(streams[streams.length - 1]).toBe("");
+    // live チャンク
+    expect(ev.stream.some(s => s.chunk === "応答" && !s.done)).toBe(true);
+    // 確定 assistant メッセージ
+    const assistant = ev.message.find(m => m.role === "assistant");
+    expect(assistant?.content).toBe("応答");
+    // done で締める
+    expect(ev.stream.at(-1)).toEqual({ chunk: "", done: true });
   });
 
-  it("末尾改行なしの最終 result でも応答を確定する", async () => {
-    const child = makeFakeChild();
-    mockedSpawn.mockImplementationOnce(() => {
-      queueMicrotask(() => {
-        // init と assistant は \n 区切り、最終 result は trailing newline 無し
-        child.stdout.emit(
-          "data",
-          `${initLine("sid-nl")}\n${assistantLine("結果です")}\n`
-        );
-        child.stdout.emit("data", resultLine("結果です")); // \n なし
-        child.emit("close", 0);
-      });
-      return child as unknown as ReturnType<typeof spawn>;
-    });
+  it("user メッセージを起動確定後に記録・配信する (user→assistant 順)", async () => {
+    const ev = collect();
+    await beaconManager.sendMessage("質問です");
 
-    const messages: { role: string; content: string }[] = [];
-    beaconManager.on("beacon:message", m =>
-      messages.push({ role: m.role, content: m.content })
+    expect(ev.message[0]?.role).toBe("user");
+    expect(ev.message[0]?.content).toBe("質問です");
+    expect(ev.message[1]?.role).toBe("assistant");
+    // DB へ user + assistant が記録される
+    const roles = dbMock.addBeaconMessage.mock.calls.map(
+      c => (c[0] as ChatMessage).role
     );
-
-    await beaconManager.sendMessage("test");
-
-    // close 時に buffer を flush して result を処理 → assistant メッセージが確定する
-    expect(messages).toContainEqual({ role: "assistant", content: "結果です" });
+    expect(roles).toEqual(["user", "assistant"]);
   });
 
-  it("init message の session_id を settings に永続化する (--resume 用)", async () => {
-    programChild([initLine("sid-xyz"), assistantLine("hi"), resultLine("hi")]);
-    await beaconManager.sendMessage("test");
+  it("ターン未完了 (タイムアウト) は runaway を kill し beacon:error を emit する", async () => {
+    cliMock.sendTurnImpl = async () => ({
+      text: "途中まで",
+      completed: false,
+    });
+    const ev = collect();
+    const killsBefore = cliMock.killCount;
+    await beaconManager.sendMessage("x");
+
+    // 10分超の runaway は kill して中断 (遅延応答による desync を防ぐ)
+    expect(cliMock.killCount).toBe(killsBefore + 1);
+    expect(ev.error.length).toBe(1);
+    expect(ev.error[0].error).toContain("タイムアウト");
+    // 中断した partial は DB に記録しない (claude 文脈も破棄したため)
+    const roles = dbMock.addBeaconMessage.mock.calls.map(
+      c => (c[0] as ChatMessage).role
+    );
+    expect(roles).not.toContain("assistant");
+    expect(ev.stream.at(-1)).toEqual({ chunk: "", done: true });
+  });
+
+  it("完了したが応答が空なら無応答エラーを emit する", async () => {
+    cliMock.sendTurnImpl = async () => ({ text: "", completed: true });
+    const ev = collect();
+    await beaconManager.sendMessage("x");
+
+    expect(ev.error.some(e => e.error.includes("応答を取得できません"))).toBe(
+      true
+    );
+    // 空応答では assistant メッセージは記録しない
+    expect(ev.message.some(m => m.role === "assistant")).toBe(false);
+  });
+
+  it("ArkMcpServer を永続 port + token で起動する", async () => {
+    // 永続化済みの port/token を返す
+    dbMock.getSetting.mockImplementation((key: string) => {
+      if (key === "beacon_ark_mcp_port") return 65123;
+      if (key === "beacon_ark_mcp_token") return "x".repeat(64);
+      return undefined;
+    });
+    await beaconManager.sendMessage("x");
+
+    expect(arkStartMock).toHaveBeenCalledWith(expect.anything(), {
+      port: 65123,
+      token: "x".repeat(64),
+    });
+  });
+
+  it("ark-beacon MCP token が無ければ生成して永続化する", async () => {
+    await beaconManager.sendMessage("x");
     expect(dbMock.setSetting).toHaveBeenCalledWith(
-      "beacon_cli_session_id",
-      "sid-xyz"
+      "beacon_ark_mcp_token",
+      expect.any(String)
+    );
+    // 確定した実ポートも永続化する (url=65000)
+    expect(dbMock.setSetting).toHaveBeenCalledWith(
+      "beacon_ark_mcp_port",
+      65000
     );
   });
 
-  it("壊れた JSON 行はスキップして処理を継続する", async () => {
-    programChild([
-      initLine("sid-2"),
-      "this is not json{{{",
-      assistantLine("正常応答"),
-      resultLine("正常応答"),
-    ]);
-
-    const messages: string[] = [];
-    beaconManager.on("beacon:message", m => {
-      if (m.role === "assistant") messages.push(m.content);
-    });
-
-    await beaconManager.sendMessage("test");
-    expect(messages).toContain("正常応答");
-  });
-
-  it("外部MCP取得が一時失敗しても直近成功分を再利用する", async () => {
-    const jiraEntry = {
-      connectionId: "jira-1",
-      label: "Jira",
-      providerId: "atlassian",
-      config: { type: "http" as const, url: "https://jira.example/mcp" },
-    };
-    // turn1: 成功 (キャッシュされる)
-    mockedBuildExternal.mockResolvedValueOnce([jiraEntry]);
-    programChild([initLine("sid-1"), assistantLine("ok"), resultLine("ok")]);
-    await beaconManager.sendMessage("first");
-    const args1 = mockedSpawn.mock.calls[0]?.[1] as string[];
-    expect(args1).toContain("mcp__jira-1__*");
-
-    // turn2: 取得失敗 → 直近成功分 (jira-1) を再利用する
-    mockedBuildExternal.mockRejectedValueOnce(
-      new Error("transient OAuth fail")
-    );
-    programChild([initLine("sid-1"), assistantLine("ok2"), resultLine("ok2")]);
-    await beaconManager.sendMessage("second");
-    const args2 = mockedSpawn.mock.calls[1]?.[1] as string[];
-    expect(args2).toContain("mcp__jira-1__*");
-  });
-
-  it("ArkMcpServer 起動失敗時も ark-beacon ツール無しでチャット継続する", async () => {
-    arkStartMock.mockRejectedValueOnce(new Error("EPERM: listen denied"));
-    programChild([initLine("sid-d"), assistantLine("ok"), resultLine("ok")]);
-
-    // 司令塔ツール起動失敗でも turn は成立する (reject しない)
-    await expect(beaconManager.sendMessage("test")).resolves.toBeUndefined();
-
-    const args = mockedSpawn.mock.calls[0]?.[1] as string[];
-    // ark-beacon ツールは allowedTools に列挙されない
-    expect(args.some(a => a.startsWith("mcp__ark-beacon__"))).toBe(false);
-    // 組込ツール (Read 等) は残る
-    expect(args).toContain("Read");
-    // systemPrompt に司令塔ツール利用不可の degradation 通知が入る
-    const sysPrompt = args[args.indexOf("--append-system-prompt") + 1];
-    expect(sysPrompt).toContain("司令塔ツールが利用できません");
-  });
-
-  it("子プロセスの env から CLAUDECODE / CLAUDE_CONFIG_DIR を unset する", async () => {
-    process.env.CLAUDECODE = "1";
-    process.env.CLAUDE_CONFIG_DIR = "/some/profile/dir";
-    try {
-      programChild([initLine("sid-e"), assistantLine("ok"), resultLine("ok")]);
-      await beaconManager.sendMessage("test");
-      const opts = mockedSpawn.mock.calls[0]?.[2] as {
-        env?: NodeJS.ProcessEnv;
-      };
-      // nested 検出回避 + 誤プロファイル回避のため両方 unset (undefined)
-      expect(opts.env?.CLAUDECODE).toBeUndefined();
-      expect(opts.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
-    } finally {
-      process.env.CLAUDECODE = undefined;
-      process.env.CLAUDE_CONFIG_DIR = undefined;
-    }
-  });
-
-  it("markMcpConfigStale は外部MCPキャッシュを無効化する (disconnect後にstale token再露出しない)", async () => {
-    const jiraEntry = {
-      connectionId: "jira-1",
-      label: "Jira",
-      providerId: "atlassian",
-      config: { type: "http" as const, url: "https://jira.example/mcp" },
-    };
-    // turn1: 成功してキャッシュ
-    mockedBuildExternal.mockResolvedValueOnce([jiraEntry]);
-    programChild([initLine("sid-1"), assistantLine("ok"), resultLine("ok")]);
-    await beaconManager.sendMessage("first");
-
-    // disconnect 相当: キャッシュを無効化
-    beaconManager.markMcpConfigStale();
-
-    // turn2: 取得失敗 → だがキャッシュは無効化済みなので jira を再利用しない
-    mockedBuildExternal.mockRejectedValueOnce(new Error("transient"));
-    programChild([initLine("sid-1"), assistantLine("ok2"), resultLine("ok2")]);
-    await beaconManager.sendMessage("second");
-    const args2 = mockedSpawn.mock.calls[1]?.[1] as string[];
-    expect(args2).not.toContain("mcp__jira-1__*");
-  });
-
-  it("stdin の error (EPIPE 等) を握りつぶしクラッシュさせない", async () => {
-    const child = makeFakeChild();
-    mockedSpawn.mockImplementationOnce(() => {
-      queueMicrotask(() => {
-        // claude が即終了して stdin write が EPIPE になる状況を再現
-        child.stdin.emit("error", new Error("write EPIPE"));
-        child.stdout.emit(
-          "data",
-          `${initLine("sid-p")}\n${assistantLine("ok")}\n${resultLine("ok")}\n`
-        );
-        child.emit("close", 0);
-      });
-      return child as unknown as ReturnType<typeof spawn>;
-    });
-
-    const messages: string[] = [];
-    beaconManager.on("beacon:message", m => {
-      if (m.role === "assistant") messages.push(m.content);
-    });
-
-    // stdin error が uncaught にならず、turn は正常に解決する
-    await expect(beaconManager.sendMessage("test")).resolves.toBeUndefined();
-    expect(messages).toContain("ok");
-  });
-
-  it("既存 cliSessionId があれば spawn 引数に --resume が含まれる", async () => {
-    dbMock.getSetting.mockReturnValue("existing-sid");
-    programChild([
-      initLine("existing-sid"),
-      assistantLine("ok"),
-      resultLine("ok"),
-    ]);
-
-    await beaconManager.sendMessage("test");
-
-    const args = mockedSpawn.mock.calls[0]?.[1] as string[];
-    expect(args).toContain("--resume");
-    expect(args[args.indexOf("--resume") + 1]).toBe("existing-sid");
-    // stream-json 駆動の必須フラグも確認
-    expect(args).toContain("--input-format");
-    expect(args).toContain("stream-json");
-    // 逐次ストリーミング有効化フラグ
-    expect(args).toContain("--include-partial-messages");
-    // operator のグローバル MCP 設定を読み込ませないよう isolate する
-    expect(args).toContain("--strict-mcp-config");
-    // 権限モードを default に固定する
-    expect(args).toContain("--permission-mode");
-    expect(args[args.indexOf("--permission-mode") + 1]).toBe("default");
-    // 標準プロンプトを保持するため置換ではなく append を使う
-    expect(args).toContain("--append-system-prompt");
-    expect(args).not.toContain("--system-prompt");
-    // 組込ツールを Read/Grep/Glob に限定する (Bash/Write/Skill 等を排除)
-    expect(args).toContain("--tools");
-    // settings ベース認証を壊さないよう --setting-sources は付けない
-    expect(args).not.toContain("--setting-sources");
-  });
-
-  it("非 success の result は beacon:error を emit する", async () => {
-    programChild([
-      initLine("sid-e"),
-      JSON.stringify({
-        type: "result",
-        subtype: "error_max_turns",
-        is_error: true,
-        result: "ターン上限に達しました",
-      }),
-    ]);
-
-    const errors: string[] = [];
-    beaconManager.on("beacon:error", e => errors.push(e.error));
-
-    await beaconManager.sendMessage("test");
-
-    expect(errors).toContain("ターン上限に達しました");
-  });
-
-  it("実在する登録リポジトリは --add-dir で workspace に追加される", async () => {
-    // getRepos が実在ディレクトリ (/tmp) と非実在を返すケース
+  it("実在する登録リポジトリは --add-dir (start cfg.addDirs) に含まれる", async () => {
     beaconManager.configure({
       getAllSessions: () => [],
       startSession: async () => ({}),
@@ -417,245 +353,455 @@ describe("BeaconManager (CLI stream-json)", () => {
       listAllWorktrees: async () => [],
       createWorktree: async () => ({}),
       deleteWorktree: async () => {},
-      getRepos: () => ["/tmp", "/nonexistent/repo/path/xyz"],
+      getRepos: () => ["/srv/repo-a"],
       listProfiles: () => [],
       linkWorktreeProfile: () => true,
     });
-    programChild([initLine("sid-d"), assistantLine("ok"), resultLine("ok")]);
-
-    await beaconManager.sendMessage("test");
-
-    const args = mockedSpawn.mock.calls[0]?.[1] as string[];
-    // 実在する /tmp は追加され、存在しないパスは除外される
-    expect(args).toContain("--add-dir");
-    expect(args[args.indexOf("--add-dir") + 1]).toBe("/tmp");
-    expect(args).not.toContain("/nonexistent/repo/path/xyz");
-  });
-
-  it("session reset 後にキューされた turn は spawn せず破棄される", async () => {
-    // turn A: result を出さず保留する child (turnLock を握り続ける)
-    const childA = makeFakeChild();
-    mockedSpawn.mockImplementationOnce(() => {
-      queueMicrotask(() => {
-        childA.stdout.emit("data", Buffer.from(`${initLine("sid-A")}\n`));
-        // result を出さない → ターン進行中のまま
-      });
-      return childA as unknown as ReturnType<typeof spawn>;
-    });
-
-    // セッションを事前確立して sendMessage が startSession を await しないようにする
-    // (await すると A の sendMessage だけ 1 microtask 遅れ、ロック取得順が逆転する)
-    await beaconManager.startSession();
-
-    const sendA = beaconManager.sendMessage("A"); // 進行中
-    const sendB = beaconManager.sendMessage("B"); // turnLock 待ちで queue される
-
-    // A が spawn 済み・B が lock 待ちになるまで待つ
-    await new Promise(r => setTimeout(r, 20));
-    expect(mockedSpawn).toHaveBeenCalledTimes(1); // A のみ起動
-
-    // セッションを破棄 (clearHistory / stop-and-reset 相当)
-    beaconManager.closeSession();
-    // A の child は kill された扱いで close する
-    childA.emit("close", null);
-
-    await Promise.allSettled([sendA, sendB]);
-
-    // B は破棄され、2 回目の spawn は起きない
-    expect(mockedSpawn).toHaveBeenCalledTimes(1);
-    // 破棄された B の user message は履歴に記録されない (Claude が見ていないため)
-    const recorded = dbMock.addBeaconMessage.mock.calls.map(
-      c => (c[0] as { content?: string }).content
-    );
-    expect(recorded).not.toContain("B");
-  });
-
-  it("closeSession({resetConversation:true}) は cliSessionId を破棄する (stop-and-reset)", async () => {
-    programChild([initLine("sid-R"), assistantLine("ok"), resultLine("ok")]);
     await beaconManager.sendMessage("x");
+    expect(cliMock.startConfigs[0].addDirs).toContain("/srv/repo-a");
+  });
+
+  it("ArkMcpServer 起動失敗時も ark-beacon ツール無しでチャット継続する", async () => {
+    arkStartMock.mockRejectedValue(new Error("listen 拒否"));
+    const ev = collect();
+    await beaconManager.sendMessage("x");
+
+    // チャットは継続 (assistant 応答あり)
+    expect(ev.message.some(m => m.role === "assistant")).toBe(true);
+    // allowedTools に ark-beacon ツールは含まれない
+    const allowed = cliMock.startConfigs[0].allowedTools as string[];
+    expect(allowed.some(t => t.startsWith("mcp__ark-beacon__"))).toBe(false);
+    // built-in は残る
+    expect(allowed).toContain("Read");
+  });
+
+  it("ark MCP 無しで起動した degraded セッションは、回復後の次ターンで貼り直す", async () => {
+    // 1ターン目: ArkMcpServer 起動失敗 → degraded 起動
+    arkStartMock.mockRejectedValueOnce(new Error("listen 拒否"));
+    await beaconManager.sendMessage("1");
+    const killsBefore = cliMock.killCount;
+    // 以降は ark が回復 (default mock が成功を返す)
+    await beaconManager.sendMessage("2");
+
+    // degraded → 回復で貼り直し (kill) が起きる
+    expect(cliMock.killCount).toBe(killsBefore + 1);
+    // 貼り直し後は ark-beacon ツールが allowedTools に載る
+    const lastCfg = cliMock.startConfigs.at(-1);
+    const allowed = lastCfg?.allowedTools as string[];
+    expect(allowed.some(t => t.startsWith("mcp__ark-beacon__"))).toBe(true);
+  });
+
+  it("ark MCP が回復しないままなら degraded セッションを貼り直さない", async () => {
+    arkStartMock.mockRejectedValue(new Error("listen 拒否")); // 常に失敗
+    await beaconManager.sendMessage("1");
+    const killsBefore = cliMock.killCount;
+    await beaconManager.sendMessage("2");
+    expect(cliMock.killCount).toBe(killsBefore);
+  });
+
+  it("degraded 起動を settings に永続化する (再起動跨ぎの検出用)", async () => {
+    arkStartMock.mockRejectedValue(new Error("listen 拒否"));
+    await beaconManager.sendMessage("1");
     expect(dbMock.setSetting).toHaveBeenCalledWith(
-      "beacon_cli_session_id",
-      "sid-R"
-    );
-    beaconManager.closeSession({ resetConversation: true });
-    expect(dbMock.deleteSetting).toHaveBeenCalledWith("beacon_cli_session_id");
-  });
-
-  it("live session が無くても resetConversation は cliSessionId を破棄する (restart/idle 後)", () => {
-    // beforeEach の closeSession で this.session は null の状態
-    expect(beaconManager.hasSession()).toBe(false);
-    beaconManager.closeSession({ resetConversation: true });
-    // live session が無くても settings の cliSessionId は破棄される
-    expect(dbMock.deleteSetting).toHaveBeenCalledWith("beacon_cli_session_id");
-  });
-
-  it("close 後にバッファ残留した stream_event delta は emit されない", async () => {
-    const childA = makeFakeChild();
-    mockedSpawn.mockImplementationOnce(() => {
-      queueMicrotask(() => {
-        childA.stdout.emit("data", Buffer.from(`${initLine("sid-c")}\n`));
-        // result は出さず保留 (turn 進行中)
-      });
-      return childA as unknown as ReturnType<typeof spawn>;
-    });
-
-    const chunks: string[] = [];
-    beaconManager.on("beacon:stream", e => {
-      if (e.chunk) chunks.push(e.chunk);
-    });
-
-    const send = beaconManager.sendMessage("A");
-    await new Promise(r => setTimeout(r, 20)); // spawn + init 済み
-
-    beaconManager.closeSession(); // this.session=null, child を kill
-
-    // close 後に stdout バッファ残留 delta が届く状況を再現
-    childA.stdout.emit("data", Buffer.from(`${deltaLine("LEAK")}\n`));
-    childA.emit("close", null);
-    await send;
-
-    // canceled turn の delta は UI に漏れない
-    expect(chunks).not.toContain("LEAK");
-  });
-
-  it("進行中ターンを kill する closeSession は cliSessionId を破棄しない (resume維持)", async () => {
-    dbMock.getSetting.mockReturnValue("inflight-sid");
-    const childA = makeFakeChild();
-    mockedSpawn.mockImplementationOnce(() => {
-      queueMicrotask(() => {
-        // init は出すが result は出さず保留 (ターン進行中)
-        childA.stdout.emit(
-          "data",
-          Buffer.from(`${initLine("inflight-sid")}\n`)
-        );
-      });
-      return childA as unknown as ReturnType<typeof spawn>;
-    });
-
-    const send = beaconManager.sendMessage("A");
-    await new Promise(r => setTimeout(r, 20)); // spawn + init 済み (turn 進行中)
-
-    beaconManager.closeSession(); // resetConversation なし
-
-    childA.emit("close", null);
-    await send;
-
-    // 進行中ターンの中断でも cliSessionId は保持される (DB履歴と文脈の一致のため。
-    // 破棄するのは明示的な reset/clear のみ)
-    expect(dbMock.deleteSetting).not.toHaveBeenCalledWith(
-      "beacon_cli_session_id"
+      "beacon_launch_ark_available",
+      false
     );
   });
 
-  it("起動準備 (buildLaunchConfig) の最中に reset されたら spawn しない", async () => {
-    // buildAuthenticatedExternalMcps を遅延させ、その await 中に closeSession する
-    mockedBuildExternal.mockImplementationOnce(async () => {
-      await new Promise(r => setTimeout(r, 40));
-      return [];
+  it("再起動後: 永続化された degraded フラグで、回復後の初ターンに貼り直す", async () => {
+    // 「前回プロセスで degraded 起動」を settings に永続化済みと仮定
+    dbMock.getSetting.mockImplementation((key: string) =>
+      key === "beacon_launch_ark_available" ? false : undefined
+    );
+    // 再起動相当: 新しい BeaconManager。tmux セッションは生存している (running=true)
+    const mgr = new BeaconManager();
+    mgr.configure({
+      getAllSessions: () => [],
+      startSession: async () => ({}),
+      stopSession: () => null,
+      sendMessage: () => {},
+      sendKey: () => {},
+      capturePane: () => null,
+      getPrUrl: async () => null,
+      listWorktrees: async () => [],
+      listAllWorktrees: async () => [],
+      createWorktree: async () => ({}),
+      deleteWorktree: async () => {},
+      getRepos: () => [],
+      listProfiles: () => [],
+      linkWorktreeProfile: () => true,
     });
-    programChild([initLine("sid-x"), assistantLine("ok"), resultLine("ok")]);
+    cliMock.running = true; // 前プロセスの degraded セッションが detached で生存
+    const killsBefore = cliMock.killCount;
+    // ark は回復している (default mock 成功) → degraded を検出して貼り直す
+    await mgr.sendMessage("hello");
+    expect(cliMock.killCount).toBe(killsBefore + 1);
+    mgr.cleanup();
+  });
 
-    const p = beaconManager.sendMessage("x"); // 起動準備に入る
-    await new Promise(r => setTimeout(r, 10)); // buildLaunchConfig の await 中
-    beaconManager.closeSession(); // activeChild はまだ null
+  it("外部MCP取得が一時失敗しても直近成功分を再利用する (再起動相当の貼り直し時)", async () => {
+    mockedBuildExternal.mockResolvedValueOnce([EXTERNAL_E]);
+    await beaconManager.sendMessage("1"); // [E] で起動
+
+    // resetConversation で kill → 次ターンは貼り直し
+    beaconManager.closeSession({ resetConversation: true });
+    mockedBuildExternal.mockRejectedValueOnce(new Error("refresh 瞬断"));
+    await beaconManager.sendMessage("2"); // 再起動相当、直近成功分 [E] を再利用
+
+    const writes = mcpConfigWrites();
+    expect(writes.at(-1)?.mcpServers).toHaveProperty("conn-jira");
+  });
+
+  it("markMcpConfigStale 後は tmux を貼り直し、削除済み connection の token を再露出しない", async () => {
+    mockedBuildExternal.mockResolvedValueOnce([EXTERNAL_E]);
+    await beaconManager.sendMessage("1"); // [E] で起動 (running=true)
+    const killsBefore = cliMock.killCount;
+
+    beaconManager.markMcpConfigStale();
+    // disconnect 直後の refresh 一時失敗を模す
+    mockedBuildExternal.mockRejectedValueOnce(new Error("refresh 瞬断"));
+    await beaconManager.sendMessage("2");
+
+    // tmux を貼り直した (kill された)
+    expect(cliMock.killCount).toBe(killsBefore + 1);
+    // stale でキャッシュ無効化 → 再利用されず E は mcp-config に出ない
+    const writes = mcpConfigWrites();
+    expect(writes.at(-1)?.mcpServers).not.toHaveProperty("conn-jira");
+    // 貼り直しで claude 文脈が消えるため UI 履歴もリセットする (C-B4)
+    expect(dbMock.clearBeaconMessages).toHaveBeenCalled();
+  });
+
+  it("closeSession({resetConversation:true}) は tmux セッションを kill する", async () => {
+    await beaconManager.sendMessage("x"); // running=true
+    const before = cliMock.killCount;
+    beaconManager.closeSession({ resetConversation: true });
+    expect(cliMock.killCount).toBe(before + 1);
+  });
+
+  it("通常の closeSession() は tmux セッションを kill しない (文脈保持)", async () => {
+    await beaconManager.sendMessage("x");
+    const before = cliMock.killCount;
+    beaconManager.closeSession();
+    expect(cliMock.killCount).toBe(before);
+  });
+
+  it("clearHistory は tmux kill + DB クリアを行う", async () => {
+    await beaconManager.sendMessage("x");
+    const before = cliMock.killCount;
+    beaconManager.clearHistory();
+    expect(cliMock.killCount).toBe(before + 1);
+    expect(dbMock.clearBeaconMessages).toHaveBeenCalled();
+  });
+
+  it("未認証等で start が失敗したら reject する (beacon:error は socket 側が emit)", async () => {
+    cliMock.startImpl = async () => {
+      throw new Error("Beacon 用 claude が未認証です");
+    };
+    const ev = collect();
+    await expect(beaconManager.sendMessage("x")).rejects.toThrow("未認証");
+    // loading 解除のため done だけは emit される
+    expect(ev.stream.at(-1)).toEqual({ chunk: "", done: true });
+  });
+
+  it("close (非reset) 中に完了したターンは DB に記録する (UI=claude 文脈の維持)", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>(r => {
+      release = r;
+    });
+    cliMock.sendTurnImpl = async (_msg, handlers) => {
+      await gate;
+      handlers.onText("遅延応答");
+      return { text: "遅延応答", completed: true };
+    };
+    const p = beaconManager.sendMessage("q");
+    await waitFor(() => cliMock.sendTurnCalls.length === 1);
+    // 非 reset close: this.session=null。tmux は kill しない (claude は裏で完走)
+    beaconManager.closeSession();
+    release();
     await p;
 
-    // 準備完了後に reset を検知し、spawn には到達しない
-    expect(mockedSpawn).not.toHaveBeenCalled();
-  });
-
-  it("resume 先が見つからない result エラーは新規会話で再試行する", async () => {
-    dbMock.getSetting.mockReturnValue("stale-sid");
-    // 1 回目 (--resume stale-sid): No conversation found エラー result
-    const childA = makeFakeChild();
-    mockedSpawn.mockImplementationOnce(() => {
-      queueMicrotask(() => {
-        childA.stdout.emit(
-          "data",
-          Buffer.from(
-            `${JSON.stringify({
-              type: "result",
-              subtype: "error_during_execution",
-              is_error: true,
-              errors: ["No conversation found with session ID: stale-sid"],
-            })}\n`
-          )
-        );
-        childA.emit("close", 1);
-      });
-      return childA as unknown as ReturnType<typeof spawn>;
-    });
-    // 2 回目 (新規会話): 正常応答
-    programChild([initLine("new-sid"), assistantLine("ok"), resultLine("ok")]);
-
-    const errors: string[] = [];
-    beaconManager.on("beacon:error", e => errors.push(e.error));
-
-    await beaconManager.sendMessage("test");
-
-    // 2 回 spawn され、1 回目は --resume 付き、2 回目は無し
-    expect(mockedSpawn).toHaveBeenCalledTimes(2);
-    const args1 = mockedSpawn.mock.calls[0]?.[1] as string[];
-    const args2 = mockedSpawn.mock.calls[1]?.[1] as string[];
-    expect(args1).toContain("--resume");
-    expect(args2).not.toContain("--resume");
-    // resume 失敗自体は beacon:error として表面化しない (retry で回復)
-    expect(errors).not.toContain(
-      "No conversation found with session ID: stale-sid"
+    const roles = dbMock.addBeaconMessage.mock.calls.map(
+      c => (c[0] as ChatMessage).role
     );
-    // 古い cliSessionId は破棄される
-    expect(dbMock.deleteSetting).toHaveBeenCalledWith("beacon_cli_session_id");
+    // close 後でも claude が保持した応答を DB に確定する
+    expect(roles).toContain("assistant");
   });
 
-  it("resume 以外の result エラーは beacon:error を出し cliSessionId を消さない", async () => {
-    dbMock.getSetting.mockReturnValue("keep-sid");
-    programChild([
-      initLine("keep-sid"),
-      JSON.stringify({
-        type: "result",
-        subtype: "error_during_execution",
-        is_error: true,
-        errors: ["Tool execution failed"],
-      }),
+  it("stop-and-reset (kill) 中のターンは DB に記録しない (claude 文脈も破棄)", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>(r => {
+      release = r;
+    });
+    cliMock.sendTurnImpl = async () => {
+      await gate;
+      return { text: "破棄される応答", completed: true };
+    };
+    const ev = collect();
+    const p = beaconManager.sendMessage("q");
+    await waitFor(() => cliMock.sendTurnCalls.length === 1);
+    // reset: tmux kill → running=false。claude 文脈が消えるので応答も記録しない
+    beaconManager.closeSession({ resetConversation: true });
+    release();
+    await p;
+
+    const roles = dbMock.addBeaconMessage.mock.calls.map(
+      c => (c[0] as ChatMessage).role
+    );
+    expect(roles).not.toContain("assistant");
+    // 早期記録した user プロンプトも取り消す (claude 文脈リセットと一致させる)
+    const userMsg = dbMock.addBeaconMessage.mock.calls
+      .map(c => c[0] as ChatMessage)
+      .find(m => m.role === "user");
+    expect(dbMock.deleteBeaconMessage).toHaveBeenCalledWith(userMsg?.id);
+    // 接続中クライアントの表示からも phantom プロンプトを除去するため履歴を再同期する
+    expect(ev.history.length).toBeGreaterThan(0);
+    // Stop を押した送信側の loading を解除するため done は必ず emit する (live=false でも)
+    expect(ev.stream.some(s => s.done)).toBe(true);
+    // ユーザ自身のキャンセルなのでエラーは出さない
+    expect(ev.error.length).toBe(0);
+  });
+
+  it("read-only 再接続 (getHistory) でも停止中の取りこぼし応答を回収して返す", () => {
+    cliMock.running = true; // 常駐セッション生存
+    cliMock.attachable = true; // ready (再接続可)
+    cliMock.hasTranscript = false; // post-restart 初回
+    cliMock.recoverResult = { text: "停止中の応答", completed: true };
+    // send せず履歴取得のみ
+    const history = beaconManager.getHistory();
+    // DB へ取り込まれ、getHistory (DB fallback) の結果にも含まれる
+    expect(
+      dbMock.addBeaconMessage.mock.calls.some(
+        c => (c[0] as ChatMessage).content === "停止中の応答"
+      )
+    ).toBe(true);
+    // dbMock.getBeaconMessages は [] を返すモックなので history 自体は空だが、
+    // 回収が発火したこと (addBeaconMessage) を確認すれば十分
+    expect(Array.isArray(history)).toBe(true);
+  });
+
+  it("再起動後の初回 attach で、停止中に完走した取りこぼし応答を DB へ回収する", async () => {
+    cliMock.running = true; // 前プロセスの常駐セッションが生存
+    cliMock.hasTranscript = false; // post-restart の初回 attach
+    // 停止中に claude が裏で完走した応答が JSONL にある状態を注入
+    cliMock.recoverResult = { text: "停止中に生成された応答", completed: true };
+    const ev = collect();
+    await beaconManager.sendMessage("次の質問");
+
+    // 取りこぼし応答が assistant として DB に取り込まれる
+    const recovered = dbMock.addBeaconMessage.mock.calls
+      .map(c => c[0] as ChatMessage)
+      .find(m => m.content === "停止中に生成された応答");
+    expect(recovered?.role).toBe("assistant");
+    // 全クライアントへ beacon:history broadcast で再同期される (回収応答を含む)
+    expect(
+      ev.history.some(h =>
+        h.messages.some(m => m.content === "停止中に生成された応答")
+      )
+    ).toBe(true);
+  });
+
+  it("stop-and-reset は queue 済み external message を破棄する (新会話に漏らさない)", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>(r => {
+      release = r;
+    });
+    cliMock.sendTurnImpl = async () => {
+      await gate;
+      return { text: "破棄", completed: true };
+    };
+    const p = beaconManager.sendMessage("q");
+    await waitFor(() => cliMock.sendTurnCalls.length === 1);
+    // turn 進行中に external message を queue (activeTurnCount>0 で defer される)
+    beaconManager.postExternalMessage("stale usage");
+    // stop-and-reset → queue は破棄されるべき
+    beaconManager.closeSession({ resetConversation: true });
+    release();
+    await p;
+
+    // 中断 turn の unwind で flush されても stale external は出ない
+    const persisted = dbMock.addBeaconMessage.mock.calls.map(
+      c => (c[0] as ChatMessage).content
+    );
+    expect(persisted).not.toContain("stale usage");
+  });
+
+  it("再起動 + busy で attach 不可 → start 経由でも取りこぼし応答を回収する", async () => {
+    cliMock.running = true; // 常駐セッション生存
+    cliMock.attachable = false; // busy で再接続不可 → start パスへ
+    cliMock.recoverResult = { text: "停止中に完走した応答", completed: true };
+    await beaconManager.sendMessage("q");
+
+    const recovered = dbMock.addBeaconMessage.mock.calls
+      .map(c => c[0] as ChatMessage)
+      .find(m => m.content === "停止中に完走した応答");
+    expect(recovered?.role).toBe("assistant");
+  });
+
+  it("tmux セッションが消えた状態で履歴が残っていれば fresh 起動時に履歴をリセットする", async () => {
+    // 既存履歴あり (server 再起動前の会話) を DB が返す
+    dbMock.getBeaconMessages.mockReturnValue([
+      {
+        id: "old",
+        role: "user",
+        content: "前会話",
+        timestamp: new Date(),
+      } as ChatMessage,
     ]);
-
-    const errors: string[] = [];
-    beaconManager.on("beacon:error", e => errors.push(e.error));
-
-    await beaconManager.sendMessage("test");
-
-    // 再試行しない (spawn は 1 回)
-    expect(mockedSpawn).toHaveBeenCalledTimes(1);
-    // エラーは通知される
-    expect(errors).toContain("Tool execution failed");
-    // cliSessionId は保持 (resume 失敗ではないため消さない)
-    expect(dbMock.deleteSetting).not.toHaveBeenCalledWith(
-      "beacon_cli_session_id"
-    );
+    cliMock.running = false; // セッションは死んでいる (外部 kill / crash)
+    await beaconManager.sendMessage("新規");
+    // fresh claude は文脈ゼロ → 古い履歴を残さずリセットする
+    expect(dbMock.clearBeaconMessages).toHaveBeenCalled();
   });
 
-  it("result を受信せず非0終了したら reject する (beacon:error は socket 側が emit)", async () => {
-    // 新規会話 (cliSessionId なし) かつ init も来ずに異常終了
-    const child = makeFakeChild();
-    mockedSpawn.mockImplementationOnce(() => {
-      queueMicrotask(() => {
-        child.stderr.emit("data", Buffer.from("boom"));
-        child.emit("close", 1);
-      });
-      return child as unknown as ReturnType<typeof spawn>;
-    });
+  it("再起動後 ark MCP が起動できない (bind 失敗) と degraded で貼り直す", async () => {
+    cliMock.running = true; // 前プロセスの ark 有りセッションが生存
+    arkStartMock.mockRejectedValue(new Error("bind 失敗")); // ark 死亡
+    const before = cliMock.killCount;
+    await beaconManager.sendMessage("x");
+    // 旧 endpoint を指したまま黙って失敗させず、degraded で貼り直す
+    expect(cliMock.killCount).toBe(before + 1);
+  });
 
-    const errors: string[] = [];
-    beaconManager.on("beacon:error", e => errors.push(e.error));
-
-    // reject パスではエラー理由を rejection に載せる (二重通知防止のため manager は
-    // beacon:error を emit せず、socket ハンドラの catch が emit する)
-    await expect(beaconManager.sendMessage("test")).rejects.toThrow(/boom/);
-    expect(errors).toHaveLength(0);
-    // launch 失敗 (init 未受信) では user message を履歴に記録しない
-    const recorded = dbMock.addBeaconMessage.mock.calls.map(
-      c => (c[0] as { content?: string }).content
+  it("再起動後 ark ポート競合 (ephemeral fallback) でセッションを貼り直す", async () => {
+    let storedPort: number | undefined = 65123; // 前回の希望ポート
+    dbMock.getSetting.mockImplementation((key: string) =>
+      key === "beacon_ark_mcp_port" ? storedPort : undefined
     );
-    expect(recorded).not.toContain("test");
+    dbMock.setSetting.mockImplementation((key: string, val: unknown) => {
+      if (key === "beacon_ark_mcp_port") storedPort = val as number;
+    });
+    // 旧ポートが競合 → ark は別ポート (ephemeral) で起動
+    arkStartMock.mockResolvedValue({
+      url: "http://127.0.0.1:7000/mcp",
+      token: "t",
+    });
+    cliMock.running = true; // 前プロセスの常駐セッションが生存
+    const before = cliMock.killCount;
+    await beaconManager.sendMessage("x");
+    // 旧ポートを指す mcp-config のままでは ark ツールが全滅するため貼り直す
+    expect(cliMock.killCount).toBe(before + 1);
+  });
+
+  it("sendTurn が throw したら user プロンプトを取り消し done を emit して reject する", async () => {
+    cliMock.sendTurnImpl = async () => {
+      throw new Error("tmux load-buffer に失敗しました");
+    };
+    const ev = collect();
+    await expect(beaconManager.sendMessage("送信失敗する")).rejects.toThrow(
+      /load-buffer/
+    );
+    // claude は受け取っていないので user プロンプトを DB から取り消す
+    const userMsg = dbMock.addBeaconMessage.mock.calls
+      .map(c => c[0] as ChatMessage)
+      .find(m => m.role === "user");
+    expect(dbMock.deleteBeaconMessage).toHaveBeenCalledWith(userMsg?.id);
+    // loading 解除のため done は emit する
+    expect(ev.stream.some(s => s.done)).toBe(true);
+    // 表示済み user プロンプト除去のため履歴を再同期する
+    expect(ev.history.length).toBeGreaterThan(0);
+  });
+
+  it("close 中の in-flight turn でも external message は assistant 後に確定する (順序保護)", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>(r => {
+      release = r;
+    });
+    cliMock.sendTurnImpl = async (_msg, handlers) => {
+      await gate;
+      handlers.onText("assistant応答");
+      return { text: "assistant応答", completed: true };
+    };
+    const p = beaconManager.sendMessage("q");
+    await waitFor(() => cliMock.sendTurnCalls.length === 1);
+
+    // turn 進行中に /usage 等の external message が届く → defer される
+    beaconManager.postExternalMessage("usage summary");
+    // 非 reset close (turn は裏で継続)。ここで flush してはいけない
+    beaconManager.closeSession();
+    const beforeRelease = dbMock.addBeaconMessage.mock.calls.map(
+      c => (c[0] as ChatMessage).content
+    );
+    expect(beforeRelease).not.toContain("usage summary");
+
+    release();
+    await p;
+
+    // turn 完了後に assistant → external の順で確定する
+    const order = dbMock.addBeaconMessage.mock.calls.map(
+      c => (c[0] as ChatMessage).content
+    );
+    const ai = order.indexOf("assistant応答");
+    const ei = order.indexOf("usage summary");
+    expect(ai).toBeGreaterThanOrEqual(0);
+    expect(ei).toBeGreaterThan(ai);
+  });
+
+  it("session reset 後にキューされた turn は sendTurn せず破棄される", async () => {
+    let releaseA: () => void = () => {};
+    const aGate = new Promise<void>(r => {
+      releaseA = r;
+    });
+    cliMock.sendTurnImpl = async (message, handlers) => {
+      if (message === "A") {
+        await aGate;
+        return { text: "A応答", completed: true };
+      }
+      handlers.onText(message);
+      return { text: message, completed: true };
+    };
+
+    const pA = beaconManager.sendMessage("A");
+    await waitFor(() => cliMock.sendTurnCalls.length === 1);
+    // B を投入 (turnLock 待ち)。この時点では this.session は A と同一
+    const pB = beaconManager.sendMessage("B");
+    await new Promise(r => setTimeout(r, 10));
+    // stop-and-reset: 会話世代が上がる。A 完了後に (enqueue 後 reset された) B は破棄される
+    beaconManager.closeSession({ resetConversation: true });
+    releaseA();
+    await Promise.all([pA, pB]);
+
+    // B は sendTurn に到達しない
+    expect(cliMock.sendTurnCalls.map(c => c.message)).toEqual(["A"]);
+  });
+
+  it("起動準備 (start) の最中に reset されたら sendTurn しない", async () => {
+    let releaseStart: () => void = () => {};
+    const startGate = new Promise<void>(r => {
+      releaseStart = r;
+    });
+    cliMock.startImpl = async () => {
+      await startGate;
+      cliMock.running = true;
+    };
+
+    const p = beaconManager.sendMessage("X");
+    await waitFor(() => cliMock.startConfigs.length === 1);
+    // start 待ちの間に stop-and-reset (会話世代を上げる) → 起動完了後に破棄される
+    beaconManager.closeSession({ resetConversation: true });
+    releaseStart();
+    await p;
+
+    expect(cliMock.sendTurnCalls.length).toBe(0);
+  });
+
+  it("plain close (非reset) では待機中の turn を破棄せず裏で送信する", async () => {
+    let releaseStart: () => void = () => {};
+    const startGate = new Promise<void>(r => {
+      releaseStart = r;
+    });
+    cliMock.startImpl = async () => {
+      await startGate;
+      cliMock.running = true;
+    };
+
+    const p = beaconManager.sendMessage("background");
+    await waitFor(() => cliMock.startConfigs.length === 1);
+    // plain close (パネルを閉じただけ) → turn は破棄されず裏で完走する
+    beaconManager.closeSession();
+    releaseStart();
+    await p;
+
+    // 起動後に send されている (= プロンプトを失わない)
+    expect(cliMock.sendTurnCalls.map(c => c.message)).toContain("background");
   });
 });
