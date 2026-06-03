@@ -31,7 +31,7 @@ vi.mock("./tmux-manager.js", () => ({
   resolveValidatedClaudePath: () => "/opt/claude/bin/claude",
 }));
 
-import { BeaconCliSession } from "./beacon-cli-session.js";
+import { BeaconCliSession, isReady } from "./beacon-cli-session.js";
 
 /** send-keys でセッションへ送られた「起動コマンド」文字列を取り出す */
 function launchCommand(): string {
@@ -434,5 +434,31 @@ describe("BeaconCliSession.recoverPending (取りこぼし回収)", () => {
     expect(r).toBeNull(); // 回収はしない
     // 過去会話全体を新規行として再生しない (P1: rollout 直後 / settings 消失時の重複防止)
     expect(texts).toEqual([]);
+  });
+});
+
+describe("isReady (起動完了アンカー)", () => {
+  it('footer hint "for shortcuts" 表示で ready', () => {
+    expect(isReady("─────\n❯\n─────\n  ? for shortcuts")).toBe(true);
+  });
+
+  it("入力プロンプト記号 ❯ だけでも ready (hint が rotate / スプラッシュで消えても検出)", () => {
+    // 実機: claude 2.1.156 の Welcome/"What's new" スプラッシュ + カスタム statusline 環境では
+    // footer が "← for agents" / "PR #201" になり "for shortcuts" が出ない。
+    const welcomeSplashPane = [
+      "╭─── Claude Code v2.1.156 ───╮",
+      "│        Welcome back Shoma! │",
+      "│        What's new          │",
+      "╰────────────────────────────╯",
+      "──────────────────────────────",
+      "❯ ",
+      "──────────────────────────────",
+      "  PR #201 · ← for agents",
+    ].join("\n");
+    expect(isReady(welcomeSplashPane)).toBe(true);
+  });
+
+  it("プロンプトも hint も無い起動途中の pane は ready ではない", () => {
+    expect(isReady("Loading…\nConnecting to MCP servers…")).toBe(false);
   });
 });

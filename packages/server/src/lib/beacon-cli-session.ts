@@ -31,9 +31,26 @@ const CAPTURE_LINES = 60;
  */
 const BUSY_RESUME_MAX_MS = 11 * 60 * 1000;
 
-/** claude 起動完了 (入力プロンプト表示) のアンカー */
-function isReady(pane: string): boolean {
-  return pane.includes("for shortcuts");
+/**
+ * 入力プロンプト記号 (❯) が表示されているか。
+ *
+ * footer の hint ("? for shortcuts" / "← for agents" 等) は数秒ごとに rotate し、
+ * 起動直後の Welcome / "What's new" スプラッシュ表示中やカスタム statusline 環境では
+ * "for shortcuts" が出ないことがある (実機検証で確認)。そのため hint 文字列ではなく
+ * 入力プロンプト記号の有無を readiness の主シグナルにする。
+ */
+function hasInputPrompt(pane: string): boolean {
+  return pane.includes("❯");
+}
+
+/**
+ * claude 起動完了 (入力プロンプト表示) のアンカー。
+ * 入力プロンプト記号 (❯) または footer hint のいずれかで検出する
+ * (hint は rotate / スプラッシュで消えるため記号を主、hint を従とする)。
+ * busy / onboarding 判定は呼び出し側で別途行う。
+ */
+export function isReady(pane: string): boolean {
+  return hasInputPrompt(pane) || pane.includes("for shortcuts");
 }
 
 /**
@@ -314,10 +331,9 @@ export class BeaconCliSession {
       // throw せず静かに終えるため、ここでは return で抜ける。
       if (isAborted?.()) return;
       const pane = this.capture();
-      if (isReady(pane) && !isBusy(pane)) {
-        ready = true;
-        break;
-      }
+      // busy / trust / onboarding を ready 判定より先に評価する。
+      // isReady は入力プロンプト記号 (❯) でも成立するため、これらの画面が ❯ を
+      // 含んでいても誤って ready と判定しないよう順序で保証する。
       if (isBusy(pane)) {
         // 処理中。次の 60s window へ deadline を延長して完了を待つ (絶対上限内)。
         deadline = Date.now() + readyTimeoutMs;
@@ -327,6 +343,9 @@ export class BeaconCliSession {
         throw new Error(
           "Beacon 用 claude が未認証です。tmux セッション ark-beacon で `claude /login` を実行してください"
         );
+      } else if (isReady(pane)) {
+        ready = true;
+        break;
       }
       await sleep(800);
     }
@@ -359,6 +378,8 @@ export class BeaconCliSession {
   attachIfRunning(): boolean {
     if (!this.isRunning()) return false;
     const pane = this.capture();
+    // isReady は ❯ でも成立するため、onboarding/trust 画面を ready と誤認しないよう除外する。
+    if (isOnboarding(pane) || isTrustDialog(pane)) return false;
     if (!isReady(pane) || isBusy(pane)) return false;
     return true;
   }

@@ -38,6 +38,18 @@ export interface ExternalMcpEntry {
 }
 
 /**
+ * OAuth token_type を HTTP Authorization の canonical な auth-scheme へ正規化する。
+ * "bearer" / "BEARER" 等は "Bearer" に揃える (case-sensitive な server 対策)。
+ * 既知でない scheme は先頭大文字化のみ行う。
+ */
+export function normalizeAuthScheme(tokenType: string): string {
+  const t = tokenType.trim();
+  if (t.toLowerCase() === "bearer") return "Bearer";
+  if (t.length === 0) return "Bearer";
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+/**
  * 認証済みの全 connection を SDK config に変換して返す。
  * - token が無い connection はスキップ
  * - expiry が近いものは refresh を試行
@@ -59,8 +71,14 @@ export async function buildAuthenticatedExternalMcps(): Promise<
     const token = db.getMcpToken(server.id);
     if (!token) continue;
 
+    // OAuth の token_type は小文字 "bearer" で返ることが多い (Atlassian 等)。
+    // HTTP Authorization の auth-scheme は RFC 7235 上は大小無視だが、
+    // mcp.atlassian.com (Cloudflare/AtlassianEdge) は case-sensitive で小文字
+    // "bearer" を 401 拒否する。canonical な "Bearer" に正規化しないと MCP 接続が
+    // 失敗し、claude にツールが現れない。
+    const authScheme = normalizeAuthScheme(token.tokenType);
     const headers = {
-      Authorization: `${token.tokenType} ${token.accessToken}`,
+      Authorization: `${authScheme} ${token.accessToken}`,
     };
     const config: McpServerHttpConfig =
       provider.transport === "sse"
