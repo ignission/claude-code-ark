@@ -13,9 +13,16 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import {
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { getErrorMessage } from "./errors.js";
 import { resolveTmuxPath } from "./system.js";
 import { resolveValidatedClaudePath } from "./tmux-manager.js";
 
@@ -24,6 +31,18 @@ export const BEACON_TMUX_SESSION = "ark-beacon";
 
 /** capture-pane の取得行数 (ready/busy 判定に十分な可視範囲) */
 const CAPTURE_LINES = 60;
+
+/**
+ * launch コマンドを書き出すスクリプトファイル名 (beacon-launch ディレクトリ内)。
+ *
+ * シェル init 中の端末は canonical モードのため、MAX_CANON (≈1KB) を超える未読入力は
+ * 破棄される。長い launch コマンド (多数の --add-dir) を send-keys でそのまま送ると
+ * init 中に切断され、claude が起動せず readiness タイムアウトに陥る。これを避けるため、
+ * 長いコマンドはファイルに書き出し、tmux には短い `source <file>` のみを送る。
+ * `source` 行は MAX_CANON 未満なので、シェルが zle (RAW モード) に入る前の canonical
+ * 状態で届いても切断されない (p10k の precmd フックや mise の init 出力にも依存しない)。
+ */
+const LAUNCH_SCRIPT_NAME = "beacon-launch.sh";
 
 /**
  * 再接続時、busy な claude (前ターン処理中) が ready になるのを待つ絶対上限。
@@ -255,6 +274,62 @@ export class BeaconCliSession {
   }
 
   /**
+   * launch コマンドを beacon-launch ディレクトリ (mcpConfigPath と同階層) のスクリプトに
+   * 書き出し、その絶対パスを返す。tmux には長い launch ではなく短い `source <path>` を
+   * 送ることで、シェル init 中 (canonical モード) の MAX_CANON 行長上限による切断を避ける
+   * (LAUNCH_SCRIPT_NAME 参照)。
+   *
+   * symlink 追従による任意ファイル上書きを防ぐ: 既存エントリ (symlink 含む) を rm で
+   * 除去 (リンク自体を消す。リンク先は消さない) してから、`wx` (O_CREAT|O_EXCL) で
+   * 排他新規作成する。rm と作成の間に攻撃者が symlink を再配置しても O_EXCL が EEXIST で
+   * 失敗するため、既存ファイルを追従して上書きすることはない。mode 0600 + 毎回上書き
+   * (mcp-config.json 等と同じ扱い)。
+   *
+   * 固定名 (LAUNCH_SCRIPT_NAME) を使うが、Beacon は singleton (BEACON_TMUX_SESSION は
+   * 単一の固定セッション。BeaconManager が直列に起動する) なので、同一ディレクトリで
+   * 並行 start() が競合することはない。この前提が崩れた場合はセッション単位の一意名が必要。
+   *
+   * rm→wx は「書き込み時の上書き」を防ぐが、source は path で後から参照するため、書き込み〜
+   * 実行の間にファイルを差し替えられる TOCTOU が残る。これを塞ぐため、書き込み先ディレクトリが
+   * **owner 専用 (group/other に権限ビット無し) かつ自分の所有**であることを assert する。
+   * 第三者が書き込めないディレクトリなら差し替え経路自体が存在しない。
+   */
+  private writeLaunchScript(launch: string, mcpConfigPath: string): string {
+    const dir = dirname(mcpConfigPath);
+    this.assertPrivateDir(dir);
+    const scriptPath = join(dir, LAUNCH_SCRIPT_NAME);
+    try {
+      rmSync(scriptPath, { force: true });
+      writeFileSync(scriptPath, `${launch}\n`, { mode: 0o600, flag: "wx" });
+    } catch (e) {
+      // 権限 / 既存ファイル衝突 (symlink 再配置等) の切り分けができるよう path を含めて包む。
+      throw new Error(
+        `Beacon launch script の書き込みに失敗しました (${scriptPath}): ${getErrorMessage(e)}`
+      );
+    }
+    return scriptPath;
+  }
+
+  /**
+   * ディレクトリが owner 専用 (group/other に権限ビット無し) かつ現ユーザーの所有で
+   * あることを検証する。第三者書き込みによる launch script 差し替え (TOCTOU) を防ぐ前提。
+   */
+  private assertPrivateDir(dir: string): void {
+    const st = statSync(dir);
+    const uid = process.getuid?.();
+    if ((st.mode & 0o077) !== 0) {
+      throw new Error(
+        `Beacon launch ディレクトリが owner 専用ではありません (group/other 権限あり): ${dir}`
+      );
+    }
+    if (uid !== undefined && st.uid !== uid) {
+      throw new Error(
+        `Beacon launch ディレクトリが現ユーザーの所有ではありません: ${dir}`
+      );
+    }
+  }
+
+  /**
    * 対話版 claude を tmux で起動する (既存セッションがあれば --continue で文脈を引き継ぐ)。
    * 起動完了 (プロンプト表示) まで待ち、未認証なら例外を投げる。
    */
@@ -334,7 +409,16 @@ export class BeaconCliSession {
         ? `export CLAUDE_CONFIG_DIR=${shellQuote(cfg.configDir)}; `
         : "unset CLAUDE_CONFIG_DIR; ";
       const launch = `${configDirPrefix}${shellQuote(claudeBin)} ${flags.join(" ")}`;
-      this.tmuxExec(["send-keys", "-t", BEACON_TMUX_SESSION, launch, "Enter"]);
+      // 長い launch はファイルに書き、tmux には短い `source <path>` のみ送る。
+      // シェル init 中 (canonical モード) の MAX_CANON 切断を回避する (LAUNCH_SCRIPT_NAME 参照)。
+      const scriptPath = this.writeLaunchScript(launch, cfg.mcpConfigPath);
+      this.tmuxExec([
+        "send-keys",
+        "-t",
+        BEACON_TMUX_SESSION,
+        `source ${shellQuote(scriptPath)}`,
+        "Enter",
+      ]);
     }
 
     // 起動完了待ち (trust ダイアログは自動承認、未認証は例外)。

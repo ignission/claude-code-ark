@@ -12,10 +12,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const spawnSyncMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({ spawnSync: spawnSyncMock }));
 
+// launch ディレクトリ privacy assert (assertPrivateDir) 用のデフォルト stat:
+// owner 専用 (mode 0700) かつ現ユーザー所有。これが無いと start() が私的ディレクトリ
+// 検証で throw する。JSONL stat 用の mtimeMs/size も同梱して両用途を満たす。
+const PRIVATE_DIR_UID = process.getuid?.() ?? 0;
 const fsMock = vi.hoisted(() => ({
   readdirSync: vi.fn(() => [] as string[]),
   readFileSync: vi.fn(() => ""),
-  statSync: vi.fn(() => ({ mtimeMs: 0 })),
+  statSync: vi.fn(() => ({
+    mode: 0o700,
+    uid: process.getuid?.() ?? 0,
+    mtimeMs: 0,
+  })),
+  writeFileSync: vi.fn(),
+  rmSync: vi.fn(),
 }));
 vi.mock("node:fs", () => fsMock);
 
@@ -33,19 +43,27 @@ vi.mock("./tmux-manager.js", () => ({
 
 import { BeaconCliSession, isReady } from "./beacon-cli-session.js";
 
-/** send-keys でセッションへ送られた「起動コマンド」文字列を取り出す */
+/**
+ * start() が beacon-launch スクリプトに書き出した「起動コマンド」文字列を取り出す。
+ * 長い launch は send-keys では送らず writeFileSync でファイルへ書き、tmux には短い
+ * `source <path>` のみを送る (MAX_CANON 切断回避) ため、起動コマンドの検証はファイル
+ * 書き込み内容を見る。
+ */
+function launchScriptWrite(): [string, string] | undefined {
+  const calls = fsMock.writeFileSync.mock.calls as Array<[string, string]>;
+  // 書き込み対象は path で構造的に絞る (content の "claude" 部分一致は将来誤検出しうる)
+  return calls.find(
+    ([path]) => typeof path === "string" && path.endsWith("beacon-launch.sh")
+  );
+}
+
 function launchCommand(): string {
-  const calls = spawnSyncMock.mock.calls as Array<[string, string[]]>;
-  for (const [, args] of calls) {
-    if (
-      args[0] === "send-keys" &&
-      typeof args[3] === "string" &&
-      args[3].includes("claude")
-    ) {
-      return args[3];
-    }
-  }
-  return "";
+  return launchScriptWrite()?.[1] ?? "";
+}
+
+/** beacon-launch スクリプトの書き込み先パスを取り出す */
+function launchScriptPath(): string {
+  return launchScriptWrite()?.[0] ?? "";
 }
 
 beforeEach(() => {
@@ -64,6 +82,15 @@ beforeEach(() => {
     }
   );
   fsMock.readdirSync.mockReturnValue([]);
+  fsMock.writeFileSync.mockClear();
+  fsMock.rmSync.mockClear();
+  // launch ディレクトリ privacy 検証用のデフォルト (owner 専用 0700 + 現ユーザー所有)。
+  // 個別テストの mockReturnValue が後続へ漏れないよう毎回リセットする。
+  fsMock.statSync.mockReturnValue({
+    mode: 0o700,
+    uid: PRIVATE_DIR_UID,
+    mtimeMs: 0,
+  });
 });
 
 describe("BeaconCliSession.start (対話版起動コマンド)", () => {
@@ -142,6 +169,113 @@ describe("BeaconCliSession.start (対話版起動コマンド)", () => {
     const idx = cmd.indexOf("--allowedTools");
     expect(idx).toBeGreaterThan(-1);
     expect(cmd.slice(idx)).not.toContain("--add-dir");
+  });
+
+  it("長い launch はファイルに書き、tmux には短い source <path> を送る (MAX_CANON 切断防止)", async () => {
+    // シェル init 中 (canonical モード) に長い launch を送ると MAX_CANON (≈1KB) 超過分が
+    // 破棄され切断される。長い起動コマンドはファイルへ書き出し、tmux には十分短い
+    // `source <path>` のみ送ることで、zle (RAW モード) 起動前の canonical 状態でも切断
+    // されない。
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await session.start(cfg, 5000);
+
+    // 起動コマンドは send-keys ではなくファイル書き込みで渡される
+    const scriptPath = launchScriptPath();
+    expect(scriptPath).toContain("beacon-launch.sh");
+    // launch スクリプトは beacon-launch ディレクトリ (mcp-config と同階層) に置く
+    expect(scriptPath).toBe("/data/beacon-launch/beacon-launch.sh");
+
+    // tmux へは長い launch ではなく短い `source <path>` を送る
+    const sendKeys = (
+      spawnSyncMock.mock.calls as Array<[string, string[]]>
+    ).filter(([, a]) => a?.[0] === "send-keys");
+    const sourceSend = sendKeys.find(([, a]) =>
+      a.some(x => typeof x === "string" && x.startsWith("source "))
+    );
+    expect(sourceSend).toBeDefined();
+    const sourceArg = sourceSend?.[1].find(
+      x => typeof x === "string" && x.startsWith("source ")
+    ) as string;
+    // source 行は MAX_CANON (≈1024) 未満で、長い claude 起動コマンドを含まない
+    expect(sourceArg.length).toBeLessThan(1024);
+    expect(sourceArg).not.toContain("--add-dir");
+    expect(sourceArg).toContain(scriptPath);
+  });
+
+  it("launch スクリプトは mode 0600 + 排他作成 (wx) で書き、内容は launch + 改行", async () => {
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await session.start(cfg, 5000);
+
+    const writeCall = (
+      fsMock.writeFileSync.mock.calls as Array<
+        [string, string, { mode?: number; flag?: string }]
+      >
+    ).find(([path]) => path.endsWith("beacon-launch.sh"));
+    expect(writeCall).toBeDefined();
+    const [, content, opts] = writeCall as [
+      string,
+      string,
+      { mode?: number; flag?: string },
+    ];
+    // 秘密 (token) は mcp-config 側なので 0600 で十分だが、他ユーザー読取りは塞ぐ
+    expect(opts?.mode).toBe(0o600);
+    // symlink 追従上書きを防ぐ排他作成
+    expect(opts?.flag).toBe("wx");
+    // 書き込み内容は起動コマンド + 末尾改行 (source で 1 行として実行される)
+    expect(content.endsWith("\n")).toBe(true);
+    expect(content).toContain("--add-dir");
+  });
+
+  it("launch スクリプト書き込み前に既存エントリを rm する (symlink 追従防止)", async () => {
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await session.start(cfg, 5000);
+
+    // rm が呼ばれ、その対象が書き込み先と同一であること
+    const rmIdx = (
+      fsMock.rmSync.mock.calls as Array<[string, unknown]>
+    ).findIndex(
+      ([p]) => typeof p === "string" && p.endsWith("beacon-launch.sh")
+    );
+    expect(rmIdx).toBeGreaterThanOrEqual(0);
+    const rmCall = fsMock.rmSync.mock.calls[rmIdx] as [string, unknown];
+    expect(rmCall[0]).toBe(launchScriptPath());
+    // force: true (存在しなくてもエラーにしない)
+    expect((rmCall[1] as { force?: boolean })?.force).toBe(true);
+
+    // rm → wx 作成の順序を保証する (write 後に rm すると symlink 防御が無効になるため)。
+    const writeIdx = (
+      fsMock.writeFileSync.mock.calls as Array<[string, string]>
+    ).findIndex(([path]) => path.endsWith("beacon-launch.sh"));
+    expect(writeIdx).toBeGreaterThanOrEqual(0);
+    const rmOrder = fsMock.rmSync.mock.invocationCallOrder[rmIdx];
+    const writeOrder = fsMock.writeFileSync.mock.invocationCallOrder[writeIdx];
+    expect(rmOrder).toBeLessThan(writeOrder);
+  });
+
+  it("launch ディレクトリが owner 専用でない (group/other 権限あり) なら起動を拒否する (TOCTOU 差し替え防止)", async () => {
+    // group 書き込み可 (0770) のディレクトリは第三者が source 対象を差し替え可能なので拒否
+    fsMock.statSync.mockReturnValue({
+      mode: 0o770,
+      uid: PRIVATE_DIR_UID,
+      mtimeMs: 0,
+    });
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await expect(session.start(cfg, 5000)).rejects.toThrow(
+      /owner 専用|private/
+    );
+    // 危険なディレクトリには launch script を書かない
+    expect(launchScriptWrite()).toBeUndefined();
+  });
+
+  it("launch ディレクトリが現ユーザー所有でないなら起動を拒否する", async () => {
+    fsMock.statSync.mockReturnValue({
+      mode: 0o700,
+      uid: PRIVATE_DIR_UID + 12345, // 別ユーザー
+      mtimeMs: 0,
+    });
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await expect(session.start(cfg, 5000)).rejects.toThrow(/所有/);
+    expect(launchScriptWrite()).toBeUndefined();
   });
 
   it("既に起動済み (has-session 成功) なら再起動せず new-session を呼ばない", async () => {
@@ -260,7 +394,10 @@ describe("BeaconCliSession.start (対話版起動コマンド)", () => {
       (_bin: string, args: string[] | undefined) => {
         if (args?.[0] === "has-session") return { status: 1 };
         if (args?.[0] === "capture-pane") {
-          return { stdout: "Welcome to Claude Code\n/login", status: 0 };
+          return {
+            stdout: "Welcome to Claude Code\n/login",
+            status: 0,
+          };
         }
         return { status: 0, stdout: "" };
       }
@@ -382,7 +519,14 @@ describe("BeaconCliSession.recoverPending (取りこぼし回収)", () => {
       }
     );
     fsMock.readdirSync.mockReturnValue(["s.jsonl"]);
-    fsMock.statSync.mockReturnValue({ mtimeMs: 1, size: 100 });
+    fsMock.writeFileSync.mockClear();
+    fsMock.rmSync.mockClear();
+    fsMock.statSync.mockReturnValue({
+      mode: 0o700,
+      uid: PRIVATE_DIR_UID,
+      mtimeMs: 1,
+      size: 100,
+    });
     // 実在するのは JSONL_PATH のみ。他パスは ENOENT で読めない (resume は保存パスを直接読む)。
     // 実 transcript と同様に各行 (最終行含む) は改行で終端する (= 完全な行)。
     fsMock.readFileSync.mockImplementation((p: string) => {
