@@ -21,12 +21,11 @@ import { build } from "esbuild";
 const serverPkg = JSON.parse(
   await readFile("../server/package.json", "utf-8")
 );
-// @ark/server の dependencies は基本 bundle するが、native module や CLI 系は external
-const nativeOrCli = new Set([
-  "better-sqlite3",
-  "playwright-core",
-  "@anthropic-ai/claude-agent-sdk",
-]);
+// @ark/server の dependencies は基本 bundle するが、native module 系は external。
+// claude バイナリ (@anthropic-ai/claude-code) は import せず resolveClaudePath() で
+// 同梱パスを直接解決するため、bundle 対象にならない (desktop の直接 dependency として
+// .app に同梱され、electron-builder の smartUnpack で展開される)。
+const nativeOrCli = new Set(["better-sqlite3", "playwright-core"]);
 const serverExternals = Object.keys(serverPkg.dependencies ?? {}).filter(
   name => nativeOrCli.has(name)
 );

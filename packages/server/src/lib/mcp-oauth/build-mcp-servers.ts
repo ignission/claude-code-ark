@@ -1,16 +1,26 @@
 /**
- * Beacon の query() に渡す mcpServers Record を構築する。
+ * Beacon の claude CLI に渡す `--mcp-config` 用の外部 MCP server 定義を構築する。
  *
- * ark-beacon (in-process カスタム tool) に加え、認証済みの全 connection を
- * `{ type: 'http', url, headers: { Authorization: Bearer ... } }` で混ぜ込む。
- * 同じ provider に複数 connection があれば全部別 MCP server として登録される
- * (マルチアカウント対応)。SDK MCP server name = connection.id。
+ * 認証済みの全 connection を `{ type: 'http'|'sse', url, headers: { Authorization:
+ * Bearer ... } }` で返す。同じ provider に複数 connection があれば全部別 MCP server
+ * として登録される (マルチアカウント対応)。MCP server name = connection.id。
  */
 
-import type { McpServerConfig as SdkMcpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { db } from "../database.js";
 import { mcpOAuthOrchestrator } from "./oauth-flow-orchestrator.js";
 import { getProvider } from "./providers.js";
+
+/**
+ * claude CLI の `--mcp-config` に渡す remote MCP server の設定。
+ * Claude Code の `.mcp.json` 形式 (`{ type, url, headers }`) と一致しており、
+ * そのまま mcp-config JSON に埋め込める。
+ * (旧 Agent SDK の `McpServerConfig` の http/sse 部分と同一スキーマ)
+ */
+export interface McpServerHttpConfig {
+  type: "http" | "sse";
+  url: string;
+  headers?: Record<string, string>;
+}
 
 export interface ExternalMcpEntry {
   /** connection ID (SDK の mcpServers Record キー、tool prefix の <id> 部分) */
@@ -24,7 +34,19 @@ export interface ExternalMcpEntry {
    * モデルが URL host から正しい connection を選ぶ判断材料 + tool 引数 (cloudId 等) に流用。
    */
   accountHint?: string;
-  config: SdkMcpServerConfig;
+  config: McpServerHttpConfig;
+}
+
+/**
+ * OAuth token_type を HTTP Authorization の canonical な auth-scheme へ正規化する。
+ * "bearer" / "BEARER" 等は "Bearer" に揃える (case-sensitive な server 対策)。
+ * 既知でない scheme は先頭大文字化のみ行う。
+ */
+export function normalizeAuthScheme(tokenType: string): string {
+  const t = tokenType.trim();
+  if (t.toLowerCase() === "bearer") return "Bearer";
+  if (t.length === 0) return "Bearer";
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
 /**
@@ -49,10 +71,16 @@ export async function buildAuthenticatedExternalMcps(): Promise<
     const token = db.getMcpToken(server.id);
     if (!token) continue;
 
+    // OAuth の token_type は小文字 "bearer" で返ることが多い (Atlassian 等)。
+    // HTTP Authorization の auth-scheme は RFC 7235 上は大小無視だが、
+    // mcp.atlassian.com (Cloudflare/AtlassianEdge) は case-sensitive で小文字
+    // "bearer" を 401 拒否する。canonical な "Bearer" に正規化しないと MCP 接続が
+    // 失敗し、claude にツールが現れない。
+    const authScheme = normalizeAuthScheme(token.tokenType);
     const headers = {
-      Authorization: `${token.tokenType} ${token.accessToken}`,
+      Authorization: `${authScheme} ${token.accessToken}`,
     };
-    const config: SdkMcpServerConfig =
+    const config: McpServerHttpConfig =
       provider.transport === "sse"
         ? { type: "sse", url: server.url, headers }
         : { type: "http", url: server.url, headers };

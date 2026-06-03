@@ -7,6 +7,7 @@
  */
 
 import type {
+  BeaconProfileState,
   BrowserSession,
   ChatMessage,
   ClientToServerEvents,
@@ -100,6 +101,10 @@ interface MobileLayoutProps {
   onBeaconClear?: () => void;
   /** 応答停止 + セッションリセット。required: 型で「停止不能」を防ぐ */
   onBeaconStopAndReset: () => void;
+  /** Beacon 専用プロファイルの状態（Linux のプロファイル切替。null = 未取得） */
+  beaconProfile?: BeaconProfileState | null;
+  /** Beacon 専用プロファイルを設定（profileId=null で既定。反映は再起動時 C-1） */
+  onBeaconSetProfile?: (profileId: string | null) => void;
   /** Socket.IO 接続状態。停止ボタンを切断時に disabled にするために使う */
   isSocketConnected: boolean;
   // Usage取得（Linux + multiProfileSupported のみ）
@@ -152,6 +157,8 @@ export function MobileLayout({
   onBeaconSend,
   onBeaconClear,
   onBeaconStopAndReset,
+  beaconProfile,
+  onBeaconSetProfile,
   isSocketConnected,
   onRequestUsage,
   usageRequesting,
@@ -394,6 +401,8 @@ export function MobileLayout({
           usageProgress={usageProgress}
           multiProfileSupported={multiProfileSupported}
           onOpenMcpManager={onOpenMcpManager}
+          beaconProfile={beaconProfile}
+          onSetProfile={onBeaconSetProfile}
         />
       </div>
 

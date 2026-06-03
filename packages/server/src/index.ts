@@ -698,6 +698,15 @@ export async function startServer(
   beaconManager.on("beacon:external-message", message => {
     io.emit("beacon:external-message", message);
   });
+  // 履歴の再同期。kill による user プロンプト除去 / close→reopen を跨いだ応答確定など、
+  // 単発の beacon:message では追従できない変化を全クライアントへ反映する。
+  beaconManager.on("beacon:history", data => {
+    io.emit("beacon:history", data);
+  });
+  // Beacon 専用プロファイルの状態変化 (設定変更 / staleProfile 解消) を全クライアントへ反映。
+  beaconManager.on("beacon:profile", data => {
+    io.emit("beacon:profile", data);
+  });
 
   // MCP OAuth フローの完了/失敗を全クライアントに通知。
   // 認証成功時は Beacon セッションに stale マークを付ける: startSession で
@@ -1371,6 +1380,9 @@ export async function startServer(
     // Beaconのチャット履歴を接続時に自動送信（クライアント側の取得タイミング問題を回避）
     socket.emit("beacon:history", { messages: beaconManager.getHistory() });
 
+    // Beacon 専用プロファイルの状態を接続時に送信 (UI 初期化用)
+    socket.emit("beacon:profile", beaconManager.getProfileState());
+
     // 接続時にショートカット一覧を即時送信（クライアント側のキャッシュ初期化用）
     try {
       socket.emit("shortcut:list", db.listMessageShortcuts());
@@ -2003,7 +2015,10 @@ export async function startServer(
       socket.emit("beacon:history", { messages });
     });
 
-    // Beaconセッション終了
+    // Beaconセッション終了 (明示的な close)。
+    // CLI 会話 (cliSessionId) は破棄しない: DB のチャット履歴は残り再接続時に
+    // 再表示されるため、resume を維持して「UI 履歴 = LLM 文脈」を一致させる。
+    // 文脈を完全に捨てたい場合は beacon:clear (履歴ごと削除) を使う。
     socket.on("beacon:close", () => {
       beaconManager.closeSession();
     });
@@ -2025,8 +2040,12 @@ export async function startServer(
     // beacon:clear と同じ trust model (Beacon は接続クライアント間で共有資源)。
     // Cloudflare Tunnel + token 認証の後ろにある前提で、追加の所有者制御は持たない。
     socket.on("beacon:stop-and-reset", () => {
-      if (!beaconManager.hasSession()) return;
-      beaconManager.closeSession();
+      // 「仕切り直し」: CLI 会話 (cliSessionId) も破棄し、次の sendMessage は
+      // --resume せず新規会話で開始する (モデル側の文脈をリセットする)。
+      // hasSession() ガードは付けない: サーバー再起動 / idle close 後は live session が
+      // 無くても cliSessionId が settings に残るため、その状態でも破棄する必要がある
+      // (closeSession 内で resetConversation を live session の有無に関わらず処理する)。
+      beaconManager.closeSession({ resetConversation: true });
     });
 
     // Beacon履歴クリア（LLMコンテキスト・DB履歴もリセット）
@@ -2034,6 +2053,25 @@ export async function startServer(
     socket.on("beacon:clear", () => {
       beaconManager.clearHistory();
       io.emit("beacon:history", { messages: [] });
+    });
+
+    // Beacon 専用プロファイルの現在状態を要求 (接続後の再取得用)
+    socket.on("beacon:get-profile", () => {
+      socket.emit("beacon:profile", beaconManager.getProfileState());
+    });
+
+    // Beacon 専用プロファイルを設定 (null で既定)。稼働中セッションは即時切替せず
+    // staleProfile になる (C-1)。setProfile が broadcastProfile するので個別 emit は不要。
+    socket.on("beacon:set-profile", (data: { profileId: string | null }) => {
+      const profileId = data?.profileId ?? null;
+      const ok = beaconManager.setProfile(profileId);
+      if (!ok) {
+        socket.emit("beacon:error", {
+          error: "指定されたプロファイルが見つかりません",
+        });
+        // 失敗時は要求元に現状態を返して UI を巻き戻す
+        socket.emit("beacon:profile", beaconManager.getProfileState());
+      }
     });
 
     // ===== MCP OAuth Commands (whitelist 形式) =====

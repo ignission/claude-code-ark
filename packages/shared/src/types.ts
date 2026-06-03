@@ -427,6 +427,8 @@ export interface ServerToClientEvents {
   "beacon:stream": (data: BeaconStreamChunk) => void;
   "beacon:history": (data: { messages: ChatMessage[] }) => void;
   "beacon:error": (data: { error: string }) => void;
+  /** Beacon 専用プロファイルの状態 (接続時 + 変更時に emit) */
+  "beacon:profile": (data: BeaconProfileState) => void;
 
   // Usage取得
   "usage:progress": (data: UsageProgress) => void;
@@ -571,6 +573,13 @@ export interface ClientToServerEvents {
    * その結果 LLM の multi-turn コンテキストは失われる。)
    */
   "beacon:stop-and-reset": () => void;
+  /**
+   * Beacon 専用プロファイルを設定する (profileId=null で既定に戻す)。
+   * 稼働中セッションは即時切替されず staleProfile になる (C-1)。反映は再起動時。
+   */
+  "beacon:set-profile": (data: { profileId: string | null }) => void;
+  /** Beacon プロファイルの現在状態を要求する (接続直後の初期取得用) */
+  "beacon:get-profile": () => void;
 
   // ファイルビューワー
   "file:read": (data: { sessionId: string; filePath: string }) => void;
@@ -747,6 +756,19 @@ export interface BeaconStreamChunk {
   chunk: string;
   /** ストリーミング完了フラグ */
   done: boolean;
+}
+
+/** Beacon 専用プロファイルの状態 (Linux のプロファイル切替) */
+export interface BeaconProfileState {
+  /** 選択中の profileId (null = 既定プロファイル) */
+  profileId: string | null;
+  /**
+   * 稼働中セッションのプロファイルが現在の選択とズレているか。
+   * true の場合 UI はバッジ + 再起動ボタンを表示する (C-1: 再起動で反映)。
+   */
+  stale: boolean;
+  /** 選択肢として提示する登録済みプロファイル一覧 */
+  profiles: Array<{ id: string; name: string }>;
 }
 
 // ============================================================

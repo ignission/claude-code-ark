@@ -23,7 +23,7 @@ Arkは、そういった問題をまとめて解決する。ブラウザを開�
 - **モバイル対応** -- スマホからフル操作可能。IME / 日本語入力にも対応
 - **リモートアクセス** -- Cloudflare Tunnelで外出先からセッションにアクセス。QRコードですぐ接続
 - **Git Worktree統合** -- WebUIからworktreeの作成・削除・一覧表示
-- **Beacon（AIアシスタント）** -- Agent SDKベースのチャットUIで、「進捗確認」「タスク着手」「判断」などの高レベル操作を自然言語で実行。MCPツール経由でセッション管理やGitHub操作を自動化
+- **Beacon（AIアシスタント）** -- ローカルの `claude` CLI（対話版）を専用 tmux セッションで常駐起動し、司令塔として駆動するチャットUI。「進捗確認」「タスク着手」「判断」などの高レベル操作を自然言語で実行し、MCPツール経由でセッション管理やGitHub操作を自動化（**インストール済み・ログイン済みの Claude Code CLI が必要**）
 - **画像送信** -- クリップボードから画像をペーストしてClaude Codeに送信（`@パス` 形式）
 
 ## アーキテクチャ
@@ -36,7 +36,7 @@ Arkは、Agent SDKではなく **tmux + ttyd によるターミナル転送方�
 
 - **tmux** がClaude CLIプロセスをdetachedセッションで管理し、サーバー再起動後もセッションが永続化される
 - **ttyd** がtmuxセッションにWebターミナルアクセスを提供し、各セッションに独立したttydプロセスが起動する
-- **Beacon** は別レイヤーとして、Agent SDKベースのチャットUIを提供する。ターミナル操作ではなく、自然言語による高レベルな指示に特化している
+- **Beacon** は別レイヤーとして、ローカルの `claude` CLI（**対話版**）を専用 tmux セッションで常駐起動し、その JSONL transcript を tail して応答を独自にレンダリングする司令塔チャットUIを提供する。`claude -p`（ヘッドレス）ではなく対話版を使うため、プランの利用枠で動作する。ターミナル操作ではなく自然言語による高レベルな指示に特化し、司令塔ツールは HTTP MCP サーバー経由で CLI に提供する。Beacon は**ローカルの `claude` CLI とその認証状態に依存する**
 
 ## Quick Start
 
@@ -88,6 +88,7 @@ xattr -dr com.apple.quarantine "$APP"
 - [pnpm](https://pnpm.io/)
 - [tmux](https://github.com/tmux/tmux)
 - [ttyd](https://github.com/tsl0922/ttyd)
+- [Claude Code CLI（`claude`）](https://docs.claude.com/en/docs/claude-code) -- **インストール済みかつログイン済み**であること。Beacon はローカルの `claude` CLI とその認証状態に依存する（確認: `claude --version` / 未ログインなら `claude` を起動して `/login`）
 
 #### インストールと起動
 

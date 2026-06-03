@@ -22,6 +22,7 @@ import {
   readdirSync,
   statSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { getBundledBinDir } from "./paths.js";
@@ -88,43 +89,52 @@ function existsInVersionedDirs(baseDir: string, suffix: string): boolean {
 }
 
 /**
- * `@anthropic-ai/claude-agent-sdk` の query() に `pathToClaudeCodeExecutable`
- * として渡す、Electron .app の `app.asar.unpacked/` 配下に同梱された SDK
- * 付属 claude バイナリの絶対パスを返す。**spawn 可能であることが確認できた
- * 場合のみ非 null を返す** (existsSync + isFile + X_OK)。
+ * Electron .app の `app.asar.unpacked/` 配下に同梱された claude バイナリの
+ * 絶対パスを返す。**spawn 可能であることが確認できた場合のみ非 null を返す**
+ * (existsSync + isFile + X_OK)。
  *
- * SDK は内部で `require.resolve("@anthropic-ai/claude-agent-sdk-<platform>-<arch>")`
- * から binary パスを得るが、Electron .app では `app.asar/...` を返す。Electron は
- * `child_process.spawn` に対して asar 透過化を **行わない** ため、その path を
- * spawn すると ENOTDIR で fail する (asar は単一ファイルなので path component
- * として辿れない)。`app.asar.unpacked/` 側の実体パスを明示的に渡す必要がある。
+ * `@anthropic-ai/claude-code` の platform 依存パッケージ
+ * (`@anthropic-ai/claude-code-<platform>-<arch>`) が standalone な `claude`
+ * 実行ファイルを同梱しており、electron-builder の smartUnpack が native バイナリ
+ * として自動的に `app.asar.unpacked/` 側へ展開する。Electron は
+ * `child_process.spawn` に対して asar 透過化を **行わない** (asar は単一ファイル
+ * なので path component として辿れず ENOTDIR) ため、unpacked 側の実体パスを
+ * 明示的に解決する必要がある。
  *
  * Linux サーバ版 / non-Electron では `process.resourcesPath` が undefined のため
  * このフォールバックはスキップされる。
  *
- * spawn 可能性まで確認することで、`pathToClaudeCodeExecutable` を信用する側
- * (`@ark/server` の query() 呼び出し) が「return non-null = spawn 安全」と
- * 仮定できる。candidate が directory / 権限なし / 壊れたリンクの場合は null
- * を返し、上位の system claude フォールバックに委ねる。
+ * spawn 可能性まで確認することで、戻り値を信用する側が「return non-null = spawn
+ * 安全」と仮定できる。candidate が directory / 権限なし / 壊れたリンクの場合は
+ * null を返し、上位の system claude フォールバックに委ねる。
  *
  * Windows (`.exe` サフィックス) は現状 Ark .app の build target に含まれない
  * ため未対応。将来 Windows 版を出す際は `.exe` を加味した分岐をここに追加する。
  */
-function resolveUnpackedSdkClaudeExecutablePath(): string | null {
-  const resourcesPath = (process as { resourcesPath?: string }).resourcesPath;
-  if (!resourcesPath) return null;
-  // Windows ターゲットは未サポート (Ark .app は darwin / linux のみ build する)
-  if (process.platform !== "darwin" && process.platform !== "linux") {
-    return null;
+/**
+ * `@anthropic-ai/claude-code` の platform 依存パッケージ名 (拡張子なし) の候補。
+ * musl 環境 (Alpine 等) では `claude-code-linux-<arch>-musl` が install されるため、
+ * glibc/musl の確実な判定が難しいことを踏まえ両方を候補として返す
+ * (実際に install / 存在する方だけが解決される)。
+ */
+export function claudeCodePlatformPkgNames(): string[] {
+  const { platform, arch } = process;
+  if (platform === "darwin") {
+    // Apple Silicon を x64 Node/Electron (Rosetta) で動かすと process.arch=x64 になるが、
+    // claude-code は darwin-arm64 を install する (x64 バイナリは Apple Silicon で動かない)。
+    // arm64 を優先候補にし、実際に install された方を解決する。Intel Mac では arm64 が
+    // 未 install なので x64 にフォールバックする。
+    return ["claude-code-darwin-arm64", "claude-code-darwin-x64"];
   }
-  const candidate = path.join(
-    resourcesPath,
-    "app.asar.unpacked",
-    "node_modules",
-    "@anthropic-ai",
-    `claude-agent-sdk-${process.platform}-${process.arch}`,
-    "claude"
-  );
+  if (platform === "linux") {
+    const base = `claude-code-linux-${arch}`;
+    return [base, `${base}-musl`];
+  }
+  return [`claude-code-${platform}-${arch}`];
+}
+
+/** path が spawn 可能な実行ファイル (存在 + 通常ファイル + X_OK) なら返す。でなければ null */
+function executableOrNull(candidate: string): string | null {
   try {
     if (!existsSync(candidate)) return null;
     if (!statSync(candidate).isFile()) return null;
@@ -136,17 +146,128 @@ function resolveUnpackedSdkClaudeExecutablePath(): string | null {
 }
 
 /**
+ * 指定 node_modules ディレクトリ配下から `@anthropic-ai/claude-code-<platform>`
+ * 同梱 claude バイナリを探す。flat レイアウト (electron-builder が hoist した場合) と
+ * pnpm の isolated レイアウト (`.pnpm/@anthropic-ai+<pkg>@<ver>/node_modules/...`) の
+ * 両方を探索する。**spawn 可能な実体のみ返す**。
+ *
+ * desktop bootstrap (`main.ts`) でも同じ判定が必要なため export する。
+ */
+export function findBundledClaudeBinary(nodeModulesDir: string): string | null {
+  for (const pkg of claudeCodePlatformPkgNames()) {
+    // 1) flat レイアウト
+    const flat = executableOrNull(
+      path.join(nodeModulesDir, "@anthropic-ai", pkg, "claude")
+    );
+    if (flat) return flat;
+    // 2) pnpm isolated レイアウト (`.pnpm/@anthropic-ai+<pkg>@<ver>/node_modules/...`)
+    const pnpmDir = path.join(nodeModulesDir, ".pnpm");
+    try {
+      for (const entry of readdirSync(pnpmDir)) {
+        if (!entry.startsWith(`@anthropic-ai+${pkg}@`)) continue;
+        const bin = executableOrNull(
+          path.join(
+            pnpmDir,
+            entry,
+            "node_modules",
+            "@anthropic-ai",
+            pkg,
+            "claude"
+          )
+        );
+        if (bin) return bin;
+      }
+    } catch {
+      // .pnpm ディレクトリ無し (flat レイアウト) → 無視
+    }
+  }
+  // 注: 主パッケージ `@anthropic-ai/claude-code` の public bin (bin/claude.exe) は
+  // フォールバックに使わない。postinstall 未実行時 (pnpm の ignored build scripts 等)
+  // この bin は「claude native binary not installed」と表示して exit 1 する stub であり、
+  // X_OK は通るが起動しない。native 実体を持つ platform パッケージのみを信頼する。
+  return null;
+}
+
+function resolveUnpackedBundledClaudeExecutablePath(): string | null {
+  const resourcesPath = (process as { resourcesPath?: string }).resourcesPath;
+  if (!resourcesPath) return null;
+  // Windows ターゲットは未サポート (Ark .app は darwin / linux のみ build する)
+  if (process.platform !== "darwin" && process.platform !== "linux") {
+    return null;
+  }
+  return findBundledClaudeBinary(
+    path.join(resourcesPath, "app.asar.unpacked", "node_modules")
+  );
+}
+
+/**
+ * node_modules に install された `@anthropic-ai/claude-code-<platform>-<arch>`
+ * パッケージ同梱の claude バイナリを Node モジュール解決で見つけて返す。
+ * **spawn 可能な場合のみ非 null** (isFile + X_OK)。
+ *
+ * standalone な `@ark/server` 実行 (`pnpm dev:server` / pm2 `node dist/cli.js`)
+ * で system に claude が無くても動くようにするフォールバック。
+ *
+ * 重要: `which claude` より **前** で解決する。`@anthropic-ai/claude-code` の
+ * 主パッケージは `node_modules/.bin/claude` に launcher を作るが、これは
+ * postinstall (native binary 取得) が走っていないと壊れている。`which claude`
+ * を先に引くとこの壊れた launcher を掴む恐れがあるため、platform パッケージの
+ * 実体バイナリを直接解決して優先する。
+ */
+function resolveNodeModulesClaudeBinary(): string | null {
+  if (process.platform !== "darwin" && process.platform !== "linux") {
+    return null;
+  }
+  // platform パッケージ (`claude-code-<platform>-<arch>`) は主パッケージ
+  // `@anthropic-ai/claude-code` の optionalDependency。`@ark/server` の直接依存は
+  // 主パッケージのみなので、まず主パッケージを解決し、その文脈 (optionalDep を
+  // 宣言している場所) から platform パッケージを解決する。これで pnpm の isolated
+  // レイアウトでも確実に platform バイナリへ辿り着ける。
+  const require = createRequire(import.meta.url);
+  const requireFroms: NodeJS.Require[] = [require];
+  try {
+    const mainPkgJson = require.resolve(
+      "@anthropic-ai/claude-code/package.json"
+    );
+    requireFroms.push(createRequire(mainPkgJson));
+  } catch {
+    // 主パッケージが見つからなければ root からの解決のみ試す
+  }
+  for (const pkg of claudeCodePlatformPkgNames()) {
+    for (const req of requireFroms) {
+      try {
+        const pkgJson = req.resolve(`@anthropic-ai/${pkg}/package.json`);
+        const bin = executableOrNull(
+          path.join(path.dirname(pkgJson), "claude")
+        );
+        if (bin) return bin;
+      } catch {
+        // この候補/解決元では見つからない → 次へ
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * `claude` コマンドの絶対パスを解決する。利用不可なら null。
  * 解決ロジックは checkClaudeCommandExists と同じ順序。tmux send-keys に
  * 絶対パスで claude を送ることで、pm2/systemd の PATH に claude が無い
  * 環境でも「command not found」にならないようにする。
  */
 export function resolveClaudePath(): string | null {
-  // -1. Electron .app の `app.asar.unpacked` に同梱された SDK 付属バイナリ。
-  // SDK と version が揃っており、prompt protocol (JSONL) 互換性が保証される。
+  // -1. Electron .app の `app.asar.unpacked` に同梱された claude バイナリ
+  // (`@anthropic-ai/claude-code-<platform>-<arch>`)。配布物に常に含まれるため、
+  // system PATH に claude が無い .app 環境でも確実に解決できる。
   // 戻り値は spawn 可能性まで確認済み (isFile + X_OK)、null なら下流に委譲。
-  const bundledSdkBin = resolveUnpackedSdkClaudeExecutablePath();
-  if (bundledSdkBin) return bundledSdkBin;
+  const bundledBin = resolveUnpackedBundledClaudeExecutablePath();
+  if (bundledBin) return bundledBin;
+
+  // -0.5. node_modules に install された platform パッケージ同梱バイナリ。
+  // standalone server で system claude 不在でも動くようにする。
+  // `which claude` より前に引いて、壊れた .bin/claude launcher の誤検出を避ける。
+  const nodeModulesBin = resolveNodeModulesClaudeBinary();
+  if (nodeModulesBin) return nodeModulesBin;
 
   // 0. F5 同梱版: `<userData>/claude-runtime/bin/claude` を最優先
   // Electron desktop でユーザに余計なセットアップを求めずに済むよう、
@@ -244,6 +365,13 @@ function scanVersionedDir(baseDir: string, suffix: string): string | null {
  * 3. 既知の候補ディレクトリ (mise shims, npm global, apt/dpkg, brew 等)
  */
 export function checkClaudeCommandExists(): boolean {
+  // resolveClaudePath() の高優先解決と整合させる。これらを見ないと、
+  // 同梱バイナリのみが claude 供給源の環境 (.app / standalone server で
+  // node_modules 同梱版のみ) で session は動くのに multiProfileSupported が
+  // false になり、UI がプロファイル/usage 機能を誤って隠してしまう。
+  if (resolveUnpackedBundledClaudeExecutablePath()) return true;
+  if (resolveNodeModulesClaudeBinary()) return true;
+
   // 0. F5 同梱版: `<userData>/claude-runtime/bin/claude`
   // resolveClaudePath() と同じく最優先でチェックし、Electron desktop で
   // システム claude 未インストールでもプロファイル切替が利用可能になる

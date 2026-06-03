@@ -28,7 +28,7 @@ function posixShellQuote(s: string): string {
 }
 
 /**
- * resolveClaudePath() の結果を tmux send-keys 用に検証する。
+ * resolveClaudePath() の結果を tmux send-keys / shell 起動用に検証する。
  *
  * 戻り値は以下のいずれか:
  *   - 検証通過した絶対パス (呼び出し側で posixShellQuote() するための原文字列)
@@ -47,8 +47,10 @@ function posixShellQuote(s: string): string {
  *     コマンド注入になり、`ESC` (0x1B) や `BS` / `DEL` は端末側で解釈されて
  *     入力行や terminal state を壊し得る。single-quote 済みでも readline 経路で
  *     脱出される余地があるため、全 control char を一律拒否する。
+ *
+ * 対話版 Beacon (beacon-cli-session.ts) も同じ信頼境界を共有するため export する。
  */
-function resolveValidatedClaudePath(): string {
+export function resolveValidatedClaudePath(): string {
   const resolved = resolveClaudePath();
   if (resolved === null) return "claude";
   if (!path.isAbsolute(resolved)) {
@@ -189,6 +191,13 @@ export class TmuxManager extends EventEmitter {
                 `[TmuxManager] Cleaned up orphan usage session: ${name}`
               );
             }
+            continue;
+          }
+          // ark-beacon は Beacon 司令塔チャット専用セッション。ttyd を持たず
+          // BeaconManager が独自に管理 (JSONL tail で描画) するため、ここでは
+          // 通常セッションとして登録しない (登録すると ttyd が起動してしまう)。
+          // kill もしない: 対話版 claude の会話文脈を保持して継続させる。
+          if (name === "ark-beacon" || name.startsWith("ark-beacon-")) {
             continue;
           }
           const id = name.replace(this.SESSION_PREFIX, "");

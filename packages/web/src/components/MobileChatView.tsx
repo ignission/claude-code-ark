@@ -6,7 +6,11 @@
  * ストリーミング表示、クイックコマンドを提供する。
  */
 
-import type { ChatMessage, UsageProgress } from "@ark/shared";
+import type {
+  BeaconProfileState,
+  ChatMessage,
+  UsageProgress,
+} from "@ark/shared";
 import {
   ChevronLeft,
   ChevronRight,
@@ -66,10 +70,14 @@ interface MobileChatViewProps {
   usageRequesting?: boolean;
   /** Usage取得進捗（取得中のみ非null） */
   usageProgress?: UsageProgress | null;
-  /** プロファイル機能が有効か（falseならUsageボタン非表示） */
+  /** プロファイル機能が有効か（falseならUsageボタン・プロファイル選択を非表示） */
   multiProfileSupported?: boolean;
   /** MCP server マネージャを開く */
   onOpenMcpManager?: () => void;
+  /** Beacon 専用プロファイルの状態（Linux のプロファイル切替。null = 未取得） */
+  beaconProfile?: BeaconProfileState | null;
+  /** Beacon 専用プロファイルを設定（profileId=null で既定。反映は再起動時 C-1） */
+  onSetProfile?: (profileId: string | null) => void;
 }
 
 /** クイックコマンドの定義 */
@@ -457,6 +465,8 @@ export function MobileChatView({
   usageProgress = null,
   multiProfileSupported = false,
   onOpenMcpManager,
+  beaconProfile = null,
+  onSetProfile,
 }: MobileChatViewProps) {
   const { height: viewportHeight, isKeyboardVisible } = useVisualViewport();
   const [inputValue, setInputValue] = useState("");
@@ -554,17 +564,62 @@ export function MobileChatView({
             <span className="font-semibold text-sm tracking-tight">Beacon</span>
           </div>
         </div>
-        {onClear && messages.length > 0 && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-destructive/50 hover:text-destructive hover:bg-destructive/10"
-            onClick={onClear}
-            disabled={isStreaming}
-          >
-            <Trash2 className="w-4 h-4" />
-          </Button>
-        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* Beacon 専用プロファイル選択（Linux + プロファイル登録時のみ）。
+              C-1: 切替は即時反映されず、稼働中セッションは staleProfile になる。 */}
+          {multiProfileSupported &&
+            beaconProfile &&
+            onSetProfile &&
+            beaconProfile.profiles.length > 0 && (
+              <div className="flex items-center gap-1 min-w-0">
+                {beaconProfile.stale && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          "プロファイルを反映するため Beacon を再起動します。\n現在の会話履歴・文脈は失われます。続行しますか？"
+                        )
+                      ) {
+                        onStopAndReset();
+                      }
+                    }}
+                    disabled={!isConnected || isStreaming}
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 hover:bg-amber-500/25 whitespace-nowrap disabled:opacity-50"
+                    title="稼働中セッションは旧プロファイルのままです。再起動で反映します（会話履歴は失われます）"
+                  >
+                    ⚠ 再起動で反映
+                  </button>
+                )}
+                <select
+                  value={beaconProfile.profileId ?? ""}
+                  onChange={e =>
+                    onSetProfile(e.target.value === "" ? null : e.target.value)
+                  }
+                  className="h-7 max-w-[110px] text-xs rounded border border-border/50 bg-background px-1.5 text-foreground"
+                  title="Beacon のプロファイル（CLAUDE_CONFIG_DIR）。変更は再起動で反映"
+                >
+                  <option value="">既定</option>
+                  {beaconProfile.profiles.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          {onClear && messages.length > 0 && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-destructive/50 hover:text-destructive hover:bg-destructive/10"
+              onClick={onClear}
+              disabled={isStreaming}
+            >
+              <Trash2 className="w-4 h-4" />
+            </Button>
+          )}
+        </div>
       </header>
 
       {/* メッセージエリア */}

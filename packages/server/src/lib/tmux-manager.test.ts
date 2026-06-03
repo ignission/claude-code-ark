@@ -245,9 +245,9 @@ describe("TmuxManager.createSession - options互換", () => {
   });
 
   it("resolveClaudePath が絶対パスを返したら send-keys に POSIX single-quote 付きで渡る (issue #186)", async () => {
-    // .app 同梱 SDK の typical path を返すように mock を上書き
+    // .app 同梱 claude (claude-code) の typical path を返すように mock を上書き
     const bundledClaudePath =
-      "/Applications/Ark.app/Contents/Resources/app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude";
+      "/Applications/Ark.app/Contents/Resources/app.asar.unpacked/node_modules/@anthropic-ai/claude-code-darwin-arm64/claude";
     vi.mocked(resolveClaudePath).mockReturnValueOnce(bundledClaudePath);
 
     await manager.createSession("/path/to/worktree");

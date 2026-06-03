@@ -208,52 +208,103 @@ function resolveWebStaticDir(): string | undefined {
 
 async function bootstrap(): Promise<void> {
   // === fail-fast 前提条件チェック (bootstrap 副作用前) ===
-  // 配布物不整合 (.app 同梱 SDK claude binary 欠落) は ここで検知する。
-  // installer 削除後は SDK 同梱が唯一の保証経路で、欠落していると tmux セッション
+  // 配布物不整合 (.app 同梱 claude binary 欠落) は ここで検知する。
+  // installer 削除後は同梱 claude が唯一の保証経路で、欠落していると tmux セッション
   // 作成時まで障害が遅延する。さらに resolveClaudePath() が PATH 経由 system claude
-  // (ユーザーが別途入れた version) にフォールバックし、SDK と version が乖離した
-  // 状態で動く危険もある。配布物不整合 (asarUnpack ルール変更 / 取り込み漏れ /
+  // (ユーザーが別途入れた version) にフォールバックし、同梱版と version が乖離した
+  // 状態で動く危険もある。配布物不整合 (smartUnpack ルール変更 / 取り込み漏れ /
   // chmod 抜け) は配布側のバグなので、起動時点で確実に検知 + ユーザー通知する。
-  // dev / unpackaged モードでは SDK binary は存在しないので skip。
+  // dev / unpackaged モードでは同梱 binary は存在しないので skip。
   //
   // 配置: tray / menu / server を起こす前に置くことで、半初期化状態を作らない
   // (codex P1 指摘対応)。
   if (app.isPackaged) {
-    const sdkBinaryPath = path.join(
+    // platform パッケージ名の候補。install 済みの方だけが存在する。
+    // - linux: glibc / musl (Alpine) で名前が異なるため両方
+    // - darwin: Rosetta (Apple Silicon を x64 で実行) では process.arch=x64 でも
+    //   claude-code は darwin-arm64 を使うため arm64 優先で両 arch を確認
+    // (system.ts:claudeCodePlatformPkgNames と同一ロジック)
+    const pkgNames =
+      process.platform === "darwin"
+        ? ["claude-code-darwin-arm64", "claude-code-darwin-x64"]
+        : process.platform === "linux"
+          ? [
+              `claude-code-linux-${process.arch}`,
+              `claude-code-linux-${process.arch}-musl`,
+            ]
+          : [`claude-code-${process.platform}-${process.arch}`];
+    const nmDir = path.join(
       process.resourcesPath,
       "app.asar.unpacked",
-      "node_modules",
-      "@anthropic-ai",
-      `claude-agent-sdk-${process.platform}-${process.arch}`,
-      "claude"
+      "node_modules"
     );
-    try {
-      const stat = fs.statSync(sdkBinaryPath);
-      if (!stat.isFile()) {
-        throw new Error(
-          `bundled SDK claude binary is not a regular file: ${sdkBinaryPath}`
-        );
+    const isExecutable = (p: string): boolean => {
+      try {
+        if (!fs.statSync(p).isFile()) return false;
+        // X_OK: chmod 抜けや権限ビットの誤りも検知する。
+        fs.accessSync(p, fs.constants.X_OK);
+        return true;
+      } catch {
+        return false;
       }
-      // X_OK: chmod 抜けや権限ビットの誤りも検知する。
-      fs.accessSync(sdkBinaryPath, fs.constants.X_OK);
-      log.info(
-        `[Ark Desktop] bundled SDK claude binary verified: ${sdkBinaryPath}`
-      );
-    } catch (err) {
+    };
+    // flat レイアウトと pnpm isolated レイアウト (.pnpm/...) の両方を探索する。
+    // (system.ts:findBundledClaudeBinary と同じ判定。@ark/server の早期 import を
+    //  避けるためここでは inline で実装する)
+    const candidatePaths: string[] = [];
+    let verified: string | undefined;
+    for (const pkg of pkgNames) {
+      const flat = path.join(nmDir, "@anthropic-ai", pkg, "claude");
+      candidatePaths.push(flat);
+      if (isExecutable(flat)) {
+        verified = flat;
+        break;
+      }
+      try {
+        const pnpmDir = path.join(nmDir, ".pnpm");
+        for (const entry of fs.readdirSync(pnpmDir)) {
+          if (!entry.startsWith(`@anthropic-ai+${pkg}@`)) continue;
+          const nested = path.join(
+            pnpmDir,
+            entry,
+            "node_modules",
+            "@anthropic-ai",
+            pkg,
+            "claude"
+          );
+          candidatePaths.push(nested);
+          if (isExecutable(nested)) {
+            verified = nested;
+            break;
+          }
+        }
+      } catch {
+        // .pnpm ディレクトリ無し (flat レイアウト) → 無視
+      }
+      if (verified) break;
+    }
+    // 注: 主パッケージ @anthropic-ai/claude-code の public bin (bin/claude.exe) は
+    // 検証に使わない。postinstall 未実行時はエラー表示して exit 1 する stub であり、
+    // X_OK は通っても起動しないため (native 実体を持つ platform パッケージのみ信頼)。
+    if (verified) {
+      log.info(`[Ark Desktop] bundled claude binary verified: ${verified}`);
+    } else {
+      const detail = candidatePaths.join("\n");
       log.error(
-        `[Ark Desktop] bundled SDK claude binary missing or not executable at ${sdkBinaryPath}:`,
-        err
+        `[Ark Desktop] bundled claude binary missing or not executable. checked:\n${detail}`
       );
       try {
         const { dialog } = await import("electron");
         dialog.showErrorBox(
           "Ark: bundled Claude CLI が見つかりません",
-          `配布物の取り込み漏れが疑われます。Ark.app の再インストールをお試しください。\n\n参照パス: ${sdkBinaryPath}\n\n詳細はログを確認してください。`
+          `配布物の取り込み漏れが疑われます。Ark.app の再インストールをお試しください。\n\n参照パス:\n${detail}\n\n詳細はログを確認してください。`
         );
       } catch {
         // dialog 表示自体に失敗しても fail-fast 自体は継続する
       }
-      throw err;
+      throw new Error(
+        `bundled claude binary not found in any of: ${candidatePaths.join(", ")}`
+      );
     }
   }
 
@@ -291,11 +342,11 @@ async function bootstrap(): Promise<void> {
   });
 
   // F5 (Claude CLI 自動インストール) は廃止 (issue #183 close, #186 で代替):
-  // SDK 付属の standalone claude binary が
-  // `app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude`
+  // `@anthropic-ai/claude-code` 付属の standalone claude binary が
+  // `app.asar.unpacked/node_modules/@anthropic-ai/claude-code-darwin-arm64/claude`
   // に常に同梱されており、tmux send-keys 経路でも resolveClaudePath() 経由で
   // 絶対パスで起動されるため、ユーザーへの追加 install (Node bundle + npm install)
-  // は不要になった。配布物不整合の早期検知は bootstrap 冒頭の SDK binary verify で実施。
+  // は不要になった。配布物不整合の早期検知は bootstrap 冒頭の claude binary verify で実施。
 
   // F6: Keychain プロファイル bridge 初期化 (skeleton)
   // 現状 skeleton のため "unsupported" モードで動作。F0:B-3 検証結果次第で
