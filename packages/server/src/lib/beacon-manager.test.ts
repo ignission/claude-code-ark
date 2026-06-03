@@ -32,6 +32,7 @@ const dbMock = vi.hoisted(() => ({
   getSetting: vi.fn(() => undefined as unknown),
   setSetting: vi.fn(),
   deleteSetting: vi.fn(),
+  getProfile: vi.fn(() => null as unknown),
 }));
 vi.mock("./database.js", () => ({ db: dbMock }));
 
@@ -66,6 +67,8 @@ const cliMock = vi.hoisted(() => ({
   killCount: 0,
   /** attachIfRunning の戻り (running かつ ready 相当)。false で start パスへ誘導 */
   attachable: true,
+  /** 直近 start() が新規 new-session を作ったか (didFreshLaunch の戻り) */
+  wasFreshLaunch: true,
   /** JSONL transcript を特定済みか (post-restart 初回 attach のみ false) */
   hasTranscript: false,
   /** recoverPending の戻り値 (取りこぼし回収の注入用)。null なら回収なし */
@@ -100,6 +103,9 @@ vi.mock("./beacon-cli-session.js", () => ({
     hasTranscript() {
       return cliMock.hasTranscript;
     }
+    didFreshLaunch() {
+      return cliMock.wasFreshLaunch;
+    }
     getTranscriptOffset() {
       return { path: "ark-beacon.jsonl", lines: 0 };
     }
@@ -112,6 +118,8 @@ vi.mock("./beacon-cli-session.js", () => ({
     }
     async start(cfg: Record<string, unknown>, _timeout: number) {
       cliMock.startConfigs.push(cfg);
+      // 実体と同じく「start 入口で未起動 = 新規 new-session」とみなす
+      cliMock.wasFreshLaunch = !cliMock.running;
       if (cliMock.startImpl) {
         await cliMock.startImpl(cfg);
         return;
@@ -200,6 +208,7 @@ beforeEach(() => {
   cliMock.sendTurnCalls.length = 0;
   cliMock.killCount = 0;
   cliMock.attachable = true;
+  cliMock.wasFreshLaunch = true;
   cliMock.hasTranscript = false;
   cliMock.recoverResult = null;
   cliMock.startImpl = null;

@@ -105,6 +105,8 @@ export default function Dashboard() {
     beaconLoadHistory,
     beaconClear,
     beaconStopAndReset,
+    beaconProfile,
+    beaconSetProfile,
     sessionPreviews,
     sessionActivityTexts,
     gridSnapshots,
@@ -609,6 +611,8 @@ export default function Dashboard() {
           onBeaconSend={beaconSend}
           onBeaconClear={beaconClear}
           onBeaconStopAndReset={beaconStopAndReset}
+          beaconProfile={beaconProfile}
+          onBeaconSetProfile={beaconSetProfile}
           isSocketConnected={isConnected}
           onRequestUsage={requestUsage}
           usageRequesting={usageRequesting}
@@ -782,6 +786,8 @@ export default function Dashboard() {
               usageRequesting={usageRequesting}
               usageProgress={usageProgress}
               multiProfileSupported={capabilities.multiProfileSupported}
+              beaconProfile={beaconProfile}
+              onSetProfile={beaconSetProfile}
             />
           }
           initialSidebarWidth={getSetting<number>("ark-sidebar-width", 250)}

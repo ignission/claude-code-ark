@@ -167,19 +167,26 @@ export function createArkMcpServer(deps: BeaconDeps): McpServer {
         sessionId: z.string().describe("セッションID"),
         key: z
           .string()
-          .describe("送信するキー（y, n, C-c, Escape, Enter, S-Tab）"),
+          .describe(
+            "送信するキー（y, n, C-c, C-d, Escape, Enter, S-Tab, Up, Down）"
+          ),
       },
     },
     async args => {
-      const validKeys = new Set([
-        "Enter",
-        "C-c",
-        "C-d",
-        "y",
-        "n",
-        "S-Tab",
-        "Escape",
-      ]);
+      // SpecialKey union と必ず一致させる (Record で網羅性を型保証。
+      // union にキーを追加して漏らすと型エラーになる)。
+      const SPECIAL_KEYS: Record<SpecialKey, true> = {
+        Enter: true,
+        "C-c": true,
+        "C-d": true,
+        y: true,
+        n: true,
+        "S-Tab": true,
+        Escape: true,
+        Up: true,
+        Down: true,
+      };
+      const validKeys = new Set<string>(Object.keys(SPECIAL_KEYS));
       if (!validKeys.has(args.key)) {
         return textResult(
           `無効なキー: ${args.key}。使用可能: ${Array.from(validKeys).join(", ")}`

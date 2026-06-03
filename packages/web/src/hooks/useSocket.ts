@@ -7,6 +7,7 @@
  */
 
 import type {
+  BeaconProfileState,
   BeaconStreamChunk,
   BridgeSessionStatus,
   BrowserSession,
@@ -157,6 +158,10 @@ interface UseSocketReturn {
   beaconClose: () => void;
   beaconClear: () => void;
   beaconStopAndReset: () => void;
+  /** Beacon 専用プロファイルの状態 (Linux のプロファイル切替。null = 未取得) */
+  beaconProfile: BeaconProfileState | null;
+  /** Beacon 専用プロファイルを設定する (profileId=null で既定)。反映は再起動時 (C-1) */
+  beaconSetProfile: (profileId: string | null) => void;
 
   // Browser sessions
   browserSessions: Map<string, BrowserSession>;
@@ -320,6 +325,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [beaconMessages, setBeaconMessages] = useState<ChatMessage[]>([]);
   const [beaconStreaming, setBeaconStreaming] = useState(false);
   const [beaconStreamText, setBeaconStreamText] = useState("");
+  const [beaconProfile, setBeaconProfile] = useState<BeaconProfileState | null>(
+    null
+  );
 
   // プロファイル切替 (Linux限定)
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -716,6 +724,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       setBeaconStreamText("");
     });
 
+    socket.on("beacon:profile", (data: BeaconProfileState) => {
+      setBeaconProfile(data);
+    });
+
     socket.on("session:previews", previews => {
       // セッションのstatusをプレビューから更新
       setSessions(prev => {
@@ -1024,6 +1036,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       socket.off("beacon:stream");
       socket.off("beacon:history");
       socket.off("beacon:error");
+      socket.off("beacon:profile");
       socket.off("session:previews");
       socket.off("session:grid:snapshot");
       socket.off("browser:started");
@@ -1281,6 +1294,14 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     const socket = socketRef.current;
     if (!socket?.connected) return;
     socket.emit("beacon:stop-and-reset");
+  }, []);
+
+  // Beacon 専用プロファイルの設定 (profileId=null で既定)。
+  // 稼働中セッションは即時切替されず staleProfile になる (C-1。反映は再起動時)。
+  const beaconSetProfile = useCallback((profileId: string | null) => {
+    const socket = socketRef.current;
+    if (!socket?.connected) return;
+    socket.emit("beacon:set-profile", { profileId });
   }, []);
 
   // Copy buffer action
@@ -1553,6 +1574,8 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     beaconClose,
     beaconClear,
     beaconStopAndReset,
+    beaconProfile,
+    beaconSetProfile,
     // Browser sessions
     browserSessions,
     browserError,

@@ -105,8 +105,29 @@ describe("BeaconCliSession.start (対話版起動コマンド)", () => {
     expect(cmd).toContain("--disable-slash-commands");
     // 巨大 system prompt は file 渡し (send-keys のコマンド長/エスケープ回避)
     expect(cmd).toContain("--append-system-prompt-file");
-    // CLAUDE_CONFIG_DIR を unset してデフォルトプロファイルで起動
+    // configDir 未指定: CLAUDE_CONFIG_DIR を unset してデフォルトプロファイルで起動
     expect(cmd).toContain("unset CLAUDE_CONFIG_DIR");
+  });
+
+  it("configDir 指定時は export CLAUDE_CONFIG_DIR=<dir> で起動する (#3 プロファイル)", async () => {
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await session.start(
+      { ...cfg, configDir: "/home/tester/.claude-profile-work" },
+      5000
+    );
+    const cmd = launchCommand();
+    expect(cmd).toContain(
+      "export CLAUDE_CONFIG_DIR='/home/tester/.claude-profile-work'"
+    );
+    expect(cmd).not.toContain("unset CLAUDE_CONFIG_DIR");
+  });
+
+  it("configDir が null なら従来どおり unset する", async () => {
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    await session.start({ ...cfg, configDir: null }, 5000);
+    const cmd = launchCommand();
+    expect(cmd).toContain("unset CLAUDE_CONFIG_DIR");
+    expect(cmd).not.toContain("export CLAUDE_CONFIG_DIR");
   });
 
   it("addDirs を --add-dir で列挙し、--allowedTools を最後に置く", async () => {
@@ -460,5 +481,62 @@ describe("isReady (起動完了アンカー)", () => {
 
   it("プロンプトも hint も無い起動途中の pane は ready ではない", () => {
     expect(isReady("Loading…\nConnecting to MCP servers…")).toBe(false);
+  });
+});
+
+describe("tmuxExec の非0終了ハンドリング (#1)", () => {
+  it("send-keys が非0終了したら stderr 付きで例外化する", async () => {
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    spawnSyncMock.mockImplementation(
+      (_b: string, args: string[] | undefined) => {
+        if (args?.[0] === "has-session") return { status: 0 }; // 送信時点では生存
+        if (args?.[0] === "send-keys")
+          return { status: 1, stderr: Buffer.from("no server running") };
+        if (args?.[0] === "capture-pane") return { stdout: "", status: 0 };
+        return { status: 0, stdout: "" };
+      }
+    );
+    await expect(
+      session.sendTurn("hi", { onText: () => {} }, 5000)
+    ).rejects.toThrow(/send-keys が異常終了.*no server running/);
+  });
+
+  it("kill-session の非0終了は許容する (冪等な破棄)", () => {
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    spawnSyncMock.mockImplementation(
+      (_b: string, args: string[] | undefined) => {
+        if (args?.[0] === "kill-session")
+          return { status: 1, stderr: Buffer.from("can't find session") };
+        return { status: 0, stdout: "" };
+      }
+    );
+    expect(() => session.kill()).not.toThrow();
+  });
+});
+
+describe("sendTurn のターン中セッション生存確認 (#2)", () => {
+  it("ターン中にセッションが消えたら turnTimeout を待たず completed=false で抜ける", async () => {
+    const session = new BeaconCliSession("/data/beacon-cwd");
+    let hasSessionCalls = 0;
+    spawnSyncMock.mockImplementation(
+      (_b: string, args: string[] | undefined) => {
+        if (args?.[0] === "has-session") {
+          hasSessionCalls += 1;
+          // 1 回目 (送信直後) は生存、以降は消失 (tmux/claude クラッシュ相当)
+          return { status: hasSessionCalls <= 1 ? 0 : 1 };
+        }
+        // 常に ready/busy いずれでもない空 pane → 生存確認が無いと deadline まで回る
+        if (args?.[0] === "capture-pane") return { stdout: "", status: 0 };
+        return { status: 0, stdout: "" };
+      }
+    );
+    // turnTimeoutMs を 10 分にしても、生存確認で即抜けるので数秒で解決する
+    const r = await session.sendTurn(
+      "hi",
+      { onText: () => {} },
+      10 * 60 * 1000
+    );
+    expect(r.completed).toBe(false);
+    expect(hasSessionCalls).toBeGreaterThanOrEqual(2);
   });
 });

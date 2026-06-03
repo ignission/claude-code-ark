@@ -59,6 +59,21 @@ const BEACON_LAUNCH_ARK_KEY = "beacon_launch_ark_available";
  */
 const BEACON_JSONL_OFFSET_KEY = "beacon_jsonl_offset";
 
+/**
+ * Beacon 専用プロファイルの profileId を保存する settings キー (Linux のプロファイル切替)。
+ * 未設定 = 既定プロファイル (CLAUDE_CONFIG_DIR unset)。Beacon は repo 非依存の全体司令塔
+ * のため worktree link ではなくグローバル設定で 1 つのプロファイルを選ぶ。
+ */
+const BEACON_PROFILE_KEY = "beacon_profile_id";
+
+/**
+ * 直近 launch 時に実際に使った CLAUDE_CONFIG_DIR (null = 既定) を保存する settings キー。
+ * 設定 (BEACON_PROFILE_KEY) を変えても稼働中セッションは起動時 env を保持するため (C-1)、
+ * 「稼働中の configDir」と「現在の設定が指す configDir」のズレ (= staleProfile) を
+ * 検出するのに使う。サーバー再起動を跨いでも検出できるよう永続化する。
+ */
+const BEACON_LAUNCHED_PROFILE_KEY = "beacon_launched_profile_config_dir";
+
 /** Beaconのシステムプロンプト */
 const BEACON_SYSTEM_PROMPT = `あなたはArkのBeaconです。
 複数のリポジトリを横断して管理するアシスタントです。
@@ -546,6 +561,70 @@ export class BeaconManager extends EventEmitter {
     }
   }
 
+  /** Beacon 専用プロファイルの profileId (未設定なら null = 既定プロファイル)。
+   *  設定値が指す profile が存在しない (削除済み 等) 場合も null に倒す。 */
+  private getBeaconProfileId(): string | null {
+    const v = db.getSetting(BEACON_PROFILE_KEY);
+    if (typeof v !== "string" || v.length === 0) return null;
+    return db.getProfile(v) ? v : null;
+  }
+
+  /** Beacon 起動に使う CLAUDE_CONFIG_DIR (null = 既定プロファイルで unset)。 */
+  private getBeaconConfigDir(): string | null {
+    const id = this.getBeaconProfileId();
+    if (!id) return null;
+    return db.getProfile(id)?.configDir ?? null;
+  }
+
+  /** 直近 launch 時に実際に使った CLAUDE_CONFIG_DIR (null = 既定)。 */
+  private getLaunchedConfigDir(): string | null {
+    const v = db.getSetting(BEACON_LAUNCHED_PROFILE_KEY);
+    return typeof v === "string" && v.length > 0 ? v : null;
+  }
+
+  /**
+   * 稼働中の Beacon セッションのプロファイルが現在の設定とズレているか (staleProfile)。
+   * 対話版 claude は起動時 env を保持し続ける (C-1) ため、設定変更は稼働中セッションに
+   * 即時反映されない。ズレている場合は UI にバッジ + 再起動ボタンを出す。
+   * セッション未起動なら次回起動で現設定が反映されるので stale ではない。
+   */
+  private isProfileStale(): boolean {
+    if (!this.cliSession?.isRunning()) return false;
+    return this.getLaunchedConfigDir() !== this.getBeaconConfigDir();
+  }
+
+  /** UI 向けの Beacon プロファイル状態。 */
+  getProfileState(): {
+    profileId: string | null;
+    stale: boolean;
+    profiles: Array<{ id: string; name: string }>;
+  } {
+    return {
+      profileId: this.getBeaconProfileId(),
+      stale: this.isProfileStale(),
+      profiles: this.deps?.listProfiles() ?? [],
+    };
+  }
+
+  /**
+   * Beacon 専用プロファイルを設定する (null で既定に戻す)。
+   * C-1 準拠で**稼働中セッションは即時切替しない** (会話文脈破壊を伴うため)。
+   * 設定だけ更新し、ズレは staleProfile として UI に通知する。次回起動 (新規 / 再起動)
+   * で反映される。profileId が存在しない場合は false を返す。
+   */
+  setProfile(profileId: string | null): boolean {
+    if (profileId !== null && !db.getProfile(profileId)) return false;
+    if (profileId === null) db.deleteSetting(BEACON_PROFILE_KEY);
+    else db.setSetting(BEACON_PROFILE_KEY, profileId);
+    this.broadcastProfile();
+    return true;
+  }
+
+  /** Beacon プロファイル状態を全クライアントへ通知する。 */
+  private broadcastProfile(): void {
+    this.emit("beacon:profile", this.getProfileState());
+  }
+
   /**
    * ark-beacon MCP の HTTP server を起動する (冪等)。永続化済みの port + token に
    * bind し直すため、サーバー再起動後に既存の常駐 claude へ再接続する場合でも、
@@ -869,6 +948,8 @@ export class BeaconManager extends EventEmitter {
     // 回復した外部 MCP を反映するには Beacon をリセット (stop-and-reset / clear) する
     // 必要がある (既知の制約 C-B1。ark MCP の degraded のみ上記で自己回復する)。
     const arkAvailableNow = ark !== null;
+    // Beacon 専用プロファイルの CLAUDE_CONFIG_DIR (null = 既定)。この launch で固定される (C-1)。
+    const configDir = this.getBeaconConfigDir();
     const { mcpServers, allowedTools, systemPrompt, addDirs } =
       await this.buildLaunchConfig(ark);
     const { mcpConfigPath, systemPromptFile } = this.writeLaunchFiles(
@@ -897,7 +978,7 @@ export class BeaconManager extends EventEmitter {
       this.pendingHistoryReset = true;
     }
     await cli.start(
-      { mcpConfigPath, systemPromptFile, allowedTools, addDirs },
+      { mcpConfigPath, systemPromptFile, allowedTools, addDirs, configDir },
       READY_TIMEOUT_MS,
       isAborted
     );
@@ -913,6 +994,13 @@ export class BeaconManager extends EventEmitter {
     this.mcpStale = false;
     this.launchArkAvailable = arkAvailableNow;
     db.setSetting(BEACON_LAUNCH_ARK_KEY, arkAvailableNow);
+    // 新規 new-session を作った場合のみ launchedConfigDir を確定する。resume/attach 時は
+    // 起動時 env を保持する (configDir は適用されない) ため上書きしない (誤って stale 解消
+    // 扱いになるのを防ぐ)。確定後、staleProfile が解消されたことを UI へ通知する。
+    if (cli.didFreshLaunch()) {
+      db.setSetting(BEACON_LAUNCHED_PROFILE_KEY, configDir);
+      this.broadcastProfile();
+    }
     // 構成変更/復旧 (kill) による UI 履歴リセットは **start 成功後のここ** で行う。
     // claude 文脈は消えたので履歴を空にして整合させる (C-B4)。start 失敗時はここに
     // 到達せずフラグが残り、次の start 成功時にリセットされる (会話の即時 data loss を防ぐ)。

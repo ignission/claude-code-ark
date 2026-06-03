@@ -92,6 +92,12 @@ export interface BeaconCliLaunchConfig {
   systemPromptFile: string;
   allowedTools: string[];
   addDirs: string[];
+  /**
+   * Beacon 専用プロファイルの CLAUDE_CONFIG_DIR (Linux のプロファイル切替機能)。
+   * 指定時はこの値を export して起動し、その認証情報で動作する。
+   * 未指定 (null/undefined) なら CLAUDE_CONFIG_DIR を unset して既定プロファイルで起動する。
+   */
+  configDir?: string | null;
 }
 
 /** 1 ターン中のライブ通知 */
@@ -176,11 +182,22 @@ export class BeaconCliSession {
     const tmux = resolveTmuxPath() ?? "tmux";
     const r = spawnSync(tmux, args, { stdio: "pipe" });
     // spawn 自体の失敗 (tmux バイナリ不在 / 実行不可) は全コマンドで致命的なので投げる
-    // (TmuxManager と同じ扱い)。非 0 status は kill-session 等で正常に出る (= セッション
-    // 不在) ため投げない。送信成否は sendTurn 側で isRunning 検証する。
+    // (TmuxManager と同じ扱い)。
     if (r.error) {
       throw new Error(
         `tmux ${args[0]} の実行に失敗しました: ${r.error.message}`
+      );
+    }
+    // kill-session は対象不在時に非 0 を返すが「冪等な破棄」なので許容する。
+    // それ以外 (new-session / send-keys / load-buffer / paste-buffer) の非 0 は
+    // 起動・送信の失敗であり、握りつぶすと「起動待ちタイムアウト」や「kill 済み扱いの
+    // ローカル状態」へ化けて根本原因が見えなくなる。stderr を含めて即例外化する。
+    if (r.status !== 0 && args[0] !== "kill-session") {
+      const stderr = (r.stderr?.toString() ?? "").trim();
+      throw new Error(
+        `tmux ${args[0]} が異常終了しました (status=${r.status})${
+          stderr ? `: ${stderr}` : ""
+        }`
       );
     }
   }
@@ -311,8 +328,12 @@ export class BeaconCliSession {
       // --allowedTools は最後 (variadic) に置く。
       flags.push("--allowedTools", ...cfg.allowedTools.map(shellQuote));
 
-      // CLAUDE_CONFIG_DIR を unset してデフォルトプロファイルで起動
-      const launch = `unset CLAUDE_CONFIG_DIR; ${shellQuote(claudeBin)} ${flags.join(" ")}`;
+      // プロファイル指定があればその CLAUDE_CONFIG_DIR を export、無ければ unset して
+      // 既定プロファイルで起動する (Linux のプロファイル切替機能。C-1: 起動時に固定)。
+      const configDirPrefix = cfg.configDir
+        ? `export CLAUDE_CONFIG_DIR=${shellQuote(cfg.configDir)}; `
+        : "unset CLAUDE_CONFIG_DIR; ";
+      const launch = `${configDirPrefix}${shellQuote(claudeBin)} ${flags.join(" ")}`;
       this.tmuxExec(["send-keys", "-t", BEACON_TMUX_SESSION, launch, "Enter"]);
     }
 
@@ -387,6 +408,14 @@ export class BeaconCliSession {
   /** JSONL transcript を既に特定済みか (false = この process でまだ未 attach) */
   hasTranscript(): boolean {
     return this.jsonlPath !== null;
+  }
+
+  /**
+   * 直近の start() が **新規 new-session を作成した** (= 起動時 env / configDir を
+   * 適用した) か。resume / attach 時は false。launchedConfigDir の永続判定に使う。
+   */
+  didFreshLaunch(): boolean {
+    return this.wasFreshLaunch;
   }
 
   /** 現在の JSONL パスと処理済み行数。永続化して再起動跨ぎの取りこぼし回収に使う。 */
@@ -679,6 +708,13 @@ export class BeaconCliSession {
       // tmux セッションが kill 済みなら最終取りこぼし回収だけして抜ける。
       if (isAborted?.()) break;
       merge(this.drainNewLines(handlers));
+      // ターン中に tmux/claude が落ちると capture() は空のままで busy/ready いずれも
+      // 成立せず、turnTimeoutMs (最大 10 分) まで loading が張り付く。毎周回で生存を
+      // 確認し、消失していれば最終取りこぼしを回収済みの状態で即未完了で抜ける。
+      if (!this.isRunning()) {
+        completed = false;
+        break;
+      }
       const pane = this.capture();
       if (isBusy(pane)) {
         sawBusy = true;
