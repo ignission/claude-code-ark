@@ -28,8 +28,9 @@ export interface McpProviderEntry {
   url: string;
   /**
    * SDK transport の種別。
-   * - "sse": MCP 1.0 (SSE) — URL が `/sse` 終わりの provider はこちら (例: Atlassian)
-   * - "http": MCP streamable-HTTP (2025-) — 新しい仕様の provider はこちら
+   * - "sse": MCP 1.0 (SSE) — URL が `/sse` 終わりのレガシー provider はこちら。
+   *   Atlassian は 2026/6/30 で /v1/sse 廃止のため "http" + /v1/mcp へ移行済み。
+   * - "http": MCP streamable-HTTP (2025-) — 現行仕様。新規 provider はこちら
    */
   transport: "sse" | "http";
   /**
@@ -130,8 +131,11 @@ export const MCP_PROVIDERS: Record<string, McpProviderEntry> = {
     id: "atlassian",
     name: "Atlassian",
     description: "Jira / Confluence (Cloud)",
-    url: "https://mcp.atlassian.com/v1/sse",
-    transport: "sse",
+    // 2026/6/30 以降 HTTP+SSE エンドポイント (/v1/sse) は非対応となるため、
+    // streamable-HTTP の /v1/mcp へ移行する。OAuth 認可サーバ / audience は同一の
+    // ため既存トークンは有効な見込みだが、失敗時はユーザーに再接続を促す。
+    url: "https://mcp.atlassian.com/v1/mcp",
+    transport: "http",
     prompt: "consent",
     resolveAccountLabel: atlassianResolveAccountLabel,
   },
