@@ -7,6 +7,7 @@
 
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
 import path from "node:path";
 import type { SpecialKey } from "@ark/shared";
 import { nanoid } from "nanoid";
@@ -583,6 +584,41 @@ export class TmuxManager extends EventEmitter {
       const eq = line.indexOf("=");
       if (eq < 0) return null;
       return line.slice(eq + 1);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * pane のシェルプロセスの環境変数を /proc/<pane_pid>/environ から読む。
+   * Linux 限定 (/proc が無い環境では null)。
+   *
+   * tmux session env (`show-environment`) に変数が無くても、tmux サーバー
+   * プロセスの env を継承してシェル/claude に変数が渡っているケースがある
+   * (旧コードで起動されたセッションの CLAUDE_CONFIG_DIR 継承等)。
+   * 「claude が実際にどの env で動いているか」の事実はプロセス environ が
+   * 唯一の情報源なので、復元時のプロファイル補完フォールバックに使う。
+   */
+  getPaneEnv(sessionId: string, name: string): string | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    try {
+      const result = spawnSync(
+        TMUX_BINARY_PATH,
+        ["list-panes", "-t", session.tmuxSessionName, "-F", "#{pane_pid}"],
+        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+      );
+      if (result.status !== 0) return null;
+      const pid = Number.parseInt(
+        (result.stdout ?? "").trim().split("\n")[0] ?? "",
+        10
+      );
+      if (!Number.isFinite(pid) || pid <= 0) return null;
+      const environ = fs.readFileSync(`/proc/${pid}/environ`, "utf-8");
+      for (const entry of environ.split("\0")) {
+        if (entry.startsWith(`${name}=`)) return entry.slice(name.length + 1);
+      }
+      return null;
     } catch {
       return null;
     }

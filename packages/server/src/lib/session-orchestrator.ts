@@ -109,25 +109,15 @@ export class SessionOrchestrator extends EventEmitter {
         const restoredProfile =
           dbSession.profileId && dbSession.profileConfigDir
             ? { id: dbSession.profileId, configDir: dbSession.profileConfigDir }
-            : null;
+            : this.detectEnvProfile(tmuxSession);
         this.sessionProfiles.set(dbSession.id, restoredProfile);
       } else {
         // DB に対応レコードなし (例: data dir を別パスに移行した直後)。
-        // tmux env から CLAUDE_CONFIG_DIR を読み取って sessionProfiles に
-        // 反映し、JsonlTailManager が正しいプロファイル配下の JSONL を
-        // 見つけられるようにする (profileId は不明なので configDir のみ)。
-        const envConfigDir = tmuxManager.getEnv(
-          tmuxSession.id,
-          "CLAUDE_CONFIG_DIR"
-        );
-        if (envConfigDir) {
-          this.sessionProfiles.set(tmuxSession.id, {
-            id: "__env__", // 識別用ダミー (UI 側のプロファイル管理とは紐付かない)
-            configDir: envConfigDir,
-          });
-          console.log(
-            `[Orchestrator] Restored profile from tmux env: ${tmuxSession.tmuxSessionName} -> ${envConfigDir}`
-          );
+        // env から CLAUDE_CONFIG_DIR を補完し、JsonlTailManager が正しい
+        // プロファイル配下の JSONL を見つけられるようにする。
+        const envProfile = this.detectEnvProfile(tmuxSession);
+        if (envProfile) {
+          this.sessionProfiles.set(tmuxSession.id, envProfile);
         }
       }
 
@@ -215,6 +205,33 @@ export class SessionOrchestrator extends EventEmitter {
       profileConfigDir: current?.configDir ?? null,
       staleProfile,
     };
+  }
+
+  /**
+   * 復元したセッションの「事実上の CLAUDE_CONFIG_DIR」を env から検出する。
+   *
+   * DB にプロファイル記録が無い (または null の) セッションでも、
+   * - 旧コードで起動され tmux サーバー env から CLAUDE_CONFIG_DIR を継承した
+   * - data dir 移行で DB レコードが消えた
+   * 等で claude が別プロファイル配下に transcript を書いていることがある。
+   * その場合 JsonlTailManager がデフォルト ~/.claude/projects を見てしまい、
+   * チャットビューに会話が一切表示されない。
+   * tmux session env (`show-environment`) → pane プロセス environ (/proc) の
+   * 順で実際の値を探し、見つかれば configDir のみのダミープロファイルとして
+   * 反映する (profileId は管理 UI と紐付かない `__env__`)。
+   */
+  private detectEnvProfile(tmuxSession: {
+    id: string;
+    tmuxSessionName: string;
+  }): { id: string; configDir: string } | null {
+    const envConfigDir =
+      tmuxManager.getEnv(tmuxSession.id, "CLAUDE_CONFIG_DIR") ??
+      tmuxManager.getPaneEnv(tmuxSession.id, "CLAUDE_CONFIG_DIR");
+    if (!envConfigDir) return null;
+    console.log(
+      `[Orchestrator] Restored profile from env: ${tmuxSession.tmuxSessionName} -> ${envConfigDir}`
+    );
+    return { id: "__env__", configDir: envConfigDir };
   }
 
   /**
