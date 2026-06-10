@@ -11,6 +11,7 @@
  */
 
 import type {
+  BridgeSessionStatus,
   ClientToServerEvents,
   ManagedSession,
   MessageShortcut,
@@ -35,6 +36,8 @@ interface SplitViewPaneProps {
   session: ManagedSession;
   /** このペインが現在表示中か (JSONL 購読をアクティブセッションに限定する) */
   isActive: boolean;
+  /** session:previews 由来のセッション状態 (busy/AWAITING 表示用) */
+  bridgeStatus?: BridgeSessionStatus;
   worktree: Worktree | undefined;
   repoName?: string;
   tabs: ViewerTab[];
@@ -166,6 +169,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           socket={props.socket}
           session={props.session}
           isActive={props.isActive}
+          bridgeStatus={props.bridgeStatus}
           onSendMessage={props.onSendMessage}
           onSendKey={props.onSendKey}
           onUploadFile={props.onUploadFile}

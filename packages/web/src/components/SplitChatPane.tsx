@@ -11,6 +11,7 @@
  */
 
 import type {
+  BridgeSessionStatus,
   ClientToServerEvents,
   ManagedSession,
   ServerToClientEvents,
@@ -53,6 +54,12 @@ interface SplitChatPaneProps {
    * セッション数ぶんの tail が常時走ってしまう)
    */
   isActive: boolean;
+  /**
+   * session:previews 由来のセッション状態。capture-pane の existence
+   * チェックのみで導出される (内容パースなし)。busy 表示と、permission
+   * prompt 等の AWAITING フォールバックバナーに使う
+   */
+  bridgeStatus?: BridgeSessionStatus;
   onSendMessage: (message: string) => void;
   /** AskUserQuestion のキャンセル (Esc) 等で使用 */
   onSendKey: (key: SpecialKey) => void;
@@ -312,6 +319,7 @@ export function SplitChatPane({
   socket,
   session,
   isActive,
+  bridgeStatus,
   onSendMessage,
   onSendKey,
   onUploadFile,
@@ -617,6 +625,12 @@ export function SplitChatPane({
           </div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
+          {(bridgeStatus === "THINK" || bridgeStatus === "TOOL") && (
+            <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              {bridgeStatus === "TOOL" ? "ツール実行中" : "考え中"}
+            </span>
+          )}
           <span
             className={`w-1.5 h-1.5 rounded-full ${jsonlSubscribed ? "bg-emerald-500" : "bg-slate-400"}`}
             title={jsonlSubscribed ? "JSONL 購読中" : "未購読"}
@@ -691,6 +705,44 @@ export function SplitChatPane({
             onToggleTerminal && !showTerminal ? onToggleTerminal : undefined
           }
         />
+      )}
+
+      {/* permission prompt 等のユーザー判断待ちフォールバック。
+          AskUserQuestion は専用カードが出る (hook 経由) ため、カード表示中
+          は出さない。hook が取りこぼされた場合のセーフティネットも兼ねる */}
+      {bridgeStatus === "AWAITING" && !activeAuq && (
+        <div className="border-t border-border bg-amber-500/10 px-3 py-2 shrink-0 flex items-center justify-between gap-2">
+          <span className="text-[13px] text-amber-700 dark:text-amber-300 min-w-0">
+            ⏳ Claude が入力を求めています
+          </span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => onSendKey("1")}
+              className="text-[12px] font-mono bg-background border border-border rounded px-2 py-0.5 hover:bg-accent transition-colors"
+              title="1 を送信"
+            >
+              1
+            </button>
+            <button
+              type="button"
+              onClick={() => onSendKey("2")}
+              className="text-[12px] font-mono bg-background border border-border rounded px-2 py-0.5 hover:bg-accent transition-colors"
+              title="2 を送信"
+            >
+              2
+            </button>
+            {onToggleTerminal && !showTerminal && (
+              <button
+                type="button"
+                onClick={onToggleTerminal}
+                className="text-[12px] underline text-amber-700 dark:text-amber-300 px-1"
+              >
+                ターミナルで確認
+              </button>
+            )}
+          </div>
+        </div>
       )}
 
       <form

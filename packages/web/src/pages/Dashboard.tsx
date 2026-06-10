@@ -772,6 +772,7 @@ export default function Dashboard() {
                         <SplitViewPane
                           socket={socket}
                           isActive={isActive}
+                          bridgeStatus={sessionStatuses.get(session.id)}
                           {...paneProps}
                         />
                       ) : (
