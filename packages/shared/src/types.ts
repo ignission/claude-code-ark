@@ -319,6 +319,7 @@ export type SpecialKey =
   | "Escape"
   | "Up"
   | "Down"
+  | "Right"
   | "Space"
   | "1"
   | "2"
@@ -384,6 +385,20 @@ export interface ServerToClientEvents {
 
   /** 購読中の JSONL ファイルに新規行が追記されたときの push */
   "session:jsonl-line": (data: { sessionId: string; line: string }) => void;
+
+  /**
+   * AskUserQuestion が表示された通知 (PreToolUse hook 由来)。
+   * 対話版 claude は AUQ の tool_use を「回答確定時」まで transcript に
+   * 書かないため、回答待ちのリアルタイム検出は hook で行う。
+   * 回答確定 (カードを閉じる) は JSONL の tool_result 出現で判定する。
+   */
+  "session:auq": (data: {
+    sessionId: string;
+    /** サーバーが hook を受信した epoch ms (JSONL 解決イベントとの前後比較用) */
+    at: number;
+    /** tool_input.questions の生データ (クライアント側で構造検証する) */
+    questions: unknown;
+  }) => void;
   "session:restored": (session: ManagedSession) => void;
   "session:restore_failed": (data: {
     worktreePath: string;

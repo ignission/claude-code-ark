@@ -31,6 +31,11 @@ import {
 import httpProxy from "http-proxy";
 import { nanoid } from "nanoid";
 import { Server, type Socket } from "socket.io";
+import {
+  AUQ_EVENT_PATH,
+  AUQ_TOKEN_HEADER,
+  auqHookBridge,
+} from "./lib/auq-hook-bridge.js";
 import { authManager } from "./lib/auth.js";
 import { beaconManager } from "./lib/beacon-manager.js";
 import {
@@ -480,6 +485,48 @@ export async function startServer(
 
   // JSON body parser（Settings API用）
   app.use(express.json({ limit: "10kb" }));
+
+  // ===== AskUserQuestion hook 受け口 =====
+  // セッション内 claude の PreToolUse hook (auq-hook-bridge が --settings で
+  // 注入) から、回答待ち質問の構造化データが POST される。
+  // 対話版 claude は AUQ の tool_use を回答確定までJSONLに書かないため、
+  // 「質問が表示された」のリアルタイム検出はこの hook が唯一の情報源。
+  app.post(AUQ_EVENT_PATH, (req, res) => {
+    if (!auqHookBridge.verifyToken(req.headers[AUQ_TOKEN_HEADER])) {
+      res.status(403).json({ error: "forbidden" });
+      return;
+    }
+    const body = req.body as {
+      cwd?: unknown;
+      tool_name?: unknown;
+      tool_input?: { questions?: unknown };
+    };
+    if (
+      body?.tool_name !== "AskUserQuestion" ||
+      typeof body.cwd !== "string" ||
+      !body.tool_input ||
+      typeof body.tool_input !== "object"
+    ) {
+      res.status(400).json({ error: "bad request" });
+      return;
+    }
+    const session = sessionOrchestrator.getSessionByWorktree(body.cwd);
+    if (!session) {
+      // Ark 管理外の claude (ユーザーが手動起動した等) からの hook は無視
+      res.status(204).end();
+      return;
+    }
+    const entry = auqHookBridge.setPending(
+      session.id,
+      body.tool_input.questions
+    );
+    io.emit("session:auq", {
+      sessionId: session.id,
+      at: entry.at,
+      questions: entry.questions,
+    });
+    res.status(204).end();
+  });
 
   // セキュリティヘッダー
   app.use((_req, res, next) => {
@@ -1796,6 +1843,18 @@ export async function startServer(
         },
       });
       jsonlUnsubscribers.set(sessionId, unsubscribe);
+
+      // 回答待ちの AskUserQuestion があれば再送する (リロード/再接続対応)。
+      // 既に回答済みかどうかはクライアントが JSONL の解決イベント timestamp
+      // と at を比較して判定する
+      const pendingAuq = auqHookBridge.getPending(sessionId);
+      if (pendingAuq) {
+        socket.emit("session:auq", {
+          sessionId,
+          at: pendingAuq.at,
+          questions: pendingAuq.questions,
+        });
+      }
     });
 
     socket.on("session:jsonl-unsubscribe", (sessionId: string) => {
@@ -3306,6 +3365,18 @@ export async function startServer(
   });
 
   console.log(`Ark server running on http://localhost:${port}/`);
+
+  // AskUserQuestion hook 入りの claude 用 settings を書き出し、以降の
+  // セッション起動コマンドに --settings として注入する (listen 後 = port 確定後)
+  try {
+    const hookSettingsPath = auqHookBridge.writeSettingsFile(port);
+    tmuxManager.setClaudeSettingsPath(hookSettingsPath);
+    console.log(`[AuqHook] settings: ${hookSettingsPath}`);
+  } catch (err) {
+    // hook が無くてもセッション自体は動く (AUQ カードが出ないだけ) ので
+    // 起動は継続する
+    console.error("[AuqHook] settings 書き出しに失敗:", getErrorMessage(err));
+  }
 
   // Start Quick Tunnel if enabled
   // 注: enableQuick は --quick コマンドラインオプションによるトンネル起動。

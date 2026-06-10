@@ -185,6 +185,7 @@ export function createArkMcpServer(deps: BeaconDeps): McpServer {
         Escape: true,
         Up: true,
         Down: true,
+        Right: true,
         Space: true,
         "1": true,
         "2": true,

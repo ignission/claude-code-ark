@@ -122,14 +122,15 @@ describe("TmuxManager.createSession - options互換", () => {
       "NODE_ENV=",
     ]);
 
-    // send-keysにclaudeが渡される
+    // send-keysにclaudeが渡される。プロファイル未指定なので、tmux サーバー
+    // env からの CLAUDE_CONFIG_DIR 継承を断つ unset が前置される
     const sendKeys = findCommandSendKeysArgs();
     expect(sendKeys).toBeDefined();
     expect(sendKeys).toEqual([
       "send-keys",
       "-t",
       "ark-testid01",
-      "claude",
+      "unset CLAUDE_CONFIG_DIR; claude",
       "Enter",
     ]);
 
@@ -241,7 +242,19 @@ describe("TmuxManager.createSession - options互換", () => {
 
     const sendKeys = findCommandSendKeysArgs();
     if (!sendKeys) throw new Error("send-keys args not found");
-    expect(sendKeys[3]).toBe("claude --dangerously-skip-permissions");
+    expect(sendKeys[3]).toBe(
+      "unset CLAUDE_CONFIG_DIR; claude --dangerously-skip-permissions"
+    );
+  });
+
+  it("options.env に CLAUDE_CONFIG_DIR がある場合 (プロファイル) は unset を前置しない", async () => {
+    await manager.createSession("/path/to/worktree", {
+      env: { CLAUDE_CONFIG_DIR: "/home/user/.claude-work" },
+    });
+
+    const sendKeys = findCommandSendKeysArgs();
+    if (!sendKeys) throw new Error("send-keys args not found");
+    expect(sendKeys[3]).toBe("claude");
   });
 
   it("resolveClaudePath が絶対パスを返したら send-keys に POSIX single-quote 付きで渡る (issue #186)", async () => {
@@ -256,7 +269,7 @@ describe("TmuxManager.createSession - options互換", () => {
     if (!sendKeys) throw new Error("send-keys args not found");
     // POSIX single-quote で wrap した絶対パスがそのまま送られる
     // ($, `, \, " 等の shell メタ文字解釈を完全に抑止するため double-quote ではなく single-quote)
-    expect(sendKeys[3]).toBe(`'${bundledClaudePath}'`);
+    expect(sendKeys[3]).toBe(`unset CLAUDE_CONFIG_DIR; '${bundledClaudePath}'`);
   });
 
   it("空白を含むパス + skipPermissions=true で single-quote + フラグが付く (issue #186)", async () => {
@@ -271,7 +284,7 @@ describe("TmuxManager.createSession - options互換", () => {
     const sendKeys = findCommandSendKeysArgs();
     if (!sendKeys) throw new Error("send-keys args not found");
     expect(sendKeys[3]).toBe(
-      `'${bundledClaudePath}' --dangerously-skip-permissions`
+      `unset CLAUDE_CONFIG_DIR; '${bundledClaudePath}' --dangerously-skip-permissions`
     );
   });
 
@@ -284,7 +297,9 @@ describe("TmuxManager.createSession - options互換", () => {
 
     const sendKeys = findCommandSendKeysArgs();
     if (!sendKeys) throw new Error("send-keys args not found");
-    expect(sendKeys[3]).toBe("'/tmp/it'\\''s a/claude'");
+    expect(sendKeys[3]).toBe(
+      "unset CLAUDE_CONFIG_DIR; '/tmp/it'\\''s a/claude'"
+    );
   });
 
   it("resolveClaudePath が相対パスを返した場合はセッション作成自体を throw する (PATH 汚染への信頼境界拡張を拒否)", async () => {

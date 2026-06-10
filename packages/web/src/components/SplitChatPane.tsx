@@ -29,9 +29,15 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
+import { AskUserQuestionCard } from "@/components/AskUserQuestionCard";
 import { Button } from "@/components/ui/button";
 import { fileToBase64, validateFile } from "@/hooks/useFileUpload";
 import { useSessionJsonl } from "@/hooks/useSessionJsonl";
+import {
+  type ActiveAuq,
+  hasResolvedAuqSince,
+  parseAuqInput,
+} from "@/lib/ask-user-question-state";
 import type { JsonlParsedEvent } from "@/lib/jsonl-event-parser";
 import { reconcileEscape } from "@/lib/reconcile-escape";
 import { reconcilePending } from "@/lib/reconcile-pending";
@@ -274,6 +280,16 @@ function EventCard({ event }: { event: JsonlParsedEvent }) {
     case "compact-marker":
       return <CompactMarkerCard />;
     case "tool-call":
+      // 回答待ちの AskUserQuestion は入力欄上のアクティブカード
+      // (AskUserQuestionCard) が担当するので履歴側には出さない。
+      // tool_result が来て done になったら回答済みカードとして表示する
+      if (
+        event.tool === "AskUserQuestion" &&
+        event.status === "running" &&
+        event.isSidechain !== true
+      ) {
+        return null;
+      }
       return (
         <ToolCallCard
           tool={event.tool}
@@ -328,6 +344,49 @@ export function SplitChatPane({
   useEffect(() => {
     setPending([]);
   }, [session.id]);
+
+  // 回答待ちの AskUserQuestion。
+  // 表示開始 = PreToolUse hook 由来の session:auq イベント (対話版 claude は
+  // AUQ の tool_use を回答確定まで JSONL に書かないため hook が唯一の情報源)。
+  // カードを閉じる = JSONL に解決イベント (tool_use + tool_result) が出現。
+  const [hookAuq, setHookAuq] = useState<{
+    at: number;
+    auq: ActiveAuq;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!socket) return;
+    const handler = (data: {
+      sessionId: string;
+      at: number;
+      questions: unknown;
+    }) => {
+      if (data.sessionId !== session.id) return;
+      const questions = parseAuqInput({ questions: data.questions });
+      if (!questions) return;
+      setHookAuq({
+        at: data.at,
+        auq: { toolUseId: `hook:${data.at}`, questions },
+      });
+    };
+    socket.on("session:auq", handler);
+    return () => {
+      socket.off("session:auq", handler);
+    };
+  }, [socket, session.id]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies(session.id): セッション切替を検知して回答待ちカードを破棄するための意図的な依存
+  useEffect(() => {
+    setHookAuq(null);
+  }, [session.id]);
+
+  // JSONL に解決イベント (回答/Esc 拒否) が書かれたらカードを閉じる
+  useEffect(() => {
+    if (!hookAuq) return;
+    if (hasResolvedAuqSince(events, hookAuq.at)) setHookAuq(null);
+  }, [events, hookAuq]);
+
+  const activeAuq = hookAuq?.auq ?? null;
 
   // ===== スクロール追従 + 上端で過去読み込み =====
   const jsonlScrollRef = useRef<HTMLDivElement>(null);
@@ -620,6 +679,19 @@ export function SplitChatPane({
           </button>
         )}
       </div>
+
+      {activeAuq && (
+        <AskUserQuestionCard
+          key={activeAuq.toolUseId}
+          socket={socket}
+          sessionId={session.id}
+          auq={activeAuq}
+          onSendKey={onSendKey}
+          onOpenTerminal={
+            onToggleTerminal && !showTerminal ? onToggleTerminal : undefined
+          }
+        />
+      )}
 
       <form
         onSubmit={handleSubmit}

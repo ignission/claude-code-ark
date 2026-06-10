@@ -81,6 +81,8 @@ const ALLOWED_SPECIAL_KEYS = new Set<SpecialKey>([
   "Escape",
   "Up",
   "Down",
+  // AskUserQuestion multiSelect の Submit タブ移動に使用
+  "Right",
   // multiSelect 選択肢のトグルに使用
   "Space",
   // 数字キー (AskUserQuestion の選択肢直接ジャンプに使用)
@@ -127,6 +129,8 @@ export class TmuxManager extends EventEmitter {
   private readonly SESSION_PREFIX = "ark-";
   /** パーミッションスキップフラグ（--dangerously-skip-permissions を付与するか） */
   private skipPermissions = false;
+  /** claude 起動時に --settings で注入する settings JSON のパス (AUQ hook 用) */
+  private claudeSettingsPath: string | null = null;
 
   constructor() {
     super();
@@ -141,6 +145,15 @@ export class TmuxManager extends EventEmitter {
    */
   setSkipPermissions(value: boolean): void {
     this.skipPermissions = value;
+  }
+
+  /**
+   * claude 起動コマンドに `--settings <path>` で注入する settings JSON を
+   * 設定する (AskUserQuestion の PreToolUse hook 等)。
+   * サーバー起動時 (listen 後、port 確定後) に呼ばれる。
+   */
+  setClaudeSettingsPath(value: string | null): void {
+    this.claudeSettingsPath = value;
   }
 
   /**
@@ -298,11 +311,27 @@ export class TmuxManager extends EventEmitter {
     const claudeBinary = resolveValidatedClaudePath();
     const claudeArg =
       claudeBinary === "claude" ? "claude" : posixShellQuote(claudeBinary);
+    // AskUserQuestion hook 等を注入する claude 用 settings (--settings)。
+    // サーバー起動時に setClaudeSettingsPath で設定される。
+    const settingsArg = this.claudeSettingsPath
+      ? ` --settings ${posixShellQuote(this.claudeSettingsPath)}`
+      : "";
+    // プロファイル未指定のセッションが、Ark サーバープロセス (やその親、
+    // tmux サーバー) の CLAUDE_CONFIG_DIR を意図せず継承すると、transcript が
+    // 想定外の config dir 配下に書かれ、JSONL tail (チャットビュー) が
+    // 参照する <profileConfigDir ?? ~/.claude>/projects と不整合になる。
+    // tmux の -e は空文字設定しかできず、claude は空文字 CLAUDE_CONFIG_DIR を
+    // 「cwd を config dir に使う」と解釈して worktree 内に projects/ 等を
+    // 作ってしまう (実機確認済み) ため、シェル変数ごと unset してから起動する。
+    const hasProfileEnv =
+      options?.env != null && "CLAUDE_CONFIG_DIR" in options.env;
+    const envPrefix = hasProfileEnv ? "" : "unset CLAUDE_CONFIG_DIR; ";
+    const skipFlag = this.skipPermissions
+      ? " --dangerously-skip-permissions"
+      : "";
     const claudeCmd =
       options?.commandLine ??
-      (this.skipPermissions
-        ? `${claudeArg} --dangerously-skip-permissions`
-        : claudeArg);
+      `${envPrefix}${claudeArg}${skipFlag}${settingsArg}`;
 
     let tmuxCreated = false;
 
