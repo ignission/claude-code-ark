@@ -33,6 +33,8 @@ import { Button } from "@/components/ui/button";
 import { fileToBase64, validateFile } from "@/hooks/useFileUpload";
 import { useSessionJsonl } from "@/hooks/useSessionJsonl";
 import type { JsonlParsedEvent } from "@/lib/jsonl-event-parser";
+import { reconcileEscape } from "@/lib/reconcile-escape";
+import { reconcilePending } from "@/lib/reconcile-pending";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -67,6 +69,17 @@ function UserInputCard({ text }: { text: string }) {
     <div className="flex justify-end px-4 pt-4 pb-2">
       <div className="max-w-[85%] bg-primary text-primary-foreground rounded-2xl rounded-tr-md px-4 py-2.5 text-[16px] leading-relaxed whitespace-pre-wrap break-words shadow-sm">
         {text}
+      </div>
+    </div>
+  );
+}
+
+function PendingMessageCard({ text }: { text: string }) {
+  return (
+    <div className="flex justify-end px-4 pt-4 pb-2">
+      <div className="max-w-[85%] bg-primary/70 text-primary-foreground rounded-2xl rounded-tr-md px-4 py-2.5 text-[16px] leading-relaxed whitespace-pre-wrap break-words shadow-sm flex items-start gap-2">
+        <Loader2 className="w-3.5 h-3.5 animate-spin mt-1 shrink-0 opacity-80" />
+        <span className="min-w-0">{text}</span>
       </div>
     </div>
   );
@@ -284,7 +297,7 @@ export function SplitChatPane({
   session,
   isActive,
   onSendMessage,
-  onSendKey: _onSendKey,
+  onSendKey,
   onUploadFile,
   showTerminal,
   onToggleTerminal,
@@ -298,6 +311,23 @@ export function SplitChatPane({
     loadMore,
     hasMore,
   } = useSessionJsonl(socket, isActive ? session.id : null);
+
+  // Claude 処理中に送ったメッセージを即時表示するための pending state。
+  // JSONL に同じテキストの user-input が現れたら自動で消える。
+  const [pending, setPending] = useState<
+    { id: string; text: string; sentAt: number }[]
+  >([]);
+
+  // events 更新のたびに pending を整理: マッチしたものを除去。ロジックは
+  // テスト容易性のため reconcilePending に純粋関数として切り出してある。
+  useEffect(() => {
+    setPending(prev => reconcilePending(prev, events, Date.now()));
+  }, [events]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies(session.id): セッション切替を検知して pending を破棄するための意図的な依存
+  useEffect(() => {
+    setPending([]);
+  }, [session.id]);
 
   // ===== スクロール追従 + 上端で過去読み込み =====
   const jsonlScrollRef = useRef<HTMLDivElement>(null);
@@ -364,11 +394,25 @@ export function SplitChatPane({
   }, [hasMore, loadMore, events.length]);
 
   // ===== 送信 =====
+  // 直近に送信したテキストを保持する。Esc 押下時に Claude Code 本体と同じく
+  // 「中断 + 入力欄に直前のテキストを復元」を再現するため。
+  // 復元したら ref をクリアし、次の submit で上書きされる。
+  const lastSubmittedRef = useRef<string>("");
+
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     const value = inputValue.trim();
     if (!value) return;
+    lastSubmittedRef.current = value;
     onSendMessage(value);
+    setPending(prev => [
+      ...prev,
+      {
+        id: `p:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+        text: value,
+        sentAt: Date.now(),
+      },
+    ]);
     setInputValue("");
   };
 
@@ -465,6 +509,33 @@ export function SplitChatPane({
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Esc は Claude Code 本体と同じ挙動 (4 分岐) を reconcileEscape に委譲する。
+    // 副作用 (setState / tmux 送信) はここで action 種別に応じて発火させる。
+    // slashOpen は slash 補完実装 (Step 9) までは常に false。
+    if (e.key === "Escape" && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      const action = reconcileEscape({
+        inputValue,
+        slashOpen: false,
+        lastSubmitted: lastSubmittedRef.current,
+      });
+      if (action.kind === "close-slash") {
+        // slash 補完未実装のため到達しない
+      } else if (action.kind === "clear-input") {
+        setInputValue("");
+      } else {
+        onSendKey("Escape");
+        if (action.restore !== null) {
+          setInputValue(action.restore);
+          lastSubmittedRef.current = "";
+        }
+        if (action.removePendingText !== null) {
+          const norm = action.removePendingText.trim();
+          setPending(prev => prev.filter(p => p.text.trim() !== norm));
+        }
+      }
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSubmit(e as unknown as FormEvent);
@@ -517,7 +588,7 @@ export function SplitChatPane({
           ref={jsonlScrollRef}
           className="absolute inset-0 overflow-y-auto py-2"
         >
-          {events.length === 0 ? (
+          {events.length === 0 && pending.length === 0 ? (
             <div className="text-center text-sm text-muted-foreground pt-8">
               このセッションの履歴はまだありません
             </div>
@@ -530,6 +601,9 @@ export function SplitChatPane({
               )}
               {events.map(ev => (
                 <EventCard key={ev.id} event={ev} />
+              ))}
+              {pending.map(p => (
+                <PendingMessageCard key={p.id} text={p.text} />
               ))}
             </>
           )}
