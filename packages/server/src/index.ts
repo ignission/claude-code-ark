@@ -83,6 +83,7 @@ import {
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import { sessionOrchestrator } from "./lib/session-orchestrator.js";
+import { listSlashCommands } from "./lib/slash-command-scanner.js";
 import { detectMultiProfileSupported } from "./lib/system.js";
 import { tmuxManager } from "./lib/tmux-manager.js";
 import { TunnelManager } from "./lib/tunnel.js";
@@ -1862,6 +1863,26 @@ export async function startServer(
       if (unsub) {
         unsub();
         jsonlUnsubscribers.delete(sessionId);
+      }
+    });
+
+    // ===== Slash command 候補列挙 =====
+    // チャットビュー入力欄の `/` 補完用。worktree + プロファイル configDir の
+    // `.claude/commands/*.md` を集約して返す。callback パターン (1 回限り)
+    socket.on("slash:list", async (sessionId, callback) => {
+      try {
+        const session = sessionOrchestrator.getSession(sessionId);
+        if (!session) {
+          callback({ error: "Session not found" });
+          return;
+        }
+        const commands = await listSlashCommands(
+          session.worktreePath,
+          session.profileConfigDir ?? null
+        );
+        callback({ commands });
+      } catch (err) {
+        callback({ error: getErrorMessage(err) });
       }
     });
 

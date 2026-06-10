@@ -15,6 +15,7 @@ import type {
   ClientToServerEvents,
   ManagedSession,
   ServerToClientEvents,
+  SlashCommandInfo,
   SpecialKey,
 } from "@ark/shared";
 import { ArrowDown, Loader2, Paperclip, Send } from "lucide-react";
@@ -34,6 +35,7 @@ import { AskUserQuestionCard } from "@/components/AskUserQuestionCard";
 import { Button } from "@/components/ui/button";
 import { fileToBase64, validateFile } from "@/hooks/useFileUpload";
 import { useSessionJsonl } from "@/hooks/useSessionJsonl";
+import { useSlashCommands } from "@/hooks/useSlashCommands";
 import {
   type ActiveAuq,
   hasResolvedAuqSince,
@@ -348,10 +350,86 @@ export function SplitChatPane({
     setPending(prev => reconcilePending(prev, events, Date.now()));
   }, [events]);
 
+  // built-in slash command (/compact, /clear 等) は JSONL に user-input として
+  // 記録されないため、ローカルで永続的に表示する slash-command イベントを保持する。
+  const [localSlashCommands, setLocalSlashCommands] = useState<
+    { id: string; name: string; args?: string; sentAt: number }[]
+  >([]);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies(session.id): セッション切替を検知して pending を破棄するための意図的な依存
   useEffect(() => {
     setPending([]);
+    setLocalSlashCommands([]);
   }, [session.id]);
+
+  // ===== Slash command 補完 =====
+  const { commands: slashCommands } = useSlashCommands(
+    socket,
+    isActive ? session.id : null
+  );
+  const [slashOpen, setSlashOpen] = useState(false);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const filteredSlashCommands = useMemo(() => {
+    if (!slashOpen) return [];
+    const q = inputValue.trim().toLowerCase();
+    if (!q.startsWith("/")) return [];
+    return slashCommands
+      .filter(c => c.name.toLowerCase().startsWith(q))
+      .slice(0, 8);
+  }, [slashOpen, slashCommands, inputValue]);
+
+  useEffect(() => {
+    const firstLine = inputValue.split("\n")[0] ?? "";
+    const shouldOpen = firstLine.startsWith("/");
+    setSlashOpen(shouldOpen);
+    if (shouldOpen) setSlashIndex(0);
+  }, [inputValue]);
+
+  const appendLocalSlashCommand = useCallback((name: string, args?: string) => {
+    setLocalSlashCommands(prev => [
+      ...prev,
+      {
+        id: `lsc:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+        name,
+        args,
+        sentAt: Date.now(),
+      },
+    ]);
+  }, []);
+
+  const applySlashCommand = useCallback(
+    (cmd: SlashCommandInfo) => {
+      setSlashOpen(false);
+      if (cmd.source === "built-in") {
+        onSendMessage(cmd.name);
+        appendLocalSlashCommand(cmd.name);
+        setInputValue("");
+        return;
+      }
+      setInputValue(prev => {
+        const lines = prev.split("\n");
+        lines[0] = `${cmd.name} `;
+        return lines.join("\n");
+      });
+    },
+    [onSendMessage, appendLocalSlashCommand]
+  );
+
+  // 入力値が built-in slash command と一致するか判定する
+  const matchBuiltInSlashCommand = useCallback(
+    (value: string): { name: string; args?: string } | null => {
+      const firstLine = value.split("\n")[0]?.trim() ?? "";
+      if (!firstLine.startsWith("/")) return null;
+      const [head, ...rest] = firstLine.split(/\s+/);
+      const cmd = slashCommands.find(
+        c => c.source === "built-in" && c.name === head
+      );
+      if (!cmd) return null;
+      const args = rest.join(" ").trim();
+      return { name: cmd.name, args: args || undefined };
+    },
+    [slashCommands]
+  );
 
   // 回答待ちの AskUserQuestion。
   // 表示開始 = PreToolUse hook 由来の session:auq イベント (対話版 claude は
@@ -472,14 +550,22 @@ export function SplitChatPane({
     if (!value) return;
     lastSubmittedRef.current = value;
     onSendMessage(value);
-    setPending(prev => [
-      ...prev,
-      {
-        id: `p:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
-        text: value,
-        sentAt: Date.now(),
-      },
-    ]);
+    // built-in slash command (/compact, /clear 等) は JSONL に user-input として
+    // 記録されないため、pending bubble だと永遠に spinner が残る。
+    // 代わりにローカル slash-command カードを即時追加する。
+    const builtIn = matchBuiltInSlashCommand(value);
+    if (builtIn) {
+      appendLocalSlashCommand(builtIn.name, builtIn.args);
+    } else {
+      setPending(prev => [
+        ...prev,
+        {
+          id: `p:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+          text: value,
+          sentAt: Date.now(),
+        },
+      ]);
+    }
     setInputValue("");
   };
 
@@ -576,18 +662,42 @@ export function SplitChatPane({
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slashOpen && filteredSlashCommands.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashIndex(i => (i + 1) % filteredSlashCommands.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashIndex(
+          i =>
+            (i - 1 + filteredSlashCommands.length) %
+            filteredSlashCommands.length
+        );
+        return;
+      }
+      if (
+        (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) &&
+        !e.nativeEvent.isComposing
+      ) {
+        e.preventDefault();
+        const target = filteredSlashCommands[slashIndex];
+        if (target) applySlashCommand(target);
+        return;
+      }
+    }
     // Esc は Claude Code 本体と同じ挙動 (4 分岐) を reconcileEscape に委譲する。
     // 副作用 (setState / tmux 送信) はここで action 種別に応じて発火させる。
-    // slashOpen は slash 補完実装 (Step 9) までは常に false。
     if (e.key === "Escape" && !e.nativeEvent.isComposing) {
       e.preventDefault();
       const action = reconcileEscape({
         inputValue,
-        slashOpen: false,
+        slashOpen: slashOpen && filteredSlashCommands.length > 0,
         lastSubmitted: lastSubmittedRef.current,
       });
       if (action.kind === "close-slash") {
-        // slash 補完未実装のため到達しない
+        setSlashOpen(false);
       } else if (action.kind === "clear-input") {
         setInputValue("");
       } else {
@@ -661,7 +771,9 @@ export function SplitChatPane({
           ref={jsonlScrollRef}
           className="absolute inset-0 overflow-y-auto py-2"
         >
-          {events.length === 0 && pending.length === 0 ? (
+          {events.length === 0 &&
+          pending.length === 0 &&
+          localSlashCommands.length === 0 ? (
             <div className="text-center text-sm text-muted-foreground pt-8">
               このセッションの履歴はまだありません
             </div>
@@ -674,6 +786,9 @@ export function SplitChatPane({
               )}
               {events.map(ev => (
                 <EventCard key={ev.id} event={ev} />
+              ))}
+              {localSlashCommands.map(c => (
+                <SlashCommandCard key={c.id} name={c.name} args={c.args} />
               ))}
               {pending.map(p => (
                 <PendingMessageCard key={p.id} text={p.text} />
@@ -807,6 +922,48 @@ export function SplitChatPane({
           rows={1}
           className="flex-1 px-3 py-2 text-sm bg-muted/40 border border-border rounded-lg focus:outline-none focus:border-primary placeholder:text-muted-foreground resize-none min-h-[36px] max-h-32"
         />
+        {slashOpen && filteredSlashCommands.length > 0 && (
+          <div className="absolute left-3 right-3 bottom-full mb-1 bg-popover border border-border rounded-lg shadow-lg overflow-hidden z-20">
+            {filteredSlashCommands.map((cmd, i) => (
+              <button
+                type="button"
+                key={cmd.name}
+                onMouseDown={e => {
+                  e.preventDefault();
+                  applySlashCommand(cmd);
+                }}
+                onMouseEnter={() => setSlashIndex(i)}
+                className={`w-full text-left px-3 py-1.5 flex items-center gap-2 text-sm ${
+                  i === slashIndex
+                    ? "bg-accent text-accent-foreground"
+                    : "hover:bg-muted/50"
+                }`}
+              >
+                <span className="font-mono text-foreground shrink-0">
+                  {cmd.name}
+                </span>
+                {cmd.description && (
+                  <span className="text-xs text-muted-foreground truncate flex-1">
+                    {cmd.description}
+                  </span>
+                )}
+                <span
+                  className={`text-[9px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
+                    cmd.source === "project"
+                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                      : cmd.source === "global"
+                        ? "bg-blue-500/15 text-blue-700 dark:text-blue-300"
+                        : cmd.source === "plugin"
+                          ? "bg-violet-500/15 text-violet-700 dark:text-violet-300"
+                          : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {cmd.source}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
         <Button
           type="submit"
           size="sm"
