@@ -1,0 +1,118 @@
+/**
+ * claude-projects.ts - Claude Code が会話 transcript (JSONL) を永続化する
+ * `<configDir>/projects/` ディレクトリに関する純粋ヘルパー群。
+ *
+ * beacon-cli-session.ts にも同等のロジック (encodeProjectDir / locateJsonl)
+ * があるが、あちらは Beacon のターン同期と密結合しているため共通化しない
+ * (実機調整済みコードを不可侵に保つ)。将来寄せる場合はこのモジュールを正とする。
+ */
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+/**
+ * セッションごとに CLAUDE_CONFIG_DIR が異なるため、明示的に渡せる形にする。
+ * プロファイル未設定なら ~/.claude/projects/ がデフォルト。
+ */
+export function projectsDirFor(configDir?: string | null): string {
+  const base = configDir ?? path.join(os.homedir(), ".claude");
+  return path.join(base, "projects");
+}
+
+/**
+ * cwd 絶対パスを Claude Code の project ディレクトリ名へエンコードする。
+ * Claude Code 本体は **すべての非英数字** を `-` に置換する。
+ * 過去に `/` `.` `_` だけ置換する実装で `+` や空白を含むパスを取りこぼした
+ * regression があるため、必ず全非英数置換にする (beacon-cli-session.ts と同一)。
+ */
+export function encodeProjectDir(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
+/**
+ * ファイル → 「最初に cwd フィールドを持つ行」の cwd 値キャッシュ。
+ * transcript の cwd は不変なので一度読めれば再読不要。
+ * (pickLatestJsonl は polling から繰り返し呼ばれるため、毎回のファイル読みを避ける)
+ */
+const cwdCache = new Map<string, string>();
+
+/** テスト用: cwd キャッシュを破棄する */
+export function clearCwdCache(): void {
+  cwdCache.clear();
+}
+
+/**
+ * JSONL ファイル先頭付近 (64KB) から最初の cwd フィールドを読む。
+ * 見つからない/読めない場合は null (検証不能)。
+ * cwd が確定したときのみキャッシュする (書きかけファイルで null を固定しない)。
+ */
+function readFileCwd(filePath: string): string | null {
+  const cached = cwdCache.get(filePath);
+  if (cached !== undefined) return cached;
+  try {
+    const fd = fs.openSync(filePath, "r");
+    try {
+      const buf = Buffer.alloc(64 * 1024);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      const head = buf.toString("utf-8", 0, n);
+      for (const line of head.split("\n")) {
+        if (line === "") continue;
+        try {
+          const parsed = JSON.parse(line) as { cwd?: unknown };
+          if (typeof parsed.cwd === "string") {
+            cwdCache.set(filePath, parsed.cwd);
+            return parsed.cwd;
+          }
+        } catch {
+          // 読み込み境界で切れた行など。次の行へ
+        }
+      }
+      return null;
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ディレクトリ内で mtime 最新の .jsonl を返す。なければ null。
+ *
+ * `expectedCwd` を渡すと、各ファイル先頭の cwd フィールドが一致するものを
+ * mtime 降順で優先する (encodeProjectDir の衝突対策。例: `/a/b` と `/a.b` は
+ * 同じディレクトリ名になる)。cwd が読めないファイルは「検証不能 = 一致扱い」、
+ * 一致が 1 つも無ければ mtime 最新へフォールバックする
+ * (beacon-cli-session.ts の locateJsonl と同じセマンティクス)。
+ */
+export function pickLatestJsonl(
+  dir: string,
+  expectedCwd?: string
+): string | null {
+  try {
+    const entries = fs.readdirSync(dir);
+    const candidates: { path: string; mtimeMs: number }[] = [];
+    for (const name of entries) {
+      if (!name.endsWith(".jsonl")) continue;
+      const full = path.join(dir, name);
+      try {
+        const st = fs.statSync(full);
+        if (!st.isFile()) continue;
+        candidates.push({ path: full, mtimeMs: st.mtimeMs });
+      } catch {
+        // stat 失敗 (削除レース等) はスキップ
+      }
+    }
+    candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    if (expectedCwd) {
+      for (const c of candidates) {
+        const cwd = readFileCwd(c.path);
+        if (cwd === null || cwd === expectedCwd) return c.path;
+      }
+    }
+    return candidates[0]?.path ?? null;
+  } catch {
+    return null;
+  }
+}
