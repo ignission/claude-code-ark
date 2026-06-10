@@ -168,7 +168,7 @@ export function createArkMcpServer(deps: BeaconDeps): McpServer {
         key: z
           .string()
           .describe(
-            "送信するキー（y, n, C-c, C-d, Escape, Enter, S-Tab, Up, Down）"
+            "送信するキー（y, n, C-c, C-d, Escape, Enter, S-Tab, Up, Down, Space, 1〜9）"
           ),
       },
     },
@@ -185,6 +185,16 @@ export function createArkMcpServer(deps: BeaconDeps): McpServer {
         Escape: true,
         Up: true,
         Down: true,
+        Space: true,
+        "1": true,
+        "2": true,
+        "3": true,
+        "4": true,
+        "5": true,
+        "6": true,
+        "7": true,
+        "8": true,
+        "9": true,
       };
       const validKeys = new Set<string>(Object.keys(SPECIAL_KEYS));
       if (!validKeys.has(args.key)) {

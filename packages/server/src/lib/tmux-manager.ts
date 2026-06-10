@@ -81,6 +81,18 @@ const ALLOWED_SPECIAL_KEYS = new Set<SpecialKey>([
   "Escape",
   "Up",
   "Down",
+  // multiSelect 選択肢のトグルに使用
+  "Space",
+  // 数字キー (AskUserQuestion の選択肢直接ジャンプに使用)
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
 ]);
 
 export interface TmuxSession {
@@ -393,6 +405,21 @@ export class TmuxManager extends EventEmitter {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error("Session not found");
 
+    // Esc 後に Claude 側の入力欄へ直前メッセージが復元されているケース等、
+    // tmux pane の入力バッファに既存テキストが残っていると Ark から送る
+    // テキストと連結されて重複送信になる。事前に C-u (kill line) を送って
+    // 入力をクリアしてからリテラル送信する。入力が空なら C-u は no-op。
+    const clearResult = spawnSync(
+      TMUX_BINARY_PATH,
+      ["send-keys", "-t", session.tmuxSessionName, "C-u"],
+      { stdio: "pipe" }
+    );
+    if (clearResult.error) throw clearResult.error;
+    if (clearResult.status !== 0)
+      throw new Error(
+        `tmux send-keys C-u exited with status ${clearResult.status}`
+      );
+
     // send-keys -l でリテラル送信（spawnSyncなのでシェルエスケープ不要）
     const literalResult = spawnSync(
       TMUX_BINARY_PATH,
@@ -417,6 +444,24 @@ export class TmuxManager extends EventEmitter {
         `tmux send-keys Enter exited with status ${enterResult.status}`
       );
 
+    session.lastActivity = new Date();
+  }
+
+  /**
+   * tmux に literal テキストのみ送信する (Enter を付けない)
+   * AskUserQuestion の Type something モードで「1 文字ずつタイプ」したいときに使う。
+   */
+  sendLiteral(sessionId: string, input: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error("Session not found");
+    const result = spawnSync(
+      TMUX_BINARY_PATH,
+      ["send-keys", "-t", session.tmuxSessionName, "-l", input],
+      { stdio: "pipe" }
+    );
+    if (result.error) throw result.error;
+    if (result.status !== 0)
+      throw new Error(`tmux send-keys -l exited with status ${result.status}`);
     session.lastActivity = new Date();
   }
 
