@@ -1,4 +1,4 @@
-import type { ManagedSession, Worktree } from "@ark/shared";
+import type { ManagedSession, SpecialKey, Worktree } from "@ark/shared";
 import { AlertCircle, Copy, Loader2, Terminal } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -22,6 +22,7 @@ import { RepoGridView } from "@/components/RepoGridView";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
+import { SplitViewPane } from "@/components/SplitViewPane";
 import { TerminalPane } from "@/components/TerminalPane";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { Button } from "@/components/ui/button";
@@ -163,6 +164,13 @@ export default function Dashboard() {
     typeof window !== "undefined" &&
     window.location.hostname !== "localhost" &&
     window.location.hostname !== "127.0.0.1";
+
+  // チャットビュー (JSONL ベース + on-demand ターミナル) のオプトイン。
+  // `?view=chat` で有効化する (安定後にデフォルト反転して `?view=classic` を
+  // 逃げ道にする予定)。
+  const isChatView =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("view") === "chat";
 
   const activeBrowserSession = Array.from(browserSessions.values())[0] ?? null;
 
@@ -728,35 +736,47 @@ export default function Dashboard() {
                     const repo = findRepoForSession(session, repoList);
                     return repo ? getBaseName(repo) : undefined;
                   })();
+                  const paneProps = {
+                    session,
+                    worktree: wt,
+                    repoName: rn,
+                    tabs: getTabsForSession(session.id),
+                    activeTabIndex: getActiveTabForSession(session.id),
+                    onTabSelect: (idx: number) =>
+                      handleTabSelect(session.id, idx),
+                    onTabClose: (idx: number) =>
+                      handleTabClose(session.id, idx),
+                    onSendMessage: (msg: string) =>
+                      sendMessage(session.id, msg),
+                    onSendKey: (key: SpecialKey) => sendKey(session.id, key),
+                    onDeleteSession: () => handleDeleteSession(session.id, wt),
+                    onUploadFile: (data: {
+                      base64Data: string;
+                      mimeType: string;
+                      originalFilename?: string;
+                    }) => uploadFile({ sessionId: session.id, ...data }),
+                    onCopyBuffer: copyBuffer
+                      ? () => copyBuffer(session.id)
+                      : undefined,
+                    messageShortcuts,
+                    onCreateShortcut: createShortcut,
+                    onUpdateShortcut: updateShortcut,
+                    onDeleteShortcut: deleteShortcut,
+                  };
                   return (
                     <div
                       key={session.id}
                       className={isActive ? "h-full flex flex-col" : "hidden"}
                     >
-                      <TerminalPane
-                        session={session}
-                        worktree={wt}
-                        repoName={rn}
-                        tabs={getTabsForSession(session.id)}
-                        activeTabIndex={getActiveTabForSession(session.id)}
-                        onTabSelect={idx => handleTabSelect(session.id, idx)}
-                        onTabClose={idx => handleTabClose(session.id, idx)}
-                        onSendMessage={msg => sendMessage(session.id, msg)}
-                        onSendKey={key => sendKey(session.id, key)}
-                        onDeleteSession={() =>
-                          handleDeleteSession(session.id, wt)
-                        }
-                        onUploadFile={data =>
-                          uploadFile({ sessionId: session.id, ...data })
-                        }
-                        onCopyBuffer={
-                          copyBuffer ? () => copyBuffer(session.id) : undefined
-                        }
-                        messageShortcuts={messageShortcuts}
-                        onCreateShortcut={createShortcut}
-                        onUpdateShortcut={updateShortcut}
-                        onDeleteShortcut={deleteShortcut}
-                      />
+                      {isChatView ? (
+                        <SplitViewPane
+                          socket={socket}
+                          isActive={isActive}
+                          {...paneProps}
+                        />
+                      ) : (
+                        <TerminalPane {...paneProps} />
+                      )}
                     </div>
                   );
                 })}

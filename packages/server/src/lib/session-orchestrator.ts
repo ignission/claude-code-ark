@@ -111,6 +111,24 @@ export class SessionOrchestrator extends EventEmitter {
             ? { id: dbSession.profileId, configDir: dbSession.profileConfigDir }
             : null;
         this.sessionProfiles.set(dbSession.id, restoredProfile);
+      } else {
+        // DB に対応レコードなし (例: data dir を別パスに移行した直後)。
+        // tmux env から CLAUDE_CONFIG_DIR を読み取って sessionProfiles に
+        // 反映し、JsonlTailManager が正しいプロファイル配下の JSONL を
+        // 見つけられるようにする (profileId は不明なので configDir のみ)。
+        const envConfigDir = tmuxManager.getEnv(
+          tmuxSession.id,
+          "CLAUDE_CONFIG_DIR"
+        );
+        if (envConfigDir) {
+          this.sessionProfiles.set(tmuxSession.id, {
+            id: "__env__", // 識別用ダミー (UI 側のプロファイル管理とは紐付かない)
+            configDir: envConfigDir,
+          });
+          console.log(
+            `[Orchestrator] Restored profile from tmux env: ${tmuxSession.tmuxSessionName} -> ${envConfigDir}`
+          );
+        }
       }
 
       // ttydも自動起動（起動完了後にクライアントへ通知）
@@ -192,6 +210,9 @@ export class SessionOrchestrator extends EventEmitter {
       ttydPort: ttydInstance?.port || null,
       ttydUrl: ttydInstance ? `/ttyd/${tmuxSession.id}/` : null,
       profileId: current?.id ?? null,
+      // JSONL tail (チャットビュー) がプロファイル配下の
+      // <configDir>/projects を参照するために必要
+      profileConfigDir: current?.configDir ?? null,
       staleProfile,
     };
   }

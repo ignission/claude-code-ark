@@ -323,3 +323,91 @@
   animation: level-up-flash 1s ease-out forwards;
   pointer-events: none;
 }
+
+/* ===== JSONL assistant text 用 markdown プロース =====
+ * react-markdown が出力する要素にチャットらしい spacing と code/blockquote 装飾を当てる */
+.md-prose {
+  line-height: 1.65;
+}
+.md-prose > * + * {
+  margin-top: 0.75em;
+}
+.md-prose > h1 + *,
+.md-prose > h2 + *,
+.md-prose > h3 + * {
+  margin-top: 0.35em;
+}
+.md-prose h1 {
+  font-size: 1.4em;
+  font-weight: 700;
+  margin-top: 1em;
+  letter-spacing: -0.01em;
+}
+.md-prose h2 {
+  font-size: 1.2em;
+  font-weight: 700;
+  margin-top: 0.9em;
+  letter-spacing: -0.01em;
+}
+.md-prose h3 {
+  font-size: 1.05em;
+  font-weight: 700;
+  margin-top: 0.8em;
+}
+.md-prose ul {
+  list-style: disc;
+  padding-left: 1.4em;
+}
+.md-prose ol {
+  list-style: decimal;
+  padding-left: 1.6em;
+}
+.md-prose li {
+  margin: 0.25em 0;
+}
+.md-prose li > p {
+  margin: 0;
+}
+.md-prose code {
+  font-family: ui-monospace, SFMono-Regular, "Menlo", monospace;
+  background: rgba(120, 120, 120, 0.15);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.9em;
+}
+.md-prose pre {
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(120, 120, 120, 0.2);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.dark .md-prose pre {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+.md-prose pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.9em;
+}
+.md-prose blockquote {
+  border-left: 3px solid rgba(120, 120, 120, 0.4);
+  padding-left: 0.8em;
+  color: rgba(120, 120, 120, 0.9);
+}
+.md-prose a {
+  color: #2563eb;
+  text-decoration: underline;
+}
+.dark .md-prose a {
+  color: #60a5fa;
+}
+.md-prose table {
+  border-collapse: collapse;
+}
+.md-prose th,
+.md-prose td {
+  border: 1px solid rgba(120, 120, 120, 0.3);
+  padding: 4px 8px;
+}

@@ -533,6 +533,33 @@ export class TmuxManager extends EventEmitter {
   }
 
   /**
+   * 指定セッションの tmux 環境変数を取得する。未定義/未取得は null。
+   *
+   * `tmux show-environment -t <session> <NAME>` を使用。変数名指定は
+   * 該当変数が無い場合に exit code 非 0 になるので、ステータスのみ判定する。
+   */
+  getEnv(sessionId: string, name: string): string | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    try {
+      const result = spawnSync(
+        TMUX_BINARY_PATH,
+        ["show-environment", "-t", session.tmuxSessionName, name],
+        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+      );
+      if (result.status !== 0) return null;
+      const line = (result.stdout ?? "").trim();
+      // 出力形式: `NAME=value` または `-NAME` (unset)
+      if (line.startsWith("-")) return null;
+      const eq = line.indexOf("=");
+      if (eq < 0) return null;
+      return line.slice(eq + 1);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * tmuxのペーストバッファの内容を取得
    */
   getBuffer(sessionId: string): string | null {
