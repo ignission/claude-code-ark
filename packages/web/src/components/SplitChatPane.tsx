@@ -278,6 +278,58 @@ function ToolCallCard({
   );
 }
 
+/**
+ * subagent (isSidechain) の連続イベントを 1 ブロックに集約した折りたたみ表示。
+ * 大量のツール呼び出しがメイン会話を埋めないようにする。
+ */
+function SidechainGroupCard({ events }: { events: JsonlParsedEvent[] }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="px-4 py-1">
+      <button
+        type="button"
+        onClick={() => setExpanded(v => !v)}
+        className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <span>{expanded ? "▾" : "▸"}</span>
+        <span>🧵 サブエージェント ({events.length} イベント)</span>
+      </button>
+      {expanded && (
+        <div className="mt-1 border-l-2 border-border pl-2 opacity-80">
+          {events.map(ev => (
+            <EventCard key={ev.id} event={ev} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 連続する sidechain イベントを 1 グループに畳む */
+function groupSidechain(events: JsonlParsedEvent[]): (
+  | { kind: "event"; event: JsonlParsedEvent }
+  | {
+      kind: "sidechain";
+      id: string;
+      events: JsonlParsedEvent[];
+    }
+)[] {
+  const out: ReturnType<typeof groupSidechain> = [];
+  for (const ev of events) {
+    if (ev.isSidechain === true) {
+      const last = out[out.length - 1];
+      if (last && last.kind === "sidechain") {
+        last.events.push(ev);
+      } else {
+        out.push({ kind: "sidechain", id: `sc:${ev.id}`, events: [ev] });
+      }
+    } else {
+      out.push({ kind: "event", event: ev });
+    }
+  }
+  return out;
+}
+
 function EventCard({ event }: { event: JsonlParsedEvent }) {
   switch (event.kind) {
     case "user-input":
@@ -473,6 +525,9 @@ export function SplitChatPane({
   }, [events, hookAuq]);
 
   const activeAuq = hookAuq?.auq ?? null;
+
+  // 連続する subagent イベントを折りたたみグループへ
+  const groupedEvents = useMemo(() => groupSidechain(events), [events]);
 
   // ===== スクロール追従 + 上端で過去読み込み =====
   const jsonlScrollRef = useRef<HTMLDivElement>(null);
@@ -784,9 +839,13 @@ export function SplitChatPane({
                   読み込み中...
                 </div>
               )}
-              {events.map(ev => (
-                <EventCard key={ev.id} event={ev} />
-              ))}
+              {groupedEvents.map(g =>
+                g.kind === "sidechain" ? (
+                  <SidechainGroupCard key={g.id} events={g.events} />
+                ) : (
+                  <EventCard key={g.event.id} event={g.event} />
+                )
+              )}
               {localSlashCommands.map(c => (
                 <SlashCommandCard key={c.id} name={c.name} args={c.args} />
               ))}

@@ -8,25 +8,49 @@
 
 ## アーキテクチャ
 
-### tmux + ttyd によるターミナル転送方式
+### チャットビュー (JSONL tail) + tmux 方式
 
-Claude Codeとの対話は **Agent SDK経由ではなく、tmux + ttyd によるターミナル転送** で実現している。
+PC のデフォルト UI はチャットビュー (`SplitViewPane`)。Claude Code が永続化する
+JSONL transcript を tail して会話を描画し、入力は tmux send-keys で行う。
+ttyd の生ターミナルは「🖥 ターミナル」トグルで on-demand 表示 (旧来の
+TerminalPane 単独表示は `?view=classic`)。エンジンは従来どおり tmux 上の
+対話版 claude (プラン枠課金を維持。Agent SDK / claude -p は使わない)。
 
 ```
-ブラウザ(iframe) ←→ ttyd(WebSocket) ←→ tmux(セッション) ←→ claude CLI
+表示: <configDir>/projects/<encoded-cwd>/*.jsonl → JsonlTailManager → Socket.IO → チャット描画
+入力: チャット入力欄 → Socket.IO → tmux send-keys → claude CLI
+補助: tmux(セッション) ←→ ttyd(WebSocket) ←→ iframe (on-demand トグル)
 ```
+
+**情報源分離の原則 (チャット UI v3 の核心)**: 会話内容は 100% JSONL transcript
+から取得する。tmux capture-pane は busy/AWAITING の existence チェック
+(`session:previews` の bridgeStatus) のみに使い、**画面テキストから内容を
+パースすることは全面禁止** (過去 2 回の挑戦の断念原因)。
 
 1. **tmux**: Claude CLIプロセスをdetachedセッションで管理。サーバー再起動後もセッションが永続化される
-2. **ttyd**: tmuxセッションにWebターミナルアクセスを提供。各セッションに独立したttydプロセスが起動する
-3. **SessionOrchestrator**: tmuxとttydを統合管理し、セッションのライフサイクルを制御する
-4. **クライアント**: ttydが提供するWebターミナルをiframeで表示。メッセージ送信はSocket.IO経由でtmux send-keysを使用
+2. **JsonlTailManager**: worktree 毎の JSONL を fs.watch + 1 秒 polling で tail し、新規行を購読 socket に push。/clear のファイル切替は onReset → 空 snapshot で追従
+3. **ttyd**: tmuxセッションにWebターミナルアクセスを提供 (チャットビューではトグル表示)
+4. **SessionOrchestrator**: tmuxとttydを統合管理し、セッションのライフサイクルを制御する
 
 ### メッセージ送信の流れ
 
-1. クライアントが `session:send` イベントでメッセージを送信
+1. クライアントが `session:send` イベントでメッセージを送信 (送信直後は pending bubble を楽観表示)
 2. サーバーの `SessionOrchestrator.sendMessage()` が `tmuxManager.sendKeys()` を呼び出す
-3. tmuxの `send-keys -l` でリテラル入力 + `Enter` キーを送信
-4. Claude CLIが入力を受け取り、ttyd経由でブラウザのiframeにリアルタイム表示
+3. tmuxの `C-u` (入力欄クリア) → `send-keys -l` でリテラル入力 + `Enter` キーを送信
+4. claude が transcript (JSONL) に追記 → tail がクライアントへ push → pending と reconcile して確定描画
+
+### AskUserQuestion (重要な実機知見)
+
+対話版 claude は AUQ の tool_use を**回答/拒否が確定した瞬間**に tool_result と
+まとめて JSONL へ書く (質問表示中は JSONL に何も出ない)。そのため:
+
+- **質問のリアルタイム検出**: セッション起動時に `--settings` で注入する
+  PreToolUse hook (`auq-hook-bridge.ts`) が tool_input.questions を
+  `/api/internal/auq-event` へ POST → `session:auq` でカード表示
+- **回答**: カードから tmux キー送出 (単問 single = digit 一発 / multiSelect =
+  digit トグル → Right → Review digit 1 / 自由入力 = digit → literal → Enter)
+- **カードを閉じる**: JSONL に解決イベントが出現したとき (`hasResolvedAuqSince`)
+- permission prompt 等は AWAITING バナー (+[1][2] クイックキー + ターミナル誘導)
 
 ### セッション永続化
 
@@ -41,7 +65,8 @@ Claude Codeとの対話は **Agent SDK経由ではなく、tmux + ttyd による
 | リポジトリスキャン     | 指定パス配下のGitリポジトリを探索（fd/findコマンド使用）                    |
 | Git Worktree管理       | 一覧表示、作成、削除                                                        |
 | セッション管理         | tmux + ttydベースの起動、停止、復元、状態管理                               |
-| Webターミナル          | ttyd iframeによるフルターミナル体験                                         |
+| チャットビュー (PC デフォルト) | JSONL tail ベースの会話描画 + pending reconcile + AskUserQuestion カード + slash 補完 + busy/AWAITING 表示 (`?view=classic` で旧表示) |
+| Webターミナル          | ttyd iframeによるフルターミナル体験（チャットビューではトグル表示）         |
 | マルチペインビュー     | 複数セッションの同時表示（1列 / 2x2グリッド切り替え）                       |
 | モバイル対応           | セッション一覧/詳細の画面遷移、Quick Keys、スクロールモード、キーボード対応 |
 | 特殊キー送信           | Enter, Ctrl+C, Ctrl+D, y, n, S-Tab, Escape, スクロール等                    |
@@ -281,6 +306,11 @@ claude-code-ark/
 | `session:key`     | `{ sessionId, key: SpecialKey }`        | 特殊キー送信                     |
 | `session:copy`    | `sessionId, callback`                   | tmuxバッファ取得（コールバック） |
 | `session:restore` | `worktreePath: string`                  | セッション復元                   |
+| `session:jsonl-subscribe` | `sessionId: string`             | JSONL 履歴の購読開始（snapshot + 増分 push）|
+| `session:jsonl-unsubscribe` | `sessionId: string`           | JSONL 購読解除                   |
+| `session:jsonl-load-more` | `{ sessionId, limit }`          | 過去履歴を limit 行で snapshot 再送 |
+| `session:send-literal` | `{ sessionId, text }`              | Enter 無しの literal 送信（AUQ 自由入力用）|
+| `slash:list`      | `sessionId, callback`                   | slash command 候補一覧（コールバック）|
 | `tunnel:start`    | `{ port? }`                             | Quick Tunnel起動                 |
 | `tunnel:stop`     | -                                       | トンネル停止                     |
 | `ports:scan`      | -                                       | ポートスキャン                   |
@@ -311,6 +341,9 @@ claude-code-ark/
 | `session:stopped`        | `sessionId: string`            | セッション停止                   |
 | `session:restored`       | `ManagedSession`               | セッション復元完了               |
 | `session:restore_failed` | `{ worktreePath, error }`      | セッション復元失敗               |
+| `session:jsonl-snapshot` | `{ sessionId, lines }`         | JSONL 履歴 snapshot（/clear 切替時は空配列）|
+| `session:jsonl-line`     | `{ sessionId, line }`          | JSONL 新規行 push                |
+| `session:auq`            | `{ sessionId, at, questions }` | 回答待ち AskUserQuestion（PreToolUse hook 由来）|
 | `session:error`          | `{ sessionId, error }`         | セッションエラー                 |
 | `tunnel:started`         | `{ url, token }`               | トンネル開始                     |
 | `tunnel:stopped`         | -                              | トンネル停止                     |

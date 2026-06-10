@@ -165,12 +165,11 @@ export default function Dashboard() {
     window.location.hostname !== "localhost" &&
     window.location.hostname !== "127.0.0.1";
 
-  // チャットビュー (JSONL ベース + on-demand ターミナル) のオプトイン。
-  // `?view=chat` で有効化する (安定後にデフォルト反転して `?view=classic` を
-  // 逃げ道にする予定)。
+  // チャットビュー (JSONL ベース + on-demand ターミナル) がデフォルト。
+  // 旧来の TerminalPane 単独表示に戻したい場合は `?view=classic` を指定する。
   const isChatView =
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("view") === "chat";
+    typeof window === "undefined" ||
+    new URLSearchParams(window.location.search).get("view") !== "classic";
 
   const activeBrowserSession = Array.from(browserSessions.values())[0] ?? null;
 
