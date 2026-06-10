@@ -67,6 +67,7 @@ import {
 import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
 import { htmlScreenshotter } from "./lib/html-screenshotter.js";
+import { jsonlTailManager } from "./lib/jsonl-tail-manager.js";
 import { DiscoveryError } from "./lib/mcp-oauth/discovery.js";
 import { mcpOAuthOrchestrator } from "./lib/mcp-oauth/oauth-flow-orchestrator.js";
 import {
@@ -1739,6 +1740,95 @@ export async function startServer(
       }
     });
 
+    // literal テキストのみ送信 (Enter を付けない)。
+    // AskUserQuestion の自由入力モードで「1 文字ずつタイプ」する用途。
+    socket.on("session:send-literal", ({ sessionId, text }) => {
+      try {
+        tmuxManager.sendLiteral(sessionId, text);
+      } catch (error) {
+        socket.emit("session:error", {
+          sessionId,
+          error: getErrorMessage(error),
+        });
+      }
+    });
+
+    // ===== JSONL tail（チャットビューの会話データソース） =====
+    // socket ごとに購読を管理する。クライアントはアクティブ表示中の
+    // セッションだけを購読する想定 (非表示ペインの分は購読しない)。
+    const jsonlUnsubscribers = new Map<string, () => void>();
+
+    socket.on("session:jsonl-subscribe", (sessionId: string) => {
+      if (jsonlUnsubscribers.has(sessionId)) return;
+      const session = sessionOrchestrator.getSession(sessionId);
+      if (!session) {
+        socket.emit("session:error", {
+          sessionId,
+          error: "Session not found for JSONL tail",
+        });
+        return;
+      }
+      const worktreePath = session.worktreePath;
+      const configDir = session.profileConfigDir ?? null;
+
+      try {
+        const snapshot = jsonlTailManager.readCurrentSnapshot(
+          worktreePath,
+          configDir
+        );
+        socket.emit("session:jsonl-snapshot", {
+          sessionId,
+          lines: snapshot.map(l => l.raw),
+        });
+      } catch (err) {
+        console.error("[JsonlTail] Snapshot error:", getErrorMessage(err));
+      }
+
+      const unsubscribe = jsonlTailManager.subscribe(worktreePath, configDir, {
+        onLine: line => {
+          socket.emit("session:jsonl-line", { sessionId, line: line.raw });
+        },
+        onReset: () => {
+          // `/clear` 等で JSONL ファイルが切り替わったタイミング。
+          // 空 snapshot を送ることでクライアント側 events が空配列に置換され、
+          // 旧会話履歴が UI から消える。新ファイルの行は後続の onLine で届く。
+          socket.emit("session:jsonl-snapshot", { sessionId, lines: [] });
+        },
+      });
+      jsonlUnsubscribers.set(sessionId, unsubscribe);
+    });
+
+    socket.on("session:jsonl-unsubscribe", (sessionId: string) => {
+      const unsub = jsonlUnsubscribers.get(sessionId);
+      if (unsub) {
+        unsub();
+        jsonlUnsubscribers.delete(sessionId);
+      }
+    });
+
+    // 過去履歴をより多く読み直す。snapshot を limit 付きで再送する。
+    socket.on("session:jsonl-load-more", ({ sessionId, limit }) => {
+      const session = sessionOrchestrator.getSession(sessionId);
+      if (!session) return;
+      const worktreePath = session.worktreePath;
+      const configDir = session.profileConfigDir ?? null;
+      try {
+        // クライアント指定の limit をそのまま fs 読みに使わないようガード
+        const capped = Math.max(1, Math.min(Number(limit) || 0, 2000));
+        const snapshot = jsonlTailManager.readCurrentSnapshot(
+          worktreePath,
+          configDir,
+          capped
+        );
+        socket.emit("session:jsonl-snapshot", {
+          sessionId,
+          lines: snapshot.map(l => l.raw),
+        });
+      } catch (err) {
+        console.error("[JsonlTail] LoadMore error:", getErrorMessage(err));
+      }
+    });
+
     // コピー: tmuxバッファの内容をクライアントに返す（コールバックパターン）
     socket.on("session:copy", (sessionId, callback) => {
       try {
@@ -3162,6 +3252,14 @@ export async function startServer(
     socket.on("disconnect", () => {
       console.log(`Client disconnected: ${socket.id}`);
       clearInterval(previewInterval);
+      for (const unsub of jsonlUnsubscribers.values()) {
+        try {
+          unsub();
+        } catch (err) {
+          console.error("[JsonlTail] Unsubscribe error:", getErrorMessage(err));
+        }
+      }
+      jsonlUnsubscribers.clear();
       // socket.leave は disconnect 時に Socket.IO が自動で行うので room の明示的な
       // クリーンアップは不要
 
