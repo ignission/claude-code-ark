@@ -62,6 +62,11 @@ interface SplitChatPaneProps {
    * prompt 等の AWAITING フォールバックバナーに使う
    */
   bridgeStatus?: BridgeSessionStatus;
+  /**
+   * AWAITING 時の確認 UI 生テキスト (ANSI 除去済み画面末尾のミラー)。
+   * 「何を聞かれているか」をバナーにそのまま表示する。構造のパースはしない
+   */
+  awaitingText?: string;
   onSendMessage: (message: string) => void;
   /** AskUserQuestion のキャンセル (Esc) 等で使用 */
   onSendKey: (key: SpecialKey) => void;
@@ -374,6 +379,7 @@ export function SplitChatPane({
   session,
   isActive,
   bridgeStatus,
+  awaitingText,
   onSendMessage,
   onSendKey,
   onUploadFile,
@@ -883,39 +889,50 @@ export function SplitChatPane({
 
       {/* permission prompt 等のユーザー判断待ちフォールバック。
           AskUserQuestion は専用カードが出る (hook 経由) ため、カード表示中
-          は出さない。hook が取りこぼされた場合のセーフティネットも兼ねる */}
+          は出さない。hook が取りこぼされた場合のセーフティネットも兼ねる。
+          「何を聞かれているか」は確認 UI の生テキストをそのまま表示する */}
       {bridgeStatus === "AWAITING" && !activeAuq && (
-        <div className="border-t border-border bg-amber-500/10 px-3 py-2 shrink-0 flex items-center justify-between gap-2">
-          <span className="text-[13px] text-amber-700 dark:text-amber-300 min-w-0">
-            ⏳ Claude が入力を求めています
-          </span>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              onClick={() => onSendKey("1")}
-              className="text-[12px] font-mono bg-background border border-border rounded px-2 py-0.5 hover:bg-accent transition-colors"
-              title="1 を送信"
-            >
-              1
-            </button>
-            <button
-              type="button"
-              onClick={() => onSendKey("2")}
-              className="text-[12px] font-mono bg-background border border-border rounded px-2 py-0.5 hover:bg-accent transition-colors"
-              title="2 を送信"
-            >
-              2
-            </button>
-            {onToggleTerminal && !showTerminal && (
+        <div className="border-t border-border bg-amber-500/10 px-3 py-2 shrink-0 max-h-[45%] overflow-y-auto">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[13px] text-amber-700 dark:text-amber-300 min-w-0 font-medium">
+              ⏳ Claude が入力を求めています
+            </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {(["1", "2", "3"] as const).map(d => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => onSendKey(d)}
+                  className="text-[12px] font-mono bg-background border border-border rounded px-2 py-0.5 hover:bg-accent transition-colors"
+                  title={`${d} を送信`}
+                >
+                  {d}
+                </button>
+              ))}
               <button
                 type="button"
-                onClick={onToggleTerminal}
-                className="text-[12px] underline text-amber-700 dark:text-amber-300 px-1"
+                onClick={() => onSendKey("Enter")}
+                className="text-[12px] font-mono bg-background border border-border rounded px-2 py-0.5 hover:bg-accent transition-colors"
+                title="Enter を送信 (フォーカス中の項目を選択)"
               >
-                ターミナルで確認
+                Enter
               </button>
-            )}
+              {onToggleTerminal && !showTerminal && (
+                <button
+                  type="button"
+                  onClick={onToggleTerminal}
+                  className="text-[12px] underline text-amber-700 dark:text-amber-300 px-1"
+                >
+                  ターミナルで確認
+                </button>
+              )}
+            </div>
           </div>
+          {awaitingText && (
+            <pre className="mt-1.5 text-[11px] leading-[1.5] font-mono bg-background/70 border border-border rounded-md px-2.5 py-2 overflow-x-auto whitespace-pre text-foreground/80">
+              {awaitingText}
+            </pre>
+          )}
         </div>
       )}
 

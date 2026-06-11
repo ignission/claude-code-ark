@@ -110,6 +110,7 @@ export default function Dashboard() {
     beaconSetProfile,
     sessionPreviews,
     sessionActivityTexts,
+    sessionAwaitingTexts,
     gridSnapshots,
     subscribeGrid,
     unsubscribeGrid,
@@ -772,6 +773,7 @@ export default function Dashboard() {
                           socket={socket}
                           isActive={isActive}
                           bridgeStatus={sessionStatuses.get(session.id)}
+                          awaitingText={sessionAwaitingTexts.get(session.id)}
                           {...paneProps}
                         />
                       ) : (

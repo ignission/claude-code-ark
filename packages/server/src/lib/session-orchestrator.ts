@@ -755,6 +755,7 @@ export class SessionOrchestrator extends EventEmitter {
     activityText: string;
     status: SessionStatus;
     bridgeStatus: BridgeSessionStatus;
+    awaitingText?: string;
     timestamp: number;
   }> {
     const allSessions = tmuxManager.getAllSessions();
@@ -764,6 +765,7 @@ export class SessionOrchestrator extends EventEmitter {
       activityText: string;
       status: SessionStatus;
       bridgeStatus: BridgeSessionStatus;
+      awaitingText?: string;
       timestamp: number;
     }> = [];
 
@@ -843,12 +845,27 @@ export class SessionOrchestrator extends EventEmitter {
         db.updateSessionStatus(session.id, status);
       }
 
+      // AWAITING (ユーザー判断待ち) のときは、確認 UI の生テキストを添える。
+      // チャットビューのバナーが「何を聞かれているか」をそのまま表示するため。
+      // 構造のパースはせず ANSI 除去済みの末尾をミラーするだけ (壊れない)
+      let awaitingText: string | undefined;
+      if (bridgeStatus === "AWAITING") {
+        const rawLines = stripAnsi(raw)
+          .split("\n")
+          .map(l => l.replace(/\s+$/, ""));
+        while (rawLines.length > 0 && rawLines[rawLines.length - 1] === "") {
+          rawLines.pop();
+        }
+        awaitingText = rawLines.slice(-18).join("\n");
+      }
+
       previews.push({
         sessionId: session.id,
         text,
         activityText: activityLine,
         status,
         bridgeStatus,
+        awaitingText,
         timestamp: Date.now(),
       });
     }

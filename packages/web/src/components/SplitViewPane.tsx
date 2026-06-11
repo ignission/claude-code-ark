@@ -38,6 +38,8 @@ interface SplitViewPaneProps {
   isActive: boolean;
   /** session:previews 由来のセッション状態 (busy/AWAITING 表示用) */
   bridgeStatus?: BridgeSessionStatus;
+  /** AWAITING 時の確認 UI 生テキスト (バナーに表示) */
+  awaitingText?: string;
   worktree: Worktree | undefined;
   repoName?: string;
   tabs: ViewerTab[];
@@ -170,6 +172,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           session={props.session}
           isActive={props.isActive}
           bridgeStatus={props.bridgeStatus}
+          awaitingText={props.awaitingText}
           onSendMessage={props.onSendMessage}
           onSendKey={props.onSendKey}
           onUploadFile={props.onUploadFile}

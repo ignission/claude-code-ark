@@ -417,6 +417,11 @@ export interface ServerToClientEvents {
        * サイドバードット色 (SessionCard) や RepoGridView と表示を統一するための情報。
        */
       bridgeStatus: BridgeSessionStatus;
+      /**
+       * AWAITING のときのみ: 確認 UI の生テキスト (ANSI 除去済み画面末尾)。
+       * チャットビューのバナーで「何を聞かれているか」をそのまま表示する
+       */
+      awaitingText?: string;
       timestamp: number;
     }>
   ) => void;
