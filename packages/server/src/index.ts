@@ -1798,12 +1798,23 @@ export async function startServer(
 
     // literal テキストのみ送信 (Enter を付けない)。
     // AskUserQuestion の自由入力モードで「1 文字ずつタイプ」する用途。
-    socket.on("session:send-literal", ({ sessionId, text }) => {
+    // payload は外部入力なので分割代入の前に型検証する (不正 payload での
+    // ハンドラ内 throw を防ぐ)
+    socket.on("session:send-literal", (data: unknown) => {
+      const d = data as { sessionId?: unknown; text?: unknown } | null;
+      if (
+        !d ||
+        typeof d !== "object" ||
+        typeof d.sessionId !== "string" ||
+        typeof d.text !== "string"
+      ) {
+        return;
+      }
       try {
-        tmuxManager.sendLiteral(sessionId, text);
+        tmuxManager.sendLiteral(d.sessionId, d.text);
       } catch (error) {
         socket.emit("session:error", {
-          sessionId,
+          sessionId: d.sessionId,
           error: getErrorMessage(error),
         });
       }
@@ -1814,7 +1825,8 @@ export async function startServer(
     // セッションだけを購読する想定 (非表示ペインの分は購読しない)。
     const jsonlUnsubscribers = new Map<string, () => void>();
 
-    socket.on("session:jsonl-subscribe", (sessionId: string) => {
+    socket.on("session:jsonl-subscribe", (sessionId: unknown) => {
+      if (typeof sessionId !== "string") return;
       if (jsonlUnsubscribers.has(sessionId)) return;
       const session = sessionOrchestrator.getSession(sessionId);
       if (!session) {
@@ -1828,30 +1840,29 @@ export async function startServer(
       const configDir = session.profileConfigDir ?? null;
 
       try {
-        const snapshot = jsonlTailManager.readCurrentSnapshot(
-          worktreePath,
-          configDir
-        );
+        // 購読 (offset 確定) と snapshot を原子的に行う。別々に行うと
+        // その間の追記行が snapshot にも onLine にも入らず欠落する
+        const { snapshot, unsubscribe } =
+          jsonlTailManager.subscribeWithSnapshot(worktreePath, configDir, {
+            onLine: line => {
+              socket.emit("session:jsonl-line", { sessionId, line: line.raw });
+            },
+            onReset: () => {
+              // `/clear` 等で JSONL ファイルが切り替わったタイミング。
+              // 空 snapshot を送ることでクライアント側 events が空配列に置換され、
+              // 旧会話履歴が UI から消える。新ファイルの行は後続の onLine で届く。
+              socket.emit("session:jsonl-snapshot", { sessionId, lines: [] });
+            },
+          });
         socket.emit("session:jsonl-snapshot", {
           sessionId,
           lines: snapshot.map(l => l.raw),
         });
+        jsonlUnsubscribers.set(sessionId, unsubscribe);
       } catch (err) {
-        console.error("[JsonlTail] Snapshot error:", getErrorMessage(err));
+        console.error("[JsonlTail] Subscribe error:", getErrorMessage(err));
+        return;
       }
-
-      const unsubscribe = jsonlTailManager.subscribe(worktreePath, configDir, {
-        onLine: line => {
-          socket.emit("session:jsonl-line", { sessionId, line: line.raw });
-        },
-        onReset: () => {
-          // `/clear` 等で JSONL ファイルが切り替わったタイミング。
-          // 空 snapshot を送ることでクライアント側 events が空配列に置換され、
-          // 旧会話履歴が UI から消える。新ファイルの行は後続の onLine で届く。
-          socket.emit("session:jsonl-snapshot", { sessionId, lines: [] });
-        },
-      });
-      jsonlUnsubscribers.set(sessionId, unsubscribe);
 
       // 回答待ちの AskUserQuestion があれば再送する (リロード/再接続対応)。
       // 既に回答済みかどうかはクライアントが JSONL の解決イベント timestamp
@@ -1866,7 +1877,8 @@ export async function startServer(
       }
     });
 
-    socket.on("session:jsonl-unsubscribe", (sessionId: string) => {
+    socket.on("session:jsonl-unsubscribe", (sessionId: unknown) => {
+      if (typeof sessionId !== "string") return;
       const unsub = jsonlUnsubscribers.get(sessionId);
       if (unsub) {
         unsub();
@@ -1876,33 +1888,53 @@ export async function startServer(
 
     // ===== Slash command 候補列挙 =====
     // チャットビュー入力欄の `/` 補完用。worktree + プロファイル configDir の
-    // `.claude/commands/*.md` を集約して返す。callback パターン (1 回限り)
-    socket.on("slash:list", async (sessionId, callback) => {
+    // `.claude/commands/*.md` を集約して返す。callback パターン (1 回限り)。
+    // ack callback は外部入力なので関数であることを検証してから呼ぶ
+    socket.on("slash:list", async (sessionId: unknown, callback: unknown) => {
+      if (typeof callback !== "function") return;
+      const reply = callback as (response: {
+        commands?: unknown;
+        error?: string;
+      }) => void;
       try {
+        if (typeof sessionId !== "string") {
+          reply({ error: "Invalid sessionId" });
+          return;
+        }
         const session = sessionOrchestrator.getSession(sessionId);
         if (!session) {
-          callback({ error: "Session not found" });
+          reply({ error: "Session not found" });
           return;
         }
         const commands = await listSlashCommands(
           session.worktreePath,
           session.profileConfigDir ?? null
         );
-        callback({ commands });
+        reply({ commands });
       } catch (err) {
-        callback({ error: getErrorMessage(err) });
+        try {
+          reply({ error: getErrorMessage(err) });
+        } catch {
+          // ack が二重呼び出し等で throw しても落とさない
+        }
       }
     });
 
     // 過去履歴をより多く読み直す。snapshot を limit 付きで再送する。
-    socket.on("session:jsonl-load-more", ({ sessionId, limit }) => {
+    // payload は外部入力なので分割代入の前に型検証する
+    socket.on("session:jsonl-load-more", (data: unknown) => {
+      const d = data as { sessionId?: unknown; limit?: unknown } | null;
+      if (!d || typeof d !== "object" || typeof d.sessionId !== "string") {
+        return;
+      }
+      const sessionId = d.sessionId;
       const session = sessionOrchestrator.getSession(sessionId);
       if (!session) return;
       const worktreePath = session.worktreePath;
       const configDir = session.profileConfigDir ?? null;
       try {
         // クライアント指定の limit をそのまま fs 読みに使わないようガード
-        const capped = Math.max(1, Math.min(Number(limit) || 0, 2000));
+        const capped = Math.max(1, Math.min(Number(d.limit) || 0, 2000));
         const snapshot = jsonlTailManager.readCurrentSnapshot(
           worktreePath,
           configDir,

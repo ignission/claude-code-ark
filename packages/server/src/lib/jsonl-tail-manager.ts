@@ -117,6 +117,35 @@ export class JsonlTailManager {
   }
 
   /**
+   * 購読開始と初期 snapshot の取得を原子的に行う。
+   *
+   * subscribe (tail の読み出し offset 確定) と snapshot 読みを別々に行うと、
+   * その間に追記された行が snapshot にも onLine にも入らず欠落する。
+   * ここでは同一同期処理内で tail の確定 offset を先に固定し、その offset
+   * までの末尾 `limit` 行を snapshot として返す。offset 以降の追記は必ず
+   * onLine で届くため、snapshot と増分が隙間なく連続する。
+   */
+  subscribeWithSnapshot(
+    worktreePath: string,
+    configDir: string | null | undefined,
+    listener: JsonlListener,
+    limit = 100
+  ): { snapshot: JsonlLine[]; unsubscribe: () => void } {
+    const unsubscribe = this.subscribe(worktreePath, configDir, listener);
+    const tail = this.tails.get(this.keyOf(worktreePath, configDir));
+    let snapshot: JsonlLine[] = [];
+    if (tail?.currentFile) {
+      // readOffset には lineBuffer (改行未到達の断片) のバイト数も含まれる。
+      // 断片が snapshot 末尾に不完全 JSON 行として混入しないよう、
+      // 確定行境界までを snapshot の上限にする
+      const settled =
+        tail.readOffset - Buffer.byteLength(tail.lineBuffer, "utf-8");
+      snapshot = this.readTailLines(tail.currentFile, limit, settled);
+    }
+    return { snapshot, unsubscribe };
+  }
+
+  /**
    * 購読中のすべてのファイルを閉じる (サーバ終了時など)
    */
   cleanup(): void {
@@ -337,15 +366,22 @@ export class JsonlTailManager {
   /**
    * 現行ファイルの末尾 `limit` 行を返す (初回 snapshot 用)。
    * 巨大ファイルでも先に全行 split せず、末尾から逆方向にチャンク読みする。
+   * `upToBytes` を渡すとそのバイト位置までを「末尾」として扱う
+   * (subscribeWithSnapshot が tail offset と snapshot を一致させるために使う)。
    */
-  private readTailLines(filePath: string, limit: number): JsonlLine[] {
+  private readTailLines(
+    filePath: string,
+    limit: number,
+    upToBytes?: number
+  ): JsonlLine[] {
     try {
       const stat = fs.statSync(filePath);
-      if (stat.size === 0 || limit <= 0) return [];
+      const end = Math.max(0, Math.min(upToBytes ?? stat.size, stat.size));
+      if (end === 0 || limit <= 0) return [];
       const fd = fs.openSync(filePath, "r");
       try {
         const CHUNK = 64 * 1024;
-        let pos = stat.size;
+        let pos = end;
         let buffer = "";
         let newlineCount = 0;
         // 末尾から CHUNK ごとに読みつつ、改行が `limit` 件以上含まれるまで遡る

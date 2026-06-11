@@ -48,18 +48,31 @@ const BUILT_IN: SlashCommandInfo[] = [
 const FRONTMATTER_DESC_RE = /^---[\r\n]+([\s\S]*?)^---[\r\n]+/m;
 const DESCRIPTION_LINE_RE = /^description:\s*(.+?)\s*$/m;
 
+/**
+ * frontmatter 抽出に必要な分だけ読む上限。
+ * `.claude/commands/*.md` は入力境界として信用できない (巨大ファイルや
+ * 巨大ファイルへの symlink が置かれ得る) ため、全読みせず先頭のみ読む。
+ */
+const FRONTMATTER_READ_LIMIT = 4 * 1024;
+
 async function readDescriptionFromMd(
   filePath: string
 ): Promise<string | undefined> {
+  let fh: Awaited<ReturnType<typeof fs.open>> | undefined;
   try {
-    const buf = await fs.readFile(filePath, "utf-8");
-    const fm = buf.match(FRONTMATTER_DESC_RE);
+    fh = await fs.open(filePath, "r");
+    const buf = Buffer.alloc(FRONTMATTER_READ_LIMIT);
+    const { bytesRead } = await fh.read(buf, 0, FRONTMATTER_READ_LIMIT, 0);
+    const head = buf.toString("utf-8", 0, bytesRead);
+    const fm = head.match(FRONTMATTER_DESC_RE);
     if (!fm) return undefined;
     const desc = fm[1].match(DESCRIPTION_LINE_RE);
     if (!desc) return undefined;
     return desc[1].replace(/^["'`]|["'`]$/g, "").trim() || undefined;
   } catch {
     return undefined;
+  } finally {
+    await fh?.close().catch(() => {});
   }
 }
 

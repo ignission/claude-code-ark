@@ -115,10 +115,21 @@ describe("pickLatestJsonl", () => {
     expect(pickLatestJsonl(dir, "/a/b")).toBe(mine);
   });
 
-  it("cwd フィールドの無いファイルは検証不能 = 一致扱いで採用しうる", () => {
+  it("cwd フィールドの無いファイルは一致候補が無い場合のみ採用される", () => {
     const noCwd = path.join(dir, "no-cwd.jsonl");
     fs.writeFileSync(noCwd, '{"type":"summary"}\n');
     expect(pickLatestJsonl(dir, "/wt")).toBe(noCwd);
+  });
+
+  it("cwd 不明の新しいファイルより cwd 一致の古いファイルを優先する", () => {
+    // 書きかけの新規ファイル (cwd 行なし) が encode 衝突した別 worktree の
+    // ものである可能性があるため、検証できた一致を必ず優先する
+    const mine = path.join(dir, "mine.jsonl");
+    const unknown = path.join(dir, "unknown.jsonl");
+    fs.writeFileSync(mine, '{"cwd":"/wt","type":"user"}\n');
+    fs.writeFileSync(unknown, '{"type":"summary"}\n');
+    setMtime(mine, -60); // unknown の方が新しい
+    expect(pickLatestJsonl(dir, "/wt")).toBe(mine);
   });
 
   it("expectedCwd 一致が無ければ mtime 最新へフォールバック", () => {

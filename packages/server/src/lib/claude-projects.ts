@@ -82,9 +82,12 @@ function readFileCwd(filePath: string): string | null {
  *
  * `expectedCwd` を渡すと、各ファイル先頭の cwd フィールドが一致するものを
  * mtime 降順で優先する (encodeProjectDir の衝突対策。例: `/a/b` と `/a.b` は
- * 同じディレクトリ名になる)。cwd が読めないファイルは「検証不能 = 一致扱い」、
- * 一致が 1 つも無ければ mtime 最新へフォールバックする
- * (beacon-cli-session.ts の locateJsonl と同じセマンティクス)。
+ * 同じディレクトリ名になる)。優先順位:
+ *   1. cwd が expectedCwd に一致するファイル (mtime 降順)
+ *   2. cwd が読めないファイル (書きかけ等。検証不能のため fallback 扱い)
+ *   3. mtime 最新 (全ファイルが別 cwd だった場合の最後の砦)
+ * cwd 不明を一致より先に採用すると、encode 衝突時に別 worktree の transcript
+ * を表示し得るため、必ず一致を先に探す。
  */
 export function pickLatestJsonl(
   dir: string,
@@ -106,10 +109,13 @@ export function pickLatestJsonl(
     }
     candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
     if (expectedCwd) {
+      let unknown: string | null = null;
       for (const c of candidates) {
         const cwd = readFileCwd(c.path);
-        if (cwd === null || cwd === expectedCwd) return c.path;
+        if (cwd === expectedCwd) return c.path;
+        if (cwd === null && unknown === null) unknown = c.path;
       }
+      if (unknown) return unknown;
     }
     return candidates[0]?.path ?? null;
   } catch {
