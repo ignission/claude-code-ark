@@ -284,6 +284,114 @@ function ToolCallCard({
 }
 
 /**
+ * AWAITING フォールバックのミニ操作パッド。
+ *
+ * hook 未注入セッション (AUQ カードが出ない) や permission prompt で、
+ * ターミナルを開かずに確認 UI を操作する。確認 UI の生テキスト表示 +
+ * キーパッド (数字ジャンプ/トグル・矢印・Space・Enter・Esc) +
+ * 自由入力 (Type something 用 literal 送信)。
+ * 画面の構造はパースしない: ユーザーが生テキストを読んでキーを選ぶ。
+ */
+function AwaitingPad({
+  socket,
+  sessionId,
+  awaitingText,
+  onSendKey,
+  onOpenTerminal,
+}: {
+  socket: TypedSocket | null;
+  sessionId: string;
+  awaitingText?: string;
+  onSendKey: (key: SpecialKey) => void;
+  onOpenTerminal?: () => void;
+}) {
+  const [freeText, setFreeText] = useState("");
+
+  const submitFreeText = () => {
+    const value = freeText;
+    if (!value.trim() || !socket) return;
+    // 「Type something」行にフォーカスした状態 (数字キーでジャンプ済み) で
+    // literal 送信 → Enter で確定する。C-u は送らない (選択 UI 上の
+    // 不要な端末操作になるため)。チャット入力欄の session:send を使わない
+    // のも同じ理由 (C-u + 即 Enter が確認 UI を誤操作する)
+    socket.emit("session:send-literal", { sessionId, text: value });
+    setTimeout(() => onSendKey("Enter"), 250);
+    setFreeText("");
+  };
+
+  const keyBtn = (label: string, key: SpecialKey, title: string) => (
+    <button
+      key={label}
+      type="button"
+      onClick={() => onSendKey(key)}
+      className="text-[12px] font-mono bg-background border border-border rounded px-2 py-0.5 hover:bg-accent transition-colors"
+      title={title}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="border-t border-border bg-amber-500/10 px-3 py-2 shrink-0 max-h-[50%] overflow-y-auto">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[13px] text-amber-700 dark:text-amber-300 min-w-0 font-medium">
+          ⏳ Claude が入力を求めています
+        </span>
+        {onOpenTerminal && (
+          <button
+            type="button"
+            onClick={onOpenTerminal}
+            className="text-[12px] underline text-amber-700 dark:text-amber-300 px-1 shrink-0"
+          >
+            ターミナルで確認
+          </button>
+        )}
+      </div>
+      {awaitingText && (
+        <pre className="mt-1.5 text-[11px] leading-[1.5] font-mono bg-background/70 border border-border rounded-md px-2.5 py-2 overflow-x-auto whitespace-pre text-foreground/80">
+          {awaitingText}
+        </pre>
+      )}
+      <div className="mt-1.5 flex items-center gap-1 flex-wrap">
+        {(["1", "2", "3", "4", "5", "6"] as const).map(d =>
+          keyBtn(d, d, `${d} を送信 (選択肢ジャンプ/トグル)`)
+        )}
+        <span className="w-2" />
+        {keyBtn("↑", "Up", "フォーカスを上へ")}
+        {keyBtn("↓", "Down", "フォーカスを下へ")}
+        {keyBtn("→", "Right", "次のタブ / Submit へ")}
+        {keyBtn("Space", "Space", "チェックをトグル")}
+        {keyBtn("Enter", "Enter", "フォーカス中の項目を選択/確定")}
+        {keyBtn("Esc", "Escape", "キャンセル")}
+      </div>
+      <div className="mt-1.5 flex items-center gap-2 bg-background border border-border rounded-md px-2.5 py-1 focus-within:border-primary">
+        <input
+          type="text"
+          value={freeText}
+          onChange={e => setFreeText(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              submitFreeText();
+            }
+          }}
+          placeholder="自由入力 — 先に Type something の番号を押してから入力 (Enter で確定)"
+          className="flex-1 text-[12px] bg-transparent focus:outline-none placeholder:text-muted-foreground py-0.5"
+        />
+        <button
+          type="button"
+          onClick={submitFreeText}
+          disabled={!freeText.trim()}
+          className="text-[11px] bg-primary text-primary-foreground rounded px-2 py-0.5 disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          入力して確定
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
  * subagent (isSidechain) の連続イベントを 1 ブロックに集約した折りたたみ表示。
  * 大量のツール呼び出しがメイン会話を埋めないようにする。
  */
@@ -889,51 +997,17 @@ export function SplitChatPane({
 
       {/* permission prompt 等のユーザー判断待ちフォールバック。
           AskUserQuestion は専用カードが出る (hook 経由) ため、カード表示中
-          は出さない。hook が取りこぼされた場合のセーフティネットも兼ねる。
-          「何を聞かれているか」は確認 UI の生テキストをそのまま表示する */}
+          は出さない。hook が取りこぼされた場合のセーフティネットも兼ねる */}
       {bridgeStatus === "AWAITING" && !activeAuq && (
-        <div className="border-t border-border bg-amber-500/10 px-3 py-2 shrink-0 max-h-[45%] overflow-y-auto">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[13px] text-amber-700 dark:text-amber-300 min-w-0 font-medium">
-              ⏳ Claude が入力を求めています
-            </span>
-            <div className="flex items-center gap-1.5 shrink-0">
-              {(["1", "2", "3"] as const).map(d => (
-                <button
-                  key={d}
-                  type="button"
-                  onClick={() => onSendKey(d)}
-                  className="text-[12px] font-mono bg-background border border-border rounded px-2 py-0.5 hover:bg-accent transition-colors"
-                  title={`${d} を送信`}
-                >
-                  {d}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => onSendKey("Enter")}
-                className="text-[12px] font-mono bg-background border border-border rounded px-2 py-0.5 hover:bg-accent transition-colors"
-                title="Enter を送信 (フォーカス中の項目を選択)"
-              >
-                Enter
-              </button>
-              {onToggleTerminal && !showTerminal && (
-                <button
-                  type="button"
-                  onClick={onToggleTerminal}
-                  className="text-[12px] underline text-amber-700 dark:text-amber-300 px-1"
-                >
-                  ターミナルで確認
-                </button>
-              )}
-            </div>
-          </div>
-          {awaitingText && (
-            <pre className="mt-1.5 text-[11px] leading-[1.5] font-mono bg-background/70 border border-border rounded-md px-2.5 py-2 overflow-x-auto whitespace-pre text-foreground/80">
-              {awaitingText}
-            </pre>
-          )}
-        </div>
+        <AwaitingPad
+          socket={socket}
+          sessionId={session.id}
+          awaitingText={awaitingText}
+          onSendKey={onSendKey}
+          onOpenTerminal={
+            onToggleTerminal && !showTerminal ? onToggleTerminal : undefined
+          }
+        />
       )}
 
       <form
