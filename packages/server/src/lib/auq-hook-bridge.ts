@@ -25,6 +25,7 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { db } from "./database.js";
 import { getDataDir } from "./paths.js";
 
 export const AUQ_EVENT_PATH = "/api/internal/auq-event";
@@ -39,9 +40,31 @@ export interface PendingAuq {
 }
 
 const PENDING_TTL_MS = 10 * 60 * 1000;
+const TOKEN_SETTING_KEY = "auq_hook_token";
+
+/**
+ * hook token は DB (settings テーブル) に永続化して再利用する。
+ * 対話版 claude は起動時に読んだ settings (hook command 内の token) を
+ * 生存中ずっと保持するため、サーバー再起動で token が変わると既存
+ * セッションの hook がすべて 403 になる (Beacon の C-B3 と同じ構造)。
+ */
+function loadOrCreateToken(): string {
+  try {
+    const saved = db.getSetting(TOKEN_SETTING_KEY);
+    if (typeof saved === "string" && /^[a-f0-9]{32,}$/.test(saved)) {
+      return saved;
+    }
+    const fresh = randomBytes(24).toString("hex");
+    db.setSetting(TOKEN_SETTING_KEY, fresh);
+    return fresh;
+  } catch {
+    // DB が使えない場合は ephemeral にフォールバック (この起動中のみ有効)
+    return randomBytes(24).toString("hex");
+  }
+}
 
 export class AuqHookBridge {
-  private token = randomBytes(24).toString("hex");
+  private token = loadOrCreateToken();
   private settingsPath: string | null = null;
   /** worktreePath や sessionId をキーにしない: 受け口で解決した sessionId で保持 */
   private pending = new Map<string, PendingAuq>();

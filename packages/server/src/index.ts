@@ -494,6 +494,9 @@ export async function startServer(
   // 「質問が表示された」のリアルタイム検出はこの hook が唯一の情報源。
   app.post(AUQ_EVENT_PATH, (req, res) => {
     if (!auqHookBridge.verifyToken(req.headers[AUQ_TOKEN_HEADER])) {
+      // 旧 token を保持したままの常駐 claude などからの hook。
+      // token は DB 永続化しているので通常は起きないが、調査の手がかりに残す
+      console.warn("[AuqHook] 403: token 不一致の hook を拒否しました");
       res.status(403).json({ error: "forbidden" });
       return;
     }
@@ -508,12 +511,16 @@ export async function startServer(
       !body.tool_input ||
       typeof body.tool_input !== "object"
     ) {
+      console.warn(
+        `[AuqHook] 400: 想定外 payload (tool=${String(body?.tool_name)})`
+      );
       res.status(400).json({ error: "bad request" });
       return;
     }
     const session = sessionOrchestrator.getSessionByWorktree(body.cwd);
     if (!session) {
       // Ark 管理外の claude (ユーザーが手動起動した等) からの hook は無視
+      console.log(`[AuqHook] 管理外 cwd からの hook を無視: ${body.cwd}`);
       res.status(204).end();
       return;
     }
@@ -526,6 +533,7 @@ export async function startServer(
       at: entry.at,
       questions: entry.questions,
     });
+    console.log(`[AuqHook] session:auq 配信: ${session.id} (${body.cwd})`);
     res.status(204).end();
   });
 
