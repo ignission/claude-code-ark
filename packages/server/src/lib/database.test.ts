@@ -470,7 +470,7 @@ describe("SessionDatabase - mcp_servers URL マイグレーション", () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  function insertAtlassianRow(url: string): void {
+  function insertMcpServerRow(url: string): void {
     // 旧バージョンで保存されたレコードを再現する (raw SQLite で直接 INSERT)
     const raw = new Database(dbPath);
     raw
@@ -497,33 +497,42 @@ describe("SessionDatabase - mcp_servers URL マイグレーション", () => {
   it("旧 /v1/sse の保存済み URL が起動時に /v1/mcp へ正規化される", () => {
     // スキーマだけ作って閉じる → 旧 URL レコードを注入 → 再オープンで migration
     new SessionDatabase(dbPath).close();
-    insertAtlassianRow("https://mcp.atlassian.com/v1/sse");
+    insertMcpServerRow("https://mcp.atlassian.com/v1/sse");
 
     const db2 = new SessionDatabase(dbPath);
-    const server = db2.getMcpServer("atlassian-test01");
-    expect(server?.url).toBe("https://mcp.atlassian.com/v1/mcp");
-    db2.close();
+    try {
+      const server = db2.getMcpServer("atlassian-test01");
+      expect(server?.url).toBe("https://mcp.atlassian.com/v1/mcp");
+    } finally {
+      db2.close();
+    }
   });
 
   it("既に /v1/mcp のレコードはそのまま (冪等)", () => {
     new SessionDatabase(dbPath).close();
-    insertAtlassianRow("https://mcp.atlassian.com/v1/mcp");
+    insertMcpServerRow("https://mcp.atlassian.com/v1/mcp");
 
     const db2 = new SessionDatabase(dbPath);
-    expect(db2.getMcpServer("atlassian-test01")?.url).toBe(
-      "https://mcp.atlassian.com/v1/mcp"
-    );
-    db2.close();
+    try {
+      expect(db2.getMcpServer("atlassian-test01")?.url).toBe(
+        "https://mcp.atlassian.com/v1/mcp"
+      );
+    } finally {
+      db2.close();
+    }
   });
 
   it("無関係な URL のレコードには触れない", () => {
     new SessionDatabase(dbPath).close();
-    insertAtlassianRow("https://mcp.linear.app/sse");
+    insertMcpServerRow("https://mcp.linear.app/sse");
 
     const db2 = new SessionDatabase(dbPath);
-    expect(db2.getMcpServer("atlassian-test01")?.url).toBe(
-      "https://mcp.linear.app/sse"
-    );
-    db2.close();
+    try {
+      expect(db2.getMcpServer("atlassian-test01")?.url).toBe(
+        "https://mcp.linear.app/sse"
+      );
+    } finally {
+      db2.close();
+    }
   });
 });
