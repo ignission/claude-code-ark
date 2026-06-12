@@ -154,6 +154,9 @@ export function buildKeySequence(
     } else if (q.multiSelect) {
       if (a.indexes.length === 0) return null;
       for (const idx of a.indexes) {
+        // 範囲外 index (負数含む) は SpecialKey 型外の digit ("0" 等) を
+        // 生成し得るため明示的に拒否する
+        if (idx < 0 || idx >= q.options.length) return null;
         if (idx + 1 > 9) return null;
         steps.push({ kind: "digit", value: String(idx + 1) });
         steps.push({ kind: "wait", ms: 150 });
@@ -165,6 +168,7 @@ export function buildKeySequence(
     } else {
       if (a.indexes.length !== 1) return null;
       const idx = a.indexes[0];
+      if (idx < 0 || idx >= q.options.length) return null;
       if (idx + 1 > 9) return null;
       // single-select は digit 一発で回答確定 + 自動タブ送り
       // (単問の場合はこれだけで即 submit される)

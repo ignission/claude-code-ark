@@ -269,6 +269,18 @@ describe("buildKeySequence", () => {
     ).not.toBeNull();
   });
 
+  it("範囲外の index (負数 / 選択肢数以上) は null", () => {
+    expect(
+      buildKeySequence([q3], [{ kind: "options", indexes: [-1] }])
+    ).toBeNull();
+    expect(
+      buildKeySequence([q3], [{ kind: "options", indexes: [3] }])
+    ).toBeNull();
+    expect(
+      buildKeySequence([q3multi], [{ kind: "options", indexes: [0, -1] }])
+    ).toBeNull();
+  });
+
   it("single-select で複数 index は null", () => {
     expect(
       buildKeySequence([q3], [{ kind: "options", indexes: [0, 1] }])

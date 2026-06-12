@@ -95,7 +95,11 @@ const SLASH_ARGS_RE = /<command-args>([^<]*)<\/command-args>/;
 
 function safeJsonStringify(v: unknown): string {
   try {
-    return typeof v === "string" ? v : JSON.stringify(v);
+    if (typeof v === "string") return v;
+    // JSON.stringify(undefined) は undefined を返し string 型と実値がズレる
+    // ため、文字列化を保証する
+    const s = JSON.stringify(v);
+    return s ?? String(v);
   } catch {
     return String(v);
   }

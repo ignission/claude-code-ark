@@ -22,7 +22,7 @@
  *   - リモートクライアント (tunnel 経由) からの偽装 POST は token 不一致で拒否
  */
 
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { db } from "./database.js";
@@ -69,9 +69,12 @@ export class AuqHookBridge {
   /** worktreePath や sessionId をキーにしない: 受け口で解決した sessionId で保持 */
   private pending = new Map<string, PendingAuq>();
 
-  /** hook 認証 token の検証 */
+  /** hook 認証 token の検証 (タイミング攻撃を避ける定数時間比較) */
   verifyToken(value: unknown): boolean {
-    return typeof value === "string" && value === this.token;
+    if (typeof value !== "string") return false;
+    const a = Buffer.from(value);
+    const b = Buffer.from(this.token);
+    return a.length === b.length && timingSafeEqual(a, b);
   }
 
   /**

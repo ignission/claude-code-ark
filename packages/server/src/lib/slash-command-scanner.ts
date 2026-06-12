@@ -94,11 +94,14 @@ async function scanCommandsDir(
     const full = path.join(dir, entry);
     let stat: import("node:fs").Stats;
     try {
-      stat = await fs.stat(full);
+      // lstat で symlink を追従せずに判定する。コマンドディレクトリは
+      // 入力境界として信用できないため、symlink 経由で許可ディレクトリ外の
+      // 任意ファイル先頭 (description 行) が slash 補完へ露出するのを防ぐ
+      stat = await fs.lstat(full);
     } catch {
       continue;
     }
-    if (!stat.isFile()) continue;
+    if (!stat.isFile() || stat.isSymbolicLink()) continue;
     const description = await readDescriptionFromMd(full);
     out.push({ name: `/${stem}`, description, source });
   }
