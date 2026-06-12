@@ -438,6 +438,17 @@ export class SessionDatabase {
       "CREATE INDEX IF NOT EXISTS idx_mcp_servers_provider_id ON mcp_servers(provider_id)"
     );
 
+    // マイグレーション: Atlassian の HTTP+SSE エンドポイント廃止 (2026/6/30)
+    // に伴い providers.ts のデフォルトは /v1/mcp (streamable-HTTP) へ移行済み
+    // (#203)。しかし保存済みレコードの url は接続時点の値のまま残るため、
+    // 旧 /v1/sse を指していると build-mcp-servers が {type:"http"} + SSE
+    // エンドポイントというプロトコル不一致の mcp-config を生成し、Beacon 等で
+    // Atlassian ツールが一切利用できなくなる (実環境で発生)。
+    // 全読み出し経路に効くよう起動時にレコード自体を正規化する (冪等)。
+    this.db.exec(
+      "UPDATE mcp_servers SET url = 'https://mcp.atlassian.com/v1/mcp' WHERE url = 'https://mcp.atlassian.com/v1/sse'"
+    );
+
     // フロントライン記録テーブル
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS frontline_records (
