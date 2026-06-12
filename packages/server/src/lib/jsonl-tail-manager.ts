@@ -83,7 +83,9 @@ export class JsonlTailManager {
   private tails = new Map<string, ActiveTail>();
 
   private keyOf(worktreePath: string, configDir: string | null | undefined) {
-    return `${worktreePath} ${configDir ?? ""}`;
+    // 空白区切りの単純連結だと空白を含む path/configDir で衝突し、
+    // 別セッションの tail/listener が混線するため衝突しない表現にする
+    return JSON.stringify([worktreePath, configDir ?? null]);
   }
 
   /**
@@ -331,10 +333,13 @@ export class JsonlTailManager {
     }
     const fd = fs.openSync(tail.currentFile, "r");
     try {
-      const length = size - tail.readOffset;
+      // 巨大な一括追記 (resume での過去ログ流入等) でも一度に確保する
+      // バッファを上限内に抑える。残りは直後の setImmediate で続きを処理する
+      const MAX_DRAIN_BYTES = 4 * 1024 * 1024;
+      const length = Math.min(size - tail.readOffset, MAX_DRAIN_BYTES);
       const buf = Buffer.alloc(length);
       fs.readSync(fd, buf, 0, length, tail.readOffset);
-      tail.readOffset = size;
+      tail.readOffset += length;
       const chunk = tail.lineBuffer + buf.toString("utf-8");
       const lines = chunk.split("\n");
       // 最後の要素は改行で終わっていない可能性 → バッファに残す
@@ -352,6 +357,15 @@ export class JsonlTailManager {
       }
     } finally {
       fs.closeSync(fd);
+    }
+    // 上限で打ち切った読み残しを即時に続行する (1 tick あたりの処理量は
+    // 上限内に保ちつつ、次の polling まで読み残しを放置しない)。
+    // 各回で readOffset が必ず前進するため有限回で収束する
+    if (size > tail.readOffset) {
+      setImmediate(() => {
+        // 続行前に購読が解除されていれば何もしない
+        if (tail.listeners.size > 0) this.drainNewLines(tail);
+      });
     }
   }
 

@@ -99,6 +99,10 @@ export class AuqHookBridge {
     fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, {
       mode: 0o600,
     });
+    // writeFileSync の mode は新規作成時にしか適用されないため、
+    // 既存ファイル (前回起動の生成物) の permission も明示的に矯正する
+    // (token を含むファイルなので 0600 を assert する)
+    fs.chmodSync(settingsPath, 0o600);
     this.settingsPath = settingsPath;
     return settingsPath;
   }

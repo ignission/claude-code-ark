@@ -85,9 +85,9 @@ function readFileCwd(filePath: string): string | null {
  * 同じディレクトリ名になる)。優先順位:
  *   1. cwd が expectedCwd に一致するファイル (mtime 降順)
  *   2. cwd が読めないファイル (書きかけ等。検証不能のため fallback 扱い)
- *   3. mtime 最新 (全ファイルが別 cwd だった場合の最後の砦)
- * cwd 不明を一致より先に採用すると、encode 衝突時に別 worktree の transcript
- * を表示し得るため、必ず一致を先に探す。
+ * **既知の不一致ファイルには決してフォールバックしない** (別 worktree の
+ * 会話を表示する情報漏えいになるため null を返し、一致ファイルの出現を
+ * 呼び出し側の polling に委ねる)。
  */
 export function pickLatestJsonl(
   dir: string,
@@ -115,7 +115,7 @@ export function pickLatestJsonl(
         if (cwd === expectedCwd) return c.path;
         if (cwd === null && unknown === null) unknown = c.path;
       }
-      if (unknown) return unknown;
+      return unknown;
     }
     return candidates[0]?.path ?? null;
   } catch {

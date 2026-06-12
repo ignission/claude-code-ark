@@ -27,7 +27,7 @@ import {
   useRef,
   useState,
 } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
@@ -116,11 +116,42 @@ function SlashCommandCard({ name, args }: { name: string; args?: string }) {
   );
 }
 
+/**
+ * assistant text はモデル出力由来の信用できない Markdown。
+ * - 画像はレンダリングしない (外部 URL の自動読込によるトラッキング/
+ *   情報漏えいを防ぐ。alt テキストのプレースホルダ表示に置き換える)
+ * - リンクは http/https のみ許可し、新規タブ + noopener noreferrer で開く
+ */
+const MD_URL_TRANSFORM = (url: string): string =>
+  /^(https?:|#)/i.test(url) ? url : "";
+
+const MD_COMPONENTS: Components = {
+  img: ({ alt }) => (
+    <span
+      className="inline-block text-xs text-muted-foreground bg-muted rounded px-1.5 py-0.5"
+      title="モデル出力由来の外部画像は自動表示しません"
+    >
+      🖼 {alt || "画像"}
+    </span>
+  ),
+  a: ({ href, children }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
+  ),
+};
+
 function AssistantTextCard({ text }: { text: string }) {
   return (
     <div className="px-4 py-2">
       <div className="md-prose text-[16px] text-foreground leading-[1.65]">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          urlTransform={MD_URL_TRANSFORM}
+          components={MD_COMPONENTS}
+        >
+          {text}
+        </ReactMarkdown>
       </div>
     </div>
   );

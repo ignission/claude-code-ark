@@ -132,10 +132,10 @@ describe("pickLatestJsonl", () => {
     expect(pickLatestJsonl(dir, "/wt")).toBe(mine);
   });
 
-  it("expectedCwd 一致が無ければ mtime 最新へフォールバック", () => {
+  it("既知の不一致ファイルしか無ければ null (別 worktree の会話を出さない)", () => {
     const other = path.join(dir, "other.jsonl");
     fs.writeFileSync(other, '{"cwd":"/different","type":"user"}\n');
-    expect(pickLatestJsonl(dir, "/wt")).toBe(other);
+    expect(pickLatestJsonl(dir, "/wt")).toBeNull();
   });
 
   it("先頭行が cwd 無しでも後続行の cwd で検証する", () => {
