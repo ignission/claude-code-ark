@@ -674,6 +674,9 @@ export function SplitChatPane({
   // 連続する subagent イベントを折りたたみグループへ
   const groupedEvents = useMemo(() => groupSidechain(events), [events]);
 
+  // 入力欄。会話エリアのクリックでここにフォーカスを移す
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
   // ===== スクロール追従 + 上端で過去読み込み =====
   const jsonlScrollRef = useRef<HTMLDivElement>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
@@ -710,6 +713,24 @@ export function SplitChatPane({
     if (!el) return;
     el.scrollTop = el.scrollHeight;
     setIsNearBottom(true);
+  }, []);
+
+  // 会話エリアのクリックで入力欄にフォーカスする。ただし
+  //  - テキスト選択中 (ドラッグでコピー等) はフォーカスを奪わない
+  //  - ボタン / リンク / 入力など操作要素のクリックは本来の挙動を優先する
+  // (AskUserQuestion の選択肢ボタン、ファイルリンク、「最新へ」ボタン等)
+  const handleConversationClick = useCallback((e: React.MouseEvent) => {
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
+    const target = e.target as HTMLElement | null;
+    if (
+      target?.closest(
+        "button, a, input, textarea, select, [role='button'], [contenteditable='true']"
+      )
+    ) {
+      return;
+    }
+    inputRef.current?.focus();
   }, []);
 
   useEffect(() => {
@@ -967,8 +988,11 @@ export function SplitChatPane({
           relative ラッパーで囲み「下へジャンプ」ボタンをスクロール領域に
           重ねて配置する。スクロール領域自体は absolute inset-0 で内側を埋める。 */}
       <div className="flex-1 min-h-0 relative">
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: クリックで入力欄にフォーカスを移すだけの補助操作。会話ログ自体は非対話要素のまま */}
+        {/* biome-ignore lint/a11y/useKeyWithClickEvents: キーボード利用者は Tab で入力欄 (textarea) に直接到達できるため、キーハンドラは不要 */}
         <div
           ref={jsonlScrollRef}
+          onClick={handleConversationClick}
           className="absolute inset-0 overflow-y-auto py-2"
         >
           {events.length === 0 &&
@@ -1091,6 +1115,7 @@ export function SplitChatPane({
           </>
         )}
         <textarea
+          ref={inputRef}
           value={inputValue}
           onChange={e => setInputValue(e.target.value)}
           onKeyDown={handleKeyDown}
