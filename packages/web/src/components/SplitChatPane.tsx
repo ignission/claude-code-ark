@@ -722,10 +722,15 @@ export function SplitChatPane({
   const handleConversationClick = useCallback((e: React.MouseEvent) => {
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed) return;
-    const target = e.target as HTMLElement | null;
+    // e.target は Node 型保証がない (closest 非存在で例外になり得る) ため
+    // Element であることを実行時に確認してから扱う
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    // 操作要素・フォーカス可能要素のクリックは本来の挙動を優先する。
+    // contenteditable は属性値 ("" / true / plaintext-only) を問わず拾う
     if (
-      target?.closest(
-        "button, a, input, textarea, select, [role='button'], [contenteditable='true']"
+      target.closest(
+        "button, a, input, textarea, select, [role='button'], [role='link'], [tabindex], [contenteditable]"
       )
     ) {
       return;
