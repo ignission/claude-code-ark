@@ -109,8 +109,16 @@ export class SessionOrchestrator extends EventEmitter {
         const restoredProfile =
           dbSession.profileId && dbSession.profileConfigDir
             ? { id: dbSession.profileId, configDir: dbSession.profileConfigDir }
-            : null;
+            : this.detectEnvProfile(tmuxSession);
         this.sessionProfiles.set(dbSession.id, restoredProfile);
+      } else {
+        // DB に対応レコードなし (例: data dir を別パスに移行した直後)。
+        // env から CLAUDE_CONFIG_DIR を補完し、JsonlTailManager が正しい
+        // プロファイル配下の JSONL を見つけられるようにする。
+        const envProfile = this.detectEnvProfile(tmuxSession);
+        if (envProfile) {
+          this.sessionProfiles.set(tmuxSession.id, envProfile);
+        }
       }
 
       // ttydも自動起動（起動完了後にクライアントへ通知）
@@ -192,8 +200,38 @@ export class SessionOrchestrator extends EventEmitter {
       ttydPort: ttydInstance?.port || null,
       ttydUrl: ttydInstance ? `/ttyd/${tmuxSession.id}/` : null,
       profileId: current?.id ?? null,
+      // JSONL tail (チャットビュー) がプロファイル配下の
+      // <configDir>/projects を参照するために必要
+      profileConfigDir: current?.configDir ?? null,
       staleProfile,
     };
+  }
+
+  /**
+   * 復元したセッションの「事実上の CLAUDE_CONFIG_DIR」を env から検出する。
+   *
+   * DB にプロファイル記録が無い (または null の) セッションでも、
+   * - 旧コードで起動され tmux サーバー env から CLAUDE_CONFIG_DIR を継承した
+   * - data dir 移行で DB レコードが消えた
+   * 等で claude が別プロファイル配下に transcript を書いていることがある。
+   * その場合 JsonlTailManager がデフォルト ~/.claude/projects を見てしまい、
+   * チャットビューに会話が一切表示されない。
+   * tmux session env (`show-environment`) → pane プロセス environ (/proc) の
+   * 順で実際の値を探し、見つかれば configDir のみのダミープロファイルとして
+   * 反映する (profileId は管理 UI と紐付かない `__env__`)。
+   */
+  private detectEnvProfile(tmuxSession: {
+    id: string;
+    tmuxSessionName: string;
+  }): { id: string; configDir: string } | null {
+    const envConfigDir =
+      tmuxManager.getEnv(tmuxSession.id, "CLAUDE_CONFIG_DIR") ??
+      tmuxManager.getPaneEnv(tmuxSession.id, "CLAUDE_CONFIG_DIR");
+    if (!envConfigDir) return null;
+    console.log(
+      `[Orchestrator] Restored profile from env: ${tmuxSession.tmuxSessionName} -> ${envConfigDir}`
+    );
+    return { id: "__env__", configDir: envConfigDir };
   }
 
   /**
@@ -717,6 +755,7 @@ export class SessionOrchestrator extends EventEmitter {
     activityText: string;
     status: SessionStatus;
     bridgeStatus: BridgeSessionStatus;
+    awaitingText?: string;
     timestamp: number;
   }> {
     const allSessions = tmuxManager.getAllSessions();
@@ -726,6 +765,7 @@ export class SessionOrchestrator extends EventEmitter {
       activityText: string;
       status: SessionStatus;
       bridgeStatus: BridgeSessionStatus;
+      awaitingText?: string;
       timestamp: number;
     }> = [];
 
@@ -805,12 +845,27 @@ export class SessionOrchestrator extends EventEmitter {
         db.updateSessionStatus(session.id, status);
       }
 
+      // AWAITING (ユーザー判断待ち) のときは、確認 UI の生テキストを添える。
+      // チャットビューのバナーが「何を聞かれているか」をそのまま表示するため。
+      // 構造のパースはせず ANSI 除去済みの末尾をミラーするだけ (壊れない)
+      let awaitingText: string | undefined;
+      if (bridgeStatus === "AWAITING") {
+        const rawLines = stripAnsi(raw)
+          .split("\n")
+          .map(l => l.replace(/\s+$/, ""));
+        while (rawLines.length > 0 && rawLines[rawLines.length - 1] === "") {
+          rawLines.pop();
+        }
+        awaitingText = rawLines.slice(-18).join("\n");
+      }
+
       previews.push({
         sessionId: session.id,
         text,
         activityText: activityLine,
         status,
         bridgeStatus,
+        awaitingText,
         timestamp: Date.now(),
       });
     }

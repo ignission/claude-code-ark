@@ -31,6 +31,11 @@ import {
 import httpProxy from "http-proxy";
 import { nanoid } from "nanoid";
 import { Server, type Socket } from "socket.io";
+import {
+  AUQ_EVENT_PATH,
+  AUQ_TOKEN_HEADER,
+  auqHookBridge,
+} from "./lib/auq-hook-bridge.js";
 import { authManager } from "./lib/auth.js";
 import { beaconManager } from "./lib/beacon-manager.js";
 import {
@@ -67,6 +72,7 @@ import {
 import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
 import { htmlScreenshotter } from "./lib/html-screenshotter.js";
+import { jsonlTailManager } from "./lib/jsonl-tail-manager.js";
 import { DiscoveryError } from "./lib/mcp-oauth/discovery.js";
 import { mcpOAuthOrchestrator } from "./lib/mcp-oauth/oauth-flow-orchestrator.js";
 import {
@@ -77,6 +83,7 @@ import {
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import { sessionOrchestrator } from "./lib/session-orchestrator.js";
+import { listSlashCommands } from "./lib/slash-command-scanner.js";
 import { detectMultiProfileSupported } from "./lib/system.js";
 import { tmuxManager } from "./lib/tmux-manager.js";
 import { TunnelManager } from "./lib/tunnel.js";
@@ -479,6 +486,56 @@ export async function startServer(
 
   // JSON body parser（Settings API用）
   app.use(express.json({ limit: "10kb" }));
+
+  // ===== AskUserQuestion hook 受け口 =====
+  // セッション内 claude の PreToolUse hook (auq-hook-bridge が --settings で
+  // 注入) から、回答待ち質問の構造化データが POST される。
+  // 対話版 claude は AUQ の tool_use を回答確定までJSONLに書かないため、
+  // 「質問が表示された」のリアルタイム検出はこの hook が唯一の情報源。
+  app.post(AUQ_EVENT_PATH, (req, res) => {
+    if (!auqHookBridge.verifyToken(req.headers[AUQ_TOKEN_HEADER])) {
+      // 旧 token を保持したままの常駐 claude などからの hook。
+      // token は DB 永続化しているので通常は起きないが、調査の手がかりに残す
+      console.warn("[AuqHook] 403: token 不一致の hook を拒否しました");
+      res.status(403).json({ error: "forbidden" });
+      return;
+    }
+    const body = req.body as {
+      cwd?: unknown;
+      tool_name?: unknown;
+      tool_input?: { questions?: unknown };
+    };
+    if (
+      body?.tool_name !== "AskUserQuestion" ||
+      typeof body.cwd !== "string" ||
+      !body.tool_input ||
+      typeof body.tool_input !== "object"
+    ) {
+      console.warn(
+        `[AuqHook] 400: 想定外 payload (tool=${String(body?.tool_name)})`
+      );
+      res.status(400).json({ error: "bad request" });
+      return;
+    }
+    const session = sessionOrchestrator.getSessionByWorktree(body.cwd);
+    if (!session) {
+      // Ark 管理外の claude (ユーザーが手動起動した等) からの hook は無視
+      console.log(`[AuqHook] 管理外 cwd からの hook を無視: ${body.cwd}`);
+      res.status(204).end();
+      return;
+    }
+    const entry = auqHookBridge.setPending(
+      session.id,
+      body.tool_input.questions
+    );
+    io.emit("session:auq", {
+      sessionId: session.id,
+      at: entry.at,
+      questions: entry.questions,
+    });
+    console.log(`[AuqHook] session:auq 配信: ${session.id} (${body.cwd})`);
+    res.status(204).end();
+  });
 
   // セキュリティヘッダー
   app.use((_req, res, next) => {
@@ -1736,6 +1793,159 @@ export async function startServer(
           sessionId,
           error: getErrorMessage(error),
         });
+      }
+    });
+
+    // literal テキストのみ送信 (Enter を付けない)。
+    // AskUserQuestion の自由入力モードで「1 文字ずつタイプ」する用途。
+    // payload は外部入力なので分割代入の前に型検証する (不正 payload での
+    // ハンドラ内 throw を防ぐ)
+    socket.on("session:send-literal", (data: unknown) => {
+      const d = data as { sessionId?: unknown; text?: unknown } | null;
+      if (
+        !d ||
+        typeof d !== "object" ||
+        typeof d.sessionId !== "string" ||
+        typeof d.text !== "string"
+      ) {
+        return;
+      }
+      try {
+        tmuxManager.sendLiteral(d.sessionId, d.text);
+      } catch (error) {
+        socket.emit("session:error", {
+          sessionId: d.sessionId,
+          error: getErrorMessage(error),
+        });
+      }
+    });
+
+    // ===== JSONL tail（チャットビューの会話データソース） =====
+    // socket ごとに購読を管理する。クライアントはアクティブ表示中の
+    // セッションだけを購読する想定 (非表示ペインの分は購読しない)。
+    const jsonlUnsubscribers = new Map<string, () => void>();
+
+    socket.on("session:jsonl-subscribe", (sessionId: unknown) => {
+      if (typeof sessionId !== "string") return;
+      if (jsonlUnsubscribers.has(sessionId)) return;
+      const session = sessionOrchestrator.getSession(sessionId);
+      if (!session) {
+        socket.emit("session:error", {
+          sessionId,
+          error: "Session not found for JSONL tail",
+        });
+        return;
+      }
+      const worktreePath = session.worktreePath;
+      const configDir = session.profileConfigDir ?? null;
+
+      try {
+        // 購読 (offset 確定) と snapshot を原子的に行う。別々に行うと
+        // その間の追記行が snapshot にも onLine にも入らず欠落する
+        const { snapshot, unsubscribe } =
+          jsonlTailManager.subscribeWithSnapshot(worktreePath, configDir, {
+            onLine: line => {
+              socket.emit("session:jsonl-line", { sessionId, line: line.raw });
+            },
+            onReset: () => {
+              // `/clear` 等で JSONL ファイルが切り替わったタイミング。
+              // 空 snapshot を送ることでクライアント側 events が空配列に置換され、
+              // 旧会話履歴が UI から消える。新ファイルの行は後続の onLine で届く。
+              socket.emit("session:jsonl-snapshot", { sessionId, lines: [] });
+            },
+          });
+        socket.emit("session:jsonl-snapshot", {
+          sessionId,
+          lines: snapshot.map(l => l.raw),
+        });
+        jsonlUnsubscribers.set(sessionId, unsubscribe);
+      } catch (err) {
+        console.error("[JsonlTail] Subscribe error:", getErrorMessage(err));
+        return;
+      }
+
+      // 回答待ちの AskUserQuestion があれば再送する (リロード/再接続対応)。
+      // 既に回答済みかどうかはクライアントが JSONL の解決イベント timestamp
+      // と at を比較して判定する
+      const pendingAuq = auqHookBridge.getPending(sessionId);
+      if (pendingAuq) {
+        socket.emit("session:auq", {
+          sessionId,
+          at: pendingAuq.at,
+          questions: pendingAuq.questions,
+        });
+      }
+    });
+
+    socket.on("session:jsonl-unsubscribe", (sessionId: unknown) => {
+      if (typeof sessionId !== "string") return;
+      const unsub = jsonlUnsubscribers.get(sessionId);
+      if (unsub) {
+        unsub();
+        jsonlUnsubscribers.delete(sessionId);
+      }
+    });
+
+    // ===== Slash command 候補列挙 =====
+    // チャットビュー入力欄の `/` 補完用。worktree + プロファイル configDir の
+    // `.claude/commands/*.md` を集約して返す。callback パターン (1 回限り)。
+    // ack callback は外部入力なので関数であることを検証してから呼ぶ
+    socket.on("slash:list", async (sessionId: unknown, callback: unknown) => {
+      if (typeof callback !== "function") return;
+      const reply = callback as (response: {
+        commands?: unknown;
+        error?: string;
+      }) => void;
+      try {
+        if (typeof sessionId !== "string") {
+          reply({ error: "Invalid sessionId" });
+          return;
+        }
+        const session = sessionOrchestrator.getSession(sessionId);
+        if (!session) {
+          reply({ error: "Session not found" });
+          return;
+        }
+        const commands = await listSlashCommands(
+          session.worktreePath,
+          session.profileConfigDir ?? null
+        );
+        reply({ commands });
+      } catch (err) {
+        try {
+          reply({ error: getErrorMessage(err) });
+        } catch {
+          // ack が二重呼び出し等で throw しても落とさない
+        }
+      }
+    });
+
+    // 過去履歴をより多く読み直す。snapshot を limit 付きで再送する。
+    // payload は外部入力なので分割代入の前に型検証する
+    socket.on("session:jsonl-load-more", (data: unknown) => {
+      const d = data as { sessionId?: unknown; limit?: unknown } | null;
+      if (!d || typeof d !== "object" || typeof d.sessionId !== "string") {
+        return;
+      }
+      const sessionId = d.sessionId;
+      const session = sessionOrchestrator.getSession(sessionId);
+      if (!session) return;
+      const worktreePath = session.worktreePath;
+      const configDir = session.profileConfigDir ?? null;
+      try {
+        // クライアント指定の limit をそのまま fs 読みに使わないようガード
+        const capped = Math.max(1, Math.min(Number(d.limit) || 0, 2000));
+        const snapshot = jsonlTailManager.readCurrentSnapshot(
+          worktreePath,
+          configDir,
+          capped
+        );
+        socket.emit("session:jsonl-snapshot", {
+          sessionId,
+          lines: snapshot.map(l => l.raw),
+        });
+      } catch (err) {
+        console.error("[JsonlTail] LoadMore error:", getErrorMessage(err));
       }
     });
 
@@ -3162,6 +3372,14 @@ export async function startServer(
     socket.on("disconnect", () => {
       console.log(`Client disconnected: ${socket.id}`);
       clearInterval(previewInterval);
+      for (const unsub of jsonlUnsubscribers.values()) {
+        try {
+          unsub();
+        } catch (err) {
+          console.error("[JsonlTail] Unsubscribe error:", getErrorMessage(err));
+        }
+      }
+      jsonlUnsubscribers.clear();
       // socket.leave は disconnect 時に Socket.IO が自動で行うので room の明示的な
       // クリーンアップは不要
 
@@ -3208,6 +3426,18 @@ export async function startServer(
   });
 
   console.log(`Ark server running on http://localhost:${port}/`);
+
+  // AskUserQuestion hook 入りの claude 用 settings を書き出し、以降の
+  // セッション起動コマンドに --settings として注入する (listen 後 = port 確定後)
+  try {
+    const hookSettingsPath = auqHookBridge.writeSettingsFile(port);
+    tmuxManager.setClaudeSettingsPath(hookSettingsPath);
+    console.log(`[AuqHook] settings: ${hookSettingsPath}`);
+  } catch (err) {
+    // hook が無くてもセッション自体は動く (AUQ カードが出ないだけ) ので
+    // 起動は継続する
+    console.error("[AuqHook] settings 書き出しに失敗:", getErrorMessage(err));
+  }
 
   // Start Quick Tunnel if enabled
   // 注: enableQuick は --quick コマンドラインオプションによるトンネル起動。

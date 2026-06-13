@@ -7,6 +7,7 @@
 
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
 import path from "node:path";
 import type { SpecialKey } from "@ark/shared";
 import { nanoid } from "nanoid";
@@ -81,6 +82,20 @@ const ALLOWED_SPECIAL_KEYS = new Set<SpecialKey>([
   "Escape",
   "Up",
   "Down",
+  // AskUserQuestion multiSelect の Submit タブ移動に使用
+  "Right",
+  // multiSelect 選択肢のトグルに使用
+  "Space",
+  // 数字キー (AskUserQuestion の選択肢直接ジャンプに使用)
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
 ]);
 
 export interface TmuxSession {
@@ -115,6 +130,8 @@ export class TmuxManager extends EventEmitter {
   private readonly SESSION_PREFIX = "ark-";
   /** パーミッションスキップフラグ（--dangerously-skip-permissions を付与するか） */
   private skipPermissions = false;
+  /** claude 起動時に --settings で注入する settings JSON のパス (AUQ hook 用) */
+  private claudeSettingsPath: string | null = null;
 
   constructor() {
     super();
@@ -129,6 +146,15 @@ export class TmuxManager extends EventEmitter {
    */
   setSkipPermissions(value: boolean): void {
     this.skipPermissions = value;
+  }
+
+  /**
+   * claude 起動コマンドに `--settings <path>` で注入する settings JSON を
+   * 設定する (AskUserQuestion の PreToolUse hook 等)。
+   * サーバー起動時 (listen 後、port 確定後) に呼ばれる。
+   */
+  setClaudeSettingsPath(value: string | null): void {
+    this.claudeSettingsPath = value;
   }
 
   /**
@@ -286,11 +312,27 @@ export class TmuxManager extends EventEmitter {
     const claudeBinary = resolveValidatedClaudePath();
     const claudeArg =
       claudeBinary === "claude" ? "claude" : posixShellQuote(claudeBinary);
+    // AskUserQuestion hook 等を注入する claude 用 settings (--settings)。
+    // サーバー起動時に setClaudeSettingsPath で設定される。
+    const settingsArg = this.claudeSettingsPath
+      ? ` --settings ${posixShellQuote(this.claudeSettingsPath)}`
+      : "";
+    // プロファイル未指定のセッションが、Ark サーバープロセス (やその親、
+    // tmux サーバー) の CLAUDE_CONFIG_DIR を意図せず継承すると、transcript が
+    // 想定外の config dir 配下に書かれ、JSONL tail (チャットビュー) が
+    // 参照する <profileConfigDir ?? ~/.claude>/projects と不整合になる。
+    // tmux の -e は空文字設定しかできず、claude は空文字 CLAUDE_CONFIG_DIR を
+    // 「cwd を config dir に使う」と解釈して worktree 内に projects/ 等を
+    // 作ってしまう (実機確認済み) ため、シェル変数ごと unset してから起動する。
+    const hasProfileEnv =
+      options?.env != null && "CLAUDE_CONFIG_DIR" in options.env;
+    const envPrefix = hasProfileEnv ? "" : "unset CLAUDE_CONFIG_DIR; ";
+    const skipFlag = this.skipPermissions
+      ? " --dangerously-skip-permissions"
+      : "";
     const claudeCmd =
       options?.commandLine ??
-      (this.skipPermissions
-        ? `${claudeArg} --dangerously-skip-permissions`
-        : claudeArg);
+      `${envPrefix}${claudeArg}${skipFlag}${settingsArg}`;
 
     let tmuxCreated = false;
 
@@ -393,6 +435,21 @@ export class TmuxManager extends EventEmitter {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error("Session not found");
 
+    // Esc 後に Claude 側の入力欄へ直前メッセージが復元されているケース等、
+    // tmux pane の入力バッファに既存テキストが残っていると Ark から送る
+    // テキストと連結されて重複送信になる。事前に C-u (kill line) を送って
+    // 入力をクリアしてからリテラル送信する。入力が空なら C-u は no-op。
+    const clearResult = spawnSync(
+      TMUX_BINARY_PATH,
+      ["send-keys", "-t", session.tmuxSessionName, "C-u"],
+      { stdio: "pipe" }
+    );
+    if (clearResult.error) throw clearResult.error;
+    if (clearResult.status !== 0)
+      throw new Error(
+        `tmux send-keys C-u exited with status ${clearResult.status}`
+      );
+
     // send-keys -l でリテラル送信（spawnSyncなのでシェルエスケープ不要）
     const literalResult = spawnSync(
       TMUX_BINARY_PATH,
@@ -417,6 +474,24 @@ export class TmuxManager extends EventEmitter {
         `tmux send-keys Enter exited with status ${enterResult.status}`
       );
 
+    session.lastActivity = new Date();
+  }
+
+  /**
+   * tmux に literal テキストのみ送信する (Enter を付けない)
+   * AskUserQuestion の Type something モードで「1 文字ずつタイプ」したいときに使う。
+   */
+  sendLiteral(sessionId: string, input: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error("Session not found");
+    const result = spawnSync(
+      TMUX_BINARY_PATH,
+      ["send-keys", "-t", session.tmuxSessionName, "-l", input],
+      { stdio: "pipe" }
+    );
+    if (result.error) throw result.error;
+    if (result.status !== 0)
+      throw new Error(`tmux send-keys -l exited with status ${result.status}`);
     session.lastActivity = new Date();
   }
 
@@ -485,6 +560,68 @@ export class TmuxManager extends EventEmitter {
     session.status = "stopped";
     this.sessions.delete(sessionId);
     this.emit("session:stopped", sessionId);
+  }
+
+  /**
+   * 指定セッションの tmux 環境変数を取得する。未定義/未取得は null。
+   *
+   * `tmux show-environment -t <session> <NAME>` を使用。変数名指定は
+   * 該当変数が無い場合に exit code 非 0 になるので、ステータスのみ判定する。
+   */
+  getEnv(sessionId: string, name: string): string | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    try {
+      const result = spawnSync(
+        TMUX_BINARY_PATH,
+        ["show-environment", "-t", session.tmuxSessionName, name],
+        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+      );
+      if (result.status !== 0) return null;
+      const line = (result.stdout ?? "").trim();
+      // 出力形式: `NAME=value` または `-NAME` (unset)
+      if (line.startsWith("-")) return null;
+      const eq = line.indexOf("=");
+      if (eq < 0) return null;
+      return line.slice(eq + 1);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * pane のシェルプロセスの環境変数を /proc/<pane_pid>/environ から読む。
+   * Linux 限定 (/proc が無い環境では null)。
+   *
+   * tmux session env (`show-environment`) に変数が無くても、tmux サーバー
+   * プロセスの env を継承してシェル/claude に変数が渡っているケースがある
+   * (旧コードで起動されたセッションの CLAUDE_CONFIG_DIR 継承等)。
+   * 「claude が実際にどの env で動いているか」の事実はプロセス environ が
+   * 唯一の情報源なので、復元時のプロファイル補完フォールバックに使う。
+   */
+  getPaneEnv(sessionId: string, name: string): string | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    try {
+      const result = spawnSync(
+        TMUX_BINARY_PATH,
+        ["list-panes", "-t", session.tmuxSessionName, "-F", "#{pane_pid}"],
+        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+      );
+      if (result.status !== 0) return null;
+      const pid = Number.parseInt(
+        (result.stdout ?? "").trim().split("\n")[0] ?? "",
+        10
+      );
+      if (!Number.isFinite(pid) || pid <= 0) return null;
+      const environ = fs.readFileSync(`/proc/${pid}/environ`, "utf-8");
+      for (const entry of environ.split("\0")) {
+        if (entry.startsWith(`${name}=`)) return entry.slice(name.length + 1);
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   /**

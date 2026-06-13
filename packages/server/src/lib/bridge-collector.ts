@@ -441,10 +441,16 @@ function detectStatus(tail: string[]): BridgeSessionStatus {
 function detectAwaiting(tail: string[]): boolean {
   // 直近 15 行に絞って探す (古い発話に含まれる質問文での誤発火を避ける)
   const window = tail.slice(-15);
-  return window.some(l =>
-    /\(y\/n\)|\[y\/N\]|\[Y\/n\]|Do you want to|Tool use approval|approval required/i.test(
-      l
-    )
+  return window.some(
+    l =>
+      /\(y\/n\)|\[y\/N\]|\[Y\/n\]|Do you want to|Tool use approval|approval required/i.test(
+        l
+      ) ||
+      // AskUserQuestion / trust prompt 等の選択 UI フッタ。
+      // 行頭限定にして、ツール結果引用 (⎿ 付き) 内の同文言では発火させない。
+      // チャットビューはこれを AWAITING フォールバックバナーに使う
+      // (hook 未注入の旧セッションで AUQ カードが出せないケースの第二防衛線)
+      /^\s{0,2}Enter to (select|confirm)\b/.test(l)
   );
 }
 

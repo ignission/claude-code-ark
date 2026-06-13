@@ -122,14 +122,15 @@ describe("TmuxManager.createSession - options互換", () => {
       "NODE_ENV=",
     ]);
 
-    // send-keysにclaudeが渡される
+    // send-keysにclaudeが渡される。プロファイル未指定なので、tmux サーバー
+    // env からの CLAUDE_CONFIG_DIR 継承を断つ unset が前置される
     const sendKeys = findCommandSendKeysArgs();
     expect(sendKeys).toBeDefined();
     expect(sendKeys).toEqual([
       "send-keys",
       "-t",
       "ark-testid01",
-      "claude",
+      "unset CLAUDE_CONFIG_DIR; claude",
       "Enter",
     ]);
 
@@ -241,7 +242,19 @@ describe("TmuxManager.createSession - options互換", () => {
 
     const sendKeys = findCommandSendKeysArgs();
     if (!sendKeys) throw new Error("send-keys args not found");
-    expect(sendKeys[3]).toBe("claude --dangerously-skip-permissions");
+    expect(sendKeys[3]).toBe(
+      "unset CLAUDE_CONFIG_DIR; claude --dangerously-skip-permissions"
+    );
+  });
+
+  it("options.env に CLAUDE_CONFIG_DIR がある場合 (プロファイル) は unset を前置しない", async () => {
+    await manager.createSession("/path/to/worktree", {
+      env: { CLAUDE_CONFIG_DIR: "/home/user/.claude-work" },
+    });
+
+    const sendKeys = findCommandSendKeysArgs();
+    if (!sendKeys) throw new Error("send-keys args not found");
+    expect(sendKeys[3]).toBe("claude");
   });
 
   it("resolveClaudePath が絶対パスを返したら send-keys に POSIX single-quote 付きで渡る (issue #186)", async () => {
@@ -256,7 +269,7 @@ describe("TmuxManager.createSession - options互換", () => {
     if (!sendKeys) throw new Error("send-keys args not found");
     // POSIX single-quote で wrap した絶対パスがそのまま送られる
     // ($, `, \, " 等の shell メタ文字解釈を完全に抑止するため double-quote ではなく single-quote)
-    expect(sendKeys[3]).toBe(`'${bundledClaudePath}'`);
+    expect(sendKeys[3]).toBe(`unset CLAUDE_CONFIG_DIR; '${bundledClaudePath}'`);
   });
 
   it("空白を含むパス + skipPermissions=true で single-quote + フラグが付く (issue #186)", async () => {
@@ -271,7 +284,7 @@ describe("TmuxManager.createSession - options互換", () => {
     const sendKeys = findCommandSendKeysArgs();
     if (!sendKeys) throw new Error("send-keys args not found");
     expect(sendKeys[3]).toBe(
-      `'${bundledClaudePath}' --dangerously-skip-permissions`
+      `unset CLAUDE_CONFIG_DIR; '${bundledClaudePath}' --dangerously-skip-permissions`
     );
   });
 
@@ -284,7 +297,9 @@ describe("TmuxManager.createSession - options互換", () => {
 
     const sendKeys = findCommandSendKeysArgs();
     if (!sendKeys) throw new Error("send-keys args not found");
-    expect(sendKeys[3]).toBe("'/tmp/it'\\''s a/claude'");
+    expect(sendKeys[3]).toBe(
+      "unset CLAUDE_CONFIG_DIR; '/tmp/it'\\''s a/claude'"
+    );
   });
 
   it("resolveClaudePath が相対パスを返した場合はセッション作成自体を throw する (PATH 汚染への信頼境界拡張を拒否)", async () => {
@@ -318,5 +333,136 @@ describe("TmuxManager.createSession - options互換", () => {
     await expect(manager.createSession("/path/to/worktree")).rejects.toThrow(
       /control char/
     );
+  });
+});
+
+/**
+ * sendKeys / sendSpecialKey / sendLiteral の挙動を検証する。
+ * sendKeys は Esc 後の重複送信を防ぐため、リテラル送信前に C-u
+ * (kill-line) を送って tmux pane の入力欄をクリアする必要がある。
+ */
+describe("TmuxManager - 入力系メソッド", () => {
+  let manager: TmuxManager;
+  let sessionId: string;
+  let tmuxSessionName: string;
+
+  beforeEach(async () => {
+    mockedSpawnSync.mockReset();
+    mockedExecSync.mockReset();
+    mockedExecSync.mockImplementation((cmd: string) => {
+      if (typeof cmd === "string" && cmd.includes("list-sessions")) {
+        return Buffer.from("");
+      }
+      return Buffer.from("");
+    });
+    mockedSpawnSync.mockReturnValue(successResult as never);
+
+    manager = new TmuxManager();
+    const session = await manager.createSession("/wt");
+    sessionId = session.id;
+    tmuxSessionName = session.tmuxSessionName;
+
+    // createSession 中に積まれた send-keys 呼び出しは別検証なので、
+    // ここで mock の履歴をクリアして以降は sendKeys 呼び出しだけを検証する
+    mockedSpawnSync.mockClear();
+  });
+
+  /** spawnSync 呼び出し履歴から tmux send-keys の引数だけを抽出 */
+  function sendKeysCalls(): string[][] {
+    return mockedSpawnSync.mock.calls
+      .map(call => call[1])
+      .filter((args): args is string[] => Array.isArray(args))
+      .filter(args => args[0] === "send-keys");
+  }
+
+  describe("sendKeys (Enter 付き送信)", () => {
+    it("リテラル送信の前に C-u を送って tmux pane の入力欄をクリアする", () => {
+      manager.sendKeys(sessionId, "hello");
+
+      const calls = sendKeysCalls();
+      // 想定: 1) C-u クリア, 2) -l hello, 3) Enter
+      expect(calls).toHaveLength(3);
+      expect(calls[0]).toEqual(["send-keys", "-t", tmuxSessionName, "C-u"]);
+      expect(calls[1]).toEqual([
+        "send-keys",
+        "-t",
+        tmuxSessionName,
+        "-l",
+        "hello",
+      ]);
+      expect(calls[2]).toEqual(["send-keys", "-t", tmuxSessionName, "Enter"]);
+    });
+
+    it("送信順序: C-u → -l → Enter を厳密に守る", () => {
+      // Esc 後の状態を模した重複防止フローの肝。
+      // この順番が崩れると Claude 側に "残骸 + 新メッセージ" が連結されたり、
+      // クリアが効かなかったりするので順序の固定化が重要。
+      manager.sendKeys(sessionId, "msg");
+      const calls = sendKeysCalls();
+      const keys = calls.map(c =>
+        c.includes("-l") ? "literal" : c[c.length - 1]
+      );
+      expect(keys).toEqual(["C-u", "literal", "Enter"]);
+    });
+
+    it("マルチバイト文字も -l でリテラル送信される", () => {
+      manager.sendKeys(sessionId, "中止テスト");
+      const calls = sendKeysCalls();
+      expect(calls[1]).toEqual([
+        "send-keys",
+        "-t",
+        tmuxSessionName,
+        "-l",
+        "中止テスト",
+      ]);
+    });
+
+    it("不明なセッション ID なら例外", () => {
+      expect(() => manager.sendKeys("unknown", "x")).toThrow(
+        "Session not found"
+      );
+    });
+  });
+
+  describe("sendLiteral (Enter 無し送信)", () => {
+    it("Enter も C-u も付与せずリテラルだけ送る", () => {
+      manager.sendLiteral(sessionId, "abc");
+      const calls = sendKeysCalls();
+      expect(calls).toEqual([
+        ["send-keys", "-t", tmuxSessionName, "-l", "abc"],
+      ]);
+    });
+  });
+
+  describe("sendSpecialKey", () => {
+    it("ホワイトリストの Escape は tmux に直接渡る", () => {
+      manager.sendSpecialKey(sessionId, "Escape");
+      const calls = sendKeysCalls();
+      expect(calls).toEqual([["send-keys", "-t", tmuxSessionName, "Escape"]]);
+    });
+
+    it("S-Tab は tmux 用の BTab にマップされる", () => {
+      manager.sendSpecialKey(sessionId, "S-Tab");
+      const calls = sendKeysCalls();
+      expect(calls[0]).toEqual(["send-keys", "-t", tmuxSessionName, "BTab"]);
+    });
+
+    it("数字キー (AskUserQuestion 選択肢) はそのまま送信される", () => {
+      manager.sendSpecialKey(sessionId, "3");
+      const calls = sendKeysCalls();
+      expect(calls).toEqual([["send-keys", "-t", tmuxSessionName, "3"]]);
+    });
+
+    it("Space (multiSelect トグル) はそのまま送信される", () => {
+      manager.sendSpecialKey(sessionId, "Space");
+      const calls = sendKeysCalls();
+      expect(calls).toEqual([["send-keys", "-t", tmuxSessionName, "Space"]]);
+    });
+
+    it("ホワイトリスト外のキーは例外", () => {
+      expect(() =>
+        manager.sendSpecialKey(sessionId, "DangerousKey" as never)
+      ).toThrow();
+    });
   });
 });

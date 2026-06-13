@@ -5,6 +5,7 @@ export default defineConfig({
     include: [
       "packages/server/src/**/*.test.ts",
       "packages/shared/src/**/*.test.ts",
+      "packages/web/src/**/*.test.ts",
     ],
     environment: "node",
   },

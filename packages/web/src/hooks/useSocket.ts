@@ -149,6 +149,13 @@ interface UseSocketReturn {
    */
   sessionStatuses: Map<string, BridgeSessionStatus>;
 
+  /**
+   * sessionId → AWAITING 時の確認 UI 生テキスト。
+   * チャットビューのバナーで「何を聞かれているか」をそのまま表示する。
+   * AWAITING でないセッションはエントリ自体が無い
+   */
+  sessionAwaitingTexts: Map<string, string>;
+
   // Beacon
   beaconMessages: ChatMessage[];
   beaconStreaming: boolean;
@@ -313,6 +320,12 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   // サイドバードット色用。RepoGridView 購読の有無に関わらず常時更新される。
   const [sessionStatuses, setSessionStatuses] = useState<
     Map<string, BridgeSessionStatus>
+  >(new Map());
+
+  // AWAITING 時の確認 UI 生テキスト (チャットビューのバナーで内容を表示する)。
+  // AWAITING でないセッションは undefined になる
+  const [sessionAwaitingTexts, setSessionAwaitingTexts] = useState<
+    Map<string, string>
   >(new Map());
 
   // Browser session state
@@ -760,6 +773,17 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         const next = new Map(prev);
         for (const p of previews) {
           next.set(p.sessionId, p.bridgeStatus);
+        }
+        return next;
+      });
+      setSessionAwaitingTexts(prev => {
+        const next = new Map(prev);
+        for (const p of previews) {
+          if (p.awaitingText) {
+            next.set(p.sessionId, p.awaitingText);
+          } else {
+            next.delete(p.sessionId);
+          }
         }
         return next;
       });
@@ -1561,6 +1585,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     // Session previews
     sessionPreviews,
     sessionActivityTexts,
+    sessionAwaitingTexts,
     gridSnapshots,
     subscribeGrid,
     unsubscribeGrid,

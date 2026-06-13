@@ -114,6 +114,18 @@ export interface McpAuthFlow {
   authorizationUrl: string;
 }
 
+/**
+ * Slash command 候補。チャットビュー入力欄の補完で使う。
+ *  - `name`: `/foo` 形式 (先頭の `/` 含む)
+ *  - `description`: 1 行説明 (frontmatter `description:` または組み込み定義)
+ *  - `source`: どこから拾ったか (UI のバッジ表示用)
+ */
+export interface SlashCommandInfo {
+  name: string;
+  description?: string;
+  source: "built-in" | "global" | "project" | "plugin";
+}
+
 export interface Worktree {
   id: string;
   path: string;
@@ -306,7 +318,18 @@ export type SpecialKey =
   | "S-Tab"
   | "Escape"
   | "Up"
-  | "Down";
+  | "Down"
+  | "Right"
+  | "Space"
+  | "1"
+  | "2"
+  | "3"
+  | "4"
+  | "5"
+  | "6"
+  | "7"
+  | "8"
+  | "9";
 
 // WebSocket event types
 export interface ServerToClientEvents {
@@ -349,6 +372,33 @@ export interface ServerToClientEvents {
   "session:updated": (session: ManagedSession) => void;
   "session:stopped": (sessionId: string) => void;
   "session:error": (data: { sessionId: string; error: string }) => void;
+
+  /**
+   * `session:jsonl-subscribe` の初回応答。既存履歴を一括で返す。
+   * `lines` は JSONL 1 行 = 1 要素の生 JSON 文字列配列。
+   * /clear 等で JSONL ファイルが切り替わったときは空配列で再送される。
+   */
+  "session:jsonl-snapshot": (data: {
+    sessionId: string;
+    lines: string[];
+  }) => void;
+
+  /** 購読中の JSONL ファイルに新規行が追記されたときの push */
+  "session:jsonl-line": (data: { sessionId: string; line: string }) => void;
+
+  /**
+   * AskUserQuestion が表示された通知 (PreToolUse hook 由来)。
+   * 対話版 claude は AUQ の tool_use を「回答確定時」まで transcript に
+   * 書かないため、回答待ちのリアルタイム検出は hook で行う。
+   * 回答確定 (カードを閉じる) は JSONL の tool_result 出現で判定する。
+   */
+  "session:auq": (data: {
+    sessionId: string;
+    /** サーバーが hook を受信した epoch ms (JSONL 解決イベントとの前後比較用) */
+    at: number;
+    /** tool_input.questions の生データ (クライアント側で構造検証する) */
+    questions: unknown;
+  }) => void;
   "session:restored": (session: ManagedSession) => void;
   "session:restore_failed": (data: {
     worktreePath: string;
@@ -367,6 +417,11 @@ export interface ServerToClientEvents {
        * サイドバードット色 (SessionCard) や RepoGridView と表示を統一するための情報。
        */
       bridgeStatus: BridgeSessionStatus;
+      /**
+       * AWAITING のときのみ: 確認 UI の生テキスト (ANSI 除去済み画面末尾)。
+       * チャットビューのバナーで「何を聞かれているか」をそのまま表示する
+       */
+      awaitingText?: string;
       timestamp: number;
     }>
   ) => void;
@@ -533,6 +588,41 @@ export interface ClientToServerEvents {
     callback: (response: { text?: string; error?: string }) => void
   ) => void;
   "session:restore": (worktreePath: string) => void;
+
+  /**
+   * tmux に literal テキストのみ送信する (Enter を付けない)。
+   * AskUserQuestion の自由入力モードで「1 文字ずつタイプ」する用途。
+   */
+  "session:send-literal": (data: { sessionId: string; text: string }) => void;
+
+  /**
+   * Claude Code が永続化する JSONL 履歴 (~/.claude/projects/<encoded-cwd>/*.jsonl)
+   * を購読する。チャットビューの会話描画に使用する。
+   */
+  "session:jsonl-subscribe": (sessionId: string) => void;
+  "session:jsonl-unsubscribe": (sessionId: string) => void;
+
+  /**
+   * 既存購読中の JSONL について、過去履歴をより多く読み直す。
+   * サーバは末尾 `limit` 行で snapshot を再送する。
+   */
+  "session:jsonl-load-more": (data: {
+    sessionId: string;
+    limit: number;
+  }) => void;
+
+  /**
+   * 指定セッションで使える slash command 一覧をリクエスト。
+   * サーバは組み込みコマンド + `<configDir>/commands/*.md` +
+   * `<worktreePath>/.claude/commands/*.md` を集めて返す。
+   */
+  "slash:list": (
+    sessionId: string,
+    callback: (response: {
+      commands?: SlashCommandInfo[];
+      error?: string;
+    }) => void
+  ) => void;
 
   // Repository commands
   "repo:scan": (basePath: string) => void;
