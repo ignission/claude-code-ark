@@ -42,6 +42,7 @@ import {
   parseAuqInput,
 } from "@/lib/ask-user-question-state";
 import type { JsonlParsedEvent } from "@/lib/jsonl-event-parser";
+import { splitTextWithUrls } from "@/lib/linkify";
 import { reconcileEscape } from "@/lib/reconcile-escape";
 import { reconcilePending } from "@/lib/reconcile-pending";
 
@@ -170,6 +171,30 @@ function CompactMarkerCard() {
   );
 }
 
+/**
+ * プレーンテキスト中の URL をクリック可能なリンクにして描画する。
+ * リンク方針は assistant markdown と揃える (http/https のみ・新規タブ・noopener)。
+ */
+function Linkify({ text }: { text: string }) {
+  return splitTextWithUrls(text).map((seg, i) =>
+    seg.type === "url" ? (
+      <a
+        // biome-ignore lint/suspicious/noArrayIndexKey: セグメント列は text から純粋導出され順序不変
+        key={i}
+        href={seg.value}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-blue-600 dark:text-blue-400 underline break-all"
+      >
+        {seg.value}
+      </a>
+    ) : (
+      // biome-ignore lint/suspicious/noArrayIndexKey: 同上
+      <span key={i}>{seg.value}</span>
+    )
+  );
+}
+
 function AskUserQuestionResultCard({
   input,
   result,
@@ -237,11 +262,15 @@ function AskUserQuestionResultCard({
             >
               <span className="text-muted-foreground shrink-0">·</span>
               <div className="min-w-0 flex-1">
-                <span className="text-foreground">{q.question}</span>
+                <span className="text-foreground">
+                  <Linkify text={q.question} />
+                </span>
                 {answer && (
                   <>
                     <span className="text-muted-foreground"> → </span>
-                    <span className="font-medium text-primary">{answer}</span>
+                    <span className="font-medium text-primary">
+                      <Linkify text={answer} />
+                    </span>
                   </>
                 )}
               </div>
