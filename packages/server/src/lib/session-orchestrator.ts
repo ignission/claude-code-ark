@@ -855,7 +855,10 @@ export class SessionOrchestrator extends EventEmitter {
       // prose やツール結果 (⎿ = Edit プレビュー/ファイル内容など機密が混じり得る) を
       // 構造上一切含めない (ツール結果の継続行も混入しない)。
       // AUQ_HEADER_RE: AUQ のヘッダ/タブ行 (単問「☐ <header>」/ 複数問タブバー)
-      const AUQ_FOOTER_RE = /^\s*Enter to (?:select|confirm)\b/;
+      // フッタ正規表現は bridge-collector.ts の AWAITING 検出契約 (先頭空白 0〜2) に
+      // 揃える。同じ capture-pane のフッタ行を見ているため、緩い \s* だとインデント
+      // された引用/混入行を誤検出し得る。
+      const AUQ_FOOTER_RE = /^\s{0,2}Enter to (?:select|confirm)\b/;
       // AUQ ヘッダ/タブ行: 行頭 (任意の先頭空白 + 複数問タブの「←」) の直後に
       // チェックボックス記号。本文・選択肢内に紛れた ☐/☒ を誤検出しないよう
       // 行頭形状に限定する。
