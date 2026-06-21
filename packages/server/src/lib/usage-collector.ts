@@ -54,6 +54,24 @@ const TRUST_DIALOG_ANCHORS = ["trust this folder", "Quick safety check"];
 /** capture-paneの取得行数（/usage画面 + ヘッダ余裕分） */
 const CAPTURE_LINES = 300;
 
+/**
+ * /usage TUI 全文を 1 画面に収めるための強制 pane サイズ。
+ *
+ * `/usage` はフルスクリーン TUI で、pane の高さより下の行はレンダリングされず
+ * `capture-pane` で取得できない（フォールド下は `↓` インジケータになるだけで
+ * scrollback にも積まれない）。claude 2.1.183 で `/usage` 出力が縦に伸び
+ * （上部に `Settings` タブ追加 + Session 統計ブロック + 狭い pane での折り返し）、
+ * detached セッションのデフォルト pane（約 80x24）では
+ * 「Current week (Sonnet only)」の数値がフォールド下に隠れ、capture-pane が
+ * `% used` を 2 個しか拾えず `hasUsageResult` が永久に成立しない事象が発生した。
+ * pane を大きく固定し、全区画を 1 画面に収めてからキャプチャする。
+ *
+ * 既定の `window-size latest` だと `resize-window` / `new-session -x/-y` が
+ * クライアントサイズ追従で無効化されるため、`window-size manual` 併用が必須。
+ */
+const USAGE_PANE_WIDTH = 120;
+const USAGE_PANE_HEIGHT = 200;
+
 /** ポーリング間隔（ミリ秒） */
 const POLL_INTERVAL_MS = 200;
 
@@ -395,6 +413,28 @@ export class UsageCollector extends EventEmitter {
           errorMessage: `tmux new-session failed (status: ${newSession.status}, stderr: ${newSession.stderr.trim()})`,
         };
       }
+
+      // pane を大きく固定して /usage TUI 全文を 1 画面に収める
+      // （フォールド下のキャプチャ漏れ防止）。claude 起動前にリサイズして
+      // 最初から大きいサイズで描画させる。`window-size manual` にしないと
+      // resize-window が既定の `latest` に上書きされて効かない。
+      // best-effort: 失敗しても後続のタイムアウト検出に委ねる。
+      this.deps.tmuxExec([
+        "set-option",
+        "-t",
+        sessionName,
+        "window-size",
+        "manual",
+      ]);
+      this.deps.tmuxExec([
+        "resize-window",
+        "-t",
+        sessionName,
+        "-x",
+        String(USAGE_PANE_WIDTH),
+        "-y",
+        String(USAGE_PANE_HEIGHT),
+      ]);
 
       // シェル起動後に claude を送信。CLAUDE_LAUNCH_COMMAND は起動時に
       // 解決した絶対パスを使うので、PATH に claude が無い pm2/systemd 環境
