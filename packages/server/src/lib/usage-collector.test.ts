@@ -103,6 +103,38 @@ const NEW_UI_USAGE_OUTPUT = `    Status   Config   Usage   Stats
    other devices or claude.ai
 `;
 
+/**
+ * 新UI フルスクリーン版 (claude 2.1.183 で確認)。
+ * 上部に「Settings」タブが増え、Session 統計ブロック + 折り返しで縦に伸びた。
+ * 「Current week (Sonnet only)」は 0% used を表示しつつ Resets 行が無く、
+ * 直後に「What's contributing to your limits usage?」が続く。
+ * pane を十分高くキャプチャできれば session/weekly all/sonnet の 3 区画が揃う。
+ */
+const NEW_UI_FULLSCREEN_OUTPUT = `   Settings  Status   Config   Usage   Stats
+
+   Session
+
+   Total cost:            $0.0000
+   Total duration (API):  0s
+   Total duration (wall): 5s
+   Total code changes:    0 lines added, 0 lines removed
+   Usage:                 0 input, 0 output, 0 cache read, 0 cache write
+
+   Current session
+   █████████████████████                              42% used
+   Resets 9:20pm (Asia/Tokyo)
+
+   Current week (all models)
+   ███████████                                        22% used
+   Resets Jun 23, 3am (Asia/Tokyo)
+
+   Current week (Sonnet only)
+                                                      0% used
+
+   What's contributing to your limits usage?
+   Approximate, based on local sessions on this machine — does not include other devices or claude.ai
+`;
+
 const ANSI_USAGE_OUTPUT = `\x1b[2J\x1b[H\x1b[1m   Current session\x1b[0m
    \x1b[36m██\x1b[0m                                                 4% used
    Resets 8:20pm (Asia/Tokyo)
@@ -176,6 +208,18 @@ describe("parseUsage", () => {
     expect(parsed?.weeklyAllPercent).toBe(12);
     expect(parsed?.weeklySonnetPercent).toBeNull();
     expect(parsed?.weeklySonnetResets).toBeNull();
+  });
+
+  it("新UI フルスクリーン版 (2.1.183) の 3 区画をパース成功", () => {
+    const parsed = parseUsage(NEW_UI_FULLSCREEN_OUTPUT);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.sessionPercent).toBe(42);
+    expect(parsed?.weeklyAllPercent).toBe(22);
+    expect(parsed?.weeklySonnetPercent).toBe(0);
+    expect(parsed?.sessionResets).toBe("9:20pm (Asia/Tokyo)");
+    expect(parsed?.weeklyAllResets).toBe("Jun 23, 3am (Asia/Tokyo)");
+    // Sonnet 0% は Resets 行が無いので空文字
+    expect(parsed?.weeklySonnetResets).toBe("");
   });
 
   it("Team プラン (Sonnet 0% で Resets行欠落) も Sonnet resets を空文字でパース成功", () => {
@@ -288,6 +332,10 @@ Current week (Sonnet only)
 
   it("新UI ('What's contributing' アンカー + % used 2つ + Resets 2つ) → true", () => {
     expect(hasUsageResult(NEW_UI_USAGE_OUTPUT)).toBe(true);
+  });
+
+  it("新UI フルスクリーン版 (2.1.183 / Sonnet 表示あり % used 3つ) → true", () => {
+    expect(hasUsageResult(NEW_UI_FULLSCREEN_OUTPUT)).toBe(true);
   });
 
   it("旧UI で Sonnet 見出しは描画されたが Sonnet 行が未描画 → false (mid-render race防止)", () => {
@@ -534,6 +582,68 @@ describe("UsageCollector.collectOne", () => {
       args => args[3] === "1" && args.includes("Enter")
     );
     expect(trustAccepts).toHaveLength(1);
+  });
+
+  it("capture 前に pane を大きくリサイズして /usage TUI 全文を収める", async () => {
+    // /usage はフルスクリーン TUI で pane 高さより下の行を capture-pane で
+    // 取得できない。デフォルト pane だと Sonnet 区画がフォールド下に隠れ
+    // パース失敗するため、collector が window を大きく固定することを検証する。
+    const sessionPattern = "ark-usage-profA-1000";
+    const calls: string[][] = [];
+    const outputs = [
+      "", // 起動中
+      "❯ for shortcuts", // ready
+      NEW_UI_FULLSCREEN_OUTPUT, // /usage 結果
+    ];
+    let captureCount = 0;
+    const tmuxExec = (
+      args: string[]
+    ): { status: number; stdout: string; stderr: string } => {
+      calls.push(args);
+      const subcmd = args[0];
+      if (subcmd === "capture-pane") {
+        const stdout = outputs[Math.min(captureCount, outputs.length - 1)];
+        captureCount += 1;
+        return { status: 0, stdout, stderr: "" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    };
+
+    const collector = new UsageCollector({
+      tmuxExec,
+      now: () => nowValue,
+      sleep: async () => {
+        nowValue += 200;
+      },
+    });
+
+    const entry = await collector.collectOne(profileA);
+    expect(entry.status).toBe("ok");
+    expect(entry.parsed?.weeklySonnetPercent).toBe(0);
+
+    // window-size manual + resize-window が new-session 直後に発行されること
+    const newSessionIdx = calls.findIndex(c => c[0] === "new-session");
+    const resizeIdx = calls.findIndex(c => c[0] === "resize-window");
+    const captureIdx = calls.findIndex(c => c[0] === "capture-pane");
+    expect(newSessionIdx).toBeGreaterThanOrEqual(0);
+    expect(resizeIdx).toBeGreaterThan(newSessionIdx);
+    expect(resizeIdx).toBeLessThan(captureIdx);
+
+    const manualOpt = calls.find(
+      c =>
+        c[0] === "set-option" &&
+        c.includes("window-size") &&
+        c.includes("manual")
+    );
+    expect(manualOpt).toBeDefined();
+    expect(manualOpt).toContain(sessionPattern);
+
+    const resize = calls[resizeIdx];
+    expect(resize).toContain(sessionPattern);
+    // 高さ(-y)が /usage 全文を収める十分な大きさであること
+    const yIdx = resize.indexOf("-y");
+    expect(yIdx).toBeGreaterThanOrEqual(0);
+    expect(Number(resize[yIdx + 1])).toBeGreaterThanOrEqual(50);
   });
 
   it("new-session失敗時は error", async () => {
