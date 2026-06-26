@@ -623,6 +623,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         typeof c.id === "string" &&
         c.id.length > 0 &&
         typeof c.path === "string" &&
+        c.path.length > 0 &&
         typeof c.branch === "string" &&
         typeof c.commit === "string" &&
         typeof c.isMain === "boolean" &&
@@ -632,8 +633,11 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
     socket.on("worktree:list", ({ repoPath: listRepoPath, worktrees: wts }) => {
       if (!isAllowedWorktreeRepo(listRepoPath) || !Array.isArray(wts)) return;
-      const valid = wts.filter(isValidWorktree);
-      setWorktreesByRepo(prev => setRepoWorktrees(prev, listRepoPath, valid));
+      // worktree:list は repo の authoritative snapshot。不正 item を filter で
+      // 黙って落とすと部分リストが「正」として保存され、schema drift / 壊れた
+      // payload で worktree が静かに消える。1件でも不正なら list 全体を拒否する。
+      if (!wts.every(isValidWorktree)) return;
+      setWorktreesByRepo(prev => setRepoWorktrees(prev, listRepoPath, wts));
     });
 
     socket.on("worktree:created", ({ repoPath: eventRepoPath, worktree }) => {
