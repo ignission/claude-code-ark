@@ -75,11 +75,7 @@ import { htmlScreenshotter } from "./lib/html-screenshotter.js";
 import { jsonlTailManager } from "./lib/jsonl-tail-manager.js";
 import { DiscoveryError } from "./lib/mcp-oauth/discovery.js";
 import { mcpOAuthOrchestrator } from "./lib/mcp-oauth/oauth-flow-orchestrator.js";
-import {
-  getProvider,
-  listProviders,
-  type McpProviderEntry,
-} from "./lib/mcp-oauth/providers.js";
+import { getProvider, listProviders } from "./lib/mcp-oauth/providers.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import {
@@ -873,7 +869,8 @@ export async function startServer(
    */
   async function startQuickTunnelShared(targetPort: number): Promise<string> {
     if (activeTunnel) {
-      return tunnelUrl!;
+      if (tunnelUrl) return tunnelUrl;
+      throw new Error("Quick Tunnel URL is missing");
     }
 
     // トークン生成
@@ -2382,37 +2379,6 @@ export async function startServer(
 
     // ===== MCP OAuth Commands (whitelist 形式) =====
 
-    /** http(s) URL のみ許可 (callback origin の検証用) */
-    const isValidHttpUrl = (s: unknown): s is string => {
-      if (typeof s !== "string") return false;
-      try {
-        const u = new URL(s);
-        return u.protocol === "http:" || u.protocol === "https:";
-      } catch {
-        return false;
-      }
-    };
-
-    /** providerId で provider を引き当てつつ存在チェック */
-    const requireProvider = (providerId: unknown): McpProviderEntry | null => {
-      if (typeof providerId !== "string" || providerId.length === 0) {
-        socket.emit("mcp:error", {
-          message: "providerId は必須です",
-          code: "invalid_provider_id",
-        });
-        return null;
-      }
-      const p = getProvider(providerId);
-      if (!p) {
-        socket.emit("mcp:error", {
-          message: `サポート対象外のプロバイダ: ${providerId}`,
-          code: "unknown_provider",
-        });
-        return null;
-      }
-      return p;
-    };
-
     socket.on("mcp:state", () => {
       try {
         socket.emit("mcp:state", buildMcpSnapshot());
@@ -2431,8 +2397,8 @@ export async function startServer(
       "mcp:connect",
       async ({ providerId, label, connectionId: existingId, requestId }) => {
         try {
-          // requireProvider は失敗時に mcp:error を emit するが requestId を持たない。
-          // popup correlation のため、ここでは inline で provider を検証する。
+          // provider 検証は popup correlation のため inline で行う
+          // (共通ヘルパだと requestId を保持できず mcp:error を相関できないため)。
           if (typeof providerId !== "string" || providerId.length === 0) {
             socket.emit("mcp:error", {
               message: "providerId は必須です",
