@@ -18,9 +18,11 @@ import type {
   SlashCommandInfo,
   SpecialKey,
 } from "@ark/shared";
-import { ArrowDown, Loader2, Paperclip, Send } from "lucide-react";
+import { isImagePath, splitTextWithFilePaths } from "@ark/shared/file-paths";
+import { ArrowDown, Download, Loader2, Paperclip, Send } from "lucide-react";
 import {
   type FormEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -123,33 +125,226 @@ function SlashCommandCard({ name, args }: { name: string; args?: string }) {
  *   情報漏えいを防ぐ。alt テキストのプレースホルダ表示に置き換える)
  * - リンクは http/https のみ許可し、新規タブ + noopener noreferrer で開く
  */
+// remarkFilePaths が検出パスを link ノード化する際に使う内部 sentinel scheme。
+// 外部 URL として許可された scheme ではなく、`a` component 上書きで FileLink へ
+// 振り替えるための内部マーカー。urlTransform は href を素通しさせるため許可する。
+// 実際の配信可否はサーバ側の transcript allowlist が唯一の境界であり、sentinel が
+// 任意パスを指していても allowlist 外なら 403 になる。
+const INTERNAL_FILE_LINK_SCHEME = "ark-file:";
+
 const MD_URL_TRANSFORM = (url: string): string =>
-  /^(https?:|#)/i.test(url) ? url : "";
+  /^(https?:|#|ark-file:)/i.test(url) ? url : "";
 
-const MD_COMPONENTS: Components = {
-  img: ({ alt }) => (
-    <span
-      className="inline-block text-xs text-muted-foreground bg-muted rounded px-1.5 py-0.5"
-      title="モデル出力由来の外部画像は自動表示しません"
-    >
-      🖼 {alt || "画像"}
+interface MarkdownNode {
+  type?: string;
+  value?: string;
+  url?: string;
+  title?: string | null;
+  children?: MarkdownNode[];
+}
+
+function remarkFilePaths() {
+  return (tree: MarkdownNode) => {
+    transformMarkdownFilePathText(tree);
+  };
+}
+
+function transformMarkdownFilePathText(node: MarkdownNode): void {
+  if (!node.children) return;
+  const next: MarkdownNode[] = [];
+  for (const child of node.children) {
+    if (child.type === "text" && typeof child.value === "string") {
+      const segments = splitTextWithFilePaths(child.value);
+      if (segments.some(seg => seg.type === "file")) {
+        for (const seg of segments) {
+          next.push(
+            seg.type === "file"
+              ? {
+                  type: "link",
+                  url: `${INTERNAL_FILE_LINK_SCHEME}${seg.value}`,
+                  title: null,
+                  children: [{ type: "text", value: seg.value }],
+                }
+              : { type: "text", value: seg.value }
+          );
+        }
+      } else {
+        next.push(child);
+      }
+      continue;
+    }
+    if (
+      child.type !== "link" &&
+      child.type !== "image" &&
+      child.type !== "linkReference" &&
+      child.type !== "definition"
+    ) {
+      transformMarkdownFilePathText(child);
+    }
+    next.push(child);
+  }
+  node.children = next;
+}
+
+function buildSessionFileUrl(
+  sessionId: string,
+  filePath: string,
+  mode: "download" | "inline"
+): string {
+  const token =
+    typeof window === "undefined"
+      ? null
+      : new URLSearchParams(window.location.search).get("token");
+  let url = `/api/session/${encodeURIComponent(sessionId)}/file?path=${encodeURIComponent(filePath)}&mode=${mode}`;
+  if (token) {
+    url += `&token=${encodeURIComponent(token)}`;
+  }
+  return url;
+}
+
+function FileLink({
+  sessionId,
+  filePath,
+  compact = false,
+}: {
+  sessionId: string;
+  filePath: string;
+  compact?: boolean;
+}) {
+  const [missing, setMissing] = useState(false);
+  const downloadUrl = buildSessionFileUrl(sessionId, filePath, "download");
+
+  if (compact || !isImagePath(filePath)) {
+    return (
+      <a
+        href={downloadUrl}
+        download
+        className="text-blue-600 dark:text-blue-400 underline break-all"
+      >
+        {filePath}
+      </a>
+    );
+  }
+
+  const inlineUrl = buildSessionFileUrl(sessionId, filePath, "inline");
+  return (
+    <span className="my-2 inline-flex max-w-full flex-col gap-1 rounded-md border border-border bg-muted/30 p-2 align-top">
+      {missing ? (
+        <span className="flex min-h-20 max-w-full items-center justify-center rounded bg-muted px-3 py-6 text-sm text-muted-foreground">
+          ファイルが見つかりません
+        </span>
+      ) : (
+        <img
+          src={inlineUrl}
+          alt={filePath}
+          loading="lazy"
+          onError={() => setMissing(true)}
+          className="max-h-[200px] max-w-full object-contain rounded bg-background"
+        />
+      )}
+      <span className="flex min-w-0 items-center gap-2">
+        <a
+          href={downloadUrl}
+          download
+          className="inline-flex h-7 items-center gap-1 rounded border border-border bg-background px-2 text-xs text-foreground hover:bg-muted"
+        >
+          <Download className="h-3.5 w-3.5" />
+          <span>DL</span>
+        </a>
+        <span className="min-w-0 break-all font-mono text-xs text-muted-foreground">
+          {filePath}
+        </span>
+      </span>
     </span>
-  ),
-  a: ({ href, children }) => (
-    <a href={href} target="_blank" rel="noopener noreferrer">
-      {children}
-    </a>
-  ),
-};
+  );
+}
 
-function AssistantTextCard({ text }: { text: string }) {
+function FilePathText({
+  text,
+  sessionId,
+  compact = false,
+}: {
+  text: string;
+  sessionId: string;
+  compact?: boolean;
+}) {
+  return splitTextWithFilePaths(text).map((seg, i) =>
+    seg.type === "file" ? (
+      <FileLink
+        // biome-ignore lint/suspicious/noArrayIndexKey: セグメント列は text から純粋導出され順序不変
+        key={i}
+        sessionId={sessionId}
+        filePath={seg.value}
+        compact={compact}
+      />
+    ) : (
+      // biome-ignore lint/suspicious/noArrayIndexKey: 同上
+      <span key={i}>{seg.value}</span>
+    )
+  );
+}
+
+function reactNodeToText(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(reactNodeToText).join("");
+  return "";
+}
+
+function createMarkdownComponents(sessionId: string): Components {
+  return {
+    img: ({ alt }) => (
+      <span
+        className="inline-block text-xs text-muted-foreground bg-muted rounded px-1.5 py-0.5"
+        title="モデル出力由来の外部画像は自動表示しません"
+      >
+        🖼 {alt || "画像"}
+      </span>
+    ),
+    a: ({ href, children }) => {
+      if (href?.startsWith(INTERNAL_FILE_LINK_SCHEME)) {
+        return (
+          <FileLink
+            sessionId={sessionId}
+            filePath={href.slice(INTERNAL_FILE_LINK_SCHEME.length)}
+          />
+        );
+      }
+      return (
+        <a href={href} target="_blank" rel="noopener noreferrer">
+          {children}
+        </a>
+      );
+    },
+    code: ({ className, children, node: _node, ...props }) => (
+      <code className={className} {...props}>
+        <FilePathText
+          text={reactNodeToText(children)}
+          sessionId={sessionId}
+          compact
+        />
+      </code>
+    ),
+  };
+}
+
+function AssistantTextCard({
+  text,
+  sessionId,
+}: {
+  text: string;
+  sessionId: string;
+}) {
+  const components = useMemo(
+    () => createMarkdownComponents(sessionId),
+    [sessionId]
+  );
   return (
     <div className="px-4 py-2">
       <div className="md-prose text-[16px] text-foreground leading-[1.65]">
         <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
+          remarkPlugins={[remarkGfm, remarkFilePaths]}
           urlTransform={MD_URL_TRANSFORM}
-          components={MD_COMPONENTS}
+          components={components}
         >
           {text}
         </ReactMarkdown>
@@ -257,6 +452,7 @@ function AskUserQuestionResultCard({
           const answer = answers.get(q.question);
           return (
             <div
+              // biome-ignore lint/suspicious/noArrayIndexKey: 質問文だけでは重複時に key が衝突するため
               key={`${i}-${q.question}`}
               className="flex gap-1.5 items-start"
             >
@@ -455,7 +651,13 @@ function AwaitingPad({
  * subagent (isSidechain) の連続イベントを 1 ブロックに集約した折りたたみ表示。
  * 大量のツール呼び出しがメイン会話を埋めないようにする。
  */
-function SidechainGroupCard({ events }: { events: JsonlParsedEvent[] }) {
+function SidechainGroupCard({
+  events,
+  sessionId,
+}: {
+  events: JsonlParsedEvent[];
+  sessionId: string;
+}) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div className="px-4 py-1">
@@ -470,7 +672,7 @@ function SidechainGroupCard({ events }: { events: JsonlParsedEvent[] }) {
       {expanded && (
         <div className="mt-1 border-l-2 border-border pl-2 opacity-80">
           {events.map(ev => (
-            <EventCard key={ev.id} event={ev} />
+            <EventCard key={ev.id} event={ev} sessionId={sessionId} />
           ))}
         </div>
       )}
@@ -503,14 +705,20 @@ function groupSidechain(events: JsonlParsedEvent[]): (
   return out;
 }
 
-function EventCard({ event }: { event: JsonlParsedEvent }) {
+function EventCard({
+  event,
+  sessionId,
+}: {
+  event: JsonlParsedEvent;
+  sessionId: string;
+}) {
   switch (event.kind) {
     case "user-input":
       return <UserInputCard text={event.text} />;
     case "slash-command":
       return <SlashCommandCard name={event.name} args={event.args} />;
     case "assistant-text":
-      return <AssistantTextCard text={event.text} />;
+      return <AssistantTextCard text={event.text} sessionId={sessionId} />;
     case "compact-marker":
       return <CompactMarkerCard />;
     case "tool-call":
@@ -1044,9 +1252,17 @@ export function SplitChatPane({
               )}
               {groupedEvents.map(g =>
                 g.kind === "sidechain" ? (
-                  <SidechainGroupCard key={g.id} events={g.events} />
+                  <SidechainGroupCard
+                    key={g.id}
+                    events={g.events}
+                    sessionId={session.id}
+                  />
                 ) : (
-                  <EventCard key={g.event.id} event={g.event} />
+                  <EventCard
+                    key={g.event.id}
+                    event={g.event}
+                    sessionId={session.id}
+                  />
                 )
               )}
               {localSlashCommands.map(c => (

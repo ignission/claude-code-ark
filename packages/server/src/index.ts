@@ -75,13 +75,17 @@ import { htmlScreenshotter } from "./lib/html-screenshotter.js";
 import { jsonlTailManager } from "./lib/jsonl-tail-manager.js";
 import { DiscoveryError } from "./lib/mcp-oauth/discovery.js";
 import { mcpOAuthOrchestrator } from "./lib/mcp-oauth/oauth-flow-orchestrator.js";
-import {
-  getProvider,
-  listProviders,
-  type McpProviderEntry,
-} from "./lib/mcp-oauth/providers.js";
+import { getProvider, listProviders } from "./lib/mcp-oauth/providers.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
+import {
+  attachmentDispositionForPath,
+  buildAllowlistFromTranscriptFiles,
+  contentTypeForPath,
+  isFilePathAllowed,
+  listTranscriptPathsForWorktree,
+  normalizeRequestedFilePath,
+} from "./lib/session-file-download.js";
 import { sessionOrchestrator } from "./lib/session-orchestrator.js";
 import { listSlashCommands } from "./lib/slash-command-scanner.js";
 import { detectMultiProfileSupported } from "./lib/system.js";
@@ -865,7 +869,8 @@ export async function startServer(
    */
   async function startQuickTunnelShared(targetPort: number): Promise<string> {
     if (activeTunnel) {
-      return tunnelUrl!;
+      if (tunnelUrl) return tunnelUrl;
+      throw new Error("Quick Tunnel URL is missing");
     }
 
     // トークン生成
@@ -954,6 +959,117 @@ export async function startServer(
       console.error("[Screenshot] エラー:", getErrorMessage(e));
       res.status(500).json({ error: getErrorMessage(e) });
     }
+  });
+
+  // ===== セッション生成ファイル配信API =====
+
+  app.get("/api/session/:sessionId/file", async (req, res) => {
+    const { sessionId } = req.params;
+    const filePath = req.query.path;
+    const mode = req.query.mode === "download" ? "download" : "inline";
+    if (typeof filePath !== "string") {
+      res.status(400).json({ error: "path query parameter is required" });
+      return;
+    }
+    const normalizedPath = normalizeRequestedFilePath(filePath);
+    if (!normalizedPath) {
+      res.status(400).json({ error: "Invalid path" });
+      return;
+    }
+
+    const session = sessionOrchestrator.getSession(sessionId);
+    if (!session) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    const transcriptPaths = await listTranscriptPathsForWorktree(
+      session.worktreePath,
+      session.profileConfigDir ?? null
+    );
+    if (transcriptPaths.length === 0) {
+      res.status(404).json({ error: "Transcript not found" });
+      return;
+    }
+
+    const allowlist = await buildAllowlistFromTranscriptFiles(transcriptPaths);
+    if (!isFilePathAllowed(filePath, allowlist)) {
+      res.status(403).json({ error: "File path is not allowed" });
+      return;
+    }
+
+    // TOCTOU/symlink 対策: O_NOFOLLOW で最終要素が symlink なら open を失敗させ、
+    // allowlist 済みパスが symlink 経由で別実体を指す経路を排除する。検証(fstat)も
+    // 配信(stream)も同一 fd 経由にし、open 後のパス差し替えの影響を受けないようにする
+    // (realpath をパス名で再確認すると fd と乖離するため使わない)。
+    // 中間ディレクトリの symlink は辿るが、その作成には FS 書き込み権限が必要で、
+    // 本ツールの利用者は既に同等の権限を持つため脅威としては等価。
+    let fileHandle: fs.promises.FileHandle;
+    try {
+      fileHandle = await fs.promises.open(
+        normalizedPath,
+        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+      );
+    } catch {
+      // ELOOP(最終要素が symlink) / ENOENT など。存在しない扱いで 404
+      res.status(404).json({ error: "File not found" });
+      return;
+    }
+    try {
+      const stat = await fileHandle.stat();
+      if (!stat.isFile()) {
+        await fileHandle.close();
+        res.status(400).json({ error: "Path is not a regular file" });
+        return;
+      }
+    } catch {
+      await fileHandle.close();
+      res.status(404).json({ error: "File not found" });
+      return;
+    }
+
+    const contentType = contentTypeForPath(normalizedPath);
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    // 直接ナビゲーション時のスクリプト実行を無効化 (SVG/HTML の stored XSS 対策)
+    res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+    res.setHeader("Cache-Control", "no-store");
+    // HTML 系はインラインでもダウンロード扱いにし、アプリ origin での実行を防ぐ
+    const forceAttachment =
+      contentType.startsWith("text/html") ||
+      contentType.startsWith("application/xhtml");
+    if (mode === "download" || forceAttachment) {
+      res.setHeader(
+        "Content-Disposition",
+        attachmentDispositionForPath(normalizedPath)
+      );
+    }
+
+    // open 済み fd からストリーム配信し、終了/エラー/クライアント切断時に必ず一度だけ
+    // fd を閉じる。stream.pipe だけだと配信途中の切断で stream の close が来ず fd が
+    // 残るため、res の close でも stream を破棄して fd を解放する。
+    const stream = fileHandle.createReadStream({ autoClose: false });
+    let handleClosed = false;
+    const closeHandleOnce = () => {
+      if (handleClosed) return;
+      handleClosed = true;
+      void fileHandle.close().catch(() => {});
+    };
+    res.on("close", () => {
+      stream.destroy();
+      closeHandleOnce();
+    });
+    stream.on("error", error => {
+      console.error("[SessionFile] stream error:", getErrorMessage(error));
+      closeHandleOnce();
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to read file" });
+      } else {
+        res.destroy(error);
+      }
+    });
+    stream.on("close", closeHandleOnce);
+    stream.pipe(res);
   });
 
   // ===== Settings API =====
@@ -2286,37 +2402,6 @@ export async function startServer(
 
     // ===== MCP OAuth Commands (whitelist 形式) =====
 
-    /** http(s) URL のみ許可 (callback origin の検証用) */
-    const isValidHttpUrl = (s: unknown): s is string => {
-      if (typeof s !== "string") return false;
-      try {
-        const u = new URL(s);
-        return u.protocol === "http:" || u.protocol === "https:";
-      } catch {
-        return false;
-      }
-    };
-
-    /** providerId で provider を引き当てつつ存在チェック */
-    const requireProvider = (providerId: unknown): McpProviderEntry | null => {
-      if (typeof providerId !== "string" || providerId.length === 0) {
-        socket.emit("mcp:error", {
-          message: "providerId は必須です",
-          code: "invalid_provider_id",
-        });
-        return null;
-      }
-      const p = getProvider(providerId);
-      if (!p) {
-        socket.emit("mcp:error", {
-          message: `サポート対象外のプロバイダ: ${providerId}`,
-          code: "unknown_provider",
-        });
-        return null;
-      }
-      return p;
-    };
-
     socket.on("mcp:state", () => {
       try {
         socket.emit("mcp:state", buildMcpSnapshot());
@@ -2335,8 +2420,8 @@ export async function startServer(
       "mcp:connect",
       async ({ providerId, label, connectionId: existingId, requestId }) => {
         try {
-          // requireProvider は失敗時に mcp:error を emit するが requestId を持たない。
-          // popup correlation のため、ここでは inline で provider を検証する。
+          // provider 検証は popup correlation のため inline で行う
+          // (共通ヘルパだと requestId を保持できず mcp:error を相関できないため)。
           if (typeof providerId !== "string" || providerId.length === 0) {
             socket.emit("mcp:error", {
               message: "providerId は必須です",
