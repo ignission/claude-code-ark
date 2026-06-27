@@ -6,7 +6,8 @@
   "main": "./src/types.ts",
   "types": "./src/types.ts",
   "exports": {
-    ".": "./src/types.ts"
+    ".": "./src/types.ts",
+    "./file-paths": "./src/file-paths.ts"
   },
   "scripts": {
     "build": "tsc -b",

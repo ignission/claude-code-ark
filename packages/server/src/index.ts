@@ -82,6 +82,14 @@ import {
 } from "./lib/mcp-oauth/providers.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
+import {
+  attachmentDispositionForPath,
+  buildAllowlistFromTranscriptFiles,
+  contentTypeForPath,
+  isFilePathAllowed,
+  listTranscriptPathsForWorktree,
+  normalizeRequestedFilePath,
+} from "./lib/session-file-download.js";
 import { sessionOrchestrator } from "./lib/session-orchestrator.js";
 import { listSlashCommands } from "./lib/slash-command-scanner.js";
 import { detectMultiProfileSupported } from "./lib/system.js";
@@ -954,6 +962,94 @@ export async function startServer(
       console.error("[Screenshot] エラー:", getErrorMessage(e));
       res.status(500).json({ error: getErrorMessage(e) });
     }
+  });
+
+  // ===== セッション生成ファイル配信API =====
+
+  app.get("/api/session/:sessionId/file", async (req, res) => {
+    const { sessionId } = req.params;
+    const filePath = req.query.path;
+    const mode = req.query.mode === "download" ? "download" : "inline";
+    if (typeof filePath !== "string") {
+      res.status(400).json({ error: "path query parameter is required" });
+      return;
+    }
+    const normalizedPath = normalizeRequestedFilePath(filePath);
+    if (!normalizedPath) {
+      res.status(400).json({ error: "Invalid path" });
+      return;
+    }
+
+    const session = sessionOrchestrator.getSession(sessionId);
+    if (!session) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+
+    const transcriptPaths = await listTranscriptPathsForWorktree(
+      session.worktreePath,
+      session.profileConfigDir ?? null
+    );
+    if (transcriptPaths.length === 0) {
+      res.status(404).json({ error: "Transcript not found" });
+      return;
+    }
+
+    const allowlist = await buildAllowlistFromTranscriptFiles(transcriptPaths);
+    if (!isFilePathAllowed(filePath, allowlist)) {
+      res.status(403).json({ error: "File path is not allowed" });
+      return;
+    }
+
+    let realPath: string;
+    let stat: fs.Stats;
+    try {
+      realPath = await fs.promises.realpath(normalizedPath);
+      stat = await fs.promises.stat(realPath);
+    } catch {
+      res.status(404).json({ error: "File not found" });
+      return;
+    }
+    if (!stat.isFile()) {
+      res.status(400).json({ error: "Path is not a regular file" });
+      return;
+    }
+    // realpath が allowlist 外を指す symlink を弾く (実体も allowlist 必須)
+    if (
+      realPath !== normalizedPath &&
+      !isFilePathAllowed(realPath, allowlist)
+    ) {
+      res.status(403).json({ error: "File path is not allowed" });
+      return;
+    }
+
+    const contentType = contentTypeForPath(normalizedPath);
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    // 直接ナビゲーション時のスクリプト実行を無効化 (SVG/HTML の stored XSS 対策)
+    res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+    res.setHeader("Cache-Control", "no-store");
+    // HTML 系はインラインでもダウンロード扱いにし、アプリ origin での実行を防ぐ
+    const forceAttachment =
+      contentType.startsWith("text/html") ||
+      contentType.startsWith("application/xhtml");
+    if (mode === "download" || forceAttachment) {
+      res.setHeader(
+        "Content-Disposition",
+        attachmentDispositionForPath(normalizedPath)
+      );
+    }
+
+    const stream = fs.createReadStream(realPath);
+    stream.on("error", error => {
+      console.error("[SessionFile] stream error:", getErrorMessage(error));
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to read file" });
+      } else {
+        res.destroy(error);
+      }
+    });
+    stream.pipe(res);
   });
 
   // ===== Settings API =====
