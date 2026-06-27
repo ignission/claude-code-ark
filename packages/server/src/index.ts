@@ -1045,7 +1045,9 @@ export async function startServer(
       );
     }
 
-    // open 済み fd からストリーム配信し、終了/エラー時に必ず一度だけ fd を閉じる。
+    // open 済み fd からストリーム配信し、終了/エラー/クライアント切断時に必ず一度だけ
+    // fd を閉じる。stream.pipe だけだと配信途中の切断で stream の close が来ず fd が
+    // 残るため、res の close でも stream を破棄して fd を解放する。
     const stream = fileHandle.createReadStream({ autoClose: false });
     let handleClosed = false;
     const closeHandleOnce = () => {
@@ -1053,6 +1055,10 @@ export async function startServer(
       handleClosed = true;
       void fileHandle.close().catch(() => {});
     };
+    res.on("close", () => {
+      stream.destroy();
+      closeHandleOnce();
+    });
     stream.on("error", error => {
       console.error("[SessionFile] stream error:", getErrorMessage(error));
       closeHandleOnce();

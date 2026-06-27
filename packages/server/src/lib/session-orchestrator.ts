@@ -863,8 +863,8 @@ export class SessionOrchestrator extends EventEmitter {
       // チェックボックス記号。本文・選択肢内に紛れた ☐/☒ を誤検出しないよう
       // 行頭形状に限定する。
       const AUQ_HEADER_RE = /^\s*(?:←\s*)?[☐☒]\s/;
-      // ツール結果 (⎿) / assistant 出力ブロック (●) の「先頭行」。継続行や他種は
-      // 検出しないため、防御範囲は「ブロック先頭の検出」に限られる。
+      // ツール結果 (⎿) / assistant 出力ブロック (●) の「先頭行」。継続行は
+      // toolBlockEnd でインデントから判定し、ブロックごと除外する。
       const BLOCK_START_RE = /^\s*(?:⎿|●)/;
       const MAX_SCAN_LINES = 60; // ヘッダ探索の上限 (暴走防止)
       const FALLBACK_TAIL_LINES = 20; // フッタ未検出時に出す末尾行数の上限
@@ -876,6 +876,29 @@ export class SessionOrchestrator extends EventEmitter {
         while (rawLines.length > 0 && rawLines[rawLines.length - 1] === "") {
           rawLines.pop();
         }
+        // ⎿/● ブロックを「先頭行 + それより深いインデントの継続行 (空行含む)」と
+        // みなし、ブロック直後の行 index を返す。継続行 (⎿ Edited 配下の差分や
+        // ファイル内容) がバナーへ漏れるのを防ぐ。選択肢/プロンプト (先頭行と同等
+        // 以下のインデント) で打ち切る。
+        const toolBlockEnd = (headerIdx: number): number => {
+          const headerIndent =
+            rawLines[headerIdx].match(/^\s*/)?.[0].length ?? 0;
+          let j = headerIdx + 1;
+          while (j < rawLines.length) {
+            const line = rawLines[j];
+            if (line === "") {
+              j++;
+              continue;
+            }
+            const indent = line.match(/^\s*/)?.[0].length ?? 0;
+            if (indent > headerIndent) {
+              j++;
+              continue;
+            }
+            break;
+          }
+          return j;
+        };
         let footerIdx = -1;
         for (let i = rawLines.length - 1; i >= 0; i--) {
           if (AUQ_FOOTER_RE.test(rawLines[i])) {
@@ -885,7 +908,8 @@ export class SessionOrchestrator extends EventEmitter {
         }
         if (footerIdx >= 0) {
           // フッタから上へヘッダ (☐/☒) を探す。ヘッダ = ボックス先頭なので
-          // それ以上は遡らない。ヘッダ前に prose/ツール結果に当たったらその直下で打ち切る。
+          // それ以上は遡らない。ヘッダ前にツール結果ブロックに当たったら、
+          // ブロック (継続行含む) を丸ごと除外した直後から開始する。
           let startIdx = footerIdx;
           for (
             let i = footerIdx - 1;
@@ -897,26 +921,26 @@ export class SessionOrchestrator extends EventEmitter {
               break;
             }
             if (BLOCK_START_RE.test(rawLines[i])) {
-              startIdx = i + 1;
+              startIdx = toolBlockEnd(i);
               break;
             }
             startIdx = i;
           }
+          // 除外の結果フッタしか残らない場合があるため start<=footer を保証
+          if (startIdx > footerIdx) startIdx = footerIdx;
           awaitingText = rawLines.slice(startIdx, footerIdx + 1).join("\n");
         } else {
-          // フッタ未検出 (permission プロンプト等)。末尾から上へ、ツール結果/prose の
-          // ブロック先頭 (⎿/●) に達するまで最大 FALLBACK_TAIL_LINES 行を出す
-          // (フッタが無くてもツール出力を無条件に含めない)。
-          const collected: string[] = [];
-          for (
-            let i = rawLines.length - 1;
-            i >= 0 && collected.length < FALLBACK_TAIL_LINES;
-            i--
-          ) {
-            if (BLOCK_START_RE.test(rawLines[i])) break;
-            collected.push(rawLines[i]);
+          // フッタ未検出 (permission プロンプト等)。末尾 FALLBACK_TAIL_LINES 行を窓と
+          // し、その中で最下位のツール結果ブロックを検出したら、ブロック (継続行含む)
+          // を丸ごと除外した直後から下を出す (フッタが無くてもツール出力を漏らさない)。
+          let startIdx = Math.max(0, rawLines.length - FALLBACK_TAIL_LINES);
+          for (let i = rawLines.length - 1; i >= startIdx; i--) {
+            if (BLOCK_START_RE.test(rawLines[i])) {
+              startIdx = toolBlockEnd(i);
+              break;
+            }
           }
-          awaitingText = collected.reverse().join("\n");
+          awaitingText = rawLines.slice(startIdx).join("\n");
         }
       }
 
