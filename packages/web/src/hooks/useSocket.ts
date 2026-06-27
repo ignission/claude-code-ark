@@ -29,9 +29,18 @@ import type {
   UsageReport,
   Worktree,
 } from "@ark/shared";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import { toast } from "sonner";
+import {
+  addWorktree,
+  clearRepo,
+  flattenWorktrees,
+  pruneToRepos,
+  removeWorktree,
+  setRepoWorktrees,
+  type WorktreesByRepo,
+} from "./worktreesByRepo";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -253,6 +262,11 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [repoList, setRepoList] = useState<string[]>(
     options.initialRepoList ?? []
   );
+  // worktree:* イベント受信時に最新の repoList で許可判定するための ref。
+  // 登録外/削除済み repo への遅延 worktree:list や不正 payload で bucket が
+  // 復活するのを防ぐ（毎レンダー同期。socket ハンドラは登録時クロージャから参照）。
+  const repoListRef = useRef(repoList);
+  repoListRef.current = repoList;
   const [repoPath, setRepoPath] = useState<string | null>(
     options.initialRepoPath ?? null
   );
@@ -270,7 +284,18 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
    */
   const confirmedRepoPathRef = useRef<string | null>(null);
 
-  const [worktrees, setWorktrees] = useState<Worktree[]>([]);
+  // worktree は repoPath ごとに bucket 分けして保持する。
+  // 単一配列で上書き保持していた旧実装は「現在選択中の1リポジトリ」分しか
+  // worktree を持てず、リロード時に選択中以外のリポジトリの worktree が
+  // サイドバーから丸ごと消えていた（複数 repo をまたいで同時に保持できなかった）。
+  const [worktreesByRepo, setWorktreesByRepo] = useState<WorktreesByRepo>(
+    () => new Map()
+  );
+  // 消費側（サイドバー等）へは全 repo を平坦化した配列で公開する（既存 API 互換）。
+  const worktrees = useMemo(
+    () => flattenWorktrees(worktreesByRepo, repoList),
+    [worktreesByRepo, repoList]
+  );
   const [deletedWorktreeId, setDeletedWorktreeId] = useState<string | null>(
     null
   );
@@ -410,6 +435,21 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     }
   }, [repoList]);
 
+  // repoList の全リポジトリの worktree を取得する。
+  // サーバーは repo:select 応答時に選択中repoの worktree:list しか返さないため、
+  // これが無いと選択中以外のリポジトリの worktree がサイドバーに出ない
+  // （リロードで「別リポジトリが丸ごと消える」原因）。接続時/repoList変化時に
+  // 全repo分を明示的にリクエストし、不要になったrepoのbucketは掃除する。
+  useEffect(() => {
+    if (!isConnected) return;
+    const socket = socketRef.current;
+    if (!socket) return;
+    setWorktreesByRepo(prev => pruneToRepos(prev, repoList));
+    for (const repo of repoList) {
+      socket.emit("worktree:list", repo);
+    }
+  }, [isConnected, repoList]);
+
   // Initialize socket connection（enabled=falseの間は接続しない）
   const enabled = options.enabled ?? true;
   useEffect(() => {
@@ -526,8 +566,8 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       if (errorRepoPath === confirmedRepoPathRef.current) {
         setError(errMsg);
         // server側がrepo:set後にworktree取得で失敗するケース（listWorktrees throw 等）。
-        // worktreesは前repoのstaleデータが残るため、確認済みrepoには有効データがない事を表すため空にする。
-        setWorktrees([]);
+        // 当該repoのbucketだけを破棄する（他repoのworktreeは保持したまま）。
+        setWorktreesByRepo(prev => clearRepo(prev, errorRepoPath));
         return;
       }
       setError(errMsg);
@@ -557,32 +597,65 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       }
     });
 
-    /**
-     * worktree系イベントの受け入れ判定。
-     * ユーザーの最新意図 (pendingRepoPathRef) を最優先で使用し、未設定時は確認済み (repoPathRef) で判定する。
-     * pendingベースで判定する理由: 直前のselectRepo(B)後にA向け遅延応答が届いた場合、
-     * refはまだAだが意図はBなので、Aのlistを誤って適用しないようにする。
-     */
-    const eventTargetRepoPath = (): string | null =>
-      pendingRepoPathRef.current ?? repoPathRef.current;
-
     // Worktree events
+    // 各イベントは payload の repoPath で bucket を特定して更新する。
+    // repoPath ごとに分離保持するため、別 repo の遅延応答が届いても
+    // その repo の bucket だけが更新され、他 repo を破壊しない
+    // （旧実装の eventTargetRepoPath による stale-drop は不要になった）。
+    //
+    // worktree イベントを受理してよい repo か判定する allowlist。
+    // 登録外/削除済み repo への遅延 worktree:list や不正な payload で、サイドバーに
+    // 想定外の path が復活するのを防ぐ。runtime では非 string も来うる前提で type guard。
+    // 空 path も弾く（repoList に含まれないため）。選択直後は confirmedRepoPathRef が
+    // 同期更新済み（repo:set 参照）なので、repoList state 反映前の worktree:list も取りこぼさない。
+    const isAllowedWorktreeRepo = (path: unknown): path is string =>
+      typeof path === "string" &&
+      (repoListRef.current.includes(path) ||
+        path === confirmedRepoPathRef.current);
+
+    // payload 健全性チェック。イベントは型付き（ServerToClientEvents）だが、
+    // socket 境界では実行時に壊れた payload が届きうるため、helper へ渡す前に
+    // Worktree の全必須フィールドの型・非空性を検証して例外終了や不正 state 流入を防ぐ。
+    const isValidWorktree = (w: unknown): w is Worktree => {
+      if (typeof w !== "object" || w === null) return false;
+      const c = w as Record<string, unknown>;
+      return (
+        typeof c.id === "string" &&
+        c.id.length > 0 &&
+        typeof c.path === "string" &&
+        c.path.length > 0 &&
+        typeof c.branch === "string" &&
+        typeof c.commit === "string" &&
+        typeof c.isMain === "boolean" &&
+        typeof c.isBare === "boolean"
+      );
+    };
+
     socket.on("worktree:list", ({ repoPath: listRepoPath, worktrees: wts }) => {
-      const target = eventTargetRepoPath();
-      if (target !== null && listRepoPath !== target) return;
-      setWorktrees(wts);
+      if (!isAllowedWorktreeRepo(listRepoPath) || !Array.isArray(wts)) return;
+      // worktree:list は repo の authoritative snapshot。不正 item を filter で
+      // 黙って落とすと部分リストが「正」として保存され、schema drift / 壊れた
+      // payload で worktree が静かに消える。1件でも不正なら list 全体を拒否する。
+      if (!wts.every(isValidWorktree)) return;
+      setWorktreesByRepo(prev => setRepoWorktrees(prev, listRepoPath, wts));
     });
 
     socket.on("worktree:created", ({ repoPath: eventRepoPath, worktree }) => {
-      const target = eventTargetRepoPath();
-      if (target !== null && eventRepoPath !== target) return;
-      setWorktrees(prev => [...prev, worktree]);
+      if (!isAllowedWorktreeRepo(eventRepoPath) || !isValidWorktree(worktree)) {
+        return;
+      }
+      setWorktreesByRepo(prev => addWorktree(prev, eventRepoPath, worktree));
     });
 
     socket.on("worktree:deleted", ({ repoPath: eventRepoPath, worktreeId }) => {
-      const target = eventTargetRepoPath();
-      if (target !== null && eventRepoPath !== target) return;
-      setWorktrees(prev => prev.filter(w => w.id !== worktreeId));
+      if (typeof worktreeId !== "string" || worktreeId.length === 0) return;
+      // 信頼できない repo 由来のイベントで bucket / グローバル UI state を動かさない。
+      // bucket 削除と deletedWorktreeId（該当ペインのクローズ等）はどちらも
+      // allowlist repo のイベントに限定する（3 ハンドラで一貫した受理条件）。
+      if (!isAllowedWorktreeRepo(eventRepoPath)) return;
+      setWorktreesByRepo(prev =>
+        removeWorktree(prev, eventRepoPath, worktreeId)
+      );
       setDeletedWorktreeId(worktreeId);
     });
 
@@ -1087,6 +1160,8 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     (path: string) => {
       // コールバック通知はuseEffectで行う（StrictMode二重実行対策）
       setRepoList(prev => prev.filter(p => p !== path));
+      // 除外したリポジトリの worktree bucket も破棄する（他repoは保持）
+      setWorktreesByRepo(prev => clearRepo(prev, path));
 
       // 削除したリポジトリが選択中の場合はクリア
       if (repoPath === path) {
@@ -1095,7 +1170,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         pendingRepoPathRef.current = null;
         confirmedRepoPathRef.current = null;
         setRepoPath(null);
-        setWorktrees([]);
       }
     },
     [repoPath]
