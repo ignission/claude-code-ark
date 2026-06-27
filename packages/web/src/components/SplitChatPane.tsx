@@ -125,10 +125,15 @@ function SlashCommandCard({ name, args }: { name: string; args?: string }) {
  *   情報漏えいを防ぐ。alt テキストのプレースホルダ表示に置き換える)
  * - リンクは http/https のみ許可し、新規タブ + noopener noreferrer で開く
  */
+// remarkFilePaths が検出パスを link ノード化する際に使う内部 sentinel scheme。
+// 外部 URL として許可された scheme ではなく、`a` component 上書きで FileLink へ
+// 振り替えるための内部マーカー。urlTransform は href を素通しさせるため許可する。
+// 実際の配信可否はサーバ側の transcript allowlist が唯一の境界であり、sentinel が
+// 任意パスを指していても allowlist 外なら 403 になる。
+const INTERNAL_FILE_LINK_SCHEME = "ark-file:";
+
 const MD_URL_TRANSFORM = (url: string): string =>
   /^(https?:|#|ark-file:)/i.test(url) ? url : "";
-
-const ARK_FILE_HREF_PREFIX = "ark-file:";
 
 interface MarkdownNode {
   type?: string;
@@ -156,7 +161,7 @@ function transformMarkdownFilePathText(node: MarkdownNode): void {
             seg.type === "file"
               ? {
                   type: "link",
-                  url: `${ARK_FILE_HREF_PREFIX}${seg.value}`,
+                  url: `${INTERNAL_FILE_LINK_SCHEME}${seg.value}`,
                   title: null,
                   children: [{ type: "text", value: seg.value }],
                 }
@@ -296,11 +301,11 @@ function createMarkdownComponents(sessionId: string): Components {
       </span>
     ),
     a: ({ href, children }) => {
-      if (href?.startsWith(ARK_FILE_HREF_PREFIX)) {
+      if (href?.startsWith(INTERNAL_FILE_LINK_SCHEME)) {
         return (
           <FileLink
             sessionId={sessionId}
-            filePath={href.slice(ARK_FILE_HREF_PREFIX.length)}
+            filePath={href.slice(INTERNAL_FILE_LINK_SCHEME.length)}
           />
         );
       }

@@ -1,7 +1,21 @@
 /**
  * 生成ファイル配信用の transcript allowlist ヘルパー。
  *
- * セッション transcript に実際に出現した絶対パスだけを配信許可する。
+ * セッション transcript に実際に出現した絶対パスだけを配信許可する。出所は
+ * assistant の text 出力と tool_result(tool 出力)に限定し、user 入力は除外する
+ * ([[collectGeneratedTextsFromTranscript]])。
+ *
+ * 【受容済みリスク (documented)】
+ * これは「生成ファイルの証明」ではなく「transcript に表示された process-readable な
+ * パス」への配信権限であり、worktree 等の trusted root には限定していない。これは
+ * spec の確定設計である (screenshot は /home や /tmp に出るため worktree 限定は使えず、
+ * 「transcript に出たパスだけ許可」を選択した)。
+ *
+ * 脅威モデル上これは権限昇格にならない: 本エンドポイントへ到達できる主体 (local /
+ * Quick Tunnel トークン / Named Tunnel 認証) は、いずれも既に Claude セッションを
+ * 操作でき = 任意コマンド実行・任意ファイル読取が可能なため、本配信は追加権限を
+ * 与えない。将来 Claude を操作できない read-only 閲覧モードを追加する場合は、ここを
+ * trusted root 限定へ見直すこと。
  */
 
 import fs from "node:fs";
@@ -83,6 +97,72 @@ function normalizeAbsolutePosixPath(filePath: string): string | null {
   return path.normalize(filePath);
 }
 
+interface TranscriptBlock {
+  type?: string;
+  text?: string;
+  content?: unknown;
+}
+
+interface TranscriptRecord {
+  type?: string;
+  message?: { role?: string; content?: unknown };
+}
+
+function pushToolResultText(texts: string[], content: unknown): void {
+  if (typeof content === "string") {
+    texts.push(content);
+  } else if (Array.isArray(content)) {
+    for (const block of content as TranscriptBlock[]) {
+      if (block?.type === "text" && typeof block.text === "string") {
+        texts.push(block.text);
+      }
+    }
+  }
+}
+
+/**
+ * transcript(JSONL)から配信 allowlist の根拠テキストだけを取り出す。
+ *
+ * 出所を区別せず全文からパス抽出すると、user 入力に任意パスを書かせるだけで
+ * プロセス権限で読める任意ファイルを配信できてしまう。そのため
+ * 「assistant の text 出力」と「tool_result(= tool 出力)」に限定する。
+ * user 入力(string/text ブロック)と assistant の tool_use input は対象外。
+ */
+export function collectGeneratedTextsFromTranscript(jsonl: string): string[] {
+  const texts: string[] = [];
+  for (const line of jsonl.split("\n")) {
+    if (line === "") continue;
+    let rec: TranscriptRecord;
+    try {
+      rec = JSON.parse(line) as TranscriptRecord;
+    } catch {
+      // 書き込み途中で切れた行など。次の行へ
+      continue;
+    }
+    const content = rec.message?.content;
+    if (rec.type === "assistant" && rec.message?.role === "assistant") {
+      if (Array.isArray(content)) {
+        for (const block of content as TranscriptBlock[]) {
+          if (block?.type === "text" && typeof block.text === "string") {
+            texts.push(block.text);
+          }
+        }
+      }
+    } else if (rec.type === "user" && rec.message?.role === "user") {
+      // user レコードでも tool_result は tool 出力なので拾う。
+      // string content / text ブロックは user 入力なので除外する。
+      if (Array.isArray(content)) {
+        for (const block of content as TranscriptBlock[]) {
+          if (block?.type === "tool_result") {
+            pushToolResultText(texts, block.content);
+          }
+        }
+      }
+    }
+  }
+  return texts;
+}
+
 /** transcript テキスト群から配信許可パス集合を構築する。 */
 export function buildFileAllowlistFromTexts(
   texts: Iterable<string>
@@ -141,8 +221,13 @@ export async function listTranscriptPathsForWorktree(
       continue;
     }
     if (!st.isFile()) continue;
+    // worktree 紐付けの検証: ディレクトリ名(encodeProjectDir)で既に紐付くが、
+    // encode 衝突(例 /a/b と /a.b は同一ディレクトリ名)対策として cwd も照合する。
+    // cwd を読めない transcript は worktree 対応を確証できないため除外する(assertive)。
+    // 照合は canonical path ではなく transcript の cwd 文字列との完全一致(意図的)。
+    // worktreePath は呼び出し元(orchestrator)で一貫した文字列を使うため表記ゆれは無い。
     const cwd = readTranscriptCwd(filePath);
-    if (cwd !== null && cwd !== worktreePath) continue;
+    if (cwd !== worktreePath) continue;
     results.push({ filePath, mtimeMs: st.mtimeMs });
   }
   results.sort((a, b) => b.mtimeMs - a.mtimeMs);
@@ -160,7 +245,9 @@ async function readCachedTranscriptPaths(filePath: string): Promise<string[]> {
   }
 
   const text = await fs.promises.readFile(filePath, "utf-8");
-  const paths = [...buildFileAllowlistFromTexts([text])];
+  const paths = [
+    ...buildFileAllowlistFromTexts(collectGeneratedTextsFromTranscript(text)),
+  ];
   transcriptFilePathCache.set(key, { paths, lastAccess: Date.now() });
   pruneTranscriptCache();
   return paths;

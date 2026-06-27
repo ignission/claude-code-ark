@@ -998,25 +998,33 @@ export async function startServer(
       return;
     }
 
-    let realPath: string;
-    let stat: fs.Stats;
+    // TOCTOU/symlink 対策: O_NOFOLLOW で最終要素が symlink なら open を失敗させ、
+    // allowlist 済みパスが symlink 経由で別実体を指す経路を排除する。検証(fstat)も
+    // 配信(stream)も同一 fd 経由にし、open 後のパス差し替えの影響を受けないようにする
+    // (realpath をパス名で再確認すると fd と乖離するため使わない)。
+    // 中間ディレクトリの symlink は辿るが、その作成には FS 書き込み権限が必要で、
+    // 本ツールの利用者は既に同等の権限を持つため脅威としては等価。
+    let fileHandle: fs.promises.FileHandle;
     try {
-      realPath = await fs.promises.realpath(normalizedPath);
-      stat = await fs.promises.stat(realPath);
+      fileHandle = await fs.promises.open(
+        normalizedPath,
+        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+      );
     } catch {
+      // ELOOP(最終要素が symlink) / ENOENT など。存在しない扱いで 404
       res.status(404).json({ error: "File not found" });
       return;
     }
-    if (!stat.isFile()) {
-      res.status(400).json({ error: "Path is not a regular file" });
-      return;
-    }
-    // realpath が allowlist 外を指す symlink を弾く (実体も allowlist 必須)
-    if (
-      realPath !== normalizedPath &&
-      !isFilePathAllowed(realPath, allowlist)
-    ) {
-      res.status(403).json({ error: "File path is not allowed" });
+    try {
+      const stat = await fileHandle.stat();
+      if (!stat.isFile()) {
+        await fileHandle.close();
+        res.status(400).json({ error: "Path is not a regular file" });
+        return;
+      }
+    } catch {
+      await fileHandle.close();
+      res.status(404).json({ error: "File not found" });
       return;
     }
 
@@ -1037,15 +1045,24 @@ export async function startServer(
       );
     }
 
-    const stream = fs.createReadStream(realPath);
+    // open 済み fd からストリーム配信し、終了/エラー時に必ず一度だけ fd を閉じる。
+    const stream = fileHandle.createReadStream({ autoClose: false });
+    let handleClosed = false;
+    const closeHandleOnce = () => {
+      if (handleClosed) return;
+      handleClosed = true;
+      void fileHandle.close().catch(() => {});
+    };
     stream.on("error", error => {
       console.error("[SessionFile] stream error:", getErrorMessage(error));
+      closeHandleOnce();
       if (!res.headersSent) {
         res.status(500).json({ error: "Failed to read file" });
       } else {
         res.destroy(error);
       }
     });
+    stream.on("close", closeHandleOnce);
     stream.pipe(res);
   });
 
