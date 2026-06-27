@@ -847,7 +847,27 @@ export class SessionOrchestrator extends EventEmitter {
 
       // AWAITING (ユーザー判断待ち) のときは、確認 UI の生テキストを添える。
       // チャットビューのバナーが「何を聞かれているか」をそのまま表示するため。
-      // 構造のパースはせず ANSI 除去済みの末尾をミラーするだけ (壊れない)
+      //
+      // AUQ ボックス (ヘッダ「☐/☒」行 〜 フッタ「Enter to select/confirm」行) だけを
+      // 抽出する。以前は末尾 slice(-18) だったため、選択肢が多い縦長 AUQ では先頭の
+      // 質問文/見出しが落ちて ttyd と一致しなかった。
+      // ボックスのヘッダ行 (☐/☒) を上端アンカーにすることで、その上にある assistant
+      // prose やツール結果 (⎿ = Edit プレビュー/ファイル内容など機密が混じり得る) を
+      // 構造上一切含めない (ツール結果の継続行も混入しない)。
+      // AUQ_HEADER_RE: AUQ のヘッダ/タブ行 (単問「☐ <header>」/ 複数問タブバー)
+      // フッタ正規表現は bridge-collector.ts の AWAITING 検出契約 (先頭空白 0〜2) に
+      // 揃える。同じ capture-pane のフッタ行を見ているため、緩い \s* だとインデント
+      // された引用/混入行を誤検出し得る。
+      const AUQ_FOOTER_RE = /^\s{0,2}Enter to (?:select|confirm)\b/;
+      // AUQ ヘッダ/タブ行: 行頭 (任意の先頭空白 + 複数問タブの「←」) の直後に
+      // チェックボックス記号。本文・選択肢内に紛れた ☐/☒ を誤検出しないよう
+      // 行頭形状に限定する。
+      const AUQ_HEADER_RE = /^\s*(?:←\s*)?[☐☒]\s/;
+      // ツール結果 (⎿) / assistant 出力ブロック (●) の「先頭行」。継続行や他種は
+      // 検出しないため、防御範囲は「ブロック先頭の検出」に限られる。
+      const BLOCK_START_RE = /^\s*(?:⎿|●)/;
+      const MAX_SCAN_LINES = 60; // ヘッダ探索の上限 (暴走防止)
+      const FALLBACK_TAIL_LINES = 20; // フッタ未検出時に出す末尾行数の上限
       let awaitingText: string | undefined;
       if (bridgeStatus === "AWAITING") {
         const rawLines = stripAnsi(raw)
@@ -856,7 +876,48 @@ export class SessionOrchestrator extends EventEmitter {
         while (rawLines.length > 0 && rawLines[rawLines.length - 1] === "") {
           rawLines.pop();
         }
-        awaitingText = rawLines.slice(-18).join("\n");
+        let footerIdx = -1;
+        for (let i = rawLines.length - 1; i >= 0; i--) {
+          if (AUQ_FOOTER_RE.test(rawLines[i])) {
+            footerIdx = i;
+            break;
+          }
+        }
+        if (footerIdx >= 0) {
+          // フッタから上へヘッダ (☐/☒) を探す。ヘッダ = ボックス先頭なので
+          // それ以上は遡らない。ヘッダ前に prose/ツール結果に当たったらその直下で打ち切る。
+          let startIdx = footerIdx;
+          for (
+            let i = footerIdx - 1;
+            i >= 0 && footerIdx - i <= MAX_SCAN_LINES;
+            i--
+          ) {
+            if (AUQ_HEADER_RE.test(rawLines[i])) {
+              startIdx = i;
+              break;
+            }
+            if (BLOCK_START_RE.test(rawLines[i])) {
+              startIdx = i + 1;
+              break;
+            }
+            startIdx = i;
+          }
+          awaitingText = rawLines.slice(startIdx, footerIdx + 1).join("\n");
+        } else {
+          // フッタ未検出 (permission プロンプト等)。末尾から上へ、ツール結果/prose の
+          // ブロック先頭 (⎿/●) に達するまで最大 FALLBACK_TAIL_LINES 行を出す
+          // (フッタが無くてもツール出力を無条件に含めない)。
+          const collected: string[] = [];
+          for (
+            let i = rawLines.length - 1;
+            i >= 0 && collected.length < FALLBACK_TAIL_LINES;
+            i--
+          ) {
+            if (BLOCK_START_RE.test(rawLines[i])) break;
+            collected.push(rawLines[i]);
+          }
+          awaitingText = collected.reverse().join("\n");
+        }
       }
 
       previews.push({
