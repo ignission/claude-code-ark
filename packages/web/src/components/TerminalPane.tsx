@@ -48,6 +48,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useIsMobile } from "../hooks/useMobile";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
+import { CanvasViewerPane } from "./CanvasViewerPane";
 import { FileViewerPane } from "./FileViewerPane";
 import { HtmlViewerPane } from "./HtmlViewerPane";
 import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
@@ -578,6 +579,18 @@ export function TerminalPane({
           return (
             <div className="flex-1 min-h-0">
               <HtmlViewerPane filePath={tab.filePath} />
+            </div>
+          );
+        })()}
+      {tabs[activeTabIndex]?.type === "canvas" &&
+        (() => {
+          const tab = tabs[activeTabIndex] as ViewerTab & { type: "canvas" };
+          return (
+            <div className="flex-1 min-h-0">
+              <CanvasViewerPane
+                mermaidCode={tab.mermaidCode}
+                title={tab.title}
+              />
             </div>
           );
         })()}
