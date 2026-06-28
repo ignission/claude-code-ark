@@ -19,7 +19,14 @@ import type {
   SpecialKey,
 } from "@ark/shared";
 import { isImagePath, splitTextWithFilePaths } from "@ark/shared/file-paths";
-import { ArrowDown, Download, Loader2, Paperclip, Send } from "lucide-react";
+import {
+  ArrowDown,
+  Download,
+  Loader2,
+  Paperclip,
+  Send,
+  Workflow,
+} from "lucide-react";
 import {
   type FormEvent,
   type ReactNode,
@@ -49,6 +56,7 @@ import { splitTextWithUrls } from "@/lib/linkify";
 import { isMermaidCodeClass } from "@/lib/mermaid-block-utils";
 import { reconcileEscape } from "@/lib/reconcile-escape";
 import { reconcilePending } from "@/lib/reconcile-pending";
+import { buildVisualizeConversationPrompt } from "@/lib/visualize-conversation";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -1049,6 +1057,23 @@ export function SplitChatPane({
     setInputValue("");
   };
 
+  // 「会話を図解」: 現在の Claude セッションに会話の図解を依頼する。
+  // 入力欄は触らず、図解プロンプトを送信して pending を楽観表示する
+  // (返答の ```mermaid は MermaidBlock がインライン描画する)。
+  const handleVisualizeConversation = () => {
+    const prompt = buildVisualizeConversationPrompt();
+    lastSubmittedRef.current = prompt;
+    onSendMessage(prompt);
+    setPending(prev => [
+      ...prev,
+      {
+        id: `p:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+        text: prompt,
+        sentAt: Date.now(),
+      },
+    ]);
+  };
+
   // ===== ファイルアップロード =====
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -1381,6 +1406,14 @@ export function SplitChatPane({
             </button>
           </>
         )}
+        <button
+          type="button"
+          onClick={handleVisualizeConversation}
+          className="p-2 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors self-end"
+          title="会話を図解 (Claude に mermaid 図で要約させる)"
+        >
+          <Workflow className="w-4 h-4" />
+        </button>
         <textarea
           ref={inputRef}
           value={inputValue}
