@@ -80,6 +80,12 @@ export type ViewerTab =
       type: "html";
       id: string;
       filePath: string;
+    }
+  | {
+      type: "canvas";
+      id: string;
+      mermaidCode: string;
+      title?: string;
     };
 
 interface TerminalPaneProps {
