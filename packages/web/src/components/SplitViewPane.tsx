@@ -94,6 +94,17 @@ export function SplitViewPane(props: SplitViewPaneProps) {
     readSavedShowTerminal()
   );
 
+  // キャンバスタブが新規に開かれたら右ペインを自動表示する。
+  // canvas タブ数の増加時のみ true 化し、ユーザーが後で閉じた操作は尊重する。
+  const prevCanvasCountRef = useRef(0);
+  useEffect(() => {
+    const canvasCount = props.tabs.filter(t => t.type === "canvas").length;
+    if (canvasCount > prevCanvasCountRef.current) {
+      setShowTerminal(true);
+    }
+    prevCanvasCountRef.current = canvasCount;
+  }, [props.tabs]);
+
   // コンテナ幅変化時に left を最大比率内に丸める (ターミナル表示中のみ意味あり)
   useEffect(() => {
     const el = containerRef.current;
