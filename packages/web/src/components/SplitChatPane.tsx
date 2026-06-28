@@ -34,6 +34,7 @@ import remarkGfm from "remark-gfm";
 import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
 import { AskUserQuestionCard } from "@/components/AskUserQuestionCard";
+import { MermaidBlock } from "@/components/MermaidBlock";
 import { Button } from "@/components/ui/button";
 import { fileToBase64, validateFile } from "@/hooks/useFileUpload";
 import { useSessionJsonl } from "@/hooks/useSessionJsonl";
@@ -45,6 +46,7 @@ import {
 } from "@/lib/ask-user-question-state";
 import type { JsonlParsedEvent } from "@/lib/jsonl-event-parser";
 import { splitTextWithUrls } from "@/lib/linkify";
+import { isMermaidCodeClass } from "@/lib/mermaid-block-utils";
 import { reconcileEscape } from "@/lib/reconcile-escape";
 import { reconcilePending } from "@/lib/reconcile-pending";
 
@@ -315,15 +317,30 @@ function createMarkdownComponents(sessionId: string): Components {
         </a>
       );
     },
-    code: ({ className, children, node: _node, ...props }) => (
-      <code className={className} {...props}>
-        <FilePathText
-          text={reactNodeToText(children)}
-          sessionId={sessionId}
-          compact
-        />
-      </code>
-    ),
+    pre: ({ children, node: _node, ...props }) => {
+      // mermaid ブロックは MermaidBlock 自身が描画するので pre を被せない
+      const child = Array.isArray(children) ? children[0] : children;
+      const cls =
+        child && typeof child === "object" && "props" in child
+          ? (child as { props?: { className?: string } }).props?.className
+          : undefined;
+      if (isMermaidCodeClass(cls)) return <>{children}</>;
+      return <pre {...props}>{children}</pre>;
+    },
+    code: ({ className, children, node: _node, ...props }) => {
+      if (isMermaidCodeClass(className)) {
+        return <MermaidBlock code={reactNodeToText(children)} />;
+      }
+      return (
+        <code className={className} {...props}>
+          <FilePathText
+            text={reactNodeToText(children)}
+            sessionId={sessionId}
+            compact
+          />
+        </code>
+      );
+    },
   };
 }
 
