@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ViewerTab } from "../components/TerminalPane";
+import { addOrFocusCanvasTab } from "../lib/canvas-tabs";
 
 /**
  * セッションごとのタブ状態管理を提供するカスタムフック。
@@ -130,6 +131,25 @@ export function useViewerTabs(
     []
   );
 
+  const openCanvasTab = useCallback(
+    (sessionId: string, mermaidCode: string, title?: string) => {
+      setSessionTabs(prev => {
+        const current = prev[sessionId] ?? [
+          { type: "terminal" as const, id: "terminal" },
+        ];
+        const { tabs, activeIndex } = addOrFocusCanvasTab(
+          current,
+          mermaidCode,
+          title,
+          `canvas-${Date.now()}`
+        );
+        setSessionActiveTab(p => ({ ...p, [sessionId]: activeIndex }));
+        return { ...prev, [sessionId]: tabs };
+      });
+    },
+    []
+  );
+
   // postMessageリスナー（ttyd iframe内のリンククリックを受信）
   useEffect(() => {
     if (!enabled) return;
@@ -179,11 +199,29 @@ export function useViewerTabs(
           readFile(selectedSessionId, filePath);
         }
       }
+
+      if (type === "ark:open-canvas") {
+        const { code, title } = event.data;
+        if (typeof code !== "string" || !code) return;
+        openCanvasTab(
+          selectedSessionId,
+          code,
+          typeof title === "string" ? title : undefined
+        );
+      }
     };
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [selectedSessionId, sessions, openFileTab, readFile, onOpenUrl, enabled]);
+  }, [
+    selectedSessionId,
+    sessions,
+    openFileTab,
+    openCanvasTab,
+    readFile,
+    onOpenUrl,
+    enabled,
+  ]);
 
   // fileContent受信時にタブを更新（全セッションを検索してレースコンディション対策）
   useEffect(() => {
@@ -226,5 +264,6 @@ export function useViewerTabs(
     handleTabSelect,
     handleTabClose,
     openFileTab,
+    openCanvasTab,
   };
 }
