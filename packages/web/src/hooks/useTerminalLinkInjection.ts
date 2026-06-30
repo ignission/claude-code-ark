@@ -713,7 +713,11 @@ export function useTerminalLinkInjection(
               );
               const newLines = totalLines - touchSentLines;
               if (newLines > 0) {
-                const wheelDeltaY = deltaY > 0 ? -newLines * 16 : newLines * 16;
+                // 自然なタッチスクロール（コンテンツが指に追従）に合わせる:
+                // 上スワイプ (deltaY>0) → 下方向(新しい出力)へスクロール (正の wheel)、
+                // 下スワイプ → 上方向(過去の出力)へスクロール (負の wheel)。
+                // 以前は符号が逆で、スワイプ方向と逆にスクロールしていた。
+                const wheelDeltaY = deltaY > 0 ? newLines * 16 : -newLines * 16;
                 const xtermEl =
                   iframeDoc.querySelector(".xterm-viewport") ||
                   iframeDoc.querySelector(".xterm-screen") ||
