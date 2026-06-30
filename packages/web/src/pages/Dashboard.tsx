@@ -641,6 +641,8 @@ export default function Dashboard() {
           onChangeActiveTab={setMobileActiveTab}
           onChangeSessionSubView={setMobileSessionSubView}
           sessionsLoaded={sessionsLoaded}
+          sessionStatuses={sessionStatuses}
+          sessionAwaitingTexts={sessionAwaitingTexts}
         />
       ) : (
         <SidebarMainLayout

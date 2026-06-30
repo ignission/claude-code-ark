@@ -8,6 +8,7 @@
 
 import type {
   BeaconProfileState,
+  BridgeSessionStatus,
   BrowserSession,
   ChatMessage,
   ClientToServerEvents,
@@ -132,6 +133,10 @@ interface MobileLayoutProps {
   onChangeSessionSubView: (view: SessionSubView) => void;
   /** session:list を受信済みか。フォールバック判定で使う（復元中の誤list遷移を防ぐ） */
   sessionsLoaded: boolean;
+  /** session:previews 由来のセッション状態マップ（チャットビューの busy/AWAITING 用） */
+  sessionStatuses: Map<string, BridgeSessionStatus>;
+  /** AWAITING 時の確認 UI 生テキストマップ（チャットビューのバナー用） */
+  sessionAwaitingTexts: Map<string, string>;
 }
 
 export function MobileLayout({
@@ -179,6 +184,8 @@ export function MobileLayout({
   onChangeActiveTab,
   onChangeSessionSubView,
   sessionsLoaded,
+  sessionStatuses,
+  sessionAwaitingTexts,
 }: MobileLayoutProps) {
   const [frontlineOpened, setFrontlineOpened] = useState(false);
   const [openedSessions, setOpenedSessions] = useState<Set<string>>(() =>
@@ -340,45 +347,54 @@ export function MobileLayout({
       {/* 詳細画面 - 一度でも開いたセッションのみ描画（iframe再マウント防止） */}
       {Array.from(sessions.entries())
         .filter(([sessionId]) => openedSessions.has(sessionId))
-        .map(([sessionId, session]) => (
-          <div
-            key={sessionId}
-            className={
-              activeTab === "session" &&
-              effectiveSessionSubView === "detail" &&
-              selectedSessionId === sessionId
-                ? "flex-1 flex flex-col min-h-0 pb-14"
-                : "hidden"
-            }
-          >
-            <MobileSessionView
-              session={session}
-              worktree={getWorktreeForSession(session)}
-              onBack={handleBack}
-              onSendMessage={message => onSendMessage(sessionId, message)}
-              onSendKey={key => onSendKey(sessionId, key)}
-              onDeleteSession={() =>
-                onDeleteSession(sessionId, getWorktreeForSession(session))
+        .map(([sessionId, session]) => {
+          // この詳細が現在画面に表示されているか。チャットビューの JSONL 購読を
+          // 表示中セッションに限定するために使う（全 opened セッションが
+          // display:none でマウントされ続けるため）。
+          const isActive =
+            activeTab === "session" &&
+            effectiveSessionSubView === "detail" &&
+            selectedSessionId === sessionId;
+          return (
+            <div
+              key={sessionId}
+              className={
+                isActive ? "flex-1 flex flex-col min-h-0 pb-14" : "hidden"
               }
-              onUploadFile={
-                onUploadFile
-                  ? data => onUploadFile({ sessionId, ...data })
-                  : undefined
-              }
-              onCopyBuffer={
-                onCopyBuffer ? () => onCopyBuffer(sessionId) : undefined
-              }
-              tabs={getTabsForSession(sessionId)}
-              activeTabIndex={getActiveTabForSession(sessionId)}
-              onTabSelect={idx => handleTabSelect(sessionId, idx)}
-              onTabClose={idx => handleTabClose(sessionId, idx)}
-              messageShortcuts={messageShortcuts}
-              onCreateShortcut={onCreateShortcut}
-              onUpdateShortcut={onUpdateShortcut}
-              onDeleteShortcut={onDeleteShortcut}
-            />
-          </div>
-        ))}
+            >
+              <MobileSessionView
+                socket={socket}
+                isActive={isActive}
+                bridgeStatus={sessionStatuses.get(sessionId)}
+                awaitingText={sessionAwaitingTexts.get(sessionId)}
+                session={session}
+                worktree={getWorktreeForSession(session)}
+                onBack={handleBack}
+                onSendMessage={message => onSendMessage(sessionId, message)}
+                onSendKey={key => onSendKey(sessionId, key)}
+                onDeleteSession={() =>
+                  onDeleteSession(sessionId, getWorktreeForSession(session))
+                }
+                onUploadFile={
+                  onUploadFile
+                    ? data => onUploadFile({ sessionId, ...data })
+                    : undefined
+                }
+                onCopyBuffer={
+                  onCopyBuffer ? () => onCopyBuffer(sessionId) : undefined
+                }
+                tabs={getTabsForSession(sessionId)}
+                activeTabIndex={getActiveTabForSession(sessionId)}
+                onTabSelect={idx => handleTabSelect(sessionId, idx)}
+                onTabClose={idx => handleTabClose(sessionId, idx)}
+                messageShortcuts={messageShortcuts}
+                onCreateShortcut={onCreateShortcut}
+                onUpdateShortcut={onUpdateShortcut}
+                onDeleteShortcut={onDeleteShortcut}
+              />
+            </div>
+          );
+        })}
 
       {/* Beaconチャットビュー */}
       <div
