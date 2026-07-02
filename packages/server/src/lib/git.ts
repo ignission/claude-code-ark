@@ -10,6 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { RepoInfo, Worktree } from "@ark/shared";
+import { getErrorMessage } from "./errors.js";
 
 const execAsync = promisify(exec);
 
@@ -325,6 +326,121 @@ export async function listWorktrees(repoPath: string): Promise<Worktree[]> {
   return worktrees.filter(w => w.isBare || fs.existsSync(w.path));
 }
 
+/**
+ * ローカルブランチが存在するか確認する
+ *
+ * `git show-ref --verify --quiet` は「存在しない」場合に exit 1 を返す。
+ * それ以外の失敗（リポジトリ異常等）は「存在しない」と区別して伝播する。
+ */
+async function branchExists(gitRoot: string, branch: string): Promise<boolean> {
+  // shell へ渡す前に必ず検証する（呼び出し元に依存しない防御境界）
+  const safeBranch = validateBranchName(branch);
+  try {
+    await execAsync(
+      `git show-ref --verify --quiet "refs/heads/${safeBranch}"`,
+      { cwd: gitRoot }
+    );
+    return true;
+  } catch (error) {
+    if ((error as { code?: number | string }).code === 1) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+/**
+ * ローカルブランチを安全に後始末する (Issue #213 ①)
+ *
+ * - baseRef から到達可能（固有コミットなし）なら削除しても情報は失われない → 削除
+ * - いずれかのリモートブランチから到達可能なら remote-tracking ref から復元できる → 削除
+ * - それ以外（固有コミットを持つ可能性あり）は削除せず理由を返す
+ *
+ * 到達可能性は `git merge-base --is-ancestor` で明示的に検証する
+ * （`git branch -d` の成否に頼ると HEAD/upstream の状態に暗黙依存するため）。
+ */
+async function cleanupLocalBranch(
+  gitRoot: string,
+  branch: string,
+  baseRef = "HEAD"
+): Promise<{ deleted: boolean; keptReason?: string }> {
+  // 呼び出し元によらず、shell へ渡す前に必ず検証する（多重防御）
+  const safeBranch = validateBranchName(branch);
+  const safeBaseRef = baseRef === "HEAD" ? "HEAD" : validateBranchName(baseRef);
+
+  const keep = (reason: string) => {
+    console.warn(`[Git] ${reason}`);
+    return { deleted: false, keptReason: reason };
+  };
+
+  // 1) baseRef からの到達可能性を判定する。`merge-base --is-ancestor` は
+  //    「ancestor ではない」場合のみ exit 1 を返すため、それ以外の失敗は
+  //    リポジトリ異常として区別し、以降のブランチ操作を重ねない
+  let reachableFromBase = false;
+  try {
+    await execAsync(
+      `git merge-base --is-ancestor "${safeBranch}" "${safeBaseRef}"`,
+      { cwd: gitRoot }
+    );
+    reachableFromBase = true;
+  } catch (error) {
+    if ((error as { code?: number | string }).code !== 1) {
+      return keep(
+        `ブランチ '${safeBranch}' の到達可能性の判定に失敗しました: ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  if (reachableFromBase) {
+    // 固有コミットなし → 削除しても情報は失われない
+    try {
+      await execAsync(`git branch -D "${safeBranch}"`, { cwd: gitRoot });
+      console.log(
+        `[Git] ${safeBaseRef} に取り込み済みのブランチ '${safeBranch}' を削除しました`
+      );
+      return { deleted: true };
+    } catch (error) {
+      // 削除失敗は「未マージ」と誤分類せず、失敗として明示する
+      return keep(
+        `ブランチ '${safeBranch}' の削除に失敗しました: ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  // 2) いずれかのリモートブランチから到達可能なら remote-tracking ref から復元できる → 削除
+  //    確認の失敗と削除の失敗は理由を分けて記録する
+  let remoteContains = false;
+  try {
+    const { stdout } = await execAsync(
+      `git branch -r --contains "${safeBranch}"`,
+      { cwd: gitRoot }
+    );
+    remoteContains = stdout.trim().length > 0;
+  } catch (error) {
+    return keep(
+      `ブランチ '${safeBranch}' のリモート取り込み状況の確認に失敗しました: ${getErrorMessage(error)}`
+    );
+  }
+
+  if (remoteContains) {
+    try {
+      await execAsync(`git branch -D "${safeBranch}"`, { cwd: gitRoot });
+      console.log(
+        `[Git] リモート取り込み済みブランチ '${safeBranch}' を削除しました`
+      );
+      return { deleted: true };
+    } catch (error) {
+      return keep(
+        `ブランチ '${safeBranch}' の削除に失敗しました: ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  return keep(
+    `ブランチ '${safeBranch}' は未マージのコミットを持つ可能性があるため削除しませんでした（不要な場合は git branch -D ${safeBranch} で削除してください）`
+  );
+}
+
 // Create a new worktree
 export async function createWorktree(
   repoPath: string,
@@ -347,18 +463,58 @@ export async function createWorktree(
 
   // Check if path already exists
   if (fs.existsSync(worktreePath)) {
-    throw new Error(`Directory already exists: ${worktreePath}`);
+    throw new Error(
+      `作成先ディレクトリが既に存在します: ${worktreePath}（前回の worktree 削除の残骸の可能性があります。不要であれば削除してから再試行してください）`
+    );
   }
 
-  // Create the worktree with a new branch
   const baseRef = baseBranch ? validateBranchName(baseBranch) : "HEAD";
 
-  await execAsync(
-    `git worktree add -b "${safeBranch}" "${worktreePath}" ${baseRef}`,
-    {
-      cwd: gitRoot,
+  // 同名ブランチが既に存在する場合の扱い (Issue #213 ②)
+  // - 別 worktree で使用中 → 明確なエラー
+  // - baseRef/リモートに取り込み済み（固有コミットなし）→ 削除して新規作成（残骸ブランチからの再作成を防ぐ）
+  // - 固有コミットを持つ可能性あり → 既存ブランチに attach して作業を引き継ぐ
+  let attachExisting = false;
+  if (await branchExists(gitRoot, safeBranch)) {
+    const worktrees = await listWorktrees(gitRoot);
+    const inUse = worktrees.find(w => w.branch === safeBranch);
+    if (inUse) {
+      throw new Error(
+        `ブランチ '${safeBranch}' は既に別の worktree で使用中です: ${inUse.path}`
+      );
     }
-  );
+
+    const cleanup = await cleanupLocalBranch(gitRoot, safeBranch, baseRef);
+    if (!cleanup.deleted) {
+      attachExisting = true;
+      console.log(
+        `[Git] 既存ブランチ '${safeBranch}' を再利用して worktree を作成します${
+          baseBranch ? `（baseBranch '${baseBranch}' は使用されません）` : ""
+        }`
+      );
+    }
+  }
+
+  try {
+    if (attachExisting) {
+      await execAsync(`git worktree add "${worktreePath}" "${safeBranch}"`, {
+        cwd: gitRoot,
+      });
+    } else {
+      // Create the worktree with a new branch
+      await execAsync(
+        `git worktree add -b "${safeBranch}" "${worktreePath}" ${baseRef}`,
+        {
+          cwd: gitRoot,
+        }
+      );
+    }
+  } catch (error) {
+    console.error(
+      `[Git] worktree の作成に失敗しました (branch=${safeBranch}, path=${worktreePath}): ${getErrorMessage(error)}`
+    );
+    throw error;
+  }
 
   // Get the created worktree info
   const worktrees = await listWorktrees(gitRoot);
@@ -371,11 +527,26 @@ export async function createWorktree(
   return created;
 }
 
+/** deleteWorktree の結果（ブランチ後始末の内訳） */
+export interface DeleteWorktreeResult {
+  /**
+   * ローカルブランチ後始末の結果
+   * - deleted: ブランチを削除した
+   * - kept: ブランチを保持した（理由は branchKeptReason）
+   * - skipped: 後始末対象なし（detached 等）
+   */
+  branchCleanup: "deleted" | "kept" | "skipped";
+  /** 後始末対象のブランチ名（skipped の場合は undefined） */
+  branch?: string;
+  /** ブランチを保持した理由（kept の場合のみ） */
+  branchKeptReason?: string;
+}
+
 // Delete a worktree
 export async function deleteWorktree(
   repoPath: string,
   worktreePath: string
-): Promise<void> {
+): Promise<DeleteWorktreeResult> {
   const safePath = validatePath(repoPath);
   const safeWorktreePath = validatePath(worktreePath);
 
@@ -395,18 +566,63 @@ export async function deleteWorktree(
   }
 
   // Remove the worktree
-  await execAsync(`git worktree remove "${safeWorktreePath}" --force`, {
-    cwd: gitRoot,
-  });
-
-  // Also delete the branch if it was created for this worktree
   try {
-    await execAsync(`git branch -D "${worktree.branch}"`, {
+    await execAsync(`git worktree remove "${safeWorktreePath}" --force`, {
       cwd: gitRoot,
     });
-  } catch {
-    // Branch might be used elsewhere, ignore error
+  } catch (error) {
+    console.error(
+      `[Git] worktree の削除に失敗しました (${safeWorktreePath}): ${getErrorMessage(error)}`
+    );
+    // 後始末 (Issue #213 ④) は「Directory not empty」（削除途中の残骸）に限定する。
+    // locked worktree や権限問題等、git が明示的に拒否したケースまで rm -rf しない
+    if (!/directory not empty/i.test(getErrorMessage(error))) {
+      throw error;
+    }
+    // 残骸ディレクトリを削除し、stale な管理情報を prune で整理する
+    // （残骸が残ると、次回作成時に「作成先ディレクトリが既に存在します」で詰まる）
+    try {
+      if (fs.existsSync(safeWorktreePath)) {
+        await fs.promises.rm(safeWorktreePath, {
+          recursive: true,
+          force: true,
+        });
+      }
+      await execAsync("git worktree prune", { cwd: gitRoot });
+    } catch (cleanupError) {
+      console.error(
+        `[Git] worktree の後始末に失敗しました (${safeWorktreePath}): ${getErrorMessage(cleanupError)}`
+      );
+      throw error;
+    }
+    if (fs.existsSync(safeWorktreePath)) {
+      throw error;
+    }
+    console.log(`[Git] worktree の残骸を後始末しました (${safeWorktreePath})`);
   }
+
+  // ローカルブランチの後始末 (Issue #213 ①)。detached 等は対象外
+  const branch = worktree.branch;
+  if (!branch || branch === "(detached)" || branch === "unknown") {
+    return { branchCleanup: "skipped" };
+  }
+
+  // ブランチ名の検証だけを限定的に catch する。worktree 自体は削除済みなので
+  // 名前不正は保持扱いに留め、それ以外の未知の例外は握りつぶさず伝播させる
+  try {
+    validateBranchName(branch);
+  } catch {
+    const reason = `ブランチ名 '${branch}' が不正なため後始末をスキップしました`;
+    console.warn(`[Git] ${reason}`);
+    return { branch, branchCleanup: "kept", branchKeptReason: reason };
+  }
+
+  const cleanup = await cleanupLocalBranch(gitRoot, branch);
+  return {
+    branch,
+    branchCleanup: cleanup.deleted ? "deleted" : "kept",
+    branchKeptReason: cleanup.keptReason,
+  };
 }
 
 // Get list of branches
