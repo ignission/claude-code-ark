@@ -59,6 +59,8 @@ export function CanvasPane({
   const lastSentElementsRef = useRef<BoardElementLike[]>([]);
   const dirtyRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 直近に保存済み（または読込/送信で同期済み）の serialize 結果。同一なら保存しない */
+  const lastSavedSceneRef = useRef<string | null>(null);
   const [initialData, setInitialData] = useState<{
     elements: unknown[];
     files?: Record<string, unknown>;
@@ -117,7 +119,13 @@ export function CanvasPane({
     saveTimerRef.current = setTimeout(() => {
       const scene = serializeScene();
       if (!scene || !socket) return;
+      if (scene === lastSavedSceneRef.current) {
+        // 実体が変わっていない onChange（updateScene 反映・pan/zoom 等）は保存しない
+        dirtyRef.current = false;
+        return;
+      }
       socket.emit("canvas:save", { worktreePath, scene });
+      lastSavedSceneRef.current = scene;
       dirtyRef.current = false;
     }, SAVE_DEBOUNCE_MS);
   }, [socket, worktreePath, serializeScene]);
@@ -128,7 +136,9 @@ export function CanvasPane({
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       if (dirtyRef.current && socket) {
         const scene = serializeScene();
-        if (scene) socket.emit("canvas:save", { worktreePath, scene });
+        if (scene && scene !== lastSavedSceneRef.current) {
+          socket.emit("canvas:save", { worktreePath, scene });
+        }
       }
     };
   }, [socket, worktreePath, serializeScene]);
@@ -179,6 +189,7 @@ export function CanvasPane({
           };
           if (scene.files) api.addFiles(Object.values(scene.files));
           api.updateScene({ elements: scene.elements ?? [] });
+          lastSavedSceneRef.current = serializeScene();
         } catch {
           // 壊れた scene は無視
         }
@@ -188,7 +199,7 @@ export function CanvasPane({
     return () => {
       socket.off("canvas:updated", handler);
     };
-  }, [socket, worktreePath]);
+  }, [socket, worktreePath, serializeScene]);
 
   // Claude に送る
   const handleSend = useCallback(() => {
@@ -210,6 +221,7 @@ export function CanvasPane({
       response => {
         if (response.ok) {
           lastSentElementsRef.current = current;
+          lastSavedSceneRef.current = scene;
           setSendState("sent");
         } else {
           console.error("ボード送信に失敗:", response.error);
@@ -225,6 +237,11 @@ export function CanvasPane({
   // biome-ignore lint/suspicious/noExplicitAny: バージョン固有の型 export 経路に依存しないため最小面へ cast
   const handleExcalidrawApi = useCallback((api: any) => {
     apiRef.current = api as ExcalidrawApiLike;
+    // 読込直後の状態を保存基準にする（pan/zoom だけで保存が走るのを防ぐ）
+    lastSavedSceneRef.current = JSON.stringify({
+      elements: (api as ExcalidrawApiLike).getSceneElements(),
+      files: (api as ExcalidrawApiLike).getFiles(),
+    });
     setApiReady(true);
   }, []);
 

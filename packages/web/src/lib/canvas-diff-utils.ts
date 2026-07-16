@@ -89,6 +89,16 @@ function describe(
   return el.label ? `${typeLabel(el.type)}「${el.label}」` : typeLabel(el.type);
 }
 
+/** 矢印の接続を「from」→「to」形式で表す（ラベル不明時は種別名） */
+function describeEnds(
+  el: LogicalElement,
+  all: Map<string, LogicalElement>
+): string {
+  const from = el.startId ? (all.get(el.startId)?.label ?? "?") : "?";
+  const to = el.endId ? (all.get(el.endId)?.label ?? "?") : "?";
+  return `「${from}」→「${to}」`;
+}
+
 /** 最も近いラベル付き要素を探す（閾値内のみ） */
 function nearestLabel(
   el: LogicalElement,
@@ -137,6 +147,13 @@ export function buildBoardDiffText(
           `変更: ${typeLabel(el.type)}「${before.label}」→（ラベル削除）`
         );
       }
+    } else if (
+      (el.type === "arrow" || el.type === "line") &&
+      (before.startId !== el.startId || before.endId !== el.endId)
+    ) {
+      lines.push(
+        `変更: ${typeLabel(el.type)}${describeEnds(el, nextById)}（旧: ${describeEnds(before, prevById)}）`
+      );
     }
   }
   for (const el of prev) {

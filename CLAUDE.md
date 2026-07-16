@@ -311,6 +311,9 @@ claude-code-ark/
 | `session:jsonl-unsubscribe` | `sessionId: string`           | JSONL 購読解除                   |
 | `session:jsonl-load-more` | `{ sessionId, limit }`          | 過去履歴を limit 行で snapshot 再送 |
 | `session:send-literal` | `{ sessionId, text }`              | Enter 無しの literal 送信（AUQ 自由入力用）|
+| `canvas:load`     | `worktreePath, callback`                | ボード scene の読込（コールバック） |
+| `canvas:save`     | `{ worktreePath, scene }`               | ボード scene の保存（デバウンス済み） |
+| `canvas:send-to-claude` | `{ sessionId, worktreePath, text, scene }, callback` | ボード diff を Claude に送信し last_sent_scene を更新 |
 | `slash:list`      | `sessionId, callback`                   | slash command 候補一覧（コールバック）|
 | `tunnel:start`    | `{ port? }`                             | Quick Tunnel起動                 |
 | `tunnel:stop`     | -                                       | トンネル停止                     |
@@ -345,6 +348,7 @@ claude-code-ark/
 | `session:jsonl-snapshot` | `{ sessionId, lines }`         | JSONL 履歴 snapshot（/clear 切替時は空配列）|
 | `session:jsonl-line`     | `{ sessionId, line }`          | JSONL 新規行 push                |
 | `session:auq`            | `{ sessionId, at, questions }` | 回答待ち AskUserQuestion（PreToolUse hook 由来）|
+| `canvas:updated`         | `{ worktreePath }`             | 他クライアントのボード保存通知（未編集なら再読込） |
 | `session:error`          | `{ sessionId, error }`         | セッションエラー                 |
 | `tunnel:started`         | `{ url, token }`               | トンネル開始                     |
 | `tunnel:stopped`         | -                              | トンネル停止                     |

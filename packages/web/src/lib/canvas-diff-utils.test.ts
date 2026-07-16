@@ -132,4 +132,33 @@ describe("buildBoardDiffText", () => {
     const text = buildBoardDiffText(prev, next);
     expect(text).toContain("変更: カード「API 設計」→（ラベル削除）");
   });
+
+  it("矢印の繋ぎ直しを変更として整形する", () => {
+    const a = rect("a", 0, 0);
+    const b = rect("b", 400, 0);
+    const c = rect("c", 800, 0);
+    const labels = [
+      boundText("a-t", "a", "セッション管理"),
+      boundText("b-t", "b", "Redis 検討"),
+      boundText("c-t", "c", "SQLite 検討"),
+    ];
+    const arrowToB: BoardElementLike = {
+      id: "ar1",
+      type: "arrow",
+      x: 120,
+      y: 30,
+      width: 280,
+      height: 0,
+      startBinding: { elementId: "a" },
+      endBinding: { elementId: "b" },
+    };
+    const arrowToC = { ...arrowToB, endBinding: { elementId: "c" } };
+    const text = buildBoardDiffText(
+      [a, b, c, ...labels, arrowToB],
+      [a, b, c, ...labels, arrowToC]
+    );
+    expect(text).toContain(
+      "変更: 矢印「セッション管理」→「SQLite 検討」（旧: 「セッション管理」→「Redis 検討」）"
+    );
+  });
 });
