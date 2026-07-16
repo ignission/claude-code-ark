@@ -313,6 +313,12 @@ export class SessionDatabase {
         display_name TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS canvas_boards (
+        worktree_path TEXT PRIMARY KEY,
+        scene TEXT NOT NULL,
+        last_sent_scene TEXT,
+        updated_at INTEGER NOT NULL
+      );
     `);
 
     // マイグレーション: 既存DBにも config_dir の UNIQUE INDEX を追加。
@@ -1146,6 +1152,56 @@ export class SessionDatabase {
       "DELETE FROM worktree_display_names WHERE worktree_path = ?"
     );
     stmt.run(worktreePath);
+  }
+
+  // ============================================================
+  // キャンバスボードCRUD操作
+  // ============================================================
+
+  /** ボード scene を取得する（未保存なら null） */
+  getCanvasBoard(
+    worktreePath: string
+  ): { scene: string; lastSentScene: string | null } | null {
+    const row = this.db
+      .prepare("SELECT * FROM canvas_boards WHERE worktree_path = ?")
+      .get(worktreePath) as
+      | { scene: string; last_sent_scene: string | null }
+      | undefined;
+    if (!row) return null;
+    return { scene: row.scene, lastSentScene: row.last_sent_scene };
+  }
+
+  /** ボード scene を upsert する（last_sent_scene は維持） */
+  saveCanvasBoardScene(worktreePath: string, scene: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO canvas_boards (worktree_path, scene, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(worktree_path)
+         DO UPDATE SET scene = excluded.scene, updated_at = excluded.updated_at`
+      )
+      .run(worktreePath, scene, Date.now());
+  }
+
+  /** 送信成功時: scene と last_sent_scene の両方を現 scene で更新する */
+  markCanvasBoardSent(worktreePath: string, scene: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO canvas_boards (worktree_path, scene, last_sent_scene, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(worktree_path)
+         DO UPDATE SET scene = excluded.scene,
+                       last_sent_scene = excluded.last_sent_scene,
+                       updated_at = excluded.updated_at`
+      )
+      .run(worktreePath, scene, scene, Date.now());
+  }
+
+  /** worktree 削除時にボードも削除する */
+  deleteCanvasBoard(worktreePath: string): void {
+    this.db
+      .prepare("DELETE FROM canvas_boards WHERE worktree_path = ?")
+      .run(worktreePath);
   }
 
   // ============================================================
