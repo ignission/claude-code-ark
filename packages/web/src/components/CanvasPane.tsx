@@ -5,6 +5,7 @@
  * - scene は canvas:save でデバウンス自動保存（サーバー側 SQLite が正）
  * - 「Claude に送る」で前回送信時との diff を自然文整形し session:send 経路で送信
  * - board-bus 経由でチャットの mermaid 図を編集可能要素として受け入れる
+ * - revision（軽量楽観ロック）で multi-client 競合を検出し、競合時は最新を再読込する
  */
 import type { ClientToServerEvents, ServerToClientEvents } from "@ark/shared";
 import {
@@ -43,6 +44,8 @@ const ExcalidrawLazy = lazy(async () => {
 });
 
 const SAVE_DEBOUNCE_MS = 1000;
+/** 保存失敗（conflict 以外）時、再試行までの待ち時間 */
+const SAVE_RETRY_MS = 5000;
 
 interface CanvasPaneProps {
   socket: TypedSocket | null;
@@ -59,17 +62,25 @@ export function CanvasPane({
   const lastSentElementsRef = useRef<BoardElementLike[]>([]);
   const dirtyRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** 直近に保存済み（または読込/送信で同期済み）の serialize 結果。同一なら保存しない */
   const lastSavedSceneRef = useRef<string | null>(null);
+  /** 直近に読込/保存で確認済みの revision。次の canvas:save の baseRevision に使う */
+  const revisionRef = useRef<number | null>(null);
   const [initialData, setInitialData] = useState<{
     elements: unknown[];
     files?: Record<string, unknown>;
   } | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">(
+    "loading"
+  );
+  const [reloadKey, setReloadKey] = useState(0);
   const [apiReady, setApiReady] = useState(false);
   const [sendState, setSendState] = useState<
     "idle" | "sending" | "sent" | "no-change" | "error"
   >("idle");
+  /** 保存競合など、一時的にユーザーへ知らせるメッセージ */
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
 
   /** 現 scene を JSON 文字列化する（保存・送信共通） */
   const serializeScene = useCallback((): string | null => {
@@ -81,11 +92,51 @@ export function CanvasPane({
     });
   }, []);
 
-  // 初期ロード（worktree ごとに 1 回）
+  /**
+   * サーバーの最新 scene を取得しエディタへ適用する。
+   * revisionRef は（scene の有無に関わらず）応答の revision で更新する。
+   * canvas:updated 受信時の再読込／canvas:save の conflict 解消の両方から使う。
+   */
+  const applyReload = useCallback(() => {
+    if (!socket) return;
+    socket.emit("canvas:load", worktreePath, response => {
+      if (response.error) {
+        console.error("ボード再読込に失敗:", response.error);
+        return;
+      }
+      revisionRef.current = response.revision;
+      const api = apiRef.current;
+      if (!api || !response.scene) return;
+      try {
+        const scene = JSON.parse(response.scene) as {
+          elements?: unknown[];
+          files?: Record<string, unknown>;
+        };
+        if (scene.files) api.addFiles(Object.values(scene.files));
+        api.updateScene({ elements: scene.elements ?? [] });
+        lastSavedSceneRef.current = serializeScene();
+        dirtyRef.current = false;
+      } catch (error) {
+        console.error("ボード再読込のパースに失敗:", error);
+      }
+    });
+  }, [socket, worktreePath, serializeScene]);
+
+  // 初期ロード（worktree ごと・reloadKey インクリメントで再試行）
+  // biome-ignore lint/correctness/useExhaustiveDependencies(reloadKey): 「再試行」ボタンで effect を再実行させるための意図的な依存
   useEffect(() => {
     if (!socket) return;
-    setLoaded(false);
+    let cancelled = false;
+    setLoadState("loading");
+    // room 参加（canvas:updated の worktree 単位配信対象になる）はサーバー側の
+    // canvas:load ハンドラーが socket.join() で行う。クライアントからは何もしない。
     socket.emit("canvas:load", worktreePath, response => {
+      if (cancelled) return;
+      if (response.error) {
+        console.error("ボード読込に失敗:", response.error);
+        setLoadState("error");
+        return;
+      }
       try {
         const scene = response.scene
           ? (JSON.parse(response.scene) as {
@@ -93,28 +144,36 @@ export function CanvasPane({
               files?: Record<string, unknown>;
             })
           : null;
-        setInitialData({
-          elements: scene?.elements ?? [],
-          files: scene?.files,
-        });
         const lastSent = response.lastSentScene
           ? (JSON.parse(response.lastSentScene) as {
               elements?: BoardElementLike[];
             })
           : null;
+        setInitialData({
+          elements: scene?.elements ?? [],
+          files: scene?.files,
+        });
         lastSentElementsRef.current = lastSent?.elements ?? [];
-      } catch {
-        // 壊れた scene は空ボードとして開く（保存で上書きされる）
-        setInitialData({ elements: [] });
-        lastSentElementsRef.current = [];
+        revisionRef.current = response.revision;
+        setLoadState("ready");
+      } catch (error) {
+        // scene が壊れている場合は空ボードにせずエラー状態にする（上書き事故防止）
+        console.error("ボード scene のパースに失敗:", error);
+        setLoadState("error");
       }
-      setLoaded(true);
     });
-  }, [socket, worktreePath]);
+    return () => {
+      cancelled = true;
+    };
+  }, [socket, worktreePath, reloadKey]);
 
-  // デバウンス保存
+  // デバウンス保存（ACK 付き）
   const scheduleSave = useCallback(() => {
     dirtyRef.current = true;
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       const scene = serializeScene();
@@ -124,20 +183,55 @@ export function CanvasPane({
         dirtyRef.current = false;
         return;
       }
-      socket.emit("canvas:save", { worktreePath, scene });
-      lastSavedSceneRef.current = scene;
-      dirtyRef.current = false;
+      socket.emit(
+        "canvas:save",
+        { worktreePath, scene, baseRevision: revisionRef.current },
+        response => {
+          if (response.ok) {
+            lastSavedSceneRef.current = scene;
+            if (response.revision !== undefined) {
+              revisionRef.current = response.revision;
+            }
+            dirtyRef.current = false;
+            return;
+          }
+          if (response.conflict) {
+            console.warn(
+              "canvas:save: 他クライアントの変更と競合したため最新を読み込みます"
+            );
+            dirtyRef.current = false;
+            setSaveNotice(
+              "他のクライアントの変更と競合したため最新を読み込みます"
+            );
+            setTimeout(() => setSaveNotice(null), 3000);
+            applyReload();
+            return;
+          }
+          // 保存失敗（conflict 以外）: dirty を維持し、5 秒後に再試行する
+          console.error("canvas:save failed:", response.error);
+          retryTimerRef.current = setTimeout(() => {
+            scheduleSave();
+          }, SAVE_RETRY_MS);
+        }
+      );
     }, SAVE_DEBOUNCE_MS);
-  }, [socket, worktreePath, serializeScene]);
+  }, [socket, worktreePath, serializeScene, applyReload]);
 
   useEffect(() => {
     return () => {
       // アンマウント時: 未保存分を即時 flush
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       if (dirtyRef.current && socket) {
         const scene = serializeScene();
         if (scene && scene !== lastSavedSceneRef.current) {
-          socket.emit("canvas:save", { worktreePath, scene });
+          // アンマウント後は state 更新できず ACK を待てないため fire-and-forget。
+          // no-op コールバックはイベントのシグネチャ（ACK 必須）を満たすためだけに渡す
+          socket.emit(
+            "canvas:save",
+            { worktreePath, scene, baseRevision: revisionRef.current },
+            () => {}
+          );
         }
       }
     };
@@ -174,32 +268,18 @@ export function CanvasPane({
     });
   }, [apiReady, worktreePath, scheduleSave]);
 
-  // 他クライアントの保存: 自分が未編集なら再読込
+  // 他クライアントの保存: 自分が未編集なら再読込する（revisionRef も更新する）
   useEffect(() => {
     if (!socket) return;
     const handler = ({ worktreePath: updated }: { worktreePath: string }) => {
       if (updated !== worktreePath || dirtyRef.current) return;
-      socket.emit("canvas:load", worktreePath, response => {
-        const api = apiRef.current;
-        if (!api || !response.scene) return;
-        try {
-          const scene = JSON.parse(response.scene) as {
-            elements?: unknown[];
-            files?: Record<string, unknown>;
-          };
-          if (scene.files) api.addFiles(Object.values(scene.files));
-          api.updateScene({ elements: scene.elements ?? [] });
-          lastSavedSceneRef.current = serializeScene();
-        } catch {
-          // 壊れた scene は無視
-        }
-      });
+      applyReload();
     };
     socket.on("canvas:updated", handler);
     return () => {
       socket.off("canvas:updated", handler);
     };
-  }, [socket, worktreePath, serializeScene]);
+  }, [socket, worktreePath, applyReload]);
 
   // Claude に送る
   const handleSend = useCallback(() => {
@@ -222,6 +302,9 @@ export function CanvasPane({
         if (response.ok) {
           lastSentElementsRef.current = current;
           lastSavedSceneRef.current = scene;
+          if (response.revision !== undefined) {
+            revisionRef.current = response.revision;
+          }
           setSendState("sent");
         } else {
           console.error("ボード送信に失敗:", response.error);
@@ -245,7 +328,7 @@ export function CanvasPane({
     setApiReady(true);
   }, []);
 
-  if (!loaded || !initialData) {
+  if (loadState === "loading") {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
         ボードを読み込み中...
@@ -253,11 +336,34 @@ export function CanvasPane({
     );
   }
 
+  if (loadState === "error") {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-sm">
+        <span className="text-destructive">ボードの読み込みに失敗しました</span>
+        <button
+          type="button"
+          onClick={() => setReloadKey(k => k + 1)}
+          className="rounded bg-primary px-3 py-1 text-primary-foreground text-xs hover:bg-primary/90"
+        >
+          再試行
+        </button>
+      </div>
+    );
+  }
+
+  if (!initialData) {
+    // loadState === "ready" では常に設定済みのはずだが、型ガードとして残す
+    return null;
+  }
+
   return (
     <div className="flex h-full flex-col bg-background">
       <div className="flex shrink-0 items-center justify-between border-border border-b px-3 py-1.5">
         <span className="font-medium text-foreground text-sm">🎨 ボード</span>
         <div className="flex items-center gap-2">
+          {saveNotice && (
+            <span className="text-muted-foreground text-xs">{saveNotice}</span>
+          )}
           {sendState === "no-change" && (
             <span className="text-muted-foreground text-xs">変更なし</span>
           )}

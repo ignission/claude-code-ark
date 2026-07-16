@@ -17,16 +17,33 @@ describe("SessionDatabase: canvas boards", () => {
   });
 
   it("saveCanvasBoardScene で保存し getCanvasBoard で取得できる", () => {
-    db.saveCanvasBoardScene("/tmp/wt-a", '{"elements":[]}');
+    const result = db.saveCanvasBoardScene(
+      "/tmp/wt-a",
+      '{"elements":[]}',
+      null
+    );
+    expect(result.ok).toBe(true);
     const board = db.getCanvasBoard("/tmp/wt-a");
     expect(board?.scene).toBe('{"elements":[]}');
     expect(board?.lastSentScene).toBeNull();
   });
 
   it("saveCanvasBoardScene は upsert（2回目は上書き・lastSentScene 維持）", () => {
-    db.saveCanvasBoardScene("/tmp/wt-a", '{"elements":[1]}');
+    const first = db.saveCanvasBoardScene(
+      "/tmp/wt-a",
+      '{"elements":[1]}',
+      null
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("unreachable");
     db.markCanvasBoardSent("/tmp/wt-a", '{"elements":[1]}');
-    db.saveCanvasBoardScene("/tmp/wt-a", '{"elements":[1,2]}');
+    const afterSent = db.getCanvasBoard("/tmp/wt-a");
+    const second = db.saveCanvasBoardScene(
+      "/tmp/wt-a",
+      '{"elements":[1,2]}',
+      afterSent?.revision ?? null
+    );
+    expect(second.ok).toBe(true);
     const board = db.getCanvasBoard("/tmp/wt-a");
     expect(board?.scene).toBe('{"elements":[1,2]}');
     expect(board?.lastSentScene).toBe('{"elements":[1]}');
@@ -40,16 +57,70 @@ describe("SessionDatabase: canvas boards", () => {
   });
 
   it("deleteCanvasBoard で削除される（未存在でもエラーにならない）", () => {
-    db.saveCanvasBoardScene("/tmp/wt-a", "{}");
+    db.saveCanvasBoardScene("/tmp/wt-a", "{}", null);
     db.deleteCanvasBoard("/tmp/wt-a");
     expect(db.getCanvasBoard("/tmp/wt-a")).toBeNull();
     db.deleteCanvasBoard("/tmp/never-existed");
   });
 
   it("worktree ごとに独立している", () => {
-    db.saveCanvasBoardScene("/tmp/wt-a", '{"a":1}');
-    db.saveCanvasBoardScene("/tmp/wt-b", '{"b":2}');
+    db.saveCanvasBoardScene("/tmp/wt-a", '{"a":1}', null);
+    db.saveCanvasBoardScene("/tmp/wt-b", '{"b":2}', null);
     expect(db.getCanvasBoard("/tmp/wt-a")?.scene).toBe('{"a":1}');
     expect(db.getCanvasBoard("/tmp/wt-b")?.scene).toBe('{"b":2}');
+  });
+
+  describe("revision（軽量楽観ロック）", () => {
+    it("正常 save → revision が増加する", () => {
+      const first = db.saveCanvasBoardScene("/tmp/wt-a", '{"v":1}', null);
+      expect(first.ok).toBe(true);
+      if (!first.ok) throw new Error("unreachable");
+
+      const second = db.saveCanvasBoardScene(
+        "/tmp/wt-a",
+        '{"v":2}',
+        first.revision
+      );
+      expect(second.ok).toBe(true);
+      if (!second.ok) throw new Error("unreachable");
+      expect(second.revision).toBeGreaterThan(first.revision);
+
+      const board = db.getCanvasBoard("/tmp/wt-a");
+      expect(board?.revision).toBe(second.revision);
+    });
+
+    it("baseRevision が現在値と不一致なら conflict を返し、保存されない", () => {
+      const first = db.saveCanvasBoardScene("/tmp/wt-a", '{"v":1}', null);
+      expect(first.ok).toBe(true);
+      if (!first.ok) throw new Error("unreachable");
+
+      const result = db.saveCanvasBoardScene(
+        "/tmp/wt-a",
+        '{"v":2}',
+        first.revision - 1
+      );
+      expect(result).toEqual({ ok: false, conflict: true });
+
+      // 保存されていないことを確認（scene は変わらない）
+      const board = db.getCanvasBoard("/tmp/wt-a");
+      expect(board?.scene).toBe('{"v":1}');
+    });
+
+    it("既存行があるのに baseRevision が null なら conflict（新規と思い込みのケース）", () => {
+      db.saveCanvasBoardScene("/tmp/wt-a", '{"v":1}', null);
+      const result = db.saveCanvasBoardScene("/tmp/wt-a", '{"v":2}', null);
+      expect(result).toEqual({ ok: false, conflict: true });
+    });
+
+    it("行がなければ baseRevision を問わず新規 insert に成功する", () => {
+      const result = db.saveCanvasBoardScene(
+        "/tmp/wt-new",
+        '{"x":1}',
+        123456789
+      );
+      expect(result.ok).toBe(true);
+      const board = db.getCanvasBoard("/tmp/wt-new");
+      expect(board?.scene).toBe('{"x":1}');
+    });
   });
 });

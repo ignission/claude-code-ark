@@ -161,6 +161,16 @@ export interface ServerHandle {
 // トンネル状態ファイルのパス
 const TUNNEL_STATE_FILE = path.join(os.tmpdir(), "ark-tunnel-state.json");
 
+// ===== キャンバスボード（Excalidraw whiteboard）関連の定数・ヘルパー =====
+/** ボード scene（Excalidraw JSON）の受け入れ上限。無制限だと悪意/バグのある
+ *  クライアントが DB を肥大化させ得るため上限を設ける */
+const CANVAS_SCENE_MAX_BYTES = 10 * 1024 * 1024;
+/** Claude へ送る diff テキストの受け入れ上限 */
+const CANVAS_TEXT_MAX_BYTES = 64 * 1024;
+/** worktree 単位のボード購読 room 名。canvas:updated をそのボードを
+ *  load 済みのクライアントだけに配信するために使う */
+const canvasRoom = (worktreePath: string) => `canvas:${worktreePath}`;
+
 /** トンネル状態をファイルに保存する */
 function saveTunnelState(port: number): void {
   try {
@@ -1956,54 +1966,169 @@ export async function startServer(
       }
     });
 
-    socket.on("canvas:load", (worktreePath, callback) => {
-      try {
-        const board = db.getCanvasBoard(worktreePath);
-        callback({
-          scene: board?.scene ?? null,
-          lastSentScene: board?.lastSentScene ?? null,
-        });
-      } catch (error) {
-        callback({
+    // canvas:* は外部入力（worktreePath / scene / baseRevision 等）を
+    // そのまま分割代入せず、まず data 自体・callback の型を検証する。
+    // ack callback は外部入力なので関数であることを検証してから呼ぶ（slash:list と同じ方針）。
+    socket.on("canvas:load", (worktreePath: unknown, callback: unknown) => {
+      if (typeof callback !== "function") return;
+      const reply = callback as (response: {
+        scene: string | null;
+        lastSentScene: string | null;
+        revision: number | null;
+        error?: string;
+      }) => void;
+      if (typeof worktreePath !== "string") {
+        reply({
           scene: null,
           lastSentScene: null,
+          revision: null,
+          error: "worktreePath が不正です",
+        });
+        return;
+      }
+      try {
+        const board = db.getCanvasBoard(worktreePath);
+        // このボードを load したクライアントだけに canvas:save の更新通知を
+        // 届けるための room。load を購読の自然な入口として join する
+        socket.join(canvasRoom(worktreePath));
+        reply({
+          scene: board?.scene ?? null,
+          lastSentScene: board?.lastSentScene ?? null,
+          revision: board?.revision ?? null,
+        });
+      } catch (error) {
+        reply({
+          scene: null,
+          lastSentScene: null,
+          revision: null,
           error: getErrorMessage(error),
         });
       }
     });
 
-    socket.on("canvas:save", ({ worktreePath, scene }) => {
+    socket.on("canvas:save", (data: unknown, callback: unknown) => {
+      if (typeof callback !== "function") return;
+      const reply = callback as (response: {
+        ok: boolean;
+        revision?: number;
+        conflict?: boolean;
+        error?: string;
+      }) => void;
+
+      if (!data || typeof data !== "object") {
+        reply({ ok: false, error: "リクエストが不正です" });
+        return;
+      }
+      const { worktreePath, scene, baseRevision } = data as {
+        worktreePath?: unknown;
+        scene?: unknown;
+        baseRevision?: unknown;
+      };
+      if (typeof worktreePath !== "string" || typeof scene !== "string") {
+        reply({ ok: false, error: "worktreePath / scene が不正です" });
+        return;
+      }
+      if (baseRevision !== null && typeof baseRevision !== "number") {
+        reply({ ok: false, error: "baseRevision が不正です" });
+        return;
+      }
+      if (Buffer.byteLength(scene, "utf-8") > CANVAS_SCENE_MAX_BYTES) {
+        reply({ ok: false, error: "サイズ上限超過" });
+        return;
+      }
+      // 任意の worktreePath で DB 行を作らせないため、実在する worktree
+      // ディレクトリに限定する
+      if (!fs.existsSync(worktreePath)) {
+        reply({ ok: false, error: "worktree が見つかりません" });
+        return;
+      }
       try {
-        db.saveCanvasBoardScene(worktreePath, scene);
-        // 同じボードを開いている他クライアントへ（送信元は除く）
-        socket.broadcast.emit("canvas:updated", { worktreePath });
+        const result = db.saveCanvasBoardScene(
+          worktreePath,
+          scene,
+          baseRevision
+        );
+        if (!result.ok) {
+          reply({ ok: false, conflict: true });
+          return;
+        }
+        // 同じボードを load 済みの他クライアントへ（送信元は除く）。
+        // 全クライアント broadcast だと未 load のクライアントにも絶対パスが
+        // 漏れるため room 限定にする
+        socket
+          .to(canvasRoom(worktreePath))
+          .emit("canvas:updated", { worktreePath });
+        reply({ ok: true, revision: result.revision });
       } catch (error) {
         console.error("canvas:save failed:", getErrorMessage(error));
+        reply({ ok: false, error: getErrorMessage(error) });
       }
     });
 
-    socket.on(
-      "canvas:send-to-claude",
-      ({ sessionId, worktreePath, text, scene }, callback) => {
-        try {
-          sessionOrchestrator.sendMessage(sessionId, text);
-        } catch (error) {
-          callback({ ok: false, error: getErrorMessage(error) });
-          return;
-        }
-        try {
-          db.markCanvasBoardSent(worktreePath, scene);
-        } catch (error) {
-          // 送信自体は成功している。ここで ok:false を返すとクライアントの再送で
-          // 同じ指示が二重にセッションへ届くため、記録失敗はログに留める
-          console.error(
-            "canvas:send-to-claude: markCanvasBoardSent failed:",
-            getErrorMessage(error)
-          );
-        }
-        callback({ ok: true });
+    socket.on("canvas:send-to-claude", (data: unknown, callback: unknown) => {
+      if (typeof callback !== "function") return;
+      const reply = callback as (response: {
+        ok: boolean;
+        error?: string;
+        revision?: number;
+      }) => void;
+
+      if (!data || typeof data !== "object") {
+        reply({ ok: false, error: "リクエストが不正です" });
+        return;
       }
-    );
+      const { sessionId, worktreePath, text, scene } = data as {
+        sessionId?: unknown;
+        worktreePath?: unknown;
+        text?: unknown;
+        scene?: unknown;
+      };
+      if (
+        typeof sessionId !== "string" ||
+        typeof worktreePath !== "string" ||
+        typeof text !== "string" ||
+        typeof scene !== "string"
+      ) {
+        reply({ ok: false, error: "リクエストが不正です" });
+        return;
+      }
+      if (Buffer.byteLength(text, "utf-8") > CANVAS_TEXT_MAX_BYTES) {
+        reply({ ok: false, error: "サイズ上限超過" });
+        return;
+      }
+      if (Buffer.byteLength(scene, "utf-8") > CANVAS_SCENE_MAX_BYTES) {
+        reply({ ok: false, error: "サイズ上限超過" });
+        return;
+      }
+      // sessionId が指す worktree と、ボードの worktree が一致することを
+      // 検証する（別 worktree のボードから任意のセッションへ送信させない）
+      const session = sessionOrchestrator.getSession(sessionId);
+      if (!session || session.worktreePath !== worktreePath) {
+        reply({
+          ok: false,
+          error: "セッションと worktree が一致しません",
+        });
+        return;
+      }
+      try {
+        sessionOrchestrator.sendMessage(sessionId, text);
+      } catch (error) {
+        reply({ ok: false, error: getErrorMessage(error) });
+        return;
+      }
+      let revision: number | undefined;
+      try {
+        revision = db.markCanvasBoardSent(worktreePath, scene);
+      } catch (error) {
+        // 送信自体は成功している。ここで ok:false を返すとクライアントの再送で
+        // 同じ指示が二重にセッションへ届くため、記録失敗はログに留める
+        console.error(
+          "canvas:send-to-claude: markCanvasBoardSent failed:",
+          getErrorMessage(error)
+        );
+      }
+      reply({ ok: true, revision });
+    });
 
     // ===== JSONL tail（チャットビューの会話データソース） =====
     // socket ごとに購読を管理する。クライアントはアクティブ表示中の

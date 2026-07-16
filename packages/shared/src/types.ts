@@ -604,11 +604,24 @@ export interface ClientToServerEvents {
     callback: (response: {
       scene: string | null;
       lastSentScene: string | null;
+      revision: number | null;
       error?: string;
     }) => void
   ) => void;
-  /** ボード scene の保存（デバウンス済みで呼ぶ） */
-  "canvas:save": (data: { worktreePath: string; scene: string }) => void;
+  /**
+   * ボード scene の保存（デバウンス済みで呼ぶ・ACK 応答あり）。
+   * baseRevision は load 時点の revision（楽観ロック用、新規ボードなら null）。
+   * 他クライアントの保存と競合していた場合は conflict: true を返す。
+   */
+  "canvas:save": (
+    data: { worktreePath: string; scene: string; baseRevision: number | null },
+    callback: (response: {
+      ok: boolean;
+      revision?: number;
+      conflict?: boolean;
+      error?: string;
+    }) => void
+  ) => void;
   /** ボード diff テキストをセッションの Claude に送信し、last_sent_scene を更新する */
   "canvas:send-to-claude": (
     data: {
@@ -617,7 +630,11 @@ export interface ClientToServerEvents {
       text: string;
       scene: string;
     },
-    callback: (response: { ok: boolean; error?: string }) => void
+    callback: (response: {
+      ok: boolean;
+      error?: string;
+      revision?: number;
+    }) => void
   ) => void;
 
   /**

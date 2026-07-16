@@ -1158,21 +1158,56 @@ export class SessionDatabase {
   // キャンバスボードCRUD操作
   // ============================================================
 
-  /** ボード scene を取得する（未保存なら null） */
+  /** ボード scene を取得する（未保存なら null）。revision は行の updated_at */
   getCanvasBoard(
     worktreePath: string
-  ): { scene: string; lastSentScene: string | null } | null {
+  ): { scene: string; lastSentScene: string | null; revision: number } | null {
     const row = this.db
       .prepare("SELECT * FROM canvas_boards WHERE worktree_path = ?")
       .get(worktreePath) as
-      | { scene: string; last_sent_scene: string | null }
+      | { scene: string; last_sent_scene: string | null; updated_at: number }
       | undefined;
     if (!row) return null;
-    return { scene: row.scene, lastSentScene: row.last_sent_scene };
+    return {
+      scene: row.scene,
+      lastSentScene: row.last_sent_scene,
+      revision: row.updated_at,
+    };
   }
 
-  /** ボード scene を upsert する（last_sent_scene は維持） */
-  saveCanvasBoardScene(worktreePath: string, scene: string): void {
+  /**
+   * 現在の updated_at から次の revision を採番する。
+   * Date.now() が同一ミリ秒で連続しても単調増加になるよう +1 との max を取る。
+   */
+  private nextCanvasRevision(currentUpdatedAt: number | undefined): number {
+    return currentUpdatedAt === undefined
+      ? Date.now()
+      : Math.max(Date.now(), currentUpdatedAt + 1);
+  }
+
+  /**
+   * ボード scene を保存する（軽量楽観ロック）。
+   *
+   * - 既存行があり `baseRevision` が現在の updated_at と一致しない場合は conflict
+   *   （既存行があるのに baseRevision が null の場合も conflict = クライアントが
+   *   新規ボードだと思い込んでいるケース）
+   * - 既存行が無ければ新規 insert（baseRevision は不問）
+   * - 新しい updated_at は単調増加を保証し、それを revision として返す
+   */
+  saveCanvasBoardScene(
+    worktreePath: string,
+    scene: string,
+    baseRevision: number | null
+  ): { ok: true; revision: number } | { ok: false; conflict: true } {
+    const existing = this.db
+      .prepare("SELECT updated_at FROM canvas_boards WHERE worktree_path = ?")
+      .get(worktreePath) as { updated_at: number } | undefined;
+
+    if (existing && baseRevision !== existing.updated_at) {
+      return { ok: false, conflict: true };
+    }
+
+    const revision = this.nextCanvasRevision(existing?.updated_at);
     this.db
       .prepare(
         `INSERT INTO canvas_boards (worktree_path, scene, updated_at)
@@ -1180,11 +1215,20 @@ export class SessionDatabase {
          ON CONFLICT(worktree_path)
          DO UPDATE SET scene = excluded.scene, updated_at = excluded.updated_at`
       )
-      .run(worktreePath, scene, Date.now());
+      .run(worktreePath, scene, revision);
+    return { ok: true, revision };
   }
 
-  /** 送信成功時: scene と last_sent_scene の両方を現 scene で更新する */
-  markCanvasBoardSent(worktreePath: string, scene: string): void {
+  /**
+   * 送信成功時: scene と last_sent_scene の両方を現 scene で無条件上書きする
+   * （送信経路は best-effort と設計済みのため conflict 検出はしない）。
+   * 新しい revision（updated_at）を返す。
+   */
+  markCanvasBoardSent(worktreePath: string, scene: string): number {
+    const existing = this.db
+      .prepare("SELECT updated_at FROM canvas_boards WHERE worktree_path = ?")
+      .get(worktreePath) as { updated_at: number } | undefined;
+    const revision = this.nextCanvasRevision(existing?.updated_at);
     this.db
       .prepare(
         `INSERT INTO canvas_boards (worktree_path, scene, last_sent_scene, updated_at)
@@ -1194,7 +1238,8 @@ export class SessionDatabase {
                        last_sent_scene = excluded.last_sent_scene,
                        updated_at = excluded.updated_at`
       )
-      .run(worktreePath, scene, scene, Date.now());
+      .run(worktreePath, scene, scene, revision);
+    return revision;
   }
 
   /** worktree 削除時にボードも削除する */
