@@ -66,6 +66,7 @@ TerminalPane 単独表示は `?view=classic`)。エンジンは従来どおり t
 | Git Worktree管理       | 一覧表示、作成、削除                                                        |
 | セッション管理         | tmux + ttydベースの起動、停止、復元、状態管理                               |
 | チャットビュー (PC デフォルト) | JSONL tail ベースの会話描画 + pending reconcile + AskUserQuestion カード + slash 補完 + busy/AWAITING 表示 (`?view=classic` で旧表示) |
+| セッションボード       | worktree 単位の Excalidraw ホワイトボード（右ペインタブ・PC のみ）。mermaid 図の「キャンバスで開く」で編集可能要素として配置し、ボード変更の diff を「Claude に送る」で還流（`canvas_boards` テーブルに自動保存） |
 | Webターミナル          | ttyd iframeによるフルターミナル体験（チャットビューではトグル表示）         |
 | マルチペインビュー     | 複数セッションの同時表示（1列 / 2x2グリッド切り替え）                       |
 | モバイル対応           | セッション一覧/詳細の画面遷移、Quick Keys、スクロールモード、キーボード対応 |
