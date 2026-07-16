@@ -122,4 +122,14 @@ describe("buildBoardDiffText", () => {
     expect(text).not.toContain("1234");
     expect(text).not.toContain("5678");
   });
+
+  it("要素が残ったままラベルだけ消えた場合も変更として整形する", () => {
+    const prev = [rect("a", 0, 0), boundText("a-t", "a", "API 設計")];
+    const next = [
+      rect("a", 0, 0),
+      { ...boundText("a-t", "a", "API 設計"), isDeleted: true },
+    ];
+    const text = buildBoardDiffText(prev, next);
+    expect(text).toContain("変更: カード「API 設計」→（ラベル削除）");
+  });
 });

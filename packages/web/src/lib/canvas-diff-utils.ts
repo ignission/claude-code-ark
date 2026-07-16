@@ -126,10 +126,17 @@ export function buildBoardDiffText(
       const near = nearestLabel(el, next);
       const suffix = near && near !== el.label ? `（「${near}」の近く）` : "";
       lines.push(`追加: ${describe(el, nextById)}${suffix}`);
-    } else if (before.label !== el.label && el.label) {
-      lines.push(
-        `変更: ${typeLabel(el.type)}「${before.label ?? ""}」→「${el.label}」`
-      );
+    } else if (before.label !== el.label) {
+      if (el.label) {
+        lines.push(
+          `変更: ${typeLabel(el.type)}「${before.label ?? ""}」→「${el.label}」`
+        );
+      } else if (before.label) {
+        // ラベルだけが消えた変更も無音にしない（要素自体は残っている）
+        lines.push(
+          `変更: ${typeLabel(el.type)}「${before.label}」→（ラベル削除）`
+        );
+      }
     }
   }
   for (const el of prev) {
