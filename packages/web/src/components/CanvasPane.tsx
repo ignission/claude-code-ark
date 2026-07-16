@@ -64,6 +64,7 @@ export function CanvasPane({
     files?: Record<string, unknown>;
   } | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [apiReady, setApiReady] = useState(false);
   const [sendState, setSendState] = useState<
     "idle" | "sending" | "sent" | "no-change" | "error"
   >("idle");
@@ -132,8 +133,12 @@ export function CanvasPane({
     };
   }, [socket, worktreePath, serializeScene]);
 
-  // board-bus: mermaid 挿入依頼を購読
+  // board-bus: mermaid 挿入依頼を購読する。
+  // 購読は Excalidraw API の準備完了後に開始する — 初回マウント時は API 準備前に
+  // キューの flush が走るため、ここでゲートしないと挿入依頼が無音で消える。
+  // 購読前の依頼は board-bus 側のキューに滞留し、購読開始時に flush される。
   useEffect(() => {
+    if (!apiReady) return;
     return subscribeBoardInserts(worktreePath, async insert => {
       const api = apiRef.current;
       if (!api) return;
@@ -157,7 +162,7 @@ export function CanvasPane({
         console.error("ボードへの図の挿入に失敗:", error);
       }
     });
-  }, [worktreePath, scheduleSave]);
+  }, [apiReady, worktreePath, scheduleSave]);
 
   // 他クライアントの保存: 自分が未編集なら再読込
   useEffect(() => {
@@ -215,6 +220,14 @@ export function CanvasPane({
     );
   }, [socket, sessionId, worktreePath, serializeScene]);
 
+  // Excalidraw API の受け取り。準備完了を state で追跡し、board-bus 購読の
+  // ゲートに使う（購読開始前に api が使えないと挿入依頼が無音で消えるため）。
+  // biome-ignore lint/suspicious/noExplicitAny: バージョン固有の型 export 経路に依存しないため最小面へ cast
+  const handleExcalidrawApi = useCallback((api: any) => {
+    apiRef.current = api as ExcalidrawApiLike;
+    setApiReady(true);
+  }, []);
+
   if (!loaded || !initialData) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
@@ -240,7 +253,7 @@ export function CanvasPane({
           <button
             type="button"
             onClick={handleSend}
-            disabled={sendState === "sending"}
+            disabled={!apiReady || sendState === "sending"}
             className="rounded bg-primary px-2 py-1 text-primary-foreground text-xs hover:bg-primary/90 disabled:opacity-50"
             title="前回送信以降のボード変更を Claude に伝える"
           >
@@ -257,10 +270,7 @@ export function CanvasPane({
           }
         >
           <ExcalidrawLazy
-            // biome-ignore lint/suspicious/noExplicitAny: バージョン固有の型 export 経路に依存しないため最小面へ cast
-            excalidrawAPI={(api: any) => {
-              apiRef.current = api as ExcalidrawApiLike;
-            }}
+            excalidrawAPI={handleExcalidrawApi}
             initialData={initialData as never}
             onChange={scheduleSave}
           />
