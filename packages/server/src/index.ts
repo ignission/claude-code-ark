@@ -1790,7 +1790,16 @@ export async function startServer(
           .replace(/[/+=]/g, "");
 
         await deleteWorktree(repoPath, worktreePath);
-        db.deleteCanvasBoard(worktreePath);
+        try {
+          db.deleteCanvasBoard(worktreePath);
+        } catch (error) {
+          // worktree 削除自体は完了している。ボード掃除の失敗で削除通知を
+          // 止めないため、ログに留めて続行する
+          console.error(
+            "worktree:delete: deleteCanvasBoard failed:",
+            getErrorMessage(error)
+          );
+        }
 
         // 削除成功を通知
         io.emit("worktree:deleted", {
@@ -1968,11 +1977,21 @@ export async function startServer(
       ({ sessionId, worktreePath, text, scene }, callback) => {
         try {
           sessionOrchestrator.sendMessage(sessionId, text);
-          db.markCanvasBoardSent(worktreePath, scene);
-          callback({ ok: true });
         } catch (error) {
           callback({ ok: false, error: getErrorMessage(error) });
+          return;
         }
+        try {
+          db.markCanvasBoardSent(worktreePath, scene);
+        } catch (error) {
+          // 送信自体は成功している。ここで ok:false を返すとクライアントの再送で
+          // 同じ指示が二重にセッションへ届くため、記録失敗はログに留める
+          console.error(
+            "canvas:send-to-claude: markCanvasBoardSent failed:",
+            getErrorMessage(error)
+          );
+        }
+        callback({ ok: true });
       }
     );
 
