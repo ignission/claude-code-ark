@@ -216,6 +216,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       >
         <div className={`h-full ${isDragging ? "pointer-events-none" : ""}`}>
           <TerminalPane
+            socket={props.socket}
             session={props.session}
             worktree={props.worktree}
             repoName={props.repoName}
