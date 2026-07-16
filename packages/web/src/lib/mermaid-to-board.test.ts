@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type BoardConversionDeps,
   computeInsertOffset,
@@ -12,6 +12,10 @@ const okDeps: BoardConversionDeps = {
 };
 
 describe("convertMermaidForBoard", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
   it("変換成功時は convert した要素を返す（fallback=false）", async () => {
     const result = await convertMermaidForBoard("graph TD; A-->B", okDeps);
     expect(result.fallback).toBe(false);
@@ -55,6 +59,24 @@ describe("convertMermaidForBoard", () => {
     await expect(convertMermaidForBoard("broken", deps)).rejects.toThrow(
       "syntax error"
     );
+  });
+
+  it("巨大な SVG でもフォールバックがクラッシュしない", async () => {
+    const bigLabel = "あ".repeat(120_000); // UTF-8 で 360KB 超・引数上限を大きく超える
+    const deps: BoardConversionDeps = {
+      ...okDeps,
+      parse: async () => {
+        throw new Error("unsupported");
+      },
+      renderSvg: async () => ({
+        ok: true,
+        svg: `<svg width="600" height="400"><text>${bigLabel}</text></svg>`,
+      }),
+    };
+    const result = await convertMermaidForBoard("stateDiagram-v2", deps);
+    expect(result.fallback).toBe(true);
+    const file = Object.values(result.files)[0] as { dataURL: string };
+    expect(file.dataURL.startsWith("data:image/svg+xml;base64,")).toBe(true);
   });
 });
 

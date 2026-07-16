@@ -43,6 +43,20 @@ async function loadDefaultDeps(): Promise<BoardConversionDeps> {
   };
 }
 
+/**
+ * UTF-8 バイト列を base64 化する。
+ * スプレッド演算子の引数上限（約 65,536）を避けるためチャンク処理を行い、
+ * 巨大な SVG での RangeError を防ぐ。
+ */
+function bytesToBase64(bytes: Uint8Array): string {
+  const CHUNK = 8192;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
 /** SVG 文字列から width/height を抽出（無ければ既定値） */
 function svgSize(svg: string): { width: number; height: number } {
   const w = /\bwidth="([\d.]+)/.exec(svg);
@@ -69,18 +83,21 @@ export async function convertMermaidForBoard(
       files: parsed.files ?? {},
       fallback: false,
     };
-  } catch {
-    // 未対応図種: SVG 画像フォールバック
+  } catch (error) {
+    // 未対応図種は正常なフォールバック経路だが、convert 側の実バグが
+    // 同じ経路に紛れると調査不能になるため、元エラーは必ずログに残す
+    console.warn(
+      "mermaid→Excalidraw 変換に失敗。SVG 画像でフォールバックします:",
+      error
+    );
+    // SVG 画像フォールバック
     const rendered = await d.renderSvg(code, `mmd-board-${(convSeq += 1)}`);
     if (!rendered.ok) {
       throw new Error(rendered.error);
     }
     const { width, height } = svgSize(rendered.svg);
     const fileId = `board-svg-${Date.now()}-${convSeq}`;
-    // btoa は Latin-1 のみ対応のため UTF-8 を安全にエンコードする
-    const base64 = btoa(
-      String.fromCharCode(...new TextEncoder().encode(rendered.svg))
-    );
+    const base64 = bytesToBase64(new TextEncoder().encode(rendered.svg));
     const files: Record<string, unknown> = {
       [fileId]: {
         id: fileId,
