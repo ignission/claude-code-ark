@@ -97,6 +97,12 @@ codex_gate_review() {
   prompt+=$'\n他の観点には触れず、上記 focus に限定して判定してください。'
   prompt+=$'\nファイル探索は禁止、stdin の差分のみを根拠にしてください。'
 
+  # 判定はセッションログ全文ではなく最終メッセージのみを対象にする。
+  # ログ全文にはプロンプトの echo（「[P0] / [P1] / [P2] の重要度マーカーを…」）や
+  # reasoning 中のマーカー言及が含まれ、クリーンなレビューでも P0 誤検知して
+  # ゲートが恒久 FAIL するため（2026-07-17 に実害を確認）。
+  local final_output="${CODEX_GATE_OUTPUT}.final"
+  : > "$final_output"  # 前回結果の残留による誤 PASS を防ぐ（fail-safe 判定の前提）
   local exit_code
   set +e
   (
@@ -104,6 +110,7 @@ codex_gate_review() {
     git diff --no-ext-diff origin/main...HEAD \
       | _run_codex exec --skip-git-repo-check -s read-only \
           -c 'model_reasoning_effort="high"' \
+          --output-last-message "$final_output" \
           "$prompt" 2>&1
   ) | tee "$CODEX_GATE_OUTPUT" >/dev/null
   exit_code=${PIPESTATUS[0]}
@@ -114,11 +121,17 @@ codex_gate_review() {
     return 1
   fi
 
-  if grep -qE '\[P0\]' "$CODEX_GATE_OUTPUT"; then
+  # fail-safe: 最終メッセージが取れなければ PASS にしない
+  if [ ! -s "$final_output" ]; then
+    CODEX_GATE_REASON="codex の最終メッセージを取得できませんでした (--output-last-message)"
+    return 1
+  fi
+
+  if grep -qE '\[P0\]' "$final_output"; then
     CODEX_GATE_REASON="[P0] 検出 (phase=$phase)"
     return 1
   fi
-  if grep -qE '\[P1\]' "$CODEX_GATE_OUTPUT"; then
+  if grep -qE '\[P1\]' "$final_output"; then
     CODEX_GATE_REASON="[P1] 検出 (phase=$phase, 自動修正サイクル管理は呼び出し側)"
     return 1
   fi
@@ -153,10 +166,14 @@ codex_gate_review_plan() {
   prompt+=$'\n各指摘に [P0] / [P1] / [P2] の重要度マーカーを付けてください。'
   prompt+=$'\nファイル探索は禁止、plan 本文 (stdin) のみを根拠にしてください。'
 
+  # review 側と同じく、判定はプロンプト echo を含むログ全文ではなく最終メッセージのみ
+  local final_output="${CODEX_GATE_OUTPUT}.final"
+  : > "$final_output"  # 前回結果の残留による誤 PASS を防ぐ（fail-safe 判定の前提）
   local exit_code
   set +e
   _run_codex exec --skip-git-repo-check -s read-only \
     -c 'model_reasoning_effort="medium"' \
+    --output-last-message "$final_output" \
     "$prompt" < "$plan_path" \
     > "$CODEX_GATE_OUTPUT" 2>&1
   exit_code=$?
@@ -167,11 +184,17 @@ codex_gate_review_plan() {
     return 1
   fi
 
-  if grep -qE '\[P0\]' "$CODEX_GATE_OUTPUT"; then
+  # fail-safe: 最終メッセージが取れなければ PASS にしない
+  if [ ! -s "$final_output" ]; then
+    CODEX_GATE_REASON="codex の最終メッセージを取得できませんでした (--output-last-message)"
+    return 1
+  fi
+
+  if grep -qE '\[P0\]' "$final_output"; then
     CODEX_GATE_REASON="[P0] 検出 (P2 plan)"
     return 1
   fi
-  if grep -qE '\[P1\]' "$CODEX_GATE_OUTPUT"; then
+  if grep -qE '\[P1\]' "$final_output"; then
     CODEX_GATE_REASON="[P1] 検出 (P2 plan, 自動修正サイクル管理は呼び出し側)"
     return 1
   fi
