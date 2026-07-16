@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ViewerTab } from "../components/TerminalPane";
-import { addOrFocusCanvasTab } from "../lib/canvas-tabs";
+import { publishBoardInsert } from "../lib/board-bus";
+import { addOrFocusBoardTab, addOrFocusCanvasTab } from "../lib/canvas-tabs";
 
 /**
  * セッションごとのタブ状態管理を提供するカスタムフック。
@@ -22,7 +23,8 @@ export function useViewerTabs(
     error?: string;
   } | null,
   onOpenUrl?: (url: string) => void,
-  enabled = true
+  enabled = true,
+  boardMode = false
 ) {
   const [sessionTabs, setSessionTabs] = useState<Record<string, ViewerTab[]>>(
     {}
@@ -150,6 +152,17 @@ export function useViewerTabs(
     []
   );
 
+  const openBoardTab = useCallback((sessionId: string) => {
+    setSessionTabs(prev => {
+      const current = prev[sessionId] ?? [
+        { type: "terminal" as const, id: "terminal" },
+      ];
+      const { tabs, activeIndex } = addOrFocusBoardTab(current);
+      setSessionActiveTab(p => ({ ...p, [sessionId]: activeIndex }));
+      return { ...prev, [sessionId]: tabs };
+    });
+  }, []);
+
   // postMessageリスナー（ttyd iframe内のリンククリックを受信）
   useEffect(() => {
     if (!enabled) return;
@@ -203,11 +216,18 @@ export function useViewerTabs(
       if (type === "ark:open-canvas") {
         const { code, title } = event.data;
         if (typeof code !== "string" || !code) return;
-        openCanvasTab(
-          selectedSessionId,
-          code,
-          typeof title === "string" ? title : undefined
-        );
+        const canvasTitle = typeof title === "string" ? title : undefined;
+        if (boardMode) {
+          // デスクトップ: ボードに要素として挿入し、ボードタブを開く
+          publishBoardInsert(session.worktreePath, {
+            code,
+            title: canvasTitle,
+          });
+          openBoardTab(selectedSessionId);
+        } else {
+          // モバイル: 従来の図解ビューワータブ
+          openCanvasTab(selectedSessionId, code, canvasTitle);
+        }
       }
     };
 
@@ -218,9 +238,11 @@ export function useViewerTabs(
     sessions,
     openFileTab,
     openCanvasTab,
+    openBoardTab,
     readFile,
     onOpenUrl,
     enabled,
+    boardMode,
   ]);
 
   // fileContent受信時にタブを更新（全セッションを検索してレースコンディション対策）
@@ -265,5 +287,6 @@ export function useViewerTabs(
     handleTabClose,
     openFileTab,
     openCanvasTab,
+    openBoardTab,
   };
 }

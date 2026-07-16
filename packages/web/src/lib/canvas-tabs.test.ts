@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ViewerTab } from "../components/TerminalPane";
-import { addOrFocusCanvasTab } from "./canvas-tabs";
+import { addOrFocusBoardTab, addOrFocusCanvasTab } from "./canvas-tabs";
 
 const term: ViewerTab = { type: "terminal", id: "terminal" };
 
@@ -31,5 +31,21 @@ describe("addOrFocusCanvasTab", () => {
     const r = addOrFocusCanvasTab(start, "Y", undefined, "c2");
     expect(r.tabs).toHaveLength(3);
     expect(r.activeIndex).toBe(2);
+  });
+});
+
+describe("addOrFocusBoardTab", () => {
+  it("board タブがなければ追加して active にする", () => {
+    const { tabs, activeIndex } = addOrFocusBoardTab([term]);
+    expect(tabs).toHaveLength(2);
+    expect(tabs[1]).toEqual({ type: "board", id: "board" });
+    expect(activeIndex).toBe(1);
+  });
+
+  it("既に board タブがあれば追加せずフォーカスする", () => {
+    const first = addOrFocusBoardTab([term]);
+    const second = addOrFocusBoardTab(first.tabs);
+    expect(second.tabs).toHaveLength(2);
+    expect(second.activeIndex).toBe(1);
   });
 });

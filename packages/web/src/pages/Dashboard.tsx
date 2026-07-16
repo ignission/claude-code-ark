@@ -239,7 +239,8 @@ export default function Dashboard() {
     readFile,
     fileContent,
     handleOpenUrl,
-    !isMobile
+    !isMobile,
+    true // boardMode: デスクトップはボードに挿入
   );
 
   // サーバーからの設定が読み込まれたらセッションIDを復元

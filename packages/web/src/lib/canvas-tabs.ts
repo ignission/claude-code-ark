@@ -19,3 +19,16 @@ export function addOrFocusCanvasTab(
   const next = [...tabs, newTab];
   return { tabs: next, activeIndex: next.length - 1 };
 }
+
+/** ホワイトボードタブを開く/フォーカスする純関数。board タブはセッションに 1 枚。 */
+export function addOrFocusBoardTab(tabs: ViewerTab[]): {
+  tabs: ViewerTab[];
+  activeIndex: number;
+} {
+  const existing = tabs.findIndex(t => t.type === "board");
+  if (existing >= 0) {
+    return { tabs, activeIndex: existing };
+  }
+  const next: ViewerTab[] = [...tabs, { type: "board", id: "board" }];
+  return { tabs: next, activeIndex: next.length - 1 };
+}

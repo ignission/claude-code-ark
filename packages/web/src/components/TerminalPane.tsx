@@ -87,6 +87,10 @@ export type ViewerTab =
       id: string;
       mermaidCode: string;
       title?: string;
+    }
+  | {
+      type: "board";
+      id: string;
     };
 
 interface TerminalPaneProps {

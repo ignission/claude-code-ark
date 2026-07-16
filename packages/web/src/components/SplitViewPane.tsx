@@ -98,7 +98,9 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   // canvas タブ数の増加時のみ true 化し、ユーザーが後で閉じた操作は尊重する。
   const prevCanvasCountRef = useRef(0);
   useEffect(() => {
-    const canvasCount = props.tabs.filter(t => t.type === "canvas").length;
+    const canvasCount = props.tabs.filter(
+      t => t.type === "canvas" || t.type === "board"
+    ).length;
     if (canvasCount > prevCanvasCountRef.current) {
       setShowTerminal(true);
     }
