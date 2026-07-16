@@ -1790,6 +1790,7 @@ export async function startServer(
           .replace(/[/+=]/g, "");
 
         await deleteWorktree(repoPath, worktreePath);
+        db.deleteCanvasBoard(worktreePath);
 
         // 削除成功を通知
         io.emit("worktree:deleted", {
@@ -1935,6 +1936,45 @@ export async function startServer(
         });
       }
     });
+
+    socket.on("canvas:load", (worktreePath, callback) => {
+      try {
+        const board = db.getCanvasBoard(worktreePath);
+        callback({
+          scene: board?.scene ?? null,
+          lastSentScene: board?.lastSentScene ?? null,
+        });
+      } catch (error) {
+        callback({
+          scene: null,
+          lastSentScene: null,
+          error: getErrorMessage(error),
+        });
+      }
+    });
+
+    socket.on("canvas:save", ({ worktreePath, scene }) => {
+      try {
+        db.saveCanvasBoardScene(worktreePath, scene);
+        // 同じボードを開いている他クライアントへ（送信元は除く）
+        socket.broadcast.emit("canvas:updated", { worktreePath });
+      } catch (error) {
+        console.error("canvas:save failed:", getErrorMessage(error));
+      }
+    });
+
+    socket.on(
+      "canvas:send-to-claude",
+      ({ sessionId, worktreePath, text, scene }, callback) => {
+        try {
+          sessionOrchestrator.sendMessage(sessionId, text);
+          db.markCanvasBoardSent(worktreePath, scene);
+          callback({ ok: true });
+        } catch (error) {
+          callback({ ok: false, error: getErrorMessage(error) });
+        }
+      }
+    );
 
     // ===== JSONL tail（チャットビューの会話データソース） =====
     // socket ごとに購読を管理する。クライアントはアクティブ表示中の

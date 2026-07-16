@@ -366,6 +366,9 @@ export interface ServerToClientEvents {
   }) => void;
   "worktree:error": (error: string) => void;
 
+  /** 他クライアントがボードを保存した通知（受信側は未編集なら再読込する） */
+  "canvas:updated": (data: { worktreePath: string }) => void;
+
   // Session events（ManagedSessionを使用）
   "session:list": (sessions: ManagedSession[]) => void;
   "session:created": (session: ManagedSession) => void;
@@ -594,6 +597,28 @@ export interface ClientToServerEvents {
    * AskUserQuestion の自由入力モードで「1 文字ずつタイプ」する用途。
    */
   "session:send-literal": (data: { sessionId: string; text: string }) => void;
+
+  /** ボード scene の読込（callback 応答）。scene は Excalidraw scene の JSON 文字列 */
+  "canvas:load": (
+    worktreePath: string,
+    callback: (response: {
+      scene: string | null;
+      lastSentScene: string | null;
+      error?: string;
+    }) => void
+  ) => void;
+  /** ボード scene の保存（デバウンス済みで呼ぶ） */
+  "canvas:save": (data: { worktreePath: string; scene: string }) => void;
+  /** ボード diff テキストをセッションの Claude に送信し、last_sent_scene を更新する */
+  "canvas:send-to-claude": (
+    data: {
+      sessionId: string;
+      worktreePath: string;
+      text: string;
+      scene: string;
+    },
+    callback: (response: { ok: boolean; error?: string }) => void
+  ) => void;
 
   /**
    * Claude Code が永続化する JSONL 履歴 (~/.claude/projects/<encoded-cwd>/*.jsonl)
