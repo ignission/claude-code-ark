@@ -17,7 +17,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "^2.1.205",
+    "@anthropic-ai/claude-code": "^2.1.207",
     "@ark/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^12.6.2",
