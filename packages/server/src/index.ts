@@ -1865,6 +1865,16 @@ export async function startServer(
                 .toString("base64")
                 .replace(/[/+=]/g, "");
               await deleteWorktree(result.repoPath, result.worktreePath);
+              try {
+                db.deleteCanvasBoard(result.worktreePath);
+              } catch (error) {
+                // worktree 削除自体は完了している。ボード掃除の失敗で削除通知を
+                // 止めないため、ログに留めて続行する
+                console.error(
+                  "session:stop: deleteCanvasBoard failed:",
+                  getErrorMessage(error)
+                );
+              }
               socket.emit("worktree:deleted", {
                 repoPath: result.repoPath,
                 worktreeId: deletedWorktreeId,
