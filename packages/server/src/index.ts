@@ -171,20 +171,36 @@ const CANVAS_TEXT_MAX_BYTES = 64 * 1024;
  *  load 済みのクライアントだけに配信するために使う */
 const canvasRoom = (worktreePath: string) => `canvas:${worktreePath}`;
 
-/** scene 文字列の構文と最低限の構造（elements 配列）を検証する。壊れた JSON を
- *  保存するとクライアントが恒久的にパースエラーになり復旧手段がないため必須 */
+/** scene 文字列の構文と構造を検証する。壊れた scene を保存するとクライアントが
+ *  恒久的にパースエラーになるため、要素・files の形まで境界で検証する */
 function isValidSceneJson(scene: string): boolean {
   try {
-    const parsed = JSON.parse(scene);
-    return (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      Array.isArray((parsed as { elements?: unknown }).elements)
-    );
+    const parsed: unknown = JSON.parse(scene);
+    if (typeof parsed !== "object" || parsed === null) return false;
+    const obj = parsed as { elements?: unknown; files?: unknown };
+    if (!Array.isArray(obj.elements)) return false;
+    for (const el of obj.elements) {
+      if (typeof el !== "object" || el === null) return false;
+      const e = el as { id?: unknown; type?: unknown };
+      if (typeof e.id !== "string" || typeof e.type !== "string") return false;
+    }
+    if (obj.files !== undefined) {
+      if (typeof obj.files !== "object" || obj.files === null) return false;
+      for (const f of Object.values(obj.files)) {
+        if (typeof f !== "object" || f === null) return false;
+      }
+    }
+    return true;
   } catch {
     return false;
   }
 }
+
+/** isManagedWorktreePath の検証結果キャッシュ（TTL 30 秒）。
+ *  canvas:* はデバウンス保存等で高頻度に呼ばれるため、同期 git 呼び出しを
+ *  イベントごとに繰り返してイベントループを塞がないようにする */
+const managedWorktreeCache = new Map<string, { ok: boolean; at: number }>();
+const MANAGED_WORKTREE_CACHE_TTL_MS = 30_000;
 
 /** トンネル状態をファイルに保存する */
 function saveTunnelState(port: number): void {
@@ -462,6 +478,16 @@ export async function startServer(
    *     含まれること（socket 側 worktree:set-profile と同じ防御を維持する）
    */
   function isManagedWorktreePath(worktreePath: string): boolean {
+    const cached = managedWorktreeCache.get(worktreePath);
+    if (cached && Date.now() - cached.at < MANAGED_WORKTREE_CACHE_TTL_MS) {
+      return cached.ok;
+    }
+    const result = computeIsManagedWorktreePath(worktreePath);
+    managedWorktreeCache.set(worktreePath, { ok: result, at: Date.now() });
+    return result;
+  }
+
+  function computeIsManagedWorktreePath(worktreePath: string): boolean {
     try {
       const stat = fs.statSync(worktreePath);
       if (!stat.isDirectory()) return false;

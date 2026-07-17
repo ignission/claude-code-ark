@@ -67,6 +67,15 @@ export function CanvasPane({
   const lastSavedSceneRef = useRef<string | null>(null);
   /** 直近に読込/保存で確認済みの revision。次の canvas:save の baseRevision に使う */
   const revisionRef = useRef<number | null>(null);
+  /** canvas:save の ACK 待ちフラグ。ACK 待ち中に次のデバウンスが発火しても
+   *  二重送信せず再スケジュールするための直列化ガード（F2） */
+  const saveInFlightRef = useRef(false);
+  /** revision 競合で reload する直前の scene を退避するバックアップ。
+   *  「競合前の編集を復元」ボタンから戻せるようにする（F3） */
+  const conflictBackupRef = useRef<{
+    elements: unknown[];
+    files: Record<string, unknown>;
+  } | null>(null);
   const [initialData, setInitialData] = useState<{
     elements: unknown[];
     files?: Record<string, unknown>;
@@ -87,6 +96,8 @@ export function CanvasPane({
   >("idle");
   /** 保存競合など、一時的にユーザーへ知らせるメッセージ */
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  /** conflictBackupRef が非 null の間だけ「競合前の編集を復元」ボタンを描画する */
+  const [hasConflictBackup, setHasConflictBackup] = useState(false);
 
   /** 現 scene を JSON 文字列化する（保存・送信共通） */
   const serializeScene = useCallback((): string | null => {
@@ -96,6 +107,17 @@ export function CanvasPane({
       elements: api.getSceneElements(),
       files: api.getFiles(),
     });
+  }, []);
+
+  /** revision 競合による applyReload 直前に、破棄されるローカル編集を退避する（F3） */
+  const backupConflictScene = useCallback(() => {
+    const api = apiRef.current;
+    if (!api) return;
+    conflictBackupRef.current = {
+      elements: [...api.getSceneElements()],
+      files: api.getFiles(),
+    };
+    setHasConflictBackup(true);
   }, []);
 
   /**
@@ -197,6 +219,12 @@ export function CanvasPane({
     }
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
+      if (saveInFlightRef.current) {
+        // 前回の canvas:save の ACK 待ち中: 二重送信せず、ACK 到着後にも
+        // 保存されるよう dirty を維持したまま再スケジュールする（F2）
+        scheduleSave();
+        return;
+      }
       const scene = serializeScene();
       if (!scene || !socket) return;
       if (scene === lastSavedSceneRef.current) {
@@ -204,16 +232,27 @@ export function CanvasPane({
         dirtyRef.current = false;
         return;
       }
+      saveInFlightRef.current = true;
       socket.emit(
         "canvas:save",
         { worktreePath, scene, baseRevision: revisionRef.current },
         response => {
+          saveInFlightRef.current = false;
           if (response.ok) {
             lastSavedSceneRef.current = scene;
             if (response.revision !== undefined) {
               revisionRef.current = response.revision;
             }
-            dirtyRef.current = false;
+            // ACK 待ち中にさらに編集が入っていた場合、ACK 対象の scene と
+            // 現在の serialize 結果が一致する場合のみ dirty を解除する。
+            // 不一致なら dirty を維持し再スケジュールして後続編集分を保存する（F2）
+            const current = serializeScene();
+            if (current !== null && current !== scene) {
+              dirtyRef.current = true;
+              scheduleSave();
+            } else {
+              dirtyRef.current = false;
+            }
             return;
           }
           if (response.conflict) {
@@ -221,8 +260,10 @@ export function CanvasPane({
               "canvas:save: 他クライアントの変更と競合したため最新を読み込みます"
             );
             dirtyRef.current = false;
+            // reload で上書きされる前にローカル編集を退避する（F3）
+            backupConflictScene();
             setSaveNotice(
-              "他のクライアントの変更と競合したため最新を読み込みます"
+              "他のクライアントの変更と競合したため最新を読み込みます（復元ボタンで直前の編集を戻せます）"
             );
             setTimeout(() => setSaveNotice(null), 3000);
             applyReload();
@@ -236,7 +277,7 @@ export function CanvasPane({
         }
       );
     }, SAVE_DEBOUNCE_MS);
-  }, [socket, worktreePath, serializeScene, applyReload]);
+  }, [socket, worktreePath, serializeScene, applyReload, backupConflictScene]);
 
   useEffect(() => {
     return () => {
@@ -350,6 +391,8 @@ export function CanvasPane({
             "canvas:send-to-claude: 他クライアントの変更と競合したため最新を読み込みます"
           );
           setSendState("sent-conflict");
+          // reload で上書きされる前にローカル編集を退避する（F3）
+          backupConflictScene();
           applyReload();
           setTimeout(() => setSendState("idle"), 2000);
           return;
@@ -366,7 +409,14 @@ export function CanvasPane({
         setTimeout(() => setSendState("idle"), 2000);
       }
     );
-  }, [socket, sessionId, worktreePath, serializeScene, applyReload]);
+  }, [
+    socket,
+    sessionId,
+    worktreePath,
+    serializeScene,
+    applyReload,
+    backupConflictScene,
+  ]);
 
   // Excalidraw API の受け取り。準備完了を state で追跡し、board-bus 購読の
   // ゲートに使う（購読開始前に api が使えないと挿入依頼が無音で消えるため）。
@@ -380,6 +430,20 @@ export function CanvasPane({
     });
     setApiReady(true);
   }, []);
+
+  // 競合前の編集を復元する（F3）: backup の elements/files を適用し、
+  // dirty 扱いにして再保存をスケジュールする
+  const handleRestoreConflictBackup = useCallback(() => {
+    const api = apiRef.current;
+    const backup = conflictBackupRef.current;
+    if (!api || !backup) return;
+    const fileList = Object.values(backup.files);
+    if (fileList.length > 0) api.addFiles(fileList);
+    api.updateScene({ elements: backup.elements });
+    conflictBackupRef.current = null;
+    setHasConflictBackup(false);
+    scheduleSave();
+  }, [scheduleSave]);
 
   if (loadState === "loading") {
     return (
@@ -425,7 +489,9 @@ export function CanvasPane({
           )}
           {sendState === "sent-conflict" && (
             <span className="text-muted-foreground text-xs">
-              送信しました（他クライアントと競合したため最新を読み込みます）
+              {
+                "送信しました（他クライアントと競合したため最新を読み込みます。復元ボタンで直前の編集を戻せます）"
+              }
             </span>
           )}
           {sendState === "sent-unpersisted" && (
@@ -435,6 +501,16 @@ export function CanvasPane({
           )}
           {sendState === "error" && (
             <span className="text-destructive text-xs">送信に失敗しました</span>
+          )}
+          {hasConflictBackup && (
+            <button
+              type="button"
+              onClick={handleRestoreConflictBackup}
+              className="rounded border border-border px-2 py-1 text-foreground text-xs hover:bg-accent"
+              title="競合で読み込む前に編集していた内容を復元する"
+            >
+              競合前の編集を復元
+            </button>
           )}
           <button
             type="button"
