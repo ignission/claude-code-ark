@@ -384,7 +384,7 @@ claude-code-ark/
 
 以下がインストールされている必要がある：
 
-- **Node.js** >= 20.6.0
+- **Node.js** >= 22.0.0（同梱 Claude Code 2.1.207 の要件）
 - **pnpm**
 - **tmux**
 - **ttyd**

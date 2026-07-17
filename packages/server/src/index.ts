@@ -173,16 +173,32 @@ const canvasRoom = (worktreePath: string) => `canvas:${worktreePath}`;
 
 /** scene 文字列の構文と構造を検証する。壊れた scene を保存するとクライアントが
  *  恒久的にパースエラーになるため、要素・files の形まで境界で検証する */
+/** scene の要素数上限。異常な巨大配列でクライアント描画と diff 計算を守る */
+const SCENE_MAX_ELEMENTS = 10_000;
+
 function isValidSceneJson(scene: string): boolean {
   try {
     const parsed: unknown = JSON.parse(scene);
     if (typeof parsed !== "object" || parsed === null) return false;
     const obj = parsed as { elements?: unknown; files?: unknown };
     if (!Array.isArray(obj.elements)) return false;
+    if (obj.elements.length > SCENE_MAX_ELEMENTS) return false;
     for (const el of obj.elements) {
       if (typeof el !== "object" || el === null) return false;
-      const e = el as { id?: unknown; type?: unknown };
+      const e = el as {
+        id?: unknown;
+        type?: unknown;
+        x?: unknown;
+        y?: unknown;
+        width?: unknown;
+        height?: unknown;
+      };
       if (typeof e.id !== "string" || typeof e.type !== "string") return false;
+      // クライアントは x/y/width/height を有限数として無条件に計算する
+      // (computeInsertOffset / buildBoardDiffText) ため、境界で有限数を強制する
+      for (const v of [e.x, e.y, e.width, e.height]) {
+        if (typeof v !== "number" || !Number.isFinite(v)) return false;
+      }
     }
     if (obj.files !== undefined) {
       if (typeof obj.files !== "object" || obj.files === null) return false;
@@ -196,10 +212,13 @@ function isValidSceneJson(scene: string): boolean {
   }
 }
 
-/** isManagedWorktreePath の検証結果キャッシュ（TTL 30 秒）。
- *  canvas:* はデバウンス保存等で高頻度に呼ばれるため、同期 git 呼び出しを
- *  イベントごとに繰り返してイベントループを塞がないようにする */
-const managedWorktreeCache = new Map<string, { ok: boolean; at: number }>();
+/** revision（canvas_boards.updated_at 由来）として妥当な値か。null は「新規ボード」 */
+function isValidBaseRevision(value: unknown): value is number | null {
+  return (
+    value === null || (Number.isSafeInteger(value) && (value as number) >= 0)
+  );
+}
+
 const MANAGED_WORKTREE_CACHE_TTL_MS = 30_000;
 
 /** トンネル状態をファイルに保存する */
@@ -468,6 +487,15 @@ export async function startServer(
 
   // クライアントが選択・スキャンしたリポジトリを追跡（Beaconが参照する）
   const knownRepos = new Set<string>(allowedRepos);
+
+  /**
+   * isManagedWorktreePath の検証結果キャッシュ（TTL 30 秒）。
+   * canvas:* はデバウンス保存等で高頻度に呼ばれるため、同期 git 呼び出しを
+   * イベントごとに繰り返してイベントループを塞がないようにする。
+   * allowedRepos はサーバーインスタンスごとの設定のため、キャッシュも
+   * startServer スコープに置き、インスタンス間で検証結果を共有しない。
+   */
+  const managedWorktreeCache = new Map<string, { ok: boolean; at: number }>();
 
   /**
    * canvas:* / linkWorktreeProfile 共通の worktree 検証（trust boundary）。
@@ -1850,6 +1878,7 @@ export async function startServer(
           .replace(/[/+=]/g, "");
 
         await deleteWorktree(repoPath, worktreePath);
+        managedWorktreeCache.delete(worktreePath);
         try {
           db.deleteCanvasBoard(worktreePath);
         } catch (error) {
@@ -1925,6 +1954,7 @@ export async function startServer(
                 .toString("base64")
                 .replace(/[/+=]/g, "");
               await deleteWorktree(result.repoPath, result.worktreePath);
+              managedWorktreeCache.delete(result.worktreePath);
               try {
                 db.deleteCanvasBoard(result.worktreePath);
               } catch (error) {
@@ -2089,7 +2119,7 @@ export async function startServer(
         reply({ ok: false, error: "worktreePath / scene が不正です" });
         return;
       }
-      if (baseRevision !== null && typeof baseRevision !== "number") {
+      if (!isValidBaseRevision(baseRevision)) {
         reply({ ok: false, error: "baseRevision が不正です" });
         return;
       }
@@ -2160,7 +2190,7 @@ export async function startServer(
         reply({ ok: false, error: "リクエストが不正です" });
         return;
       }
-      if (baseRevision !== null && typeof baseRevision !== "number") {
+      if (!isValidBaseRevision(baseRevision)) {
         reply({ ok: false, error: "baseRevision が不正です" });
         return;
       }
