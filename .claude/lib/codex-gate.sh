@@ -96,6 +96,7 @@ codex_gate_review() {
   prompt+=$'\n各指摘に [P0] / [P1] / [P2] の重要度マーカーを付けてください。'
   prompt+=$'\n他の観点には触れず、上記 focus に限定して判定してください。'
   prompt+=$'\nファイル探索は禁止、stdin の差分のみを根拠にしてください。'
+  prompt+=$'\n[P0]/[P1] に該当する指摘が 1 件もない場合は（[P2] のみ、または指摘なし）、最終行に GATE_PASS とだけ書いた行を出力してください。'
 
   # 判定はセッションログ全文ではなく最終メッセージのみを対象にする。
   # ログ全文にはプロンプトの echo（「[P0] / [P1] / [P2] の重要度マーカーを…」）や
@@ -127,6 +128,13 @@ codex_gate_review() {
     return 1
   fi
 
+  # PASS はセンチネル必須: 指摘ゼロ時のみ codex が GATE_PASS を出力する。
+  # マーカー grep だけだと指摘本文中の「[P0]」引用（ゲート自身への指摘等）で
+  # 誤検知するため、センチネル + マーカー不在の両方を PASS 条件にする。
+  if grep -qE '^[[:space:]]*GATE_PASS[[:space:]]*$' "$final_output" \
+     && ! grep -qE '\[P0\]|\[P1\]' "$final_output"; then
+    return 0
+  fi
   if grep -qE '\[P0\]' "$final_output"; then
     CODEX_GATE_REASON="[P0] 検出 (phase=$phase)"
     return 1
@@ -135,7 +143,8 @@ codex_gate_review() {
     CODEX_GATE_REASON="[P1] 検出 (phase=$phase, 自動修正サイクル管理は呼び出し側)"
     return 1
   fi
-  return 0
+  CODEX_GATE_REASON="判定不能: GATE_PASS も P0/P1 マーカーも検出できません (phase=$phase)"
+  return 1
 }
 
 codex_gate_max_p1_cycles() {
@@ -165,6 +174,7 @@ codex_gate_review_plan() {
   prompt="あなたは設計レビュアです。以下の plan を ${focus} の観点でレビューしてください。"
   prompt+=$'\n各指摘に [P0] / [P1] / [P2] の重要度マーカーを付けてください。'
   prompt+=$'\nファイル探索は禁止、plan 本文 (stdin) のみを根拠にしてください。'
+  prompt+=$'\n[P0]/[P1] に該当する指摘が 1 件もない場合は（[P2] のみ、または指摘なし）、最終行に GATE_PASS とだけ書いた行を出力してください。'
 
   # review 側と同じく、判定はプロンプト echo を含むログ全文ではなく最終メッセージのみ
   local final_output="${CODEX_GATE_OUTPUT}.final"
@@ -190,6 +200,11 @@ codex_gate_review_plan() {
     return 1
   fi
 
+  # review 側と同じ PASS センチネル判定
+  if grep -qE '^[[:space:]]*GATE_PASS[[:space:]]*$' "$final_output" \
+     && ! grep -qE '\[P0\]|\[P1\]' "$final_output"; then
+    return 0
+  fi
   if grep -qE '\[P0\]' "$final_output"; then
     CODEX_GATE_REASON="[P0] 検出 (P2 plan)"
     return 1
@@ -198,7 +213,8 @@ codex_gate_review_plan() {
     CODEX_GATE_REASON="[P1] 検出 (P2 plan, 自動修正サイクル管理は呼び出し側)"
     return 1
   fi
-  return 0
+  CODEX_GATE_REASON="判定不能: GATE_PASS も P0/P1 マーカーも検出できません (P2 plan)"
+  return 1
 }
 
 codex_gate_collect_new_findings() {
