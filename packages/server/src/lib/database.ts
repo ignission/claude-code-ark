@@ -1220,14 +1220,27 @@ export class SessionDatabase {
   }
 
   /**
-   * 送信成功時: scene と last_sent_scene の両方を現 scene で無条件上書きする
-   * （送信経路は best-effort と設計済みのため conflict 検出はしない）。
-   * 新しい revision（updated_at）を返す。
+   * 送信成功時: scene と last_sent_scene の両方を現 scene で更新する。
+   *
+   * saveCanvasBoardScene と同じ CAS 規則を用いる（軽量楽観ロック）:
+   * - 既存行があり `baseRevision` が現在の updated_at と一致しない場合は conflict
+   *   （他クライアントの新しい変更を古い scene で上書きしないため）
+   * - 既存行が無ければ新規 insert（baseRevision は不問）
+   * - 新しい updated_at は単調増加を保証し、それを revision として返す
    */
-  markCanvasBoardSent(worktreePath: string, scene: string): number {
+  markCanvasBoardSent(
+    worktreePath: string,
+    scene: string,
+    baseRevision: number | null
+  ): { ok: true; revision: number } | { ok: false; conflict: true } {
     const existing = this.db
       .prepare("SELECT updated_at FROM canvas_boards WHERE worktree_path = ?")
       .get(worktreePath) as { updated_at: number } | undefined;
+
+    if (existing && baseRevision !== existing.updated_at) {
+      return { ok: false, conflict: true };
+    }
+
     const revision = this.nextCanvasRevision(existing?.updated_at);
     this.db
       .prepare(
@@ -1239,7 +1252,7 @@ export class SessionDatabase {
                        updated_at = excluded.updated_at`
       )
       .run(worktreePath, scene, scene, revision);
-    return revision;
+    return { ok: true, revision };
   }
 
   /** worktree 削除時にボードも削除する */

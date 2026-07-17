@@ -622,18 +622,30 @@ export interface ClientToServerEvents {
       error?: string;
     }) => void
   ) => void;
-  /** ボード diff テキストをセッションの Claude に送信し、last_sent_scene を更新する */
+  /**
+   * ボード diff テキストをセッションの Claude に送信し、last_sent_scene を更新する。
+   * baseRevision は load/save 時点の revision（last_sent_scene 更新の楽観ロック用、
+   * 新規ボードなら null）。
+   *
+   * ok は Claude への送信自体（sendMessage）の成否。persisted は scene /
+   * last_sent_scene の永続化成否で、送信成功時（ok: true）のみ意味を持つ。
+   * conflict は persisted: false の理由が revision 競合であることを示す
+   * （他クライアントの新しい変更を古い scene で上書きしない）。
+   */
   "canvas:send-to-claude": (
     data: {
       sessionId: string;
       worktreePath: string;
       text: string;
       scene: string;
+      baseRevision: number | null;
     },
     callback: (response: {
       ok: boolean;
-      error?: string;
+      persisted?: boolean;
+      conflict?: boolean;
       revision?: number;
+      error?: string;
     }) => void
   ) => void;
 

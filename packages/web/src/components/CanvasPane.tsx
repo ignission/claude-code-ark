@@ -77,7 +77,13 @@ export function CanvasPane({
   const [reloadKey, setReloadKey] = useState(0);
   const [apiReady, setApiReady] = useState(false);
   const [sendState, setSendState] = useState<
-    "idle" | "sending" | "sent" | "no-change" | "error"
+    | "idle"
+    | "sending"
+    | "sent"
+    | "sent-conflict"
+    | "sent-unpersisted"
+    | "no-change"
+    | "error"
   >("idle");
   /** 保存競合など、一時的にユーザーへ知らせるメッセージ */
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
@@ -105,6 +111,21 @@ export function CanvasPane({
         return;
       }
       revisionRef.current = response.revision;
+      // lastSentElementsRef も初回ロードと同じパース規則（null → []）で
+      // 同期する。他クライアントの送信で last_sent_scene が更新された場合に
+      // 反映するため（F4: これを省くと「Claude に送る」の diff が古い基準のまま残る）
+      if (response.lastSentScene) {
+        try {
+          const lastSent = JSON.parse(response.lastSentScene) as {
+            elements?: BoardElementLike[];
+          };
+          lastSentElementsRef.current = lastSent.elements ?? [];
+        } catch (error) {
+          console.error("ボード再読込の lastSentScene パースに失敗:", error);
+        }
+      } else {
+        lastSentElementsRef.current = [];
+      }
       const api = apiRef.current;
       if (!api || !response.scene) return;
       try {
@@ -297,23 +318,55 @@ export function CanvasPane({
     setSendState("sending");
     socket.emit(
       "canvas:send-to-claude",
-      { sessionId, worktreePath, text, scene },
+      {
+        sessionId,
+        worktreePath,
+        text,
+        scene,
+        baseRevision: revisionRef.current,
+      },
       response => {
-        if (response.ok) {
+        if (!response.ok) {
+          // Claude への送信自体が失敗（scene の永続化には未到達）
+          console.error("ボード送信に失敗:", response.error);
+          setSendState("error");
+          setTimeout(() => setSendState("idle"), 2000);
+          return;
+        }
+        if (response.persisted) {
           lastSentElementsRef.current = current;
           lastSavedSceneRef.current = scene;
           if (response.revision !== undefined) {
             revisionRef.current = response.revision;
           }
           setSendState("sent");
-        } else {
-          console.error("ボード送信に失敗:", response.error);
-          setSendState("error");
+          setTimeout(() => setSendState("idle"), 2000);
+          return;
         }
+        if (response.conflict) {
+          // 送信自体は成功しているが、他クライアントの新しい変更と競合したため
+          // scene は上書きせず最新を再読込する（lastSentElementsRef もそこで同期される）
+          console.warn(
+            "canvas:send-to-claude: 他クライアントの変更と競合したため最新を読み込みます"
+          );
+          setSendState("sent-conflict");
+          applyReload();
+          setTimeout(() => setSendState("idle"), 2000);
+          return;
+        }
+        // persisted:false かつ conflict でもない = DB エラー。送信自体は成功済みなので
+        // lastSentElementsRef / lastSavedSceneRef は更新しない（dirty を維持し、
+        // 既存のデバウンス保存の自動再試行に委ねる。次回 diff が冗長になるのは安全側）
+        console.error(
+          "canvas:send-to-claude: scene の保存に失敗しました:",
+          response.error
+        );
+        dirtyRef.current = true;
+        setSendState("sent-unpersisted");
         setTimeout(() => setSendState("idle"), 2000);
       }
     );
-  }, [socket, sessionId, worktreePath, serializeScene]);
+  }, [socket, sessionId, worktreePath, serializeScene, applyReload]);
 
   // Excalidraw API の受け取り。準備完了を state で追跡し、board-bus 購読の
   // ゲートに使う（購読開始前に api が使えないと挿入依頼が無音で消えるため）。
@@ -369,6 +422,16 @@ export function CanvasPane({
           )}
           {sendState === "sent" && (
             <span className="text-muted-foreground text-xs">送信しました</span>
+          )}
+          {sendState === "sent-conflict" && (
+            <span className="text-muted-foreground text-xs">
+              送信しました（他クライアントと競合したため最新を読み込みます）
+            </span>
+          )}
+          {sendState === "sent-unpersisted" && (
+            <span className="text-muted-foreground text-xs">
+              送信しました（保存は失敗・自動再保存します）
+            </span>
           )}
           {sendState === "error" && (
             <span className="text-destructive text-xs">送信に失敗しました</span>

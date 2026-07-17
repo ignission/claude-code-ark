@@ -46,6 +46,16 @@ describe("convertMermaidForBoard", () => {
     };
     expect(file.mimeType).toBe("image/svg+xml");
     expect(file.dataURL.startsWith("data:image/svg+xml;base64,")).toBe(true);
+    // 画像 skeleton も成功パスと同じ convert（okDeps.convert が付与する
+    // full: true）を通っていることを検証する
+    const [element] = result.elements as Array<{
+      type: string;
+      fileId: string;
+      full: boolean;
+    }>;
+    expect(element.type).toBe("image");
+    expect(element.fileId).toBe(fileIds[0]);
+    expect(element.full).toBe(true);
   });
 
   it("parse も renderSvg も失敗したら throw する", async () => {
@@ -77,6 +87,9 @@ describe("convertMermaidForBoard", () => {
     expect(result.fallback).toBe(true);
     const file = Object.values(result.files)[0] as { dataURL: string };
     expect(file.dataURL.startsWith("data:image/svg+xml;base64,")).toBe(true);
+    // ここでも convert（okDeps.convert が付与する full: true）を通っている
+    const [element] = result.elements as Array<{ full: boolean }>;
+    expect(element.full).toBe(true);
   });
 });
 

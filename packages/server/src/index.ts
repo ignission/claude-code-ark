@@ -171,6 +171,21 @@ const CANVAS_TEXT_MAX_BYTES = 64 * 1024;
  *  load 済みのクライアントだけに配信するために使う */
 const canvasRoom = (worktreePath: string) => `canvas:${worktreePath}`;
 
+/** scene 文字列の構文と最低限の構造（elements 配列）を検証する。壊れた JSON を
+ *  保存するとクライアントが恒久的にパースエラーになり復旧手段がないため必須 */
+function isValidSceneJson(scene: string): boolean {
+  try {
+    const parsed = JSON.parse(scene);
+    return (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      Array.isArray((parsed as { elements?: unknown }).elements)
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** トンネル状態をファイルに保存する */
 function saveTunnelState(port: number): void {
   try {
@@ -438,6 +453,57 @@ export async function startServer(
   // クライアントが選択・スキャンしたリポジトリを追跡（Beaconが参照する）
   const knownRepos = new Set<string>(allowedRepos);
 
+  /**
+   * canvas:* / linkWorktreeProfile 共通の worktree 検証（trust boundary）。
+   * (1) 実在ディレクトリであること
+   * (2) git worktree であること（`.git` ファイル/ディレクトリの存在で判定）
+   *     任意ディレクトリへの読み書きを防ぐ
+   * (3) allowedRepos 設定時は、そこから導出した repoPath が許可リストに
+   *     含まれること（socket 側 worktree:set-profile と同じ防御を維持する）
+   */
+  function isManagedWorktreePath(worktreePath: string): boolean {
+    try {
+      const stat = fs.statSync(worktreePath);
+      if (!stat.isDirectory()) return false;
+    } catch {
+      return false;
+    }
+    if (!fs.existsSync(`${worktreePath}/.git`)) return false;
+    if (allowedRepos.length > 0) {
+      let derivedRepoPath: string | undefined;
+      try {
+        // execFileSync は shell を介さないため worktreePath のメタ文字
+        // (`、$()、;、空白) によるコマンド注入を防げる。
+        const stdout = execFileSync(
+          "git",
+          [
+            "-C",
+            worktreePath,
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+          ],
+          { stdio: ["ignore", "pipe", "ignore"] }
+        ).toString();
+        const gitCommonDir = stdout.trim();
+        derivedRepoPath = gitCommonDir.replace(/\/\.git\/?$/, "") || undefined;
+      } catch {
+        return false;
+      }
+      if (!derivedRepoPath) return false;
+      let inAllowed = allowedRepos.includes(derivedRepoPath);
+      if (!inAllowed) {
+        try {
+          inAllowed = allowedRepos.includes(fs.realpathSync(derivedRepoPath));
+        } catch {
+          inAllowed = false;
+        }
+      }
+      if (!inAllowed) return false;
+    }
+    return true;
+  }
+
   // トンネル状態管理 (startServer のライフタイム内に閉じ込める)
   let activeTunnel: TunnelManager | null = null;
   let tunnelUrl: string | null = null;
@@ -645,51 +711,9 @@ export async function startServer(
       // 「成功した」状態になるのを防ぐため、書き込み前に存在確認する。
       // (worktree_profile_links は FK 制約を持たないため明示チェックが必要)
       if (!db.getProfile(profileId)) return false;
-      // 1) 実在 directory であること
-      // 2) git worktree であること (.git ファイル/ディレクトリの存在で判定)
-      //    任意ディレクトリへの link 書き込みを防ぐ trust boundary。
-      // 3) (allowedRepos 設定時) repoPath が許可リストに含まれること
-      //    socket側 worktree:set-profile と同じ防御を維持する。
-      try {
-        const stat = fs.statSync(worktreePath);
-        if (!stat.isDirectory()) return false;
-      } catch {
-        return false;
-      }
-      if (!fs.existsSync(`${worktreePath}/.git`)) return false;
-      if (allowedRepos.length > 0) {
-        let derivedRepoPath: string | undefined;
-        try {
-          // execFileSync は shell を介さないため worktreePath のメタ文字
-          // (`、$()、;、空白) によるコマンド注入を防げる。
-          const stdout = execFileSync(
-            "git",
-            [
-              "-C",
-              worktreePath,
-              "rev-parse",
-              "--path-format=absolute",
-              "--git-common-dir",
-            ],
-            { stdio: ["ignore", "pipe", "ignore"] }
-          ).toString();
-          const gitCommonDir = stdout.trim();
-          derivedRepoPath =
-            gitCommonDir.replace(/\/\.git\/?$/, "") || undefined;
-        } catch {
-          return false;
-        }
-        if (!derivedRepoPath) return false;
-        let inAllowed = allowedRepos.includes(derivedRepoPath);
-        if (!inAllowed) {
-          try {
-            inAllowed = allowedRepos.includes(fs.realpathSync(derivedRepoPath));
-          } catch {
-            inAllowed = false;
-          }
-        }
-        if (!inAllowed) return false;
-      }
+      // worktree 側の trust boundary チェック（実在ディレクトリ / git worktree /
+      // allowedRepos 許可リスト）は canvas:* と共通の isManagedWorktreePath に委譲する。
+      if (!isManagedWorktreePath(worktreePath)) return false;
       db.setWorktreeProfileLink(worktreePath, profileId);
       // UIの worktreeProfileLinks マップ / プロファイルバッジを更新するため
       // 全クライアントに通知する。worktree:set-profile ハンドラと同じイベント。
@@ -1986,6 +2010,17 @@ export async function startServer(
         });
         return;
       }
+      // 実在しない / worktree でない / allowedRepos 対象外のパスに対しては
+      // room に join させない（未知パスへの購読・DB 参照を防ぐ trust boundary）
+      if (!isManagedWorktreePath(worktreePath)) {
+        reply({
+          scene: null,
+          lastSentScene: null,
+          revision: null,
+          error: "invalid worktreePath",
+        });
+        return;
+      }
       try {
         const board = db.getCanvasBoard(worktreePath);
         // このボードを load したクライアントだけに canvas:save の更新通知を
@@ -2036,9 +2071,13 @@ export async function startServer(
         reply({ ok: false, error: "サイズ上限超過" });
         return;
       }
-      // 任意の worktreePath で DB 行を作らせないため、実在する worktree
-      // ディレクトリに限定する
-      if (!fs.existsSync(worktreePath)) {
+      if (!isValidSceneJson(scene)) {
+        reply({ ok: false, error: "invalid scene" });
+        return;
+      }
+      // 任意の worktreePath で DB 行を作らせないため、実在する git worktree
+      // ディレクトリ（+ allowedRepos 設定時は許可リスト内）に限定する
+      if (!isManagedWorktreePath(worktreePath)) {
         reply({ ok: false, error: "worktree が見つかりません" });
         return;
       }
@@ -2069,19 +2108,22 @@ export async function startServer(
       if (typeof callback !== "function") return;
       const reply = callback as (response: {
         ok: boolean;
-        error?: string;
+        persisted?: boolean;
+        conflict?: boolean;
         revision?: number;
+        error?: string;
       }) => void;
 
       if (!data || typeof data !== "object") {
         reply({ ok: false, error: "リクエストが不正です" });
         return;
       }
-      const { sessionId, worktreePath, text, scene } = data as {
+      const { sessionId, worktreePath, text, scene, baseRevision } = data as {
         sessionId?: unknown;
         worktreePath?: unknown;
         text?: unknown;
         scene?: unknown;
+        baseRevision?: unknown;
       };
       if (
         typeof sessionId !== "string" ||
@@ -2092,12 +2134,26 @@ export async function startServer(
         reply({ ok: false, error: "リクエストが不正です" });
         return;
       }
+      if (baseRevision !== null && typeof baseRevision !== "number") {
+        reply({ ok: false, error: "baseRevision が不正です" });
+        return;
+      }
       if (Buffer.byteLength(text, "utf-8") > CANVAS_TEXT_MAX_BYTES) {
         reply({ ok: false, error: "サイズ上限超過" });
         return;
       }
       if (Buffer.byteLength(scene, "utf-8") > CANVAS_SCENE_MAX_BYTES) {
         reply({ ok: false, error: "サイズ上限超過" });
+        return;
+      }
+      // 送信前に scene の構造を検証する。送信自体はまだ行っていないので
+      // ok:false を返しても二重送信にはならず安全
+      if (!isValidSceneJson(scene)) {
+        reply({ ok: false, error: "invalid scene" });
+        return;
+      }
+      if (!isManagedWorktreePath(worktreePath)) {
+        reply({ ok: false, error: "worktree が見つかりません" });
         return;
       }
       // sessionId が指す worktree と、ボードの worktree が一致することを
@@ -2116,18 +2172,34 @@ export async function startServer(
         reply({ ok: false, error: getErrorMessage(error) });
         return;
       }
-      let revision: number | undefined;
+      // ここから先は Claude への送信自体は成功済み。scene の永続化（persisted）
+      // に失敗しても ok:false にすると呼び出し側が再送し、同じ指示が二重に
+      // セッションへ届くため、常に ok:true を返し persisted で成否を分ける。
       try {
-        revision = db.markCanvasBoardSent(worktreePath, scene);
+        const result = db.markCanvasBoardSent(
+          worktreePath,
+          scene,
+          baseRevision
+        );
+        if (!result.ok) {
+          // 他クライアントの新しい変更を古い scene で上書きしないよう、
+          // conflict 時は保存しない（次の canvas:load / canvas:updated で追従させる）
+          reply({ ok: true, persisted: false, conflict: true });
+          return;
+        }
+        // last_sent_scene が更新されたことを、同じボードを load 済みの他クライアントへ
+        // 通知する（lastSentElementsRef の同期用。canvas:save と同じ room 配信）
+        socket
+          .to(canvasRoom(worktreePath))
+          .emit("canvas:updated", { worktreePath });
+        reply({ ok: true, persisted: true, revision: result.revision });
       } catch (error) {
-        // 送信自体は成功している。ここで ok:false を返すとクライアントの再送で
-        // 同じ指示が二重にセッションへ届くため、記録失敗はログに留める
         console.error(
           "canvas:send-to-claude: markCanvasBoardSent failed:",
           getErrorMessage(error)
         );
+        reply({ ok: true, persisted: false, error: getErrorMessage(error) });
       }
-      reply({ ok: true, revision });
     });
 
     // ===== JSONL tail（チャットビューの会話データソース） =====

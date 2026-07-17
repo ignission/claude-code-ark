@@ -106,17 +106,17 @@ export async function convertMermaidForBoard(
         created: Date.now(),
       },
     };
-    const elements: unknown[] = [
-      {
-        type: "image",
-        fileId,
-        x: 0,
-        y: 0,
-        width,
-        height,
-      },
-    ];
-    return { elements, files, fallback: true };
+    const imageSkeleton = {
+      type: "image",
+      fileId,
+      x: 0,
+      y: 0,
+      width,
+      height,
+    };
+    // 成功パスと同じく convertToExcalidrawElements を通し、id/seed/version 等を
+    // Excalidraw に補完させる（手組みの skeleton のままだと要素として不完全）
+    return { elements: d.convert([imageSkeleton]), files, fallback: true };
   }
 }
 

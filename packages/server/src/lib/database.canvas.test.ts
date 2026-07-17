@@ -36,7 +36,12 @@ describe("SessionDatabase: canvas boards", () => {
     );
     expect(first.ok).toBe(true);
     if (!first.ok) throw new Error("unreachable");
-    db.markCanvasBoardSent("/tmp/wt-a", '{"elements":[1]}');
+    const sent = db.markCanvasBoardSent(
+      "/tmp/wt-a",
+      '{"elements":[1]}',
+      first.revision
+    );
+    expect(sent.ok).toBe(true);
     const afterSent = db.getCanvasBoard("/tmp/wt-a");
     const second = db.saveCanvasBoardScene(
       "/tmp/wt-a",
@@ -50,7 +55,12 @@ describe("SessionDatabase: canvas boards", () => {
   });
 
   it("markCanvasBoardSent は scene と lastSentScene の両方を更新する", () => {
-    db.markCanvasBoardSent("/tmp/wt-a", '{"elements":[9]}');
+    const result = db.markCanvasBoardSent(
+      "/tmp/wt-a",
+      '{"elements":[9]}',
+      null
+    );
+    expect(result.ok).toBe(true);
     const board = db.getCanvasBoard("/tmp/wt-a");
     expect(board?.scene).toBe('{"elements":[9]}');
     expect(board?.lastSentScene).toBe('{"elements":[9]}');
@@ -121,6 +131,61 @@ describe("SessionDatabase: canvas boards", () => {
       expect(result.ok).toBe(true);
       const board = db.getCanvasBoard("/tmp/wt-new");
       expect(board?.scene).toBe('{"x":1}');
+    });
+  });
+
+  describe("markCanvasBoardSent の CAS（軽量楽観ロック）", () => {
+    it("行がなければ baseRevision を問わず新規 insert に成功する", () => {
+      const result = db.markCanvasBoardSent(
+        "/tmp/wt-new",
+        '{"v":1}',
+        123456789
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("unreachable");
+      const board = db.getCanvasBoard("/tmp/wt-new");
+      expect(board?.scene).toBe('{"v":1}');
+      expect(board?.lastSentScene).toBe('{"v":1}');
+      expect(board?.revision).toBe(result.revision);
+    });
+
+    it("baseRevision が現在値と一致すれば成功し、revision が増加する", () => {
+      const first = db.saveCanvasBoardScene("/tmp/wt-a", '{"v":1}', null);
+      expect(first.ok).toBe(true);
+      if (!first.ok) throw new Error("unreachable");
+
+      const sent = db.markCanvasBoardSent(
+        "/tmp/wt-a",
+        '{"v":1}',
+        first.revision
+      );
+      expect(sent.ok).toBe(true);
+      if (!sent.ok) throw new Error("unreachable");
+      expect(sent.revision).toBeGreaterThan(first.revision);
+    });
+
+    it("baseRevision が現在値と不一致なら conflict を返し、scene を上書きしない", () => {
+      const first = db.saveCanvasBoardScene("/tmp/wt-a", '{"v":1}', null);
+      expect(first.ok).toBe(true);
+      if (!first.ok) throw new Error("unreachable");
+
+      const result = db.markCanvasBoardSent(
+        "/tmp/wt-a",
+        '{"v":2}',
+        first.revision - 1
+      );
+      expect(result).toEqual({ ok: false, conflict: true });
+
+      // 他クライアントの新しい変更が古い scene で上書きされていないことを確認
+      const board = db.getCanvasBoard("/tmp/wt-a");
+      expect(board?.scene).toBe('{"v":1}');
+      expect(board?.lastSentScene).toBeNull();
+    });
+
+    it("既存行があるのに baseRevision が null なら conflict（新規と思い込みのケース）", () => {
+      db.saveCanvasBoardScene("/tmp/wt-a", '{"v":1}', null);
+      const result = db.markCanvasBoardSent("/tmp/wt-a", '{"v":2}', null);
+      expect(result).toEqual({ ok: false, conflict: true });
     });
   });
 });
