@@ -489,30 +489,83 @@ export async function startServer(
   const knownRepos = new Set<string>(allowedRepos);
 
   /**
-   * isManagedWorktreePath の検証結果キャッシュ（TTL 30 秒）。
+   * resolveManagedWorktreePath の検証成功結果のみを保持するキャッシュ（TTL 30 秒）。
    * canvas:* はデバウンス保存等で高頻度に呼ばれるため、同期 git 呼び出しを
    * イベントごとに繰り返してイベントループを塞がないようにする。
+   * 失敗結果はキャッシュしない: realpath 正規化により実在しないパスは
+   * キャッシュ到達前に弾かれるため、キャッシュは実在パスの git 検証成功結果
+   * だけを保持すればよく、これにより未知パスの連投で Map が際限なく肥大化する
+   * 問題（負結果キャッシュの弊害）を避ける。
+   * さらにサイズ上限（FIFO）で有界化し、実在パスの水平スキャン等でも
+   * メモリが無制限に増えないようにする。
    * allowedRepos はサーバーインスタンスごとの設定のため、キャッシュも
    * startServer スコープに置き、インスタンス間で検証結果を共有しない。
    */
-  const managedWorktreeCache = new Map<string, { ok: boolean; at: number }>();
+  const managedWorktreeCache = new Map<string, { at: number }>();
+  const MANAGED_WORKTREE_CACHE_MAX = 256;
 
   /**
-   * canvas:* / linkWorktreeProfile 共通の worktree 検証（trust boundary）。
-   * (1) 実在ディレクトリであること
+   * 期限切れエントリを掃除し、なおサイズ上限を超えていれば最古（Map の挿入順
+   * 先頭）のエントリを削除する。Map は挿入順を保持するため単純な FIFO として
+   * 扱える。
+   */
+  function pruneManagedWorktreeCache(): void {
+    const now = Date.now();
+    for (const [key, entry] of managedWorktreeCache) {
+      if (now - entry.at >= MANAGED_WORKTREE_CACHE_TTL_MS) {
+        managedWorktreeCache.delete(key);
+      }
+    }
+    while (managedWorktreeCache.size >= MANAGED_WORKTREE_CACHE_MAX) {
+      const oldestKey = managedWorktreeCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      managedWorktreeCache.delete(oldestKey);
+    }
+  }
+
+  /**
+   * canvas:* / linkWorktreeProfile 共通の worktree 検証（trust boundary）+
+   * realpath 正規化。`/repo`・`/repo/.`・`/repo/./.` 等の表記揺れを同一の
+   * 実パスへ畳み込み、DB 主キー・キャッシュキー・room 名を worktree ごとに
+   * 一意化する（正規化しないと表記違いで別 DB 行が作られ、行単位のサイズ上限
+   * を迂回して肥大化させ得る）。
+   * (0) 入力長の上限チェック（異常に長い文字列での realpathSync 呼び出しを防ぐ）
+   * (1) realpath で正規化する。実在しないパスはここで弾かれる（キャッシュにも
+   *     到達しない = 未知パスの連投によるキャッシュ肥大化を防ぐ）
    * (2) git worktree であること（`.git` ファイル/ディレクトリの存在で判定）
    *     任意ディレクトリへの読み書きを防ぐ
    * (3) allowedRepos 設定時は、そこから導出した repoPath が許可リストに
    *     含まれること（socket 側 worktree:set-profile と同じ防御を維持する）
+   * 戻り値: 検証成功時は正規化済みの実パス、失敗時は null。
+   */
+  function resolveManagedWorktreePath(worktreePath: string): string | null {
+    if (worktreePath.length > 4096) return null;
+    let real: string;
+    try {
+      real = fs.realpathSync(worktreePath);
+    } catch {
+      return null;
+    }
+    const cached = managedWorktreeCache.get(real);
+    if (cached && Date.now() - cached.at < MANAGED_WORKTREE_CACHE_TTL_MS) {
+      return real;
+    }
+    if (!computeIsManagedWorktreePath(real)) {
+      return null;
+    }
+    pruneManagedWorktreeCache();
+    managedWorktreeCache.set(real, { at: Date.now() });
+    return real;
+  }
+
+  /**
+   * linkWorktreeProfile 専用の boolean ラッパー。worktree_profile_links の
+   * 既存キーは非正規化パスのままのため、こちらは呼び出し側の worktreePath を
+   * 正規化せずに使い続ける既存挙動を維持する（検証自体は正規化済みパスに対して
+   * 行われるが、DB へは元の worktreePath を渡す = link 側の挙動は変えない）。
    */
   function isManagedWorktreePath(worktreePath: string): boolean {
-    const cached = managedWorktreeCache.get(worktreePath);
-    if (cached && Date.now() - cached.at < MANAGED_WORKTREE_CACHE_TTL_MS) {
-      return cached.ok;
-    }
-    const result = computeIsManagedWorktreePath(worktreePath);
-    managedWorktreeCache.set(worktreePath, { ok: result, at: Date.now() });
-    return result;
+    return resolveManagedWorktreePath(worktreePath) !== null;
   }
 
   function computeIsManagedWorktreePath(worktreePath: string): boolean {
@@ -2067,8 +2120,11 @@ export async function startServer(
         return;
       }
       // 実在しない / worktree でない / allowedRepos 対象外のパスに対しては
-      // room に join させない（未知パスへの購読・DB 参照を防ぐ trust boundary）
-      if (!isManagedWorktreePath(worktreePath)) {
+      // room に join させない（未知パスへの購読・DB 参照を防ぐ trust boundary）。
+      // realpath 正規化した値を以降の DB キー・room 名として使い続け、
+      // `/repo`・`/repo/.` 等の表記違いを同一 worktree として扱う
+      const resolvedWorktreePath = resolveManagedWorktreePath(worktreePath);
+      if (resolvedWorktreePath === null) {
         reply({
           scene: null,
           lastSentScene: null,
@@ -2078,10 +2134,10 @@ export async function startServer(
         return;
       }
       try {
-        const board = db.getCanvasBoard(worktreePath);
+        const board = db.getCanvasBoard(resolvedWorktreePath);
         // このボードを load したクライアントだけに canvas:save の更新通知を
         // 届けるための room。load を購読の自然な入口として join する
-        socket.join(canvasRoom(worktreePath));
+        socket.join(canvasRoom(resolvedWorktreePath));
         reply({
           scene: board?.scene ?? null,
           lastSentScene: board?.lastSentScene ?? null,
@@ -2132,14 +2188,16 @@ export async function startServer(
         return;
       }
       // 任意の worktreePath で DB 行を作らせないため、実在する git worktree
-      // ディレクトリ（+ allowedRepos 設定時は許可リスト内）に限定する
-      if (!isManagedWorktreePath(worktreePath)) {
+      // ディレクトリ（+ allowedRepos 設定時は許可リスト内）に限定する。
+      // realpath 正規化した値を以降の DB キー・room 名として使い続ける
+      const resolvedWorktreePath = resolveManagedWorktreePath(worktreePath);
+      if (resolvedWorktreePath === null) {
         reply({ ok: false, error: "worktree が見つかりません" });
         return;
       }
       try {
         const result = db.saveCanvasBoardScene(
-          worktreePath,
+          resolvedWorktreePath,
           scene,
           baseRevision
         );
@@ -2151,8 +2209,8 @@ export async function startServer(
         // 全クライアント broadcast だと未 load のクライアントにも絶対パスが
         // 漏れるため room 限定にする
         socket
-          .to(canvasRoom(worktreePath))
-          .emit("canvas:updated", { worktreePath });
+          .to(canvasRoom(resolvedWorktreePath))
+          .emit("canvas:updated", { worktreePath: resolvedWorktreePath });
         reply({ ok: true, revision: result.revision });
       } catch (error) {
         console.error("canvas:save failed:", getErrorMessage(error));
@@ -2208,14 +2266,26 @@ export async function startServer(
         reply({ ok: false, error: "invalid scene" });
         return;
       }
-      if (!isManagedWorktreePath(worktreePath)) {
+      // realpath 正規化した値を以降の DB キー・room 名・session 比較で使い続ける
+      const resolvedWorktreePath = resolveManagedWorktreePath(worktreePath);
+      if (resolvedWorktreePath === null) {
         reply({ ok: false, error: "worktree が見つかりません" });
         return;
       }
       // sessionId が指す worktree と、ボードの worktree が一致することを
-      // 検証する（別 worktree のボードから任意のセッションへ送信させない）
+      // 検証する（別 worktree のボードから任意のセッションへ送信させない）。
+      // session.worktreePath は listWorktrees 由来で通常は正規化済みだが、
+      // 念のため realpath で正規化してから比較する（realpath 失敗時は不一致扱い）
       const session = sessionOrchestrator.getSession(sessionId);
-      if (!session || session.worktreePath !== worktreePath) {
+      let sessionWorktreeReal: string | null = null;
+      if (session?.worktreePath) {
+        try {
+          sessionWorktreeReal = fs.realpathSync(session.worktreePath);
+        } catch {
+          sessionWorktreeReal = null;
+        }
+      }
+      if (!session || sessionWorktreeReal !== resolvedWorktreePath) {
         reply({
           ok: false,
           error: "セッションと worktree が一致しません",
@@ -2233,7 +2303,7 @@ export async function startServer(
       // セッションへ届くため、常に ok:true を返し persisted で成否を分ける。
       try {
         const result = db.markCanvasBoardSent(
-          worktreePath,
+          resolvedWorktreePath,
           scene,
           baseRevision
         );
@@ -2246,8 +2316,8 @@ export async function startServer(
         // last_sent_scene が更新されたことを、同じボードを load 済みの他クライアントへ
         // 通知する（lastSentElementsRef の同期用。canvas:save と同じ room 配信）
         socket
-          .to(canvasRoom(worktreePath))
-          .emit("canvas:updated", { worktreePath });
+          .to(canvasRoom(resolvedWorktreePath))
+          .emit("canvas:updated", { worktreePath: resolvedWorktreePath });
         reply({ ok: true, persisted: true, revision: result.revision });
       } catch (error) {
         console.error(

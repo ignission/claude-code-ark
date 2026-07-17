@@ -431,8 +431,12 @@ export function CanvasPane({
     setApiReady(true);
   }, []);
 
-  // 競合前の編集を復元する（F3）: backup の elements/files を適用し、
-  // dirty 扱いにして再保存をスケジュールする
+  // 競合前の編集を復元する: backup の elements/files をローカル編集として
+  // 再適用するだけに留める（保存はしない）。revisionRef / lastSavedSceneRef は
+  // 書き換えず、通常の debounce save（scheduleSave）経路に乗せることで、
+  // その保存が現在の revisionRef を baseRevision として送るようにする。
+  // これにより「復元＝最新 revision で全置換保存」という楽観ロック迂回を避け、
+  // 他クライアントが復元までの間に更新していれば通常どおり conflict になる
   const handleRestoreConflictBackup = useCallback(() => {
     const api = apiRef.current;
     const backup = conflictBackupRef.current;
@@ -442,6 +446,9 @@ export function CanvasPane({
     api.updateScene({ elements: backup.elements });
     conflictBackupRef.current = null;
     setHasConflictBackup(false);
+    // scheduleSave() 内で dirtyRef.current = true になるが、意図を明示するため
+    // ここでも明示的に立てておく
+    dirtyRef.current = true;
     scheduleSave();
   }, [scheduleSave]);
 
