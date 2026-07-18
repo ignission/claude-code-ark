@@ -93,6 +93,8 @@ interface SplitChatPaneProps {
   showTerminal?: boolean;
   /** ターミナルの表示切替 (undefined のとき トグルボタンを描画しない) */
   onToggleTerminal?: () => void;
+  /** 空のホワイトボードを直接開く (undefined のとき ボタンを描画しない) */
+  onOpenBoard?: () => void;
 }
 
 // ===== JSONL イベントカード =====
@@ -786,6 +788,7 @@ export function SplitChatPane({
   onUploadFile,
   showTerminal,
   onToggleTerminal,
+  onOpenBoard,
 }: SplitChatPaneProps) {
   const [inputValue, setInputValue] = useState("");
 
@@ -1226,19 +1229,7 @@ export function SplitChatPane({
 
   return (
     <div className="h-full flex flex-col bg-background">
-      <header className="border-b border-border px-4 py-2.5 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-base">💬</span>
-          <div className="min-w-0">
-            <div className="font-bold text-sm text-foreground truncate">
-              会話
-            </div>
-            <div className="text-[11px] text-muted-foreground truncate">
-              {session.worktreePath.split("/").pop() ?? "session"} ·{" "}
-              {events.length} イベント
-            </div>
-          </div>
-        </div>
+      <header className="border-b border-border px-4 py-1.5 flex items-center justify-end shrink-0">
         <div className="flex items-center gap-1.5 shrink-0">
           {(bridgeStatus === "THINK" || bridgeStatus === "TOOL") && (
             <span className="text-[11px] text-muted-foreground flex items-center gap-1">
@@ -1250,6 +1241,17 @@ export function SplitChatPane({
             className={`w-1.5 h-1.5 rounded-full ${jsonlSubscribed ? "bg-emerald-500" : "bg-slate-400"}`}
             title={jsonlSubscribed ? "JSONL 購読中" : "未購読"}
           />
+          {onOpenBoard && (
+            <button
+              type="button"
+              onClick={onOpenBoard}
+              className="text-[11px] px-2 py-1 rounded-md font-medium flex items-center gap-1 transition-colors bg-muted hover:bg-muted/70 text-foreground"
+              title="ホワイトボードを開く"
+            >
+              <span>🎨</span>
+              <span>ボード</span>
+            </button>
+          )}
           {onToggleTerminal && (
             <button
               type="button"

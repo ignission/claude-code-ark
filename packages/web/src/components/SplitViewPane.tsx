@@ -49,6 +49,8 @@ interface SplitViewPaneProps {
   onSendMessage: (message: string) => void;
   onSendKey: (key: SpecialKey) => void;
   onDeleteSession: () => void;
+  /** 空のホワイトボードタブを直接開く (mermaid 図なしでボードを使い始める導線) */
+  onOpenBoard?: () => void;
   onUploadFile?: (data: {
     base64Data: string;
     mimeType: string;
@@ -191,6 +193,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           onUploadFile={props.onUploadFile}
           showTerminal={showTerminal}
           onToggleTerminal={handleToggleTerminal}
+          onOpenBoard={props.onOpenBoard}
         />
       </div>
 

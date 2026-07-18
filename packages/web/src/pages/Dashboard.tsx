@@ -233,6 +233,7 @@ export default function Dashboard() {
     getActiveTabForSession,
     handleTabSelect,
     handleTabClose,
+    openBoardTab,
   } = useViewerTabs(
     selectedSessionId,
     sessions,
@@ -777,6 +778,7 @@ export default function Dashboard() {
                           isActive={isActive}
                           bridgeStatus={sessionStatuses.get(session.id)}
                           awaitingText={sessionAwaitingTexts.get(session.id)}
+                          onOpenBoard={() => openBoardTab(session.id)}
                           {...paneProps}
                         />
                       ) : (
