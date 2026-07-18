@@ -61,6 +61,21 @@ _codex_fingerprint() {
   fi
 }
 
+# codex の最終メッセージが PASS センチネルか判定する。
+# PASS 条件: (1) P0/P1 マーカーが本文に存在しない かつ
+#            (2) 末尾の空白行を除いた「最終行」が GATE_PASS 完全一致。
+# 「最終行」に限定するのは、GATE_PASS の後に「実は完了できなかった」等の
+# 但し書きが続く不正応答を PASS と誤認しないため（センチネルの fail-safe 意図）。
+_codex_gate_passed() {
+  local file="$1"
+  grep -qE '\[P0\]|\[P1\]' "$file" && return 1
+  # 末尾の空白「行」だけを除外し、最終非空白行そのものを完全一致で判定する。
+  # 行内の前後空白は許容しない（センチネルは「GATE_PASS とだけ書いた行」の契約）。
+  local last
+  last=$(awk 'NF {last=$0} END {print last}' "$file")
+  [ "$last" = "GATE_PASS" ]
+}
+
 # === 公開関数 ===
 
 # codex review を起動して結果を判定する。
@@ -131,8 +146,7 @@ codex_gate_review() {
   # PASS はセンチネル必須: 指摘ゼロ時のみ codex が GATE_PASS を出力する。
   # マーカー grep だけだと指摘本文中の「[P0]」引用（ゲート自身への指摘等）で
   # 誤検知するため、センチネル + マーカー不在の両方を PASS 条件にする。
-  if grep -qE '^[[:space:]]*GATE_PASS[[:space:]]*$' "$final_output" \
-     && ! grep -qE '\[P0\]|\[P1\]' "$final_output"; then
+  if _codex_gate_passed "$final_output"; then
     return 0
   fi
   if grep -qE '\[P0\]' "$final_output"; then
@@ -201,8 +215,7 @@ codex_gate_review_plan() {
   fi
 
   # review 側と同じ PASS センチネル判定
-  if grep -qE '^[[:space:]]*GATE_PASS[[:space:]]*$' "$final_output" \
-     && ! grep -qE '\[P0\]|\[P1\]' "$final_output"; then
+  if _codex_gate_passed "$final_output"; then
     return 0
   fi
   if grep -qE '\[P0\]' "$final_output"; then
