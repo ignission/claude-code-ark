@@ -1,17 +1,21 @@
 /**
- * SplitViewPane - チャット UI 時代の PC 用セッションビュー
+ * SplitViewPane - PC 用セッションビュー（ターミナル + ボードの左右2ペイン）
  *
- * 左ペイン (SplitChatPane = JSONL ベースの会話ビュー) を全幅表示し、
- * 上部の「🖥 ターミナル」トグルで右に既存 TerminalPane (ttyd) を展開する。
- * 旧来の TerminalPane 単独表示に戻したい場合は URL に `?view=classic` を付ける
- * (Dashboard.tsx で分岐)。
+ * 左ペイン = TerminalPane（ttyd + file/html/canvas タブ）を常時表示、
+ * 右ペインは「🎨 ボード」トグルで開閉する CanvasPane（Excalidraw ホワイトボード）。
+ * 会話ビュー（SplitChatPane）は使わない — チャット内容を確認したい場合は
+ * ttyd の生ターミナル（左ペイン）を直接見る。
  *
- * - ttyd は display 切替で残置 (unmount するとセッション再接続コストが発生)
- * - 左右比 / ターミナル開閉状態は localStorage に永続化
+ * - board は TerminalPane のタブ機構から外れ、右ペイン専属になった
+ *   （board タブ自体は sessionTabs 上には残るが、非表示のまま「開いている印」として使う）
+ * - 会話内の mermaid ブロック「キャンバスで開く」は publishBoardInsert で
+ *   board-bus にキューされ、useViewerTabs.openBoardTab が board タブを
+ *   sessionTabs に追加する。下の useEffect がその追加を検知して showBoard を
+ *   自動 true にし、CanvasPane がマウントされてキューが flush される
+ * - 右ペイン幅 / 開閉状態は localStorage に永続化
  */
 
 import type {
-  BridgeSessionStatus,
   ClientToServerEvents,
   ManagedSession,
   MessageShortcut,
@@ -21,25 +25,19 @@ import type {
 } from "@ark/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
-import { SplitChatPane } from "./SplitChatPane";
+import { CanvasPane } from "./CanvasPane";
 import { TerminalPane, type ViewerTab } from "./TerminalPane";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
-const LEFT_MIN_WIDTH = 280;
-const LEFT_MAX_RATIO = 0.6;
-const STORAGE_KEY_WIDTH = "ark-split-left-width";
-const STORAGE_KEY_TERMINAL = "ark-split-show-terminal";
+const BOARD_MIN_WIDTH = 320;
+const BOARD_MAX_RATIO = 0.6;
+const STORAGE_KEY_BOARD_WIDTH = "ark-split-board-width";
+const STORAGE_KEY_SHOW_BOARD = "ark-split-show-board";
 
 interface SplitViewPaneProps {
   socket: TypedSocket | null;
   session: ManagedSession;
-  /** このペインが現在表示中か (JSONL 購読をアクティブセッションに限定する) */
-  isActive: boolean;
-  /** session:previews 由来のセッション状態 (busy/AWAITING 表示用) */
-  bridgeStatus?: BridgeSessionStatus;
-  /** AWAITING 時の確認 UI 生テキスト (バナーに表示) */
-  awaitingText?: string;
   worktree: Worktree | undefined;
   repoName?: string;
   tabs: ViewerTab[];
@@ -49,8 +47,6 @@ interface SplitViewPaneProps {
   onSendMessage: (message: string) => void;
   onSendKey: (key: SpecialKey) => void;
   onDeleteSession: () => void;
-  /** 空のホワイトボードタブを直接開く (mermaid 図なしでボードを使い始める導線) */
-  onOpenBoard?: () => void;
   onUploadFile?: (data: {
     base64Data: string;
     mimeType: string;
@@ -67,9 +63,9 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function readSavedLeftWidth(): number | null {
+function readSavedBoardWidth(): number | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_WIDTH);
+    const raw = localStorage.getItem(STORAGE_KEY_BOARD_WIDTH);
     if (!raw) return null;
     const n = Number.parseInt(raw, 10);
     return Number.isFinite(n) && n > 0 ? n : null;
@@ -78,9 +74,9 @@ function readSavedLeftWidth(): number | null {
   }
 }
 
-function readSavedShowTerminal(): boolean {
+function readSavedShowBoard(): boolean {
   try {
-    return localStorage.getItem(STORAGE_KEY_TERMINAL) === "1";
+    return localStorage.getItem(STORAGE_KEY_SHOW_BOARD) === "1";
   } catch {
     return false;
   }
@@ -88,40 +84,42 @@ function readSavedShowTerminal(): boolean {
 
 export function SplitViewPane(props: SplitViewPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [leftWidth, setLeftWidth] = useState<number>(
-    () => readSavedLeftWidth() ?? 420
+  const [boardWidth, setBoardWidth] = useState<number>(
+    () => readSavedBoardWidth() ?? 420
   );
   const [isDragging, setIsDragging] = useState(false);
-  const [showTerminal, setShowTerminal] = useState<boolean>(() =>
-    readSavedShowTerminal()
+  const [showBoard, setShowBoard] = useState<boolean>(() =>
+    readSavedShowBoard()
   );
 
-  // キャンバスタブが新規に開かれたら右ペインを自動表示する。
-  // canvas タブ数の増加時のみ true 化し、ユーザーが後で閉じた操作は尊重する。
-  const prevCanvasCountRef = useRef(0);
+  // board タブが sessionTabs に新規追加されたら右ペインを自動表示する
+  // （「キャンバスで開く」→ publishBoardInsert + openBoardTab の導線）。
+  // tabs は session 単位でスコープされているため、他セッションの変化には反応しない。
+  // board 数の増加時のみ true 化し、ユーザーが後で閉じた操作は尊重する。
+  const prevBoardCountRef = useRef(0);
   useEffect(() => {
-    const canvasCount = props.tabs.filter(
-      t => t.type === "canvas" || t.type === "board"
+    const boardCount = props.tabs.filter(
+      t => t.type === "board" || t.type === "canvas"
     ).length;
-    if (canvasCount > prevCanvasCountRef.current) {
-      setShowTerminal(true);
+    if (boardCount > prevBoardCountRef.current) {
+      setShowBoard(true);
     }
-    prevCanvasCountRef.current = canvasCount;
+    prevBoardCountRef.current = boardCount;
   }, [props.tabs]);
 
-  // コンテナ幅変化時に left を最大比率内に丸める (ターミナル表示中のみ意味あり)
+  // コンテナ幅変化時に board 幅を最大比率内に丸める（表示中のみ意味あり）
   useEffect(() => {
     const el = containerRef.current;
-    if (!el || !showTerminal) return;
+    if (!el || !showBoard) return;
     const observer = new ResizeObserver(() => {
       const total = el.clientWidth;
       if (total <= 0) return;
-      const max = Math.floor(total * LEFT_MAX_RATIO);
-      setLeftWidth(prev => clamp(prev, LEFT_MIN_WIDTH, max));
+      const max = Math.floor(total * BOARD_MAX_RATIO);
+      setBoardWidth(prev => clamp(prev, BOARD_MIN_WIDTH, max));
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [showTerminal]);
+  }, [showBoard]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -135,15 +133,16 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       if (!el) return;
       const rect = el.getBoundingClientRect();
       const total = rect.width;
-      const next = e.clientX - rect.left;
-      const max = Math.floor(total * LEFT_MAX_RATIO);
-      const clamped = clamp(next, LEFT_MIN_WIDTH, max);
-      setLeftWidth(clamped);
+      // 右ペイン（board）の幅 = コンテナ右端からカーソルまでの距離
+      const next = rect.right - e.clientX;
+      const max = Math.floor(total * BOARD_MAX_RATIO);
+      const clamped = clamp(next, BOARD_MIN_WIDTH, max);
+      setBoardWidth(clamped);
     };
     const onUp = () => {
       setIsDragging(false);
       try {
-        localStorage.setItem(STORAGE_KEY_WIDTH, String(leftWidth));
+        localStorage.setItem(STORAGE_KEY_BOARD_WIDTH, String(boardWidth));
       } catch {
         // ignore
       }
@@ -158,13 +157,13 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-  }, [isDragging, leftWidth]);
+  }, [isDragging, boardWidth]);
 
-  const handleToggleTerminal = useCallback(() => {
-    setShowTerminal(prev => {
+  const handleToggleBoard = useCallback(() => {
+    setShowBoard(prev => {
       const next = !prev;
       try {
-        localStorage.setItem(STORAGE_KEY_TERMINAL, next ? "1" : "0");
+        localStorage.setItem(STORAGE_KEY_SHOW_BOARD, next ? "1" : "0");
       } catch {
         // ignore
       }
@@ -173,53 +172,28 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   }, []);
 
   return (
-    <div ref={containerRef} className="h-full flex relative">
-      <div
-        style={
-          showTerminal
-            ? { width: leftWidth, flexShrink: 0 }
-            : { flex: "1 1 auto", minWidth: 0 }
-        }
-        className={`h-full overflow-hidden ${showTerminal ? "border-r border-border" : ""}`}
-      >
-        <SplitChatPane
-          socket={props.socket}
-          session={props.session}
-          isActive={props.isActive}
-          bridgeStatus={props.bridgeStatus}
-          awaitingText={props.awaitingText}
-          onSendMessage={props.onSendMessage}
-          onSendKey={props.onSendKey}
-          onUploadFile={props.onUploadFile}
-          showTerminal={showTerminal}
-          onToggleTerminal={handleToggleTerminal}
-          onOpenBoard={props.onOpenBoard}
-        />
-      </div>
-
-      {/* リサイザはターミナル表示時のみ */}
-      {showTerminal && (
+    <div className="h-full flex flex-col">
+      {/* 上部バー: ボード開閉トグル */}
+      <div className="h-8 shrink-0 border-b border-border bg-sidebar flex items-center justify-end px-2">
         <button
           type="button"
-          aria-label="左右の幅を調整"
-          onMouseDown={handleMouseDown}
-          className={`relative w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/50 transition-colors ${
-            isDragging ? "bg-primary/70" : ""
+          onClick={handleToggleBoard}
+          className={`text-[11px] px-2 py-1 rounded-md font-medium flex items-center gap-1 transition-colors ${
+            showBoard
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted hover:bg-muted/70 text-foreground"
           }`}
+          title={showBoard ? "ボードを閉じる" : "ボードを開く"}
         >
-          <span className="absolute inset-y-0 -left-1 -right-1" />
+          <span>🎨</span>
+          <span>{showBoard ? "ボードを閉じる" : "ボード"}</span>
         </button>
-      )}
+      </div>
 
-      {/* TerminalPane は display 切替で永続マウント (ttyd の再接続コストを避ける) */}
-      <div
-        className={`h-full overflow-hidden ${
-          showTerminal ? "flex-1 min-w-0" : "hidden"
-        }`}
-      >
-        <div className={`h-full ${isDragging ? "pointer-events-none" : ""}`}>
+      <div ref={containerRef} className="flex-1 min-h-0 flex relative">
+        {/* 左ペイン: ターミナル（常時表示） */}
+        <div className="h-full flex-1 min-w-0 overflow-hidden">
           <TerminalPane
-            socket={props.socket}
             session={props.session}
             worktree={props.worktree}
             repoName={props.repoName}
@@ -238,6 +212,34 @@ export function SplitViewPane(props: SplitViewPaneProps) {
             onDeleteShortcut={props.onDeleteShortcut}
           />
         </div>
+
+        {/* リサイザ・右ペインはボード表示時のみ */}
+        {showBoard && (
+          <>
+            <button
+              type="button"
+              aria-label="左右の幅を調整"
+              onMouseDown={handleMouseDown}
+              className={`relative w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/50 transition-colors ${
+                isDragging ? "bg-primary/70" : ""
+              }`}
+            >
+              <span className="absolute inset-y-0 -left-1 -right-1" />
+            </button>
+            <div
+              style={{ width: boardWidth, flexShrink: 0 }}
+              className={`h-full overflow-hidden border-l border-border ${
+                isDragging ? "pointer-events-none" : ""
+              }`}
+            >
+              <CanvasPane
+                socket={props.socket}
+                sessionId={props.session.id}
+                worktreePath={props.session.worktreePath}
+              />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

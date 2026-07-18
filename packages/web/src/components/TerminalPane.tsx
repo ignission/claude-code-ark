@@ -9,10 +9,8 @@
  */
 
 import type {
-  ClientToServerEvents,
   ManagedSession,
   MessageShortcut,
-  ServerToClientEvents,
   SpecialKey,
   Worktree,
 } from "@ark/shared";
@@ -35,7 +33,6 @@ import {
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Socket } from "socket.io-client";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -51,7 +48,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useIsMobile } from "../hooks/useMobile";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
-import { CanvasPane } from "./CanvasPane";
 import { CanvasViewerPane } from "./CanvasViewerPane";
 import { FileViewerPane } from "./FileViewerPane";
 import { HtmlViewerPane } from "./HtmlViewerPane";
@@ -99,8 +95,6 @@ export type ViewerTab =
 
 interface TerminalPaneProps {
   session: ManagedSession;
-  /** ボードタブ用（未指定ならボードタブは案内表示のみ） */
-  socket?: Socket<ServerToClientEvents, ClientToServerEvents> | null;
   worktree: Worktree | undefined;
   repoName?: string;
   onSendMessage: (message: string) => void;
@@ -129,7 +123,6 @@ interface TerminalPaneProps {
 
 export function TerminalPane({
   session,
-  socket,
   worktree,
   repoName,
   onSendMessage,
@@ -424,6 +417,17 @@ export function TerminalPane({
     { label: "/compact", cmd: "/compact" },
   ];
 
+  // board タブは右ペイン（SplitViewPane の CanvasPane）専属になったため、
+  // タブバーには表示しない。visibleTabIndexMap[表示用index] = 元のtabs配列index
+  const visibleTabIndexMap: number[] = [];
+  const visibleTabs: ViewerTab[] = [];
+  tabs.forEach((tab, i) => {
+    if (tab.type === "board") return;
+    visibleTabIndexMap.push(i);
+    visibleTabs.push(tab);
+  });
+  const visibleActiveTabIndex = visibleTabIndexMap.indexOf(activeTabIndex);
+
   return (
     <div className="h-full flex flex-col bg-card border border-border rounded-lg overflow-hidden">
       {/* ウィンドウ全体のD&Dオーバーレイ（ドラッグ中のみ表示） */}
@@ -532,12 +536,13 @@ export function TerminalPane({
         </div>
       </header>
 
-      {/* タブバー（共通コンポーネント） */}
+      {/* タブバー（共通コンポーネント）。board は右ペイン専属になったのでタブ一覧からは除外し、
+          表示用インデックスと元の tabs 配列インデックスを相互変換する */}
       <ViewerTabBar
-        tabs={tabs}
-        activeTabIndex={activeTabIndex}
-        onTabSelect={onTabSelect}
-        onTabClose={onTabClose}
+        tabs={visibleTabs}
+        activeTabIndex={visibleActiveTabIndex}
+        onTabSelect={idx => onTabSelect(visibleTabIndexMap[idx])}
+        onTabClose={idx => onTabClose(visibleTabIndexMap[idx])}
       />
 
       {/* ttyd iframe */}
@@ -605,21 +610,6 @@ export function TerminalPane({
             </div>
           );
         })()}
-      {tabs[activeTabIndex]?.type === "board" && (
-        <div className="flex-1 min-h-0">
-          {socket !== undefined ? (
-            <CanvasPane
-              socket={socket}
-              sessionId={session.id}
-              worktreePath={session.worktreePath}
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
-              ボードはこのビューでは利用できません
-            </div>
-          )}
-        </div>
-      )}
       {/* 添付ファイル プレビューダイアログ（画像/非画像共通） */}
       {pendingFiles.length > 0 && (
         <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

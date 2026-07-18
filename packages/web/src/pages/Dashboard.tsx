@@ -23,7 +23,6 @@ import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
 import { SplitViewPane } from "@/components/SplitViewPane";
-import { TerminalPane } from "@/components/TerminalPane";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { Button } from "@/components/ui/button";
 import {
@@ -166,12 +165,6 @@ export default function Dashboard() {
     window.location.hostname !== "localhost" &&
     window.location.hostname !== "127.0.0.1";
 
-  // チャットビュー (JSONL ベース + on-demand ターミナル) がデフォルト。
-  // 旧来の TerminalPane 単独表示に戻したい場合は `?view=classic` を指定する。
-  const isChatView =
-    typeof window === "undefined" ||
-    new URLSearchParams(window.location.search).get("view") !== "classic";
-
   const activeBrowserSession = Array.from(browserSessions.values())[0] ?? null;
 
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
@@ -233,7 +226,6 @@ export default function Dashboard() {
     getActiveTabForSession,
     handleTabSelect,
     handleTabClose,
-    openBoardTab,
   } = useViewerTabs(
     selectedSessionId,
     sessions,
@@ -772,18 +764,7 @@ export default function Dashboard() {
                       key={session.id}
                       className={isActive ? "h-full flex flex-col" : "hidden"}
                     >
-                      {isChatView ? (
-                        <SplitViewPane
-                          socket={socket}
-                          isActive={isActive}
-                          bridgeStatus={sessionStatuses.get(session.id)}
-                          awaitingText={sessionAwaitingTexts.get(session.id)}
-                          onOpenBoard={() => openBoardTab(session.id)}
-                          {...paneProps}
-                        />
-                      ) : (
-                        <TerminalPane {...paneProps} />
-                      )}
+                      <SplitViewPane socket={socket} {...paneProps} />
                     </div>
                   );
                 })}

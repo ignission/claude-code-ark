@@ -152,13 +152,18 @@ export function useViewerTabs(
     []
   );
 
+  // board はデスクトップでは TerminalPane のタブ機構ではなく右ペイン（SplitViewPane
+  // の CanvasPane）専属になったため、ここでは sessionTabs への追加のみ行い、
+  // アクティブタブは変更しない（変更すると TerminalPane の表示対象が board タブになり、
+  // board を描画しない TerminalPane では画面が空白になってしまう）。
+  // sessionTabs への追加自体は、SplitViewPane 側の「board タブ数が増えたら右ペインを
+  // 自動表示する」effect のトリガーとして必要。
   const openBoardTab = useCallback((sessionId: string) => {
     setSessionTabs(prev => {
       const current = prev[sessionId] ?? [
         { type: "terminal" as const, id: "terminal" },
       ];
-      const { tabs, activeIndex } = addOrFocusBoardTab(current);
-      setSessionActiveTab(p => ({ ...p, [sessionId]: activeIndex }));
+      const { tabs } = addOrFocusBoardTab(current);
       return { ...prev, [sessionId]: tabs };
     });
   }, []);
