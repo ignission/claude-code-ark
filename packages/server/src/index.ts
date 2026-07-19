@@ -837,13 +837,24 @@ export async function startServer(
       io.to(canvasRoom(worktreePath)).emit("canvas:updated", { worktreePath });
     },
   };
-  // 永続化ポート（Task 5 で settings に保存される想定）。未設定なら ephemeral 起動。
+  // 永続化ポート（C-B3 の ark-beacon MCP と同型）。前回 bind したポートに
+  // 再度 bind し直すことで、稼働中セッションの mcp-config の url を維持する。
+  // 1〜65535 の整数以外（範囲外・非整数・NaN・不正値混入）は無視して ephemeral 起動にフォールバックする
+  // （httpServer.listen() への不正値渡しによる例外を防ぐ）。
   const savedBoardMcpPort = db.getSetting("board_mcp_port");
   const boardMcpPort =
-    typeof savedBoardMcpPort === "number" && Number.isInteger(savedBoardMcpPort)
+    typeof savedBoardMcpPort === "number" &&
+    Number.isInteger(savedBoardMcpPort) &&
+    savedBoardMcpPort >= 1 &&
+    savedBoardMcpPort <= 65535
       ? savedBoardMcpPort
       : undefined;
   await boardMcp.start(boardDeps, boardRegistry, { port: boardMcpPort });
+  // 実際に bind できたポートを settings に保存する（次回起動で同じポートに bind し直すため）。
+  const boundBoardMcpPort = boardMcp.getPort();
+  if (boundBoardMcpPort) {
+    db.setSetting("board_mcp_port", boundBoardMcpPort);
+  }
   // 会話セッション起動時に per-session token/mcp-config を注入できるよう、
   // SessionOrchestrator へ boardMcp/boardRegistry を配線する (Task 4)。
   sessionOrchestrator.setBoardMcp(boardMcp, boardRegistry);
