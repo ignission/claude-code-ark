@@ -573,6 +573,19 @@ describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
     // registry に (token → worktreePath) が実際に登録されている
     expect(registry.resolve(token)).toBe("/path/to/work");
 
+    // token 秘匿: cfgPath (--mcp-config で ps aux 露出する) に token 文字列を
+    // 含めない。token は内容の headers.Authorization のみに置く。
+    expect(cfgPath).not.toContain(token);
+    // ファイル名 (basename) も token と無関係なランダム id であること
+    const basename = cfgPath.split("/").pop() ?? "";
+    expect(basename).toMatch(/^[0-9a-f]{32}\.json$/);
+
+    // 格納 dir が存在し 0700 (他ユーザーから列挙不可) で作られている
+    const dir = cfgPath.slice(0, cfgPath.lastIndexOf("/"));
+    expect(fs.existsSync(dir)).toBe(true);
+    const dirMode = fs.statSync(dir).mode & 0o777;
+    expect(dirMode).toBe(0o700);
+
     // bearer token を含むため 0600 で書かれている
     const mode = fs.statSync(cfgPath).mode & 0o777;
     expect(mode).toBe(0o600);

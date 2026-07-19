@@ -163,8 +163,9 @@ export class TmuxManager extends EventEmitter {
   }
 
   /**
-   * claude 起動コマンドに `--mcp-config <path> --strict-mcp-config` で注入する
-   * per-session MCP config JSON を設定する (board_write 等)。
+   * claude 起動コマンドに `--mcp-config <path>` で注入する per-session MCP
+   * config JSON を設定する (board_write 等)。--strict-mcp-config は付けない
+   * (ユーザーの他 MCP を無効化しないため、board MCP は既存 MCP に上乗せする)。
    * このインスタンスは全セッションで共有されるため、SessionOrchestrator は
    * 各セッション起動 (createSession 呼び出し) の直前に必ず設定し直すこと
    * (board MCP が利用不可なセッションでは null を渡して前回値を持ち越さない)。
@@ -335,10 +336,12 @@ export class TmuxManager extends EventEmitter {
       : "";
     // board_write 等の per-session MCP server を注入する --mcp-config。
     // SessionOrchestrator が起動直前に setClaudeMcpConfigPath で設定する。
-    // --strict-mcp-config を併せて付与し、ユーザーの ~/.claude.json 等に
-    // 定義された他 MCP server が意図せず追加接続されるのを防ぐ (beacon と同方針)。
+    // beacon と異なり --strict-mcp-config は**付けない**: strict を付けると
+    // ユーザーの project .mcp.json / global 設定の他 MCP (Slack/Jira/Figma 等)
+    // が全て無効化されてしまう。会話セッションはそれら他 MCP を使いたいので、
+    // board MCP は既存 MCP に**上乗せ**する (strict なしなら追加マージされる)。
     const mcpConfigArg = this.claudeMcpConfigPath
-      ? ` --mcp-config ${posixShellQuote(this.claudeMcpConfigPath)} --strict-mcp-config`
+      ? ` --mcp-config ${posixShellQuote(this.claudeMcpConfigPath)}`
       : "";
     // プロファイル未指定のセッションが、Ark サーバープロセス (やその親、
     // tmux サーバー) の CLAUDE_CONFIG_DIR を意図せず継承すると、transcript が
