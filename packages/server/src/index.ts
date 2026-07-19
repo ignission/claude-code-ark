@@ -36,6 +36,10 @@ import {
   AUQ_TOKEN_HEADER,
   auqHookBridge,
 } from "./lib/auq-hook-bridge.js";
+import {
+  AUQ_SCREEN_CAPTURE_LINES,
+  buildAuqScreenContext,
+} from "./lib/auq-screen-context.js";
 import { authManager } from "./lib/auth.js";
 import { beaconManager } from "./lib/beacon-manager.js";
 import {
@@ -711,14 +715,22 @@ export async function startServer(
       res.status(204).end();
       return;
     }
+    // 直前の会話文脈は AUQ 解決まで JSONL に書かれないため、hook 受信の
+    // この瞬間 (質問ボックス描画前後) の tmux 画面を verbatim で添付する。
+    // 解釈はしない (auq-screen-context.ts の原則境界コメント参照)
+    const screen = buildAuqScreenContext(
+      tmuxManager.capturePane(session.id, AUQ_SCREEN_CAPTURE_LINES)
+    );
     const entry = auqHookBridge.setPending(
       session.id,
-      body.tool_input.questions
+      body.tool_input.questions,
+      screen
     );
     io.emit("session:auq", {
       sessionId: session.id,
       at: entry.at,
       questions: entry.questions,
+      screen: entry.screen,
     });
     console.log(`[AuqHook] session:auq 配信: ${session.id} (${body.cwd})`);
     res.status(204).end();
@@ -2381,6 +2393,7 @@ export async function startServer(
           sessionId,
           at: pendingAuq.at,
           questions: pendingAuq.questions,
+          screen: pendingAuq.screen,
         });
       }
     });

@@ -401,6 +401,12 @@ export interface ServerToClientEvents {
     at: number;
     /** tool_input.questions の生データ (クライアント側で構造検証する) */
     questions: unknown;
+    /**
+     * hook 受信時の tmux 画面スナップショット (verbatim・無解釈)。
+     * AUQ 表示中は直前の会話が JSONL に無いため、カードの「直前の画面」
+     * 表示に使う。capture 失敗時は null
+     */
+    screen: string | null;
   }) => void;
   "session:restored": (session: ManagedSession) => void;
   "session:restore_failed": (data: {
