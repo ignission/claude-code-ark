@@ -40,9 +40,12 @@ const SHAPE_TYPE_MAP: Record<string, string> = {
   diamond: "diamond",
 };
 
-/** fractional index。Phase A は "a" + 連番で十分（厳密な fractional-indexing は不要）。 */
+/**
+ * fractional index。Phase A は "a" + ゼロ埋め連番で十分（厳密な fractional-indexing は不要）。
+ * ゼロ埋めにより辞書順=数値順を保証する（"a0010" > "a0002"。padStart 無しだと "a10" < "a2"）。
+ */
 function fractionalIndex(n: number): string {
-  return `a${n}`;
+  return `a${String(n).padStart(4, "0")}`;
 }
 
 /** Excalidraw 要素の共通必須フィールドを埋める。 */
@@ -228,13 +231,14 @@ export function expandElements(
       const tx = to.x + to.w / 2;
       const ty = to.y + to.h / 2;
       const arrow: ExcalidrawElement = {
+        // width/height は絶対値（左向き/上向き矢印で負値にならないよう）。points は符号付きで方向を表す
         ...baseElement(
           el.id,
           "arrow",
           fx,
           fy,
-          tx - fx,
-          ty - fy,
+          Math.abs(tx - fx),
+          Math.abs(ty - fy),
           fractionalIndex(idx++),
           rng,
           strokeDefault
@@ -251,6 +255,20 @@ export function expandElements(
         roundness: { type: 2 },
       };
       elements.push(arrow);
+      // label があれば矢印の中点に中央寄せ text 要素を追加する（index を1つ消費）
+      if (el.label) {
+        elements.push(
+          centeredText(
+            `${el.id}__label`,
+            (fx + tx) / 2,
+            (fy + ty) / 2,
+            el.label,
+            fractionalIndex(idx++),
+            rng,
+            strokeDefault
+          )
+        );
+      }
     } else {
       skipped.push({
         id: (el as { id?: string }).id,

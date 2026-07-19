@@ -49,7 +49,7 @@ describe("expandElements", () => {
     ]) {
       expect(el).toHaveProperty(k);
     }
-    expect(el.index).toBe("a0");
+    expect(el.index).toBe("a0000");
   });
 
   it("rect の text はシェイプ + 中央寄せ text 要素の2つに展開する", () => {
@@ -103,6 +103,47 @@ describe("expandElements", () => {
       [{ type: "text", id: "t1", x: 0, y: 0, text: "hi" }],
       { startIndex: 3, rng: fixedRng }
     );
-    expect((elements[0] as Record<string, unknown>).index).toBe("a3");
+    expect((elements[0] as Record<string, unknown>).index).toBe("a0003");
+  });
+
+  it("右→左の arrow でも width/height が非負になる", () => {
+    const simple: SimpleElement[] = [
+      // from が右、to が左（左向き矢印）
+      { type: "rect", id: "a", x: 300, y: 200, w: 100, h: 40 },
+      { type: "rect", id: "b", x: 0, y: 0, w: 100, h: 40 },
+      { type: "arrow", id: "ar1", from: "a", to: "b" },
+    ];
+    const { elements, skipped } = expandElements(simple, {
+      startIndex: 0,
+      rng: fixedRng,
+    });
+    expect(skipped).toEqual([]);
+    const arrow = elements.find(
+      e => (e as Record<string, unknown>).type === "arrow"
+    ) as Record<string, unknown>;
+    expect(arrow).toBeTruthy();
+    expect(arrow.width as number).toBeGreaterThanOrEqual(0);
+    expect(arrow.height as number).toBeGreaterThanOrEqual(0);
+  });
+
+  it("arrow の label は矢印 + 中央寄せ text 要素の2つに展開する", () => {
+    const { elements, skipped } = expandElements(
+      [
+        { type: "rect", id: "a", x: 0, y: 0, w: 100, h: 40 },
+        { type: "rect", id: "b", x: 300, y: 0, w: 100, h: 40 },
+        { type: "arrow", id: "ar1", from: "a", to: "b", label: "calls" },
+      ],
+      { startIndex: 0, rng: fixedRng }
+    );
+    expect(skipped).toEqual([]);
+    const arrow = elements.find(
+      e => (e as Record<string, unknown>).type === "arrow"
+    ) as Record<string, unknown>;
+    expect(arrow).toBeTruthy();
+    const text = elements.find(
+      e => (e as Record<string, unknown>).type === "text"
+    ) as Record<string, unknown>;
+    expect(text).toBeTruthy();
+    expect(text.text).toBe("calls");
   });
 });
