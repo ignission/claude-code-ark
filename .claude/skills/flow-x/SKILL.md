@@ -181,7 +181,8 @@ flow_state_update progress '.gate = "codex-impl"' "$SCOPE_KEY"
 4. `kpi.intervention_timestamps` への記録は対話モード (P10) と同様に行う。
 
 **承認検知仕様** (tick が実施。単発起動なら `--resume` で再評価):
-- `gh pr view <n> --json reviews,comments` で review と会話コメントの両方を取得し、**HEAD commit より後に提出されたもの**だけを評価する (修正 push 前の古いシグナルは無効)。コメントは collaborator のもののみシグナルとして扱う。
+- `gh pr view <n> --json reviews,comments` で review と会話コメントの両方を取得し、**HEAD commit より後に提出されたもの**だけを評価する (修正 push 前の古いシグナルは無効)。
+- **投稿者権限の検証はコメント・review の両方に必須**: 各シグナルの投稿者について `gh api "repos/{owner}/{repo}/collaborators/{login}/permission" -q .permission` が `admin` / `write` (または `maintain`) であることを確認し、それ以外 (read / triage / 404) のシグナルは**無視する**。公開リポジトリでは第三者が APPROVED review を提出できるため、コメントだけ collaborator 限定にしても review 経由で人間ゲートが突破される (これはマージ・deploy に直結する認可判定であり、省略してはならない)。
 - **鮮度判定は必ず epoch (UTC 秒) で比較する**: `flow-loop/lib/loop.sh` の `flow_signal_after "$createdAt" "$(flow_head_epoch "$WORKTREE_PATH")"`。`git log --format=%cI` (`+09:00` ローカルオフセット) と GitHub API の `Z` (UTC) を **ISO 文字列で大小比較すると TZ オフセット差で誤判定**し、有効な承認を取りこぼす。`%cI` 直比較はしない。
 - 有効なシグナルが複数あれば**最新が勝つ** (承認→修正の順なら修正を採用)。
 - 承認 → P11 (cleanup_merge_pr 以降) へ。修正 → codex に差し戻し (P8 の要領で修正 → Claude レビュー → push) → PR に再依頼コメント → 再 park。CLOSED (unmerged) → 中止 (`/flow-loop` の abort 処理参照)。

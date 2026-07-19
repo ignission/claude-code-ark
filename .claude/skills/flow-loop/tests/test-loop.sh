@@ -101,15 +101,26 @@ assert_rc "取得中は 2 重取得できない" 1 'flow_loop_lock'
 flow_loop_unlock
 assert_rc "unlock 後は再取得できる" 0 'flow_loop_lock'
 flow_loop_unlock
-# stale lock の回収 (mtime を 2h 前にする)
+# stale lock の回収 (pid 不明 + mtime を 2h 前にする)
 mkdir -p "$FLOW_LOOP_LOCK"
 if touch -t "$(date -v-2H +%Y%m%d%H%M 2>/dev/null || date -d '2 hours ago' +%Y%m%d%H%M)" "$FLOW_LOOP_LOCK" 2>/dev/null; then
-  assert_rc "stale lock (2h 前) は回収して取得できる" 0 'flow_loop_lock'
+  assert_rc "stale lock (pid 不明・2h 前) は回収して取得できる" 0 'flow_loop_lock'
   flow_loop_unlock
 else
   echo "WARN: touch -t 不可 → stale lock テストを skip"
   rm -rf "$FLOW_LOOP_LOCK"
 fi
+# 所有者 pid ベースの回収判定
+mkdir -p "$FLOW_LOOP_LOCK"; printf '%s' "999999" > "$FLOW_LOOP_LOCK/pid"
+assert_rc "所有 pid が死んでいる lock は mtime に関わらず即回収できる" 0 'flow_loop_lock'
+flow_loop_unlock
+mkdir -p "$FLOW_LOOP_LOCK"; printf '%s' "$$" > "$FLOW_LOOP_LOCK/pid"
+if touch -t "$(date -v-2H +%Y%m%d%H%M 2>/dev/null || date -d '2 hours ago' +%Y%m%d%H%M)" "$FLOW_LOOP_LOCK" 2>/dev/null; then
+  assert_rc "所有 pid が生存中なら mtime が stale でも横取りしない" 1 'flow_loop_lock'
+fi
+# 所有者が自分 (生存) の lock は unlock で消える (後始末を兼ねる)
+flow_loop_unlock
+assert_rc "自分所有の lock は unlock で消える" 1 '[ -d "$FLOW_LOOP_LOCK" ]'
 
 # --- アクティブ run 列挙 (state-io.sh の progress ファイル形式を模す) ---
 printf '{"phase":"P3","ticket":"issue-1"}' > "$TMP_RUNS/flow-progress-issue-1.json"
@@ -128,7 +139,11 @@ assert_rc "00-24 は常に範囲内" 0 'flow_loop_within_active_hours'
 flow_loop_update '.active_hours = "00-00"'
 assert_rc "00-00 は常に範囲外" 1 'flow_loop_within_active_hours'
 flow_loop_update '.active_hours = "9x-19"'
-assert_rc "形式不正は fail-open (常時可)" 0 'flow_loop_within_active_hours'
+assert_rc "形式不正は fail-closed (稼働外扱い。安全設定のタイプミスで制限が消えない)" 1 'flow_loop_within_active_hours'
+flow_loop_update '.active_hours = "0919"'
+assert_rc "区切り無しも fail-closed" 1 'flow_loop_within_active_hours'
+flow_loop_update '.active_hours = "09-99"'
+assert_rc "時刻範囲外 (99) も fail-closed" 1 'flow_loop_within_active_hours'
 flow_loop_update '.active_hours = ""'
 
 # --- 新規着手予算 (日次) ---

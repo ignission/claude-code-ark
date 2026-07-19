@@ -138,10 +138,14 @@ if [ -f "/tmp/flow-done-${SCOPE_KEY}.json" ]; then
   fi
 fi
 
-if flow_state_exists "$SCOPE_KEY"; then
-  if flow_state_is_stale "$SCOPE_KEY"; then
-    flow_state_cleanup_stale "$SCOPE_KEY"
-  fi
+# stale state の削除は --resume 明示時には行わない。failure 系 terminal
+# (cleanup_post_deploy resumable) は sentinel を作らず state (phase=done) だけを残すため、
+# 1h 経過後に --resume すると先に state が削除され、phase=done を検出できずに
+# 「新規 run」として P-1 から再開してしまう事故を防ぐ。
+if flow_state_exists "$SCOPE_KEY" \
+   && [ "${MODE:-}" != "--resume" ] \
+   && flow_state_is_stale "$SCOPE_KEY"; then
+  flow_state_cleanup_stale "$SCOPE_KEY"
 fi
 
 if [ "${MODE:-}" = "--resume" ] && flow_state_exists "$SCOPE_KEY"; then

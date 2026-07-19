@@ -43,7 +43,9 @@ require_zsh
 #   非対話（stdin=/dev/null）時に上書きを拒否し、state 更新が無言で失われる。
 #   command mv を使えばエイリアスを迂回して必ず上書きできる。
 # -----------------------------------------------------------------------------
-SK="issue-9999"
+# scope はテスト専用の一意な値にする (固定値 issue-9999 だと、万一同名の本番 run が
+# 進行中の場合にその state をテストが破壊するため。pid で衝突を避ける)
+SK="zshcompat-test-$$"
 cleanup_state() { rm -f /tmp/flow-progress-"$SK".json /tmp/flow-kpi-"$SK".json \
   /tmp/flow-context-"$SK".json /tmp/flow-"$SK".lock /tmp/flow-progress-"$SK".json.new.* 2>/dev/null; }
 cleanup_state
@@ -51,7 +53,7 @@ phase_after_update=$(zsh -c "
   setopt aliases 2>/dev/null
   alias mv='mv -i'
   source '$LIB_DIR/state-io.sh'
-  sk=\$(flow_state_init issue-9999 feature/issue-9999/zshcompat /tmp/zshcompat-wt 9999 2>/dev/null) || exit 7
+  sk=\$(flow_state_init '$SK' 'feature/$SK' /tmp/zshcompat-wt 2>/dev/null) || exit 7
   flow_state_update progress '.phase = \"P2\"' \"\$sk\" </dev/null 2>/dev/null
   flow_state_read progress '.phase' \"\$sk\"
 " 2>/dev/null)

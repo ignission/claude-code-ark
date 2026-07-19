@@ -78,10 +78,23 @@ flow_loop_breaker_tripped() {
   [ -n "$n" ] && [ "$n" -eq "$n" ] 2>/dev/null && [ "$n" -ge "$FLOW_LOOP_BREAKER_THRESHOLD" ]
 }
 
-# tick 排他。mkdir の atomic 性で取得し、stale (mtime が閾値超) は 1 回だけ回収して再試行。
+# tick 排他。mkdir の atomic 性で取得し、lock dir 内に所有者 pid を記録する。
+# 回収条件: 所有 pid が死んでいる、または pid 不明かつ mtime が閾値超 (stale)。
+# 所有 pid が生存している限り mtime に関わらず回収しない (1h を超える正当な長時間 tick を
+# 横取りして二重実行になる事故を防ぐ)。
 flow_loop_lock() {
   mkdir -p "$FLOW_LOOP_STATE_DIR"
-  mkdir "$FLOW_LOOP_LOCK" 2>/dev/null && return 0
+  if mkdir "$FLOW_LOOP_LOCK" 2>/dev/null; then
+    printf '%s' "$$" > "$FLOW_LOOP_LOCK/pid" 2>/dev/null || true
+    return 0
+  fi
+  local owner
+  owner="$(cat "$FLOW_LOOP_LOCK/pid" 2>/dev/null || echo "")"
+  case "$owner" in *[!0-9]*) owner="" ;; esac
+  # 所有者が生きている → 正当な実行中。回収しない
+  if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+    return 1
+  fi
   local now mtime
   now="$(date +%s)"
   # GNU (stat -c %Y) を先に試す。BSD 先行 (stat -f %m) にすると GNU stat では
@@ -89,8 +102,9 @@ flow_loop_lock() {
   # (mtime に /tmp が入り算術式が爆発、stale 回収も永久に効かない) ため順序が重要。
   mtime="$(stat -c %Y "$FLOW_LOOP_LOCK" 2>/dev/null || stat -f %m "$FLOW_LOOP_LOCK" 2>/dev/null || echo "$now")"
   case "$mtime" in ''|*[!0-9]*) mtime="$now" ;; esac
-  if [ $((now - mtime)) -ge "$FLOW_LOOP_LOCK_STALE_SECONDS" ]; then
-    # stale 回収は rename (atomic) で勝者を 1 人に絞る。素の rm -rf だと、2 つの tick が
+  if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } \
+     || [ $((now - mtime)) -ge "$FLOW_LOOP_LOCK_STALE_SECONDS" ]; then
+    # 回収は rename (atomic) で勝者を 1 人に絞る。素の削除だと、2 つの tick が
     # 同時に stale を観測したとき、一方が取得し直した新 lock をもう一方が削除して
     # 両者とも取得成功する二重実行レースがある。mv は同一パスに対して 1 プロセスしか
     # 成功しないため、敗者はそのまま通常の mkdir 競争 (どちらか一方だけ成功) に戻る。
@@ -98,11 +112,25 @@ flow_loop_lock() {
     if command mv "$FLOW_LOOP_LOCK" "$reclaim" 2>/dev/null; then
       rm -rf "$reclaim"
     fi
-    mkdir "$FLOW_LOOP_LOCK" 2>/dev/null && return 0
+    if mkdir "$FLOW_LOOP_LOCK" 2>/dev/null; then
+      printf '%s' "$$" > "$FLOW_LOOP_LOCK/pid" 2>/dev/null || true
+      return 0
+    fi
   fi
   return 1
 }
-flow_loop_unlock() { rmdir "$FLOW_LOOP_LOCK" 2>/dev/null || true; }
+
+# 解錠は自分が所有する lock のみ。他プロセスが生存所有している lock は触らない
+# (旧所有者の遅延 unlock が新所有者の lock を消して二重実行になる事故を防ぐ)。
+flow_loop_unlock() {
+  local owner
+  owner="$(cat "$FLOW_LOOP_LOCK/pid" 2>/dev/null || echo "")"
+  case "$owner" in *[!0-9]*) owner="" ;; esac
+  if [ -n "$owner" ] && [ "$owner" != "$$" ] && kill -0 "$owner" 2>/dev/null; then
+    return 0
+  fi
+  rm -rf "$FLOW_LOOP_LOCK" 2>/dev/null || true
+}
 
 # アクティブ run の scope_key 一覧 (progress の phase != done)。WIP 算出・走査の起点。
 # glob 展開はシェル依存 (zsh は no-match で全体がエラーになる) のため find で列挙する。
@@ -123,14 +151,32 @@ flow_loop_active_scope_keys() {
 flow_loop_active_count() { flow_loop_active_scope_keys | grep -c . || true; }
 
 # 稼働時間帯 (active_hours = "09-19" 形式・ローカル時刻・空なら常時可)。
-# 自動起動 tick の抑制用。形式不正・フィールド欠落 (旧 loop.json) は fail-open で常時可。
+# 自動起動 tick の抑制用。フィールド欠落・空 (旧 loop.json / 未設定) は常時可。
+# **非空だが形式不正な値は fail-closed (稼働外扱い + stderr にエラー)**:
+# 自動 pick・push・merge を抑制する安全設定なので、タイプミスで制限が
+# 無効化される (fail-open) 挙動は Assertive Programming に反する。
 flow_loop_within_active_hours() {
   local range start end hour
   range="$(flow_loop_read '.active_hours // ""' 2>/dev/null)" || range=""
   if [ -z "$range" ] || [ "$range" = "null" ]; then return 0; fi
-  case "$range" in *-*) ;; *) return 0 ;; esac
+  case "$range" in
+    *-*) ;;
+    *)
+      echo "ERROR: active_hours の形式が不正です: '$range' (期待: \"HH-HH\"。tick を抑制します)" >&2
+      return 1
+      ;;
+  esac
   start="${range%%-*}"; end="${range##*-}"
-  case "$start$end" in ''|*[!0-9]*) return 0 ;; esac
+  case "$start$end" in
+    ''|*[!0-9]*)
+      echo "ERROR: active_hours の形式が不正です: '$range' (期待: \"HH-HH\"。tick を抑制します)" >&2
+      return 1
+      ;;
+  esac
+  if [ "$((10#$start))" -gt 24 ] || [ "$((10#$end))" -gt 24 ]; then
+    echo "ERROR: active_hours の時刻が範囲外です: '$range' (0..24。tick を抑制します)" >&2
+    return 1
+  fi
   hour="$(date +%H)"
   [ "$((10#$hour))" -ge "$((10#$start))" ] && [ "$((10#$hour))" -lt "$((10#$end))" ]
 }

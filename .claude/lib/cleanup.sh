@@ -233,8 +233,8 @@ cleanup_flow_state_files() {
   # sentinel 書き込み直後 (archive 前) にクラッシュしても、sentinel は archived=false の
   # ままなので次回実行は通常 path を再走し KPI が失われない (「sentinel の存在 = archive
   # 済み」と誤認して state を消す旧実装のクラッシュ窓を塞ぐ)。KPI archive 失敗時は全
-  # state を残し (resume 可能)、並行 /flow から見ると常に state または sentinel の
-  # どちらかが存在する (race で「新規 run」扱いになる窓を消す)。
+  # state を残し (次回の cleanup 再実行で回収可能)、並行 /flow から見ると常に state
+  # または sentinel のどちらかが存在する (race で「新規 run」扱いになる窓を消す)。
   _cleanup_do_final_delete() {
     # sentinel が同 branch かつ archived=true で存在 → 完了済み (前回の cleanup が
     # KPI archive まで成功して抜けている)。state を削除してリトライ完了。
@@ -331,8 +331,11 @@ cleanup_flow_state_files() {
 # 引数:
 #   $1 scope_key
 #   $2 mode (省略時 "final", "resumable" / "final" のいずれか)
-#      - "final" (success / no-target): state を削除して --resume 不可にする
-#      - "resumable" (failure / timeout / poll-error): state を残し --resume 可能にする
+#      - "final" (success / no-target): state を削除する (done sentinel + KPI history 退避)
+#      - "resumable" (failure / timeout / poll-error): state を deploy 失敗の調査用に残置する。
+#        **「/flow --resume で run を継続できる」という意味ではない** (terminal は
+#        phase=done を記録するため --resume は STEP 0 で halt する)。
+#        cleanup_flow_state_files の mode 名 (歴史的名称) と揃えるためこの名を維持
 cleanup_post_deploy() {
   local scope_key="$1"
   local mode="${2:-final}"
