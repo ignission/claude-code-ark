@@ -1992,6 +1992,10 @@ export async function startServer(
           worktree = await createWorktree(repoPath, branchName, baseBranch);
           io.emit("worktree:created", { repoPath, worktree });
         } catch (error) {
+          // UI 通知だけでなくサーバーログにも残して調査可能にする (Issue #213 ③)
+          console.error(
+            `[Worktree] 作成に失敗しました (repo=${repoPath}, branch=${branchName}, base=${baseBranch ?? "HEAD"}): ${getErrorMessage(error)}`
+          );
           socket.emit("worktree:error", getErrorMessage(error));
           return;
         }
@@ -2032,8 +2036,14 @@ export async function startServer(
           .toString("base64")
           .replace(/[/+=]/g, "");
 
-        await deleteWorktree(repoPath, worktreePath);
+        const result = await deleteWorktree(repoPath, worktreePath);
         managedWorktreeCache.delete(worktreePath);
+        if (result.branchKeptReason) {
+          // ブランチが残った場合は調査の起点になるようハンドラー側でも記録する
+          console.log(
+            `[Worktree] ${result.branchKeptReason} (repo=${repoPath})`
+          );
+        }
         try {
           db.deleteCanvasBoard(worktreePath);
         } catch (error) {
@@ -2054,6 +2064,10 @@ export async function startServer(
         const worktrees = await listWorktrees(repoPath);
         io.emit("worktree:list", { repoPath, worktrees });
       } catch (error) {
+        // UI 通知だけでなくサーバーログにも残して調査可能にする (Issue #213 ③)
+        console.error(
+          `[Worktree] 削除に失敗しました (repo=${repoPath}, path=${worktreePath}): ${getErrorMessage(error)}`
+        );
         socket.emit("worktree:error", getErrorMessage(error));
       }
     });

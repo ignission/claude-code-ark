@@ -153,9 +153,12 @@ flow_state_init() {
       }')
     printf '%s' "$context_json" > "$tmp_context"
 
-    if ! mv "$tmp_progress" "$progress_file" \
-      || ! mv "$tmp_kpi" "$kpi_file" \
-      || ! mv "$tmp_context" "$context_file"; then
+    # 3 ファイル揃ってから atomic rename で公開。1 つでも失敗したら全 tmp を削除。
+    # command mv を使うのは、呼び出し元 zsh の `alias mv='mv -i'` を迂回するため
+    # （対話プロンプト化すると非対話時に上書きが拒否され state 更新が無言で失われる）。
+    if ! command mv "$tmp_progress" "$progress_file" \
+      || ! command mv "$tmp_kpi" "$kpi_file" \
+      || ! command mv "$tmp_context" "$context_file"; then
       rm -f "$tmp_progress" "$tmp_kpi" "$tmp_context" \
             "$progress_file" "$kpi_file" "$context_file"
       echo "ERROR: state ファイル公開に失敗: $scope_key" >&2
@@ -202,7 +205,8 @@ flow_state_update() {
       echo "ERROR: jq failed for expr: $expr" >&2
       return 1
     }
-    mv "$tmp" "$file"
+    # command mv で zsh の `alias mv='mv -i'` を迂回する（前述の理由）。
+    command mv "$tmp" "$file"
   ) 9>"$lock"
 }
 

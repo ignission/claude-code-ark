@@ -119,17 +119,9 @@ codex_gate_review() {
   # ゲートが恒久 FAIL するため（2026-07-17 に実害を確認）。
   local final_output="${CODEX_GATE_OUTPUT}.final"
   : > "$final_output"  # 前回結果の残留による誤 PASS を防ぐ（fail-safe 判定の前提）
-  local exit_code
-  set +e
-  (
-    cd "$repo_root"
-    git diff --no-ext-diff origin/main...HEAD \
-      | _run_codex exec --skip-git-repo-check -s read-only \
-          -c 'model_reasoning_effort="high"' \
-          --output-last-message "$final_output" \
-          "$prompt" 2>&1
-  ) | tee "$CODEX_GATE_OUTPUT" >/dev/null
-  exit_code=${PIPESTATUS[0]}
+          "$prompt"
+  ) > "$CODEX_GATE_OUTPUT" 2>&1
+  exit_code=$?
   set -e
 
   if [ "$exit_code" -ne 0 ]; then
