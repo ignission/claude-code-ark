@@ -844,6 +844,9 @@ export async function startServer(
       ? savedBoardMcpPort
       : undefined;
   await boardMcp.start(boardDeps, boardRegistry, { port: boardMcpPort });
+  // 会話セッション起動時に per-session token/mcp-config を注入できるよう、
+  // SessionOrchestrator へ boardMcp/boardRegistry を配線する (Task 4)。
+  sessionOrchestrator.setBoardMcp(boardMcp, boardRegistry);
 
   // BeaconにArk操作の依存を注入（MCPツールで利用）
   beaconManager.configure({

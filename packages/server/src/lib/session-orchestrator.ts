@@ -6,8 +6,11 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   BridgeSessionStatus,
   ManagedSession,
@@ -15,6 +18,10 @@ import type {
   SpecialKey,
 } from "@ark/shared";
 import { stripAnsi } from "./ansi.js";
+import type {
+  BoardMcpServer,
+  BoardSessionRegistry,
+} from "./board-mcp-server.js";
 import { analyzeBridgeStatus } from "./bridge-collector.js";
 import { db } from "./database.js";
 import { type TmuxSession, tmuxManager } from "./tmux-manager.js";
@@ -46,10 +53,122 @@ export class SessionOrchestrator extends EventEmitter {
     { id: string; configDir: string } | null
   >();
 
+  /**
+   * board_write MCP (BoardMcpServer / BoardSessionRegistry) への依存。
+   * index.ts が boardMcp.start() 後に setBoardMcp() で一度だけ注入する。
+   * 未注入 (null) の間は新規セッションに --mcp-config を付与しない。
+   */
+  private boardMcp: BoardMcpServer | null = null;
+  private boardRegistry: BoardSessionRegistry | null = null;
+
+  /**
+   * sessionId → board MCP 用に発行した per-session bearer token
+   *
+   * stopSession / restartSession (旧セッション) 時に registry から
+   * unregister し、対応する per-session mcp-config ファイルも削除する
+   * (token をファイル/registry に残さない)。
+   */
+  private sessionBoardTokens = new Map<string, string>();
+
   constructor() {
     super();
     this.setupEventForwarding();
     this.restoreExistingSessions();
+  }
+
+  /**
+   * board_write MCP の依存を注入する (index.ts から一度だけ呼ばれる想定)。
+   * サーバー起動時、既存セッションの復元 (restoreExistingSessions) より後に
+   * 呼ばれるため、復元済みセッションには board MCP が接続されない
+   * (既知の制約。再接続するには restartSession でセッションを再起動する)。
+   */
+  setBoardMcp(
+    boardMcp: BoardMcpServer,
+    boardRegistry: BoardSessionRegistry
+  ): void {
+    this.boardMcp = boardMcp;
+    this.boardRegistry = boardRegistry;
+  }
+
+  /** token から per-session mcp-config ファイルのパスを導出する (書込み/削除で共用) */
+  private boardMcpConfigPath(token: string): string {
+    return join(tmpdir(), "ark-board-mcp", `${token}.json`);
+  }
+
+  /**
+   * 新規 tmux セッション向けに board MCP 用の per-session token/config を用意し、
+   * tmuxManager (共有インスタンス) の --mcp-config 設定を更新する。
+   *
+   * board MCP 未起動 (port なし) または未注入 (setBoardMcp 未呼び出し) の場合は
+   * tmuxManager.setClaudeMcpConfigPath(null) を呼んで前回セッションの設定を
+   * 持ち越さないようにし、null を返す。
+   *
+   * 呼び出し直後 (await を挟まず) に tmuxManager.createSession() を呼ぶこと。
+   * claudeMcpConfigPath は tmuxManager の共有状態のため、間に他の非同期処理を
+   * 挟むと並行する別セッションの起動と競合し得る。
+   */
+  private prepareBoardMcpConfig(): { token: string } | null {
+    const port = this.boardMcp?.getPort() ?? null;
+    if (port === null || !this.boardRegistry) {
+      tmuxManager.setClaudeMcpConfigPath(null);
+      return null;
+    }
+    const token = randomBytes(24).toString("hex");
+    const cfgPath = this.boardMcpConfigPath(token);
+    fs.mkdirSync(join(tmpdir(), "ark-board-mcp"), { recursive: true });
+    // bearer token を含むため 0600 で書く (beacon の mcp-config.json と同方針)
+    fs.writeFileSync(
+      cfgPath,
+      JSON.stringify({
+        mcpServers: {
+          "ark-board": {
+            type: "http",
+            url: `http://127.0.0.1:${port}/mcp`,
+            headers: { Authorization: `Bearer ${token}` },
+          },
+        },
+      }),
+      { mode: 0o600 }
+    );
+    tmuxManager.setClaudeMcpConfigPath(cfgPath);
+    return { token };
+  }
+
+  /**
+   * prepareBoardMcpConfig() の後にセッション作成が失敗した場合の後始末。
+   * registry には未登録 (成功後にのみ register するため) だが、書き込んだ
+   * 設定ファイルと tmuxManager の設定は残ってしまうため破棄する。
+   */
+  private discardBoardMcpConfig(token: string): void {
+    tmuxManager.setClaudeMcpConfigPath(null);
+    try {
+      fs.unlinkSync(this.boardMcpConfigPath(token));
+    } catch {
+      // ベストエフォート (既に無い場合等は無視)
+    }
+  }
+
+  /** セッション作成成功後、board token を registry + sessionBoardTokens に登録する */
+  private registerBoardToken(
+    sessionId: string,
+    worktreePath: string,
+    token: string
+  ): void {
+    this.boardRegistry?.register(token, worktreePath);
+    this.sessionBoardTokens.set(sessionId, token);
+  }
+
+  /** セッション停止時、board token を registry + ファイルから解除する */
+  private unregisterBoardToken(sessionId: string): void {
+    const token = this.sessionBoardTokens.get(sessionId);
+    if (!token) return;
+    this.boardRegistry?.unregister(token);
+    this.sessionBoardTokens.delete(sessionId);
+    try {
+      fs.unlinkSync(this.boardMcpConfigPath(token));
+    } catch {
+      // ベストエフォート (既に無い場合等は無視)
+    }
   }
 
   /**
@@ -419,11 +538,25 @@ export class SessionOrchestrator extends EventEmitter {
       resolvedRepoPath
     );
 
+    // board MCP (ark-board / board_write) 用の per-session token/config を用意する。
+    // 未起動/未注入なら tmuxManager の --mcp-config 設定を null にリセットする
+    // (tmuxManager は共有インスタンスのため、前回セッションの設定を持ち越さない)。
+    const boardPrep = this.prepareBoardMcpConfig();
+
     // 新規tmuxセッションを作成（envがあれば注入）
-    const tmuxSession = await tmuxManager.createSession(
-      worktreePath,
-      env ? { env } : undefined
-    );
+    let tmuxSession: TmuxSession;
+    try {
+      tmuxSession = await tmuxManager.createSession(
+        worktreePath,
+        env ? { env } : undefined
+      );
+    } catch (e) {
+      if (boardPrep) this.discardBoardMcpConfig(boardPrep.token);
+      throw e;
+    }
+    if (boardPrep) {
+      this.registerBoardToken(tmuxSession.id, worktreePath, boardPrep.token);
+    }
 
     // ttydインスタンスを起動
     const ttydInstance = await ttydManager.startInstance(
@@ -501,11 +634,20 @@ export class SessionOrchestrator extends EventEmitter {
       repoPath
     );
 
-    // 2. 新tmuxセッションを別IDで作成 (失敗時は旧セッション無傷)
-    const newTmux = await tmuxManager.createSession(
-      worktreePath,
-      env ? { env } : undefined
-    );
+    // 2. board MCP 用の per-session token/config を用意してから、
+    //    新tmuxセッションを別IDで作成する (失敗時は旧セッション無傷)。
+    //    旧セッションの token はまだ解除しない (新側が usable と確認できてから)。
+    const boardPrep = this.prepareBoardMcpConfig();
+    let newTmux: TmuxSession;
+    try {
+      newTmux = await tmuxManager.createSession(
+        worktreePath,
+        env ? { env } : undefined
+      );
+    } catch (e) {
+      if (boardPrep) this.discardBoardMcpConfig(boardPrep.token);
+      throw e;
+    }
 
     // 3. 新ttydを起動 (失敗時は新tmuxを後始末してから throw、旧は無傷)
     let newTtyd: Awaited<ReturnType<typeof ttydManager.startInstance>>;
@@ -516,6 +658,7 @@ export class SessionOrchestrator extends EventEmitter {
       );
     } catch (e) {
       tmuxManager.killSession(newTmux.id);
+      if (boardPrep) this.discardBoardMcpConfig(boardPrep.token);
       throw e;
     }
 
@@ -548,11 +691,17 @@ export class SessionOrchestrator extends EventEmitter {
     } catch (e) {
       ttydManager.stopInstance(newTmux.id);
       tmuxManager.killSession(newTmux.id);
+      if (boardPrep) this.discardBoardMcpConfig(boardPrep.token);
       throw e;
     }
     this.sessionProfiles.set(newTmux.id, snapshot);
     this.sessionProfiles.delete(sessionId);
     this.repoPathCache.delete(worktreePath);
+    if (boardPrep) {
+      this.registerBoardToken(newTmux.id, worktreePath, boardPrep.token);
+    }
+    // 旧セッションの board token を解除する (新セッションのIDに切り替わるため)
+    this.unregisterBoardToken(sessionId);
 
     // 5. ここまで成功 → 旧 tmux/ttyd を停止
     ttydManager.stopInstance(sessionId);
@@ -640,6 +789,7 @@ export class SessionOrchestrator extends EventEmitter {
     tmuxManager.killSession(sessionId);
     db.deleteSession(sessionId);
     this.sessionProfiles.delete(sessionId);
+    this.unregisterBoardToken(sessionId);
     if (worktreePath) {
       this.repoPathCache.delete(worktreePath);
     }

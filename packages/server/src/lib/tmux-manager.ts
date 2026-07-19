@@ -132,6 +132,11 @@ export class TmuxManager extends EventEmitter {
   private skipPermissions = false;
   /** claude 起動時に --settings で注入する settings JSON のパス (AUQ hook 用) */
   private claudeSettingsPath: string | null = null;
+  /**
+   * claude 起動時に --mcp-config で注入する per-session MCP config JSON のパス
+   * (board_write 等)。SessionOrchestrator がセッション起動直前に設定する。
+   */
+  private claudeMcpConfigPath: string | null = null;
 
   constructor() {
     super();
@@ -155,6 +160,17 @@ export class TmuxManager extends EventEmitter {
    */
   setClaudeSettingsPath(value: string | null): void {
     this.claudeSettingsPath = value;
+  }
+
+  /**
+   * claude 起動コマンドに `--mcp-config <path> --strict-mcp-config` で注入する
+   * per-session MCP config JSON を設定する (board_write 等)。
+   * このインスタンスは全セッションで共有されるため、SessionOrchestrator は
+   * 各セッション起動 (createSession 呼び出し) の直前に必ず設定し直すこと
+   * (board MCP が利用不可なセッションでは null を渡して前回値を持ち越さない)。
+   */
+  setClaudeMcpConfigPath(value: string | null): void {
+    this.claudeMcpConfigPath = value;
   }
 
   /**
@@ -317,6 +333,13 @@ export class TmuxManager extends EventEmitter {
     const settingsArg = this.claudeSettingsPath
       ? ` --settings ${posixShellQuote(this.claudeSettingsPath)}`
       : "";
+    // board_write 等の per-session MCP server を注入する --mcp-config。
+    // SessionOrchestrator が起動直前に setClaudeMcpConfigPath で設定する。
+    // --strict-mcp-config を併せて付与し、ユーザーの ~/.claude.json 等に
+    // 定義された他 MCP server が意図せず追加接続されるのを防ぐ (beacon と同方針)。
+    const mcpConfigArg = this.claudeMcpConfigPath
+      ? ` --mcp-config ${posixShellQuote(this.claudeMcpConfigPath)} --strict-mcp-config`
+      : "";
     // プロファイル未指定のセッションが、Ark サーバープロセス (やその親、
     // tmux サーバー) の CLAUDE_CONFIG_DIR を意図せず継承すると、transcript が
     // 想定外の config dir 配下に書かれ、JSONL tail (チャットビュー) が
@@ -332,7 +355,7 @@ export class TmuxManager extends EventEmitter {
       : "";
     const claudeCmd =
       options?.commandLine ??
-      `${envPrefix}${claudeArg}${skipFlag}${settingsArg}`;
+      `${envPrefix}${claudeArg}${skipFlag}${settingsArg}${mcpConfigArg}`;
 
     let tmuxCreated = false;
 

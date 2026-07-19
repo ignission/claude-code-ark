@@ -9,7 +9,7 @@
  * vi.mock のhoist仕様に依存するため、import文より前にmock宣言を行う。
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // TmuxManager / TtydManager / SessionDatabase のシングルトンをモック化。
 // SessionOrchestrator は constructor で `tmuxManager.getAllSessions()` を呼ぶため、
@@ -26,6 +26,7 @@ vi.mock("./tmux-manager.js", async () => {
     sendKeys = vi.fn();
     sendSpecialKey = vi.fn();
     capturePane = vi.fn();
+    setClaudeMcpConfigPath = vi.fn();
   }
   const tmuxManager = new TmuxManagerStub();
   // 複数の SessionOrchestrator インスタンス（各testで生成）が listener を追加するため
@@ -74,6 +75,11 @@ vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(() => "/repo/.git\n"),
 }));
 
+import fs from "node:fs";
+import type { BoardMcpServer } from "./board-mcp-server.js";
+// BoardSessionRegistry は単純な token→worktreePath の in-memory map なので
+// モック化せず実体を使い、register/resolve/unregister の実挙動を検証する。
+import { BoardSessionRegistry } from "./board-mcp-server.js";
 import { db } from "./database.js";
 import { SessionOrchestrator } from "./session-orchestrator.js";
 import { tmuxManager } from "./tmux-manager.js";
@@ -472,5 +478,204 @@ describe("SessionOrchestrator - プロファイル切替", () => {
         orchestrator.restartSession("does-not-exist")
       ).rejects.toThrow(/Session not found/);
     });
+  });
+});
+
+/**
+ * board_write MCP (Task 4) の per-session token/mcp-config 注入まわりのテスト。
+ *
+ * BoardSessionRegistry は token→worktreePath の単純な in-memory map なので、
+ * モック化せず実体を使って register/resolve/unregister の実挙動を検証する。
+ * per-session mcp-config ファイルは実際に OS tmpdir 配下へ書き込まれるため、
+ * 各テストで生成したファイルは afterEach で確実に削除する。
+ */
+describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
+  let orchestrator: SessionOrchestrator;
+  const fakeBoardMcp = { getPort: () => 39123 } as unknown as BoardMcpServer;
+  let writtenConfigPaths: string[] = [];
+
+  /** 直近の setClaudeMcpConfigPath 呼び出しに渡された path (null なら例外) */
+  function lastMcpConfigPath(): string {
+    const calls = mockedTmux.setClaudeMcpConfigPath.mock.calls;
+    const path = calls[calls.length - 1]?.[0];
+    if (!path) throw new Error("setClaudeMcpConfigPath(path) が呼ばれていない");
+    writtenConfigPaths.push(path);
+    return path;
+  }
+
+  /** cfgPath の中身から ark-board の bearer token を取り出す */
+  function readToken(cfgPath: string): string {
+    const parsed = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+    const auth = parsed.mcpServers["ark-board"].headers.Authorization as string;
+    return auth.replace("Bearer ", "");
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    writtenConfigPaths = [];
+
+    mockedTmux.getAllSessions.mockReturnValue([]);
+    mockedTmux.getSessionByWorktree.mockReturnValue(undefined);
+    mockedTmux.getSession.mockReturnValue(undefined);
+    mockedTmux.createSession.mockResolvedValue(makeTmuxSession());
+
+    mockedTtyd.getInstance.mockReturnValue(undefined);
+    mockedTtyd.startInstance.mockResolvedValue({
+      sessionId: "sess-id-1",
+      port: 7681,
+      tmuxSessionName: "ark-sess1",
+      basePath: "/ttyd/sess-id-1",
+    } as never);
+
+    mockedDb.getRepoProfileLink.mockReturnValue(null);
+    mockedDb.getWorktreeProfileLink.mockReturnValue(null);
+    mockedDb.getProfile.mockReturnValue(null);
+    mockedDb.getSessionByWorktreePath.mockReturnValue(null);
+
+    orchestrator = new SessionOrchestrator();
+  });
+
+  afterEach(() => {
+    for (const p of writtenConfigPaths) {
+      try {
+        fs.unlinkSync(p);
+      } catch {
+        // 既にテスト内で削除済み等は無視 (ベストエフォート)
+      }
+    }
+    writtenConfigPaths = [];
+  });
+
+  it("setBoardMcp 未呼び出しなら setClaudeMcpConfigPath(null) が呼ばれ、mcp-config は書かれない", async () => {
+    await orchestrator.startSession("wt-1", "/path/to/work", "/repo");
+
+    expect(mockedTmux.setClaudeMcpConfigPath).toHaveBeenCalledWith(null);
+    expect(mockedTmux.setClaudeMcpConfigPath).toHaveBeenCalledTimes(1);
+  });
+
+  it("setBoardMcp 後の新規セッションで per-session token を生成し、mcp-config を書いて registry に登録する", async () => {
+    const registry = new BoardSessionRegistry();
+    orchestrator.setBoardMcp(fakeBoardMcp, registry);
+
+    await orchestrator.startSession("wt-1", "/path/to/work", "/repo");
+
+    const cfgPath = lastMcpConfigPath();
+    expect(cfgPath).toContain("ark-board-mcp");
+    expect(cfgPath.endsWith(".json")).toBe(true);
+
+    const parsed = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
+    const server = parsed.mcpServers["ark-board"];
+    expect(server.type).toBe("http");
+    expect(server.url).toBe("http://127.0.0.1:39123/mcp");
+
+    const token = readToken(cfgPath);
+    expect(token).toMatch(/^[0-9a-f]{48}$/);
+    // registry に (token → worktreePath) が実際に登録されている
+    expect(registry.resolve(token)).toBe("/path/to/work");
+
+    // bearer token を含むため 0600 で書かれている
+    const mode = fs.statSync(cfgPath).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  it("既存セッション再利用パスでは token を発行しない (setClaudeMcpConfigPath も呼ばれない)", async () => {
+    const registry = new BoardSessionRegistry();
+    orchestrator.setBoardMcp(fakeBoardMcp, registry);
+
+    const existing = makeTmuxSession();
+    mockedTmux.getSessionByWorktree.mockReturnValue(existing);
+
+    await orchestrator.startSession("wt-1", "/path/to/work", "/repo");
+
+    expect(mockedTmux.setClaudeMcpConfigPath).not.toHaveBeenCalled();
+    expect(mockedTmux.createSession).not.toHaveBeenCalled();
+  });
+
+  it("stopSession で token を unregister し、per-session mcp-config ファイルを削除する", async () => {
+    const registry = new BoardSessionRegistry();
+    orchestrator.setBoardMcp(fakeBoardMcp, registry);
+
+    const managed = await orchestrator.startSession(
+      "wt-1",
+      "/path/to/work",
+      "/repo"
+    );
+    const cfgPath = lastMcpConfigPath();
+    const token = readToken(cfgPath);
+    expect(registry.resolve(token)).toBe("/path/to/work");
+
+    // stopSession は tmuxManager.getSession() から worktreePath を得る
+    mockedTmux.getSession.mockReturnValue(makeTmuxSession());
+
+    orchestrator.stopSession(managed.id);
+
+    expect(registry.resolve(token)).toBeNull();
+    expect(fs.existsSync(cfgPath)).toBe(false);
+  });
+
+  it("restartSession で新token を登録し、旧token を unregister する", async () => {
+    const registry = new BoardSessionRegistry();
+    orchestrator.setBoardMcp(fakeBoardMcp, registry);
+
+    await orchestrator.startSession("wt-1", "/path/to/work", "/repo");
+    const oldCfgPath = lastMcpConfigPath();
+    const oldToken = readToken(oldCfgPath);
+    expect(registry.resolve(oldToken)).toBe("/path/to/work");
+
+    // restartSession 用のスタブ設定 (既存の restartSession テストと同じ形)
+    const oldSession = makeTmuxSession({ id: "sess-id-1" });
+    mockedTmux.getSession.mockReturnValue(oldSession);
+    mockedDb.getSessionByWorktreePath.mockReturnValue({
+      id: "sess-id-1",
+      worktreeId: "wt-1",
+      worktreePath: "/path/to/work",
+      repoPath: "/repo",
+      status: "active",
+      createdAt: "2026-04-25T00:00:00Z",
+      updatedAt: "2026-04-25T00:00:00Z",
+    } as never);
+    mockedTmux.createSession.mockResolvedValue(
+      makeTmuxSession({ id: "sess-id-2", tmuxSessionName: "ark-sess2" })
+    );
+    mockedTmux.getSessionByWorktree.mockReturnValue(undefined);
+    mockedTtyd.startInstance.mockResolvedValue({
+      sessionId: "sess-id-2",
+      port: 7682,
+      tmuxSessionName: "ark-sess2",
+      basePath: "/ttyd/sess-id-2",
+    } as never);
+
+    await orchestrator.restartSession("sess-id-1");
+
+    const newCfgPath = lastMcpConfigPath();
+    const newToken = readToken(newCfgPath);
+
+    // 旧token は解除され、ファイルも削除されている
+    expect(registry.resolve(oldToken)).toBeNull();
+    expect(fs.existsSync(oldCfgPath)).toBe(false);
+    // 新token は新しい worktreePath (変わらないので同じ値) で登録されている
+    expect(registry.resolve(newToken)).toBe("/path/to/work");
+  });
+
+  it("tmuxManager.createSession が失敗したら mcp-config ファイルは削除され、tmuxManager の設定も null に戻る", async () => {
+    const registry = new BoardSessionRegistry();
+    orchestrator.setBoardMcp(fakeBoardMcp, registry);
+    mockedTmux.createSession.mockRejectedValueOnce(new Error("boom"));
+
+    await expect(
+      orchestrator.startSession("wt-1", "/path/to/work", "/repo")
+    ).rejects.toThrow("boom");
+
+    // 1回目 (prepareBoardMcpConfig) で実際に書かれた path、
+    // 2回目 (discardBoardMcpConfig の後始末) で null にリセットされる
+    const calls = mockedTmux.setClaudeMcpConfigPath.mock.calls;
+    expect(calls).toHaveLength(2);
+    const cfgPath = calls[0]?.[0];
+    if (!cfgPath) throw new Error("cfgPath not set");
+    expect(calls[1]?.[0]).toBeNull();
+
+    // 失敗時は registerBoardToken に到達しないため、後始末でファイルが消える
+    // (createSession 失敗時点では registry.register も未実行)
+    expect(fs.existsSync(cfgPath)).toBe(false);
   });
 });
