@@ -1,0 +1,346 @@
+name: Bump Claude Code
+
+# 同梱依存 @anthropic-ai/claude-code の新しい npm リリースを毎晩検知し、
+# バージョンを引き上げる PR を作成する。マージ前の検証は「in-job 品質ゲート」
+# （verify ジョブ内で実行する pnpm check + pnpm build）で行い、緑なら squash マージする。
+# 新版が無ければ何もしない。
+#
+# セキュリティ設計（サプライチェーン対策）:
+# - 未検証の依存コード（新規 npm リリースの lifecycle script / build）を実行する verify
+#   ジョブは `contents: read` かつ `persist-credentials: false` に隔離し、write トークンも
+#   git 認証情報も渡さない。悪意ある/侵害されたリリースがトークンを悪用できないようにする。
+# - 書き込み（commit/push/PR/merge）を行う merge ジョブは verify が生成した成果物（bump 済み
+#   の package.json ×2 + pnpm-lock.yaml）を artifact 経由で受け取り commit するだけで、
+#   pnpm install/build 等の未検証コードは一切実行しない。
+# - すべての外部 Action は監査済みの完全な commit SHA に固定する（可変タグの侵害対策）。
+#
+# 注: デフォルト GITHUB_TOKEN で作成した PR は ci.yml を起動しない（GitHub 仕様）。
+# PAT 不要を優先し、PR の required checks の代わりに in-job ゲートで緑判定する。
+# マージ後の main への push で ci.yml が事後検証（backstop）として走る。
+
+on:
+  schedule:
+    - cron: "0 18 * * *" # 18:00 UTC = 03:00 JST
+  workflow_dispatch:
+
+# 既定は最小権限。各ジョブが必要な権限だけを個別に付与する。
+permissions:
+  contents: read
+
+concurrency:
+  group: bump-claude-code
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # gh pr list
+    outputs:
+      has_update: ${{ steps.check.outputs.has_update }}
+      latest: ${{ steps.check.outputs.latest }}
+      current: ${{ steps.check.outputs.current }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # このワークフローは main 向けに自動マージするため、main 以外の ref からの実行を拒否する。
+          # (workflow_dispatch は任意 ref を選べるため、feature ブランチのコミット混入を防ぐ)
+          if [ "${GITHUB_REF:-}" != "refs/heads/main" ]; then
+            echo "::error::main 以外では実行不可 (ref=${GITHUB_REF:-unset})。workflow_dispatch は main を選択すること。"
+            exit 1
+          fi
+          # 各数値識別子を 0|[1-9][0-9]* とし先頭ゼロを拒否（厳密 SemVer）。
+          RANGE_RE='^\^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'   # DeclaredVersionRange: ^x.y.z
+          SEMVER_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'    # PublishedVersion: 安定版 x.y.z
+
+          # --- 生の宣言範囲を読む（先頭1文字除去はしない = 値オブジェクトとして厳密検証） ---
+          server_range=$(jq -r '.dependencies["@anthropic-ai/claude-code"]' packages/server/package.json)
+          desktop_range=$(jq -r '.dependencies["@anthropic-ai/claude-code"]' packages/desktop/package.json)
+
+          # 形式違反は InvariantViolation として fail（無音 skip にしない）
+          for r in "$server_range" "$desktop_range"; do
+            if ! printf '%s' "$r" | grep -Eq "$RANGE_RE"; then
+              echo "::error::DeclaredVersionRange '$r' が ^x.y.z に不一致（>=, 複合 range, workspace:*, プレリリース等）。不変条件違反のため fail。"
+              exit 1
+            fi
+          done
+
+          # 両 manifest の不一致は NoUpdate と別ドメイン: error + fail
+          if [ "$server_range" != "$desktop_range" ]; then
+            echo "::error::宣言範囲が不一致 (server=$server_range desktop=$desktop_range)。不変条件違反のため fail。"
+            exit 1
+          fi
+
+          current="${server_range#^}"   # キャレット除去（値オブジェクト化）
+          latest=$(npm view @anthropic-ai/claude-code version)
+
+          # PublishedVersion も安定版 SemVer に厳密一致するか（プレリリース/不正形式は fail）
+          if ! printf '%s' "$latest" | grep -Eq "$SEMVER_RE"; then
+            echo "::error::PublishedVersion '$latest' が安定版 x.y.z でない（プレリリース/不正形式）。fail。"
+            exit 1
+          fi
+
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+
+          # --- NoUpdate 判定 ---
+          if [ "$current" = "$latest" ]; then
+            echo "has_update=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          newest=$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -1)
+          if [ "$newest" != "$latest" ]; then
+            echo "::notice::宣言版 $current >= latest $latest。更新なし。"
+            echo "has_update=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          # --- 検出（状態の観測。判定は次ブロックで行い、削除は一切しない） ---
+          branch="chore/bump-claude-code-$latest"
+          related_pr=$(gh pr list --head "$branch" --state all --json number --jq 'length')
+          branch_exists=false
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            branch_exists=true
+          fi
+
+          # --- skip 判定（fail-closed: ブランチ削除は行わない） ---
+          # open/closed 問わず関連 PR が1件でもあれば、人間が扱った/扱い中なので触らない。
+          if [ "$related_pr" != "0" ]; then
+            echo "::notice::関連 PR ($related_pr 件) が存在（$branch）。触らず skip。"
+            echo "has_update=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # PR 皆無だがブランチだけ残る「宙ぶらりん push」は所有権を安全確認できないため
+          # fail-closed（自動削除しない）。warning で可視化し人間の介入を促す。
+          if [ "$branch_exists" = "true" ]; then
+            echo "::warning::ブランチ $branch が PR 無しで残存（宙ぶらりん）。安全のため自動削除せず skip。手動確認が必要。"
+            echo "has_update=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+
+          echo "has_update=true" >> "$GITHUB_OUTPUT"
+
+  # 未検証の依存コードを実行するジョブ。write トークン・git 認証情報を持たない（隔離）。
+  verify:
+    needs: detect
+    if: needs.detect.outputs.has_update == 'true'
+    runs-on: macos-latest # 既存 ci.yml と同一環境で緑判定を忠実に行う
+    permissions:
+      contents: read
+    env:
+      CURRENT: ${{ needs.detect.outputs.current }}
+      LATEST: ${{ needs.detect.outputs.latest }}
+    outputs:
+      gate_outcome: ${{ steps.gate.outcome }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ github.sha }} # detect と同一コミットを対象にする
+          persist-credentials: false # 未検証コードに git 認証情報を渡さない
+      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4
+      - name: Bump version (assert + perl)
+        run: |
+          set -euo pipefail
+          # 置換前 assert: server==desktop==^CURRENT（不整合を防ぐ）。
+          sv=$(jq -r '.dependencies["@anthropic-ai/claude-code"]' packages/server/package.json)
+          dv=$(jq -r '.dependencies["@anthropic-ai/claude-code"]' packages/desktop/package.json)
+          if [ "$sv" != "^$CURRENT" ] || [ "$dv" != "^$CURRENT" ]; then
+            echo "::error::置換前の宣言範囲不整合 (server=$sv desktop=$dv expected=^$CURRENT)。中止。"
+            exit 1
+          fi
+          CUR="$CURRENT" NEW="$LATEST" perl -i -pe \
+            's/("\@anthropic-ai\/claude-code":\s*")[\^~]?\Q$ENV{CUR}\E(")/$1 . "^" . $ENV{NEW} . $2/e' \
+            packages/server/package.json packages/desktop/package.json
+          # 置換後 assert: 両ファイルが ^$LATEST（0 件置換や部分適用を検出して fail）。
+          sv2=$(jq -r '.dependencies["@anthropic-ai/claude-code"]' packages/server/package.json)
+          dv2=$(jq -r '.dependencies["@anthropic-ai/claude-code"]' packages/desktop/package.json)
+          if [ "$sv2" != "^$LATEST" ] || [ "$dv2" != "^$LATEST" ]; then
+            echo "::error::置換後の値が不正 (server=$sv2 desktop=$dv2 expected=^$LATEST)。置換 0 件か部分適用の可能性。中止。"
+            exit 1
+          fi
+      - name: Resolve lockfile WITHOUT running scripts (trusted artifact)
+        run: |
+          set -euo pipefail
+          # 未検証の lifecycle script を一切実行せずに lockfile を解決する。
+          # ここで得た package.json ×2 + lockfile を「信頼できる成果物」として先に固定し、
+          # 後続ゲート（script 実行）による改ざんから隔離する（成果物経路に未検証コードを通さない）。
+          pnpm install --ignore-scripts --no-frozen-lockfile
+      - name: Assert lockfile invariant
+        run: |
+          set -euo pipefail
+          # lockfile 不変条件（更新単位は 3 ファイル）:
+          # importers の claude-code specifier が両方 ^$LATEST、resolved が両方 LATEST であること。
+          # (pnpm-lock v9: importer アンカーは "'@anthropic-ai/claude-code':" でちょうど2回)
+          anchor="'@anthropic-ai/claude-code':"
+          # grep はマッチ 0 件で exit 1。set -e で無音終了せず、明示的な count assert で
+          # 必ず診断を出せるよう `|| true` で非失敗化する。
+          spec_lines=$(grep -A1 "$anchor" pnpm-lock.yaml | grep 'specifier:' || true)
+          spec_count=$(printf '%s\n' "$spec_lines" | grep -c . || true)
+          uniq_spec=$(printf '%s\n' "$spec_lines" | sed -E 's/^[[:space:]]*specifier:[[:space:]]*//' | sort -u)
+          if [ "$spec_count" != "2" ] || [ "$uniq_spec" != "^$LATEST" ]; then
+            echo "::error::lockfile specifier 不整合 (count=$spec_count uniq=$uniq_spec expected= 2 x ^$LATEST)。中止。"
+            exit 1
+          fi
+          # ResolvedVersion が両 importer とも厳密に LATEST であること。
+          # 検出〜install の時間差で別の新版が解決された場合はここで fail（翌晩クリーン再試行 = self-healing）。
+          ver_lines=$(grep -A2 "$anchor" pnpm-lock.yaml | grep 'version:' | sed -E 's/^[[:space:]]*version:[[:space:]]*//' || true)
+          ver_count=$(printf '%s\n' "$ver_lines" | grep -c . || true)
+          uniq_ver=$(printf '%s\n' "$ver_lines" | sort -u)
+          if [ "$ver_count" != "2" ] || [ "$uniq_ver" != "$LATEST" ]; then
+            echo "::error::ResolvedVersion が LATEST と不一致 (count=$ver_count uniq=$uniq_ver expected= 2 x $LATEST)。検出後に別版が公開された可能性。中止（翌晩再試行）。"
+            exit 1
+          fi
+      - name: Snapshot trusted manifests (before any lifecycle script runs)
+        run: |
+          set -euo pipefail
+          # 未検証 script 実行前の信頼できる 3 ファイルを退避。merge はこれを commit する。
+          dest="$RUNNER_TEMP/bumped"
+          mkdir -p "$dest/packages/server" "$dest/packages/desktop"
+          cp packages/server/package.json  "$dest/packages/server/package.json"
+          cp packages/desktop/package.json "$dest/packages/desktop/package.json"
+          cp pnpm-lock.yaml                "$dest/pnpm-lock.yaml"
+      # 未検証 script を実行する前に artifact を封印する（アップロード後は不変）。
+      # これにより gate 中の lifecycle script が snapshot を書き換えても成果物には影響しない。
+      - name: Upload trusted manifests (before any lifecycle script)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bumped-manifests
+          path: ${{ runner.temp }}/bumped
+          if-no-files-found: error
+          retention-days: 1
+      - name: Gate - in-job quality gate (type check and build)
+        id: gate
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # ci.yml を忠実に再現するためここでは lifecycle script も実行する。
+          # 成果物は既にアップロード済み（不変）なので、ここでのツリー変更は反映されない。
+          pnpm install --no-frozen-lockfile
+          pnpm check
+          pnpm build
+
+  # 書き込み（commit/push/PR/merge）を行うジョブ。未検証コードは一切実行しない。
+  merge:
+    needs: [detect, verify]
+    if: needs.detect.outputs.has_update == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CURRENT: ${{ needs.detect.outputs.current }}
+      LATEST: ${{ needs.detect.outputs.latest }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ github.sha }} # detect/verify と同一コミット
+      - name: Download bumped manifests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bumped-manifests
+          path: . # 3 ファイルを元のパスへ復元（checkout 済みの版を上書き）
+      - name: Verify artifact integrity (tamper check)
+        run: |
+          set -euo pipefail
+          # 多層防御: 成果物が「バージョン行だけの変更」であることを再構築で厳密検証する。
+          # 元コミット (GITHUB_SHA) の各 package.json に同一の置換を適用したものと byte 一致するか。
+          # 一致しなければ lifecycle script 等による注入の可能性 → fail。
+          for f in packages/server/package.json packages/desktop/package.json; do
+            expected="$RUNNER_TEMP/expected-$(printf '%s' "$f" | tr '/' '_')"
+            git show "$GITHUB_SHA:$f" > "$expected"
+            CUR="$CURRENT" NEW="$LATEST" perl -i -pe \
+              's/("\@anthropic-ai\/claude-code":\s*")[\^~]?\Q$ENV{CUR}\E(")/$1 . "^" . $ENV{NEW} . $2/e' \
+              "$expected"
+            if ! diff -q "$expected" "$f" >/dev/null; then
+              echo "::error::$f が想定（バージョン行のみ変更）と不一致。成果物改ざんの可能性。中止。"
+              exit 1
+            fi
+          done
+          # 変更ファイルが想定の 3 つだけであること（余計なファイル追加・改変を検出）。
+          changed=$(git status --porcelain | awk '{print $2}' | sort | tr '\n' ' ')
+          expected_set="packages/desktop/package.json packages/server/package.json pnpm-lock.yaml "
+          if [ "$changed" != "$expected_set" ]; then
+            echo "::error::変更ファイル集合が想定外 (changed=[$changed] expected=[$expected_set])。中止。"
+            exit 1
+          fi
+          # lockfile の specifier==^LATEST ×2 / resolved==LATEST ×2 を再検証（多層防御）。
+          anchor="'@anthropic-ai/claude-code':"
+          # grep 0 件でも明示 assert で診断を出せるよう `|| true` で非失敗化（set -e 対策）。
+          spec_lines=$(grep -A1 "$anchor" pnpm-lock.yaml | grep 'specifier:' || true)
+          uniq_spec=$(printf '%s\n' "$spec_lines" | sed -E 's/^[[:space:]]*specifier:[[:space:]]*//' | sort -u)
+          spec_count=$(printf '%s\n' "$spec_lines" | grep -c . || true)
+          if [ "$spec_count" != "2" ] || [ "$uniq_spec" != "^$LATEST" ]; then
+            echo "::error::lockfile specifier 再検証 NG (count=$spec_count uniq=$uniq_spec expected= 2 x ^$LATEST)。中止。"
+            exit 1
+          fi
+          ver_lines=$(grep -A2 "$anchor" pnpm-lock.yaml | grep 'version:' | sed -E 's/^[[:space:]]*version:[[:space:]]*//' || true)
+          uniq_ver=$(printf '%s\n' "$ver_lines" | sort -u)
+          ver_count=$(printf '%s\n' "$ver_lines" | grep -c . || true)
+          if [ "$ver_count" != "2" ] || [ "$uniq_ver" != "$LATEST" ]; then
+            echo "::error::lockfile resolved 再検証 NG (count=$ver_count uniq=$uniq_ver expected= 2 x $LATEST)。中止。"
+            exit 1
+          fi
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Commit and push
+        run: |
+          set -euo pipefail
+          branch="chore/bump-claude-code-$LATEST"
+          git checkout -b "$branch"
+          git add packages/server/package.json packages/desktop/package.json pnpm-lock.yaml
+          git commit -m "chore(deps): bump @anthropic-ai/claude-code to $LATEST"
+          git push origin "$branch"
+      - name: Create PR
+        id: pr
+        run: |
+          set -euo pipefail
+          branch="chore/bump-claude-code-$LATEST"
+          url=$(gh pr create --base main --head "$branch" \
+            --title "chore(deps): bump @anthropic-ai/claude-code to $LATEST" \
+            --body "npm latest \`$LATEST\` へ自動追従（\`$CURRENT\` → \`$LATEST\`）。毎晩の bump-claude-code ワークフローが作成しました。マージ前検証は in-job 品質ゲート（pnpm check + build）で実施済みです。")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Check base freshness (TOCTOU guard)
+        id: freshness
+        run: |
+          set -euo pipefail
+          # 検証時 (GITHUB_SHA) から main が進行していないか確認する。
+          # 進行していれば「検証した組み合わせ != マージ結果」になるため自動マージを見送る。
+          git fetch origin main --quiet
+          if [ "$(git rev-parse origin/main)" = "$GITHUB_SHA" ]; then
+            echo "fresh=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "fresh=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Merge when in-job gate passed and base is fresh
+        if: needs.verify.outputs.gate_outcome == 'success' && steps.freshness.outputs.fresh == 'true'
+        env:
+          PR_URL: ${{ steps.pr.outputs.url }}
+        run: |
+          set -euo pipefail
+          gh pr merge --squash --delete-branch "$PR_URL"
+      - name: Leave PR open when base advanced since verification
+        if: needs.verify.outputs.gate_outcome == 'success' && steps.freshness.outputs.fresh != 'true'
+        env:
+          PR_URL: ${{ steps.pr.outputs.url }}
+        run: |
+          # gate は緑だが検証時から main が進行 → 未検証の組み合わせの自動マージを回避。
+          # PR は AwaitingReview として残置する。detect は関連 PR (--state all) を検出して
+          # 以降この版を skip するため、自動再試行はされない。人間がこの PR をレビュー/マージするか、
+          # 不要なら閉じる（閉じても skip 継続 = 人間判断を尊重）運用とする。
+          echo "::warning::検証時 ($GITHUB_SHA) から main が進行したため自動マージを見送り、PR を残置（要手動マージ）: $PR_URL"
+      - name: Mark PR blocked when in-job gate failed
+        if: needs.verify.outputs.gate_outcome == 'failure'
+        env:
+          PR_URL: ${{ steps.pr.outputs.url }}
+        run: |
+          # GateFailed を AwaitingReview と区別するためラベルを付与（運用可視化用）。
+          # ラベルが無ければ作成（--force で冪等）。付与失敗はブロック理由の可視化を妨げない。
+          gh label create automerge-blocked --color B60205 \
+            --description "in-job gate failed; needs manual fix" --force >/dev/null 2>&1 || true
+          gh pr edit "$PR_URL" --add-label automerge-blocked >/dev/null 2>&1 || true
+          echo "::error::in-job 品質ゲート（pnpm check/build）が失敗（$CURRENT → $LATEST）。PR 残置(automerge-blocked): $PR_URL"
+          exit 1
