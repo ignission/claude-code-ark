@@ -121,6 +121,21 @@ fi
 
 SCOPE_KEY=$(flow_state_scope_key "$WORK_ID")
 
+# done sentinel チェック。
+# cleanup_post_deploy "final" は state 削除後に /tmp/flow-done-<scope>.json を書く。
+# worktree は P12 後も残置されるので、state 不在 → 「新規 run」扱いで誤って P-1 から
+# 開始する事故を防ぐ。sentinel の branch が現在 branch と一致する場合のみ halt する。
+if [ -f "/tmp/flow-done-${SCOPE_KEY}.json" ]; then
+  _SENTINEL_BRANCH=$(jq -r '.branch // ""' "/tmp/flow-done-${SCOPE_KEY}.json" 2>/dev/null)
+  _CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+  if [ -z "$_SENTINEL_BRANCH" ] || [ "$_SENTINEL_BRANCH" = "$_CURRENT_BRANCH" ]; then
+    if ! { [ "${MODE:-}" = "--resume" ] && flow_state_exists "$SCOPE_KEY"; }; then
+      halt "STEP 0: scope $SCOPE_KEY は既に完了済み (sentinel: /tmp/flow-done-${SCOPE_KEY}.json)。\
+再実行したい場合は sentinel を削除してから再起動してください"
+    fi
+  fi
+fi
+
 if flow_state_exists "$SCOPE_KEY"; then
   if flow_state_is_stale "$SCOPE_KEY"; then
     flow_state_cleanup_stale "$SCOPE_KEY"
@@ -129,6 +144,10 @@ fi
 
 if [ "${MODE:-}" = "--resume" ] && flow_state_exists "$SCOPE_KEY"; then
   CURRENT_PHASE=$(flow_state_read progress '.phase' "$SCOPE_KEY")
+  # phase=done (P12 terminal 済み) の resume は cron 二重起動・通知再送の元なので halt する
+  if [ "$CURRENT_PHASE" = "done" ]; then
+    halt "STEP 0: scope_key=$SCOPE_KEY は既に完了済み (phase=done)。新しい run として開始してください"
+  fi
   echo "resume from phase: $CURRENT_PHASE"
 else
   CURRENT_PHASE="P-1"
@@ -516,32 +535,43 @@ if [ "$HAS_TARGET" != "true" ] || [ "$PM2_ONLINE" != "true" ]; then
   # no-target で即 finalize (deploy_watch_tick の呼び出しで no-target 判定 + state 更新)
   deploy_watch_tick "$SCOPE_KEY"  # RESULT=no-target, fires++, result="no-target"
   flow_state_update kpi ".deploy_status = \"no-target\" | .end_at = $(date +%s)" "$SCOPE_KEY"
-  flow_state_update progress '.phase = "done"' "$SCOPE_KEY"
+  # Issue コメントは state 削除 (cleanup_post_deploy final) より前に行う
   if [ -n "$ISSUE_NUMBER_FROM_STATE" ] && [ "$ISSUE_NUMBER_FROM_STATE" != "null" ]; then
     gh issue comment "$ISSUE_NUMBER_FROM_STATE" --body "deploy 対象 path 変更なし or pm2 未稼働、deploy 監視はスキップ" || true
   fi
+  flow_state_update progress '.phase = "done"' "$SCOPE_KEY"
+  # P12 terminal: state / codex log 回収。done sentinel を書き、KPI は
+  # /tmp/flow-kpi-history.jsonl に退避してから state を削除する (--kpi 集計と再起動阻害解消の両立)
+  cleanup_post_deploy "$SCOPE_KEY" final || echo "WARNING: cleanup_post_deploy 失敗 (continue)" >&2
   echo "deploy 対象なし、P12 を no-target で finalize"
 else
   # CronCreate で 30 秒間隔の監視ジョブを起動
   CRON_PROMPT="flow P12 pm2 deploy 監視 tick (WORK_ID=$WORK_ID, SCOPE_KEY=$SCOPE_KEY)。\
 以下を順に実行:\
 \
-1. Bash で次を実行し、stdout を取得する:\
-   source $CLAUDE_PROJECT_DIR/.claude/lib/deploy-watch.sh && deploy_watch_tick \"$SCOPE_KEY\"\
+1. Bash で次を実行し、stdout を取得する (cleanup.sh も source する: terminal 分岐で\
+   cleanup_post_deploy を呼ぶため):\
+   source $CLAUDE_PROJECT_DIR/.claude/lib/cleanup.sh && \\\
+   source $CLAUDE_PROJECT_DIR/.claude/lib/deploy-watch.sh && \\\
+   deploy_watch_tick \"$SCOPE_KEY\"\
 \
 2. 出力の最終行から RESULT を抽出: 'RESULT=<success|failure|timeout|continue|no-target|poll-error> CRON_ID=<id> FIRES=<n>'\
-   RESULT 値で分岐 (terminal 系は全て kpi.end_at + progress.phase=done + CronDelete を必ず実行):\
-   - success: gh issue comment (deploy_watch_format_summary 出力) + flow_state_update kpi '.deploy_status = \"success\" | .end_at = <now>' + flow_state_update progress '.phase = \"done\"' + CronDelete(CRON_ID)\
-   - failure: gh issue comment + PushNotification + flow_state_update kpi '.deploy_status = \"failure\" | .end_at = <now>' + flow_state_update progress '.phase = \"done\"' + CronDelete\
-   - timeout: gh issue comment + PushNotification + flow_state_update kpi '.deploy_status = \"timeout\" | .end_at = <now>' + flow_state_update progress '.phase = \"done\"' + CronDelete\
-   - poll-error: gh issue comment + PushNotification + flow_state_update kpi '.deploy_status = \"poll-error\" | .end_at = <now>' + flow_state_update progress '.phase = \"done\"' + CronDelete\
-   - no-target: flow_state_update kpi '.deploy_status = \"no-target\" | .end_at = <now>' + flow_state_update progress '.phase = \"done\"' + CronDelete\
+   RESULT 値で分岐 (terminal 系は全て kpi.end_at + progress.phase=done + CronDelete + cleanup_post_deploy を必ず実行):\
+   - success: gh issue comment (deploy_watch_format_summary 出力) + flow_state_update kpi '.deploy_status = \"success\" | .end_at = <now>' + flow_state_update progress '.phase = \"done\"' + CronDelete(CRON_ID) + cleanup_post_deploy(SCOPE_KEY, \"final\")\
+   - failure: gh issue comment + PushNotification + flow_state_update kpi '.deploy_status = \"failure\" | .end_at = <now>' + flow_state_update progress '.phase = \"done\"' + CronDelete + cleanup_post_deploy(SCOPE_KEY, \"resumable\")\
+   - timeout: gh issue comment + PushNotification + flow_state_update kpi '.deploy_status = \"timeout\" | .end_at = <now>' + flow_state_update progress '.phase = \"done\"' + CronDelete + cleanup_post_deploy(SCOPE_KEY, \"resumable\")\
+   - poll-error: gh issue comment + PushNotification + flow_state_update kpi '.deploy_status = \"poll-error\" | .end_at = <now>' + flow_state_update progress '.phase = \"done\"' + CronDelete + cleanup_post_deploy(SCOPE_KEY, \"resumable\")\
+   - no-target: flow_state_update kpi '.deploy_status = \"no-target\" | .end_at = <now>' + flow_state_update progress '.phase = \"done\"' + CronDelete + cleanup_post_deploy(SCOPE_KEY, \"final\")\
    - continue: 何もせず終了 (次の fire を待つ)\
 \
 3. tick が exit 1 で失敗した場合: cron は残し、次回 fire で復帰を試みる。poll_failures が cap に達すると tick は exit 0 + RESULT=failure を返す。\
 \
 重要: terminal 系の RESULT (success/failure/timeout/poll-error/no-target) では必ず progress.phase=\"done\" に更新する。\
-更新を怠ると --resume で P12 を再入してしまい cron 二重起動 / 通知再送が発生する。"
+更新を怠ると --resume で P12 を再入してしまい cron 二重起動 / 通知再送が発生する。\
+\
+重要: cleanup_post_deploy(SCOPE_KEY, mode) は terminal 系 RESULT で必ず最後に呼ぶ。mode は\
+success / no-target で \"final\" (state 削除 + done sentinel + KPI を history へ退避)、\
+failure / timeout / poll-error で \"resumable\" (state を調査用に残置)。"
 
   # ↓ Claude tool call: CronCreate cron="*/30 * * * * *" prompt="$CRON_PROMPT"
   #   (30 秒間隔は cron の 6 フィールド形式)
@@ -555,18 +585,19 @@ cron が発火するたびに Claude が起き、上記 prompt の指示通り�
 
 1. Bash で `source ... && deploy_watch_tick "$SCOPE_KEY"` を実行
 2. **stdout 最終行の `RESULT=<value> CRON_ID=<id> FIRES=<n>` を grep して抽出**
-3. RESULT 値で分岐 (**terminal 系は全て `kpi.end_at` + `progress.phase="done"` 更新 + `CronDelete` 必須**):
-   - `success` → 初回 fire の build 完了後、`http://localhost:4001/api/settings` が HTTP 200 を返した
-   - `failure` → build/restart 失敗、または health が 5 回連続で 200 以外
-   - `timeout` → fires cap (5) または wall-clock cap (180s) 到達
-   - `no-target` → has_target=false または pm2_online=false (init 時に finalize 済みの保険発火)
+3. RESULT 値で分岐 (**terminal 系は全て `kpi.end_at` + `progress.phase="done"` 更新 + `CronDelete` + `cleanup_post_deploy` 必須**):
+   - `success` → 初回 fire の build 完了後、`http://localhost:4001/api/settings` が HTTP 200 を返した → `cleanup_post_deploy "$SCOPE_KEY" final`
+   - `failure` → build/restart 失敗、または health が 5 回連続で 200 以外 → `cleanup_post_deploy "$SCOPE_KEY" resumable`
+   - `timeout` → fires cap (5) または wall-clock cap (180s) 到達 → `cleanup_post_deploy "$SCOPE_KEY" resumable`
+   - `no-target` → has_target=false または pm2_online=false (init 時に finalize 済みの保険発火) → `cleanup_post_deploy "$SCOPE_KEY" final`
    - `continue` → 次の fire を待つ
 4. terminal で `kpi.end_at` を必ず記録 + `progress.phase="done"` 更新
 
 ### 12-3. terminal 後のフォロー
 
 - worktree はそのまま残す。ユーザーが結果を見て手動で `git worktree remove <path>` する
-- deploy 失敗時は worktree 内で原因調査 → 追加 fix を `/flow --resume` で続行できる
+- **success / no-target** → `cleanup_post_deploy final`: 全 state を削除。削除前に kpi.json を `/tmp/flow-kpi-history.jsonl` に append するため KPI は履歴として永続化される。done sentinel (`/tmp/flow-done-<scope>.json`) が残り、STEP 0 が「完了済み」を検出できる
+- **failure / timeout / poll-error** → `cleanup_post_deploy resumable`: state を**調査用に残置**。terminal は `phase=done` を記録するため `--resume` での継続は STEP 0 で halt する。実際の re-deploy は**別 PR / 別 flow run** として開始する
 
 ### 12-4. session 終了時の挙動
 
@@ -589,7 +620,7 @@ cron が発火するたびに Claude が起き、上記 prompt の指示通り�
 ```bash
 /flow --kpi
 ```
-全 `/tmp/flow-kpi-*.json` を集計して以下の markdown table を出力:
+全 `/tmp/flow-kpi-*.json` (進行中 run) と `/tmp/flow-kpi-history.jsonl` (完了済み run、`cleanup_post_deploy final` で append される) を集計して以下の markdown table を出力:
 
 ```
 | Work | 最大連続 | 総自走率 | 初介入中央値 | 待機除外 | 状態 | deploy |
@@ -605,7 +636,7 @@ cron が発火するたびに Claude が起き、上記 prompt の指示通り�
 - `.claude/lib/state-io.sh` — 状態 3 ファイル管理 (progress / kpi / context)
 - `.claude/lib/codex-gate.sh` — codex review ゲート (P2/P5/P8/P9) + fingerprint 抑止
 - `.claude/lib/check-cr-threads.sh` — CodeRabbit 未解決スレッド取得 + action 判定
-- `.claude/lib/cleanup.sh` — PR squash merge + main pull + Issue クローズヒント (worktree 削除関数 `cleanup_remove_worktree` も残置するが flow P11 からは呼ばない)
+- `.claude/lib/cleanup.sh` — PR squash merge + main pull + Issue クローズヒント + P12 terminal 用 `cleanup_post_deploy` (state 回収・done sentinel・KPI history 退避)。worktree 削除関数 `cleanup_remove_worktree` も残置するが flow P11 からは呼ばない
 - `.claude/lib/deploy-watch.sh` — P12 pm2 deploy 監視 (has_target / pm2_online 判定 + tick 状態確認 + 通知サマリ生成)
 - `.claude/lib/worktree/{sanitize-branch,compute-worktree-path,setup-worktree}.sh` — worktree 規約共通 lib
 - `.claude/agents/flow-plan-writer.md` — P2 plan 作成 subagent

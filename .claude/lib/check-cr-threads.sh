@@ -6,9 +6,15 @@
 set -euo pipefail
 
 _cr_hooks_dir() {
-  local root
-  root="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-  printf '%s/.claude/hooks\n' "$root"
+  # 呼び出し元の cwd に依存せず CLAUDE_PROJECT_DIR で hook 配置を解決する。
+  # zsh で source した場合 BASH_SOURCE は未定義、$0 も self-locate に使えないため、
+  # 推測でずれた path を返すより未設定なら fail loud にする
+  # (flow / flow-x は source 前に必ず CLAUDE_PROJECT_DIR を設定する)。
+  if [ -z "${CLAUDE_PROJECT_DIR:-}" ]; then
+    echo "ERROR: CLAUDE_PROJECT_DIR が未設定です (check-cr-threads.sh は flow context から source してください)" >&2
+    return 1
+  fi
+  printf '%s/.claude/hooks\n' "$CLAUDE_PROJECT_DIR"
 }
 
 # CI / CodeRabbit の現在状態を取得して action 文字列を返す。

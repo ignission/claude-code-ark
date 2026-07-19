@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+# .claude/skills/flow-loop/lib/loop.sh
+# flow-loop (運転ループ) の状態・排他・計測ヘルパー。
+#
+# 利用想定:
+#   source "$CLAUDE_PROJECT_DIR/.claude/skills/flow-loop/lib/loop.sh"
+#   flow_loop_init
+#   flow_loop_lock && ... && flow_loop_unlock
+#
+# 設計判断:
+#   - run state (state-io.sh の /tmp/flow-{progress,kpi,context}-*.json) には依存せず、
+#     progress ファイルの列挙と jq 読み取りのみで active run を数える (疎結合)。
+#   - loop 状態 (loop.json / metrics / kill switch) も state-io.sh と同じ /tmp 規約に置く
+#     (kpi 履歴の /tmp/flow-kpi-history.jsonl と同格)。再起動で消えたら init が既定値で
+#     再生成する。恒久化したい設定変更 (wip_limit / pick_query 等) は本ファイルの既定値を
+#     PR で変える。/tmp の loop.json 直接編集は一時的な調整用。
+#   - パス解決に BASH_SOURCE を使わない。Claude の Bash ツールは実体が zsh のことがあり、
+#     zsh で source すると BASH_SOURCE が空になる (本ファイルは固定パス /tmp のみで完結)。
+#   - tick 排他は mkdir の atomic 性を使う (flock ファイルと違い stale 回収を mtime で判定できる)。
+#   - pick は GitHub Issue のみ対応。pick_query は gh issue list --search 用の
+#     GitHub 検索構文で持つ。
+
+set -euo pipefail
+
+# loop 状態の配置先。テストでは一時ディレクトリに差し替える。
+: "${FLOW_LOOP_STATE_DIR:=/tmp}"
+
+# run state (state-io.sh) の配置先。テストでは一時ディレクトリに差し替える。
+: "${FLOW_LOOP_RUNS_DIR:=/tmp}"
+
+FLOW_LOOP_JSON="$FLOW_LOOP_STATE_DIR/flow-loop.json"
+FLOW_LOOP_LOCK="$FLOW_LOOP_STATE_DIR/flow-loop.lock"
+FLOW_LOOP_STOP="$FLOW_LOOP_STATE_DIR/flow-loop-stop"
+FLOW_LOOP_METRICS="$FLOW_LOOP_STATE_DIR/flow-loop-metrics.jsonl"
+: "${FLOW_LOOP_LOCK_STALE_SECONDS:=3600}"
+: "${FLOW_LOOP_BREAKER_THRESHOLD:=3}"
+
+# 新規 pick の既定クエリ (gh issue list --search に渡す GitHub 検索構文)。
+# 運用に合わせて loop.json の .pick_query を書き換えてよい
+# (init は既存 loop.json を上書きしないため、手で編集した値は保持される)。
+# in-progress / review ラベルは flow が着手時・マージ後に付けるステータス代替なので除外する。
+FLOW_LOOP_DEFAULT_PICK_QUERY='assignee:@me is:open is:issue -label:loop-exclude -label:in-progress -label:review sort:created-asc'
+
+# init ── loop.json が無ければ既定値で作る (冪等。既存は一切変更しない)
+flow_loop_init() {
+  mkdir -p "$FLOW_LOOP_STATE_DIR"
+  [ -f "$FLOW_LOOP_JSON" ] && return 0
+  jq -n --arg q "$FLOW_LOOP_DEFAULT_PICK_QUERY" --argjson ts "$(date +%s)" \
+    '{wip_limit: 2, engine: "codex", pick_query: $q,
+      active_hours: "", daily_budget: 3, picks_today: 0, pick_date: "",
+      consecutive_halts: 0, last_tick_at: 0, created_at: $ts}' \
+    > "$FLOW_LOOP_JSON.tmp" && command mv "$FLOW_LOOP_JSON.tmp" "$FLOW_LOOP_JSON"
+}
+
+# read <jq_filter>
+flow_loop_read() {
+  [ -f "$FLOW_LOOP_JSON" ] || return 1
+  jq -r "${1:?jq filter required}" "$FLOW_LOOP_JSON"
+}
+
+# update <jq_expr> ── updated_at を自動更新し atomic に書き戻す。
+# command mv は zsh の `alias mv='mv -i'` を迂回するため (state-io.sh と同じ理由)。
+flow_loop_update() {
+  [ -f "$FLOW_LOOP_JSON" ] || return 1
+  jq --argjson ts "$(date +%s)" "(${1:?jq expr required}) | .updated_at = \$ts" "$FLOW_LOOP_JSON" \
+    > "$FLOW_LOOP_JSON.tmp" \
+    && command mv "$FLOW_LOOP_JSON.tmp" "$FLOW_LOOP_JSON" \
+    || { rm -f "$FLOW_LOOP_JSON.tmp"; return 1; }
+}
+
+# kill switch (loop-stop ファイルの有無。stop=touch / start=rm は skill 手順が行う)
+flow_loop_stopped() { [ -f "$FLOW_LOOP_STOP" ]; }
+
+# ブレーカー作動中か (連続 halt が閾値以上)
+flow_loop_breaker_tripped() {
+  local n
+  n="$(flow_loop_read '.consecutive_halts // 0' 2>/dev/null)" || return 1
+  [ -n "$n" ] && [ "$n" -eq "$n" ] 2>/dev/null && [ "$n" -ge "$FLOW_LOOP_BREAKER_THRESHOLD" ]
+}
+
+# tick 排他。mkdir の atomic 性で取得し、stale (mtime が閾値超) は 1 回だけ回収して再試行。
+flow_loop_lock() {
+  mkdir -p "$FLOW_LOOP_STATE_DIR"
+  mkdir "$FLOW_LOOP_LOCK" 2>/dev/null && return 0
+  local now mtime
+  now="$(date +%s)"
+  # GNU (stat -c %Y) を先に試す。BSD 先行 (stat -f %m) にすると GNU stat では
+  # -f がファイルシステムモードになり %m が「マウントポイント文字列」で成功してしまう
+  # (mtime に /tmp が入り算術式が爆発、stale 回収も永久に効かない) ため順序が重要。
+  mtime="$(stat -c %Y "$FLOW_LOOP_LOCK" 2>/dev/null || stat -f %m "$FLOW_LOOP_LOCK" 2>/dev/null || echo "$now")"
+  case "$mtime" in ''|*[!0-9]*) mtime="$now" ;; esac
+  if [ $((now - mtime)) -ge "$FLOW_LOOP_LOCK_STALE_SECONDS" ]; then
+    rm -rf "$FLOW_LOOP_LOCK"
+    mkdir "$FLOW_LOOP_LOCK" 2>/dev/null && return 0
+  fi
+  return 1
+}
+flow_loop_unlock() { rmdir "$FLOW_LOOP_LOCK" 2>/dev/null || true; }
+
+# アクティブ run の scope_key 一覧 (progress の phase != done)。WIP 算出・走査の起点。
+# glob 展開はシェル依存 (zsh は no-match で全体がエラーになる) のため find で列挙する。
+flow_loop_active_scope_keys() {
+  [ -d "$FLOW_LOOP_RUNS_DIR" ] || return 0
+  local f phase key
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    phase="$(jq -r '.phase // empty' "$f" 2>/dev/null)" || continue
+    if [ -z "$phase" ] || [ "$phase" = "done" ]; then continue; fi
+    key="${f##*/flow-progress-}"
+    key="${key%.json}"
+    [ -n "$key" ] && printf '%s\n' "$key"
+  done < <(find "$FLOW_LOOP_RUNS_DIR" -maxdepth 1 -name 'flow-progress-*.json' -type f 2>/dev/null)
+  return 0
+}
+
+flow_loop_active_count() { flow_loop_active_scope_keys | grep -c . || true; }
+
+# 稼働時間帯 (active_hours = "09-19" 形式・ローカル時刻・空なら常時可)。
+# 自動起動 tick の抑制用。形式不正・フィールド欠落 (旧 loop.json) は fail-open で常時可。
+flow_loop_within_active_hours() {
+  local range start end hour
+  range="$(flow_loop_read '.active_hours // ""' 2>/dev/null)" || range=""
+  if [ -z "$range" ] || [ "$range" = "null" ]; then return 0; fi
+  case "$range" in *-*) ;; *) return 0 ;; esac
+  start="${range%%-*}"; end="${range##*-}"
+  case "$start$end" in ''|*[!0-9]*) return 0 ;; esac
+  hour="$(date +%H)"
+  [ "$((10#$hour))" -ge "$((10#$start))" ] && [ "$((10#$hour))" -lt "$((10#$end))" ]
+}
+
+# 1 日の新規着手予算の残数を返す。日付が変わればカウンタは自然リセット扱い。
+# フィールド欠落 (旧 loop.json) は既定値 (daily_budget=3) で解釈する。
+flow_loop_pick_budget_left() {
+  local budget picks pdate today
+  budget="$(flow_loop_read '.daily_budget // 3' 2>/dev/null)" || budget=3
+  case "$budget" in ''|null|*[!0-9]*) budget=3 ;; esac
+  today="$(date +%Y-%m-%d)"
+  pdate="$(flow_loop_read '.pick_date // ""' 2>/dev/null)" || pdate=""
+  picks="$(flow_loop_read '.picks_today // 0' 2>/dev/null)" || picks=0
+  case "$picks" in ''|null|*[!0-9]*) picks=0 ;; esac
+  [ "$pdate" = "$today" ] || picks=0
+  echo $((budget - picks))
+}
+
+# 新規着手 1 件を記録する (日付跨ぎはカウンタを 1 から数え直す)
+flow_loop_record_pick() {
+  local today; today="$(date +%Y-%m-%d)"
+  flow_loop_update '.picks_today = (if (.pick_date // "") == "'"$today"'" then (.picks_today // 0) + 1 else 1 end) | .pick_date = "'"$today"'"'
+}
+
+# detached codex の生存確認 (pid が数値かつ生きていれば 0)
+flow_loop_pid_alive() {
+  case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$1" 2>/dev/null
+}
+
+# ── 計測 (metrics) ──────────────────────────────────────────────
+# run のイベントを 1 行 JSON で metrics.jsonl へ追記する。
+# 記録点: pick (新規着手) / park (承認・監視待ち) / halt / merged (P11) / done (P12 terminal)。
+# 既存 KPI (/tmp/flow-kpi-*.json / flow-kpi-history.jsonl) とはレイヤが別:
+# KPI は run 内の自走時間、metrics.jsonl は loop 視点のイベント列 (人間待ち内訳の集計用)。
+
+# append <work_id> <event> [<jq_object_expr>]
+# extra は jq 式として評価する (キーのクォート不要。--argjson は厳密 JSON を要求するため使わない)。
+# 例: flow_loop_metrics_append issue-700 halt '{reason: "CI failure", phase: "P7"}'
+# extra が不正な式なら何も追記せず非 0 を返す。
+flow_loop_metrics_append() {
+  local work_id="${1-}" event="${2-}" extra="${3-}" line
+  [ -n "$work_id" ] && [ -n "$event" ] || return 1
+  [ -n "$extra" ] || extra='{}'
+  line="$(jq -cn --arg t "$work_id" --arg e "$event" --argjson ts "$(date +%s)" \
+    "{ts: \$ts, ticket: \$t, event: \$e} + ($extra)" 2>/dev/null)" || return 1
+  [ -n "$line" ] || return 1
+  mkdir -p "$FLOW_LOOP_STATE_DIR"
+  printf '%s\n' "$line" >> "$FLOW_LOOP_METRICS"
+}
+
+# 直近 N 件を返す (digest 用の簡易リーダ)
+flow_loop_metrics_tail() {
+  [ -f "$FLOW_LOOP_METRICS" ] || return 0
+  tail -n "${1:-20}" "$FLOW_LOOP_METRICS"
+}
+
+# ── 承認/レビューシグナルの鮮度判定 (必ず epoch=UTC秒 で比較する) ──
+# 背景: HEAD を `git log --format=%cI` (`...+09:00` ローカルオフセット) で取り、GitHub API の
+# `createdAt`/`submittedAt` (`...Z`=UTC) と ISO 文字列で大小比較すると誤判定する。
+# 例 HEAD `09:54:31+09:00`(=00:54:31Z) vs コメント `01:23:50Z` は、実時刻ではコメントが後なのに
+# 文字列比較では `01`<`09` で「前」と判定され、有効な承認が取りこぼされる。必ず epoch で比較する。
+
+# ISO8601 (末尾 Z または +hh:mm) → unix epoch (UTC秒)。BSD/macOS date と GNU date の両対応。
+flow_iso_to_epoch() {
+  local iso="${1-}" norm
+  [ -n "$iso" ] || return 1
+  # `Z`→`+0000`、`+hh:mm`→`+hhmm` (BSD の %z はコロン無しを要求する)
+  norm="$(printf '%s' "$iso" | sed 's/Z$/+0000/; s/\([+-][0-9][0-9]\):\([0-9][0-9]\)$/\1\2/')"
+  date -j -f "%Y-%m-%dT%H:%M:%S%z" "$norm" +%s 2>/dev/null && return 0   # BSD/macOS
+  date -d "$iso" +%s 2>/dev/null && return 0                             # GNU
+  return 1
+}
+
+# worktree の HEAD commit の committer epoch (鮮度の基準時刻)。
+flow_head_epoch() { git -C "${1:?worktree}" log -1 --format=%ct 2>/dev/null; }
+
+# シグナル時刻(ISO) が基準 epoch より後か。0=fresh (後・有効) / 1=stale (前・無効)。
+# 使い方: flow_signal_after "$comment_createdAt" "$(flow_head_epoch "$WORKTREE_PATH")"
+flow_signal_after() {
+  local sig_iso="${1-}" base_epoch="${2-}" se
+  se="$(flow_iso_to_epoch "$sig_iso")" || return 1
+  [ -n "$se" ] && [ -n "$base_epoch" ] && [ "$se" -gt "$base_epoch" ]
+}

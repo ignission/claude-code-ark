@@ -75,11 +75,18 @@ DEPLOY_WATCH_RESTART_TIMEOUT=${DEPLOY_WATCH_RESTART_TIMEOUT:-30}
 # === 内部ヘルパー ===
 
 _deploy_watch_load_state_io() {
-  if ! declare -F flow_state_read >/dev/null 2>&1; then
-    local root
-    root="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+  # `declare -F` は bash 専用 (zsh では -F が float 宣言になり存在確認にならない)。
+  # `command -v` なら bash / zsh 双方で関数存在を判定できる。
+  if ! command -v flow_state_read >/dev/null 2>&1; then
+    # root は CLAUDE_PROJECT_DIR を必須とする。zsh で source した場合 BASH_SOURCE は
+    # 未定義、$0 も "zsh" になり self-locate が不能なため、推測でずれた path を読むより
+    # 未設定なら fail loud にする (flow / flow-x は source 前に必ず CLAUDE_PROJECT_DIR を設定する)。
+    if [ -z "${CLAUDE_PROJECT_DIR:-}" ]; then
+      echo "ERROR: CLAUDE_PROJECT_DIR が未設定です (deploy-watch.sh は flow context から source してください)" >&2
+      return 1
+    fi
     # shellcheck source=/dev/null
-    source "$root/.claude/lib/state-io.sh"
+    source "$CLAUDE_PROJECT_DIR/.claude/lib/state-io.sh"
   fi
 }
 
@@ -87,10 +94,12 @@ _deploy_watch_load_state_io() {
 # 戻り値: 0=online, 1=not running / not pm2 / pm2 not installed
 _deploy_watch_pm2_online() {
   command -v pm2 >/dev/null 2>&1 || return 1
-  local status
-  status=$(pm2 jlist 2>/dev/null \
+  # zsh では `status` は read-only の特殊変数（$? の別名）なので local に使えない。
+  # pm2_status に退避する。
+  local pm2_status
+  pm2_status=$(pm2 jlist 2>/dev/null \
     | jq -r --arg name "$DEPLOY_WATCH_PM2_APP" '.[] | select(.name == $name) | .pm2_env.status' 2>/dev/null) || return 1
-  [ "$status" = "online" ]
+  [ "$pm2_status" = "online" ]
 }
 
 # git diff の path 一覧と path glob のマッチを判定。
