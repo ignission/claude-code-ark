@@ -28,6 +28,9 @@ vi.mock("./tmux-manager.js", async () => {
     capturePane = vi.fn();
     setClaudeMcpConfigPath = vi.fn();
     setClaudeAppendSystemPrompt = vi.fn();
+    // restoreExistingSessions → detectEnvProfile が参照する (env 無し = null 相当)
+    getEnv = vi.fn(() => undefined);
+    getPaneEnv = vi.fn(() => undefined);
   }
   const tmuxManager = new TmuxManagerStub();
   // 複数の SessionOrchestrator インスタンス（各testで生成）が listener を追加するため
@@ -77,6 +80,8 @@ vi.mock("node:child_process", () => ({
 }));
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { BoardMcpServer } from "./board-mcp-server.js";
 // BoardSessionRegistry は単純な token→worktreePath の in-memory map なので
 // モック化せず実体を使い、register/resolve/unregister の実挙動を検証する。
@@ -494,6 +499,8 @@ describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
   let orchestrator: SessionOrchestrator;
   const fakeBoardMcp = { getPort: () => 39123 } as unknown as BoardMcpServer;
   let writtenConfigPaths: string[] = [];
+  /** テスト内で実際に作った worktree ディレクトリ (afterEach で削除する) */
+  let createdWorktrees: string[] = [];
 
   /** 直近の setClaudeMcpConfigPath 呼び出しに渡された path (null なら例外) */
   function lastMcpConfigPath(): string {
@@ -514,6 +521,7 @@ describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     writtenConfigPaths = [];
+    createdWorktrees = [];
 
     mockedTmux.getAllSessions.mockReturnValue([]);
     mockedTmux.getSessionByWorktree.mockReturnValue(undefined);
@@ -545,6 +553,10 @@ describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
       }
     }
     writtenConfigPaths = [];
+    for (const dir of createdWorktrees) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    createdWorktrees = [];
   });
 
   it("setBoardMcp 未呼び出しなら setClaudeMcpConfigPath(null) が呼ばれ、mcp-config は書かれない", async () => {
@@ -625,6 +637,72 @@ describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
 
     expect(registry.resolve(token)).toBeNull();
     expect(fs.existsSync(cfgPath)).toBe(false);
+  });
+
+  it("getAllSessions の孤児クリーンアップ (worktree 削除済み) でも token を unregister し mcp-config を削除する", async () => {
+    const registry = new BoardSessionRegistry();
+    orchestrator.setBoardMcp(fakeBoardMcp, registry);
+
+    await orchestrator.startSession("wt-1", "/path/to/work", "/repo");
+    const cfgPath = lastMcpConfigPath();
+    const token = readToken(cfgPath);
+    expect(registry.resolve(token)).toBe("/path/to/work");
+
+    // worktree 削除済みの状態。"/path/to/work" は実在しないパスなので
+    // getAllSessions() の fs.existsSync 判定が false となり孤児として掃除される。
+    // 掃除後は tmux 側からも消えるため 2 回目以降は空配列を返す。
+    mockedTmux.getAllSessions
+      .mockReturnValueOnce([makeTmuxSession()] as never)
+      .mockReturnValue([]);
+
+    orchestrator.getAllSessions();
+
+    // 削除済み worktree を指す token が registry に残ると、その token での
+    // board_write が「board scene の保存先 worktree が見つかりません」で
+    // 失敗し続ける (realpathSync が ENOENT を投げ検証が null になるため)。
+    expect(registry.resolve(token)).toBeNull();
+    expect(fs.existsSync(cfgPath)).toBe(false);
+  });
+
+  it("setBoardMcp 時に、復元済みセッションの board token を cfg ファイルから registry へ復帰させる", async () => {
+    // 稼働中の claude は起動時に渡された古い token を保持し続けるため、
+    // サーバー再起動後もその token が解決できないと board_write が 401 で
+    // 全滅する (セッションを作り直すまで復旧しない)。
+    // worktree は実在させる (存在しないと復元時に孤児として掃除されてしまう)。
+    const worktree = fs.mkdtempSync(path.join(os.tmpdir(), "ark-restore-wt-"));
+    createdWorktrees.push(worktree);
+
+    const registry1 = new BoardSessionRegistry();
+    orchestrator.setBoardMcp(fakeBoardMcp, registry1);
+    mockedTmux.createSession.mockResolvedValue(
+      makeTmuxSession({ worktreePath: worktree })
+    );
+    await orchestrator.startSession("wt-1", worktree, "/repo");
+    const cfgPath = lastMcpConfigPath();
+    const token = readToken(cfgPath);
+    expect(registry1.resolve(token)).toBe(worktree);
+
+    // --- サーバー再起動相当 ---
+    // tmux セッションは生き残り、DB に cfgPath が永続化されている状態
+    mockedTmux.getAllSessions.mockReturnValue([
+      makeTmuxSession({ worktreePath: worktree }),
+    ] as never);
+    mockedDb.getSessionByWorktreePath.mockReturnValue({
+      id: "sess-id-1",
+      worktreeId: "wt-1",
+      worktreePath: worktree,
+      repoPath: "/repo",
+      status: "active",
+      boardMcpConfigPath: cfgPath,
+      createdAt: "2026-07-19T00:00:00Z",
+      updatedAt: "2026-07-19T00:00:00Z",
+    } as never);
+
+    const restarted = new SessionOrchestrator();
+    const registry2 = new BoardSessionRegistry();
+    restarted.setBoardMcp(fakeBoardMcp, registry2);
+
+    expect(registry2.resolve(token)).toBe(worktree);
   });
 
   it("restartSession で新token を登録し、旧token を unregister する", async () => {

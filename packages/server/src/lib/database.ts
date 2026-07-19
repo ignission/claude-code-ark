@@ -51,6 +51,7 @@ interface SessionRow {
   status: string;
   profile_id: string | null;
   profile_config_dir: string | null;
+  board_mcp_config_path: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -76,6 +77,14 @@ interface CreateSessionInput {
   readonly profileId?: string | null;
   /** 起動時に確定したプロファイルのconfigDir（profile_id とペア） */
   readonly profileConfigDir?: string | null;
+  /**
+   * board MCP の per-session mcp-config ファイルのパス。
+   * 稼働中の claude は起動時に渡された token を保持し続けるため、サーバー
+   * 再起動後もこのファイルから token を読み戻して registry へ復帰させる
+   * （復帰しないと board_write が 401 で全滅する）。token 自体は 0600 の
+   * このファイルにのみ置き、DB にはパスだけを持つ。
+   */
+  readonly boardMcpConfigPath?: string | null;
 }
 
 /** メッセージ作成時の入力データ */
@@ -238,6 +247,19 @@ export class SessionDatabase {
     // (起動時のCLAUDE_CONFIG_DIRを記録し、profile.configDir変更を検出するため)
     try {
       this.db.exec("ALTER TABLE sessions ADD COLUMN profile_config_dir TEXT");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("duplicate column name")) {
+        throw e;
+      }
+    }
+
+    // マイグレーション: sessionsテーブルにboard_mcp_config_path列を追加
+    // (サーバー再起動後に board token を registry へ復帰させるため)
+    try {
+      this.db.exec(
+        "ALTER TABLE sessions ADD COLUMN board_mcp_config_path TEXT"
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (!msg.includes("duplicate column name")) {
@@ -538,8 +560,8 @@ export class SessionDatabase {
   upsertSession(session: CreateSessionInput): void {
     const now = new Date().toISOString();
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, profile_id, profile_config_dir, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, profile_id, profile_config_dir, board_mcp_config_path, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(worktree_path) DO UPDATE SET
         id = excluded.id,
         worktree_id = excluded.worktree_id,
@@ -547,6 +569,7 @@ export class SessionDatabase {
         status = excluded.status,
         profile_id = excluded.profile_id,
         profile_config_dir = excluded.profile_config_dir,
+        board_mcp_config_path = excluded.board_mcp_config_path,
         updated_at = excluded.updated_at
     `);
     stmt.run(
@@ -557,6 +580,7 @@ export class SessionDatabase {
       session.status,
       session.profileId ?? null,
       session.profileConfigDir ?? null,
+      session.boardMcpConfigPath ?? null,
       now,
       now
     );
@@ -805,6 +829,7 @@ export class SessionDatabase {
       createdAt: new Date(row.created_at),
       profileId: row.profile_id,
       profileConfigDir: row.profile_config_dir,
+      boardMcpConfigPath: row.board_mcp_config_path,
     };
   }
 

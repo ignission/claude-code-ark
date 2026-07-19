@@ -87,9 +87,9 @@ export class SessionOrchestrator extends EventEmitter {
 
   /**
    * board_write MCP の依存を注入する (index.ts から一度だけ呼ばれる想定)。
-   * サーバー起動時、既存セッションの復元 (restoreExistingSessions) より後に
-   * 呼ばれるため、復元済みセッションには board MCP が接続されない
-   * (既知の制約。再接続するには restartSession でセッションを再起動する)。
+   * 既存セッションの復元 (restoreExistingSessions) はコンストラクタで
+   * 走り終えているため、ここで復元済みセッションの board token を
+   * registry へ復帰させる (restoreBoardTokens)。
    */
   setBoardMcp(
     boardMcp: BoardMcpServer,
@@ -97,6 +97,45 @@ export class SessionOrchestrator extends EventEmitter {
   ): void {
     this.boardMcp = boardMcp;
     this.boardRegistry = boardRegistry;
+    this.restoreBoardTokens();
+  }
+
+  /**
+   * サーバー再起動後、復元済みセッションの board token を registry へ復帰させる。
+   *
+   * 稼働中の claude は起動時に `--mcp-config` で渡された token を保持し続ける
+   * (プロセスを作り直さない限り変えられない)。registry は in-memory なので
+   * 再起動で空になり、復帰させないと既存セッションの board_write が
+   * すべて 401 になる (セッションを作り直すまで復旧しない)。
+   *
+   * token は 0600 の mcp-config ファイルにのみ置き、DB にはそのパスだけを
+   * 永続化しているため、ここでファイルから読み戻す。
+   */
+  private restoreBoardTokens(): void {
+    if (!this.boardRegistry) return;
+    for (const session of tmuxManager.getAllSessions()) {
+      if (!session.worktreePath) continue;
+      // 同一プロセス内で既に登録済みのものは触らない
+      if (this.sessionBoardTokens.has(session.id)) continue;
+      const cfgPath = db.getSessionByWorktreePath(
+        session.worktreePath
+      )?.boardMcpConfigPath;
+      if (!cfgPath) continue;
+      try {
+        const parsed = JSON.parse(fs.readFileSync(cfgPath, "utf-8")) as {
+          mcpServers?: {
+            "ark-board"?: { headers?: { Authorization?: string } };
+          };
+        };
+        const auth = parsed.mcpServers?.["ark-board"]?.headers?.Authorization;
+        const token = auth?.startsWith("Bearer ") ? auth.slice(7) : "";
+        if (!token) continue;
+        this.boardRegistry.register(token, session.worktreePath);
+        this.sessionBoardTokens.set(session.id, { token, cfgPath });
+      } catch {
+        // ファイルが消えている/壊れている場合は諦める (次回起動時に再作成される)
+      }
+    }
   }
 
   /** per-session mcp-config ファイルを格納するディレクトリ (token は含めない) */
@@ -614,6 +653,9 @@ export class SessionOrchestrator extends EventEmitter {
       status: "active",
       profileId: snapshot?.id ?? null,
       profileConfigDir: snapshot?.configDir ?? null,
+      // サーバー再起動後に token を registry へ復帰させるため、
+      // mcp-config のパスを永続化する (token 自体は 0600 のファイル内のみ)
+      boardMcpConfigPath: boardPrep?.cfgPath ?? null,
     });
 
     // プロファイルスナップショットをsession-id毎に記憶
@@ -723,6 +765,7 @@ export class SessionOrchestrator extends EventEmitter {
         status: "active" as const,
         profileId: snapshot?.id ?? null,
         profileConfigDir: snapshot?.configDir ?? null,
+        boardMcpConfigPath: boardPrep?.cfgPath ?? null,
       };
       if (dbSession) {
         db.replaceSession(dbSession.id, newSessionInput);
@@ -910,6 +953,10 @@ export class SessionOrchestrator extends EventEmitter {
         );
         ttydManager.stopInstance(s.id);
         tmuxManager.killSession(s.id);
+        // board token を解除する。削除済み worktree を指す token が registry に
+        // 残ると、その token での board_write が realpathSync の ENOENT により
+        // 「board scene の保存先 worktree が見つかりません」で失敗し続ける。
+        this.unregisterBoardToken(s.id);
         const dbSession = db.getSessionByWorktreePath(s.worktreePath);
         if (dbSession) {
           db.deleteSession(dbSession.id);

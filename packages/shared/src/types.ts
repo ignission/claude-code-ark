@@ -180,6 +180,11 @@ export interface Session {
   profileId?: string | null;
   /** 起動時に確定したプロファイルのconfigDir（configDir変更検出用） */
   profileConfigDir?: string | null;
+  /**
+   * board MCP の per-session mcp-config ファイルのパス（サーバー内部用）。
+   * サーバー再起動後に board token を registry へ復帰させるために使う。
+   */
+  boardMcpConfigPath?: string | null;
 }
 
 /**

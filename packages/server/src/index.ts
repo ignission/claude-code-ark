@@ -6,7 +6,7 @@
  * Supports remote access via Cloudflare Tunnel.
  */
 
-import { exec, execFileSync } from "node:child_process";
+import { exec } from "node:child_process";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
 import express from "express";
@@ -78,6 +78,11 @@ import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
 import { htmlScreenshotter } from "./lib/html-screenshotter.js";
 import { jsonlTailManager } from "./lib/jsonl-tail-manager.js";
+import {
+  checkManagedWorktree,
+  describeWorktreeFailure,
+  resolveWorktreeRealPath,
+} from "./lib/managed-worktree.js";
 import { DiscoveryError } from "./lib/mcp-oauth/discovery.js";
 import { mcpOAuthOrchestrator } from "./lib/mcp-oauth/oauth-flow-orchestrator.js";
 import { getProvider, listProviders } from "./lib/mcp-oauth/providers.js";
@@ -543,24 +548,30 @@ export async function startServer(
    *     含まれること（socket 側 worktree:set-profile と同じ防御を維持する）
    * 戻り値: 検証成功時は正規化済みの実パス、失敗時は null。
    */
-  function resolveManagedWorktreePath(worktreePath: string): string | null {
-    if (worktreePath.length > 4096) return null;
-    let real: string;
-    try {
-      real = fs.realpathSync(worktreePath);
-    } catch {
-      return null;
+  function resolveManagedWorktreeDetailed(
+    worktreePath: string
+  ): { ok: true; path: string } | { ok: false; reason: string } {
+    const resolved = resolveWorktreeRealPath(worktreePath);
+    if (!resolved.ok) {
+      return { ok: false, reason: describeWorktreeFailure(resolved.failure) };
     }
+    const real = resolved.realPath;
     const cached = managedWorktreeCache.get(real);
     if (cached && Date.now() - cached.at < MANAGED_WORKTREE_CACHE_TTL_MS) {
-      return real;
+      return { ok: true, path: real };
     }
-    if (!computeIsManagedWorktreePath(real)) {
-      return null;
+    const checked = checkManagedWorktree(real, { allowedRepos });
+    if (!checked.ok) {
+      return { ok: false, reason: describeWorktreeFailure(checked.failure) };
     }
     pruneManagedWorktreeCache();
     managedWorktreeCache.set(real, { at: Date.now() });
-    return real;
+    return { ok: true, path: real };
+  }
+
+  function resolveManagedWorktreePath(worktreePath: string): string | null {
+    const result = resolveManagedWorktreeDetailed(worktreePath);
+    return result.ok ? result.path : null;
   }
 
   /**
@@ -571,49 +582,6 @@ export async function startServer(
    */
   function isManagedWorktreePath(worktreePath: string): boolean {
     return resolveManagedWorktreePath(worktreePath) !== null;
-  }
-
-  function computeIsManagedWorktreePath(worktreePath: string): boolean {
-    try {
-      const stat = fs.statSync(worktreePath);
-      if (!stat.isDirectory()) return false;
-    } catch {
-      return false;
-    }
-    if (!fs.existsSync(`${worktreePath}/.git`)) return false;
-    if (allowedRepos.length > 0) {
-      let derivedRepoPath: string | undefined;
-      try {
-        // execFileSync は shell を介さないため worktreePath のメタ文字
-        // (`、$()、;、空白) によるコマンド注入を防げる。
-        const stdout = execFileSync(
-          "git",
-          [
-            "-C",
-            worktreePath,
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-common-dir",
-          ],
-          { stdio: ["ignore", "pipe", "ignore"] }
-        ).toString();
-        const gitCommonDir = stdout.trim();
-        derivedRepoPath = gitCommonDir.replace(/\/\.git\/?$/, "") || undefined;
-      } catch {
-        return false;
-      }
-      if (!derivedRepoPath) return false;
-      let inAllowed = allowedRepos.includes(derivedRepoPath);
-      if (!inAllowed) {
-        try {
-          inAllowed = allowedRepos.includes(fs.realpathSync(derivedRepoPath));
-        } catch {
-          inAllowed = false;
-        }
-      }
-      if (!inAllowed) return false;
-    }
-    return true;
   }
 
   // トンネル状態管理 (startServer のライフタイム内に閉じ込める)
@@ -817,15 +785,23 @@ export async function startServer(
     saveBoardScene(worktreePath, scene) {
       // canvas:save と同じく未管理/実在しないパスへの書き込みは拒否する。
       // 例外は MCP tool 側の catch で呼び出し元 (Claude) にエラーとして伝わる。
-      const resolved = resolveManagedWorktreePath(worktreePath);
-      if (!resolved) {
-        throw new Error("board scene の保存先 worktree が見つかりません");
+      const resolved = resolveManagedWorktreeDetailed(worktreePath);
+      if (!resolved.ok) {
+        // 失敗要因 (削除済み / FS エラー(errno) / worktree でない / 許可外) を
+        // ログとメッセージの両方に残す。要因を潰して単一メッセージにすると、
+        // 事後に原因が一切追えなくなる。
+        console.warn(
+          `[Board] board_write の保存先を解決できません (path=${worktreePath}): ${resolved.reason}`
+        );
+        throw new Error(
+          `board scene の保存先 worktree が見つかりません: ${resolved.reason}`
+        );
       }
       // canvas:save と同じ CAS（楽観ロック）規則に従う。直前の revision を
       // baseRevision として渡し、他クライアントの新しい変更を古い scene で
       // 上書きしないようにする。衝突時は例外を投げ、MCP tool 側の catch で
       // 呼び出し元 (Claude) にエラーとして伝える。
-      const existing = db.getCanvasBoard(resolved);
+      const existing = db.getCanvasBoard(resolved.path);
       // board_write は elements しか扱わないため、既存 scene に埋め込み画像
       // (files) があれば引き継ぐ（そのまま上書きすると人間が貼り付けた画像が
       // 消えてしまう）。壊れた既存 scene は無視して files 無しで進める。
@@ -839,7 +815,7 @@ export async function startServer(
       }
       const payload = files !== undefined ? { ...scene, files } : scene;
       const result = db.saveCanvasBoardScene(
-        resolved,
+        resolved.path,
         JSON.stringify(payload),
         existing?.revision ?? null
       );
