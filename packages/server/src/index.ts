@@ -791,9 +791,21 @@ export async function startServer(
   // ここでは BoardMcpDeps の実体（DB アダプタ + socket 通知）と起動のみ行う。
   const boardRegistry = new BoardSessionRegistry();
   const boardMcp = new BoardMcpServer();
+  // board deps に渡る worktreePath は registry 登録時のクライアント生値
+  // （realpath 未正規化）である。canvas:load / canvas:save /
+  // canvas:send-to-claude は全て resolveManagedWorktreePath（realpathSync
+  // ベース）で正規化してから canvas_boards の DB キー・canvasRoom を作る規約
+  // （commit 4d20706）なので、board deps も同じ関数を通さないと、symlink を
+  // 含むパス（/tmp→/private/tmp 等）で Claude が canvas_boards[P] に書いて
+  // room canvas:P に emit する一方、UI は canvas_boards[realpath(P)] を読み
+  // room canvas:realpath(P) に join するため図が UI に一切現れなくなる。
+  // realpathSync は冪等なので、Task 4 が realpath を register 済みでも二重
+  // 正規化にならない。未管理パス（null）の扱いも canvas:save と揃える。
   const boardDeps: BoardMcpDeps = {
     getBoardScene(worktreePath) {
-      const board = db.getCanvasBoard(worktreePath);
+      const resolved = resolveManagedWorktreePath(worktreePath);
+      if (!resolved) return { elements: [] };
+      const board = db.getCanvasBoard(resolved);
       if (!board?.scene) return { elements: [] };
       try {
         const parsed = JSON.parse(board.scene) as { elements?: unknown[] };
@@ -803,11 +815,17 @@ export async function startServer(
       }
     },
     saveBoardScene(worktreePath, scene) {
+      // canvas:save と同じく未管理/実在しないパスへの書き込みは拒否する。
+      // 例外は MCP tool 側の catch で呼び出し元 (Claude) にエラーとして伝わる。
+      const resolved = resolveManagedWorktreePath(worktreePath);
+      if (!resolved) {
+        throw new Error("board scene の保存先 worktree が見つかりません");
+      }
       // canvas:save と同じ CAS（楽観ロック）規則に従う。直前の revision を
       // baseRevision として渡し、他クライアントの新しい変更を古い scene で
       // 上書きしないようにする。衝突時は例外を投げ、MCP tool 側の catch で
       // 呼び出し元 (Claude) にエラーとして伝える。
-      const existing = db.getCanvasBoard(worktreePath);
+      const existing = db.getCanvasBoard(resolved);
       // board_write は elements しか扱わないため、既存 scene に埋め込み画像
       // (files) があれば引き継ぐ（そのまま上書きすると人間が貼り付けた画像が
       // 消えてしまう）。壊れた既存 scene は無視して files 無しで進める。
@@ -821,7 +839,7 @@ export async function startServer(
       }
       const payload = files !== undefined ? { ...scene, files } : scene;
       const result = db.saveCanvasBoardScene(
-        worktreePath,
+        resolved,
         JSON.stringify(payload),
         existing?.revision ?? null
       );
@@ -832,9 +850,13 @@ export async function startServer(
       }
     },
     notifyUpdated(worktreePath) {
-      // canvas:save / canvas:send-to-claude と同じ room 配信にする
+      // canvas:save / canvas:send-to-claude と同じ room（正規化済みパス）へ配信する
       // (load 済みクライアントだけに worktree の絶対パスが渡る範囲を限定する)
-      io.to(canvasRoom(worktreePath)).emit("canvas:updated", { worktreePath });
+      const resolved = resolveManagedWorktreePath(worktreePath);
+      if (!resolved) return;
+      io.to(canvasRoom(resolved)).emit("canvas:updated", {
+        worktreePath: resolved,
+      });
     },
   };
   // 永続化ポート（C-B3 の ark-beacon MCP と同型）。前回 bind したポートに
