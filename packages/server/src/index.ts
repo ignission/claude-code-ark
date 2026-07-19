@@ -39,6 +39,11 @@ import {
 import { authManager } from "./lib/auth.js";
 import { beaconManager } from "./lib/beacon-manager.js";
 import {
+  type BoardMcpDeps,
+  BoardMcpServer,
+  BoardSessionRegistry,
+} from "./lib/board-mcp-server.js";
+import {
   buildTunnelEntries,
   collectBridgeSessions,
   collectGridSnapshots,
@@ -778,6 +783,67 @@ export async function startServer(
 
   // Apply Socket.IO authentication middleware
   io.use(authManager.socketMiddleware());
+
+  // ===== セッションボード MCP サーバー (board_write ツール) =====
+  // 1 プロセスに 1 インスタンスで良く、worktree ごとの区別は
+  // BoardSessionRegistry の bearer token 解決で行う（セッション起動時の
+  // register/unregister は Task 4 で SessionOrchestrator 側に配線する）。
+  // ここでは BoardMcpDeps の実体（DB アダプタ + socket 通知）と起動のみ行う。
+  const boardRegistry = new BoardSessionRegistry();
+  const boardMcp = new BoardMcpServer();
+  const boardDeps: BoardMcpDeps = {
+    getBoardScene(worktreePath) {
+      const board = db.getCanvasBoard(worktreePath);
+      if (!board?.scene) return { elements: [] };
+      try {
+        const parsed = JSON.parse(board.scene) as { elements?: unknown[] };
+        return { elements: parsed.elements ?? [] };
+      } catch {
+        return { elements: [] };
+      }
+    },
+    saveBoardScene(worktreePath, scene) {
+      // canvas:save と同じ CAS（楽観ロック）規則に従う。直前の revision を
+      // baseRevision として渡し、他クライアントの新しい変更を古い scene で
+      // 上書きしないようにする。衝突時は例外を投げ、MCP tool 側の catch で
+      // 呼び出し元 (Claude) にエラーとして伝える。
+      const existing = db.getCanvasBoard(worktreePath);
+      // board_write は elements しか扱わないため、既存 scene に埋め込み画像
+      // (files) があれば引き継ぐ（そのまま上書きすると人間が貼り付けた画像が
+      // 消えてしまう）。壊れた既存 scene は無視して files 無しで進める。
+      let files: unknown;
+      if (existing?.scene) {
+        try {
+          files = (JSON.parse(existing.scene) as { files?: unknown }).files;
+        } catch {
+          files = undefined;
+        }
+      }
+      const payload = files !== undefined ? { ...scene, files } : scene;
+      const result = db.saveCanvasBoardScene(
+        worktreePath,
+        JSON.stringify(payload),
+        existing?.revision ?? null
+      );
+      if (!result.ok) {
+        throw new Error(
+          "board scene の保存に失敗しました（他クライアントとの競合）"
+        );
+      }
+    },
+    notifyUpdated(worktreePath) {
+      // canvas:save / canvas:send-to-claude と同じ room 配信にする
+      // (load 済みクライアントだけに worktree の絶対パスが渡る範囲を限定する)
+      io.to(canvasRoom(worktreePath)).emit("canvas:updated", { worktreePath });
+    },
+  };
+  // 永続化ポート（Task 5 で settings に保存される想定）。未設定なら ephemeral 起動。
+  const savedBoardMcpPort = db.getSetting("board_mcp_port");
+  const boardMcpPort =
+    typeof savedBoardMcpPort === "number" && Number.isInteger(savedBoardMcpPort)
+      ? savedBoardMcpPort
+      : undefined;
+  await boardMcp.start(boardDeps, boardRegistry, { port: boardMcpPort });
 
   // BeaconにArk操作の依存を注入（MCPツールで利用）
   beaconManager.configure({
@@ -4014,6 +4080,7 @@ export async function startServer(
     sessionOrchestrator.cleanup();
     beaconManager.cleanup();
     browserManager.cleanup();
+    boardMcp.stop();
     if (activeTunnel) {
       try {
         activeTunnel.stop();
