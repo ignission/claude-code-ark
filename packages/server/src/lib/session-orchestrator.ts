@@ -126,6 +126,7 @@ export class SessionOrchestrator extends EventEmitter {
     const port = this.boardMcp?.getPort() ?? null;
     if (port === null || !this.boardRegistry) {
       tmuxManager.setClaudeMcpConfigPath(null);
+      tmuxManager.setClaudeAppendSystemPrompt(null);
       return null;
     }
     const token = randomBytes(24).toString("hex");
@@ -156,6 +157,14 @@ export class SessionOrchestrator extends EventEmitter {
       { mode: 0o600 }
     );
     tmuxManager.setClaudeMcpConfigPath(cfgPath);
+    // 図解要求でモデルが board_write を呼ぶよう促す（description だけでは弱いため）。
+    tmuxManager.setClaudeAppendSystemPrompt(
+      "あなたはこのセッションのボード(Excalidraw)に図を描ける board_write ツールを持っている。" +
+        "ユーザーが「図解して」「図で説明して」「ボードに描いて」「フロー図/構成図にして」等、" +
+        "図解・作図・可視化・図示を求めたら、チャットに mermaid や ASCII 図を出すのではなく、" +
+        "必ず board_write ツールでこのセッションのボードに図を描くこと。既存の図に足すときは " +
+        "mode=append、全て描き直す明示要求のときだけ mode=replace を使う。"
+    );
     return { token, cfgPath };
   }
 
@@ -166,6 +175,7 @@ export class SessionOrchestrator extends EventEmitter {
    */
   private discardBoardMcpConfig(cfgPath: string): void {
     tmuxManager.setClaudeMcpConfigPath(null);
+    tmuxManager.setClaudeAppendSystemPrompt(null);
     try {
       fs.unlinkSync(cfgPath);
     } catch {

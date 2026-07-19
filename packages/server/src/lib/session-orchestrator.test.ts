@@ -27,6 +27,7 @@ vi.mock("./tmux-manager.js", async () => {
     sendSpecialKey = vi.fn();
     capturePane = vi.fn();
     setClaudeMcpConfigPath = vi.fn();
+    setClaudeAppendSystemPrompt = vi.fn();
   }
   const tmuxManager = new TmuxManagerStub();
   // 複数の SessionOrchestrator インスタンス（各testで生成）が listener を追加するため

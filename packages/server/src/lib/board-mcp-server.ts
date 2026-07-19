@@ -115,7 +115,7 @@ export function createBoardMcpServer(
     "board_write",
     {
       description:
-        "ユーザーがこのセッションのボードへの図解を求めたときに、ボードに図を描く。elements は簡略スキーマ: " +
+        "ユーザーが図解・作図・可視化・フロー図/構成図などを求めたら、チャットに mermaid や ASCII 図を書かず、必ずこのツールでこのセッションのボードに図を描くこと。elements は簡略スキーマ: " +
         '{type:"rect"|"ellipse"|"diamond",id,x,y,w,h,text?,color?} / {type:"text",id,x,y,text,color?} / {type:"arrow",id,from,to,label?}。' +
         "arrow の from/to は同じ呼び出し内のシェイプ id を指す。mode=append(既定,追記) / replace(全置換,ユーザーが明示要求した時のみ)。座標は左上原点・px。",
       inputSchema: {
