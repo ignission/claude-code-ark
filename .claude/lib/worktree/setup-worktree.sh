@@ -7,8 +7,15 @@
 #   - branch が既存ならそれを使う、無ければ origin/main から新規作成
 #   - git fetch 失敗時は即エラー（意図しないコミット混入の温床になるため）
 
+# sibling lib は CLAUDE_PROJECT_DIR からの絶対パスで source する。
+# zsh で source した場合 BASH_SOURCE は未定義 ($0 も "zsh") のため self-locate は
+# 使えない。未設定なら fail loud にする (flow / flow-x は source 前に必ず設定する)。
+if [ -z "${CLAUDE_PROJECT_DIR:-}" ]; then
+  echo "ERROR: CLAUDE_PROJECT_DIR が未設定です (setup-worktree.sh は flow context から source してください)" >&2
+  return 1 2>/dev/null || exit 1
+fi
 # shellcheck source=./compute-worktree-path.sh
-source "$(dirname "${BASH_SOURCE[0]}")/compute-worktree-path.sh"
+source "$CLAUDE_PROJECT_DIR/.claude/lib/worktree/compute-worktree-path.sh"
 
 # 引数:
 #   $1 main_root   main worktree の絶対パス
