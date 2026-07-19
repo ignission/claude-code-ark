@@ -118,7 +118,10 @@ EOF
 #                 再起動を拒否する。一方 kpi 完全削除は --kpi 集計を空にするので
 #                 history file への append で両立)
 #      - "resumable": progress / kpi / context を残す。failure / timeout / poll-error で
-#                     使用。deploy 失敗の調査と /flow --resume 継続を可能にする
+#                     使用。**「/flow --resume で run を継続できる」という意味ではない**
+#                     (terminal は phase=done を記録するため --resume は STEP 0 で halt
+#                     する)。目的は deploy 失敗の調査用に state を残すこと (mode 名は
+#                     flow 系 lib 共通の歴史的名称として維持)
 # 仕様:
 #   - scope_key は whitelist `^[A-Za-z0-9_-]+$` のみ許容 (glob meta 文字 * ? [ ] /
 #     . 空白 等を全て拒否)。ark の SCOPE_KEY (work_id) は元から whitelist 内
@@ -313,10 +316,12 @@ cleanup_flow_state_files() {
            _cleanup_archive_kpi_to_history _cleanup_do_final_delete 2>/dev/null
 
   # codex-gate ログは atomic write の対象外で writer と race しないので lock 外で OK。
-  # 両 mode で削除 (履歴のみ)。
+  # 両 mode で削除 (履歴のみ)。`.txt.final` (codex --output-last-message の最終
+  # メッセージ) も対象に含める (`*.txt` の glob には一致しないため個別指定)。
   # scope_key は上の whitelist で sanitization 済みなので find -name の glob 展開は safe。
   find "$base" -maxdepth 1 -type f \
-    -name "codex-gate-*-${scope_key}-*.txt" \
+    \( -name "codex-gate-*-${scope_key}-*.txt" \
+    -o -name "codex-gate-*-${scope_key}-*.txt.final" \) \
     -delete 2>/dev/null || true
 }
 
