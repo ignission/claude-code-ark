@@ -144,6 +144,20 @@ flow_loop_update '.active_hours = "0919"'
 assert_rc "区切り無しも fail-closed" 1 'flow_loop_within_active_hours'
 flow_loop_update '.active_hours = "09-99"'
 assert_rc "時刻範囲外 (99) も fail-closed" 1 'flow_loop_within_active_hours'
+# 日付跨ぎ (start > end) は「start 以降 または end 未満」として解釈する
+flow_loop_update '.active_hours = "00-24"'
+_NOW_H="$(date +%H)"
+flow_loop_update '.active_hours = "'"$_NOW_H"'-'"$_NOW_H"'"'  # 現在時-現在時 (同値) は範囲外
+assert_rc "start=end は常に範囲外" 1 'flow_loop_within_active_hours'
+# 現在時刻を必ず含む日付跨ぎ範囲 (現在時+1 → 現在時-…では複雑なので、跨ぎ判定の両側を直接検証)
+_H1=$(( (10#$_NOW_H + 1) % 24 )); _H1=$(printf '%02d' "$_H1")
+flow_loop_update '.active_hours = "'"$_H1"'-'"$_NOW_H"'"'
+# start=now+1 > end=now: 跨ぎ範囲 [now+1, 24) ∪ [0, now)。現在時 now はどちらにも入らない
+assert_rc "日付跨ぎ範囲で現在時刻が範囲外なら偽" 1 'flow_loop_within_active_hours'
+flow_loop_update '.active_hours = "'"$_NOW_H"'-'"$_H1"'"' 2>/dev/null || true
+# 通常範囲 [now, now+1) は現在時刻を含む… now=23 のとき end=00 で跨ぎ扱いになるが
+# 跨ぎ解釈 [23,24)∪[0,0) でも 23 時は真になるため両解釈で成立する
+assert_rc "現在時刻を含む範囲 (跨ぎ解釈含む) は真" 0 'flow_loop_within_active_hours'
 flow_loop_update '.active_hours = ""'
 
 # --- 新規着手予算 (日次) ---

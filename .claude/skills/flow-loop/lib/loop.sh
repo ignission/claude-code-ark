@@ -49,7 +49,7 @@ flow_loop_init() {
     '{wip_limit: 2, engine: "codex", pick_query: $q,
       active_hours: "", daily_budget: 3, picks_today: 0, pick_date: "",
       consecutive_halts: 0, last_tick_at: 0, created_at: $ts}' \
-    > "$FLOW_LOOP_JSON.tmp" && command mv "$FLOW_LOOP_JSON.tmp" "$FLOW_LOOP_JSON"
+    > "$FLOW_LOOP_JSON.$$.tmp" && command mv "$FLOW_LOOP_JSON.$$.tmp" "$FLOW_LOOP_JSON"
 }
 
 # read <jq_filter>
@@ -60,12 +60,13 @@ flow_loop_read() {
 
 # update <jq_expr> ── updated_at を自動更新し atomic に書き戻す。
 # command mv は zsh の `alias mv='mv -i'` を迂回するため (state-io.sh と同じ理由)。
+# 一時ファイル名は $$ 付きで一意にする (init と同様。固定名だと同時書き込みで競合する)。
 flow_loop_update() {
   [ -f "$FLOW_LOOP_JSON" ] || return 1
   jq --argjson ts "$(date +%s)" "(${1:?jq expr required}) | .updated_at = \$ts" "$FLOW_LOOP_JSON" \
-    > "$FLOW_LOOP_JSON.tmp" \
-    && command mv "$FLOW_LOOP_JSON.tmp" "$FLOW_LOOP_JSON" \
-    || { rm -f "$FLOW_LOOP_JSON.tmp"; return 1; }
+    > "$FLOW_LOOP_JSON.$$.tmp" \
+    && command mv "$FLOW_LOOP_JSON.$$.tmp" "$FLOW_LOOP_JSON" \
+    || { rm -f "$FLOW_LOOP_JSON.$$.tmp"; return 1; }
 }
 
 # kill switch (loop-stop ファイルの有無。stop=touch / start=rm は skill 手順が行う)
@@ -201,7 +202,13 @@ flow_loop_within_active_hours() {
     return 1
   fi
   hour="$(date +%H)"
-  [ "$((10#$hour))" -ge "$((10#$start))" ] && [ "$((10#$hour))" -lt "$((10#$end))" ]
+  # start > end は日付跨ぎ (例 "22-06" = 22時〜翌6時) として解釈する
+  local h="$((10#$hour))" s="$((10#$start))" e="$((10#$end))"
+  if [ "$s" -le "$e" ]; then
+    [ "$h" -ge "$s" ] && [ "$h" -lt "$e" ]
+  else
+    [ "$h" -ge "$s" ] || [ "$h" -lt "$e" ]
+  fi
 }
 
 # 1 日の新規着手予算の残数を返す。日付が変わればカウンタは自然リセット扱い。
