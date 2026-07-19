@@ -161,6 +161,10 @@ assert_eq "日付跨ぎの record_pick はカウンタを 1 から数え直す" 
 flow_loop_update 'del(.daily_budget, .picks_today, .pick_date, .active_hours)'
 assert_eq "フィールド欠落は既定予算 3 で解釈" "3" "$(flow_loop_pick_budget_left)"
 assert_rc "フィールド欠落の active_hours は常時可" 0 'flow_loop_within_active_hours'
+# 非空で数値でない daily_budget は fail-closed (残 0。設定ミスで自動着手が再開しない)
+flow_loop_update '.daily_budget = "off"'
+assert_eq "daily_budget 不正値は fail-closed (残 0)" "0" "$(flow_loop_pick_budget_left 2>/dev/null)"
+flow_loop_update '.daily_budget = 3'
 
 # --- detached codex の生存確認 ---
 assert_rc "自プロセスは alive" 0 'flow_loop_pid_alive "$$"'

@@ -132,7 +132,9 @@ EOF
 #     lock 取得失敗時は削除をスキップ (best-effort)
 #   - codex-gate ログと .new.* (atomic write 中間) は両モードで削除 (履歴のみ)
 cleanup_flow_state_files() {
-  local scope_key="$1"
+  # ${1:-} で受ける: 引数なし呼び出しを set -u の unbound エラーで即死させず、
+  # 下の空チェックの診断メッセージに到達させる
+  local scope_key="${1:-}"
   local mode="${2:-final}"
   if [ -z "$scope_key" ]; then
     echo "ERROR: cleanup_flow_state_files: scope_key が必要です" >&2
@@ -337,7 +339,8 @@ cleanup_flow_state_files() {
 #        phase=done を記録するため --resume は STEP 0 で halt する)。
 #        cleanup_flow_state_files の mode 名 (歴史的名称) と揃えるためこの名を維持
 cleanup_post_deploy() {
-  local scope_key="$1"
+  # ${1:-}: 引数なし呼び出しでも診断メッセージへ到達させる (cleanup_flow_state_files と同じ)
+  local scope_key="${1:-}"
   local mode="${2:-final}"
   if [ -z "$scope_key" ]; then
     echo "ERROR: cleanup_post_deploy: scope_key が必要です" >&2

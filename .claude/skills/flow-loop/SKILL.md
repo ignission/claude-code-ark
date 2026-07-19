@@ -94,7 +94,7 @@ phase は flow-x の run state (`progress.phase`)。async モードで park す�
 
 **重い前進は 1 tick に 1 run まで**: codex 終了後の P4→P7 継続・P2/P8 差し戻し・stale resume は時間がかかるため、1 tick では 1 run に留める。設計承認 → P3 detached 起動・マージ (P10→P11)・deploy tick などの軽い前進は複数 run 処理してよい。
 
-**abort 処理** (PR が Close された場合): ① Issue に「中止 (PR Close による)」をコメントし `in-progress` ラベルを外す (Issue は open のまま = 人間が振り直す。pick は in-progress 除外クエリなので、振り直すまで再 pick されない場合はラベル状態を確認する)。② state 回収 `cleanup_flow_state_files "$KEY" final` (`.claude/lib/cleanup.sh`)。③ worktree は**残置** (本プロジェクトの運用どおり人間が手動で `git worktree remove` する)。
+**abort 処理** (PR が Close された場合): ① Issue に「中止 (PR Close による)。再開する場合は loop-exclude ラベルを外してください」をコメントし、**`loop-exclude` ラベルを付与**した上で `in-progress` ラベルを外す (Issue は open のまま = 人間が振り直す。`in-progress` を外すだけだと既定 pick_query の条件に戻って**次 tick で即再 pick されてしまう**ため、loop-exclude で明示的に隔離する)。② state 回収 `cleanup_flow_state_files "$KEY" final` (`.claude/lib/cleanup.sh`)。③ worktree は**残置** (本プロジェクトの運用どおり人間が手動で `git worktree remove` する)。
 
 ## 安全装置
 

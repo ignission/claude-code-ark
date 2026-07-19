@@ -82,11 +82,24 @@ flow_loop_breaker_tripped() {
 # 回収条件: 所有 pid が死んでいる、または pid 不明かつ mtime が閾値超 (stale)。
 # 所有 pid が生存している限り mtime に関わらず回収しない (1h を超える正当な長時間 tick を
 # 横取りして二重実行になる事故を防ぐ)。
+#
+# 設計制約: tick は Claude が複数の Bash 呼び出しにまたがって実行するため、fd を保持し
+# 続ける flock は使えない (呼び出し間で fd が生きない)。mkdir + pid 記録 + 取得後検証で
+# 近似する。取得後検証 (pid read-back) により、reclaim レースで他プロセスに lock を
+# 奪われた側は取得失敗を自覚して撤退する。pid 書き込み直前の極小窓は残るが、tick 間隔
+# (分単位) に対して十分小さく、シングルユーザー運用では実害がない。
+
+# 取得後検証: lock の pid が自分であること (reclaim レースの敗者検出)
+_flow_loop_lock_owned_by_self() {
+  [ "$(cat "$FLOW_LOOP_LOCK/pid" 2>/dev/null || echo "")" = "$$" ]
+}
+
 flow_loop_lock() {
   mkdir -p "$FLOW_LOOP_STATE_DIR"
   if mkdir "$FLOW_LOOP_LOCK" 2>/dev/null; then
     printf '%s' "$$" > "$FLOW_LOOP_LOCK/pid" 2>/dev/null || true
-    return 0
+    _flow_loop_lock_owned_by_self && return 0
+    return 1
   fi
   local owner
   owner="$(cat "$FLOW_LOOP_LOCK/pid" 2>/dev/null || echo "")"
@@ -110,11 +123,21 @@ flow_loop_lock() {
     # 成功しないため、敗者はそのまま通常の mkdir 競争 (どちらか一方だけ成功) に戻る。
     local reclaim="$FLOW_LOOP_LOCK.reclaim.$$"
     if command mv "$FLOW_LOOP_LOCK" "$reclaim" 2>/dev/null; then
+      # mv した dir が本当に自分が stale 判定した旧 lock か検証してから捨てる。
+      # 別プロセスが先に reclaim → 新 lock を作った直後だと、その新 lock を
+      # 掴んでしまう可能性があるため、生存所有者の lock なら黙って返却する
+      local stolen_owner
+      stolen_owner="$(cat "$reclaim/pid" 2>/dev/null || echo "")"
+      case "$stolen_owner" in *[!0-9]*) stolen_owner="" ;; esac
+      if [ -n "$stolen_owner" ] && [ "$stolen_owner" != "$$" ] && kill -0 "$stolen_owner" 2>/dev/null; then
+        command mv "$reclaim" "$FLOW_LOOP_LOCK" 2>/dev/null || rm -rf "$reclaim"
+        return 1
+      fi
       rm -rf "$reclaim"
     fi
     if mkdir "$FLOW_LOOP_LOCK" 2>/dev/null; then
       printf '%s' "$$" > "$FLOW_LOOP_LOCK/pid" 2>/dev/null || true
-      return 0
+      _flow_loop_lock_owned_by_self && return 0
     fi
   fi
   return 1
@@ -182,11 +205,20 @@ flow_loop_within_active_hours() {
 }
 
 # 1 日の新規着手予算の残数を返す。日付が変わればカウンタは自然リセット扱い。
-# フィールド欠落 (旧 loop.json) は既定値 (daily_budget=3) で解釈する。
+# フィールド欠落 (旧 loop.json) は既定値 (daily_budget=3) で解釈するが、
+# **非空で数値でない値は fail-closed (残 0 + stderr にエラー)**: 自動着手を抑制する
+# 安全設定なので、設定ミスで既定値に戻って着手が再開する挙動を許さない (active_hours と同じ方針)。
 flow_loop_pick_budget_left() {
   local budget picks pdate today
   budget="$(flow_loop_read '.daily_budget // 3' 2>/dev/null)" || budget=3
-  case "$budget" in ''|null|*[!0-9]*) budget=3 ;; esac
+  case "$budget" in
+    ''|null) budget=3 ;;
+    *[!0-9]*)
+      echo "ERROR: daily_budget が数値ではありません: '$budget' (新規着手を停止します)" >&2
+      echo 0
+      return 0
+      ;;
+  esac
   today="$(date +%Y-%m-%d)"
   pdate="$(flow_loop_read '.pick_date // ""' 2>/dev/null)" || pdate=""
   picks="$(flow_loop_read '.picks_today // 0' 2>/dev/null)" || picks=0

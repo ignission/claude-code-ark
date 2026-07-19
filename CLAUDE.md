@@ -99,7 +99,7 @@ TerminalPane 単独表示は `?view=classic`)。エンジンは従来どおり t
 - **git push は必ずフォアグラウンドで実行する**（バックグラウンド実行するとpush完了前にCodeRabbit返信が送信されてしまう）
 - **CodeRabbitの1コメントに複数の修正ポイントが含まれる場合がある**。対応前に全ポイントを箇条書きにしてから実装に入ること
 - **コミット前に現在のブランチを確認する。** 意図したfeatureブランチにいることを検証してからコミットすること。mainや無関係なブランチへの誤コミットを防ぐ
-- **セルフレビュー禁止・全成果物Codexレビュー必須**。自分自身でレビューしてはならない。コード、設計ドキュメント、スキル定義、hook、CLAUDE.mdルール等、全ての成果物のレビューは `/codex review`（Codex CLI）に委任すること。`/pre-push-review` は既にCodexに委任済み
+- **セルフレビュー禁止・成果物は必ず「作った側と別の AI」がレビューする**。自分が実装した成果物を自分でレビューしてはならない。Claude が実装した場合のレビューは `/codex review`（Codex CLI）に委任する。**例外: `/flow-x`（役割逆転 skill）では codex が実装するため、レビューは Claude が担う** — この場合も「実装者 ≠ レビュアー」の原則は保たれている。push 前レビューは flow の P5 codex ゲート / flow-x の P5 Claude レビューが担う（旧 `/pre-push-review` skill は撤廃済み）
 
 ## 自走実装（flow / flow-x / flow-loop）
 
