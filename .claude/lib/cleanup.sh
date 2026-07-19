@@ -221,27 +221,30 @@ cleanup_flow_state_files() {
   }
 
   # 内部ヘルパー: final mode の state 削除本体。lock 内で呼ぶ。
-  # 順序が重要:
-  #   1. 既存 sentinel チェック (KPI 二重 archive 防止)
+  # 二段階コミット (sentinel の .archived フィールド) で順序を保証する:
+  #   1. 既存 sentinel が archived=true → 完了済み。state 削除のみ (KPI 二重 archive 防止)
   #   2. branch を progress.json から読む (削除前)
-  #   3. done sentinel を書く (state 削除前 → 「state も sentinel も無い窓」を作らない)
-  #   4. KPI archive → state ファイル一括削除
-  # この順序により、KPI archive 失敗時は全 state を残し (resume 可能)、並行 /flow から
-  # 見ると常に state または sentinel のどちらかが存在する (race で「新規 run」扱いに
-  # なる窓を消す)。
+  #   3. done sentinel を archived=false で書く (state 削除前 → 「state も sentinel も
+  #      無い窓」を作らない)
+  #   4. KPI archive → sentinel を archived=true に更新 → state ファイル一括削除
+  # sentinel 書き込み直後 (archive 前) にクラッシュしても、sentinel は archived=false の
+  # ままなので次回実行は通常 path を再走し KPI が失われない (「sentinel の存在 = archive
+  # 済み」と誤認して state を消す旧実装のクラッシュ窓を塞ぐ)。KPI archive 失敗時は全
+  # state を残し (resume 可能)、並行 /flow から見ると常に state または sentinel の
+  # どちらかが存在する (race で「新規 run」扱いになる窓を消す)。
   _cleanup_do_final_delete() {
-    # 既に sentinel が同 branch で存在 → 既に完了済み (前回の cleanup が
-    # KPI archive 成功 + sentinel 書き込み成功で抜けている)。再実行で
-    # KPI を二重 archive しないため early return する。
+    # sentinel が同 branch かつ archived=true で存在 → 完了済み (前回の cleanup が
+    # KPI archive まで成功して抜けている)。state を削除してリトライ完了。
     if [ -f "$base/flow-done-${scope_key}.json" ]; then
-      local existing_branch
+      local existing_branch existing_archived
       existing_branch=$(jq -r '.branch // ""' "$base/flow-done-${scope_key}.json" 2>/dev/null || echo "")
+      existing_archived=$(jq -r '.archived // false' "$base/flow-done-${scope_key}.json" 2>/dev/null || echo "false")
       local current_branch=""
       if [ -f "$base/flow-progress-${scope_key}.json" ]; then
         current_branch=$(jq -r '.branch // ""' "$base/flow-progress-${scope_key}.json" 2>/dev/null || echo "")
       fi
-      if [ -n "$existing_branch" ] && [ "$existing_branch" = "$current_branch" ]; then
-        # sentinel 既存 → archive 済み。state を削除してリトライ完了
+      if [ -n "$existing_branch" ] && [ "$existing_branch" = "$current_branch" ] \
+        && [ "$existing_archived" = "true" ]; then
         rm -f \
           "$base/flow-progress-${scope_key}.json" \
           "$base/flow-context-${scope_key}.json" \
@@ -260,28 +263,35 @@ cleanup_flow_state_files() {
     if [ -z "$sentinel_branch" ] && [ -f "$base/flow-done-${scope_key}.json" ]; then
       sentinel_branch=$(jq -r '.branch // ""' "$base/flow-done-${scope_key}.json" 2>/dev/null || echo "")
     fi
-    # 2. done sentinel を **KPI archive と state 削除の前に** 書く。
+    # 2. done sentinel を archived=false で **KPI archive と state 削除の前に** 書く。
     #    sentinel 書き込み失敗時は何もせず return → 次回リトライで再開可能。
     if ! jq -n \
         --arg scope "$scope_key" \
         --arg branch "$sentinel_branch" \
         --arg now "$(date +%s)" \
-        '{scope_key: $scope, branch: $branch, completed_at: ($now | tonumber), source: "cleanup_post_deploy(final)"}' \
+        '{scope_key: $scope, branch: $branch, completed_at: ($now | tonumber), source: "cleanup_post_deploy(final)", archived: false}' \
         > "$base/flow-done-${scope_key}.json" 2>/dev/null; then
       echo "WARNING: cleanup_flow_state_files: done sentinel 書き込み失敗 (/tmp 満杯 / 権限不足 等)、cleanup を中止 (KPI 未 archive、state 残置)" >&2
       rm -f "$base/flow-done-${scope_key}.json" 2>/dev/null
       return 0
     fi
-    # 3. KPI archive (sentinel 成功確認済みで再実行時は早期 return される)
+    # 3. KPI archive
     if ! _cleanup_archive_kpi_to_history; then
       echo "WARNING: cleanup_flow_state_files: KPI history append 失敗、cleanup を中止 (sentinel も削除して次回リトライで再 archive 可能に戻す)" >&2
-      # sentinel を残置すると次回リトライが冒頭 early-return path に入り、archive
-      # 未実行のまま state を削除して KPI が失われる。sentinel + state 両方残せば
-      # リトライ時に通常 path を再実行できる。
       rm -f "$base/flow-done-${scope_key}.json" 2>/dev/null
       return 0
     fi
-    # 4. state ファイル一括削除 (sentinel + archive 両方成功)
+    # 4. archive 成功を sentinel にコミット (archived=true)。この更新に失敗したら state を
+    #    残して中止する (次回は archived=false のまま通常 path を再走。archive の二重
+    #    append はこの失敗窓でのみ起こりうるが、KPI 消失より二重行の方が復旧可能)。
+    local _tmp_sentinel="$base/flow-done-${scope_key}.json.new.$$"
+    if ! jq '.archived = true' "$base/flow-done-${scope_key}.json" > "$_tmp_sentinel" 2>/dev/null \
+      || ! command mv "$_tmp_sentinel" "$base/flow-done-${scope_key}.json"; then
+      rm -f "$_tmp_sentinel" 2>/dev/null
+      echo "WARNING: cleanup_flow_state_files: sentinel の archived 更新に失敗、cleanup を中止 (state 残置)" >&2
+      return 0
+    fi
+    # 5. state ファイル一括削除 (sentinel + archive 両方成功)
     rm -f \
       "$base/flow-progress-${scope_key}.json" \
       "$base/flow-context-${scope_key}.json" \

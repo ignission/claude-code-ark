@@ -90,7 +90,14 @@ flow_loop_lock() {
   mtime="$(stat -c %Y "$FLOW_LOOP_LOCK" 2>/dev/null || stat -f %m "$FLOW_LOOP_LOCK" 2>/dev/null || echo "$now")"
   case "$mtime" in ''|*[!0-9]*) mtime="$now" ;; esac
   if [ $((now - mtime)) -ge "$FLOW_LOOP_LOCK_STALE_SECONDS" ]; then
-    rm -rf "$FLOW_LOOP_LOCK"
+    # stale 回収は rename (atomic) で勝者を 1 人に絞る。素の rm -rf だと、2 つの tick が
+    # 同時に stale を観測したとき、一方が取得し直した新 lock をもう一方が削除して
+    # 両者とも取得成功する二重実行レースがある。mv は同一パスに対して 1 プロセスしか
+    # 成功しないため、敗者はそのまま通常の mkdir 競争 (どちらか一方だけ成功) に戻る。
+    local reclaim="$FLOW_LOOP_LOCK.reclaim.$$"
+    if command mv "$FLOW_LOOP_LOCK" "$reclaim" 2>/dev/null; then
+      rm -rf "$reclaim"
+    fi
     mkdir "$FLOW_LOOP_LOCK" 2>/dev/null && return 0
   fi
   return 1

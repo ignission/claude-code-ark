@@ -109,7 +109,9 @@ fi
 
 # 単一 TARGET から WORK_ID と ISSUE_NUMBER を導出 (通常モード)
 if [[ "$TARGET" =~ ^#?([0-9]+)$ ]]; then
-  ISSUE_NUMBER="${BASH_REMATCH[1]}"
+  # zsh は =~ で BASH_REMATCH を設定しない ($match 配列)。set -u 下で未定義変数に
+  # ならないよう、キャプチャではなく文字列除去で数字部分を取る (bash/zsh 共通)
+  ISSUE_NUMBER="${TARGET#\#}"
   WORK_ID="issue-${ISSUE_NUMBER}"
 elif [ -n "$TARGET" ]; then
   # slug 形式: 英数 + ハイフンのみ許可

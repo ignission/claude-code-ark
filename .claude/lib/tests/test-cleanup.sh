@@ -234,6 +234,45 @@ cleanup_flow_state_files "OTHER-*" >/dev/null 2>&1 || true
 assert_file_present "glob 混入 scope_key で別ファイルが残ること" "$TMP_TEST_DIR/flow-progress-OTHER-1234567890ab.json"
 
 echo ""
+echo "--- cleanup_flow_state_files: sentinel 二段階コミット (クラッシュ回復) ---"
+# sentinel 書き込み後・KPI archive 前にクラッシュしたケースを再現:
+# archived=false の sentinel + state が残っている状態で final を再実行したとき、
+# 「archive 済み」と誤認して KPI を捨てず、archive してから削除すること
+CRASH_SCOPE="issue-666"
+echo '{"phase":"done","branch":"feature/issue-666/crash-test"}' > "$TMP_TEST_DIR/flow-progress-${CRASH_SCOPE}.json"
+echo '{"scope":"crash","deploy_status":"success","marker":"crash-recovery-kpi"}' > "$TMP_TEST_DIR/flow-kpi-${CRASH_SCOPE}.json"
+touch "$TMP_TEST_DIR/flow-context-${CRASH_SCOPE}.json"
+# クラッシュ時に残る sentinel (archived=false 相当。旧版の archived 無し sentinel も同義)
+echo '{"scope_key":"issue-666","branch":"feature/issue-666/crash-test","completed_at":1,"source":"cleanup_post_deploy(final)","archived":false}' \
+  > "$TMP_TEST_DIR/flow-done-${CRASH_SCOPE}.json"
+cleanup_flow_state_files "$CRASH_SCOPE" final
+TESTS=$((TESTS + 1))
+if grep -q 'crash-recovery-kpi' "$TMP_TEST_DIR/flow-kpi-history.jsonl" 2>/dev/null; then
+  PASSES=$((PASSES + 1))
+  echo -e "${GREEN}PASS${NC}: archived=false sentinel 残存時も KPI が history に archive される (旧版は消失)"
+else
+  FAILURES=$((FAILURES + 1))
+  echo -e "${RED}FAIL${NC}: archived=false sentinel 残存時に KPI が archive されず失われた"
+fi
+assert_file_absent "[crash-recovery] 再実行で state は削除される" "$TMP_TEST_DIR/flow-progress-${CRASH_SCOPE}.json"
+TESTS=$((TESTS + 1))
+if [ "$(jq -r '.archived' "$TMP_TEST_DIR/flow-done-${CRASH_SCOPE}.json" 2>/dev/null)" = "true" ]; then
+  PASSES=$((PASSES + 1))
+  echo -e "${GREEN}PASS${NC}: 完了後の sentinel は archived=true にコミットされる"
+else
+  FAILURES=$((FAILURES + 1))
+  echo -e "${RED}FAIL${NC}: sentinel の archived が true になっていない"
+fi
+# archived=true の sentinel での再実行は KPI を二重 archive しない
+HIST_LINES_BEFORE=$(wc -l < "$TMP_TEST_DIR/flow-kpi-history.jsonl" | tr -d ' ')
+echo '{"phase":"done","branch":"feature/issue-666/crash-test"}' > "$TMP_TEST_DIR/flow-progress-${CRASH_SCOPE}.json"
+echo '{"scope":"crash","marker":"should-not-be-archived"}' > "$TMP_TEST_DIR/flow-kpi-${CRASH_SCOPE}.json"
+cleanup_flow_state_files "$CRASH_SCOPE" final
+assert_eq "[crash-recovery] archived=true での再実行は KPI を二重 archive しない" \
+  "$HIST_LINES_BEFORE" "$(wc -l < "$TMP_TEST_DIR/flow-kpi-history.jsonl" | tr -d ' ')"
+assert_file_absent "[crash-recovery] archived=true での再実行でも state は削除される" "$TMP_TEST_DIR/flow-progress-${CRASH_SCOPE}.json"
+
+echo ""
 echo "--- cleanup_post_deploy: cleanup_flow_state_files への委譲 ---"
 PD_SCOPE="issue-555"
 echo '{"phase":"done","branch":"feature/issue-555/pd-test"}' > "$TMP_TEST_DIR/flow-progress-${PD_SCOPE}.json"
