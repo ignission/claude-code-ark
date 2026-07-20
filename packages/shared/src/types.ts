@@ -374,6 +374,17 @@ export interface ServerToClientEvents {
   /** 他クライアントがボードを保存した通知（受信側は未編集なら再読込する） */
   "canvas:updated": (data: { worktreePath: string }) => void;
 
+  /**
+   * Claude が board_open を呼んだ。クライアントは図タブを開く。
+   * worktreePath は載せない。クライアントは session:list で既に持っている値を
+   * sessionId から引く（canvas 系と同じく、worktree の絶対パスが渡る範囲を
+   * 必要なクライアントに限定するため。index.ts:853-855 の方針に揃える）。
+   */
+  "diagram:open": (data: { sessionId: string; relPath: string }) => void;
+
+  /** 監視中の図ファイルが更新された。クライアントは再読込する */
+  "diagram:updated": (data: { worktreePath: string; relPath: string }) => void;
+
   // Session events（ManagedSessionを使用）
   "session:list": (sessions: ManagedSession[]) => void;
   "session:created": (session: ManagedSession) => void;
@@ -653,6 +664,18 @@ export interface ClientToServerEvents {
       error?: string;
     }) => void
   ) => void;
+
+  /** 図の購読開始（更新通知を受け取る）。1 セッション 1 図を想定 */
+  "diagram:subscribe": (data: {
+    worktreePath: string;
+    relPath: string;
+  }) => void;
+
+  /** 図の購読解除 */
+  "diagram:unsubscribe": (data: {
+    worktreePath: string;
+    relPath: string;
+  }) => void;
 
   /**
    * Claude Code が永続化する JSONL 履歴 (~/.claude/projects/<encoded-cwd>/*.jsonl)

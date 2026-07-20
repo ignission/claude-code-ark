@@ -59,6 +59,8 @@ import {
   WS_PORT_START,
 } from "./lib/constants.js";
 import { db } from "./lib/database.js";
+import { readDiagram } from "./lib/diagram-reader.js";
+import { diagramWatcher } from "./lib/diagram-watcher.js";
 import { getErrorMessage } from "./lib/errors.js";
 import { readFileFromWorktree } from "./lib/file-manager.js";
 import {
@@ -834,9 +836,23 @@ export async function startServer(
         worktreePath: resolved,
       });
     },
-    openDiagram(_worktreePath, _relPath) {
-      // 本実装は Task 7（socket 配線）で入れる
-      return { ok: false, error: "図を開く経路が未配線です" };
+    openDiagram(worktreePath, relPath) {
+      const resolved = resolveManagedWorktreeDetailed(worktreePath);
+      if (!resolved.ok) {
+        return {
+          ok: false,
+          error: `worktree を解決できません: ${resolved.reason}`,
+        };
+      }
+      const session = sessionOrchestrator.getSessionByWorktree(resolved.path);
+      if (!session) {
+        return {
+          ok: false,
+          error: "この worktree のセッションが見つかりません",
+        };
+      }
+      io.emit("diagram:open", { sessionId: session.id, relPath });
+      return { ok: true };
     },
   };
   // 永続化ポート（C-B3 の ark-beacon MCP と同型）。前回 bind したポートに
@@ -1156,6 +1172,32 @@ export async function startServer(
     } catch {
       res.status(404).json({ error: "File not found" });
     }
+  });
+
+  // ===== 図解キャンバス配信API =====
+
+  app.get("/api/diagram", async (req, res) => {
+    const worktreePath = req.query.worktreePath;
+    const relPath = req.query.path;
+    if (typeof worktreePath !== "string" || typeof relPath !== "string") {
+      res.status(400).json({ error: "worktreePath と path が必要です" });
+      return;
+    }
+    const resolved = resolveManagedWorktreePath(worktreePath);
+    if (!resolved) {
+      res.status(403).json({ error: "管理外の worktree です" });
+      return;
+    }
+    const result = await readDiagram(resolved, relPath);
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    // 本文に meta CSP を注入済み。クライアントは srcDoc で描画するため
+    // ヘッダの CSP は当該文書に適用されない（判断4.2.1 の実測）
+    res.setHeader("Cache-Control", "no-store");
+    res.send(result.html);
   });
 
   // HTML をレンダリングして PNG スクリーンショットを返す
@@ -2422,6 +2464,43 @@ export async function startServer(
         );
         reply({ ok: true, persisted: false, error: getErrorMessage(error) });
       }
+    });
+
+    // ===== 図解キャンバス（board_open による表示 + 更新監視） =====
+    const diagramUnsubs = new Map<string, () => void>();
+
+    socket.on("diagram:subscribe", ({ worktreePath, relPath }) => {
+      const resolved = resolveManagedWorktreePath(worktreePath);
+      if (!resolved) return;
+      // 空白連結だと path や relPath に空白がある場合に別購読と衝突するため
+      // JSON 配列表現をキーにする（jsonl-tail-manager.ts の keyOf と同じ方針）
+      const key = JSON.stringify([resolved, relPath]);
+      if (diagramUnsubs.has(key)) return;
+      // 非同期解決の前に key を予約する。予約しないと購読要求が連続したとき
+      // 両方が has() を通過し、watcher が二重に張られて片方が解除されず残る。
+      diagramUnsubs.set(key, () => {});
+      void readDiagram(resolved, relPath).then(result => {
+        // 先に unsubscribe が来ていたら watcher を張らない
+        if (!diagramUnsubs.has(key)) return;
+        if (!result.ok) {
+          diagramUnsubs.delete(key);
+          return;
+        }
+        const off = diagramWatcher.subscribe(result.absPath, () => {
+          socket.emit("diagram:updated", { worktreePath: resolved, relPath });
+        });
+        diagramUnsubs.set(key, off);
+      });
+    });
+
+    socket.on("diagram:unsubscribe", ({ worktreePath, relPath }) => {
+      const resolved = resolveManagedWorktreePath(worktreePath);
+      if (!resolved) return;
+      // 空白連結だと path や relPath に空白がある場合に別購読と衝突するため
+      // JSON 配列表現をキーにする（jsonl-tail-manager.ts の keyOf と同じ方針）
+      const key = JSON.stringify([resolved, relPath]);
+      diagramUnsubs.get(key)?.();
+      diagramUnsubs.delete(key);
     });
 
     // ===== JSONL tail（チャットビューの会話データソース） =====
@@ -3955,6 +4034,9 @@ export async function startServer(
       jsonlUnsubscribers.clear();
       // socket.leave は disconnect 時に Socket.IO が自動で行うので room の明示的な
       // クリーンアップは不要
+
+      for (const unsub of diagramUnsubs.values()) unsub();
+      diagramUnsubs.clear();
 
       forwardHandlers.forEach((handler, event) => {
         sessionOrchestrator.off(event, handler);
