@@ -1122,12 +1122,13 @@ git commit -m "feat(diagram): 図ファイルの更新監視を追加"
 `packages/shared/src/types.ts` の `ServerToClientEvents` に追加する。ServerToClientEvents に callback は作らない（既存規約）。
 
 ```ts
-  /** Claude が board_open を呼んだ。クライアントは図タブを開く */
-  "diagram:open": (data: {
-    sessionId: string;
-    worktreePath: string;
-    relPath: string;
-  }) => void;
+  /**
+   * Claude が board_open を呼んだ。クライアントは図タブを開く。
+   * worktreePath は載せない。クライアントは session:list で既に持っている値を
+   * sessionId から引く（canvas 系と同じく、worktree の絶対パスが渡る範囲を
+   * 必要なクライアントに限定するため。index.ts:853-855 の方針に揃える）。
+   */
+  "diagram:open": (data: { sessionId: string; relPath: string }) => void;
 
   /** 監視中の図ファイルが更新された。クライアントは再読込する */
   "diagram:updated": (data: { worktreePath: string; relPath: string }) => void;
@@ -1169,11 +1170,7 @@ import { diagramWatcher } from "./lib/diagram-watcher.js";
       if (!session) {
         return { ok: false, error: "この worktree のセッションが見つかりません" };
       }
-      io.emit("diagram:open", {
-        sessionId: session.id,
-        worktreePath: resolved.path,
-        relPath,
-      });
+      io.emit("diagram:open", { sessionId: session.id, relPath });
       return { ok: true };
     },
 ```
@@ -1214,10 +1211,20 @@ socket ハンドラを `canvas:load` の近くに足す。
     socket.on("diagram:subscribe", ({ worktreePath, relPath }) => {
       const resolved = resolveManagedWorktreePath(worktreePath);
       if (!resolved) return;
-      const key = `${resolved} ${relPath}`;
+      // 空白連結だと path や relPath に空白がある場合に別購読と衝突するため
+      // JSON 配列表現をキーにする（jsonl-tail-manager.ts の keyOf と同じ方針）
+      const key = JSON.stringify([resolved, relPath]);
       if (diagramUnsubs.has(key)) return;
+      // 非同期解決の前に key を予約する。予約しないと購読要求が連続したとき
+      // 両方が has() を通過し、watcher が二重に張られて片方が解除されず残る。
+      diagramUnsubs.set(key, () => {});
       void readDiagram(resolved, relPath).then(result => {
-        if (!result.ok) return;
+        // 先に unsubscribe が来ていたら watcher を張らない
+        if (!diagramUnsubs.has(key)) return;
+        if (!result.ok) {
+          diagramUnsubs.delete(key);
+          return;
+        }
         const off = diagramWatcher.subscribe(result.absPath, () => {
           socket.emit("diagram:updated", { worktreePath: resolved, relPath });
         });
@@ -1228,7 +1235,9 @@ socket ハンドラを `canvas:load` の近くに足す。
     socket.on("diagram:unsubscribe", ({ worktreePath, relPath }) => {
       const resolved = resolveManagedWorktreePath(worktreePath);
       if (!resolved) return;
-      const key = `${resolved} ${relPath}`;
+      // 空白連結だと path や relPath に空白がある場合に別購読と衝突するため
+      // JSON 配列表現をキーにする（jsonl-tail-manager.ts の keyOf と同じ方針）
+      const key = JSON.stringify([resolved, relPath]);
       diagramUnsubs.get(key)?.();
       diagramUnsubs.delete(key);
     });
@@ -1539,14 +1548,18 @@ import { DiagramPane } from "./DiagramPane";
 
 ```ts
   useEffect(() => {
-    const onOpen = (data: { sessionId: string; worktreePath: string; relPath: string }) => {
-      openDiagramTab(data.sessionId, data.worktreePath, data.relPath);
+    const onOpen = (data: { sessionId: string; relPath: string }) => {
+      // worktreePath はサーバーから送られない。既に保持している
+      // セッション情報から引く（絶対パスの配布範囲を広げないため）
+      const session = sessions.get(data.sessionId);
+      if (!session?.worktreePath) return;
+      openDiagramTab(data.sessionId, session.worktreePath, data.relPath);
     };
     socket.on("diagram:open", onOpen);
     return () => {
       socket.off("diagram:open", onOpen);
     };
-  }, [socket, openDiagramTab]);
+  }, [socket, sessions, openDiagramTab]);
 ```
 
 - [ ] **Step 5: 型チェックとテストを実行**
