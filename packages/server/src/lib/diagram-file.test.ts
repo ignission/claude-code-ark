@@ -1,11 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { DIAGRAM_CSP, extractModel, injectCsp } from "./diagram-file.js";
+import {
+  DIAGRAM_CSP,
+  extractModel,
+  injectCsp,
+  replaceModelBlock,
+} from "./diagram-file.js";
+import type { DiagramModel } from "./diagram-model.js";
 
 const MODEL = JSON.stringify({
   version: 1,
   title: "T",
   nodes: [{ id: "a", label: "A" }],
 });
+
+const MODEL_OBJ: DiagramModel = {
+  version: 1,
+  title: "T",
+  nodes: [{ id: "a", label: "A" }],
+  edges: [],
+  groups: [],
+};
 
 function page(body: string, head = ""): string {
   return `<!doctype html><html><head>${head}</head><body>${body}</body></html>`;
@@ -113,5 +127,90 @@ describe("injectCsp", () => {
     expect(out).not.toContain("default-src *");
     // Ark の CSP だけが残るべき
     expect(out.match(/http-equiv=.*Content-Security-Policy/g)).toHaveLength(1);
+  });
+});
+
+describe("replaceModelBlock", () => {
+  it("モデルブロックが新しい内容に差し替わる", () => {
+    const html = page(
+      `<script type="application/json" id="ark-diagram-model">${MODEL}</script><div>図</div>`
+    );
+    const nextModel: DiagramModel = {
+      ...MODEL_OBJ,
+      nodes: [{ id: "a", label: "A2" }],
+    };
+
+    const result = replaceModelBlock(html, nextModel);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.html).toContain('"label": "A2"');
+      expect(result.html).not.toContain('"label": "A"');
+    }
+  });
+
+  it("投影（DOM）部分は変わらない", () => {
+    const html = page(
+      `<script type="application/json" id="ark-diagram-model">${MODEL}</script><div class="entity" data-model-id="a">A</div>`
+    );
+    const nextModel: DiagramModel = {
+      ...MODEL_OBJ,
+      nodes: [{ id: "a", label: "A2" }],
+    };
+
+    const result = replaceModelBlock(html, nextModel);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.html).toContain(
+        '<div class="entity" data-model-id="a">A</div>'
+      );
+    }
+  });
+
+  it("モデルブロックが無ければエラーを返す", () => {
+    const result = replaceModelBlock(page("<div>図だけ</div>"), MODEL_OBJ);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("ark-diagram-model");
+  });
+
+  it("差し替え後の HTML を extractModel で読むと新モデルが取れる（往復）", () => {
+    const html = page(
+      `<script type="application/json" id="ark-diagram-model">${MODEL}</script><div>図</div>`
+    );
+    const nextModel: DiagramModel = {
+      ...MODEL_OBJ,
+      nodes: [{ id: "a", label: "A2" }],
+    };
+
+    const replaced = replaceModelBlock(html, nextModel);
+    expect(replaced.ok).toBe(true);
+    if (!replaced.ok) return;
+
+    const extracted = extractModel(replaced.html);
+    expect(extracted.ok).toBe(true);
+    if (extracted.ok) expect(extracted.model.nodes[0]?.label).toBe("A2");
+  });
+
+  it("属性の順序が逆でも差し替えられる", () => {
+    const html = page(
+      `<script id="ark-diagram-model" type="application/json">${MODEL}</script>`
+    );
+
+    const result = replaceModelBlock(html, {
+      ...MODEL_OBJ,
+      nodes: [{ id: "a", label: "A2" }],
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("type=application/json が無いブロックは差し替え対象にしない", () => {
+    const html = page(`<script id="ark-diagram-model">${MODEL}</script>`);
+
+    const result = replaceModelBlock(html, MODEL_OBJ);
+
+    expect(result.ok).toBe(false);
   });
 });

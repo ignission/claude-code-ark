@@ -59,6 +59,9 @@ import {
   WS_PORT_START,
 } from "./lib/constants.js";
 import { db } from "./lib/database.js";
+import { describeModelDiff } from "./lib/diagram-diff.js";
+import { replaceModelBlock } from "./lib/diagram-file.js";
+import { parseDiagramModel } from "./lib/diagram-model.js";
 import { resolveDiagramPath } from "./lib/diagram-path.js";
 import { readDiagram } from "./lib/diagram-reader.js";
 import { diagramWatcher } from "./lib/diagram-watcher.js";
@@ -2180,6 +2183,134 @@ export async function startServer(
       const key = JSON.stringify([resolved, relPath]);
       diagramUnsubs.get(key)?.();
       diagramUnsubs.delete(key);
+    });
+
+    /**
+     * 図の編集結果を保存し、意味差分を会話へ還流する。
+     *
+     * html のサイズ上限（無制限だとメモリを一気に確保してしまう）。
+     * 2MB は .diagram.html が意味モデル + 軽量な HTML 投影であるという
+     * 前提（画像等の埋め込みは想定しない）に基づく余裕を持った上限。
+     */
+    const DIAGRAM_SUBMIT_MAX_HTML_BYTES = 2 * 1024 * 1024;
+
+    socket.on("diagram:submit", async (data: unknown, callback: unknown) => {
+      // ack callback は外部入力なので関数であることを検証してから呼ぶ
+      // （slash:list と同じ方針）
+      if (typeof callback !== "function") return;
+      const reply = callback as (response: {
+        ok: boolean;
+        sent?: string[];
+        error?: string;
+      }) => void;
+
+      // payload は外部入力。分割代入前に型を検証しないと、引数なし emit や
+      // null/不正形状の payload でハンドラ内 throw → プロセスごと落ちる
+      // （socket.io の同期ハンドラ内例外は uncaughtException になる）。
+      const d = data as {
+        sessionId?: unknown;
+        worktreePath?: unknown;
+        relPath?: unknown;
+        model?: unknown;
+        html?: unknown;
+      } | null;
+      if (
+        !d ||
+        typeof d !== "object" ||
+        typeof d.sessionId !== "string" ||
+        typeof d.worktreePath !== "string" ||
+        typeof d.relPath !== "string" ||
+        typeof d.html !== "string"
+      ) {
+        reply({ ok: false, error: "不正なリクエストです" });
+        return;
+      }
+      const { sessionId, worktreePath, relPath, model, html } = d;
+
+      try {
+        const resolved = resolveManagedWorktreePath(worktreePath);
+        if (!resolved) {
+          reply({ ok: false, error: "worktree を解決できません" });
+          return;
+        }
+
+        // 現在のファイルを読み、差分の基準となる旧モデルを得る
+        // （resolveDiagramPath の TOCTOU 対策込みの検証も兼ねる）
+        const current = await readDiagram(resolved, relPath);
+        if (!current.ok) {
+          reply({ ok: false, error: current.error });
+          return;
+        }
+
+        // 受け取ったモデルを検証する。不正なら保存しない。
+        // model は unknown（構造化された JS 値。iframe からの
+        // postMessage は structured clone のため文字列ではない）なので、
+        // parseDiagramModel（JSON 文字列を受け取る）へ渡す前に文字列化する。
+        // undefined/関数等は JSON.stringify が undefined を返すため、
+        // その場合はモデル未指定として弾く。
+        const modelJson = JSON.stringify(model);
+        if (modelJson === undefined) {
+          reply({ ok: false, error: "モデルが指定されていません" });
+          return;
+        }
+        const parsed = parseDiagramModel(modelJson);
+        if (!parsed.ok) {
+          reply({ ok: false, error: parsed.error });
+          return;
+        }
+
+        if (Buffer.byteLength(html, "utf-8") > DIAGRAM_SUBMIT_MAX_HTML_BYTES) {
+          reply({ ok: false, error: "図のサイズが大きすぎます（上限 2MB）" });
+          return;
+        }
+
+        // html 内のモデルブロック（クライアントが送ってくる html 内のブロック
+        // は編集前の古い JSON のまま）を最新モデルで差し替える。DOM 側は
+        // 変更しない。
+        const replaced = replaceModelBlock(html, parsed.model);
+        if (!replaced.ok) {
+          reply({ ok: false, error: replaced.error });
+          return;
+        }
+
+        const pathResolved = resolveDiagramPath(resolved, relPath);
+        if (!pathResolved.ok) {
+          reply({ ok: false, error: pathResolved.error });
+          return;
+        }
+        await fs.promises.writeFile(
+          pathResolved.absPath,
+          replaced.html,
+          "utf-8"
+        );
+
+        // 意味差分を組み立てて会話へ還流する。文面は describeModelDiff の
+        // 出力だけで組む（html の中身などクライアント由来の文字列は
+        // 混ぜない = 注入対策）。変更が無ければ送信しない。
+        const sent = describeModelDiff(current.model, parsed.model);
+        if (sent.length > 0) {
+          const message = `図を編集しました（${relPath}）:\n${sent
+            .map(line => `- ${line}`)
+            .join("\n")}`;
+          try {
+            sessionOrchestrator.sendMessage(sessionId, message);
+          } catch (error) {
+            console.error(
+              "[Diagram] sendMessage failed:",
+              getErrorMessage(error)
+            );
+            reply({
+              ok: false,
+              error: `図は保存しましたが、セッションへの通知に失敗しました: ${getErrorMessage(error)}`,
+            });
+            return;
+          }
+        }
+
+        reply({ ok: true, sent });
+      } catch (error) {
+        reply({ ok: false, error: getErrorMessage(error) });
+      }
     });
 
     // ===== JSONL tail（チャットビューの会話データソース） =====

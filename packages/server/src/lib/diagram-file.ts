@@ -10,7 +10,11 @@
  * 外部送信を止めるには本文に meta を差し込む必要がある。
  */
 
-import { type ParseResult, parseDiagramModel } from "./diagram-model.js";
+import {
+  type DiagramModel,
+  type ParseResult,
+  parseDiagramModel,
+} from "./diagram-model.js";
 
 export const MODEL_SCRIPT_ID = "ark-diagram-model";
 
@@ -42,6 +46,48 @@ export function extractModel(html: string): ParseResult {
     ok: false,
     error: `モデルブロックが見つかりません（<script type="application/json" id="${MODEL_SCRIPT_ID}">）`,
   };
+}
+
+export type ReplaceModelResult =
+  | { ok: true; html: string }
+  | { ok: false; error: string };
+
+/**
+ * html 内のモデル埋め込みブロック（<script type="application/json"
+ * id="ark-diagram-model">）の中身だけを model で差し替える。投影（DOM）側は
+ * 一切変更しない。
+ *
+ * ハーネス（diagram-harness.ts）はモデル編集を state.model 側だけに反映し、
+ * DOM 上の script タグは書き戻さない。そのためクライアントから届く html 内の
+ * モデルブロックは編集前の古い JSON のままであることがある。保存前にここで
+ * 最新の model へ差し替え、「古いモデル + 新しい DOM」のずれを防ぐ。
+ *
+ * 対象ブロックの判定は extractModel と同じ規則（id 一致 + type 一致）にし、
+ * 書式（開始/終了タグの前後改行）も揃える。
+ */
+export function replaceModelBlock(
+  html: string,
+  model: DiagramModel
+): ReplaceModelResult {
+  let replaced = false;
+  const next = html.replace(
+    /<script\b([^>]*)>([\s\S]*?)<\/script>/gi,
+    (match: string, attrs: string) => {
+      if (replaced) return match; // 最初に一致したブロックだけを差し替える
+      if (!new RegExp(`id\\s*=\\s*["']${MODEL_SCRIPT_ID}["']`, "i").test(attrs))
+        return match;
+      if (!/type\s*=\s*["']application\/json["']/i.test(attrs)) return match;
+      replaced = true;
+      return `<script${attrs}>\n${JSON.stringify(model, null, 2)}\n</script>`;
+    }
+  );
+  if (!replaced) {
+    return {
+      ok: false,
+      error: `モデルブロックが見つかりません（<script type="application/json" id="${MODEL_SCRIPT_ID}">）`,
+    };
+  }
+  return { ok: true, html: next };
 }
 
 /** 既存の CSP meta を除去したうえで、Ark が管理する meta CSP を先頭に差し込む */
