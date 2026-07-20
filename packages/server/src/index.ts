@@ -834,6 +834,10 @@ export async function startServer(
         worktreePath: resolved,
       });
     },
+    openDiagram(_worktreePath, _relPath) {
+      // 本実装は Task 7（socket 配線）で入れる
+      return { ok: false, error: "図を開く経路が未配線です" };
+    },
   };
   // 永続化ポート（C-B3 の ark-beacon MCP と同型）。前回 bind したポートに
   // 再度 bind し直すことで、稼働中セッションの mcp-config の url を維持する。

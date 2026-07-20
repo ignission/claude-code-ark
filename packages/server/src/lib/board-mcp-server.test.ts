@@ -4,7 +4,11 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { BoardSessionRegistry, handleBoardWrite } from "./board-mcp-server.js";
+import {
+  BoardSessionRegistry,
+  handleBoardOpen,
+  handleBoardWrite,
+} from "./board-mcp-server.js";
 
 describe("BoardSessionRegistry", () => {
   it("register/resolve/unregister が機能する", () => {
@@ -65,5 +69,33 @@ describe("handleBoardWrite", () => {
     // 有効要素ゼロなら保存も通知もしない
     expect(deps.saveBoardScene).not.toHaveBeenCalled();
     expect(deps.notifyUpdated).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleBoardOpen", () => {
+  it("deps.openDiagram に worktreePath と相対パスを渡す", () => {
+    const openDiagram = vi.fn(() => ({ ok: true }));
+    const deps = { openDiagram } as never;
+
+    const res = handleBoardOpen(deps, "/wt", {
+      path: "docs/diagrams/a.diagram.html",
+    });
+
+    expect(openDiagram).toHaveBeenCalledWith(
+      "/wt",
+      "docs/diagrams/a.diagram.html"
+    );
+    expect(res.ok).toBe(true);
+  });
+
+  it("deps がエラーを返したらそのまま伝える", () => {
+    const deps = {
+      openDiagram: vi.fn(() => ({ ok: false, error: "見つかりません" })),
+    } as never;
+
+    const res = handleBoardOpen(deps, "/wt", { path: "a.diagram.html" });
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("見つかりません");
   });
 });

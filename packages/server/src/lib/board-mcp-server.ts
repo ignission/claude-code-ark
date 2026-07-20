@@ -52,6 +52,11 @@ export interface BoardMcpDeps {
   getBoardScene(worktreePath: string): { elements: unknown[] };
   saveBoardScene(worktreePath: string, scene: { elements: unknown[] }): void;
   notifyUpdated(worktreePath: string): void;
+  /** 図ファイルをボードペインで開かせる（B-0a）。失敗理由は呼び出し元に返す */
+  openDiagram(
+    worktreePath: string,
+    relPath: string
+  ): { ok: boolean; error?: string };
 }
 
 export interface BoardWriteInput {
@@ -95,6 +100,24 @@ export function handleBoardWrite(
   return { added: elements.length, total: merged.length, skipped };
 }
 
+export interface BoardOpenInput {
+  path: string;
+}
+
+export interface BoardOpenResult {
+  ok: boolean;
+  error?: string;
+}
+
+/** board_open の純ロジック（HTTP/MCP から分離してテスト可能にする）。 */
+export function handleBoardOpen(
+  deps: Pick<BoardMcpDeps, "openDiagram">,
+  worktreePath: string,
+  input: BoardOpenInput
+): BoardOpenResult {
+  return deps.openDiagram(worktreePath, input.path);
+}
+
 // board_write の zod schema。
 // SimpleElement は discriminated union だが、MCP スキーマとしては record で緩く受け、
 // 実際の検証・変換は expandElements（codec 側）に委譲する（不正/未知 type は skip される）。
@@ -134,6 +157,34 @@ export function createBoardMcpServer(
         return textResult(JSON.stringify(res));
       } catch (e) {
         return textResult(`board_write 失敗: ${getErrorMessage(e)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "board_open",
+    {
+      description:
+        "生成した図ファイル (docs/diagrams/*.diagram.html) をこのセッションのボードペインで開かせる。" +
+        "図を Write/Edit で書いた直後に呼ぶこと。path は worktree 相対で指定する。",
+      inputSchema: {
+        path: z
+          .string()
+          .describe(
+            "worktree 相対の図ファイルパス（例: docs/diagrams/purchase-flow.diagram.html）"
+          ),
+      },
+    },
+    async args => {
+      try {
+        const res = handleBoardOpen(deps, worktreePath, { path: args.path });
+        return textResult(
+          res.ok
+            ? JSON.stringify({ opened: args.path })
+            : `board_open 失敗: ${res.error ?? "不明なエラー"}`
+        );
+      } catch (e) {
+        return textResult(`board_open 失敗: ${getErrorMessage(e)}`);
       }
     }
   );
