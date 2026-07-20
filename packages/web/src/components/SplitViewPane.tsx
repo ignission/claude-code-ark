@@ -252,6 +252,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
             >
               <DiagramPane
                 socket={props.socket}
+                sessionId={props.session.id}
                 worktreePath={diagramTab.worktreePath}
                 relPath={diagramTab.relPath}
               />

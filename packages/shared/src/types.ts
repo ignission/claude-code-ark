@@ -634,6 +634,26 @@ export interface ClientToServerEvents {
   }) => void;
 
   /**
+   * 図の編集結果を保存し、意味差分を会話へ還流する。
+   * model は構造化モデル、html は投影（ハーネスと meta CSP を除いたもの）。
+   * 還流の文面はサーバーが model の差分から組む（iframe から散文は受け取らない）。
+   */
+  "diagram:submit": (
+    data: {
+      sessionId: string;
+      worktreePath: string;
+      relPath: string;
+      model: unknown;
+      html: string;
+    },
+    callback: (response: {
+      ok: boolean;
+      sent?: string[];
+      error?: string;
+    }) => void
+  ) => void;
+
+  /**
    * Claude Code が永続化する JSONL 履歴 (~/.claude/projects/<encoded-cwd>/*.jsonl)
    * を購読する。チャットビューの会話描画に使用する。
    */

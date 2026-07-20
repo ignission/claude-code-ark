@@ -13,10 +13,26 @@ import type { Socket } from "socket.io-client";
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 interface DiagramPaneProps {
+  sessionId: string;
   worktreePath: string;
   relPath: string;
   /** 未接続時は null。null の間は診断購読をスキップする */
   socket: TypedSocket | null;
+}
+
+/** ハーネス（diagram-harness.ts）が port 経由で送ってくるメッセージ */
+interface DiagramSubmitMessage {
+  type: "ark:diagram-submit";
+  model: unknown;
+  html: string;
+}
+
+function isDiagramSubmitMessage(data: unknown): data is DiagramSubmitMessage {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as { type?: unknown }).type === "ark:diagram-submit"
+  );
 }
 
 /**
@@ -33,14 +49,19 @@ function buildDiagramUrl(worktreePath: string, relPath: string): string {
 }
 
 export function DiagramPane({
+  sessionId,
   worktreePath,
   relPath,
   socket,
 }: DiagramPaneProps) {
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   // 進行中の fetch を追跡し、古いタブの結果が新しいタブを上書きしないようにする
   const abortControllerRef = useRef<AbortController | null>(null);
+  // ハーネスへ渡した MessageChannel の port1（親側）。再ロードのたびに
+  // 張り直すので、常に「今のロードに対応する port」だけを保持する。
+  const portRef = useRef<MessagePort | null>(null);
 
   const load = useCallback(async () => {
     // 前のリクエストをキャンセル。タブ切り替え時に古い fetch が
@@ -82,11 +103,19 @@ export function DiagramPane({
   }, [worktreePath, relPath]);
 
   // worktreePath / relPath 変更時は、前タブの内容が一瞬残らないよう
-  // 先にリセットしてから再取得する（HtmlViewerPane と同じ方針）
+  // 先にリセットしてから再取得する（HtmlViewerPane と同じ方針）。
+  // load は worktreePath / relPath の変化のたびに作り直される（useCallback の
+  // deps 参照）ため、この effect も同じタイミングで再実行される。cleanup で
+  // 古い iframe に紐づく port を閉じる（次の load で新しい iframe → 新しい
+  // port が張られる。閉じ忘れると古い port がぶら下がり続ける）。
   useEffect(() => {
     setHtml(null);
     setError(null);
     void load();
+    return () => {
+      portRef.current?.close();
+      portRef.current = null;
+    };
   }, [load]);
 
   // 図ファイルの更新監視。worktreePath / relPath が変わるたびに
@@ -114,6 +143,65 @@ export function DiagramPane({
     };
   }, []);
 
+  // ハーネスから port 経由で受け取った送信内容を socket:diagram:submit で
+  // サーバーへ中継する。ハンドラは次タスク（Task 4）でまだ未実装のため、
+  // ACK が返らずタイムアウトも無いが、それ自体は正常（Task 4 で解消する）。
+  const handleSubmit = useCallback(
+    (model: unknown, submittedHtml: string) => {
+      if (!socket) {
+        setSubmitError("サーバーに未接続のため送信できません");
+        return;
+      }
+      socket.emit(
+        "diagram:submit",
+        { sessionId, worktreePath, relPath, model, html: submittedHtml },
+        response => {
+          if (!response.ok) {
+            setSubmitError(response.error ?? "送信に失敗しました");
+            return;
+          }
+          setSubmitError(null);
+        }
+      );
+    },
+    [socket, sessionId, worktreePath, relPath]
+  );
+
+  // iframe のロード（初回表示 / worktreePath・relPath 変更 / diagram:updated
+  // による再読込のいずれも "load" イベントを起こす）のたびに MessageChannel を
+  // 新規に張り直し、port2 をハーネスへ渡す。ハーネス側も document 再生成のたびに
+  // submitPort を失うため、古い port を使い回すと繋がらない。
+  const handleIframeLoad = useCallback(
+    (e: React.SyntheticEvent<HTMLIFrameElement>) => {
+      const iframeWindow = e.currentTarget.contentWindow;
+      if (!iframeWindow) return;
+
+      // 前回の port が残っていれば閉じてから張り替える
+      portRef.current?.close();
+
+      const channel = new MessageChannel();
+      portRef.current = channel.port1;
+      channel.port1.onmessage = (event: MessageEvent) => {
+        if (!isDiagramSubmitMessage(event.data)) return;
+        handleSubmit(event.data.model, event.data.html);
+      };
+
+      // targetOrigin に "*" を使う理由:
+      // この iframe は sandbox="allow-scripts"（allow-same-origin 無し）+
+      // srcDoc なので不透明オリジンを持ち、event.origin は常に "null" になる
+      // （実測済み）。そのため postMessage 側も具体的な targetOrigin を
+      // 指定できない。ただし送信先は `iframeWindow`、つまりこの DiagramPane が
+      // 自分で srcDoc に書き込んだ文書そのものであり、宛先は window 参照の
+      // 時点で一意に特定できている（他のタブ/フレームに渡る余地が無い）。
+      // "*" は「誰でも受け取ってよい」という意味ではなく、
+      // 「相手のオリジン文字列を検証できない（検証不要）」という意味に限られる。
+      iframeWindow.postMessage({ type: "ark:diagram-init" }, "*", [
+        channel.port2,
+      ]);
+    },
+    [handleSubmit]
+  );
+
   if (error) {
     return (
       <div className="flex h-full items-center justify-center p-4 text-sm text-destructive">
@@ -129,11 +217,26 @@ export function DiagramPane({
     );
   }
   return (
-    <iframe
-      title={relPath}
-      srcDoc={html}
-      sandbox="allow-scripts"
-      className="h-full w-full border-0 bg-white"
-    />
+    <div className="relative flex h-full flex-col">
+      {submitError && (
+        <div className="flex shrink-0 items-start justify-between gap-2 border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <span className="flex-1">{submitError}</span>
+          <button
+            type="button"
+            className="shrink-0 text-xs underline"
+            onClick={() => setSubmitError(null)}
+          >
+            閉じる
+          </button>
+        </div>
+      )}
+      <iframe
+        title={relPath}
+        srcDoc={html}
+        sandbox="allow-scripts"
+        className="h-full w-full flex-1 border-0 bg-white"
+        onLoad={handleIframeLoad}
+      />
+    </div>
   );
 }
