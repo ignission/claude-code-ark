@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>サンプル</title>
+<style>
+  body { font-family: system-ui, sans-serif; background:#1a1b26; color:#c0caf5; padding:1.5rem; }
+  .entity { border:1px solid #2c2f42; border-radius:4px; margin-bottom:1rem; max-width:22rem; }
+  .entity h3 { margin:0; padding:.6rem .9rem; border-bottom:1px solid #2c2f42; font-size:.9rem; }
+  .entity ul { list-style:none; margin:0; padding:.4rem 0; }
+  .entity li { padding:.25rem .9rem; font-family:ui-monospace,monospace; font-size:.8rem; }
+  .rel { color:#7aa2f7; font-size:.8rem; }
+</style>
+</head>
+<body>
+<script type="application/json" id="ark-diagram-model">
+{
+  "version": 1,
+  "title": "サンプル",
+  "nodes": [
+    { "id": "order", "label": "Order", "kind": "entity",
+      "fields": [ { "id": "order_id", "label": "id" },
+                  { "id": "order_user_id", "label": "user_id" },
+                  { "id": "order_status", "label": "status" } ] },
+    { "id": "user", "label": "User", "kind": "entity",
+      "fields": [ { "id": "user_id", "label": "id" },
+                  { "id": "user_email", "label": "email" } ] }
+  ],
+  "edges": [ { "id": "e_order_user", "from": "order", "to": "user", "label": "belongs to" } ],
+  "groups": []
+}
+</script>
+
+<div class="entity" data-model-id="order">
+  <h3>Order</h3>
+  <ul>
+    <li data-model-id="order_id">id</li>
+    <li data-model-id="order_user_id">user_id</li>
+    <li data-model-id="order_status">status</li>
+  </ul>
+</div>
+<div class="entity" data-model-id="user">
+  <h3>User</h3>
+  <ul>
+    <li data-model-id="user_id">id</li>
+    <li data-model-id="user_email">email</li>
+  </ul>
+</div>
+<p class="rel" data-model-id="e_order_user">Order — belongs to → User</p>
+</body>
+</html>
