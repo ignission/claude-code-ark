@@ -153,21 +153,23 @@ export function useViewerTabs(
     []
   );
 
+  // diagram は openBoardTab と同じく右ペイン（SplitViewPane の DiagramPane）専属になった
+  // ため、ここでは sessionTabs への追加のみ行い、アクティブタブは変更しない（変更すると
+  // TerminalPane の表示対象が diagram タブになり、diagram を描画しない TerminalPane では
+  // 画面が空白になってしまう）。sessionTabs への追加自体は、SplitViewPane 側の
+  // 「diagram タブ数が増えたら右ペインを自動表示する」effect のトリガーとして必要。
   const openDiagramTab = useCallback(
     (sessionId: string, worktreePath: string, relPath: string) => {
-      // openCanvasTab と同じく、両方の setState を同じ updater 内に閉じ込める
-      // （L72-80 のコメントにある eager bailout タイミング依存の回帰を避けるため）
       setSessionTabs(prev => {
         const current = prev[sessionId] ?? [
           { type: "terminal" as const, id: "terminal" },
         ];
-        const { tabs, activeIndex } = addOrFocusDiagramTab(
+        const { tabs } = addOrFocusDiagramTab(
           current,
           worktreePath,
           relPath,
           `diagram-${Date.now()}`
         );
-        setSessionActiveTab(p => ({ ...p, [sessionId]: activeIndex }));
         return { ...prev, [sessionId]: tabs };
       });
     },

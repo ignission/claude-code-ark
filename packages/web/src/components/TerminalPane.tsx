@@ -9,10 +9,8 @@
  */
 
 import type {
-  ClientToServerEvents,
   ManagedSession,
   MessageShortcut,
-  ServerToClientEvents,
   SpecialKey,
   Worktree,
 } from "@ark/shared";
@@ -35,7 +33,6 @@ import {
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Socket } from "socket.io-client";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -52,7 +49,6 @@ import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useIsMobile } from "../hooks/useMobile";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { CanvasViewerPane } from "./CanvasViewerPane";
-import { DiagramPane } from "./DiagramPane";
 import { FileViewerPane } from "./FileViewerPane";
 import { HtmlViewerPane } from "./HtmlViewerPane";
 import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
@@ -104,8 +100,6 @@ export type ViewerTab =
     };
 
 interface TerminalPaneProps {
-  /** diagram タブの購読（diagram:subscribe 等）に使う。未接続時は null */
-  socket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
   session: ManagedSession;
   worktree: Worktree | undefined;
   repoName?: string;
@@ -134,7 +128,6 @@ interface TerminalPaneProps {
 }
 
 export function TerminalPane({
-  socket,
   session,
   worktree,
   repoName,
@@ -430,12 +423,12 @@ export function TerminalPane({
     { label: "/compact", cmd: "/compact" },
   ];
 
-  // board タブは右ペイン（SplitViewPane の CanvasPane）専属になったため、
-  // タブバーには表示しない。visibleTabIndexMap[表示用index] = 元のtabs配列index
+  // board / diagram タブは右ペイン（SplitViewPane の CanvasPane / DiagramPane）専属になった
+  // ため、タブバーには表示しない。visibleTabIndexMap[表示用index] = 元のtabs配列index
   const visibleTabIndexMap: number[] = [];
   const visibleTabs: ViewerTab[] = [];
   tabs.forEach((tab, i) => {
-    if (tab.type === "board") return;
+    if (tab.type === "board" || tab.type === "diagram") return;
     visibleTabIndexMap.push(i);
     visibleTabs.push(tab);
   });
@@ -619,19 +612,6 @@ export function TerminalPane({
               <CanvasViewerPane
                 mermaidCode={tab.mermaidCode}
                 title={tab.title}
-              />
-            </div>
-          );
-        })()}
-      {tabs[activeTabIndex]?.type === "diagram" &&
-        (() => {
-          const tab = tabs[activeTabIndex] as ViewerTab & { type: "diagram" };
-          return (
-            <div className="flex-1 min-h-0">
-              <DiagramPane
-                worktreePath={tab.worktreePath}
-                relPath={tab.relPath}
-                socket={socket}
               />
             </div>
           );
