@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>図解ハーネスの構成</title>
+<style>
+  :root {
+    --bg:#1a1b26; --fg:#c0caf5; --dim:#565f89; --line:#2c2f42; --card:#1e202b;
+    --blue:#7aa2f7; --green:#9ece6a; --amber:#e0af68; --violet:#bb9af7; --red:#f7768e;
+    --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; padding:1.25rem; background:var(--bg); color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+    font-size:13px; line-height:1.6;
+  }
+  h1 { font-family:var(--mono); font-size:.95rem; margin:0 0 .2rem; letter-spacing:-.01em; }
+  .sub { color:var(--dim); font-size:.72rem; margin:0 0 1.5rem; font-family:var(--mono); }
+  h2 {
+    font-family:var(--mono); font-size:.66rem; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--dim); margin:1.75rem 0 .7rem; padding-bottom:.3rem; border-bottom:1px solid var(--line);
+  }
+
+  /* ノード共通 */
+  .node {
+    background:var(--card); border:1px solid var(--line); border-radius:4px;
+    padding:.6rem .75rem; margin-bottom:.5rem;
+  }
+  .node .nm { font-family:var(--mono); font-weight:600; font-size:.8rem; color:var(--tone,var(--fg)); }
+  .node .ds { color:var(--dim); font-size:.72rem; margin-top:.2rem; }
+  .node .ds .m { font-family:var(--mono); }
+
+  /* kind ごとの見え方 */
+  [kind="step"]   { border-left:2px solid var(--tone,var(--line)); }
+  [kind="entity"] { border-radius:4px; }
+  [kind="asset"]  { border-style:dashed; }
+
+  .t-blue{--tone:var(--blue)} .t-green{--tone:var(--green)}
+  .t-amber{--tone:var(--amber)} .t-violet{--tone:var(--violet)} .t-red{--tone:var(--red)}
+
+  /* フロー: 縦一列 + 矢印 */
+  ol.flow { list-style:none; margin:0; padding:0; }
+  ol.flow > li { position:relative; }
+  ol.flow > li:not(:last-child)::after {
+    content:"▼"; display:block; color:var(--line);
+    font-size:.7rem; margin:-.15rem 0 .1rem .9rem;
+  }
+  .loop {
+    margin-top:.4rem; padding:.5rem .75rem; border:1px dashed var(--line);
+    border-radius:4px; color:var(--dim); font-size:.72rem;
+  }
+  .loop b { color:var(--blue); font-family:var(--mono); font-weight:600; }
+
+  /* 資産: 2列 */
+  ul.assets { list-style:none; margin:0; padding:0; display:grid; gap:.5rem;
+              grid-template-columns:repeat(auto-fit,minmax(15rem,1fr)); }
+  .num { font-family:var(--mono); font-variant-numeric:tabular-nums; color:var(--fg); }
+  .keep { color:var(--green); } .drop { color:var(--red); }
+  .tag { font-family:var(--mono); font-size:.66rem; }
+</style>
+</head>
+<body>
+
+<script type="application/json" id="ark-diagram-model">
+{
+  "version": 1,
+  "title": "図解ハーネスの構成",
+  "nodes": [
+    { "id": "claude", "label": "Claude", "kind": "step",
+      "fields": [ { "id": "claude_write", "label": "docs/diagrams/*.diagram.html を Write/Edit で書く" },
+                  { "id": "claude_open", "label": "board_open MCP ツールで開かせる" } ] },
+    { "id": "file", "label": "図ファイル", "kind": "step",
+      "fields": [ { "id": "file_model", "label": "モデル(JSON) と 投影(HTML) を1ファイルに埋め込む" },
+                  { "id": "file_git", "label": "git 管理下 — これが正" } ] },
+    { "id": "server", "label": "Ark server", "kind": "step",
+      "fields": [ { "id": "server_path", "label": "worktree 配下へ封じ込め + symlink 実体検証" },
+                  { "id": "server_csp", "label": "meta CSP を注入して外部送信を遮断" },
+                  { "id": "server_watch", "label": "fs.watch + 1秒 polling で更新検知" } ] },
+    { "id": "pane", "label": "右ペイン", "kind": "step",
+      "fields": [ { "id": "pane_iframe", "label": "sandbox iframe / 不透明オリジン" },
+                  { "id": "pane_reload", "label": "diagram:updated を受けて再投影" } ] },
+    { "id": "keep_mcp", "label": "BoardMcpServer", "kind": "asset",
+      "fields": [ { "id": "keep_mcp_n", "label": "245行 — HTTP / registry / 認証" } ] },
+    { "id": "keep_token", "label": "board token ライフサイクル", "kind": "asset",
+      "fields": [ { "id": "keep_token_n", "label": "77行 — 再起動をまたいで復帰する" } ] },
+    { "id": "keep_wt", "label": "managed-worktree", "kind": "asset",
+      "fields": [ { "id": "keep_wt_n", "label": "155行 — 失敗要因を型で区別する" } ] },
+    { "id": "keep_html", "label": "HtmlViewerPane 系", "kind": "asset",
+      "fields": [ { "id": "keep_html_n", "label": "359行 — srcDoc 描画の土台になった" } ] },
+    { "id": "drop_canvas", "label": "CanvasPane (Excalidraw)", "kind": "asset",
+      "fields": [ { "id": "drop_canvas_n", "label": "551行 — 撤去済み" } ] },
+    { "id": "drop_codec", "label": "board-element-codec", "kind": "asset",
+      "fields": [ { "id": "drop_codec_n", "label": "282行 — 撤去済み" } ] },
+    { "id": "drop_canvas_ev", "label": "canvas:* と canvas_boards", "kind": "asset",
+      "fields": [ { "id": "drop_canvas_ev_n", "label": "337行 — 撤去済み" } ] },
+    { "id": "drop_diff", "label": "canvas-diff-utils", "kind": "asset",
+      "fields": [ { "id": "drop_diff_n", "label": "167行 — コードは捨てたが、解いていた問題は B-0b でサーバー側に戻る" } ] }
+  ],
+  "edges": [
+    { "id": "e1", "from": "claude", "to": "file", "label": "Write / Edit" },
+    { "id": "e2", "from": "file", "to": "server", "label": "fs.watch" },
+    { "id": "e3", "from": "server", "to": "pane", "label": "/api/diagram" },
+    { "id": "e4", "from": "pane", "to": "claude", "label": "B-0b で還流予定" }
+  ],
+  "groups": [
+    { "id": "g_flow", "label": "いま動いている経路", "nodes": ["claude","file","server","pane"] },
+    { "id": "g_keep", "label": "引き継いだ資産", "nodes": ["keep_mcp","keep_token","keep_wt","keep_html"] },
+    { "id": "g_drop", "label": "撤去した資産", "nodes": ["drop_canvas","drop_codec","drop_canvas_ev","drop_diff"] }
+  ]
+}
+</script>
+
+<h1>図解ハーネスの構成</h1>
+<p class="sub">B-0a 生成と表示 / B-1 Excalidraw 撤去 — 2026-07-20</p>
+
+<h2 data-model-id="g_flow">いま動いている経路</h2>
+<ol class="flow">
+  <li>
+    <div class="node t-blue" kind="step" data-model-id="claude">
+      <div class="nm">Claude</div>
+      <div class="ds">
+        <span data-model-id="claude_write"><span class="m">docs/diagrams/*.diagram.html</span> を Write/Edit で書く</span><br>
+        <span data-model-id="claude_open"><span class="m">board_open</span> MCP ツールで開かせる</span>
+      </div>
+    </div>
+  </li>
+  <li>
+    <div class="node t-green" kind="step" data-model-id="file">
+      <div class="nm">図ファイル</div>
+      <div class="ds">
+        <span data-model-id="file_model">モデル(JSON) と 投影(HTML) を1ファイルに埋め込む</span><br>
+        <span data-model-id="file_git">git 管理下 — これが正</span>
+      </div>
+    </div>
+  </li>
+  <li>
+    <div class="node t-amber" kind="step" data-model-id="server">
+      <div class="nm">Ark server</div>
+      <div class="ds">
+        <span data-model-id="server_path">worktree 配下へ封じ込め + symlink 実体検証</span><br>
+        <span data-model-id="server_csp">meta CSP を注入して外部送信を遮断</span><br>
+        <span data-model-id="server_watch">fs.watch + 1秒 polling で更新検知</span>
+      </div>
+    </div>
+  </li>
+  <li>
+    <div class="node t-violet" kind="step" data-model-id="pane">
+      <div class="nm">右ペイン（いまあなたが見ている場所）</div>
+      <div class="ds">
+        <span data-model-id="pane_iframe">sandbox iframe / 不透明オリジン</span><br>
+        <span data-model-id="pane_reload"><span class="m">diagram:updated</span> を受けて再投影</span>
+      </div>
+    </div>
+  </li>
+</ol>
+<div class="loop" data-model-id="e4">
+  <b>↩ B-0b で追加予定</b> — 図の上で直接編集し、意味差分を <span class="m">session:send</span> で会話へ戻す。
+  ここが入って初めて「Claude を待たずに図を直す」ループが閉じる。
+</div>
+
+<h2 data-model-id="g_keep">引き継いだ資産</h2>
+<ul class="assets">
+  <li class="node" kind="asset" data-model-id="keep_mcp">
+    <div class="nm">BoardMcpServer</div>
+    <div class="ds"><span class="num" data-model-id="keep_mcp_n">245行</span> — HTTP / registry / 認証</div>
+  </li>
+  <li class="node" kind="asset" data-model-id="keep_token">
+    <div class="nm">board token ライフサイクル</div>
+    <div class="ds"><span class="num" data-model-id="keep_token_n">77行</span> — 再起動をまたいで復帰する</div>
+  </li>
+  <li class="node" kind="asset" data-model-id="keep_wt">
+    <div class="nm">managed-worktree</div>
+    <div class="ds"><span class="num" data-model-id="keep_wt_n">155行</span> — 失敗要因を型で区別する</div>
+  </li>
+  <li class="node" kind="asset" data-model-id="keep_html">
+    <div class="nm">HtmlViewerPane 系</div>
+    <div class="ds"><span class="num" data-model-id="keep_html_n">359行</span> — srcDoc 描画の土台になった</div>
+  </li>
+</ul>
+
+<h2 data-model-id="g_drop">撤去した資産</h2>
+<ul class="assets">
+  <li class="node" kind="asset" data-model-id="drop_canvas">
+    <div class="nm drop">CanvasPane (Excalidraw)</div>
+    <div class="ds"><span class="num" data-model-id="drop_canvas_n">551行</span> — 撤去済み</div>
+  </li>
+  <li class="node" kind="asset" data-model-id="drop_codec">
+    <div class="nm drop">board-element-codec</div>
+    <div class="ds"><span class="num" data-model-id="drop_codec_n">282行</span> — 撤去済み</div>
+  </li>
+  <li class="node" kind="asset" data-model-id="drop_canvas_ev">
+    <div class="nm drop">canvas:* と canvas_boards</div>
+    <div class="ds"><span class="num" data-model-id="drop_canvas_ev_n">337行</span> — 撤去済み</div>
+  </li>
+  <li class="node" kind="asset" data-model-id="drop_diff">
+    <div class="nm drop">canvas-diff-utils</div>
+    <div class="ds"><span class="num" data-model-id="drop_diff_n">167行</span> — コードは捨てたが、解いていた問題は B-0b でサーバー側に戻る</div>
+  </li>
+</ul>
+
+</body>
+</html>
