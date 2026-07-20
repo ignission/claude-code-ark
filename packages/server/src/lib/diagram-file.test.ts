@@ -237,3 +237,23 @@ describe("ensureDoctype", () => {
     expect(ensureDoctype(padded)).toBe(padded);
   });
 });
+
+describe("injectCsp と doctype の順序", () => {
+  it("doctype があればその直後に CSP を差し込む（doctype より前に置かない）", () => {
+    const out = injectCsp("<!doctype html>\n<html><body>x</body></html>");
+
+    expect(out.indexOf("<!doctype")).toBe(0);
+    expect(out.indexOf(DIAGRAM_CSP)).toBeGreaterThan(out.indexOf("<!doctype"));
+    expect(out.indexOf(DIAGRAM_CSP)).toBeLessThan(out.indexOf("<body>"));
+  });
+
+  it("コメント内の偽 doctype では位置をずらせない（先頭アンカーのみ一致）", () => {
+    const html = "<!-- <!doctype html> --><script>bad()</script>";
+
+    const out = injectCsp(html);
+
+    // 偽 doctype は先頭アンカーに一致しない（コメント開始が先頭）ため、
+    // CSP は文書先頭に置かれ、script より必ず前に来る
+    expect(out.indexOf(DIAGRAM_CSP)).toBe(0);
+  });
+});

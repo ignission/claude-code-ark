@@ -104,15 +104,25 @@ export function replaceModelBlock(
   return { ok: true, html: next };
 }
 
-/** 既存の CSP meta を除去したうえで、Ark が管理する meta CSP を先頭に差し込む */
+/** 既存の CSP meta を除去したうえで、Ark が管理する meta CSP を差し込む */
 export function injectCsp(html: string): string {
   // 既存の CSP meta を除去（引用符あり/なし両対応）。
-  // HTML コメント内の <head> 誤検出を避けるため、常に文書先頭に prepend し、
-  // head の有無や位置に依存しない。HTML5 パーサは先頭の <meta> を暗黙の <head> の
-  // 最初の子として復旧するため、この方法でセキュリティ境界を確保できる。
+  // HTML コメント内の <head> 誤検出を避けるため <head> は探さず、文書先頭
+  // （doctype があればその直後）に差し込む。HTML5 パーサは先頭の <meta> を
+  // 暗黙の <head> の最初の子として復旧するため、位置に依存せず境界を確保できる。
   const stripped = html.replace(
     /<meta\b[^>]*http-equiv\s*=\s*(?:["']?Content-Security-Policy["']?)[^>]*>/gi,
     ""
   );
+  // doctype がある場合はその直後に置く。doctype より前に要素を置くと、
+  // /api/diagram を直接ブラウザで開いた場合に doctype が先頭トークンで
+  // なくなり quirks mode になる（srcDoc 描画は仕様上常に no-quirks のため
+  // 影響しないが、直接閲覧経路も正しくしておく）。先頭アンカーの一致に
+  // 限るため、コメント内の偽 doctype で位置をずらすことはできない。
+  const doctype = stripped.match(/^[﻿\s]*<!doctype[^>]*>/i);
+  if (doctype) {
+    const at = doctype[0].length;
+    return stripped.slice(0, at) + DIAGRAM_CSP + stripped.slice(at);
+  }
   return DIAGRAM_CSP + stripped;
 }

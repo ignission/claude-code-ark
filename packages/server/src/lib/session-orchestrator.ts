@@ -643,11 +643,19 @@ export class SessionOrchestrator extends EventEmitter {
       );
     }
 
-    // ttydインスタンスを起動
-    const ttydInstance = await ttydManager.startInstance(
-      tmuxSession.id,
-      tmuxSession.tmuxSessionName
-    );
+    // ttydインスタンスを起動。失敗したら registry に登録済みの board token を
+    // ロールバックする（残すと DB セッションの無い孤児 token が認可され続ける。
+    // tmux セッションは生きているため getAllSessions の孤児掃除でも回収されない）
+    let ttydInstance: Awaited<ReturnType<typeof ttydManager.startInstance>>;
+    try {
+      ttydInstance = await ttydManager.startInstance(
+        tmuxSession.id,
+        tmuxSession.tmuxSessionName
+      );
+    } catch (e) {
+      this.unregisterBoardToken(tmuxSession.id);
+      throw e;
+    }
 
     // DBに保存（既存レコードがあればupsertで更新）
     db.upsertSession({

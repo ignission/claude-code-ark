@@ -171,10 +171,30 @@ export function DiagramPane({
   // による再読込のいずれも "load" イベントを起こす）のたびに MessageChannel を
   // 新規に張り直し、port2 をハーネスへ渡す。ハーネス側も document 再生成のたびに
   // submitPort を失うため、古い port を使い回すと繋がらない。
+  //
+  // ただし「同じ srcDoc に対する2回目以降の load」には渡さない。srcDoc の
+  // 正当な再描画は必ず html state の変更（再fetch）を伴うため、同一 html での
+  // 再 load は文書内スクリプトが location.href 等で別ドキュメントへ遷移した
+  // ことを意味する。meta CSP はサブリソースを遮断するがナビゲーションは
+  // 止められない（spec §4.2.2）ので、ここで port を渡すと遷移先の外部
+  // ドキュメントに diagram:submit の書き込み経路まで開いてしまう（codex
+  // review P1 指摘）。初回限定にすることでこの経路を塞ぐ。
+  const portGrantedForRef = useRef<string | null>(null);
   const handleIframeLoad = useCallback(
     (e: React.SyntheticEvent<HTMLIFrameElement>) => {
       const iframeWindow = e.currentTarget.contentWindow;
       if (!iframeWindow) return;
+
+      if (html !== null && portGrantedForRef.current === html) {
+        // 同一文書での2回目の load = 自己ナビゲーション。port を渡さず遮断する
+        portRef.current?.close();
+        portRef.current = null;
+        setError(
+          "図が別のページへ遷移しようとしたため接続を遮断しました。図ファイルに外部遷移するスクリプトが含まれていないか確認してください"
+        );
+        return;
+      }
+      portGrantedForRef.current = html;
 
       // 前回の port が残っていれば閉じてから張り替える
       portRef.current?.close();
@@ -199,7 +219,7 @@ export function DiagramPane({
         channel.port2,
       ]);
     },
-    [handleSubmit]
+    [handleSubmit, html]
   );
 
   if (error) {
