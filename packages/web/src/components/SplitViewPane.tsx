@@ -1,20 +1,16 @@
 /**
  * SplitViewPane - PC 用セッションビュー（ターミナル + 右ペインの左右2ペイン）
  *
- * 左ペイン = TerminalPane（ttyd + file/html/canvas タブ）を常時表示、
- * 右ペインは上部バーのトグルで開閉する。中身は diagram タブの有無で切り替わる:
- * diagram タブがあれば DiagramPane（B-0a の図ペイン）、無ければ従来どおり
- * CanvasPane（Excalidraw ホワイトボード）。
+ * 左ペイン = TerminalPane（ttyd + file/html タブ）を常時表示、
+ * 右ペインは diagram タブがあるときだけ意味を持ち、上部バーのトグルで開閉する。
+ * 中身は DiagramPane（B-0a の図ペイン）。
  * 会話ビュー（SplitChatPane）は使わない — チャット内容を確認したい場合は
  * ttyd の生ターミナル（左ペイン）を直接見る。
  *
- * - board / diagram は TerminalPane のタブ機構から外れ、右ペイン専属になった
+ * - diagram は TerminalPane のタブ機構から外れ、右ペイン専属になった
  *   （タブ自体は sessionTabs 上には残るが、非表示のまま「開いている印」として使う）
- * - 会話内の mermaid ブロック「キャンバスで開く」は publishBoardInsert で
- *   board-bus にキューされ、useViewerTabs.openBoardTab が board タブを
- *   sessionTabs に追加する。下の useEffect がその追加を検知して showBoard を
- *   自動 true にし、CanvasPane がマウントされてキューが flush される
- * - 図（openDiagramTab）が開かれたときも同じ useEffect が showBoard を自動 true にする
+ * - 図（openDiagramTab）が開かれると下の useEffect が検知して showBoard を自動 true にする
+ * - diagram タブが無くなったら右ペインは自動的に閉じる（表示するものが無いため）
  * - 右ペイン幅 / 開閉状態は localStorage に永続化
  */
 
@@ -28,7 +24,6 @@ import type {
 } from "@ark/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
-import { CanvasPane } from "./CanvasPane";
 import { DiagramPane } from "./DiagramPane";
 import { TerminalPane, type ViewerTab } from "./TerminalPane";
 
@@ -100,20 +95,24 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   // 除外されており、ここでのみ描画される。
   const diagramTab = [...props.tabs].reverse().find(t => t.type === "diagram");
 
-  // board / diagram タブが sessionTabs に新規追加されたら右ペインを自動表示する
-  // （「キャンバスで開く」→ publishBoardInsert + openBoardTab、または図を開く導線）。
+  // diagram タブが sessionTabs に新規追加されたら右ペインを自動表示する。
   // tabs は session 単位でスコープされているため、他セッションの変化には反応しない。
   // 数の増加時のみ true 化し、ユーザーが後で閉じた操作は尊重する。
   const prevBoardCountRef = useRef(0);
   useEffect(() => {
-    const boardCount = props.tabs.filter(
-      t => t.type === "board" || t.type === "canvas" || t.type === "diagram"
-    ).length;
+    const boardCount = props.tabs.filter(t => t.type === "diagram").length;
     if (boardCount > prevBoardCountRef.current) {
       setShowBoard(true);
     }
     prevBoardCountRef.current = boardCount;
   }, [props.tabs]);
+
+  // diagram タブが無くなったら右ペインに表示するものが無いので自動的に閉じる
+  useEffect(() => {
+    if (!diagramTab && showBoard) {
+      setShowBoard(false);
+    }
+  }, [diagramTab, showBoard]);
 
   // コンテナ幅変化時に board 幅を最大比率内に丸める（表示中のみ意味あり）
   useEffect(() => {
@@ -181,28 +180,24 @@ export function SplitViewPane(props: SplitViewPaneProps) {
 
   return (
     <div className="h-full flex flex-col">
-      {/* 上部バー: ボード開閉トグル */}
-      <div className="h-8 shrink-0 border-b border-border bg-sidebar flex items-center justify-end px-2">
-        <button
-          type="button"
-          onClick={handleToggleBoard}
-          className={`text-[11px] px-2 py-1 rounded-md font-medium flex items-center gap-1 transition-colors ${
-            showBoard
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted hover:bg-muted/70 text-foreground"
-          }`}
-          title={
-            showBoard
-              ? "右ペインを閉じる"
-              : diagramTab
-                ? "図を開く"
-                : "ボードを開く"
-          }
-        >
-          <span>{diagramTab ? "📐" : "🎨"}</span>
-          <span>{showBoard ? "閉じる" : diagramTab ? "図" : "ボード"}</span>
-        </button>
-      </div>
+      {/* 上部バー: 右ペイン開閉トグル（diagram タブがあるときのみ表示） */}
+      {diagramTab && (
+        <div className="h-8 shrink-0 border-b border-border bg-sidebar flex items-center justify-end px-2">
+          <button
+            type="button"
+            onClick={handleToggleBoard}
+            className={`text-[11px] px-2 py-1 rounded-md font-medium flex items-center gap-1 transition-colors ${
+              showBoard
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted hover:bg-muted/70 text-foreground"
+            }`}
+            title={showBoard ? "右ペインを閉じる" : "図を開く"}
+          >
+            <span>📐</span>
+            <span>{showBoard ? "閉じる" : "図"}</span>
+          </button>
+        </div>
+      )}
 
       <div ref={containerRef} className="flex-1 min-h-0 flex relative">
         {/* 左ペイン: ターミナル（常時表示） */}
@@ -227,8 +222,8 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           />
         </div>
 
-        {/* リサイザ・右ペインはボード表示時のみ */}
-        {showBoard && (
+        {/* リサイザ・右ペインは diagram タブ表示時のみ */}
+        {showBoard && diagramTab && (
           <>
             <button
               type="button"
@@ -246,19 +241,11 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                 isDragging ? "pointer-events-none" : ""
               }`}
             >
-              {diagramTab && diagramTab.type === "diagram" ? (
-                <DiagramPane
-                  socket={props.socket}
-                  worktreePath={diagramTab.worktreePath}
-                  relPath={diagramTab.relPath}
-                />
-              ) : (
-                <CanvasPane
-                  socket={props.socket}
-                  sessionId={props.session.id}
-                  worktreePath={props.session.worktreePath}
-                />
-              )}
+              <DiagramPane
+                socket={props.socket}
+                worktreePath={diagramTab.worktreePath}
+                relPath={diagramTab.relPath}
+              />
             </div>
           </>
         )}

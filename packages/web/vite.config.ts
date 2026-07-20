@@ -7,10 +7,6 @@ const plugins = [react(), tailwindcss()];
 
 export default defineConfig({
   plugins,
-  // Excalidraw が参照する process.env をブラウザ向けに固定する（公式 Vite 手順）
-  define: {
-    "process.env.IS_PREACT": JSON.stringify("false"),
-  },
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "src"),

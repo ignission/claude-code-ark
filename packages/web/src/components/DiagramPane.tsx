@@ -15,7 +15,7 @@ type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 interface DiagramPaneProps {
   worktreePath: string;
   relPath: string;
-  /** 未接続時は null。null の間は診断購読をスキップする（CanvasPane と同じ方針） */
+  /** 未接続時は null。null の間は診断購読をスキップする */
   socket: TypedSocket | null;
 }
 

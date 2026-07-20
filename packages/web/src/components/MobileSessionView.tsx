@@ -51,7 +51,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { useVisualViewport } from "../hooks/useVisualViewport";
-import { CanvasViewerPane } from "./CanvasViewerPane";
 import { FileViewerPane } from "./FileViewerPane";
 import { HtmlViewerPane } from "./HtmlViewerPane";
 import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
@@ -573,19 +572,6 @@ export function MobileSessionView({
               </div>
             );
           })()}
-        {tabs[activeTabIndex]?.type === "canvas" &&
-          (() => {
-            const tab = tabs[activeTabIndex] as ViewerTab & { type: "canvas" };
-            return (
-              <div className="flex-1 min-h-0">
-                <CanvasViewerPane
-                  mermaidCode={tab.mermaidCode}
-                  title={tab.title}
-                />
-              </div>
-            );
-          })()}
-
         {/* 添付ファイル プレビューダイアログ（画像/非画像共通） */}
         {pendingFiles.length > 0 && (
           <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

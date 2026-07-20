@@ -45,21 +45,6 @@ export function MermaidBlock({ code }: { code: string }) {
 
   return (
     <div className="ark-mermaid my-2">
-      <div className="mb-1 flex justify-end">
-        <button
-          type="button"
-          onClick={() =>
-            window.postMessage(
-              { type: "ark:open-canvas", code, title: "会話の図" },
-              window.location.origin
-            )
-          }
-          className="inline-flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground"
-          title="この図を右ペインのキャンバスで開く"
-        >
-          ⤢ キャンバスで開く
-        </button>
-      </div>
       <div
         className="flex justify-center overflow-x-auto"
         // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid strict の出力のため安全

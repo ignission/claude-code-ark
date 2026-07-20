@@ -233,8 +233,7 @@ export default function Dashboard() {
     readFile,
     fileContent,
     handleOpenUrl,
-    !isMobile,
-    true // boardMode: デスクトップはボードに挿入
+    !isMobile
   );
 
   // diagram:open を受けて図タブを開く。worktreePath はサーバーから送られない

@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ViewerTab } from "../components/TerminalPane";
-import { publishBoardInsert } from "../lib/board-bus";
-import { addOrFocusBoardTab, addOrFocusCanvasTab } from "../lib/canvas-tabs";
 import { addOrFocusDiagramTab } from "../lib/diagram-tabs";
 
 /**
@@ -24,8 +22,7 @@ export function useViewerTabs(
     error?: string;
   } | null,
   onOpenUrl?: (url: string) => void,
-  enabled = true,
-  boardMode = false
+  enabled = true
 ) {
   const [sessionTabs, setSessionTabs] = useState<Record<string, ViewerTab[]>>(
     {}
@@ -134,26 +131,7 @@ export function useViewerTabs(
     []
   );
 
-  const openCanvasTab = useCallback(
-    (sessionId: string, mermaidCode: string, title?: string) => {
-      setSessionTabs(prev => {
-        const current = prev[sessionId] ?? [
-          { type: "terminal" as const, id: "terminal" },
-        ];
-        const { tabs, activeIndex } = addOrFocusCanvasTab(
-          current,
-          mermaidCode,
-          title,
-          `canvas-${Date.now()}`
-        );
-        setSessionActiveTab(p => ({ ...p, [sessionId]: activeIndex }));
-        return { ...prev, [sessionId]: tabs };
-      });
-    },
-    []
-  );
-
-  // diagram は openBoardTab と同じく右ペイン（SplitViewPane の DiagramPane）専属になった
+  // diagram は右ペイン（SplitViewPane の DiagramPane）専属になった
   // ため、ここでは sessionTabs への追加のみ行い、アクティブタブは変更しない（変更すると
   // TerminalPane の表示対象が diagram タブになり、diagram を描画しない TerminalPane では
   // 画面が空白になってしまう）。sessionTabs への追加自体は、SplitViewPane 側の
@@ -175,22 +153,6 @@ export function useViewerTabs(
     },
     []
   );
-
-  // board はデスクトップでは TerminalPane のタブ機構ではなく右ペイン（SplitViewPane
-  // の CanvasPane）専属になったため、ここでは sessionTabs への追加のみ行い、
-  // アクティブタブは変更しない（変更すると TerminalPane の表示対象が board タブになり、
-  // board を描画しない TerminalPane では画面が空白になってしまう）。
-  // sessionTabs への追加自体は、SplitViewPane 側の「board タブ数が増えたら右ペインを
-  // 自動表示する」effect のトリガーとして必要。
-  const openBoardTab = useCallback((sessionId: string) => {
-    setSessionTabs(prev => {
-      const current = prev[sessionId] ?? [
-        { type: "terminal" as const, id: "terminal" },
-      ];
-      const { tabs } = addOrFocusBoardTab(current);
-      return { ...prev, [sessionId]: tabs };
-    });
-  }, []);
 
   // postMessageリスナー（ttyd iframe内のリンククリックを受信）
   useEffect(() => {
@@ -241,38 +203,11 @@ export function useViewerTabs(
           readFile(selectedSessionId, filePath);
         }
       }
-
-      if (type === "ark:open-canvas") {
-        const { code, title } = event.data;
-        if (typeof code !== "string" || !code) return;
-        const canvasTitle = typeof title === "string" ? title : undefined;
-        if (boardMode) {
-          // デスクトップ: ボードに要素として挿入し、ボードタブを開く
-          publishBoardInsert(session.worktreePath, {
-            code,
-            title: canvasTitle,
-          });
-          openBoardTab(selectedSessionId);
-        } else {
-          // モバイル: 従来の図解ビューワータブ
-          openCanvasTab(selectedSessionId, code, canvasTitle);
-        }
-      }
     };
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [
-    selectedSessionId,
-    sessions,
-    openFileTab,
-    openCanvasTab,
-    openBoardTab,
-    readFile,
-    onOpenUrl,
-    enabled,
-    boardMode,
-  ]);
+  }, [selectedSessionId, sessions, openFileTab, readFile, onOpenUrl, enabled]);
 
   // fileContent受信時にタブを更新（全セッションを検索してレースコンディション対策）
   useEffect(() => {
@@ -315,8 +250,6 @@ export function useViewerTabs(
     handleTabSelect,
     handleTabClose,
     openFileTab,
-    openCanvasTab,
-    openBoardTab,
     openDiagramTab,
   };
 }

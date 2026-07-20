@@ -48,7 +48,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useIsMobile } from "../hooks/useMobile";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
-import { CanvasViewerPane } from "./CanvasViewerPane";
 import { FileViewerPane } from "./FileViewerPane";
 import { HtmlViewerPane } from "./HtmlViewerPane";
 import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
@@ -81,16 +80,6 @@ export type ViewerTab =
       type: "html";
       id: string;
       filePath: string;
-    }
-  | {
-      type: "canvas";
-      id: string;
-      mermaidCode: string;
-      title?: string;
-    }
-  | {
-      type: "board";
-      id: string;
     }
   | {
       type: "diagram";
@@ -423,12 +412,12 @@ export function TerminalPane({
     { label: "/compact", cmd: "/compact" },
   ];
 
-  // board / diagram タブは右ペイン（SplitViewPane の CanvasPane / DiagramPane）専属になった
+  // diagram タブは右ペイン（SplitViewPane の DiagramPane）専属になった
   // ため、タブバーには表示しない。visibleTabIndexMap[表示用index] = 元のtabs配列index
   const visibleTabIndexMap: number[] = [];
   const visibleTabs: ViewerTab[] = [];
   tabs.forEach((tab, i) => {
-    if (tab.type === "board" || tab.type === "diagram") return;
+    if (tab.type === "diagram") return;
     visibleTabIndexMap.push(i);
     visibleTabs.push(tab);
   });
@@ -601,18 +590,6 @@ export function TerminalPane({
           return (
             <div className="flex-1 min-h-0">
               <HtmlViewerPane filePath={tab.filePath} />
-            </div>
-          );
-        })()}
-      {tabs[activeTabIndex]?.type === "canvas" &&
-        (() => {
-          const tab = tabs[activeTabIndex] as ViewerTab & { type: "canvas" };
-          return (
-            <div className="flex-1 min-h-0">
-              <CanvasViewerPane
-                mermaidCode={tab.mermaidCode}
-                title={tab.title}
-              />
             </div>
           );
         })()}

@@ -1,6 +1,6 @@
 /**
  * 図タブの追加・フォーカス（純関数）。
- * id を引数で受け取り、テスト可能な純関数として保つ（canvas-tabs.ts と同じ方針）。
+ * id を引数で受け取り、テスト可能な純関数として保つ。
  */
 import type { ViewerTab } from "../components/TerminalPane";
 
