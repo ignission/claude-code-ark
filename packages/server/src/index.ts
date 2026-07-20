@@ -60,7 +60,7 @@ import {
 } from "./lib/constants.js";
 import { db } from "./lib/database.js";
 import { describeModelDiff } from "./lib/diagram-diff.js";
-import { replaceModelBlock } from "./lib/diagram-file.js";
+import { ensureDoctype, replaceModelBlock } from "./lib/diagram-file.js";
 import { parseDiagramModel } from "./lib/diagram-model.js";
 import { resolveDiagramPath } from "./lib/diagram-path.js";
 import { readDiagram } from "./lib/diagram-reader.js";
@@ -2282,9 +2282,11 @@ export async function startServer(
           reply({ ok: false, error: pathResolved.error });
           return;
         }
+        // ハーネスが送る html は document.documentElement.outerHTML 由来で
+        // doctype を含まない。補わないと送信のたびにファイルから落ちる。
         await fs.promises.writeFile(
           pathResolved.absPath,
-          replaced.html,
+          ensureDoctype(replaced.html),
           "utf-8"
         );
 

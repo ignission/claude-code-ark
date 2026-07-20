@@ -26,6 +26,20 @@ export const DIAGRAM_CSP =
   `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; ` +
   `script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;">`;
 
+/**
+ * doctype が無ければ先頭に補う。
+ *
+ * 編集ハーネスが送る HTML は document.documentElement.outerHTML 由来のため
+ * doctype を含まない。そのまま保存すると送信のたびにファイルから doctype が
+ * 落ちる（quirks mode の火種になり、git diff にもノイズが出る）ので、
+ * diagram:submit の保存直前にこれを通す。
+ * 先頭の BOM・空白は許容し、既にあれば大文字小文字を問わず何もしない。
+ */
+export function ensureDoctype(html: string): string {
+  if (/^[﻿\s]*<!doctype\b/i.test(html)) return html;
+  return `<!doctype html>\n${html}`;
+}
+
 /** モデル埋め込みブロックの中身を取り出して検証する */
 export function extractModel(html: string): ParseResult {
   // id と type は順不同で書かれうるので、script タグ全体を拾ってから中身を判定する

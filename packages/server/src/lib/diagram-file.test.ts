@@ -3,6 +3,7 @@ import {
   DIAGRAM_CSP,
   extractModel,
   injectCsp,
+  ensureDoctype,
   replaceModelBlock,
 } from "./diagram-file.js";
 import type { DiagramModel } from "./diagram-model.js";
@@ -212,5 +213,27 @@ describe("replaceModelBlock", () => {
     const result = replaceModelBlock(html, MODEL_OBJ);
 
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("ensureDoctype", () => {
+  it("doctype が無い HTML の先頭に補う", () => {
+    const out = ensureDoctype("<html><body>x</body></html>");
+
+    expect(out).toBe("<!doctype html>\n<html><body>x</body></html>");
+  });
+
+  it("既に doctype があれば変えない（大文字小文字を問わない）", () => {
+    const lower = "<!doctype html>\n<html></html>";
+    const upper = "<!DOCTYPE html>\n<html></html>";
+
+    expect(ensureDoctype(lower)).toBe(lower);
+    expect(ensureDoctype(upper)).toBe(upper);
+  });
+
+  it("先頭の空白や BOM を挟んでいても二重に付けない", () => {
+    const padded = "﻿  \n<!doctype html><html></html>";
+
+    expect(ensureDoctype(padded)).toBe(padded);
   });
 });

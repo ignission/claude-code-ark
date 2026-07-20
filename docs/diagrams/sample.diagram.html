@@ -1,6 +1,6 @@
-<!doctype html>
-<html lang="ja">
-<head><meta charset="utf-8"><title>サンプル</title>
+<html lang="ja"><head>
+
+<meta charset="utf-8"><title>サンプル</title>
 <style>
   body { font-family: system-ui, sans-serif; background:#1a1b26; color:#c0caf5; padding:1.5rem; }
   .entity { border:1px solid #2c2f42; border-radius:4px; margin-bottom:1rem; max-width:22rem; }
@@ -16,15 +16,49 @@
   "version": 1,
   "title": "サンプル",
   "nodes": [
-    { "id": "order", "label": "Order", "kind": "entity",
-      "fields": [ { "id": "order_id", "label": "id" },
-                  { "id": "order_user_id", "label": "user_id" },
-                  { "id": "order_status", "label": "status" } ] },
-    { "id": "user", "label": "User", "kind": "entity",
-      "fields": [ { "id": "user_id", "label": "id" },
-                  { "id": "user_email", "label": "email" } ] }
+    {
+      "id": "order",
+      "label": "Order",
+      "kind": "entity",
+      "fields": [
+        {
+          "id": "order_id",
+          "label": "id"
+        },
+        {
+          "id": "order_user_id",
+          "label": "user_id"
+        },
+        {
+          "id": "order_status",
+          "label": "status"
+        }
+      ]
+    },
+    {
+      "id": "user",
+      "label": "User",
+      "kind": "entity",
+      "fields": [
+        {
+          "id": "user_id",
+          "label": "id"
+        },
+        {
+          "id": "user_email",
+          "label": "email"
+        }
+      ]
+    }
   ],
-  "edges": [ { "id": "e_order_user", "from": "order", "to": "user", "label": "belongs to" } ],
+  "edges": [
+    {
+      "id": "e_order_user",
+      "from": "order",
+      "to": "user",
+      "label": "belongs to"
+    }
+  ],
   "groups": []
 }
 </script>
@@ -45,5 +79,7 @@
   </ul>
 </div>
 <p class="rel" data-model-id="e_order_user">Order — belongs to → User</p>
-</body>
-</html>
+
+
+
+</body></html>
