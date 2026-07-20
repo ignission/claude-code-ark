@@ -7,7 +7,7 @@
  * 外部送信の遮断は本文に注入された meta CSP が担う（サーバー側で注入済み）。
  */
 import type { ClientToServerEvents, ServerToClientEvents } from "@ark/shared";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -39,21 +39,43 @@ export function DiagramPane({
 }: DiagramPaneProps) {
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 進行中の fetch を追跡し、古いタブの結果が新しいタブを上書きしないようにする
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
+    // 前のリクエストをキャンセル。タブ切り替え時に古い fetch が
+    // 新しいタブの display を上書きするのを防ぐ（HtmlViewerPane と同じ方針）
+    abortControllerRef.current?.abort();
+
+    // 新しい controller を作成
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
-      const res = await fetch(buildDiagramUrl(worktreePath, relPath));
+      const res = await fetch(buildDiagramUrl(worktreePath, relPath), {
+        signal: controller.signal,
+      });
+
+      // 中断済みの場合はステート更新をスキップ
+      if (controller.signal.aborted) return;
+
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as {
           error?: string;
         } | null;
+        if (controller.signal.aborted) return;
         setError(body?.error ?? `読み込みに失敗しました (${res.status})`);
         setHtml(null);
         return;
       }
-      setHtml(await res.text());
+      const text = await res.text();
+      if (controller.signal.aborted) return;
+      setHtml(text);
       setError(null);
     } catch (e) {
+      // AbortError は正常なキャンセルなので無視
+      if (e instanceof Error && e.name === "AbortError") return;
+      if (controller.signal.aborted) return;
       setError(e instanceof Error ? e.message : String(e));
       setHtml(null);
     }
@@ -83,6 +105,14 @@ export function DiagramPane({
       socket.emit("diagram:unsubscribe", { worktreePath, relPath });
     };
   }, [socket, worktreePath, relPath, load]);
+
+  // アンマウント時に進行中の fetch を中止。タブ切り替え直後の
+  // アンマウント時に古い fetch が返された結果でステート更新されるのを防ぐ
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
   if (error) {
     return (
