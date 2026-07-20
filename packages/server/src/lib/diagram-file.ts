@@ -40,14 +40,13 @@ export function extractModel(html: string): ParseResult {
 
 /** 既存の CSP meta を除去したうえで、Ark が管理する meta CSP を先頭に差し込む */
 export function injectCsp(html: string): string {
+  // 既存の CSP meta を除去（引用符あり/なし両対応）。
+  // HTML コメント内の <head> 誤検出を避けるため、常に文書先頭に prepend し、
+  // head の有無や位置に依存しない。HTML5 パーサは先頭の <meta> を暗黙の <head> の
+  // 最初の子として復旧するため、この方法でセキュリティ境界を確保できる。
   const stripped = html.replace(
-    /<meta\b[^>]*http-equiv\s*=\s*["']Content-Security-Policy["'][^>]*>/gi,
+    /<meta\b[^>]*http-equiv\s*=\s*(?:["']?Content-Security-Policy["']?)[^>]*>/gi,
     ""
   );
-  const headOpen = stripped.match(/<head\b[^>]*>/i);
-  if (headOpen && headOpen.index !== undefined) {
-    const at = headOpen.index + headOpen[0].length;
-    return stripped.slice(0, at) + DIAGRAM_CSP + stripped.slice(at);
-  }
   return DIAGRAM_CSP + stripped;
 }

