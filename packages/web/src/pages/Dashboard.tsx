@@ -449,8 +449,13 @@ export default function Dashboard() {
       const replacement = Array.from(sessions.values()).find(
         s => s.worktreePath === restartingWorktreePathRef.current
       );
-      if (replacement && replacement.id !== selectedSessionId) {
-        setSelectedSessionId(replacement.id);
+      if (replacement) {
+        if (replacement.id !== selectedSessionId) {
+          setSelectedSessionId(replacement.id);
+        }
+        // session:restarted の追従が先に効いて選択済みでも pending は解消する。
+        // 残すと以後の通常停止でフォールバック選択が抑制され続け、
+        // 停止済みセッションを選択したまま固まる
         restartingWorktreePathRef.current = null;
         return;
       }

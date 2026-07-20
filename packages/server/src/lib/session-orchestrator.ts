@@ -558,9 +558,11 @@ export class SessionOrchestrator extends EventEmitter {
     ttydManager.stopInstance(sessionId);
     tmuxManager.killSession(sessionId);
 
-    // 6. クライアント通知
-    this.emit("session:stopped", sessionId);
-
+    // 6. クライアント通知。順序が重要:
+    //    created(新) → restarted(旧→新の対応) → stopped(旧)。
+    //    stopped を先に流すと、受信側で「選択中セッションの消失」による
+    //    フォールバック選択が session:restarted の到着より先に走り、
+    //    選択追従 (prev === oldSessionId) が失敗するため
     const managed: ManagedSession = {
       id: newTmux.id,
       worktreeId,
@@ -574,6 +576,11 @@ export class SessionOrchestrator extends EventEmitter {
       profileId: snapshot?.id ?? null,
     };
     this.emit("session:created", managed);
+    this.emit("session:restarted", {
+      oldSessionId: sessionId,
+      session: managed,
+    });
+    this.emit("session:stopped", sessionId);
     return managed;
   }
 
