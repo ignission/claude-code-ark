@@ -59,6 +59,7 @@ import {
   WS_PORT_START,
 } from "./lib/constants.js";
 import { db } from "./lib/database.js";
+import { resolveDiagramPath } from "./lib/diagram-path.js";
 import { readDiagram } from "./lib/diagram-reader.js";
 import { diagramWatcher } from "./lib/diagram-watcher.js";
 import { getErrorMessage } from "./lib/errors.js";
@@ -844,7 +845,16 @@ export async function startServer(
           error: `worktree を解決できません: ${resolved.reason}`,
         };
       }
-      const session = sessionOrchestrator.getSessionByWorktree(resolved.path);
+      // セッション検索は引数の worktreePath（registry 登録時の生パス）で行う。
+      // tmuxManager / DB のセッション行は session:start が受け取った生パスの
+      // ままキーになっており、getSessionByWorktree は文字列完全一致でしか
+      // ヒットしない。resolved.path（realpath 正規化済み）で引いてしまうと、
+      // realpath ≠ 生パスの環境（symlink を含む home 等）では常に
+      // 「セッションが見つかりません」になり、board_open の唯一の入口が
+      // 死んでしまう。ファイル読み書きと DB のボードキーは逆に realpath が
+      // 規約（commit 0e547d0 で確定）なので、下の readDiagram には
+      // resolved.path を渡す ― この2つを取り違えないこと。
+      const session = sessionOrchestrator.getSessionByWorktree(worktreePath);
       if (!session) {
         return {
           ok: false,
@@ -854,7 +864,8 @@ export async function startServer(
       // Claude に「開いた」と嘘をつかないよう、diagram:open を emit する前に
       // 実際に readDiagram で読めることを確認する（/api/diagram と同じ検証
       // = 403 パス不正・worktree外・symlink脱出 / 404 不在 / 422 モデルブロック
-      // 無し・壊れている、を理由付きで弾く）。
+      // 無し・壊れている、を理由付きで弾く）。ファイル読み込みは realpath
+      // （resolved.path）を使う規約なのでこちらはそのまま。
       const result = await readDiagram(resolved.path, relPath);
       if (!result.ok) {
         return { ok: false, error: result.error };
@@ -2476,16 +2487,6 @@ export async function startServer(
 
     // ===== 図解キャンバス（board_open による表示 + 更新監視） =====
     const diagramUnsubs = new Map<string, () => void>();
-    // キーごとの「最新の予約」世代トークン。subscribe のたびに新しい Symbol を
-    // 発行し、readDiagram 解決時に「自分が発行された時点でまだ最新か」を
-    // 確認してから watcher を張る。これがないと
-    // subscribe→unsubscribe→subscribe と素早く連打された場合に
-    // 古い方の readDiagram（R1）が後から解決したとき、新しい予約（手順3）が
-    // 生きているため has(key) だけのチェックは通過してしまい、R1 が watcher を
-    // 張って off1 を保存 → その後 R2 が解決して off2 で上書き、という順で
-    // off1 が二度と呼ばれず fs.watch ハンドルと setInterval がリークする
-    // （タブの素早い開閉・React StrictMode の二重マウントで再現する）。
-    const diagramSubscribeGenerations = new Map<string, symbol>();
 
     socket.on("diagram:subscribe", (data: unknown) => {
       // payload は外部入力。分割代入前に型を検証しないと、引数なし emit や
@@ -2507,28 +2508,31 @@ export async function startServer(
       // JSON 配列表現をキーにする（jsonl-tail-manager.ts の keyOf と同じ方針）
       const key = JSON.stringify([resolved, relPath]);
       if (diagramUnsubs.has(key)) return;
-      // 非同期解決の前に key を予約する。予約しないと購読要求が連続したとき
-      // 両方が has() を通過し、watcher が二重に張られて片方が解除されず残る。
-      diagramUnsubs.set(key, () => {});
-      const generation = Symbol("diagram:subscribe");
-      diagramSubscribeGenerations.set(key, generation);
-      void readDiagram(resolved, relPath).then(result => {
-        // 先に unsubscribe が来ていたら watcher を張らない
-        if (!diagramUnsubs.has(key)) return;
-        // 自分より後に発行された予約（再 subscribe）があるなら、自分は
-        // 古い世代の readDiagram なので watcher を張らずに終わる。
-        // 世代を更新した側（最新の readDiagram）だけが watcher を張ることで
-        // off ハンドラの上書き・リークを防ぐ。
-        if (diagramSubscribeGenerations.get(key) !== generation) return;
-        if (!result.ok) {
-          diagramUnsubs.delete(key);
-          return;
-        }
-        const off = diagramWatcher.subscribe(result.absPath, () => {
-          socket.emit("diagram:updated", { worktreePath: resolved, relPath });
-        });
-        diagramUnsubs.set(key, off);
+
+      // watcher を張る条件は「パスが worktree の docs/diagrams 配下に収まって
+      // いるか」だけにする（resolveDiagramPath は文字列上の解決のみで FS I/O
+      // を行わないため同期）。ファイルが読めるか（403/404/422）を条件にすると、
+      // DiagramWatcher は「ファイルが未作成でも polling が後から拾う」設計
+      // なのに、Claude が Edit で図を書き換えている最中（モデルブロック未
+      // 書き込み等で readDiagram が一時的に失敗する）にタブを開き直すと
+      // watcher が張られないまま終わり、書き込み完了後も diagram:updated が
+      // 届かなくなる。DiagramPane の購読はマウント時 1 回きりで再試行もない
+      // ため、タブを閉じて開き直すまで永久にエラー表示のままになってしまう。
+      // 内容が読めるかどうかの判定は配信時 (/api/diagram) の責務にする。
+      const pathResolved = resolveDiagramPath(resolved, relPath);
+      if (!pathResolved.ok) return; // パス自体が不正 (403 相当) なら購読しない
+
+      const off = diagramWatcher.subscribe(pathResolved.absPath, () => {
+        // クライアントへは購読要求で送られてきた worktreePath（生パス）を
+        // そのままエコーバックする。サーバー内部の購読キー・ファイル解決は
+        // realpath（resolved）で行うが、クライアント（DiagramPane）は
+        // session:start に渡した生パスしか知らないため、resolved を返すと
+        // realpath ≠ 生パスの環境で一致判定 (data.worktreePath ===
+        // worktreePath) が常に false になり、fs.watch による再投影が
+        // エラーも出さず無言で機能しなくなる。
+        socket.emit("diagram:updated", { worktreePath, relPath });
       });
+      diagramUnsubs.set(key, off);
     });
 
     socket.on("diagram:unsubscribe", (data: unknown) => {
@@ -2550,7 +2554,6 @@ export async function startServer(
       const key = JSON.stringify([resolved, relPath]);
       diagramUnsubs.get(key)?.();
       diagramUnsubs.delete(key);
-      diagramSubscribeGenerations.delete(key);
     });
 
     // ===== JSONL tail（チャットビューの会話データソース） =====
@@ -4093,7 +4096,6 @@ export async function startServer(
         }
       }
       diagramUnsubs.clear();
-      diagramSubscribeGenerations.clear();
 
       forwardHandlers.forEach((handler, event) => {
         sessionOrchestrator.off(event, handler);

@@ -37,6 +37,28 @@ describe("extractModel", () => {
 
     expect(extractModel(html).ok).toBe(true);
   });
+
+  it("type=application/json が無いブロックは id が一致しても拒否する", () => {
+    // type 無しの <script id="ark-diagram-model"> はサーバー検証を通っても
+    // ブラウザには JS として実行されてしまう（skill / エラーメッセージが
+    // type="application/json" を要求しているのに、実装が id だけで
+    // 一致させていた契約違反）。
+    const html = page(`<script id="ark-diagram-model">${MODEL}</script>`);
+
+    const result = extractModel(html);
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("type が application/json 以外のブロックは id が一致しても拒否する", () => {
+    const html = page(
+      `<script id="ark-diagram-model" type="text/javascript">${MODEL}</script>`
+    );
+
+    const result = extractModel(html);
+
+    expect(result.ok).toBe(false);
+  });
 });
 
 describe("injectCsp", () => {

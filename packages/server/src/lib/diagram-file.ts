@@ -30,6 +30,12 @@ export function extractModel(html: string): ParseResult {
     const attrs = m[1] ?? "";
     if (!new RegExp(`id\\s*=\\s*["']${MODEL_SCRIPT_ID}["']`, "i").test(attrs))
       continue;
+    // id だけで一致させると <script id="ark-diagram-model">（type 無し）も
+    // 拾ってしまう。type 無しの script はブラウザが JS として実行するため、
+    // サーバー検証（id 一致）を通る一方でブラウザは実行する、という契約と
+    // 実装のずれが生まれる。skill / このファイル先頭のコメントが要求する
+    // type="application/json" もここで検証する。
+    if (!/type\s*=\s*["']application\/json["']/i.test(attrs)) continue;
     return parseDiagramModel((m[2] ?? "").trim());
   }
   return {

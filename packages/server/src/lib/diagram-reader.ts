@@ -19,6 +19,16 @@ export type ReadDiagramResult =
   | { ok: true; absPath: string; html: string; model: DiagramModel }
   | { ok: false; status: number; error: string };
 
+/** errno を持つ例外から code を取り出す (無ければ "UNKNOWN")。managed-worktree.ts と同じ方針 */
+function errnoCode(e: unknown): string {
+  const code = (e as NodeJS.ErrnoException | undefined)?.code;
+  return typeof code === "string" ? code : "UNKNOWN";
+}
+
+function errnoMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 export async function readDiagram(
   worktreeReal: string,
   relPath: string
@@ -68,8 +78,27 @@ export async function readDiagram(
       html: injectCsp(raw),
       model: model.model,
     };
-  } catch {
-    return { ok: false, status: 404, error: "図ファイルが見つかりません" };
+  } catch (e) {
+    // ENOENT (未作成) だけを「見つかりません」として区別する。EACCES /
+    // EISDIR 等の一過性・環境要因のエラーまで 404 に畳むと、Claude には
+    // 「ファイルが無い」との区別がつかず無意味な再生成を誘発する
+    // (managed-worktree.ts の失敗要因分離と同じ方針)。
+    const code = errnoCode(e);
+    if (code === "ENOENT") {
+      return { ok: false, status: 404, error: "図ファイルが見つかりません" };
+    }
+    if (code === "EACCES" || code === "EPERM") {
+      return {
+        ok: false,
+        status: 403,
+        error: `図ファイルへのアクセスが拒否されました (${code})`,
+      };
+    }
+    return {
+      ok: false,
+      status: 500,
+      error: `図ファイルの読み込みに失敗しました (${code}): ${errnoMessage(e)}`,
+    };
   } finally {
     await fd?.close();
   }

@@ -80,6 +80,38 @@ describe("readDiagram", () => {
     if (!result.ok) expect(result.status).toBe(422);
   });
 
+  it("EACCES (権限エラー) は 404 に畳まず 403 で errno を含めて返す", async () => {
+    // ENOENT 以外の FS エラーまで「見つかりません」に畳むと、Claude 側は
+    // 「ファイルが無い」と誤解して無意味な再生成を繰り返してしまう。
+    write("perm.diagram.html", "<div>図</div>");
+    const target = path.join(dir, "perm.diagram.html");
+    fs.chmodSync(target, 0o000);
+
+    try {
+      const result = await readDiagram(wt, "perm.diagram.html");
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.status).toBe(403);
+        expect(result.error).toContain("EACCES");
+      }
+    } finally {
+      fs.chmodSync(target, 0o644);
+    }
+  });
+
+  it("EISDIR (ディレクトリ) は 404 に畳まず 500 で errno を含めて返す", async () => {
+    fs.mkdirSync(path.join(dir, "adir.diagram.html"));
+
+    const result = await readDiagram(wt, "adir.diagram.html");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(500);
+      expect(result.error).toContain("EISDIR");
+    }
+  });
+
   it("worktree 外を指すシンボリックリンクは 403 を返す", async () => {
     // docs/diagrams 配下の見た目上は正しいパスでも、実体（realpath）が
     // worktree 外を指すシンボリックリンクなら文字列上の封じ込め
