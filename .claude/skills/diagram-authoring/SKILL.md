@@ -41,11 +41,32 @@ description: 図解を求められたときに .diagram.html を生成する規�
 ## 守ること
 
 - **モデルは必ず `id="ark-diagram-model"` の JSON ブロックに入れる。** 無いとサーバーが 422 を返す
-- **語彙は node / edge / field / group と label だけ使う。** 図種固有の意味は `ext` に入れる
+- **語彙は node / edge / field / group / label と kind だけ使う。** 図種固有の意味は `ext` に入れる
 - **id はファイル内で一意にする。** 重複するとサーバーが拒否する
+- **edge の `from` と `to` は実在する node の id を指す。** 存在しない id を指すと 422 で拒否される
 - **投影の各要素に `data-model-id` を付ける。** 編集ハーネスがモデルと対応づけるため
-- **外部リソースを参照しない。** CSS も画像も自前で書く（外部通信は遮断される）
+- **外部リソースを参照しない。** CSS も画像も自前で書き、画像は data URI として埋め込む（外部通信は遮断される）
 - **`<meta http-equiv="Content-Security-Policy">` を自分で書かない。** Ark が注入する
+
+## 語彙: kind
+
+node の `kind` フィールドで図の要素型を指定する。サーバーは `kind` の値を解釈せず、投影側（HTML/CSS）と skill の取り決めに従う。
+
+- `kind: "entity"` — エンティティ（ER図など）
+- `kind: "step"` — プロセスステップ（フローチャートなど）
+- `kind: "state"` — ステートマシンの状態
+- その他の値でも可。投影側で CSS セレクタ `[kind="..."]` で見た目を分け替える
+
+例：
+
+```html
+<div data-model-id="order" class="entity">…</div>
+```
+
+```css
+[kind="entity"] { border-radius: 4px; }
+[kind="state"] { border-radius: 50%; }
+```
 
 ## 表現
 
