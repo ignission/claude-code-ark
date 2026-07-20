@@ -185,6 +185,12 @@ export interface Session {
    * サーバー再起動後に board token を registry へ復帰させるために使う。
    */
   boardMcpConfigPath?: string | null;
+  /**
+   * セッションで最後に開いた図（docs/diagrams/*.diagram.html）の worktree 相対パス。
+   * board_open で図を開くたびに更新され、クライアントはリロード後に
+   * この値を使って右ペインの図タブを復元する（未オープン時は null/undefined）。
+   */
+  lastDiagramPath?: string | null;
 }
 
 /**

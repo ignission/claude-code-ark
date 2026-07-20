@@ -150,7 +150,12 @@ export function useViewerTabs(
   // 画面が空白になってしまう）。sessionTabs への追加自体は、SplitViewPane 側の
   // 「diagram タブ数が増えたら右ペインを自動表示する」effect のトリガーとして必要。
   const openDiagramTab = useCallback(
-    (sessionId: string, worktreePath: string, relPath: string) => {
+    (
+      sessionId: string,
+      worktreePath: string,
+      relPath: string,
+      restoredOnLoad?: boolean
+    ) => {
       setSessionTabs(prev => {
         const current = prev[sessionId] ?? [
           { type: "terminal" as const, id: "terminal" },
@@ -159,7 +164,8 @@ export function useViewerTabs(
           current,
           worktreePath,
           relPath,
-          `diagram-${Date.now()}`
+          `diagram-${Date.now()}`,
+          restoredOnLoad
         );
         return { ...prev, [sessionId]: tabs };
       });

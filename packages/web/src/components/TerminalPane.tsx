@@ -86,6 +86,13 @@ export type ViewerTab =
       id: string;
       worktreePath: string;
       relPath: string;
+      /**
+       * リロード直後の DB 復元（lastDiagramPath）で開かれたタブなら true。
+       * SplitViewPane の「図タブが増えたら右ペインを自動表示する」トリガーから
+       * 除外するために使う（復元のたびに右ペインが強制で開くのを防ぐ）。
+       * board_open による通常のライブオープンでは付与しない。
+       */
+      restoredOnLoad?: boolean;
     };
 
 interface TerminalPaneProps {

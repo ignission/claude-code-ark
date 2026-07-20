@@ -50,4 +50,24 @@ describe("addOrFocusDiagramTab", () => {
     expect(second.tabs).toHaveLength(3);
     expect(second.activeIndex).toBe(2);
   });
+
+  it("restoredOnLoad=true で追加したタブはそのフラグを持つ", () => {
+    const { tabs } = addOrFocusDiagramTab(
+      base,
+      "/wt",
+      "a.diagram.html",
+      "d1",
+      true
+    );
+
+    expect(tabs[1]).toMatchObject({ type: "diagram", restoredOnLoad: true });
+  });
+
+  it("restoredOnLoad は省略時 undefined になる（通常の live open）", () => {
+    const { tabs } = addOrFocusDiagramTab(base, "/wt", "a.diagram.html", "d1");
+
+    expect((tabs[1] as { restoredOnLoad?: boolean }).restoredOnLoad).toBe(
+      undefined
+    );
+  });
 });

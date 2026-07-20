@@ -52,6 +52,8 @@ interface SessionRow {
   profile_id: string | null;
   profile_config_dir: string | null;
   board_mcp_config_path: string | null;
+  /** セッションで最後に開いた図（docs/diagrams/*.diagram.html）の worktree 相対パス */
+  last_diagram_path: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -260,6 +262,17 @@ export class SessionDatabase {
       this.db.exec(
         "ALTER TABLE sessions ADD COLUMN board_mcp_config_path TEXT"
       );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("duplicate column name")) {
+        throw e;
+      }
+    }
+
+    // マイグレーション: sessionsテーブルにlast_diagram_path列を追加
+    // (board_open で開いた図をリロード後も右ペインに復元するため)
+    try {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN last_diagram_path TEXT");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (!msg.includes("duplicate column name")) {
@@ -639,6 +652,23 @@ export class SessionDatabase {
   }
 
   /**
+   * セッションで最後に開いた図（worktree相対パス）を更新
+   *
+   * board_open で図を開くたびに呼び出し、リロード後の右ペイン復元に使う。
+   * relPath に null を渡すと「最後に開いた図なし」の状態に戻せる。
+   *
+   * @param sessionId - セッションID
+   * @param relPath - 図ファイルの worktree 相対パス、または null
+   */
+  updateSessionLastDiagram(sessionId: string, relPath: string | null): void {
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(
+      "UPDATE sessions SET last_diagram_path = ?, updated_at = ? WHERE id = ?"
+    );
+    stmt.run(relPath, now, sessionId);
+  }
+
+  /**
    * セッションを削除（関連するメッセージも自動削除）
    *
    * @param id - セッションID
@@ -828,6 +858,7 @@ export class SessionDatabase {
       profileId: row.profile_id,
       profileConfigDir: row.profile_config_dir,
       boardMcpConfigPath: row.board_mcp_config_path,
+      lastDiagramPath: row.last_diagram_path,
     };
   }
 

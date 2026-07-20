@@ -400,6 +400,9 @@ export class SessionOrchestrator extends EventEmitter {
       // <configDir>/projects を参照するために必要
       profileConfigDir: current?.configDir ?? null,
       staleProfile,
+      // リロード後にクライアントが右ペインの図タブを復元するために必要
+      // (board_open の度に db.updateSessionLastDiagram で更新される)
+      lastDiagramPath: dbSession?.lastDiagramPath ?? null,
     };
   }
 

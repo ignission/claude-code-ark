@@ -98,9 +98,24 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   // diagram タブが sessionTabs に新規追加されたら右ペインを自動表示する。
   // tabs は session 単位でスコープされているため、他セッションの変化には反応しない。
   // 数の増加時のみ true 化し、ユーザーが後で閉じた操作は尊重する。
+  //
+  // 「lastDiagramPath からの復元」除外について:
+  // このコンポーネントは Dashboard.tsx で全セッション分が session.id をキーに
+  // 常時マウントされている（selectedSessionId でなくても hidden で存在し続ける）。
+  // ページロード直後、対象セッションが sessions に現れた最初のレンダーでは
+  // props.tabs はまだ [terminal] のみ（sessionTabs の復元用 setState は
+  // Dashboard 側の別 effect で非同期に行われるため、同一コミットには乗らない）。
+  // そのため「マウント時点で図タブが既にあれば増加とみなさない」という直感的な
+  // 前提は成り立たない ― prevBoardCountRef は常にマウント直後は 0 から始まり、
+  // 直後に復元 openDiagramTab が発火すると 0→1 の「増加」として観測されてしまう。
+  // ここでは live な board_open による新規オープンだけを「増加」としてカウント
+  // したいので、restoredOnLoad タグの付いた復元タブを母数から除外する
+  // （タグは openDiagramTab の呼び出し元 = Dashboard.tsx の復元 effect が付与する）。
   const prevBoardCountRef = useRef(0);
   useEffect(() => {
-    const boardCount = props.tabs.filter(t => t.type === "diagram").length;
+    const boardCount = props.tabs.filter(
+      t => t.type === "diagram" && !t.restoredOnLoad
+    ).length;
     if (boardCount > prevBoardCountRef.current) {
       setShowBoard(true);
     }

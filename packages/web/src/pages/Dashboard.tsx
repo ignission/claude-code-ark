@@ -252,6 +252,43 @@ export default function Dashboard() {
     };
   }, [socket, sessions, openDiagramTab]);
 
+  // セッションで最後に開いていた図（lastDiagramPath）をリロード後に復元する。
+  // 「セッションが見つからなければ何もしない」という diagram:open ハンドラと
+  // 同じガードを踏襲する（sessions に無いセッションは処理対象にならない）。
+  //
+  // 復元は各 sessionId につき一度だけ試みる（restoredDiagramSessionIdsRef）。
+  // session:updated 等で sessions が再エミットされるたびに再実行すると、
+  // ユーザーが後から手動で右ペインを閉じた操作を無限ループで打ち消しかねない
+  // ため、「最初に対象セッションを認識したとき」だけに限定する。
+  //
+  // openDiagramTab には restoredOnLoad=true を渡す。SplitViewPane 側の
+  // 「図タブが増えたら右ペインを自動表示する」effect は、マウント直後は
+  // 常にカウント基準値 0 から始まるため、素直に復元すると毎回強制で右ペインが
+  // 開いてしまう（詳細は SplitViewPane.tsx のコメント参照）。restoredOnLoad の
+  // タブは自動表示のカウント対象から除外されるため、ユーザーが閉じた状態が
+  // リロードのたびに上書きされることはない。
+  const restoredDiagramSessionIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const session of sessions.values()) {
+      if (restoredDiagramSessionIdsRef.current.has(session.id)) continue;
+      restoredDiagramSessionIdsRef.current.add(session.id);
+
+      if (!session.lastDiagramPath || !session.worktreePath) continue;
+      // 既に図タブがある場合は復元不要（diagram:open ハンドラが既に開いている等）
+      const hasDiagramTab = getTabsForSession(session.id).some(
+        t => t.type === "diagram"
+      );
+      if (hasDiagramTab) continue;
+
+      openDiagramTab(
+        session.id,
+        session.worktreePath,
+        session.lastDiagramPath,
+        true
+      );
+    }
+  }, [sessions, getTabsForSession, openDiagramTab]);
+
   // サーバーからの設定が読み込まれたらセッションIDを復元
   const settingsInitializedRef = useRef(false);
   useEffect(() => {

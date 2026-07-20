@@ -745,6 +745,10 @@ export async function startServer(
         return { ok: false, error: result.error };
       }
       io.emit("diagram:open", { sessionId: session.id, relPath });
+      // 「セッションで最後に開いた図」を永続化する。リロード後も
+      // session:list 経由で lastDiagramPath を受け取り、クライアントが
+      // 右ペインの図タブを復元できるようにするため。
+      db.updateSessionLastDiagram(session.id, relPath);
       return { ok: true };
     },
   };
