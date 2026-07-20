@@ -205,8 +205,11 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   return (
     <div className="h-full flex flex-col">
       {/* 上部バー: 右ペイン開閉トグル（diagram タブがあるときのみ表示） */}
+      {/* pr-12: SidebarMainLayout の Beacon 展開ボタン（absolute top-2 right-2 の浮遊）が
+          右端トグルに重なってクリックを奪うため、その分の余白を常に確保する。
+          Beacon 表示中は無駄な余白になるが、右端にはトグルしか無いので実害はない */}
       {diagramTab && (
-        <div className="h-8 shrink-0 border-b border-border bg-sidebar flex items-center justify-end px-2">
+        <div className="h-8 shrink-0 border-b border-border bg-sidebar flex items-center justify-end pl-2 pr-12">
           <button
             type="button"
             onClick={handleToggleBoard}
