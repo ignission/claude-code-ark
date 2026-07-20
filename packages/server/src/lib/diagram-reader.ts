@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { extractModel, injectCsp } from "./diagram-file.js";
+import { injectHarness } from "./diagram-harness.js";
 import type { DiagramModel } from "./diagram-model.js";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
 
@@ -75,7 +76,7 @@ export async function readDiagram(
     return {
       ok: true,
       absPath: resolved.absPath,
-      html: injectCsp(raw),
+      html: injectHarness(injectCsp(raw)),
       model: model.model,
     };
   } catch (e) {
