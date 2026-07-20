@@ -593,6 +593,11 @@ export function SessionSidebar({
                             session &&
                             onDeleteSession(session.id, wt ?? undefined)
                           }
+                          onRestart={
+                            session && onRestartSession
+                              ? () => setRestartTargetSessionId(session.id)
+                              : undefined
+                          }
                           onStart={() => (wt ? onStartSession(wt) : undefined)}
                           profileBadgeSlot={renderProfileBadgeSlot(
                             session,
@@ -660,7 +665,7 @@ export function SessionSidebar({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* セッション再起動 確認ダイアログ (staleProfile対応) */}
+      {/* セッション再起動 確認ダイアログ (コンテキストメニュー / staleProfile 警告の両方から開く) */}
       <AlertDialog
         open={restartTargetSessionId !== null}
         onOpenChange={open => {

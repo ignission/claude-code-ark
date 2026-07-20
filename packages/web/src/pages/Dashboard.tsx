@@ -604,6 +604,7 @@ export default function Dashboard() {
           repoPath={repoPath}
           onStartSession={handleStartSession}
           onDeleteSession={handleDeleteSession}
+          onRestartSession={handleRestartSession}
           onDeleteWorktree={handleDeleteWorktree}
           onSendMessage={sendMessage}
           onSendKey={sendKey}
