@@ -3296,18 +3296,24 @@ export async function startServer(
       }
     );
 
+    // 再起動は profile 機能に依存しない汎用操作 (restartSession 内の
+    // profile 再解決は、profile 未対応環境では env 無しに解決されるだけ)
+    // のため、multiProfileSupported では gate しない
     socket.on("session:restart-with-profile", async ({ sessionId }) => {
-      if (!capabilities.multiProfileSupported) {
-        emitUnsupported();
-        return;
-      }
       try {
         // restartSession 自身が orchestrator.emit("session:stopped") と
         // session:created を発行し、forwardedEvents 経由で全接続クライアントに
         // 旧IDの停止と新IDの作成が届く。ここで重ねて io.emit("session:updated")
         // を流すと、別タブが session:stopped を取りこぼした幻シナリオで旧IDが
         // 残ったまま新IDが追加される懸念があるため、追加 emit はしない。
-        await sessionOrchestrator.restartSession(sessionId);
+        const restarted = await sessionOrchestrator.restartSession(sessionId);
+        // 旧ID→新IDの対応を全クライアントへ通知する (別タブの選択追従用。
+        // sessions 一覧の更新は上記 stopped/created が担うため、受信側は
+        // このイベントで一覧に session を追加してはならない)
+        io.emit("session:restarted", {
+          oldSessionId: sessionId,
+          session: restarted,
+        });
       } catch (e) {
         socket.emit("session:error", {
           sessionId,

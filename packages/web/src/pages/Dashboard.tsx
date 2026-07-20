@@ -388,6 +388,27 @@ export default function Dashboard() {
     [selectedSessionId, sessions, restartSessionWithProfile]
   );
 
+  // 再起動完了通知 (旧ID→新ID) による選択追従。別タブ発の再起動でも
+  // 選択中セッションを新IDへ確実に移す (サーバーが io.emit で全クライアント
+  // に配るため、initiating tab 以外もこの経路で追従できる)。
+  // sessions 一覧の更新は session:stopped / session:created が担うので、
+  // ここでは selectedSessionId の付け替えだけを行う
+  useEffect(() => {
+    if (!socket) return;
+    const handler = (data: {
+      oldSessionId: string;
+      session: ManagedSession;
+    }) => {
+      setSelectedSessionId(prev =>
+        prev === data.oldSessionId ? data.session.id : prev
+      );
+    };
+    socket.on("session:restarted", handler);
+    return () => {
+      socket.off("session:restarted", handler);
+    };
+  }, [socket]);
+
   // ユーザー操作によるセッション選択。restart pending 中にユーザーが
   // 別セッションを手動で選んだ場合、新セッション到着時に元の worktree
   // へ自動移動させない (= migration を破棄する)。
@@ -406,10 +427,12 @@ export default function Dashboard() {
     // 直前 snapshot から worktreePath を取り出して restart pending として扱う。
     // (initiating tab は handleRestartSession で先に値を入れているため上書きしない)
     //
+    // 別タブ発の再起動の一次経路は session:restarted イベントによる追従。
+    // このヒューリスティックは同イベントを取りこぼした場合の保険で、
     // restart 由来かどうかの推定は「直前snapshot で staleProfile=true だった」
-    // ことを条件にする。restart は staleProfile セッションに対してのみ実行され
-    // るため、stale でないセッションが消えるのは通常停止 (別タブからのstop等)
-    // とみなして migration を発動させない。
+    // ことを条件にする。stale でないセッションが消えるのは通常停止
+    // (別タブからのstop等) の可能性があり、migration を発動させると
+    // 停止済みセッションを選択したまま固まるため、保険は stale に限定する。
     if (
       !restartingWorktreePathRef.current &&
       selectedSessionId &&
