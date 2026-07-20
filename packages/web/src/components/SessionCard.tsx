@@ -3,7 +3,7 @@ import type {
   ManagedSession,
   Worktree,
 } from "@ark/shared";
-import { MessageSquare, Pencil, Trash2 } from "lucide-react";
+import { MessageSquare, Pencil, RotateCw, Trash2 } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   AlertDialog,
@@ -42,6 +42,12 @@ interface SessionCardProps {
   onClick: () => void;
   /** セッション削除（停止 + メイン以外のWorktree削除） */
   onDelete: () => void;
+  /**
+   * セッション再起動（tmux kill → 新セッション作成。会話履歴は失われる）。
+   * 確認ダイアログは親 (SessionSidebar) が持つため、ここではトリガーのみ。
+   * 未指定なら再起動メニューを表示しない
+   */
+  onRestart?: () => void;
   onStart?: () => void;
   /**
    * ステータスドットと worktree名 (branch) の間に挿入するバッジ等のスロット。
@@ -71,6 +77,7 @@ export function SessionCard({
   gridStatus,
   onClick,
   onDelete,
+  onRestart,
   onStart,
   profileBadgeSlot,
   customDisplayName,
@@ -315,6 +322,12 @@ export function SessionCard({
             </ContextMenuItem>
           )}
           <ContextMenuSeparator />
+          {onRestart && (
+            <ContextMenuItem onSelect={onRestart}>
+              <RotateCw className="w-4 h-4 mr-2" />
+              セッションを再起動
+            </ContextMenuItem>
+          )}
           <ContextMenuItem
             className="text-destructive focus:text-destructive"
             onSelect={() => setShowDeleteDialog(true)}

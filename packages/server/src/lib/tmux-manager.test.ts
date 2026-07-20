@@ -139,6 +139,44 @@ describe("TmuxManager.createSession - options互換", () => {
     expect(session.tmuxSessionName).toBe("ark-testid01");
   });
 
+  it("createSession の tmux 呼び出しすべてに timeout が付与される", async () => {
+    // spawnSync は同期呼び出しでハングするとイベントループごと停止するため、
+    // JS 側のタイムアウトでは救えない。timeout オプションで子プロセスを
+    // kill させ、error → throw → restartSession の finally が in-flight を
+    // 解放する経路を成立させる (CodeRabbit PR#221 指摘対応)
+    await manager.createSession("/path/to/worktree");
+
+    const tmuxCalls = mockedSpawnSync.mock.calls.filter(
+      ([, args]) =>
+        Array.isArray(args) &&
+        ["new-session", "set-option", "send-keys"].includes(String(args[0]))
+    );
+    expect(tmuxCalls.length).toBeGreaterThanOrEqual(3);
+    for (const call of tmuxCalls) {
+      const opts = call[2] as { timeout?: number } | undefined;
+      expect(opts?.timeout).toBeGreaterThan(0);
+    }
+  });
+
+  it("createSession 失敗時のクリーンアップ kill-session にも timeout が付与される", async () => {
+    // new-session 成功 → set-option 失敗、でクリーンアップ経路に入れる
+    mockedSpawnSync.mockImplementation((_cmd, args) => {
+      if (Array.isArray(args) && args[0] === "set-option") {
+        return { ...successResult, status: 1 } as never;
+      }
+      return successResult as never;
+    });
+
+    await expect(manager.createSession("/path/to/worktree")).rejects.toThrow();
+
+    const killCall = mockedSpawnSync.mock.calls.find(
+      ([, args]) => Array.isArray(args) && args[0] === "kill-session"
+    );
+    expect(killCall).toBeDefined();
+    const opts = killCall?.[2] as { timeout?: number } | undefined;
+    expect(opts?.timeout).toBeGreaterThan(0);
+  });
+
   it("options.envで -e KEY=VALUE が追加される", async () => {
     await manager.createSession("/path/to/worktree", {
       env: { FOO: "bar", BAZ: "qux" },

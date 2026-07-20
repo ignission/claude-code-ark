@@ -371,6 +371,16 @@ export interface ServerToClientEvents {
   "session:created": (session: ManagedSession) => void;
   "session:updated": (session: ManagedSession) => void;
   "session:stopped": (sessionId: string) => void;
+  /**
+   * セッション再起動の完了通知 (旧ID → 新セッションの対応)。
+   * sessions 一覧の更新は session:stopped / session:created が担うため、
+   * このイベントは「選択中セッションの新IDへの追従」のヒント専用。
+   * 一覧へ session を追加してはならない (旧ID残留の幻セッション防止)
+   */
+  "session:restarted": (data: {
+    oldSessionId: string;
+    session: ManagedSession;
+  }) => void;
   "session:error": (data: { sessionId: string; error: string }) => void;
 
   /**

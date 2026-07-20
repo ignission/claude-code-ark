@@ -1585,6 +1585,7 @@ export async function startServer(
     // （自動復元で発行されるsession:restoredイベントを転送するため）
     const forwardedEvents = [
       "session:created",
+      "session:restarted",
       "session:restored",
       "session:stopped",
       "session:updated",
@@ -3301,17 +3302,17 @@ export async function startServer(
       }
     );
 
+    // 再起動は profile 機能に依存しない汎用操作 (restartSession 内の
+    // profile 再解決は、profile 未対応環境では env 無しに解決されるだけ)
+    // のため、multiProfileSupported では gate しない
     socket.on("session:restart-with-profile", async ({ sessionId }) => {
-      if (!capabilities.multiProfileSupported) {
-        emitUnsupported();
-        return;
-      }
       try {
-        // restartSession 自身が orchestrator.emit("session:stopped") と
-        // session:created を発行し、forwardedEvents 経由で全接続クライアントに
-        // 旧IDの停止と新IDの作成が届く。ここで重ねて io.emit("session:updated")
-        // を流すと、別タブが session:stopped を取りこぼした幻シナリオで旧IDが
-        // 残ったまま新IDが追加される懸念があるため、追加 emit はしない。
+        // restartSession 自身が orchestrator 経由で
+        // session:created → session:restarted → session:stopped を発行し、
+        // forwardedEvents で全接続クライアントに届く (順序は選択追従の要件。
+        // session-orchestrator.ts 参照)。ここで重ねて emit すると、別タブが
+        // session:stopped を取りこぼした幻シナリオで旧IDが残ったまま新IDが
+        // 追加される懸念があるため、追加 emit はしない。
         await sessionOrchestrator.restartSession(sessionId);
       } catch (e) {
         socket.emit("session:error", {
