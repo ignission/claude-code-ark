@@ -194,6 +194,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
         {/* 左ペイン: ターミナル（常時表示） */}
         <div className="h-full flex-1 min-w-0 overflow-hidden">
           <TerminalPane
+            socket={props.socket}
             session={props.session}
             worktree={props.worktree}
             repoName={props.repoName}

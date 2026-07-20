@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ViewerTab } from "../components/TerminalPane";
 import { publishBoardInsert } from "../lib/board-bus";
 import { addOrFocusBoardTab, addOrFocusCanvasTab } from "../lib/canvas-tabs";
+import { addOrFocusDiagramTab } from "../lib/diagram-tabs";
 
 /**
  * セッションごとのタブ状態管理を提供するカスタムフック。
@@ -152,6 +153,27 @@ export function useViewerTabs(
     []
   );
 
+  const openDiagramTab = useCallback(
+    (sessionId: string, worktreePath: string, relPath: string) => {
+      // openCanvasTab と同じく、両方の setState を同じ updater 内に閉じ込める
+      // （L72-80 のコメントにある eager bailout タイミング依存の回帰を避けるため）
+      setSessionTabs(prev => {
+        const current = prev[sessionId] ?? [
+          { type: "terminal" as const, id: "terminal" },
+        ];
+        const { tabs, activeIndex } = addOrFocusDiagramTab(
+          current,
+          worktreePath,
+          relPath,
+          `diagram-${Date.now()}`
+        );
+        setSessionActiveTab(p => ({ ...p, [sessionId]: activeIndex }));
+        return { ...prev, [sessionId]: tabs };
+      });
+    },
+    []
+  );
+
   // board はデスクトップでは TerminalPane のタブ機構ではなく右ペイン（SplitViewPane
   // の CanvasPane）専属になったため、ここでは sessionTabs への追加のみ行い、
   // アクティブタブは変更しない（変更すると TerminalPane の表示対象が board タブになり、
@@ -293,5 +315,6 @@ export function useViewerTabs(
     openFileTab,
     openCanvasTab,
     openBoardTab,
+    openDiagramTab,
   };
 }

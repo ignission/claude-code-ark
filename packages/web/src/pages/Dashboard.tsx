@@ -226,6 +226,7 @@ export default function Dashboard() {
     getActiveTabForSession,
     handleTabSelect,
     handleTabClose,
+    openDiagramTab,
   } = useViewerTabs(
     selectedSessionId,
     sessions,
@@ -235,6 +236,22 @@ export default function Dashboard() {
     !isMobile,
     true // boardMode: デスクトップはボードに挿入
   );
+
+  // diagram:open を受けて図タブを開く。worktreePath はサーバーから送られない
+  // （絶対パスの配布範囲を広げないため）。クライアントが既に持っている
+  // sessions から sessionId 経由で引く。
+  useEffect(() => {
+    if (!socket) return;
+    const onDiagramOpen = (data: { sessionId: string; relPath: string }) => {
+      const session = sessions.get(data.sessionId);
+      if (!session?.worktreePath) return;
+      openDiagramTab(data.sessionId, session.worktreePath, data.relPath);
+    };
+    socket.on("diagram:open", onDiagramOpen);
+    return () => {
+      socket.off("diagram:open", onDiagramOpen);
+    };
+  }, [socket, sessions, openDiagramTab]);
 
   // サーバーからの設定が読み込まれたらセッションIDを復元
   const settingsInitializedRef = useRef(false);
