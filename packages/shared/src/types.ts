@@ -371,14 +371,11 @@ export interface ServerToClientEvents {
   }) => void;
   "worktree:error": (error: string) => void;
 
-  /** 他クライアントがボードを保存した通知（受信側は未編集なら再読込する） */
-  "canvas:updated": (data: { worktreePath: string }) => void;
-
   /**
    * Claude が board_open を呼んだ。クライアントは図タブを開く。
    * worktreePath は載せない。クライアントは session:list で既に持っている値を
-   * sessionId から引く（canvas 系と同じく、worktree の絶対パスが渡る範囲を
-   * 必要なクライアントに限定するため。index.ts:853-855 の方針に揃える）。
+   * sessionId から引く（worktree の絶対パスが渡る範囲を必要なクライアントに
+   * 限定するため。index.ts の openDiagram 実装の方針に揃える）。
    */
   "diagram:open": (data: { sessionId: string; relPath: string }) => void;
 
@@ -613,57 +610,6 @@ export interface ClientToServerEvents {
    * AskUserQuestion の自由入力モードで「1 文字ずつタイプ」する用途。
    */
   "session:send-literal": (data: { sessionId: string; text: string }) => void;
-
-  /** ボード scene の読込（callback 応答）。scene は Excalidraw scene の JSON 文字列 */
-  "canvas:load": (
-    worktreePath: string,
-    callback: (response: {
-      scene: string | null;
-      lastSentScene: string | null;
-      revision: number | null;
-      error?: string;
-    }) => void
-  ) => void;
-  /**
-   * ボード scene の保存（デバウンス済みで呼ぶ・ACK 応答あり）。
-   * baseRevision は load 時点の revision（楽観ロック用、新規ボードなら null）。
-   * 他クライアントの保存と競合していた場合は conflict: true を返す。
-   */
-  "canvas:save": (
-    data: { worktreePath: string; scene: string; baseRevision: number | null },
-    callback: (response: {
-      ok: boolean;
-      revision?: number;
-      conflict?: boolean;
-      error?: string;
-    }) => void
-  ) => void;
-  /**
-   * ボード diff テキストをセッションの Claude に送信し、last_sent_scene を更新する。
-   * baseRevision は load/save 時点の revision（last_sent_scene 更新の楽観ロック用、
-   * 新規ボードなら null）。
-   *
-   * ok は Claude への送信自体（sendMessage）の成否。persisted は scene /
-   * last_sent_scene の永続化成否で、送信成功時（ok: true）のみ意味を持つ。
-   * conflict は persisted: false の理由が revision 競合であることを示す
-   * （他クライアントの新しい変更を古い scene で上書きしない）。
-   */
-  "canvas:send-to-claude": (
-    data: {
-      sessionId: string;
-      worktreePath: string;
-      text: string;
-      scene: string;
-      baseRevision: number | null;
-    },
-    callback: (response: {
-      ok: boolean;
-      persisted?: boolean;
-      conflict?: boolean;
-      revision?: number;
-      error?: string;
-    }) => void
-  ) => void;
 
   /** 図の購読開始（更新通知を受け取る）。1 セッション 1 図を想定 */
   "diagram:subscribe": (data: {

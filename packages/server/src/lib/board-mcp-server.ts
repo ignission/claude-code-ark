@@ -1,8 +1,9 @@
 /**
  * Board MCP Server (HTTP)
  *
- * セッションボード（Excalidraw）へ Claude が図解を書き込むための
- * **Streamable HTTP MCP server** を 127.0.0.1 に公開する。
+ * board_open ツール（生成した図ファイルをセッションのボードペインで開かせる）を
+ * 公開する **Streamable HTTP MCP server** を 127.0.0.1 に公開する。
+ * 旧 board_write（Excalidraw scene への直接書き込み）は撤去済み（B-1）。
  *
  * ArkMcpServer（司令塔ツール群）との違い:
  * - 1 worktree = 1 board という前提のため、bearer token は
@@ -20,7 +21,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express from "express";
 import { z } from "zod";
-import { expandElements, type SimpleElement } from "./board-element-codec.js";
 import { getErrorMessage } from "./errors.js";
 
 /** text content だけの CallToolResult を生成するヘルパー */
@@ -49,9 +49,6 @@ export class BoardSessionRegistry {
 }
 
 export interface BoardMcpDeps {
-  getBoardScene(worktreePath: string): { elements: unknown[] };
-  saveBoardScene(worktreePath: string, scene: { elements: unknown[] }): void;
-  notifyUpdated(worktreePath: string): void;
   /**
    * 図ファイルをボードペインで開かせる（B-0a）。
    * 実際に readDiagram で読めることを確認してから開かせる（403/404/422 の
@@ -61,47 +58,6 @@ export interface BoardMcpDeps {
     worktreePath: string,
     relPath: string
   ): Promise<{ ok: boolean; error?: string }>;
-}
-
-export interface BoardWriteInput {
-  mode: "append" | "replace";
-  elements: SimpleElement[];
-}
-
-export interface BoardWriteResult {
-  added: number;
-  total: number;
-  skipped: { id?: string; reason: string }[];
-}
-
-/**
- * board_write の純ロジック（HTTP/MCP から分離してテスト可能にする）。
- * - append: 既存 scene に展開後の要素を追記する
- * - replace: 既存を破棄し展開後の要素で置き換える
- * - 展開後の有効要素が 0 件（全 skip）なら保存/通知しない（scene を壊さない）
- */
-export function handleBoardWrite(
-  deps: Pick<
-    BoardMcpDeps,
-    "getBoardScene" | "saveBoardScene" | "notifyUpdated"
-  >,
-  worktreePath: string,
-  input: BoardWriteInput
-): BoardWriteResult {
-  const existing =
-    input.mode === "replace"
-      ? []
-      : (deps.getBoardScene(worktreePath).elements ?? []);
-  const { elements, skipped } = expandElements(input.elements, {
-    startIndex: existing.length,
-  });
-  if (elements.length === 0) {
-    return { added: 0, total: existing.length, skipped };
-  }
-  const merged = [...existing, ...elements];
-  deps.saveBoardScene(worktreePath, { elements: merged });
-  deps.notifyUpdated(worktreePath);
-  return { added: elements.length, total: merged.length, skipped };
 }
 
 export interface BoardOpenInput {
@@ -122,13 +78,8 @@ export async function handleBoardOpen(
   return deps.openDiagram(worktreePath, input.path);
 }
 
-// board_write の zod schema。
-// SimpleElement は discriminated union だが、MCP スキーマとしては record で緩く受け、
-// 実際の検証・変換は expandElements（codec 側）に委譲する（不正/未知 type は skip される）。
-const simpleElementSchema = z.array(z.record(z.string(), z.any()));
-
 /**
- * board_write ツールを登録した McpServer を構築する。
+ * board_open ツールを登録した McpServer を構築する。
  * stateless transport では request 毎に新しい server を作るため、
  * deps + worktreePath（認証で解決済み）を引数に取るファクトリ関数にしている。
  */
@@ -137,33 +88,6 @@ export function createBoardMcpServer(
   worktreePath: string
 ): McpServer {
   const server = new McpServer({ name: "ark-board", version: "1.0.0" });
-
-  server.registerTool(
-    "board_write",
-    {
-      description:
-        "ユーザーが図解・作図・可視化・フロー図/構成図などを求めたら、チャットに mermaid や ASCII 図を書かず、必ずこのツールでこのセッションのボードに図を描くこと。elements は簡略スキーマ: " +
-        '{type:"rect"|"ellipse"|"diamond",id,x,y,w,h,text?,color?} / {type:"text",id,x,y,text,color?} / {type:"arrow",id,from,to,label?}。' +
-        "arrow の from/to は同じ呼び出し内のシェイプ id を指す。mode=append(既定,追記) / replace(全置換,ユーザーが明示要求した時のみ)。座標は左上原点・px。",
-      inputSchema: {
-        mode: z.enum(["append", "replace"]).default("append"),
-        elements: simpleElementSchema.describe(
-          "描く要素の配列（簡略スキーマ）"
-        ),
-      },
-    },
-    async args => {
-      try {
-        const res = handleBoardWrite(deps, worktreePath, {
-          mode: args.mode ?? "append",
-          elements: args.elements as unknown as SimpleElement[],
-        });
-        return textResult(JSON.stringify(res));
-      } catch (e) {
-        return textResult(`board_write 失敗: ${getErrorMessage(e)}`);
-      }
-    }
-  );
 
   server.registerTool(
     "board_open",

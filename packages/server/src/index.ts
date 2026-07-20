@@ -174,64 +174,6 @@ export interface ServerHandle {
 // トンネル状態ファイルのパス
 const TUNNEL_STATE_FILE = path.join(os.tmpdir(), "ark-tunnel-state.json");
 
-// ===== キャンバスボード（Excalidraw whiteboard）関連の定数・ヘルパー =====
-/** ボード scene（Excalidraw JSON）の受け入れ上限。無制限だと悪意/バグのある
- *  クライアントが DB を肥大化させ得るため上限を設ける */
-const CANVAS_SCENE_MAX_BYTES = 10 * 1024 * 1024;
-/** Claude へ送る diff テキストの受け入れ上限 */
-const CANVAS_TEXT_MAX_BYTES = 64 * 1024;
-/** worktree 単位のボード購読 room 名。canvas:updated をそのボードを
- *  load 済みのクライアントだけに配信するために使う */
-const canvasRoom = (worktreePath: string) => `canvas:${worktreePath}`;
-
-/** scene 文字列の構文と構造を検証する。壊れた scene を保存するとクライアントが
- *  恒久的にパースエラーになるため、要素・files の形まで境界で検証する */
-/** scene の要素数上限。異常な巨大配列でクライアント描画と diff 計算を守る */
-const SCENE_MAX_ELEMENTS = 10_000;
-
-function isValidSceneJson(scene: string): boolean {
-  try {
-    const parsed: unknown = JSON.parse(scene);
-    if (typeof parsed !== "object" || parsed === null) return false;
-    const obj = parsed as { elements?: unknown; files?: unknown };
-    if (!Array.isArray(obj.elements)) return false;
-    if (obj.elements.length > SCENE_MAX_ELEMENTS) return false;
-    for (const el of obj.elements) {
-      if (typeof el !== "object" || el === null) return false;
-      const e = el as {
-        id?: unknown;
-        type?: unknown;
-        x?: unknown;
-        y?: unknown;
-        width?: unknown;
-        height?: unknown;
-      };
-      if (typeof e.id !== "string" || typeof e.type !== "string") return false;
-      // クライアントは x/y/width/height を有限数として無条件に計算する
-      // (computeInsertOffset / buildBoardDiffText) ため、境界で有限数を強制する
-      for (const v of [e.x, e.y, e.width, e.height]) {
-        if (typeof v !== "number" || !Number.isFinite(v)) return false;
-      }
-    }
-    if (obj.files !== undefined) {
-      if (typeof obj.files !== "object" || obj.files === null) return false;
-      for (const f of Object.values(obj.files)) {
-        if (typeof f !== "object" || f === null) return false;
-      }
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** revision（canvas_boards.updated_at 由来）として妥当な値か。null は「新規ボード」 */
-function isValidBaseRevision(value: unknown): value is number | null {
-  return (
-    value === null || (Number.isSafeInteger(value) && (value as number) >= 0)
-  );
-}
-
 const MANAGED_WORKTREE_CACHE_TTL_MS = 30_000;
 
 /** トンネル状態をファイルに保存する */
@@ -503,7 +445,7 @@ export async function startServer(
 
   /**
    * resolveManagedWorktreePath の検証成功結果のみを保持するキャッシュ（TTL 30 秒）。
-   * canvas:* はデバウンス保存等で高頻度に呼ばれるため、同期 git 呼び出しを
+   * diagram:subscribe 等は高頻度に呼ばれるため、同期 git 呼び出しを
    * イベントごとに繰り返してイベントループを塞がないようにする。
    * 失敗結果はキャッシュしない: realpath 正規化により実在しないパスは
    * キャッシュ到達前に弾かれるため、キャッシュは実在パスの git 検証成功結果
@@ -537,7 +479,7 @@ export async function startServer(
   }
 
   /**
-   * canvas:* / linkWorktreeProfile 共通の worktree 検証（trust boundary）+
+   * diagram:subscribe / linkWorktreeProfile 共通の worktree 検証（trust boundary）+
    * realpath 正規化。`/repo`・`/repo/.`・`/repo/./.` 等の表記揺れを同一の
    * 実パスへ畳み込み、DB 主キー・キャッシュキー・room 名を worktree ごとに
    * 一意化する（正規化しないと表記違いで別 DB 行が作られ、行単位のサイズ上限
@@ -755,88 +697,16 @@ export async function startServer(
   // Apply Socket.IO authentication middleware
   io.use(authManager.socketMiddleware());
 
-  // ===== セッションボード MCP サーバー (board_write ツール) =====
+  // ===== セッションボード MCP サーバー (board_open ツール) =====
   // 1 プロセスに 1 インスタンスで良く、worktree ごとの区別は
   // BoardSessionRegistry の bearer token 解決で行う（セッション起動時の
-  // register/unregister は Task 4 で SessionOrchestrator 側に配線する）。
-  // ここでは BoardMcpDeps の実体（DB アダプタ + socket 通知）と起動のみ行う。
+  // register/unregister は SessionOrchestrator 側に配線済み）。
+  // ここでは BoardMcpDeps の実体（socket 通知）と起動のみ行う。
+  // 旧 board_write（Excalidraw scene への直接書き込み）用の getBoardScene /
+  // saveBoardScene / notifyUpdated は撤去済み（B-1）。openDiagram のみ残る。
   const boardRegistry = new BoardSessionRegistry();
   const boardMcp = new BoardMcpServer();
-  // board deps に渡る worktreePath は registry 登録時のクライアント生値
-  // （realpath 未正規化）である。canvas:load / canvas:save /
-  // canvas:send-to-claude は全て resolveManagedWorktreePath（realpathSync
-  // ベース）で正規化してから canvas_boards の DB キー・canvasRoom を作る規約
-  // （commit 4d20706）なので、board deps も同じ関数を通さないと、symlink を
-  // 含むパス（/tmp→/private/tmp 等）で Claude が canvas_boards[P] に書いて
-  // room canvas:P に emit する一方、UI は canvas_boards[realpath(P)] を読み
-  // room canvas:realpath(P) に join するため図が UI に一切現れなくなる。
-  // realpathSync は冪等なので、Task 4 が realpath を register 済みでも二重
-  // 正規化にならない。未管理パス（null）の扱いも canvas:save と揃える。
   const boardDeps: BoardMcpDeps = {
-    getBoardScene(worktreePath) {
-      const resolved = resolveManagedWorktreePath(worktreePath);
-      if (!resolved) return { elements: [] };
-      const board = db.getCanvasBoard(resolved);
-      if (!board?.scene) return { elements: [] };
-      try {
-        const parsed = JSON.parse(board.scene) as { elements?: unknown[] };
-        return { elements: parsed.elements ?? [] };
-      } catch {
-        return { elements: [] };
-      }
-    },
-    saveBoardScene(worktreePath, scene) {
-      // canvas:save と同じく未管理/実在しないパスへの書き込みは拒否する。
-      // 例外は MCP tool 側の catch で呼び出し元 (Claude) にエラーとして伝わる。
-      const resolved = resolveManagedWorktreeDetailed(worktreePath);
-      if (!resolved.ok) {
-        // 失敗要因 (削除済み / FS エラー(errno) / worktree でない / 許可外) を
-        // ログとメッセージの両方に残す。要因を潰して単一メッセージにすると、
-        // 事後に原因が一切追えなくなる。
-        console.warn(
-          `[Board] board_write の保存先を解決できません (path=${worktreePath}): ${resolved.reason}`
-        );
-        throw new Error(
-          `board scene の保存先 worktree が見つかりません: ${resolved.reason}`
-        );
-      }
-      // canvas:save と同じ CAS（楽観ロック）規則に従う。直前の revision を
-      // baseRevision として渡し、他クライアントの新しい変更を古い scene で
-      // 上書きしないようにする。衝突時は例外を投げ、MCP tool 側の catch で
-      // 呼び出し元 (Claude) にエラーとして伝える。
-      const existing = db.getCanvasBoard(resolved.path);
-      // board_write は elements しか扱わないため、既存 scene に埋め込み画像
-      // (files) があれば引き継ぐ（そのまま上書きすると人間が貼り付けた画像が
-      // 消えてしまう）。壊れた既存 scene は無視して files 無しで進める。
-      let files: unknown;
-      if (existing?.scene) {
-        try {
-          files = (JSON.parse(existing.scene) as { files?: unknown }).files;
-        } catch {
-          files = undefined;
-        }
-      }
-      const payload = files !== undefined ? { ...scene, files } : scene;
-      const result = db.saveCanvasBoardScene(
-        resolved.path,
-        JSON.stringify(payload),
-        existing?.revision ?? null
-      );
-      if (!result.ok) {
-        throw new Error(
-          "board scene の保存に失敗しました（他クライアントとの競合）"
-        );
-      }
-    },
-    notifyUpdated(worktreePath) {
-      // canvas:save / canvas:send-to-claude と同じ room（正規化済みパス）へ配信する
-      // (load 済みクライアントだけに worktree の絶対パスが渡る範囲を限定する)
-      const resolved = resolveManagedWorktreePath(worktreePath);
-      if (!resolved) return;
-      io.to(canvasRoom(resolved)).emit("canvas:updated", {
-        worktreePath: resolved,
-      });
-    },
     async openDiagram(worktreePath, relPath) {
       const resolved = resolveManagedWorktreeDetailed(worktreePath);
       if (!resolved.ok) {
@@ -936,7 +806,7 @@ export async function startServer(
       // (worktree_profile_links は FK 制約を持たないため明示チェックが必要)
       if (!db.getProfile(profileId)) return false;
       // worktree 側の trust boundary チェック（実在ディレクトリ / git worktree /
-      // allowedRepos 許可リスト）は canvas:* と共通の isManagedWorktreePath に委譲する。
+      // allowedRepos 許可リスト）は diagram:subscribe と共通の isManagedWorktreePath に委譲する。
       if (!isManagedWorktreePath(worktreePath)) return false;
       db.setWorktreeProfileLink(worktreePath, profileId);
       // UIの worktreeProfileLinks マップ / プロファイルバッジを更新するため
@@ -2085,17 +1955,6 @@ export async function startServer(
             `[Worktree] ${result.branchKeptReason} (repo=${repoPath})`
           );
         }
-        try {
-          db.deleteCanvasBoard(worktreePath);
-        } catch (error) {
-          // worktree 削除自体は完了している。ボード掃除の失敗で削除通知を
-          // 止めないため、ログに留めて続行する
-          console.error(
-            "worktree:delete: deleteCanvasBoard failed:",
-            getErrorMessage(error)
-          );
-        }
-
         // 削除成功を通知
         io.emit("worktree:deleted", {
           repoPath,
@@ -2165,16 +2024,6 @@ export async function startServer(
                 .replace(/[/+=]/g, "");
               await deleteWorktree(result.repoPath, result.worktreePath);
               managedWorktreeCache.delete(result.worktreePath);
-              try {
-                db.deleteCanvasBoard(result.worktreePath);
-              } catch (error) {
-                // worktree 削除自体は完了している。ボード掃除の失敗で削除通知を
-                // 止めないため、ログに留めて続行する
-                console.error(
-                  "session:stop: deleteCanvasBoard failed:",
-                  getErrorMessage(error)
-                );
-              }
               socket.emit("worktree:deleted", {
                 repoPath: result.repoPath,
                 worktreeId: deletedWorktreeId,
@@ -2253,235 +2102,6 @@ export async function startServer(
           sessionId: d.sessionId,
           error: getErrorMessage(error),
         });
-      }
-    });
-
-    // canvas:* は外部入力（worktreePath / scene / baseRevision 等）を
-    // そのまま分割代入せず、まず data 自体・callback の型を検証する。
-    // ack callback は外部入力なので関数であることを検証してから呼ぶ（slash:list と同じ方針）。
-    socket.on("canvas:load", (worktreePath: unknown, callback: unknown) => {
-      if (typeof callback !== "function") return;
-      const reply = callback as (response: {
-        scene: string | null;
-        lastSentScene: string | null;
-        revision: number | null;
-        error?: string;
-      }) => void;
-      if (typeof worktreePath !== "string") {
-        reply({
-          scene: null,
-          lastSentScene: null,
-          revision: null,
-          error: "worktreePath が不正です",
-        });
-        return;
-      }
-      // 実在しない / worktree でない / allowedRepos 対象外のパスに対しては
-      // room に join させない（未知パスへの購読・DB 参照を防ぐ trust boundary）。
-      // realpath 正規化した値を以降の DB キー・room 名として使い続け、
-      // `/repo`・`/repo/.` 等の表記違いを同一 worktree として扱う
-      const resolvedWorktreePath = resolveManagedWorktreePath(worktreePath);
-      if (resolvedWorktreePath === null) {
-        reply({
-          scene: null,
-          lastSentScene: null,
-          revision: null,
-          error: "invalid worktreePath",
-        });
-        return;
-      }
-      try {
-        const board = db.getCanvasBoard(resolvedWorktreePath);
-        // このボードを load したクライアントだけに canvas:save の更新通知を
-        // 届けるための room。load を購読の自然な入口として join する
-        socket.join(canvasRoom(resolvedWorktreePath));
-        reply({
-          scene: board?.scene ?? null,
-          lastSentScene: board?.lastSentScene ?? null,
-          revision: board?.revision ?? null,
-        });
-      } catch (error) {
-        reply({
-          scene: null,
-          lastSentScene: null,
-          revision: null,
-          error: getErrorMessage(error),
-        });
-      }
-    });
-
-    socket.on("canvas:save", (data: unknown, callback: unknown) => {
-      if (typeof callback !== "function") return;
-      const reply = callback as (response: {
-        ok: boolean;
-        revision?: number;
-        conflict?: boolean;
-        error?: string;
-      }) => void;
-
-      if (!data || typeof data !== "object") {
-        reply({ ok: false, error: "リクエストが不正です" });
-        return;
-      }
-      const { worktreePath, scene, baseRevision } = data as {
-        worktreePath?: unknown;
-        scene?: unknown;
-        baseRevision?: unknown;
-      };
-      if (typeof worktreePath !== "string" || typeof scene !== "string") {
-        reply({ ok: false, error: "worktreePath / scene が不正です" });
-        return;
-      }
-      if (!isValidBaseRevision(baseRevision)) {
-        reply({ ok: false, error: "baseRevision が不正です" });
-        return;
-      }
-      if (Buffer.byteLength(scene, "utf-8") > CANVAS_SCENE_MAX_BYTES) {
-        reply({ ok: false, error: "サイズ上限超過" });
-        return;
-      }
-      if (!isValidSceneJson(scene)) {
-        reply({ ok: false, error: "invalid scene" });
-        return;
-      }
-      // 任意の worktreePath で DB 行を作らせないため、実在する git worktree
-      // ディレクトリ（+ allowedRepos 設定時は許可リスト内）に限定する。
-      // realpath 正規化した値を以降の DB キー・room 名として使い続ける
-      const resolvedWorktreePath = resolveManagedWorktreePath(worktreePath);
-      if (resolvedWorktreePath === null) {
-        reply({ ok: false, error: "worktree が見つかりません" });
-        return;
-      }
-      try {
-        const result = db.saveCanvasBoardScene(
-          resolvedWorktreePath,
-          scene,
-          baseRevision
-        );
-        if (!result.ok) {
-          reply({ ok: false, conflict: true });
-          return;
-        }
-        // 同じボードを load 済みの他クライアントへ（送信元は除く）。
-        // 全クライアント broadcast だと未 load のクライアントにも絶対パスが
-        // 漏れるため room 限定にする
-        socket
-          .to(canvasRoom(resolvedWorktreePath))
-          .emit("canvas:updated", { worktreePath: resolvedWorktreePath });
-        reply({ ok: true, revision: result.revision });
-      } catch (error) {
-        console.error("canvas:save failed:", getErrorMessage(error));
-        reply({ ok: false, error: getErrorMessage(error) });
-      }
-    });
-
-    socket.on("canvas:send-to-claude", (data: unknown, callback: unknown) => {
-      if (typeof callback !== "function") return;
-      const reply = callback as (response: {
-        ok: boolean;
-        persisted?: boolean;
-        conflict?: boolean;
-        revision?: number;
-        error?: string;
-      }) => void;
-
-      if (!data || typeof data !== "object") {
-        reply({ ok: false, error: "リクエストが不正です" });
-        return;
-      }
-      const { sessionId, worktreePath, text, scene, baseRevision } = data as {
-        sessionId?: unknown;
-        worktreePath?: unknown;
-        text?: unknown;
-        scene?: unknown;
-        baseRevision?: unknown;
-      };
-      if (
-        typeof sessionId !== "string" ||
-        typeof worktreePath !== "string" ||
-        typeof text !== "string" ||
-        typeof scene !== "string"
-      ) {
-        reply({ ok: false, error: "リクエストが不正です" });
-        return;
-      }
-      if (!isValidBaseRevision(baseRevision)) {
-        reply({ ok: false, error: "baseRevision が不正です" });
-        return;
-      }
-      if (Buffer.byteLength(text, "utf-8") > CANVAS_TEXT_MAX_BYTES) {
-        reply({ ok: false, error: "サイズ上限超過" });
-        return;
-      }
-      if (Buffer.byteLength(scene, "utf-8") > CANVAS_SCENE_MAX_BYTES) {
-        reply({ ok: false, error: "サイズ上限超過" });
-        return;
-      }
-      // 送信前に scene の構造を検証する。送信自体はまだ行っていないので
-      // ok:false を返しても二重送信にはならず安全
-      if (!isValidSceneJson(scene)) {
-        reply({ ok: false, error: "invalid scene" });
-        return;
-      }
-      // realpath 正規化した値を以降の DB キー・room 名・session 比較で使い続ける
-      const resolvedWorktreePath = resolveManagedWorktreePath(worktreePath);
-      if (resolvedWorktreePath === null) {
-        reply({ ok: false, error: "worktree が見つかりません" });
-        return;
-      }
-      // sessionId が指す worktree と、ボードの worktree が一致することを
-      // 検証する（別 worktree のボードから任意のセッションへ送信させない）。
-      // session.worktreePath は listWorktrees 由来で通常は正規化済みだが、
-      // 念のため realpath で正規化してから比較する（realpath 失敗時は不一致扱い）
-      const session = sessionOrchestrator.getSession(sessionId);
-      let sessionWorktreeReal: string | null = null;
-      if (session?.worktreePath) {
-        try {
-          sessionWorktreeReal = fs.realpathSync(session.worktreePath);
-        } catch {
-          sessionWorktreeReal = null;
-        }
-      }
-      if (!session || sessionWorktreeReal !== resolvedWorktreePath) {
-        reply({
-          ok: false,
-          error: "セッションと worktree が一致しません",
-        });
-        return;
-      }
-      try {
-        sessionOrchestrator.sendMessage(sessionId, text);
-      } catch (error) {
-        reply({ ok: false, error: getErrorMessage(error) });
-        return;
-      }
-      // ここから先は Claude への送信自体は成功済み。scene の永続化（persisted）
-      // に失敗しても ok:false にすると呼び出し側が再送し、同じ指示が二重に
-      // セッションへ届くため、常に ok:true を返し persisted で成否を分ける。
-      try {
-        const result = db.markCanvasBoardSent(
-          resolvedWorktreePath,
-          scene,
-          baseRevision
-        );
-        if (!result.ok) {
-          // 他クライアントの新しい変更を古い scene で上書きしないよう、
-          // conflict 時は保存しない（次の canvas:load / canvas:updated で追従させる）
-          reply({ ok: true, persisted: false, conflict: true });
-          return;
-        }
-        // last_sent_scene が更新されたことを、同じボードを load 済みの他クライアントへ
-        // 通知する（lastSentElementsRef の同期用。canvas:save と同じ room 配信）
-        socket
-          .to(canvasRoom(resolvedWorktreePath))
-          .emit("canvas:updated", { worktreePath: resolvedWorktreePath });
-        reply({ ok: true, persisted: true, revision: result.revision });
-      } catch (error) {
-        console.error(
-          "canvas:send-to-claude: markCanvasBoardSent failed:",
-          getErrorMessage(error)
-        );
-        reply({ ok: true, persisted: false, error: getErrorMessage(error) });
       }
     });
 

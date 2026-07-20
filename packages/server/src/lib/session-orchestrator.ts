@@ -196,13 +196,15 @@ export class SessionOrchestrator extends EventEmitter {
       { mode: 0o600 }
     );
     tmuxManager.setClaudeMcpConfigPath(cfgPath);
-    // 図解要求でモデルが board_write を呼ぶよう促す（description だけでは弱いため）。
+    // 図解要求でモデルが .diagram.html を書いて board_open を呼ぶよう促す
+    // （description だけでは弱いため）。旧 board_write（Excalidraw 直接書き込み）
+    // は B-1 で撤去済み。生成規約自体は diagram-authoring skill が持つ。
     tmuxManager.setClaudeAppendSystemPrompt(
-      "あなたはこのセッションのボード(Excalidraw)に図を描ける board_write ツールを持っている。" +
+      "あなたはこのセッションのボードペインに図ファイルを開かせる board_open ツールを持っている。" +
         "ユーザーが「図解して」「図で説明して」「ボードに描いて」「フロー図/構成図にして」等、" +
         "図解・作図・可視化・図示を求めたら、チャットに mermaid や ASCII 図を出すのではなく、" +
-        "必ず board_write ツールでこのセッションのボードに図を描くこと。既存の図に足すときは " +
-        "mode=append、全て描き直す明示要求のときだけ mode=replace を使う。"
+        "docs/diagrams/ 配下に *.diagram.html を書いて（作図規約は diagram-authoring skill を参照）、" +
+        "書いたら必ず board_open ツールでこのセッションのボードペインに開かせること。"
     );
     return { token, cfgPath };
   }

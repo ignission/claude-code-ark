@@ -335,13 +335,11 @@ export class SessionDatabase {
         display_name TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS canvas_boards (
-        worktree_path TEXT PRIMARY KEY,
-        scene TEXT NOT NULL,
-        last_sent_scene TEXT,
-        updated_at INTEGER NOT NULL
-      );
     `);
+    // 注意: canvas_boards（旧 Excalidraw ボードの scene 永続化）テーブルは
+    // B-1 でコードから撤去した。既存 DB に残っている canvas_boards テーブルは
+    // 意図的に DROP していない（使われなくなるだけで害はなく、稼働中 DB を
+    // 誤って壊すリスクの方が大きいため）。新規 DB でも作成しない。
 
     // マイグレーション: 既存DBにも config_dir の UNIQUE INDEX を追加。
     // 旧スキーマ (UNIQUE なし) で起動していたインスタンスでも、複数プロファイル
@@ -1177,114 +1175,6 @@ export class SessionDatabase {
       "DELETE FROM worktree_display_names WHERE worktree_path = ?"
     );
     stmt.run(worktreePath);
-  }
-
-  // ============================================================
-  // キャンバスボードCRUD操作
-  // ============================================================
-
-  /** ボード scene を取得する（未保存なら null）。revision は行の updated_at */
-  getCanvasBoard(
-    worktreePath: string
-  ): { scene: string; lastSentScene: string | null; revision: number } | null {
-    const row = this.db
-      .prepare("SELECT * FROM canvas_boards WHERE worktree_path = ?")
-      .get(worktreePath) as
-      | { scene: string; last_sent_scene: string | null; updated_at: number }
-      | undefined;
-    if (!row) return null;
-    return {
-      scene: row.scene,
-      lastSentScene: row.last_sent_scene,
-      revision: row.updated_at,
-    };
-  }
-
-  /**
-   * 現在の updated_at から次の revision を採番する。
-   * Date.now() が同一ミリ秒で連続しても単調増加になるよう +1 との max を取る。
-   */
-  private nextCanvasRevision(currentUpdatedAt: number | undefined): number {
-    return currentUpdatedAt === undefined
-      ? Date.now()
-      : Math.max(Date.now(), currentUpdatedAt + 1);
-  }
-
-  /**
-   * ボード scene を保存する（軽量楽観ロック）。
-   *
-   * - 既存行があり `baseRevision` が現在の updated_at と一致しない場合は conflict
-   *   （既存行があるのに baseRevision が null の場合も conflict = クライアントが
-   *   新規ボードだと思い込んでいるケース）
-   * - 既存行が無ければ新規 insert（baseRevision は不問）
-   * - 新しい updated_at は単調増加を保証し、それを revision として返す
-   */
-  saveCanvasBoardScene(
-    worktreePath: string,
-    scene: string,
-    baseRevision: number | null
-  ): { ok: true; revision: number } | { ok: false; conflict: true } {
-    const existing = this.db
-      .prepare("SELECT updated_at FROM canvas_boards WHERE worktree_path = ?")
-      .get(worktreePath) as { updated_at: number } | undefined;
-
-    if (existing && baseRevision !== existing.updated_at) {
-      return { ok: false, conflict: true };
-    }
-
-    const revision = this.nextCanvasRevision(existing?.updated_at);
-    this.db
-      .prepare(
-        `INSERT INTO canvas_boards (worktree_path, scene, updated_at)
-         VALUES (?, ?, ?)
-         ON CONFLICT(worktree_path)
-         DO UPDATE SET scene = excluded.scene, updated_at = excluded.updated_at`
-      )
-      .run(worktreePath, scene, revision);
-    return { ok: true, revision };
-  }
-
-  /**
-   * 送信成功時: scene と last_sent_scene の両方を現 scene で更新する。
-   *
-   * saveCanvasBoardScene と同じ CAS 規則を用いる（軽量楽観ロック）:
-   * - 既存行があり `baseRevision` が現在の updated_at と一致しない場合は conflict
-   *   （他クライアントの新しい変更を古い scene で上書きしないため）
-   * - 既存行が無ければ新規 insert（baseRevision は不問）
-   * - 新しい updated_at は単調増加を保証し、それを revision として返す
-   */
-  markCanvasBoardSent(
-    worktreePath: string,
-    scene: string,
-    baseRevision: number | null
-  ): { ok: true; revision: number } | { ok: false; conflict: true } {
-    const existing = this.db
-      .prepare("SELECT updated_at FROM canvas_boards WHERE worktree_path = ?")
-      .get(worktreePath) as { updated_at: number } | undefined;
-
-    if (existing && baseRevision !== existing.updated_at) {
-      return { ok: false, conflict: true };
-    }
-
-    const revision = this.nextCanvasRevision(existing?.updated_at);
-    this.db
-      .prepare(
-        `INSERT INTO canvas_boards (worktree_path, scene, last_sent_scene, updated_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(worktree_path)
-         DO UPDATE SET scene = excluded.scene,
-                       last_sent_scene = excluded.last_sent_scene,
-                       updated_at = excluded.updated_at`
-      )
-      .run(worktreePath, scene, scene, revision);
-    return { ok: true, revision };
-  }
-
-  /** worktree 削除時にボードも削除する */
-  deleteCanvasBoard(worktreePath: string): void {
-    this.db
-      .prepare("DELETE FROM canvas_boards WHERE worktree_path = ?")
-      .run(worktreePath);
   }
 
   // ============================================================
