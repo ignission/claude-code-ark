@@ -91,6 +91,12 @@ export type ViewerTab =
   | {
       type: "board";
       id: string;
+    }
+  | {
+      type: "diagram";
+      id: string;
+      worktreePath: string;
+      relPath: string;
     };
 
 interface TerminalPaneProps {

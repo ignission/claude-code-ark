@@ -11,6 +11,7 @@ function getTabLabel(tab: ViewerTab): string {
   if (tab.type === "terminal") return "Terminal";
   if (tab.type === "canvas") return tab.title ?? "図解";
   if (tab.type === "board") return "🎨 ボード";
+  if (tab.type === "diagram") return tab.relPath?.split("/").pop() || "図";
   if (tab.type === "html") return tab.filePath?.split("/").pop() || "HTML";
   return tab.filePath?.split("/").pop() || "File";
 }
