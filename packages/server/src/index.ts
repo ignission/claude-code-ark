@@ -2468,8 +2468,31 @@ export async function startServer(
 
     // ===== 図解キャンバス（board_open による表示 + 更新監視） =====
     const diagramUnsubs = new Map<string, () => void>();
+    // キーごとの「最新の予約」世代トークン。subscribe のたびに新しい Symbol を
+    // 発行し、readDiagram 解決時に「自分が発行された時点でまだ最新か」を
+    // 確認してから watcher を張る。これがないと
+    // subscribe→unsubscribe→subscribe と素早く連打された場合に
+    // 古い方の readDiagram（R1）が後から解決したとき、新しい予約（手順3）が
+    // 生きているため has(key) だけのチェックは通過してしまい、R1 が watcher を
+    // 張って off1 を保存 → その後 R2 が解決して off2 で上書き、という順で
+    // off1 が二度と呼ばれず fs.watch ハンドルと setInterval がリークする
+    // （タブの素早い開閉・React StrictMode の二重マウントで再現する）。
+    const diagramSubscribeGenerations = new Map<string, symbol>();
 
-    socket.on("diagram:subscribe", ({ worktreePath, relPath }) => {
+    socket.on("diagram:subscribe", (data: unknown) => {
+      // payload は外部入力。分割代入前に型を検証しないと、引数なし emit や
+      // null/不正形状の payload でハンドラ内 throw → プロセスごと落ちる
+      // （socket.io の同期ハンドラ内例外は uncaughtException になる）。
+      const d = data as { worktreePath?: unknown; relPath?: unknown } | null;
+      if (
+        !d ||
+        typeof d !== "object" ||
+        typeof d.worktreePath !== "string" ||
+        typeof d.relPath !== "string"
+      ) {
+        return;
+      }
+      const { worktreePath, relPath } = d;
       const resolved = resolveManagedWorktreePath(worktreePath);
       if (!resolved) return;
       // 空白連結だと path や relPath に空白がある場合に別購読と衝突するため
@@ -2479,9 +2502,16 @@ export async function startServer(
       // 非同期解決の前に key を予約する。予約しないと購読要求が連続したとき
       // 両方が has() を通過し、watcher が二重に張られて片方が解除されず残る。
       diagramUnsubs.set(key, () => {});
+      const generation = Symbol("diagram:subscribe");
+      diagramSubscribeGenerations.set(key, generation);
       void readDiagram(resolved, relPath).then(result => {
         // 先に unsubscribe が来ていたら watcher を張らない
         if (!diagramUnsubs.has(key)) return;
+        // 自分より後に発行された予約（再 subscribe）があるなら、自分は
+        // 古い世代の readDiagram なので watcher を張らずに終わる。
+        // 世代を更新した側（最新の readDiagram）だけが watcher を張ることで
+        // off ハンドラの上書き・リークを防ぐ。
+        if (diagramSubscribeGenerations.get(key) !== generation) return;
         if (!result.ok) {
           diagramUnsubs.delete(key);
           return;
@@ -2493,7 +2523,18 @@ export async function startServer(
       });
     });
 
-    socket.on("diagram:unsubscribe", ({ worktreePath, relPath }) => {
+    socket.on("diagram:unsubscribe", (data: unknown) => {
+      // subscribe と同じく、外部入力を分割代入する前に型を検証する
+      const d = data as { worktreePath?: unknown; relPath?: unknown } | null;
+      if (
+        !d ||
+        typeof d !== "object" ||
+        typeof d.worktreePath !== "string" ||
+        typeof d.relPath !== "string"
+      ) {
+        return;
+      }
+      const { worktreePath, relPath } = d;
       const resolved = resolveManagedWorktreePath(worktreePath);
       if (!resolved) return;
       // 空白連結だと path や relPath に空白がある場合に別購読と衝突するため
@@ -2501,6 +2542,7 @@ export async function startServer(
       const key = JSON.stringify([resolved, relPath]);
       diagramUnsubs.get(key)?.();
       diagramUnsubs.delete(key);
+      diagramSubscribeGenerations.delete(key);
     });
 
     // ===== JSONL tail（チャットビューの会話データソース） =====
@@ -4035,8 +4077,15 @@ export async function startServer(
       // socket.leave は disconnect 時に Socket.IO が自動で行うので room の明示的な
       // クリーンアップは不要
 
-      for (const unsub of diagramUnsubs.values()) unsub();
+      for (const unsub of diagramUnsubs.values()) {
+        try {
+          unsub();
+        } catch (err) {
+          console.error("[Diagram] Unsubscribe error:", getErrorMessage(err));
+        }
+      }
       diagramUnsubs.clear();
+      diagramSubscribeGenerations.clear();
 
       forwardHandlers.forEach((handler, event) => {
         sessionOrchestrator.off(event, handler);
