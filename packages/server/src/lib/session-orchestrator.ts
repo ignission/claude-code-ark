@@ -700,7 +700,25 @@ export class SessionOrchestrator extends EventEmitter {
    * @throws sessionId に対応する tmux セッションが見つからない場合
    * @throws 新セッション起動失敗 (旧セッションは無傷)
    */
+  /**
+   * 同一セッションへの並行 restartSession を直列化する in-flight guard。
+   * ガード無しだと複数タブからの同時再起動が両方とも旧セッションを基に
+   * 新セッションを作成し、重複 tmux/ttyd と DB 不整合が発生する。
+   * 進行中の再起動があればその Promise に相乗りする (冪等)
+   */
+  private restartsInFlight = new Map<string, Promise<ManagedSession>>();
+
   async restartSession(sessionId: string): Promise<ManagedSession> {
+    const inFlight = this.restartsInFlight.get(sessionId);
+    if (inFlight) return inFlight;
+    const promise = this.doRestartSession(sessionId).finally(() => {
+      this.restartsInFlight.delete(sessionId);
+    });
+    this.restartsInFlight.set(sessionId, promise);
+    return promise;
+  }
+
+  private async doRestartSession(sessionId: string): Promise<ManagedSession> {
     const oldTmux = tmuxManager.getSession(sessionId);
     if (!oldTmux) {
       throw new Error(`Session not found: ${sessionId}`);
@@ -798,9 +816,11 @@ export class SessionOrchestrator extends EventEmitter {
     ttydManager.stopInstance(sessionId);
     tmuxManager.killSession(sessionId);
 
-    // 6. クライアント通知
-    this.emit("session:stopped", sessionId);
-
+    // 6. クライアント通知。順序が重要:
+    //    created(新) → restarted(旧→新の対応) → stopped(旧)。
+    //    stopped を先に流すと、受信側で「選択中セッションの消失」による
+    //    フォールバック選択が session:restarted の到着より先に走り、
+    //    選択追従 (prev === oldSessionId) が失敗するため
     const managed: ManagedSession = {
       id: newTmux.id,
       worktreeId,
@@ -814,6 +834,11 @@ export class SessionOrchestrator extends EventEmitter {
       profileId: snapshot?.id ?? null,
     };
     this.emit("session:created", managed);
+    this.emit("session:restarted", {
+      oldSessionId: sessionId,
+      session: managed,
+    });
+    this.emit("session:stopped", sessionId);
     return managed;
   }
 

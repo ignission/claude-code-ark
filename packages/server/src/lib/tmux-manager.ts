@@ -18,6 +18,15 @@ import { resolveClaudePath, resolveTmuxPath } from "./system.js";
 const TMUX_BINARY_PATH = resolveTmuxPath() ?? "tmux";
 
 /**
+ * セッション作成/破棄系の tmux コマンドの打ち切り時間 (ms)。
+ * spawnSync は同期呼び出しでハングするとイベントループごと停止し、
+ * JS 側のタイムアウト (Promise.race 等) では救えない。timeout で子プロセスを
+ * kill させ error → throw に変換することで、restartSession の in-flight guard
+ * が finally で確実に解放される (通常の tmux コマンドは数十 ms で完了する)
+ */
+const TMUX_CMD_TIMEOUT_MS = 10_000;
+
+/**
  * POSIX shell の single-quote 文字列にエスケープする。
  * 'foo bar' のように wrap し、入力中の `'` は `'\''` (single quote を抜けて
  * リテラル single quote を入れ再度入る) に置き換える。
@@ -198,7 +207,7 @@ export class TmuxManager extends EventEmitter {
       spawnSync(
         TMUX_BINARY_PATH,
         ["set-option", "-s", "copy-command", "pbcopy"],
-        { stdio: "pipe" }
+        { stdio: "pipe", timeout: TMUX_CMD_TIMEOUT_MS }
       );
     } catch {
       // tmuxサーバーが起動していない場合は設定不要
@@ -243,7 +252,7 @@ export class TmuxManager extends EventEmitter {
             const killResult = spawnSync(
               TMUX_BINARY_PATH,
               ["kill-session", "-t", name],
-              { stdio: "pipe" }
+              { stdio: "pipe", timeout: TMUX_CMD_TIMEOUT_MS }
             );
             if (killResult.status === 0) {
               console.log(
@@ -276,7 +285,7 @@ export class TmuxManager extends EventEmitter {
             spawnSync(
               TMUX_BINARY_PATH,
               ["set-option", "-t", name, "mouse", "on"],
-              { stdio: "pipe" }
+              { stdio: "pipe", timeout: TMUX_CMD_TIMEOUT_MS }
             );
           } catch {
             // セッションが利用不可の場合は無視
@@ -410,7 +419,7 @@ export class TmuxManager extends EventEmitter {
           "NODE_ENV=",
           ...extraEnvArgs,
         ],
-        { stdio: "pipe" }
+        { stdio: "pipe", timeout: TMUX_CMD_TIMEOUT_MS }
       );
       if (newSessionResult.error) throw newSessionResult.error;
       if (newSessionResult.status !== 0)
@@ -423,7 +432,7 @@ export class TmuxManager extends EventEmitter {
       const setOptionResult = spawnSync(
         TMUX_BINARY_PATH,
         ["set-option", "-t", tmuxSessionName, "mouse", "on"],
-        { stdio: "pipe" }
+        { stdio: "pipe", timeout: TMUX_CMD_TIMEOUT_MS }
       );
       if (setOptionResult.error) throw setOptionResult.error;
       if (setOptionResult.status !== 0)
@@ -436,7 +445,7 @@ export class TmuxManager extends EventEmitter {
       const sendKeysResult = spawnSync(
         TMUX_BINARY_PATH,
         ["send-keys", "-t", tmuxSessionName, claudeCmd, "Enter"],
-        { stdio: "pipe" }
+        { stdio: "pipe", timeout: TMUX_CMD_TIMEOUT_MS }
       );
       if (sendKeysResult.error) throw sendKeysResult.error;
       if (sendKeysResult.status !== 0)
@@ -448,6 +457,7 @@ export class TmuxManager extends EventEmitter {
       if (tmuxCreated) {
         spawnSync(TMUX_BINARY_PATH, ["kill-session", "-t", tmuxSessionName], {
           stdio: "pipe",
+          timeout: TMUX_CMD_TIMEOUT_MS,
         });
       }
       throw new Error(`Failed to create tmux session: ${error}`);
@@ -598,7 +608,7 @@ export class TmuxManager extends EventEmitter {
     const result = spawnSync(
       TMUX_BINARY_PATH,
       ["kill-session", "-t", session.tmuxSessionName],
-      { stdio: "pipe" }
+      { stdio: "pipe", timeout: TMUX_CMD_TIMEOUT_MS }
     );
     if (result.status === 0) {
       console.log(`[TmuxManager] Killed session: ${session.tmuxSessionName}`);

@@ -362,47 +362,40 @@ export default function Dashboard() {
     }
   }, [tunnelJustStarted, clearTunnelJustStarted]);
 
-  // restart進行中の対象worktreePath。
-  // 再起動するとサーバ側で sessionId が変わるため、新IDで session:created
-  // が届くまで selectedSessionId を「同じ worktreePath を持つ新セッション」
-  // に自動migrateするための一時記録。
-  const restartingWorktreePathRef = useRef<string | null>(null);
-  // 直近選択中だった ManagedSession のスナップショット。
-  // 別タブで再起動が起きた場合 (initiating tab以外) でも、
-  // selectedSessionId が消えたタイミングで worktreePath を取り出して
-  // restartingWorktreePathRef に保存し、新セッションへ追従できるようにする。
-  const lastSelectedSessionRef = useRef<ManagedSession | null>(null);
-
-  // selectedSessionId に対応する ManagedSession を毎回スナップショット
-  useEffect(() => {
-    if (selectedSessionId && selectedSessionId !== "browser") {
-      const s = sessions.get(selectedSessionId);
-      if (s) lastSelectedSessionRef.current = s;
-    } else {
-      lastSelectedSessionRef.current = null;
-    }
-  }, [selectedSessionId, sessions]);
-
   const handleRestartSession = useCallback(
     (sessionId: string) => {
-      // 再起動対象が選択中ならworktreePathを覚えておき、
-      // 新セッション到着時に selectedSessionId を新IDへ追従させる
-      if (selectedSessionId === sessionId) {
-        const target = sessions.get(sessionId);
-        if (target) {
-          restartingWorktreePathRef.current = target.worktreePath;
-        }
-      }
       restartSessionWithProfile(sessionId);
     },
-    [selectedSessionId, sessions, restartSessionWithProfile]
+    [restartSessionWithProfile]
   );
 
-  // ユーザー操作によるセッション選択。restart pending 中にユーザーが
-  // 別セッションを手動で選んだ場合、新セッション到着時に元の worktree
-  // へ自動移動させない (= migration を破棄する)。
+  // 再起動完了通知 (旧ID→新ID) による選択追従。
+  // サーバーは created(新) → restarted(旧→新) → stopped(旧) の順で emit する
+  // ため、選択中セッションが sessions Map から消える前にこのハンドラで新IDへ
+  // 付け替わる (= 消失フォールバックとの競合が起きない)。initiating tab /
+  // 別タブの区別なくこの1経路で追従が完結するので、worktreePath ベースの
+  // migration ヒューリスティックは持たない (pending 残留の温床だったため廃止)。
+  // sessions 一覧の更新は session:stopped / session:created が担うので、
+  // ここでは selectedSessionId の付け替えだけを行う。
+  // 選択が "browser" 等の別対象に移っていた場合は付け替えない (prev 不一致)
+  useEffect(() => {
+    if (!socket) return;
+    const handler = (data: {
+      oldSessionId: string;
+      session: ManagedSession;
+    }) => {
+      setSelectedSessionId(prev =>
+        prev === data.oldSessionId ? data.session.id : prev
+      );
+    };
+    socket.on("session:restarted", handler);
+    return () => {
+      socket.off("session:restarted", handler);
+    };
+  }, [socket]);
+
+  // ユーザー操作によるセッション選択
   const handleSelectSession = useCallback((id: string | null) => {
-    restartingWorktreePathRef.current = null;
     setSelectedSessionId(id);
   }, []);
 
@@ -410,42 +403,6 @@ export default function Dashboard() {
   useEffect(() => {
     // ブラウザ選択中はリセットしない
     if (selectedSessionId === "browser") return;
-
-    // 別タブで再起動が起きた場合のフォールバック:
-    // 選択中セッションが今回の sessions Map から消えた瞬間に、
-    // 直前 snapshot から worktreePath を取り出して restart pending として扱う。
-    // (initiating tab は handleRestartSession で先に値を入れているため上書きしない)
-    //
-    // restart 由来かどうかの推定は「直前snapshot で staleProfile=true だった」
-    // ことを条件にする。restart は staleProfile セッションに対してのみ実行され
-    // るため、stale でないセッションが消えるのは通常停止 (別タブからのstop等)
-    // とみなして migration を発動させない。
-    if (
-      !restartingWorktreePathRef.current &&
-      selectedSessionId &&
-      !sessions.has(selectedSessionId) &&
-      lastSelectedSessionRef.current?.id === selectedSessionId &&
-      lastSelectedSessionRef.current?.staleProfile === true
-    ) {
-      restartingWorktreePathRef.current =
-        lastSelectedSessionRef.current.worktreePath;
-    }
-
-    // 再起動進行中: 新セッションが届いていれば selectedSessionId を新IDへ移す
-    if (restartingWorktreePathRef.current) {
-      const replacement = Array.from(sessions.values()).find(
-        s => s.worktreePath === restartingWorktreePathRef.current
-      );
-      if (replacement && replacement.id !== selectedSessionId) {
-        setSelectedSessionId(replacement.id);
-        restartingWorktreePathRef.current = null;
-        return;
-      }
-      // まだ届いていない: 通常のフォールバックを抑制して新session到着を待つ
-      if (selectedSessionId && !sessions.has(selectedSessionId)) {
-        return;
-      }
-    }
 
     // グリッドビュー表示中は自動選択を抑制 (ユーザーがセルクリックで明示的に選ぶ)
     if (!selectedSessionId && sessions.size > 0 && !gridRepoPath) {
@@ -614,6 +571,7 @@ export default function Dashboard() {
           repoPath={repoPath}
           onStartSession={handleStartSession}
           onDeleteSession={handleDeleteSession}
+          onRestartSession={handleRestartSession}
           onDeleteWorktree={handleDeleteWorktree}
           onSendMessage={sendMessage}
           onSendKey={sendKey}

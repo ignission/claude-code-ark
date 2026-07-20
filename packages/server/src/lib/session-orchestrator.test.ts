@@ -484,6 +484,96 @@ describe("SessionOrchestrator - プロファイル切替", () => {
         orchestrator.restartSession("does-not-exist")
       ).rejects.toThrow(/Session not found/);
     });
+
+    it("created → restarted → stopped の順で emit する (受信側の選択追従がイベント順序に依存するため)", async () => {
+      const oldSession = makeTmuxSession({ id: "sess-id-1" });
+      mockedTmux.getSession.mockReturnValue(oldSession);
+      mockedDb.getSessionByWorktreePath.mockReturnValue({
+        id: "sess-id-1",
+        worktreeId: "wt-1",
+        worktreePath: "/path/to/work",
+        repoPath: "/repo",
+        status: "active",
+        createdAt: "2026-04-25T00:00:00Z",
+        updatedAt: "2026-04-25T00:00:00Z",
+      } as never);
+      mockedTmux.createSession.mockResolvedValue(
+        makeTmuxSession({ id: "sess-id-2", tmuxSessionName: "ark-sess2" })
+      );
+      mockedTmux.getSessionByWorktree.mockReturnValue(undefined);
+      mockedTtyd.startInstance.mockResolvedValue({
+        sessionId: "sess-id-2",
+        port: 7682,
+        tmuxSessionName: "ark-sess2",
+        basePath: "/ttyd/sess-id-2",
+      } as never);
+
+      const order: string[] = [];
+      orchestrator.on("session:created", () => order.push("created"));
+      orchestrator.on("session:restarted", () => order.push("restarted"));
+      orchestrator.on("session:stopped", () => order.push("stopped"));
+      let restartedPayload: unknown;
+      orchestrator.on("session:restarted", payload => {
+        restartedPayload = payload;
+      });
+
+      await orchestrator.restartSession("sess-id-1");
+
+      // stopped を先に流すと、受信側で「選択中セッション消失」フォールバックが
+      // session:restarted より先に走り、選択追従 (prev === oldSessionId) が
+      // 失敗するため、この順序を仕様として固定する
+      expect(order).toEqual(["created", "restarted", "stopped"]);
+      expect(restartedPayload).toMatchObject({
+        oldSessionId: "sess-id-1",
+        session: { id: "sess-id-2" },
+      });
+    });
+
+    it("同一セッションの並行再起動は直列化され、同じ新セッションを返す", async () => {
+      const oldSession = makeTmuxSession({ id: "sess-id-1" });
+      mockedTmux.getSession.mockReturnValue(oldSession);
+      mockedDb.getSessionByWorktreePath.mockReturnValue({
+        id: "sess-id-1",
+        worktreeId: "wt-1",
+        worktreePath: "/path/to/work",
+        repoPath: "/repo",
+        status: "active",
+        createdAt: "2026-04-25T00:00:00Z",
+        updatedAt: "2026-04-25T00:00:00Z",
+      } as never);
+      // 並行実行が直列化されない場合は2つの新セッションが作られてしまう
+      mockedTmux.createSession
+        .mockResolvedValueOnce(
+          makeTmuxSession({ id: "sess-id-2", tmuxSessionName: "ark-sess2" })
+        )
+        .mockResolvedValueOnce(
+          makeTmuxSession({ id: "sess-id-3", tmuxSessionName: "ark-sess3" })
+        );
+      mockedTmux.getSessionByWorktree.mockReturnValue(undefined);
+      mockedTtyd.startInstance
+        .mockResolvedValueOnce({
+          sessionId: "sess-id-2",
+          port: 7682,
+          tmuxSessionName: "ark-sess2",
+          basePath: "/ttyd/sess-id-2",
+        } as never)
+        .mockResolvedValueOnce({
+          sessionId: "sess-id-3",
+          port: 7683,
+          tmuxSessionName: "ark-sess3",
+          basePath: "/ttyd/sess-id-3",
+        } as never);
+
+      const [r1, r2] = await Promise.all([
+        orchestrator.restartSession("sess-id-1"),
+        orchestrator.restartSession("sess-id-1"),
+      ]);
+
+      // 2つ目の呼び出しは進行中の再起動に相乗りし、新セッションは1つだけ
+      expect(mockedTmux.createSession).toHaveBeenCalledTimes(1);
+      expect(r1.id).toBe("sess-id-2");
+      expect(r2.id).toBe("sess-id-2");
+    });
   });
 });
 

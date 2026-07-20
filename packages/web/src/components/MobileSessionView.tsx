@@ -22,6 +22,7 @@ import {
   ImageIcon,
   MoreVertical,
   RefreshCw,
+  RotateCw,
   Send,
   Trash2,
   X,
@@ -102,6 +103,11 @@ interface MobileSessionViewProps {
   onSendKey: (key: SpecialKey) => void;
   /** セッション削除（停止 + メイン以外のWorktree削除） */
   onDeleteSession: () => void;
+  /**
+   * セッション再起動（tmux kill → 新セッション作成。会話履歴は失われる）。
+   * 未指定ならメニュー項目を表示しない
+   */
+  onRestartSession?: () => void;
   onUploadFile?: (data: {
     base64Data: string;
     mimeType: string;
@@ -133,6 +139,7 @@ export function MobileSessionView({
   onSendMessage,
   onSendKey,
   onDeleteSession,
+  onRestartSession,
   onUploadFile,
   onCopyBuffer,
   tabs,
@@ -178,6 +185,7 @@ export function MobileSessionView({
   const [isSending, setIsSending] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showRestartDialog, setShowRestartDialog] = useState(false);
   const [showShortcutManager, setShowShortcutManager] = useState(false);
 
   // Ops メニューからの添付（pendingFiles）はターミナルペイン内のダイアログで
@@ -460,6 +468,12 @@ export function MobileSessionView({
                 <RefreshCw className="w-4 h-4 mr-2" />
                 Reload Terminal
               </DropdownMenuItem>
+              {onRestartSession && (
+                <DropdownMenuItem onClick={() => setShowRestartDialog(true)}>
+                  <RotateCw className="w-4 h-4 mr-2" />
+                  セッションを再起動
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               {slashCommands.map(({ label, cmd }) => (
                 <DropdownMenuItem
@@ -786,6 +800,32 @@ export function MobileSessionView({
               }}
             >
               削除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* 再起動確認ダイアログ */}
+      <AlertDialog open={showRestartDialog} onOpenChange={setShowRestartDialog}>
+        <AlertDialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle>セッションを再起動しますか？</AlertDialogTitle>
+            <AlertDialogDescription>
+              このセッションを再起動するとClaude会話履歴・実行中コマンド・ターミナル内容がすべて失われます。続行しますか？
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
+            <AlertDialogCancel className="h-12 md:h-10">
+              キャンセル
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="h-12 md:h-10"
+              onClick={() => {
+                onRestartSession?.();
+                setShowRestartDialog(false);
+              }}
+            >
+              再起動
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

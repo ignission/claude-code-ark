@@ -67,6 +67,8 @@ interface MobileLayoutProps {
   onStartSession: (worktree: Worktree) => void;
   /** セッション削除（停止 + メイン以外のWorktree削除） */
   onDeleteSession: (sessionId: string, worktree: Worktree | undefined) => void;
+  /** セッション再起動（tmux kill → 新セッション作成。会話履歴は失われる） */
+  onRestartSession?: (sessionId: string) => void;
   onDeleteWorktree: (worktree: Worktree) => void;
   onSendMessage: (sessionId: string, message: string) => void;
   onSendKey: (sessionId: string, key: SpecialKey) => void;
@@ -147,6 +149,7 @@ export function MobileLayout({
   repoPath: _repoPath,
   onStartSession,
   onDeleteSession,
+  onRestartSession,
   onDeleteWorktree,
   onSendMessage,
   onSendKey,
@@ -374,6 +377,9 @@ export function MobileLayout({
                 onSendKey={key => onSendKey(sessionId, key)}
                 onDeleteSession={() =>
                   onDeleteSession(sessionId, getWorktreeForSession(session))
+                }
+                onRestartSession={
+                  onRestartSession ? () => onRestartSession(sessionId) : undefined
                 }
                 onUploadFile={
                   onUploadFile
