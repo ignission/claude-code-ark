@@ -94,6 +94,40 @@ iframe からは構造化されたモデルだけを受け取り、サーバー�
 L2 の「編集ロジックは書かせない」は規約であり、境界ではない。
 LLM に渡す規約は守られる保証がないため、注入の防止はサーバー側の文面生成で担保する。
 
+#### 4.2.1 実測による訂正（2026-07-20 スパイク）
+
+`HtmlViewerPane` と同じ条件（`srcDoc` + `sandbox="allow-scripts"`）を再現して 7 項目を実測した。
+6 項目は前提どおりだったが、外部通信の遮断だけが成立していなかった。
+
+| 項目 | 前提 | 実測 |
+| --- | --- | --- |
+| sandbox 内の script 実行 | 動く | 動いた |
+| origin | `"null"`（不透明） | `window.origin = null` |
+| 親への postMessage | 既存リスナーの origin 検査で弾かれる | 親は受信したが `origin: "null"` |
+| 外部通信 | CSP で遮断される | **遮断されず、外部 fetch が成功した** |
+| localStorage | 使えない | `SecurityError` |
+| MessageChannel | 使える | 使える |
+| IME | DOM なのでネイティブに動く | 問題なし（実機確認） |
+
+外部通信が遮断されない理由は配信方式にある。
+`HtmlViewerPane` は `/api/html-file` を fetch して `srcDoc` に流し込むため（`HtmlViewerPane.tsx:34,156`）、
+サーバーが付けている `Content-Security-Policy: sandbox allow-scripts`（`index.ts:1150`）は srcDoc 文書には適用されない。
+srcDoc 文書は埋め込み側の CSP を継承する。
+実際に効いているのは iframe の `sandbox` 属性だけであり、これはネットワークを制限しない。
+
+このまま実装すると、Claude が生成した JS がリポジトリの内容を外部へ送信できる。
+図はリポジトリ経由で共有される前提（4.1）なので、他人が書いた `.diagram.html` も同じ経路を持つ。
+
+遮断手段は実測で確定した。srcDoc の中身に meta CSP を注入する。
+
+```html
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;">
+```
+
+この指定で外部 fetch は `Failed to fetch` で遮断され、インライン script とインライン style は動作を続けることを確認した。
+meta の注入は Ark 側が行う（生成物に書かせると、書かなければ無効になる）。
+
 ### 4.3 モデルの意味語彙
 
 コア語彙（node / edge / field / group と label の規約）だけ標準化し、図種固有の意味は拡張フィールドに逃がす。
