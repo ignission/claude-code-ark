@@ -88,6 +88,7 @@ import {
 } from "./lib/session-file-download.js";
 import { sessionOrchestrator } from "./lib/session-orchestrator.js";
 import { listSlashCommands } from "./lib/slash-command-scanner.js";
+import { SPA_FALLBACK_ROUTE_PATTERN } from "./lib/spa-fallback.js";
 import { detectMultiProfileSupported } from "./lib/system.js";
 import { tmuxManager } from "./lib/tmux-manager.js";
 import { TunnelManager } from "./lib/tunnel.js";
@@ -1355,8 +1356,12 @@ export async function startServer(
     app.use(express.static(resolvedStaticDir));
 
     // Handle client-side routing - serve index.html for all routes
-    // Exclude ttyd, proxy, and browser routes
-    app.get(/^(?!\/ttyd\/|\/proxy\/|\/browser\/).*$/, (_req, res) => {
+    // 除外: ttyd/proxy/browser (プロキシ領域) と /assets/ (実ファイル要求)。
+    // /assets/ の未ヒットに index.html を 200 で返すと、再ビルドの狭間で
+    // 旧ハッシュを要求したクライアントに偽アセット (HTML) がキャッシュされ、
+    // リロードしても白画面のままになるため、除外して Express 既定の 404 に
+    // 落とす (lib/spa-fallback.ts 参照)
+    app.get(SPA_FALLBACK_ROUTE_PATTERN, (_req, res) => {
       res.sendFile(path.join(resolvedStaticDir, "index.html"));
     });
   }
