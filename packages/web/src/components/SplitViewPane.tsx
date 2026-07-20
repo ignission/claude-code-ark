@@ -108,6 +108,15 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   }, [props.tabs]);
 
   // diagram タブが無くなったら右ペインに表示するものが無いので自動的に閉じる
+  //
+  // 注意: diagram タブには閉じるボタンが無く（ViewerTabBar はタブバー自体から
+  // diagram を除外しており、タブバー経由の close 導線が存在しない）、他に
+  // props.tabs から diagram タブを削除する経路も現状無いため、diagramTab が
+  // 存在した状態から falsy になる（= !diagramTab && showBoard が true になる）
+  // ケースは実質到達しない。到達しなくても描画側は下で
+  // `showBoard && diagramTab` により二重に守られているため実害は無いが、
+  // 「なぜ動いているのを見たことがないのか」で悩まないよう明記しておく。
+  // 将来 diagram タブの削除経路が追加されたときのための保険として残す。
   useEffect(() => {
     if (!diagramTab && showBoard) {
       setShowBoard(false);

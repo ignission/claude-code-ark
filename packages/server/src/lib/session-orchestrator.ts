@@ -54,7 +54,7 @@ export class SessionOrchestrator extends EventEmitter {
   >();
 
   /**
-   * board_write MCP (BoardMcpServer / BoardSessionRegistry) への依存。
+   * board_open MCP (BoardMcpServer / BoardSessionRegistry) への依存。
    * index.ts が boardMcp.start() 後に setBoardMcp() で一度だけ注入する。
    * 未注入 (null) の間は新規セッションに --mcp-config を付与しない。
    */

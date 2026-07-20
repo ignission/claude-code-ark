@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ViewerTab } from "../components/TerminalPane";
 import { addOrFocusDiagramTab } from "../lib/diagram-tabs";
+import { correctActiveIndexAfterClose } from "../lib/tab-close";
 
 /**
  * セッションごとのタブ状態管理を提供するカスタムフック。
@@ -50,19 +51,31 @@ export function useViewerTabs(
   }, []);
 
   const handleTabClose = useCallback((sessionId: string, index: number) => {
+    // openFileTab と同様、tabs 変更後の配列を使って activeTab を補正する必要が
+    // あるため、両方の setState を同じ setSessionTabs updater 内に閉じ込める
+    // （updater 外の closure 変数経由だと2つの setState 呼び出しの実行順序に
+    // 依存してしまい、タイミングによって補正が効かない回帰があった）。
     setSessionTabs(prev => {
       const tabs = [
         ...(prev[sessionId] ?? [{ type: "terminal" as const, id: "terminal" }]),
       ];
       tabs.splice(index, 1);
+
+      setSessionActiveTab(prevActive => {
+        const current = prevActive[sessionId] ?? 0;
+        // 根本修正: 補正後のインデックスがタブバーに出ない diagram タブ
+        // （右ペイン専属）に着地しないようにする。diagram に着地すると
+        // TerminalPane にはそれを描画する分岐が無く、左ペインが完全に
+        // 空白になってしまう（例: [terminal, diagram, file] で file を
+        // 閉じると素朴な current-1 補正では diagram に着地する）。補正ロジック
+        // は純関数として lib/tab-close.ts に切り出してユニットテスト済み。
+        const next = correctActiveIndexAfterClose(tabs, index, current);
+        return next === current
+          ? prevActive
+          : { ...prevActive, [sessionId]: next };
+      });
+
       return { ...prev, [sessionId]: tabs };
-    });
-    setSessionActiveTab(prev => {
-      const current = prev[sessionId] ?? 0;
-      if (current >= index && current > 0) {
-        return { ...prev, [sessionId]: current - 1 };
-      }
-      return prev;
     });
   }, []);
 

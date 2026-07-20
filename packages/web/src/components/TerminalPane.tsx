@@ -422,6 +422,20 @@ export function TerminalPane({
     visibleTabs.push(tab);
   });
   const visibleActiveTabIndex = visibleTabIndexMap.indexOf(activeTabIndex);
+  // 防御: activeTabIndex がタブバーに出ない diagram タブを指してしまった場合
+  // （本来は useViewerTabs.handleTabClose の index 補正で回避されるが、想定外の
+  // 経路で着地した場合に備えた保険）、visibleTabIndexMap に見つからず
+  // visibleActiveTabIndex が -1 になる。この状態のまま下の描画分岐
+  // （terminal/file/html）を raw な activeTabIndex で判定すると、
+  // どれにも該当せず左ペインが完全に空白になってしまう。
+  // 根本修正だけだと将来別の経路で同じ状態に陥ったとき同じ空白が再発し、
+  // 防御だけだと activeTabIndex 自体の状態は壊れたままになるため、両方入れる。
+  // terminal（index 0、常にタブバーに存在し close 不可）へフォールバックする。
+  const isActiveTabHidden = visibleActiveTabIndex < 0;
+  const effectiveActiveTabIndex = isActiveTabHidden ? 0 : activeTabIndex;
+  const safeVisibleActiveTabIndex = isActiveTabHidden
+    ? 0
+    : visibleActiveTabIndex;
 
   return (
     <div className="h-full flex flex-col bg-card border border-border rounded-lg overflow-hidden">
@@ -531,11 +545,11 @@ export function TerminalPane({
         </div>
       </header>
 
-      {/* タブバー（共通コンポーネント）。board は右ペイン専属になったのでタブ一覧からは除外し、
+      {/* タブバー（共通コンポーネント）。diagram は右ペイン専属になったのでタブ一覧からは除外し、
           表示用インデックスと元の tabs 配列インデックスを相互変換する */}
       <ViewerTabBar
         tabs={visibleTabs}
-        activeTabIndex={visibleActiveTabIndex}
+        activeTabIndex={safeVisibleActiveTabIndex}
         onTabSelect={idx => onTabSelect(visibleTabIndexMap[idx])}
         onTabClose={idx => onTabClose(visibleTabIndexMap[idx])}
       />
@@ -545,7 +559,9 @@ export function TerminalPane({
         className="flex-1 min-h-0 bg-[#1a1b26] overflow-hidden"
         style={{
           display:
-            tabs[activeTabIndex]?.type === "terminal" ? undefined : "none",
+            tabs[effectiveActiveTabIndex]?.type === "terminal"
+              ? undefined
+              : "none",
         }}
       >
         {session.ttydUrl || session.ttydPort ? (
@@ -568,9 +584,11 @@ export function TerminalPane({
       </div>
 
       {/* ファイルビューワー / ブラウザ */}
-      {tabs[activeTabIndex]?.type === "file" &&
+      {tabs[effectiveActiveTabIndex]?.type === "file" &&
         (() => {
-          const tab = tabs[activeTabIndex] as ViewerTab & { type: "file" };
+          const tab = tabs[effectiveActiveTabIndex] as ViewerTab & {
+            type: "file";
+          };
           return (
             <div className="flex-1 min-h-0">
               <FileViewerPane
@@ -584,9 +602,11 @@ export function TerminalPane({
             </div>
           );
         })()}
-      {tabs[activeTabIndex]?.type === "html" &&
+      {tabs[effectiveActiveTabIndex]?.type === "html" &&
         (() => {
-          const tab = tabs[activeTabIndex] as ViewerTab & { type: "html" };
+          const tab = tabs[effectiveActiveTabIndex] as ViewerTab & {
+            type: "html";
+          };
           return (
             <div className="flex-1 min-h-0">
               <HtmlViewerPane filePath={tab.filePath} />
