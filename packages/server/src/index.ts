@@ -836,7 +836,7 @@ export async function startServer(
         worktreePath: resolved,
       });
     },
-    openDiagram(worktreePath, relPath) {
+    async openDiagram(worktreePath, relPath) {
       const resolved = resolveManagedWorktreeDetailed(worktreePath);
       if (!resolved.ok) {
         return {
@@ -850,6 +850,14 @@ export async function startServer(
           ok: false,
           error: "この worktree のセッションが見つかりません",
         };
+      }
+      // Claude に「開いた」と嘘をつかないよう、diagram:open を emit する前に
+      // 実際に readDiagram で読めることを確認する（/api/diagram と同じ検証
+      // = 403 パス不正・worktree外・symlink脱出 / 404 不在 / 422 モデルブロック
+      // 無し・壊れている、を理由付きで弾く）。
+      const result = await readDiagram(resolved.path, relPath);
+      if (!result.ok) {
+        return { ok: false, error: result.error };
       }
       io.emit("diagram:open", { sessionId: session.id, relPath });
       return { ok: true };

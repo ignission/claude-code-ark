@@ -52,11 +52,15 @@ export interface BoardMcpDeps {
   getBoardScene(worktreePath: string): { elements: unknown[] };
   saveBoardScene(worktreePath: string, scene: { elements: unknown[] }): void;
   notifyUpdated(worktreePath: string): void;
-  /** 図ファイルをボードペインで開かせる（B-0a）。失敗理由は呼び出し元に返す */
+  /**
+   * 図ファイルをボードペインで開かせる（B-0a）。
+   * 実際に readDiagram で読めることを確認してから開かせる（403/404/422 の
+   * 理由をそのまま呼び出し元 = Claude に返す）ため非同期。
+   */
   openDiagram(
     worktreePath: string,
     relPath: string
-  ): { ok: boolean; error?: string };
+  ): Promise<{ ok: boolean; error?: string }>;
 }
 
 export interface BoardWriteInput {
@@ -110,11 +114,11 @@ export interface BoardOpenResult {
 }
 
 /** board_open の純ロジック（HTTP/MCP から分離してテスト可能にする）。 */
-export function handleBoardOpen(
+export async function handleBoardOpen(
   deps: Pick<BoardMcpDeps, "openDiagram">,
   worktreePath: string,
   input: BoardOpenInput
-): BoardOpenResult {
+): Promise<BoardOpenResult> {
   return deps.openDiagram(worktreePath, input.path);
 }
 
@@ -177,7 +181,9 @@ export function createBoardMcpServer(
     },
     async args => {
       try {
-        const res = handleBoardOpen(deps, worktreePath, { path: args.path });
+        const res = await handleBoardOpen(deps, worktreePath, {
+          path: args.path,
+        });
         return textResult(
           res.ok
             ? JSON.stringify({ opened: args.path })

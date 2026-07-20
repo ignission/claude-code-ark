@@ -73,11 +73,11 @@ describe("handleBoardWrite", () => {
 });
 
 describe("handleBoardOpen", () => {
-  it("deps.openDiagram に worktreePath と相対パスを渡す", () => {
-    const openDiagram = vi.fn(() => ({ ok: true }));
+  it("deps.openDiagram に worktreePath と相対パスを渡す", async () => {
+    const openDiagram = vi.fn(async () => ({ ok: true }));
     const deps = { openDiagram } as never;
 
-    const res = handleBoardOpen(deps, "/wt", {
+    const res = await handleBoardOpen(deps, "/wt", {
       path: "docs/diagrams/a.diagram.html",
     });
 
@@ -88,12 +88,12 @@ describe("handleBoardOpen", () => {
     expect(res.ok).toBe(true);
   });
 
-  it("deps がエラーを返したらそのまま伝える", () => {
+  it("deps がエラーを返したらそのまま伝える", async () => {
     const deps = {
-      openDiagram: vi.fn(() => ({ ok: false, error: "見つかりません" })),
+      openDiagram: vi.fn(async () => ({ ok: false, error: "見つかりません" })),
     } as never;
 
-    const res = handleBoardOpen(deps, "/wt", { path: "a.diagram.html" });
+    const res = await handleBoardOpen(deps, "/wt", { path: "a.diagram.html" });
 
     expect(res.ok).toBe(false);
     expect(res.error).toBe("見つかりません");
