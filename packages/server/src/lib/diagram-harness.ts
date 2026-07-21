@@ -89,6 +89,27 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   font-size: 11.5px; cursor: pointer;
 }
 .ark-harness-add-row:hover { border-color: #38bdf8; color: #38bdf8; }
+[data-ark-container="graph"] { position: relative; }
+.ark-harness-graph-node {
+  position: absolute; left: var(--ark-harness-graph-x); top: var(--ark-harness-graph-y); z-index: 1;
+}
+.ark-harness-edge-layer {
+  position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%;
+  overflow: visible; pointer-events: none;
+}
+.ark-harness-edge-layer line, .ark-harness-edge-layer path {
+  fill: none; stroke: #64748b; stroke-width: 1.5;
+}
+.ark-harness-edge-layer text {
+  fill: #475569; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  font-size: 12px; text-anchor: middle; dominant-baseline: central;
+}
+.ark-harness-graph-handle {
+  position: absolute; top: .25rem; right: .25rem; z-index: 2;
+  border: 1px solid rgba(100,116,139,.45); border-radius: 4px; background: rgba(255,255,255,.9);
+  color: #64748b; cursor: grab; line-height: 1; padding: .25rem; touch-action: none;
+}
+.ark-harness-graph-dragging { z-index: 2; }
 body { padding-bottom: 3.4rem !important; }
 </style>`;
 
@@ -112,6 +133,9 @@ const HARNESS_JS = `(function () {
   var state = { model: null };
   var submitPort = null;
   var dragSrcLi = null;
+  var graphDrag = null;
+  var graphs = [];
+  var graphSequence = 0;
   var statusEl = null;
   var sendBtn = null;
 
@@ -151,6 +175,231 @@ const HARNESS_JS = `(function () {
       if (nodes[i].id === id) return nodes[i];
     }
     return null;
+  }
+
+  function finiteNumber(v) {
+    return typeof v === "number" && Number.isFinite(v);
+  }
+
+  function graphPosition(node) {
+    if (!node || !isRecordObject(node.ext)) return null;
+    if (!finiteNumber(node.ext.x) || !finiteNumber(node.ext.y)) return null;
+    return { x: node.ext.x, y: node.ext.y };
+  }
+
+  function svgElement(name) {
+    return document.createElementNS("http://www.w3.org/2000/svg", name);
+  }
+
+  function appendGraphMarker(svg, markerId) {
+    var defs = svgElement("defs");
+    var marker = svgElement("marker");
+    marker.setAttribute("id", markerId);
+    marker.setAttribute("viewBox", "0 0 10 10");
+    marker.setAttribute("refX", "9");
+    marker.setAttribute("refY", "5");
+    marker.setAttribute("markerWidth", "7");
+    marker.setAttribute("markerHeight", "7");
+    marker.setAttribute("orient", "auto-start-reverse");
+    var arrow = svgElement("path");
+    arrow.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+    arrow.setAttribute("fill", "#64748b");
+    arrow.setAttribute("stroke", "none");
+    marker.appendChild(arrow);
+    defs.appendChild(marker);
+    svg.appendChild(defs);
+  }
+
+  function appendGraphLabel(svg, label, x, y) {
+    if (typeof label !== "string" || label.length === 0) return;
+    var text = svgElement("text");
+    text.setAttribute("x", String(x));
+    text.setAttribute("y", String(y));
+    text.textContent = label;
+    svg.appendChild(text);
+  }
+
+  function renderGraph(graph) {
+    graph.scheduled = false;
+    while (graph.svg.firstChild) graph.svg.removeChild(graph.svg.firstChild);
+    appendGraphMarker(graph.svg, graph.markerId);
+
+    var svgRect = graph.svg.getBoundingClientRect();
+    var edges = state.model && state.model.edges ? state.model.edges : [];
+    edges.forEach(function (edge) {
+      var fromEl = graph.nodesById.get(edge.from);
+      var toEl = graph.nodesById.get(edge.to);
+      if (!fromEl || !toEl) return;
+
+      var fromRect = fromEl.getBoundingClientRect();
+      var toRect = toEl.getBoundingClientRect();
+      var fromCx = fromRect.left + fromRect.width / 2 - svgRect.left;
+      var fromCy = fromRect.top + fromRect.height / 2 - svgRect.top;
+      var toCx = toRect.left + toRect.width / 2 - svgRect.left;
+      var toCy = toRect.top + toRect.height / 2 - svgRect.top;
+
+      if (edge.from === edge.to) {
+        var loop = svgElement("path");
+        var startX = fromRect.right - svgRect.left;
+        var startY = fromCy;
+        var endX = fromCx;
+        var endY = fromRect.top - svgRect.top;
+        var loopSize = Math.max(36, Math.min(fromRect.width, fromRect.height) / 2);
+        loop.setAttribute("data-ark-edge-id", edge.id);
+        loop.setAttribute(
+          "d",
+          "M " + startX + " " + startY + " C " +
+            (startX + loopSize) + " " + startY + ", " +
+            fromCx + " " + (endY - loopSize) + ", " + endX + " " + endY
+        );
+        loop.setAttribute("marker-end", "url(#" + graph.markerId + ")");
+        graph.svg.appendChild(loop);
+        appendGraphLabel(graph.svg, edge.label, startX + loopSize * 0.7, endY - loopSize * 0.45);
+        return;
+      }
+
+      var dx = toCx - fromCx;
+      var dy = toCy - fromCy;
+      var length = Math.sqrt(dx * dx + dy * dy) || 1;
+      var ux = dx / length;
+      var uy = dy / length;
+      var fromRadius = Math.min(
+        Math.abs(ux) > 0 ? fromRect.width / 2 / Math.abs(ux) : Infinity,
+        Math.abs(uy) > 0 ? fromRect.height / 2 / Math.abs(uy) : Infinity
+      );
+      var toRadius = Math.min(
+        Math.abs(ux) > 0 ? toRect.width / 2 / Math.abs(ux) : Infinity,
+        Math.abs(uy) > 0 ? toRect.height / 2 / Math.abs(uy) : Infinity
+      );
+      var x1 = fromCx + ux * fromRadius;
+      var y1 = fromCy + uy * fromRadius;
+      var x2 = toCx - ux * toRadius;
+      var y2 = toCy - uy * toRadius;
+      var line = svgElement("line");
+      line.setAttribute("data-ark-edge-id", edge.id);
+      line.setAttribute("x1", String(x1));
+      line.setAttribute("y1", String(y1));
+      line.setAttribute("x2", String(x2));
+      line.setAttribute("y2", String(y2));
+      line.setAttribute("marker-end", "url(#" + graph.markerId + ")");
+      graph.svg.appendChild(line);
+      appendGraphLabel(graph.svg, edge.label, (x1 + x2) / 2, (y1 + y2) / 2);
+    });
+  }
+
+  function scheduleGraphRender(graph) {
+    if (graph.scheduled) return;
+    graph.scheduled = true;
+    window.requestAnimationFrame(function () { renderGraph(graph); });
+  }
+
+  function finishGraphDrag(event) {
+    if (!graphDrag) return;
+    if (event && event.pointerId !== graphDrag.pointerId) return;
+    var drag = graphDrag;
+    graphDrag = null;
+    drag.el.classList.remove("ark-harness-graph-dragging");
+    if (drag.handle.hasPointerCapture(drag.pointerId)) {
+      drag.handle.releasePointerCapture(drag.pointerId);
+    }
+  }
+
+  function attachGraphHandle(graph, el, node) {
+    var handle = createButton(
+      "\\u283F",
+      "ark-harness-graph-handle",
+      (node.label || node.id) + " をドラッグして移動"
+    );
+    handle.addEventListener("pointerdown", function (event) {
+      if (graphDrag) return;
+      var id = el.getAttribute("data-model-id");
+      if (!id) return;
+      var currentNode = getNode(state.model, id);
+      var position = graphPosition(currentNode);
+      if (!position) return;
+      event.preventDefault();
+      handle.setPointerCapture(event.pointerId);
+      el.classList.add("ark-harness-graph-dragging");
+      graphDrag = {
+        pointerId: event.pointerId,
+        handle: handle,
+        graph: graph,
+        el: el,
+        node: currentNode,
+        start: {
+          clientX: event.clientX,
+          clientY: event.clientY,
+          x: position.x,
+          y: position.y
+        }
+      };
+    });
+    handle.addEventListener("pointermove", function (event) {
+      if (!graphDrag || event.pointerId !== graphDrag.pointerId) return;
+      var drag = graphDrag;
+      var x = Math.max(0, Math.round(drag.start.x + event.clientX - drag.start.clientX));
+      var y = Math.max(0, Math.round(drag.start.y + event.clientY - drag.start.clientY));
+      if (!isRecordObject(drag.node.ext)) drag.node.ext = {};
+      drag.node.ext.x = x;
+      drag.node.ext.y = y;
+      drag.el.style.setProperty("--ark-harness-graph-x", x + "px");
+      drag.el.style.setProperty("--ark-harness-graph-y", y + "px");
+      scheduleGraphRender(drag.graph);
+    });
+    handle.addEventListener("pointerup", finishGraphDrag);
+    handle.addEventListener("pointercancel", finishGraphDrag);
+    el.appendChild(handle);
+  }
+
+  function wireGraph(container) {
+    var nodesById = new Map();
+    var modelNodesById = new Map();
+    var candidates = container.querySelectorAll("[data-model-id]");
+    candidates.forEach(function (el) {
+      if (el.closest('[data-ark-container="graph"]') !== container) return;
+      var id = el.getAttribute("data-model-id");
+      if (!id || nodesById.has(id)) return;
+      var node = getNode(state.model, id);
+      var position = graphPosition(node);
+      if (!position) return;
+      nodesById.set(id, el);
+      modelNodesById.set(id, node);
+      el.classList.add("ark-harness-graph-node");
+      el.style.setProperty("--ark-harness-graph-x", position.x + "px");
+      el.style.setProperty("--ark-harness-graph-y", position.y + "px");
+    });
+
+    var svg = svgElement("svg");
+    svg.classList.add("ark-harness-edge-layer");
+    markUi(svg);
+    container.appendChild(svg);
+    graphSequence += 1;
+    var graph = {
+      container: container,
+      nodesById: nodesById,
+      svg: svg,
+      resizeObserver: null,
+      scheduled: false,
+      markerId: "ark-harness-arrow-" + graphSequence
+    };
+    nodesById.forEach(function (el, id) {
+      attachGraphHandle(graph, el, modelNodesById.get(id));
+    });
+    if (typeof ResizeObserver !== "undefined") {
+      graph.resizeObserver = new ResizeObserver(function () { scheduleGraphRender(graph); });
+      graph.resizeObserver.observe(container);
+      nodesById.forEach(function (el) { graph.resizeObserver.observe(el); });
+    }
+    scheduleGraphRender(graph);
+    return graph;
+  }
+
+  function initGraphs() {
+    var containers = document.querySelectorAll('[data-ark-container="graph"]');
+    containers.forEach(function (container) { graphs.push(wireGraph(container)); });
+    window.addEventListener("resize", function () {
+      graphs.forEach(function (graph) { scheduleGraphRender(graph); });
+    });
   }
 
   function findEntry(model, id) {
@@ -412,6 +661,11 @@ const HARNESS_JS = `(function () {
     clone.querySelectorAll("[data-ark-harness-ui]").forEach(function (el) {
       if (el.parentNode) el.parentNode.removeChild(el);
     });
+    clone.querySelectorAll(".ark-harness-graph-node").forEach(function (el) {
+      el.style.removeProperty("--ark-harness-graph-x");
+      el.style.removeProperty("--ark-harness-graph-y");
+      if (el.style.length === 0) el.removeAttribute("style");
+    });
     clone.querySelectorAll("[data-ark-harness-wrap]").forEach(function (span) {
       var parent = span.parentNode;
       if (!parent) return;
@@ -554,6 +808,7 @@ const HARNESS_JS = `(function () {
       state.model = model;
       buildToolbar();
       initEditing();
+      initGraphs();
     } catch (e) {
       console.error("[ark-harness] 初期化に失敗しました", e);
     }

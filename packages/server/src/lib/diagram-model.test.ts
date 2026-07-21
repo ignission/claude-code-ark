@@ -31,14 +31,24 @@ describe("parseDiagramModel", () => {
   it("図種固有の情報は ext に保持する", () => {
     const json = JSON.stringify({
       version: 1,
-      nodes: [{ id: "n1", label: "N", ext: { cardinality: "1..N" } }],
+      nodes: [
+        {
+          id: "n1",
+          label: "N",
+          ext: { x: 40, y: 50, color: "blue" },
+        },
+      ],
     });
 
     const result = parseDiagramModel(json);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.model.nodes[0]?.ext).toEqual({ cardinality: "1..N" });
+      expect(result.model.nodes[0]?.ext).toEqual({
+        x: 40,
+        y: 50,
+        color: "blue",
+      });
     }
   });
 
