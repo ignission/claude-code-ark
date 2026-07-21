@@ -31,4 +31,17 @@ describe("injectHarness", () => {
       1
     );
   });
+
+  it("graph 編集 UI の契約を注入する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
+      )
+    );
+
+    expect(out).toContain('[data-ark-container="graph"]');
+    expect(out).toContain("ark-harness-edge-layer");
+    expect(out).toContain("ark-harness-graph-handle");
+    expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
+  });
 });
