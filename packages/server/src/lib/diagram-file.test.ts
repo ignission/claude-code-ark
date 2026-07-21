@@ -194,6 +194,36 @@ describe("replaceModelBlock", () => {
     if (extracted.ok) expect(extracted.model.nodes[0]?.label).toBe("A2");
   });
 
+  it("モデルブロックの往復で node.ext の graph 座標を保持する", () => {
+    const html = page(
+      `<script type="application/json" id="ark-diagram-model">${MODEL}</script><div>図</div>`
+    );
+    const nextModel: DiagramModel = {
+      ...MODEL_OBJ,
+      nodes: [
+        {
+          id: "a",
+          label: "A",
+          ext: { x: 40, y: 50, color: "blue" },
+        },
+      ],
+    };
+
+    const replaced = replaceModelBlock(html, nextModel);
+    expect(replaced.ok).toBe(true);
+    if (!replaced.ok) return;
+
+    const extracted = extractModel(replaced.html);
+    expect(extracted.ok).toBe(true);
+    if (extracted.ok) {
+      expect(extracted.model.nodes[0]?.ext).toEqual({
+        x: 40,
+        y: 50,
+        color: "blue",
+      });
+    }
+  });
+
   it("属性の順序が逆でも差し替えられる", () => {
     const html = page(
       `<script id="ark-diagram-model" type="application/json">${MODEL}</script>`

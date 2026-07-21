@@ -256,6 +256,31 @@ describe("describeModelDiff（境界ケース）", () => {
     expect(describeModelDiff(model([before]), model([after]))).toEqual([]);
   });
 
+  it("node.ext の座標変更は意味差分に含めない", () => {
+    const before = model([{ ...order, ext: { x: 40, y: 50 } }]);
+    const after = model([{ ...order, ext: { x: 120, y: 110 } }]);
+
+    expect(describeModelDiff(before, after)).toEqual([]);
+  });
+
+  it("node.ext の座標変更と field 改名では改名だけを述べる", () => {
+    const before = model([{ ...order, ext: { x: 40, y: 50 } }]);
+    const after = model([
+      {
+        ...order,
+        fields: [
+          { id: "f_id", label: "id" },
+          { id: "f_status", label: "state" },
+        ],
+        ext: { x: 120, y: 110 },
+      },
+    ]);
+
+    expect(describeModelDiff(before, after)).toEqual([
+      "Order の status を state に変更",
+    ]);
+  });
+
   it("label の「」はエスケープせずそのまま埋め込むが、改行は無害化で落ちる", () => {
     const after = model([
       {

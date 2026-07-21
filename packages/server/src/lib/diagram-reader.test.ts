@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DIAGRAM_CSP } from "./diagram-file.js";
+import { DIAGRAM_HARNESS_MARKER } from "./diagram-harness.js";
 import { readDiagram } from "./diagram-reader.js";
 
 let wt: string;
@@ -31,11 +32,11 @@ afterEach(() => {
   fs.rmSync(outsideDir, { recursive: true, force: true });
 });
 
-function write(name: string, body: string) {
+function write(name: string, body: string, model = MODEL) {
   fs.writeFileSync(
     path.join(dir, name),
     `<!doctype html><html><head></head><body>` +
-      `<script type="application/json" id="ark-diagram-model">${MODEL}</script>` +
+      `<script type="application/json" id="ark-diagram-model">${model}</script>` +
       body +
       `</body></html>`
   );
@@ -51,6 +52,36 @@ describe("readDiagram", () => {
     if (result.ok) {
       expect(result.model.title).toBe("購買フロー");
       expect(result.html).toContain(DIAGRAM_CSP);
+    }
+  });
+
+  it("graph の ext と配信時 harness を返す", async () => {
+    const graphModel = JSON.stringify({
+      version: 1,
+      nodes: [
+        { id: "order", label: "Order", ext: { x: 40, y: 50 } },
+        { id: "user", label: "User", ext: { x: 360, y: 180 } },
+      ],
+      edges: [
+        { id: "e_order_user", from: "order", to: "user", label: "belongs to" },
+      ],
+      groups: [],
+    });
+    write(
+      "graph.diagram.html",
+      '<div data-ark-container="graph"><div data-model-id="order">Order</div><div data-model-id="user">User</div></div>',
+      graphModel
+    );
+
+    const result = await readDiagram(wt, "graph.diagram.html");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.model.nodes[0]?.ext).toEqual({ x: 40, y: 50 });
+      expect(result.model.nodes[1]?.ext).toEqual({ x: 360, y: 180 });
+      expect(result.html).toContain(DIAGRAM_CSP);
+      expect(result.html).toContain(DIAGRAM_HARNESS_MARKER);
+      expect(result.html).toContain('data-ark-container="graph"');
     }
   });
 
