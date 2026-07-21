@@ -26,6 +26,32 @@ export const DIAGRAM_CSP =
   `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; ` +
   `script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;">`;
 
+// --- モデルブロック判定の共有部品（extractModel と replaceModelBlock で使う） ---
+// 定数として1度だけ組み、script タグごとの再コンパイルを避ける（extractModel /
+// replaceModelBlock は /api/diagram・board_open・diagram:submit の各経路で通る）。
+
+/** 先頭 doctype の一致（BOM・空白は許容）。ensureDoctype / injectCsp で共用する */
+const LEADING_DOCTYPE_RE = /^[﻿\s]*<!doctype[^>]*>/i;
+/** script タグ全体（属性 = $1、本文 = $2） */
+const SCRIPT_TAG_RE = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+const MODEL_ID_ATTR_RE = new RegExp(
+  `id\\s*=\\s*["']${MODEL_SCRIPT_ID}["']`,
+  "i"
+);
+const MODEL_TYPE_ATTR_RE = /type\s*=\s*["']application\/json["']/i;
+const MODEL_BLOCK_NOT_FOUND = `モデルブロックが見つかりません（<script type="application/json" id="${MODEL_SCRIPT_ID}">）`;
+
+/**
+ * script タグの属性がモデルブロック（id 一致 + type="application/json"）かを判定する。
+ *
+ * id だけで一致させると <script id="ark-diagram-model">（type 無し）も拾い、
+ * ブラウザはそれを JS として実行してしまう（サーバー検証は通るのに実行される、
+ * という契約と実装のずれ）。type もここで必ず検証する。
+ */
+function isModelScriptAttrs(attrs: string): boolean {
+  return MODEL_ID_ATTR_RE.test(attrs) && MODEL_TYPE_ATTR_RE.test(attrs);
+}
+
 /**
  * doctype が無ければ先頭に補う。
  *
@@ -36,30 +62,18 @@ export const DIAGRAM_CSP =
  * 先頭の BOM・空白は許容し、既にあれば大文字小文字を問わず何もしない。
  */
 export function ensureDoctype(html: string): string {
-  if (/^[﻿\s]*<!doctype\b/i.test(html)) return html;
+  if (LEADING_DOCTYPE_RE.test(html)) return html;
   return `<!doctype html>\n${html}`;
 }
 
 /** モデル埋め込みブロックの中身を取り出して検証する */
 export function extractModel(html: string): ParseResult {
   // id と type は順不同で書かれうるので、script タグ全体を拾ってから中身を判定する
-  const scripts = html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi);
-  for (const m of scripts) {
-    const attrs = m[1] ?? "";
-    if (!new RegExp(`id\\s*=\\s*["']${MODEL_SCRIPT_ID}["']`, "i").test(attrs))
-      continue;
-    // id だけで一致させると <script id="ark-diagram-model">（type 無し）も
-    // 拾ってしまう。type 無しの script はブラウザが JS として実行するため、
-    // サーバー検証（id 一致）を通る一方でブラウザは実行する、という契約と
-    // 実装のずれが生まれる。skill / このファイル先頭のコメントが要求する
-    // type="application/json" もここで検証する。
-    if (!/type\s*=\s*["']application\/json["']/i.test(attrs)) continue;
+  for (const m of html.matchAll(SCRIPT_TAG_RE)) {
+    if (!isModelScriptAttrs(m[1] ?? "")) continue;
     return parseDiagramModel((m[2] ?? "").trim());
   }
-  return {
-    ok: false,
-    error: `モデルブロックが見つかりません（<script type="application/json" id="${MODEL_SCRIPT_ID}">）`,
-  };
+  return { ok: false, error: MODEL_BLOCK_NOT_FOUND };
 }
 
 export type ReplaceModelResult =
@@ -84,22 +98,14 @@ export function replaceModelBlock(
   model: DiagramModel
 ): ReplaceModelResult {
   let replaced = false;
-  const next = html.replace(
-    /<script\b([^>]*)>([\s\S]*?)<\/script>/gi,
-    (match: string, attrs: string) => {
-      if (replaced) return match; // 最初に一致したブロックだけを差し替える
-      if (!new RegExp(`id\\s*=\\s*["']${MODEL_SCRIPT_ID}["']`, "i").test(attrs))
-        return match;
-      if (!/type\s*=\s*["']application\/json["']/i.test(attrs)) return match;
-      replaced = true;
-      return `<script${attrs}>\n${JSON.stringify(model, null, 2)}\n</script>`;
-    }
-  );
+  const next = html.replace(SCRIPT_TAG_RE, (match: string, attrs: string) => {
+    if (replaced) return match; // 最初に一致したブロックだけを差し替える
+    if (!isModelScriptAttrs(attrs)) return match;
+    replaced = true;
+    return `<script${attrs}>\n${JSON.stringify(model, null, 2)}\n</script>`;
+  });
   if (!replaced) {
-    return {
-      ok: false,
-      error: `モデルブロックが見つかりません（<script type="application/json" id="${MODEL_SCRIPT_ID}">）`,
-    };
+    return { ok: false, error: MODEL_BLOCK_NOT_FOUND };
   }
   return { ok: true, html: next };
 }
@@ -119,7 +125,7 @@ export function injectCsp(html: string): string {
   // なくなり quirks mode になる（srcDoc 描画は仕様上常に no-quirks のため
   // 影響しないが、直接閲覧経路も正しくしておく）。先頭アンカーの一致に
   // 限るため、コメント内の偽 doctype で位置をずらすことはできない。
-  const doctype = stripped.match(/^[﻿\s]*<!doctype[^>]*>/i);
+  const doctype = stripped.match(LEADING_DOCTYPE_RE);
   if (doctype) {
     const at = doctype[0].length;
     return stripped.slice(0, at) + DIAGRAM_CSP + stripped.slice(at);

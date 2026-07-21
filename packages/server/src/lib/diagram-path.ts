@@ -49,21 +49,12 @@ export function resolveDiagramPath(
 
   const normalized = path.normalize(relPath);
 
-  // docs/diagrams で始まるかどうかで処理分岐
-  let withDir: string;
-  if (normalized.startsWith(`${DIAGRAM_DIR}${path.sep}`)) {
-    withDir = normalized;
-  } else if (normalized === DIAGRAM_DIR) {
-    // docs/diagrams そのもの（ファイルではなくディレクトリ）は拒否される（拡張子チェック）
-    return {
-      ok: false,
-      error: `図のパスは .diagram.html で終わる必要があります`,
-    };
-  } else {
-    // docs/diagrams で始まらない場合、相対指定なので前に付ける
-    // ただし元のパスに .. が無いことは確認済み
-    withDir = path.join(DIAGRAM_DIR, normalized);
-  }
+  // docs/diagrams で始まっていればそのまま、そうでなければ前に付ける。
+  // （relPath は .diagram.html で終わることを確認済みなので、normalized が
+  // DIAGRAM_DIR "そのもの" になることはない = ディレクトリ指定の分岐は不要）
+  const withDir = normalized.startsWith(`${DIAGRAM_DIR}${path.sep}`)
+    ? normalized
+    : path.join(DIAGRAM_DIR, normalized);
 
   const base = path.join(worktreeReal, DIAGRAM_DIR);
   const absPath = path.resolve(worktreeReal, withDir);

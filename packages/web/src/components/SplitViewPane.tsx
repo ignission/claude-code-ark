@@ -93,7 +93,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
 
   // 右ペインに出す図（最後に開かれたもの）。diagram タブはタブバーから
   // 除外されており、ここでのみ描画される。
-  const diagramTab = [...props.tabs].reverse().find(t => t.type === "diagram");
+  const diagramTab = props.tabs.findLast(t => t.type === "diagram");
 
   // diagram タブが sessionTabs に新規追加されたら右ペインを自動表示する。
   // tabs は session 単位でスコープされているため、他セッションの変化には反応しない。

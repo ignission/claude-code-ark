@@ -63,7 +63,7 @@ import { describeModelDiff } from "./lib/diagram-diff.js";
 import { ensureDoctype, replaceModelBlock } from "./lib/diagram-file.js";
 import { parseDiagramModel } from "./lib/diagram-model.js";
 import { resolveDiagramPath } from "./lib/diagram-path.js";
-import { readDiagram } from "./lib/diagram-reader.js";
+import { readDiagram, readDiagramModel } from "./lib/diagram-reader.js";
 import { diagramWatcher } from "./lib/diagram-watcher.js";
 import { getErrorMessage } from "./lib/errors.js";
 import { readFileFromWorktree } from "./lib/file-manager.js";
@@ -2239,8 +2239,9 @@ export async function startServer(
         }
 
         // 現在のファイルを読み、差分の基準となる旧モデルを得る
-        // （resolveDiagramPath の TOCTOU 対策込みの検証も兼ねる）
-        const current = await readDiagram(resolved, relPath);
+        // （TOCTOU 対策込みの検証も兼ねる）。ここは配信ではないので
+        // CSP/ハーネス注入をしない軽量版を使う（毎 submit の無駄を省く）。
+        const current = await readDiagramModel(resolved, relPath);
         if (!current.ok) {
           reply({ ok: false, error: current.error });
           return;

@@ -14,6 +14,7 @@
 
 import { execFileSync } from "node:child_process";
 import nodeFs from "node:fs";
+import { errnoCode, errnoMessage } from "./errors.js";
 
 /** realpathSync に異常に長い文字列を渡さないための上限 */
 const MAX_WORKTREE_PATH_LENGTH = 4096;
@@ -47,16 +48,6 @@ interface CheckFs {
   statSync: (p: string) => { isDirectory: () => boolean };
   existsSync: (p: string) => boolean;
   realpathSync: (p: string) => string;
-}
-
-/** errno を持つ例外から code を取り出す (無ければ "UNKNOWN") */
-function errnoCode(e: unknown): string {
-  const code = (e as NodeJS.ErrnoException | undefined)?.code;
-  return typeof code === "string" ? code : "UNKNOWN";
-}
-
-function errnoMessage(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
 }
 
 /**

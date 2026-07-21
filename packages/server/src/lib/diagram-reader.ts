@@ -15,25 +15,29 @@ import { extractModel, injectCsp } from "./diagram-file.js";
 import { injectHarness } from "./diagram-harness.js";
 import type { DiagramModel } from "./diagram-model.js";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
+import { errnoCode, errnoMessage } from "./errors.js";
 
 export type ReadDiagramResult =
   | { ok: true; absPath: string; html: string; model: DiagramModel }
   | { ok: false; status: number; error: string };
 
-/** errno を持つ例外から code を取り出す (無ければ "UNKNOWN")。managed-worktree.ts と同じ方針 */
-function errnoCode(e: unknown): string {
-  const code = (e as NodeJS.ErrnoException | undefined)?.code;
-  return typeof code === "string" ? code : "UNKNOWN";
-}
+export type ReadDiagramModelResult =
+  | { ok: true; absPath: string; raw: string; model: DiagramModel }
+  | { ok: false; status: number; error: string };
 
-function errnoMessage(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
+type ReadRawResult =
+  | { ok: true; absPath: string; raw: string }
+  | { ok: false; status: number; error: string };
 
-export async function readDiagram(
+/**
+ * TOCTOU 対策込みでファイルを読み、生テキストを返す共通コア。
+ * open→fstat→realpath+stat の inode/device 一致と、実体が docs/diagrams 配下に
+ * 収まっていることを検証する（symlink による worktree 外脱出を弾く）。
+ */
+async function readRawVerified(
   worktreeReal: string,
   relPath: string
-): Promise<ReadDiagramResult> {
+): Promise<ReadRawResult> {
   const resolved = resolveDiagramPath(worktreeReal, relPath);
   if (!resolved.ok) return { ok: false, status: 403, error: resolved.error };
 
@@ -70,15 +74,7 @@ export async function readDiagram(
     }
 
     const raw = await fd.readFile("utf-8");
-    const model = extractModel(raw);
-    if (!model.ok) return { ok: false, status: 422, error: model.error };
-
-    return {
-      ok: true,
-      absPath: resolved.absPath,
-      html: injectHarness(injectCsp(raw)),
-      model: model.model,
-    };
+    return { ok: true, absPath: resolved.absPath, raw };
   } catch (e) {
     // ENOENT (未作成) だけを「見つかりません」として区別する。EACCES /
     // EISDIR 等の一過性・環境要因のエラーまで 404 に畳むと、Claude には
@@ -103,4 +99,37 @@ export async function readDiagram(
   } finally {
     await fd?.close();
   }
+}
+
+/** 配信用に読む。meta CSP と編集ハーネスを注入した HTML を返す。 */
+export async function readDiagram(
+  worktreeReal: string,
+  relPath: string
+): Promise<ReadDiagramResult> {
+  const read = await readRawVerified(worktreeReal, relPath);
+  if (!read.ok) return read;
+  const model = extractModel(read.raw);
+  if (!model.ok) return { ok: false, status: 422, error: model.error };
+  return {
+    ok: true,
+    absPath: read.absPath,
+    html: injectHarness(injectCsp(read.raw)),
+    model: model.model,
+  };
+}
+
+/**
+ * モデルだけが欲しい経路（diagram:submit の差分基準など）向けの軽量版。
+ * HTML への CSP/ハーネス注入を行わない（配信しない読み取りで無駄な文字列
+ * 加工を避ける）。生テキストも返すので、呼び出し側が書き戻しに使える。
+ */
+export async function readDiagramModel(
+  worktreeReal: string,
+  relPath: string
+): Promise<ReadDiagramModelResult> {
+  const read = await readRawVerified(worktreeReal, relPath);
+  if (!read.ok) return read;
+  const model = extractModel(read.raw);
+  if (!model.ok) return { ok: false, status: 422, error: model.error };
+  return { ok: true, absPath: read.absPath, raw: read.raw, model: model.model };
 }

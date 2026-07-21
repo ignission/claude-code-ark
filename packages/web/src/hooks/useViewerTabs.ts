@@ -160,7 +160,7 @@ export function useViewerTabs(
         const current = prev[sessionId] ?? [
           { type: "terminal" as const, id: "terminal" },
         ];
-        const { tabs } = addOrFocusDiagramTab(
+        const tabs = addOrFocusDiagramTab(
           current,
           worktreePath,
           relPath,
