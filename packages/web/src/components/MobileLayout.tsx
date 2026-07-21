@@ -379,7 +379,9 @@ export function MobileLayout({
                   onDeleteSession(sessionId, getWorktreeForSession(session))
                 }
                 onRestartSession={
-                  onRestartSession ? () => onRestartSession(sessionId) : undefined
+                  onRestartSession
+                    ? () => onRestartSession(sessionId)
+                    : undefined
                 }
                 onUploadFile={
                   onUploadFile

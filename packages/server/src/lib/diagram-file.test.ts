@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   DIAGRAM_CSP,
+  ensureDoctype,
   extractModel,
   injectCsp,
-  ensureDoctype,
   replaceModelBlock,
 } from "./diagram-file.js";
 import type { DiagramModel } from "./diagram-model.js";
