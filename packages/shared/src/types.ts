@@ -180,6 +180,17 @@ export interface Session {
   profileId?: string | null;
   /** 起動時に確定したプロファイルのconfigDir（configDir変更検出用） */
   profileConfigDir?: string | null;
+  /**
+   * board MCP の per-session mcp-config ファイルのパス（サーバー内部用）。
+   * サーバー再起動後に board token を registry へ復帰させるために使う。
+   */
+  boardMcpConfigPath?: string | null;
+  /**
+   * セッションで最後に開いた図（docs/diagrams/*.diagram.html）の worktree 相対パス。
+   * board_open で図を開くたびに更新され、クライアントはリロード後に
+   * この値を使って右ペインの図タブを復元する（未オープン時は null/undefined）。
+   */
+  lastDiagramPath?: string | null;
 }
 
 /**
@@ -365,6 +376,17 @@ export interface ServerToClientEvents {
     worktreeId: string;
   }) => void;
   "worktree:error": (error: string) => void;
+
+  /**
+   * Claude が board_open を呼んだ。クライアントは図タブを開く。
+   * worktreePath は載せない。クライアントは session:list で既に持っている値を
+   * sessionId から引く（worktree の絶対パスが渡る範囲を必要なクライアントに
+   * 限定するため。index.ts の openDiagram 実装の方針に揃える）。
+   */
+  "diagram:open": (data: { sessionId: string; relPath: string }) => void;
+
+  /** 監視中の図ファイルが更新された。クライアントは再読込する */
+  "diagram:updated": (data: { worktreePath: string; relPath: string }) => void;
 
   // Session events（ManagedSessionを使用）
   "session:list": (sessions: ManagedSession[]) => void;
@@ -604,6 +626,38 @@ export interface ClientToServerEvents {
    * AskUserQuestion の自由入力モードで「1 文字ずつタイプ」する用途。
    */
   "session:send-literal": (data: { sessionId: string; text: string }) => void;
+
+  /** 図の購読開始（更新通知を受け取る）。1 セッション 1 図を想定 */
+  "diagram:subscribe": (data: {
+    worktreePath: string;
+    relPath: string;
+  }) => void;
+
+  /** 図の購読解除 */
+  "diagram:unsubscribe": (data: {
+    worktreePath: string;
+    relPath: string;
+  }) => void;
+
+  /**
+   * 図の編集結果を保存し、意味差分を会話へ還流する。
+   * model は構造化モデル、html は投影（ハーネスと meta CSP を除いたもの）。
+   * 還流の文面はサーバーが model の差分から組む（iframe から散文は受け取らない）。
+   */
+  "diagram:submit": (
+    data: {
+      sessionId: string;
+      worktreePath: string;
+      relPath: string;
+      model: unknown;
+      html: string;
+    },
+    callback: (response: {
+      ok: boolean;
+      sent?: string[];
+      error?: string;
+    }) => void
+  ) => void;
 
   /**
    * Claude Code が永続化する JSONL 履歴 (~/.claude/projects/<encoded-cwd>/*.jsonl)

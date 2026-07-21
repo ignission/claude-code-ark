@@ -141,6 +141,17 @@ export class TmuxManager extends EventEmitter {
   private skipPermissions = false;
   /** claude 起動時に --settings で注入する settings JSON のパス (AUQ hook 用) */
   private claudeSettingsPath: string | null = null;
+  /**
+   * claude 起動時に --mcp-config で注入する per-session MCP config JSON のパス
+   * (board_write 等)。SessionOrchestrator がセッション起動直前に設定する。
+   */
+  private claudeMcpConfigPath: string | null = null;
+  /**
+   * claude 起動時に --append-system-prompt で注入する追加指示。
+   * board_write 等のセッション固有ツールの使い方をモデルに促すために使う。
+   * claudeMcpConfigPath と同様、SessionOrchestrator が起動直前に設定する。
+   */
+  private claudeAppendSystemPrompt: string | null = null;
 
   constructor() {
     super();
@@ -164,6 +175,28 @@ export class TmuxManager extends EventEmitter {
    */
   setClaudeSettingsPath(value: string | null): void {
     this.claudeSettingsPath = value;
+  }
+
+  /**
+   * claude 起動コマンドに `--mcp-config <path>` で注入する per-session MCP
+   * config JSON を設定する (board_write 等)。--strict-mcp-config は付けない
+   * (ユーザーの他 MCP を無効化しないため、board MCP は既存 MCP に上乗せする)。
+   * このインスタンスは全セッションで共有されるため、SessionOrchestrator は
+   * 各セッション起動 (createSession 呼び出し) の直前に必ず設定し直すこと
+   * (board MCP が利用不可なセッションでは null を渡して前回値を持ち越さない)。
+   */
+  setClaudeMcpConfigPath(value: string | null): void {
+    this.claudeMcpConfigPath = value;
+  }
+
+  /**
+   * claude 起動コマンドに `--append-system-prompt <text>` で注入する追加指示を
+   * 設定する。board MCP を持つセッションに「図解要求はボードに描く」等を促す。
+   * 共有インスタンスなので、各セッション起動直前に必ず設定し直すこと
+   * (board MCP 非対応セッションでは null を渡して前回値を持ち越さない)。
+   */
+  setClaudeAppendSystemPrompt(value: string | null): void {
+    this.claudeAppendSystemPrompt = value;
   }
 
   /**
@@ -326,6 +359,20 @@ export class TmuxManager extends EventEmitter {
     const settingsArg = this.claudeSettingsPath
       ? ` --settings ${posixShellQuote(this.claudeSettingsPath)}`
       : "";
+    // board_write 等の per-session MCP server を注入する --mcp-config。
+    // SessionOrchestrator が起動直前に setClaudeMcpConfigPath で設定する。
+    // beacon と異なり --strict-mcp-config は**付けない**: strict を付けると
+    // ユーザーの project .mcp.json / global 設定の他 MCP (Slack/Jira/Figma 等)
+    // が全て無効化されてしまう。会話セッションはそれら他 MCP を使いたいので、
+    // board MCP は既存 MCP に**上乗せ**する (strict なしなら追加マージされる)。
+    const mcpConfigArg = this.claudeMcpConfigPath
+      ? ` --mcp-config ${posixShellQuote(this.claudeMcpConfigPath)}`
+      : "";
+    // board_write 等のツールの使い方をモデルに促す追加 system prompt。
+    // SessionOrchestrator が board MCP を注入するセッションにだけ設定する。
+    const appendPromptArg = this.claudeAppendSystemPrompt
+      ? ` --append-system-prompt ${posixShellQuote(this.claudeAppendSystemPrompt)}`
+      : "";
     // プロファイル未指定のセッションが、Ark サーバープロセス (やその親、
     // tmux サーバー) の CLAUDE_CONFIG_DIR を意図せず継承すると、transcript が
     // 想定外の config dir 配下に書かれ、JSONL tail (チャットビュー) が
@@ -341,7 +388,7 @@ export class TmuxManager extends EventEmitter {
       : "";
     const claudeCmd =
       options?.commandLine ??
-      `${envPrefix}${claudeArg}${skipFlag}${settingsArg}`;
+      `${envPrefix}${claudeArg}${skipFlag}${settingsArg}${mcpConfigArg}${appendPromptArg}`;
 
     let tmuxCreated = false;
 

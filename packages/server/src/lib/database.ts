@@ -51,6 +51,9 @@ interface SessionRow {
   status: string;
   profile_id: string | null;
   profile_config_dir: string | null;
+  board_mcp_config_path: string | null;
+  /** セッションで最後に開いた図（docs/diagrams/*.diagram.html）の worktree 相対パス */
+  last_diagram_path: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -76,6 +79,14 @@ interface CreateSessionInput {
   readonly profileId?: string | null;
   /** 起動時に確定したプロファイルのconfigDir（profile_id とペア） */
   readonly profileConfigDir?: string | null;
+  /**
+   * board MCP の per-session mcp-config ファイルのパス。
+   * 稼働中の claude は起動時に渡された token を保持し続けるため、サーバー
+   * 再起動後もこのファイルから token を読み戻して registry へ復帰させる
+   * （復帰しないと board_write が 401 で全滅する）。token 自体は 0600 の
+   * このファイルにのみ置き、DB にはパスだけを持つ。
+   */
+  readonly boardMcpConfigPath?: string | null;
 }
 
 /** メッセージ作成時の入力データ */
@@ -245,6 +256,30 @@ export class SessionDatabase {
       }
     }
 
+    // マイグレーション: sessionsテーブルにboard_mcp_config_path列を追加
+    // (サーバー再起動後に board token を registry へ復帰させるため)
+    try {
+      this.db.exec(
+        "ALTER TABLE sessions ADD COLUMN board_mcp_config_path TEXT"
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("duplicate column name")) {
+        throw e;
+      }
+    }
+
+    // マイグレーション: sessionsテーブルにlast_diagram_path列を追加
+    // (board_open で開いた図をリロード後も右ペインに復元するため)
+    try {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN last_diagram_path TEXT");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("duplicate column name")) {
+        throw e;
+      }
+    }
+
     // 既存のpetsテーブルを破棄（pet機能はサーバー側を廃止済み）
     this.db.exec("DROP TABLE IF EXISTS pets;");
 
@@ -314,6 +349,10 @@ export class SessionDatabase {
         updated_at INTEGER NOT NULL
       );
     `);
+    // 注意: canvas_boards（旧 Excalidraw ボードの scene 永続化）テーブルは
+    // B-1 でコードから撤去した。既存 DB に残っている canvas_boards テーブルは
+    // 意図的に DROP していない（使われなくなるだけで害はなく、稼働中 DB を
+    // 誤って壊すリスクの方が大きいため）。新規 DB でも作成しない。
 
     // マイグレーション: 既存DBにも config_dir の UNIQUE INDEX を追加。
     // 旧スキーマ (UNIQUE なし) で起動していたインスタンスでも、複数プロファイル
@@ -532,8 +571,8 @@ export class SessionDatabase {
   upsertSession(session: CreateSessionInput): void {
     const now = new Date().toISOString();
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, profile_id, profile_config_dir, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, worktree_id, worktree_path, repo_path, status, profile_id, profile_config_dir, board_mcp_config_path, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(worktree_path) DO UPDATE SET
         id = excluded.id,
         worktree_id = excluded.worktree_id,
@@ -541,6 +580,7 @@ export class SessionDatabase {
         status = excluded.status,
         profile_id = excluded.profile_id,
         profile_config_dir = excluded.profile_config_dir,
+        board_mcp_config_path = excluded.board_mcp_config_path,
         updated_at = excluded.updated_at
     `);
     stmt.run(
@@ -551,6 +591,7 @@ export class SessionDatabase {
       session.status,
       session.profileId ?? null,
       session.profileConfigDir ?? null,
+      session.boardMcpConfigPath ?? null,
       now,
       now
     );
@@ -608,6 +649,23 @@ export class SessionDatabase {
       "UPDATE sessions SET repo_path = ?, updated_at = ? WHERE id = ?"
     );
     stmt.run(repoPath, now, id);
+  }
+
+  /**
+   * セッションで最後に開いた図（worktree相対パス）を更新
+   *
+   * board_open で図を開くたびに呼び出し、リロード後の右ペイン復元に使う。
+   * relPath に null を渡すと「最後に開いた図なし」の状態に戻せる。
+   *
+   * @param sessionId - セッションID
+   * @param relPath - 図ファイルの worktree 相対パス、または null
+   */
+  updateSessionLastDiagram(sessionId: string, relPath: string | null): void {
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(
+      "UPDATE sessions SET last_diagram_path = ?, updated_at = ? WHERE id = ?"
+    );
+    stmt.run(relPath, now, sessionId);
   }
 
   /**
@@ -799,6 +857,8 @@ export class SessionDatabase {
       createdAt: new Date(row.created_at),
       profileId: row.profile_id,
       profileConfigDir: row.profile_config_dir,
+      boardMcpConfigPath: row.board_mcp_config_path,
+      lastDiagramPath: row.last_diagram_path,
     };
   }
 

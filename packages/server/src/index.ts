@@ -6,7 +6,7 @@
  * Supports remote access via Cloudflare Tunnel.
  */
 
-import { exec, execFileSync } from "node:child_process";
+import { exec } from "node:child_process";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
 import express from "express";
@@ -39,6 +39,11 @@ import {
 import { authManager } from "./lib/auth.js";
 import { beaconManager } from "./lib/beacon-manager.js";
 import {
+  type BoardMcpDeps,
+  BoardMcpServer,
+  BoardSessionRegistry,
+} from "./lib/board-mcp-server.js";
+import {
   buildTunnelEntries,
   collectBridgeSessions,
   collectGridSnapshots,
@@ -54,6 +59,12 @@ import {
   WS_PORT_START,
 } from "./lib/constants.js";
 import { db } from "./lib/database.js";
+import { describeModelDiff } from "./lib/diagram-diff.js";
+import { ensureDoctype, replaceModelBlock } from "./lib/diagram-file.js";
+import { parseDiagramModel } from "./lib/diagram-model.js";
+import { resolveDiagramPath } from "./lib/diagram-path.js";
+import { readDiagram, readDiagramModel } from "./lib/diagram-reader.js";
+import { diagramWatcher } from "./lib/diagram-watcher.js";
 import { getErrorMessage } from "./lib/errors.js";
 import { readFileFromWorktree } from "./lib/file-manager.js";
 import {
@@ -73,6 +84,11 @@ import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
 import { htmlScreenshotter } from "./lib/html-screenshotter.js";
 import { jsonlTailManager } from "./lib/jsonl-tail-manager.js";
+import {
+  checkManagedWorktree,
+  describeWorktreeFailure,
+  resolveWorktreeRealPath,
+} from "./lib/managed-worktree.js";
 import { DiscoveryError } from "./lib/mcp-oauth/discovery.js";
 import { mcpOAuthOrchestrator } from "./lib/mcp-oauth/oauth-flow-orchestrator.js";
 import { getProvider, listProviders } from "./lib/mcp-oauth/providers.js";
@@ -161,6 +177,8 @@ export interface ServerHandle {
 
 // トンネル状態ファイルのパス
 const TUNNEL_STATE_FILE = path.join(os.tmpdir(), "ark-tunnel-state.json");
+
+const MANAGED_WORKTREE_CACHE_TTL_MS = 30_000;
 
 /** トンネル状態をファイルに保存する */
 function saveTunnelState(port: number): void {
@@ -429,6 +447,92 @@ export async function startServer(
   // クライアントが選択・スキャンしたリポジトリを追跡（Beaconが参照する）
   const knownRepos = new Set<string>(allowedRepos);
 
+  /**
+   * resolveManagedWorktreePath の検証成功結果のみを保持するキャッシュ（TTL 30 秒）。
+   * diagram:subscribe 等は高頻度に呼ばれるため、同期 git 呼び出しを
+   * イベントごとに繰り返してイベントループを塞がないようにする。
+   * 失敗結果はキャッシュしない: realpath 正規化により実在しないパスは
+   * キャッシュ到達前に弾かれるため、キャッシュは実在パスの git 検証成功結果
+   * だけを保持すればよく、これにより未知パスの連投で Map が際限なく肥大化する
+   * 問題（負結果キャッシュの弊害）を避ける。
+   * さらにサイズ上限（FIFO）で有界化し、実在パスの水平スキャン等でも
+   * メモリが無制限に増えないようにする。
+   * allowedRepos はサーバーインスタンスごとの設定のため、キャッシュも
+   * startServer スコープに置き、インスタンス間で検証結果を共有しない。
+   */
+  const managedWorktreeCache = new Map<string, { at: number }>();
+  const MANAGED_WORKTREE_CACHE_MAX = 256;
+
+  /**
+   * 期限切れエントリを掃除し、なおサイズ上限を超えていれば最古（Map の挿入順
+   * 先頭）のエントリを削除する。Map は挿入順を保持するため単純な FIFO として
+   * 扱える。
+   */
+  function pruneManagedWorktreeCache(): void {
+    const now = Date.now();
+    for (const [key, entry] of managedWorktreeCache) {
+      if (now - entry.at >= MANAGED_WORKTREE_CACHE_TTL_MS) {
+        managedWorktreeCache.delete(key);
+      }
+    }
+    while (managedWorktreeCache.size >= MANAGED_WORKTREE_CACHE_MAX) {
+      const oldestKey = managedWorktreeCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      managedWorktreeCache.delete(oldestKey);
+    }
+  }
+
+  /**
+   * diagram:subscribe / linkWorktreeProfile 共通の worktree 検証（trust boundary）+
+   * realpath 正規化。`/repo`・`/repo/.`・`/repo/./.` 等の表記揺れを同一の
+   * 実パスへ畳み込み、DB 主キー・キャッシュキー・room 名を worktree ごとに
+   * 一意化する（正規化しないと表記違いで別 DB 行が作られ、行単位のサイズ上限
+   * を迂回して肥大化させ得る）。
+   * (0) 入力長の上限チェック（異常に長い文字列での realpathSync 呼び出しを防ぐ）
+   * (1) realpath で正規化する。実在しないパスはここで弾かれる（キャッシュにも
+   *     到達しない = 未知パスの連投によるキャッシュ肥大化を防ぐ）
+   * (2) git worktree であること（`.git` ファイル/ディレクトリの存在で判定）
+   *     任意ディレクトリへの読み書きを防ぐ
+   * (3) allowedRepos 設定時は、そこから導出した repoPath が許可リストに
+   *     含まれること（socket 側 worktree:set-profile と同じ防御を維持する）
+   * 戻り値: 検証成功時は正規化済みの実パス、失敗時は null。
+   */
+  function resolveManagedWorktreeDetailed(
+    worktreePath: string
+  ): { ok: true; path: string } | { ok: false; reason: string } {
+    const resolved = resolveWorktreeRealPath(worktreePath);
+    if (!resolved.ok) {
+      return { ok: false, reason: describeWorktreeFailure(resolved.failure) };
+    }
+    const real = resolved.realPath;
+    const cached = managedWorktreeCache.get(real);
+    if (cached && Date.now() - cached.at < MANAGED_WORKTREE_CACHE_TTL_MS) {
+      return { ok: true, path: real };
+    }
+    const checked = checkManagedWorktree(real, { allowedRepos });
+    if (!checked.ok) {
+      return { ok: false, reason: describeWorktreeFailure(checked.failure) };
+    }
+    pruneManagedWorktreeCache();
+    managedWorktreeCache.set(real, { at: Date.now() });
+    return { ok: true, path: real };
+  }
+
+  function resolveManagedWorktreePath(worktreePath: string): string | null {
+    const result = resolveManagedWorktreeDetailed(worktreePath);
+    return result.ok ? result.path : null;
+  }
+
+  /**
+   * linkWorktreeProfile 専用の boolean ラッパー。worktree_profile_links の
+   * 既存キーは非正規化パスのままのため、こちらは呼び出し側の worktreePath を
+   * 正規化せずに使い続ける既存挙動を維持する（検証自体は正規化済みパスに対して
+   * 行われるが、DB へは元の worktreePath を渡す = link 側の挙動は変えない）。
+   */
+  function isManagedWorktreePath(worktreePath: string): boolean {
+    return resolveManagedWorktreePath(worktreePath) !== null;
+  }
+
   // トンネル状態管理 (startServer のライフタイム内に閉じ込める)
   let activeTunnel: TunnelManager | null = null;
   let tunnelUrl: string | null = null;
@@ -597,6 +701,79 @@ export async function startServer(
   // Apply Socket.IO authentication middleware
   io.use(authManager.socketMiddleware());
 
+  // ===== セッションボード MCP サーバー (board_open ツール) =====
+  // 1 プロセスに 1 インスタンスで良く、worktree ごとの区別は
+  // BoardSessionRegistry の bearer token 解決で行う（セッション起動時の
+  // register/unregister は SessionOrchestrator 側に配線済み）。
+  // ここでは BoardMcpDeps の実体（socket 通知）と起動のみ行う。
+  // 旧 board_write（Excalidraw scene への直接書き込み）用の getBoardScene /
+  // saveBoardScene / notifyUpdated は撤去済み（B-1）。openDiagram のみ残る。
+  const boardRegistry = new BoardSessionRegistry();
+  const boardMcp = new BoardMcpServer();
+  const boardDeps: BoardMcpDeps = {
+    async openDiagram(worktreePath, relPath) {
+      const resolved = resolveManagedWorktreeDetailed(worktreePath);
+      if (!resolved.ok) {
+        return {
+          ok: false,
+          error: `worktree を解決できません: ${resolved.reason}`,
+        };
+      }
+      // セッション検索は引数の worktreePath（registry 登録時の生パス）で行う。
+      // tmuxManager / DB のセッション行は session:start が受け取った生パスの
+      // ままキーになっており、getSessionByWorktree は文字列完全一致でしか
+      // ヒットしない。resolved.path（realpath 正規化済み）で引いてしまうと、
+      // realpath ≠ 生パスの環境（symlink を含む home 等）では常に
+      // 「セッションが見つかりません」になり、board_open の唯一の入口が
+      // 死んでしまう。ファイル読み書きと DB のボードキーは逆に realpath が
+      // 規約（commit 0e547d0 で確定）なので、下の readDiagram には
+      // resolved.path を渡す ― この2つを取り違えないこと。
+      const session = sessionOrchestrator.getSessionByWorktree(worktreePath);
+      if (!session) {
+        return {
+          ok: false,
+          error: "この worktree のセッションが見つかりません",
+        };
+      }
+      // Claude に「開いた」と嘘をつかないよう、diagram:open を emit する前に
+      // 実際に readDiagram で読めることを確認する（/api/diagram と同じ検証
+      // = 403 パス不正・worktree外・symlink脱出 / 404 不在 / 422 モデルブロック
+      // 無し・壊れている、を理由付きで弾く）。ファイル読み込みは realpath
+      // （resolved.path）を使う規約なのでこちらはそのまま。
+      const result = await readDiagram(resolved.path, relPath);
+      if (!result.ok) {
+        return { ok: false, error: result.error };
+      }
+      io.emit("diagram:open", { sessionId: session.id, relPath });
+      // 「セッションで最後に開いた図」を永続化する。リロード後も
+      // session:list 経由で lastDiagramPath を受け取り、クライアントが
+      // 右ペインの図タブを復元できるようにするため。
+      db.updateSessionLastDiagram(session.id, relPath);
+      return { ok: true };
+    },
+  };
+  // 永続化ポート（C-B3 の ark-beacon MCP と同型）。前回 bind したポートに
+  // 再度 bind し直すことで、稼働中セッションの mcp-config の url を維持する。
+  // 1〜65535 の整数以外（範囲外・非整数・NaN・不正値混入）は無視して ephemeral 起動にフォールバックする
+  // （httpServer.listen() への不正値渡しによる例外を防ぐ）。
+  const savedBoardMcpPort = db.getSetting("board_mcp_port");
+  const boardMcpPort =
+    typeof savedBoardMcpPort === "number" &&
+    Number.isInteger(savedBoardMcpPort) &&
+    savedBoardMcpPort >= 1 &&
+    savedBoardMcpPort <= 65535
+      ? savedBoardMcpPort
+      : undefined;
+  await boardMcp.start(boardDeps, boardRegistry, { port: boardMcpPort });
+  // 実際に bind できたポートを settings に保存する（次回起動で同じポートに bind し直すため）。
+  const boundBoardMcpPort = boardMcp.getPort();
+  if (boundBoardMcpPort) {
+    db.setSetting("board_mcp_port", boundBoardMcpPort);
+  }
+  // 会話セッション起動時に per-session token/mcp-config を注入できるよう、
+  // SessionOrchestrator へ boardMcp/boardRegistry を配線する (Task 4)。
+  sessionOrchestrator.setBoardMcp(boardMcp, boardRegistry);
+
   // BeaconにArk操作の依存を注入（MCPツールで利用）
   beaconManager.configure({
     getAllSessions: () => sessionOrchestrator.getAllSessions(),
@@ -636,51 +813,9 @@ export async function startServer(
       // 「成功した」状態になるのを防ぐため、書き込み前に存在確認する。
       // (worktree_profile_links は FK 制約を持たないため明示チェックが必要)
       if (!db.getProfile(profileId)) return false;
-      // 1) 実在 directory であること
-      // 2) git worktree であること (.git ファイル/ディレクトリの存在で判定)
-      //    任意ディレクトリへの link 書き込みを防ぐ trust boundary。
-      // 3) (allowedRepos 設定時) repoPath が許可リストに含まれること
-      //    socket側 worktree:set-profile と同じ防御を維持する。
-      try {
-        const stat = fs.statSync(worktreePath);
-        if (!stat.isDirectory()) return false;
-      } catch {
-        return false;
-      }
-      if (!fs.existsSync(`${worktreePath}/.git`)) return false;
-      if (allowedRepos.length > 0) {
-        let derivedRepoPath: string | undefined;
-        try {
-          // execFileSync は shell を介さないため worktreePath のメタ文字
-          // (`、$()、;、空白) によるコマンド注入を防げる。
-          const stdout = execFileSync(
-            "git",
-            [
-              "-C",
-              worktreePath,
-              "rev-parse",
-              "--path-format=absolute",
-              "--git-common-dir",
-            ],
-            { stdio: ["ignore", "pipe", "ignore"] }
-          ).toString();
-          const gitCommonDir = stdout.trim();
-          derivedRepoPath =
-            gitCommonDir.replace(/\/\.git\/?$/, "") || undefined;
-        } catch {
-          return false;
-        }
-        if (!derivedRepoPath) return false;
-        let inAllowed = allowedRepos.includes(derivedRepoPath);
-        if (!inAllowed) {
-          try {
-            inAllowed = allowedRepos.includes(fs.realpathSync(derivedRepoPath));
-          } catch {
-            inAllowed = false;
-          }
-        }
-        if (!inAllowed) return false;
-      }
+      // worktree 側の trust boundary チェック（実在ディレクトリ / git worktree /
+      // allowedRepos 許可リスト）は diagram:subscribe と共通の isManagedWorktreePath に委譲する。
+      if (!isManagedWorktreePath(worktreePath)) return false;
       db.setWorktreeProfileLink(worktreePath, profileId);
       // UIの worktreeProfileLinks マップ / プロファイルバッジを更新するため
       // 全クライアントに通知する。worktree:set-profile ハンドラと同じイベント。
@@ -934,6 +1069,32 @@ export async function startServer(
     } catch {
       res.status(404).json({ error: "File not found" });
     }
+  });
+
+  // ===== 図解キャンバス配信API =====
+
+  app.get("/api/diagram", async (req, res) => {
+    const worktreePath = req.query.worktreePath;
+    const relPath = req.query.path;
+    if (typeof worktreePath !== "string" || typeof relPath !== "string") {
+      res.status(400).json({ error: "worktreePath と path が必要です" });
+      return;
+    }
+    const resolved = resolveManagedWorktreePath(worktreePath);
+    if (!resolved) {
+      res.status(403).json({ error: "管理外の worktree です" });
+      return;
+    }
+    const result = await readDiagram(resolved, relPath);
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    // 本文に meta CSP を注入済み。クライアントは srcDoc で描画するため
+    // ヘッダの CSP は当該文書に適用されない（判断4.2.1 の実測）
+    res.setHeader("Cache-Control", "no-store");
+    res.send(result.html);
   });
 
   // HTML をレンダリングして PNG スクリーンショットを返す
@@ -1799,14 +1960,20 @@ export async function startServer(
           .toString("base64")
           .replace(/[/+=]/g, "");
 
+        // キャッシュキーは realpath 正規化済みパス。生パスで delete しても
+        // ヒットしないため、worktree が消える前に realpath を解決してその
+        // キーを消す（消し損ねると同じ realpath に新 worktree が作られた際、
+        // TTL 切れまで stale な検証結果を返し得る）。
+        const cachedReal = resolveManagedWorktreePath(worktreePath);
         const result = await deleteWorktree(repoPath, worktreePath);
+        if (cachedReal) managedWorktreeCache.delete(cachedReal);
+        managedWorktreeCache.delete(worktreePath);
         if (result.branchKeptReason) {
           // ブランチが残った場合は調査の起点になるようハンドラー側でも記録する
           console.log(
             `[Worktree] ${result.branchKeptReason} (repo=${repoPath})`
           );
         }
-
         // 削除成功を通知
         io.emit("worktree:deleted", {
           repoPath,
@@ -1875,6 +2042,7 @@ export async function startServer(
                 .toString("base64")
                 .replace(/[/+=]/g, "");
               await deleteWorktree(result.repoPath, result.worktreePath);
+              managedWorktreeCache.delete(result.worktreePath);
               socket.emit("worktree:deleted", {
                 repoPath: result.repoPath,
                 worktreeId: deletedWorktreeId,
@@ -1953,6 +2121,227 @@ export async function startServer(
           sessionId: d.sessionId,
           error: getErrorMessage(error),
         });
+      }
+    });
+
+    // ===== 図解キャンバス（board_open による表示 + 更新監視） =====
+    const diagramUnsubs = new Map<string, () => void>();
+
+    socket.on("diagram:subscribe", (data: unknown) => {
+      // payload は外部入力。分割代入前に型を検証しないと、引数なし emit や
+      // null/不正形状の payload でハンドラ内 throw → プロセスごと落ちる
+      // （socket.io の同期ハンドラ内例外は uncaughtException になる）。
+      const d = data as { worktreePath?: unknown; relPath?: unknown } | null;
+      if (
+        !d ||
+        typeof d !== "object" ||
+        typeof d.worktreePath !== "string" ||
+        typeof d.relPath !== "string"
+      ) {
+        return;
+      }
+      const { worktreePath, relPath } = d;
+      const resolved = resolveManagedWorktreePath(worktreePath);
+      if (!resolved) return;
+      // 空白連結だと path や relPath に空白がある場合に別購読と衝突するため
+      // JSON 配列表現をキーにする（jsonl-tail-manager.ts の keyOf と同じ方針）
+      const key = JSON.stringify([resolved, relPath]);
+      if (diagramUnsubs.has(key)) return;
+
+      // watcher を張る条件は「パスが worktree の docs/diagrams 配下に収まって
+      // いるか」だけにする（resolveDiagramPath は文字列上の解決のみで FS I/O
+      // を行わないため同期）。ファイルが読めるか（403/404/422）を条件にすると、
+      // DiagramWatcher は「ファイルが未作成でも polling が後から拾う」設計
+      // なのに、Claude が Edit で図を書き換えている最中（モデルブロック未
+      // 書き込み等で readDiagram が一時的に失敗する）にタブを開き直すと
+      // watcher が張られないまま終わり、書き込み完了後も diagram:updated が
+      // 届かなくなる。DiagramPane の購読はマウント時 1 回きりで再試行もない
+      // ため、タブを閉じて開き直すまで永久にエラー表示のままになってしまう。
+      // 内容が読めるかどうかの判定は配信時 (/api/diagram) の責務にする。
+      const pathResolved = resolveDiagramPath(resolved, relPath);
+      if (!pathResolved.ok) return; // パス自体が不正 (403 相当) なら購読しない
+
+      const off = diagramWatcher.subscribe(pathResolved.absPath, () => {
+        // クライアントへは購読要求で送られてきた worktreePath（生パス）を
+        // そのままエコーバックする。サーバー内部の購読キー・ファイル解決は
+        // realpath（resolved）で行うが、クライアント（DiagramPane）は
+        // session:start に渡した生パスしか知らないため、resolved を返すと
+        // realpath ≠ 生パスの環境で一致判定 (data.worktreePath ===
+        // worktreePath) が常に false になり、fs.watch による再投影が
+        // エラーも出さず無言で機能しなくなる。
+        socket.emit("diagram:updated", { worktreePath, relPath });
+      });
+      diagramUnsubs.set(key, off);
+    });
+
+    socket.on("diagram:unsubscribe", (data: unknown) => {
+      // subscribe と同じく、外部入力を分割代入する前に型を検証する
+      const d = data as { worktreePath?: unknown; relPath?: unknown } | null;
+      if (
+        !d ||
+        typeof d !== "object" ||
+        typeof d.worktreePath !== "string" ||
+        typeof d.relPath !== "string"
+      ) {
+        return;
+      }
+      const { worktreePath, relPath } = d;
+      const resolved = resolveManagedWorktreePath(worktreePath);
+      if (!resolved) return;
+      // 空白連結だと path や relPath に空白がある場合に別購読と衝突するため
+      // JSON 配列表現をキーにする（jsonl-tail-manager.ts の keyOf と同じ方針）
+      const key = JSON.stringify([resolved, relPath]);
+      diagramUnsubs.get(key)?.();
+      diagramUnsubs.delete(key);
+    });
+
+    /**
+     * 図の編集結果を保存し、意味差分を会話へ還流する。
+     *
+     * html のサイズ上限（無制限だとメモリを一気に確保してしまう）。
+     * 2MB は .diagram.html が意味モデル + 軽量な HTML 投影であるという
+     * 前提（画像等の埋め込みは想定しない）に基づく余裕を持った上限。
+     */
+    const DIAGRAM_SUBMIT_MAX_HTML_BYTES = 2 * 1024 * 1024;
+
+    socket.on("diagram:submit", async (data: unknown, callback: unknown) => {
+      // ack callback は外部入力なので関数であることを検証してから呼ぶ
+      // （slash:list と同じ方針）
+      if (typeof callback !== "function") return;
+      const reply = callback as (response: {
+        ok: boolean;
+        sent?: string[];
+        error?: string;
+      }) => void;
+
+      // payload は外部入力。分割代入前に型を検証しないと、引数なし emit や
+      // null/不正形状の payload でハンドラ内 throw → プロセスごと落ちる
+      // （socket.io の同期ハンドラ内例外は uncaughtException になる）。
+      const d = data as {
+        sessionId?: unknown;
+        worktreePath?: unknown;
+        relPath?: unknown;
+        model?: unknown;
+        html?: unknown;
+      } | null;
+      if (
+        !d ||
+        typeof d !== "object" ||
+        typeof d.sessionId !== "string" ||
+        typeof d.worktreePath !== "string" ||
+        typeof d.relPath !== "string" ||
+        typeof d.html !== "string"
+      ) {
+        reply({ ok: false, error: "不正なリクエストです" });
+        return;
+      }
+      const { sessionId, worktreePath, relPath, model, html } = d;
+
+      try {
+        const resolved = resolveManagedWorktreePath(worktreePath);
+        if (!resolved) {
+          reply({ ok: false, error: "worktree を解決できません" });
+          return;
+        }
+
+        // 現在のファイルを読み、差分の基準となる旧モデルを得る
+        // （TOCTOU 対策込みの検証も兼ねる）。ここは配信ではないので
+        // CSP/ハーネス注入をしない軽量版を使う（毎 submit の無駄を省く）。
+        const current = await readDiagramModel(resolved, relPath);
+        if (!current.ok) {
+          reply({ ok: false, error: current.error });
+          return;
+        }
+
+        // 受け取ったモデルを検証する。不正なら保存しない。
+        // model は unknown（構造化された JS 値。iframe からの
+        // postMessage は structured clone のため文字列ではない）なので、
+        // parseDiagramModel（JSON 文字列を受け取る）へ渡す前に文字列化する。
+        // undefined/関数等は JSON.stringify が undefined を返すため、
+        // その場合はモデル未指定として弾く。
+        const modelJson = JSON.stringify(model);
+        if (modelJson === undefined) {
+          reply({ ok: false, error: "モデルが指定されていません" });
+          return;
+        }
+        const parsed = parseDiagramModel(modelJson);
+        if (!parsed.ok) {
+          reply({ ok: false, error: parsed.error });
+          return;
+        }
+
+        if (Buffer.byteLength(html, "utf-8") > DIAGRAM_SUBMIT_MAX_HTML_BYTES) {
+          reply({ ok: false, error: "図のサイズが大きすぎます（上限 2MB）" });
+          return;
+        }
+
+        // html 内のモデルブロック（クライアントが送ってくる html 内のブロック
+        // は編集前の古い JSON のまま）を最新モデルで差し替える。DOM 側は
+        // 変更しない。
+        const replaced = replaceModelBlock(html, parsed.model);
+        if (!replaced.ok) {
+          reply({ ok: false, error: replaced.error });
+          return;
+        }
+
+        const pathResolved = resolveDiagramPath(resolved, relPath);
+        if (!pathResolved.ok) {
+          reply({ ok: false, error: pathResolved.error });
+          return;
+        }
+        // ハーネスが送る html は document.documentElement.outerHTML 由来で
+        // doctype を含まない。補わないと送信のたびにファイルから落ちる。
+        //
+        // TOCTOU/symlink 対策: 読み込み側(readRawVerified)は inode/dev + realpath で
+        // worktree 外脱出を弾くが、書き込みは resolveDiagramPath(文字列解決のみ)の後
+        // fs.writeFile が symlink を辿るため、読み書きの間に外向き symlink へ
+        // 差し替えられると worktree 外へ書けてしまう。/api/session の配信(L1163)と
+        // 同じく O_NOFOLLOW で最終要素が symlink なら open を失敗させて防ぐ。
+        let writeHandle: fs.promises.FileHandle;
+        try {
+          writeHandle = await fs.promises.open(
+            pathResolved.absPath,
+            fs.constants.O_WRONLY |
+              fs.constants.O_TRUNC |
+              fs.constants.O_NOFOLLOW
+          );
+        } catch {
+          // ELOOP(最終要素が symlink に差し替わった) / ENOENT(読み込み後に削除) 等
+          reply({ ok: false, error: "図ファイルの実体を検証できません" });
+          return;
+        }
+        try {
+          await writeHandle.writeFile(ensureDoctype(replaced.html), "utf-8");
+        } finally {
+          await writeHandle.close();
+        }
+
+        // 意味差分を組み立てて会話へ還流する。文面は describeModelDiff の
+        // 出力だけで組む（html の中身などクライアント由来の文字列は
+        // 混ぜない = 注入対策）。変更が無ければ送信しない。
+        const sent = describeModelDiff(current.model, parsed.model);
+        if (sent.length > 0) {
+          const message = `図を編集しました（${relPath}）:\n${sent
+            .map(line => `- ${line}`)
+            .join("\n")}`;
+          try {
+            sessionOrchestrator.sendMessage(sessionId, message);
+          } catch (error) {
+            console.error(
+              "[Diagram] sendMessage failed:",
+              getErrorMessage(error)
+            );
+            reply({
+              ok: false,
+              error: `図は保存しましたが、セッションへの通知に失敗しました: ${getErrorMessage(error)}`,
+            });
+            return;
+          }
+        }
+
+        reply({ ok: true, sent });
+      } catch (error) {
+        reply({ ok: false, error: getErrorMessage(error) });
       }
     });
 
@@ -3488,6 +3877,15 @@ export async function startServer(
       // socket.leave は disconnect 時に Socket.IO が自動で行うので room の明示的な
       // クリーンアップは不要
 
+      for (const unsub of diagramUnsubs.values()) {
+        try {
+          unsub();
+        } catch (err) {
+          console.error("[Diagram] Unsubscribe error:", getErrorMessage(err));
+        }
+      }
+      diagramUnsubs.clear();
+
       forwardHandlers.forEach((handler, event) => {
         sessionOrchestrator.off(event, handler);
       });
@@ -3642,6 +4040,7 @@ export async function startServer(
     sessionOrchestrator.cleanup();
     beaconManager.cleanup();
     browserManager.cleanup();
+    boardMcp.stop();
     if (activeTunnel) {
       try {
         activeTunnel.stop();

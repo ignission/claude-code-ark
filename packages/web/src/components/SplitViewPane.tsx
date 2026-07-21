@@ -1,17 +1,20 @@
 /**
- * SplitViewPane - チャット UI 時代の PC 用セッションビュー
+ * SplitViewPane - PC 用セッションビュー（ターミナル + 右ペインの左右2ペイン）
  *
- * 左ペイン (SplitChatPane = JSONL ベースの会話ビュー) を全幅表示し、
- * 上部の「🖥 ターミナル」トグルで右に既存 TerminalPane (ttyd) を展開する。
- * 旧来の TerminalPane 単独表示に戻したい場合は URL に `?view=classic` を付ける
- * (Dashboard.tsx で分岐)。
+ * 左ペイン = TerminalPane（ttyd + file/html タブ）を常時表示、
+ * 右ペインは diagram タブがあるときだけ意味を持ち、上部バーのトグルで開閉する。
+ * 中身は DiagramPane（B-0a の図ペイン）。
+ * 会話ビュー（SplitChatPane）は使わない — チャット内容を確認したい場合は
+ * ttyd の生ターミナル（左ペイン）を直接見る。
  *
- * - ttyd は display 切替で残置 (unmount するとセッション再接続コストが発生)
- * - 左右比 / ターミナル開閉状態は localStorage に永続化
+ * - diagram は TerminalPane のタブ機構から外れ、右ペイン専属になった
+ *   （タブ自体は sessionTabs 上には残るが、非表示のまま「開いている印」として使う）
+ * - 図（openDiagramTab）が開かれると下の useEffect が検知して showBoard を自動 true にする
+ * - diagram タブが無くなったら右ペインは自動的に閉じる（表示するものが無いため）
+ * - 右ペイン幅 / 開閉状態は localStorage に永続化
  */
 
 import type {
-  BridgeSessionStatus,
   ClientToServerEvents,
   ManagedSession,
   MessageShortcut,
@@ -21,25 +24,19 @@ import type {
 } from "@ark/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
-import { SplitChatPane } from "./SplitChatPane";
+import { DiagramPane } from "./DiagramPane";
 import { TerminalPane, type ViewerTab } from "./TerminalPane";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
-const LEFT_MIN_WIDTH = 280;
-const LEFT_MAX_RATIO = 0.6;
-const STORAGE_KEY_WIDTH = "ark-split-left-width";
-const STORAGE_KEY_TERMINAL = "ark-split-show-terminal";
+const BOARD_MIN_WIDTH = 320;
+const BOARD_MAX_RATIO = 0.6;
+const STORAGE_KEY_BOARD_WIDTH = "ark-split-board-width";
+const STORAGE_KEY_SHOW_BOARD = "ark-split-show-board";
 
 interface SplitViewPaneProps {
   socket: TypedSocket | null;
   session: ManagedSession;
-  /** このペインが現在表示中か (JSONL 購読をアクティブセッションに限定する) */
-  isActive: boolean;
-  /** session:previews 由来のセッション状態 (busy/AWAITING 表示用) */
-  bridgeStatus?: BridgeSessionStatus;
-  /** AWAITING 時の確認 UI 生テキスト (バナーに表示) */
-  awaitingText?: string;
   worktree: Worktree | undefined;
   repoName?: string;
   tabs: ViewerTab[];
@@ -65,9 +62,9 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function readSavedLeftWidth(): number | null {
+function readSavedBoardWidth(): number | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_WIDTH);
+    const raw = localStorage.getItem(STORAGE_KEY_BOARD_WIDTH);
     if (!raw) return null;
     const n = Number.parseInt(raw, 10);
     return Number.isFinite(n) && n > 0 ? n : null;
@@ -76,9 +73,9 @@ function readSavedLeftWidth(): number | null {
   }
 }
 
-function readSavedShowTerminal(): boolean {
+function readSavedShowBoard(): boolean {
   try {
-    return localStorage.getItem(STORAGE_KEY_TERMINAL) === "1";
+    return localStorage.getItem(STORAGE_KEY_SHOW_BOARD) === "1";
   } catch {
     return false;
   }
@@ -86,27 +83,74 @@ function readSavedShowTerminal(): boolean {
 
 export function SplitViewPane(props: SplitViewPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [leftWidth, setLeftWidth] = useState<number>(
-    () => readSavedLeftWidth() ?? 420
+  const [boardWidth, setBoardWidth] = useState<number>(
+    () => readSavedBoardWidth() ?? 420
   );
   const [isDragging, setIsDragging] = useState(false);
-  const [showTerminal, setShowTerminal] = useState<boolean>(() =>
-    readSavedShowTerminal()
+  const [showBoard, setShowBoard] = useState<boolean>(() =>
+    readSavedShowBoard()
   );
 
-  // コンテナ幅変化時に left を最大比率内に丸める (ターミナル表示中のみ意味あり)
+  // 右ペインに出す図（最後に開かれたもの）。diagram タブはタブバーから
+  // 除外されており、ここでのみ描画される。
+  const diagramTab = props.tabs.findLast(t => t.type === "diagram");
+
+  // diagram タブが sessionTabs に新規追加されたら右ペインを自動表示する。
+  // tabs は session 単位でスコープされているため、他セッションの変化には反応しない。
+  // 数の増加時のみ true 化し、ユーザーが後で閉じた操作は尊重する。
+  //
+  // 「lastDiagramPath からの復元」除外について:
+  // このコンポーネントは Dashboard.tsx で全セッション分が session.id をキーに
+  // 常時マウントされている（selectedSessionId でなくても hidden で存在し続ける）。
+  // ページロード直後、対象セッションが sessions に現れた最初のレンダーでは
+  // props.tabs はまだ [terminal] のみ（sessionTabs の復元用 setState は
+  // Dashboard 側の別 effect で非同期に行われるため、同一コミットには乗らない）。
+  // そのため「マウント時点で図タブが既にあれば増加とみなさない」という直感的な
+  // 前提は成り立たない ― prevBoardCountRef は常にマウント直後は 0 から始まり、
+  // 直後に復元 openDiagramTab が発火すると 0→1 の「増加」として観測されてしまう。
+  // ここでは live な board_open による新規オープンだけを「増加」としてカウント
+  // したいので、restoredOnLoad タグの付いた復元タブを母数から除外する
+  // （タグは openDiagramTab の呼び出し元 = Dashboard.tsx の復元 effect が付与する）。
+  const prevBoardCountRef = useRef(0);
+  useEffect(() => {
+    const boardCount = props.tabs.filter(
+      t => t.type === "diagram" && !t.restoredOnLoad
+    ).length;
+    if (boardCount > prevBoardCountRef.current) {
+      setShowBoard(true);
+    }
+    prevBoardCountRef.current = boardCount;
+  }, [props.tabs]);
+
+  // diagram タブが無くなったら右ペインに表示するものが無いので自動的に閉じる
+  //
+  // 注意: diagram タブには閉じるボタンが無く（ViewerTabBar はタブバー自体から
+  // diagram を除外しており、タブバー経由の close 導線が存在しない）、他に
+  // props.tabs から diagram タブを削除する経路も現状無いため、diagramTab が
+  // 存在した状態から falsy になる（= !diagramTab && showBoard が true になる）
+  // ケースは実質到達しない。到達しなくても描画側は下で
+  // `showBoard && diagramTab` により二重に守られているため実害は無いが、
+  // 「なぜ動いているのを見たことがないのか」で悩まないよう明記しておく。
+  // 将来 diagram タブの削除経路が追加されたときのための保険として残す。
+  useEffect(() => {
+    if (!diagramTab && showBoard) {
+      setShowBoard(false);
+    }
+  }, [diagramTab, showBoard]);
+
+  // コンテナ幅変化時に board 幅を最大比率内に丸める（表示中のみ意味あり）
   useEffect(() => {
     const el = containerRef.current;
-    if (!el || !showTerminal) return;
+    if (!el || !showBoard) return;
     const observer = new ResizeObserver(() => {
       const total = el.clientWidth;
       if (total <= 0) return;
-      const max = Math.floor(total * LEFT_MAX_RATIO);
-      setLeftWidth(prev => clamp(prev, LEFT_MIN_WIDTH, max));
+      const max = Math.floor(total * BOARD_MAX_RATIO);
+      setBoardWidth(prev => clamp(prev, BOARD_MIN_WIDTH, max));
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [showTerminal]);
+  }, [showBoard]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -120,15 +164,16 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       if (!el) return;
       const rect = el.getBoundingClientRect();
       const total = rect.width;
-      const next = e.clientX - rect.left;
-      const max = Math.floor(total * LEFT_MAX_RATIO);
-      const clamped = clamp(next, LEFT_MIN_WIDTH, max);
-      setLeftWidth(clamped);
+      // 右ペイン（board）の幅 = コンテナ右端からカーソルまでの距離
+      const next = rect.right - e.clientX;
+      const max = Math.floor(total * BOARD_MAX_RATIO);
+      const clamped = clamp(next, BOARD_MIN_WIDTH, max);
+      setBoardWidth(clamped);
     };
     const onUp = () => {
       setIsDragging(false);
       try {
-        localStorage.setItem(STORAGE_KEY_WIDTH, String(leftWidth));
+        localStorage.setItem(STORAGE_KEY_BOARD_WIDTH, String(boardWidth));
       } catch {
         // ignore
       }
@@ -143,13 +188,13 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-  }, [isDragging, leftWidth]);
+  }, [isDragging, boardWidth]);
 
-  const handleToggleTerminal = useCallback(() => {
-    setShowTerminal(prev => {
+  const handleToggleBoard = useCallback(() => {
+    setShowBoard(prev => {
       const next = !prev;
       try {
-        localStorage.setItem(STORAGE_KEY_TERMINAL, next ? "1" : "0");
+        localStorage.setItem(STORAGE_KEY_SHOW_BOARD, next ? "1" : "0");
       } catch {
         // ignore
       }
@@ -158,50 +203,32 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   }, []);
 
   return (
-    <div ref={containerRef} className="h-full flex relative">
-      <div
-        style={
-          showTerminal
-            ? { width: leftWidth, flexShrink: 0 }
-            : { flex: "1 1 auto", minWidth: 0 }
-        }
-        className={`h-full overflow-hidden ${showTerminal ? "border-r border-border" : ""}`}
-      >
-        <SplitChatPane
-          socket={props.socket}
-          session={props.session}
-          isActive={props.isActive}
-          bridgeStatus={props.bridgeStatus}
-          awaitingText={props.awaitingText}
-          onSendMessage={props.onSendMessage}
-          onSendKey={props.onSendKey}
-          onUploadFile={props.onUploadFile}
-          showTerminal={showTerminal}
-          onToggleTerminal={handleToggleTerminal}
-        />
-      </div>
-
-      {/* リサイザはターミナル表示時のみ */}
-      {showTerminal && (
-        <button
-          type="button"
-          aria-label="左右の幅を調整"
-          onMouseDown={handleMouseDown}
-          className={`relative w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/50 transition-colors ${
-            isDragging ? "bg-primary/70" : ""
-          }`}
-        >
-          <span className="absolute inset-y-0 -left-1 -right-1" />
-        </button>
+    <div className="h-full flex flex-col">
+      {/* 上部バー: 右ペイン開閉トグル（diagram タブがあるときのみ表示） */}
+      {/* pr-12: SidebarMainLayout の Beacon 展開ボタン（absolute top-2 right-2 の浮遊）が
+          右端トグルに重なってクリックを奪うため、その分の余白を常に確保する。
+          Beacon 表示中は無駄な余白になるが、右端にはトグルしか無いので実害はない */}
+      {diagramTab && (
+        <div className="h-8 shrink-0 border-b border-border bg-sidebar flex items-center justify-end pl-2 pr-12">
+          <button
+            type="button"
+            onClick={handleToggleBoard}
+            className={`text-[11px] px-2 py-1 rounded-md font-medium flex items-center gap-1 transition-colors ${
+              showBoard
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted hover:bg-muted/70 text-foreground"
+            }`}
+            title={showBoard ? "右ペインを閉じる" : "図を開く"}
+          >
+            <span>📐</span>
+            <span>{showBoard ? "閉じる" : "図"}</span>
+          </button>
+        </div>
       )}
 
-      {/* TerminalPane は display 切替で永続マウント (ttyd の再接続コストを避ける) */}
-      <div
-        className={`h-full overflow-hidden ${
-          showTerminal ? "flex-1 min-w-0" : "hidden"
-        }`}
-      >
-        <div className={`h-full ${isDragging ? "pointer-events-none" : ""}`}>
+      <div ref={containerRef} className="flex-1 min-h-0 flex relative">
+        {/* 左ペイン: ターミナル（常時表示） */}
+        <div className="h-full flex-1 min-w-0 overflow-hidden">
           <TerminalPane
             session={props.session}
             worktree={props.worktree}
@@ -221,6 +248,35 @@ export function SplitViewPane(props: SplitViewPaneProps) {
             onDeleteShortcut={props.onDeleteShortcut}
           />
         </div>
+
+        {/* リサイザ・右ペインは diagram タブ表示時のみ */}
+        {showBoard && diagramTab && (
+          <>
+            <button
+              type="button"
+              aria-label="左右の幅を調整"
+              onMouseDown={handleMouseDown}
+              className={`relative w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/50 transition-colors ${
+                isDragging ? "bg-primary/70" : ""
+              }`}
+            >
+              <span className="absolute inset-y-0 -left-1 -right-1" />
+            </button>
+            <div
+              style={{ width: boardWidth, flexShrink: 0 }}
+              className={`h-full overflow-hidden border-l border-border ${
+                isDragging ? "pointer-events-none" : ""
+              }`}
+            >
+              <DiagramPane
+                socket={props.socket}
+                sessionId={props.session.id}
+                worktreePath={diagramTab.worktreePath}
+                relPath={diagramTab.relPath}
+              />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

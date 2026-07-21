@@ -285,6 +285,55 @@ describe("TmuxManager.createSession - options互換", () => {
     );
   });
 
+  it("setClaudeMcpConfigPath 設定時は --mcp-config <quoted> のみが付与される (board_write を既存 MCP に上乗せ・strict なし)", async () => {
+    manager.setClaudeMcpConfigPath("/tmp/sess-mcp.json");
+    await manager.createSession("/path/to/worktree");
+
+    const sendKeys = findCommandSendKeysArgs();
+    if (!sendKeys) throw new Error("send-keys args not found");
+    expect(sendKeys[3]).toContain("--mcp-config");
+    expect(sendKeys[3]).toContain("/tmp/sess-mcp.json");
+    // --strict-mcp-config は付けない: ユーザーの project .mcp.json / global の
+    // 他 MCP (Slack/Jira/Figma 等) を無効化しないため (board MCP は上乗せ)。
+    expect(sendKeys[3]).not.toContain("--strict-mcp-config");
+    expect(sendKeys[3]).toBe(
+      "unset CLAUDE_CONFIG_DIR; claude --mcp-config '/tmp/sess-mcp.json'"
+    );
+  });
+
+  it("setClaudeMcpConfigPath は setSkipPermissions と併用でき、--dangerously-skip-permissions の後に付与される", async () => {
+    manager.setSkipPermissions(true);
+    manager.setClaudeMcpConfigPath("/tmp/sess-mcp.json");
+    await manager.createSession("/path/to/worktree");
+
+    const sendKeys = findCommandSendKeysArgs();
+    if (!sendKeys) throw new Error("send-keys args not found");
+    expect(sendKeys[3]).not.toContain("--strict-mcp-config");
+    expect(sendKeys[3]).toBe(
+      "unset CLAUDE_CONFIG_DIR; claude --dangerously-skip-permissions --mcp-config '/tmp/sess-mcp.json'"
+    );
+  });
+
+  it("setClaudeMcpConfigPath(null) にリセットすると --mcp-config は付与されない (tmuxManager 共有インスタンスの安全確認)", async () => {
+    manager.setClaudeMcpConfigPath("/tmp/sess-mcp.json");
+    manager.setClaudeMcpConfigPath(null);
+    await manager.createSession("/path/to/worktree");
+
+    const sendKeys = findCommandSendKeysArgs();
+    if (!sendKeys) throw new Error("send-keys args not found");
+    expect(sendKeys[3]).toBe("unset CLAUDE_CONFIG_DIR; claude");
+    expect(sendKeys[3]).not.toContain("--mcp-config");
+  });
+
+  it("未設定 (デフォルト) のときは --mcp-config を注入しない", async () => {
+    await manager.createSession("/path/to/worktree");
+
+    const sendKeys = findCommandSendKeysArgs();
+    if (!sendKeys) throw new Error("send-keys args not found");
+    expect(sendKeys[3]).not.toContain("--mcp-config");
+    expect(sendKeys[3]).not.toContain("--strict-mcp-config");
+  });
+
   it("options.env に CLAUDE_CONFIG_DIR がある場合 (プロファイル) は unset を前置しない", async () => {
     await manager.createSession("/path/to/worktree", {
       env: { CLAUDE_CONFIG_DIR: "/home/user/.claude-work" },

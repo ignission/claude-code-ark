@@ -80,6 +80,19 @@ export type ViewerTab =
       type: "html";
       id: string;
       filePath: string;
+    }
+  | {
+      type: "diagram";
+      id: string;
+      worktreePath: string;
+      relPath: string;
+      /**
+       * リロード直後の DB 復元（lastDiagramPath）で開かれたタブなら true。
+       * SplitViewPane の「図タブが増えたら右ペインを自動表示する」トリガーから
+       * 除外するために使う（復元のたびに右ペインが強制で開くのを防ぐ）。
+       * board_open による通常のライブオープンでは付与しない。
+       */
+      restoredOnLoad?: boolean;
     };
 
 interface TerminalPaneProps {
@@ -406,6 +419,31 @@ export function TerminalPane({
     { label: "/compact", cmd: "/compact" },
   ];
 
+  // diagram タブは右ペイン（SplitViewPane の DiagramPane）専属になった
+  // ため、タブバーには表示しない。visibleTabIndexMap[表示用index] = 元のtabs配列index
+  const visibleTabIndexMap: number[] = [];
+  const visibleTabs: ViewerTab[] = [];
+  tabs.forEach((tab, i) => {
+    if (tab.type === "diagram") return;
+    visibleTabIndexMap.push(i);
+    visibleTabs.push(tab);
+  });
+  const visibleActiveTabIndex = visibleTabIndexMap.indexOf(activeTabIndex);
+  // 防御: activeTabIndex がタブバーに出ない diagram タブを指してしまった場合
+  // （本来は useViewerTabs.handleTabClose の index 補正で回避されるが、想定外の
+  // 経路で着地した場合に備えた保険）、visibleTabIndexMap に見つからず
+  // visibleActiveTabIndex が -1 になる。この状態のまま下の描画分岐
+  // （terminal/file/html）を raw な activeTabIndex で判定すると、
+  // どれにも該当せず左ペインが完全に空白になってしまう。
+  // 根本修正だけだと将来別の経路で同じ状態に陥ったとき同じ空白が再発し、
+  // 防御だけだと activeTabIndex 自体の状態は壊れたままになるため、両方入れる。
+  // terminal（index 0、常にタブバーに存在し close 不可）へフォールバックする。
+  const isActiveTabHidden = visibleActiveTabIndex < 0;
+  const effectiveActiveTabIndex = isActiveTabHidden ? 0 : activeTabIndex;
+  const safeVisibleActiveTabIndex = isActiveTabHidden
+    ? 0
+    : visibleActiveTabIndex;
+
   return (
     <div className="h-full flex flex-col bg-card border border-border rounded-lg overflow-hidden">
       {/* ウィンドウ全体のD&Dオーバーレイ（ドラッグ中のみ表示） */}
@@ -514,12 +552,13 @@ export function TerminalPane({
         </div>
       </header>
 
-      {/* タブバー（共通コンポーネント） */}
+      {/* タブバー（共通コンポーネント）。diagram は右ペイン専属になったのでタブ一覧からは除外し、
+          表示用インデックスと元の tabs 配列インデックスを相互変換する */}
       <ViewerTabBar
-        tabs={tabs}
-        activeTabIndex={activeTabIndex}
-        onTabSelect={onTabSelect}
-        onTabClose={onTabClose}
+        tabs={visibleTabs}
+        activeTabIndex={safeVisibleActiveTabIndex}
+        onTabSelect={idx => onTabSelect(visibleTabIndexMap[idx])}
+        onTabClose={idx => onTabClose(visibleTabIndexMap[idx])}
       />
 
       {/* ttyd iframe */}
@@ -527,7 +566,9 @@ export function TerminalPane({
         className="flex-1 min-h-0 bg-[#1a1b26] overflow-hidden"
         style={{
           display:
-            tabs[activeTabIndex]?.type === "terminal" ? undefined : "none",
+            tabs[effectiveActiveTabIndex]?.type === "terminal"
+              ? undefined
+              : "none",
         }}
       >
         {session.ttydUrl || session.ttydPort ? (
@@ -550,9 +591,11 @@ export function TerminalPane({
       </div>
 
       {/* ファイルビューワー / ブラウザ */}
-      {tabs[activeTabIndex]?.type === "file" &&
+      {tabs[effectiveActiveTabIndex]?.type === "file" &&
         (() => {
-          const tab = tabs[activeTabIndex] as ViewerTab & { type: "file" };
+          const tab = tabs[effectiveActiveTabIndex] as ViewerTab & {
+            type: "file";
+          };
           return (
             <div className="flex-1 min-h-0">
               <FileViewerPane
@@ -566,9 +609,11 @@ export function TerminalPane({
             </div>
           );
         })()}
-      {tabs[activeTabIndex]?.type === "html" &&
+      {tabs[effectiveActiveTabIndex]?.type === "html" &&
         (() => {
-          const tab = tabs[activeTabIndex] as ViewerTab & { type: "html" };
+          const tab = tabs[effectiveActiveTabIndex] as ViewerTab & {
+            type: "html";
+          };
           return (
             <div className="flex-1 min-h-0">
               <HtmlViewerPane filePath={tab.filePath} />

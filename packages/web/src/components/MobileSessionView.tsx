@@ -6,8 +6,11 @@
  */
 
 import type {
+  BridgeSessionStatus,
+  ClientToServerEvents,
   ManagedSession,
   MessageShortcut,
+  ServerToClientEvents,
   SpecialKey,
   Worktree,
 } from "@ark/shared";
@@ -25,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Socket } from "socket.io-client";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -52,8 +56,26 @@ import { FileViewerPane } from "./FileViewerPane";
 import { HtmlViewerPane } from "./HtmlViewerPane";
 import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
 import { MessageShortcutMenu } from "./MessageShortcutMenu";
+import { SplitChatPane } from "./SplitChatPane";
 import type { ViewerTab } from "./TerminalPane";
 import { ViewerTabBar } from "./ViewerTabBar";
+
+type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
+
+const STORAGE_KEY_MOBILE_VIEW = "ark-mobile-session-view";
+
+/** モバイルセッションの表示モード（会話 / ターミナル）。既定は会話。 */
+type MobileSessionViewMode = "chat" | "terminal";
+
+function readSavedViewMode(): MobileSessionViewMode {
+  try {
+    return localStorage.getItem(STORAGE_KEY_MOBILE_VIEW) === "terminal"
+      ? "terminal"
+      : "chat";
+  } catch {
+    return "chat";
+  }
+}
 
 /** プレビューダイアログに蓄積する添付ファイル */
 interface PendingFile {
@@ -66,6 +88,14 @@ interface PendingFile {
 }
 
 interface MobileSessionViewProps {
+  /** 会話ビュー（SplitChatPane）の JSONL 購読・AUQ 受信に使う */
+  socket: TypedSocket | null;
+  /** この詳細が現在表示中か。会話ビューの購読を表示中に限定する */
+  isActive: boolean;
+  /** session:previews 由来のセッション状態（busy/AWAITING 表示用） */
+  bridgeStatus?: BridgeSessionStatus;
+  /** AWAITING 時の確認 UI 生テキスト（バナー表示用） */
+  awaitingText?: string;
   session: ManagedSession;
   worktree: Worktree | undefined;
   onBack: () => void;
@@ -99,6 +129,10 @@ interface MobileSessionViewProps {
 }
 
 export function MobileSessionView({
+  socket,
+  isActive,
+  bridgeStatus,
+  awaitingText,
   session,
   worktree,
   onBack,
@@ -120,6 +154,31 @@ export function MobileSessionView({
   const { height: viewportHeight, isKeyboardVisible } = useVisualViewport();
   const [inputValue, setInputValue] = useState("");
   const [iframeKey, setIframeKey] = useState(0);
+  // 表示モード（会話 / ターミナル）。既定は会話。最後の選択を localStorage に永続化。
+  const [viewMode, setViewMode] =
+    useState<MobileSessionViewMode>(readSavedViewMode);
+
+  const toggleViewMode = useCallback(() => {
+    setViewMode(prev => {
+      const next = prev === "chat" ? "terminal" : "chat";
+      try {
+        localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, next);
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
+  // ファイル/HTML/キャンバスのビューワータブが開かれた（active が terminal 以外に
+  // なった）ら、ターミナルモードへ自動で切り替えてビューワーを可視化する。
+  // 会話内のファイルリンクや「キャンバスで開く」タップに追従する。
+  const activeTabType = tabs[activeTabIndex]?.type;
+  useEffect(() => {
+    if (activeTabType && activeTabType !== "terminal") {
+      setViewMode("terminal");
+    }
+  }, [activeTabType]);
   // 全ての添付ファイル（画像/非画像）を共通でプレビューダイアログに集約する
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [uploadMessage, setUploadMessage] = useState("");
@@ -128,6 +187,14 @@ export function MobileSessionView({
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showRestartDialog, setShowRestartDialog] = useState(false);
   const [showShortcutManager, setShowShortcutManager] = useState(false);
+
+  // Ops メニューからの添付（pendingFiles）はターミナルペイン内のダイアログで
+  // 表示するため、会話モードのときはターミナルへ切り替えてダイアログを可視化する。
+  const pendingCount = pendingFiles.length;
+  useEffect(() => {
+    if (pendingCount > 0) setViewMode("terminal");
+  }, [pendingCount]);
+
   const inputRef = useRef<HTMLInputElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   // ファイル選択input は DropdownMenuContent (Radix Portal) の外に配置する。
@@ -355,6 +422,16 @@ export function MobileSessionView({
           </span>
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          {/* 会話 / ターミナル 表示切替 */}
+          <button
+            type="button"
+            onClick={toggleViewMode}
+            className="flex items-center gap-1 rounded-md bg-muted px-2 py-1.5 font-medium text-foreground text-xs shrink-0 hover:bg-muted/70"
+            title={viewMode === "chat" ? "ターミナルに切替" : "会話に切替"}
+          >
+            <span>{viewMode === "chat" ? "🖥" : "💬"}</span>
+            <span>{viewMode === "chat" ? "端末" : "会話"}</span>
+          </button>
           <MessageShortcutMenu
             shortcuts={messageShortcuts}
             onSendMessage={onSendMessage}
@@ -422,236 +499,264 @@ export function MobileSessionView({
         </div>
       </header>
 
-      {/* タブバー（共通コンポーネント） */}
-      <ViewerTabBar
-        tabs={tabs}
-        activeTabIndex={activeTabIndex}
-        onTabSelect={onTabSelect}
-        onTabClose={onTabClose}
-      />
-
-      {/* ttyd iframe */}
+      {/* 会話モード（既定）: JSONL チャットビュー。入力欄・AUQ・AWAITING を内包する。
+          ttyd を持たないため display:none で残置しても再接続コストはない。 */}
       <div
-        className="flex-1 min-h-0 bg-[#1a1b26] overflow-hidden relative"
-        style={{
-          display:
-            tabs[activeTabIndex]?.type === "terminal" ? undefined : "none",
-        }}
+        className={
+          viewMode === "chat" ? "flex-1 flex flex-col min-h-0" : "hidden"
+        }
       >
-        {session.ttydUrl || session.ttydPort ? (
-          <iframe
-            key={iframeKey}
-            ref={iframeRef}
-            src={ttydIframeSrc}
-            className="w-full h-full border-0"
-            title={`Terminal - ${worktree?.branch || session.id}`}
-            allow="clipboard-read; clipboard-write; keyboard-map"
-          />
-        ) : (
-          <div className="flex items-center justify-center h-full text-muted-foreground">
-            <div className="text-center">
-              <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4" />
-              <p>ターミナルを起動中...</p>
+        <SplitChatPane
+          socket={socket}
+          session={session}
+          isActive={isActive && viewMode === "chat"}
+          bridgeStatus={bridgeStatus}
+          awaitingText={awaitingText}
+          onSendMessage={onSendMessage}
+          onSendKey={onSendKey}
+          onUploadFile={onUploadFile}
+        />
+      </div>
+
+      {/* ターミナルモード: タブ + ttyd + ファイル/HTML/キャンバスビューワー +
+          Quick Keys + 入力バー。display:none 切替で ttyd 接続を維持する。 */}
+      <div
+        className={
+          viewMode === "terminal" ? "flex-1 flex flex-col min-h-0" : "hidden"
+        }
+      >
+        {/* タブバー（共通コンポーネント） */}
+        <ViewerTabBar
+          tabs={tabs}
+          activeTabIndex={activeTabIndex}
+          onTabSelect={onTabSelect}
+          onTabClose={onTabClose}
+        />
+
+        {/* ttyd iframe */}
+        <div
+          className="flex-1 min-h-0 bg-[#1a1b26] overflow-hidden relative"
+          style={{
+            display:
+              tabs[activeTabIndex]?.type === "terminal" ? undefined : "none",
+          }}
+        >
+          {session.ttydUrl || session.ttydPort ? (
+            <iframe
+              key={iframeKey}
+              ref={iframeRef}
+              src={ttydIframeSrc}
+              className="w-full h-full border-0"
+              title={`Terminal - ${worktree?.branch || session.id}`}
+              allow="clipboard-read; clipboard-write; keyboard-map"
+            />
+          ) : (
+            <div className="flex items-center justify-center h-full text-muted-foreground">
+              <div className="text-center">
+                <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4" />
+                <p>ターミナルを起動中...</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ファイルビューワー / ブラウザ */}
+        {tabs[activeTabIndex]?.type === "file" &&
+          (() => {
+            const tab = tabs[activeTabIndex] as ViewerTab & { type: "file" };
+            return (
+              <div className="flex-1 min-h-0">
+                <FileViewerPane
+                  filePath={tab.filePath}
+                  content={tab.content}
+                  mimeType={tab.mimeType}
+                  size={tab.size}
+                  targetLine={tab.targetLine}
+                  error={tab.error}
+                />
+              </div>
+            );
+          })()}
+        {tabs[activeTabIndex]?.type === "html" &&
+          (() => {
+            const tab = tabs[activeTabIndex] as ViewerTab & { type: "html" };
+            return (
+              <div className="flex-1 min-h-0">
+                <HtmlViewerPane filePath={tab.filePath} />
+              </div>
+            );
+          })()}
+        {/* 添付ファイル プレビューダイアログ（画像/非画像共通） */}
+        {pendingFiles.length > 0 && (
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-card border border-border rounded-lg p-4 max-w-md w-full">
+              <h3 className="text-sm font-semibold mb-3">
+                ファイルを送信（{pendingFiles.length}件）
+              </h3>
+              <div className="space-y-2 max-h-60 overflow-y-auto mb-3">
+                {pendingFiles.map((pf, idx) => (
+                  <div
+                    key={`${pf.filename}-${idx}`}
+                    className="flex items-center gap-2 text-sm border border-border rounded p-2"
+                  >
+                    {pf.preview ? (
+                      <img
+                        src={pf.preview}
+                        alt={pf.filename}
+                        className="w-12 h-12 object-cover rounded shrink-0"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 flex items-center justify-center bg-muted rounded shrink-0">
+                        <FileIcon className="w-6 h-6 text-muted-foreground" />
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate" title={pf.filename}>
+                        {pf.filename}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {(pf.size / 1024).toFixed(1)} KB
+                      </div>
+                    </div>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 shrink-0"
+                      onClick={() =>
+                        setPendingFiles(prev =>
+                          prev.filter((_, i) => i !== idx)
+                        )
+                      }
+                      disabled={isSending}
+                      title="このファイルを取り除く"
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <Textarea
+                value={uploadMessage}
+                onChange={e => setUploadMessage(e.target.value)}
+                placeholder="メッセージを追加（任意）"
+                className="min-h-[60px] resize-none text-sm mb-3"
+                rows={2}
+                disabled={isSending}
+              />
+              {uploadError && (
+                <p className="text-destructive text-xs mb-3">{uploadError}</p>
+              )}
+              <div className="flex gap-2 justify-end">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCancelPending}
+                  disabled={isSending}
+                >
+                  キャンセル
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleSendWithFiles}
+                  disabled={isSending}
+                >
+                  {isSending ? "送信中..." : "送信"}
+                </Button>
+              </div>
             </div>
           </div>
         )}
-      </div>
 
-      {/* ファイルビューワー / ブラウザ */}
-      {tabs[activeTabIndex]?.type === "file" &&
-        (() => {
-          const tab = tabs[activeTabIndex] as ViewerTab & { type: "file" };
-          return (
-            <div className="flex-1 min-h-0">
-              <FileViewerPane
-                filePath={tab.filePath}
-                content={tab.content}
-                mimeType={tab.mimeType}
-                size={tab.size}
-                targetLine={tab.targetLine}
-                error={tab.error}
-              />
-            </div>
-          );
-        })()}
-      {tabs[activeTabIndex]?.type === "html" &&
-        (() => {
-          const tab = tabs[activeTabIndex] as ViewerTab & { type: "html" };
-          return (
-            <div className="flex-1 min-h-0">
-              <HtmlViewerPane filePath={tab.filePath} />
-            </div>
-          );
-        })()}
-
-      {/* 添付ファイル プレビューダイアログ（画像/非画像共通） */}
-      {pendingFiles.length > 0 && (
-        <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-card border border-border rounded-lg p-4 max-w-md w-full">
-            <h3 className="text-sm font-semibold mb-3">
-              ファイルを送信（{pendingFiles.length}件）
-            </h3>
-            <div className="space-y-2 max-h-60 overflow-y-auto mb-3">
-              {pendingFiles.map((pf, idx) => (
-                <div
-                  key={`${pf.filename}-${idx}`}
-                  className="flex items-center gap-2 text-sm border border-border rounded p-2"
-                >
-                  {pf.preview ? (
-                    <img
-                      src={pf.preview}
-                      alt={pf.filename}
-                      className="w-12 h-12 object-cover rounded shrink-0"
-                    />
-                  ) : (
-                    <div className="w-12 h-12 flex items-center justify-center bg-muted rounded shrink-0">
-                      <FileIcon className="w-6 h-6 text-muted-foreground" />
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="truncate" title={pf.filename}>
-                      {pf.filename}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {(pf.size / 1024).toFixed(1)} KB
-                    </div>
-                  </div>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-7 w-7 shrink-0"
-                    onClick={() =>
-                      setPendingFiles(prev => prev.filter((_, i) => i !== idx))
-                    }
-                    disabled={isSending}
-                    title="このファイルを取り除く"
-                  >
-                    <X className="w-4 h-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-            <Textarea
-              value={uploadMessage}
-              onChange={e => setUploadMessage(e.target.value)}
-              placeholder="メッセージを追加（任意）"
-              className="min-h-[60px] resize-none text-sm mb-3"
-              rows={2}
-              disabled={isSending}
-            />
-            {uploadError && (
-              <p className="text-destructive text-xs mb-3">{uploadError}</p>
-            )}
-            <div className="flex gap-2 justify-end">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleCancelPending}
-                disabled={isSending}
-              >
-                キャンセル
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleSendWithFiles}
-                disabled={isSending}
-              >
-                {isSending ? "送信中..." : "送信"}
-              </Button>
-            </div>
+        {/* 添付ファイル エラートースト（モーダル未表示時の全件失敗や検証失敗を表示） */}
+        {uploadError && pendingFiles.length === 0 && (
+          <div className="px-3 py-2 bg-destructive/10 text-destructive text-sm border-t border-destructive/20 whitespace-pre-line flex items-start justify-between gap-2">
+            <span className="flex-1">{uploadError}</span>
+            <button
+              type="button"
+              className="text-xs underline shrink-0"
+              onClick={() => setUploadError(null)}
+            >
+              閉じる
+            </button>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* 添付ファイル エラートースト（モーダル未表示時の全件失敗や検証失敗を表示） */}
-      {uploadError && pendingFiles.length === 0 && (
-        <div className="px-3 py-2 bg-destructive/10 text-destructive text-sm border-t border-destructive/20 whitespace-pre-line flex items-start justify-between gap-2">
-          <span className="flex-1">{uploadError}</span>
-          <button
-            type="button"
-            className="text-xs underline shrink-0"
-            onClick={() => setUploadError(null)}
-          >
-            閉じる
-          </button>
-        </div>
-      )}
-
-      {/* Quick Keys: ↑/↓/Esc/Ctrl+C/S-Tab 常時表示 */}
-      <div className="flex items-center gap-1 px-3 py-1.5 border-t border-border/50 bg-sidebar overflow-x-auto select-none">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-8 px-3 text-xs shrink-0"
-          onClick={() => onSendKey("Up")}
-        >
-          ↑
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-8 px-3 text-xs shrink-0"
-          onClick={() => onSendKey("Down")}
-        >
-          ↓
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-8 px-3 text-xs shrink-0"
-          onClick={() => onSendKey("Escape")}
-        >
-          Esc
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-8 px-3 text-xs text-destructive hover:text-destructive shrink-0"
-          onClick={() => onSendKey("C-c")}
-        >
-          Ctrl+C
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-8 px-3 text-xs shrink-0"
-          onClick={() => onSendKey("S-Tab")}
-        >
-          S-Tab
-        </Button>
-      </div>
-
-      {/* 入力バー: 常時表示 */}
-      <form
-        onSubmit={handleSubmit}
-        className="p-3 border-t border-border bg-sidebar safe-area-bottom"
-      >
-        <div className="flex gap-2 items-end">
-          <div className="flex-1">
-            <Input
-              ref={inputRef}
-              value={inputValue}
-              onChange={e => setInputValue(e.target.value)}
-              onKeyDown={handleKeyDown}
-              enterKeyHint="send"
-              placeholder="メッセージを入力... (Enter送信)"
-              className="h-11 font-mono text-sm bg-input"
-            />
-          </div>
+        {/* Quick Keys: ↑/↓/Esc/Ctrl+C/S-Tab 常時表示 */}
+        <div className="flex items-center gap-1 px-3 py-1.5 border-t border-border/50 bg-sidebar overflow-x-auto select-none">
           <Button
-            type="submit"
-            size="icon"
-            className="h-11 w-11 glow-green shrink-0"
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 px-3 text-xs shrink-0"
+            onClick={() => onSendKey("Up")}
           >
-            <Send className="w-5 h-5" />
+            ↑
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 px-3 text-xs shrink-0"
+            onClick={() => onSendKey("Down")}
+          >
+            ↓
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 px-3 text-xs shrink-0"
+            onClick={() => onSendKey("Escape")}
+          >
+            Esc
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 px-3 text-xs text-destructive hover:text-destructive shrink-0"
+            onClick={() => onSendKey("C-c")}
+          >
+            Ctrl+C
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 px-3 text-xs shrink-0"
+            onClick={() => onSendKey("S-Tab")}
+          >
+            S-Tab
           </Button>
         </div>
-      </form>
+
+        {/* 入力バー: 常時表示 */}
+        <form
+          onSubmit={handleSubmit}
+          className="p-3 border-t border-border bg-sidebar safe-area-bottom"
+        >
+          <div className="flex gap-2 items-end">
+            <div className="flex-1">
+              <Input
+                ref={inputRef}
+                value={inputValue}
+                onChange={e => setInputValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                enterKeyHint="send"
+                placeholder="メッセージを入力... (Enter送信)"
+                className="h-11 font-mono text-sm bg-input"
+              />
+            </div>
+            <Button
+              type="submit"
+              size="icon"
+              className="h-11 w-11 glow-green shrink-0"
+            >
+              <Send className="w-5 h-5" />
+            </Button>
+          </div>
+        </form>
+      </div>
 
       {/* 添付ファイル選択用の隠しinput
           DropdownMenuContent の外に置くことで、メニューが閉じても DOM に残り続け、

@@ -8,18 +8,20 @@
 
 ## アーキテクチャ
 
-### チャットビュー (JSONL tail) + tmux 方式
+### PC: ttyd ターミナル方式 / モバイル: チャットビュー (JSONL tail) 併用
 
-PC のデフォルト UI はチャットビュー (`SplitViewPane`)。Claude Code が永続化する
-JSONL transcript を tail して会話を描画し、入力は tmux send-keys で行う。
-ttyd の生ターミナルは「🖥 ターミナル」トグルで on-demand 表示 (旧来の
-TerminalPane 単独表示は `?view=classic`)。エンジンは従来どおり tmux 上の
-対話版 claude (プラン枠課金を維持。Agent SDK / claude -p は使わない)。
+PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`SplitViewPane` の
+左ペインに常時表示）。右ペインは図解タブが開かれたときだけ意味を持ち、
+上部バーのトグルで開閉する（中身は `DiagramPane`。詳細は下記「セッションボード」）。
+チャット形式で会話を描画する `SplitChatPane`（JSONL transcript を tail）は
+モバイル専用（`MobileSessionView` の🖥/💬トグルで ttyd 表示と切替）。
+エンジンは PC・モバイル共通で tmux 上の対話版 claude
+(プラン枠課金を維持。Agent SDK / claude -p は使わない)。
 
-```
-表示: <configDir>/projects/<encoded-cwd>/*.jsonl → JsonlTailManager → Socket.IO → チャット描画
-入力: チャット入力欄 → Socket.IO → tmux send-keys → claude CLI
-補助: tmux(セッション) ←→ ttyd(WebSocket) ←→ iframe (on-demand トグル)
+```text
+表示: <configDir>/projects/<encoded-cwd>/*.jsonl → JsonlTailManager → Socket.IO → チャット描画（モバイル専用）
+入力: チャット入力欄 / ターミナル入力欄 → Socket.IO → tmux send-keys → claude CLI
+補助: tmux(セッション) ←→ ttyd(WebSocket) ←→ iframe (PC は常時表示 / モバイルはトグル)
 ```
 
 **情報源分離の原則 (チャット UI v3 の核心)**: 会話内容は 100% JSONL transcript
@@ -29,7 +31,7 @@ TerminalPane 単独表示は `?view=classic`)。エンジンは従来どおり t
 
 1. **tmux**: Claude CLIプロセスをdetachedセッションで管理。サーバー再起動後もセッションが永続化される
 2. **JsonlTailManager**: worktree 毎の JSONL を fs.watch + 1 秒 polling で tail し、新規行を購読 socket に push。/clear のファイル切替は onReset → 空 snapshot で追従
-3. **ttyd**: tmuxセッションにWebターミナルアクセスを提供 (チャットビューではトグル表示)
+3. **ttyd**: tmuxセッションにWebターミナルアクセスを提供（PC は常時表示、モバイルは🖥/💬トグルで表示切替）
 4. **SessionOrchestrator**: tmuxとttydを統合管理し、セッションのライフサイクルを制御する
 
 ### メッセージ送信の流れ
@@ -65,8 +67,9 @@ TerminalPane 単独表示は `?view=classic`)。エンジンは従来どおり t
 | リポジトリスキャン     | 指定パス配下のGitリポジトリを探索（fd/findコマンド使用）                    |
 | Git Worktree管理       | 一覧表示、作成、削除                                                        |
 | セッション管理         | tmux + ttydベースの起動、停止、復元、状態管理                               |
-| チャットビュー (PC デフォルト) | JSONL tail ベースの会話描画 + pending reconcile + AskUserQuestion カード + slash 補完 + busy/AWAITING 表示 (`?view=classic` で旧表示) |
-| Webターミナル          | ttyd iframeによるフルターミナル体験（チャットビューではトグル表示）         |
+| チャットビュー (モバイル専用) | JSONL tail ベースの会話描画 + pending reconcile + AskUserQuestion カード + slash 補完 + busy/AWAITING 表示（`MobileSessionView` の🖥/💬トグルで ttyd 表示と切替） |
+| セッションボード       | worktree の `docs/diagrams/*.diagram.html`（意味モデル + HTML 投影）を表示する図解ペイン（右ペインタブ・PC のみ）。Claude が MCP ツール `board_open` で開き、ファイル更新を検知して自動再読込する |
+| Webターミナル          | ttyd iframeによるフルターミナル体験（PC はデフォルト表示、モバイルは🖥/💬トグルでチャットビューと切替） |
 | マルチペインビュー     | 複数セッションの同時表示（1列 / 2x2グリッド切り替え）                       |
 | モバイル対応           | セッション一覧/詳細の画面遷移、Quick Keys、スクロールモード、キーボード対応 |
 | 特殊キー送信           | Enter, Ctrl+C, Ctrl+D, y, n, S-Tab, Escape, スクロール等                    |
@@ -316,6 +319,8 @@ claude-code-ark/
 | `session:jsonl-unsubscribe` | `sessionId: string`           | JSONL 購読解除                   |
 | `session:jsonl-load-more` | `{ sessionId, limit }`          | 過去履歴を limit 行で snapshot 再送 |
 | `session:send-literal` | `{ sessionId, text }`              | Enter 無しの literal 送信（AUQ 自由入力用）|
+| `diagram:subscribe` | `{ worktreePath, relPath }`           | 図ファイルの更新監視を開始（1セッション1図を想定） |
+| `diagram:unsubscribe` | `{ worktreePath, relPath }`         | 図ファイルの更新監視を解除                       |
 | `slash:list`      | `sessionId, callback`                   | slash command 候補一覧（コールバック）|
 | `tunnel:start`    | `{ port? }`                             | Quick Tunnel起動                 |
 | `tunnel:stop`     | -                                       | トンネル停止                     |
@@ -350,6 +355,8 @@ claude-code-ark/
 | `session:jsonl-snapshot` | `{ sessionId, lines }`         | JSONL 履歴 snapshot（/clear 切替時は空配列）|
 | `session:jsonl-line`     | `{ sessionId, line }`          | JSONL 新規行 push                |
 | `session:auq`            | `{ sessionId, at, questions }` | 回答待ち AskUserQuestion（PreToolUse hook 由来）|
+| `diagram:open`           | `{ sessionId, relPath }`       | Claude が `board_open` を呼んだ。クライアントは図タブを開く |
+| `diagram:updated`        | `{ worktreePath, relPath }`    | 監視中の図ファイルが更新された。クライアントは再読込する |
 | `session:error`          | `{ sessionId, error }`         | セッションエラー                 |
 | `tunnel:started`         | `{ url, token }`               | トンネル開始                     |
 | `tunnel:stopped`         | -                              | トンネル停止                     |
@@ -385,7 +392,7 @@ claude-code-ark/
 
 以下がインストールされている必要がある：
 
-- **Node.js** >= 20.6.0
+- **Node.js** >= 22.12.0（同梱 Claude Code 2.1.207 + Vite 8 の要件）
 - **pnpm**
 - **tmux**
 - **ttyd**

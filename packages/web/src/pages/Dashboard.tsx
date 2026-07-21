@@ -23,7 +23,6 @@ import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
 import { SplitViewPane } from "@/components/SplitViewPane";
-import { TerminalPane } from "@/components/TerminalPane";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { Button } from "@/components/ui/button";
 import {
@@ -166,12 +165,6 @@ export default function Dashboard() {
     window.location.hostname !== "localhost" &&
     window.location.hostname !== "127.0.0.1";
 
-  // チャットビュー (JSONL ベース + on-demand ターミナル) がデフォルト。
-  // 旧来の TerminalPane 単独表示に戻したい場合は `?view=classic` を指定する。
-  const isChatView =
-    typeof window === "undefined" ||
-    new URLSearchParams(window.location.search).get("view") !== "classic";
-
   const activeBrowserSession = Array.from(browserSessions.values())[0] ?? null;
 
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
@@ -233,6 +226,7 @@ export default function Dashboard() {
     getActiveTabForSession,
     handleTabSelect,
     handleTabClose,
+    openDiagramTab,
   } = useViewerTabs(
     selectedSessionId,
     sessions,
@@ -241,6 +235,59 @@ export default function Dashboard() {
     handleOpenUrl,
     !isMobile
   );
+
+  // diagram:open を受けて図タブを開く。worktreePath はサーバーから送られない
+  // （絶対パスの配布範囲を広げないため）。クライアントが既に持っている
+  // sessions から sessionId 経由で引く。
+  useEffect(() => {
+    if (!socket) return;
+    const onDiagramOpen = (data: { sessionId: string; relPath: string }) => {
+      const session = sessions.get(data.sessionId);
+      if (!session?.worktreePath) return;
+      openDiagramTab(data.sessionId, session.worktreePath, data.relPath);
+    };
+    socket.on("diagram:open", onDiagramOpen);
+    return () => {
+      socket.off("diagram:open", onDiagramOpen);
+    };
+  }, [socket, sessions, openDiagramTab]);
+
+  // セッションで最後に開いていた図（lastDiagramPath）をリロード後に復元する。
+  // 「セッションが見つからなければ何もしない」という diagram:open ハンドラと
+  // 同じガードを踏襲する（sessions に無いセッションは処理対象にならない）。
+  //
+  // 復元は各 sessionId につき一度だけ試みる（restoredDiagramSessionIdsRef）。
+  // session:updated 等で sessions が再エミットされるたびに再実行すると、
+  // ユーザーが後から手動で右ペインを閉じた操作を無限ループで打ち消しかねない
+  // ため、「最初に対象セッションを認識したとき」だけに限定する。
+  //
+  // openDiagramTab には restoredOnLoad=true を渡す。SplitViewPane 側の
+  // 「図タブが増えたら右ペインを自動表示する」effect は、マウント直後は
+  // 常にカウント基準値 0 から始まるため、素直に復元すると毎回強制で右ペインが
+  // 開いてしまう（詳細は SplitViewPane.tsx のコメント参照）。restoredOnLoad の
+  // タブは自動表示のカウント対象から除外されるため、ユーザーが閉じた状態が
+  // リロードのたびに上書きされることはない。
+  const restoredDiagramSessionIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const session of sessions.values()) {
+      if (restoredDiagramSessionIdsRef.current.has(session.id)) continue;
+      restoredDiagramSessionIdsRef.current.add(session.id);
+
+      if (!session.lastDiagramPath || !session.worktreePath) continue;
+      // 既に図タブがある場合は復元不要（diagram:open ハンドラが既に開いている等）
+      const hasDiagramTab = getTabsForSession(session.id).some(
+        t => t.type === "diagram"
+      );
+      if (hasDiagramTab) continue;
+
+      openDiagramTab(
+        session.id,
+        session.worktreePath,
+        session.lastDiagramPath,
+        true
+      );
+    }
+  }, [sessions, getTabsForSession, openDiagramTab]);
 
   // サーバーからの設定が読み込まれたらセッションIDを復元
   const settingsInitializedRef = useRef(false);
@@ -599,6 +646,8 @@ export default function Dashboard() {
           onChangeActiveTab={setMobileActiveTab}
           onChangeSessionSubView={setMobileSessionSubView}
           sessionsLoaded={sessionsLoaded}
+          sessionStatuses={sessionStatuses}
+          sessionAwaitingTexts={sessionAwaitingTexts}
         />
       ) : (
         <SidebarMainLayout
@@ -726,17 +775,7 @@ export default function Dashboard() {
                       key={session.id}
                       className={isActive ? "h-full flex flex-col" : "hidden"}
                     >
-                      {isChatView ? (
-                        <SplitViewPane
-                          socket={socket}
-                          isActive={isActive}
-                          bridgeStatus={sessionStatuses.get(session.id)}
-                          awaitingText={sessionAwaitingTexts.get(session.id)}
-                          {...paneProps}
-                        />
-                      ) : (
-                        <TerminalPane {...paneProps} />
-                      )}
+                      <SplitViewPane socket={socket} {...paneProps} />
                     </div>
                   );
                 })}

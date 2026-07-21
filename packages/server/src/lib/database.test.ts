@@ -388,6 +388,144 @@ describe("SessionDatabase - profiles / repo_profile_links", () => {
   });
 
   // ============================================================
+  // sessions.last_diagram_path 永続化（図解キャンバスの復元用）
+  // ============================================================
+
+  describe("updateSessionLastDiagram / lastDiagramPath 永続化", () => {
+    it("upsert直後は lastDiagramPath が null", () => {
+      testDb.upsertSession({
+        id: "sess-diag-1",
+        worktreeId: "wt-diag-1",
+        worktreePath: "/repo/diag1",
+        status: "active",
+      });
+
+      expect(
+        testDb.getSessionByWorktreePath("/repo/diag1")?.lastDiagramPath
+      ).toBeNull();
+    });
+
+    it("updateSessionLastDiagram で relPath を保存し、getSession/getSessionByWorktreePath 両方から読める", () => {
+      testDb.upsertSession({
+        id: "sess-diag-2",
+        worktreeId: "wt-diag-2",
+        worktreePath: "/repo/diag2",
+        status: "active",
+      });
+
+      testDb.updateSessionLastDiagram(
+        "sess-diag-2",
+        "docs/diagrams/a.diagram.html"
+      );
+
+      expect(testDb.getSession("sess-diag-2")?.lastDiagramPath).toBe(
+        "docs/diagrams/a.diagram.html"
+      );
+      expect(
+        testDb.getSessionByWorktreePath("/repo/diag2")?.lastDiagramPath
+      ).toBe("docs/diagrams/a.diagram.html");
+    });
+
+    it("別の図を開くと上書きされる（最後に開いたものだけを保持する）", () => {
+      testDb.upsertSession({
+        id: "sess-diag-3",
+        worktreeId: "wt-diag-3",
+        worktreePath: "/repo/diag3",
+        status: "active",
+      });
+
+      testDb.updateSessionLastDiagram(
+        "sess-diag-3",
+        "docs/diagrams/a.diagram.html"
+      );
+      testDb.updateSessionLastDiagram(
+        "sess-diag-3",
+        "docs/diagrams/b.diagram.html"
+      );
+
+      expect(testDb.getSession("sess-diag-3")?.lastDiagramPath).toBe(
+        "docs/diagrams/b.diagram.html"
+      );
+    });
+
+    it("null を渡すと「最後に開いた図なし」の状態に戻せる", () => {
+      testDb.upsertSession({
+        id: "sess-diag-4",
+        worktreeId: "wt-diag-4",
+        worktreePath: "/repo/diag4",
+        status: "active",
+      });
+
+      testDb.updateSessionLastDiagram(
+        "sess-diag-4",
+        "docs/diagrams/a.diagram.html"
+      );
+      testDb.updateSessionLastDiagram("sess-diag-4", null);
+
+      expect(testDb.getSession("sess-diag-4")?.lastDiagramPath).toBeNull();
+    });
+
+    it("存在しないsessionIdを指定しても例外を投げない（no-op）", () => {
+      expect(() =>
+        testDb.updateSessionLastDiagram(
+          "no-such-session",
+          "docs/diagrams/a.diagram.html"
+        )
+      ).not.toThrow();
+    });
+
+    it("last_diagram_path列が無い既存DBでもマイグレーションで追加され、既存セッションは保持される", () => {
+      const legacyPath = path.join(tmpDir, "legacy-diagram.db");
+      const legacy = new Database(legacyPath);
+      legacy.exec(`
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          worktree_id TEXT NOT NULL,
+          worktree_path TEXT NOT NULL UNIQUE,
+          status TEXT NOT NULL DEFAULT 'idle',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+      legacy
+        .prepare(
+          `INSERT INTO sessions (id, worktree_id, worktree_path, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          "s-legacy-diagram",
+          "wt-legacy-diagram",
+          "/legacy/diagram-path",
+          "idle",
+          "2026-01-01T00:00:00.000Z",
+          "2026-01-01T00:00:00.000Z"
+        );
+      legacy.close();
+
+      const upgraded = new SessionDatabase(legacyPath);
+      try {
+        const restored = upgraded.getSessionByWorktreePath(
+          "/legacy/diagram-path"
+        );
+        expect(restored).not.toBeNull();
+        expect(restored?.lastDiagramPath).toBeNull();
+
+        // マイグレーション後のDBでも新規に更新できる
+        upgraded.updateSessionLastDiagram(
+          "s-legacy-diagram",
+          "docs/diagrams/legacy.diagram.html"
+        );
+        expect(
+          upgraded.getSessionByWorktreePath("/legacy/diagram-path")
+            ?.lastDiagramPath
+        ).toBe("docs/diagrams/legacy.diagram.html");
+      } finally {
+        upgraded.close();
+      }
+    });
+  });
+
+  // ============================================================
   // replaceSession (atomic delete + upsert for restartSession)
   // ============================================================
 

@@ -19,7 +19,14 @@ import type {
   SpecialKey,
 } from "@ark/shared";
 import { isImagePath, splitTextWithFilePaths } from "@ark/shared/file-paths";
-import { ArrowDown, Download, Loader2, Paperclip, Send } from "lucide-react";
+import {
+  ArrowDown,
+  Download,
+  Loader2,
+  Paperclip,
+  Send,
+  Workflow,
+} from "lucide-react";
 import {
   type FormEvent,
   type ReactNode,
@@ -34,6 +41,7 @@ import remarkGfm from "remark-gfm";
 import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
 import { AskUserQuestionCard } from "@/components/AskUserQuestionCard";
+import { MermaidBlock } from "@/components/MermaidBlock";
 import { Button } from "@/components/ui/button";
 import { fileToBase64, validateFile } from "@/hooks/useFileUpload";
 import { useSessionJsonl } from "@/hooks/useSessionJsonl";
@@ -45,8 +53,10 @@ import {
 } from "@/lib/ask-user-question-state";
 import type { JsonlParsedEvent } from "@/lib/jsonl-event-parser";
 import { splitTextWithUrls } from "@/lib/linkify";
+import { isMermaidCodeClass } from "@/lib/mermaid-block-utils";
 import { reconcileEscape } from "@/lib/reconcile-escape";
 import { reconcilePending } from "@/lib/reconcile-pending";
+import { buildVisualizeConversationPrompt } from "@/lib/visualize-conversation";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -83,6 +93,8 @@ interface SplitChatPaneProps {
   showTerminal?: boolean;
   /** ターミナルの表示切替 (undefined のとき トグルボタンを描画しない) */
   onToggleTerminal?: () => void;
+  /** 空のホワイトボードを直接開く (undefined のとき ボタンを描画しない) */
+  onOpenBoard?: () => void;
 }
 
 // ===== JSONL イベントカード =====
@@ -315,15 +327,30 @@ function createMarkdownComponents(sessionId: string): Components {
         </a>
       );
     },
-    code: ({ className, children, node: _node, ...props }) => (
-      <code className={className} {...props}>
-        <FilePathText
-          text={reactNodeToText(children)}
-          sessionId={sessionId}
-          compact
-        />
-      </code>
-    ),
+    pre: ({ children, node: _node, ...props }) => {
+      // mermaid ブロックは MermaidBlock 自身が描画するので pre を被せない
+      const child = Array.isArray(children) ? children[0] : children;
+      const cls =
+        child && typeof child === "object" && "props" in child
+          ? (child as { props?: { className?: string } }).props?.className
+          : undefined;
+      if (isMermaidCodeClass(cls)) return <>{children}</>;
+      return <pre {...props}>{children}</pre>;
+    },
+    code: ({ className, children, node: _node, ...props }) => {
+      if (isMermaidCodeClass(className)) {
+        return <MermaidBlock code={reactNodeToText(children)} />;
+      }
+      return (
+        <code className={className} {...props}>
+          <FilePathText
+            text={reactNodeToText(children)}
+            sessionId={sessionId}
+            compact
+          />
+        </code>
+      );
+    },
   };
 }
 
@@ -761,6 +788,7 @@ export function SplitChatPane({
   onUploadFile,
   showTerminal,
   onToggleTerminal,
+  onOpenBoard,
 }: SplitChatPaneProps) {
   const [inputValue, setInputValue] = useState("");
 
@@ -1032,6 +1060,23 @@ export function SplitChatPane({
     setInputValue("");
   };
 
+  // 「会話を図解」: 現在の Claude セッションに会話の図解を依頼する。
+  // 入力欄は触らず、図解プロンプトを送信して pending を楽観表示する
+  // (返答の ```mermaid は MermaidBlock がインライン描画する)。
+  const handleVisualizeConversation = () => {
+    const prompt = buildVisualizeConversationPrompt();
+    lastSubmittedRef.current = prompt;
+    onSendMessage(prompt);
+    setPending(prev => [
+      ...prev,
+      {
+        id: `p:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+        text: prompt,
+        sentAt: Date.now(),
+      },
+    ]);
+  };
+
   // ===== ファイルアップロード =====
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -1184,19 +1229,7 @@ export function SplitChatPane({
 
   return (
     <div className="h-full flex flex-col bg-background">
-      <header className="border-b border-border px-4 py-2.5 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-base">💬</span>
-          <div className="min-w-0">
-            <div className="font-bold text-sm text-foreground truncate">
-              会話
-            </div>
-            <div className="text-[11px] text-muted-foreground truncate">
-              {session.worktreePath.split("/").pop() ?? "session"} ·{" "}
-              {events.length} イベント
-            </div>
-          </div>
-        </div>
+      <header className="border-b border-border px-4 py-1.5 flex items-center justify-end shrink-0">
         <div className="flex items-center gap-1.5 shrink-0">
           {(bridgeStatus === "THINK" || bridgeStatus === "TOOL") && (
             <span className="text-[11px] text-muted-foreground flex items-center gap-1">
@@ -1208,6 +1241,17 @@ export function SplitChatPane({
             className={`w-1.5 h-1.5 rounded-full ${jsonlSubscribed ? "bg-emerald-500" : "bg-slate-400"}`}
             title={jsonlSubscribed ? "JSONL 購読中" : "未購読"}
           />
+          {onOpenBoard && (
+            <button
+              type="button"
+              onClick={onOpenBoard}
+              className="text-[11px] px-2 py-1 rounded-md font-medium flex items-center gap-1 transition-colors bg-muted hover:bg-muted/70 text-foreground"
+              title="ホワイトボードを開く"
+            >
+              <span>🎨</span>
+              <span>ボード</span>
+            </button>
+          )}
           {onToggleTerminal && (
             <button
               type="button"
@@ -1364,6 +1408,14 @@ export function SplitChatPane({
             </button>
           </>
         )}
+        <button
+          type="button"
+          onClick={handleVisualizeConversation}
+          className="p-2 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors self-end"
+          title="会話を図解 (Claude に mermaid 図で要約させる)"
+        >
+          <Workflow className="w-4 h-4" />
+        </button>
         <textarea
           ref={inputRef}
           value={inputValue}
