@@ -312,7 +312,10 @@ const HARNESS_JS = `(function () {
     );
     handle.addEventListener("pointerdown", function (event) {
       if (graphDrag) return;
-      var position = graphPosition(node);
+      var id = el.getAttribute("data-model-id");
+      if (!id) return;
+      var currentNode = getNode(state.model, id);
+      var position = graphPosition(currentNode);
       if (!position) return;
       event.preventDefault();
       handle.setPointerCapture(event.pointerId);
@@ -322,7 +325,7 @@ const HARNESS_JS = `(function () {
         handle: handle,
         graph: graph,
         el: el,
-        node: node,
+        node: currentNode,
         start: {
           clientX: event.clientX,
           clientY: event.clientY,

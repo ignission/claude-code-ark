@@ -256,6 +256,64 @@ test("node ドラッグと list 編集を送信 model と clean HTML に反映�
   expect(html).toContain('data-ark-container="graph"');
 });
 
+test("モデル直接編集後の node ドラッグを送信 model に反映する", async ({
+  page,
+}) => {
+  await openDiagram(page);
+  await connectSubmissionPort(page);
+
+  const editedModel = {
+    ...model,
+    nodes: model.nodes.map(node =>
+      node.id === "order" ? { ...node, label: "Edited Order" } : node
+    ),
+  };
+  await page
+    .getByRole("button", { name: "モデル JSON を直接編集する" })
+    .click();
+  await page.locator(".ark-harness-textarea").fill(JSON.stringify(editedModel));
+  await page.getByRole("button", { name: "反映", exact: true }).click();
+
+  const order = page.locator('section[data-model-id="order"]');
+  const handleBox = await requiredBoundingBox(
+    order.locator(".ark-harness-graph-handle")
+  );
+  await page.mouse.move(
+    handleBox.x + handleBox.width / 2,
+    handleBox.y + handleBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    handleBox.x + handleBox.width / 2 + 80,
+    handleBox.y + handleBox.height / 2 + 60
+  );
+  await page.mouse.up();
+
+  await page
+    .getByRole("button", { name: "変更を親フレームへ送信する" })
+    .click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  const submission = await page.evaluate(
+    () =>
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+  );
+  expect(submission).toMatchObject({
+    type: "ark:diagram-submit",
+    model: {
+      nodes: [
+        { id: "order", label: "Edited Order", ext: { x: 120, y: 110 } },
+        { id: "user" },
+      ],
+    },
+  });
+});
+
 test("不正座標と graph 外参照を安全に除外する", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
