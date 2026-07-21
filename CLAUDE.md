@@ -18,7 +18,7 @@ PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`Spli
 エンジンは PC・モバイル共通で tmux 上の対話版 claude
 (プラン枠課金を維持。Agent SDK / claude -p は使わない)。
 
-```
+```text
 表示: <configDir>/projects/<encoded-cwd>/*.jsonl → JsonlTailManager → Socket.IO → チャット描画（モバイル専用）
 入力: チャット入力欄 / ターミナル入力欄 → Socket.IO → tmux send-keys → claude CLI
 補助: tmux(セッション) ←→ ttyd(WebSocket) ←→ iframe (PC は常時表示 / モバイルはトグル)

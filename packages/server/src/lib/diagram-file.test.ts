@@ -257,3 +257,51 @@ describe("injectCsp と doctype の順序", () => {
     expect(out.indexOf(DIAGRAM_CSP)).toBe(0);
   });
 });
+
+describe("replaceModelBlock のブレイクアウト対策（CodeRabbit Critical）", () => {
+  it("label に </script > を仕込んでもブラウザが script を早期終了できない", () => {
+    // </script の直後が空白でもブラウザの script-data トークナイザは終了扱いに
+    // する。JSON.stringify は < をエスケープしないため、そのまま埋めると
+    // script 要素をブレイクアウトして後続のインライン script が実行される。
+    const html = page(
+      `<script type="application/json" id="ark-diagram-model">{}</script>`
+    );
+    const evil: DiagramModel = {
+      version: 1,
+      nodes: [{ id: "a", label: "</script ><script>evil()</script>" }],
+      edges: [],
+      groups: [],
+    };
+
+    const result = replaceModelBlock(html, evil);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // 生の </script は出力に現れてはならない（< が < に退避される）
+      expect(result.html).not.toContain("</script ><script>evil");
+      expect(result.html).toContain("\\u003c/script");
+    }
+  });
+
+  it("エスケープ後も extractModel で元の label に戻る（往復維持）", () => {
+    const html = page(
+      `<script type="application/json" id="ark-diagram-model">{}</script>`
+    );
+    const model: DiagramModel = {
+      version: 1,
+      nodes: [{ id: "a", label: "a < b </script>" }],
+      edges: [],
+      groups: [],
+    };
+
+    const replaced = replaceModelBlock(html, model);
+    expect(replaced.ok).toBe(true);
+    if (!replaced.ok) return;
+
+    const extracted = extractModel(replaced.html);
+    expect(extracted.ok).toBe(true);
+    if (extracted.ok) {
+      expect(extracted.model.nodes[0]?.label).toBe("a < b </script>");
+    }
+  });
+});

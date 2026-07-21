@@ -144,8 +144,8 @@ export function DiagramPane({
   }, []);
 
   // ハーネスから port 経由で受け取った送信内容を socket:diagram:submit で
-  // サーバーへ中継する。ハンドラは次タスク（Task 4）でまだ未実装のため、
-  // ACK が返らずタイムアウトも無いが、それ自体は正常（Task 4 で解消する）。
+  // サーバーへ中継し、ACK で保存/還流の成否を受け取る。失敗時はペインに
+  // エラーを表示する（非破壊）。
   const handleSubmit = useCallback(
     (model: unknown, submittedHtml: string) => {
       if (!socket) {

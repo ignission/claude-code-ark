@@ -102,7 +102,14 @@ export function replaceModelBlock(
     if (replaced) return match; // 最初に一致したブロックだけを差し替える
     if (!isModelScriptAttrs(attrs)) return match;
     replaced = true;
-    return `<script${attrs}>\n${JSON.stringify(model, null, 2)}\n</script>`;
+    // `<` を < に退避する。JSON.stringify は `<` をエスケープしないため、
+    // label や ext に `</script >`（`>` の前が空白/改行/`/` でもブラウザの
+    // script-data トークナイザは終了扱い）を仕込むと、application/json の
+    // モデルブロックをブレイクアウトして後続のインライン script が
+    // script-src 'unsafe-inline' の下で実行されてしまう。application/json
+    // として JSON.parse すると < は `<` に戻るため往復は保たれる。
+    const json = JSON.stringify(model, null, 2).replace(/</g, "\\u003c");
+    return `<script${attrs}>\n${json}\n</script>`;
   });
   if (!replaced) {
     return { ok: false, error: MODEL_BLOCK_NOT_FOUND };

@@ -122,7 +122,7 @@ describe("resolveDiagramPath", () => {
   });
 
   it("1024字を超えるパスを拒否する", () => {
-    const longPath = "a".repeat(1025) + ".diagram.html";
+    const longPath = `${"a".repeat(1025)}.diagram.html`;
     const result = resolveDiagramPath(wt, longPath);
 
     expect(result.ok).toBe(false);

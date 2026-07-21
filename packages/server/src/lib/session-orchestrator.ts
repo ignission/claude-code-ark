@@ -643,9 +643,11 @@ export class SessionOrchestrator extends EventEmitter {
       );
     }
 
-    // ttydインスタンスを起動。失敗したら registry に登録済みの board token を
-    // ロールバックする（残すと DB セッションの無い孤児 token が認可され続ける。
-    // tmux セッションは生きているため getAllSessions の孤児掃除でも回収されない）
+    // ttydインスタンスを起動。失敗したら startSession 全体が失敗する（throw）ため、
+    // 直前に作った tmux セッションと board token を両方ロールバックする。
+    // tmux を残すと ttyd の無いゾンビセッションになり、board token を残すと
+    // DB セッションの無い孤児 token が認可され続ける（どちらも getAllSessions の
+    // 孤児掃除では回収されない = worktree は実在するため）。
     let ttydInstance: Awaited<ReturnType<typeof ttydManager.startInstance>>;
     try {
       ttydInstance = await ttydManager.startInstance(
@@ -654,6 +656,7 @@ export class SessionOrchestrator extends EventEmitter {
       );
     } catch (e) {
       this.unregisterBoardToken(tmuxSession.id);
+      tmuxManager.killSession(tmuxSession.id);
       throw e;
     }
 

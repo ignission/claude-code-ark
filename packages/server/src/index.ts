@@ -1960,7 +1960,13 @@ export async function startServer(
           .toString("base64")
           .replace(/[/+=]/g, "");
 
+        // キャッシュキーは realpath 正規化済みパス。生パスで delete しても
+        // ヒットしないため、worktree が消える前に realpath を解決してその
+        // キーを消す（消し損ねると同じ realpath に新 worktree が作られた際、
+        // TTL 切れまで stale な検証結果を返し得る）。
+        const cachedReal = resolveManagedWorktreePath(worktreePath);
         const result = await deleteWorktree(repoPath, worktreePath);
+        if (cachedReal) managedWorktreeCache.delete(cachedReal);
         managedWorktreeCache.delete(worktreePath);
         if (result.branchKeptReason) {
           // ブランチが残った場合は調査の起点になるようハンドラー側でも記録する
@@ -2285,11 +2291,30 @@ export async function startServer(
         }
         // ハーネスが送る html は document.documentElement.outerHTML 由来で
         // doctype を含まない。補わないと送信のたびにファイルから落ちる。
-        await fs.promises.writeFile(
-          pathResolved.absPath,
-          ensureDoctype(replaced.html),
-          "utf-8"
-        );
+        //
+        // TOCTOU/symlink 対策: 読み込み側(readRawVerified)は inode/dev + realpath で
+        // worktree 外脱出を弾くが、書き込みは resolveDiagramPath(文字列解決のみ)の後
+        // fs.writeFile が symlink を辿るため、読み書きの間に外向き symlink へ
+        // 差し替えられると worktree 外へ書けてしまう。/api/session の配信(L1163)と
+        // 同じく O_NOFOLLOW で最終要素が symlink なら open を失敗させて防ぐ。
+        let writeHandle: fs.promises.FileHandle;
+        try {
+          writeHandle = await fs.promises.open(
+            pathResolved.absPath,
+            fs.constants.O_WRONLY |
+              fs.constants.O_TRUNC |
+              fs.constants.O_NOFOLLOW
+          );
+        } catch {
+          // ELOOP(最終要素が symlink に差し替わった) / ENOENT(読み込み後に削除) 等
+          reply({ ok: false, error: "図ファイルの実体を検証できません" });
+          return;
+        }
+        try {
+          await writeHandle.writeFile(ensureDoctype(replaced.html), "utf-8");
+        } finally {
+          await writeHandle.close();
+        }
 
         // 意味差分を組み立てて会話へ還流する。文面は describeModelDiff の
         // 出力だけで組む（html の中身などクライアント由来の文字列は

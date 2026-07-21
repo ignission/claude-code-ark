@@ -62,9 +62,22 @@ export class DiagramWatcher {
 
   private startWatcher(absPath: string, entry: Watched): void {
     try {
-      entry.watcher = fs.watch(absPath, () => {
+      const watcher = fs.watch(absPath, () => {
         this.check(absPath);
       });
+      // FSWatcher は EventEmitter。error リスナーが無いと、稼働後に発生した
+      // ランタイムエラー（ハンドル上限・監視対象の削除等）が uncaughtException
+      // となり Ark プロセス全体を落とす。ここで受けて watcher を畳み、
+      // polling 側の自己回復（次 tick で startWatcher 再試行）に委ねる。
+      watcher.on("error", () => {
+        try {
+          watcher.close();
+        } catch {
+          // 既に閉じている等は無視
+        }
+        if (entry.watcher === watcher) entry.watcher = null;
+      });
+      entry.watcher = watcher;
     } catch {
       // ファイルが未作成でも polling が後から拾う
       entry.watcher = null;
