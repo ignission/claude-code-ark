@@ -22,11 +22,29 @@ const model = {
       fields: [{ id: "user_id", label: "id" }],
       ext: { x: 360, y: 180 },
     },
+    {
+      id: "external",
+      label: "External",
+      ext: { x: 20, y: 20 },
+    },
   ],
   edges: [
     { id: "e_order_user", from: "order", to: "user", label: "belongs to" },
   ],
-  groups: [],
+  groups: [
+    {
+      id: "ordering-context",
+      label: "Ordering Context",
+      nodes: ["order", "user"],
+      ext: { role: "bounded-context" },
+    },
+    { id: "empty-context", label: "Empty Context", nodes: [] },
+    {
+      id: "cross-graph-context",
+      label: "Cross Graph Context",
+      nodes: ["order", "external"],
+    },
+  ],
 };
 
 function diagramHtml(diagramModel: unknown = model): string {
@@ -37,6 +55,19 @@ function diagramHtml(diagramModel: unknown = model): string {
       body { margin: 0; }
       .graph { width: 720px; height: 480px; background: #f8fafc; }
       .entity { box-sizing: border-box; width: 220px; padding: 12px; border: 1px solid #64748b; border-left: 4px solid var(--kind-color); background: var(--kind-bg); }
+      .group-boundary {
+        display: none;
+        box-sizing: border-box;
+        position: absolute;
+        left: calc(var(--ark-harness-group-x) - 20px);
+        top: calc(var(--ark-harness-group-y) - 28px);
+        width: calc(var(--ark-harness-group-width) + 40px);
+        height: calc(var(--ark-harness-group-height) + 48px);
+        border: 2px solid #0f766e;
+        background: rgba(15, 118, 110, .08);
+      }
+      .group-boundary.ark-harness-graph-group { display: block; }
+      .group-label { position: absolute; top: 4px; left: 8px; color: #134e4a; }
       [data-kind="aggregate"] { --kind-color: #e0af68; --kind-bg: #332b1f; }
       [data-kind="entity"] { --kind-color: #7aa2f7; --kind-bg: #1f2a44; }
       [data-kind="event"] { --kind-color: #9ece6a; --kind-bg: #203222; }
@@ -48,6 +79,18 @@ function diagramHtml(diagramModel: unknown = model): string {
   <body>
     <script id="ark-diagram-model" type="application/json">${JSON.stringify(diagramModel)}</script>
     <div class="graph" data-ark-container="graph">
+      <section class="group-boundary" data-ark-group data-model-id="ordering-context">
+        <span class="group-label" data-model-id="ordering-context">Ordering Context</span>
+      </section>
+      <section class="group-boundary" data-ark-group data-model-id="empty-context">
+        <span class="group-label" data-model-id="empty-context">Empty Context</span>
+      </section>
+      <section class="group-boundary" data-ark-group data-model-id="cross-graph-context">
+        <span class="group-label" data-model-id="cross-graph-context">Cross Graph Context</span>
+      </section>
+      <section class="group-boundary" data-ark-group data-model-id="missing-context">
+        <span class="group-label" data-model-id="missing-context">Missing Context</span>
+      </section>
       <section class="entity" data-model-id="order">
         <h2 data-model-id="order"><span class="kind-icon" aria-hidden="true"></span>Order</h2>
         <ul>
@@ -60,6 +103,7 @@ function diagramHtml(diagramModel: unknown = model): string {
         <ul><li data-model-id="user_id">id</li></ul>
       </section>
     </div>
+    <section data-model-id="external">External</section>
   </body>
 </html>`);
 }
@@ -149,6 +193,20 @@ async function requiredBoundingBox(locator: Locator) {
   return box;
 }
 
+function expectBoxToContain(
+  container: { x: number; y: number; width: number; height: number },
+  member: { x: number; y: number; width: number; height: number }
+) {
+  expect(container.x).toBeLessThanOrEqual(member.x);
+  expect(container.y).toBeLessThanOrEqual(member.y);
+  expect(container.x + container.width).toBeGreaterThanOrEqual(
+    member.x + member.width
+  );
+  expect(container.y + container.height).toBeGreaterThanOrEqual(
+    member.y + member.height
+  );
+}
+
 test("ext 座標の2次元配置と edge で node 外周を結ぶ", async ({ page }) => {
   await openDiagram(page);
 
@@ -187,6 +245,208 @@ test("ext 座標の2次元配置と edge で node 外周を結ぶ", async ({ pag
   };
   expect(pointIsOnPerimeter(line.x1, line.y1, orderBox)).toBe(true);
   expect(pointIsOnPerimeter(line.x2, line.y2, userBox)).toBe(true);
+});
+
+test("group は複数 node を囲むラベル付き境界として投影する", async ({
+  page,
+}) => {
+  await openDiagram(page);
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  const group = graph.locator(
+    '[data-ark-group][data-model-id="ordering-context"]'
+  );
+  const order = graph.locator('section[data-model-id="order"]');
+  const user = graph.locator('section[data-model-id="user"]');
+
+  await expect(group).toHaveClass(/ark-harness-graph-group/);
+  const geometry = await group.evaluate(element => {
+    const style = (element as HTMLElement).style;
+    return [
+      "--ark-harness-group-x",
+      "--ark-harness-group-y",
+      "--ark-harness-group-width",
+      "--ark-harness-group-height",
+    ].map(name => style.getPropertyValue(name));
+  });
+  for (const value of geometry) {
+    expect(value).toMatch(/^-?\d+(?:\.\d+)?px$/);
+    expect(Number.isFinite(Number.parseFloat(value))).toBe(true);
+  }
+
+  const [groupBox, orderBox, userBox] = await Promise.all([
+    requiredBoundingBox(group),
+    requiredBoundingBox(order),
+    requiredBoundingBox(user),
+  ]);
+  expectBoxToContain(groupBox, orderBox);
+  expectBoxToContain(groupBox, userBox);
+  expect(groupBox.x).toBeLessThan(orderBox.x);
+  expect(groupBox.y).toBeLessThan(orderBox.y);
+
+  const label = group.locator('.group-label[data-model-id="ordering-context"]');
+  await expect(label).toBeVisible();
+  await expect(label).toHaveText("Ordering Context");
+  await expect(label).toHaveAttribute("contenteditable", "true");
+  await expect(graph.locator(".ark-harness-edge-layer")).toHaveCount(1);
+  await expect(graph.locator('[data-ark-edge-id="e_order_user"]')).toHaveCount(
+    1
+  );
+  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(2);
+  await expect(
+    order.locator('li[data-model-id="order_id"] .ark-harness-text')
+  ).toHaveAttribute("contenteditable", "true");
+});
+
+test("node ドラッグで group 境界と edge だけが追従する", async ({ page }) => {
+  await openDiagram(page);
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  const group = graph.locator(
+    '[data-ark-group][data-model-id="ordering-context"]'
+  );
+  const order = graph.locator('section[data-model-id="order"]');
+  const user = graph.locator('section[data-model-id="user"]');
+  const beforeGroup = await requiredBoundingBox(group);
+  const beforeOrder = await requiredBoundingBox(order);
+  const beforeUser = await requiredBoundingBox(user);
+  const beforeEdge = await readEdge(page);
+  const handleBox = await requiredBoundingBox(
+    order.locator(".ark-harness-graph-handle")
+  );
+
+  await page.mouse.move(
+    handleBox.x + handleBox.width / 2,
+    handleBox.y + handleBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    handleBox.x + handleBox.width / 2 + 80,
+    handleBox.y + handleBox.height / 2 + 60
+  );
+  await page.mouse.up();
+
+  await expect
+    .poll(async () => (await order.boundingBox())?.x)
+    .toBeCloseTo(beforeOrder.x + 80, 0);
+  const [afterGroup, afterOrder, afterUser, afterEdge] = await Promise.all([
+    requiredBoundingBox(group),
+    requiredBoundingBox(order),
+    requiredBoundingBox(user),
+    readEdge(page),
+  ]);
+  expectBoxToContain(afterGroup, afterOrder);
+  expectBoxToContain(afterGroup, afterUser);
+  expect(afterGroup.x).not.toBeCloseTo(beforeGroup.x, 0);
+  expect(afterUser.x).toBeCloseTo(beforeUser.x, 0);
+  expect(afterUser.y).toBeCloseTo(beforeUser.y, 0);
+  expect(afterEdge.x1).not.toBeCloseTo(beforeEdge.x1, 0);
+});
+
+test("invalid / cross-graph group 境界を安全に除外する", async ({ page }) => {
+  const errors = await openDiagram(page);
+  const graph = page.locator('[data-ark-container="graph"]');
+  const invalidGroups = graph.locator(
+    '[data-ark-group][data-model-id]:not([data-model-id="ordering-context"])'
+  );
+
+  await expect(invalidGroups).toHaveCount(3);
+  for (const group of await invalidGroups.all()) {
+    await expect(group).not.toHaveClass(/ark-harness-graph-group/);
+    const geometry = await group.evaluate(element =>
+      (element.getAttribute("style") || "").includes("--ark-harness-group-")
+    );
+    expect(geometry).toBe(false);
+  }
+
+  const orderingGroup = graph.locator(
+    '[data-ark-group][data-model-id="ordering-context"]'
+  );
+  await expect(orderingGroup).toHaveClass(/ark-harness-graph-group/);
+  const invalidatedModel = {
+    ...model,
+    groups: model.groups.map(group =>
+      group.id === "ordering-context"
+        ? { ...group, nodes: ["order", "external"] }
+        : group
+    ),
+  };
+  await page
+    .getByRole("button", { name: "モデル JSON を直接編集する" })
+    .click();
+  await page
+    .locator(".ark-harness-textarea")
+    .fill(JSON.stringify(invalidatedModel));
+  await page.getByRole("button", { name: "反映", exact: true }).click();
+
+  await expect(orderingGroup).not.toHaveClass(/ark-harness-graph-group/);
+  const staleGeometry = await orderingGroup.evaluate(element =>
+    (element.getAttribute("style") || "").includes("--ark-harness-group-")
+  );
+  expect(staleGeometry).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+test("group label 編集を model に反映し clean HTML から境界 geometry を除く", async ({
+  page,
+}) => {
+  await openDiagram(page);
+  await connectSubmissionPort(page);
+
+  const label = page.locator(
+    '[data-ark-group][data-model-id="ordering-context"] .group-label'
+  );
+  await label.fill("Orders & Users");
+  await page
+    .getByRole("button", { name: "変更を親フレームへ送信する" })
+    .click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  const submission = await page.evaluate(
+    () =>
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+  );
+
+  expect(submission).toMatchObject({ type: "ark:diagram-submit" });
+  const submittedGroups = (
+    submission as {
+      model: { groups: Array<{ id: string; label: string; nodes: string[] }> };
+    }
+  ).model.groups;
+  expect(submittedGroups[0]).toMatchObject({
+    id: "ordering-context",
+    label: "Orders & Users",
+    nodes: ["order", "user"],
+  });
+  const html = (submission as { html: string }).html;
+  const cleanProjection = await page.evaluate(cleanHtml => {
+    const document = new DOMParser().parseFromString(cleanHtml, "text/html");
+    const group = document.querySelector(
+      '[data-ark-group][data-model-id="ordering-context"]'
+    );
+    return {
+      groupHtml: group?.outerHTML || "",
+      groupClass: group?.getAttribute("class") || "",
+      groupStyle: group?.getAttribute("style") || "",
+      hasGraph: Boolean(document.querySelector('[data-ark-container="graph"]')),
+    };
+  }, html);
+  expect(cleanProjection.groupClass).toBe("group-boundary");
+  expect(cleanProjection.groupStyle).not.toContain("--ark-harness-group-x");
+  expect(cleanProjection.groupStyle).not.toContain("--ark-harness-group-y");
+  expect(cleanProjection.groupStyle).not.toContain("--ark-harness-group-width");
+  expect(cleanProjection.groupStyle).not.toContain(
+    "--ark-harness-group-height"
+  );
+  expect(cleanProjection.groupHtml).toContain('data-ark-group=""');
+  expect(cleanProjection.groupHtml).toContain('class="group-label"');
+  expect(cleanProjection.groupHtml).toContain("Orders &amp; Users");
+  expect(cleanProjection.hasGraph).toBe(true);
 });
 
 test("node.kind を data-kind へ同期して色とアイコンを区別する", async ({
@@ -359,6 +619,7 @@ test("node ドラッグと list 編集を送信 model と clean HTML に反映�
           ],
         },
         { id: "user" },
+        { id: "external" },
       ],
     },
   });
@@ -453,6 +714,7 @@ test("モデル直接編集後の kind 再同期と node ドラッグを送信 m
           ext: { x: 120, y: 110 },
         },
         { id: "user" },
+        { id: "external" },
       ],
     },
   });
