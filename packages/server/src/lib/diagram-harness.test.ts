@@ -42,6 +42,11 @@ describe("injectHarness", () => {
     expect(out).toContain('[data-ark-container="graph"]');
     expect(out).toContain("ark-harness-edge-layer");
     expect(out).toContain("ark-harness-graph-handle");
+    expect(out).toContain("ark-harness-edge-handle-layer");
+    expect(out).toContain("ark-harness-edge-handle");
+    expect(out).toContain("function syncEdgeHandles(");
+    expect(out).toContain("function finishEdgeDrag(");
+    expect(out).toContain("getEdge(state.model, drag.edgeId)");
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 

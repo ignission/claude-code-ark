@@ -111,6 +111,25 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   fill: #475569; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
   font-size: 12px; text-anchor: middle; dominant-baseline: central;
 }
+.ark-harness-edge-handle-layer {
+  position: absolute; inset: 0; z-index: 3; pointer-events: none;
+}
+.ark-harness-edge-handle {
+  position: absolute; transform: translate(-50%, -50%); z-index: 3;
+  width: 18px; height: 18px; padding: 0; border: 2px solid #0ea5b7; border-radius: 999px;
+  background: #fff; color: #0e7490; cursor: crosshair; line-height: 14px; font-size: 9px;
+  pointer-events: auto; touch-action: none;
+}
+.ark-harness-edge-preview {
+  position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none;
+}
+.ark-harness-edge-preview line {
+  stroke: #0ea5b7; stroke-width: 2; stroke-dasharray: 5 4;
+}
+.ark-harness-edge-drop-indicator {
+  position: absolute; box-sizing: border-box; border: 2px solid #0ea5b7;
+  border-radius: 6px; background: rgba(14,165,183,.1); pointer-events: none;
+}
 .ark-harness-graph-handle {
   position: absolute; top: .25rem; right: .25rem; z-index: 3;
   border: 1px solid rgba(100,116,139,.45); border-radius: 4px; background: rgba(255,255,255,.9);
@@ -147,6 +166,7 @@ const HARNESS_JS = `(function () {
   var submitPort = null;
   var dragSrcLi = null;
   var graphDrag = null;
+  var edgeDrag = null;
   var graphs = [];
   var graphSequence = 0;
   var statusEl = null;
@@ -194,6 +214,14 @@ const HARNESS_JS = `(function () {
     var groups = model.groups || [];
     for (var i = 0; i < groups.length; i++) {
       if (groups[i].id === id) return groups[i];
+    }
+    return null;
+  }
+
+  function getEdge(model, id) {
+    var edges = model.edges || [];
+    for (var i = 0; i < edges.length; i++) {
+      if (edges[i].id === id) return edges[i];
     }
     return null;
   }
@@ -487,12 +515,176 @@ const HARNESS_JS = `(function () {
       );
       appendGraphLabel(graph.svg, edge.label, geometry.label.x, geometry.label.y);
     });
+    syncEdgeHandles(graph, edges);
   }
 
   function scheduleGraphRender(graph) {
     if (graph.scheduled) return;
     graph.scheduled = true;
     window.requestAnimationFrame(function () { renderGraph(graph); });
+  }
+
+  function positionEdgeHandle(handle, endpoint) {
+    handle.style.left = endpoint.x + "px";
+    handle.style.top = endpoint.y + "px";
+  }
+
+  function findEdgeDropCandidate(graph, clientX, clientY) {
+    var elements = document.elementsFromPoint(clientX, clientY);
+    for (var i = 0; i < elements.length; i++) {
+      var current = elements[i];
+      while (current && current !== graph.container) {
+        var id = current.getAttribute && current.getAttribute("data-model-id");
+        var nodeEl = id ? graph.nodesById.get(id) : null;
+        if (nodeEl && getNode(state.model, id) &&
+            nodeEl.closest('[data-ark-container="graph"]') === graph.container) {
+          return { id: id, el: nodeEl };
+        }
+        current = current.parentElement;
+      }
+    }
+    return null;
+  }
+
+  function removeEdgeDragUi(drag) {
+    if (drag.preview && drag.preview.parentNode) drag.preview.parentNode.removeChild(drag.preview);
+    if (drag.indicator && drag.indicator.parentNode) {
+      drag.indicator.parentNode.removeChild(drag.indicator);
+    }
+    drag.preview = null;
+    drag.previewLine = null;
+    drag.indicator = null;
+    drag.candidateId = null;
+  }
+
+  function updateEdgeDropIndicator(drag, candidate) {
+    if (!candidate) {
+      if (drag.indicator && drag.indicator.parentNode) {
+        drag.indicator.parentNode.removeChild(drag.indicator);
+      }
+      drag.indicator = null;
+      drag.candidateId = null;
+      return;
+    }
+    if (!drag.indicator) {
+      drag.indicator = document.createElement("div");
+      drag.indicator.className = "ark-harness-edge-drop-indicator";
+      markUi(drag.indicator);
+      drag.graph.handleLayer.appendChild(drag.indicator);
+    }
+    var containerRect = drag.graph.container.getBoundingClientRect();
+    var nodeRect = candidate.el.getBoundingClientRect();
+    drag.indicator.style.left = nodeRect.left - containerRect.left + "px";
+    drag.indicator.style.top = nodeRect.top - containerRect.top + "px";
+    drag.indicator.style.width = nodeRect.width + "px";
+    drag.indicator.style.height = nodeRect.height + "px";
+    drag.candidateId = candidate.id;
+  }
+
+  function updateEdgeDrag(event) {
+    if (!edgeDrag || event.pointerId !== edgeDrag.pointerId) return;
+    var drag = edgeDrag;
+    var containerRect = drag.graph.container.getBoundingClientRect();
+    drag.previewLine.setAttribute("x2", String(event.clientX - containerRect.left));
+    drag.previewLine.setAttribute("y2", String(event.clientY - containerRect.top));
+    updateEdgeDropIndicator(
+      drag,
+      findEdgeDropCandidate(drag.graph, event.clientX, event.clientY)
+    );
+  }
+
+  function finishEdgeDrag(event, commit) {
+    if (!edgeDrag) return;
+    if (event && event.pointerId !== edgeDrag.pointerId) return;
+    var drag = edgeDrag;
+    var candidate = commit && event
+      ? findEdgeDropCandidate(drag.graph, event.clientX, event.clientY)
+      : null;
+    edgeDrag = null;
+    if (commit && candidate) {
+      var currentEdge = getEdge(state.model, drag.edgeId);
+      if (currentEdge && graphPosition(getNode(state.model, candidate.id))) {
+        currentEdge[drag.end] = candidate.id;
+      }
+    }
+    removeEdgeDragUi(drag);
+    if (drag.handle.hasPointerCapture(drag.pointerId)) {
+      drag.handle.releasePointerCapture(drag.pointerId);
+    }
+    scheduleGraphRender(drag.graph);
+  }
+
+  function createEdgeHandle(graph, edge, end) {
+    var handle = createButton("", "ark-harness-edge-handle");
+    handle.setAttribute("data-ark-edge-id", edge.id);
+    handle.setAttribute("data-ark-edge-end", end);
+    handle.addEventListener("pointerdown", function (event) {
+      if (graphDrag || edgeDrag) return;
+      var currentEdge = getEdge(state.model, handle.getAttribute("data-ark-edge-id"));
+      var geometry = currentEdge && graph.edgeGeometryById.get(currentEdge.id);
+      var endpoint = geometry && geometry[end];
+      if (!currentEdge || !endpoint) return;
+      event.preventDefault();
+      event.stopPropagation();
+      handle.setPointerCapture(event.pointerId);
+
+      var preview = svgElement("svg");
+      preview.classList.add("ark-harness-edge-preview");
+      markUi(preview);
+      var line = svgElement("line");
+      line.setAttribute("x1", String(endpoint.x));
+      line.setAttribute("y1", String(endpoint.y));
+      line.setAttribute("x2", String(endpoint.x));
+      line.setAttribute("y2", String(endpoint.y));
+      preview.appendChild(line);
+      graph.handleLayer.insertBefore(preview, graph.handleLayer.firstChild);
+      edgeDrag = {
+        pointerId: event.pointerId,
+        handle: handle,
+        graph: graph,
+        edgeId: currentEdge.id,
+        end: end,
+        preview: preview,
+        previewLine: line,
+        indicator: null,
+        candidateId: null
+      };
+    });
+    handle.addEventListener("pointermove", updateEdgeDrag);
+    handle.addEventListener("pointerup", function (event) { finishEdgeDrag(event, true); });
+    handle.addEventListener("pointercancel", function (event) { finishEdgeDrag(event, false); });
+    graph.handleLayer.appendChild(handle);
+    return handle;
+  }
+
+  function syncEdgeHandles(graph, edges) {
+    var activeKeys = new Set();
+    edges.forEach(function (edge) {
+      var geometry = graph.edgeGeometryById.get(edge.id);
+      if (!geometry) return;
+      ["from", "to"].forEach(function (end) {
+        var key = edge.id + ":" + end;
+        activeKeys.add(key);
+        var handle = graph.edgeHandlesByKey.get(key);
+        if (!handle) {
+          handle = createEdgeHandle(graph, edge, end);
+          graph.edgeHandlesByKey.set(key, handle);
+        }
+        handle.setAttribute("data-ark-edge-id", edge.id);
+        handle.setAttribute("data-ark-edge-end", end);
+        var name = (typeof edge.label === "string" && edge.label) || edge.id;
+        var endLabel = end === "from" ? "始点" : "終点";
+        var ariaLabel = name + " の" + endLabel + "をドラッグして張り替え";
+        handle.setAttribute("aria-label", ariaLabel);
+        handle.title = ariaLabel;
+        positionEdgeHandle(handle, geometry[end]);
+      });
+    });
+    graph.edgeHandlesByKey.forEach(function (handle, key) {
+      if (activeKeys.has(key)) return;
+      if (handle.parentNode) handle.parentNode.removeChild(handle);
+      graph.edgeHandlesByKey.delete(key);
+    });
   }
 
   function finishGraphDrag(event) {
@@ -513,7 +705,7 @@ const HARNESS_JS = `(function () {
       (node.label || node.id) + " をドラッグして移動"
     );
     handle.addEventListener("pointerdown", function (event) {
-      if (graphDrag) return;
+      if (graphDrag || edgeDrag) return;
       var id = el.getAttribute("data-model-id");
       if (!id) return;
       var currentNode = getNode(state.model, id);
@@ -583,6 +775,10 @@ const HARNESS_JS = `(function () {
     svg.classList.add("ark-harness-edge-layer");
     markUi(svg);
     container.appendChild(svg);
+    var handleLayer = document.createElement("div");
+    handleLayer.className = "ark-harness-edge-handle-layer";
+    markUi(handleLayer);
+    container.appendChild(handleLayer);
     graphSequence += 1;
     var graph = {
       container: container,
@@ -590,6 +786,8 @@ const HARNESS_JS = `(function () {
       groupsById: groupsById,
       svg: svg,
       edgeGeometryById: new Map(),
+      handleLayer: handleLayer,
+      edgeHandlesByKey: new Map(),
       resizeObserver: null,
       scheduled: false,
       markerId: "ark-harness-arrow-" + graphSequence
@@ -611,6 +809,12 @@ const HARNESS_JS = `(function () {
     containers.forEach(function (container) { graphs.push(wireGraph(container)); });
     window.addEventListener("resize", function () {
       graphs.forEach(function (graph) { scheduleGraphRender(graph); });
+    });
+    window.addEventListener("pointerup", function (event) {
+      finishEdgeDrag(event, true);
+    });
+    window.addEventListener("pointercancel", function (event) {
+      finishEdgeDrag(event, false);
     });
   }
 
