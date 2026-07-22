@@ -50,6 +50,37 @@ description: 図解を求められたときに .diagram.html を生成する規�
 - **外部リソースを参照しない。** Unicode、inline SVG、data URI は使えるが、外部 URL の画像・stylesheet・font・icon library・外部 `<use href>` は使わない（外部通信は遮断される）
 - **`<meta http-equiv="Content-Security-Policy">` を自分で書かない。** Ark が注入する
 
+## graph の自動レイアウトと手動座標
+
+graph node は `node.ext.x` と `node.ext.y` の両方が有限数なら manual、それ以外は
+auto として扱われる。標準は node 座標を省略し、図全体の `model.ext.layout` で方向と
+間隔を指定する。厳密な位置を固定したい node だけ x/y の両方を書く。
+
+```json
+{
+  "version": 1,
+  "ext": {
+    "layout": {
+      "direction": "LR",
+      "rankSpacing": 96,
+      "nodeSpacing": 48,
+      "padding": 24
+    }
+  }
+}
+```
+
+- `direction` は `LR`（左から右）または `TB`（上から下）。省略・未知値は `LR`
+- `rankSpacing` は rank 間、`nodeSpacing` は同 rank と衝突回避、`padding` は graph
+  外周の間隔。有限な非負数を使い、不正値や文字列値は既定値、安全上限を超える値は
+  clamp される
+- x/y の片方だけ、文字列、`null`、非有限値は manual 座標にならず、安全に auto
+  配置される。manual node は動かさず、auto node がそれを避ける
+- auto 座標は表示専用で model へ書き戻されない。node をドラッグしたときだけ、その
+  node の有限な x/y が保存され、以後 manual になる
+- group は配置後の member node を囲み、edge は配置後の node 外周を結ぶ。
+  `group.ext` / `edge.ext` の既存語彙は layout 設定とは独立してそのまま使う
+
 ## 語彙: kind
 
 node の `kind` フィールドで図の要素型を指定する。サーバーは `kind` の値を解釈せず、投影側（HTML/CSS）と skill の取り決めに従う。値は lowercase kebab-case を推奨するが、server enum ではなく未知の値もそのまま保持される。
@@ -118,8 +149,8 @@ read-model=緑を基本にする。各 card には `aria-hidden="true"` の `.ki
 [data-kind="external-system"] .kind-icon::before { content: "☁"; }
 ```
 
-時系列は Issue `#228` の auto-layout に依存させず、全 node の `ext.x` / `ext.y` に
-有限数を指定する。actor を起点、read-model を結果として、主要因果列の x を左から
+この例は厳密な時系列と swimlane を表すため、全 node の `ext.x` / `ext.y` に有限数を
+指定して手動配置する。actor を起点、read-model を結果として、主要因果列の x を左から
 右へ単調に増やす。因果関係には既存 edge の `from` / `to` / `label` だけを使い、
 event storming 専用 edge schema は作らない。
 
@@ -184,8 +215,8 @@ projection root は member node と sibling に置き、既存の
 .event-lane.ark-harness-graph-group { display: block; }
 ```
 
-group nesting、group 一括 drag、snap / grid、auto-layout は未対応で、このパターンでも
-導入しない。完成例は `docs/diagrams/event-storming.diagram.html` を参照する。
+group nesting、group 一括 drag、snap / grid は未対応。この例は timeline を固定するため
+auto layout を使わない。完成例は `docs/diagrams/event-storming.diagram.html` を参照する。
 
 ### Infrastructure の例
 
@@ -194,8 +225,8 @@ group nesting、group 一括 drag、snap / grid、auto-layout は未対応で、
 `.infra-node` style を fallback として適用し、model の `node.kind` と node projection
 root の `data-kind` は一致させる。
 
-Issue `#228` の auto-layout に依存せず、graph 内のすべての node に有限数の `ext.x` / `ext.y`
-を指定して手動配置する。外部クライアントも graph 外の特別要素にはせず、
+この例は region / VPC / subnet の境界を厳密に重ねるため、graph 内のすべての node に
+有限数の `ext.x` / `ext.y` を指定して手動配置する。外部クライアントも graph 外の特別要素にはせず、
 `kind: "external"` の通常 node とする。通信や依存関係は既存 edge の `from` / `to` /
 `label` だけで表す。
 
@@ -287,8 +318,8 @@ region / VPC / subnet の階層感が必要でも `groups[].nodes` に group id 
 }
 ```
 
-group nesting、group 一括 drag、auto-layout は未対応で、インフラ構成図でも導入しない。
-完成例は `docs/diagrams/infrastructure.diagram.html` を参照する。
+group nesting、group 一括 drag は未対応。この例は階層境界を固定するため auto layout を
+使わない。完成例は `docs/diagrams/infrastructure.diagram.html` を参照する。
 
 ## 語彙: edge / ER
 
@@ -385,8 +416,9 @@ crow's foot 記号、端点 handle、drag preview、drop indicator は配信時�
 </div>
 ```
 
-全 entity node に有限数の `ext.x` / `ext.y` を指定して手動配置し、auto-layout には
-依存しない。端点 handle の drag は core の `edge.from` / `edge.to` だけを更新するため
+通常は entity node の座標を省略し、`model.ext.layout` の auto layout を使う。ER 固有の
+位置調整が必要な node だけ有限数の `ext.x` / `ext.y` を両方指定する。端点 handle の
+drag は core の `edge.from` / `edge.to` だけを更新するため
 会話へ関連変更として還流する。一方、cardinality / direction / type のような `edge.ext`
 単独変更は diagram file と表示には保存されるが、自動で自然文へ還流しない。
 

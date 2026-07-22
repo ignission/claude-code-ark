@@ -224,6 +224,29 @@ describe("replaceModelBlock", () => {
     }
   });
 
+  it("モデルブロックの往復で top-level ext.layout を保持する", () => {
+    const html = page(
+      `<script type="application/json" id="ark-diagram-model">${MODEL}</script><div>図</div>`
+    );
+    const layout = {
+      direction: "LR",
+      rankSpacing: 80,
+      nodeSpacing: 36,
+      padding: 20,
+      futureOption: "keep-me",
+    };
+    const replaced = replaceModelBlock(html, {
+      ...MODEL_OBJ,
+      ext: { layout },
+    });
+    expect(replaced.ok).toBe(true);
+    if (!replaced.ok) return;
+
+    const extracted = extractModel(replaced.html);
+    expect(extracted.ok).toBe(true);
+    if (extracted.ok) expect(extracted.model.ext?.layout).toEqual(layout);
+  });
+
   it("モデルブロックの往復で edge.ext のセマンティクスを保持する", () => {
     const html = page(
       `<script type="application/json" id="ark-diagram-model">${MODEL}</script><div>図</div>`

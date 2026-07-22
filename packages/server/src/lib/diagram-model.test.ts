@@ -52,6 +52,39 @@ describe("parseDiagramModel", () => {
     }
   });
 
+  it("図全体の layout 設定と未知の情報を top-level ext に保持する", () => {
+    const ext = {
+      layout: {
+        direction: "TB",
+        rankSpacing: 80,
+        nodeSpacing: 36,
+        padding: 20,
+        futureOption: "keep-me",
+      },
+      custom: { theme: "night" },
+    };
+    const result = parseDiagramModel(
+      JSON.stringify({ version: 1, nodes: [], ext })
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.model.ext).toEqual(ext);
+  });
+
+  it.each([
+    "invalid",
+    null,
+    [],
+    42,
+  ])("object でない top-level ext (%j) は undefined に正規化する", ext => {
+    const result = parseDiagramModel(
+      JSON.stringify({ version: 1, nodes: [], ext })
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.model.ext).toBeUndefined();
+  });
+
   it("edge のセマンティクスを ext に保持する", () => {
     const ext = {
       from_card: "one",

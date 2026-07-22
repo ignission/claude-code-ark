@@ -34,15 +34,19 @@
 {
   "version": 1,
   "title": "サンプル",
+  "ext": {
+    "layout": {
+      "direction": "LR",
+      "rankSpacing": 72,
+      "nodeSpacing": 40,
+      "padding": 40
+    }
+  },
   "nodes": [
     {
       "id": "order",
       "label": "Order",
       "kind": "aggregate",
-      "ext": {
-        "x": 40,
-        "y": 50
-      },
       "fields": [
         {
           "id": "order_id",
@@ -62,10 +66,6 @@
       "id": "user",
       "label": "User",
       "kind": "entity",
-      "ext": {
-        "x": 360,
-        "y": 180
-      },
       "fields": [
         {
           "id": "user_id",

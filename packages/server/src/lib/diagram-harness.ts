@@ -90,6 +90,9 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
 }
 .ark-harness-add-row:hover { border-color: #38bdf8; color: #38bdf8; }
 [data-ark-container="graph"] { position: relative; }
+[data-ark-container="graph"].ark-harness-graph-layout {
+  min-width: var(--ark-harness-graph-min-width); min-height: var(--ark-harness-graph-min-height);
+}
 .ark-harness-graph-group { position: absolute; z-index: 0; }
 .ark-harness-graph-node {
   position: absolute; left: var(--ark-harness-graph-x); top: var(--ark-harness-graph-y); z-index: 2;
@@ -153,6 +156,10 @@ const HARNESS_JS = `(function () {
     "--ark-harness-group-y",
     "--ark-harness-group-width",
     "--ark-harness-group-height"
+  ];
+  var GRAPH_LAYOUT_PROPERTIES = [
+    "--ark-harness-graph-min-width",
+    "--ark-harness-graph-min-height"
   ];
 
   var BLOCK_TAGS = {
@@ -234,6 +241,279 @@ const HARNESS_JS = `(function () {
     if (!node || !isRecordObject(node.ext)) return null;
     if (!finiteNumber(node.ext.x) || !finiteNumber(node.ext.y)) return null;
     return { x: node.ext.x, y: node.ext.y };
+  }
+
+  function readLayoutConfig(model) {
+    var layout = isRecordObject(model && model.ext) && isRecordObject(model.ext.layout)
+      ? model.ext.layout
+      : {};
+    var bounded = function (value, fallback, maximum) {
+      return finiteNumber(value) && value >= 0 ? Math.min(value, maximum) : fallback;
+    };
+    return {
+      direction: layout.direction === "TB" ? "TB" : "LR",
+      rankSpacing: bounded(layout.rankSpacing, 96, 512),
+      nodeSpacing: bounded(layout.nodeSpacing, 48, 512),
+      padding: bounded(layout.padding, 24, 256)
+    };
+  }
+
+  function graphModelNodes(graph) {
+    var result = [];
+    var nodes = state.model && Array.isArray(state.model.nodes) ? state.model.nodes : [];
+    nodes.forEach(function (node, index) {
+      if (!node || typeof node.id !== "string") return;
+      var el = graph.nodesById.get(node.id);
+      if (el) result.push({ id: node.id, node: node, el: el, index: index });
+    });
+    return result;
+  }
+
+  function assignLayerRanks(graph) {
+    var entries = graphModelNodes(graph);
+    var indexById = new Map();
+    var adjacency = new Map();
+    entries.forEach(function (entry) {
+      indexById.set(entry.id, entry.index);
+      adjacency.set(entry.id, []);
+    });
+    var seenEdges = new Set();
+    var edges = state.model && Array.isArray(state.model.edges) ? state.model.edges : [];
+    edges.forEach(function (edge) {
+      if (!edge || edge.from === edge.to || !adjacency.has(edge.from) || !adjacency.has(edge.to)) {
+        return;
+      }
+      var key = edge.from + "\u0000" + edge.to;
+      if (seenEdges.has(key)) return;
+      seenEdges.add(key);
+      adjacency.get(edge.from).push(edge.to);
+    });
+    adjacency.forEach(function (targets) {
+      targets.sort(function (left, right) {
+        return indexById.get(left) - indexById.get(right);
+      });
+    });
+
+    var nextIndex = 0;
+    var stack = [];
+    var onStack = new Set();
+    var indexes = new Map();
+    var lowLinks = new Map();
+    var components = [];
+    var visit = function (id) {
+      indexes.set(id, nextIndex);
+      lowLinks.set(id, nextIndex);
+      nextIndex += 1;
+      stack.push(id);
+      onStack.add(id);
+      adjacency.get(id).forEach(function (target) {
+        if (!indexes.has(target)) {
+          visit(target);
+          lowLinks.set(id, Math.min(lowLinks.get(id), lowLinks.get(target)));
+        } else if (onStack.has(target)) {
+          lowLinks.set(id, Math.min(lowLinks.get(id), indexes.get(target)));
+        }
+      });
+      if (lowLinks.get(id) !== indexes.get(id)) return;
+      var component = [];
+      var member = null;
+      do {
+        member = stack.pop();
+        onStack.delete(member);
+        component.push(member);
+      } while (member !== id);
+      component.sort(function (left, right) {
+        return indexById.get(left) - indexById.get(right);
+      });
+      components.push(component);
+    };
+    entries.forEach(function (entry) {
+      if (!indexes.has(entry.id)) visit(entry.id);
+    });
+    components.sort(function (left, right) {
+      return indexById.get(left[0]) - indexById.get(right[0]);
+    });
+
+    var componentById = new Map();
+    var componentOrder = [];
+    components.forEach(function (component, componentIndex) {
+      componentOrder[componentIndex] = indexById.get(component[0]);
+      component.forEach(function (id) { componentById.set(id, componentIndex); });
+    });
+    var outgoing = components.map(function () { return new Set(); });
+    var indegrees = components.map(function () { return 0; });
+    adjacency.forEach(function (targets, from) {
+      var fromComponent = componentById.get(from);
+      targets.forEach(function (to) {
+        var toComponent = componentById.get(to);
+        if (fromComponent === toComponent || outgoing[fromComponent].has(toComponent)) return;
+        outgoing[fromComponent].add(toComponent);
+        indegrees[toComponent] += 1;
+      });
+    });
+    var queue = [];
+    indegrees.forEach(function (degree, componentIndex) {
+      if (degree === 0) queue.push(componentIndex);
+    });
+    var byOrder = function (left, right) {
+      return componentOrder[left] - componentOrder[right];
+    };
+    queue.sort(byOrder);
+    var componentRanks = components.map(function () { return 0; });
+    while (queue.length > 0) {
+      var current = queue.shift();
+      Array.from(outgoing[current]).sort(byOrder).forEach(function (target) {
+        componentRanks[target] = Math.max(
+          componentRanks[target],
+          componentRanks[current] + 1
+        );
+        indegrees[target] -= 1;
+        if (indegrees[target] === 0) {
+          queue.push(target);
+          queue.sort(byOrder);
+        }
+      });
+    }
+    var ranks = new Map();
+    entries.forEach(function (entry) {
+      ranks.set(entry.id, componentRanks[componentById.get(entry.id)] || 0);
+    });
+    return ranks;
+  }
+
+  function rectanglesCollide(left, right, gap) {
+    return left.x < right.x + right.width + gap &&
+      left.x + left.width + gap > right.x &&
+      left.y < right.y + right.height + gap &&
+      left.y + left.height + gap > right.y;
+  }
+
+  function layoutGraph(graph) {
+    var config = readLayoutConfig(state.model);
+    var direction = config.direction;
+    var entries = graphModelNodes(graph);
+    var ranksById = assignLayerRanks(graph);
+    var measured = new Map();
+    var ranks = [];
+    entries.forEach(function (entry) {
+      var rect = entry.el.getBoundingClientRect();
+      var size = { width: rect.width, height: rect.height };
+      measured.set(entry.id, size);
+      var rank = ranksById.get(entry.id) || 0;
+      if (!ranks[rank]) ranks[rank] = [];
+      ranks[rank].push(entry);
+    });
+
+    var primaryStarts = [];
+    var primary = config.padding;
+    ranks.forEach(function (rankEntries, rank) {
+      primaryStarts[rank] = primary;
+      var largest = 0;
+      rankEntries.forEach(function (entry) {
+        var size = measured.get(entry.id);
+        largest = Math.max(largest, direction === "TB" ? size.height : size.width);
+      });
+      primary += largest + config.rankSpacing;
+    });
+
+    var occupied = [];
+    var nextPositions = new Map();
+    entries.forEach(function (entry) {
+      var manual = graphPosition(entry.node);
+      if (!manual) return;
+      var size = measured.get(entry.id);
+      var rectangle = {
+        id: entry.id,
+        x: manual.x,
+        y: manual.y,
+        width: size.width,
+        height: size.height
+      };
+      nextPositions.set(entry.id, manual);
+      occupied.push(rectangle);
+    });
+
+    ranks.forEach(function (rankEntries, rank) {
+      var secondary = config.padding;
+      rankEntries.forEach(function (entry) {
+        if (nextPositions.has(entry.id)) return;
+        var size = measured.get(entry.id);
+        var position = direction === "TB"
+          ? { x: secondary, y: primaryStarts[rank] }
+          : { x: primaryStarts[rank], y: secondary };
+        var rectangle = {
+          id: entry.id,
+          x: position.x,
+          y: position.y,
+          width: size.width,
+          height: size.height
+        };
+        var maximumAttempts = entries.length * 4 + 8;
+        var attempts = 0;
+        while (attempts < maximumAttempts) {
+          var collision = null;
+          for (var i = 0; i < occupied.length; i++) {
+            if (rectanglesCollide(rectangle, occupied[i], config.nodeSpacing)) {
+              collision = occupied[i];
+              break;
+            }
+          }
+          if (!collision) break;
+          secondary = direction === "TB"
+            ? collision.x + collision.width + config.nodeSpacing
+            : collision.y + collision.height + config.nodeSpacing;
+          if (direction === "TB") rectangle.x = secondary;
+          else rectangle.y = secondary;
+          attempts += 1;
+        }
+        if (attempts === maximumAttempts) {
+          var fallback = config.padding;
+          occupied.forEach(function (other) {
+            fallback = Math.max(
+              fallback,
+              (direction === "TB" ? other.x + other.width : other.y + other.height) +
+                config.nodeSpacing
+            );
+          });
+          secondary = fallback;
+          if (direction === "TB") rectangle.x = fallback;
+          else rectangle.y = fallback;
+        }
+        nextPositions.set(entry.id, { x: rectangle.x, y: rectangle.y });
+        occupied.push(rectangle);
+        secondary = (direction === "TB"
+          ? rectangle.x + rectangle.width
+          : rectangle.y + rectangle.height) + config.nodeSpacing;
+      });
+    });
+
+    var maxRight = 0;
+    var maxBottom = 0;
+    entries.forEach(function (entry) {
+      var position = nextPositions.get(entry.id);
+      var size = measured.get(entry.id);
+      if (!position || !size) return;
+      var previous = graph.positionsById.get(entry.id);
+      if (!previous || previous.x !== position.x || previous.y !== position.y) {
+        entry.el.style.setProperty("--ark-harness-graph-x", position.x + "px");
+        entry.el.style.setProperty("--ark-harness-graph-y", position.y + "px");
+      }
+      maxRight = Math.max(maxRight, position.x + size.width);
+      maxBottom = Math.max(maxBottom, position.y + size.height);
+    });
+    graph.positionsById = nextPositions;
+
+    var minWidth = Math.ceil(maxRight + config.padding) + "px";
+    var minHeight = Math.ceil(maxBottom + config.padding) + "px";
+    if (graph.layoutExtent.width !== minWidth) {
+      graph.container.style.setProperty("--ark-harness-graph-min-width", minWidth);
+      graph.layoutExtent.width = minWidth;
+    }
+    if (graph.layoutExtent.height !== minHeight) {
+      graph.container.style.setProperty("--ark-harness-graph-min-height", minHeight);
+      graph.layoutExtent.height = minHeight;
+    }
+    graph.container.classList.add("ark-harness-graph-layout");
   }
 
   function svgElement(name) {
@@ -476,6 +756,7 @@ const HARNESS_JS = `(function () {
 
   function renderGraph(graph) {
     graph.scheduled = false;
+    layoutGraph(graph);
     renderGraphGroups(graph);
     while (graph.svg.firstChild) graph.svg.removeChild(graph.svg.firstChild);
     appendGraphMarker(graph.svg, graph.markerId);
@@ -603,7 +884,7 @@ const HARNESS_JS = `(function () {
     edgeDrag = null;
     if (commit && candidate) {
       var currentEdge = getEdge(state.model, drag.edgeId);
-      if (currentEdge && graphPosition(getNode(state.model, candidate.id))) {
+      if (currentEdge && drag.graph.positionsById.has(candidate.id)) {
         currentEdge[drag.end] = candidate.id;
       }
     }
@@ -709,7 +990,7 @@ const HARNESS_JS = `(function () {
       var id = el.getAttribute("data-model-id");
       if (!id) return;
       var currentNode = getNode(state.model, id);
-      var position = graphPosition(currentNode);
+      var position = graphPosition(currentNode) || graph.positionsById.get(id);
       if (!position) return;
       event.preventDefault();
       handle.setPointerCapture(event.pointerId);
@@ -736,6 +1017,7 @@ const HARNESS_JS = `(function () {
       if (!isRecordObject(drag.node.ext)) drag.node.ext = {};
       drag.node.ext.x = x;
       drag.node.ext.y = y;
+      drag.graph.positionsById.set(drag.node.id, { x: x, y: y });
       drag.el.style.setProperty("--ark-harness-graph-x", x + "px");
       drag.el.style.setProperty("--ark-harness-graph-y", y + "px");
       scheduleGraphRender(drag.graph);
@@ -762,13 +1044,10 @@ const HARNESS_JS = `(function () {
       var id = el.getAttribute("data-model-id");
       if (!id || nodesById.has(id)) return;
       var node = getNode(state.model, id);
-      var position = graphPosition(node);
-      if (!position) return;
+      if (!node) return;
       nodesById.set(id, el);
       modelNodesById.set(id, node);
       el.classList.add("ark-harness-graph-node");
-      el.style.setProperty("--ark-harness-graph-x", position.x + "px");
-      el.style.setProperty("--ark-harness-graph-y", position.y + "px");
     });
 
     var svg = svgElement("svg");
@@ -788,6 +1067,8 @@ const HARNESS_JS = `(function () {
       edgeGeometryById: new Map(),
       handleLayer: handleLayer,
       edgeHandlesByKey: new Map(),
+      positionsById: new Map(),
+      layoutExtent: { width: null, height: null },
       resizeObserver: null,
       scheduled: false,
       markerId: "ark-harness-arrow-" + graphSequence
@@ -1096,6 +1377,12 @@ const HARNESS_JS = `(function () {
     clone.querySelectorAll(".ark-harness-graph-node").forEach(function (el) {
       el.style.removeProperty("--ark-harness-graph-x");
       el.style.removeProperty("--ark-harness-graph-y");
+      if (el.style.length === 0) el.removeAttribute("style");
+    });
+    clone.querySelectorAll('[data-ark-container="graph"]').forEach(function (el) {
+      GRAPH_LAYOUT_PROPERTIES.forEach(function (property) {
+        el.style.removeProperty(property);
+      });
       if (el.style.length === 0) el.removeAttribute("style");
     });
     clone.querySelectorAll(".ark-harness-graph-group").forEach(function (el) {
