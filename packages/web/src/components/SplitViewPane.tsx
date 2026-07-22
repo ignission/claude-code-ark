@@ -227,8 +227,18 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       )}
 
       <div ref={containerRef} className="flex-1 min-h-0 flex relative">
-        {/* 左ペイン: ターミナル（常時表示） */}
-        <div className="h-full flex-1 min-w-0 overflow-hidden">
+        {/* 左ペイン: ターミナル（常時表示）
+            リサイズ中は pointer-events-none にする。ターミナルは ttyd の iframe
+            （別ブラウジングコンテキスト）で、分割線を左へドラッグしてカーソルが
+            この上に乗ると mousemove / mouseup を iframe が飲み込み、window の
+            リスナーへ届かなくなる。結果、幅が更新されず（ターミナルが狭くならない）、
+            mouseup も発火せずドラッグが解除されない（カーソル追従が止まらない）。
+            右ペイン（ボード）と同様に透過させて window リスナーへ届かせる。 */}
+        <div
+          className={`h-full flex-1 min-w-0 overflow-hidden ${
+            isDragging ? "pointer-events-none" : ""
+          }`}
+        >
           <TerminalPane
             session={props.session}
             worktree={props.worktree}
