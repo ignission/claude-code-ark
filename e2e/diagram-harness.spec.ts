@@ -148,12 +148,19 @@ async function openDiagram(page: Page, diagramModel: unknown = model) {
   return errors;
 }
 
-async function openSampleDiagram(page: Page) {
+async function openAuthoredDiagram(page: Page, filename: string) {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
   const html = readFileSync(
-    new URL("../docs/diagrams/sample.diagram.html", import.meta.url),
+    new URL(`../docs/diagrams/${filename}`, import.meta.url),
     "utf8"
   );
   await page.setContent(injectHarness(html));
+  return { errors, html };
+}
+
+async function openSampleDiagram(page: Page) {
+  await openAuthoredDiagram(page, "sample.diagram.html");
 }
 
 async function connectSubmissionPort(page: Page) {
@@ -582,6 +589,165 @@ test("sample group は2 node を囲むラベル付き境界として表示する
   expectBoxToContain(boundaryBox, secondNodeBox);
   await expect(boundary).toContainText(sampleGroup.label);
   await expect(boundary.locator(".group-label")).toBeVisible();
+});
+
+test("infrastructure sample は kind アイコンと手動配置で接続を表示する", async ({
+  page,
+}) => {
+  const { errors, html } = await openAuthoredDiagram(
+    page,
+    "infrastructure.diagram.html"
+  );
+  const diagramModel = await page.locator("#ark-diagram-model").evaluate(
+    element =>
+      JSON.parse(element.textContent || "") as {
+        nodes: Array<{
+          id: string;
+          label: string;
+          kind: string;
+          ext: { x: number; y: number };
+        }>;
+        edges: Array<{
+          id: string;
+          from: string;
+          to: string;
+          label?: string;
+        }>;
+      }
+  );
+
+  expect(new Set(diagramModel.nodes.map(node => node.kind))).toEqual(
+    new Set(["service", "db", "queue", "lb", "cache", "external"])
+  );
+  for (const node of diagramModel.nodes) {
+    expect(Number.isFinite(node.ext.x)).toBe(true);
+    expect(Number.isFinite(node.ext.y)).toBe(true);
+  }
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  const graphBox = await requiredBoundingBox(graph);
+  const iconsByKind = new Map<string, string>();
+  for (const node of diagramModel.nodes) {
+    const projection = graph.locator(
+      `:scope > [data-model-id="${node.id}"]:not([data-ark-group])`
+    );
+    await expect(projection).toHaveAttribute("data-kind", node.kind);
+    await expect(projection.locator(".node-label")).toBeVisible();
+    await expect(projection.locator(".node-label")).not.toHaveText("");
+    const icon = await projection
+      .locator(".kind-icon")
+      .evaluate(element => getComputedStyle(element, "::before").content);
+    expect(icon).not.toBe("none");
+    expect(icon).not.toBe("");
+    iconsByKind.set(node.kind, icon);
+
+    const box = await requiredBoundingBox(projection);
+    expect(box.x - graphBox.x).toBeCloseTo(node.ext.x, 0);
+    expect(box.y - graphBox.y).toBeCloseTo(node.ext.y, 0);
+  }
+  expect(new Set(iconsByKind.values())).toHaveProperty("size", 6);
+
+  expect(diagramModel.edges.map(edge => `${edge.from}->${edge.to}`)).toEqual(
+    expect.arrayContaining([
+      "client->public-lb",
+      "public-lb->api-service",
+      "api-service->orders-db",
+      "api-service->jobs-queue",
+      "api-service->session-cache",
+      "jobs-queue->worker-service",
+      "worker-service->orders-db",
+    ])
+  );
+  await expect(graph.locator("[data-ark-edge-id]")).toHaveCount(
+    diagramModel.edges.length
+  );
+  for (const edge of diagramModel.edges) {
+    expect(edge.label).toBeTruthy();
+    await expect(graph.locator("text", { hasText: edge.label })).toHaveCount(1);
+  }
+
+  expect(html).not.toMatch(/https?:\/\//i);
+  expect(html).not.toMatch(/<link[^>]+rel=["']?stylesheet/i);
+  expect(html).not.toMatch(/@import/i);
+  expect(html).not.toMatch(/icon[- ]library/i);
+  expect(errors).toEqual([]);
+});
+
+test("infrastructure sample は flat group で region / VPC / subnet を囲む", async ({
+  page,
+}) => {
+  await openAuthoredDiagram(page, "infrastructure.diagram.html");
+  const diagramModel = await page.locator("#ark-diagram-model").evaluate(
+    element =>
+      JSON.parse(element.textContent || "") as {
+        nodes: Array<{ id: string }>;
+        groups: Array<{
+          id: string;
+          label: string;
+          nodes: string[];
+          ext: { role: string };
+        }>;
+      }
+  );
+  const nodeIds = new Set(diagramModel.nodes.map(node => node.id));
+  const groupIds = new Set(diagramModel.groups.map(group => group.id));
+  expect(new Set(diagramModel.groups.map(group => group.ext.role))).toEqual(
+    new Set(["region", "vpc", "subnet"])
+  );
+  for (const group of diagramModel.groups) {
+    expect(group.nodes.length).toBeGreaterThan(0);
+    expect(group.nodes.every(nodeId => nodeIds.has(nodeId))).toBe(true);
+    expect(group.nodes.every(nodeId => !groupIds.has(nodeId))).toBe(true);
+  }
+  expect(
+    diagramModel.groups.every(group => !group.nodes.includes("client"))
+  ).toBe(true);
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  const boxes = new Map<
+    string,
+    Awaited<ReturnType<typeof requiredBoundingBox>>
+  >();
+  for (const group of diagramModel.groups) {
+    const boundary = graph.locator(
+      `:scope > [data-ark-group][data-model-id="${group.id}"]`
+    );
+    await expect(boundary).toHaveClass(/ark-harness-graph-group/);
+    const label = boundary.locator(".group-label");
+    await expect(label).toBeVisible();
+    await expect(label).toHaveText(group.label);
+    const boundaryBox = await requiredBoundingBox(boundary);
+    boxes.set(group.id, boundaryBox);
+    for (const memberId of group.nodes) {
+      const memberBox = await requiredBoundingBox(
+        graph.locator(
+          `:scope > [data-model-id="${memberId}"]:not([data-ark-group])`
+        )
+      );
+      expectBoxToContain(boundaryBox, memberBox);
+    }
+  }
+
+  const regionBox = boxes.get("tokyo-region");
+  const vpcBox = boxes.get("production-vpc");
+  expect(regionBox).toBeDefined();
+  expect(vpcBox).toBeDefined();
+  if (!regionBox || !vpcBox) return;
+  expect(regionBox.x).toBeLessThan(vpcBox.x);
+  expect(regionBox.y).toBeLessThan(vpcBox.y);
+  expect(regionBox.width).toBeGreaterThan(vpcBox.width);
+  expect(regionBox.height).toBeGreaterThan(vpcBox.height);
+
+  const subnetMembers = Object.fromEntries(
+    diagramModel.groups
+      .filter(group => group.ext.role === "subnet")
+      .map(group => [group.id, group.nodes])
+  );
+  expect(subnetMembers).toEqual({
+    "public-subnet": ["public-lb"],
+    "app-subnet": ["api-service", "worker-service"],
+    "data-subnet": ["orders-db", "jobs-queue", "session-cache"],
+  });
 });
 
 test("node ドラッグと list 編集を送信 model と clean HTML に反映する", async ({
