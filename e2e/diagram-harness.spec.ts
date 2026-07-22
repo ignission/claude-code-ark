@@ -185,8 +185,8 @@ function autoLayoutHtml(
     body { margin: 0; }
     .graph { width: 360px; height: 260px; background: #f8fafc; }
     .node { box-sizing: border-box; width: 128px; min-height: 64px; padding: 10px; border: 1px solid #64748b; background: white; }
-    [data-model-id="branch_a"] { width: 196px; height: 82px; }
-    [data-model-id="cycle_b"] { width: 148px; height: 104px; }
+    [data-model-id="branch_a"] { width: 196px; min-height: 82px; }
+    [data-model-id="cycle_b"] { width: 148px; min-height: 104px; }
     .group-boundary {
       display: none;
       position: absolute;
@@ -389,11 +389,15 @@ async function readEdge(page: Page) {
 
 async function readNamedEdge(page: Page, edgeId: string) {
   return page
-    .locator(
-      `line[data-ark-edge-id="${edgeId}"], path[data-ark-edge-id="${edgeId}"]`
-    )
-    .first()
-    .evaluate(edge => {
+    .locator('[data-ark-container="graph"]')
+    .evaluate((graph, expectedEdgeId) => {
+      const edge = Array.from(
+        graph.querySelectorAll("line[data-ark-edge-id], path[data-ark-edge-id]")
+      ).find(
+        candidate =>
+          candidate.getAttribute("data-ark-edge-id") === expectedEdgeId
+      );
+      if (!edge) throw new Error("edge がありません");
       const svg = edge.ownerSVGElement;
       if (!svg) throw new Error("edge SVG がありません");
       const svgRect = svg.getBoundingClientRect();
@@ -414,7 +418,7 @@ async function readNamedEdge(page: Page, edgeId: string) {
         x2: svgRect.x + end.x,
         y2: svgRect.y + end.y,
       };
-    });
+    }, edgeId);
 }
 
 async function requiredBoundingBox(locator: Locator) {
@@ -699,6 +703,58 @@ test("表示時は座標を非永続化し、ドラッグした node だけ手�
     x: 30,
     y: 40,
   });
+  const cleanHtml = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          arkHarnessSubmission?: { html: string };
+        }
+      ).arkHarnessSubmission?.html
+  );
+  expect(cleanHtml).not.toContain("--ark-harness-graph-min-width");
+  expect(cleanHtml).not.toContain("--ark-harness-graph-min-height");
+  expect(cleanHtml).not.toContain("ark-harness-graph-layout");
+});
+
+test("自動配置は text resize とモデル JSON 再適用で再計算する", async ({
+  page,
+}) => {
+  await page.setContent(autoLayoutHtml());
+  let boxes = await graphNodeBoxes(page);
+  let byId = Object.fromEntries(boxes.map(box => [box.id, box]));
+  const branchBBefore = byId.branch_b.y;
+  await page
+    .locator('[data-model-id="branch_a"] h2[data-model-id="branch_a"]')
+    .fill("Branch A with enough text to wrap ".repeat(10));
+  await expect
+    .poll(async () => {
+      boxes = await graphNodeBoxes(page);
+      byId = Object.fromEntries(boxes.map(box => [box.id, box]));
+      return byId.branch_b.y;
+    })
+    .toBeGreaterThan(branchBBefore + 20);
+
+  const editedModel = await page
+    .locator("#ark-diagram-model")
+    .evaluate(element => {
+      const parsed = JSON.parse(element.textContent || "") as {
+        ext: { layout: { direction: string } };
+      };
+      parsed.ext.layout.direction = "TB";
+      return parsed;
+    });
+  await page
+    .getByRole("button", { name: "モデル JSON を直接編集する" })
+    .click();
+  await page.locator(".ark-harness-textarea").fill(JSON.stringify(editedModel));
+  await page.getByRole("button", { name: "反映", exact: true }).click();
+  await expect
+    .poll(async () => {
+      boxes = await graphNodeBoxes(page);
+      byId = Object.fromEntries(boxes.map(box => [box.id, box]));
+      return byId.branch_a.y > byId.source.y + byId.source.height;
+    })
+    .toBe(true);
 });
 
 test("ext 座標の2次元配置と edge で node 外周を結ぶ", async ({ page }) => {
@@ -760,10 +816,16 @@ test("cardinality・方向・type を edge SVG に安全に投影する", async 
 
   await expect(fromCardinality.locator("line")).toHaveCount(1);
   expect(
-    await fromCardinality.locator("line").evaluate(element => ({
-      length: (element as SVGLineElement).getTotalLength(),
-      stroke: getComputedStyle(element).stroke,
-    }))
+    await graph.evaluate(container => {
+      const element = container.querySelector(
+        '.ark-harness-edge-cardinality[data-ark-edge-id="e_order_owner"][data-ark-edge-end="from"] line'
+      ) as SVGLineElement | null;
+      if (!element) throw new Error("from cardinality がありません");
+      return {
+        length: element.getTotalLength(),
+        stroke: getComputedStyle(element).stroke,
+      };
+    })
   ).toMatchObject({ length: expect.any(Number), stroke: "rgb(100, 116, 139)" });
   await expect(toCardinality.locator("circle")).toBeVisible();
   await expect(toCardinality.locator("circle")).toHaveCount(1);

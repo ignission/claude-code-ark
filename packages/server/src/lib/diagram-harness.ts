@@ -157,6 +157,10 @@ const HARNESS_JS = `(function () {
     "--ark-harness-group-width",
     "--ark-harness-group-height"
   ];
+  var GRAPH_LAYOUT_PROPERTIES = [
+    "--ark-harness-graph-min-width",
+    "--ark-harness-graph-min-height"
+  ];
 
   var BLOCK_TAGS = {
     DIV: 1, UL: 1, OL: 1, LI: 1, TABLE: 1, THEAD: 1, TBODY: 1, TR: 1, TD: 1, TH: 1,
@@ -880,7 +884,7 @@ const HARNESS_JS = `(function () {
     edgeDrag = null;
     if (commit && candidate) {
       var currentEdge = getEdge(state.model, drag.edgeId);
-      if (currentEdge && graphPosition(getNode(state.model, candidate.id))) {
+      if (currentEdge && drag.graph.positionsById.has(candidate.id)) {
         currentEdge[drag.end] = candidate.id;
       }
     }
@@ -986,7 +990,7 @@ const HARNESS_JS = `(function () {
       var id = el.getAttribute("data-model-id");
       if (!id) return;
       var currentNode = getNode(state.model, id);
-      var position = graphPosition(currentNode);
+      var position = graphPosition(currentNode) || graph.positionsById.get(id);
       if (!position) return;
       event.preventDefault();
       handle.setPointerCapture(event.pointerId);
@@ -1013,6 +1017,7 @@ const HARNESS_JS = `(function () {
       if (!isRecordObject(drag.node.ext)) drag.node.ext = {};
       drag.node.ext.x = x;
       drag.node.ext.y = y;
+      drag.graph.positionsById.set(drag.node.id, { x: x, y: y });
       drag.el.style.setProperty("--ark-harness-graph-x", x + "px");
       drag.el.style.setProperty("--ark-harness-graph-y", y + "px");
       scheduleGraphRender(drag.graph);
@@ -1372,6 +1377,12 @@ const HARNESS_JS = `(function () {
     clone.querySelectorAll(".ark-harness-graph-node").forEach(function (el) {
       el.style.removeProperty("--ark-harness-graph-x");
       el.style.removeProperty("--ark-harness-graph-y");
+      if (el.style.length === 0) el.removeAttribute("style");
+    });
+    clone.querySelectorAll('[data-ark-container="graph"]').forEach(function (el) {
+      GRAPH_LAYOUT_PROPERTIES.forEach(function (property) {
+        el.style.removeProperty(property);
+      });
       if (el.style.length === 0) el.removeAttribute("style");
     });
     clone.querySelectorAll(".ark-harness-graph-group").forEach(function (el) {
