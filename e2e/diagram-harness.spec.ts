@@ -761,6 +761,215 @@ test("infrastructure sample は flat group で region / VPC / subnet を囲む",
   });
 });
 
+test("event storming sample は6 kindを色・アイコン・可視ラベルで区別し因果を表示する", async ({
+  page,
+}) => {
+  const { errors, html } = await openAuthoredDiagram(
+    page,
+    "event-storming.diagram.html"
+  );
+  const diagramModel = await page.locator("#ark-diagram-model").evaluate(
+    element =>
+      JSON.parse(element.textContent || "") as {
+        nodes: Array<{
+          id: string;
+          label: string;
+          kind: string;
+        }>;
+        edges: Array<{
+          id: string;
+          from: string;
+          to: string;
+          label?: string;
+        }>;
+      }
+  );
+  const expectedColors = {
+    event: "rgb(245, 158, 11)",
+    command: "rgb(96, 165, 250)",
+    aggregate: "rgb(250, 204, 21)",
+    policy: "rgb(192, 132, 252)",
+    actor: "rgb(244, 114, 182)",
+    "read-model": "rgb(74, 222, 128)",
+  };
+
+  expect(new Set(diagramModel.nodes.map(node => node.kind))).toEqual(
+    new Set(Object.keys(expectedColors))
+  );
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  const iconsByKind = new Map<string, string>();
+  for (const node of diagramModel.nodes) {
+    const projection = graph.locator(
+      `:scope > [data-model-id="${node.id}"]:not([data-ark-group])`
+    );
+    await expect(projection).toHaveAttribute("data-kind", node.kind);
+    await expect(projection.locator(".kind-name")).toBeVisible();
+    await expect(projection.locator(".kind-name")).not.toHaveText("");
+    await expect(projection.locator(".node-label")).toBeVisible();
+    await expect(projection.locator(".node-label")).toHaveText(node.label);
+    const style = await projection.evaluate(element => ({
+      color: getComputedStyle(element).borderLeftColor,
+      icon: getComputedStyle(element.querySelector(".kind-icon"), "::before")
+        .content,
+    }));
+    expect(style.color).toBe(
+      expectedColors[node.kind as keyof typeof expectedColors]
+    );
+    expect(style.icon).not.toBe("none");
+    expect(style.icon).not.toBe("");
+    iconsByKind.set(node.kind, style.icon);
+  }
+  expect(new Set(iconsByKind.values())).toHaveProperty("size", 6);
+
+  expect(diagramModel.edges.map(edge => `${edge.from}->${edge.to}`)).toEqual([
+    "customer->place-order",
+    "place-order->order",
+    "order->order-placed",
+    "order-placed->capture-payment-policy",
+    "capture-payment-policy->capture-payment",
+    "capture-payment->payment",
+    "payment->payment-captured",
+    "payment-captured->order-status",
+  ]);
+  await expect(graph.locator("[data-ark-edge-id]")).toHaveCount(
+    diagramModel.edges.length
+  );
+  for (const edge of diagramModel.edges) {
+    expect(edge.label).toBeTruthy();
+    await expect(graph.locator("text", { hasText: edge.label })).toHaveCount(1);
+  }
+
+  expect(html).not.toMatch(/https?:\/\//i);
+  expect(html).not.toMatch(/\bsrc\s*=\s*["']\s*\/\//i);
+  expect(html).not.toMatch(/url\(\s*["']?\s*\/\//i);
+  expect(html).not.toMatch(/<link[^>]+rel=["']?stylesheet/i);
+  expect(html).not.toMatch(/@import/i);
+  expect(html).not.toMatch(/icon[- ]library/i);
+  expect(html).not.toMatch(
+    /<use\b[^>]*\b(?:href|xlink:href)\s*=\s*["']\s*(?!(?:#|data:))[^"']+/i
+  );
+  expect(errors).toEqual([]);
+});
+
+test("event storming sample は手動 timeline と flat group swimlane で配置する", async ({
+  page,
+}) => {
+  await openAuthoredDiagram(page, "event-storming.diagram.html");
+  const diagramModel = await page.locator("#ark-diagram-model").evaluate(
+    element =>
+      JSON.parse(element.textContent || "") as {
+        nodes: Array<{
+          id: string;
+          ext: { x: number; y: number };
+        }>;
+        groups: Array<{
+          id: string;
+          label: string;
+          nodes: string[];
+          ext: { role: string; lane: string };
+        }>;
+      }
+  );
+  const causalNodeIds = [
+    "customer",
+    "place-order",
+    "order",
+    "order-placed",
+    "capture-payment-policy",
+    "capture-payment",
+    "payment",
+    "payment-captured",
+    "order-status",
+  ];
+  const nodesById = new Map(diagramModel.nodes.map(node => [node.id, node]));
+  for (const node of diagramModel.nodes) {
+    expect(Number.isFinite(node.ext.x)).toBe(true);
+    expect(Number.isFinite(node.ext.y)).toBe(true);
+  }
+  for (let index = 1; index < causalNodeIds.length; index += 1) {
+    const previousNode = nodesById.get(causalNodeIds[index - 1]);
+    const currentNode = nodesById.get(causalNodeIds[index]);
+    expect(previousNode).toBeDefined();
+    expect(currentNode).toBeDefined();
+    if (!previousNode || !currentNode) continue;
+    expect(currentNode.ext.x).toBeGreaterThan(previousNode.ext.x);
+  }
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  const graphBox = await requiredBoundingBox(graph);
+  for (const node of diagramModel.nodes) {
+    const projection = graph.locator(
+      `:scope > [data-model-id="${node.id}"]:not([data-ark-group])`
+    );
+    const box = await requiredBoundingBox(projection);
+    expect(box.x - graphBox.x).toBeCloseTo(node.ext.x, 0);
+    expect(box.y - graphBox.y).toBeCloseTo(node.ext.y, 0);
+  }
+  const earlier = graph.locator(".timeline-earlier");
+  const later = graph.locator(".timeline-later");
+  await expect(earlier).toBeVisible();
+  await expect(earlier).toHaveText("Earlier");
+  await expect(later).toBeVisible();
+  await expect(later).toHaveText("Later");
+  const [earlierBox, laterBox] = await Promise.all([
+    requiredBoundingBox(earlier),
+    requiredBoundingBox(later),
+  ]);
+  expect(earlierBox.x).toBeLessThan(laterBox.x);
+
+  const nodeIds = new Set(diagramModel.nodes.map(node => node.id));
+  const groupIds = new Set(diagramModel.groups.map(group => group.id));
+  expect(diagramModel.groups.map(group => group.label)).toEqual([
+    "Customer",
+    "Ordering",
+    "Payment",
+  ]);
+  expect(
+    diagramModel.groups.every(group => group.ext.role === "swimlane")
+  ).toBe(true);
+  const memberships = new Map(diagramModel.nodes.map(node => [node.id, 0]));
+  for (const group of diagramModel.groups) {
+    expect(group.nodes.length).toBeGreaterThan(0);
+    expect(group.nodes.every(nodeId => nodeIds.has(nodeId))).toBe(true);
+    expect(group.nodes.every(nodeId => !groupIds.has(nodeId))).toBe(true);
+    for (const memberId of group.nodes) {
+      memberships.set(memberId, (memberships.get(memberId) || 0) + 1);
+    }
+  }
+  expect([...memberships.values()].every(count => count === 1)).toBe(true);
+
+  const laneBoxes: Array<Awaited<ReturnType<typeof requiredBoundingBox>>> = [];
+  for (const group of diagramModel.groups) {
+    const lane = graph.locator(
+      `:scope > [data-ark-group][data-model-id="${group.id}"]`
+    );
+    await expect(lane).toHaveClass(/ark-harness-graph-group/);
+    await expect(lane).toHaveClass(/event-lane/);
+    await expect(lane.locator(".group-label")).toBeVisible();
+    await expect(lane.locator(".group-label")).toHaveText(group.label);
+    const laneBox = await requiredBoundingBox(lane);
+    laneBoxes.push(laneBox);
+    expect(laneBox.x).toBeCloseTo(graphBox.x, 0);
+    expect(laneBox.width).toBeCloseTo(graphBox.width, 0);
+    for (const memberId of group.nodes) {
+      const memberBox = await requiredBoundingBox(
+        graph.locator(
+          `:scope > [data-model-id="${memberId}"]:not([data-ark-group])`
+        )
+      );
+      expectBoxToContain(laneBox, memberBox);
+    }
+  }
+  for (let index = 1; index < laneBoxes.length; index += 1) {
+    const previousLane = laneBoxes[index - 1];
+    const currentLane = laneBoxes[index];
+    expect(currentLane.y).toBeGreaterThanOrEqual(
+      previousLane.y + previousLane.height
+    );
+  }
+});
+
 test("node ドラッグと list 編集を送信 model と clean HTML に反映する", async ({
   page,
 }) => {
