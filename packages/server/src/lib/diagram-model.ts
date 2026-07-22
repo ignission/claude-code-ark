@@ -42,6 +42,7 @@ export interface DiagramModel {
   nodes: DiagramNode[];
   edges: DiagramEdge[];
   groups: DiagramGroup[];
+  ext?: Record<string, unknown>;
 }
 
 export type ParseResult =
@@ -187,6 +188,7 @@ export function parseDiagramModel(json: string): ParseResult {
       nodes,
       edges,
       groups,
+      ext: asExt(raw.ext),
     },
   };
 }

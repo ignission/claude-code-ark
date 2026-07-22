@@ -396,6 +396,50 @@ describe("describeModelDiff（境界ケース）", () => {
     ]);
   });
 
+  it("top-level ext.layout の変更は意味差分に含めない", () => {
+    const before: DiagramModel = {
+      ...model([order]),
+      ext: { layout: { direction: "LR" } },
+    };
+    const after: DiagramModel = {
+      ...model([order]),
+      ext: { layout: { direction: "TB" } },
+    };
+
+    expect(describeModelDiff(before, after)).toEqual([]);
+  });
+
+  it("座標なし node が drag 後に ext.x/y を得ても意味差分に含めない", () => {
+    const before = model([order]);
+    const after = model([{ ...order, ext: { x: 120, y: 110 } }]);
+
+    expect(describeModelDiff(before, after)).toEqual([]);
+  });
+
+  it("layout / node ext と field label の同時変更では field 変更だけを述べる", () => {
+    const before: DiagramModel = {
+      ...model([order]),
+      ext: { layout: { direction: "LR" } },
+    };
+    const after: DiagramModel = {
+      ...model([
+        {
+          ...order,
+          fields: [
+            { id: "f_id", label: "id" },
+            { id: "f_status", label: "state" },
+          ],
+          ext: { x: 120, y: 110 },
+        },
+      ]),
+      ext: { layout: { direction: "TB" } },
+    };
+
+    expect(describeModelDiff(before, after)).toEqual([
+      "Order の status を state に変更",
+    ]);
+  });
+
   it("label の「」はエスケープせずそのまま埋め込むが、改行は無害化で落ちる", () => {
     const after = model([
       {
