@@ -1176,6 +1176,160 @@ test("sample group は2 node を囲むラベル付き境界として表示する
   await expect(boundary.locator(".group-label")).toBeVisible();
 });
 
+test("ER edge semantics artifact は記号を投影して端点を張り替えられる", async ({
+  page,
+}) => {
+  const { errors, html } = await openAuthoredDiagram(
+    page,
+    "er-edge-semantics.diagram.html"
+  );
+  const diagramModel = await page.locator("#ark-diagram-model").evaluate(
+    element =>
+      JSON.parse(element.textContent || "") as {
+        nodes: Array<{
+          id: string;
+          label: string;
+          kind: string;
+          fields: Array<{ id: string; label: string }>;
+          ext: { x: number; y: number };
+        }>;
+        edges: Array<{
+          id: string;
+          from: string;
+          to: string;
+          label: string;
+          ext: {
+            from_card: string;
+            to_card: string;
+            direction: string;
+            type: string;
+          };
+        }>;
+      }
+  );
+
+  expect(diagramModel.nodes.length).toBeGreaterThanOrEqual(3);
+  expect(diagramModel.nodes.every(node => node.kind === "entity")).toBe(true);
+  for (const node of diagramModel.nodes) {
+    expect(Number.isFinite(node.ext.x)).toBe(true);
+    expect(Number.isFinite(node.ext.y)).toBe(true);
+    expect(node.fields.length).toBeGreaterThan(0);
+  }
+  expect(
+    diagramModel.edges.map(edge => `${edge.ext.from_card}->${edge.ext.to_card}`)
+  ).toEqual(
+    expect.arrayContaining([
+      "one->zero-or-many",
+      "one->zero-or-one",
+      "zero-or-many->zero-or-many",
+    ])
+  );
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  for (const node of diagramModel.nodes) {
+    const projection = graph.locator(
+      `:scope > [data-model-id="${node.id}"]:not([data-ark-group])`
+    );
+    await expect(projection).toHaveAttribute("data-kind", "entity");
+    await expect(projection.locator(".entity-label")).toHaveText(node.label);
+    for (const field of node.fields) {
+      await expect(
+        projection.locator(`li[data-model-id="${field.id}"]`)
+      ).toContainText(field.label);
+    }
+  }
+  for (const edge of diagramModel.edges) {
+    const main = graph.locator(
+      `.ark-harness-edge-main[data-ark-edge-id="${edge.id}"]`
+    );
+    await expect(main).toHaveAttribute(
+      "data-ark-edge-direction",
+      edge.ext.direction
+    );
+    await expect(main).toHaveAttribute("data-ark-edge-type", edge.ext.type);
+    await expect(
+      graph.locator(
+        `.ark-harness-edge-cardinality[data-ark-edge-id="${edge.id}"][data-ark-edge-end="from"]`
+      )
+    ).toHaveAttribute("data-ark-edge-cardinality", edge.ext.from_card);
+    await expect(
+      graph.locator(
+        `.ark-harness-edge-cardinality[data-ark-edge-id="${edge.id}"][data-ark-edge-end="to"]`
+      )
+    ).toHaveAttribute("data-ark-edge-cardinality", edge.ext.to_card);
+    await expect(graph.locator("text", { hasText: edge.label })).toHaveCount(1);
+  }
+
+  expect(html).not.toMatch(/https?:\/\//i);
+  expect(html).not.toMatch(/<link[^>]+rel=["']?stylesheet/i);
+  expect(html).not.toMatch(/<script(?![^>]*type=["']application\/json["'])/i);
+  expect(html).not.toMatch(/<(?:img|image)\b/i);
+  expect(html).not.toMatch(/@import|@font-face/i);
+
+  await connectSubmissionPort(page);
+  const product = graph.locator(
+    ':scope > [data-model-id="product"]:not([data-ark-group])'
+  );
+  const toHandle = graph.locator(
+    '.ark-harness-edge-handle[data-ark-edge-id="e_order_customer"][data-ark-edge-end="to"]'
+  );
+  const [handleBox, productBox] = await Promise.all([
+    requiredBoundingBox(toHandle),
+    requiredBoundingBox(product),
+  ]);
+  await page.mouse.move(
+    handleBox.x + handleBox.width / 2,
+    handleBox.y + handleBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    productBox.x + productBox.width / 2,
+    productBox.y + productBox.height / 2,
+    { steps: 5 }
+  );
+  await expect(graph.locator(".ark-harness-edge-preview")).toBeVisible();
+  await expect(graph.locator(".ark-harness-edge-drop-indicator")).toBeVisible();
+  await page.mouse.up();
+  await expect
+    .poll(async () => (await readNamedEdge(page, "e_order_customer")).x2)
+    .toBeGreaterThan(productBox.x - 2);
+  const movedEdge = await readNamedEdge(page, "e_order_customer");
+  expect(movedEdge.x2).toBeLessThan(productBox.x + productBox.width + 2);
+  expect(movedEdge.y2).toBeGreaterThan(productBox.y - 2);
+  expect(movedEdge.y2).toBeLessThan(productBox.y + productBox.height + 2);
+
+  await page
+    .getByRole("button", { name: "変更を親フレームへ送信する" })
+    .click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  const submission = await page.evaluate(
+    () =>
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+  );
+  const submittedEdge = (
+    submission as {
+      model: { edges: typeof diagramModel.edges };
+    }
+  ).model.edges.find(edge => edge.id === "e_order_customer");
+  expect(submittedEdge).toMatchObject({
+    from: "order",
+    to: "product",
+    ext: diagramModel.edges.find(edge => edge.id === "e_order_customer")?.ext,
+  });
+  const cleanHtml = (submission as { html: string }).html;
+  expect(cleanHtml).not.toContain("ark-harness-edge-handle");
+  expect(cleanHtml).not.toContain("ark-harness-edge-cardinality");
+  expect(cleanHtml).toContain('data-ark-container="graph"');
+  expect(cleanHtml).toContain('data-model-id="product"');
+  expect(errors).toEqual([]);
+});
+
 test("infrastructure sample は kind アイコンと手動配置で接続を表示する", async ({
   page,
 }) => {

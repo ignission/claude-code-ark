@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>ER edge semantics</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; padding:1.5rem; background:#111827; color:#e5e7eb; font-family:system-ui,sans-serif; }
+  h1 { margin:0 0 .35rem; font-size:1.2rem; }
+  .legend { margin:0 0 1rem; color:#9ca3af; font-size:.8rem; }
+  .er-graph { width:980px; height:600px; border:1px solid #374151; border-radius:12px; background:#172033; }
+  .entity { width:220px; box-sizing:border-box; border:1px solid #4b5563; border-top:4px solid #60a5fa; border-radius:8px; background:#1f2937; box-shadow:0 8px 24px rgba(0,0,0,.25); }
+  .entity-label { margin:0; padding:.65rem .85rem; border-bottom:1px solid #374151; color:#dbeafe; font-size:.95rem; }
+  .entity ul { list-style:none; margin:0; padding:.45rem 0 .65rem; }
+  .entity li { padding:.2rem .85rem; color:#d1d5db; font-family:ui-monospace,monospace; font-size:.76rem; }
+  .entity li:first-child { color:#fbbf24; }
+  [data-ark-container="graph"] .ark-harness-edge-main[data-ark-edge-type="identifying"] { stroke:#f59e0b; stroke-width:2.25; }
+  [data-ark-container="graph"] .ark-harness-edge-main[data-ark-edge-type="association"] { stroke:#a78bfa; stroke-dasharray:7 5; }
+  [data-ark-container="graph"] .ark-harness-edge-main[data-ark-edge-type="optional-reference"] { stroke:#34d399; }
+</style>
+</head>
+<body>
+<h1>注文ドメイン ER 図</h1>
+<p class="legend">1:N、0..1、N:M と方向・種別を edge.ext から投影</p>
+<script type="application/json" id="ark-diagram-model">
+{
+  "version": 1,
+  "title": "注文ドメイン ER 図",
+  "nodes": [
+    {
+      "id": "customer",
+      "label": "Customer",
+      "kind": "entity",
+      "ext": { "x": 40, "y": 70 },
+      "fields": [
+        { "id": "customer_id", "label": "id PK" },
+        { "id": "customer_email", "label": "email" }
+      ]
+    },
+    {
+      "id": "order",
+      "label": "Order",
+      "kind": "entity",
+      "ext": { "x": 360, "y": 70 },
+      "fields": [
+        { "id": "order_id", "label": "id PK" },
+        { "id": "order_customer_id", "label": "customer_id FK" },
+        { "id": "order_featured_product_id", "label": "featured_product_id FK NULL" }
+      ]
+    },
+    {
+      "id": "order-item",
+      "label": "OrderItem",
+      "kind": "entity",
+      "ext": { "x": 360, "y": 340 },
+      "fields": [
+        { "id": "order_item_id", "label": "id PK" },
+        { "id": "order_item_order_id", "label": "order_id FK" },
+        { "id": "order_item_product_id", "label": "product_id FK" },
+        { "id": "order_item_quantity", "label": "quantity" }
+      ]
+    },
+    {
+      "id": "product",
+      "label": "Product",
+      "kind": "entity",
+      "ext": { "x": 700, "y": 320 },
+      "fields": [
+        { "id": "product_id", "label": "id PK" },
+        { "id": "product_name", "label": "name" },
+        { "id": "product_price", "label": "price" }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_order_customer",
+      "from": "order",
+      "to": "customer",
+      "label": "placed by",
+      "ext": {
+        "from_card": "one",
+        "to_card": "zero-or-many",
+        "direction": "forward",
+        "type": "belongs-to"
+      }
+    },
+    {
+      "id": "e_order_items",
+      "from": "order",
+      "to": "order-item",
+      "label": "contains",
+      "ext": {
+        "from_card": "one",
+        "to_card": "one-or-many",
+        "direction": "forward",
+        "type": "identifying"
+      }
+    },
+    {
+      "id": "e_order_featured_product",
+      "from": "order",
+      "to": "product",
+      "label": "features",
+      "ext": {
+        "from_card": "one",
+        "to_card": "zero-or-one",
+        "direction": "none",
+        "type": "optional-reference"
+      }
+    },
+    {
+      "id": "e_item_product",
+      "from": "order-item",
+      "to": "product",
+      "label": "catalog association",
+      "ext": {
+        "from_card": "zero-or-many",
+        "to_card": "zero-or-many",
+        "direction": "both",
+        "type": "association"
+      }
+    }
+  ],
+  "groups": []
+}
+</script>
+<div class="er-graph" data-ark-container="graph">
+  <section class="entity" data-model-id="customer" data-kind="entity">
+    <h2 class="entity-label" data-model-id="customer">Customer</h2>
+    <ul>
+      <li data-model-id="customer_id">id PK</li>
+      <li data-model-id="customer_email">email</li>
+    </ul>
+  </section>
+  <section class="entity" data-model-id="order" data-kind="entity">
+    <h2 class="entity-label" data-model-id="order">Order</h2>
+    <ul>
+      <li data-model-id="order_id">id PK</li>
+      <li data-model-id="order_customer_id">customer_id FK</li>
+      <li data-model-id="order_featured_product_id">featured_product_id FK NULL</li>
+    </ul>
+  </section>
+  <section class="entity" data-model-id="order-item" data-kind="entity">
+    <h2 class="entity-label" data-model-id="order-item">OrderItem</h2>
+    <ul>
+      <li data-model-id="order_item_id">id PK</li>
+      <li data-model-id="order_item_order_id">order_id FK</li>
+      <li data-model-id="order_item_product_id">product_id FK</li>
+      <li data-model-id="order_item_quantity">quantity</li>
+    </ul>
+  </section>
+  <section class="entity" data-model-id="product" data-kind="entity">
+    <h2 class="entity-label" data-model-id="product">Product</h2>
+    <ul>
+      <li data-model-id="product_id">id PK</li>
+      <li data-model-id="product_name">name</li>
+      <li data-model-id="product_price">price</li>
+    </ul>
+  </section>
+</div>
+</body>
+</html>
