@@ -45,6 +45,23 @@ describe("injectHarness", () => {
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 
+  it("group projection と geometry 同期の契約を注入する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><section data-ark-group data-model-id="group"></section></div>'
+      )
+    );
+
+    expect(out).toContain("[data-ark-group]");
+    expect(out).toContain("ark-harness-graph-group");
+    expect(out).toContain("--ark-harness-group-x");
+    expect(out).toContain("--ark-harness-group-y");
+    expect(out).toContain("--ark-harness-group-width");
+    expect(out).toContain("--ark-harness-group-height");
+    expect(out).toContain("function renderGraphGroups(");
+    expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
+  });
+
   it("node projection の data-kind を初期表示とモデル再適用で同期する", () => {
     const out = injectHarness(
       page('<div data-model-id="node" data-kind="stale"></div>')

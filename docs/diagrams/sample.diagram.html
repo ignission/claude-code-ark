@@ -4,6 +4,16 @@
 <style>
   body { font-family: system-ui, sans-serif; background:#1a1b26; color:#c0caf5; padding:1.5rem; }
   .graph { min-height:420px; }
+  .group-boundary {
+    display:none; box-sizing:border-box; position:absolute;
+    left:calc(var(--ark-harness-group-x) - 24px);
+    top:calc(var(--ark-harness-group-y) - 36px);
+    width:calc(var(--ark-harness-group-width) + 48px);
+    height:calc(var(--ark-harness-group-height) + 60px);
+    border:1px solid #2ac3de; border-radius:10px; background:rgba(42,195,222,.08);
+  }
+  .group-boundary.ark-harness-graph-group { display:block; }
+  .group-label { position:absolute; top:.45rem; left:.75rem; color:#7dcfff; font-size:.8rem; font-weight:600; }
   .entity {
     --kind-color:#565f89; --kind-bg:#1e202b;
     width:22rem; border:1px solid #2c2f42; border-left:4px solid var(--kind-color);
@@ -76,11 +86,26 @@
       "label": "belongs to"
     }
   ],
-  "groups": []
+  "groups": [
+    {
+      "id": "ordering-context",
+      "label": "Ordering Context",
+      "nodes": [
+        "order",
+        "user"
+      ],
+      "ext": {
+        "role": "bounded-context"
+      }
+    }
+  ]
 }
 </script>
 
 <div class="graph" data-ark-container="graph">
+  <section class="group-boundary" data-ark-group data-model-id="ordering-context">
+    <span class="group-label" data-model-id="ordering-context">Ordering Context</span>
+  </section>
   <div class="entity" data-model-id="order" data-kind="aggregate">
     <h3><span class="kind-icon" aria-hidden="true"></span>Order</h3>
     <ul>

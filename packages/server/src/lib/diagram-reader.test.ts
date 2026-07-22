@@ -85,6 +85,52 @@ describe("readDiagram", () => {
     }
   });
 
+  it("group model と graph projection を配信時も保持する", async () => {
+    const groupModel = JSON.stringify({
+      version: 1,
+      nodes: [
+        { id: "order", label: "Order", ext: { x: 40, y: 50 } },
+        { id: "user", label: "User", ext: { x: 360, y: 180 } },
+      ],
+      edges: [],
+      groups: [
+        {
+          id: "ordering-context",
+          label: "Ordering Context",
+          nodes: ["order", "user"],
+          ext: { role: "bounded-context" },
+        },
+      ],
+    });
+    write(
+      "group.diagram.html",
+      '<div data-ark-container="graph">' +
+        '<section class="group-boundary" data-ark-group data-model-id="ordering-context">' +
+        '<span data-model-id="ordering-context">Ordering Context</span></section>' +
+        '<div data-model-id="order">Order</div>' +
+        '<div data-model-id="user">User</div></div>',
+      groupModel
+    );
+
+    const result = await readDiagram(wt, "group.diagram.html");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.model.groups).toEqual([
+        {
+          id: "ordering-context",
+          label: "Ordering Context",
+          nodes: ["order", "user"],
+          ext: { role: "bounded-context" },
+        },
+      ]);
+      expect(result.html).toContain("data-ark-group");
+      expect(result.html).toContain('class="group-boundary"');
+      expect(result.html).toContain(DIAGRAM_CSP);
+      expect(result.html).toContain(DIAGRAM_HARNESS_MARKER);
+    }
+  });
+
   it("任意の model kind と投影 data-kind を配信時も保持する", async () => {
     const kindModel = JSON.stringify({
       version: 1,

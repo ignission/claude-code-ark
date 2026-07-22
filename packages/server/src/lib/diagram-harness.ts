@@ -90,11 +90,12 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
 }
 .ark-harness-add-row:hover { border-color: #38bdf8; color: #38bdf8; }
 [data-ark-container="graph"] { position: relative; }
+.ark-harness-graph-group { position: absolute; z-index: 0; }
 .ark-harness-graph-node {
-  position: absolute; left: var(--ark-harness-graph-x); top: var(--ark-harness-graph-y); z-index: 1;
+  position: absolute; left: var(--ark-harness-graph-x); top: var(--ark-harness-graph-y); z-index: 2;
 }
 .ark-harness-edge-layer {
-  position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%;
+  position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%;
   overflow: visible; pointer-events: none;
 }
 .ark-harness-edge-layer line, .ark-harness-edge-layer path {
@@ -105,11 +106,11 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   font-size: 12px; text-anchor: middle; dominant-baseline: central;
 }
 .ark-harness-graph-handle {
-  position: absolute; top: .25rem; right: .25rem; z-index: 2;
+  position: absolute; top: .25rem; right: .25rem; z-index: 3;
   border: 1px solid rgba(100,116,139,.45); border-radius: 4px; background: rgba(255,255,255,.9);
   color: #64748b; cursor: grab; line-height: 1; padding: .25rem; touch-action: none;
 }
-.ark-harness-graph-dragging { z-index: 2; }
+.ark-harness-graph-dragging { z-index: 3; }
 body { padding-bottom: 3.4rem !important; }
 </style>`;
 
@@ -122,6 +123,12 @@ const HARNESS_JS = `(function () {
   "use strict";
 
   var MODEL_SCRIPT_ID = "${MODEL_SCRIPT_ID}";
+  var GROUP_GEOMETRY_PROPERTIES = [
+    "--ark-harness-group-x",
+    "--ark-harness-group-y",
+    "--ark-harness-group-width",
+    "--ark-harness-group-height"
+  ];
 
   var BLOCK_TAGS = {
     DIV: 1, UL: 1, OL: 1, LI: 1, TABLE: 1, THEAD: 1, TBODY: 1, TR: 1, TD: 1, TH: 1,
@@ -177,6 +184,14 @@ const HARNESS_JS = `(function () {
     return null;
   }
 
+  function getGroup(model, id) {
+    var groups = model.groups || [];
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].id === id) return groups[i];
+    }
+    return null;
+  }
+
   function finiteNumber(v) {
     return typeof v === "number" && Number.isFinite(v);
   }
@@ -219,8 +234,57 @@ const HARNESS_JS = `(function () {
     svg.appendChild(text);
   }
 
+  function clearGroupGeometry(el) {
+    el.classList.remove("ark-harness-graph-group");
+    GROUP_GEOMETRY_PROPERTIES.forEach(function (property) {
+      el.style.removeProperty(property);
+    });
+    if (el.style.length === 0) el.removeAttribute("style");
+  }
+
+  function renderGraphGroups(graph) {
+    var containerRect = graph.container.getBoundingClientRect();
+    graph.groupsById.forEach(function (el, id) {
+      var group = getGroup(state.model, id);
+      if (!group || !Array.isArray(group.nodes) || group.nodes.length === 0) {
+        clearGroupGeometry(el);
+        return;
+      }
+
+      var memberEls = [];
+      for (var i = 0; i < group.nodes.length; i++) {
+        var memberEl = graph.nodesById.get(group.nodes[i]);
+        if (!memberEl) {
+          clearGroupGeometry(el);
+          return;
+        }
+        memberEls.push(memberEl);
+      }
+
+      var firstRect = memberEls[0].getBoundingClientRect();
+      var minLeft = firstRect.left;
+      var minTop = firstRect.top;
+      var maxRight = firstRect.right;
+      var maxBottom = firstRect.bottom;
+      for (var j = 1; j < memberEls.length; j++) {
+        var memberRect = memberEls[j].getBoundingClientRect();
+        minLeft = Math.min(minLeft, memberRect.left);
+        minTop = Math.min(minTop, memberRect.top);
+        maxRight = Math.max(maxRight, memberRect.right);
+        maxBottom = Math.max(maxBottom, memberRect.bottom);
+      }
+
+      el.classList.add("ark-harness-graph-group");
+      el.style.setProperty("--ark-harness-group-x", minLeft - containerRect.left + "px");
+      el.style.setProperty("--ark-harness-group-y", minTop - containerRect.top + "px");
+      el.style.setProperty("--ark-harness-group-width", maxRight - minLeft + "px");
+      el.style.setProperty("--ark-harness-group-height", maxBottom - minTop + "px");
+    });
+  }
+
   function renderGraph(graph) {
     graph.scheduled = false;
+    renderGraphGroups(graph);
     while (graph.svg.firstChild) graph.svg.removeChild(graph.svg.firstChild);
     appendGraphMarker(graph.svg, graph.markerId);
 
@@ -354,6 +418,14 @@ const HARNESS_JS = `(function () {
   function wireGraph(container) {
     var nodesById = new Map();
     var modelNodesById = new Map();
+    var groupsById = new Map();
+    var groupCandidates = container.querySelectorAll("[data-ark-group][data-model-id]");
+    groupCandidates.forEach(function (el) {
+      if (el.closest('[data-ark-container="graph"]') !== container) return;
+      var id = el.getAttribute("data-model-id");
+      if (!id || groupsById.has(id) || !getGroup(state.model, id)) return;
+      groupsById.set(id, el);
+    });
     var candidates = container.querySelectorAll("[data-model-id]");
     candidates.forEach(function (el) {
       if (el.closest('[data-ark-container="graph"]') !== container) return;
@@ -377,6 +449,7 @@ const HARNESS_JS = `(function () {
     var graph = {
       container: container,
       nodesById: nodesById,
+      groupsById: groupsById,
       svg: svg,
       resizeObserver: null,
       scheduled: false,
@@ -658,6 +731,7 @@ const HARNESS_JS = `(function () {
     var editableEls = document.querySelectorAll("[data-model-id]");
     editableEls.forEach(function (el) {
       if (isInsideHarnessUi(el)) return;
+      if (el.hasAttribute("data-ark-group")) return;
       if (!isLeaf(el)) return;
       var rowInfo = null;
       if (el.tagName === "LI" && el.parentElement) {
@@ -679,6 +753,12 @@ const HARNESS_JS = `(function () {
     clone.querySelectorAll(".ark-harness-graph-node").forEach(function (el) {
       el.style.removeProperty("--ark-harness-graph-x");
       el.style.removeProperty("--ark-harness-graph-y");
+      if (el.style.length === 0) el.removeAttribute("style");
+    });
+    clone.querySelectorAll(".ark-harness-graph-group").forEach(function (el) {
+      GROUP_GEOMETRY_PROPERTIES.forEach(function (property) {
+        el.style.removeProperty(property);
+      });
       if (el.style.length === 0) el.removeAttribute("style");
     });
     clone.querySelectorAll("[data-ark-harness-wrap]").forEach(function (span) {
@@ -760,6 +840,7 @@ const HARNESS_JS = `(function () {
         if (!Array.isArray(parsed.groups)) parsed.groups = [];
         state.model = parsed;
         syncNodeKinds();
+        graphs.forEach(function (graph) { scheduleGraphRender(graph); });
         error.style.display = "none";
         panel.style.display = "none";
       } catch (e) {
