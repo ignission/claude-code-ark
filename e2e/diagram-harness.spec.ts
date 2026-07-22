@@ -512,7 +512,9 @@ test("sample は複数 kind を色とアイコンで区別する", async ({ page
       return Object.fromEntries(parsed.nodes.map(node => [node.id, node.kind]));
     });
   const projections = await page
-    .locator('[data-ark-container="graph"] > [data-model-id]')
+    .locator(
+      '[data-ark-container="graph"] > [data-model-id]:not([data-ark-group])'
+    )
     .evaluateAll(elements =>
       elements.map(element => {
         const icon = element.querySelector(".kind-icon");
@@ -544,6 +546,42 @@ test("sample は複数 kind を色とアイコンで区別する", async ({ page
   await expect(
     graph.locator('li[data-model-id="order_id"] .ark-harness-text')
   ).toHaveAttribute("contenteditable", "true");
+});
+
+test("sample group は2 node を囲むラベル付き境界として表示する", async ({
+  page,
+}) => {
+  await openSampleDiagram(page);
+
+  const groups = await page.locator("#ark-diagram-model").evaluate(element => {
+    const parsed = JSON.parse(element.textContent || "") as {
+      groups: Array<{ id: string; label: string; nodes: string[] }>;
+    };
+    return parsed.groups;
+  });
+  expect(groups.length).toBeGreaterThanOrEqual(1);
+  const sampleGroup = groups[0];
+  expect(sampleGroup).toBeDefined();
+  if (!sampleGroup) return;
+  expect(sampleGroup.nodes).toHaveLength(2);
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  const boundary = graph.locator(
+    `[data-ark-group][data-model-id="${sampleGroup.id}"]`
+  );
+  const [boundaryBox, firstNodeBox, secondNodeBox] = await Promise.all([
+    requiredBoundingBox(boundary),
+    requiredBoundingBox(
+      graph.locator(`[data-model-id="${sampleGroup.nodes[0]}"]`).first()
+    ),
+    requiredBoundingBox(
+      graph.locator(`[data-model-id="${sampleGroup.nodes[1]}"]`).first()
+    ),
+  ]);
+  expectBoxToContain(boundaryBox, firstNodeBox);
+  expectBoxToContain(boundaryBox, secondNodeBox);
+  await expect(boundary).toContainText(sampleGroup.label);
+  await expect(boundary.locator(".group-label")).toBeVisible();
 });
 
 test("node ドラッグと list 編集を送信 model と clean HTML に反映する", async ({

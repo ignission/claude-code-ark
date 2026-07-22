@@ -121,6 +121,102 @@ node の `kind` フィールドで図の要素型を指定する。サーバー�
 [data-kind="lb"] .kind-icon::before { content: "⇄"; }
 ```
 
+## 語彙: group
+
+複数 node をラベル付きの境界でまとめるときは group を使う。model shape は
+`{ id, label, nodes, ext? }` で、`nodes` には同じ model に実在する node id を入れる。
+field id や別 group の id は member にせず、group の入れ子も作らない。bounded context、
+actor、VPC、region、subnet など図種固有の役割が必要なら `ext` に置き、server の
+group kind enum や固定 palette は前提にしない。
+
+graph 上の自動境界配置を使う projection root は、member node と sibling にする。
+root の `data-model-id` は group id と一致させ、可視 label の leaf にも同じ id を
+付けると既存 inline label edit を利用できる。
+
+```html
+<section class="group-boundary" data-ark-group data-model-id="ordering-context">
+  <span class="group-label" data-model-id="ordering-context">Ordering Context</span>
+</section>
+<article class="node" data-model-id="order">…</article>
+<article class="node" data-model-id="user">…</article>
+```
+
+ハーネスは member node の外接矩形を次の CSS custom properties として root に渡す。
+余白、border、background、角丸、label 帯の位置と大きさは projection CSS が決める。
+
+- `--ark-harness-group-x`
+- `--ark-harness-group-y`
+- `--ark-harness-group-width`
+- `--ark-harness-group-height`
+
+### Rectangle boundary の例
+
+全周に余白を足し、label を上辺付近に置く例。geometry が解決できない group は
+表示しないよう、harness class が付いたときだけ表示する。
+
+```css
+.group-boundary {
+  display: none;
+  box-sizing: border-box;
+  position: absolute;
+  left: calc(var(--ark-harness-group-x) - 1.5rem);
+  top: calc(var(--ark-harness-group-y) - 2.25rem);
+  width: calc(var(--ark-harness-group-width) + 3rem);
+  height: calc(var(--ark-harness-group-height) + 3.75rem);
+  border: 1px solid currentColor;
+  border-radius: .75rem;
+  background: rgba(125, 207, 255, .08);
+}
+.group-boundary.ark-harness-graph-group { display: block; }
+.group-boundary .group-label {
+  position: absolute;
+  top: .5rem;
+  left: .75rem;
+  font-weight: 600;
+}
+```
+
+### Swimlane の例
+
+同じ model shape と DOM contract のまま projection class を変え、左側に大きな
+label 帯を確保する例。上帯にしたい場合も同じ4変数から `top` / `height` を
+`calc()` して表現する。
+
+```html
+<section class="group-swimlane" data-ark-group data-model-id="payment-lane">
+  <span class="group-label" data-model-id="payment-lane">Payment</span>
+</section>
+```
+
+```css
+.group-swimlane {
+  display: none;
+  box-sizing: border-box;
+  position: absolute;
+  left: calc(var(--ark-harness-group-x) - 5rem);
+  top: calc(var(--ark-harness-group-y) - 1rem);
+  width: calc(var(--ark-harness-group-width) + 6rem);
+  height: calc(var(--ark-harness-group-height) + 2rem);
+  border: 1px solid currentColor;
+  background: rgba(187, 154, 247, .06);
+}
+.group-swimlane.ark-harness-graph-group { display: block; }
+.group-swimlane .group-label {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4.5rem;
+  display: grid;
+  place-items: center;
+  border-right: 1px solid currentColor;
+  writing-mode: vertical-rl;
+}
+```
+
+group 自体の drag や member node の一括移動、snap / grid、自動レイアウト、
+group nesting は未対応。node は従来どおり個別に drag し、境界だけが追従する。
+group projection でも外部 stylesheet、font、image は使わず、Unicode、inline SVG、
+data URI、生成 CSS の範囲で可視 label を必ず設ける。
+
 ## 表現
 
 図種は問わない。エンティティ表、スイムレーン、状態機械など、問題に合うものを HTML と CSS で作る。
