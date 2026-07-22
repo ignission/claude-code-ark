@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Order and Payment Event Storming</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 1.5rem;
+    background: #111827;
+    color: #e5e7eb;
+    font-family: system-ui, sans-serif;
+  }
+  h1 { margin: 0 0 1rem; font-size: 1.25rem; }
+  .graph {
+    width: 1490px;
+    min-height: 680px;
+    overflow: hidden;
+    outline: 1px solid #334155;
+    border-radius: 12px;
+    background: #151d2b;
+  }
+  .timeline-guide {
+    position: absolute;
+    top: 38px;
+    left: 32px;
+    right: 32px;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: #cbd5e1;
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .timeline-line {
+    position: relative;
+    height: 2px;
+    margin: 0 1rem;
+    flex: 1;
+    background: #64748b;
+  }
+  .timeline-line::after {
+    position: absolute;
+    top: 50%;
+    right: -1px;
+    width: 9px;
+    height: 9px;
+    border-top: 2px solid #64748b;
+    border-right: 2px solid #64748b;
+    content: "";
+    transform: translateY(-50%) rotate(45deg);
+  }
+  .storming-note {
+    --kind-color: #94a3b8;
+    --kind-bg: #202b3c;
+    width: 140px;
+    min-height: 112px;
+    padding: .85rem .75rem;
+    border: 1px solid var(--kind-color);
+    border-left: 6px solid var(--kind-color);
+    border-radius: 4px;
+    background: var(--kind-bg);
+    box-shadow: 0 7px 18px rgba(0, 0, 0, .2);
+  }
+  .note-heading { display: flex; align-items: center; gap: .45rem; }
+  .kind-icon {
+    display: inline-grid;
+    width: 1.35rem;
+    height: 1.35rem;
+    flex: 0 0 auto;
+    place-items: center;
+    color: var(--kind-color);
+    font-size: 1rem;
+  }
+  .kind-name {
+    color: var(--kind-color);
+    font-size: .65rem;
+    font-weight: 800;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .node-label {
+    display: block;
+    margin-top: .7rem;
+    font-size: .9rem;
+    font-weight: 750;
+    line-height: 1.25;
+  }
+  [data-kind="event"] { --kind-color: #f59e0b; --kind-bg: #3b2810; }
+  [data-kind="command"] { --kind-color: #60a5fa; --kind-bg: #172a46; }
+  [data-kind="aggregate"] { --kind-color: #facc15; --kind-bg: #3a3111; }
+  [data-kind="policy"] { --kind-color: #c084fc; --kind-bg: #302044; }
+  [data-kind="actor"] {
+    --kind-color: #f472b6;
+    --kind-bg: #3b1e35;
+    width: 120px;
+    min-height: 84px;
+  }
+  [data-kind="read-model"] { --kind-color: #4ade80; --kind-bg: #153522; }
+  [data-kind="event"] .kind-icon::before { content: "⚡"; }
+  [data-kind="command"] .kind-icon::before { content: "▶"; }
+  [data-kind="aggregate"] .kind-icon::before { content: "◆"; }
+  [data-kind="policy"] .kind-icon::before { content: "◇"; }
+  [data-kind="actor"] .kind-icon::before { content: "◎"; }
+  [data-kind="read-model"] .kind-icon::before { content: "▤"; }
+  .event-lane {
+    display: none;
+    position: absolute;
+    left: 0;
+    width: 100%;
+    top: calc(var(--ark-harness-group-y) - 24px);
+    height: calc(var(--ark-harness-group-height) + 48px);
+    border: 1px solid currentColor;
+    border-width: 1px 0;
+    background: color-mix(in srgb, currentColor 5%, transparent);
+    color: #64748b;
+    pointer-events: none;
+  }
+  .event-lane.ark-harness-graph-group { display: block; }
+  .lane-customer { color: #f472b6; }
+  .lane-ordering { color: #60a5fa; }
+  .lane-payment { color: #c084fc; }
+  .group-label {
+    position: absolute;
+    top: .45rem;
+    left: .75rem;
+    padding: .18rem .5rem;
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    background: #151d2b;
+    color: currentColor;
+    font-size: .7rem;
+    font-weight: 800;
+    letter-spacing: .04em;
+  }
+</style>
+</head>
+<body>
+<h1>Order and Payment Event Storming</h1>
+<script type="application/json" id="ark-diagram-model">
+{
+  "version": 1,
+  "title": "Order and Payment Event Storming",
+  "nodes": [
+    { "id": "customer", "label": "Customer", "kind": "actor", "ext": { "x": 32, "y": 110 } },
+    { "id": "place-order", "label": "Place order", "kind": "command", "ext": { "x": 190, "y": 290 } },
+    { "id": "order", "label": "Order", "kind": "aggregate", "ext": { "x": 350, "y": 290 } },
+    { "id": "order-placed", "label": "Order placed", "kind": "event", "ext": { "x": 510, "y": 290 } },
+    { "id": "capture-payment-policy", "label": "Capture payment policy", "kind": "policy", "ext": { "x": 670, "y": 290 } },
+    { "id": "capture-payment", "label": "Capture payment", "kind": "command", "ext": { "x": 830, "y": 480 } },
+    { "id": "payment", "label": "Payment", "kind": "aggregate", "ext": { "x": 990, "y": 480 } },
+    { "id": "payment-captured", "label": "Payment captured", "kind": "event", "ext": { "x": 1150, "y": 480 } },
+    { "id": "order-status", "label": "Order status", "kind": "read-model", "ext": { "x": 1310, "y": 290 } }
+  ],
+  "edges": [
+    { "id": "customer-to-place-order", "from": "customer", "to": "place-order", "label": "requests" },
+    { "id": "place-order-to-order", "from": "place-order", "to": "order", "label": "targets" },
+    { "id": "order-to-order-placed", "from": "order", "to": "order-placed", "label": "emits" },
+    { "id": "order-placed-to-policy", "from": "order-placed", "to": "capture-payment-policy", "label": "triggers" },
+    { "id": "policy-to-capture-payment", "from": "capture-payment-policy", "to": "capture-payment", "label": "issues" },
+    { "id": "capture-payment-to-payment", "from": "capture-payment", "to": "payment", "label": "charges" },
+    { "id": "payment-to-payment-captured", "from": "payment", "to": "payment-captured", "label": "records" },
+    { "id": "payment-captured-to-order-status", "from": "payment-captured", "to": "order-status", "label": "updates" }
+  ],
+  "groups": [
+    {
+      "id": "customer-lane",
+      "label": "Customer",
+      "nodes": ["customer"],
+      "ext": { "role": "swimlane", "lane": "customer" }
+    },
+    {
+      "id": "ordering-lane",
+      "label": "Ordering",
+      "nodes": ["place-order", "order", "order-placed", "capture-payment-policy", "order-status"],
+      "ext": { "role": "swimlane", "lane": "ordering" }
+    },
+    {
+      "id": "payment-lane",
+      "label": "Payment",
+      "nodes": ["capture-payment", "payment", "payment-captured"],
+      "ext": { "role": "swimlane", "lane": "payment" }
+    }
+  ]
+}
+</script>
+
+<div class="graph" data-ark-container="graph">
+  <div class="timeline-guide">
+    <span class="timeline-earlier">Earlier</span>
+    <span class="timeline-line" aria-hidden="true"></span>
+    <span class="timeline-later">Later</span>
+  </div>
+
+  <section class="event-lane lane-customer" data-ark-group data-model-id="customer-lane">
+    <span class="group-label" data-model-id="customer-lane">Customer</span>
+  </section>
+  <section class="event-lane lane-ordering" data-ark-group data-model-id="ordering-lane">
+    <span class="group-label" data-model-id="ordering-lane">Ordering</span>
+  </section>
+  <section class="event-lane lane-payment" data-ark-group data-model-id="payment-lane">
+    <span class="group-label" data-model-id="payment-lane">Payment</span>
+  </section>
+
+  <article class="storming-note" data-model-id="customer" data-kind="actor">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Actor</span></div>
+    <span class="node-label">Customer</span>
+  </article>
+  <article class="storming-note" data-model-id="place-order" data-kind="command">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Command</span></div>
+    <span class="node-label">Place order</span>
+  </article>
+  <article class="storming-note" data-model-id="order" data-kind="aggregate">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Aggregate</span></div>
+    <span class="node-label">Order</span>
+  </article>
+  <article class="storming-note" data-model-id="order-placed" data-kind="event">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span></div>
+    <span class="node-label">Order placed</span>
+  </article>
+  <article class="storming-note" data-model-id="capture-payment-policy" data-kind="policy">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Policy</span></div>
+    <span class="node-label">Capture payment policy</span>
+  </article>
+  <article class="storming-note" data-model-id="capture-payment" data-kind="command">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Command</span></div>
+    <span class="node-label">Capture payment</span>
+  </article>
+  <article class="storming-note" data-model-id="payment" data-kind="aggregate">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Aggregate</span></div>
+    <span class="node-label">Payment</span>
+  </article>
+  <article class="storming-note" data-model-id="payment-captured" data-kind="event">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span></div>
+    <span class="node-label">Payment captured</span>
+  </article>
+  <article class="storming-note" data-model-id="order-status" data-kind="read-model">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Read model</span></div>
+    <span class="node-label">Order status</span>
+  </article>
+</div>
+</body>
+</html>
