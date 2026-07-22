@@ -224,6 +224,40 @@ describe("replaceModelBlock", () => {
     }
   });
 
+  it("モデルブロックの往復で edge.ext のセマンティクスを保持する", () => {
+    const html = page(
+      `<script type="application/json" id="ark-diagram-model">${MODEL}</script><div>図</div>`
+    );
+    const edge = {
+      id: "e_order_user",
+      from: "order",
+      to: "user",
+      label: "belongs to",
+      ext: {
+        from_card: "one",
+        to_card: "zero-or-many",
+        direction: "forward",
+        type: "belongs-to",
+      },
+    };
+    const nextModel: DiagramModel = {
+      ...MODEL_OBJ,
+      nodes: [
+        { id: "order", label: "Order" },
+        { id: "user", label: "User" },
+      ],
+      edges: [edge],
+    };
+
+    const replaced = replaceModelBlock(html, nextModel);
+    expect(replaced.ok).toBe(true);
+    if (!replaced.ok) return;
+
+    const extracted = extractModel(replaced.html);
+    expect(extracted.ok).toBe(true);
+    if (extracted.ok) expect(extracted.model.edges[0]).toEqual(edge);
+  });
+
   it("モデルブロックの往復で任意の node kind を保持する", () => {
     const html = page(
       `<script type="application/json" id="ark-diagram-model">${MODEL}</script><div>図</div>`

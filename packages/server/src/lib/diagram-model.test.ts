@@ -52,6 +52,36 @@ describe("parseDiagramModel", () => {
     }
   });
 
+  it("edge のセマンティクスを ext に保持する", () => {
+    const ext = {
+      from_card: "one",
+      to_card: "zero-or-many",
+      direction: "forward",
+      type: "belongs-to",
+    };
+    const json = JSON.stringify({
+      version: 1,
+      nodes: [
+        { id: "order", label: "Order" },
+        { id: "user", label: "User" },
+      ],
+      edges: [
+        {
+          id: "e_order_user",
+          from: "order",
+          to: "user",
+          label: "belongs to",
+          ext,
+        },
+      ],
+    });
+
+    const result = parseDiagramModel(json);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.model.edges[0]?.ext).toEqual(ext);
+  });
+
   it("任意の node kind を文字列のまま保持する", () => {
     const json = JSON.stringify({
       version: 1,

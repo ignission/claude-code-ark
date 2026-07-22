@@ -177,17 +177,132 @@ describe("describeModelDiff（境界ケース）", () => {
 
   it("edge の to が変わったとき、変更前後を明示して述べる", () => {
     const user = { id: "user", label: "User" };
-    const product = { id: "product", label: "Product" };
-    const nodes = [order, user, product];
+    const account = { id: "account", label: "Account" };
+    const nodes = [order, user, account];
+    const ext = {
+      from_card: "one",
+      to_card: "zero-or-many",
+      direction: "forward",
+      type: "belongs-to",
+    };
     const before = model(nodes, [
-      { id: "e1", from: "order", to: "user", label: "ships to" },
+      {
+        id: "e1",
+        from: "order",
+        to: "user",
+        label: "belongs to",
+        ext,
+      },
     ]);
     const after = model(nodes, [
-      { id: "e1", from: "order", to: "product", label: "ships to" },
+      {
+        id: "e1",
+        from: "order",
+        to: "account",
+        label: "belongs to",
+        ext,
+      },
     ]);
 
     expect(describeModelDiff(before, after)).toEqual([
-      "Order から User への関連「ships to」を Order から Product への関連「ships to」 に変更",
+      "Order から User への関連「belongs to」を Order から Account への関連「belongs to」 に変更",
+    ]);
+  });
+
+  it("edge の from が変わったとき、変更前後を明示して述べる", () => {
+    const user = { id: "user", label: "User" };
+    const account = { id: "account", label: "Account" };
+    const nodes = [order, user, account];
+    const ext = {
+      from_card: "one",
+      to_card: "zero-or-many",
+      direction: "forward",
+      type: "belongs-to",
+    };
+    const before = model(nodes, [
+      {
+        id: "e1",
+        from: "order",
+        to: "user",
+        label: "belongs to",
+        ext,
+      },
+    ]);
+    const after = model(nodes, [
+      {
+        id: "e1",
+        from: "account",
+        to: "user",
+        label: "belongs to",
+        ext,
+      },
+    ]);
+
+    expect(describeModelDiff(before, after)).toEqual([
+      "Order から User への関連「belongs to」を Account から User への関連「belongs to」 に変更",
+    ]);
+  });
+
+  it("edge.ext だけの変更は意味差分に含めない", () => {
+    const user = { id: "user", label: "User" };
+    const nodes = [order, user];
+    const before = model(nodes, [
+      {
+        id: "e1",
+        from: "order",
+        to: "user",
+        label: "belongs to",
+        ext: {
+          from_card: "one",
+          to_card: "zero-or-many",
+          direction: "forward",
+          type: "belongs-to",
+        },
+      },
+    ]);
+    const after = model(nodes, [
+      {
+        id: "e1",
+        from: "order",
+        to: "user",
+        label: "belongs to",
+        ext: {
+          from_card: "zero-or-one",
+          to_card: "one-or-many",
+          direction: "both",
+          type: "identifying",
+        },
+      },
+    ]);
+
+    expect(describeModelDiff(before, after)).toEqual([]);
+  });
+
+  it("edge.ext と端点を同時に変えても端点の意味差分だけを述べる", () => {
+    const user = { id: "user", label: "User" };
+    const account = { id: "account", label: "Account" };
+    const nodes = [order, user, account];
+    const before = model(nodes, [
+      {
+        id: "e1",
+        from: "order",
+        to: "user",
+        label: "belongs to",
+        ext: { direction: "forward", type: "belongs-to" },
+      },
+    ]);
+    const after = model(nodes, [
+      {
+        id: "e1",
+        from: "order",
+        to: "account",
+        label: "belongs to",
+        ext: { direction: "both", type: "identifying" },
+      },
+    ]);
+
+    expect(describeModelDiff(before, after)).toEqual([
+      "Order から User への関連「belongs to」を Order から Account への関連「belongs to」 に変更",
     ]);
   });
 
