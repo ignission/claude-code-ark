@@ -71,17 +71,19 @@ describe("parseDiagramModel", () => {
     if (result.ok) expect(result.model.ext).toEqual(ext);
   });
 
-  it.each(["invalid", null, [], 42])(
-    "object でない top-level ext (%j) は undefined に正規化する",
-    ext => {
-      const result = parseDiagramModel(
-        JSON.stringify({ version: 1, nodes: [], ext })
-      );
+  it.each([
+    "invalid",
+    null,
+    [],
+    42,
+  ])("object でない top-level ext (%j) は undefined に正規化する", ext => {
+    const result = parseDiagramModel(
+      JSON.stringify({ version: 1, nodes: [], ext })
+    );
 
-      expect(result.ok).toBe(true);
-      if (result.ok) expect(result.model.ext).toBeUndefined();
-    }
-  );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.model.ext).toBeUndefined();
+  });
 
   it("edge のセマンティクスを ext に保持する", () => {
     const ext = {
