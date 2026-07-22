@@ -76,39 +76,116 @@ node の `kind` フィールドで図の要素型を指定する。サーバー�
 
 ### Event storming の例
 
-`command` / `event` / `aggregate` / `policy` は event storming で使える推奨語彙の例であり、server が制限する enum ではない。色だけに依存せず、Unicode icon と可視 label を併用する。
+`command` / `event` / `aggregate` / `policy` / `actor` / `read-model` は event
+storming で使う推奨語彙であり、server が制限する enum ではない。外部サービスとの
+境界を示す必要がある場合だけ `external-system` も使える。未知 kind は共通
+`.storming-note` style へ fallback させ、model の `node.kind` と node projection root の
+`data-kind` は必ず一致させる。
+
+色は event=橙、command=青、aggregate=黄、policy=紫、actor=小さい桃（黄でも可）、
+read-model=緑を基本にする。各 card には `aria-hidden="true"` の `.kind-icon`、可視の
+`.kind-name`、可視の `.node-label` を併置し、色だけで kind を伝えない。
 
 ```html
-<div class="node" data-model-id="place-order" data-kind="command">
-  <span class="kind-icon" aria-hidden="true"></span><span>Place order</span>
-</div>
-<div class="node" data-model-id="order-placed" data-kind="event">
-  <span class="kind-icon" aria-hidden="true"></span><span>Order placed</span>
-</div>
-<div class="node" data-model-id="order" data-kind="aggregate">
-  <span class="kind-icon" aria-hidden="true"></span><span>Order</span>
-</div>
-<div class="node" data-model-id="payment-policy" data-kind="policy">
-  <span class="kind-icon" aria-hidden="true"></span><span>Payment policy</span>
-</div>
+<article class="storming-note" data-model-id="place-order" data-kind="command">
+  <span class="kind-icon" aria-hidden="true"></span>
+  <span class="kind-name">Command</span>
+  <span class="node-label">Place order</span>
+</article>
 ```
 
 ```css
-.node {
-  --kind-color: #565f89;
-  --kind-bg: #1e202b;
+.storming-note {
+  --kind-color: #94a3b8;
+  --kind-bg: #202b3c;
   border: 1px solid var(--kind-color);
+  border-left: 6px solid var(--kind-color);
   background: var(--kind-bg);
 }
-[data-kind="command"] { --kind-color: #7aa2f7; --kind-bg: #1f2a44; }
-[data-kind="event"] { --kind-color: #9ece6a; --kind-bg: #203222; }
-[data-kind="aggregate"] { --kind-color: #e0af68; --kind-bg: #332b1f; }
-[data-kind="policy"] { --kind-color: #bb9af7; --kind-bg: #302640; }
-[data-kind="command"] .kind-icon::before { content: "▶"; }
+[data-kind="event"] { --kind-color: #f59e0b; --kind-bg: #3b2810; }
+[data-kind="command"] { --kind-color: #60a5fa; --kind-bg: #172a46; }
+[data-kind="aggregate"] { --kind-color: #facc15; --kind-bg: #3a3111; }
+[data-kind="policy"] { --kind-color: #c084fc; --kind-bg: #302044; }
+[data-kind="actor"] { --kind-color: #f472b6; --kind-bg: #3b1e35; width: 7.5rem; }
+[data-kind="read-model"] { --kind-color: #4ade80; --kind-bg: #153522; }
+[data-kind="external-system"] { --kind-color: #94a3b8; --kind-bg: #202b3c; }
 [data-kind="event"] .kind-icon::before { content: "⚡"; }
+[data-kind="command"] .kind-icon::before { content: "▶"; }
 [data-kind="aggregate"] .kind-icon::before { content: "◆"; }
 [data-kind="policy"] .kind-icon::before { content: "◇"; }
+[data-kind="actor"] .kind-icon::before { content: "◎"; }
+[data-kind="read-model"] .kind-icon::before { content: "▤"; }
+[data-kind="external-system"] .kind-icon::before { content: "☁"; }
 ```
+
+時系列は Issue `#228` の auto-layout に依存させず、全 node の `ext.x` / `ext.y` に
+有限数を指定する。actor を起点、read-model を結果として、主要因果列の x を左から
+右へ単調に増やす。因果関係には既存 edge の `from` / `to` / `label` だけを使い、
+event storming 専用 edge schema は作らない。
+
+```json
+{
+  "nodes": [
+    { "id": "customer", "label": "Customer", "kind": "actor", "ext": { "x": 24, "y": 80 } },
+    { "id": "place-order", "label": "Place order", "kind": "command", "ext": { "x": 180, "y": 240 } },
+    { "id": "order", "label": "Order", "kind": "aggregate", "ext": { "x": 340, "y": 240 } },
+    { "id": "order-placed", "label": "Order placed", "kind": "event", "ext": { "x": 500, "y": 240 } },
+    { "id": "payment-policy", "label": "Capture payment policy", "kind": "policy", "ext": { "x": 660, "y": 240 } },
+    { "id": "capture-payment", "label": "Capture payment", "kind": "command", "ext": { "x": 820, "y": 400 } },
+    { "id": "order-status", "label": "Order status", "kind": "read-model", "ext": { "x": 980, "y": 240 } }
+  ],
+  "edges": [
+    { "id": "customer-command", "from": "customer", "to": "place-order", "label": "requests" },
+    { "id": "command-aggregate", "from": "place-order", "to": "order", "label": "targets" },
+    { "id": "aggregate-event", "from": "order", "to": "order-placed", "label": "emits" },
+    { "id": "event-policy", "from": "order-placed", "to": "payment-policy", "label": "triggers" },
+    { "id": "policy-command", "from": "payment-policy", "to": "capture-payment", "label": "issues" },
+    { "id": "command-read-model", "from": "capture-payment", "to": "order-status", "label": "updates" }
+  ]
+}
+```
+
+`Earlier → Later` の目盛りや矢印は projection HTML/CSS の補助表示であり、新しい
+model 語彙ではない。外部 image / font / stylesheet / icon library は使わず、Unicode、
+inline SVG、data URI、生成 CSS の範囲で作る。
+
+swimlane や bounded context は既存の flat group で表す。`groups[].nodes` には node id
+だけを入れ、actor や read-model を含む各 node を該当 lane に直接所属させる。
+
+```json
+{
+  "groups": [
+    { "id": "customer-lane", "label": "Customer", "nodes": ["customer"], "ext": { "role": "swimlane", "lane": "customer" } },
+    { "id": "ordering-lane", "label": "Ordering", "nodes": ["place-order", "order", "order-placed", "payment-policy", "order-status"], "ext": { "role": "swimlane", "lane": "ordering" } },
+    { "id": "payment-lane", "label": "Payment", "nodes": ["capture-payment"], "ext": { "role": "swimlane", "lane": "payment" } }
+  ]
+}
+```
+
+projection root は member node と sibling に置き、既存の
+`[data-ark-group][data-model-id]` + `.group-label` contract を使う。全幅の帯や役割ごとの
+境界は authored class と4つの `--ark-harness-group-*` から組み立てる。
+
+```html
+<section class="event-lane lane-payment" data-ark-group data-model-id="payment-lane">
+  <span class="group-label" data-model-id="payment-lane">Payment</span>
+</section>
+```
+
+```css
+.event-lane {
+  display: none;
+  position: absolute;
+  left: calc(var(--ark-harness-group-x) - 5rem);
+  top: calc(var(--ark-harness-group-y) - 1.5rem);
+  width: calc(var(--ark-harness-group-width) + 10rem);
+  height: calc(var(--ark-harness-group-height) + 3rem);
+}
+.event-lane.ark-harness-graph-group { display: block; }
+```
+
+group nesting、group 一括 drag、snap / grid、auto-layout は未対応で、このパターンでも
+導入しない。完成例は `docs/diagrams/event-storming.diagram.html` を参照する。
 
 ### Infrastructure の例
 
