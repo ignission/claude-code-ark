@@ -112,14 +112,106 @@ node の `kind` フィールドで図の要素型を指定する。サーバー�
 
 ### Infrastructure の例
 
-`service` / `db` / `queue` / `lb` も推奨語彙の例として使える。Unicode の代わりに inline SVG や data URI を使ってもよいが、`<img src="https://...">`、外部 stylesheet、icon font / icon library、外部ファイルを指す `<use href>` は禁止する。
+`service` / `db` / `queue` / `lb` / `cache` / `external` はインフラ構成図で
+使える推奨語彙であり、server が制限する enum ではない。未知 kind にも共通
+`.infra-node` style を fallback として適用し、model の `node.kind` と node projection
+root の `data-kind` は一致させる。
+
+#228 の auto-layout に依存せず、graph 内のすべての node に有限数の `ext.x` / `ext.y`
+を指定して手動配置する。外部クライアントも graph 外の特別要素にはせず、
+`kind: "external"` の通常 node とする。通信や依存関係は既存 edge の `from` / `to` /
+`label` だけで表す。
+
+```json
+{
+  "nodes": [
+    { "id": "client", "label": "Internet Client", "kind": "external", "ext": { "x": 24, "y": 280 } },
+    { "id": "lb", "label": "Load Balancer", "kind": "lb", "ext": { "x": 260, "y": 280 } },
+    { "id": "api", "label": "API Service", "kind": "service", "ext": { "x": 500, "y": 280 } }
+  ],
+  "edges": [
+    { "id": "client-to-lb", "from": "client", "to": "lb", "label": "HTTPS" },
+    { "id": "lb-to-api", "from": "lb", "to": "api", "label": "routes" }
+  ]
+}
+```
+
+各 card には `aria-hidden="true"` の `.kind-icon` と、文字として読める可視 label を
+併置する。色は補助情報に留め、6 kind を異なる icon と label でも判別できるようにする。
 
 ```css
+[data-kind="service"] { --kind-color: #60a5fa; --kind-bg: #182942; }
+[data-kind="db"] { --kind-color: #a78bfa; --kind-bg: #27203d; }
+[data-kind="queue"] { --kind-color: #f59e0b; --kind-bg: #342817; }
+[data-kind="lb"] { --kind-color: #34d399; --kind-bg: #17362f; }
+[data-kind="cache"] { --kind-color: #f472b6; --kind-bg: #382035; }
+[data-kind="external"] { --kind-color: #a3a3a3; --kind-bg: #292929; }
 [data-kind="service"] .kind-icon::before { content: "▣"; }
 [data-kind="db"] .kind-icon::before { content: "◉"; }
 [data-kind="queue"] .kind-icon::before { content: "≋"; }
 [data-kind="lb"] .kind-icon::before { content: "⇄"; }
+[data-kind="cache"] .kind-icon::before { content: "◇"; }
+[data-kind="external"] .kind-icon::before { content: "☁"; }
 ```
+
+```html
+<article class="infra-node" data-model-id="api" data-kind="service">
+  <span class="kind-icon" aria-hidden="true"></span>
+  <span class="node-label">API Service</span>
+</article>
+```
+
+icon は Unicode、inline SVG、data URI の範囲で作る。外部 URL の image / font /
+stylesheet / icon library や、外部ファイルを指す `<use href>` は使わない。
+
+region / VPC / subnet の境界は、既存の flat group を次の形で使う。
+
+```json
+{
+  "groups": [
+    { "id": "tokyo-region", "label": "Tokyo Region", "nodes": ["lb", "api"], "ext": { "role": "region" } },
+    { "id": "production-vpc", "label": "Production VPC", "nodes": ["lb", "api"], "ext": { "role": "vpc" } },
+    { "id": "app-subnet", "label": "Application Subnet", "nodes": ["api"], "ext": { "role": "subnet" } }
+  ]
+}
+```
+
+projection は member node の sibling として既存の
+`[data-ark-group][data-model-id]` + `.group-label` contract を使う。
+
+```html
+<section class="infra-boundary boundary-region" data-ark-group data-model-id="tokyo-region">
+  <span class="group-label" data-model-id="tokyo-region">Tokyo Region</span>
+</section>
+```
+
+region / VPC / subnet の階層感が必要でも `groups[].nodes` に group id は入れない。
+外側 group には配下 node の和集合を列挙し、projection class ごとに4つの
+`--ark-harness-group-*` を `calc()` する padding 差で、重なる矩形として近似する。
+
+```css
+.boundary-region {
+  left: calc(var(--ark-harness-group-x) - 8rem);
+  top: calc(var(--ark-harness-group-y) - 5rem);
+  width: calc(var(--ark-harness-group-width) + 16rem);
+  height: calc(var(--ark-harness-group-height) + 10rem);
+}
+.boundary-vpc {
+  left: calc(var(--ark-harness-group-x) - 5rem);
+  top: calc(var(--ark-harness-group-y) - 3rem);
+  width: calc(var(--ark-harness-group-width) + 10rem);
+  height: calc(var(--ark-harness-group-height) + 6rem);
+}
+.boundary-subnet {
+  left: calc(var(--ark-harness-group-x) - 1.5rem);
+  top: calc(var(--ark-harness-group-y) - 2rem);
+  width: calc(var(--ark-harness-group-width) + 3rem);
+  height: calc(var(--ark-harness-group-height) + 3.5rem);
+}
+```
+
+group nesting、group 一括 drag、auto-layout は未対応で、インフラ構成図でも導入しない。
+完成例は `docs/diagrams/infrastructure.diagram.html` を参照する。
 
 ## 語彙: group
 
