@@ -252,6 +252,34 @@ describe("replaceModelBlock", () => {
     }
   });
 
+  it("モデルブロックの往復で group の label / nodes / ext を保持する", () => {
+    const html = page(
+      `<script type="application/json" id="ark-diagram-model">${MODEL}</script><div>図</div>`
+    );
+    const group = {
+      id: "ordering-context",
+      label: "Ordering Context",
+      nodes: ["order", "user"],
+      ext: { role: "bounded-context" },
+    };
+    const nextModel: DiagramModel = {
+      ...MODEL_OBJ,
+      nodes: [
+        { id: "order", label: "Order" },
+        { id: "user", label: "User" },
+      ],
+      groups: [group],
+    };
+
+    const replaced = replaceModelBlock(html, nextModel);
+    expect(replaced.ok).toBe(true);
+    if (!replaced.ok) return;
+
+    const extracted = extractModel(replaced.html);
+    expect(extracted.ok).toBe(true);
+    if (extracted.ok) expect(extracted.model.groups).toEqual([group]);
+  });
+
   it("属性の順序が逆でも差し替えられる", () => {
     const html = page(
       `<script id="ark-diagram-model" type="application/json">${MODEL}</script>`

@@ -74,6 +74,38 @@ describe("parseDiagramModel", () => {
     }
   });
 
+  it("group の label / nodes / ext を保持する", () => {
+    const json = JSON.stringify({
+      version: 1,
+      nodes: [
+        { id: "order", label: "Order" },
+        { id: "user", label: "User" },
+      ],
+      groups: [
+        {
+          id: "ordering-context",
+          label: "Ordering Context",
+          nodes: ["order", "user"],
+          ext: { role: "bounded-context" },
+        },
+      ],
+    });
+
+    const result = parseDiagramModel(json);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.model.groups).toEqual([
+        {
+          id: "ordering-context",
+          label: "Ordering Context",
+          nodes: ["order", "user"],
+          ext: { role: "bounded-context" },
+        },
+      ]);
+    }
+  });
+
   it("id が重複するモデルを拒否する", () => {
     const json = JSON.stringify({
       version: 1,
@@ -100,6 +132,28 @@ describe("parseDiagramModel", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain("missing");
+  });
+
+  it("存在しないノードを含む group を拒否する", () => {
+    const json = JSON.stringify({
+      version: 1,
+      nodes: [{ id: "order", label: "Order" }],
+      groups: [
+        {
+          id: "ordering-context",
+          label: "Ordering Context",
+          nodes: ["order", "missing"],
+        },
+      ],
+    });
+
+    const result = parseDiagramModel(json);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("ordering-context");
+      expect(result.error).toContain("missing");
+    }
   });
 
   it("壊れた JSON を拒否する", () => {
