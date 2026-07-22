@@ -101,6 +101,12 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
 .ark-harness-edge-layer line, .ark-harness-edge-layer path {
   fill: none; stroke: #64748b; stroke-width: 1.5;
 }
+.ark-harness-edge-cardinality circle {
+  fill: #fff; stroke: #64748b; stroke-width: 1.5;
+}
+.ark-harness-edge-cardinality line {
+  stroke: #64748b; stroke-width: 1.5;
+}
 .ark-harness-edge-layer text {
   fill: #475569; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
   font-size: 12px; text-anchor: middle; dominant-baseline: central;
@@ -234,6 +240,164 @@ const HARNESS_JS = `(function () {
     svg.appendChild(text);
   }
 
+  function edgeDirection(edge) {
+    if (!edge || !isRecordObject(edge.ext)) return "forward";
+    var direction = edge.ext.direction;
+    return direction === "reverse" || direction === "both" || direction === "none"
+      ? direction
+      : "forward";
+  }
+
+  function edgeCardinality(edge, end) {
+    if (!edge || !isRecordObject(edge.ext)) return null;
+    var value = edge.ext[end === "from" ? "from_card" : "to_card"];
+    return value === "one" || value === "many" || value === "zero-or-one" ||
+      value === "one-or-many" || value === "zero-or-many" ? value : null;
+  }
+
+  function edgeType(edge) {
+    if (!edge || !isRecordObject(edge.ext)) return null;
+    return typeof edge.ext.type === "string" ? edge.ext.type : null;
+  }
+
+  function edgeGeometry(graph, edge) {
+    var fromEl = graph.nodesById.get(edge.from);
+    var toEl = graph.nodesById.get(edge.to);
+    if (!fromEl || !toEl) return null;
+
+    var svgRect = graph.svg.getBoundingClientRect();
+    var fromRect = fromEl.getBoundingClientRect();
+    var toRect = toEl.getBoundingClientRect();
+    var fromCx = fromRect.left + fromRect.width / 2 - svgRect.left;
+    var fromCy = fromRect.top + fromRect.height / 2 - svgRect.top;
+    var toCx = toRect.left + toRect.width / 2 - svgRect.left;
+    var toCy = toRect.top + toRect.height / 2 - svgRect.top;
+
+    if (edge.from === edge.to) {
+      var startX = fromRect.right - svgRect.left;
+      var startY = fromCy;
+      var endX = fromCx;
+      var endY = fromRect.top - svgRect.top;
+      var loopSize = Math.max(36, Math.min(fromRect.width, fromRect.height) / 2);
+      return {
+        kind: "path",
+        path: "M " + startX + " " + startY + " C " +
+          (startX + loopSize) + " " + startY + ", " +
+          fromCx + " " + (endY - loopSize) + ", " + endX + " " + endY,
+        from: { x: startX, y: startY, tx: 1, ty: 0 },
+        to: { x: endX, y: endY, tx: 0, ty: -1 },
+        label: { x: startX + loopSize * 0.7, y: endY - loopSize * 0.45 }
+      };
+    }
+
+    var dx = toCx - fromCx;
+    var dy = toCy - fromCy;
+    var length = Math.sqrt(dx * dx + dy * dy) || 1;
+    var ux = dx / length;
+    var uy = dy / length;
+    var fromRadius = Math.min(
+      Math.abs(ux) > 0 ? fromRect.width / 2 / Math.abs(ux) : Infinity,
+      Math.abs(uy) > 0 ? fromRect.height / 2 / Math.abs(uy) : Infinity
+    );
+    var toRadius = Math.min(
+      Math.abs(ux) > 0 ? toRect.width / 2 / Math.abs(ux) : Infinity,
+      Math.abs(uy) > 0 ? toRect.height / 2 / Math.abs(uy) : Infinity
+    );
+    var x1 = fromCx + ux * fromRadius;
+    var y1 = fromCy + uy * fromRadius;
+    var x2 = toCx - ux * toRadius;
+    var y2 = toCy - uy * toRadius;
+    return {
+      kind: "line",
+      from: { x: x1, y: y1, tx: ux, ty: uy },
+      to: { x: x2, y: y2, tx: -ux, ty: -uy },
+      label: { x: (x1 + x2) / 2, y: (y1 + y2) / 2 }
+    };
+  }
+
+  function setEdgeProjectionAttributes(main, edge, direction) {
+    main.classList.add("ark-harness-edge-main");
+    main.setAttribute("data-ark-edge-id", edge.id);
+    main.setAttribute("data-ark-edge-direction", direction);
+    var type = edgeType(edge);
+    if (type !== null) main.setAttribute("data-ark-edge-type", type);
+  }
+
+  function applyEdgeMarkers(main, markerId, direction) {
+    var marker = "url(#" + markerId + ")";
+    if (direction === "reverse" || direction === "both") {
+      main.setAttribute("marker-start", marker);
+    }
+    if (direction === "forward" || direction === "both") {
+      main.setAttribute("marker-end", marker);
+    }
+  }
+
+  function appendCardinalityLine(group, a, b) {
+    var line = svgElement("line");
+    line.setAttribute("x1", String(a.x));
+    line.setAttribute("y1", String(a.y));
+    line.setAttribute("x2", String(b.x));
+    line.setAttribute("y2", String(b.y));
+    group.appendChild(line);
+  }
+
+  function appendEdgeCardinality(svg, edge, end, endpoint, value) {
+    if (!value) return;
+    var barDistance = 12;
+    var secondDistance = 22;
+    var halfWidth = 7;
+    var circleRadius = 4;
+    var nx = -endpoint.ty;
+    var ny = endpoint.tx;
+    var point = function (distance, perpendicular) {
+      return {
+        x: endpoint.x + endpoint.tx * distance + nx * perpendicular,
+        y: endpoint.y + endpoint.ty * distance + ny * perpendicular
+      };
+    };
+    var group = svgElement("g");
+    group.classList.add("ark-harness-edge-cardinality");
+    group.setAttribute("data-ark-edge-id", edge.id);
+    group.setAttribute("data-ark-edge-end", end);
+    group.setAttribute("data-ark-edge-cardinality", value);
+    markUi(group);
+
+    var appendBar = function (distance) {
+      appendCardinalityLine(group, point(distance, -halfWidth), point(distance, halfWidth));
+    };
+    var appendCircle = function (distance) {
+      var circle = svgElement("circle");
+      var center = point(distance, 0);
+      circle.setAttribute("cx", String(center.x));
+      circle.setAttribute("cy", String(center.y));
+      circle.setAttribute("r", String(circleRadius));
+      group.appendChild(circle);
+    };
+    var appendMany = function (distance) {
+      var tip = point(distance - 7, 0);
+      appendCardinalityLine(group, tip, point(distance, -halfWidth));
+      appendCardinalityLine(group, tip, point(distance, 0));
+      appendCardinalityLine(group, tip, point(distance, halfWidth));
+    };
+
+    if (value === "one") appendBar(barDistance);
+    if (value === "many") appendMany(barDistance + 7);
+    if (value === "zero-or-one") {
+      appendCircle(barDistance);
+      appendBar(secondDistance);
+    }
+    if (value === "one-or-many") {
+      appendBar(barDistance);
+      appendMany(secondDistance);
+    }
+    if (value === "zero-or-many") {
+      appendCircle(barDistance);
+      appendMany(secondDistance);
+    }
+    svg.appendChild(group);
+  }
+
   function clearGroupGeometry(el) {
     el.classList.remove("ark-harness-graph-group");
     GROUP_GEOMETRY_PROPERTIES.forEach(function (property) {
@@ -288,66 +452,40 @@ const HARNESS_JS = `(function () {
     while (graph.svg.firstChild) graph.svg.removeChild(graph.svg.firstChild);
     appendGraphMarker(graph.svg, graph.markerId);
 
-    var svgRect = graph.svg.getBoundingClientRect();
+    graph.edgeGeometryById.clear();
     var edges = state.model && state.model.edges ? state.model.edges : [];
     edges.forEach(function (edge) {
-      var fromEl = graph.nodesById.get(edge.from);
-      var toEl = graph.nodesById.get(edge.to);
-      if (!fromEl || !toEl) return;
-
-      var fromRect = fromEl.getBoundingClientRect();
-      var toRect = toEl.getBoundingClientRect();
-      var fromCx = fromRect.left + fromRect.width / 2 - svgRect.left;
-      var fromCy = fromRect.top + fromRect.height / 2 - svgRect.top;
-      var toCx = toRect.left + toRect.width / 2 - svgRect.left;
-      var toCy = toRect.top + toRect.height / 2 - svgRect.top;
-
-      if (edge.from === edge.to) {
-        var loop = svgElement("path");
-        var startX = fromRect.right - svgRect.left;
-        var startY = fromCy;
-        var endX = fromCx;
-        var endY = fromRect.top - svgRect.top;
-        var loopSize = Math.max(36, Math.min(fromRect.width, fromRect.height) / 2);
-        loop.setAttribute("data-ark-edge-id", edge.id);
-        loop.setAttribute(
-          "d",
-          "M " + startX + " " + startY + " C " +
-            (startX + loopSize) + " " + startY + ", " +
-            fromCx + " " + (endY - loopSize) + ", " + endX + " " + endY
-        );
-        loop.setAttribute("marker-end", "url(#" + graph.markerId + ")");
-        graph.svg.appendChild(loop);
-        appendGraphLabel(graph.svg, edge.label, startX + loopSize * 0.7, endY - loopSize * 0.45);
-        return;
+      var geometry = edgeGeometry(graph, edge);
+      if (!geometry) return;
+      graph.edgeGeometryById.set(edge.id, geometry);
+      var direction = edgeDirection(edge);
+      var main = svgElement(geometry.kind);
+      setEdgeProjectionAttributes(main, edge, direction);
+      if (geometry.kind === "path") {
+        main.setAttribute("d", geometry.path);
+      } else {
+        main.setAttribute("x1", String(geometry.from.x));
+        main.setAttribute("y1", String(geometry.from.y));
+        main.setAttribute("x2", String(geometry.to.x));
+        main.setAttribute("y2", String(geometry.to.y));
       }
-
-      var dx = toCx - fromCx;
-      var dy = toCy - fromCy;
-      var length = Math.sqrt(dx * dx + dy * dy) || 1;
-      var ux = dx / length;
-      var uy = dy / length;
-      var fromRadius = Math.min(
-        Math.abs(ux) > 0 ? fromRect.width / 2 / Math.abs(ux) : Infinity,
-        Math.abs(uy) > 0 ? fromRect.height / 2 / Math.abs(uy) : Infinity
+      applyEdgeMarkers(main, graph.markerId, direction);
+      graph.svg.appendChild(main);
+      appendEdgeCardinality(
+        graph.svg,
+        edge,
+        "from",
+        geometry.from,
+        edgeCardinality(edge, "from")
       );
-      var toRadius = Math.min(
-        Math.abs(ux) > 0 ? toRect.width / 2 / Math.abs(ux) : Infinity,
-        Math.abs(uy) > 0 ? toRect.height / 2 / Math.abs(uy) : Infinity
+      appendEdgeCardinality(
+        graph.svg,
+        edge,
+        "to",
+        geometry.to,
+        edgeCardinality(edge, "to")
       );
-      var x1 = fromCx + ux * fromRadius;
-      var y1 = fromCy + uy * fromRadius;
-      var x2 = toCx - ux * toRadius;
-      var y2 = toCy - uy * toRadius;
-      var line = svgElement("line");
-      line.setAttribute("data-ark-edge-id", edge.id);
-      line.setAttribute("x1", String(x1));
-      line.setAttribute("y1", String(y1));
-      line.setAttribute("x2", String(x2));
-      line.setAttribute("y2", String(y2));
-      line.setAttribute("marker-end", "url(#" + graph.markerId + ")");
-      graph.svg.appendChild(line);
-      appendGraphLabel(graph.svg, edge.label, (x1 + x2) / 2, (y1 + y2) / 2);
+      appendGraphLabel(graph.svg, edge.label, geometry.label.x, geometry.label.y);
     });
   }
 
@@ -451,6 +589,7 @@ const HARNESS_JS = `(function () {
       nodesById: nodesById,
       groupsById: groupsById,
       svg: svg,
+      edgeGeometryById: new Map(),
       resizeObserver: null,
       scheduled: false,
       markerId: "ark-harness-arrow-" + graphSequence
