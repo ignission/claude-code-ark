@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { injectHarness } from "../packages/server/src/lib/diagram-harness";
 
@@ -7,6 +8,7 @@ const model = {
     {
       id: "order",
       label: "Order",
+      kind: "aggregate",
       fields: [
         { id: "order_id", label: "id" },
         { id: "order_status", label: "status" },
@@ -16,6 +18,7 @@ const model = {
     {
       id: "user",
       label: "User",
+      kind: "entity",
       fields: [{ id: "user_id", label: "id" }],
       ext: { x: 360, y: 180 },
     },
@@ -33,21 +36,27 @@ function diagramHtml(diagramModel: unknown = model): string {
     <style>
       body { margin: 0; }
       .graph { width: 720px; height: 480px; background: #f8fafc; }
-      .entity { box-sizing: border-box; width: 220px; padding: 12px; border: 1px solid #64748b; background: white; }
+      .entity { box-sizing: border-box; width: 220px; padding: 12px; border: 1px solid #64748b; border-left: 4px solid var(--kind-color); background: var(--kind-bg); }
+      [data-kind="aggregate"] { --kind-color: #e0af68; --kind-bg: #332b1f; }
+      [data-kind="entity"] { --kind-color: #7aa2f7; --kind-bg: #1f2a44; }
+      [data-kind="event"] { --kind-color: #9ece6a; --kind-bg: #203222; }
+      [data-kind="aggregate"] .kind-icon::before { content: "◆"; }
+      [data-kind="entity"] .kind-icon::before { content: "●"; }
+      [data-kind="event"] .kind-icon::before { content: "⚡"; }
     </style>
   </head>
   <body>
     <script id="ark-diagram-model" type="application/json">${JSON.stringify(diagramModel)}</script>
     <div class="graph" data-ark-container="graph">
       <section class="entity" data-model-id="order">
-        <h2 data-model-id="order">Order</h2>
+        <h2 data-model-id="order"><span class="kind-icon" aria-hidden="true"></span>Order</h2>
         <ul>
           <li data-model-id="order_id">id</li>
           <li data-model-id="order_status">status</li>
         </ul>
       </section>
       <section class="entity" data-model-id="user">
-        <h2 data-model-id="user">User</h2>
+        <h2 data-model-id="user"><span class="kind-icon" aria-hidden="true"></span>User</h2>
         <ul><li data-model-id="user_id">id</li></ul>
       </section>
     </div>
@@ -93,6 +102,14 @@ async function openDiagram(page: Page, diagramModel: unknown = model) {
   page.on("pageerror", error => errors.push(error.message));
   await page.setContent(diagramHtml(diagramModel));
   return errors;
+}
+
+async function openSampleDiagram(page: Page) {
+  const html = readFileSync(
+    new URL("../docs/diagrams/sample.diagram.html", import.meta.url),
+    "utf8"
+  );
+  await page.setContent(injectHarness(html));
 }
 
 async function connectSubmissionPort(page: Page) {
@@ -170,6 +187,103 @@ test("ext 座標の2次元配置と edge で node 外周を結ぶ", async ({ pag
   };
   expect(pointIsOnPerimeter(line.x1, line.y1, orderBox)).toBe(true);
   expect(pointIsOnPerimeter(line.x2, line.y2, userBox)).toBe(true);
+});
+
+test("node.kind を data-kind へ同期して色とアイコンを区別する", async ({
+  page,
+}) => {
+  await openDiagram(page);
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  const order = graph.locator('section[data-model-id="order"]');
+  const user = graph.locator('section[data-model-id="user"]');
+  await expect(order).toHaveAttribute("data-kind", "aggregate");
+  await expect(user).toHaveAttribute("data-kind", "entity");
+
+  const [orderStyle, userStyle] = await Promise.all([
+    order.evaluate(element => {
+      const style = getComputedStyle(element);
+      const icon = element.querySelector(".kind-icon");
+      return {
+        backgroundColor: style.backgroundColor,
+        borderLeftColor: style.borderLeftColor,
+        icon: icon ? getComputedStyle(icon, "::before").content : "none",
+      };
+    }),
+    user.evaluate(element => {
+      const style = getComputedStyle(element);
+      const icon = element.querySelector(".kind-icon");
+      return {
+        backgroundColor: style.backgroundColor,
+        borderLeftColor: style.borderLeftColor,
+        icon: icon ? getComputedStyle(icon, "::before").content : "none",
+      };
+    }),
+  ]);
+  expect(orderStyle.backgroundColor).not.toBe(userStyle.backgroundColor);
+  expect(orderStyle.borderLeftColor).not.toBe(userStyle.borderLeftColor);
+  expect(orderStyle.icon).not.toBe("none");
+  expect(orderStyle.icon).not.toBe("");
+  expect(userStyle.icon).not.toBe("none");
+  expect(userStyle.icon).not.toBe("");
+  expect(orderStyle.icon).not.toBe(userStyle.icon);
+
+  await expect(graph.locator(".ark-harness-edge-layer")).toHaveCount(1);
+  await expect(graph.locator('[data-ark-edge-id="e_order_user"]')).toHaveCount(
+    1
+  );
+  await expect(
+    order.locator('li[data-model-id="order_id"] .ark-harness-text')
+  ).toHaveAttribute("contenteditable", "true");
+  await expect(
+    user.locator('li[data-model-id="user_id"] .ark-harness-text')
+  ).toHaveAttribute("contenteditable", "true");
+});
+
+test("sample は複数 kind を色とアイコンで区別する", async ({ page }) => {
+  await openSampleDiagram(page);
+
+  const modelKinds = await page
+    .locator("#ark-diagram-model")
+    .evaluate(element => {
+      const parsed = JSON.parse(element.textContent || "") as {
+        nodes: Array<{ id: string; kind?: string }>;
+      };
+      return Object.fromEntries(parsed.nodes.map(node => [node.id, node.kind]));
+    });
+  const projections = await page
+    .locator('[data-ark-container="graph"] > [data-model-id]')
+    .evaluateAll(elements =>
+      elements.map(element => {
+        const icon = element.querySelector(".kind-icon");
+        const style = getComputedStyle(element);
+        return {
+          id: element.getAttribute("data-model-id"),
+          kind: element.getAttribute("data-kind"),
+          color: `${style.backgroundColor}/${style.borderLeftColor}`,
+          icon: icon ? getComputedStyle(icon, "::before").content : "none",
+        };
+      })
+    );
+
+  expect(new Set(Object.values(modelKinds))).toHaveProperty("size", 2);
+  expect(projections).toHaveLength(2);
+  for (const projection of projections) {
+    expect(projection.kind).toBe(modelKinds[projection.id || ""]);
+    expect(projection.icon).not.toBe("none");
+    expect(projection.icon).not.toBe("");
+  }
+  expect(new Set(projections.map(projection => projection.color)).size).toBe(2);
+  expect(new Set(projections.map(projection => projection.icon)).size).toBe(2);
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  await expect(graph.locator('[data-ark-edge-id="e_order_user"]')).toHaveCount(
+    1
+  );
+  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(2);
+  await expect(
+    graph.locator('li[data-model-id="order_id"] .ark-harness-text')
+  ).toHaveAttribute("contenteditable", "true");
 });
 
 test("node ドラッグと list 編集を送信 model と clean HTML に反映する", async ({
@@ -256,7 +370,7 @@ test("node ドラッグと list 編集を送信 model と clean HTML に反映�
   expect(html).toContain('data-ark-container="graph"');
 });
 
-test("モデル直接編集後の node ドラッグを送信 model に反映する", async ({
+test("モデル直接編集後の kind 再同期と node ドラッグを送信 model に反映する", async ({
   page,
 }) => {
   await openDiagram(page);
@@ -265,16 +379,41 @@ test("モデル直接編集後の node ドラッグを送信 model に反映す�
   const editedModel = {
     ...model,
     nodes: model.nodes.map(node =>
-      node.id === "order" ? { ...node, label: "Edited Order" } : node
+      node.id === "order"
+        ? { ...node, label: "Edited Order", kind: "event" }
+        : node
     ),
   };
+  const order = page.locator('section[data-model-id="order"]');
+  const beforeStyle = await order.evaluate(element => {
+    const icon = element.querySelector(".kind-icon");
+    return {
+      backgroundColor: getComputedStyle(element).backgroundColor,
+      borderLeftColor: getComputedStyle(element).borderLeftColor,
+      icon: icon ? getComputedStyle(icon, "::before").content : "none",
+    };
+  });
   await page
     .getByRole("button", { name: "モデル JSON を直接編集する" })
     .click();
   await page.locator(".ark-harness-textarea").fill(JSON.stringify(editedModel));
   await page.getByRole("button", { name: "反映", exact: true }).click();
 
-  const order = page.locator('section[data-model-id="order"]');
+  await expect(order).toHaveAttribute("data-kind", "event");
+  const afterStyle = await order.evaluate(element => {
+    const icon = element.querySelector(".kind-icon");
+    return {
+      backgroundColor: getComputedStyle(element).backgroundColor,
+      borderLeftColor: getComputedStyle(element).borderLeftColor,
+      icon: icon ? getComputedStyle(icon, "::before").content : "none",
+    };
+  });
+  expect(afterStyle.backgroundColor).not.toBe(beforeStyle.backgroundColor);
+  expect(afterStyle.borderLeftColor).not.toBe(beforeStyle.borderLeftColor);
+  expect(afterStyle.icon).not.toBe("none");
+  expect(afterStyle.icon).not.toBe("");
+  expect(afterStyle.icon).not.toBe(beforeStyle.icon);
+
   const handleBox = await requiredBoundingBox(
     order.locator(".ark-harness-graph-handle")
   );
@@ -307,11 +446,22 @@ test("モデル直接編集後の node ドラッグを送信 model に反映す�
     type: "ark:diagram-submit",
     model: {
       nodes: [
-        { id: "order", label: "Edited Order", ext: { x: 120, y: 110 } },
+        {
+          id: "order",
+          label: "Edited Order",
+          kind: "event",
+          ext: { x: 120, y: 110 },
+        },
         { id: "user" },
       ],
     },
   });
+  const html = (submission as { html: string }).html;
+  expect(html).toContain('data-kind="event"');
+  expect(html).not.toContain("ark-harness-edge-layer");
+  expect(html).not.toContain("ark-harness-graph-handle");
+  expect(html).not.toContain("--ark-harness-graph-x");
+  expect(html).not.toContain("--ark-harness-graph-y");
 });
 
 test("不正座標と graph 外参照を安全に除外する", async ({ page }) => {

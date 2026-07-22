@@ -470,6 +470,21 @@ const HARNESS_JS = `(function () {
     return !!(el.closest && el.closest("[data-ark-harness-ui]"));
   }
 
+  function syncNodeKinds() {
+    document.querySelectorAll("[data-model-id]").forEach(function (el) {
+      if (isInsideHarnessUi(el)) return;
+      var id = el.getAttribute("data-model-id");
+      if (!id) return;
+      var node = getNode(state.model, id);
+      if (!node) return;
+      if (typeof node.kind === "string") {
+        el.setAttribute("data-kind", node.kind);
+      } else {
+        el.removeAttribute("data-kind");
+      }
+    });
+  }
+
   function markUi(el) {
     el.setAttribute("data-ark-harness-ui", "1");
     return el;
@@ -744,6 +759,7 @@ const HARNESS_JS = `(function () {
         if (!Array.isArray(parsed.edges)) parsed.edges = [];
         if (!Array.isArray(parsed.groups)) parsed.groups = [];
         state.model = parsed;
+        syncNodeKinds();
         error.style.display = "none";
         panel.style.display = "none";
       } catch (e) {
@@ -806,6 +822,7 @@ const HARNESS_JS = `(function () {
       var model = loadModel();
       if (!model) return;
       state.model = model;
+      syncNodeKinds();
       buildToolbar();
       initEditing();
       initGraphs();

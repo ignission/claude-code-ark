@@ -52,6 +52,28 @@ describe("parseDiagramModel", () => {
     }
   });
 
+  it("任意の node kind を文字列のまま保持する", () => {
+    const json = JSON.stringify({
+      version: 1,
+      nodes: [
+        { id: "place-order", label: "Place order", kind: "command" },
+        { id: "order-placed", label: "Order placed", kind: "event" },
+        { id: "order-api", label: "Order API", kind: "service" },
+      ],
+    });
+
+    const result = parseDiagramModel(json);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.model.nodes.map(node => node.kind)).toEqual([
+        "command",
+        "event",
+        "service",
+      ]);
+    }
+  });
+
   it("id が重複するモデルを拒否する", () => {
     const json = JSON.stringify({
       version: 1,
