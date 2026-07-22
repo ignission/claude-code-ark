@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Production Infrastructure</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 1.5rem;
+    background: #111827;
+    color: #e5e7eb;
+    font-family: system-ui, sans-serif;
+  }
+  h1 { margin: 0 0 1rem; font-size: 1.25rem; }
+  .graph {
+    width: 1080px;
+    min-height: 640px;
+    outline: 1px solid #263244;
+    border-radius: 12px;
+    background: #151d2b;
+  }
+  .infra-node {
+    --kind-color: #94a3b8;
+    --kind-bg: #202b3c;
+    width: 200px;
+    min-height: 96px;
+    padding: 1rem;
+    border: 1px solid var(--kind-color);
+    border-left-width: 5px;
+    border-radius: 10px;
+    background: var(--kind-bg);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, .18);
+  }
+  .node-heading { display: flex; align-items: center; gap: .55rem; }
+  .kind-icon {
+    display: inline-grid;
+    width: 1.5rem;
+    height: 1.5rem;
+    place-items: center;
+    color: var(--kind-color);
+    font-size: 1.2rem;
+  }
+  .node-label { font-weight: 700; line-height: 1.2; }
+  .node-role { margin: .65rem 0 0; color: #b8c2d4; font-size: .78rem; }
+  [data-kind="service"] { --kind-color: #60a5fa; --kind-bg: #182942; }
+  [data-kind="db"] { --kind-color: #a78bfa; --kind-bg: #27203d; }
+  [data-kind="queue"] { --kind-color: #f59e0b; --kind-bg: #342817; }
+  [data-kind="lb"] { --kind-color: #34d399; --kind-bg: #17362f; }
+  [data-kind="cache"] { --kind-color: #f472b6; --kind-bg: #382035; }
+  [data-kind="external"] { --kind-color: #a3a3a3; --kind-bg: #292929; }
+  [data-kind="service"] .kind-icon::before { content: "▣"; }
+  [data-kind="db"] .kind-icon::before { content: "◉"; }
+  [data-kind="queue"] .kind-icon::before { content: "≋"; }
+  [data-kind="lb"] .kind-icon::before { content: "⇄"; }
+  [data-kind="cache"] .kind-icon::before { content: "◇"; }
+  [data-kind="external"] .kind-icon::before { content: "☁"; }
+  .infra-boundary {
+    display: none;
+    box-sizing: border-box;
+    position: absolute;
+    border: 1px solid currentColor;
+    border-radius: 12px;
+    background: transparent;
+    pointer-events: none;
+  }
+  .infra-boundary.ark-harness-graph-group { display: block; }
+  .group-label {
+    position: absolute;
+    top: .45rem;
+    left: .75rem;
+    padding: .15rem .45rem;
+    border-radius: 999px;
+    background: #151d2b;
+    color: currentColor;
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .03em;
+  }
+  .boundary-region {
+    left: calc(var(--ark-harness-group-x) - 48px);
+    top: calc(var(--ark-harness-group-y) - 90px);
+    width: calc(var(--ark-harness-group-width) + 96px);
+    height: calc(var(--ark-harness-group-height) + 180px);
+    border-width: 2px;
+    color: #38bdf8;
+  }
+  .boundary-vpc {
+    left: calc(var(--ark-harness-group-x) - 36px);
+    top: calc(var(--ark-harness-group-y) - 62px);
+    width: calc(var(--ark-harness-group-width) + 72px);
+    height: calc(var(--ark-harness-group-height) + 124px);
+    border-style: dashed;
+    color: #22c55e;
+  }
+  .boundary-subnet {
+    left: calc(var(--ark-harness-group-x) - 24px);
+    top: calc(var(--ark-harness-group-y) - 42px);
+    width: calc(var(--ark-harness-group-width) + 48px);
+    height: calc(var(--ark-harness-group-height) + 66px);
+    color: #64748b;
+    background: rgba(100, 116, 139, .035);
+  }
+</style>
+</head>
+<body>
+<h1>Production Infrastructure</h1>
+<script type="application/json" id="ark-diagram-model">
+{
+  "version": 1,
+  "title": "Production Infrastructure",
+  "nodes": [
+    { "id": "client", "label": "Internet Client", "kind": "external", "ext": { "x": 24, "y": 280 } },
+    { "id": "public-lb", "label": "Public Load Balancer", "kind": "lb", "ext": { "x": 280, "y": 280 } },
+    { "id": "api-service", "label": "API Service", "kind": "service", "ext": { "x": 520, "y": 170 } },
+    { "id": "worker-service", "label": "Worker Service", "kind": "service", "ext": { "x": 520, "y": 390 } },
+    { "id": "orders-db", "label": "Orders DB", "kind": "db", "ext": { "x": 820, "y": 120 } },
+    { "id": "jobs-queue", "label": "Jobs Queue", "kind": "queue", "ext": { "x": 820, "y": 280 } },
+    { "id": "session-cache", "label": "Session Cache", "kind": "cache", "ext": { "x": 820, "y": 440 } }
+  ],
+  "edges": [
+    { "id": "client-to-lb", "from": "client", "to": "public-lb", "label": "HTTPS" },
+    { "id": "lb-to-api", "from": "public-lb", "to": "api-service", "label": "routes" },
+    { "id": "api-to-db", "from": "api-service", "to": "orders-db", "label": "reads / writes" },
+    { "id": "api-to-queue", "from": "api-service", "to": "jobs-queue", "label": "enqueues" },
+    { "id": "api-to-cache", "from": "api-service", "to": "session-cache", "label": "sessions" },
+    { "id": "queue-to-worker", "from": "jobs-queue", "to": "worker-service", "label": "dispatches" },
+    { "id": "worker-to-db", "from": "worker-service", "to": "orders-db", "label": "persists" }
+  ],
+  "groups": [
+    {
+      "id": "tokyo-region",
+      "label": "Tokyo Region",
+      "nodes": ["public-lb", "api-service", "worker-service", "orders-db", "jobs-queue", "session-cache"],
+      "ext": { "role": "region" }
+    },
+    {
+      "id": "production-vpc",
+      "label": "Production VPC",
+      "nodes": ["public-lb", "api-service", "worker-service", "orders-db", "jobs-queue", "session-cache"],
+      "ext": { "role": "vpc" }
+    },
+    {
+      "id": "public-subnet",
+      "label": "Public Subnet",
+      "nodes": ["public-lb"],
+      "ext": { "role": "subnet" }
+    },
+    {
+      "id": "app-subnet",
+      "label": "Application Subnet",
+      "nodes": ["api-service", "worker-service"],
+      "ext": { "role": "subnet" }
+    },
+    {
+      "id": "data-subnet",
+      "label": "Data Subnet",
+      "nodes": ["orders-db", "jobs-queue", "session-cache"],
+      "ext": { "role": "subnet" }
+    }
+  ]
+}
+</script>
+
+<div class="graph" data-ark-container="graph">
+  <section class="infra-boundary boundary-region" data-ark-group data-model-id="tokyo-region">
+    <span class="group-label" data-model-id="tokyo-region">Tokyo Region</span>
+  </section>
+  <section class="infra-boundary boundary-vpc" data-ark-group data-model-id="production-vpc">
+    <span class="group-label" data-model-id="production-vpc">Production VPC</span>
+  </section>
+  <section class="infra-boundary boundary-subnet" data-ark-group data-model-id="public-subnet">
+    <span class="group-label" data-model-id="public-subnet">Public Subnet</span>
+  </section>
+  <section class="infra-boundary boundary-subnet" data-ark-group data-model-id="app-subnet">
+    <span class="group-label" data-model-id="app-subnet">Application Subnet</span>
+  </section>
+  <section class="infra-boundary boundary-subnet" data-ark-group data-model-id="data-subnet">
+    <span class="group-label" data-model-id="data-subnet">Data Subnet</span>
+  </section>
+
+  <article class="infra-node" data-model-id="client" data-kind="external">
+    <div class="node-heading"><span class="kind-icon" aria-hidden="true"></span><span class="node-label">Internet Client</span></div>
+    <p class="node-role">External request origin</p>
+  </article>
+  <article class="infra-node" data-model-id="public-lb" data-kind="lb">
+    <div class="node-heading"><span class="kind-icon" aria-hidden="true"></span><span class="node-label">Public Load Balancer</span></div>
+    <p class="node-role">Public traffic entry point</p>
+  </article>
+  <article class="infra-node" data-model-id="api-service" data-kind="service">
+    <div class="node-heading"><span class="kind-icon" aria-hidden="true"></span><span class="node-label">API Service</span></div>
+    <p class="node-role">Synchronous application API</p>
+  </article>
+  <article class="infra-node" data-model-id="worker-service" data-kind="service">
+    <div class="node-heading"><span class="kind-icon" aria-hidden="true"></span><span class="node-label">Worker Service</span></div>
+    <p class="node-role">Asynchronous job processor</p>
+  </article>
+  <article class="infra-node" data-model-id="orders-db" data-kind="db">
+    <div class="node-heading"><span class="kind-icon" aria-hidden="true"></span><span class="node-label">Orders DB</span></div>
+    <p class="node-role">Durable order storage</p>
+  </article>
+  <article class="infra-node" data-model-id="jobs-queue" data-kind="queue">
+    <div class="node-heading"><span class="kind-icon" aria-hidden="true"></span><span class="node-label">Jobs Queue</span></div>
+    <p class="node-role">Background work buffer</p>
+  </article>
+  <article class="infra-node" data-model-id="session-cache" data-kind="cache">
+    <div class="node-heading"><span class="kind-icon" aria-hidden="true"></span><span class="node-label">Session Cache</span></div>
+    <p class="node-role">Low-latency session data</p>
+  </article>
+</div>
+</body>
+</html>
