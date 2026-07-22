@@ -44,4 +44,18 @@ describe("injectHarness", () => {
     expect(out).toContain("ark-harness-graph-handle");
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
+
+  it("node projection の data-kind を初期表示とモデル再適用で同期する", () => {
+    const out = injectHarness(
+      page('<div data-model-id="node" data-kind="stale"></div>')
+    );
+
+    expect(out).toContain("function syncNodeKinds()");
+    expect(out).toContain('document.querySelectorAll("[data-model-id]")');
+    expect(out).toContain('typeof node.kind === "string"');
+    expect(out).toContain('el.setAttribute("data-kind", node.kind)');
+    expect(out).toContain('el.removeAttribute("data-kind")');
+    expect(out.match(/syncNodeKinds\(\);/g)).toHaveLength(2);
+    expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
+  });
 });
