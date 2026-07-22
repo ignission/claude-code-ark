@@ -85,6 +85,38 @@ describe("readDiagram", () => {
     }
   });
 
+  it("任意の model kind と投影 data-kind を配信時も保持する", async () => {
+    const kindModel = JSON.stringify({
+      version: 1,
+      nodes: [
+        { id: "command", label: "Command", kind: "command" },
+        { id: "service", label: "Service", kind: "service" },
+      ],
+      edges: [],
+      groups: [],
+    });
+    write(
+      "kinds.diagram.html",
+      '<div data-model-id="command" data-kind="command">Command</div>' +
+        '<div data-model-id="service" data-kind="service">Service</div>',
+      kindModel
+    );
+
+    const result = await readDiagram(wt, "kinds.diagram.html");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.model.nodes.map(node => node.kind)).toEqual([
+        "command",
+        "service",
+      ]);
+      expect(result.html).toContain('data-kind="command"');
+      expect(result.html).toContain('data-kind="service"');
+      expect(result.html).toContain(DIAGRAM_CSP);
+      expect(result.html).toContain(DIAGRAM_HARNESS_MARKER);
+    }
+  });
+
   it("存在しないファイルは 404 を返す", async () => {
     const result = await readDiagram(wt, "missing.diagram.html");
 

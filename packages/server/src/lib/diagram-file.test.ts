@@ -224,6 +224,34 @@ describe("replaceModelBlock", () => {
     }
   });
 
+  it("モデルブロックの往復で任意の node kind を保持する", () => {
+    const html = page(
+      `<script type="application/json" id="ark-diagram-model">${MODEL}</script><div>図</div>`
+    );
+    const nextModel: DiagramModel = {
+      ...MODEL_OBJ,
+      nodes: [
+        { id: "command", label: "Command", kind: "command" },
+        { id: "event", label: "Event", kind: "event" },
+        { id: "service", label: "Service", kind: "service" },
+      ],
+    };
+
+    const replaced = replaceModelBlock(html, nextModel);
+    expect(replaced.ok).toBe(true);
+    if (!replaced.ok) return;
+
+    const extracted = extractModel(replaced.html);
+    expect(extracted.ok).toBe(true);
+    if (extracted.ok) {
+      expect(extracted.model.nodes.map(node => node.kind)).toEqual([
+        "command",
+        "event",
+        "service",
+      ]);
+    }
+  });
+
   it("属性の順序が逆でも差し替えられる", () => {
     const html = page(
       `<script id="ark-diagram-model" type="application/json">${MODEL}</script>`
