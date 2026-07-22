@@ -264,8 +264,9 @@ const HARNESS_JS = `(function () {
     if (!layoutDirectionBtn || !state.model) return;
     var direction = readLayoutConfig(state.model).direction;
     var nextDirection = direction === "LR" ? "TB" : "LR";
-    var label = "現在のレイアウト方向は " + direction + "。" + nextDirection + " に切り替える";
-    layoutDirectionBtn.textContent = "方向: " + direction;
+    var visibleLabel = "方向: " + direction;
+    var label = visibleLabel + "（現在 " + direction + "。" + nextDirection + " に切り替える）";
+    layoutDirectionBtn.textContent = visibleLabel;
     layoutDirectionBtn.setAttribute("aria-label", label);
     layoutDirectionBtn.title = label;
   }

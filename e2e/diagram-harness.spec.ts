@@ -535,7 +535,7 @@ test("レイアウト方向を LR から TB へ切り替えて再配置・保存
 
   const toolbar = page.locator(".ark-harness-toolbar");
   const directionButton = page.getByRole("button", {
-    name: "現在のレイアウト方向は LR。TB に切り替える",
+    name: "方向: LR（現在 LR。TB に切り替える）",
   });
   const editModelButton = page.getByRole("button", {
     name: "モデル JSON を直接編集する",
@@ -543,7 +543,7 @@ test("レイアウト方向を LR から TB へ切り替えて再配置・保存
   await expect(directionButton).toHaveText("方向: LR");
   await expect(directionButton).toHaveAttribute(
     "title",
-    "現在のレイアウト方向は LR。TB に切り替える"
+    "方向: LR（現在 LR。TB に切り替える）"
   );
   expect(
     await toolbar
@@ -573,12 +573,12 @@ test("レイアウト方向を LR から TB へ切り替えて再配置・保存
 
   await directionButton.click();
   const toggledButton = page.getByRole("button", {
-    name: "現在のレイアウト方向は TB。LR に切り替える",
+    name: "方向: TB（現在 TB。LR に切り替える）",
   });
   await expect(toggledButton).toHaveText("方向: TB");
   await expect(toggledButton).toHaveAttribute(
     "title",
-    "現在のレイアウト方向は TB。LR に切り替える"
+    "方向: TB（現在 TB。LR に切り替える）"
   );
   await expect
     .poll(async () => {
@@ -643,7 +643,7 @@ test("レイアウト方向は ext 欠損を補い、モデル直接編集後も
   await page.setContent(diagramHtml());
   await connectSubmissionPort(page);
   const directionButton = page.getByRole("button", {
-    name: "現在のレイアウト方向は LR。TB に切り替える",
+    name: "方向: LR（現在 LR。TB に切り替える）",
   });
   await expect(directionButton).toHaveText("方向: LR");
   await directionButton.click();
@@ -679,7 +679,7 @@ test("レイアウト方向は ext 欠損を補い、モデル直接編集後も
     await page.setContent(diagramHtml({ ...model, ext: invalidExt }));
     await page
       .getByRole("button", {
-        name: "現在のレイアウト方向は LR。TB に切り替える",
+        name: "方向: LR（現在 LR。TB に切り替える）",
       })
       .click();
     await page
@@ -701,7 +701,7 @@ test("レイアウト方向は ext 欠損を補い、モデル直接編集後も
     autoLayoutHtml(tbModel.ext?.layout as Record<string, unknown>)
   );
   const tbButton = page.getByRole("button", {
-    name: "現在のレイアウト方向は TB。LR に切り替える",
+    name: "方向: TB（現在 TB。LR に切り替える）",
   });
   await expect(tbButton).toHaveText("方向: TB");
   tbModel.ext = {
@@ -718,7 +718,7 @@ test("レイアウト方向は ext 欠損を補い、モデル直接編集後も
   await page.getByRole("button", { name: "反映", exact: true }).click();
   await expect(
     page.getByRole("button", {
-      name: "現在のレイアウト方向は LR。TB に切り替える",
+      name: "方向: LR（現在 LR。TB に切り替える）",
     })
   ).toHaveText("方向: LR");
 });
