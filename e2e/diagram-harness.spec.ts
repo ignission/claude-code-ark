@@ -1537,14 +1537,40 @@ test("node.kind を data-kind へ同期して色とアイコンを区別する",
 test("sample は複数 kind を色とアイコンで区別する", async ({ page }) => {
   await openSampleDiagram(page);
 
-  const modelKinds = await page
-    .locator("#ark-diagram-model")
-    .evaluate(element => {
-      const parsed = JSON.parse(element.textContent || "") as {
-        nodes: Array<{ id: string; kind?: string }>;
-      };
-      return Object.fromEntries(parsed.nodes.map(node => [node.id, node.kind]));
-    });
+  const modelScript = page.locator("#ark-diagram-model");
+  const initialModelText = await modelScript.textContent();
+  const sampleModel = await modelScript.evaluate(
+    element =>
+      JSON.parse(element.textContent || "") as {
+        ext: {
+          layout: {
+            direction: string;
+            rankSpacing: number;
+            nodeSpacing: number;
+            padding: number;
+          };
+        };
+        nodes: Array<{
+          id: string;
+          kind?: string;
+          ext?: Record<string, unknown>;
+        }>;
+      }
+  );
+  expect(sampleModel.ext.layout).toEqual({
+    direction: "LR",
+    rankSpacing: 72,
+    nodeSpacing: 40,
+    padding: 40,
+  });
+  expect(
+    sampleModel.nodes.every(
+      node => node.ext?.x === undefined && node.ext?.y === undefined
+    )
+  ).toBe(true);
+  const modelKinds = Object.fromEntries(
+    sampleModel.nodes.map(node => [node.id, node.kind])
+  );
   const projections = await page
     .locator(
       '[data-ark-container="graph"] > [data-model-id]:not([data-ark-group])'
@@ -1573,6 +1599,12 @@ test("sample は複数 kind を色とアイコンで区別する", async ({ page
   expect(new Set(projections.map(projection => projection.icon)).size).toBe(2);
 
   const graph = page.locator('[data-ark-container="graph"]');
+  const [orderBox, userBox] = await Promise.all([
+    requiredBoundingBox(graph.locator('[data-model-id="order"]').first()),
+    requiredBoundingBox(graph.locator('[data-model-id="user"]').first()),
+  ]);
+  expect(boxesOverlap(orderBox, userBox)).toBe(false);
+  expect(userBox.x - (orderBox.x + orderBox.width)).toBeGreaterThanOrEqual(71);
   await expect(
     graph.locator('.ark-harness-edge-main[data-ark-edge-id="e_order_user"]')
   ).toHaveCount(1);
@@ -1580,6 +1612,7 @@ test("sample は複数 kind を色とアイコンで区別する", async ({ page
   await expect(
     graph.locator('li[data-model-id="order_id"] .ark-harness-text')
   ).toHaveAttribute("contenteditable", "true");
+  expect(await modelScript.textContent()).toBe(initialModelText);
 });
 
 test("sample group は2 node を囲むラベル付き境界として表示する", async ({
