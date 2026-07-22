@@ -51,6 +51,7 @@ const HARNESS_STYLE = `<style data-ark-harness-ui="1">
 }
 .ark-harness-btn:hover { background: #232732; }
 .ark-harness-btn:disabled { opacity: .45; cursor: not-allowed; }
+.ark-harness-layout-direction { min-width: 5.5rem; }
 .ark-harness-btn-primary { background: #0ea5b7; border-color: #0ea5b7; color: #05201f; font-weight: 600; }
 .ark-harness-btn-primary:hover { background: #14b8c9; }
 .ark-harness-btn-primary:disabled { background: #1b1e27; border-color: #333947; color: #8b93a7; }
@@ -178,6 +179,7 @@ const HARNESS_JS = `(function () {
   var graphSequence = 0;
   var statusEl = null;
   var sendBtn = null;
+  var layoutDirectionBtn = null;
 
   function isRecordObject(v) {
     return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -256,6 +258,27 @@ const HARNESS_JS = `(function () {
       nodeSpacing: bounded(layout.nodeSpacing, 48, 512),
       padding: bounded(layout.padding, 24, 256)
     };
+  }
+
+  function syncLayoutDirectionButton() {
+    if (!layoutDirectionBtn || !state.model) return;
+    var direction = readLayoutConfig(state.model).direction;
+    var nextDirection = direction === "LR" ? "TB" : "LR";
+    var label = "現在のレイアウト方向は " + direction + "。" + nextDirection + " に切り替える";
+    layoutDirectionBtn.textContent = "方向: " + direction;
+    layoutDirectionBtn.setAttribute("aria-label", label);
+    layoutDirectionBtn.title = label;
+  }
+
+  function toggleLayoutDirection() {
+    if (!state.model) return;
+    var direction = readLayoutConfig(state.model).direction;
+    var nextDirection = direction === "LR" ? "TB" : "LR";
+    if (!isRecordObject(state.model.ext)) state.model.ext = {};
+    if (!isRecordObject(state.model.ext.layout)) state.model.ext.layout = {};
+    state.model.ext.layout.direction = nextDirection;
+    syncLayoutDirectionButton();
+    graphs.forEach(function (graph) { scheduleGraphRender(graph); });
   }
 
   function graphModelNodes(graph) {
@@ -1470,6 +1493,7 @@ const HARNESS_JS = `(function () {
         if (!Array.isArray(parsed.groups)) parsed.groups = [];
         state.model = parsed;
         syncNodeKinds();
+        syncLayoutDirectionButton();
         graphs.forEach(function (graph) { scheduleGraphRender(graph); });
         error.style.display = "none";
         panel.style.display = "none";
@@ -1491,6 +1515,13 @@ const HARNESS_JS = `(function () {
     var bar = document.createElement("div");
     bar.className = "ark-harness-toolbar";
     markUi(bar);
+
+    if (document.querySelector('[data-ark-container="graph"]')) {
+      layoutDirectionBtn = createButton("", "ark-harness-btn ark-harness-btn-secondary ark-harness-layout-direction");
+      syncLayoutDirectionButton();
+      layoutDirectionBtn.addEventListener("click", toggleLayoutDirection);
+      bar.appendChild(layoutDirectionBtn);
+    }
 
     var editModelBtn = createButton("モデルを直接編集", "ark-harness-btn ark-harness-btn-secondary", "モデル JSON を直接編集する");
 
