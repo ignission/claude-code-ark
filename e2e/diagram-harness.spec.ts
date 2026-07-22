@@ -667,9 +667,14 @@ test("infrastructure sample は kind アイコンと手動配置で接続を表�
   }
 
   expect(html).not.toMatch(/https?:\/\//i);
+  expect(html).not.toMatch(/\bsrc\s*=\s*["']\s*\/\//i);
+  expect(html).not.toMatch(/url\(\s*["']?\s*\/\//i);
   expect(html).not.toMatch(/<link[^>]+rel=["']?stylesheet/i);
   expect(html).not.toMatch(/@import/i);
   expect(html).not.toMatch(/icon[- ]library/i);
+  expect(html).not.toMatch(
+    /<use\b[^>]*\b(?:href|xlink:href)\s*=\s*["']\s*(?!(?:#|data:))[^"']+/i
+  );
   expect(errors).toEqual([]);
 });
 
@@ -733,6 +738,12 @@ test("infrastructure sample は flat group で region / VPC / subnet を囲む",
   expect(regionBox).toBeDefined();
   expect(vpcBox).toBeDefined();
   if (!regionBox || !vpcBox) return;
+  const clientBox = await requiredBoundingBox(
+    graph.locator(':scope > [data-model-id="client"]:not([data-ark-group])')
+  );
+  const clientRight = clientBox.x + clientBox.width;
+  expect(clientRight).toBeLessThan(regionBox.x);
+  expect(clientRight).toBeLessThan(vpcBox.x);
   expect(regionBox.x).toBeLessThan(vpcBox.x);
   expect(regionBox.y).toBeLessThan(vpcBox.y);
   expect(regionBox.width).toBeGreaterThan(vpcBox.width);

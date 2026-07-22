@@ -79,17 +79,17 @@
     letter-spacing: .03em;
   }
   .boundary-region {
-    left: calc(var(--ark-harness-group-x) - 130px);
+    left: calc(var(--ark-harness-group-x) - 48px);
     top: calc(var(--ark-harness-group-y) - 90px);
-    width: calc(var(--ark-harness-group-width) + 260px);
+    width: calc(var(--ark-harness-group-width) + 96px);
     height: calc(var(--ark-harness-group-height) + 180px);
     border-width: 2px;
     color: #38bdf8;
   }
   .boundary-vpc {
-    left: calc(var(--ark-harness-group-x) - 96px);
+    left: calc(var(--ark-harness-group-x) - 36px);
     top: calc(var(--ark-harness-group-y) - 62px);
-    width: calc(var(--ark-harness-group-width) + 192px);
+    width: calc(var(--ark-harness-group-width) + 72px);
     height: calc(var(--ark-harness-group-height) + 124px);
     border-style: dashed;
     color: #22c55e;
@@ -112,12 +112,12 @@
   "title": "Production Infrastructure",
   "nodes": [
     { "id": "client", "label": "Internet Client", "kind": "external", "ext": { "x": 24, "y": 280 } },
-    { "id": "public-lb", "label": "Public Load Balancer", "kind": "lb", "ext": { "x": 260, "y": 280 } },
-    { "id": "api-service", "label": "API Service", "kind": "service", "ext": { "x": 500, "y": 170 } },
-    { "id": "worker-service", "label": "Worker Service", "kind": "service", "ext": { "x": 500, "y": 390 } },
-    { "id": "orders-db", "label": "Orders DB", "kind": "db", "ext": { "x": 800, "y": 120 } },
-    { "id": "jobs-queue", "label": "Jobs Queue", "kind": "queue", "ext": { "x": 800, "y": 280 } },
-    { "id": "session-cache", "label": "Session Cache", "kind": "cache", "ext": { "x": 800, "y": 440 } }
+    { "id": "public-lb", "label": "Public Load Balancer", "kind": "lb", "ext": { "x": 280, "y": 280 } },
+    { "id": "api-service", "label": "API Service", "kind": "service", "ext": { "x": 520, "y": 170 } },
+    { "id": "worker-service", "label": "Worker Service", "kind": "service", "ext": { "x": 520, "y": 390 } },
+    { "id": "orders-db", "label": "Orders DB", "kind": "db", "ext": { "x": 820, "y": 120 } },
+    { "id": "jobs-queue", "label": "Jobs Queue", "kind": "queue", "ext": { "x": 820, "y": 280 } },
+    { "id": "session-cache", "label": "Session Cache", "kind": "cache", "ext": { "x": 820, "y": 440 } }
   ],
   "edges": [
     { "id": "client-to-lb", "from": "client", "to": "public-lb", "label": "HTTPS" },

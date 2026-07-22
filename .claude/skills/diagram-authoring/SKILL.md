@@ -117,7 +117,7 @@ node の `kind` フィールドで図の要素型を指定する。サーバー�
 `.infra-node` style を fallback として適用し、model の `node.kind` と node projection
 root の `data-kind` は一致させる。
 
-#228 の auto-layout に依存せず、graph 内のすべての node に有限数の `ext.x` / `ext.y`
+Issue `#228` の auto-layout に依存せず、graph 内のすべての node に有限数の `ext.x` / `ext.y`
 を指定して手動配置する。外部クライアントも graph 外の特別要素にはせず、
 `kind: "external"` の通常 node とする。通信や依存関係は既存 edge の `from` / `to` /
 `label` だけで表す。
