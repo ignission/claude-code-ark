@@ -47,6 +47,20 @@ describe("injectHarness", () => {
     expect(out).toContain("function syncEdgeHandles(");
     expect(out).toContain("function finishEdgeDrag(");
     expect(out).toContain("getEdge(state.model, drag.edgeId)");
+    expect(out).toContain("ark-harness-layout-direction");
+    expect(out).toContain("function syncLayoutDirectionButton(");
+    expect(out).toContain("function toggleLayoutDirection(");
+    expect(out).toContain("現在のレイアウト方向は ");
+    expect(out).toContain(
+      "if (!isRecordObject(state.model.ext)) state.model.ext = {};"
+    );
+    expect(out).toContain(
+      "if (!isRecordObject(state.model.ext.layout)) state.model.ext.layout = {};"
+    );
+    expect(out).toContain("state.model.ext.layout.direction = nextDirection;");
+    expect(out).toContain(
+      "graphs.forEach(function (graph) { scheduleGraphRender(graph); });"
+    );
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 

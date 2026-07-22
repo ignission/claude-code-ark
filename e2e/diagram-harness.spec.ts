@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import { describeModelDiff } from "../packages/server/src/lib/diagram-diff";
 import { injectHarness } from "../packages/server/src/lib/diagram-harness";
+import type { DiagramModel } from "../packages/server/src/lib/diagram-model";
 
 const model = {
   version: 1,
@@ -160,15 +162,15 @@ const autoLayoutEdges = [
   { id: "e_self", from: "self", to: "self" },
 ];
 
-function autoLayoutHtml(
+function autoLayoutModel(
   layout: Record<string, unknown> = {
     direction: "LR",
     rankSpacing: 80,
     nodeSpacing: 36,
     padding: 20,
   }
-): string {
-  const autoModel = {
+): DiagramModel {
+  return {
     version: 1,
     ext: { layout },
     nodes: autoLayoutNodes,
@@ -181,6 +183,17 @@ function autoLayoutHtml(
       },
     ],
   };
+}
+
+function autoLayoutHtml(
+  layout: Record<string, unknown> = {
+    direction: "LR",
+    rankSpacing: 80,
+    nodeSpacing: 36,
+    padding: 20,
+  }
+): string {
+  const autoModel = autoLayoutModel(layout);
   return injectHarness(`<!doctype html><html><head><style>
     body { margin: 0; }
     .graph { width: 360px; height: 260px; background: #f8fafc; }
@@ -505,6 +518,234 @@ function expectNoOverlaps(
     }
   }
 }
+
+test("レイアウト方向を LR から TB へ切り替えて再配置・保存する", async ({
+  page,
+}) => {
+  const layout = {
+    direction: "LR",
+    rankSpacing: 80,
+    nodeSpacing: 36,
+    padding: 20,
+    routing: "orthogonal",
+  };
+  const initialModel = autoLayoutModel(layout);
+  await page.setContent(autoLayoutHtml(layout));
+  await connectSubmissionPort(page);
+
+  const toolbar = page.locator(".ark-harness-toolbar");
+  const directionButton = page.getByRole("button", {
+    name: "方向: LR（現在 LR。TB に切り替える）",
+  });
+  const editModelButton = page.getByRole("button", {
+    name: "モデル JSON を直接編集する",
+  });
+  await expect(directionButton).toHaveText("方向: LR");
+  await expect(directionButton).toHaveAttribute(
+    "title",
+    "方向: LR（現在 LR。TB に切り替える）"
+  );
+  expect(
+    await toolbar
+      .locator("button")
+      .evaluateAll(buttons => buttons.map(button => button.textContent))
+  ).toEqual(["方向: LR", "モデルを直接編集", "変更を送る"]);
+  expect(
+    await directionButton.evaluate(
+      (button, editButton) =>
+        Boolean(
+          button.compareDocumentPosition(editButton) &
+            Node.DOCUMENT_POSITION_FOLLOWING
+        ),
+      await editModelButton.elementHandle()
+    )
+  ).toBe(true);
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  const beforeBoxes = await graphNodeBoxes(page);
+  const beforeById = Object.fromEntries(beforeBoxes.map(box => [box.id, box]));
+  const edgeCount = await graph
+    .locator(".ark-harness-edge-main[data-ark-edge-id]")
+    .count();
+  const endpointHandleCount = await graph
+    .locator(".ark-harness-edge-handle")
+    .count();
+
+  await directionButton.click();
+  const toggledButton = page.getByRole("button", {
+    name: "方向: TB（現在 TB。LR に切り替える）",
+  });
+  await expect(toggledButton).toHaveText("方向: TB");
+  await expect(toggledButton).toHaveAttribute(
+    "title",
+    "方向: TB（現在 TB。LR に切り替える）"
+  );
+  await expect
+    .poll(async () => {
+      const boxes = await graphNodeBoxes(page);
+      const byId = Object.fromEntries(boxes.map(box => [box.id, box]));
+      return byId.branch_a.y > byId.source.y + byId.source.height;
+    })
+    .toBe(true);
+
+  const afterBoxes = await graphNodeBoxes(page);
+  const afterById = Object.fromEntries(afterBoxes.map(box => [box.id, box]));
+  expect(afterById.branch_a.y).toBeGreaterThan(beforeById.branch_a.y);
+  expectNoOverlaps(afterBoxes);
+  const group = graph.locator('[data-ark-group][data-model-id="cycle_group"]');
+  const [groupBox, cycleABox, cycleBBox] = await Promise.all([
+    requiredBoundingBox(group),
+    requiredBoundingBox(graph.locator('[data-model-id="cycle_a"]').first()),
+    requiredBoundingBox(graph.locator('[data-model-id="cycle_b"]').first()),
+  ]);
+  expectBoxToContain(groupBox, cycleABox);
+  expectBoxToContain(groupBox, cycleBBox);
+  await expect(
+    graph.locator(".ark-harness-edge-main[data-ark-edge-id]")
+  ).toHaveCount(edgeCount);
+  await expect(graph.locator(".ark-harness-edge-handle")).toHaveCount(
+    endpointHandleCount
+  );
+
+  await page
+    .getByRole("button", { name: "変更を親フレームへ送信する" })
+    .click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  const submission = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          arkHarnessSubmission?: { model: DiagramModel; html: string };
+        }
+      ).arkHarnessSubmission
+  );
+  expect(submission?.model.ext?.layout).toEqual({
+    ...layout,
+    direction: "TB",
+  });
+  if (!submission) throw new Error("submission がありません");
+  expect(describeModelDiff(initialModel, submission.model)).toEqual([]);
+  expect(submission.html).not.toContain("方向: TB");
+  expect(submission.html).not.toContain("ark-harness-layout-direction");
+  expect(submission.html).not.toContain("data-ark-harness-ui");
+  expect(submission.html).toContain('data-ark-container="graph"');
+  expect(submission.html).toContain('id="ark-diagram-model"');
+});
+
+test("レイアウト方向は ext 欠損を補い、モデル直接編集後も同期する", async ({
+  page,
+}) => {
+  await page.setContent(diagramHtml());
+  await connectSubmissionPort(page);
+  const directionButton = page.getByRole("button", {
+    name: "方向: LR（現在 LR。TB に切り替える）",
+  });
+  await expect(directionButton).toHaveText("方向: LR");
+  await directionButton.click();
+  await page
+    .getByRole("button", { name: "変更を親フレームへ送信する" })
+    .click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  const submittedModel = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          arkHarnessSubmission?: { model: DiagramModel };
+        }
+      ).arkHarnessSubmission?.model
+  );
+  expect(submittedModel).toEqual({
+    ...model,
+    ext: { layout: { direction: "TB" } },
+  });
+
+  for (const [invalidExt, expectedExt] of [
+    [[], { layout: { direction: "TB" } }],
+    [
+      { scope: "preserved", layout: [] },
+      { scope: "preserved", layout: { direction: "TB" } },
+    ],
+  ] as const) {
+    await page.setContent(diagramHtml({ ...model, ext: invalidExt }));
+    await page
+      .getByRole("button", {
+        name: "方向: LR（現在 LR。TB に切り替える）",
+      })
+      .click();
+    await page
+      .getByRole("button", { name: "モデル JSON を直接編集する" })
+      .click();
+    const currentModel = JSON.parse(
+      await page.locator(".ark-harness-textarea").inputValue()
+    ) as DiagramModel;
+    expect(currentModel.ext).toEqual(expectedExt);
+  }
+
+  const tbModel = autoLayoutModel({
+    direction: "TB",
+    rankSpacing: 80,
+    nodeSpacing: 36,
+    padding: 20,
+  });
+  await page.setContent(
+    autoLayoutHtml(tbModel.ext?.layout as Record<string, unknown>)
+  );
+  const tbButton = page.getByRole("button", {
+    name: "方向: TB（現在 TB。LR に切り替える）",
+  });
+  await expect(tbButton).toHaveText("方向: TB");
+  tbModel.ext = {
+    ...tbModel.ext,
+    layout: {
+      ...(tbModel.ext?.layout as Record<string, unknown>),
+      direction: "LR",
+    },
+  };
+  await page
+    .getByRole("button", { name: "モデル JSON を直接編集する" })
+    .click();
+  await page.locator(".ark-harness-textarea").fill(JSON.stringify(tbModel));
+  await page.getByRole("button", { name: "反映", exact: true }).click();
+  await expect(
+    page.getByRole("button", {
+      name: "方向: LR（現在 LR。TB に切り替える）",
+    })
+  ).toHaveText("方向: LR");
+});
+
+test("レイアウト方向 UI は graph がない文書には表示しない", async ({
+  page,
+}) => {
+  await page.setContent(
+    injectHarness(`<!doctype html><html><body>
+      <script id="ark-diagram-model" type="application/json">${JSON.stringify({
+        version: 1,
+        nodes: [{ id: "note", label: "Note" }],
+        edges: [],
+        groups: [],
+      })}</script>
+      <p data-model-id="note">Note</p>
+    </body></html>`)
+  );
+
+  await expect(
+    page.getByRole("button", { name: "モデル JSON を直接編集する" })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "変更を親フレームへ送信する" })
+  ).toBeVisible();
+  await expect(page.locator(".ark-harness-layout-direction")).toHaveCount(0);
+});
 
 test("自動配置 LR は分岐・循環・self-edge・孤立 node を決定的に配置する", async ({
   page,
