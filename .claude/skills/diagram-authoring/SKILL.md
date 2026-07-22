@@ -290,6 +290,110 @@ region / VPC / subnet の階層感が必要でも `groups[].nodes` に group id 
 group nesting、group 一括 drag、auto-layout は未対応で、インフラ構成図でも導入しない。
 完成例は `docs/diagrams/infrastructure.diagram.html` を参照する。
 
+## 語彙: edge / ER
+
+edge の core field は `id` / `from` / `to` / `label` である。`from` と `to` は同じ
+graph に投影した実在 node の id を参照し、self-edge（同じ id 同士）も使える。
+ER 図の多重度・矢印方向・線の用途は、core 語彙を増やさず `edge.ext` に置く。
+
+- `from_card` / `to_card` は、それぞれ `from` / `to` node 側の cardinality
+- cardinality は `one`（1）、`many`（N）、`zero-or-one`（0..1）、
+  `one-or-many`（1..N）、`zero-or-many`（0..N）の5値
+- `direction` は `forward`（from → to）、`reverse`（to → from）、`both`（双方向）、
+  `none`（矢印なし）の4値。省略または未知値は `forward`
+- `type` は lowercase kebab-case 推奨の opaque string。server enum ではない
+
+1:N、0..1、N:M の例：
+
+```json
+{
+  "edges": [
+    {
+      "id": "customer-orders",
+      "from": "customer",
+      "to": "order",
+      "label": "places",
+      "ext": {
+        "from_card": "one",
+        "to_card": "zero-or-many",
+        "direction": "forward",
+        "type": "identifying"
+      }
+    },
+    {
+      "id": "order-featured-product",
+      "from": "order",
+      "to": "product",
+      "label": "features",
+      "ext": {
+        "from_card": "one",
+        "to_card": "zero-or-one",
+        "direction": "none",
+        "type": "optional-reference"
+      }
+    },
+    {
+      "id": "order-products",
+      "from": "order",
+      "to": "product",
+      "label": "contains",
+      "ext": {
+        "from_card": "zero-or-many",
+        "to_card": "zero-or-many",
+        "direction": "both",
+        "type": "association"
+      }
+    }
+  ]
+}
+```
+
+edge の main line / path には、harness が解釈済みの
+`data-ark-edge-direction` と string の `data-ark-edge-type` を付ける。authored CSS は
+これらを selector に使える。harness の汎用線 style より詳細度を高くするため、graph
+root と generated main class も組み合わせる。
+
+```css
+[data-ark-container="graph"] .ark-harness-edge-main[data-ark-edge-type="identifying"] {
+  stroke: #f59e0b;
+  stroke-width: 2.25;
+}
+[data-ark-container="graph"] .ark-harness-edge-main[data-ark-edge-type="association"] {
+  stroke-dasharray: 7 5;
+}
+```
+
+ER projection の最小 HTML は通常の graph / entity / field list だけを書く。edge line、
+crow's foot 記号、端点 handle、drag preview、drop indicator は配信時に harness が生成する
+ため、authored HTML に重複して書かない。
+
+```html
+<div class="er-graph" data-ark-container="graph">
+  <section class="entity" data-model-id="customer" data-kind="entity">
+    <h2 data-model-id="customer">Customer</h2>
+    <ul>
+      <li data-model-id="customer_id">id PK</li>
+    </ul>
+  </section>
+  <section class="entity" data-model-id="order" data-kind="entity">
+    <h2 data-model-id="order">Order</h2>
+    <ul>
+      <li data-model-id="order_id">id PK</li>
+      <li data-model-id="order_customer_id">customer_id FK</li>
+    </ul>
+  </section>
+</div>
+```
+
+全 entity node に有限数の `ext.x` / `ext.y` を指定して手動配置し、auto-layout には
+依存しない。端点 handle の drag は core の `edge.from` / `edge.to` だけを更新するため
+会話へ関連変更として還流する。一方、cardinality / direction / type のような `edge.ext`
+単独変更は diagram file と表示には保存されるが、自動で自然文へ還流しない。
+
+ER projection でも外部 URL、stylesheet、font、image、script、外部 `<use href>` は使わず、
+inline CSS / SVG の範囲に留める。完成例は
+`docs/diagrams/er-edge-semantics.diagram.html` を参照する。
+
 ## 語彙: group
 
 複数 node をラベル付きの境界でまとめるときは group を使う。model shape は

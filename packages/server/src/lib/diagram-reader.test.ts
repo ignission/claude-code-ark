@@ -85,6 +85,50 @@ describe("readDiagram", () => {
     }
   });
 
+  it("edge.ext と ER projection を配信時も保持する", async () => {
+    const edge = {
+      id: "e_order_user",
+      from: "order",
+      to: "user",
+      label: "belongs to",
+      ext: {
+        from_card: "one",
+        to_card: "zero-or-many",
+        direction: "forward",
+        type: "belongs-to",
+      },
+    };
+    const graphModel = JSON.stringify({
+      version: 1,
+      nodes: [
+        { id: "order", label: "Order", kind: "entity", ext: { x: 40, y: 50 } },
+        { id: "user", label: "User", kind: "entity", ext: { x: 360, y: 180 } },
+      ],
+      edges: [edge],
+      groups: [],
+    });
+    write(
+      "er.diagram.html",
+      '<div class="er-graph" data-ark-container="graph">' +
+        '<section class="entity" data-model-id="order" data-kind="entity">Order</section>' +
+        '<section class="entity" data-model-id="user" data-kind="entity">User</section></div>',
+      graphModel
+    );
+
+    const result = await readDiagram(wt, "er.diagram.html");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.model.edges[0]).toEqual(edge);
+      expect(result.html).toContain('class="er-graph"');
+      expect(result.html).toContain('data-kind="entity"');
+      expect(result.html).toContain(DIAGRAM_CSP);
+      expect(result.html).toContain(DIAGRAM_HARNESS_MARKER);
+      expect(result.html).toContain("from_card");
+      expect(result.html).toContain("data-ark-edge-cardinality");
+    }
+  });
+
   it("group model と graph projection を配信時も保持する", async () => {
     const groupModel = JSON.stringify({
       version: 1,

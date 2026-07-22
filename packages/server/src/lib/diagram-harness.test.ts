@@ -42,6 +42,29 @@ describe("injectHarness", () => {
     expect(out).toContain('[data-ark-container="graph"]');
     expect(out).toContain("ark-harness-edge-layer");
     expect(out).toContain("ark-harness-graph-handle");
+    expect(out).toContain("ark-harness-edge-handle-layer");
+    expect(out).toContain("ark-harness-edge-handle");
+    expect(out).toContain("function syncEdgeHandles(");
+    expect(out).toContain("function finishEdgeDrag(");
+    expect(out).toContain("getEdge(state.model, drag.edgeId)");
+    expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
+  });
+
+  it("edge ext の cardinality・direction・type 投影契約を注入する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
+      )
+    );
+
+    expect(out).toContain("from_card");
+    expect(out).toContain("to_card");
+    expect(out).toContain("function edgeDirection(");
+    expect(out).toContain("function appendEdgeCardinality(");
+    expect(out).toContain("ark-harness-edge-cardinality");
+    expect(out).toContain("data-ark-edge-cardinality");
+    expect(out).toContain("data-ark-edge-direction");
+    expect(out).toContain("data-ark-edge-type");
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 

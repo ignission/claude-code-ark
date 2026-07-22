@@ -101,9 +101,34 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
 .ark-harness-edge-layer line, .ark-harness-edge-layer path {
   fill: none; stroke: #64748b; stroke-width: 1.5;
 }
+.ark-harness-edge-cardinality circle {
+  fill: #fff; stroke: #64748b; stroke-width: 1.5;
+}
+.ark-harness-edge-cardinality line {
+  stroke: #64748b; stroke-width: 1.5;
+}
 .ark-harness-edge-layer text {
   fill: #475569; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
   font-size: 12px; text-anchor: middle; dominant-baseline: central;
+}
+.ark-harness-edge-handle-layer {
+  position: absolute; inset: 0; z-index: 3; pointer-events: none;
+}
+.ark-harness-edge-handle {
+  position: absolute; transform: translate(-50%, -50%); z-index: 3;
+  width: 18px; height: 18px; padding: 0; border: 2px solid #0ea5b7; border-radius: 999px;
+  background: #fff; color: #0e7490; cursor: crosshair; line-height: 14px; font-size: 9px;
+  pointer-events: auto; touch-action: none;
+}
+.ark-harness-edge-preview {
+  position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none;
+}
+.ark-harness-edge-preview line {
+  stroke: #0ea5b7; stroke-width: 2; stroke-dasharray: 5 4;
+}
+.ark-harness-edge-drop-indicator {
+  position: absolute; box-sizing: border-box; border: 2px solid #0ea5b7;
+  border-radius: 6px; background: rgba(14,165,183,.1); pointer-events: none;
 }
 .ark-harness-graph-handle {
   position: absolute; top: .25rem; right: .25rem; z-index: 3;
@@ -141,6 +166,7 @@ const HARNESS_JS = `(function () {
   var submitPort = null;
   var dragSrcLi = null;
   var graphDrag = null;
+  var edgeDrag = null;
   var graphs = [];
   var graphSequence = 0;
   var statusEl = null;
@@ -192,6 +218,14 @@ const HARNESS_JS = `(function () {
     return null;
   }
 
+  function getEdge(model, id) {
+    var edges = model.edges || [];
+    for (var i = 0; i < edges.length; i++) {
+      if (edges[i].id === id) return edges[i];
+    }
+    return null;
+  }
+
   function finiteNumber(v) {
     return typeof v === "number" && Number.isFinite(v);
   }
@@ -232,6 +266,164 @@ const HARNESS_JS = `(function () {
     text.setAttribute("y", String(y));
     text.textContent = label;
     svg.appendChild(text);
+  }
+
+  function edgeDirection(edge) {
+    if (!edge || !isRecordObject(edge.ext)) return "forward";
+    var direction = edge.ext.direction;
+    return direction === "reverse" || direction === "both" || direction === "none"
+      ? direction
+      : "forward";
+  }
+
+  function edgeCardinality(edge, end) {
+    if (!edge || !isRecordObject(edge.ext)) return null;
+    var value = edge.ext[end === "from" ? "from_card" : "to_card"];
+    return value === "one" || value === "many" || value === "zero-or-one" ||
+      value === "one-or-many" || value === "zero-or-many" ? value : null;
+  }
+
+  function edgeType(edge) {
+    if (!edge || !isRecordObject(edge.ext)) return null;
+    return typeof edge.ext.type === "string" ? edge.ext.type : null;
+  }
+
+  function edgeGeometry(graph, edge) {
+    var fromEl = graph.nodesById.get(edge.from);
+    var toEl = graph.nodesById.get(edge.to);
+    if (!fromEl || !toEl) return null;
+
+    var svgRect = graph.svg.getBoundingClientRect();
+    var fromRect = fromEl.getBoundingClientRect();
+    var toRect = toEl.getBoundingClientRect();
+    var fromCx = fromRect.left + fromRect.width / 2 - svgRect.left;
+    var fromCy = fromRect.top + fromRect.height / 2 - svgRect.top;
+    var toCx = toRect.left + toRect.width / 2 - svgRect.left;
+    var toCy = toRect.top + toRect.height / 2 - svgRect.top;
+
+    if (edge.from === edge.to) {
+      var startX = fromRect.right - svgRect.left;
+      var startY = fromCy;
+      var endX = fromCx;
+      var endY = fromRect.top - svgRect.top;
+      var loopSize = Math.max(36, Math.min(fromRect.width, fromRect.height) / 2);
+      return {
+        kind: "path",
+        path: "M " + startX + " " + startY + " C " +
+          (startX + loopSize) + " " + startY + ", " +
+          fromCx + " " + (endY - loopSize) + ", " + endX + " " + endY,
+        from: { x: startX, y: startY, tx: 1, ty: 0 },
+        to: { x: endX, y: endY, tx: 0, ty: -1 },
+        label: { x: startX + loopSize * 0.7, y: endY - loopSize * 0.45 }
+      };
+    }
+
+    var dx = toCx - fromCx;
+    var dy = toCy - fromCy;
+    var length = Math.sqrt(dx * dx + dy * dy) || 1;
+    var ux = dx / length;
+    var uy = dy / length;
+    var fromRadius = Math.min(
+      Math.abs(ux) > 0 ? fromRect.width / 2 / Math.abs(ux) : Infinity,
+      Math.abs(uy) > 0 ? fromRect.height / 2 / Math.abs(uy) : Infinity
+    );
+    var toRadius = Math.min(
+      Math.abs(ux) > 0 ? toRect.width / 2 / Math.abs(ux) : Infinity,
+      Math.abs(uy) > 0 ? toRect.height / 2 / Math.abs(uy) : Infinity
+    );
+    var x1 = fromCx + ux * fromRadius;
+    var y1 = fromCy + uy * fromRadius;
+    var x2 = toCx - ux * toRadius;
+    var y2 = toCy - uy * toRadius;
+    return {
+      kind: "line",
+      from: { x: x1, y: y1, tx: ux, ty: uy },
+      to: { x: x2, y: y2, tx: -ux, ty: -uy },
+      label: { x: (x1 + x2) / 2, y: (y1 + y2) / 2 }
+    };
+  }
+
+  function setEdgeProjectionAttributes(main, edge, direction) {
+    main.classList.add("ark-harness-edge-main");
+    main.setAttribute("data-ark-edge-id", edge.id);
+    main.setAttribute("data-ark-edge-direction", direction);
+    var type = edgeType(edge);
+    if (type !== null) main.setAttribute("data-ark-edge-type", type);
+  }
+
+  function applyEdgeMarkers(main, markerId, direction) {
+    var marker = "url(#" + markerId + ")";
+    if (direction === "reverse" || direction === "both") {
+      main.setAttribute("marker-start", marker);
+    }
+    if (direction === "forward" || direction === "both") {
+      main.setAttribute("marker-end", marker);
+    }
+  }
+
+  function appendCardinalityLine(group, a, b) {
+    var line = svgElement("line");
+    line.setAttribute("x1", String(a.x));
+    line.setAttribute("y1", String(a.y));
+    line.setAttribute("x2", String(b.x));
+    line.setAttribute("y2", String(b.y));
+    group.appendChild(line);
+  }
+
+  function appendEdgeCardinality(svg, edge, end, endpoint, value) {
+    if (!value) return;
+    var barDistance = 12;
+    var secondDistance = 22;
+    var halfWidth = 7;
+    var circleRadius = 4;
+    var nx = -endpoint.ty;
+    var ny = endpoint.tx;
+    var point = function (distance, perpendicular) {
+      return {
+        x: endpoint.x + endpoint.tx * distance + nx * perpendicular,
+        y: endpoint.y + endpoint.ty * distance + ny * perpendicular
+      };
+    };
+    var group = svgElement("g");
+    group.classList.add("ark-harness-edge-cardinality");
+    group.setAttribute("data-ark-edge-id", edge.id);
+    group.setAttribute("data-ark-edge-end", end);
+    group.setAttribute("data-ark-edge-cardinality", value);
+    markUi(group);
+
+    var appendBar = function (distance) {
+      appendCardinalityLine(group, point(distance, -halfWidth), point(distance, halfWidth));
+    };
+    var appendCircle = function (distance) {
+      var circle = svgElement("circle");
+      var center = point(distance, 0);
+      circle.setAttribute("cx", String(center.x));
+      circle.setAttribute("cy", String(center.y));
+      circle.setAttribute("r", String(circleRadius));
+      group.appendChild(circle);
+    };
+    var appendMany = function (distance) {
+      var tip = point(distance - 7, 0);
+      appendCardinalityLine(group, tip, point(distance, -halfWidth));
+      appendCardinalityLine(group, tip, point(distance, 0));
+      appendCardinalityLine(group, tip, point(distance, halfWidth));
+    };
+
+    if (value === "one") appendBar(barDistance);
+    if (value === "many") appendMany(barDistance + 7);
+    if (value === "zero-or-one") {
+      appendCircle(barDistance);
+      appendBar(secondDistance);
+    }
+    if (value === "one-or-many") {
+      appendBar(barDistance);
+      appendMany(secondDistance);
+    }
+    if (value === "zero-or-many") {
+      appendCircle(barDistance);
+      appendMany(secondDistance);
+    }
+    svg.appendChild(group);
   }
 
   function clearGroupGeometry(el) {
@@ -288,73 +480,211 @@ const HARNESS_JS = `(function () {
     while (graph.svg.firstChild) graph.svg.removeChild(graph.svg.firstChild);
     appendGraphMarker(graph.svg, graph.markerId);
 
-    var svgRect = graph.svg.getBoundingClientRect();
+    graph.edgeGeometryById.clear();
     var edges = state.model && state.model.edges ? state.model.edges : [];
     edges.forEach(function (edge) {
-      var fromEl = graph.nodesById.get(edge.from);
-      var toEl = graph.nodesById.get(edge.to);
-      if (!fromEl || !toEl) return;
-
-      var fromRect = fromEl.getBoundingClientRect();
-      var toRect = toEl.getBoundingClientRect();
-      var fromCx = fromRect.left + fromRect.width / 2 - svgRect.left;
-      var fromCy = fromRect.top + fromRect.height / 2 - svgRect.top;
-      var toCx = toRect.left + toRect.width / 2 - svgRect.left;
-      var toCy = toRect.top + toRect.height / 2 - svgRect.top;
-
-      if (edge.from === edge.to) {
-        var loop = svgElement("path");
-        var startX = fromRect.right - svgRect.left;
-        var startY = fromCy;
-        var endX = fromCx;
-        var endY = fromRect.top - svgRect.top;
-        var loopSize = Math.max(36, Math.min(fromRect.width, fromRect.height) / 2);
-        loop.setAttribute("data-ark-edge-id", edge.id);
-        loop.setAttribute(
-          "d",
-          "M " + startX + " " + startY + " C " +
-            (startX + loopSize) + " " + startY + ", " +
-            fromCx + " " + (endY - loopSize) + ", " + endX + " " + endY
-        );
-        loop.setAttribute("marker-end", "url(#" + graph.markerId + ")");
-        graph.svg.appendChild(loop);
-        appendGraphLabel(graph.svg, edge.label, startX + loopSize * 0.7, endY - loopSize * 0.45);
-        return;
+      var geometry = edgeGeometry(graph, edge);
+      if (!geometry) return;
+      graph.edgeGeometryById.set(edge.id, geometry);
+      var direction = edgeDirection(edge);
+      var main = svgElement(geometry.kind);
+      setEdgeProjectionAttributes(main, edge, direction);
+      if (geometry.kind === "path") {
+        main.setAttribute("d", geometry.path);
+      } else {
+        main.setAttribute("x1", String(geometry.from.x));
+        main.setAttribute("y1", String(geometry.from.y));
+        main.setAttribute("x2", String(geometry.to.x));
+        main.setAttribute("y2", String(geometry.to.y));
       }
-
-      var dx = toCx - fromCx;
-      var dy = toCy - fromCy;
-      var length = Math.sqrt(dx * dx + dy * dy) || 1;
-      var ux = dx / length;
-      var uy = dy / length;
-      var fromRadius = Math.min(
-        Math.abs(ux) > 0 ? fromRect.width / 2 / Math.abs(ux) : Infinity,
-        Math.abs(uy) > 0 ? fromRect.height / 2 / Math.abs(uy) : Infinity
+      applyEdgeMarkers(main, graph.markerId, direction);
+      graph.svg.appendChild(main);
+      appendEdgeCardinality(
+        graph.svg,
+        edge,
+        "from",
+        geometry.from,
+        edgeCardinality(edge, "from")
       );
-      var toRadius = Math.min(
-        Math.abs(ux) > 0 ? toRect.width / 2 / Math.abs(ux) : Infinity,
-        Math.abs(uy) > 0 ? toRect.height / 2 / Math.abs(uy) : Infinity
+      appendEdgeCardinality(
+        graph.svg,
+        edge,
+        "to",
+        geometry.to,
+        edgeCardinality(edge, "to")
       );
-      var x1 = fromCx + ux * fromRadius;
-      var y1 = fromCy + uy * fromRadius;
-      var x2 = toCx - ux * toRadius;
-      var y2 = toCy - uy * toRadius;
-      var line = svgElement("line");
-      line.setAttribute("data-ark-edge-id", edge.id);
-      line.setAttribute("x1", String(x1));
-      line.setAttribute("y1", String(y1));
-      line.setAttribute("x2", String(x2));
-      line.setAttribute("y2", String(y2));
-      line.setAttribute("marker-end", "url(#" + graph.markerId + ")");
-      graph.svg.appendChild(line);
-      appendGraphLabel(graph.svg, edge.label, (x1 + x2) / 2, (y1 + y2) / 2);
+      appendGraphLabel(graph.svg, edge.label, geometry.label.x, geometry.label.y);
     });
+    syncEdgeHandles(graph, edges);
   }
 
   function scheduleGraphRender(graph) {
     if (graph.scheduled) return;
     graph.scheduled = true;
     window.requestAnimationFrame(function () { renderGraph(graph); });
+  }
+
+  function positionEdgeHandle(handle, endpoint) {
+    handle.style.left = endpoint.x + "px";
+    handle.style.top = endpoint.y + "px";
+  }
+
+  function findEdgeDropCandidate(graph, clientX, clientY) {
+    var elements = document.elementsFromPoint(clientX, clientY);
+    for (var i = 0; i < elements.length; i++) {
+      var current = elements[i];
+      while (current && current !== graph.container) {
+        var id = current.getAttribute && current.getAttribute("data-model-id");
+        var nodeEl = id ? graph.nodesById.get(id) : null;
+        if (nodeEl && getNode(state.model, id) &&
+            nodeEl.closest('[data-ark-container="graph"]') === graph.container) {
+          return { id: id, el: nodeEl };
+        }
+        current = current.parentElement;
+      }
+    }
+    return null;
+  }
+
+  function removeEdgeDragUi(drag) {
+    if (drag.preview && drag.preview.parentNode) drag.preview.parentNode.removeChild(drag.preview);
+    if (drag.indicator && drag.indicator.parentNode) {
+      drag.indicator.parentNode.removeChild(drag.indicator);
+    }
+    drag.preview = null;
+    drag.previewLine = null;
+    drag.indicator = null;
+    drag.candidateId = null;
+  }
+
+  function updateEdgeDropIndicator(drag, candidate) {
+    if (!candidate) {
+      if (drag.indicator && drag.indicator.parentNode) {
+        drag.indicator.parentNode.removeChild(drag.indicator);
+      }
+      drag.indicator = null;
+      drag.candidateId = null;
+      return;
+    }
+    if (!drag.indicator) {
+      drag.indicator = document.createElement("div");
+      drag.indicator.className = "ark-harness-edge-drop-indicator";
+      markUi(drag.indicator);
+      drag.graph.handleLayer.appendChild(drag.indicator);
+    }
+    var containerRect = drag.graph.container.getBoundingClientRect();
+    var nodeRect = candidate.el.getBoundingClientRect();
+    drag.indicator.style.left = nodeRect.left - containerRect.left + "px";
+    drag.indicator.style.top = nodeRect.top - containerRect.top + "px";
+    drag.indicator.style.width = nodeRect.width + "px";
+    drag.indicator.style.height = nodeRect.height + "px";
+    drag.candidateId = candidate.id;
+  }
+
+  function updateEdgeDrag(event) {
+    if (!edgeDrag || event.pointerId !== edgeDrag.pointerId) return;
+    var drag = edgeDrag;
+    var containerRect = drag.graph.container.getBoundingClientRect();
+    drag.previewLine.setAttribute("x2", String(event.clientX - containerRect.left));
+    drag.previewLine.setAttribute("y2", String(event.clientY - containerRect.top));
+    updateEdgeDropIndicator(
+      drag,
+      findEdgeDropCandidate(drag.graph, event.clientX, event.clientY)
+    );
+  }
+
+  function finishEdgeDrag(event, commit) {
+    if (!edgeDrag) return;
+    if (event && event.pointerId !== edgeDrag.pointerId) return;
+    var drag = edgeDrag;
+    var candidate = commit && event
+      ? findEdgeDropCandidate(drag.graph, event.clientX, event.clientY)
+      : null;
+    edgeDrag = null;
+    if (commit && candidate) {
+      var currentEdge = getEdge(state.model, drag.edgeId);
+      if (currentEdge && graphPosition(getNode(state.model, candidate.id))) {
+        currentEdge[drag.end] = candidate.id;
+      }
+    }
+    removeEdgeDragUi(drag);
+    if (drag.handle.hasPointerCapture(drag.pointerId)) {
+      drag.handle.releasePointerCapture(drag.pointerId);
+    }
+    scheduleGraphRender(drag.graph);
+  }
+
+  function createEdgeHandle(graph, edge, end) {
+    var handle = createButton("", "ark-harness-edge-handle");
+    handle.setAttribute("data-ark-edge-id", edge.id);
+    handle.setAttribute("data-ark-edge-end", end);
+    handle.addEventListener("pointerdown", function (event) {
+      if (graphDrag || edgeDrag) return;
+      var currentEdge = getEdge(state.model, handle.getAttribute("data-ark-edge-id"));
+      var geometry = currentEdge && graph.edgeGeometryById.get(currentEdge.id);
+      var endpoint = geometry && geometry[end];
+      if (!currentEdge || !endpoint) return;
+      event.preventDefault();
+      event.stopPropagation();
+      handle.setPointerCapture(event.pointerId);
+
+      var preview = svgElement("svg");
+      preview.classList.add("ark-harness-edge-preview");
+      markUi(preview);
+      var line = svgElement("line");
+      line.setAttribute("x1", String(endpoint.x));
+      line.setAttribute("y1", String(endpoint.y));
+      line.setAttribute("x2", String(endpoint.x));
+      line.setAttribute("y2", String(endpoint.y));
+      preview.appendChild(line);
+      graph.handleLayer.insertBefore(preview, graph.handleLayer.firstChild);
+      edgeDrag = {
+        pointerId: event.pointerId,
+        handle: handle,
+        graph: graph,
+        edgeId: currentEdge.id,
+        end: end,
+        preview: preview,
+        previewLine: line,
+        indicator: null,
+        candidateId: null
+      };
+    });
+    handle.addEventListener("pointermove", updateEdgeDrag);
+    handle.addEventListener("pointerup", function (event) { finishEdgeDrag(event, true); });
+    handle.addEventListener("pointercancel", function (event) { finishEdgeDrag(event, false); });
+    graph.handleLayer.appendChild(handle);
+    return handle;
+  }
+
+  function syncEdgeHandles(graph, edges) {
+    var activeKeys = new Set();
+    edges.forEach(function (edge) {
+      var geometry = graph.edgeGeometryById.get(edge.id);
+      if (!geometry) return;
+      ["from", "to"].forEach(function (end) {
+        var key = edge.id + ":" + end;
+        activeKeys.add(key);
+        var handle = graph.edgeHandlesByKey.get(key);
+        if (!handle) {
+          handle = createEdgeHandle(graph, edge, end);
+          graph.edgeHandlesByKey.set(key, handle);
+        }
+        handle.setAttribute("data-ark-edge-id", edge.id);
+        handle.setAttribute("data-ark-edge-end", end);
+        var name = (typeof edge.label === "string" && edge.label) || edge.id;
+        var endLabel = end === "from" ? "始点" : "終点";
+        var ariaLabel = name + " の" + endLabel + "をドラッグして張り替え";
+        handle.setAttribute("aria-label", ariaLabel);
+        handle.title = ariaLabel;
+        positionEdgeHandle(handle, geometry[end]);
+      });
+    });
+    graph.edgeHandlesByKey.forEach(function (handle, key) {
+      if (activeKeys.has(key)) return;
+      if (handle.parentNode) handle.parentNode.removeChild(handle);
+      graph.edgeHandlesByKey.delete(key);
+    });
   }
 
   function finishGraphDrag(event) {
@@ -375,7 +705,7 @@ const HARNESS_JS = `(function () {
       (node.label || node.id) + " をドラッグして移動"
     );
     handle.addEventListener("pointerdown", function (event) {
-      if (graphDrag) return;
+      if (graphDrag || edgeDrag) return;
       var id = el.getAttribute("data-model-id");
       if (!id) return;
       var currentNode = getNode(state.model, id);
@@ -445,12 +775,19 @@ const HARNESS_JS = `(function () {
     svg.classList.add("ark-harness-edge-layer");
     markUi(svg);
     container.appendChild(svg);
+    var handleLayer = document.createElement("div");
+    handleLayer.className = "ark-harness-edge-handle-layer";
+    markUi(handleLayer);
+    container.appendChild(handleLayer);
     graphSequence += 1;
     var graph = {
       container: container,
       nodesById: nodesById,
       groupsById: groupsById,
       svg: svg,
+      edgeGeometryById: new Map(),
+      handleLayer: handleLayer,
+      edgeHandlesByKey: new Map(),
       resizeObserver: null,
       scheduled: false,
       markerId: "ark-harness-arrow-" + graphSequence
@@ -472,6 +809,12 @@ const HARNESS_JS = `(function () {
     containers.forEach(function (container) { graphs.push(wireGraph(container)); });
     window.addEventListener("resize", function () {
       graphs.forEach(function (graph) { scheduleGraphRender(graph); });
+    });
+    window.addEventListener("pointerup", function (event) {
+      finishEdgeDrag(event, true);
+    });
+    window.addEventListener("pointercancel", function (event) {
+      finishEdgeDrag(event, false);
     });
   }
 
