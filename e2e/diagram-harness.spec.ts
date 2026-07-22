@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { injectHarness } from "../packages/server/src/lib/diagram-harness";
 
@@ -101,6 +102,14 @@ async function openDiagram(page: Page, diagramModel: unknown = model) {
   page.on("pageerror", error => errors.push(error.message));
   await page.setContent(diagramHtml(diagramModel));
   return errors;
+}
+
+async function openSampleDiagram(page: Page) {
+  const html = readFileSync(
+    new URL("../docs/diagrams/sample.diagram.html", import.meta.url),
+    "utf8"
+  );
+  await page.setContent(injectHarness(html));
 }
 
 async function connectSubmissionPort(page: Page) {
@@ -228,6 +237,52 @@ test("node.kind を data-kind へ同期して色とアイコンを区別する",
   ).toHaveAttribute("contenteditable", "true");
   await expect(
     user.locator('li[data-model-id="user_id"] .ark-harness-text')
+  ).toHaveAttribute("contenteditable", "true");
+});
+
+test("sample は複数 kind を色とアイコンで区別する", async ({ page }) => {
+  await openSampleDiagram(page);
+
+  const modelKinds = await page
+    .locator("#ark-diagram-model")
+    .evaluate(element => {
+      const parsed = JSON.parse(element.textContent || "") as {
+        nodes: Array<{ id: string; kind?: string }>;
+      };
+      return Object.fromEntries(parsed.nodes.map(node => [node.id, node.kind]));
+    });
+  const projections = await page
+    .locator('[data-ark-container="graph"] > [data-model-id]')
+    .evaluateAll(elements =>
+      elements.map(element => {
+        const icon = element.querySelector(".kind-icon");
+        const style = getComputedStyle(element);
+        return {
+          id: element.getAttribute("data-model-id"),
+          kind: element.getAttribute("data-kind"),
+          color: `${style.backgroundColor}/${style.borderLeftColor}`,
+          icon: icon ? getComputedStyle(icon, "::before").content : "none",
+        };
+      })
+    );
+
+  expect(new Set(Object.values(modelKinds))).toHaveProperty("size", 2);
+  expect(projections).toHaveLength(2);
+  for (const projection of projections) {
+    expect(projection.kind).toBe(modelKinds[projection.id || ""]);
+    expect(projection.icon).not.toBe("none");
+    expect(projection.icon).not.toBe("");
+  }
+  expect(new Set(projections.map(projection => projection.color)).size).toBe(2);
+  expect(new Set(projections.map(projection => projection.icon)).size).toBe(2);
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  await expect(graph.locator('[data-ark-edge-id="e_order_user"]')).toHaveCount(
+    1
+  );
+  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(2);
+  await expect(
+    graph.locator('li[data-model-id="order_id"] .ark-harness-text')
   ).toHaveAttribute("contenteditable", "true");
 });
 
