@@ -50,6 +50,28 @@ describe("injectHarness", () => {
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 
+  it("依存なし auto layout と注入サイズの契約を満たす", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
+      )
+    );
+
+    expect(out).toContain("function readLayoutConfig(");
+    expect(out).toContain("function assignLayerRanks(");
+    expect(out).toContain("function layoutGraph(");
+    expect(out).toContain("positionsById");
+    expect(out).toContain('direction === "TB"');
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThan(128 * 1024);
+    expect(out).not.toContain("elkjs");
+    expect(out).not.toContain("new Worker");
+    expect(out).not.toContain("blob:");
+    expect(out).not.toContain("fetch(");
+    expect(out).not.toContain("import(");
+    expect(out).not.toContain("https://");
+    expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
+  });
+
   it("edge ext の cardinality・direction・type 投影契約を注入する", () => {
     const out = injectHarness(
       page(

@@ -141,6 +141,123 @@ function invalidCoordinateHtml(): string {
   </body></html>`);
 }
 
+const autoLayoutNodes = [
+  { id: "source", label: "Source" },
+  { id: "branch_a", label: "Branch A with a wider label" },
+  { id: "branch_b", label: "Branch B" },
+  { id: "cycle_a", label: "Cycle A" },
+  { id: "cycle_b", label: "Cycle B with two lines" },
+  { id: "self", label: "Self edge" },
+  { id: "isolated", label: "Isolated" },
+];
+
+const autoLayoutEdges = [
+  { id: "e_source_a", from: "source", to: "branch_a" },
+  { id: "e_source_b", from: "source", to: "branch_b" },
+  { id: "e_a_cycle", from: "branch_a", to: "cycle_a" },
+  { id: "e_cycle_ab", from: "cycle_a", to: "cycle_b" },
+  { id: "e_cycle_ba", from: "cycle_b", to: "cycle_a" },
+  { id: "e_self", from: "self", to: "self" },
+];
+
+function autoLayoutHtml(
+  layout: Record<string, unknown> = {
+    direction: "LR",
+    rankSpacing: 80,
+    nodeSpacing: 36,
+    padding: 20,
+  }
+): string {
+  const autoModel = {
+    version: 1,
+    ext: { layout },
+    nodes: autoLayoutNodes,
+    edges: autoLayoutEdges,
+    groups: [
+      {
+        id: "cycle_group",
+        label: "Cycle Group",
+        nodes: ["cycle_a", "cycle_b"],
+      },
+    ],
+  };
+  return injectHarness(`<!doctype html><html><head><style>
+    body { margin: 0; }
+    .graph { width: 360px; height: 260px; background: #f8fafc; }
+    .node { box-sizing: border-box; width: 128px; min-height: 64px; padding: 10px; border: 1px solid #64748b; background: white; }
+    [data-model-id="branch_a"] { width: 196px; height: 82px; }
+    [data-model-id="cycle_b"] { width: 148px; height: 104px; }
+    .group-boundary {
+      display: none;
+      position: absolute;
+      left: calc(var(--ark-harness-group-x) - 12px);
+      top: calc(var(--ark-harness-group-y) - 24px);
+      width: calc(var(--ark-harness-group-width) + 24px);
+      height: calc(var(--ark-harness-group-height) + 36px);
+      border: 2px solid #0f766e;
+    }
+    .group-boundary.ark-harness-graph-group { display: block; }
+  </style></head><body>
+    <script id="ark-diagram-model" type="application/json">${JSON.stringify(autoModel)}</script>
+    <div class="graph" data-ark-container="graph">
+      <section class="group-boundary" data-ark-group data-model-id="cycle_group"><span data-model-id="cycle_group">Cycle Group</span></section>
+      ${autoLayoutNodes
+        .map(
+          node =>
+            `<section class="node" data-model-id="${node.id}"><h2 data-model-id="${node.id}">${node.label}</h2></section>`
+        )
+        .join("\n")}
+    </div>
+    <section data-model-id="source">Outside duplicate</section>
+  </body></html>`);
+}
+
+function mixedLayoutHtml(): string {
+  const mixedModel = {
+    version: 1,
+    ext: {
+      layout: {
+        direction: "LR",
+        rankSpacing: 64,
+        nodeSpacing: 28,
+        padding: 16,
+      },
+    },
+    nodes: [
+      { id: "manual_a", label: "Manual A", ext: { x: 30, y: 40 } },
+      { id: "manual_b", label: "Manual B", ext: { x: 30, y: 40 } },
+      { id: "auto_missing", label: "Auto Missing" },
+      { id: "auto_partial", label: "Auto Partial", ext: { x: 90 } },
+      {
+        id: "auto_invalid",
+        label: "Auto Invalid",
+        ext: { x: "120", y: 80 },
+      },
+    ],
+    edges: [
+      { id: "e_manual_auto", from: "manual_a", to: "auto_missing" },
+      { id: "e_auto_partial", from: "auto_missing", to: "auto_partial" },
+      { id: "e_partial_invalid", from: "auto_partial", to: "auto_invalid" },
+    ],
+    groups: [],
+  };
+  return injectHarness(`<!doctype html><html><head><style>
+    body { margin: 0; }
+    .graph { width: 320px; height: 220px; }
+    .node { box-sizing: border-box; width: 150px; height: 72px; padding: 10px; border: 1px solid #64748b; }
+  </style></head><body>
+    <script id="ark-diagram-model" type="application/json">${JSON.stringify(mixedModel)}</script>
+    <div class="graph" data-ark-container="graph">
+      ${mixedModel.nodes
+        .map(
+          node =>
+            `<section class="node" data-model-id="${node.id}"><h2 data-model-id="${node.id}">${node.label}</h2></section>`
+        )
+        .join("\n")}
+    </div>
+  </body></html>`);
+}
+
 const edgeSemanticsModel = {
   version: 1,
   nodes: [
@@ -320,6 +437,269 @@ function expectBoxToContain(
     member.y + member.height
   );
 }
+
+function boxesOverlap(
+  left: { x: number; y: number; width: number; height: number },
+  right: { x: number; y: number; width: number; height: number },
+  gap = 0
+) {
+  return !(
+    left.x + left.width + gap <= right.x ||
+    right.x + right.width + gap <= left.x ||
+    left.y + left.height + gap <= right.y ||
+    right.y + right.height + gap <= left.y
+  );
+}
+
+async function graphNodeBoxes(page: Page) {
+  const nodes = page.locator(
+    '[data-ark-container="graph"] > .ark-harness-graph-node'
+  );
+  await expect
+    .poll(() =>
+      nodes.evaluateAll(elements =>
+        elements.every(element =>
+          Boolean(
+            (element as HTMLElement).style.getPropertyValue(
+              "--ark-harness-graph-x"
+            )
+          )
+        )
+      )
+    )
+    .toBe(true);
+  return nodes.evaluateAll(elements =>
+    elements.map(element => {
+      const box = element.getBoundingClientRect();
+      return {
+        id: element.getAttribute("data-model-id") || "",
+        x: box.x,
+        y: box.y,
+        width: box.width,
+        height: box.height,
+      };
+    })
+  );
+}
+
+function expectNoOverlaps(
+  boxes: Array<{
+    id: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }>,
+  gap = 0
+) {
+  for (let left = 0; left < boxes.length; left += 1) {
+    for (let right = left + 1; right < boxes.length; right += 1) {
+      expect(
+        boxesOverlap(boxes[left], boxes[right], gap),
+        `${boxes[left].id} と ${boxes[right].id} が重なっています`
+      ).toBe(false);
+    }
+  }
+}
+
+test("自動配置 LR は分岐・循環・self-edge・孤立 node を決定的に配置する", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.setContent(autoLayoutHtml());
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  await expect(graph.locator(":scope > .ark-harness-graph-node")).toHaveCount(
+    autoLayoutNodes.length
+  );
+  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(
+    autoLayoutNodes.length
+  );
+  await expect(
+    graph.locator(".ark-harness-edge-main[data-ark-edge-id]")
+  ).toHaveCount(autoLayoutEdges.length);
+
+  const boxes = await graphNodeBoxes(page);
+  expect(boxes).toHaveLength(autoLayoutNodes.length);
+  expect(
+    boxes.every(box =>
+      [box.x, box.y, box.width, box.height].every(Number.isFinite)
+    )
+  ).toBe(true);
+  expectNoOverlaps(boxes);
+  const byId = Object.fromEntries(boxes.map(box => [box.id, box]));
+  expect(
+    byId.branch_a.x - (byId.source.x + byId.source.width)
+  ).toBeGreaterThanOrEqual(79);
+  expect(byId.branch_a.x).toBeGreaterThan(byId.source.x);
+  expect(
+    Math.abs(byId.branch_b.y - (byId.branch_a.y + byId.branch_a.height))
+  ).toBeGreaterThanOrEqual(35);
+
+  const group = graph.locator('[data-ark-group][data-model-id="cycle_group"]');
+  await expect(group).toHaveClass(/ark-harness-graph-group/);
+  const [groupBox, cycleABox, cycleBBox] = await Promise.all([
+    requiredBoundingBox(group),
+    requiredBoundingBox(graph.locator('[data-model-id="cycle_a"]').first()),
+    requiredBoundingBox(graph.locator('[data-model-id="cycle_b"]').first()),
+  ]);
+  expectBoxToContain(groupBox, cycleABox);
+  expectBoxToContain(groupBox, cycleBBox);
+  expect(errors).toEqual([]);
+});
+
+test("自動配置 TB と不正 layout 設定は安全な fallback で重なりを避ける", async ({
+  page,
+}) => {
+  await page.setContent(
+    autoLayoutHtml({
+      direction: "TB",
+      rankSpacing: 80,
+      nodeSpacing: 36,
+      padding: 20,
+    })
+  );
+  let boxes = await graphNodeBoxes(page);
+  expectNoOverlaps(boxes);
+  let byId = Object.fromEntries(boxes.map(box => [box.id, box]));
+  expect(
+    byId.branch_a.y - (byId.source.y + byId.source.height)
+  ).toBeGreaterThanOrEqual(79);
+  expect(byId.branch_b.x).not.toBeCloseTo(byId.branch_a.x, 0);
+
+  await page.setContent(
+    autoLayoutHtml({
+      direction: "diagonal",
+      rankSpacing: -40,
+      nodeSpacing: "huge",
+      padding: 1_000_000,
+    })
+  );
+  boxes = await graphNodeBoxes(page);
+  expect(boxes).toHaveLength(autoLayoutNodes.length);
+  expectNoOverlaps(boxes);
+  byId = Object.fromEntries(boxes.map(box => [box.id, box]));
+  expect(byId.branch_a.x).toBeGreaterThan(byId.source.x);
+});
+
+test("手動座標と座標未指定 node を混在させ、manual 同士の重なりだけを保持する", async ({
+  page,
+}) => {
+  await page.setContent(mixedLayoutHtml());
+  const graph = page.locator('[data-ark-container="graph"]');
+  const graphBox = await requiredBoundingBox(graph);
+  const boxes = await graphNodeBoxes(page);
+  expect(boxes).toHaveLength(5);
+  const byId = Object.fromEntries(boxes.map(box => [box.id, box]));
+  for (const id of ["manual_a", "manual_b"]) {
+    expect(byId[id].x - graphBox.x).toBeCloseTo(30, 0);
+    expect(byId[id].y - graphBox.y).toBeCloseTo(40, 0);
+  }
+  expect(boxesOverlap(byId.manual_a, byId.manual_b)).toBe(true);
+  for (const autoId of ["auto_missing", "auto_partial", "auto_invalid"]) {
+    await expect(
+      graph.locator(`[data-model-id="${autoId}"] .ark-harness-graph-handle`)
+    ).toHaveCount(1);
+    expect(boxesOverlap(byId[autoId], byId.manual_a)).toBe(false);
+    expect(boxesOverlap(byId[autoId], byId.manual_b)).toBe(false);
+  }
+  expectNoOverlaps(boxes.filter(box => box.id.startsWith("auto_")));
+  await expect(
+    graph.locator(".ark-harness-edge-main[data-ark-edge-id]")
+  ).toHaveCount(3);
+});
+
+test("表示時は座標を非永続化し、ドラッグした node だけ手動座標へ昇格する", async ({
+  page,
+}) => {
+  await page.setContent(mixedLayoutHtml());
+  await connectSubmissionPort(page);
+  const submit = page.getByRole("button", {
+    name: "変更を親フレームへ送信する",
+  });
+  await submit.click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  const initialNodes = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          arkHarnessSubmission?: {
+            model: { nodes: Array<{ id: string; ext?: unknown }> };
+          };
+        }
+      ).arkHarnessSubmission?.model.nodes
+  );
+  expect(
+    initialNodes?.find(node => node.id === "auto_missing")?.ext
+  ).toBeUndefined();
+  expect(initialNodes?.find(node => node.id === "auto_partial")?.ext).toEqual({
+    x: 90,
+  });
+
+  const autoNode = page.locator('[data-model-id="auto_missing"]').first();
+  const before = await requiredBoundingBox(autoNode);
+  const handle = await requiredBoundingBox(
+    autoNode.locator(".ark-harness-graph-handle")
+  );
+  await page.evaluate(() => {
+    delete (window as typeof window & { arkHarnessSubmission?: unknown })
+      .arkHarnessSubmission;
+  });
+  await page.mouse.move(
+    handle.x + handle.width / 2,
+    handle.y + handle.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    handle.x + handle.width / 2 + 60,
+    handle.y + handle.height / 2 + 40
+  );
+  await page.mouse.up();
+  await submit.click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  const submittedNodes = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          arkHarnessSubmission?: {
+            model: {
+              nodes: Array<{
+                id: string;
+                ext?: Record<string, unknown>;
+              }>;
+            };
+          };
+        }
+      ).arkHarnessSubmission?.model.nodes
+  );
+  const dragged = submittedNodes?.find(node => node.id === "auto_missing");
+  const graphBox = await requiredBoundingBox(
+    page.locator('[data-ark-container="graph"]')
+  );
+  expect(dragged?.ext?.x).toBeCloseTo(before.x - graphBox.x + 60, 0);
+  expect(dragged?.ext?.y).toBeCloseTo(before.y - graphBox.y + 40, 0);
+  expect(submittedNodes?.find(node => node.id === "auto_invalid")?.ext).toEqual(
+    {
+      x: "120",
+      y: 80,
+    }
+  );
+  expect(submittedNodes?.find(node => node.id === "manual_a")?.ext).toEqual({
+    x: 30,
+    y: 40,
+  });
+});
 
 test("ext 座標の2次元配置と edge で node 外周を結ぶ", async ({ page }) => {
   await openDiagram(page);
@@ -1889,7 +2269,9 @@ test("モデル直接編集後の kind 再同期と node ドラッグを送信 m
   expect(html).not.toContain("--ark-harness-graph-y");
 });
 
-test("不正座標と graph 外参照を安全に除外する", async ({ page }) => {
+test("不正座標は座標未指定として自動配置し graph 外参照だけを除外する", async ({
+  page,
+}) => {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   await page.setContent(invalidCoordinateHtml());
@@ -1902,19 +2284,20 @@ test("不正座標と graph 外参照を安全に除外する", async ({ page })
     graph.locator(
       '.ark-harness-edge-main[data-ark-edge-id="invalid_coordinate_edge"]'
     )
-  ).toHaveCount(0);
+  ).toHaveCount(1);
   await expect(
     graph.locator('.ark-harness-edge-main[data-ark-edge-id="outside_edge"]')
   ).toHaveCount(0);
   await expect(
     graph.locator(".ark-harness-edge-main[data-ark-edge-id]")
-  ).toHaveCount(1);
-  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(2);
+  ).toHaveCount(2);
+  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(4);
   await expect(
     graph.locator('[data-model-id="string_x"] .ark-harness-graph-handle')
-  ).toHaveCount(0);
+  ).toHaveCount(1);
   await expect(
     graph.locator('[data-model-id="null_y"] .ark-harness-graph-handle')
-  ).toHaveCount(0);
+  ).toHaveCount(1);
+  expectNoOverlaps(await graphNodeBoxes(page));
   expect(errors).toEqual([]);
 });
