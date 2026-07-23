@@ -199,11 +199,20 @@ describe("injectHarness", () => {
     expect(out).toContain("drag.didDrag");
     expect(out).toContain("drag.leftSource");
     expect(out).toContain("function removeEdge(");
-    expect(out).toContain("edgeDeleteControlsById");
-    expect(out).toContain("function syncEdgeDeleteControls(");
+    expect(out).toContain("function setEdgeDeletePending(");
+    expect(out).toContain('drag.mode === "rewire" && !candidate');
+    expect(out).toContain("離すと edge を削除");
+    expect(out).toContain("function setSelectedNode(");
+    expect(out).toContain("function handleNodeDeleteKey(");
+    expect(out).toContain('event.key !== "Delete"');
+    expect(out).toContain('event.key !== "Backspace"');
+    expect(out).toContain("target.isContentEditable");
+    expect(out).not.toContain("ark-harness-node-delete");
+    expect(out).not.toContain("ark-harness-edge-delete-visible");
+    expect(out).not.toContain("ark-harness-edge-hit");
+    expect(out).not.toContain("function syncEdgeDeleteControls(");
     expect(out).toContain("var AFFORDANCE_CLOSE_DELAY = 120");
     expect(out).toContain("function scheduleNodeAffordanceClose(");
-    expect(out).toContain("function scheduleEdgeDeleteClose(");
     expect(out).toContain("ark-harness-node-affordance-open");
     expect(out).toContain('controller.root.matches(":focus-within")');
     expect(out).toContain(

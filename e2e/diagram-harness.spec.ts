@@ -480,12 +480,12 @@ function crudDiagramHtml(diagramModel: DiagramModel = crudModel): string {
     <script id="ark-diagram-model" type="application/json">${JSON.stringify(diagramModel)}</script>
     <div class="crud-graph" data-ark-container="graph" data-model-id="crud-a">
       <section data-ark-group data-model-id="crud-group">CRUD group</section>
-      <section class="crud-node" data-model-id="crud-a">A unsafe node</section>
-      <section class="crud-node" data-model-id="crud-b">B</section>
-      <section class="crud-node" data-model-id="crud-d">D</section>
+      <section class="crud-node" data-model-id="crud-a"><span data-model-id="crud-a">A unsafe node</span></section>
+      <section class="crud-node" data-model-id="crud-b"><span data-model-id="crud-b">B</span></section>
+      <section class="crud-node" data-model-id="crud-d"><span data-model-id="crud-d">D</span></section>
     </div>
     <div class="crud-graph" data-ark-container="graph">
-      <section class="crud-node" data-model-id="crud-other">Other graph</section>
+      <section class="crud-node" data-model-id="crud-other"><span data-model-id="crud-other">Other graph</span></section>
     </div>
     <aside data-model-id="crud-a">duplicate projection</aside>
   </body></html>`);
@@ -684,7 +684,7 @@ test("node CRUD: palette から安全な projection を重ならず追加して�
   await expect(projection.locator(".ark-harness-kind-picker")).toHaveCount(1);
   await expect(projection.locator(".ark-harness-graph-handle")).toHaveCount(1);
   await expect(projection.locator(".ark-harness-node-create")).toHaveCount(1);
-  await expect(projection.locator(".ark-harness-node-delete")).toHaveCount(1);
+  await expect(projection.locator(".ark-harness-node-delete")).toHaveCount(0);
 
   const newBox = await requiredBoundingBox(projection);
   const oldBoxes = await firstGraph
@@ -729,35 +729,14 @@ test("node CRUD: node 削除を対象 projection・incident edge・group 参照�
     .first()
     .locator('[data-model-id="crud-a"]')
     .first();
-  await node.hover();
-  await expect(node.locator(".ark-harness-node-delete")).toHaveAttribute(
-    "aria-label",
-    'A <unsafe "node"> を削除'
-  );
+  await expect(page.locator(".ark-harness-node-delete")).toHaveCount(0);
+  await expect(page.locator(".ark-harness-edge-delete")).toHaveCount(0);
+  await expect(page.locator(".ark-harness-edge-hit")).toHaveCount(0);
   await expect(page.locator("img, script[src], [onerror]")).toHaveCount(0);
-  const nodeBox = await requiredBoundingBox(node);
-  const deleteButton = node.locator(".ark-harness-node-delete");
-  const deleteBox = await requiredBoundingBox(deleteButton);
-  await page.mouse.move(
-    nodeBox.x + nodeBox.width / 2,
-    nodeBox.y + nodeBox.height / 2
-  );
-  await page.mouse.move(
-    deleteBox.x + deleteBox.width / 2,
-    deleteBox.y + deleteBox.height / 2,
-    { steps: 8 }
-  );
-  await page.waitForTimeout(160);
-  await expect(node.locator(".ark-harness-node-rail")).toHaveCSS(
-    "opacity",
-    "1"
-  );
-  await expect(node.locator(".ark-harness-node-rail")).toHaveCSS(
-    "pointer-events",
-    "auto"
-  );
-  await page.mouse.down();
-  await page.mouse.up();
+  await node.focus();
+  await expect(node).toBeFocused();
+  await expect(node).toHaveClass(/ark-harness-node-selected/);
+  await page.keyboard.press("Delete");
 
   await expect(graphs).toHaveCount(2);
   await expect(graphs.first()).toHaveAttribute("data-model-id", "crud-a");
@@ -811,6 +790,27 @@ test("node CRUD: node 削除を対象 projection・incident edge・group 参照�
   expect(submission?.html).toContain('data-ark-container="graph"');
   expect(submission?.html).toContain('data-model-id="crud-b"');
   expect(submission?.html).toContain('id="ark-diagram-model"');
+});
+
+test("node CRUD: contenteditable 編集中の Delete は node 削除に使わない", async ({
+  page,
+}) => {
+  await page.setContent(crudDiagramHtml());
+  const node = page
+    .locator('[data-ark-container="graph"]')
+    .first()
+    .locator('[data-model-id="crud-a"]')
+    .first();
+  const editable = node.locator('span[data-model-id="crud-a"]');
+
+  await editable.focus();
+  await expect(editable).toBeFocused();
+  await page.keyboard.press("Delete");
+
+  await expect(node).toBeAttached();
+  expect(
+    (await readCurrentModel(page)).nodes.some(entry => entry.id === "crud-a")
+  ).toBe(true);
 });
 
 test("edge CRUD: click・微小移動・source drop を無視し明確な drag だけで edge を追加する", async ({
@@ -933,26 +933,36 @@ test("edge CRUD: click・微小移動・source drop を無視し明確な drag �
   );
 });
 
-test("edge CRUD: hit target button と endpoint keyboard で対象 edge だけを削除する", async ({
+test("edge CRUD: endpoint を空き領域へ drag して対象 edge だけを削除する", async ({
   page,
 }) => {
   await page.setContent(crudDiagramHtml());
   const graph = page.locator('[data-ark-container="graph"]').first();
-  const button = graph.locator(
-    '.ark-harness-edge-delete[data-ark-edge-id="crud-ab"]'
+  const endpoint = graph.locator(
+    '.ark-harness-edge-handle[data-ark-edge-id="crud-ab"][data-ark-edge-end="to"]'
   );
-  const edge = await readNamedEdge(page, "crud-ab");
-  await page.mouse.move((edge.x1 + edge.x2) / 2, (edge.y1 + edge.y2) / 2);
-  await expect(button).toBeVisible();
-  const buttonBox = await requiredBoundingBox(button);
+  const [handleBox, graphBox] = await Promise.all([
+    requiredBoundingBox(endpoint),
+    requiredBoundingBox(graph),
+  ]);
   await page.mouse.move(
-    buttonBox.x + buttonBox.width / 2,
-    buttonBox.y + buttonBox.height / 2,
-    { steps: 8 }
+    handleBox.x + handleBox.width / 2,
+    handleBox.y + handleBox.height / 2
   );
-  await page.waitForTimeout(160);
-  await expect(button).toBeVisible();
   await page.mouse.down();
+  await page.mouse.move(
+    graphBox.x + graphBox.width - 20,
+    graphBox.y + graphBox.height - 24,
+    { steps: 5 }
+  );
+  await expect(endpoint).toHaveClass(/ark-harness-edge-delete-pending/);
+  await expect(endpoint).toHaveAttribute("aria-label", "離すと edge を削除");
+  await expect(
+    graph.locator('.ark-harness-edge-main[data-ark-edge-id="crud-ab"]')
+  ).toHaveClass(/ark-harness-edge-delete-pending/);
+  await expect(graph.locator(".ark-harness-edge-drop-indicator")).toHaveCount(
+    0
+  );
   await page.mouse.up();
   await expect(graph.locator('[data-ark-edge-id="crud-ab"]')).toHaveCount(0);
   await expect(graph.locator('[data-model-id="crud-a"]').first()).toBeVisible();
@@ -963,15 +973,9 @@ test("edge CRUD: hit target button と endpoint keyboard で対象 edge だけ�
   ]);
   expect(afterSingleDelete.nodes).toEqual(crudModel.nodes);
   expect(afterSingleDelete.groups).toEqual(crudModel.groups);
-
-  const endpoint = graph.locator(
-    '.ark-harness-edge-handle[data-ark-edge-id="crud-bd"][data-ark-edge-end="to"]'
-  );
-  await endpoint.focus();
-  await endpoint.press("Delete");
-  await expect(graph.locator('[data-ark-edge-id="crud-bd"]')).toHaveCount(0);
-  expect((await readCurrentModel(page)).edges.map(edge => edge.id)).toEqual([
+  expect(afterSingleDelete.edges.map(edge => edge.id)).toEqual([
     "crud-aa",
+    "crud-bd",
   ]);
 });
 
@@ -1956,43 +1960,50 @@ test("端点 drag 中の model 直接削除でも stale edge を更新しない"
   expect(errors).toEqual([]);
 });
 
-test("edge 端点の invalid drop と pointercancel は model を変更しない", async ({
+test("edge 端点 drag の Escape と pointercancel は model を変更しない", async ({
   page,
 }) => {
   await openEdgeSemanticsDiagram(page);
   await connectSubmissionPort(page);
   const graph = page.locator('[data-ark-container="graph"]');
   const graphBox = await requiredBoundingBox(graph);
-  const outside = page.locator('body > [data-model-id="outside"]');
-  const outsideBox = await requiredBoundingBox(outside);
   const handleSelector =
     '.ark-harness-edge-handle[data-ark-edge-id="e_order_owner"][data-ark-edge-end="to"]';
 
-  for (const target of [
-    { x: graphBox.x + 820, y: graphBox.y + 30 },
-    {
-      x: outsideBox.x + outsideBox.width / 2,
-      y: outsideBox.y + outsideBox.height / 2,
-    },
-  ]) {
-    const handleBox = await requiredBoundingBox(graph.locator(handleSelector));
-    await page.mouse.move(
-      handleBox.x + handleBox.width / 2,
-      handleBox.y + handleBox.height / 2
-    );
-    await page.mouse.down();
-    await page.mouse.move(target.x, target.y, { steps: 3 });
-    await page.mouse.up();
-  }
-
-  const handle = graph.locator(handleSelector);
-  const cancelBox = await requiredBoundingBox(handle);
+  let handle = graph.locator(handleSelector);
+  let handleBox = await requiredBoundingBox(handle);
   await page.mouse.move(
-    cancelBox.x + cancelBox.width / 2,
-    cancelBox.y + cancelBox.height / 2
+    handleBox.x + handleBox.width / 2,
+    handleBox.y + handleBox.height / 2
   );
   await page.mouse.down();
-  await page.mouse.move(graphBox.x + 700, graphBox.y + 400);
+  await page.mouse.move(
+    graphBox.x + graphBox.width - 20,
+    graphBox.y + graphBox.height - 20,
+    { steps: 3 }
+  );
+  await expect(handle).toHaveClass(/ark-harness-edge-delete-pending/);
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await expect(graph.locator(".ark-harness-edge-preview")).toHaveCount(0);
+  expect(
+    (await readCurrentModel(page)).edges.find(
+      edge => edge.id === "e_order_owner"
+    )
+  ).toMatchObject({ from: "order", to: "user" });
+
+  handle = graph.locator(handleSelector);
+  handleBox = await requiredBoundingBox(handle);
+  await page.mouse.move(
+    handleBox.x + handleBox.width / 2,
+    handleBox.y + handleBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    graphBox.x + graphBox.width - 20,
+    graphBox.y + graphBox.height - 20
+  );
+  await expect(handle).toHaveClass(/ark-harness-edge-delete-pending/);
   await handle.dispatchEvent("pointercancel", { pointerId: 1 });
   await page.mouse.up();
 
