@@ -130,6 +130,9 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   fill: #475569; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
   font-size: 12px; text-anchor: middle; dominant-baseline: central;
 }
+.ark-harness-edge-hit-target {
+  stroke: transparent !important; stroke-width: 18 !important; pointer-events: stroke;
+}
 .ark-harness-edge-handle-layer {
   position: absolute; inset: 0; z-index: 3; pointer-events: none;
 }
@@ -138,6 +141,31 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   width: 18px; height: 18px; padding: 0; border: 2px solid #0ea5b7; border-radius: 999px;
   background: #fff; color: #0e7490; cursor: crosshair; line-height: 14px; font-size: 9px;
   pointer-events: auto; touch-action: none;
+}
+.ark-harness-edge-controls {
+  position: absolute; inset: 0; z-index: 4; opacity: 0; pointer-events: none;
+  transition: opacity .1s ease;
+}
+.ark-harness-edge-controls.ark-harness-edge-controls-active,
+.ark-harness-edge-controls:focus-within {
+  opacity: 1;
+}
+.ark-harness-edge-control {
+  position: absolute; transform: translate(-50%, -50%); box-sizing: border-box;
+  width: 108px; min-width: 0; padding: 2px 3px;
+  border: 1px solid rgba(100,116,139,.65); border-radius: 4px;
+  background: rgba(255,255,255,.97); color: #334155; font: 10px/1.2 sans-serif;
+  pointer-events: none;
+}
+.ark-harness-edge-controls.ark-harness-edge-controls-active .ark-harness-edge-control,
+.ark-harness-edge-controls:focus-within .ark-harness-edge-control {
+  pointer-events: auto;
+}
+.ark-harness-edge-controls-unavailable {
+  opacity: 0 !important; pointer-events: none !important;
+}
+.ark-harness-edge-controls-unavailable .ark-harness-edge-control {
+  pointer-events: none !important;
 }
 .ark-harness-edge-preview {
   position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none;
@@ -177,6 +205,23 @@ const HARNESS_JS = `(function () {
     "--ark-harness-graph-min-width",
     "--ark-harness-graph-min-height"
   ];
+  var CARDINALITY_VALUES = [
+    "one", "many", "zero-or-one", "one-or-many", "zero-or-many"
+  ];
+  var DIRECTION_VALUES = ["forward", "reverse", "both", "none"];
+  var CARDINALITY_LABELS = {
+    "one": "1",
+    "many": "N",
+    "zero-or-one": "0..1",
+    "one-or-many": "1..N",
+    "zero-or-many": "0..N"
+  };
+  var DIRECTION_LABELS = {
+    "forward": "\\u2192",
+    "reverse": "\\u2190",
+    "both": "\\u2194",
+    "none": "\\u77E2\\u5370\\u306A\\u3057"
+  };
 
   var BLOCK_TAGS = {
     DIV: 1, UL: 1, OL: 1, LI: 1, TABLE: 1, THEAD: 1, TBODY: 1, TR: 1, TD: 1, TH: 1,
@@ -639,9 +684,12 @@ const HARNESS_JS = `(function () {
     svg.appendChild(defs);
   }
 
-  function appendGraphLabel(svg, label, x, y) {
+  function appendGraphLabel(svg, edge, x, y) {
+    var label = edge && edge.label;
     if (typeof label !== "string" || label.length === 0) return;
     var text = svgElement("text");
+    text.classList.add("ark-harness-edge-label");
+    text.setAttribute("data-ark-edge-id", edge.id);
     text.setAttribute("x", String(x));
     text.setAttribute("y", String(y));
     text.textContent = label;
@@ -651,21 +699,31 @@ const HARNESS_JS = `(function () {
   function edgeDirection(edge) {
     if (!edge || !isRecordObject(edge.ext)) return "forward";
     var direction = edge.ext.direction;
-    return direction === "reverse" || direction === "both" || direction === "none"
-      ? direction
-      : "forward";
+    return DIRECTION_VALUES.indexOf(direction) !== -1 ? direction : "forward";
   }
 
   function edgeCardinality(edge, end) {
     if (!edge || !isRecordObject(edge.ext)) return null;
     var value = edge.ext[end === "from" ? "from_card" : "to_card"];
-    return value === "one" || value === "many" || value === "zero-or-one" ||
-      value === "one-or-many" || value === "zero-or-many" ? value : null;
+    return CARDINALITY_VALUES.indexOf(value) !== -1 ? value : null;
   }
 
   function edgeType(edge) {
     if (!edge || !isRecordObject(edge.ext)) return null;
     return typeof edge.ext.type === "string" ? edge.ext.type : null;
+  }
+
+  function updateEdgeExt(graph, edgeId, property, value) {
+    var cardinalityProperty = property === "from_card" || property === "to_card";
+    var valid = cardinalityProperty
+      ? CARDINALITY_VALUES.indexOf(value) !== -1
+      : property === "direction" && DIRECTION_VALUES.indexOf(value) !== -1;
+    if (!valid) return;
+    var edge = getEdge(state.model, edgeId);
+    if (!edge) return;
+    if (!isRecordObject(edge.ext)) edge.ext = {};
+    edge.ext[property] = value;
+    scheduleGraphRender(graph);
   }
 
   function edgeGeometry(graph, edge) {
@@ -739,6 +797,32 @@ const HARNESS_JS = `(function () {
     if (direction === "forward" || direction === "both") {
       main.setAttribute("marker-end", marker);
     }
+  }
+
+  function setEdgeShapeGeometry(element, geometry) {
+    if (geometry.kind === "path") {
+      element.setAttribute("d", geometry.path);
+    } else {
+      element.setAttribute("x1", String(geometry.from.x));
+      element.setAttribute("y1", String(geometry.from.y));
+      element.setAttribute("x2", String(geometry.to.x));
+      element.setAttribute("y2", String(geometry.to.y));
+    }
+  }
+
+  function appendEdgeHitTarget(graph, edge, geometry) {
+    var hitTarget = svgElement(geometry.kind);
+    hitTarget.classList.add("ark-harness-edge-hit-target");
+    hitTarget.setAttribute("data-ark-edge-id", edge.id);
+    setEdgeShapeGeometry(hitTarget, geometry);
+    markUi(hitTarget);
+    hitTarget.addEventListener("pointerenter", function () {
+      activateEdgeControls(graph, edge.id);
+    });
+    hitTarget.addEventListener("pointerleave", function () {
+      scheduleEdgeControlsClose(graph, edge.id);
+    });
+    graph.svg.appendChild(hitTarget);
   }
 
   function appendCardinalityLine(group, a, b) {
@@ -862,6 +946,7 @@ const HARNESS_JS = `(function () {
     appendGraphMarker(graph.svg, graph.markerId);
 
     graph.edgeGeometryById.clear();
+    graph.edgeMainById.clear();
     var edges = state.model && state.model.edges ? state.model.edges : [];
     edges.forEach(function (edge) {
       var geometry = edgeGeometry(graph, edge);
@@ -870,16 +955,10 @@ const HARNESS_JS = `(function () {
       var direction = edgeDirection(edge);
       var main = svgElement(geometry.kind);
       setEdgeProjectionAttributes(main, edge, direction);
-      if (geometry.kind === "path") {
-        main.setAttribute("d", geometry.path);
-      } else {
-        main.setAttribute("x1", String(geometry.from.x));
-        main.setAttribute("y1", String(geometry.from.y));
-        main.setAttribute("x2", String(geometry.to.x));
-        main.setAttribute("y2", String(geometry.to.y));
-      }
+      setEdgeShapeGeometry(main, geometry);
       applyEdgeMarkers(main, graph.markerId, direction);
       graph.svg.appendChild(main);
+      graph.edgeMainById.set(edge.id, main);
       appendEdgeCardinality(
         graph.svg,
         edge,
@@ -894,9 +973,11 @@ const HARNESS_JS = `(function () {
         geometry.to,
         edgeCardinality(edge, "to")
       );
-      appendGraphLabel(graph.svg, edge.label, geometry.label.x, geometry.label.y);
+      appendGraphLabel(graph.svg, edge, geometry.label.x, geometry.label.y);
+      appendEdgeHitTarget(graph, edge, geometry);
     });
     syncEdgeHandles(graph, edges);
+    syncEdgeControls(graph, edges);
   }
 
   function scheduleGraphRender(graph) {
@@ -974,13 +1055,23 @@ const HARNESS_JS = `(function () {
     );
   }
 
+  function edgeDropCandidateAtPointer(drag, event) {
+    var candidate = findEdgeDropCandidate(drag.graph, event.clientX, event.clientY);
+    if (candidate || !drag.candidateId) return candidate;
+    var nodeEl = drag.graph.nodesById.get(drag.candidateId);
+    if (!nodeEl || !getNode(state.model, drag.candidateId)) return null;
+    var rect = nodeEl.getBoundingClientRect();
+    return event.clientX >= rect.left && event.clientX <= rect.right &&
+      event.clientY >= rect.top && event.clientY <= rect.bottom
+      ? { id: drag.candidateId, el: nodeEl }
+      : null;
+  }
+
   function finishEdgeDrag(event, commit) {
     if (!edgeDrag) return;
     if (event && event.pointerId !== edgeDrag.pointerId) return;
     var drag = edgeDrag;
-    var candidate = commit && event
-      ? findEdgeDropCandidate(drag.graph, event.clientX, event.clientY)
-      : null;
+    var candidate = commit && event ? edgeDropCandidateAtPointer(drag, event) : null;
     edgeDrag = null;
     if (commit && candidate) {
       var currentEdge = getEdge(state.model, drag.edgeId);
@@ -1065,6 +1156,337 @@ const HARNESS_JS = `(function () {
       if (activeKeys.has(key)) return;
       if (handle.parentNode) handle.parentNode.removeChild(handle);
       graph.edgeHandlesByKey.delete(key);
+    });
+  }
+
+  function createEdgeOption(value, label) {
+    var option = document.createElement("option");
+    option.value = value;
+    option.textContent = label + " (" + value + ")";
+    markUi(option);
+    return option;
+  }
+
+  function createEdgePlaceholder(text) {
+    var option = document.createElement("option");
+    option.value = "__ark_invalid__";
+    option.textContent = text;
+    option.setAttribute("disabled", "");
+    markUi(option);
+    return option;
+  }
+
+  function edgeControlProperty(role) {
+    if (role === "from-card") return "from_card";
+    if (role === "to-card") return "to_card";
+    return role === "direction" ? "direction" : null;
+  }
+
+  function createEdgeSelect(graph, edgeId, role) {
+    var select = document.createElement("select");
+    select.className = "ark-harness-edge-control";
+    select.setAttribute("data-ark-edge-control", role);
+    markUi(select);
+    var values = role === "direction" ? DIRECTION_VALUES : CARDINALITY_VALUES;
+    var labels = role === "direction" ? DIRECTION_LABELS : CARDINALITY_LABELS;
+    values.forEach(function (value) {
+      select.appendChild(createEdgeOption(value, labels[value]));
+    });
+    ["pointerdown", "click", "keydown"].forEach(function (type) {
+      select.addEventListener(type, function (event) { event.stopPropagation(); });
+    });
+    select.addEventListener("focus", function () {
+      activateEdgeControls(graph, edgeId);
+    });
+    select.addEventListener("change", function (event) {
+      event.stopPropagation();
+      var property = edgeControlProperty(select.getAttribute("data-ark-edge-control"));
+      if (property) updateEdgeExt(graph, edgeId, property, select.value);
+    });
+    return select;
+  }
+
+  function createEdgeControls(graph, edge) {
+    var root = document.createElement("div");
+    root.className = "ark-harness-edge-controls";
+    root.setAttribute("data-ark-edge-id", edge.id);
+    markUi(root);
+    var controls = {
+      root: root,
+      selects: {},
+      placeholders: {},
+      closeTimer: null
+    };
+    ["from-card", "direction", "to-card"].forEach(function (role) {
+      var select = createEdgeSelect(graph, edge.id, role);
+      controls.selects[role] = select;
+      root.appendChild(select);
+    });
+    root.addEventListener("pointerenter", function () {
+      activateEdgeControls(graph, edge.id);
+    });
+    root.addEventListener("pointerleave", function () {
+      scheduleEdgeControlsClose(graph, edge.id);
+    });
+    graph.handleLayer.appendChild(root);
+    return controls;
+  }
+
+  function clearEdgeControlsClose(controls) {
+    if (controls.closeTimer === null) return;
+    window.clearTimeout(controls.closeTimer);
+    controls.closeTimer = null;
+  }
+
+  function edgeControlsEngaged(controls) {
+    if (controls.root.contains(document.activeElement)) return true;
+    var roles = ["from-card", "direction", "to-card"];
+    for (var i = 0; i < roles.length; i++) {
+      if (controls.selects[roles[i]].matches(":hover")) return true;
+    }
+    return false;
+  }
+
+  function activateEdgeControls(graph, edgeId) {
+    graph.edgeControlsById.forEach(function (controls, currentId) {
+      clearEdgeControlsClose(controls);
+      if (currentId === edgeId) {
+        controls.root.classList.add("ark-harness-edge-controls-active");
+      } else {
+        controls.root.classList.remove("ark-harness-edge-controls-active");
+      }
+    });
+  }
+
+  function scheduleEdgeControlsClose(graph, edgeId) {
+    var controls = graph.edgeControlsById.get(edgeId);
+    if (!controls) return;
+    clearEdgeControlsClose(controls);
+    controls.closeTimer = window.setTimeout(function () {
+      controls.closeTimer = null;
+      if (!edgeControlsEngaged(controls)) {
+        controls.root.classList.remove("ark-harness-edge-controls-active");
+      }
+    }, 100);
+  }
+
+  function syncEdgeSelect(controls, role, edge) {
+    var select = controls.selects[role];
+    var property = edgeControlProperty(role);
+    var raw = isRecordObject(edge.ext) ? edge.ext[property] : undefined;
+    var allowed = role === "direction"
+      ? DIRECTION_VALUES.indexOf(raw) !== -1
+      : CARDINALITY_VALUES.indexOf(raw) !== -1;
+    var missingDirection = role === "direction" && raw === undefined;
+    var current = allowed ? raw : missingDirection ? "forward" : null;
+    var placeholderText = raw === undefined
+      ? "\\u672A\\u8A2D\\u5B9A"
+      : role === "direction"
+        ? "\\u4E0D\\u6B63\\u5024\\u30FB\\u8868\\u793A\\u306F forward"
+        : "\\u4E0D\\u6B63\\u5024";
+    if (current === null) {
+      if (!controls.placeholders[role]) {
+        controls.placeholders[role] = createEdgePlaceholder(placeholderText);
+        select.insertBefore(controls.placeholders[role], select.firstChild);
+      } else {
+        controls.placeholders[role].textContent = placeholderText;
+      }
+      select.value = "__ark_invalid__";
+    } else {
+      if (controls.placeholders[role]) {
+        controls.placeholders[role].remove();
+        controls.placeholders[role] = null;
+      }
+      select.value = current;
+    }
+    select.disabled = false;
+    var name = (typeof edge.label === "string" && edge.label) || edge.id;
+    var roleLabel = role === "from-card"
+      ? "\\u59CB\\u70B9 cardinality"
+      : role === "to-card"
+        ? "\\u7D42\\u70B9 cardinality"
+        : "direction";
+    var currentLabel = current === null ? placeholderText : current;
+    var label = name + " \\u306E" + roleLabel + "\\uFF08\\u73FE\\u5728 " + currentLabel + "\\uFF09";
+    select.setAttribute("aria-label", label);
+    select.setAttribute("title", label);
+  }
+
+  function domRectangle(element, containerRect) {
+    var rect = element.getBoundingClientRect();
+    return {
+      x: rect.left - containerRect.left,
+      y: rect.top - containerRect.top,
+      width: rect.width,
+      height: rect.height
+    };
+  }
+
+  function findEdgeLabel(graph, edgeId) {
+    var labels = graph.svg.querySelectorAll(".ark-harness-edge-label");
+    for (var i = 0; i < labels.length; i++) {
+      if (labels[i].getAttribute("data-ark-edge-id") === edgeId) return labels[i];
+    }
+    return null;
+  }
+
+  function edgeControlBlockers(graph, edgeId, containerRect) {
+    var blockers = [];
+    var label = findEdgeLabel(graph, edgeId);
+    if (label) blockers.push(domRectangle(label, containerRect));
+    ["from", "to"].forEach(function (end) {
+      var handle = graph.edgeHandlesByKey.get(edgeId + ":" + end);
+      if (handle) blockers.push(domRectangle(handle, containerRect));
+    });
+    graph.nodesById.forEach(function (node) {
+      blockers.push(domRectangle(node, containerRect));
+    });
+    return blockers;
+  }
+
+  function edgePathAnchor(main, fraction) {
+    var length = main.getTotalLength();
+    if (!Number.isFinite(length) || length <= 0) return null;
+    var offset = Math.max(0.5, Math.min(2, length / 20));
+    var distance = length * fraction;
+    var before = main.getPointAtLength(Math.max(0, distance - offset));
+    var after = main.getPointAtLength(Math.min(length, distance + offset));
+    var dx = after.x - before.x;
+    var dy = after.y - before.y;
+    var tangentLength = Math.sqrt(dx * dx + dy * dy);
+    if (!Number.isFinite(tangentLength) || tangentLength <= 0) return null;
+    var point = main.getPointAtLength(distance);
+    return {
+      x: point.x,
+      y: point.y,
+      tx: dx / tangentLength,
+      ty: dy / tangentLength
+    };
+  }
+
+  function controlRectangle(center, size) {
+    return {
+      x: center.x - size.width / 2,
+      y: center.y - size.height / 2,
+      width: size.width,
+      height: size.height
+    };
+  }
+
+  function placeEdgeSelect(select, anchor, blockers, edgeBox) {
+    var measured = select.getBoundingClientRect();
+    var size = { width: measured.width, height: measured.height };
+    if (!Number.isFinite(size.width) || !Number.isFinite(size.height) ||
+        size.width <= 0 || size.height <= 0) return null;
+    var nx = -anchor.ty;
+    var ny = anchor.tx;
+    var distances = [32, 56, 84, 112, 140, 168, 196];
+    var shifts = [0, -48, 48, -96, 96, -144, 144];
+    for (var i = 0; i < distances.length; i++) {
+      for (var signIndex = 0; signIndex < 2; signIndex++) {
+        var sign = signIndex === 0 ? 1 : -1;
+        for (var j = 0; j < shifts.length; j++) {
+          var center = {
+            x: anchor.x + nx * distances[i] * sign + anchor.tx * shifts[j],
+            y: anchor.y + ny * distances[i] * sign + anchor.ty * shifts[j]
+          };
+          var candidate = controlRectangle(center, size);
+          var blocked = blockers.some(function (blocker) {
+            return rectanglesCollide(candidate, blocker, 6);
+          });
+          if (blocked) continue;
+          select.style.left = center.x + "px";
+          select.style.top = center.y + "px";
+          return candidate;
+        }
+      }
+    }
+    var fallbackXs = [
+      edgeBox.x + edgeBox.width / 2,
+      edgeBox.x,
+      edgeBox.x + edgeBox.width,
+      edgeBox.x - size.width - 6,
+      edgeBox.x + edgeBox.width + size.width + 6
+    ];
+    for (var row = 0; row < 6; row++) {
+      for (var sideIndex = 0; sideIndex < 2; sideIndex++) {
+        for (var xIndex = 0; xIndex < fallbackXs.length; xIndex++) {
+          var fallbackCenter = {
+            x: fallbackXs[xIndex],
+            y: sideIndex === 0
+              ? edgeBox.y - size.height / 2 - 6 - row * (size.height + 6)
+              : edgeBox.y + edgeBox.height + size.height / 2 + 6 +
+                row * (size.height + 6)
+          };
+          var fallback = controlRectangle(fallbackCenter, size);
+          var fallbackBlocked = blockers.some(function (blocker) {
+            return rectanglesCollide(fallback, blocker, 6);
+          });
+          if (fallbackBlocked) continue;
+          select.style.left = fallbackCenter.x + "px";
+          select.style.top = fallbackCenter.y + "px";
+          return fallback;
+        }
+      }
+    }
+    return null;
+  }
+
+  function positionEdgeControls(graph, edge, controls) {
+    var main = graph.edgeMainById.get(edge.id);
+    if (!main) {
+      controls.root.classList.add("ark-harness-edge-controls-unavailable");
+      ["from-card", "direction", "to-card"].forEach(function (role) {
+        controls.selects[role].disabled = true;
+      });
+      return;
+    }
+    var containerRect = graph.container.getBoundingClientRect();
+    var blockers = edgeControlBlockers(graph, edge.id, containerRect);
+    var edgeBox = domRectangle(main, containerRect);
+    var placements = [
+      { role: "from-card", fraction: 0.2 },
+      { role: "direction", fraction: 0.5 },
+      { role: "to-card", fraction: 0.8 }
+    ];
+    for (var i = 0; i < placements.length; i++) {
+      var placement = placements[i];
+      var anchor = edgePathAnchor(main, placement.fraction);
+      var rectangle = anchor &&
+        placeEdgeSelect(controls.selects[placement.role], anchor, blockers, edgeBox);
+      if (!rectangle) {
+        controls.root.classList.add("ark-harness-edge-controls-unavailable");
+        ["from-card", "direction", "to-card"].forEach(function (role) {
+          controls.selects[role].disabled = true;
+        });
+        return;
+      }
+      blockers.push(rectangle);
+    }
+    controls.root.classList.remove("ark-harness-edge-controls-unavailable");
+  }
+
+  function syncEdgeControls(graph, edges) {
+    var activeIds = new Set();
+    edges.forEach(function (edge) {
+      if (!graph.edgeGeometryById.has(edge.id)) return;
+      activeIds.add(edge.id);
+      var controls = graph.edgeControlsById.get(edge.id);
+      if (!controls) {
+        controls = createEdgeControls(graph, edge);
+        graph.edgeControlsById.set(edge.id, controls);
+      }
+      controls.root.setAttribute("data-ark-edge-id", edge.id);
+      syncEdgeSelect(controls, "from-card", edge);
+      syncEdgeSelect(controls, "direction", edge);
+      syncEdgeSelect(controls, "to-card", edge);
+      positionEdgeControls(graph, edge, controls);
+    });
+    graph.edgeControlsById.forEach(function (controls, edgeId) {
+      if (activeIds.has(edgeId)) return;
+      clearEdgeControlsClose(controls);
+      if (controls.root.parentNode) controls.root.parentNode.removeChild(controls.root);
+      graph.edgeControlsById.delete(edgeId);
     });
   }
 
@@ -1165,8 +1587,10 @@ const HARNESS_JS = `(function () {
       groupsById: groupsById,
       svg: svg,
       edgeGeometryById: new Map(),
+      edgeMainById: new Map(),
       handleLayer: handleLayer,
       edgeHandlesByKey: new Map(),
+      edgeControlsById: new Map(),
       positionsById: new Map(),
       layoutExtent: { width: null, height: null },
       resizeObserver: null,
