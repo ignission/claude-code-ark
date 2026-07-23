@@ -243,7 +243,7 @@ describe("describeModelDiff（境界ケース）", () => {
     ]);
   });
 
-  it("edge.ext だけの変更は意味差分に含めない", () => {
+  it("edge cardinality・direction だけの変更は意味差分に含めない", () => {
     const user = { id: "user", label: "User" };
     const nodes = [order, user];
     const before = model(nodes, [
@@ -270,7 +270,7 @@ describe("describeModelDiff（境界ケース）", () => {
           from_card: "zero-or-one",
           to_card: "one-or-many",
           direction: "both",
-          type: "identifying",
+          type: "belongs-to",
         },
       },
     ]);
@@ -278,7 +278,7 @@ describe("describeModelDiff（境界ケース）", () => {
     expect(describeModelDiff(before, after)).toEqual([]);
   });
 
-  it("edge.ext と端点を同時に変えても端点の意味差分だけを述べる", () => {
+  it("edge cardinality・direction と端点を同時に変えても端点だけを述べる", () => {
     const user = { id: "user", label: "User" };
     const account = { id: "account", label: "Account" };
     const nodes = [order, user, account];
@@ -288,7 +288,12 @@ describe("describeModelDiff（境界ケース）", () => {
         from: "order",
         to: "user",
         label: "belongs to",
-        ext: { direction: "forward", type: "belongs-to" },
+        ext: {
+          from_card: "one",
+          to_card: "zero-or-many",
+          direction: "forward",
+          type: "belongs-to",
+        },
       },
     ]);
     const after = model(nodes, [
@@ -297,13 +302,22 @@ describe("describeModelDiff（境界ケース）", () => {
         from: "order",
         to: "account",
         label: "belongs to",
-        ext: { direction: "both", type: "identifying" },
+        ext: {
+          from_card: "zero-or-one",
+          to_card: "one-or-many",
+          direction: "both",
+          type: "belongs-to",
+        },
       },
     ]);
 
-    expect(describeModelDiff(before, after)).toEqual([
+    const diff = describeModelDiff(before, after);
+    expect(diff).toEqual([
       "Order から User への関連「belongs to」を Order から Account への関連「belongs to」 に変更",
     ]);
+    expect(diff.join("\n")).not.toMatch(
+      /one|many|zero-or-one|one-or-many|zero-or-many|forward|reverse|both|none/
+    );
   });
 
   it("削除されるノードとそれを参照するedgeが同時に消えたとき、edge文の主語はbefore側のノードlabelを使う", () => {

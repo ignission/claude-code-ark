@@ -108,6 +108,65 @@ describe("injectHarness", () => {
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 
+  it("edge cardinality・direction control の安全な更新契約を注入する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
+      )
+    );
+
+    expect(out).toContain("var CARDINALITY_VALUES = [");
+    expect(out).toContain("var DIRECTION_VALUES = [");
+    expect(out).toContain("function updateEdgeExt(");
+    expect(out).toContain("getEdge(state.model, edgeId)");
+    expect(out).toContain("if (!isRecordObject(edge.ext)) edge.ext = {};");
+    expect(out).toContain("scheduleGraphRender(graph);");
+    expect(out).toContain('document.createElement("select")');
+    expect(out).toContain('document.createElement("option")');
+    expect(out).toContain("option.textContent =");
+    expect(out).toContain("markUi(option)");
+    expect(out).toContain("function syncEdgeControls(");
+    expect(out).toContain("edgeControlsById: new Map()");
+    expect(out).toContain("data-ark-harness-ui");
+  });
+
+  it("edge control と SVG 投影が同じ allowlist・描画経路を共有する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
+      )
+    );
+
+    expect(out).toContain("CARDINALITY_VALUES.indexOf(value)");
+    expect(out).toContain("DIRECTION_VALUES.indexOf(direction)");
+    expect(out).toContain("function edgeCardinality(");
+    expect(out).toContain("function edgeDirection(");
+    expect(out).toContain("applyEdgeMarkers(main, graph.markerId, direction)");
+    expect(out).toContain("appendEdgeCardinality(");
+    expect(out.match(/var CARDINALITY_VALUES = \[/g)).toHaveLength(1);
+    expect(out.match(/var DIRECTION_VALUES = \[/g)).toHaveLength(1);
+  });
+
+  it("edge control option を固定文字列と安全な DOM API だけで作る", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
+      )
+    );
+
+    expect(out).toContain('document.createElement("option")');
+    expect(out).toContain("option.textContent =");
+    expect(out).toContain("option.value =");
+    expect(out).toContain('option.setAttribute("disabled", "")');
+    expect(out).not.toContain("innerHTML");
+    expect(out).not.toContain("insertAdjacentHTML");
+    expect(out).not.toContain("fetch(");
+    expect(out).not.toContain("import(");
+    expect(out).not.toContain("https://");
+    expect(out).not.toContain("@font-face");
+    expect(out).not.toContain('rel="stylesheet"');
+  });
+
   it("group projection と geometry 同期の契約を注入する", () => {
     const out = injectHarness(
       page(
@@ -224,7 +283,7 @@ describe("injectHarness", () => {
     expect(out).toContain("target.isContentEditable");
     expect(out).not.toContain("ark-harness-node-delete");
     expect(out).not.toContain("ark-harness-edge-delete-visible");
-    expect(out).not.toContain("ark-harness-edge-hit");
+    expect(out).not.toContain(".ark-harness-edge-hit {");
     expect(out).not.toContain("function syncEdgeDeleteControls(");
     expect(out).toContain("var AFFORDANCE_CLOSE_DELAY = 120");
     expect(out).toContain("function scheduleNodeAffordanceClose(");
