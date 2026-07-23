@@ -31,6 +31,10 @@ export function useViewerTabs(
   const [sessionActiveTab, setSessionActiveTab] = useState<
     Record<string, number>
   >({});
+  const sessionTabsRef = useRef(sessionTabs);
+  const sessionActiveTabRef = useRef(sessionActiveTab);
+  sessionTabsRef.current = sessionTabs;
+  sessionActiveTabRef.current = sessionActiveTab;
 
   const getTabsForSession = useCallback(
     (sessionId: string): ViewerTab[] => {
@@ -157,35 +161,33 @@ export function useViewerTabs(
     ) => {
       diagramTabSequenceRef.current += 1;
       const id = `diagram-${Date.now()}-${diagramTabSequenceRef.current}`;
-      setSessionTabs(prev => {
-        const current = prev[sessionId] ?? [
-          { type: "terminal" as const, id: "terminal" },
-        ];
-        const { tabs } = setCurrentDiagramTab(
-          current,
-          0,
-          worktreePath,
-          relPath,
-          id,
-          restoredOnLoad
-        );
+      const currentTabs = sessionTabsRef.current[sessionId] ?? [
+        { type: "terminal" as const, id: "terminal" },
+      ];
+      const currentActiveIndex = sessionActiveTabRef.current[sessionId] ?? 0;
+      const { tabs, activeIndex } = setCurrentDiagramTab(
+        currentTabs,
+        currentActiveIndex,
+        worktreePath,
+        relPath,
+        id,
+        restoredOnLoad
+      );
 
-        setSessionActiveTab(prevActive => {
-          const activeIndex = prevActive[sessionId] ?? 0;
-          const next = setCurrentDiagramTab(
-            current,
-            activeIndex,
-            worktreePath,
-            relPath,
-            id,
-            restoredOnLoad
-          ).activeIndex;
-          return next === activeIndex
-            ? prevActive
-            : { ...prevActive, [sessionId]: next };
-        });
-
-        return { ...prev, [sessionId]: tabs };
+      sessionTabsRef.current = {
+        ...sessionTabsRef.current,
+        [sessionId]: tabs,
+      };
+      sessionActiveTabRef.current = {
+        ...sessionActiveTabRef.current,
+        [sessionId]: activeIndex,
+      };
+      setSessionTabs(prev => ({ ...prev, [sessionId]: tabs }));
+      setSessionActiveTab(prev => {
+        const previousActiveIndex = prev[sessionId] ?? 0;
+        return activeIndex === previousActiveIndex
+          ? prev
+          : { ...prev, [sessionId]: activeIndex };
       });
     },
     []

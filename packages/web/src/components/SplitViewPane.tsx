@@ -45,7 +45,7 @@ interface SplitViewPaneProps {
   activeTabIndex: number;
   onTabSelect: (index: number) => void;
   onTabClose: (index: number) => void;
-  onSelectDiagram: (relPath: string) => void;
+  onSelectDiagram: (relPath: string, worktreePath: string) => void;
   onSendMessage: (message: string) => void;
   onSendKey: (key: SpecialKey) => void;
   onDeleteSession: () => void;

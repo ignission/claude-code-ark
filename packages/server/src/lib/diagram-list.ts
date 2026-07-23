@@ -7,6 +7,7 @@ import { errnoCode, errnoMessage } from "./errors.js";
 
 const DIAGRAM_SUFFIX = ".diagram.html";
 const MAX_WORKTREE_PATH_LENGTH = 4096;
+const DIAGRAM_READ_CONCURRENCY = 8;
 
 async function collectDiagramCandidates(
   directory: string,
@@ -64,9 +65,19 @@ export async function listDiagrams(
   }
 
   candidates.sort((a, b) => a.localeCompare(b));
-  const items = await Promise.all(
-    candidates.map(relPath => readDiagramListItem(worktreeReal, relPath))
-  );
+  const items: Array<DiagramListItem | null> = [];
+  for (
+    let offset = 0;
+    offset < candidates.length;
+    offset += DIAGRAM_READ_CONCURRENCY
+  ) {
+    const batch = candidates.slice(offset, offset + DIAGRAM_READ_CONCURRENCY);
+    items.push(
+      ...(await Promise.all(
+        batch.map(relPath => readDiagramListItem(worktreeReal, relPath))
+      ))
+    );
+  }
   return items.filter((item): item is DiagramListItem => item !== null);
 }
 

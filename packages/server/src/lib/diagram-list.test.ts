@@ -128,6 +128,33 @@ describe("listDiagrams", () => {
       },
     ]);
   });
+
+  it("図の読み込みを同時に8件までに制限する", async () => {
+    const { worktree, diagramDir } = makeWorktree();
+    for (let index = 0; index < 17; index += 1) {
+      fs.writeFileSync(
+        path.join(diagramDir, `${index}.diagram.html`),
+        diagramHtml()
+      );
+    }
+
+    const originalOpen = fs.promises.open.bind(fs.promises);
+    let active = 0;
+    let maxActive = 0;
+    vi.spyOn(fs.promises, "open").mockImplementation(async (...args) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      try {
+        return await originalOpen(...args);
+      } finally {
+        active -= 1;
+      }
+    });
+
+    await expect(listDiagrams(worktree)).resolves.toHaveLength(17);
+    expect(maxActive).toBe(8);
+  });
 });
 
 describe("handleDiagramListRequest", () => {

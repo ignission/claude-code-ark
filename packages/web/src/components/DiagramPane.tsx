@@ -21,7 +21,7 @@ interface DiagramPaneProps {
   sessionId: string;
   worktreePath: string;
   relPath?: string;
-  onSelectDiagram: (relPath: string) => void;
+  onSelectDiagram: (relPath: string, worktreePath: string) => void;
   isConnected: boolean;
   listDiagrams: (worktreePath: string) => Promise<DiagramListItem[]>;
   /** 未接続時は null。null の間は診断購読をスキップする */
@@ -290,7 +290,9 @@ export function DiagramPane({
       <DiagramSwitcher
         diagrams={diagrams}
         currentRelPath={relPath}
-        onSelect={onSelectDiagram}
+        onSelect={selectedRelPath =>
+          onSelectDiagram(selectedRelPath, worktreePath)
+        }
         listLoading={listLoading}
         listError={listError}
         onRetry={() => setListRefreshKey(key => key + 1)}
