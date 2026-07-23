@@ -198,6 +198,11 @@ describe("injectHarness", () => {
     expect(out).toContain("function removeEdge(");
     expect(out).toContain("edgeDeleteControlsById");
     expect(out).toContain("function syncEdgeDeleteControls(");
+    expect(out).toContain("var AFFORDANCE_CLOSE_DELAY = 120");
+    expect(out).toContain("function scheduleNodeAffordanceClose(");
+    expect(out).toContain("function scheduleEdgeDeleteClose(");
+    expect(out).toContain("ark-harness-node-affordance-open");
+    expect(out).toContain('controller.root.matches(":focus-within")');
   });
 
   it("CRUD DOM を安全な API だけで生成し全 model id を予約する", () => {

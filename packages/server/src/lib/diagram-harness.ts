@@ -113,6 +113,7 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   opacity: 0; pointer-events: none; transition: opacity .12s ease;
 }
 .ark-harness-graph-node:hover > .ark-harness-kind-picker,
+.ark-harness-graph-node.ark-harness-node-affordance-open > .ark-harness-kind-picker,
 .ark-harness-graph-node:focus-within > .ark-harness-kind-picker {
   opacity: 1; pointer-events: auto;
 }
@@ -161,16 +162,17 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   position: absolute; transform: translate(-50%, -50%); z-index: 5;
   width: 24px; height: 24px; padding: 0; border: 1px solid #ef4444;
   border-radius: 999px; background: #fff; color: #b91c1c; cursor: pointer;
-  pointer-events: auto; opacity: 0;
+  pointer-events: none; opacity: 0;
 }
 .ark-harness-edge-delete.ark-harness-edge-delete-visible,
-.ark-harness-edge-delete:focus { opacity: 1; }
+.ark-harness-edge-delete:focus { opacity: 1; pointer-events: auto; }
 .ark-harness-node-rail {
   position: absolute; z-index: 5; display: flex; gap: 4px; padding: 2px;
   border: 1px solid rgba(100,116,139,.55); border-radius: 999px;
   background: rgba(255,255,255,.96); opacity: 0; pointer-events: none;
 }
 .ark-harness-graph-node:hover > .ark-harness-node-rail,
+.ark-harness-graph-node.ark-harness-node-affordance-open > .ark-harness-node-rail,
 .ark-harness-graph-node:focus-within > .ark-harness-node-rail {
   opacity: 1; pointer-events: auto;
 }
@@ -219,6 +221,7 @@ const HARNESS_JS = `(function () {
     "--ark-harness-graph-min-width",
     "--ark-harness-graph-min-height"
   ];
+  var AFFORDANCE_CLOSE_DELAY = 120;
 
   var BLOCK_TAGS = {
     DIV: 1, UL: 1, OL: 1, LI: 1, TABLE: 1, THEAD: 1, TBODY: 1, TR: 1, TD: 1, TH: 1,
@@ -1034,7 +1037,12 @@ const HARNESS_JS = `(function () {
       ["pointerenter", "focus", "click"].forEach(function (type) {
         hit.addEventListener(type, function (event) {
           event.stopPropagation();
-          setSelectedEdge(edge.id);
+          activateEdgeDeleteControl(graph, edge.id);
+        });
+      });
+      ["pointerleave", "blur"].forEach(function (type) {
+        hit.addEventListener(type, function () {
+          scheduleEdgeDeleteClose(graph, edge.id);
         });
       });
       hit.addEventListener("keydown", function (event) {
@@ -1373,11 +1381,52 @@ const HARNESS_JS = `(function () {
     ["pointerdown", "click", "keydown"].forEach(function (type) {
       button.addEventListener(type, function (event) { event.stopPropagation(); });
     });
+    ["pointerenter", "focus"].forEach(function (type) {
+      button.addEventListener(type, function () {
+        activateEdgeDeleteControl(
+          graph,
+          button.getAttribute("data-ark-edge-id")
+        );
+      });
+    });
+    ["pointerleave", "blur"].forEach(function (type) {
+      button.addEventListener(type, function () {
+        scheduleEdgeDeleteClose(
+          graph,
+          button.getAttribute("data-ark-edge-id")
+        );
+      });
+    });
     button.addEventListener("click", function () {
       removeEdge(button.getAttribute("data-ark-edge-id"));
     });
     graph.handleLayer.appendChild(button);
-    return { wrapper: button, button: button };
+    return { wrapper: button, button: button, closeTimer: null };
+  }
+
+  function clearEdgeDeleteClose(control) {
+    if (!control || control.closeTimer === null) return;
+    window.clearTimeout(control.closeTimer);
+    control.closeTimer = null;
+  }
+
+  function activateEdgeDeleteControl(graph, edgeId) {
+    graph.edgeDeleteControlsById.forEach(function (control) {
+      clearEdgeDeleteClose(control);
+    });
+    setSelectedEdge(edgeId);
+  }
+
+  function scheduleEdgeDeleteClose(graph, edgeId) {
+    var control = graph.edgeDeleteControlsById.get(edgeId);
+    if (!control) return;
+    clearEdgeDeleteClose(control);
+    control.closeTimer = window.setTimeout(function () {
+      control.closeTimer = null;
+      if (control.wrapper.matches(":hover") ||
+          control.wrapper.contains(document.activeElement)) return;
+      if (selectedEdgeId === edgeId) setSelectedEdge(null);
+    }, AFFORDANCE_CLOSE_DELAY);
   }
 
   function syncEdgeDeleteControls(graph, edges) {
@@ -1399,6 +1448,7 @@ const HARNESS_JS = `(function () {
     });
     graph.edgeDeleteControlsById.forEach(function (control, id) {
       if (activeIds.has(id)) return;
+      clearEdgeDeleteClose(control);
       control.wrapper.remove();
       graph.edgeDeleteControlsById.delete(id);
     });
@@ -1619,6 +1669,52 @@ const HARNESS_JS = `(function () {
     graph.nodeRailsById.set(id, rail);
   }
 
+  function clearNodeAffordanceClose(controller) {
+    if (!controller || controller.closeTimer === null) return;
+    window.clearTimeout(controller.closeTimer);
+    controller.closeTimer = null;
+  }
+
+  function openNodeAffordance(controller) {
+    clearNodeAffordanceClose(controller);
+    controller.root.classList.add("ark-harness-node-affordance-open");
+  }
+
+  function scheduleNodeAffordanceClose(controller) {
+    clearNodeAffordanceClose(controller);
+    controller.closeTimer = window.setTimeout(function () {
+      controller.closeTimer = null;
+      if (controller.root.matches(":hover") ||
+          controller.root.matches(":focus-within")) return;
+      controller.root.classList.remove("ark-harness-node-affordance-open");
+    }, AFFORDANCE_CLOSE_DELAY);
+  }
+
+  function attachNodeAffordanceHover(graph, root, id) {
+    var controller = { root: root, closeTimer: null };
+    ["pointerenter", "focusin"].forEach(function (type) {
+      root.addEventListener(type, function () {
+        openNodeAffordance(controller);
+      });
+    });
+    ["pointerleave", "focusout"].forEach(function (type) {
+      root.addEventListener(type, function () {
+        scheduleNodeAffordanceClose(controller);
+      });
+    });
+    root.querySelectorAll(
+      ".ark-harness-kind-picker, .ark-harness-graph-handle, .ark-harness-node-rail"
+    ).forEach(function (affordance) {
+      affordance.addEventListener("pointerenter", function () {
+        openNodeAffordance(controller);
+      });
+      affordance.addEventListener("pointerleave", function () {
+        scheduleNodeAffordanceClose(controller);
+      });
+    });
+    graph.nodeAffordancesById.set(id, controller);
+  }
+
   function registerGraphNode(graph, root, node) {
     if (!node || typeof node.id !== "string" || graph.nodesById.has(node.id)) return false;
     graph.nodesById.set(node.id, root);
@@ -1626,6 +1722,7 @@ const HARNESS_JS = `(function () {
     attachKindPicker(graph, root);
     attachGraphHandle(graph, root, node);
     attachNodeRail(graph, root);
+    attachNodeAffordanceHover(graph, root, node.id);
     if (graph.resizeObserver) graph.resizeObserver.observe(root);
     return true;
   }
@@ -1638,6 +1735,9 @@ const HARNESS_JS = `(function () {
     var rail = graph.nodeRailsById.get(id);
     if (rail) rail.remove();
     graph.nodeRailsById.delete(id);
+    var affordance = graph.nodeAffordancesById.get(id);
+    clearNodeAffordanceClose(affordance);
+    graph.nodeAffordancesById.delete(id);
     kindPickers = kindPickers.filter(function (picker) {
       if (picker.root !== root) return true;
       if (picker.select.parentNode) picker.select.parentNode.remove();
@@ -1876,6 +1976,7 @@ const HARNESS_JS = `(function () {
       edgeHandlesByKey: new Map(),
       edgeDeleteControlsById: new Map(),
       nodeRailsById: new Map(),
+      nodeAffordancesById: new Map(),
       positionsById: new Map(),
       layoutExtent: { width: null, height: null },
       resizeObserver: null,

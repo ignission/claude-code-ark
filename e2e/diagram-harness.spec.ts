@@ -519,6 +519,7 @@ async function readEdge(page: Page) {
 async function readNamedEdge(page: Page, edgeId: string) {
   return page
     .locator('[data-ark-container="graph"]')
+    .first()
     .evaluate((graph, expectedEdgeId) => {
       const edge = Array.from(
         graph.querySelectorAll("line[data-ark-edge-id], path[data-ark-edge-id]")
@@ -729,7 +730,29 @@ test("node CRUD: node 削除で incident edge・group 参照・全 projection �
     'A <unsafe "node"> を削除'
   );
   await expect(page.locator("img, script[src], [onerror]")).toHaveCount(0);
-  await node.locator(".ark-harness-node-delete").click();
+  const nodeBox = await requiredBoundingBox(node);
+  const deleteButton = node.locator(".ark-harness-node-delete");
+  const deleteBox = await requiredBoundingBox(deleteButton);
+  await page.mouse.move(
+    nodeBox.x + nodeBox.width / 2,
+    nodeBox.y + nodeBox.height / 2
+  );
+  await page.mouse.move(
+    deleteBox.x + deleteBox.width / 2,
+    deleteBox.y + deleteBox.height / 2,
+    { steps: 8 }
+  );
+  await page.waitForTimeout(160);
+  await expect(node.locator(".ark-harness-node-rail")).toHaveCSS(
+    "opacity",
+    "1"
+  );
+  await expect(node.locator(".ark-harness-node-rail")).toHaveCSS(
+    "pointer-events",
+    "auto"
+  );
+  await page.mouse.down();
+  await page.mouse.up();
 
   await expect(page.locator('[data-model-id="crud-a"]')).toHaveCount(0);
   await expect(page.locator('[data-ark-edge-id="crud-ab"]')).toHaveCount(0);
@@ -820,15 +843,22 @@ test("edge CRUD: hit target button と endpoint keyboard で対象 edge だけ�
 }) => {
   await page.setContent(crudDiagramHtml());
   const graph = page.locator('[data-ark-container="graph"]').first();
-  const hit = graph.locator(
-    '.ark-harness-edge-hit[data-ark-edge-id="crud-ab"]'
-  );
-  await hit.focus();
   const button = graph.locator(
     '.ark-harness-edge-delete[data-ark-edge-id="crud-ab"]'
   );
+  const edge = await readNamedEdge(page, "crud-ab");
+  await page.mouse.move((edge.x1 + edge.x2) / 2, (edge.y1 + edge.y2) / 2);
   await expect(button).toBeVisible();
-  await button.click();
+  const buttonBox = await requiredBoundingBox(button);
+  await page.mouse.move(
+    buttonBox.x + buttonBox.width / 2,
+    buttonBox.y + buttonBox.height / 2,
+    { steps: 8 }
+  );
+  await page.waitForTimeout(160);
+  await expect(button).toBeVisible();
+  await page.mouse.down();
+  await page.mouse.up();
   await expect(graph.locator('[data-ark-edge-id="crud-ab"]')).toHaveCount(0);
   await expect(graph.locator('[data-model-id="crud-a"]').first()).toBeVisible();
 
