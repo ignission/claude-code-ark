@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ViewerTab } from "../components/TerminalPane";
-import { addOrFocusDiagramTab } from "../lib/diagram-tabs";
+import { setCurrentDiagramTab } from "../lib/diagram-tabs";
 import { correctActiveIndexAfterClose } from "../lib/tab-close";
 
 /**
@@ -31,6 +31,10 @@ export function useViewerTabs(
   const [sessionActiveTab, setSessionActiveTab] = useState<
     Record<string, number>
   >({});
+  const sessionTabsRef = useRef(sessionTabs);
+  const sessionActiveTabRef = useRef(sessionActiveTab);
+  sessionTabsRef.current = sessionTabs;
+  sessionActiveTabRef.current = sessionActiveTab;
 
   const getTabsForSession = useCallback(
     (sessionId: string): ViewerTab[] => {
@@ -144,11 +148,10 @@ export function useViewerTabs(
     []
   );
 
-  // diagram は右ペイン（SplitViewPane の DiagramPane）専属になった
-  // ため、ここでは sessionTabs への追加のみ行い、アクティブタブは変更しない（変更すると
-  // TerminalPane の表示対象が diagram タブになり、diagram を描画しない TerminalPane では
-  // 画面が空白になってしまう）。sessionTabs への追加自体は、SplitViewPane 側の
-  // 「diagram タブ数が増えたら右ペインを自動表示する」effect のトリガーとして必要。
+  // diagram は右ペインの「現在図」1件として設定する。左ペインの active tab は
+  // id で追跡して維持し、旧 state に複数 diagram があっても同時に畳み込む。
+  // live open ごとに新しい id を採用し、SplitViewPane の再表示トリガーにする。
+  const diagramTabSequenceRef = useRef(0);
   const openDiagramTab = useCallback(
     (
       sessionId: string,
@@ -156,18 +159,35 @@ export function useViewerTabs(
       relPath: string,
       restoredOnLoad?: boolean
     ) => {
-      setSessionTabs(prev => {
-        const current = prev[sessionId] ?? [
-          { type: "terminal" as const, id: "terminal" },
-        ];
-        const tabs = addOrFocusDiagramTab(
-          current,
-          worktreePath,
-          relPath,
-          `diagram-${Date.now()}`,
-          restoredOnLoad
-        );
-        return { ...prev, [sessionId]: tabs };
+      diagramTabSequenceRef.current += 1;
+      const id = `diagram-${Date.now()}-${diagramTabSequenceRef.current}`;
+      const currentTabs = sessionTabsRef.current[sessionId] ?? [
+        { type: "terminal" as const, id: "terminal" },
+      ];
+      const currentActiveIndex = sessionActiveTabRef.current[sessionId] ?? 0;
+      const { tabs, activeIndex } = setCurrentDiagramTab(
+        currentTabs,
+        currentActiveIndex,
+        worktreePath,
+        relPath,
+        id,
+        restoredOnLoad
+      );
+
+      sessionTabsRef.current = {
+        ...sessionTabsRef.current,
+        [sessionId]: tabs,
+      };
+      sessionActiveTabRef.current = {
+        ...sessionActiveTabRef.current,
+        [sessionId]: activeIndex,
+      };
+      setSessionTabs(prev => ({ ...prev, [sessionId]: tabs }));
+      setSessionActiveTab(prev => {
+        const previousActiveIndex = prev[sessionId] ?? 0;
+        return activeIndex === previousActiveIndex
+          ? prev
+          : { ...prev, [sessionId]: activeIndex };
       });
     },
     []

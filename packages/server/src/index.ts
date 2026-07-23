@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import {
   type BridgeSnapshot,
   type ClientToServerEvents,
+  type DiagramListResponse,
   MESSAGE_SHORTCUT_MAX_LENGTH,
   type ServerToClientEvents,
   type SessionGridSnapshot,
@@ -61,6 +62,7 @@ import {
 import { db } from "./lib/database.js";
 import { describeModelDiff } from "./lib/diagram-diff.js";
 import { ensureDoctype, replaceModelBlock } from "./lib/diagram-file.js";
+import { handleDiagramListRequest, listDiagrams } from "./lib/diagram-list.js";
 import { parseDiagramModel } from "./lib/diagram-model.js";
 import { resolveDiagramPath } from "./lib/diagram-path.js";
 import { readDiagram, readDiagramModel } from "./lib/diagram-reader.js";
@@ -2126,6 +2128,22 @@ export async function startServer(
 
     // ===== 図解キャンバス（board_open による表示 + 更新監視） =====
     const diagramUnsubs = new Map<string, () => void>();
+
+    socket.on("diagram:list", (data: unknown, callback: unknown) => {
+      if (typeof callback !== "function") return;
+      const reply = callback as (response: DiagramListResponse) => void;
+
+      void handleDiagramListRequest(
+        { resolveManagedWorktreePath, listDiagrams },
+        data
+      ).then(response => {
+        try {
+          reply(response);
+        } catch {
+          // ACK callback はクライアント由来。throw を server process へ伝播させない。
+        }
+      });
+    });
 
     socket.on("diagram:subscribe", (data: unknown) => {
       // payload は外部入力。分割代入前に型を検証しないと、引数なし emit や

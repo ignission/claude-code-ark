@@ -77,6 +77,7 @@ export default function Dashboard() {
     isScanning,
     scanRepos,
     listDirectory,
+    listDiagrams,
     worktrees,
     createWorktree,
     deleteWorktree,
@@ -753,6 +754,8 @@ export default function Dashboard() {
                       handleTabSelect(session.id, idx),
                     onTabClose: (idx: number) =>
                       handleTabClose(session.id, idx),
+                    onSelectDiagram: (relPath: string, worktreePath: string) =>
+                      openDiagramTab(session.id, worktreePath, relPath),
                     onSendMessage: (msg: string) =>
                       sendMessage(session.id, msg),
                     onSendKey: (key: SpecialKey) => sendKey(session.id, key),
@@ -775,7 +778,12 @@ export default function Dashboard() {
                       key={session.id}
                       className={isActive ? "h-full flex flex-col" : "hidden"}
                     >
-                      <SplitViewPane socket={socket} {...paneProps} />
+                      <SplitViewPane
+                        socket={socket}
+                        isConnected={isConnected}
+                        listDiagrams={listDiagrams}
+                        {...paneProps}
+                      />
                     </div>
                   );
                 })}

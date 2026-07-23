@@ -2,20 +2,20 @@
  * SplitViewPane - PC 用セッションビュー（ターミナル + 右ペインの左右2ペイン）
  *
  * 左ペイン = TerminalPane（ttyd + file/html タブ）を常時表示、
- * 右ペインは diagram タブがあるときだけ意味を持ち、上部バーのトグルで開閉する。
+ * 右ペインは図が未選択でも上部バーのトグルで開閉できる。
  * 中身は DiagramPane（B-0a の図ペイン）。
  * 会話ビュー（SplitChatPane）は使わない — チャット内容を確認したい場合は
  * ttyd の生ターミナル（左ペイン）を直接見る。
  *
  * - diagram は TerminalPane のタブ機構から外れ、右ペイン専属になった
  *   （タブ自体は sessionTabs 上には残るが、非表示のまま「開いている印」として使う）
- * - 図（openDiagramTab）が開かれると下の useEffect が検知して showBoard を自動 true にする
- * - diagram タブが無くなったら右ペインは自動的に閉じる（表示するものが無いため）
+ * - 図（openDiagramTab）の activation id が変わると showBoard を自動 true にする
  * - 右ペイン幅 / 開閉状態は localStorage に永続化
  */
 
 import type {
   ClientToServerEvents,
+  DiagramListItem,
   ManagedSession,
   MessageShortcut,
   ServerToClientEvents,
@@ -36,6 +36,8 @@ const STORAGE_KEY_SHOW_BOARD = "ark-split-show-board";
 
 interface SplitViewPaneProps {
   socket: TypedSocket | null;
+  isConnected: boolean;
+  listDiagrams: (worktreePath: string) => Promise<DiagramListItem[]>;
   session: ManagedSession;
   worktree: Worktree | undefined;
   repoName?: string;
@@ -43,6 +45,7 @@ interface SplitViewPaneProps {
   activeTabIndex: number;
   onTabSelect: (index: number) => void;
   onTabClose: (index: number) => void;
+  onSelectDiagram: (relPath: string, worktreePath: string) => void;
   onSendMessage: (message: string) => void;
   onSendKey: (key: SpecialKey) => void;
   onDeleteSession: () => void;
@@ -91,13 +94,13 @@ export function SplitViewPane(props: SplitViewPaneProps) {
     readSavedShowBoard()
   );
 
-  // 右ペインに出す図（最後に開かれたもの）。diagram タブはタブバーから
-  // 除外されており、ここでのみ描画される。
-  const diagramTab = props.tabs.findLast(t => t.type === "diagram");
+  // 現在図は session ごとに最大1件。diagram タブは左タブバーから除外され、
+  // ここでのみ参照する。
+  const diagramTab = props.tabs.find(t => t.type === "diagram");
 
-  // diagram タブが sessionTabs に新規追加されたら右ペインを自動表示する。
+  // current diagram の activation id が変わったら右ペインを自動表示する。
   // tabs は session 単位でスコープされているため、他セッションの変化には反応しない。
-  // 数の増加時のみ true 化し、ユーザーが後で閉じた操作は尊重する。
+  // 同じ relPath の board_open でも id は新しくなるため再表示できる。
   //
   // 「lastDiagramPath からの復元」除外について:
   // このコンポーネントは Dashboard.tsx で全セッション分が session.id をキーに
@@ -108,35 +111,21 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   // そのため「マウント時点で図タブが既にあれば増加とみなさない」という直感的な
   // 前提は成り立たない ― prevBoardCountRef は常にマウント直後は 0 から始まり、
   // 直後に復元 openDiagramTab が発火すると 0→1 の「増加」として観測されてしまう。
-  // ここでは live な board_open による新規オープンだけを「増加」としてカウント
-  // したいので、restoredOnLoad タグの付いた復元タブを母数から除外する
+  // ここでは live な board_open / user switch だけを自動表示したいので、
+  // restoredOnLoad タグの付いた復元タブは除外する
   // （タグは openDiagramTab の呼び出し元 = Dashboard.tsx の復元 effect が付与する）。
-  const prevBoardCountRef = useRef(0);
+  const prevDiagramIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    const boardCount = props.tabs.filter(
-      t => t.type === "diagram" && !t.restoredOnLoad
-    ).length;
-    if (boardCount > prevBoardCountRef.current) {
+    const currentId = diagramTab?.id;
+    if (
+      currentId !== undefined &&
+      currentId !== prevDiagramIdRef.current &&
+      diagramTab?.restoredOnLoad !== true
+    ) {
       setShowBoard(true);
     }
-    prevBoardCountRef.current = boardCount;
-  }, [props.tabs]);
-
-  // diagram タブが無くなったら右ペインに表示するものが無いので自動的に閉じる
-  //
-  // 注意: diagram タブには閉じるボタンが無く（ViewerTabBar はタブバー自体から
-  // diagram を除外しており、タブバー経由の close 導線が存在しない）、他に
-  // props.tabs から diagram タブを削除する経路も現状無いため、diagramTab が
-  // 存在した状態から falsy になる（= !diagramTab && showBoard が true になる）
-  // ケースは実質到達しない。到達しなくても描画側は下で
-  // `showBoard && diagramTab` により二重に守られているため実害は無いが、
-  // 「なぜ動いているのを見たことがないのか」で悩まないよう明記しておく。
-  // 将来 diagram タブの削除経路が追加されたときのための保険として残す。
-  useEffect(() => {
-    if (!diagramTab && showBoard) {
-      setShowBoard(false);
-    }
-  }, [diagramTab, showBoard]);
+    prevDiagramIdRef.current = currentId;
+  }, [diagramTab]);
 
   // コンテナ幅変化時に board 幅を最大比率内に丸める（表示中のみ意味あり）
   useEffect(() => {
@@ -204,27 +193,25 @@ export function SplitViewPane(props: SplitViewPaneProps) {
 
   return (
     <div className="h-full flex flex-col">
-      {/* 上部バー: 右ペイン開閉トグル（diagram タブがあるときのみ表示） */}
+      {/* 上部バー: 右ペイン開閉トグル */}
       {/* pr-12: SidebarMainLayout の Beacon 展開ボタン（absolute top-2 right-2 の浮遊）が
           右端トグルに重なってクリックを奪うため、その分の余白を常に確保する。
           Beacon 表示中は無駄な余白になるが、右端にはトグルしか無いので実害はない */}
-      {diagramTab && (
-        <div className="h-8 shrink-0 border-b border-border bg-sidebar flex items-center justify-end pl-2 pr-12">
-          <button
-            type="button"
-            onClick={handleToggleBoard}
-            className={`text-[11px] px-2 py-1 rounded-md font-medium flex items-center gap-1 transition-colors ${
-              showBoard
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted hover:bg-muted/70 text-foreground"
-            }`}
-            title={showBoard ? "右ペインを閉じる" : "図を開く"}
-          >
-            <span>📐</span>
-            <span>{showBoard ? "閉じる" : "図"}</span>
-          </button>
-        </div>
-      )}
+      <div className="h-8 shrink-0 border-b border-border bg-sidebar flex items-center justify-end pl-2 pr-12">
+        <button
+          type="button"
+          onClick={handleToggleBoard}
+          className={`text-[11px] px-2 py-1 rounded-md font-medium flex items-center gap-1 transition-colors ${
+            showBoard
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted hover:bg-muted/70 text-foreground"
+          }`}
+          title={showBoard ? "右ペインを閉じる" : "図を開く"}
+        >
+          <span>📐</span>
+          <span>{showBoard ? "閉じる" : "図"}</span>
+        </button>
+      </div>
 
       <div ref={containerRef} className="flex-1 min-h-0 flex relative">
         {/* 左ペイン: ターミナル（常時表示）
@@ -259,8 +246,8 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           />
         </div>
 
-        {/* リサイザ・右ペインは diagram タブ表示時のみ */}
-        {showBoard && diagramTab && (
+        {/* リサイザ・右ペイン */}
+        {showBoard && (
           <>
             <button
               type="button"
@@ -280,9 +267,14 @@ export function SplitViewPane(props: SplitViewPaneProps) {
             >
               <DiagramPane
                 socket={props.socket}
+                isConnected={props.isConnected}
+                listDiagrams={props.listDiagrams}
                 sessionId={props.session.id}
-                worktreePath={diagramTab.worktreePath}
-                relPath={diagramTab.relPath}
+                worktreePath={
+                  diagramTab?.worktreePath ?? props.session.worktreePath
+                }
+                relPath={diagramTab?.relPath}
+                onSelectDiagram={props.onSelectDiagram}
               />
             </div>
           </>

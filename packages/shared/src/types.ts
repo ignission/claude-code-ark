@@ -343,6 +343,15 @@ export type SpecialKey =
   | "9";
 
 // WebSocket event types
+export interface DiagramListItem {
+  relPath: string;
+  displayName: string;
+}
+
+export type DiagramListResponse =
+  | { ok: true; diagrams: DiagramListItem[] }
+  | { ok: false; error: string };
+
 export interface ServerToClientEvents {
   // Repository events
   "repos:list": (repos: string[]) => void;
@@ -626,6 +635,12 @@ export interface ClientToServerEvents {
    * AskUserQuestion の自由入力モードで「1 文字ずつタイプ」する用途。
    */
   "session:send-literal": (data: { sessionId: string; text: string }) => void;
+
+  /** managed worktree にある有効な図を read-only で一覧する */
+  "diagram:list": (
+    data: { worktreePath: string },
+    callback: (response: DiagramListResponse) => void
+  ) => void;
 
   /** 図の購読開始（更新通知を受け取る）。1 セッション 1 図を想定 */
   "diagram:subscribe": (data: {

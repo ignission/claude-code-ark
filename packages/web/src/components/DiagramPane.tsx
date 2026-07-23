@@ -6,16 +6,24 @@
  * sandbox は allow-scripts のみで allow-same-origin を付けない。
  * 外部送信の遮断は本文に注入された meta CSP が担う（サーバー側で注入済み）。
  */
-import type { ClientToServerEvents, ServerToClientEvents } from "@ark/shared";
+import type {
+  ClientToServerEvents,
+  DiagramListItem,
+  ServerToClientEvents,
+} from "@ark/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
+import { DiagramSwitcher } from "./DiagramSwitcher";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 interface DiagramPaneProps {
   sessionId: string;
   worktreePath: string;
-  relPath: string;
+  relPath?: string;
+  onSelectDiagram: (relPath: string, worktreePath: string) => void;
+  isConnected: boolean;
+  listDiagrams: (worktreePath: string) => Promise<DiagramListItem[]>;
   /** 未接続時は null。null の間は診断購読をスキップする */
   socket: TypedSocket | null;
 }
@@ -53,17 +61,27 @@ export function DiagramPane({
   worktreePath,
   relPath,
   socket,
+  isConnected,
+  listDiagrams,
+  onSelectDiagram,
 }: DiagramPaneProps) {
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [diagrams, setDiagrams] = useState<DiagramListItem[]>([]);
+  const [listLoading, setListLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
+  const [listRefreshKey, setListRefreshKey] = useState(0);
+  const activeListRequestRef = useRef<object | null>(null);
   // 進行中の fetch を追跡し、古いタブの結果が新しいタブを上書きしないようにする
   const abortControllerRef = useRef<AbortController | null>(null);
   // ハーネスへ渡した MessageChannel の port1（親側）。再ロードのたびに
   // 張り直すので、常に「今のロードに対応する port」だけを保持する。
   const portRef = useRef<MessagePort | null>(null);
+  const portGrantedForRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
+    if (!relPath) return;
     // 前のリクエストをキャンセル。タブ切り替え時に古い fetch が
     // 新しいタブの display を上書きするのを防ぐ（HtmlViewerPane と同じ方針）
     abortControllerRef.current?.abort();
@@ -111,21 +129,66 @@ export function DiagramPane({
   useEffect(() => {
     setHtml(null);
     setError(null);
+    portGrantedForRef.current = null;
+    if (!relPath) {
+      abortControllerRef.current?.abort();
+      portRef.current?.close();
+      portRef.current = null;
+      return;
+    }
     void load();
     return () => {
       portRef.current?.close();
       portRef.current = null;
     };
-  }, [load]);
+  }, [load, relPath]);
+
+  // mount / reconnect / current 図変更 / 明示 refresh で一覧を再取得する。
+  // request generation により、古い worktree の遅延 ACK は state へ反映しない。
+  useEffect(() => {
+    const request = { worktreePath, relPath, listRefreshKey };
+    activeListRequestRef.current = request;
+    if (!isConnected || !worktreePath) {
+      setListLoading(false);
+      return;
+    }
+
+    setListLoading(true);
+    void listDiagrams(worktreePath)
+      .then(items => {
+        if (activeListRequestRef.current !== request) return;
+        setDiagrams(items);
+        setListError(null);
+      })
+      .catch(reason => {
+        if (activeListRequestRef.current !== request) return;
+        setListError(
+          reason instanceof Error
+            ? reason.message
+            : "図一覧の取得に失敗しました"
+        );
+      })
+      .finally(() => {
+        if (activeListRequestRef.current === request) {
+          setListLoading(false);
+        }
+      });
+    return () => {
+      if (activeListRequestRef.current === request) {
+        activeListRequestRef.current = null;
+      }
+    };
+  }, [worktreePath, isConnected, relPath, listDiagrams, listRefreshKey]);
 
   // 図ファイルの更新監視。worktreePath / relPath が変わるたびに
   // 古い購読を解除してから新しい購読を張る。アンマウント時も同様に解除する。
   useEffect(() => {
-    if (!socket) return;
+    if (!socket || !isConnected || !relPath) return;
     socket.emit("diagram:subscribe", { worktreePath, relPath });
     const onUpdated = (data: { worktreePath: string; relPath: string }) => {
       if (data.worktreePath === worktreePath && data.relPath === relPath) {
         void load();
+        setListRefreshKey(key => key + 1);
       }
     };
     socket.on("diagram:updated", onUpdated);
@@ -133,7 +196,7 @@ export function DiagramPane({
       socket.off("diagram:updated", onUpdated);
       socket.emit("diagram:unsubscribe", { worktreePath, relPath });
     };
-  }, [socket, worktreePath, relPath, load]);
+  }, [socket, isConnected, worktreePath, relPath, load]);
 
   // アンマウント時に進行中の fetch を中止。タブ切り替え直後の
   // アンマウント時に古い fetch が返された結果でステート更新されるのを防ぐ
@@ -148,7 +211,8 @@ export function DiagramPane({
   // エラーを表示する（非破壊）。
   const handleSubmit = useCallback(
     (model: unknown, submittedHtml: string) => {
-      if (!socket) {
+      if (!relPath) return;
+      if (!socket || !isConnected) {
         setSubmitError("サーバーに未接続のため送信できません");
         return;
       }
@@ -164,7 +228,7 @@ export function DiagramPane({
         }
       );
     },
-    [socket, sessionId, worktreePath, relPath]
+    [socket, isConnected, sessionId, worktreePath, relPath]
   );
 
   // iframe のロード（初回表示 / worktreePath・relPath 変更 / diagram:updated
@@ -179,7 +243,6 @@ export function DiagramPane({
   // 止められない（spec §4.2.2）ので、ここで port を渡すと遷移先の外部
   // ドキュメントに diagram:submit の書き込み経路まで開いてしまう（codex
   // review P1 指摘）。初回限定にすることでこの経路を塞ぐ。
-  const portGrantedForRef = useRef<string | null>(null);
   const handleIframeLoad = useCallback(
     (e: React.SyntheticEvent<HTMLIFrameElement>) => {
       const iframeWindow = e.currentTarget.contentWindow;
@@ -222,41 +285,55 @@ export function DiagramPane({
     [handleSubmit, html]
   );
 
-  if (error) {
-    return (
-      <div className="flex h-full items-center justify-center p-4 text-sm text-destructive">
-        {error}
-      </div>
-    );
-  }
-  if (html === null) {
-    return (
-      <div className="flex h-full items-center justify-center p-4 text-sm text-muted-foreground">
-        読み込み中…
-      </div>
-    );
-  }
   return (
-    <div className="relative flex h-full flex-col">
-      {submitError && (
-        <div className="flex shrink-0 items-start justify-between gap-2 border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          <span className="flex-1">{submitError}</span>
-          <button
-            type="button"
-            className="shrink-0 text-xs underline"
-            onClick={() => setSubmitError(null)}
-          >
-            閉じる
-          </button>
-        </div>
-      )}
-      <iframe
-        title={relPath}
-        srcDoc={html}
-        sandbox="allow-scripts"
-        className="h-full w-full flex-1 border-0 bg-white"
-        onLoad={handleIframeLoad}
+    <div className="flex h-full flex-col">
+      <DiagramSwitcher
+        diagrams={diagrams}
+        currentRelPath={relPath}
+        onSelect={selectedRelPath =>
+          onSelectDiagram(selectedRelPath, worktreePath)
+        }
+        listLoading={listLoading}
+        listError={listError}
+        onRetry={() => setListRefreshKey(key => key + 1)}
       />
+      <div className="relative min-h-0 flex-1">
+        {!relPath ? (
+          <div className="flex h-full items-center justify-center p-4 text-sm text-muted-foreground">
+            {diagrams.length > 0 ? "上の一覧から図を選択" : "図がありません"}
+          </div>
+        ) : error ? (
+          <div className="flex h-full items-center justify-center p-4 text-sm text-destructive">
+            {error}
+          </div>
+        ) : html === null ? (
+          <div className="flex h-full items-center justify-center p-4 text-sm text-muted-foreground">
+            読み込み中…
+          </div>
+        ) : (
+          <div className="flex h-full flex-col">
+            {submitError && (
+              <div className="flex shrink-0 items-start justify-between gap-2 border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                <span className="flex-1">{submitError}</span>
+                <button
+                  type="button"
+                  className="shrink-0 text-xs underline"
+                  onClick={() => setSubmitError(null)}
+                >
+                  閉じる
+                </button>
+              </div>
+            )}
+            <iframe
+              title={relPath}
+              srcDoc={html}
+              sandbox="allow-scripts"
+              className="min-h-0 w-full flex-1 border-0 bg-white"
+              onLoad={handleIframeLoad}
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
