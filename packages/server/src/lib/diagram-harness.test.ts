@@ -236,4 +236,87 @@ describe("injectHarness", () => {
     expect(out).not.toContain('kindCandidates = ["');
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
+
+  it("node / edge CRUD と参照整合性の契約を注入する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
+      )
+    );
+
+    expect(out).toContain("reservedModelIds");
+    expect(out).toContain("function collectModelIds(");
+    expect(out).toContain("function generateUniqueModelId(");
+    expect(out).toContain("ark-harness-node-palette");
+    expect(out).toContain("function registerGraphNode(");
+    expect(out).toContain("function addNode(");
+    expect(out).toContain("function removeNode(");
+    expect(out).toContain("group.nodes = group.nodes.filter");
+    expect(out).toContain('mode: "create"');
+    expect(out).toContain('mode: "rewire"');
+    expect(out).toContain("var EDGE_DRAG_MIN_DISTANCE = 8");
+    expect(out).toContain("drag.didDrag");
+    expect(out).toContain("drag.leftSource");
+    expect(out).toContain("ark-harness-node-connectors");
+    expect(out).toContain("ark-harness-node-anchor");
+    expect(out).toContain(
+      "position: absolute; transform: translate(-50%, -50%); z-index: 5"
+    );
+    expect(out).toContain("function nodeAnchorPoint(");
+    expect(out).toContain("function attachNodeConnectors(");
+    expect(out).toContain('["top-left", 0, 0]');
+    expect(out).toContain('["bottom-right", 1, 1]');
+    expect(out).not.toContain("ark-harness-node-create");
+    expect(out).not.toContain("ark-harness-node-rail");
+    expect(out).toContain("function removeEdge(");
+    expect(out).toContain("function setEdgeDeletePending(");
+    expect(out).toContain('drag.mode === "rewire" && !candidate');
+    expect(out).toContain("離すと edge を削除");
+    expect(out).toContain("function setSelectedNode(");
+    expect(out).toContain('root.addEventListener("pointerdown"');
+    expect(out).toContain("editableControl.getBoundingClientRect()");
+    expect(out).toContain("event.preventDefault()");
+    expect(out).toContain("root.focus({ preventScroll: true })");
+    expect(out).toContain("function handleNodeDeleteKey(");
+    expect(out).toContain('event.key !== "Delete"');
+    expect(out).toContain('event.key !== "Backspace"');
+    expect(out).toContain("target.isContentEditable");
+    expect(out).not.toContain("ark-harness-node-delete");
+    expect(out).not.toContain("ark-harness-edge-delete-visible");
+    expect(out).not.toContain(".ark-harness-edge-hit {");
+    expect(out).not.toContain("function syncEdgeDeleteControls(");
+    expect(out).toContain("var AFFORDANCE_CLOSE_DELAY = 120");
+    expect(out).toContain("function scheduleNodeAffordanceClose(");
+    expect(out).toContain("ark-harness-node-affordance-open");
+    expect(out).toContain('controller.root.matches(":focus-within")');
+    expect(out).toContain(
+      "root.closest('[data-ark-container=\"graph\"]') === graph.container"
+    );
+    expect(out).toContain('element.hasAttribute("data-ark-container")');
+  });
+
+  it("CRUD DOM を安全な API だけで生成し全 model id を予約する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
+      )
+    );
+
+    expect(out).toContain('document.createElement("article")');
+    expect(out).toContain('document.createElement("span")');
+    expect(out).toContain(
+      'document.createElementNS("http://www.w3.org/2000/svg"'
+    );
+    expect(out).toContain('root.setAttribute("data-model-id", node.id)');
+    expect(out).toContain("label.textContent = node.label");
+    expect(out).toContain("(node.fields || []).forEach");
+    expect(out).toContain("(model.edges || []).forEach");
+    expect(out).toContain("(model.groups || []).forEach");
+    expect(out).toContain("reservedModelIds.has(candidate)");
+    expect(out).not.toContain("innerHTML");
+    expect(out).not.toContain("insertAdjacentHTML");
+    expect(out).not.toContain("fetch(");
+    expect(out).not.toContain("import(");
+    expect(out).not.toContain("https://");
+  });
 });
