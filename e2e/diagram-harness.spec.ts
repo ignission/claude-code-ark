@@ -738,7 +738,16 @@ test("node CRUD: node 削除を対象 projection・incident edge・group 参照�
   await expect(page.locator(".ark-harness-edge-delete")).toHaveCount(0);
   await expect(page.locator(".ark-harness-edge-hit")).toHaveCount(0);
   await expect(page.locator("img, script[src], [onerror]")).toHaveCount(0);
-  await node.focus();
+  await node.hover();
+  await expect(
+    graphs
+      .first()
+      .locator(
+        '.ark-harness-node-connectors[data-ark-node-id="crud-a"] .ark-harness-node-anchor'
+      )
+      .first()
+  ).toHaveCSS("pointer-events", "auto");
+  await node.click({ position: { x: 10, y: 36 } });
   await expect(node).toBeFocused();
   await expect(node).toHaveClass(/ark-harness-node-selected/);
   await page.keyboard.press("Delete");
@@ -1079,13 +1088,34 @@ test("edge CRUD: endpoint を空き領域へ drag して対象 edge だけを削
 }) => {
   await page.setContent(crudDiagramHtml());
   const graph = page.locator('[data-ark-container="graph"]').first();
+  const endpointNode = graph.locator('[data-model-id="crud-b"]').first();
   const endpoint = graph.locator(
     '.ark-harness-edge-handle[data-ark-edge-id="crud-ab"][data-ark-edge-end="to"]'
   );
+  const overlappingAnchor = graph.locator(
+    '.ark-harness-node-connectors[data-ark-node-id="crud-b"] ' +
+      '.ark-harness-node-anchor[data-ark-anchor-position="left"]'
+  );
+  await endpointNode.hover();
+  await expect(overlappingAnchor).toHaveCSS("pointer-events", "auto");
   const [handleBox, graphBox] = await Promise.all([
     requiredBoundingBox(endpoint),
     requiredBoundingBox(graph),
   ]);
+  const hitTarget = await page.evaluate(
+    ({ x, y }) => {
+      const target = document.elementFromPoint(x, y);
+      return {
+        edgeId: target?.getAttribute("data-ark-edge-id"),
+        edgeEnd: target?.getAttribute("data-ark-edge-end"),
+      };
+    },
+    {
+      x: handleBox.x + handleBox.width / 2,
+      y: handleBox.y + handleBox.height / 2,
+    }
+  );
+  expect(hitTarget).toEqual({ edgeId: "crud-ab", edgeEnd: "to" });
   await page.mouse.move(
     handleBox.x + handleBox.width / 2,
     handleBox.y + handleBox.height / 2

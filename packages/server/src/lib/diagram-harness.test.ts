@@ -200,6 +200,9 @@ describe("injectHarness", () => {
     expect(out).toContain("drag.leftSource");
     expect(out).toContain("ark-harness-node-connectors");
     expect(out).toContain("ark-harness-node-anchor");
+    expect(out).toContain(
+      "position: absolute; transform: translate(-50%, -50%); z-index: 5"
+    );
     expect(out).toContain("function nodeAnchorPoint(");
     expect(out).toContain("function attachNodeConnectors(");
     expect(out).toContain('["top-left", 0, 0]');
@@ -211,6 +214,10 @@ describe("injectHarness", () => {
     expect(out).toContain('drag.mode === "rewire" && !candidate');
     expect(out).toContain("離すと edge を削除");
     expect(out).toContain("function setSelectedNode(");
+    expect(out).toContain('root.addEventListener("pointerdown"');
+    expect(out).toContain("editableControl.getBoundingClientRect()");
+    expect(out).toContain("event.preventDefault()");
+    expect(out).toContain("root.focus({ preventScroll: true })");
     expect(out).toContain("function handleNodeDeleteKey(");
     expect(out).toContain('event.key !== "Delete"');
     expect(out).toContain('event.key !== "Backspace"');

@@ -148,7 +148,7 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   overflow: visible; pointer-events: none;
 }
 .ark-harness-edge-handle {
-  position: absolute; transform: translate(-50%, -50%); z-index: 3;
+  position: absolute; transform: translate(-50%, -50%); z-index: 5;
   width: 18px; height: 18px; padding: 0; border: 2px solid #0ea5b7; border-radius: 999px;
   background: #fff; color: #0e7490; cursor: crosshair; line-height: 14px; font-size: 9px;
   pointer-events: auto; touch-action: none;
@@ -1534,6 +1534,19 @@ const HARNESS_JS = `(function () {
       root.setAttribute("tabindex", "0");
       root.classList.add("ark-harness-node-tabindex-added");
     }
+    root.addEventListener("pointerdown", function (event) {
+      if (event.button !== 0 || isInsideHarnessUi(event.target)) return;
+      var editableControl = event.target && event.target.closest &&
+        event.target.closest('[contenteditable="true"], input, textarea, select, button');
+      if (editableControl) {
+        var editableRect = editableControl.getBoundingClientRect();
+        if (event.clientX >= editableRect.left && event.clientX <= editableRect.right &&
+            event.clientY >= editableRect.top && event.clientY <= editableRect.bottom) return;
+      }
+      event.preventDefault();
+      setSelectedNode(id);
+      root.focus({ preventScroll: true });
+    });
     root.addEventListener("click", function () { setSelectedNode(id); });
     root.addEventListener("focusin", function () { setSelectedNode(id); });
   }
