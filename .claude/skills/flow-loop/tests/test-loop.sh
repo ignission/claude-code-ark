@@ -131,6 +131,23 @@ printf '{"phase":"done","ticket":"issue-2"}' > "$TMP_RUNS/flow-progress-issue-2.
 assert_eq "phase=done は active に数えない" "1" "$(flow_loop_active_count)"
 assert_eq "active_scope_keys は scope_key を返す" "issue-1" "$(flow_loop_active_scope_keys)"
 
+# --- クロスプロジェクト分離 (別 repo の run を掴まない) ---
+# flow state は /tmp 共有なので、active_scope は「現プロジェクト所属の run」だけを返すべき。
+# 別 repo の worktree を持つ run を掴むと、別プロジェクトの PR を CI 判定/マージしかねない。
+REPO_A="$TMP_RUNS/repo-a"; REPO_B="$TMP_RUNS/repo-b"
+git init -q "$REPO_A"; git init -q "$REPO_B"
+printf '{"phase":"P3"}' > "$TMP_RUNS/flow-progress-run-a.json"
+printf '{"worktree_path":"%s"}' "$REPO_A" > "$TMP_RUNS/flow-context-run-a.json"
+printf '{"phase":"P3"}' > "$TMP_RUNS/flow-progress-run-b.json"
+printf '{"worktree_path":"%s"}' "$REPO_B" > "$TMP_RUNS/flow-context-run-b.json"
+# 現プロジェクト = repo-a。run-a (同 repo) と context 無しの issue-1 (permissive) は出て、
+# run-b (別 repo) は出ない。
+_scope="$(CLAUDE_PROJECT_DIR="$REPO_A" flow_loop_active_scope_keys | sort | tr '\n' ',')"
+assert_eq "別 repo の run は active_scope に出ない (現 repo + permissive のみ)" "issue-1,run-a," "$_scope"
+# 後片付け (以降の active 系テストに影響させない)
+rm -f "$TMP_RUNS/flow-progress-run-a.json" "$TMP_RUNS/flow-context-run-a.json" \
+      "$TMP_RUNS/flow-progress-run-b.json" "$TMP_RUNS/flow-context-run-b.json"
+
 # --- 稼働時間帯 ---
 flow_loop_update '.active_hours = ""'
 assert_rc "active_hours 空は常時可" 0 'flow_loop_within_active_hours'
