@@ -99,11 +99,14 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   position: absolute; left: var(--ark-harness-graph-x); top: var(--ark-harness-graph-y); z-index: 2;
 }
 .ark-harness-kind-picker {
-  position: absolute; top: .25rem; left: .25rem; z-index: 3; opacity: .35;
-  transition: opacity .12s ease;
+  position: absolute; top: 0; right: .25rem; z-index: 4;
+  transform: translateY(calc(-100% - .25rem));
+  opacity: 0; pointer-events: none; transition: opacity .12s ease;
 }
 .ark-harness-graph-node:hover > .ark-harness-kind-picker,
-.ark-harness-graph-node:focus-within > .ark-harness-kind-picker { opacity: 1; }
+.ark-harness-graph-node:focus-within > .ark-harness-kind-picker {
+  opacity: 1; pointer-events: auto;
+}
 .ark-harness-kind-select {
   appearance: auto; max-width: 9rem; min-width: 4.5rem; padding: .18rem .25rem;
   border: 1px solid rgba(100,116,139,.55); border-radius: 4px;

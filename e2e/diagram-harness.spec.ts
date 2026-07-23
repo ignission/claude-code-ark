@@ -1986,6 +1986,7 @@ test("kind ピッカーで CSS 候補を選び投影・geometry・保存へ同�
   const graph = page.locator('[data-ark-container="graph"]');
   const order = graph.locator(':scope > section[data-model-id="order"]');
   const user = graph.locator(':scope > section[data-model-id="user"]');
+  const orderPickerWrapper = order.locator(".ark-harness-kind-picker");
   const orderPicker = order.locator("select.ark-harness-kind-select");
   const userPicker = user.locator("select.ark-harness-kind-select");
 
@@ -2011,6 +2012,20 @@ test("kind ピッカーで CSS 候補を選び投影・geometry・保存へ同�
   await expect(
     page.locator('body > section[data-model-id="external"] select')
   ).toHaveCount(0);
+
+  await expect(orderPickerWrapper).toHaveCSS("opacity", "0");
+  const beforeHoverBox = await requiredBoundingBox(order);
+  await order.hover();
+  await expect(orderPickerWrapper).toHaveCSS("opacity", "1");
+  const [hoverBox, pickerBox, titleBox, dragHandleBox] = await Promise.all([
+    requiredBoundingBox(order),
+    requiredBoundingBox(orderPicker),
+    requiredBoundingBox(order.locator('h2[data-model-id="order"]')),
+    requiredBoundingBox(order.locator(".ark-harness-graph-handle")),
+  ]);
+  expect(hoverBox).toEqual(beforeHoverBox);
+  expect(boxesOverlap(pickerBox, titleBox)).toBe(false);
+  expect(boxesOverlap(pickerBox, dragHandleBox)).toBe(false);
 
   const beforeModel = structuredClone(model);
   const beforeBox = await requiredBoundingBox(order);

@@ -153,6 +153,12 @@ describe("injectHarness", () => {
     expect(out).toContain("rule.selectorText");
     expect(out).toContain("new Set()");
     expect(out).toContain("ark-harness-kind-picker");
+    expect(out).toContain("transform: translateY(calc(-100% - .25rem))");
+    expect(out).toContain("opacity: 0; pointer-events: none");
+    expect(out).toContain(
+      ".ark-harness-graph-node:focus-within > .ark-harness-kind-picker"
+    );
+    expect(out).toContain("opacity: 1; pointer-events: auto");
     expect(out).toContain('document.createElement("select")');
     expect(out).toContain('document.createElement("option")');
     expect(out).toContain("option.textContent = value");
