@@ -1,5 +1,6 @@
 import type { DiagramListItem } from "@ark/shared";
 import type { ChangeEvent } from "react";
+import { formatDiagramOptionLabel } from "../lib/diagram-option-label";
 
 interface DiagramSwitcherProps {
   diagrams: DiagramListItem[];
@@ -8,10 +9,6 @@ interface DiagramSwitcherProps {
   listLoading?: boolean;
   listError?: string | null;
   onRetry?: () => void;
-}
-
-function basename(relPath: string): string {
-  return relPath.split("/").at(-1) ?? relPath;
 }
 
 export function DiagramSwitcher({
@@ -43,7 +40,10 @@ export function DiagramSwitcher({
         {!currentRelPath && <option value="">{placeholder}</option>}
         {currentIsStale && currentRelPath && (
           <option value={currentRelPath} title={currentRelPath}>
-            {basename(currentRelPath)}
+            {formatDiagramOptionLabel(
+              currentRelPath.split("/").at(-1) ?? currentRelPath,
+              currentRelPath
+            )}
           </option>
         )}
         {diagrams.map(diagram => (
@@ -52,7 +52,7 @@ export function DiagramSwitcher({
             value={diagram.relPath}
             title={diagram.relPath}
           >
-            {diagram.displayName}
+            {formatDiagramOptionLabel(diagram.displayName, diagram.relPath)}
           </option>
         ))}
       </select>
