@@ -357,6 +357,7 @@ const edgeSemanticsModel = {
         to_card: "zero-or-many",
         direction: "forward",
         type: "belongs-to",
+        custom: { retained: true },
       },
     },
     {
@@ -368,6 +369,29 @@ const edgeSemanticsModel = {
   ],
   groups: [],
 };
+
+const edgeControlOptions = {
+  from: [
+    ["one", "1"],
+    ["many", "N"],
+    ["zero-or-one", "0..1"],
+    ["one-or-many", "1..N"],
+    ["zero-or-many", "0..N"],
+  ],
+  to: [
+    ["one", "1"],
+    ["many", "N"],
+    ["zero-or-one", "0..1"],
+    ["one-or-many", "1..N"],
+    ["zero-or-many", "0..N"],
+  ],
+  direction: [
+    ["forward", "→"],
+    ["reverse", "←"],
+    ["both", "↔"],
+    ["none", "矢印なし"],
+  ],
+} as const;
 
 function edgeSemanticsHtml(diagramModel: unknown = edgeSemanticsModel): string {
   return injectHarness(`<!doctype html><html><head><style>
@@ -1095,7 +1119,7 @@ test("cardinality・方向・type を edge SVG に安全に投影する", async 
   const errors = await openEdgeSemanticsDiagram(page);
   const graph = page.locator('[data-ark-container="graph"]');
   const edge = graph.locator(
-    'line[data-ark-edge-id="e_order_owner"], path[data-ark-edge-id="e_order_owner"]'
+    '.ark-harness-edge-main[data-ark-edge-id="e_order_owner"]'
   );
   const fromCardinality = graph.locator(
     '.ark-harness-edge-cardinality[data-ark-edge-id="e_order_owner"][data-ark-edge-end="from"][data-ark-edge-cardinality="one"]'
@@ -1157,7 +1181,7 @@ test("cardinality・方向・type を edge SVG に安全に投影する", async 
   await page.reload();
   await page.setContent(edgeSemanticsHtml());
   const legacyEdge = page.locator(
-    'line[data-ark-edge-id="e_account_user"], path[data-ark-edge-id="e_account_user"]'
+    '.ark-harness-edge-main[data-ark-edge-id="e_account_user"]'
   );
   await expect(legacyEdge).toHaveAttribute(
     "data-ark-edge-direction",
@@ -1165,6 +1189,372 @@ test("cardinality・方向・type を edge SVG に安全に投影する", async 
   );
   await expect(legacyEdge).toHaveAttribute("marker-end", /url\(.+\)/);
   await expect(page.locator("text", { hasText: "legacy edge" })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("edge ごとに3つの native edge control と allowlist を表示する", async ({
+  page,
+}) => {
+  const errors = await openEdgeSemanticsDiagram(page);
+  const graph = page.locator('[data-ark-container="graph"]');
+  const controls = graph.locator(
+    '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"]'
+  );
+
+  await expect(controls.locator("select")).toHaveCount(3);
+  for (const [role, name, expected] of [
+    ["from-card", /owned by.*始点 cardinality.*one/, edgeControlOptions.from],
+    [
+      "to-card",
+      /owned by.*終点 cardinality.*zero-or-many/,
+      edgeControlOptions.to,
+    ],
+    ["direction", /owned by.*direction.*forward/, edgeControlOptions.direction],
+  ] as const) {
+    const select = controls.locator(`select[data-ark-edge-control="${role}"]`);
+    await expect(select).toHaveAttribute("aria-label", name);
+    expect(
+      await select.locator("option").evaluateAll(options =>
+        options.map(option => ({
+          value: (option as HTMLOptionElement).value,
+          text: option.textContent,
+        }))
+      )
+    ).toEqual(
+      expected.map(([value, label]) => ({
+        value,
+        text: `${label} (${value})`,
+      }))
+    );
+  }
+  await expect(
+    controls.locator('select[data-ark-edge-control="type"]')
+  ).toHaveCount(0);
+  await expect(
+    controls.locator('option[value="LR"], option[value="TB"]')
+  ).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("edge control は hover・focus で表示され6px gapで重ならない", async ({
+  page,
+}) => {
+  await openEdgeSemanticsDiagram(page);
+  const graph = page.locator('[data-ark-container="graph"]');
+  const controls = graph.locator(
+    '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"]'
+  );
+  const hitTarget = graph.locator(
+    '.ark-harness-edge-hit-target[data-ark-edge-id="e_order_owner"]'
+  );
+
+  await expect(controls).toHaveCSS("opacity", "0");
+  await expect(controls).toHaveCSS("pointer-events", "none");
+  await hitTarget.hover({ force: true });
+  await expect(controls).toHaveCSS("opacity", "1");
+  await controls.locator("select").first().hover();
+  await expect(controls).toHaveCSS("opacity", "1");
+
+  const secondHitTarget = graph.locator(
+    '.ark-harness-edge-hit-target[data-ark-edge-id="e_account_user"]'
+  );
+  await secondHitTarget.hover({ force: true });
+  await expect(controls).toHaveCSS("opacity", "0");
+  await controls.locator("select").first().focus();
+  await expect(controls).toHaveCSS("opacity", "1");
+
+  const blockers = [
+    graph.locator(
+      'text[data-ark-edge-id="e_order_owner"].ark-harness-edge-label'
+    ),
+    graph.locator(
+      '.ark-harness-edge-handle[data-ark-edge-id="e_order_owner"][data-ark-edge-end="from"]'
+    ),
+    graph.locator(
+      '.ark-harness-edge-handle[data-ark-edge-id="e_order_owner"][data-ark-edge-end="to"]'
+    ),
+    graph.locator('.ark-harness-graph-node[data-model-id="order"]'),
+    graph.locator('.ark-harness-graph-node[data-model-id="user"]'),
+    graph.locator('.ark-harness-graph-node[data-model-id="account"]'),
+  ];
+  const controlBoxes = await controls.locator("select").evaluateAll(elements =>
+    elements.map(element => {
+      const rect = element.getBoundingClientRect();
+      return {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+      };
+    })
+  );
+  const blockerBoxes = await Promise.all(
+    blockers.map(async blocker => {
+      const box = await requiredBoundingBox(blocker);
+      return {
+        left: box.x,
+        top: box.y,
+        right: box.x + box.width,
+        bottom: box.y + box.height,
+      };
+    })
+  );
+  for (let index = 0; index < controlBoxes.length; index += 1) {
+    const control = controlBoxes[index];
+    for (const blocker of [...blockerBoxes, ...controlBoxes.slice(0, index)]) {
+      expect(
+        control.right + 6 <= blocker.left ||
+          blocker.right + 6 <= control.left ||
+          control.bottom + 6 <= blocker.top ||
+          blocker.bottom + 6 <= control.top
+      ).toBe(true);
+    }
+  }
+});
+
+test("edge cardinality・edge direction control を即時投影し非還流で保存する", async ({
+  page,
+}) => {
+  const initialModel = structuredClone(edgeSemanticsModel);
+  const errors = await openEdgeSemanticsDiagram(page, initialModel);
+  await connectSubmissionPort(page);
+  const graph = page.locator('[data-ark-container="graph"]');
+  const controls = graph.locator(
+    '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"]'
+  );
+  const main = graph.locator(
+    '.ark-harness-edge-main[data-ark-edge-id="e_order_owner"]'
+  );
+  const layoutButton = page.getByRole("button", { name: /方向: LR/ });
+
+  await controls
+    .locator('select[data-ark-edge-control="from-card"]')
+    .selectOption("zero-or-one");
+  await controls
+    .locator('select[data-ark-edge-control="to-card"]')
+    .selectOption("one-or-many");
+  const fromCard = graph.locator(
+    '.ark-harness-edge-cardinality[data-ark-edge-id="e_order_owner"][data-ark-edge-end="from"][data-ark-edge-cardinality="zero-or-one"]'
+  );
+  const toCard = graph.locator(
+    '.ark-harness-edge-cardinality[data-ark-edge-id="e_order_owner"][data-ark-edge-end="to"][data-ark-edge-cardinality="one-or-many"]'
+  );
+  await expect(fromCard.locator("circle")).toHaveCount(1);
+  await expect(fromCard.locator("line")).toHaveCount(1);
+  await expect(toCard.locator("circle")).toHaveCount(0);
+  await expect(toCard.locator("line")).toHaveCount(4);
+
+  for (const [direction, markerStart, markerEnd] of [
+    ["reverse", true, false],
+    ["both", true, true],
+    ["none", false, false],
+    ["forward", false, true],
+  ] as const) {
+    await controls
+      .locator('select[data-ark-edge-control="direction"]')
+      .selectOption(direction);
+    await expect(main).toHaveAttribute("data-ark-edge-direction", direction);
+    if (markerStart) {
+      await expect(main).toHaveAttribute("marker-start", /url\(.+\)/);
+    } else {
+      await expect(main).not.toHaveAttribute("marker-start", /.+/);
+    }
+    if (markerEnd) {
+      await expect(main).toHaveAttribute("marker-end", /url\(.+\)/);
+    } else {
+      await expect(main).not.toHaveAttribute("marker-end", /.+/);
+    }
+    await expect(layoutButton).toHaveAttribute("aria-label", /方向: LR/);
+  }
+
+  await page
+    .getByRole("button", { name: "変更を親フレームへ送信する" })
+    .click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  const submission = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          arkHarnessSubmission?: {
+            model: typeof edgeSemanticsModel;
+            html: string;
+          };
+        }
+      ).arkHarnessSubmission
+  );
+  if (!submission) throw new Error("submission がありません");
+  const submittedEdge = submission.model.edges.find(
+    edge => edge.id === "e_order_owner"
+  );
+  expect(submittedEdge).toMatchObject({
+    from: "order",
+    to: "user",
+    label: "owned by",
+    ext: {
+      from_card: "zero-or-one",
+      to_card: "one-or-many",
+      direction: "forward",
+      type: "belongs-to",
+      custom: { retained: true },
+    },
+  });
+  expect(submission.model.edges[1]).toEqual(initialModel.edges[1]);
+  expect(describeModelDiff(initialModel, submission.model)).toEqual([]);
+  expect(submission.html).not.toMatch(
+    /ark-harness-edge-controls|ark-harness-edge-hit-target|data-ark-harness-ui|<select|<option/
+  );
+  expect(submission.html).toContain('id="ark-diagram-model"');
+  expect(submission.html).toContain('data-ark-container="graph"');
+  expect(errors).toEqual([]);
+});
+
+test("unknown edge ext は allowlist placeholder と forward fallback で安全に扱う", async ({
+  page,
+}) => {
+  const requests: string[] = [];
+  page.on("request", request => requests.push(request.url()));
+  const hostileModel = structuredClone(edgeSemanticsModel);
+  const hostileExt = hostileModel.edges[0].ext as Record<string, unknown>;
+  delete hostileExt.from_card;
+  hostileExt.to_card =
+    '<img src="https://example.invalid/x" onerror="alert(1)">';
+  hostileExt.direction = '<script src="https://example.invalid/x.js">';
+  const errors = await openEdgeSemanticsDiagram(page, hostileModel);
+  const graph = page.locator('[data-ark-container="graph"]');
+  const controls = graph.locator(
+    '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"]'
+  );
+  const main = graph.locator(
+    '.ark-harness-edge-main[data-ark-edge-id="e_order_owner"]'
+  );
+  const fromSelect = controls.locator(
+    'select[data-ark-edge-control="from-card"]'
+  );
+  const toSelect = controls.locator('select[data-ark-edge-control="to-card"]');
+  const directionSelect = controls.locator(
+    'select[data-ark-edge-control="direction"]'
+  );
+
+  await expect(fromSelect.locator("option:checked")).toBeDisabled();
+  await expect(fromSelect.locator("option:checked")).toHaveText("未設定");
+  await expect(toSelect.locator("option:checked")).toBeDisabled();
+  await expect(toSelect.locator("option:checked")).toHaveText("不正値");
+  await expect(directionSelect.locator("option:checked")).toBeDisabled();
+  await expect(directionSelect.locator("option:checked")).toHaveText(
+    "不正値・表示は forward"
+  );
+  await expect(main).toHaveAttribute("data-ark-edge-direction", "forward");
+  await expect(main).not.toHaveAttribute("marker-start", /.+/);
+  await expect(main).toHaveAttribute("marker-end", /url\(.+\)/);
+  await expect(
+    graph.locator(
+      '.ark-harness-edge-cardinality[data-ark-edge-id="e_order_owner"]'
+    )
+  ).toHaveCount(0);
+  await expect(graph.locator("img")).toHaveCount(0);
+  await expect(graph.locator("script")).toHaveCount(0);
+  expect(
+    await controls
+      .locator("*")
+      .evaluateAll(elements =>
+        elements.some(element =>
+          [...element.attributes].some(attribute =>
+            attribute.name.toLowerCase().startsWith("on")
+          )
+        )
+      )
+  ).toBe(false);
+  expect(requests.filter(url => url.startsWith("http"))).toEqual([]);
+
+  await page
+    .getByRole("button", { name: "モデル JSON を直接編集する" })
+    .click();
+  const beforeNormalization = JSON.parse(
+    await page.locator(".ark-harness-textarea").inputValue()
+  ) as { edges: Array<{ ext: Record<string, unknown> }> };
+  expect(beforeNormalization.edges[0].ext).toMatchObject({
+    to_card: hostileExt.to_card,
+    direction: hostileExt.direction,
+  });
+  expect(beforeNormalization.edges[0].ext).not.toHaveProperty("from_card");
+  await page.getByRole("button", { name: "閉じる", exact: true }).click();
+
+  await fromSelect.selectOption("one");
+  await toSelect.selectOption("many");
+  await directionSelect.selectOption("forward");
+  await expect(fromSelect.locator("option")).toHaveCount(5);
+  await expect(toSelect.locator("option")).toHaveCount(5);
+  await expect(directionSelect.locator("option")).toHaveCount(4);
+  await expect(
+    graph.locator(
+      '.ark-harness-edge-cardinality[data-ark-edge-id="e_order_owner"][data-ark-edge-end="from"][data-ark-edge-cardinality="one"]'
+    )
+  ).toHaveCount(1);
+  await expect(
+    graph.locator(
+      '.ark-harness-edge-cardinality[data-ark-edge-id="e_order_owner"][data-ark-edge-end="to"][data-ark-edge-cardinality="many"]'
+    )
+  ).toHaveCount(1);
+  expect(errors).toEqual([]);
+});
+
+test("モデル直接編集後の edge control を current model と同期して stale group を除去する", async ({
+  page,
+}) => {
+  const errors = await openEdgeSemanticsDiagram(page);
+  const graph = page.locator('[data-ark-container="graph"]');
+  const ownerControls = graph.locator(
+    '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"]'
+  );
+  await ownerControls
+    .locator('select[data-ark-edge-control="direction"]')
+    .focus();
+
+  const nextModel = structuredClone(edgeSemanticsModel);
+  nextModel.edges = [
+    {
+      id: "e_account_user",
+      from: "order",
+      to: "account",
+      label: "legacy edge",
+      ext: {
+        from_card: "many",
+        to_card: "one",
+        direction: "both",
+        type: "legacy",
+        custom: { retained: true },
+      },
+    },
+  ];
+  await page
+    .getByRole("button", { name: "モデル JSON を直接編集する" })
+    .evaluate(element => (element as HTMLButtonElement).click());
+  await page.locator(".ark-harness-textarea").fill(JSON.stringify(nextModel));
+  await page
+    .getByRole("button", { name: "反映", exact: true })
+    .evaluate(element => (element as HTMLButtonElement).click());
+
+  await expect(ownerControls).toHaveCount(0);
+  const legacyControls = graph.locator(
+    '.ark-harness-edge-controls[data-ark-edge-id="e_account_user"]'
+  );
+  await expect(
+    legacyControls.locator('select[data-ark-edge-control="from-card"]')
+  ).toHaveValue("many");
+  await expect(
+    legacyControls.locator('select[data-ark-edge-control="to-card"]')
+  ).toHaveValue("one");
+  await expect(
+    legacyControls.locator('select[data-ark-edge-control="direction"]')
+  ).toHaveValue("both");
+  await expect(
+    graph.locator('.ark-harness-edge-main[data-ark-edge-id="e_account_user"]')
+  ).toHaveAttribute("data-ark-edge-direction", "both");
   expect(errors).toEqual([]);
 });
 
@@ -1201,8 +1591,79 @@ test("カーディナリティ 5 語彙を self-loop にも投影する", async 
     await expect(main).toHaveAttribute("marker-end", /url\(.+\)/);
     await expect(primitive.locator("line")).toHaveCount(lineCount);
     await expect(primitive.locator("circle")).toHaveCount(circleCount);
+    await expect(
+      page.locator(
+        '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"] select[data-ark-edge-control="from-card"]'
+      )
+    ).toHaveValue(cardinality);
   }
 
+  const graph = page.locator('[data-ark-container="graph"]');
+  const controls = graph.locator(
+    '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"]'
+  );
+  await expect(controls.locator("select")).toHaveCount(3);
+  await controls
+    .locator('select[data-ark-edge-control="to-card"]')
+    .selectOption("one-or-many");
+  await controls
+    .locator('select[data-ark-edge-control="direction"]')
+    .selectOption("none");
+  await expect(
+    graph.locator(
+      '.ark-harness-edge-cardinality[data-ark-edge-id="e_order_owner"][data-ark-edge-end="to"][data-ark-edge-cardinality="one-or-many"]'
+    )
+  ).toHaveCount(1);
+  await expect(
+    graph.locator(
+      'path.ark-harness-edge-main[data-ark-edge-id="e_order_owner"]'
+    )
+  ).toHaveAttribute("data-ark-edge-direction", "none");
+  await expect(
+    graph.locator(
+      'path.ark-harness-edge-main[data-ark-edge-id="e_order_owner"]'
+    )
+  ).not.toHaveAttribute("marker-start", /.+/);
+  await expect(
+    graph.locator(
+      'path.ark-harness-edge-main[data-ark-edge-id="e_order_owner"]'
+    )
+  ).not.toHaveAttribute("marker-end", /.+/);
+  expect(
+    await graph.evaluate(container => {
+      const selects = [
+        ...container.querySelectorAll(
+          '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"] select'
+        ),
+      ];
+      const blockers = [
+        container.querySelector(
+          'text.ark-harness-edge-label[data-ark-edge-id="e_order_owner"]'
+        ),
+        ...container.querySelectorAll(
+          '.ark-harness-edge-handle[data-ark-edge-id="e_order_owner"]'
+        ),
+        container.querySelector(
+          '.ark-harness-graph-node[data-model-id="order"]'
+        ),
+      ].filter((element): element is Element => element !== null);
+      const separated = (left: Element, right: Element) => {
+        const a = left.getBoundingClientRect();
+        const b = right.getBoundingClientRect();
+        return (
+          a.right + 6 <= b.left ||
+          b.right + 6 <= a.left ||
+          a.bottom + 6 <= b.top ||
+          b.bottom + 6 <= a.top
+        );
+      };
+      return selects.every(
+        (select, index) =>
+          blockers.every(blocker => separated(select, blocker)) &&
+          selects.slice(0, index).every(other => separated(select, other))
+      );
+    })
+  ).toBe(true);
   expect(errors).toEqual([]);
 });
 
@@ -1254,6 +1715,18 @@ test("edge 終点を張り替えて記号と clean HTML を同期する", async 
   await openEdgeSemanticsDiagram(page);
   await connectSubmissionPort(page);
   const graph = page.locator('[data-ark-container="graph"]');
+  const controls = graph.locator(
+    '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"]'
+  );
+  await controls
+    .locator('select[data-ark-edge-control="from-card"]')
+    .selectOption("zero-or-one");
+  await controls
+    .locator('select[data-ark-edge-control="to-card"]')
+    .selectOption("one-or-many");
+  await controls
+    .locator('select[data-ark-edge-control="direction"]')
+    .selectOption("both");
   const account = graph.locator('[data-model-id="account"]').first();
   const toHandle = graph.locator(
     '.ark-harness-edge-handle[data-ark-edge-id="e_order_owner"][data-ark-edge-end="to"]'
@@ -1292,7 +1765,7 @@ test("edge 終点を張り替えて記号と clean HTML を同期する", async 
   expect(after.y2).toBeLessThan(accountBox.y + accountBox.height + 2);
 
   const movedCardinality = graph.locator(
-    '.ark-harness-edge-cardinality[data-ark-edge-id="e_order_owner"][data-ark-edge-end="to"][data-ark-edge-cardinality="zero-or-many"]'
+    '.ark-harness-edge-cardinality[data-ark-edge-id="e_order_owner"][data-ark-edge-end="to"][data-ark-edge-cardinality="one-or-many"]'
   );
   const movedHandle = graph.locator(
     '.ark-harness-edge-handle[data-ark-edge-id="e_order_owner"][data-ark-edge-end="to"]'
@@ -1333,12 +1806,22 @@ test("edge 終点を張り替えて記号と clean HTML を同期する", async 
     from: "order",
     to: "account",
     ext: {
-      from_card: "one",
-      to_card: "zero-or-many",
-      direction: "forward",
+      from_card: "zero-or-one",
+      to_card: "one-or-many",
+      direction: "both",
       type: "belongs-to",
+      custom: { retained: true },
     },
   });
+  const submittedModel = (submission as { model: typeof edgeSemanticsModel })
+    .model;
+  const diff = describeModelDiff(edgeSemanticsModel, submittedModel);
+  expect(diff).toEqual([
+    "Order から User への関連「owned by」を Order から Account への関連「owned by」 に変更",
+  ]);
+  expect(diff.join("\n")).not.toMatch(
+    /one|many|zero-or-one|one-or-many|zero-or-many|forward|reverse|both|none/
+  );
 
   const html = (submission as { html: string }).html;
   expect(html).not.toContain("ark-harness-edge-handle-layer");
@@ -1346,6 +1829,11 @@ test("edge 終点を張り替えて記号と clean HTML を同期する", async 
   expect(html).not.toContain("ark-harness-edge-preview");
   expect(html).not.toContain("ark-harness-edge-drop-indicator");
   expect(html).not.toContain("ark-harness-edge-cardinality");
+  expect(html).not.toContain("ark-harness-edge-controls");
+  expect(html).not.toContain("ark-harness-edge-hit-target");
+  expect(html).not.toContain("<select");
+  expect(html).not.toContain("<option");
+  expect(html).not.toContain("data-ark-harness-ui");
   expect(html).toContain('data-ark-container="graph"');
   expect(html).toContain('data-model-id="account"');
   expect(html).toContain('data-model-id="account_id"');
@@ -1416,8 +1904,8 @@ test("edge 始点の張り替えと self-edge を同じ handle 機構で扱う",
   await page.goto("about:blank");
   const selfEdgeStartModel = structuredClone(edgeSemanticsModel);
   selfEdgeStartModel.edges[0].from = "account";
+  selfEdgeStartModel.edges[0].to = "account";
   await openEdgeSemanticsDiagram(page, selfEdgeStartModel);
-  await dragEndToAccount("to");
   await expect(
     graph.locator(
       'path.ark-harness-edge-main[data-ark-edge-id="e_order_owner"]'
@@ -2840,6 +3328,28 @@ test("kind 変更と node・edge・field・list 編集を同じ送信 model に�
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
       })
   );
+  const edgeControls = page.locator(
+    '.ark-harness-edge-controls[data-ark-edge-id="e_order_user"]'
+  );
+  await edgeControls
+    .locator('select[data-ark-edge-control="from-card"]')
+    .selectOption("zero-or-many");
+  await edgeControls
+    .locator('select[data-ark-edge-control="to-card"]')
+    .selectOption("one");
+  await edgeControls
+    .locator('select[data-ark-edge-control="direction"]')
+    .selectOption("both");
+  const layoutDirection = page.getByRole("button", { name: /方向: LR/ });
+  await layoutDirection.click();
+  await page.getByRole("button", { name: /方向: TB/ }).click();
+  await expect(layoutDirection).toHaveAttribute("aria-label", /方向: LR/);
+  await page.evaluate(
+    () =>
+      new Promise<void>(resolve => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      })
+  );
   const handle = order.locator(".ark-harness-graph-handle");
   const beforeBox = await requiredBoundingBox(order);
   const beforeEdge = await readEdge(page);
@@ -2932,7 +3442,18 @@ test("kind 変更と node・edge・field・list 編集を同じ送信 model に�
         { id: "user" },
         { id: "external" },
       ],
-      edges: [{ id: "e_order_user", from: "order", to: "order" }],
+      edges: [
+        {
+          id: "e_order_user",
+          from: "order",
+          to: "order",
+          ext: {
+            from_card: "zero-or-many",
+            to_card: "one",
+            direction: "both",
+          },
+        },
+      ],
     },
   });
   const submittedModel = (submission as { model: DiagramModel }).model;
