@@ -77,6 +77,7 @@ export default function Dashboard() {
     isScanning,
     scanRepos,
     listDirectory,
+    listDiagrams,
     worktrees,
     createWorktree,
     deleteWorktree,
@@ -777,7 +778,12 @@ export default function Dashboard() {
                       key={session.id}
                       className={isActive ? "h-full flex flex-col" : "hidden"}
                     >
-                      <SplitViewPane socket={socket} {...paneProps} />
+                      <SplitViewPane
+                        socket={socket}
+                        isConnected={isConnected}
+                        listDiagrams={listDiagrams}
+                        {...paneProps}
+                      />
                     </div>
                   );
                 })}

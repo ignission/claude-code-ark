@@ -15,6 +15,7 @@
 
 import type {
   ClientToServerEvents,
+  DiagramListItem,
   ManagedSession,
   MessageShortcut,
   ServerToClientEvents,
@@ -35,6 +36,8 @@ const STORAGE_KEY_SHOW_BOARD = "ark-split-show-board";
 
 interface SplitViewPaneProps {
   socket: TypedSocket | null;
+  isConnected: boolean;
+  listDiagrams: (worktreePath: string) => Promise<DiagramListItem[]>;
   session: ManagedSession;
   worktree: Worktree | undefined;
   repoName?: string;
@@ -264,6 +267,8 @@ export function SplitViewPane(props: SplitViewPaneProps) {
             >
               <DiagramPane
                 socket={props.socket}
+                isConnected={props.isConnected}
+                listDiagrams={props.listDiagrams}
                 sessionId={props.session.id}
                 worktreePath={
                   diagramTab?.worktreePath ?? props.session.worktreePath

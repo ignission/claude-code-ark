@@ -13,6 +13,7 @@ import type {
   BrowserSession,
   ChatMessage,
   ClientToServerEvents,
+  DiagramListItem,
   FsListResult,
   ManagedSession,
   McpConnectionInfo,
@@ -75,6 +76,9 @@ interface UseSocketReturn {
 
   // Folder browser
   listDirectory: (path?: string) => Promise<FsListResult>;
+
+  // Diagram list
+  listDiagrams: (worktreePath: string) => Promise<DiagramListItem[]>;
 
   // Repository
   repoList: string[];
@@ -1201,6 +1205,37 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     });
   }, []);
 
+  const listDiagrams = useCallback(
+    (worktreePath: string): Promise<DiagramListItem[]> => {
+      return new Promise((resolve, reject) => {
+        const socket = socketRef.current;
+        if (!socket?.connected) {
+          reject(new Error("ソケットが切断されています"));
+          return;
+        }
+
+        let settled = false;
+        const timeoutId = window.setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          reject(new Error("図一覧の取得がタイムアウトしました"));
+        }, 10000);
+
+        socket.emit("diagram:list", { worktreePath }, response => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timeoutId);
+          if (response.ok) {
+            resolve(response.diagrams);
+          } else {
+            reject(new Error(response.error));
+          }
+        });
+      });
+    },
+    []
+  );
+
   // Worktree actions
   const createWorktree = useCallback(
     (branchName: string, baseBranch?: string) => {
@@ -1621,6 +1656,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     isScanning,
     scanRepos,
     listDirectory,
+    listDiagrams,
     repoList,
     repoPath,
     selectRepo,
