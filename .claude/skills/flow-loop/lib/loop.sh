@@ -156,18 +156,47 @@ flow_loop_unlock() {
   rm -rf "$FLOW_LOOP_LOCK" 2>/dev/null || true
 }
 
-# アクティブ run の scope_key 一覧 (progress の phase != done)。WIP 算出・走査の起点。
-# glob 展開はシェル依存 (zsh は no-match で全体がエラーになる) のため find で列挙する。
+# 現在のプロジェクト (repo) の git-common-dir。run の所属判定に使う。
+# CLAUDE_PROJECT_DIR (loop 起動元) を基準に解決。repo 外なら空 (= 絞り込み無効)。
+flow_loop_self_repo() {
+  git -C "${CLAUDE_PROJECT_DIR:-$PWD}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true
+}
+
+# run が現在のプロジェクトに属するか (別プロジェクトの run を掴まないためのフィルタ)。
+# 判定は run の context.worktree_path の git-common-dir と self_repo の一致で行う。
+#   - self_repo 空 (repo 外で起動)        → 真 (絞り込みしない = 旧挙動)
+#   - context / worktree が解決できない    → 真 (permissive。active run は通常 worktree を持つ)
+#   - worktree が別 repo                   → 偽 (掴まない)
+# flow state は /tmp 共有のため、このフィルタが無いと他プロジェクトの run まで wip 算入・
+# 走査・前進してしまう (クロスプロジェクト汚染。別 repo の PR を CI 判定/マージしかねない)。
+_flow_loop_run_in_self_repo() {
+  local key="$1" self_repo="$2" ctx wt run_repo
+  [ -n "$self_repo" ] || return 0
+  ctx="$FLOW_LOOP_RUNS_DIR/flow-context-$key.json"
+  [ -f "$ctx" ] || return 0
+  wt="$(jq -r '.worktree_path // empty' "$ctx" 2>/dev/null)" || return 0
+  { [ -n "$wt" ] && [ -d "$wt" ]; } || return 0
+  run_repo="$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 0
+  [ -n "$run_repo" ] || return 0
+  [ "$run_repo" = "$self_repo" ]
+}
+
+# アクティブ run の scope_key 一覧 (progress の phase != done・かつ現プロジェクト所属)。
+# WIP 算出・走査の起点。glob 展開はシェル依存 (zsh は no-match で全体がエラーになる) のため find で列挙する。
 flow_loop_active_scope_keys() {
   [ -d "$FLOW_LOOP_RUNS_DIR" ] || return 0
-  local f phase key
+  local f phase key self_repo
+  self_repo="$(flow_loop_self_repo)"
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     phase="$(jq -r '.phase // empty' "$f" 2>/dev/null)" || continue
     if [ -z "$phase" ] || [ "$phase" = "done" ]; then continue; fi
     key="${f##*/flow-progress-}"
     key="${key%.json}"
-    [ -n "$key" ] && printf '%s\n' "$key"
+    [ -n "$key" ] || continue
+    # 別プロジェクトの run (worktree が別 repo) は掴まない。
+    _flow_loop_run_in_self_repo "$key" "$self_repo" || continue
+    printf '%s\n' "$key"
   done < <(find "$FLOW_LOOP_RUNS_DIR" -maxdepth 1 -name 'flow-progress-*.json' -type f 2>/dev/null)
   return 0
 }
