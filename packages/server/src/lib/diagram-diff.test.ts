@@ -371,6 +371,19 @@ describe("describeModelDiff（境界ケース）", () => {
     expect(describeModelDiff(model([before]), model([after]))).toEqual([]);
   });
 
+  it("kind 単独の変更は会話用意味差分に含めない", () => {
+    const before = {
+      ...order,
+      kind: "entity",
+    };
+    const after = {
+      ...order,
+      kind: "aggregate",
+    };
+
+    expect(describeModelDiff(model([before]), model([after]))).toEqual([]);
+  });
+
   it("node.ext の座標変更は意味差分に含めない", () => {
     const before = model([{ ...order, ext: { x: 40, y: 50 } }]);
     const after = model([{ ...order, ext: { x: 120, y: 110 } }]);

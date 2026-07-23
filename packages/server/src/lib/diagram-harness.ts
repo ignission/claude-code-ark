@@ -98,6 +98,21 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
 .ark-harness-graph-node {
   position: absolute; left: var(--ark-harness-graph-x); top: var(--ark-harness-graph-y); z-index: 2;
 }
+.ark-harness-kind-picker {
+  position: absolute; top: 0; right: .25rem; z-index: 4;
+  transform: translateY(calc(-100% - .25rem));
+  opacity: 0; pointer-events: none; transition: opacity .12s ease;
+}
+.ark-harness-graph-node:hover > .ark-harness-kind-picker,
+.ark-harness-graph-node:focus-within > .ark-harness-kind-picker {
+  opacity: 1; pointer-events: auto;
+}
+.ark-harness-kind-select {
+  appearance: auto; max-width: 9rem; min-width: 4.5rem; padding: .18rem .25rem;
+  border: 1px solid rgba(100,116,139,.55); border-radius: 4px;
+  background: rgba(255,255,255,.94); color: #334155; font: 11px/1.2 sans-serif;
+  cursor: pointer;
+}
 .ark-harness-edge-layer {
   position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%;
   overflow: visible; pointer-events: none;
@@ -177,6 +192,8 @@ const HARNESS_JS = `(function () {
   var edgeDrag = null;
   var graphs = [];
   var graphSequence = 0;
+  var kindCandidates = [];
+  var kindPickers = [];
   var statusEl = null;
   var sendBtn = null;
   var layoutDirectionBtn = null;
@@ -217,6 +234,65 @@ const HARNESS_JS = `(function () {
       if (nodes[i].id === id) return nodes[i];
     }
     return null;
+  }
+
+  function decodeCssEscapes(value) {
+    return value.replace(/\\\\([0-9a-fA-F]{1,6}[ \\t\\r\\n\\f]?|[\\s\\S])/g, function (_, escaped) {
+      var hex = escaped.trim();
+      if (/^[0-9a-fA-F]{1,6}$/.test(hex)) {
+        var codePoint = parseInt(hex, 16);
+        if (codePoint === 0 || codePoint > 1114111 ||
+            (codePoint >= 55296 && codePoint <= 57343)) {
+          return "\\uFFFD";
+        }
+        return String.fromCodePoint(codePoint);
+      }
+      if (escaped === "\\n" || escaped === "\\r" || escaped === "\\f") return "";
+      return escaped;
+    });
+  }
+
+  function collectKindRules(rules, seen, values) {
+    if (!rules || values.length >= 128) return;
+    for (var i = 0; i < rules.length && values.length < 128; i++) {
+      var rule = rules[i];
+      if (typeof rule.selectorText === "string") {
+        var pattern = /\\[\\s*data-kind\\s*=\\s*(?:"((?:\\\\[\\s\\S]|[^"\\\\])*)"|'((?:\\\\[\\s\\S]|[^'\\\\])*)'|((?:\\\\[\\s\\S]|[^\\s\\]])+))\\s*\\]/gi;
+        var match = null;
+        while ((match = pattern.exec(rule.selectorText)) !== null &&
+               values.length < 128) {
+          var encoded = match[1] !== undefined ? match[1]
+            : match[2] !== undefined ? match[2] : match[3];
+          var value = decodeCssEscapes(encoded);
+          if (value && value.length <= 256 && !seen.has(value)) {
+            seen.add(value);
+            values.push(value);
+          }
+        }
+      }
+      var nested = null;
+      try {
+        nested = rule.cssRules;
+      } catch (_) {
+        nested = null;
+      }
+      if (nested) collectKindRules(nested, seen, values);
+    }
+  }
+
+  function collectKindCandidates() {
+    var seen = new Set();
+    var values = [];
+    document.querySelectorAll("style:not([data-ark-harness-ui])").forEach(function (style) {
+      var rules = null;
+      try {
+        rules = style.sheet && style.sheet.cssRules;
+      } catch (_) {
+        rules = null;
+      }
+      if (rules) collectKindRules(rules, seen, values);
+    });
+    return values;
   }
 
   function getGroup(model, id) {
@@ -1098,6 +1174,7 @@ const HARNESS_JS = `(function () {
       markerId: "ark-harness-arrow-" + graphSequence
     };
     nodesById.forEach(function (el, id) {
+      attachKindPicker(graph, el);
       attachGraphHandle(graph, el, modelNodesById.get(id));
     });
     if (typeof ResizeObserver !== "undefined") {
@@ -1204,6 +1281,88 @@ const HARNESS_JS = `(function () {
         el.removeAttribute("data-kind");
       }
     });
+  }
+
+  function createKindOption(value) {
+    var option = document.createElement("option");
+    option.textContent = value;
+    option.value = value;
+    markUi(option);
+    return option;
+  }
+
+  function syncKindPicker(picker) {
+    var id = picker.root.getAttribute("data-model-id");
+    var node = id && getNode(state.model, id);
+    if (!node) {
+      picker.select.disabled = true;
+      return;
+    }
+    picker.select.disabled = false;
+    var current = typeof node.kind === "string" ? node.kind : "";
+    if (kindCandidates.indexOf(current) === -1) {
+      if (!picker.currentOption) {
+        picker.currentOption = createKindOption(current);
+        picker.currentOption.disabled = true;
+        picker.select.insertBefore(picker.currentOption, picker.select.firstChild);
+      } else {
+        picker.currentOption.textContent = current || "kind なし";
+        picker.currentOption.value = current;
+      }
+    } else if (picker.currentOption) {
+      picker.currentOption.remove();
+      picker.currentOption = null;
+    }
+    picker.select.value = current;
+    var name = (typeof node.label === "string" && node.label) || node.id;
+    var currentLabel = current || "なし";
+    var label = name + " の kind（現在 " + currentLabel + "）";
+    picker.select.setAttribute("aria-label", label);
+    picker.select.title = label;
+  }
+
+  function syncKindPickers() {
+    kindPickers.forEach(function (picker) { syncKindPicker(picker); });
+  }
+
+  function updateNodeKind(graph, root, value) {
+    var id = root.getAttribute("data-model-id");
+    if (!id || kindCandidates.indexOf(value) === -1) return;
+    var node = getNode(state.model, id);
+    if (!node) return;
+    node.kind = value;
+    syncNodeKinds();
+    syncKindPickers();
+    scheduleGraphRender(graph);
+  }
+
+  function attachKindPicker(graph, root) {
+    if (kindCandidates.length === 0) return;
+    var wrapper = document.createElement("span");
+    wrapper.className = "ark-harness-kind-picker";
+    markUi(wrapper);
+    var select = document.createElement("select");
+    select.className = "ark-harness-kind-select";
+    markUi(select);
+    kindCandidates.forEach(function (value) {
+      select.appendChild(createKindOption(value));
+    });
+    var picker = {
+      root: root,
+      select: select,
+      currentOption: null
+    };
+    ["pointerdown", "click", "keydown"].forEach(function (type) {
+      select.addEventListener(type, function (event) { event.stopPropagation(); });
+    });
+    select.addEventListener("change", function (event) {
+      event.stopPropagation();
+      updateNodeKind(graph, root, select.value);
+    });
+    wrapper.appendChild(select);
+    root.appendChild(wrapper);
+    kindPickers.push(picker);
+    syncKindPicker(picker);
   }
 
   function markUi(el) {
@@ -1494,6 +1653,7 @@ const HARNESS_JS = `(function () {
         if (!Array.isArray(parsed.groups)) parsed.groups = [];
         state.model = parsed;
         syncNodeKinds();
+        syncKindPickers();
         syncLayoutDirectionButton();
         graphs.forEach(function (graph) { scheduleGraphRender(graph); });
         error.style.display = "none";
@@ -1566,6 +1726,7 @@ const HARNESS_JS = `(function () {
       if (!model) return;
       state.model = model;
       syncNodeKinds();
+      kindCandidates = collectKindCandidates();
       buildToolbar();
       initEditing();
       initGraphs();

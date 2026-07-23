@@ -73,6 +73,7 @@ function diagramHtml(diagramModel: unknown = model): string {
       [data-kind="aggregate"] { --kind-color: #e0af68; --kind-bg: #332b1f; }
       [data-kind="entity"] { --kind-color: #7aa2f7; --kind-bg: #1f2a44; }
       [data-kind="event"] { --kind-color: #9ece6a; --kind-bg: #203222; }
+      .entity[data-kind="event"] { width: 280px; height: 260px; }
       [data-kind="aggregate"] .kind-icon::before { content: "◆"; }
       [data-kind="entity"] .kind-icon::before { content: "●"; }
       [data-kind="event"] .kind-icon::before { content: "⚡"; }
@@ -140,6 +141,54 @@ function invalidCoordinateHtml(): string {
       <section class="node" data-model-id="null_y">Null Y</section>
     </div>
     <section data-model-id="outside">Outside</section>
+  </body></html>`);
+}
+
+function kindCandidateHtml(): string {
+  const candidateModel = {
+    version: 1,
+    nodes: [{ id: "candidate", label: "Candidate", kind: "quoted" }],
+    edges: [],
+    groups: [],
+  };
+  return injectHarness(`<!doctype html><html><head><style>
+    [data-kind="quoted"] { color: red; }
+    [data-kind='single'], .variant[data-kind=unquoted] { color: green; }
+    [data-kind="quoted"] { border-color: red; }
+    @media (min-width: 0px) {
+      [data-kind="nested"] { color: blue; }
+    }
+    [data-kind="escaped\\26 kind"] { color: purple; }
+    .noise { --kind-like-text: "[data-kind=declaration]"; }
+    /* [data-kind=comment] */
+  </style></head><body>
+    <script id="ark-diagram-model" type="application/json">${JSON.stringify(candidateModel)}</script>
+    <div data-ark-container="graph">
+      <section data-model-id="candidate">Candidate</section>
+    </div>
+  </body></html>`);
+}
+
+function untrustedKindHtml(): string {
+  const boundaryModel = {
+    version: 1,
+    nodes: [
+      {
+        id: "unsafe",
+        label: 'Unsafe "Node" <img>',
+        kind: 'current"><img src=x onerror=alert(1)>',
+      },
+    ],
+    edges: [],
+    groups: [],
+  };
+  return injectHarness(`<!doctype html><html><head><style>
+    [data-kind="candidate\\22 ><script src=x>"] { color: rgb(1, 2, 3); }
+  </style></head><body>
+    <script id="ark-diagram-model" type="application/json">${JSON.stringify(boundaryModel)}</script>
+    <div data-ark-container="graph">
+      <section data-model-id="unsafe">Unsafe Node</section>
+    </div>
   </body></html>`);
 }
 
@@ -1775,6 +1824,357 @@ test("node.kind を data-kind へ同期して色とアイコンを区別する",
   ).toHaveAttribute("contenteditable", "true");
 });
 
+test("kind 候補は authored CSS rule を宣言順かつ重複なしで収集する", async ({
+  page,
+}) => {
+  await page.setContent(kindCandidateHtml());
+
+  const picker = page.getByRole("combobox", {
+    name: /Candidate.*quoted/,
+  });
+  await expect(picker).toHaveCount(1);
+  expect(await picker.locator("option").allTextContents()).toEqual([
+    "quoted",
+    "single",
+    "unquoted",
+    "nested",
+    "escaped&kind",
+  ]);
+  await expect(picker.locator("option")).toHaveCount(5);
+  await expect(
+    picker.locator("option", { hasText: "declaration" })
+  ).toHaveCount(0);
+  await expect(picker.locator("option", { hasText: "comment" })).toHaveCount(0);
+});
+
+test("kind 候補が無い図ではピッカーを付けず既存編集 UI を維持する", async ({
+  page,
+}) => {
+  await page.setContent(invalidCoordinateHtml());
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  await expect(graph.locator(".ark-harness-kind-picker")).toHaveCount(0);
+  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(4);
+  await expect(
+    graph.locator('[data-model-id="valid_a"].ark-harness-editable')
+  ).toHaveAttribute("contenteditable", "true");
+});
+
+test("kind ピッカーは候補外の現在値を保持し候補選択時だけ更新する", async ({
+  page,
+}) => {
+  const boundaryModel = structuredClone(model);
+  boundaryModel.nodes[0].kind = "legacy-kind";
+  await openDiagram(page, boundaryModel);
+
+  const order = page.locator(
+    '[data-ark-container="graph"] > section[data-model-id="order"]'
+  );
+  const picker = order.locator("select.ark-harness-kind-select");
+  const current = picker.locator("option").first();
+  await expect(order).toHaveAttribute("data-kind", "legacy-kind");
+  await expect(picker).toHaveValue("legacy-kind");
+  await expect(current).toBeDisabled();
+  await expect(current).toHaveText("legacy-kind");
+  await expect(current).toHaveAttribute("value", "legacy-kind");
+  expect(await picker.locator("option").allTextContents()).toEqual([
+    "legacy-kind",
+    "aggregate",
+    "entity",
+    "event",
+  ]);
+
+  await picker.selectOption("entity");
+  await expect(order).toHaveAttribute("data-kind", "entity");
+  await expect(picker).toHaveValue("entity");
+  await expect(picker.locator("option")).toHaveCount(3);
+});
+
+test("kind ピッカーは untrusted 値を text と value だけで扱う", async ({
+  page,
+}) => {
+  const requests: string[] = [];
+  page.on("request", request => requests.push(request.url()));
+  await page.setContent(untrustedKindHtml());
+
+  const currentKind = 'current"><img src=x onerror=alert(1)>';
+  const candidateKind = 'candidate"><script src=x>';
+  const root = page.locator(
+    '[data-ark-container="graph"] > [data-model-id="unsafe"]'
+  );
+  const picker = root.locator("select.ark-harness-kind-select");
+  const options = picker.locator("option");
+  await expect(options).toHaveCount(2);
+  await expect(options.nth(0)).toBeDisabled();
+  await expect(options.nth(0)).toHaveText(currentKind);
+  await expect(options.nth(0)).toHaveAttribute("value", currentKind);
+  await expect(options.nth(1)).toHaveText(candidateKind);
+  await expect(options.nth(1)).toHaveAttribute("value", candidateKind);
+  await expect(
+    page.locator(
+      "img, script:not(#ark-diagram-model):not(#ark-diagram-harness), [onerror], [onload]"
+    )
+  ).toHaveCount(0);
+
+  await picker.selectOption(candidateKind);
+  await expect(root).toHaveAttribute("data-kind", candidateKind);
+  await expect(
+    page.locator(
+      "img, script:not(#ark-diagram-model):not(#ark-diagram-harness), [onerror], [onload]"
+    )
+  ).toHaveCount(0);
+  expect(requests).toEqual([]);
+});
+
+test("モデル直接編集後に kind ピッカーと方向表示を再同期する", async ({
+  page,
+}) => {
+  await openDiagram(page);
+  const order = page.locator(
+    '[data-ark-container="graph"] > section[data-model-id="order"]'
+  );
+  const picker = order.locator("select.ark-harness-kind-select");
+  const editButton = page.getByRole("button", {
+    name: "モデル JSON を直接編集する",
+  });
+
+  await picker.selectOption("event");
+  await expect(order).toHaveAttribute("data-kind", "event");
+
+  const candidateModel = structuredClone(model);
+  candidateModel.nodes[0].kind = "entity";
+  await editButton.click();
+  await page
+    .locator(".ark-harness-textarea")
+    .fill(JSON.stringify(candidateModel));
+  await page.getByRole("button", { name: "反映", exact: true }).click();
+  await expect(order).toHaveAttribute("data-kind", "entity");
+  await expect(picker).toHaveValue("entity");
+  await expect(picker).toHaveAccessibleName(/Order.*entity/);
+
+  const unknownModel = structuredClone(
+    candidateModel
+  ) as typeof candidateModel & {
+    ext?: { layout: { direction: string } };
+  };
+  unknownModel.nodes[0].kind = "custom-kind";
+  unknownModel.ext = { layout: { direction: "TB" } };
+  await editButton.click();
+  await page
+    .locator(".ark-harness-textarea")
+    .fill(JSON.stringify(unknownModel));
+  await page.getByRole("button", { name: "反映", exact: true }).click();
+  await expect(order).toHaveAttribute("data-kind", "custom-kind");
+  await expect(picker).toHaveValue("custom-kind");
+  await expect(picker).toHaveAccessibleName(/Order.*custom-kind/);
+  const current = picker.locator("option").first();
+  await expect(current).toBeDisabled();
+  await expect(current).toHaveText("custom-kind");
+  await expect(
+    page.getByRole("button", {
+      name: "方向: TB（現在 TB。LR に切り替える）",
+    })
+  ).toBeVisible();
+});
+
+test("kind ピッカーで CSS 候補を選び投影・geometry・保存へ同期する", async ({
+  page,
+}) => {
+  await openDiagram(page);
+  await connectSubmissionPort(page);
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  const order = graph.locator(':scope > section[data-model-id="order"]');
+  const user = graph.locator(':scope > section[data-model-id="user"]');
+  const orderPickerWrapper = order.locator(".ark-harness-kind-picker");
+  const orderPicker = order.locator("select.ark-harness-kind-select");
+  const userPicker = user.locator("select.ark-harness-kind-select");
+
+  await expect(orderPicker).toHaveCount(1);
+  await expect(userPicker).toHaveCount(1);
+  await expect(orderPicker).toHaveAccessibleName(/Order.*aggregate/);
+  await expect(userPicker).toHaveAccessibleName(/User.*entity/);
+  expect(await orderPicker.locator("option").allTextContents()).toEqual([
+    "aggregate",
+    "entity",
+    "event",
+  ]);
+  expect(await userPicker.locator("option").allTextContents()).toEqual([
+    "aggregate",
+    "entity",
+    "event",
+  ]);
+  await expect(
+    graph.locator(
+      '[data-ark-group] select, h2[data-model-id="order"] select, li select, .ark-harness-edge-layer select'
+    )
+  ).toHaveCount(0);
+  await expect(
+    page.locator('body > section[data-model-id="external"] select')
+  ).toHaveCount(0);
+
+  await expect(orderPickerWrapper).toHaveCSS("opacity", "0");
+  const beforeHoverBox = await requiredBoundingBox(order);
+  await order.hover();
+  await expect(orderPickerWrapper).toHaveCSS("opacity", "1");
+  const [hoverBox, pickerBox, titleBox, dragHandleBox] = await Promise.all([
+    requiredBoundingBox(order),
+    requiredBoundingBox(orderPicker),
+    requiredBoundingBox(order.locator('h2[data-model-id="order"]')),
+    requiredBoundingBox(order.locator(".ark-harness-graph-handle")),
+  ]);
+  expect(hoverBox).toEqual(beforeHoverBox);
+  expect(boxesOverlap(pickerBox, titleBox)).toBe(false);
+  expect(boxesOverlap(pickerBox, dragHandleBox)).toBe(false);
+
+  const beforeModel = structuredClone(model);
+  const beforeBox = await requiredBoundingBox(order);
+  const beforeStyle = await order.evaluate(element => {
+    const icon = element.querySelector(".kind-icon");
+    const style = getComputedStyle(element);
+    return {
+      backgroundColor: style.backgroundColor,
+      borderLeftColor: style.borderLeftColor,
+      icon: icon ? getComputedStyle(icon, "::before").content : "none",
+    };
+  });
+
+  await orderPicker.selectOption("event");
+
+  await expect(order).toHaveAttribute("data-kind", "event");
+  await expect(order.locator('h2[data-model-id="order"]')).toHaveAttribute(
+    "data-kind",
+    "event"
+  );
+  await expect(orderPicker).toHaveValue("event");
+  await expect(orderPicker).toHaveAccessibleName(/Order.*event/);
+  const afterStyle = await order.evaluate(element => {
+    const icon = element.querySelector(".kind-icon");
+    const style = getComputedStyle(element);
+    return {
+      backgroundColor: style.backgroundColor,
+      borderLeftColor: style.borderLeftColor,
+      icon: icon ? getComputedStyle(icon, "::before").content : "none",
+    };
+  });
+  expect(afterStyle.backgroundColor).not.toBe(beforeStyle.backgroundColor);
+  expect(afterStyle.borderLeftColor).not.toBe(beforeStyle.borderLeftColor);
+  expect(afterStyle.icon).not.toBe(beforeStyle.icon);
+
+  await expect
+    .poll(async () => {
+      const box = await order.boundingBox();
+      return box ? { width: box.width, height: box.height } : null;
+    })
+    .toEqual({ width: 280, height: 260 });
+  const afterBox = await requiredBoundingBox(order);
+  expect(afterBox.width).toBeGreaterThan(beforeBox.width);
+  expect(afterBox.height).toBeGreaterThan(beforeBox.height);
+
+  await expect
+    .poll(async () => {
+      const [groupBox, orderBox, userBox] = await Promise.all([
+        requiredBoundingBox(
+          graph.locator(
+            ':scope > [data-ark-group][data-model-id="ordering-context"]'
+          )
+        ),
+        requiredBoundingBox(order),
+        requiredBoundingBox(user),
+      ]);
+      return (
+        groupBox.x <= orderBox.x &&
+        groupBox.y <= orderBox.y &&
+        groupBox.x + groupBox.width >= orderBox.x + orderBox.width &&
+        groupBox.y + groupBox.height >= orderBox.y + orderBox.height &&
+        groupBox.x <= userBox.x &&
+        groupBox.y <= userBox.y &&
+        groupBox.x + groupBox.width >= userBox.x + userBox.width &&
+        groupBox.y + groupBox.height >= userBox.y + userBox.height
+      );
+    })
+    .toBe(true);
+  await expect
+    .poll(async () => {
+      const edge = await readEdge(page);
+      const handles = await graph
+        .locator('.ark-harness-edge-handle[data-ark-edge-id="e_order_user"]')
+        .evaluateAll(elements =>
+          elements.map(element => {
+            const rect = element.getBoundingClientRect();
+            return {
+              end: element.getAttribute("data-ark-edge-end"),
+              x: rect.x + rect.width / 2,
+              y: rect.y + rect.height / 2,
+            };
+          })
+        );
+      const from = handles.find(handle => handle.end === "from");
+      const to = handles.find(handle => handle.end === "to");
+      return Boolean(
+        from &&
+          to &&
+          Math.abs(from.x - edge.x1) < 1 &&
+          Math.abs(from.y - edge.y1) < 1 &&
+          Math.abs(to.x - edge.x2) < 1 &&
+          Math.abs(to.y - edge.y2) < 1 &&
+          edge.x1 >= afterBox.x &&
+          edge.x1 <= afterBox.x + afterBox.width &&
+          edge.y1 >= afterBox.y &&
+          edge.y1 <= afterBox.y + afterBox.height
+      );
+    })
+    .toBe(true);
+
+  await page
+    .getByRole("button", { name: "変更を親フレームへ送信する" })
+    .click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  const submission = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          arkHarnessSubmission?: { model: DiagramModel; html: string };
+        }
+      ).arkHarnessSubmission
+  );
+  if (!submission) throw new Error("submission がありません");
+  expect(submission.model).toEqual({
+    ...beforeModel,
+    nodes: beforeModel.nodes.map(node =>
+      node.id === "order" ? { ...node, kind: "event" } : node
+    ),
+  });
+  expect(describeModelDiff(beforeModel, submission.model)).toEqual([]);
+  expect(submission.html).toContain('data-kind="event"');
+  expect(submission.html).toContain('id="ark-diagram-model"');
+  expect(submission.html).toContain('data-ark-container="graph"');
+  expect(submission.html).toContain('[data-kind="event"]');
+  expect(submission.html).not.toContain("ark-harness-kind-picker");
+  expect(submission.html).not.toContain("ark-harness-layout-direction");
+  expect(submission.html).not.toContain("ark-harness-graph-handle");
+  expect(submission.html).not.toContain("ark-harness-edge-handle");
+  expect(submission.html).not.toContain("Content-Security-Policy");
+  expect(submission.html).not.toContain("contenteditable");
+  expect(submission.html).not.toContain("<option");
+  expect(submission.html).not.toContain("data-ark-harness-ui");
+  expect(
+    await page.evaluate(cleanHtml => {
+      const parsed = new DOMParser().parseFromString(cleanHtml, "text/html");
+      return Array.from(parsed.querySelectorAll("[class]")).some(element =>
+        Array.from(element.classList).some(className =>
+          className.startsWith("ark-harness-")
+        )
+      );
+    }, submission.html)
+  ).toBe(false);
+});
+
 test("sample は複数 kind を色とアイコンで区別する", async ({ page }) => {
   await openSampleDiagram(page);
 
@@ -2425,13 +2825,21 @@ test("event storming sample は手動 timeline と flat group swimlane で配置
   }
 });
 
-test("node ドラッグと list 編集を送信 model と clean HTML に反映する", async ({
+test("kind 変更と node・edge・field・list 編集を同じ送信 model に反映する", async ({
   page,
 }) => {
   await openDiagram(page);
   await connectSubmissionPort(page);
 
   const order = page.locator('section[data-model-id="order"]');
+  await order.locator("select.ark-harness-kind-select").selectOption("event");
+  await expect(order).toHaveAttribute("data-kind", "event");
+  await page.evaluate(
+    () =>
+      new Promise<void>(resolve => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      })
+  );
   const handle = order.locator(".ark-harness-graph-handle");
   const beforeBox = await requiredBoundingBox(order);
   const beforeEdge = await readEdge(page);
@@ -2458,6 +2866,29 @@ test("node ドラッグと list 編集を送信 model と clean HTML に反映�
   expect(afterEdge.x1).toBeCloseTo(afterBox.x + afterBox.width, 0);
   expect(afterEdge.y1).toBeGreaterThanOrEqual(afterBox.y);
   expect(afterEdge.y1).toBeLessThanOrEqual(afterBox.y + afterBox.height);
+
+  const toHandle = page.locator(
+    '.ark-harness-edge-handle[data-ark-edge-id="e_order_user"][data-ark-edge-end="to"]'
+  );
+  const [toHandleBox, movedOrderBox] = await Promise.all([
+    requiredBoundingBox(toHandle),
+    requiredBoundingBox(order),
+  ]);
+  await page.mouse.move(
+    toHandleBox.x + toHandleBox.width / 2,
+    toHandleBox.y + toHandleBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    movedOrderBox.x + movedOrderBox.width / 2,
+    movedOrderBox.y + movedOrderBox.height / 2,
+    { steps: 5 }
+  );
+  await expect(page.locator(".ark-harness-edge-drop-indicator")).toBeVisible();
+  await page.mouse.up();
+  await expect(
+    page.locator('path.ark-harness-edge-main[data-ark-edge-id="e_order_user"]')
+  ).toHaveCount(1);
 
   const status = page.locator('li[data-model-id="order_status"]');
   await expect(status.locator(".ark-harness-text")).toHaveAttribute(
@@ -2491,6 +2922,7 @@ test("node ドラッグと list 編集を送信 model と clean HTML に反映�
       nodes: [
         {
           id: "order",
+          kind: "event",
           ext: { x: 120, y: 110 },
           fields: [
             { id: "order_status", label: "state" },
@@ -2500,9 +2932,18 @@ test("node ドラッグと list 編集を送信 model と clean HTML に反映�
         { id: "user" },
         { id: "external" },
       ],
+      edges: [{ id: "e_order_user", from: "order", to: "order" }],
     },
   });
+  const submittedModel = (submission as { model: DiagramModel }).model;
+  expect(describeModelDiff(model, submittedModel)).toEqual([
+    "Order の status を state に変更",
+    "Order のフィールド順を state, id に変更",
+    "Order から User への関連「belongs to」を Order から Order への関連「belongs to」 に変更",
+  ]);
   const html = (submission as { html: string }).html;
+  expect(html).toContain('data-kind="event"');
+  expect(html).not.toContain("ark-harness-kind-picker");
   expect(html).not.toContain("ark-harness-edge-layer");
   expect(html).not.toContain("ark-harness-graph-handle");
   expect(html).not.toContain("--ark-harness-graph-x");

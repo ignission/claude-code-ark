@@ -50,7 +50,7 @@ describe("injectHarness", () => {
     expect(out).toContain("ark-harness-layout-direction");
     expect(out).toContain("function syncLayoutDirectionButton(");
     expect(out).toContain("function toggleLayoutDirection(");
-    expect(out).toContain("現在のレイアウト方向は ");
+    expect(out).toContain('var label = visibleLabel + "（現在 "');
     expect(out).toContain(
       "if (!isRecordObject(state.model.ext)) state.model.ext = {};"
     );
@@ -83,6 +83,10 @@ describe("injectHarness", () => {
     expect(out).not.toContain("fetch(");
     expect(out).not.toContain("import(");
     expect(out).not.toContain("https://");
+    expect(out).not.toContain("innerHTML");
+    expect(out).not.toContain("insertAdjacentHTML");
+    expect(out).not.toContain("@font-face");
+    expect(out).not.toContain('rel="stylesheet"');
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 
@@ -131,7 +135,46 @@ describe("injectHarness", () => {
     expect(out).toContain('typeof node.kind === "string"');
     expect(out).toContain('el.setAttribute("data-kind", node.kind)');
     expect(out).toContain('el.removeAttribute("data-kind")');
-    expect(out.match(/syncNodeKinds\(\);/g)).toHaveLength(2);
+    expect(out.match(/syncNodeKinds\(\);/g)).toHaveLength(3);
+    expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
+  });
+
+  it("authored CSS 由来の kind picker 契約を注入する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
+      )
+    );
+
+    expect(out).toContain("function collectKindCandidates(");
+    expect(out).toContain("function collectKindRules(");
+    expect(out).toContain("function decodeCssEscapes(");
+    expect(out).toContain("style:not([data-ark-harness-ui])");
+    expect(out).toContain("rule.selectorText");
+    expect(out).toContain("new Set()");
+    expect(out).toContain("ark-harness-kind-picker");
+    expect(out).toContain("transform: translateY(calc(-100% - .25rem))");
+    expect(out).toContain("opacity: 0; pointer-events: none");
+    expect(out).toContain(
+      ".ark-harness-graph-node:focus-within > .ark-harness-kind-picker"
+    );
+    expect(out).toContain("opacity: 1; pointer-events: auto");
+    expect(out).toContain('document.createElement("select")');
+    expect(out).toContain('document.createElement("option")');
+    expect(out).toContain("option.textContent = value");
+    expect(out).toContain("option.value = value");
+    expect(out).toContain("function syncKindPicker(");
+    expect(out).toContain("function updateNodeKind(");
+    expect(out).toContain("getNode(state.model, id)");
+    expect(out).toContain("kindCandidates.indexOf(value) === -1");
+    expect(out).toContain("node.kind = value");
+    expect(out).toContain("syncNodeKinds();");
+    expect(out).toContain("scheduleGraphRender(graph);");
+    expect(out).toContain('el.setAttribute("data-kind", node.kind)');
+    expect(out).not.toContain("aggregate");
+    expect(out).not.toContain("entity");
+    expect(out).not.toContain('value === "event"');
+    expect(out).not.toContain('kindCandidates = ["');
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 });
