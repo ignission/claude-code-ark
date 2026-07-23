@@ -195,6 +195,9 @@ describe("injectHarness", () => {
     expect(out).toContain("group.nodes = group.nodes.filter");
     expect(out).toContain('mode: "create"');
     expect(out).toContain('mode: "rewire"');
+    expect(out).toContain("var EDGE_DRAG_MIN_DISTANCE = 8");
+    expect(out).toContain("drag.didDrag");
+    expect(out).toContain("drag.leftSource");
     expect(out).toContain("function removeEdge(");
     expect(out).toContain("edgeDeleteControlsById");
     expect(out).toContain("function syncEdgeDeleteControls(");
@@ -203,6 +206,10 @@ describe("injectHarness", () => {
     expect(out).toContain("function scheduleEdgeDeleteClose(");
     expect(out).toContain("ark-harness-node-affordance-open");
     expect(out).toContain('controller.root.matches(":focus-within")');
+    expect(out).toContain(
+      "root.closest('[data-ark-container=\"graph\"]') === graph.container"
+    );
+    expect(out).toContain('element.hasAttribute("data-ark-container")');
   });
 
   it("CRUD DOM を安全な API だけで生成し全 model id を予約する", () => {

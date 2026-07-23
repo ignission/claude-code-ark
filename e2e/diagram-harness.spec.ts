@@ -478,7 +478,7 @@ function crudDiagramHtml(diagramModel: DiagramModel = crudModel): string {
     [data-kind="event"] { border-left: 4px solid #16a34a; }
   </style></head><body>
     <script id="ark-diagram-model" type="application/json">${JSON.stringify(diagramModel)}</script>
-    <div class="crud-graph" data-ark-container="graph">
+    <div class="crud-graph" data-ark-container="graph" data-model-id="crud-a">
       <section data-ark-group data-model-id="crud-group">CRUD group</section>
       <section class="crud-node" data-model-id="crud-a">A unsafe node</section>
       <section class="crud-node" data-model-id="crud-b">B</section>
@@ -655,6 +655,7 @@ test("node CRUD: palette から安全な projection を重ならず追加して�
 
   await palette.getByLabel("配置先").selectOption("0");
   await palette.getByLabel("kind").selectOption("event");
+  const initialEdgeCount = (await readCurrentModel(page)).edges.length;
   await palette.getByRole("button", { name: "ノードを追加" }).click();
 
   const firstGraph = page.locator('[data-ark-container="graph"]').first();
@@ -669,6 +670,7 @@ test("node CRUD: palette から安全な projection を重ならず追加して�
   expect(added?.id).not.toContain("新しいノード");
   expect(Number.isInteger((added?.ext as { x?: number })?.x)).toBe(true);
   expect(Number.isInteger((added?.ext as { y?: number })?.y)).toBe(true);
+  expect(current.edges).toHaveLength(initialEdgeCount);
   if (!added) throw new Error("追加 node がありません");
 
   const projection = firstGraph
@@ -715,10 +717,13 @@ test("node CRUD: palette から安全な projection を重ならず追加して�
   expect(errors).toEqual([]);
 });
 
-test("node CRUD: node 削除で incident edge・group 参照・全 projection を同期除去する", async ({
+test("node CRUD: node 削除を対象 projection・incident edge・group 参照だけに限定する", async ({
   page,
 }) => {
   await page.setContent(crudDiagramHtml());
+  await connectSubmissionPort(page);
+  const graphs = page.locator('[data-ark-container="graph"]');
+  await expect(graphs).toHaveCount(2);
   const node = page
     .locator('[data-ark-container="graph"]')
     .first()
@@ -754,7 +759,21 @@ test("node CRUD: node 削除で incident edge・group 参照・全 projection �
   await page.mouse.down();
   await page.mouse.up();
 
-  await expect(page.locator('[data-model-id="crud-a"]')).toHaveCount(0);
+  await expect(graphs).toHaveCount(2);
+  await expect(graphs.first()).toHaveAttribute("data-model-id", "crud-a");
+  await expect(
+    graphs.first().locator(':scope > [data-model-id="crud-a"]')
+  ).toHaveCount(0);
+  await expect(page.locator('aside[data-model-id="crud-a"]')).toHaveCount(0);
+  await expect(
+    graphs.first().locator(':scope > [data-model-id="crud-b"]')
+  ).toHaveCount(1);
+  await expect(
+    graphs.first().locator(':scope > [data-model-id="crud-d"]')
+  ).toHaveCount(1);
+  await expect(
+    graphs.nth(1).locator(':scope > [data-model-id="crud-other"]')
+  ).toHaveCount(1);
   await expect(page.locator('[data-ark-edge-id="crud-ab"]')).toHaveCount(0);
   await expect(page.locator('[data-ark-edge-id="crud-aa"]')).toHaveCount(0);
   await expect(
@@ -766,9 +785,35 @@ test("node CRUD: node 削除で incident edge・group 参照・全 projection �
   expect(current.groups).toEqual([
     { id: "crud-group", label: "CRUD group", nodes: ["crud-b"] },
   ]);
+  expect(describeModelDiff(crudModel, current)).toEqual([
+    'A <unsafe "node"> を削除',
+    'A <unsafe "node"> から B への関連「A to B」を削除',
+    'A <unsafe "node"> から A <unsafe "node"> への関連を削除',
+  ]);
+  await page
+    .getByRole("button", { name: "変更を親フレームへ送信する" })
+    .click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  const submission = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          arkHarnessSubmission?: { model: DiagramModel; html: string };
+        }
+      ).arkHarnessSubmission
+  );
+  expect(submission?.model).toEqual(current);
+  expect(submission?.html).toContain('data-ark-container="graph"');
+  expect(submission?.html).toContain('data-model-id="crud-b"');
+  expect(submission?.html).toContain('id="ark-diagram-model"');
 });
 
-test("edge CRUD: node handle から通常 edge と self-edge を追加し invalid drop を無視する", async ({
+test("edge CRUD: click・微小移動・source drop を無視し明確な drag だけで edge を追加する", async ({
   page,
 }) => {
   await page.setContent(crudDiagramHtml());
@@ -803,6 +848,38 @@ test("edge CRUD: node handle から通常 edge と self-edge を追加し invali
   };
 
   const initialCount = (await readCurrentModel(page)).edges.length;
+  await source.hover();
+  const createHandle = source.locator(".ark-harness-node-create");
+  await createHandle.click();
+  expect((await readCurrentModel(page)).edges).toHaveLength(initialCount);
+
+  let handleBox = await requiredBoundingBox(createHandle);
+  await page.mouse.move(
+    handleBox.x + handleBox.width / 2,
+    handleBox.y + handleBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    handleBox.x + handleBox.width / 2 + 3,
+    handleBox.y + handleBox.height / 2 + 2
+  );
+  await page.mouse.up();
+  expect((await readCurrentModel(page)).edges).toHaveLength(initialCount);
+
+  handleBox = await requiredBoundingBox(createHandle);
+  const sourceBox = await requiredBoundingBox(source);
+  await page.mouse.move(
+    handleBox.x + handleBox.width / 2,
+    handleBox.y + handleBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    sourceBox.x + sourceBox.width / 2,
+    sourceBox.y + sourceBox.height / 2
+  );
+  await page.mouse.up();
+  expect((await readCurrentModel(page)).edges).toHaveLength(initialCount);
+
   await dragCreate(target);
   await expect
     .poll(async () => (await readCurrentModel(page)).edges.length)
@@ -819,7 +896,25 @@ test("edge CRUD: node handle から通常 edge と self-edge を追加し invali
     graph.locator(`.ark-harness-edge-handle[data-ark-edge-id="${normal?.id}"]`)
   ).toHaveCount(2);
 
-  await dragCreate(source);
+  await source.hover();
+  handleBox = await requiredBoundingBox(createHandle);
+  const graphBox = await requiredBoundingBox(graph);
+  await page.mouse.move(
+    handleBox.x + handleBox.width / 2,
+    handleBox.y + handleBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    graphBox.x + graphBox.width - 20,
+    graphBox.y + graphBox.height - 20,
+    { steps: 4 }
+  );
+  await page.mouse.move(
+    sourceBox.x + sourceBox.width / 2,
+    sourceBox.y + sourceBox.height / 2,
+    { steps: 4 }
+  );
+  await page.mouse.up();
   current = await readCurrentModel(page);
   const self = current.edges.find(
     edge => edge.from === "crud-b" && edge.to === "crud-b"
@@ -861,6 +956,13 @@ test("edge CRUD: hit target button と endpoint keyboard で対象 edge だけ�
   await page.mouse.up();
   await expect(graph.locator('[data-ark-edge-id="crud-ab"]')).toHaveCount(0);
   await expect(graph.locator('[data-model-id="crud-a"]').first()).toBeVisible();
+  await expect(page.locator('[data-ark-container="graph"]')).toHaveCount(2);
+  const afterSingleDelete = await readCurrentModel(page);
+  expect(describeModelDiff(crudModel, afterSingleDelete)).toEqual([
+    'A <unsafe "node"> から B への関連「A to B」を削除',
+  ]);
+  expect(afterSingleDelete.nodes).toEqual(crudModel.nodes);
+  expect(afterSingleDelete.groups).toEqual(crudModel.groups);
 
   const endpoint = graph.locator(
     '.ark-harness-edge-handle[data-ark-edge-id="crud-bd"][data-ark-edge-end="to"]'

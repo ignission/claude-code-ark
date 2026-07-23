@@ -222,6 +222,7 @@ const HARNESS_JS = `(function () {
     "--ark-harness-graph-min-height"
   ];
   var AFFORDANCE_CLOSE_DELAY = 120;
+  var EDGE_DRAG_MIN_DISTANCE = 8;
 
   var BLOCK_TAGS = {
     DIV: 1, UL: 1, OL: 1, LI: 1, TABLE: 1, THEAD: 1, TBODY: 1, TR: 1, TD: 1, TH: 1,
@@ -1158,6 +1159,15 @@ const HARNESS_JS = `(function () {
     var drag = edgeDrag;
     var containerRect = drag.graph.container.getBoundingClientRect();
     var candidate = findEdgeDropCandidate(drag.graph, event.clientX, event.clientY);
+    var dx = event.clientX - drag.startClientX;
+    var dy = event.clientY - drag.startClientY;
+    if (dx * dx + dy * dy >= EDGE_DRAG_MIN_DISTANCE * EDGE_DRAG_MIN_DISTANCE) {
+      drag.didDrag = true;
+    }
+    if (drag.didDrag && drag.mode === "create" &&
+        (!candidate || candidate.id !== drag.sourceId)) {
+      drag.leftSource = true;
+    }
     var end = candidate
       ? nodeBoundaryPoint(
           drag.graph,
@@ -1182,7 +1192,10 @@ const HARNESS_JS = `(function () {
       ? findEdgeDropCandidate(drag.graph, event.clientX, event.clientY)
       : null;
     edgeDrag = null;
-    if (commit && candidate) {
+    var explicitSelfDrop = drag.mode !== "create" ||
+      candidate && candidate.id !== drag.sourceId ||
+      drag.leftSource;
+    if (commit && drag.didDrag && candidate && explicitSelfDrop) {
       if (drag.mode === "rewire") {
         var currentEdge = getEdge(state.model, drag.edgeId);
         if (currentEdge && getNode(state.model, candidate.id) &&
@@ -1247,6 +1260,10 @@ const HARNESS_JS = `(function () {
         graph: graph,
         edgeId: currentEdge.id,
         end: end,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        didDrag: false,
+        leftSource: false,
         preview: previewUi.preview,
         previewLine: previewUi.line,
         indicator: null,
@@ -1622,6 +1639,10 @@ const HARNESS_JS = `(function () {
       handle: handle,
       graph: graph,
       sourceId: sourceId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      didDrag: false,
+      leftSource: false,
       preview: previewUi.preview,
       previewLine: previewUi.line,
       indicator: null,
@@ -1752,6 +1773,30 @@ const HARNESS_JS = `(function () {
   function removeNode(id) {
     var node = getNode(state.model, id);
     if (!node) return;
+    var projections = [];
+    graphs.forEach(function (graph) {
+      var root = graph.nodesById.get(id);
+      if (root && root !== graph.container &&
+          root.closest('[data-ark-container="graph"]') === graph.container) {
+        projections.push(root);
+      }
+    });
+    document.querySelectorAll("[data-model-id]").forEach(function (element) {
+      if (element.getAttribute("data-model-id") !== id ||
+          isInsideHarnessUi(element) ||
+          element.closest('[data-ark-container="graph"]') ||
+          element.hasAttribute("data-ark-container") ||
+          element.hasAttribute("data-ark-group")) return;
+      var ancestor = element.parentElement;
+      while (ancestor && ancestor !== document.body) {
+        if (ancestor.getAttribute &&
+            ancestor.getAttribute("data-model-id") === id &&
+            !ancestor.hasAttribute("data-ark-container") &&
+            !ancestor.hasAttribute("data-ark-group")) return;
+        ancestor = ancestor.parentElement;
+      }
+      projections.push(element);
+    });
     var incidentIds = new Set();
     state.model.edges.forEach(function (edge) {
       if (edge.from === id || edge.to === id) incidentIds.add(edge.id);
@@ -1773,18 +1818,6 @@ const HARNESS_JS = `(function () {
       group.nodes = group.nodes.filter(function (nodeId) { return nodeId !== id; });
     });
     graphs.forEach(function (graph) { unregisterGraphNode(graph, id); });
-
-    var projections = [];
-    document.querySelectorAll("[data-model-id]").forEach(function (element) {
-      if (element.getAttribute("data-model-id") !== id || isInsideHarnessUi(element)) return;
-      var ancestor = element.parentElement;
-      while (ancestor && ancestor !== document.body) {
-        if (ancestor.getAttribute &&
-            ancestor.getAttribute("data-model-id") === id) return;
-        ancestor = ancestor.parentElement;
-      }
-      projections.push(element);
-    });
     projections.forEach(function (element) { element.remove(); });
     graphs.forEach(function (graph) { scheduleGraphRender(graph); });
   }
