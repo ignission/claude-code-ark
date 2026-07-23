@@ -153,22 +153,26 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   background: #fff; color: #0e7490; cursor: crosshair; line-height: 14px; font-size: 9px;
   pointer-events: auto; touch-action: none;
 }
-.ark-harness-node-rail {
-  position: absolute; z-index: 5; display: flex; gap: 4px; padding: 2px;
-  border: 1px solid rgba(100,116,139,.55); border-radius: 999px;
-  background: rgba(255,255,255,.96); opacity: 0; pointer-events: none;
+.ark-harness-node-connectors {
+  position: absolute; inset: 0; z-index: 4; opacity: 0; pointer-events: none;
+  transition: opacity .12s ease;
 }
-.ark-harness-graph-node:hover > .ark-harness-node-rail,
-.ark-harness-graph-node.ark-harness-node-affordance-open > .ark-harness-node-rail,
-.ark-harness-graph-node:focus-within > .ark-harness-node-rail {
-  opacity: 1; pointer-events: auto;
+.ark-harness-node-anchor {
+  position: absolute; width: 12px; height: 12px; padding: 0;
+  transform: translate(-50%, -50%); border: 2px solid #0ea5b7; border-radius: 999px;
+  background: #fff; color: #0e7490; font: 9px/8px sans-serif;
+  cursor: crosshair; touch-action: none; pointer-events: none;
 }
-.ark-harness-node-create {
-  width: 24px; height: 24px; padding: 0; border-radius: 999px;
-  border: 1px solid #94a3b8; background: #fff; color: #0e7490;
-  cursor: crosshair; touch-action: none;
+.ark-harness-node-connectors.ark-harness-node-connectors-visible {
+  opacity: 1;
 }
-.ark-harness-edge-dragging .ark-harness-node-rail { opacity: 0; pointer-events: none; }
+.ark-harness-node-connectors.ark-harness-node-connectors-visible > .ark-harness-node-anchor {
+  pointer-events: auto;
+}
+.ark-harness-edge-dragging .ark-harness-node-connectors {
+  opacity: 0; pointer-events: none;
+}
+.ark-harness-edge-dragging .ark-harness-node-anchor { pointer-events: none !important; }
 .ark-harness-edge-preview {
   position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none;
 }
@@ -1016,7 +1020,7 @@ const HARNESS_JS = `(function () {
       appendGraphLabel(graph.svg, edge.id, edge.label, geometry.label.x, geometry.label.y);
     });
     syncEdgeHandles(graph, edges);
-    syncNodeRails(graph);
+    syncNodeConnectors(graph);
   }
 
   function scheduleGraphRender(graph) {
@@ -1093,20 +1097,20 @@ const HARNESS_JS = `(function () {
       markUi(drag.indicator);
       drag.graph.handleLayer.appendChild(drag.indicator);
     }
-    var containerRect = drag.graph.container.getBoundingClientRect();
+    var layerRect = drag.graph.handleLayer.getBoundingClientRect();
     var nodeRect = candidate.el.getBoundingClientRect();
-    drag.indicator.style.left = nodeRect.left - containerRect.left - 4 + "px";
-    drag.indicator.style.top = nodeRect.top - containerRect.top - 4 + "px";
+    drag.indicator.style.left = nodeRect.left - layerRect.left - 4 + "px";
+    drag.indicator.style.top = nodeRect.top - layerRect.top - 4 + "px";
     drag.indicator.style.width = nodeRect.width + 8 + "px";
     drag.indicator.style.height = nodeRect.height + 8 + "px";
     drag.candidateId = candidate.id;
   }
 
   function nodeBoundaryPoint(graph, nodeEl, towardX, towardY) {
-    var containerRect = graph.container.getBoundingClientRect();
+    var previewRect = graph.previewLayer.getBoundingClientRect();
     var rect = nodeEl.getBoundingClientRect();
-    var cx = rect.left + rect.width / 2 - containerRect.left;
-    var cy = rect.top + rect.height / 2 - containerRect.top;
+    var cx = rect.left + rect.width / 2 - previewRect.left;
+    var cy = rect.top + rect.height / 2 - previewRect.top;
     var dx = towardX - cx;
     var dy = towardY - cy;
     var length = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -1123,7 +1127,7 @@ const HARNESS_JS = `(function () {
   function updateEdgeDrag(event) {
     if (!edgeDrag || event.pointerId !== edgeDrag.pointerId) return;
     var drag = edgeDrag;
-    var containerRect = drag.graph.container.getBoundingClientRect();
+    var previewRect = drag.graph.previewLayer.getBoundingClientRect();
     var candidate = findEdgeDropCandidate(drag.graph, event.clientX, event.clientY);
     var dx = event.clientX - drag.startClientX;
     var dy = event.clientY - drag.startClientY;
@@ -1142,8 +1146,8 @@ const HARNESS_JS = `(function () {
           Number(drag.previewLine.getAttribute("y1"))
         )
       : {
-          x: event.clientX - containerRect.left,
-          y: event.clientY - containerRect.top
+          x: event.clientX - previewRect.left,
+          y: event.clientY - previewRect.top
         };
     drag.previewLine.setAttribute("x2", String(end.x));
     drag.previewLine.setAttribute("y2", String(end.y));
@@ -1352,108 +1356,52 @@ const HARNESS_JS = `(function () {
     el.appendChild(handle);
   }
 
-  function positionNodeRail(graph, id) {
-    var nodeEl = graph.nodesById.get(id);
-    var rail = graph.nodeRailsById.get(id);
-    if (!nodeEl || !rail) return;
-    var nodeRect = nodeEl.getBoundingClientRect();
-    var railWidth = rail.offsetWidth || 56;
-    var railHeight = rail.offsetHeight || 28;
-    var candidates = [
-      { x: (nodeRect.width - railWidth) / 2, y: nodeRect.height + 8 },
-      { x: -railWidth - 8, y: (nodeRect.height - railHeight) / 2 },
-      { x: nodeRect.width + 8, y: (nodeRect.height - railHeight) / 2 },
-      { x: (nodeRect.width - railWidth) / 2, y: -railHeight - 8 }
-    ];
-    var containerRect = graph.container.getBoundingClientRect();
-    var nodeX = nodeRect.left - containerRect.left;
-    var nodeY = nodeRect.top - containerRect.top;
-    var blockers = [];
-    graph.nodesById.forEach(function (other, otherId) {
-      if (otherId === id) return;
-      var rect = graphLocalRect(graph, other);
-      if (rect) blockers.push(rect);
-    });
-    graph.svg.querySelectorAll("text[data-ark-edge-id]").forEach(function (label) {
-      var rect = graphLocalRect(graph, label);
-      if (rect) blockers.push(rect);
-    });
-    graph.edgeHandlesByKey.forEach(function (handle) {
-      var rect = graphLocalRect(graph, handle);
-      if (rect) blockers.push(rect);
-    });
-    graph.nodeRailsById.forEach(function (other, otherId) {
-      if (otherId === id) return;
-      var rect = graphLocalRect(graph, other);
-      if (rect) blockers.push(rect);
-    });
-    [".ark-harness-kind-picker", ".ark-harness-graph-handle"].forEach(function (selector) {
-      var control = nodeEl.querySelector(selector);
-      var rect = control && graphLocalRect(graph, control);
-      if (rect) blockers.push(rect);
-    });
-    var chosen = null;
-    for (var i = 0; i < candidates.length; i++) {
-      var candidateRect = {
-        x: nodeX + candidates[i].x,
-        y: nodeY + candidates[i].y,
-        width: railWidth,
-        height: railHeight
-      };
-      if (candidateRect.x < 0 || candidateRect.y < 0) continue;
-      if (!blockers.some(function (blocker) {
-        return rectanglesCollide(candidateRect, blocker, 6);
-      })) {
-        chosen = candidates[i];
-        break;
-      }
-    }
-    if (!chosen) {
-      var right = nodeRect.width + 12;
-      blockers.forEach(function (blocker) {
-        right = Math.max(right, blocker.x + blocker.width - nodeX + 12);
-      });
-      chosen = { x: right, y: 0 };
-    }
-    rail.style.left = Math.round(chosen.x) + "px";
-    rail.style.top = Math.round(chosen.y) + "px";
-  }
-
-  function syncNodeRails(graph) {
-    graph.nodeRailsById.forEach(function (rail, id) {
+  function syncNodeConnectors(graph) {
+    graph.nodeConnectorsById.forEach(function (connectors, id) {
       var node = getNode(state.model, id);
-      if (node) {
-        var name = (typeof node.label === "string" && node.label) || node.id;
-        var create = rail.querySelector(".ark-harness-node-create");
-        if (create) {
-          create.setAttribute("aria-label", name + " から edge を作成");
-          create.title = name + " から edge を作成";
-        }
-      }
-      positionNodeRail(graph, id);
+      if (!node) return;
+      var name = (typeof node.label === "string" && node.label) || node.id;
+      connectors.querySelectorAll(".ark-harness-node-anchor").forEach(function (anchor) {
+        var position = anchor.getAttribute("data-ark-anchor-position") || "";
+        var label = name + " の" + position + "接続点から edge を作成";
+        anchor.setAttribute("aria-label", label);
+        anchor.title = label;
+        var point = nodeAnchorPoint(
+          graph.nodesById.get(id),
+          anchor,
+          connectors
+        );
+        anchor.style.left = point.x + "px";
+        anchor.style.top = point.y + "px";
+      });
     });
   }
 
-  function startCreateEdgeDrag(graph, nodeEl, handle, event) {
+  function nodeAnchorPoint(nodeEl, anchor, reference) {
+    var referenceRect = reference.getBoundingClientRect();
+    var nodeRect = nodeEl.getBoundingClientRect();
+    var xRatio = Number(anchor.getAttribute("data-ark-anchor-x"));
+    var yRatio = Number(anchor.getAttribute("data-ark-anchor-y"));
+    return {
+      x: nodeRect.left - referenceRect.left + nodeRect.width * xRatio,
+      y: nodeRect.top - referenceRect.top + nodeRect.height * yRatio
+    };
+  }
+
+  function startCreateEdgeDrag(graph, nodeEl, anchor, event) {
     if (graphDrag || edgeDrag) return;
     var sourceId = nodeEl.getAttribute("data-model-id");
     if (!sourceId || !getNode(state.model, sourceId) ||
         graph.nodesById.get(sourceId) !== nodeEl) return;
     event.preventDefault();
     event.stopPropagation();
-    handle.setPointerCapture(event.pointerId);
-    var containerRect = graph.container.getBoundingClientRect();
-    var start = nodeBoundaryPoint(
-      graph,
-      nodeEl,
-      event.clientX - containerRect.left + 1,
-      event.clientY - containerRect.top
-    );
+    anchor.setPointerCapture(event.pointerId);
+    var start = nodeAnchorPoint(nodeEl, anchor, graph.previewLayer);
     var previewUi = createEdgePreview(graph, start);
     edgeDrag = {
       mode: "create",
       pointerId: event.pointerId,
-      handle: handle,
+      handle: anchor,
       graph: graph,
       sourceId: sourceId,
       startClientX: event.clientX,
@@ -1467,34 +1415,50 @@ const HARNESS_JS = `(function () {
     };
   }
 
-  function attachNodeRail(graph, root) {
+  function attachNodeConnectors(graph, root) {
     var id = root.getAttribute("data-model-id");
-    if (!id || graph.nodeRailsById.has(id)) return;
+    if (!id || graph.nodeConnectorsById.has(id)) return;
     var node = getNode(state.model, id);
     if (!node) return;
-    var rail = document.createElement("span");
-    rail.className = "ark-harness-node-rail";
-    rail.setAttribute("data-ark-node-id", id);
-    markUi(rail);
+    var connectors = document.createElement("span");
+    connectors.className = "ark-harness-node-connectors";
+    connectors.setAttribute("data-ark-node-id", id);
+    markUi(connectors);
     var name = (typeof node.label === "string" && node.label) || node.id;
-    var create = createButton(
-      "+",
-      "ark-harness-node-create",
-      name + " から edge を作成"
-    );
-    create.setAttribute("data-ark-node-id", id);
+    var positions = [
+      ["top-left", 0, 0],
+      ["top", 0.5, 0],
+      ["top-right", 1, 0],
+      ["right", 1, 0.5],
+      ["bottom-right", 1, 1],
+      ["bottom", 0.5, 1],
+      ["bottom-left", 0, 1],
+      ["left", 0, 0.5]
+    ];
     ["pointerdown", "click", "keydown"].forEach(function (type) {
-      rail.addEventListener(type, function (event) { event.stopPropagation(); });
+      connectors.addEventListener(type, function (event) { event.stopPropagation(); });
     });
-    create.addEventListener("pointerdown", function (event) {
-      startCreateEdgeDrag(graph, root, create, event);
+    positions.forEach(function (position) {
+      var label = name + " の" + position[0] + "接続点から edge を作成";
+      var anchor = createButton("\\u2022", "ark-harness-node-anchor", label);
+      anchor.setAttribute("data-ark-node-id", id);
+      anchor.setAttribute("data-ark-anchor-position", String(position[0]));
+      anchor.setAttribute("data-ark-anchor-x", String(position[1]));
+      anchor.setAttribute("data-ark-anchor-y", String(position[2]));
+      anchor.addEventListener("pointerdown", function (event) {
+        startCreateEdgeDrag(graph, root, anchor, event);
+      });
+      anchor.addEventListener("pointermove", updateEdgeDrag);
+      anchor.addEventListener("pointerup", function (event) {
+        finishEdgeDrag(event, true);
+      });
+      anchor.addEventListener("pointercancel", function (event) {
+        finishEdgeDrag(event, false);
+      });
+      connectors.appendChild(anchor);
     });
-    create.addEventListener("pointermove", updateEdgeDrag);
-    create.addEventListener("pointerup", function (event) { finishEdgeDrag(event, true); });
-    create.addEventListener("pointercancel", function (event) { finishEdgeDrag(event, false); });
-    rail.appendChild(create);
-    root.appendChild(rail);
-    graph.nodeRailsById.set(id, rail);
+    graph.handleLayer.appendChild(connectors);
+    graph.nodeConnectorsById.set(id, connectors);
   }
 
   function clearNodeAffordanceClose(controller) {
@@ -1506,6 +1470,7 @@ const HARNESS_JS = `(function () {
   function openNodeAffordance(controller) {
     clearNodeAffordanceClose(controller);
     controller.root.classList.add("ark-harness-node-affordance-open");
+    controller.connectors.classList.add("ark-harness-node-connectors-visible");
   }
 
   function scheduleNodeAffordanceClose(controller) {
@@ -1513,13 +1478,18 @@ const HARNESS_JS = `(function () {
     controller.closeTimer = window.setTimeout(function () {
       controller.closeTimer = null;
       if (controller.root.matches(":hover") ||
-          controller.root.matches(":focus-within")) return;
+          controller.root.matches(":focus-within") ||
+          controller.connectors.matches(":hover") ||
+          controller.connectors.matches(":focus-within")) return;
       controller.root.classList.remove("ark-harness-node-affordance-open");
+      controller.connectors.classList.remove("ark-harness-node-connectors-visible");
     }, AFFORDANCE_CLOSE_DELAY);
   }
 
   function attachNodeAffordanceHover(graph, root, id) {
-    var controller = { root: root, closeTimer: null };
+    var connectors = graph.nodeConnectorsById.get(id);
+    if (!connectors) return;
+    var controller = { root: root, connectors: connectors, closeTimer: null };
     ["pointerenter", "focusin"].forEach(function (type) {
       root.addEventListener(type, function () {
         openNodeAffordance(controller);
@@ -1530,9 +1500,13 @@ const HARNESS_JS = `(function () {
         scheduleNodeAffordanceClose(controller);
       });
     });
-    root.querySelectorAll(
-      ".ark-harness-kind-picker, .ark-harness-graph-handle, .ark-harness-node-rail"
-    ).forEach(function (affordance) {
+    var affordances = [
+      root.querySelector(".ark-harness-kind-picker"),
+      root.querySelector(".ark-harness-graph-handle"),
+      connectors
+    ];
+    affordances.forEach(function (affordance) {
+      if (!affordance) return;
       affordance.addEventListener("pointerenter", function () {
         openNodeAffordance(controller);
       });
@@ -1571,7 +1545,7 @@ const HARNESS_JS = `(function () {
     attachNodeSelection(root, node.id);
     attachKindPicker(graph, root);
     attachGraphHandle(graph, root, node);
-    attachNodeRail(graph, root);
+    attachNodeConnectors(graph, root);
     attachNodeAffordanceHover(graph, root, node.id);
     if (graph.resizeObserver) graph.resizeObserver.observe(root);
     return true;
@@ -1582,9 +1556,9 @@ const HARNESS_JS = `(function () {
     if (root && graph.resizeObserver) graph.resizeObserver.unobserve(root);
     graph.nodesById.delete(id);
     graph.positionsById.delete(id);
-    var rail = graph.nodeRailsById.get(id);
-    if (rail) rail.remove();
-    graph.nodeRailsById.delete(id);
+    var connectors = graph.nodeConnectorsById.get(id);
+    if (connectors) connectors.remove();
+    graph.nodeConnectorsById.delete(id);
     var affordance = graph.nodeAffordancesById.get(id);
     clearNodeAffordanceClose(affordance);
     graph.nodeAffordancesById.delete(id);
@@ -1713,7 +1687,6 @@ const HARNESS_JS = `(function () {
     graph.nodesById.forEach(add);
     graph.svg.querySelectorAll("text[data-ark-edge-id]").forEach(add);
     graph.edgeHandlesByKey.forEach(add);
-    graph.nodeRailsById.forEach(add);
     graph.nodesById.forEach(function (nodeRoot) {
       nodeRoot.querySelectorAll(
         ".ark-harness-kind-picker, .ark-harness-graph-handle"
@@ -1844,7 +1817,7 @@ const HARNESS_JS = `(function () {
       handleLayer: handleLayer,
       previewLayer: previewLayer,
       edgeHandlesByKey: new Map(),
-      nodeRailsById: new Map(),
+      nodeConnectorsById: new Map(),
       nodeAffordancesById: new Map(),
       positionsById: new Map(),
       layoutExtent: { width: null, height: null },

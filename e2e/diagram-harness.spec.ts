@@ -683,7 +683,12 @@ test("node CRUD: palette から安全な projection を重ならず追加して�
   ).toHaveText("新しいノード");
   await expect(projection.locator(".ark-harness-kind-picker")).toHaveCount(1);
   await expect(projection.locator(".ark-harness-graph-handle")).toHaveCount(1);
-  await expect(projection.locator(".ark-harness-node-create")).toHaveCount(1);
+  await expect(
+    firstGraph.locator(
+      `.ark-harness-node-connectors[data-ark-node-id="${added.id}"] .ark-harness-node-anchor`
+    )
+  ).toHaveCount(8);
+  await expect(projection.locator(".ark-harness-node-create")).toHaveCount(0);
   await expect(projection.locator(".ark-harness-node-delete")).toHaveCount(0);
 
   const newBox = await requiredBoundingBox(projection);
@@ -813,12 +818,126 @@ test("node CRUD: contenteditable 編集中の Delete は node 削除に使わな
   ).toBe(true);
 });
 
-test("edge CRUD: click・微小移動・source drop を無視し明確な drag だけで edge を追加する", async ({
+test("edge CRUD: hover でノード周縁の8接続点を予測可能な位置に表示する", async ({
   page,
 }) => {
   await page.setContent(crudDiagramHtml());
   const graph = page.locator('[data-ark-container="graph"]').first();
   const source = graph.locator('[data-model-id="crud-b"]').first();
+  const connectors = graph.locator(
+    '.ark-harness-node-connectors[data-ark-node-id="crud-b"]'
+  );
+  const anchors = connectors.locator(".ark-harness-node-anchor");
+
+  await expect(anchors).toHaveCount(8);
+  await expect(source.locator(".ark-harness-node-create")).toHaveCount(0);
+  await expect(source.locator(".ark-harness-node-rail")).toHaveCount(0);
+  await expect(connectors).toHaveCSS("opacity", "0");
+  await expect(anchors.first()).toHaveCSS("opacity", "1");
+  await expect(anchors.first()).toHaveCSS("pointer-events", "none");
+
+  await source.hover();
+  for (let index = 0; index < 8; index += 1) {
+    await expect(anchors.nth(index)).toBeVisible();
+    await expect(anchors.nth(index)).toHaveCSS("pointer-events", "auto");
+  }
+
+  const geometry = await graph.evaluate(element => {
+    const node = element.querySelector<HTMLElement>(
+      '[data-model-id="crud-b"].ark-harness-graph-node'
+    );
+    const connectors = element.querySelector<HTMLElement>(
+      '.ark-harness-node-connectors[data-ark-node-id="crud-b"]'
+    );
+    if (!node || !connectors) throw new Error("接続点 geometry がありません");
+    const nodeRect = node.getBoundingClientRect();
+    return Array.from(
+      connectors.querySelectorAll<HTMLElement>(".ark-harness-node-anchor")
+    ).map(anchor => {
+      const rect = anchor.getBoundingClientRect();
+      return {
+        position: anchor.getAttribute("data-ark-anchor-position"),
+        xRatio: Number(anchor.getAttribute("data-ark-anchor-x")),
+        yRatio: Number(anchor.getAttribute("data-ark-anchor-y")),
+        centerX: rect.left + rect.width / 2,
+        centerY: rect.top + rect.height / 2,
+        expectedX:
+          nodeRect.left +
+          nodeRect.width * Number(anchor.getAttribute("data-ark-anchor-x")),
+        expectedY:
+          nodeRect.top +
+          nodeRect.height * Number(anchor.getAttribute("data-ark-anchor-y")),
+      };
+    });
+  });
+  expect(geometry.map(anchor => anchor.position)).toEqual([
+    "top-left",
+    "top",
+    "top-right",
+    "right",
+    "bottom-right",
+    "bottom",
+    "bottom-left",
+    "left",
+  ]);
+  expect(
+    geometry.filter(
+      anchor =>
+        (anchor.xRatio === 0 || anchor.xRatio === 0.5 || anchor.xRatio === 1) &&
+        (anchor.yRatio === 0 || anchor.yRatio === 0.5 || anchor.yRatio === 1) &&
+        (anchor.xRatio !== 0.5 || anchor.yRatio !== 0.5)
+    )
+  ).toHaveLength(8);
+  for (const anchor of geometry) {
+    expect(anchor.centerX).toBeCloseTo(anchor.expectedX, 1);
+    expect(anchor.centerY).toBeCloseTo(anchor.expectedY, 1);
+  }
+
+  const rightBox = await requiredBoundingBox(
+    connectors.locator(
+      '.ark-harness-node-anchor[data-ark-anchor-position="right"]'
+    )
+  );
+  await page.mouse.move(
+    rightBox.x + rightBox.width / 2,
+    rightBox.y + rightBox.height / 2
+  );
+  await page.mouse.down();
+  await expect(graph.locator(".ark-harness-edge-preview")).toHaveCount(1);
+  const previewStart = await graph.evaluate(element => {
+    const node = element.querySelector<HTMLElement>(
+      '[data-model-id="crud-b"].ark-harness-graph-node'
+    );
+    const line = element.querySelector<SVGLineElement>(
+      ".ark-harness-edge-preview line"
+    );
+    if (!node || !line) throw new Error("preview geometry がありません");
+    const svgRect = line.ownerSVGElement?.getBoundingClientRect();
+    if (!svgRect) throw new Error("preview SVG geometry がありません");
+    const nodeRect = node.getBoundingClientRect();
+    return {
+      x: svgRect.left + Number(line.getAttribute("x1")),
+      y: svgRect.top + Number(line.getAttribute("y1")),
+      expectedX: nodeRect.right,
+      expectedY: nodeRect.top + nodeRect.height / 2,
+    };
+  });
+  expect(previewStart.x).toBeCloseTo(previewStart.expectedX, 1);
+  expect(previewStart.y).toBeCloseTo(previewStart.expectedY, 1);
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await expect(graph.locator(".ark-harness-edge-preview")).toHaveCount(0);
+});
+
+test("edge CRUD: click・微小移動・source drop・Escape を無視し明確な anchor drag だけで edge を追加する", async ({
+  page,
+}) => {
+  await page.setContent(crudDiagramHtml());
+  const graph = page.locator('[data-ark-container="graph"]').first();
+  const source = graph.locator('[data-model-id="crud-b"]').first();
+  const sourceConnectors = graph.locator(
+    '.ark-harness-node-connectors[data-ark-node-id="crud-b"]'
+  );
   const target = graph.locator('[data-model-id="crud-d"]').first();
   const otherGraphTarget = page
     .locator('[data-ark-container="graph"]')
@@ -829,7 +948,9 @@ test("edge CRUD: click・微小移動・source drop を無視し明確な drag �
   const dragCreate = async (drop: Locator) => {
     await source.hover();
     const handleBox = await requiredBoundingBox(
-      source.locator(".ark-harness-node-create")
+      sourceConnectors.locator(
+        '.ark-harness-node-anchor[data-ark-anchor-position="bottom"]'
+      )
     );
     const dropBox = await requiredBoundingBox(drop);
     await page.mouse.move(
@@ -849,11 +970,13 @@ test("edge CRUD: click・微小移動・source drop を無視し明確な drag �
 
   const initialCount = (await readCurrentModel(page)).edges.length;
   await source.hover();
-  const createHandle = source.locator(".ark-harness-node-create");
-  await createHandle.click();
+  const createAnchor = sourceConnectors.locator(
+    '.ark-harness-node-anchor[data-ark-anchor-position="bottom"]'
+  );
+  await createAnchor.click();
   expect((await readCurrentModel(page)).edges).toHaveLength(initialCount);
 
-  let handleBox = await requiredBoundingBox(createHandle);
+  let handleBox = await requiredBoundingBox(createAnchor);
   await page.mouse.move(
     handleBox.x + handleBox.width / 2,
     handleBox.y + handleBox.height / 2
@@ -866,7 +989,7 @@ test("edge CRUD: click・微小移動・source drop を無視し明確な drag �
   await page.mouse.up();
   expect((await readCurrentModel(page)).edges).toHaveLength(initialCount);
 
-  handleBox = await requiredBoundingBox(createHandle);
+  handleBox = await requiredBoundingBox(createAnchor);
   const sourceBox = await requiredBoundingBox(source);
   await page.mouse.move(
     handleBox.x + handleBox.width / 2,
@@ -879,6 +1002,24 @@ test("edge CRUD: click・微小移動・source drop を無視し明確な drag �
   );
   await page.mouse.up();
   expect((await readCurrentModel(page)).edges).toHaveLength(initialCount);
+
+  handleBox = await requiredBoundingBox(createAnchor);
+  const targetBox = await requiredBoundingBox(target);
+  await page.mouse.move(
+    handleBox.x + handleBox.width / 2,
+    handleBox.y + handleBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    targetBox.x + targetBox.width / 2,
+    targetBox.y + targetBox.height / 2,
+    { steps: 4 }
+  );
+  await expect(graph.locator(".ark-harness-edge-preview")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  expect((await readCurrentModel(page)).edges).toHaveLength(initialCount);
+  await expect(graph.locator(".ark-harness-edge-preview")).toHaveCount(0);
 
   await dragCreate(target);
   await expect
@@ -897,7 +1038,7 @@ test("edge CRUD: click・微小移動・source drop を無視し明確な drag �
   ).toHaveCount(2);
 
   await source.hover();
-  handleBox = await requiredBoundingBox(createHandle);
+  handleBox = await requiredBoundingBox(createAnchor);
   const graphBox = await requiredBoundingBox(graph);
   await page.mouse.move(
     handleBox.x + handleBox.width / 2,
@@ -1015,7 +1156,8 @@ test("構造変更: clean submission は semantic node を残し CRUD UI と見�
   expect(submission.html).toContain("新しいノード");
   expect(submission.html).not.toContain("data-ark-harness-ui");
   expect(submission.html).not.toContain("ark-harness-node-palette");
-  expect(submission.html).not.toContain("ark-harness-node-rail");
+  expect(submission.html).not.toContain("ark-harness-node-connectors");
+  expect(submission.html).not.toContain("ark-harness-node-anchor");
   expect(submission.html).not.toContain("ark-harness-edge-hit");
   expect(submission.html).not.toContain("--ark-harness-graph-x");
   expect(describeModelDiff(crudModel, submission.model)).toEqual([

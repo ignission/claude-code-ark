@@ -198,6 +198,14 @@ describe("injectHarness", () => {
     expect(out).toContain("var EDGE_DRAG_MIN_DISTANCE = 8");
     expect(out).toContain("drag.didDrag");
     expect(out).toContain("drag.leftSource");
+    expect(out).toContain("ark-harness-node-connectors");
+    expect(out).toContain("ark-harness-node-anchor");
+    expect(out).toContain("function nodeAnchorPoint(");
+    expect(out).toContain("function attachNodeConnectors(");
+    expect(out).toContain('["top-left", 0, 0]');
+    expect(out).toContain('["bottom-right", 1, 1]');
+    expect(out).not.toContain("ark-harness-node-create");
+    expect(out).not.toContain("ark-harness-node-rail");
     expect(out).toContain("function removeEdge(");
     expect(out).toContain("function setEdgeDeletePending(");
     expect(out).toContain('drag.mode === "rewire" && !candidate');
