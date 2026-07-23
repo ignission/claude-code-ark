@@ -177,4 +177,51 @@ describe("injectHarness", () => {
     expect(out).not.toContain('kindCandidates = ["');
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
+
+  it("node / edge CRUD と参照整合性の契約を注入する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
+      )
+    );
+
+    expect(out).toContain("reservedModelIds");
+    expect(out).toContain("function collectModelIds(");
+    expect(out).toContain("function generateUniqueModelId(");
+    expect(out).toContain("ark-harness-node-palette");
+    expect(out).toContain("function registerGraphNode(");
+    expect(out).toContain("function addNode(");
+    expect(out).toContain("function removeNode(");
+    expect(out).toContain("group.nodes = group.nodes.filter");
+    expect(out).toContain('mode: "create"');
+    expect(out).toContain('mode: "rewire"');
+    expect(out).toContain("function removeEdge(");
+    expect(out).toContain("edgeDeleteControlsById");
+    expect(out).toContain("function syncEdgeDeleteControls(");
+  });
+
+  it("CRUD DOM を安全な API だけで生成し全 model id を予約する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
+      )
+    );
+
+    expect(out).toContain('document.createElement("article")');
+    expect(out).toContain('document.createElement("span")');
+    expect(out).toContain(
+      'document.createElementNS("http://www.w3.org/2000/svg"'
+    );
+    expect(out).toContain('root.setAttribute("data-model-id", node.id)');
+    expect(out).toContain("label.textContent = node.label");
+    expect(out).toContain("(node.fields || []).forEach");
+    expect(out).toContain("(model.edges || []).forEach");
+    expect(out).toContain("(model.groups || []).forEach");
+    expect(out).toContain("reservedModelIds.has(candidate)");
+    expect(out).not.toContain("innerHTML");
+    expect(out).not.toContain("insertAdjacentHTML");
+    expect(out).not.toContain("fetch(");
+    expect(out).not.toContain("import(");
+    expect(out).not.toContain("https://");
+  });
 });

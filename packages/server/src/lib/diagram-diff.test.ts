@@ -558,3 +558,87 @@ describe("describeModelDiff（label の無害化 / プロンプト注入対策�
     expect(field.label).toBe(label);
   });
 });
+
+describe("describeModelDiff（node / edge CRUD）", () => {
+  const base: DiagramModel = {
+    version: 1,
+    nodes: [
+      { id: "a", label: "A", fields: [{ id: "a_name", label: "name" }] },
+      { id: "b", label: "B" },
+    ],
+    edges: [{ id: "ab", from: "a", to: "b", label: "uses" }],
+    groups: [],
+  };
+
+  it("kind / ext 付き node の追加と削除だけを既存文面で述べる", () => {
+    const added: DiagramModel = {
+      ...base,
+      nodes: [
+        ...base.nodes,
+        { id: "c", label: "C", kind: "event", ext: { x: 10, y: 20 } },
+      ],
+      ext: { layout: { direction: "TB" } },
+    };
+    expect(describeModelDiff(base, added)).toEqual(["C を追加"]);
+    expect(describeModelDiff(added, base)).toEqual(["C を削除"]);
+  });
+
+  it("label 無し edge と label 付き edge、self-edge の追加削除を述べる", () => {
+    const edges: DiagramModel = {
+      ...base,
+      edges: [
+        ...base.edges,
+        { id: "ba", from: "b", to: "a" },
+        { id: "aa", from: "a", to: "a" },
+      ],
+    };
+    expect(describeModelDiff(base, edges)).toEqual([
+      "B から A への関連を追加",
+      "A から A への関連を追加",
+    ]);
+    expect(describeModelDiff(edges, base)).toEqual([
+      "B から A への関連を削除",
+      "A から A への関連を削除",
+    ]);
+  });
+
+  it("cascade 削除は node 文の後に incident edge 文を返す", () => {
+    const after: DiagramModel = {
+      ...base,
+      nodes: [base.nodes[1]],
+      edges: [],
+    };
+    expect(describeModelDiff(base, after)).toEqual([
+      "A を削除",
+      "A から B への関連「uses」を削除",
+    ]);
+  });
+
+  it("CRUD と既存 field / endpoint 編集が共存し見た目変更を返さない", () => {
+    const after: DiagramModel = {
+      version: 1,
+      nodes: [
+        {
+          ...base.nodes[0],
+          fields: [{ id: "a_name", label: "display name" }],
+          kind: "aggregate",
+          ext: { x: 100, y: 200 },
+        },
+        { id: "c", label: "C" },
+      ],
+      edges: [
+        { id: "ab", from: "a", to: "c", label: "uses", ext: { type: "async" } },
+        { id: "ca", from: "c", to: "a" },
+      ],
+      groups: [],
+      ext: { layout: { direction: "TB" } },
+    };
+    expect(describeModelDiff(base, after)).toEqual([
+      "A の name を display name に変更",
+      "C を追加",
+      "B を削除",
+      "A から B への関連「uses」を A から C への関連「uses」 に変更",
+      "C から A への関連を追加",
+    ]);
+  });
+});

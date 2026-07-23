@@ -52,6 +52,15 @@ const HARNESS_STYLE = `<style data-ark-harness-ui="1">
 .ark-harness-btn:hover { background: #232732; }
 .ark-harness-btn:disabled { opacity: .45; cursor: not-allowed; }
 .ark-harness-layout-direction { min-width: 5.5rem; }
+.ark-harness-node-palette {
+  display: flex; align-items: center; flex-wrap: wrap; gap: .35rem;
+  padding: .2rem .35rem; border: 1px solid #2a2f3a; border-radius: 6px;
+}
+.ark-harness-palette-label { display: flex; align-items: center; gap: .25rem; color: #aab1c1; }
+.ark-harness-palette-select {
+  appearance: auto; max-width: 9rem; padding: .2rem .3rem;
+  border: 1px solid #333947; border-radius: 4px; background: #1b1e27; color: #e6e8ee;
+}
 .ark-harness-btn-primary { background: #0ea5b7; border-color: #0ea5b7; color: #05201f; font-weight: 600; }
 .ark-harness-btn-primary:hover { background: #14b8c9; }
 .ark-harness-btn-primary:disabled { background: #1b1e27; border-color: #333947; color: #8b93a7; }
@@ -130,8 +139,17 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   fill: #475569; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
   font-size: 12px; text-anchor: middle; dominant-baseline: central;
 }
+.ark-harness-edge-hit {
+  fill: none; stroke: transparent !important; stroke-width: 18 !important;
+  pointer-events: stroke; cursor: pointer;
+}
+.ark-harness-edge-main.ark-harness-edge-selected { stroke: #0ea5b7; stroke-width: 2.5; }
 .ark-harness-edge-handle-layer {
   position: absolute; inset: 0; z-index: 3; pointer-events: none;
+}
+.ark-harness-edge-preview-layer {
+  position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%;
+  overflow: visible; pointer-events: none;
 }
 .ark-harness-edge-handle {
   position: absolute; transform: translate(-50%, -50%); z-index: 3;
@@ -139,6 +157,30 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   background: #fff; color: #0e7490; cursor: crosshair; line-height: 14px; font-size: 9px;
   pointer-events: auto; touch-action: none;
 }
+.ark-harness-edge-delete {
+  position: absolute; transform: translate(-50%, -50%); z-index: 5;
+  width: 24px; height: 24px; padding: 0; border: 1px solid #ef4444;
+  border-radius: 999px; background: #fff; color: #b91c1c; cursor: pointer;
+  pointer-events: auto; opacity: 0;
+}
+.ark-harness-edge-delete.ark-harness-edge-delete-visible,
+.ark-harness-edge-delete:focus { opacity: 1; }
+.ark-harness-node-rail {
+  position: absolute; z-index: 5; display: flex; gap: 4px; padding: 2px;
+  border: 1px solid rgba(100,116,139,.55); border-radius: 999px;
+  background: rgba(255,255,255,.96); opacity: 0; pointer-events: none;
+}
+.ark-harness-graph-node:hover > .ark-harness-node-rail,
+.ark-harness-graph-node:focus-within > .ark-harness-node-rail {
+  opacity: 1; pointer-events: auto;
+}
+.ark-harness-node-create, .ark-harness-node-delete {
+  width: 24px; height: 24px; padding: 0; border-radius: 999px;
+  border: 1px solid #94a3b8; background: #fff; color: #0e7490;
+  cursor: crosshair; touch-action: none;
+}
+.ark-harness-node-delete { color: #b91c1c; cursor: pointer; }
+.ark-harness-edge-dragging .ark-harness-node-rail { opacity: 0; pointer-events: none; }
 .ark-harness-edge-preview {
   position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none;
 }
@@ -147,7 +189,7 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
 }
 .ark-harness-edge-drop-indicator {
   position: absolute; box-sizing: border-box; border: 2px solid #0ea5b7;
-  border-radius: 6px; background: rgba(14,165,183,.1); pointer-events: none;
+  border-radius: 8px; background: transparent; pointer-events: none;
 }
 .ark-harness-graph-handle {
   position: absolute; top: .25rem; right: .25rem; z-index: 3;
@@ -155,7 +197,7 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   color: #64748b; cursor: grab; line-height: 1; padding: .25rem; touch-action: none;
 }
 .ark-harness-graph-dragging { z-index: 3; }
-body { padding-bottom: 3.4rem !important; }
+body { padding-bottom: var(--ark-harness-toolbar-height, 3.4rem) !important; }
 </style>`;
 
 /**
@@ -194,6 +236,9 @@ const HARNESS_JS = `(function () {
   var graphSequence = 0;
   var kindCandidates = [];
   var kindPickers = [];
+  var reservedModelIds = new Set();
+  var generatedIdCounter = 0;
+  var selectedEdgeId = null;
   var statusEl = null;
   var sendBtn = null;
   var layoutDirectionBtn = null;
@@ -202,11 +247,59 @@ const HARNESS_JS = `(function () {
     return v !== null && typeof v === "object" && !Array.isArray(v);
   }
 
-  function cryptoRandomId() {
+  function collectModelIds(model) {
+    var ids = new Set();
+    var reserve = function (entry) {
+      if (entry && typeof entry.id === "string") ids.add(entry.id);
+    };
+    (model.nodes || []).forEach(function (node) {
+      reserve(node);
+      (node.fields || []).forEach(reserve);
+    });
+    (model.edges || []).forEach(reserve);
+    (model.groups || []).forEach(reserve);
+    return ids;
+  }
+
+  function reserveCurrentModelIds() {
+    collectModelIds(state.model || {}).forEach(function (id) {
+      reservedModelIds.add(id);
+    });
+  }
+
+  function randomOpaquePart() {
     if (window.crypto && typeof window.crypto.randomUUID === "function") {
-      return window.crypto.randomUUID();
+      try {
+        return window.crypto.randomUUID();
+      } catch (_) {
+        // getRandomValues fallback へ進む
+      }
     }
-    return Math.random().toString(36).slice(2) + Date.now().toString(36);
+    if (window.crypto && typeof window.crypto.getRandomValues === "function") {
+      try {
+        var bytes = new Uint8Array(16);
+        window.crypto.getRandomValues(bytes);
+        var encoded = "";
+        for (var i = 0; i < bytes.length; i++) {
+          encoded += bytes[i].toString(16).padStart(2, "0");
+        }
+        return encoded;
+      } catch (_) {
+        // counter fallback へ進む
+      }
+    }
+    generatedIdCounter += 1;
+    return "session-" + generatedIdCounter;
+  }
+
+  function generateUniqueModelId(prefix) {
+    for (var attempt = 0; attempt < 32; attempt++) {
+      var candidate = prefix + "-" + randomOpaquePart();
+      if (reservedModelIds.has(candidate)) continue;
+      reservedModelIds.add(candidate);
+      return candidate;
+    }
+    return null;
   }
 
   function loadModel() {
@@ -639,9 +732,10 @@ const HARNESS_JS = `(function () {
     svg.appendChild(defs);
   }
 
-  function appendGraphLabel(svg, label, x, y) {
+  function appendGraphLabel(svg, edgeId, label, x, y) {
     if (typeof label !== "string" || label.length === 0) return;
     var text = svgElement("text");
+    text.setAttribute("data-ark-edge-id", edgeId);
     text.setAttribute("x", String(x));
     text.setAttribute("y", String(y));
     text.textContent = label;
@@ -729,6 +823,61 @@ const HARNESS_JS = `(function () {
     main.setAttribute("data-ark-edge-direction", direction);
     var type = edgeType(edge);
     if (type !== null) main.setAttribute("data-ark-edge-type", type);
+  }
+
+  function setEdgeGeometryAttributes(element, geometry) {
+    if (geometry.kind === "path") {
+      element.setAttribute("d", geometry.path);
+    } else {
+      element.setAttribute("x1", String(geometry.from.x));
+      element.setAttribute("y1", String(geometry.from.y));
+      element.setAttribute("x2", String(geometry.to.x));
+      element.setAttribute("y2", String(geometry.to.y));
+    }
+  }
+
+  function setSelectedEdge(edgeId) {
+    selectedEdgeId = edgeId && getEdge(state.model, edgeId) ? edgeId : null;
+    graphs.forEach(function (graph) {
+      graph.svg.querySelectorAll(".ark-harness-edge-main").forEach(function (main) {
+        main.classList.toggle(
+          "ark-harness-edge-selected",
+          main.getAttribute("data-ark-edge-id") === selectedEdgeId
+        );
+      });
+      graph.edgeDeleteControlsById.forEach(function (control, id) {
+        control.wrapper.classList.toggle(
+          "ark-harness-edge-delete-visible",
+          id === selectedEdgeId
+        );
+      });
+    });
+  }
+
+  function removeEdge(edgeId) {
+    var edge = getEdge(state.model, edgeId);
+    if (!edge) return;
+    if (edgeDrag && edgeDrag.mode === "rewire" && edgeDrag.edgeId === edgeId) {
+      finishEdgeDrag(null, false);
+    }
+    state.model.edges = state.model.edges.filter(function (entry) {
+      return entry.id !== edgeId;
+    });
+    if (selectedEdgeId === edgeId) selectedEdgeId = null;
+    graphs.forEach(function (graph) { scheduleGraphRender(graph); });
+  }
+
+  function isEditableControlTarget(target) {
+    if (!target || !target.closest) return false;
+    return !!target.closest('[contenteditable="true"], input, textarea, select');
+  }
+
+  function handleEdgeDeleteKey(event, edgeId) {
+    if ((event.key !== "Delete" && event.key !== "Backspace") ||
+        isEditableControlTarget(event.target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    removeEdge(edgeId);
   }
 
   function applyEdgeMarkers(main, markerId, direction) {
@@ -870,16 +1019,27 @@ const HARNESS_JS = `(function () {
       var direction = edgeDirection(edge);
       var main = svgElement(geometry.kind);
       setEdgeProjectionAttributes(main, edge, direction);
-      if (geometry.kind === "path") {
-        main.setAttribute("d", geometry.path);
-      } else {
-        main.setAttribute("x1", String(geometry.from.x));
-        main.setAttribute("y1", String(geometry.from.y));
-        main.setAttribute("x2", String(geometry.to.x));
-        main.setAttribute("y2", String(geometry.to.y));
-      }
+      setEdgeGeometryAttributes(main, geometry);
       applyEdgeMarkers(main, graph.markerId, direction);
       graph.svg.appendChild(main);
+      var hit = svgElement(geometry.kind);
+      hit.classList.add("ark-harness-edge-hit");
+      hit.setAttribute("data-ark-edge-id", edge.id);
+      hit.setAttribute("tabindex", "0");
+      hit.setAttribute("role", "button");
+      var edgeName = (typeof edge.label === "string" && edge.label) || edge.id;
+      hit.setAttribute("aria-label", edgeName + " を選択");
+      setEdgeGeometryAttributes(hit, geometry);
+      markUi(hit);
+      ["pointerenter", "focus", "click"].forEach(function (type) {
+        hit.addEventListener(type, function (event) {
+          event.stopPropagation();
+          setSelectedEdge(edge.id);
+        });
+      });
+      hit.addEventListener("keydown", function (event) {
+        handleEdgeDeleteKey(event, edge.id);
+      });
       appendEdgeCardinality(
         graph.svg,
         edge,
@@ -894,9 +1054,13 @@ const HARNESS_JS = `(function () {
         geometry.to,
         edgeCardinality(edge, "to")
       );
-      appendGraphLabel(graph.svg, edge.label, geometry.label.x, geometry.label.y);
+      appendGraphLabel(graph.svg, edge.id, edge.label, geometry.label.x, geometry.label.y);
+      graph.svg.appendChild(hit);
     });
     syncEdgeHandles(graph, edges);
+    syncNodeRails(graph);
+    syncEdgeDeleteControls(graph, edges);
+    setSelectedEdge(selectedEdgeId);
   }
 
   function scheduleGraphRender(graph) {
@@ -936,6 +1100,7 @@ const HARNESS_JS = `(function () {
     drag.previewLine = null;
     drag.indicator = null;
     drag.candidateId = null;
+    drag.graph.container.classList.remove("ark-harness-edge-dragging");
   }
 
   function updateEdgeDropIndicator(drag, candidate) {
@@ -955,23 +1120,50 @@ const HARNESS_JS = `(function () {
     }
     var containerRect = drag.graph.container.getBoundingClientRect();
     var nodeRect = candidate.el.getBoundingClientRect();
-    drag.indicator.style.left = nodeRect.left - containerRect.left + "px";
-    drag.indicator.style.top = nodeRect.top - containerRect.top + "px";
-    drag.indicator.style.width = nodeRect.width + "px";
-    drag.indicator.style.height = nodeRect.height + "px";
+    drag.indicator.style.left = nodeRect.left - containerRect.left - 4 + "px";
+    drag.indicator.style.top = nodeRect.top - containerRect.top - 4 + "px";
+    drag.indicator.style.width = nodeRect.width + 8 + "px";
+    drag.indicator.style.height = nodeRect.height + 8 + "px";
     drag.candidateId = candidate.id;
+  }
+
+  function nodeBoundaryPoint(graph, nodeEl, towardX, towardY) {
+    var containerRect = graph.container.getBoundingClientRect();
+    var rect = nodeEl.getBoundingClientRect();
+    var cx = rect.left + rect.width / 2 - containerRect.left;
+    var cy = rect.top + rect.height / 2 - containerRect.top;
+    var dx = towardX - cx;
+    var dy = towardY - cy;
+    var length = Math.sqrt(dx * dx + dy * dy) || 1;
+    var ux = dx / length;
+    var uy = dy / length;
+    var radius = Math.min(
+      Math.abs(ux) > 0 ? rect.width / 2 / Math.abs(ux) : Infinity,
+      Math.abs(uy) > 0 ? rect.height / 2 / Math.abs(uy) : Infinity
+    );
+    if (!finiteNumber(radius)) radius = 0;
+    return { x: cx + ux * radius, y: cy + uy * radius };
   }
 
   function updateEdgeDrag(event) {
     if (!edgeDrag || event.pointerId !== edgeDrag.pointerId) return;
     var drag = edgeDrag;
     var containerRect = drag.graph.container.getBoundingClientRect();
-    drag.previewLine.setAttribute("x2", String(event.clientX - containerRect.left));
-    drag.previewLine.setAttribute("y2", String(event.clientY - containerRect.top));
-    updateEdgeDropIndicator(
-      drag,
-      findEdgeDropCandidate(drag.graph, event.clientX, event.clientY)
-    );
+    var candidate = findEdgeDropCandidate(drag.graph, event.clientX, event.clientY);
+    var end = candidate
+      ? nodeBoundaryPoint(
+          drag.graph,
+          candidate.el,
+          Number(drag.previewLine.getAttribute("x1")),
+          Number(drag.previewLine.getAttribute("y1"))
+        )
+      : {
+          x: event.clientX - containerRect.left,
+          y: event.clientY - containerRect.top
+        };
+    drag.previewLine.setAttribute("x2", String(end.x));
+    drag.previewLine.setAttribute("y2", String(end.y));
+    updateEdgeDropIndicator(drag, candidate);
   }
 
   function finishEdgeDrag(event, commit) {
@@ -983,16 +1175,46 @@ const HARNESS_JS = `(function () {
       : null;
     edgeDrag = null;
     if (commit && candidate) {
-      var currentEdge = getEdge(state.model, drag.edgeId);
-      if (currentEdge && drag.graph.positionsById.has(candidate.id)) {
-        currentEdge[drag.end] = candidate.id;
+      if (drag.mode === "rewire") {
+        var currentEdge = getEdge(state.model, drag.edgeId);
+        if (currentEdge && getNode(state.model, candidate.id) &&
+            drag.graph.nodesById.has(candidate.id)) {
+          currentEdge[drag.end] = candidate.id;
+        }
+      } else {
+        var source = getNode(state.model, drag.sourceId);
+        var target = getNode(state.model, candidate.id);
+        if (source && target && drag.graph.nodesById.has(source.id) &&
+            drag.graph.nodesById.has(target.id)) {
+          var edgeId = generateUniqueModelId("edge");
+          if (edgeId) {
+            state.model.edges.push({ id: edgeId, from: source.id, to: target.id });
+          } else {
+            updateStatus(!!submitPort, "一意な ID を生成できませんでした");
+          }
+        }
       }
     }
     removeEdgeDragUi(drag);
     if (drag.handle.hasPointerCapture(drag.pointerId)) {
       drag.handle.releasePointerCapture(drag.pointerId);
     }
-    scheduleGraphRender(drag.graph);
+    graphs.forEach(function (graph) { scheduleGraphRender(graph); });
+  }
+
+  function createEdgePreview(graph, start) {
+    var preview = svgElement("svg");
+    preview.classList.add("ark-harness-edge-preview");
+    markUi(preview);
+    var line = svgElement("line");
+    line.setAttribute("x1", String(start.x));
+    line.setAttribute("y1", String(start.y));
+    line.setAttribute("x2", String(start.x));
+    line.setAttribute("y2", String(start.y));
+    preview.appendChild(line);
+    graph.previewLayer.appendChild(preview);
+    graph.container.classList.add("ark-harness-edge-dragging");
+    return { preview: preview, line: line };
   }
 
   function createEdgeHandle(graph, edge, end) {
@@ -1009,24 +1231,16 @@ const HARNESS_JS = `(function () {
       event.stopPropagation();
       handle.setPointerCapture(event.pointerId);
 
-      var preview = svgElement("svg");
-      preview.classList.add("ark-harness-edge-preview");
-      markUi(preview);
-      var line = svgElement("line");
-      line.setAttribute("x1", String(endpoint.x));
-      line.setAttribute("y1", String(endpoint.y));
-      line.setAttribute("x2", String(endpoint.x));
-      line.setAttribute("y2", String(endpoint.y));
-      preview.appendChild(line);
-      graph.handleLayer.insertBefore(preview, graph.handleLayer.firstChild);
+      var previewUi = createEdgePreview(graph, endpoint);
       edgeDrag = {
+        mode: "rewire",
         pointerId: event.pointerId,
         handle: handle,
         graph: graph,
         edgeId: currentEdge.id,
         end: end,
-        preview: preview,
-        previewLine: line,
+        preview: previewUi.preview,
+        previewLine: previewUi.line,
         indicator: null,
         candidateId: null
       };
@@ -1034,6 +1248,9 @@ const HARNESS_JS = `(function () {
     handle.addEventListener("pointermove", updateEdgeDrag);
     handle.addEventListener("pointerup", function (event) { finishEdgeDrag(event, true); });
     handle.addEventListener("pointercancel", function (event) { finishEdgeDrag(event, false); });
+    handle.addEventListener("keydown", function (event) {
+      handleEdgeDeleteKey(event, handle.getAttribute("data-ark-edge-id"));
+    });
     graph.handleLayer.appendChild(handle);
     return handle;
   }
@@ -1065,6 +1282,125 @@ const HARNESS_JS = `(function () {
       if (activeKeys.has(key)) return;
       if (handle.parentNode) handle.parentNode.removeChild(handle);
       graph.edgeHandlesByKey.delete(key);
+    });
+  }
+
+  function graphLocalRect(graph, element) {
+    var rect = element.getBoundingClientRect();
+    var containerRect = graph.container.getBoundingClientRect();
+    if (!finiteNumber(rect.width) || !finiteNumber(rect.height)) return null;
+    return {
+      x: rect.left - containerRect.left,
+      y: rect.top - containerRect.top,
+      width: rect.width,
+      height: rect.height
+    };
+  }
+
+  function edgeDeleteBlockers(graph, ownWrapper) {
+    var blockers = [];
+    var add = function (element) {
+      if (element === ownWrapper || !element.isConnected) return;
+      var rect = graphLocalRect(graph, element);
+      if (rect && rect.width >= 0 && rect.height >= 0) blockers.push(rect);
+    };
+    graph.nodesById.forEach(add);
+    graph.svg.querySelectorAll("text[data-ark-edge-id]").forEach(add);
+    graph.edgeHandlesByKey.forEach(add);
+    graph.nodeRailsById.forEach(function (rail) { add(rail); });
+    graph.edgeDeleteControlsById.forEach(function (control) { add(control.wrapper); });
+    return blockers;
+  }
+
+  function positionEdgeDeleteControl(graph, control, geometry) {
+    var width = control.wrapper.offsetWidth || 24;
+    var height = control.wrapper.offsetHeight || 24;
+    var nx = -geometry.from.ty;
+    var ny = geometry.from.tx;
+    var candidates = [];
+    var fractions = [0.35, 0.65, 0.2, 0.8];
+    fractions.forEach(function (fraction) {
+      var base = geometry.kind === "line"
+        ? {
+            x: geometry.from.x + (geometry.to.x - geometry.from.x) * fraction,
+            y: geometry.from.y + (geometry.to.y - geometry.from.y) * fraction
+          }
+        : geometry.label;
+      [34, -34, 50, -50].forEach(function (offset) {
+        candidates.push({
+          x: base.x + nx * offset - width / 2,
+          y: base.y + ny * offset - height / 2
+        });
+      });
+    });
+    var blockers = edgeDeleteBlockers(graph, control.wrapper);
+    var chosen = null;
+    for (var i = 0; i < candidates.length; i++) {
+      var rectangle = {
+        x: candidates[i].x,
+        y: candidates[i].y,
+        width: width,
+        height: height
+      };
+      if (rectangle.x < 0 || rectangle.y < 0) continue;
+      var collision = blockers.some(function (blocker) {
+        return rectanglesCollide(rectangle, blocker, 6);
+      });
+      if (!collision) {
+        chosen = candidates[i];
+        break;
+      }
+    }
+    if (!chosen) {
+      var right = readLayoutConfig(state.model).padding;
+      blockers.forEach(function (blocker) {
+        right = Math.max(right, blocker.x + blocker.width + 12);
+      });
+      chosen = { x: right, y: readLayoutConfig(state.model).padding };
+    }
+    control.wrapper.style.left = chosen.x + width / 2 + "px";
+    control.wrapper.style.top = chosen.y + height / 2 + "px";
+  }
+
+  function createEdgeDeleteControl(graph, edge) {
+    var name = (typeof edge.label === "string" && edge.label) || edge.id;
+    var button = createButton(
+      "\\u2212",
+      "ark-harness-edge-delete",
+      name + " を削除"
+    );
+    button.setAttribute("data-ark-edge-id", edge.id);
+    ["pointerdown", "click", "keydown"].forEach(function (type) {
+      button.addEventListener(type, function (event) { event.stopPropagation(); });
+    });
+    button.addEventListener("click", function () {
+      removeEdge(button.getAttribute("data-ark-edge-id"));
+    });
+    graph.handleLayer.appendChild(button);
+    return { wrapper: button, button: button };
+  }
+
+  function syncEdgeDeleteControls(graph, edges) {
+    var activeIds = new Set();
+    edges.forEach(function (edge) {
+      var geometry = graph.edgeGeometryById.get(edge.id);
+      if (!geometry) return;
+      activeIds.add(edge.id);
+      var control = graph.edgeDeleteControlsById.get(edge.id);
+      if (!control) {
+        control = createEdgeDeleteControl(graph, edge);
+        graph.edgeDeleteControlsById.set(edge.id, control);
+      }
+      control.button.setAttribute("data-ark-edge-id", edge.id);
+      var name = (typeof edge.label === "string" && edge.label) || edge.id;
+      control.button.setAttribute("aria-label", name + " を削除");
+      control.button.title = name + " を削除";
+      positionEdgeDeleteControl(graph, control, geometry);
+    });
+    graph.edgeDeleteControlsById.forEach(function (control, id) {
+      if (activeIds.has(id)) return;
+      control.wrapper.remove();
+      graph.edgeDeleteControlsById.delete(id);
     });
   }
 
@@ -1127,9 +1463,376 @@ const HARNESS_JS = `(function () {
     el.appendChild(handle);
   }
 
+  function positionNodeRail(graph, id) {
+    var nodeEl = graph.nodesById.get(id);
+    var rail = graph.nodeRailsById.get(id);
+    if (!nodeEl || !rail) return;
+    var nodeRect = nodeEl.getBoundingClientRect();
+    var railWidth = rail.offsetWidth || 56;
+    var railHeight = rail.offsetHeight || 28;
+    var candidates = [
+      { x: (nodeRect.width - railWidth) / 2, y: nodeRect.height + 8 },
+      { x: -railWidth - 8, y: (nodeRect.height - railHeight) / 2 },
+      { x: nodeRect.width + 8, y: (nodeRect.height - railHeight) / 2 },
+      { x: (nodeRect.width - railWidth) / 2, y: -railHeight - 8 }
+    ];
+    var containerRect = graph.container.getBoundingClientRect();
+    var nodeX = nodeRect.left - containerRect.left;
+    var nodeY = nodeRect.top - containerRect.top;
+    var blockers = [];
+    graph.nodesById.forEach(function (other, otherId) {
+      if (otherId === id) return;
+      var rect = graphLocalRect(graph, other);
+      if (rect) blockers.push(rect);
+    });
+    graph.svg.querySelectorAll("text[data-ark-edge-id]").forEach(function (label) {
+      var rect = graphLocalRect(graph, label);
+      if (rect) blockers.push(rect);
+    });
+    graph.edgeHandlesByKey.forEach(function (handle) {
+      var rect = graphLocalRect(graph, handle);
+      if (rect) blockers.push(rect);
+    });
+    graph.nodeRailsById.forEach(function (other, otherId) {
+      if (otherId === id) return;
+      var rect = graphLocalRect(graph, other);
+      if (rect) blockers.push(rect);
+    });
+    [".ark-harness-kind-picker", ".ark-harness-graph-handle"].forEach(function (selector) {
+      var control = nodeEl.querySelector(selector);
+      var rect = control && graphLocalRect(graph, control);
+      if (rect) blockers.push(rect);
+    });
+    var chosen = null;
+    for (var i = 0; i < candidates.length; i++) {
+      var candidateRect = {
+        x: nodeX + candidates[i].x,
+        y: nodeY + candidates[i].y,
+        width: railWidth,
+        height: railHeight
+      };
+      if (candidateRect.x < 0 || candidateRect.y < 0) continue;
+      if (!blockers.some(function (blocker) {
+        return rectanglesCollide(candidateRect, blocker, 6);
+      })) {
+        chosen = candidates[i];
+        break;
+      }
+    }
+    if (!chosen) {
+      var right = nodeRect.width + 12;
+      blockers.forEach(function (blocker) {
+        right = Math.max(right, blocker.x + blocker.width - nodeX + 12);
+      });
+      chosen = { x: right, y: 0 };
+    }
+    rail.style.left = Math.round(chosen.x) + "px";
+    rail.style.top = Math.round(chosen.y) + "px";
+  }
+
+  function syncNodeRails(graph) {
+    graph.nodeRailsById.forEach(function (rail, id) {
+      var node = getNode(state.model, id);
+      if (node) {
+        var name = (typeof node.label === "string" && node.label) || node.id;
+        var create = rail.querySelector(".ark-harness-node-create");
+        var remove = rail.querySelector(".ark-harness-node-delete");
+        if (create) {
+          create.setAttribute("aria-label", name + " から edge を作成");
+          create.title = name + " から edge を作成";
+        }
+        if (remove) {
+          remove.setAttribute("aria-label", name + " を削除");
+          remove.title = name + " を削除";
+        }
+      }
+      positionNodeRail(graph, id);
+    });
+  }
+
+  function startCreateEdgeDrag(graph, nodeEl, handle, event) {
+    if (graphDrag || edgeDrag) return;
+    var sourceId = nodeEl.getAttribute("data-model-id");
+    if (!sourceId || !getNode(state.model, sourceId) ||
+        graph.nodesById.get(sourceId) !== nodeEl) return;
+    event.preventDefault();
+    event.stopPropagation();
+    handle.setPointerCapture(event.pointerId);
+    var containerRect = graph.container.getBoundingClientRect();
+    var start = nodeBoundaryPoint(
+      graph,
+      nodeEl,
+      event.clientX - containerRect.left + 1,
+      event.clientY - containerRect.top
+    );
+    var previewUi = createEdgePreview(graph, start);
+    edgeDrag = {
+      mode: "create",
+      pointerId: event.pointerId,
+      handle: handle,
+      graph: graph,
+      sourceId: sourceId,
+      preview: previewUi.preview,
+      previewLine: previewUi.line,
+      indicator: null,
+      candidateId: null
+    };
+  }
+
+  function attachNodeRail(graph, root) {
+    var id = root.getAttribute("data-model-id");
+    if (!id || graph.nodeRailsById.has(id)) return;
+    var node = getNode(state.model, id);
+    if (!node) return;
+    var rail = document.createElement("span");
+    rail.className = "ark-harness-node-rail";
+    rail.setAttribute("data-ark-node-id", id);
+    markUi(rail);
+    var name = (typeof node.label === "string" && node.label) || node.id;
+    var create = createButton(
+      "+",
+      "ark-harness-node-create",
+      name + " から edge を作成"
+    );
+    var remove = createButton(
+      "\\u2212",
+      "ark-harness-node-delete",
+      name + " を削除"
+    );
+    create.setAttribute("data-ark-node-id", id);
+    remove.setAttribute("data-ark-node-id", id);
+    ["pointerdown", "click", "keydown"].forEach(function (type) {
+      rail.addEventListener(type, function (event) { event.stopPropagation(); });
+    });
+    create.addEventListener("pointerdown", function (event) {
+      startCreateEdgeDrag(graph, root, create, event);
+    });
+    create.addEventListener("pointermove", updateEdgeDrag);
+    create.addEventListener("pointerup", function (event) { finishEdgeDrag(event, true); });
+    create.addEventListener("pointercancel", function (event) { finishEdgeDrag(event, false); });
+    remove.addEventListener("click", function () {
+      removeNode(remove.getAttribute("data-ark-node-id"));
+    });
+    rail.appendChild(create);
+    rail.appendChild(remove);
+    root.appendChild(rail);
+    graph.nodeRailsById.set(id, rail);
+  }
+
+  function registerGraphNode(graph, root, node) {
+    if (!node || typeof node.id !== "string" || graph.nodesById.has(node.id)) return false;
+    graph.nodesById.set(node.id, root);
+    root.classList.add("ark-harness-graph-node");
+    attachKindPicker(graph, root);
+    attachGraphHandle(graph, root, node);
+    attachNodeRail(graph, root);
+    if (graph.resizeObserver) graph.resizeObserver.observe(root);
+    return true;
+  }
+
+  function unregisterGraphNode(graph, id) {
+    var root = graph.nodesById.get(id);
+    if (root && graph.resizeObserver) graph.resizeObserver.unobserve(root);
+    graph.nodesById.delete(id);
+    graph.positionsById.delete(id);
+    var rail = graph.nodeRailsById.get(id);
+    if (rail) rail.remove();
+    graph.nodeRailsById.delete(id);
+    kindPickers = kindPickers.filter(function (picker) {
+      if (picker.root !== root) return true;
+      if (picker.select.parentNode) picker.select.parentNode.remove();
+      return false;
+    });
+    if (graphDrag && graphDrag.graph === graph &&
+        graphDrag.el.getAttribute("data-model-id") === id) {
+      finishGraphDrag(null);
+    }
+  }
+
+  function removeNode(id) {
+    var node = getNode(state.model, id);
+    if (!node) return;
+    var incidentIds = new Set();
+    state.model.edges.forEach(function (edge) {
+      if (edge.from === id || edge.to === id) incidentIds.add(edge.id);
+    });
+    if (edgeDrag && (
+      (edgeDrag.mode === "create" && edgeDrag.sourceId === id) ||
+      (edgeDrag.mode === "rewire" && incidentIds.has(edgeDrag.edgeId))
+    )) finishEdgeDrag(null, false);
+    if (selectedEdgeId && incidentIds.has(selectedEdgeId)) selectedEdgeId = null;
+
+    state.model.nodes = state.model.nodes.filter(function (entry) {
+      return entry.id !== id;
+    });
+    state.model.edges = state.model.edges.filter(function (edge) {
+      return edge.from !== id && edge.to !== id;
+    });
+    state.model.groups.forEach(function (group) {
+      if (!Array.isArray(group.nodes)) return;
+      group.nodes = group.nodes.filter(function (nodeId) { return nodeId !== id; });
+    });
+    graphs.forEach(function (graph) { unregisterGraphNode(graph, id); });
+
+    var projections = [];
+    document.querySelectorAll("[data-model-id]").forEach(function (element) {
+      if (element.getAttribute("data-model-id") !== id || isInsideHarnessUi(element)) return;
+      var ancestor = element.parentElement;
+      while (ancestor && ancestor !== document.body) {
+        if (ancestor.getAttribute &&
+            ancestor.getAttribute("data-model-id") === id) return;
+        ancestor = ancestor.parentElement;
+      }
+      projections.push(element);
+    });
+    projections.forEach(function (element) { element.remove(); });
+    graphs.forEach(function (graph) { scheduleGraphRender(graph); });
+  }
+
+  function authoredClassName(root) {
+    var kept = [];
+    root.classList.forEach(function (token) {
+      if (token.indexOf("ark-harness-") !== 0) kept.push(token);
+    });
+    return kept.join(" ");
+  }
+
+  function projectionTemplate(graph, kind) {
+    var template = null;
+    graph.nodesById.forEach(function (root, id) {
+      if (template) return;
+      var node = getNode(state.model, id);
+      if (kind && node && node.kind === kind) template = root;
+    });
+    if (!template) {
+      graph.nodesById.forEach(function (root) {
+        if (!template) template = root;
+      });
+    }
+    var tag = template && /^(ARTICLE|SECTION|DIV)$/.test(template.tagName)
+      ? template.tagName.toLowerCase()
+      : "article";
+    return { tag: tag, className: template ? authoredClassName(template) : "" };
+  }
+
+  function createNodeProjection(graph, node) {
+    var template = projectionTemplate(graph, node.kind || "");
+    var root = template.tag === "section"
+      ? document.createElement("section")
+      : template.tag === "div"
+        ? document.createElement("div")
+        : document.createElement("article");
+    var label = document.createElement("span");
+    root.setAttribute("data-model-id", node.id);
+    label.setAttribute("data-model-id", node.id);
+    if (node.kind) root.setAttribute("data-kind", node.kind);
+    if (template.className) root.className = template.className;
+    label.textContent = node.label;
+    root.appendChild(label);
+    return { root: root, label: label };
+  }
+
+  function nodePlacementBlockers(graph, excluded) {
+    var blockers = [];
+    var add = function (element) {
+      if (element === excluded || !element.isConnected) return;
+      var rect = graphLocalRect(graph, element);
+      if (rect && rect.width > 0 && rect.height > 0) blockers.push(rect);
+    };
+    graph.nodesById.forEach(add);
+    graph.svg.querySelectorAll("text[data-ark-edge-id]").forEach(add);
+    graph.edgeHandlesByKey.forEach(add);
+    graph.nodeRailsById.forEach(add);
+    graph.edgeDeleteControlsById.forEach(function (control) { add(control.wrapper); });
+    graph.nodesById.forEach(function (nodeRoot) {
+      nodeRoot.querySelectorAll(
+        ".ark-harness-kind-picker, .ark-harness-graph-handle"
+      ).forEach(add);
+    });
+    return blockers;
+  }
+
+  function findNodePlacement(graph, root) {
+    var config = readLayoutConfig(state.model);
+    var rect = root.getBoundingClientRect();
+    var width = rect.width || 160;
+    var height = rect.height || 64;
+    var blockers = nodePlacementBlockers(graph, root);
+    var maximumRight = config.padding;
+    var maximumBottom = config.padding;
+    blockers.forEach(function (blocker) {
+      maximumRight = Math.max(maximumRight, blocker.x + blocker.width);
+      maximumBottom = Math.max(maximumBottom, blocker.y + blocker.height);
+    });
+    var candidates = [];
+    for (var i = 0; i < blockers.length + 8; i++) {
+      candidates.push(config.direction === "TB"
+        ? {
+            x: config.padding + i * (width + config.nodeSpacing),
+            y: maximumBottom + config.rankSpacing
+          }
+        : {
+            x: maximumRight + config.rankSpacing,
+            y: config.padding + i * (height + config.nodeSpacing)
+          });
+    }
+    for (var j = 0; j < candidates.length; j++) {
+      var candidate = {
+        x: Math.max(0, Math.round(candidates[j].x)),
+        y: Math.max(0, Math.round(candidates[j].y)),
+        width: width,
+        height: height
+      };
+      if (!blockers.some(function (blocker) {
+        return rectanglesCollide(candidate, blocker, config.nodeSpacing);
+      })) return { x: candidate.x, y: candidate.y };
+    }
+    return config.direction === "TB"
+      ? { x: Math.round(maximumRight + config.nodeSpacing), y: Math.round(maximumBottom + config.rankSpacing) }
+      : { x: Math.round(maximumRight + config.rankSpacing), y: Math.round(maximumBottom + config.nodeSpacing) };
+  }
+
+  function addNode(graph, kind) {
+    if (!graph || graphs.indexOf(graph) === -1) {
+      updateStatus(!!submitPort, "配置先 graph を解決できませんでした");
+      return;
+    }
+    if (kind && kindCandidates.indexOf(kind) === -1) return;
+    var id = generateUniqueModelId("node");
+    if (!id) {
+      updateStatus(!!submitPort, "一意な ID を生成できませんでした");
+      return;
+    }
+    var node = { id: id, label: "新しいノード", ext: { x: 0, y: 0 } };
+    if (kind) node.kind = kind;
+    var projection = createNodeProjection(graph, node);
+    graph.container.appendChild(projection.root);
+    projection.root.classList.add("ark-harness-graph-node");
+    projection.root.style.setProperty("--ark-harness-graph-x", "0px");
+    projection.root.style.setProperty("--ark-harness-graph-y", "0px");
+    try {
+      var position = findNodePlacement(graph, projection.root);
+      node.ext.x = position.x;
+      node.ext.y = position.y;
+      state.model.nodes.push(node);
+      if (!registerGraphNode(graph, projection.root, node)) {
+        throw new Error("node registration failed");
+      }
+      wireEditableLeaf(projection.label, null);
+      graphs.forEach(function (entry) { scheduleGraphRender(entry); });
+    } catch (error) {
+      state.model.nodes = state.model.nodes.filter(function (entry) {
+        return entry.id !== id;
+      });
+      unregisterGraphNode(graph, id);
+      projection.root.remove();
+      updateStatus(!!submitPort, "ノードを追加できませんでした");
+    }
+  }
+
   function wireGraph(container) {
     var nodesById = new Map();
-    var modelNodesById = new Map();
+    var nodeCandidates = [];
     var groupsById = new Map();
     var groupCandidates = container.querySelectorAll("[data-ark-group][data-model-id]");
     groupCandidates.forEach(function (el) {
@@ -1146,14 +1849,17 @@ const HARNESS_JS = `(function () {
       var node = getNode(state.model, id);
       if (!node) return;
       nodesById.set(id, el);
-      modelNodesById.set(id, node);
-      el.classList.add("ark-harness-graph-node");
+      nodeCandidates.push({ root: el, node: node });
     });
 
     var svg = svgElement("svg");
     svg.classList.add("ark-harness-edge-layer");
     markUi(svg);
     container.appendChild(svg);
+    var previewLayer = document.createElement("div");
+    previewLayer.classList.add("ark-harness-edge-preview-layer");
+    markUi(previewLayer);
+    container.appendChild(previewLayer);
     var handleLayer = document.createElement("div");
     handleLayer.className = "ark-harness-edge-handle-layer";
     markUi(handleLayer);
@@ -1166,21 +1872,24 @@ const HARNESS_JS = `(function () {
       svg: svg,
       edgeGeometryById: new Map(),
       handleLayer: handleLayer,
+      previewLayer: previewLayer,
       edgeHandlesByKey: new Map(),
+      edgeDeleteControlsById: new Map(),
+      nodeRailsById: new Map(),
       positionsById: new Map(),
       layoutExtent: { width: null, height: null },
       resizeObserver: null,
       scheduled: false,
       markerId: "ark-harness-arrow-" + graphSequence
     };
-    nodesById.forEach(function (el, id) {
-      attachKindPicker(graph, el);
-      attachGraphHandle(graph, el, modelNodesById.get(id));
+    nodesById.clear();
+    nodeCandidates.forEach(function (candidate) {
+      registerGraphNode(graph, candidate.root, candidate.node);
     });
     if (typeof ResizeObserver !== "undefined") {
       graph.resizeObserver = new ResizeObserver(function () { scheduleGraphRender(graph); });
       graph.resizeObserver.observe(container);
-      nodesById.forEach(function (el) { graph.resizeObserver.observe(el); });
+      graph.nodesById.forEach(function (el) { graph.resizeObserver.observe(el); });
     }
     scheduleGraphRender(graph);
     return graph;
@@ -1197,6 +1906,9 @@ const HARNESS_JS = `(function () {
     });
     window.addEventListener("pointercancel", function (event) {
       finishEdgeDrag(event, false);
+    });
+    window.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") finishEdgeDrag(null, false);
     });
   }
 
@@ -1478,7 +2190,11 @@ const HARNESS_JS = `(function () {
   function addField(listEl, ownerNodeId) {
     var node = getNode(state.model, ownerNodeId);
     if (!node) return;
-    var id = cryptoRandomId();
+    var id = generateUniqueModelId("field");
+    if (!id) {
+      updateStatus(!!submitPort, "一意な ID を生成できませんでした");
+      return;
+    }
     var field = { id: id, label: "新しい項目" };
     if (!node.fields) node.fields = [];
     node.fields.push(field);
@@ -1557,6 +2273,10 @@ const HARNESS_JS = `(function () {
     clone.querySelectorAll("[data-ark-harness-ui]").forEach(function (el) {
       if (el.parentNode) el.parentNode.removeChild(el);
     });
+    if (clone.body) {
+      clone.body.style.removeProperty("--ark-harness-toolbar-height");
+      if (clone.body.style.length === 0) clone.body.removeAttribute("style");
+    }
     clone.querySelectorAll(".ark-harness-graph-node").forEach(function (el) {
       el.style.removeProperty("--ark-harness-graph-x");
       el.style.removeProperty("--ark-harness-graph-y");
@@ -1651,7 +2371,9 @@ const HARNESS_JS = `(function () {
         if (!Array.isArray(parsed.nodes)) throw new Error("nodes は配列である必要があります");
         if (!Array.isArray(parsed.edges)) parsed.edges = [];
         if (!Array.isArray(parsed.groups)) parsed.groups = [];
+        finishEdgeDrag(null, false);
         state.model = parsed;
+        reserveCurrentModelIds();
         syncNodeKinds();
         syncKindPickers();
         syncLayoutDirectionButton();
@@ -1672,6 +2394,82 @@ const HARNESS_JS = `(function () {
     return panel;
   }
 
+  function createPaletteSelect(labelText, className) {
+    var label = document.createElement("label");
+    label.className = "ark-harness-palette-label";
+    markUi(label);
+    var text = document.createElement("span");
+    text.textContent = labelText;
+    markUi(text);
+    var select = document.createElement("select");
+    select.className = "ark-harness-palette-select " + className;
+    select.setAttribute("aria-label", labelText);
+    markUi(select);
+    ["pointerdown", "click", "keydown"].forEach(function (type) {
+      select.addEventListener(type, function (event) { event.stopPropagation(); });
+    });
+    label.appendChild(text);
+    label.appendChild(select);
+    return { label: label, select: select };
+  }
+
+  function buildNodePalette() {
+    var palette = document.createElement("div");
+    palette.className = "ark-harness-node-palette";
+    markUi(palette);
+    var graphChoice = createPaletteSelect("配置先", "ark-harness-graph-select");
+    document.querySelectorAll('[data-ark-container="graph"]').forEach(function (_, index) {
+      var option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = "graph " + (index + 1);
+      markUi(option);
+      graphChoice.select.appendChild(option);
+    });
+    var kindChoice = createPaletteSelect("kind", "ark-harness-palette-kind-select");
+    if (kindCandidates.length === 0) {
+      var none = document.createElement("option");
+      none.value = "";
+      none.textContent = "kind なし";
+      markUi(none);
+      kindChoice.select.appendChild(none);
+    } else {
+      kindCandidates.forEach(function (value) {
+        kindChoice.select.appendChild(createKindOption(value));
+      });
+    }
+    var add = createButton(
+      "+ ノード",
+      "ark-harness-btn ark-harness-btn-secondary ark-harness-add-node",
+      "ノードを追加"
+    );
+    add.addEventListener("click", function () {
+      var graphIndex = Number(graphChoice.select.value);
+      var graph = Number.isInteger(graphIndex) ? graphs[graphIndex] : null;
+      var kind = kindChoice.select.value;
+      if (kind && kindCandidates.indexOf(kind) === -1) return;
+      addNode(graph, kind);
+    });
+    palette.appendChild(graphChoice.label);
+    palette.appendChild(kindChoice.label);
+    palette.appendChild(add);
+    return palette;
+  }
+
+  function syncToolbarHeight(bar) {
+    var update = function () {
+      var height = Math.ceil(bar.getBoundingClientRect().height);
+      if (height > 0) {
+        document.body.style.setProperty("--ark-harness-toolbar-height", height + "px");
+      }
+    };
+    update();
+    window.requestAnimationFrame(update);
+    if (typeof ResizeObserver !== "undefined") {
+      var observer = new ResizeObserver(update);
+      observer.observe(bar);
+    }
+  }
+
   function buildToolbar() {
     var bar = document.createElement("div");
     bar.className = "ark-harness-toolbar";
@@ -1682,6 +2480,7 @@ const HARNESS_JS = `(function () {
       syncLayoutDirectionButton();
       layoutDirectionBtn.addEventListener("click", toggleLayoutDirection);
       bar.appendChild(layoutDirectionBtn);
+      bar.appendChild(buildNodePalette());
     }
 
     var editModelBtn = createButton("モデルを直接編集", "ark-harness-btn ark-harness-btn-secondary", "モデル JSON を直接編集する");
@@ -1707,6 +2506,7 @@ const HARNESS_JS = `(function () {
 
     document.body.appendChild(panel);
     document.body.appendChild(bar);
+    syncToolbarHeight(bar);
 
     editModelBtn.addEventListener("click", function () {
       var opening = panel.style.display !== "flex";
@@ -1725,6 +2525,7 @@ const HARNESS_JS = `(function () {
       var model = loadModel();
       if (!model) return;
       state.model = model;
+      reservedModelIds = collectModelIds(model);
       syncNodeKinds();
       kindCandidates = collectKindCandidates();
       buildToolbar();
