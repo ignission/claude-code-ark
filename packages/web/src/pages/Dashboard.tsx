@@ -753,6 +753,8 @@ export default function Dashboard() {
                       handleTabSelect(session.id, idx),
                     onTabClose: (idx: number) =>
                       handleTabClose(session.id, idx),
+                    onSelectDiagram: (relPath: string) =>
+                      openDiagramTab(session.id, session.worktreePath, relPath),
                     onSendMessage: (msg: string) =>
                       sendMessage(session.id, msg),
                     onSendKey: (key: SpecialKey) => sendKey(session.id, key),

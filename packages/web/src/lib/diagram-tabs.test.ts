@@ -1,56 +1,172 @@
 import { describe, expect, it } from "vitest";
 import type { ViewerTab } from "../components/TerminalPane";
-import { addOrFocusDiagramTab } from "./diagram-tabs";
+import { setCurrentDiagramTab } from "./diagram-tabs";
 
-const base: ViewerTab[] = [{ type: "terminal", id: "terminal" }];
+const terminal: ViewerTab = { type: "terminal", id: "terminal" };
+const diagram = (
+  id: string,
+  relPath: string,
+  restoredOnLoad?: boolean
+): ViewerTab => ({
+  type: "diagram",
+  id,
+  worktreePath: "/wt",
+  relPath,
+  restoredOnLoad,
+});
+const file = (id: string): ViewerTab => ({
+  type: "file",
+  id,
+  filePath: `/${id}.txt`,
+  content: "",
+  mimeType: "text/plain",
+  size: 0,
+});
+const html = (id: string): ViewerTab => ({
+  type: "html",
+  id,
+  filePath: `/${id}.html`,
+});
 
-describe("addOrFocusDiagramTab", () => {
-  it("図タブが無ければ追加する", () => {
-    const tabs = addOrFocusDiagramTab(base, "/wt", "a.diagram.html", "d1");
+describe("setCurrentDiagramTab", () => {
+  it("図タブが無ければ現在図を1件追加する", () => {
+    const result = setCurrentDiagramTab(
+      [terminal],
+      0,
+      "/wt",
+      "a.diagram.html",
+      "d1"
+    );
 
-    expect(tabs).toHaveLength(2);
-    expect(tabs[1]).toEqual({
-      type: "diagram",
-      id: "d1",
-      worktreePath: "/wt",
-      relPath: "a.diagram.html",
+    expect(result).toEqual({
+      tabs: [
+        terminal,
+        {
+          type: "diagram",
+          id: "d1",
+          worktreePath: "/wt",
+          relPath: "a.diagram.html",
+          restoredOnLoad: undefined,
+        },
+      ],
+      activeIndex: 0,
     });
   });
 
-  it("同じ図が既に開いていれば追加しない（配列をそのまま返す）", () => {
-    const first = addOrFocusDiagramTab(base, "/wt", "a.diagram.html", "d1");
-
-    const second = addOrFocusDiagramTab(first, "/wt", "a.diagram.html", "d2");
-
-    expect(second).toHaveLength(2);
-    expect(second).toBe(first); // 変更が無いので同じ参照を返す
-  });
-
-  it("別の図は別タブとして追加する", () => {
-    const first = addOrFocusDiagramTab(base, "/wt", "a.diagram.html", "d1");
-
-    const second = addOrFocusDiagramTab(first, "/wt", "b.diagram.html", "d2");
-
-    expect(second).toHaveLength(3);
-  });
-
-  it("restoredOnLoad=true で追加したタブはそのフラグを持つ", () => {
-    const tabs = addOrFocusDiagramTab(
-      base,
+  it("同じ図の live open でも新しい id と restoredOnLoad=false へ更新する", () => {
+    const result = setCurrentDiagramTab(
+      [terminal, diagram("old", "a.diagram.html", true)],
+      0,
       "/wt",
       "a.diagram.html",
-      "d1",
+      "live"
+    );
+
+    expect(result.tabs).toHaveLength(2);
+    expect(result.tabs[1]).toEqual({
+      type: "diagram",
+      id: "live",
+      worktreePath: "/wt",
+      relPath: "a.diagram.html",
+      restoredOnLoad: undefined,
+    });
+  });
+
+  it("別図なら既存 diagram の位置で置換する", () => {
+    const f1 = file("f1");
+    const result = setCurrentDiagramTab(
+      [terminal, diagram("old", "a.diagram.html"), f1],
+      2,
+      "/wt",
+      "b.diagram.html",
+      "new"
+    );
+
+    expect(result.tabs.map(tab => tab.id)).toEqual(["terminal", "new", "f1"]);
+    expect(result.tabs[1]).toMatchObject({
+      type: "diagram",
+      relPath: "b.diagram.html",
+    });
+    expect(result.activeIndex).toBe(2);
+  });
+
+  it("過去の複数 diagram tabs を現在図1件へ畳み込む", () => {
+    const result = setCurrentDiagramTab(
+      [
+        terminal,
+        diagram("a", "a.diagram.html"),
+        file("f1"),
+        diagram("b", "b.diagram.html"),
+        html("h1"),
+      ],
+      4,
+      "/wt",
+      "c.diagram.html",
+      "current"
+    );
+
+    expect(result.tabs.map(tab => tab.id)).toEqual([
+      "terminal",
+      "current",
+      "f1",
+      "h1",
+    ]);
+    expect(result.tabs.filter(tab => tab.type === "diagram")).toHaveLength(1);
+  });
+
+  it("reload 復元だけ restoredOnLoad=true を保持する", () => {
+    const result = setCurrentDiagramTab(
+      [terminal],
+      0,
+      "/wt",
+      "a.diagram.html",
+      "restored",
       true
     );
 
-    expect(tabs[1]).toMatchObject({ type: "diagram", restoredOnLoad: true });
+    expect(result.tabs[1]).toMatchObject({
+      type: "diagram",
+      restoredOnLoad: true,
+    });
   });
 
-  it("restoredOnLoad は省略時 undefined になる（通常の live open）", () => {
-    const tabs = addOrFocusDiagramTab(base, "/wt", "a.diagram.html", "d1");
+  it.each([
+    { active: 2, expected: 2, label: "file" },
+    { active: 4, expected: 3, label: "html" },
+  ])("複数 diagram を畳んでも active $label を id で追跡する", ({
+    active,
+    expected,
+  }) => {
+    const tabs = [
+      terminal,
+      diagram("a", "a.diagram.html"),
+      file("active-file"),
+      diagram("b", "b.diagram.html"),
+      html("active-html"),
+    ];
 
-    expect((tabs[1] as { restoredOnLoad?: boolean }).restoredOnLoad).toBe(
-      undefined
+    const result = setCurrentDiagramTab(
+      tabs,
+      active,
+      "/wt",
+      "c.diagram.html",
+      "current"
     );
+
+    expect(result.activeIndex).toBe(expected);
+    expect(result.tabs[result.activeIndex]?.id).toBe(tabs[active]?.id);
+  });
+
+  it("active が diagram を指していた場合だけ terminal へ戻す", () => {
+    const result = setCurrentDiagramTab(
+      [terminal, diagram("a", "a.diagram.html"), file("f1")],
+      1,
+      "/wt",
+      "b.diagram.html",
+      "current"
+    );
+
+    expect(result.activeIndex).toBe(0);
+    expect(result.tabs[0]).toBe(terminal);
   });
 });

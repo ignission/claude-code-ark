@@ -15,7 +15,8 @@ type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 interface DiagramPaneProps {
   sessionId: string;
   worktreePath: string;
-  relPath: string;
+  relPath?: string;
+  onSelectDiagram: (relPath: string) => void;
   /** 未接続時は null。null の間は診断購読をスキップする */
   socket: TypedSocket | null;
 }
@@ -64,6 +65,7 @@ export function DiagramPane({
   const portRef = useRef<MessagePort | null>(null);
 
   const load = useCallback(async () => {
+    if (!relPath) return;
     // 前のリクエストをキャンセル。タブ切り替え時に古い fetch が
     // 新しいタブの display を上書きするのを防ぐ（HtmlViewerPane と同じ方針）
     abortControllerRef.current?.abort();
@@ -111,17 +113,23 @@ export function DiagramPane({
   useEffect(() => {
     setHtml(null);
     setError(null);
+    if (!relPath) {
+      abortControllerRef.current?.abort();
+      portRef.current?.close();
+      portRef.current = null;
+      return;
+    }
     void load();
     return () => {
       portRef.current?.close();
       portRef.current = null;
     };
-  }, [load]);
+  }, [load, relPath]);
 
   // 図ファイルの更新監視。worktreePath / relPath が変わるたびに
   // 古い購読を解除してから新しい購読を張る。アンマウント時も同様に解除する。
   useEffect(() => {
-    if (!socket) return;
+    if (!socket || !relPath) return;
     socket.emit("diagram:subscribe", { worktreePath, relPath });
     const onUpdated = (data: { worktreePath: string; relPath: string }) => {
       if (data.worktreePath === worktreePath && data.relPath === relPath) {
@@ -148,6 +156,7 @@ export function DiagramPane({
   // エラーを表示する（非破壊）。
   const handleSubmit = useCallback(
     (model: unknown, submittedHtml: string) => {
+      if (!relPath) return;
       if (!socket) {
         setSubmitError("サーバーに未接続のため送信できません");
         return;
@@ -221,6 +230,14 @@ export function DiagramPane({
     },
     [handleSubmit, html]
   );
+
+  if (!relPath) {
+    return (
+      <div className="flex h-full items-center justify-center p-4 text-sm text-muted-foreground">
+        図を選択してください
+      </div>
+    );
+  }
 
   if (error) {
     return (
