@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>EC ドメインモデル（ER 図）</title>
+<style>
+  body { margin: 0; background: #0f1117; color: #e6e8ee;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+  .er-graph { position: relative; padding: 48px; }
+
+  .entity {
+    box-sizing: border-box; width: 13rem;
+    border: 1px solid #3b82f6; border-radius: 8px;
+    background: #141b2d; overflow: hidden;
+  }
+  .entity h2 {
+    margin: 0; padding: .5rem .7rem; font-size: 13.5px; font-weight: 700;
+    background: #182a46; color: #dbe7ff; border-bottom: 1px solid #2a3a5c;
+    display: flex; align-items: center; gap: .4rem;
+  }
+  .entity h2::before { content: "▤"; color: #60a5fa; }
+  .entity ul { list-style: none; margin: 0; padding: 0; }
+  .entity li {
+    padding: .28rem .7rem; font-size: 12px; color: #aeb9d0;
+    border-bottom: 1px solid #1c2740; display: flex; justify-content: space-between; gap: .5rem;
+  }
+  .entity li:last-child { border-bottom: 0; }
+  .entity li .key { font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+  .entity li .pk { color: #fbbf24; }
+  .entity li .fk { color: #34d399; }
+
+  /* 関係の種類ごとに線を出し分ける（harness が生成する main line に対して詳細度を上げる） */
+  [data-ark-container="graph"] .ark-harness-edge-main[data-ark-edge-type="identifying"] {
+    stroke: #f59e0b; stroke-width: 2.25;
+  }
+  [data-ark-container="graph"] .ark-harness-edge-main[data-ark-edge-type="association"] {
+    stroke: #c084fc; stroke-dasharray: 7 5;
+  }
+  [data-ark-container="graph"] .ark-harness-edge-main[data-ark-edge-type="non-identifying"] {
+    stroke: #64748b;
+  }
+</style>
+</head>
+<body>
+<script type="application/json" id="ark-diagram-model">
+{
+  "version": 1,
+  "title": "EC ドメインモデル（ER 図）",
+  "ext": { "layout": { "direction": "LR", "rankSpacing": 128, "nodeSpacing": 56, "padding": 32 } },
+  "nodes": [
+    { "id": "customer", "label": "Customer", "kind": "entity", "fields": [
+      { "id": "customer_id", "label": "id 〈PK〉" },
+      { "id": "customer_email", "label": "email" },
+      { "id": "customer_name", "label": "name" } ] },
+    { "id": "order", "label": "Order", "kind": "entity", "fields": [
+      { "id": "order_id", "label": "id 〈PK〉" },
+      { "id": "order_customer_id", "label": "customer_id 〈FK〉" },
+      { "id": "order_status", "label": "status" },
+      { "id": "order_total", "label": "total" } ] },
+    { "id": "order_line", "label": "OrderLine", "kind": "entity", "fields": [
+      { "id": "line_id", "label": "id 〈PK〉" },
+      { "id": "line_order_id", "label": "order_id 〈FK〉" },
+      { "id": "line_product_id", "label": "product_id 〈FK〉" },
+      { "id": "line_qty", "label": "quantity" },
+      { "id": "line_price", "label": "unit_price" } ] },
+    { "id": "product", "label": "Product", "kind": "entity", "fields": [
+      { "id": "product_id", "label": "id 〈PK〉" },
+      { "id": "product_name", "label": "name" },
+      { "id": "product_price", "label": "price" } ] },
+    { "id": "category", "label": "Category", "kind": "entity", "fields": [
+      { "id": "category_id", "label": "id 〈PK〉" },
+      { "id": "category_name", "label": "name" } ] },
+    { "id": "payment", "label": "Payment", "kind": "entity", "fields": [
+      { "id": "payment_id", "label": "id 〈PK〉" },
+      { "id": "payment_order_id", "label": "order_id 〈FK〉" },
+      { "id": "payment_method", "label": "method" },
+      { "id": "payment_status", "label": "status" } ] }
+  ],
+  "edges": [
+    { "id": "r_customer_order", "from": "customer", "to": "order", "label": "places",
+      "ext": { "from_card": "one", "to_card": "zero-or-many", "direction": "forward", "type": "identifying" } },
+    { "id": "r_order_line", "from": "order", "to": "order_line", "label": "contains",
+      "ext": { "from_card": "one", "to_card": "one-or-many", "direction": "forward", "type": "identifying" } },
+    { "id": "r_product_line", "from": "product", "to": "order_line", "label": "appears in",
+      "ext": { "from_card": "one", "to_card": "zero-or-many", "direction": "forward", "type": "non-identifying" } },
+    { "id": "r_order_payment", "from": "order", "to": "payment", "label": "paid by",
+      "ext": { "from_card": "one", "to_card": "one", "direction": "forward", "type": "identifying" } },
+    { "id": "r_product_category", "from": "product", "to": "category", "label": "categorized as (N:M)",
+      "ext": { "from_card": "zero-or-many", "to_card": "zero-or-many", "direction": "both", "type": "association" } }
+  ],
+  "groups": []
+}
+</script>
+
+<div class="er-graph" data-ark-container="graph">
+  <section class="entity" data-model-id="customer" data-kind="entity">
+    <h2 data-model-id="customer">Customer</h2>
+    <ul>
+      <li data-model-id="customer_id"><span>id</span><span class="key pk">PK</span></li>
+      <li data-model-id="customer_email"><span>email</span><span></span></li>
+      <li data-model-id="customer_name"><span>name</span><span></span></li>
+    </ul>
+  </section>
+
+  <section class="entity" data-model-id="order" data-kind="entity">
+    <h2 data-model-id="order">Order</h2>
+    <ul>
+      <li data-model-id="order_id"><span>id</span><span class="key pk">PK</span></li>
+      <li data-model-id="order_customer_id"><span>customer_id</span><span class="key fk">FK</span></li>
+      <li data-model-id="order_status"><span>status</span><span></span></li>
+      <li data-model-id="order_total"><span>total</span><span></span></li>
+    </ul>
+  </section>
+
+  <section class="entity" data-model-id="order_line" data-kind="entity">
+    <h2 data-model-id="order_line">OrderLine</h2>
+    <ul>
+      <li data-model-id="line_id"><span>id</span><span class="key pk">PK</span></li>
+      <li data-model-id="line_order_id"><span>order_id</span><span class="key fk">FK</span></li>
+      <li data-model-id="line_product_id"><span>product_id</span><span class="key fk">FK</span></li>
+      <li data-model-id="line_qty"><span>quantity</span><span></span></li>
+      <li data-model-id="line_price"><span>unit_price</span><span></span></li>
+    </ul>
+  </section>
+
+  <section class="entity" data-model-id="product" data-kind="entity">
+    <h2 data-model-id="product">Product</h2>
+    <ul>
+      <li data-model-id="product_id"><span>id</span><span class="key pk">PK</span></li>
+      <li data-model-id="product_name"><span>name</span><span></span></li>
+      <li data-model-id="product_price"><span>price</span><span></span></li>
+    </ul>
+  </section>
+
+  <section class="entity" data-model-id="category" data-kind="entity">
+    <h2 data-model-id="category">Category</h2>
+    <ul>
+      <li data-model-id="category_id"><span>id</span><span class="key pk">PK</span></li>
+      <li data-model-id="category_name"><span>name</span><span></span></li>
+    </ul>
+  </section>
+
+  <section class="entity" data-model-id="payment" data-kind="entity">
+    <h2 data-model-id="payment">Payment</h2>
+    <ul>
+      <li data-model-id="payment_id"><span>id</span><span class="key pk">PK</span></li>
+      <li data-model-id="payment_order_id"><span>order_id</span><span class="key fk">FK</span></li>
+      <li data-model-id="payment_method"><span>method</span><span></span></li>
+      <li data-model-id="payment_status"><span>status</span><span></span></li>
+    </ul>
+  </section>
+</div>
+</body>
+</html>
