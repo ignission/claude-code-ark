@@ -10,6 +10,8 @@ import { errnoCode, errnoMessage } from "./errors.js";
 const DIAGRAM_SUFFIX = ".diagram.html";
 const MAX_WORKTREE_PATH_LENGTH = 4096;
 const DIAGRAM_READ_CONCURRENCY = 8;
+const GIT_TIMEOUT_MS = 10_000;
+const GIT_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
 
 async function listTrackedDiagramPaths(
@@ -18,7 +20,11 @@ async function listTrackedDiagramPaths(
   const { stdout } = await execFileAsync(
     "git",
     ["-C", worktreeReal, "ls-files", "--cached", "-z", "--", DIAGRAM_DIR],
-    { encoding: "utf8" }
+    {
+      encoding: "utf8",
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: GIT_MAX_BUFFER_BYTES,
+    }
   );
   return new Set(stdout.split("\0").filter(Boolean));
 }

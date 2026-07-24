@@ -93,6 +93,11 @@ describe("handleDiagramDeleteRequest payload validation", () => {
       expectedTracked: true,
     },
     { sessionId: "session-1", relPath: "", expectedTracked: true },
+    {
+      sessionId: "session-1",
+      relPath: ".claude/diagrams/a\0.diagram.html",
+      expectedTracked: true,
+    },
     { sessionId: "session-1", relPath: 1, expectedTracked: true },
     {
       sessionId: "session-1",
@@ -224,6 +229,26 @@ describe("handleDiagramDeleteRequest tracked 再確認", () => {
 
     expect(result).toMatchObject({ ok: false, code: "IO_ERROR" });
     if (!result.ok) expect(result.error).toContain("git failed");
+    expect(deps.deleteDiagramFile).not.toHaveBeenCalled();
+  });
+
+  it("git timeout kill は未追跡扱いにせず unlink 前の IO_ERROR にする", async () => {
+    const deps = makeRequestDeps();
+    vi.mocked(deps.isDiagramTracked).mockRejectedValue(
+      Object.assign(new Error("git timed out"), {
+        killed: true,
+        signal: "SIGTERM",
+      })
+    );
+
+    const result = await handleDiagramDeleteRequest(deps, {
+      sessionId: "session-1",
+      relPath: ".claude/diagrams/a.diagram.html",
+      expectedTracked: false,
+    });
+
+    expect(result).toMatchObject({ ok: false, code: "IO_ERROR" });
+    if (!result.ok) expect(result.error).toContain("git timed out");
     expect(deps.deleteDiagramFile).not.toHaveBeenCalled();
   });
 
@@ -473,6 +498,31 @@ describe("deleteDiagramFile path boundary", () => {
 });
 
 describe("deleteDiagramFile symlink と file 種別", () => {
+  it("Windows では filesystem に触れず FORBIDDEN にする", async () => {
+    const { worktree, diagramsDir } = makeDeleteFixture();
+    const target = path.join(diagramsDir, "target.diagram.html");
+    fs.writeFileSync(target, "target");
+    const open = vi.fn();
+    const unlinkSync = vi.fn();
+
+    await expect(
+      deleteDiagramFile(worktree, ".claude/diagrams/target.diagram.html", {
+        platform: "win32",
+        fs: {
+          open,
+          realpath: fs.promises.realpath,
+          stat: fs.promises.stat,
+          lstatSync: fs.lstatSync,
+          unlinkSync,
+        },
+      })
+    ).resolves.toMatchObject({ ok: false, code: "FORBIDDEN" });
+
+    expect(open).not.toHaveBeenCalled();
+    expect(unlinkSync).not.toHaveBeenCalled();
+    expect(fs.readFileSync(target, "utf8")).toBe("target");
+  });
+
   it.each([
     "outside",
     "inside",

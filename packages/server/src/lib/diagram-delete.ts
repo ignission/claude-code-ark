@@ -7,6 +7,8 @@ import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
 import { errnoCode, errnoMessage } from "./errors.js";
 
 const MAX_SESSION_ID_LENGTH = 1024;
+const GIT_TIMEOUT_MS = 10_000;
+const GIT_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
 
 export type DeleteDiagramFileResult =
@@ -48,6 +50,7 @@ interface DiagramDeleteFs {
 
 interface DeleteDiagramFileOptions {
   fs?: DiagramDeleteFs;
+  platform?: NodeJS.Platform;
   beforeFinalIdentityCheck?: (absPath: string) => void;
 }
 
@@ -99,7 +102,11 @@ export async function isDiagramTracked(
       "--",
       resolved.relPath,
     ],
-    { encoding: "utf8" }
+    {
+      encoding: "utf8",
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: GIT_MAX_BUFFER_BYTES,
+    }
   );
   return stdout.split("\0").some(candidate => candidate === resolved.relPath);
 }
@@ -112,6 +119,11 @@ export async function deleteDiagramFile(
   const resolved = resolveDeleteDiagramPath(worktreeReal, relPath);
   if (!resolved.ok) {
     return forbidden(resolved.error);
+  }
+  if ((options.platform ?? process.platform) === "win32") {
+    return forbidden(
+      "この環境では symlink を安全に検証できないため図ファイルを削除できません"
+    );
   }
 
   const deleteFs = options.fs ?? defaultDeleteFs;
@@ -194,6 +206,7 @@ function isValidRequest(
     request.sessionId.length <= MAX_SESSION_ID_LENGTH &&
     typeof request.relPath === "string" &&
     request.relPath.length > 0 &&
+    !request.relPath.includes("\0") &&
     typeof request.expectedTracked === "boolean"
   );
 }

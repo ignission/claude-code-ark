@@ -34,6 +34,10 @@ it("git ls-files の pathspec magic を明示的に無効化する", async () =>
       "--",
       ".claude/diagrams/:(glob)*.diagram.html",
     ],
-    { encoding: "utf8" }
+    {
+      encoding: "utf8",
+      timeout: 10_000,
+      maxBuffer: 10 * 1024 * 1024,
+    }
   );
 });
