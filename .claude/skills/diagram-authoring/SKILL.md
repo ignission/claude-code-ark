@@ -79,8 +79,19 @@ auto として扱われる。標準は node 座標を省略し、図全体の `m
   配置される。manual node は動かさず、auto node がそれを避ける
 - auto 座標は表示専用で model へ書き戻されない。node をドラッグしたときだけ、その
   node の有限な x/y が保存され、以後 manual になる
-- group は配置後の member node を囲み、edge は配置後の node 外周を結ぶ。
-  `group.ext` / `edge.ext` の既存語彙は layout 設定とは独立してそのまま使う
+- 座標を省略した、互いに member が重ならない flat group は cluster として自動配置
+  される。group 内で閉じる edge は member の読み順、group をまたぐ edge は cluster
+  間の読み順に使われ、edge 自体は配置後の node 外周を結ぶ
+- node の幅・高さと authored group 境界の余白は表示 DOM から実測される。field 数や
+  label 長から高さを見積もる必要はなく、折返しや field 編集後も再配置される
+- manual 座標は group 内でも絶対優先される。manual member を含む group は固定
+  cluster となり、残りの auto member と他の auto cluster がその境界を避ける
+- group-aware auto layout では **1 node 1 group** にする。同じ node を複数 group に
+  入れた図は重なる境界・疑似階層を保つため従来の node 単位 layout へ fallback する。
+  region / VPC / subnet の疑似階層、timeline、swimlane の厳密な位置は全 node に有限な
+  `ext.x/y` を指定して manual のまま作る
+- group は配置後の member node を囲む。`group.ext` / `edge.ext` の既存語彙は layout
+  設定とは独立してそのまま使う
 
 ## 語彙: kind
 

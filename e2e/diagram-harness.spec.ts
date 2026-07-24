@@ -275,6 +275,192 @@ function autoLayoutHtml(
   </body></html>`);
 }
 
+function groupAwareModel(direction: "LR" | "TB" = "LR"): DiagramModel {
+  const node = (id: string, label: string, fieldCount: number) => ({
+    id,
+    label,
+    fields: Array.from({ length: fieldCount }, (_, index) => ({
+      id: `${id}_field_${index}`,
+      label: `${id} field ${index + 1}`,
+    })),
+  });
+  return {
+    version: 1,
+    ext: {
+      layout: {
+        direction,
+        rankSpacing: 72,
+        nodeSpacing: 32,
+        padding: 20,
+      },
+    },
+    nodes: [
+      node("cart", "Cart", 2),
+      node("cart_item", "Cart item with wider content", 5),
+      node("order", "Order", 3),
+      node("order_line", "Order line", 6),
+      node("stock", "Stock", 2),
+      node("stock_event", "Stock reserved", 3),
+      node("customer", "Customer", 2),
+      node("policy", "Fulfillment policy", 5),
+    ],
+    edges: [
+      { id: "e_cart_item", from: "cart", to: "cart_item" },
+      { id: "e_order_line", from: "order", to: "order_line" },
+      { id: "e_stock_event", from: "stock", to: "stock_event" },
+      { id: "e_cart_order", from: "cart_item", to: "order" },
+      { id: "e_order_stock", from: "order_line", to: "stock" },
+      { id: "e_customer_cart", from: "customer", to: "cart" },
+      { id: "e_stock_policy", from: "stock_event", to: "policy" },
+      { id: "e_policy_self", from: "policy", to: "policy" },
+    ],
+    groups: [
+      { id: "cart_group", label: "Cart", nodes: ["cart", "cart_item"] },
+      {
+        id: "order_group",
+        label: "Order",
+        nodes: ["order", "order_line"],
+      },
+      {
+        id: "stock_group",
+        label: "Stock",
+        nodes: ["stock", "stock_event"],
+      },
+    ],
+  };
+}
+
+function groupAwareHtml(direction: "LR" | "TB" = "LR"): string {
+  const diagramModel = groupAwareModel(direction);
+  const outsets = [
+    ["cart_group", 12, 28, 16, 14],
+    ["order_group", 20, 34, 20, 18],
+    ["stock_group", 10, 24, 12, 12],
+  ] as const;
+  return injectHarness(`<!doctype html><html><head><style>
+    body { margin: 0; }
+    .graph { width: 420px; height: 320px; background: #f8fafc; }
+    .node {
+      box-sizing: border-box; width: var(--node-width, 156px); min-height: 64px;
+      padding: 10px; border: 1px solid #64748b; background: white;
+      overflow-wrap: anywhere;
+    }
+    .node h2 { margin: 0 0 8px; font: 600 16px/20px sans-serif; }
+    .node ul { margin: 0; padding-left: 18px; }
+    .node li { min-height: 22px; font: 14px/20px sans-serif; }
+    [data-model-id="cart_item"] { --node-width: 196px; }
+    [data-model-id="order_line"] { --node-width: 184px; }
+    [data-model-id="stock_event"] { --node-width: 140px; }
+    .group-boundary {
+      display: none; box-sizing: border-box; position: absolute;
+      left: calc(var(--ark-harness-group-x) - var(--out-left));
+      top: calc(var(--ark-harness-group-y) - var(--out-top));
+      width: calc(var(--ark-harness-group-width) + var(--out-left) + var(--out-right));
+      height: calc(var(--ark-harness-group-height) + var(--out-top) + var(--out-bottom));
+      border: 2px solid #0f766e; background: rgba(15, 118, 110, .04);
+    }
+    .group-boundary.ark-harness-graph-group { display: block; }
+  </style></head><body>
+    <script id="ark-diagram-model" type="application/json">${JSON.stringify(diagramModel)}</script>
+    <div class="graph" data-ark-container="graph">
+      ${outsets
+        .map(
+          ([id, left, top, right, bottom]) =>
+            `<section class="group-boundary" data-ark-group data-model-id="${id}" style="--out-left:${left}px;--out-top:${top}px;--out-right:${right}px;--out-bottom:${bottom}px"><span data-model-id="${id}">${id}</span></section>`
+        )
+        .join("\n")}
+      ${diagramModel.nodes
+        .map(
+          node =>
+            `<section class="node" data-model-id="${node.id}"><h2 data-model-id="${node.id}">${node.label}</h2><ul>${(
+              node.fields ?? []
+            )
+              .map(
+                field => `<li data-model-id="${field.id}">${field.label}</li>`
+              )
+              .join("")}</ul></section>`
+        )
+        .join("\n")}
+    </div>
+  </body></html>`);
+}
+
+function mixedGroupAwareHtml(): string {
+  const diagramModel = groupAwareModel();
+  diagramModel.nodes = diagramModel.nodes.map(node => {
+    if (node.id === "cart") return { ...node, ext: { x: 260, y: 180 } };
+    if (node.id === "customer" || node.id === "policy")
+      return { ...node, ext: { x: 20, y: 20 } };
+    return node;
+  });
+  return groupAwareHtml().replace(
+    JSON.stringify(groupAwareModel()),
+    JSON.stringify(diagramModel)
+  );
+}
+
+function invalidGroupLayoutHtml(): string {
+  const diagramModel: DiagramModel = {
+    version: 1,
+    ext: {
+      layout: {
+        direction: "LR",
+        rankSpacing: 64,
+        nodeSpacing: 28,
+        padding: 16,
+      },
+    },
+    nodes: [
+      { id: "a", label: "A" },
+      { id: "b", label: "B" },
+      { id: "c", label: "C" },
+      { id: "outside", label: "Outside" },
+    ],
+    edges: [
+      { id: "e_ab", from: "a", to: "b" },
+      { id: "e_bc", from: "b", to: "c" },
+    ],
+    groups: [
+      { id: "first", label: "First", nodes: ["a", "b"] },
+      { id: "duplicate", label: "Duplicate", nodes: ["b", "c"] },
+      { id: "empty", label: "Empty", nodes: [] },
+      { id: "cross", label: "Cross", nodes: ["a", "outside"] },
+    ],
+  };
+  return injectHarness(`<!doctype html><html><head><style>
+    body { margin: 0; }
+    .graph { width: 320px; height: 220px; }
+    .node { box-sizing: border-box; width: 120px; height: 64px; border: 1px solid; }
+    .boundary {
+      display: none; position: absolute;
+      left: calc(var(--ark-harness-group-x) - 10px);
+      top: calc(var(--ark-harness-group-y) - 20px);
+      width: calc(var(--ark-harness-group-width) + 20px);
+      height: calc(var(--ark-harness-group-height) + 30px);
+      border: 1px solid;
+    }
+    .boundary.ark-harness-graph-group { display: block; }
+  </style></head><body>
+    <script id="ark-diagram-model" type="application/json">${JSON.stringify(diagramModel)}</script>
+    <div class="graph" data-ark-container="graph">
+      ${diagramModel.groups
+        .map(
+          group =>
+            `<section class="boundary" data-ark-group data-model-id="${group.id}">${group.label}</section>`
+        )
+        .join("")}
+      ${diagramModel.nodes
+        .filter(node => node.id !== "outside")
+        .map(
+          node =>
+            `<section class="node" data-model-id="${node.id}">${node.label}</section>`
+        )
+        .join("")}
+    </div>
+    <section data-model-id="outside">Outside</section>
+  </body></html>`);
+}
+
 function mixedLayoutHtml(): string {
   const mixedModel = {
     version: 1,
@@ -639,6 +825,25 @@ async function graphNodeBoxes(page: Page) {
       };
     })
   );
+}
+
+async function graphGroupBoxes(page: Page) {
+  return page
+    .locator(
+      '[data-ark-container="graph"] > [data-ark-group].ark-harness-graph-group'
+    )
+    .evaluateAll(elements =>
+      elements.map(element => {
+        const box = element.getBoundingClientRect();
+        return {
+          id: element.getAttribute("data-model-id") || "",
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
+        };
+      })
+    );
 }
 
 function expectNoOverlaps(
@@ -1697,6 +1902,357 @@ test("自動配置は text resize とモデル JSON 再適用で再計算する"
       return byId.branch_a.y > byId.source.y + byId.source.height;
     })
     .toBe(true);
+});
+
+for (const direction of ["LR", "TB"] as const) {
+  test(`group-aware auto layout ${direction} は全矩形を分離して cluster を保持する`, async ({
+    page,
+  }) => {
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    const initialModel = groupAwareModel(direction);
+    await page.setContent(groupAwareHtml(direction));
+
+    const graph = page.locator('[data-ark-container="graph"]');
+    const nodeBoxes = await graphNodeBoxes(page);
+    const nodeById = Object.fromEntries(nodeBoxes.map(box => [box.id, box]));
+    expect(nodeById.order_line.height).toBeGreaterThan(nodeById.cart.height);
+    expectNoOverlaps(nodeBoxes);
+
+    const groupBoxes = await graphGroupBoxes(page);
+    expect(groupBoxes).toHaveLength(initialModel.groups.length);
+    expectNoOverlaps(groupBoxes, 31);
+    const groupById = Object.fromEntries(groupBoxes.map(box => [box.id, box]));
+    const freeBoxes = ["customer", "policy"].map(id => nodeById[id]);
+    for (const groupBox of groupBoxes) {
+      for (const freeBox of freeBoxes) {
+        expect(
+          boxesOverlap(groupBox, freeBox, 31),
+          `${groupBox.id} と ${freeBox.id} が重なっています`
+        ).toBe(false);
+      }
+    }
+
+    for (const group of initialModel.groups) {
+      const boundary = groupById[group.id];
+      for (const id of group.nodes) {
+        expectBoxToContain(boundary, nodeById[id]);
+      }
+      for (const node of initialModel.nodes.filter(
+        node => !group.nodes.includes(node.id)
+      )) {
+        const box = nodeById[node.id];
+        const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+        expect(
+          center.x > boundary.x &&
+            center.x < boundary.x + boundary.width &&
+            center.y > boundary.y &&
+            center.y < boundary.y + boundary.height,
+          `${node.id} が ${group.id} に侵入しています`
+        ).toBe(false);
+      }
+    }
+
+    const geometry = await graph
+      .locator(":scope > [data-ark-group]")
+      .evaluateAll(elements =>
+        elements.map(element => {
+          const style = (element as HTMLElement).style;
+          return {
+            id: element.getAttribute("data-model-id") || "",
+            x: Number.parseFloat(
+              style.getPropertyValue("--ark-harness-group-x")
+            ),
+            y: Number.parseFloat(
+              style.getPropertyValue("--ark-harness-group-y")
+            ),
+            width: Number.parseFloat(
+              style.getPropertyValue("--ark-harness-group-width")
+            ),
+            height: Number.parseFloat(
+              style.getPropertyValue("--ark-harness-group-height")
+            ),
+          };
+        })
+      );
+    const graphBox = await requiredBoundingBox(graph);
+    for (const group of initialModel.groups) {
+      const raw = geometry.find(entry => entry.id === group.id);
+      if (!raw) throw new Error(`${group.id} の geometry がありません`);
+      const members = group.nodes.map(id => nodeById[id]);
+      const left = Math.min(...members.map(box => box.x));
+      const top = Math.min(...members.map(box => box.y));
+      const right = Math.max(...members.map(box => box.x + box.width));
+      const bottom = Math.max(...members.map(box => box.y + box.height));
+      expect(raw.x).toBeCloseTo(left - graphBox.x, 1);
+      expect(raw.y).toBeCloseTo(top - graphBox.y, 1);
+      expect(raw.width).toBeCloseTo(right - left, 1);
+      expect(raw.height).toBeCloseTo(bottom - top, 1);
+    }
+
+    const primary = direction === "LR" ? "x" : "y";
+    expect(groupById.order_group[primary]).toBeGreaterThan(
+      groupById.cart_group[primary]
+    );
+    expect(groupById.stock_group[primary]).toBeGreaterThan(
+      groupById.order_group[primary]
+    );
+    const edges = graph.locator(".ark-harness-edge-main[data-ark-edge-id]");
+    await expect(edges).toHaveCount(initialModel.edges.length);
+    expect(
+      await edges.evaluateAll(elements =>
+        elements.every(element =>
+          ["line", "path"].includes(element.tagName.toLowerCase())
+        )
+      )
+    ).toBe(true);
+
+    const before = Object.fromEntries(
+      nodeBoxes.map(box => [box.id, { x: box.x, y: box.y }])
+    );
+    await page
+      .getByRole("button", { name: "モデル JSON を直接編集する" })
+      .click();
+    await page
+      .locator(".ark-harness-textarea")
+      .fill(JSON.stringify(initialModel));
+    await page.getByRole("button", { name: "反映", exact: true }).click();
+    await expect
+      .poll(async () => {
+        const after = await graphNodeBoxes(page);
+        return after.every(
+          box =>
+            Math.abs(box.x - before[box.id].x) <= 0.5 &&
+            Math.abs(box.y - before[box.id].y) <= 0.5
+        );
+      })
+      .toBe(true);
+    expect(errors).toEqual([]);
+  });
+}
+
+test("group-aware auto layout は実測した可変高 resize 後も全矩形を再配置する", async ({
+  page,
+}) => {
+  await page.setContent(groupAwareHtml());
+  const beforeNodes = await graphNodeBoxes(page);
+  const before = Object.fromEntries(beforeNodes.map(box => [box.id, box]));
+  await page
+    .locator(
+      '[data-model-id="order_line"] li[data-model-id="order_line_field_0"] .ark-harness-text'
+    )
+    .fill("実測高さを増やすために十分長い field label ".repeat(12));
+
+  await expect
+    .poll(async () => {
+      const nodes = await graphNodeBoxes(page);
+      const current = Object.fromEntries(nodes.map(box => [box.id, box]));
+      if (current.order_line.height <= before.order_line.height + 20)
+        return false;
+      expectNoOverlaps(nodes);
+      const groups = await graphGroupBoxes(page);
+      expectNoOverlaps(groups, 31);
+      for (const group of groups) {
+        for (const id of ["customer", "policy"]) {
+          expect(boxesOverlap(group, current[id], 31)).toBe(false);
+        }
+      }
+      return true;
+    })
+    .toBe(true);
+});
+
+test("group-aware auto layout は manual cluster を固定し auto unit だけを退避する", async ({
+  page,
+}) => {
+  await page.setContent(mixedGroupAwareHtml());
+  const graph = page.locator('[data-ark-container="graph"]');
+  const graphBox = await requiredBoundingBox(graph);
+  const nodes = await graphNodeBoxes(page);
+  const byId = Object.fromEntries(nodes.map(box => [box.id, box]));
+  expect(byId.cart.x - graphBox.x).toBeCloseTo(260, 0);
+  expect(byId.cart.y - graphBox.y).toBeCloseTo(180, 0);
+  for (const id of ["customer", "policy"]) {
+    expect(byId[id].x - graphBox.x).toBeCloseTo(20, 0);
+    expect(byId[id].y - graphBox.y).toBeCloseTo(20, 0);
+  }
+  expect(boxesOverlap(byId.customer, byId.policy)).toBe(true);
+  expectNoOverlaps(nodes.filter(node => node.id !== "policy"));
+
+  const groups = await graphGroupBoxes(page);
+  const groupById = Object.fromEntries(groups.map(box => [box.id, box]));
+  expectBoxToContain(groupById.cart_group, byId.cart);
+  expectBoxToContain(groupById.cart_group, byId.cart_item);
+  for (const id of ["order_group", "stock_group"]) {
+    expect(boxesOverlap(groupById[id], groupById.cart_group, 31)).toBe(false);
+    expect(boxesOverlap(groupById[id], byId.customer, 31)).toBe(false);
+    expect(boxesOverlap(groupById[id], byId.policy, 31)).toBe(false);
+  }
+});
+
+test("group-aware auto layout は座標を還流せず drag した member だけ manual にする", async ({
+  page,
+}) => {
+  const initialModel = groupAwareModel();
+  await page.setContent(groupAwareHtml());
+  await connectSubmissionPort(page);
+  const submit = page.getByRole("button", {
+    name: "変更を親フレームへ送信する",
+  });
+  await submit.click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  let submission = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          arkHarnessSubmission?: { model: DiagramModel; html: string };
+        }
+      ).arkHarnessSubmission
+  );
+  expect(submission?.model).toEqual(initialModel);
+  expect(
+    describeModelDiff(initialModel, submission?.model as DiagramModel)
+  ).toEqual([]);
+  for (const node of submission?.model.nodes ?? []) {
+    expect(node.ext?.x).toBeUndefined();
+    expect(node.ext?.y).toBeUndefined();
+  }
+  expect(submission?.html).toContain('id="ark-diagram-model"');
+  expect(submission?.html).toContain("data-ark-group");
+  for (const transient of [
+    "--ark-harness-graph-x",
+    "--ark-harness-graph-y",
+    "--ark-harness-graph-min-width",
+    "groupAwareLayout",
+  ]) {
+    expect(submission?.html).not.toContain(transient);
+  }
+  const cleanGroupGeometry = await page.evaluate(html => {
+    const parsed = new DOMParser().parseFromString(html || "", "text/html");
+    return Array.from(parsed.querySelectorAll("[data-ark-group]")).map(
+      element => {
+        const htmlElement = element as HTMLElement;
+        return {
+          harnessClass: htmlElement.classList.contains(
+            "ark-harness-graph-group"
+          ),
+          properties: [
+            "--ark-harness-group-x",
+            "--ark-harness-group-y",
+            "--ark-harness-group-width",
+            "--ark-harness-group-height",
+          ].map(property => htmlElement.style.getPropertyValue(property)),
+        };
+      }
+    );
+  }, submission?.html);
+  expect(
+    cleanGroupGeometry.every(
+      group =>
+        !group.harnessClass && group.properties.every(value => value === "")
+    )
+  ).toBe(true);
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  const member = graph.locator('[data-model-id="cart_item"]').first();
+  const memberBefore = await requiredBoundingBox(member);
+  const handle = await requiredBoundingBox(
+    member.locator(".ark-harness-graph-handle")
+  );
+  await page.evaluate(() => {
+    delete (window as typeof window & { arkHarnessSubmission?: unknown })
+      .arkHarnessSubmission;
+  });
+  await page.mouse.move(
+    handle.x + handle.width / 2,
+    handle.y + handle.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    handle.x + handle.width / 2 + 48,
+    handle.y + handle.height / 2 + 36
+  );
+  await page.mouse.up();
+  await expect
+    .poll(async () => (await requiredBoundingBox(member)).x)
+    .toBeCloseTo(memberBefore.x + 48, 0);
+  await submit.click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  submission = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          arkHarnessSubmission?: { model: DiagramModel; html: string };
+        }
+      ).arkHarnessSubmission
+  );
+  const dragged = submission?.model.nodes.find(node => node.id === "cart_item");
+  expect(Number.isFinite(dragged?.ext?.x)).toBe(true);
+  expect(Number.isFinite(dragged?.ext?.y)).toBe(true);
+  for (const node of submission?.model.nodes.filter(
+    node => node.id !== "cart_item"
+  ) ?? []) {
+    expect(node.ext?.x).toBeUndefined();
+    expect(node.ext?.y).toBeUndefined();
+  }
+  expect(
+    describeModelDiff(initialModel, submission?.model as DiagramModel)
+  ).toEqual([]);
+  expectNoOverlaps(await graphNodeBoxes(page));
+});
+
+test("group-aware auto layout は重複 membership などを deterministic legacy layout へ fallback する", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.setContent(invalidGroupLayoutHtml());
+  const before = await graphNodeBoxes(page);
+  expectNoOverlaps(before);
+  const graph = page.locator('[data-ark-container="graph"]');
+  await expect(
+    graph.locator('[data-ark-group][data-model-id="first"]')
+  ).toHaveClass(/ark-harness-graph-group/);
+  await expect(
+    graph.locator('[data-ark-group][data-model-id="duplicate"]')
+  ).toHaveClass(/ark-harness-graph-group/);
+  for (const id of ["empty", "cross"]) {
+    await expect(
+      graph.locator(`[data-ark-group][data-model-id="${id}"]`)
+    ).not.toHaveClass(/ark-harness-graph-group/);
+  }
+
+  const current = await readCurrentModel(page);
+  await page
+    .getByRole("button", { name: "モデル JSON を直接編集する" })
+    .click();
+  await page.locator(".ark-harness-textarea").fill(JSON.stringify(current));
+  await page.getByRole("button", { name: "反映", exact: true }).click();
+  await expect
+    .poll(async () => {
+      const after = await graphNodeBoxes(page);
+      return after.every(
+        box =>
+          Math.abs(
+            box.x - (before.find(entry => entry.id === box.id)?.x ?? 0)
+          ) <= 0.5 &&
+          Math.abs(
+            box.y - (before.find(entry => entry.id === box.id)?.y ?? 0)
+          ) <= 0.5
+      );
+    })
+    .toBe(true);
+  expect(errors).toEqual([]);
 });
 
 test("ext 座標の2次元配置と edge で node 外周を結ぶ", async ({ page }) => {
@@ -3384,7 +3940,9 @@ test("sample group は2 node を囲むラベル付き境界として表示する
 }) => {
   await openSampleDiagram(page);
 
-  const groups = await page.locator("#ark-diagram-model").evaluate(element => {
+  const modelScript = page.locator("#ark-diagram-model");
+  const initialModelText = await modelScript.textContent();
+  const groups = await modelScript.evaluate(element => {
     const parsed = JSON.parse(element.textContent || "") as {
       groups: Array<{ id: string; label: string; nodes: string[] }>;
     };
@@ -3411,8 +3969,41 @@ test("sample group は2 node を囲むラベル付き境界として表示する
   ]);
   expectBoxToContain(boundaryBox, firstNodeBox);
   expectBoxToContain(boundaryBox, secondNodeBox);
+  expectNoOverlaps([
+    { id: sampleGroup.nodes[0], ...firstNodeBox },
+    { id: sampleGroup.nodes[1], ...secondNodeBox },
+  ]);
+  const graphBox = await requiredBoundingBox(graph);
+  const rawGeometry = await boundary.evaluate(element => {
+    const style = (element as HTMLElement).style;
+    return {
+      x: Number.parseFloat(style.getPropertyValue("--ark-harness-group-x")),
+      y: Number.parseFloat(style.getPropertyValue("--ark-harness-group-y")),
+      width: Number.parseFloat(
+        style.getPropertyValue("--ark-harness-group-width")
+      ),
+      height: Number.parseFloat(
+        style.getPropertyValue("--ark-harness-group-height")
+      ),
+    };
+  });
+  const rawLeft = Math.min(firstNodeBox.x, secondNodeBox.x);
+  const rawTop = Math.min(firstNodeBox.y, secondNodeBox.y);
+  const rawRight = Math.max(
+    firstNodeBox.x + firstNodeBox.width,
+    secondNodeBox.x + secondNodeBox.width
+  );
+  const rawBottom = Math.max(
+    firstNodeBox.y + firstNodeBox.height,
+    secondNodeBox.y + secondNodeBox.height
+  );
+  expect(rawGeometry.x).toBeCloseTo(rawLeft - graphBox.x, 1);
+  expect(rawGeometry.y).toBeCloseTo(rawTop - graphBox.y, 1);
+  expect(rawGeometry.width).toBeCloseTo(rawRight - rawLeft, 1);
+  expect(rawGeometry.height).toBeCloseTo(rawBottom - rawTop, 1);
   await expect(boundary).toContainText(sampleGroup.label);
   await expect(boundary.locator(".group-label")).toBeVisible();
+  expect(await modelScript.textContent()).toBe(initialModelText);
 });
 
 test("ER edge semantics artifact は記号を投影して端点を張り替えられる", async ({
