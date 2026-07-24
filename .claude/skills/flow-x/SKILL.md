@@ -88,8 +88,8 @@ flow-x を実運用で回して判明した、codex exec の安定運用に必�
 # 一時ファイル名には必ず ${SCOPE_KEY} を含める (flow-loop の WIP>1 で並行 run 同士の
 # 完了判定・ログが混線するのを防ぐ)。起動 pid は必ず記録する (停止は pid 指名で行う)
 nohup codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
-  -o "/tmp/codex-<phase>-${SCOPE_KEY}-last.txt" -c 'model_reasoning_effort="high"' \
-  "$(cat "/tmp/flowx-<phase>-prompt-${SCOPE_KEY}.md")" > "/tmp/codex-<phase>-${SCOPE_KEY}-run.log" 2>&1 &
+  -o "$FLOW_STATE_DIR/codex-<phase>-${SCOPE_KEY}-last.txt" -c 'model_reasoning_effort="high"' \
+  "$(cat "$FLOW_STATE_DIR/flowx-<phase>-prompt-${SCOPE_KEY}.md")" > "$FLOW_STATE_DIR/codex-<phase>-${SCOPE_KEY}-run.log" 2>&1 &
 CODEX_PID=$!
 flow_state_update context ".codex_pid = $CODEX_PID" "$SCOPE_KEY"
 ```
@@ -105,7 +105,7 @@ flow_state_update context ".codex_pid = $CODEX_PID" "$SCOPE_KEY"
 `ps` での codex プロセス検出は名前が安定せず当てにならない。Monitor は以下で張る:
 
 ```bash
-LOG="/tmp/codex-<phase>-${SCOPE_KEY}-run.log"; DONE="/tmp/codex-<phase>-${SCOPE_KEY}-last.txt"; prev=-1
+LOG="$FLOW_STATE_DIR/codex-<phase>-${SCOPE_KEY}-run.log"; DONE="$FLOW_STATE_DIR/codex-<phase>-${SCOPE_KEY}-last.txt"; prev=-1
 while true; do
   [ -s "$DONE" ] && { echo "CODEX_DONE"; break; }          # -o 完了ファイルが書かれた = 正常終了
   cur=$(wc -c < "$LOG" 2>/dev/null || echo 0)
@@ -165,8 +165,8 @@ codex が log 成長後に**プロセス消失・`-o` 未生成**で終わる事
 **P3 の detached 起動** (「codex 実行の運用知見」の invocation を流用し、待たずに park する):
 ```bash
 nohup codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
-  -o "/tmp/codex-p3-${SCOPE_KEY}-last.txt" -c 'model_reasoning_effort="high"' \
-  "$(cat "/tmp/flowx-impl-prompt-${SCOPE_KEY}.md")" > "/tmp/codex-p3-${SCOPE_KEY}-run.log" 2>&1 &
+  -o "$FLOW_STATE_DIR/codex-p3-${SCOPE_KEY}-last.txt" -c 'model_reasoning_effort="high"' \
+  "$(cat "$FLOW_STATE_DIR/flowx-impl-prompt-${SCOPE_KEY}.md")" > "$FLOW_STATE_DIR/codex-p3-${SCOPE_KEY}-run.log" 2>&1 &
 CODEX_PID=$!
 flow_state_update context ".codex_pid = $CODEX_PID" "$SCOPE_KEY"
 flow_state_update progress '.gate = "codex-impl"' "$SCOPE_KEY"
@@ -198,6 +198,7 @@ source "$CLAUDE_PROJECT_DIR/.claude/lib/check-cr-threads.sh"
 source "$CLAUDE_PROJECT_DIR/.claude/lib/cleanup.sh"
 source "$CLAUDE_PROJECT_DIR/.claude/lib/ticket-source.sh"
 source "$CLAUDE_PROJECT_DIR/.claude/lib/worktree/setup-worktree.sh"
+flow_state_dir_init
 
 # 引数パース。state-io.sh は set -euo pipefail を有効化するので、
 # 未初期化変数を参照すると abort する。全変数を必ず初期化してから判定する。
@@ -317,14 +318,14 @@ SCOPE_KEY=$(flow_state_scope_key "$WORK_ID")
 #        された場合に state 不在 → 「新規 run」扱いで誤って P-1 から開始する事故を防ぐ。
 #        sentinel は scope_key + branch を JSON で持ち、branch が現在 branch と一致する
 #        場合のみ halt する (同 WORK_ID 別 branch は legitimate)。
-if [ -n "$SCOPE_KEY" ] && [ -f "/tmp/flow-done-${SCOPE_KEY}.json" ]; then
-  _SENTINEL_BRANCH=$(jq -r '.branch // ""' "/tmp/flow-done-${SCOPE_KEY}.json" 2>/dev/null)
+if [ -n "$SCOPE_KEY" ] && [ -f "$FLOW_STATE_DIR/flow-done-${SCOPE_KEY}.json" ]; then
+  _SENTINEL_BRANCH=$(jq -r '.branch // ""' "$FLOW_STATE_DIR/flow-done-${SCOPE_KEY}.json" 2>/dev/null)
   if [ -z "$_SENTINEL_BRANCH" ] || [ "$_SENTINEL_BRANCH" = "${_CURRENT_BRANCH:-}" ]; then
     if ! { [ "${MODE:-}" = "--resume" ] && flow_state_exists "$SCOPE_KEY"; }; then
       halt "STEP 0: scope $SCOPE_KEY (branch: ${_SENTINEL_BRANCH:-unknown}) は既に完了済み \
-(sentinel: /tmp/flow-done-${SCOPE_KEY}.json)。\
+(sentinel: $FLOW_STATE_DIR/flow-done-${SCOPE_KEY}.json)。\
 新しい flow run を始める場合は main worktree に戻り '/flow-x #NNN' を実行してください。\
-同じ branch で再実行したい場合は sentinel を削除 (rm /tmp/flow-done-${SCOPE_KEY}.json) してから再起動してください"
+同じ branch で再実行したい場合は sentinel を削除 (rm \"$FLOW_STATE_DIR/flow-done-${SCOPE_KEY}.json\") してから再起動してください"
     fi
   fi
 fi
@@ -342,11 +343,11 @@ fi
 if [ "${IN_FLOW_WORKTREE:-0}" = "1" ] && flow_state_exists "$SCOPE_KEY"; then
   _SAVED_BRANCH=$(flow_state_read progress '.branch' "$SCOPE_KEY")
   if [ -z "$_SAVED_BRANCH" ]; then
-    halt "STEP 0: state から branch を読み取れませんでした (state 破損の可能性): SCOPE_KEY=$SCOPE_KEY。state を削除 (rm /tmp/flow-{progress,kpi,context}-${SCOPE_KEY}.json) して再実行してください"
+    halt "STEP 0: state から branch を読み取れませんでした (state 破損の可能性): SCOPE_KEY=$SCOPE_KEY。state を削除 (rm \"$FLOW_STATE_DIR\"/flow-{progress,kpi,context}-${SCOPE_KEY}.json) して再実行してください"
   fi
   if [ "$_SAVED_BRANCH" != "$_CURRENT_BRANCH" ]; then
     halt "STEP 0: SCOPE_KEY ($SCOPE_KEY) は別 branch ($_SAVED_BRANCH) の state を保持しています。\
-古い branch の state を削除 (rm /tmp/flow-{progress,kpi,context}-${SCOPE_KEY}.json) してから再実行してください"
+古い branch の state を削除 (rm \"$FLOW_STATE_DIR\"/flow-{progress,kpi,context}-${SCOPE_KEY}.json) してから再実行してください"
   fi
 fi
 
@@ -473,8 +474,8 @@ flow_state_update progress '.phase = "P2"' "$SCOPE_KEY"
 PLAN_PATH="$WORKTREE_PATH/docs/superpowers/plans/<TODAY>-<WORK_ID>.md"
 # プロンプトはファイルに書いて渡す (shell escape 事故回避)
 nohup codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
-  -o "/tmp/codex-p2-${SCOPE_KEY}-last.txt" -c 'model_reasoning_effort="high"' \
-  "$(cat "/tmp/flowx-plan-prompt-${SCOPE_KEY}.md")" > "/tmp/codex-p2-${SCOPE_KEY}-run.log" 2>&1 &
+  -o "$FLOW_STATE_DIR/codex-p2-${SCOPE_KEY}-last.txt" -c 'model_reasoning_effort="high"' \
+  "$(cat "$FLOW_STATE_DIR/flowx-plan-prompt-${SCOPE_KEY}.md")" > "$FLOW_STATE_DIR/codex-p2-${SCOPE_KEY}-run.log" 2>&1 &
 CODEX_PID=$!
 flow_state_update context ".codex_pid = $CODEX_PID" "$SCOPE_KEY"
 # Monitor で log 成長 + last.txt 生成を監視 (前節参照)。完了後:
@@ -558,8 +559,8 @@ plan は**成果物としてコミットし、作業の PR に含める** (CLAUD
 ```bash
 # 実装プロンプトをファイルに書いて渡す
 nohup codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
-  -o "/tmp/codex-p3-${SCOPE_KEY}-last.txt" -c 'model_reasoning_effort="high"' \
-  "$(cat "/tmp/flowx-impl-prompt-${SCOPE_KEY}.md")" > "/tmp/codex-p3-${SCOPE_KEY}-run.log" 2>&1 &
+  -o "$FLOW_STATE_DIR/codex-p3-${SCOPE_KEY}-last.txt" -c 'model_reasoning_effort="high"' \
+  "$(cat "$FLOW_STATE_DIR/flowx-impl-prompt-${SCOPE_KEY}.md")" > "$FLOW_STATE_DIR/codex-p3-${SCOPE_KEY}-run.log" 2>&1 &
 CODEX_PID=$!
 flow_state_update context ".codex_pid = $CODEX_PID" "$SCOPE_KEY"
 # 対話モード: Monitor で log 成長 + 完了ファイルを監視 (前節「codex 実行の運用知見」)
@@ -886,7 +887,7 @@ tick (対話モードは cron、非同期モードは flow-loop) が実行する
 ### 12-3. terminal 後のフォロー
 
 - worktree はそのまま残す。ユーザーが結果を見て手動で `git worktree remove <path>` する。
-- **success / no-target** → `cleanup_post_deploy final`: 全 state を削除。削除前に kpi.json を `/tmp/flow-kpi-history.jsonl` に append するため KPI は履歴として永続化される。done sentinel (`/tmp/flow-done-<scope>.json`) が残り、STEP 0 が「完了済み」を検出できる。
+- **success / no-target** → `cleanup_post_deploy final`: 全 state を削除。削除前に kpi.json を `$FLOW_STATE_DIR/flow-kpi-history.jsonl` に append するため KPI は履歴として永続化される。done sentinel (`$FLOW_STATE_DIR/flow-done-<scope>.json`) が残り、STEP 0 が「完了済み」を検出できる。
 - **failure / timeout / poll-error** → `cleanup_post_deploy resumable`: state を**調査用に残置**する。terminal は `phase=done` を記録するため `--resume` での継続は STEP 0 で halt する。実際の re-deploy は**別 PR / 別 flow-x run** として開始する。
 
 ### 12-4. session 終了時の挙動 (対話モードのみ)
@@ -909,7 +910,7 @@ tick (対話モードは cron、非同期モードは flow-loop) が実行する
 ```bash
 /flow-x --kpi
 ```
-全 `/tmp/flow-kpi-*.json` (進行中 run) と `/tmp/flow-kpi-history.jsonl` (完了済み run、`cleanup_post_deploy final` で append される) を集計して以下の markdown table を出力:
+`$FLOW_STATE_DIR/flow-kpi-*.json` (進行中 run) と `$FLOW_STATE_DIR/flow-kpi-history.jsonl` (完了済み run、`cleanup_post_deploy final` で append される) を集計して以下の markdown table を出力:
 
 ```
 | Work | 最大連続 | 総自走率 | 初介入中央値 | 待機除外 | 状態 | deploy |

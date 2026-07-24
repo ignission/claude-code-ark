@@ -10,7 +10,7 @@ allowed-tools: Bash, PushNotification, Read, Edit, Write, Glob, Grep, Agent, Ski
 
 `/flow-x` の**外殻となる運転ループ**。1 作業の自走 (flow-x) を「バックログを回し続ける」に昇華する。
 
-- **原則 1: tick は何も待たない。** 毎回 state (`/tmp/flow-progress-*.json`) と外部状態 (PR Review・CI・CodeRabbit・deploy) を突き合わせ、シグナルが揃った run だけ前進させて終わる (冪等)。人間の判断は「AskUserQuestion への返答」ではなく「PR 上の状態」としてループが拾う。Monitor / CronCreate による run ごとのセッション内待機 (P7 / P12) も tick のポーリングに置き換わるため、**セッションを拘束しない**。
+- **原則 1: tick は何も待たない。** 毎回 state (`$FLOW_LOOP_RUNS_DIR/flow-progress-*.json`) と外部状態 (PR Review・CI・CodeRabbit・deploy) を突き合わせ、シグナルが揃った run だけ前進させて終わる (冪等)。人間の判断は「AskUserQuestion への返答」ではなく「PR 上の状態」としてループが拾う。Monitor / CronCreate による run ごとのセッション内待機 (P7 / P12) も tick のポーリングに置き換わるため、**セッションを拘束しない**。
 - **原則 2: 人間ゲートは不変。** P2.5 設計承認と P10 マージ確認の 2 つは廃止しない。待ち方だけが変わる (コメント「承認」`ok` `lgtm` `approve` /「修正: …」・PR Review・Close。検知仕様は flow-x「非同期ゲートモード」)。設計承認は **plan をコミットした draft PR** で取る (plan/spec は成果物としてコミットし作業の PR に含める)。**author 本人の PR は GitHub 仕様で Approve 不可・draft も Approve 不可**のため本人はコメントで判断する (ready 化後の merge-review はチームメンバーの PR Review でも可)。
 - **原則 3: run 単位の安全機構は置き換えず外側に重ねる。** flow-x の介入 2 段化・safety_level・iter 上限・pre-bash-guard はそのまま。flow-loop はブレーカー・kill switch を追加するだけ。
 
@@ -20,7 +20,7 @@ allowed-tools: Bash, PushNotification, Read, Edit, Write, Glob, Grep, Agent, Ski
 /flow-loop tick --dry-run  # 判定のみ。ラベル遷移 / push / PR 操作 / merge / 新規着手をしない
 /flow-loop tick --force    # active_hours (稼働時間帯) 外でも実行する
 /flow-loop status          # 読み取り専用ダッシュボード (run 一覧・ゲート状況・loop 設定)
-/flow-loop stop            # kill switch 設置 (touch /tmp/flow-loop-stop)
+/flow-loop stop            # resolved kill switch ($FLOW_LOOP_STOP) を設置
 /flow-loop start           # kill switch 撤去 + ブレーカーリセット (consecutive_halts=0)
 ```
 
@@ -40,7 +40,15 @@ source "$CLAUDE_PROJECT_DIR/.claude/skills/flow-loop/lib/loop.sh"
 flow_loop_init   # 冪等 (既存 loop.json は上書きしない)
 ```
 
-`/tmp/flow-loop.json` (run state・kpi 履歴と同じ /tmp 規約)。再起動で消えたら init が既定値で再生成する。**恒久化したい設定変更 (`wip_limit` / `pick_query` 等) は `lib/loop.sh` の既定値を PR で変える**。/tmp の loop.json 直接編集は一時的な調整用:
+`$FLOW_LOOP_JSON` (run state・kpi 履歴と同じ resolved runtime directory 規約)。再起動で消えたら init が既定値で再生成する。**恒久化したい設定変更 (`wip_limit` / `pick_query` 等) は `lib/loop.sh` の既定値を PR で変える**。resolved directory の loop.json 直接編集は一時的な調整用:
+
+kill switch を直接操作する場合も resolver を迂回しない:
+
+```bash
+source "$CLAUDE_PROJECT_DIR/.claude/skills/flow-loop/lib/loop.sh"
+touch "$FLOW_LOOP_STOP"    # stop
+rm -f "$FLOW_LOOP_STOP"    # start
+```
 
 | フィールド | 既定 | 意味 |
 | --- | --- | --- |
@@ -99,7 +107,7 @@ phase は flow-x の run state (`progress.phase`)。async モードで park す�
 ## 安全装置
 
 - **ブレーカー**: 連続 halt が 3 に達したら tick を拒否 (STEP 2)。同じ壁に無限に突撃しない。復帰は人間が原因を見てから `/flow-loop start`。
-- **kill switch**: `/flow-loop stop` (= `touch /tmp/flow-loop-stop`)。tick 冒頭で検知して即終了。ファイルを直接 touch してもよい (「停止指示も状態」)。
+- **kill switch**: `/flow-loop stop` (= `loop.sh` source 後に `touch "$FLOW_LOOP_STOP"`)。tick 冒頭で検知して即終了。ファイルを直接 touch する場合も resolved path を使う (「停止指示も状態」)。
 - **dry-run**: 初回導入時・pick_query 変更後は `--dry-run` で判定を確認してから実行する。
 - **run 単位の安全**: flow-x の介入 2 段化 (halt/warn)・safety_level 3 段階・iter 上限・DB スキーマ変更検出・pre-bash-guard (push 品質ゲート・PR コメント前 push マーカー) はそのまま効く。
 

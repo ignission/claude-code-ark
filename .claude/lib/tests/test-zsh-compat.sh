@@ -46,18 +46,53 @@ require_zsh
 # scope はテスト専用の一意な値にする (固定値 issue-9999 だと、万一同名の本番 run が
 # 進行中の場合にその state をテストが破壊するため。pid で衝突を避ける)
 SK="zshcompat-test-$$"
-cleanup_state() { rm -f /tmp/flow-progress-"$SK".json /tmp/flow-kpi-"$SK".json \
-  /tmp/flow-context-"$SK".json /tmp/flow-"$SK".lock /tmp/flow-progress-"$SK".json.new.* 2>/dev/null; }
+TMP_STATE=$(mktemp -d "/tmp/test-zsh-flow-state.XXXXXX")
+cleanup_state() {
+  rm -f "$TMP_STATE"/flow-progress-"$SK".json "$TMP_STATE"/flow-kpi-"$SK".json \
+    "$TMP_STATE"/flow-context-"$SK".json "$TMP_STATE"/flow-"$SK".lock \
+    "$TMP_STATE"/flow-progress-"$SK".json.new.* \
+    /tmp/flow-progress-"$SK".json /tmp/flow-kpi-"$SK".json \
+    /tmp/flow-context-"$SK".json /tmp/flow-"$SK".lock \
+    /tmp/flow-progress-"$SK".json.new.* 2>/dev/null
+}
+trap 'cleanup_state; rm -rf "$TMP_STATE"' EXIT
 cleanup_state
 phase_after_update=$(zsh -c "
   setopt aliases 2>/dev/null
   alias mv='mv -i'
+  export CLAUDE_PROJECT_DIR='$REPO_ROOT'
+  export FLOW_STATE_DIR='$TMP_STATE'
   source '$LIB_DIR/state-io.sh'
   sk=\$(flow_state_init '$SK' 'feature/$SK' /tmp/zshcompat-wt 2>/dev/null) || exit 7
   flow_state_update progress '.phase = \"P2\"' \"\$sk\" </dev/null 2>/dev/null
   flow_state_read progress '.phase' \"\$sk\"
 " 2>/dev/null)
 assert_eq "state-io: zsh の mv -i エイリアス下でも phase 更新が反映される" "P2" "$phase_after_update"
+assert_eq "state-io: progress は FLOW_STATE_DIR 配下に作られる" \
+  "yes" "$([ -f "$TMP_STATE/flow-progress-$SK.json" ] && echo yes || echo no)"
+assert_eq "state-io: kpi は FLOW_STATE_DIR 配下に作られる" \
+  "yes" "$([ -f "$TMP_STATE/flow-kpi-$SK.json" ] && echo yes || echo no)"
+assert_eq "state-io: context は FLOW_STATE_DIR 配下に作られる" \
+  "yes" "$([ -f "$TMP_STATE/flow-context-$SK.json" ] && echo yes || echo no)"
+assert_eq "state-io: scope lock は FLOW_STATE_DIR 配下に作られる" \
+  "yes" "$([ -f "$TMP_STATE/flow-$SK.lock" ] && echo yes || echo no)"
+assert_eq "state-io: atomic update の中間 file が残らない" \
+  "0" "$(find "$TMP_STATE" -maxdepth 1 -name '*.new.*' -type f | wc -l | tr -d ' ')"
+
+# deploy-watch は外部状態判定を stub し、context update の配置だけを integration 確認する。
+deploy_merge_sha="0123456789abcdef"
+deploy_context=$(zsh -c "
+  export CLAUDE_PROJECT_DIR='$REPO_ROOT'
+  export FLOW_STATE_DIR='$TMP_STATE'
+  source '$LIB_DIR/state-io.sh'
+  source '$LIB_DIR/deploy-watch.sh'
+  deploy_watch_has_target() { return 1; }
+  _deploy_watch_pm2_online() { return 1; }
+  deploy_watch_init '$SK' '$deploy_merge_sha'
+  flow_state_read context '.deploy_watch.merge_sha' '$SK'
+" 2>/dev/null)
+assert_eq "deploy-watch: context update は FLOW_STATE_DIR 配下の state を更新する" \
+  "$deploy_merge_sha" "$deploy_context"
 cleanup_state
 
 # -----------------------------------------------------------------------------

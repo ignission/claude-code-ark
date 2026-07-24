@@ -17,6 +17,13 @@
 
 set -euo pipefail
 
+if [ -z "${CLAUDE_PROJECT_DIR:-}" ]; then
+  echo "ERROR: CLAUDE_PROJECT_DIR が未設定です (state-io.sh は project context から source してください)" >&2
+  return 1
+fi
+# shellcheck source=/dev/null
+source "$CLAUDE_PROJECT_DIR/.claude/lib/flow-state-dir.sh"
+
 # === 内部ヘルパー ===
 
 # work_id から SCOPE_KEY を計算する。
@@ -34,12 +41,12 @@ _flow_scope_key() {
 _flow_state_file() {
   local type="$1"
   local key="$2"
-  printf '/tmp/flow-%s-%s.json\n' "$type" "$key"
+  printf '%s/flow-%s-%s.json\n' "$FLOW_STATE_DIR" "$type" "$key"
 }
 
 _flow_lock_file() {
   local key="$1"
-  printf '/tmp/flow-%s.lock\n' "$key"
+  printf '%s/flow-%s.lock\n' "$FLOW_STATE_DIR" "$key"
 }
 
 _flow_gen_run_id() {
@@ -58,6 +65,7 @@ _flow_gen_run_id() {
 # state 3 ファイルを初期化する。
 # 引数: $1 work_id (issue-<N> or slug), $2 branch, $3 worktree_path, [$4 issue_number]
 flow_state_init() {
+  flow_state_dir_init || return 1
   local work_id="$1"
   local branch="$2"
   local worktree_path="$3"
@@ -172,6 +180,7 @@ flow_state_init() {
 # state JSON のフィールドを read する。
 # 引数: $1 type (progress|kpi|context), $2 jq_filter, $3 scope_key
 flow_state_read() {
+  flow_state_dir_init || return 1
   local type="$1"
   local filter="$2"
   local key="$3"
@@ -188,6 +197,7 @@ flow_state_read() {
 # state JSON のフィールドを atomic rename で update する。
 # 引数: $1 type, $2 jq_assign_expr, $3 scope_key
 flow_state_update() {
+  flow_state_dir_init || return 1
   local type="$1"
   local expr="$2"
   local key="$3"
@@ -212,6 +222,7 @@ flow_state_update() {
 
 # stale state を判定する。1h 経過 + owner_pid 死亡で stale。
 flow_state_is_stale() {
+  flow_state_dir_init || return 1
   local key="$1"
   local file lock
   file=$(_flow_state_file progress "$key")
@@ -237,6 +248,7 @@ flow_state_is_stale() {
 }
 
 flow_state_cleanup_stale() {
+  flow_state_dir_init || return 1
   local key="$1"
   local lock progress_file
   lock=$(_flow_lock_file "$key")
@@ -273,6 +285,7 @@ flow_state_cleanup_stale() {
 }
 
 flow_state_exists() {
+  flow_state_dir_init || return 1
   local key="$1"
   [ -f "$(_flow_state_file progress "$key")" ] \
     && [ -f "$(_flow_state_file kpi "$key")" ] \

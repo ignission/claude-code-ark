@@ -13,6 +13,13 @@
 
 set -euo pipefail
 
+if [ -z "${CLAUDE_PROJECT_DIR:-}" ]; then
+  echo "ERROR: CLAUDE_PROJECT_DIR が未設定です (codex-gate.sh は project context から source してください)" >&2
+  return 1
+fi
+# shellcheck source=/dev/null
+source "$CLAUDE_PROJECT_DIR/.claude/lib/flow-state-dir.sh"
+
 _run_codex() {
   if command -v codex >/dev/null 2>&1; then
     codex "$@"
@@ -82,13 +89,14 @@ _codex_gate_passed() {
 # 引数: $1 phase (P5/P8/P9), $2 scope_key
 # 戻り値: 0=PASS, 1=FAIL
 codex_gate_review() {
+  flow_state_dir_init || return 1
   local phase="$1"
   local scope_key="$2"
   local focus
   focus=$(_codex_phase_focus "$phase")
 
   CODEX_GATE_REASON=""
-  CODEX_GATE_OUTPUT=$(mktemp "/tmp/codex-gate-${phase}-${scope_key}-XXXXXX.txt")
+  CODEX_GATE_OUTPUT=$(mktemp "$FLOW_STATE_DIR/codex-gate-${phase}-${scope_key}-XXXXXX.txt")
 
   if ! _codex_available; then
     CODEX_GATE_REASON="codex CLI が利用できません (PATH にも mise にも見つかりません)"
@@ -119,6 +127,16 @@ codex_gate_review() {
   # ゲートが恒久 FAIL するため（2026-07-17 に実害を確認）。
   local final_output="${CODEX_GATE_OUTPUT}.final"
   : > "$final_output"  # 前回結果の残留による誤 PASS を防ぐ（fail-safe 判定の前提）
+  # ログはリダイレクトで直接ファイルへ書く。`| tee` + PIPESTATUS は bash 専用で、
+  # zsh (Claude の Bash ツールの実体) では PIPESTATUS が未定義 → set -u で即死する。
+  local exit_code
+  set +e
+  (
+    cd "$repo_root"
+    git diff --no-ext-diff origin/main...HEAD \
+      | _run_codex exec --skip-git-repo-check -s read-only \
+          -c 'model_reasoning_effort="high"' \
+          --output-last-message "$final_output" \
           "$prompt"
   ) > "$CODEX_GATE_OUTPUT" 2>&1
   exit_code=$?
@@ -159,13 +177,14 @@ codex_gate_max_p1_cycles() {
 
 # P2 plan ファイルに対する DDD レビュー。
 codex_gate_review_plan() {
+  flow_state_dir_init || return 1
   local plan_path="$1"
   local scope_key="$2"
   local focus
   focus=$(_codex_phase_focus "P2")
 
   CODEX_GATE_REASON=""
-  CODEX_GATE_OUTPUT=$(mktemp "/tmp/codex-gate-P2-${scope_key}-XXXXXX.txt")
+  CODEX_GATE_OUTPUT=$(mktemp "$FLOW_STATE_DIR/codex-gate-P2-${scope_key}-XXXXXX.txt")
 
   if ! _codex_available; then
     CODEX_GATE_REASON="codex CLI が利用できません"
@@ -223,10 +242,11 @@ codex_gate_review_plan() {
 }
 
 codex_gate_collect_new_findings() {
+  flow_state_dir_init || return 1
   local scope_key="$1"
   local seen_json
   seen_json=$(jq -r '.gate_findings_seen | join("\n")' \
-    "/tmp/flow-progress-${scope_key}.json" 2>/dev/null || echo "")
+    "$FLOW_STATE_DIR/flow-progress-${scope_key}.json" 2>/dev/null || echo "")
 
   grep -oE '[a-zA-Z0-9_./-]+:[0-9]+' "$CODEX_GATE_OUTPUT" 2>/dev/null \
     | sort -u \

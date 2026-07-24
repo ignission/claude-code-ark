@@ -26,6 +26,7 @@ assert_true() {
 }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 REPORT="$SCRIPT_DIR/../lib/report.sh"
 
 TMPD="$(mktemp -d)"
@@ -57,6 +58,50 @@ assert_true "機械時間 30 分" 'echo "$OUT" | grep "issue-1t" | grep -qw "30"
 assert_true "待ち比率 40%" 'echo "$OUT" | grep "issue-1t" | grep -qw "40"'
 assert_true "done が無い run は集計に出ない" '! echo "$OUT" | grep -q "issue-2t"'
 assert_true "不在ファイルはエラー" '! bash "$REPORT" "$TMPD/nonexistent.jsonl"'
+
+write_minimal_metrics() {
+  local metrics_file="$1"
+  local ticket="$2"
+  mkdir -p "$(dirname "$metrics_file")"
+  printf '%s\n' \
+    "{\"ts\":100,\"ticket\":\"$ticket\",\"event\":\"pick\"}" \
+    "{\"ts\":160,\"ticket\":\"$ticket\",\"event\":\"done\"}" \
+    > "$metrics_file"
+}
+
+echo ""
+echo "=== metrics path priority ==="
+CLI_DIR="$TMPD/cli"
+LOOP_DIR="$TMPD/loop"
+COMMON_DIR="$TMPD/common"
+XDG_DIR="$TMPD/xdg"
+mkdir -m 700 "$CLI_DIR" "$LOOP_DIR" "$COMMON_DIR" "$XDG_DIR"
+write_minimal_metrics "$CLI_DIR/metrics.jsonl" "cli-ticket"
+write_minimal_metrics "$LOOP_DIR/flow-loop-metrics.jsonl" "loop-ticket"
+write_minimal_metrics "$COMMON_DIR/flow-loop-metrics.jsonl" "common-ticket"
+DEFAULT_DIR="$XDG_DIR/ark-flow-$(id -u)"
+mkdir -m 700 "$DEFAULT_DIR"
+write_minimal_metrics "$DEFAULT_DIR/flow-loop-metrics.jsonl" "default-ticket"
+
+PRIORITY_OUT=$(FLOW_LOOP_STATE_DIR="$LOOP_DIR" FLOW_STATE_DIR="$COMMON_DIR" \
+  CLAUDE_PROJECT_DIR="$PROJECT_DIR" bash "$REPORT" "$CLI_DIR/metrics.jsonl")
+assert_true "CLI 第1引数が最優先" \
+  'echo "$PRIORITY_OUT" | grep -q "cli-ticket" && ! echo "$PRIORITY_OUT" | grep -q "loop-ticket"'
+
+LOOP_OUT=$(FLOW_LOOP_STATE_DIR="$LOOP_DIR" FLOW_STATE_DIR="$COMMON_DIR" \
+  CLAUDE_PROJECT_DIR="$PROJECT_DIR" bash "$REPORT")
+assert_true "FLOW_LOOP_STATE_DIR は FLOW_STATE_DIR より優先" \
+  'echo "$LOOP_OUT" | grep -q "loop-ticket" && ! echo "$LOOP_OUT" | grep -q "common-ticket"'
+
+COMMON_OUT=$(env -u FLOW_LOOP_STATE_DIR FLOW_STATE_DIR="$COMMON_DIR" \
+  CLAUDE_PROJECT_DIR="$PROJECT_DIR" bash "$REPORT")
+assert_true "限定 override 未指定時は FLOW_STATE_DIR を使う" \
+  'echo "$COMMON_OUT" | grep -q "common-ticket"'
+
+DEFAULT_OUT=$(env -u FLOW_LOOP_STATE_DIR -u FLOW_STATE_DIR \
+  XDG_RUNTIME_DIR="$XDG_DIR" bash "$REPORT")
+assert_true "全 override 未指定時は XDG secure default を使う" \
+  'echo "$DEFAULT_OUT" | grep -q "default-ticket"'
 
 echo ""
 echo "=== 結果: $PASSES/$TESTS PASS ==="

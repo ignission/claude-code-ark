@@ -9,7 +9,22 @@
 # 差し戻し修正に要した機械時間も直前 park からの区間に含まれるため、待ち時間はやや過大に出る (v1 の近似)。
 set -euo pipefail
 
-METRICS="${1:-${FLOW_LOOP_STATE_DIR:-/tmp}/flow-loop-metrics.jsonl}"
+REPORT_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -z "${CLAUDE_PROJECT_DIR:-}" ]; then
+  CLAUDE_PROJECT_DIR="$(cd "$REPORT_SCRIPT_DIR/../../../.." && pwd)"
+  export CLAUDE_PROJECT_DIR
+fi
+# shellcheck source=/dev/null
+source "$CLAUDE_PROJECT_DIR/.claude/lib/flow-state-dir.sh"
+
+if [ -n "${1:-}" ]; then
+  METRICS="$1"
+elif [ -n "${FLOW_LOOP_STATE_DIR:-}" ]; then
+  METRICS="$FLOW_LOOP_STATE_DIR/flow-loop-metrics.jsonl"
+else
+  flow_state_dir_init
+  METRICS="$FLOW_STATE_DIR/flow-loop-metrics.jsonl"
+fi
 [ -f "$METRICS" ] || { echo "metrics ファイルが見つかりません: $METRICS" >&2; exit 1; }
 
 jq -s -r '
