@@ -56,7 +56,9 @@ assert_file_present() {
 }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 CLEANUP_LIB="$SCRIPT_DIR/../cleanup.sh"
+export CLAUDE_PROJECT_DIR="$PROJECT_DIR"
 
 # pre-flight: jq が無いと KPI archive のテストが意味を成さない
 if ! command -v jq >/dev/null 2>&1; then
@@ -71,7 +73,8 @@ source "$CLEANUP_LIB"
 
 # テスト用 tmpdir を確保 (本物の /tmp を汚さない)
 TMP_TEST_DIR=$(mktemp -d "/tmp/test-cleanup-flow-state.XXXXXX")
-trap 'rm -rf "$TMP_TEST_DIR"' EXIT
+LEGACY_SCOPE="cleanup-common-$$"
+trap 'rm -rf "$TMP_TEST_DIR"; rm -f "/tmp/flow-$LEGACY_SCOPE.lock"' EXIT
 
 # cleanup_flow_state_files が参照する base dir を CLEANUP_FLOW_STATE_DIR で差し替える
 export CLEANUP_FLOW_STATE_DIR="$TMP_TEST_DIR"
@@ -289,6 +292,43 @@ else
   PASSES=$((PASSES + 1))
   echo -e "${GREEN}PASS${NC}: cleanup_post_deploy は空 scope_key で fail-fast"
 fi
+
+echo ""
+echo "--- cleanup override priority: specific > common > secure default ---"
+COMMON_STATE_DIR="$TMP_TEST_DIR/common"
+SPECIFIC_STATE_DIR="$TMP_TEST_DIR/specific"
+mkdir -m 700 "$COMMON_STATE_DIR" "$SPECIFIC_STATE_DIR"
+
+unset CLEANUP_FLOW_STATE_DIR
+export FLOW_STATE_DIR="$COMMON_STATE_DIR"
+echo '{"phase":"done","branch":"feature/common"}' > "$COMMON_STATE_DIR/flow-progress-${LEGACY_SCOPE}.json"
+echo '{"scope":"common"}' > "$COMMON_STATE_DIR/flow-kpi-${LEGACY_SCOPE}.json"
+touch "$COMMON_STATE_DIR/flow-context-${LEGACY_SCOPE}.json" \
+  "$COMMON_STATE_DIR/codex-gate-P5-${LEGACY_SCOPE}-AAAAAA.txt" \
+  "$COMMON_STATE_DIR/flow-progress-${LEGACY_SCOPE}.json.new.123"
+cleanup_flow_state_files "$LEGACY_SCOPE" final
+assert_file_absent "CLEANUP 未指定時は FLOW_STATE_DIR の state を削除する" \
+  "$COMMON_STATE_DIR/flow-progress-${LEGACY_SCOPE}.json"
+assert_file_present "CLEANUP 未指定時は FLOW_STATE_DIR に done sentinel を作る" \
+  "$COMMON_STATE_DIR/flow-done-${LEGACY_SCOPE}.json"
+assert_file_present "CLEANUP 未指定時は FLOW_STATE_DIR に KPI history を作る" \
+  "$COMMON_STATE_DIR/flow-kpi-history.jsonl"
+assert_file_absent "CLEANUP 未指定時は FLOW_STATE_DIR の codex log を削除する" \
+  "$COMMON_STATE_DIR/codex-gate-P5-${LEGACY_SCOPE}-AAAAAA.txt"
+assert_file_absent "CLEANUP 未指定時は FLOW_STATE_DIR の atomic tmp を削除する" \
+  "$COMMON_STATE_DIR/flow-progress-${LEGACY_SCOPE}.json.new.123"
+
+PRIORITY_SCOPE="cleanup-priority-$$"
+export CLEANUP_FLOW_STATE_DIR="$SPECIFIC_STATE_DIR"
+echo '{"phase":"done","branch":"feature/specific"}' > "$SPECIFIC_STATE_DIR/flow-progress-${PRIORITY_SCOPE}.json"
+echo '{"scope":"specific"}' > "$SPECIFIC_STATE_DIR/flow-kpi-${PRIORITY_SCOPE}.json"
+touch "$SPECIFIC_STATE_DIR/flow-context-${PRIORITY_SCOPE}.json"
+echo '{"phase":"done","branch":"feature/common"}' > "$COMMON_STATE_DIR/flow-progress-${PRIORITY_SCOPE}.json"
+cleanup_flow_state_files "$PRIORITY_SCOPE" final
+assert_file_absent "両方指定時は CLEANUP_FLOW_STATE_DIR が優先される" \
+  "$SPECIFIC_STATE_DIR/flow-progress-${PRIORITY_SCOPE}.json"
+assert_file_present "限定 override 使用時は FLOW_STATE_DIR 側を処理しない" \
+  "$COMMON_STATE_DIR/flow-progress-${PRIORITY_SCOPE}.json"
 
 echo ""
 echo "========================================"

@@ -53,17 +53,76 @@ assert_rc() {
 }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 LOOP_LIB="$SCRIPT_DIR/../lib/loop.sh"
 
 TMP_STATE="$(mktemp -d)"
 TMP_RUNS="$(mktemp -d)"
-trap 'rm -rf "$TMP_STATE" "$TMP_RUNS"' EXIT
+TMP_XDG="$(mktemp -d)"
+trap 'rm -rf "$TMP_STATE" "$TMP_RUNS" "$TMP_XDG"' EXIT
+export CLAUDE_PROJECT_DIR="$PROJECT_DIR"
 export FLOW_LOOP_STATE_DIR="$TMP_STATE"
 export FLOW_LOOP_RUNS_DIR="$TMP_RUNS"
 
 # shellcheck source=/dev/null
 source "$LOOP_LIB"
 set +e  # loop.sh の set -e をテストランナー側では解除 (FAIL しても継続する)
+
+echo "=== directory resolution / override priority ==="
+DEFAULT_XDG="$TMP_XDG/default"
+mkdir -m 700 "$DEFAULT_XDG"
+DEFAULT_RESULT=$(env -u FLOW_STATE_DIR -u FLOW_LOOP_STATE_DIR -u FLOW_LOOP_RUNS_DIR \
+  XDG_RUNTIME_DIR="$DEFAULT_XDG" CLAUDE_PROJECT_DIR="$PROJECT_DIR" \
+  bash -c '
+    source "$CLAUDE_PROJECT_DIR/.claude/skills/flow-loop/lib/loop.sh" || exit 1
+    expected="$XDG_RUNTIME_DIR/ark-flow-$(id -u)"
+    if [ "$FLOW_LOOP_STATE_DIR" != "$expected" ] || [ "$FLOW_LOOP_RUNS_DIR" != "$expected" ]; then
+      printf "%s|%s||\n" "$FLOW_LOOP_STATE_DIR" "$FLOW_LOOP_RUNS_DIR"
+      exit 0
+    fi
+    flow_loop_init || exit 2
+    flow_loop_lock || exit 3
+    [ -f "$FLOW_LOOP_LOCK/pid" ] || exit 4
+    flow_loop_unlock
+    touch "$FLOW_LOOP_STOP"
+    flow_loop_metrics_append issue-default park "{}" || exit 5
+    printf "%s|%s|%s|%s\n" "$FLOW_LOOP_STATE_DIR" "$FLOW_LOOP_RUNS_DIR" \
+      "$([ -f "$FLOW_LOOP_JSON" ] && echo json)" \
+      "$([ -f "$FLOW_LOOP_STOP" ] && [ -f "$FLOW_LOOP_METRICS" ] && echo artifacts)"
+  ' 2>/dev/null)
+EXPECTED_DEFAULT="$DEFAULT_XDG/ark-flow-$(id -u)"
+assert_eq "override 無しでは loop/run とも XDG secure default を使う" \
+  "$EXPECTED_DEFAULT|$EXPECTED_DEFAULT|json|artifacts" "$DEFAULT_RESULT"
+
+COMMON_DIR="$TMP_XDG/common"
+LIMITED_STATE_DIR="$TMP_XDG/limited-state"
+LIMITED_RUNS_DIR="$TMP_XDG/limited-runs"
+mkdir -m 700 "$COMMON_DIR" "$LIMITED_STATE_DIR" "$LIMITED_RUNS_DIR"
+PRIORITY_RESULT=$(FLOW_STATE_DIR="$COMMON_DIR" \
+  FLOW_LOOP_STATE_DIR="$LIMITED_STATE_DIR" FLOW_LOOP_RUNS_DIR="$LIMITED_RUNS_DIR" \
+  CLAUDE_PROJECT_DIR="$PROJECT_DIR" bash -c '
+    source "$CLAUDE_PROJECT_DIR/.claude/skills/flow-loop/lib/loop.sh"
+    printf "%s|%s\n" "$FLOW_LOOP_STATE_DIR" "$FLOW_LOOP_RUNS_DIR"
+  ' 2>/dev/null)
+assert_eq "限定 override は共通 FLOW_STATE_DIR より優先される" \
+  "$LIMITED_STATE_DIR|$LIMITED_RUNS_DIR" "$PRIORITY_RESULT"
+
+COMMON_RESULT=$(FLOW_STATE_DIR="$COMMON_DIR" \
+  CLAUDE_PROJECT_DIR="$PROJECT_DIR" bash -c '
+    unset FLOW_LOOP_STATE_DIR FLOW_LOOP_RUNS_DIR
+    source "$CLAUDE_PROJECT_DIR/.claude/skills/flow-loop/lib/loop.sh"
+    printf "%s|%s\n" "$FLOW_LOOP_STATE_DIR" "$FLOW_LOOP_RUNS_DIR"
+  ' 2>/dev/null)
+assert_eq "限定 override 未指定時は loop/run とも共通 FLOW_STATE_DIR を使う" \
+  "$COMMON_DIR|$COMMON_DIR" "$COMMON_RESULT"
+
+UNSAFE_XDG="$TMP_XDG/unsafe"
+mkdir -m 700 "$UNSAFE_XDG"
+mkdir -m 755 "$UNSAFE_XDG/ark-flow-$(id -u)"
+assert_rc "mode 0755 の自動既定候補では init が fail closed" 1 \
+  "env -u FLOW_STATE_DIR -u FLOW_LOOP_STATE_DIR -u FLOW_LOOP_RUNS_DIR XDG_RUNTIME_DIR='$UNSAFE_XDG' CLAUDE_PROJECT_DIR='$PROJECT_DIR' bash -c 'source \"\$CLAUDE_PROJECT_DIR/.claude/skills/flow-loop/lib/loop.sh\" || exit 1; expected=\"\$XDG_RUNTIME_DIR/ark-flow-\$(id -u)\"; [ \"\$FLOW_LOOP_STATE_DIR\" = \"\$expected\" ] || exit 0; flow_loop_init'"
+assert_rc "mode 0755 の自動既定候補では lock も fail closed" 1 \
+  "env -u FLOW_STATE_DIR -u FLOW_LOOP_STATE_DIR -u FLOW_LOOP_RUNS_DIR XDG_RUNTIME_DIR='$UNSAFE_XDG' CLAUDE_PROJECT_DIR='$PROJECT_DIR' bash -c 'source \"\$CLAUDE_PROJECT_DIR/.claude/skills/flow-loop/lib/loop.sh\" || exit 1; expected=\"\$XDG_RUNTIME_DIR/ark-flow-\$(id -u)\"; [ \"\$FLOW_LOOP_STATE_DIR\" = \"\$expected\" ] || exit 0; flow_loop_lock'"
 
 # --- init (冪等) ---
 flow_loop_init
@@ -219,7 +278,7 @@ assert_eq "metrics_tail が直近を返す" "done" "$(flow_loop_metrics_tail 1 |
 # (BASH_SOURCE 依存のパス解決だと zsh で空になり全機能が壊れる)
 if command -v zsh >/dev/null 2>&1; then
   ZTMP="$(mktemp -d)"
-  if zsh -c "export FLOW_LOOP_STATE_DIR='$ZTMP'; export FLOW_LOOP_RUNS_DIR='$TMP_RUNS'; \
+  if zsh -c "export CLAUDE_PROJECT_DIR='$PROJECT_DIR'; export FLOW_LOOP_STATE_DIR='$ZTMP'; export FLOW_LOOP_RUNS_DIR='$TMP_RUNS'; \
        source '$LOOP_LIB' \
        && flow_loop_init && flow_loop_lock && flow_loop_unlock \
        && [ \"\$(flow_loop_read '.wip_limit')\" = '2' ] \

@@ -8,25 +8,36 @@
 #   flow_loop_lock && ... && flow_loop_unlock
 #
 # 設計判断:
-#   - run state (state-io.sh の /tmp/flow-{progress,kpi,context}-*.json) には依存せず、
+#   - run state (state-io.sh の flow-{progress,kpi,context}-*.json) には依存せず、
 #     progress ファイルの列挙と jq 読み取りのみで active run を数える (疎結合)。
-#   - loop 状態 (loop.json / metrics / kill switch) も state-io.sh と同じ /tmp 規約に置く
-#     (kpi 履歴の /tmp/flow-kpi-history.jsonl と同格)。再起動で消えたら init が既定値で
+#   - loop 状態 (loop.json / metrics / kill switch) も state-io.sh と同じ runtime
+#     directory 規約に置く (kpi 履歴と同格)。再起動で消えたら init が既定値で
 #     再生成する。恒久化したい設定変更 (wip_limit / pick_query 等) は本ファイルの既定値を
-#     PR で変える。/tmp の loop.json 直接編集は一時的な調整用。
+#     PR で変える。runtime directory の loop.json 直接編集は一時的な調整用。
 #   - パス解決に BASH_SOURCE を使わない。Claude の Bash ツールは実体が zsh のことがあり、
-#     zsh で source すると BASH_SOURCE が空になる (本ファイルは固定パス /tmp のみで完結)。
+#     zsh で source すると BASH_SOURCE が空になるため CLAUDE_PROJECT_DIR を使う。
 #   - tick 排他は mkdir の atomic 性を使う (flock ファイルと違い stale 回収を mtime で判定できる)。
 #   - pick は GitHub Issue のみ対応。pick_query は gh issue list --search 用の
 #     GitHub 検索構文で持つ。
 
 set -euo pipefail
 
-# loop 状態の配置先。テストでは一時ディレクトリに差し替える。
-: "${FLOW_LOOP_STATE_DIR:=/tmp}"
+if [ -z "${CLAUDE_PROJECT_DIR:-}" ]; then
+  echo "ERROR: CLAUDE_PROJECT_DIR が未設定です (flow-loop loop.sh は project context から source してください)" >&2
+  return 1
+fi
+# shellcheck source=/dev/null
+source "$CLAUDE_PROJECT_DIR/.claude/lib/flow-state-dir.sh"
 
-# run state (state-io.sh) の配置先。テストでは一時ディレクトリに差し替える。
-: "${FLOW_LOOP_RUNS_DIR:=/tmp}"
+# 限定 override が無い用途だけ共通 directory を解決する。
+if [ -z "${FLOW_LOOP_STATE_DIR:-}" ] || [ -z "${FLOW_LOOP_RUNS_DIR:-}" ]; then
+  flow_state_dir_init || return 1
+fi
+
+# loop 独自 state と run 走査は別々に限定 override 可能。空文字は未指定扱い。
+FLOW_LOOP_STATE_DIR="${FLOW_LOOP_STATE_DIR:-$FLOW_STATE_DIR}"
+FLOW_LOOP_RUNS_DIR="${FLOW_LOOP_RUNS_DIR:-$FLOW_STATE_DIR}"
+export FLOW_LOOP_STATE_DIR FLOW_LOOP_RUNS_DIR
 
 FLOW_LOOP_JSON="$FLOW_LOOP_STATE_DIR/flow-loop.json"
 FLOW_LOOP_LOCK="$FLOW_LOOP_STATE_DIR/flow-loop.lock"
@@ -113,7 +124,7 @@ flow_loop_lock() {
   now="$(date +%s)"
   # GNU (stat -c %Y) を先に試す。BSD 先行 (stat -f %m) にすると GNU stat では
   # -f がファイルシステムモードになり %m が「マウントポイント文字列」で成功してしまう
-  # (mtime に /tmp が入り算術式が爆発、stale 回収も永久に効かない) ため順序が重要。
+  # (mtime に mount path が入り算術式が爆発、stale 回収も永久に効かない) ため順序が重要。
   mtime="$(stat -c %Y "$FLOW_LOOP_LOCK" 2>/dev/null || stat -f %m "$FLOW_LOOP_LOCK" 2>/dev/null || echo "$now")"
   case "$mtime" in ''|*[!0-9]*) mtime="$now" ;; esac
   if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } \
@@ -167,7 +178,8 @@ flow_loop_self_repo() {
 #   - self_repo 空 (repo 外で起動)        → 真 (絞り込みしない = 旧挙動)
 #   - context / worktree が解決できない    → 真 (permissive。active run は通常 worktree を持つ)
 #   - worktree が別 repo                   → 偽 (掴まない)
-# flow state は /tmp 共有のため、このフィルタが無いと他プロジェクトの run まで wip 算入・
+# flow state directory は複数 project で共有し得るため、このフィルタが無いと
+# 他プロジェクトの run まで wip 算入・
 # 走査・前進してしまう (クロスプロジェクト汚染。別 repo の PR を CI 判定/マージしかねない)。
 _flow_loop_run_in_self_repo() {
   local key="$1" self_repo="$2" ctx wt run_repo
@@ -278,7 +290,7 @@ flow_loop_pid_alive() {
 # ── 計測 (metrics) ──────────────────────────────────────────────
 # run のイベントを 1 行 JSON で metrics.jsonl へ追記する。
 # 記録点: pick (新規着手) / park (承認・監視待ち) / halt / merged (P11) / done (P12 terminal)。
-# 既存 KPI (/tmp/flow-kpi-*.json / flow-kpi-history.jsonl) とはレイヤが別:
+# 既存 KPI (flow-kpi-*.json / flow-kpi-history.jsonl) とはレイヤが別:
 # KPI は run 内の自走時間、metrics.jsonl は loop 視点のイベント列 (人間待ち内訳の集計用)。
 
 # append <work_id> <event> [<jq_object_expr>]

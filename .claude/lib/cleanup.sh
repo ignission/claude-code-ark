@@ -14,6 +14,13 @@
 
 set -euo pipefail
 
+if [ -z "${CLAUDE_PROJECT_DIR:-}" ]; then
+  echo "ERROR: CLAUDE_PROJECT_DIR が未設定です (cleanup.sh は project context から source してください)" >&2
+  return 1
+fi
+# shellcheck source=/dev/null
+source "$CLAUDE_PROJECT_DIR/.claude/lib/flow-state-dir.sh"
+
 # === 公開関数 ===
 
 # PR を squash merge し、ローカル main を最新化する。
@@ -152,17 +159,23 @@ cleanup_flow_state_files() {
       return 1
       ;;
   esac
-  local base="${CLEANUP_FLOW_STATE_DIR:-/tmp}"
+  local base
+  if [ -n "${CLEANUP_FLOW_STATE_DIR:-}" ]; then
+    base="$CLEANUP_FLOW_STATE_DIR"
+  else
+    flow_state_dir_init || return 1
+    base="$FLOW_STATE_DIR"
+  fi
   # 削除対象 (state-io.sh / codex-gate.sh の出力に対応):
   #   final mode のみ削除 (flock 取得して atomic):
-  #     /tmp/flow-progress-<scope>.json
-  #     /tmp/flow-kpi-<scope>.json (削除前に flow-kpi-history.jsonl に append)
-  #     /tmp/flow-context-<scope>.json
+  #     flow-progress-<scope>.json
+  #     flow-kpi-<scope>.json (削除前に flow-kpi-history.jsonl に append)
+  #     flow-context-<scope>.json
   #   両 mode で削除:
-  #     /tmp/flow-{progress,kpi,context}-<scope>.json.new.* (atomic write 中間)
-  #     /tmp/codex-gate-<phase>-<scope>-<random>.txt (codex review log)
+  #     flow-{progress,kpi,context}-<scope>.json.new.* (atomic write 中間)
+  #     codex-gate-<phase>-<scope>-<random>.txt (codex review log)
   #   両 mode で残す:
-  #     /tmp/flow-<scope>.lock (state-io invariant)
+  #     flow-<scope>.lock (state-io invariant)
   local lock_file="$base/flow-${scope_key}.lock"
   # state-io 互換: lock file が無ければ作成 (state-io 側も touch ベースで作成する)
   : > "$lock_file" 2>/dev/null || true
@@ -276,7 +289,7 @@ cleanup_flow_state_files() {
         --arg now "$(date +%s)" \
         '{scope_key: $scope, branch: $branch, completed_at: ($now | tonumber), source: "cleanup_post_deploy(final)", archived: false}' \
         > "$base/flow-done-${scope_key}.json" 2>/dev/null; then
-      echo "WARNING: cleanup_flow_state_files: done sentinel 書き込み失敗 (/tmp 満杯 / 権限不足 等)、cleanup を中止 (KPI 未 archive、state 残置)" >&2
+      echo "WARNING: cleanup_flow_state_files: done sentinel 書き込み失敗 (flow state directory の容量不足 / 権限不足 等)、cleanup を中止 (KPI 未 archive、state 残置)" >&2
       rm -f "$base/flow-done-${scope_key}.json" 2>/dev/null
       return 0
     fi

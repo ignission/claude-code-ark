@@ -62,6 +62,7 @@ source "$CLAUDE_PROJECT_DIR/.claude/lib/codex-gate.sh"
 source "$CLAUDE_PROJECT_DIR/.claude/lib/check-cr-threads.sh"
 source "$CLAUDE_PROJECT_DIR/.claude/lib/cleanup.sh"
 source "$CLAUDE_PROJECT_DIR/.claude/lib/worktree/setup-worktree.sh"
+flow_state_dir_init
 
 # 引数パース。state-io.sh / codex-gate.sh は set -euo pipefail を有効化するので、
 # 未初期化変数を参照すると abort する。MODE / FROM_PHASE / TARGET を必ず初期化してから判定する。
@@ -88,7 +89,7 @@ done
 # 通常 flow に進むと WORK_ID 空で flow_state_exists が偽になり P-1 を再走するので、
 # 早期 short-circuit する (codex review [P2] 指摘への対応)。
 if [ "${MODE:-}" = "--kpi" ]; then
-  # /tmp/flow-kpi-*.json を集計して markdown table を出して exit
+  # "$FLOW_STATE_DIR"/flow-kpi-*.json を集計して markdown table を出して exit
   # （実装本体は /flow --kpi セクション参照）
   exec_kpi_aggregation_and_exit
 fi
@@ -124,15 +125,15 @@ fi
 SCOPE_KEY=$(flow_state_scope_key "$WORK_ID")
 
 # done sentinel チェック。
-# cleanup_post_deploy "final" は state 削除後に /tmp/flow-done-<scope>.json を書く。
+# cleanup_post_deploy "final" は state 削除後に flow-done-<scope>.json を書く。
 # worktree は P12 後も残置されるので、state 不在 → 「新規 run」扱いで誤って P-1 から
 # 開始する事故を防ぐ。sentinel の branch が現在 branch と一致する場合のみ halt する。
-if [ -f "/tmp/flow-done-${SCOPE_KEY}.json" ]; then
-  _SENTINEL_BRANCH=$(jq -r '.branch // ""' "/tmp/flow-done-${SCOPE_KEY}.json" 2>/dev/null)
+if [ -f "$FLOW_STATE_DIR/flow-done-${SCOPE_KEY}.json" ]; then
+  _SENTINEL_BRANCH=$(jq -r '.branch // ""' "$FLOW_STATE_DIR/flow-done-${SCOPE_KEY}.json" 2>/dev/null)
   _CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
   if [ -z "$_SENTINEL_BRANCH" ] || [ "$_SENTINEL_BRANCH" = "$_CURRENT_BRANCH" ]; then
     if ! { [ "${MODE:-}" = "--resume" ] && flow_state_exists "$SCOPE_KEY"; }; then
-      halt "STEP 0: scope $SCOPE_KEY は既に完了済み (sentinel: /tmp/flow-done-${SCOPE_KEY}.json)。\
+      halt "STEP 0: scope $SCOPE_KEY は既に完了済み (sentinel: $FLOW_STATE_DIR/flow-done-${SCOPE_KEY}.json)。\
 再実行したい場合は sentinel を削除してから再起動してください"
     fi
   fi
@@ -547,7 +548,7 @@ if [ "$HAS_TARGET" != "true" ] || [ "$PM2_ONLINE" != "true" ]; then
   fi
   flow_state_update progress '.phase = "done"' "$SCOPE_KEY"
   # P12 terminal: state / codex log 回収。done sentinel を書き、KPI は
-  # /tmp/flow-kpi-history.jsonl に退避してから state を削除する (--kpi 集計と再起動阻害解消の両立)
+  # flow-kpi-history.jsonl に退避してから state を削除する (--kpi 集計と再起動阻害解消の両立)
   cleanup_post_deploy "$SCOPE_KEY" final || echo "WARNING: cleanup_post_deploy 失敗 (continue)" >&2
   echo "deploy 対象なし、P12 を no-target で finalize"
 else
@@ -602,7 +603,7 @@ cron が発火するたびに Claude が起き、上記 prompt の指示通り�
 ### 12-3. terminal 後のフォロー
 
 - worktree はそのまま残す。ユーザーが結果を見て手動で `git worktree remove <path>` する
-- **success / no-target** → `cleanup_post_deploy final`: 全 state を削除。削除前に kpi.json を `/tmp/flow-kpi-history.jsonl` に append するため KPI は履歴として永続化される。done sentinel (`/tmp/flow-done-<scope>.json`) が残り、STEP 0 が「完了済み」を検出できる
+- **success / no-target** → `cleanup_post_deploy final`: 全 state を削除。削除前に kpi.json を `$FLOW_STATE_DIR/flow-kpi-history.jsonl` に append するため KPI は履歴として永続化される。done sentinel (`$FLOW_STATE_DIR/flow-done-<scope>.json`) が残り、STEP 0 が「完了済み」を検出できる
 - **failure / timeout / poll-error** → `cleanup_post_deploy resumable`: state を**調査用に残置**。terminal は `phase=done` を記録するため `--resume` での継続は STEP 0 で halt する。実際の re-deploy は**別 PR / 別 flow run** として開始する
 
 ### 12-4. session 終了時の挙動
@@ -626,7 +627,7 @@ cron が発火するたびに Claude が起き、上記 prompt の指示通り�
 ```bash
 /flow --kpi
 ```
-全 `/tmp/flow-kpi-*.json` (進行中 run) と `/tmp/flow-kpi-history.jsonl` (完了済み run、`cleanup_post_deploy final` で append される) を集計して以下の markdown table を出力:
+`$FLOW_STATE_DIR/flow-kpi-*.json` (進行中 run) と `$FLOW_STATE_DIR/flow-kpi-history.jsonl` (完了済み run、`cleanup_post_deploy final` で append される) を集計して以下の markdown table を出力:
 
 ```
 | Work | 最大連続 | 総自走率 | 初介入中央値 | 待機除外 | 状態 | deploy |
