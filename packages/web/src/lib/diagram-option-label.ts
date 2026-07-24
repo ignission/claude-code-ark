@@ -1,4 +1,6 @@
-const DIAGRAMS_PREFIX = "docs/diagrams/";
+import { DIAGRAM_DIR } from "@ark/shared";
+
+const DIAGRAMS_PREFIX = `${DIAGRAM_DIR}/`;
 
 function basename(relPath: string): string {
   return relPath.split("/").at(-1) ?? relPath;

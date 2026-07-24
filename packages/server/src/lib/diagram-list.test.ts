@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DIAGRAM_DIR } from "@ark/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleDiagramListRequest, listDiagrams } from "./diagram-list.js";
 
@@ -14,7 +15,7 @@ function makeWorktree(withDiagramDir = true): {
     fs.mkdtempSync(path.join(os.tmpdir(), "ark-diagram-list-"))
   );
   tempDirs.push(worktree);
-  const diagramDir = path.join(worktree, "docs", "diagrams");
+  const diagramDir = path.join(worktree, DIAGRAM_DIR);
   if (withDiagramDir) fs.mkdirSync(diagramDir, { recursive: true });
   return { worktree, diagramDir };
 }
@@ -66,19 +67,19 @@ describe("listDiagrams", () => {
 
     await expect(listDiagrams(worktree)).resolves.toEqual([
       {
-        relPath: "docs/diagrams/a.diagram.html",
+        relPath: ".claude/diagrams/a.diagram.html",
         displayName: "a.diagram.html",
       },
       {
-        relPath: "docs/diagrams/blank.diagram.html",
+        relPath: ".claude/diagrams/blank.diagram.html",
         displayName: "blank.diagram.html",
       },
       {
-        relPath: "docs/diagrams/nested/b.diagram.html",
+        relPath: ".claude/diagrams/nested/b.diagram.html",
         displayName: "サブ図",
       },
       {
-        relPath: "docs/diagrams/z.diagram.html",
+        relPath: ".claude/diagrams/z.diagram.html",
         displayName: "注文フロー",
       },
     ]);
@@ -90,6 +91,18 @@ describe("listDiagrams", () => {
 
     await expect(listDiagrams(missing.worktree)).resolves.toEqual([]);
     await expect(listDiagrams(empty.worktree)).resolves.toEqual([]);
+  });
+
+  it("旧 docs/diagrams にだけ有効な図があっても空配列を返す", async () => {
+    const { worktree } = makeWorktree(false);
+    const legacyDir = path.join(worktree, "docs", "diagrams");
+    fs.mkdirSync(legacyDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(legacyDir, "legacy.diagram.html"),
+      diagramHtml("旧ルート")
+    );
+
+    await expect(listDiagrams(worktree)).resolves.toEqual([]);
   });
 
   it("不正モデル・モデル無し・外向き symlink・symlink directory を除外する", async () => {
@@ -123,7 +136,7 @@ describe("listDiagrams", () => {
 
     await expect(listDiagrams(worktree)).resolves.toEqual([
       {
-        relPath: "docs/diagrams/valid.diagram.html",
+        relPath: ".claude/diagrams/valid.diagram.html",
         displayName: "正常",
       },
     ]);
@@ -205,7 +218,7 @@ describe("handleDiagramListRequest", () => {
   it("resolver の正規化済み実パスだけを helper に渡して成功応答を返す", async () => {
     const diagrams = [
       {
-        relPath: "docs/diagrams/a.diagram.html",
+        relPath: ".claude/diagrams/a.diagram.html",
         displayName: "A",
       },
     ];

@@ -2,18 +2,21 @@ import { describe, expect, it } from "vitest";
 import { formatDiagramOptionLabel } from "./diagram-option-label";
 
 describe("formatDiagramOptionLabel", () => {
-  it("タイトルと docs/diagrams/ より後ろの path を表示する", () => {
+  it("タイトルと .claude/diagrams/ より後ろの path を表示する", () => {
     expect(
       formatDiagramOptionLabel(
         "注文フロー",
-        "docs/diagrams/promarche-order-status.diagram.html"
+        ".claude/diagrams/promarche-order-status.diagram.html"
       )
     ).toBe("注文フロー — promarche-order-status.diagram.html");
   });
 
   it("displayName が basename と同じ場合は path だけを表示する", () => {
     expect(
-      formatDiagramOptionLabel("b.diagram.html", "docs/diagrams/b.diagram.html")
+      formatDiagramOptionLabel(
+        "b.diagram.html",
+        ".claude/diagrams/b.diagram.html"
+      )
     ).toBe("b.diagram.html");
   });
 
@@ -21,12 +24,18 @@ describe("formatDiagramOptionLabel", () => {
     expect(
       formatDiagramOptionLabel(
         "b.diagram.html",
-        "docs/diagrams/nested/b.diagram.html"
+        ".claude/diagrams/nested/b.diagram.html"
       )
     ).toBe("nested/b.diagram.html");
   });
 
-  it("docs/diagrams/ 以外の relPath は全体を path として使う", () => {
+  it("旧 docs/diagrams/ の relPath は全体を path として使う", () => {
+    expect(
+      formatDiagramOptionLabel("注文フロー", "docs/diagrams/order.diagram.html")
+    ).toBe("注文フロー — docs/diagrams/order.diagram.html");
+  });
+
+  it(".claude/diagrams/ 以外の relPath は全体を path として使う", () => {
     expect(
       formatDiagramOptionLabel(
         "注文フロー",

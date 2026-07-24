@@ -3,6 +3,7 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 import { describeModelDiff } from "../packages/server/src/lib/diagram-diff";
 import { injectHarness } from "../packages/server/src/lib/diagram-harness";
 import type { DiagramModel } from "../packages/server/src/lib/diagram-model";
+import { DIAGRAM_DIR } from "../packages/shared/src/types";
 
 const model = {
   version: 1,
@@ -430,7 +431,7 @@ async function openAuthoredDiagram(page: Page, filename: string) {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   const html = readFileSync(
-    new URL(`../docs/diagrams/${filename}`, import.meta.url),
+    new URL(`../${DIAGRAM_DIR}/${filename}`, import.meta.url),
     "utf8"
   );
   await page.setContent(injectHarness(html));

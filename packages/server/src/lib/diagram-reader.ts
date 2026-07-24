@@ -1,11 +1,11 @@
 /**
  * 図ファイルを読み、モデルを取り出し、meta CSP を注入して返す。
  *
- * `resolveDiagramPath` は文字列上の封じ込め（`docs/diagrams` 配下かどうか）しか
- * 見ないため、`docs/diagrams/x.diagram.html` が worktree 外を指す
+ * `resolveDiagramPath` は文字列上の封じ込め（`DIAGRAM_DIR` 配下かどうか）しか
+ * 見ないため、`DIAGRAM_DIR/x.diagram.html` が worktree 外を指す
  * シンボリックリンクだった場合は素通りしてしまう。ここでは
  * `html-path-validator.ts` と同じ水準で open→fstat→realpath+stat による
- * TOCTOU 対策を行い、実体（realpath）が `docs/diagrams` 配下に収まっている
+ * TOCTOU 対策を行い、実体（realpath）が `DIAGRAM_DIR` 配下に収まっている
  * ことまで検証する。
  */
 
@@ -31,7 +31,7 @@ type ReadRawResult =
 
 /**
  * TOCTOU 対策込みでファイルを読み、生テキストを返す共通コア。
- * open→fstat→realpath+stat の inode/device 一致と、実体が docs/diagrams 配下に
+ * open→fstat→realpath+stat の inode/device 一致と、実体が DIAGRAM_DIR 配下に
  * 収まっていることを検証する（symlink による worktree 外脱出を弾く）。
  */
 async function readRawVerified(
@@ -60,7 +60,7 @@ async function readRawVerified(
       };
     }
 
-    // 実体（realpath）が worktree の docs/diagrams 配下に収まっているか
+    // 実体（realpath）が worktree の DIAGRAM_DIR 配下に収まっているか
     // （シンボリックリンクで worktree 外を指すケースを弾く）
     if (
       realPath !== diagramsDir &&
@@ -69,7 +69,7 @@ async function readRawVerified(
       return {
         ok: false,
         status: 403,
-        error: "図ファイルの実体が worktree の docs/diagrams から出ています",
+        error: `図ファイルの実体が worktree の ${DIAGRAM_DIR} から出ています`,
       };
     }
 

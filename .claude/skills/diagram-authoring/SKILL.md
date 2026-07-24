@@ -5,8 +5,9 @@ description: 図解を求められたときに .diagram.html を生成する規�
 
 # 図の書き方
 
-図は `<worktree>/docs/diagrams/<名前>.diagram.html` に 1 ファイルで書く。
-書いたら `board_open` でペインを開かせる。
+図の書き出し先は `board_open.path` の説明に示された正準 directory と
+`<名前>.diagram.html` を組み合わせ、1 ファイルで書く。書き込む直前に
+parent directory が存在しない場合だけ作成し、書いた後に `board_open` でペインを開かせる。
 
 ## ファイルの構造
 
@@ -216,7 +217,8 @@ projection root は member node と sibling に置き、既存の
 ```
 
 group nesting、group 一括 drag、snap / grid は未対応。この例は timeline を固定するため
-auto layout を使わない。完成例は `docs/diagrams/event-storming.diagram.html` を参照する。
+auto layout を使わない。完成例は `event-storming.diagram.html` を
+`board_open.path` の説明に示された正準 directory と組み合わせて参照する。
 
 ### Infrastructure の例
 
@@ -319,7 +321,8 @@ region / VPC / subnet の階層感が必要でも `groups[].nodes` に group id 
 ```
 
 group nesting、group 一括 drag は未対応。この例は階層境界を固定するため auto layout を
-使わない。完成例は `docs/diagrams/infrastructure.diagram.html` を参照する。
+使わない。完成例は `infrastructure.diagram.html` を
+`board_open.path` の説明に示された正準 directory と組み合わせて参照する。
 
 ## 語彙: edge / ER
 
@@ -424,7 +427,8 @@ drag は core の `edge.from` / `edge.to` だけを更新するため
 
 ER projection でも外部 URL、stylesheet、font、image、script、外部 `<use href>` は使わず、
 inline CSS / SVG の範囲に留める。完成例は
-`docs/diagrams/er-edge-semantics.diagram.html` を参照する。
+`er-edge-semantics.diagram.html` を `board_open.path` の説明に示された正準 directory と
+組み合わせて参照する。
 
 ## 語彙: group
 

@@ -1,13 +1,15 @@
 /**
- * 図ファイルのパス解決。worktree 配下の `docs/diagrams/*.diagram.html` に封じ込める。
+ * 図ファイルのパス解決。worktree 配下の `DIAGRAM_DIR` に封じ込める。
  *
  * worktree の実パス自体の検証は managed-worktree.ts が担い、ここは
  * 「その配下から出ないこと」と「図ファイルであること」だけを見る。
  */
 
 import path from "node:path";
+import { DIAGRAM_DIR } from "@ark/shared";
 
-export const DIAGRAM_DIR = "docs/diagrams";
+export { DIAGRAM_DIR };
+
 const DIAGRAM_SUFFIX = ".diagram.html";
 
 export type DiagramPathResult =
@@ -16,7 +18,7 @@ export type DiagramPathResult =
 
 /**
  * @param worktreeReal realpath 済みの worktree 絶対パス
- * @param relPath `docs/diagrams/x.diagram.html` または `x.diagram.html`
+ * @param relPath `${DIAGRAM_DIR}/x.diagram.html` または `x.diagram.html`
  */
 export function resolveDiagramPath(
   worktreeReal: string,
@@ -43,13 +45,13 @@ export function resolveDiagramPath(
   if (relPath.includes("..")) {
     return {
       ok: false,
-      error: "図のパスが worktree の docs/diagrams から出ています",
+      error: `図のパスが worktree の ${DIAGRAM_DIR} から出ています`,
     };
   }
 
   const normalized = path.normalize(relPath);
 
-  // docs/diagrams で始まっていればそのまま、そうでなければ前に付ける。
+  // DIAGRAM_DIR で始まっていればそのまま、そうでなければ前に付ける。
   // （relPath は .diagram.html で終わることを確認済みなので、normalized が
   // DIAGRAM_DIR "そのもの" になることはない = ディレクトリ指定の分岐は不要）
   const withDir = normalized.startsWith(`${DIAGRAM_DIR}${path.sep}`)
@@ -63,7 +65,7 @@ export function resolveDiagramPath(
   if (absPath !== base && !absPath.startsWith(base + path.sep)) {
     return {
       ok: false,
-      error: "図のパスが worktree の docs/diagrams から出ています",
+      error: `図のパスが worktree の ${DIAGRAM_DIR} から出ています`,
     };
   }
   return { ok: true, absPath };

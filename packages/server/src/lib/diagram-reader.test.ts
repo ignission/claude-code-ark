@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DIAGRAM_DIR } from "@ark/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DIAGRAM_CSP } from "./diagram-file.js";
 import { DIAGRAM_HARNESS_MARKER } from "./diagram-harness.js";
@@ -20,7 +21,7 @@ beforeEach(() => {
   wt = fs.realpathSync(
     fs.mkdtempSync(path.join(os.tmpdir(), "ark-diagram-read-"))
   );
-  dir = path.join(wt, "docs", "diagrams");
+  dir = path.join(wt, DIAGRAM_DIR);
   fs.mkdirSync(dir, { recursive: true });
   outsideDir = fs.realpathSync(
     fs.mkdtempSync(path.join(os.tmpdir(), "ark-diagram-read-outside-"))
@@ -214,6 +215,22 @@ describe("readDiagram", () => {
     if (!result.ok) expect(result.status).toBe(404);
   });
 
+  it("旧 docs/diagrams にだけある同名ファイルは読まない", async () => {
+    const legacyDir = path.join(wt, "docs", "diagrams");
+    fs.mkdirSync(legacyDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(legacyDir, "legacy.diagram.html"),
+      `<!doctype html><html><head></head><body>` +
+        `<script type="application/json" id="ark-diagram-model">${MODEL}</script>` +
+        `<div>旧ルート</div></body></html>`
+    );
+
+    const result = await readDiagram(wt, "legacy.diagram.html");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(404);
+  });
+
   it("worktree の外を指す指定は 403 を返す", async () => {
     const result = await readDiagram(wt, "../../x.diagram.html");
 
@@ -266,7 +283,7 @@ describe("readDiagram", () => {
   });
 
   it("worktree 外を指すシンボリックリンクは 403 を返す", async () => {
-    // docs/diagrams 配下の見た目上は正しいパスでも、実体（realpath）が
+    // DIAGRAM_DIR 配下の見た目上は正しいパスでも、実体（realpath）が
     // worktree 外を指すシンボリックリンクなら文字列上の封じ込め
     // (resolveDiagramPath) だけでは検出できない。fs 実体側の検証が必須。
     const outsideTarget = path.join(outsideDir, "secret.diagram.html");
@@ -281,6 +298,10 @@ describe("readDiagram", () => {
     const result = await readDiagram(wt, "evil.diagram.html");
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.status).toBe(403);
+    if (!result.ok) {
+      expect(result.status).toBe(403);
+      expect(result.error).toContain(DIAGRAM_DIR);
+      expect(result.error).not.toContain("docs/diagrams");
+    }
   });
 });

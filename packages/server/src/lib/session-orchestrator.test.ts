@@ -82,6 +82,7 @@ vi.mock("node:child_process", () => ({
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DIAGRAM_DIR } from "@ark/shared";
 import type { BoardMcpServer } from "./board-mcp-server.js";
 // BoardSessionRegistry は単純な token→worktreePath の in-memory map なので
 // モック化せず実体を使い、register/resolve/unregister の実挙動を検証する。
@@ -692,6 +693,22 @@ describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
     // bearer token を含むため 0600 で書かれている
     const mode = fs.statSync(cfgPath).mode & 0o777;
     expect(mode).toBe(0o600);
+  });
+
+  it("新規セッションの作図 prompt は正準 directory を書込時だけ作り、書込後に board_open するよう指示する", async () => {
+    const registry = new BoardSessionRegistry();
+    orchestrator.setBoardMcp(fakeBoardMcp, registry);
+
+    await orchestrator.startSession("wt-1", "/path/to/work", "/repo");
+
+    const prompt =
+      mockedTmux.setClaudeAppendSystemPrompt.mock.calls.at(-1)?.[0];
+    expect(prompt).toContain(DIAGRAM_DIR);
+    expect(prompt).not.toContain("docs/diagrams");
+    expect(prompt).toContain("書き込む直前");
+    expect(prompt).toContain("存在しない場合");
+    expect(prompt).toContain("書いた後");
+    expect(prompt).toContain("board_open");
   });
 
   it("既存セッション再利用パスでは token を発行しない (setClaudeMcpConfigPath も呼ばれない)", async () => {
