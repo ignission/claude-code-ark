@@ -13,17 +13,17 @@ export { DIAGRAM_DIR };
 const DIAGRAM_SUFFIX = ".diagram.html";
 
 export type DiagramPathResult =
-  | { ok: true; absPath: string }
+  | { ok: true; absPath: string; relPath: string }
+  | { ok: false; error: string };
+
+export type DiagramRelPathResult =
+  | { ok: true; relPath: string }
   | { ok: false; error: string };
 
 /**
- * @param worktreeReal realpath 済みの worktree 絶対パス
  * @param relPath `${DIAGRAM_DIR}/x.diagram.html` または `x.diagram.html`
  */
-export function resolveDiagramPath(
-  worktreeReal: string,
-  relPath: string
-): DiagramPathResult {
+export function normalizeDiagramRelPath(relPath: string): DiagramRelPathResult {
   if (typeof relPath !== "string" || relPath.length === 0) {
     return { ok: false, error: "図のパスが空です" };
   }
@@ -58,8 +58,22 @@ export function resolveDiagramPath(
     ? normalized
     : path.join(DIAGRAM_DIR, normalized);
 
+  return { ok: true, relPath: withDir };
+}
+
+/**
+ * @param worktreeReal realpath 済みの worktree 絶対パス
+ * @param relPath `${DIAGRAM_DIR}/x.diagram.html` または `x.diagram.html`
+ */
+export function resolveDiagramPath(
+  worktreeReal: string,
+  relPath: string
+): DiagramPathResult {
+  const normalized = normalizeDiagramRelPath(relPath);
+  if (!normalized.ok) return normalized;
+
   const base = path.join(worktreeReal, DIAGRAM_DIR);
-  const absPath = path.resolve(worktreeReal, withDir);
+  const absPath = path.resolve(worktreeReal, normalized.relPath);
 
   // 二重チェック：パス解決後も DIAGRAM_DIR 配下であることを確認
   if (absPath !== base && !absPath.startsWith(base + path.sep)) {
@@ -68,5 +82,5 @@ export function resolveDiagramPath(
       error: `図のパスが worktree の ${DIAGRAM_DIR} から出ています`,
     };
   }
-  return { ok: true, absPath };
+  return { ok: true, absPath, relPath: normalized.relPath };
 }

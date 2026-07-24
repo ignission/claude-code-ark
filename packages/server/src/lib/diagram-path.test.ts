@@ -2,7 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
+import {
+  DIAGRAM_DIR,
+  normalizeDiagramRelPath,
+  resolveDiagramPath,
+} from "./diagram-path.js";
 
 let wt: string;
 
@@ -38,10 +42,18 @@ describe("resolveDiagramPath", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
+      expect(result.relPath).toBe(".claude/diagrams/a.diagram.html");
       expect(result.absPath).toBe(
         path.join(wt, ".claude", "diagrams", "a.diagram.html")
       );
     }
+  });
+
+  it("relPath の正規化だけでも同じ正準形を返す", () => {
+    expect(normalizeDiagramRelPath("a.diagram.html")).toEqual({
+      ok: true,
+      relPath: ".claude/diagrams/a.diagram.html",
+    });
   });
 
   it("worktree の外へ出る指定を拒否する", () => {

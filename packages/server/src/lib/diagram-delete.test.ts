@@ -226,6 +226,41 @@ describe("handleDiagramDeleteRequest tracked 再確認", () => {
     if (!result.ok) expect(result.error).toContain("git failed");
     expect(deps.deleteDiagramFile).not.toHaveBeenCalled();
   });
+
+  it("filename-only 入力を正準化して全処理と ACK に使う", async () => {
+    const deps = makeRequestDeps();
+    vi.mocked(deps.clearSessionLastDiagramIfMatches).mockReturnValue(true);
+
+    await expect(
+      handleDiagramDeleteRequest(deps, {
+        sessionId: "session-1",
+        relPath: "a.diagram.html",
+        expectedTracked: true,
+      })
+    ).resolves.toEqual({
+      ok: true,
+      relPath: ".claude/diagrams/a.diagram.html",
+      tracked: true,
+    });
+
+    const canonicalRelPath = ".claude/diagrams/a.diagram.html";
+    expect(deps.isDiagramTracked).toHaveBeenCalledWith(
+      "/real/worktree",
+      canonicalRelPath
+    );
+    expect(deps.deleteDiagramFile).toHaveBeenCalledWith(
+      "/real/worktree",
+      canonicalRelPath
+    );
+    expect(deps.clearSessionLastDiagramIfMatches).toHaveBeenCalledWith(
+      "session-1",
+      canonicalRelPath
+    );
+    expect(deps.onDeleted).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      relPath: canonicalRelPath,
+    });
+  });
 });
 
 describe("handleDiagramDeleteRequest side-effect order", () => {
@@ -730,5 +765,65 @@ describe("tracked/untracked unlink integration", () => {
     expect(execFileSync("git", ["-C", worktree, "ls-files"]).toString()).toBe(
       ""
     );
+  });
+
+  it("filename-only 入力でも正準位置の tracked file を判定して削除する", async () => {
+    const { worktree, diagramsDir } = makeDeleteFixture();
+    initializeGitWorktree(worktree);
+    const target = path.join(diagramsDir, "filename-only.diagram.html");
+    fs.writeFileSync(target, "tracked");
+    execFileSync("git", [
+      "-C",
+      worktree,
+      "add",
+      "--",
+      ".claude/diagrams/filename-only.diagram.html",
+    ]);
+    execFileSync("git", ["-C", worktree, "commit", "-qm", "fixture"]);
+    const deps = realDeps(worktree);
+    deps.clearSessionLastDiagramIfMatches = vi.fn(() => true);
+
+    await expect(
+      handleDiagramDeleteRequest(deps, {
+        sessionId: "session-1",
+        relPath: "filename-only.diagram.html",
+        expectedTracked: true,
+      })
+    ).resolves.toEqual({
+      ok: true,
+      relPath: ".claude/diagrams/filename-only.diagram.html",
+      tracked: true,
+    });
+
+    expect(fs.existsSync(target)).toBe(false);
+    expect(deps.clearSessionLastDiagramIfMatches).toHaveBeenCalledWith(
+      "session-1",
+      ".claude/diagrams/filename-only.diagram.html"
+    );
+    expect(deps.onDeleted).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      relPath: ".claude/diagrams/filename-only.diagram.html",
+    });
+  });
+
+  it.each([
+    ":(glob)*.diagram.html",
+    ":(top)victim.diagram.html",
+  ])("pathspec magic %s を通常ファイル名として扱う", async relPath => {
+    const { worktree } = makeDeleteFixture();
+    initializeGitWorktree(worktree);
+    const rootTracked = path.join(worktree, "victim.diagram.html");
+    fs.writeFileSync(rootTracked, "tracked");
+    execFileSync("git", ["-C", worktree, "add", "--", "victim.diagram.html"]);
+
+    await expect(
+      handleDiagramDeleteRequest(realDeps(worktree), {
+        sessionId: "session-1",
+        relPath,
+        expectedTracked: false,
+      })
+    ).resolves.toMatchObject({ ok: false, code: "NOT_FOUND" });
+
+    expect(fs.readFileSync(rootTracked, "utf8")).toBe("tracked");
   });
 });

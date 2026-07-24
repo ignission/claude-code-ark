@@ -84,12 +84,24 @@ export async function isDiagramTracked(
   worktreeReal: string,
   relPath: string
 ): Promise<boolean> {
+  const resolved = resolveDeleteDiagramPath(worktreeReal, relPath);
+  if (!resolved.ok) return false;
+
   const { stdout } = await execFileAsync(
     "git",
-    ["-C", worktreeReal, "ls-files", "--cached", "-z", "--", relPath],
+    [
+      "-C",
+      worktreeReal,
+      "--literal-pathspecs",
+      "ls-files",
+      "--cached",
+      "-z",
+      "--",
+      resolved.relPath,
+    ],
     { encoding: "utf8" }
   );
-  return stdout.split("\0").some(candidate => candidate === relPath);
+  return stdout.split("\0").some(candidate => candidate === resolved.relPath);
 }
 
 export async function deleteDiagramFile(
@@ -223,10 +235,11 @@ export async function handleDiagramDeleteRequest(
       error: resolved.error,
     };
   }
+  const relPath = resolved.relPath;
 
   let tracked: boolean;
   try {
-    tracked = await deps.isDiagramTracked(worktreeReal, data.relPath);
+    tracked = await deps.isDiagramTracked(worktreeReal, relPath);
   } catch (error) {
     return {
       ok: false,
@@ -242,23 +255,23 @@ export async function handleDiagramDeleteRequest(
     };
   }
 
-  const deleted = await deps.deleteDiagramFile(worktreeReal, data.relPath);
+  const deleted = await deps.deleteDiagramFile(worktreeReal, relPath);
   if (!deleted.ok) return deleted;
 
   let warning: string | undefined;
   try {
     const cleared = deps.clearSessionLastDiagramIfMatches(
       data.sessionId,
-      data.relPath
+      relPath
     );
     if (cleared) deps.onSessionCleared(data.sessionId);
   } catch (error) {
     warning = `ファイルは削除済みですが復元情報の消去に失敗しました: ${errnoMessage(error)}`;
   }
-  deps.onDeleted({ sessionId: data.sessionId, relPath: data.relPath });
+  deps.onDeleted({ sessionId: data.sessionId, relPath });
   return {
     ok: true,
-    relPath: data.relPath,
+    relPath,
     tracked,
     ...(warning ? { warning } : {}),
   };
