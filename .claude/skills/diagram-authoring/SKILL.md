@@ -437,9 +437,10 @@ drag は core の `edge.from` / `edge.to` だけを更新するため
 単独変更は diagram file と表示には保存されるが、自動で自然文へ還流しない。
 
 ER projection でも外部 URL、stylesheet、font、image、script、外部 `<use href>` は使わず、
-inline CSS / SVG の範囲に留める。完成例は
-`er-edge-semantics.diagram.html` を `board_open.path` の説明に示された正準 directory と
-組み合わせて参照する。
+inline CSS / SVG の範囲に留める。完成例は `board_open.path` の説明に示された正準 directory と
+組み合わせて参照する。cardinality/direction/type の最小デモは
+`er-edge-semantics.diagram.html`、業務ドメインを題材に 1:N・1:1・N:M（関連エンティティ含む）を
+座標なし auto-layout で並べた実例は `ec-domain-model.diagram.html` を見る。
 
 ## 語彙: group
 
