@@ -27,12 +27,53 @@
  */
 
 import { MODEL_SCRIPT_ID } from "./diagram-file.js";
+import { layoutDiagram } from "./diagram-layout.js";
 
 /**
  * 二重注入検出に使うマーカー。注入する `<script>` タグの id 属性の値として
  * 一度だけ現れる（HARNESS_JS / HARNESS_STYLE の中では絶対に使わない）。
  */
 export const DIAGRAM_HARNESS_MARKER = "ark-diagram-harness";
+
+/**
+ * 注入サイズを抑えるため、既知の trusted source から文字列外の空白だけを除く。
+ * 対象にする kernel / adapter 区間には comment と正規表現 literal を置かない。
+ */
+function compactTrustedJavaScript(source: string): string {
+  let result = "";
+  let quote = "";
+  let escaped = false;
+  const isWord = (character: string | undefined) =>
+    character !== undefined && /[A-Za-z0-9_$]/.test(character);
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (quote) {
+      result += character;
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+      result += character;
+      continue;
+    }
+    if (/\s/.test(character)) {
+      let next = index + 1;
+      while (next < source.length && /\s/.test(source[next])) next += 1;
+      if (isWord(result.at(-1)) && isWord(source[next])) result += " ";
+      index = next - 1;
+      continue;
+    }
+    result += character;
+  }
+  return result;
+}
+
+const GROUP_LAYOUT_KERNEL_SOURCE = compactTrustedJavaScript(
+  layoutDiagram.toString()
+);
 
 const HARNESS_STYLE = `<style data-ark-harness-ui="1">
 .ark-harness-toolbar {
@@ -236,12 +277,13 @@ body { padding-bottom: var(--ark-harness-toolbar-height, 3.4rem) !important; }
 /**
  * ブラウザで実行するハーネス本体。バッククォート（テンプレートリテラル）を
  * 使うと TS 側のテンプレートリテラルとネストして壊れるため、文字列連結のみで
- * 書く。`${MODEL_SCRIPT_ID}` の 1 箇所だけ TS 側の定数を埋め込む。
+ * 書く。model script id と trusted kernel の function literal を TS 側で埋め込む。
  */
-const HARNESS_JS = `(function () {
+const RAW_HARNESS_JS = `(function () {
   "use strict";
 
   var MODEL_SCRIPT_ID = "${MODEL_SCRIPT_ID}";
+  var groupAwareLayout = ${GROUP_LAYOUT_KERNEL_SOURCE};
   var GROUP_GEOMETRY_PROPERTIES = [
     "--ark-harness-group-x",
     "--ark-harness-group-y",
@@ -633,6 +675,35 @@ const HARNESS_JS = `(function () {
       left.y + left.height + gap > right.y;
   }
 
+  function applyLayoutPositions(graph, entries, measured, nextPositions, config) {
+    var maxRight = 0;
+    var maxBottom = 0;
+    entries.forEach(function (entry) {
+      var position = nextPositions.get(entry.id);
+      var size = measured.get(entry.id);
+      if (!position || !size) return;
+      var previous = graph.positionsById.get(entry.id);
+      if (!previous || previous.x !== position.x || previous.y !== position.y) {
+        entry.el.style.setProperty("--ark-harness-graph-x", position.x + "px");
+        entry.el.style.setProperty("--ark-harness-graph-y", position.y + "px");
+      }
+      maxRight = Math.max(maxRight, position.x + size.width);
+      maxBottom = Math.max(maxBottom, position.y + size.height);
+    });
+    graph.positionsById = nextPositions;
+    var minWidth = Math.ceil(maxRight + config.padding) + "px";
+    var minHeight = Math.ceil(maxBottom + config.padding) + "px";
+    if (graph.layoutExtent.width !== minWidth) {
+      graph.container.style.setProperty("--ark-harness-graph-min-width", minWidth);
+      graph.layoutExtent.width = minWidth;
+    }
+    if (graph.layoutExtent.height !== minHeight) {
+      graph.container.style.setProperty("--ark-harness-graph-min-height", minHeight);
+      graph.layoutExtent.height = minHeight;
+    }
+    graph.container.classList.add("ark-harness-graph-layout");
+  }
+
   function layoutGraph(graph) {
     var config = readLayoutConfig(state.model);
     var direction = config.direction;
@@ -732,33 +803,118 @@ const HARNESS_JS = `(function () {
       });
     });
 
-    var maxRight = 0;
-    var maxBottom = 0;
-    entries.forEach(function (entry) {
-      var position = nextPositions.get(entry.id);
-      var size = measured.get(entry.id);
-      if (!position || !size) return;
-      var previous = graph.positionsById.get(entry.id);
-      if (!previous || previous.x !== position.x || previous.y !== position.y) {
-        entry.el.style.setProperty("--ark-harness-graph-x", position.x + "px");
-        entry.el.style.setProperty("--ark-harness-graph-y", position.y + "px");
-      }
-      maxRight = Math.max(maxRight, position.x + size.width);
-      maxBottom = Math.max(maxBottom, position.y + size.height);
-    });
-    graph.positionsById = nextPositions;
+    applyLayoutPositions(graph, entries, measured, nextPositions, config);
+  }
 
-    var minWidth = Math.ceil(maxRight + config.padding) + "px";
-    var minHeight = Math.ceil(maxBottom + config.padding) + "px";
-    if (graph.layoutExtent.width !== minWidth) {
-      graph.container.style.setProperty("--ark-harness-graph-min-width", minWidth);
-      graph.layoutExtent.width = minWidth;
-    }
-    if (graph.layoutExtent.height !== minHeight) {
-      graph.container.style.setProperty("--ark-harness-graph-min-height", minHeight);
-      graph.layoutExtent.height = minHeight;
-    }
-    graph.container.classList.add("ark-harness-graph-layout");
+  function applyGroupLayout(graph, entries, measured, result, config) {
+    var nextPositions = new Map();
+    entries.forEach(function (entry) {
+      var position = result.positions[entry.id];
+      if (position) nextPositions.set(entry.id, position);
+    });
+    applyLayoutPositions(graph, entries, measured, nextPositions, config);
+  }
+
+  function measureGroupOutsets(graph, groups) {
+    var outsets = new Map();
+    groups.forEach(function (group) {
+      var boundary = graph.groupsById.get(group.id);
+      var memberEls = group.nodes.map(function (id) {
+        return graph.nodesById.get(id);
+      });
+      if (!boundary || memberEls.some(function (el) { return !el; })) {
+        outsets.set(group.id, { left: 0, top: 0, right: 0, bottom: 0 });
+        return;
+      }
+      var first = memberEls[0].getBoundingClientRect();
+      var left = first.left;
+      var top = first.top;
+      var right = first.right;
+      var bottom = first.bottom;
+      memberEls.slice(1).forEach(function (el) {
+        var rect = el.getBoundingClientRect();
+        left = Math.min(left, rect.left);
+        top = Math.min(top, rect.top);
+        right = Math.max(right, rect.right);
+        bottom = Math.max(bottom, rect.bottom);
+      });
+      var boundaryRect = boundary.getBoundingClientRect();
+      var values = {
+        left: Math.max(0, left - boundaryRect.left),
+        top: Math.max(0, top - boundaryRect.top),
+        right: Math.max(0, boundaryRect.right - right),
+        bottom: Math.max(0, boundaryRect.bottom - bottom)
+      };
+      if (!Object.keys(values).every(function (key) {
+        return finiteNumber(values[key]);
+      })) values = { left: 0, top: 0, right: 0, bottom: 0 };
+      outsets.set(group.id, values);
+    });
+    return outsets;
+  }
+
+  function layoutGroupAwareGraph(graph) {
+    if (graph.groupsById.size === 0) return false;
+    var entries = graphModelNodes(graph);
+    if (entries.length === 0 || entries.every(function (entry) {
+      return !!graphPosition(entry.node);
+    })) return false;
+    var modelGroups = state.model && Array.isArray(state.model.groups)
+      ? state.model.groups
+      : [];
+    var groups = [];
+    modelGroups.forEach(function (group, index) {
+      if (!group || !graph.groupsById.has(group.id)) return;
+      groups.push({
+        id: group.id,
+        index: index,
+        nodes: Array.isArray(group.nodes) ? group.nodes.slice() : [],
+        outsets: { left: 0, top: 0, right: 0, bottom: 0 }
+      });
+    });
+    if (groups.length === 0 || groups.length !== graph.groupsById.size) return false;
+
+    var config = readLayoutConfig(state.model);
+    var measured = new Map();
+    var nodes = entries.map(function (entry) {
+      var rect = entry.el.getBoundingClientRect();
+      var size = { width: rect.width, height: rect.height };
+      measured.set(entry.id, size);
+      var manual = graphPosition(entry.node);
+      return {
+        id: entry.id,
+        index: entry.index,
+        width: size.width,
+        height: size.height,
+        manual: manual || undefined
+      };
+    });
+    var edges = state.model && Array.isArray(state.model.edges)
+      ? state.model.edges.map(function (edge) {
+          return { from: edge.from, to: edge.to };
+        })
+      : [];
+    var input = {
+      nodes: nodes,
+      edges: edges,
+      groups: groups,
+      direction: config.direction,
+      rankSpacing: config.rankSpacing,
+      nodeSpacing: config.nodeSpacing,
+      padding: config.padding
+    };
+    var provisional = groupAwareLayout(input);
+    if (provisional.fallback) return false;
+    applyGroupLayout(graph, entries, measured, provisional, config);
+    renderGraphGroups(graph);
+    var measuredOutsets = measureGroupOutsets(graph, groups);
+    groups.forEach(function (group) {
+      group.outsets = measuredOutsets.get(group.id);
+    });
+    var finalLayout = groupAwareLayout(input);
+    if (finalLayout.fallback) return false;
+    applyGroupLayout(graph, entries, measured, finalLayout, config);
+    return true;
   }
 
   function svgElement(name) {
@@ -1058,7 +1214,7 @@ const HARNESS_JS = `(function () {
 
   function renderGraph(graph) {
     graph.scheduled = false;
-    layoutGraph(graph);
+    if (!layoutGroupAwareGraph(graph)) layoutGraph(graph);
     renderGraphGroups(graph);
     while (graph.svg.firstChild) graph.svg.removeChild(graph.svg.firstChild);
     appendGraphMarker(graph.svg, graph.markerId);
@@ -2935,6 +3091,20 @@ const HARNESS_JS = `(function () {
     }
   });
 })();`;
+
+const GROUP_ADAPTER_START = "  function applyGroupLayout(";
+const GROUP_ADAPTER_END = "  function svgElement(";
+const groupAdapterStart = RAW_HARNESS_JS.indexOf(GROUP_ADAPTER_START);
+const groupAdapterEnd = RAW_HARNESS_JS.indexOf(
+  GROUP_ADAPTER_END,
+  groupAdapterStart
+);
+const HARNESS_JS =
+  RAW_HARNESS_JS.slice(0, groupAdapterStart) +
+  compactTrustedJavaScript(
+    RAW_HARNESS_JS.slice(groupAdapterStart, groupAdapterEnd)
+  ) +
+  RAW_HARNESS_JS.slice(groupAdapterEnd);
 
 export const DIAGRAM_HARNESS_SCRIPT = `${HARNESS_STYLE}
 <script id="${DIAGRAM_HARNESS_MARKER}" data-ark-harness-ui="1">
