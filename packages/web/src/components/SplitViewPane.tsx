@@ -15,6 +15,7 @@
 
 import type {
   ClientToServerEvents,
+  DiagramDeleteResponse,
   DiagramListItem,
   ManagedSession,
   MessageShortcut,
@@ -38,6 +39,11 @@ interface SplitViewPaneProps {
   socket: TypedSocket | null;
   isConnected: boolean;
   listDiagrams: (worktreePath: string) => Promise<DiagramListItem[]>;
+  deleteDiagram: (
+    sessionId: string,
+    relPath: string,
+    expectedTracked: boolean
+  ) => Promise<DiagramDeleteResponse>;
   session: ManagedSession;
   worktree: Worktree | undefined;
   repoName?: string;
@@ -269,6 +275,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                 socket={props.socket}
                 isConnected={props.isConnected}
                 listDiagrams={props.listDiagrams}
+                deleteDiagram={props.deleteDiagram}
                 sessionId={props.session.id}
                 worktreePath={
                   diagramTab?.worktreePath ?? props.session.worktreePath

@@ -678,6 +678,21 @@ export class SessionDatabase {
   }
 
   /**
+   * 指定 path が現在値と一致する場合だけ last_diagram_path を消去する。
+   * board_open との競合で保存された別 path を消さないよう比較と更新を単一 SQL にする。
+   */
+  clearSessionLastDiagramIfMatches(
+    sessionId: string,
+    relPath: string
+  ): boolean {
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare(
+      "UPDATE sessions SET last_diagram_path = NULL, updated_at = ? WHERE id = ? AND last_diagram_path = ?"
+    );
+    return stmt.run(now, sessionId, relPath).changes > 0;
+  }
+
+  /**
    * セッションを削除（関連するメッセージも自動削除）
    *
    * @param id - セッションID

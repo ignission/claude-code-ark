@@ -53,3 +53,39 @@ export function setCurrentDiagramTab(
     activeIndex: nextActiveIndex >= 0 ? nextActiveIndex : 0,
   };
 }
+
+/**
+ * 削除通知が現在図と一致する場合だけ diagram state を空にする。
+ * legacy state の複数 diagram はまとめて除去するが、別図を開いた後に届いた
+ * 古い通知では現在図を変更しない。
+ */
+export function clearCurrentDiagramTab(
+  tabs: ViewerTab[],
+  activeIndex: number,
+  relPath: string
+): CurrentDiagramTabResult {
+  const currentDiagram = tabs.find(tab => tab.type === "diagram");
+  if (
+    !currentDiagram ||
+    currentDiagram.type !== "diagram" ||
+    currentDiagram.relPath !== relPath
+  ) {
+    return { tabs, activeIndex };
+  }
+
+  const activeTab = tabs[activeIndex];
+  const nextTabs = tabs.filter(tab => tab.type !== "diagram");
+  if (!activeTab || activeTab.type === "diagram") {
+    const terminalIndex = nextTabs.findIndex(tab => tab.type === "terminal");
+    return {
+      tabs: nextTabs,
+      activeIndex: terminalIndex >= 0 ? terminalIndex : 0,
+    };
+  }
+
+  const nextActiveIndex = nextTabs.findIndex(tab => tab.id === activeTab.id);
+  return {
+    tabs: nextTabs,
+    activeIndex: nextActiveIndex >= 0 ? nextActiveIndex : 0,
+  };
+}

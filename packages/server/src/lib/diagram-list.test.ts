@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,6 +16,7 @@ function makeWorktree(withDiagramDir = true): {
     fs.mkdtempSync(path.join(os.tmpdir(), "ark-diagram-list-"))
   );
   tempDirs.push(worktree);
+  execFileSync("git", ["init", "-q", worktree]);
   const diagramDir = path.join(worktree, DIAGRAM_DIR);
   if (withDiagramDir) fs.mkdirSync(diagramDir, { recursive: true });
   return { worktree, diagramDir };
@@ -64,23 +66,35 @@ describe("listDiagrams", () => {
       diagramHtml("対象外")
     );
     fs.writeFileSync(path.join(diagramDir, "notes.txt"), "対象外");
+    execFileSync("git", [
+      "-C",
+      worktree,
+      "add",
+      "--",
+      ".claude/diagrams/a.diagram.html",
+      ".claude/diagrams/nested/b.diagram.html",
+    ]);
 
     await expect(listDiagrams(worktree)).resolves.toEqual([
       {
         relPath: ".claude/diagrams/a.diagram.html",
         displayName: "a.diagram.html",
+        tracked: true,
       },
       {
         relPath: ".claude/diagrams/blank.diagram.html",
         displayName: "blank.diagram.html",
+        tracked: false,
       },
       {
         relPath: ".claude/diagrams/nested/b.diagram.html",
         displayName: "サブ図",
+        tracked: true,
       },
       {
         relPath: ".claude/diagrams/z.diagram.html",
         displayName: "注文フロー",
+        tracked: false,
       },
     ]);
   });
@@ -91,6 +105,77 @@ describe("listDiagrams", () => {
 
     await expect(listDiagrams(missing.worktree)).resolves.toEqual([]);
     await expect(listDiagrams(empty.worktree)).resolves.toEqual([]);
+  });
+
+  it("tracked、untracked、ignored-untracked、nested tracked を一括判定する", async () => {
+    const { worktree, diagramDir } = makeWorktree();
+    fs.mkdirSync(path.join(diagramDir, "nested"), { recursive: true });
+    fs.writeFileSync(
+      path.join(diagramDir, "tracked.diagram.html"),
+      diagramHtml("tracked")
+    );
+    fs.writeFileSync(
+      path.join(diagramDir, "untracked.diagram.html"),
+      diagramHtml("untracked")
+    );
+    fs.writeFileSync(
+      path.join(diagramDir, "ignored.diagram.html"),
+      diagramHtml("ignored")
+    );
+    fs.writeFileSync(
+      path.join(diagramDir, "nested", "tracked.diagram.html"),
+      diagramHtml("nested")
+    );
+    fs.writeFileSync(
+      path.join(worktree, ".gitignore"),
+      ".claude/diagrams/ignored.diagram.html\n"
+    );
+    execFileSync("git", [
+      "-C",
+      worktree,
+      "add",
+      "--",
+      ".gitignore",
+      ".claude/diagrams/tracked.diagram.html",
+      ".claude/diagrams/nested/tracked.diagram.html",
+    ]);
+
+    await expect(listDiagrams(worktree)).resolves.toEqual([
+      {
+        relPath: ".claude/diagrams/ignored.diagram.html",
+        displayName: "ignored",
+        tracked: false,
+      },
+      {
+        relPath: ".claude/diagrams/nested/tracked.diagram.html",
+        displayName: "nested",
+        tracked: true,
+      },
+      {
+        relPath: ".claude/diagrams/tracked.diagram.html",
+        displayName: "tracked",
+        tracked: true,
+      },
+      {
+        relPath: ".claude/diagrams/untracked.diagram.html",
+        displayName: "untracked",
+        tracked: false,
+      },
+    ]);
+  });
+
+  it("git index の取得失敗を全件 untracked に丸めず一覧 error にする", async () => {
+    const { worktree, diagramDir } = makeWorktree();
+    fs.writeFileSync(
+      path.join(diagramDir, "valid.diagram.html"),
+      diagramHtml("正常")
+    );
+    fs.renameSync(
+      path.join(worktree, ".git"),
+      path.join(worktree, ".git-broken")
+    );
+
+    await expect(listDiagrams(worktree)).rejects.toThrow();
   });
 
   it("旧 docs/diagrams にだけ有効な図があっても空配列を返す", async () => {
@@ -138,6 +223,7 @@ describe("listDiagrams", () => {
       {
         relPath: ".claude/diagrams/valid.diagram.html",
         displayName: "正常",
+        tracked: false,
       },
     ]);
   });
@@ -220,6 +306,7 @@ describe("handleDiagramListRequest", () => {
       {
         relPath: ".claude/diagrams/a.diagram.html",
         displayName: "A",
+        tracked: true,
       },
     ];
     const resolveManagedWorktreePath = vi.fn(() => "/real/worktree");

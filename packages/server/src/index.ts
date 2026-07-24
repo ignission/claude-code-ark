@@ -60,6 +60,11 @@ import {
   WS_PORT_START,
 } from "./lib/constants.js";
 import { db } from "./lib/database.js";
+import {
+  createDiagramDeleteSocketHandler,
+  deleteDiagramFile,
+  isDiagramTracked,
+} from "./lib/diagram-delete.js";
 import { describeModelDiff } from "./lib/diagram-diff.js";
 import { ensureDoctype, replaceModelBlock } from "./lib/diagram-file.js";
 import { handleDiagramListRequest, listDiagrams } from "./lib/diagram-list.js";
@@ -2144,6 +2149,34 @@ export async function startServer(
         }
       });
     });
+
+    socket.on(
+      "diagram:delete",
+      createDiagramDeleteSocketHandler({
+        getSession: sessionId => sessionOrchestrator.getSession(sessionId),
+        resolveManagedWorktreePath,
+        isDiagramTracked,
+        deleteDiagramFile,
+        clearSessionLastDiagramIfMatches: (sessionId, relPath) => {
+          try {
+            return db.clearSessionLastDiagramIfMatches(sessionId, relPath);
+          } catch (error) {
+            console.error(
+              "[Diagram] last_diagram_path の消去に失敗しました:",
+              getErrorMessage(error)
+            );
+            throw error;
+          }
+        },
+        onSessionCleared: sessionId => {
+          const session = sessionOrchestrator.getSession(sessionId);
+          if (session) io.emit("session:updated", session);
+        },
+        onDeleted: data => {
+          io.emit("diagram:deleted", data);
+        },
+      })
+    );
 
     socket.on("diagram:subscribe", (data: unknown) => {
       // payload は外部入力。分割代入前に型を検証しないと、引数なし emit や

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ViewerTab } from "../components/TerminalPane";
-import { setCurrentDiagramTab } from "../lib/diagram-tabs";
+import {
+  clearCurrentDiagramTab,
+  setCurrentDiagramTab,
+} from "../lib/diagram-tabs";
 import { correctActiveIndexAfterClose } from "../lib/tab-close";
 
 /**
@@ -193,6 +196,35 @@ export function useViewerTabs(
     []
   );
 
+  const clearDiagramTab = useCallback((sessionId: string, relPath: string) => {
+    const currentTabs = sessionTabsRef.current[sessionId] ?? [
+      { type: "terminal" as const, id: "terminal" },
+    ];
+    const currentActiveIndex = sessionActiveTabRef.current[sessionId] ?? 0;
+    const { tabs, activeIndex } = clearCurrentDiagramTab(
+      currentTabs,
+      currentActiveIndex,
+      relPath
+    );
+    if (tabs === currentTabs) return;
+
+    sessionTabsRef.current = {
+      ...sessionTabsRef.current,
+      [sessionId]: tabs,
+    };
+    sessionActiveTabRef.current = {
+      ...sessionActiveTabRef.current,
+      [sessionId]: activeIndex,
+    };
+    setSessionTabs(prev => ({ ...prev, [sessionId]: tabs }));
+    setSessionActiveTab(prev => {
+      const previousActiveIndex = prev[sessionId] ?? 0;
+      return activeIndex === previousActiveIndex
+        ? prev
+        : { ...prev, [sessionId]: activeIndex };
+    });
+  }, []);
+
   // postMessageリスナー（ttyd iframe内のリンククリックを受信）
   useEffect(() => {
     if (!enabled) return;
@@ -290,5 +322,6 @@ export function useViewerTabs(
     handleTabClose,
     openFileTab,
     openDiagramTab,
+    clearDiagramTab,
   };
 }

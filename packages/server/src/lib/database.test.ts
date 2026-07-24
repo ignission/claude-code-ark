@@ -392,6 +392,54 @@ describe("SessionDatabase - profiles / repo_profile_links", () => {
   // ============================================================
 
   describe("updateSessionLastDiagram / lastDiagramPath 永続化", () => {
+    it("一致する lastDiagramPath だけを単一条件付き更新で null にする", () => {
+      for (const [id, relPath] of [
+        ["matched", ".claude/diagrams/a.diagram.html"],
+        ["different", ".claude/diagrams/b.diagram.html"],
+        ["already-null", null],
+      ] as const) {
+        testDb.upsertSession({
+          id,
+          worktreeId: `wt-${id}`,
+          worktreePath: `/repo/${id}`,
+          status: "active",
+        });
+        if (relPath !== null) testDb.updateSessionLastDiagram(id, relPath);
+      }
+
+      expect(
+        testDb.clearSessionLastDiagramIfMatches(
+          "matched",
+          ".claude/diagrams/a.diagram.html"
+        )
+      ).toBe(true);
+      expect(testDb.getSession("matched")?.lastDiagramPath).toBeNull();
+
+      expect(
+        testDb.clearSessionLastDiagramIfMatches(
+          "different",
+          ".claude/diagrams/a.diagram.html"
+        )
+      ).toBe(false);
+      expect(testDb.getSession("different")?.lastDiagramPath).toBe(
+        ".claude/diagrams/b.diagram.html"
+      );
+
+      expect(
+        testDb.clearSessionLastDiagramIfMatches(
+          "already-null",
+          ".claude/diagrams/a.diagram.html"
+        )
+      ).toBe(false);
+      expect(testDb.getSession("already-null")?.lastDiagramPath).toBeNull();
+      expect(
+        testDb.clearSessionLastDiagramIfMatches(
+          "missing",
+          ".claude/diagrams/a.diagram.html"
+        )
+      ).toBe(false);
+    });
+
     it("upsert直後は lastDiagramPath が null", () => {
       testDb.upsertSession({
         id: "sess-diag-1",

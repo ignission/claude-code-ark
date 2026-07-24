@@ -8,11 +8,17 @@
  */
 import type {
   ClientToServerEvents,
+  DiagramDeleteResponse,
   DiagramListItem,
   ServerToClientEvents,
 } from "@ark/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
+import {
+  applyDiagramDeleteResponse,
+  getDiagramEmptyState,
+  shouldRefreshDiagramList,
+} from "../lib/diagram-delete-state";
 import { DiagramSwitcher } from "./DiagramSwitcher";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -24,6 +30,11 @@ interface DiagramPaneProps {
   onSelectDiagram: (relPath: string, worktreePath: string) => void;
   isConnected: boolean;
   listDiagrams: (worktreePath: string) => Promise<DiagramListItem[]>;
+  deleteDiagram: (
+    sessionId: string,
+    relPath: string,
+    expectedTracked: boolean
+  ) => Promise<DiagramDeleteResponse>;
   /** 未接続時は null。null の間は診断購読をスキップする */
   socket: TypedSocket | null;
 }
@@ -63,6 +74,7 @@ export function DiagramPane({
   socket,
   isConnected,
   listDiagrams,
+  deleteDiagram,
   onSelectDiagram,
 }: DiagramPaneProps) {
   const [html, setHtml] = useState<string | null>(null);
@@ -72,7 +84,10 @@ export function DiagramPane({
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [listRefreshKey, setListRefreshKey] = useState(0);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
   const activeListRequestRef = useRef<object | null>(null);
+  const deleteInFlightRef = useRef(false);
   // 進行中の fetch を追跡し、古いタブの結果が新しいタブを上書きしないようにする
   const abortControllerRef = useRef<AbortController | null>(null);
   // ハーネスへ渡した MessageChannel の port1（親側）。再ロードのたびに
@@ -198,6 +213,51 @@ export function DiagramPane({
     };
   }, [socket, isConnected, worktreePath, relPath, load]);
 
+  useEffect(() => {
+    if (!socket) return;
+    const onDeleted = (data: { sessionId: string; relPath: string }) => {
+      if (shouldRefreshDiagramList(sessionId, data)) {
+        setListRefreshKey(key => key + 1);
+      }
+    };
+    socket.on("diagram:deleted", onDeleted);
+    return () => {
+      socket.off("diagram:deleted", onDeleted);
+    };
+  }, [socket, sessionId]);
+
+  const handleDelete = useCallback(
+    async (
+      targetRelPath: string,
+      expectedTracked: boolean
+    ): Promise<boolean> => {
+      if (deleteInFlightRef.current) return false;
+      deleteInFlightRef.current = true;
+      setIsDeleting(true);
+      setDeleteMessage(null);
+      try {
+        const response = await deleteDiagram(
+          sessionId,
+          targetRelPath,
+          expectedTracked
+        );
+        const next = applyDiagramDeleteResponse(response);
+        setDeleteMessage(next.message);
+        if (next.refreshList) setListRefreshKey(key => key + 1);
+        return response.ok;
+      } catch (reason) {
+        setDeleteMessage(
+          reason instanceof Error ? reason.message : "図の削除に失敗しました"
+        );
+        return false;
+      } finally {
+        deleteInFlightRef.current = false;
+        setIsDeleting(false);
+      }
+    },
+    [deleteDiagram, sessionId]
+  );
+
   // アンマウント時に進行中の fetch を中止。タブ切り替え直後の
   // アンマウント時に古い fetch が返された結果でステート更新されるのを防ぐ
   useEffect(() => {
@@ -296,11 +356,22 @@ export function DiagramPane({
         listLoading={listLoading}
         listError={listError}
         onRetry={() => setListRefreshKey(key => key + 1)}
+        onDelete={handleDelete}
+        isConnected={isConnected}
+        isDeleting={isDeleting}
       />
+      {deleteMessage && (
+        <div
+          className="shrink-0 border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          role="status"
+        >
+          {deleteMessage}
+        </div>
+      )}
       <div className="relative min-h-0 flex-1">
         {!relPath ? (
           <div className="flex h-full items-center justify-center p-4 text-sm text-muted-foreground">
-            {diagrams.length > 0 ? "上の一覧から図を選択" : "図がありません"}
+            {getDiagramEmptyState(diagrams.length)}
           </div>
         ) : error ? (
           <div className="flex h-full items-center justify-center p-4 text-sm text-destructive">
