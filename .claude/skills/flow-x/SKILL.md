@@ -826,9 +826,9 @@ flow_state_update progress '.phase = "P12"' "$SCOPE_KEY"
 
 ---
 
-## P12: pm2 deploy 監視 (30 秒間隔・最大 3 分)
+## P12: pm2 deploy 監視 (30 秒間隔・最大 5 分)
 
-ark の本番デプロイは `pkill -f ttyd && pnpm build && pm2 restart claude-code-ark`。
+ark の本番デプロイは `pnpm install --frozen-lockfile && pnpm build && pkill -x ttyd && pm2 restart claude-code-ark`。
 判定・tick の仕様は flow P12 と同一 (deploy-watch.sh の has_target / pm2_online 判定)。
 
 | 条件 | 動作 |

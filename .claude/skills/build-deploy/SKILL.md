@@ -8,13 +8,15 @@ allowed-tools: Bash
 
 CLAUDE.mdのデプロイ手順に従い、以下を **順番通りに** 実行する。
 
-### 1. ttydプロセスをkill
+### 1. 依存関係をインストール
 
 ```bash
-pkill -f ttyd
+pnpm install --frozen-lockfile
 ```
 
-エラーは無視してよい（ttydが起動していない場合）。
+毎晩の bump-claude-code ワークフローによる同梱 `@anthropic-ai/claude-code` の更新は、
+install で初めて node_modules に反映される。省略すると稼働中の Ark が旧バージョンの
+claude を配り続ける。失敗した場合はエラー内容を報告して停止する。
 
 ### 2. ビルド
 
@@ -24,21 +26,34 @@ pnpm build
 
 失敗した場合はエラー内容を報告して停止する。
 
-### 3. pm2で再起動
+### 3. ttydプロセスをkill（再起動の直前に実行）
+
+```bash
+pkill -x ttyd
+```
+
+エラーは無視してよい（ttydが起動していない場合）。
+
+### 4. pm2で再起動
 
 ```bash
 pm2 restart claude-code-ark
 ```
 
-### 4. 結果報告
+### 5. 反映確認と結果報告
 
-- 成功: 「ビルド&デプロイ完了」と報告
+```bash
+packages/server/node_modules/.bin/claude --version
+```
+
+- 成功: 同梱 claude のバージョンを添えて「ビルド&デプロイ完了」と報告
 - 失敗: エラー内容を表示
 
 ## 注意
 
-- `pkill -f ttyd` を省略するとttydのポート(7680〜)が競合し、ターミナルが表示されなくなる
-- 3つのコマンドは必ず上記の順番で実行すること
+- `pkill -x ttyd` を省略するとttydのポート(7680〜)が競合し、ターミナルが表示されなくなる。kill は pm2 restart の直前に行う（`-f` はコマンドライン文字列に "ttyd" を含む無関係なプロセスへ誤マッチしうるため `-x` を使う）
+- コマンドは必ず上記の順番で実行すること
+- `@anthropic-ai/claude-code` の postinstall（native binary の配置）はルート `package.json` の `pnpm.onlyBuiltDependencies` で許可している。install 後に `claude native binary not installed` が出る場合はこの許可が外れていないか確認する
 
 ## pm2 の env 汚染に注意 (pm2 start / --update-env 時)
 
