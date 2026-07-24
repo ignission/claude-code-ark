@@ -350,11 +350,37 @@ export type SpecialKey =
 export interface DiagramListItem {
   relPath: string;
   displayName: string;
+  tracked: boolean;
 }
 
 export type DiagramListResponse =
   | { ok: true; diagrams: DiagramListItem[] }
   | { ok: false; error: string };
+
+export interface DiagramDeleteRequest {
+  sessionId: string;
+  relPath: string;
+  expectedTracked: boolean;
+}
+
+export type DiagramDeleteResponse =
+  | {
+      ok: true;
+      relPath: string;
+      tracked: boolean;
+      warning?: string;
+    }
+  | {
+      ok: false;
+      code:
+        | "BAD_REQUEST"
+        | "SESSION_NOT_FOUND"
+        | "NOT_FOUND"
+        | "FORBIDDEN"
+        | "CONFLICT"
+        | "IO_ERROR";
+      error: string;
+    };
 
 export interface ServerToClientEvents {
   // Repository events
@@ -400,6 +426,9 @@ export interface ServerToClientEvents {
 
   /** 監視中の図ファイルが更新された。クライアントは再読込する */
   "diagram:updated": (data: { worktreePath: string; relPath: string }) => void;
+
+  /** 管理対象の図ファイルが削除された。絶対 path は通知しない */
+  "diagram:deleted": (data: { sessionId: string; relPath: string }) => void;
 
   // Session events（ManagedSessionを使用）
   "session:list": (sessions: ManagedSession[]) => void;
@@ -644,6 +673,12 @@ export interface ClientToServerEvents {
   "diagram:list": (
     data: { worktreePath: string },
     callback: (response: DiagramListResponse) => void
+  ) => void;
+
+  /** session に紐づく現在図を1件削除する */
+  "diagram:delete": (
+    data: DiagramDeleteRequest,
+    callback: (response: DiagramDeleteResponse) => void
   ) => void;
 
   /** 図の購読開始（更新通知を受け取る）。1 セッション 1 図を想定 */

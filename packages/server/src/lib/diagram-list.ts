@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
 import type { DiagramListItem, DiagramListResponse } from "@ark/shared";
 import { DIAGRAM_DIR } from "./diagram-path.js";
 import { readDiagramModel } from "./diagram-reader.js";
@@ -8,6 +10,18 @@ import { errnoCode, errnoMessage } from "./errors.js";
 const DIAGRAM_SUFFIX = ".diagram.html";
 const MAX_WORKTREE_PATH_LENGTH = 4096;
 const DIAGRAM_READ_CONCURRENCY = 8;
+const execFileAsync = promisify(execFile);
+
+async function listTrackedDiagramPaths(
+  worktreeReal: string
+): Promise<Set<string>> {
+  const { stdout } = await execFileAsync(
+    "git",
+    ["-C", worktreeReal, "ls-files", "--cached", "-z", "--", DIAGRAM_DIR],
+    { encoding: "utf8" }
+  );
+  return new Set(stdout.split("\0").filter(Boolean));
+}
 
 async function collectDiagramCandidates(
   directory: string,
@@ -37,7 +51,8 @@ async function collectDiagramCandidates(
 
 async function readDiagramListItem(
   worktreeReal: string,
-  relPath: string
+  relPath: string,
+  trackedPaths: ReadonlySet<string>
 ): Promise<DiagramListItem | null> {
   const result = await readDiagramModel(worktreeReal, relPath);
   if (!result.ok) return null;
@@ -45,6 +60,7 @@ async function readDiagramListItem(
   return {
     relPath,
     displayName: title || path.posix.basename(relPath),
+    tracked: trackedPaths.has(relPath),
   };
 }
 
@@ -55,6 +71,7 @@ async function readDiagramListItem(
 export async function listDiagrams(
   worktreeReal: string
 ): Promise<DiagramListItem[]> {
+  const trackedPaths = await listTrackedDiagramPaths(worktreeReal);
   const diagramsDir = path.join(worktreeReal, DIAGRAM_DIR);
   let candidates: string[];
   try {
@@ -74,7 +91,9 @@ export async function listDiagrams(
     const batch = candidates.slice(offset, offset + DIAGRAM_READ_CONCURRENCY);
     items.push(
       ...(await Promise.all(
-        batch.map(relPath => readDiagramListItem(worktreeReal, relPath))
+        batch.map(relPath =>
+          readDiagramListItem(worktreeReal, relPath, trackedPaths)
+        )
       ))
     );
   }
