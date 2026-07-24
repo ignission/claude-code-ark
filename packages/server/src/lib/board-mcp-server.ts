@@ -17,6 +17,7 @@
  */
 
 import { createServer, type Server as HttpServer } from "node:http";
+import { DIAGRAM_DIR } from "@ark/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import express from "express";
@@ -93,13 +94,13 @@ export function createBoardMcpServer(
     "board_open",
     {
       description:
-        "生成した図ファイル (docs/diagrams/*.diagram.html) をこのセッションのボードペインで開かせる。" +
+        `生成した図ファイル (${DIAGRAM_DIR}/*.diagram.html) をこのセッションのボードペインで開かせる。` +
         "図を Write/Edit で書いた直後に呼ぶこと。path は worktree 相対で指定する。",
       inputSchema: {
         path: z
           .string()
           .describe(
-            "worktree 相対の図ファイルパス（例: docs/diagrams/purchase-flow.diagram.html）"
+            `worktree 相対の図ファイルパス（例: ${DIAGRAM_DIR}/purchase-flow.diagram.html）`
           ),
       },
     },

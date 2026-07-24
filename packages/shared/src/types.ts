@@ -1,5 +1,8 @@
 // Shared types between client and server
 
+/** 図ファイルを格納する worktree 相対の正準ディレクトリ */
+export const DIAGRAM_DIR = ".claude/diagrams";
+
 /**
  * Beacon が外部 MCP server に OAuth で接続するための設定 (1 connection)。
  *
@@ -186,9 +189,10 @@ export interface Session {
    */
   boardMcpConfigPath?: string | null;
   /**
-   * セッションで最後に開いた図（docs/diagrams/*.diagram.html）の worktree 相対パス。
+   * セッションで最後に開いた図（.claude/diagrams/*.diagram.html）の worktree 相対パス。
    * board_open で図を開くたびに更新され、クライアントはリロード後に
-   * この値を使って右ペインの図タブを復元する（未オープン時は null/undefined）。
+   * この値を使って右ペインの図タブを復元する。旧 root の保存値は server
+   * 起動時に無効化される（未オープン時は null/undefined）。
    */
   lastDiagramPath?: string | null;
 }

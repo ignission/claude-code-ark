@@ -66,7 +66,7 @@
   "title": "図解ハーネスの構成",
   "nodes": [
     { "id": "claude", "label": "Claude", "kind": "step",
-      "fields": [ { "id": "claude_write", "label": "docs/diagrams/*.diagram.html を Write/Edit で書く" },
+      "fields": [ { "id": "claude_write", "label": ".claude/diagrams/*.diagram.html を Write/Edit で書く" },
                   { "id": "claude_open", "label": "board_open MCP ツールで開かせる" } ] },
     { "id": "file", "label": "図ファイル", "kind": "step",
       "fields": [ { "id": "file_model", "label": "モデル(JSON) と 投影(HTML) を1ファイルに埋め込む" },
@@ -118,7 +118,7 @@
     <div class="node t-blue" data-kind="step" data-model-id="claude">
       <div class="nm">Claude</div>
       <div class="ds">
-        <span data-model-id="claude_write"><span class="m">docs/diagrams/*.diagram.html</span> を Write/Edit で書く</span><br>
+        <span data-model-id="claude_write"><span class="m">.claude/diagrams/*.diagram.html</span> を Write/Edit で書く</span><br>
         <span data-model-id="claude_open"><span class="m">board_open</span> MCP ツールで開かせる</span>
       </div>
     </div>

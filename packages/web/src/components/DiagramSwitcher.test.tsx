@@ -5,11 +5,11 @@ import { DiagramSwitcher } from "./DiagramSwitcher";
 
 const diagrams = [
   {
-    relPath: "docs/diagrams/a.diagram.html",
+    relPath: ".claude/diagrams/a.diagram.html",
     displayName: "注文フロー",
   },
   {
-    relPath: "docs/diagrams/nested/b.diagram.html",
+    relPath: ".claude/diagrams/nested/b.diagram.html",
     displayName: "b.diagram.html",
   },
 ];
@@ -19,17 +19,17 @@ describe("DiagramSwitcher", () => {
     const markup = renderToStaticMarkup(
       createElement(DiagramSwitcher, {
         diagrams,
-        currentRelPath: "docs/diagrams/nested/b.diagram.html",
+        currentRelPath: ".claude/diagrams/nested/b.diagram.html",
         onSelect: vi.fn(),
       })
     );
 
     expect(markup).toContain('aria-label="表示する図"');
     expect(markup).toContain(
-      '<option value="docs/diagrams/a.diagram.html" title="docs/diagrams/a.diagram.html">注文フロー — a.diagram.html</option>'
+      '<option value=".claude/diagrams/a.diagram.html" title=".claude/diagrams/a.diagram.html">注文フロー — a.diagram.html</option>'
     );
     expect(markup).toContain(
-      '<option value="docs/diagrams/nested/b.diagram.html" title="docs/diagrams/nested/b.diagram.html" selected="">nested/b.diagram.html</option>'
+      '<option value=".claude/diagrams/nested/b.diagram.html" title=".claude/diagrams/nested/b.diagram.html" selected="">nested/b.diagram.html</option>'
     );
   });
 
@@ -65,13 +65,13 @@ describe("DiagramSwitcher", () => {
     const markup = renderToStaticMarkup(
       createElement(DiagramSwitcher, {
         diagrams,
-        currentRelPath: "docs/diagrams/deleted/deleted.diagram.html",
+        currentRelPath: ".claude/diagrams/deleted/deleted.diagram.html",
         onSelect: vi.fn(),
       })
     );
 
     expect(markup).toContain(
-      '<option value="docs/diagrams/deleted/deleted.diagram.html" title="docs/diagrams/deleted/deleted.diagram.html" selected="">deleted/deleted.diagram.html</option>'
+      '<option value=".claude/diagrams/deleted/deleted.diagram.html" title=".claude/diagrams/deleted/deleted.diagram.html" selected="">deleted/deleted.diagram.html</option>'
     );
   });
 });

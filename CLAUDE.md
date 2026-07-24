@@ -68,7 +68,7 @@ PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`Spli
 | Git Worktree管理       | 一覧表示、作成、削除                                                        |
 | セッション管理         | tmux + ttydベースの起動、停止、復元、状態管理                               |
 | チャットビュー (モバイル専用) | JSONL tail ベースの会話描画 + pending reconcile + AskUserQuestion カード + slash 補完 + busy/AWAITING 表示（`MobileSessionView` の🖥/💬トグルで ttyd 表示と切替） |
-| セッションボード       | worktree の `docs/diagrams/*.diagram.html`（意味モデル + HTML 投影）を表示する図解ペイン（右ペインタブ・PC のみ）。Claude が MCP ツール `board_open` で開き、ファイル更新を検知して自動再読込する |
+| セッションボード       | worktree の `.claude/diagrams/*.diagram.html`（意味モデル + HTML 投影）を表示する図解ペイン（右ペインタブ・PC のみ）。Claude が MCP ツール `board_open` で開き、ファイル更新を検知して自動再読込する |
 | Webターミナル          | ttyd iframeによるフルターミナル体験（PC はデフォルト表示、モバイルは🖥/💬トグルでチャットビューと切替） |
 | マルチペインビュー     | 複数セッションの同時表示（1列 / 2x2グリッド切り替え）                       |
 | モバイル対応           | セッション一覧/詳細の画面遷移、Quick Keys、スクロールモード、キーボード対応 |

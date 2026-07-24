@@ -30,6 +30,8 @@ import Database from "better-sqlite3";
 import { nanoid } from "nanoid";
 import { getDataDir } from "./paths.js";
 
+const LEGACY_DIAGRAM_PREFIX = "docs/diagrams/";
+
 // データディレクトリの解決は `paths.ts` の `getDataDir()` に一元化。
 // ARK_DATA_DIR 環境変数 / macOS の Application Support / Linux の cwd ベースを順に判定する。
 // 旧: `path.join(process.cwd(), "data")` 直書きだったが、Finder から起動した .app では
@@ -52,7 +54,7 @@ interface SessionRow {
   profile_id: string | null;
   profile_config_dir: string | null;
   board_mcp_config_path: string | null;
-  /** セッションで最後に開いた図（docs/diagrams/*.diagram.html）の worktree 相対パス */
+  /** セッションで最後に開いた図（.claude/diagrams/*.diagram.html）の worktree 相対パス */
   last_diagram_path: string | null;
   created_at: string;
   updated_at: string;
@@ -279,6 +281,13 @@ export class SessionDatabase {
         throw e;
       }
     }
+    // 旧 root の保存値は実ファイルの移行を保証できず stale tab を作るため、
+    // prefix rewrite せず無効化する。同じ UPDATE の再実行は結果を変えない。
+    this.db
+      .prepare(
+        "UPDATE sessions SET last_diagram_path = NULL WHERE substr(last_diagram_path, 1, ?) = ?"
+      )
+      .run(LEGACY_DIAGRAM_PREFIX.length, LEGACY_DIAGRAM_PREFIX);
 
     // 既存のpetsテーブルを破棄（pet機能はサーバー側を廃止済み）
     this.db.exec("DROP TABLE IF EXISTS pets;");

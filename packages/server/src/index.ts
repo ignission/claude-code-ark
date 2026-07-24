@@ -2166,7 +2166,7 @@ export async function startServer(
       const key = JSON.stringify([resolved, relPath]);
       if (diagramUnsubs.has(key)) return;
 
-      // watcher を張る条件は「パスが worktree の docs/diagrams 配下に収まって
+      // watcher を張る条件は「パスが worktree の DIAGRAM_DIR 配下に収まって
       // いるか」だけにする（resolveDiagramPath は文字列上の解決のみで FS I/O
       // を行わないため同期）。ファイルが読めるか（403/404/422）を条件にすると、
       // DiagramWatcher は「ファイルが未作成でも polling が後から拾う」設計

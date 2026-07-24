@@ -4,8 +4,14 @@
  * 旧 board_write（Excalidraw scene への直接書き込み）のテストは撤去済み（B-1）。
  */
 
+import { DIAGRAM_DIR } from "@ark/shared";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { describe, expect, it, vi } from "vitest";
-import { BoardSessionRegistry, handleBoardOpen } from "./board-mcp-server.js";
+import {
+  BoardSessionRegistry,
+  createBoardMcpServer,
+  handleBoardOpen,
+} from "./board-mcp-server.js";
 
 describe("BoardSessionRegistry", () => {
   it("register/resolve/unregister が機能する", () => {
@@ -24,12 +30,12 @@ describe("handleBoardOpen", () => {
     const deps = { openDiagram } as never;
 
     const res = await handleBoardOpen(deps, "/wt", {
-      path: "docs/diagrams/a.diagram.html",
+      path: ".claude/diagrams/a.diagram.html",
     });
 
     expect(openDiagram).toHaveBeenCalledWith(
       "/wt",
-      "docs/diagrams/a.diagram.html"
+      ".claude/diagrams/a.diagram.html"
     );
     expect(res.ok).toBe(true);
   });
@@ -43,5 +49,31 @@ describe("handleBoardOpen", () => {
 
     expect(res.ok).toBe(false);
     expect(res.error).toBe("見つかりません");
+  });
+});
+
+describe("createBoardMcpServer", () => {
+  it("board_open metadata を shared の正準 directory から生成する", () => {
+    const registerTool = vi.spyOn(McpServer.prototype, "registerTool");
+    const deps = {
+      openDiagram: vi.fn(async () => ({ ok: true })),
+    };
+
+    createBoardMcpServer(deps, "/wt");
+
+    expect(registerTool).toHaveBeenCalledOnce();
+    const [, config] = registerTool.mock.calls[0] ?? [];
+    const metadata = config as
+      | {
+          description?: string;
+          inputSchema?: { path?: { description?: string } };
+        }
+      | undefined;
+    expect(metadata?.description).toContain(DIAGRAM_DIR);
+    expect(metadata?.description).not.toContain("docs/diagrams");
+    expect(metadata?.inputSchema?.path?.description).toContain(DIAGRAM_DIR);
+    expect(metadata?.inputSchema?.path?.description).not.toContain(
+      "docs/diagrams"
+    );
   });
 });

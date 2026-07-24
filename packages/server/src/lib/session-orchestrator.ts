@@ -11,11 +11,12 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type {
-  BridgeSessionStatus,
-  ManagedSession,
-  SessionStatus,
-  SpecialKey,
+import {
+  type BridgeSessionStatus,
+  DIAGRAM_DIR,
+  type ManagedSession,
+  type SessionStatus,
+  type SpecialKey,
 } from "@ark/shared";
 import { stripAnsi } from "./ansi.js";
 import type {
@@ -203,8 +204,9 @@ export class SessionOrchestrator extends EventEmitter {
       "あなたはこのセッションのボードペインに図ファイルを開かせる board_open ツールを持っている。" +
         "ユーザーが「図解して」「図で説明して」「ボードに描いて」「フロー図/構成図にして」等、" +
         "図解・作図・可視化・図示を求めたら、チャットに mermaid や ASCII 図を出すのではなく、" +
-        "docs/diagrams/ 配下に *.diagram.html を書いて（作図規約は diagram-authoring skill を参照）、" +
-        "書いたら必ず board_open ツールでこのセッションのボードペインに開かせること。"
+        `${DIAGRAM_DIR}/ 配下に *.diagram.html を書くこと（作図規約は diagram-authoring skill を参照）。` +
+        "書き込む直前に parent directory が存在しない場合だけ作成し、" +
+        "書いた後は必ず board_open ツールでこのセッションのボードペインに開かせること。"
     );
     return { token, cfgPath };
   }

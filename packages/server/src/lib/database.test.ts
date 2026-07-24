@@ -415,15 +415,15 @@ describe("SessionDatabase - profiles / repo_profile_links", () => {
 
       testDb.updateSessionLastDiagram(
         "sess-diag-2",
-        "docs/diagrams/a.diagram.html"
+        ".claude/diagrams/a.diagram.html"
       );
 
       expect(testDb.getSession("sess-diag-2")?.lastDiagramPath).toBe(
-        "docs/diagrams/a.diagram.html"
+        ".claude/diagrams/a.diagram.html"
       );
       expect(
         testDb.getSessionByWorktreePath("/repo/diag2")?.lastDiagramPath
-      ).toBe("docs/diagrams/a.diagram.html");
+      ).toBe(".claude/diagrams/a.diagram.html");
     });
 
     it("別の図を開くと上書きされる（最後に開いたものだけを保持する）", () => {
@@ -436,15 +436,15 @@ describe("SessionDatabase - profiles / repo_profile_links", () => {
 
       testDb.updateSessionLastDiagram(
         "sess-diag-3",
-        "docs/diagrams/a.diagram.html"
+        ".claude/diagrams/a.diagram.html"
       );
       testDb.updateSessionLastDiagram(
         "sess-diag-3",
-        "docs/diagrams/b.diagram.html"
+        ".claude/diagrams/b.diagram.html"
       );
 
       expect(testDb.getSession("sess-diag-3")?.lastDiagramPath).toBe(
-        "docs/diagrams/b.diagram.html"
+        ".claude/diagrams/b.diagram.html"
       );
     });
 
@@ -458,7 +458,7 @@ describe("SessionDatabase - profiles / repo_profile_links", () => {
 
       testDb.updateSessionLastDiagram(
         "sess-diag-4",
-        "docs/diagrams/a.diagram.html"
+        ".claude/diagrams/a.diagram.html"
       );
       testDb.updateSessionLastDiagram("sess-diag-4", null);
 
@@ -469,9 +469,57 @@ describe("SessionDatabase - profiles / repo_profile_links", () => {
       expect(() =>
         testDb.updateSessionLastDiagram(
           "no-such-session",
-          "docs/diagrams/a.diagram.html"
+          ".claude/diagrams/a.diagram.html"
         )
       ).not.toThrow();
+    });
+
+    it("既存DBの旧 prefix だけを null にし、新 prefix と元の null は維持する", () => {
+      const migrationPath = path.join(tmpDir, "diagram-prefix-migration.db");
+      const seed = new SessionDatabase(migrationPath);
+      for (const [id, worktreePath] of [
+        ["legacy", "/repo/legacy"],
+        ["current", "/repo/current"],
+        ["empty", "/repo/empty"],
+      ]) {
+        seed.upsertSession({
+          id,
+          worktreeId: `wt-${id}`,
+          worktreePath,
+          status: "active",
+        });
+      }
+      seed.updateSessionLastDiagram(
+        "legacy",
+        "docs/diagrams/legacy.diagram.html"
+      );
+      seed.updateSessionLastDiagram(
+        "current",
+        ".claude/diagrams/current.diagram.html"
+      );
+      seed.close();
+
+      const migrated = new SessionDatabase(migrationPath);
+      try {
+        expect(migrated.getSession("legacy")?.lastDiagramPath).toBeNull();
+        expect(migrated.getSession("current")?.lastDiagramPath).toBe(
+          ".claude/diagrams/current.diagram.html"
+        );
+        expect(migrated.getSession("empty")?.lastDiagramPath).toBeNull();
+      } finally {
+        migrated.close();
+      }
+
+      const remigrated = new SessionDatabase(migrationPath);
+      try {
+        expect(remigrated.getSession("legacy")?.lastDiagramPath).toBeNull();
+        expect(remigrated.getSession("current")?.lastDiagramPath).toBe(
+          ".claude/diagrams/current.diagram.html"
+        );
+        expect(remigrated.getSession("empty")?.lastDiagramPath).toBeNull();
+      } finally {
+        remigrated.close();
+      }
     });
 
     it("last_diagram_path列が無い既存DBでもマイグレーションで追加され、既存セッションは保持される", () => {
@@ -513,12 +561,12 @@ describe("SessionDatabase - profiles / repo_profile_links", () => {
         // マイグレーション後のDBでも新規に更新できる
         upgraded.updateSessionLastDiagram(
           "s-legacy-diagram",
-          "docs/diagrams/legacy.diagram.html"
+          ".claude/diagrams/legacy.diagram.html"
         );
         expect(
           upgraded.getSessionByWorktreePath("/legacy/diagram-path")
             ?.lastDiagramPath
-        ).toBe("docs/diagrams/legacy.diagram.html");
+        ).toBe(".claude/diagrams/legacy.diagram.html");
       } finally {
         upgraded.close();
       }
