@@ -45,7 +45,8 @@
       "better-sqlite3",
       "esbuild",
       "@tailwindcss/oxide",
-      "electron"
+      "electron",
+      "@anthropic-ai/claude-code"
     ]
   }
 }

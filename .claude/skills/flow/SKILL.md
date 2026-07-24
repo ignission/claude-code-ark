@@ -1,6 +1,6 @@
 ---
 name: flow
-description: ark 用の自走期間最大化型自律実装 skill。worktree 作成 → plan (codex DDD) → 実装 (TDD) → ローカル検証 → push 前 codex review → push → CI/CodeRabbit 監視 → 自律修正 → マージ前 codex review → マージ確認 (人間) → cleanup → pm2 deploy 監視 (30 秒間隔・最大 3 分) を 1 セッション内で連続実行する。GitHub Issue 連携 (#NNN) または slug ベースの両方に対応。worktree は P11 で削除せず、deploy 結果を確認したユーザーが手動で削除する運用。
+description: ark 用の自走期間最大化型自律実装 skill。worktree 作成 → plan (codex DDD) → 実装 (TDD) → ローカル検証 → push 前 codex review → push → CI/CodeRabbit 監視 → 自律修正 → マージ前 codex review → マージ確認 (人間) → cleanup → pm2 deploy 監視 (30 秒間隔・最大 5 分) を 1 セッション内で連続実行する。GitHub Issue 連携 (#NNN) または slug ベースの両方に対応。worktree は P11 で削除せず、deploy 結果を確認したユーザーが手動で削除する運用。
 disable-model-invocation: true
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Agent, Skill, AskUserQuestion, Monitor, CronCreate, CronDelete, CronList, PushNotification, WebSearch, WebFetch
 argument-hint: [#<issue> | <slug>] [--resume | --from PHASE | --dry-run | --plan-only | --kpi]
@@ -504,7 +504,7 @@ cleanup_issue_close_hint "$ISSUE_NUMBER_FROM_STATE"
 P11 完了直前に、`progress.warnings` に蓄積した警告をまとめて `AskUserQuestion` で表示 (1 回のみ)。
 
 ### 11-2. KPI 集計 (`end_at` は記録しない)
-P11 完了時点では `kpi.end_at` を書かない。P12 (deploy 監視) が最大 3 分動く可能性があるため、
+P11 完了時点では `kpi.end_at` を書かない。P12 (deploy 監視) が最大 5 分動く可能性があるため、
 ここで end_at を記録すると KPI が deploy 待機を含まず短く出る。
 **`end_at` は P12 terminal (success/failure/timeout/poll-error/no-target) で記録する。**
 
@@ -515,9 +515,9 @@ flow_state_update progress '.phase = "P12"' "$SCOPE_KEY"
 
 ---
 
-## P12: pm2 deploy 監視 (30 秒間隔・最大 3 分)
+## P12: pm2 deploy 監視 (30 秒間隔・最大 5 分)
 
-ark の本番デプロイは `pkill -f ttyd && pnpm build && pm2 restart claude-code-ark`。
+ark の本番デプロイは `pnpm install --frozen-lockfile && pnpm build && pkill -x ttyd && pm2 restart claude-code-ark`。
 P12 では以下の判定で動作を分ける:
 
 | 条件 | 動作 |

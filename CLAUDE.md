@@ -106,7 +106,7 @@ PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`Spli
 
 ## 自走実装（flow / flow-x / flow-loop）
 
-- **`/flow #NNN`（または slug）**: Claude が plan/実装し codex がレビューゲート (P2/P5/P8/P9) を担う自走 skill。worktree 作成 → plan → 実装 (TDD) → ローカル検証 → push → CI/CodeRabbit 監視 → 自律修正 → マージ確認 (人間) → cleanup → pm2 deploy 監視 (P12: 30 秒間隔・最大 3 分) を 1 セッションで実行。worktree は `<repo-parent>/ark-<sanitized-branch>/` に作られ、P11 では削除しない（deploy 確認後にユーザーが手動 `git worktree remove`）
+- **`/flow #NNN`（または slug）**: Claude が plan/実装し codex がレビューゲート (P2/P5/P8/P9) を担う自走 skill。worktree 作成 → plan → 実装 (TDD) → ローカル検証 → push → CI/CodeRabbit 監視 → 自律修正 → マージ確認 (人間) → cleanup → pm2 deploy 監視 (P12: 30 秒間隔・最大 5 分) を 1 セッションで実行。worktree は `<repo-parent>/ark-<sanitized-branch>/` に作られ、P11 では削除しない（deploy 確認後にユーザーが手動 `git worktree remove`）
 - **`/flow-x #NNN`**: flow の役割逆転版。**codex が plan 立案と実装** (`codex exec --dangerously-bypass-approvals-and-sandbox`)、**Claude がレビュー** (P2/P5/P8/P9)。**P2.5 設計承認ゲート**（人間が plan を承認してから実装へ）を持ち、plan は成果物としてコミットする。`--async-gates` で待ちを park に変える非同期モードになる
 - **運転ループ `/flow-loop`**: `/flow-x` の外殻。自分アサインの open Issue を WIP 上限 (既定 2) 内で自動 pick し `/flow-x --async-gates` で回す冪等な `tick` を提供する。人間ゲートは **P2.5 設計承認**と **P10 マージ確認**の 2 つで廃止せず、判断を **GitHub PR 上のシグナル** (コメント「承認」`ok` `lgtm` /「修正: <指示>」/ Close。author 本人の PR は GitHub 仕様で Approve 不可のためコメントで判断) として非同期に検知する。設計承認は plan をコミットした draft PR で取る。P7 (CI/CodeRabbit) / P12 (deploy) のセッション内待機 (Monitor/CronCreate) も tick のポーリングに置き換わるため、セッションを拘束しない。安全装置: サーキットブレーカー (連続 halt 3 で停止)・kill switch・`--dry-run`・日次 pick 予算・`active_hours`。loop に処理させない Issue は GitHub ラベル `loop-exclude` で pick 対象から外す。常駐運用は `/loop 30m /flow-loop tick`。詳細は `.claude/skills/flow-loop/SKILL.md`
 
@@ -115,20 +115,30 @@ PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`Spli
 mainブランチをpullした後は、以下の手順で **順番通りに** ビルド・再起動する：
 
 ```bash
-# 1. 古いttydプロセスをkill
-#    ttydは各セッションごとに独立プロセスで起動しており、
-#    サーバー再起動時に同じポートを確保できずEADDRINUSEになるため、
-#    必ず先にkillする
-pkill -f ttyd
+# 1. 依存関係をインストール
+#    毎晩の bump-claude-code ワークフローによる同梱 @anthropic-ai/claude-code の
+#    更新は install で初めて node_modules に反映される。省略すると稼働中の Ark が
+#    旧バージョンの claude を配り続ける
+pnpm install --frozen-lockfile
 
 # 2. ビルド
 pnpm build
 
-# 3. pm2で再起動（サーバー起動時にttydも自動で再起動される）
+# 3. 古いttydプロセスをkill（再起動の直前に実行）
+#    ttydは各セッションごとに独立プロセスで起動しており、
+#    サーバー再起動時に同じポートを確保できずEADDRINUSEになるため、
+#    必ず再起動前にkillする。-f だとコマンドライン文字列に "ttyd" を含む
+#    無関係なプロセスに誤マッチしうるため、プロセス名一致の -x を使う
+pkill -x ttyd
+
+# 4. pm2で再起動（サーバー起動時にttydも自動で再起動される）
 pm2 restart claude-code-ark
 ```
 
-**注意**: `pkill -f ttyd` を省略するとttydのポート(7680〜)が競合し、ターミナルが表示されなくなる。
+**注意**:
+
+- `pkill -x ttyd` を省略するとttydのポート(7680〜)が競合し、ターミナルが表示されなくなる
+- `@anthropic-ai/claude-code` の postinstall（native binary の配置）はルート `package.json` の `pnpm.onlyBuiltDependencies` で許可している。リストから外すと install 後も `claude native binary not installed` で起動できなくなる
 
 ## 一般規約
 

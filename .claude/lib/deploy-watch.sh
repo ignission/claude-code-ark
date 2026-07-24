@@ -3,16 +3,18 @@
 # flow P12: ark の **ローカル pm2 デプロイ** を実行・監視するヘルパー。
 #
 # ark には GitHub Actions の deploy workflow が無く、main ブランチを pull した後に
-# `pkill -f ttyd && pnpm build && pm2 restart claude-code-ark` で再起動する運用 (CLAUDE.md 参照)。
+# `pnpm install --frozen-lockfile && pnpm build && pkill -x ttyd && pm2 restart claude-code-ark`
+# で再起動する運用 (CLAUDE.md 参照)。install を省略すると、毎晩の bump-claude-code による
+# 同梱 @anthropic-ai/claude-code の更新が node_modules に反映されない。
 # 本ヘルパーは P11 のマージ完了後に呼ばれ、以下を行う:
 #
 #   1. deploy 対象パス変更を検出 (packages/server/src/, packages/web/, packages/shared/src/, packages/server/ecosystem.config.cjs, package.json)
 #      → 変更が無ければ no-target finalize
 #   2. pm2 で claude-code-ark プロセスが稼働しているかを判定
 #      → 稼働していなければ "pnpm dev で動いている" とみなして no-target finalize
-#   3. 稼働している場合は `pkill -f ttyd && pnpm build && pm2 restart claude-code-ark` を実行
+#   3. 稼働している場合は `pnpm install --frozen-lockfile && pnpm build && pkill -x ttyd && pm2 restart claude-code-ark` を実行
 #   4. 30 秒間隔で最大 5 回、health check (HTTP 200 on http://localhost:<PORT>/) を実施
-#      → 成功で success、5 回連続失敗で failure、build/restart 失敗で failure
+#      → 成功で success、5 回連続失敗で failure、install/build/restart 失敗で failure
 #
 # 利用想定:
 #   source "$CLAUDE_PROJECT_DIR/.claude/lib/deploy-watch.sh"
@@ -63,12 +65,15 @@ _DEPLOY_WATCH_PATHS=(
 DEPLOY_WATCH_MAX_FIRES=${DEPLOY_WATCH_MAX_FIRES:-5}                  # 30 秒 × 5 = 2.5 分
 DEPLOY_WATCH_TICK_INTERVAL=${DEPLOY_WATCH_TICK_INTERVAL:-30}         # 30 秒間隔
 DEPLOY_WATCH_MAX_POLL_FAILURES=${DEPLOY_WATCH_MAX_POLL_FAILURES:-5}
-DEPLOY_WATCH_MAX_WALL_SECONDS=${DEPLOY_WATCH_MAX_WALL_SECONDS:-180}  # 3 分
+# wall cap は init からの経過秒で判定される (初回 tick の install/build/restart 時間も含む)。
+# install (最大 120s) + build (最大 120s) + restart (最大 30s) が収まるよう 5 分とする
+DEPLOY_WATCH_MAX_WALL_SECONDS=${DEPLOY_WATCH_MAX_WALL_SECONDS:-300}  # 5 分
 
-# pnpm build / pm2 restart の個別タイムアウト (秒)。
+# pnpm install / pnpm build / pm2 restart の個別タイムアウト (秒)。
 # これを超えるとコマンドが kill され failure として扱われる。
-# 設定しないと build/restart のハングで P12 が wall-clock cap に到達できず無限待機になる
+# 設定しないと install/build/restart のハングで P12 が wall-clock cap に到達できず無限待機になる
 # (codex review [P1] 指摘)。
+DEPLOY_WATCH_INSTALL_TIMEOUT=${DEPLOY_WATCH_INSTALL_TIMEOUT:-120}
 DEPLOY_WATCH_BUILD_TIMEOUT=${DEPLOY_WATCH_BUILD_TIMEOUT:-120}
 DEPLOY_WATCH_RESTART_TIMEOUT=${DEPLOY_WATCH_RESTART_TIMEOUT:-30}
 
@@ -203,8 +208,8 @@ deploy_watch_set_cron_id() {
   flow_state_update context ".deploy_watch.cron_id = \"$cron_id\"" "$scope_key"
 }
 
-# main worktree で `pkill -f ttyd && pnpm build && pm2 restart claude-code-ark` を実行する。
-# 戻り値: 0=成功, 1=失敗 (build / restart いずれか)
+# main worktree で `pnpm install --frozen-lockfile && pnpm build && pkill -x ttyd && pm2 restart claude-code-ark` を実行する。
+# 戻り値: 0=成功, 1=失敗 (install / build / restart いずれか)
 # 出力: stdout/stderr に build / restart のログを残す
 # 副作用: context.deploy_watch.deploy_started_at / deploy_completed_at を更新
 deploy_watch_run_pm2_deploy() {
@@ -221,17 +226,28 @@ deploy_watch_run_pm2_deploy() {
   started_at=$(date +%s)
   flow_state_update context ".deploy_watch.deploy_started_at = $started_at" "$scope_key"
 
-  echo "[deploy-watch] pkill -f ttyd"
-  pkill -f ttyd || true  # ttyd プロセス無しは正常
-
-  # pnpm build / pm2 restart はハング可能性があるため timeout で囲む。
+  # pnpm install / pnpm build / pm2 restart はハング可能性があるため timeout で囲む。
   # cap 内に終わらないと kill され、tick は terminal=failure を返す
   # (codex review [P1] 指摘への対応)。
+  # install を省略すると毎晩の bump-claude-code による同梱 claude の更新が
+  # node_modules に反映されず、古いバージョンを配り続ける。
+  echo "[deploy-watch] cd $main_root && timeout ${DEPLOY_WATCH_INSTALL_TIMEOUT}s pnpm install --frozen-lockfile"
+  if ! (cd "$main_root" && timeout "${DEPLOY_WATCH_INSTALL_TIMEOUT}s" pnpm install --frozen-lockfile 2>&1); then
+    echo "ERROR: pnpm install に失敗または ${DEPLOY_WATCH_INSTALL_TIMEOUT}s でタイムアウト" >&2
+    return 1
+  fi
+
   echo "[deploy-watch] cd $main_root && timeout ${DEPLOY_WATCH_BUILD_TIMEOUT}s pnpm build"
   if ! (cd "$main_root" && timeout "${DEPLOY_WATCH_BUILD_TIMEOUT}s" pnpm build 2>&1); then
     echo "ERROR: pnpm build に失敗または ${DEPLOY_WATCH_BUILD_TIMEOUT}s でタイムアウト" >&2
     return 1
   fi
+
+  # ttyd の kill は restart の直前に行い、build 中のターミナル断を避ける。
+  # -f はコマンドライン部分一致で無関係プロセス (例: ttyd-manager.ts を開いたエディタ)
+  # を巻き込みうるため、プロセス名完全一致の -x を使う。
+  echo "[deploy-watch] pkill -x ttyd"
+  pkill -x ttyd || true  # ttyd プロセス無し / 他ユーザー所有で kill 不可は正常
 
   echo "[deploy-watch] timeout ${DEPLOY_WATCH_RESTART_TIMEOUT}s pm2 restart $DEPLOY_WATCH_PM2_APP"
   if ! timeout "${DEPLOY_WATCH_RESTART_TIMEOUT}s" pm2 restart "$DEPLOY_WATCH_PM2_APP" 2>&1; then
@@ -325,12 +341,12 @@ deploy_watch_tick() {
   local deploy_completed_at
   deploy_completed_at=$(flow_state_read context '.deploy_watch.deploy_completed_at' "$scope_key")
   if [ "$deploy_completed_at" = "null" ] || [ -z "$deploy_completed_at" ]; then
-    echo "[deploy-watch] 初回 tick: pkill ttyd → pnpm build → pm2 restart 実行"
+    echo "[deploy-watch] 初回 tick: pnpm install → pnpm build → pkill ttyd → pm2 restart 実行"
     if ! deploy_watch_run_pm2_deploy "$scope_key"; then
       DEPLOY_WATCH_RESULT="failure"
-      DEPLOY_WATCH_DETAIL='{"reason":"pnpm build または pm2 restart 失敗"}'
+      DEPLOY_WATCH_DETAIL='{"reason":"pnpm install / pnpm build または pm2 restart 失敗"}'
       flow_state_update context '.deploy_watch.result = "failure"' "$scope_key"
-      printf '[deploy-watch] FAILURE: build/restart 失敗\n'
+      printf '[deploy-watch] FAILURE: install/build/restart 失敗\n'
       printf 'RESULT=failure CRON_ID=%s FIRES=%s\n' "${cron_id:-null}" "$fires"
       return 0
     fi
