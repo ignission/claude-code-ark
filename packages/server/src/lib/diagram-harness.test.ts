@@ -1,3 +1,8 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
 import { DIAGRAM_HARNESS_MARKER, injectHarness } from "./diagram-harness.js";
 
@@ -88,6 +93,59 @@ describe("injectHarness", () => {
     expect(out).not.toContain("@font-face");
     expect(out).not.toContain('rel="stylesheet"');
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
+  });
+
+  it("group layout kernel を function literal で一度だけ注入する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><section data-ark-group data-model-id="group"></section><div data-model-id="node"></div></div>'
+      )
+    );
+
+    expect(
+      out.match(/var groupAwareLayout = function layoutDiagram/g)
+    ).toHaveLength(1);
+    expect(out.match(/function layoutGroupAwareGraph\(/g)).toHaveLength(1);
+    expect(out.match(/function measureGroupOutsets\(/g)).toHaveLength(1);
+    expect(out.match(/\bunitEdges=/g)).toHaveLength(1);
+    expect(out).toContain(
+      "if (!layoutGroupAwareGraph(graph)) layoutGraph(graph);"
+    );
+    expect(out).not.toContain("eval(");
+    expect(out).not.toContain("new Function");
+  });
+
+  it("esbuild artifact からも group kernel を function literal として注入する", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ark-diagram-harness-"));
+    const outfile = join(directory, "diagram-harness.mjs");
+    try {
+      await build({
+        entryPoints: [join(import.meta.dirname, "diagram-harness.ts")],
+        outfile,
+        bundle: true,
+        format: "esm",
+        platform: "node",
+      });
+      const artifact = (await import(
+        `${pathToFileURL(outfile).href}?test=${Date.now()}`
+      )) as typeof import("./diagram-harness.js");
+      const out = artifact.injectHarness(
+        page(
+          '<div data-ark-container="graph"><section data-ark-group data-model-id="group"></section><div data-model-id="node"></div></div>'
+        )
+      );
+
+      expect(
+        out.match(/var groupAwareLayout = function layoutDiagram/g)
+      ).toHaveLength(1);
+      expect(out.match(/function layoutGroupAwareGraph\(/g)).toHaveLength(1);
+      expect(Buffer.byteLength(out, "utf8")).toBeLessThan(128 * 1024);
+      expect(out).not.toContain("eval(");
+      expect(out).not.toContain("new Function");
+      expect(out).not.toContain("import(");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("edge ext の cardinality・direction・type 投影契約を注入する", () => {
