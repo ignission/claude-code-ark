@@ -13,6 +13,7 @@ import type {
   BrowserSession,
   ChatMessage,
   ClientToServerEvents,
+  DiagramDeleteResponse,
   DiagramListItem,
   FsListResult,
   ManagedSession,
@@ -33,6 +34,7 @@ import type {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import { toast } from "sonner";
+import { requestDiagramDelete } from "../lib/diagram-delete-transport";
 import {
   addWorktree,
   clearRepo,
@@ -79,6 +81,11 @@ interface UseSocketReturn {
 
   // Diagram list
   listDiagrams: (worktreePath: string) => Promise<DiagramListItem[]>;
+  deleteDiagram: (
+    sessionId: string,
+    relPath: string,
+    expectedTracked: boolean
+  ) => Promise<DiagramDeleteResponse>;
 
   // Repository
   repoList: string[];
@@ -1236,6 +1243,17 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
+  const deleteDiagram = useCallback(
+    (sessionId: string, relPath: string, expectedTracked: boolean) =>
+      requestDiagramDelete(
+        socketRef.current,
+        sessionId,
+        relPath,
+        expectedTracked
+      ),
+    []
+  );
+
   // Worktree actions
   const createWorktree = useCallback(
     (branchName: string, baseBranch?: string) => {
@@ -1657,6 +1675,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     scanRepos,
     listDirectory,
     listDiagrams,
+    deleteDiagram,
     repoList,
     repoPath,
     selectRepo,

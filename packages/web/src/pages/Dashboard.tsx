@@ -78,6 +78,7 @@ export default function Dashboard() {
     scanRepos,
     listDirectory,
     listDiagrams,
+    deleteDiagram,
     worktrees,
     createWorktree,
     deleteWorktree,
@@ -228,6 +229,7 @@ export default function Dashboard() {
     handleTabSelect,
     handleTabClose,
     openDiagramTab,
+    clearDiagramTab,
   } = useViewerTabs(
     selectedSessionId,
     sessions,
@@ -252,6 +254,17 @@ export default function Dashboard() {
       socket.off("diagram:open", onDiagramOpen);
     };
   }, [socket, sessions, openDiagramTab]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onDiagramDeleted = (data: { sessionId: string; relPath: string }) => {
+      clearDiagramTab(data.sessionId, data.relPath);
+    };
+    socket.on("diagram:deleted", onDiagramDeleted);
+    return () => {
+      socket.off("diagram:deleted", onDiagramDeleted);
+    };
+  }, [socket, clearDiagramTab]);
 
   // セッションで最後に開いていた図（lastDiagramPath）をリロード後に復元する。
   // 「セッションが見つからなければ何もしない」という diagram:open ハンドラと
@@ -782,6 +795,7 @@ export default function Dashboard() {
                         socket={socket}
                         isConnected={isConnected}
                         listDiagrams={listDiagrams}
+                        deleteDiagram={deleteDiagram}
                         {...paneProps}
                       />
                     </div>

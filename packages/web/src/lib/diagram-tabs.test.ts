@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ViewerTab } from "../components/TerminalPane";
-import { setCurrentDiagramTab } from "./diagram-tabs";
+import { clearCurrentDiagramTab, setCurrentDiagramTab } from "./diagram-tabs";
 
 const terminal: ViewerTab = { type: "terminal", id: "terminal" };
 const diagram = (
@@ -168,5 +168,60 @@ describe("setCurrentDiagramTab", () => {
 
     expect(result.activeIndex).toBe(0);
     expect(result.tabs[0]).toBe(terminal);
+  });
+});
+
+describe("clearCurrentDiagramTab", () => {
+  it("current relPath 一致時だけ diagram を除去して non-diagram 順序と active id を維持する", () => {
+    const tabs = [
+      terminal,
+      diagram("current", "a.diagram.html"),
+      file("active-file"),
+      html("h1"),
+    ];
+
+    const result = clearCurrentDiagramTab(tabs, 2, "a.diagram.html");
+
+    expect(result.tabs.map(tab => tab.id)).toEqual([
+      "terminal",
+      "active-file",
+      "h1",
+    ]);
+    expect(result.tabs[result.activeIndex]?.id).toBe("active-file");
+  });
+
+  it("不一致の遅延通知は別 current を消さない no-op", () => {
+    const tabs = [terminal, diagram("current", "new.diagram.html")];
+
+    expect(clearCurrentDiagramTab(tabs, 0, "old.diagram.html")).toEqual({
+      tabs,
+      activeIndex: 0,
+    });
+  });
+
+  it("legacy の複数 diagram は current 一致時にすべて除去する", () => {
+    const tabs = [
+      terminal,
+      diagram("current", "a.diagram.html"),
+      file("f1"),
+      diagram("legacy", "old.diagram.html"),
+      html("h1"),
+    ];
+
+    const result = clearCurrentDiagramTab(tabs, 4, "a.diagram.html");
+
+    expect(result.tabs.map(tab => tab.id)).toEqual(["terminal", "f1", "h1"]);
+    expect(result.tabs[result.activeIndex]?.id).toBe("h1");
+  });
+
+  it("legacy state で diagram が active なら terminal へ戻す", () => {
+    const result = clearCurrentDiagramTab(
+      [terminal, diagram("current", "a.diagram.html"), file("f1")],
+      1,
+      "a.diagram.html"
+    );
+
+    expect(result.tabs.map(tab => tab.id)).toEqual(["terminal", "f1"]);
+    expect(result.activeIndex).toBe(0);
   });
 });
