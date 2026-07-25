@@ -69,6 +69,79 @@ describe("injectHarness", () => {
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 
+  it("node / edge 共通 selection と単一 context toolbar の契約を注入する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
+      )
+    );
+
+    expect(out).toContain("var selection = { kind: null, id: null };");
+    expect(out).toContain("var selectionGraph = null;");
+    expect(out).toContain("function setSelection(");
+    expect(out).toContain("function clearSelection(");
+    expect(out).toContain("function reconcileSelection(");
+    expect(out).toContain("function renderSelectionVisuals(");
+    expect(out).toContain("function buildContextToolbar(");
+    expect(out).toContain("function renderContextToolbar(");
+    expect(out).toContain("function scheduleContextToolbarPosition(");
+    expect(out).toContain("ark-harness-context-toolbar");
+    expect(out).toContain('setAttribute("role", "toolbar")');
+    expect(out).toContain('setAttribute("data-ark-selection-kind"');
+    expect(out).toContain('setAttribute("data-ark-selection-id"');
+    expect(out).toContain("data-ark-toolbar-placement");
+    expect(out).toContain("document.body.appendChild(contextToolbar)");
+    expect(out).not.toContain("selectedNodeId");
+    expect(out).not.toContain("function setSelectedNode(");
+    expect(out).not.toContain("edgeControlsById: new Map()");
+  });
+
+  it("selection toolbar から node / edge action の既存安全境界へ到達する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
+      )
+    );
+
+    expect(out).toContain("function renderNodeToolbar(");
+    expect(out).toContain("function renderEdgeToolbar(");
+    expect(out).toContain("function collectKindCandidates(");
+    expect(out).toContain("function updateNodeKind(");
+    expect(out).toContain("kindCandidates.indexOf(value) === -1");
+    expect(out).toContain("function updateEdgeExt(");
+    expect(out).toContain("CARDINALITY_VALUES.indexOf(value)");
+    expect(out).toContain("DIRECTION_VALUES.indexOf(direction)");
+    expect(out).toContain("function addField(");
+    expect(out).toContain("function removeNode(");
+    expect(out).toContain("function removeEdge(");
+    expect(out).toContain("group.nodes = group.nodes.filter");
+    expect(out).toContain("var listBindingsByNode = new Map();");
+    expect(out).toContain("function selectedListBinding(");
+    expect(out).not.toContain("ark-harness-add-row");
+  });
+
+  it("selection toolbar は hover close 経路を持たず creation hover だけを維持する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
+      )
+    );
+
+    expect(out).not.toContain(
+      ".ark-harness-graph-node:hover > .ark-harness-kind-picker"
+    );
+    expect(out).not.toContain("ark-harness-kind-picker");
+    expect(out).not.toContain("function scheduleEdgeControlsClose(");
+    expect(out).not.toContain("function activateEdgeControls(");
+    expect(out).not.toContain("function edgeControlsEngaged(");
+    expect(out).not.toContain("ark-harness-edge-controls-active");
+    expect(out).not.toContain("function positionEdgeControls(");
+    expect(out).toContain("var AFFORDANCE_CLOSE_DELAY = 120");
+    expect(out).toContain("function scheduleNodeAffordanceClose(");
+    expect(out).toContain("ark-harness-node-connectors-visible");
+    expect(out).toContain('anchor.addEventListener("pointerdown"');
+  });
+
   it("依存なし auto layout と注入サイズの契約を満たす", () => {
     const out = injectHarness(
       page(
@@ -183,8 +256,8 @@ describe("injectHarness", () => {
     expect(out).toContain('document.createElement("option")');
     expect(out).toContain("option.textContent =");
     expect(out).toContain("markUi(option)");
-    expect(out).toContain("function syncEdgeControls(");
-    expect(out).toContain("edgeControlsById: new Map()");
+    expect(out).toContain("function syncEdgeSelect(");
+    expect(out).toContain("function renderEdgeToolbar(");
     expect(out).toContain("data-ark-harness-ui");
   });
 
@@ -256,7 +329,7 @@ describe("injectHarness", () => {
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 
-  it("authored CSS 由来の kind picker 契約を注入する", () => {
+  it("authored CSS 由来の kind toolbar 契約を注入する", () => {
     const out = injectHarness(
       page(
         '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
@@ -269,18 +342,13 @@ describe("injectHarness", () => {
     expect(out).toContain("style:not([data-ark-harness-ui])");
     expect(out).toContain("rule.selectorText");
     expect(out).toContain("new Set()");
-    expect(out).toContain("ark-harness-kind-picker");
-    expect(out).toContain("transform: translateY(calc(-100% - .25rem))");
-    expect(out).toContain("opacity: 0; pointer-events: none");
-    expect(out).toContain(
-      ".ark-harness-graph-node:focus-within > .ark-harness-kind-picker"
-    );
-    expect(out).toContain("opacity: 1; pointer-events: auto");
+    expect(out).toContain("ark-harness-context-toolbar");
+    expect(out).not.toContain("ark-harness-kind-picker");
     expect(out).toContain('document.createElement("select")');
     expect(out).toContain('document.createElement("option")');
     expect(out).toContain("option.textContent = value");
     expect(out).toContain("option.value = value");
-    expect(out).toContain("function syncKindPicker(");
+    expect(out).toContain("function syncKindSelect(");
     expect(out).toContain("function updateNodeKind(");
     expect(out).toContain("getNode(state.model, id)");
     expect(out).toContain("kindCandidates.indexOf(value) === -1");
@@ -330,16 +398,16 @@ describe("injectHarness", () => {
     expect(out).toContain("function setEdgeDeletePending(");
     expect(out).toContain('drag.mode === "rewire" && !candidate');
     expect(out).toContain("離すと edge を削除");
-    expect(out).toContain("function setSelectedNode(");
+    expect(out).toContain("function setSelection(");
     expect(out).toContain('root.addEventListener("pointerdown"');
-    expect(out).toContain("editableControl.getBoundingClientRect()");
+    expect(out).toContain("if (isEditableControlTarget(event.target)) return;");
     expect(out).toContain("event.preventDefault()");
     expect(out).toContain("root.focus({ preventScroll: true })");
-    expect(out).toContain("function handleNodeDeleteKey(");
+    expect(out).toContain("function handleSelectionKey(");
     expect(out).toContain('event.key !== "Delete"');
     expect(out).toContain('event.key !== "Backspace"');
     expect(out).toContain("target.isContentEditable");
-    expect(out).not.toContain("ark-harness-node-delete");
+    expect(out).toContain("ark-harness-node-delete");
     expect(out).not.toContain("ark-harness-edge-delete-visible");
     expect(out).not.toContain(".ark-harness-edge-hit {");
     expect(out).not.toContain("function syncEdgeDeleteControls(");

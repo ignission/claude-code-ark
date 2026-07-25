@@ -596,6 +596,53 @@ function edgeSemanticsHtml(diagramModel: unknown = edgeSemanticsModel): string {
   </body></html>`);
 }
 
+function selectionToolbarPositionHtml(): string {
+  const positionModel = {
+    version: 1,
+    nodes: [
+      {
+        id: "top-left",
+        label: "Top left",
+        kind: "entity",
+        ext: { x: 0, y: 0 },
+      },
+      {
+        id: "lower-right",
+        label: "Lower right",
+        kind: "entity",
+        ext: { x: 690, y: 180 },
+      },
+      {
+        id: "shared",
+        label: "Shared",
+        kind: "entity",
+        ext: { x: 120, y: 210 },
+      },
+    ],
+    edges: [],
+    groups: [],
+  };
+  return injectHarness(`<!doctype html><html><head><style>
+    body { margin: 0; }
+    .position-graph { width: 840px; height: 360px; background: #f8fafc; }
+    .position-node { box-sizing: border-box; width: 150px; height: 72px; padding: 12px; border: 1px solid #64748b; background: white; }
+    .position-scroller { width: 520px; height: 140px; overflow: auto; margin-top: 24px; }
+    .position-spacer { height: 180px; }
+  </style></head><body>
+    <script id="ark-diagram-model" type="application/json">${JSON.stringify(positionModel)}</script>
+    <div class="position-graph" data-ark-container="graph">
+      <section class="position-node" data-model-id="top-left">Top left</section>
+      <section class="position-node" data-model-id="lower-right">Lower right</section>
+    </div>
+    <div class="position-scroller">
+      <div class="position-spacer"></div>
+      <div class="position-graph" data-ark-container="graph">
+        <section class="position-node" data-model-id="shared">Shared</section>
+      </div>
+    </div>
+  </body></html>`);
+}
+
 async function openDiagram(page: Page, diagramModel: unknown = model) {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -769,6 +816,127 @@ async function requiredBoundingBox(locator: Locator) {
   return box;
 }
 
+function contextToolbar(page: Page) {
+  return page.locator("body > .ark-harness-context-toolbar");
+}
+
+function selectedNodeAnchor(page: Page, id: string) {
+  return page.locator(
+    `.ark-harness-graph-node[data-model-id="${id}"].ark-harness-node-selected`
+  );
+}
+
+function selectedEdgeAnchor(page: Page, id: string) {
+  return page.locator(
+    `.ark-harness-edge-main[data-ark-edge-id="${id}"].ark-harness-edge-selected`
+  );
+}
+
+async function selectNode(page: Page, id: string) {
+  const node = page
+    .locator(`.ark-harness-graph-node[data-model-id="${id}"]`)
+    .first();
+  await node.dispatchEvent("pointerdown", { button: 0 });
+  await node.dispatchEvent("click", { button: 0 });
+  await expect(contextToolbar(page)).toHaveAttribute(
+    "data-ark-selection-id",
+    id
+  );
+  return contextToolbar(page);
+}
+
+async function selectEdge(page: Page, id: string) {
+  await page
+    .locator(`.ark-harness-edge-hit-target[data-ark-edge-id="${id}"]`)
+    .first()
+    .dispatchEvent("click", { button: 0 });
+  await expect(contextToolbar(page)).toHaveAttribute(
+    "data-ark-selection-id",
+    id
+  );
+  return contextToolbar(page);
+}
+
+async function expectContextToolbarPlacement(
+  page: Page,
+  anchor: Locator,
+  expected?: "above" | "below" | "clamped"
+) {
+  const toolbar = contextToolbar(page);
+  await expect(toolbar).toHaveAttribute(
+    "data-ark-toolbar-placement",
+    /above|below|clamped/
+  );
+  await expect
+    .poll(async () => {
+      const [toolbarBox, anchorBox, placement] = await Promise.all([
+        requiredBoundingBox(toolbar),
+        requiredBoundingBox(anchor),
+        toolbar.getAttribute("data-ark-toolbar-placement"),
+      ]);
+      if (placement === "above") {
+        return (
+          anchorBox.y - (toolbarBox.y + toolbarBox.height) >= 7 &&
+          Math.abs(
+            toolbarBox.x +
+              toolbarBox.width / 2 -
+              (anchorBox.x + anchorBox.width / 2)
+          ) <= Math.max(toolbarBox.width / 2, 8)
+        );
+      }
+      if (placement === "below") {
+        return toolbarBox.y - (anchorBox.y + anchorBox.height) >= 7;
+      }
+      return placement === "clamped";
+    })
+    .toBe(true);
+  const [toolbarBox, anchorBox, placement, viewport] = await Promise.all([
+    requiredBoundingBox(toolbar),
+    requiredBoundingBox(anchor),
+    toolbar.getAttribute("data-ark-toolbar-placement"),
+    page.evaluate(() => ({ width: innerWidth, height: innerHeight })),
+  ]);
+  expect(toolbarBox.x).toBeGreaterThanOrEqual(8);
+  expect(toolbarBox.y).toBeGreaterThanOrEqual(8);
+  expect(toolbarBox.x + toolbarBox.width).toBeLessThanOrEqual(
+    viewport.width - 8
+  );
+  expect(toolbarBox.y + toolbarBox.height).toBeLessThanOrEqual(
+    viewport.height - 8
+  );
+  if (expected) expect(placement).toBe(expected);
+  if (placement === "above") {
+    expect(
+      anchorBox.y - (toolbarBox.y + toolbarBox.height)
+    ).toBeGreaterThanOrEqual(7);
+  } else if (placement === "below") {
+    expect(
+      toolbarBox.y - (anchorBox.y + anchorBox.height)
+    ).toBeGreaterThanOrEqual(7);
+  }
+}
+
+async function moveAcrossToolbarGap(
+  page: Page,
+  anchor: Locator,
+  control: Locator
+) {
+  const [anchorBox, toolbarBox, controlBox] = await Promise.all([
+    requiredBoundingBox(anchor),
+    requiredBoundingBox(contextToolbar(page)),
+    requiredBoundingBox(control),
+  ]);
+  const gapY =
+    toolbarBox.y + toolbarBox.height <= anchorBox.y
+      ? (toolbarBox.y + toolbarBox.height + anchorBox.y) / 2
+      : (anchorBox.y + anchorBox.height + toolbarBox.y) / 2;
+  await page.mouse.move(anchorBox.x + anchorBox.width / 2, gapY);
+  await page.mouse.move(
+    controlBox.x + controlBox.width / 2,
+    controlBox.y + controlBox.height / 2
+  );
+}
+
 function expectBoxToContain(
   container: { x: number; y: number; width: number; height: number },
   member: { x: number; y: number; width: number; height: number }
@@ -866,6 +1034,288 @@ function expectNoOverlaps(
   }
 }
 
+test("selection toolbar: node・contenteditable・edge・解除を単一 root で扱う", async ({
+  page,
+}) => {
+  await openEdgeSemanticsDiagram(page);
+  const toolbar = contextToolbar(page);
+  await expect(toolbar).toHaveCount(1);
+  await expect(toolbar).toBeHidden();
+  await expect(toolbar).toHaveAttribute("role", "toolbar");
+  await toolbar.evaluate(element => {
+    (element as HTMLElement & { __arkIdentity?: string }).__arkIdentity =
+      "selection-toolbar";
+  });
+
+  const order = page.locator('.ark-harness-graph-node[data-model-id="order"]');
+  await order.click({ position: { x: 8, y: 36 } });
+  await expect(toolbar).toBeVisible();
+  await expect(toolbar).toHaveAttribute("data-ark-selection-kind", "node");
+  await expect(toolbar).toHaveAttribute("data-ark-selection-id", "order");
+  await expect(selectedNodeAnchor(page, "order")).toHaveCount(1);
+  await expect(toolbar.locator("select.ark-harness-kind-select")).toHaveCount(
+    1
+  );
+  await expect(toolbar.getByRole("button", { name: "行を追加" })).toHaveCount(
+    1
+  );
+  await expect(
+    toolbar.getByRole("button", { name: "Order を削除" })
+  ).toHaveCount(1);
+  await expect(toolbar.locator("[data-ark-edge-control]")).toHaveCount(0);
+
+  const editable = order.locator(
+    'li[data-model-id="order_id"] .ark-harness-text'
+  );
+  await editable.click();
+  await expect(editable).toBeFocused();
+  await expect(toolbar).toHaveAttribute("data-ark-selection-id", "order");
+  await page.keyboard.insertText("-edited");
+  expect(
+    (await readCurrentModel(page)).nodes
+      .find(node => node.id === "order")
+      ?.fields?.find(field => field.id === "order_id")?.label
+  ).toContain("-edited");
+
+  const hitTarget = page.locator(
+    '.ark-harness-edge-hit-target[data-ark-edge-id="e_order_owner"]'
+  );
+  await hitTarget.click({ force: true });
+  await expect(toolbar).toBeVisible();
+  await expect(toolbar).toHaveAttribute("data-ark-selection-kind", "edge");
+  await expect(toolbar).toHaveAttribute(
+    "data-ark-selection-id",
+    "e_order_owner"
+  );
+  await expect(
+    toolbar.evaluate(
+      element =>
+        (element as HTMLElement & { __arkIdentity?: string }).__arkIdentity
+    )
+  ).resolves.toBe("selection-toolbar");
+  await expect(selectedNodeAnchor(page, "order")).toHaveCount(0);
+  await expect(selectedEdgeAnchor(page, "e_order_owner")).toHaveCount(1);
+  await expect(toolbar.locator("[data-ark-edge-control]")).toHaveCount(3);
+  await expect(toolbar.locator("select.ark-harness-kind-select")).toHaveCount(
+    0
+  );
+  await expect(
+    toolbar.getByRole("button", { name: "owned by を削除" })
+  ).toHaveCount(1);
+
+  await toolbar.locator('select[data-ark-edge-control="from-card"]').focus();
+  await page.keyboard.press("Escape");
+  await expect(toolbar).toBeHidden();
+  await expect(toolbar).not.toHaveAttribute("data-ark-selection-kind");
+  await expect(toolbar).not.toHaveAttribute("data-ark-selection-id");
+  await expect(selectedEdgeAnchor(page, "e_order_owner")).toHaveCount(0);
+
+  await order.click({ position: { x: 8, y: 36 } });
+  await page
+    .locator('[data-ark-container="graph"]')
+    .click({ position: { x: 820, y: 500 } });
+  await expect(toolbar).toBeHidden();
+  await expect(selectedNodeAnchor(page, "order")).toHaveCount(0);
+});
+
+test("selection toolbar hover-gap: node と edge から gap 経由で移動しても 250ms 後まで維持する", async ({
+  page,
+}) => {
+  await openEdgeSemanticsDiagram(page);
+  const toolbar = contextToolbar(page);
+  const order = page.locator('.ark-harness-graph-node[data-model-id="order"]');
+
+  await order.click({ position: { x: 8, y: 36 } });
+  const nodeControl = toolbar.getByRole("button", { name: "行を追加" });
+  await moveAcrossToolbarGap(page, order, nodeControl);
+  await page.waitForTimeout(250);
+  await expect(toolbar).toBeVisible();
+  await expect(toolbar).toHaveAttribute("data-ark-selection-id", "order");
+  await expect(nodeControl).toBeEnabled();
+
+  const hitTarget = page.locator(
+    '.ark-harness-edge-hit-target[data-ark-edge-id="e_order_owner"]'
+  );
+  await hitTarget.click({ force: true });
+  const edgeAnchor = selectedEdgeAnchor(page, "e_order_owner");
+  const edgeControl = toolbar.locator(
+    'select[data-ark-edge-control="from-card"]'
+  );
+  await moveAcrossToolbarGap(page, edgeAnchor, edgeControl);
+  await page.waitForTimeout(250);
+  await expect(toolbar).toBeVisible();
+  await expect(toolbar).toHaveAttribute(
+    "data-ark-selection-id",
+    "e_order_owner"
+  );
+  await expect(edgeControl).toBeEnabled();
+});
+
+test("selection toolbar: anchor 上配置・上端 fallback・viewport clamp を実矩形で保証する", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 860, height: 720 });
+  await page.setContent(selectionToolbarPositionHtml());
+
+  const topLeft = page.locator(
+    '.ark-harness-graph-node[data-model-id="top-left"]'
+  );
+  await topLeft.click({ position: { x: 8, y: 30 } });
+  await expectContextToolbarPlacement(page, topLeft, "below");
+
+  const lowerRight = page.locator(
+    '.ark-harness-graph-node[data-model-id="lower-right"]'
+  );
+  await lowerRight.click({ position: { x: 8, y: 30 } });
+  await expectContextToolbarPlacement(page, lowerRight, "above");
+});
+
+test("selection toolbar: 複数 graph の選択元と nested scroll 後の最新 anchor に追従する", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 720 });
+  await page.setContent(selectionToolbarPositionHtml());
+  const scroller = page.locator(".position-scroller");
+  await scroller.evaluate(element => {
+    element.scrollTop = 230;
+  });
+  const shared = page
+    .locator('[data-ark-container="graph"]')
+    .nth(1)
+    .locator('.ark-harness-graph-node[data-model-id="shared"]');
+  await shared.click({ position: { x: 8, y: 30 } });
+  const toolbar = contextToolbar(page);
+  await expect(toolbar).toHaveCount(1);
+  await expect(toolbar).toHaveAttribute("data-ark-selection-id", "shared");
+  const before = await requiredBoundingBox(toolbar);
+
+  await scroller.evaluate(element => {
+    element.scrollTop += 40;
+  });
+  await expect
+    .poll(async () => Math.round((await requiredBoundingBox(toolbar)).y))
+    .not.toBe(Math.round(before.y));
+  await expectContextToolbarPlacement(page, shared);
+});
+
+test("selection toolbar node action: +行と削除を既存 field・参照整合性へ接続する", async ({
+  page,
+}) => {
+  await openDiagram(page);
+  const toolbar = await selectNode(page, "order");
+  await expect(page.locator(".ark-harness-add-row")).toHaveCount(0);
+  const before = (await readCurrentModel(page)).nodes.find(
+    node => node.id === "order"
+  )?.fields?.length;
+  await toolbar.getByRole("button", { name: "行を追加" }).click();
+  const afterAdd = await readCurrentModel(page);
+  const orderAfterAdd = afterAdd.nodes.find(node => node.id === "order");
+  expect(orderAfterAdd?.fields).toHaveLength((before || 0) + 1);
+  expect(orderAfterAdd?.fields?.at(-1)?.id).toMatch(/^field-/);
+  await expect(
+    page.locator(
+      '.ark-harness-graph-node[data-model-id="order"] li[data-model-id]'
+    )
+  ).toHaveCount((before || 0) + 1);
+
+  await toolbar.getByRole("button", { name: "Order を削除" }).click();
+  await expect(toolbar).toBeHidden();
+  await expect(
+    page.locator('.ark-harness-graph-node[data-model-id="order"]')
+  ).toHaveCount(0);
+  await expect(page.locator('[data-ark-edge-id="e_order_user"]')).toHaveCount(
+    0
+  );
+  const afterDelete = await readCurrentModel(page);
+  expect(afterDelete.nodes.some(node => node.id === "order")).toBe(false);
+  expect(afterDelete.edges.some(edge => edge.id === "e_order_user")).toBe(
+    false
+  );
+  expect(
+    afterDelete.groups.find(group => group.id === "ordering-context")?.nodes
+  ).toEqual(["user"]);
+  expect(
+    afterDelete.groups.find(group => group.id === "cross-graph-context")?.nodes
+  ).toEqual(["external"]);
+});
+
+test("selection toolbar edge action: rerender 後も選択を復元して対象 edge だけ削除する", async ({
+  page,
+}) => {
+  await openEdgeSemanticsDiagram(page);
+  const toolbar = await selectEdge(page, "e_order_owner");
+  await toolbar
+    .locator('select[data-ark-edge-control="direction"]')
+    .selectOption("both");
+  await expect(selectedEdgeAnchor(page, "e_order_owner")).toHaveCount(1);
+  await expect(toolbar).toHaveAttribute(
+    "data-ark-selection-id",
+    "e_order_owner"
+  );
+  await toolbar.getByRole("button", { name: "owned by を削除" }).click();
+  await expect(toolbar).toBeHidden();
+  await expect(page.locator('[data-ark-edge-id="e_order_owner"]')).toHaveCount(
+    0
+  );
+  await expect(
+    page.locator('.ark-harness-edge-main[data-ark-edge-id="e_account_user"]')
+  ).toHaveCount(1);
+  expect((await readCurrentModel(page)).edges.map(edge => edge.id)).toEqual([
+    "e_account_user",
+  ]);
+});
+
+test("selection toolbar stale・submission: model 直接削除で解除し選択痕跡を送信しない", async ({
+  page,
+}) => {
+  await openDiagram(page);
+  await connectSubmissionPort(page);
+  const toolbar = await selectNode(page, "order");
+  const nextModel = structuredClone(model);
+  nextModel.nodes = nextModel.nodes.filter(node => node.id !== "order");
+  nextModel.edges = nextModel.edges.filter(
+    edge => edge.from !== "order" && edge.to !== "order"
+  );
+  nextModel.groups = nextModel.groups.map(group => ({
+    ...group,
+    nodes: group.nodes.filter(id => id !== "order"),
+  }));
+  await page
+    .getByRole("button", { name: "モデル JSON を直接編集する" })
+    .click();
+  await page.locator(".ark-harness-textarea").fill(JSON.stringify(nextModel));
+  await page.getByRole("button", { name: "反映", exact: true }).click();
+  await expect(toolbar).toBeHidden();
+  await expect(page.locator(".ark-harness-node-selected")).toHaveCount(0);
+  await expect(page.locator(".ark-harness-edge-selected")).toHaveCount(0);
+
+  await selectNode(page, "user");
+  await page
+    .getByRole("button", { name: "変更を親フレームへ送信する" })
+    .click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  const html = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          arkHarnessSubmission?: { html: string };
+        }
+      ).arkHarnessSubmission?.html || ""
+  );
+  expect(html).not.toContain("ark-harness-context-toolbar");
+  expect(html).not.toContain("data-ark-selection-kind");
+  expect(html).not.toContain("data-ark-selection-id");
+  expect(html).not.toContain("ark-harness-node-selected");
+  expect(html).not.toContain("ark-harness-edge-selected");
+  expect(html).not.toContain("data-ark-harness-ui");
+  expect(html).toContain('data-kind="entity"');
+});
+
 test("node CRUD: palette から安全な projection を重ならず追加して再編集できる", async ({
   page,
 }) => {
@@ -911,7 +1361,11 @@ test("node CRUD: palette から安全な projection を重ならず追加して�
   await expect(
     projection.locator(`span[data-model-id="${added.id}"]`)
   ).toHaveText("新しいノード");
-  await expect(projection.locator(".ark-harness-kind-picker")).toHaveCount(1);
+  await expect(projection.locator(".ark-harness-kind-picker")).toHaveCount(0);
+  await selectNode(page, added.id);
+  await expect(
+    contextToolbar(page).locator("select.ark-harness-kind-select")
+  ).toHaveValue("event");
   await expect(projection.locator(".ark-harness-graph-handle")).toHaveCount(1);
   await expect(
     firstGraph.locator(
@@ -2376,16 +2830,14 @@ test("cardinality・方向・type を edge SVG に安全に投影する", async 
   expect(errors).toEqual([]);
 });
 
-test("edge ごとに3つの native edge control と allowlist を表示する", async ({
+test("edge 選択時に単一 toolbar へ3つの native control と allowlist を表示する", async ({
   page,
 }) => {
   const errors = await openEdgeSemanticsDiagram(page);
-  const graph = page.locator('[data-ark-container="graph"]');
-  const controls = graph.locator(
-    '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"]'
-  );
+  const controls = await selectEdge(page, "e_order_owner");
 
   await expect(controls.locator("select")).toHaveCount(3);
+  await expect(page.locator(".ark-harness-edge-controls")).toHaveCount(0);
   for (const [role, name, expected] of [
     ["from-card", /owned by.*始点 cardinality.*one/, edgeControlOptions.from],
     [
@@ -2420,80 +2872,31 @@ test("edge ごとに3つの native edge control と allowlist を表示する", 
   expect(errors).toEqual([]);
 });
 
-test("edge control は hover・focus で表示され6px gapで重ならない", async ({
+test("edge control は選択中だけ単一 toolbar に表示し hover では切り替わらない", async ({
   page,
 }) => {
   await openEdgeSemanticsDiagram(page);
-  const graph = page.locator('[data-ark-container="graph"]');
-  const controls = graph.locator(
-    '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"]'
+  const controls = await selectEdge(page, "e_order_owner");
+  const rootIdentity = await controls.evaluate(element => {
+    (element as HTMLElement & { __edgeToolbar?: boolean }).__edgeToolbar = true;
+    return true;
+  });
+  await page
+    .locator('.ark-harness-edge-hit-target[data-ark-edge-id="e_account_user"]')
+    .hover({ force: true });
+  await page.waitForTimeout(250);
+  await expect(controls).toHaveAttribute(
+    "data-ark-selection-id",
+    "e_order_owner"
   );
-  const hitTarget = graph.locator(
-    '.ark-harness-edge-hit-target[data-ark-edge-id="e_order_owner"]'
-  );
-
-  await expect(controls).toHaveCSS("opacity", "0");
-  await expect(controls).toHaveCSS("pointer-events", "none");
-  await hitTarget.hover({ force: true });
-  await expect(controls).toHaveCSS("opacity", "1");
-  await controls.locator("select").first().hover();
-  await expect(controls).toHaveCSS("opacity", "1");
-
-  const secondHitTarget = graph.locator(
-    '.ark-harness-edge-hit-target[data-ark-edge-id="e_account_user"]'
-  );
-  await secondHitTarget.hover({ force: true });
-  await expect(controls).toHaveCSS("opacity", "0");
   await controls.locator("select").first().focus();
-  await expect(controls).toHaveCSS("opacity", "1");
-
-  const blockers = [
-    graph.locator(
-      'text[data-ark-edge-id="e_order_owner"].ark-harness-edge-label'
-    ),
-    graph.locator(
-      '.ark-harness-edge-handle[data-ark-edge-id="e_order_owner"][data-ark-edge-end="from"]'
-    ),
-    graph.locator(
-      '.ark-harness-edge-handle[data-ark-edge-id="e_order_owner"][data-ark-edge-end="to"]'
-    ),
-    graph.locator('.ark-harness-graph-node[data-model-id="order"]'),
-    graph.locator('.ark-harness-graph-node[data-model-id="user"]'),
-    graph.locator('.ark-harness-graph-node[data-model-id="account"]'),
-  ];
-  const controlBoxes = await controls.locator("select").evaluateAll(elements =>
-    elements.map(element => {
-      const rect = element.getBoundingClientRect();
-      return {
-        left: rect.left,
-        top: rect.top,
-        right: rect.right,
-        bottom: rect.bottom,
-      };
-    })
+  await expect(controls.locator("select").first()).toBeFocused();
+  expect(rootIdentity).toBeTruthy();
+  await selectEdge(page, "e_account_user");
+  await expect(controls).toHaveAttribute(
+    "data-ark-selection-id",
+    "e_account_user"
   );
-  const blockerBoxes = await Promise.all(
-    blockers.map(async blocker => {
-      const box = await requiredBoundingBox(blocker);
-      return {
-        left: box.x,
-        top: box.y,
-        right: box.x + box.width,
-        bottom: box.y + box.height,
-      };
-    })
-  );
-  for (let index = 0; index < controlBoxes.length; index += 1) {
-    const control = controlBoxes[index];
-    for (const blocker of [...blockerBoxes, ...controlBoxes.slice(0, index)]) {
-      expect(
-        control.right + 6 <= blocker.left ||
-          blocker.right + 6 <= control.left ||
-          control.bottom + 6 <= blocker.top ||
-          blocker.bottom + 6 <= control.top
-      ).toBe(true);
-    }
-  }
 });
 
 test("edge cardinality・edge direction control を即時投影し非還流で保存する", async ({
@@ -2503,9 +2906,7 @@ test("edge cardinality・edge direction control を即時投影し非還流で�
   const errors = await openEdgeSemanticsDiagram(page, initialModel);
   await connectSubmissionPort(page);
   const graph = page.locator('[data-ark-container="graph"]');
-  const controls = graph.locator(
-    '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"]'
-  );
+  const controls = await selectEdge(page, "e_order_owner");
   const main = graph.locator(
     '.ark-harness-edge-main[data-ark-edge-id="e_order_owner"]'
   );
@@ -2610,9 +3011,7 @@ test("unknown edge ext は allowlist placeholder と forward fallback で安全�
   hostileExt.direction = '<script src="https://example.invalid/x.js">';
   const errors = await openEdgeSemanticsDiagram(page, hostileModel);
   const graph = page.locator('[data-ark-container="graph"]');
-  const controls = graph.locator(
-    '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"]'
-  );
+  const controls = await selectEdge(page, "e_order_owner");
   const main = graph.locator(
     '.ark-harness-edge-main[data-ark-edge-id="e_order_owner"]'
   );
@@ -2687,14 +3086,12 @@ test("unknown edge ext は allowlist placeholder と forward fallback で安全�
   expect(errors).toEqual([]);
 });
 
-test("モデル直接編集後の edge control を current model と同期して stale group を除去する", async ({
+test("モデル直接編集後の edge toolbar を current model と同期して stale selection を除去する", async ({
   page,
 }) => {
   const errors = await openEdgeSemanticsDiagram(page);
   const graph = page.locator('[data-ark-container="graph"]');
-  const ownerControls = graph.locator(
-    '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"]'
-  );
+  const ownerControls = await selectEdge(page, "e_order_owner");
   await ownerControls
     .locator('select[data-ark-edge-control="direction"]')
     .focus();
@@ -2723,10 +3120,9 @@ test("モデル直接編集後の edge control を current model と同期して
     .getByRole("button", { name: "反映", exact: true })
     .evaluate(element => (element as HTMLButtonElement).click());
 
-  await expect(ownerControls).toHaveCount(0);
-  const legacyControls = graph.locator(
-    '.ark-harness-edge-controls[data-ark-edge-id="e_account_user"]'
-  );
+  await expect(ownerControls).toBeHidden();
+  await expect(ownerControls).not.toHaveAttribute("data-ark-selection-id");
+  const legacyControls = await selectEdge(page, "e_account_user");
   await expect(
     legacyControls.locator('select[data-ark-edge-control="from-card"]')
   ).toHaveValue("many");
@@ -2775,17 +3171,14 @@ test("カーディナリティ 5 語彙を self-loop にも投影する", async 
     await expect(main).toHaveAttribute("marker-end", /url\(.+\)/);
     await expect(primitive.locator("line")).toHaveCount(lineCount);
     await expect(primitive.locator("circle")).toHaveCount(circleCount);
+    const controls = await selectEdge(page, "e_order_owner");
     await expect(
-      page.locator(
-        '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"] select[data-ark-edge-control="from-card"]'
-      )
+      controls.locator('select[data-ark-edge-control="from-card"]')
     ).toHaveValue(cardinality);
   }
 
   const graph = page.locator('[data-ark-container="graph"]');
-  const controls = graph.locator(
-    '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"]'
-  );
+  const controls = await selectEdge(page, "e_order_owner");
   await expect(controls.locator("select")).toHaveCount(3);
   await controls
     .locator('select[data-ark-edge-control="to-card"]')
@@ -2813,41 +3206,12 @@ test("カーディナリティ 5 語彙を self-loop にも投影する", async 
       'path.ark-harness-edge-main[data-ark-edge-id="e_order_owner"]'
     )
   ).not.toHaveAttribute("marker-end", /.+/);
-  expect(
-    await graph.evaluate(container => {
-      const selects = [
-        ...container.querySelectorAll(
-          '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"] select'
-        ),
-      ];
-      const blockers = [
-        container.querySelector(
-          'text.ark-harness-edge-label[data-ark-edge-id="e_order_owner"]'
-        ),
-        ...container.querySelectorAll(
-          '.ark-harness-edge-handle[data-ark-edge-id="e_order_owner"]'
-        ),
-        container.querySelector(
-          '.ark-harness-graph-node[data-model-id="order"]'
-        ),
-      ].filter((element): element is Element => element !== null);
-      const separated = (left: Element, right: Element) => {
-        const a = left.getBoundingClientRect();
-        const b = right.getBoundingClientRect();
-        return (
-          a.right + 6 <= b.left ||
-          b.right + 6 <= a.left ||
-          a.bottom + 6 <= b.top ||
-          b.bottom + 6 <= a.top
-        );
-      };
-      return selects.every(
-        (select, index) =>
-          blockers.every(blocker => separated(select, blocker)) &&
-          selects.slice(0, index).every(other => separated(select, other))
-      );
-    })
-  ).toBe(true);
+  await expect(controls).toBeVisible();
+  await expect(controls).toHaveAttribute(
+    "data-ark-selection-id",
+    "e_order_owner"
+  );
+  await expect(controls.locator("select").first()).toBeEnabled();
   expect(errors).toEqual([]);
 });
 
@@ -2899,9 +3263,7 @@ test("edge 終点を張り替えて記号と clean HTML を同期する", async 
   await openEdgeSemanticsDiagram(page);
   await connectSubmissionPort(page);
   const graph = page.locator('[data-ark-container="graph"]');
-  const controls = graph.locator(
-    '.ark-harness-edge-controls[data-ark-edge-id="e_order_owner"]'
-  );
+  const controls = await selectEdge(page, "e_order_owner");
   await controls
     .locator('select[data-ark-edge-control="from-card"]')
     .selectOption("zero-or-one");
@@ -3508,9 +3870,8 @@ test("kind 候補は authored CSS rule を宣言順かつ重複なしで収集�
 }) => {
   await page.setContent(kindCandidateHtml());
 
-  const picker = page.getByRole("combobox", {
-    name: /Candidate.*quoted/,
-  });
+  const toolbar = await selectNode(page, "candidate");
+  const picker = toolbar.getByRole("combobox", { name: /Candidate.*quoted/ });
   await expect(picker).toHaveCount(1);
   expect(await picker.locator("option").allTextContents()).toEqual([
     "quoted",
@@ -3526,7 +3887,7 @@ test("kind 候補は authored CSS rule を宣言順かつ重複なしで収集�
   await expect(picker.locator("option", { hasText: "comment" })).toHaveCount(0);
 });
 
-test("kind 候補が無い図ではピッカーを付けず既存編集 UI を維持する", async ({
+test("kind 候補が無い図では disabled toolbar select と既存編集 UI を維持する", async ({
   page,
 }) => {
   await page.setContent(invalidCoordinateHtml());
@@ -3537,9 +3898,14 @@ test("kind 候補が無い図ではピッカーを付けず既存編集 UI を�
   await expect(
     graph.locator('[data-model-id="valid_a"].ark-harness-editable')
   ).toHaveAttribute("contenteditable", "true");
+  const toolbar = await selectNode(page, "valid_a");
+  await expect(
+    toolbar.locator("select.ark-harness-kind-select")
+  ).toBeDisabled();
+  await expect(toolbar.locator("select option")).toHaveText("kind なし");
 });
 
-test("kind ピッカーは候補外の現在値を保持し候補選択時だけ更新する", async ({
+test("kind toolbar は候補外の現在値を保持し候補選択時だけ更新する", async ({
   page,
 }) => {
   const boundaryModel = structuredClone(model);
@@ -3549,7 +3915,8 @@ test("kind ピッカーは候補外の現在値を保持し候補選択時だけ
   const order = page.locator(
     '[data-ark-container="graph"] > section[data-model-id="order"]'
   );
-  const picker = order.locator("select.ark-harness-kind-select");
+  const toolbar = await selectNode(page, "order");
+  const picker = toolbar.locator("select.ark-harness-kind-select");
   const current = picker.locator("option").first();
   await expect(order).toHaveAttribute("data-kind", "legacy-kind");
   await expect(picker).toHaveValue("legacy-kind");
@@ -3569,7 +3936,7 @@ test("kind ピッカーは候補外の現在値を保持し候補選択時だけ
   await expect(picker.locator("option")).toHaveCount(3);
 });
 
-test("kind ピッカーは untrusted 値を text と value だけで扱う", async ({
+test("kind toolbar は untrusted 値を text と value だけで扱う", async ({
   page,
 }) => {
   const requests: string[] = [];
@@ -3581,7 +3948,8 @@ test("kind ピッカーは untrusted 値を text と value だけで扱う", asy
   const root = page.locator(
     '[data-ark-container="graph"] > [data-model-id="unsafe"]'
   );
-  const picker = root.locator("select.ark-harness-kind-select");
+  const toolbar = await selectNode(page, "unsafe");
+  const picker = toolbar.locator("select.ark-harness-kind-select");
   const options = picker.locator("option");
   await expect(options).toHaveCount(2);
   await expect(options.nth(0)).toBeDisabled();
@@ -3605,14 +3973,15 @@ test("kind ピッカーは untrusted 値を text と value だけで扱う", asy
   expect(requests).toEqual([]);
 });
 
-test("モデル直接編集後に kind ピッカーと方向表示を再同期する", async ({
+test("モデル直接編集後に kind toolbar と方向表示を再同期する", async ({
   page,
 }) => {
   await openDiagram(page);
   const order = page.locator(
     '[data-ark-container="graph"] > section[data-model-id="order"]'
   );
-  const picker = order.locator("select.ark-harness-kind-select");
+  const toolbar = await selectNode(page, "order");
+  const picker = toolbar.locator("select.ark-harness-kind-select");
   const editButton = page.getByRole("button", {
     name: "モデル JSON を直接編集する",
   });
@@ -3656,7 +4025,7 @@ test("モデル直接編集後に kind ピッカーと方向表示を再同期�
   ).toBeVisible();
 });
 
-test("kind ピッカーで CSS 候補を選び投影・geometry・保存へ同期する", async ({
+test("kind toolbar で CSS 候補を選び投影・geometry・保存へ同期する", async ({
   page,
 }) => {
   await openDiagram(page);
@@ -3665,24 +4034,25 @@ test("kind ピッカーで CSS 候補を選び投影・geometry・保存へ同�
   const graph = page.locator('[data-ark-container="graph"]');
   const order = graph.locator(':scope > section[data-model-id="order"]');
   const user = graph.locator(':scope > section[data-model-id="user"]');
-  const orderPickerWrapper = order.locator(".ark-harness-kind-picker");
-  const orderPicker = order.locator("select.ark-harness-kind-select");
-  const userPicker = user.locator("select.ark-harness-kind-select");
+  const toolbar = await selectNode(page, "order");
+  const orderPicker = toolbar.locator("select.ark-harness-kind-select");
 
   await expect(orderPicker).toHaveCount(1);
-  await expect(userPicker).toHaveCount(1);
   await expect(orderPicker).toHaveAccessibleName(/Order.*aggregate/);
-  await expect(userPicker).toHaveAccessibleName(/User.*entity/);
   expect(await orderPicker.locator("option").allTextContents()).toEqual([
     "aggregate",
     "entity",
     "event",
   ]);
+  await selectNode(page, "user");
+  const userPicker = toolbar.locator("select.ark-harness-kind-select");
+  await expect(userPicker).toHaveAccessibleName(/User.*entity/);
   expect(await userPicker.locator("option").allTextContents()).toEqual([
     "aggregate",
     "entity",
     "event",
   ]);
+  await selectNode(page, "order");
   await expect(
     graph.locator(
       '[data-ark-group] select, h2[data-model-id="order"] select, li select, .ark-harness-edge-layer select'
@@ -3692,19 +4062,7 @@ test("kind ピッカーで CSS 候補を選び投影・geometry・保存へ同�
     page.locator('body > section[data-model-id="external"] select')
   ).toHaveCount(0);
 
-  await expect(orderPickerWrapper).toHaveCSS("opacity", "0");
-  const beforeHoverBox = await requiredBoundingBox(order);
-  await order.hover();
-  await expect(orderPickerWrapper).toHaveCSS("opacity", "1");
-  const [hoverBox, pickerBox, titleBox, dragHandleBox] = await Promise.all([
-    requiredBoundingBox(order),
-    requiredBoundingBox(orderPicker),
-    requiredBoundingBox(order.locator('h2[data-model-id="order"]')),
-    requiredBoundingBox(order.locator(".ark-harness-graph-handle")),
-  ]);
-  expect(hoverBox).toEqual(beforeHoverBox);
-  expect(boxesOverlap(pickerBox, titleBox)).toBe(false);
-  expect(boxesOverlap(pickerBox, dragHandleBox)).toBe(false);
+  await expectContextToolbarPlacement(page, order);
 
   const beforeModel = structuredClone(model);
   const beforeBox = await requiredBoundingBox(order);
@@ -4546,7 +4904,10 @@ test("kind 変更と node・edge・field・list 編集を同じ送信 model に�
   await connectSubmissionPort(page);
 
   const order = page.locator('section[data-model-id="order"]');
-  await order.locator("select.ark-harness-kind-select").selectOption("event");
+  const nodeToolbar = await selectNode(page, "order");
+  await nodeToolbar
+    .locator("select.ark-harness-kind-select")
+    .selectOption("event");
   await expect(order).toHaveAttribute("data-kind", "event");
   await page.evaluate(
     () =>
@@ -4554,9 +4915,7 @@ test("kind 変更と node・edge・field・list 編集を同じ送信 model に�
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
       })
   );
-  const edgeControls = page.locator(
-    '.ark-harness-edge-controls[data-ark-edge-id="e_order_user"]'
-  );
+  const edgeControls = await selectEdge(page, "e_order_user");
   await edgeControls
     .locator('select[data-ark-edge-control="from-card"]')
     .selectOption("zero-or-many");

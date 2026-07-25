@@ -134,12 +134,6 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
 .ark-harness-handle { cursor: grab; }
 .ark-harness-handle:hover { background: rgba(255,255,255,.08); color: #d7dee8; }
 .ark-harness-delete:hover { background: rgba(248,113,113,.2); color: #f87171; }
-.ark-harness-add-row {
-  display: inline-block; margin: .35rem 0 1.5rem; padding: .3rem .6rem;
-  border: 1px dashed #333947; border-radius: 6px; background: transparent; color: #8b93a7;
-  font-size: 11.5px; cursor: pointer;
-}
-.ark-harness-add-row:hover { border-color: #38bdf8; color: #38bdf8; }
 [data-ark-container="graph"] { position: relative; }
 [data-ark-container="graph"].ark-harness-graph-layout {
   min-width: var(--ark-harness-graph-min-width); min-height: var(--ark-harness-graph-min-height);
@@ -147,16 +141,6 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
 .ark-harness-graph-group { position: absolute; z-index: 0; }
 .ark-harness-graph-node {
   position: absolute; left: var(--ark-harness-graph-x); top: var(--ark-harness-graph-y); z-index: 2;
-}
-.ark-harness-kind-picker {
-  position: absolute; top: 0; right: .25rem; z-index: 4;
-  transform: translateY(calc(-100% - .25rem));
-  opacity: 0; pointer-events: none; transition: opacity .12s ease;
-}
-.ark-harness-graph-node:hover > .ark-harness-kind-picker,
-.ark-harness-graph-node.ark-harness-node-affordance-open > .ark-harness-kind-picker,
-.ark-harness-graph-node:focus-within > .ark-harness-kind-picker {
-  opacity: 1; pointer-events: auto;
 }
 .ark-harness-kind-select {
   appearance: auto; max-width: 9rem; min-width: 4.5rem; padding: .18rem .25rem;
@@ -217,30 +201,10 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   opacity: 0; pointer-events: none;
 }
 .ark-harness-edge-dragging .ark-harness-node-anchor { pointer-events: none !important; }
-.ark-harness-edge-controls {
-  position: absolute; inset: 0; z-index: 4; opacity: 0; pointer-events: none;
-  transition: opacity .1s ease;
-}
-.ark-harness-edge-controls.ark-harness-edge-controls-active,
-.ark-harness-edge-controls:focus-within {
-  opacity: 1;
-}
 .ark-harness-edge-control {
-  position: absolute; transform: translate(-50%, -50%); box-sizing: border-box;
-  width: 108px; min-width: 0; padding: 2px 3px;
+  box-sizing: border-box; min-width: 108px; padding: 2px 3px;
   border: 1px solid rgba(100,116,139,.65); border-radius: 4px;
   background: rgba(255,255,255,.97); color: #334155; font: 10px/1.2 sans-serif;
-  pointer-events: none;
-}
-.ark-harness-edge-controls.ark-harness-edge-controls-active .ark-harness-edge-control,
-.ark-harness-edge-controls:focus-within .ark-harness-edge-control {
-  pointer-events: auto;
-}
-.ark-harness-edge-controls-unavailable {
-  opacity: 0 !important; pointer-events: none !important;
-}
-.ark-harness-edge-controls-unavailable .ark-harness-edge-control {
-  pointer-events: none !important;
 }
 .ark-harness-edge-preview {
   position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none;
@@ -270,6 +234,25 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
 .ark-harness-graph-node.ark-harness-node-selected {
   outline: 2px solid #0ea5b7; outline-offset: 3px;
 }
+.ark-harness-edge-main.ark-harness-edge-selected {
+  stroke: #0ea5b7; stroke-width: 3;
+}
+.ark-harness-context-toolbar {
+  position: fixed; z-index: 2147483647; display: flex; align-items: center; gap: .35rem;
+  box-sizing: border-box; max-width: calc(100vw - 16px); padding: .35rem;
+  border: 1px solid rgba(100,116,139,.55); border-radius: 7px;
+  background: rgba(255,255,255,.98); color: #334155;
+  box-shadow: 0 4px 14px rgba(15,23,42,.22); font: 11px/1.2 sans-serif;
+}
+.ark-harness-context-toolbar[hidden] { display: none; }
+.ark-harness-context-toolbar button {
+  appearance: none; border: 1px solid rgba(100,116,139,.55); border-radius: 4px;
+  background: #fff; color: #334155; padding: .25rem .45rem; font: inherit; cursor: pointer;
+}
+.ark-harness-context-toolbar button:disabled,
+.ark-harness-context-toolbar select:disabled { opacity: .45; cursor: not-allowed; }
+.ark-harness-context-toolbar .ark-harness-node-delete,
+.ark-harness-context-toolbar .ark-harness-edge-delete { color: #b91c1c; }
 .ark-harness-graph-dragging { z-index: 3; }
 body { padding-bottom: var(--ark-harness-toolbar-height, 3.4rem) !important; }
 </style>`;
@@ -329,10 +312,14 @@ const RAW_HARNESS_JS = `(function () {
   var graphs = [];
   var graphSequence = 0;
   var kindCandidates = [];
-  var kindPickers = [];
   var reservedModelIds = new Set();
   var generatedIdCounter = 0;
-  var selectedNodeId = null;
+  var selection = { kind: null, id: null };
+  var selectionGraph = null;
+  var contextToolbar = null;
+  var toolbarPositionFrame = null;
+  var selectionResizeObserver = null;
+  var listBindingsByNode = new Map();
   var statusEl = null;
   var sendBtn = null;
   var layoutDirectionBtn = null;
@@ -1059,6 +1046,7 @@ const RAW_HARNESS_JS = `(function () {
   function removeEdge(edgeId) {
     var edge = getEdge(state.model, edgeId);
     if (!edge) return;
+    if (selection.kind === "edge" && selection.id === edgeId) clearSelection();
     if (edgeDrag && edgeDrag.mode === "rewire" && edgeDrag.edgeId === edgeId) {
       finishEdgeDrag(null, false);
     }
@@ -1090,11 +1078,10 @@ const RAW_HARNESS_JS = `(function () {
     hitTarget.setAttribute("data-ark-edge-id", edge.id);
     setEdgeGeometryAttributes(hitTarget, geometry);
     markUi(hitTarget);
-    hitTarget.addEventListener("pointerenter", function () {
-      activateEdgeControls(graph, edge.id);
-    });
-    hitTarget.addEventListener("pointerleave", function () {
-      scheduleEdgeControlsClose(graph, edge.id);
+    hitTarget.addEventListener("click", function (event) {
+      if (event.button !== 0) return;
+      event.stopPropagation();
+      setSelection("edge", edge.id, graph);
     });
     graph.svg.appendChild(hitTarget);
   }
@@ -1251,8 +1238,8 @@ const RAW_HARNESS_JS = `(function () {
       appendEdgeHitTarget(graph, edge, geometry);
     });
     syncEdgeHandles(graph, edges);
-    syncEdgeControls(graph, edges);
     syncNodeConnectors(graph);
+    reconcileSelection();
   }
 
   function scheduleGraphRender(graph) {
@@ -1575,83 +1562,17 @@ const RAW_HARNESS_JS = `(function () {
     ["pointerdown", "click", "keydown"].forEach(function (type) {
       select.addEventListener(type, function (event) { event.stopPropagation(); });
     });
-    select.addEventListener("focus", function () {
-      activateEdgeControls(graph, edgeId);
-    });
     select.addEventListener("change", function (event) {
       event.stopPropagation();
+      if (selection.kind !== "edge" || selection.id !== edgeId ||
+          selectionGraph !== graph) return;
       var property = edgeControlProperty(select.getAttribute("data-ark-edge-control"));
       if (property) updateEdgeExt(graph, edgeId, property, select.value);
     });
     return select;
   }
 
-  function createEdgeControls(graph, edge) {
-    var root = document.createElement("div");
-    root.className = "ark-harness-edge-controls";
-    root.setAttribute("data-ark-edge-id", edge.id);
-    markUi(root);
-    var controls = {
-      root: root,
-      selects: {},
-      placeholders: {},
-      closeTimer: null
-    };
-    ["from-card", "direction", "to-card"].forEach(function (role) {
-      var select = createEdgeSelect(graph, edge.id, role);
-      controls.selects[role] = select;
-      root.appendChild(select);
-    });
-    root.addEventListener("pointerenter", function () {
-      activateEdgeControls(graph, edge.id);
-    });
-    root.addEventListener("pointerleave", function () {
-      scheduleEdgeControlsClose(graph, edge.id);
-    });
-    graph.handleLayer.appendChild(root);
-    return controls;
-  }
-
-  function clearEdgeControlsClose(controls) {
-    if (controls.closeTimer === null) return;
-    window.clearTimeout(controls.closeTimer);
-    controls.closeTimer = null;
-  }
-
-  function edgeControlsEngaged(controls) {
-    if (controls.root.contains(document.activeElement)) return true;
-    var roles = ["from-card", "direction", "to-card"];
-    for (var i = 0; i < roles.length; i++) {
-      if (controls.selects[roles[i]].matches(":hover")) return true;
-    }
-    return false;
-  }
-
-  function activateEdgeControls(graph, edgeId) {
-    graph.edgeControlsById.forEach(function (controls, currentId) {
-      clearEdgeControlsClose(controls);
-      if (currentId === edgeId) {
-        controls.root.classList.add("ark-harness-edge-controls-active");
-      } else {
-        controls.root.classList.remove("ark-harness-edge-controls-active");
-      }
-    });
-  }
-
-  function scheduleEdgeControlsClose(graph, edgeId) {
-    var controls = graph.edgeControlsById.get(edgeId);
-    if (!controls) return;
-    clearEdgeControlsClose(controls);
-    controls.closeTimer = window.setTimeout(function () {
-      controls.closeTimer = null;
-      if (!edgeControlsEngaged(controls)) {
-        controls.root.classList.remove("ark-harness-edge-controls-active");
-      }
-    }, 100);
-  }
-
-  function syncEdgeSelect(controls, role, edge) {
-    var select = controls.selects[role];
+  function syncEdgeSelect(select, role, edge) {
     var property = edgeControlProperty(role);
     var raw = isRecordObject(edge.ext) ? edge.ext[property] : undefined;
     var allowed = role === "direction"
@@ -1665,18 +1586,10 @@ const RAW_HARNESS_JS = `(function () {
         ? "\\u4E0D\\u6B63\\u5024\\u30FB\\u8868\\u793A\\u306F forward"
         : "\\u4E0D\\u6B63\\u5024";
     if (current === null) {
-      if (!controls.placeholders[role]) {
-        controls.placeholders[role] = createEdgePlaceholder(placeholderText);
-        select.insertBefore(controls.placeholders[role], select.firstChild);
-      } else {
-        controls.placeholders[role].textContent = placeholderText;
-      }
+      var placeholder = createEdgePlaceholder(placeholderText);
+      select.insertBefore(placeholder, select.firstChild);
       select.value = "__ark_invalid__";
     } else {
-      if (controls.placeholders[role]) {
-        controls.placeholders[role].remove();
-        controls.placeholders[role] = null;
-      }
       select.value = current;
     }
     select.disabled = false;
@@ -1690,184 +1603,6 @@ const RAW_HARNESS_JS = `(function () {
     var label = name + " \\u306E" + roleLabel + "\\uFF08\\u73FE\\u5728 " + currentLabel + "\\uFF09";
     select.setAttribute("aria-label", label);
     select.setAttribute("title", label);
-  }
-
-  function domRectangle(element, containerRect) {
-    var rect = element.getBoundingClientRect();
-    return {
-      x: rect.left - containerRect.left,
-      y: rect.top - containerRect.top,
-      width: rect.width,
-      height: rect.height
-    };
-  }
-
-  function findEdgeLabel(graph, edgeId) {
-    var labels = graph.svg.querySelectorAll(".ark-harness-edge-label");
-    for (var i = 0; i < labels.length; i++) {
-      if (labels[i].getAttribute("data-ark-edge-id") === edgeId) return labels[i];
-    }
-    return null;
-  }
-
-  function edgeControlBlockers(graph, edgeId, containerRect) {
-    var blockers = [];
-    var label = findEdgeLabel(graph, edgeId);
-    if (label) blockers.push(domRectangle(label, containerRect));
-    ["from", "to"].forEach(function (end) {
-      var handle = graph.edgeHandlesByKey.get(edgeId + ":" + end);
-      if (handle) blockers.push(domRectangle(handle, containerRect));
-    });
-    graph.nodesById.forEach(function (node) {
-      blockers.push(domRectangle(node, containerRect));
-    });
-    return blockers;
-  }
-
-  function edgePathAnchor(main, fraction) {
-    var length = main.getTotalLength();
-    if (!Number.isFinite(length) || length <= 0) return null;
-    var offset = Math.max(0.5, Math.min(2, length / 20));
-    var distance = length * fraction;
-    var before = main.getPointAtLength(Math.max(0, distance - offset));
-    var after = main.getPointAtLength(Math.min(length, distance + offset));
-    var dx = after.x - before.x;
-    var dy = after.y - before.y;
-    var tangentLength = Math.sqrt(dx * dx + dy * dy);
-    if (!Number.isFinite(tangentLength) || tangentLength <= 0) return null;
-    var point = main.getPointAtLength(distance);
-    return {
-      x: point.x,
-      y: point.y,
-      tx: dx / tangentLength,
-      ty: dy / tangentLength
-    };
-  }
-
-  function controlRectangle(center, size) {
-    return {
-      x: center.x - size.width / 2,
-      y: center.y - size.height / 2,
-      width: size.width,
-      height: size.height
-    };
-  }
-
-  function placeEdgeSelect(select, anchor, blockers, edgeBox) {
-    var measured = select.getBoundingClientRect();
-    var size = { width: measured.width, height: measured.height };
-    if (!Number.isFinite(size.width) || !Number.isFinite(size.height) ||
-        size.width <= 0 || size.height <= 0) return null;
-    var nx = -anchor.ty;
-    var ny = anchor.tx;
-    var distances = [32, 56, 84, 112, 140, 168, 196];
-    var shifts = [0, -48, 48, -96, 96, -144, 144];
-    for (var i = 0; i < distances.length; i++) {
-      for (var signIndex = 0; signIndex < 2; signIndex++) {
-        var sign = signIndex === 0 ? 1 : -1;
-        for (var j = 0; j < shifts.length; j++) {
-          var center = {
-            x: anchor.x + nx * distances[i] * sign + anchor.tx * shifts[j],
-            y: anchor.y + ny * distances[i] * sign + anchor.ty * shifts[j]
-          };
-          var candidate = controlRectangle(center, size);
-          var blocked = blockers.some(function (blocker) {
-            return rectanglesCollide(candidate, blocker, 6);
-          });
-          if (blocked) continue;
-          select.style.left = center.x + "px";
-          select.style.top = center.y + "px";
-          return candidate;
-        }
-      }
-    }
-    var fallbackXs = [
-      edgeBox.x + edgeBox.width / 2,
-      edgeBox.x,
-      edgeBox.x + edgeBox.width,
-      edgeBox.x - size.width - 6,
-      edgeBox.x + edgeBox.width + size.width + 6
-    ];
-    for (var row = 0; row < 6; row++) {
-      for (var sideIndex = 0; sideIndex < 2; sideIndex++) {
-        for (var xIndex = 0; xIndex < fallbackXs.length; xIndex++) {
-          var fallbackCenter = {
-            x: fallbackXs[xIndex],
-            y: sideIndex === 0
-              ? edgeBox.y - size.height / 2 - 6 - row * (size.height + 6)
-              : edgeBox.y + edgeBox.height + size.height / 2 + 6 +
-                row * (size.height + 6)
-          };
-          var fallback = controlRectangle(fallbackCenter, size);
-          var fallbackBlocked = blockers.some(function (blocker) {
-            return rectanglesCollide(fallback, blocker, 6);
-          });
-          if (fallbackBlocked) continue;
-          select.style.left = fallbackCenter.x + "px";
-          select.style.top = fallbackCenter.y + "px";
-          return fallback;
-        }
-      }
-    }
-    return null;
-  }
-
-  function positionEdgeControls(graph, edge, controls) {
-    var main = graph.edgeMainById.get(edge.id);
-    if (!main) {
-      controls.root.classList.add("ark-harness-edge-controls-unavailable");
-      ["from-card", "direction", "to-card"].forEach(function (role) {
-        controls.selects[role].disabled = true;
-      });
-      return;
-    }
-    var containerRect = graph.container.getBoundingClientRect();
-    var blockers = edgeControlBlockers(graph, edge.id, containerRect);
-    var edgeBox = domRectangle(main, containerRect);
-    var placements = [
-      { role: "from-card", fraction: 0.2 },
-      { role: "direction", fraction: 0.5 },
-      { role: "to-card", fraction: 0.8 }
-    ];
-    for (var i = 0; i < placements.length; i++) {
-      var placement = placements[i];
-      var anchor = edgePathAnchor(main, placement.fraction);
-      var rectangle = anchor &&
-        placeEdgeSelect(controls.selects[placement.role], anchor, blockers, edgeBox);
-      if (!rectangle) {
-        controls.root.classList.add("ark-harness-edge-controls-unavailable");
-        ["from-card", "direction", "to-card"].forEach(function (role) {
-          controls.selects[role].disabled = true;
-        });
-        return;
-      }
-      blockers.push(rectangle);
-    }
-    controls.root.classList.remove("ark-harness-edge-controls-unavailable");
-  }
-
-  function syncEdgeControls(graph, edges) {
-    var activeIds = new Set();
-    edges.forEach(function (edge) {
-      if (!graph.edgeGeometryById.has(edge.id)) return;
-      activeIds.add(edge.id);
-      var controls = graph.edgeControlsById.get(edge.id);
-      if (!controls) {
-        controls = createEdgeControls(graph, edge);
-        graph.edgeControlsById.set(edge.id, controls);
-      }
-      controls.root.setAttribute("data-ark-edge-id", edge.id);
-      syncEdgeSelect(controls, "from-card", edge);
-      syncEdgeSelect(controls, "direction", edge);
-      syncEdgeSelect(controls, "to-card", edge);
-      positionEdgeControls(graph, edge, controls);
-    });
-    graph.edgeControlsById.forEach(function (controls, edgeId) {
-      if (activeIds.has(edgeId)) return;
-      clearEdgeControlsClose(controls);
-      if (controls.root.parentNode) controls.root.parentNode.removeChild(controls.root);
-      graph.edgeControlsById.delete(edgeId);
-    });
   }
 
   function finishGraphDrag(event) {
@@ -2074,7 +1809,6 @@ const RAW_HARNESS_JS = `(function () {
       });
     });
     var affordances = [
-      root.querySelector(".ark-harness-kind-picker"),
       root.querySelector(".ark-harness-graph-handle"),
       connectors
     ];
@@ -2090,16 +1824,289 @@ const RAW_HARNESS_JS = `(function () {
     graph.nodeAffordancesById.set(id, controller);
   }
 
-  function setSelectedNode(id) {
-    selectedNodeId = id && getNode(state.model, id) ? id : null;
+  function selectionEntry() {
+    if (selection.kind === "node") return getNode(state.model, selection.id);
+    if (selection.kind === "edge") return getEdge(state.model, selection.id);
+    return null;
+  }
+
+  function selectionAnchor() {
+    if (!selectionGraph || graphs.indexOf(selectionGraph) === -1) return null;
+    if (selection.kind === "node") {
+      return selectionGraph.nodesById.get(selection.id) || null;
+    }
+    if (selection.kind === "edge") {
+      return selectionGraph.edgeMainById.get(selection.id) || null;
+    }
+    return null;
+  }
+
+  function renderSelectionVisuals() {
     graphs.forEach(function (graph) {
       graph.nodesById.forEach(function (root, nodeId) {
         root.classList.toggle(
           "ark-harness-node-selected",
-          nodeId === selectedNodeId
+          selection.kind === "node" && graph === selectionGraph &&
+            nodeId === selection.id
+        );
+      });
+      graph.edgeMainById.forEach(function (main, edgeId) {
+        main.classList.toggle(
+          "ark-harness-edge-selected",
+          selection.kind === "edge" && graph === selectionGraph &&
+            edgeId === selection.id
         );
       });
     });
+  }
+
+  function clearToolbarChildren() {
+    if (!contextToolbar) return;
+    while (contextToolbar.firstChild) {
+      contextToolbar.removeChild(contextToolbar.firstChild);
+    }
+  }
+
+  function syncKindSelect(select, node) {
+    var current = typeof node.kind === "string" ? node.kind : "";
+    if (kindCandidates.indexOf(current) === -1) {
+      var currentOption = createKindOption(current);
+      currentOption.textContent = current || "kind \\u306A\\u3057";
+      currentOption.disabled = true;
+      select.insertBefore(currentOption, select.firstChild);
+    }
+    select.value = current;
+    var name = (typeof node.label === "string" && node.label) || node.id;
+    var label = name + " \\u306E kind\\uFF08\\u73FE\\u5728 " +
+      (current || "\\u306A\\u3057") + "\\uFF09";
+    select.setAttribute("aria-label", label);
+    select.title = label;
+  }
+
+  function selectedListBinding() {
+    if (selection.kind !== "node" || !selectionGraph) return null;
+    var root = selectionGraph.nodesById.get(selection.id);
+    var bindings = listBindingsByNode.get(selection.id) || [];
+    for (var i = 0; i < bindings.length; i++) {
+      if (bindings[i].listEl.isConnected && root.contains(bindings[i].listEl)) {
+        return bindings[i];
+      }
+    }
+    return null;
+  }
+
+  function renderNodeToolbar(node) {
+    var graph = selectionGraph;
+    var root = graph && graph.nodesById.get(node.id);
+    var select = document.createElement("select");
+    select.className = "ark-harness-kind-select";
+    markUi(select);
+    if (kindCandidates.length === 0) {
+      var none = createKindOption("");
+      none.textContent = "kind \\u306A\\u3057";
+      select.appendChild(none);
+      select.disabled = true;
+    } else {
+      kindCandidates.forEach(function (value) {
+        select.appendChild(createKindOption(value));
+      });
+      syncKindSelect(select, node);
+    }
+    select.addEventListener("change", function (event) {
+      event.stopPropagation();
+      if (selection.kind === "node" && selection.id === node.id &&
+          selectionGraph === graph && root) {
+        updateNodeKind(graph, root, select.value);
+      }
+    });
+    contextToolbar.appendChild(select);
+
+    var binding = selectedListBinding();
+    var add = createButton(
+      "+ \\u884C",
+      "ark-harness-node-add-field",
+      "\\u884C\\u3092\\u8FFD\\u52A0"
+    );
+    add.disabled = !binding;
+    add.addEventListener("click", function () {
+      if (selection.kind !== "node" || selection.id !== node.id) return;
+      var current = selectedListBinding();
+      if (current) addField(current.listEl, current.ownerNodeId);
+    });
+    contextToolbar.appendChild(add);
+
+    var name = (typeof node.label === "string" && node.label) || node.id;
+    var del = createButton(
+      "\\u524A\\u9664",
+      "ark-harness-node-delete",
+      name + " \\u3092\\u524A\\u9664"
+    );
+    del.addEventListener("click", function () {
+      if (selection.kind !== "node" || selection.id !== node.id) return;
+      clearSelection();
+      removeNode(node.id);
+    });
+    contextToolbar.appendChild(del);
+  }
+
+  function renderEdgeToolbar(edge) {
+    var graph = selectionGraph;
+    ["from-card", "to-card", "direction"].forEach(function (role) {
+      var select = createEdgeSelect(graph, edge.id, role);
+      syncEdgeSelect(select, role, edge);
+      contextToolbar.appendChild(select);
+    });
+    var name = (typeof edge.label === "string" && edge.label) || edge.id;
+    var del = createButton(
+      "\\u524A\\u9664",
+      "ark-harness-edge-delete",
+      name + " \\u3092\\u524A\\u9664"
+    );
+    del.addEventListener("click", function () {
+      if (selection.kind !== "edge" || selection.id !== edge.id) return;
+      clearSelection();
+      removeEdge(edge.id);
+    });
+    contextToolbar.appendChild(del);
+  }
+
+  function renderContextToolbar() {
+    if (!contextToolbar) return;
+    clearToolbarChildren();
+    contextToolbar.removeAttribute("data-ark-selection-kind");
+    contextToolbar.removeAttribute("data-ark-selection-id");
+    contextToolbar.removeAttribute("data-ark-toolbar-placement");
+    var entry = selectionEntry();
+    if (!entry) {
+      contextToolbar.hidden = true;
+      return;
+    }
+    contextToolbar.hidden = false;
+    contextToolbar.setAttribute("data-ark-selection-kind", selection.kind);
+    contextToolbar.setAttribute("data-ark-selection-id", selection.id);
+    var name = (typeof entry.label === "string" && entry.label) || entry.id;
+    contextToolbar.setAttribute(
+      "aria-label",
+      name + " \\u306E\\u30B3\\u30F3\\u30C6\\u30AD\\u30B9\\u30C8\\u30C4\\u30FC\\u30EB\\u30D0\\u30FC"
+    );
+    if (selection.kind === "node") renderNodeToolbar(entry);
+    if (selection.kind === "edge") renderEdgeToolbar(entry);
+  }
+
+  function observeSelectionAnchor(anchor) {
+    if (!selectionResizeObserver) return;
+    selectionResizeObserver.disconnect();
+    if (anchor) selectionResizeObserver.observe(anchor);
+    if (contextToolbar && !contextToolbar.hidden) {
+      selectionResizeObserver.observe(contextToolbar);
+    }
+  }
+
+  function positionContextToolbar() {
+    toolbarPositionFrame = null;
+    if (!contextToolbar || contextToolbar.hidden) return;
+    var anchor = selectionAnchor();
+    if (!anchor || !anchor.isConnected) {
+      clearSelection();
+      return;
+    }
+    var anchorRect = anchor.getBoundingClientRect();
+    var toolbarRect = contextToolbar.getBoundingClientRect();
+    if (!finiteNumber(anchorRect.left) || !finiteNumber(anchorRect.top) ||
+        !finiteNumber(toolbarRect.width) || !finiteNumber(toolbarRect.height) ||
+        toolbarRect.width <= 0 || toolbarRect.height <= 0) {
+      clearSelection();
+      return;
+    }
+    var margin = 8;
+    var top = anchorRect.top - toolbarRect.height - margin;
+    var placement = "above";
+    if (top < margin) {
+      top = anchorRect.bottom + margin;
+      placement = "below";
+    }
+    if (top + toolbarRect.height > window.innerHeight - margin) {
+      top = Math.max(
+        margin,
+        Math.min(top, window.innerHeight - toolbarRect.height - margin)
+      );
+      placement = "clamped";
+    }
+    var left = anchorRect.left +
+      (anchorRect.width - toolbarRect.width) / 2;
+    left = Math.max(
+      margin,
+      Math.min(left, window.innerWidth - toolbarRect.width - margin)
+    );
+    contextToolbar.style.left = left + "px";
+    contextToolbar.style.top = top + "px";
+    contextToolbar.setAttribute("data-ark-toolbar-placement", placement);
+    observeSelectionAnchor(anchor);
+  }
+
+  function scheduleContextToolbarPosition() {
+    if (toolbarPositionFrame !== null || !contextToolbar ||
+        contextToolbar.hidden) return;
+    toolbarPositionFrame = window.requestAnimationFrame(positionContextToolbar);
+  }
+
+  function clearSelection() {
+    selection = { kind: null, id: null };
+    selectionGraph = null;
+    if (selectionResizeObserver) selectionResizeObserver.disconnect();
+    renderSelectionVisuals();
+    renderContextToolbar();
+  }
+
+  function setSelection(kind, id, graph) {
+    var valid = kind === "node"
+      ? getNode(state.model, id)
+      : kind === "edge"
+        ? getEdge(state.model, id)
+        : null;
+    if (!valid || graphs.indexOf(graph) === -1) {
+      clearSelection();
+      return;
+    }
+    selection = { kind: kind, id: id };
+    selectionGraph = graph;
+    renderSelectionVisuals();
+    renderContextToolbar();
+    scheduleContextToolbarPosition();
+  }
+
+  function reconcileSelection() {
+    if (!selectionEntry()) {
+      clearSelection();
+      return;
+    }
+    var anchor = selectionAnchor();
+    if (!anchor || !anchor.isConnected) {
+      clearSelection();
+      return;
+    }
+    renderSelectionVisuals();
+    renderContextToolbar();
+    scheduleContextToolbarPosition();
+  }
+
+  function buildContextToolbar() {
+    contextToolbar = document.createElement("div");
+    contextToolbar.className = "ark-harness-context-toolbar";
+    contextToolbar.setAttribute("role", "toolbar");
+    contextToolbar.hidden = true;
+    markUi(contextToolbar);
+    ["pointerdown", "click"].forEach(function (type) {
+      contextToolbar.addEventListener(type, function (event) {
+        event.stopPropagation();
+      });
+    });
+    document.body.appendChild(contextToolbar);
+    if (typeof ResizeObserver !== "undefined") {
+      selectionResizeObserver = new ResizeObserver(
+        scheduleContextToolbarPosition
+      );
+    }
   }
 
   function attachNodeSelection(root, id) {
@@ -2109,19 +2116,22 @@ const RAW_HARNESS_JS = `(function () {
     }
     root.addEventListener("pointerdown", function (event) {
       if (event.button !== 0 || isInsideHarnessUi(event.target)) return;
-      var editableControl = event.target && event.target.closest &&
-        event.target.closest('[contenteditable="true"], input, textarea, select, button');
-      if (editableControl) {
-        var editableRect = editableControl.getBoundingClientRect();
-        if (event.clientX >= editableRect.left && event.clientX <= editableRect.right &&
-            event.clientY >= editableRect.top && event.clientY <= editableRect.bottom) return;
-      }
+      if (isEditableControlTarget(event.target)) return;
       event.preventDefault();
-      setSelectedNode(id);
+      var graph = graphs.find(function (entry) {
+        return entry.nodesById.get(id) === root;
+      });
+      setSelection("node", id, graph);
       root.focus({ preventScroll: true });
     });
-    root.addEventListener("click", function () { setSelectedNode(id); });
-    root.addEventListener("focusin", function () { setSelectedNode(id); });
+    root.addEventListener("click", function (event) {
+      if (event.button !== 0 || isInsideHarnessUi(event.target) ||
+          !isEditableControlTarget(event.target)) return;
+      var graph = graphs.find(function (entry) {
+        return entry.nodesById.get(id) === root;
+      });
+      setSelection("node", id, graph);
+    });
   }
 
   function registerGraphNode(graph, root, node) {
@@ -2129,7 +2139,6 @@ const RAW_HARNESS_JS = `(function () {
     graph.nodesById.set(node.id, root);
     root.classList.add("ark-harness-graph-node");
     attachNodeSelection(root, node.id);
-    attachKindPicker(graph, root);
     attachGraphHandle(graph, root, node);
     attachNodeConnectors(graph, root);
     attachNodeAffordanceHover(graph, root, node.id);
@@ -2148,11 +2157,6 @@ const RAW_HARNESS_JS = `(function () {
     var affordance = graph.nodeAffordancesById.get(id);
     clearNodeAffordanceClose(affordance);
     graph.nodeAffordancesById.delete(id);
-    kindPickers = kindPickers.filter(function (picker) {
-      if (picker.root !== root) return true;
-      if (picker.select.parentNode) picker.select.parentNode.remove();
-      return false;
-    });
     if (graphDrag && graphDrag.graph === graph &&
         graphDrag.el.getAttribute("data-model-id") === id) {
       finishGraphDrag(null);
@@ -2194,7 +2198,7 @@ const RAW_HARNESS_JS = `(function () {
       (edgeDrag.mode === "create" && edgeDrag.sourceId === id) ||
       (edgeDrag.mode === "rewire" && incidentIds.has(edgeDrag.edgeId))
     )) finishEdgeDrag(null, false);
-    if (selectedNodeId === id) selectedNodeId = null;
+    if (selection.kind === "node" && selection.id === id) clearSelection();
 
     state.model.nodes = state.model.nodes.filter(function (entry) {
       return entry.id !== id;
@@ -2211,13 +2215,16 @@ const RAW_HARNESS_JS = `(function () {
     graphs.forEach(function (graph) { scheduleGraphRender(graph); });
   }
 
-  function handleNodeDeleteKey(event) {
+  function handleSelectionKey(event) {
     if ((event.key !== "Delete" && event.key !== "Backspace") ||
-        !selectedNodeId || graphDrag || edgeDrag ||
+        !selection.id || graphDrag || edgeDrag ||
         isEditableControlTarget(event.target)) return;
     event.preventDefault();
     event.stopPropagation();
-    removeNode(selectedNodeId);
+    var selected = { kind: selection.kind, id: selection.id };
+    clearSelection();
+    if (selected.kind === "node") removeNode(selected.id);
+    if (selected.kind === "edge") removeEdge(selected.id);
   }
 
   function authoredClassName(root) {
@@ -2274,9 +2281,7 @@ const RAW_HARNESS_JS = `(function () {
     graph.svg.querySelectorAll("text[data-ark-edge-id]").forEach(add);
     graph.edgeHandlesByKey.forEach(add);
     graph.nodesById.forEach(function (nodeRoot) {
-      nodeRoot.querySelectorAll(
-        ".ark-harness-kind-picker, .ark-harness-graph-handle"
-      ).forEach(add);
+      nodeRoot.querySelectorAll(".ark-harness-graph-handle").forEach(add);
     });
     return blockers;
   }
@@ -2406,7 +2411,6 @@ const RAW_HARNESS_JS = `(function () {
       edgeHandlesByKey: new Map(),
       nodeConnectorsById: new Map(),
       nodeAffordancesById: new Map(),
-      edgeControlsById: new Map(),
       positionsById: new Map(),
       layoutExtent: { width: null, height: null },
       resizeObserver: null,
@@ -2431,21 +2435,33 @@ const RAW_HARNESS_JS = `(function () {
     containers.forEach(function (container) { graphs.push(wireGraph(container)); });
     window.addEventListener("resize", function () {
       graphs.forEach(function (graph) { scheduleGraphRender(graph); });
+      scheduleContextToolbarPosition();
     });
+    window.addEventListener("scroll", scheduleContextToolbarPosition, true);
     window.addEventListener("pointerup", function (event) {
       finishEdgeDrag(event, true);
     });
     window.addEventListener("pointercancel", function (event) {
       finishEdgeDrag(event, false);
     });
+    window.addEventListener("click", function (event) {
+      if (event.button !== 0) return;
+      var target = event.target;
+      if (!target || isInsideHarnessUi(target) ||
+          target.closest(".ark-harness-graph-node") ||
+          target.closest(".ark-harness-edge-hit-target") ||
+          isEditableControlTarget(target)) return;
+      clearSelection();
+    });
     window.addEventListener("keydown", function (event) {
       if (event.key === "Escape") {
         if (edgeDrag) event.preventDefault();
         finishEdgeDrag(null, false);
+        clearSelection();
         return;
       }
-      handleNodeDeleteKey(event);
-    });
+      handleSelectionKey(event);
+    }, true);
   }
 
   function findEntry(model, id) {
@@ -2539,40 +2555,6 @@ const RAW_HARNESS_JS = `(function () {
     return option;
   }
 
-  function syncKindPicker(picker) {
-    var id = picker.root.getAttribute("data-model-id");
-    var node = id && getNode(state.model, id);
-    if (!node) {
-      picker.select.disabled = true;
-      return;
-    }
-    picker.select.disabled = false;
-    var current = typeof node.kind === "string" ? node.kind : "";
-    if (kindCandidates.indexOf(current) === -1) {
-      if (!picker.currentOption) {
-        picker.currentOption = createKindOption(current);
-        picker.currentOption.disabled = true;
-        picker.select.insertBefore(picker.currentOption, picker.select.firstChild);
-      } else {
-        picker.currentOption.textContent = current || "kind なし";
-        picker.currentOption.value = current;
-      }
-    } else if (picker.currentOption) {
-      picker.currentOption.remove();
-      picker.currentOption = null;
-    }
-    picker.select.value = current;
-    var name = (typeof node.label === "string" && node.label) || node.id;
-    var currentLabel = current || "なし";
-    var label = name + " の kind（現在 " + currentLabel + "）";
-    picker.select.setAttribute("aria-label", label);
-    picker.select.title = label;
-  }
-
-  function syncKindPickers() {
-    kindPickers.forEach(function (picker) { syncKindPicker(picker); });
-  }
-
   function updateNodeKind(graph, root, value) {
     var id = root.getAttribute("data-model-id");
     if (!id || kindCandidates.indexOf(value) === -1) return;
@@ -2580,37 +2562,8 @@ const RAW_HARNESS_JS = `(function () {
     if (!node) return;
     node.kind = value;
     syncNodeKinds();
-    syncKindPickers();
+    renderContextToolbar();
     scheduleGraphRender(graph);
-  }
-
-  function attachKindPicker(graph, root) {
-    if (kindCandidates.length === 0) return;
-    var wrapper = document.createElement("span");
-    wrapper.className = "ark-harness-kind-picker";
-    markUi(wrapper);
-    var select = document.createElement("select");
-    select.className = "ark-harness-kind-select";
-    markUi(select);
-    kindCandidates.forEach(function (value) {
-      select.appendChild(createKindOption(value));
-    });
-    var picker = {
-      root: root,
-      select: select,
-      currentOption: null
-    };
-    ["pointerdown", "click", "keydown"].forEach(function (type) {
-      select.addEventListener(type, function (event) { event.stopPropagation(); });
-    });
-    select.addEventListener("change", function (event) {
-      event.stopPropagation();
-      updateNodeKind(graph, root, select.value);
-    });
-    wrapper.appendChild(select);
-    root.appendChild(wrapper);
-    kindPickers.push(picker);
-    syncKindPicker(picker);
   }
 
   function markUi(el) {
@@ -2758,22 +2711,23 @@ const RAW_HARNESS_JS = `(function () {
       e.preventDefault();
       syncFieldOrder(listEl, ownerNodeId);
     });
-
-    var addBtn = createButton("+ 行を追加", "ark-harness-add-row", "行を追加");
-    addBtn.addEventListener("click", function () {
-      addField(listEl, ownerNodeId);
-    });
-    listEl.insertAdjacentElement("afterend", addBtn);
   }
 
   function initEditing() {
     var model = state.model;
     var listBindings = [];
+    listBindingsByNode = new Map();
     var listEls = document.querySelectorAll("ul, ol");
     listEls.forEach(function (listEl) {
       if (isInsideHarnessUi(listEl)) return;
       var ownerNodeId = findOwnerNodeId(model, listEl);
-      if (ownerNodeId) listBindings.push({ listEl: listEl, ownerNodeId: ownerNodeId });
+      if (ownerNodeId) {
+        var binding = { listEl: listEl, ownerNodeId: ownerNodeId };
+        listBindings.push(binding);
+        var owned = listBindingsByNode.get(ownerNodeId) || [];
+        owned.push(binding);
+        listBindingsByNode.set(ownerNodeId, owned);
+      }
     });
 
     listBindings.forEach(function (binding) {
@@ -2917,8 +2871,8 @@ const RAW_HARNESS_JS = `(function () {
         state.model = parsed;
         reserveCurrentModelIds();
         syncNodeKinds();
-        syncKindPickers();
         syncLayoutDirectionButton();
+        reconcileSelection();
         graphs.forEach(function (graph) { scheduleGraphRender(graph); });
         error.style.display = "none";
         panel.style.display = "none";
@@ -3072,6 +3026,7 @@ const RAW_HARNESS_JS = `(function () {
       kindCandidates = collectKindCandidates();
       buildToolbar();
       initEditing();
+      buildContextToolbar();
       initGraphs();
     } catch (e) {
       console.error("[ark-harness] 初期化に失敗しました", e);
