@@ -13,7 +13,7 @@
     "package:mac": "pnpm --filter @ark/web build && pnpm --filter @ark/server build && pnpm build && electron-builder --mac --arm64"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "^2.1.219",
+    "@anthropic-ai/claude-code": "^2.1.220",
     "better-sqlite3": "^12.6.2",
     "electron-log": "^5.4.3",
     "playwright-core": "^1.59.1"
