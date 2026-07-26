@@ -373,9 +373,11 @@ describe("injectHarness", () => {
     expect(out).toContain("reservedModelIds");
     expect(out).toContain("function collectModelIds(");
     expect(out).toContain("function generateUniqueModelId(");
-    expect(out).toContain("ark-harness-node-palette");
+    expect(out).not.toContain("ark-harness-node-palette");
+    expect(out).not.toContain("buildNodePalette");
+    expect(out).not.toContain("createPaletteSelect");
     expect(out).toContain("function registerGraphNode(");
-    expect(out).toContain("function addNode(");
+    expect(out).toContain("function createNodeInGraph(");
     expect(out).toContain("function removeNode(");
     expect(out).toContain("group.nodes = group.nodes.filter");
     expect(out).toContain('mode: "create"');
