@@ -1730,6 +1730,11 @@ test("edge CRUD: click・微小移動・source drop・Escape を無視し明確�
     '.ark-harness-node-connectors[data-ark-node-id="crud-b"]'
   );
   const target = graph.locator('[data-model-id="crud-d"]').first();
+  const otherGraphTarget = page
+    .locator('[data-ark-container="graph"]')
+    .nth(1)
+    .locator('[data-model-id="crud-other"]')
+    .first();
 
   const dragCreate = async (drop: Locator) => {
     await source.hover();
@@ -1851,6 +1856,17 @@ test("edge CRUD: click・微小移動・source drop・Escape を無視し明確�
     graph.locator(`path.ark-harness-edge-main[data-ark-edge-id="${self?.id}"]`)
   ).toHaveCount(1);
 
+  const beforeInvalid = await readCurrentModel(page);
+  const beforeInvalidDomNodes = await page
+    .locator(".ark-harness-graph-node")
+    .count();
+  await dragCreate(otherGraphTarget);
+  const afterInvalid = await readCurrentModel(page);
+  expect(afterInvalid.nodes).toHaveLength(beforeInvalid.nodes.length);
+  expect(afterInvalid.edges).toHaveLength(beforeInvalid.edges.length);
+  await expect(page.locator(".ark-harness-graph-node")).toHaveCount(
+    beforeInvalidDomNodes
+  );
   await expect(graph.locator(".ark-harness-edge-preview")).toHaveCount(0);
   await expect(graph.locator(".ark-harness-edge-drop-indicator")).toHaveCount(
     0

@@ -1393,6 +1393,20 @@ const RAW_HARNESS_JS = `(function () {
     if (commit && drag.didDrag && drag.mode === "rewire" && !candidate) {
       removeEdge(drag.edgeId);
     } else if (commit && drag.didDrag && drag.mode === "create" && !candidate) {
+      var overOtherGraph = graphs.some(function (entry) {
+        if (entry === drag.graph) return false;
+        var rect = entry.container.getBoundingClientRect();
+        return event.clientX >= rect.left && event.clientX <= rect.right &&
+          event.clientY >= rect.top && event.clientY <= rect.bottom;
+      });
+      if (overOtherGraph) {
+        removeEdgeDragUi(drag);
+        if (drag.handle.hasPointerCapture(drag.pointerId)) {
+          drag.handle.releasePointerCapture(drag.pointerId);
+        }
+        graphs.forEach(function (graph) { scheduleGraphRender(graph); });
+        return;
+      }
       var blankSource = getNode(state.model, drag.sourceId);
       var blankSourceEl = drag.graph.nodesById.get(drag.sourceId);
       if (blankSource && blankSourceEl) {
