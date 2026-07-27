@@ -1415,9 +1415,11 @@ const RAW_HARNESS_JS = `(function () {
           x: event.clientX - graphRect.left,
           y: event.clientY - graphRect.top
         };
-        var kind = kindCandidates.indexOf(lastKind) !== -1
-          ? lastKind
-          : kindCandidates[0] || "";
+        var kind = lastKind === ""
+          ? ""
+          : kindCandidates.indexOf(lastKind) !== -1
+            ? lastKind
+            : kindCandidates[0] || "";
         var previousLastKind = lastKind;
         var newNode = createNodeInGraph(drag.graph, kind, point);
         if (!newNode) {
@@ -1906,11 +1908,11 @@ const RAW_HARNESS_JS = `(function () {
 
   function syncKindSelect(select, node) {
     var current = typeof node.kind === "string" ? node.kind : "";
-    if (kindCandidates.indexOf(current) === -1) {
+    if (current && kindCandidates.indexOf(current) === -1) {
       var currentOption = createKindOption(current);
-      currentOption.textContent = current || "kind \\u306A\\u3057";
+      currentOption.textContent = current;
       currentOption.disabled = true;
-      select.insertBefore(currentOption, select.firstChild);
+      select.insertBefore(currentOption, select.children[1] || null);
     }
     select.value = current;
     var name = (typeof node.label === "string" && node.label) || node.id;
@@ -1944,6 +1946,9 @@ const RAW_HARNESS_JS = `(function () {
       select.appendChild(none);
       select.disabled = true;
     } else {
+      var none = createKindOption("");
+      none.textContent = "kind \\u306A\\u3057";
+      select.appendChild(none);
       kindCandidates.forEach(function (value) {
         select.appendChild(createKindOption(value));
       });
@@ -2396,7 +2401,7 @@ const RAW_HARNESS_JS = `(function () {
         throw new Error("node registration failed");
       }
       wireEditableLeaf(projection.label, null);
-      if (kind) lastKind = kind;
+      lastKind = kind;
       graphs.forEach(function (entry) { scheduleGraphRender(entry); });
       return node;
     } catch (error) {
@@ -2603,10 +2608,11 @@ const RAW_HARNESS_JS = `(function () {
 
   function updateNodeKind(graph, root, value) {
     var id = root.getAttribute("data-model-id");
-    if (!id || kindCandidates.indexOf(value) === -1) return;
+    if (!id || value && kindCandidates.indexOf(value) === -1) return;
     var node = getNode(state.model, id);
     if (!node) return;
-    node.kind = value;
+    if (value) node.kind = value;
+    else delete node.kind;
     lastKind = value;
     syncNodeKinds();
     renderContextToolbar();

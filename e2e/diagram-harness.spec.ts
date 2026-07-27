@@ -1456,6 +1456,49 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   expect(errors).toEqual([]);
 });
 
+test("node CRUD: kind なしを選ぶと node から kind を除去し drag 作成にも引き継ぐ", async ({
+  page,
+}) => {
+  await page.setContent(crudDiagramHtml());
+
+  const graph = page.locator('[data-ark-container="graph"]').first();
+  const source = graph.locator('[data-model-id="crud-b"]').first();
+  const toolbar = await selectNode(page, "crud-b");
+  const picker = toolbar.locator("select.ark-harness-kind-select");
+  const none = picker.locator('option[value=""]');
+  await expect(none).toHaveText("kind なし");
+  await expect(none).toBeEnabled();
+  expect(await picker.locator("option").allTextContents()).toEqual([
+    "kind なし",
+    "entity",
+    "event",
+  ]);
+
+  await picker.selectOption("");
+  await expect(picker).toHaveValue("");
+  await expect(source).not.toHaveAttribute("data-kind", /.*/);
+  const cleared = await readCurrentModel(page);
+  expect(cleared.nodes.find(node => node.id === "crud-b")).not.toHaveProperty(
+    "kind"
+  );
+
+  const graphBox = await requiredBoundingBox(graph);
+  await dragNodeAnchorToPoint(page, graph, "crud-b", "bottom", {
+    x: graphBox.x + graphBox.width - 20,
+    y: graphBox.y + graphBox.height - 20,
+  });
+  const current = await readCurrentModel(page);
+  const added = current.nodes.find(
+    node => !crudModel.nodes.some(old => old.id === node.id)
+  );
+  expect(added).toBeDefined();
+  expect(added).not.toHaveProperty("kind");
+  if (!added) throw new Error("追加 node がありません");
+  await expect(
+    graph.locator(`[data-model-id="${added.id}"]`).first()
+  ).not.toHaveAttribute("data-kind", /.*/);
+});
+
 test("node CRUD: node/edge ID 生成失敗時は projection と model を原子的に戻す", async ({
   page,
 }) => {
@@ -3988,13 +4031,14 @@ test("kind 候補は authored CSS rule を宣言順かつ重複なしで収集�
   const picker = toolbar.getByRole("combobox", { name: /Candidate.*quoted/ });
   await expect(picker).toHaveCount(1);
   expect(await picker.locator("option").allTextContents()).toEqual([
+    "kind なし",
     "quoted",
     "single",
     "unquoted",
     "nested",
     "escaped&kind",
   ]);
-  await expect(picker.locator("option")).toHaveCount(5);
+  await expect(picker.locator("option")).toHaveCount(6);
   await expect(
     picker.locator("option", { hasText: "declaration" })
   ).toHaveCount(0);
@@ -4031,13 +4075,18 @@ test("kind toolbar は候補外の現在値を保持し候補選択時だけ更�
   );
   const toolbar = await selectNode(page, "order");
   const picker = toolbar.locator("select.ark-harness-kind-select");
-  const current = picker.locator("option").first();
+  const none = picker.locator("option").first();
+  const current = picker.locator("option").nth(1);
   await expect(order).toHaveAttribute("data-kind", "legacy-kind");
   await expect(picker).toHaveValue("legacy-kind");
+  await expect(none).toBeEnabled();
+  await expect(none).toHaveText("kind なし");
+  await expect(none).toHaveAttribute("value", "");
   await expect(current).toBeDisabled();
   await expect(current).toHaveText("legacy-kind");
   await expect(current).toHaveAttribute("value", "legacy-kind");
   expect(await picker.locator("option").allTextContents()).toEqual([
+    "kind なし",
     "legacy-kind",
     "aggregate",
     "entity",
@@ -4047,7 +4096,7 @@ test("kind toolbar は候補外の現在値を保持し候補選択時だけ更�
   await picker.selectOption("entity");
   await expect(order).toHaveAttribute("data-kind", "entity");
   await expect(picker).toHaveValue("entity");
-  await expect(picker.locator("option")).toHaveCount(3);
+  await expect(picker.locator("option")).toHaveCount(4);
 });
 
 test("kind toolbar は untrusted 値を text と value だけで扱う", async ({
@@ -4065,12 +4114,15 @@ test("kind toolbar は untrusted 値を text と value だけで扱う", async (
   const toolbar = await selectNode(page, "unsafe");
   const picker = toolbar.locator("select.ark-harness-kind-select");
   const options = picker.locator("option");
-  await expect(options).toHaveCount(2);
-  await expect(options.nth(0)).toBeDisabled();
-  await expect(options.nth(0)).toHaveText(currentKind);
-  await expect(options.nth(0)).toHaveAttribute("value", currentKind);
-  await expect(options.nth(1)).toHaveText(candidateKind);
-  await expect(options.nth(1)).toHaveAttribute("value", candidateKind);
+  await expect(options).toHaveCount(3);
+  await expect(options.nth(0)).toBeEnabled();
+  await expect(options.nth(0)).toHaveText("kind なし");
+  await expect(options.nth(0)).toHaveAttribute("value", "");
+  await expect(options.nth(1)).toBeDisabled();
+  await expect(options.nth(1)).toHaveText(currentKind);
+  await expect(options.nth(1)).toHaveAttribute("value", currentKind);
+  await expect(options.nth(2)).toHaveText(candidateKind);
+  await expect(options.nth(2)).toHaveAttribute("value", candidateKind);
   await expect(
     page.locator(
       "img, script:not(#ark-diagram-model):not(#ark-diagram-harness), [onerror], [onload]"
@@ -4129,7 +4181,7 @@ test("モデル直接編集後に kind toolbar と方向表示を再同期する
   await expect(order).toHaveAttribute("data-kind", "custom-kind");
   await expect(picker).toHaveValue("custom-kind");
   await expect(picker).toHaveAccessibleName(/Order.*custom-kind/);
-  const current = picker.locator("option").first();
+  const current = picker.locator("option").nth(1);
   await expect(current).toBeDisabled();
   await expect(current).toHaveText("custom-kind");
   await expect(
@@ -4154,6 +4206,7 @@ test("kind toolbar で CSS 候補を選び投影・geometry・保存へ同期す
   await expect(orderPicker).toHaveCount(1);
   await expect(orderPicker).toHaveAccessibleName(/Order.*aggregate/);
   expect(await orderPicker.locator("option").allTextContents()).toEqual([
+    "kind なし",
     "aggregate",
     "entity",
     "event",
@@ -4162,6 +4215,7 @@ test("kind toolbar で CSS 候補を選び投影・geometry・保存へ同期す
   const userPicker = toolbar.locator("select.ark-harness-kind-select");
   await expect(userPicker).toHaveAccessibleName(/User.*entity/);
   expect(await userPicker.locator("option").allTextContents()).toEqual([
+    "kind なし",
     "aggregate",
     "entity",
     "event",

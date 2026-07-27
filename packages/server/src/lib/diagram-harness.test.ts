@@ -107,7 +107,7 @@ describe("injectHarness", () => {
     expect(out).toContain("function renderEdgeToolbar(");
     expect(out).toContain("function collectKindCandidates(");
     expect(out).toContain("function updateNodeKind(");
-    expect(out).toContain("kindCandidates.indexOf(value) === -1");
+    expect(out).toContain("value && kindCandidates.indexOf(value) === -1");
     expect(out).toContain("function updateEdgeExt(");
     expect(out).toContain("CARDINALITY_VALUES.indexOf(value)");
     expect(out).toContain("DIRECTION_VALUES.indexOf(direction)");
@@ -351,8 +351,12 @@ describe("injectHarness", () => {
     expect(out).toContain("function syncKindSelect(");
     expect(out).toContain("function updateNodeKind(");
     expect(out).toContain("getNode(state.model, id)");
-    expect(out).toContain("kindCandidates.indexOf(value) === -1");
+    expect(out).toContain("value && kindCandidates.indexOf(value) === -1");
     expect(out).toContain("node.kind = value");
+    expect(out).toContain("else delete node.kind");
+    expect(out).toContain('var none = createKindOption("")');
+    expect(out).toContain('lastKind === ""');
+    expect(out).toContain("lastKind = kind;");
     expect(out).toContain("syncNodeKinds();");
     expect(out).toContain("scheduleGraphRender(graph);");
     expect(out).toContain('el.setAttribute("data-kind", node.kind)');
