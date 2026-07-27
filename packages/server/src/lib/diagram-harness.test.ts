@@ -329,7 +329,7 @@ describe("injectHarness", () => {
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 
-  it("authored CSS 由来の kind toolbar 契約を注入する", () => {
+  it("authored CSS と model node 由来の kind toolbar 契約を注入する", () => {
     const out = injectHarness(
       page(
         '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
@@ -342,6 +342,10 @@ describe("injectHarness", () => {
     expect(out).toContain("style:not([data-ark-harness-ui])");
     expect(out).toContain("rule.selectorText");
     expect(out).toContain("new Set()");
+    expect(out).toContain("state.model && Array.isArray(state.model.nodes)");
+    expect(out).toContain('typeof value === "string" && value');
+    expect(out).toContain("!seen.has(value)");
+    expect(out).toContain("values.push(value)");
     expect(out).toContain("ark-harness-context-toolbar");
     expect(out).not.toContain("ark-harness-kind-picker");
     expect(out).toContain('document.createElement("select")');

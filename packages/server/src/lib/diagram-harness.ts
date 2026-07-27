@@ -458,6 +458,16 @@ const RAW_HARNESS_JS = `(function () {
       }
       if (rules) collectKindRules(rules, seen, values);
     });
+    var nodes = state.model && Array.isArray(state.model.nodes)
+      ? state.model.nodes
+      : [];
+    nodes.forEach(function (node) {
+      var value = node && node.kind;
+      if (typeof value === "string" && value && !seen.has(value)) {
+        seen.add(value);
+        values.push(value);
+      }
+    });
     return values;
   }
 
