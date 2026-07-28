@@ -371,6 +371,32 @@ describe("injectHarness", () => {
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 
+  it("node projection に authored label のタグと class を複製する契約を注入する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><section class="entity" data-model-id="node"><h2 class="title" data-model-id="node">Node</h2></section></div>'
+      )
+    );
+
+    expect(out).toContain(
+      'var id = template && template.getAttribute("data-model-id")'
+    );
+    expect(out).toContain('template.querySelectorAll("[data-model-id]")');
+    expect(out).toContain('candidate.getAttribute("data-model-id") !== id');
+    expect(out).toContain("isInsideHarnessUi(candidate)");
+    expect(out).toContain('candidate.hasAttribute("data-ark-container")');
+    expect(out).toContain('candidate.hasAttribute("data-ark-group")');
+    expect(out).toContain("/^(H1|H2|H3|H4|H5|H6|SPAN|DIV|P|STRONG|HEADER)$/");
+    expect(out).toContain("labelTag: labelTag");
+    expect(out).toContain(
+      "labelClassName: labelEl ? authoredClassName(labelEl) :"
+    );
+    expect(out).toContain("document.createElement(template.labelTag)");
+    expect(out).toContain(
+      "if (template.labelClassName) label.className = template.labelClassName"
+    );
+  });
+
   it("node / edge CRUD と参照整合性の契約を注入する", () => {
     const out = injectHarness(
       page(

@@ -2302,7 +2302,32 @@ const RAW_HARNESS_JS = `(function () {
     var tag = template && /^(ARTICLE|SECTION|DIV)$/.test(template.tagName)
       ? template.tagName.toLowerCase()
       : "article";
-    return { tag: tag, className: template ? authoredClassName(template) : "" };
+    var id = template && template.getAttribute("data-model-id");
+    var labelEl = null;
+    if (id) {
+      template.querySelectorAll("[data-model-id]").forEach(function (candidate) {
+        if (labelEl || candidate === template ||
+            candidate.getAttribute("data-model-id") !== id ||
+            isInsideHarnessUi(candidate) ||
+            candidate.hasAttribute("data-ark-container") ||
+            candidate.hasAttribute("data-ark-group")) return;
+        var nested = candidate.querySelectorAll("[data-model-id]");
+        for (var i = 0; i < nested.length; i++) {
+          if (nested[i].getAttribute("data-model-id") === id) return;
+        }
+        labelEl = candidate;
+      });
+    }
+    var labelTag = labelEl &&
+      /^(H1|H2|H3|H4|H5|H6|SPAN|DIV|P|STRONG|HEADER)$/.test(labelEl.tagName)
+      ? labelEl.tagName.toLowerCase()
+      : null;
+    return {
+      tag: tag,
+      className: template ? authoredClassName(template) : "",
+      labelTag: labelTag,
+      labelClassName: labelEl ? authoredClassName(labelEl) : ""
+    };
   }
 
   function createNodeProjection(graph, node) {
@@ -2312,11 +2337,14 @@ const RAW_HARNESS_JS = `(function () {
       : template.tag === "div"
         ? document.createElement("div")
         : document.createElement("article");
-    var label = document.createElement("span");
+    var label = template.labelTag
+      ? document.createElement(template.labelTag)
+      : document.createElement("span");
     root.setAttribute("data-model-id", node.id);
     label.setAttribute("data-model-id", node.id);
     if (node.kind) root.setAttribute("data-kind", node.kind);
     if (template.className) root.className = template.className;
+    if (template.labelClassName) label.className = template.labelClassName;
     label.textContent = node.label;
     root.appendChild(label);
     return { root: root, label: label };

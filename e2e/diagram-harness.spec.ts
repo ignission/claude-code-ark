@@ -188,12 +188,14 @@ function modelKindCandidateHtml(): string {
         id: "model-kind-source",
         label: "Source",
         kind: "entity",
+        fields: [{ id: "model-kind-source-id", label: "id" }],
         ext: { x: 30, y: 40 },
       },
       {
         id: "model-kind-peer",
         label: "Peer",
         kind: "entity",
+        fields: [{ id: "model-kind-peer-id", label: "id" }],
         ext: { x: 260, y: 40 },
       },
     ],
@@ -203,12 +205,21 @@ function modelKindCandidateHtml(): string {
   return injectHarness(`<!doctype html><html><head><style>
     body { margin: 0; }
     .model-kind-graph { width: 640px; height: 360px; background: #f8fafc; }
-    .model-kind-node { box-sizing: border-box; width: 150px; min-height: 72px; padding: 12px; border: 1px solid #64748b; background: white; }
+    .entity { box-sizing: border-box; width: 180px; min-height: 72px; border: 1px solid #64748b; background: white; }
+    .entity h2 { margin: 0; padding: 8px 12px; background: #dbeafe; font-size: 16px; }
+    .entity h2::before { content: "▤"; margin-right: 6px; }
+    .entity ul { margin: 0; padding: 8px 12px 8px 32px; }
   </style></head><body>
     <script id="ark-diagram-model" type="application/json">${JSON.stringify(candidateModel)}</script>
     <div class="model-kind-graph" data-ark-container="graph">
-      <section class="model-kind-node" data-model-id="model-kind-source">Source</section>
-      <section class="model-kind-node" data-model-id="model-kind-peer">Peer</section>
+      <section class="entity" data-model-id="model-kind-source">
+        <h2 class="entity-title" data-model-id="model-kind-source">Source</h2>
+        <ul><li data-model-id="model-kind-source-id">id</li></ul>
+      </section>
+      <section class="entity" data-model-id="model-kind-peer">
+        <h2 class="entity-title" data-model-id="model-kind-peer">Peer</h2>
+        <ul><li data-model-id="model-kind-peer-id">id</li></ul>
+      </section>
     </div>
   </body></html>`);
 }
@@ -1445,9 +1456,13 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
     .first();
   await expect(projection).toHaveAttribute("data-kind", "entity");
   await expect(projection).toHaveClass(/crud-node/);
-  await expect(
-    projection.locator(`span[data-model-id="${added.id}"]`)
-  ).toHaveText("新しいノード");
+  const projectionLabel = projection.locator(
+    `:scope > span[data-model-id="${added.id}"]`
+  );
+  await expect(projectionLabel).toHaveText("新しいノード");
+  expect(await projectionLabel.evaluate(element => element.tagName)).toBe(
+    "SPAN"
+  );
   await expect(projection.locator(".ark-harness-kind-picker")).toHaveCount(0);
   await selectNode(page, added.id);
   await expect(
@@ -4116,7 +4131,15 @@ test("model node だけに kind がある図でも picker・drag 作成・kind �
   expect(added).toMatchObject({ label: "新しいノード", kind: "entity" });
   if (!added) throw new Error("追加 node がありません");
   const projection = graph.locator(`[data-model-id="${added.id}"]`).first();
+  expect(await projection.evaluate(element => element.tagName)).toBe("SECTION");
+  await expect(projection).toHaveClass(/(^|\s)entity(\s|$)/);
   await expect(projection).toHaveAttribute("data-kind", "entity");
+  const label = projection.locator(`:scope > h2[data-model-id="${added.id}"]`);
+  await expect(label).toHaveCount(1);
+  expect(await label.evaluate(element => element.tagName)).toBe("H2");
+  await expect(label).toHaveClass(/(^|\s)entity-title(\s|$)/);
+  await expect(label).toHaveAttribute("data-model-id", added.id);
+  await expect(label).toHaveText("新しいノード");
 
   const addedToolbar = await selectNode(page, added.id);
   const addedPicker = addedToolbar.locator("select.ark-harness-kind-select");
