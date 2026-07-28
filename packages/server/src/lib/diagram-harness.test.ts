@@ -381,6 +381,9 @@ describe("injectHarness", () => {
     expect(out).toContain(
       'var id = template && template.getAttribute("data-model-id")'
     );
+    expect(out).toContain("var matched = false");
+    expect(out).toContain("matched = true");
+    expect(out.match(/if \(matched && id\)/g)).toHaveLength(2);
     expect(out).toContain('template.querySelectorAll("[data-model-id]")');
     expect(out).toContain('candidate.getAttribute("data-model-id") !== id');
     expect(out).toContain("isInsideHarnessUi(candidate)");

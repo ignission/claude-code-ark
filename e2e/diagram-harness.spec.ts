@@ -4172,6 +4172,43 @@ test("model node だけに kind がある図でも picker・drag 作成・kind �
   expect(
     (await readCurrentModel(page)).nodes.find(node => node.id === added.id)
   ).not.toHaveProperty("kind");
+  await expect(label).toHaveCount(1);
+  await expect(list).toHaveCount(1);
+  await expect(list.locator(":scope > li")).toHaveCount(1);
+  await expect(addFieldButton).toBeEnabled();
+
+  const beforeKindless = await readCurrentModel(page);
+  await dragNodeAnchorToPoint(page, graph, added.id, "bottom", {
+    x: graphBox.x + 100,
+    y: graphBox.y + graphBox.height - 60,
+  });
+  const afterKindless = await readCurrentModel(page);
+  const kindless = afterKindless.nodes.find(
+    node => !beforeKindless.nodes.some(old => old.id === node.id)
+  );
+  expect(kindless).toBeDefined();
+  expect(kindless).not.toHaveProperty("kind");
+  if (!kindless) throw new Error("kind なし node がありません");
+
+  const kindlessProjection = graph
+    .locator(`[data-model-id="${kindless.id}"]`)
+    .first();
+  expect(await kindlessProjection.evaluate(element => element.tagName)).toBe(
+    "SECTION"
+  );
+  await expect(kindlessProjection).toHaveClass(/(^|\s)entity(\s|$)/);
+  await expect(kindlessProjection).not.toHaveAttribute("data-kind", /.*/);
+  await expect(kindlessProjection.locator(":scope > h2")).toHaveCount(0);
+  await expect(kindlessProjection.locator(":scope > ul")).toHaveCount(0);
+  const kindlessLabel = kindlessProjection.locator(
+    `:scope > span[data-model-id="${kindless.id}"]`
+  );
+  await expect(kindlessLabel).toHaveCount(1);
+  await expect(kindlessLabel).toHaveText("新しいノード");
+  const kindlessToolbar = await selectNode(page, kindless.id);
+  await expect(
+    kindlessToolbar.getByRole("button", { name: "行を追加" })
+  ).toBeDisabled();
 });
 
 test("kind 候補が無い図では disabled toolbar select と既存編集 UI を維持する", async ({

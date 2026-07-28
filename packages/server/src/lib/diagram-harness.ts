@@ -2290,10 +2290,14 @@ const RAW_HARNESS_JS = `(function () {
 
   function projectionTemplate(graph, kind) {
     var template = null;
+    var matched = false;
     graph.nodesById.forEach(function (root, id) {
       if (template) return;
       var node = getNode(state.model, id);
-      if (kind && node && node.kind === kind) template = root;
+      if (kind && node && node.kind === kind) {
+        template = root;
+        matched = true;
+      }
     });
     if (!template) {
       graph.nodesById.forEach(function (root) {
@@ -2305,7 +2309,7 @@ const RAW_HARNESS_JS = `(function () {
       : "article";
     var id = template && template.getAttribute("data-model-id");
     var labelEl = null;
-    if (id) {
+    if (matched && id) {
       template.querySelectorAll("[data-model-id]").forEach(function (candidate) {
         if (labelEl || candidate === template ||
             candidate.getAttribute("data-model-id") !== id ||
@@ -2324,7 +2328,7 @@ const RAW_HARNESS_JS = `(function () {
       ? labelEl.tagName.toLowerCase()
       : null;
     var listEl = null;
-    if (id) {
+    if (matched && id) {
       template.querySelectorAll("ul, ol").forEach(function (candidate) {
         if (!listEl && !isInsideHarnessUi(candidate) &&
             findOwnerNodeId(state.model, candidate) === id) {
