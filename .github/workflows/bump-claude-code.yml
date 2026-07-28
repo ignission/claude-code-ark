@@ -1,6 +1,6 @@
 name: Bump Claude Code
 
-# 同梱依存 @anthropic-ai/claude-code の新しい npm リリースを毎晩検知し、
+# 同梱依存 @anthropic-ai/claude-code の新しい npm リリースを毎日検知し、
 # バージョンを引き上げる PR を作成する。マージ前の検証は「in-job 品質ゲート」
 # （verify ジョブ内で実行する pnpm check + pnpm build）で行い、緑なら squash マージする。
 # 新版が無ければ何もしない。
@@ -19,8 +19,13 @@ name: Bump Claude Code
 # マージ後の main への push で ci.yml が事後検証（backstop）として走る。
 
 on:
+  # 実行時刻は upstream の npm 公開時刻より「後ろ」に置く。公開は概ね 19:00-21:00 UTC に
+  # 集中しており、旧設定の 18:00 UTC 起動では GitHub のスケジュール遅延（実測 +50〜85 分）
+  # を加味しても公開の直前に走って空振りし、取り込みが翌サイクル送り = 実質1日遅れになって
+  # いた（2.1.216/217/218/220 が約20〜23時間遅れ）。01:00 UTC なら前日の公開分を同一
+  # サイクルで拾える。
   schedule:
-    - cron: "0 18 * * *" # 18:00 UTC = 03:00 JST
+    - cron: "0 1 * * *" # 01:00 UTC = 10:00 JST
   workflow_dispatch:
 
 # 既定は最小権限。各ジョブが必要な権限だけを個別に付与する。
@@ -183,12 +188,12 @@ jobs:
             exit 1
           fi
           # ResolvedVersion が両 importer とも厳密に LATEST であること。
-          # 検出〜install の時間差で別の新版が解決された場合はここで fail（翌晩クリーン再試行 = self-healing）。
+          # 検出〜install の時間差で別の新版が解決された場合はここで fail（翌日クリーン再試行 = self-healing）。
           ver_lines=$(grep -A2 "$anchor" pnpm-lock.yaml | grep 'version:' | sed -E 's/^[[:space:]]*version:[[:space:]]*//' || true)
           ver_count=$(printf '%s\n' "$ver_lines" | grep -c . || true)
           uniq_ver=$(printf '%s\n' "$ver_lines" | sort -u)
           if [ "$ver_count" != "2" ] || [ "$uniq_ver" != "$LATEST" ]; then
-            echo "::error::ResolvedVersion が LATEST と不一致 (count=$ver_count uniq=$uniq_ver expected= 2 x $LATEST)。検出後に別版が公開された可能性。中止（翌晩再試行）。"
+            echo "::error::ResolvedVersion が LATEST と不一致 (count=$ver_count uniq=$uniq_ver expected= 2 x $LATEST)。検出後に別版が公開された可能性。中止（翌日再試行）。"
             exit 1
           fi
       - name: Snapshot trusted manifests (before any lifecycle script runs)
@@ -301,7 +306,7 @@ jobs:
           branch="chore/bump-claude-code-$LATEST"
           url=$(gh pr create --base main --head "$branch" \
             --title "chore(deps): bump @anthropic-ai/claude-code to $LATEST" \
-            --body "npm latest \`$LATEST\` へ自動追従（\`$CURRENT\` → \`$LATEST\`）。毎晩の bump-claude-code ワークフローが作成しました。マージ前検証は in-job 品質ゲート（pnpm check + build）で実施済みです。")
+            --body "npm latest \`$LATEST\` へ自動追従（\`$CURRENT\` → \`$LATEST\`）。毎日の bump-claude-code ワークフローが作成しました。マージ前検証は in-job 品質ゲート（pnpm check + build）で実施済みです。")
           echo "url=$url" >> "$GITHUB_OUTPUT"
       - name: Check base freshness (TOCTOU guard)
         id: freshness

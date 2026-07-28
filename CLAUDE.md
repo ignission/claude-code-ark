@@ -116,7 +116,7 @@ mainブランチをpullした後は、以下の手順で **順番通りに** ビ
 
 ```bash
 # 1. 依存関係をインストール
-#    毎晩の bump-claude-code ワークフローによる同梱 @anthropic-ai/claude-code の
+#    毎日の bump-claude-code ワークフローによる同梱 @anthropic-ai/claude-code の
 #    更新は install で初めて node_modules に反映される。省略すると稼働中の Ark が
 #    旧バージョンの claude を配り続ける
 pnpm install --frozen-lockfile
