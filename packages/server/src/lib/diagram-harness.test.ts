@@ -371,10 +371,10 @@ describe("injectHarness", () => {
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 
-  it("node projection に authored label のタグと class を複製する契約を注入する", () => {
+  it("node projection に authored label と空 list の構造を複製する契約を注入する", () => {
     const out = injectHarness(
       page(
-        '<div data-ark-container="graph"><section class="entity" data-model-id="node"><h2 class="title" data-model-id="node">Node</h2></section></div>'
+        '<div data-ark-container="graph"><section class="entity" data-model-id="node"><h2 class="title" data-model-id="node">Node</h2><ul class="fields"><li data-model-id="field">Field</li></ul></section></div>'
       )
     );
 
@@ -395,6 +395,19 @@ describe("injectHarness", () => {
     expect(out).toContain(
       "if (template.labelClassName) label.className = template.labelClassName"
     );
+    expect(out).toContain('template.querySelectorAll("ul, ol")');
+    expect(out).toContain("findOwnerNodeId(state.model, candidate) === id");
+    expect(out).toContain(
+      "listTag: listEl ? listEl.tagName.toLowerCase() : null"
+    );
+    expect(out).toContain(
+      "listClassName: listEl ? authoredClassName(listEl) :"
+    );
+    expect(out).toContain("document.createElement(template.listTag)");
+    expect(out).toContain(
+      "if (template.listClassName) list.className = template.listClassName"
+    );
+    expect(out).toContain("return { root: root, label: label, list: list }");
   });
 
   it("node / edge CRUD と参照整合性の契約を注入する", () => {
@@ -413,6 +426,11 @@ describe("injectHarness", () => {
     expect(out).toContain("function registerGraphNode(");
     expect(out).toContain("function createNodeInGraph(");
     expect(out).toContain("function removeNode(");
+    expect(out).toContain("listBindingsByNode.delete(id)");
+    expect(out).toContain(
+      "owned.push({ listEl: projection.list, ownerNodeId: node.id })"
+    );
+    expect(out).toContain("wireList(projection.list, node.id)");
     expect(out).toContain("group.nodes = group.nodes.filter");
     expect(out).toContain('mode: "create"');
     expect(out).toContain('mode: "rewire"');

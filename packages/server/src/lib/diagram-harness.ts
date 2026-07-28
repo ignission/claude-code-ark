@@ -2252,6 +2252,7 @@ const RAW_HARNESS_JS = `(function () {
     )) finishEdgeDrag(null, false);
     if (selection.kind === "node" && selection.id === id) clearSelection();
 
+    listBindingsByNode.delete(id);
     state.model.nodes = state.model.nodes.filter(function (entry) {
       return entry.id !== id;
     });
@@ -2322,11 +2323,22 @@ const RAW_HARNESS_JS = `(function () {
       /^(H1|H2|H3|H4|H5|H6|SPAN|DIV|P|STRONG|HEADER)$/.test(labelEl.tagName)
       ? labelEl.tagName.toLowerCase()
       : null;
+    var listEl = null;
+    if (id) {
+      template.querySelectorAll("ul, ol").forEach(function (candidate) {
+        if (!listEl && !isInsideHarnessUi(candidate) &&
+            findOwnerNodeId(state.model, candidate) === id) {
+          listEl = candidate;
+        }
+      });
+    }
     return {
       tag: tag,
       className: template ? authoredClassName(template) : "",
       labelTag: labelTag,
-      labelClassName: labelEl ? authoredClassName(labelEl) : ""
+      labelClassName: labelEl ? authoredClassName(labelEl) : "",
+      listTag: listEl ? listEl.tagName.toLowerCase() : null,
+      listClassName: listEl ? authoredClassName(listEl) : ""
     };
   }
 
@@ -2347,7 +2359,13 @@ const RAW_HARNESS_JS = `(function () {
     if (template.labelClassName) label.className = template.labelClassName;
     label.textContent = node.label;
     root.appendChild(label);
-    return { root: root, label: label };
+    var list = null;
+    if (template.listTag) {
+      list = document.createElement(template.listTag);
+      if (template.listClassName) list.className = template.listClassName;
+      root.appendChild(list);
+    }
+    return { root: root, label: label, list: list };
   }
 
   function nodePlacementBlockers(graph, excluded) {
@@ -2439,6 +2457,12 @@ const RAW_HARNESS_JS = `(function () {
         throw new Error("node registration failed");
       }
       wireEditableLeaf(projection.label, null);
+      if (projection.list) {
+        var owned = listBindingsByNode.get(node.id) || [];
+        owned.push({ listEl: projection.list, ownerNodeId: node.id });
+        listBindingsByNode.set(node.id, owned);
+        wireList(projection.list, node.id);
+      }
       lastKind = kind;
       graphs.forEach(function (entry) { scheduleGraphRender(entry); });
       return node;

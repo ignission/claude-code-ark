@@ -214,11 +214,11 @@ function modelKindCandidateHtml(): string {
     <div class="model-kind-graph" data-ark-container="graph">
       <section class="entity" data-model-id="model-kind-source">
         <h2 class="entity-title" data-model-id="model-kind-source">Source</h2>
-        <ul><li data-model-id="model-kind-source-id">id</li></ul>
+        <ul class="entity-fields"><li data-model-id="model-kind-source-id">id</li></ul>
       </section>
       <section class="entity" data-model-id="model-kind-peer">
         <h2 class="entity-title" data-model-id="model-kind-peer">Peer</h2>
-        <ul><li data-model-id="model-kind-peer-id">id</li></ul>
+        <ul class="entity-fields"><li data-model-id="model-kind-peer-id">id</li></ul>
       </section>
     </div>
   </body></html>`);
@@ -1468,6 +1468,10 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   await expect(
     contextToolbar(page).locator("select.ark-harness-kind-select")
   ).toHaveValue("entity");
+  await expect(projection.locator(":scope > ul")).toHaveCount(0);
+  await expect(
+    contextToolbar(page).getByRole("button", { name: "行を追加" })
+  ).toBeDisabled();
   await expect(projection.locator(".ark-harness-graph-handle")).toHaveCount(1);
   await expect(
     firstGraph.locator(
@@ -4142,6 +4146,25 @@ test("model node だけに kind がある図でも picker・drag 作成・kind �
   await expect(label).toHaveText("新しいノード");
 
   const addedToolbar = await selectNode(page, added.id);
+  const list = projection.locator(":scope > ul");
+  await expect(list).toHaveCount(1);
+  expect(await list.evaluate(element => element.tagName)).toBe("UL");
+  await expect(list).toHaveClass(/(^|\s)entity-fields(\s|$)/);
+  await expect(list.locator(":scope > li")).toHaveCount(0);
+  const addFieldButton = addedToolbar.getByRole("button", {
+    name: "行を追加",
+  });
+  await expect(addFieldButton).toBeEnabled();
+  await addFieldButton.click();
+  await expect(list.locator(":scope > li")).toHaveCount(1);
+  const afterAdd = await readCurrentModel(page);
+  const addedAfterField = afterAdd.nodes.find(node => node.id === added.id);
+  expect(addedAfterField?.fields).toHaveLength(1);
+  expect(addedAfterField?.fields?.[0]).toMatchObject({
+    label: "新しい項目",
+  });
+  expect(addedAfterField?.fields?.[0]?.id).toMatch(/^field-/);
+
   const addedPicker = addedToolbar.locator("select.ark-harness-kind-select");
   await addedPicker.selectOption("");
   await expect(addedPicker).toHaveValue("");
