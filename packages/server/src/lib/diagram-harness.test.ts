@@ -107,7 +107,7 @@ describe("injectHarness", () => {
     expect(out).toContain("function renderEdgeToolbar(");
     expect(out).toContain("function collectKindCandidates(");
     expect(out).toContain("function updateNodeKind(");
-    expect(out).toContain("kindCandidates.indexOf(value) === -1");
+    expect(out).toContain("value && kindCandidates.indexOf(value) === -1");
     expect(out).toContain("function updateEdgeExt(");
     expect(out).toContain("CARDINALITY_VALUES.indexOf(value)");
     expect(out).toContain("DIRECTION_VALUES.indexOf(direction)");
@@ -329,7 +329,7 @@ describe("injectHarness", () => {
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 
-  it("authored CSS 由来の kind toolbar 契約を注入する", () => {
+  it("authored CSS と model node 由来の kind toolbar 契約を注入する", () => {
     const out = injectHarness(
       page(
         '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
@@ -342,6 +342,10 @@ describe("injectHarness", () => {
     expect(out).toContain("style:not([data-ark-harness-ui])");
     expect(out).toContain("rule.selectorText");
     expect(out).toContain("new Set()");
+    expect(out).toContain("state.model && Array.isArray(state.model.nodes)");
+    expect(out).toContain('typeof value === "string" && value');
+    expect(out).toContain("!seen.has(value)");
+    expect(out).toContain("values.push(value)");
     expect(out).toContain("ark-harness-context-toolbar");
     expect(out).not.toContain("ark-harness-kind-picker");
     expect(out).toContain('document.createElement("select")');
@@ -351,8 +355,12 @@ describe("injectHarness", () => {
     expect(out).toContain("function syncKindSelect(");
     expect(out).toContain("function updateNodeKind(");
     expect(out).toContain("getNode(state.model, id)");
-    expect(out).toContain("kindCandidates.indexOf(value) === -1");
+    expect(out).toContain("value && kindCandidates.indexOf(value) === -1");
     expect(out).toContain("node.kind = value");
+    expect(out).toContain("else delete node.kind");
+    expect(out).toContain('var none = createKindOption("")');
+    expect(out).toContain('lastKind === ""');
+    expect(out).toContain("lastKind = kind;");
     expect(out).toContain("syncNodeKinds();");
     expect(out).toContain("scheduleGraphRender(graph);");
     expect(out).toContain('el.setAttribute("data-kind", node.kind)');
@@ -361,6 +369,48 @@ describe("injectHarness", () => {
     expect(out).not.toContain('value === "event"');
     expect(out).not.toContain('kindCandidates = ["');
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
+  });
+
+  it("node projection に authored label と空 list の構造を複製する契約を注入する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><section class="entity" data-model-id="node"><h2 class="title" data-model-id="node">Node</h2><ul class="fields"><li data-model-id="field">Field</li></ul></section></div>'
+      )
+    );
+
+    expect(out).toContain(
+      'var id = template && template.getAttribute("data-model-id")'
+    );
+    expect(out).toContain("var matched = false");
+    expect(out).toContain("matched = true");
+    expect(out.match(/if \(matched && id\)/g)).toHaveLength(2);
+    expect(out).toContain('template.querySelectorAll("[data-model-id]")');
+    expect(out).toContain('candidate.getAttribute("data-model-id") !== id');
+    expect(out).toContain("isInsideHarnessUi(candidate)");
+    expect(out).toContain('candidate.hasAttribute("data-ark-container")');
+    expect(out).toContain('candidate.hasAttribute("data-ark-group")');
+    expect(out).toContain("/^(H1|H2|H3|H4|H5|H6|SPAN|DIV|P|STRONG|HEADER)$/");
+    expect(out).toContain("labelTag: labelTag");
+    expect(out).toContain(
+      "labelClassName: labelEl ? authoredClassName(labelEl) :"
+    );
+    expect(out).toContain("document.createElement(template.labelTag)");
+    expect(out).toContain(
+      "if (template.labelClassName) label.className = template.labelClassName"
+    );
+    expect(out).toContain('template.querySelectorAll("ul, ol")');
+    expect(out).toContain("findOwnerNodeId(state.model, candidate) === id");
+    expect(out).toContain(
+      "listTag: listEl ? listEl.tagName.toLowerCase() : null"
+    );
+    expect(out).toContain(
+      "listClassName: listEl ? authoredClassName(listEl) :"
+    );
+    expect(out).toContain("document.createElement(template.listTag)");
+    expect(out).toContain(
+      "if (template.listClassName) list.className = template.listClassName"
+    );
+    expect(out).toContain("return { root: root, label: label, list: list }");
   });
 
   it("node / edge CRUD と参照整合性の契約を注入する", () => {
@@ -373,10 +423,17 @@ describe("injectHarness", () => {
     expect(out).toContain("reservedModelIds");
     expect(out).toContain("function collectModelIds(");
     expect(out).toContain("function generateUniqueModelId(");
-    expect(out).toContain("ark-harness-node-palette");
+    expect(out).not.toContain("ark-harness-node-palette");
+    expect(out).not.toContain("buildNodePalette");
+    expect(out).not.toContain("createPaletteSelect");
     expect(out).toContain("function registerGraphNode(");
-    expect(out).toContain("function addNode(");
+    expect(out).toContain("function createNodeInGraph(");
     expect(out).toContain("function removeNode(");
+    expect(out).toContain("listBindingsByNode.delete(id)");
+    expect(out).toContain(
+      "owned.push({ listEl: projection.list, ownerNodeId: node.id })"
+    );
+    expect(out).toContain("wireList(projection.list, node.id)");
     expect(out).toContain("group.nodes = group.nodes.filter");
     expect(out).toContain('mode: "create"');
     expect(out).toContain('mode: "rewire"');

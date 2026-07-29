@@ -93,15 +93,6 @@ const HARNESS_STYLE = `<style data-ark-harness-ui="1">
 .ark-harness-btn:hover { background: #232732; }
 .ark-harness-btn:disabled { opacity: .45; cursor: not-allowed; }
 .ark-harness-layout-direction { min-width: 5.5rem; }
-.ark-harness-node-palette {
-  display: flex; align-items: center; flex-wrap: wrap; gap: .35rem;
-  padding: .2rem .35rem; border: 1px solid #2a2f3a; border-radius: 6px;
-}
-.ark-harness-palette-label { display: flex; align-items: center; gap: .25rem; color: #aab1c1; }
-.ark-harness-palette-select {
-  appearance: auto; max-width: 9rem; padding: .2rem .3rem;
-  border: 1px solid #333947; border-radius: 4px; background: #1b1e27; color: #e6e8ee;
-}
 .ark-harness-btn-primary { background: #0ea5b7; border-color: #0ea5b7; color: #05201f; font-weight: 600; }
 .ark-harness-btn-primary:hover { background: #14b8c9; }
 .ark-harness-btn-primary:disabled { background: #1b1e27; border-color: #333947; color: #8b93a7; }
@@ -312,6 +303,7 @@ const RAW_HARNESS_JS = `(function () {
   var graphs = [];
   var graphSequence = 0;
   var kindCandidates = [];
+  var lastKind = null;
   var reservedModelIds = new Set();
   var generatedIdCounter = 0;
   var selection = { kind: null, id: null };
@@ -465,6 +457,16 @@ const RAW_HARNESS_JS = `(function () {
         rules = null;
       }
       if (rules) collectKindRules(rules, seen, values);
+    });
+    var nodes = state.model && Array.isArray(state.model.nodes)
+      ? state.model.nodes
+      : [];
+    nodes.forEach(function (node) {
+      var value = node && node.kind;
+      if (typeof value === "string" && value && !seen.has(value)) {
+        seen.add(value);
+        values.push(value);
+      }
     });
     return values;
   }
@@ -1400,6 +1402,53 @@ const RAW_HARNESS_JS = `(function () {
       drag.leftSource;
     if (commit && drag.didDrag && drag.mode === "rewire" && !candidate) {
       removeEdge(drag.edgeId);
+    } else if (commit && drag.didDrag && drag.mode === "create" && !candidate) {
+      var overOtherGraph = graphs.some(function (entry) {
+        if (entry === drag.graph) return false;
+        var rect = entry.container.getBoundingClientRect();
+        return event.clientX >= rect.left && event.clientX <= rect.right &&
+          event.clientY >= rect.top && event.clientY <= rect.bottom;
+      });
+      if (overOtherGraph) {
+        removeEdgeDragUi(drag);
+        if (drag.handle.hasPointerCapture(drag.pointerId)) {
+          drag.handle.releasePointerCapture(drag.pointerId);
+        }
+        graphs.forEach(function (graph) { scheduleGraphRender(graph); });
+        return;
+      }
+      var blankSource = getNode(state.model, drag.sourceId);
+      var blankSourceEl = drag.graph.nodesById.get(drag.sourceId);
+      if (blankSource && blankSourceEl) {
+        var graphRect = drag.graph.container.getBoundingClientRect();
+        var point = {
+          x: event.clientX - graphRect.left,
+          y: event.clientY - graphRect.top
+        };
+        var kind = lastKind === ""
+          ? ""
+          : kindCandidates.indexOf(lastKind) !== -1
+            ? lastKind
+            : kindCandidates[0] || "";
+        var previousLastKind = lastKind;
+        var newNode = createNodeInGraph(drag.graph, kind, point);
+        if (!newNode) {
+          updateStatus(!!submitPort, "ノードと edge を作成できませんでした");
+        } else {
+          var newEdgeId = generateUniqueModelId("edge");
+          if (newEdgeId) {
+            state.model.edges.push({
+              id: newEdgeId,
+              from: blankSource.id,
+              to: newNode.id
+            });
+          } else {
+            removeNode(newNode.id);
+            lastKind = previousLastKind;
+            updateStatus(!!submitPort, "ノードと edge を作成できませんでした");
+          }
+        }
+      }
     } else if (commit && drag.didDrag && candidate && explicitSelfDrop) {
       if (drag.mode === "rewire") {
         var currentEdge = getEdge(state.model, drag.edgeId);
@@ -1869,11 +1918,11 @@ const RAW_HARNESS_JS = `(function () {
 
   function syncKindSelect(select, node) {
     var current = typeof node.kind === "string" ? node.kind : "";
-    if (kindCandidates.indexOf(current) === -1) {
+    if (current && kindCandidates.indexOf(current) === -1) {
       var currentOption = createKindOption(current);
-      currentOption.textContent = current || "kind \\u306A\\u3057";
+      currentOption.textContent = current;
       currentOption.disabled = true;
-      select.insertBefore(currentOption, select.firstChild);
+      select.insertBefore(currentOption, select.children[1] || null);
     }
     select.value = current;
     var name = (typeof node.label === "string" && node.label) || node.id;
@@ -1907,6 +1956,9 @@ const RAW_HARNESS_JS = `(function () {
       select.appendChild(none);
       select.disabled = true;
     } else {
+      var none = createKindOption("");
+      none.textContent = "kind \\u306A\\u3057";
+      select.appendChild(none);
       kindCandidates.forEach(function (value) {
         select.appendChild(createKindOption(value));
       });
@@ -2200,6 +2252,7 @@ const RAW_HARNESS_JS = `(function () {
     )) finishEdgeDrag(null, false);
     if (selection.kind === "node" && selection.id === id) clearSelection();
 
+    listBindingsByNode.delete(id);
     state.model.nodes = state.model.nodes.filter(function (entry) {
       return entry.id !== id;
     });
@@ -2237,10 +2290,14 @@ const RAW_HARNESS_JS = `(function () {
 
   function projectionTemplate(graph, kind) {
     var template = null;
+    var matched = false;
     graph.nodesById.forEach(function (root, id) {
       if (template) return;
       var node = getNode(state.model, id);
-      if (kind && node && node.kind === kind) template = root;
+      if (kind && node && node.kind === kind) {
+        template = root;
+        matched = true;
+      }
     });
     if (!template) {
       graph.nodesById.forEach(function (root) {
@@ -2250,7 +2307,43 @@ const RAW_HARNESS_JS = `(function () {
     var tag = template && /^(ARTICLE|SECTION|DIV)$/.test(template.tagName)
       ? template.tagName.toLowerCase()
       : "article";
-    return { tag: tag, className: template ? authoredClassName(template) : "" };
+    var id = template && template.getAttribute("data-model-id");
+    var labelEl = null;
+    if (matched && id) {
+      template.querySelectorAll("[data-model-id]").forEach(function (candidate) {
+        if (labelEl || candidate === template ||
+            candidate.getAttribute("data-model-id") !== id ||
+            isInsideHarnessUi(candidate) ||
+            candidate.hasAttribute("data-ark-container") ||
+            candidate.hasAttribute("data-ark-group")) return;
+        var nested = candidate.querySelectorAll("[data-model-id]");
+        for (var i = 0; i < nested.length; i++) {
+          if (nested[i].getAttribute("data-model-id") === id) return;
+        }
+        labelEl = candidate;
+      });
+    }
+    var labelTag = labelEl &&
+      /^(H1|H2|H3|H4|H5|H6|SPAN|DIV|P|STRONG|HEADER)$/.test(labelEl.tagName)
+      ? labelEl.tagName.toLowerCase()
+      : null;
+    var listEl = null;
+    if (matched && id) {
+      template.querySelectorAll("ul, ol").forEach(function (candidate) {
+        if (!listEl && !isInsideHarnessUi(candidate) &&
+            findOwnerNodeId(state.model, candidate) === id) {
+          listEl = candidate;
+        }
+      });
+    }
+    return {
+      tag: tag,
+      className: template ? authoredClassName(template) : "",
+      labelTag: labelTag,
+      labelClassName: labelEl ? authoredClassName(labelEl) : "",
+      listTag: listEl ? listEl.tagName.toLowerCase() : null,
+      listClassName: listEl ? authoredClassName(listEl) : ""
+    };
   }
 
   function createNodeProjection(graph, node) {
@@ -2260,14 +2353,23 @@ const RAW_HARNESS_JS = `(function () {
       : template.tag === "div"
         ? document.createElement("div")
         : document.createElement("article");
-    var label = document.createElement("span");
+    var label = template.labelTag
+      ? document.createElement(template.labelTag)
+      : document.createElement("span");
     root.setAttribute("data-model-id", node.id);
     label.setAttribute("data-model-id", node.id);
     if (node.kind) root.setAttribute("data-kind", node.kind);
     if (template.className) root.className = template.className;
+    if (template.labelClassName) label.className = template.labelClassName;
     label.textContent = node.label;
     root.appendChild(label);
-    return { root: root, label: label };
+    var list = null;
+    if (template.listTag) {
+      list = document.createElement(template.listTag);
+      if (template.listClassName) list.className = template.listClassName;
+      root.appendChild(list);
+    }
+    return { root: root, label: label, list: list };
   }
 
   function nodePlacementBlockers(graph, excluded) {
@@ -2326,16 +2428,16 @@ const RAW_HARNESS_JS = `(function () {
       : { x: Math.round(maximumRight + config.rankSpacing), y: Math.round(maximumBottom + config.nodeSpacing) };
   }
 
-  function addNode(graph, kind) {
+  function createNodeInGraph(graph, kind, point) {
     if (!graph || graphs.indexOf(graph) === -1) {
       updateStatus(!!submitPort, "配置先 graph を解決できませんでした");
-      return;
+      return null;
     }
-    if (kind && kindCandidates.indexOf(kind) === -1) return;
+    if (kind && kindCandidates.indexOf(kind) === -1) return null;
     var id = generateUniqueModelId("node");
     if (!id) {
       updateStatus(!!submitPort, "一意な ID を生成できませんでした");
-      return;
+      return null;
     }
     var node = { id: id, label: "新しいノード", ext: { x: 0, y: 0 } };
     if (kind) node.kind = kind;
@@ -2345,7 +2447,13 @@ const RAW_HARNESS_JS = `(function () {
     projection.root.style.setProperty("--ark-harness-graph-x", "0px");
     projection.root.style.setProperty("--ark-harness-graph-y", "0px");
     try {
-      var position = findNodePlacement(graph, projection.root);
+      var rect = projection.root.getBoundingClientRect();
+      var position = point === null
+        ? findNodePlacement(graph, projection.root)
+        : {
+            x: Math.max(0, Math.round(point.x - (rect.width || 160) / 2)),
+            y: Math.max(0, Math.round(point.y - (rect.height || 64) / 2))
+          };
       node.ext.x = position.x;
       node.ext.y = position.y;
       state.model.nodes.push(node);
@@ -2353,7 +2461,15 @@ const RAW_HARNESS_JS = `(function () {
         throw new Error("node registration failed");
       }
       wireEditableLeaf(projection.label, null);
+      if (projection.list) {
+        var owned = listBindingsByNode.get(node.id) || [];
+        owned.push({ listEl: projection.list, ownerNodeId: node.id });
+        listBindingsByNode.set(node.id, owned);
+        wireList(projection.list, node.id);
+      }
+      lastKind = kind;
       graphs.forEach(function (entry) { scheduleGraphRender(entry); });
+      return node;
     } catch (error) {
       state.model.nodes = state.model.nodes.filter(function (entry) {
         return entry.id !== id;
@@ -2361,6 +2477,7 @@ const RAW_HARNESS_JS = `(function () {
       unregisterGraphNode(graph, id);
       projection.root.remove();
       updateStatus(!!submitPort, "ノードを追加できませんでした");
+      return null;
     }
   }
 
@@ -2557,10 +2674,12 @@ const RAW_HARNESS_JS = `(function () {
 
   function updateNodeKind(graph, root, value) {
     var id = root.getAttribute("data-model-id");
-    if (!id || kindCandidates.indexOf(value) === -1) return;
+    if (!id || value && kindCandidates.indexOf(value) === -1) return;
     var node = getNode(state.model, id);
     if (!node) return;
-    node.kind = value;
+    if (value) node.kind = value;
+    else delete node.kind;
+    lastKind = value;
     syncNodeKinds();
     renderContextToolbar();
     scheduleGraphRender(graph);
@@ -2890,67 +3009,6 @@ const RAW_HARNESS_JS = `(function () {
     return panel;
   }
 
-  function createPaletteSelect(labelText, className) {
-    var label = document.createElement("label");
-    label.className = "ark-harness-palette-label";
-    markUi(label);
-    var text = document.createElement("span");
-    text.textContent = labelText;
-    markUi(text);
-    var select = document.createElement("select");
-    select.className = "ark-harness-palette-select " + className;
-    select.setAttribute("aria-label", labelText);
-    markUi(select);
-    ["pointerdown", "click", "keydown"].forEach(function (type) {
-      select.addEventListener(type, function (event) { event.stopPropagation(); });
-    });
-    label.appendChild(text);
-    label.appendChild(select);
-    return { label: label, select: select };
-  }
-
-  function buildNodePalette() {
-    var palette = document.createElement("div");
-    palette.className = "ark-harness-node-palette";
-    markUi(palette);
-    var graphChoice = createPaletteSelect("配置先", "ark-harness-graph-select");
-    document.querySelectorAll('[data-ark-container="graph"]').forEach(function (_, index) {
-      var option = document.createElement("option");
-      option.value = String(index);
-      option.textContent = "graph " + (index + 1);
-      markUi(option);
-      graphChoice.select.appendChild(option);
-    });
-    var kindChoice = createPaletteSelect("kind", "ark-harness-palette-kind-select");
-    if (kindCandidates.length === 0) {
-      var none = document.createElement("option");
-      none.value = "";
-      none.textContent = "kind なし";
-      markUi(none);
-      kindChoice.select.appendChild(none);
-    } else {
-      kindCandidates.forEach(function (value) {
-        kindChoice.select.appendChild(createKindOption(value));
-      });
-    }
-    var add = createButton(
-      "+ ノード",
-      "ark-harness-btn ark-harness-btn-secondary ark-harness-add-node",
-      "ノードを追加"
-    );
-    add.addEventListener("click", function () {
-      var graphIndex = Number(graphChoice.select.value);
-      var graph = Number.isInteger(graphIndex) ? graphs[graphIndex] : null;
-      var kind = kindChoice.select.value;
-      if (kind && kindCandidates.indexOf(kind) === -1) return;
-      addNode(graph, kind);
-    });
-    palette.appendChild(graphChoice.label);
-    palette.appendChild(kindChoice.label);
-    palette.appendChild(add);
-    return palette;
-  }
-
   function syncToolbarHeight(bar) {
     var update = function () {
       var height = Math.ceil(bar.getBoundingClientRect().height);
@@ -2976,7 +3034,6 @@ const RAW_HARNESS_JS = `(function () {
       syncLayoutDirectionButton();
       layoutDirectionBtn.addEventListener("click", toggleLayoutDirection);
       bar.appendChild(layoutDirectionBtn);
-      bar.appendChild(buildNodePalette());
     }
 
     var editModelBtn = createButton("モデルを直接編集", "ark-harness-btn ark-harness-btn-secondary", "モデル JSON を直接編集する");

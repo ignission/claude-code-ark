@@ -148,7 +148,17 @@ function invalidCoordinateHtml(): string {
 function kindCandidateHtml(): string {
   const candidateModel = {
     version: 1,
-    nodes: [{ id: "candidate", label: "Candidate", kind: "quoted" }],
+    nodes: [
+      { id: "candidate", label: "Candidate", kind: "quoted" },
+      { id: "css-duplicate", label: "CSS duplicate", kind: "single" },
+      { id: "model-only", label: "Model only", kind: "model-only" },
+      {
+        id: "model-only-duplicate",
+        label: "Model only duplicate",
+        kind: "model-only",
+      },
+      { id: "empty-kind", label: "Empty kind", kind: "" },
+    ],
     edges: [],
     groups: [],
   };
@@ -166,6 +176,50 @@ function kindCandidateHtml(): string {
     <script id="ark-diagram-model" type="application/json">${JSON.stringify(candidateModel)}</script>
     <div data-ark-container="graph">
       <section data-model-id="candidate">Candidate</section>
+    </div>
+  </body></html>`);
+}
+
+function modelKindCandidateHtml(): string {
+  const candidateModel = {
+    version: 1,
+    nodes: [
+      {
+        id: "model-kind-source",
+        label: "Source",
+        kind: "entity",
+        fields: [{ id: "model-kind-source-id", label: "id" }],
+        ext: { x: 30, y: 40 },
+      },
+      {
+        id: "model-kind-peer",
+        label: "Peer",
+        kind: "entity",
+        fields: [{ id: "model-kind-peer-id", label: "id" }],
+        ext: { x: 260, y: 40 },
+      },
+    ],
+    edges: [],
+    groups: [],
+  };
+  return injectHarness(`<!doctype html><html><head><style>
+    body { margin: 0; }
+    .model-kind-graph { width: 640px; height: 360px; background: #f8fafc; }
+    .entity { box-sizing: border-box; width: 180px; min-height: 72px; border: 1px solid #64748b; background: white; }
+    .entity h2 { margin: 0; padding: 8px 12px; background: #dbeafe; font-size: 16px; }
+    .entity h2::before { content: "▤"; margin-right: 6px; }
+    .entity ul { margin: 0; padding: 8px 12px 8px 32px; }
+  </style></head><body>
+    <script id="ark-diagram-model" type="application/json">${JSON.stringify(candidateModel)}</script>
+    <div class="model-kind-graph" data-ark-container="graph">
+      <section class="entity" data-model-id="model-kind-source">
+        <h2 class="entity-title" data-model-id="model-kind-source">Source</h2>
+        <ul class="entity-fields"><li data-model-id="model-kind-source-id">id</li></ul>
+      </section>
+      <section class="entity" data-model-id="model-kind-peer">
+        <h2 class="entity-title" data-model-id="model-kind-peer">Peer</h2>
+        <ul class="entity-fields"><li data-model-id="model-kind-peer-id">id</li></ul>
+      </section>
     </div>
   </body></html>`);
 }
@@ -727,7 +781,10 @@ const crudModel: DiagramModel = {
   },
 };
 
-function crudDiagramHtml(diagramModel: DiagramModel = crudModel): string {
+function crudDiagramHtml(
+  diagramModel: DiagramModel = crudModel,
+  setup = ""
+): string {
   return injectHarness(`<!doctype html><html><head><style>
     body { margin: 0; }
     .crud-graph { width: 760px; min-height: 420px; background: #f8fafc; }
@@ -746,6 +803,7 @@ function crudDiagramHtml(diagramModel: DiagramModel = crudModel): string {
       <section class="crud-node" data-model-id="crud-other"><span data-model-id="crud-other">Other graph</span></section>
     </div>
     <aside data-model-id="crud-a">duplicate projection</aside>
+    ${setup}
   </body></html>`);
 }
 
@@ -814,6 +872,29 @@ async function requiredBoundingBox(locator: Locator) {
   expect(box).not.toBeNull();
   if (!box) throw new Error("要素の bounding box がありません");
   return box;
+}
+
+async function dragNodeAnchorToPoint(
+  page: Page,
+  graph: Locator,
+  sourceId: string,
+  anchorPosition: string,
+  point: { x: number; y: number }
+) {
+  await graph.locator(`[data-model-id="${sourceId}"]`).first().hover();
+  const anchorBox = await requiredBoundingBox(
+    graph.locator(
+      `.ark-harness-node-connectors[data-ark-node-id="${sourceId}"] ` +
+        `.ark-harness-node-anchor[data-ark-anchor-position="${anchorPosition}"]`
+    )
+  );
+  await page.mouse.move(
+    anchorBox.x + anchorBox.width / 2,
+    anchorBox.y + anchorBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(point.x, point.y, { steps: 5 });
+  await page.mouse.up();
 }
 
 function contextToolbar(page: Page) {
@@ -1316,56 +1397,81 @@ test("selection toolbar stale・submission: model 直接削除で解除し選択
   expect(html).toContain('data-kind="entity"');
 });
 
-test("node CRUD: palette から安全な projection を重ならず追加して再編集できる", async ({
+test("node CRUD: anchor から空白へ drag して pin node と edge を原子的に追加する", async ({
   page,
 }) => {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
-  await page.setContent(crudDiagramHtml());
-
-  const palette = page.locator(".ark-harness-node-palette");
-  await expect(palette.getByLabel("配置先")).toHaveText(/graph 1/);
-  await expect(palette.getByLabel("kind")).toHaveText(/entity/);
-  await expect(palette.getByLabel("kind").locator("option")).toHaveText([
-    "entity",
-    "event",
-  ]);
-  await expect(palette.locator("input")).toHaveCount(0);
-  await expect(palette.getByText(/group|cardinality/i)).toHaveCount(0);
-
-  await palette.getByLabel("配置先").selectOption("0");
-  await palette.getByLabel("kind").selectOption("event");
-  const initialEdgeCount = (await readCurrentModel(page)).edges.length;
-  await palette.getByRole("button", { name: "ノードを追加" }).click();
+  const connectDragModel = structuredClone(crudModel);
+  connectDragModel.nodes.forEach(node => {
+    delete node.ext;
+  });
+  await page.setContent(crudDiagramHtml(connectDragModel));
 
   const firstGraph = page.locator('[data-ark-container="graph"]').first();
+  const sourceBefore = structuredClone(
+    connectDragModel.nodes.find(node => node.id === "crud-b")
+  );
+  const initial = await readCurrentModel(page);
+  const graphBox = await requiredBoundingBox(firstGraph);
+  const drop = {
+    x: graphBox.x + graphBox.width - 20,
+    y: graphBox.y + graphBox.height - 20,
+  };
+  await dragNodeAnchorToPoint(page, firstGraph, "crud-b", "bottom", drop);
+
   await expect(firstGraph.locator(".ark-harness-graph-node")).toHaveCount(4);
+  await expect(page.locator(".ark-harness-add-node")).toHaveCount(0);
+  await expect(page.locator(".ark-harness-node-palette")).toHaveCount(0);
   const current = await readCurrentModel(page);
   const added = current.nodes.find(
-    node => !crudModel.nodes.some(old => old.id === node.id)
+    node => !connectDragModel.nodes.some(old => old.id === node.id)
   );
   expect(added).toBeDefined();
-  expect(added).toMatchObject({ label: "新しいノード", kind: "event" });
+  expect(added).toMatchObject({ label: "新しいノード", kind: "entity" });
   expect(added?.id).toMatch(/^node-/);
   expect(added?.id).not.toContain("新しいノード");
   expect(Number.isInteger((added?.ext as { x?: number })?.x)).toBe(true);
   expect(Number.isInteger((added?.ext as { y?: number })?.y)).toBe(true);
-  expect(current.edges).toHaveLength(initialEdgeCount);
+  expect(current.nodes).toHaveLength(initial.nodes.length + 1);
+  expect(current.edges).toHaveLength(initial.edges.length + 1);
+  expect(current.nodes.find(node => node.id === "crud-b")).toEqual(
+    sourceBefore
+  );
+  expect(
+    current.nodes.filter(node => {
+      const ext = node.ext as { x?: unknown; y?: unknown } | undefined;
+      return Number.isFinite(ext?.x) && Number.isFinite(ext?.y);
+    })
+  ).toEqual([added]);
   if (!added) throw new Error("追加 node がありません");
+  const addedEdge = current.edges.find(
+    edge => !connectDragModel.edges.some(old => old.id === edge.id)
+  );
+  expect(addedEdge).toMatchObject({ from: "crud-b", to: added.id });
+  expect(addedEdge?.id).toMatch(/^edge-/);
 
   const projection = firstGraph
     .locator(`[data-model-id="${added.id}"]`)
     .first();
-  await expect(projection).toHaveAttribute("data-kind", "event");
+  await expect(projection).toHaveAttribute("data-kind", "entity");
   await expect(projection).toHaveClass(/crud-node/);
-  await expect(
-    projection.locator(`span[data-model-id="${added.id}"]`)
-  ).toHaveText("新しいノード");
+  const projectionLabel = projection.locator(
+    `:scope > span[data-model-id="${added.id}"]`
+  );
+  await expect(projectionLabel).toHaveText("新しいノード");
+  expect(await projectionLabel.evaluate(element => element.tagName)).toBe(
+    "SPAN"
+  );
   await expect(projection.locator(".ark-harness-kind-picker")).toHaveCount(0);
   await selectNode(page, added.id);
   await expect(
     contextToolbar(page).locator("select.ark-harness-kind-select")
-  ).toHaveValue("event");
+  ).toHaveValue("entity");
+  await expect(projection.locator(":scope > ul")).toHaveCount(0);
+  await expect(
+    contextToolbar(page).getByRole("button", { name: "行を追加" })
+  ).toBeDisabled();
   await expect(projection.locator(".ark-harness-graph-handle")).toHaveCount(1);
   await expect(
     firstGraph.locator(
@@ -1376,6 +1482,12 @@ test("node CRUD: palette から安全な projection を重ならず追加して�
   await expect(projection.locator(".ark-harness-node-delete")).toHaveCount(0);
 
   const newBox = await requiredBoundingBox(projection);
+  expect((added.ext as { x: number }).x).toBe(
+    Math.max(0, Math.round(drop.x - graphBox.x - newBox.width / 2))
+  );
+  expect((added.ext as { y: number }).y).toBe(
+    Math.max(0, Math.round(drop.y - graphBox.y - newBox.height / 2))
+  );
   const oldBoxes = await firstGraph
     .locator(".ark-harness-graph-node")
     .evaluateAll(
@@ -1404,6 +1516,97 @@ test("node CRUD: palette から安全な projection を重ならず追加して�
       ?.label
   ).toBe("追加済み");
   expect(errors).toEqual([]);
+});
+
+test("node CRUD: kind なしを選ぶと node から kind を除去し drag 作成にも引き継ぐ", async ({
+  page,
+}) => {
+  await page.setContent(crudDiagramHtml());
+
+  const graph = page.locator('[data-ark-container="graph"]').first();
+  const source = graph.locator('[data-model-id="crud-b"]').first();
+  const toolbar = await selectNode(page, "crud-b");
+  const picker = toolbar.locator("select.ark-harness-kind-select");
+  const none = picker.locator('option[value=""]');
+  await expect(none).toHaveText("kind なし");
+  await expect(none).toBeEnabled();
+  expect(await picker.locator("option").allTextContents()).toEqual([
+    "kind なし",
+    "entity",
+    "event",
+  ]);
+
+  await picker.selectOption("");
+  await expect(picker).toHaveValue("");
+  await expect(source).not.toHaveAttribute("data-kind", /.*/);
+  const cleared = await readCurrentModel(page);
+  expect(cleared.nodes.find(node => node.id === "crud-b")).not.toHaveProperty(
+    "kind"
+  );
+
+  const graphBox = await requiredBoundingBox(graph);
+  await dragNodeAnchorToPoint(page, graph, "crud-b", "bottom", {
+    x: graphBox.x + graphBox.width - 20,
+    y: graphBox.y + graphBox.height - 20,
+  });
+  const current = await readCurrentModel(page);
+  const added = current.nodes.find(
+    node => !crudModel.nodes.some(old => old.id === node.id)
+  );
+  expect(added).toBeDefined();
+  expect(added).not.toHaveProperty("kind");
+  if (!added) throw new Error("追加 node がありません");
+  await expect(
+    graph.locator(`[data-model-id="${added.id}"]`).first()
+  ).not.toHaveAttribute("data-kind", /.*/);
+});
+
+test("node CRUD: node/edge ID 生成失敗時は projection と model を原子的に戻す", async ({
+  page,
+}) => {
+  const setup =
+    '<script>Object.defineProperty(window.crypto, "randomUUID", ' +
+    '{ configurable: true, value: function () { return "fixed"; } });</script>';
+  const scenarios = [
+    {
+      name: "node ID",
+      model: {
+        ...structuredClone(crudModel),
+        nodes: [
+          ...structuredClone(crudModel.nodes),
+          { id: "node-fixed", label: "予約済み node ID" },
+        ],
+      },
+    },
+    {
+      name: "edge ID",
+      model: {
+        ...structuredClone(crudModel),
+        edges: [
+          ...structuredClone(crudModel.edges),
+          { id: "edge-fixed", from: "crud-a", to: "crud-b" },
+        ],
+      },
+    },
+  ] satisfies { name: string; model: DiagramModel }[];
+
+  for (const scenario of scenarios) {
+    await page.setContent(crudDiagramHtml(scenario.model, setup));
+    const graph = page.locator('[data-ark-container="graph"]').first();
+    const graphBox = await requiredBoundingBox(graph);
+    await dragNodeAnchorToPoint(page, graph, "crud-b", "bottom", {
+      x: graphBox.x + graphBox.width - 20,
+      y: graphBox.y + graphBox.height - 20,
+    });
+
+    expect(await readCurrentModel(page), scenario.name).toEqual(scenario.model);
+    await expect(graph.locator(":scope > .ark-harness-graph-node")).toHaveCount(
+      3
+    );
+    await expect(page.locator(".ark-harness-status")).toHaveText(
+      "ノードと edge を作成できませんでした"
+    );
+  }
 });
 
 test("node CRUD: node 削除を対象 projection・incident edge・group 参照だけに限定する", async ({
@@ -1758,9 +1961,17 @@ test("edge CRUD: click・微小移動・source drop・Escape を無視し明確�
     graph.locator(`path.ark-harness-edge-main[data-ark-edge-id="${self?.id}"]`)
   ).toHaveCount(1);
 
-  const beforeInvalid = current.edges.length;
+  const beforeInvalid = await readCurrentModel(page);
+  const beforeInvalidDomNodes = await page
+    .locator(".ark-harness-graph-node")
+    .count();
   await dragCreate(otherGraphTarget);
-  expect((await readCurrentModel(page)).edges).toHaveLength(beforeInvalid);
+  const afterInvalid = await readCurrentModel(page);
+  expect(afterInvalid.nodes).toHaveLength(beforeInvalid.nodes.length);
+  expect(afterInvalid.edges).toHaveLength(beforeInvalid.edges.length);
+  await expect(page.locator(".ark-harness-graph-node")).toHaveCount(
+    beforeInvalidDomNodes
+  );
   await expect(graph.locator(".ark-harness-edge-preview")).toHaveCount(0);
   await expect(graph.locator(".ark-harness-edge-drop-indicator")).toHaveCount(
     0
@@ -1839,13 +2050,20 @@ test("構造変更: clean submission は semantic node を残し CRUD UI と見�
 }) => {
   await page.setContent(crudDiagramHtml());
   await connectSubmissionPort(page);
-  await page.locator(".ark-harness-palette-kind-select").selectOption("event");
-  await page.getByRole("button", { name: "ノードを追加" }).click();
+  const graph = page.locator('[data-ark-container="graph"]').first();
+  const toolbar = await selectNode(page, "crud-b");
+  await toolbar.locator("select.ark-harness-kind-select").selectOption("event");
+  const graphBox = await requiredBoundingBox(graph);
+  await dragNodeAnchorToPoint(page, graph, "crud-b", "bottom", {
+    x: graphBox.x + graphBox.width - 20,
+    y: graphBox.y + graphBox.height - 20,
+  });
   const current = await readCurrentModel(page);
   const added = current.nodes.find(
     node => !crudModel.nodes.some(old => old.id === node.id)
   );
   if (!added) throw new Error("追加 node がありません");
+  expect(added.kind).toBe("event");
 
   await page
     .getByRole("button", { name: "変更を親フレームへ送信する" })
@@ -1876,6 +2094,7 @@ test("構造変更: clean submission は semantic node を残し CRUD UI と見�
   expect(submission.html).not.toContain("--ark-harness-graph-x");
   expect(describeModelDiff(crudModel, submission.model)).toEqual([
     "新しいノード を追加",
+    "B から 新しいノード への関連を追加",
   ]);
 });
 
@@ -1909,7 +2128,7 @@ test("レイアウト方向を LR から TB へ切り替えて再配置・保存
     await toolbar
       .locator("button")
       .evaluateAll(buttons => buttons.map(button => button.textContent))
-  ).toEqual(["方向: LR", "+ ノード", "モデルを直接編集", "変更を送る"]);
+  ).toEqual(["方向: LR", "モデルを直接編集", "変更を送る"]);
   expect(
     await directionButton.evaluate(
       (button, editButton) =>
@@ -3865,7 +4084,7 @@ test("node.kind を data-kind へ同期して色とアイコンを区別する",
   ).toHaveAttribute("contenteditable", "true");
 });
 
-test("kind 候補は authored CSS rule を宣言順かつ重複なしで収集する", async ({
+test("kind 候補は CSS を先に model node のみを後に重複なしで収集する", async ({
   page,
 }) => {
   await page.setContent(kindCandidateHtml());
@@ -3874,17 +4093,122 @@ test("kind 候補は authored CSS rule を宣言順かつ重複なしで収集�
   const picker = toolbar.getByRole("combobox", { name: /Candidate.*quoted/ });
   await expect(picker).toHaveCount(1);
   expect(await picker.locator("option").allTextContents()).toEqual([
+    "kind なし",
     "quoted",
     "single",
     "unquoted",
     "nested",
     "escaped&kind",
+    "model-only",
   ]);
-  await expect(picker.locator("option")).toHaveCount(5);
+  await expect(picker.locator("option")).toHaveCount(7);
   await expect(
     picker.locator("option", { hasText: "declaration" })
   ).toHaveCount(0);
   await expect(picker.locator("option", { hasText: "comment" })).toHaveCount(0);
+});
+
+test("model node だけに kind がある図でも picker・drag 作成・kind なしを利用できる", async ({
+  page,
+}) => {
+  await page.setContent(modelKindCandidateHtml());
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  const toolbar = await selectNode(page, "model-kind-source");
+  const picker = toolbar.locator("select.ark-harness-kind-select");
+  await expect(picker).toBeEnabled();
+  expect(await picker.locator("option").allTextContents()).toEqual([
+    "kind なし",
+    "entity",
+  ]);
+
+  const initial = await readCurrentModel(page);
+  const graphBox = await requiredBoundingBox(graph);
+  await dragNodeAnchorToPoint(page, graph, "model-kind-source", "bottom", {
+    x: graphBox.x + graphBox.width - 20,
+    y: graphBox.y + graphBox.height - 20,
+  });
+  const current = await readCurrentModel(page);
+  const added = current.nodes.find(
+    node => !initial.nodes.some(old => old.id === node.id)
+  );
+  expect(added).toMatchObject({ label: "新しいノード", kind: "entity" });
+  if (!added) throw new Error("追加 node がありません");
+  const projection = graph.locator(`[data-model-id="${added.id}"]`).first();
+  expect(await projection.evaluate(element => element.tagName)).toBe("SECTION");
+  await expect(projection).toHaveClass(/(^|\s)entity(\s|$)/);
+  await expect(projection).toHaveAttribute("data-kind", "entity");
+  const label = projection.locator(`:scope > h2[data-model-id="${added.id}"]`);
+  await expect(label).toHaveCount(1);
+  expect(await label.evaluate(element => element.tagName)).toBe("H2");
+  await expect(label).toHaveClass(/(^|\s)entity-title(\s|$)/);
+  await expect(label).toHaveAttribute("data-model-id", added.id);
+  await expect(label).toHaveText("新しいノード");
+
+  const addedToolbar = await selectNode(page, added.id);
+  const list = projection.locator(":scope > ul");
+  await expect(list).toHaveCount(1);
+  expect(await list.evaluate(element => element.tagName)).toBe("UL");
+  await expect(list).toHaveClass(/(^|\s)entity-fields(\s|$)/);
+  await expect(list.locator(":scope > li")).toHaveCount(0);
+  const addFieldButton = addedToolbar.getByRole("button", {
+    name: "行を追加",
+  });
+  await expect(addFieldButton).toBeEnabled();
+  await addFieldButton.click();
+  await expect(list.locator(":scope > li")).toHaveCount(1);
+  const afterAdd = await readCurrentModel(page);
+  const addedAfterField = afterAdd.nodes.find(node => node.id === added.id);
+  expect(addedAfterField?.fields).toHaveLength(1);
+  expect(addedAfterField?.fields?.[0]).toMatchObject({
+    label: "新しい項目",
+  });
+  expect(addedAfterField?.fields?.[0]?.id).toMatch(/^field-/);
+
+  const addedPicker = addedToolbar.locator("select.ark-harness-kind-select");
+  await addedPicker.selectOption("");
+  await expect(addedPicker).toHaveValue("");
+  await expect(projection).not.toHaveAttribute("data-kind", /.*/);
+  expect(
+    (await readCurrentModel(page)).nodes.find(node => node.id === added.id)
+  ).not.toHaveProperty("kind");
+  await expect(label).toHaveCount(1);
+  await expect(list).toHaveCount(1);
+  await expect(list.locator(":scope > li")).toHaveCount(1);
+  await expect(addFieldButton).toBeEnabled();
+
+  const beforeKindless = await readCurrentModel(page);
+  await dragNodeAnchorToPoint(page, graph, added.id, "bottom", {
+    x: graphBox.x + 100,
+    y: graphBox.y + graphBox.height - 60,
+  });
+  const afterKindless = await readCurrentModel(page);
+  const kindless = afterKindless.nodes.find(
+    node => !beforeKindless.nodes.some(old => old.id === node.id)
+  );
+  expect(kindless).toBeDefined();
+  expect(kindless).not.toHaveProperty("kind");
+  if (!kindless) throw new Error("kind なし node がありません");
+
+  const kindlessProjection = graph
+    .locator(`[data-model-id="${kindless.id}"]`)
+    .first();
+  expect(await kindlessProjection.evaluate(element => element.tagName)).toBe(
+    "SECTION"
+  );
+  await expect(kindlessProjection).toHaveClass(/(^|\s)entity(\s|$)/);
+  await expect(kindlessProjection).not.toHaveAttribute("data-kind", /.*/);
+  await expect(kindlessProjection.locator(":scope > h2")).toHaveCount(0);
+  await expect(kindlessProjection.locator(":scope > ul")).toHaveCount(0);
+  const kindlessLabel = kindlessProjection.locator(
+    `:scope > span[data-model-id="${kindless.id}"]`
+  );
+  await expect(kindlessLabel).toHaveCount(1);
+  await expect(kindlessLabel).toHaveText("新しいノード");
+  const kindlessToolbar = await selectNode(page, kindless.id);
+  await expect(
+    kindlessToolbar.getByRole("button", { name: "行を追加" })
+  ).toBeDisabled();
 });
 
 test("kind 候補が無い図では disabled toolbar select と既存編集 UI を維持する", async ({
@@ -3905,7 +4229,7 @@ test("kind 候補が無い図では disabled toolbar select と既存編集 UI �
   await expect(toolbar.locator("select option")).toHaveText("kind なし");
 });
 
-test("kind toolbar は候補外の現在値を保持し候補選択時だけ更新する", async ({
+test("kind toolbar は model のみの現在値を CSS 候補の後へ追加して更新できる", async ({
   page,
 }) => {
   const boundaryModel = structuredClone(model);
@@ -3917,23 +4241,28 @@ test("kind toolbar は候補外の現在値を保持し候補選択時だけ更�
   );
   const toolbar = await selectNode(page, "order");
   const picker = toolbar.locator("select.ark-harness-kind-select");
-  const current = picker.locator("option").first();
+  const none = picker.locator("option").first();
+  const current = picker.locator("option").last();
   await expect(order).toHaveAttribute("data-kind", "legacy-kind");
   await expect(picker).toHaveValue("legacy-kind");
-  await expect(current).toBeDisabled();
+  await expect(none).toBeEnabled();
+  await expect(none).toHaveText("kind なし");
+  await expect(none).toHaveAttribute("value", "");
+  await expect(current).toBeEnabled();
   await expect(current).toHaveText("legacy-kind");
   await expect(current).toHaveAttribute("value", "legacy-kind");
   expect(await picker.locator("option").allTextContents()).toEqual([
-    "legacy-kind",
+    "kind なし",
     "aggregate",
     "entity",
     "event",
+    "legacy-kind",
   ]);
 
   await picker.selectOption("entity");
   await expect(order).toHaveAttribute("data-kind", "entity");
   await expect(picker).toHaveValue("entity");
-  await expect(picker.locator("option")).toHaveCount(3);
+  await expect(picker.locator("option")).toHaveCount(5);
 });
 
 test("kind toolbar は untrusted 値を text と value だけで扱う", async ({
@@ -3951,12 +4280,16 @@ test("kind toolbar は untrusted 値を text と value だけで扱う", async (
   const toolbar = await selectNode(page, "unsafe");
   const picker = toolbar.locator("select.ark-harness-kind-select");
   const options = picker.locator("option");
-  await expect(options).toHaveCount(2);
-  await expect(options.nth(0)).toBeDisabled();
-  await expect(options.nth(0)).toHaveText(currentKind);
-  await expect(options.nth(0)).toHaveAttribute("value", currentKind);
+  await expect(options).toHaveCount(3);
+  await expect(options.nth(0)).toBeEnabled();
+  await expect(options.nth(0)).toHaveText("kind なし");
+  await expect(options.nth(0)).toHaveAttribute("value", "");
+  await expect(options.nth(1)).toBeEnabled();
   await expect(options.nth(1)).toHaveText(candidateKind);
   await expect(options.nth(1)).toHaveAttribute("value", candidateKind);
+  await expect(options.nth(2)).toBeEnabled();
+  await expect(options.nth(2)).toHaveText(currentKind);
+  await expect(options.nth(2)).toHaveAttribute("value", currentKind);
   await expect(
     page.locator(
       "img, script:not(#ark-diagram-model):not(#ark-diagram-harness), [onerror], [onload]"
@@ -4015,7 +4348,7 @@ test("モデル直接編集後に kind toolbar と方向表示を再同期する
   await expect(order).toHaveAttribute("data-kind", "custom-kind");
   await expect(picker).toHaveValue("custom-kind");
   await expect(picker).toHaveAccessibleName(/Order.*custom-kind/);
-  const current = picker.locator("option").first();
+  const current = picker.locator("option").nth(1);
   await expect(current).toBeDisabled();
   await expect(current).toHaveText("custom-kind");
   await expect(
@@ -4040,6 +4373,7 @@ test("kind toolbar で CSS 候補を選び投影・geometry・保存へ同期す
   await expect(orderPicker).toHaveCount(1);
   await expect(orderPicker).toHaveAccessibleName(/Order.*aggregate/);
   expect(await orderPicker.locator("option").allTextContents()).toEqual([
+    "kind なし",
     "aggregate",
     "entity",
     "event",
@@ -4048,6 +4382,7 @@ test("kind toolbar で CSS 候補を選び投影・geometry・保存へ同期す
   const userPicker = toolbar.locator("select.ark-harness-kind-select");
   await expect(userPicker).toHaveAccessibleName(/User.*entity/);
   expect(await userPicker.locator("option").allTextContents()).toEqual([
+    "kind なし",
     "aggregate",
     "entity",
     "event",
