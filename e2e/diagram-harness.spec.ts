@@ -4175,12 +4175,21 @@ test("model node だけに kind がある図でも picker・drag 作成・kind �
   await addedPicker.selectOption("");
   await expect(addedPicker).toHaveValue("");
   await expect(projection).not.toHaveAttribute("data-kind", /.*/);
+  await expect(label).toHaveCount(0);
+  const kindlessLabelAfterSwitch = projection.locator(
+    `:scope > span[data-model-id="${added.id}"]`
+  );
+  await expect(kindlessLabelAfterSwitch).toHaveCount(1);
+  await expect(kindlessLabelAfterSwitch).toHaveText("新しいノード");
+  await expect(kindlessLabelAfterSwitch).toHaveAttribute(
+    "contenteditable",
+    "true"
+  );
   const kindlessAfterSwitch = (await readCurrentModel(page)).nodes.find(
     node => node.id === added.id
   );
   expect(kindlessAfterSwitch).not.toHaveProperty("kind");
   expect(kindlessAfterSwitch?.fields).toEqual([addedField]);
-  await expect(label).toHaveCount(1);
   await expect(list).toHaveCount(1);
   await expect(
     list.locator(
@@ -4189,12 +4198,33 @@ test("model node だけに kind がある図でも picker・drag 作成・kind �
   ).toHaveText(addedField.label);
   await expect(addFieldButton).toBeEnabled();
 
+  await kindlessLabelAfterSwitch.fill("切替後のラベル");
+  expect(
+    (await readCurrentModel(page)).nodes.find(node => node.id === added.id)
+      ?.label
+  ).toBe("切替後のラベル");
+
   await addedPicker.selectOption("entity");
   await expect(addedPicker).toHaveValue("entity");
   await expect(projection).toHaveAttribute("data-kind", "entity");
+  await expect(kindlessLabelAfterSwitch).toHaveCount(0);
+  const entityLabelAfterSwitch = projection.locator(
+    `:scope > h2[data-model-id="${added.id}"]`
+  );
+  await expect(entityLabelAfterSwitch).toHaveCount(1);
+  await expect(entityLabelAfterSwitch).toHaveClass(/(^|\s)entity-title(\s|$)/);
+  await expect(entityLabelAfterSwitch).toHaveText("切替後のラベル");
+  await expect(entityLabelAfterSwitch).toHaveAttribute(
+    "contenteditable",
+    "true"
+  );
   expect(
     (await readCurrentModel(page)).nodes.find(node => node.id === added.id)
-  ).toMatchObject({ kind: "entity", fields: [addedField] });
+  ).toMatchObject({
+    kind: "entity",
+    label: "切替後のラベル",
+    fields: [addedField],
+  });
   await expect(
     list.locator(
       `:scope > li[data-model-id="${addedField.id}"] .ark-harness-text`
@@ -4204,6 +4234,14 @@ test("model node だけに kind がある図でも picker・drag 作成・kind �
   await addedPicker.selectOption("");
   await expect(addedPicker).toHaveValue("");
   await expect(projection).not.toHaveAttribute("data-kind", /.*/);
+  await expect(entityLabelAfterSwitch).toHaveCount(0);
+  await expect(
+    projection.locator(`:scope > span[data-model-id="${added.id}"]`)
+  ).toHaveText("切替後のラベル");
+  expect(
+    (await readCurrentModel(page)).nodes.find(node => node.id === added.id)
+      ?.fields
+  ).toEqual([addedField]);
 
   const beforeKindless = await readCurrentModel(page);
   await dragNodeAnchorToPoint(page, graph, added.id, "bottom", {

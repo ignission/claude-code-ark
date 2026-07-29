@@ -358,6 +358,20 @@ describe("injectHarness", () => {
     expect(out).toContain("value && kindCandidates.indexOf(value) === -1");
     expect(out).toContain("node.kind = value");
     expect(out).toContain("else delete node.kind");
+    expect(out).toContain("function findNodeLabelEl(");
+    expect(out).toContain(
+      "var labelEl = matched && id ? findNodeLabelEl(template, id) : null"
+    );
+    expect(out).toContain(
+      'var tpl = projectionTemplate(graph, node.kind || "")'
+    );
+    expect(out).toContain('var targetTag = tpl.labelTag || "span"');
+    expect(out).toContain(
+      "if (cur && cur.tagName.toLowerCase() !== targetTag)"
+    );
+    expect(out).toContain("var next = document.createElement(targetTag)");
+    expect(out).toContain("cur.parentNode.replaceChild(next, cur)");
+    expect(out).toContain("wireEditableLeaf(next, null)");
     expect(out).toContain('var none = createKindOption("")');
     expect(out).toContain('lastKind === ""');
     expect(out).toContain("lastKind = kind;");
@@ -383,13 +397,15 @@ describe("injectHarness", () => {
     );
     expect(out).toContain("var matched = false");
     expect(out).toContain("matched = true");
-    expect(out).toContain("var labelEl = null;\n    if (matched && id) {");
-    expect(out.match(/if \(matched && id\)/g)).toHaveLength(1);
-    expect(out).toContain('template.querySelectorAll("[data-model-id]")');
+    expect(out).toContain("function findNodeLabelEl(rootEl, id)");
+    expect(out).toContain('rootEl.querySelectorAll("[data-model-id]")');
     expect(out).toContain('candidate.getAttribute("data-model-id") !== id');
     expect(out).toContain("isInsideHarnessUi(candidate)");
     expect(out).toContain('candidate.hasAttribute("data-ark-container")');
     expect(out).toContain('candidate.hasAttribute("data-ark-group")');
+    expect(out).toContain(
+      "var labelEl = matched && id ? findNodeLabelEl(template, id) : null"
+    );
     expect(out).toContain("/^(H1|H2|H3|H4|H5|H6|SPAN|DIV|P|STRONG|HEADER)$/");
     expect(out).toContain("labelTag: labelTag");
     expect(out).toContain(

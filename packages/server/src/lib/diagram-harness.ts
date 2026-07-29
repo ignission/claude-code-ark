@@ -2288,6 +2288,23 @@ const RAW_HARNESS_JS = `(function () {
     return kept.join(" ");
   }
 
+  function findNodeLabelEl(rootEl, id) {
+    var labelEl = null;
+    rootEl.querySelectorAll("[data-model-id]").forEach(function (candidate) {
+      if (labelEl || candidate === rootEl ||
+          candidate.getAttribute("data-model-id") !== id ||
+          isInsideHarnessUi(candidate) ||
+          candidate.hasAttribute("data-ark-container") ||
+          candidate.hasAttribute("data-ark-group")) return;
+      var nested = candidate.querySelectorAll("[data-model-id]");
+      for (var i = 0; i < nested.length; i++) {
+        if (nested[i].getAttribute("data-model-id") === id) return;
+      }
+      labelEl = candidate;
+    });
+    return labelEl;
+  }
+
   function projectionTemplate(graph, kind) {
     var template = null;
     var matched = false;
@@ -2308,21 +2325,7 @@ const RAW_HARNESS_JS = `(function () {
       ? template.tagName.toLowerCase()
       : "article";
     var id = template && template.getAttribute("data-model-id");
-    var labelEl = null;
-    if (matched && id) {
-      template.querySelectorAll("[data-model-id]").forEach(function (candidate) {
-        if (labelEl || candidate === template ||
-            candidate.getAttribute("data-model-id") !== id ||
-            isInsideHarnessUi(candidate) ||
-            candidate.hasAttribute("data-ark-container") ||
-            candidate.hasAttribute("data-ark-group")) return;
-        var nested = candidate.querySelectorAll("[data-model-id]");
-        for (var i = 0; i < nested.length; i++) {
-          if (nested[i].getAttribute("data-model-id") === id) return;
-        }
-        labelEl = candidate;
-      });
-    }
+    var labelEl = matched && id ? findNodeLabelEl(template, id) : null;
     var labelTag = labelEl &&
       /^(H1|H2|H3|H4|H5|H6|SPAN|DIV|P|STRONG|HEADER)$/.test(labelEl.tagName)
       ? labelEl.tagName.toLowerCase()
@@ -2680,6 +2683,20 @@ const RAW_HARNESS_JS = `(function () {
     if (value) node.kind = value;
     else delete node.kind;
     lastKind = value;
+    var tpl = projectionTemplate(graph, node.kind || "");
+    var targetTag = tpl.labelTag || "span";
+    var targetClass = tpl.labelClassName || "";
+    var cur = findNodeLabelEl(root, id);
+    if (cur && cur.tagName.toLowerCase() !== targetTag) {
+      var next = document.createElement(targetTag);
+      if (targetClass) next.className = targetClass;
+      next.setAttribute("data-model-id", id);
+      next.textContent = typeof node.label === "string"
+        ? node.label
+        : (cur.textContent || "");
+      cur.parentNode.replaceChild(next, cur);
+      wireEditableLeaf(next, null);
+    }
     syncNodeKinds();
     renderContextToolbar();
     scheduleGraphRender(graph);
