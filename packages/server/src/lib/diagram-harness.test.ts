@@ -371,7 +371,7 @@ describe("injectHarness", () => {
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 
-  it("node projection に authored label と空 list の構造を複製する契約を注入する", () => {
+  it("node projection は matched label と id 所有 list の構造を複製する契約を注入する", () => {
     const out = injectHarness(
       page(
         '<div data-ark-container="graph"><section class="entity" data-model-id="node"><h2 class="title" data-model-id="node">Node</h2><ul class="fields"><li data-model-id="field">Field</li></ul></section></div>'
@@ -383,7 +383,8 @@ describe("injectHarness", () => {
     );
     expect(out).toContain("var matched = false");
     expect(out).toContain("matched = true");
-    expect(out.match(/if \(matched && id\)/g)).toHaveLength(2);
+    expect(out).toContain("var labelEl = null;\n    if (matched && id) {");
+    expect(out.match(/if \(matched && id\)/g)).toHaveLength(1);
     expect(out).toContain('template.querySelectorAll("[data-model-id]")');
     expect(out).toContain('candidate.getAttribute("data-model-id") !== id');
     expect(out).toContain("isInsideHarnessUi(candidate)");
@@ -398,6 +399,7 @@ describe("injectHarness", () => {
     expect(out).toContain(
       "if (template.labelClassName) label.className = template.labelClassName"
     );
+    expect(out).toContain("var listEl = null;\n    if (id) {");
     expect(out).toContain('template.querySelectorAll("ul, ol")');
     expect(out).toContain("findOwnerNodeId(state.model, candidate) === id");
     expect(out).toContain(

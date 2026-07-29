@@ -1556,9 +1556,13 @@ test("node CRUD: kind なしを選ぶと node から kind を除去し drag 作�
   expect(added).toBeDefined();
   expect(added).not.toHaveProperty("kind");
   if (!added) throw new Error("追加 node がありません");
+  const projection = graph.locator(`[data-model-id="${added.id}"]`).first();
+  await expect(projection).not.toHaveAttribute("data-kind", /.*/);
+  await expect(projection.locator(":scope > ul")).toHaveCount(0);
+  const addedToolbar = await selectNode(page, added.id);
   await expect(
-    graph.locator(`[data-model-id="${added.id}"]`).first()
-  ).not.toHaveAttribute("data-kind", /.*/);
+    addedToolbar.getByRole("button", { name: "行を追加" })
+  ).toBeDisabled();
 });
 
 test("node CRUD: node/edge ID 生成失敗時は projection と model を原子的に戻す", async ({
@@ -4164,18 +4168,42 @@ test("model node だけに kind がある図でも picker・drag 作成・kind �
     label: "新しい項目",
   });
   expect(addedAfterField?.fields?.[0]?.id).toMatch(/^field-/);
+  const addedField = addedAfterField?.fields?.[0];
+  if (!addedField) throw new Error("追加 field がありません");
 
   const addedPicker = addedToolbar.locator("select.ark-harness-kind-select");
   await addedPicker.selectOption("");
   await expect(addedPicker).toHaveValue("");
   await expect(projection).not.toHaveAttribute("data-kind", /.*/);
-  expect(
-    (await readCurrentModel(page)).nodes.find(node => node.id === added.id)
-  ).not.toHaveProperty("kind");
+  const kindlessAfterSwitch = (await readCurrentModel(page)).nodes.find(
+    node => node.id === added.id
+  );
+  expect(kindlessAfterSwitch).not.toHaveProperty("kind");
+  expect(kindlessAfterSwitch?.fields).toEqual([addedField]);
   await expect(label).toHaveCount(1);
   await expect(list).toHaveCount(1);
-  await expect(list.locator(":scope > li")).toHaveCount(1);
+  await expect(
+    list.locator(
+      `:scope > li[data-model-id="${addedField.id}"] .ark-harness-text`
+    )
+  ).toHaveText(addedField.label);
   await expect(addFieldButton).toBeEnabled();
+
+  await addedPicker.selectOption("entity");
+  await expect(addedPicker).toHaveValue("entity");
+  await expect(projection).toHaveAttribute("data-kind", "entity");
+  expect(
+    (await readCurrentModel(page)).nodes.find(node => node.id === added.id)
+  ).toMatchObject({ kind: "entity", fields: [addedField] });
+  await expect(
+    list.locator(
+      `:scope > li[data-model-id="${addedField.id}"] .ark-harness-text`
+    )
+  ).toHaveText(addedField.label);
+
+  await addedPicker.selectOption("");
+  await expect(addedPicker).toHaveValue("");
+  await expect(projection).not.toHaveAttribute("data-kind", /.*/);
 
   const beforeKindless = await readCurrentModel(page);
   await dragNodeAnchorToPoint(page, graph, added.id, "bottom", {
@@ -4199,16 +4227,31 @@ test("model node だけに kind がある図でも picker・drag 作成・kind �
   await expect(kindlessProjection).toHaveClass(/(^|\s)entity(\s|$)/);
   await expect(kindlessProjection).not.toHaveAttribute("data-kind", /.*/);
   await expect(kindlessProjection.locator(":scope > h2")).toHaveCount(0);
-  await expect(kindlessProjection.locator(":scope > ul")).toHaveCount(0);
   const kindlessLabel = kindlessProjection.locator(
     `:scope > span[data-model-id="${kindless.id}"]`
   );
   await expect(kindlessLabel).toHaveCount(1);
   await expect(kindlessLabel).toHaveText("新しいノード");
+  const kindlessList = kindlessProjection.locator(":scope > ul");
+  await expect(kindlessList).toHaveCount(1);
+  await expect(kindlessList).toHaveClass(/(^|\s)entity-fields(\s|$)/);
+  await expect(kindlessList.locator(":scope > li")).toHaveCount(0);
   const kindlessToolbar = await selectNode(page, kindless.id);
-  await expect(
-    kindlessToolbar.getByRole("button", { name: "行を追加" })
-  ).toBeDisabled();
+  const kindlessAddFieldButton = kindlessToolbar.getByRole("button", {
+    name: "行を追加",
+  });
+  await expect(kindlessAddFieldButton).toBeEnabled();
+  await kindlessAddFieldButton.click();
+  await expect(kindlessList.locator(":scope > li")).toHaveCount(1);
+  const afterKindlessAdd = await readCurrentModel(page);
+  const kindlessAfterField = afterKindlessAdd.nodes.find(
+    node => node.id === kindless.id
+  );
+  expect(kindlessAfterField?.fields).toHaveLength(1);
+  expect(kindlessAfterField?.fields?.[0]).toMatchObject({
+    label: "新しい項目",
+  });
+  expect(kindlessAfterField?.fields?.[0]?.id).toMatch(/^field-/);
 });
 
 test("kind 候補が無い図では disabled toolbar select と既存編集 UI を維持する", async ({

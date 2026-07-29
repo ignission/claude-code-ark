@@ -2328,7 +2328,7 @@ const RAW_HARNESS_JS = `(function () {
       ? labelEl.tagName.toLowerCase()
       : null;
     var listEl = null;
-    if (matched && id) {
+    if (id) {
       template.querySelectorAll("ul, ol").forEach(function (candidate) {
         if (!listEl && !isInsideHarnessUi(candidate) &&
             findOwnerNodeId(state.model, candidate) === id) {
