@@ -4112,6 +4112,57 @@ test("kind 候補は CSS を先に model node のみを後に重複なしで収�
   await expect(picker.locator("option", { hasText: "comment" })).toHaveCount(0);
 });
 
+test("authored 先頭 entity を kind なしから戻すと h2 と内容を復元する", async ({
+  page,
+}) => {
+  await page.setContent(modelKindCandidateHtml());
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  const authoredNodes = graph.locator(":scope > section.entity");
+  await expect(authoredNodes).toHaveCount(2);
+  await expect(authoredNodes.first()).toHaveAttribute(
+    "data-model-id",
+    "model-kind-source"
+  );
+
+  const source = authoredNodes.first();
+  const toolbar = await selectNode(page, "model-kind-source");
+  const picker = toolbar.locator("select.ark-harness-kind-select");
+  const fields = [{ id: "model-kind-source-id", label: "id" }];
+
+  await picker.selectOption("");
+  await expect(source).not.toHaveAttribute("data-kind", /.*/);
+  await expect(
+    source.locator(':scope > span[data-model-id="model-kind-source"]')
+  ).toHaveText("Source");
+  await expect(
+    source.locator(':scope > h2[data-model-id="model-kind-source"]')
+  ).toHaveCount(0);
+
+  await picker.selectOption("entity");
+  await expect(source).toHaveAttribute("data-kind", "entity");
+  await expect(
+    source.locator(':scope > span[data-model-id="model-kind-source"]')
+  ).toHaveCount(0);
+  await expect(
+    source.locator(':scope > h2[data-model-id="model-kind-source"]')
+  ).toHaveText("Source");
+  expect(
+    (await readCurrentModel(page)).nodes.find(
+      node => node.id === "model-kind-source"
+    )
+  ).toMatchObject({
+    kind: "entity",
+    label: "Source",
+    fields,
+  });
+  await expect(
+    source.locator(
+      ':scope > ul > li[data-model-id="model-kind-source-id"] .ark-harness-text'
+    )
+  ).toHaveText("id");
+});
+
 test("model node だけに kind がある図でも picker・drag 作成・kind なしを利用できる", async ({
   page,
 }) => {

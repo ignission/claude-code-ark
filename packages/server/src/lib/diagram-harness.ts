@@ -2305,10 +2305,11 @@ const RAW_HARNESS_JS = `(function () {
     return labelEl;
   }
 
-  function projectionTemplate(graph, kind) {
+  function projectionTemplate(graph, kind, excludeId) {
     var template = null;
     var matched = false;
     graph.nodesById.forEach(function (root, id) {
+      if (excludeId && id === excludeId) return;
       if (template) return;
       var node = getNode(state.model, id);
       if (kind && node && node.kind === kind) {
@@ -2317,8 +2318,12 @@ const RAW_HARNESS_JS = `(function () {
       }
     });
     if (!template) {
-      graph.nodesById.forEach(function (root) {
-        if (!template) template = root;
+      graph.nodesById.forEach(function (root, id) {
+        if (excludeId && id === excludeId) return;
+        if (!template) {
+          template = root;
+          if (kind && excludeId) matched = true;
+        }
       });
     }
     var tag = template && /^(ARTICLE|SECTION|DIV)$/.test(template.tagName)
@@ -2683,7 +2688,7 @@ const RAW_HARNESS_JS = `(function () {
     if (value) node.kind = value;
     else delete node.kind;
     lastKind = value;
-    var tpl = projectionTemplate(graph, node.kind || "");
+    var tpl = projectionTemplate(graph, node.kind || "", id);
     var targetTag = tpl.labelTag || "span";
     var targetClass = tpl.labelClassName || "";
     var cur = findNodeLabelEl(root, id);

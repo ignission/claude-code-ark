@@ -363,7 +363,7 @@ describe("injectHarness", () => {
       "var labelEl = matched && id ? findNodeLabelEl(template, id) : null"
     );
     expect(out).toContain(
-      'var tpl = projectionTemplate(graph, node.kind || "")'
+      'var tpl = projectionTemplate(graph, node.kind || "", id)'
     );
     expect(out).toContain('var targetTag = tpl.labelTag || "span"');
     expect(out).toContain(
@@ -383,6 +383,28 @@ describe("injectHarness", () => {
     expect(out).not.toContain('value === "event"');
     expect(out).not.toContain('kindCandidates = ["');
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
+  });
+
+  it("node kind 再投影だけ自 node を template 候補から除外する契約を注入する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><section data-model-id="first"></section><section data-model-id="peer"></section></div>'
+      )
+    );
+
+    expect(out).toContain(
+      "function projectionTemplate(graph, kind, excludeId)"
+    );
+    expect(
+      out.match(/if \(excludeId && id === excludeId\) return;/g)
+    ).toHaveLength(2);
+    expect(out).toContain("if (kind && excludeId) matched = true");
+    expect(out).toContain(
+      'var tpl = projectionTemplate(graph, node.kind || "", id)'
+    );
+    expect(out).toContain(
+      'var template = projectionTemplate(graph, node.kind || "")'
+    );
   });
 
   it("node projection は matched label と id 所有 list の構造を複製する契約を注入する", () => {
