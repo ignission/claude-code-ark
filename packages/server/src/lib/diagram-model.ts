@@ -17,6 +17,8 @@ export interface DiagramNode {
   label: string;
   /** entity / step / state など。サーバーは解釈せず、投影側と skill の取り決め */
   kind?: string;
+  /** kind=note の自由記述本文。label / fields とは独立して保持する */
+  noteText?: string;
   fields?: DiagramField[];
   ext?: Record<string, unknown>;
 }
@@ -113,6 +115,7 @@ export function parseDiagramModel(json: string): ParseResult {
       id: n.id,
       label: n.label,
       kind: typeof n.kind === "string" ? n.kind : undefined,
+      noteText: typeof n.noteText === "string" ? n.noteText : undefined,
       fields: fields.length > 0 ? fields : undefined,
       ext: asExt(n.ext),
     });

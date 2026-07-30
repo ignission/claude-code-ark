@@ -114,6 +114,7 @@ const HARNESS_STYLE = `<style data-ark-harness-ui="1">
 .ark-harness-editable { outline: 1px dashed transparent; border-radius: 3px; }
 .ark-harness-editable:hover { outline-color: rgba(56,189,248,.35); }
 .ark-harness-editable:focus { outline: 1px solid #38bdf8; outline-offset: 1px; background: rgba(56,189,248,.1); }
+.ark-harness-note { white-space: pre-wrap; min-height: 1.5em; padding: .4rem .6rem; outline: none; }
 li.ark-harness-row { display: flex; align-items: center; gap: .35rem; }
 li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
 .ark-harness-dragging { opacity: .4; }
@@ -1425,8 +1426,8 @@ const RAW_HARNESS_JS = `(function () {
           x: event.clientX - graphRect.left,
           y: event.clientY - graphRect.top
         };
-        var kind = lastKind === ""
-          ? ""
+        var kind = lastKind === "note"
+          ? "note"
           : kindCandidates.indexOf(lastKind) !== -1
             ? lastKind
             : kindCandidates[0] || "";
@@ -1918,13 +1919,15 @@ const RAW_HARNESS_JS = `(function () {
 
   function syncKindSelect(select, node) {
     var current = typeof node.kind === "string" ? node.kind : "";
-    if (current && kindCandidates.indexOf(current) === -1) {
+    if (current && current !== "note" &&
+        kindCandidates.indexOf(current) === -1) {
       var currentOption = createKindOption(current);
       currentOption.textContent = current;
       currentOption.disabled = true;
       select.insertBefore(currentOption, select.children[1] || null);
     }
     select.value = current;
+    if (!current) select.selectedIndex = -1;
     var name = (typeof node.label === "string" && node.label) || node.id;
     var label = name + " \\u306E kind\\uFF08\\u73FE\\u5728 " +
       (current || "\\u306A\\u3057") + "\\uFF09";
@@ -1950,20 +1953,13 @@ const RAW_HARNESS_JS = `(function () {
     var select = document.createElement("select");
     select.className = "ark-harness-kind-select";
     markUi(select);
-    if (kindCandidates.length === 0) {
-      var none = createKindOption("");
-      none.textContent = "kind \\u306A\\u3057";
-      select.appendChild(none);
-      select.disabled = true;
-    } else {
-      var none = createKindOption("");
-      none.textContent = "kind \\u306A\\u3057";
-      select.appendChild(none);
-      kindCandidates.forEach(function (value) {
-        select.appendChild(createKindOption(value));
-      });
-      syncKindSelect(select, node);
-    }
+    var note = createKindOption("note");
+    note.textContent = "note";
+    select.appendChild(note);
+    kindCandidates.forEach(function (value) {
+      if (value !== "note") select.appendChild(createKindOption(value));
+    });
+    syncKindSelect(select, node);
     select.addEventListener("change", function (event) {
       event.stopPropagation();
       if (selection.kind === "node" && selection.id === node.id &&
@@ -2305,38 +2301,20 @@ const RAW_HARNESS_JS = `(function () {
     return labelEl;
   }
 
-  function projectionTemplate(graph, kind, excludeId) {
-    var template = null;
-    var matched = false;
-    graph.nodesById.forEach(function (root, id) {
-      if (excludeId && id === excludeId) return;
-      if (template) return;
-      var node = getNode(state.model, id);
-      if (kind && node && node.kind === kind) {
-        template = root;
-        matched = true;
-      }
-    });
-    if (!template) {
-      graph.nodesById.forEach(function (root, id) {
-        if (excludeId && id === excludeId) return;
-        if (!template) {
-          template = root;
-          if (kind && excludeId) matched = true;
-        }
-      });
-    }
+  function projectionTemplateForRoot(template, matched, labelMatched) {
     var tag = template && /^(ARTICLE|SECTION|DIV)$/.test(template.tagName)
       ? template.tagName.toLowerCase()
       : "article";
     var id = template && template.getAttribute("data-model-id");
-    var labelEl = matched && id ? findNodeLabelEl(template, id) : null;
+    var labelEl = (matched || labelMatched) && id
+      ? findNodeLabelEl(template, id)
+      : null;
     var labelTag = labelEl &&
       /^(H1|H2|H3|H4|H5|H6|SPAN|DIV|P|STRONG|HEADER)$/.test(labelEl.tagName)
       ? labelEl.tagName.toLowerCase()
       : null;
     var listEl = null;
-    if (id) {
+    if (matched && id) {
       template.querySelectorAll("ul, ol").forEach(function (candidate) {
         if (!listEl && !isInsideHarnessUi(candidate) &&
             findOwnerNodeId(state.model, candidate) === id) {
@@ -2354,6 +2332,61 @@ const RAW_HARNESS_JS = `(function () {
     };
   }
 
+  function projectionTemplate(graph, kind, excludeId) {
+    var template = null;
+    var matched = false;
+    var labelMatched = false;
+    graph.nodesById.forEach(function (root, id) {
+      if (excludeId && id === excludeId) return;
+      if (template) return;
+      var node = getNode(state.model, id);
+      if (kind && node && node.kind === kind) {
+        template = root;
+        matched = true;
+      }
+    });
+    if (!template) {
+      graph.nodesById.forEach(function (root, id) {
+        if (excludeId && id === excludeId) return;
+        if (!template) {
+          template = root;
+          if (kind && excludeId) labelMatched = true;
+        }
+      });
+    }
+    return projectionTemplateForRoot(template, matched, labelMatched);
+  }
+
+  function createNoteProjection(node) {
+    var note = document.createElement("div");
+    note.className = "ark-harness-note";
+    note.setAttribute("data-ark-harness-note", "");
+    note.setAttribute("contenteditable", "true");
+    note.textContent = typeof node.noteText === "string" ? node.noteText : "";
+    return note;
+  }
+
+  function createStructuredProjection(template, node) {
+    var label = template.labelTag
+      ? document.createElement(template.labelTag)
+      : document.createElement("span");
+    label.setAttribute("data-model-id", node.id);
+    if (template.labelClassName) label.className = template.labelClassName;
+    label.textContent = typeof node.label === "string" ? node.label : "";
+    var list = null;
+    if (template.listTag) {
+      list = document.createElement(template.listTag);
+      if (template.listClassName) list.className = template.listClassName;
+      (node.fields || []).forEach(function (field) {
+        var li = document.createElement("li");
+        li.setAttribute("data-model-id", field.id);
+        li.textContent = field.label;
+        list.appendChild(li);
+      });
+    }
+    return { label: label, list: list };
+  }
+
   function createNodeProjection(graph, node) {
     var template = projectionTemplate(graph, node.kind || "");
     var root = template.tag === "section"
@@ -2361,23 +2394,27 @@ const RAW_HARNESS_JS = `(function () {
       : template.tag === "div"
         ? document.createElement("div")
         : document.createElement("article");
-    var label = template.labelTag
-      ? document.createElement(template.labelTag)
-      : document.createElement("span");
     root.setAttribute("data-model-id", node.id);
-    label.setAttribute("data-model-id", node.id);
     if (node.kind) root.setAttribute("data-kind", node.kind);
     if (template.className) root.className = template.className;
-    if (template.labelClassName) label.className = template.labelClassName;
-    label.textContent = node.label;
-    root.appendChild(label);
+    var label = null;
     var list = null;
-    if (template.listTag) {
-      list = document.createElement(template.listTag);
-      if (template.listClassName) list.className = template.listClassName;
-      root.appendChild(list);
+    var note = null;
+    if (node.kind === "note") {
+      note = createNoteProjection(node);
+      root.appendChild(note);
+    } else {
+      if (node.kind === "entity") {
+        if (!template.labelTag) template.labelTag = "h2";
+        if (!template.listTag) template.listTag = "ul";
+      }
+      var structured = createStructuredProjection(template, node);
+      label = structured.label;
+      list = structured.list;
+      root.appendChild(label);
+      if (list) root.appendChild(list);
     }
-    return { root: root, label: label, list: list };
+    return { root: root, label: label, list: list, note: note };
   }
 
   function nodePlacementBlockers(graph, excluded) {
@@ -2441,7 +2478,8 @@ const RAW_HARNESS_JS = `(function () {
       updateStatus(!!submitPort, "配置先 graph を解決できませんでした");
       return null;
     }
-    if (kind && kindCandidates.indexOf(kind) === -1) return null;
+    if (kind !== "note" && kind &&
+        kindCandidates.indexOf(kind) === -1) return null;
     var id = generateUniqueModelId("node");
     if (!id) {
       updateStatus(!!submitPort, "一意な ID を生成できませんでした");
@@ -2449,6 +2487,7 @@ const RAW_HARNESS_JS = `(function () {
     }
     var node = { id: id, label: "新しいノード", ext: { x: 0, y: 0 } };
     if (kind) node.kind = kind;
+    if (kind === "note") node.noteText = "";
     var projection = createNodeProjection(graph, node);
     graph.container.appendChild(projection.root);
     projection.root.classList.add("ark-harness-graph-node");
@@ -2468,12 +2507,19 @@ const RAW_HARNESS_JS = `(function () {
       if (!registerGraphNode(graph, projection.root, node)) {
         throw new Error("node registration failed");
       }
-      wireEditableLeaf(projection.label, null);
+      if (projection.label) wireEditableLeaf(projection.label, null);
+      if (projection.note) wireNote(projection.note, node);
       if (projection.list) {
         var owned = listBindingsByNode.get(node.id) || [];
         owned.push({ listEl: projection.list, ownerNodeId: node.id });
         listBindingsByNode.set(node.id, owned);
         wireList(projection.list, node.id);
+        projection.list.querySelectorAll(":scope > li").forEach(function (li) {
+          wireEditableLeaf(li, {
+            listEl: projection.list,
+            ownerNodeId: node.id
+          });
+        });
       }
       lastKind = kind;
       graphs.forEach(function (entry) { scheduleGraphRender(entry); });
@@ -2680,27 +2726,103 @@ const RAW_HARNESS_JS = `(function () {
     return option;
   }
 
+  function rememberProjectionTemplate(root, kind) {
+    if (!kind || kind === "note") return;
+    if (!root.__arkHarnessProjectionTemplates) {
+      root.__arkHarnessProjectionTemplates = new Map();
+    }
+    root.__arkHarnessProjectionTemplates.set(
+      kind,
+      projectionTemplateForRoot(root, true, true)
+    );
+  }
+
+  function projectionTemplateForKind(graph, root, kind, id) {
+    var remembered = root.__arkHarnessProjectionTemplates &&
+      root.__arkHarnessProjectionTemplates.get(kind);
+    var template = remembered || projectionTemplate(graph, kind, id);
+    if (kind === "entity") {
+      if (!template.labelTag) template.labelTag = "h2";
+      if (!template.listTag) template.listTag = "ul";
+    }
+    return template;
+  }
+
+  function clearNodeProjection(root) {
+    Array.from(root.childNodes).forEach(function (child) {
+      if (child.nodeType === 1 && isInsideHarnessUi(child)) return;
+      root.removeChild(child);
+    });
+  }
+
+  function registerProjectedList(node, list) {
+    var binding = { listEl: list, ownerNodeId: node.id };
+    listBindingsByNode.set(node.id, [binding]);
+    wireList(list, node.id);
+    list.querySelectorAll(":scope > li").forEach(function (li) {
+      wireEditableLeaf(li, {
+        listEl: list,
+        ownerNodeId: node.id
+      });
+    });
+  }
+
+  function projectNoteContent(root, node) {
+    listBindingsByNode.delete(node.id);
+    clearNodeProjection(root);
+    var note = createNoteProjection(node);
+    root.insertBefore(note, root.firstChild);
+    wireNote(note, node);
+  }
+
+  function projectStructuredContent(root, node, template) {
+    listBindingsByNode.delete(node.id);
+    clearNodeProjection(root);
+    var projection = createStructuredProjection(template, node);
+    root.insertBefore(projection.label, root.firstChild);
+    wireEditableLeaf(projection.label, null);
+    if (projection.list) {
+      root.insertBefore(projection.list, projection.label.nextSibling);
+      registerProjectedList(node, projection.list);
+    }
+  }
+
   function updateNodeKind(graph, root, value) {
     var id = root.getAttribute("data-model-id");
-    if (!id || value && kindCandidates.indexOf(value) === -1) return;
+    if (!id || !(value === "note" ||
+        kindCandidates.indexOf(value) !== -1)) return;
     var node = getNode(state.model, id);
     if (!node) return;
-    if (value) node.kind = value;
-    else delete node.kind;
+    var previousKind = typeof node.kind === "string" ? node.kind : "";
+    if (previousKind === value) {
+      lastKind = value;
+      return;
+    }
+    rememberProjectionTemplate(root, previousKind);
+    node.kind = value;
     lastKind = value;
-    var tpl = projectionTemplate(graph, node.kind || "", id);
-    var targetTag = tpl.labelTag || "span";
-    var targetClass = tpl.labelClassName || "";
-    var cur = findNodeLabelEl(root, id);
-    if (cur && cur.tagName.toLowerCase() !== targetTag) {
-      var next = document.createElement(targetTag);
-      if (targetClass) next.className = targetClass;
-      next.setAttribute("data-model-id", id);
-      next.textContent = typeof node.label === "string"
-        ? node.label
-        : (cur.textContent || "");
-      cur.parentNode.replaceChild(next, cur);
-      wireEditableLeaf(next, null);
+    if (value === "note") {
+      if (typeof node.noteText !== "string") node.noteText = "";
+      projectNoteContent(root, node);
+    } else {
+      var tpl = projectionTemplateForKind(graph, root, value, id);
+      if (tpl.listTag || previousKind === "note") {
+        projectStructuredContent(root, node, tpl);
+      } else {
+        var targetTag = tpl.labelTag || "span";
+        var targetClass = tpl.labelClassName || "";
+        var cur = findNodeLabelEl(root, id);
+        if (cur && cur.tagName.toLowerCase() !== targetTag) {
+          var next = document.createElement(targetTag);
+          if (targetClass) next.className = targetClass;
+          next.setAttribute("data-model-id", id);
+          next.textContent = typeof node.label === "string"
+            ? node.label
+            : (cur.textContent || "");
+          cur.parentNode.replaceChild(next, cur);
+          wireEditableLeaf(next, null);
+        }
+      }
     }
     syncNodeKinds();
     renderContextToolbar();
@@ -2791,6 +2913,17 @@ const RAW_HARNESS_JS = `(function () {
     if (rowInfo) {
       attachRowControls(el, rowInfo.listEl, rowInfo.ownerNodeId);
     }
+  }
+
+  function wireNote(el, node) {
+    if (el.__arkHarnessNoteWired) return;
+    el.__arkHarnessNoteWired = true;
+    el.addEventListener("input", function () {
+      var text = typeof el.innerText === "string"
+        ? el.innerText
+        : (el.textContent || "");
+      node.noteText = text.replace(/\\r\\n?/g, "\\n");
+    });
   }
 
   function syncFieldOrder(listEl, ownerNodeId) {
@@ -2898,6 +3031,15 @@ const RAW_HARNESS_JS = `(function () {
         }
       }
       wireEditableLeaf(el, rowInfo);
+    });
+  }
+
+  function initNoteProjections() {
+    graphs.forEach(function (graph) {
+      graph.nodesById.forEach(function (root, id) {
+        var node = getNode(state.model, id);
+        if (node && node.kind === "note") projectNoteContent(root, node);
+      });
     });
   }
 
@@ -3107,6 +3249,7 @@ const RAW_HARNESS_JS = `(function () {
       initEditing();
       buildContextToolbar();
       initGraphs();
+      initNoteProjections();
     } catch (e) {
       console.error("[ark-harness] 初期化に失敗しました", e);
     }

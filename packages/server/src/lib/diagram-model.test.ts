@@ -52,6 +52,33 @@ describe("parseDiagramModel", () => {
     }
   });
 
+  it("noteText を label・fields と独立して保持する", () => {
+    const result = parseDiagramModel(
+      JSON.stringify({
+        version: 1,
+        nodes: [
+          {
+            id: "memo",
+            label: "Memo",
+            kind: "note",
+            noteText: "1行目\n2行目",
+            fields: [{ id: "memo-id", label: "id" }],
+          },
+        ],
+      })
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.model.nodes[0]).toMatchObject({
+        label: "Memo",
+        kind: "note",
+        noteText: "1行目\n2行目",
+        fields: [{ id: "memo-id", label: "id" }],
+      });
+    }
+  });
+
   it("図全体の layout 設定と未知の情報を top-level ext に保持する", () => {
     const ext = {
       layout: {
