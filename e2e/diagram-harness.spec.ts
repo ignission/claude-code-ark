@@ -1518,6 +1518,45 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   expect(errors).toEqual([]);
 });
 
+test("node CRUD: 空白への接続 drag は anchor の方向に応じて新 node を edge の始点・終点にする", async ({
+  page,
+}) => {
+  const directionalModel = structuredClone(crudModel);
+  directionalModel.edges = [];
+  const scenarios = [
+    { anchor: "top", newNodeEnd: "from" },
+    { anchor: "bottom", newNodeEnd: "to" },
+    { anchor: "left", newNodeEnd: "from" },
+    { anchor: "right", newNodeEnd: "to" },
+  ] as const;
+
+  for (const scenario of scenarios) {
+    await page.setContent(crudDiagramHtml(directionalModel));
+    const graph = page.locator('[data-ark-container="graph"]').first();
+    const graphBox = await requiredBoundingBox(graph);
+    await dragNodeAnchorToPoint(page, graph, "crud-b", scenario.anchor, {
+      x: graphBox.x + graphBox.width - 20,
+      y: graphBox.y + graphBox.height - 20,
+    });
+
+    const current = await readCurrentModel(page);
+    const addedNode = current.nodes.find(
+      node => !directionalModel.nodes.some(old => old.id === node.id)
+    );
+    expect(addedNode, scenario.anchor).toBeDefined();
+    if (!addedNode)
+      throw new Error(`${scenario.anchor}: 追加 node がありません`);
+    const addedEdge = current.edges.find(
+      edge => !directionalModel.edges.some(old => old.id === edge.id)
+    );
+    expect(addedEdge, scenario.anchor).toMatchObject(
+      scenario.newNodeEnd === "from"
+        ? { from: addedNode.id, to: "crud-b" }
+        : { from: "crud-b", to: addedNode.id }
+    );
+  }
+});
+
 test("node CRUD: note を選ぶと独立本文を投影し drag 作成にも引き継ぐ", async ({
   page,
 }) => {

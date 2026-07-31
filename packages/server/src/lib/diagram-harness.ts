@@ -1440,10 +1440,12 @@ const RAW_HARNESS_JS = `(function () {
         } else {
           var newEdgeId = generateUniqueModelId("edge");
           if (newEdgeId) {
+            var anchorPosition = drag.handle.getAttribute("data-ark-anchor-position");
+            var newNodeIsSource = anchorPosition === "top" || anchorPosition === "left";
             state.model.edges.push({
               id: newEdgeId,
-              from: blankSource.id,
-              to: newNode.id
+              from: newNodeIsSource ? newNode.id : blankSource.id,
+              to: newNodeIsSource ? blankSource.id : newNode.id
             });
           } else {
             removeNode(newNode.id);
