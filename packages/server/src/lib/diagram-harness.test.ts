@@ -464,8 +464,13 @@ describe("injectHarness", () => {
     expect(out).toContain(
       ".ark-harness-note { white-space: pre-wrap; min-height: 1.5em;"
     );
+    expect(out).toContain(".ark-harness-editable:empty::before");
+    expect(out).toContain(".ark-harness-note:empty::before");
     expect(out).toContain("function createNoteProjection(node)");
     expect(out).toContain('note.setAttribute("data-ark-harness-note", "")');
+    expect(out).toContain(
+      'note.setAttribute("data-placeholder", "\\u30E1\\u30E2\\u3092\\u5165\\u529B")'
+    );
     expect(out).toContain('note.setAttribute("contenteditable", "true")');
     expect(out).toContain(
       'note.textContent = typeof node.noteText === "string" ? node.noteText : ""'
@@ -480,6 +485,11 @@ describe("injectHarness", () => {
     expect(out).toContain("createStructuredProjection(template, node)");
     expect(out).toContain("registerProjectedList(node, projection.list)");
     expect(out).toContain('if (kind === "note") node.noteText = ""');
+    expect(out).toContain(
+      'label.setAttribute("data-placeholder", "\\u540D\\u524D\\u3092\\u5165\\u529B")'
+    );
+    expect(out).toContain('label: kind === "note" ? "" : "新しいノード"');
+    expect(out).toContain('clone.querySelectorAll("[data-placeholder]")');
   });
 
   it("node / edge CRUD と参照整合性の契約を注入する", () => {

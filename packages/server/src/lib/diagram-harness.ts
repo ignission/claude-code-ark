@@ -112,9 +112,11 @@ const HARNESS_STYLE = `<style data-ark-harness-ui="1">
 .ark-harness-model-error { color: #f87171; font-size: 11.5px; white-space: pre-wrap; }
 .ark-harness-model-actions { display: flex; gap: .5rem; justify-content: flex-end; }
 .ark-harness-editable { outline: 1px dashed transparent; border-radius: 3px; }
+.ark-harness-editable:empty::before { content: attr(data-placeholder); color: rgba(148,163,184,.7); pointer-events: none; }
 .ark-harness-editable:hover { outline-color: rgba(56,189,248,.35); }
 .ark-harness-editable:focus { outline: 1px solid #38bdf8; outline-offset: 1px; background: rgba(56,189,248,.1); }
 .ark-harness-note { white-space: pre-wrap; min-height: 1.5em; padding: .4rem .6rem; outline: none; }
+.ark-harness-note:empty::before { content: attr(data-placeholder); color: rgba(148,163,184,.7); pointer-events: none; }
 li.ark-harness-row { display: flex; align-items: center; gap: .35rem; }
 li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
 .ark-harness-dragging { opacity: .4; }
@@ -2361,6 +2363,7 @@ const RAW_HARNESS_JS = `(function () {
     var note = document.createElement("div");
     note.className = "ark-harness-note";
     note.setAttribute("data-ark-harness-note", "");
+    note.setAttribute("data-placeholder", "\\u30E1\\u30E2\\u3092\\u5165\\u529B");
     note.setAttribute("contenteditable", "true");
     note.textContent = typeof node.noteText === "string" ? node.noteText : "";
     return note;
@@ -2371,6 +2374,7 @@ const RAW_HARNESS_JS = `(function () {
       ? document.createElement(template.labelTag)
       : document.createElement("span");
     label.setAttribute("data-model-id", node.id);
+    label.setAttribute("data-placeholder", "\\u540D\\u524D\\u3092\\u5165\\u529B");
     if (template.labelClassName) label.className = template.labelClassName;
     label.textContent = typeof node.label === "string" ? node.label : "";
     var list = null;
@@ -2485,7 +2489,7 @@ const RAW_HARNESS_JS = `(function () {
       updateStatus(!!submitPort, "一意な ID を生成できませんでした");
       return null;
     }
-    var node = { id: id, label: "新しいノード", ext: { x: 0, y: 0 } };
+    var node = { id: id, label: kind === "note" ? "" : "新しいノード", ext: { x: 0, y: 0 } };
     if (kind) node.kind = kind;
     if (kind === "note") node.noteText = "";
     var projection = createNodeProjection(graph, node);
@@ -3078,6 +3082,9 @@ const RAW_HARNESS_JS = `(function () {
     });
     clone.querySelectorAll("[contenteditable]").forEach(function (el) {
       el.removeAttribute("contenteditable");
+    });
+    clone.querySelectorAll("[data-placeholder]").forEach(function (el) {
+      el.removeAttribute("data-placeholder");
     });
     clone.querySelectorAll(".ark-harness-node-tabindex-added").forEach(function (el) {
       el.removeAttribute("tabindex");

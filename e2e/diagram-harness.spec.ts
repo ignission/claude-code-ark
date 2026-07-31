@@ -4235,6 +4235,7 @@ test("authored entity と note を往復して label・fields・noteText を独�
   expect(submission.html).toContain('data-kind="note"');
   expect(submission.html).toContain("設計メモ\n2行目");
   expect(submission.html).not.toContain("contenteditable");
+  expect(submission.html).not.toContain("data-placeholder");
 });
 
 test("model node だけに entity がある図でも note picker・往復・drag 作成を利用できる", async ({
@@ -4305,6 +4306,7 @@ test("model node だけに entity がある図でも note picker・往復・drag
   const note = projection.locator(":scope > [data-ark-harness-note]");
   await expect(note).toHaveCount(1);
   await expect(note).toHaveAttribute("contenteditable", "true");
+  await expect(note).toHaveAttribute("data-placeholder", "メモを入力");
   await expect(note).toHaveText("");
   const noteAfterSwitch = (await readCurrentModel(page)).nodes.find(
     node => node.id === added.id
@@ -4376,7 +4378,7 @@ test("model node だけに entity がある図でも note picker・往復・drag
   expect(createdNote).toMatchObject({
     kind: "note",
     noteText: "",
-    label: "新しいノード",
+    label: "",
   });
   if (!createdNote) throw new Error("note node がありません");
 
@@ -4388,9 +4390,15 @@ test("model node だけに entity がある図でも note picker・往復・drag
   );
   await expect(noteProjection).toHaveClass(/(^|\s)entity(\s|$)/);
   await expect(noteProjection).toHaveAttribute("data-kind", "note");
-  await expect(
-    noteProjection.locator(":scope > [data-ark-harness-note]")
-  ).toHaveCount(1);
+  const createdNoteBody = noteProjection.locator(
+    ":scope > [data-ark-harness-note]"
+  );
+  await expect(createdNoteBody).toHaveCount(1);
+  await expect(createdNoteBody).toHaveAttribute(
+    "data-placeholder",
+    "メモを入力"
+  );
+  await expect(createdNoteBody).toHaveText("");
   await expect(
     noteProjection.locator(":scope > h2, :scope > span, :scope > ul")
   ).toHaveCount(0);
@@ -4398,6 +4406,30 @@ test("model node だけに entity がある図でも note picker・往復・drag
   await expect(
     noteToolbar.getByRole("button", { name: "行を追加" })
   ).toBeDisabled();
+  const createdNotePicker = noteToolbar.locator(
+    "select.ark-harness-kind-select"
+  );
+  await createdNotePicker.selectOption("entity");
+  await expect(noteProjection).toHaveAttribute("data-kind", "entity");
+  await expect(createdNoteBody).toHaveCount(0);
+  const createdEntityLabel = noteProjection.locator(
+    `:scope > h2[data-model-id="${createdNote.id}"]`
+  );
+  await expect(createdEntityLabel).toHaveCount(1);
+  await expect(createdEntityLabel).toHaveText("");
+  await expect(createdEntityLabel).toHaveAttribute(
+    "data-placeholder",
+    "名前を入力"
+  );
+  expect(
+    (await readCurrentModel(page)).nodes.find(
+      node => node.id === createdNote.id
+    )
+  ).toMatchObject({
+    kind: "entity",
+    label: "",
+    noteText: "",
+  });
 });
 
 test("flat 図の authored kindless node は note を選ぶまで従来投影を維持する", async ({
