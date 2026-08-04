@@ -66,11 +66,11 @@ import {
   isDiagramTracked,
 } from "./lib/diagram-delete.js";
 import { describeModelDiff } from "./lib/diagram-diff.js";
-import { ensureDoctype, replaceModelBlock } from "./lib/diagram-file.js";
 import { handleDiagramListRequest, listDiagrams } from "./lib/diagram-list.js";
-import { parseDiagramModel } from "./lib/diagram-model.js";
+import type { DiagramModel } from "./lib/diagram-model.js";
 import { resolveDiagramPath } from "./lib/diagram-path.js";
-import { readDiagram, readDiagramModel } from "./lib/diagram-reader.js";
+import { readDiagram } from "./lib/diagram-reader.js";
+import { saveDiagramEdit } from "./lib/diagram-save.js";
 import { diagramWatcher } from "./lib/diagram-watcher.js";
 import { getErrorMessage } from "./lib/errors.js";
 import { readFileFromWorktree } from "./lib/file-manager.js";
@@ -186,6 +186,13 @@ export interface ServerHandle {
 const TUNNEL_STATE_FILE = path.join(os.tmpdir(), "ark-tunnel-state.json");
 
 const MANAGED_WORKTREE_CACHE_TTL_MS = 30_000;
+
+/** 図ごとの、最後に Claude へ通知できたモデル。autosave では更新しない。 */
+const lastNotifiedModels = new Map<string, DiagramModel>();
+
+function diagramModelKey(worktreePath: string, relPath: string): string {
+  return `${worktreePath}\0${relPath}`;
+}
 
 /** トンネル状態をファイルに保存する */
 function saveTunnelState(port: number): void {
@@ -1096,6 +1103,12 @@ export async function startServer(
     if (!result.ok) {
       res.status(result.status).json({ error: result.error });
       return;
+    }
+    // 初回配信時のモデルは Claude が生成済みの状態として通知 baseline にする。
+    // 既存値は未通知の autosave 差分を含み得るため上書きしない。
+    const modelKey = diagramModelKey(resolved, relPath);
+    if (!lastNotifiedModels.has(modelKey)) {
+      lastNotifiedModels.set(modelKey, result.model);
     }
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     // 本文に meta CSP を注入済み。クライアントは srcDoc で描画するため
@@ -2133,6 +2146,18 @@ export async function startServer(
 
     // ===== 図解キャンバス（board_open による表示 + 更新監視） =====
     const diagramUnsubs = new Map<string, () => void>();
+    // autosave の自己書き込みで、この socket の iframe だけを再読込しない。
+    // O_TRUNC と本文書き込みが別々に見える環境もあるため短い期間で抑制する。
+    const suppressedDiagramUpdates = new Map<string, NodeJS.Timeout>();
+
+    const suppressNextDiagramUpdate = (absPath: string) => {
+      const previous = suppressedDiagramUpdates.get(absPath);
+      if (previous) clearTimeout(previous);
+      const timeout = setTimeout(() => {
+        suppressedDiagramUpdates.delete(absPath);
+      }, 2_500);
+      suppressedDiagramUpdates.set(absPath, timeout);
+    };
 
     socket.on("diagram:list", (data: unknown, callback: unknown) => {
       if (typeof callback !== "function") return;
@@ -2173,6 +2198,13 @@ export async function startServer(
           if (session) io.emit("session:updated", session);
         },
         onDeleted: data => {
+          const session = sessionOrchestrator.getSession(data.sessionId);
+          const resolved = session
+            ? resolveManagedWorktreePath(session.worktreePath)
+            : null;
+          if (resolved) {
+            lastNotifiedModels.delete(diagramModelKey(resolved, data.relPath));
+          }
           io.emit("diagram:deleted", data);
         },
       })
@@ -2213,6 +2245,7 @@ export async function startServer(
       if (!pathResolved.ok) return; // パス自体が不正 (403 相当) なら購読しない
 
       const off = diagramWatcher.subscribe(pathResolved.absPath, () => {
+        if (suppressedDiagramUpdates.has(pathResolved.absPath)) return;
         // クライアントへは購読要求で送られてきた worktreePath（生パス）を
         // そのままエコーバックする。サーバー内部の購読キー・ファイル解決は
         // realpath（resolved）で行うが、クライアント（DiagramPane）は
@@ -2246,28 +2279,13 @@ export async function startServer(
       diagramUnsubs.delete(key);
     });
 
-    /**
-     * 図の編集結果を保存し、意味差分を会話へ還流する。
-     *
-     * html のサイズ上限（無制限だとメモリを一気に確保してしまう）。
-     * 2MB は .diagram.html が意味モデル + 軽量な HTML 投影であるという
-     * 前提（画像等の埋め込みは想定しない）に基づく余裕を持った上限。
-     */
-    const DIAGRAM_SUBMIT_MAX_HTML_BYTES = 2 * 1024 * 1024;
-
-    socket.on("diagram:submit", async (data: unknown, callback: unknown) => {
-      // ack callback は外部入力なので関数であることを検証してから呼ぶ
-      // （slash:list と同じ方針）
+    /** 図の編集結果をファイルへ保存する。会話への通知と baseline 更新はしない。 */
+    socket.on("diagram:autosave", async (data: unknown, callback: unknown) => {
       if (typeof callback !== "function") return;
       const reply = callback as (response: {
         ok: boolean;
-        sent?: string[];
         error?: string;
       }) => void;
-
-      // payload は外部入力。分割代入前に型を検証しないと、引数なし emit や
-      // null/不正形状の payload でハンドラ内 throw → プロセスごと落ちる
-      // （socket.io の同期ハンドラ内例外は uncaughtException になる）。
       const d = data as {
         sessionId?: unknown;
         worktreePath?: unknown;
@@ -2286,97 +2304,90 @@ export async function startServer(
         reply({ ok: false, error: "不正なリクエストです" });
         return;
       }
-      const { sessionId, worktreePath, relPath, model, html } = d;
 
       try {
-        const resolved = resolveManagedWorktreePath(worktreePath);
+        const resolved = resolveManagedWorktreePath(d.worktreePath);
         if (!resolved) {
           reply({ ok: false, error: "worktree を解決できません" });
           return;
         }
+        const saved = await saveDiagramEdit(
+          resolved,
+          d.relPath,
+          d.model,
+          d.html,
+          suppressNextDiagramUpdate
+        );
+        if (!saved.ok) {
+          reply(saved);
+          return;
+        }
+        // 未登録時だけ保存前モデルを初期 baseline にする。以後の autosave は
+        // baseline を進めず、明示 submit まで未通知差分を蓄積する。
+        const modelKey = diagramModelKey(resolved, d.relPath);
+        if (!lastNotifiedModels.has(modelKey)) {
+          lastNotifiedModels.set(modelKey, saved.previousModel);
+        }
+        reply({ ok: true });
+      } catch (error) {
+        reply({ ok: false, error: getErrorMessage(error) });
+      }
+    });
 
-        // 現在のファイルを読み、差分の基準となる旧モデルを得る
-        // （TOCTOU 対策込みの検証も兼ねる）。ここは配信ではないので
-        // CSP/ハーネス注入をしない軽量版を使う（毎 submit の無駄を省く）。
-        const current = await readDiagramModel(resolved, relPath);
-        if (!current.ok) {
-          reply({ ok: false, error: current.error });
-          return;
-        }
+    /** 図を保存し、最後に通知したモデルからの意味差分を会話へ還流する。 */
+    socket.on("diagram:submit", async (data: unknown, callback: unknown) => {
+      if (typeof callback !== "function") return;
+      const reply = callback as (response: {
+        ok: boolean;
+        sent?: string[];
+        error?: string;
+      }) => void;
+      const d = data as {
+        sessionId?: unknown;
+        worktreePath?: unknown;
+        relPath?: unknown;
+        model?: unknown;
+        html?: unknown;
+      } | null;
+      if (
+        !d ||
+        typeof d !== "object" ||
+        typeof d.sessionId !== "string" ||
+        typeof d.worktreePath !== "string" ||
+        typeof d.relPath !== "string" ||
+        typeof d.html !== "string"
+      ) {
+        reply({ ok: false, error: "不正なリクエストです" });
+        return;
+      }
 
-        // 受け取ったモデルを検証する。不正なら保存しない。
-        // model は unknown（構造化された JS 値。iframe からの
-        // postMessage は structured clone のため文字列ではない）なので、
-        // parseDiagramModel（JSON 文字列を受け取る）へ渡す前に文字列化する。
-        // undefined/関数等は JSON.stringify が undefined を返すため、
-        // その場合はモデル未指定として弾く。
-        const modelJson = JSON.stringify(model);
-        if (modelJson === undefined) {
-          reply({ ok: false, error: "モデルが指定されていません" });
+      try {
+        const resolved = resolveManagedWorktreePath(d.worktreePath);
+        if (!resolved) {
+          reply({ ok: false, error: "worktree を解決できません" });
           return;
         }
-        const parsed = parseDiagramModel(modelJson);
-        if (!parsed.ok) {
-          reply({ ok: false, error: parsed.error });
+        const saved = await saveDiagramEdit(
+          resolved,
+          d.relPath,
+          d.model,
+          d.html
+        );
+        if (!saved.ok) {
+          reply(saved);
           return;
-        }
-
-        if (Buffer.byteLength(html, "utf-8") > DIAGRAM_SUBMIT_MAX_HTML_BYTES) {
-          reply({ ok: false, error: "図のサイズが大きすぎます（上限 2MB）" });
-          return;
-        }
-
-        // html 内のモデルブロック（クライアントが送ってくる html 内のブロック
-        // は編集前の古い JSON のまま）を最新モデルで差し替える。DOM 側は
-        // 変更しない。
-        const replaced = replaceModelBlock(html, parsed.model);
-        if (!replaced.ok) {
-          reply({ ok: false, error: replaced.error });
-          return;
-        }
-
-        const pathResolved = resolveDiagramPath(resolved, relPath);
-        if (!pathResolved.ok) {
-          reply({ ok: false, error: pathResolved.error });
-          return;
-        }
-        // ハーネスが送る html は document.documentElement.outerHTML 由来で
-        // doctype を含まない。補わないと送信のたびにファイルから落ちる。
-        //
-        // TOCTOU/symlink 対策: 読み込み側(readRawVerified)は inode/dev + realpath で
-        // worktree 外脱出を弾くが、書き込みは resolveDiagramPath(文字列解決のみ)の後
-        // fs.writeFile が symlink を辿るため、読み書きの間に外向き symlink へ
-        // 差し替えられると worktree 外へ書けてしまう。/api/session の配信(L1163)と
-        // 同じく O_NOFOLLOW で最終要素が symlink なら open を失敗させて防ぐ。
-        let writeHandle: fs.promises.FileHandle;
-        try {
-          writeHandle = await fs.promises.open(
-            pathResolved.absPath,
-            fs.constants.O_WRONLY |
-              fs.constants.O_TRUNC |
-              fs.constants.O_NOFOLLOW
-          );
-        } catch {
-          // ELOOP(最終要素が symlink に差し替わった) / ENOENT(読み込み後に削除) 等
-          reply({ ok: false, error: "図ファイルの実体を検証できません" });
-          return;
-        }
-        try {
-          await writeHandle.writeFile(ensureDoctype(replaced.html), "utf-8");
-        } finally {
-          await writeHandle.close();
         }
 
-        // 意味差分を組み立てて会話へ還流する。文面は describeModelDiff の
-        // 出力だけで組む（html の中身などクライアント由来の文字列は
-        // 混ぜない = 注入対策）。変更が無ければ送信しない。
-        const sent = describeModelDiff(current.model, parsed.model);
+        const modelKey = diagramModelKey(resolved, d.relPath);
+        const baseline =
+          lastNotifiedModels.get(modelKey) ?? saved.previousModel;
+        const sent = describeModelDiff(baseline, saved.savedModel);
         if (sent.length > 0) {
-          const message = `図を編集しました（${relPath}）:\n${sent
+          const message = `図を編集しました（${d.relPath}）:\n${sent
             .map(line => `- ${line}`)
             .join("\n")}`;
           try {
-            sessionOrchestrator.sendMessage(sessionId, message);
+            sessionOrchestrator.sendMessage(d.sessionId, message);
           } catch (error) {
             console.error(
               "[Diagram] sendMessage failed:",
@@ -2390,6 +2401,8 @@ export async function startServer(
           }
         }
 
+        // 通知が成功した（または意味差分が無かった）時だけ baseline を進める。
+        lastNotifiedModels.set(modelKey, saved.savedModel);
         reply({ ok: true, sent });
       } catch (error) {
         reply({ ok: false, error: getErrorMessage(error) });
@@ -3936,6 +3949,10 @@ export async function startServer(
         }
       }
       diagramUnsubs.clear();
+      for (const timeout of suppressedDiagramUpdates.values()) {
+        clearTimeout(timeout);
+      }
+      suppressedDiagramUpdates.clear();
 
       forwardHandlers.forEach((handler, event) => {
         sessionOrchestrator.off(event, handler);

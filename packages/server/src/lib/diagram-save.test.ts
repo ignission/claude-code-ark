@@ -1,0 +1,86 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { extractModel } from "./diagram-file.js";
+import type { DiagramModel } from "./diagram-model.js";
+import { DIAGRAM_DIR } from "./diagram-path.js";
+import { saveDiagramEdit } from "./diagram-save.js";
+
+const initialModel: DiagramModel = {
+  version: 1,
+  nodes: [{ id: "order", label: "Order" }],
+  edges: [],
+  groups: [],
+};
+
+const html = (model: DiagramModel, label = model.nodes[0]?.label ?? "") =>
+  `<html><body><script type="application/json" id="ark-diagram-model">${JSON.stringify(model)}</script><h1>${label}</h1></body></html>`;
+
+let worktree: string;
+let absPath: string;
+
+beforeEach(() => {
+  worktree = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ark-diagram-save-"))
+  );
+  const directory = path.join(worktree, DIAGRAM_DIR);
+  fs.mkdirSync(directory, { recursive: true });
+  absPath = path.join(directory, "sample.diagram.html");
+  fs.writeFileSync(absPath, `<!doctype html>\n${html(initialModel, "Order")}`);
+});
+
+afterEach(() => {
+  fs.rmSync(worktree, { recursive: true, force: true });
+});
+
+describe("saveDiagramEdit", () => {
+  it("検証済みモデルへブロックを差し替え、保存前モデルも返す", async () => {
+    const edited: DiagramModel = {
+      ...initialModel,
+      nodes: [{ id: "order", label: "Edited Order" }],
+    };
+    const beforeWrite: string[] = [];
+
+    const result = await saveDiagramEdit(
+      worktree,
+      "sample.diagram.html",
+      edited,
+      html(initialModel, "Edited Order"),
+      path => beforeWrite.push(path)
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      previousModel: initialModel,
+      savedModel: edited,
+    });
+    expect(beforeWrite).toEqual([absPath]);
+    const savedHtml = fs.readFileSync(absPath, "utf8");
+    expect(savedHtml).toMatch(/^<!doctype html>/i);
+    expect(extractModel(savedHtml)).toEqual({ ok: true, model: edited });
+    expect(savedHtml).toContain("<h1>Edited Order</h1>");
+  });
+
+  it("不正モデルは保存せず、beforeWrite も呼ばない", async () => {
+    const original = fs.readFileSync(absPath, "utf8");
+    let beforeWriteCalled = false;
+
+    const result = await saveDiagramEdit(
+      worktree,
+      "sample.diagram.html",
+      { version: 2 },
+      html(initialModel),
+      () => {
+        beforeWriteCalled = true;
+      }
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "version は 1 である必要があります",
+    });
+    expect(beforeWriteCalled).toBe(false);
+    expect(fs.readFileSync(absPath, "utf8")).toBe(original);
+  });
+});

@@ -46,11 +46,27 @@ interface DiagramSubmitMessage {
   html: string;
 }
 
+interface DiagramAutosaveMessage {
+  type: "ark:diagram-autosave";
+  model: unknown;
+  html: string;
+}
+
 function isDiagramSubmitMessage(data: unknown): data is DiagramSubmitMessage {
   return (
     typeof data === "object" &&
     data !== null &&
     (data as { type?: unknown }).type === "ark:diagram-submit"
+  );
+}
+
+function isDiagramAutosaveMessage(
+  data: unknown
+): data is DiagramAutosaveMessage {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as { type?: unknown }).type === "ark:diagram-autosave"
   );
 }
 
@@ -291,6 +307,38 @@ export function DiagramPane({
     [socket, isConnected, sessionId, worktreePath, relPath]
   );
 
+  // 自動保存はファイルだけを更新し、会話への還流は行わない。ACK は port で
+  // ハーネスへ返し、「保存中… / 保存済み」の表示を確定させる。
+  const handleAutosave = useCallback(
+    (
+      model: unknown,
+      submittedHtml: string,
+      reply: (response: { ok: boolean; error?: string }) => void
+    ) => {
+      if (!relPath) {
+        reply({ ok: false, error: "図が選択されていません" });
+        return;
+      }
+      if (!socket || !isConnected) {
+        const error = "サーバーに未接続のため保存できません";
+        setSubmitError(error);
+        reply({ ok: false, error });
+        return;
+      }
+      socket.emit(
+        "diagram:autosave",
+        { sessionId, worktreePath, relPath, model, html: submittedHtml },
+        response => {
+          setSubmitError(
+            response.ok ? null : (response.error ?? "自動保存に失敗しました")
+          );
+          reply(response);
+        }
+      );
+    },
+    [socket, isConnected, sessionId, worktreePath, relPath]
+  );
+
   // iframe のロード（初回表示 / worktreePath・relPath 変更 / diagram:updated
   // による再読込のいずれも "load" イベントを起こす）のたびに MessageChannel を
   // 新規に張り直し、port2 をハーネスへ渡す。ハーネス側も document 再生成のたびに
@@ -325,8 +373,18 @@ export function DiagramPane({
       const channel = new MessageChannel();
       portRef.current = channel.port1;
       channel.port1.onmessage = (event: MessageEvent) => {
-        if (!isDiagramSubmitMessage(event.data)) return;
-        handleSubmit(event.data.model, event.data.html);
+        if (isDiagramSubmitMessage(event.data)) {
+          handleSubmit(event.data.model, event.data.html);
+          return;
+        }
+        if (isDiagramAutosaveMessage(event.data)) {
+          handleAutosave(event.data.model, event.data.html, response => {
+            channel.port1.postMessage({
+              type: "ark:diagram-autosave-result",
+              ...response,
+            });
+          });
+        }
       };
 
       // targetOrigin に "*" を使う理由:
@@ -342,7 +400,7 @@ export function DiagramPane({
         channel.port2,
       ]);
     },
-    [handleSubmit, html]
+    [handleAutosave, handleSubmit, html]
   );
 
   return (
