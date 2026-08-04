@@ -2385,10 +2385,15 @@ test("構造変更: clean submission は semantic node を残し CRUD UI と見�
   expect(submission.html).not.toContain("ark-harness-node-anchor");
   expect(submission.html).not.toContain("ark-harness-edge-hit");
   expect(submission.html).not.toContain("--ark-harness-graph-x");
-  expect(describeModelDiff(crudModel, submission.model)).toEqual([
-    "(無題) を追加",
-    "B から (無題) への関連を追加",
+  const diff = describeModelDiff(crudModel, submission.model);
+  expect(diff).toEqual([
+    expect.stringMatching(/^event ノード \(node-[0-9a-f-]+\) を追加$/),
+    expect.stringMatching(
+      /^B から event ノード \(node-[0-9a-f-]+\) への関連を追加$/
+    ),
   ]);
+  expect(diff[0]).toContain(`(${added.id})`);
+  expect(diff[1]).toContain(`(${added.id})`);
 });
 
 test("下部ツールバーは既定で非表示になり余白を残さない", async ({ page }) => {
