@@ -2563,7 +2563,7 @@ const RAW_HARNESS_JS = `(function () {
       updateStatus(!!submitPort, "一意な ID を生成できませんでした");
       return null;
     }
-    var node = { id: id, label: kind === "note" ? "" : "新しいノード", ext: { x: 0, y: 0 } };
+    var node = { id: id, label: "", ext: { x: 0, y: 0 } };
     if (kind) node.kind = kind;
     if (kind === "note") node.noteText = "";
     var projection = createNodeProjection(graph, node);
@@ -3073,17 +3073,18 @@ const RAW_HARNESS_JS = `(function () {
       updateStatus(!!submitPort, "一意な ID を生成できませんでした");
       return;
     }
-    var field = { id: id, label: "新しい項目" };
+    var field = { id: id, label: "" };
     if (!node.fields) node.fields = [];
     node.fields.push(field);
     syncDirtyState();
 
     var li = document.createElement("li");
     li.setAttribute("data-model-id", id);
-    li.textContent = field.label;
     listEl.appendChild(li);
 
-    return wireEditableLeaf(li, { listEl: listEl, ownerNodeId: ownerNodeId });
+    var editable = wireEditableLeaf(li, { listEl: listEl, ownerNodeId: ownerNodeId });
+    if (editable) editable.setAttribute("data-placeholder", "\\u9805\\u76EE\\u3092\\u5165\\u529B");
+    return editable;
   }
 
   function wireList(listEl, ownerNodeId) {

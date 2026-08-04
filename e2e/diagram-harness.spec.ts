@@ -1647,9 +1647,8 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
     node => !connectDragModel.nodes.some(old => old.id === node.id)
   );
   expect(added).toBeDefined();
-  expect(added).toMatchObject({ label: "新しいノード", kind: "entity" });
+  expect(added).toMatchObject({ label: "", kind: "entity" });
   expect(added?.id).toMatch(/^node-/);
-  expect(added?.id).not.toContain("新しいノード");
   expect(Number.isInteger((added?.ext as { x?: number })?.x)).toBe(true);
   expect(Number.isInteger((added?.ext as { y?: number })?.y)).toBe(true);
   expect(current.nodes).toHaveLength(initial.nodes.length + 1);
@@ -1679,7 +1678,11 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   const projectionLabel = projection.locator(
     `:scope > span[data-model-id="${added.id}"]`
   );
-  await expect(projectionLabel).toHaveText("新しいノード");
+  await expect(projectionLabel).toHaveText("");
+  await expect(projectionLabel).toHaveAttribute(
+    "data-placeholder",
+    "名前を入力"
+  );
   expect(await projectionLabel.evaluate(element => element.tagName)).toBe(
     "SPAN"
   );
@@ -2362,7 +2365,7 @@ test("構造変更: clean submission は semantic node を残し CRUD UI と見�
   if (!submission) throw new Error("submission がありません");
   expect(submission.html).toContain(`data-model-id="${added.id}"`);
   expect(submission.html).toContain('data-kind="event"');
-  expect(submission.html).toContain("新しいノード");
+  expect(submission.html).not.toContain("新しいノード");
   expect(submission.html).not.toContain("data-ark-harness-ui");
   expect(submission.html).not.toContain("ark-harness-node-palette");
   expect(submission.html).not.toContain("ark-harness-node-connectors");
@@ -2370,8 +2373,8 @@ test("構造変更: clean submission は semantic node を残し CRUD UI と見�
   expect(submission.html).not.toContain("ark-harness-edge-hit");
   expect(submission.html).not.toContain("--ark-harness-graph-x");
   expect(describeModelDiff(crudModel, submission.model)).toEqual([
-    "新しいノード を追加",
-    "B から 新しいノード への関連を追加",
+    "(無題) を追加",
+    "B から (無題) への関連を追加",
   ]);
 });
 
@@ -4731,7 +4734,7 @@ test("model node だけに entity がある図でも note picker・往復・drag
   const added = current.nodes.find(
     node => !initial.nodes.some(old => old.id === node.id)
   );
-  expect(added).toMatchObject({ label: "新しいノード", kind: "entity" });
+  expect(added).toMatchObject({ label: "", kind: "entity" });
   if (!added) throw new Error("追加 node がありません");
   const projection = graph.locator(`[data-model-id="${added.id}"]`).first();
   expect(await projection.evaluate(element => element.tagName)).toBe("SECTION");
@@ -4742,7 +4745,8 @@ test("model node だけに entity がある図でも note picker・往復・drag
   expect(await label.evaluate(element => element.tagName)).toBe("H2");
   await expect(label).toHaveClass(/(^|\s)entity-title(\s|$)/);
   await expect(label).toHaveAttribute("data-model-id", added.id);
-  await expect(label).toHaveText("新しいノード");
+  await expect(label).toHaveText("");
+  await expect(label).toHaveAttribute("data-placeholder", "名前を入力");
 
   const list = projection.locator(":scope > ul");
   await expect(list).toHaveCount(1);
@@ -4750,9 +4754,22 @@ test("model node だけに entity がある図でも note picker・往復・drag
   await expect(list).toHaveClass(/(^|\s)entity-fields(\s|$)/);
   await expect(list.locator(":scope > li")).toHaveCount(0);
   await label.fill("追加ノード");
+  await expect(label).toHaveText("追加ノード");
+  expect(
+    (await readCurrentModel(page)).nodes.find(node => node.id === added.id)
+      ?.label
+  ).toBe("追加ノード");
   await label.press("Enter");
   await expect(list.locator(":scope > li")).toHaveCount(1);
-  await expect(list.locator(":scope > li .ark-harness-text")).toBeFocused();
+  const addedFieldEditable = list.locator(":scope > li .ark-harness-text");
+  await expect(addedFieldEditable).toBeFocused();
+  await expect(addedFieldEditable).toHaveText("");
+  await expect(addedFieldEditable).toHaveAttribute(
+    "data-placeholder",
+    "項目を入力"
+  );
+  await addedFieldEditable.fill("code");
+  await expect(addedFieldEditable).toHaveText("code");
   const addedToolbar = await selectNode(page, added.id);
   const addFieldButton = addedToolbar.getByRole("button", {
     name: "行を追加",
@@ -4763,7 +4780,7 @@ test("model node だけに entity がある図でも note picker・往復・drag
   expect(addedAfterField?.label).toBe("追加ノード");
   expect(addedAfterField?.fields).toHaveLength(1);
   expect(addedAfterField?.fields?.[0]).toMatchObject({
-    label: "新しい項目",
+    label: "code",
   });
   expect(addedAfterField?.fields?.[0]?.id).toMatch(/^field-/);
   const addedField = addedAfterField?.fields?.[0];

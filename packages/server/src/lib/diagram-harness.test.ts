@@ -513,7 +513,11 @@ describe("injectHarness", () => {
     expect(out).toContain(
       'label.setAttribute("data-placeholder", "\\u540D\\u524D\\u3092\\u5165\\u529B")'
     );
-    expect(out).toContain('label: kind === "note" ? "" : "新しいノード"');
+    expect(out).toContain('var node = { id: id, label: "", ext:');
+    expect(out).toContain('var field = { id: id, label: "" }');
+    expect(out).toContain(
+      'editable.setAttribute("data-placeholder", "\\u9805\\u76EE\\u3092\\u5165\\u529B")'
+    );
     expect(out).toContain('clone.querySelectorAll("[data-placeholder]")');
   });
 
