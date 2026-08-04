@@ -2262,10 +2262,12 @@ test("構造変更: clean submission は semantic node を残し CRUD UI と見�
   ]);
 });
 
-test("下部ツールバーは既定で方向トグルだけを表示する", async ({ page }) => {
+test("下部ツールバーは既定で非表示になり余白を残さない", async ({ page }) => {
   await page.setContent(diagramHtml());
 
-  await expect(page.locator(".ark-harness-layout-direction")).toBeVisible();
+  const toolbar = page.locator(".ark-harness-toolbar");
+  await expect(toolbar).toBeHidden();
+  await expect(page.locator(".ark-harness-layout-direction")).toBeHidden();
   await expect(
     page.getByRole("button", {
       name: "モデル JSON を直接編集する",
@@ -2279,38 +2281,64 @@ test("下部ツールバーは既定で方向トグルだけを表示する", as
     })
   ).toBeHidden();
   await expect(page.locator(".ark-harness-status")).toBeHidden();
+  await expect
+    .poll(() =>
+      page.evaluate(() => ({
+        height: document.body.style.getPropertyValue(
+          "--ark-harness-toolbar-height"
+        ),
+        paddingBottom: getComputedStyle(document.body).paddingBottom,
+      }))
+    )
+    .toEqual({ height: "0px", paddingBottom: "0px" });
 });
 
-test("ark-debug hash でモデル直接編集ボタンを動的に切り替える", async ({
-  page,
-}) => {
+test("ark-debug hash で下部 debug UI を動的に切り替える", async ({ page }) => {
   await page.setContent(diagramHtml());
+  const toolbar = page.locator(".ark-harness-toolbar");
   const editButton = page.getByRole("button", {
     name: "モデル JSON を直接編集する",
     includeHidden: true,
   });
+  const directionButton = page.locator(".ark-harness-layout-direction");
 
+  await expect(toolbar).toBeHidden();
   await expect(editButton).toBeHidden();
+  await expect(directionButton).toBeHidden();
   await page.evaluate(() => {
     location.hash = "ark-debug";
   });
+  await expect(toolbar).toBeVisible();
   await expect(editButton).toBeVisible();
+  await expect(directionButton).toBeVisible();
   await page.evaluate(() => {
     location.hash = "";
   });
+  await expect(toolbar).toBeHidden();
   await expect(editButton).toBeHidden();
+  await expect(directionButton).toBeHidden();
 });
 
 test("ノードのラベル編集時だけ送信 UI を表示する", async ({ page }) => {
   await page.setContent(diagramHtml());
+  const toolbar = page.locator(".ark-harness-toolbar");
 
+  await expect(toolbar).toBeHidden();
   await page
     .locator('[data-ark-container="graph"] h2[data-model-id="order"]')
     .fill("Edited Order");
+  await expect(toolbar).toBeVisible();
   await expect(
     page.getByRole("button", { name: "変更を親フレームへ送信する" })
   ).toBeVisible();
   await expect(page.locator(".ark-harness-status")).toBeVisible();
+  await expect(page.locator(".ark-harness-layout-direction")).toBeHidden();
+  await expect(
+    page.getByRole("button", {
+      name: "モデル JSON を直接編集する",
+      includeHidden: true,
+    })
+  ).toBeHidden();
   await expect(page.locator(".ark-harness-status")).toHaveText(
     "親フレーム未接続"
   );
@@ -2323,12 +2351,14 @@ test("送信成功後に送信 UI を再び隠す", async ({ page }) => {
     name: "変更を親フレームへ送信する",
   });
   const status = page.locator(".ark-harness-status");
+  const toolbar = page.locator(".ark-harness-toolbar");
 
   await page
     .locator('[data-ark-container="graph"] h2[data-model-id="order"]')
     .fill("Edited Order");
   await expect(sendButton).toBeVisible();
   await expect(status).toBeVisible();
+  await expect(toolbar).toBeVisible();
   await sendButton.click();
   await page.waitForFunction(() =>
     Boolean(
@@ -2338,6 +2368,14 @@ test("送信成功後に送信 UI を再び隠す", async ({ page }) => {
   );
   await expect(sendButton).toBeHidden();
   await expect(status).toBeHidden();
+  await expect(toolbar).toBeHidden();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        document.body.style.getPropertyValue("--ark-harness-toolbar-height")
+      )
+    )
+    .toBe("0px");
 });
 
 test("レイアウト方向を LR から TB へ切り替えて再配置・保存する", async ({
@@ -2353,6 +2391,7 @@ test("レイアウト方向を LR から TB へ切り替えて再配置・保存
   const initialModel = autoLayoutModel(layout);
   await page.setContent(autoLayoutHtml(layout));
   await connectSubmissionPort(page);
+  await enableDiagramDebug(page);
 
   const toolbar = page.locator(".ark-harness-toolbar");
   const directionButton = page.getByRole("button", {
@@ -2464,6 +2503,7 @@ test("レイアウト方向は ext 欠損を補い、モデル直接編集後も
 }) => {
   await page.setContent(diagramHtml());
   await connectSubmissionPort(page);
+  await enableDiagramDebug(page);
   const directionButton = page.getByRole("button", {
     name: "方向: LR（現在 LR。TB に切り替える）",
   });
@@ -2499,6 +2539,7 @@ test("レイアウト方向は ext 欠損を補い、モデル直接編集後も
     ],
   ] as const) {
     await page.setContent(diagramHtml({ ...model, ext: invalidExt }));
+    await enableDiagramDebug(page);
     await page
       .getByRole("button", {
         name: "方向: LR（現在 LR。TB に切り替える）",
@@ -2520,6 +2561,7 @@ test("レイアウト方向は ext 欠損を補い、モデル直接編集後も
   await page.setContent(
     autoLayoutHtml(tbModel.ext?.layout as Record<string, unknown>)
   );
+  await enableDiagramDebug(page);
   const tbButton = page.getByRole("button", {
     name: "方向: TB（現在 TB。LR に切り替える）",
   });
@@ -3361,6 +3403,7 @@ test("edge cardinality・edge direction control を即時投影し非還流で�
   const initialModel = structuredClone(edgeSemanticsModel);
   const errors = await openEdgeSemanticsDiagram(page, initialModel);
   await connectSubmissionPort(page);
+  await enableDiagramDebug(page);
   const graph = page.locator('[data-ark-container="graph"]');
   const controls = await selectEdge(page, "e_order_owner");
   const main = graph.locator(
@@ -5731,6 +5774,7 @@ test("kind 変更と node・edge・field・list 編集を同じ送信 model に�
 }) => {
   await openDiagram(page);
   await connectSubmissionPort(page);
+  await enableDiagramDebug(page);
 
   const order = page.locator('section[data-model-id="order"]');
   const nodeToolbar = await selectNode(page, "order");

@@ -318,6 +318,7 @@ const RAW_HARNESS_JS = `(function () {
   var statusEl = null;
   var sendBtn = null;
   var layoutDirectionBtn = null;
+  var toolbarEl = null;
   var baselineModelJson;
 
   function isRecordObject(v) {
@@ -2899,6 +2900,14 @@ const RAW_HARNESS_JS = `(function () {
     var dirty = JSON.stringify(state.model) !== baselineModelJson;
     if (sendBtn) sendBtn.style.display = dirty ? "" : "none";
     if (statusEl) statusEl.style.display = dirty ? "" : "none";
+    syncToolbarVisibility(dirty);
+  }
+
+  function syncToolbarVisibility(dirty) {
+    if (!toolbarEl) return;
+    if (dirty === undefined) dirty = JSON.stringify(state.model) !== baselineModelJson;
+    var debug = location.hash.indexOf("ark-debug") !== -1;
+    toolbarEl.style.display = dirty || debug ? "" : "none";
   }
 
   function attachRowControls(li, listEl, ownerNodeId) {
@@ -3234,9 +3243,7 @@ const RAW_HARNESS_JS = `(function () {
   function syncToolbarHeight(bar) {
     var update = function () {
       var height = Math.ceil(bar.getBoundingClientRect().height);
-      if (height > 0) {
-        document.body.style.setProperty("--ark-harness-toolbar-height", height + "px");
-      }
+      document.body.style.setProperty("--ark-harness-toolbar-height", height + "px");
     };
     update();
     window.requestAnimationFrame(update);
@@ -3250,6 +3257,7 @@ const RAW_HARNESS_JS = `(function () {
     var bar = document.createElement("div");
     bar.className = "ark-harness-toolbar";
     markUi(bar);
+    toolbarEl = bar;
 
     if (document.querySelector('[data-ark-container="graph"]')) {
       layoutDirectionBtn = createButton("", "ark-harness-btn ark-harness-btn-secondary ark-harness-layout-direction");
@@ -3293,7 +3301,10 @@ const RAW_HARNESS_JS = `(function () {
     });
 
     function syncDebugChrome() {
-      editModelBtn.style.display = location.hash.indexOf("ark-debug") !== -1 ? "" : "none";
+      var debug = location.hash.indexOf("ark-debug") !== -1;
+      editModelBtn.style.display = debug ? "" : "none";
+      if (layoutDirectionBtn) layoutDirectionBtn.style.display = debug ? "" : "none";
+      syncToolbarVisibility();
     }
     syncDebugChrome();
     window.addEventListener("hashchange", syncDebugChrome);
