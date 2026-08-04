@@ -733,10 +733,20 @@ async function connectSubmissionPort(page: Page) {
   await page.evaluate(() => {
     const browserWindow = window as typeof window & {
       arkHarnessSubmission?: unknown;
+      arkHarnessAutosaves?: unknown[];
     };
     const channel = new MessageChannel();
     channel.port1.onmessage = event => {
-      browserWindow.arkHarnessSubmission = event.data;
+      if (event.data?.type === "ark:diagram-autosave") {
+        browserWindow.arkHarnessAutosaves ??= [];
+        browserWindow.arkHarnessAutosaves.push(event.data);
+        channel.port1.postMessage({
+          type: "ark:diagram-autosave-result",
+          ok: true,
+        });
+      } else {
+        browserWindow.arkHarnessSubmission = event.data;
+      }
     };
     window.postMessage({ type: "ark:test-connect" }, "*", [channel.port2]);
   });
@@ -2542,6 +2552,73 @@ test("送信成功後に送信 UI を再び隠す", async ({ page }) => {
       )
     )
     .toBe("0px");
+});
+
+test("編集を debounce で自動保存し、未通知の送信 UI は残す", async ({
+  page,
+}) => {
+  await page.setContent(diagramHtml());
+  await connectSubmissionPort(page);
+  const sendButton = page.getByRole("button", {
+    name: "変更を親フレームへ送信する",
+  });
+  const status = page.locator(".ark-harness-status");
+
+  const label = page.locator(
+    '[data-ark-container="graph"] h2[data-model-id="order"]'
+  );
+  await label.fill("Edited");
+  await page.waitForTimeout(400);
+  await label.fill("Autosaved Order");
+
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as typeof window & { arkHarnessAutosaves?: unknown[] })
+            .arkHarnessAutosaves?.length ?? 0
+      )
+    )
+    .toBe(1);
+  await expect(status).toHaveText("保存済み");
+  await expect(sendButton).toBeVisible();
+
+  const autosave = await page.evaluate(
+    () =>
+      (window as typeof window & { arkHarnessAutosaves?: unknown[] })
+        .arkHarnessAutosaves?.[0]
+  );
+  expect(autosave).toMatchObject({ type: "ark:diagram-autosave" });
+  expect(
+    (autosave as { model: { nodes: Array<{ id: string; label: string }> } })
+      .model.nodes[0]
+  ).toMatchObject({ id: "order", label: "Autosaved Order" });
+
+  // 通知 baseline へ戻して dirty UI が消えても、保存済み baseline との差は
+  // 独立して autosave する。
+  await label.fill("Order");
+  await expect(sendButton).toBeHidden();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as typeof window & { arkHarnessAutosaves?: unknown[] })
+            .arkHarnessAutosaves?.length ?? 0
+      )
+    )
+    .toBe(2);
+  const revertedAutosave = await page.evaluate(
+    () =>
+      (window as typeof window & { arkHarnessAutosaves?: unknown[] })
+        .arkHarnessAutosaves?.[1]
+  );
+  expect(
+    (
+      revertedAutosave as {
+        model: { nodes: Array<{ id: string; label: string }> };
+      }
+    ).model.nodes[0]
+  ).toMatchObject({ id: "order", label: "Order" });
 });
 
 test("レイアウト方向を LR から TB へ切り替えて再配置・保存する", async ({

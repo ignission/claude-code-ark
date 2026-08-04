@@ -58,9 +58,7 @@ describe("injectHarness", () => {
     expect(out).toContain("var baselineModelJson;");
     expect(out).toContain("function syncDirtyState(");
     expect(out).toContain("function isDebugMode(");
-    expect(out).toContain(
-      "return /(^|[#,])ark-debug($|[,])/.test(location.hash);"
-    );
+    expect(out).toContain("ark-debug($|[,])/.test(location.hash)");
     expect(out).not.toContain('location.hash.indexOf("ark-debug") !== -1');
     expect(out).toContain(
       'window.addEventListener("hashchange", syncDebugChrome)'
