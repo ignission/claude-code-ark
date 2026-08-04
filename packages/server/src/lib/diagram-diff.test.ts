@@ -86,6 +86,63 @@ describe("describeModelDiff", () => {
     ]);
   });
 
+  it("空 label の note 追加では noteText の抜粋を表示名にする", () => {
+    const note = {
+      id: "note-1",
+      label: "",
+      kind: "note",
+      noteText: "合ってる",
+    };
+
+    expect(describeModelDiff(model([]), model([note]))).toEqual([
+      "メモ「合ってる」を追加",
+    ]);
+  });
+
+  it("空 label の note どうしの関連では両端の noteText の抜粋を表示名にする", () => {
+    const question = {
+      id: "note-question",
+      label: "",
+      kind: "note",
+      noteText: "この理解でよい？",
+    };
+    const answer = {
+      id: "note-answer",
+      label: "",
+      kind: "note",
+      noteText: "合ってる",
+    };
+    const before = model([question, answer]);
+    const after = model(
+      [question, answer],
+      [{ id: "e1", from: question.id, to: answer.id }]
+    );
+
+    expect(describeModelDiff(before, after)).toEqual([
+      "メモ「この理解でよい？」から メモ「合ってる」への関連を追加",
+    ]);
+  });
+
+  it("空 label かつ noteText なしのノードは kind と id を表示名にする", () => {
+    const node = { id: "node-x", label: "", kind: "entity" };
+
+    expect(describeModelDiff(model([]), model([node]))).toEqual([
+      "entity ノード (node-x) を追加",
+    ]);
+  });
+
+  it("noteText だけの変更は意味差分に含めない", () => {
+    const before = {
+      id: "note-1",
+      label: "",
+      kind: "note",
+      noteText: "変更前",
+    };
+    const after = { ...before, noteText: "変更後" };
+
+    expect(describeModelDiff(model([before]), model([after]))).toEqual([]);
+  });
+
   it("関連の追加を述べる", () => {
     const user = { id: "user", label: "User" };
     const before = model([order, user]);
@@ -530,6 +587,40 @@ describe("describeModelDiff（label の無害化 / プロンプト注入対策�
     const inserted = line.replace("Order に ", "").replace(" を追加", "");
     expect(inserted).toHaveLength(80);
     expect(inserted).toBe(`${"x".repeat(79)}…`);
+  });
+
+  it("長い noteText は先頭20文字と省略記号を表示名にする", () => {
+    const noteText = "あ".repeat(30);
+    const note = { id: "note-1", label: "", kind: "note", noteText };
+
+    expect(describeModelDiff(model([]), model([note]))).toEqual([
+      `メモ「${"あ".repeat(20)}…」を追加`,
+    ]);
+  });
+
+  it("noteText の改行・制御文字を除去して前後を trim する", () => {
+    const note = {
+      id: "note-1",
+      label: "",
+      kind: "note",
+      noteText: "  一行目\n\u0000二行目\u0007  ",
+    };
+
+    expect(describeModelDiff(model([]), model([note]))).toEqual([
+      "メモ「一行目二行目」を追加",
+    ]);
+  });
+
+  it("node 表示名に使う kind と id の改行・制御文字も除去する", () => {
+    const node = {
+      id: "node\n-x\u0000",
+      label: "",
+      kind: "enti\u0007ty\n",
+    };
+
+    expect(describeModelDiff(model([]), model([node]))).toEqual([
+      "entity ノード (node-x) を追加",
+    ]);
   });
 
   it("通常の label は変わらない", () => {
