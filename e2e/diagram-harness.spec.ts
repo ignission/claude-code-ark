@@ -1457,11 +1457,16 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   await page.setContent(crudDiagramHtml(connectDragModel));
 
   const firstGraph = page.locator('[data-ark-container="graph"]').first();
-  const sourceBefore = structuredClone(
-    connectDragModel.nodes.find(node => node.id === "crud-b")
+  const source = firstGraph.locator(
+    '.ark-harness-graph-node[data-model-id="crud-b"]'
+  );
+  const existingPeer = firstGraph.locator(
+    '.ark-harness-graph-node[data-model-id="crud-a"]'
   );
   const initial = await readCurrentModel(page);
   const graphBox = await requiredBoundingBox(firstGraph);
+  const sourceBoxBefore = await requiredBoundingBox(source);
+  const existingPeerBoxBefore = await requiredBoundingBox(existingPeer);
   const drop = {
     x: graphBox.x + graphBox.width - 20,
     y: graphBox.y + graphBox.height - 20,
@@ -1483,15 +1488,16 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   expect(Number.isInteger((added?.ext as { y?: number })?.y)).toBe(true);
   expect(current.nodes).toHaveLength(initial.nodes.length + 1);
   expect(current.edges).toHaveLength(initial.edges.length + 1);
-  expect(current.nodes.find(node => node.id === "crud-b")).toEqual(
-    sourceBefore
+  for (const id of ["crud-a", "crud-b", "crud-d"]) {
+    const ext = current.nodes.find(node => node.id === id)?.ext as
+      | { x?: unknown; y?: unknown }
+      | undefined;
+    expect(Number.isFinite(ext?.x), `${id}.ext.x`).toBe(true);
+    expect(Number.isFinite(ext?.y), `${id}.ext.y`).toBe(true);
+  }
+  expect(current.nodes.find(node => node.id === "crud-other")?.ext).toBe(
+    undefined
   );
-  expect(
-    current.nodes.filter(node => {
-      const ext = node.ext as { x?: unknown; y?: unknown } | undefined;
-      return Number.isFinite(ext?.x) && Number.isFinite(ext?.y);
-    })
-  ).toEqual([added]);
   if (!added) throw new Error("追加 node がありません");
   const addedEdge = current.edges.find(
     edge => !connectDragModel.edges.some(old => old.id === edge.id)
@@ -1530,6 +1536,16 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   await expect(projection.locator(".ark-harness-node-delete")).toHaveCount(0);
 
   const newBox = await requiredBoundingBox(projection);
+  const sourceBoxAfter = await requiredBoundingBox(source);
+  const existingPeerBoxAfter = await requiredBoundingBox(existingPeer);
+  expect(Math.abs(sourceBoxAfter.x - sourceBoxBefore.x)).toBeLessThanOrEqual(4);
+  expect(Math.abs(sourceBoxAfter.y - sourceBoxBefore.y)).toBeLessThanOrEqual(4);
+  expect(
+    Math.abs(existingPeerBoxAfter.x - existingPeerBoxBefore.x)
+  ).toBeLessThanOrEqual(4);
+  expect(
+    Math.abs(existingPeerBoxAfter.y - existingPeerBoxBefore.y)
+  ).toBeLessThanOrEqual(4);
   expect((added.ext as { x: number }).x).toBe(
     Math.max(0, Math.round(drop.x - graphBox.x - newBox.width / 2))
   );

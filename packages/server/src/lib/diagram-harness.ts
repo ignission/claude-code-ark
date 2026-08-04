@@ -696,6 +696,17 @@ const RAW_HARNESS_JS = `(function () {
     graph.container.classList.add("ark-harness-graph-layout");
   }
 
+  function freezeGraphPositions(graph) {
+    graphModelNodes(graph).forEach(function (entry) {
+      if (graphPosition(entry.node)) return;
+      var pos = graph.positionsById.get(entry.id);
+      if (!pos) return;
+      if (!isRecordObject(entry.node.ext)) entry.node.ext = {};
+      entry.node.ext.x = pos.x;
+      entry.node.ext.y = pos.y;
+    });
+  }
+
   function layoutGraph(graph) {
     var config = readLayoutConfig(state.model);
     var direction = config.direction;
@@ -1442,6 +1453,7 @@ const RAW_HARNESS_JS = `(function () {
           if (newEdgeId) {
             var anchorPosition = drag.handle.getAttribute("data-ark-anchor-position");
             var newNodeIsSource = anchorPosition === "bottom" || anchorPosition === "right";
+            freezeGraphPositions(drag.graph);
             state.model.edges.push({
               id: newEdgeId,
               from: newNodeIsSource ? newNode.id : blankSource.id,
