@@ -2420,6 +2420,37 @@ test("ark-debug の部分文字列を含む hash では下部 debug UI を表示
   await expect(directionButton).toBeHidden();
 });
 
+test("浮くツールバー・下部ツールバー・hover アンカーに軽いトランジションを付ける", async ({
+  page,
+}) => {
+  await openDiagram(page);
+  const context = await selectNode(page, "order");
+  await page
+    .locator('[data-model-id="order"] h2[data-model-id="order"]')
+    .fill("Edited Order");
+  const bottom = page.locator(".ark-harness-toolbar");
+  await expect(bottom).toBeVisible();
+
+  for (const toolbar of [context, bottom]) {
+    expect(
+      await toolbar.evaluate(element => ({
+        name: getComputedStyle(element).animationName,
+        duration: getComputedStyle(element).animationDuration,
+      }))
+    ).toEqual({ name: "ark-harness-in", duration: "0.12s" });
+  }
+  const connectorsTransition = await page
+    .locator(".ark-harness-node-connectors")
+    .first()
+    .evaluate(element => getComputedStyle(element).transitionProperty);
+  const anchorTransition = await page
+    .locator(".ark-harness-node-anchor")
+    .first()
+    .evaluate(element => getComputedStyle(element).transitionProperty);
+  expect(connectorsTransition).toContain("opacity");
+  expect(anchorTransition).toContain("transform");
+});
+
 test("ノードのラベル編集時だけ送信 UI を表示する", async ({ page }) => {
   await page.setContent(diagramHtml());
   const toolbar = page.locator(".ark-harness-toolbar");

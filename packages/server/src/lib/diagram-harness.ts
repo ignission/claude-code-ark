@@ -184,6 +184,7 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   transform: translate(-50%, -50%); border: 2px solid #0ea5b7; border-radius: 999px;
   background: #fff; color: #0e7490; font: 9px/8px sans-serif;
   cursor: crosshair; touch-action: none; pointer-events: none;
+  transition: transform .12s ease;
 }
 .ark-harness-node-connectors.ark-harness-node-connectors-visible {
   opacity: 1;
@@ -191,6 +192,7 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
 .ark-harness-node-connectors.ark-harness-node-connectors-visible > .ark-harness-node-anchor {
   pointer-events: auto;
 }
+.ark-harness-node-anchor:hover { transform: translate(-50%, -50%) scale(1.15); }
 .ark-harness-edge-dragging .ark-harness-node-connectors {
   opacity: 0; pointer-events: none;
 }
@@ -238,6 +240,8 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   background: rgba(255,255,255,.98); color: #334155;
   box-shadow: 0 4px 14px rgba(15,23,42,.22); font: 11px/1.2 sans-serif;
 }
+.ark-harness-toolbar, .ark-harness-context-toolbar { animation: ark-harness-in .12s ease-out; }
+@keyframes ark-harness-in { from { opacity: 0; transform: translateY(4px); } }
 .ark-harness-context-toolbar[hidden] { display: none; }
 .ark-harness-context-toolbar button {
   appearance: none; border: 1px solid rgba(100,116,139,.55); border-radius: 4px;
