@@ -1349,24 +1349,33 @@ test("entity 最終行の Enter だけが行を追加してフォーカスし no
   page,
 }) => {
   await openDiagram(page);
+  const userLabel = page.locator(
+    '.ark-harness-graph-node[data-model-id="user"] > h2[data-model-id="user"]'
+  );
   const userRows = page.locator(
     '.ark-harness-graph-node[data-model-id="user"] li[data-model-id]'
   );
 
-  await userRows.last().locator(".ark-harness-text").press("Enter");
+  await userLabel.press("Enter");
   await expect(userRows).toHaveCount(2);
+  await expect(userRows.last().locator(".ark-harness-text")).toBeFocused();
+  expect(await userLabel.textContent()).not.toContain("\n");
+  await expect(userLabel.locator(":scope > div")).toHaveCount(0);
+
+  await userRows.last().locator(".ark-harness-text").press("Enter");
+  await expect(userRows).toHaveCount(3);
   await expect(userRows.last().locator(".ark-harness-text")).toBeFocused();
   expect(
     (await readCurrentModel(page)).nodes.find(node => node.id === "user")
       ?.fields
-  ).toHaveLength(2);
+  ).toHaveLength(3);
 
   await userRows.first().locator(".ark-harness-text").press("Enter");
-  await expect(userRows).toHaveCount(2);
+  await expect(userRows).toHaveCount(3);
   expect(
     (await readCurrentModel(page)).nodes.find(node => node.id === "user")
       ?.fields
-  ).toHaveLength(2);
+  ).toHaveLength(3);
 
   const toolbar = await selectNode(page, "user");
   await toolbar.locator("select.ark-harness-kind-select").selectOption("note");
@@ -4735,20 +4744,23 @@ test("model node だけに entity がある図でも note picker・往復・drag
   await expect(label).toHaveAttribute("data-model-id", added.id);
   await expect(label).toHaveText("新しいノード");
 
-  const addedToolbar = await selectNode(page, added.id);
   const list = projection.locator(":scope > ul");
   await expect(list).toHaveCount(1);
   expect(await list.evaluate(element => element.tagName)).toBe("UL");
   await expect(list).toHaveClass(/(^|\s)entity-fields(\s|$)/);
   await expect(list.locator(":scope > li")).toHaveCount(0);
+  await label.fill("追加ノード");
+  await label.press("Enter");
+  await expect(list.locator(":scope > li")).toHaveCount(1);
+  await expect(list.locator(":scope > li .ark-harness-text")).toBeFocused();
+  const addedToolbar = await selectNode(page, added.id);
   const addFieldButton = addedToolbar.getByRole("button", {
     name: "行を追加",
   });
   await expect(addFieldButton).toBeEnabled();
-  await addFieldButton.click();
-  await expect(list.locator(":scope > li")).toHaveCount(1);
   const afterAdd = await readCurrentModel(page);
   const addedAfterField = afterAdd.nodes.find(node => node.id === added.id);
+  expect(addedAfterField?.label).toBe("追加ノード");
   expect(addedAfterField?.fields).toHaveLength(1);
   expect(addedAfterField?.fields?.[0]).toMatchObject({
     label: "新しい項目",
@@ -4773,7 +4785,7 @@ test("model node だけに entity がある図でも note picker・往復・drag
   );
   expect(noteAfterSwitch).toMatchObject({
     kind: "note",
-    label: "新しいノード",
+    label: "追加ノード",
     fields: [addedField],
     noteText: "",
   });
@@ -4789,7 +4801,7 @@ test("model node だけに entity がある図でも note picker・往復・drag
   );
   await expect(entityLabelAfterSwitch).toHaveCount(1);
   await expect(entityLabelAfterSwitch).toHaveClass(/(^|\s)entity-title(\s|$)/);
-  await expect(entityLabelAfterSwitch).toHaveText("新しいノード");
+  await expect(entityLabelAfterSwitch).toHaveText("追加ノード");
   await expect(entityLabelAfterSwitch).toHaveAttribute(
     "contenteditable",
     "true"
@@ -4798,7 +4810,7 @@ test("model node だけに entity がある図でも note picker・往復・drag
     (await readCurrentModel(page)).nodes.find(node => node.id === added.id)
   ).toMatchObject({
     kind: "entity",
-    label: "新しいノード",
+    label: "追加ノード",
     fields: [addedField],
     noteText: "自由記述\n複数行",
   });
@@ -4821,7 +4833,7 @@ test("model node だけに entity がある図でも note picker・往復・drag
     (await readCurrentModel(page)).nodes.find(node => node.id === added.id)
   ).toMatchObject({
     kind: "note",
-    label: "新しいノード",
+    label: "追加ノード",
     fields: [addedField],
     noteText: "自由記述\n複数行",
   });

@@ -139,7 +139,9 @@ describe("injectHarness", () => {
     expect(out).toContain("function removeEdge(");
     expect(out).toContain("group.nodes = group.nodes.filter");
     expect(out).toContain("var listBindingsByNode = new Map();");
+    expect(out).toContain("function listBinding(");
     expect(out).toContain("function selectedListBinding(");
+    expect(out).toContain('event.key !== "Enter" || event.isComposing');
     expect(out).not.toContain("ark-harness-add-row");
   });
 

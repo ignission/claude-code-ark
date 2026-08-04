@@ -1956,16 +1956,23 @@ const RAW_HARNESS_JS = `(function () {
     select.title = label;
   }
 
-  function selectedListBinding() {
-    if (selection.kind !== "node" || !selectionGraph) return null;
-    var root = selectionGraph.nodesById.get(selection.id);
-    var bindings = listBindingsByNode.get(selection.id) || [];
+  function listBinding(nodeId, root) {
+    var bindings = listBindingsByNode.get(nodeId) || [];
     for (var i = 0; i < bindings.length; i++) {
-      if (bindings[i].listEl.isConnected && root.contains(bindings[i].listEl)) {
+      if (bindings[i].listEl.isConnected && root &&
+          root.contains(bindings[i].listEl)) {
         return bindings[i];
       }
     }
     return null;
+  }
+
+  function selectedListBinding() {
+    if (selection.kind !== "node" || !selectionGraph) return null;
+    return listBinding(
+      selection.id,
+      selectionGraph.nodesById.get(selection.id)
+    );
   }
 
   function renderNodeToolbar(node) {
@@ -3001,14 +3008,18 @@ const RAW_HARNESS_JS = `(function () {
       syncDirtyState();
     });
 
+    editableTarget.addEventListener("keydown", function (event) {
+      if (event.key !== "Enter" || event.isComposing) return;
+      event.preventDefault();
+      var binding = rowInfo || listBinding(
+        id,
+        editableTarget.closest(".ark-harness-graph-node")
+      );
+      if (!binding || rowInfo && el !== binding.listEl.lastElementChild) return;
+      var next = addField(binding.listEl, binding.ownerNodeId);
+      if (next) next.focus();
+    });
     if (rowInfo) {
-      editableTarget.addEventListener("keydown", function (event) {
-        if (event.key !== "Enter") return;
-        event.preventDefault();
-        if (el !== rowInfo.listEl.lastElementChild) return;
-        var next = addField(rowInfo.listEl, rowInfo.ownerNodeId);
-        if (next) next.focus();
-      });
       attachRowControls(el, rowInfo.listEl, rowInfo.ownerNodeId);
     }
     return editableTarget;
