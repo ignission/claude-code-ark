@@ -1261,10 +1261,9 @@ const RAW_HARNESS_JS = `(function () {
   }
 
   function scheduleGraphRender(graph) {
-    syncDirtyState();
     if (graph.scheduled) return;
     graph.scheduled = true;
-    window.requestAnimationFrame(function () { renderGraph(graph); });
+    window.requestAnimationFrame(function () { renderGraph(graph); syncDirtyState(); });
   }
 
   function positionEdgeHandle(handle, endpoint) {
