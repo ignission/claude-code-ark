@@ -12,6 +12,7 @@ import type {
   DiagramListItem,
   ServerToClientEvents,
 } from "@ark/shared";
+import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 import {
@@ -63,6 +64,96 @@ interface DiagramAutosaveRequest {
 interface DiagramAutosaveResponse {
   ok: boolean;
   error?: string;
+}
+
+export const DIAGRAM_ZOOM_MIN = 0.25;
+export const DIAGRAM_ZOOM_MAX = 2;
+export const DIAGRAM_ZOOM_STEP = 1.25;
+export const DIAGRAM_ZOOM_DEFAULT = 1;
+
+export function stepDiagramZoom(zoom: number, direction: "in" | "out"): number {
+  const next =
+    direction === "in" ? zoom * DIAGRAM_ZOOM_STEP : zoom / DIAGRAM_ZOOM_STEP;
+  return Math.min(DIAGRAM_ZOOM_MAX, Math.max(DIAGRAM_ZOOM_MIN, next));
+}
+
+export function getDiagramZoomPercent(zoom: number): number {
+  return Math.round(zoom * 100);
+}
+
+export function getDiagramZoomStyle(zoom: number): CSSProperties | undefined {
+  if (zoom === DIAGRAM_ZOOM_DEFAULT) return undefined;
+  return {
+    width: `calc(100% / ${zoom})`,
+    height: `calc(100% / ${zoom})`,
+    transform: `scale(${zoom})`,
+    transformOrigin: "0 0",
+  };
+}
+
+export function resetDiagramZoom(): number {
+  return DIAGRAM_ZOOM_DEFAULT;
+}
+
+interface DiagramViewportProps {
+  relPath: string;
+  html: string;
+  zoom: number;
+  onZoomOut: () => void;
+  onZoomReset: () => void;
+  onZoomIn: () => void;
+  onIframeLoad: (event: React.SyntheticEvent<HTMLIFrameElement>) => void;
+}
+
+export function DiagramViewport({
+  relPath,
+  html,
+  zoom,
+  onZoomOut,
+  onZoomReset,
+  onZoomIn,
+  onIframeLoad,
+}: DiagramViewportProps) {
+  return (
+    <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div className="absolute top-2 right-2 z-10 flex items-center rounded-md border border-border bg-background/90 p-0.5 shadow-sm">
+        <button
+          type="button"
+          title="ズームアウト"
+          disabled={zoom <= DIAGRAM_ZOOM_MIN}
+          className="inline-flex size-7 items-center justify-center rounded text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          onClick={onZoomOut}
+        >
+          −
+        </button>
+        <button
+          type="button"
+          title="ズームをリセット"
+          className="h-7 min-w-12 rounded px-1 text-xs tabular-nums text-foreground transition-colors hover:bg-accent"
+          onClick={onZoomReset}
+        >
+          {getDiagramZoomPercent(zoom)}%
+        </button>
+        <button
+          type="button"
+          title="ズームイン"
+          disabled={zoom >= DIAGRAM_ZOOM_MAX}
+          className="inline-flex size-7 items-center justify-center rounded text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          onClick={onZoomIn}
+        >
+          ＋
+        </button>
+      </div>
+      <iframe
+        title={relPath}
+        srcDoc={html}
+        sandbox="allow-scripts"
+        className="block h-full w-full border-0 bg-white"
+        style={getDiagramZoomStyle(zoom)}
+        onLoad={onIframeLoad}
+      />
+    </div>
+  );
 }
 
 export function emitDiagramAutosave(
@@ -130,6 +221,7 @@ export function DiagramPane({
   const [listRefreshKey, setListRefreshKey] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(DIAGRAM_ZOOM_DEFAULT);
   const activeListRequestRef = useRef<object | null>(null);
   const deleteInFlightRef = useRef(false);
   // 進行中の fetch を追跡し、古いタブの結果が新しいタブを上書きしないようにする
@@ -188,6 +280,7 @@ export function DiagramPane({
   useEffect(() => {
     setHtml(null);
     setError(null);
+    setZoom(resetDiagramZoom());
     portGrantedForRef.current = null;
     if (!relPath) {
       abortControllerRef.current?.abort();
@@ -499,12 +592,18 @@ export function DiagramPane({
                 </button>
               </div>
             )}
-            <iframe
-              title={relPath}
-              srcDoc={html}
-              sandbox="allow-scripts"
-              className="min-h-0 w-full flex-1 border-0 bg-white"
-              onLoad={handleIframeLoad}
+            <DiagramViewport
+              relPath={relPath}
+              html={html}
+              zoom={zoom}
+              onZoomOut={() =>
+                setZoom(current => stepDiagramZoom(current, "out"))
+              }
+              onZoomReset={() => setZoom(resetDiagramZoom())}
+              onZoomIn={() =>
+                setZoom(current => stepDiagramZoom(current, "in"))
+              }
+              onIframeLoad={handleIframeLoad}
             />
           </div>
         )}
