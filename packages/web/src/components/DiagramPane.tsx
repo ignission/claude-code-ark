@@ -46,11 +46,54 @@ interface DiagramSubmitMessage {
   html: string;
 }
 
+interface DiagramAutosaveMessage {
+  type: "ark:diagram-autosave";
+  model: unknown;
+  html: string;
+}
+
+interface DiagramAutosaveRequest {
+  sessionId: string;
+  worktreePath: string;
+  relPath: string;
+  model: unknown;
+  html: string;
+}
+
+interface DiagramAutosaveResponse {
+  ok: boolean;
+  error?: string;
+}
+
+export function emitDiagramAutosave(
+  socket: TypedSocket,
+  request: DiagramAutosaveRequest,
+  reply: (response: DiagramAutosaveResponse) => void
+): void {
+  socket.timeout(10_000).emit("diagram:autosave", request, (err, response) => {
+    if (err) {
+      reply({ ok: false, error: "保存がタイムアウトしました" });
+      return;
+    }
+    reply(response);
+  });
+}
+
 function isDiagramSubmitMessage(data: unknown): data is DiagramSubmitMessage {
   return (
     typeof data === "object" &&
     data !== null &&
     (data as { type?: unknown }).type === "ark:diagram-submit"
+  );
+}
+
+function isDiagramAutosaveMessage(
+  data: unknown
+): data is DiagramAutosaveMessage {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as { type?: unknown }).type === "ark:diagram-autosave"
   );
 }
 
@@ -80,6 +123,7 @@ export function DiagramPane({
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [diagrams, setDiagrams] = useState<DiagramListItem[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
@@ -276,15 +320,53 @@ export function DiagramPane({
         setSubmitError("サーバーに未接続のため送信できません");
         return;
       }
-      socket.emit(
-        "diagram:submit",
+      socket
+        .timeout(10_000)
+        .emit(
+          "diagram:submit",
+          { sessionId, worktreePath, relPath, model, html: submittedHtml },
+          (err, response) => {
+            if (err) {
+              setSubmitError("送信がタイムアウトしました");
+              return;
+            }
+            if (!response.ok) {
+              setSubmitError(response.error ?? "送信に失敗しました");
+              return;
+            }
+            setSubmitError(null);
+          }
+        );
+    },
+    [socket, isConnected, sessionId, worktreePath, relPath]
+  );
+
+  // 自動保存はファイルだけを更新し、会話への還流は行わない。ACK は port で
+  // ハーネスへ返し、「保存中… / 保存済み」の表示を確定させる。
+  const handleAutosave = useCallback(
+    (
+      model: unknown,
+      submittedHtml: string,
+      reply: (response: { ok: boolean; error?: string }) => void
+    ) => {
+      if (!relPath) {
+        reply({ ok: false, error: "図が選択されていません" });
+        return;
+      }
+      if (!socket || !isConnected) {
+        const error = "サーバーに未接続のため保存できません";
+        setSaveError(error);
+        reply({ ok: false, error });
+        return;
+      }
+      emitDiagramAutosave(
+        socket,
         { sessionId, worktreePath, relPath, model, html: submittedHtml },
         response => {
-          if (!response.ok) {
-            setSubmitError(response.error ?? "送信に失敗しました");
-            return;
-          }
-          setSubmitError(null);
+          setSaveError(
+            response.ok ? null : (response.error ?? "自動保存に失敗しました")
+          );
+          reply(response);
         }
       );
     },
@@ -325,8 +407,18 @@ export function DiagramPane({
       const channel = new MessageChannel();
       portRef.current = channel.port1;
       channel.port1.onmessage = (event: MessageEvent) => {
-        if (!isDiagramSubmitMessage(event.data)) return;
-        handleSubmit(event.data.model, event.data.html);
+        if (isDiagramSubmitMessage(event.data)) {
+          handleSubmit(event.data.model, event.data.html);
+          return;
+        }
+        if (isDiagramAutosaveMessage(event.data)) {
+          handleAutosave(event.data.model, event.data.html, response => {
+            channel.port1.postMessage({
+              type: "ark:diagram-autosave-result",
+              ...response,
+            });
+          });
+        }
       };
 
       // targetOrigin に "*" を使う理由:
@@ -342,7 +434,7 @@ export function DiagramPane({
         channel.port2,
       ]);
     },
-    [handleSubmit, html]
+    [handleAutosave, handleSubmit, html]
   );
 
   return (
@@ -383,6 +475,18 @@ export function DiagramPane({
           </div>
         ) : (
           <div className="flex h-full flex-col">
+            {saveError && (
+              <div className="flex shrink-0 items-start justify-between gap-2 border-b border-destructive/20 bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
+                <span className="flex-1">{saveError}</span>
+                <button
+                  type="button"
+                  className="shrink-0 text-xs underline"
+                  onClick={() => setSaveError(null)}
+                >
+                  閉じる
+                </button>
+              </div>
+            )}
             {submitError && (
               <div className="flex shrink-0 items-start justify-between gap-2 border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 <span className="flex-1">{submitError}</span>

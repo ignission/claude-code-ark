@@ -37,7 +37,7 @@ export const DIAGRAM_HARNESS_MARKER = "ark-diagram-harness";
 
 /**
  * 注入サイズを抑えるため、既知の trusted source から文字列外の空白だけを除く。
- * 対象にする kernel / adapter 区間には comment と正規表現 literal を置かない。
+ * 対象区間には comment と、空白を含む正規表現 literal を置かない。
  */
 function compactTrustedJavaScript(source: string): string {
   let result = "";
@@ -324,6 +324,7 @@ const RAW_HARNESS_JS = `(function () {
   var layoutDirectionBtn = null;
   var toolbarEl = null;
   var baselineModelJson;
+  var savedJson, savingJson, autosaveTimer, submitPending;
 
   function isRecordObject(v) {
     return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -2941,10 +2942,24 @@ const RAW_HARNESS_JS = `(function () {
   }
 
   function syncDirtyState() {
-    var dirty = JSON.stringify(state.model) !== baselineModelJson;
+    var modelJson = JSON.stringify(state.model);
+    var dirty = modelJson !== baselineModelJson;
     if (sendBtn) sendBtn.style.display = dirty ? "" : "none";
     if (statusEl) statusEl.style.display = dirty ? "" : "none";
     syncToolbarVisibility(dirty);
+    clearTimeout(autosaveTimer);
+    if (modelJson !== savedJson && !savingJson && submitPort) {
+      autosaveTimer = setTimeout(function () {
+        try {
+          savingJson = JSON.stringify(state.model);
+          updateStatus(true, "保存中…");
+          submitPort.postMessage({ type: "ark:diagram-autosave", model: state.model, html: buildSubmissionHtml() });
+        } catch {
+          savingJson = null;
+          updateStatus(true, "保存失敗");
+        }
+      }, 800);
+    }
   }
 
   function syncToolbarVisibility(dirty) {
@@ -3225,10 +3240,16 @@ const RAW_HARNESS_JS = `(function () {
       updateStatus(false, "親フレーム未接続のため送信できません");
       return;
     }
+    if (savingJson) {
+      submitPending = true;
+      return;
+    }
     try {
+      clearTimeout(autosaveTimer);
       var html = buildSubmissionHtml();
       submitPort.postMessage({ type: "ark:diagram-submit", model: state.model, html: html });
       baselineModelJson = JSON.stringify(state.model);
+      savedJson = baselineModelJson;
       updateStatus(true, "送信しました");
       syncDirtyState();
     } catch (e) {
@@ -3376,6 +3397,7 @@ const RAW_HARNESS_JS = `(function () {
       if (!model) return;
       state.model = model;
       baselineModelJson = JSON.stringify(state.model);
+      savedJson = baselineModelJson;
       reservedModelIds = collectModelIds(model);
       syncNodeKinds();
       kindCandidates = collectKindCandidates();
@@ -3398,7 +3420,20 @@ const RAW_HARNESS_JS = `(function () {
     if (submitPort) return;
     if (event.ports && event.ports.length > 0) {
       submitPort = event.ports[0];
+      submitPort.onmessage = function (e) {
+        if (e.data && e.data.type === "ark:diagram-autosave-result") {
+          if (e.data.ok) savedJson = savingJson;
+          savingJson = null;
+          if (e.data.ok) updateStatus(true, "保存済み");
+          else updateStatus(false, "保存失敗");
+          if (submitPending) {
+            submitPending = false;
+            handleSubmit();
+          } else syncDirtyState();
+        }
+      };
       updateStatus(true);
+      syncDirtyState();
     }
   });
 })();`;
@@ -3410,12 +3445,63 @@ const groupAdapterEnd = RAW_HARNESS_JS.indexOf(
   GROUP_ADAPTER_END,
   groupAdapterStart
 );
-const HARNESS_JS =
+const GROUP_COMPACTED_HARNESS_JS =
   RAW_HARNESS_JS.slice(0, groupAdapterStart) +
   compactTrustedJavaScript(
     RAW_HARNESS_JS.slice(groupAdapterStart, groupAdapterEnd)
   ) +
   RAW_HARNESS_JS.slice(groupAdapterEnd);
+
+function requireIndex(value: string, marker: string): number {
+  const index = value.indexOf(marker);
+  if (index === -1) {
+    throw new Error(`ハーネス圧縮マーカーが見つかりません: ${marker}`);
+  }
+  return index;
+}
+
+const STATUS_STATE_START = "  function updateStatus(";
+const STATUS_STATE_END = "  function attachRowControls(";
+const statusStateStart = requireIndex(
+  GROUP_COMPACTED_HARNESS_JS,
+  STATUS_STATE_START
+);
+const statusStateEnd = requireIndex(
+  GROUP_COMPACTED_HARNESS_JS,
+  STATUS_STATE_END
+);
+const STATUS_COMPACTED_HARNESS_JS =
+  GROUP_COMPACTED_HARNESS_JS.slice(0, statusStateStart) +
+  compactTrustedJavaScript(
+    GROUP_COMPACTED_HARNESS_JS.slice(statusStateStart, statusStateEnd)
+  ) +
+  GROUP_COMPACTED_HARNESS_JS.slice(statusStateEnd);
+const SUBMIT_START = "  function handleSubmit(";
+const SUBMIT_END = "  function buildModelPanel(";
+const submitStart = requireIndex(STATUS_COMPACTED_HARNESS_JS, SUBMIT_START);
+const submitEnd = requireIndex(STATUS_COMPACTED_HARNESS_JS, SUBMIT_END);
+const SUBMIT_COMPACTED_HARNESS_JS =
+  STATUS_COMPACTED_HARNESS_JS.slice(0, submitStart) +
+  compactTrustedJavaScript(
+    STATUS_COMPACTED_HARNESS_JS.slice(submitStart, submitEnd)
+  ) +
+  STATUS_COMPACTED_HARNESS_JS.slice(submitEnd);
+const PORT_HANDLER_START = "    if (submitPort) return;";
+const PORT_HANDLER_END = "  });\n})();";
+const portHandlerStart = requireIndex(
+  SUBMIT_COMPACTED_HARNESS_JS,
+  PORT_HANDLER_START
+);
+const portHandlerEnd = requireIndex(
+  SUBMIT_COMPACTED_HARNESS_JS,
+  PORT_HANDLER_END
+);
+const HARNESS_JS =
+  SUBMIT_COMPACTED_HARNESS_JS.slice(0, portHandlerStart) +
+  compactTrustedJavaScript(
+    SUBMIT_COMPACTED_HARNESS_JS.slice(portHandlerStart, portHandlerEnd)
+  ) +
+  SUBMIT_COMPACTED_HARNESS_JS.slice(portHandlerEnd);
 
 export const DIAGRAM_HARNESS_SCRIPT = `${HARNESS_STYLE}
 <script id="${DIAGRAM_HARNESS_MARKER}" data-ark-harness-ui="1">

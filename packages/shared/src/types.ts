@@ -693,6 +693,18 @@ export interface ClientToServerEvents {
     relPath: string;
   }) => void;
 
+  /** 図の編集結果を保存する。会話への還流は行わない。 */
+  "diagram:autosave": (
+    data: {
+      sessionId: string;
+      worktreePath: string;
+      relPath: string;
+      model: unknown;
+      html: string;
+    },
+    callback: (response: { ok: boolean; error?: string }) => void
+  ) => void;
+
   /**
    * 図の編集結果を保存し、意味差分を会話へ還流する。
    * model は構造化モデル、html は投影（ハーネスと meta CSP を除いたもの）。
