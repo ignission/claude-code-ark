@@ -2024,6 +2024,8 @@ const RAW_HARNESS_JS = `(function () {
       "ark-harness-edge-reverse",
       name + " \\u306E\\u5411\\u304D\\u3092\\u53CD\\u8EE2"
     );
+    var reversible = edgeDirection(edge);
+    reverse.disabled = reversible !== "forward" && reversible !== "reverse";
     reverse.addEventListener("click", function () {
       if (selection.kind !== "edge" || selection.id !== edge.id) return;
       var current = getEdge(state.model, edge.id);
@@ -2949,13 +2951,16 @@ const RAW_HARNESS_JS = `(function () {
   }
 
   function wireNote(el, node) {
+    var ownerId = node.id;
     if (el.__arkHarnessNoteWired) return;
     el.__arkHarnessNoteWired = true;
     el.addEventListener("input", function () {
       var text = typeof el.innerText === "string"
         ? el.innerText
         : (el.textContent || "");
-      node.noteText = text.replace(/\\r\\n?/g, "\\n");
+      var current = getNode(state.model, ownerId);
+      if (!current) return;
+      current.noteText = text.replace(/\\r\\n?/g, "\\n");
     });
   }
 
@@ -3192,6 +3197,7 @@ const RAW_HARNESS_JS = `(function () {
         syncNodeKinds();
         syncLayoutDirectionButton();
         reconcileSelection();
+        initNoteProjections();
         graphs.forEach(function (graph) { scheduleGraphRender(graph); });
         error.style.display = "none";
         panel.style.display = "none";

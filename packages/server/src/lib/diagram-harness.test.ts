@@ -484,7 +484,9 @@ describe("injectHarness", () => {
       'note.textContent = typeof node.noteText === "string" ? node.noteText : ""'
     );
     expect(out).toContain("function wireNote(el, node)");
-    expect(out).toContain('node.noteText = text.replace(/\\r\\n?/g, "\\n")');
+    expect(out).toContain("var ownerId = node.id");
+    expect(out).toContain("var current = getNode(state.model, ownerId)");
+    expect(out).toContain('current.noteText = text.replace(/\\r\\n?/g, "\\n")');
     expect(out).toContain("function projectNoteContent(root, node)");
     expect(out).toContain(
       "function projectStructuredContent(root, node, template)"

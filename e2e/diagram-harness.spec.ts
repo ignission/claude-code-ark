@@ -1382,6 +1382,25 @@ test("selection toolbar edge action: 向き反転で direction だけを切替�
   await expect(selectedEdgeAnchor(page, "e_order_owner")).toHaveCount(1);
 });
 
+test("selection toolbar edge action: both は向き反転を無効化し forward は有効にする", async ({
+  page,
+}) => {
+  await openEdgeSemanticsDiagram(page);
+  const toolbar = await selectEdge(page, "e_order_owner");
+  const reverse = toolbar.getByRole("button", {
+    name: "owned by の向きを反転",
+  });
+  const direction = toolbar.locator(
+    'select[data-ark-edge-control="direction"]'
+  );
+
+  await expect(direction).toHaveValue("forward");
+  await expect(reverse).toBeEnabled();
+  await direction.selectOption("both");
+  await expect(direction).toHaveValue("both");
+  await expect(reverse).toBeDisabled();
+});
+
 test("selection toolbar edge action: rerender 後も選択を復元して対象 edge だけ削除する", async ({
   page,
 }) => {
@@ -4346,6 +4365,52 @@ test("authored entity と note を往復して label・fields・noteText を独�
   expect(submission.html).toContain("設計メモ\n2行目");
   expect(submission.html).not.toContain("contenteditable");
   expect(submission.html).not.toContain("data-placeholder");
+});
+
+test("モデル直接編集後の note 入力を現行モデルへ反映して送信する", async ({
+  page,
+}) => {
+  await page.setContent(modelKindCandidateHtml());
+  await connectSubmissionPort(page);
+
+  const source = page.locator(
+    '.ark-harness-graph-node[data-model-id="model-kind-source"]'
+  );
+  const toolbar = await selectNode(page, "model-kind-source");
+  await toolbar.locator("select.ark-harness-kind-select").selectOption("note");
+  const note = source.locator(":scope > [data-ark-harness-note]");
+  await note.fill("適用前のメモ");
+
+  await page
+    .getByRole("button", { name: "モデル JSON を直接編集する" })
+    .click();
+  await page.getByRole("button", { name: "反映", exact: true }).click();
+
+  const currentNote = source.locator(":scope > [data-ark-harness-note]");
+  await expect(currentNote).toHaveText("適用前のメモ");
+  await currentNote.fill("適用後のメモ\n2行目");
+  await page
+    .getByRole("button", { name: "変更を親フレームへ送信する" })
+    .click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  const submission = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          arkHarnessSubmission?: { model: DiagramModel };
+        }
+      ).arkHarnessSubmission
+  );
+
+  expect(
+    submission?.model.nodes.find(node => node.id === "model-kind-source")
+      ?.noteText
+  ).toBe("適用後のメモ\n2行目");
 });
 
 test("model node だけに entity がある図でも note picker・往復・drag 作成を利用できる", async ({
