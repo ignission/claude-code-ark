@@ -1404,6 +1404,50 @@ test("selection toolbar edge action: 向き反転で direction だけを切替�
   await expect(selectedEdgeAnchor(page, "e_order_owner")).toHaveCount(1);
 });
 
+test("selection toolbar edge label: 入力・空欄・モデル再適用後を current model と SVG へ同期する", async ({
+  page,
+}) => {
+  await openEdgeSemanticsDiagram(page);
+  const toolbar = await selectEdge(page, "e_order_owner");
+  const input = toolbar.locator("input.ark-harness-edge-label-input");
+  const label = page.locator(
+    'text.ark-harness-edge-label[data-ark-edge-id="e_order_owner"]'
+  );
+
+  await expect(input).toHaveValue("owned by");
+  await input.fill("owns");
+  await expect(label).toHaveText("owns");
+  expect(
+    (await readCurrentModel(page)).edges.find(
+      edge => edge.id === "e_order_owner"
+    )?.label
+  ).toBe("owns");
+
+  await input.fill("");
+  await expect(label).toHaveCount(0);
+  expect(
+    (await readCurrentModel(page)).edges.find(
+      edge => edge.id === "e_order_owner"
+    )
+  ).not.toHaveProperty("label");
+
+  const applied = structuredClone(edgeSemanticsModel);
+  const appliedEdge = applied.edges.find(edge => edge.id === "e_order_owner");
+  if (!appliedEdge) throw new Error("edge がありません");
+  appliedEdge.label = "applied label";
+  await openModelPanel(page);
+  await page.locator(".ark-harness-textarea").fill(JSON.stringify(applied));
+  await page.getByRole("button", { name: "反映", exact: true }).click();
+  await expect(input).toHaveValue("applied label");
+  await input.fill("current label");
+  await expect(label).toHaveText("current label");
+  expect(
+    (await readCurrentModel(page)).edges.find(
+      edge => edge.id === "e_order_owner"
+    )?.label
+  ).toBe("current label");
+});
+
 test("selection toolbar edge action: both は向き反転を無効化し forward は有効にする", async ({
   page,
 }) => {

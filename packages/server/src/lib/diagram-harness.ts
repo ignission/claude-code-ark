@@ -2016,6 +2016,30 @@ const RAW_HARNESS_JS = `(function () {
 
   function renderEdgeToolbar(edge) {
     var graph = selectionGraph;
+    var input = document.createElement("input");
+    input.type = "text";
+    input.className = "ark-harness-edge-control ark-harness-edge-label-input";
+    input.value = typeof edge.label === "string" ? edge.label : "";
+    input.placeholder = "\u30E9\u30D9\u30EB";
+    markUi(input);
+    function updateLabel(event) {
+      event.stopPropagation();
+      var current = getEdge(state.model, edge.id);
+      if (!current) return;
+      if (input.value) current.label = input.value;
+      else delete current.label;
+      graphs.forEach(function (entry) { scheduleGraphRender(entry); });
+    }
+    input.addEventListener("input", updateLabel);
+    input.addEventListener("change", updateLabel);
+    ["pointerdown", "click"].forEach(function (type) {
+      input.addEventListener(type, function (event) { event.stopPropagation(); });
+    });
+    input.addEventListener("keydown", function (event) {
+      event.stopPropagation();
+      if (event.key === "Enter") input.blur();
+    });
+    contextToolbar.appendChild(input);
     ["from-card", "to-card", "direction"].forEach(function (role) {
       var select = createEdgeSelect(graph, edge.id, role);
       syncEdgeSelect(select, role, edge);
