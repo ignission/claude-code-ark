@@ -1688,6 +1688,46 @@ const RAW_HARNESS_JS = `(function () {
     }
   }
 
+  function startGraphDrag(graph, el, handle, event, start) {
+    if (graphDrag || edgeDrag) return false;
+    var id = el.getAttribute("data-model-id");
+    if (!id) return false;
+    var currentNode = getNode(state.model, id);
+    var position = graphPosition(currentNode) || graph.positionsById.get(id);
+    if (!position) return false;
+    event.preventDefault();
+    handle.setPointerCapture(event.pointerId);
+    el.classList.add("ark-harness-graph-dragging");
+    graphDrag = {
+      pointerId: event.pointerId,
+      handle: handle,
+      graph: graph,
+      el: el,
+      node: currentNode,
+      start: {
+        clientX: start ? start.x : event.clientX,
+        clientY: start ? start.y : event.clientY,
+        x: position.x,
+        y: position.y
+      }
+    };
+    return true;
+  }
+
+  function updateGraphDrag(event) {
+    if (!graphDrag || event.pointerId !== graphDrag.pointerId) return;
+    var drag = graphDrag;
+    var x = Math.max(0, Math.round(drag.start.x + event.clientX - drag.start.clientX));
+    var y = Math.max(0, Math.round(drag.start.y + event.clientY - drag.start.clientY));
+    if (!isRecordObject(drag.node.ext)) drag.node.ext = {};
+    drag.node.ext.x = x;
+    drag.node.ext.y = y;
+    drag.graph.positionsById.set(drag.node.id, { x: x, y: y });
+    drag.el.style.setProperty("--ark-harness-graph-x", x + "px");
+    drag.el.style.setProperty("--ark-harness-graph-y", y + "px");
+    scheduleGraphRender(drag.graph);
+  }
+
   function attachGraphHandle(graph, el, node) {
     var handle = createButton(
       "\\u283F",
@@ -1695,45 +1735,59 @@ const RAW_HARNESS_JS = `(function () {
       (node.label || node.id) + " をドラッグして移動"
     );
     handle.addEventListener("pointerdown", function (event) {
-      if (graphDrag || edgeDrag) return;
-      var id = el.getAttribute("data-model-id");
-      if (!id) return;
-      var currentNode = getNode(state.model, id);
-      var position = graphPosition(currentNode) || graph.positionsById.get(id);
-      if (!position) return;
-      event.preventDefault();
-      handle.setPointerCapture(event.pointerId);
-      el.classList.add("ark-harness-graph-dragging");
-      graphDrag = {
-        pointerId: event.pointerId,
-        handle: handle,
-        graph: graph,
-        el: el,
-        node: currentNode,
-        start: {
-          clientX: event.clientX,
-          clientY: event.clientY,
-          x: position.x,
-          y: position.y
-        }
-      };
+      startGraphDrag(graph, el, handle, event);
     });
-    handle.addEventListener("pointermove", function (event) {
-      if (!graphDrag || event.pointerId !== graphDrag.pointerId) return;
-      var drag = graphDrag;
-      var x = Math.max(0, Math.round(drag.start.x + event.clientX - drag.start.clientX));
-      var y = Math.max(0, Math.round(drag.start.y + event.clientY - drag.start.clientY));
-      if (!isRecordObject(drag.node.ext)) drag.node.ext = {};
-      drag.node.ext.x = x;
-      drag.node.ext.y = y;
-      drag.graph.positionsById.set(drag.node.id, { x: x, y: y });
-      drag.el.style.setProperty("--ark-harness-graph-x", x + "px");
-      drag.el.style.setProperty("--ark-harness-graph-y", y + "px");
-      scheduleGraphRender(drag.graph);
-    });
+    handle.addEventListener("pointermove", updateGraphDrag);
     handle.addEventListener("pointerup", finishGraphDrag);
     handle.addEventListener("pointercancel", finishGraphDrag);
     el.appendChild(handle);
+
+    var pending = null;
+    var suppressClick = false;
+    el.addEventListener("pointerdown", function (event) {
+      if (!event.isTrusted || event.button !== 0 || graphDrag || edgeDrag ||
+          !event.target.closest) return;
+      var editable = event.target.closest('[contenteditable="true"],input,textarea');
+      if (event.target.closest('button,select,option,.ark-harness-node-anchor,.ark-harness-node-connectors,[draggable="true"]') ||
+          editable === document.activeElement) return;
+      pending = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        editable: editable
+      };
+      el.setPointerCapture(event.pointerId);
+    });
+    el.addEventListener("pointermove", function (event) {
+      if (!pending || event.pointerId !== pending.pointerId) {
+        updateGraphDrag(event);
+        return;
+      }
+      var dx = event.clientX - pending.x;
+      var dy = event.clientY - pending.y;
+      if (dx * dx + dy * dy <= 16) return;
+      var start = pending;
+      pending = null;
+      if (start.editable) start.editable.blur();
+      if (startGraphDrag(graph, el, el, event, start)) {
+        suppressClick = true;
+        updateGraphDrag(event);
+      }
+    });
+    var finish = function (event) {
+      if (pending && event.pointerId === pending.pointerId) pending = null;
+      finishGraphDrag(event);
+      if (el.hasPointerCapture(event.pointerId)) el.releasePointerCapture(event.pointerId);
+      if (suppressClick) window.setTimeout(function () { suppressClick = false; });
+    };
+    el.addEventListener("pointerup", finish);
+    el.addEventListener("pointercancel", finish);
+    el.addEventListener("click", function (event) {
+      if (!suppressClick) return;
+      suppressClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+    }, true);
   }
 
   function syncNodeConnectors(graph) {
@@ -3461,22 +3515,53 @@ function requireIndex(value: string, marker: string): number {
   return index;
 }
 
+const AUTO_LAYOUT_START = "  function assignLayerRanks(";
+const AUTO_LAYOUT_END = "function applyGroupLayout(";
+const autoLayoutStart = requireIndex(
+  GROUP_COMPACTED_HARNESS_JS,
+  AUTO_LAYOUT_START
+);
+const autoLayoutEnd = requireIndex(GROUP_COMPACTED_HARNESS_JS, AUTO_LAYOUT_END);
+const AUTO_LAYOUT_COMPACTED_HARNESS_JS =
+  GROUP_COMPACTED_HARNESS_JS.slice(0, autoLayoutStart) +
+  compactTrustedJavaScript(
+    GROUP_COMPACTED_HARNESS_JS.slice(autoLayoutStart, autoLayoutEnd)
+  ) +
+  GROUP_COMPACTED_HARNESS_JS.slice(autoLayoutEnd);
+
+const GRAPH_DRAG_START = "  function finishGraphDrag(";
+const GRAPH_DRAG_END = "  function syncNodeConnectors(";
+const graphDragStart = requireIndex(
+  AUTO_LAYOUT_COMPACTED_HARNESS_JS,
+  GRAPH_DRAG_START
+);
+const graphDragEnd = requireIndex(
+  AUTO_LAYOUT_COMPACTED_HARNESS_JS,
+  GRAPH_DRAG_END
+);
+const GRAPH_DRAG_COMPACTED_HARNESS_JS =
+  AUTO_LAYOUT_COMPACTED_HARNESS_JS.slice(0, graphDragStart) +
+  compactTrustedJavaScript(
+    AUTO_LAYOUT_COMPACTED_HARNESS_JS.slice(graphDragStart, graphDragEnd)
+  ) +
+  AUTO_LAYOUT_COMPACTED_HARNESS_JS.slice(graphDragEnd);
+
 const STATUS_STATE_START = "  function updateStatus(";
 const STATUS_STATE_END = "  function attachRowControls(";
 const statusStateStart = requireIndex(
-  GROUP_COMPACTED_HARNESS_JS,
+  GRAPH_DRAG_COMPACTED_HARNESS_JS,
   STATUS_STATE_START
 );
 const statusStateEnd = requireIndex(
-  GROUP_COMPACTED_HARNESS_JS,
+  GRAPH_DRAG_COMPACTED_HARNESS_JS,
   STATUS_STATE_END
 );
 const STATUS_COMPACTED_HARNESS_JS =
-  GROUP_COMPACTED_HARNESS_JS.slice(0, statusStateStart) +
+  GRAPH_DRAG_COMPACTED_HARNESS_JS.slice(0, statusStateStart) +
   compactTrustedJavaScript(
-    GROUP_COMPACTED_HARNESS_JS.slice(statusStateStart, statusStateEnd)
+    GRAPH_DRAG_COMPACTED_HARNESS_JS.slice(statusStateStart, statusStateEnd)
   ) +
-  GROUP_COMPACTED_HARNESS_JS.slice(statusStateEnd);
+  GRAPH_DRAG_COMPACTED_HARNESS_JS.slice(statusStateEnd);
 const SUBMIT_START = "  function handleSubmit(";
 const SUBMIT_END = "  function buildModelPanel(";
 const submitStart = requireIndex(STATUS_COMPACTED_HARNESS_JS, SUBMIT_START);

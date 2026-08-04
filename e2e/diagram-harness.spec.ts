@@ -1292,6 +1292,94 @@ test("selection toolbar: node・contenteditable・edge・解除を単一 root �
   await expect(selectedNodeAnchor(page, "order")).toHaveCount(0);
 });
 
+test("node 本体を4px超ドラッグすると座標を更新する", async ({ page }) => {
+  await openDiagram(page);
+  const order = page.locator('.ark-harness-graph-node[data-model-id="order"]');
+  const heading = order.locator("h2");
+  const [before, headingBox] = await Promise.all([
+    requiredBoundingBox(order),
+    requiredBoundingBox(heading),
+  ]);
+  const start = {
+    x: headingBox.x + headingBox.width - 10,
+    y: headingBox.y + headingBox.height / 2,
+  };
+
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x + 70, start.y + 45, { steps: 5 });
+  await page.mouse.up();
+
+  await expect
+    .poll(async () => (await order.boundingBox())?.x)
+    .toBeCloseTo(before.x + 70, 0);
+  const after = await requiredBoundingBox(order);
+  expect(after.y).toBeCloseTo(before.y + 45, 0);
+  const current = await readCurrentModel(page);
+  expect(current.nodes.find(node => node.id === "order")?.ext).toMatchObject({
+    x: 110,
+    y: 95,
+  });
+});
+
+test("node 本体の4px以下操作はラベルと行の編集フォーカスを維持する", async ({
+  page,
+}) => {
+  await openDiagram(page);
+  const order = page.locator('.ark-harness-graph-node[data-model-id="order"]');
+  const before = await requiredBoundingBox(order);
+  for (const editable of [
+    order.locator("h2"),
+    order.locator('li[data-model-id="order_id"] .ark-harness-text'),
+  ]) {
+    const box = await requiredBoundingBox(editable);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(
+      box.x + box.width / 2 + 2,
+      box.y + box.height / 2 + 1
+    );
+    await page.mouse.up();
+    await expect(editable).toBeFocused();
+  }
+  const after = await requiredBoundingBox(order);
+  expect(after.x).toBeCloseTo(before.x, 0);
+  expect(after.y).toBeCloseTo(before.y, 0);
+});
+
+test("フォーカス済み editable 内のドラッグでは node を移動しない", async ({
+  page,
+}) => {
+  await openDiagram(page);
+  const order = page.locator('.ark-harness-graph-node[data-model-id="order"]');
+  const editable = order.locator(
+    'li[data-model-id="order_id"] .ark-harness-text'
+  );
+  await editable.focus();
+  await expect(editable).toBeFocused();
+  const [before, editableBox] = await Promise.all([
+    requiredBoundingBox(order),
+    requiredBoundingBox(editable),
+  ]);
+
+  await page.mouse.move(
+    editableBox.x + 2,
+    editableBox.y + editableBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    editableBox.x + editableBox.width - 2,
+    editableBox.y + editableBox.height / 2,
+    { steps: 5 }
+  );
+  await page.mouse.up();
+
+  const after = await requiredBoundingBox(order);
+  expect(after.x).toBeCloseTo(before.x, 0);
+  expect(after.y).toBeCloseTo(before.y, 0);
+  await expect(editable).toBeFocused();
+});
+
 test("selection toolbar hover-gap: node と edge から gap 経由で移動しても 250ms 後まで維持する", async ({
   page,
 }) => {
