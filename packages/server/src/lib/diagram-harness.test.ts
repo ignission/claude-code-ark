@@ -105,9 +105,19 @@ describe("injectHarness", () => {
 
     expect(out).toContain("function renderNodeToolbar(");
     expect(out).toContain("function renderEdgeToolbar(");
+    expect(out).toContain("ark-harness-edge-reverse");
+    expect(out).toContain("var current = getEdge(state.model, edge.id);");
+    expect(out).toContain("var dir = edgeDirection(current);");
+    expect(out).toContain(
+      'current.ext.direction = dir === "forward" ? "reverse" : "forward";'
+    );
+    expect(out).not.toContain("current.from = current.to;");
+    expect(out).not.toContain("previousFromCard");
     expect(out).toContain("function collectKindCandidates(");
     expect(out).toContain("function updateNodeKind(");
-    expect(out).toContain("value && kindCandidates.indexOf(value) === -1");
+    expect(out).toContain(
+      'value === "note" ||\n        kindCandidates.indexOf(value) !== -1'
+    );
     expect(out).toContain("function updateEdgeExt(");
     expect(out).toContain("CARDINALITY_VALUES.indexOf(value)");
     expect(out).toContain("DIRECTION_VALUES.indexOf(direction)");
@@ -355,23 +365,58 @@ describe("injectHarness", () => {
     expect(out).toContain("function syncKindSelect(");
     expect(out).toContain("function updateNodeKind(");
     expect(out).toContain("getNode(state.model, id)");
-    expect(out).toContain("value && kindCandidates.indexOf(value) === -1");
+    expect(out).toContain(
+      'value === "note" ||\n        kindCandidates.indexOf(value) !== -1'
+    );
     expect(out).toContain("node.kind = value");
-    expect(out).toContain("else delete node.kind");
-    expect(out).toContain('var none = createKindOption("")');
-    expect(out).toContain('lastKind === ""');
+    expect(out).toContain('var note = createKindOption("note")');
+    expect(out).toContain('note.textContent = "note"');
+    expect(out).toContain("function findNodeLabelEl(");
+    expect(out).toContain("var labelEl = (matched || labelMatched) && id");
+    expect(out).toContain(
+      "var tpl = projectionTemplateForKind(graph, root, value, id)"
+    );
+    expect(out).toContain('var targetTag = tpl.labelTag || "span"');
+    expect(out).toContain(
+      "if (cur && cur.tagName.toLowerCase() !== targetTag)"
+    );
+    expect(out).toContain("var next = document.createElement(targetTag)");
+    expect(out).toContain("cur.parentNode.replaceChild(next, cur)");
+    expect(out).toContain("wireEditableLeaf(next, null)");
+    expect(out).toContain('lastKind === "note"');
     expect(out).toContain("lastKind = kind;");
     expect(out).toContain("syncNodeKinds();");
     expect(out).toContain("scheduleGraphRender(graph);");
     expect(out).toContain('el.setAttribute("data-kind", node.kind)');
     expect(out).not.toContain("aggregate");
-    expect(out).not.toContain("entity");
     expect(out).not.toContain('value === "event"');
     expect(out).not.toContain('kindCandidates = ["');
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 
-  it("node projection に authored label と空 list の構造を複製する契約を注入する", () => {
+  it("node kind 再投影だけ自 node を template 候補から除外する契約を注入する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><section data-model-id="first"></section><section data-model-id="peer"></section></div>'
+      )
+    );
+
+    expect(out).toContain(
+      "function projectionTemplate(graph, kind, excludeId)"
+    );
+    expect(
+      out.match(/if \(excludeId && id === excludeId\) return;/g)
+    ).toHaveLength(2);
+    expect(out).toContain("if (kind && excludeId) labelMatched = true");
+    expect(out).toContain(
+      "var template = remembered || projectionTemplate(graph, kind, id)"
+    );
+    expect(out).toContain(
+      'var template = projectionTemplate(graph, node.kind || "")'
+    );
+  });
+
+  it("node projection は matched label と id 所有 list の構造を複製する契約を注入する", () => {
     const out = injectHarness(
       page(
         '<div data-ark-container="graph"><section class="entity" data-model-id="node"><h2 class="title" data-model-id="node">Node</h2><ul class="fields"><li data-model-id="field">Field</li></ul></section></div>'
@@ -383,12 +428,13 @@ describe("injectHarness", () => {
     );
     expect(out).toContain("var matched = false");
     expect(out).toContain("matched = true");
-    expect(out.match(/if \(matched && id\)/g)).toHaveLength(2);
-    expect(out).toContain('template.querySelectorAll("[data-model-id]")');
+    expect(out).toContain("function findNodeLabelEl(rootEl, id)");
+    expect(out).toContain('rootEl.querySelectorAll("[data-model-id]")');
     expect(out).toContain('candidate.getAttribute("data-model-id") !== id');
     expect(out).toContain("isInsideHarnessUi(candidate)");
     expect(out).toContain('candidate.hasAttribute("data-ark-container")');
     expect(out).toContain('candidate.hasAttribute("data-ark-group")');
+    expect(out).toContain("var labelEl = (matched || labelMatched) && id");
     expect(out).toContain("/^(H1|H2|H3|H4|H5|H6|SPAN|DIV|P|STRONG|HEADER)$/");
     expect(out).toContain("labelTag: labelTag");
     expect(out).toContain(
@@ -398,6 +444,7 @@ describe("injectHarness", () => {
     expect(out).toContain(
       "if (template.labelClassName) label.className = template.labelClassName"
     );
+    expect(out).toContain("var listEl = null;\n    if (matched && id) {");
     expect(out).toContain('template.querySelectorAll("ul, ol")');
     expect(out).toContain("findOwnerNodeId(state.model, candidate) === id");
     expect(out).toContain(
@@ -410,7 +457,49 @@ describe("injectHarness", () => {
     expect(out).toContain(
       "if (template.listClassName) list.className = template.listClassName"
     );
-    expect(out).toContain("return { root: root, label: label, list: list }");
+    expect(out).toContain(
+      "return { root: root, label: label, list: list, note: note }"
+    );
+  });
+
+  it("note を独立本文として生成・編集・再投影する契約を注入する", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><section data-model-id="node"></section></div>'
+      )
+    );
+
+    expect(out).toContain(
+      ".ark-harness-note { white-space: pre-wrap; min-height: 1.5em;"
+    );
+    expect(out).toContain(".ark-harness-editable:empty::before");
+    expect(out).toContain(".ark-harness-note:empty::before");
+    expect(out).toContain("function createNoteProjection(node)");
+    expect(out).toContain('note.setAttribute("data-ark-harness-note", "")');
+    expect(out).toContain(
+      'note.setAttribute("data-placeholder", "\\u30E1\\u30E2\\u3092\\u5165\\u529B")'
+    );
+    expect(out).toContain('note.setAttribute("contenteditable", "true")');
+    expect(out).toContain(
+      'note.textContent = typeof node.noteText === "string" ? node.noteText : ""'
+    );
+    expect(out).toContain("function wireNote(el, node)");
+    expect(out).toContain("var ownerId = node.id");
+    expect(out).toContain("var current = getNode(state.model, ownerId)");
+    expect(out).toContain('current.noteText = text.replace(/\\r\\n?/g, "\\n")');
+    expect(out).toContain("function projectNoteContent(root, node)");
+    expect(out).toContain(
+      "function projectStructuredContent(root, node, template)"
+    );
+    expect(out).toContain("listBindingsByNode.delete(node.id)");
+    expect(out).toContain("createStructuredProjection(template, node)");
+    expect(out).toContain("registerProjectedList(node, projection.list)");
+    expect(out).toContain('if (kind === "note") node.noteText = ""');
+    expect(out).toContain(
+      'label.setAttribute("data-placeholder", "\\u540D\\u524D\\u3092\\u5165\\u529B")'
+    );
+    expect(out).toContain('label: kind === "note" ? "" : "新しいノード"');
+    expect(out).toContain('clone.querySelectorAll("[data-placeholder]")');
   });
 
   it("node / edge CRUD と参照整合性の契約を注入する", () => {
@@ -437,6 +526,10 @@ describe("injectHarness", () => {
     expect(out).toContain("group.nodes = group.nodes.filter");
     expect(out).toContain('mode: "create"');
     expect(out).toContain('mode: "rewire"');
+    expect(out).toContain(
+      "from: blankSource.id,\n              to: newNode.id"
+    );
+    expect(out).not.toContain("newNodeIsSource");
     expect(out).toContain("var EDGE_DRAG_MIN_DISTANCE = 8");
     expect(out).toContain("drag.didDrag");
     expect(out).toContain("drag.leftSource");
@@ -491,7 +584,9 @@ describe("injectHarness", () => {
       'document.createElementNS("http://www.w3.org/2000/svg"'
     );
     expect(out).toContain('root.setAttribute("data-model-id", node.id)');
-    expect(out).toContain("label.textContent = node.label");
+    expect(out).toContain(
+      'label.textContent = typeof node.label === "string" ? node.label : ""'
+    );
     expect(out).toContain("(node.fields || []).forEach");
     expect(out).toContain("(model.edges || []).forEach");
     expect(out).toContain("(model.groups || []).forEach");

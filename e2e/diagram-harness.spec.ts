@@ -1181,6 +1181,9 @@ test("selection toolbar: node・contenteditable・edge・解除を単一 root �
     0
   );
   await expect(
+    toolbar.getByRole("button", { name: "owned by の向きを反転" })
+  ).toHaveCount(1);
+  await expect(
     toolbar.getByRole("button", { name: "owned by を削除" })
   ).toHaveCount(1);
 
@@ -1320,6 +1323,84 @@ test("selection toolbar node action: +行と削除を既存 field・参照整合
   ).toEqual(["external"]);
 });
 
+test("selection toolbar edge action: 向き反転で direction だけを切替え2回で元に戻る", async ({
+  page,
+}) => {
+  await openEdgeSemanticsDiagram(page);
+  const toolbar = await selectEdge(page, "e_order_owner");
+  const reverse = toolbar.getByRole("button", {
+    name: "owned by の向きを反転",
+  });
+  const original = (await readCurrentModel(page)).edges.find(
+    edge => edge.id === "e_order_owner"
+  );
+  expect(original).toMatchObject({
+    from: "order",
+    to: "user",
+    ext: {
+      from_card: "one",
+      to_card: "zero-or-many",
+      direction: "forward",
+    },
+  });
+
+  await reverse.click();
+  const reversed = (await readCurrentModel(page)).edges.find(
+    edge => edge.id === "e_order_owner"
+  );
+  expect(reversed).toMatchObject({
+    from: "order",
+    to: "user",
+    ext: {
+      from_card: "one",
+      to_card: "zero-or-many",
+      direction: "reverse",
+    },
+  });
+  await expect(
+    toolbar.locator('select[data-ark-edge-control="from-card"]')
+  ).toHaveValue("one");
+  await expect(
+    toolbar.locator('select[data-ark-edge-control="to-card"]')
+  ).toHaveValue("zero-or-many");
+  await expect(
+    toolbar.locator('select[data-ark-edge-control="direction"]')
+  ).toHaveValue("reverse");
+  await expect(toolbar).toHaveAttribute(
+    "data-ark-selection-id",
+    "e_order_owner"
+  );
+
+  await reverse.click();
+  const restored = (await readCurrentModel(page)).edges.find(
+    edge => edge.id === "e_order_owner"
+  );
+  expect(restored).toEqual(original);
+  await expect(
+    toolbar.locator('select[data-ark-edge-control="direction"]')
+  ).toHaveValue("forward");
+  await expect(selectedEdgeAnchor(page, "e_order_owner")).toHaveCount(1);
+});
+
+test("selection toolbar edge action: both は向き反転を無効化し forward は有効にする", async ({
+  page,
+}) => {
+  await openEdgeSemanticsDiagram(page);
+  const toolbar = await selectEdge(page, "e_order_owner");
+  const reverse = toolbar.getByRole("button", {
+    name: "owned by の向きを反転",
+  });
+  const direction = toolbar.locator(
+    'select[data-ark-edge-control="direction"]'
+  );
+
+  await expect(direction).toHaveValue("forward");
+  await expect(reverse).toBeEnabled();
+  await direction.selectOption("both");
+  await expect(direction).toHaveValue("both");
+  await expect(reverse).toBeDisabled();
+});
+
 test("selection toolbar edge action: rerender 後も選択を復元して対象 edge だけ削除する", async ({
   page,
 }) => {
@@ -1409,11 +1490,16 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   await page.setContent(crudDiagramHtml(connectDragModel));
 
   const firstGraph = page.locator('[data-ark-container="graph"]').first();
-  const sourceBefore = structuredClone(
-    connectDragModel.nodes.find(node => node.id === "crud-b")
+  const source = firstGraph.locator(
+    '.ark-harness-graph-node[data-model-id="crud-b"]'
+  );
+  const existingPeer = firstGraph.locator(
+    '.ark-harness-graph-node[data-model-id="crud-a"]'
   );
   const initial = await readCurrentModel(page);
   const graphBox = await requiredBoundingBox(firstGraph);
+  const sourceBoxBefore = await requiredBoundingBox(source);
+  const existingPeerBoxBefore = await requiredBoundingBox(existingPeer);
   const drop = {
     x: graphBox.x + graphBox.width - 20,
     y: graphBox.y + graphBox.height - 20,
@@ -1435,15 +1521,16 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   expect(Number.isInteger((added?.ext as { y?: number })?.y)).toBe(true);
   expect(current.nodes).toHaveLength(initial.nodes.length + 1);
   expect(current.edges).toHaveLength(initial.edges.length + 1);
-  expect(current.nodes.find(node => node.id === "crud-b")).toEqual(
-    sourceBefore
+  for (const id of ["crud-a", "crud-b", "crud-d"]) {
+    const ext = current.nodes.find(node => node.id === id)?.ext as
+      | { x?: unknown; y?: unknown }
+      | undefined;
+    expect(Number.isFinite(ext?.x), `${id}.ext.x`).toBe(true);
+    expect(Number.isFinite(ext?.y), `${id}.ext.y`).toBe(true);
+  }
+  expect(current.nodes.find(node => node.id === "crud-other")?.ext).toBe(
+    undefined
   );
-  expect(
-    current.nodes.filter(node => {
-      const ext = node.ext as { x?: unknown; y?: unknown } | undefined;
-      return Number.isFinite(ext?.x) && Number.isFinite(ext?.y);
-    })
-  ).toEqual([added]);
   if (!added) throw new Error("追加 node がありません");
   const addedEdge = current.edges.find(
     edge => !connectDragModel.edges.some(old => old.id === edge.id)
@@ -1468,10 +1555,10 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   await expect(
     contextToolbar(page).locator("select.ark-harness-kind-select")
   ).toHaveValue("entity");
-  await expect(projection.locator(":scope > ul")).toHaveCount(0);
+  await expect(projection.locator(":scope > ul")).toHaveCount(1);
   await expect(
     contextToolbar(page).getByRole("button", { name: "行を追加" })
-  ).toBeDisabled();
+  ).toBeEnabled();
   await expect(projection.locator(".ark-harness-graph-handle")).toHaveCount(1);
   await expect(
     firstGraph.locator(
@@ -1482,6 +1569,16 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   await expect(projection.locator(".ark-harness-node-delete")).toHaveCount(0);
 
   const newBox = await requiredBoundingBox(projection);
+  const sourceBoxAfter = await requiredBoundingBox(source);
+  const existingPeerBoxAfter = await requiredBoundingBox(existingPeer);
+  expect(Math.abs(sourceBoxAfter.x - sourceBoxBefore.x)).toBeLessThanOrEqual(4);
+  expect(Math.abs(sourceBoxAfter.y - sourceBoxBefore.y)).toBeLessThanOrEqual(4);
+  expect(
+    Math.abs(existingPeerBoxAfter.x - existingPeerBoxBefore.x)
+  ).toBeLessThanOrEqual(4);
+  expect(
+    Math.abs(existingPeerBoxAfter.y - existingPeerBoxBefore.y)
+  ).toBeLessThanOrEqual(4);
   expect((added.ext as { x: number }).x).toBe(
     Math.max(0, Math.round(drop.x - graphBox.x - newBox.width / 2))
   );
@@ -1518,7 +1615,39 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   expect(errors).toEqual([]);
 });
 
-test("node CRUD: kind なしを選ぶと node から kind を除去し drag 作成にも引き継ぐ", async ({
+test("node CRUD: 空白への接続 drag はどの anchor でも新 node を edge の終点にする", async ({
+  page,
+}) => {
+  const directionalModel = structuredClone(crudModel);
+  directionalModel.edges = [];
+  const anchors = ["top", "bottom", "left", "right"] as const;
+
+  for (const anchor of anchors) {
+    await page.setContent(crudDiagramHtml(directionalModel));
+    const graph = page.locator('[data-ark-container="graph"]').first();
+    const graphBox = await requiredBoundingBox(graph);
+    await dragNodeAnchorToPoint(page, graph, "crud-b", anchor, {
+      x: graphBox.x + graphBox.width - 20,
+      y: graphBox.y + graphBox.height - 20,
+    });
+
+    const current = await readCurrentModel(page);
+    const addedNode = current.nodes.find(
+      node => !directionalModel.nodes.some(old => old.id === node.id)
+    );
+    expect(addedNode, anchor).toBeDefined();
+    if (!addedNode) throw new Error(`${anchor}: 追加 node がありません`);
+    const addedEdge = current.edges.find(
+      edge => !directionalModel.edges.some(old => old.id === edge.id)
+    );
+    expect(addedEdge, anchor).toMatchObject({
+      from: "crud-b",
+      to: addedNode.id,
+    });
+  }
+});
+
+test("node CRUD: note を選ぶと独立本文を投影し drag 作成にも引き継ぐ", async ({
   page,
 }) => {
   await page.setContent(crudDiagramHtml());
@@ -1527,22 +1656,28 @@ test("node CRUD: kind なしを選ぶと node から kind を除去し drag 作�
   const source = graph.locator('[data-model-id="crud-b"]').first();
   const toolbar = await selectNode(page, "crud-b");
   const picker = toolbar.locator("select.ark-harness-kind-select");
-  const none = picker.locator('option[value=""]');
-  await expect(none).toHaveText("kind なし");
-  await expect(none).toBeEnabled();
+  const noteOption = picker.locator('option[value="note"]');
+  await expect(noteOption).toHaveText("note");
+  await expect(noteOption).toBeEnabled();
   expect(await picker.locator("option").allTextContents()).toEqual([
-    "kind なし",
+    "note",
     "entity",
     "event",
   ]);
 
-  await picker.selectOption("");
-  await expect(picker).toHaveValue("");
-  await expect(source).not.toHaveAttribute("data-kind", /.*/);
-  const cleared = await readCurrentModel(page);
-  expect(cleared.nodes.find(node => node.id === "crud-b")).not.toHaveProperty(
-    "kind"
-  );
+  await picker.selectOption("note");
+  await expect(picker).toHaveValue("note");
+  await expect(source).toHaveAttribute("data-kind", "note");
+  const sourceNote = source.locator(":scope > [data-ark-harness-note]");
+  await expect(sourceNote).toHaveCount(1);
+  await expect(sourceNote).toHaveAttribute("contenteditable", "true");
+  await expect(
+    source.locator(":scope > span, :scope > h2, :scope > ul")
+  ).toHaveCount(0);
+  await sourceNote.fill("1行目\n2行目");
+  expect(
+    (await readCurrentModel(page)).nodes.find(node => node.id === "crud-b")
+  ).toMatchObject({ kind: "note", noteText: "1行目\n2行目", label: "B" });
 
   const graphBox = await requiredBoundingBox(graph);
   await dragNodeAnchorToPoint(page, graph, "crud-b", "bottom", {
@@ -1554,11 +1689,20 @@ test("node CRUD: kind なしを選ぶと node から kind を除去し drag 作�
     node => !crudModel.nodes.some(old => old.id === node.id)
   );
   expect(added).toBeDefined();
-  expect(added).not.toHaveProperty("kind");
+  expect(added).toMatchObject({ kind: "note", noteText: "" });
   if (!added) throw new Error("追加 node がありません");
+  const projection = graph.locator(`[data-model-id="${added.id}"]`).first();
+  await expect(projection).toHaveAttribute("data-kind", "note");
   await expect(
-    graph.locator(`[data-model-id="${added.id}"]`).first()
-  ).not.toHaveAttribute("data-kind", /.*/);
+    projection.locator(":scope > [data-ark-harness-note]")
+  ).toHaveCount(1);
+  await expect(
+    projection.locator(":scope > h2, :scope > span, :scope > ul")
+  ).toHaveCount(0);
+  const addedToolbar = await selectNode(page, added.id);
+  await expect(
+    addedToolbar.getByRole("button", { name: "行を追加" })
+  ).toBeDisabled();
 });
 
 test("node CRUD: node/edge ID 生成失敗時は projection と model を原子的に戻す", async ({
@@ -4093,7 +4237,7 @@ test("kind 候補は CSS を先に model node のみを後に重複なしで収�
   const picker = toolbar.getByRole("combobox", { name: /Candidate.*quoted/ });
   await expect(picker).toHaveCount(1);
   expect(await picker.locator("option").allTextContents()).toEqual([
-    "kind なし",
+    "note",
     "quoted",
     "single",
     "unquoted",
@@ -4108,7 +4252,168 @@ test("kind 候補は CSS を先に model node のみを後に重複なしで収�
   await expect(picker.locator("option", { hasText: "comment" })).toHaveCount(0);
 });
 
-test("model node だけに kind がある図でも picker・drag 作成・kind なしを利用できる", async ({
+test("authored entity と note を往復して label・fields・noteText を独立保持する", async ({
+  page,
+}) => {
+  await page.setContent(modelKindCandidateHtml());
+  await connectSubmissionPort(page);
+  const beforeModel = await readCurrentModel(page);
+
+  const graph = page.locator('[data-ark-container="graph"]');
+  const authoredNodes = graph.locator(":scope > section.entity");
+  await expect(authoredNodes).toHaveCount(2);
+  await expect(authoredNodes.first()).toHaveAttribute(
+    "data-model-id",
+    "model-kind-source"
+  );
+
+  const source = authoredNodes.first();
+  const toolbar = await selectNode(page, "model-kind-source");
+  const picker = toolbar.locator("select.ark-harness-kind-select");
+  const fields = [{ id: "model-kind-source-id", label: "id" }];
+
+  await picker.selectOption("note");
+  await expect(source).toHaveAttribute("data-kind", "note");
+  const note = source.locator(":scope > [data-ark-harness-note]");
+  await expect(note).toHaveCount(1);
+  await expect(note).toHaveAttribute("contenteditable", "true");
+  await expect(
+    source.locator(':scope > h2[data-model-id="model-kind-source"]')
+  ).toHaveCount(0);
+  await expect(source.locator(":scope > ul")).toHaveCount(0);
+  await note.fill("設計メモ\n2行目");
+  expect(
+    (await readCurrentModel(page)).nodes.find(
+      node => node.id === "model-kind-source"
+    )
+  ).toMatchObject({
+    kind: "note",
+    label: "Source",
+    fields,
+    noteText: "設計メモ\n2行目",
+  });
+
+  await picker.selectOption("entity");
+  await expect(source).toHaveAttribute("data-kind", "entity");
+  await expect(
+    source.locator(':scope > span[data-model-id="model-kind-source"]')
+  ).toHaveCount(0);
+  await expect(note).toHaveCount(0);
+  await expect(
+    source.locator(':scope > h2[data-model-id="model-kind-source"]')
+  ).toHaveText("Source");
+  expect(
+    (await readCurrentModel(page)).nodes.find(
+      node => node.id === "model-kind-source"
+    )
+  ).toMatchObject({
+    kind: "entity",
+    label: "Source",
+    fields,
+    noteText: "設計メモ\n2行目",
+  });
+  await expect(
+    source.locator(
+      ':scope > ul > li[data-model-id="model-kind-source-id"] .ark-harness-text'
+    )
+  ).toHaveText("id");
+
+  await picker.selectOption("note");
+  await expect(source.locator(":scope > h2, :scope > ul")).toHaveCount(0);
+  await expect(source.locator(":scope > [data-ark-harness-note]")).toHaveText(
+    "設計メモ\n2行目"
+  );
+  expect(
+    (await readCurrentModel(page)).nodes.find(
+      node => node.id === "model-kind-source"
+    )
+  ).toMatchObject({
+    kind: "note",
+    label: "Source",
+    fields,
+    noteText: "設計メモ\n2行目",
+  });
+
+  await page
+    .getByRole("button", { name: "変更を親フレームへ送信する" })
+    .click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  const submission = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          arkHarnessSubmission?: { model: DiagramModel; html: string };
+        }
+      ).arkHarnessSubmission
+  );
+  if (!submission) throw new Error("submission がありません");
+  expect(describeModelDiff(beforeModel, submission.model)).toEqual([]);
+  expect(
+    submission.model.nodes.find(node => node.id === "model-kind-source")
+  ).toMatchObject({
+    kind: "note",
+    label: "Source",
+    fields,
+    noteText: "設計メモ\n2行目",
+  });
+  expect(submission.html).toContain('data-kind="note"');
+  expect(submission.html).toContain("設計メモ\n2行目");
+  expect(submission.html).not.toContain("contenteditable");
+  expect(submission.html).not.toContain("data-placeholder");
+});
+
+test("モデル直接編集後の note 入力を現行モデルへ反映して送信する", async ({
+  page,
+}) => {
+  await page.setContent(modelKindCandidateHtml());
+  await connectSubmissionPort(page);
+
+  const source = page.locator(
+    '.ark-harness-graph-node[data-model-id="model-kind-source"]'
+  );
+  const toolbar = await selectNode(page, "model-kind-source");
+  await toolbar.locator("select.ark-harness-kind-select").selectOption("note");
+  const note = source.locator(":scope > [data-ark-harness-note]");
+  await note.fill("適用前のメモ");
+
+  await page
+    .getByRole("button", { name: "モデル JSON を直接編集する" })
+    .click();
+  await page.getByRole("button", { name: "反映", exact: true }).click();
+
+  const currentNote = source.locator(":scope > [data-ark-harness-note]");
+  await expect(currentNote).toHaveText("適用前のメモ");
+  await currentNote.fill("適用後のメモ\n2行目");
+  await page
+    .getByRole("button", { name: "変更を親フレームへ送信する" })
+    .click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  const submission = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          arkHarnessSubmission?: { model: DiagramModel };
+        }
+      ).arkHarnessSubmission
+  );
+
+  expect(
+    submission?.model.nodes.find(node => node.id === "model-kind-source")
+      ?.noteText
+  ).toBe("適用後のメモ\n2行目");
+});
+
+test("model node だけに entity がある図でも note picker・往復・drag 作成を利用できる", async ({
   page,
 }) => {
   await page.setContent(modelKindCandidateHtml());
@@ -4118,7 +4423,7 @@ test("model node だけに kind がある図でも picker・drag 作成・kind �
   const picker = toolbar.locator("select.ark-harness-kind-select");
   await expect(picker).toBeEnabled();
   expect(await picker.locator("option").allTextContents()).toEqual([
-    "kind なし",
+    "note",
     "entity",
   ]);
 
@@ -4164,54 +4469,145 @@ test("model node だけに kind がある図でも picker・drag 作成・kind �
     label: "新しい項目",
   });
   expect(addedAfterField?.fields?.[0]?.id).toMatch(/^field-/);
+  const addedField = addedAfterField?.fields?.[0];
+  if (!addedField) throw new Error("追加 field がありません");
 
   const addedPicker = addedToolbar.locator("select.ark-harness-kind-select");
-  await addedPicker.selectOption("");
-  await expect(addedPicker).toHaveValue("");
-  await expect(projection).not.toHaveAttribute("data-kind", /.*/);
+  await addedPicker.selectOption("note");
+  await expect(addedPicker).toHaveValue("note");
+  await expect(projection).toHaveAttribute("data-kind", "note");
+  await expect(label).toHaveCount(0);
+  await expect(list).toHaveCount(0);
+  const note = projection.locator(":scope > [data-ark-harness-note]");
+  await expect(note).toHaveCount(1);
+  await expect(note).toHaveAttribute("contenteditable", "true");
+  await expect(note).toHaveAttribute("data-placeholder", "メモを入力");
+  await expect(note).toHaveText("");
+  const noteAfterSwitch = (await readCurrentModel(page)).nodes.find(
+    node => node.id === added.id
+  );
+  expect(noteAfterSwitch).toMatchObject({
+    kind: "note",
+    label: "新しいノード",
+    fields: [addedField],
+    noteText: "",
+  });
+  await expect(addFieldButton).toBeDisabled();
+  await note.fill("自由記述\n複数行");
+
+  await addedPicker.selectOption("entity");
+  await expect(addedPicker).toHaveValue("entity");
+  await expect(projection).toHaveAttribute("data-kind", "entity");
+  await expect(note).toHaveCount(0);
+  const entityLabelAfterSwitch = projection.locator(
+    `:scope > h2[data-model-id="${added.id}"]`
+  );
+  await expect(entityLabelAfterSwitch).toHaveCount(1);
+  await expect(entityLabelAfterSwitch).toHaveClass(/(^|\s)entity-title(\s|$)/);
+  await expect(entityLabelAfterSwitch).toHaveText("新しいノード");
+  await expect(entityLabelAfterSwitch).toHaveAttribute(
+    "contenteditable",
+    "true"
+  );
   expect(
     (await readCurrentModel(page)).nodes.find(node => node.id === added.id)
-  ).not.toHaveProperty("kind");
-  await expect(label).toHaveCount(1);
-  await expect(list).toHaveCount(1);
-  await expect(list.locator(":scope > li")).toHaveCount(1);
-  await expect(addFieldButton).toBeEnabled();
+  ).toMatchObject({
+    kind: "entity",
+    label: "新しいノード",
+    fields: [addedField],
+    noteText: "自由記述\n複数行",
+  });
+  const restoredList = projection.locator(":scope > ul.entity-fields");
+  await expect(
+    restoredList.locator(
+      `:scope > li[data-model-id="${addedField.id}"] .ark-harness-text`
+    )
+  ).toHaveText(addedField.label);
 
-  const beforeKindless = await readCurrentModel(page);
+  await addedPicker.selectOption("note");
+  await expect(addedPicker).toHaveValue("note");
+  await expect(projection).toHaveAttribute("data-kind", "note");
+  await expect(entityLabelAfterSwitch).toHaveCount(0);
+  await expect(restoredList).toHaveCount(0);
+  await expect(
+    projection.locator(":scope > [data-ark-harness-note]")
+  ).toHaveText("自由記述\n複数行");
+  expect(
+    (await readCurrentModel(page)).nodes.find(node => node.id === added.id)
+  ).toMatchObject({
+    kind: "note",
+    label: "新しいノード",
+    fields: [addedField],
+    noteText: "自由記述\n複数行",
+  });
+
+  const beforeNote = await readCurrentModel(page);
   await dragNodeAnchorToPoint(page, graph, added.id, "bottom", {
     x: graphBox.x + 100,
     y: graphBox.y + graphBox.height - 60,
   });
-  const afterKindless = await readCurrentModel(page);
-  const kindless = afterKindless.nodes.find(
-    node => !beforeKindless.nodes.some(old => old.id === node.id)
+  const afterNote = await readCurrentModel(page);
+  const createdNote = afterNote.nodes.find(
+    node => !beforeNote.nodes.some(old => old.id === node.id)
   );
-  expect(kindless).toBeDefined();
-  expect(kindless).not.toHaveProperty("kind");
-  if (!kindless) throw new Error("kind なし node がありません");
+  expect(createdNote).toMatchObject({
+    kind: "note",
+    noteText: "",
+    label: "",
+  });
+  if (!createdNote) throw new Error("note node がありません");
 
-  const kindlessProjection = graph
-    .locator(`[data-model-id="${kindless.id}"]`)
+  const noteProjection = graph
+    .locator(`[data-model-id="${createdNote.id}"]`)
     .first();
-  expect(await kindlessProjection.evaluate(element => element.tagName)).toBe(
+  expect(await noteProjection.evaluate(element => element.tagName)).toBe(
     "SECTION"
   );
-  await expect(kindlessProjection).toHaveClass(/(^|\s)entity(\s|$)/);
-  await expect(kindlessProjection).not.toHaveAttribute("data-kind", /.*/);
-  await expect(kindlessProjection.locator(":scope > h2")).toHaveCount(0);
-  await expect(kindlessProjection.locator(":scope > ul")).toHaveCount(0);
-  const kindlessLabel = kindlessProjection.locator(
-    `:scope > span[data-model-id="${kindless.id}"]`
+  await expect(noteProjection).toHaveClass(/(^|\s)entity(\s|$)/);
+  await expect(noteProjection).toHaveAttribute("data-kind", "note");
+  const createdNoteBody = noteProjection.locator(
+    ":scope > [data-ark-harness-note]"
   );
-  await expect(kindlessLabel).toHaveCount(1);
-  await expect(kindlessLabel).toHaveText("新しいノード");
-  const kindlessToolbar = await selectNode(page, kindless.id);
+  await expect(createdNoteBody).toHaveCount(1);
+  await expect(createdNoteBody).toHaveAttribute(
+    "data-placeholder",
+    "メモを入力"
+  );
+  await expect(createdNoteBody).toHaveText("");
   await expect(
-    kindlessToolbar.getByRole("button", { name: "行を追加" })
+    noteProjection.locator(":scope > h2, :scope > span, :scope > ul")
+  ).toHaveCount(0);
+  const noteToolbar = await selectNode(page, createdNote.id);
+  await expect(
+    noteToolbar.getByRole("button", { name: "行を追加" })
   ).toBeDisabled();
+  const createdNotePicker = noteToolbar.locator(
+    "select.ark-harness-kind-select"
+  );
+  await createdNotePicker.selectOption("entity");
+  await expect(noteProjection).toHaveAttribute("data-kind", "entity");
+  await expect(createdNoteBody).toHaveCount(0);
+  const createdEntityLabel = noteProjection.locator(
+    `:scope > h2[data-model-id="${createdNote.id}"]`
+  );
+  await expect(createdEntityLabel).toHaveCount(1);
+  await expect(createdEntityLabel).toHaveText("");
+  await expect(createdEntityLabel).toHaveAttribute(
+    "data-placeholder",
+    "名前を入力"
+  );
+  expect(
+    (await readCurrentModel(page)).nodes.find(
+      node => node.id === createdNote.id
+    )
+  ).toMatchObject({
+    kind: "entity",
+    label: "",
+    noteText: "",
+  });
 });
 
-test("kind 候補が無い図では disabled toolbar select と既存編集 UI を維持する", async ({
+test("flat 図の authored kindless node は note を選ぶまで従来投影を維持する", async ({
   page,
 }) => {
   await page.setContent(invalidCoordinateHtml());
@@ -4222,11 +4618,20 @@ test("kind 候補が無い図では disabled toolbar select と既存編集 UI �
   await expect(
     graph.locator('[data-model-id="valid_a"].ark-harness-editable')
   ).toHaveAttribute("contenteditable", "true");
+  const root = graph.locator('[data-model-id="valid_a"]');
+  await expect(root).not.toHaveAttribute("data-kind", /.*/);
+  await expect(root).toContainText("Valid A");
+  await expect(root.locator(":scope > [data-ark-harness-note]")).toHaveCount(0);
   const toolbar = await selectNode(page, "valid_a");
-  await expect(
-    toolbar.locator("select.ark-harness-kind-select")
-  ).toBeDisabled();
-  await expect(toolbar.locator("select option")).toHaveText("kind なし");
+  const picker = toolbar.locator("select.ark-harness-kind-select");
+  await expect(picker).toBeEnabled();
+  await expect(picker.locator("option")).toHaveText("note");
+  await expect(root).not.toHaveAttribute("data-kind", /.*/);
+
+  await picker.selectOption("note");
+  await expect(root).toHaveAttribute("data-kind", "note");
+  await expect(root.locator(":scope > [data-ark-harness-note]")).toHaveCount(1);
+  await expect(root.locator(":scope > [data-model-id]")).toHaveCount(0);
 });
 
 test("kind toolbar は model のみの現在値を CSS 候補の後へ追加して更新できる", async ({
@@ -4241,18 +4646,18 @@ test("kind toolbar は model のみの現在値を CSS 候補の後へ追加し�
   );
   const toolbar = await selectNode(page, "order");
   const picker = toolbar.locator("select.ark-harness-kind-select");
-  const none = picker.locator("option").first();
+  const note = picker.locator("option").first();
   const current = picker.locator("option").last();
   await expect(order).toHaveAttribute("data-kind", "legacy-kind");
   await expect(picker).toHaveValue("legacy-kind");
-  await expect(none).toBeEnabled();
-  await expect(none).toHaveText("kind なし");
-  await expect(none).toHaveAttribute("value", "");
+  await expect(note).toBeEnabled();
+  await expect(note).toHaveText("note");
+  await expect(note).toHaveAttribute("value", "note");
   await expect(current).toBeEnabled();
   await expect(current).toHaveText("legacy-kind");
   await expect(current).toHaveAttribute("value", "legacy-kind");
   expect(await picker.locator("option").allTextContents()).toEqual([
-    "kind なし",
+    "note",
     "aggregate",
     "entity",
     "event",
@@ -4282,8 +4687,8 @@ test("kind toolbar は untrusted 値を text と value だけで扱う", async (
   const options = picker.locator("option");
   await expect(options).toHaveCount(3);
   await expect(options.nth(0)).toBeEnabled();
-  await expect(options.nth(0)).toHaveText("kind なし");
-  await expect(options.nth(0)).toHaveAttribute("value", "");
+  await expect(options.nth(0)).toHaveText("note");
+  await expect(options.nth(0)).toHaveAttribute("value", "note");
   await expect(options.nth(1)).toBeEnabled();
   await expect(options.nth(1)).toHaveText(candidateKind);
   await expect(options.nth(1)).toHaveAttribute("value", candidateKind);
@@ -4373,7 +4778,7 @@ test("kind toolbar で CSS 候補を選び投影・geometry・保存へ同期す
   await expect(orderPicker).toHaveCount(1);
   await expect(orderPicker).toHaveAccessibleName(/Order.*aggregate/);
   expect(await orderPicker.locator("option").allTextContents()).toEqual([
-    "kind なし",
+    "note",
     "aggregate",
     "entity",
     "event",
@@ -4382,7 +4787,7 @@ test("kind toolbar で CSS 候補を選び投影・geometry・保存へ同期す
   const userPicker = toolbar.locator("select.ark-harness-kind-select");
   await expect(userPicker).toHaveAccessibleName(/User.*entity/);
   expect(await userPicker.locator("option").allTextContents()).toEqual([
-    "kind なし",
+    "note",
     "aggregate",
     "entity",
     "event",

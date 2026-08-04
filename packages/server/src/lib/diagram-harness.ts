@@ -112,8 +112,11 @@ const HARNESS_STYLE = `<style data-ark-harness-ui="1">
 .ark-harness-model-error { color: #f87171; font-size: 11.5px; white-space: pre-wrap; }
 .ark-harness-model-actions { display: flex; gap: .5rem; justify-content: flex-end; }
 .ark-harness-editable { outline: 1px dashed transparent; border-radius: 3px; }
+.ark-harness-editable:empty::before { content: attr(data-placeholder); color: rgba(148,163,184,.7); pointer-events: none; }
 .ark-harness-editable:hover { outline-color: rgba(56,189,248,.35); }
 .ark-harness-editable:focus { outline: 1px solid #38bdf8; outline-offset: 1px; background: rgba(56,189,248,.1); }
+.ark-harness-note { white-space: pre-wrap; min-height: 1.5em; padding: .4rem .6rem; outline: none; }
+.ark-harness-note:empty::before { content: attr(data-placeholder); color: rgba(148,163,184,.7); pointer-events: none; }
 li.ark-harness-row { display: flex; align-items: center; gap: .35rem; }
 li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
 .ark-harness-dragging { opacity: .4; }
@@ -691,6 +694,17 @@ const RAW_HARNESS_JS = `(function () {
       graph.layoutExtent.height = minHeight;
     }
     graph.container.classList.add("ark-harness-graph-layout");
+  }
+
+  function freezeGraphPositions(graph) {
+    graphModelNodes(graph).forEach(function (entry) {
+      if (graphPosition(entry.node)) return;
+      var pos = graph.positionsById.get(entry.id);
+      if (!pos) return;
+      if (!isRecordObject(entry.node.ext)) entry.node.ext = {};
+      entry.node.ext.x = pos.x;
+      entry.node.ext.y = pos.y;
+    });
   }
 
   function layoutGraph(graph) {
@@ -1425,8 +1439,8 @@ const RAW_HARNESS_JS = `(function () {
           x: event.clientX - graphRect.left,
           y: event.clientY - graphRect.top
         };
-        var kind = lastKind === ""
-          ? ""
+        var kind = lastKind === "note"
+          ? "note"
           : kindCandidates.indexOf(lastKind) !== -1
             ? lastKind
             : kindCandidates[0] || "";
@@ -1437,6 +1451,7 @@ const RAW_HARNESS_JS = `(function () {
         } else {
           var newEdgeId = generateUniqueModelId("edge");
           if (newEdgeId) {
+            freezeGraphPositions(drag.graph);
             state.model.edges.push({
               id: newEdgeId,
               from: blankSource.id,
@@ -1918,13 +1933,15 @@ const RAW_HARNESS_JS = `(function () {
 
   function syncKindSelect(select, node) {
     var current = typeof node.kind === "string" ? node.kind : "";
-    if (current && kindCandidates.indexOf(current) === -1) {
+    if (current && current !== "note" &&
+        kindCandidates.indexOf(current) === -1) {
       var currentOption = createKindOption(current);
       currentOption.textContent = current;
       currentOption.disabled = true;
       select.insertBefore(currentOption, select.children[1] || null);
     }
     select.value = current;
+    if (!current) select.selectedIndex = -1;
     var name = (typeof node.label === "string" && node.label) || node.id;
     var label = name + " \\u306E kind\\uFF08\\u73FE\\u5728 " +
       (current || "\\u306A\\u3057") + "\\uFF09";
@@ -1950,20 +1967,13 @@ const RAW_HARNESS_JS = `(function () {
     var select = document.createElement("select");
     select.className = "ark-harness-kind-select";
     markUi(select);
-    if (kindCandidates.length === 0) {
-      var none = createKindOption("");
-      none.textContent = "kind \\u306A\\u3057";
-      select.appendChild(none);
-      select.disabled = true;
-    } else {
-      var none = createKindOption("");
-      none.textContent = "kind \\u306A\\u3057";
-      select.appendChild(none);
-      kindCandidates.forEach(function (value) {
-        select.appendChild(createKindOption(value));
-      });
-      syncKindSelect(select, node);
-    }
+    var note = createKindOption("note");
+    note.textContent = "note";
+    select.appendChild(note);
+    kindCandidates.forEach(function (value) {
+      if (value !== "note") select.appendChild(createKindOption(value));
+    });
+    syncKindSelect(select, node);
     select.addEventListener("change", function (event) {
       event.stopPropagation();
       if (selection.kind === "node" && selection.id === node.id &&
@@ -2009,6 +2019,25 @@ const RAW_HARNESS_JS = `(function () {
       contextToolbar.appendChild(select);
     });
     var name = (typeof edge.label === "string" && edge.label) || edge.id;
+    var reverse = createButton(
+      "\\u5411\\u304D\\u53CD\\u8EE2",
+      "ark-harness-edge-reverse",
+      name + " \\u306E\\u5411\\u304D\\u3092\\u53CD\\u8EE2"
+    );
+    var reversible = edgeDirection(edge);
+    reverse.disabled = reversible !== "forward" && reversible !== "reverse";
+    reverse.addEventListener("click", function () {
+      if (selection.kind !== "edge" || selection.id !== edge.id) return;
+      var current = getEdge(state.model, edge.id);
+      if (!current) return;
+      var dir = edgeDirection(current);
+      if (dir !== "forward" && dir !== "reverse") return;
+      if (!isRecordObject(current.ext)) current.ext = {};
+      current.ext.direction = dir === "forward" ? "reverse" : "forward";
+      graphs.forEach(function (entry) { scheduleGraphRender(entry); });
+      renderContextToolbar();
+    });
+    contextToolbar.appendChild(reverse);
     var del = createButton(
       "\\u524A\\u9664",
       "ark-harness-edge-delete",
@@ -2288,41 +2317,31 @@ const RAW_HARNESS_JS = `(function () {
     return kept.join(" ");
   }
 
-  function projectionTemplate(graph, kind) {
-    var template = null;
-    var matched = false;
-    graph.nodesById.forEach(function (root, id) {
-      if (template) return;
-      var node = getNode(state.model, id);
-      if (kind && node && node.kind === kind) {
-        template = root;
-        matched = true;
+  function findNodeLabelEl(rootEl, id) {
+    var labelEl = null;
+    rootEl.querySelectorAll("[data-model-id]").forEach(function (candidate) {
+      if (labelEl || candidate === rootEl ||
+          candidate.getAttribute("data-model-id") !== id ||
+          isInsideHarnessUi(candidate) ||
+          candidate.hasAttribute("data-ark-container") ||
+          candidate.hasAttribute("data-ark-group")) return;
+      var nested = candidate.querySelectorAll("[data-model-id]");
+      for (var i = 0; i < nested.length; i++) {
+        if (nested[i].getAttribute("data-model-id") === id) return;
       }
+      labelEl = candidate;
     });
-    if (!template) {
-      graph.nodesById.forEach(function (root) {
-        if (!template) template = root;
-      });
-    }
+    return labelEl;
+  }
+
+  function projectionTemplateForRoot(template, matched, labelMatched) {
     var tag = template && /^(ARTICLE|SECTION|DIV)$/.test(template.tagName)
       ? template.tagName.toLowerCase()
       : "article";
     var id = template && template.getAttribute("data-model-id");
-    var labelEl = null;
-    if (matched && id) {
-      template.querySelectorAll("[data-model-id]").forEach(function (candidate) {
-        if (labelEl || candidate === template ||
-            candidate.getAttribute("data-model-id") !== id ||
-            isInsideHarnessUi(candidate) ||
-            candidate.hasAttribute("data-ark-container") ||
-            candidate.hasAttribute("data-ark-group")) return;
-        var nested = candidate.querySelectorAll("[data-model-id]");
-        for (var i = 0; i < nested.length; i++) {
-          if (nested[i].getAttribute("data-model-id") === id) return;
-        }
-        labelEl = candidate;
-      });
-    }
+    var labelEl = (matched || labelMatched) && id
+      ? findNodeLabelEl(template, id)
+      : null;
     var labelTag = labelEl &&
       /^(H1|H2|H3|H4|H5|H6|SPAN|DIV|P|STRONG|HEADER)$/.test(labelEl.tagName)
       ? labelEl.tagName.toLowerCase()
@@ -2346,6 +2365,63 @@ const RAW_HARNESS_JS = `(function () {
     };
   }
 
+  function projectionTemplate(graph, kind, excludeId) {
+    var template = null;
+    var matched = false;
+    var labelMatched = false;
+    graph.nodesById.forEach(function (root, id) {
+      if (excludeId && id === excludeId) return;
+      if (template) return;
+      var node = getNode(state.model, id);
+      if (kind && node && node.kind === kind) {
+        template = root;
+        matched = true;
+      }
+    });
+    if (!template) {
+      graph.nodesById.forEach(function (root, id) {
+        if (excludeId && id === excludeId) return;
+        if (!template) {
+          template = root;
+          if (kind && excludeId) labelMatched = true;
+        }
+      });
+    }
+    return projectionTemplateForRoot(template, matched, labelMatched);
+  }
+
+  function createNoteProjection(node) {
+    var note = document.createElement("div");
+    note.className = "ark-harness-note";
+    note.setAttribute("data-ark-harness-note", "");
+    note.setAttribute("data-placeholder", "\\u30E1\\u30E2\\u3092\\u5165\\u529B");
+    note.setAttribute("contenteditable", "true");
+    note.textContent = typeof node.noteText === "string" ? node.noteText : "";
+    return note;
+  }
+
+  function createStructuredProjection(template, node) {
+    var label = template.labelTag
+      ? document.createElement(template.labelTag)
+      : document.createElement("span");
+    label.setAttribute("data-model-id", node.id);
+    label.setAttribute("data-placeholder", "\\u540D\\u524D\\u3092\\u5165\\u529B");
+    if (template.labelClassName) label.className = template.labelClassName;
+    label.textContent = typeof node.label === "string" ? node.label : "";
+    var list = null;
+    if (template.listTag) {
+      list = document.createElement(template.listTag);
+      if (template.listClassName) list.className = template.listClassName;
+      (node.fields || []).forEach(function (field) {
+        var li = document.createElement("li");
+        li.setAttribute("data-model-id", field.id);
+        li.textContent = field.label;
+        list.appendChild(li);
+      });
+    }
+    return { label: label, list: list };
+  }
+
   function createNodeProjection(graph, node) {
     var template = projectionTemplate(graph, node.kind || "");
     var root = template.tag === "section"
@@ -2353,23 +2429,27 @@ const RAW_HARNESS_JS = `(function () {
       : template.tag === "div"
         ? document.createElement("div")
         : document.createElement("article");
-    var label = template.labelTag
-      ? document.createElement(template.labelTag)
-      : document.createElement("span");
     root.setAttribute("data-model-id", node.id);
-    label.setAttribute("data-model-id", node.id);
     if (node.kind) root.setAttribute("data-kind", node.kind);
     if (template.className) root.className = template.className;
-    if (template.labelClassName) label.className = template.labelClassName;
-    label.textContent = node.label;
-    root.appendChild(label);
+    var label = null;
     var list = null;
-    if (template.listTag) {
-      list = document.createElement(template.listTag);
-      if (template.listClassName) list.className = template.listClassName;
-      root.appendChild(list);
+    var note = null;
+    if (node.kind === "note") {
+      note = createNoteProjection(node);
+      root.appendChild(note);
+    } else {
+      if (node.kind === "entity") {
+        if (!template.labelTag) template.labelTag = "h2";
+        if (!template.listTag) template.listTag = "ul";
+      }
+      var structured = createStructuredProjection(template, node);
+      label = structured.label;
+      list = structured.list;
+      root.appendChild(label);
+      if (list) root.appendChild(list);
     }
-    return { root: root, label: label, list: list };
+    return { root: root, label: label, list: list, note: note };
   }
 
   function nodePlacementBlockers(graph, excluded) {
@@ -2433,14 +2513,16 @@ const RAW_HARNESS_JS = `(function () {
       updateStatus(!!submitPort, "配置先 graph を解決できませんでした");
       return null;
     }
-    if (kind && kindCandidates.indexOf(kind) === -1) return null;
+    if (kind !== "note" && kind &&
+        kindCandidates.indexOf(kind) === -1) return null;
     var id = generateUniqueModelId("node");
     if (!id) {
       updateStatus(!!submitPort, "一意な ID を生成できませんでした");
       return null;
     }
-    var node = { id: id, label: "新しいノード", ext: { x: 0, y: 0 } };
+    var node = { id: id, label: kind === "note" ? "" : "新しいノード", ext: { x: 0, y: 0 } };
     if (kind) node.kind = kind;
+    if (kind === "note") node.noteText = "";
     var projection = createNodeProjection(graph, node);
     graph.container.appendChild(projection.root);
     projection.root.classList.add("ark-harness-graph-node");
@@ -2460,12 +2542,19 @@ const RAW_HARNESS_JS = `(function () {
       if (!registerGraphNode(graph, projection.root, node)) {
         throw new Error("node registration failed");
       }
-      wireEditableLeaf(projection.label, null);
+      if (projection.label) wireEditableLeaf(projection.label, null);
+      if (projection.note) wireNote(projection.note, node);
       if (projection.list) {
         var owned = listBindingsByNode.get(node.id) || [];
         owned.push({ listEl: projection.list, ownerNodeId: node.id });
         listBindingsByNode.set(node.id, owned);
         wireList(projection.list, node.id);
+        projection.list.querySelectorAll(":scope > li").forEach(function (li) {
+          wireEditableLeaf(li, {
+            listEl: projection.list,
+            ownerNodeId: node.id
+          });
+        });
       }
       lastKind = kind;
       graphs.forEach(function (entry) { scheduleGraphRender(entry); });
@@ -2672,14 +2761,104 @@ const RAW_HARNESS_JS = `(function () {
     return option;
   }
 
+  function rememberProjectionTemplate(root, kind) {
+    if (!kind || kind === "note") return;
+    if (!root.__arkHarnessProjectionTemplates) {
+      root.__arkHarnessProjectionTemplates = new Map();
+    }
+    root.__arkHarnessProjectionTemplates.set(
+      kind,
+      projectionTemplateForRoot(root, true, true)
+    );
+  }
+
+  function projectionTemplateForKind(graph, root, kind, id) {
+    var remembered = root.__arkHarnessProjectionTemplates &&
+      root.__arkHarnessProjectionTemplates.get(kind);
+    var template = remembered || projectionTemplate(graph, kind, id);
+    if (kind === "entity") {
+      if (!template.labelTag) template.labelTag = "h2";
+      if (!template.listTag) template.listTag = "ul";
+    }
+    return template;
+  }
+
+  function clearNodeProjection(root) {
+    Array.from(root.childNodes).forEach(function (child) {
+      if (child.nodeType === 1 && isInsideHarnessUi(child)) return;
+      root.removeChild(child);
+    });
+  }
+
+  function registerProjectedList(node, list) {
+    var binding = { listEl: list, ownerNodeId: node.id };
+    listBindingsByNode.set(node.id, [binding]);
+    wireList(list, node.id);
+    list.querySelectorAll(":scope > li").forEach(function (li) {
+      wireEditableLeaf(li, {
+        listEl: list,
+        ownerNodeId: node.id
+      });
+    });
+  }
+
+  function projectNoteContent(root, node) {
+    listBindingsByNode.delete(node.id);
+    clearNodeProjection(root);
+    var note = createNoteProjection(node);
+    root.insertBefore(note, root.firstChild);
+    wireNote(note, node);
+  }
+
+  function projectStructuredContent(root, node, template) {
+    listBindingsByNode.delete(node.id);
+    clearNodeProjection(root);
+    var projection = createStructuredProjection(template, node);
+    root.insertBefore(projection.label, root.firstChild);
+    wireEditableLeaf(projection.label, null);
+    if (projection.list) {
+      root.insertBefore(projection.list, projection.label.nextSibling);
+      registerProjectedList(node, projection.list);
+    }
+  }
+
   function updateNodeKind(graph, root, value) {
     var id = root.getAttribute("data-model-id");
-    if (!id || value && kindCandidates.indexOf(value) === -1) return;
+    if (!id || !(value === "note" ||
+        kindCandidates.indexOf(value) !== -1)) return;
     var node = getNode(state.model, id);
     if (!node) return;
-    if (value) node.kind = value;
-    else delete node.kind;
+    var previousKind = typeof node.kind === "string" ? node.kind : "";
+    if (previousKind === value) {
+      lastKind = value;
+      return;
+    }
+    rememberProjectionTemplate(root, previousKind);
+    node.kind = value;
     lastKind = value;
+    if (value === "note") {
+      if (typeof node.noteText !== "string") node.noteText = "";
+      projectNoteContent(root, node);
+    } else {
+      var tpl = projectionTemplateForKind(graph, root, value, id);
+      if (tpl.listTag || previousKind === "note") {
+        projectStructuredContent(root, node, tpl);
+      } else {
+        var targetTag = tpl.labelTag || "span";
+        var targetClass = tpl.labelClassName || "";
+        var cur = findNodeLabelEl(root, id);
+        if (cur && cur.tagName.toLowerCase() !== targetTag) {
+          var next = document.createElement(targetTag);
+          if (targetClass) next.className = targetClass;
+          next.setAttribute("data-model-id", id);
+          next.textContent = typeof node.label === "string"
+            ? node.label
+            : (cur.textContent || "");
+          cur.parentNode.replaceChild(next, cur);
+          wireEditableLeaf(next, null);
+        }
+      }
+    }
     syncNodeKinds();
     renderContextToolbar();
     scheduleGraphRender(graph);
@@ -2769,6 +2948,20 @@ const RAW_HARNESS_JS = `(function () {
     if (rowInfo) {
       attachRowControls(el, rowInfo.listEl, rowInfo.ownerNodeId);
     }
+  }
+
+  function wireNote(el, node) {
+    var ownerId = node.id;
+    if (el.__arkHarnessNoteWired) return;
+    el.__arkHarnessNoteWired = true;
+    el.addEventListener("input", function () {
+      var text = typeof el.innerText === "string"
+        ? el.innerText
+        : (el.textContent || "");
+      var current = getNode(state.model, ownerId);
+      if (!current) return;
+      current.noteText = text.replace(/\\r\\n?/g, "\\n");
+    });
   }
 
   function syncFieldOrder(listEl, ownerNodeId) {
@@ -2879,6 +3072,15 @@ const RAW_HARNESS_JS = `(function () {
     });
   }
 
+  function initNoteProjections() {
+    graphs.forEach(function (graph) {
+      graph.nodesById.forEach(function (root, id) {
+        var node = getNode(state.model, id);
+        if (node && node.kind === "note") projectNoteContent(root, node);
+      });
+    });
+  }
+
   function buildSubmissionHtml() {
     var clone = document.documentElement.cloneNode(true);
 
@@ -2914,6 +3116,9 @@ const RAW_HARNESS_JS = `(function () {
     });
     clone.querySelectorAll("[contenteditable]").forEach(function (el) {
       el.removeAttribute("contenteditable");
+    });
+    clone.querySelectorAll("[data-placeholder]").forEach(function (el) {
+      el.removeAttribute("data-placeholder");
     });
     clone.querySelectorAll(".ark-harness-node-tabindex-added").forEach(function (el) {
       el.removeAttribute("tabindex");
@@ -2992,6 +3197,7 @@ const RAW_HARNESS_JS = `(function () {
         syncNodeKinds();
         syncLayoutDirectionButton();
         reconcileSelection();
+        initNoteProjections();
         graphs.forEach(function (graph) { scheduleGraphRender(graph); });
         error.style.display = "none";
         panel.style.display = "none";
@@ -3085,6 +3291,7 @@ const RAW_HARNESS_JS = `(function () {
       initEditing();
       buildContextToolbar();
       initGraphs();
+      initNoteProjections();
     } catch (e) {
       console.error("[ark-harness] 初期化に失敗しました", e);
     }
