@@ -9,11 +9,11 @@
  * モデルしか受け取らないため、生成コードや他人が書いた図が任意の散文を
  * 会話へ流し込めない。
  *
- * ただし node / field / edge の label 自体は外部入力である（ユーザーの
- * インライン編集、または他人が PR で持ち込む .diagram.html 内のモデル
- * JSON）。label をテンプレートへ素通しすると、この前提が崩れて label
- * 経由で任意の指示文を注入できてしまう。そのため文へ挿入する直前に
- * sanitizeLabel() を通す。
+ * ただし node / field / edge の label と、node の noteText / kind / id は
+ * 外部入力である（ユーザーのインライン編集、または他人が PR で持ち込む
+ * .diagram.html 内のモデル JSON）。これらをテンプレートへ素通しすると、
+ * この前提が崩れて任意の指示文を注入できてしまう。そのため文へ挿入する
+ * 直前に sanitizeLabel() を通す（node は nodeDisplayName() 内で行う）。
  */
 
 import type {
@@ -26,6 +26,7 @@ import type {
 const LABEL_MAX_LENGTH = 80;
 const LABEL_ELLIPSIS = "…";
 const LABEL_FALLBACK = "(無題)";
+const NOTE_EXCERPT_LENGTH = 20;
 
 /** C0制御文字（コードポイント 0-31）と DEL（127）かどうかを判定する */
 function isControlCodePoint(codePoint: number): boolean {
@@ -52,16 +53,62 @@ function isControlCodePoint(codePoint: number): boolean {
  * これは表示用の変換であり、モデルに保存される label 自体（呼び出し元が
  * 保持するオブジェクト）は変更しない。
  */
-function sanitizeLabel(label: string): string {
+function sanitizeLabel(
+  label: string,
+  fallback: string = LABEL_FALLBACK
+): string {
   const stripped = Array.from(label)
     .filter(ch => !isControlCodePoint(ch.codePointAt(0) ?? 0))
     .join("")
     .trim();
-  if (stripped.length === 0) return LABEL_FALLBACK;
+  if (stripped.length === 0) return fallback;
   if (stripped.length <= LABEL_MAX_LENGTH) return stripped;
   return (
     stripped.slice(0, LABEL_MAX_LENGTH - LABEL_ELLIPSIS.length) + LABEL_ELLIPSIS
   );
+}
+
+/** node の label、メモ本文、種別と id の順で生成文向けの表示名を解決する */
+function nodeDisplayName(node: DiagramNode): string {
+  const label = sanitizeLabel(node.label ?? "");
+  if (label !== LABEL_FALLBACK) return label;
+
+  if (typeof node.noteText === "string") {
+    const noteText = sanitizeLabel(node.noteText, "");
+    if (noteText.length > 0) {
+      const characters = Array.from(noteText);
+      const excerpt =
+        characters.length > NOTE_EXCERPT_LENGTH
+          ? `${characters.slice(0, NOTE_EXCERPT_LENGTH).join("")}${LABEL_ELLIPSIS}`
+          : noteText;
+      return `メモ「${excerpt}」`;
+    }
+  }
+
+  const id = sanitizeLabel(node.id);
+  return node.kind
+    ? `${sanitizeLabel(node.kind)} ノード (${id})`
+    : `ノード (${id})`;
+}
+
+/** noteText 由来の表示名だけは、日本語の鉤括弧に助詞を直結する */
+function isNoteExcerptDisplayName(
+  node: DiagramNode,
+  displayName: string
+): boolean {
+  return (
+    sanitizeLabel(node.label ?? "") === LABEL_FALLBACK &&
+    displayName.startsWith("メモ「") &&
+    displayName.endsWith("」")
+  );
+}
+
+function withParticle(
+  displayName: string,
+  particle: string,
+  compact: boolean
+): string {
+  return `${displayName}${compact ? "" : " "}${particle}`;
 }
 
 function byId<T extends { id: string }>(items: T[]): Map<string, T> {
@@ -71,6 +118,7 @@ function byId<T extends { id: string }>(items: T[]): Map<string, T> {
 /** フィールド列の差分を述べる（追加・削除・改名・並べ替え） */
 function diffFields(
   nodeLabel: string,
+  compactNodeLabel: boolean,
   before: DiagramField[],
   after: DiagramField[]
 ): string[] {
@@ -80,15 +128,20 @@ function diffFields(
 
   for (const f of after) {
     const prev = b.get(f.id);
-    if (!prev) out.push(`${nodeLabel} に ${sanitizeLabel(f.label)} を追加`);
+    if (!prev)
+      out.push(
+        `${withParticle(nodeLabel, "に", compactNodeLabel)} ${sanitizeLabel(f.label)} を追加`
+      );
     else if (prev.label !== f.label)
       out.push(
-        `${nodeLabel} の ${sanitizeLabel(prev.label)} を ${sanitizeLabel(f.label)} に変更`
+        `${withParticle(nodeLabel, "の", compactNodeLabel)} ${sanitizeLabel(prev.label)} を ${sanitizeLabel(f.label)} に変更`
       );
   }
   for (const f of before) {
     if (!a.has(f.id))
-      out.push(`${nodeLabel} から ${sanitizeLabel(f.label)} を削除`);
+      out.push(
+        `${withParticle(nodeLabel, "から", compactNodeLabel)} ${sanitizeLabel(f.label)} を削除`
+      );
   }
 
   // 追加・削除を除いた並びが変わっていれば並べ替えとして述べる
@@ -96,7 +149,9 @@ function diffFields(
   const keptAfter = after.filter(f => b.has(f.id)).map(f => f.id);
   if (keptBefore.length > 1 && keptBefore.join(" ") !== keptAfter.join(" ")) {
     const order = after.map(f => sanitizeLabel(f.label)).join(", ");
-    out.push(`${nodeLabel} のフィールド順を ${order} に変更`);
+    out.push(
+      `${withParticle(nodeLabel, "の", compactNodeLabel)}フィールド順を ${order} に変更`
+    );
   }
   return out;
 }
@@ -108,27 +163,41 @@ function diffNodes(before: DiagramNode[], after: DiagramNode[]): string[] {
 
   for (const n of after) {
     const prev = b.get(n.id);
-    const label = sanitizeLabel(n.label);
+    const label = nodeDisplayName(n);
+    const compactLabel = isNoteExcerptDisplayName(n, label);
     if (!prev) {
-      out.push(`${label} を追加`);
+      out.push(`${withParticle(label, "を", compactLabel)}追加`);
       continue;
     }
-    if (prev.label !== n.label)
-      out.push(`${sanitizeLabel(prev.label)} を ${label} に改名`);
-    out.push(...diffFields(label, prev.fields ?? [], n.fields ?? []));
+    if (prev.label !== n.label) {
+      const prevLabel = nodeDisplayName(prev);
+      out.push(
+        `${withParticle(prevLabel, "を", isNoteExcerptDisplayName(prev, prevLabel))} ${withParticle(label, "に", compactLabel)}改名`
+      );
+    }
+    out.push(
+      ...diffFields(label, compactLabel, prev.fields ?? [], n.fields ?? [])
+    );
   }
   for (const n of before) {
     // 削除の主語は before 側の label（after には存在しない）
-    if (!a.has(n.id)) out.push(`${sanitizeLabel(n.label)} を削除`);
+    if (!a.has(n.id)) {
+      const label = nodeDisplayName(n);
+      out.push(
+        `${withParticle(label, "を", isNoteExcerptDisplayName(n, label))}削除`
+      );
+    }
   }
   return out;
 }
 
 function edgeText(edge: DiagramEdge, nodes: Map<string, DiagramNode>): string {
-  const from = sanitizeLabel(nodes.get(edge.from)?.label ?? edge.from);
-  const to = sanitizeLabel(nodes.get(edge.to)?.label ?? edge.to);
+  const fromNode = nodes.get(edge.from);
+  const toNode = nodes.get(edge.to);
+  const from = fromNode ? nodeDisplayName(fromNode) : sanitizeLabel(edge.from);
+  const to = toNode ? nodeDisplayName(toNode) : sanitizeLabel(edge.to);
   const label = edge.label ? `「${sanitizeLabel(edge.label)}」` : "";
-  return `${from} から ${to} への関連${label}`;
+  return `${withParticle(from, "から", fromNode ? isNoteExcerptDisplayName(fromNode, from) : false)} ${withParticle(to, "への", toNode ? isNoteExcerptDisplayName(toNode, to) : false)}関連${label}`;
 }
 
 function diffEdges(before: DiagramModel, after: DiagramModel): string[] {
