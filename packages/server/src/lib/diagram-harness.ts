@@ -3424,12 +3424,12 @@ const RAW_HARNESS_JS = `(function () {
         if (e.data && e.data.type === "ark:diagram-autosave-result") {
           if (e.data.ok) savedJson = savingJson;
           savingJson = null;
-          updateStatus(true, e.data.ok ? "保存済み" : "保存失敗");
-          if (!e.data.ok) statusEl.classList.remove("ark-harness-status-ok");
+          if (e.data.ok) updateStatus(true, "保存済み");
+          else updateStatus(false, "保存失敗");
           if (submitPending) {
             submitPending = false;
             handleSubmit();
-          } else if (e.data.ok) syncDirtyState();
+          } else syncDirtyState();
         }
       };
       updateStatus(true);
@@ -3451,12 +3451,24 @@ const GROUP_COMPACTED_HARNESS_JS =
     RAW_HARNESS_JS.slice(groupAdapterStart, groupAdapterEnd)
   ) +
   RAW_HARNESS_JS.slice(groupAdapterEnd);
+
+function requireIndex(value: string, marker: string): number {
+  const index = value.indexOf(marker);
+  if (index === -1) {
+    throw new Error(`ハーネス圧縮マーカーが見つかりません: ${marker}`);
+  }
+  return index;
+}
+
 const STATUS_STATE_START = "  function updateStatus(";
 const STATUS_STATE_END = "  function attachRowControls(";
-const statusStateStart = GROUP_COMPACTED_HARNESS_JS.indexOf(STATUS_STATE_START);
-const statusStateEnd = GROUP_COMPACTED_HARNESS_JS.indexOf(
-  STATUS_STATE_END,
-  statusStateStart
+const statusStateStart = requireIndex(
+  GROUP_COMPACTED_HARNESS_JS,
+  STATUS_STATE_START
+);
+const statusStateEnd = requireIndex(
+  GROUP_COMPACTED_HARNESS_JS,
+  STATUS_STATE_END
 );
 const STATUS_COMPACTED_HARNESS_JS =
   GROUP_COMPACTED_HARNESS_JS.slice(0, statusStateStart) +
@@ -3466,8 +3478,8 @@ const STATUS_COMPACTED_HARNESS_JS =
   GROUP_COMPACTED_HARNESS_JS.slice(statusStateEnd);
 const SUBMIT_START = "  function handleSubmit(";
 const SUBMIT_END = "  function buildModelPanel(";
-const submitStart = STATUS_COMPACTED_HARNESS_JS.indexOf(SUBMIT_START);
-const submitEnd = STATUS_COMPACTED_HARNESS_JS.indexOf(SUBMIT_END, submitStart);
+const submitStart = requireIndex(STATUS_COMPACTED_HARNESS_JS, SUBMIT_START);
+const submitEnd = requireIndex(STATUS_COMPACTED_HARNESS_JS, SUBMIT_END);
 const SUBMIT_COMPACTED_HARNESS_JS =
   STATUS_COMPACTED_HARNESS_JS.slice(0, submitStart) +
   compactTrustedJavaScript(
@@ -3476,10 +3488,14 @@ const SUBMIT_COMPACTED_HARNESS_JS =
   STATUS_COMPACTED_HARNESS_JS.slice(submitEnd);
 const PORT_HANDLER_START = "    if (submitPort) return;";
 const PORT_HANDLER_END = "  });\n})();";
-const portHandlerStart =
-  SUBMIT_COMPACTED_HARNESS_JS.lastIndexOf(PORT_HANDLER_START);
-const portHandlerEnd =
-  SUBMIT_COMPACTED_HARNESS_JS.lastIndexOf(PORT_HANDLER_END);
+const portHandlerStart = requireIndex(
+  SUBMIT_COMPACTED_HARNESS_JS,
+  PORT_HANDLER_START
+);
+const portHandlerEnd = requireIndex(
+  SUBMIT_COMPACTED_HARNESS_JS,
+  PORT_HANDLER_END
+);
 const HARNESS_JS =
   SUBMIT_COMPACTED_HARNESS_JS.slice(0, portHandlerStart) +
   compactTrustedJavaScript(

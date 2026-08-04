@@ -729,8 +729,11 @@ async function openSampleDiagram(page: Page) {
   await openAuthoredDiagram(page, "sample.diagram.html");
 }
 
-async function connectSubmissionPort(page: Page) {
-  await page.evaluate(() => {
+async function connectSubmissionPort(
+  page: Page,
+  autosaveResults: boolean[] = []
+) {
+  await page.evaluate(results => {
     const browserWindow = window as typeof window & {
       arkHarnessSubmission?: unknown;
       arkHarnessAutosaves?: unknown[];
@@ -742,14 +745,14 @@ async function connectSubmissionPort(page: Page) {
         browserWindow.arkHarnessAutosaves.push(event.data);
         channel.port1.postMessage({
           type: "ark:diagram-autosave-result",
-          ok: true,
+          ok: results.shift() ?? true,
         });
       } else {
         browserWindow.arkHarnessSubmission = event.data;
       }
     };
     window.postMessage({ type: "ark:test-connect" }, "*", [channel.port2]);
-  });
+  }, autosaveResults);
   await expect(
     page.getByRole("button", {
       name: "変更を親フレームへ送信する",
@@ -2568,7 +2571,7 @@ test("編集を debounce で自動保存し、未通知の送信 UI は残す", 
     '[data-ark-container="graph"] h2[data-model-id="order"]'
   );
   await label.fill("Edited");
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(150);
   await label.fill("Autosaved Order");
 
   await expect
@@ -2619,6 +2622,27 @@ test("編集を debounce で自動保存し、未通知の送信 UI は残す", 
       }
     ).model.nodes[0]
   ).toMatchObject({ id: "order", label: "Order" });
+});
+
+test("自動保存に失敗した変更を次の tick で再試行する", async ({ page }) => {
+  await page.setContent(diagramHtml());
+  await connectSubmissionPort(page, [false, true]);
+  const status = page.locator(".ark-harness-status");
+
+  await page
+    .locator('[data-ark-container="graph"] h2[data-model-id="order"]')
+    .fill("Retry Order");
+
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as typeof window & { arkHarnessAutosaves?: unknown[] })
+            .arkHarnessAutosaves?.length ?? 0
+      )
+    )
+    .toBe(2);
+  await expect(status).toHaveText("保存済み");
 });
 
 test("レイアウト方向を LR から TB へ切り替えて再配置・保存する", async ({
