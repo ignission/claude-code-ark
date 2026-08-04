@@ -55,6 +55,15 @@ describe("injectHarness", () => {
     expect(out).toContain("ark-harness-layout-direction");
     expect(out).toContain("function syncLayoutDirectionButton(");
     expect(out).toContain("function toggleLayoutDirection(");
+    expect(out).toContain("var baselineModelJson;");
+    expect(out).toContain("function syncDirtyState(");
+    expect(out).toContain('location.hash.indexOf("ark-debug") !== -1');
+    expect(out).toContain(
+      'window.addEventListener("hashchange", syncDebugChrome)'
+    );
+    expect(out).toContain(
+      'createButton("変更を送る", "ark-harness-btn ark-harness-btn-secondary"'
+    );
     expect(out).toContain('var label = visibleLabel + "（現在 "');
     expect(out).toContain(
       "if (!isRecordObject(state.model.ext)) state.model.ext = {};"

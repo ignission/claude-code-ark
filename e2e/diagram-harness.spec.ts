@@ -741,8 +741,32 @@ async function connectSubmissionPort(page: Page) {
     window.postMessage({ type: "ark:test-connect" }, "*", [channel.port2]);
   });
   await expect(
-    page.getByRole("button", { name: "変更を親フレームへ送信する" })
+    page.getByRole("button", {
+      name: "変更を親フレームへ送信する",
+      includeHidden: true,
+    })
   ).toBeEnabled();
+}
+
+async function enableDiagramDebug(page: Page) {
+  await page.evaluate(() => {
+    location.hash = "ark-debug";
+  });
+  await expect(
+    page.getByRole("button", { name: "モデル JSON を直接編集する" })
+  ).toBeVisible();
+}
+
+async function openModelPanel(page: Page, programmatic = false) {
+  await enableDiagramDebug(page);
+  const button = page.getByRole("button", {
+    name: "モデル JSON を直接編集する",
+  });
+  if (programmatic) {
+    await button.evaluate(element => (element as HTMLButtonElement).click());
+  } else {
+    await button.click();
+  }
 }
 
 const crudModel: DiagramModel = {
@@ -808,9 +832,7 @@ function crudDiagramHtml(
 }
 
 async function readCurrentModel(page: Page): Promise<DiagramModel> {
-  await page
-    .getByRole("button", { name: "モデル JSON を直接編集する" })
-    .click();
+  await openModelPanel(page);
   const value = await page.locator(".ark-harness-textarea").inputValue();
   await page.getByRole("button", { name: "閉じる", exact: true }).click();
   return JSON.parse(value) as DiagramModel;
@@ -1442,9 +1464,7 @@ test("selection toolbar stale・submission: model 直接削除で解除し選択
     ...group,
     nodes: group.nodes.filter(id => id !== "order"),
   }));
-  await page
-    .getByRole("button", { name: "モデル JSON を直接編集する" })
-    .click();
+  await openModelPanel(page);
   await page.locator(".ark-harness-textarea").fill(JSON.stringify(nextModel));
   await page.getByRole("button", { name: "反映", exact: true }).click();
   await expect(toolbar).toBeHidden();
@@ -2242,6 +2262,84 @@ test("構造変更: clean submission は semantic node を残し CRUD UI と見�
   ]);
 });
 
+test("下部ツールバーは既定で方向トグルだけを表示する", async ({ page }) => {
+  await page.setContent(diagramHtml());
+
+  await expect(page.locator(".ark-harness-layout-direction")).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "モデル JSON を直接編集する",
+      includeHidden: true,
+    })
+  ).toBeHidden();
+  await expect(
+    page.getByRole("button", {
+      name: "変更を親フレームへ送信する",
+      includeHidden: true,
+    })
+  ).toBeHidden();
+  await expect(page.locator(".ark-harness-status")).toBeHidden();
+});
+
+test("ark-debug hash でモデル直接編集ボタンを動的に切り替える", async ({
+  page,
+}) => {
+  await page.setContent(diagramHtml());
+  const editButton = page.getByRole("button", {
+    name: "モデル JSON を直接編集する",
+    includeHidden: true,
+  });
+
+  await expect(editButton).toBeHidden();
+  await page.evaluate(() => {
+    location.hash = "ark-debug";
+  });
+  await expect(editButton).toBeVisible();
+  await page.evaluate(() => {
+    location.hash = "";
+  });
+  await expect(editButton).toBeHidden();
+});
+
+test("ノードのラベル編集時だけ送信 UI を表示する", async ({ page }) => {
+  await page.setContent(diagramHtml());
+
+  await page
+    .locator('[data-ark-container="graph"] h2[data-model-id="order"]')
+    .fill("Edited Order");
+  await expect(
+    page.getByRole("button", { name: "変更を親フレームへ送信する" })
+  ).toBeVisible();
+  await expect(page.locator(".ark-harness-status")).toBeVisible();
+  await expect(page.locator(".ark-harness-status")).toHaveText(
+    "親フレーム未接続"
+  );
+});
+
+test("送信成功後に送信 UI を再び隠す", async ({ page }) => {
+  await page.setContent(diagramHtml());
+  await connectSubmissionPort(page);
+  const sendButton = page.getByRole("button", {
+    name: "変更を親フレームへ送信する",
+  });
+  const status = page.locator(".ark-harness-status");
+
+  await page
+    .locator('[data-ark-container="graph"] h2[data-model-id="order"]')
+    .fill("Edited Order");
+  await expect(sendButton).toBeVisible();
+  await expect(status).toBeVisible();
+  await sendButton.click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  await expect(sendButton).toBeHidden();
+  await expect(status).toBeHidden();
+});
+
 test("レイアウト方向を LR から TB へ切り替えて再配置・保存する", async ({
   page,
 }) => {
@@ -2262,6 +2360,7 @@ test("レイアウト方向を LR から TB へ切り替えて再配置・保存
   });
   const editModelButton = page.getByRole("button", {
     name: "モデル JSON を直接編集する",
+    includeHidden: true,
   });
   await expect(directionButton).toHaveText("方向: LR");
   await expect(directionButton).toHaveAttribute(
@@ -2405,9 +2504,7 @@ test("レイアウト方向は ext 欠損を補い、モデル直接編集後も
         name: "方向: LR（現在 LR。TB に切り替える）",
       })
       .click();
-    await page
-      .getByRole("button", { name: "モデル JSON を直接編集する" })
-      .click();
+    await openModelPanel(page);
     const currentModel = JSON.parse(
       await page.locator(".ark-harness-textarea").inputValue()
     ) as DiagramModel;
@@ -2434,9 +2531,7 @@ test("レイアウト方向は ext 欠損を補い、モデル直接編集後も
       direction: "LR",
     },
   };
-  await page
-    .getByRole("button", { name: "モデル JSON を直接編集する" })
-    .click();
+  await openModelPanel(page);
   await page.locator(".ark-harness-textarea").fill(JSON.stringify(tbModel));
   await page.getByRole("button", { name: "反映", exact: true }).click();
   await expect(
@@ -2463,10 +2558,11 @@ test("レイアウト方向 UI は graph がない文書には表示しない", 
 
   await expect(
     page.getByRole("button", { name: "モデル JSON を直接編集する" })
-  ).toBeVisible();
+  ).toBeHidden();
   await expect(
     page.getByRole("button", { name: "変更を親フレームへ送信する" })
-  ).toBeVisible();
+  ).toBeHidden();
+  await expect(page.locator(".ark-harness-status")).toBeHidden();
   await expect(page.locator(".ark-harness-layout-direction")).toHaveCount(0);
 });
 
@@ -2585,8 +2681,9 @@ test("表示時は座標を非永続化し、ドラッグした node だけ手�
   await connectSubmissionPort(page);
   const submit = page.getByRole("button", {
     name: "変更を親フレームへ送信する",
+    includeHidden: true,
   });
-  await submit.click();
+  await submit.evaluate(element => (element as HTMLButtonElement).click());
   await page.waitForFunction(() =>
     Boolean(
       (window as typeof window & { arkHarnessSubmission?: unknown })
@@ -2707,9 +2804,7 @@ test("自動配置は text resize とモデル JSON 再適用で再計算する"
       parsed.ext.layout.direction = "TB";
       return parsed;
     });
-  await page
-    .getByRole("button", { name: "モデル JSON を直接編集する" })
-    .click();
+  await openModelPanel(page);
   await page.locator(".ark-harness-textarea").fill(JSON.stringify(editedModel));
   await page.getByRole("button", { name: "反映", exact: true }).click();
   await expect
@@ -2827,9 +2922,7 @@ for (const direction of ["LR", "TB"] as const) {
     const before = Object.fromEntries(
       nodeBoxes.map(box => [box.id, { x: box.x, y: box.y }])
     );
-    await page
-      .getByRole("button", { name: "モデル JSON を直接編集する" })
-      .click();
+    await openModelPanel(page);
     await page
       .locator(".ark-harness-textarea")
       .fill(JSON.stringify(initialModel));
@@ -2915,8 +3008,9 @@ test("group-aware auto layout は座標を還流せず drag した member だけ
   await connectSubmissionPort(page);
   const submit = page.getByRole("button", {
     name: "変更を親フレームへ送信する",
+    includeHidden: true,
   });
-  await submit.click();
+  await submit.evaluate(element => (element as HTMLButtonElement).click());
   await page.waitForFunction(() =>
     Boolean(
       (window as typeof window & { arkHarnessSubmission?: unknown })
@@ -3050,9 +3144,7 @@ test("group-aware auto layout は重複 membership などを deterministic legac
   }
 
   const current = await readCurrentModel(page);
-  await page
-    .getByRole("button", { name: "モデル JSON を直接編集する" })
-    .click();
+  await openModelPanel(page);
   await page.locator(".ark-harness-textarea").fill(JSON.stringify(current));
   await page.getByRole("button", { name: "反映", exact: true }).click();
   await expect
@@ -3150,6 +3242,7 @@ test("cardinality・方向・type を edge SVG に安全に投影する", async 
   await expect(edge).not.toHaveAttribute("marker-start", /.+/);
   await expect(edge).toHaveAttribute("marker-end", /url\(.+\)/);
 
+  await enableDiagramDebug(page);
   const editButton = page.getByRole("button", {
     name: "モデル JSON を直接編集する",
   });
@@ -3417,9 +3510,7 @@ test("unknown edge ext は allowlist placeholder と forward fallback で安全�
   ).toBe(false);
   expect(requests.filter(url => url.startsWith("http"))).toEqual([]);
 
-  await page
-    .getByRole("button", { name: "モデル JSON を直接編集する" })
-    .click();
+  await openModelPanel(page);
   const beforeNormalization = JSON.parse(
     await page.locator(".ark-harness-textarea").inputValue()
   ) as { edges: Array<{ ext: Record<string, unknown> }> };
@@ -3475,9 +3566,7 @@ test("モデル直接編集後の edge toolbar を current model と同期して
       },
     },
   ];
-  await page
-    .getByRole("button", { name: "モデル JSON を直接編集する" })
-    .evaluate(element => (element as HTMLButtonElement).click());
+  await openModelPanel(page);
   await page.locator(".ark-harness-textarea").fill(JSON.stringify(nextModel));
   await page
     .getByRole("button", { name: "反映", exact: true })
@@ -3503,6 +3592,7 @@ test("モデル直接編集後の edge toolbar を current model と同期して
 
 test("カーディナリティ 5 語彙を self-loop にも投影する", async ({ page }) => {
   const errors = await openEdgeSemanticsDiagram(page);
+  await enableDiagramDebug(page);
   const editButton = page.getByRole("button", {
     name: "モデル JSON を直接編集する",
   });
@@ -3799,9 +3889,7 @@ test("edge 始点の張り替えと self-edge を同じ handle 機構で扱う",
       'line.ark-harness-edge-main[data-ark-edge-id="e_order_owner"]'
     )
   ).toHaveCount(1);
-  await page
-    .getByRole("button", { name: "モデル JSON を直接編集する" })
-    .click();
+  await openModelPanel(page);
   const rewiredFromModel = JSON.parse(
     await page.locator(".ark-harness-textarea").inputValue()
   ) as typeof edgeSemanticsModel;
@@ -3832,8 +3920,11 @@ test("edge 始点の張り替えと self-edge を同じ handle 機構で扱う",
   ).toHaveCount(2);
 
   await page
-    .getByRole("button", { name: "変更を親フレームへ送信する" })
-    .click();
+    .getByRole("button", {
+      name: "変更を親フレームへ送信する",
+      includeHidden: true,
+    })
+    .evaluate(element => (element as HTMLButtonElement).click());
   await page.waitForFunction(() =>
     Boolean(
       (window as typeof window & { arkHarnessSubmission?: unknown })
@@ -3878,9 +3969,7 @@ test("端点 drag 中の model 直接削除でも stale edge を更新しない"
     ...edgeSemanticsModel,
     edges: edgeSemanticsModel.edges.filter(edge => edge.id !== "e_order_owner"),
   };
-  await page
-    .getByRole("button", { name: "モデル JSON を直接編集する" })
-    .evaluate(element => (element as HTMLButtonElement).click());
+  await openModelPanel(page, true);
   await page
     .locator(".ark-harness-textarea")
     .fill(JSON.stringify(withoutDraggedEdge));
@@ -3950,8 +4039,11 @@ test("edge 端点 drag の Escape と pointercancel は model を変更しない
   await page.mouse.up();
 
   await page
-    .getByRole("button", { name: "変更を親フレームへ送信する" })
-    .click();
+    .getByRole("button", {
+      name: "変更を親フレームへ送信する",
+      includeHidden: true,
+    })
+    .evaluate(element => (element as HTMLButtonElement).click());
   await page.waitForFunction(() =>
     Boolean(
       (window as typeof window & { arkHarnessSubmission?: unknown })
@@ -4099,9 +4191,7 @@ test("invalid / cross-graph group 境界を安全に除外する", async ({ page
         : group
     ),
   };
-  await page
-    .getByRole("button", { name: "モデル JSON を直接編集する" })
-    .click();
+  await openModelPanel(page);
   await page
     .locator(".ark-harness-textarea")
     .fill(JSON.stringify(invalidatedModel));
@@ -4381,9 +4471,7 @@ test("モデル直接編集後の note 入力を現行モデルへ反映して�
   const note = source.locator(":scope > [data-ark-harness-note]");
   await note.fill("適用前のメモ");
 
-  await page
-    .getByRole("button", { name: "モデル JSON を直接編集する" })
-    .click();
+  await openModelPanel(page);
   await page.getByRole("button", { name: "反映", exact: true }).click();
 
   const currentNote = source.locator(":scope > [data-ark-harness-note]");
@@ -4720,6 +4808,7 @@ test("モデル直接編集後に kind toolbar と方向表示を再同期する
   );
   const toolbar = await selectNode(page, "order");
   const picker = toolbar.locator("select.ark-harness-kind-select");
+  await enableDiagramDebug(page);
   const editButton = page.getByRole("button", {
     name: "モデル JSON を直接編集する",
   });
@@ -5820,9 +5909,7 @@ test("モデル直接編集後の kind 再同期と node ドラッグを送信 m
       icon: icon ? getComputedStyle(icon, "::before").content : "none",
     };
   });
-  await page
-    .getByRole("button", { name: "モデル JSON を直接編集する" })
-    .click();
+  await openModelPanel(page);
   await page.locator(".ark-harness-textarea").fill(JSON.stringify(editedModel));
   await page.getByRole("button", { name: "反映", exact: true }).click();
 
