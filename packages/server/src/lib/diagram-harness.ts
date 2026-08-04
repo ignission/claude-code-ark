@@ -2896,6 +2896,10 @@ const RAW_HARNESS_JS = `(function () {
     }
   }
 
+  function isDebugMode() {
+    return /(^|[#,])ark-debug($|[,])/.test(location.hash);
+  }
+
   function syncDirtyState() {
     var dirty = JSON.stringify(state.model) !== baselineModelJson;
     if (sendBtn) sendBtn.style.display = dirty ? "" : "none";
@@ -2906,7 +2910,7 @@ const RAW_HARNESS_JS = `(function () {
   function syncToolbarVisibility(dirty) {
     if (!toolbarEl) return;
     if (dirty === undefined) dirty = JSON.stringify(state.model) !== baselineModelJson;
-    var debug = location.hash.indexOf("ark-debug") !== -1;
+    var debug = isDebugMode();
     toolbarEl.style.display = dirty || debug ? "" : "none";
   }
 
@@ -3301,7 +3305,7 @@ const RAW_HARNESS_JS = `(function () {
     });
 
     function syncDebugChrome() {
-      var debug = location.hash.indexOf("ark-debug") !== -1;
+      var debug = isDebugMode();
       editModelBtn.style.display = debug ? "" : "none";
       if (layoutDirectionBtn) layoutDirectionBtn.style.display = debug ? "" : "none";
       syncToolbarVisibility();

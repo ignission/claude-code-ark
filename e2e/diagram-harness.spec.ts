@@ -2319,6 +2319,25 @@ test("ark-debug hash で下部 debug UI を動的に切り替える", async ({ p
   await expect(directionButton).toBeHidden();
 });
 
+test("ark-debug の部分文字列を含む hash では下部 debug UI を表示しない", async ({
+  page,
+}) => {
+  await page.setContent(diagramHtml());
+  const toolbar = page.locator(".ark-harness-toolbar");
+  const editButton = page.getByRole("button", {
+    name: "モデル JSON を直接編集する",
+    includeHidden: true,
+  });
+  const directionButton = page.locator(".ark-harness-layout-direction");
+
+  await page.evaluate(() => {
+    location.hash = "ark-debugging";
+  });
+  await expect(toolbar).toBeHidden();
+  await expect(editButton).toBeHidden();
+  await expect(directionButton).toBeHidden();
+});
+
 test("ノードのラベル編集時だけ送信 UI を表示する", async ({ page }) => {
   await page.setContent(diagramHtml());
   const toolbar = page.locator(".ark-harness-toolbar");
