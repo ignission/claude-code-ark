@@ -53,6 +53,11 @@ interface DiagramAutosaveMessage {
   html: string;
 }
 
+interface DiagramPinchMessage {
+  type: "ark:diagram-pinch";
+  deltaY: number;
+}
+
 interface DiagramAutosaveRequest {
   sessionId: string;
   worktreePath: string;
@@ -74,6 +79,11 @@ export const DIAGRAM_ZOOM_DEFAULT = 1;
 export function stepDiagramZoom(zoom: number, direction: "in" | "out"): number {
   const next =
     direction === "in" ? zoom * DIAGRAM_ZOOM_STEP : zoom / DIAGRAM_ZOOM_STEP;
+  return Math.min(DIAGRAM_ZOOM_MAX, Math.max(DIAGRAM_ZOOM_MIN, next));
+}
+
+export function applyDiagramPinchZoom(zoom: number, deltaY: number): number {
+  const next = zoom * Math.exp(-deltaY / 400);
   return Math.min(DIAGRAM_ZOOM_MAX, Math.max(DIAGRAM_ZOOM_MIN, next));
 }
 
@@ -186,6 +196,25 @@ function isDiagramAutosaveMessage(
     data !== null &&
     (data as { type?: unknown }).type === "ark:diagram-autosave"
   );
+}
+
+function isDiagramPinchMessage(data: unknown): data is DiagramPinchMessage {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as { type?: unknown }).type === "ark:diagram-pinch" &&
+    typeof (data as { deltaY?: unknown }).deltaY === "number" &&
+    Number.isFinite((data as { deltaY: number }).deltaY)
+  );
+}
+
+export function handleDiagramPinchMessage(
+  data: unknown,
+  setZoom: (update: (zoom: number) => number) => void
+): boolean {
+  if (!isDiagramPinchMessage(data)) return false;
+  setZoom(zoom => applyDiagramPinchZoom(zoom, data.deltaY));
+  return true;
 }
 
 /**
@@ -500,6 +529,7 @@ export function DiagramPane({
       const channel = new MessageChannel();
       portRef.current = channel.port1;
       channel.port1.onmessage = (event: MessageEvent) => {
+        if (handleDiagramPinchMessage(event.data, setZoom)) return;
         if (isDiagramSubmitMessage(event.data)) {
           handleSubmit(event.data.model, event.data.html);
           return;

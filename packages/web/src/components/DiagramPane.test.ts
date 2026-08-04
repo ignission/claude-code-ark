@@ -2,11 +2,13 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
+  applyDiagramPinchZoom,
   DIAGRAM_ZOOM_MAX,
   DIAGRAM_ZOOM_MIN,
   DiagramViewport,
   emitDiagramAutosave,
   getDiagramZoomPercent,
+  handleDiagramPinchMessage,
   resetDiagramZoom,
   stepDiagramZoom,
 } from "./DiagramPane";
@@ -62,6 +64,47 @@ describe("emitDiagramAutosave", () => {
 });
 
 describe("DiagramPane zoom", () => {
+  it("pinch メッセージで連続ズームし 200% / 25% で clamp する", () => {
+    let zoom = 1;
+    const setZoom = (update: (current: number) => number) => {
+      zoom = update(zoom);
+    };
+
+    expect(
+      handleDiagramPinchMessage(
+        { type: "ark:diagram-pinch", deltaY: -40 },
+        setZoom
+      )
+    ).toBe(true);
+    expect(zoom).toBeCloseTo(Math.exp(0.1));
+
+    handleDiagramPinchMessage(
+      { type: "ark:diagram-pinch", deltaY: 80 },
+      setZoom
+    );
+    expect(zoom).toBeCloseTo(Math.exp(-0.1));
+    expect(applyDiagramPinchZoom(1, -10_000)).toBe(DIAGRAM_ZOOM_MAX);
+    expect(applyDiagramPinchZoom(1, 10_000)).toBe(DIAGRAM_ZOOM_MIN);
+  });
+
+  it("不正な pinch メッセージは zoom を変更しない", () => {
+    const setZoom = vi.fn();
+
+    expect(
+      handleDiagramPinchMessage(
+        { type: "ark:diagram-pinch", deltaY: "-40" },
+        setZoom
+      )
+    ).toBe(false);
+    expect(
+      handleDiagramPinchMessage(
+        { type: "ark:diagram-pinch", deltaY: Number.NaN },
+        setZoom
+      )
+    ).toBe(false);
+    expect(setZoom).not.toHaveBeenCalled();
+  });
+
   it("＋/−で percent 表示と iframe の width/transform が変わる", () => {
     const zoomedIn = stepDiagramZoom(1, "in");
     expect(getDiagramZoomPercent(zoomedIn)).toBe(125);

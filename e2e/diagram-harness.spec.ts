@@ -770,6 +770,61 @@ async function enableDiagramDebug(page: Page) {
   ).toBeVisible();
 }
 
+test("ctrl+wheel は pinch として親 port へ転送し通常 wheel は転送しない", async ({
+  page,
+}) => {
+  await openDiagram(page);
+  await connectSubmissionPort(page);
+
+  const ctrlPrevented = await page.evaluate(() => {
+    const event = new WheelEvent("wheel", {
+      ctrlKey: true,
+      deltaY: -80,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(ctrlPrevented).toBe(true);
+  await page.waitForFunction(
+    () =>
+      (
+        window as typeof window & {
+          arkHarnessSubmission?: { type?: string };
+        }
+      ).arkHarnessSubmission?.type === "ark:diagram-pinch"
+  );
+  expect(
+    await page.evaluate(
+      () =>
+        (window as typeof window & { arkHarnessSubmission?: unknown })
+          .arkHarnessSubmission
+    )
+  ).toEqual({ type: "ark:diagram-pinch", deltaY: -80 });
+
+  const plainPrevented = await page.evaluate(() => {
+    delete (window as typeof window & { arkHarnessSubmission?: unknown })
+      .arkHarnessSubmission;
+    const event = new WheelEvent("wheel", {
+      deltaY: 80,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(plainPrevented).toBe(false);
+  await page.evaluate(
+    () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+  );
+  expect(
+    await page.evaluate(
+      () =>
+        (window as typeof window & { arkHarnessSubmission?: unknown })
+          .arkHarnessSubmission
+    )
+  ).toBeUndefined();
+});
+
 async function openModelPanel(page: Page, programmatic = false) {
   await enableDiagramDebug(page);
   const button = page.getByRole("button", {
