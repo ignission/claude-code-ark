@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { extractModel } from "./diagram-file.js";
 import type { DiagramModel } from "./diagram-model.js";
 import { DIAGRAM_DIR } from "./diagram-path.js";
@@ -31,6 +31,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   fs.rmSync(worktree, { recursive: true, force: true });
 });
 
@@ -82,5 +83,35 @@ describe("saveDiagramEdit", () => {
     });
     expect(beforeWriteCalled).toBe(false);
     expect(fs.readFileSync(absPath, "utf8")).toBe(original);
+  });
+
+  it("write が失敗しても元ファイルを空にしない", async () => {
+    const original = fs.readFileSync(absPath, "utf8");
+    const open = fs.promises.open.bind(fs.promises);
+    const close = vi.fn();
+
+    await expect(
+      saveDiagramEdit(
+        worktree,
+        "sample.diagram.html",
+        initialModel,
+        html(initialModel, "Updated"),
+        () => {
+          vi.spyOn(fs.promises, "open").mockImplementation(async (...args) => {
+            const handle = await open(...args);
+            close.mockImplementation(() => handle.close());
+            return {
+              write: vi.fn().mockRejectedValue(new Error("write failed")),
+              truncate: vi.fn(),
+              close,
+            } as unknown as fs.promises.FileHandle;
+          });
+        }
+      )
+    ).rejects.toThrow("write failed");
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(fs.readFileSync(absPath, "utf8")).toBe(original);
+    expect(fs.statSync(absPath).size).toBe(Buffer.byteLength(original));
   });
 });

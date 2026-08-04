@@ -57,13 +57,15 @@ export async function saveDiagramEdit(
   try {
     writeHandle = await fs.promises.open(
       pathResolved.absPath,
-      fs.constants.O_WRONLY | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW
+      fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW
     );
   } catch {
     return { ok: false, error: "図ファイルの実体を検証できません" };
   }
   try {
-    await writeHandle.writeFile(ensureDoctype(replaced.html), "utf-8");
+    const body = Buffer.from(ensureDoctype(replaced.html), "utf-8");
+    await writeHandle.write(body, 0, body.byteLength, 0);
+    await writeHandle.truncate(body.byteLength);
   } finally {
     await writeHandle.close();
   }
