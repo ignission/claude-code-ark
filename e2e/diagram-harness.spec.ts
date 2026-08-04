@@ -1181,6 +1181,9 @@ test("selection toolbar: node・contenteditable・edge・解除を単一 root �
     0
   );
   await expect(
+    toolbar.getByRole("button", { name: "owned by の向きを反転" })
+  ).toHaveCount(1);
+  await expect(
     toolbar.getByRole("button", { name: "owned by を削除" })
   ).toHaveCount(1);
 
@@ -1320,6 +1323,51 @@ test("selection toolbar node action: +行と削除を既存 field・参照整合
   ).toEqual(["external"]);
 });
 
+test("selection toolbar edge action: 向き反転を2回行うと from/to だけが元に戻る", async ({
+  page,
+}) => {
+  await openEdgeSemanticsDiagram(page);
+  const toolbar = await selectEdge(page, "e_order_owner");
+  const reverse = toolbar.getByRole("button", {
+    name: "owned by の向きを反転",
+  });
+  const original = (await readCurrentModel(page)).edges.find(
+    edge => edge.id === "e_order_owner"
+  );
+  expect(original).toMatchObject({
+    from: "order",
+    to: "user",
+    ext: { direction: "forward" },
+  });
+
+  await reverse.click();
+  expect(
+    (await readCurrentModel(page)).edges.find(
+      edge => edge.id === "e_order_owner"
+    )
+  ).toMatchObject({
+    from: "user",
+    to: "order",
+    ext: { direction: "forward" },
+  });
+  await expect(toolbar).toHaveAttribute(
+    "data-ark-selection-id",
+    "e_order_owner"
+  );
+
+  await reverse.click();
+  expect(
+    (await readCurrentModel(page)).edges.find(
+      edge => edge.id === "e_order_owner"
+    )
+  ).toMatchObject({
+    from: "order",
+    to: "user",
+    ext: { direction: "forward" },
+  });
+  await expect(selectedEdgeAnchor(page, "e_order_owner")).toHaveCount(1);
+});
+
 test("selection toolbar edge action: rerender 後も選択を復元して対象 edge だけ削除する", async ({
   page,
 }) => {
@@ -1448,7 +1496,7 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   const addedEdge = current.edges.find(
     edge => !connectDragModel.edges.some(old => old.id === edge.id)
   );
-  expect(addedEdge).toMatchObject({ from: "crud-b", to: added.id });
+  expect(addedEdge).toMatchObject({ from: added.id, to: "crud-b" });
   expect(addedEdge?.id).toMatch(/^edge-/);
 
   const projection = firstGraph
@@ -1524,10 +1572,10 @@ test("node CRUD: 空白への接続 drag は anchor の方向に応じて新 nod
   const directionalModel = structuredClone(crudModel);
   directionalModel.edges = [];
   const scenarios = [
-    { anchor: "top", newNodeEnd: "from" },
-    { anchor: "bottom", newNodeEnd: "to" },
-    { anchor: "left", newNodeEnd: "from" },
-    { anchor: "right", newNodeEnd: "to" },
+    { anchor: "top", newNodeEnd: "to" },
+    { anchor: "bottom", newNodeEnd: "from" },
+    { anchor: "left", newNodeEnd: "to" },
+    { anchor: "right", newNodeEnd: "from" },
   ] as const;
 
   for (const scenario of scenarios) {
@@ -2148,7 +2196,7 @@ test("構造変更: clean submission は semantic node を残し CRUD UI と見�
   expect(submission.html).not.toContain("--ark-harness-graph-x");
   expect(describeModelDiff(crudModel, submission.model)).toEqual([
     "新しいノード を追加",
-    "B から 新しいノード への関連を追加",
+    "新しいノード から B への関連を追加",
   ]);
 });
 

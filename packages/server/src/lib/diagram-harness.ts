@@ -1441,7 +1441,7 @@ const RAW_HARNESS_JS = `(function () {
           var newEdgeId = generateUniqueModelId("edge");
           if (newEdgeId) {
             var anchorPosition = drag.handle.getAttribute("data-ark-anchor-position");
-            var newNodeIsSource = anchorPosition === "top" || anchorPosition === "left";
+            var newNodeIsSource = anchorPosition === "bottom" || anchorPosition === "right";
             state.model.edges.push({
               id: newEdgeId,
               from: newNodeIsSource ? newNode.id : blankSource.id,
@@ -2009,6 +2009,22 @@ const RAW_HARNESS_JS = `(function () {
       contextToolbar.appendChild(select);
     });
     var name = (typeof edge.label === "string" && edge.label) || edge.id;
+    var reverse = createButton(
+      "\\u5411\\u304D\\u53CD\\u8EE2",
+      "ark-harness-edge-reverse",
+      name + " \\u306E\\u5411\\u304D\\u3092\\u53CD\\u8EE2"
+    );
+    reverse.addEventListener("click", function () {
+      if (selection.kind !== "edge" || selection.id !== edge.id) return;
+      var current = getEdge(state.model, edge.id);
+      if (!current || current.from === current.to) return;
+      var previousFrom = current.from;
+      current.from = current.to;
+      current.to = previousFrom;
+      graphs.forEach(function (entry) { scheduleGraphRender(entry); });
+      renderContextToolbar();
+    });
+    contextToolbar.appendChild(reverse);
     var del = createButton(
       "\\u524A\\u9664",
       "ark-harness-edge-delete",
