@@ -2033,6 +2033,14 @@ const RAW_HARNESS_JS = `(function () {
       var previousFrom = current.from;
       current.from = current.to;
       current.to = previousFrom;
+      if (isRecordObject(current.ext)) {
+        var previousFromCard = current.ext.from_card;
+        var previousToCard = current.ext.to_card;
+        if (previousToCard === undefined) delete current.ext.from_card;
+        else current.ext.from_card = previousToCard;
+        if (previousFromCard === undefined) delete current.ext.to_card;
+        else current.ext.to_card = previousFromCard;
+      }
       graphs.forEach(function (entry) { scheduleGraphRender(entry); });
       renderContextToolbar();
     });

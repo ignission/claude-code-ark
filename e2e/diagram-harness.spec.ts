@@ -1323,7 +1323,7 @@ test("selection toolbar node action: +行と削除を既存 field・参照整合
   ).toEqual(["external"]);
 });
 
-test("selection toolbar edge action: 向き反転を2回行うと from/to だけが元に戻る", async ({
+test("selection toolbar edge action: 向き反転で from/to と cardinality を入替え2回で元に戻る", async ({
   page,
 }) => {
   await openEdgeSemanticsDiagram(page);
@@ -1337,7 +1337,11 @@ test("selection toolbar edge action: 向き反転を2回行うと from/to だけ
   expect(original).toMatchObject({
     from: "order",
     to: "user",
-    ext: { direction: "forward" },
+    ext: {
+      from_card: "one",
+      to_card: "zero-or-many",
+      direction: "forward",
+    },
   });
 
   await reverse.click();
@@ -1348,23 +1352,32 @@ test("selection toolbar edge action: 向き反転を2回行うと from/to だけ
   ).toMatchObject({
     from: "user",
     to: "order",
-    ext: { direction: "forward" },
+    ext: {
+      from_card: "zero-or-many",
+      to_card: "one",
+      direction: "forward",
+    },
   });
+  await expect(
+    toolbar.locator('select[data-ark-edge-control="from-card"]')
+  ).toHaveValue("zero-or-many");
+  await expect(
+    toolbar.locator('select[data-ark-edge-control="to-card"]')
+  ).toHaveValue("one");
+  await expect(
+    toolbar.locator('select[data-ark-edge-control="direction"]')
+  ).toHaveValue("forward");
   await expect(toolbar).toHaveAttribute(
     "data-ark-selection-id",
     "e_order_owner"
   );
 
   await reverse.click();
-  expect(
-    (await readCurrentModel(page)).edges.find(
-      edge => edge.id === "e_order_owner"
-    )
-  ).toMatchObject({
-    from: "order",
-    to: "user",
-    ext: { direction: "forward" },
-  });
+  const restored = (await readCurrentModel(page)).edges.find(
+    edge => edge.id === "e_order_owner"
+  );
+  expect(restored).toEqual(original);
+  expect(restored?.ext).toMatchObject({ direction: "forward" });
   await expect(selectedEdgeAnchor(page, "e_order_owner")).toHaveCount(1);
 });
 
