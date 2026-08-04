@@ -1486,6 +1486,28 @@ test("selection toolbar edge label: 入力・空欄・モデル再適用後を c
   ).toBe("current label");
 });
 
+test("selection toolbar edge label: 1文字ずつ入力してもフォーカスと全入力を維持する", async ({
+  page,
+}) => {
+  await openEdgeSemanticsDiagram(page);
+  const toolbar = await selectEdge(page, "e_order_owner");
+  const input = toolbar.locator("input.ark-harness-edge-label-input");
+
+  await input.click();
+  await input.press("ControlOrMeta+A");
+  await input.pressSequentially("orders");
+
+  await expect(input).toHaveValue("orders");
+  expect(
+    await input.evaluate(element => document.activeElement === element)
+  ).toBe(true);
+  expect(
+    (await readCurrentModel(page)).edges.find(
+      edge => edge.id === "e_order_owner"
+    )?.label
+  ).toBe("orders");
+});
+
 test("selection toolbar edge action: both は向き反転を無効化し forward は有効にする", async ({
   page,
 }) => {

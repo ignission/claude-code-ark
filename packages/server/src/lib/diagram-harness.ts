@@ -2066,6 +2066,7 @@ const RAW_HARNESS_JS = `(function () {
       if (!isRecordObject(current.ext)) current.ext = {};
       current.ext.direction = dir === "forward" ? "reverse" : "forward";
       graphs.forEach(function (entry) { scheduleGraphRender(entry); });
+      reverse.blur();
       renderContextToolbar();
     });
     contextToolbar.appendChild(reverse);
@@ -2084,6 +2085,10 @@ const RAW_HARNESS_JS = `(function () {
 
   function renderContextToolbar() {
     if (!contextToolbar) return;
+    if (!contextToolbar.hidden &&
+        contextToolbar.contains(document.activeElement) &&
+        contextToolbar.getAttribute("data-ark-selection-kind") === selection.kind &&
+        contextToolbar.getAttribute("data-ark-selection-id") === selection.id) return;
     clearToolbarChildren();
     contextToolbar.removeAttribute("data-ark-selection-kind");
     contextToolbar.removeAttribute("data-ark-selection-id");
