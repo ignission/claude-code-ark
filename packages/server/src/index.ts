@@ -44,6 +44,7 @@ import {
   BoardMcpServer,
   BoardSessionRegistry,
 } from "./lib/board-mcp-server.js";
+import { rememberFifoEntry } from "./lib/bounded-fifo-map.js";
 import {
   buildTunnelEntries,
   collectBridgeSessions,
@@ -186,9 +187,6 @@ export interface ServerHandle {
 const TUNNEL_STATE_FILE = path.join(os.tmpdir(), "ark-tunnel-state.json");
 
 const MANAGED_WORKTREE_CACHE_TTL_MS = 30_000;
-
-/** 図ごとの、最後に Claude へ通知できたモデル。autosave では更新しない。 */
-const lastNotifiedModels = new Map<string, DiagramModel>();
 
 function diagramModelKey(worktreePath: string, relPath: string): string {
   return `${worktreePath}\0${relPath}`;
@@ -476,6 +474,14 @@ export async function startServer(
    */
   const managedWorktreeCache = new Map<string, { at: number }>();
   const MANAGED_WORKTREE_CACHE_MAX = 256;
+
+  /** 図ごとの、最後に Claude へ通知できたモデル。autosave では更新しない。 */
+  const lastNotifiedModels = new Map<string, DiagramModel>();
+  const LAST_NOTIFIED_MODELS_MAX = 256;
+
+  function rememberNotifiedModel(key: string, model: DiagramModel): void {
+    rememberFifoEntry(lastNotifiedModels, key, model, LAST_NOTIFIED_MODELS_MAX);
+  }
 
   /**
    * 期限切れエントリを掃除し、なおサイズ上限を超えていれば最古（Map の挿入順
@@ -1108,7 +1114,7 @@ export async function startServer(
     // 既存値は未通知の autosave 差分を含み得るため上書きしない。
     const modelKey = diagramModelKey(resolved, relPath);
     if (!lastNotifiedModels.has(modelKey)) {
-      lastNotifiedModels.set(modelKey, result.model);
+      rememberNotifiedModel(modelKey, result.model);
     }
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     // 本文に meta CSP を注入済み。クライアントは srcDoc で描画するため
@@ -2326,7 +2332,7 @@ export async function startServer(
         // baseline を進めず、明示 submit まで未通知差分を蓄積する。
         const modelKey = diagramModelKey(resolved, d.relPath);
         if (!lastNotifiedModels.has(modelKey)) {
-          lastNotifiedModels.set(modelKey, saved.previousModel);
+          rememberNotifiedModel(modelKey, saved.previousModel);
         }
         reply({ ok: true });
       } catch (error) {
@@ -2402,7 +2408,7 @@ export async function startServer(
         }
 
         // 通知が成功した（または意味差分が無かった）時だけ baseline を進める。
-        lastNotifiedModels.set(modelKey, saved.savedModel);
+        rememberNotifiedModel(modelKey, saved.savedModel);
         reply({ ok: true, sent });
       } catch (error) {
         reply({ ok: false, error: getErrorMessage(error) });
