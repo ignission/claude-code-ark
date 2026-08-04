@@ -2993,8 +2993,16 @@ const RAW_HARNESS_JS = `(function () {
     });
 
     if (rowInfo) {
+      editableTarget.addEventListener("keydown", function (event) {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        if (el !== rowInfo.listEl.lastElementChild) return;
+        var next = addField(rowInfo.listEl, rowInfo.ownerNodeId);
+        if (next) next.focus();
+      });
       attachRowControls(el, rowInfo.listEl, rowInfo.ownerNodeId);
     }
+    return editableTarget;
   }
 
   function wireNote(el, node) {
@@ -3055,7 +3063,7 @@ const RAW_HARNESS_JS = `(function () {
     li.textContent = field.label;
     listEl.appendChild(li);
 
-    wireEditableLeaf(li, { listEl: listEl, ownerNodeId: ownerNodeId });
+    return wireEditableLeaf(li, { listEl: listEl, ownerNodeId: ownerNodeId });
   }
 
   function wireList(listEl, ownerNodeId) {

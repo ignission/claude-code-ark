@@ -1345,6 +1345,44 @@ test("selection toolbar node action: +行と削除を既存 field・参照整合
   ).toEqual(["external"]);
 });
 
+test("entity 最終行の Enter だけが行を追加してフォーカスし note は改行する", async ({
+  page,
+}) => {
+  await openDiagram(page);
+  const userRows = page.locator(
+    '.ark-harness-graph-node[data-model-id="user"] li[data-model-id]'
+  );
+
+  await userRows.last().locator(".ark-harness-text").press("Enter");
+  await expect(userRows).toHaveCount(2);
+  await expect(userRows.last().locator(".ark-harness-text")).toBeFocused();
+  expect(
+    (await readCurrentModel(page)).nodes.find(node => node.id === "user")
+      ?.fields
+  ).toHaveLength(2);
+
+  await userRows.first().locator(".ark-harness-text").press("Enter");
+  await expect(userRows).toHaveCount(2);
+  expect(
+    (await readCurrentModel(page)).nodes.find(node => node.id === "user")
+      ?.fields
+  ).toHaveLength(2);
+
+  const toolbar = await selectNode(page, "user");
+  await toolbar.locator("select.ark-harness-kind-select").selectOption("note");
+  const note = page.locator(
+    '.ark-harness-graph-node[data-model-id="user"] > .ark-harness-note'
+  );
+  await note.fill("1行目");
+  await note.press("End");
+  await note.press("Enter");
+  await page.keyboard.type("2行目");
+  expect(
+    (await readCurrentModel(page)).nodes.find(node => node.id === "user")
+      ?.noteText
+  ).toBe("1行目\n2行目");
+});
+
 test("selection toolbar edge action: 向き反転で direction だけを切替え2回で元に戻る", async ({
   page,
 }) => {
