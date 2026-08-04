@@ -107,8 +107,12 @@ describe("injectHarness", () => {
     expect(out).toContain("function renderEdgeToolbar(");
     expect(out).toContain("ark-harness-edge-reverse");
     expect(out).toContain("var current = getEdge(state.model, edge.id);");
-    expect(out).toContain("current.from = current.to;");
-    expect(out).toContain("current.to = previousFrom;");
+    expect(out).toContain("var dir = edgeDirection(current);");
+    expect(out).toContain(
+      'current.ext.direction = dir === "forward" ? "reverse" : "forward";'
+    );
+    expect(out).not.toContain("current.from = current.to;");
+    expect(out).not.toContain("previousFromCard");
     expect(out).toContain("function collectKindCandidates(");
     expect(out).toContain("function updateNodeKind(");
     expect(out).toContain(
@@ -521,8 +525,9 @@ describe("injectHarness", () => {
     expect(out).toContain('mode: "create"');
     expect(out).toContain('mode: "rewire"');
     expect(out).toContain(
-      'var newNodeIsSource = anchorPosition === "bottom" || anchorPosition === "right";'
+      "from: blankSource.id,\n              to: newNode.id"
     );
+    expect(out).not.toContain("newNodeIsSource");
     expect(out).toContain("var EDGE_DRAG_MIN_DISTANCE = 8");
     expect(out).toContain("drag.didDrag");
     expect(out).toContain("drag.leftSource");

@@ -1323,7 +1323,7 @@ test("selection toolbar node action: +行と削除を既存 field・参照整合
   ).toEqual(["external"]);
 });
 
-test("selection toolbar edge action: 向き反転で from/to と cardinality を入替え2回で元に戻る", async ({
+test("selection toolbar edge action: 向き反転で direction だけを切替え2回で元に戻る", async ({
   page,
 }) => {
   await openEdgeSemanticsDiagram(page);
@@ -1345,28 +1345,27 @@ test("selection toolbar edge action: 向き反転で from/to と cardinality を
   });
 
   await reverse.click();
-  expect(
-    (await readCurrentModel(page)).edges.find(
-      edge => edge.id === "e_order_owner"
-    )
-  ).toMatchObject({
-    from: "user",
-    to: "order",
+  const reversed = (await readCurrentModel(page)).edges.find(
+    edge => edge.id === "e_order_owner"
+  );
+  expect(reversed).toMatchObject({
+    from: "order",
+    to: "user",
     ext: {
-      from_card: "zero-or-many",
-      to_card: "one",
-      direction: "forward",
+      from_card: "one",
+      to_card: "zero-or-many",
+      direction: "reverse",
     },
   });
   await expect(
     toolbar.locator('select[data-ark-edge-control="from-card"]')
-  ).toHaveValue("zero-or-many");
-  await expect(
-    toolbar.locator('select[data-ark-edge-control="to-card"]')
   ).toHaveValue("one");
   await expect(
+    toolbar.locator('select[data-ark-edge-control="to-card"]')
+  ).toHaveValue("zero-or-many");
+  await expect(
     toolbar.locator('select[data-ark-edge-control="direction"]')
-  ).toHaveValue("forward");
+  ).toHaveValue("reverse");
   await expect(toolbar).toHaveAttribute(
     "data-ark-selection-id",
     "e_order_owner"
@@ -1377,7 +1376,9 @@ test("selection toolbar edge action: 向き反転で from/to と cardinality を
     edge => edge.id === "e_order_owner"
   );
   expect(restored).toEqual(original);
-  expect(restored?.ext).toMatchObject({ direction: "forward" });
+  await expect(
+    toolbar.locator('select[data-ark-edge-control="direction"]')
+  ).toHaveValue("forward");
   await expect(selectedEdgeAnchor(page, "e_order_owner")).toHaveCount(1);
 });
 
@@ -1515,7 +1516,7 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   const addedEdge = current.edges.find(
     edge => !connectDragModel.edges.some(old => old.id === edge.id)
   );
-  expect(addedEdge).toMatchObject({ from: added.id, to: "crud-b" });
+  expect(addedEdge).toMatchObject({ from: "crud-b", to: added.id });
   expect(addedEdge?.id).toMatch(/^edge-/);
 
   const projection = firstGraph
@@ -1595,23 +1596,18 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   expect(errors).toEqual([]);
 });
 
-test("node CRUD: 空白への接続 drag は anchor の方向に応じて新 node を edge の始点・終点にする", async ({
+test("node CRUD: 空白への接続 drag はどの anchor でも新 node を edge の終点にする", async ({
   page,
 }) => {
   const directionalModel = structuredClone(crudModel);
   directionalModel.edges = [];
-  const scenarios = [
-    { anchor: "top", newNodeEnd: "to" },
-    { anchor: "bottom", newNodeEnd: "from" },
-    { anchor: "left", newNodeEnd: "to" },
-    { anchor: "right", newNodeEnd: "from" },
-  ] as const;
+  const anchors = ["top", "bottom", "left", "right"] as const;
 
-  for (const scenario of scenarios) {
+  for (const anchor of anchors) {
     await page.setContent(crudDiagramHtml(directionalModel));
     const graph = page.locator('[data-ark-container="graph"]').first();
     const graphBox = await requiredBoundingBox(graph);
-    await dragNodeAnchorToPoint(page, graph, "crud-b", scenario.anchor, {
+    await dragNodeAnchorToPoint(page, graph, "crud-b", anchor, {
       x: graphBox.x + graphBox.width - 20,
       y: graphBox.y + graphBox.height - 20,
     });
@@ -1620,17 +1616,15 @@ test("node CRUD: 空白への接続 drag は anchor の方向に応じて新 nod
     const addedNode = current.nodes.find(
       node => !directionalModel.nodes.some(old => old.id === node.id)
     );
-    expect(addedNode, scenario.anchor).toBeDefined();
-    if (!addedNode)
-      throw new Error(`${scenario.anchor}: 追加 node がありません`);
+    expect(addedNode, anchor).toBeDefined();
+    if (!addedNode) throw new Error(`${anchor}: 追加 node がありません`);
     const addedEdge = current.edges.find(
       edge => !directionalModel.edges.some(old => old.id === edge.id)
     );
-    expect(addedEdge, scenario.anchor).toMatchObject(
-      scenario.newNodeEnd === "from"
-        ? { from: addedNode.id, to: "crud-b" }
-        : { from: "crud-b", to: addedNode.id }
-    );
+    expect(addedEdge, anchor).toMatchObject({
+      from: "crud-b",
+      to: addedNode.id,
+    });
   }
 });
 
@@ -2225,7 +2219,7 @@ test("構造変更: clean submission は semantic node を残し CRUD UI と見�
   expect(submission.html).not.toContain("--ark-harness-graph-x");
   expect(describeModelDiff(crudModel, submission.model)).toEqual([
     "新しいノード を追加",
-    "新しいノード から B への関連を追加",
+    "B から 新しいノード への関連を追加",
   ]);
 });
 

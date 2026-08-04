@@ -1451,13 +1451,11 @@ const RAW_HARNESS_JS = `(function () {
         } else {
           var newEdgeId = generateUniqueModelId("edge");
           if (newEdgeId) {
-            var anchorPosition = drag.handle.getAttribute("data-ark-anchor-position");
-            var newNodeIsSource = anchorPosition === "bottom" || anchorPosition === "right";
             freezeGraphPositions(drag.graph);
             state.model.edges.push({
               id: newEdgeId,
-              from: newNodeIsSource ? newNode.id : blankSource.id,
-              to: newNodeIsSource ? blankSource.id : newNode.id
+              from: blankSource.id,
+              to: newNode.id
             });
           } else {
             removeNode(newNode.id);
@@ -2029,18 +2027,11 @@ const RAW_HARNESS_JS = `(function () {
     reverse.addEventListener("click", function () {
       if (selection.kind !== "edge" || selection.id !== edge.id) return;
       var current = getEdge(state.model, edge.id);
-      if (!current || current.from === current.to) return;
-      var previousFrom = current.from;
-      current.from = current.to;
-      current.to = previousFrom;
-      if (isRecordObject(current.ext)) {
-        var previousFromCard = current.ext.from_card;
-        var previousToCard = current.ext.to_card;
-        if (previousToCard === undefined) delete current.ext.from_card;
-        else current.ext.from_card = previousToCard;
-        if (previousFromCard === undefined) delete current.ext.to_card;
-        else current.ext.to_card = previousFromCard;
-      }
+      if (!current) return;
+      var dir = edgeDirection(current);
+      if (dir !== "forward" && dir !== "reverse") return;
+      if (!isRecordObject(current.ext)) current.ext = {};
+      current.ext.direction = dir === "forward" ? "reverse" : "forward";
       graphs.forEach(function (entry) { scheduleGraphRender(entry); });
       renderContextToolbar();
     });
