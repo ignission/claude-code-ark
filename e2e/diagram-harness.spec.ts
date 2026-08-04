@@ -1345,6 +1345,53 @@ test("selection toolbar node action: +行と削除を既存 field・参照整合
   ).toEqual(["external"]);
 });
 
+test("entity 最終行の Enter だけが行を追加してフォーカスし note は改行する", async ({
+  page,
+}) => {
+  await openDiagram(page);
+  const userLabel = page.locator(
+    '.ark-harness-graph-node[data-model-id="user"] > h2[data-model-id="user"]'
+  );
+  const userRows = page.locator(
+    '.ark-harness-graph-node[data-model-id="user"] li[data-model-id]'
+  );
+
+  await userLabel.press("Enter");
+  await expect(userRows).toHaveCount(2);
+  await expect(userRows.last().locator(".ark-harness-text")).toBeFocused();
+  expect(await userLabel.textContent()).not.toContain("\n");
+  await expect(userLabel.locator(":scope > div")).toHaveCount(0);
+
+  await userRows.last().locator(".ark-harness-text").press("Enter");
+  await expect(userRows).toHaveCount(3);
+  await expect(userRows.last().locator(".ark-harness-text")).toBeFocused();
+  expect(
+    (await readCurrentModel(page)).nodes.find(node => node.id === "user")
+      ?.fields
+  ).toHaveLength(3);
+
+  await userRows.first().locator(".ark-harness-text").press("Enter");
+  await expect(userRows).toHaveCount(3);
+  expect(
+    (await readCurrentModel(page)).nodes.find(node => node.id === "user")
+      ?.fields
+  ).toHaveLength(3);
+
+  const toolbar = await selectNode(page, "user");
+  await toolbar.locator("select.ark-harness-kind-select").selectOption("note");
+  const note = page.locator(
+    '.ark-harness-graph-node[data-model-id="user"] > .ark-harness-note'
+  );
+  await note.fill("1行目");
+  await note.press("End");
+  await note.press("Enter");
+  await page.keyboard.type("2行目");
+  expect(
+    (await readCurrentModel(page)).nodes.find(node => node.id === "user")
+      ?.noteText
+  ).toBe("1行目\n2行目");
+});
+
 test("selection toolbar edge action: 向き反転で direction だけを切替え2回で元に戻る", async ({
   page,
 }) => {
@@ -1402,6 +1449,72 @@ test("selection toolbar edge action: 向き反転で direction だけを切替�
     toolbar.locator('select[data-ark-edge-control="direction"]')
   ).toHaveValue("forward");
   await expect(selectedEdgeAnchor(page, "e_order_owner")).toHaveCount(1);
+});
+
+test("selection toolbar edge label: 入力・空欄・モデル再適用後を current model と SVG へ同期する", async ({
+  page,
+}) => {
+  await openEdgeSemanticsDiagram(page);
+  const toolbar = await selectEdge(page, "e_order_owner");
+  const input = toolbar.locator("input.ark-harness-edge-label-input");
+  const label = page.locator(
+    'text.ark-harness-edge-label[data-ark-edge-id="e_order_owner"]'
+  );
+
+  await expect(input).toHaveValue("owned by");
+  await input.fill("owns");
+  await expect(label).toHaveText("owns");
+  expect(
+    (await readCurrentModel(page)).edges.find(
+      edge => edge.id === "e_order_owner"
+    )?.label
+  ).toBe("owns");
+
+  await input.fill("");
+  await expect(label).toHaveCount(0);
+  expect(
+    (await readCurrentModel(page)).edges.find(
+      edge => edge.id === "e_order_owner"
+    )
+  ).not.toHaveProperty("label");
+
+  const applied = structuredClone(edgeSemanticsModel);
+  const appliedEdge = applied.edges.find(edge => edge.id === "e_order_owner");
+  if (!appliedEdge) throw new Error("edge がありません");
+  appliedEdge.label = "applied label";
+  await openModelPanel(page);
+  await page.locator(".ark-harness-textarea").fill(JSON.stringify(applied));
+  await page.getByRole("button", { name: "反映", exact: true }).click();
+  await expect(input).toHaveValue("applied label");
+  await input.fill("current label");
+  await expect(label).toHaveText("current label");
+  expect(
+    (await readCurrentModel(page)).edges.find(
+      edge => edge.id === "e_order_owner"
+    )?.label
+  ).toBe("current label");
+});
+
+test("selection toolbar edge label: 1文字ずつ入力してもフォーカスと全入力を維持する", async ({
+  page,
+}) => {
+  await openEdgeSemanticsDiagram(page);
+  const toolbar = await selectEdge(page, "e_order_owner");
+  const input = toolbar.locator("input.ark-harness-edge-label-input");
+
+  await input.click();
+  await input.press("ControlOrMeta+A");
+  await input.pressSequentially("orders");
+
+  await expect(input).toHaveValue("orders");
+  expect(
+    await input.evaluate(element => document.activeElement === element)
+  ).toBe(true);
+  expect(
+    (await readCurrentModel(page)).edges.find(
+      edge => edge.id === "e_order_owner"
+    )?.label
+  ).toBe("orders");
 });
 
 test("selection toolbar edge action: both は向き反転を無効化し forward は有効にする", async ({
@@ -1534,9 +1647,8 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
     node => !connectDragModel.nodes.some(old => old.id === node.id)
   );
   expect(added).toBeDefined();
-  expect(added).toMatchObject({ label: "新しいノード", kind: "entity" });
+  expect(added).toMatchObject({ label: "", kind: "entity" });
   expect(added?.id).toMatch(/^node-/);
-  expect(added?.id).not.toContain("新しいノード");
   expect(Number.isInteger((added?.ext as { x?: number })?.x)).toBe(true);
   expect(Number.isInteger((added?.ext as { y?: number })?.y)).toBe(true);
   expect(current.nodes).toHaveLength(initial.nodes.length + 1);
@@ -1566,7 +1678,11 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   const projectionLabel = projection.locator(
     `:scope > span[data-model-id="${added.id}"]`
   );
-  await expect(projectionLabel).toHaveText("新しいノード");
+  await expect(projectionLabel).toHaveText("");
+  await expect(projectionLabel).toHaveAttribute(
+    "data-placeholder",
+    "名前を入力"
+  );
   expect(await projectionLabel.evaluate(element => element.tagName)).toBe(
     "SPAN"
   );
@@ -2249,7 +2365,7 @@ test("構造変更: clean submission は semantic node を残し CRUD UI と見�
   if (!submission) throw new Error("submission がありません");
   expect(submission.html).toContain(`data-model-id="${added.id}"`);
   expect(submission.html).toContain('data-kind="event"');
-  expect(submission.html).toContain("新しいノード");
+  expect(submission.html).not.toContain("新しいノード");
   expect(submission.html).not.toContain("data-ark-harness-ui");
   expect(submission.html).not.toContain("ark-harness-node-palette");
   expect(submission.html).not.toContain("ark-harness-node-connectors");
@@ -2257,8 +2373,8 @@ test("構造変更: clean submission は semantic node を残し CRUD UI と見�
   expect(submission.html).not.toContain("ark-harness-edge-hit");
   expect(submission.html).not.toContain("--ark-harness-graph-x");
   expect(describeModelDiff(crudModel, submission.model)).toEqual([
-    "新しいノード を追加",
-    "B から 新しいノード への関連を追加",
+    "(無題) を追加",
+    "B から (無題) への関連を追加",
   ]);
 });
 
@@ -2336,6 +2452,37 @@ test("ark-debug の部分文字列を含む hash では下部 debug UI を表示
   await expect(toolbar).toBeHidden();
   await expect(editButton).toBeHidden();
   await expect(directionButton).toBeHidden();
+});
+
+test("浮くツールバー・下部ツールバー・hover アンカーに軽いトランジションを付ける", async ({
+  page,
+}) => {
+  await openDiagram(page);
+  const context = await selectNode(page, "order");
+  await page
+    .locator('[data-model-id="order"] h2[data-model-id="order"]')
+    .fill("Edited Order");
+  const bottom = page.locator(".ark-harness-toolbar");
+  await expect(bottom).toBeVisible();
+
+  for (const toolbar of [context, bottom]) {
+    expect(
+      await toolbar.evaluate(element => ({
+        name: getComputedStyle(element).animationName,
+        duration: getComputedStyle(element).animationDuration,
+      }))
+    ).toEqual({ name: "ark-harness-in", duration: "0.12s" });
+  }
+  const connectorsTransition = await page
+    .locator(".ark-harness-node-connectors")
+    .first()
+    .evaluate(element => getComputedStyle(element).transitionProperty);
+  const anchorTransition = await page
+    .locator(".ark-harness-node-anchor")
+    .first()
+    .evaluate(element => getComputedStyle(element).transitionProperty);
+  expect(connectorsTransition).toContain("opacity");
+  expect(anchorTransition).toContain("transform");
 });
 
 test("ノードのラベル編集時だけ送信 UI を表示する", async ({ page }) => {
@@ -4587,7 +4734,7 @@ test("model node だけに entity がある図でも note picker・往復・drag
   const added = current.nodes.find(
     node => !initial.nodes.some(old => old.id === node.id)
   );
-  expect(added).toMatchObject({ label: "新しいノード", kind: "entity" });
+  expect(added).toMatchObject({ label: "", kind: "entity" });
   if (!added) throw new Error("追加 node がありません");
   const projection = graph.locator(`[data-model-id="${added.id}"]`).first();
   expect(await projection.evaluate(element => element.tagName)).toBe("SECTION");
@@ -4598,25 +4745,42 @@ test("model node だけに entity がある図でも note picker・往復・drag
   expect(await label.evaluate(element => element.tagName)).toBe("H2");
   await expect(label).toHaveClass(/(^|\s)entity-title(\s|$)/);
   await expect(label).toHaveAttribute("data-model-id", added.id);
-  await expect(label).toHaveText("新しいノード");
+  await expect(label).toHaveText("");
+  await expect(label).toHaveAttribute("data-placeholder", "名前を入力");
 
-  const addedToolbar = await selectNode(page, added.id);
   const list = projection.locator(":scope > ul");
   await expect(list).toHaveCount(1);
   expect(await list.evaluate(element => element.tagName)).toBe("UL");
   await expect(list).toHaveClass(/(^|\s)entity-fields(\s|$)/);
   await expect(list.locator(":scope > li")).toHaveCount(0);
+  await label.fill("追加ノード");
+  await expect(label).toHaveText("追加ノード");
+  expect(
+    (await readCurrentModel(page)).nodes.find(node => node.id === added.id)
+      ?.label
+  ).toBe("追加ノード");
+  await label.press("Enter");
+  await expect(list.locator(":scope > li")).toHaveCount(1);
+  const addedFieldEditable = list.locator(":scope > li .ark-harness-text");
+  await expect(addedFieldEditable).toBeFocused();
+  await expect(addedFieldEditable).toHaveText("");
+  await expect(addedFieldEditable).toHaveAttribute(
+    "data-placeholder",
+    "項目を入力"
+  );
+  await addedFieldEditable.fill("code");
+  await expect(addedFieldEditable).toHaveText("code");
+  const addedToolbar = await selectNode(page, added.id);
   const addFieldButton = addedToolbar.getByRole("button", {
     name: "行を追加",
   });
   await expect(addFieldButton).toBeEnabled();
-  await addFieldButton.click();
-  await expect(list.locator(":scope > li")).toHaveCount(1);
   const afterAdd = await readCurrentModel(page);
   const addedAfterField = afterAdd.nodes.find(node => node.id === added.id);
+  expect(addedAfterField?.label).toBe("追加ノード");
   expect(addedAfterField?.fields).toHaveLength(1);
   expect(addedAfterField?.fields?.[0]).toMatchObject({
-    label: "新しい項目",
+    label: "code",
   });
   expect(addedAfterField?.fields?.[0]?.id).toMatch(/^field-/);
   const addedField = addedAfterField?.fields?.[0];
@@ -4638,7 +4802,7 @@ test("model node だけに entity がある図でも note picker・往復・drag
   );
   expect(noteAfterSwitch).toMatchObject({
     kind: "note",
-    label: "新しいノード",
+    label: "追加ノード",
     fields: [addedField],
     noteText: "",
   });
@@ -4654,7 +4818,7 @@ test("model node だけに entity がある図でも note picker・往復・drag
   );
   await expect(entityLabelAfterSwitch).toHaveCount(1);
   await expect(entityLabelAfterSwitch).toHaveClass(/(^|\s)entity-title(\s|$)/);
-  await expect(entityLabelAfterSwitch).toHaveText("新しいノード");
+  await expect(entityLabelAfterSwitch).toHaveText("追加ノード");
   await expect(entityLabelAfterSwitch).toHaveAttribute(
     "contenteditable",
     "true"
@@ -4663,7 +4827,7 @@ test("model node だけに entity がある図でも note picker・往復・drag
     (await readCurrentModel(page)).nodes.find(node => node.id === added.id)
   ).toMatchObject({
     kind: "entity",
-    label: "新しいノード",
+    label: "追加ノード",
     fields: [addedField],
     noteText: "自由記述\n複数行",
   });
@@ -4686,7 +4850,7 @@ test("model node だけに entity がある図でも note picker・往復・drag
     (await readCurrentModel(page)).nodes.find(node => node.id === added.id)
   ).toMatchObject({
     kind: "note",
-    label: "新しいノード",
+    label: "追加ノード",
     fields: [addedField],
     noteText: "自由記述\n複数行",
   });

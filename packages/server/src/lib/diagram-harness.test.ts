@@ -139,7 +139,9 @@ describe("injectHarness", () => {
     expect(out).toContain("function removeEdge(");
     expect(out).toContain("group.nodes = group.nodes.filter");
     expect(out).toContain("var listBindingsByNode = new Map();");
+    expect(out).toContain("function listBinding(");
     expect(out).toContain("function selectedListBinding(");
+    expect(out).toContain('event.key !== "Enter" || event.isComposing');
     expect(out).not.toContain("ark-harness-add-row");
   });
 
@@ -511,7 +513,11 @@ describe("injectHarness", () => {
     expect(out).toContain(
       'label.setAttribute("data-placeholder", "\\u540D\\u524D\\u3092\\u5165\\u529B")'
     );
-    expect(out).toContain('label: kind === "note" ? "" : "新しいノード"');
+    expect(out).toContain('var node = { id: id, label: "", ext:');
+    expect(out).toContain('var field = { id: id, label: "" }');
+    expect(out).toContain(
+      'editable.setAttribute("data-placeholder", "\\u9805\\u76EE\\u3092\\u5165\\u529B")'
+    );
     expect(out).toContain('clone.querySelectorAll("[data-placeholder]")');
   });
 

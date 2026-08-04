@@ -184,6 +184,7 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   transform: translate(-50%, -50%); border: 2px solid #0ea5b7; border-radius: 999px;
   background: #fff; color: #0e7490; font: 9px/8px sans-serif;
   cursor: crosshair; touch-action: none; pointer-events: none;
+  transition: transform .12s ease;
 }
 .ark-harness-node-connectors.ark-harness-node-connectors-visible {
   opacity: 1;
@@ -191,6 +192,7 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
 .ark-harness-node-connectors.ark-harness-node-connectors-visible > .ark-harness-node-anchor {
   pointer-events: auto;
 }
+.ark-harness-node-anchor:hover { transform: translate(-50%, -50%) scale(1.15); }
 .ark-harness-edge-dragging .ark-harness-node-connectors {
   opacity: 0; pointer-events: none;
 }
@@ -238,6 +240,8 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   background: rgba(255,255,255,.98); color: #334155;
   box-shadow: 0 4px 14px rgba(15,23,42,.22); font: 11px/1.2 sans-serif;
 }
+.ark-harness-toolbar, .ark-harness-context-toolbar { animation: ark-harness-in .12s ease-out; }
+@keyframes ark-harness-in { from { opacity: 0; transform: translateY(4px); } }
 .ark-harness-context-toolbar[hidden] { display: none; }
 .ark-harness-context-toolbar button {
   appearance: none; border: 1px solid rgba(100,116,139,.55); border-radius: 4px;
@@ -1952,16 +1956,23 @@ const RAW_HARNESS_JS = `(function () {
     select.title = label;
   }
 
-  function selectedListBinding() {
-    if (selection.kind !== "node" || !selectionGraph) return null;
-    var root = selectionGraph.nodesById.get(selection.id);
-    var bindings = listBindingsByNode.get(selection.id) || [];
+  function listBinding(nodeId, root) {
+    var bindings = listBindingsByNode.get(nodeId) || [];
     for (var i = 0; i < bindings.length; i++) {
-      if (bindings[i].listEl.isConnected && root.contains(bindings[i].listEl)) {
+      if (bindings[i].listEl.isConnected && root &&
+          root.contains(bindings[i].listEl)) {
         return bindings[i];
       }
     }
     return null;
+  }
+
+  function selectedListBinding() {
+    if (selection.kind !== "node" || !selectionGraph) return null;
+    return listBinding(
+      selection.id,
+      selectionGraph.nodesById.get(selection.id)
+    );
   }
 
   function renderNodeToolbar(node) {
@@ -2016,6 +2027,30 @@ const RAW_HARNESS_JS = `(function () {
 
   function renderEdgeToolbar(edge) {
     var graph = selectionGraph;
+    var input = document.createElement("input");
+    input.type = "text";
+    input.className = "ark-harness-edge-control ark-harness-edge-label-input";
+    input.value = typeof edge.label === "string" ? edge.label : "";
+    input.placeholder = "\u30E9\u30D9\u30EB";
+    markUi(input);
+    function updateLabel(event) {
+      event.stopPropagation();
+      var current = getEdge(state.model, edge.id);
+      if (!current) return;
+      if (input.value) current.label = input.value;
+      else delete current.label;
+      graphs.forEach(function (entry) { scheduleGraphRender(entry); });
+    }
+    input.addEventListener("input", updateLabel);
+    input.addEventListener("change", updateLabel);
+    ["pointerdown", "click"].forEach(function (type) {
+      input.addEventListener(type, function (event) { event.stopPropagation(); });
+    });
+    input.addEventListener("keydown", function (event) {
+      event.stopPropagation();
+      if (event.key === "Enter") input.blur();
+    });
+    contextToolbar.appendChild(input);
     ["from-card", "to-card", "direction"].forEach(function (role) {
       var select = createEdgeSelect(graph, edge.id, role);
       syncEdgeSelect(select, role, edge);
@@ -2038,6 +2073,7 @@ const RAW_HARNESS_JS = `(function () {
       if (!isRecordObject(current.ext)) current.ext = {};
       current.ext.direction = dir === "forward" ? "reverse" : "forward";
       graphs.forEach(function (entry) { scheduleGraphRender(entry); });
+      reverse.blur();
       renderContextToolbar();
     });
     contextToolbar.appendChild(reverse);
@@ -2056,6 +2092,10 @@ const RAW_HARNESS_JS = `(function () {
 
   function renderContextToolbar() {
     if (!contextToolbar) return;
+    if (!contextToolbar.hidden &&
+        contextToolbar.contains(document.activeElement) &&
+        contextToolbar.getAttribute("data-ark-selection-kind") === selection.kind &&
+        contextToolbar.getAttribute("data-ark-selection-id") === selection.id) return;
     clearToolbarChildren();
     contextToolbar.removeAttribute("data-ark-selection-kind");
     contextToolbar.removeAttribute("data-ark-selection-id");
@@ -2523,7 +2563,7 @@ const RAW_HARNESS_JS = `(function () {
       updateStatus(!!submitPort, "一意な ID を生成できませんでした");
       return null;
     }
-    var node = { id: id, label: kind === "note" ? "" : "新しいノード", ext: { x: 0, y: 0 } };
+    var node = { id: id, label: "", ext: { x: 0, y: 0 } };
     if (kind) node.kind = kind;
     if (kind === "note") node.noteText = "";
     var projection = createNodeProjection(graph, node);
@@ -2968,9 +3008,21 @@ const RAW_HARNESS_JS = `(function () {
       syncDirtyState();
     });
 
+    editableTarget.addEventListener("keydown", function (event) {
+      if (event.key !== "Enter" || event.isComposing) return;
+      event.preventDefault();
+      var binding = rowInfo || listBinding(
+        id,
+        editableTarget.closest(".ark-harness-graph-node")
+      );
+      if (!binding || rowInfo && el !== binding.listEl.lastElementChild) return;
+      var next = addField(binding.listEl, binding.ownerNodeId);
+      if (next) next.focus();
+    });
     if (rowInfo) {
       attachRowControls(el, rowInfo.listEl, rowInfo.ownerNodeId);
     }
+    return editableTarget;
   }
 
   function wireNote(el, node) {
@@ -3021,17 +3073,18 @@ const RAW_HARNESS_JS = `(function () {
       updateStatus(!!submitPort, "一意な ID を生成できませんでした");
       return;
     }
-    var field = { id: id, label: "新しい項目" };
+    var field = { id: id, label: "" };
     if (!node.fields) node.fields = [];
     node.fields.push(field);
     syncDirtyState();
 
     var li = document.createElement("li");
     li.setAttribute("data-model-id", id);
-    li.textContent = field.label;
     listEl.appendChild(li);
 
-    wireEditableLeaf(li, { listEl: listEl, ownerNodeId: ownerNodeId });
+    var editable = wireEditableLeaf(li, { listEl: listEl, ownerNodeId: ownerNodeId });
+    if (editable) editable.setAttribute("data-placeholder", "\\u9805\\u76EE\\u3092\\u5165\\u529B");
+    return editable;
   }
 
   function wireList(listEl, ownerNodeId) {
