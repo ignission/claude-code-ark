@@ -222,11 +222,6 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
   position: absolute; box-sizing: border-box; border: 2px solid #0ea5b7;
   border-radius: 8px; background: transparent; pointer-events: none;
 }
-.ark-harness-graph-handle {
-  position: absolute; top: .25rem; right: .25rem; z-index: 3;
-  border: 1px solid rgba(100,116,139,.45); border-radius: 4px; background: rgba(255,255,255,.9);
-  color: #64748b; cursor: grab; line-height: 1; padding: .25rem; touch-action: none;
-}
 .ark-harness-graph-node.ark-harness-node-selected {
   outline: 2px solid #0ea5b7; outline-offset: 3px;
 }
@@ -1728,20 +1723,7 @@ const RAW_HARNESS_JS = `(function () {
     scheduleGraphRender(drag.graph);
   }
 
-  function attachGraphHandle(graph, el, node) {
-    var handle = createButton(
-      "\\u283F",
-      "ark-harness-graph-handle",
-      (node.label || node.id) + " をドラッグして移動"
-    );
-    handle.addEventListener("pointerdown", function (event) {
-      startGraphDrag(graph, el, handle, event);
-    });
-    handle.addEventListener("pointermove", updateGraphDrag);
-    handle.addEventListener("pointerup", finishGraphDrag);
-    handle.addEventListener("pointercancel", finishGraphDrag);
-    el.appendChild(handle);
-
+  function attachNodeDrag(graph, el) {
     var pending = null;
     var suppressClick = false;
     el.addEventListener("pointerdown", function (event) {
@@ -1934,18 +1916,11 @@ const RAW_HARNESS_JS = `(function () {
         scheduleNodeAffordanceClose(controller);
       });
     });
-    var affordances = [
-      root.querySelector(".ark-harness-graph-handle"),
-      connectors
-    ];
-    affordances.forEach(function (affordance) {
-      if (!affordance) return;
-      affordance.addEventListener("pointerenter", function () {
-        openNodeAffordance(controller);
-      });
-      affordance.addEventListener("pointerleave", function () {
-        scheduleNodeAffordanceClose(controller);
-      });
+    connectors.addEventListener("pointerenter", function () {
+      openNodeAffordance(controller);
+    });
+    connectors.addEventListener("pointerleave", function () {
+      scheduleNodeAffordanceClose(controller);
     });
     graph.nodeAffordancesById.set(id, controller);
   }
@@ -2318,7 +2293,7 @@ const RAW_HARNESS_JS = `(function () {
     graph.nodesById.set(node.id, root);
     root.classList.add("ark-harness-graph-node");
     attachNodeSelection(root, node.id);
-    attachGraphHandle(graph, root, node);
+    attachNodeDrag(graph, root);
     attachNodeConnectors(graph, root);
     attachNodeAffordanceHover(graph, root, node.id);
     if (graph.resizeObserver) graph.resizeObserver.observe(root);
@@ -2560,9 +2535,6 @@ const RAW_HARNESS_JS = `(function () {
     graph.nodesById.forEach(add);
     graph.svg.querySelectorAll("text[data-ark-edge-id]").forEach(add);
     graph.edgeHandlesByKey.forEach(add);
-    graph.nodesById.forEach(function (nodeRoot) {
-      nodeRoot.querySelectorAll(".ark-harness-graph-handle").forEach(add);
-    });
     return blockers;
   }
 

@@ -46,7 +46,7 @@ describe("injectHarness", () => {
 
     expect(out).toContain('[data-ark-container="graph"]');
     expect(out).toContain("ark-harness-edge-layer");
-    expect(out).toContain("ark-harness-graph-handle");
+    expect(out).not.toContain("ark-harness-graph-handle");
     expect(out).toContain("ark-harness-edge-handle-layer");
     expect(out).toContain("ark-harness-edge-handle");
     expect(out).toContain("function syncEdgeHandles(");
