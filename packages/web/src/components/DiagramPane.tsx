@@ -52,6 +52,33 @@ interface DiagramAutosaveMessage {
   html: string;
 }
 
+interface DiagramAutosaveRequest {
+  sessionId: string;
+  worktreePath: string;
+  relPath: string;
+  model: unknown;
+  html: string;
+}
+
+interface DiagramAutosaveResponse {
+  ok: boolean;
+  error?: string;
+}
+
+export function emitDiagramAutosave(
+  socket: TypedSocket,
+  request: DiagramAutosaveRequest,
+  reply: (response: DiagramAutosaveResponse) => void
+): void {
+  socket.timeout(10_000).emit("diagram:autosave", request, (err, response) => {
+    if (err) {
+      reply({ ok: false, error: "保存がタイムアウトしました" });
+      return;
+    }
+    reply(response);
+  });
+}
+
 function isDiagramSubmitMessage(data: unknown): data is DiagramSubmitMessage {
   return (
     typeof data === "object" &&
@@ -96,6 +123,7 @@ export function DiagramPane({
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [diagrams, setDiagrams] = useState<DiagramListItem[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
@@ -292,17 +320,23 @@ export function DiagramPane({
         setSubmitError("サーバーに未接続のため送信できません");
         return;
       }
-      socket.emit(
-        "diagram:submit",
-        { sessionId, worktreePath, relPath, model, html: submittedHtml },
-        response => {
-          if (!response.ok) {
-            setSubmitError(response.error ?? "送信に失敗しました");
-            return;
+      socket
+        .timeout(10_000)
+        .emit(
+          "diagram:submit",
+          { sessionId, worktreePath, relPath, model, html: submittedHtml },
+          (err, response) => {
+            if (err) {
+              setSubmitError("送信がタイムアウトしました");
+              return;
+            }
+            if (!response.ok) {
+              setSubmitError(response.error ?? "送信に失敗しました");
+              return;
+            }
+            setSubmitError(null);
           }
-          setSubmitError(null);
-        }
-      );
+        );
     },
     [socket, isConnected, sessionId, worktreePath, relPath]
   );
@@ -321,15 +355,15 @@ export function DiagramPane({
       }
       if (!socket || !isConnected) {
         const error = "サーバーに未接続のため保存できません";
-        setSubmitError(error);
+        setSaveError(error);
         reply({ ok: false, error });
         return;
       }
-      socket.emit(
-        "diagram:autosave",
+      emitDiagramAutosave(
+        socket,
         { sessionId, worktreePath, relPath, model, html: submittedHtml },
         response => {
-          setSubmitError(
+          setSaveError(
             response.ok ? null : (response.error ?? "自動保存に失敗しました")
           );
           reply(response);
@@ -441,6 +475,18 @@ export function DiagramPane({
           </div>
         ) : (
           <div className="flex h-full flex-col">
+            {saveError && (
+              <div className="flex shrink-0 items-start justify-between gap-2 border-b border-destructive/20 bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
+                <span className="flex-1">{saveError}</span>
+                <button
+                  type="button"
+                  className="shrink-0 text-xs underline"
+                  onClick={() => setSaveError(null)}
+                >
+                  閉じる
+                </button>
+              </div>
+            )}
             {submitError && (
               <div className="flex shrink-0 items-start justify-between gap-2 border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 <span className="flex-1">{submitError}</span>
