@@ -770,6 +770,61 @@ async function enableDiagramDebug(page: Page) {
   ).toBeVisible();
 }
 
+test("ctrl+wheel は pinch として親 port へ転送し通常 wheel は転送しない", async ({
+  page,
+}) => {
+  await openDiagram(page);
+  await connectSubmissionPort(page);
+
+  const ctrlPrevented = await page.evaluate(() => {
+    const event = new WheelEvent("wheel", {
+      ctrlKey: true,
+      deltaY: -80,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(ctrlPrevented).toBe(true);
+  await page.waitForFunction(
+    () =>
+      (
+        window as typeof window & {
+          arkHarnessSubmission?: { type?: string };
+        }
+      ).arkHarnessSubmission?.type === "ark:diagram-pinch"
+  );
+  expect(
+    await page.evaluate(
+      () =>
+        (window as typeof window & { arkHarnessSubmission?: unknown })
+          .arkHarnessSubmission
+    )
+  ).toEqual({ type: "ark:diagram-pinch", deltaY: -80 });
+
+  const plainPrevented = await page.evaluate(() => {
+    delete (window as typeof window & { arkHarnessSubmission?: unknown })
+      .arkHarnessSubmission;
+    const event = new WheelEvent("wheel", {
+      deltaY: 80,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(plainPrevented).toBe(false);
+  await page.evaluate(
+    () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+  );
+  expect(
+    await page.evaluate(
+      () =>
+        (window as typeof window & { arkHarnessSubmission?: unknown })
+          .arkHarnessSubmission
+    )
+  ).toBeUndefined();
+});
+
 async function openModelPanel(page: Page, programmatic = false) {
   await enableDiagramDebug(page);
   const button = page.getByRole("button", {
@@ -2385,10 +2440,15 @@ test("構造変更: clean submission は semantic node を残し CRUD UI と見�
   expect(submission.html).not.toContain("ark-harness-node-anchor");
   expect(submission.html).not.toContain("ark-harness-edge-hit");
   expect(submission.html).not.toContain("--ark-harness-graph-x");
-  expect(describeModelDiff(crudModel, submission.model)).toEqual([
-    "(無題) を追加",
-    "B から (無題) への関連を追加",
+  const diff = describeModelDiff(crudModel, submission.model);
+  expect(diff).toEqual([
+    expect.stringMatching(/^event ノード \(node-[0-9a-f-]+\) を追加$/),
+    expect.stringMatching(
+      /^B から event ノード \(node-[0-9a-f-]+\) への関連を追加$/
+    ),
   ]);
+  expect(diff[0]).toContain(`(${added.id})`);
+  expect(diff[1]).toContain(`(${added.id})`);
 });
 
 test("下部ツールバーは既定で非表示になり余白を残さない", async ({ page }) => {

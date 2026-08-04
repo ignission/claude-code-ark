@@ -3413,6 +3413,7 @@ const RAW_HARNESS_JS = `(function () {
 
   init();
 
+  window.addEventListener("wheel",function(e){if(!e.ctrlKey||!submitPort)return;e.preventDefault();submitPort.postMessage({type:"ark:diagram-pinch",deltaY:e.deltaY})},{passive:false});
   window.addEventListener("message", function onMessage(event) {
     // event.origin は検証しない: sandbox iframe は不透明オリジンで
     // event.origin === "null" になる（実測済み）。port を持っていること
@@ -3486,22 +3487,32 @@ const SUBMIT_COMPACTED_HARNESS_JS =
     STATUS_COMPACTED_HARNESS_JS.slice(submitStart, submitEnd)
   ) +
   STATUS_COMPACTED_HARNESS_JS.slice(submitEnd);
+const INIT_START = "  function init() {";
+const INIT_END = "  init();";
+const initStart = requireIndex(SUBMIT_COMPACTED_HARNESS_JS, INIT_START);
+const initEnd = requireIndex(SUBMIT_COMPACTED_HARNESS_JS, INIT_END);
+const INIT_COMPACTED_HARNESS_JS =
+  SUBMIT_COMPACTED_HARNESS_JS.slice(0, initStart) +
+  compactTrustedJavaScript(
+    SUBMIT_COMPACTED_HARNESS_JS.slice(initStart, initEnd)
+  ) +
+  SUBMIT_COMPACTED_HARNESS_JS.slice(initEnd);
 const PORT_HANDLER_START = "    if (submitPort) return;";
 const PORT_HANDLER_END = "  });\n})();";
 const portHandlerStart = requireIndex(
-  SUBMIT_COMPACTED_HARNESS_JS,
+  INIT_COMPACTED_HARNESS_JS,
   PORT_HANDLER_START
 );
 const portHandlerEnd = requireIndex(
-  SUBMIT_COMPACTED_HARNESS_JS,
+  INIT_COMPACTED_HARNESS_JS,
   PORT_HANDLER_END
 );
 const HARNESS_JS =
-  SUBMIT_COMPACTED_HARNESS_JS.slice(0, portHandlerStart) +
+  INIT_COMPACTED_HARNESS_JS.slice(0, portHandlerStart) +
   compactTrustedJavaScript(
-    SUBMIT_COMPACTED_HARNESS_JS.slice(portHandlerStart, portHandlerEnd)
+    INIT_COMPACTED_HARNESS_JS.slice(portHandlerStart, portHandlerEnd)
   ) +
-  SUBMIT_COMPACTED_HARNESS_JS.slice(portHandlerEnd);
+  INIT_COMPACTED_HARNESS_JS.slice(portHandlerEnd);
 
 export const DIAGRAM_HARNESS_SCRIPT = `${HARNESS_STYLE}
 <script id="${DIAGRAM_HARNESS_MARKER}" data-ark-harness-ui="1">
