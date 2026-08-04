@@ -318,6 +318,8 @@ const RAW_HARNESS_JS = `(function () {
   var statusEl = null;
   var sendBtn = null;
   var layoutDirectionBtn = null;
+  var toolbarEl = null;
+  var baselineModelJson;
 
   function isRecordObject(v) {
     return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -982,6 +984,7 @@ const RAW_HARNESS_JS = `(function () {
     if (!edge) return;
     if (!isRecordObject(edge.ext)) edge.ext = {};
     edge.ext[property] = value;
+    syncDirtyState();
     scheduleGraphRender(graph);
   }
 
@@ -1261,7 +1264,7 @@ const RAW_HARNESS_JS = `(function () {
   function scheduleGraphRender(graph) {
     if (graph.scheduled) return;
     graph.scheduled = true;
-    window.requestAnimationFrame(function () { renderGraph(graph); });
+    window.requestAnimationFrame(function () { renderGraph(graph); syncDirtyState(); });
   }
 
   function positionEdgeHandle(handle, endpoint) {
@@ -2893,6 +2896,24 @@ const RAW_HARNESS_JS = `(function () {
     }
   }
 
+  function isDebugMode() {
+    return /(^|[#,])ark-debug($|[,])/.test(location.hash);
+  }
+
+  function syncDirtyState() {
+    var dirty = JSON.stringify(state.model) !== baselineModelJson;
+    if (sendBtn) sendBtn.style.display = dirty ? "" : "none";
+    if (statusEl) statusEl.style.display = dirty ? "" : "none";
+    syncToolbarVisibility(dirty);
+  }
+
+  function syncToolbarVisibility(dirty) {
+    if (!toolbarEl) return;
+    if (dirty === undefined) dirty = JSON.stringify(state.model) !== baselineModelJson;
+    var debug = isDebugMode();
+    toolbarEl.style.display = dirty || debug ? "" : "none";
+  }
+
   function attachRowControls(li, listEl, ownerNodeId) {
     var handle = createButton("\\u283F", "ark-harness-handle", "ドラッグして並べ替え");
     handle.draggable = true;
@@ -2917,6 +2938,7 @@ const RAW_HARNESS_JS = `(function () {
         node.fields = node.fields.filter(function (f) { return f.id !== id; });
       }
       li.remove();
+      syncDirtyState();
     });
 
     li.appendChild(handle);
@@ -2943,6 +2965,7 @@ const RAW_HARNESS_JS = `(function () {
     editableTarget.addEventListener("input", function () {
       var entry = findEntry(state.model, id);
       if (entry) entry.set(editableTarget.textContent || "");
+      syncDirtyState();
     });
 
     if (rowInfo) {
@@ -2961,6 +2984,7 @@ const RAW_HARNESS_JS = `(function () {
       var current = getNode(state.model, ownerId);
       if (!current) return;
       current.noteText = text.replace(/\\r\\n?/g, "\\n");
+      syncDirtyState();
     });
   }
 
@@ -2986,6 +3010,7 @@ const RAW_HARNESS_JS = `(function () {
       if (reordered.indexOf(f) === -1) reordered.push(f);
     });
     node.fields = reordered;
+    syncDirtyState();
   }
 
   function addField(listEl, ownerNodeId) {
@@ -2999,6 +3024,7 @@ const RAW_HARNESS_JS = `(function () {
     var field = { id: id, label: "新しい項目" };
     if (!node.fields) node.fields = [];
     node.fields.push(field);
+    syncDirtyState();
 
     var li = document.createElement("li");
     li.setAttribute("data-model-id", id);
@@ -3149,7 +3175,9 @@ const RAW_HARNESS_JS = `(function () {
     try {
       var html = buildSubmissionHtml();
       submitPort.postMessage({ type: "ark:diagram-submit", model: state.model, html: html });
+      baselineModelJson = JSON.stringify(state.model);
       updateStatus(true, "送信しました");
+      syncDirtyState();
     } catch (e) {
       updateStatus(true, "送信に失敗しました: " + (e instanceof Error ? e.message : String(e)));
     }
@@ -3199,6 +3227,7 @@ const RAW_HARNESS_JS = `(function () {
         reconcileSelection();
         initNoteProjections();
         graphs.forEach(function (graph) { scheduleGraphRender(graph); });
+        syncDirtyState();
         error.style.display = "none";
         panel.style.display = "none";
       } catch (e) {
@@ -3218,9 +3247,7 @@ const RAW_HARNESS_JS = `(function () {
   function syncToolbarHeight(bar) {
     var update = function () {
       var height = Math.ceil(bar.getBoundingClientRect().height);
-      if (height > 0) {
-        document.body.style.setProperty("--ark-harness-toolbar-height", height + "px");
-      }
+      document.body.style.setProperty("--ark-harness-toolbar-height", height + "px");
     };
     update();
     window.requestAnimationFrame(update);
@@ -3234,6 +3261,7 @@ const RAW_HARNESS_JS = `(function () {
     var bar = document.createElement("div");
     bar.className = "ark-harness-toolbar";
     markUi(bar);
+    toolbarEl = bar;
 
     if (document.querySelector('[data-ark-container="graph"]')) {
       layoutDirectionBtn = createButton("", "ark-harness-btn ark-harness-btn-secondary ark-harness-layout-direction");
@@ -3252,7 +3280,7 @@ const RAW_HARNESS_JS = `(function () {
     statusEl.className = "ark-harness-status";
     markUi(statusEl);
 
-    sendBtn = createButton("変更を送る", "ark-harness-btn ark-harness-btn-primary", "変更を親フレームへ送信する");
+    sendBtn = createButton("変更を送る", "ark-harness-btn ark-harness-btn-secondary", "変更を親フレームへ送信する");
     sendBtn.disabled = true;
     sendBtn.addEventListener("click", handleSubmit);
 
@@ -3276,7 +3304,17 @@ const RAW_HARNESS_JS = `(function () {
       panel.style.display = opening ? "flex" : "none";
     });
 
+    function syncDebugChrome() {
+      var debug = isDebugMode();
+      editModelBtn.style.display = debug ? "" : "none";
+      if (layoutDirectionBtn) layoutDirectionBtn.style.display = debug ? "" : "none";
+      syncToolbarVisibility();
+    }
+    syncDebugChrome();
+    window.addEventListener("hashchange", syncDebugChrome);
+
     updateStatus(false);
+    syncDirtyState();
   }
 
   function init() {
@@ -3284,6 +3322,7 @@ const RAW_HARNESS_JS = `(function () {
       var model = loadModel();
       if (!model) return;
       state.model = model;
+      baselineModelJson = JSON.stringify(state.model);
       reservedModelIds = collectModelIds(model);
       syncNodeKinds();
       kindCandidates = collectKindCandidates();
