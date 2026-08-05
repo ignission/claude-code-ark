@@ -964,6 +964,19 @@ async function requiredBoundingBox(locator: Locator) {
   return box;
 }
 
+async function dragNodeBody(
+  page: Page,
+  node: Locator,
+  delta: { x: number; y: number }
+) {
+  const box = await requiredBoundingBox(node);
+  const start = { x: box.x + 8, y: box.y + 8 };
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x + delta.x, start.y + delta.y, { steps: 5 });
+  await page.mouse.up();
+}
+
 async function dragNodeAnchorToPoint(
   page: Page,
   graph: Locator,
@@ -1290,6 +1303,126 @@ test("selection toolbar: node・contenteditable・edge・解除を単一 root �
     .click({ position: { x: 820, y: 500 } });
   await expect(toolbar).toBeHidden();
   await expect(selectedNodeAnchor(page, "order")).toHaveCount(0);
+});
+
+test("node 本体を4px超ドラッグすると座標を更新する", async ({ page }) => {
+  await openDiagram(page);
+  const order = page.locator('.ark-harness-graph-node[data-model-id="order"]');
+  const heading = order.locator("h2");
+  const [before, headingBox] = await Promise.all([
+    requiredBoundingBox(order),
+    requiredBoundingBox(heading),
+  ]);
+  const start = {
+    x: headingBox.x + headingBox.width - 10,
+    y: headingBox.y + headingBox.height / 2,
+  };
+
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x + 70, start.y + 45, { steps: 5 });
+  await page.mouse.up();
+
+  await expect
+    .poll(async () => (await order.boundingBox())?.x)
+    .toBeCloseTo(before.x + 70, 0);
+  const after = await requiredBoundingBox(order);
+  expect(after.y).toBeCloseTo(before.y + 45, 0);
+  const current = await readCurrentModel(page);
+  expect(current.nodes.find(node => node.id === "order")?.ext).toMatchObject({
+    x: 110,
+    y: 95,
+  });
+});
+
+test("node 本体の4px境界で編集フォーカスとドラッグ開始を分ける", async ({
+  page,
+}) => {
+  await openDiagram(page);
+  const order = page.locator('.ark-harness-graph-node[data-model-id="order"]');
+  const before = await requiredBoundingBox(order);
+  const boundaryCases = [
+    { editable: order.locator("h2"), dx: 3, dy: 0 },
+    {
+      editable: order.locator('li[data-model-id="order_id"] .ark-harness-text'),
+      dx: 0,
+      dy: 4,
+    },
+  ];
+  for (const { editable, dx, dy } of boundaryCases) {
+    const box = await requiredBoundingBox(editable);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(
+      box.x + box.width / 2 + dx,
+      box.y + box.height / 2 + dy
+    );
+    await page.mouse.up();
+    await expect(editable).toBeFocused();
+    const unchanged = await requiredBoundingBox(order);
+    expect(unchanged.x).toBeCloseTo(before.x, 0);
+    expect(unchanged.y).toBeCloseTo(before.y, 0);
+  }
+
+  const heading = order.locator("h2");
+  const headingBox = await requiredBoundingBox(heading);
+  await page.mouse.move(
+    headingBox.x + headingBox.width / 2,
+    headingBox.y + headingBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    headingBox.x + headingBox.width / 2 + 5,
+    headingBox.y + headingBox.height / 2
+  );
+  await page.mouse.up();
+
+  const after = await requiredBoundingBox(order);
+  expect(after.x).toBeCloseTo(before.x + 5, 0);
+  expect(after.y).toBeCloseTo(before.y, 0);
+});
+
+test("フォーカス済み editable 内のドラッグでは node を移動しない", async ({
+  page,
+}) => {
+  await openDiagram(page);
+  const order = page.locator('.ark-harness-graph-node[data-model-id="order"]');
+  const editable = order.locator(
+    'li[data-model-id="order_id"] .ark-harness-text'
+  );
+  await editable.focus();
+  await expect(editable).toBeFocused();
+  const [before, textBox] = await Promise.all([
+    requiredBoundingBox(order),
+    editable.evaluate(element => {
+      const text = element.firstChild;
+      if (!(text instanceof Text))
+        throw new Error("editable text node not found");
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const rect = range.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    }),
+  ]);
+
+  await page.mouse.move(textBox.x, textBox.y + textBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    textBox.x + textBox.width,
+    textBox.y + textBox.height / 2,
+    { steps: 5 }
+  );
+  await page.mouse.up();
+
+  const selectedText = await page.evaluate(
+    () => document.getSelection()?.toString() ?? ""
+  );
+  expect(selectedText).not.toBe("");
+  expect(selectedText).toContain("id");
+  const after = await requiredBoundingBox(order);
+  expect(after.x).toBeCloseTo(before.x, 0);
+  expect(after.y).toBeCloseTo(before.y, 0);
+  await expect(editable).toBeFocused();
 });
 
 test("selection toolbar hover-gap: node と edge から gap 経由で移動しても 250ms 後まで維持する", async ({
@@ -1763,7 +1896,7 @@ test("node CRUD: anchor から空白へ drag して pin node と edge を原子�
   await expect(
     contextToolbar(page).getByRole("button", { name: "行を追加" })
   ).toBeEnabled();
-  await expect(projection.locator(".ark-harness-graph-handle")).toHaveCount(1);
+  await expect(projection.locator(".ark-harness-graph-handle")).toHaveCount(0);
   await expect(
     firstGraph.locator(
       `.ark-harness-node-connectors[data-ark-node-id="${added.id}"] .ark-harness-node-anchor`
@@ -2946,9 +3079,7 @@ test("自動配置 LR は分岐・循環・self-edge・孤立 node を決定的�
   await expect(graph.locator(":scope > .ark-harness-graph-node")).toHaveCount(
     autoLayoutNodes.length
   );
-  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(
-    autoLayoutNodes.length
-  );
+  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(0);
   await expect(
     graph.locator(".ark-harness-edge-main[data-ark-edge-id]")
   ).toHaveCount(autoLayoutEdges.length);
@@ -3033,7 +3164,7 @@ test("手動座標と座標未指定 node を混在させ、manual 同士の重�
   for (const autoId of ["auto_missing", "auto_partial", "auto_invalid"]) {
     await expect(
       graph.locator(`[data-model-id="${autoId}"] .ark-harness-graph-handle`)
-    ).toHaveCount(1);
+    ).toHaveCount(0);
     expect(boxesOverlap(byId[autoId], byId.manual_a)).toBe(false);
     expect(boxesOverlap(byId[autoId], byId.manual_b)).toBe(false);
   }
@@ -3078,23 +3209,11 @@ test("表示時は座標を非永続化し、ドラッグした node だけ手�
 
   const autoNode = page.locator('[data-model-id="auto_missing"]').first();
   const before = await requiredBoundingBox(autoNode);
-  const handle = await requiredBoundingBox(
-    autoNode.locator(".ark-harness-graph-handle")
-  );
   await page.evaluate(() => {
     delete (window as typeof window & { arkHarnessSubmission?: unknown })
       .arkHarnessSubmission;
   });
-  await page.mouse.move(
-    handle.x + handle.width / 2,
-    handle.y + handle.height / 2
-  );
-  await page.mouse.down();
-  await page.mouse.move(
-    handle.x + handle.width / 2 + 60,
-    handle.y + handle.height / 2 + 40
-  );
-  await page.mouse.up();
+  await dragNodeBody(page, autoNode, { x: 60, y: 40 });
   await submit.click();
   await page.waitForFunction(() =>
     Boolean(
@@ -3441,23 +3560,11 @@ test("group-aware auto layout は座標を還流せず drag した member だけ
   const graph = page.locator('[data-ark-container="graph"]');
   const member = graph.locator('[data-model-id="cart_item"]').first();
   const memberBefore = await requiredBoundingBox(member);
-  const handle = await requiredBoundingBox(
-    member.locator(".ark-harness-graph-handle")
-  );
   await page.evaluate(() => {
     delete (window as typeof window & { arkHarnessSubmission?: unknown })
       .arkHarnessSubmission;
   });
-  await page.mouse.move(
-    handle.x + handle.width / 2,
-    handle.y + handle.height / 2
-  );
-  await page.mouse.down();
-  await page.mouse.move(
-    handle.x + handle.width / 2 + 48,
-    handle.y + handle.height / 2 + 36
-  );
-  await page.mouse.up();
+  await dragNodeBody(page, member, { x: 48, y: 36 });
   await expect
     .poll(async () => (await requiredBoundingBox(member)).x)
     .toBeCloseTo(memberBefore.x + 48, 0);
@@ -4074,12 +4181,7 @@ test("edge 端点 handle を最前面の専用 layer に配置する", async ({ 
       .locator('.ark-harness-graph-node[data-model-id="order"]')
       .evaluate(element => getComputedStyle(element).zIndex)
   ).toBe("2");
-  expect(
-    await graph
-      .locator(".ark-harness-graph-handle")
-      .first()
-      .evaluate(element => getComputedStyle(element).zIndex)
-  ).toBe("3");
+  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(0);
 });
 
 test("edge 終点を張り替えて記号と clean HTML を同期する", async ({ page }) => {
@@ -4482,7 +4584,7 @@ test("group は複数 node を囲むラベル付き境界として投影する",
   await expect(
     graph.locator('.ark-harness-edge-main[data-ark-edge-id="e_order_user"]')
   ).toHaveCount(1);
-  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(2);
+  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(0);
   await expect(
     order.locator('li[data-model-id="order_id"] .ark-harness-text')
   ).toHaveAttribute("contenteditable", "true");
@@ -4501,20 +4603,7 @@ test("node ドラッグで group 境界と edge だけが追従する", async ({
   const beforeOrder = await requiredBoundingBox(order);
   const beforeUser = await requiredBoundingBox(user);
   const beforeEdge = await readEdge(page);
-  const handleBox = await requiredBoundingBox(
-    order.locator(".ark-harness-graph-handle")
-  );
-
-  await page.mouse.move(
-    handleBox.x + handleBox.width / 2,
-    handleBox.y + handleBox.height / 2
-  );
-  await page.mouse.down();
-  await page.mouse.move(
-    handleBox.x + handleBox.width / 2 + 80,
-    handleBox.y + handleBox.height / 2 + 60
-  );
-  await page.mouse.up();
+  await dragNodeBody(page, order, { x: 80, y: 60 });
 
   await expect
     .poll(async () => (await order.boundingBox())?.x)
@@ -5089,7 +5178,7 @@ test("flat 図の authored kindless node は note を選ぶまで従来投影を
 
   const graph = page.locator('[data-ark-container="graph"]');
   await expect(graph.locator(".ark-harness-kind-picker")).toHaveCount(0);
-  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(4);
+  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(0);
   await expect(
     graph.locator('[data-model-id="valid_a"].ark-harness-editable')
   ).toHaveAttribute("contenteditable", "true");
@@ -5502,7 +5591,7 @@ test("sample は複数 kind を色とアイコンで区別する", async ({ page
   await expect(
     graph.locator('.ark-harness-edge-main[data-ark-edge-id="e_order_user"]')
   ).toHaveCount(1);
-  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(2);
+  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(0);
   await expect(
     graph.locator('li[data-model-id="order_id"] .ark-harness-text')
   ).toHaveAttribute("contenteditable", "true");
@@ -6152,20 +6241,9 @@ test("kind 変更と node・edge・field・list 編集を同じ送信 model に�
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
       })
   );
-  const handle = order.locator(".ark-harness-graph-handle");
   const beforeBox = await requiredBoundingBox(order);
   const beforeEdge = await readEdge(page);
-  const handleBox = await requiredBoundingBox(handle);
-  await page.mouse.move(
-    handleBox.x + handleBox.width / 2,
-    handleBox.y + handleBox.height / 2
-  );
-  await page.mouse.down();
-  await page.mouse.move(
-    handleBox.x + handleBox.width / 2 + 80,
-    handleBox.y + handleBox.height / 2 + 60
-  );
-  await page.mouse.up();
+  await dragNodeBody(page, order, { x: 80, y: 60 });
 
   await expect
     .poll(async () => (await order.boundingBox())?.x)
@@ -6316,19 +6394,7 @@ test("モデル直接編集後の kind 再同期と node ドラッグを送信 m
   expect(afterStyle.icon).not.toBe("");
   expect(afterStyle.icon).not.toBe(beforeStyle.icon);
 
-  const handleBox = await requiredBoundingBox(
-    order.locator(".ark-harness-graph-handle")
-  );
-  await page.mouse.move(
-    handleBox.x + handleBox.width / 2,
-    handleBox.y + handleBox.height / 2
-  );
-  await page.mouse.down();
-  await page.mouse.move(
-    handleBox.x + handleBox.width / 2 + 80,
-    handleBox.y + handleBox.height / 2 + 60
-  );
-  await page.mouse.up();
+  await dragNodeBody(page, order, { x: 80, y: 60 });
 
   await page
     .getByRole("button", { name: "変更を親フレームへ送信する" })
@@ -6389,13 +6455,13 @@ test("不正座標は座標未指定として自動配置し graph 外参照だ�
   await expect(
     graph.locator(".ark-harness-edge-main[data-ark-edge-id]")
   ).toHaveCount(2);
-  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(4);
+  await expect(graph.locator(".ark-harness-graph-handle")).toHaveCount(0);
   await expect(
     graph.locator('[data-model-id="string_x"] .ark-harness-graph-handle')
-  ).toHaveCount(1);
+  ).toHaveCount(0);
   await expect(
     graph.locator('[data-model-id="null_y"] .ark-harness-graph-handle')
-  ).toHaveCount(1);
+  ).toHaveCount(0);
   expectNoOverlaps(await graphNodeBoxes(page));
   expect(errors).toEqual([]);
 });
