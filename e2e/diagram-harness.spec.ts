@@ -1335,28 +1335,50 @@ test("node 本体を4px超ドラッグすると座標を更新する", async ({ 
   });
 });
 
-test("node 本体の4px以下操作はラベルと行の編集フォーカスを維持する", async ({
+test("node 本体の4px境界で編集フォーカスとドラッグ開始を分ける", async ({
   page,
 }) => {
   await openDiagram(page);
   const order = page.locator('.ark-harness-graph-node[data-model-id="order"]');
   const before = await requiredBoundingBox(order);
-  for (const editable of [
-    order.locator("h2"),
-    order.locator('li[data-model-id="order_id"] .ark-harness-text'),
-  ]) {
+  const boundaryCases = [
+    { editable: order.locator("h2"), dx: 3, dy: 0 },
+    {
+      editable: order.locator('li[data-model-id="order_id"] .ark-harness-text'),
+      dx: 0,
+      dy: 4,
+    },
+  ];
+  for (const { editable, dx, dy } of boundaryCases) {
     const box = await requiredBoundingBox(editable);
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
     await page.mouse.move(
-      box.x + box.width / 2 + 2,
-      box.y + box.height / 2 + 1
+      box.x + box.width / 2 + dx,
+      box.y + box.height / 2 + dy
     );
     await page.mouse.up();
     await expect(editable).toBeFocused();
+    const unchanged = await requiredBoundingBox(order);
+    expect(unchanged.x).toBeCloseTo(before.x, 0);
+    expect(unchanged.y).toBeCloseTo(before.y, 0);
   }
+
+  const heading = order.locator("h2");
+  const headingBox = await requiredBoundingBox(heading);
+  await page.mouse.move(
+    headingBox.x + headingBox.width / 2,
+    headingBox.y + headingBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    headingBox.x + headingBox.width / 2 + 5,
+    headingBox.y + headingBox.height / 2
+  );
+  await page.mouse.up();
+
   const after = await requiredBoundingBox(order);
-  expect(after.x).toBeCloseTo(before.x, 0);
+  expect(after.x).toBeCloseTo(before.x + 5, 0);
   expect(after.y).toBeCloseTo(before.y, 0);
 });
 
@@ -1370,23 +1392,33 @@ test("フォーカス済み editable 内のドラッグでは node を移動し�
   );
   await editable.focus();
   await expect(editable).toBeFocused();
-  const [before, editableBox] = await Promise.all([
+  const [before, textBox] = await Promise.all([
     requiredBoundingBox(order),
-    requiredBoundingBox(editable),
+    editable.evaluate(element => {
+      const text = element.firstChild;
+      if (!(text instanceof Text))
+        throw new Error("editable text node not found");
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const rect = range.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    }),
   ]);
 
-  await page.mouse.move(
-    editableBox.x + 2,
-    editableBox.y + editableBox.height / 2
-  );
+  await page.mouse.move(textBox.x, textBox.y + textBox.height / 2);
   await page.mouse.down();
   await page.mouse.move(
-    editableBox.x + editableBox.width - 2,
-    editableBox.y + editableBox.height / 2,
+    textBox.x + textBox.width,
+    textBox.y + textBox.height / 2,
     { steps: 5 }
   );
   await page.mouse.up();
 
+  const selectedText = await page.evaluate(
+    () => document.getSelection()?.toString() ?? ""
+  );
+  expect(selectedText).not.toBe("");
+  expect(selectedText).toContain("id");
   const after = await requiredBoundingBox(order);
   expect(after.x).toBeCloseTo(before.x, 0);
   expect(after.y).toBeCloseTo(before.y, 0);
