@@ -45,6 +45,35 @@ afterEach(() => {
 });
 
 describe("listDiagrams", () => {
+  it("アンダースコア始まりのディレクトリ配下は一覧から除外する", async () => {
+    // 規約サンプル（diagram-authoring skill の完成例）等の参照用ファイルを
+    // 図スイッチャーに並べないための隠しディレクトリ規約
+    const { worktree, diagramDir } = makeWorktree();
+    fs.mkdirSync(path.join(diagramDir, "_examples", "nested"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(diagramDir, "visible.diagram.html"),
+      diagramHtml("可視の図")
+    );
+    fs.writeFileSync(
+      path.join(diagramDir, "_examples", "hidden.diagram.html"),
+      diagramHtml("規約サンプル")
+    );
+    fs.writeFileSync(
+      path.join(diagramDir, "_examples", "nested", "deep.diagram.html"),
+      diagramHtml("深い規約サンプル")
+    );
+
+    await expect(listDiagrams(worktree)).resolves.toEqual([
+      {
+        relPath: ".claude/diagrams/visible.diagram.html",
+        displayName: "可視の図",
+        tracked: false,
+      },
+    ]);
+  });
+
   it("有効な図だけを再帰列挙し、title 優先・basename fallback でパス順に返す", async () => {
     const { worktree, diagramDir } = makeWorktree();
     fs.mkdirSync(path.join(diagramDir, "nested"), { recursive: true });
