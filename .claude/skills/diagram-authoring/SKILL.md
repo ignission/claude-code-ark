@@ -228,7 +228,7 @@ projection root は member node と sibling に置き、既存の
 ```
 
 group nesting、group 一括 drag、snap / grid は未対応。この例は timeline を固定するため
-auto layout を使わない。完成例は `event-storming.diagram.html` を
+auto layout を使わない。完成例は `_examples/event-storming.diagram.html` を
 `board_open.path` の説明に示された正準 directory と組み合わせて参照する。
 
 ### Infrastructure の例
@@ -332,7 +332,7 @@ region / VPC / subnet の階層感が必要でも `groups[].nodes` に group id 
 ```
 
 group nesting、group 一括 drag は未対応。この例は階層境界を固定するため auto layout を
-使わない。完成例は `infrastructure.diagram.html` を
+使わない。完成例は `_examples/infrastructure.diagram.html` を
 `board_open.path` の説明に示された正準 directory と組み合わせて参照する。
 
 ## 語彙: edge / ER
@@ -439,8 +439,8 @@ drag は core の `edge.from` / `edge.to` だけを更新するため
 ER projection でも外部 URL、stylesheet、font、image、script、外部 `<use href>` は使わず、
 inline CSS / SVG の範囲に留める。完成例は `board_open.path` の説明に示された正準 directory と
 組み合わせて参照する。cardinality/direction/type の最小デモは
-`er-edge-semantics.diagram.html`、業務ドメインを題材に 1:N・1:1・N:M（関連エンティティ含む）を
-座標なし auto-layout で並べた実例は `ec-domain-model.diagram.html` を見る。
+`_examples/er-edge-semantics.diagram.html`、業務ドメインを題材に 1:N・1:1・N:M（関連エンティティ含む）を
+座標なし auto-layout で並べた実例は `_examples/ec-domain-model.diagram.html` を見る。
 
 ## 語彙: group
 
@@ -542,3 +542,9 @@ data URI、生成 CSS の範囲で可視 label を必ず設ける。
 
 図種は問わない。エンティティ表、スイムレーン、状態機械など、問題に合うものを HTML と CSS で作る。
 ただし一覧的な並びは `<ul>` や `<ol>` のような素直なコンテナで組む（編集ハーネスが並べ替えを扱えるようにするため）。
+
+## 参照用ファイルの置き場
+
+正準 directory 直下の `_` 始まりのサブディレクトリ（例: `_examples/`）は
+図スイッチャーの一覧に出ない。規約サンプルなど参照用の図はそこに置く。
+`board_open` はサブディレクトリのパスでも開ける。

@@ -718,7 +718,7 @@ async function openAuthoredDiagram(page: Page, filename: string) {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
   const html = readFileSync(
-    new URL(`../${DIAGRAM_DIR}/${filename}`, import.meta.url),
+    new URL(`../${DIAGRAM_DIR}/_examples/${filename}`, import.meta.url),
     "utf8"
   );
   await page.setContent(injectHarness(html));
