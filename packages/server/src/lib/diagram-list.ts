@@ -37,6 +37,9 @@ async function collectDiagramCandidates(
   const candidates: string[] = [];
 
   for (const entry of entries) {
+    // "_" 始まりのディレクトリは参照用（規約サンプル等）の隠し置き場として
+    // 一覧から除外する。ファイル自体は board_open / subscribe で開ける
+    if (entry.isDirectory() && entry.name.startsWith("_")) continue;
     const childParts = [...relativeParts, entry.name];
     if (entry.isDirectory()) {
       candidates.push(

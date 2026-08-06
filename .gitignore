@@ -123,3 +123,7 @@ test-results/
 # Superpowers
 .superpowers/
 .gstack/
+
+# 図解ボード: 作業用の図はコミット対象外（規約サンプル _examples/ のみ git 管理する）
+.claude/diagrams/*
+!.claude/diagrams/_examples/
