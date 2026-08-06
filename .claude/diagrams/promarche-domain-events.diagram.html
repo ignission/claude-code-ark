@@ -424,6 +424,24 @@
       "from": "ev_order",
       "to": "rm_history",
       "label": "投影（CQRS・read model）"
+    },
+    {
+      "id": "s9",
+      "from": "ev_supplier",
+      "to": "cmd_prepare",
+      "label": "受注後に"
+    },
+    {
+      "id": "s10",
+      "from": "ev_order",
+      "to": "cmd_cancel",
+      "label": "注文確定→発送準備中の間"
+    },
+    {
+      "id": "r5",
+      "from": "ev_return_req",
+      "to": "cmd_approve",
+      "label": "運営が審査"
     }
   ],
   "groups": [
