@@ -168,7 +168,7 @@
     },
     {
       "id": "ev_refunded",
-      "label": "ReturnRefunded（台帳記録のみ・D9）",
+      "label": "RefundObligationRecorded（返金の台帳記録・CON-02。旧名: ReturnRefunded）",
       "kind": "event",
       "ext": {
         "x": 2610,
@@ -276,7 +276,7 @@
     },
     {
       "id": "cmd_approve",
-      "label": "返品承認 / 返金処理",
+      "label": "返品承認 / 返金処理（運営ロール限定・REQ-A-02）",
       "kind": "command",
       "ext": {
         "x": 2400,
@@ -537,7 +537,7 @@
   <article class="storming-note" data-model-id="ev_delivered" data-kind="event"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span><span class="node-label">OrderDelivered</span></article>
   <article class="storming-note" data-model-id="ev_return_req" data-kind="event"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span><span class="node-label">ReturnRequested</span></article>
   <article class="storming-note" data-model-id="ev_return_ok" data-kind="event"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span><span class="node-label">ReturnApproved（返金可能額を写す）</span></article>
-  <article class="storming-note" data-model-id="ev_refunded" data-kind="event"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span><span class="node-label">ReturnRefunded（台帳記録のみ・D9）</span></article>
+  <article class="storming-note" data-model-id="ev_refunded" data-kind="event"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span><span class="node-label">RefundObligationRecorded（返金の台帳記録・CON-02。旧名: ReturnRefunded）</span></article>
 
   <article class="storming-note" data-model-id="pol_notify" data-kind="policy"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Policy</span><span class="node-label">通知 policy（outbox→メール・バイヤー+各サプライヤー FUNC-038）</span></article>
   <article class="storming-note" data-model-id="ev_cancelled" data-kind="event"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span><span class="node-label">OrderCancelled（在庫全量復元・返金記録と同一Tx）</span></article>
@@ -552,7 +552,7 @@
 
   <article class="storming-note" data-model-id="admin" data-kind="actor"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Actor</span><span class="node-label">管理者</span></article>
   <article class="storming-note" data-model-id="cmd_deliver" data-kind="policy"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Policy</span><span class="node-label">みなし配達 policy（発送から3日で自動記録・REQ-A-03）</span></article>
-  <article class="storming-note" data-model-id="cmd_approve" data-kind="command"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Command</span><span class="node-label">返品承認 / 返金処理</span></article>
+  <article class="storming-note" data-model-id="cmd_approve" data-kind="command"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Command</span><span class="node-label">返品承認 / 返金処理（運営ロール限定・REQ-A-02）</span></article>
   <article class="storming-note" data-model-id="note_out" data-kind="note"><div data-ark-harness-note>フェーズ外（CON-02: 決済実行は含めない）:
 決済オーソリ/キャプチャ（旧H03/H06）・後払いはフェーズ3（CON-03）</div></article>
   <article class="storming-note" data-model-id="note_open" data-kind="note"><div data-ark-harness-note>確認事項は7章で全件「未決・確認中」:
