@@ -31,25 +31,107 @@
 {
   "version": 1,
   "title": "ProMarche 注文ステータス状態遷移（要求定義書 4.10）",
-  "ext": { "layout": { "direction": "LR", "rankSpacing": 88, "nodeSpacing": 30, "padding": 28 } },
+  "ext": {
+    "layout": {
+      "direction": "LR",
+      "rankSpacing": 88,
+      "nodeSpacing": 30,
+      "padding": 28
+    }
+  },
   "nodes": [
-    { "id": "init",      "label": "開始",         "kind": "initial",         "fields": [] },
-    { "id": "ordered",   "label": "注文確定",     "kind": "state",           "fields": [] },
-    { "id": "accepted",  "label": "受注確認済み", "kind": "state",           "fields": [] },
-    { "id": "preparing", "label": "発送準備中",   "kind": "state",           "fields": [] },
-    { "id": "shipped",   "label": "発送済み",     "kind": "state",           "fields": [] },
-    { "id": "delivered", "label": "配達完了",     "kind": "terminal-ok",     "fields": [] },
-    { "id": "cancelled", "label": "キャンセル",   "kind": "terminal-cancel", "fields": [] }
+    {
+      "id": "init",
+      "label": "開始",
+      "kind": "initial",
+      "fields": []
+    },
+    {
+      "id": "ordered",
+      "label": "注文確定",
+      "kind": "state",
+      "fields": []
+    },
+    {
+      "id": "accepted",
+      "label": "受注確認済み",
+      "kind": "state",
+      "fields": []
+    },
+    {
+      "id": "preparing",
+      "label": "発送準備中",
+      "kind": "state",
+      "fields": []
+    },
+    {
+      "id": "shipped",
+      "label": "発送済み",
+      "kind": "state",
+      "fields": []
+    },
+    {
+      "id": "delivered",
+      "label": "配達完了",
+      "kind": "terminal-ok",
+      "fields": []
+    },
+    {
+      "id": "cancelled",
+      "label": "キャンセル",
+      "kind": "terminal-cancel",
+      "fields": []
+    }
   ],
   "edges": [
-    { "id": "t0", "from": "init",      "to": "ordered",   "label": "バイヤーが注文を確定" },
-    { "id": "t1", "from": "ordered",   "to": "accepted",  "label": "サプライヤーが受注確認（REQ-S-02）" },
-    { "id": "t2", "from": "accepted",  "to": "preparing", "label": "準備開始・不定貫の計量/金額確定" },
-    { "id": "t3", "from": "preparing", "to": "shipped",   "label": "追跡番号を入力（REQ-S-03）" },
-    { "id": "t4", "from": "shipped",   "to": "delivered", "label": "発送から3日で自動 / 運営手動（REQ-A-03・みなし配達）" },
-    { "id": "c1", "from": "ordered",   "to": "cancelled", "label": "発送前・全額返金・在庫全量戻し（REQ-S-04）" },
-    { "id": "c2", "from": "accepted",  "to": "cancelled", "label": "発送前まで（REQ-S-04）" },
-    { "id": "c3", "from": "preparing", "to": "cancelled", "label": "発送前まで（REQ-S-04）" }
+    {
+      "id": "t0",
+      "from": "init",
+      "to": "ordered",
+      "label": "バイヤーが注文を確定"
+    },
+    {
+      "id": "t1",
+      "from": "ordered",
+      "to": "accepted",
+      "label": "サプライヤーが受注確認（REQ-S-02）"
+    },
+    {
+      "id": "t2",
+      "from": "accepted",
+      "to": "preparing",
+      "label": "準備開始・不定貫の計量/金額確定"
+    },
+    {
+      "id": "t3",
+      "from": "preparing",
+      "to": "shipped",
+      "label": "追跡番号を入力（REQ-S-03）"
+    },
+    {
+      "id": "t4",
+      "from": "shipped",
+      "to": "delivered",
+      "label": "発送から3日で自動 / 運営手動（REQ-A-03・みなし配達）"
+    },
+    {
+      "id": "c1",
+      "from": "ordered",
+      "to": "cancelled",
+      "label": "サプライヤーのみ・事由限定（在庫切れ/出荷不可/品質不適合）・全額返金・在庫全量戻し（REQ-S-04）"
+    },
+    {
+      "id": "c2",
+      "from": "accepted",
+      "to": "cancelled",
+      "label": "サプライヤーのみ・発送前まで（REQ-S-04）"
+    },
+    {
+      "id": "c3",
+      "from": "preparing",
+      "to": "cancelled",
+      "label": "サプライヤーのみ・発送前まで（REQ-S-04）"
+    }
   ],
   "groups": []
 }

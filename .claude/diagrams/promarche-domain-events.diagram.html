@@ -49,66 +49,452 @@
   "version": 1,
   "title": "ProMarche ドメインイベント（確定版）— Ordering BC",
   "nodes": [
-    { "id": "buyer", "label": "バイヤー", "kind": "actor", "ext": { "x": 120, "y": 70 } },
-    { "id": "cmd_checkout", "label": "チェックアウト確定（confirm）", "kind": "command", "ext": { "x": 300, "y": 70 } },
-    { "id": "cmd_return", "label": "返品申請（到着後3営業日以内・全数量のみ）", "kind": "command", "ext": { "x": 2190, "y": 70 } },
-    { "id": "rm_history", "label": "購入履歴 / 注文詳細（概算・確定・差額精算の状況）", "kind": "read-model", "ext": { "x": 2610, "y": 70 } },
-
-    { "id": "agg_checkout", "label": "CheckoutSession（単一Tx: 検証→在庫減算→Order生成）", "kind": "aggregate", "ext": { "x": 510, "y": 280 } },
-    { "id": "ev_checkout", "label": "CheckoutConfirmed（注文番号一覧を運ぶ統合イベント）", "kind": "event", "ext": { "x": 720, "y": 280 } },
-    { "id": "ev_order", "label": "OrderConfirmed（サプライヤー毎の注文成立）", "kind": "event", "ext": { "x": 930, "y": 280 } },
-    { "id": "ev_supplier", "label": "SupplierConfirmed", "kind": "event", "ext": { "x": 1140, "y": 280 } },
-    { "id": "ev_amount", "label": "OrderAmountFinalized（最後の明細確定で1回・FR-V-06）", "kind": "event", "ext": { "x": 1560, "y": 280 } },
-    { "id": "ev_shipped", "label": "OrderShipped", "kind": "event", "ext": { "x": 1770, "y": 280 } },
-    { "id": "ev_delivered", "label": "OrderDelivered", "kind": "event", "ext": { "x": 1980, "y": 280 } },
-    { "id": "ev_return_req", "label": "ReturnRequested", "kind": "event", "ext": { "x": 2190, "y": 280 } },
-    { "id": "ev_return_ok", "label": "ReturnApproved（返金可能額を写す）", "kind": "event", "ext": { "x": 2400, "y": 280 } },
-    { "id": "ev_refunded", "label": "ReturnRefunded（台帳記録のみ・D9）", "kind": "event", "ext": { "x": 2610, "y": 280 } },
-
-    { "id": "pol_notify", "label": "通知 policy（outbox→メール・バイヤー+各サプライヤー FUNC-038）", "kind": "policy", "ext": { "x": 930, "y": 430 } },
-    { "id": "ev_cancelled", "label": "OrderCancelled（在庫全量復元・返金記録と同一Tx）", "kind": "event", "ext": { "x": 1350, "y": 430 } },
-    { "id": "pol_ledger", "label": "差額を台帳へ記録 policy（追加請求 / 返金 → PaymentObligation）", "kind": "policy", "ext": { "x": 1770, "y": 430 } },
-
-    { "id": "supplier", "label": "サプライヤー", "kind": "actor", "ext": { "x": 120, "y": 600 } },
-    { "id": "cmd_cancel", "label": "キャンセル（事由限定・confirmed→preparing のみ）", "kind": "command", "ext": { "x": 930, "y": 600 } },
-    { "id": "cmd_confirm", "label": "受注確認", "kind": "command", "ext": { "x": 1140, "y": 600 } },
-    { "id": "cmd_prepare", "label": "準備開始", "kind": "command", "ext": { "x": 1350, "y": 600 } },
-    { "id": "cmd_weight", "label": "実重量入力（不定貫明細毎・±20%外はエラー）", "kind": "command", "ext": { "x": 1560, "y": 600 } },
-    { "id": "cmd_ship", "label": "発送（追跡番号）", "kind": "command", "ext": { "x": 1770, "y": 600 } },
-
-    { "id": "admin", "label": "管理者", "kind": "actor", "ext": { "x": 120, "y": 790 } },
-    { "id": "cmd_deliver", "label": "配達記録（手動・未解決6の仮置き）", "kind": "command", "ext": { "x": 1980, "y": 790 } },
-    { "id": "cmd_approve", "label": "返品承認 / 返金処理", "kind": "command", "ext": { "x": 2400, "y": 790 } },
-    { "id": "note_out", "label": "", "kind": "note", "noteText": "フェーズ外（D9: 初版は決済なし）:\n決済オーソリ/キャプチャ（旧H03/H06）・掛け払い/月次請求書（未解決4・PMRD-56）", "ext": { "x": 510, "y": 790 } },
-    { "id": "note_open", "label": "", "kind": "note", "noteText": "残る未解決:\nキャンセル二重定義（1）・±20%の表現統一（2）・配達記録の主体（6）・消費税の扱い（9）", "ext": { "x": 790, "y": 790 } }
+    {
+      "id": "buyer",
+      "label": "バイヤー",
+      "kind": "actor",
+      "ext": {
+        "x": 120,
+        "y": 70
+      }
+    },
+    {
+      "id": "cmd_checkout",
+      "label": "チェックアウト確定（confirm）",
+      "kind": "command",
+      "ext": {
+        "x": 300,
+        "y": 70
+      }
+    },
+    {
+      "id": "cmd_return",
+      "label": "返品申請（到着後3営業日以内・全数量のみ）",
+      "kind": "command",
+      "ext": {
+        "x": 2190,
+        "y": 70
+      }
+    },
+    {
+      "id": "rm_history",
+      "label": "購入履歴 / 注文詳細（概算・確定・差額精算の状況）",
+      "kind": "read-model",
+      "ext": {
+        "x": 2610,
+        "y": 70
+      }
+    },
+    {
+      "id": "agg_checkout",
+      "label": "CheckoutSession（単一Tx: 検証→在庫減算→Order生成）",
+      "kind": "aggregate",
+      "ext": {
+        "x": 510,
+        "y": 280
+      }
+    },
+    {
+      "id": "ev_checkout",
+      "label": "CheckoutConfirmed（注文番号一覧を運ぶ統合イベント）",
+      "kind": "event",
+      "ext": {
+        "x": 720,
+        "y": 280
+      }
+    },
+    {
+      "id": "ev_order",
+      "label": "OrderConfirmed（サプライヤー毎の注文成立）",
+      "kind": "event",
+      "ext": {
+        "x": 930,
+        "y": 280
+      }
+    },
+    {
+      "id": "ev_supplier",
+      "label": "SupplierConfirmed",
+      "kind": "event",
+      "ext": {
+        "x": 1140,
+        "y": 280
+      }
+    },
+    {
+      "id": "ev_amount",
+      "label": "OrderAmountFinalized（最後の明細確定で1回・FR-V-06）",
+      "kind": "event",
+      "ext": {
+        "x": 1560,
+        "y": 280
+      }
+    },
+    {
+      "id": "ev_shipped",
+      "label": "OrderShipped",
+      "kind": "event",
+      "ext": {
+        "x": 1770,
+        "y": 280
+      }
+    },
+    {
+      "id": "ev_delivered",
+      "label": "OrderDelivered",
+      "kind": "event",
+      "ext": {
+        "x": 1980,
+        "y": 280
+      }
+    },
+    {
+      "id": "ev_return_req",
+      "label": "ReturnRequested",
+      "kind": "event",
+      "ext": {
+        "x": 2190,
+        "y": 280
+      }
+    },
+    {
+      "id": "ev_return_ok",
+      "label": "ReturnApproved（返金可能額を写す）",
+      "kind": "event",
+      "ext": {
+        "x": 2400,
+        "y": 280
+      }
+    },
+    {
+      "id": "ev_refunded",
+      "label": "ReturnRefunded（台帳記録のみ・D9）",
+      "kind": "event",
+      "ext": {
+        "x": 2610,
+        "y": 280
+      }
+    },
+    {
+      "id": "pol_notify",
+      "label": "通知 policy（outbox→メール・バイヤー+各サプライヤー FUNC-038）",
+      "kind": "policy",
+      "ext": {
+        "x": 930,
+        "y": 430
+      }
+    },
+    {
+      "id": "ev_cancelled",
+      "label": "OrderCancelled（在庫全量復元・返金記録と同一Tx）",
+      "kind": "event",
+      "ext": {
+        "x": 1350,
+        "y": 430
+      }
+    },
+    {
+      "id": "pol_ledger",
+      "label": "差額を台帳へ記録 policy（追加請求 / 返金 → PaymentObligation）",
+      "kind": "policy",
+      "ext": {
+        "x": 1770,
+        "y": 430
+      }
+    },
+    {
+      "id": "supplier",
+      "label": "サプライヤー",
+      "kind": "actor",
+      "ext": {
+        "x": 120,
+        "y": 600
+      }
+    },
+    {
+      "id": "cmd_cancel",
+      "label": "キャンセル（事由限定・confirmed→preparing のみ）",
+      "kind": "command",
+      "ext": {
+        "x": 930,
+        "y": 600
+      }
+    },
+    {
+      "id": "cmd_confirm",
+      "label": "受注確認",
+      "kind": "command",
+      "ext": {
+        "x": 1140,
+        "y": 600
+      }
+    },
+    {
+      "id": "cmd_prepare",
+      "label": "準備開始",
+      "kind": "command",
+      "ext": {
+        "x": 1350,
+        "y": 600
+      }
+    },
+    {
+      "id": "cmd_weight",
+      "label": "実重量入力（不定貫明細毎・±20%外はエラー）",
+      "kind": "command",
+      "ext": {
+        "x": 1560,
+        "y": 600
+      }
+    },
+    {
+      "id": "cmd_ship",
+      "label": "発送（追跡番号）",
+      "kind": "command",
+      "ext": {
+        "x": 1770,
+        "y": 600
+      }
+    },
+    {
+      "id": "admin",
+      "label": "管理者",
+      "kind": "actor",
+      "ext": {
+        "x": 120,
+        "y": 790
+      }
+    },
+    {
+      "id": "cmd_deliver",
+      "label": "みなし配達 policy（発送から3日で自動記録・REQ-A-03）",
+      "kind": "policy",
+      "ext": {
+        "x": 1980,
+        "y": 430
+      }
+    },
+    {
+      "id": "cmd_approve",
+      "label": "返品承認 / 返金処理",
+      "kind": "command",
+      "ext": {
+        "x": 2400,
+        "y": 790
+      }
+    },
+    {
+      "id": "note_out",
+      "label": "",
+      "kind": "note",
+      "noteText": "フェーズ外（CON-02: 決済実行は含めない）:\n決済オーソリ/キャプチャ（旧H03/H06）・後払いはフェーズ3（CON-03）",
+      "ext": {
+        "x": 510,
+        "y": 790
+      }
+    },
+    {
+      "id": "note_open",
+      "label": "",
+      "kind": "note",
+      "noteText": "確認事項は7章で全件「未決・確認中」:\n1 バイヤーキャンセル不可(案A) / 2 支払方法(案A:クレカ) / 3 税込単価(案A) / 4 みなし配達(案B反映) / 5 在庫自動戻し(案A) / 6 ±20%は価格基準(案B)",
+      "ext": {
+        "x": 790,
+        "y": 790
+      }
+    }
   ],
   "edges": [
-    { "id": "b1", "from": "buyer", "to": "cmd_checkout", "label": "requests" },
-    { "id": "b2", "from": "cmd_checkout", "to": "agg_checkout", "label": "targets" },
-    { "id": "b3", "from": "agg_checkout", "to": "ev_checkout", "label": "emits" },
-    { "id": "b4", "from": "ev_checkout", "to": "ev_order", "label": "注文毎に" },
-    { "id": "b5", "from": "ev_order", "to": "pol_notify", "label": "triggers" },
-    { "id": "s1", "from": "supplier", "to": "cmd_confirm", "label": "" },
-    { "id": "s2", "from": "cmd_confirm", "to": "ev_supplier", "label": "emits（Order経由）" },
-    { "id": "s3", "from": "cmd_prepare", "to": "cmd_weight", "label": "preparing 中に明細毎" },
-    { "id": "s4", "from": "cmd_weight", "to": "ev_amount", "label": "全明細確定で" },
-    { "id": "s5", "from": "ev_amount", "to": "pol_ledger", "label": "差額があれば" },
-    { "id": "s6", "from": "ev_amount", "to": "cmd_ship", "label": "確定が shipped の前提" },
-    { "id": "s7", "from": "cmd_ship", "to": "ev_shipped", "label": "emits" },
-    { "id": "s8", "from": "cmd_cancel", "to": "ev_cancelled", "label": "emits" },
-    { "id": "a1", "from": "admin", "to": "cmd_deliver", "label": "" },
-    { "id": "a2", "from": "cmd_deliver", "to": "ev_delivered", "label": "emits" },
-    { "id": "r1", "from": "ev_delivered", "to": "cmd_return", "label": "3営業日以内" },
-    { "id": "r2", "from": "cmd_return", "to": "ev_return_req", "label": "emits" },
-    { "id": "r3", "from": "cmd_approve", "to": "ev_return_ok", "label": "emits" },
-    { "id": "r4", "from": "ev_return_ok", "to": "ev_refunded", "label": "台帳へ記録" },
-    { "id": "q1", "from": "ev_order", "to": "rm_history", "label": "投影（CQRS・read model）" }
+    {
+      "id": "b1",
+      "from": "buyer",
+      "to": "cmd_checkout",
+      "label": "requests"
+    },
+    {
+      "id": "b2",
+      "from": "cmd_checkout",
+      "to": "agg_checkout",
+      "label": "targets"
+    },
+    {
+      "id": "b3",
+      "from": "agg_checkout",
+      "to": "ev_checkout",
+      "label": "emits"
+    },
+    {
+      "id": "b4",
+      "from": "ev_checkout",
+      "to": "ev_order",
+      "label": "注文毎に"
+    },
+    {
+      "id": "b5",
+      "from": "ev_order",
+      "to": "pol_notify",
+      "label": "triggers"
+    },
+    {
+      "id": "s1",
+      "from": "supplier",
+      "to": "cmd_confirm",
+      "label": ""
+    },
+    {
+      "id": "s2",
+      "from": "cmd_confirm",
+      "to": "ev_supplier",
+      "label": "emits（Order経由）"
+    },
+    {
+      "id": "s3",
+      "from": "cmd_prepare",
+      "to": "cmd_weight",
+      "label": "preparing 中に明細毎"
+    },
+    {
+      "id": "s4",
+      "from": "cmd_weight",
+      "to": "ev_amount",
+      "label": "全明細確定で"
+    },
+    {
+      "id": "s5",
+      "from": "ev_amount",
+      "to": "pol_ledger",
+      "label": "差額があれば"
+    },
+    {
+      "id": "s6",
+      "from": "ev_amount",
+      "to": "cmd_ship",
+      "label": "確定が shipped の前提"
+    },
+    {
+      "id": "s7",
+      "from": "cmd_ship",
+      "to": "ev_shipped",
+      "label": "emits"
+    },
+    {
+      "id": "s8",
+      "from": "cmd_cancel",
+      "to": "ev_cancelled",
+      "label": "emits"
+    },
+    {
+      "id": "a1",
+      "from": "admin",
+      "to": "cmd_deliver",
+      "label": "実態と異なるとき手動修正"
+    },
+    {
+      "id": "a2",
+      "from": "cmd_deliver",
+      "to": "ev_delivered",
+      "label": "emits"
+    },
+    {
+      "id": "r1",
+      "from": "ev_delivered",
+      "to": "cmd_return",
+      "label": "3営業日以内"
+    },
+    {
+      "id": "r2",
+      "from": "cmd_return",
+      "to": "ev_return_req",
+      "label": "emits"
+    },
+    {
+      "id": "r3",
+      "from": "cmd_approve",
+      "to": "ev_return_ok",
+      "label": "emits"
+    },
+    {
+      "id": "r4",
+      "from": "ev_return_ok",
+      "to": "ev_refunded",
+      "label": "台帳へ記録"
+    },
+    {
+      "id": "q1",
+      "from": "ev_order",
+      "to": "rm_history",
+      "label": "投影（CQRS・read model）"
+    }
   ],
   "groups": [
-    { "id": "buyer_lane", "label": "バイヤー", "nodes": ["buyer","cmd_checkout","cmd_return","rm_history"], "ext": { "role": "swimlane", "lane": "buyer" } },
-    { "id": "ordering_lane", "label": "Ordering", "nodes": ["agg_checkout","ev_checkout","ev_order","ev_supplier","ev_amount","ev_shipped","ev_delivered","ev_return_req","ev_return_ok","ev_refunded","pol_notify","ev_cancelled","pol_ledger"], "ext": { "role": "swimlane", "lane": "ordering" } },
-    { "id": "supplier_lane", "label": "サプライヤー", "nodes": ["supplier","cmd_cancel","cmd_confirm","cmd_prepare","cmd_weight","cmd_ship"], "ext": { "role": "swimlane", "lane": "supplier" } },
-    { "id": "admin_lane", "label": "管理者", "nodes": ["admin","cmd_deliver","cmd_approve","note_out","note_open"], "ext": { "role": "swimlane", "lane": "admin" } }
+    {
+      "id": "buyer_lane",
+      "label": "バイヤー",
+      "nodes": [
+        "buyer",
+        "cmd_checkout",
+        "cmd_return",
+        "rm_history"
+      ],
+      "ext": {
+        "role": "swimlane",
+        "lane": "buyer"
+      }
+    },
+    {
+      "id": "ordering_lane",
+      "label": "Ordering",
+      "nodes": [
+        "agg_checkout",
+        "ev_checkout",
+        "ev_order",
+        "ev_supplier",
+        "ev_amount",
+        "ev_shipped",
+        "ev_delivered",
+        "ev_return_req",
+        "ev_return_ok",
+        "ev_refunded",
+        "pol_notify",
+        "ev_cancelled",
+        "pol_ledger",
+        "cmd_deliver"
+      ],
+      "ext": {
+        "role": "swimlane",
+        "lane": "ordering"
+      }
+    },
+    {
+      "id": "supplier_lane",
+      "label": "サプライヤー",
+      "nodes": [
+        "supplier",
+        "cmd_cancel",
+        "cmd_confirm",
+        "cmd_prepare",
+        "cmd_weight",
+        "cmd_ship"
+      ],
+      "ext": {
+        "role": "swimlane",
+        "lane": "supplier"
+      }
+    },
+    {
+      "id": "admin_lane",
+      "label": "管理者",
+      "nodes": [
+        "admin",
+        "cmd_approve",
+        "note_out",
+        "note_open"
+      ],
+      "ext": {
+        "role": "swimlane",
+        "lane": "admin"
+      }
+    }
   ]
 }
 </script>
@@ -147,7 +533,7 @@
   <article class="storming-note" data-model-id="cmd_ship" data-kind="command"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Command</span><span class="node-label">発送（追跡番号）</span></article>
 
   <article class="storming-note" data-model-id="admin" data-kind="actor"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Actor</span><span class="node-label">管理者</span></article>
-  <article class="storming-note" data-model-id="cmd_deliver" data-kind="command"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Command</span><span class="node-label">配達記録（手動・未解決6の仮置き）</span></article>
+  <article class="storming-note" data-model-id="cmd_deliver" data-kind="policy"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Policy</span><span class="node-label">みなし配達 policy（発送から3日で自動記録・REQ-A-03）</span></article>
   <article class="storming-note" data-model-id="cmd_approve" data-kind="command"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Command</span><span class="node-label">返品承認 / 返金処理</span></article>
   <article class="storming-note" data-model-id="note_out" data-kind="note"><div data-ark-harness-note>フェーズ外（D9: 初版は決済なし）:
 決済オーソリ/キャプチャ（旧H03/H06）・掛け払い/月次請求書（未解決4・PMRD-56）</div></article>
