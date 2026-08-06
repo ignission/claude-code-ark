@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8"><title>ProMarche 集約設計（DDD 戦術設計）— Ordering BC</title>
+<style>
+  body { font-family: system-ui, sans-serif; background:#1a1b26; color:#c0caf5; padding:1.5rem; }
+  .graph { min-height:1500px; position:relative; }
+  .node {
+    --kind-color:#94a3b8; --kind-bg:#202b3c;
+    width:12rem; border:1px solid var(--kind-color); border-radius:7px;
+    background:var(--kind-bg); padding:.45rem .6rem;
+  }
+  .node .kind-name { display:block; font-size:.54rem; color:var(--kind-color); text-transform:uppercase; letter-spacing:.05em; }
+  .node .node-label { display:block; font-size:.82rem; font-weight:600; margin-top:.05rem; }
+  .node ul { margin:.3rem 0 0; padding-left:1rem; }
+  .node li { font-size:.66rem; color:#aeb7d6; line-height:1.4; }
+  .kind-icon { display:inline-block; width:1.15em; }
+  /* 集約ルート（太枠） */
+  [data-kind="root"]      { --kind-color:#facc15; --kind-bg:#332b0e; border-width:2px; }
+  [data-kind="entity"]    { --kind-color:#60a5fa; --kind-bg:#172a46; }
+  [data-kind="vo"]        { --kind-color:#4ade80; --kind-bg:#153522; }
+  [data-kind="external"]  { --kind-color:#a3a3a3; --kind-bg:#26262b; border-style:dashed; }
+  [data-kind="invariant"] { --kind-color:#f87171; --kind-bg:#3a1c1c; border-style:dashed; }
+  [data-kind="principle"] { --kind-color:#c084fc; --kind-bg:#2a2044; width:14rem; border-width:2px; }
+  [data-kind="root"]      .kind-icon::before { content:"◆"; }
+  [data-kind="entity"]    .kind-icon::before { content:"▷"; }
+  [data-kind="vo"]        .kind-icon::before { content:"◇"; }
+  [data-kind="external"]  .kind-icon::before { content:"▤"; }
+  [data-kind="invariant"] .kind-icon::before { content:"⚠"; }
+  [data-kind="principle"] .kind-icon::before { content:"§"; }
+  /* 集約をまたぐ相互作用のエッジを破線で示す */
+  [data-ark-container="graph"] .ark-harness-edge-main[data-ark-edge-type="ref"]  { stroke:#a3a3a3; stroke-dasharray:5 4; }
+  [data-ark-container="graph"] .ark-harness-edge-main[data-ark-edge-type="saga"] { stroke:#2dd4bf; stroke-width:2; stroke-dasharray:7 4; }
+  [data-ark-container="graph"] .ark-harness-edge-main[data-ark-edge-type="invariant"] { stroke:#f87171; stroke-dasharray:2 4; opacity:.6; }
+  /* 集約境界（group）= 一貫性境界 */
+  .agg-boundary {
+    display:none; box-sizing:border-box; position:absolute;
+    left:calc(var(--ark-harness-group-x) - 1.4rem);
+    top:calc(var(--ark-harness-group-y) - 2.3rem);
+    width:calc(var(--ark-harness-group-width) + 2.8rem);
+    height:calc(var(--ark-harness-group-height) + 3.4rem);
+    border:1.5px solid #f0b90b; border-radius:.9rem; background:rgba(250,204,21,.045);
+  }
+  .agg-boundary.ark-harness-graph-group { display:block; }
+  .agg-boundary .group-label { position:absolute; top:.5rem; left:.8rem; font-size:.7rem; font-weight:700; color:#facc15; }
+</style>
+</head>
+<body>
+<script type="application/json" id="ark-diagram-model">
+{
+  "version": 1,
+  "title": "ProMarche 集約設計（DDD 戦術設計）— Ordering BC",
+  "ext": { "layout": { "direction": "LR", "rankSpacing": 96, "nodeSpacing": 48, "padding": 24 } },
+  "nodes": [
+    { "id": "unit", "label": "販売単位（商品カタログ）", "kind": "external", "ext": { "x": 60, "y": 760 },
+      "fields": [ { "id": "u1", "label": "税込単価" }, { "id": "u2", "label": "税率区分（8/10%）" }, { "id": "u3", "label": "定貫/不定貫" }, { "id": "u4", "label": "目安重量・単価" } ] },
+
+    { "id": "cart", "label": "Cart（集約ルート）", "kind": "root", "ext": { "x": 60, "y": 80 },
+      "fields": [ { "id": "ca1", "label": "バイヤー" }, { "id": "ca2", "label": "更新日時" } ] },
+    { "id": "cart_line", "label": "CartLine", "kind": "entity", "ext": { "x": 60, "y": 250 },
+      "fields": [ { "id": "cl1", "label": "販売単位id →参照" }, { "id": "cl2", "label": "数量" } ] },
+    { "id": "inv_cart", "label": "Cart 不変条件", "kind": "invariant", "ext": { "x": 60, "y": 430 },
+      "fields": [ { "id": "ic1", "label": "≤50 販売単位（REQ-C-03）" }, { "id": "ic2", "label": "同一単位は数量加算（REQ-C-02）" }, { "id": "ic3", "label": "価格を持たず表示時に最新（REQ-C-06）" }, { "id": "ic4", "label": "30日更新なしで自動除去（REQ-C-04）" }, { "id": "ic5", "label": "追加時は在庫を確保しない（REQ-C-07）" } ] },
+
+    { "id": "order", "label": "Order（集約ルート）", "kind": "root", "ext": { "x": 460, "y": 80 },
+      "fields": [ { "id": "o1", "label": "注文番号（表示用）+ 公開ID（API用）" }, { "id": "o2", "label": "ステータス（4.10）+ 遷移時刻・操作者" }, { "id": "o3", "label": "配送先・希望納品日" }, { "id": "o4", "label": "概算金額 / 確定金額 / 差額" }, { "id": "o5", "label": "送料・手数料（内訳ごと写し取り）" } ] },
+    { "id": "order_line", "label": "OrderLine", "kind": "entity", "ext": { "x": 460, "y": 330 },
+      "fields": [ { "id": "ol1", "label": "販売単位id →参照" }, { "id": "ol2", "label": "数量" }, { "id": "ol3", "label": "概算価格 / 確定価格" }, { "id": "ol4", "label": "税区分" }, { "id": "ol5", "label": "状態: Fixed / VariableEstimated / VariableFinalized" }, { "id": "ol6", "label": "実重量（不定貫・確定後は変更不可 FR-V-05）" } ] },
+    { "id": "shipping", "label": "送料（値オブジェクト）", "kind": "vo", "ext": { "x": 720, "y": 330 },
+      "fields": [ { "id": "sh1", "label": "荷物単位（同梱）" }, { "id": "sh2", "label": "配送業者・温度帯" }, { "id": "sh3", "label": "サイズ・配送エリア" } ] },
+    { "id": "inv_order", "label": "Order 不変条件", "kind": "invariant", "ext": { "x": 460, "y": 580 },
+      "fields": [ { "id": "io1", "label": "1注文=1サプライヤー=1配送先（REQ-O-01/07）" }, { "id": "io2", "label": "ステータス遷移は4.10のみ" }, { "id": "io3", "label": "キャンセルはサプライヤーのみ・confirmed→preparing（PMRD-2/D10）" }, { "id": "io4", "label": "確定価格は概算の±20%内・超過はエラーで再入力（PMRD-69/D6）" }, { "id": "io5", "label": "金額は銭単位の整数 MoneySen（NFR-04）" }, { "id": "io6", "label": "税込単価+区分で内訳（REQ-O-11）" }, { "id": "io7", "label": "全明細の金額確定まで shipped 不可" }, { "id": "io8", "label": "確定合計の通知は1注文1回（FR-V-06）" } ] },
+
+    { "id": "stock", "label": "在庫（集約ルート）", "kind": "root", "ext": { "x": 1010, "y": 80 },
+      "fields": [ { "id": "st1", "label": "販売単位id" }, { "id": "st2", "label": "引当可能数" }, { "id": "st3", "label": "引当済数" } ] },
+    { "id": "inv_stock", "label": "在庫 不変条件", "kind": "invariant", "ext": { "x": 1010, "y": 300 },
+      "fields": [ { "id": "is1", "label": "超過引当なし（NFR-03・並行性境界）" }, { "id": "is2", "label": "引当は注文確定時（REQ-O-08/D11）" }, { "id": "is3", "label": "取消で全量復元・同一Tx（未解決5: 仮置き）" } ] },
+
+    { "id": "principle", "label": "集約設計の原則（DDD）", "kind": "principle", "ext": { "x": 1010, "y": 560 },
+      "fields": [ { "id": "p1", "label": "集約境界＝一貫性境界＝1コミット1集約" }, { "id": "p2", "label": "集約をまたぐ参照は id のみ（オブジェクト参照しない）" }, { "id": "p3", "label": "例外: 注文確定は単一Tx（検証→在庫減算→Order生成→セッション消費・P0-1）" }, { "id": "p4", "label": "通知・read model 投影は outbox で結果整合" }, { "id": "p5", "label": "決済は Payment BC へ分離・初版は台帳記録のみ（D9）" } ] },
+
+    { "id": "checkout_session", "label": "CheckoutSession（集約ルート）", "kind": "root",
+      "fields": [ { "id": "cs1", "label": "明細と数量の写し（作成時に固定）" }, { "id": "cs2", "label": "配送先は1つ（PMRD-77 B案/D3）" }, { "id": "cs3", "label": "希望納品日・備考（任意・D4）" }, { "id": "cs4", "label": "有効期限（サーバー発行）" } ] },
+    { "id": "inv_checkout", "label": "CheckoutSession 不変条件", "kind": "invariant",
+      "fields": [ { "id": "ix1", "label": "未消費かつ期限内のみ確定可（確定Tx内で判定）" }, { "id": "ix2", "label": "確定成功で消費（1セッション1回）" }, { "id": "ix3", "label": "消費済みへの再confirmは注文番号一覧を冪等返却" }, { "id": "ix4", "label": "二重生成防止 UNIQUE(session, supplier)" } ] },
+
+    { "id": "return_request", "label": "ReturnRequest（集約ルート）", "kind": "root",
+      "fields": [ { "id": "rr1", "label": "事由: 不良品/誤配送/配送前期限切れ（PMRD-3）" }, { "id": "rr2", "label": "申請は到着後3営業日以内（暦・時計はPort注入）" }, { "id": "rr3", "label": "対象は明細の全数量のみ（部分返品なし）" }, { "id": "rr4", "label": "承認時に返金可能額を写し取る" } ] },
+    { "id": "inv_return", "label": "ReturnRequest 不変条件", "kind": "invariant",
+      "fields": [ { "id": "ir1", "label": "バイヤー都合の返品は不可（PMRD-3）" }, { "id": "ir2", "label": "同一明細への重複申請は部分ユニーク制約で防ぐ" }, { "id": "ir3", "label": "返金は商品代のみ・送料はサプライヤー負担" } ] },
+
+    { "id": "obligation", "label": "PaymentObligation（請求・返金台帳）", "kind": "root",
+      "fields": [ { "id": "ob1", "label": "種類: 初期請求 / 差額の追加請求 / 返金" }, { "id": "ob2", "label": "金額（MoneySen・銭整数）" }, { "id": "ob3", "label": "一意キーで二重記録を防ぐ" }, { "id": "ob4", "label": "初版は記録のみ・決済実行なし（D9）" } ] }
+  ],
+  "edges": [
+    { "id": "e1", "from": "cart",       "to": "cart_line",  "label": "含む 1..N" },
+    { "id": "e2", "from": "cart_line",  "to": "unit",       "label": "id参照（価格は都度カタログ）", "ext": { "type": "ref" } },
+    { "id": "e3", "from": "order",      "to": "order_line", "label": "含む 1..N" },
+    { "id": "e4", "from": "order",      "to": "shipping",   "label": "含む（荷物毎・REQ-O-05）" },
+    { "id": "e5", "from": "order_line", "to": "unit",       "label": "id参照（注文時に概算をスナップショット）", "ext": { "type": "ref" } },
+    { "id": "e6", "from": "cart",       "to": "checkout_session", "label": "明細を写して作成（以後のカート編集に影響されない）", "ext": { "type": "saga" } },
+    { "id": "e8", "from": "checkout_session", "to": "order", "label": "confirm でサプライヤー毎に生成・単一Tx（D2）", "ext": { "type": "saga" } },
+    { "id": "e7", "from": "order",      "to": "stock",      "label": "確定時に確認して減算・取消で復元（D11）", "ext": { "type": "saga" } },
+    { "id": "e9", "from": "order",      "to": "obligation", "label": "初期請求と差額（追加請求/返金）を記録", "ext": { "type": "saga" } },
+    { "id": "e10", "from": "return_request", "to": "order", "label": "対象明細を id 参照", "ext": { "type": "ref" } },
+    { "id": "e11", "from": "return_request", "to": "obligation", "label": "承認で返金を記録", "ext": { "type": "saga" } },
+    { "id": "vi1", "from": "inv_cart",  "to": "cart",  "label": "", "ext": { "direction": "none", "type": "invariant" } },
+    { "id": "vi2", "from": "inv_order", "to": "order", "label": "", "ext": { "direction": "none", "type": "invariant" } },
+    { "id": "vi3", "from": "inv_stock", "to": "stock", "label": "", "ext": { "direction": "none", "type": "invariant" } },
+    { "id": "vi4", "from": "inv_checkout", "to": "checkout_session", "label": "", "ext": { "direction": "none", "type": "invariant" } },
+    { "id": "vi5", "from": "inv_return", "to": "return_request", "label": "", "ext": { "direction": "none", "type": "invariant" } }
+  ],
+  "groups": [
+    { "id": "cart_agg",  "label": "Cart 集約（バイヤー毎）",            "nodes": ["cart","cart_line","inv_cart"], "ext": { "role": "aggregate" } },
+    { "id": "order_agg", "label": "Order 集約（サプライヤー毎・注文番号）", "nodes": ["order","order_line","shipping","inv_order"], "ext": { "role": "aggregate" } },
+    { "id": "stock_agg", "label": "在庫 集約（販売単位毎・並行性境界）",   "nodes": ["stock","inv_stock"], "ext": { "role": "aggregate" } },
+    { "id": "checkout_agg", "label": "CheckoutSession 集約（チェックアウト毎・一時）", "nodes": ["checkout_session","inv_checkout"], "ext": { "role": "aggregate" } },
+    { "id": "return_agg", "label": "ReturnRequest 集約（明細毎・フェーズ2）", "nodes": ["return_request","inv_return"], "ext": { "role": "aggregate" } },
+    { "id": "obligation_agg", "label": "PaymentObligation 台帳（→将来 Payment BC）", "nodes": ["obligation"], "ext": { "role": "aggregate" } }
+  ]
+}
+</script>
+
+<div class="graph" data-ark-container="graph">
+  <section class="agg-boundary" data-ark-group data-model-id="cart_agg"><span class="group-label" data-model-id="cart_agg">Cart 集約（バイヤー毎）</span></section>
+  <section class="agg-boundary" data-ark-group data-model-id="order_agg"><span class="group-label" data-model-id="order_agg">Order 集約（サプライヤー毎・注文番号）</span></section>
+  <section class="agg-boundary" data-ark-group data-model-id="stock_agg"><span class="group-label" data-model-id="stock_agg">在庫 集約（販売単位毎・並行性境界）</span></section>
+  <section class="agg-boundary" data-ark-group data-model-id="checkout_agg"><span class="group-label" data-model-id="checkout_agg">CheckoutSession 集約（チェックアウト毎・一時）</span></section>
+  <section class="agg-boundary" data-ark-group data-model-id="return_agg"><span class="group-label" data-model-id="return_agg">ReturnRequest 集約（明細毎・フェーズ2）</span></section>
+  <section class="agg-boundary" data-ark-group data-model-id="obligation_agg"><span class="group-label" data-model-id="obligation_agg">PaymentObligation 台帳（→将来 Payment BC）</span></section>
+
+  <article class="node" data-model-id="unit" data-kind="external"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">external（開発済み）</span><span class="node-label">販売単位（商品カタログ）</span><ul><li data-model-id="u1">税込単価</li><li data-model-id="u2">税率区分（8/10%）</li><li data-model-id="u3">定貫/不定貫</li><li data-model-id="u4">目安重量・単価</li></ul></article>
+
+  <article class="node" data-model-id="cart" data-kind="root"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">aggregate root</span><span class="node-label">Cart（集約ルート）</span><ul><li data-model-id="ca1">バイヤー</li><li data-model-id="ca2">更新日時</li></ul></article>
+  <article class="node" data-model-id="cart_line" data-kind="entity"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">entity</span><span class="node-label">CartLine</span><ul><li data-model-id="cl1">販売単位id →参照</li><li data-model-id="cl2">数量</li></ul></article>
+  <article class="node" data-model-id="inv_cart" data-kind="invariant"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">invariant</span><span class="node-label">Cart 不変条件</span><ul><li data-model-id="ic1">≤50 販売単位（REQ-C-03）</li><li data-model-id="ic2">同一単位は数量加算（REQ-C-02）</li><li data-model-id="ic3">価格を持たず表示時に最新（REQ-C-06）</li><li data-model-id="ic4">30日更新なしで自動除去（REQ-C-04）</li><li data-model-id="ic5">追加時は在庫を確保しない（REQ-C-07）</li></ul></article>
+
+  <article class="node" data-model-id="order" data-kind="root"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">aggregate root</span><span class="node-label">Order（集約ルート）</span><ul><li data-model-id="o1">注文番号（表示用）+ 公開ID（API用）</li><li data-model-id="o2">ステータス（4.10）+ 遷移時刻・操作者</li><li data-model-id="o3">配送先・希望納品日</li><li data-model-id="o4">概算金額 / 確定金額 / 差額</li><li data-model-id="o5">送料・手数料（内訳ごと写し取り）</li></ul></article>
+  <article class="node" data-model-id="order_line" data-kind="entity"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">entity</span><span class="node-label">OrderLine</span><ul><li data-model-id="ol1">販売単位id →参照</li><li data-model-id="ol2">数量</li><li data-model-id="ol3">概算価格 / 確定価格</li><li data-model-id="ol4">税区分</li><li data-model-id="ol5">状態: Fixed / VariableEstimated / VariableFinalized</li><li data-model-id="ol6">実重量（不定貫・確定後は変更不可 FR-V-05）</li></ul></article>
+  <article class="node" data-model-id="shipping" data-kind="vo"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">value object</span><span class="node-label">送料（値オブジェクト）</span><ul><li data-model-id="sh1">荷物単位（同梱）</li><li data-model-id="sh2">配送業者・温度帯</li><li data-model-id="sh3">サイズ・配送エリア</li></ul></article>
+  <article class="node" data-model-id="inv_order" data-kind="invariant"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">invariant</span><span class="node-label">Order 不変条件</span><ul><li data-model-id="io1">1注文=1サプライヤー=1配送先（REQ-O-01/07）</li><li data-model-id="io2">ステータス遷移は4.10のみ</li><li data-model-id="io3">キャンセルはサプライヤーのみ・confirmed→preparing（PMRD-2/D10）</li><li data-model-id="io4">確定価格は概算の±20%内・超過はエラーで再入力（PMRD-69/D6）</li><li data-model-id="io5">金額は銭単位の整数 MoneySen（NFR-04）</li><li data-model-id="io6">税込単価+区分で内訳（REQ-O-11）</li><li data-model-id="io7">全明細の金額確定まで shipped 不可</li><li data-model-id="io8">確定合計の通知は1注文1回（FR-V-06）</li></ul></article>
+
+  <article class="node" data-model-id="stock" data-kind="root"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">aggregate root</span><span class="node-label">在庫（集約ルート）</span><ul><li data-model-id="st1">販売単位id</li><li data-model-id="st2">引当可能数</li><li data-model-id="st3">引当済数</li></ul></article>
+  <article class="node" data-model-id="inv_stock" data-kind="invariant"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">invariant</span><span class="node-label">在庫 不変条件</span><ul><li data-model-id="is1">超過引当なし（NFR-03・並行性境界）</li><li data-model-id="is2">引当は注文確定時（REQ-O-08/D11）</li><li data-model-id="is3">取消で全量復元・同一Tx（未解決5: 仮置き）</li></ul></article>
+
+  <article class="node" data-model-id="principle" data-kind="principle"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">design principle</span><span class="node-label">集約設計の原則（DDD）</span><ul><li data-model-id="p1">集約境界＝一貫性境界＝1コミット1集約</li><li data-model-id="p2">集約をまたぐ参照は id のみ（オブジェクト参照しない）</li><li data-model-id="p3">例外: 注文確定は単一Tx（検証→在庫減算→Order生成→セッション消費・P0-1）</li><li data-model-id="p4">通知・read model 投影は outbox で結果整合</li><li data-model-id="p5">決済は Payment BC へ分離・初版は台帳記録のみ（D9）</li></ul></article>
+
+  <article class="node" data-model-id="checkout_session" data-kind="root"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">aggregate root</span><span class="node-label">CheckoutSession（集約ルート）</span><ul><li data-model-id="cs1">明細と数量の写し（作成時に固定）</li><li data-model-id="cs2">配送先は1つ（PMRD-77 B案/D3）</li><li data-model-id="cs3">希望納品日・備考（任意・D4）</li><li data-model-id="cs4">有効期限（サーバー発行）</li></ul></article>
+  <article class="node" data-model-id="inv_checkout" data-kind="invariant"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">invariant</span><span class="node-label">CheckoutSession 不変条件</span><ul><li data-model-id="ix1">未消費かつ期限内のみ確定可（確定Tx内で判定）</li><li data-model-id="ix2">確定成功で消費（1セッション1回）</li><li data-model-id="ix3">消費済みへの再confirmは注文番号一覧を冪等返却</li><li data-model-id="ix4">二重生成防止 UNIQUE(session, supplier)</li></ul></article>
+
+  <article class="node" data-model-id="return_request" data-kind="root"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">aggregate root</span><span class="node-label">ReturnRequest（集約ルート）</span><ul><li data-model-id="rr1">事由: 不良品/誤配送/配送前期限切れ（PMRD-3）</li><li data-model-id="rr2">申請は到着後3営業日以内（暦・時計はPort注入）</li><li data-model-id="rr3">対象は明細の全数量のみ（部分返品なし）</li><li data-model-id="rr4">承認時に返金可能額を写し取る</li></ul></article>
+  <article class="node" data-model-id="inv_return" data-kind="invariant"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">invariant</span><span class="node-label">ReturnRequest 不変条件</span><ul><li data-model-id="ir1">バイヤー都合の返品は不可（PMRD-3）</li><li data-model-id="ir2">同一明細への重複申請は部分ユニーク制約で防ぐ</li><li data-model-id="ir3">返金は商品代のみ・送料はサプライヤー負担</li></ul></article>
+
+  <article class="node" data-model-id="obligation" data-kind="root"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">aggregate root（台帳）</span><span class="node-label">PaymentObligation（請求・返金台帳）</span><ul><li data-model-id="ob1">種類: 初期請求 / 差額の追加請求 / 返金</li><li data-model-id="ob2">金額（MoneySen・銭整数）</li><li data-model-id="ob3">一意キーで二重記録を防ぐ</li><li data-model-id="ob4">初版は記録のみ・決済実行なし（D9）</li></ul></article>
+</div>
+</body></html>

@@ -1,0 +1,1025 @@
+<!doctype html>
+<html lang="ja"><head>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<meta charset="utf-8">
+<title>プロマルシェ 購買プロセス イベントマップ（叩き台）</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 1.5rem;
+    background: #111827;
+    color: #e5e7eb;
+    font-family: system-ui, sans-serif;
+  }
+  h1 { margin: 0 0 1rem; font-size: 1.25rem; }
+  .graph {
+    width: 3260px;
+    min-height: 1700px;
+    overflow: hidden;
+    outline: 1px solid #334155;
+    border-radius: 12px;
+    background: #151d2b;
+  }
+  .storming-note {
+    --kind-color: #94a3b8;
+    --kind-bg: #202b3c;
+    width: 140px;
+    min-height: 112px;
+    padding: .85rem .75rem;
+    border: 1px solid var(--kind-color);
+    border-left: 6px solid var(--kind-color);
+    border-radius: 4px;
+    background: var(--kind-bg);
+    box-shadow: 0 7px 18px rgba(0, 0, 0, .2);
+  }
+  .note-heading { display: flex; align-items: center; gap: .45rem; }
+  .kind-icon {
+    display: inline-grid;
+    width: 1.35rem;
+    height: 1.35rem;
+    flex: 0 0 auto;
+    place-items: center;
+    color: var(--kind-color);
+    font-size: 1rem;
+  }
+  .kind-name {
+    color: var(--kind-color);
+    font-size: .65rem;
+    font-weight: 800;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .node-label {
+    display: block;
+    margin-top: .7rem;
+    font-size: .88rem;
+    font-weight: 750;
+    line-height: 1.3;
+  }
+  .storming-note[data-kind="event"] { --kind-color: #f59e0b; --kind-bg: #3b2810; }
+  .storming-note[data-kind="hypothesis"] {
+    --kind-color: #fb7185;
+    --kind-bg: #3f1d28;
+    border-style: dashed;
+    border-left-style: solid;
+  }
+  .storming-note[data-kind="actor"] {
+    --kind-color: #f472b6;
+    --kind-bg: #3b1e35;
+    width: 120px;
+    min-height: 84px;
+  }
+  .storming-note[data-kind="external-system"] {
+    --kind-color: #94a3b8;
+    --kind-bg: #202b3c;
+    width: 120px;
+    min-height: 84px;
+  }
+  .storming-note[data-kind="state"] {
+    --kind-color: #38bdf8;
+    --kind-bg: #12303f;
+    border-radius: 999px;
+    min-height: 84px;
+    text-align: center;
+  }
+  .storming-note[data-kind="note"] { --kind-color: #fde047; --kind-bg: #3a3111; width: 250px; }
+.storming-note[data-kind="event"] .kind-icon::before { content: "⚡"; }
+.storming-note[data-kind="hypothesis"] .kind-icon::before { content: "❓"; }
+.storming-note[data-kind="actor"] .kind-icon::before { content: "◎"; }
+.storming-note[data-kind="external-system"] .kind-icon::before { content: "☁"; }
+.storming-note[data-kind="state"] .kind-icon::before { content: "◉"; }
+  [data-ark-container="graph"] .ark-harness-edge-main[data-ark-edge-type="question"] {
+    stroke-dasharray: 3 4;
+    stroke: #fde047;
+  }
+  [data-ark-container="graph"] .ark-harness-edge-main[data-ark-edge-type="actor-link"] {
+    stroke-dasharray: 6 5;
+    stroke: #64748b;
+  }
+  .layer-boundary {
+    display: none;
+    box-sizing: border-box;
+    position: absolute;
+    left: calc(var(--ark-harness-group-x) - 1.25rem);
+    top: calc(var(--ark-harness-group-y) - 2.4rem);
+    width: calc(var(--ark-harness-group-width) + 2.5rem);
+    height: calc(var(--ark-harness-group-height) + 3.6rem);
+    border: 1px solid currentColor;
+    border-radius: .75rem;
+    background: color-mix(in srgb, currentColor 4%, transparent);
+    pointer-events: none;
+  }
+  .layer-boundary.ark-harness-graph-group { display: block; }
+  .boundary-layer1 { color: #f59e0b; }
+  .boundary-layer2 { color: #fb7185; border-style: dashed; }
+  .boundary-states { color: #38bdf8; }
+  .boundary-questions { color: #fde047; }
+  .group-label {
+    position: absolute;
+    top: .45rem;
+    left: .75rem;
+    padding: .18rem .5rem;
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    background: #151d2b;
+    color: currentColor;
+    font-size: .7rem;
+    font-weight: 800;
+    letter-spacing: .04em;
+  }
+</style>
+</head>
+<body style="--ark-harness-toolbar-height: 48px;">
+<h1>プロマルシェ 購買プロセス イベントマップ（叩き台）</h1>
+<script type="application/json" id="ark-diagram-model">
+{
+  "version": 1,
+  "title": "プロマルシェ 購買プロセス イベントマップ（叩き台）",
+  "nodes": [
+    {
+      "id": "buyer",
+      "label": "バイヤー",
+      "kind": "actor",
+      "ext": {
+        "x": 24,
+        "y": 24
+      }
+    },
+    {
+      "id": "system",
+      "label": "システム",
+      "kind": "actor",
+      "ext": {
+        "x": 1544,
+        "y": 24
+      }
+    },
+    {
+      "id": "stripe",
+      "label": "Stripe",
+      "kind": "external-system",
+      "ext": {
+        "x": 1734,
+        "y": 24
+      }
+    },
+    {
+      "id": "supplier",
+      "label": "サプライヤー",
+      "kind": "actor",
+      "ext": {
+        "x": 1924,
+        "y": 24
+      }
+    },
+    {
+      "id": "honbu",
+      "label": "本部",
+      "kind": "actor",
+      "ext": {
+        "x": 2874,
+        "y": 24
+      }
+    },
+    {
+      "id": "e01",
+      "label": "E01 商品が閲覧された",
+      "kind": "event",
+      "ext": {
+        "x": 27,
+        "y": 218
+      }
+    },
+    {
+      "id": "e02",
+      "label": "E02 入荷通知が申し込まれた",
+      "kind": "event",
+      "ext": {
+        "x": 217,
+        "y": 333
+      }
+    },
+    {
+      "id": "e03",
+      "label": "E03 商品がカートに追加された",
+      "kind": "event",
+      "ext": {
+        "x": 320,
+        "y": 200
+      }
+    },
+    {
+      "id": "e04",
+      "label": "E04 カート内容が変更された",
+      "kind": "event",
+      "ext": {
+        "x": 594,
+        "y": 210
+      }
+    },
+    {
+      "id": "e05",
+      "label": "E05 お届け先が指定された",
+      "kind": "event",
+      "ext": {
+        "x": 784,
+        "y": 210
+      }
+    },
+    {
+      "id": "e06",
+      "label": "E06 クレジットカードが登録された",
+      "kind": "event",
+      "ext": {
+        "x": 974,
+        "y": 210
+      }
+    },
+    {
+      "id": "e07",
+      "label": "E07 支払い方法が選択された",
+      "kind": "event",
+      "ext": {
+        "x": 1164,
+        "y": 210
+      }
+    },
+    {
+      "id": "e08",
+      "label": "E08 注文が確定した",
+      "kind": "event",
+      "ext": {
+        "x": 1354,
+        "y": 210
+      }
+    },
+    {
+      "id": "e09",
+      "label": "E09 注文が失敗した",
+      "kind": "event",
+      "ext": {
+        "x": 1164,
+        "y": 400
+      }
+    },
+    {
+      "id": "h01",
+      "label": "H01 在庫が引き当てられた",
+      "kind": "hypothesis",
+      "ext": {
+        "x": 1354,
+        "y": 600
+      }
+    },
+    {
+      "id": "h02",
+      "label": "H02 サプライヤーが受け付けた/断った",
+      "kind": "hypothesis",
+      "ext": {
+        "x": 1544,
+        "y": 600
+      }
+    },
+    {
+      "id": "h03",
+      "label": "H03 決済がオーソリされた",
+      "kind": "hypothesis",
+      "ext": {
+        "x": 1734,
+        "y": 600
+      }
+    },
+    {
+      "id": "h04",
+      "label": "H04 重量が確定した",
+      "kind": "event",
+      "ext": {
+        "x": 1924,
+        "y": 600
+      }
+    },
+    {
+      "id": "h05",
+      "label": "H05 請求額が確定した",
+      "kind": "event",
+      "ext": {
+        "x": 2114,
+        "y": 600
+      }
+    },
+    {
+      "id": "h06",
+      "label": "H06 決済がキャプチャされた",
+      "kind": "hypothesis",
+      "ext": {
+        "x": 2304,
+        "y": 600
+      }
+    },
+    {
+      "id": "h08",
+      "label": "H08 出荷された/配送が完了した",
+      "kind": "hypothesis",
+      "ext": {
+        "x": 2494,
+        "y": 600
+      }
+    },
+    {
+      "id": "h09",
+      "label": "H09 返品・返金が行われた",
+      "kind": "hypothesis",
+      "ext": {
+        "x": 2684,
+        "y": 600
+      }
+    },
+    {
+      "id": "h07",
+      "label": "H07 注文がキャンセルされた",
+      "kind": "hypothesis",
+      "ext": {
+        "x": 2874,
+        "y": 600
+      }
+    },
+    {
+      "id": "h10",
+      "label": "H10 請求書発行/入金消込",
+      "kind": "hypothesis",
+      "ext": {
+        "x": 2304,
+        "y": 790
+      }
+    },
+    {
+      "id": "q1",
+      "label": "",
+      "kind": "note",
+      "noteText": "①注文確定時点の金額の意味 ✅確定\n不定貫は概算で注文成立し、後から請求額が変わる（島田さん回答: 合ってる）",
+      "ext": {
+        "x": 24,
+        "y": 1420
+      }
+    },
+    {
+      "id": "q2",
+      "label": "",
+      "kind": "note",
+      "noteText": "②差額の許容幅 ✅確定（出典: Confluence 不定貫商品 / PMRD-69）\n±20%以内（デフォルト値）。超過はエラーでサプライヤーが実重量を再入力（バイヤー承認・自動キャンセルではない）。確定>概算は管理画面から追加請求、確定<概算は返金（返金詳細は未確定）",
+      "ext": {
+        "x": 424,
+        "y": 1420
+      }
+    },
+    {
+      "id": "q3",
+      "label": "",
+      "kind": "note",
+      "noteText": "③受注成立モデル\n即時成立か、サプライヤー承認制か。承認制なら「注文完了」画面の意味が変わる",
+      "ext": {
+        "x": 824,
+        "y": 1420
+      }
+    },
+    {
+      "id": "q4",
+      "label": "",
+      "kind": "note",
+      "noteText": "④キャンセル境界\nバイヤー/サプライヤー各々どの状態まで可能か（重量確定前？出荷前？）",
+      "ext": {
+        "x": 1224,
+        "y": 1420
+      }
+    },
+    {
+      "id": "q5",
+      "label": "",
+      "kind": "note",
+      "noteText": "⑤支払い方法の全種類\nクレカのみか、掛け払い（請求書払い）があるか。あるなら与信は誰が持つか",
+      "ext": {
+        "x": 1624,
+        "y": 1420
+      }
+    },
+    {
+      "id": "q6",
+      "label": "",
+      "kind": "note",
+      "noteText": "⑥注文の単位\n複数出展者の商品は、注文・決済・配送が出展者単位で分割されるか",
+      "ext": {
+        "x": 2024,
+        "y": 1420
+      }
+    },
+    {
+      "id": "st_cart",
+      "label": "カート",
+      "kind": "state",
+      "ext": {
+        "x": 24,
+        "y": 1030
+      }
+    },
+    {
+      "id": "st_ordered",
+      "label": "注文確定（概算）",
+      "kind": "state",
+      "ext": {
+        "x": 214,
+        "y": 1030
+      }
+    },
+    {
+      "id": "st_accepted",
+      "label": "サプライヤー受付",
+      "kind": "state",
+      "ext": {
+        "x": 404,
+        "y": 1030
+      }
+    },
+    {
+      "id": "st_weighed",
+      "label": "重量確定",
+      "kind": "state",
+      "ext": {
+        "x": 594,
+        "y": 1030
+      }
+    },
+    {
+      "id": "st_billed",
+      "label": "請求額確定",
+      "kind": "state",
+      "ext": {
+        "x": 784,
+        "y": 1030
+      }
+    },
+    {
+      "id": "st_paid",
+      "label": "決済完了",
+      "kind": "state",
+      "ext": {
+        "x": 974,
+        "y": 1030
+      }
+    },
+    {
+      "id": "st_shipped",
+      "label": "出荷",
+      "kind": "state",
+      "ext": {
+        "x": 1164,
+        "y": 1030
+      }
+    },
+    {
+      "id": "st_delivered",
+      "label": "配送完了",
+      "kind": "state",
+      "ext": {
+        "x": 1354,
+        "y": 1030
+      }
+    },
+    {
+      "id": "st_failed",
+      "label": "注文失敗",
+      "kind": "state",
+      "ext": {
+        "x": 214,
+        "y": 1230
+      }
+    },
+    {
+      "id": "st_cancelled",
+      "label": "キャンセル",
+      "kind": "state",
+      "ext": {
+        "x": 404,
+        "y": 1230
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "flow1",
+      "from": "e01",
+      "to": "e03",
+      "label": "ログイン後"
+    },
+    {
+      "id": "flow2",
+      "from": "e01",
+      "to": "e02",
+      "label": "在庫なし"
+    },
+    {
+      "id": "flow3",
+      "from": "e03",
+      "to": "e04"
+    },
+    {
+      "id": "flow4",
+      "from": "e04",
+      "to": "e05"
+    },
+    {
+      "id": "flow5",
+      "from": "e05",
+      "to": "e06"
+    },
+    {
+      "id": "flow6",
+      "from": "e06",
+      "to": "e07"
+    },
+    {
+      "id": "flow7",
+      "from": "e07",
+      "to": "e08",
+      "label": "確定"
+    },
+    {
+      "id": "flow8",
+      "from": "e07",
+      "to": "e09",
+      "label": "失敗"
+    },
+    {
+      "id": "hflow2",
+      "from": "h01",
+      "to": "h02"
+    },
+    {
+      "id": "hflow3",
+      "from": "h02",
+      "to": "h03"
+    },
+    {
+      "id": "hflow4",
+      "from": "h03",
+      "to": "h04"
+    },
+    {
+      "id": "hflow5",
+      "from": "h04",
+      "to": "h05"
+    },
+    {
+      "id": "hflow6",
+      "from": "h05",
+      "to": "h06"
+    },
+    {
+      "id": "hflow7",
+      "from": "h06",
+      "to": "h08"
+    },
+    {
+      "id": "hflow8",
+      "from": "h08",
+      "to": "h09",
+      "label": "返品時"
+    },
+    {
+      "id": "hflow9",
+      "from": "h05",
+      "to": "h10",
+      "label": "掛け払い時"
+    },
+    {
+      "id": "act1",
+      "from": "buyer",
+      "to": "e01",
+      "ext": {
+        "type": "actor-link",
+        "direction": "none"
+      }
+    },
+    {
+      "id": "act2",
+      "from": "system",
+      "to": "h01",
+      "ext": {
+        "type": "actor-link",
+        "direction": "none"
+      }
+    },
+    {
+      "id": "act3",
+      "from": "stripe",
+      "to": "h03",
+      "ext": {
+        "type": "actor-link",
+        "direction": "none"
+      }
+    },
+    {
+      "id": "act4",
+      "from": "supplier",
+      "to": "h04",
+      "ext": {
+        "type": "actor-link",
+        "direction": "none"
+      }
+    },
+    {
+      "id": "act5",
+      "from": "honbu",
+      "to": "h09",
+      "ext": {
+        "type": "actor-link",
+        "direction": "none"
+      }
+    },
+    {
+      "id": "st1",
+      "from": "st_cart",
+      "to": "st_ordered",
+      "label": "E08"
+    },
+    {
+      "id": "st2",
+      "from": "st_ordered",
+      "to": "st_accepted",
+      "label": "H02"
+    },
+    {
+      "id": "st3",
+      "from": "st_accepted",
+      "to": "st_weighed",
+      "label": "H04"
+    },
+    {
+      "id": "st4",
+      "from": "st_weighed",
+      "to": "st_billed",
+      "label": "H05"
+    },
+    {
+      "id": "st5",
+      "from": "st_billed",
+      "to": "st_paid",
+      "label": "H06"
+    },
+    {
+      "id": "st6",
+      "from": "st_paid",
+      "to": "st_shipped",
+      "label": "H08"
+    },
+    {
+      "id": "st7",
+      "from": "st_shipped",
+      "to": "st_delivered"
+    },
+    {
+      "id": "stb1",
+      "from": "st_ordered",
+      "to": "st_failed",
+      "label": "失敗 (E09)"
+    },
+    {
+      "id": "stb2",
+      "from": "st_accepted",
+      "to": "st_cancelled",
+      "label": "拒否/期限切れ"
+    },
+    {
+      "id": "nq1",
+      "from": "q1",
+      "to": "e08",
+      "ext": {
+        "type": "question",
+        "direction": "none"
+      }
+    },
+    {
+      "id": "nq2",
+      "from": "q2",
+      "to": "h05",
+      "ext": {
+        "type": "question",
+        "direction": "none"
+      }
+    },
+    {
+      "id": "nq3",
+      "from": "q3",
+      "to": "h02",
+      "ext": {
+        "type": "question",
+        "direction": "none"
+      }
+    },
+    {
+      "id": "nq4",
+      "from": "q4",
+      "to": "h07",
+      "ext": {
+        "type": "question",
+        "direction": "none"
+      }
+    },
+    {
+      "id": "nq5",
+      "from": "q5",
+      "to": "e06",
+      "ext": {
+        "type": "question",
+        "direction": "none"
+      }
+    },
+    {
+      "id": "nq6",
+      "from": "q6",
+      "to": "e04",
+      "ext": {
+        "type": "question",
+        "direction": "none"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "id": "g_layer1",
+      "label": "第1層: 画面裏付けイベント",
+      "nodes": [
+        "e01",
+        "e02",
+        "e03",
+        "e04",
+        "e05",
+        "e06",
+        "e07",
+        "e08",
+        "e09"
+      ],
+      "ext": {
+        "role": "layer"
+      }
+    },
+    {
+      "id": "g_layer2",
+      "label": "第2層: 画面に現れない（要確認）",
+      "nodes": [
+        "h01",
+        "h02",
+        "h03",
+        "h04",
+        "h05",
+        "h06",
+        "h07",
+        "h08",
+        "h09",
+        "h10"
+      ],
+      "ext": {
+        "role": "layer"
+      }
+    },
+    {
+      "id": "g_states",
+      "label": "注文の状態遷移（仮説）",
+      "nodes": [
+        "st_cart",
+        "st_ordered",
+        "st_accepted",
+        "st_weighed",
+        "st_billed",
+        "st_paid",
+        "st_shipped",
+        "st_delivered",
+        "st_failed",
+        "st_cancelled"
+      ],
+      "ext": {
+        "role": "layer"
+      }
+    },
+    {
+      "id": "g_questions",
+      "label": "島田さんへの確認事項（優先順）",
+      "nodes": [
+        "q1",
+        "q2",
+        "q3",
+        "q4",
+        "q5",
+        "q6"
+      ],
+      "ext": {
+        "role": "layer"
+      }
+    }
+  ],
+  "ext": {
+    "layout": {
+      "direction": "LR"
+    }
+  }
+}
+</script>
+
+<div class="graph" data-ark-container="graph">
+  <section class="layer-boundary boundary-layer1" data-ark-group="" data-model-id="g_layer1">
+    <span class="group-label" data-model-id="g_layer1">第1層: 画面裏付けイベント</span>
+  </section>
+  <section class="layer-boundary boundary-layer2" data-ark-group="" data-model-id="g_layer2">
+    <span class="group-label" data-model-id="g_layer2">第2層: 画面に現れない（要確認）</span>
+  </section>
+  <section class="layer-boundary boundary-states" data-ark-group="" data-model-id="g_states">
+    <span class="group-label" data-model-id="g_states">注文の状態遷移（仮説）</span>
+  </section>
+  <section class="layer-boundary boundary-questions" data-ark-group="" data-model-id="g_questions">
+    <span class="group-label" data-model-id="g_questions">島田さんへの確認事項（優先順）</span>
+  </section>
+
+  <article class="storming-note" data-model-id="buyer" data-kind="actor">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Actor</span></div>
+    <span class="node-label" data-model-id="buyer" data-kind="actor">バイヤー</span>
+  </article>
+  <article class="storming-note" data-model-id="system" data-kind="actor">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Actor</span></div>
+    <span class="node-label" data-model-id="system" data-kind="actor">システム</span>
+  </article>
+  <article class="storming-note" data-model-id="stripe" data-kind="external-system">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">External</span></div>
+    <span class="node-label" data-model-id="stripe" data-kind="external-system">Stripe</span>
+  </article>
+  <article class="storming-note" data-model-id="supplier" data-kind="actor">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Actor</span></div>
+    <span class="node-label" data-model-id="supplier" data-kind="actor">サプライヤー</span>
+  </article>
+  <article class="storming-note" data-model-id="honbu" data-kind="actor">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Actor</span></div>
+    <span class="node-label" data-model-id="honbu" data-kind="actor">本部</span>
+  </article>
+
+  <article class="storming-note" data-model-id="e01" data-kind="event">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span></div>
+    <span class="node-label" data-model-id="e01" data-kind="event">E01 商品が閲覧された</span>
+  </article>
+  <article class="storming-note" data-model-id="e02" data-kind="event">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span></div>
+    <span class="node-label" data-model-id="e02" data-kind="event">E02 入荷通知が申し込まれた</span>
+  </article>
+  <article class="storming-note" data-model-id="e03" data-kind="event">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span></div>
+    <span class="node-label" data-model-id="e03" data-kind="event">E03 商品がカートに追加された</span>
+  </article>
+  <article class="storming-note" data-model-id="e04" data-kind="event">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span></div>
+    <span class="node-label" data-model-id="e04" data-kind="event">E04 カート内容が変更された</span>
+  </article>
+  <article class="storming-note" data-model-id="e05" data-kind="event">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span></div>
+    <span class="node-label" data-model-id="e05" data-kind="event">E05 お届け先が指定された</span>
+  </article>
+  <article class="storming-note" data-model-id="e06" data-kind="event">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span></div>
+    <span class="node-label" data-model-id="e06" data-kind="event">E06 クレジットカードが登録された</span>
+  </article>
+  <article class="storming-note" data-model-id="e07" data-kind="event">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span></div>
+    <span class="node-label" data-model-id="e07" data-kind="event">E07 支払い方法が選択された</span>
+  </article>
+  <article class="storming-note" data-model-id="e08" data-kind="event">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span></div>
+    <span class="node-label" data-model-id="e08" data-kind="event">E08 注文が確定した</span>
+  </article>
+  <article class="storming-note" data-model-id="e09" data-kind="event">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span></div>
+    <span class="node-label" data-model-id="e09" data-kind="event">E09 注文が失敗した</span>
+  </article>
+
+  <article class="storming-note" data-model-id="h01" data-kind="hypothesis">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">要確認</span></div>
+    <span class="node-label" data-model-id="h01" data-kind="hypothesis">H01 在庫が引き当てられた</span>
+  </article>
+  <article class="storming-note" data-model-id="h02" data-kind="hypothesis">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">要確認</span></div>
+    <span class="node-label" data-model-id="h02" data-kind="hypothesis">H02 サプライヤーが受け付けた/断った</span>
+  </article>
+  <article class="storming-note" data-model-id="h03" data-kind="hypothesis">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">要確認</span></div>
+    <span class="node-label" data-model-id="h03" data-kind="hypothesis">H03 決済がオーソリされた</span>
+  </article>
+  <article class="storming-note" data-model-id="h04" data-kind="event">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span></div>
+    <span class="node-label" data-model-id="h04" data-kind="event">H04 重量が確定した</span>
+  </article>
+  <article class="storming-note" data-model-id="h05" data-kind="event">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">Event</span></div>
+    <span class="node-label" data-model-id="h05" data-kind="event">H05 請求額が確定した</span>
+  </article>
+  <article class="storming-note" data-model-id="h06" data-kind="hypothesis">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">要確認</span></div>
+    <span class="node-label" data-model-id="h06" data-kind="hypothesis">H06 決済がキャプチャされた</span>
+  </article>
+  <article class="storming-note" data-model-id="h07" data-kind="hypothesis">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">要確認</span></div>
+    <span class="node-label" data-model-id="h07" data-kind="hypothesis">H07 注文がキャンセルされた</span>
+  </article>
+  <article class="storming-note" data-model-id="h08" data-kind="hypothesis">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">要確認</span></div>
+    <span class="node-label" data-model-id="h08" data-kind="hypothesis">H08 出荷された/配送が完了した</span>
+  </article>
+  <article class="storming-note" data-model-id="h09" data-kind="hypothesis">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">要確認</span></div>
+    <span class="node-label" data-model-id="h09" data-kind="hypothesis">H09 返品・返金が行われた</span>
+  </article>
+  <article class="storming-note" data-model-id="h10" data-kind="hypothesis">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">要確認</span></div>
+    <span class="node-label" data-model-id="h10" data-kind="hypothesis">H10 請求書発行/入金消込</span>
+  </article>
+
+  <article class="storming-note" data-model-id="q1" data-kind="note"><div data-ark-harness-note="">①注文確定時点の金額の意味 ✅確定
+不定貫は概算で注文成立し、後から請求額が変わる（島田さん回答: 合ってる）</div></article>
+  <article class="storming-note" data-model-id="q2" data-kind="note"><div data-ark-harness-note="">②差額の許容幅 ✅確定（出典: Confluence 不定貫商品 / PMRD-69）
+±20%以内（デフォルト値）。超過はエラーでサプライヤーが実重量を再入力（バイヤー承認・自動キャンセルではない）。確定&gt;概算は管理画面から追加請求、確定&lt;概算は返金（返金詳細は未確定）</div></article>
+  <article class="storming-note" data-model-id="q3" data-kind="note"><div data-ark-harness-note="">③受注成立モデル
+即時成立か、サプライヤー承認制か。承認制なら「注文完了」画面の意味が変わる</div></article>
+  <article class="storming-note" data-model-id="q4" data-kind="note"><div data-ark-harness-note="">④キャンセル境界
+バイヤー/サプライヤー各々どの状態まで可能か（重量確定前？出荷前？）</div></article>
+  <article class="storming-note" data-model-id="q5" data-kind="note"><div data-ark-harness-note="">⑤支払い方法の全種類
+クレカのみか、掛け払い（請求書払い）があるか。あるなら与信は誰が持つか</div></article>
+  <article class="storming-note" data-model-id="q6" data-kind="note"><div data-ark-harness-note="">⑥注文の単位
+複数出展者の商品は、注文・決済・配送が出展者単位で分割されるか</div></article>
+
+  <article class="storming-note" data-model-id="st_cart" data-kind="state">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">State</span></div>
+    <span class="node-label" data-model-id="st_cart" data-kind="state">カート</span>
+  </article>
+  <article class="storming-note" data-model-id="st_ordered" data-kind="state">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">State</span></div>
+    <span class="node-label" data-model-id="st_ordered" data-kind="state">注文確定（概算）</span>
+  </article>
+  <article class="storming-note" data-model-id="st_accepted" data-kind="state">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">State</span></div>
+    <span class="node-label" data-model-id="st_accepted" data-kind="state">サプライヤー受付</span>
+  </article>
+  <article class="storming-note" data-model-id="st_weighed" data-kind="state">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">State</span></div>
+    <span class="node-label" data-model-id="st_weighed" data-kind="state">重量確定</span>
+  </article>
+  <article class="storming-note" data-model-id="st_billed" data-kind="state">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">State</span></div>
+    <span class="node-label" data-model-id="st_billed" data-kind="state">請求額確定</span>
+  </article>
+  <article class="storming-note" data-model-id="st_paid" data-kind="state">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">State</span></div>
+    <span class="node-label" data-model-id="st_paid" data-kind="state">決済完了</span>
+  </article>
+  <article class="storming-note" data-model-id="st_shipped" data-kind="state">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">State</span></div>
+    <span class="node-label" data-model-id="st_shipped" data-kind="state">出荷</span>
+  </article>
+  <article class="storming-note" data-model-id="st_delivered" data-kind="state">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">State</span></div>
+    <span class="node-label" data-model-id="st_delivered" data-kind="state">配送完了</span>
+  </article>
+  <article class="storming-note" data-model-id="st_failed" data-kind="state">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">State</span></div>
+    <span class="node-label" data-model-id="st_failed" data-kind="state">注文失敗</span>
+  </article>
+  <article class="storming-note" data-model-id="st_cancelled" data-kind="state">
+    <div class="note-heading"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">State</span></div>
+    <span class="node-label" data-model-id="st_cancelled" data-kind="state">キャンセル</span>
+  </article>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</body></html>

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8"><title>ProMarche コンテキストマップ（DDD 戦略設計）</title>
+<style>
+  body { font-family: system-ui, sans-serif; background:#1a1b26; color:#c0caf5; padding:1.5rem; }
+  .graph { min-height:560px; position:relative; }
+  .ctx {
+    --kind-color:#94a3b8; --kind-bg:#202b3c;
+    width:11rem; border:1.5px solid var(--kind-color); border-radius:8px;
+    background:var(--kind-bg); padding:.5rem .65rem;
+  }
+  .ctx .kind-name { display:block; font-size:.55rem; color:var(--kind-color); text-transform:uppercase; letter-spacing:.06em; }
+  .ctx .node-label { display:block; font-size:.86rem; font-weight:600; margin-top:.08rem; }
+  .ctx .ctx-note { display:block; font-size:.62rem; color:#8a94b8; margin-top:.18rem; line-height:1.3; }
+  .kind-icon { display:inline-block; width:1.2em; }
+  /* Core domain（この構築の主戦場） */
+  [data-kind="core"]       { --kind-color:#facc15; --kind-bg:#332b0e; border-width:2px; }
+  /* Supporting subdomain（本構築で作る補助機能） */
+  [data-kind="supporting"] { --kind-color:#60a5fa; --kind-bg:#172a46; }
+  /* フェーズ2 開発済み（同一プロダクト内・稼働中の機能） */
+  [data-kind="developed"]  { --kind-color:#5eead4; --kind-bg:#0f2e2a; }
+  /* 範囲外（CON-02・将来のコンテキスト） */
+  [data-kind="external"]   { --kind-color:#c084fc; --kind-bg:#2a2044; border-style:dotted; opacity:.85; }
+  [data-kind="core"]       .kind-icon::before { content:"★"; }
+  [data-kind="supporting"] .kind-icon::before { content:"◆"; }
+  [data-kind="developed"]  .kind-icon::before { content:"✓"; }
+  [data-kind="external"]   .kind-icon::before { content:"☁"; }
+  /* コンテキスト境界（group）。ハーネスが外接矩形を解決したときだけ表示する */
+  .ctx-boundary {
+    display:none; box-sizing:border-box; position:absolute;
+    left:calc(var(--ark-harness-group-x) - 1.5rem);
+    top:calc(var(--ark-harness-group-y) - 2.4rem);
+    width:calc(var(--ark-harness-group-width) + 3rem);
+    height:calc(var(--ark-harness-group-height) + 3.6rem);
+    border-radius:.9rem;
+  }
+  .ctx-boundary.ark-harness-graph-group { display:block; }
+  .ctx-boundary .group-label { position:absolute; top:.5rem; left:.8rem; font-size:.7rem; font-weight:700; letter-spacing:.03em; }
+  .boundary-new       { border:1.5px dashed #f0b90b; background:rgba(250,204,21,.05); color:#facc15; }
+  .boundary-developed { border:1.5px solid #2dd4bf; background:rgba(94,234,212,.05); color:#5eead4; }
+</style>
+</head>
+<body>
+<script type="application/json" id="ark-diagram-model">
+{
+  "version": 1,
+  "title": "ProMarche コンテキストマップ（DDD 戦略設計）",
+  "nodes": [
+    { "id": "catalog",    "label": "商品カタログ",       "kind": "developed",  "fields": [], "ext": { "x": 40,  "y": 60 } },
+    { "id": "membership", "label": "会員",               "kind": "developed",  "fields": [], "ext": { "x": 40,  "y": 230 } },
+    { "id": "ordering",   "label": "注文（Ordering）",   "kind": "core",       "fields": [], "ext": { "x": 340, "y": 150 } },
+    { "id": "inventory",  "label": "在庫",               "kind": "supporting", "fields": [], "ext": { "x": 340, "y": 360 } },
+    { "id": "fulfillment","label": "フルフィルメント",   "kind": "core",       "fields": [], "ext": { "x": 630, "y": 90 } },
+    { "id": "settlement", "label": "価格・精算",         "kind": "core",       "fields": [], "ext": { "x": 630, "y": 280 } },
+    { "id": "operations", "label": "運営",               "kind": "supporting", "fields": [], "ext": { "x": 920, "y": 70 } },
+    { "id": "returns",    "label": "返品",               "kind": "supporting", "fields": [], "ext": { "x": 920, "y": 250 } },
+    { "id": "payment",    "label": "決済",               "kind": "external",   "fields": [], "ext": { "x": 920, "y": 430 } }
+  ],
+  "edges": [
+    { "id": "r1", "from": "ordering",    "to": "catalog",    "label": "Conformist｜開発済みの商品・販売単位・税区分・送料設定に従う（CON-06）", "ext": { "direction": "forward", "type": "conformist" } },
+    { "id": "r2", "from": "ordering",    "to": "membership", "label": "Conformist｜開発済みの会員認証・セミクローズド（CON-01/06）", "ext": { "direction": "forward", "type": "conformist" } },
+    { "id": "r3", "from": "ordering",    "to": "inventory",  "label": "引当/戻し（NFR-03 超過引当禁止・本構築で実装・REQ-O-08）", "ext": { "direction": "forward", "type": "supply" } },
+    { "id": "r4", "from": "ordering",    "to": "fulfillment","label": "domain event｜注文確定（サプライヤー毎に分割・REQ-O-07）", "ext": { "direction": "forward", "type": "event" } },
+    { "id": "r5", "from": "ordering",    "to": "settlement", "label": "概算価格・送料・税・手数料（REQ-O-11 / REQ-F）", "ext": { "direction": "forward", "type": "supply" } },
+    { "id": "r6", "from": "fulfillment", "to": "settlement", "label": "計量→確定価格・差額精算（不定貫・REQ-V-05）", "ext": { "direction": "forward", "type": "supply" } },
+    { "id": "r7", "from": "fulfillment", "to": "returns",    "label": "配達完了（みなし配達）が返品期限の起点（REQ-R-02）", "ext": { "direction": "forward", "type": "event" } },
+    { "id": "r8", "from": "returns",     "to": "operations", "label": "返金処理は運営が担う（REQ-R-05 / REQ-A-02）", "ext": { "direction": "forward", "type": "supply" } },
+    { "id": "r9", "from": "settlement",  "to": "payment",    "label": "請求/返金を記録 → 精算は運用（CON-02・本構築範囲外）", "ext": { "direction": "forward", "type": "external" } },
+    { "id": "r10","from": "operations",  "to": "ordering",   "label": "全注文の監視・みなし配達の手動修正（REQ-A-01/03）", "ext": { "direction": "forward", "type": "oversight" } }
+  ],
+  "groups": [
+    { "id": "new-build", "label": "本購買フロー構築（フェーズ2・今回）", "nodes": ["ordering","inventory","fulfillment","settlement","returns","operations"], "ext": { "role": "boundary" } },
+    { "id": "developed", "label": "フェーズ2 開発済み・稼働中",           "nodes": ["catalog","membership"], "ext": { "role": "boundary" } }
+  ]
+}
+</script>
+
+<div class="graph" data-ark-container="graph">
+  <section class="ctx-boundary boundary-new" data-ark-group data-model-id="new-build"><span class="group-label" data-model-id="new-build">本購買フロー構築（フェーズ2・今回）</span></section>
+  <section class="ctx-boundary boundary-developed" data-ark-group data-model-id="developed"><span class="group-label" data-model-id="developed">フェーズ2 開発済み・稼働中</span></section>
+
+  <article class="ctx" data-model-id="catalog" data-kind="developed"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">開発済み</span><span class="node-label">商品カタログ</span><span class="ctx-note">販売単位・定貫/不定貫・税区分・送料設定</span></article>
+  <article class="ctx" data-model-id="membership" data-kind="developed"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">開発済み</span><span class="node-label">会員</span><span class="ctx-note">会員認証・セミクローズド開示</span></article>
+  <article class="ctx" data-model-id="ordering" data-kind="core"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">core domain</span><span class="node-label">注文（Ordering）</span><span class="ctx-note">Cart・Checkout・送料計算・注文分割</span></article>
+  <article class="ctx" data-model-id="inventory" data-kind="supporting"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">supporting（本構築）</span><span class="node-label">在庫</span><span class="ctx-note">引当/戻しを本構築で実装・超過引当の防止</span></article>
+  <article class="ctx" data-model-id="fulfillment" data-kind="core"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">core domain</span><span class="node-label">フルフィルメント</span><span class="ctx-note">受注確認・計量・発送・追跡番号</span></article>
+  <article class="ctx" data-model-id="settlement" data-kind="core"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">core domain</span><span class="node-label">価格・精算</span><span class="ctx-note">概算↔確定・差額請求/返金・手数料・税</span></article>
+  <article class="ctx" data-model-id="operations" data-kind="supporting"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">supporting</span><span class="node-label">運営</span><span class="ctx-note">全注文監視・返金処理・みなし配達修正</span></article>
+  <article class="ctx" data-model-id="returns" data-kind="supporting"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">supporting</span><span class="node-label">返品</span><span class="ctx-note">不良品等・3営業日・写真必須・全額返金</span></article>
+  <article class="ctx" data-model-id="payment" data-kind="external"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">out of scope</span><span class="node-label">決済</span><span class="ctx-note">CON-02・請求/返金は記録のみ・将来組込</span></article>
+</div>
+</body></html>

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8"><title>ProMarche 注文ステータス状態遷移（要求定義書 4.10）</title>
+<style>
+  body { font-family: system-ui, sans-serif; background:#1a1b26; color:#c0caf5; padding:1.5rem; }
+  .graph { min-height:420px; }
+  .state-node {
+    --kind-color:#94a3b8; --kind-bg:#202b3c;
+    min-width:8.5rem; max-width:12rem;
+    border:1.5px solid var(--kind-color); border-radius:1.1rem;
+    background:var(--kind-bg); padding:.5rem .7rem;
+  }
+  .state-node .kind-name { display:block; font-size:.56rem; color:var(--kind-color); text-transform:uppercase; letter-spacing:.06em; }
+  .state-node .node-label { display:block; font-size:.86rem; font-weight:600; margin-top:.1rem; }
+  .kind-icon { display:inline-block; width:1.2em; }
+  /* 通常状態 */
+  [data-kind="state"]         { --kind-color:#60a5fa; --kind-bg:#172a46; }
+  /* 開始擬似状態 */
+  [data-kind="initial"]       { --kind-color:#a3a3a3; --kind-bg:#26262b; min-width:5rem; border-radius:1.4rem; }
+  /* 終端: 配達完了（正常終了・緑）/ キャンセル（取消・赤）。二重枠で終端を示す */
+  [data-kind="terminal-ok"]     { --kind-color:#4ade80; --kind-bg:#153522; box-shadow:0 0 0 3px #1a1b26, 0 0 0 4.5px var(--kind-color); }
+  [data-kind="terminal-cancel"] { --kind-color:#f87171; --kind-bg:#3a1c1c; box-shadow:0 0 0 3px #1a1b26, 0 0 0 4.5px var(--kind-color); }
+  [data-kind="initial"]         .kind-icon::before { content:"●"; }
+  [data-kind="state"]           .kind-icon::before { content:"◻"; }
+  [data-kind="terminal-ok"]     .kind-icon::before { content:"◉"; }
+  [data-kind="terminal-cancel"] .kind-icon::before { content:"✕"; }
+</style>
+</head>
+<body>
+<script type="application/json" id="ark-diagram-model">
+{
+  "version": 1,
+  "title": "ProMarche 注文ステータス状態遷移（要求定義書 4.10）",
+  "ext": { "layout": { "direction": "LR", "rankSpacing": 88, "nodeSpacing": 30, "padding": 28 } },
+  "nodes": [
+    { "id": "init",      "label": "開始",         "kind": "initial",         "fields": [] },
+    { "id": "ordered",   "label": "注文確定",     "kind": "state",           "fields": [] },
+    { "id": "accepted",  "label": "受注確認済み", "kind": "state",           "fields": [] },
+    { "id": "preparing", "label": "発送準備中",   "kind": "state",           "fields": [] },
+    { "id": "shipped",   "label": "発送済み",     "kind": "state",           "fields": [] },
+    { "id": "delivered", "label": "配達完了",     "kind": "terminal-ok",     "fields": [] },
+    { "id": "cancelled", "label": "キャンセル",   "kind": "terminal-cancel", "fields": [] }
+  ],
+  "edges": [
+    { "id": "t0", "from": "init",      "to": "ordered",   "label": "バイヤーが注文を確定" },
+    { "id": "t1", "from": "ordered",   "to": "accepted",  "label": "サプライヤーが受注確認（REQ-S-02）" },
+    { "id": "t2", "from": "accepted",  "to": "preparing", "label": "準備開始・不定貫の計量/金額確定" },
+    { "id": "t3", "from": "preparing", "to": "shipped",   "label": "追跡番号を入力（REQ-S-03）" },
+    { "id": "t4", "from": "shipped",   "to": "delivered", "label": "発送から3日で自動 / 運営手動（REQ-A-03・みなし配達）" },
+    { "id": "c1", "from": "ordered",   "to": "cancelled", "label": "発送前・全額返金・在庫全量戻し（REQ-S-04）" },
+    { "id": "c2", "from": "accepted",  "to": "cancelled", "label": "発送前まで（REQ-S-04）" },
+    { "id": "c3", "from": "preparing", "to": "cancelled", "label": "発送前まで（REQ-S-04）" }
+  ],
+  "groups": []
+}
+</script>
+
+<div class="graph" data-ark-container="graph">
+  <article class="state-node" data-model-id="init" data-kind="initial"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">initial</span><span class="node-label">開始</span></article>
+  <article class="state-node" data-model-id="ordered" data-kind="state"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">state</span><span class="node-label">注文確定</span></article>
+  <article class="state-node" data-model-id="accepted" data-kind="state"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">state</span><span class="node-label">受注確認済み</span></article>
+  <article class="state-node" data-model-id="preparing" data-kind="state"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">state</span><span class="node-label">発送準備中</span></article>
+  <article class="state-node" data-model-id="shipped" data-kind="state"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">state</span><span class="node-label">発送済み</span></article>
+  <article class="state-node" data-model-id="delivered" data-kind="terminal-ok"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">配達完了（終端）</span><span class="node-label">配達完了</span></article>
+  <article class="state-node" data-model-id="cancelled" data-kind="terminal-cancel"><span class="kind-icon" aria-hidden="true"></span><span class="kind-name">キャンセル（終端）</span><span class="node-label">キャンセル</span></article>
+</div>
+</body></html>
