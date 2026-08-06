@@ -131,7 +131,10 @@ describe("describeModelDiff", () => {
     ]);
   });
 
-  it("noteText だけの変更は意味差分に含めない", () => {
+  // noteText の変更はかつて意図的に非還流だった（#276 のスコープ都合を #283 が
+  // 不変条件として踏襲）。しかし「ノートを編集して送ったのに何も伝わらない/
+  // entity の蓄積差分だけが送られる」という実害が出たため、還流対象に変更した。
+  it("ノート本文の変更を述べる", () => {
     const before = {
       id: "note-1",
       label: "",
@@ -140,7 +143,61 @@ describe("describeModelDiff", () => {
     };
     const after = { ...before, noteText: "変更後" };
 
-    expect(describeModelDiff(model([before]), model([after]))).toEqual([]);
+    expect(describeModelDiff(model([before]), model([after]))).toEqual([
+      "メモ「変更前」の本文を「変更後」に変更",
+    ]);
+  });
+
+  it("ノート本文の変更は抜粋 20 文字に切り詰める", () => {
+    const before = { id: "note-1", label: "", kind: "note", noteText: "元" };
+    const after = { ...before, noteText: "あ".repeat(25) };
+
+    expect(describeModelDiff(model([before]), model([after]))).toEqual([
+      `メモ「元」の本文を「${"あ".repeat(20)}…」に変更`,
+    ]);
+  });
+
+  it("ノート本文を空にしたら本文の削除と述べる", () => {
+    const before = { id: "note-1", label: "", kind: "note", noteText: "消す" };
+    const after = { ...before, noteText: "" };
+
+    expect(describeModelDiff(model([before]), model([after]))).toEqual([
+      "メモ「消す」の本文を削除",
+    ]);
+  });
+
+  it("kind の変更を述べる", () => {
+    const before = { id: "order", label: "Order", kind: "entity" };
+    const after = { ...before, kind: "note" };
+
+    expect(describeModelDiff(model([before]), model([after]))).toEqual([
+      "Order の種別を entity から note に変更",
+    ]);
+  });
+
+  it("entity の変更とノート本文の変更を両方述べる", () => {
+    const note = {
+      id: "note-1",
+      label: "",
+      kind: "note",
+      noteText: "元の本文",
+    };
+    const before = model([order, note]);
+    const after = model([
+      {
+        ...order,
+        fields: [
+          ...(order.fields ?? []),
+          { id: "f_cancelled", label: "cancelled_at" },
+        ],
+      },
+      { ...note, noteText: "書き換えた本文" },
+    ]);
+
+    expect(describeModelDiff(before, after)).toEqual([
+      "Order に cancelled_at を追加",
+      "メモ「元の本文」の本文を「書き換えた本文」に変更",
+    ]);
   });
 
   it("関連の追加を述べる", () => {
@@ -425,7 +482,10 @@ describe("describeModelDiff（境界ケース）", () => {
     expect(describeModelDiff(before, after)).toEqual([]);
   });
 
-  it("kind / ext の変更はサーバーが解釈しない要素なので無視される", () => {
+  // kind はかつて ext と同列の「サーバーが解釈しない要素」として非還流だったが、
+  // entity/aggregate/note というドメイン語彙そのものであり、ボードの kind picker
+  // から変更できるため還流対象に変更した。ext（色・座標等）は引き続き無視する
+  it("ext の変更は無視し kind の変更は種別変更として述べる", () => {
     const before = {
       id: "order",
       label: "Order",
@@ -439,20 +499,9 @@ describe("describeModelDiff（境界ケース）", () => {
       ext: { color: "blue" },
     };
 
-    expect(describeModelDiff(model([before]), model([after]))).toEqual([]);
-  });
-
-  it("kind 単独の変更は会話用意味差分に含めない", () => {
-    const before = {
-      ...order,
-      kind: "entity",
-    };
-    const after = {
-      ...order,
-      kind: "aggregate",
-    };
-
-    expect(describeModelDiff(model([before]), model([after]))).toEqual([]);
+    expect(describeModelDiff(model([before]), model([after]))).toEqual([
+      "Order の種別を entity から aggregate に変更",
+    ]);
   });
 
   it("node.ext の座標変更は意味差分に含めない", () => {
@@ -561,7 +610,7 @@ describe("describeModelDiff（label の無害化 / プロンプト注入対策�
   });
 
   it("制御文字を落とす", () => {
-    const label = "id status"; // NUL, BEL などの制御文字
+    const label = "id\u0000\u0007status"; // NUL, BEL などの制御文字
     const after = model([
       {
         ...order,
@@ -638,7 +687,7 @@ describe("describeModelDiff（label の無害化 / プロンプト注入対策�
   });
 
   it("無害化後に空になる label は代替文字列になる", () => {
-    const label = "\n\t   "; // 改行・タブ・制御文字・空白のみ
+    const label = "\n\t\u0000  "; // 改行・タブ・制御文字・空白のみ
     const after = model([
       {
         ...order,
@@ -719,7 +768,7 @@ describe("describeModelDiff（node / edge CRUD）", () => {
     ]);
   });
 
-  it("CRUD と既存 field / endpoint 編集が共存し見た目変更を返さない", () => {
+  it("CRUD と既存 field / endpoint / 種別編集が共存し座標・ext 変更を返さない", () => {
     const after: DiagramModel = {
       version: 1,
       nodes: [
@@ -739,6 +788,7 @@ describe("describeModelDiff（node / edge CRUD）", () => {
       ext: { layout: { direction: "TB" } },
     };
     expect(describeModelDiff(base, after)).toEqual([
+      "A の種別を (未指定) から aggregate に変更",
       "A の name を display name に変更",
       "C を追加",
       "B を削除",

@@ -68,21 +68,24 @@ function sanitizeLabel(
   );
 }
 
+/** メモ本文を生成文向けの抜粋（sanitize + 先頭20文字）にする。空なら null */
+function noteExcerpt(noteText: string): string | null {
+  const sanitized = sanitizeLabel(noteText, "");
+  if (sanitized.length === 0) return null;
+  const characters = Array.from(sanitized);
+  return characters.length > NOTE_EXCERPT_LENGTH
+    ? `${characters.slice(0, NOTE_EXCERPT_LENGTH).join("")}${LABEL_ELLIPSIS}`
+    : sanitized;
+}
+
 /** node の label、メモ本文、種別と id の順で生成文向けの表示名を解決する */
 function nodeDisplayName(node: DiagramNode): string {
   const label = sanitizeLabel(node.label ?? "");
   if (label !== LABEL_FALLBACK) return label;
 
   if (typeof node.noteText === "string") {
-    const noteText = sanitizeLabel(node.noteText, "");
-    if (noteText.length > 0) {
-      const characters = Array.from(noteText);
-      const excerpt =
-        characters.length > NOTE_EXCERPT_LENGTH
-          ? `${characters.slice(0, NOTE_EXCERPT_LENGTH).join("")}${LABEL_ELLIPSIS}`
-          : noteText;
-      return `メモ「${excerpt}」`;
-    }
+    const excerpt = noteExcerpt(node.noteText);
+    if (excerpt !== null) return `メモ「${excerpt}」`;
   }
 
   const id = sanitizeLabel(node.id);
@@ -173,6 +176,27 @@ function diffNodes(before: DiagramNode[], after: DiagramNode[]): string[] {
       const prevLabel = nodeDisplayName(prev);
       out.push(
         `${withParticle(prevLabel, "を", isNoteExcerptDisplayName(prev, prevLabel))} ${withParticle(label, "に", compactLabel)}改名`
+      );
+    }
+    // 変更前後の両方が意味を持つ差分（種別・メモ本文）の主語は before 側の
+    // 表示名にする。note の表示名は noteText 由来のため、after 側を主語に
+    // すると「新本文の本文を新本文に変更」と同語反復になる
+    const prevSubject = nodeDisplayName(prev);
+    const compactPrevSubject = isNoteExcerptDisplayName(prev, prevSubject);
+    if ((prev.kind ?? "") !== (n.kind ?? "")) {
+      const prevKind = sanitizeLabel(prev.kind ?? "", "(未指定)");
+      const nextKind = sanitizeLabel(n.kind ?? "", "(未指定)");
+      out.push(
+        `${withParticle(prevSubject, "の", compactPrevSubject)}種別を ${prevKind} から ${nextKind} に変更`
+      );
+    }
+    if ((prev.noteText ?? "") !== (n.noteText ?? "")) {
+      const excerpt =
+        typeof n.noteText === "string" ? noteExcerpt(n.noteText) : null;
+      out.push(
+        excerpt === null
+          ? `${withParticle(prevSubject, "の", compactPrevSubject)}本文を削除`
+          : `${withParticle(prevSubject, "の", compactPrevSubject)}本文を「${excerpt}」に変更`
       );
     }
     out.push(
