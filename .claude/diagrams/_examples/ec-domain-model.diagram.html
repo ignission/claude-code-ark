@@ -1,7 +1,6 @@
 <!doctype html>
-<html lang="ja"><head>
-
-
+<html lang="ja">
+<head>
 <meta charset="utf-8">
 <title>EC ドメインモデル（ER 図）</title>
 <style>
@@ -47,211 +46,55 @@
 {
   "version": 1,
   "title": "EC ドメインモデル（ER 図）",
+  "ext": { "layout": { "direction": "LR", "rankSpacing": 128, "nodeSpacing": 56, "padding": 32 } },
   "nodes": [
-    {
-      "id": "customer",
-      "label": "Customer",
-      "kind": "entity",
-      "fields": [
-        {
-          "id": "customer_id",
-          "label": "id 〈PK〉"
-        },
-        {
-          "id": "customer_email",
-          "label": "email"
-        },
-        {
-          "id": "customer_name",
-          "label": "name"
-        }
-      ]
-    },
-    {
-      "id": "order",
-      "label": "Order",
-      "kind": "entity",
-      "fields": [
-        {
-          "id": "order_id",
-          "label": "id 〈PK〉"
-        },
-        {
-          "id": "order_customer_id",
-          "label": "customer_id 〈FK〉"
-        },
-        {
-          "id": "order_status",
-          "label": "status"
-        },
-        {
-          "id": "order_total",
-          "label": "total"
-        }
-      ]
-    },
-    {
-      "id": "order_line",
-      "label": "OrderLine",
-      "kind": "entity",
-      "fields": [
-        {
-          "id": "line_id",
-          "label": "id 〈PK〉"
-        },
-        {
-          "id": "line_order_id",
-          "label": "order_id 〈FK〉"
-        },
-        {
-          "id": "line_product_id",
-          "label": "product_id 〈FK〉"
-        },
-        {
-          "id": "line_qty",
-          "label": "quantity"
-        },
-        {
-          "id": "line_price",
-          "label": "unit_price"
-        }
-      ]
-    },
-    {
-      "id": "product",
-      "label": "Product",
-      "kind": "entity",
-      "fields": [
-        {
-          "id": "product_id",
-          "label": "id 〈PK〉"
-        },
-        {
-          "id": "product_name",
-          "label": "name"
-        },
-        {
-          "id": "product_price",
-          "label": "price"
-        }
-      ]
-    },
-    {
-      "id": "category",
-      "label": "Category",
-      "kind": "entity",
-      "fields": [
-        {
-          "id": "category_id",
-          "label": "id 〈PK〉"
-        },
-        {
-          "id": "category_name",
-          "label": "name"
-        }
-      ]
-    },
-    {
-      "id": "payment",
-      "label": "Payment",
-      "kind": "entity",
-      "fields": [
-        {
-          "id": "payment_id",
-          "label": "id 〈PK〉"
-        },
-        {
-          "id": "payment_order_id",
-          "label": "order_id 〈FK〉"
-        },
-        {
-          "id": "payment_method",
-          "label": "method"
-        },
-        {
-          "id": "payment_status",
-          "label": "status"
-        }
-      ]
-    }
+    { "id": "customer", "label": "Customer", "kind": "entity", "fields": [
+      { "id": "customer_id", "label": "id 〈PK〉" },
+      { "id": "customer_email", "label": "email" },
+      { "id": "customer_name", "label": "name" } ] },
+    { "id": "order", "label": "Order", "kind": "entity", "fields": [
+      { "id": "order_id", "label": "id 〈PK〉" },
+      { "id": "order_customer_id", "label": "customer_id 〈FK〉" },
+      { "id": "order_status", "label": "status" },
+      { "id": "order_total", "label": "total" } ] },
+    { "id": "order_line", "label": "OrderLine", "kind": "entity", "fields": [
+      { "id": "line_id", "label": "id 〈PK〉" },
+      { "id": "line_order_id", "label": "order_id 〈FK〉" },
+      { "id": "line_product_id", "label": "product_id 〈FK〉" },
+      { "id": "line_qty", "label": "quantity" },
+      { "id": "line_price", "label": "unit_price" } ] },
+    { "id": "product", "label": "Product", "kind": "entity", "fields": [
+      { "id": "product_id", "label": "id 〈PK〉" },
+      { "id": "product_name", "label": "name" },
+      { "id": "product_price", "label": "price" } ] },
+    { "id": "category", "label": "Category", "kind": "entity", "fields": [
+      { "id": "category_id", "label": "id 〈PK〉" },
+      { "id": "category_name", "label": "name" } ] },
+    { "id": "payment", "label": "Payment", "kind": "entity", "fields": [
+      { "id": "payment_id", "label": "id 〈PK〉" },
+      { "id": "payment_order_id", "label": "order_id 〈FK〉" },
+      { "id": "payment_method", "label": "method" },
+      { "id": "payment_status", "label": "status" } ] }
   ],
   "edges": [
-    {
-      "id": "r_customer_order",
-      "from": "customer",
-      "to": "order",
-      "label": "places",
-      "ext": {
-        "from_card": "one",
-        "to_card": "zero-or-many",
-        "direction": "forward",
-        "type": "identifying"
-      }
-    },
-    {
-      "id": "r_order_line",
-      "from": "order",
-      "to": "order_line",
-      "label": "contains",
-      "ext": {
-        "from_card": "one",
-        "to_card": "one-or-many",
-        "direction": "forward",
-        "type": "identifying"
-      }
-    },
-    {
-      "id": "r_product_line",
-      "from": "product",
-      "to": "order_line",
-      "label": "appears in",
-      "ext": {
-        "from_card": "one",
-        "to_card": "zero-or-many",
-        "direction": "forward",
-        "type": "non-identifying"
-      }
-    },
-    {
-      "id": "r_order_payment",
-      "from": "order",
-      "to": "payment",
-      "label": "paid by",
-      "ext": {
-        "from_card": "one",
-        "to_card": "one",
-        "direction": "forward",
-        "type": "identifying"
-      }
-    },
-    {
-      "id": "r_product_category",
-      "from": "product",
-      "to": "category",
-      "label": "categorized as (N:M)",
-      "ext": {
-        "from_card": "zero-or-many",
-        "to_card": "zero-or-many",
-        "direction": "both",
-        "type": "association"
-      }
-    }
+    { "id": "r_customer_order", "from": "customer", "to": "order", "label": "places",
+      "ext": { "from_card": "one", "to_card": "zero-or-many", "direction": "forward", "type": "identifying" } },
+    { "id": "r_order_line", "from": "order", "to": "order_line", "label": "contains",
+      "ext": { "from_card": "one", "to_card": "one-or-many", "direction": "forward", "type": "identifying" } },
+    { "id": "r_product_line", "from": "product", "to": "order_line", "label": "appears in",
+      "ext": { "from_card": "one", "to_card": "zero-or-many", "direction": "forward", "type": "non-identifying" } },
+    { "id": "r_order_payment", "from": "order", "to": "payment", "label": "paid by",
+      "ext": { "from_card": "one", "to_card": "one", "direction": "forward", "type": "identifying" } },
+    { "id": "r_product_category", "from": "product", "to": "category", "label": "categorized as (N:M)",
+      "ext": { "from_card": "zero-or-many", "to_card": "zero-or-many", "direction": "both", "type": "association" } }
   ],
-  "groups": [],
-  "ext": {
-    "layout": {
-      "direction": "LR",
-      "rankSpacing": 128,
-      "nodeSpacing": 56,
-      "padding": 32
-    }
-  }
+  "groups": []
 }
 </script>
 
 <div class="er-graph" data-ark-container="graph">
   <section class="entity" data-model-id="customer" data-kind="entity">
-    <h2 data-model-id="customer" data-kind="entity">Customer</h2>
+    <h2 data-model-id="customer">Customer</h2>
     <ul>
       <li data-model-id="customer_id"><span>id</span><span class="key pk">PK</span></li>
       <li data-model-id="customer_email"><span>email</span><span></span></li>
@@ -260,7 +103,7 @@
   </section>
 
   <section class="entity" data-model-id="order" data-kind="entity">
-    <h2 data-model-id="order" data-kind="entity">Order</h2>
+    <h2 data-model-id="order">Order</h2>
     <ul>
       <li data-model-id="order_id"><span>id</span><span class="key pk">PK</span></li>
       <li data-model-id="order_customer_id"><span>customer_id</span><span class="key fk">FK</span></li>
@@ -270,7 +113,7 @@
   </section>
 
   <section class="entity" data-model-id="order_line" data-kind="entity">
-    <h2 data-model-id="order_line" data-kind="entity">OrderLine</h2>
+    <h2 data-model-id="order_line">OrderLine</h2>
     <ul>
       <li data-model-id="line_id"><span>id</span><span class="key pk">PK</span></li>
       <li data-model-id="line_order_id"><span>order_id</span><span class="key fk">FK</span></li>
@@ -281,7 +124,7 @@
   </section>
 
   <section class="entity" data-model-id="product" data-kind="entity">
-    <h2 data-model-id="product" data-kind="entity">Product</h2>
+    <h2 data-model-id="product">Product</h2>
     <ul>
       <li data-model-id="product_id"><span>id</span><span class="key pk">PK</span></li>
       <li data-model-id="product_name"><span>name</span><span></span></li>
@@ -290,7 +133,7 @@
   </section>
 
   <section class="entity" data-model-id="category" data-kind="entity">
-    <h2 data-model-id="category" data-kind="entity">Category</h2>
+    <h2 data-model-id="category">Category</h2>
     <ul>
       <li data-model-id="category_id"><span>id</span><span class="key pk">PK</span></li>
       <li data-model-id="category_name"><span>name</span><span></span></li>
@@ -298,7 +141,7 @@
   </section>
 
   <section class="entity" data-model-id="payment" data-kind="entity">
-    <h2 data-model-id="payment" data-kind="entity">Payment</h2>
+    <h2 data-model-id="payment">Payment</h2>
     <ul>
       <li data-model-id="payment_id"><span>id</span><span class="key pk">PK</span></li>
       <li data-model-id="payment_order_id"><span>order_id</span><span class="key fk">FK</span></li>
@@ -307,7 +150,5 @@
     </ul>
   </section>
 </div>
-
-
-
-</body></html>
+</body>
+</html>
