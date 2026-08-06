@@ -28,9 +28,20 @@ const LABEL_ELLIPSIS = "…";
 const LABEL_FALLBACK = "(無題)";
 const NOTE_EXCERPT_LENGTH = 20;
 
-/** C0制御文字（コードポイント 0-31）と DEL（127）かどうかを判定する */
+/**
+ * 生成文から除去すべきコードポイントかを判定する。
+ * C0 制御文字（0-31）・DEL（127）・C1 制御文字（128-159、改行扱いされうる
+ * NEL U+0085 を含む）に加え、C0 ではないが改行として描画されうる
+ * U+2028 LINE SEPARATOR / U+2029 PARAGRAPH SEPARATOR も対象にする
+ * （1行封じ込めの注入対策を迂回させないため）
+ */
 function isControlCodePoint(codePoint: number): boolean {
-  return codePoint <= 31 || codePoint === 127;
+  return (
+    codePoint <= 31 ||
+    (codePoint >= 127 && codePoint <= 159) ||
+    codePoint === 0x2028 ||
+    codePoint === 0x2029
+  );
 }
 
 /**
@@ -68,21 +79,36 @@ function sanitizeLabel(
   );
 }
 
+/**
+ * メモ本文の意味比較用キー。制御文字を落とし前後空白を除く（長さは切らない）。
+ * "" → "\n" のような空白だけの編集を「本文を削除」と誤報告しないための比較軸
+ */
+function noteBodyKey(noteText: string | undefined): string {
+  if (typeof noteText !== "string") return "";
+  return Array.from(noteText)
+    .filter(ch => !isControlCodePoint(ch.codePointAt(0) ?? 0))
+    .join("")
+    .trim();
+}
+
+/** メモ本文を生成文向けの抜粋（sanitize + 先頭20文字）にする。空なら null */
+function noteExcerpt(noteText: string): string | null {
+  const sanitized = sanitizeLabel(noteText, "");
+  if (sanitized.length === 0) return null;
+  const characters = Array.from(sanitized);
+  return characters.length > NOTE_EXCERPT_LENGTH
+    ? `${characters.slice(0, NOTE_EXCERPT_LENGTH).join("")}${LABEL_ELLIPSIS}`
+    : sanitized;
+}
+
 /** node の label、メモ本文、種別と id の順で生成文向けの表示名を解決する */
 function nodeDisplayName(node: DiagramNode): string {
   const label = sanitizeLabel(node.label ?? "");
   if (label !== LABEL_FALLBACK) return label;
 
   if (typeof node.noteText === "string") {
-    const noteText = sanitizeLabel(node.noteText, "");
-    if (noteText.length > 0) {
-      const characters = Array.from(noteText);
-      const excerpt =
-        characters.length > NOTE_EXCERPT_LENGTH
-          ? `${characters.slice(0, NOTE_EXCERPT_LENGTH).join("")}${LABEL_ELLIPSIS}`
-          : noteText;
-      return `メモ「${excerpt}」`;
-    }
+    const excerpt = noteExcerpt(node.noteText);
+    if (excerpt !== null) return `メモ「${excerpt}」`;
   }
 
   const id = sanitizeLabel(node.id);
@@ -173,6 +199,27 @@ function diffNodes(before: DiagramNode[], after: DiagramNode[]): string[] {
       const prevLabel = nodeDisplayName(prev);
       out.push(
         `${withParticle(prevLabel, "を", isNoteExcerptDisplayName(prev, prevLabel))} ${withParticle(label, "に", compactLabel)}改名`
+      );
+    }
+    // 変更前後の両方が意味を持つ差分（種別・メモ本文）の主語は before 側の
+    // 表示名にする。note の表示名は noteText 由来のため、after 側を主語に
+    // すると「新本文の本文を新本文に変更」と同語反復になる
+    const prevSubject = nodeDisplayName(prev);
+    const compactPrevSubject = isNoteExcerptDisplayName(prev, prevSubject);
+    if ((prev.kind ?? "") !== (n.kind ?? "")) {
+      const prevKind = sanitizeLabel(prev.kind ?? "", "(未指定)");
+      const nextKind = sanitizeLabel(n.kind ?? "", "(未指定)");
+      out.push(
+        `${withParticle(prevSubject, "の", compactPrevSubject)}種別を ${prevKind} から ${nextKind} に変更`
+      );
+    }
+    if (noteBodyKey(prev.noteText) !== noteBodyKey(n.noteText)) {
+      const excerpt =
+        typeof n.noteText === "string" ? noteExcerpt(n.noteText) : null;
+      out.push(
+        excerpt === null
+          ? `${withParticle(prevSubject, "の", compactPrevSubject)}本文を削除`
+          : `${withParticle(prevSubject, "の", compactPrevSubject)}本文を「${excerpt}」に変更`
       );
     }
     out.push(

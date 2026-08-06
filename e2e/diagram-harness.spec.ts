@@ -6465,3 +6465,65 @@ test("不正座標は座標未指定として自動配置し graph 外参照だ�
   expectNoOverlaps(await graphNodeBoxes(page));
   expect(errors).toEqual([]);
 });
+
+test("既存 note の本文編集と field 改名を同じ送信で意味差分に両方述べる", async ({
+  page,
+}) => {
+  // ノートと entity を両方編集して送信したとき、entity の差分だけが還流し
+  // ノート本文の変更が黙って消えるバグの回帰テスト。1回目の送信 model を
+  // サーバーの baseline（最終通知 model）に見立て、UI 編集 → submit →
+  // describeModelDiff まで実経路で確認する
+  const errors = await openDiagram(page);
+  await connectSubmissionPort(page);
+
+  const toolbar = await selectNode(page, "user");
+  await toolbar.locator("select.ark-harness-kind-select").selectOption("note");
+  const note = page.locator(
+    '.ark-harness-graph-node[data-model-id="user"] > .ark-harness-note'
+  );
+  await note.fill("元の本文");
+  await page
+    .getByRole("button", { name: "変更を親フレームへ送信する" })
+    .click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  const baseline = (await page.evaluate(() => {
+    const browserWindow = window as typeof window & {
+      arkHarnessSubmission?: unknown;
+    };
+    const submission = browserWindow.arkHarnessSubmission;
+    delete browserWindow.arkHarnessSubmission;
+    return submission;
+  })) as { type: string; model: DiagramModel };
+  expect(baseline.type).toBe("ark:diagram-submit");
+
+  const status = page.locator('li[data-model-id="order_status"]');
+  await status.locator(".ark-harness-text").fill("state");
+  await note.fill("書き換えた本文");
+  await page
+    .getByRole("button", { name: "変更を親フレームへ送信する" })
+    .click();
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+    )
+  );
+  const second = (await page.evaluate(
+    () =>
+      (window as typeof window & { arkHarnessSubmission?: unknown })
+        .arkHarnessSubmission
+  )) as { type: string; model: DiagramModel };
+  expect(second.type).toBe("ark:diagram-submit");
+
+  const sent = describeModelDiff(baseline.model, second.model);
+  expect(sent).toEqual([
+    "Order の status を state に変更",
+    "User の本文を「書き換えた本文」に変更",
+  ]);
+  expect(errors).toEqual([]);
+});
