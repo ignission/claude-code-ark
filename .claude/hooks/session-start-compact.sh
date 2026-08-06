@@ -53,11 +53,15 @@ if ! [[ "$RECENT_COMMITS" =~ ^[0-9a-f\ ]+$ ]]; then
   RECENT_COMMITS="(取得失敗)"
 fi
 
-UNCOMMITTED=$(git status --porcelain 2>/dev/null | sanitize_path | limit_lines 10 200) || UNCOMMITTED="(取得失敗)"
-if [ -n "$UNCOMMITTED" ]; then
-  UNCOMMITTED_STATUS="あり${NL}${UNCOMMITTED}"
+# 取得失敗を「変更あり」と混同しないよう、成否と有無を分けて表示する
+if UNCOMMITTED=$(git status --porcelain 2>/dev/null | sanitize_path | limit_lines 10 200); then
+  if [ -n "$UNCOMMITTED" ]; then
+    UNCOMMITTED_STATUS="あり${NL}${UNCOMMITTED}"
+  else
+    UNCOMMITTED_STATUS="なし"
+  fi
 else
-  UNCOMMITTED_STATUS="なし"
+  UNCOMMITTED_STATUS="(取得失敗)"
 fi
 
 # ブランチから flow の WORK_ID と GitHub Issue # を抽出
@@ -89,9 +93,12 @@ CONTEXT="${CONTEXT}${NL}${NL}=== 直近コミット（hash のみ・新しい順
 CONTEXT="${CONTEXT}${NL}${NL}=== 未コミット変更 ===${NL}${UNCOMMITTED_STATUS}"
 
 # フック出力の肥大でセッション復帰を壊さないよう全体にも上限を設ける
+# （切り詰めマーカーを含めた最終文字数が上限に収まるよう、マーカー長を先に引く）
 MAX_CONTEXT_CHARS=4000
 if [ "${#CONTEXT}" -gt "$MAX_CONTEXT_CHARS" ]; then
-  CONTEXT="${CONTEXT:0:$MAX_CONTEXT_CHARS}${NL}（総文字数上限 ${MAX_CONTEXT_CHARS} で切り詰め）"
+  TRUNC_MARKER="${NL}（総文字数上限 ${MAX_CONTEXT_CHARS} で切り詰め）"
+  KEEP_CHARS=$((MAX_CONTEXT_CHARS - ${#TRUNC_MARKER}))
+  CONTEXT="${CONTEXT:0:KEEP_CHARS}${TRUNC_MARKER}"
 fi
 
 jq -n --arg ctx "$CONTEXT" '{
