@@ -166,6 +166,15 @@ describe("describeModelDiff", () => {
     ]);
   });
 
+  it("空白だけになるノート本文の変更は述べない", () => {
+    // contenteditable の空行操作で "" → "\n" になるケース。意味は空のままなので
+    // 「本文を削除」と誤報告しない
+    const before = { id: "note-1", label: "", kind: "note", noteText: "" };
+    const after = { ...before, noteText: "\n" };
+
+    expect(describeModelDiff(model([before]), model([after]))).toEqual([]);
+  });
+
   it("kind の変更を述べる", () => {
     const before = { id: "order", label: "Order", kind: "entity" };
     const after = { ...before, kind: "note" };
@@ -611,6 +620,22 @@ describe("describeModelDiff（label の無害化 / プロンプト注入対策�
 
   it("制御文字を落とす", () => {
     const label = "id\u0000\u0007status"; // NUL, BEL などの制御文字
+    const after = model([
+      {
+        ...order,
+        fields: [...(order.fields ?? []), { id: "f_note", label }],
+      },
+    ]);
+
+    expect(describeModelDiff(model([order]), after)).toEqual([
+      "Order に idstatus を追加",
+    ]);
+  });
+
+  it("U+2028 / U+2029 の行区切りも落とす", () => {
+    // C0 制御文字ではないが改行として描画されうるため、1行封じ込めの
+    // 注入対策として同様に除去する
+    const label = "id\u2028\u2029status";
     const after = model([
       {
         ...order,

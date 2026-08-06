@@ -28,9 +28,20 @@ const LABEL_ELLIPSIS = "…";
 const LABEL_FALLBACK = "(無題)";
 const NOTE_EXCERPT_LENGTH = 20;
 
-/** C0制御文字（コードポイント 0-31）と DEL（127）かどうかを判定する */
+/**
+ * 生成文から除去すべきコードポイントかを判定する。
+ * C0 制御文字（0-31）・DEL（127）・C1 制御文字（128-159、改行扱いされうる
+ * NEL U+0085 を含む）に加え、C0 ではないが改行として描画されうる
+ * U+2028 LINE SEPARATOR / U+2029 PARAGRAPH SEPARATOR も対象にする
+ * （1行封じ込めの注入対策を迂回させないため）
+ */
 function isControlCodePoint(codePoint: number): boolean {
-  return codePoint <= 31 || codePoint === 127;
+  return (
+    codePoint <= 31 ||
+    (codePoint >= 127 && codePoint <= 159) ||
+    codePoint === 0x2028 ||
+    codePoint === 0x2029
+  );
 }
 
 /**
@@ -66,6 +77,18 @@ function sanitizeLabel(
   return (
     stripped.slice(0, LABEL_MAX_LENGTH - LABEL_ELLIPSIS.length) + LABEL_ELLIPSIS
   );
+}
+
+/**
+ * メモ本文の意味比較用キー。制御文字を落とし前後空白を除く（長さは切らない）。
+ * "" → "\n" のような空白だけの編集を「本文を削除」と誤報告しないための比較軸
+ */
+function noteBodyKey(noteText: string | undefined): string {
+  if (typeof noteText !== "string") return "";
+  return Array.from(noteText)
+    .filter(ch => !isControlCodePoint(ch.codePointAt(0) ?? 0))
+    .join("")
+    .trim();
 }
 
 /** メモ本文を生成文向けの抜粋（sanitize + 先頭20文字）にする。空なら null */
@@ -190,7 +213,7 @@ function diffNodes(before: DiagramNode[], after: DiagramNode[]): string[] {
         `${withParticle(prevSubject, "の", compactPrevSubject)}種別を ${prevKind} から ${nextKind} に変更`
       );
     }
-    if ((prev.noteText ?? "") !== (n.noteText ?? "")) {
+    if (noteBodyKey(prev.noteText) !== noteBodyKey(n.noteText)) {
       const excerpt =
         typeof n.noteText === "string" ? noteExcerpt(n.noteText) : null;
       out.push(
