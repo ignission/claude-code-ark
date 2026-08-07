@@ -178,20 +178,45 @@ test("er: 自動レイアウトが node を重ねずに配置する", async ({ p
   expect(overlaps).toBe(false);
 });
 
-test("event-storming: kind 名を可視テキストで併置し note 本文を描画する", async ({
+/** node root の ::before に出る kind 見出し（icon + kind 名） */
+async function kindHeading(page: Page, id: string): Promise<string> {
+  return page
+    .locator(`article[data-model-id="${id}"]`)
+    .evaluate(el => getComputedStyle(el, "::before").content);
+}
+
+test("event-storming: kind 名を可視の見出しとして出し note 本文を描画する", async ({
   page,
 }) => {
   await openBuiltin(page, stormingModel);
 
-  await expect(
-    page.locator('article[data-model-id="placed"] .ark-builtin-kind-name')
-  ).toHaveText("event");
-  await expect(
-    page.locator('article[data-model-id="buyer"] .ark-builtin-kind-name')
-  ).toHaveText("actor");
+  expect(await kindHeading(page, "placed")).toContain("event");
+  expect(await kindHeading(page, "buyer")).toContain("actor");
   await expect(
     page.locator('article[data-model-id="memo"] [data-ark-harness-note]')
   ).toContainText("未決: 在庫の引当");
+});
+
+test("kind を変えると可視の kind 見出しも追従する", async ({ page }) => {
+  // kind 名を DOM の静的テキストで持つと、ハーネスは root の data-kind しか
+  // 更新しないため表示が古いまま残る（CodeRabbit #293 の指摘・実機で再現）
+  await openBuiltin(page, stormingModel);
+
+  const node = page.locator('article[data-model-id="placed"]');
+  expect(await kindHeading(page, "placed")).toContain("event");
+
+  await node.dispatchEvent("pointerdown", { button: 0 });
+  await node.dispatchEvent("click", { button: 0 });
+  const toolbar = page.locator("[data-ark-selection-id]").first();
+  await expect(toolbar).toHaveAttribute("data-ark-selection-id", "placed");
+  await toolbar
+    .locator("select.ark-harness-kind-select")
+    .selectOption("command");
+
+  await expect(node).toHaveAttribute("data-kind", "command");
+  const after = await kindHeading(page, "placed");
+  expect(after).toContain("command");
+  expect(after).not.toContain("event");
 });
 
 test("送信 HTML は生成投影を含まずモデルだけが残る", async ({ page }) => {
@@ -213,6 +238,36 @@ test("送信 HTML は生成投影を含まずモデルだけが残る", async ({
   expect(submission?.html).not.toContain("--ark-harness-group-x");
   // モデルブロックは残る
   expect(submission?.html).toContain("ark-diagram-model");
+});
+
+test("パレットで追加した node も内蔵の kind 見出しを持つ", async ({ page }) => {
+  // 見出しを node root の ::before で出すので、ハーネスが作った DOM でも
+  // class と data-kind さえ揃えば同じ装飾になる
+  await openBuiltin(page, stormingModel);
+
+  const source = page.locator('article[data-model-id="place"]');
+  await source.dispatchEvent("pointerdown", { button: 0 });
+  await source.dispatchEvent("click", { button: 0 });
+  const toolbar = page.locator("[data-ark-selection-id]").first();
+  await toolbar.locator("select.ark-harness-kind-select").selectOption("event");
+
+  const box = await source.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) return;
+  // 下辺の anchor から空白へ drag して node を追加する
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height + 260, {
+    steps: 12,
+  });
+  await page.mouse.up();
+
+  const added = page.locator('article[data-kind="event"]').last();
+  await expect(added).toHaveClass(/ark-builtin-node/);
+  const heading = await added.evaluate(
+    el => getComputedStyle(el, "::before").content
+  );
+  expect(heading).toContain("event");
 });
 
 test("生成投影の図でも node を drag して座標をモデルへ保存できる", async ({

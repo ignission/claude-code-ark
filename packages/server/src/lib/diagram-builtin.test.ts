@@ -111,8 +111,9 @@ describe("injectBuiltinProjection", () => {
     expect(out).toContain("未決の論点");
   });
 
-  it("event-storming は kind 名を可視テキストとして併置する", () => {
-    // 色だけで kind を伝えない（作図規約のアクセシビリティ要件）
+  it("event-storming の kind 見出しは DOM ではなく CSS 由来にする", () => {
+    // 静的テキストで書くと、ハーネスで kind を変えた後も古い名前が残る
+    // （root の data-kind しか更新されないため。実機で再現済み）
     const out = injectBuiltinProjection(
       page(modelScript),
       model({
@@ -124,7 +125,37 @@ describe("injectBuiltinProjection", () => {
     );
 
     expect(out).toContain('data-ark-builtin="event-storming"');
-    expect(out).toMatch(/ark-builtin-kind-name[^>]*>event</);
+    // kind 名は DOM に焼き込まない
+    expect(out).not.toContain("ark-builtin-kind-name");
+    // 色だけに頼らないための可視名は CSS 変数 + ::before で出す
+    expect(out).toContain('--kn:"event"');
+    expect(out).toMatch(/\.ark-builtin-node::before\{content:var\(--kg/);
+  });
+
+  it("引用符なしの graph 属性を持つ図にも触らない", () => {
+    // HTML は data-ark-container=graph も許す。見落とすと graph が二重になる
+    const authored = page(
+      `${modelScript}<div data-ark-container=graph><div data-model-id="order">Order</div></div>`
+    );
+
+    expect(injectBuiltinProjection(authored, model())).toBe(authored);
+  });
+
+  it("script 本文や comment の中の文字列を graph と誤認しない", () => {
+    // 誤認すると投影を生成せず白紙になる
+    const decoy =
+      '<script type="application/json" id="ark-diagram-model">' +
+      '{"note":"data-ark-container=\\"graph\\" と書いただけ"}</script>' +
+      '<!-- data-ark-container="graph" -->';
+
+    const out = injectBuiltinProjection(page(decoy), model());
+
+    // 生成された graph container はちょうど1つ
+    // （CSS の selector やコメント内の文字列とは区別する）
+    expect(
+      out.match(/data-ark-container="graph" data-ark-builtin="er"/g)
+    ).toHaveLength(1);
+    expect(out).toContain("ark-builtin-node");
   });
 
   it("未知の図種と図種なしには何もしない", () => {

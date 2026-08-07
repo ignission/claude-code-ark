@@ -35,8 +35,6 @@ export const GENERATED_ATTR = "data-ark-harness-generated";
 interface BuiltinType {
   /** 図種専用の CSS（外部リソースを参照しない） */
   css: string;
-  /** kind 名を可視テキストとして併置するか（色だけに頼らないため） */
-  showKindName: boolean;
 }
 
 const BASE_CSS = `
@@ -47,9 +45,8 @@ font-family:"Hiragino Sans","Noto Sans JP",system-ui,sans-serif;font-size:14px}
 .ark-builtin-node{box-sizing:border-box;width:13.5rem;padding:.45rem .6rem;
 border:1px solid var(--k,#565f89);border-left:5px solid var(--k,#565f89);
 border-radius:6px;background:var(--kb,#1e202b)}
-.ark-builtin-kind{display:inline-block;width:1.15em}
-.ark-builtin-kind::before{content:var(--kg,"\\25A3")}
-.ark-builtin-kind-name{font-size:.58rem;color:var(--k,#94a3b8);letter-spacing:.05em}
+.ark-builtin-node::before{display:block;font-size:.58rem;letter-spacing:.05em;
+color:var(--k,#94a3b8);content:var(--kg,"\\25A3")}
 .ark-builtin-label{display:block;font-size:.84rem;font-weight:650;line-height:1.35;margin-top:.05rem}
 .ark-builtin-fields{list-style:none;margin:.32rem 0 0;padding:.28rem 0 0;
 border-top:1px solid rgba(148,163,184,.28)}
@@ -85,20 +82,21 @@ const ER_CSS = `${BASE_CSS}
  * policy=紫 / actor=桃 / read-model=緑 を既定にし、必ず kind 名を併置する。
  */
 const STORMING_CSS = `${BASE_CSS}
+[data-ark-builtin="event-storming"] .ark-builtin-node::before{content:var(--kg,"\\25A3") "\\00A0" var(--kn,"")}
 [data-ark-builtin="event-storming"] .ark-builtin-node{--k:#94a3b8;--kb:#202b3c;--kg:"\\25A3"}
-[data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="event"]{--k:#f59e0b;--kb:#3b2810;--kg:"\\26A1"}
-[data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="command"]{--k:#60a5fa;--kb:#172a46;--kg:"\\25B6"}
-[data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="aggregate"]{--k:#facc15;--kb:#3a3111;--kg:"\\25C6"}
-[data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="policy"]{--k:#c084fc;--kb:#302044;--kg:"\\25C7"}
-[data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="actor"]{--k:#f472b6;--kb:#3b1e35;--kg:"\\25CE";width:9rem}
-[data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="read-model"]{--k:#4ade80;--kb:#153522;--kg:"\\25A4"}
-[data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="external-system"]{--k:#94a3b8;--kb:#202b3c;--kg:"\\2601"}
-[data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="note"]{--k:#94a3b8;--kb:#1b2130;width:17rem;border-style:dashed;border-left-style:solid}
+[data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="event"]{--kn:"event";--k:#f59e0b;--kb:#3b2810;--kg:"\\26A1"}
+[data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="command"]{--kn:"command";--k:#60a5fa;--kb:#172a46;--kg:"\\25B6"}
+[data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="aggregate"]{--kn:"aggregate";--k:#facc15;--kb:#3a3111;--kg:"\\25C6"}
+[data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="policy"]{--kn:"policy";--k:#c084fc;--kb:#302044;--kg:"\\25C7"}
+[data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="actor"]{--kn:"actor";--k:#f472b6;--kb:#3b1e35;--kg:"\\25CE";width:9rem}
+[data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="read-model"]{--kn:"read-model";--k:#4ade80;--kb:#153522;--kg:"\\25A4"}
+[data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="external-system"]{--kn:"external-system";--k:#94a3b8;--kb:#202b3c;--kg:"\\2601"}
+[data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="note"]{--kn:"note";--k:#94a3b8;--kb:#1b2130;width:17rem;border-style:dashed;border-left-style:solid}
 `;
 
 export const BUILTIN_DIAGRAM_TYPES: Readonly<Record<string, BuiltinType>> = {
-  er: { css: ER_CSS, showKindName: false },
-  "event-storming": { css: STORMING_CSS, showKindName: true },
+  er: { css: ER_CSS },
+  "event-storming": { css: STORMING_CSS },
 };
 
 function escapeHtml(value: string): string {
@@ -110,7 +108,16 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function renderNode(node: DiagramNode, type: BuiltinType): string {
+/**
+ * node 1 個の投影。
+ *
+ * kind の見出し（icon と kind 名）は DOM に書かず、node root の `::before` を
+ * CSS 変数で出す。ハーネスは kind 変更時に root の `data-kind` を更新するだけで
+ * 中身の装飾までは面倒を見ないため、静的テキストで書くと kind を変えた後も
+ * 古い名前が残る（実機で再現済み）。CSS 由来にすれば表示は `data-kind` の
+ * 純粋な関数になり、パレットで追加した node も同じ見出しを得る。
+ */
+function renderNode(node: DiagramNode): string {
   const id = escapeHtml(node.id);
   const kindAttr = node.kind ? ` data-kind="${escapeHtml(node.kind)}"` : "";
   const parts: string[] = [];
@@ -121,12 +128,6 @@ function renderNode(node: DiagramNode, type: BuiltinType): string {
       `<div class="ark-builtin-note" data-ark-harness-note>${escapeHtml(node.noteText ?? "")}</div>`
     );
   } else {
-    parts.push('<span class="ark-builtin-kind" aria-hidden="true"></span>');
-    if (type.showKindName && node.kind) {
-      parts.push(
-        `<span class="ark-builtin-kind-name">${escapeHtml(node.kind)}</span>`
-      );
-    }
     parts.push(
       `<span class="ark-builtin-label" data-model-id="${id}">${escapeHtml(node.label)}</span>`
     );
@@ -154,9 +155,21 @@ function renderGroup(id: string, label: string): string {
   );
 }
 
-/** 生成物が自前の graph を持っているか（持っていれば作者のものを尊重する） */
+/**
+ * 生成物が自前の graph を持っているか（持っていれば作者のものを尊重する）。
+ *
+ * HTML は引用符なしの属性値も許すため `data-ark-container=graph` も拾う。
+ * 逆に script 本文（モデル JSON の label 等）や HTML コメントの中の同じ文字列は
+ * 属性ではないので、判定前に取り除く。誤検出すると投影を生成せず白紙になり、
+ * 見落とすと graph が二重になる。
+ */
 function hasAuthoredGraph(html: string): boolean {
-  return /data-ark-container\s*=\s*["']graph["']/i.test(html);
+  const markup = html
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+  return /data-ark-container\s*=\s*(?:"graph"|'graph'|graph(?=[\s/>]|$))/i.test(
+    markup
+  );
 }
 
 /**
@@ -181,7 +194,7 @@ export function injectBuiltinProjection(
   const groups = model.groups
     .map(group => renderGroup(group.id, group.label))
     .join("");
-  const nodes = model.nodes.map(node => renderNode(node, type)).join("");
+  const nodes = model.nodes.map(node => renderNode(node)).join("");
   const projection =
     `<style data-ark-harness-ui="1">${type.css}</style>` +
     title +
