@@ -164,6 +164,39 @@ describe("parseDiagramModel", () => {
     }
   });
 
+  it("図種 type を文字列のまま保持し、保存の往復で失わない", () => {
+    // type は内蔵レンダラの選択に使う。parse が落とすと最初の保存で図種が
+    // 消え、次の配信から投影が生成されなくなる
+    const json = JSON.stringify({
+      version: 1,
+      type: "er",
+      nodes: [{ id: "order", label: "Order", kind: "entity" }],
+    });
+
+    const result = parseDiagramModel(json);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.model.type).toBe("er");
+      const round = parseDiagramModel(JSON.stringify(result.model));
+      expect(round.ok).toBe(true);
+      if (round.ok) expect(round.model.type).toBe("er");
+    }
+  });
+
+  it("type が文字列でなければ落とす", () => {
+    const json = JSON.stringify({
+      version: 1,
+      type: { name: "er" },
+      nodes: [{ id: "order", label: "Order" }],
+    });
+
+    const result = parseDiagramModel(json);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.model.type).toBeUndefined();
+  });
+
   it("group の label / nodes / ext を保持する", () => {
     const json = JSON.stringify({
       version: 1,

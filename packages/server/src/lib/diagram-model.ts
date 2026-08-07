@@ -40,6 +40,12 @@ export interface DiagramGroup {
 
 export interface DiagramModel {
   version: 1;
+  /**
+   * 図種（er / event-storming など）。サーバーは値を解釈せず保持するだけで、
+   * 既知の図種なら配信時に投影 DOM と CSS を生成する（diagram-builtin.ts）。
+   * 未知の値・未指定なら従来どおり生成物が書いた投影をそのまま使う。
+   */
+  type?: string;
   title?: string;
   nodes: DiagramNode[];
   edges: DiagramEdge[];
@@ -187,6 +193,7 @@ export function parseDiagramModel(json: string): ParseResult {
     ok: true,
     model: {
       version: 1,
+      type: typeof raw.type === "string" ? raw.type : undefined,
       title: typeof raw.title === "string" ? raw.title : undefined,
       nodes,
       edges,
