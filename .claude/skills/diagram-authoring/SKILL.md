@@ -9,7 +9,48 @@ description: 図解を求められたときに .diagram.html を生成する規�
 `<名前>.diagram.html` を組み合わせ、1 ファイルで書く。書き込む直前に
 parent directory が存在しない場合だけ作成し、書いた後に `board_open` でペインを開かせる。
 
-## ファイルの構造
+## まず図種を確かめる（内蔵レンダラ）
+
+書式が決まっている図は `type` を書くだけでよい。投影（HTML）も CSS も書かない。
+Ark が配信時に生成し、生成物はファイルへ焼き付かない（モデルだけが残る）。
+
+| `type` | 使う場面 | 使える kind |
+| --- | --- | --- |
+| `er` | ER 図・集約設計・エンティティ表 | `entity`（既定）/ `root` / `vo` / `external` / `invariant` / `principle` / `note` |
+| `event-storming` | イベントストーミング | `command` / `event` / `aggregate` / `policy` / `actor` / `read-model` / `external-system` / `note` |
+
+```html
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>注文まわり</title></head>
+<body>
+<script type="application/json" id="ark-diagram-model">
+{
+  "version": 1,
+  "type": "er",
+  "title": "注文まわり",
+  "nodes": [
+    { "id": "order", "label": "Order", "kind": "entity",
+      "fields": [ { "id": "order_id", "label": "id PK" } ] }
+  ],
+  "edges": [],
+  "groups": []
+}
+</script>
+</body>
+</html>
+```
+
+これで足りる図に手書きの投影を足さないこと。同じ意味を二度書くことになり、
+モデルと投影が食い違う余地を作ってしまう。多重度（`edge.ext` の
+`from_card` / `to_card` / `direction` / `type`）、group 境界、自動レイアウトは
+内蔵レンダラでもそのまま効く。
+
+自前の graph container（`data-ark-container="graph"`）を書いた図には内蔵レンダラは
+一切触らない。決まった図種でない図（ロードマップ、説明図、スイムレーンの厳密な
+座標指定など）は、以下の手書き投影で作る。
+
+## ファイルの構造（手書き投影・`type` が無いとき）
 
 モデル（意味）と投影（見た目）を 1 ファイルに入れる。
 

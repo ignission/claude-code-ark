@@ -3207,6 +3207,9 @@ const RAW_HARNESS_JS = `(function () {
     clone.querySelectorAll("[data-ark-harness-ui]").forEach(function (el) {
       if (el.parentNode) el.parentNode.removeChild(el);
     });
+    clone.querySelectorAll("[data-ark-harness-generated]").forEach(function (el) {
+      if (el.parentNode) el.parentNode.removeChild(el);
+    });
     if (clone.body) {
       clone.body.style.removeProperty("--ark-harness-toolbar-height");
       if (clone.body.style.length === 0) clone.body.removeAttribute("style");

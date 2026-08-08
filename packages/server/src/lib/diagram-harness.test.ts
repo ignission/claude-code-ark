@@ -588,6 +588,22 @@ describe("injectHarness", () => {
     expect(out).toContain('element.hasAttribute("data-ark-container")');
   });
 
+  it("サーバー生成の投影を送信 HTML から取り除く", () => {
+    // 内蔵図種（diagram-builtin.ts）の投影は配信のたびに作り直す。
+    // 送信 HTML に残すと最初の保存でファイルへ焼き付き、モデルと投影の
+    // 二重管理に逆戻りする
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
+      )
+    );
+
+    expect(out).toContain('querySelectorAll("[data-ark-harness-generated]")');
+    expect(
+      out.indexOf('querySelectorAll("[data-ark-harness-generated]")')
+    ).toBeGreaterThan(out.indexOf("function buildSubmissionHtml("));
+  });
+
   it("CRUD DOM を安全な API だけで生成し全 model id を予約する", () => {
     const out = injectHarness(
       page(

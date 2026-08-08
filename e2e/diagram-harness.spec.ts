@@ -2575,13 +2575,15 @@ test("構造変更: clean submission は semantic node を残し CRUD UI と見�
   expect(submission.html).not.toContain("--ark-harness-graph-x");
   const diff = describeModelDiff(crudModel, submission.model);
   expect(diff).toEqual([
+    // kind select は選択中の node にも適用される（B が entity → event）
+    "B の種別を entity から event に変更",
     expect.stringMatching(/^event ノード \(node-[0-9a-f-]+\) を追加$/),
     expect.stringMatching(
       /^B から event ノード \(node-[0-9a-f-]+\) への関連を追加$/
     ),
   ]);
-  expect(diff[0]).toContain(`(${added.id})`);
   expect(diff[1]).toContain(`(${added.id})`);
+  expect(diff[2]).toContain(`(${added.id})`);
 });
 
 test("下部ツールバーは既定で非表示になり余白を残さない", async ({ page }) => {
@@ -4901,7 +4903,11 @@ test("authored entity と note を往復して label・fields・noteText を独�
       ).arkHarnessSubmission
   );
   if (!submission) throw new Error("submission がありません");
-  expect(describeModelDiff(beforeModel, submission.model)).toEqual([]);
+  // kind と noteText の変更は意味差分として述べる（#289）
+  expect(describeModelDiff(beforeModel, submission.model)).toEqual([
+    "Source の種別を entity から note に変更",
+    "Source の本文を「設計メモ2行目」に変更",
+  ]);
   expect(
     submission.model.nodes.find(node => node.id === "model-kind-source")
   ).toMatchObject({
@@ -5492,7 +5498,9 @@ test("kind toolbar で CSS 候補を選び投影・geometry・保存へ同期す
       node.id === "order" ? { ...node, kind: "event" } : node
     ),
   });
-  expect(describeModelDiff(beforeModel, submission.model)).toEqual([]);
+  expect(describeModelDiff(beforeModel, submission.model)).toEqual([
+    "Order の種別を aggregate から event に変更",
+  ]);
   expect(submission.html).toContain('data-kind="event"');
   expect(submission.html).toContain('id="ark-diagram-model"');
   expect(submission.html).toContain('data-ark-container="graph"');
@@ -6338,6 +6346,7 @@ test("kind 変更と node・edge・field・list 編集を同じ送信 model に�
   });
   const submittedModel = (submission as { model: DiagramModel }).model;
   expect(describeModelDiff(model, submittedModel)).toEqual([
+    "Order の種別を aggregate から event に変更",
     "Order の status を state に変更",
     "Order のフィールド順を state, id に変更",
     "Order から User への関連「belongs to」を Order から Order への関連「belongs to」 に変更",
