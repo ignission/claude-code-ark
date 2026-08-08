@@ -167,11 +167,18 @@ describe("injectBuiltinProjection", () => {
       })
     );
     const style = out.slice(out.indexOf("<style"), out.indexOf("</style>"));
+    // style 内の同じ文字列で通ってしまわないよう、判定は graph の中だけで行う
+    const graphStart = out.indexOf('<div data-ark-container="graph"');
+    expect(graphStart).toBeGreaterThanOrEqual(0);
+    const graphHtml = out.slice(graphStart);
 
     expect(out).toContain(`data-ark-builtin="${type}"`);
     for (const kind of kinds) {
       expect(style).toContain(`.ark-builtin-node[data-kind="${kind}"]`);
-      expect(out).toContain(`data-kind="${kind}"`);
+      // data-kind は node root（article）に直接付く
+      expect(graphHtml).toMatch(
+        new RegExp(`<article\\b[^>]*data-kind="${kind}"`)
+      );
     }
     // 素の [data-kind] は label span にも当たるので使わない
     const kindRules = style.match(/\[data-kind=/g) ?? [];
