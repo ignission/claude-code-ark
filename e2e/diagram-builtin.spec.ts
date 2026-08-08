@@ -41,6 +41,24 @@ const erModel: DiagramModel = {
   groups: [{ id: "ordering", label: "Ordering", nodes: ["customer", "order"] }],
 };
 
+const stateModel: DiagramModel = {
+  version: 1,
+  type: "state",
+  title: "注文ステータス",
+  nodes: [
+    { id: "i", label: "開始", kind: "initial" },
+    { id: "c", label: "注文確定", kind: "state" },
+    { id: "d", label: "配達完了", kind: "terminal-ok" },
+    { id: "x", label: "キャンセル", kind: "terminal-cancel" },
+  ],
+  edges: [
+    { id: "e1", from: "i", to: "c", label: "confirm" },
+    { id: "e2", from: "c", to: "d", label: "deliver" },
+    { id: "e3", from: "c", to: "x", label: "cancel" },
+  ],
+  groups: [],
+};
+
 const stormingModel: DiagramModel = {
   version: 1,
   type: "event-storming",
@@ -195,6 +213,28 @@ test("event-storming: kind 名を可視の見出しとして出し note 本文�
   await expect(
     page.locator('article[data-model-id="memo"] [data-ark-harness-note]')
   ).toContainText("未決: 在庫の引当");
+});
+
+test("state: 開始と2つの終端を色以外でも区別して描画する", async ({ page }) => {
+  // CSS 変数の値を比べるだけでは実表示を保証できない（codex 指摘）。
+  // 疑似要素に解決されたグリフを実際に読む
+  await openBuiltin(page, stateModel);
+
+  const glyph = (id: string) =>
+    page
+      .locator(`article[data-model-id="${id}"]`)
+      .evaluate(el => getComputedStyle(el, "::before").content);
+
+  // state 図は kind 見出しを出さずグリフ自体が意味を担うので、対応まで固定する
+  expect(await glyph("i")).toBe('"●"');
+  expect(await glyph("c")).toBe('"○"');
+  expect(await glyph("d")).toBe('"✔"');
+  expect(await glyph("x")).toBe('"✖"');
+  // 取消は線種でも区別する
+  await expect(page.locator('article[data-model-id="x"]')).toHaveCSS(
+    "border-top-style",
+    "dashed"
+  );
 });
 
 test("kind を変えると可視の kind 見出しも追従する", async ({ page }) => {

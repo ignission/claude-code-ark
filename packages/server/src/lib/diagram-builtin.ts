@@ -94,9 +94,60 @@ const STORMING_CSS = `${BASE_CSS}
 [data-ark-builtin="event-storming"] .ark-builtin-node[data-kind="note"]{--kn:"note";--k:#94a3b8;--kb:#1b2130;width:17rem;border-style:dashed;border-left-style:solid}
 `;
 
+/**
+ * 業務フロー・シナリオ。分岐と出口の性格（成功 / エラー）が読めることが要件で、
+ * group は「単一Tx境界」「同期応答」のような区間の枠として使う。
+ */
+const FLOW_CSS = `${BASE_CSS}
+[data-ark-builtin="flow"] .ark-builtin-node::before{content:var(--kg,"\\25A3") "\\00A0" var(--kn,"")}
+[data-ark-builtin="flow"] .ark-builtin-node{--kn:"step";--k:#38bdf8;--kb:#12283a;--kg:"\\25A3"}
+[data-ark-builtin="flow"] .ark-builtin-node[data-kind="step"]{--kn:"step";--k:#38bdf8;--kb:#12283a;--kg:"\\25A3"}
+[data-ark-builtin="flow"] .ark-builtin-node[data-kind="command"]{--kn:"command";--k:#60a5fa;--kb:#172a46;--kg:"\\25B6"}
+[data-ark-builtin="flow"] .ark-builtin-node[data-kind="decision"]{--kn:"decision";--k:#c084fc;--kb:#302044;--kg:"\\25C7"}
+[data-ark-builtin="flow"] .ark-builtin-node[data-kind="policy"]{--kn:"policy";--k:#c084fc;--kb:#241a33;--kg:"\\25C7"}
+[data-ark-builtin="flow"] .ark-builtin-node[data-kind="event"]{--kn:"event";--k:#f59e0b;--kb:#2c1f0d;--kg:"\\26A1"}
+[data-ark-builtin="flow"] .ark-builtin-node[data-kind="outcome"]{--kn:"outcome";--k:#4ade80;--kb:#153522;--kg:"\\2714"}
+[data-ark-builtin="flow"] .ark-builtin-node[data-kind="error"]{--kn:"error";--k:#f87171;--kb:#3a1a1a;--kg:"\\2716"}
+[data-ark-builtin="flow"] .ark-builtin-node[data-kind="actor"]{--kn:"actor";--k:#f472b6;--kb:#3b1e35;--kg:"\\25CE";width:9rem}
+[data-ark-builtin="flow"] .ark-builtin-node[data-kind="note"]{--kn:"note";--k:#94a3b8;--kb:#1b2130;width:19rem;border-style:dashed;border-left-style:solid}
+`;
+
+/**
+ * 状態遷移。開始と終了の区別が読めることが要件で、終了は「正常」と「取消」を
+ * 別 kind にする。遷移は edge の label と direction で表す。
+ */
+const STATE_CSS = `${BASE_CSS}
+[data-ark-builtin="state"] .ark-builtin-node{--k:#60a5fa;--kb:#172a46;--kg:"\\25CB";
+width:11.5rem;border-radius:1.1rem;text-align:center}
+[data-ark-builtin="state"] .ark-builtin-node[data-kind="initial"]{--k:#94a3b8;--kb:#242a36;--kg:"\\25CF"}
+[data-ark-builtin="state"] .ark-builtin-node[data-kind="state"]{--k:#60a5fa;--kb:#172a46;--kg:"\\25CB"}
+[data-ark-builtin="state"] .ark-builtin-node[data-kind="terminal-ok"]{--k:#4ade80;--kb:#153522;--kg:"\\2714";border-width:2px}
+[data-ark-builtin="state"] .ark-builtin-node[data-kind="terminal-cancel"]{--k:#f87171;--kb:#3a1a1a;--kg:"\\2716";border-width:2px;border-style:dashed}
+[data-ark-builtin="state"] .ark-builtin-node[data-kind="note"]{--k:#94a3b8;--kb:#1b2130;width:18rem;
+border-radius:6px;text-align:left;border-style:dashed;border-left-style:solid}
+`;
+
+/**
+ * コンテキストマップ（戦略設計）。中核と補助と外部の区別が読めることが要件で、
+ * 上流下流や関係の種類は edge の label と `edge.ext` に置く。
+ */
+const CONTEXT_MAP_CSS = `${BASE_CSS}
+[data-ark-builtin="context-map"] .ark-builtin-node::before{content:var(--kg,"\\25A3") "\\00A0" var(--kn,"")}
+[data-ark-builtin="context-map"] .ark-builtin-node{--kn:"supporting";--k:#60a5fa;--kb:#172a46;--kg:"\\25A3";width:15rem}
+[data-ark-builtin="context-map"] .ark-builtin-node[data-kind="core"]{--kn:"core domain";--k:#facc15;--kb:#332b0e;--kg:"\\2605";border-width:2px;border-left-width:5px}
+[data-ark-builtin="context-map"] .ark-builtin-node[data-kind="supporting"]{--kn:"supporting";--k:#60a5fa;--kb:#172a46;--kg:"\\25A3"}
+[data-ark-builtin="context-map"] .ark-builtin-node[data-kind="generic"]{--kn:"generic";--k:#4ade80;--kb:#153522;--kg:"\\25A3"}
+[data-ark-builtin="context-map"] .ark-builtin-node[data-kind="developed"]{--kn:"this phase";--k:#c084fc;--kb:#2a2044;--kg:"\\25B6"}
+[data-ark-builtin="context-map"] .ark-builtin-node[data-kind="external"]{--kn:"external";--k:#a3a3a3;--kb:#26262b;--kg:"\\2601";border-style:dashed;border-left-style:solid}
+[data-ark-builtin="context-map"] .ark-builtin-node[data-kind="note"]{--kn:"note";--k:#94a3b8;--kb:#1b2130;width:19rem;border-style:dashed;border-left-style:solid}
+`;
+
 export const BUILTIN_DIAGRAM_TYPES: Readonly<Record<string, BuiltinType>> = {
   er: { css: ER_CSS },
   "event-storming": { css: STORMING_CSS },
+  flow: { css: FLOW_CSS },
+  state: { css: STATE_CSS },
+  "context-map": { css: CONTEXT_MAP_CSS },
 };
 
 function escapeHtml(value: string): string {

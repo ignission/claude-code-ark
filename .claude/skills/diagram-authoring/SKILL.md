@@ -18,6 +18,13 @@ Ark が配信時に生成し、生成物はファイルへ焼き付かない（�
 | --- | --- | --- |
 | `er` | ER 図・集約設計・エンティティ表 | `entity`（既定）/ `root` / `vo` / `external` / `invariant` / `principle` / `note` |
 | `event-storming` | イベントストーミング | `command` / `event` / `aggregate` / `policy` / `actor` / `read-model` / `external-system` / `note` |
+| `flow` | 業務フロー・シナリオ・処理の分岐 | `step`（既定）/ `command` / `decision` / `policy` / `event` / `outcome` / `error` / `actor` / `note` |
+| `state` | 状態遷移 | `state`（既定）/ `initial` / `terminal-ok` / `terminal-cancel` / `note` |
+| `context-map` | コンテキストマップ（戦略設計） | `supporting`（既定）/ `core` / `generic` / `developed` / `external` / `note` |
+
+語彙にない kind を書くとその図種の既定スタイルになる。`flow` の出口は成功を
+`outcome`、失敗を `error` に分けると、色に頼らず読めるようになる。区間の枠
+（単一Tx境界、スイムレーン、境界づけられたコンテキスト）は group で表す。
 
 ```html
 <!doctype html>
