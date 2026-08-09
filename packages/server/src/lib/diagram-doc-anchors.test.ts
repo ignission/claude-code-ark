@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
 import type { DiagramModel } from "./diagram-model.js";
 
-function model(type: string | undefined = "doc"): DiagramModel {
+function model(type: string | undefined): DiagramModel {
   return {
     version: 1,
     type,
@@ -20,7 +20,7 @@ describe("validateDiagramDocAnchors", () => {
   it("doc の全 node id が opening tag に1回ずつあれば成功する", () => {
     const result = validateDiagramDocAnchors(
       "<section data-ark-id=\"s1\"><p data-ark-id='s1-p1'>本文</p><div data-ark-id=s1-t1-r1>明細</div></section>",
-      model()
+      model("doc")
     );
 
     expect(result).toEqual({ ok: true });
@@ -48,7 +48,7 @@ describe("validateDiagramDocAnchors", () => {
       id: "s1",
     },
   ])("$name とき id を含む error を返す", ({ html, id }) => {
-    const result = validateDiagramDocAnchors(html, model());
+    const result = validateDiagramDocAnchors(html, model("doc"));
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain(id);
@@ -65,7 +65,7 @@ describe("validateDiagramDocAnchors", () => {
       </section>
     `;
 
-    expect(validateDiagramDocAnchors(html, model())).toEqual({ ok: true });
+    expect(validateDiagramDocAnchors(html, model("doc"))).toEqual({ ok: true });
   });
 
   it.each([undefined, "er", "flow", "custom-graph"])(

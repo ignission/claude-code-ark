@@ -4,6 +4,7 @@
  */
 
 import fs from "node:fs";
+import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
 import { ensureDoctype, replaceModelBlock } from "./diagram-file.js";
 import { type DiagramModel, parseDiagramModel } from "./diagram-model.js";
 import { resolveDiagramPath } from "./diagram-path.js";
@@ -47,6 +48,8 @@ export async function saveDiagramEdit(
   // 最新モデルへ差し替える。DOM 投影には触れない。
   const replaced = replaceModelBlock(html, parsed.model);
   if (!replaced.ok) return replaced;
+  const anchors = validateDiagramDocAnchors(replaced.html, parsed.model);
+  if (!anchors.ok) return anchors;
 
   const pathResolved = resolveDiagramPath(worktreeReal, relPath);
   if (!pathResolved.ok) return pathResolved;

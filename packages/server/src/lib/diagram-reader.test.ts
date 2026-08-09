@@ -250,6 +250,36 @@ describe("readDiagram", () => {
     if (!result.ok) expect(result.status).toBe(422);
   });
 
+  it("node に対応する anchor がない doc は 422 を返す", async () => {
+    const docModel = JSON.stringify({
+      version: 1,
+      type: "doc",
+      nodes: [{ id: "section-1", label: "概要" }],
+      edges: [],
+      groups: [],
+    });
+    write("invalid-doc.diagram.html", "<section>概要</section>", docModel);
+
+    const result = await readDiagram(wt, "invalid-doc.diagram.html");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(422);
+      expect(result.error).toContain("section-1");
+    }
+  });
+
+  it("graph は data-ark-id がなくても従来どおり配信する", async () => {
+    write(
+      "unanchored-graph.diagram.html",
+      '<div data-model-id="order">Order</div>'
+    );
+
+    const result = await readDiagram(wt, "unanchored-graph.diagram.html");
+
+    expect(result.ok).toBe(true);
+  });
+
   it("EACCES (権限エラー) は 404 に畳まず 403 で errno を含めて返す", async () => {
     // ENOENT 以外の FS エラーまで「見つかりません」に畳むと、Claude 側は
     // 「ファイルが無い」と誤解して無意味な再生成を繰り返してしまう。
