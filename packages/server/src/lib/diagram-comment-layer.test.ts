@@ -65,7 +65,7 @@ describe("injectDiagramCommentLayer", () => {
     );
   });
 
-  it("DOM API だけで right rail・marker・composer を構築する", () => {
+  it("DOM API だけで浮遊 card・hover composer を構築する", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
     for (const contract of [
@@ -82,26 +82,69 @@ describe("injectDiagramCommentLayer", () => {
     }
   });
 
-  it("marker をコメント無し・未解決あり・解決済みのみで区別する", () => {
+  it("常設 panel・見出し・status・全 block の marker を生成しない", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
-    expect(injected).toContain('setAttribute("data-comment-state",state)');
-    expect(injected).toContain(
-      'setAttribute("data-open-count",String(openCount))'
-    );
-    expect(injected).toContain('state="open"');
-    expect(injected).toContain('state="resolved"');
-    expect(injected).toContain('state="none"');
-    expect(injected).toContain(".ark-comment-marker[data-comment-state=none]");
+    expect(injected).not.toContain('setAttribute("id","ark-comment-root")');
+    expect(injected).not.toContain('element("aside"');
+    expect(injected).not.toContain("文書コメント");
+    expect(injected).not.toContain("ark-comment-status");
+    expect(injected).not.toContain("ark-comment-marker");
   });
 
-  it("成功 result を受け取るたび marker 状態を更新する", () => {
+  it("thread card を anchor 順に配置し、直前 card との重なりを避ける", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
-    expect(injected).toContain("function updateMarkers()");
-    expect(injected).toMatch(
-      /if\(data\.ok\)\{[^}]*comments=data\.comments;[^}]*updateMarkers\(\)/u
+    expect(injected).toContain("function positionCards()");
+    expect(injected).toContain("getBoundingClientRect()");
+    expect(injected).toContain("anchorTop");
+    expect(injected).toContain("previousBottom");
+    expect(injected).toContain("CARD_GAP");
+    expect(injected).toContain("Math.max(anchorTop,previousBottom+CARD_GAP)");
+    expect(injected).toContain(
+      'setAttribute("data-anchor-id",thread.anchorId)'
     );
+    expect(injected).toContain(".ark-comment-card{position:fixed");
+  });
+
+  it("anchor の hover / focus 中だけ新規 comment の＋導線を出す", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain('element("button","＋","ark-comment-add")');
+    expect(injected).toContain('addEventListener("mouseenter"');
+    expect(injected).toContain('addEventListener("focusin"');
+    expect(injected).toContain('setAttribute("data-visible","true")');
+    expect(injected).toContain("openComposer");
+    expect(injected).toContain(".ark-comment-add[data-visible=true]");
+  });
+
+  it("card がある時だけ右余白を確保し、狭い pane では badge に畳む", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("MIN_CONTENT_WIDTH=480");
+    expect(injected).toContain("originalBodyPaddingRight");
+    expect(injected).toContain("document.body.style.paddingRight");
+    expect(injected).toContain(
+      'setAttribute("data-narrow",narrow?"true":"false")'
+    );
+    expect(injected).toContain('setAttribute("data-collapsed","true")');
+    expect(injected).toContain(
+      'element("button",String(openCount),"ark-comment-badge")'
+    );
+    expect(injected).toContain(".ark-comment-layer[data-narrow=true]");
+  });
+
+  it("card と anchor を相互 highlight し、解決済みを控えめに表示する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("ark-comment-anchor-active");
+    expect(injected).toContain('setAttribute("data-active"');
+    expect(injected).toContain(
+      'card.setAttribute("data-status",thread.status)'
+    );
+    expect(injected).toContain(".ark-comment-card[data-status=resolved]");
+    expect(injected).toContain('thread.status==="open"');
+    expect(injected).toContain('element("button","解決する"');
   });
 
   it("pinch/create/resolve と pending/error 契約を含む", () => {
@@ -113,6 +156,11 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain("ark:diagram-comment-resolve");
     expect(injected).toContain("pendingRequestId");
     expect(injected).toContain("disabled");
+    expect(injected).toContain("function updatePendingControls()");
+    expect(injected).toContain(
+      'querySelectorAll(".ark-comment-create,.ark-comment-resolve,.ark-comment-input")'
+    );
+    expect(injected).toContain("ark-comment-error");
     expect(injected).toContain("error");
     expect(injected).not.toContain("ark:diagram-comment-reply");
     expect(injected).not.toContain("orphaned");
