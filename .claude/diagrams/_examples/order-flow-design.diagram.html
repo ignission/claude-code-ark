@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>受注フロー 設計</title>
+<style>
+  :root {
+    color-scheme: light;
+    --ink: #223047;
+    --muted: #627086;
+    --line: #d8e0ea;
+    --paper: #f5f7fa;
+    --card: #ffffff;
+    --accent: #176b87;
+    --accent-soft: #e8f4f7;
+    font-family: "Hiragino Sans", "Yu Gothic UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: var(--ink); background: var(--paper); }
+  .document { width: min(960px, calc(100% - 48px)); margin: 40px auto 72px; }
+  .eyebrow { margin: 0 0 8px; color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .14em; }
+  h1 { margin: 0; font-size: 32px; letter-spacing: .02em; }
+  .lead { margin: 16px 0 28px; color: var(--muted); line-height: 1.8; }
+  .panel { margin: 0 0 28px; padding: 20px 22px; border: 1px solid #b8dce5; border-left: 5px solid var(--accent); border-radius: 10px; background: var(--accent-soft); }
+  .panel h2, .flow h2 { margin: 0 0 10px; font-size: 19px; }
+  .panel p { margin: 0; line-height: 1.75; }
+  .flow { padding: 26px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); box-shadow: 0 12px 30px rgba(34, 48, 71, .06); }
+  table { width: 100%; margin-top: 16px; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 13px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; line-height: 1.55; }
+  th { color: #425169; background: #eef2f6; font-size: 12px; letter-spacing: .04em; }
+  tbody tr:last-child td { border-bottom: 0; }
+  .note { margin: 22px 0 0; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); line-height: 1.75; }
+  .summary { margin-top: 28px; padding: 22px 24px; border-radius: 12px; color: #eefaff; background: #244b5a; }
+  .summary h2 { margin: 0 0 8px; font-size: 18px; }
+  .summary p { margin: 0; line-height: 1.75; }
+  @media (max-width: 680px) {
+    .document { width: min(100% - 24px, 960px); margin-top: 24px; }
+    .flow { padding: 18px; overflow-x: auto; }
+    table { min-width: 680px; }
+  }
+</style>
+</head>
+<body>
+<script type="application/json" id="ark-diagram-model">
+{
+  "version": 1,
+  "type": "doc",
+  "title": "受注フロー 設計",
+  "nodes": [
+    { "id": "s1", "label": "受注フロー全体の目的、判断基準、担当間の受け渡しを一つの設計文書として整理する。", "kind": "section" },
+    { "id": "s1-p1", "label": "受付から確定までの判断点を明示し、担当者が同じ基準で処理できる状態を目指す。", "kind": "paragraph" },
+    { "id": "s1-panel1", "label": "在庫、取引条件、納期の三点を確認し、不明点があれば確定前に依頼元へ確認する。", "kind": "panel" },
+    { "id": "s1-t1", "label": "受注処理の各段階について、入力、判断、完了条件、次の担当を対応づけて一覧化する。", "kind": "table" },
+    { "id": "s1-t1-r1", "label": "受付では依頼内容と連絡先を記録し、確認に必要な情報がそろっていることを確かめる。", "kind": "table-row" },
+    { "id": "s1-t1-r2", "label": "条件確認では在庫、取引条件、希望納期を照合し、対応可否と回答期限を判断する。", "kind": "table-row" },
+    { "id": "s1-t1-r3", "label": "受注確定では注文内容を固定し、受付番号と確定した納期を依頼元へ通知する。", "kind": "table-row" },
+    { "id": "s1-t1-r4", "label": "引き渡しでは確定済みの注文情報を出荷担当へ渡し、受領されたことを記録する。", "kind": "table-row" },
+    { "id": "s1-p2", "label": "例外が生じた場合は理由と確認先を記録し、判断を保留したまま次工程へ渡さない。", "kind": "paragraph" },
+    { "id": "s1-summary1", "label": "確定条件と受け渡し記録をそろえることで、処理状況を追跡できる受注フローを維持する。", "kind": "summary" }
+  ],
+  "edges": [],
+  "groups": [
+    { "id": "g-intake", "label": "受付方針", "nodes": ["s1-p1", "s1-panel1"] },
+    { "id": "g-process", "label": "処理手順", "nodes": ["s1-t1", "s1-t1-r1", "s1-t1-r2", "s1-t1-r3", "s1-t1-r4", "s1-p2"] },
+    { "id": "g-conclusion", "label": "完了基準", "nodes": ["s1-summary1"] }
+  ]
+}
+</script>
+
+<main class="document" data-ark-id="s1">
+  <p class="eyebrow">ORDER FLOW / DESIGN NOTE</p>
+  <h1>受注フロー 設計</h1>
+  <p class="lead" data-ark-id="s1-p1">受付から確定までの判断点を明示し、担当者が同じ基準で処理できる状態を目指します。</p>
+
+  <aside class="panel" data-ark-id="s1-panel1">
+    <h2>確定前に確認すること</h2>
+    <p>在庫、取引条件、納期の三点を確認します。不明点がある場合は、注文を確定する前に依頼元へ確認します。</p>
+  </aside>
+
+  <section class="flow">
+    <h2>標準の処理手順</h2>
+    <table data-ark-id="s1-t1">
+      <thead>
+        <tr>
+          <th>段階</th>
+          <th>入力と確認</th>
+          <th>完了条件</th>
+          <th>次の担当</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr data-ark-id="s1-t1-r1">
+          <td>受付</td>
+          <td>依頼内容と連絡先を記録する</td>
+          <td>必要な情報がそろっている</td>
+          <td>条件確認担当</td>
+        </tr>
+        <tr data-ark-id="s1-t1-r2">
+          <td>条件確認</td>
+          <td>在庫、取引条件、希望納期を照合する</td>
+          <td>対応可否と回答期限が決まっている</td>
+          <td>受注確定担当</td>
+        </tr>
+        <tr data-ark-id="s1-t1-r3">
+          <td>受注確定</td>
+          <td>注文内容を固定し、受付番号を発行する</td>
+          <td>依頼元へ受付番号と確定納期を通知している</td>
+          <td>出荷担当</td>
+        </tr>
+        <tr data-ark-id="s1-t1-r4">
+          <td>引き渡し</td>
+          <td>確定済みの注文情報を出荷担当へ渡す</td>
+          <td>出荷担当の受領が記録されている</td>
+          <td>出荷担当</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="note" data-ark-id="s1-p2">例外が生じた場合は理由と確認先を記録し、判断を保留したまま次工程へ渡しません。</p>
+  </section>
+
+  <section class="summary" data-ark-id="s1-summary1">
+    <h2>完了の定義</h2>
+    <p>確定条件と受け渡し記録をそろえ、受付番号から現在の処理状況を追跡できる状態を維持します。</p>
+  </section>
+</main>
+</body>
+</html>
