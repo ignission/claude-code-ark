@@ -57,6 +57,18 @@ function unknownKeys(value: Record<string, unknown>, keys: string[]): string[] {
   return Object.keys(value).filter(key => !keys.includes(key));
 }
 
+function summarizeUnknownKeys(keys: string[]): string {
+  const maxCount = 3;
+  const maxLength = 40;
+  const summarized = keys
+    .slice(0, maxCount)
+    .map(key => (key.length > maxLength ? `${key.slice(0, maxLength)}…` : key));
+  if (keys.length > maxCount) {
+    summarized.push(`ほか ${keys.length - maxCount} 件`);
+  }
+  return summarized.join(", ");
+}
+
 function validString(value: unknown, maxLength: number): value is string {
   return (
     typeof value === "string" &&
@@ -89,7 +101,7 @@ export function parseDiagramCommentPortRequest(
   if (value.type === "ark:diagram-comments-load") {
     if (!hasOnlyKeys(value, ["type", "requestId"])) {
       return invalid(
-        `コメント取得要求の不明なフィールド: ${unknownKeys(value, ["type", "requestId"]).join(", ")}`
+        `コメント取得要求の不明なフィールド: ${summarizeUnknownKeys(unknownKeys(value, ["type", "requestId"]))}`
       );
     }
     return {
@@ -111,7 +123,7 @@ export function parseDiagramCommentPortRequest(
     const unexpected = unknownKeys(value, allowedKeys);
     if (unexpected.length > 0) {
       return invalid(
-        `コメント作成要求の不明なフィールド: ${unexpected.join(", ")}`
+        `コメント作成要求の不明なフィールド: ${summarizeUnknownKeys(unexpected)}`
       );
     }
     if (!validString(value.anchorId, 256)) {
@@ -159,7 +171,7 @@ export function parseDiagramCommentPortRequest(
   const unexpected = unknownKeys(value, ["type", "requestId", "threadId"]);
   if (unexpected.length > 0) {
     return invalid(
-      `コメント解決要求の不明なフィールド: ${unexpected.join(", ")}`
+      `コメント解決要求の不明なフィールド: ${summarizeUnknownKeys(unexpected)}`
     );
   }
   if (!validString(value.threadId, 256)) {

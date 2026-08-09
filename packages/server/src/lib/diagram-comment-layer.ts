@@ -15,6 +15,8 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
   var pendingTimer=null;
   var operationError=null;
   var rememberedAuthor="";
+  var composerDraftAuthor="";
+  var composerDraftBody="";
   var requestSequence=0;
   var root=null;
   var anchors=[];
@@ -48,8 +50,28 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
       control.disabled=Boolean(pendingRequestId);
     });
   }
+  function rememberComposerInputs(author,body){
+    composerDraftAuthor=author;
+    composerDraftBody=body;
+  }
+  function clearComposerInputs(){
+    composerDraftAuthor="";
+    composerDraftBody="";
+  }
   function send(type,payload){
-    if(!port||pendingRequestId)return;
+    if(pendingRequestId)return;
+    if(!port){
+      if(type!=="ark:diagram-comments-load"){
+        operationError={
+          type:type,
+          anchorId:payload&&payload.anchorId,
+          threadId:payload&&payload.threadId,
+          message:"コメント機能に接続できていません"
+        };
+        render();
+      }
+      return;
+    }
     pendingRequestId=requestId();
     pendingAction={type:type,anchorId:payload&&payload.anchorId,threadId:payload&&payload.threadId};
     operationError=null;
@@ -106,6 +128,8 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     if(selectionAddButton)selectionAddButton.setAttribute("data-visible","false");
   }
   function openComposer(anchorId,anchorQuote,anchorOccurrence){
+    clearComposerInputs();
+    composerDraftAuthor=rememberedAuthor;
     composerAnchorId=anchorId;
     composerAnchorQuote=anchorQuote||null;
     composerAnchorOccurrence=anchorQuote?(anchorOccurrence||0):null;
@@ -180,6 +204,7 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     closeButton.setAttribute("aria-label","コメント入力を閉じる");
     closeButton.addEventListener("click",function(){
       if(pendingRequestId)return;
+      clearComposerInputs();
       composerAnchorId=null;
       composerAnchorQuote=null;
       composerAnchorOccurrence=null;
@@ -195,15 +220,19 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     authorInput.setAttribute("type","text");
     authorInput.setAttribute("maxlength","80");
     authorInput.setAttribute("placeholder","名前（任意）");
-    authorInput.value=rememberedAuthor;
+    authorInput.value=composerDraftAuthor;
     composer.appendChild(authorInput);
     var bodyInput=element("textarea",undefined,"ark-comment-input");
     bodyInput.setAttribute("maxlength","4000");
     bodyInput.setAttribute("placeholder","コメント");
+    bodyInput.value=composerDraftBody;
     composer.appendChild(bodyInput);
+    authorInput.addEventListener("input",function(){rememberComposerInputs(authorInput.value,bodyInput.value);});
+    bodyInput.addEventListener("input",function(){rememberComposerInputs(authorInput.value,bodyInput.value);});
     var createButton=element("button","コメントする","ark-comment-create");
     createButton.setAttribute("type","button");
     createButton.addEventListener("click",function(){
+      rememberComposerInputs(authorInput.value,bodyInput.value);
       var author=authorInput.value.trim();
       if(author)rememberedAuthor=author;
       if(!bodyInput.value.trim()){
@@ -551,6 +580,7 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
       comments=data.comments;
       operationError=null;
       if(completedAction&&completedAction.type==="ark:diagram-comment-create"){
+        clearComposerInputs();
         composerAnchorId=null;
         composerAnchorQuote=null;
         composerAnchorOccurrence=null;

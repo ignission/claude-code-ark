@@ -242,6 +242,18 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).not.toContain("orphaned");
   });
 
+  it("port 未接続時は pending にせず操作対象へエラーを表示する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain('message:"コメント機能に接続できていません"');
+    expect(injected.indexOf("if(!port){")).toBeLessThan(
+      injected.indexOf("pendingRequestId=requestId()")
+    );
+    expect(injected.indexOf("if(pendingRequestId)return")).toBeLessThan(
+      injected.indexOf("if(!port){")
+    );
+  });
+
   it("空本文は送信前に拒否し、名前を任意化してページ内で記憶する", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
@@ -250,7 +262,27 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain('author||"名無し"');
     expect(injected).toContain('setAttribute("placeholder","名前（任意）")');
     expect(injected).toContain("rememberedAuthor");
-    expect(injected).toContain("authorInput.value=rememberedAuthor");
+    expect(injected).toContain("composerDraftAuthor=rememberedAuthor");
+  });
+
+  it("composer の名前と本文を render 間で退避・復元し、成功時と閉じる時にクリアする", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain('var composerDraftAuthor=""');
+    expect(injected).toContain('var composerDraftBody=""');
+    expect(injected).toContain(
+      "rememberComposerInputs(authorInput.value,bodyInput.value)"
+    );
+    expect(injected).toContain("authorInput.value=composerDraftAuthor");
+    expect(injected).toContain("bodyInput.value=composerDraftBody");
+    expect(injected).toContain("function clearComposerInputs()");
+    expect(injected).toContain(
+      'closeButton.addEventListener("click",function(){\n      if(pendingRequestId)return;\n      clearComposerInputs()'
+    );
+    expect(injected).toContain(
+      'completedAction.type==="ark:diagram-comment-create"){\n        clearComposerInputs()'
+    );
+    expect(injected.match(/clearComposerInputs\(\)/gu)).toHaveLength(4);
   });
 
   it("15 秒の watchdog で pending を解除し、結果受信時は timer を止める", () => {

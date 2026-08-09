@@ -193,6 +193,27 @@ describe("parseDiagramCommentPortRequest", () => {
     });
   });
 
+  it("不明なフィールド名は件数と長さを丸めてエラーへ含める", () => {
+    const longKeys = ["a", "b", "c", "d", "e"].map(
+      prefix => `${prefix}${"x".repeat(80)}`
+    );
+    const input: Record<string, unknown> = {
+      type: "ark:diagram-comments-load",
+      requestId: "req-unknown-keys",
+    };
+    for (const key of longKeys) input[key] = true;
+
+    const parsed = parseDiagramCommentPortRequest(input);
+
+    expect(parsed).toMatchObject({ kind: "invalid" });
+    if (parsed.kind !== "invalid") throw new Error("invalid response expected");
+    expect(parsed.error).toContain(`${longKeys[0].slice(0, 40)}…`);
+    expect(parsed.error).not.toContain(longKeys[0]);
+    expect(parsed.error).not.toContain(longKeys[3].slice(0, 40));
+    expect(parsed.error).toContain("ほか 2 件");
+    expect(parsed.error.length).toBeLessThan(180);
+  });
+
   it.each([
     null,
     [],
