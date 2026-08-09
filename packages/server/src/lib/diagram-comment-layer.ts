@@ -3,18 +3,23 @@ export const DIAGRAM_COMMENT_LAYER_MARKER = "ark-diagram-comment-layer";
 const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
 (function(){
   "use strict";
+  var CARD_WIDTH=300;
+  var CARD_GAP=10;
+  var RAIL_GAP=12;
+  var MIN_CONTENT_WIDTH=480;
   var port=null;
   var comments={version:1,target:"",threads:[]};
-  var selectedAnchorId=null;
   var pendingRequestId=null;
+  var pendingAction=null;
+  var operationError=null;
   var requestSequence=0;
-  var markers=[];
   var root=null;
-  var content=null;
-  var status=null;
-  var authorInput=null;
-  var bodyInput=null;
-  var createButton=null;
+  var anchors=[];
+  var composerAnchorId=null;
+  var selectedAnchorId=null;
+  var narrow=false;
+  var originalBodyPaddingRight="";
+  var originalComputedPaddingRight=0;
 
   function element(tag,text,className){
     var value=document.createElement(tag);
@@ -23,141 +28,274 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     return value;
   }
   function clear(value){while(value.firstChild)value.removeChild(value.firstChild);}
-  function setStatus(message,isError){
-    status.textContent=message||"";
-    status.setAttribute("data-error",isError?"true":"false");
-  }
   function requestId(){requestSequence+=1;return "comment-"+Date.now()+"-"+requestSequence;}
+  function anchorEntry(anchorId){
+    return anchors.filter(function(entry){return entry.anchorId===anchorId;})[0]||null;
+  }
+  function updatePendingControls(){
+    root.querySelectorAll(".ark-comment-create,.ark-comment-resolve,.ark-comment-input").forEach(function(control){
+      control.disabled=Boolean(pendingRequestId);
+    });
+  }
   function send(type,payload){
     if(!port||pendingRequestId)return;
     pendingRequestId=requestId();
+    pendingAction={type:type,anchorId:payload&&payload.anchorId,threadId:payload&&payload.threadId};
+    operationError=null;
     var message={type:type,requestId:pendingRequestId};
     Object.keys(payload||{}).forEach(function(key){message[key]=payload[key];});
-    createButton.disabled=true;
-    setStatus("処理中…",false);
+    updatePendingControls();
     port.postMessage(message);
   }
-  function threadForAnchor(){
-    return comments.threads.filter(function(thread){return thread.anchorId===selectedAnchorId;});
-  }
-  function render(){
-    clear(content);
-    if(!selectedAnchorId){
-      content.appendChild(element("p","本文右側の丸印を選択してください","ark-comment-empty"));
-      return;
-    }
-    var heading=element("h2","コメント: "+selectedAnchorId,"ark-comment-heading");
-    content.appendChild(heading);
-    var threads=threadForAnchor();
-    if(threads.length===0)content.appendChild(element("p","コメントはありません","ark-comment-empty"));
-    threads.forEach(function(thread){
-      var card=element("section",undefined,"ark-comment-thread");
-      card.setAttribute("data-status",thread.status);
-      card.appendChild(element("strong",thread.anchorText,"ark-comment-anchor-text"));
-      card.appendChild(element("span",thread.status==="open"?"未解決":"解決済み","ark-comment-state"));
-      thread.messages.forEach(function(message){
-        var item=element("article",undefined,"ark-comment-message");
-        item.appendChild(element("b",message.author,"ark-comment-author"));
-        item.appendChild(element("time",message.at,"ark-comment-time"));
-        item.appendChild(element("p",message.body,"ark-comment-body"));
-        card.appendChild(item);
-      });
-      if(thread.status==="open"){
-        var resolveButton=element("button","解決する","ark-comment-resolve");
-        resolveButton.setAttribute("type","button");
-        resolveButton.disabled=Boolean(pendingRequestId);
-        resolveButton.addEventListener("click",function(){
-          send("ark:diagram-comment-resolve",{threadId:thread.id});
-        });
-        card.appendChild(resolveButton);
-      }
-      content.appendChild(card);
+  function setActiveAnchor(anchorId){
+    anchors.forEach(function(entry){
+      if(entry.anchorId===anchorId)entry.anchor.classList.add("ark-comment-anchor-active");
+      else entry.anchor.classList.remove("ark-comment-anchor-active");
     });
+    root.querySelectorAll(".ark-comment-card,.ark-comment-composer").forEach(function(card){
+      card.setAttribute("data-active",card.getAttribute("data-anchor-id")===anchorId?"true":"false");
+    });
+  }
+  function cardInteraction(card,anchorId){
+    card.addEventListener("mouseenter",function(){setActiveAnchor(anchorId);});
+    card.addEventListener("mouseleave",function(){setActiveAnchor(selectedAnchorId);});
+    card.addEventListener("click",function(){
+      selectedAnchorId=anchorId;
+      setActiveAnchor(anchorId);
+    });
+  }
+  function addError(container,message){
+    var error=element("p",message||"コメント処理に失敗しました","ark-comment-error");
+    error.setAttribute("role","alert");
+    container.appendChild(error);
+  }
+  function openComposer(anchorId){
+    composerAnchorId=anchorId;
+    selectedAnchorId=anchorId;
+    operationError=null;
+    render();
+    var input=root.querySelector(".ark-comment-composer .ark-comment-input");
+    if(input)input.focus();
+  }
+  function renderThread(thread){
+    var entry=anchorEntry(thread.anchorId);
+    if(!entry)return;
+    var card=element("section",undefined,"ark-comment-card");
+    card.setAttribute("data-anchor-id",thread.anchorId);
+    card.setAttribute("data-thread-id",thread.id);
+    card.setAttribute("data-status",thread.status);
+    card.setAttribute("data-collapsed","true");
+    var openCount=comments.threads.filter(function(candidate){
+      return candidate.anchorId===thread.anchorId&&candidate.status==="open";
+    }).length;
+    var badge=element("button",String(openCount),"ark-comment-badge");
+    badge.setAttribute("type","button");
+    badge.setAttribute("aria-label",openCount>0?"未解決コメント "+openCount+" 件":"解決済みコメント");
+    badge.addEventListener("click",function(event){
+      event.stopPropagation();
+      card.setAttribute("data-collapsed",card.getAttribute("data-collapsed")==="true"?"false":"true");
+      positionCards();
+    });
+    card.appendChild(badge);
+    var content=element("div",undefined,"ark-comment-card-content");
+    content.appendChild(element("strong",thread.anchorText,"ark-comment-anchor-text"));
+    content.appendChild(element("span",thread.status==="open"?"未解決":"解決済み","ark-comment-state"));
+    thread.messages.forEach(function(message){
+      var item=element("article",undefined,"ark-comment-message");
+      item.appendChild(element("b",message.author,"ark-comment-author"));
+      item.appendChild(element("time",message.at,"ark-comment-time"));
+      item.appendChild(element("p",message.body,"ark-comment-body"));
+      content.appendChild(item);
+    });
+    if(thread.status==="open"){
+      var resolveButton=element("button","解決する","ark-comment-resolve");
+      resolveButton.setAttribute("type","button");
+      resolveButton.addEventListener("click",function(event){
+        event.stopPropagation();
+        send("ark:diagram-comment-resolve",{threadId:thread.id});
+      });
+      content.appendChild(resolveButton);
+    }
+    if(operationError&&operationError.type==="ark:diagram-comment-resolve"&&operationError.threadId===thread.id){
+      addError(content,operationError.message);
+    }
+    card.appendChild(content);
+    cardInteraction(card,thread.anchorId);
+    root.appendChild(card);
+  }
+  function renderComposer(){
+    if(!composerAnchorId||!anchorEntry(composerAnchorId))return;
+    var anchorId=composerAnchorId;
     var composer=element("section",undefined,"ark-comment-composer");
-    composer.appendChild(element("h3","新しいコメント"));
-    authorInput=element("input",undefined,"ark-comment-input");
+    composer.setAttribute("data-anchor-id",anchorId);
+    var header=element("div",undefined,"ark-comment-composer-header");
+    header.appendChild(element("strong","新しいコメント"));
+    var closeButton=element("button","×","ark-comment-close");
+    closeButton.setAttribute("type","button");
+    closeButton.setAttribute("aria-label","コメント入力を閉じる");
+    closeButton.addEventListener("click",function(){
+      if(pendingRequestId)return;
+      composerAnchorId=null;
+      operationError=null;
+      render();
+    });
+    header.appendChild(closeButton);
+    composer.appendChild(header);
+    var authorInput=element("input",undefined,"ark-comment-input");
     authorInput.setAttribute("type","text");
     authorInput.setAttribute("maxlength","80");
     authorInput.setAttribute("placeholder","名前");
     composer.appendChild(authorInput);
-    bodyInput=element("textarea",undefined,"ark-comment-input");
+    var bodyInput=element("textarea",undefined,"ark-comment-input");
     bodyInput.setAttribute("maxlength","4000");
     bodyInput.setAttribute("placeholder","コメント");
     composer.appendChild(bodyInput);
-    createButton=element("button","コメントする","ark-comment-create");
+    var createButton=element("button","コメントする","ark-comment-create");
     createButton.setAttribute("type","button");
-    createButton.disabled=Boolean(pendingRequestId);
     createButton.addEventListener("click",function(){
       send("ark:diagram-comment-create",{
-        anchorId:selectedAnchorId,
+        anchorId:anchorId,
         author:authorInput.value,
         body:bodyInput.value
       });
     });
     composer.appendChild(createButton);
-    content.appendChild(composer);
+    if(operationError&&operationError.type==="ark:diagram-comment-create"&&operationError.anchorId===anchorId){
+      addError(composer,operationError.message);
+    }
+    cardInteraction(composer,anchorId);
+    root.appendChild(composer);
   }
-  function positionMarkers(){
-    markers.forEach(function(entry){
+  function updateLayout(){
+    var hasCards=root.querySelectorAll(".ark-comment-card,.ark-comment-composer").length>0;
+    narrow=hasCards&&document.documentElement.clientWidth-CARD_WIDTH-RAIL_GAP*2<MIN_CONTENT_WIDTH;
+    root.setAttribute("data-narrow",narrow?"true":"false");
+    if(hasCards&&!narrow){
+      document.body.style.paddingRight=(originalComputedPaddingRight+CARD_WIDTH+RAIL_GAP*2)+"px";
+    }else{
+      document.body.style.paddingRight=originalBodyPaddingRight;
+    }
+  }
+  function positionAddButtons(){
+    anchors.forEach(function(entry){
+      if(entry.addButton.getAttribute("data-visible")!=="true")return;
       var rect=entry.anchor.getBoundingClientRect();
-      entry.marker.style.top=Math.max(8,rect.top+Math.min(rect.height/2,24))+"px";
-      entry.marker.style.display=rect.bottom<0||rect.top>window.innerHeight?"none":"block";
+      entry.addButton.style.top=Math.max(8,rect.top+Math.min(rect.height/2,20)-14)+"px";
+      entry.addButton.style.left=Math.min(window.innerWidth-36,rect.right+8)+"px";
+      entry.addButton.style.display=rect.bottom<0||rect.top>window.innerHeight?"none":"block";
     });
   }
-  function updateMarkers(){
-    markers.forEach(function(entry){
-      var anchorThreads=comments.threads.filter(function(thread){return thread.anchorId===entry.anchorId;});
-      var openCount=anchorThreads.filter(function(thread){return thread.status==="open";}).length;
-      var state="none";
-      if(openCount>0)state="open";
-      else if(anchorThreads.length>0)state="resolved";
-      entry.marker.setAttribute("data-comment-state",state);
-      entry.marker.setAttribute("data-open-count",String(openCount));
-      var detail=state==="open"?"（未解決 "+openCount+" 件）":state==="resolved"?"（解決済みのみ）":"（コメントなし）";
-      entry.marker.setAttribute("aria-label",entry.anchorId+" のコメントを表示 "+detail);
+  function positionCards(){
+    var entries=[];
+    root.querySelectorAll(".ark-comment-card,.ark-comment-composer").forEach(function(card){
+      var entry=anchorEntry(card.getAttribute("data-anchor-id"));
+      if(!entry)return;
+      entries.push({card:card,anchor:entry.anchor,rect:entry.anchor.getBoundingClientRect()});
     });
+    entries.sort(function(left,right){return left.rect.top-right.rect.top;});
+    var previousBottom=-CARD_GAP;
+    entries.forEach(function(entry){
+      var rect=entry.anchor.getBoundingClientRect();
+      if(rect.bottom<0||rect.top>window.innerHeight){
+        entry.card.style.display="none";
+        return;
+      }
+      entry.card.style.display="block";
+      var anchorTop=Math.max(8,rect.top);
+      var cardTop=Math.max(anchorTop,previousBottom+CARD_GAP);
+      entry.card.style.top=cardTop+"px";
+      previousBottom=cardTop+entry.card.offsetHeight;
+    });
+    positionAddButtons();
   }
-  function buildMarkers(){
+  function refreshLayout(){
+    updateLayout();
+    positionCards();
+  }
+  function render(){
+    root.querySelectorAll(".ark-comment-card,.ark-comment-composer").forEach(function(card){
+      root.removeChild(card);
+    });
+    comments.threads.forEach(renderThread);
+    renderComposer();
+    updatePendingControls();
+    updateLayout();
+    setActiveAnchor(selectedAnchorId);
+    window.requestAnimationFrame(positionCards);
+  }
+  function showAdd(entry){
+    entry.addButton.setAttribute("data-visible","true");
+    positionAddButtons();
+  }
+  function hideAdd(entry,relatedTarget){
+    if(relatedTarget===entry.addButton)return;
+    entry.addButton.setAttribute("data-visible","false");
+    entry.addButton.style.display="none";
+  }
+  function buildAnchors(){
     document.querySelectorAll("[data-ark-id]").forEach(function(anchor){
       var anchorId=anchor.getAttribute("data-ark-id");
       if(!anchorId)return;
-      var marker=element("button","●","ark-comment-marker");
-      marker.setAttribute("type","button");
-      marker.setAttribute("aria-label",anchorId+" のコメントを表示");
-      marker.addEventListener("click",function(){selectedAnchorId=anchorId;render();});
-      document.body.appendChild(marker);
-      markers.push({anchor:anchor,anchorId:anchorId,marker:marker});
+      if(!anchor.hasAttribute("tabindex"))anchor.setAttribute("tabindex","0");
+      var addButton=element("button","＋","ark-comment-add");
+      addButton.setAttribute("type","button");
+      addButton.setAttribute("aria-label",anchorId+" にコメントを追加");
+      addButton.setAttribute("data-visible","false");
+      var entry={anchor:anchor,anchorId:anchorId,addButton:addButton};
+      anchor.addEventListener("mouseenter",function(){
+        showAdd(entry);
+        setActiveAnchor(anchorId);
+      });
+      anchor.addEventListener("mouseleave",function(event){
+        hideAdd(entry,event.relatedTarget);
+        setActiveAnchor(selectedAnchorId);
+      });
+      anchor.addEventListener("focusin",function(){
+        showAdd(entry);
+        setActiveAnchor(anchorId);
+      });
+      anchor.addEventListener("focusout",function(event){hideAdd(entry,event.relatedTarget);});
+      anchor.addEventListener("keydown",function(event){
+        if(event.key!=="Enter")return;
+        event.preventDefault();
+        openComposer(anchorId);
+      });
+      addButton.addEventListener("mouseenter",function(){showAdd(entry);});
+      addButton.addEventListener("mouseleave",function(event){hideAdd(entry,event.relatedTarget);});
+      addButton.addEventListener("click",function(){openComposer(anchorId);});
+      root.appendChild(addButton);
+      anchors.push(entry);
     });
-    updateMarkers();
-    positionMarkers();
   }
   function build(){
     var style=element("style");
-    style.textContent="#ark-comment-root{position:fixed;z-index:2147483000;top:0;right:0;width:320px;height:100vh;overflow:auto;background:#fff;color:#172033;border-left:1px solid #cbd5e1;box-shadow:-4px 0 14px #0002;font:13px/1.5 system-ui,sans-serif;padding:14px;box-sizing:border-box}#ark-comment-root [data-error=true]{color:#b91c1c}.ark-comment-marker{position:fixed;z-index:2147482999;right:328px;border:0;border-radius:999px;background:#64748b;color:#fff;width:24px;height:24px;cursor:pointer;transition:opacity .15s,background .15s}.ark-comment-marker[data-comment-state=none]{opacity:.12}.ark-comment-marker[data-comment-state=none]:hover,.ark-comment-marker[data-comment-state=none]:focus-visible{opacity:.65}.ark-comment-marker[data-comment-state=open]{background:#2563eb;opacity:1}.ark-comment-marker[data-comment-state=resolved]{background:#64748b;opacity:.7}.ark-comment-thread,.ark-comment-composer{border:1px solid #dbe3ef;border-radius:8px;padding:10px;margin:10px 0}.ark-comment-state,.ark-comment-time{display:block;color:#64748b;font-size:11px}.ark-comment-message{border-top:1px solid #e2e8f0;margin-top:8px;padding-top:8px}.ark-comment-input{display:block;width:100%;box-sizing:border-box;margin:6px 0;padding:7px;border:1px solid #94a3b8;border-radius:5px}.ark-comment-create,.ark-comment-resolve{border:0;border-radius:5px;background:#2563eb;color:#fff;padding:7px 10px;cursor:pointer}.ark-comment-create:disabled,.ark-comment-resolve:disabled{opacity:.5;cursor:default}";
+    style.textContent=".ark-comment-layer{position:fixed;z-index:2147483000;inset:0;pointer-events:none;color:#172033;font:13px/1.5 system-ui,sans-serif}.ark-comment-card{position:fixed;right:12px;width:300px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-composer{position:fixed;right:12px;width:300px;box-sizing:border-box;border:1px solid #93c5fd;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-card[data-active=true],.ark-comment-composer[data-active=true]{border-color:#3b82f6;box-shadow:0 3px 16px #2563eb33}.ark-comment-card[data-status=resolved]{background:#f8fafc;border-color:#e2e8f0;color:#64748b;opacity:.78}.ark-comment-badge{display:none}.ark-comment-card-content{display:block}.ark-comment-state,.ark-comment-time{display:block;color:#64748b;font-size:11px}.ark-comment-message{border-top:1px solid #e2e8f0;margin-top:8px;padding-top:8px}.ark-comment-body{white-space:pre-wrap}.ark-comment-input{display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:7px;border:1px solid #94a3b8;border-radius:5px;font:inherit}.ark-comment-create,.ark-comment-resolve{border:0;border-radius:5px;background:#2563eb;color:#fff;padding:7px 10px;cursor:pointer}.ark-comment-create:disabled,.ark-comment-resolve:disabled,.ark-comment-input:disabled{opacity:.5;cursor:default}.ark-comment-error{color:#b91c1c;margin:8px 0 0}.ark-comment-composer-header{display:flex;align-items:center;justify-content:space-between}.ark-comment-close{border:0;background:transparent;color:#64748b;font-size:18px;cursor:pointer}.ark-comment-add{position:fixed;z-index:2147483001;width:28px;height:28px;padding:0;border:1px solid #93c5fd;border-radius:999px;background:#fff;color:#2563eb;box-shadow:0 2px 8px #0002;cursor:pointer;visibility:hidden;pointer-events:none}.ark-comment-add[data-visible=true]{visibility:visible;pointer-events:auto}.ark-comment-anchor-active{background-color:rgba(219,234,254,.45);outline:1px solid rgba(37,99,235,.28);outline-offset:2px}.ark-comment-layer[data-narrow=true] .ark-comment-card{right:8px;width:auto;min-width:34px;padding:0;border:0;background:transparent;box-shadow:none;opacity:1}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=true] .ark-comment-card-content{display:none}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=true] .ark-comment-badge{display:block;width:34px;height:28px;border:0;border-radius:14px;background:#2563eb;color:#fff;box-shadow:0 2px 8px #0003;cursor:pointer}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-status=resolved][data-collapsed=true] .ark-comment-badge{background:#94a3b8}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=false]{width:300px;padding:11px;border:1px solid #cbd5e1;background:#fff;box-shadow:0 3px 14px #0003}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=false] .ark-comment-badge{display:none}";
     document.head.appendChild(style);
-    root=element("aside",undefined);
-    root.setAttribute("id","ark-comment-root");
-    root.setAttribute("aria-label","文書コメント");
-    root.appendChild(element("h1","文書コメント"));
-    status=element("p","接続待ち","ark-comment-status");
-    root.appendChild(status);
-    content=element("div",undefined,"ark-comment-content");
-    root.appendChild(content);
+    root=element("div",undefined,"ark-comment-layer");
+    root.setAttribute("data-narrow","false");
     document.body.appendChild(root);
-    createButton=element("button");
+    originalBodyPaddingRight=document.body.style.paddingRight;
+    originalComputedPaddingRight=parseFloat(window.getComputedStyle(document.body).paddingRight)||0;
+    buildAnchors();
     render();
-    buildMarkers();
   }
   function onPortMessage(event){
     var data=event.data;
     if(!data||data.type!=="ark:diagram-comments-result"||data.requestId!==pendingRequestId)return;
+    var completedAction=pendingAction;
     pendingRequestId=null;
+    pendingAction=null;
     if(data.ok){
       comments=data.comments;
-      updateMarkers();
-      setStatus("最新のコメントを表示しています",false);
-    }else{
-      setStatus(data.error||"コメント処理に失敗しました",true);
+      operationError=null;
+      if(completedAction&&completedAction.type==="ark:diagram-comment-create")composerAnchorId=null;
+    }else if(completedAction&&completedAction.type!=="ark:diagram-comments-load"){
+      operationError={
+        type:completedAction.type,
+        anchorId:completedAction.anchorId,
+        threadId:completedAction.threadId,
+        message:data.error||"コメント処理に失敗しました"
+      };
     }
     render();
   }
@@ -166,9 +304,9 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     event.preventDefault();
     port.postMessage({type:"ark:diagram-pinch",deltaY:event.deltaY});
   },{passive:false});
-  window.addEventListener("scroll",positionMarkers,{passive:true});
-  window.addEventListener("resize",positionMarkers);
-  var observer=new ResizeObserver(positionMarkers);
+  window.addEventListener("scroll",positionCards,{passive:true});
+  window.addEventListener("resize",refreshLayout);
+  var observer=new ResizeObserver(refreshLayout);
   observer.observe(document.documentElement);
   window.addEventListener("message",function(event){
     if(port||!event.data||event.data.type!=="ark:diagram-init"||!event.ports||!event.ports[0])return;
