@@ -97,6 +97,21 @@ asar: true
 # native module / 動的ロード対象は asar 内では動かないため unpack する。
 # better-sqlite3 は SQLite の .node binding を持ち、playwright-core は
 # Chromium バイナリの起動経路で fs アクセスをする。
+# 同梱 claude は asar 内のパスからは spawn できない (ENOTDIR) ため必ず unpack する。
+# main.ts の bootstrap が app.asar.unpacked 配下の
+# `@anthropic-ai/claude-code-<platform>-<arch>/claude` を fail-fast で要求しており
+# (flat / pnpm isolated の両レイアウトを探索)、ここに無いと .app が起動しない。
+# wrapper 側 (@anthropic-ai/claude-code) も同じ経路から解決するので併せて unpack する。
+#
+# `.pnpm` はドット始まりのため minimatch の `**` に一致しない。pnpm の isolated
+# レイアウト (`node_modules/.pnpm/<pkg>@<ver>/node_modules/<pkg>/**`) を確実に拾うには
+# `.pnpm` を literal で書いた pattern も並べる必要がある (実測で確認)。
 asarUnpack:
   - "**/node_modules/better-sqlite3/**"
+  - "**/node_modules/.pnpm/**/node_modules/better-sqlite3/**"
   - "**/node_modules/playwright-core/**"
+  - "**/node_modules/.pnpm/**/node_modules/playwright-core/**"
+  - "**/node_modules/@anthropic-ai/claude-code/**"
+  - "**/node_modules/@anthropic-ai/claude-code-*/**"
+  - "**/node_modules/.pnpm/**/@anthropic-ai/claude-code/**"
+  - "**/node_modules/.pnpm/**/@anthropic-ai/claude-code-*/**"

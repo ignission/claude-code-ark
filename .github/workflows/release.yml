@@ -4,13 +4,11 @@ name: release
 # 別 repo (`<user>/homebrew-tap`) の Caskfile も自動更新する (要 HOMEBREW_TAP_TOKEN)。
 #
 # 前提:
-#   - F4 (build-bin) で tmux/ttyd の artifact が揃っている (現状未生成のため
-#     skip 可能な構造にしている)
-#   - F5 (Claude CLI loader) は未実装。.app 単体で動作する状態を想定
+#   - build-bin で tmux/ttyd の artifact が揃っている
+#   - claude は @anthropic-ai/claude-code の platform package を .app へ同梱する
+#     (runtime installer は廃止済み。main.ts の bootstrap が起動時に fail-fast で
+#     app.asar.unpacked 配下の存在を要求する)
 #   - F0:B-1 確定済み: Apple Developer 登録なし (未署名配布)
-#
-# 実 release tag を打つのは F4-F6 完了後。それまでは手動 (workflow_dispatch) で
-# 動作確認のみ実施する想定。
 
 on:
   workflow_dispatch:
@@ -356,21 +354,63 @@ jobs:
             echo "::${END_TOKEN}::"
           done
 
-      - name: Smoke test bundled SDK claude binary
-        # PR #180 の root cause だった「SDK 付属 claude バイナリが asar 内パスで
+      - name: Smoke test bundled claude binary
+        # PR #180 の root cause だった「同梱 claude バイナリが asar 内パスで
         # spawn ENOTDIR」を防ぐため、`.unpacked` 配下に **実行ファイルとして** 配置
         # されていることを `--version` 起動で確認する。
-        # `asarUnpack` ルール変更・SDK バージョン更新で binary 配置が変わった場合に
-        # ここで fail する想定。Ark .app の target は darwin-arm64 のみのためパスは固定。
+        # `asarUnpack` ルール変更・claude-code バージョン更新で binary 配置が変わった
+        # 場合にここで fail する想定。Ark .app の target は darwin-arm64 のみ。
+        #
+        # 探索は main.ts の bootstrap fail-fast と同じ 2 レイアウト (flat / pnpm
+        # isolated) を対象にする。パスを固定で書くと pnpm のバージョン付き
+        # ディレクトリ名に追従できず、実体があるのに fail する。
         # 外部入力 (github.event.*) は使わず固定文字列のみ参照。
         run: |
           set -euo pipefail
-          BIN="packages/desktop/release/mac-arm64/Ark.app/Contents/Resources/app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude"
-          if [ ! -x "$BIN" ]; then
-            echo "::error::Bundled SDK claude binary missing or not executable: $BIN"
-            ls -la "$(dirname "$BIN")" 2>&1 || echo "(directory not found)"
+          UNPACKED="packages/desktop/release/mac-arm64/Ark.app/Contents/Resources/app.asar.unpacked/node_modules"
+          # arch は arm64 に限定する。darwin-x64 でも Rosetta 経由で --version は
+          # 成功しうるため、緩い pattern だと bootstrap が要求する arm64 が
+          # 欠落した成果物を通してしまう。
+          #
+          # 候補は bootstrap (main.ts) が実際に探索する 2 か所だけに限定する。
+          # 別の依存配下にネストされたコピーを拾うと、bootstrap が見る位置には
+          # 実体が無いのに smoke test だけ成功してしまう。
+          #   1. flat:  <nm>/@anthropic-ai/claude-code-darwin-arm64/claude
+          #   2. pnpm:  <nm>/.pnpm/@anthropic-ai+claude-code-darwin-arm64@*/node_modules/
+          #             @anthropic-ai/claude-code-darwin-arm64/claude
+          #
+          # macOS runner の /bin/bash は 3.2 系なので mapfile (bash 4.0+) は使えない。
+          # while read で配列へ積む。
+          PKG="@anthropic-ai/claude-code-darwin-arm64"
+          CANDIDATES=()
+          FLAT="${UNPACKED}/${PKG}/claude"
+          [ -f "$FLAT" ] && CANDIDATES+=("$FLAT")
+          # .pnpm からの深さは <pkg>@<ver>/node_modules/@scope/<name>/claude = 5。
+          # 固定することで、その下にさらにネストしたコピーを拾わない。
+          while IFS= read -r line; do
+            [ -n "$line" ] && CANDIDATES+=("$line")
+          done < <(find "${UNPACKED}/.pnpm" -mindepth 5 -maxdepth 5 -type f -name claude \
+            -path "*/node_modules/${PKG}/claude" 2>/dev/null | sort)
+          if [ "${#CANDIDATES[@]}" -eq 0 ]; then
+            echo "::error::Bundled claude (darwin-arm64) not found at bootstrap-visible paths under ${UNPACKED}"
+            ls -la "$UNPACKED/@anthropic-ai" 2>&1 || echo "(@anthropic-ai not unpacked)"
+            ls -la "$UNPACKED/.pnpm" 2>&1 | head -20 || echo "(.pnpm not unpacked)"
             exit 1
           fi
+          # flat / pnpm isolated のどちらか一方に 1 件だけあるのが期待レイアウト。
+          # 複数出たら取り違えの可能性があるので明示的に fail させる。
+          if [ "${#CANDIDATES[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly 1 bundled claude, found ${#CANDIDATES[@]}"
+            printf '  %s\n' "${CANDIDATES[@]}"
+            exit 1
+          fi
+          BIN="${CANDIDATES[0]}"
+          if [ ! -x "$BIN" ]; then
+            echo "::error::Bundled claude is not executable: $BIN"
+            ls -la "$(dirname "$BIN")"
+            exit 1
+          fi
+          echo "Found bundled claude: $BIN"
           # `--version` は network / auth 不要で即終了する safe な smoke 用 subcommand。
           # 壊れたバイナリ / dyld loader 問題で hang した場合に job timeout (60min) まで
           # 走らせないよう、background + sleep race で 15s で kill する。
@@ -398,7 +438,7 @@ jobs:
           kill "$KILLER_PID" 2>/dev/null || true
           wait "$KILLER_PID" 2>/dev/null || true
           if [ "$BIN_EXIT" -ne 0 ]; then
-            echo "::error::Bundled SDK claude --version failed or timed out (exit=$BIN_EXIT)"
+            echo "::error::Bundled claude --version failed or timed out (exit=$BIN_EXIT)"
             # bundled binary 出力に workflow command が混入する可能性に備えて escape。
             END_TOKEN="ark-claude-version-$(uuidgen)"
             echo "::stop-commands::${END_TOKEN}"
@@ -411,7 +451,7 @@ jobs:
           VERSION=$(head -1 "$OUT_FILE")
           END_TOKEN="ark-claude-version-ok-$(uuidgen)"
           echo "::stop-commands::${END_TOKEN}"
-          echo "Bundled SDK claude binary OK: ${VERSION}"
+          echo "Bundled claude binary OK: ${VERSION}"
           echo "::${END_TOKEN}::"
 
       - name: Compute artifact metadata

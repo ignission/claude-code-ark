@@ -11,6 +11,7 @@ export default defineConfig({
       "packages/server/src/**/*.test.ts",
       "packages/shared/src/**/*.test.ts",
       "packages/web/src/**/*.test.{ts,tsx}",
+      "packages/desktop/src/**/*.test.ts",
     ],
     environment: "node",
   },
