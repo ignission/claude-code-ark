@@ -18,6 +18,20 @@ export const DIAGRAM_COMMENTS_MAX_AUTHOR_LENGTH = 80;
 export const DIAGRAM_COMMENTS_MAX_BODY_LENGTH = 4000;
 export const DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH = 256;
 
+function normalizeDiagramCommentAnchorText(
+  label: string,
+  anchorId: string
+): string {
+  const normalizedLabel = label
+    .trim()
+    .slice(0, DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH);
+  if (normalizedLabel.length > 0) return normalizedLabel;
+  return (
+    anchorId.trim().slice(0, DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH) ||
+    "コメント対象"
+  );
+}
+
 export type DiagramCommentsPathResult =
   | {
       ok: true;
@@ -496,7 +510,7 @@ export async function createDiagramComment(
         {
           id: `th-${randomUUID()}`,
           anchorId,
-          anchorText: anchor.label,
+          anchorText: normalizeDiagramCommentAnchorText(anchor.label, anchorId),
           status: "open",
           createdAt: at,
           messages: [

@@ -493,6 +493,37 @@ describe("comment mutations", () => {
     }
   });
 
+  it.each([
+    ["空 label", ""],
+    ["空白のみの label", " \t "],
+    [
+      "上限超の label",
+      ` ${"長".repeat(DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH + 1)} `,
+    ],
+  ])(
+    "create は %s を保存可能な anchorText に正規化する",
+    async (_name, label) => {
+      writeDoc("order-flow", [{ id: "s1-p1", label }]);
+
+      const result = await createDiagramComment(
+        worktree,
+        relPath,
+        "s1-p1",
+        "Reviewer",
+        "確認してください"
+      );
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        const anchorText = result.comments.threads[0]?.anchorText ?? "";
+        expect(anchorText.trim().length).toBeGreaterThan(0);
+        expect(anchorText.length).toBeLessThanOrEqual(
+          DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH
+        );
+      }
+    }
+  );
+
   it("client が指定できない値を受け取らず、未知 anchor を拒否する", async () => {
     writeDoc();
 
