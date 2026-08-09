@@ -17,6 +17,11 @@ export type DiagramCommentPortRequest =
       threadId: string;
     };
 
+export type DiagramCommentPortParse =
+  | { kind: "request"; request: DiagramCommentPortRequest }
+  | { kind: "invalid"; requestId: string; error: string }
+  | { kind: "ignore" };
+
 type DiagramCommentsErrorCode = Extract<
   DiagramCommentsResponse,
   { ok: false }
@@ -48,6 +53,10 @@ function hasOnlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
   );
 }
 
+function unknownKeys(value: Record<string, unknown>, keys: string[]): string[] {
+  return Object.keys(value).filter(key => !keys.includes(key));
+}
+
 function validString(value: unknown, maxLength: number): value is string {
   return (
     typeof value === "string" &&
@@ -57,39 +66,77 @@ function validString(value: unknown, maxLength: number): value is string {
   );
 }
 
-/** iframe port の untrusted data を3種類の request だけへ narrow する。 */
+/** iframe port の untrusted data を要求・検証失敗・対象外へ分類する。 */
 export function parseDiagramCommentPortRequest(
   value: unknown
-): DiagramCommentPortRequest | null {
-  if (!isRecord(value) || !validString(value.requestId, 256)) return null;
+): DiagramCommentPortParse {
   if (
-    value.type === "ark:diagram-comments-load" &&
-    hasOnlyKeys(value, ["type", "requestId"])
+    !isRecord(value) ||
+    (value.type !== "ark:diagram-comments-load" &&
+      value.type !== "ark:diagram-comment-create" &&
+      value.type !== "ark:diagram-comment-resolve") ||
+    !validString(value.requestId, 256)
   ) {
-    return { type: value.type, requestId: value.requestId };
+    return { kind: "ignore" };
   }
-  if (
-    value.type === "ark:diagram-comment-create" &&
-    Object.keys(value).every(key =>
-      [
-        "type",
-        "requestId",
-        "anchorId",
-        "anchorQuote",
-        "anchorOccurrence",
-        "author",
-        "body",
-      ].includes(key)
-    ) &&
-    validString(value.anchorId, 256) &&
-    validString(value.author, 80) &&
-    validString(value.body, 4000) &&
-    (value.anchorQuote === undefined || validString(value.anchorQuote, 1000)) &&
-    (value.anchorOccurrence === undefined ||
-      (value.anchorQuote !== undefined &&
-        Number.isSafeInteger(value.anchorOccurrence) &&
-        (value.anchorOccurrence as number) >= 0))
-  ) {
+
+  const invalid = (error: string): DiagramCommentPortParse => ({
+    kind: "invalid",
+    requestId: value.requestId as string,
+    error,
+  });
+
+  if (value.type === "ark:diagram-comments-load") {
+    if (!hasOnlyKeys(value, ["type", "requestId"])) {
+      return invalid(
+        `コメント取得要求の不明なフィールド: ${unknownKeys(value, ["type", "requestId"]).join(", ")}`
+      );
+    }
+    return {
+      kind: "request",
+      request: { type: value.type, requestId: value.requestId },
+    };
+  }
+
+  if (value.type === "ark:diagram-comment-create") {
+    const allowedKeys = [
+      "type",
+      "requestId",
+      "anchorId",
+      "anchorQuote",
+      "anchorOccurrence",
+      "author",
+      "body",
+    ];
+    const unexpected = unknownKeys(value, allowedKeys);
+    if (unexpected.length > 0) {
+      return invalid(
+        `コメント作成要求の不明なフィールド: ${unexpected.join(", ")}`
+      );
+    }
+    if (!validString(value.anchorId, 256)) {
+      return invalid("アンカー ID（anchorId）が不正です");
+    }
+    if (!validString(value.author, 80)) {
+      return invalid("名前（author）が不正です");
+    }
+    if (!validString(value.body, 4000)) {
+      return invalid("コメント本文（body）が不正です。本文を入力してください");
+    }
+    if (
+      value.anchorQuote !== undefined &&
+      !validString(value.anchorQuote, 1000)
+    ) {
+      return invalid("選択本文（anchorQuote）が不正です");
+    }
+    if (
+      value.anchorOccurrence !== undefined &&
+      (value.anchorQuote === undefined ||
+        !Number.isSafeInteger(value.anchorOccurrence) ||
+        (value.anchorOccurrence as number) < 0)
+    ) {
+      return invalid("選択位置（anchorOccurrence）が不正です");
+    }
     const request: Extract<
       DiagramCommentPortRequest,
       { type: "ark:diagram-comment-create" }
@@ -106,20 +153,26 @@ export function parseDiagramCommentPortRequest(
     if (value.anchorOccurrence !== undefined) {
       request.anchorOccurrence = value.anchorOccurrence as number;
     }
-    return request;
+    return { kind: "request", request };
   }
-  if (
-    value.type === "ark:diagram-comment-resolve" &&
-    hasOnlyKeys(value, ["type", "requestId", "threadId"]) &&
-    validString(value.threadId, 256)
-  ) {
-    return {
+
+  const unexpected = unknownKeys(value, ["type", "requestId", "threadId"]);
+  if (unexpected.length > 0) {
+    return invalid(
+      `コメント解決要求の不明なフィールド: ${unexpected.join(", ")}`
+    );
+  }
+  if (!validString(value.threadId, 256)) {
+    return invalid("スレッド ID（threadId）が不正です");
+  }
+  return {
+    kind: "request",
+    request: {
       type: value.type,
       requestId: value.requestId,
       threadId: value.threadId,
-    };
-  }
-  return null;
+    },
+  };
 }
 
 export function toDiagramCommentPortResult(

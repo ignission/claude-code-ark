@@ -62,29 +62,70 @@ describe("parseDiagramCommentPortRequest", () => {
       },
     ],
   ])("valid request %j を narrow する", (input, expected) => {
-    expect(parseDiagramCommentPortRequest(input)).toEqual(expected);
+    expect(parseDiagramCommentPortRequest(input)).toEqual({
+      kind: "request",
+      request: expected,
+    });
   });
 
   it.each([
-    null,
-    [],
-    "request",
-    {},
-    { type: "unknown", requestId: "req" },
-    { type: "ark:diagram-comments-load" },
-    { type: "ark:diagram-comments-load", requestId: 1 },
-    { type: "ark:diagram-comments-load", requestId: "r".repeat(257) },
+    [
+      {
+        type: "ark:diagram-comment-create",
+        requestId: "req-anchor",
+        anchorId: "",
+        author: "Reviewer",
+        body: "本文",
+      },
+      "anchorId",
+    ],
+    [
+      {
+        type: "ark:diagram-comment-create",
+        requestId: "req-author",
+        anchorId: "s1",
+        author: "   ",
+        body: "本文",
+      },
+      "author",
+    ],
+    [
+      {
+        type: "ark:diagram-comment-create",
+        requestId: "req-body",
+        anchorId: "s1",
+        author: "Reviewer",
+        body: "\n\t",
+      },
+      "body",
+    ],
+    [
+      {
+        type: "ark:diagram-comment-create",
+        requestId: "req-quote",
+        anchorId: "s1",
+        anchorQuote: "q".repeat(1001),
+        author: "Reviewer",
+        body: "本文",
+      },
+      "anchorQuote",
+    ],
+  ])("検証失敗 %j を requestId 付き invalid にする", (input, field) => {
+    const parsed = parseDiagramCommentPortRequest(input);
+
+    expect(parsed).toMatchObject({
+      kind: "invalid",
+      requestId: input.requestId,
+    });
+    expect(parsed).toHaveProperty("error", expect.stringMatching(/不正|入力/));
+    expect(parsed).toHaveProperty("error", expect.stringContaining(field));
+  });
+
+  it.each([
     {
       type: "ark:diagram-comments-load",
       requestId: "req",
       anchorId: "extra",
-    },
-    {
-      type: "ark:diagram-comment-create",
-      requestId: "req",
-      anchorId: "",
-      author: "Reviewer",
-      body: "本文",
     },
     {
       type: "ark:diagram-comment-create",
@@ -144,8 +185,27 @@ describe("parseDiagramCommentPortRequest", () => {
       requestId: "req",
       threadId: "t".repeat(257),
     },
-  ])("invalid request %j を拒否する", input => {
-    expect(parseDiagramCommentPortRequest(input)).toBeNull();
+  ])("その他の検証失敗 %j も invalid として返す", input => {
+    expect(parseDiagramCommentPortRequest(input)).toMatchObject({
+      kind: "invalid",
+      requestId: "req",
+      error: expect.any(String),
+    });
+  });
+
+  it.each([
+    null,
+    [],
+    "request",
+    {},
+    { type: "unknown", requestId: "req" },
+    { type: "ark:diagram-pinch", deltaY: 10 },
+    { type: "ark:diagram-submit", model: {}, html: "<html></html>" },
+    { type: "ark:diagram-comments-load" },
+    { type: "ark:diagram-comments-load", requestId: 1 },
+    { type: "ark:diagram-comments-load", requestId: "r".repeat(257) },
+  ])("無関係または requestId 不正の %j を ignore する", input => {
+    expect(parseDiagramCommentPortRequest(input)).toEqual({ kind: "ignore" });
   });
 });
 

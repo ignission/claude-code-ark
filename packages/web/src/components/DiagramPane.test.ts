@@ -1,7 +1,10 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { DiagramCommentPortRequest } from "../lib/diagram-comment-bridge";
+import type {
+  DiagramCommentPortParse,
+  DiagramCommentPortRequest,
+} from "../lib/diagram-comment-bridge";
 import {
   applyDiagramPinchZoom,
   DIAGRAM_ZOOM_MAX,
@@ -12,6 +15,7 @@ import {
   getDiagramZoomPercent,
   handleDiagramPinchMessage,
   readDiagramCommentConnectionState,
+  replyToInvalidDiagramCommentPortRequest,
   resetDiagramZoom,
   stepDiagramZoom,
 } from "./DiagramPane";
@@ -195,6 +199,45 @@ describe("forwardDiagramCommentPortRequest", () => {
     expect(handled).toBe(false);
     expect(deps.reply).not.toHaveBeenCalled();
     expect(deps.onError).not.toHaveBeenCalled();
+  });
+});
+
+describe("replyToInvalidDiagramCommentPortRequest", () => {
+  it("invalid は同じ requestId の BAD_REQUEST を必ず reply する", () => {
+    const reply = vi.fn();
+    const onError = vi.fn();
+    const parsed: DiagramCommentPortParse = {
+      kind: "invalid",
+      requestId: "req-invalid",
+      error: "body が不正です",
+    };
+
+    expect(
+      replyToInvalidDiagramCommentPortRequest(parsed, reply, onError)
+    ).toBe(true);
+    expect(reply).toHaveBeenCalledWith({
+      type: "ark:diagram-comments-result",
+      requestId: "req-invalid",
+      ok: false,
+      code: "BAD_REQUEST",
+      error: "body が不正です",
+    });
+    expect(onError).toHaveBeenCalledWith("body が不正です");
+  });
+
+  it("ignore は reply しない", () => {
+    const reply = vi.fn();
+    const onError = vi.fn();
+
+    expect(
+      replyToInvalidDiagramCommentPortRequest(
+        { kind: "ignore" },
+        reply,
+        onError
+      )
+    ).toBe(false);
+    expect(reply).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
   });
 });
 

@@ -17,6 +17,7 @@ import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 import {
+  type DiagramCommentPortParse,
   type DiagramCommentPortRequest,
   type DiagramCommentPortResult,
   parseDiagramCommentPortRequest,
@@ -273,6 +274,23 @@ export function readDiagramCommentConnectionState(state: {
   readonly current: boolean;
 }): boolean {
   return state.current;
+}
+
+export function replyToInvalidDiagramCommentPortRequest(
+  parsed: DiagramCommentPortParse,
+  reply: (result: DiagramCommentPortResult) => void,
+  onError: (error: string) => void
+): boolean {
+  if (parsed.kind !== "invalid") return false;
+  reply(
+    toDiagramCommentPortResult(parsed.requestId, {
+      ok: false,
+      code: "BAD_REQUEST",
+      error: parsed.error,
+    })
+  );
+  onError(parsed.error);
+  return true;
 }
 
 export async function forwardDiagramCommentPortRequest(
@@ -661,9 +679,29 @@ export function DiagramPane({
           });
           return;
         }
-        const commentRequest = parseDiagramCommentPortRequest(event.data);
-        if (commentRequest === null || !relPath) return;
-        void forwardDiagramCommentPortRequest(commentRequest, {
+        const commentParse = parseDiagramCommentPortRequest(event.data);
+        if (commentParse.kind === "invalid") {
+          replyToInvalidDiagramCommentPortRequest(
+            commentParse,
+            result => channel.port1.postMessage(result),
+            setCommentError
+          );
+          return;
+        }
+        if (commentParse.kind === "ignore") return;
+        if (!relPath) {
+          const error = "図のパスがないためコメントを処理できません";
+          channel.port1.postMessage(
+            toDiagramCommentPortResult(commentParse.request.requestId, {
+              ok: false,
+              code: "BAD_REQUEST",
+              error,
+            })
+          );
+          setCommentError(error);
+          return;
+        }
+        void forwardDiagramCommentPortRequest(commentParse.request, {
           isConnected: readDiagramCommentConnectionState(isConnectedRef),
           sessionId,
           relPath,
