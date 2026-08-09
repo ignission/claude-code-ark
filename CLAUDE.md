@@ -26,8 +26,10 @@ PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`Spli
 
 **情報源分離の原則 (チャット UI v3 の核心)**: 会話内容は 100% JSONL transcript
 から取得する。tmux capture-pane は busy/AWAITING の existence チェック
-(`session:previews` の bridgeStatus) のみに使い、**画面テキストから内容を
-パースすることは全面禁止** (過去 2 回の挑戦の断念原因)。
+(`session:previews` の bridgeStatus) と、AUQ カードの「直前の画面」の
+**verbatim 表示** (`auq-screen-context.ts`。無解釈のスクリーンショット的添付)
+のみに使い、**画面テキストから内容をパースすることは全面禁止**
+(過去 2 回の挑戦の断念原因)。
 
 1. **tmux**: Claude CLIプロセスをdetachedセッションで管理。サーバー再起動後もセッションが永続化される
 2. **JsonlTailManager**: worktree 毎の JSONL を fs.watch + 1 秒 polling で tail し、新規行を購読 socket に push。/clear のファイル切替は onReset → 空 snapshot で追従
@@ -49,6 +51,9 @@ PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`Spli
 - **質問のリアルタイム検出**: セッション起動時に `--settings` で注入する
   PreToolUse hook (`auq-hook-bridge.ts`) が tool_input.questions を
   `/api/internal/auq-event` へ POST → `session:auq` でカード表示
+- **質問の文脈**: AUQ 表示中は直前の会話も JSONL に無いため、hook 受信時の
+  tmux 画面を capture し verbatim でカードに添付する (「直前の画面」表示。
+  解釈・パースはしない)
 - **回答**: カードから tmux キー送出 (単問 single = digit 一発 / multiSelect =
   digit トグル → Right → Review digit 1 / 自由入力 = digit → literal → Enter)
 - **カードを閉じる**: JSONL に解決イベントが出現したとき (`hasResolvedAuqSince`)

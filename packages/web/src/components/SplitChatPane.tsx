@@ -900,6 +900,8 @@ export function SplitChatPane({
   const [hookAuq, setHookAuq] = useState<{
     at: number;
     auq: ActiveAuq;
+    /** hook 受信時の tmux 画面 (verbatim)。直前の文脈は JSONL に無いため */
+    screen: string | null;
   } | null>(null);
 
   useEffect(() => {
@@ -908,6 +910,7 @@ export function SplitChatPane({
       sessionId: string;
       at: number;
       questions: unknown;
+      screen: string | null;
     }) => {
       if (data.sessionId !== session.id) return;
       const questions = parseAuqInput({ questions: data.questions });
@@ -915,6 +918,7 @@ export function SplitChatPane({
       setHookAuq({
         at: data.at,
         auq: { toolUseId: `hook:${data.at}`, questions },
+        screen: typeof data.screen === "string" ? data.screen : null,
       });
     };
     socket.on("session:auq", handler);
@@ -1337,6 +1341,7 @@ export function SplitChatPane({
           socket={socket}
           sessionId={session.id}
           auq={activeAuq}
+          screenContext={hookAuq?.screen ?? null}
           onSendKey={onSendKey}
           onOpenTerminal={
             onToggleTerminal && !showTerminal ? onToggleTerminal : undefined

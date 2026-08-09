@@ -35,6 +35,12 @@ interface AskUserQuestionCardProps {
   socket: TypedSocket | null;
   sessionId: string;
   auq: ActiveAuq;
+  /**
+   * hook 受信時の tmux 画面スナップショット (verbatim・無解釈)。
+   * AUQ 表示中は直前の会話が JSONL に書かれないため、質問の文脈は
+   * これでしか提示できない。null なら非表示
+   */
+  screenContext?: string | null;
   onSendKey: (key: SpecialKey) => void;
   /** desync 時の「ターミナルで確認」(ttyd を開く)。未指定なら文言のみ */
   onOpenTerminal?: () => void;
@@ -54,6 +60,7 @@ export function AskUserQuestionCard({
   socket,
   sessionId,
   auq,
+  screenContext,
   onSendKey,
   onOpenTerminal,
 }: AskUserQuestionCardProps) {
@@ -190,6 +197,8 @@ export function AskUserQuestionCard({
         </div>
       )}
 
+      {screenContext && <ScreenContextBlock text={screenContext} />}
+
       {auq.questions.map((q, qi) => {
         const draft = drafts[qi];
         return (
@@ -297,6 +306,38 @@ export function AskUserQuestionCard({
             </button>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 質問直前のターミナル画面の verbatim 表示。
+ * 最新行 (末尾) が文脈として最重要なので末尾へスクロールする。
+ * カードを保ったまま次の質問へ差し替わる場合があるので text にも追従する
+ */
+function ScreenContextBlock({ text }: { text: string }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // text は effect 内で読まないが、本文が差し替わった後に最新行へスクロール
+  // し直すための依存。外すとカードを保ったまま次の質問へ変わったときに
+  // 古いスクロール位置へ留まる
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 上記のとおり意図的
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [text]);
+  return (
+    <div className="mb-2">
+      <div className="text-[11px] text-muted-foreground mb-1">
+        直前の画面（ターミナルの表示そのまま）
+      </div>
+      <div
+        ref={scrollRef}
+        className="max-h-36 overflow-y-auto rounded-md border border-border bg-background/60 px-2.5 py-1.5"
+      >
+        <pre className="text-[11px] font-mono whitespace-pre-wrap break-words text-muted-foreground leading-[1.55]">
+          {text}
+        </pre>
       </div>
     </div>
   );
