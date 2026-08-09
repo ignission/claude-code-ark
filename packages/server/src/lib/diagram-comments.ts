@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import type {
   DiagramCommentMessage,
@@ -5,7 +6,8 @@ import type {
   DiagramCommentsResponse,
   DiagramCommentThread,
 } from "@ark/shared";
-import { resolveDiagramPath } from "./diagram-path.js";
+import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
+import { errnoCode, errnoMessage } from "./errors.js";
 
 export const DIAGRAM_COMMENTS_MAX_BYTES = 1024 * 1024;
 export const DIAGRAM_COMMENTS_MAX_THREADS = 1000;
@@ -29,6 +31,19 @@ export type DiagramCommentsPathResult =
 
 function invalid(error: string): DiagramCommentsResponse {
   return { ok: false, code: "INVALID_SIDECAR", error };
+}
+
+function ioError(prefix: string, error: unknown): DiagramCommentsResponse {
+  const code = errnoCode(error);
+  return {
+    ok: false,
+    code: "IO_ERROR",
+    error: `${prefix} (${code}): ${errnoMessage(error)}`,
+  };
+}
+
+export function emptyDiagramComments(target: string): DiagramCommentsFile {
+  return { version: 1, target, threads: [] };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -227,4 +242,83 @@ export function parseDiagramComments(
     threads,
   };
   return { ok: true, comments };
+}
+
+/** ENOENT だけを空として扱い、実体検証済み sidecar を読む。 */
+export async function readDiagramCommentsFile(
+  worktreeReal: string,
+  relPath: string
+): Promise<DiagramCommentsResponse> {
+  const resolved = resolveDiagramCommentsPath(worktreeReal, relPath);
+  if (!resolved.ok) return resolved;
+
+  let handle: fs.promises.FileHandle;
+  try {
+    handle = await fs.promises.open(
+      resolved.commentsAbsPath,
+      fs.constants.O_RDONLY
+    );
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") {
+      return { ok: true, comments: emptyDiagramComments(resolved.target) };
+    }
+    return ioError("コメント sidecar を開けません", error);
+  }
+
+  let result: DiagramCommentsResponse;
+  try {
+    const descriptorStat = await handle.stat();
+    if (!descriptorStat.isFile()) {
+      result = {
+        ok: false,
+        code: "FORBIDDEN",
+        error: "コメント sidecar は通常ファイルである必要があります",
+      };
+    } else {
+      const realPath = await fs.promises.realpath(resolved.commentsAbsPath);
+      const realStat = await fs.promises.stat(realPath);
+      const diagramsDir = path.join(worktreeReal, DIAGRAM_DIR);
+      if (
+        descriptorStat.ino !== realStat.ino ||
+        descriptorStat.dev !== realStat.dev
+      ) {
+        result = {
+          ok: false,
+          code: "FORBIDDEN",
+          error: "コメント sidecar の実体を検証できません",
+        };
+      } else if (!realStat.isFile()) {
+        result = {
+          ok: false,
+          code: "FORBIDDEN",
+          error: "コメント sidecar は通常ファイルである必要があります",
+        };
+      } else if (
+        realPath !== diagramsDir &&
+        !realPath.startsWith(diagramsDir + path.sep)
+      ) {
+        result = {
+          ok: false,
+          code: "FORBIDDEN",
+          error: `コメント sidecar の実体が worktree の ${DIAGRAM_DIR} から出ています`,
+        };
+      } else if (descriptorStat.size > DIAGRAM_COMMENTS_MAX_BYTES) {
+        result = invalid(
+          "コメント sidecar のサイズが大きすぎます（上限 1MiB）"
+        );
+      } else {
+        const raw = await handle.readFile("utf8");
+        result = parseDiagramComments(raw, resolved.target);
+      }
+    }
+  } catch (error) {
+    result = ioError("コメント sidecar の読み込みに失敗しました", error);
+  }
+
+  try {
+    await handle.close();
+  } catch (error) {
+    return ioError("コメント sidecar を close できません", error);
+  }
+  return result;
 }
