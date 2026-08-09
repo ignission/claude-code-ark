@@ -31,8 +31,14 @@ export function buildAuqScreenContext(
   opts: { maxLines?: number; maxChars?: number } = {}
 ): string | null {
   if (raw === null) return null;
-  const maxLines = opts.maxLines ?? DEFAULT_MAX_LINES;
-  const maxChars = opts.maxChars ?? DEFAULT_MAX_CHARS;
+  // 上限は有限な正整数へ丸める。0 や負値を通すと末尾切り出しの
+  // `slice(-0)` が全文を返し、サイズ上限の不変条件が破れる
+  const clamp = (value: number | undefined, fallback: number): number =>
+    typeof value === "number" && Number.isFinite(value) && value >= 1
+      ? Math.floor(value)
+      : fallback;
+  const maxLines = clamp(opts.maxLines, DEFAULT_MAX_LINES);
+  const maxChars = clamp(opts.maxChars, DEFAULT_MAX_CHARS);
 
   const lines = raw.split("\n");
   let end = lines.length;

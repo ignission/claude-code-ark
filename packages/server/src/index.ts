@@ -668,7 +668,9 @@ export async function startServer(
       body.tool_input.questions,
       screen
     );
-    io.emit("session:auq", {
+    // screen は端末の生画面なので、コマンド出力・パス・token 等を含みうる。
+    // 全 socket への broadcast はやめ、当該セッションの購読者だけへ送る
+    io.to(sessionRoom(session.id)).emit("session:auq", {
       sessionId: session.id,
       at: entry.at,
       questions: entry.questions,
@@ -1697,6 +1699,12 @@ export async function startServer(
   // (Socket.IO room) にブロードキャストする。
   const BRIDGE_ROOM = "bridge:subscribers";
   const GRID_ROOM = "grid:subscribers";
+  /**
+   * セッション単位の配信先。JSONL を購読しているクライアント
+   * （= そのセッションの会話ビューを開いている画面）だけが入る。
+   * 端末画面のような機微を含む配信を全 socket へ broadcast しないため。
+   */
+  const sessionRoom = (sessionId: string) => `session:${sessionId}`;
 
   // 直近のブロードキャスト結果。新規 subscribe 時に即時応答として送る
   // (subscribe ハンドラ内で hostMetrics.sample() を再実行すると、内部の prev*
@@ -2466,6 +2474,9 @@ export async function startServer(
           lines: snapshot.map(l => l.raw),
         });
         jsonlUnsubscribers.set(sessionId, unsubscribe);
+        // このセッションの会話ビューを開いている socket として登録する
+        // （session:auq の配信先。broadcast による端末画面の漏洩を防ぐ）
+        socket.join(sessionRoom(sessionId));
       } catch (err) {
         console.error("[JsonlTail] Subscribe error:", getErrorMessage(err));
         return;
@@ -2492,6 +2503,7 @@ export async function startServer(
         unsub();
         jsonlUnsubscribers.delete(sessionId);
       }
+      socket.leave(sessionRoom(sessionId));
     });
 
     // ===== Slash command 候補列挙 =====

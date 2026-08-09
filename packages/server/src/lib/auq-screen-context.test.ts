@@ -19,6 +19,18 @@ describe("buildAuqScreenContext", () => {
     expect(buildAuqScreenContext("   \n\n  \t ")).toBeNull();
   });
 
+  it("不正な上限指定でもサイズ上限の不変条件を破らない", () => {
+    // maxChars: 0 は `slice(-0)` が全文を返すため、既定値へ丸める
+    const raw = Array.from({ length: 200 }, (_, i) => `行${i}`).join("\n");
+
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const out = buildAuqScreenContext(raw, { maxChars: bad, maxLines: bad });
+      expect(out).not.toBeNull();
+      expect((out as string).length).toBeLessThan(raw.length);
+      expect((out as string).split("\n").length).toBeLessThanOrEqual(40);
+    }
+  });
+
   it("末尾の空行は除去するが、内容は verbatim で保持する", () => {
     const raw = "● 認証方式は2案あります。\n  - JWT\n  - セッション\n\n\n";
     expect(buildAuqScreenContext(raw)).toBe(

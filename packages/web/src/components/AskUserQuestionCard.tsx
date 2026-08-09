@@ -313,14 +313,15 @@ export function AskUserQuestionCard({
 
 /**
  * 質問直前のターミナル画面の verbatim 表示。
- * 最新行 (末尾) が文脈として最重要なのでマウント時に末尾へスクロールする
+ * 最新行 (末尾) が文脈として最重要なので末尾へスクロールする。
+ * カードを保ったまま次の質問へ差し替わる場合があるので text にも追従する
  */
 function ScreenContextBlock({ text }: { text: string }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, []);
+  }, [text]);
   return (
     <div className="mb-2">
       <div className="text-[11px] text-muted-foreground mb-1">
