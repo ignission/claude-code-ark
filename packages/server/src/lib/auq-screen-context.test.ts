@@ -71,9 +71,9 @@ describe("buildAuqScreenContext", () => {
       maxChars: 350,
     });
     expect(result).not.toBeNull();
-    expect(result!.length).toBeLessThanOrEqual(350);
+    expect(result?.length).toBeLessThanOrEqual(350);
     // 末尾 (最新) 側が残る
-    expect(result!.endsWith("9".repeat(100))).toBe(true);
+    expect(result?.endsWith("9".repeat(100))).toBe(true);
     // 行の途中で切らない (行単位で落とす)
     expect(result).toBe(lines.slice(7).join("\n"));
   });

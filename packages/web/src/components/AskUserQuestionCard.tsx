@@ -318,6 +318,10 @@ export function AskUserQuestionCard({
  */
 function ScreenContextBlock({ text }: { text: string }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  // text は effect 内で読まないが、本文が差し替わった後に最新行へスクロール
+  // し直すための依存。外すとカードを保ったまま次の質問へ変わったときに
+  // 古いスクロール位置へ留まる
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 上記のとおり意図的
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;

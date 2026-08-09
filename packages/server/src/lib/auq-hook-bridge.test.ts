@@ -28,8 +28,8 @@ describe("AuqHookBridge - screen スナップショット", () => {
 
     const pending = bridge.getPending("s1");
     expect(pending).not.toBeNull();
-    expect(pending!.questions).toBe(questions);
-    expect(pending!.screen).toBe("直前の行1\n直前の行2");
+    expect(pending?.questions).toBe(questions);
+    expect(pending?.screen).toBe("直前の行1\n直前の行2");
   });
 
   it("screen が null (capture 失敗) でも保持できる", () => {
