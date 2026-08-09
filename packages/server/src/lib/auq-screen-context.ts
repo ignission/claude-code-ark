@@ -51,6 +51,20 @@ export function buildAuqScreenContext(
     kept = kept.slice(1);
   }
   const text = kept.join("\n");
-  if (text.length > maxChars) return text.slice(-maxChars);
+  if (text.length > maxChars) return sliceTailByCodePoint(text, maxChars);
   return text;
+}
+
+/**
+ * 末尾から最大 maxChars コード単位を、コードポイント境界を保って切り出す。
+ * 素の `slice(-n)` は境界にサロゲートペア（絵文字等）があると片割れを残し、
+ * 壊れた文字を作る。verbatim で渡すという不変条件に反するため使わない。
+ */
+function sliceTailByCodePoint(text: string, maxChars: number): string {
+  let start = text.length - maxChars;
+  // 下位サロゲートから始まってしまう場合は 1 つ手前（上位サロゲート）へ寄せず、
+  // 1 つ後ろへずらして壊れた片割れを落とす
+  const code = text.charCodeAt(start);
+  if (code >= 0xdc00 && code <= 0xdfff) start += 1;
+  return text.slice(start);
 }

@@ -31,6 +31,21 @@ describe("buildAuqScreenContext", () => {
     }
   });
 
+  it("文字数上限の切り詰めでサロゲートペアを分断しない", () => {
+    // 素の slice(-n) は境界の絵文字を片割れにして壊れた文字を作る
+    const emoji = "🍎"; // U+1F34E = サロゲートペア（2 コード単位）
+    const raw = emoji.repeat(50);
+
+    for (let maxChars = 10; maxChars <= 21; maxChars += 1) {
+      const out = buildAuqScreenContext(raw, { maxChars });
+      expect(out).not.toBeNull();
+      const text = out as string;
+      expect(text.length).toBeLessThanOrEqual(maxChars);
+      // 孤立サロゲートが残っていない = 全コードポイントが元の絵文字
+      expect([...text].every(ch => ch === emoji)).toBe(true);
+    }
+  });
+
   it("末尾の空行は除去するが、内容は verbatim で保持する", () => {
     const raw = "● 認証方式は2案あります。\n  - JWT\n  - セッション\n\n\n";
     expect(buildAuqScreenContext(raw)).toBe(
