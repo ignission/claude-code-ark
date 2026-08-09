@@ -109,6 +109,14 @@ jobs:
           name: ark-bin-macos-arm64
           path: packages/desktop/build-assets
 
+      # actions/upload-artifact は zip 化の際に file mode を保持しないため、
+      # download 後の tmux / ttyd は 644 (実行ビット無し) で展開される。
+      # electron-builder はそのまま .app へ同梱するので、配布物から
+      # bundled tmux/ttyd を exec できなくなる。ここで復元する。
+      # 参照: https://github.com/actions/upload-artifact#permission-loss
+      - name: Restore executable bit on bundled binaries
+        run: chmod +x packages/desktop/build-assets/bin/tmux packages/desktop/build-assets/bin/ttyd
+
       # 同梱バイナリが揃っていることを electron-builder 起動前に assert する
       # (build-bin の verify step を二重チェック)。
       - name: Verify bundled binaries
