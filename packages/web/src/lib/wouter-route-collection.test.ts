@@ -35,8 +35,11 @@ function collectSourceFiles(directory: string, found: string[] = []): string[] {
 
 describe("wouter パッチの撤去", () => {
   it("削除した global を読むコードが残っていない", () => {
+    // 除外はこのファイル自身だけ。basename 一致にすると、別パッケージに
+    // 同名ファイルが増えたときその中の参照を見逃す
+    const thisFile = fileURLToPath(import.meta.url);
     const sources = collectSourceFiles(PACKAGES_DIR).filter(
-      file => !file.endsWith("wouter-route-collection.test.ts")
+      file => file !== thisFile
     );
     expect(sources.length).toBeGreaterThan(50); // 走査対象を取り違えていない
 
