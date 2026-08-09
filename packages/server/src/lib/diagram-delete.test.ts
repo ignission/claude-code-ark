@@ -174,46 +174,46 @@ describe("handleDiagramDeleteRequest tracked 再確認", () => {
   it.each([
     { expectedTracked: true, currentTracked: true },
     { expectedTracked: false, currentTracked: false },
-  ])("expected=$expectedTracked/current=$currentTracked なら削除へ進む", async ({
-    expectedTracked,
-    currentTracked,
-  }) => {
-    const deps = makeRequestDeps();
-    vi.mocked(deps.isDiagramTracked).mockResolvedValue(currentTracked);
+  ])(
+    "expected=$expectedTracked/current=$currentTracked なら削除へ進む",
+    async ({ expectedTracked, currentTracked }) => {
+      const deps = makeRequestDeps();
+      vi.mocked(deps.isDiagramTracked).mockResolvedValue(currentTracked);
 
-    await expect(
-      handleDiagramDeleteRequest(deps, {
-        sessionId: "session-1",
+      await expect(
+        handleDiagramDeleteRequest(deps, {
+          sessionId: "session-1",
+          relPath: ".claude/diagrams/a.diagram.html",
+          expectedTracked,
+        })
+      ).resolves.toEqual({
+        ok: true,
         relPath: ".claude/diagrams/a.diagram.html",
-        expectedTracked,
-      })
-    ).resolves.toEqual({
-      ok: true,
-      relPath: ".claude/diagrams/a.diagram.html",
-      tracked: currentTracked,
-    });
-    expect(deps.deleteDiagramFile).toHaveBeenCalledOnce();
-  });
+        tracked: currentTracked,
+      });
+      expect(deps.deleteDiagramFile).toHaveBeenCalledOnce();
+    }
+  );
 
   it.each([
     { expectedTracked: true, currentTracked: false },
     { expectedTracked: false, currentTracked: true },
-  ])("expected=$expectedTracked/current=$currentTracked の不一致は CONFLICT で削除しない", async ({
-    expectedTracked,
-    currentTracked,
-  }) => {
-    const deps = makeRequestDeps();
-    vi.mocked(deps.isDiagramTracked).mockResolvedValue(currentTracked);
+  ])(
+    "expected=$expectedTracked/current=$currentTracked の不一致は CONFLICT で削除しない",
+    async ({ expectedTracked, currentTracked }) => {
+      const deps = makeRequestDeps();
+      vi.mocked(deps.isDiagramTracked).mockResolvedValue(currentTracked);
 
-    await expect(
-      handleDiagramDeleteRequest(deps, {
-        sessionId: "session-1",
-        relPath: ".claude/diagrams/a.diagram.html",
-        expectedTracked,
-      })
-    ).resolves.toMatchObject({ ok: false, code: "CONFLICT" });
-    expect(deps.deleteDiagramFile).not.toHaveBeenCalled();
-  });
+      await expect(
+        handleDiagramDeleteRequest(deps, {
+          sessionId: "session-1",
+          relPath: ".claude/diagrams/a.diagram.html",
+          expectedTracked,
+        })
+      ).resolves.toMatchObject({ ok: false, code: "CONFLICT" });
+      expect(deps.deleteDiagramFile).not.toHaveBeenCalled();
+    }
+  );
 
   it("git error は unlink 前の IO_ERROR にする", async () => {
     const deps = makeRequestDeps();
@@ -383,21 +383,20 @@ describe("diagram:delete ACK handler", () => {
     expect(requestHandler).toHaveBeenCalledOnce();
   });
 
-  it.each([
-    undefined,
-    null,
-    "callback",
-  ])("callback が関数でない場合 (%j) は core を呼ばず安全に無視する", async callback => {
-    const requestHandler = vi.fn();
-    const handler = createDiagramDeleteSocketHandler(
-      makeRequestDeps(),
-      requestHandler
-    );
+  it.each([undefined, null, "callback"])(
+    "callback が関数でない場合 (%j) は core を呼ばず安全に無視する",
+    async callback => {
+      const requestHandler = vi.fn();
+      const handler = createDiagramDeleteSocketHandler(
+        makeRequestDeps(),
+        requestHandler
+      );
 
-    expect(() => handler({}, callback)).not.toThrow();
-    await Promise.resolve();
-    expect(requestHandler).not.toHaveBeenCalled();
-  });
+      expect(() => handler({}, callback)).not.toThrow();
+      await Promise.resolve();
+      expect(requestHandler).not.toHaveBeenCalled();
+    }
+  );
 
   it("ACK callback が throw しても handler から伝播しない", async () => {
     const handler = createDiagramDeleteSocketHandler(
@@ -482,19 +481,22 @@ describe("deleteDiagramFile path boundary", () => {
     "/tmp/outside.diagram.html",
     "docs/diagrams/legacy.diagram.html",
     ".claude/other/outside.diagram.html",
-  ])("request core は不正 path %j を Git 判定より前に FORBIDDEN にする", async relPath => {
-    const deps = makeRequestDeps();
+  ])(
+    "request core は不正 path %j を Git 判定より前に FORBIDDEN にする",
+    async relPath => {
+      const deps = makeRequestDeps();
 
-    await expect(
-      handleDiagramDeleteRequest(deps, {
-        sessionId: "session-1",
-        relPath,
-        expectedTracked: true,
-      })
-    ).resolves.toMatchObject({ ok: false, code: "FORBIDDEN" });
-    expect(deps.isDiagramTracked).not.toHaveBeenCalled();
-    expect(deps.deleteDiagramFile).not.toHaveBeenCalled();
-  });
+      await expect(
+        handleDiagramDeleteRequest(deps, {
+          sessionId: "session-1",
+          relPath,
+          expectedTracked: true,
+        })
+      ).resolves.toMatchObject({ ok: false, code: "FORBIDDEN" });
+      expect(deps.isDiagramTracked).not.toHaveBeenCalled();
+      expect(deps.deleteDiagramFile).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe("deleteDiagramFile symlink と file 種別", () => {
@@ -523,23 +525,23 @@ describe("deleteDiagramFile symlink と file 種別", () => {
     expect(fs.readFileSync(target, "utf8")).toBe("target");
   });
 
-  it.each([
-    "outside",
-    "inside",
-  ] as const)("最終要素が %s 向き symlink なら link と target を残して FORBIDDEN にする", async direction => {
-    const { worktree, diagramsDir, outside } = makeDeleteFixture();
-    const inside = path.join(diagramsDir, "target.diagram.html");
-    const link = path.join(diagramsDir, "link.diagram.html");
-    fs.writeFileSync(inside, "inside");
-    const target = direction === "outside" ? outside : inside;
-    fs.symlinkSync(target, link);
+  it.each(["outside", "inside"] as const)(
+    "最終要素が %s 向き symlink なら link と target を残して FORBIDDEN にする",
+    async direction => {
+      const { worktree, diagramsDir, outside } = makeDeleteFixture();
+      const inside = path.join(diagramsDir, "target.diagram.html");
+      const link = path.join(diagramsDir, "link.diagram.html");
+      fs.writeFileSync(inside, "inside");
+      const target = direction === "outside" ? outside : inside;
+      fs.symlinkSync(target, link);
 
-    await expect(
-      deleteDiagramFile(worktree, ".claude/diagrams/link.diagram.html")
-    ).resolves.toMatchObject({ ok: false, code: "FORBIDDEN" });
-    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
-    expect(fs.readFileSync(target, "utf8")).toBe(direction);
-  });
+      await expect(
+        deleteDiagramFile(worktree, ".claude/diagrams/link.diagram.html")
+      ).resolves.toMatchObject({ ok: false, code: "FORBIDDEN" });
+      expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(target, "utf8")).toBe(direction);
+    }
+  );
 
   it("外向き ancestor symlink を辿らず外部 target を残す", async () => {
     const { worktree, diagramsDir } = makeDeleteFixture();
@@ -636,31 +638,31 @@ describe("deleteDiagramFile verified unlink", () => {
     expect(fs.readFileSync(neighbor, "utf8")).toBe("neighbor");
   });
 
-  it.each([
-    "EACCES",
-    "EPERM",
-  ])("%s を FORBIDDEN にして unlink しない", async code => {
-    const { worktree, diagramsDir } = makeDeleteFixture();
-    const target = path.join(diagramsDir, "denied.diagram.html");
-    fs.writeFileSync(target, "target");
-    const unlinkSync = vi.fn();
+  it.each(["EACCES", "EPERM"])(
+    "%s を FORBIDDEN にして unlink しない",
+    async code => {
+      const { worktree, diagramsDir } = makeDeleteFixture();
+      const target = path.join(diagramsDir, "denied.diagram.html");
+      fs.writeFileSync(target, "target");
+      const unlinkSync = vi.fn();
 
-    await expect(
-      deleteDiagramFile(worktree, ".claude/diagrams/denied.diagram.html", {
-        fs: {
-          open: async () => {
-            throw Object.assign(new Error("denied"), { code });
+      await expect(
+        deleteDiagramFile(worktree, ".claude/diagrams/denied.diagram.html", {
+          fs: {
+            open: async () => {
+              throw Object.assign(new Error("denied"), { code });
+            },
+            realpath: fs.promises.realpath,
+            stat: fs.promises.stat,
+            lstatSync: fs.lstatSync,
+            unlinkSync,
           },
-          realpath: fs.promises.realpath,
-          stat: fs.promises.stat,
-          lstatSync: fs.lstatSync,
-          unlinkSync,
-        },
-      })
-    ).resolves.toMatchObject({ ok: false, code: "FORBIDDEN" });
-    expect(unlinkSync).not.toHaveBeenCalled();
-    expect(fs.readFileSync(target, "utf8")).toBe("target");
-  });
+        })
+      ).resolves.toMatchObject({ ok: false, code: "FORBIDDEN" });
+      expect(unlinkSync).not.toHaveBeenCalled();
+      expect(fs.readFileSync(target, "utf8")).toBe("target");
+    }
+  );
 
   it("その他 I/O error は errno を含む IO_ERROR にする", async () => {
     const { worktree, diagramsDir } = makeDeleteFixture();
@@ -856,24 +858,24 @@ describe("tracked/untracked unlink integration", () => {
     });
   });
 
-  it.each([
-    ":(glob)*.diagram.html",
-    ":(top)victim.diagram.html",
-  ])("pathspec magic %s を通常ファイル名として扱う", async relPath => {
-    const { worktree } = makeDeleteFixture();
-    initializeGitWorktree(worktree);
-    const rootTracked = path.join(worktree, "victim.diagram.html");
-    fs.writeFileSync(rootTracked, "tracked");
-    execFileSync("git", ["-C", worktree, "add", "--", "victim.diagram.html"]);
+  it.each([":(glob)*.diagram.html", ":(top)victim.diagram.html"])(
+    "pathspec magic %s を通常ファイル名として扱う",
+    async relPath => {
+      const { worktree } = makeDeleteFixture();
+      initializeGitWorktree(worktree);
+      const rootTracked = path.join(worktree, "victim.diagram.html");
+      fs.writeFileSync(rootTracked, "tracked");
+      execFileSync("git", ["-C", worktree, "add", "--", "victim.diagram.html"]);
 
-    await expect(
-      handleDiagramDeleteRequest(realDeps(worktree), {
-        sessionId: "session-1",
-        relPath,
-        expectedTracked: false,
-      })
-    ).resolves.toMatchObject({ ok: false, code: "NOT_FOUND" });
+      await expect(
+        handleDiagramDeleteRequest(realDeps(worktree), {
+          sessionId: "session-1",
+          relPath,
+          expectedTracked: false,
+        })
+      ).resolves.toMatchObject({ ok: false, code: "NOT_FOUND" });
 
-    expect(fs.readFileSync(rootTracked, "utf8")).toBe("tracked");
-  });
+      expect(fs.readFileSync(rootTracked, "utf8")).toBe("tracked");
+    }
+  );
 });

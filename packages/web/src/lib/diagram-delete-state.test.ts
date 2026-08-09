@@ -22,21 +22,21 @@ describe("diagram delete client state", () => {
     ).toBe(false);
   });
 
-  it.each([
-    "CONFLICT",
-    "NOT_FOUND",
-  ] as const)("%s は削除済みと決めつけず error と一覧更新を返す", code => {
-    const response: DiagramDeleteResponse = {
-      ok: false,
-      code,
-      error: `${code} error`,
-    };
+  it.each(["CONFLICT", "NOT_FOUND"] as const)(
+    "%s は削除済みと決めつけず error と一覧更新を返す",
+    code => {
+      const response: DiagramDeleteResponse = {
+        ok: false,
+        code,
+        error: `${code} error`,
+      };
 
-    expect(applyDiagramDeleteResponse(response)).toEqual({
-      message: `${code} error`,
-      refreshList: true,
-    });
-  });
+      expect(applyDiagramDeleteResponse(response)).toEqual({
+        message: `${code} error`,
+        refreshList: true,
+      });
+    }
+  );
 
   it("success は通知経由の更新を待ち、warning を区別して表示する", () => {
     expect(

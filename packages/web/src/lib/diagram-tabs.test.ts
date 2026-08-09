@@ -133,29 +133,29 @@ describe("setCurrentDiagramTab", () => {
   it.each([
     { active: 2, expected: 2, label: "file" },
     { active: 4, expected: 3, label: "html" },
-  ])("複数 diagram を畳んでも active $label を id で追跡する", ({
-    active,
-    expected,
-  }) => {
-    const tabs = [
-      terminal,
-      diagram("a", "a.diagram.html"),
-      file("active-file"),
-      diagram("b", "b.diagram.html"),
-      html("active-html"),
-    ];
+  ])(
+    "複数 diagram を畳んでも active $label を id で追跡する",
+    ({ active, expected }) => {
+      const tabs = [
+        terminal,
+        diagram("a", "a.diagram.html"),
+        file("active-file"),
+        diagram("b", "b.diagram.html"),
+        html("active-html"),
+      ];
 
-    const result = setCurrentDiagramTab(
-      tabs,
-      active,
-      "/wt",
-      "c.diagram.html",
-      "current"
-    );
+      const result = setCurrentDiagramTab(
+        tabs,
+        active,
+        "/wt",
+        "c.diagram.html",
+        "current"
+      );
 
-    expect(result.activeIndex).toBe(expected);
-    expect(result.tabs[result.activeIndex]?.id).toBe(tabs[active]?.id);
-  });
+      expect(result.activeIndex).toBe(expected);
+      expect(result.tabs[result.activeIndex]?.id).toBe(tabs[active]?.id);
+    }
+  );
 
   it("active が diagram を指していた場合だけ terminal へ戻す", () => {
     const result = setCurrentDiagramTab(

@@ -414,13 +414,16 @@ describe("TmuxManager.createSession - options互換", () => {
     ["BS (\\x08)", "/tmp/x\x08claude"],
     ["ESC (\\x1B)", "/tmp/x\x1bclaude"],
     ["DEL (\\x7F)", "/tmp/x\x7fclaude"],
-  ])("resolveClaudePath が %s を含むパスを返した場合は throw (control char 一括拒否)", async (_label, evilPath) => {
-    vi.mocked(resolveClaudePath).mockReturnValueOnce(evilPath);
+  ])(
+    "resolveClaudePath が %s を含むパスを返した場合は throw (control char 一括拒否)",
+    async (_label, evilPath) => {
+      vi.mocked(resolveClaudePath).mockReturnValueOnce(evilPath);
 
-    await expect(manager.createSession("/path/to/worktree")).rejects.toThrow(
-      /control char/
-    );
-  });
+      await expect(manager.createSession("/path/to/worktree")).rejects.toThrow(
+        /control char/
+      );
+    }
+  );
 });
 
 /**

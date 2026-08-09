@@ -286,25 +286,22 @@ describe("listDiagrams", () => {
 });
 
 describe("handleDiagramListRequest", () => {
-  it.each([
-    undefined,
-    null,
-    {},
-    { worktreePath: 1 },
-    { worktreePath: "" },
-  ])("不正 payload %j を ACK error にする", async data => {
-    const resolveManagedWorktreePath = vi.fn();
-    const list = vi.fn();
+  it.each([undefined, null, {}, { worktreePath: 1 }, { worktreePath: "" }])(
+    "不正 payload %j を ACK error にする",
+    async data => {
+      const resolveManagedWorktreePath = vi.fn();
+      const list = vi.fn();
 
-    const result = await handleDiagramListRequest(
-      { resolveManagedWorktreePath, listDiagrams: list },
-      data
-    );
+      const result = await handleDiagramListRequest(
+        { resolveManagedWorktreePath, listDiagrams: list },
+        data
+      );
 
-    expect(result).toEqual({ ok: false, error: "不正なリクエストです" });
-    expect(resolveManagedWorktreePath).not.toHaveBeenCalled();
-    expect(list).not.toHaveBeenCalled();
-  });
+      expect(result).toEqual({ ok: false, error: "不正なリクエストです" });
+      expect(resolveManagedWorktreePath).not.toHaveBeenCalled();
+      expect(list).not.toHaveBeenCalled();
+    }
+  );
 
   it("長すぎる path と managed worktree 解決失敗を ACK error にする", async () => {
     const resolveManagedWorktreePath = vi.fn(() => null);
