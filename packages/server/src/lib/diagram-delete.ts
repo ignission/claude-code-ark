@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { DiagramDeleteResponse } from "@ark/shared";
+import { resolveDiagramCommentsPath } from "./diagram-comments.js";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
 import { errnoCode, errnoMessage } from "./errors.js";
 
@@ -12,7 +13,7 @@ const GIT_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
 
 export type DeleteDiagramFileResult =
-  | { ok: true; absPath: string }
+  | { ok: true; absPath: string; warning?: string }
   | {
       ok: false;
       code: "NOT_FOUND" | "FORBIDDEN" | "IO_ERROR";
@@ -129,6 +130,7 @@ export async function deleteDiagramFile(
   const deleteFs = options.fs ?? defaultDeleteFs;
   const diagramsDir = path.join(worktreeReal, DIAGRAM_DIR);
   let fd: import("node:fs/promises").FileHandle | null = null;
+  let sidecarFd: import("node:fs/promises").FileHandle | null = null;
   try {
     fd = await deleteFs.open(
       resolved.absPath,
@@ -153,6 +155,64 @@ export async function deleteDiagramFile(
       );
     }
 
+    const commentsPath = resolveDiagramCommentsPath(
+      worktreeReal,
+      resolved.relPath
+    );
+    if (!commentsPath.ok) return forbidden(commentsPath.error);
+    let sidecarStat: fs.Stats | null = null;
+    try {
+      sidecarFd = await deleteFs.open(
+        commentsPath.commentsAbsPath,
+        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+      );
+      sidecarStat = await sidecarFd.stat();
+      if (!sidecarStat.isFile()) {
+        return forbidden("コメント sidecar は通常ファイルではありません");
+      }
+      const sidecarRealPath = await deleteFs.realpath(
+        commentsPath.commentsAbsPath
+      );
+      const sidecarRealStat = await deleteFs.stat(sidecarRealPath);
+      if (
+        sidecarStat.ino !== sidecarRealStat.ino ||
+        sidecarStat.dev !== sidecarRealStat.dev
+      ) {
+        return forbidden("コメント sidecar の実体を検証できません");
+      }
+      if (
+        sidecarRealPath !== diagramsDir &&
+        !sidecarRealPath.startsWith(diagramsDir + path.sep)
+      ) {
+        return forbidden(
+          `コメント sidecar の実体が worktree の ${DIAGRAM_DIR} から出ています`
+        );
+      }
+    } catch (error) {
+      const code = errnoCode(error);
+      if (code === "ENOENT" && sidecarFd !== null) {
+        return forbidden("コメント sidecar の実体を検証できません");
+      }
+      if (code !== "ENOENT") {
+        if (
+          code === "EACCES" ||
+          code === "EPERM" ||
+          code === "ELOOP" ||
+          code === "EMLINK"
+        ) {
+          return forbidden(
+            `コメント sidecar へのアクセスが拒否されました (${code})`
+          );
+        }
+        return {
+          ok: false,
+          code: "IO_ERROR",
+          error: `コメント sidecar の検証に失敗しました (${code}): ${errnoMessage(error)}`,
+        };
+      }
+      sidecarStat = null;
+    }
+
     options.beforeFinalIdentityCheck?.(resolved.absPath);
     const finalStat = deleteFs.lstatSync(resolved.absPath);
     if (
@@ -162,7 +222,50 @@ export async function deleteDiagramFile(
     ) {
       return forbidden("削除直前に図ファイルの実体が変化しました");
     }
+
+    if (sidecarStat !== null) {
+      let finalSidecarStat: fs.Stats;
+      try {
+        finalSidecarStat = deleteFs.lstatSync(commentsPath.commentsAbsPath);
+      } catch (error) {
+        return forbidden(
+          `削除直前にコメント sidecar の実体が変化しました (${errnoCode(error)})`
+        );
+      }
+      if (
+        !finalSidecarStat.isFile() ||
+        finalSidecarStat.ino !== sidecarStat.ino ||
+        finalSidecarStat.dev !== sidecarStat.dev
+      ) {
+        return forbidden("削除直前にコメント sidecar の実体が変化しました");
+      }
+    } else {
+      try {
+        deleteFs.lstatSync(commentsPath.commentsAbsPath);
+        return forbidden("削除直前にコメント sidecar が作成されました");
+      } catch (error) {
+        if (errnoCode(error) !== "ENOENT") {
+          return {
+            ok: false,
+            code: "IO_ERROR",
+            error: `コメント sidecar の最終確認に失敗しました (${errnoCode(error)}): ${errnoMessage(error)}`,
+          };
+        }
+      }
+    }
+
     deleteFs.unlinkSync(resolved.absPath);
+    if (sidecarStat !== null) {
+      try {
+        deleteFs.unlinkSync(commentsPath.commentsAbsPath);
+      } catch (error) {
+        return {
+          ok: true,
+          absPath: resolved.absPath,
+          warning: `図は削除済みですがコメント sidecar は残存しています (${errnoCode(error)}): ${errnoMessage(error)}`,
+        };
+      }
+    }
     return { ok: true, absPath: resolved.absPath };
   } catch (error) {
     const code = errnoCode(error);
@@ -189,6 +292,11 @@ export async function deleteDiagramFile(
   } finally {
     try {
       await fd?.close();
+    } catch {
+      // unlink の成否を close error で反転させない。
+    }
+    try {
+      await sidecarFd?.close();
     } catch {
       // unlink の成否を close error で反転させない。
     }
@@ -271,7 +379,7 @@ export async function handleDiagramDeleteRequest(
   const deleted = await deps.deleteDiagramFile(worktreeReal, relPath);
   if (!deleted.ok) return deleted;
 
-  let warning: string | undefined;
+  let warning = deleted.warning;
   try {
     const cleared = deps.clearSessionLastDiagramIfMatches(
       data.sessionId,
@@ -279,7 +387,8 @@ export async function handleDiagramDeleteRequest(
     );
     if (cleared) deps.onSessionCleared(data.sessionId);
   } catch (error) {
-    warning = `ファイルは削除済みですが復元情報の消去に失敗しました: ${errnoMessage(error)}`;
+    const databaseWarning = `ファイルは削除済みですが復元情報の消去に失敗しました: ${errnoMessage(error)}`;
+    warning = warning ? `${warning} / ${databaseWarning}` : databaseWarning;
   }
   deps.onDeleted({ sessionId: data.sessionId, relPath });
   return {

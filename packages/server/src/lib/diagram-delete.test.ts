@@ -694,6 +694,126 @@ describe("deleteDiagramFile verified unlink", () => {
   });
 });
 
+describe("deleteDiagramFile comment sidecar cascade", () => {
+  it("正常な sidecar があれば図と一緒に削除する", async () => {
+    const { worktree, diagramsDir } = makeDeleteFixture();
+    const diagram = path.join(diagramsDir, "review.diagram.html");
+    const sidecar = path.join(diagramsDir, "review.comments.json");
+    fs.writeFileSync(diagram, "diagram");
+    fs.writeFileSync(sidecar, '{"broken":"content is irrelevant on delete"}');
+
+    await expect(
+      deleteDiagramFile(worktree, ".claude/diagrams/review.diagram.html")
+    ).resolves.toEqual({ ok: true, absPath: diagram });
+    expect(fs.existsSync(diagram)).toBe(false);
+    expect(fs.existsSync(sidecar)).toBe(false);
+  });
+
+  it.each(["symlink", "directory"] as const)(
+    "sidecar が %s なら事前検証で図を残す",
+    async kind => {
+      const { worktree, diagramsDir, outside } = makeDeleteFixture();
+      const diagram = path.join(diagramsDir, "review.diagram.html");
+      const sidecar = path.join(diagramsDir, "review.comments.json");
+      fs.writeFileSync(diagram, "diagram");
+      if (kind === "symlink") fs.symlinkSync(outside, sidecar);
+      else fs.mkdirSync(sidecar);
+
+      await expect(
+        deleteDiagramFile(worktree, ".claude/diagrams/review.diagram.html")
+      ).resolves.toMatchObject({ ok: false, code: "FORBIDDEN" });
+      expect(fs.readFileSync(diagram, "utf8")).toBe("diagram");
+    }
+  );
+
+  it("sidecar の EACCES は図を残して FORBIDDEN にする", async () => {
+    const { worktree, diagramsDir } = makeDeleteFixture();
+    const diagram = path.join(diagramsDir, "review.diagram.html");
+    const sidecar = path.join(diagramsDir, "review.comments.json");
+    fs.writeFileSync(diagram, "diagram");
+    fs.writeFileSync(sidecar, "comments");
+    const open = fs.promises.open.bind(fs.promises);
+
+    const result = await deleteDiagramFile(
+      worktree,
+      ".claude/diagrams/review.diagram.html",
+      {
+        fs: {
+          open: (filePath, flags) => {
+            if (filePath === sidecar) {
+              throw Object.assign(new Error("denied"), { code: "EACCES" });
+            }
+            return open(filePath, flags);
+          },
+          realpath: fs.promises.realpath,
+          stat: fs.promises.stat,
+          lstatSync: fs.lstatSync,
+          unlinkSync: fs.unlinkSync,
+        },
+      }
+    );
+
+    expect(result).toMatchObject({ ok: false, code: "FORBIDDEN" });
+    expect(fs.readFileSync(diagram, "utf8")).toBe("diagram");
+    expect(fs.readFileSync(sidecar, "utf8")).toBe("comments");
+  });
+
+  it("sidecar unlink だけ失敗したら図削除済みを warning で返す", async () => {
+    const { worktree, diagramsDir } = makeDeleteFixture();
+    const diagram = path.join(diagramsDir, "review.diagram.html");
+    const sidecar = path.join(diagramsDir, "review.comments.json");
+    fs.writeFileSync(diagram, "diagram");
+    fs.writeFileSync(sidecar, "comments");
+
+    const result = await deleteDiagramFile(
+      worktree,
+      ".claude/diagrams/review.diagram.html",
+      {
+        fs: {
+          open: fs.promises.open,
+          realpath: fs.promises.realpath,
+          stat: fs.promises.stat,
+          lstatSync: fs.lstatSync,
+          unlinkSync: filePath => {
+            if (filePath === sidecar) {
+              throw Object.assign(new Error("sidecar busy"), { code: "EBUSY" });
+            }
+            fs.unlinkSync(filePath);
+          },
+        },
+      }
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.warning).toContain("図は削除済み");
+      expect(result.warning).toContain("sidecar");
+    }
+    expect(fs.existsSync(diagram)).toBe(false);
+    expect(fs.readFileSync(sidecar, "utf8")).toBe("comments");
+  });
+
+  it("file helper の warning を ACK response へ伝える", async () => {
+    const dependencies = makeRequestDeps();
+    vi.mocked(dependencies.deleteDiagramFile).mockResolvedValue({
+      ok: true,
+      absPath: "/real/worktree/.claude/diagrams/a.diagram.html",
+      warning: "図は削除済み・sidecar は残存",
+    });
+
+    const result = await handleDiagramDeleteRequest(dependencies, {
+      sessionId: "session-1",
+      relPath: ".claude/diagrams/a.diagram.html",
+      expectedTracked: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      warning: "図は削除済み・sidecar は残存",
+    });
+  });
+});
+
 describe("deleteDiagramFile TOCTOU final identity", () => {
   it("open 後に外向き symlink へ交換された path を削除しない", async () => {
     const { worktree, diagramsDir, outside } = makeDeleteFixture();
