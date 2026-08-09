@@ -12,7 +12,9 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
   var comments={version:1,target:"",threads:[]};
   var pendingRequestId=null;
   var pendingAction=null;
+  var pendingTimer=null;
   var operationError=null;
+  var rememberedAuthor="";
   var requestSequence=0;
   var root=null;
   var anchors=[];
@@ -54,6 +56,22 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     var message={type:type,requestId:pendingRequestId};
     Object.keys(payload||{}).forEach(function(key){message[key]=payload[key];});
     updatePendingControls();
+    pendingTimer=window.setTimeout(function(){
+      var timedOutAction=pendingAction;
+      pendingRequestId=null;
+      pendingAction=null;
+      pendingTimer=null;
+      updatePendingControls();
+      if(timedOutAction&&timedOutAction.type!=="ark:diagram-comments-load"){
+        operationError={
+          type:timedOutAction.type,
+          anchorId:timedOutAction.anchorId,
+          threadId:timedOutAction.threadId,
+          message:"応答がありません。もう一度お試しください"
+        };
+      }
+      render();
+    },15000);
     port.postMessage(message);
   }
   function setActiveAnchor(anchorId,threadId){
@@ -176,7 +194,8 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     var authorInput=element("input",undefined,"ark-comment-input");
     authorInput.setAttribute("type","text");
     authorInput.setAttribute("maxlength","80");
-    authorInput.setAttribute("placeholder","名前");
+    authorInput.setAttribute("placeholder","名前（任意）");
+    authorInput.value=rememberedAuthor;
     composer.appendChild(authorInput);
     var bodyInput=element("textarea",undefined,"ark-comment-input");
     bodyInput.setAttribute("maxlength","4000");
@@ -185,15 +204,22 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     var createButton=element("button","コメントする","ark-comment-create");
     createButton.setAttribute("type","button");
     createButton.addEventListener("click",function(){
+      var author=authorInput.value.trim();
+      if(author)rememberedAuthor=author;
+      if(!bodyInput.value.trim()){
+        operationError={type:"ark:diagram-comment-create",anchorId:anchorId,message:"コメント本文を入力してください"};
+        render();
+        return;
+      }
       var payload=composerAnchorQuote?{
         anchorId:anchorId,
         anchorQuote:composerAnchorQuote,
         anchorOccurrence:composerAnchorOccurrence,
-        author:authorInput.value,
+        author:author||"名無し",
         body:bodyInput.value
       }:{
         anchorId:anchorId,
-        author:authorInput.value,
+        author:author||"名無し",
         body:bodyInput.value
       };
       send("ark:diagram-comment-create",payload);
@@ -517,6 +543,8 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     var data=event.data;
     if(!data||data.type!=="ark:diagram-comments-result"||data.requestId!==pendingRequestId)return;
     var completedAction=pendingAction;
+    if(pendingTimer)window.clearTimeout(pendingTimer);
+    pendingTimer=null;
     pendingRequestId=null;
     pendingAction=null;
     if(data.ok){

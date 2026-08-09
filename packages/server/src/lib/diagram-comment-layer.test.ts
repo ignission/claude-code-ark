@@ -241,4 +241,27 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).not.toContain("ark:diagram-comment-reply");
     expect(injected).not.toContain("orphaned");
   });
+
+  it("空本文は送信前に拒否し、名前を任意化してページ内で記憶する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("bodyInput.value.trim()");
+    expect(injected).toContain("コメント本文を入力してください");
+    expect(injected).toContain('author||"名無し"');
+    expect(injected).toContain('setAttribute("placeholder","名前（任意）")');
+    expect(injected).toContain("rememberedAuthor");
+    expect(injected).toContain("authorInput.value=rememberedAuthor");
+  });
+
+  it("15 秒の watchdog で pending を解除し、結果受信時は timer を止める", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("15000");
+    expect(injected).toContain("pendingTimer");
+    expect(injected).toContain("応答がありません。もう一度お試しください");
+    expect(injected).toContain("window.clearTimeout(pendingTimer)");
+    expect(injected).toContain("pendingRequestId=null");
+    expect(injected).toContain("updatePendingControls()");
+    expect(injected).toContain("data.requestId!==pendingRequestId");
+  });
 });
