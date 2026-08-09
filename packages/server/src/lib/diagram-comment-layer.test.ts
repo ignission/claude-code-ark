@@ -107,15 +107,37 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain(".ark-comment-card{position:fixed");
   });
 
-  it("anchor の hover / focus 中だけ新規 comment の＋導線を出す", () => {
+  it("mouseover の最も内側の anchor 1つだけへ新規 comment の＋導線を出す", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
     expect(injected).toContain('element("button","＋","ark-comment-add")');
-    expect(injected).toContain('addEventListener("mouseenter"');
-    expect(injected).toContain('addEventListener("focusin"');
+    expect(injected).toContain('document.addEventListener("mouseover"');
+    expect(injected).toContain('event.target.closest("[data-ark-id]")');
+    expect(injected).toContain("function showAdd(entry)");
     expect(injected).toContain('setAttribute("data-visible","true")');
     expect(injected).toContain("openComposer");
     expect(injected).toContain(".ark-comment-add[data-visible=true]");
+  });
+
+  it("＋を anchor に接して配置し、close を遅延して通常のマウス移動を許容する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("AFFORDANCE_CLOSE_DELAY=120");
+    expect(injected).toContain("function scheduleAddClose()");
+    expect(injected).toContain("window.setTimeout(function ()");
+    expect(injected).toContain("AFFORDANCE_CLOSE_DELAY");
+    expect(injected).toContain("rect.right-2");
+    expect(injected).not.toContain("rect.right+8");
+  });
+
+  it("本文 block を tab 順へ追加せず、＋ button 自身の focus 経路を使う", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).not.toContain("tabindex");
+    expect(injected).not.toContain('anchor.addEventListener("keydown"');
+    expect(injected).not.toContain('event.key==="Enter"');
+    expect(injected).toContain('addButton.addEventListener("focus"');
+    expect(injected).toContain(".ark-comment-add:focus");
   });
 
   it("card がある時だけ右余白を確保し、狭い pane では badge に畳む", () => {
