@@ -263,4 +263,52 @@ describe("createDiagramCommentsSocketHandlers", () => {
     ).not.toThrow();
     await vi.waitFor(() => expect(callback).toHaveBeenCalledOnce());
   });
+
+  it.each([undefined, null, "callback"])(
+    "callback 欠落 (%j) は core を呼ばず無視する",
+    async callback => {
+      const dependencies = deps();
+      const handlers = createDiagramCommentsSocketHandlers(dependencies);
+
+      expect(() =>
+        handlers.create(
+          {
+            sessionId: "session-1",
+            relPath: "sample.diagram.html",
+            anchorId: "s1",
+            author: "Reviewer",
+            body: "本文",
+          },
+          callback
+        )
+      ).not.toThrow();
+      await Promise.resolve();
+      expect(dependencies.getSession).not.toHaveBeenCalled();
+    }
+  );
+
+  it("core の予期しない rejection も IO_ERROR ACK へ閉じ込める", async () => {
+    const dependencies = deps();
+    vi.mocked(dependencies.getSession).mockImplementation(() => {
+      throw new Error("session store failed");
+    });
+    const handlers = createDiagramCommentsSocketHandlers(dependencies);
+    const callback = vi.fn();
+
+    handlers.resolve(
+      {
+        sessionId: "session-1",
+        relPath: "sample.diagram.html",
+        threadId: "th-1",
+      },
+      callback
+    );
+
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledOnce());
+    expect(callback).toHaveBeenCalledWith({
+      ok: false,
+      code: "IO_ERROR",
+      error: "コメント処理に失敗しました: session store failed",
+    });
+  });
 });

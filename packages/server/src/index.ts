@@ -66,6 +66,10 @@ import {
 } from "./lib/constants.js";
 import { db } from "./lib/database.js";
 import {
+  createDiagramCommentsSocketHandlers,
+  diagramCommentsStore,
+} from "./lib/diagram-comments-handler.js";
+import {
   createDiagramDeleteSocketHandler,
   deleteDiagramFile,
   isDiagramTracked,
@@ -2235,6 +2239,15 @@ export async function startServer(
         },
       })
     );
+
+    const diagramCommentsHandlers = createDiagramCommentsSocketHandlers({
+      getSession: sessionId => sessionOrchestrator.getSession(sessionId),
+      resolveManagedWorktreePath,
+      ...diagramCommentsStore,
+    });
+    socket.on("diagram:comments:get", diagramCommentsHandlers.get);
+    socket.on("diagram:comment:create", diagramCommentsHandlers.create);
+    socket.on("diagram:comment:resolve", diagramCommentsHandlers.resolve);
 
     socket.on("diagram:subscribe", (data: unknown) => {
       // payload は外部入力。分割代入前に型を検証しないと、引数なし emit や

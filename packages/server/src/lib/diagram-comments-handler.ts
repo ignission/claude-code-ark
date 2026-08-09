@@ -1,4 +1,11 @@
 import type { DiagramCommentsResponse } from "@ark/shared";
+import {
+  createDiagramComment,
+  readDiagramCommentsFile,
+  resolveDiagramComment,
+} from "./diagram-comments.js";
+import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
+import { readDiagramModel } from "./diagram-reader.js";
 import { errnoMessage } from "./errors.js";
 
 const MAX_SESSION_OR_PATH_LENGTH = 1024;
@@ -36,6 +43,35 @@ export interface DiagramCommentsHandlerDeps {
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
 }
+
+/** get でも mutation と同じ doc/anchor trust boundary を通す。 */
+export async function getDiagramCommentsForDoc(
+  worktreeReal: string,
+  relPath: string
+): Promise<DiagramCommentsResponse> {
+  const diagram = await readDiagramModel(worktreeReal, relPath);
+  if (!diagram.ok) {
+    return {
+      ok: false,
+      code: diagram.status === 403 ? "FORBIDDEN" : "IO_ERROR",
+      error: diagram.error,
+    };
+  }
+  if (diagram.model.type !== "doc") {
+    return { ok: false, code: "NOT_DOC", error: "文書型の図ではありません" };
+  }
+  const anchors = validateDiagramDocAnchors(diagram.raw, diagram.model);
+  if (!anchors.ok) {
+    return { ok: false, code: "ANCHOR_NOT_FOUND", error: anchors.error };
+  }
+  return readDiagramCommentsFile(worktreeReal, relPath);
+}
+
+export const diagramCommentsStore = {
+  getComments: getDiagramCommentsForDoc,
+  createComment: createDiagramComment,
+  resolveComment: resolveDiagramComment,
+};
 
 type RequestContext =
   | { valid: true; worktreeReal: string; sessionId: string; relPath: string }
