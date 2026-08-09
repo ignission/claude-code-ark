@@ -132,6 +132,82 @@ describe("injectBuiltinProjection", () => {
     expect(out).toMatch(/\.ark-builtin-node::before\{content:var\(--kg/);
   });
 
+  it.each([
+    [
+      "flow",
+      [
+        "step",
+        "command",
+        "decision",
+        "policy",
+        "event",
+        "outcome",
+        "error",
+        "actor",
+        "note",
+      ],
+    ],
+    ["state", ["initial", "state", "terminal-ok", "terminal-cancel", "note"]],
+    [
+      "context-map",
+      ["core", "supporting", "generic", "developed", "external", "note"],
+    ],
+  ] as const)("%s は語彙の全 kind を node root だけに当てる", (type, kinds) => {
+    const out = injectBuiltinProjection(
+      page(modelScript),
+      model({
+        type,
+        nodes: kinds.map((kind, index) => ({
+          id: `n${index}`,
+          label: `ノード${index}`,
+          kind,
+        })),
+        edges: [],
+        groups: [],
+      })
+    );
+    const style = out.slice(out.indexOf("<style"), out.indexOf("</style>"));
+    // style 内の同じ文字列で通ってしまわないよう、判定は graph の中だけで行う
+    const graphStart = out.indexOf('<div data-ark-container="graph"');
+    expect(graphStart).toBeGreaterThanOrEqual(0);
+    const graphHtml = out.slice(graphStart);
+
+    expect(out).toContain(`data-ark-builtin="${type}"`);
+    for (const kind of kinds) {
+      expect(style).toContain(`.ark-builtin-node[data-kind="${kind}"]`);
+      // data-kind は node root（article）に直接付く
+      expect(graphHtml).toMatch(
+        new RegExp(`<article\\b[^>]*data-kind="${kind}"`)
+      );
+    }
+    // 素の [data-kind] は label span にも当たるので使わない
+    const kindRules = style.match(/\[data-kind=/g) ?? [];
+    const scoped = style.match(/\.ark-builtin-node\[data-kind=/g) ?? [];
+    expect(scoped).toHaveLength(kindRules.length);
+  });
+
+  it("state の2つの終端を色以外でも区別する", () => {
+    // 色覚・モノクロ表示でも「正常終了」と「取消」を読み分けられること
+    const out = injectBuiltinProjection(
+      page(modelScript),
+      model({ type: "state", nodes: [], edges: [], groups: [] })
+    );
+    const rule = (kind: string) =>
+      out.match(
+        new RegExp(`\\.ark-builtin-node\\[data-kind="${kind}"\\]\\{[^}]*\\}`)
+      )?.[0] ?? "";
+
+    const glyph = (kind: string) => rule(kind).match(/--kg:"([^"]*)"/)?.[1];
+
+    // 入れ替わりも検出できるよう、kind とグリフの対応まで固定する
+    expect(glyph("initial")).toBe("\\25CF"); // ●
+    expect(glyph("state")).toBe("\\25CB"); // ○
+    expect(glyph("terminal-ok")).toBe("\\2714"); // ✔
+    expect(glyph("terminal-cancel")).toBe("\\2716"); // ✖
+    // 取消は線種でも区別する
+    expect(rule("terminal-cancel")).toContain("border-style:dashed");
+  });
+
   it("引用符なしの graph 属性を持つ図にも触らない", () => {
     // HTML は data-ark-container=graph も許す。見落とすと graph が二重になる
     const authored = page(
