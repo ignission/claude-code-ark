@@ -104,6 +104,19 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
       entry.marker.style.display=rect.bottom<0||rect.top>window.innerHeight?"none":"block";
     });
   }
+  function updateMarkers(){
+    markers.forEach(function(entry){
+      var anchorThreads=comments.threads.filter(function(thread){return thread.anchorId===entry.anchorId;});
+      var openCount=anchorThreads.filter(function(thread){return thread.status==="open";}).length;
+      var state="none";
+      if(openCount>0)state="open";
+      else if(anchorThreads.length>0)state="resolved";
+      entry.marker.setAttribute("data-comment-state",state);
+      entry.marker.setAttribute("data-open-count",String(openCount));
+      var detail=state==="open"?"（未解決 "+openCount+" 件）":state==="resolved"?"（解決済みのみ）":"（コメントなし）";
+      entry.marker.setAttribute("aria-label",entry.anchorId+" のコメントを表示 "+detail);
+    });
+  }
   function buildMarkers(){
     document.querySelectorAll("[data-ark-id]").forEach(function(anchor){
       var anchorId=anchor.getAttribute("data-ark-id");
@@ -113,13 +126,14 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
       marker.setAttribute("aria-label",anchorId+" のコメントを表示");
       marker.addEventListener("click",function(){selectedAnchorId=anchorId;render();});
       document.body.appendChild(marker);
-      markers.push({anchor:anchor,marker:marker});
+      markers.push({anchor:anchor,anchorId:anchorId,marker:marker});
     });
+    updateMarkers();
     positionMarkers();
   }
   function build(){
     var style=element("style");
-    style.textContent="#ark-comment-root{position:fixed;z-index:2147483000;top:0;right:0;width:320px;height:100vh;overflow:auto;background:#fff;color:#172033;border-left:1px solid #cbd5e1;box-shadow:-4px 0 14px #0002;font:13px/1.5 system-ui,sans-serif;padding:14px;box-sizing:border-box}#ark-comment-root [data-error=true]{color:#b91c1c}.ark-comment-marker{position:fixed;z-index:2147482999;right:328px;border:0;border-radius:999px;background:#2563eb;color:#fff;width:24px;height:24px;cursor:pointer}.ark-comment-thread,.ark-comment-composer{border:1px solid #dbe3ef;border-radius:8px;padding:10px;margin:10px 0}.ark-comment-state,.ark-comment-time{display:block;color:#64748b;font-size:11px}.ark-comment-message{border-top:1px solid #e2e8f0;margin-top:8px;padding-top:8px}.ark-comment-input{display:block;width:100%;box-sizing:border-box;margin:6px 0;padding:7px;border:1px solid #94a3b8;border-radius:5px}.ark-comment-create,.ark-comment-resolve{border:0;border-radius:5px;background:#2563eb;color:#fff;padding:7px 10px;cursor:pointer}.ark-comment-create:disabled,.ark-comment-resolve:disabled{opacity:.5;cursor:default}";
+    style.textContent="#ark-comment-root{position:fixed;z-index:2147483000;top:0;right:0;width:320px;height:100vh;overflow:auto;background:#fff;color:#172033;border-left:1px solid #cbd5e1;box-shadow:-4px 0 14px #0002;font:13px/1.5 system-ui,sans-serif;padding:14px;box-sizing:border-box}#ark-comment-root [data-error=true]{color:#b91c1c}.ark-comment-marker{position:fixed;z-index:2147482999;right:328px;border:0;border-radius:999px;background:#64748b;color:#fff;width:24px;height:24px;cursor:pointer;transition:opacity .15s,background .15s}.ark-comment-marker[data-comment-state=none]{opacity:.12}.ark-comment-marker[data-comment-state=none]:hover,.ark-comment-marker[data-comment-state=none]:focus-visible{opacity:.65}.ark-comment-marker[data-comment-state=open]{background:#2563eb;opacity:1}.ark-comment-marker[data-comment-state=resolved]{background:#64748b;opacity:.7}.ark-comment-thread,.ark-comment-composer{border:1px solid #dbe3ef;border-radius:8px;padding:10px;margin:10px 0}.ark-comment-state,.ark-comment-time{display:block;color:#64748b;font-size:11px}.ark-comment-message{border-top:1px solid #e2e8f0;margin-top:8px;padding-top:8px}.ark-comment-input{display:block;width:100%;box-sizing:border-box;margin:6px 0;padding:7px;border:1px solid #94a3b8;border-radius:5px}.ark-comment-create,.ark-comment-resolve{border:0;border-radius:5px;background:#2563eb;color:#fff;padding:7px 10px;cursor:pointer}.ark-comment-create:disabled,.ark-comment-resolve:disabled{opacity:.5;cursor:default}";
     document.head.appendChild(style);
     root=element("aside",undefined);
     root.setAttribute("id","ark-comment-root");
@@ -140,6 +154,7 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     pendingRequestId=null;
     if(data.ok){
       comments=data.comments;
+      updateMarkers();
       setStatus("最新のコメントを表示しています",false);
     }else{
       setStatus(data.error||"コメント処理に失敗しました",true);

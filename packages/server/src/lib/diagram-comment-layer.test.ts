@@ -82,6 +82,28 @@ describe("injectDiagramCommentLayer", () => {
     }
   });
 
+  it("marker をコメント無し・未解決あり・解決済みのみで区別する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain('setAttribute("data-comment-state",state)');
+    expect(injected).toContain(
+      'setAttribute("data-open-count",String(openCount))'
+    );
+    expect(injected).toContain('state="open"');
+    expect(injected).toContain('state="resolved"');
+    expect(injected).toContain('state="none"');
+    expect(injected).toContain(".ark-comment-marker[data-comment-state=none]");
+  });
+
+  it("成功 result を受け取るたび marker 状態を更新する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("function updateMarkers()");
+    expect(injected).toMatch(
+      /if\(data\.ok\)\{[^}]*comments=data\.comments;[^}]*updateMarkers\(\)/u
+    );
+  });
+
   it("pinch/create/resolve と pending/error 契約を含む", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
