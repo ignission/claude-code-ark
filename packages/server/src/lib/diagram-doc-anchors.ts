@@ -22,24 +22,36 @@ function tagEnd(html: string, start: number): number {
 
 function attributeValues(tag: string): string[] {
   const values: string[] = [];
-  const attribute = /(?:^|\s)data-ark-id(?=\s|=|\/|$)/giu;
-  for (const match of tag.matchAll(attribute)) {
-    let index = (match.index ?? 0) + match[0].length;
+  let index = tag.match(/^[^\s/>]+/u)?.[0].length ?? 0;
+  while (index < tag.length) {
     while (/\s/u.test(tag[index] ?? "")) index += 1;
-    if (tag[index] !== "=") {
-      values.push("");
+    if (index >= tag.length || tag[index] === "/") break;
+    const name = tag.slice(index).match(/^[^\s"'=<>`/]+/u)?.[0];
+    if (name === undefined) {
+      index += 1;
       continue;
     }
-    index += 1;
+    index += name.length;
     while (/\s/u.test(tag[index] ?? "")) index += 1;
-    const quote = tag[index];
-    if (quote === '"' || quote === "'") {
-      const end = tag.indexOf(quote, index + 1);
-      values.push(end < 0 ? "" : tag.slice(index + 1, end));
-      continue;
+    let value = "";
+    if (tag[index] === "=") {
+      index += 1;
+      while (/\s/u.test(tag[index] ?? "")) index += 1;
+      const quote = tag[index];
+      if (quote === '"' || quote === "'") {
+        const end = tag.indexOf(quote, index + 1);
+        if (end < 0) {
+          index = tag.length;
+        } else {
+          value = tag.slice(index + 1, end);
+          index = end + 1;
+        }
+      } else {
+        value = tag.slice(index).match(/^[^\s"'=<>`]+/u)?.[0] ?? "";
+        index += value.length;
+      }
     }
-    const value = tag.slice(index).match(/^[^\s"'=<>`]+/u)?.[0] ?? "";
-    values.push(value);
+    if (name.toLowerCase() === ATTRIBUTE_NAME) values.push(value);
   }
   return values;
 }

@@ -68,6 +68,31 @@ describe("validateDiagramDocAnchors", () => {
     expect(validateDiagramDocAnchors(html, model("doc"))).toEqual({ ok: true });
   });
 
+  it("別の属性値に含まれる data-ark-id を anchor と数えない", () => {
+    const emptyModel = { ...model("doc"), nodes: [] };
+
+    expect(
+      validateDiagramDocAnchors(
+        '<div title="x data-ark-id=s6"></div>',
+        emptyModel
+      )
+    ).toEqual({ ok: true });
+  });
+
+  it("実属性の値だけを返し別の属性値に含まれる文字列を無視する", () => {
+    const singleNodeModel = {
+      ...model("doc"),
+      nodes: [{ id: "s6", label: "本文" }],
+    };
+
+    expect(
+      validateDiagramDocAnchors(
+        '<div data-ark-id="s6" title="data-ark-id=s7"></div>',
+        singleNodeModel
+      )
+    ).toEqual({ ok: true });
+  });
+
   it.each([undefined, "er", "flow", "custom-graph"])(
     "doc 以外 (%s) は data-model-id のまま成功する",
     type => {
