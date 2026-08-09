@@ -11,6 +11,7 @@ import {
   forwardDiagramCommentPortRequest,
   getDiagramZoomPercent,
   handleDiagramPinchMessage,
+  readDiagramCommentConnectionState,
   resetDiagramZoom,
   stepDiagramZoom,
 } from "./DiagramPane";
@@ -161,6 +162,24 @@ describe("forwardDiagramCommentPortRequest", () => {
     expect(deps.reply).toHaveBeenCalledWith(
       expect.objectContaining({ ok: false, requestId: "req-load" })
     );
+  });
+
+  it("同じ port の処理でも再接続後は最新の接続状態で中継する", async () => {
+    const connection = { current: false };
+    const deps = dependencies();
+
+    await forwardDiagramCommentPortRequest(requests[0], {
+      ...deps,
+      isConnected: readDiagramCommentConnectionState(connection),
+    });
+    expect(deps.getDiagramComments).not.toHaveBeenCalled();
+
+    connection.current = true;
+    await forwardDiagramCommentPortRequest(requests[0], {
+      ...deps,
+      isConnected: readDiagramCommentConnectionState(connection),
+    });
+    expect(deps.getDiagramComments).toHaveBeenCalledOnce();
   });
 
   it("旧 port generation の遅延結果を reply/state に反映しない", async () => {

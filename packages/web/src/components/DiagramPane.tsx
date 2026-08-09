@@ -265,6 +265,12 @@ interface DiagramCommentForwardDeps {
   onError: (error: string | null) => void;
 }
 
+export function readDiagramCommentConnectionState(state: {
+  readonly current: boolean;
+}): boolean {
+  return state.current;
+}
+
 export async function forwardDiagramCommentPortRequest(
   request: DiagramCommentPortRequest,
   deps: DiagramCommentForwardDeps
@@ -359,6 +365,8 @@ export function DiagramPane({
   const portRef = useRef<MessagePort | null>(null);
   const portGrantedForRef = useRef<string | null>(null);
   const portGenerationRef = useRef(0);
+  const isConnectedRef = useRef(isConnected);
+  isConnectedRef.current = isConnected;
 
   const load = useCallback(async () => {
     if (!relPath) return;
@@ -650,7 +658,7 @@ export function DiagramPane({
         const commentRequest = parseDiagramCommentPortRequest(event.data);
         if (commentRequest === null || !relPath) return;
         void forwardDiagramCommentPortRequest(commentRequest, {
-          isConnected,
+          isConnected: readDiagramCommentConnectionState(isConnectedRef),
           sessionId,
           relPath,
           getDiagramComments,
@@ -683,7 +691,6 @@ export function DiagramPane({
       handleAutosave,
       handleSubmit,
       html,
-      isConnected,
       relPath,
       resolveDiagramComment,
       sessionId,
