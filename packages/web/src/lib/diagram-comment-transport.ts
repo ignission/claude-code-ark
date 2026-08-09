@@ -50,14 +50,21 @@ export function requestDiagramCommentCreate(
   relPath: string,
   anchorId: string,
   author: string,
-  body: string
+  body: string,
+  anchorQuote?: string,
+  anchorOccurrence?: number
 ): Promise<DiagramCommentsResponse> {
   return requestDiagramComments(socket, (activeSocket, callback) => {
-    activeSocket.emit(
-      "diagram:comment:create",
-      { sessionId, relPath, anchorId, author, body },
-      callback
-    );
+    const payload = {
+      sessionId,
+      relPath,
+      anchorId,
+      author,
+      body,
+      ...(anchorQuote === undefined ? {} : { anchorQuote }),
+      ...(anchorOccurrence === undefined ? {} : { anchorOccurrence }),
+    };
+    activeSocket.emit("diagram:comment:create", payload, callback);
   });
 }
 

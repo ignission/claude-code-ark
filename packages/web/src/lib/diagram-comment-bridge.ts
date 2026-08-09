@@ -6,6 +6,8 @@ export type DiagramCommentPortRequest =
       type: "ark:diagram-comment-create";
       requestId: string;
       anchorId: string;
+      anchorQuote?: string;
+      anchorOccurrence?: number;
       author: string;
       body: string;
     }
@@ -68,18 +70,43 @@ export function parseDiagramCommentPortRequest(
   }
   if (
     value.type === "ark:diagram-comment-create" &&
-    hasOnlyKeys(value, ["type", "requestId", "anchorId", "author", "body"]) &&
+    Object.keys(value).every(key =>
+      [
+        "type",
+        "requestId",
+        "anchorId",
+        "anchorQuote",
+        "anchorOccurrence",
+        "author",
+        "body",
+      ].includes(key)
+    ) &&
     validString(value.anchorId, 256) &&
     validString(value.author, 80) &&
-    validString(value.body, 4000)
+    validString(value.body, 4000) &&
+    (value.anchorQuote === undefined || validString(value.anchorQuote, 1000)) &&
+    (value.anchorOccurrence === undefined ||
+      (value.anchorQuote !== undefined &&
+        Number.isSafeInteger(value.anchorOccurrence) &&
+        (value.anchorOccurrence as number) >= 0))
   ) {
-    return {
+    const request: Extract<
+      DiagramCommentPortRequest,
+      { type: "ark:diagram-comment-create" }
+    > = {
       type: value.type,
       requestId: value.requestId,
       anchorId: value.anchorId,
       author: value.author,
       body: value.body,
     };
+    if (value.anchorQuote !== undefined) {
+      request.anchorQuote = value.anchorQuote as string;
+    }
+    if (value.anchorOccurrence !== undefined) {
+      request.anchorOccurrence = value.anchorOccurrence as number;
+    }
+    return request;
   }
   if (
     value.type === "ark:diagram-comment-resolve" &&

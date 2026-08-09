@@ -5,10 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createDiagramComment,
   DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH,
+  DIAGRAM_COMMENTS_MAX_ANCHOR_QUOTE_LENGTH,
   DIAGRAM_COMMENTS_MAX_AUTHOR_LENGTH,
   DIAGRAM_COMMENTS_MAX_BODY_LENGTH,
   DIAGRAM_COMMENTS_MAX_BYTES,
-  DIAGRAM_COMMENTS_MAX_ANCHOR_QUOTE_LENGTH,
   DIAGRAM_COMMENTS_MAX_THREADS,
   parseDiagramComments,
   readDiagramCommentsFile,

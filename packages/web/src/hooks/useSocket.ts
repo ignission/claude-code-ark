@@ -101,7 +101,9 @@ interface UseSocketReturn {
     relPath: string,
     anchorId: string,
     author: string,
-    body: string
+    body: string,
+    anchorQuote?: string,
+    anchorOccurrence?: number
   ) => Promise<DiagramCommentsResponse>;
   resolveDiagramComment: (
     sessionId: string,
@@ -1288,7 +1290,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       relPath: string,
       anchorId: string,
       author: string,
-      body: string
+      body: string,
+      anchorQuote?: string,
+      anchorOccurrence?: number
     ) =>
       requestDiagramCommentCreate(
         socketRef.current,
@@ -1296,7 +1300,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         relPath,
         anchorId,
         author,
-        body
+        body,
+        anchorQuote,
+        anchorOccurrence
       ),
     []
   );

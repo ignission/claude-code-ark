@@ -54,7 +54,9 @@ interface SplitViewPaneProps {
     relPath: string,
     anchorId: string,
     author: string,
-    body: string
+    body: string,
+    anchorQuote?: string,
+    anchorOccurrence?: number
   ) => Promise<DiagramCommentsResponse>;
   resolveDiagramComment: (
     sessionId: string,

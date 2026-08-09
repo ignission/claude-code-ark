@@ -52,7 +52,9 @@ interface DiagramPaneProps {
     relPath: string,
     anchorId: string,
     author: string,
-    body: string
+    body: string,
+    anchorQuote?: string,
+    anchorOccurrence?: number
   ) => Promise<DiagramCommentsResponse>;
   resolveDiagramComment: (
     sessionId: string,
@@ -253,7 +255,9 @@ interface DiagramCommentForwardDeps {
     relPath: string,
     anchorId: string,
     author: string,
-    body: string
+    body: string,
+    anchorQuote?: string,
+    anchorOccurrence?: number
   ) => Promise<DiagramCommentsResponse>;
   resolveDiagramComment: (
     sessionId: string,
@@ -292,7 +296,9 @@ export async function forwardDiagramCommentPortRequest(
           deps.relPath,
           request.anchorId,
           request.author,
-          request.body
+          request.body,
+          request.anchorQuote,
+          request.anchorOccurrence
         );
       } else {
         response = await deps.resolveDiagramComment(

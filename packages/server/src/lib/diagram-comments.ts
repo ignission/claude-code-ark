@@ -17,6 +17,7 @@ export const DIAGRAM_COMMENTS_MAX_THREADS = 1000;
 export const DIAGRAM_COMMENTS_MAX_AUTHOR_LENGTH = 80;
 export const DIAGRAM_COMMENTS_MAX_BODY_LENGTH = 4000;
 export const DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH = 256;
+export const DIAGRAM_COMMENTS_MAX_ANCHOR_QUOTE_LENGTH = 1000;
 
 function normalizeDiagramCommentAnchorText(
   label: string,
@@ -185,6 +186,14 @@ export function parseDiagramComments(
       `threads[${threadIndex}].anchorText`,
       DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH
     );
+    const anchorQuote =
+      rawThread.anchorQuote === undefined
+        ? null
+        : boundedString(
+            rawThread.anchorQuote,
+            `threads[${threadIndex}].anchorQuote`,
+            DIAGRAM_COMMENTS_MAX_ANCHOR_QUOTE_LENGTH
+          );
     const createdAt = timestamp(
       rawThread.createdAt,
       `threads[${threadIndex}].createdAt`
@@ -192,6 +201,19 @@ export function parseDiagramComments(
     if (!id.ok) return invalid(id.error);
     if (!anchorId.ok) return invalid(anchorId.error);
     if (!anchorText.ok) return invalid(anchorText.error);
+    if (anchorQuote !== null && !anchorQuote.ok) {
+      return invalid(anchorQuote.error);
+    }
+    if (
+      rawThread.anchorOccurrence !== undefined &&
+      (anchorQuote === null ||
+        !Number.isSafeInteger(rawThread.anchorOccurrence) ||
+        (rawThread.anchorOccurrence as number) < 0)
+    ) {
+      return invalid(
+        `threads[${threadIndex}].anchorOccurrence は anchorQuote と0以上の整数が必要です`
+      );
+    }
     if (!createdAt.ok) return invalid(createdAt.error);
     if (seenIds.has(id.value))
       return invalid(`id が重複しています: ${id.value}`);
@@ -243,14 +265,21 @@ export function parseDiagramComments(
       });
     }
 
-    threads.push({
+    const thread: DiagramCommentThread = {
       id: id.value,
       anchorId: anchorId.value,
       anchorText: anchorText.value,
       status: rawThread.status,
       createdAt: createdAt.value,
       messages,
-    });
+    };
+    if (anchorQuote?.ok) {
+      thread.anchorQuote = anchorQuote.value;
+      if (rawThread.anchorOccurrence !== undefined) {
+        thread.anchorOccurrence = rawThread.anchorOccurrence as number;
+      }
+    }
+    threads.push(thread);
   }
 
   const comments: DiagramCommentsFile = {
@@ -468,7 +497,9 @@ export async function createDiagramComment(
   relPath: string,
   anchorId: string,
   author: string,
-  body: string
+  body: string,
+  anchorQuote?: string,
+  anchorOccurrence?: number
 ): Promise<DiagramCommentsResponse> {
   const resolved = resolveDiagramCommentsPath(worktreeReal, relPath);
   if (!resolved.ok) return resolved;
@@ -499,6 +530,33 @@ export async function createDiagramComment(
     if (!validBody.ok) {
       return { ok: false, code: "BAD_REQUEST", error: validBody.error };
     }
+    const validAnchorQuote =
+      anchorQuote === undefined
+        ? null
+        : boundedString(
+            anchorQuote,
+            "anchorQuote",
+            DIAGRAM_COMMENTS_MAX_ANCHOR_QUOTE_LENGTH
+          );
+    if (validAnchorQuote !== null && !validAnchorQuote.ok) {
+      return { ok: false, code: "BAD_REQUEST", error: validAnchorQuote.error };
+    }
+    if (
+      anchorOccurrence !== undefined &&
+      (validAnchorQuote === null ||
+        !Number.isSafeInteger(anchorOccurrence) ||
+        anchorOccurrence < 0)
+    ) {
+      return {
+        ok: false,
+        code: "BAD_REQUEST",
+        error: "anchorOccurrence は anchorQuote と0以上の整数が必要です",
+      };
+    }
+
+    // quote の本文 HTML 内での実在性は、DOM を持たない server では検証しない。
+    // HTML 部分木の text 抽出を独自実装すると browser と乖離するため、解決と
+    // 「アンカー未解決」の可視化は comment layer に委ねる。
 
     const current = await readDiagramCommentsFile(worktreeReal, relPath);
     if (!current.ok) return current;
@@ -510,7 +568,16 @@ export async function createDiagramComment(
         {
           id: `th-${randomUUID()}`,
           anchorId,
-          anchorText: normalizeDiagramCommentAnchorText(anchor.label, anchorId),
+          anchorText: normalizeDiagramCommentAnchorText(
+            validAnchorQuote?.ok ? validAnchorQuote.value : anchor.label,
+            anchorId
+          ),
+          ...(validAnchorQuote?.ok
+            ? {
+                anchorQuote: validAnchorQuote.value,
+                ...(anchorOccurrence === undefined ? {} : { anchorOccurrence }),
+              }
+            : {}),
           status: "open",
           createdAt: at,
           messages: [

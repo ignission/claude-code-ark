@@ -393,6 +393,8 @@ export interface DiagramCommentThread {
   id: string;
   anchorId: string;
   anchorText: string;
+  anchorQuote?: string;
+  anchorOccurrence?: number;
   status: "open" | "resolved";
   createdAt: string;
   messages: DiagramCommentMessage[];
@@ -731,12 +733,14 @@ export interface ClientToServerEvents {
     callback: (response: DiagramCommentsResponse) => void
   ) => void;
 
-  /** 文書ブロックへ単発コメントを作成する */
+  /** 文書ブロックまたはそのテキスト選択範囲へ単発コメントを作成する */
   "diagram:comment:create": (
     data: {
       sessionId: string;
       relPath: string;
       anchorId: string;
+      anchorQuote?: string;
+      anchorOccurrence?: number;
       author: string;
       body: string;
     },

@@ -12,10 +12,13 @@ const MAX_SESSION_OR_PATH_LENGTH = 1024;
 const MAX_ANCHOR_OR_ID_LENGTH = 256;
 const MAX_AUTHOR_LENGTH = 80;
 const MAX_BODY_LENGTH = 4000;
+const MAX_ANCHOR_QUOTE_LENGTH = 1000;
 
 type GetPayload = { sessionId: string; relPath: string };
 type CreatePayload = GetPayload & {
   anchorId: string;
+  anchorQuote?: string;
+  anchorOccurrence?: number;
   author: string;
   body: string;
 };
@@ -35,7 +38,9 @@ export interface DiagramCommentsHandlerDeps {
     relPath: string,
     anchorId: string,
     author: string,
-    body: string
+    body: string,
+    anchorQuote?: string,
+    anchorOccurrence?: number
   ) => Promise<DiagramCommentsResponse>;
   resolveComment: (
     worktreeReal: string,
@@ -119,18 +124,32 @@ function parseGetPayload(value: unknown): GetPayload | null {
 function parseCreatePayload(value: unknown): CreatePayload | null {
   if (
     !isRecord(value) ||
-    !hasOnlyKeys(value, [
-      "sessionId",
-      "relPath",
-      "anchorId",
-      "author",
-      "body",
-    ]) ||
+    !Object.keys(value).every(key =>
+      [
+        "sessionId",
+        "relPath",
+        "anchorId",
+        "anchorQuote",
+        "anchorOccurrence",
+        "author",
+        "body",
+      ].includes(key)
+    ) ||
     !validString(value.sessionId, MAX_SESSION_OR_PATH_LENGTH) ||
     !validString(value.relPath, MAX_SESSION_OR_PATH_LENGTH) ||
     !validString(value.anchorId, MAX_ANCHOR_OR_ID_LENGTH) ||
     typeof value.author !== "string" ||
     typeof value.body !== "string"
+  ) {
+    return null;
+  }
+  if (
+    (value.anchorQuote !== undefined &&
+      !validString(value.anchorQuote, MAX_ANCHOR_QUOTE_LENGTH)) ||
+    (value.anchorOccurrence !== undefined &&
+      (value.anchorQuote === undefined ||
+        !Number.isSafeInteger(value.anchorOccurrence) ||
+        (value.anchorOccurrence as number) < 0))
   ) {
     return null;
   }
@@ -142,13 +161,20 @@ function parseCreatePayload(value: unknown): CreatePayload | null {
   ) {
     return null;
   }
-  return {
+  const payload: CreatePayload = {
     sessionId: value.sessionId,
     relPath: value.relPath,
     anchorId: value.anchorId,
     author,
     body,
   };
+  if (value.anchorQuote !== undefined) {
+    payload.anchorQuote = value.anchorQuote as string;
+  }
+  if (value.anchorOccurrence !== undefined) {
+    payload.anchorOccurrence = value.anchorOccurrence as number;
+  }
+  return payload;
 }
 
 function parseResolvePayload(value: unknown): ResolvePayload | null {
@@ -243,7 +269,9 @@ export async function handleDiagramCommentCreate(
       context.relPath,
       payload.anchorId,
       payload.author,
-      payload.body
+      payload.body,
+      payload.anchorQuote,
+      payload.anchorOccurrence
     )
   );
 }
