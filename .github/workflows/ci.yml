@@ -22,5 +22,11 @@ jobs:
       - name: Type check
         run: pnpm check
 
+      # ユニットテスト（server / shared / web の *.test.ts をルート vitest 設定で一括実行）。
+      # 以前は CI にテストの step が無く、意味差分の契約を変えた #289 が
+      # e2e を 4 件壊したまま緑で通っていた。ここで落ちるようにする。
+      - name: Test
+        run: pnpm test
+
       - name: Build
         run: pnpm build

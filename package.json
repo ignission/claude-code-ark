@@ -21,6 +21,7 @@
     "preview": "pnpm --filter @ark/web preview",
     "test:e2e": "playwright test",
     "check": "biome check . && tsc -b",
+    "test": "vitest run",
     "format": "biome check --write .",
     "lint": "biome lint ."
   },
