@@ -119,14 +119,16 @@ describe("DiagramSwitcher", () => {
   });
 
   it("tracked/untracked ごとの取り消せない警告を返す", () => {
-    expect(getDiagramDeleteWarning(diagrams[0])).toContain(
-      "worktree に削除差分が残ります"
-    );
-    expect(getDiagramDeleteWarning(diagrams[0])).toContain("Git で復元");
-    expect(getDiagramDeleteWarning(diagrams[1])).toContain(
-      "Git から復元できません"
-    );
-    expect(getDiagramDeleteWarning(diagrams[1])).toContain("取り消せません");
+    const tracked = getDiagramDeleteWarning(diagrams[0]);
+    const untracked = getDiagramDeleteWarning(diagrams[1]);
+
+    expect(tracked).toContain("コメント sidecar も削除");
+    expect(tracked).toContain("worktree に削除差分が残ります");
+    expect(tracked).toContain("Git で復元");
+    expect(tracked).toContain("Git 未追跡のファイルは復元できません");
+    expect(untracked).toContain("コメント sidecar も削除");
+    expect(untracked).toContain("Git 未追跡のファイルは復元できません");
+    expect(untracked).toContain("取り消せません");
   });
 
   it("cancel は callback 無し、confirm は current 1件だけを渡して成否を返す", async () => {

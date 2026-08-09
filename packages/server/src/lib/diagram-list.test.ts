@@ -281,6 +281,42 @@ describe("listDiagrams", () => {
     ]);
   });
 
+  it("comments sidecar を単独でも図の隣接時でも候補にしない", async () => {
+    const { worktree, diagramDir } = makeWorktree();
+    fs.mkdirSync(path.join(diagramDir, "nested"), { recursive: true });
+    fs.writeFileSync(
+      path.join(diagramDir, "review.diagram.html"),
+      diagramHtml("レビュー図")
+    );
+    fs.writeFileSync(
+      path.join(diagramDir, "review.comments.json"),
+      '{"version":1}'
+    );
+    fs.writeFileSync(
+      path.join(diagramDir, "orphan.comments.json"),
+      '{"version":1}'
+    );
+    fs.writeFileSync(
+      path.join(diagramDir, "nested", "only.comments.json"),
+      '{"version":1}'
+    );
+    execFileSync("git", [
+      "-C",
+      worktree,
+      "add",
+      "--",
+      ".claude/diagrams/review.diagram.html",
+    ]);
+
+    await expect(listDiagrams(worktree)).resolves.toEqual([
+      {
+        relPath: ".claude/diagrams/review.diagram.html",
+        displayName: "レビュー図",
+        tracked: true,
+      },
+    ]);
+  });
+
   it("図の読み込みを同時に8件までに制限する", async () => {
     const { worktree, diagramDir } = makeWorktree();
     for (let index = 0; index < 17; index += 1) {
