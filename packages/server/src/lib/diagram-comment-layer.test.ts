@@ -64,4 +64,35 @@ describe("injectDiagramCommentLayer", () => {
       /<link\b[^>]*rel=["']?stylesheet|@import\s|url\s*\(/iu
     );
   });
+
+  it("DOM API だけで right rail・marker・composer を構築する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    for (const contract of [
+      "createElement",
+      "textContent",
+      "setAttribute",
+      "appendChild",
+      "[data-ark-id]",
+      "ResizeObserver",
+      "scroll",
+      "resize",
+    ]) {
+      expect(injected).toContain(contract);
+    }
+  });
+
+  it("pinch/create/resolve と pending/error 契約を含む", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("ark:diagram-pinch");
+    expect(injected).toContain("ctrlKey");
+    expect(injected).toContain("ark:diagram-comment-create");
+    expect(injected).toContain("ark:diagram-comment-resolve");
+    expect(injected).toContain("pendingRequestId");
+    expect(injected).toContain("disabled");
+    expect(injected).toContain("error");
+    expect(injected).not.toContain("ark:diagram-comment-reply");
+    expect(injected).not.toContain("orphaned");
+  });
 });
