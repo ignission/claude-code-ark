@@ -101,56 +101,56 @@ function expectContains(
 }
 
 describe("layoutDiagram", () => {
-  it.each([
-    "LR",
-    "TB",
-  ] as const)("%s で可変高 node と cluster の全矩形を重ねず member を保持する", direction => {
-    const input = fixture(direction);
-    const { result, nodes } = rects(input);
+  it.each(["LR", "TB"] as const)(
+    "%s で可変高 node と cluster の全矩形を重ねず member を保持する",
+    direction => {
+      const input = fixture(direction);
+      const { result, nodes } = rects(input);
 
-    expect(result.fallback).toBeNull();
-    expectDisjoint(Object.entries(nodes));
-    for (const group of input.groups) {
-      const geometry = result.groups[group.id];
-      for (const id of group.nodes) {
-        expectContains(geometry.member, nodes[id]);
+      expect(result.fallback).toBeNull();
+      expectDisjoint(Object.entries(nodes));
+      for (const group of input.groups) {
+        const geometry = result.groups[group.id];
+        for (const id of group.nodes) {
+          expectContains(geometry.member, nodes[id]);
+        }
+        for (const node of input.nodes.filter(
+          node => !group.nodes.includes(node.id)
+        )) {
+          const center = {
+            x: nodes[node.id].x + nodes[node.id].width / 2,
+            y: nodes[node.id].y + nodes[node.id].height / 2,
+          };
+          expect(
+            center.x > geometry.member.x &&
+              center.x < geometry.member.x + geometry.member.width &&
+              center.y > geometry.member.y &&
+              center.y < geometry.member.y + geometry.member.height,
+            `${node.id} が ${group.id} の member hull に侵入しています`
+          ).toBe(false);
+        }
       }
-      for (const node of input.nodes.filter(
-        node => !group.nodes.includes(node.id)
-      )) {
-        const center = {
-          x: nodes[node.id].x + nodes[node.id].width / 2,
-          y: nodes[node.id].y + nodes[node.id].height / 2,
-        };
-        expect(
-          center.x > geometry.member.x &&
-            center.x < geometry.member.x + geometry.member.width &&
-            center.y > geometry.member.y &&
-            center.y < geometry.member.y + geometry.member.height,
-          `${node.id} が ${group.id} の member hull に侵入しています`
-        ).toBe(false);
-      }
+      expectDisjoint(
+        result.units.map(unit => [unit.id, unit.rect]),
+        input.nodeSpacing
+      );
     }
-    expectDisjoint(
-      result.units.map(unit => [unit.id, unit.rect]),
-      input.nodeSpacing
-    );
-  });
+  );
 
-  it.each([
-    "LR",
-    "TB",
-  ] as const)("%s で内部 edge と cross edge を別の rank に反映する", direction => {
-    const { result, nodes } = rects(fixture(direction));
-    const primary = direction === "LR" ? "x" : "y";
-    expect(nodes.cart_item[primary]).toBeGreaterThan(nodes.cart[primary]);
-    expect(result.groups.order_group.outer[primary]).toBeGreaterThan(
-      result.groups.cart_group.outer[primary]
-    );
-    expect(result.groups.stock_group.outer[primary]).toBeGreaterThan(
-      result.groups.order_group.outer[primary]
-    );
-  });
+  it.each(["LR", "TB"] as const)(
+    "%s で内部 edge と cross edge を別の rank に反映する",
+    direction => {
+      const { result, nodes } = rects(fixture(direction));
+      const primary = direction === "LR" ? "x" : "y";
+      expect(nodes.cart_item[primary]).toBeGreaterThan(nodes.cart[primary]);
+      expect(result.groups.order_group.outer[primary]).toBeGreaterThan(
+        result.groups.cart_group.outer[primary]
+      );
+      expect(result.groups.stock_group.outer[primary]).toBeGreaterThan(
+        result.groups.order_group.outer[primary]
+      );
+    }
+  );
 
   it("cycle・self-edge・重複 edge があっても決定的で入力を mutate しない", () => {
     const input = fixture();
