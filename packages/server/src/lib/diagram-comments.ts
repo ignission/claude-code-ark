@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type {
@@ -6,7 +7,9 @@ import type {
   DiagramCommentsResponse,
   DiagramCommentThread,
 } from "@ark/shared";
+import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
+import { readDiagramModel } from "./diagram-reader.js";
 import { errnoCode, errnoMessage } from "./errors.js";
 
 export const DIAGRAM_COMMENTS_MAX_BYTES = 1024 * 1024;
@@ -321,4 +324,232 @@ export async function readDiagramCommentsFile(
     return ioError("コメント sidecar を close できません", error);
   }
   return result;
+}
+
+const mutationQueues = new Map<string, Promise<void>>();
+type DiagramCommentsError = Extract<DiagramCommentsResponse, { ok: false }>;
+
+async function withMutationQueue<T>(
+  key: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const previous = mutationQueues.get(key) ?? Promise.resolve();
+  let release = (): void => undefined;
+  const gate = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  const tail = previous.then(
+    () => gate,
+    () => gate
+  );
+  mutationQueues.set(key, tail);
+  await previous.catch(() => undefined);
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (mutationQueues.get(key) === tail) mutationQueues.delete(key);
+  }
+}
+
+async function readCurrentDoc(
+  worktreeReal: string,
+  relPath: string
+): Promise<
+  | Extract<Awaited<ReturnType<typeof readDiagramModel>>, { ok: true }>
+  | DiagramCommentsError
+> {
+  const diagram = await readDiagramModel(worktreeReal, relPath);
+  if (!diagram.ok) {
+    return {
+      ok: false,
+      code: diagram.status === 403 ? "FORBIDDEN" : "IO_ERROR",
+      error: diagram.error,
+    };
+  }
+  if (diagram.model.type !== "doc") {
+    return { ok: false, code: "NOT_DOC", error: "文書型の図ではありません" };
+  }
+  const anchors = validateDiagramDocAnchors(diagram.raw, diagram.model);
+  if (!anchors.ok) {
+    return { ok: false, code: "ANCHOR_NOT_FOUND", error: anchors.error };
+  }
+  return diagram;
+}
+
+async function preflightTarget(
+  absPath: string
+): Promise<{ ok: true } | DiagramCommentsError> {
+  try {
+    const targetStat = await fs.promises.lstat(absPath);
+    if (targetStat.isSymbolicLink() || !targetStat.isFile()) {
+      return {
+        ok: false,
+        code: "FORBIDDEN",
+        error: "コメント sidecar は通常ファイルである必要があります",
+      };
+    }
+    return { ok: true };
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") {
+      return { ok: true };
+    }
+    return ioError("コメント sidecar の実体を検証できません", error);
+  }
+}
+
+async function writeDiagramCommentsFile(
+  resolved: Extract<DiagramCommentsPathResult, { ok: true }>,
+  comments: DiagramCommentsFile
+): Promise<DiagramCommentsResponse> {
+  const serialized = `${JSON.stringify(comments, null, 2)}\n`;
+  const validated = parseDiagramComments(serialized, resolved.target);
+  if (!validated.ok) return validated;
+
+  const tempPath = path.join(
+    path.dirname(resolved.commentsAbsPath),
+    `.${path.basename(resolved.commentsAbsPath)}.${randomUUID()}.tmp`
+  );
+  let handle: fs.promises.FileHandle | null = null;
+  try {
+    handle = await fs.promises.open(
+      tempPath,
+      fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        fs.constants.O_WRONLY |
+        fs.constants.O_NOFOLLOW,
+      0o600
+    );
+    await handle.writeFile(serialized, "utf8");
+    await handle.close();
+    handle = null;
+
+    const preflight = await preflightTarget(resolved.commentsAbsPath);
+    if (!preflight.ok) return preflight;
+    await fs.promises.rename(tempPath, resolved.commentsAbsPath);
+    return validated;
+  } catch (error) {
+    return ioError("コメント sidecar の保存に失敗しました", error);
+  } finally {
+    if (handle !== null) {
+      try {
+        await handle.close();
+      } catch {
+        // 元の write error を保持し、下の temp cleanup を続ける。
+      }
+    }
+    try {
+      await fs.promises.unlink(tempPath);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") {
+        // rename 成功後は temp が無い。失敗時も元 sidecar を優先して保持する。
+      }
+    }
+  }
+}
+
+/** 最新の doc/sidecar を再検証して単発コメントを追加する。 */
+export async function createDiagramComment(
+  worktreeReal: string,
+  relPath: string,
+  anchorId: string,
+  author: string,
+  body: string
+): Promise<DiagramCommentsResponse> {
+  const resolved = resolveDiagramCommentsPath(worktreeReal, relPath);
+  if (!resolved.ok) return resolved;
+  return withMutationQueue(resolved.commentsAbsPath, async () => {
+    const diagram = await readCurrentDoc(worktreeReal, relPath);
+    if (!diagram.ok) return diagram;
+    const anchor = diagram.model.nodes.find(node => node.id === anchorId);
+    if (anchor === undefined) {
+      return {
+        ok: false,
+        code: "ANCHOR_NOT_FOUND",
+        error: `コメント anchor が見つかりません: ${anchorId}`,
+      };
+    }
+    const validAuthor = boundedString(
+      author,
+      "author",
+      DIAGRAM_COMMENTS_MAX_AUTHOR_LENGTH
+    );
+    const validBody = boundedString(
+      body,
+      "body",
+      DIAGRAM_COMMENTS_MAX_BODY_LENGTH
+    );
+    if (!validAuthor.ok) {
+      return { ok: false, code: "BAD_REQUEST", error: validAuthor.error };
+    }
+    if (!validBody.ok) {
+      return { ok: false, code: "BAD_REQUEST", error: validBody.error };
+    }
+
+    const current = await readDiagramCommentsFile(worktreeReal, relPath);
+    if (!current.ok) return current;
+    const at = new Date().toISOString();
+    const next: DiagramCommentsFile = {
+      ...current.comments,
+      threads: [
+        ...current.comments.threads,
+        {
+          id: `th-${randomUUID()}`,
+          anchorId,
+          anchorText: anchor.label,
+          status: "open",
+          createdAt: at,
+          messages: [
+            {
+              id: `m-${randomUUID()}`,
+              author,
+              at,
+              body,
+            },
+          ],
+        },
+      ],
+    };
+    return writeDiagramCommentsFile(resolved, next);
+  });
+}
+
+/** 最新の doc/sidecar を再検証して thread を解決済みにする。 */
+export async function resolveDiagramComment(
+  worktreeReal: string,
+  relPath: string,
+  threadId: string
+): Promise<DiagramCommentsResponse> {
+  const resolved = resolveDiagramCommentsPath(worktreeReal, relPath);
+  if (!resolved.ok) return resolved;
+  return withMutationQueue(resolved.commentsAbsPath, async () => {
+    const diagram = await readCurrentDoc(worktreeReal, relPath);
+    if (!diagram.ok) return diagram;
+    const current = await readDiagramCommentsFile(worktreeReal, relPath);
+    if (!current.ok) return current;
+    const thread = current.comments.threads.find(item => item.id === threadId);
+    if (thread === undefined) {
+      return {
+        ok: false,
+        code: "THREAD_NOT_FOUND",
+        error: `コメント thread が見つかりません: ${threadId}`,
+      };
+    }
+    if (!diagram.model.nodes.some(node => node.id === thread.anchorId)) {
+      return {
+        ok: false,
+        code: "ANCHOR_NOT_FOUND",
+        error: `コメント anchor が見つかりません: ${thread.anchorId}`,
+      };
+    }
+    if (thread.status === "resolved") return current;
+
+    const next: DiagramCommentsFile = {
+      ...current.comments,
+      threads: current.comments.threads.map(item =>
+        item.id === threadId ? { ...item, status: "resolved" } : item
+      ),
+    };
+    return writeDiagramCommentsFile(resolved, next);
+  });
 }

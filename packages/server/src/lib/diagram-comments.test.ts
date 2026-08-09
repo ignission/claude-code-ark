@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createDiagramComment,
   DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH,
   DIAGRAM_COMMENTS_MAX_AUTHOR_LENGTH,
   DIAGRAM_COMMENTS_MAX_BODY_LENGTH,
@@ -10,6 +11,7 @@ import {
   DIAGRAM_COMMENTS_MAX_THREADS,
   parseDiagramComments,
   readDiagramCommentsFile,
+  resolveDiagramComment,
   resolveDiagramCommentsPath,
 } from "./diagram-comments.js";
 
@@ -53,6 +55,22 @@ function comments(overrides: Record<string, unknown> = {}) {
     ],
     ...overrides,
   };
+}
+
+function writeDoc(
+  name = "order-flow",
+  nodes = [
+    { id: "s1-p1", label: "注文を受け付ける" },
+    { id: "s1-p2", label: "在庫を確認する" },
+  ]
+) {
+  const anchors = nodes
+    .map(node => `<p data-ark-id="${node.id}">${node.label}</p>`)
+    .join("");
+  fs.writeFileSync(
+    path.join(worktree, `.claude/diagrams/${name}.diagram.html`),
+    `<!doctype html><html><body><script type="application/json" id="ark-diagram-model">${JSON.stringify({ version: 1, type: "doc", nodes, edges: [], groups: [] })}</script>${anchors}</body></html>`
+  );
 }
 
 describe("resolveDiagramCommentsPath", () => {
@@ -442,5 +460,209 @@ describe("readDiagramCommentsFile", () => {
     await readDiagramCommentsFile(worktree, relPath);
 
     expect(close).toHaveBeenCalledOnce();
+  });
+});
+
+describe("comment mutations", () => {
+  const relPath = ".claude/diagrams/order-flow.diagram.html";
+
+  it("create は server ID/時刻と最新 node label で open thread を追加する", async () => {
+    writeDoc();
+
+    const result = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p1",
+      "Reviewer",
+      "確認してください"
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const thread = result.comments.threads[0];
+      expect(thread).toMatchObject({
+        anchorId: "s1-p1",
+        anchorText: "注文を受け付ける",
+        status: "open",
+        messages: [{ author: "Reviewer", body: "確認してください" }],
+      });
+      expect(thread?.id).toMatch(/^th-[0-9a-f-]{36}$/u);
+      expect(thread?.messages[0]?.id).toMatch(/^m-[0-9a-f-]{36}$/u);
+      expect(Date.parse(thread?.createdAt ?? "invalid")).not.toBeNaN();
+      expect(thread?.messages[0]?.at).toBe(thread?.createdAt);
+    }
+  });
+
+  it("client が指定できない値を受け取らず、未知 anchor を拒否する", async () => {
+    writeDoc();
+
+    const result = await createDiagramComment(
+      worktree,
+      relPath,
+      "unknown",
+      "Reviewer",
+      "本文"
+    );
+
+    expect(result).toMatchObject({ ok: false, code: "ANCHOR_NOT_FOUND" });
+    expect(
+      fs.existsSync(
+        path.join(worktree, ".claude/diagrams/order-flow.comments.json")
+      )
+    ).toBe(false);
+  });
+
+  it("doc 以外を NOT_DOC にする", async () => {
+    const graphModel = {
+      version: 1,
+      nodes: [{ id: "s1-p1", label: "Graph" }],
+      edges: [],
+      groups: [],
+    };
+    fs.writeFileSync(
+      path.join(worktree, ".claude/diagrams/order-flow.diagram.html"),
+      `<script type="application/json" id="ark-diagram-model">${JSON.stringify(graphModel)}</script><div data-model-id="s1-p1"></div>`
+    );
+
+    await expect(
+      createDiagramComment(worktree, relPath, "s1-p1", "Reviewer", "本文")
+    ).resolves.toMatchObject({ ok: false, code: "NOT_DOC" });
+  });
+
+  it("resolve は open thread だけを resolved にし、再実行は冪等", async () => {
+    writeDoc();
+    const created = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p1",
+      "Reviewer",
+      "本文"
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const threadId = created.comments.threads[0]?.id ?? "";
+
+    const resolved = await resolveDiagramComment(worktree, relPath, threadId);
+    const again = await resolveDiagramComment(worktree, relPath, threadId);
+
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) {
+      expect(resolved.comments.threads[0]?.status).toBe("resolved");
+      expect(resolved.comments.threads[0]?.messages).toEqual(
+        created.comments.threads[0]?.messages
+      );
+    }
+    expect(again).toEqual(resolved);
+  });
+
+  it("未知 thread を THREAD_NOT_FOUND にする", async () => {
+    writeDoc();
+
+    await expect(
+      resolveDiagramComment(worktree, relPath, "th-unknown")
+    ).resolves.toMatchObject({ ok: false, code: "THREAD_NOT_FOUND" });
+  });
+
+  it("同じ sidecar への並行 create を直列化して両方保持する", async () => {
+    writeDoc();
+
+    await Promise.all([
+      createDiagramComment(worktree, relPath, "s1-p1", "A", "first"),
+      createDiagramComment(worktree, relPath, "s1-p2", "B", "second"),
+    ]);
+
+    const stored = await readDiagramCommentsFile(worktree, relPath);
+    expect(stored.ok).toBe(true);
+    if (stored.ok) {
+      expect(stored.comments.threads).toHaveLength(2);
+      expect(
+        stored.comments.threads.map(thread => thread.anchorId).sort()
+      ).toEqual(["s1-p1", "s1-p2"]);
+    }
+  });
+
+  it("別 sidecar の mutation は独立して成功する", async () => {
+    writeDoc("order-flow");
+    writeDoc("shipping-flow");
+
+    const results = await Promise.all([
+      createDiagramComment(worktree, relPath, "s1-p1", "A", "first"),
+      createDiagramComment(
+        worktree,
+        ".claude/diagrams/shipping-flow.diagram.html",
+        "s1-p2",
+        "B",
+        "second"
+      ),
+    ]);
+
+    expect(results.every(result => result.ok)).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(worktree, ".claude/diagrams/order-flow.comments.json")
+      )
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(worktree, ".claude/diagrams/shipping-flow.comments.json")
+      )
+    ).toBe(true);
+  });
+
+  it("target が symlink なら拒否し、外部 file を変更しない", async () => {
+    writeDoc();
+    const outside = path.join(worktree, "outside.json");
+    fs.writeFileSync(outside, "outside");
+    fs.symlinkSync(
+      outside,
+      path.join(worktree, ".claude/diagrams/order-flow.comments.json")
+    );
+
+    const result = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p1",
+      "Reviewer",
+      "本文"
+    );
+
+    expect(result).toMatchObject({ ok: false, code: "FORBIDDEN" });
+    expect(fs.readFileSync(outside, "utf8")).toBe("outside");
+  });
+
+  it("atomic write 失敗時は元 sidecar を保持し temp を消す", async () => {
+    writeDoc();
+    const first = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p1",
+      "Reviewer",
+      "first"
+    );
+    expect(first.ok).toBe(true);
+    const sidecar = path.join(
+      worktree,
+      ".claude/diagrams/order-flow.comments.json"
+    );
+    const original = fs.readFileSync(sidecar, "utf8");
+    vi.spyOn(fs.promises, "rename").mockRejectedValueOnce(
+      Object.assign(new Error("rename failed"), { code: "EIO" })
+    );
+
+    const result = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p2",
+      "Reviewer",
+      "second"
+    );
+
+    expect(result).toMatchObject({ ok: false, code: "IO_ERROR" });
+    expect(fs.readFileSync(sidecar, "utf8")).toBe(original);
+    expect(
+      fs
+        .readdirSync(path.dirname(sidecar))
+        .filter(name => name.includes(".tmp"))
+    ).toEqual([]);
   });
 });
