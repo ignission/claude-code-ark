@@ -382,6 +382,44 @@ export type DiagramDeleteResponse =
       error: string;
     };
 
+export interface DiagramCommentMessage {
+  id: string;
+  author: string;
+  at: string;
+  body: string;
+}
+
+export interface DiagramCommentThread {
+  id: string;
+  anchorId: string;
+  anchorText: string;
+  status: "open" | "resolved";
+  createdAt: string;
+  messages: DiagramCommentMessage[];
+}
+
+export interface DiagramCommentsFile {
+  version: 1;
+  target: string;
+  threads: DiagramCommentThread[];
+}
+
+export type DiagramCommentsResponse =
+  | { ok: true; comments: DiagramCommentsFile }
+  | {
+      ok: false;
+      code:
+        | "BAD_REQUEST"
+        | "SESSION_NOT_FOUND"
+        | "FORBIDDEN"
+        | "NOT_DOC"
+        | "INVALID_SIDECAR"
+        | "ANCHOR_NOT_FOUND"
+        | "THREAD_NOT_FOUND"
+        | "IO_ERROR";
+      error: string;
+    };
+
 export interface ServerToClientEvents {
   // Repository events
   "repos:list": (repos: string[]) => void;
@@ -685,6 +723,30 @@ export interface ClientToServerEvents {
   "diagram:delete": (
     data: DiagramDeleteRequest,
     callback: (response: DiagramDeleteResponse) => void
+  ) => void;
+
+  /** session に紐づく図のコメントを取得する */
+  "diagram:comments:get": (
+    data: { sessionId: string; relPath: string },
+    callback: (response: DiagramCommentsResponse) => void
+  ) => void;
+
+  /** 文書ブロックへ単発コメントを作成する */
+  "diagram:comment:create": (
+    data: {
+      sessionId: string;
+      relPath: string;
+      anchorId: string;
+      author: string;
+      body: string;
+    },
+    callback: (response: DiagramCommentsResponse) => void
+  ) => void;
+
+  /** 文書コメントを解決済みにする */
+  "diagram:comment:resolve": (
+    data: { sessionId: string; relPath: string; threadId: string },
+    callback: (response: DiagramCommentsResponse) => void
   ) => void;
 
   /** 図の購読開始（更新通知を受け取る）。1 セッション 1 図を想定 */
