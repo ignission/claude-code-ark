@@ -169,6 +169,60 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain('element("button","解決する"');
   });
 
+  it("テキスト node を連結して occurrence を解決し、分割 span を再描画前に戻す", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    for (const contract of [
+      "function collectTextNodes",
+      "NodeFilter.SHOW_TEXT",
+      "anchorQuote",
+      "anchorOccurrence",
+      'element("span",undefined,"ark-comment-highlight")',
+      'setAttribute("data-thread-id",thread.id)',
+      "function clearHighlights",
+      "replaceWith",
+      "normalize()",
+    ]) {
+      expect(injected).toContain(contract);
+    }
+  });
+
+  it("選択範囲から共通 anchor と occurrence を決めて近くにコメント button を出す", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    for (const contract of [
+      "selectionchange",
+      "mouseup",
+      "keyup",
+      "getSelection()",
+      "commonAncestorContainer",
+      "ark-comment-selection-add",
+      "getRangeAt(0)",
+      "getBoundingClientRect()",
+      "openComposer",
+    ]) {
+      expect(injected).toContain(contract);
+    }
+  });
+
+  it("選択 quote を composer に表示して create payload へ渡す", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("composerAnchorQuote");
+    expect(injected).toContain("composerAnchorOccurrence");
+    expect(injected).toContain("ark-comment-composer-quote");
+    expect(injected).toContain("anchorQuote:composerAnchorQuote");
+    expect(injected).toContain("anchorOccurrence:composerAnchorOccurrence");
+  });
+
+  it("quote を解決できない thread を捨てずアンカー未解決として表示する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("アンカー未解決");
+    expect(injected).toContain("ark-comment-unresolved-anchor");
+    expect(injected).toContain("thread.anchorQuote");
+  });
+
   it("pinch/create/resolve と pending/error 契約を含む", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 

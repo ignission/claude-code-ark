@@ -61,7 +61,9 @@ describe("diagram comment transport", () => {
       "sample.diagram.html",
       "s1",
       "Reviewer",
-      "本文"
+      "本文",
+      "選択した本文",
+      1
     );
     const error: DiagramCommentsResponse = {
       ok: false,
@@ -75,6 +77,8 @@ describe("diagram comment transport", () => {
         sessionId: "session-1",
         relPath: "sample.diagram.html",
         anchorId: "s1",
+        anchorQuote: "選択した本文",
+        anchorOccurrence: 1,
         author: "Reviewer",
         body: "本文",
       },

@@ -191,8 +191,94 @@ describe("diagram comments handler core", () => {
       "sample.diagram.html",
       "s1",
       "Reviewer",
-      "本文"
+      "本文",
+      undefined,
+      undefined
     );
+  });
+
+  it("create の anchorQuote/anchorOccurrence を検証して store へ渡す", async () => {
+    const dependencies = deps();
+
+    await handleDiagramCommentCreate(dependencies, {
+      sessionId: "session-1",
+      relPath: "sample.diagram.html",
+      anchorId: "s1",
+      anchorQuote: "選択した本文",
+      anchorOccurrence: 1,
+      author: "Reviewer",
+      body: "本文",
+    });
+
+    expect(dependencies.createComment).toHaveBeenCalledWith(
+      "/managed/worktree",
+      "sample.diagram.html",
+      "s1",
+      "Reviewer",
+      "本文",
+      "選択した本文",
+      1
+    );
+  });
+
+  it("create の anchorQuote 単独を先頭出現として store へ渡す", async () => {
+    const dependencies = deps();
+
+    await handleDiagramCommentCreate(dependencies, {
+      sessionId: "session-1",
+      relPath: "sample.diagram.html",
+      anchorId: "s1",
+      anchorQuote: "選択した本文",
+      author: "Reviewer",
+      body: "本文",
+    });
+
+    expect(dependencies.createComment).toHaveBeenCalledWith(
+      "/managed/worktree",
+      "sample.diagram.html",
+      "s1",
+      "Reviewer",
+      "本文",
+      "選択した本文",
+      undefined
+    );
+  });
+
+  it.each([
+    {
+      anchorQuote: "",
+      anchorOccurrence: 0,
+    },
+    {
+      anchorQuote: "本文",
+      anchorOccurrence: -1,
+    },
+    {
+      anchorQuote: "本文",
+      anchorOccurrence: 0.5,
+    },
+    {
+      anchorOccurrence: 0,
+    },
+    {
+      anchorQuote: "本文",
+      anchorOccurrence: 0,
+      unknown: true,
+    },
+  ])("create の不正な選択 payload %j を拒否する", async extra => {
+    const dependencies = deps();
+
+    await expect(
+      handleDiagramCommentCreate(dependencies, {
+        sessionId: "session-1",
+        relPath: "sample.diagram.html",
+        anchorId: "s1",
+        author: "Reviewer",
+        body: "本文",
+        ...extra,
+      })
+    ).resolves.toMatchObject({ ok: false, code: "BAD_REQUEST" });
+    expect(dependencies.createComment).not.toHaveBeenCalled();
   });
 
   it.each(["NOT_DOC", "INVALID_SIDECAR"] as const)(

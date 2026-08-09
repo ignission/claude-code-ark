@@ -73,6 +73,8 @@ describe("forwardDiagramCommentPortRequest", () => {
       type: "ark:diagram-comment-create",
       requestId: "req-create",
       anchorId: "s1",
+      anchorQuote: "選択した本文",
+      anchorOccurrence: 1,
       author: "Reviewer",
       body: "本文",
     },
@@ -118,7 +120,9 @@ describe("forwardDiagramCommentPortRequest", () => {
       REL_PATH,
       "s1",
       "Reviewer",
-      "本文"
+      "本文",
+      "選択した本文",
+      1
     );
     expect(deps.resolveDiagramComment).toHaveBeenCalledWith(
       "session-1",

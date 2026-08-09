@@ -8,6 +8,7 @@ import {
   DIAGRAM_COMMENTS_MAX_AUTHOR_LENGTH,
   DIAGRAM_COMMENTS_MAX_BODY_LENGTH,
   DIAGRAM_COMMENTS_MAX_BYTES,
+  DIAGRAM_COMMENTS_MAX_ANCHOR_QUOTE_LENGTH,
   DIAGRAM_COMMENTS_MAX_THREADS,
   parseDiagramComments,
   readDiagramCommentsFile,
@@ -241,6 +242,8 @@ describe("parseDiagramComments", () => {
           id: "t".repeat(DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH),
           anchorId: "a".repeat(DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH),
           anchorText: "x".repeat(DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH),
+          anchorQuote: "q".repeat(DIAGRAM_COMMENTS_MAX_ANCHOR_QUOTE_LENGTH),
+          anchorOccurrence: 0,
           messages: [
             {
               ...thread.messages[0],
@@ -256,6 +259,87 @@ describe("parseDiagramComments", () => {
     expect(parseDiagramComments(JSON.stringify(boundary), target).ok).toBe(
       true
     );
+  });
+
+  it("anchorQuote 無しの従来 thread と quote 単独を受け付ける", () => {
+    const legacy = parseDiagramComments(JSON.stringify(comments()), target);
+    const quotedThread = {
+      ...comments().threads[0],
+      anchorQuote: "注文を受け付ける",
+    };
+    const quoted = parseDiagramComments(
+      JSON.stringify(comments({ threads: [quotedThread] })),
+      target
+    );
+
+    expect(legacy.ok).toBe(true);
+    expect(quoted).toMatchObject({
+      ok: true,
+      comments: { threads: [{ anchorQuote: "注文を受け付ける" }] },
+    });
+  });
+
+  it.each([
+    ["空", ""],
+    ["空白のみ", "   "],
+    ["上限超過", "q".repeat(DIAGRAM_COMMENTS_MAX_ANCHOR_QUOTE_LENGTH + 1)],
+  ])("anchorQuote が%sなら拒否する", (_name, anchorQuote) => {
+    const thread = { ...comments().threads[0], anchorQuote };
+
+    expect(
+      parseDiagramComments(
+        JSON.stringify(comments({ threads: [thread] })),
+        target
+      ).ok
+    ).toBe(false);
+  });
+
+  it.each([-1, 0.5, Number.MAX_SAFE_INTEGER + 1])(
+    "anchorOccurrence=%s を拒否する",
+    anchorOccurrence => {
+      const thread = {
+        ...comments().threads[0],
+        anchorQuote: "注文",
+        anchorOccurrence,
+      };
+
+      expect(
+        parseDiagramComments(
+          JSON.stringify(comments({ threads: [thread] })),
+          target
+        ).ok
+      ).toBe(false);
+    }
+  );
+
+  it("anchorOccurrence 単独を拒否し、quote と非負整数の組を受け付ける", () => {
+    const occurrenceOnly = {
+      ...comments().threads[0],
+      anchorOccurrence: 0,
+    };
+    const pair = {
+      ...comments().threads[0],
+      anchorQuote: "注文",
+      anchorOccurrence: 2,
+    };
+
+    expect(
+      parseDiagramComments(
+        JSON.stringify(comments({ threads: [occurrenceOnly] })),
+        target
+      ).ok
+    ).toBe(false);
+    expect(
+      parseDiagramComments(
+        JSON.stringify(comments({ threads: [pair] })),
+        target
+      )
+    ).toMatchObject({
+      ok: true,
+      comments: {
+        threads: [{ anchorQuote: "注文", anchorOccurrence: 2 }],
+      },
+    });
   });
 
   it("threads/文字列/byte size の上限超過を拒否する", () => {
@@ -490,6 +574,30 @@ describe("comment mutations", () => {
       expect(thread?.messages[0]?.id).toMatch(/^m-[0-9a-f-]{36}$/u);
       expect(Date.parse(thread?.createdAt ?? "invalid")).not.toBeNaN();
       expect(thread?.messages[0]?.at).toBe(thread?.createdAt);
+    }
+  });
+
+  it("create は選択 quote と occurrence を保存し、quote を表示抜粋にする", async () => {
+    writeDoc();
+    const anchorQuote = `  ${"選".repeat(300)}  `;
+
+    const result = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p1",
+      "Reviewer",
+      "確認してください",
+      anchorQuote,
+      2
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.comments.threads[0]).toMatchObject({
+        anchorQuote,
+        anchorOccurrence: 2,
+        anchorText: "選".repeat(DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH),
+      });
     }
   });
 
