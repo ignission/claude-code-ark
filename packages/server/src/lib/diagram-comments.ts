@@ -47,6 +47,10 @@ export type DiagramCommentsPathResult =
       error: string;
     };
 
+interface DeleteDiagramCommentOptions {
+  platform?: NodeJS.Platform;
+}
+
 function invalid(error: string): DiagramCommentsResponse {
   return { ok: false, code: "INVALID_SIDECAR", error };
 }
@@ -680,10 +684,19 @@ async function removeEmptyDiagramCommentsFile(
 export async function deleteDiagramComment(
   worktreeReal: string,
   relPath: string,
-  threadId: string
+  threadId: string,
+  options: DeleteDiagramCommentOptions = {}
 ): Promise<DiagramCommentsResponse> {
   const resolved = resolveDiagramCommentsPath(worktreeReal, relPath);
   if (!resolved.ok) return resolved;
+  if ((options.platform ?? process.platform) === "win32") {
+    return {
+      ok: false,
+      code: "FORBIDDEN",
+      error:
+        "この環境では symlink を安全に検証できないためコメントを削除できません",
+    };
+  }
   return withMutationQueue(resolved.commentsAbsPath, async () => {
     const diagram = await readCurrentDoc(worktreeReal, relPath);
     if (!diagram.ok) return diagram;

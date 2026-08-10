@@ -764,6 +764,65 @@ describe("comment mutations", () => {
     expect(fs.existsSync(sidecar)).toBe(false);
   });
 
+  it("delete は Windows では sidecar が存在しても FORBIDDEN にして削除しない", async () => {
+    writeDoc();
+    const created = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p1",
+      "本文"
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const threadId = created.comments.threads[0]?.id;
+    if (!threadId) throw new Error("thread expected");
+    const sidecar = path.join(
+      worktree,
+      ".claude/diagrams/order-flow.comments.json"
+    );
+    const original = fs.readFileSync(sidecar, "utf8");
+
+    const deleted = await deleteDiagramComment(worktree, relPath, threadId, {
+      platform: "win32",
+    });
+
+    expect(deleted).toEqual({
+      ok: false,
+      code: "FORBIDDEN",
+      error:
+        "この環境では symlink を安全に検証できないためコメントを削除できません",
+    });
+    expect(fs.readFileSync(sidecar, "utf8")).toBe(original);
+  });
+
+  it("delete は Linux では最後の thread と sidecar を削除する", async () => {
+    writeDoc();
+    const created = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p1",
+      "本文"
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const threadId = created.comments.threads[0]?.id;
+    if (!threadId) throw new Error("thread expected");
+    const sidecar = path.join(
+      worktree,
+      ".claude/diagrams/order-flow.comments.json"
+    );
+
+    const deleted = await deleteDiagramComment(worktree, relPath, threadId, {
+      platform: "linux",
+    });
+
+    expect(deleted).toEqual({
+      ok: true,
+      comments: { version: 1, target, threads: [] },
+    });
+    expect(fs.existsSync(sidecar)).toBe(false);
+  });
+
   it("最後の thread 削除後に unlink が失敗しても空 sidecar を残して成功する", async () => {
     writeDoc();
     const created = await createDiagramComment(
