@@ -2270,6 +2270,7 @@ export async function startServer(
     socket.on("diagram:comments:get", diagramCommentsHandlers.get);
     socket.on("diagram:comment:create", diagramCommentsHandlers.create);
     socket.on("diagram:comment:resolve", diagramCommentsHandlers.resolve);
+    socket.on("diagram:comment:delete", diagramCommentsHandlers.delete);
     socket.on("diagram:comment:send", diagramCommentsHandlers.send);
 
     socket.on("diagram:subscribe", (data: unknown) => {

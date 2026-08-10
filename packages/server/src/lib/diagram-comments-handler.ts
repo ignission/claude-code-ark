@@ -1,6 +1,7 @@
 import type { DiagramCommentsResponse } from "@ark/shared";
 import {
   createDiagramComment,
+  deleteDiagramComment,
   readDiagramCommentsFile,
   resolveDiagramComment,
 } from "./diagram-comments.js";
@@ -44,6 +45,11 @@ export interface DiagramCommentsHandlerDeps {
     relPath: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
+  deleteComment: (
+    worktreeReal: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
   sendMessage: (sessionId: string, message: string) => void;
 }
 
@@ -73,6 +79,7 @@ export async function getDiagramCommentsForDoc(
 export const diagramCommentsStore = {
   getComments: getDiagramCommentsForDoc,
   createComment: createDiagramComment,
+  deleteComment: deleteDiagramComment,
   resolveComment: resolveDiagramComment,
 };
 
@@ -310,6 +317,19 @@ export async function handleDiagramCommentResolve(
   );
 }
 
+export async function handleDiagramCommentDelete(
+  deps: DiagramCommentsHandlerDeps,
+  data: unknown
+): Promise<DiagramCommentsResponse> {
+  const payload = parseResolvePayload(data);
+  if (payload === null) return badRequest();
+  const context = requestContext(deps, payload);
+  if (!context.valid) return context.response;
+  return containStoreError(() =>
+    deps.deleteComment(context.worktreeReal, context.relPath, payload.threadId)
+  );
+}
+
 export async function handleDiagramCommentSend(
   deps: DiagramCommentsHandlerDeps,
   data: unknown
@@ -385,6 +405,7 @@ export function createDiagramCommentsSocketHandlers(
   get: SocketHandler;
   create: SocketHandler;
   resolve: SocketHandler;
+  delete: SocketHandler;
   send: SocketHandler;
 } {
   return {
@@ -393,6 +414,7 @@ export function createDiagramCommentsSocketHandlers(
     resolve: createSocketHandler(data =>
       handleDiagramCommentResolve(deps, data)
     ),
+    delete: createSocketHandler(data => handleDiagramCommentDelete(deps, data)),
     send: createSocketHandler(data => handleDiagramCommentSend(deps, data)),
   };
 }

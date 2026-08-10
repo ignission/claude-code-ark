@@ -10,6 +10,7 @@ import {
   DIAGRAM_COMMENTS_MAX_BODY_LENGTH,
   DIAGRAM_COMMENTS_MAX_BYTES,
   DIAGRAM_COMMENTS_MAX_THREADS,
+  deleteDiagramComment,
   parseDiagramComments,
   readDiagramCommentsFile,
   resolveDiagramComment,
@@ -708,6 +709,119 @@ describe("comment mutations", () => {
     await expect(
       resolveDiagramComment(worktree, relPath, "th-unknown")
     ).resolves.toMatchObject({ ok: false, code: "THREAD_NOT_FOUND" });
+  });
+
+  it("delete は指定 thread だけを削除して最新 comments を返す", async () => {
+    writeDoc();
+    const [first, second] = await Promise.all([
+      createDiagramComment(worktree, relPath, "s1-p1", "first"),
+      createDiagramComment(worktree, relPath, "s1-p2", "second"),
+    ]);
+    expect(first.ok && second.ok).toBe(true);
+    if (!first.ok || !second.ok) return;
+    const firstId = first.comments.threads[0]?.id;
+    if (!firstId) throw new Error("first thread expected");
+
+    const deleted = await deleteDiagramComment(worktree, relPath, firstId);
+
+    expect(deleted).toMatchObject({
+      ok: true,
+      comments: { threads: [{ anchorId: "s1-p2" }] },
+    });
+  });
+
+  it("delete は未知 thread を THREAD_NOT_FOUND にする", async () => {
+    writeDoc();
+
+    await expect(
+      deleteDiagramComment(worktree, relPath, "th-unknown")
+    ).resolves.toMatchObject({ ok: false, code: "THREAD_NOT_FOUND" });
+  });
+
+  it("delete は最後の thread を消すと sidecar 自体を削除する", async () => {
+    writeDoc();
+    const created = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p1",
+      "本文"
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const threadId = created.comments.threads[0]?.id;
+    if (!threadId) throw new Error("thread expected");
+    const sidecar = path.join(
+      worktree,
+      ".claude/diagrams/order-flow.comments.json"
+    );
+
+    const deleted = await deleteDiagramComment(worktree, relPath, threadId);
+
+    expect(deleted).toEqual({
+      ok: true,
+      comments: { version: 1, target, threads: [] },
+    });
+    expect(fs.existsSync(sidecar)).toBe(false);
+  });
+
+  it("最後の thread 削除後に unlink が失敗しても空 sidecar を残して成功する", async () => {
+    writeDoc();
+    const created = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p1",
+      "本文"
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const threadId = created.comments.threads[0]?.id;
+    if (!threadId) throw new Error("thread expected");
+    const sidecar = path.join(
+      worktree,
+      ".claude/diagrams/order-flow.comments.json"
+    );
+    const unlink = fs.promises.unlink.bind(fs.promises);
+    vi.spyOn(fs.promises, "unlink").mockImplementation(async targetPath => {
+      if (targetPath === sidecar) {
+        throw Object.assign(new Error("unlink denied"), { code: "EACCES" });
+      }
+      return unlink(targetPath);
+    });
+
+    const deleted = await deleteDiagramComment(worktree, relPath, threadId);
+
+    expect(deleted).toEqual({
+      ok: true,
+      comments: { version: 1, target, threads: [] },
+    });
+    expect(fs.existsSync(sidecar)).toBe(true);
+    await expect(readDiagramCommentsFile(worktree, relPath)).resolves.toEqual(
+      deleted
+    );
+  });
+
+  it("同じ sidecar への並行 delete を直列化して両方削除する", async () => {
+    writeDoc();
+    await Promise.all([
+      createDiagramComment(worktree, relPath, "s1-p1", "first"),
+      createDiagramComment(worktree, relPath, "s1-p2", "second"),
+    ]);
+    const stored = await readDiagramCommentsFile(worktree, relPath);
+    expect(stored.ok).toBe(true);
+    if (!stored.ok) return;
+    const threadIds = stored.comments.threads.map(thread => thread.id);
+
+    const deleted = await Promise.all(
+      threadIds.map(threadId =>
+        deleteDiagramComment(worktree, relPath, threadId)
+      )
+    );
+
+    expect(deleted.every(result => result.ok)).toBe(true);
+    await expect(readDiagramCommentsFile(worktree, relPath)).resolves.toEqual({
+      ok: true,
+      comments: { version: 1, target, threads: [] },
+    });
   });
 
   it("同じ sidecar への並行 create を直列化して両方保持する", async () => {

@@ -4,6 +4,7 @@ import {
   createDiagramCommentsSocketHandlers,
   type DiagramCommentsHandlerDeps,
   handleDiagramCommentCreate,
+  handleDiagramCommentDelete,
   handleDiagramCommentResolve,
   handleDiagramCommentSend,
   handleDiagramCommentsGet,
@@ -27,6 +28,7 @@ function deps(): DiagramCommentsHandlerDeps {
     resolveManagedWorktreePath: vi.fn(() => "/managed/worktree"),
     getComments: vi.fn(async () => snapshot),
     createComment: vi.fn(async () => snapshot),
+    deleteComment: vi.fn(async () => snapshot),
     resolveComment: vi.fn(async () => snapshot),
     sendMessage: vi.fn(),
   };
@@ -184,6 +186,45 @@ describe("diagram comments handler core", () => {
       handleDiagramCommentResolve(dependencies, payload)
     ).resolves.toMatchObject({ ok: false, code: "BAD_REQUEST" });
     expect(dependencies.resolveComment).not.toHaveBeenCalled();
+  });
+
+  it("delete は session の managed worktree と検証済み payload だけを store へ渡す", async () => {
+    const dependencies = deps();
+
+    await expect(
+      handleDiagramCommentDelete(dependencies, {
+        sessionId: "session-1",
+        relPath: "sample.diagram.html",
+        threadId: "th-1",
+      })
+    ).resolves.toEqual(snapshot);
+
+    expect(dependencies.resolveManagedWorktreePath).toHaveBeenCalledWith(
+      "/session/worktree"
+    );
+    expect(dependencies.deleteComment).toHaveBeenCalledWith(
+      "/managed/worktree",
+      "sample.diagram.html",
+      "th-1"
+    );
+  });
+
+  it.each([
+    null,
+    { sessionId: "session-1", relPath: "sample.diagram.html" },
+    {
+      sessionId: "session-1",
+      relPath: "sample.diagram.html",
+      threadId: "th-1",
+      unknown: true,
+    },
+  ])("delete の不正 payload %j を BAD_REQUEST にする", async payload => {
+    const dependencies = deps();
+
+    await expect(
+      handleDiagramCommentDelete(dependencies, payload)
+    ).resolves.toMatchObject({ ok: false, code: "BAD_REQUEST" });
+    expect(dependencies.deleteComment).not.toHaveBeenCalled();
   });
 
   it("存在しない session を SESSION_NOT_FOUND にする", async () => {

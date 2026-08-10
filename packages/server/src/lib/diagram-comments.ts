@@ -627,3 +627,85 @@ export async function resolveDiagramComment(
     return writeDiagramCommentsFile(resolved, next);
   });
 }
+
+/** 空にした sidecar の同一性と配置を再検証し、安全に削除する。失敗は残存を許容する。 */
+async function removeEmptyDiagramCommentsFile(
+  resolved: Extract<DiagramCommentsPathResult, { ok: true }>,
+  worktreeReal: string
+): Promise<void> {
+  let handle: fs.promises.FileHandle | null = null;
+  try {
+    handle = await fs.promises.open(
+      resolved.commentsAbsPath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+    );
+    const descriptorStat = await handle.stat();
+    if (!descriptorStat.isFile()) return;
+
+    const realPath = await fs.promises.realpath(resolved.commentsAbsPath);
+    const realStat = await fs.promises.stat(realPath);
+    const diagramsDir = path.join(worktreeReal, DIAGRAM_DIR);
+    if (
+      descriptorStat.ino !== realStat.ino ||
+      descriptorStat.dev !== realStat.dev ||
+      !realStat.isFile() ||
+      (realPath !== diagramsDir && !realPath.startsWith(diagramsDir + path.sep))
+    ) {
+      return;
+    }
+
+    const finalStat = await fs.promises.lstat(resolved.commentsAbsPath);
+    if (
+      !finalStat.isFile() ||
+      finalStat.ino !== descriptorStat.ino ||
+      finalStat.dev !== descriptorStat.dev
+    ) {
+      return;
+    }
+    await fs.promises.unlink(resolved.commentsAbsPath);
+  } catch {
+    // 空 sidecar の残存は成功扱い。次回 mutation の atomic write で回収可能。
+  } finally {
+    if (handle !== null) {
+      try {
+        await handle.close();
+      } catch {
+        // unlink の成否を変えない。
+      }
+    }
+  }
+}
+
+/** 最新の doc/sidecar を再検証して thread を物理削除する。 */
+export async function deleteDiagramComment(
+  worktreeReal: string,
+  relPath: string,
+  threadId: string
+): Promise<DiagramCommentsResponse> {
+  const resolved = resolveDiagramCommentsPath(worktreeReal, relPath);
+  if (!resolved.ok) return resolved;
+  return withMutationQueue(resolved.commentsAbsPath, async () => {
+    const diagram = await readCurrentDoc(worktreeReal, relPath);
+    if (!diagram.ok) return diagram;
+    const current = await readDiagramCommentsFile(worktreeReal, relPath);
+    if (!current.ok) return current;
+    if (!current.comments.threads.some(thread => thread.id === threadId)) {
+      return {
+        ok: false,
+        code: "THREAD_NOT_FOUND",
+        error: `コメント thread が見つかりません: ${threadId}`,
+      };
+    }
+
+    const next: DiagramCommentsFile = {
+      ...current.comments,
+      threads: current.comments.threads.filter(
+        thread => thread.id !== threadId
+      ),
+    };
+    const written = await writeDiagramCommentsFile(resolved, next);
+    if (!written.ok || next.threads.length > 0) return written;
+    await removeEmptyDiagramCommentsFile(resolved, worktreeReal);
+    return written;
+  });
+}

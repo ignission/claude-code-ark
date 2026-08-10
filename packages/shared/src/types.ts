@@ -406,6 +406,12 @@ export interface DiagramCommentsFile {
   threads: DiagramCommentThread[];
 }
 
+export interface DiagramCommentDeleteRequest {
+  sessionId: string;
+  relPath: string;
+  threadId: string;
+}
+
 export type DiagramCommentsResponse =
   | { ok: true; comments: DiagramCommentsFile }
   | {
@@ -749,6 +755,12 @@ export interface ClientToServerEvents {
   /** 文書コメントを解決済みにする */
   "diagram:comment:resolve": (
     data: { sessionId: string; relPath: string; threadId: string },
+    callback: (response: DiagramCommentsResponse) => void
+  ) => void;
+
+  /** 文書コメントを削除する */
+  "diagram:comment:delete": (
+    data: DiagramCommentDeleteRequest,
     callback: (response: DiagramCommentsResponse) => void
   ) => void;
 
