@@ -47,6 +47,7 @@ import {
   type BoardMcpDeps,
   BoardMcpServer,
   BoardSessionRegistry,
+  listDiagramCommentPaths,
 } from "./lib/board-mcp-server.js";
 import { rememberFifoEntry } from "./lib/bounded-fifo-map.js";
 import {
@@ -68,6 +69,7 @@ import { db } from "./lib/database.js";
 import {
   createDiagramCommentsSocketHandlers,
   diagramCommentsStore,
+  getDiagramCommentsForDoc,
 } from "./lib/diagram-comments-handler.js";
 import {
   createDiagramDeleteSocketHandler,
@@ -749,6 +751,24 @@ export async function startServer(
   const boardRegistry = new BoardSessionRegistry();
   const boardMcp = new BoardMcpServer();
   const boardDeps: BoardMcpDeps = {
+    async listDiagramPaths(worktreePath) {
+      const resolved = resolveManagedWorktreeDetailed(worktreePath);
+      if (!resolved.ok) {
+        throw new Error(`worktree を解決できません: ${resolved.reason}`);
+      }
+      return listDiagramCommentPaths(resolved.path);
+    },
+    async getDiagramComments(worktreePath, relPath) {
+      const resolved = resolveManagedWorktreeDetailed(worktreePath);
+      if (!resolved.ok) {
+        return {
+          ok: false,
+          code: "FORBIDDEN",
+          error: `worktree を解決できません: ${resolved.reason}`,
+        };
+      }
+      return getDiagramCommentsForDoc(resolved.path, relPath);
+    },
     async openDiagram(worktreePath, relPath) {
       const resolved = resolveManagedWorktreeDetailed(worktreePath);
       if (!resolved.ok) {
