@@ -410,6 +410,8 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
       entries.push({card:card,anchor:entry.anchor,rect:entry.anchor.getBoundingClientRect()});
     });
     entries.sort(function(left,right){return left.rect.top-right.rect.top;});
+    var viewportTop=8;
+    var viewportBottom=window.innerHeight-8;
     var previousBottom=-CARD_GAP;
     entries.forEach(function(entry){
       var rect=entry.anchor.getBoundingClientRect();
@@ -418,10 +420,23 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
         return;
       }
       entry.card.style.display="block";
-      var anchorTop=Math.max(8,rect.top);
-      var cardTop=Math.max(anchorTop,previousBottom+CARD_GAP);
+      var cardHeight=entry.card.offsetHeight;
+      var anchorTop=Math.max(viewportTop,rect.top);
+      var baseTop=anchorTop;
+      var isNarrowPanel=narrow&&(
+        entry.card.classList.contains("ark-comment-composer")||
+        entry.card.getAttribute("data-collapsed")==="false"
+      );
+      if(isNarrowPanel){
+        var belowTop=rect.bottom+CARD_GAP;
+        var aboveTop=rect.top-cardHeight-CARD_GAP;
+        if(belowTop+cardHeight<=viewportBottom)baseTop=belowTop;
+        else if(aboveTop>=viewportTop)baseTop=aboveTop;
+        else baseTop=Math.max(viewportTop,Math.min(belowTop,viewportBottom-cardHeight));
+      }
+      var cardTop=Math.max(baseTop,previousBottom+CARD_GAP);
       entry.card.style.top=cardTop+"px";
-      previousBottom=cardTop+entry.card.offsetHeight;
+      previousBottom=cardTop+cardHeight;
     });
     unanchored.forEach(function(card){
       card.style.display="block";

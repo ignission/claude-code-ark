@@ -102,11 +102,32 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain("anchorTop");
     expect(injected).toContain("previousBottom");
     expect(injected).toContain("CARD_GAP");
-    expect(injected).toContain("Math.max(anchorTop,previousBottom+CARD_GAP)");
+    expect(injected).toContain("Math.max(baseTop,previousBottom+CARD_GAP)");
     expect(injected).toContain(
       'setAttribute("data-anchor-id",thread.anchorId)'
     );
     expect(injected).toContain(".ark-comment-card{position:fixed");
+  });
+
+  it("狭幅の展開 panel を anchor の下へ置き、入らなければ上へ回して重なりを避ける", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const positionCards = injected.slice(
+      injected.indexOf("function positionCards()"),
+      injected.indexOf("function refreshLayout()")
+    );
+
+    expect(positionCards).toContain("narrow&&");
+    expect(positionCards).toContain("ark-comment-composer");
+    expect(positionCards).toContain('getAttribute("data-collapsed")==="false"');
+    expect(positionCards).toContain("var belowTop=rect.bottom+CARD_GAP");
+    expect(positionCards).toContain(
+      "var aboveTop=rect.top-cardHeight-CARD_GAP"
+    );
+    expect(positionCards).toContain("if(belowTop+cardHeight<=viewportBottom)");
+    expect(positionCards).toContain("else if(aboveTop>=viewportTop)");
+    expect(positionCards).toContain(
+      "Math.max(baseTop,previousBottom+CARD_GAP)"
+    );
   });
 
   it("mouseover の最も内側の anchor 1つだけへ新規 comment の＋導線を出す", () => {
