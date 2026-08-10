@@ -59,6 +59,18 @@ describe("parseDiagramCommentPortRequest", () => {
     ],
     [
       {
+        type: "ark:diagram-comment-delete",
+        requestId: "req-delete",
+        threadId: "th-1",
+      },
+      {
+        type: "ark:diagram-comment-delete",
+        requestId: "req-delete",
+        threadId: "th-1",
+      },
+    ],
+    [
+      {
         type: "ark:diagram-comment-send",
         requestId: "req-send",
         threadId: "th-1",
@@ -183,6 +195,12 @@ describe("parseDiagramCommentPortRequest", () => {
       type: "ark:diagram-comment-resolve",
       requestId: "req",
       threadId: "t".repeat(257),
+    },
+    {
+      type: "ark:diagram-comment-delete",
+      requestId: "req",
+      threadId: "th-1",
+      body: "余計な値",
     },
     {
       type: "ark:diagram-comment-send",

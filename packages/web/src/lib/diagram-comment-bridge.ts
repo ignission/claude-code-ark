@@ -16,6 +16,11 @@ export type DiagramCommentPortRequest =
       threadId: string;
     }
   | {
+      type: "ark:diagram-comment-delete";
+      requestId: string;
+      threadId: string;
+    }
+  | {
       type: "ark:diagram-comment-send";
       requestId: string;
       threadId: string;
@@ -91,6 +96,7 @@ export function parseDiagramCommentPortRequest(
     (value.type !== "ark:diagram-comments-load" &&
       value.type !== "ark:diagram-comment-create" &&
       value.type !== "ark:diagram-comment-resolve" &&
+      value.type !== "ark:diagram-comment-delete" &&
       value.type !== "ark:diagram-comment-send") ||
     !validString(value.requestId, 256)
   ) {
@@ -170,8 +176,14 @@ export function parseDiagramCommentPortRequest(
 
   const unexpected = unknownKeys(value, ["type", "requestId", "threadId"]);
   if (unexpected.length > 0) {
+    const action =
+      value.type === "ark:diagram-comment-send"
+        ? "コメント送信"
+        : value.type === "ark:diagram-comment-delete"
+          ? "コメント削除"
+          : "コメント解決";
     return invalid(
-      `${value.type === "ark:diagram-comment-send" ? "コメント送信" : "コメント解決"}要求の不明なフィールド: ${summarizeUnknownKeys(unexpected)}`
+      `${action}要求の不明なフィールド: ${summarizeUnknownKeys(unexpected)}`
     );
   }
   if (!validString(value.threadId, 256)) {

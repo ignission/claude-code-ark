@@ -37,6 +37,7 @@ import { io, type Socket } from "socket.io-client";
 import { toast } from "sonner";
 import {
   requestDiagramCommentCreate,
+  requestDiagramCommentDelete,
   requestDiagramCommentResolve,
   requestDiagramCommentSend,
   requestDiagramCommentsGet,
@@ -106,6 +107,11 @@ interface UseSocketReturn {
     anchorOccurrence?: number
   ) => Promise<DiagramCommentsResponse>;
   resolveDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
+  deleteDiagramComment: (
     sessionId: string,
     relPath: string,
     threadId: string
@@ -1321,6 +1327,17 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
+  const deleteDiagramComment = useCallback(
+    (sessionId: string, relPath: string, threadId: string) =>
+      requestDiagramCommentDelete(
+        socketRef.current,
+        sessionId,
+        relPath,
+        threadId
+      ),
+    []
+  );
+
   const sendDiagramComment = useCallback(
     (sessionId: string, relPath: string, threadId: string) =>
       requestDiagramCommentSend(
@@ -1757,6 +1774,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     getDiagramComments,
     createDiagramComment,
     resolveDiagramComment,
+    deleteDiagramComment,
     sendDiagramComment,
     repoList,
     repoPath,

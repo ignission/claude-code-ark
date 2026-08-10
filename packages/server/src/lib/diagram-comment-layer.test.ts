@@ -57,6 +57,8 @@ describe("injectDiagramCommentLayer", () => {
       "innerHTML",
       "insertAdjacentHTML",
       "@font-face",
+      "confirm(",
+      "alert(",
     ]) {
       expect(injected).not.toContain(forbidden);
     }
@@ -234,7 +236,7 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain("disabled");
     expect(injected).toContain("function updatePendingControls()");
     expect(injected).toContain(
-      'querySelectorAll(".ark-comment-create,.ark-comment-resolve,.ark-comment-send,.ark-comment-input")'
+      'querySelectorAll(".ark-comment-create,.ark-comment-resolve,.ark-comment-send,.ark-comment-delete,.ark-comment-input")'
     );
     expect(injected).toContain("ark-comment-error");
     expect(injected).toContain("error");
@@ -264,8 +266,38 @@ describe("injectDiagramCommentLayer", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
     expect(injected).toContain(
-      'querySelectorAll(".ark-comment-create,.ark-comment-resolve,.ark-comment-send,.ark-comment-input")'
+      'querySelectorAll(".ark-comment-create,.ark-comment-resolve,.ark-comment-send,.ark-comment-delete,.ark-comment-input")'
     );
+  });
+
+  it("未解決・解決済み・アンカー未解決を分岐せず全 card に削除を出す", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const openBlockEnd = injected.indexOf(
+      "content.appendChild(resolveButton);\n    }"
+    );
+    const deleteButton = injected.indexOf(
+      'element("button","削除","ark-comment-delete")'
+    );
+
+    expect(openBlockEnd).toBeGreaterThan(-1);
+    expect(deleteButton).toBeGreaterThan(openBlockEnd);
+    expect(injected).toContain(
+      'send("ark:diagram-comment-delete",{threadId:thread.id})'
+    );
+    expect(injected).toContain(
+      ".ark-comment-delete{border:0;background:transparent"
+    );
+  });
+
+  it("削除は単一 card だけを5秒間の2段階確認にし、別 card で解除する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain('deleteButton.textContent="削除する？"');
+    expect(injected).toContain("deleteConfirmThreadId===thread.id");
+    expect(injected).toContain("clearDeleteConfirmation()");
+    expect(injected).toContain("deleteConfirmTimer=window.setTimeout");
+    expect(injected).toContain("},5000)");
+    expect(injected).not.toContain("confirm(");
   });
 
   it("port 未接続時は pending にせず操作対象へエラーを表示する", () => {

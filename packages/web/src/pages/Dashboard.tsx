@@ -82,6 +82,7 @@ export default function Dashboard() {
     getDiagramComments,
     createDiagramComment,
     resolveDiagramComment,
+    deleteDiagramComment,
     sendDiagramComment,
     worktrees,
     createWorktree,
@@ -803,6 +804,7 @@ export default function Dashboard() {
                         getDiagramComments={getDiagramComments}
                         createDiagramComment={createDiagramComment}
                         resolveDiagramComment={resolveDiagramComment}
+                        deleteDiagramComment={deleteDiagramComment}
                         sendDiagramComment={sendDiagramComment}
                         {...paneProps}
                       />

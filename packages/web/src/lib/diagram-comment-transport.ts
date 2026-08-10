@@ -81,6 +81,21 @@ export function requestDiagramCommentResolve(
   });
 }
 
+export function requestDiagramCommentDelete(
+  socket: DiagramCommentSocket | null,
+  sessionId: string,
+  relPath: string,
+  threadId: string
+): Promise<DiagramCommentsResponse> {
+  return requestDiagramComments(socket, (activeSocket, callback) => {
+    activeSocket.emit(
+      "diagram:comment:delete",
+      { sessionId, relPath, threadId },
+      callback
+    );
+  });
+}
+
 export function requestDiagramCommentSend(
   socket: DiagramCommentSocket | null,
   sessionId: string,

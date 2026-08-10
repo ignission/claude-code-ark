@@ -61,6 +61,11 @@ interface DiagramPaneProps {
     relPath: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
+  deleteDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
   sendDiagramComment: (
     sessionId: string,
     relPath: string,
@@ -268,6 +273,11 @@ interface DiagramCommentForwardDeps {
     relPath: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
+  deleteDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
   sendDiagramComment: (
     sessionId: string,
     relPath: string,
@@ -331,6 +341,12 @@ export async function forwardDiagramCommentPortRequest(
           deps.relPath,
           request.threadId
         );
+      } else if (request.type === "ark:diagram-comment-delete") {
+        response = await deps.deleteDiagramComment(
+          deps.sessionId,
+          deps.relPath,
+          request.threadId
+        );
       } else {
         response = await deps.sendDiagramComment(
           deps.sessionId,
@@ -379,6 +395,7 @@ export function DiagramPane({
   getDiagramComments,
   createDiagramComment,
   resolveDiagramComment,
+  deleteDiagramComment,
   sendDiagramComment,
   onSelectDiagram,
 }: DiagramPaneProps) {
@@ -722,6 +739,7 @@ export function DiagramPane({
           getDiagramComments,
           createDiagramComment,
           resolveDiagramComment,
+          deleteDiagramComment,
           sendDiagramComment,
           isCurrent: () =>
             portGenerationRef.current === generation &&
@@ -746,6 +764,7 @@ export function DiagramPane({
     },
     [
       createDiagramComment,
+      deleteDiagramComment,
       getDiagramComments,
       handleAutosave,
       handleSubmit,

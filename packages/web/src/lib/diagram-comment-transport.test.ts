@@ -2,6 +2,7 @@ import type { DiagramCommentsResponse } from "@ark/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   requestDiagramCommentCreate,
+  requestDiagramCommentDelete,
   requestDiagramCommentResolve,
   requestDiagramCommentSend,
   requestDiagramCommentsGet,
@@ -98,6 +99,28 @@ describe("diagram comment transport", () => {
 
     expect(fake.socket.emit).toHaveBeenCalledWith(
       "diagram:comment:resolve",
+      {
+        sessionId: "session-1",
+        relPath: "sample.diagram.html",
+        threadId: "th-1",
+      },
+      expect.any(Function)
+    );
+    fake.reply(response);
+    await expect(pending).resolves.toEqual(response);
+  });
+
+  it("delete は threadId だけを正しい event/payload で送る", async () => {
+    const fake = makeSocket();
+    const pending = requestDiagramCommentDelete(
+      fake.socket,
+      "session-1",
+      "sample.diagram.html",
+      "th-1"
+    );
+
+    expect(fake.socket.emit).toHaveBeenCalledWith(
+      "diagram:comment:delete",
       {
         sessionId: "session-1",
         relPath: "sample.diagram.html",

@@ -87,6 +87,11 @@ describe("forwardDiagramCommentPortRequest", () => {
       threadId: "th-1",
     },
     {
+      type: "ark:diagram-comment-delete",
+      requestId: "req-delete",
+      threadId: "th-1",
+    },
+    {
       type: "ark:diagram-comment-send",
       requestId: "req-send",
       threadId: "th-1",
@@ -108,6 +113,7 @@ describe("forwardDiagramCommentPortRequest", () => {
       relPath: REL_PATH,
       getDiagramComments: vi.fn(async () => response),
       createDiagramComment: vi.fn(async () => response),
+      deleteDiagramComment: vi.fn(async () => response),
       resolveDiagramComment: vi.fn(async () => response),
       sendDiagramComment: vi.fn(async () => response),
       isCurrent: vi.fn(() => true),
@@ -116,7 +122,7 @@ describe("forwardDiagramCommentPortRequest", () => {
     };
   }
 
-  it("load/create/resolve/send を現在の session/path と検証済み payload で中継する", async () => {
+  it("load/create/resolve/delete/send を現在の session/path と検証済み payload で中継する", async () => {
     const deps = dependencies();
 
     for (const request of requests) {
@@ -137,6 +143,11 @@ describe("forwardDiagramCommentPortRequest", () => {
       REL_PATH,
       "th-1"
     );
+    expect(deps.deleteDiagramComment).toHaveBeenCalledWith(
+      "session-1",
+      REL_PATH,
+      "th-1"
+    );
     expect(deps.sendDiagramComment).toHaveBeenCalledWith(
       "session-1",
       REL_PATH,
@@ -146,6 +157,7 @@ describe("forwardDiagramCommentPortRequest", () => {
       "req-load",
       "req-create",
       "req-resolve",
+      "req-delete",
       "req-send",
     ]);
   });
