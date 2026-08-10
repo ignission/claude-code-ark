@@ -224,7 +224,7 @@ describe("injectDiagramCommentLayer", () => {
 
     expect(injected.match(/"ark-comment-actions"/gu)).toHaveLength(2);
     expect(injected).toContain(
-      ".ark-comment-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}"
+      ".ark-comment-actions{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;margin-top:8px}"
     );
     expect(injected).toContain("actions.appendChild(sendButton)");
     expect(injected).toContain("actions.appendChild(resolveButton)");
@@ -232,7 +232,7 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain("composerActions.appendChild(createButton)");
   });
 
-  it("時刻は元の ISO 値を datetime に保ち、閲覧者のローカル時刻へ短く整形する", () => {
+  it("時刻は元の ISO 値を datetime に保ち、日本語形式へ短く整形する", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
     expect(injected).toContain("function formatCommentTime(value)");
@@ -240,7 +240,7 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain("if(Number.isNaN(date.getTime()))return value");
     expect(injected).toContain("catch(_error)");
     expect(injected).toContain(
-      'date.toLocaleString(undefined,{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false})'
+      'date.toLocaleString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false})'
     );
     expect(injected).toContain(
       'element("time",formatCommentTime(message.at),"ark-comment-time")'
