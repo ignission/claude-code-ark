@@ -294,6 +294,50 @@ describe("diagram comments handler core", () => {
     );
   });
 
+  it("sendMessage へ渡す本文から制御文字・書式文字を除去する", async () => {
+    const dependencies = deps();
+    const response = structuredClone(sendSnapshot);
+    if (!response.ok) throw new Error("successful comments response expected");
+    const message = response.comments.threads[0]?.messages[0];
+    if (!message) throw new Error("comment message expected");
+    message.body = "本文\x1b[31m赤\x07色";
+    vi.mocked(dependencies.getComments).mockResolvedValue(response);
+
+    await handleDiagramCommentSend(dependencies, {
+      sessionId: "session-1",
+      relPath: "sample.diagram.html",
+      threadId: "th-send",
+    });
+
+    expect(dependencies.sendMessage).toHaveBeenCalledOnce();
+    const sent = vi.mocked(dependencies.sendMessage).mock.calls[0]?.[1];
+    expect(sent).toBeDefined();
+    expect(sent).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+  });
+
+  it("メッセージが 0 件の thread は送信せず INVALID_SIDECAR にする", async () => {
+    const dependencies = deps();
+    const response = structuredClone(sendSnapshot);
+    if (!response.ok) throw new Error("successful comments response expected");
+    const thread = response.comments.threads[0];
+    if (!thread) throw new Error("comment thread expected");
+    thread.messages = [];
+    vi.mocked(dependencies.getComments).mockResolvedValue(response);
+
+    await expect(
+      handleDiagramCommentSend(dependencies, {
+        sessionId: "session-1",
+        relPath: "sample.diagram.html",
+        threadId: "th-send",
+      })
+    ).resolves.toEqual({
+      ok: false,
+      code: "INVALID_SIDECAR",
+      error: "送信できるコメントメッセージがありません",
+    });
+    expect(dependencies.sendMessage).not.toHaveBeenCalled();
+  });
+
   it("create の author/body を trim して store へ渡す", async () => {
     const dependencies = deps();
 

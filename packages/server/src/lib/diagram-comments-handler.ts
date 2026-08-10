@@ -196,7 +196,11 @@ function parseResolvePayload(value: unknown): ResolvePayload | null {
 }
 
 function oneLine(value: string): string {
-  return value.replace(/\s+/gu, " ").trim();
+  // sidecar は入力をそのまま保持し、tmux へリテラル送出する文面だけを無害化する。
+  return value
+    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 function truncate(value: string, maxLength: number): string {
@@ -210,9 +214,9 @@ function buildDiagramCommentMessage(
     { ok: true }
   >["comments"]["threads"][number],
   otherOpenCount: number
-): string {
+): string | null {
   const message = thread.messages.at(-1);
-  if (!message) return "";
+  if (!message) return null;
   const anchorText = truncate(oneLine(thread.anchorText), 80);
   const quote = oneLine(thread.anchorQuote ?? thread.anchorText);
   const suffix =
@@ -344,10 +348,19 @@ export async function handleDiagramCommentSend(
     const otherOpenCount = response.comments.threads.filter(
       candidate => candidate.id !== thread.id && candidate.status === "open"
     ).length;
-    deps.sendMessage(
-      context.sessionId,
-      buildDiagramCommentMessage(context.relPath, thread, otherOpenCount)
+    const message = buildDiagramCommentMessage(
+      context.relPath,
+      thread,
+      otherOpenCount
     );
+    if (message === null) {
+      return {
+        ok: false,
+        code: "INVALID_SIDECAR",
+        error: "送信できるコメントメッセージがありません",
+      };
+    }
+    deps.sendMessage(context.sessionId, message);
     return response;
   });
 }
