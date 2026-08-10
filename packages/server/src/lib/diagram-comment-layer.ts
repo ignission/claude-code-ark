@@ -291,8 +291,9 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
   }
   function updateLayout(){
     var contentRight=null;
-    document.querySelectorAll("[data-ark-id]").forEach(function(anchor){
-      var anchorRight=anchor.getBoundingClientRect().right;
+    // 横方向の空き幅はレイアウト更新時だけ測り、スクロールでは測らない。
+    anchors.forEach(function(entry){
+      var anchorRight=entry.anchor.getBoundingClientRect().right;
       contentRight=contentRight===null?anchorRight:Math.max(contentRight,anchorRight);
     });
     var availableWidth=contentRight===null?0:document.documentElement.clientWidth-contentRight;
@@ -401,7 +402,6 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     });
   }
   function positionCards(){
-    updateLayout();
     var entries=[];
     var unanchored=[];
     root.querySelectorAll(".ark-comment-card,.ark-comment-composer").forEach(function(card){

@@ -144,24 +144,36 @@ describe("injectDiagramCommentLayer", () => {
 
   it("本文の padding を変更せず、実測した右側の空き幅で badge 表示を切り替える", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
+    const updateLayout = injected.slice(
+      injected.indexOf("function updateLayout()"),
+      injected.indexOf("function clearHighlights()")
+    );
+    const positionCards = injected.slice(
+      injected.indexOf("function positionCards()"),
+      injected.indexOf("function refreshLayout()")
+    );
 
     expect(injected).not.toContain("MIN_CONTENT_WIDTH");
     expect(injected).not.toContain("originalBodyPaddingRight");
     expect(injected).not.toContain("originalComputedPaddingRight");
     expect(injected).not.toContain("document.body.style.paddingRight=");
     expect(injected).toContain("var contentRight=null");
-    expect(injected).toContain(
-      'document.querySelectorAll("[data-ark-id]").forEach(function(anchor)'
+    expect(updateLayout).not.toContain(
+      'document.querySelectorAll("[data-ark-id]")'
     );
-    expect(injected).toContain("anchor.getBoundingClientRect().right");
+    expect(updateLayout).toContain("anchors.forEach(function(entry)");
+    expect(updateLayout).toContain(
+      "entry.anchor.getBoundingClientRect().right"
+    );
     expect(injected).toContain("Math.max(contentRight,anchorRight)");
     expect(injected).toContain(
       "document.documentElement.clientWidth-contentRight"
     );
     expect(injected).toContain("CARD_WIDTH+RAIL_GAP*2");
     expect(injected).toContain("contentRight===null");
-    expect(injected).toContain(
-      "function positionCards(){\n    updateLayout();"
+    expect(positionCards).not.toContain("updateLayout()");
+    expect(updateLayout).toContain(
+      "横方向の空き幅はレイアウト更新時だけ測り、スクロールでは測らない。"
     );
     expect(injected).toContain(
       'setAttribute("data-narrow",narrow?"true":"false")'
