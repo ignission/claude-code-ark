@@ -61,7 +61,6 @@ describe("diagram comment transport", () => {
       "session-1",
       "sample.diagram.html",
       "s1",
-      "Reviewer",
       "本文",
       "選択した本文",
       1
@@ -80,7 +79,6 @@ describe("diagram comment transport", () => {
         anchorId: "s1",
         anchorQuote: "選択した本文",
         anchorOccurrence: 1,
-        author: "Reviewer",
         body: "本文",
       },
       expect.any(Function)

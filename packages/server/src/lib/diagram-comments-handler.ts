@@ -10,7 +10,6 @@ import { errnoMessage } from "./errors.js";
 
 const MAX_SESSION_OR_PATH_LENGTH = 1024;
 const MAX_ANCHOR_OR_ID_LENGTH = 256;
-const MAX_AUTHOR_LENGTH = 80;
 const MAX_BODY_LENGTH = 4000;
 const MAX_ANCHOR_QUOTE_LENGTH = 1000;
 
@@ -19,7 +18,6 @@ type CreatePayload = GetPayload & {
   anchorId: string;
   anchorQuote?: string;
   anchorOccurrence?: number;
-  author: string;
   body: string;
 };
 type ResolvePayload = GetPayload & { threadId: string };
@@ -37,7 +35,6 @@ export interface DiagramCommentsHandlerDeps {
     worktreeReal: string,
     relPath: string,
     anchorId: string,
-    author: string,
     body: string,
     anchorQuote?: string,
     anchorOccurrence?: number
@@ -132,14 +129,12 @@ function parseCreatePayload(value: unknown): CreatePayload | null {
         "anchorId",
         "anchorQuote",
         "anchorOccurrence",
-        "author",
         "body",
       ].includes(key)
     ) ||
     !validString(value.sessionId, MAX_SESSION_OR_PATH_LENGTH) ||
     !validString(value.relPath, MAX_SESSION_OR_PATH_LENGTH) ||
     !validString(value.anchorId, MAX_ANCHOR_OR_ID_LENGTH) ||
-    typeof value.author !== "string" ||
     typeof value.body !== "string"
   ) {
     return null;
@@ -154,19 +149,14 @@ function parseCreatePayload(value: unknown): CreatePayload | null {
   ) {
     return null;
   }
-  const author = value.author.trim();
   const body = value.body.trim();
-  if (
-    !validString(author, MAX_AUTHOR_LENGTH) ||
-    !validString(body, MAX_BODY_LENGTH)
-  ) {
+  if (!validString(body, MAX_BODY_LENGTH)) {
     return null;
   }
   const payload: CreatePayload = {
     sessionId: value.sessionId,
     relPath: value.relPath,
     anchorId: value.anchorId,
-    author,
     body,
   };
   if (value.anchorQuote !== undefined) {
@@ -223,7 +213,7 @@ function buildDiagramCommentMessage(
     otherOpenCount > 0
       ? ` / 他に未解決 ${otherOpenCount} 件（board_comments で全件取得できる）`
       : "";
-  return `図のコメント（${oneLine(relPath)}） 対象: ${anchorText} / 引用: 「${quote}」 / ${oneLine(message.author)}: ${oneLine(message.body)}${suffix}`;
+  return `図のコメント（${oneLine(relPath)}） 対象: ${anchorText} / 引用: 「${quote}」 / コメント: ${oneLine(message.body)}${suffix}`;
 }
 
 function requestContext(
@@ -300,7 +290,6 @@ export async function handleDiagramCommentCreate(
       context.worktreeReal,
       context.relPath,
       payload.anchorId,
-      payload.author,
       payload.body,
       payload.anchorQuote,
       payload.anchorOccurrence

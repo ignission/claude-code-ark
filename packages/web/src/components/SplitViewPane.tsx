@@ -53,7 +53,6 @@ interface SplitViewPaneProps {
     sessionId: string,
     relPath: string,
     anchorId: string,
-    author: string,
     body: string,
     anchorQuote?: string,
     anchorOccurrence?: number

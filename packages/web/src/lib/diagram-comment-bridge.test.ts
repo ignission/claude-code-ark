@@ -18,7 +18,6 @@ describe("parseDiagramCommentPortRequest", () => {
         anchorId: "s1-p1",
         anchorQuote: "選択した本文",
         anchorOccurrence: 1,
-        author: "Reviewer",
         body: "本文",
       },
       {
@@ -27,7 +26,6 @@ describe("parseDiagramCommentPortRequest", () => {
         anchorId: "s1-p1",
         anchorQuote: "選択した本文",
         anchorOccurrence: 1,
-        author: "Reviewer",
         body: "本文",
       },
     ],
@@ -37,7 +35,6 @@ describe("parseDiagramCommentPortRequest", () => {
         requestId: "req-create-first",
         anchorId: "s1-p1",
         anchorQuote: "先頭の一致",
-        author: "Reviewer",
         body: "本文",
       },
       {
@@ -45,7 +42,6 @@ describe("parseDiagramCommentPortRequest", () => {
         requestId: "req-create-first",
         anchorId: "s1-p1",
         anchorQuote: "先頭の一致",
-        author: "Reviewer",
         body: "本文",
       },
     ],
@@ -86,7 +82,6 @@ describe("parseDiagramCommentPortRequest", () => {
         type: "ark:diagram-comment-create",
         requestId: "req-anchor",
         anchorId: "",
-        author: "Reviewer",
         body: "本文",
       },
       "anchorId",
@@ -94,19 +89,8 @@ describe("parseDiagramCommentPortRequest", () => {
     [
       {
         type: "ark:diagram-comment-create",
-        requestId: "req-author",
-        anchorId: "s1",
-        author: "   ",
-        body: "本文",
-      },
-      "author",
-    ],
-    [
-      {
-        type: "ark:diagram-comment-create",
         requestId: "req-body",
         anchorId: "s1",
-        author: "Reviewer",
         body: "\n\t",
       },
       "body",
@@ -117,7 +101,6 @@ describe("parseDiagramCommentPortRequest", () => {
         requestId: "req-quote",
         anchorId: "s1",
         anchorQuote: "q".repeat(1001),
-        author: "Reviewer",
         body: "本文",
       },
       "anchorQuote",
@@ -133,6 +116,22 @@ describe("parseDiagramCommentPortRequest", () => {
     expect(parsed).toHaveProperty("error", expect.stringContaining(field));
   });
 
+  it("author を含む create を未知フィールドとして invalid にする", () => {
+    expect(
+      parseDiagramCommentPortRequest({
+        type: "ark:diagram-comment-create",
+        requestId: "req-author",
+        anchorId: "s1",
+        author: "Reviewer",
+        body: "本文",
+      })
+    ).toMatchObject({
+      kind: "invalid",
+      requestId: "req-author",
+      error: expect.stringContaining("author"),
+    });
+  });
+
   it.each([
     {
       type: "ark:diagram-comments-load",
@@ -143,14 +142,6 @@ describe("parseDiagramCommentPortRequest", () => {
       type: "ark:diagram-comment-create",
       requestId: "req",
       anchorId: "a".repeat(257),
-      author: "Reviewer",
-      body: "本文",
-    },
-    {
-      type: "ark:diagram-comment-create",
-      requestId: "req",
-      anchorId: "s1",
-      author: "a".repeat(81),
       body: "本文",
     },
     {
@@ -158,7 +149,6 @@ describe("parseDiagramCommentPortRequest", () => {
       requestId: "req",
       anchorId: "s1",
       anchorOccurrence: 0,
-      author: "Reviewer",
       body: "本文",
     },
     {
@@ -167,7 +157,6 @@ describe("parseDiagramCommentPortRequest", () => {
       anchorId: "s1",
       anchorQuote: "本文",
       anchorOccurrence: -1,
-      author: "Reviewer",
       body: "本文",
     },
     {
@@ -177,14 +166,12 @@ describe("parseDiagramCommentPortRequest", () => {
       anchorQuote: "本文",
       anchorOccurrence: 0,
       unknown: true,
-      author: "Reviewer",
       body: "本文",
     },
     {
       type: "ark:diagram-comment-create",
       requestId: "req",
       anchorId: "s1",
-      author: "Reviewer",
       body: "b".repeat(4001),
     },
     {

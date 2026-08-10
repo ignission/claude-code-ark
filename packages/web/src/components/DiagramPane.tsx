@@ -52,7 +52,6 @@ interface DiagramPaneProps {
     sessionId: string,
     relPath: string,
     anchorId: string,
-    author: string,
     body: string,
     anchorQuote?: string,
     anchorOccurrence?: number
@@ -260,7 +259,6 @@ interface DiagramCommentForwardDeps {
     sessionId: string,
     relPath: string,
     anchorId: string,
-    author: string,
     body: string,
     anchorQuote?: string,
     anchorOccurrence?: number
@@ -323,7 +321,6 @@ export async function forwardDiagramCommentPortRequest(
           deps.sessionId,
           deps.relPath,
           request.anchorId,
-          request.author,
           request.body,
           request.anchorQuote,
           request.anchorOccurrence

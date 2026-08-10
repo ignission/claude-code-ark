@@ -14,8 +14,6 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
   var pendingAction=null;
   var pendingTimer=null;
   var operationError=null;
-  var rememberedAuthor="";
-  var composerDraftAuthor="";
   var composerDraftBody="";
   // 送信はコメントの状態ではなく、その場の行為なので sidecar へ保存しない。
   // リロードで消えてよいページ内メモリとして threadId だけを覚える。
@@ -53,12 +51,10 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
       control.disabled=Boolean(pendingRequestId)||control.getAttribute("data-sent")==="true";
     });
   }
-  function rememberComposerInputs(author,body){
-    composerDraftAuthor=author;
+  function rememberComposerInput(body){
     composerDraftBody=body;
   }
   function clearComposerInputs(){
-    composerDraftAuthor="";
     composerDraftBody="";
   }
   function send(type,payload){
@@ -132,7 +128,6 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
   }
   function openComposer(anchorId,anchorQuote,anchorOccurrence){
     clearComposerInputs();
-    composerDraftAuthor=rememberedAuthor;
     composerAnchorId=anchorId;
     composerAnchorQuote=anchorQuote||null;
     composerAnchorOccurrence=anchorQuote?(anchorOccurrence||0):null;
@@ -174,7 +169,6 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     content.appendChild(element("span",thread.status==="open"?"未解決":"解決済み","ark-comment-state"));
     thread.messages.forEach(function(message){
       var item=element("article",undefined,"ark-comment-message");
-      item.appendChild(element("b",message.author,"ark-comment-author"));
       item.appendChild(element("time",message.at,"ark-comment-time"));
       item.appendChild(element("p",message.body,"ark-comment-body"));
       content.appendChild(item);
@@ -232,25 +226,16 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     if(composerAnchorQuote){
       composer.appendChild(element("blockquote",composerAnchorQuote,"ark-comment-composer-quote"));
     }
-    var authorInput=element("input",undefined,"ark-comment-input");
-    authorInput.setAttribute("type","text");
-    authorInput.setAttribute("maxlength","80");
-    authorInput.setAttribute("placeholder","名前（任意）");
-    authorInput.value=composerDraftAuthor;
-    composer.appendChild(authorInput);
     var bodyInput=element("textarea",undefined,"ark-comment-input");
     bodyInput.setAttribute("maxlength","4000");
     bodyInput.setAttribute("placeholder","コメント");
     bodyInput.value=composerDraftBody;
     composer.appendChild(bodyInput);
-    authorInput.addEventListener("input",function(){rememberComposerInputs(authorInput.value,bodyInput.value);});
-    bodyInput.addEventListener("input",function(){rememberComposerInputs(authorInput.value,bodyInput.value);});
+    bodyInput.addEventListener("input",function(){rememberComposerInput(bodyInput.value);});
     var createButton=element("button","コメントする","ark-comment-create");
     createButton.setAttribute("type","button");
     createButton.addEventListener("click",function(){
-      rememberComposerInputs(authorInput.value,bodyInput.value);
-      var author=authorInput.value.trim();
-      if(author)rememberedAuthor=author;
+      rememberComposerInput(bodyInput.value);
       if(!bodyInput.value.trim()){
         operationError={type:"ark:diagram-comment-create",anchorId:anchorId,message:"コメント本文を入力してください"};
         render();
@@ -260,11 +245,9 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
         anchorId:anchorId,
         anchorQuote:composerAnchorQuote,
         anchorOccurrence:composerAnchorOccurrence,
-        author:author||"名無し",
         body:bodyInput.value
       }:{
         anchorId:anchorId,
-        author:author||"名無し",
         body:bodyInput.value
       };
       send("ark:diagram-comment-create",payload);

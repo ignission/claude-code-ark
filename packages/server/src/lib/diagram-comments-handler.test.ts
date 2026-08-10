@@ -119,42 +119,24 @@ describe("diagram comments handler core", () => {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
       anchorId: "",
-      author: "Reviewer",
       body: "本文",
     },
     {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
       anchorId: "a".repeat(257),
-      author: "Reviewer",
       body: "本文",
     },
     {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
       anchorId: "s1",
-      author: " ",
-      body: "本文",
-    },
-    {
-      sessionId: "session-1",
-      relPath: "sample.diagram.html",
-      anchorId: "s1",
-      author: "Reviewer",
       body: " ",
     },
     {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
       anchorId: "s1",
-      author: "a".repeat(81),
-      body: "本文",
-    },
-    {
-      sessionId: "session-1",
-      relPath: "sample.diagram.html",
-      anchorId: "s1",
-      author: "Reviewer",
       body: "b".repeat(4001),
     },
   ])("create の不正 payload を BAD_REQUEST にする", async payload => {
@@ -162,6 +144,21 @@ describe("diagram comments handler core", () => {
 
     await expect(
       handleDiagramCommentCreate(dependencies, payload)
+    ).resolves.toMatchObject({ ok: false, code: "BAD_REQUEST" });
+    expect(dependencies.createComment).not.toHaveBeenCalled();
+  });
+
+  it("create payload の author を未知フィールドとして拒否する", async () => {
+    const dependencies = deps();
+
+    await expect(
+      handleDiagramCommentCreate(dependencies, {
+        sessionId: "session-1",
+        relPath: "sample.diagram.html",
+        anchorId: "s1",
+        author: "Reviewer",
+        body: "本文",
+      })
     ).resolves.toMatchObject({ ok: false, code: "BAD_REQUEST" });
     expect(dependencies.createComment).not.toHaveBeenCalled();
   });
@@ -288,7 +285,8 @@ describe("diagram comments handler core", () => {
     expect(message).not.toMatch(/[\r\n\t]/u);
     expect(message).toContain("図のコメント（sample.diagram.html）");
     expect(message).toContain("引用: 「引用の一行目 引用の二行目」");
-    expect(message).toContain("Reviewer: 本文の一行目 本文の二行目 末尾");
+    expect(message).toContain("コメント: 本文の一行目 本文の二行目 末尾");
+    expect(message).not.toContain("Reviewer");
     expect(message).toContain(
       "他に未解決 1 件（board_comments で全件取得できる）"
     );
@@ -338,14 +336,13 @@ describe("diagram comments handler core", () => {
     expect(dependencies.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("create の author/body を trim して store へ渡す", async () => {
+  it("create の body を trim して store へ渡す", async () => {
     const dependencies = deps();
 
     await handleDiagramCommentCreate(dependencies, {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
       anchorId: "s1",
-      author: "  Reviewer  ",
       body: "  本文  ",
     });
 
@@ -353,7 +350,6 @@ describe("diagram comments handler core", () => {
       "/managed/worktree",
       "sample.diagram.html",
       "s1",
-      "Reviewer",
       "本文",
       undefined,
       undefined
@@ -369,7 +365,6 @@ describe("diagram comments handler core", () => {
       anchorId: "s1",
       anchorQuote: "選択した本文",
       anchorOccurrence: 1,
-      author: "Reviewer",
       body: "本文",
     });
 
@@ -377,7 +372,6 @@ describe("diagram comments handler core", () => {
       "/managed/worktree",
       "sample.diagram.html",
       "s1",
-      "Reviewer",
       "本文",
       "選択した本文",
       1
@@ -392,7 +386,6 @@ describe("diagram comments handler core", () => {
       relPath: "sample.diagram.html",
       anchorId: "s1",
       anchorQuote: "選択した本文",
-      author: "Reviewer",
       body: "本文",
     });
 
@@ -400,7 +393,6 @@ describe("diagram comments handler core", () => {
       "/managed/worktree",
       "sample.diagram.html",
       "s1",
-      "Reviewer",
       "本文",
       "選択した本文",
       undefined
@@ -436,7 +428,6 @@ describe("diagram comments handler core", () => {
         sessionId: "session-1",
         relPath: "sample.diagram.html",
         anchorId: "s1",
-        author: "Reviewer",
         body: "本文",
         ...extra,
       })
@@ -525,7 +516,6 @@ describe("createDiagramCommentsSocketHandlers", () => {
             sessionId: "session-1",
             relPath: "sample.diagram.html",
             anchorId: "s1",
-            author: "Reviewer",
             body: "本文",
           },
           callback

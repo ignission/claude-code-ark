@@ -384,7 +384,7 @@ export type DiagramDeleteResponse =
 
 export interface DiagramCommentMessage {
   id: string;
-  author: string;
+  author?: string;
   at: string;
   body: string;
 }
@@ -741,7 +741,6 @@ export interface ClientToServerEvents {
       anchorId: string;
       anchorQuote?: string;
       anchorOccurrence?: number;
-      author: string;
       body: string;
     },
     callback: (response: DiagramCommentsResponse) => void

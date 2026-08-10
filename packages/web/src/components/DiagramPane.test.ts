@@ -79,7 +79,6 @@ describe("forwardDiagramCommentPortRequest", () => {
       anchorId: "s1",
       anchorQuote: "選択した本文",
       anchorOccurrence: 1,
-      author: "Reviewer",
       body: "本文",
     },
     {
@@ -129,7 +128,6 @@ describe("forwardDiagramCommentPortRequest", () => {
       "session-1",
       REL_PATH,
       "s1",
-      "Reviewer",
       "本文",
       "選択した本文",
       1

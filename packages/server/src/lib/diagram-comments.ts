@@ -238,11 +238,14 @@ export function parseDiagramComments(
         `${prefix}.id`,
         DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH
       );
-      const author = boundedString(
-        rawMessage.author,
-        `${prefix}.author`,
-        DIAGRAM_COMMENTS_MAX_AUTHOR_LENGTH
-      );
+      const author =
+        rawMessage.author === undefined
+          ? null
+          : boundedString(
+              rawMessage.author,
+              `${prefix}.author`,
+              DIAGRAM_COMMENTS_MAX_AUTHOR_LENGTH
+            );
       const body = boundedString(
         rawMessage.body,
         `${prefix}.body`,
@@ -250,7 +253,7 @@ export function parseDiagramComments(
       );
       const at = timestamp(rawMessage.at, `${prefix}.at`);
       if (!messageId.ok) return invalid(messageId.error);
-      if (!author.ok) return invalid(author.error);
+      if (author !== null && !author.ok) return invalid(author.error);
       if (!body.ok) return invalid(body.error);
       if (!at.ok) return invalid(at.error);
       if (seenIds.has(messageId.value)) {
@@ -259,7 +262,7 @@ export function parseDiagramComments(
       seenIds.add(messageId.value);
       messages.push({
         id: messageId.value,
-        author: author.value,
+        ...(author?.ok ? { author: author.value } : {}),
         at: at.value,
         body: body.value,
       });
@@ -496,7 +499,6 @@ export async function createDiagramComment(
   worktreeReal: string,
   relPath: string,
   anchorId: string,
-  author: string,
   body: string,
   anchorQuote?: string,
   anchorOccurrence?: number
@@ -514,19 +516,11 @@ export async function createDiagramComment(
         error: `コメント anchor が見つかりません: ${anchorId}`,
       };
     }
-    const validAuthor = boundedString(
-      author,
-      "author",
-      DIAGRAM_COMMENTS_MAX_AUTHOR_LENGTH
-    );
     const validBody = boundedString(
       body,
       "body",
       DIAGRAM_COMMENTS_MAX_BODY_LENGTH
     );
-    if (!validAuthor.ok) {
-      return { ok: false, code: "BAD_REQUEST", error: validAuthor.error };
-    }
     if (!validBody.ok) {
       return { ok: false, code: "BAD_REQUEST", error: validBody.error };
     }
@@ -583,7 +577,6 @@ export async function createDiagramComment(
           messages: [
             {
               id: `m-${randomUUID()}`,
-              author,
               at,
               body,
             },

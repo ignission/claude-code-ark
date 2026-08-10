@@ -49,7 +49,6 @@ export function requestDiagramCommentCreate(
   sessionId: string,
   relPath: string,
   anchorId: string,
-  author: string,
   body: string,
   anchorQuote?: string,
   anchorOccurrence?: number
@@ -59,7 +58,6 @@ export function requestDiagramCommentCreate(
       sessionId,
       relPath,
       anchorId,
-      author,
       body,
       ...(anchorQuote === undefined ? {} : { anchorQuote }),
       ...(anchorOccurrence === undefined ? {} : { anchorOccurrence }),

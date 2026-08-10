@@ -8,7 +8,6 @@ export type DiagramCommentPortRequest =
       anchorId: string;
       anchorQuote?: string;
       anchorOccurrence?: number;
-      author: string;
       body: string;
     }
   | {
@@ -123,7 +122,6 @@ export function parseDiagramCommentPortRequest(
       "anchorId",
       "anchorQuote",
       "anchorOccurrence",
-      "author",
       "body",
     ];
     const unexpected = unknownKeys(value, allowedKeys);
@@ -134,9 +132,6 @@ export function parseDiagramCommentPortRequest(
     }
     if (!validString(value.anchorId, 256)) {
       return invalid("アンカー ID（anchorId）が不正です");
-    }
-    if (!validString(value.author, 80)) {
-      return invalid("名前（author）が不正です");
     }
     if (!validString(value.body, 4000)) {
       return invalid("コメント本文（body）が不正です。本文を入力してください");
@@ -162,7 +157,6 @@ export function parseDiagramCommentPortRequest(
       type: value.type,
       requestId: value.requestId,
       anchorId: value.anchorId,
-      author: value.author,
       body: value.body,
     };
     if (value.anchorQuote !== undefined) {

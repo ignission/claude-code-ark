@@ -122,7 +122,6 @@ describe("handleBoardComments", () => {
               status: "open",
               messages: [
                 {
-                  author: "Reviewer",
                   at: "2026-08-10T00:00:00.000Z",
                   body: "未解決です",
                 },

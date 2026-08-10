@@ -280,26 +280,23 @@ describe("injectDiagramCommentLayer", () => {
     );
   });
 
-  it("空本文は送信前に拒否し、名前を任意化してページ内で記憶する", () => {
+  it("空本文は送信前に拒否し、名前入力と author payload を持たない", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
     expect(injected).toContain("bodyInput.value.trim()");
     expect(injected).toContain("コメント本文を入力してください");
-    expect(injected).toContain('author||"名無し"');
-    expect(injected).toContain('setAttribute("placeholder","名前（任意）")');
-    expect(injected).toContain("rememberedAuthor");
-    expect(injected).toContain("composerDraftAuthor=rememberedAuthor");
+    expect(injected).not.toContain("authorInput");
+    expect(injected).not.toContain("rememberedAuthor");
+    expect(injected).not.toContain("composerDraftAuthor");
+    expect(injected).not.toContain("message.author");
+    expect(injected).not.toContain("ark-comment-author");
   });
 
-  it("composer の名前と本文を render 間で退避・復元し、成功時と閉じる時にクリアする", () => {
+  it("composer の本文だけを render 間で退避・復元し、成功時と閉じる時にクリアする", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
-    expect(injected).toContain('var composerDraftAuthor=""');
     expect(injected).toContain('var composerDraftBody=""');
-    expect(injected).toContain(
-      "rememberComposerInputs(authorInput.value,bodyInput.value)"
-    );
-    expect(injected).toContain("authorInput.value=composerDraftAuthor");
+    expect(injected).toContain("rememberComposerInput(bodyInput.value)");
     expect(injected).toContain("bodyInput.value=composerDraftBody");
     expect(injected).toContain("function clearComposerInputs()");
     expect(injected).toContain(

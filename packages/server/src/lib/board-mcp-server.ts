@@ -97,7 +97,7 @@ type BoardCommentThread = Pick<
   | "anchorOccurrence"
   | "status"
 > & {
-  messages: Array<{ author: string; at: string; body: string }>;
+  messages: Array<{ at: string; body: string }>;
 };
 
 export type BoardCommentsResult = {
@@ -153,7 +153,6 @@ export async function handleBoardComments(
           : { anchorOccurrence: thread.anchorOccurrence }),
         status: thread.status,
         messages: thread.messages.map(message => ({
-          author: message.author,
           at: message.at,
           body: message.body,
         })),

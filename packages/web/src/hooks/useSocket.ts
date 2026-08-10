@@ -101,7 +101,6 @@ interface UseSocketReturn {
     sessionId: string,
     relPath: string,
     anchorId: string,
-    author: string,
     body: string,
     anchorQuote?: string,
     anchorOccurrence?: number
@@ -1295,7 +1294,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       sessionId: string,
       relPath: string,
       anchorId: string,
-      author: string,
       body: string,
       anchorQuote?: string,
       anchorOccurrence?: number
@@ -1305,7 +1303,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         sessionId,
         relPath,
         anchorId,
-        author,
         body,
         anchorQuote,
         anchorOccurrence

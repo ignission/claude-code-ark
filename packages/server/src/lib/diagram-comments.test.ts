@@ -108,10 +108,22 @@ describe("resolveDiagramCommentsPath", () => {
 });
 
 describe("parseDiagramComments", () => {
-  it("厳格 schema に合う sidecar を返す", () => {
+  it("author 付きの既存 sidecar を返す", () => {
     expect(parseDiagramComments(JSON.stringify(comments()), target)).toEqual({
       ok: true,
       comments: comments(),
+    });
+  });
+
+  it("author 無しの sidecar を返す", () => {
+    const authorless = structuredClone(comments());
+    const message = authorless.threads[0]?.messages[0];
+    if (!message) throw new Error("comment message expected");
+    delete (message as { author?: string }).author;
+
+    expect(parseDiagramComments(JSON.stringify(authorless), target)).toEqual({
+      ok: true,
+      comments: authorless,
     });
   });
 
@@ -550,14 +562,13 @@ describe("readDiagramCommentsFile", () => {
 describe("comment mutations", () => {
   const relPath = ".claude/diagrams/order-flow.diagram.html";
 
-  it("create は server ID/時刻と最新 node label で open thread を追加する", async () => {
+  it("create は author を書かず server ID/時刻と最新 node label で open thread を追加する", async () => {
     writeDoc();
 
     const result = await createDiagramComment(
       worktree,
       relPath,
       "s1-p1",
-      "Reviewer",
       "確認してください"
     );
 
@@ -568,8 +579,9 @@ describe("comment mutations", () => {
         anchorId: "s1-p1",
         anchorText: "注文を受け付ける",
         status: "open",
-        messages: [{ author: "Reviewer", body: "確認してください" }],
+        messages: [{ body: "確認してください" }],
       });
+      expect(thread?.messages[0]).not.toHaveProperty("author");
       expect(thread?.id).toMatch(/^th-[0-9a-f-]{36}$/u);
       expect(thread?.messages[0]?.id).toMatch(/^m-[0-9a-f-]{36}$/u);
       expect(Date.parse(thread?.createdAt ?? "invalid")).not.toBeNaN();
@@ -585,7 +597,6 @@ describe("comment mutations", () => {
       worktree,
       relPath,
       "s1-p1",
-      "Reviewer",
       "確認してください",
       anchorQuote,
       2
@@ -617,7 +628,6 @@ describe("comment mutations", () => {
         worktree,
         relPath,
         "s1-p1",
-        "Reviewer",
         "確認してください"
       );
 
@@ -639,7 +649,6 @@ describe("comment mutations", () => {
       worktree,
       relPath,
       "unknown",
-      "Reviewer",
       "本文"
     );
 
@@ -664,7 +673,7 @@ describe("comment mutations", () => {
     );
 
     await expect(
-      createDiagramComment(worktree, relPath, "s1-p1", "Reviewer", "本文")
+      createDiagramComment(worktree, relPath, "s1-p1", "本文")
     ).resolves.toMatchObject({ ok: false, code: "NOT_DOC" });
   });
 
@@ -674,7 +683,6 @@ describe("comment mutations", () => {
       worktree,
       relPath,
       "s1-p1",
-      "Reviewer",
       "本文"
     );
     expect(created.ok).toBe(true);
@@ -706,8 +714,8 @@ describe("comment mutations", () => {
     writeDoc();
 
     await Promise.all([
-      createDiagramComment(worktree, relPath, "s1-p1", "A", "first"),
-      createDiagramComment(worktree, relPath, "s1-p2", "B", "second"),
+      createDiagramComment(worktree, relPath, "s1-p1", "first"),
+      createDiagramComment(worktree, relPath, "s1-p2", "second"),
     ]);
 
     const stored = await readDiagramCommentsFile(worktree, relPath);
@@ -725,12 +733,11 @@ describe("comment mutations", () => {
     writeDoc("shipping-flow");
 
     const results = await Promise.all([
-      createDiagramComment(worktree, relPath, "s1-p1", "A", "first"),
+      createDiagramComment(worktree, relPath, "s1-p1", "first"),
       createDiagramComment(
         worktree,
         ".claude/diagrams/shipping-flow.diagram.html",
         "s1-p2",
-        "B",
         "second"
       ),
     ]);
@@ -761,7 +768,6 @@ describe("comment mutations", () => {
       worktree,
       relPath,
       "s1-p1",
-      "Reviewer",
       "本文"
     );
 
@@ -775,7 +781,6 @@ describe("comment mutations", () => {
       worktree,
       relPath,
       "s1-p1",
-      "Reviewer",
       "first"
     );
     expect(first.ok).toBe(true);
@@ -792,7 +797,6 @@ describe("comment mutations", () => {
       worktree,
       relPath,
       "s1-p2",
-      "Reviewer",
       "second"
     );
 
