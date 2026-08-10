@@ -12,6 +12,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { injectBuiltinProjection } from "./diagram-builtin.js";
+import { injectDiagramCommentLayer } from "./diagram-comment-layer.js";
+import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
 import { extractModel, injectCsp } from "./diagram-file.js";
 import { injectHarness } from "./diagram-harness.js";
 import type { DiagramModel } from "./diagram-model.js";
@@ -111,14 +113,18 @@ export async function readDiagram(
   if (!read.ok) return read;
   const model = extractModel(read.raw);
   if (!model.ok) return { ok: false, status: 422, error: model.error };
-  // 内蔵図種の投影生成 → CSP → ハーネスの順。投影はハーネスが読む DOM 契約を
-  // 満たす必要があるため、ハーネス注入より前に置く
+  const anchors = validateDiagramDocAnchors(read.raw, model.model);
+  if (!anchors.ok) return { ok: false, status: 422, error: anchors.error };
+  // 内蔵図種の投影生成 → CSP → 専用層の順。doc 本文は自前 HTML が正なので
+  // 編集ハーネスを混ぜず、コメント層だけを載せる。
+  const projected = injectCsp(injectBuiltinProjection(read.raw, model.model));
   return {
     ok: true,
     absPath: read.absPath,
-    html: injectHarness(
-      injectCsp(injectBuiltinProjection(read.raw, model.model))
-    ),
+    html:
+      model.model.type === "doc"
+        ? injectDiagramCommentLayer(projected)
+        : injectHarness(projected),
     model: model.model,
   };
 }

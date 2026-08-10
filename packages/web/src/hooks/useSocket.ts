@@ -13,6 +13,7 @@ import type {
   BrowserSession,
   ChatMessage,
   ClientToServerEvents,
+  DiagramCommentsResponse,
   DiagramDeleteResponse,
   DiagramListItem,
   FsListResult,
@@ -34,6 +35,13 @@ import type {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import { toast } from "sonner";
+import {
+  requestDiagramCommentCreate,
+  requestDiagramCommentDelete,
+  requestDiagramCommentResolve,
+  requestDiagramCommentSend,
+  requestDiagramCommentsGet,
+} from "../lib/diagram-comment-transport";
 import { requestDiagramDelete } from "../lib/diagram-delete-transport";
 import {
   addWorktree,
@@ -86,6 +94,33 @@ interface UseSocketReturn {
     relPath: string,
     expectedTracked: boolean
   ) => Promise<DiagramDeleteResponse>;
+  getDiagramComments: (
+    sessionId: string,
+    relPath: string
+  ) => Promise<DiagramCommentsResponse>;
+  createDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    anchorId: string,
+    body: string,
+    anchorQuote?: string,
+    anchorOccurrence?: number
+  ) => Promise<DiagramCommentsResponse>;
+  resolveDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
+  deleteDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
+  sendDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
 
   // Repository
   repoList: string[];
@@ -1254,6 +1289,66 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
+  const getDiagramComments = useCallback(
+    (sessionId: string, relPath: string) =>
+      requestDiagramCommentsGet(socketRef.current, sessionId, relPath),
+    []
+  );
+
+  const createDiagramComment = useCallback(
+    (
+      sessionId: string,
+      relPath: string,
+      anchorId: string,
+      body: string,
+      anchorQuote?: string,
+      anchorOccurrence?: number
+    ) =>
+      requestDiagramCommentCreate(
+        socketRef.current,
+        sessionId,
+        relPath,
+        anchorId,
+        body,
+        anchorQuote,
+        anchorOccurrence
+      ),
+    []
+  );
+
+  const resolveDiagramComment = useCallback(
+    (sessionId: string, relPath: string, threadId: string) =>
+      requestDiagramCommentResolve(
+        socketRef.current,
+        sessionId,
+        relPath,
+        threadId
+      ),
+    []
+  );
+
+  const deleteDiagramComment = useCallback(
+    (sessionId: string, relPath: string, threadId: string) =>
+      requestDiagramCommentDelete(
+        socketRef.current,
+        sessionId,
+        relPath,
+        threadId
+      ),
+    []
+  );
+
+  const sendDiagramComment = useCallback(
+    (sessionId: string, relPath: string, threadId: string) =>
+      requestDiagramCommentSend(
+        socketRef.current,
+        sessionId,
+        relPath,
+        threadId
+      ),
+    []
+  );
+
   // Worktree actions
   const createWorktree = useCallback(
     (branchName: string, baseBranch?: string) => {
@@ -1676,6 +1771,11 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     listDirectory,
     listDiagrams,
     deleteDiagram,
+    getDiagramComments,
+    createDiagramComment,
+    resolveDiagramComment,
+    deleteDiagramComment,
+    sendDiagramComment,
     repoList,
     repoPath,
     selectRepo,

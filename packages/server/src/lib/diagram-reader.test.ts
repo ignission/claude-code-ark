@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { DIAGRAM_DIR } from "@ark/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DIAGRAM_COMMENT_LAYER_MARKER } from "./diagram-comment-layer.js";
 import { DIAGRAM_CSP } from "./diagram-file.js";
 import { DIAGRAM_HARNESS_MARKER } from "./diagram-harness.js";
 import { readDiagram } from "./diagram-reader.js";
@@ -82,7 +83,32 @@ describe("readDiagram", () => {
       expect(result.model.nodes[1]?.ext).toEqual({ x: 360, y: 180 });
       expect(result.html).toContain(DIAGRAM_CSP);
       expect(result.html).toContain(DIAGRAM_HARNESS_MARKER);
+      expect(result.html).not.toContain(DIAGRAM_COMMENT_LAYER_MARKER);
       expect(result.html).toContain('data-ark-container="graph"');
+    }
+  });
+
+  it("doc は CSP とコメント層だけを注入する", async () => {
+    const docModel = JSON.stringify({
+      version: 1,
+      type: "doc",
+      nodes: [{ id: "section-1", label: "概要" }],
+      edges: [],
+      groups: [],
+    });
+    write(
+      "doc.diagram.html",
+      '<section data-ark-id="section-1">概要</section>',
+      docModel
+    );
+
+    const result = await readDiagram(wt, "doc.diagram.html");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.html).toContain(DIAGRAM_CSP);
+      expect(result.html).toContain(DIAGRAM_COMMENT_LAYER_MARKER);
+      expect(result.html).not.toContain(DIAGRAM_HARNESS_MARKER);
     }
   });
 
@@ -248,6 +274,36 @@ describe("readDiagram", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.status).toBe(422);
+  });
+
+  it("node に対応する anchor がない doc は 422 を返す", async () => {
+    const docModel = JSON.stringify({
+      version: 1,
+      type: "doc",
+      nodes: [{ id: "section-1", label: "概要" }],
+      edges: [],
+      groups: [],
+    });
+    write("invalid-doc.diagram.html", "<section>概要</section>", docModel);
+
+    const result = await readDiagram(wt, "invalid-doc.diagram.html");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(422);
+      expect(result.error).toContain("section-1");
+    }
+  });
+
+  it("graph は data-ark-id がなくても従来どおり配信する", async () => {
+    write(
+      "unanchored-graph.diagram.html",
+      '<div data-model-id="order">Order</div>'
+    );
+
+    const result = await readDiagram(wt, "unanchored-graph.diagram.html");
+
+    expect(result.ok).toBe(true);
   });
 
   it("EACCES (権限エラー) は 404 に畳まず 403 で errno を含めて返す", async () => {

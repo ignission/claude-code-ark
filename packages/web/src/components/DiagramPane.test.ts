@@ -1,14 +1,21 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import type {
+  DiagramCommentPortParse,
+  DiagramCommentPortRequest,
+} from "../lib/diagram-comment-bridge";
 import {
   applyDiagramPinchZoom,
   DIAGRAM_ZOOM_MAX,
   DIAGRAM_ZOOM_MIN,
   DiagramViewport,
   emitDiagramAutosave,
+  forwardDiagramCommentPortRequest,
   getDiagramZoomPercent,
   handleDiagramPinchMessage,
+  readDiagramCommentConnectionState,
+  replyToInvalidDiagramCommentPortRequest,
   resetDiagramZoom,
   stepDiagramZoom,
 } from "./DiagramPane";
@@ -60,6 +67,199 @@ describe("emitDiagramAutosave", () => {
       ok: false,
       error: "保存がタイムアウトしました",
     });
+  });
+});
+
+describe("forwardDiagramCommentPortRequest", () => {
+  const requests: DiagramCommentPortRequest[] = [
+    { type: "ark:diagram-comments-load", requestId: "req-load" },
+    {
+      type: "ark:diagram-comment-create",
+      requestId: "req-create",
+      anchorId: "s1",
+      anchorQuote: "選択した本文",
+      anchorOccurrence: 1,
+      body: "本文",
+    },
+    {
+      type: "ark:diagram-comment-resolve",
+      requestId: "req-resolve",
+      threadId: "th-1",
+    },
+    {
+      type: "ark:diagram-comment-delete",
+      requestId: "req-delete",
+      threadId: "th-1",
+    },
+    {
+      type: "ark:diagram-comment-send",
+      requestId: "req-send",
+      threadId: "th-1",
+    },
+  ];
+
+  function dependencies() {
+    const response = {
+      ok: true as const,
+      comments: {
+        version: 1 as const,
+        target: "sample.diagram.html",
+        threads: [],
+      },
+    };
+    return {
+      isConnected: true,
+      sessionId: "session-1",
+      relPath: REL_PATH,
+      getDiagramComments: vi.fn(async () => response),
+      createDiagramComment: vi.fn(async () => response),
+      deleteDiagramComment: vi.fn(async () => response),
+      resolveDiagramComment: vi.fn(async () => response),
+      sendDiagramComment: vi.fn(async () => response),
+      isCurrent: vi.fn(() => true),
+      reply: vi.fn(),
+      onError: vi.fn(),
+    };
+  }
+
+  it("load/create/resolve/delete/send を現在の session/path と検証済み payload で中継する", async () => {
+    const deps = dependencies();
+
+    for (const request of requests) {
+      await forwardDiagramCommentPortRequest(request, deps);
+    }
+
+    expect(deps.getDiagramComments).toHaveBeenCalledWith("session-1", REL_PATH);
+    expect(deps.createDiagramComment).toHaveBeenCalledWith(
+      "session-1",
+      REL_PATH,
+      "s1",
+      "本文",
+      "選択した本文",
+      1
+    );
+    expect(deps.resolveDiagramComment).toHaveBeenCalledWith(
+      "session-1",
+      REL_PATH,
+      "th-1"
+    );
+    expect(deps.deleteDiagramComment).toHaveBeenCalledWith(
+      "session-1",
+      REL_PATH,
+      "th-1"
+    );
+    expect(deps.sendDiagramComment).toHaveBeenCalledWith(
+      "session-1",
+      REL_PATH,
+      "th-1"
+    );
+    expect(deps.reply.mock.calls.map(call => call[0].requestId)).toEqual([
+      "req-load",
+      "req-create",
+      "req-resolve",
+      "req-delete",
+      "req-send",
+    ]);
+  });
+
+  it("transport timeout を同じ requestId の error result と banner へ返す", async () => {
+    const deps = dependencies();
+    deps.getDiagramComments.mockRejectedValueOnce(
+      new Error("コメント処理がタイムアウトしました")
+    );
+
+    await forwardDiagramCommentPortRequest(requests[0], deps);
+
+    expect(deps.reply).toHaveBeenCalledWith({
+      type: "ark:diagram-comments-result",
+      requestId: "req-load",
+      ok: false,
+      code: "IO_ERROR",
+      error: "コメント処理がタイムアウトしました",
+    });
+    expect(deps.onError).toHaveBeenCalledWith(
+      "コメント処理がタイムアウトしました"
+    );
+  });
+
+  it("未接続は transport を呼ばず即 error ACK にする", async () => {
+    const deps = dependencies();
+    deps.isConnected = false;
+
+    await forwardDiagramCommentPortRequest(requests[0], deps);
+
+    expect(deps.getDiagramComments).not.toHaveBeenCalled();
+    expect(deps.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ ok: false, requestId: "req-load" })
+    );
+  });
+
+  it("同じ port の処理でも再接続後は最新の接続状態で中継する", async () => {
+    const connection = { current: false };
+    const deps = dependencies();
+
+    await forwardDiagramCommentPortRequest(requests[0], {
+      ...deps,
+      isConnected: readDiagramCommentConnectionState(connection),
+    });
+    expect(deps.getDiagramComments).not.toHaveBeenCalled();
+
+    connection.current = true;
+    await forwardDiagramCommentPortRequest(requests[0], {
+      ...deps,
+      isConnected: readDiagramCommentConnectionState(connection),
+    });
+    expect(deps.getDiagramComments).toHaveBeenCalledOnce();
+  });
+
+  it("旧 port generation の遅延結果を reply/state に反映しない", async () => {
+    const deps = dependencies();
+    deps.isCurrent.mockReturnValue(false);
+
+    const handled = await forwardDiagramCommentPortRequest(requests[0], deps);
+
+    expect(handled).toBe(false);
+    expect(deps.reply).not.toHaveBeenCalled();
+    expect(deps.onError).not.toHaveBeenCalled();
+  });
+});
+
+describe("replyToInvalidDiagramCommentPortRequest", () => {
+  it("invalid は同じ requestId の BAD_REQUEST を必ず reply する", () => {
+    const reply = vi.fn();
+    const onError = vi.fn();
+    const parsed: DiagramCommentPortParse = {
+      kind: "invalid",
+      requestId: "req-invalid",
+      error: "body が不正です",
+    };
+
+    expect(
+      replyToInvalidDiagramCommentPortRequest(parsed, reply, onError)
+    ).toBe(true);
+    expect(reply).toHaveBeenCalledWith({
+      type: "ark:diagram-comments-result",
+      requestId: "req-invalid",
+      ok: false,
+      code: "BAD_REQUEST",
+      error: "body が不正です",
+    });
+    expect(onError).toHaveBeenCalledWith("body が不正です");
+  });
+
+  it("ignore は reply しない", () => {
+    const reply = vi.fn();
+    const onError = vi.fn();
+
+    expect(
+      replyToInvalidDiagramCommentPortRequest(
+        { kind: "ignore" },
+        reply,
+        onError
+      )
+    ).toBe(false);
+    expect(reply).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
   });
 });
 

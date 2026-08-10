@@ -85,6 +85,51 @@ describe("saveDiagramEdit", () => {
     expect(fs.readFileSync(absPath, "utf8")).toBe(original);
   });
 
+  it.each([
+    {
+      name: "anchor がない",
+      projection: "<main><p>本文</p></main>",
+      expectedId: "section-1",
+    },
+    {
+      name: "anchor が重複する",
+      projection:
+        '<main data-ark-id="section-1"><p data-ark-id="section-1">本文</p></main>',
+      expectedId: "section-1",
+    },
+    {
+      name: "未知の anchor がある",
+      projection:
+        '<main data-ark-id="section-1"><p data-ark-id="unknown">本文</p></main>',
+      expectedId: "unknown",
+    },
+  ])("doc の $name 場合は元ファイルを変更しない", async testCase => {
+    const original = fs.readFileSync(absPath, "utf8");
+    const docModel: DiagramModel = {
+      version: 1,
+      type: "doc",
+      nodes: [{ id: "section-1", label: "概要" }],
+      edges: [],
+      groups: [],
+    };
+    let beforeWriteCalled = false;
+
+    const result = await saveDiagramEdit(
+      worktree,
+      "sample.diagram.html",
+      docModel,
+      `<html><body><script type="application/json" id="ark-diagram-model">${JSON.stringify(initialModel)}</script>${testCase.projection}</body></html>`,
+      () => {
+        beforeWriteCalled = true;
+      }
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain(testCase.expectedId);
+    expect(beforeWriteCalled).toBe(false);
+    expect(fs.readFileSync(absPath, "utf8")).toBe(original);
+  });
+
   it("write が失敗しても元ファイルを空にしない", async () => {
     const original = fs.readFileSync(absPath, "utf8");
     const open = fs.promises.open.bind(fs.promises);

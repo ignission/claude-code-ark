@@ -32,8 +32,8 @@ interface DiagramSwitcherProps {
 
 export function getDiagramDeleteWarning(item: DiagramListItem): string {
   return item.tracked
-    ? "worktree に削除差分が残ります。必要なら Git で復元できます。この操作は取り消せません。"
-    : "未追跡ファイルは Git から復元できません。この操作は取り消せません。";
+    ? "図と隣接するコメント sidecar も削除します。図は worktree に削除差分が残ります。必要なら Git で復元できます。ただし Git 未追跡のファイルは復元できません。この操作は取り消せません。"
+    : "図と隣接するコメント sidecar も削除します。Git 未追跡のファイルは復元できません。この操作は取り消せません。";
 }
 
 export function handleDiagramDeleteConfirmation(

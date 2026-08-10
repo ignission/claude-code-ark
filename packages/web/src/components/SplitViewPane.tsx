@@ -15,6 +15,7 @@
 
 import type {
   ClientToServerEvents,
+  DiagramCommentsResponse,
   DiagramDeleteResponse,
   DiagramListItem,
   ManagedSession,
@@ -44,6 +45,33 @@ interface SplitViewPaneProps {
     relPath: string,
     expectedTracked: boolean
   ) => Promise<DiagramDeleteResponse>;
+  getDiagramComments: (
+    sessionId: string,
+    relPath: string
+  ) => Promise<DiagramCommentsResponse>;
+  createDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    anchorId: string,
+    body: string,
+    anchorQuote?: string,
+    anchorOccurrence?: number
+  ) => Promise<DiagramCommentsResponse>;
+  resolveDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
+  deleteDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
+  sendDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
   session: ManagedSession;
   worktree: Worktree | undefined;
   repoName?: string;
@@ -276,6 +304,11 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                 isConnected={props.isConnected}
                 listDiagrams={props.listDiagrams}
                 deleteDiagram={props.deleteDiagram}
+                getDiagramComments={props.getDiagramComments}
+                createDiagramComment={props.createDiagramComment}
+                resolveDiagramComment={props.resolveDiagramComment}
+                deleteDiagramComment={props.deleteDiagramComment}
+                sendDiagramComment={props.sendDiagramComment}
                 sessionId={props.session.id}
                 worktreePath={
                   diagramTab?.worktreePath ?? props.session.worktreePath

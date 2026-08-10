@@ -79,6 +79,11 @@ export default function Dashboard() {
     listDirectory,
     listDiagrams,
     deleteDiagram,
+    getDiagramComments,
+    createDiagramComment,
+    resolveDiagramComment,
+    deleteDiagramComment,
+    sendDiagramComment,
     worktrees,
     createWorktree,
     deleteWorktree,
@@ -796,6 +801,11 @@ export default function Dashboard() {
                         isConnected={isConnected}
                         listDiagrams={listDiagrams}
                         deleteDiagram={deleteDiagram}
+                        getDiagramComments={getDiagramComments}
+                        createDiagramComment={createDiagramComment}
+                        resolveDiagramComment={resolveDiagramComment}
+                        deleteDiagramComment={deleteDiagramComment}
+                        sendDiagramComment={sendDiagramComment}
                         {...paneProps}
                       />
                     </div>

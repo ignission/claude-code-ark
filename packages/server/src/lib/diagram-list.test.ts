@@ -257,6 +257,66 @@ describe("listDiagrams", () => {
     ]);
   });
 
+  it("anchor lint 違反の doc も一覧から消さない", async () => {
+    const { worktree, diagramDir } = makeWorktree();
+    const docModel = {
+      version: 1,
+      type: "doc",
+      title: "レビュー文書",
+      nodes: [{ id: "section-1", label: "概要" }],
+      edges: [],
+      groups: [],
+    };
+    fs.writeFileSync(
+      path.join(diagramDir, "review.diagram.html"),
+      `<!doctype html><html><body><script type="application/json" id="ark-diagram-model">${JSON.stringify(docModel)}</script><section>anchor なし</section></body></html>`
+    );
+
+    await expect(listDiagrams(worktree)).resolves.toEqual([
+      {
+        relPath: ".claude/diagrams/review.diagram.html",
+        displayName: "レビュー文書",
+        tracked: false,
+      },
+    ]);
+  });
+
+  it("comments sidecar を単独でも図の隣接時でも候補にしない", async () => {
+    const { worktree, diagramDir } = makeWorktree();
+    fs.mkdirSync(path.join(diagramDir, "nested"), { recursive: true });
+    fs.writeFileSync(
+      path.join(diagramDir, "review.diagram.html"),
+      diagramHtml("レビュー図")
+    );
+    fs.writeFileSync(
+      path.join(diagramDir, "review.comments.json"),
+      '{"version":1}'
+    );
+    fs.writeFileSync(
+      path.join(diagramDir, "orphan.comments.json"),
+      '{"version":1}'
+    );
+    fs.writeFileSync(
+      path.join(diagramDir, "nested", "only.comments.json"),
+      '{"version":1}'
+    );
+    execFileSync("git", [
+      "-C",
+      worktree,
+      "add",
+      "--",
+      ".claude/diagrams/review.diagram.html",
+    ]);
+
+    await expect(listDiagrams(worktree)).resolves.toEqual([
+      {
+        relPath: ".claude/diagrams/review.diagram.html",
+        displayName: "レビュー図",
+        tracked: true,
+      },
+    ]);
+  });
+
   it("図の読み込みを同時に8件までに制限する", async () => {
     const { worktree, diagramDir } = makeWorktree();
     for (let index = 0; index < 17; index += 1) {

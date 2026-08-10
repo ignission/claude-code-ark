@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
+import { DIAGRAM_COMMENT_LAYER_MARKER } from "./diagram-comment-layer.js";
 import { DIAGRAM_HARNESS_MARKER, injectHarness } from "./diagram-harness.js";
 
 const page = (body: string) =>
@@ -236,9 +237,37 @@ describe("injectHarness", () => {
       ).toHaveLength(1);
       expect(out.match(/function layoutGroupAwareGraph\(/g)).toHaveLength(1);
       expect(Buffer.byteLength(out, "utf8")).toBeLessThan(128 * 1024);
+      // 変更前の graph artifact 実測は 128,921 bytes。コメント層を混ぜず上限を維持する。
+      expect(out).not.toContain(DIAGRAM_COMMENT_LAYER_MARKER);
       expect(out).not.toContain("eval(");
       expect(out).not.toContain("new Function");
       expect(out).not.toContain("import(");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("doc コメント層の esbuild artifact も独立して上限内に収まる", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ark-diagram-comments-"));
+    const outfile = join(directory, "diagram-comment-layer.mjs");
+    try {
+      await build({
+        entryPoints: [join(import.meta.dirname, "diagram-comment-layer.ts")],
+        outfile,
+        bundle: true,
+        format: "esm",
+        platform: "node",
+      });
+      const artifact = (await import(
+        `${pathToFileURL(outfile).href}?test=${Date.now()}`
+      )) as typeof import("./diagram-comment-layer.js");
+      const out = artifact.injectDiagramCommentLayer(
+        page('<p data-ark-id="s1">本文</p>')
+      );
+
+      expect(Buffer.byteLength(out, "utf8")).toBeLessThan(128 * 1024);
+      expect(out).toContain(DIAGRAM_COMMENT_LAYER_MARKER);
+      expect(out).not.toContain(DIAGRAM_HARNESS_MARKER);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

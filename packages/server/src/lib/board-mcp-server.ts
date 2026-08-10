@@ -16,7 +16,13 @@
  * - registry に登録された token のみ許可する
  */
 
+import fs from "node:fs";
 import { createServer, type Server as HttpServer } from "node:http";
+import path from "node:path";
+import type {
+  DiagramCommentsResponse,
+  DiagramCommentThread,
+} from "@ark/shared";
 import { DIAGRAM_DIR } from "@ark/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -59,6 +65,13 @@ export interface BoardMcpDeps {
     worktreePath: string,
     relPath: string
   ): Promise<{ ok: boolean; error?: string }>;
+  /** コメントを走査する図候補を worktree 相対パスで返す。 */
+  listDiagramPaths(worktreePath: string): Promise<string[]>;
+  /** doc/anchor trust boundary を通して sidecar を読む。 */
+  getDiagramComments(
+    worktreePath: string,
+    relPath: string
+  ): Promise<DiagramCommentsResponse>;
 }
 
 export interface BoardOpenInput {
@@ -70,6 +83,30 @@ export interface BoardOpenResult {
   error?: string;
 }
 
+export interface BoardCommentsInput {
+  path?: string;
+  includeResolved?: boolean;
+}
+
+type BoardCommentThread = Pick<
+  DiagramCommentThread,
+  | "id"
+  | "anchorId"
+  | "anchorText"
+  | "anchorQuote"
+  | "anchorOccurrence"
+  | "status"
+> & {
+  messages: Array<{ at: string; body: string }>;
+};
+
+export type BoardCommentsResult = {
+  diagrams: Array<
+    | { path: string; threads: BoardCommentThread[] }
+    | { path: string; error: string }
+  >;
+};
+
 /** board_open の純ロジック（HTTP/MCP から分離してテスト可能にする）。 */
 export async function handleBoardOpen(
   deps: Pick<BoardMcpDeps, "openDiagram">,
@@ -77,6 +114,91 @@ export async function handleBoardOpen(
   input: BoardOpenInput
 ): Promise<BoardOpenResult> {
   return deps.openDiagram(worktreePath, input.path);
+}
+
+/** board_comments の純ロジック（HTTP/MCP から分離してテスト可能にする）。 */
+export async function handleBoardComments(
+  deps: Pick<BoardMcpDeps, "listDiagramPaths" | "getDiagramComments">,
+  worktreePath: string,
+  input: BoardCommentsInput
+): Promise<BoardCommentsResult> {
+  const paths = input.path
+    ? [input.path]
+    : await deps.listDiagramPaths(worktreePath);
+  const diagrams: BoardCommentsResult["diagrams"] = [];
+
+  for (const relPath of paths) {
+    let response: DiagramCommentsResponse;
+    try {
+      response = await deps.getDiagramComments(worktreePath, relPath);
+    } catch (error) {
+      diagrams.push({ path: relPath, error: getErrorMessage(error) });
+      continue;
+    }
+    if (!response.ok) {
+      diagrams.push({ path: relPath, error: response.error });
+      continue;
+    }
+    const threads = response.comments.threads
+      .filter(thread => input.includeResolved || thread.status === "open")
+      .map(thread => ({
+        id: thread.id,
+        anchorId: thread.anchorId,
+        anchorText: thread.anchorText,
+        ...(thread.anchorQuote === undefined
+          ? {}
+          : { anchorQuote: thread.anchorQuote }),
+        ...(thread.anchorOccurrence === undefined
+          ? {}
+          : { anchorOccurrence: thread.anchorOccurrence }),
+        status: thread.status,
+        messages: thread.messages.map(message => ({
+          at: message.at,
+          body: message.body,
+        })),
+      }));
+    if (threads.length > 0) diagrams.push({ path: relPath, threads });
+  }
+
+  return { diagrams };
+}
+
+async function collectDiagramPaths(
+  directory: string,
+  relativeParts: string[]
+): Promise<string[]> {
+  const entries = await fs.promises.readdir(directory, { withFileTypes: true });
+  const result: string[] = [];
+  for (const entry of entries) {
+    const childParts = [...relativeParts, entry.name];
+    if (entry.isDirectory()) {
+      result.push(
+        ...(await collectDiagramPaths(
+          path.join(directory, entry.name),
+          childParts
+        ))
+      );
+    } else if (entry.isFile() && entry.name.endsWith(".diagram.html")) {
+      result.push([DIAGRAM_DIR, ...childParts].join("/"));
+    }
+  }
+  return result;
+}
+
+/** DIAGRAM_DIR 配下の図候補を決定的な順序で列挙する。 */
+export async function listDiagramCommentPaths(
+  worktreeReal: string
+): Promise<string[]> {
+  try {
+    const paths = await collectDiagramPaths(
+      path.join(worktreeReal, DIAGRAM_DIR),
+      []
+    );
+    return paths.sort((left, right) => left.localeCompare(right));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
 }
 
 /**
@@ -116,6 +238,43 @@ export function createBoardMcpServer(
         );
       } catch (e) {
         return textResult(`board_open 失敗: ${getErrorMessage(e)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "board_comments",
+    {
+      description:
+        "ボード（文書型の図）に付いた未解決コメントを読む。ユーザーが「コメントした」「図を見て」と言ったとき、または図のレビューを依頼されたときに呼ぶ。",
+      inputSchema: {
+        path: z
+          .string()
+          .optional()
+          .describe(
+            `worktree 相対の図ファイルパス（省略時は ${DIAGRAM_DIR} 配下の全図）`
+          ),
+        includeResolved: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe("解決済みスレッドも含める"),
+      },
+    },
+    async args => {
+      try {
+        const result = await handleBoardComments(deps, worktreePath, {
+          ...(args.path === undefined ? {} : { path: args.path }),
+          includeResolved: args.includeResolved,
+        });
+        return textResult(JSON.stringify(result));
+      } catch (error) {
+        return textResult(
+          JSON.stringify({
+            diagrams: [],
+            error: `board_comments 失敗: ${getErrorMessage(error)}`,
+          })
+        );
       }
     }
   );

@@ -53,6 +53,35 @@ Ark が配信時に生成し、生成物はファイルへ焼き付かない（�
 `from_card` / `to_card` / `direction` / `type`）、group 境界、自動レイアウトは
 内蔵レンダラでもそのまま効く。
 
+## 文書型（自前 HTML 投影）
+
+設計書や仕様書のように本文を読みながらコメントする文書は、モデルへ
+`type: "doc"` を指定し、HTML 投影を自前で書く。`doc` は内蔵レンダラではないため、
+本文は HTML を正準 source とし、model の `label` には検索と一覧表示に足りる
+60〜80文字の抜粋だけを置く。全文を model に複製しない。
+
+node の `kind` は次の12種類から選ぶ。
+
+- `section` / `paragraph` / `table` / `table-row`
+- `list` / `list-item` / `panel` / `figure`
+- `code` / `quote` / `task` / `summary`
+
+文書内の全 node に、その node id と同じ値の `data-ark-id` をちょうど1つ付ける。
+同じ `data-ark-id` を複数要素へ付けず、node の無い HTML 要素へも付けない。
+コメント anchor は行単位を既定とし、表では cell ではなく `table-row` を既定にする。
+
+id は文書の構造が分かる階層 prefix で組み立てる。例えば section を `s6`、その段落を
+`s6-p1`、表を `s6-t1`、2行目を `s6-t1-r2` とする。cell 単位のコメントが必要な表だけ
+opt-in で `s6-t1-r2-c3` のような node を追加する。field が必要なら既存 shape のまま
+`<nodeId>--f<n>`（例: `s6-t1-r2--f1`）を使い、node / field の名前空間を分けない。
+
+`DiagramModel` や `DiagramNode` に文書専用 field を追加しない。section nesting は既存の
+flat groups で表し、`groups[].nodes` には node id だけを直接列挙する。group id を member
+にした入れ子は作らない。
+
+投影は inline CSS と同一ファイル内の HTML だけで完結させ、外部リソースを参照しない。
+外部 URL の画像・stylesheet・font・script・icon library は使わず、CSP meta も書かない。
+
 自前の graph container（`data-ark-container="graph"`）を書いた図には内蔵レンダラは
 一切触らない。決まった図種でない図（ロードマップ、説明図、スイムレーンの厳密な
 座標指定など）は、以下の手書き投影で作る。
