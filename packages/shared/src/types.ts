@@ -753,6 +753,12 @@ export interface ClientToServerEvents {
     callback: (response: DiagramCommentsResponse) => void
   ) => void;
 
+  /** 文書コメントを会話セッションへ送る */
+  "diagram:comment:send": (
+    data: { sessionId: string; relPath: string; threadId: string },
+    callback: (response: DiagramCommentsResponse) => void
+  ) => void;
+
   /** 図の購読開始（更新通知を受け取る）。1 セッション 1 図を想定 */
   "diagram:subscribe": (data: {
     worktreePath: string;

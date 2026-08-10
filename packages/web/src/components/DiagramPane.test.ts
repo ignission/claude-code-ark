@@ -87,6 +87,11 @@ describe("forwardDiagramCommentPortRequest", () => {
       requestId: "req-resolve",
       threadId: "th-1",
     },
+    {
+      type: "ark:diagram-comment-send",
+      requestId: "req-send",
+      threadId: "th-1",
+    },
   ];
 
   function dependencies() {
@@ -105,13 +110,14 @@ describe("forwardDiagramCommentPortRequest", () => {
       getDiagramComments: vi.fn(async () => response),
       createDiagramComment: vi.fn(async () => response),
       resolveDiagramComment: vi.fn(async () => response),
+      sendDiagramComment: vi.fn(async () => response),
       isCurrent: vi.fn(() => true),
       reply: vi.fn(),
       onError: vi.fn(),
     };
   }
 
-  it("load/create/resolve を現在の session/path と検証済み payload で中継する", async () => {
+  it("load/create/resolve/send を現在の session/path と検証済み payload で中継する", async () => {
     const deps = dependencies();
 
     for (const request of requests) {
@@ -133,10 +139,16 @@ describe("forwardDiagramCommentPortRequest", () => {
       REL_PATH,
       "th-1"
     );
+    expect(deps.sendDiagramComment).toHaveBeenCalledWith(
+      "session-1",
+      REL_PATH,
+      "th-1"
+    );
     expect(deps.reply.mock.calls.map(call => call[0].requestId)).toEqual([
       "req-load",
       "req-create",
       "req-resolve",
+      "req-send",
     ]);
   });
 

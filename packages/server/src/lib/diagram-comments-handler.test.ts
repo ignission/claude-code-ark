@@ -5,6 +5,7 @@ import {
   type DiagramCommentsHandlerDeps,
   handleDiagramCommentCreate,
   handleDiagramCommentResolve,
+  handleDiagramCommentSend,
   handleDiagramCommentsGet,
 } from "./diagram-comments-handler.js";
 
@@ -27,8 +28,66 @@ function deps(): DiagramCommentsHandlerDeps {
     getComments: vi.fn(async () => snapshot),
     createComment: vi.fn(async () => snapshot),
     resolveComment: vi.fn(async () => snapshot),
+    sendMessage: vi.fn(),
   };
 }
+
+const sendSnapshot: DiagramCommentsResponse = {
+  ok: true,
+  comments: {
+    version: 1,
+    target: "sample.diagram.html",
+    threads: [
+      {
+        id: "th-send",
+        anchorId: "s1",
+        anchorText:
+          "これは八十文字を超えた場合に切り詰める対象テキストです。改行\nやタブ\tも含みます。さらに十分な長さを加えて末尾を切ります。abcdefghij",
+        anchorQuote: "引用の一行目\n引用の二行目",
+        status: "open",
+        createdAt: "2026-08-10T00:00:00.000Z",
+        messages: [
+          {
+            id: "msg-send",
+            author: "Reviewer",
+            at: "2026-08-10T00:00:00.000Z",
+            body: "本文の一行目\n本文の二行目\t末尾",
+          },
+        ],
+      },
+      {
+        id: "th-other-open",
+        anchorId: "s2",
+        anchorText: "別の未解決",
+        status: "open",
+        createdAt: "2026-08-10T00:00:00.000Z",
+        messages: [
+          {
+            id: "msg-other-open",
+            author: "Reviewer",
+            at: "2026-08-10T00:00:00.000Z",
+            body: "別件",
+          },
+        ],
+      },
+      {
+        id: "th-resolved",
+        anchorId: "s3",
+        anchorText: "解決済み",
+        status: "resolved",
+        createdAt: "2026-08-10T00:00:00.000Z",
+        messages: [
+          {
+            id: "msg-resolved",
+            author: "Reviewer",
+            at: "2026-08-10T00:00:00.000Z",
+            body: "解決済み",
+          },
+        ],
+      },
+    ],
+  },
+};
 
 describe("diagram comments handler core", () => {
   it.each([
@@ -172,6 +231,66 @@ describe("diagram comments handler core", () => {
     expect(dependencies.getComments).toHaveBeenCalledWith(
       "/managed/worktree",
       "sample.diagram.html"
+    );
+  });
+
+  it("send は sessionId から解決した worktree の comments を読む", async () => {
+    const dependencies = deps();
+    vi.mocked(dependencies.getComments).mockResolvedValue(sendSnapshot);
+
+    await handleDiagramCommentSend(dependencies, {
+      sessionId: "session-1",
+      relPath: "sample.diagram.html",
+      threadId: "th-send",
+    });
+
+    expect(dependencies.resolveManagedWorktreePath).toHaveBeenCalledWith(
+      "/session/worktree"
+    );
+    expect(dependencies.getComments).toHaveBeenCalledWith(
+      "/managed/worktree",
+      "sample.diagram.html"
+    );
+  });
+
+  it("send の不明な threadId を THREAD_NOT_FOUND にする", async () => {
+    const dependencies = deps();
+    vi.mocked(dependencies.getComments).mockResolvedValue(sendSnapshot);
+
+    await expect(
+      handleDiagramCommentSend(dependencies, {
+        sessionId: "session-1",
+        relPath: "sample.diagram.html",
+        threadId: "missing",
+      })
+    ).resolves.toMatchObject({ ok: false, code: "THREAD_NOT_FOUND" });
+    expect(dependencies.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("sendMessage を引用・本文・他の未解決件数を含む一行で呼び、最新 comments を返す", async () => {
+    const dependencies = deps();
+    vi.mocked(dependencies.getComments).mockResolvedValue(sendSnapshot);
+
+    await expect(
+      handleDiagramCommentSend(dependencies, {
+        sessionId: "session-1",
+        relPath: "sample.diagram.html",
+        threadId: "th-send",
+      })
+    ).resolves.toEqual(sendSnapshot);
+
+    expect(dependencies.sendMessage).toHaveBeenCalledOnce();
+    const call = vi.mocked(dependencies.sendMessage).mock.calls[0];
+    expect(call).toBeDefined();
+    if (!call) throw new Error("sendMessage call expected");
+    const [sessionId, message] = call;
+    expect(sessionId).toBe("session-1");
+    expect(message).not.toMatch(/[\r\n\t]/u);
+    expect(message).toContain("図のコメント（sample.diagram.html）");
+    expect(message).toContain("引用: 「引用の一行目 引用の二行目」");
+    expect(message).toContain("Reviewer: 本文の一行目 本文の二行目 末尾");
+    expect(message).toContain(
+      "他に未解決 1 件（board_comments で全件取得できる）"
     );
   });
 

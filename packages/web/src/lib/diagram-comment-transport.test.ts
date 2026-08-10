@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   requestDiagramCommentCreate,
   requestDiagramCommentResolve,
+  requestDiagramCommentSend,
   requestDiagramCommentsGet,
 } from "./diagram-comment-transport";
 
@@ -99,6 +100,28 @@ describe("diagram comment transport", () => {
 
     expect(fake.socket.emit).toHaveBeenCalledWith(
       "diagram:comment:resolve",
+      {
+        sessionId: "session-1",
+        relPath: "sample.diagram.html",
+        threadId: "th-1",
+      },
+      expect.any(Function)
+    );
+    fake.reply(response);
+    await expect(pending).resolves.toEqual(response);
+  });
+
+  it("send は threadId だけを正しい event/payload で送る", async () => {
+    const fake = makeSocket();
+    const pending = requestDiagramCommentSend(
+      fake.socket,
+      "session-1",
+      "sample.diagram.html",
+      "th-1"
+    );
+
+    expect(fake.socket.emit).toHaveBeenCalledWith(
+      "diagram:comment:send",
       {
         sessionId: "session-1",
         relPath: "sample.diagram.html",

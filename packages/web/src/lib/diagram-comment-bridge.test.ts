@@ -61,6 +61,18 @@ describe("parseDiagramCommentPortRequest", () => {
         threadId: "th-1",
       },
     ],
+    [
+      {
+        type: "ark:diagram-comment-send",
+        requestId: "req-send",
+        threadId: "th-1",
+      },
+      {
+        type: "ark:diagram-comment-send",
+        requestId: "req-send",
+        threadId: "th-1",
+      },
+    ],
   ])("valid request %j を narrow する", (input, expected) => {
     expect(parseDiagramCommentPortRequest(input)).toEqual({
       kind: "request",
@@ -184,6 +196,17 @@ describe("parseDiagramCommentPortRequest", () => {
       type: "ark:diagram-comment-resolve",
       requestId: "req",
       threadId: "t".repeat(257),
+    },
+    {
+      type: "ark:diagram-comment-send",
+      requestId: "req",
+      threadId: "th-1",
+      body: "クライアントから文面を送らない",
+    },
+    {
+      type: "ark:diagram-comment-send",
+      requestId: "req",
+      threadId: " ",
     },
   ])("その他の検証失敗 %j も invalid として返す", input => {
     expect(parseDiagramCommentPortRequest(input)).toMatchObject({

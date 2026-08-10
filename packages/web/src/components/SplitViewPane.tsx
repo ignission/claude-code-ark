@@ -63,6 +63,11 @@ interface SplitViewPaneProps {
     relPath: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
+  sendDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
   session: ManagedSession;
   worktree: Worktree | undefined;
   repoName?: string;
@@ -298,6 +303,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                 getDiagramComments={props.getDiagramComments}
                 createDiagramComment={props.createDiagramComment}
                 resolveDiagramComment={props.resolveDiagramComment}
+                sendDiagramComment={props.sendDiagramComment}
                 sessionId={props.session.id}
                 worktreePath={
                   diagramTab?.worktreePath ?? props.session.worktreePath

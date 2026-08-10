@@ -62,6 +62,11 @@ interface DiagramPaneProps {
     relPath: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
+  sendDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
   /** 未接続時は null。null の間は診断購読をスキップする */
   socket: TypedSocket | null;
 }
@@ -265,6 +270,11 @@ interface DiagramCommentForwardDeps {
     relPath: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
+  sendDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
   isCurrent: () => boolean;
   reply: (result: DiagramCommentPortResult) => void;
   onError: (error: string | null) => void;
@@ -318,8 +328,14 @@ export async function forwardDiagramCommentPortRequest(
           request.anchorQuote,
           request.anchorOccurrence
         );
-      } else {
+      } else if (request.type === "ark:diagram-comment-resolve") {
         response = await deps.resolveDiagramComment(
+          deps.sessionId,
+          deps.relPath,
+          request.threadId
+        );
+      } else {
+        response = await deps.sendDiagramComment(
           deps.sessionId,
           deps.relPath,
           request.threadId
@@ -366,6 +382,7 @@ export function DiagramPane({
   getDiagramComments,
   createDiagramComment,
   resolveDiagramComment,
+  sendDiagramComment,
   onSelectDiagram,
 }: DiagramPaneProps) {
   const [html, setHtml] = useState<string | null>(null);
@@ -708,6 +725,7 @@ export function DiagramPane({
           getDiagramComments,
           createDiagramComment,
           resolveDiagramComment,
+          sendDiagramComment,
           isCurrent: () =>
             portGenerationRef.current === generation &&
             portRef.current === channel.port1,
@@ -737,6 +755,7 @@ export function DiagramPane({
       html,
       relPath,
       resolveDiagramComment,
+      sendDiagramComment,
       sessionId,
     ]
   );

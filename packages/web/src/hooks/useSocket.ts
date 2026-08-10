@@ -38,6 +38,7 @@ import { toast } from "sonner";
 import {
   requestDiagramCommentCreate,
   requestDiagramCommentResolve,
+  requestDiagramCommentSend,
   requestDiagramCommentsGet,
 } from "../lib/diagram-comment-transport";
 import { requestDiagramDelete } from "../lib/diagram-delete-transport";
@@ -106,6 +107,11 @@ interface UseSocketReturn {
     anchorOccurrence?: number
   ) => Promise<DiagramCommentsResponse>;
   resolveDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
+  sendDiagramComment: (
     sessionId: string,
     relPath: string,
     threadId: string
@@ -1318,6 +1324,17 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
+  const sendDiagramComment = useCallback(
+    (sessionId: string, relPath: string, threadId: string) =>
+      requestDiagramCommentSend(
+        socketRef.current,
+        sessionId,
+        relPath,
+        threadId
+      ),
+    []
+  );
+
   // Worktree actions
   const createWorktree = useCallback(
     (branchName: string, baseBranch?: string) => {
@@ -1743,6 +1760,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     getDiagramComments,
     createDiagramComment,
     resolveDiagramComment,
+    sendDiagramComment,
     repoList,
     repoPath,
     selectRepo,

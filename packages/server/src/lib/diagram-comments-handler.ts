@@ -47,6 +47,7 @@ export interface DiagramCommentsHandlerDeps {
     relPath: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
+  sendMessage: (sessionId: string, message: string) => void;
 }
 
 /** get でも mutation と同じ doc/anchor trust boundary を通す。 */
@@ -194,6 +195,33 @@ function parseResolvePayload(value: unknown): ResolvePayload | null {
   };
 }
 
+function oneLine(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
+}
+
+function truncate(value: string, maxLength: number): string {
+  return Array.from(value).slice(0, maxLength).join("");
+}
+
+function buildDiagramCommentMessage(
+  relPath: string,
+  thread: Extract<
+    DiagramCommentsResponse,
+    { ok: true }
+  >["comments"]["threads"][number],
+  otherOpenCount: number
+): string {
+  const message = thread.messages.at(-1);
+  if (!message) return "";
+  const anchorText = truncate(oneLine(thread.anchorText), 80);
+  const quote = oneLine(thread.anchorQuote ?? thread.anchorText);
+  const suffix =
+    otherOpenCount > 0
+      ? ` / 他に未解決 ${otherOpenCount} 件（board_comments で全件取得できる）`
+      : "";
+  return `図のコメント（${oneLine(relPath)}） 対象: ${anchorText} / 引用: 「${quote}」 / ${oneLine(message.author)}: ${oneLine(message.body)}${suffix}`;
+}
+
 function requestContext(
   deps: DiagramCommentsHandlerDeps,
   payload: GetPayload
@@ -289,6 +317,41 @@ export async function handleDiagramCommentResolve(
   );
 }
 
+export async function handleDiagramCommentSend(
+  deps: DiagramCommentsHandlerDeps,
+  data: unknown
+): Promise<DiagramCommentsResponse> {
+  const payload = parseResolvePayload(data);
+  if (payload === null) return badRequest();
+  const context = requestContext(deps, payload);
+  if (!context.valid) return context.response;
+  return containStoreError(async () => {
+    const response = await deps.getComments(
+      context.worktreeReal,
+      context.relPath
+    );
+    if (!response.ok) return response;
+    const thread = response.comments.threads.find(
+      candidate => candidate.id === payload.threadId
+    );
+    if (!thread) {
+      return {
+        ok: false,
+        code: "THREAD_NOT_FOUND",
+        error: "コメントスレッドが見つかりません",
+      };
+    }
+    const otherOpenCount = response.comments.threads.filter(
+      candidate => candidate.id !== thread.id && candidate.status === "open"
+    ).length;
+    deps.sendMessage(
+      context.sessionId,
+      buildDiagramCommentMessage(context.relPath, thread, otherOpenCount)
+    );
+    return response;
+  });
+}
+
 type SocketHandler = (data: unknown, callback: unknown) => void;
 
 function createSocketHandler(
@@ -316,12 +379,18 @@ function createSocketHandler(
 
 export function createDiagramCommentsSocketHandlers(
   deps: DiagramCommentsHandlerDeps
-): { get: SocketHandler; create: SocketHandler; resolve: SocketHandler } {
+): {
+  get: SocketHandler;
+  create: SocketHandler;
+  resolve: SocketHandler;
+  send: SocketHandler;
+} {
   return {
     get: createSocketHandler(data => handleDiagramCommentsGet(deps, data)),
     create: createSocketHandler(data => handleDiagramCommentCreate(deps, data)),
     resolve: createSocketHandler(data =>
       handleDiagramCommentResolve(deps, data)
     ),
+    send: createSocketHandler(data => handleDiagramCommentSend(deps, data)),
   };
 }
