@@ -200,18 +200,16 @@ export class SessionOrchestrator extends EventEmitter {
     // ボードの図・文書機能に加え、コメント機能の存在と、コメントを受けて
     // 修正・再表示する往復手順を全セッションへ伝える。
     // 生成規約自体は diagram-authoring skill が持つ。
+    // tmux send-keys に -l がなく、改行は Enter キーとして解釈されるため、
+    // append-system-prompt に渡す文字列は必ず 1 行にする。
     tmuxManager.setClaudeAppendSystemPrompt(
       [
         "このセッションにはボードペインがあり、図と文書を表示できる。board_open（ボードに開く）と board_comments（人間が付けたコメントを読む）の 2 つのツールを持っている。",
-        "",
         `ユーザーが「図解して」「図で説明して」「フロー図/構成図にして」等、図解・作図・可視化を求めたら、チャットに mermaid や ASCII 図を出すのではなく、${DIAGRAM_DIR}/ 配下に *.diagram.html を書き、board_open で開くこと。`,
-        "",
         '設計メモ・仕様・調査結果など「人に読ませる文書」も同じ形式で書ける。model の type を "doc" にすると、ユーザーが本文をテキスト選択してコメントを付けられる、レビュー可能な文書になる。',
-        "",
         "ユーザーが「コメントした」「図を見て」等と言ったら、board_comments で未解決コメントを読み、引用された箇所を直してから board_open で開き直すこと。",
-        "",
         "書き込む直前に parent directory が存在しない場合だけ作成する。作図・文書の規約（type と kind の語彙、data-ark-id の対応、label の書き方）は diagram-authoring skill に従う。",
-      ].join("\n")
+      ].join(" ")
     );
     return { token, cfgPath };
   }

@@ -705,6 +705,7 @@ describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
 
     const prompt =
       mockedTmux.setClaudeAppendSystemPrompt.mock.calls.at(-1)?.[0];
+    expect(prompt).not.toContain("\n");
     expect(prompt).toContain(DIAGRAM_DIR);
     expect(prompt).not.toContain("docs/diagrams");
     expect(prompt).toContain("書き込む直前");
