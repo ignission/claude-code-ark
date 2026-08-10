@@ -142,12 +142,27 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain(".ark-comment-add:focus");
   });
 
-  it("card がある時だけ右余白を確保し、狭い pane では badge に畳む", () => {
+  it("本文の padding を変更せず、実測した右側の空き幅で badge 表示を切り替える", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
-    expect(injected).toContain("MIN_CONTENT_WIDTH=480");
-    expect(injected).toContain("originalBodyPaddingRight");
-    expect(injected).toContain("document.body.style.paddingRight");
+    expect(injected).not.toContain("MIN_CONTENT_WIDTH");
+    expect(injected).not.toContain("originalBodyPaddingRight");
+    expect(injected).not.toContain("originalComputedPaddingRight");
+    expect(injected).not.toContain("document.body.style.paddingRight=");
+    expect(injected).toContain("var contentRight=null");
+    expect(injected).toContain(
+      'document.querySelectorAll("[data-ark-id]").forEach(function(anchor)'
+    );
+    expect(injected).toContain("anchor.getBoundingClientRect().right");
+    expect(injected).toContain("Math.max(contentRight,anchorRight)");
+    expect(injected).toContain(
+      "document.documentElement.clientWidth-contentRight"
+    );
+    expect(injected).toContain("CARD_WIDTH+RAIL_GAP*2");
+    expect(injected).toContain("contentRight===null");
+    expect(injected).toContain(
+      "function positionCards(){\n    updateLayout();"
+    );
     expect(injected).toContain(
       'setAttribute("data-narrow",narrow?"true":"false")'
     );

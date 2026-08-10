@@ -6,7 +6,6 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
   var CARD_WIDTH=300;
   var CARD_GAP=10;
   var RAIL_GAP=12;
-  var MIN_CONTENT_WIDTH=480;
   var AFFORDANCE_CLOSE_DELAY=120;
   var port=null;
   var comments={version:1,target:"",threads:[]};
@@ -35,8 +34,6 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
   var selectionCandidate=null;
   var threadHighlightResolved=Object.create(null);
   var narrow=false;
-  var originalBodyPaddingRight="";
-  var originalComputedPaddingRight=0;
 
   function element(tag,text,className){
     var value=document.createElement(tag);
@@ -293,14 +290,14 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     root.appendChild(composer);
   }
   function updateLayout(){
-    var hasCards=root.querySelectorAll(".ark-comment-card,.ark-comment-composer").length>0;
-    narrow=hasCards&&document.documentElement.clientWidth-CARD_WIDTH-RAIL_GAP*2<MIN_CONTENT_WIDTH;
+    var contentRight=null;
+    document.querySelectorAll("[data-ark-id]").forEach(function(anchor){
+      var anchorRight=anchor.getBoundingClientRect().right;
+      contentRight=contentRight===null?anchorRight:Math.max(contentRight,anchorRight);
+    });
+    var availableWidth=contentRight===null?0:document.documentElement.clientWidth-contentRight;
+    narrow=contentRight===null||availableWidth<CARD_WIDTH+RAIL_GAP*2;
     root.setAttribute("data-narrow",narrow?"true":"false");
-    if(hasCards&&!narrow){
-      document.body.style.paddingRight=(originalComputedPaddingRight+CARD_WIDTH+RAIL_GAP*2)+"px";
-    }else{
-      document.body.style.paddingRight=originalBodyPaddingRight;
-    }
   }
   function clearHighlights(){
     document.querySelectorAll('.ark-comment-highlight[data-ark-comment-owned="true"]').forEach(function(highlight){
@@ -404,6 +401,7 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     });
   }
   function positionCards(){
+    updateLayout();
     var entries=[];
     var unanchored=[];
     root.querySelectorAll(".ark-comment-card,.ark-comment-composer").forEach(function(card){
@@ -596,8 +594,6 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     root=element("div",undefined,"ark-comment-layer");
     root.setAttribute("data-narrow","false");
     document.body.appendChild(root);
-    originalBodyPaddingRight=document.body.style.paddingRight;
-    originalComputedPaddingRight=parseFloat(window.getComputedStyle(document.body).paddingRight)||0;
     buildSelectionAdd();
     buildAnchors();
     render();
