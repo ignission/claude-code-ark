@@ -234,12 +234,38 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain("disabled");
     expect(injected).toContain("function updatePendingControls()");
     expect(injected).toContain(
-      'querySelectorAll(".ark-comment-create,.ark-comment-resolve,.ark-comment-input")'
+      'querySelectorAll(".ark-comment-create,.ark-comment-resolve,.ark-comment-send,.ark-comment-input")'
     );
     expect(injected).toContain("ark-comment-error");
     expect(injected).toContain("error");
     expect(injected).not.toContain("ark:diagram-comment-reply");
     expect(injected).not.toContain("orphaned");
+  });
+
+  it("未解決 card だけに → Claude を出し、既存 result 契約で送信済みにする", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain(
+      'element("button","→ Claude","ark-comment-send")'
+    );
+    expect(injected).toContain(
+      'send("ark:diagram-comment-send",{threadId:thread.id})'
+    );
+    expect(injected).toContain("sentThreadIds");
+    expect(injected).toContain('sendButton.textContent="送信済み"');
+    expect(injected).toContain("sendButton.disabled=true");
+    expect(injected.indexOf('if(thread.status==="open"){')).toBeLessThan(
+      injected.indexOf('element("button","→ Claude","ark-comment-send")')
+    );
+    expect(injected).not.toContain("ark:diagram-comment-send-result");
+  });
+
+  it("→ Claude を pending controls に含めて二重送信を防ぐ", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain(
+      'querySelectorAll(".ark-comment-create,.ark-comment-resolve,.ark-comment-send,.ark-comment-input")'
+    );
   });
 
   it("port 未接続時は pending にせず操作対象へエラーを表示する", () => {
