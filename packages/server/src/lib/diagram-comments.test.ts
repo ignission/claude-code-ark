@@ -590,6 +590,85 @@ describe("comment mutations", () => {
     }
   });
 
+  it("create は thread 件数上限に達していると BAD_REQUEST にする", async () => {
+    writeDoc();
+    const thread = comments().threads[0];
+    const threads = Array.from(
+      { length: DIAGRAM_COMMENTS_MAX_THREADS },
+      (_, index) => ({
+        ...thread,
+        id: `th-${index}`,
+        messages: [{ ...thread.messages[0], id: `m-${index}` }],
+      })
+    );
+    fs.writeFileSync(
+      path.join(worktree, ".claude/diagrams/order-flow.comments.json"),
+      JSON.stringify(comments({ threads }))
+    );
+
+    const result = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p1",
+      "本文"
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      code: "BAD_REQUEST",
+      error: `コメント thread は ${DIAGRAM_COMMENTS_MAX_THREADS} 件までです`,
+    });
+  });
+
+  it("create は追加後の sidecar がサイズ上限を超えると BAD_REQUEST にする", async () => {
+    writeDoc();
+    const baseThread = comments().threads[0];
+    const messages = [];
+    const serialize = (): string =>
+      `${JSON.stringify(
+        comments({ threads: [{ ...baseThread, messages }] }),
+        null,
+        2
+      )}\n`;
+
+    for (let index = 0; ; index += 1) {
+      const message = {
+        ...baseThread.messages[0],
+        id: `m-${index}`,
+        body: "x".repeat(DIAGRAM_COMMENTS_MAX_BODY_LENGTH),
+      };
+      messages.push(message);
+      if (Buffer.byteLength(serialize(), "utf8") > DIAGRAM_COMMENTS_MAX_BYTES) {
+        messages.pop();
+        const minimal = { ...message, body: "x" };
+        messages.push(minimal);
+        const remaining =
+          DIAGRAM_COMMENTS_MAX_BYTES - Buffer.byteLength(serialize(), "utf8");
+        minimal.body += "x".repeat(remaining);
+        break;
+      }
+    }
+    const raw = serialize();
+    expect(Buffer.byteLength(raw, "utf8")).toBe(DIAGRAM_COMMENTS_MAX_BYTES);
+    fs.writeFileSync(
+      path.join(worktree, ".claude/diagrams/order-flow.comments.json"),
+      raw
+    );
+
+    const result = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p1",
+      "本文"
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      code: "BAD_REQUEST",
+      error: "コメント sidecar は 1MiB までです",
+    });
+  });
+
   it("create は選択 quote と occurrence を保存し、quote を表示抜粋にする", async () => {
     writeDoc();
     const anchorQuote = `  ${"選".repeat(300)}  `;

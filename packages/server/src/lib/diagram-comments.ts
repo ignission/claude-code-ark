@@ -448,11 +448,15 @@ async function preflightTarget(
   }
 }
 
+function serializeDiagramComments(comments: DiagramCommentsFile): string {
+  return `${JSON.stringify(comments, null, 2)}\n`;
+}
+
 async function writeDiagramCommentsFile(
   resolved: Extract<DiagramCommentsPathResult, { ok: true }>,
   comments: DiagramCommentsFile
 ): Promise<DiagramCommentsResponse> {
-  const serialized = `${JSON.stringify(comments, null, 2)}\n`;
+  const serialized = serializeDiagramComments(comments);
   const validated = parseDiagramComments(serialized, resolved.target);
   if (!validated.ok) return validated;
 
@@ -558,6 +562,13 @@ export async function createDiagramComment(
 
     const current = await readDiagramCommentsFile(worktreeReal, relPath);
     if (!current.ok) return current;
+    if (current.comments.threads.length >= DIAGRAM_COMMENTS_MAX_THREADS) {
+      return {
+        ok: false,
+        code: "BAD_REQUEST",
+        error: `コメント thread は ${DIAGRAM_COMMENTS_MAX_THREADS} 件までです`,
+      };
+    }
     const at = new Date().toISOString();
     const next: DiagramCommentsFile = {
       ...current.comments,
@@ -588,6 +599,16 @@ export async function createDiagramComment(
         },
       ],
     };
+    if (
+      Buffer.byteLength(serializeDiagramComments(next), "utf8") >
+      DIAGRAM_COMMENTS_MAX_BYTES
+    ) {
+      return {
+        ok: false,
+        code: "BAD_REQUEST",
+        error: "コメント sidecar は 1MiB までです",
+      };
+    }
     return writeDiagramCommentsFile(resolved, next);
   });
 }
