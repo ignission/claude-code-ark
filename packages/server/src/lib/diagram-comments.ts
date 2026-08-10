@@ -125,14 +125,24 @@ export function resolveDiagramCommentsPath(
       error: diagram.error,
     };
   }
+  const commentsAbsPath = diagram.absPath.replace(
+    /\.diagram\.html$/u,
+    ".comments.json"
+  );
+  // 現状は resolveDiagramPath の suffix 強制により到達不能。上流の変更で
+  // 図 HTML 自体を JSON で上書きしないための不変条件として残す。
+  if (commentsAbsPath === diagram.absPath) {
+    return {
+      ok: false,
+      code: "BAD_REQUEST",
+      error: "コメント sidecar のパスを図ファイルから導出できません",
+    };
+  }
   const target = path.basename(diagram.absPath);
   return {
     ok: true,
     diagramAbsPath: diagram.absPath,
-    commentsAbsPath: diagram.absPath.replace(
-      /\.diagram\.html$/u,
-      ".comments.json"
-    ),
+    commentsAbsPath,
     diagramRelPath: diagram.relPath,
     target,
   };
