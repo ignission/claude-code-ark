@@ -67,7 +67,7 @@ describe("injectDiagramCommentLayer", () => {
     );
   });
 
-  it("DOM API だけで浮遊 card・hover composer を構築する", () => {
+  it("DOM API だけで浮遊 card・selection composer を構築する", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
     for (const contract of [
@@ -130,37 +130,20 @@ describe("injectDiagramCommentLayer", () => {
     );
   });
 
-  it("mouseover の最も内側の anchor 1つだけへ新規 comment の＋導線を出す", () => {
+  it("block hover の＋導線・最内側 anchor 解決・close 遅延を含まない", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
-    expect(injected).toContain('element("button","＋","ark-comment-add")');
-    expect(injected).toContain('document.addEventListener("mouseover"');
-    expect(injected).toContain('event.target.closest("[data-ark-id]")');
-    expect(injected).toContain("function showAdd(entry)");
-    expect(injected).toContain('setAttribute("data-visible","true")');
-    expect(injected).toContain("openComposer");
-    expect(injected).toContain(".ark-comment-add[data-visible=true]");
-  });
-
-  it("＋を anchor に接して配置し、close を遅延して通常のマウス移動を許容する", () => {
-    const injected = injectDiagramCommentLayer(minimalDoc);
-
-    expect(injected).toContain("AFFORDANCE_CLOSE_DELAY=120");
-    expect(injected).toContain("function scheduleAddClose()");
-    expect(injected).toContain("window.setTimeout(function ()");
-    expect(injected).toContain("AFFORDANCE_CLOSE_DELAY");
-    expect(injected).toContain("rect.right-2");
-    expect(injected).not.toContain("rect.right+8");
-  });
-
-  it("本文 block を tab 順へ追加せず、＋ button 自身の focus 経路を使う", () => {
-    const injected = injectDiagramCommentLayer(minimalDoc);
-
-    expect(injected).not.toContain("tabindex");
-    expect(injected).not.toContain('anchor.addEventListener("keydown"');
-    expect(injected).not.toContain('event.key==="Enter"');
-    expect(injected).toContain('addButton.addEventListener("focus"');
-    expect(injected).toContain(".ark-comment-add:focus");
+    for (const removedContract of [
+      "ark-comment-add",
+      "function positionAddButtons()",
+      'document.addEventListener("mouseover"',
+      'event.target.closest("[data-ark-id]")',
+      "function showAdd(entry)",
+      "function scheduleAddClose()",
+      "AFFORDANCE_CLOSE_DELAY",
+    ]) {
+      expect(injected).not.toContain(removedContract);
+    }
   });
 
   it("本文の padding を変更せず、実測した右側の空き幅で badge 表示を切り替える", () => {
@@ -273,12 +256,14 @@ describe("injectDiagramCommentLayer", () => {
       "selectionchange",
       "mouseup",
       "keyup",
+      'document.addEventListener("keyup",updateSelectionAdd)',
       "getSelection()",
       "commonAncestorContainer",
+      'return commonElement.closest("[data-ark-id]")',
       "ark-comment-selection-add",
       "getRangeAt(0)",
       "getBoundingClientRect()",
-      "openComposer",
+      "openComposer(selectionCandidate.anchorId,selectionCandidate.anchorQuote,selectionCandidate.anchorOccurrence)",
     ]) {
       expect(injected).toContain(contract);
     }
