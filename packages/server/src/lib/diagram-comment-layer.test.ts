@@ -67,7 +67,7 @@ describe("injectDiagramCommentLayer", () => {
     );
   });
 
-  it("DOM API だけで浮遊 card・hover composer を構築する", () => {
+  it("DOM API だけで浮遊 card・selection composer を構築する", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
     for (const contract of [
@@ -102,52 +102,83 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain("anchorTop");
     expect(injected).toContain("previousBottom");
     expect(injected).toContain("CARD_GAP");
-    expect(injected).toContain("Math.max(anchorTop,previousBottom+CARD_GAP)");
+    expect(injected).toContain("Math.max(baseTop,previousBottom+CARD_GAP)");
     expect(injected).toContain(
       'setAttribute("data-anchor-id",thread.anchorId)'
     );
     expect(injected).toContain(".ark-comment-card{position:fixed");
   });
 
-  it("mouseover の最も内側の anchor 1つだけへ新規 comment の＋導線を出す", () => {
+  it("狭幅の展開 panel を anchor の下へ置き、入らなければ上へ回して重なりを避ける", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
+    const positionCards = injected.slice(
+      injected.indexOf("function positionCards()"),
+      injected.indexOf("function refreshLayout()")
+    );
 
-    expect(injected).toContain('element("button","＋","ark-comment-add")');
-    expect(injected).toContain('document.addEventListener("mouseover"');
-    expect(injected).toContain('event.target.closest("[data-ark-id]")');
-    expect(injected).toContain("function showAdd(entry)");
-    expect(injected).toContain('setAttribute("data-visible","true")');
-    expect(injected).toContain("openComposer");
-    expect(injected).toContain(".ark-comment-add[data-visible=true]");
+    expect(positionCards).toContain("narrow&&");
+    expect(positionCards).toContain("ark-comment-composer");
+    expect(positionCards).toContain('getAttribute("data-collapsed")==="false"');
+    expect(positionCards).toContain("var belowTop=rect.bottom+CARD_GAP");
+    expect(positionCards).toContain(
+      "var aboveTop=rect.top-cardHeight-CARD_GAP"
+    );
+    expect(positionCards).toContain("if(belowTop+cardHeight<=viewportBottom)");
+    expect(positionCards).toContain("else if(aboveTop>=viewportTop)");
+    expect(positionCards).toContain(
+      "Math.max(baseTop,previousBottom+CARD_GAP)"
+    );
   });
 
-  it("＋を anchor に接して配置し、close を遅延して通常のマウス移動を許容する", () => {
+  it("block hover の＋導線・最内側 anchor 解決・close 遅延を含まない", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
-    expect(injected).toContain("AFFORDANCE_CLOSE_DELAY=120");
-    expect(injected).toContain("function scheduleAddClose()");
-    expect(injected).toContain("window.setTimeout(function ()");
-    expect(injected).toContain("AFFORDANCE_CLOSE_DELAY");
-    expect(injected).toContain("rect.right-2");
-    expect(injected).not.toContain("rect.right+8");
+    for (const removedContract of [
+      "ark-comment-add",
+      "function positionAddButtons()",
+      'document.addEventListener("mouseover"',
+      'event.target.closest("[data-ark-id]")',
+      "function showAdd(entry)",
+      "function scheduleAddClose()",
+      "AFFORDANCE_CLOSE_DELAY",
+    ]) {
+      expect(injected).not.toContain(removedContract);
+    }
   });
 
-  it("本文 block を tab 順へ追加せず、＋ button 自身の focus 経路を使う", () => {
+  it("本文の padding を変更せず、実測した右側の空き幅で badge 表示を切り替える", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
+    const updateLayout = injected.slice(
+      injected.indexOf("function updateLayout()"),
+      injected.indexOf("function clearHighlights()")
+    );
+    const positionCards = injected.slice(
+      injected.indexOf("function positionCards()"),
+      injected.indexOf("function refreshLayout()")
+    );
 
-    expect(injected).not.toContain("tabindex");
-    expect(injected).not.toContain('anchor.addEventListener("keydown"');
-    expect(injected).not.toContain('event.key==="Enter"');
-    expect(injected).toContain('addButton.addEventListener("focus"');
-    expect(injected).toContain(".ark-comment-add:focus");
-  });
-
-  it("card がある時だけ右余白を確保し、狭い pane では badge に畳む", () => {
-    const injected = injectDiagramCommentLayer(minimalDoc);
-
-    expect(injected).toContain("MIN_CONTENT_WIDTH=480");
-    expect(injected).toContain("originalBodyPaddingRight");
-    expect(injected).toContain("document.body.style.paddingRight");
+    expect(injected).not.toContain("MIN_CONTENT_WIDTH");
+    expect(injected).not.toContain("originalBodyPaddingRight");
+    expect(injected).not.toContain("originalComputedPaddingRight");
+    expect(injected).not.toContain("document.body.style.paddingRight=");
+    expect(injected).toContain("var contentRight=null");
+    expect(updateLayout).not.toContain(
+      'document.querySelectorAll("[data-ark-id]")'
+    );
+    expect(updateLayout).toContain("anchors.forEach(function(entry)");
+    expect(updateLayout).toContain(
+      "entry.anchor.getBoundingClientRect().right"
+    );
+    expect(injected).toContain("Math.max(contentRight,anchorRight)");
+    expect(injected).toContain(
+      "document.documentElement.clientWidth-contentRight"
+    );
+    expect(injected).toContain("CARD_WIDTH+RAIL_GAP*2");
+    expect(injected).toContain("contentRight===null");
+    expect(positionCards).not.toContain("updateLayout()");
+    expect(updateLayout).toContain(
+      "横方向の空き幅はレイアウト更新時だけ測り、スクロールでは測らない。"
+    );
     expect(injected).toContain(
       'setAttribute("data-narrow",narrow?"true":"false")'
     );
@@ -169,6 +200,35 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain(".ark-comment-card[data-status=resolved]");
     expect(injected).toContain('thread.status==="open"');
     expect(injected).toContain('element("button","解決する"');
+  });
+
+  it("card と composer の操作ボタンを折り返し可能な専用コンテナで整列する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected.match(/"ark-comment-actions"/gu)).toHaveLength(2);
+    expect(injected).toContain(
+      ".ark-comment-actions{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;margin-top:8px}"
+    );
+    expect(injected).toContain("actions.appendChild(sendButton)");
+    expect(injected).toContain("actions.appendChild(resolveButton)");
+    expect(injected).toContain("actions.appendChild(deleteButton)");
+    expect(injected).toContain("composerActions.appendChild(createButton)");
+  });
+
+  it("時刻は元の ISO 値を datetime に保ち、日本語形式へ短く整形する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("function formatCommentTime(value)");
+    expect(injected).toContain("new Date(value)");
+    expect(injected).toContain("if(Number.isNaN(date.getTime()))return value");
+    expect(injected).toContain("catch(_error)");
+    expect(injected).toContain(
+      'date.toLocaleString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false})'
+    );
+    expect(injected).toContain(
+      'element("time",formatCommentTime(message.at),"ark-comment-time")'
+    );
+    expect(injected).toContain('time.setAttribute("datetime",message.at)');
   });
 
   it("テキスト node を連結して occurrence を解決し、分割 span を再描画前に戻す", () => {
@@ -196,12 +256,14 @@ describe("injectDiagramCommentLayer", () => {
       "selectionchange",
       "mouseup",
       "keyup",
+      'document.addEventListener("keyup",updateSelectionAdd)',
       "getSelection()",
       "commonAncestorContainer",
+      'return commonElement.closest("[data-ark-id]")',
       "ark-comment-selection-add",
       "getRangeAt(0)",
       "getBoundingClientRect()",
-      "openComposer",
+      "openComposer(selectionCandidate.anchorId,selectionCandidate.anchorQuote,selectionCandidate.anchorOccurrence)",
     ]) {
       expect(injected).toContain(contract);
     }
@@ -262,18 +324,21 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).not.toContain("ark:diagram-comment-send-result");
   });
 
-  it("→ Claude を pending controls に含めて二重送信を防ぐ", () => {
+  it("pending 中は → Claude・解決・削除・作成と入力欄をすべて無効化する", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
     expect(injected).toContain(
       'querySelectorAll(".ark-comment-create,.ark-comment-resolve,.ark-comment-send,.ark-comment-delete,.ark-comment-input")'
+    );
+    expect(injected).toContain(
+      'control.disabled=Boolean(pendingRequestId)||control.getAttribute("data-sent")==="true"'
     );
   });
 
   it("未解決・解決済み・アンカー未解決を分岐せず全 card に削除を出す", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const openBlockEnd = injected.indexOf(
-      "content.appendChild(resolveButton);\n    }"
+      "actions.appendChild(resolveButton);\n    }"
     );
     const deleteButton = injected.indexOf(
       'element("button","削除","ark-comment-delete")'
