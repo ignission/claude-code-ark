@@ -439,6 +439,8 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     updateSelectionAdd();
   }
   function render(){
+    clearDeleteConfirmation();
+    // 無関係な再描画でも確認を押し直す方が、誤削除を防ぐ安全側の挙動になる。
     renderHighlights();
     root.querySelectorAll(".ark-comment-card,.ark-comment-composer").forEach(function(card){
       root.removeChild(card);

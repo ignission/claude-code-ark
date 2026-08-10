@@ -300,6 +300,14 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).not.toContain("confirm(");
   });
 
+  it("render の先頭で削除の確認待ちを解除する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain(
+      "function render(){\n    clearDeleteConfirmation();"
+    );
+  });
+
   it("port 未接続時は pending にせず操作対象へエラーを表示する", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
