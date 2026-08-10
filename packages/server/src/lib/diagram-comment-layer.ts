@@ -41,6 +41,15 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     if(className)value.setAttribute("class",className);
     return value;
   }
+  function formatCommentTime(value){
+    try{
+      var date=new Date(value);
+      if(Number.isNaN(date.getTime()))return value;
+      return date.toLocaleString(undefined,{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false});
+    }catch(_error){
+      return value;
+    }
+  }
   function clear(value){while(value.firstChild)value.removeChild(value.firstChild);}
   function requestId(){requestSequence+=1;return "comment-"+Date.now()+"-"+requestSequence;}
   function anchorEntry(anchorId){
@@ -179,10 +188,13 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     content.appendChild(element("span",thread.status==="open"?"未解決":"解決済み","ark-comment-state"));
     thread.messages.forEach(function(message){
       var item=element("article",undefined,"ark-comment-message");
-      item.appendChild(element("time",message.at,"ark-comment-time"));
+      var time=element("time",formatCommentTime(message.at),"ark-comment-time");
+      time.setAttribute("datetime",message.at);
+      item.appendChild(time);
       item.appendChild(element("p",message.body,"ark-comment-body"));
       content.appendChild(item);
     });
+    var actions=element("div",undefined,"ark-comment-actions");
     if(thread.status==="open"){
       var sendButton=element("button","→ Claude","ark-comment-send");
       sendButton.setAttribute("type","button");
@@ -196,14 +208,14 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
           send("ark:diagram-comment-send",{threadId:thread.id});
         });
       }
-      content.appendChild(sendButton);
+      actions.appendChild(sendButton);
       var resolveButton=element("button","解決する","ark-comment-resolve");
       resolveButton.setAttribute("type","button");
       resolveButton.addEventListener("click",function(event){
         event.stopPropagation();
         send("ark:diagram-comment-resolve",{threadId:thread.id});
       });
-      content.appendChild(resolveButton);
+      actions.appendChild(resolveButton);
     }
     var deleteButton=element("button","削除","ark-comment-delete");
     deleteButton.setAttribute("type","button");
@@ -224,7 +236,8 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
         clearDeleteConfirmation();
       },5000);
     });
-    content.appendChild(deleteButton);
+    actions.appendChild(deleteButton);
+    content.appendChild(actions);
     if(operationError&&(operationError.type==="ark:diagram-comment-resolve"||operationError.type==="ark:diagram-comment-send"||operationError.type==="ark:diagram-comment-delete")&&operationError.threadId===thread.id){
       addError(content,operationError.message);
     }
@@ -282,7 +295,9 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
       };
       send("ark:diagram-comment-create",payload);
     });
-    composer.appendChild(createButton);
+    var composerActions=element("div",undefined,"ark-comment-actions");
+    composerActions.appendChild(createButton);
+    composer.appendChild(composerActions);
     if(operationError&&operationError.type==="ark:diagram-comment-create"&&operationError.anchorId===anchorId){
       addError(composer,operationError.message);
     }
@@ -604,7 +619,7 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
   }
   function build(){
     var style=element("style");
-    style.textContent=".ark-comment-layer{position:fixed;z-index:2147483000;inset:0;pointer-events:none;color:#172033;font:13px/1.5 system-ui,sans-serif}.ark-comment-card{position:fixed;right:12px;width:300px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-composer{position:fixed;right:12px;width:300px;box-sizing:border-box;border:1px solid #93c5fd;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-card[data-active=true],.ark-comment-composer[data-active=true]{border-color:#3b82f6;box-shadow:0 3px 16px #2563eb33}.ark-comment-card[data-status=resolved]{background:#f8fafc;border-color:#e2e8f0;color:#64748b;opacity:.78}.ark-comment-card[data-unresolved=true]{border-style:dashed}.ark-comment-badge{display:none}.ark-comment-card-content{display:block}.ark-comment-state,.ark-comment-time{display:block;color:#64748b;font-size:11px}.ark-comment-unresolved-anchor{display:block;color:#b45309;font-weight:700}.ark-comment-unresolved-quote,.ark-comment-composer-quote{margin:7px 0;padding:7px;border-left:3px solid #f59e0b;background:#fffbeb;white-space:pre-wrap}.ark-comment-message{border-top:1px solid #e2e8f0;margin-top:8px;padding-top:8px}.ark-comment-body{white-space:pre-wrap}.ark-comment-input{display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:7px;border:1px solid #94a3b8;border-radius:5px;font:inherit}.ark-comment-create,.ark-comment-resolve,.ark-comment-send{border:0;border-radius:5px;background:#2563eb;color:#fff;padding:7px 10px;cursor:pointer}.ark-comment-delete{border:0;background:transparent;color:#b91c1c;padding:7px 8px;cursor:pointer}.ark-comment-create:disabled,.ark-comment-resolve:disabled,.ark-comment-send:disabled,.ark-comment-delete:disabled,.ark-comment-input:disabled{opacity:.5;cursor:default}.ark-comment-error{color:#b91c1c;margin:8px 0 0}.ark-comment-composer-header{display:flex;align-items:center;justify-content:space-between}.ark-comment-close{border:0;background:transparent;color:#64748b;font-size:18px;cursor:pointer}.ark-comment-add{position:fixed;z-index:2147483001;width:28px;height:28px;padding:0;border:1px solid #93c5fd;border-radius:999px;background:#fff;color:#2563eb;box-shadow:0 2px 8px #0002;cursor:pointer;opacity:0;pointer-events:none}.ark-comment-add[data-visible=true],.ark-comment-add:focus{opacity:1;pointer-events:auto}.ark-comment-selection-add{position:fixed;z-index:2147483002;border:0;border-radius:14px;background:#2563eb;color:#fff;padding:5px 10px;box-shadow:0 2px 8px #0003;cursor:pointer;opacity:0;pointer-events:none}.ark-comment-selection-add[data-visible=true]{opacity:1;pointer-events:auto}.ark-comment-highlight{background:#fde68a;border-radius:2px;cursor:pointer}.ark-comment-highlight[data-active=true]{background:#fbbf24;box-shadow:0 0 0 2px #f59e0b55}.ark-comment-anchor-active{background-color:rgba(219,234,254,.45);outline:1px solid rgba(37,99,235,.28);outline-offset:2px}.ark-comment-layer[data-narrow=true] .ark-comment-card{right:8px;width:auto;min-width:34px;padding:0;border:0;background:transparent;box-shadow:none;opacity:1}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=true] .ark-comment-card-content{display:none}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=true] .ark-comment-badge{display:block;width:34px;height:28px;border:0;border-radius:14px;background:#2563eb;color:#fff;box-shadow:0 2px 8px #0003;cursor:pointer}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-status=resolved][data-collapsed=true] .ark-comment-badge{background:#94a3b8}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=false]{width:300px;padding:11px;border:1px solid #cbd5e1;background:#fff;box-shadow:0 3px 14px #0003}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=false] .ark-comment-badge{display:none}";
+    style.textContent=".ark-comment-layer{position:fixed;z-index:2147483000;inset:0;pointer-events:none;color:#172033;font:13px/1.5 system-ui,sans-serif}.ark-comment-card{position:fixed;right:12px;width:300px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-composer{position:fixed;right:12px;width:300px;box-sizing:border-box;border:1px solid #93c5fd;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-card[data-active=true],.ark-comment-composer[data-active=true]{border-color:#3b82f6;box-shadow:0 3px 16px #2563eb33}.ark-comment-card[data-status=resolved]{background:#f8fafc;border-color:#e2e8f0;color:#64748b;opacity:.78}.ark-comment-card[data-unresolved=true]{border-style:dashed}.ark-comment-badge{display:none}.ark-comment-card-content{display:block}.ark-comment-state,.ark-comment-time{display:block;color:#64748b;font-size:11px}.ark-comment-unresolved-anchor{display:block;color:#b45309;font-weight:700}.ark-comment-unresolved-quote,.ark-comment-composer-quote{margin:7px 0;padding:7px;border-left:3px solid #f59e0b;background:#fffbeb;white-space:pre-wrap}.ark-comment-message{border-top:1px solid #e2e8f0;margin-top:8px;padding-top:8px}.ark-comment-body{white-space:pre-wrap}.ark-comment-input{display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:7px;border:1px solid #94a3b8;border-radius:5px;font:inherit}.ark-comment-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}.ark-comment-create,.ark-comment-resolve,.ark-comment-send{border:0;border-radius:5px;background:#2563eb;color:#fff;padding:7px 10px;cursor:pointer}.ark-comment-delete{border:0;background:transparent;color:#b91c1c;padding:7px 8px;cursor:pointer}.ark-comment-create:disabled,.ark-comment-resolve:disabled,.ark-comment-send:disabled,.ark-comment-delete:disabled,.ark-comment-input:disabled{opacity:.5;cursor:default}.ark-comment-error{color:#b91c1c;margin:8px 0 0}.ark-comment-composer-header{display:flex;align-items:center;justify-content:space-between}.ark-comment-close{border:0;background:transparent;color:#64748b;font-size:18px;cursor:pointer}.ark-comment-add{position:fixed;z-index:2147483001;width:28px;height:28px;padding:0;border:1px solid #93c5fd;border-radius:999px;background:#fff;color:#2563eb;box-shadow:0 2px 8px #0002;cursor:pointer;opacity:0;pointer-events:none}.ark-comment-add[data-visible=true],.ark-comment-add:focus{opacity:1;pointer-events:auto}.ark-comment-selection-add{position:fixed;z-index:2147483002;border:0;border-radius:14px;background:#2563eb;color:#fff;padding:5px 10px;box-shadow:0 2px 8px #0003;cursor:pointer;opacity:0;pointer-events:none}.ark-comment-selection-add[data-visible=true]{opacity:1;pointer-events:auto}.ark-comment-highlight{background:#fde68a;border-radius:2px;cursor:pointer}.ark-comment-highlight[data-active=true]{background:#fbbf24;box-shadow:0 0 0 2px #f59e0b55}.ark-comment-anchor-active{background-color:rgba(219,234,254,.45);outline:1px solid rgba(37,99,235,.28);outline-offset:2px}.ark-comment-layer[data-narrow=true] .ark-comment-card{right:8px;width:auto;min-width:34px;padding:0;border:0;background:transparent;box-shadow:none;opacity:1}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=true] .ark-comment-card-content{display:none}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=true] .ark-comment-badge{display:block;width:34px;height:28px;border:0;border-radius:14px;background:#2563eb;color:#fff;box-shadow:0 2px 8px #0003;cursor:pointer}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-status=resolved][data-collapsed=true] .ark-comment-badge{background:#94a3b8}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=false]{width:300px;padding:11px;border:1px solid #cbd5e1;background:#fff;box-shadow:0 3px 14px #0003}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=false] .ark-comment-badge{display:none}";
     document.head.appendChild(style);
     root=element("div",undefined,"ark-comment-layer");
     root.setAttribute("data-narrow","false");

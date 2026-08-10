@@ -219,6 +219,35 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain('element("button","解決する"');
   });
 
+  it("card と composer の操作ボタンを折り返し可能な専用コンテナで整列する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected.match(/"ark-comment-actions"/gu)).toHaveLength(2);
+    expect(injected).toContain(
+      ".ark-comment-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}"
+    );
+    expect(injected).toContain("actions.appendChild(sendButton)");
+    expect(injected).toContain("actions.appendChild(resolveButton)");
+    expect(injected).toContain("actions.appendChild(deleteButton)");
+    expect(injected).toContain("composerActions.appendChild(createButton)");
+  });
+
+  it("時刻は元の ISO 値を datetime に保ち、閲覧者のローカル時刻へ短く整形する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("function formatCommentTime(value)");
+    expect(injected).toContain("new Date(value)");
+    expect(injected).toContain("if(Number.isNaN(date.getTime()))return value");
+    expect(injected).toContain("catch(_error)");
+    expect(injected).toContain(
+      'date.toLocaleString(undefined,{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false})'
+    );
+    expect(injected).toContain(
+      'element("time",formatCommentTime(message.at),"ark-comment-time")'
+    );
+    expect(injected).toContain('time.setAttribute("datetime",message.at)');
+  });
+
   it("テキスト node を連結して occurrence を解決し、分割 span を再描画前に戻す", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
@@ -310,18 +339,21 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).not.toContain("ark:diagram-comment-send-result");
   });
 
-  it("→ Claude を pending controls に含めて二重送信を防ぐ", () => {
+  it("pending 中は → Claude・解決・削除・作成と入力欄をすべて無効化する", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
     expect(injected).toContain(
       'querySelectorAll(".ark-comment-create,.ark-comment-resolve,.ark-comment-send,.ark-comment-delete,.ark-comment-input")'
+    );
+    expect(injected).toContain(
+      'control.disabled=Boolean(pendingRequestId)||control.getAttribute("data-sent")==="true"'
     );
   });
 
   it("未解決・解決済み・アンカー未解決を分岐せず全 card に削除を出す", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const openBlockEnd = injected.indexOf(
-      "content.appendChild(resolveButton);\n    }"
+      "actions.appendChild(resolveButton);\n    }"
     );
     const deleteButton = injected.indexOf(
       'element("button","削除","ark-comment-delete")'
