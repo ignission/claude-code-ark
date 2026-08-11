@@ -84,7 +84,7 @@ interface PendingFile {
   size: number;
 }
 
-interface MobileSessionViewProps extends Partial<MobileDiagramPaneProps> {
+export interface MobileSessionViewProps extends MobileDiagramPaneProps {
   /** 会話ビュー（SplitChatPane）の JSONL 購読・AUQ 受信に使う */
   socket: TypedSocket | null;
   /** この詳細が現在表示中か。会話ビューの購読を表示中に限定する */
@@ -762,31 +762,21 @@ export function MobileSessionView({
           viewMode === "board" ? "flex-1 flex flex-col min-h-0" : "hidden"
         }
       >
-        {isConnected !== undefined &&
-          listDiagrams &&
-          deleteDiagram &&
-          getDiagramComments &&
-          createDiagramComment &&
-          resolveDiagramComment &&
-          deleteDiagramComment &&
-          sendDiagramComment &&
-          onSelectDiagram && (
-            <DiagramPane
-              socket={socket}
-              isConnected={isConnected}
-              listDiagrams={listDiagrams}
-              deleteDiagram={deleteDiagram}
-              getDiagramComments={getDiagramComments}
-              createDiagramComment={createDiagramComment}
-              resolveDiagramComment={resolveDiagramComment}
-              deleteDiagramComment={deleteDiagramComment}
-              sendDiagramComment={sendDiagramComment}
-              sessionId={session.id}
-              worktreePath={session.worktreePath}
-              relPath={tabs.find(tab => tab.type === "diagram")?.relPath}
-              onSelectDiagram={onSelectDiagram}
-            />
-          )}
+        <DiagramPane
+          socket={socket}
+          isConnected={isConnected}
+          listDiagrams={listDiagrams}
+          deleteDiagram={deleteDiagram}
+          getDiagramComments={getDiagramComments}
+          createDiagramComment={createDiagramComment}
+          resolveDiagramComment={resolveDiagramComment}
+          deleteDiagramComment={deleteDiagramComment}
+          sendDiagramComment={sendDiagramComment}
+          sessionId={session.id}
+          worktreePath={session.worktreePath}
+          relPath={tabs.find(tab => tab.type === "diagram")?.relPath}
+          onSelectDiagram={onSelectDiagram}
+        />
       </div>
 
       {/* 添付ファイル選択用の隠しinput

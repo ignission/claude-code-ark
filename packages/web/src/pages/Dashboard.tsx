@@ -214,6 +214,10 @@ export default function Dashboard() {
   const handleOpenUrl = useCallback(
     (url: string) => {
       if (isRemote) {
+        if (isMobile) {
+          handleSelectBrowser();
+          setMobileActiveTab("browser");
+        }
         navigateBrowser(url);
         setSelectedSessionId("browser");
         setHasBrowserOpened(true);
@@ -225,7 +229,7 @@ export default function Dashboard() {
         a.click();
       }
     },
-    [isRemote, navigateBrowser]
+    [isRemote, isMobile, handleSelectBrowser, navigateBrowser]
   );
 
   const {
@@ -241,7 +245,7 @@ export default function Dashboard() {
     readFile,
     fileContent,
     handleOpenUrl,
-    !isMobile
+    true
   );
 
   // diagram:open を受けて図タブを開く。worktreePath はサーバーから送られない
@@ -635,8 +639,18 @@ export default function Dashboard() {
           onUploadFile={uploadFile}
           onCopyBuffer={copyBuffer}
           onNewSession={handleNewSession}
-          readFile={readFile}
-          fileContent={fileContent}
+          getTabsForSession={getTabsForSession}
+          getActiveTabForSession={getActiveTabForSession}
+          handleTabSelect={handleTabSelect}
+          handleTabClose={handleTabClose}
+          openDiagramTab={openDiagramTab}
+          listDiagrams={listDiagrams}
+          deleteDiagram={deleteDiagram}
+          getDiagramComments={getDiagramComments}
+          createDiagramComment={createDiagramComment}
+          resolveDiagramComment={resolveDiagramComment}
+          deleteDiagramComment={deleteDiagramComment}
+          sendDiagramComment={sendDiagramComment}
           beaconMessages={beaconMessages}
           beaconStreaming={beaconStreaming}
           beaconStreamText={beaconStreamText}
@@ -652,7 +666,6 @@ export default function Dashboard() {
           multiProfileSupported={capabilities.multiProfileSupported}
           activeBrowserSession={activeBrowserSession}
           onSelectBrowser={handleSelectBrowser}
-          navigateBrowser={navigateBrowser}
           isRemote={isRemote}
           onOpenMcpManager={() => setShowMcpManager(true)}
           messageShortcuts={messageShortcuts}
