@@ -46,6 +46,11 @@ const comments = {
             at: "2026-08-10T00:00:00.000Z",
             body: "未解決です",
           },
+          {
+            id: "message-open-human",
+            at: "2026-08-10T00:01:00.000Z",
+            body: "人間からの追記です",
+          },
         ],
       },
       {
@@ -109,7 +114,7 @@ describe("handleBoardOpen", () => {
 });
 
 describe("handleBoardComments", () => {
-  it("既定では指定した図の open thread だけを返す", async () => {
+  it("open thread の author を含め、無いメッセージではキーごと省く", async () => {
     const deps = {
       listDiagramPaths: vi.fn(async () => []),
       getDiagramComments: vi.fn(async () => comments),
@@ -135,8 +140,13 @@ describe("handleBoardComments", () => {
               status: "open",
               messages: [
                 {
+                  author: "Reviewer",
                   at: "2026-08-10T00:00:00.000Z",
                   body: "未解決です",
+                },
+                {
+                  at: "2026-08-10T00:01:00.000Z",
+                  body: "人間からの追記です",
                 },
               ],
             },
@@ -336,6 +346,10 @@ describe("createBoardMcpServer", () => {
       "docs/diagrams"
     );
     expect(registerTool.mock.calls[1]?.[0]).toBe("board_comments");
+    const [, boardCommentsConfig] = registerTool.mock.calls[1] ?? [];
+    expect(boardCommentsConfig?.description).toContain(
+      "author が無いメッセージは人間が書いたもの"
+    );
     expect(registerTool.mock.calls[2]?.[0]).toBe("board_authoring_guide");
 
     const handler = registerTool.mock.calls[2]?.[2] as unknown as (

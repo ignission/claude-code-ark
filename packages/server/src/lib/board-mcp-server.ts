@@ -104,7 +104,7 @@ type BoardCommentThread = Pick<
   | "anchorOccurrence"
   | "status"
 > & {
-  messages: Array<{ at: string; body: string }>;
+  messages: Array<{ at: string; body: string; author?: string }>;
 };
 
 export type BoardCommentsResult = {
@@ -218,6 +218,7 @@ export async function handleBoardComments(
         messages: thread.messages.map(message => ({
           at: message.at,
           body: message.body,
+          ...(message.author === undefined ? {} : { author: message.author }),
         })),
       }));
     if (threads.length > 0) diagrams.push({ path: relPath, threads });
@@ -309,7 +310,7 @@ export function createBoardMcpServer(
     "board_comments",
     {
       description:
-        "ボード（文書型の図）に付いた未解決コメントを読む。ユーザーが「コメントした」「図を見て」と言ったとき、または図のレビューを依頼されたときに呼ぶ。",
+        "ボード（文書型の図）に付いた未解決コメントを読む。ユーザーが「コメントした」「図を見て」と言ったとき、または図のレビューを依頼されたときに呼ぶ。author が無いメッセージは人間が書いたものである。",
       inputSchema: {
         path: z
           .string()
