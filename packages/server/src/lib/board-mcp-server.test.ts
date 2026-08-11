@@ -4,15 +4,28 @@
  * 旧 board_write（Excalidraw scene への直接書き込み）のテストは撤去済み（B-1）。
  */
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { DIAGRAM_DIR } from "@ark/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BoardSessionRegistry,
   createBoardMcpServer,
   handleBoardComments,
   handleBoardOpen,
+  readDiagramAuthoringGuide,
 } from "./board-mcp-server.js";
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const tempDir of tempDirs.splice(0)) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
 
 const comments = {
   ok: true as const,
@@ -206,18 +219,64 @@ describe("handleBoardComments", () => {
   });
 });
 
+describe("readDiagramAuthoringGuide", () => {
+  function createRuntimeDir(): { root: string; runtimeDir: string } {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ark-board-guide-"));
+    tempDirs.push(root);
+    const runtimeDir = path.join(root, "packages/server/dist/lib");
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    return { root, runtimeDir };
+  }
+
+  it("dist/lib から dist の配布用ガイドを読む", async () => {
+    const { runtimeDir } = createRuntimeDir();
+    fs.writeFileSync(
+      path.resolve(runtimeDir, "../diagram-authoring-guide.md"),
+      "dist guide"
+    );
+
+    await expect(readDiagramAuthoringGuide(runtimeDir)).resolves.toBe(
+      "dist guide"
+    );
+  });
+
+  it("dist のガイドが無ければリポジトリの SKILL.md を読む", async () => {
+    const { root, runtimeDir } = createRuntimeDir();
+    const skillPath = path.join(
+      root,
+      ".claude/skills/diagram-authoring/SKILL.md"
+    );
+    fs.mkdirSync(path.dirname(skillPath), { recursive: true });
+    fs.writeFileSync(skillPath, "source guide");
+
+    await expect(readDiagramAuthoringGuide(runtimeDir)).resolves.toBe(
+      "source guide"
+    );
+  });
+
+  it("配布用ガイドも SKILL.md も無ければ理由を含むエラーになる", async () => {
+    const { runtimeDir } = createRuntimeDir();
+
+    await expect(readDiagramAuthoringGuide(runtimeDir)).rejects.toThrow(
+      /diagram-authoring-guide\.md.*SKILL\.md/s
+    );
+  });
+});
+
 describe("createBoardMcpServer", () => {
-  it("board_open metadata を shared の正準 directory から生成する", () => {
+  it("3 ツールを登録し board_authoring_guide は注入した規約全文を返す", async () => {
     const registerTool = vi.spyOn(McpServer.prototype, "registerTool");
+    const readAuthoringGuide = vi.fn(async () => "authoring guide body");
     const deps = {
       openDiagram: vi.fn(async () => ({ ok: true })),
       listDiagramPaths: vi.fn(async () => []),
       getDiagramComments: vi.fn(async () => comments),
+      readAuthoringGuide,
     };
 
     createBoardMcpServer(deps, "/wt");
 
-    expect(registerTool).toHaveBeenCalledTimes(2);
+    expect(registerTool).toHaveBeenCalledTimes(3);
     const [, config] = registerTool.mock.calls[0] ?? [];
     const metadata = config as
       | {
@@ -232,5 +291,38 @@ describe("createBoardMcpServer", () => {
       "docs/diagrams"
     );
     expect(registerTool.mock.calls[1]?.[0]).toBe("board_comments");
+    expect(registerTool.mock.calls[2]?.[0]).toBe("board_authoring_guide");
+
+    const handler = registerTool.mock.calls[2]?.[2] as unknown as (
+      args: Record<string, never>
+    ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+    await expect(handler({})).resolves.toEqual({
+      content: [{ type: "text", text: "authoring guide body" }],
+    });
+    expect(readAuthoringGuide).toHaveBeenCalledOnce();
+  });
+
+  it("board_authoring_guide の読み出し失敗理由を返す", async () => {
+    const registerTool = vi.spyOn(McpServer.prototype, "registerTool");
+    createBoardMcpServer(
+      {
+        openDiagram: vi.fn(async () => ({ ok: true })),
+        listDiagramPaths: vi.fn(async () => []),
+        getDiagramComments: vi.fn(async () => comments),
+        readAuthoringGuide: vi.fn(async () => {
+          throw new Error("ガイドが見つかりません");
+        }),
+      },
+      "/wt"
+    );
+
+    const handler = registerTool.mock.calls[2]?.[2] as unknown as (
+      args: Record<string, never>
+    ) => Promise<{ content: Array<{ type: string; text: string }> }>;
+    const result = await handler({});
+
+    expect(result.content[0]?.text).toBe(
+      "board_authoring_guide 失敗: ガイドが見つかりません"
+    );
   });
 });
