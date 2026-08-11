@@ -232,6 +232,8 @@ export default function Dashboard() {
     [isRemote, isMobile, handleSelectBrowser, navigateBrowser]
   );
 
+  // PC / モバイル共通の単一インスタンス。MobileLayout で再度呼ぶとリンクタップの
+  // ハンドラが二重登録され、URL オープンが 2 回走るため、ここだけで管理する。
   const {
     getTabsForSession,
     getActiveTabForSession,

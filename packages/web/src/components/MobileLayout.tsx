@@ -90,7 +90,7 @@ interface MobileLayoutProps {
   }>;
   onCopyBuffer?: (sessionId: string) => Promise<string | null>;
   onNewSession: () => void;
-  // Dashboard が所有するビューアタブ状態（diagram:open / 復元と同じ instance）
+  // ビューアタブ状態は Dashboard から props で受け取り、ここでは useViewerTabs を呼ばない
   getTabsForSession: (sessionId: string) => ViewerTab[];
   getActiveTabForSession: (sessionId: string) => number;
   handleTabSelect: (sessionId: string, index: number) => void;
