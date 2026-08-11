@@ -2334,7 +2334,7 @@ export async function startServer(
       const pathResolved = resolveDiagramPath(resolved, relPath);
       if (!pathResolved.ok) return; // パス自体が不正 (403 相当) なら購読しない
 
-      const off = diagramWatcher.subscribe(pathResolved.absPath, () => {
+      const offDiagram = diagramWatcher.subscribe(pathResolved.absPath, () => {
         if (suppressedDiagramUpdates.has(pathResolved.absPath)) return;
         // クライアントへは購読要求で送られてきた worktreePath（生パス）を
         // そのままエコーバックする。サーバー内部の購読キー・ファイル解決は
@@ -2345,7 +2345,19 @@ export async function startServer(
         // エラーも出さず無言で機能しなくなる。
         socket.emit("diagram:updated", { worktreePath, relPath });
       });
-      diagramUnsubs.set(key, off);
+      const commentsResolved = resolveDiagramCommentsPath(resolved, relPath);
+      const offComments = commentsResolved.ok
+        ? diagramWatcher.subscribe(commentsResolved.commentsAbsPath, () => {
+            socket.emit("diagram:comments-updated", {
+              worktreePath,
+              relPath,
+            });
+          })
+        : null;
+      diagramUnsubs.set(key, () => {
+        offDiagram();
+        offComments?.();
+      });
     });
 
     socket.on("diagram:unsubscribe", (data: unknown) => {

@@ -38,6 +38,11 @@ export interface DiagramPaneProps {
   relPath?: string;
   onSelectDiagram: (relPath: string, worktreePath: string) => void;
   isConnected: boolean;
+  diagramCommentsUpdate?: {
+    worktreePath: string;
+    relPath: string;
+    sequence: number;
+  } | null;
   listDiagrams: (worktreePath: string) => Promise<DiagramListItem[]>;
   deleteDiagram: (
     sessionId: string,
@@ -306,6 +311,19 @@ export function readDiagramCommentConnectionState(state: {
   return state.current;
 }
 
+export function forwardDiagramCommentsUpdate(
+  update: { worktreePath: string; relPath: string } | null,
+  worktreePath: string,
+  relPath: string | undefined,
+  postMessage: (message: { type: "ark:diagram-comments-changed" }) => void
+): boolean {
+  if (update?.worktreePath !== worktreePath || update.relPath !== relPath) {
+    return false;
+  }
+  postMessage({ type: "ark:diagram-comments-changed" });
+  return true;
+}
+
 export function replyToInvalidDiagramCommentPortRequest(
   parsed: DiagramCommentPortParse,
   reply: (result: DiagramCommentPortResult) => void,
@@ -409,6 +427,7 @@ export function DiagramPane({
   relPath,
   socket,
   isConnected,
+  diagramCommentsUpdate,
   listDiagrams,
   deleteDiagram,
   getDiagramComments,
@@ -564,6 +583,16 @@ export function DiagramPane({
       socket.emit("diagram:unsubscribe", { worktreePath, relPath });
     };
   }, [socket, isConnected, worktreePath, relPath, load]);
+
+  useEffect(() => {
+    if (!portRef.current) return;
+    forwardDiagramCommentsUpdate(
+      diagramCommentsUpdate ?? null,
+      worktreePath,
+      relPath,
+      message => portRef.current?.postMessage(message)
+    );
+  }, [diagramCommentsUpdate, worktreePath, relPath]);
 
   useEffect(() => {
     if (!socket) return;

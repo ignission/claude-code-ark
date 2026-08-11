@@ -153,6 +153,7 @@ export function MobileSessionView({
   onUpdateShortcut,
   onDeleteShortcut,
   isConnected,
+  diagramCommentsUpdate,
   listDiagrams,
   deleteDiagram,
   getDiagramComments,
@@ -786,6 +787,7 @@ export function MobileSessionView({
         <DiagramPane
           socket={socket}
           isConnected={isConnected}
+          diagramCommentsUpdate={diagramCommentsUpdate}
           listDiagrams={listDiagrams}
           deleteDiagram={deleteDiagram}
           getDiagramComments={getDiagramComments}

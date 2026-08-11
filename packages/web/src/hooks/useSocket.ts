@@ -76,6 +76,11 @@ interface UseSocketReturn {
   socket: TypedSocket | null;
   isConnected: boolean;
   error: string | null;
+  diagramCommentsUpdate: {
+    worktreePath: string;
+    relPath: string;
+    sequence: number;
+  } | null;
 
   // Allowed repositories (from --repos option)
   allowedRepos: string[];
@@ -359,6 +364,11 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   // 空配列でも true になるため、リロード直後の savedId 復元処理で
   // 「サーバ側にセッションが存在しない」ことを判定できる。
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
+  const [diagramCommentsUpdate, setDiagramCommentsUpdate] = useState<{
+    worktreePath: string;
+    relPath: string;
+    sequence: number;
+  } | null>(null);
 
   // Tunnel state
   const [tunnelActive, setTunnelActive] = useState(false);
@@ -568,6 +578,13 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       console.error("Socket connection error:", err);
       setError("Failed to connect to server");
       setIsConnected(false);
+    });
+
+    socket.on("diagram:comments-updated", data => {
+      setDiagramCommentsUpdate(previous => ({
+        ...data,
+        sequence: (previous?.sequence ?? 0) + 1,
+      }));
     });
 
     // Allowed repositories list
@@ -1783,6 +1800,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socket: socketRef.current,
     isConnected,
     error,
+    diagramCommentsUpdate,
     allowedRepos,
     scannedRepos,
     isScanning,

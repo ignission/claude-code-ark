@@ -12,6 +12,7 @@ import {
   DiagramViewport,
   emitDiagramAutosave,
   forwardDiagramCommentPortRequest,
+  forwardDiagramCommentsUpdate,
   getDiagramZoomPercent,
   handleDiagramPinchMessage,
   readDiagramCommentConnectionState,
@@ -274,6 +275,26 @@ describe("replyToInvalidDiagramCommentPortRequest", () => {
     ).toBe(false);
     expect(reply).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
+  });
+});
+
+describe("forwardDiagramCommentsUpdate", () => {
+  it("現在の図の sidecar 更新だけを iframe へ通知する", () => {
+    const postMessage = vi.fn();
+    const update = { worktreePath: "/wt", relPath: REL_PATH };
+
+    expect(
+      forwardDiagramCommentsUpdate(update, "/wt", REL_PATH, postMessage)
+    ).toBe(true);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "ark:diagram-comments-changed",
+    });
+
+    postMessage.mockClear();
+    expect(
+      forwardDiagramCommentsUpdate(update, "/other", REL_PATH, postMessage)
+    ).toBe(false);
+    expect(postMessage).not.toHaveBeenCalled();
   });
 });
 
