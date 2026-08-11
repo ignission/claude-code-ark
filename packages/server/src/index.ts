@@ -68,6 +68,10 @@ import {
 } from "./lib/constants.js";
 import { db } from "./lib/database.js";
 import {
+  appendDiagramCommentMessage,
+  resolveDiagramCommentsPath,
+} from "./lib/diagram-comments.js";
+import {
   createDiagramCommentsSocketHandlers,
   diagramCommentsStore,
   getDiagramCommentsForDoc,
@@ -774,6 +778,22 @@ export async function startServer(
         };
       }
       return getDiagramCommentsForDoc(resolved.path, relPath);
+    },
+    async replyDiagramComment(worktreePath, relPath, threadId, input) {
+      const resolved = resolveManagedWorktreeDetailed(worktreePath);
+      if (!resolved.ok) {
+        return {
+          ok: false,
+          code: "FORBIDDEN",
+          error: `worktree を解決できません: ${resolved.reason}`,
+        };
+      }
+      return appendDiagramCommentMessage(
+        resolved.path,
+        relPath,
+        threadId,
+        input
+      );
     },
     async openDiagram(worktreePath, relPath) {
       const resolved = resolveManagedWorktreeDetailed(worktreePath);
@@ -2275,6 +2295,7 @@ export async function startServer(
     });
     socket.on("diagram:comments:get", diagramCommentsHandlers.get);
     socket.on("diagram:comment:create", diagramCommentsHandlers.create);
+    socket.on("diagram:comment:reply", diagramCommentsHandlers.reply);
     socket.on("diagram:comment:resolve", diagramCommentsHandlers.resolve);
     socket.on("diagram:comment:delete", diagramCommentsHandlers.delete);
     socket.on("diagram:comment:send", diagramCommentsHandlers.send);
@@ -2313,7 +2334,7 @@ export async function startServer(
       const pathResolved = resolveDiagramPath(resolved, relPath);
       if (!pathResolved.ok) return; // パス自体が不正 (403 相当) なら購読しない
 
-      const off = diagramWatcher.subscribe(pathResolved.absPath, () => {
+      const offDiagram = diagramWatcher.subscribe(pathResolved.absPath, () => {
         if (suppressedDiagramUpdates.has(pathResolved.absPath)) return;
         // クライアントへは購読要求で送られてきた worktreePath（生パス）を
         // そのままエコーバックする。サーバー内部の購読キー・ファイル解決は
@@ -2324,7 +2345,19 @@ export async function startServer(
         // エラーも出さず無言で機能しなくなる。
         socket.emit("diagram:updated", { worktreePath, relPath });
       });
-      diagramUnsubs.set(key, off);
+      const commentsResolved = resolveDiagramCommentsPath(resolved, relPath);
+      const offComments = commentsResolved.ok
+        ? diagramWatcher.subscribe(commentsResolved.commentsAbsPath, () => {
+            socket.emit("diagram:comments-updated", {
+              worktreePath,
+              relPath,
+            });
+          })
+        : null;
+      diagramUnsubs.set(key, () => {
+        offDiagram();
+        offComments?.();
+      });
     });
 
     socket.on("diagram:unsubscribe", (data: unknown) => {

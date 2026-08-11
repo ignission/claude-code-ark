@@ -39,6 +39,11 @@ const STORAGE_KEY_SHOW_BOARD = "ark-split-show-board";
 interface SplitViewPaneProps {
   socket: TypedSocket | null;
   isConnected: boolean;
+  diagramCommentsUpdate: {
+    worktreePath: string;
+    relPath: string;
+    sequence: number;
+  } | null;
   listDiagrams: (worktreePath: string) => Promise<DiagramListItem[]>;
   deleteDiagram: (
     sessionId: string,
@@ -61,6 +66,12 @@ interface SplitViewPaneProps {
     sessionId: string,
     relPath: string,
     threadId: string
+  ) => Promise<DiagramCommentsResponse>;
+  replyDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string,
+    body: string
   ) => Promise<DiagramCommentsResponse>;
   deleteDiagramComment: (
     sessionId: string,
@@ -302,10 +313,12 @@ export function SplitViewPane(props: SplitViewPaneProps) {
               <DiagramPane
                 socket={props.socket}
                 isConnected={props.isConnected}
+                diagramCommentsUpdate={props.diagramCommentsUpdate}
                 listDiagrams={props.listDiagrams}
                 deleteDiagram={props.deleteDiagram}
                 getDiagramComments={props.getDiagramComments}
                 createDiagramComment={props.createDiagramComment}
+                replyDiagramComment={props.replyDiagramComment}
                 resolveDiagramComment={props.resolveDiagramComment}
                 deleteDiagramComment={props.deleteDiagramComment}
                 sendDiagramComment={props.sendDiagramComment}

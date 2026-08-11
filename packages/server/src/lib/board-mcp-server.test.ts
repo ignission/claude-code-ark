@@ -46,6 +46,11 @@ const comments = {
             at: "2026-08-10T00:00:00.000Z",
             body: "未解決です",
           },
+          {
+            id: "message-open-human",
+            at: "2026-08-10T00:01:00.000Z",
+            body: "人間からの追記です",
+          },
         ],
       },
       {
@@ -109,7 +114,7 @@ describe("handleBoardOpen", () => {
 });
 
 describe("handleBoardComments", () => {
-  it("既定では指定した図の open thread だけを返す", async () => {
+  it("open thread の author を含め、無いメッセージではキーごと省く", async () => {
     const deps = {
       listDiagramPaths: vi.fn(async () => []),
       getDiagramComments: vi.fn(async () => comments),
@@ -135,8 +140,13 @@ describe("handleBoardComments", () => {
               status: "open",
               messages: [
                 {
+                  author: "Reviewer",
                   at: "2026-08-10T00:00:00.000Z",
                   body: "未解決です",
+                },
+                {
+                  at: "2026-08-10T00:01:00.000Z",
+                  body: "人間からの追記です",
                 },
               ],
             },
@@ -309,19 +319,20 @@ describe("readDiagramAuthoringGuide", () => {
 });
 
 describe("createBoardMcpServer", () => {
-  it("3 ツールを登録し board_authoring_guide は注入した規約全文を返す", async () => {
+  it("4 ツールを既存順序のまま登録し board_reply は claude 固定で返信する", async () => {
     const registerTool = vi.spyOn(McpServer.prototype, "registerTool");
     const readAuthoringGuide = vi.fn(async () => "authoring guide body");
     const deps = {
       openDiagram: vi.fn(async () => ({ ok: true })),
       listDiagramPaths: vi.fn(async () => []),
       getDiagramComments: vi.fn(async () => comments),
+      replyDiagramComment: vi.fn(async () => comments),
       readAuthoringGuide,
     };
 
     createBoardMcpServer(deps, "/wt");
 
-    expect(registerTool).toHaveBeenCalledTimes(3);
+    expect(registerTool).toHaveBeenCalledTimes(4);
     const [, config] = registerTool.mock.calls[0] ?? [];
     const metadata = config as
       | {
@@ -336,7 +347,12 @@ describe("createBoardMcpServer", () => {
       "docs/diagrams"
     );
     expect(registerTool.mock.calls[1]?.[0]).toBe("board_comments");
+    const [, boardCommentsConfig] = registerTool.mock.calls[1] ?? [];
+    expect(boardCommentsConfig?.description).toContain(
+      "author が無いメッセージは人間が書いたもの"
+    );
     expect(registerTool.mock.calls[2]?.[0]).toBe("board_authoring_guide");
+    expect(registerTool.mock.calls[3]?.[0]).toBe("board_reply");
 
     const handler = registerTool.mock.calls[2]?.[2] as unknown as (
       args: Record<string, never>
@@ -345,6 +361,30 @@ describe("createBoardMcpServer", () => {
       content: [{ type: "text", text: "authoring guide body" }],
     });
     expect(readAuthoringGuide).toHaveBeenCalledOnce();
+
+    const [, replyConfig, replyHandler] = registerTool.mock.calls[3] ?? [];
+    expect(replyConfig?.description).toContain("board_comments");
+    expect(replyConfig?.inputSchema).toHaveProperty("path");
+    expect(replyConfig?.inputSchema).toHaveProperty("threadId");
+    expect(replyConfig?.inputSchema).toHaveProperty("body");
+    expect(replyConfig?.inputSchema).not.toHaveProperty("author");
+    await (
+      replyHandler as unknown as (args: {
+        path: string;
+        threadId: string;
+        body: string;
+      }) => Promise<unknown>
+    )({
+      path: `${DIAGRAM_DIR}/a.diagram.html`,
+      threadId: "thread-open",
+      body: "修正しました",
+    });
+    expect(deps.replyDiagramComment).toHaveBeenCalledWith(
+      "/wt",
+      `${DIAGRAM_DIR}/a.diagram.html`,
+      "thread-open",
+      { body: "修正しました", author: "claude" }
+    );
   });
 
   it("board_authoring_guide の読み出し失敗理由を返す", async () => {
@@ -354,6 +394,7 @@ describe("createBoardMcpServer", () => {
         openDiagram: vi.fn(async () => ({ ok: true })),
         listDiagramPaths: vi.fn(async () => []),
         getDiagramComments: vi.fn(async () => comments),
+        replyDiagramComment: vi.fn(async () => comments),
         readAuthoringGuide: vi.fn(async () => {
           throw new Error("ガイドが見つかりません");
         }),

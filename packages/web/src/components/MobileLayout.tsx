@@ -127,6 +127,12 @@ interface MobileLayoutProps {
     relPath: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
+  replyDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string,
+    body: string
+  ) => Promise<DiagramCommentsResponse>;
   deleteDiagramComment: (
     sessionId: string,
     relPath: string,
@@ -151,6 +157,11 @@ interface MobileLayoutProps {
   onBeaconSetProfile?: (profileId: string | null) => void;
   /** Socket.IO 接続状態。停止ボタンを切断時に disabled にするために使う */
   isSocketConnected: boolean;
+  diagramCommentsUpdate: {
+    worktreePath: string;
+    relPath: string;
+    sequence: number;
+  } | null;
   // Usage取得（Linux + multiProfileSupported のみ）
   onRequestUsage?: () => void;
   usageRequesting?: boolean;
@@ -208,6 +219,7 @@ export function MobileLayout({
   getDiagramComments,
   createDiagramComment,
   resolveDiagramComment,
+  replyDiagramComment,
   deleteDiagramComment,
   sendDiagramComment,
   beaconMessages,
@@ -219,6 +231,7 @@ export function MobileLayout({
   beaconProfile,
   onBeaconSetProfile,
   isSocketConnected,
+  diagramCommentsUpdate,
   onRequestUsage,
   usageRequesting,
   usageProgress,
@@ -412,10 +425,12 @@ export function MobileLayout({
                 onTabSelect={idx => handleTabSelect(sessionId, idx)}
                 onTabClose={idx => handleTabClose(sessionId, idx)}
                 isConnected={isSocketConnected}
+                diagramCommentsUpdate={diagramCommentsUpdate}
                 listDiagrams={listDiagrams}
                 deleteDiagram={deleteDiagram}
                 getDiagramComments={getDiagramComments}
                 createDiagramComment={createDiagramComment}
+                replyDiagramComment={replyDiagramComment}
                 resolveDiagramComment={resolveDiagramComment}
                 deleteDiagramComment={deleteDiagramComment}
                 sendDiagramComment={sendDiagramComment}

@@ -72,6 +72,7 @@ export default function Dashboard() {
     socket,
     isConnected,
     error,
+    diagramCommentsUpdate,
     allowedRepos,
     repoList,
     repoPath,
@@ -85,6 +86,7 @@ export default function Dashboard() {
     deleteDiagram,
     getDiagramComments,
     createDiagramComment,
+    replyDiagramComment,
     resolveDiagramComment,
     deleteDiagramComment,
     sendDiagramComment,
@@ -660,6 +662,7 @@ export default function Dashboard() {
           deleteDiagram={deleteDiagram}
           getDiagramComments={getDiagramComments}
           createDiagramComment={createDiagramComment}
+          replyDiagramComment={replyDiagramComment}
           resolveDiagramComment={resolveDiagramComment}
           deleteDiagramComment={deleteDiagramComment}
           sendDiagramComment={sendDiagramComment}
@@ -672,6 +675,7 @@ export default function Dashboard() {
           beaconProfile={beaconProfile}
           onBeaconSetProfile={beaconSetProfile}
           isSocketConnected={isConnected}
+          diagramCommentsUpdate={diagramCommentsUpdate}
           onRequestUsage={requestUsage}
           usageRequesting={usageRequesting}
           usageProgress={usageProgress}
@@ -824,10 +828,12 @@ export default function Dashboard() {
                       <SplitViewPane
                         socket={socket}
                         isConnected={isConnected}
+                        diagramCommentsUpdate={diagramCommentsUpdate}
                         listDiagrams={listDiagrams}
                         deleteDiagram={deleteDiagram}
                         getDiagramComments={getDiagramComments}
                         createDiagramComment={createDiagramComment}
+                        replyDiagramComment={replyDiagramComment}
                         resolveDiagramComment={resolveDiagramComment}
                         deleteDiagramComment={deleteDiagramComment}
                         sendDiagramComment={sendDiagramComment}

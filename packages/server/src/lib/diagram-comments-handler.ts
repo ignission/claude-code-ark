@@ -1,5 +1,6 @@
 import type { DiagramCommentsResponse } from "@ark/shared";
 import {
+  appendDiagramCommentMessage,
   createDiagramComment,
   deleteDiagramComment,
   readDiagramCommentsFile,
@@ -22,6 +23,7 @@ type CreatePayload = GetPayload & {
   body: string;
 };
 type ResolvePayload = GetPayload & { threadId: string };
+type ReplyPayload = ResolvePayload & { body: string };
 
 export interface DiagramCommentsHandlerDeps {
   getSession: (
@@ -39,6 +41,12 @@ export interface DiagramCommentsHandlerDeps {
     body: string,
     anchorQuote?: string,
     anchorOccurrence?: number
+  ) => Promise<DiagramCommentsResponse>;
+  replyComment: (
+    worktreeReal: string,
+    relPath: string,
+    threadId: string,
+    input: { body: string; author?: string }
   ) => Promise<DiagramCommentsResponse>;
   resolveComment: (
     worktreeReal: string,
@@ -79,6 +87,7 @@ export async function getDiagramCommentsForDoc(
 export const diagramCommentsStore = {
   getComments: getDiagramCommentsForDoc,
   createComment: createDiagramComment,
+  replyComment: appendDiagramCommentMessage,
   deleteComment: deleteDiagramComment,
   resolveComment: resolveDiagramComment,
 };
@@ -192,6 +201,27 @@ function parseResolvePayload(value: unknown): ResolvePayload | null {
   };
 }
 
+function parseReplyPayload(value: unknown): ReplyPayload | null {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ["sessionId", "relPath", "threadId", "body"]) ||
+    !validString(value.sessionId, MAX_SESSION_OR_PATH_LENGTH) ||
+    !validString(value.relPath, MAX_SESSION_OR_PATH_LENGTH) ||
+    !validString(value.threadId, MAX_ANCHOR_OR_ID_LENGTH) ||
+    typeof value.body !== "string"
+  ) {
+    return null;
+  }
+  const body = value.body.trim();
+  if (!validString(body, MAX_BODY_LENGTH)) return null;
+  return {
+    sessionId: value.sessionId,
+    relPath: value.relPath,
+    threadId: value.threadId,
+    body,
+  };
+}
+
 function oneLine(value: string): string {
   // sidecar は入力をそのまま保持し、tmux へリテラル送出する文面だけを無害化する。
   return value
@@ -212,15 +242,23 @@ function buildDiagramCommentMessage(
   >["comments"]["threads"][number],
   otherOpenCount: number
 ): string | null {
-  const message = thread.messages.at(-1);
-  if (!message) return null;
+  const latestMessage = thread.messages.at(-1);
+  if (!latestMessage) return null;
+  // 人間のメッセージが無い旧形式・外部生成 sidecar も送れるよう、最後のメッセージへフォールバックする。
+  const message =
+    thread.messages.findLast(candidate => candidate.author === undefined) ??
+    latestMessage;
   const anchorText = truncate(oneLine(thread.anchorText), 80);
   const quote = oneLine(thread.anchorQuote ?? thread.anchorText);
-  const suffix =
+  const replyCount = thread.messages.filter(
+    candidate => candidate.author !== undefined
+  ).length;
+  const replySuffix = replyCount > 0 ? ` / 返信済み ${replyCount} 件` : "";
+  const otherOpenSuffix =
     otherOpenCount > 0
       ? ` / 他に未解決 ${otherOpenCount} 件（board_comments で全件取得できる）`
       : "";
-  return `図のコメント（${oneLine(relPath)}） 対象: ${anchorText} / 引用: 「${quote}」 / コメント: ${oneLine(message.body)}${suffix}`;
+  return `図のコメント（${oneLine(relPath)}） 対象: ${anchorText} / 引用: 「${quote}」 / コメント: ${oneLine(message.body)}${replySuffix}${otherOpenSuffix}`;
 }
 
 function requestContext(
@@ -317,6 +355,21 @@ export async function handleDiagramCommentResolve(
   );
 }
 
+export async function handleDiagramCommentReply(
+  deps: DiagramCommentsHandlerDeps,
+  data: unknown
+): Promise<DiagramCommentsResponse> {
+  const payload = parseReplyPayload(data);
+  if (payload === null) return badRequest();
+  const context = requestContext(deps, payload);
+  if (!context.valid) return context.response;
+  return containStoreError(() =>
+    deps.replyComment(context.worktreeReal, context.relPath, payload.threadId, {
+      body: payload.body,
+    })
+  );
+}
+
 export async function handleDiagramCommentDelete(
   deps: DiagramCommentsHandlerDeps,
   data: unknown
@@ -404,6 +457,7 @@ export function createDiagramCommentsSocketHandlers(
 ): {
   get: SocketHandler;
   create: SocketHandler;
+  reply: SocketHandler;
   resolve: SocketHandler;
   delete: SocketHandler;
   send: SocketHandler;
@@ -411,6 +465,7 @@ export function createDiagramCommentsSocketHandlers(
   return {
     get: createSocketHandler(data => handleDiagramCommentsGet(deps, data)),
     create: createSocketHandler(data => handleDiagramCommentCreate(deps, data)),
+    reply: createSocketHandler(data => handleDiagramCommentReply(deps, data)),
     resolve: createSocketHandler(data =>
       handleDiagramCommentResolve(deps, data)
     ),

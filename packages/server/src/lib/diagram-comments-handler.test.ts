@@ -5,6 +5,7 @@ import {
   type DiagramCommentsHandlerDeps,
   handleDiagramCommentCreate,
   handleDiagramCommentDelete,
+  handleDiagramCommentReply,
   handleDiagramCommentResolve,
   handleDiagramCommentSend,
   handleDiagramCommentsGet,
@@ -28,11 +29,32 @@ function deps(): DiagramCommentsHandlerDeps {
     resolveManagedWorktreePath: vi.fn(() => "/managed/worktree"),
     getComments: vi.fn(async () => snapshot),
     createComment: vi.fn(async () => snapshot),
+    replyComment: vi.fn(async () => snapshot),
     deleteComment: vi.fn(async () => snapshot),
     resolveComment: vi.fn(async () => snapshot),
     sendMessage: vi.fn(),
   };
 }
+
+describe("handleDiagramCommentReply", () => {
+  it("人間の返信は author を渡さない", async () => {
+    const dependencies = deps();
+
+    await handleDiagramCommentReply(dependencies, {
+      sessionId: "session-1",
+      relPath: "sample.diagram.html",
+      threadId: "th-1",
+      body: " 人間の返信 ",
+    });
+
+    expect(dependencies.replyComment).toHaveBeenCalledWith(
+      "/managed/worktree",
+      "sample.diagram.html",
+      "th-1",
+      { body: "人間の返信" }
+    );
+  });
+});
 
 const sendSnapshot: DiagramCommentsResponse = {
   ok: true,
@@ -50,10 +72,26 @@ const sendSnapshot: DiagramCommentsResponse = {
         createdAt: "2026-08-10T00:00:00.000Z",
         messages: [
           {
-            id: "msg-send",
-            author: "Reviewer",
+            id: "msg-human-old",
             at: "2026-08-10T00:00:00.000Z",
+            body: "古い人間コメント",
+          },
+          {
+            id: "msg-claude-old",
+            author: "claude",
+            at: "2026-08-10T00:01:00.000Z",
+            body: "Claude の過去の返信",
+          },
+          {
+            id: "msg-human-latest",
+            at: "2026-08-10T00:02:00.000Z",
             body: "本文の一行目\n本文の二行目\t末尾",
+          },
+          {
+            id: "msg-claude-latest",
+            author: "claude",
+            at: "2026-08-10T00:03:00.000Z",
+            body: "送り返してはいけない Claude の返信",
           },
         ],
       },
@@ -305,7 +343,7 @@ describe("diagram comments handler core", () => {
     expect(dependencies.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("sendMessage を引用・本文・他の未解決件数を含む一行で呼び、最新 comments を返す", async () => {
+  it("最新の人間コメントと返信済み件数を含む一行で sendMessage を呼ぶ", async () => {
     const dependencies = deps();
     vi.mocked(dependencies.getComments).mockResolvedValue(sendSnapshot);
 
@@ -327,19 +365,54 @@ describe("diagram comments handler core", () => {
     expect(message).toContain("図のコメント（sample.diagram.html）");
     expect(message).toContain("引用: 「引用の一行目 引用の二行目」");
     expect(message).toContain("コメント: 本文の一行目 本文の二行目 末尾");
-    expect(message).not.toContain("Reviewer");
+    expect(message).not.toContain("送り返してはいけない Claude の返信");
+    expect(message).toContain("返信済み 2 件");
     expect(message).toContain(
       "他に未解決 1 件（board_comments で全件取得できる）"
     );
+  });
+
+  it("人間のメッセージが無ければ最後のメッセージへフォールバックする", async () => {
+    const dependencies = deps();
+    const response = structuredClone(sendSnapshot);
+    if (!response.ok) throw new Error("successful comments response expected");
+    const thread = response.comments.threads[0];
+    if (!thread) throw new Error("comment thread expected");
+    thread.messages = [
+      {
+        id: "msg-claude-only",
+        author: "claude",
+        at: "2026-08-10T00:00:00.000Z",
+        body: "Claude だけの返信\n二行目",
+      },
+    ];
+    vi.mocked(dependencies.getComments).mockResolvedValue(response);
+
+    await handleDiagramCommentSend(dependencies, {
+      sessionId: "session-1",
+      relPath: "sample.diagram.html",
+      threadId: "th-send",
+    });
+
+    const sent = vi.mocked(dependencies.sendMessage).mock.calls[0]?.[1];
+    expect(sent).toContain("コメント: Claude だけの返信 二行目");
+    expect(sent).toContain("返信済み 1 件");
+    expect(sent).not.toMatch(/[\p{Cc}\p{Cf}]/u);
   });
 
   it("sendMessage へ渡す本文から制御文字・書式文字を除去する", async () => {
     const dependencies = deps();
     const response = structuredClone(sendSnapshot);
     if (!response.ok) throw new Error("successful comments response expected");
-    const message = response.comments.threads[0]?.messages[0];
-    if (!message) throw new Error("comment message expected");
-    message.body = "本文\x1b[31m赤\x07色";
+    const thread = response.comments.threads[0];
+    if (!thread) throw new Error("comment thread expected");
+    thread.messages = [
+      {
+        id: "msg-control",
+        at: "2026-08-10T00:00:00.000Z",
+        body: "本文\x1b[31m赤\x07色",
+      },
+    ];
     vi.mocked(dependencies.getComments).mockResolvedValue(response);
 
     await handleDiagramCommentSend(dependencies, {

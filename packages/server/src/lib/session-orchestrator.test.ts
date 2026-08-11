@@ -713,11 +713,12 @@ describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
     expect(prompt).toContain("board_open");
     expect(prompt).toContain("board_comments");
     expect(prompt).toContain("board_authoring_guide");
+    expect(prompt).toContain("board_reply");
     expect(prompt).not.toContain("diagram-authoring skill");
     expect(prompt).toContain('model の type を "doc"');
     expect(prompt).toContain("本文をテキスト選択してコメントを付けられる");
     expect(prompt).toContain(
-      "引用された箇所を直してから board_open で開き直す"
+      "引用された箇所を直してから board_open で開き直し、board_reply で対応内容を返信する"
     );
   });
 

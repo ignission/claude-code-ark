@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  appendDiagramCommentMessage,
   createDiagramComment,
   DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH,
   DIAGRAM_COMMENTS_MAX_ANCHOR_QUOTE_LENGTH,
@@ -637,6 +638,183 @@ describe("comment mutations", () => {
       expect(Date.parse(thread?.createdAt ?? "invalid")).not.toBeNaN();
       expect(thread?.messages[0]?.at).toBe(thread?.createdAt);
     }
+  });
+
+  it("append は同じ thread に server ID/時刻付きメッセージを追加する", async () => {
+    writeDoc();
+    fs.writeFileSync(
+      path.join(worktree, ".claude/diagrams/order-flow.comments.json"),
+      JSON.stringify(comments())
+    );
+
+    const result = await appendDiagramCommentMessage(
+      worktree,
+      relPath,
+      "th-1",
+      { body: "修正しました", author: "claude" }
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const message = result.comments.threads[0]?.messages[1];
+      expect(message).toMatchObject({ body: "修正しました", author: "claude" });
+      expect(message?.id).toMatch(/^m-[0-9a-f-]{36}$/u);
+      expect(Date.parse(message?.at ?? "invalid")).not.toBeNaN();
+    }
+  });
+
+  it("append は author 未指定ならキーごと書かない", async () => {
+    writeDoc();
+    fs.writeFileSync(
+      path.join(worktree, ".claude/diagrams/order-flow.comments.json"),
+      JSON.stringify(comments())
+    );
+
+    const result = await appendDiagramCommentMessage(
+      worktree,
+      relPath,
+      "th-1",
+      { body: "人間の返信" }
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.comments.threads[0]?.messages[1]).not.toHaveProperty(
+        "author"
+      );
+    }
+    const saved = JSON.parse(
+      fs.readFileSync(
+        path.join(worktree, ".claude/diagrams/order-flow.comments.json"),
+        "utf8"
+      )
+    );
+    expect(saved.threads[0].messages[1]).not.toHaveProperty("author");
+  });
+
+  it("append は未知 thread を THREAD_NOT_FOUND にする", async () => {
+    writeDoc();
+
+    await expect(
+      appendDiagramCommentMessage(worktree, relPath, "th-unknown", {
+        body: "本文",
+      })
+    ).resolves.toMatchObject({ ok: false, code: "THREAD_NOT_FOUND" });
+  });
+
+  it("append は現在の doc に無い anchor を ANCHOR_NOT_FOUND にする", async () => {
+    writeDoc();
+    fs.writeFileSync(
+      path.join(worktree, ".claude/diagrams/order-flow.comments.json"),
+      JSON.stringify(
+        comments({
+          threads: [{ ...comments().threads[0], anchorId: "removed" }],
+        })
+      )
+    );
+
+    await expect(
+      appendDiagramCommentMessage(worktree, relPath, "th-1", { body: "本文" })
+    ).resolves.toMatchObject({ ok: false, code: "ANCHOR_NOT_FOUND" });
+  });
+
+  it("append は resolved thread を再オープンせず BAD_REQUEST にする", async () => {
+    writeDoc();
+    fs.writeFileSync(
+      path.join(worktree, ".claude/diagrams/order-flow.comments.json"),
+      JSON.stringify(
+        comments({
+          threads: [{ ...comments().threads[0], status: "resolved" }],
+        })
+      )
+    );
+
+    const result = await appendDiagramCommentMessage(
+      worktree,
+      relPath,
+      "th-1",
+      { body: "本文" }
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: "BAD_REQUEST",
+      error: expect.stringContaining("解決済み"),
+    });
+  });
+
+  it.each(["   ", "x".repeat(DIAGRAM_COMMENTS_MAX_BODY_LENGTH + 1)])(
+    "append は不正な body %j を BAD_REQUEST にする",
+    async body => {
+      writeDoc();
+      fs.writeFileSync(
+        path.join(worktree, ".claude/diagrams/order-flow.comments.json"),
+        JSON.stringify(comments())
+      );
+
+      await expect(
+        appendDiagramCommentMessage(worktree, relPath, "th-1", { body })
+      ).resolves.toMatchObject({ ok: false, code: "BAD_REQUEST" });
+    }
+  );
+
+  it("append は長すぎる author を BAD_REQUEST にする", async () => {
+    writeDoc();
+    fs.writeFileSync(
+      path.join(worktree, ".claude/diagrams/order-flow.comments.json"),
+      JSON.stringify(comments())
+    );
+
+    await expect(
+      appendDiagramCommentMessage(worktree, relPath, "th-1", {
+        body: "本文",
+        author: "a".repeat(DIAGRAM_COMMENTS_MAX_AUTHOR_LENGTH + 1),
+      })
+    ).resolves.toMatchObject({ ok: false, code: "BAD_REQUEST" });
+  });
+
+  it("append は追加後の sidecar がサイズ上限を超えると BAD_REQUEST にする", async () => {
+    writeDoc();
+    const baseThread = comments().threads[0];
+    const messages = [];
+    const serialize = (): string =>
+      `${JSON.stringify(comments({ threads: [{ ...baseThread, messages }] }), null, 2)}\n`;
+    for (let index = 0; ; index += 1) {
+      const message = {
+        ...baseThread.messages[0],
+        id: `m-${index}`,
+        body: "x".repeat(DIAGRAM_COMMENTS_MAX_BODY_LENGTH),
+      };
+      messages.push(message);
+      if (Buffer.byteLength(serialize(), "utf8") > DIAGRAM_COMMENTS_MAX_BYTES) {
+        messages.pop();
+        const minimal = { ...message, body: "x" };
+        messages.push(minimal);
+        const remaining =
+          DIAGRAM_COMMENTS_MAX_BYTES - Buffer.byteLength(serialize(), "utf8");
+        minimal.body += "x".repeat(remaining);
+        break;
+      }
+    }
+    const raw = serialize();
+    expect(Buffer.byteLength(raw, "utf8")).toBe(DIAGRAM_COMMENTS_MAX_BYTES);
+    fs.writeFileSync(
+      path.join(worktree, ".claude/diagrams/order-flow.comments.json"),
+      raw
+    );
+
+    const result = await appendDiagramCommentMessage(
+      worktree,
+      relPath,
+      "th-1",
+      { body: "本文" }
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      code: "BAD_REQUEST",
+      error: "コメント sidecar は 1MiB までです",
+    });
   });
 
   it("create は thread 件数上限に達していると BAD_REQUEST にする", async () => {

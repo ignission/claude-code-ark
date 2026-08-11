@@ -182,7 +182,9 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain(
       'setAttribute("data-narrow",narrow?"true":"false")'
     );
-    expect(injected).toContain('setAttribute("data-collapsed","true")');
+    expect(injected).toContain(
+      'card.setAttribute("data-collapsed",expandedThreadIds.has(thread.id)?"false":"true")'
+    );
     expect(injected).toContain(
       'element("button",String(openCount),"ark-comment-badge")'
     );
@@ -215,6 +217,147 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain("composerActions.appendChild(createButton)");
   });
 
+  it("open card だけにメッセージ列と actions の間の返信 UI を描画する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const threadRenderer = injected.slice(
+      injected.indexOf("function renderThread"),
+      injected.indexOf("function renderComposer")
+    );
+
+    expect(threadRenderer).toContain('if(thread.status==="open"){');
+    expect(threadRenderer).toContain(
+      'element("textarea",undefined,"ark-comment-input")'
+    );
+    expect(threadRenderer).toContain(
+      'element("button","返信","ark-comment-reply")'
+    );
+    expect(threadRenderer).toContain(
+      'send("ark:diagram-comment-reply",{threadId:thread.id,body:replyInput.value})'
+    );
+    expect(threadRenderer.indexOf("replyInput")).toBeLessThan(
+      threadRenderer.indexOf(
+        'var actions=element("div",undefined,"ark-comment-actions")'
+      )
+    );
+  });
+
+  it("card の展開状態を集合から復元し、選択された thread も集合へ追加する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const threadRenderer = injected.slice(
+      injected.indexOf("function renderThread"),
+      injected.indexOf("function renderComposer")
+    );
+    const activateThread = injected.slice(
+      injected.indexOf("function activateThread"),
+      injected.indexOf("function wrapThreadQuote")
+    );
+
+    expect(injected).toContain("var expandedThreadIds=new Set()");
+    expect(threadRenderer).toContain(
+      'card.setAttribute("data-collapsed",expandedThreadIds.has(thread.id)?"false":"true")'
+    );
+    expect(threadRenderer).not.toContain(
+      'card.setAttribute("data-collapsed","true")'
+    );
+    expect(activateThread).toContain("expandedThreadIds.add(thread.id)");
+  });
+
+  it("badge のクリックで thread の展開状態を集合上でトグルする", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const threadRenderer = injected.slice(
+      injected.indexOf("function renderThread"),
+      injected.indexOf("function renderComposer")
+    );
+
+    expect(threadRenderer).toContain(
+      "if(expandedThreadIds.has(thread.id))expandedThreadIds.delete(thread.id)"
+    );
+    expect(threadRenderer).toContain("else expandedThreadIds.add(thread.id)");
+    expect(threadRenderer).toContain(
+      'card.setAttribute("data-collapsed",expandedThreadIds.has(thread.id)?"false":"true")'
+    );
+  });
+
+  it("sidecar から消えた thread の展開状態を render 時に掃除する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("function cleanupExpandedThreads()");
+    expect(injected).toContain(
+      "var existingThreadIds=new Set(comments.threads.map(function(thread){return thread.id;}))"
+    );
+    expect(injected).toContain(
+      "if(!existingThreadIds.has(threadId))expandedThreadIds.delete(threadId)"
+    );
+    expect(injected).toContain("cleanupExpandedThreads()");
+  });
+
+  it("受動的な再取得の発行直前に textarea のフォーカスと選択範囲を記録する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const changedHandler = injected.slice(
+      injected.indexOf('data.type==="ark:diagram-comments-changed"'),
+      injected.indexOf('data.type!=="ark:diagram-comments-result"')
+    );
+    const render = injected.slice(
+      injected.indexOf("function render(focusedInput){"),
+      injected.indexOf("function commonSelectionAnchor")
+    );
+
+    expect(injected).toContain("function captureFocusedInput()");
+    expect(injected).toContain("document.activeElement");
+    expect(injected).toContain("root.contains(activeElement)");
+    expect(injected).toContain('activeElement.tagName!=="TEXTAREA"');
+    expect(injected).toContain("selectionStart:activeElement.selectionStart");
+    expect(injected).toContain("selectionEnd:activeElement.selectionEnd");
+    expect(injected).toContain('activeElement.closest(".ark-comment-card")');
+    expect(changedHandler.indexOf("captureFocusedInput()")).toBeLessThan(
+      changedHandler.indexOf('send("ark:diagram-comments-load"')
+    );
+    expect(render).not.toContain("document.activeElement");
+    expect(render).toContain("focusedInput.threadId");
+    expect(render).toContain("restoredInput.focus()");
+    expect(render).toContain("restoredInput.setSelectionRange(");
+    expect(injected).toContain(
+      "render(completedAction&&completedAction.focusedInput)"
+    );
+  });
+
+  it("返信下書きを thread ごとに render 間で保持し成功時だけ消す", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("var replyDraftBodies=new Map()");
+    expect(injected).toContain(
+      "replyDraftBodies.set(thread.id,replyInput.value)"
+    );
+    expect(injected).toContain(
+      'replyInput.value=replyDraftBodies.get(thread.id)||""'
+    );
+    expect(injected).toContain(
+      "replyDraftBodies.delete(completedAction.threadId)"
+    );
+  });
+
+  it("sidecar 更新通知は pending 中を避けて既存 load を再実行する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain('data.type==="ark:diagram-comments-changed"');
+    expect(injected).toContain("if(pendingRequestId)return");
+    expect(injected).toContain('send("ark:diagram-comments-load",{}');
+  });
+
+  it("sidecar 更新通知による受動 load では pending 中もコントロールを無効化しない", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const send = injected.slice(
+      injected.indexOf("function send("),
+      injected.indexOf("function setActiveAnchor")
+    );
+
+    expect(injected).toContain("passive:true");
+    expect(injected).toContain(
+      "Boolean(pendingRequestId)&&!(pendingAction&&pendingAction.passive)"
+    );
+    expect(send).toContain("if(!pendingAction.passive)updatePendingControls()");
+  });
+
   it("時刻は元の ISO 値を datetime に保ち、日本語形式へ短く整形する", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
@@ -229,6 +372,19 @@ describe("injectDiagramCommentLayer", () => {
       'element("time",formatCommentTime(message.at),"ark-comment-time")'
     );
     expect(injected).toContain('time.setAttribute("datetime",message.at)');
+  });
+
+  it("author があるメッセージだけ投稿者を控えめに表示し、代替テキストは出さない", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("if(message.author)");
+    expect(injected).toContain(
+      'element("span",message.author,"ark-comment-author")'
+    );
+    expect(injected).toContain(
+      ".ark-comment-state,.ark-comment-time,.ark-comment-author{display:block;color:#64748b;font-size:11px}"
+    );
+    expect(injected).not.toContain("名無し");
   });
 
   it("テキスト node を連結して occurrence を解決し、分割 span を再描画前に戻す", () => {
@@ -298,11 +454,11 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain("disabled");
     expect(injected).toContain("function updatePendingControls()");
     expect(injected).toContain(
-      'querySelectorAll(".ark-comment-create,.ark-comment-resolve,.ark-comment-send,.ark-comment-delete,.ark-comment-input")'
+      'querySelectorAll(".ark-comment-create,.ark-comment-reply,.ark-comment-resolve,.ark-comment-send,.ark-comment-delete,.ark-comment-input")'
     );
     expect(injected).toContain("ark-comment-error");
     expect(injected).toContain("error");
-    expect(injected).not.toContain("ark:diagram-comment-reply");
+    expect(injected).toContain("ark:diagram-comment-reply");
     expect(injected).not.toContain("orphaned");
   });
 
@@ -362,14 +518,14 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).not.toContain("ark:diagram-comment-send-result");
   });
 
-  it("pending 中は → Claude・解決・削除・作成と入力欄をすべて無効化する", () => {
+  it("pending 中は返信・→ Claude・解決・削除・作成と入力欄をすべて無効化する", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
     expect(injected).toContain(
-      'querySelectorAll(".ark-comment-create,.ark-comment-resolve,.ark-comment-send,.ark-comment-delete,.ark-comment-input")'
+      'querySelectorAll(".ark-comment-create,.ark-comment-reply,.ark-comment-resolve,.ark-comment-send,.ark-comment-delete,.ark-comment-input")'
     );
     expect(injected).toContain(
-      'control.disabled=Boolean(pendingRequestId)||control.getAttribute("data-sent")==="true"'
+      'control.disabled=disableForPending||control.getAttribute("data-sent")==="true"'
     );
   });
 
@@ -407,7 +563,7 @@ describe("injectDiagramCommentLayer", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
     expect(injected).toContain(
-      "function render(){\n    clearDeleteConfirmation();"
+      "function render(focusedInput){\n    clearDeleteConfirmation();"
     );
   });
 
@@ -418,21 +574,53 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected.indexOf("if(!port){")).toBeLessThan(
       injected.indexOf("pendingRequestId=requestId()")
     );
-    expect(injected.indexOf("if(pendingRequestId)return")).toBeLessThan(
+    expect(injected.indexOf("if(pendingRequestId){")).toBeLessThan(
       injected.indexOf("if(!port){")
     );
   });
 
+  it("pending 中の操作は対象へ理由を表示して再描画する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const send = injected.slice(
+      injected.indexOf("function send("),
+      injected.indexOf("if(!port){")
+    );
+
+    expect(send).toContain("if(pendingRequestId){");
+    expect(send).toContain('if(type!=="ark:diagram-comments-load"){');
+    expect(send).toContain("type:type");
+    expect(send).toContain("anchorId:payload&&payload.anchorId");
+    expect(send).toContain("threadId:payload&&payload.threadId");
+    expect(send).toContain('message:"更新中です。もう一度お試しください"');
+    expect(send).toContain("render()");
+  });
+
+  it("pending 中の load は理由を表示せず無言で破棄する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const send = injected.slice(
+      injected.indexOf("function send("),
+      injected.indexOf("if(!port){")
+    );
+
+    expect(send).toContain(
+      'if(type!=="ark:diagram-comments-load"){\n        operationError='
+    );
+    expect(send).toContain("      }\n      return;\n    }");
+  });
+
   it("空本文は送信前に拒否し、名前入力と author payload を持たない", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
+    const composer = injected.slice(
+      injected.indexOf("function renderComposer"),
+      injected.indexOf("function updateLayout")
+    );
 
     expect(injected).toContain("bodyInput.value.trim()");
     expect(injected).toContain("コメント本文を入力してください");
-    expect(injected).not.toContain("authorInput");
-    expect(injected).not.toContain("rememberedAuthor");
-    expect(injected).not.toContain("composerDraftAuthor");
-    expect(injected).not.toContain("message.author");
-    expect(injected).not.toContain("ark-comment-author");
+    expect(composer).not.toContain("authorInput");
+    expect(composer).not.toContain("rememberedAuthor");
+    expect(composer).not.toContain("composerDraftAuthor");
+    expect(composer).not.toContain("author");
   });
 
   it("composer の本文だけを render 間で退避・復元し、成功時と閉じる時にクリアする", () => {

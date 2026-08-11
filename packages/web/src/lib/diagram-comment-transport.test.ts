@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   requestDiagramCommentCreate,
   requestDiagramCommentDelete,
+  requestDiagramCommentReply,
   requestDiagramCommentResolve,
   requestDiagramCommentSend,
   requestDiagramCommentsGet,
@@ -35,6 +36,30 @@ function makeSocket(connected = true) {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+it("reply は threadId と本文を送る", async () => {
+  const fake = makeSocket();
+  const pending = requestDiagramCommentReply(
+    fake.socket,
+    "session-1",
+    ".claude/diagrams/a.diagram.html",
+    "th-1",
+    "返信本文"
+  );
+
+  expect(fake.socket.emit).toHaveBeenCalledWith(
+    "diagram:comment:reply",
+    {
+      sessionId: "session-1",
+      relPath: ".claude/diagrams/a.diagram.html",
+      threadId: "th-1",
+      body: "返信本文",
+    },
+    expect.any(Function)
+  );
+  fake.reply(response);
+  await expect(pending).resolves.toEqual(response);
 });
 
 describe("diagram comment transport", () => {
