@@ -54,11 +54,14 @@ trap 'rm -rf "$TMP_TEST_DIR"' EXIT
 HOOK_PROJECT="$TMP_TEST_DIR/hook-project"
 REPO_MAIN="$TMP_TEST_DIR/main-repo"
 REPO_WORKTREE="$TMP_TEST_DIR/work tree"
+REPO_WITHOUT_HEAD="$TMP_TEST_DIR/repo-without-head"
 TEST_HOME="$TMP_TEST_DIR/home"
 REPO_TILDE="$TEST_HOME/tilde-repo"
 MARKER="$HOOK_PROJECT/.claude/push-completed.marker"
+POST_STDERR="$TMP_TEST_DIR/post.stderr"
 
-mkdir -p "$HOOK_PROJECT/.claude/hooks" "$REPO_MAIN" "$REPO_WORKTREE" "$REPO_TILDE"
+mkdir -p "$HOOK_PROJECT/.claude/hooks" "$REPO_MAIN" "$REPO_WORKTREE" \
+  "$REPO_WITHOUT_HEAD" "$REPO_TILDE"
 
 # post hook のマーカー書き込み後の処理だけを無害な fixture に差し替える。
 printf '%s\n' \
@@ -85,6 +88,7 @@ init_repo() {
 init_repo "$REPO_MAIN" "main"
 init_repo "$REPO_WORKTREE" "worktree"
 init_repo "$REPO_TILDE" "tilde"
+git -C "$REPO_WITHOUT_HEAD" init -q
 
 MAIN_HEAD=$(git -C "$REPO_MAIN" rev-parse HEAD)
 WORKTREE_HEAD=$(git -C "$REPO_WORKTREE" rev-parse HEAD)
@@ -103,8 +107,13 @@ run_post() {
     input=$(jq -n --arg command "$command" '{tool_input: {command: $command}}')
   fi
 
-  (cd "$REPO_MAIN" && printf '%s\n' "$input" | \
-    HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$HOOK_PROJECT" bash "$POST_HOOK" >/dev/null)
+  if POST_OUTPUT=$(cd "$REPO_MAIN" && printf '%s\n' "$input" | \
+    HOME="$TEST_HOME" CLAUDE_PROJECT_DIR="$HOOK_PROJECT" bash "$POST_HOOK" \
+    2>"$POST_STDERR"); then
+    POST_STATUS=0
+  else
+    POST_STATUS=$?
+  fi
 }
 
 echo "=== post-push-monitor: push 検出と SHA ==="
@@ -174,6 +183,13 @@ assert_eq "存在しない cd 先は採用せず stdin の cwd に戻る" \
 run_post "git push" "$TMP_TEST_DIR/missing-cwd"
 assert_eq "存在しない stdin の cwd は採用せず hook の cwd に戻る" \
   "$MAIN_HEAD" "$(head -1 "$MARKER" 2>/dev/null)"
+
+run_post "git push" "$REPO_WITHOUT_HEAD"
+assert_marker_absent "HEAD を解決できない場合はマーカーを書かない"
+assert_eq "HEAD を解決できなくても post hook は正常終了する" \
+  "0" "$POST_STATUS"
+assert_eq "HEAD を解決できなくても監視の起動 JSON を出力する" \
+  "PostToolUse" "$(printf '%s\n' "$POST_OUTPUT" | jq -r '.hookSpecificOutput.hookEventName // ""' 2>/dev/null)"
 
 echo ""
 echo "=== pre-bash-guard: マーカー SHA 照合 ==="

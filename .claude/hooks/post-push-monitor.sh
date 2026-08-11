@@ -62,9 +62,15 @@ CHECK_SCRIPT="$PROJECT_DIR/.claude/hooks/check-ci-coderabbit.sh"
 
 if $IS_GIT_PUSH; then
   UNRESOLVED_CONTEXT=""
-  TARGET_REPO_DIR=$(push_marker_resolve_repo_dir "$HOOK_INPUT_CWD" "$COMMAND" "$HOOK_CWD")
-  PUSH_HEAD=$(git -C "$TARGET_REPO_DIR" rev-parse HEAD)
-  printf '%s\n%s\n' "$PUSH_HEAD" "$TARGET_REPO_DIR" > "$PROJECT_DIR/.claude/push-completed.marker"
+  TARGET_REPO_DIR=""
+  PUSH_HEAD=""
+  if ! TARGET_REPO_DIR=$(push_marker_resolve_repo_dir "$HOOK_INPUT_CWD" "$COMMAND" "$HOOK_CWD"); then
+    echo "push-marker: push 対象のリポジトリを解決できないためマーカーを更新しません" >&2
+  elif ! PUSH_HEAD=$(git -C "$TARGET_REPO_DIR" rev-parse HEAD 2>/dev/null); then
+    echo "push-marker: push 対象の HEAD を解決できないためマーカーを更新しません" >&2
+  else
+    printf '%s\n%s\n' "$PUSH_HEAD" "$TARGET_REPO_DIR" > "$PROJECT_DIR/.claude/push-completed.marker"
+  fi
 
   source "$PROJECT_DIR/.claude/hooks/fetch-unresolved-threads.sh"
   fetch_unresolved_threads
