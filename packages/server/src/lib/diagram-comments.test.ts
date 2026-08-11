@@ -38,6 +38,7 @@ const acceptedTimestamps = [
   "2026-08-10T12:18:59Z",
   "2026-08-10T12:18:59.377Z",
   "2026-08-10T21:18:59.377337+09:00",
+  "2026-08-10T07:18:59.377337-05:00",
 ] as const;
 
 function comments(overrides: Record<string, unknown> = {}) {
