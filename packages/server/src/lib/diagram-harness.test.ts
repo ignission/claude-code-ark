@@ -192,6 +192,33 @@ describe("injectHarness", () => {
     expect(out.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(1);
   });
 
+  it("wheel pinch を維持し、2 点タッチだけを同じ deltaY で親へ渡す", () => {
+    const out = injectHarness(
+      page(
+        '<div data-ark-container="graph"><div data-model-id="node"></div></div>'
+      )
+    );
+    const touchHandlers = out.slice(
+      out.indexOf("function handleTouchStart"),
+      out.indexOf('window.addEventListener("touchstart"')
+    );
+
+    expect(out).toContain('addEventListener("wheel"');
+    expect(out).toContain("ctrlKey");
+    expect(out).toContain('addEventListener("touchstart"');
+    expect(out).toContain('addEventListener("touchmove"');
+    expect(out).toContain('addEventListener("touchend"');
+    expect(out).toContain("touches.length!==2");
+    expect(out).toContain("Math.hypot");
+    expect(out).toContain("Math.log");
+    expect(out).toContain("var deltaY=-400*Math.log");
+    expect(out).toContain("pinchDistance=null");
+    expect(touchHandlers.indexOf("touches.length!==2")).toBeLessThan(
+      touchHandlers.indexOf("event.preventDefault()")
+    );
+    expect(out.match(/\{passive:false\}/gu)?.length).toBeGreaterThanOrEqual(3);
+  });
+
   it("group layout kernel を function literal で一度だけ注入する", () => {
     const out = injectHarness(
       page(

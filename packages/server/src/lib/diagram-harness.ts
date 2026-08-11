@@ -3443,6 +3443,33 @@ const RAW_HARNESS_JS = `(function () {
   init();
 
   window.addEventListener("wheel",function(e){if(!e.ctrlKey||!submitPort)return;e.preventDefault();submitPort.postMessage({type:"ark:diagram-pinch",deltaY:e.deltaY})},{passive:false});
+  var pinchDistance=null;
+  function touchDistance(event){
+    var first=event.touches[0];
+    var second=event.touches[1];
+    return Math.hypot(first.clientX-second.clientX,first.clientY-second.clientY);
+  }
+  function resetTouchPinch(){pinchDistance=null;}
+  function handleTouchStart(event){
+    if(event.touches.length!==2){resetTouchPinch();return;}
+    pinchDistance=touchDistance(event);
+    event.preventDefault();
+  }
+  function handleTouchMove(event){
+    if(event.touches.length!==2){resetTouchPinch();return;}
+    var nextDistance=touchDistance(event);
+    event.preventDefault();
+    if(pinchDistance===null){pinchDistance=nextDistance;return;}
+    var deltaY=-400*Math.log(nextDistance/pinchDistance);
+    pinchDistance=nextDistance;
+    if(submitPort&&Number.isFinite(deltaY)&&deltaY!==0){
+      submitPort.postMessage({type:"ark:diagram-pinch",deltaY:deltaY});
+    }
+  }
+  window.addEventListener("touchstart",handleTouchStart,{passive:false});
+  window.addEventListener("touchmove",handleTouchMove,{passive:false});
+  window.addEventListener("touchend",resetTouchPinch,{passive:false});
+  window.addEventListener("touchcancel",resetTouchPinch,{passive:false});
   window.addEventListener("message", function onMessage(event) {
     // event.origin は検証しない: sandbox iframe は不透明オリジンで
     // event.origin === "null" になる（実測済み）。port を持っていること

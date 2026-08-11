@@ -7,6 +7,7 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
   var CARD_GAP=10;
   var RAIL_GAP=12;
   var port=null;
+  var pinchDistance=null;
   var comments={version:1,target:"",threads:[]};
   var pendingRequestId=null;
   var pendingAction=null;
@@ -585,6 +586,32 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     event.preventDefault();
     port.postMessage({type:"ark:diagram-pinch",deltaY:event.deltaY});
   },{passive:false});
+  function touchDistance(event){
+    var first=event.touches[0];
+    var second=event.touches[1];
+    return Math.hypot(first.clientX-second.clientX,first.clientY-second.clientY);
+  }
+  function resetTouchPinch(){pinchDistance=null;}
+  function handleTouchStart(event){
+    if(event.touches.length!==2){resetTouchPinch();return;}
+    pinchDistance=touchDistance(event);
+    event.preventDefault();
+  }
+  function handleTouchMove(event){
+    if(event.touches.length!==2){resetTouchPinch();return;}
+    var nextDistance=touchDistance(event);
+    event.preventDefault();
+    if(pinchDistance===null){pinchDistance=nextDistance;return;}
+    var deltaY=-400*Math.log(nextDistance/pinchDistance);
+    pinchDistance=nextDistance;
+    if(port&&Number.isFinite(deltaY)&&deltaY!==0){
+      port.postMessage({type:"ark:diagram-pinch",deltaY:deltaY});
+    }
+  }
+  window.addEventListener("touchstart",handleTouchStart,{passive:false});
+  window.addEventListener("touchmove",handleTouchMove,{passive:false});
+  window.addEventListener("touchend",resetTouchPinch,{passive:false});
+  window.addEventListener("touchcancel",resetTouchPinch,{passive:false});
   window.addEventListener("scroll",positionCards,{passive:true});
   window.addEventListener("resize",refreshLayout);
   var observer=new ResizeObserver(refreshLayout);

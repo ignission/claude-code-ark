@@ -306,6 +306,31 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).not.toContain("orphaned");
   });
 
+  it("2 点タッチだけを既存 pinch deltaY へ変換し、終了時に状態を戻す", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const touchHandlers = injected.slice(
+      injected.indexOf("function handleTouchStart"),
+      injected.indexOf('window.addEventListener("touchstart"')
+    );
+
+    expect(injected).toContain('addEventListener("wheel"');
+    expect(injected).toContain("ctrlKey");
+    expect(injected).toContain('addEventListener("touchstart"');
+    expect(injected).toContain('addEventListener("touchmove"');
+    expect(injected).toContain('addEventListener("touchend"');
+    expect(injected).toContain("touches.length!==2");
+    expect(injected).toContain("Math.hypot");
+    expect(injected).toContain("Math.log");
+    expect(injected).toContain("var deltaY=-400*Math.log");
+    expect(injected).toContain("pinchDistance=null");
+    expect(touchHandlers.indexOf("touches.length!==2")).toBeLessThan(
+      touchHandlers.indexOf("event.preventDefault()")
+    );
+    expect(
+      injected.match(/\{passive:false\}/gu)?.length
+    ).toBeGreaterThanOrEqual(3);
+  });
+
   it("未解決 card だけに → Claude を出し、既存 result 契約で送信済みにする", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
