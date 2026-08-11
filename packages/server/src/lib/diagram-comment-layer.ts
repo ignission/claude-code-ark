@@ -18,6 +18,7 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
   var deleteConfirmTimer=null;
   var composerDraftBody="";
   var replyDraftBodies=new Map();
+  var expandedThreadIds=new Set();
   // 送信はコメントの状態ではなく、その場の行為なので sidecar へ保存しない。
   // リロードで消えてよいページ内メモリとして threadId だけを覚える。
   var sentThreadIds=new Set();
@@ -165,7 +166,7 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     card.setAttribute("data-thread-id",thread.id);
     card.setAttribute("data-status",thread.status);
     card.setAttribute("data-unresolved",unresolved?"true":"false");
-    card.setAttribute("data-collapsed","true");
+    card.setAttribute("data-collapsed",expandedThreadIds.has(thread.id)?"false":"true");
     var openCount=comments.threads.filter(function(candidate){
       return candidate.anchorId===thread.anchorId&&candidate.status==="open";
     }).length;
@@ -174,7 +175,9 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     badge.setAttribute("aria-label",openCount>0?"未解決コメント "+openCount+" 件":"解決済みコメント");
     badge.addEventListener("click",function(event){
       event.stopPropagation();
-      card.setAttribute("data-collapsed",card.getAttribute("data-collapsed")==="true"?"false":"true");
+      if(expandedThreadIds.has(thread.id))expandedThreadIds.delete(thread.id);
+      else expandedThreadIds.add(thread.id);
+      card.setAttribute("data-collapsed",expandedThreadIds.has(thread.id)?"false":"true");
       positionCards();
     });
     card.appendChild(badge);
@@ -384,8 +387,11 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
   function activateThread(thread){
     selectedAnchorId=thread.anchorId;
     selectedThreadId=thread.id;
+    expandedThreadIds.add(thread.id);
     root.querySelectorAll(".ark-comment-card").forEach(function(card){
-      if(card.getAttribute("data-thread-id")===thread.id)card.setAttribute("data-collapsed","false");
+      if(card.getAttribute("data-thread-id")===thread.id){
+        card.setAttribute("data-collapsed",expandedThreadIds.has(thread.id)?"false":"true");
+      }
     });
     setActiveAnchor(thread.anchorId,thread.id);
     positionCards();
@@ -476,9 +482,26 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     positionCards();
     updateSelectionAdd();
   }
+  function cleanupExpandedThreads(){
+    var existingThreadIds=new Set(comments.threads.map(function(thread){return thread.id;}));
+    expandedThreadIds.forEach(function(threadId){
+      if(!existingThreadIds.has(threadId))expandedThreadIds.delete(threadId);
+    });
+  }
   function render(){
     clearDeleteConfirmation();
     // 無関係な再描画でも確認を押し直す方が、誤削除を防ぐ安全側の挙動になる。
+    var focusedInput=null;
+    var activeElement=document.activeElement;
+    if(activeElement&&root.contains(activeElement)&&activeElement.tagName==="TEXTAREA"){
+      var replyCard=activeElement.closest(".ark-comment-card");
+      focusedInput={
+        threadId:replyCard?replyCard.getAttribute("data-thread-id"):null,
+        selectionStart:activeElement.selectionStart,
+        selectionEnd:activeElement.selectionEnd
+      };
+    }
+    cleanupExpandedThreads();
     renderHighlights();
     root.querySelectorAll(".ark-comment-card,.ark-comment-composer").forEach(function(card){
       root.removeChild(card);
@@ -489,6 +512,26 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     updateLayout();
     setActiveAnchor(selectedAnchorId,selectedThreadId);
     window.requestAnimationFrame(positionCards);
+    if(focusedInput){
+      var restoredInput=null;
+      if(focusedInput.threadId===null){
+        restoredInput=root.querySelector(".ark-comment-composer .ark-comment-input");
+      }else{
+        root.querySelectorAll(".ark-comment-card").forEach(function(card){
+          if(card.getAttribute("data-thread-id")===focusedInput.threadId){
+            restoredInput=card.querySelector(".ark-comment-input");
+          }
+        });
+      }
+      if(restoredInput){
+        var restoredLength=restoredInput.value.length;
+        restoredInput.focus();
+        restoredInput.setSelectionRange(
+          Math.min(focusedInput.selectionStart,restoredLength),
+          Math.min(focusedInput.selectionEnd,restoredLength)
+        );
+      }
+    }
   }
   function commonSelectionAnchor(range){
     var common=range.commonAncestorContainer;

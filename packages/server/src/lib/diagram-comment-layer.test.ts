@@ -182,7 +182,9 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain(
       'setAttribute("data-narrow",narrow?"true":"false")'
     );
-    expect(injected).toContain('setAttribute("data-collapsed","true")');
+    expect(injected).toContain(
+      'card.setAttribute("data-collapsed",expandedThreadIds.has(thread.id)?"false":"true")'
+    );
     expect(injected).toContain(
       'element("button",String(openCount),"ark-comment-badge")'
     );
@@ -237,6 +239,74 @@ describe("injectDiagramCommentLayer", () => {
         'var actions=element("div",undefined,"ark-comment-actions")'
       )
     );
+  });
+
+  it("card の展開状態を集合から復元し、選択された thread も集合へ追加する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const threadRenderer = injected.slice(
+      injected.indexOf("function renderThread"),
+      injected.indexOf("function renderComposer")
+    );
+    const activateThread = injected.slice(
+      injected.indexOf("function activateThread"),
+      injected.indexOf("function wrapThreadQuote")
+    );
+
+    expect(injected).toContain("var expandedThreadIds=new Set()");
+    expect(threadRenderer).toContain(
+      'card.setAttribute("data-collapsed",expandedThreadIds.has(thread.id)?"false":"true")'
+    );
+    expect(threadRenderer).not.toContain(
+      'card.setAttribute("data-collapsed","true")'
+    );
+    expect(activateThread).toContain("expandedThreadIds.add(thread.id)");
+  });
+
+  it("badge のクリックで thread の展開状態を集合上でトグルする", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const threadRenderer = injected.slice(
+      injected.indexOf("function renderThread"),
+      injected.indexOf("function renderComposer")
+    );
+
+    expect(threadRenderer).toContain(
+      "if(expandedThreadIds.has(thread.id))expandedThreadIds.delete(thread.id)"
+    );
+    expect(threadRenderer).toContain("else expandedThreadIds.add(thread.id)");
+    expect(threadRenderer).toContain(
+      'card.setAttribute("data-collapsed",expandedThreadIds.has(thread.id)?"false":"true")'
+    );
+  });
+
+  it("sidecar から消えた thread の展開状態を render 時に掃除する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("function cleanupExpandedThreads()");
+    expect(injected).toContain(
+      "var existingThreadIds=new Set(comments.threads.map(function(thread){return thread.id;}))"
+    );
+    expect(injected).toContain(
+      "if(!existingThreadIds.has(threadId))expandedThreadIds.delete(threadId)"
+    );
+    expect(injected).toContain("cleanupExpandedThreads()");
+  });
+
+  it("render 前後でコメント欄 textarea のフォーカスと選択範囲を復元する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const render = injected.slice(
+      injected.indexOf("function render(){"),
+      injected.indexOf("function commonSelectionAnchor")
+    );
+
+    expect(render).toContain("document.activeElement");
+    expect(render).toContain("root.contains(activeElement)");
+    expect(render).toContain('activeElement.tagName==="TEXTAREA"');
+    expect(render).toContain("selectionStart:activeElement.selectionStart");
+    expect(render).toContain("selectionEnd:activeElement.selectionEnd");
+    expect(render).toContain('activeElement.closest(".ark-comment-card")');
+    expect(render).toContain("focusedInput.threadId");
+    expect(render).toContain("restoredInput.focus()");
+    expect(render).toContain("restoredInput.setSelectionRange(");
   });
 
   it("返信下書きを thread ごとに render 間で保持し成功時だけ消す", () => {
