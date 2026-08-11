@@ -80,13 +80,108 @@ _push_marker_split_shell_command() {
   PUSH_MARKER_SEGMENTS+=("$current")
 }
 
-_push_marker_is_git_push_segment() {
-  local segment
-  segment="$(_push_marker_trim "$1")"
+_push_marker_tokenize_segment() {
+  local input="$1"
+  local token=""
+  local quote=""
+  local escaped=false
+  local started=false
+  local char
+  local i
 
-  [[ "$segment" =~ ^git[[:space:]]+(.+[[:space:]]+)?push([[:space:]]|$) ]] || return 1
-  [[ "$segment" =~ ^git[[:space:]]+(stash|submodule)([[:space:]]|$) ]] && return 1
+  PUSH_MARKER_TOKENS=()
+
+  for ((i = 0; i < ${#input}; i++)); do
+    char="${input:i:1}"
+
+    if $escaped; then
+      token+="$char"
+      escaped=false
+      started=true
+      continue
+    fi
+
+    if [ "$quote" = "'" ]; then
+      if [ "$char" = "'" ]; then
+        quote=""
+      else
+        token+="$char"
+      fi
+      continue
+    fi
+
+    if [ "$quote" = '"' ]; then
+      if [ "$char" = "\\" ]; then
+        escaped=true
+      elif [ "$char" = '"' ]; then
+        quote=""
+      else
+        token+="$char"
+      fi
+      continue
+    fi
+
+    case "$char" in
+      "'"|'"')
+        quote="$char"
+        started=true
+        ;;
+      \\)
+        escaped=true
+        started=true
+        ;;
+      [[:space:]])
+        if $started; then
+          PUSH_MARKER_TOKENS+=("$token")
+          token=""
+          started=false
+        fi
+        ;;
+      *)
+        token+="$char"
+        started=true
+        ;;
+    esac
+  done
+
+  [ -z "$quote" ] && ! $escaped || return 1
+  $started && PUSH_MARKER_TOKENS+=("$token")
   return 0
+}
+
+_push_marker_is_git_push_segment() {
+  local segment token
+  local i=1
+
+  segment="$(_push_marker_trim "$1")"
+  _push_marker_tokenize_segment "$segment" || return 1
+  [ "${#PUSH_MARKER_TOKENS[@]}" -gt 1 ] || return 1
+  [ "${PUSH_MARKER_TOKENS[0]}" = "git" ] || return 1
+
+  while [ "$i" -lt "${#PUSH_MARKER_TOKENS[@]}" ]; do
+    token="${PUSH_MARKER_TOKENS[$i]}"
+    case "$token" in
+      -C|-c|--git-dir|--work-tree|--exec-path|--namespace|--super-prefix|--config-env)
+        i=$((i + 2))
+        ;;
+      --git-dir=*|--work-tree=*|--exec-path=*|--namespace=*|--super-prefix=*|--config-env=*)
+        i=$((i + 1))
+        ;;
+      --)
+        i=$((i + 1))
+        break
+        ;;
+      -*)
+        i=$((i + 1))
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  [ "$i" -lt "${#PUSH_MARKER_TOKENS[@]}" ] || return 1
+  [ "${PUSH_MARKER_TOKENS[$i]}" = "push" ]
 }
 
 push_marker_detect_git_push() {

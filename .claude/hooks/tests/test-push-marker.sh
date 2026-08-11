@@ -131,6 +131,22 @@ assert_marker_absent "cd 先の git stash push は除外する"
 run_post "git submodule foreach git push"
 assert_marker_absent "git submodule 内の push は除外する"
 
+run_post "git -C '$REPO_WORKTREE' stash push -m x"
+assert_marker_absent "git -C <dir> stash push は除外する"
+
+run_post "git -c core.pager=cat --no-pager stash push -m x"
+assert_marker_absent "複数のグローバルオプション後の stash push は除外する"
+
+run_post "git --git-dir '$REPO_MAIN/.git' submodule foreach git push"
+assert_marker_absent "値が分離した --git-dir 後の submodule は除外する"
+
+run_post "git --work-tree='$REPO_MAIN' --exec-path=/tmp submodule foreach git push"
+assert_marker_absent "値が結合したグローバルオプション後の submodule は除外する"
+
+run_post "git -C '$REPO_WORKTREE' push"
+assert_eq "グローバルオプション後の git push は検出する" \
+  "$MAIN_HEAD" "$(head -1 "$MARKER" 2>/dev/null)"
+
 run_post "git push --dry-run" "$REPO_MAIN"
 assert_marker_absent "git push --dry-run はマーカーを書かない"
 
