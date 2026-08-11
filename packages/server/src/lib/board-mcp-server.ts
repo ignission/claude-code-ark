@@ -115,12 +115,27 @@ export type BoardCommentsResult = {
 };
 
 /**
- * 配布物にコピーされた作図規約を読み、dev 実行時だけリポジトリの正本へ
- * フォールバックする。runtimeDir はパス解決テストで差し替えるための引数。
+ * 明示された同梱パス、server の配布物、リポジトリの正本の順で作図規約を読む。
+ * runtimeDir はパス解決テストで差し替えるための引数。
  */
 export async function readDiagramAuthoringGuide(
-  runtimeDir = __dirname
+  runtimeDir = __dirname,
+  authoringGuidePath?: string
 ): Promise<string> {
+  let configuredError: unknown;
+  if (authoringGuidePath) {
+    try {
+      return await fs.promises.readFile(authoringGuidePath, "utf-8");
+    } catch (error) {
+      configuredError = error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new Error(
+          `作図規約を読み出せません: ${authoringGuidePath}: ${getErrorMessage(error)}`
+        );
+      }
+    }
+  }
+
   const distributedPath = path.resolve(
     runtimeDir,
     path.basename(runtimeDir) === "lib" ? ".." : ".",
@@ -146,8 +161,11 @@ export async function readDiagramAuthoringGuide(
   try {
     return await fs.promises.readFile(sourcePath, "utf-8");
   } catch (sourceError) {
+    const configuredDetail = authoringGuidePath
+      ? `同梱指定 ${authoringGuidePath}: ${getErrorMessage(configuredError)} / `
+      : "";
     throw new Error(
-      `作図規約を読み出せません。配布用 ${distributedPath}: ${getErrorMessage(distributedError)} / 正本 ${sourcePath}: ${getErrorMessage(sourceError)}`
+      `作図規約を読み出せません。${configuredDetail}配布用 ${distributedPath}: ${getErrorMessage(distributedError)} / 正本 ${sourcePath}: ${getErrorMessage(sourceError)}`
     );
   }
 }

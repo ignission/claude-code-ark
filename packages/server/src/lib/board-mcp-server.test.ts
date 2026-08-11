@@ -240,6 +240,42 @@ describe("readDiagramAuthoringGuide", () => {
     );
   });
 
+  it("明示された同梱パスを dist と正本より優先して読む", async () => {
+    const { root, runtimeDir } = createRuntimeDir();
+    const configuredPath = path.join(root, "packaged/authoring-guide.md");
+    fs.mkdirSync(path.dirname(configuredPath), { recursive: true });
+    fs.writeFileSync(configuredPath, "packaged guide");
+    fs.writeFileSync(
+      path.resolve(runtimeDir, "../diagram-authoring-guide.md"),
+      "dist guide"
+    );
+    const skillPath = path.join(
+      root,
+      ".claude/skills/diagram-authoring/SKILL.md"
+    );
+    fs.mkdirSync(path.dirname(skillPath), { recursive: true });
+    fs.writeFileSync(skillPath, "source guide");
+
+    await expect(
+      readDiagramAuthoringGuide(runtimeDir, configuredPath)
+    ).resolves.toBe("packaged guide");
+  });
+
+  it("明示された同梱パスが無ければ dist の配布用ガイドへフォールバックする", async () => {
+    const { root, runtimeDir } = createRuntimeDir();
+    fs.writeFileSync(
+      path.resolve(runtimeDir, "../diagram-authoring-guide.md"),
+      "dist guide"
+    );
+
+    await expect(
+      readDiagramAuthoringGuide(
+        runtimeDir,
+        path.join(root, "packaged/authoring-guide.md")
+      )
+    ).resolves.toBe("dist guide");
+  });
+
   it("dist のガイドが無ければリポジトリの SKILL.md を読む", async () => {
     const { root, runtimeDir } = createRuntimeDir();
     const skillPath = path.join(
@@ -260,6 +296,15 @@ describe("readDiagramAuthoringGuide", () => {
     await expect(readDiagramAuthoringGuide(runtimeDir)).rejects.toThrow(
       /diagram-authoring-guide\.md.*SKILL\.md/s
     );
+  });
+
+  it("明示パスを含む全経路で読めなければ理由を含むエラーになる", async () => {
+    const { root, runtimeDir } = createRuntimeDir();
+    const configuredPath = path.join(root, "packaged/authoring-guide.md");
+
+    await expect(
+      readDiagramAuthoringGuide(runtimeDir, configuredPath)
+    ).rejects.toThrow(/packaged\/authoring-guide\.md.*SKILL\.md/s);
   });
 });
 

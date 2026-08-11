@@ -48,6 +48,7 @@ import {
   BoardMcpServer,
   BoardSessionRegistry,
   listDiagramCommentPaths,
+  readDiagramAuthoringGuide,
 } from "./lib/board-mcp-server.js";
 import { rememberFifoEntry } from "./lib/bounded-fifo-map.js";
 import {
@@ -152,6 +153,8 @@ export {
  * - `webStaticDir`: 本番モード時に静的配信する Web ビルド成果物のパス。
  *   未指定時は CLI 起動時の旧パス互換 (`<__dirname>/../../web/dist`) で解決する。
  *   Electron からは `app/web` のような同梱パスを渡す。
+ * - `diagramAuthoringGuidePath`: `.diagram.html` 作図規約の同梱パス。
+ *   Electron packaged 版から明示し、未指定時は server 側の既存解決に委ねる。
  */
 export interface StartServerOptions {
   port?: number;
@@ -161,6 +164,7 @@ export interface StartServerOptions {
   publicDomain?: string;
   allowedRepos?: string[];
   webStaticDir?: string;
+  diagramAuthoringGuidePath?: string;
   /**
    * 将来 Electron から実データ保存ディレクトリ (`app.getPath('userData')`)
    * を渡すための予約オプション。Phase 2 では未使用 (Phase 3 で本実装予定)。
@@ -751,6 +755,8 @@ export async function startServer(
   const boardRegistry = new BoardSessionRegistry();
   const boardMcp = new BoardMcpServer();
   const boardDeps: BoardMcpDeps = {
+    readAuthoringGuide: () =>
+      readDiagramAuthoringGuide(undefined, options.diagramAuthoringGuidePath),
     async listDiagramPaths(worktreePath) {
       const resolved = resolveManagedWorktreeDetailed(worktreePath);
       if (!resolved.ok) {

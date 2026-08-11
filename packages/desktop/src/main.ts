@@ -206,6 +206,18 @@ function resolveWebStaticDir(): string | undefined {
   return path.resolve(__dirname, "../../web/dist");
 }
 
+/**
+ * `.app` の Resources/ に同梱された作図規約のパスを解決する。
+ *
+ * packaged 時だけ electron-builder の `extraResources` による配置先を返す。
+ * dev / unpackaged では server 側の既存解決（dist 隣接 → リポジトリ正本）に
+ * 委ねるため undefined を返す。
+ */
+export function resolveDiagramAuthoringGuidePath(): string | undefined {
+  if (!app.isPackaged) return undefined;
+  return path.join(process.resourcesPath, "app", "diagram-authoring-guide.md");
+}
+
 async function bootstrap(): Promise<void> {
   // === fail-fast 前提条件チェック (bootstrap 副作用前) ===
   // 配布物不整合 (.app 同梱 claude binary 欠落) は ここで検知する。
@@ -414,6 +426,7 @@ async function bootstrap(): Promise<void> {
   serverHandle = await startServer({
     port,
     webStaticDir: resolveWebStaticDir(),
+    diagramAuthoringGuidePath: resolveDiagramAuthoringGuidePath(),
     // Electron は ephemeral port で毎回 port が変わるため、
     // `/tmp/ark-tunnel-state.json` の port を信用して proxy すると
     // 存在しない port を指してリモートアクセスが切れる。
