@@ -127,6 +127,12 @@ interface MobileLayoutProps {
     relPath: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
+  replyDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string,
+    body: string
+  ) => Promise<DiagramCommentsResponse>;
   deleteDiagramComment: (
     sessionId: string,
     relPath: string,
@@ -208,6 +214,7 @@ export function MobileLayout({
   getDiagramComments,
   createDiagramComment,
   resolveDiagramComment,
+  replyDiagramComment,
   deleteDiagramComment,
   sendDiagramComment,
   beaconMessages,
@@ -416,6 +423,7 @@ export function MobileLayout({
                 deleteDiagram={deleteDiagram}
                 getDiagramComments={getDiagramComments}
                 createDiagramComment={createDiagramComment}
+                replyDiagramComment={replyDiagramComment}
                 resolveDiagramComment={resolveDiagramComment}
                 deleteDiagramComment={deleteDiagramComment}
                 sendDiagramComment={sendDiagramComment}

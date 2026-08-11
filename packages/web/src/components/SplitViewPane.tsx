@@ -62,6 +62,12 @@ interface SplitViewPaneProps {
     relPath: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
+  replyDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string,
+    body: string
+  ) => Promise<DiagramCommentsResponse>;
   deleteDiagramComment: (
     sessionId: string,
     relPath: string,
@@ -306,6 +312,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                 deleteDiagram={props.deleteDiagram}
                 getDiagramComments={props.getDiagramComments}
                 createDiagramComment={props.createDiagramComment}
+                replyDiagramComment={props.replyDiagramComment}
                 resolveDiagramComment={props.resolveDiagramComment}
                 deleteDiagramComment={props.deleteDiagramComment}
                 sendDiagramComment={props.sendDiagramComment}

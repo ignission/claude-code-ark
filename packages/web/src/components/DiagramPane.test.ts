@@ -74,6 +74,12 @@ describe("forwardDiagramCommentPortRequest", () => {
   const requests: DiagramCommentPortRequest[] = [
     { type: "ark:diagram-comments-load", requestId: "req-load" },
     {
+      type: "ark:diagram-comment-reply",
+      requestId: "req-reply",
+      threadId: "th-1",
+      body: "返信本文",
+    },
+    {
       type: "ark:diagram-comment-create",
       requestId: "req-create",
       anchorId: "s1",
@@ -113,6 +119,7 @@ describe("forwardDiagramCommentPortRequest", () => {
       relPath: REL_PATH,
       getDiagramComments: vi.fn(async () => response),
       createDiagramComment: vi.fn(async () => response),
+      replyDiagramComment: vi.fn(async () => response),
       deleteDiagramComment: vi.fn(async () => response),
       resolveDiagramComment: vi.fn(async () => response),
       sendDiagramComment: vi.fn(async () => response),
@@ -122,7 +129,7 @@ describe("forwardDiagramCommentPortRequest", () => {
     };
   }
 
-  it("load/create/resolve/delete/send を現在の session/path と検証済み payload で中継する", async () => {
+  it("load/create/reply/resolve/delete/send を現在の session/path と検証済み payload で中継する", async () => {
     const deps = dependencies();
 
     for (const request of requests) {
@@ -137,6 +144,12 @@ describe("forwardDiagramCommentPortRequest", () => {
       "本文",
       "選択した本文",
       1
+    );
+    expect(deps.replyDiagramComment).toHaveBeenCalledWith(
+      "session-1",
+      REL_PATH,
+      "th-1",
+      "返信本文"
     );
     expect(deps.resolveDiagramComment).toHaveBeenCalledWith(
       "session-1",
@@ -155,6 +168,7 @@ describe("forwardDiagramCommentPortRequest", () => {
     );
     expect(deps.reply.mock.calls.map(call => call[0].requestId)).toEqual([
       "req-load",
+      "req-reply",
       "req-create",
       "req-resolve",
       "req-delete",

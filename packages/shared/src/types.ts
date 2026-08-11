@@ -412,6 +412,13 @@ export interface DiagramCommentDeleteRequest {
   threadId: string;
 }
 
+export interface DiagramCommentReplyRequest {
+  sessionId: string;
+  relPath: string;
+  threadId: string;
+  body: string;
+}
+
 export type DiagramCommentsResponse =
   | { ok: true; comments: DiagramCommentsFile }
   | {
@@ -472,6 +479,12 @@ export interface ServerToClientEvents {
 
   /** 監視中の図ファイルが更新された。クライアントは再読込する */
   "diagram:updated": (data: { worktreePath: string; relPath: string }) => void;
+
+  /** 監視中のコメント sidecar が更新された。iframe はコメントだけを再取得する */
+  "diagram:comments-updated": (data: {
+    worktreePath: string;
+    relPath: string;
+  }) => void;
 
   /** 管理対象の図ファイルが削除された。絶対 path は通知しない */
   "diagram:deleted": (data: { sessionId: string; relPath: string }) => void;
@@ -749,6 +762,12 @@ export interface ClientToServerEvents {
       anchorOccurrence?: number;
       body: string;
     },
+    callback: (response: DiagramCommentsResponse) => void
+  ) => void;
+
+  /** 既存の文書コメントへ人間の返信を追加する */
+  "diagram:comment:reply": (
+    data: DiagramCommentReplyRequest,
     callback: (response: DiagramCommentsResponse) => void
   ) => void;
 

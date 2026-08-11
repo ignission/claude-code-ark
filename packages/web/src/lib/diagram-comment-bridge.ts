@@ -3,6 +3,12 @@ import type { DiagramCommentsFile, DiagramCommentsResponse } from "@ark/shared";
 export type DiagramCommentPortRequest =
   | { type: "ark:diagram-comments-load"; requestId: string }
   | {
+      type: "ark:diagram-comment-reply";
+      requestId: string;
+      threadId: string;
+      body: string;
+    }
+  | {
       type: "ark:diagram-comment-create";
       requestId: string;
       anchorId: string;
@@ -95,6 +101,7 @@ export function parseDiagramCommentPortRequest(
     !isRecord(value) ||
     (value.type !== "ark:diagram-comments-load" &&
       value.type !== "ark:diagram-comment-create" &&
+      value.type !== "ark:diagram-comment-reply" &&
       value.type !== "ark:diagram-comment-resolve" &&
       value.type !== "ark:diagram-comment-delete" &&
       value.type !== "ark:diagram-comment-send") ||
@@ -172,6 +179,31 @@ export function parseDiagramCommentPortRequest(
       request.anchorOccurrence = value.anchorOccurrence as number;
     }
     return { kind: "request", request };
+  }
+
+  if (value.type === "ark:diagram-comment-reply") {
+    const allowedKeys = ["type", "requestId", "threadId", "body"];
+    const unexpected = unknownKeys(value, allowedKeys);
+    if (unexpected.length > 0) {
+      return invalid(
+        `コメント返信要求の不明なフィールド: ${summarizeUnknownKeys(unexpected)}`
+      );
+    }
+    if (!validString(value.threadId, 256)) {
+      return invalid("スレッド ID（threadId）が不正です");
+    }
+    if (!validString(value.body, 4000)) {
+      return invalid("コメント本文（body）が不正です。本文を入力してください");
+    }
+    return {
+      kind: "request",
+      request: {
+        type: value.type,
+        requestId: value.requestId,
+        threadId: value.threadId,
+        body: value.body,
+      },
+    };
   }
 
   const unexpected = unknownKeys(value, ["type", "requestId", "threadId"]);

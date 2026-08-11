@@ -61,6 +61,12 @@ export interface DiagramPaneProps {
     relPath: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
+  replyDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string,
+    body: string
+  ) => Promise<DiagramCommentsResponse>;
   deleteDiagramComment: (
     sessionId: string,
     relPath: string,
@@ -273,6 +279,12 @@ interface DiagramCommentForwardDeps {
     relPath: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
+  replyDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string,
+    body: string
+  ) => Promise<DiagramCommentsResponse>;
   deleteDiagramComment: (
     sessionId: string,
     relPath: string,
@@ -341,6 +353,13 @@ export async function forwardDiagramCommentPortRequest(
           deps.relPath,
           request.threadId
         );
+      } else if (request.type === "ark:diagram-comment-reply") {
+        response = await deps.replyDiagramComment(
+          deps.sessionId,
+          deps.relPath,
+          request.threadId,
+          request.body
+        );
       } else if (request.type === "ark:diagram-comment-delete") {
         response = await deps.deleteDiagramComment(
           deps.sessionId,
@@ -394,6 +413,7 @@ export function DiagramPane({
   deleteDiagram,
   getDiagramComments,
   createDiagramComment,
+  replyDiagramComment,
   resolveDiagramComment,
   deleteDiagramComment,
   sendDiagramComment,
@@ -738,6 +758,7 @@ export function DiagramPane({
           relPath,
           getDiagramComments,
           createDiagramComment,
+          replyDiagramComment,
           resolveDiagramComment,
           deleteDiagramComment,
           sendDiagramComment,
@@ -770,6 +791,7 @@ export function DiagramPane({
       handleSubmit,
       html,
       relPath,
+      replyDiagramComment,
       resolveDiagramComment,
       sendDiagramComment,
       sessionId,

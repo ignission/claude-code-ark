@@ -85,6 +85,7 @@ export default function Dashboard() {
     deleteDiagram,
     getDiagramComments,
     createDiagramComment,
+    replyDiagramComment,
     resolveDiagramComment,
     deleteDiagramComment,
     sendDiagramComment,
@@ -660,6 +661,7 @@ export default function Dashboard() {
           deleteDiagram={deleteDiagram}
           getDiagramComments={getDiagramComments}
           createDiagramComment={createDiagramComment}
+          replyDiagramComment={replyDiagramComment}
           resolveDiagramComment={resolveDiagramComment}
           deleteDiagramComment={deleteDiagramComment}
           sendDiagramComment={sendDiagramComment}
@@ -828,6 +830,7 @@ export default function Dashboard() {
                         deleteDiagram={deleteDiagram}
                         getDiagramComments={getDiagramComments}
                         createDiagramComment={createDiagramComment}
+                        replyDiagramComment={replyDiagramComment}
                         resolveDiagramComment={resolveDiagramComment}
                         deleteDiagramComment={deleteDiagramComment}
                         sendDiagramComment={sendDiagramComment}

@@ -157,6 +157,7 @@ export function MobileSessionView({
   deleteDiagram,
   getDiagramComments,
   createDiagramComment,
+  replyDiagramComment,
   resolveDiagramComment,
   deleteDiagramComment,
   sendDiagramComment,
@@ -789,6 +790,7 @@ export function MobileSessionView({
           deleteDiagram={deleteDiagram}
           getDiagramComments={getDiagramComments}
           createDiagramComment={createDiagramComment}
+          replyDiagramComment={replyDiagramComment}
           resolveDiagramComment={resolveDiagramComment}
           deleteDiagramComment={deleteDiagramComment}
           sendDiagramComment={sendDiagramComment}

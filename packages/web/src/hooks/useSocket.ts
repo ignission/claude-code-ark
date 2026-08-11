@@ -38,6 +38,7 @@ import { toast } from "sonner";
 import {
   requestDiagramCommentCreate,
   requestDiagramCommentDelete,
+  requestDiagramCommentReply,
   requestDiagramCommentResolve,
   requestDiagramCommentSend,
   requestDiagramCommentsGet,
@@ -110,6 +111,12 @@ interface UseSocketReturn {
     sessionId: string,
     relPath: string,
     threadId: string
+  ) => Promise<DiagramCommentsResponse>;
+  replyDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string,
+    body: string
   ) => Promise<DiagramCommentsResponse>;
   deleteDiagramComment: (
     sessionId: string,
@@ -1327,6 +1334,18 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
+  const replyDiagramComment = useCallback(
+    (sessionId: string, relPath: string, threadId: string, body: string) =>
+      requestDiagramCommentReply(
+        socketRef.current,
+        sessionId,
+        relPath,
+        threadId,
+        body
+      ),
+    []
+  );
+
   const deleteDiagramComment = useCallback(
     (sessionId: string, relPath: string, threadId: string) =>
       requestDiagramCommentDelete(
@@ -1773,6 +1792,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     deleteDiagram,
     getDiagramComments,
     createDiagramComment,
+    replyDiagramComment,
     resolveDiagramComment,
     deleteDiagramComment,
     sendDiagramComment,
