@@ -267,6 +267,12 @@ fi
 if $IS_PR_COMMENT; then
   # push完了マーカーの確認（60秒以内に作成されたものが必要）
   PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+  HOOK_INPUT_CWD=$(echo "$STDIN_INPUT" | jq -r '.cwd // ""' 2>/dev/null) || HOOK_INPUT_CWD=""
+  HOOK_CWD=$(pwd -P)
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  # shellcheck source=./push-marker-utils.sh
+  source "$SCRIPT_DIR/push-marker-utils.sh"
+  TARGET_REPO_DIR=$(push_marker_resolve_repo_dir "$HOOK_INPUT_CWD" "$COMMAND" "$HOOK_CWD")
   MARKER="$PROJECT_DIR/.claude/push-completed.marker"
   if [ ! -f "$MARKER" ]; then
     echo "BLOCKED: push完了前にCodeRabbit返信はできません" >&2
@@ -290,7 +296,7 @@ if $IS_PR_COMMENT; then
   fi
   # push時のcommit SHAと現在のHEADが一致するか検証（バックグラウンドpush対策）
   MARKER_HEAD=$(head -1 "$MARKER" 2>/dev/null) || MARKER_HEAD=""
-  CURRENT_HEAD=$(git rev-parse HEAD 2>/dev/null) || CURRENT_HEAD=""
+  CURRENT_HEAD=$(git -C "$TARGET_REPO_DIR" rev-parse HEAD 2>/dev/null) || CURRENT_HEAD=""
   if [ -n "$CURRENT_HEAD" ] && [ "$MARKER_HEAD" != "$CURRENT_HEAD" ]; then
     echo "BLOCKED: push後に新しいコミットが追加されています" >&2
     echo "  WHY: マーカーのSHA(${MARKER_HEAD:0:8})と現在のHEAD(${CURRENT_HEAD:0:8})が不一致" >&2
