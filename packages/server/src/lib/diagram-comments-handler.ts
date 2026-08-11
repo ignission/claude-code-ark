@@ -1,5 +1,6 @@
 import type { DiagramCommentsResponse } from "@ark/shared";
 import {
+  appendDiagramCommentMessage,
   createDiagramComment,
   deleteDiagramComment,
   readDiagramCommentsFile,
@@ -22,6 +23,7 @@ type CreatePayload = GetPayload & {
   body: string;
 };
 type ResolvePayload = GetPayload & { threadId: string };
+type ReplyPayload = ResolvePayload & { body: string };
 
 export interface DiagramCommentsHandlerDeps {
   getSession: (
@@ -39,6 +41,12 @@ export interface DiagramCommentsHandlerDeps {
     body: string,
     anchorQuote?: string,
     anchorOccurrence?: number
+  ) => Promise<DiagramCommentsResponse>;
+  replyComment: (
+    worktreeReal: string,
+    relPath: string,
+    threadId: string,
+    input: { body: string; author?: string }
   ) => Promise<DiagramCommentsResponse>;
   resolveComment: (
     worktreeReal: string,
@@ -79,6 +87,7 @@ export async function getDiagramCommentsForDoc(
 export const diagramCommentsStore = {
   getComments: getDiagramCommentsForDoc,
   createComment: createDiagramComment,
+  replyComment: appendDiagramCommentMessage,
   deleteComment: deleteDiagramComment,
   resolveComment: resolveDiagramComment,
 };
@@ -189,6 +198,27 @@ function parseResolvePayload(value: unknown): ResolvePayload | null {
     sessionId: value.sessionId,
     relPath: value.relPath,
     threadId: value.threadId,
+  };
+}
+
+function parseReplyPayload(value: unknown): ReplyPayload | null {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ["sessionId", "relPath", "threadId", "body"]) ||
+    !validString(value.sessionId, MAX_SESSION_OR_PATH_LENGTH) ||
+    !validString(value.relPath, MAX_SESSION_OR_PATH_LENGTH) ||
+    !validString(value.threadId, MAX_ANCHOR_OR_ID_LENGTH) ||
+    typeof value.body !== "string"
+  ) {
+    return null;
+  }
+  const body = value.body.trim();
+  if (!validString(body, MAX_BODY_LENGTH)) return null;
+  return {
+    sessionId: value.sessionId,
+    relPath: value.relPath,
+    threadId: value.threadId,
+    body,
   };
 }
 
@@ -325,6 +355,21 @@ export async function handleDiagramCommentResolve(
   );
 }
 
+export async function handleDiagramCommentReply(
+  deps: DiagramCommentsHandlerDeps,
+  data: unknown
+): Promise<DiagramCommentsResponse> {
+  const payload = parseReplyPayload(data);
+  if (payload === null) return badRequest();
+  const context = requestContext(deps, payload);
+  if (!context.valid) return context.response;
+  return containStoreError(() =>
+    deps.replyComment(context.worktreeReal, context.relPath, payload.threadId, {
+      body: payload.body,
+    })
+  );
+}
+
 export async function handleDiagramCommentDelete(
   deps: DiagramCommentsHandlerDeps,
   data: unknown
@@ -412,6 +457,7 @@ export function createDiagramCommentsSocketHandlers(
 ): {
   get: SocketHandler;
   create: SocketHandler;
+  reply: SocketHandler;
   resolve: SocketHandler;
   delete: SocketHandler;
   send: SocketHandler;
@@ -419,6 +465,7 @@ export function createDiagramCommentsSocketHandlers(
   return {
     get: createSocketHandler(data => handleDiagramCommentsGet(deps, data)),
     create: createSocketHandler(data => handleDiagramCommentCreate(deps, data)),
+    reply: createSocketHandler(data => handleDiagramCommentReply(deps, data)),
     resolve: createSocketHandler(data =>
       handleDiagramCommentResolve(deps, data)
     ),

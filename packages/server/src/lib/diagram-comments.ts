@@ -625,6 +625,90 @@ export async function createDiagramComment(
   });
 }
 
+/** 最新の doc/sidecar を再検証して既存 thread へメッセージを追加する。 */
+export async function appendDiagramCommentMessage(
+  worktreeReal: string,
+  relPath: string,
+  threadId: string,
+  input: { body: string; author?: string }
+): Promise<DiagramCommentsResponse> {
+  const resolved = resolveDiagramCommentsPath(worktreeReal, relPath);
+  if (!resolved.ok) return resolved;
+  return withMutationQueue(resolved.commentsAbsPath, async () => {
+    const diagram = await readCurrentDoc(worktreeReal, relPath);
+    if (!diagram.ok) return diagram;
+    const current = await readDiagramCommentsFile(worktreeReal, relPath);
+    if (!current.ok) return current;
+    const thread = current.comments.threads.find(item => item.id === threadId);
+    if (thread === undefined) {
+      return {
+        ok: false,
+        code: "THREAD_NOT_FOUND",
+        error: `コメント thread が見つかりません: ${threadId}`,
+      };
+    }
+    if (!diagram.model.nodes.some(node => node.id === thread.anchorId)) {
+      return {
+        ok: false,
+        code: "ANCHOR_NOT_FOUND",
+        error: `コメント anchor が見つかりません: ${thread.anchorId}`,
+      };
+    }
+    if (thread.status === "resolved") {
+      return {
+        ok: false,
+        code: "BAD_REQUEST",
+        error: "解決済みのコメントスレッドには返信できません",
+      };
+    }
+    const validBody = boundedString(
+      input.body,
+      "body",
+      DIAGRAM_COMMENTS_MAX_BODY_LENGTH
+    );
+    if (!validBody.ok) {
+      return { ok: false, code: "BAD_REQUEST", error: validBody.error };
+    }
+    const validAuthor =
+      input.author === undefined
+        ? null
+        : boundedString(
+            input.author,
+            "author",
+            DIAGRAM_COMMENTS_MAX_AUTHOR_LENGTH
+          );
+    if (validAuthor !== null && !validAuthor.ok) {
+      return { ok: false, code: "BAD_REQUEST", error: validAuthor.error };
+    }
+
+    const message: DiagramCommentMessage = {
+      id: `m-${randomUUID()}`,
+      at: new Date().toISOString(),
+      body: input.body,
+      ...(validAuthor?.ok ? { author: validAuthor.value } : {}),
+    };
+    const next: DiagramCommentsFile = {
+      ...current.comments,
+      threads: current.comments.threads.map(item =>
+        item.id === threadId
+          ? { ...item, messages: [...item.messages, message] }
+          : item
+      ),
+    };
+    if (
+      Buffer.byteLength(serializeDiagramComments(next), "utf8") >
+      DIAGRAM_COMMENTS_MAX_BYTES
+    ) {
+      return {
+        ok: false,
+        code: "BAD_REQUEST",
+        error: "コメント sidecar は 1MiB までです",
+      };
+    }
+    return writeDiagramCommentsFile(resolved, next);
+  });
+}
+
 /** 最新の doc/sidecar を再検証して thread を解決済みにする。 */
 export async function resolveDiagramComment(
   worktreeReal: string,
