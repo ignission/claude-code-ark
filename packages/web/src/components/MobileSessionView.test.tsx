@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
+  getViewModeForActiveTab,
   normalizeMobileSessionViewMode,
   writeSavedViewMode,
 } from "../lib/mobile-session-view-mode";
@@ -33,6 +34,21 @@ describe("mobile session view mode", () => {
       "ark-mobile-session-view",
       "board"
     );
+  });
+
+  it.each([
+    { activeTabType: "diagram", expected: "board", label: "図" },
+    { activeTabType: "file", expected: "terminal", label: "ファイル" },
+    { activeTabType: "html", expected: "terminal", label: "HTML" },
+  ] as const)(
+    "active な $label タブに合わせて $expected モードへ切り替える",
+    ({ activeTabType, expected }) => {
+      expect(getViewModeForActiveTab(activeTabType)).toBe(expected);
+    }
+  );
+
+  it("terminal タブでは表示モードを変えない", () => {
+    expect(getViewModeForActiveTab("terminal")).toBeNull();
   });
 
   it("現在モードが分かる 3 択トグルを表示する", () => {

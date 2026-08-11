@@ -53,6 +53,7 @@ import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { useVisualViewport } from "../hooks/useVisualViewport";
 import {
+  getViewModeForActiveTab,
   type MobileSessionViewMode,
   readSavedViewMode,
   writeSavedViewMode,
@@ -169,18 +170,12 @@ export function MobileSessionView({
     setViewMode(next);
   }, []);
 
-  // ファイル/HTML/キャンバスのビューワータブが開かれた（active が terminal 以外に
-  // なった）ら、ターミナルモードへ自動で切り替えてビューワーを可視化する。
-  // 会話内のファイルリンクや「キャンバスで開く」タップに追従する。
+  // 図タブが active になったら board モードへ切り替え、board_open とタブ選択の
+  // 両方に追従する。他のビューワータブは従来どおり terminal モードで可視化する。
   const activeTabType = tabs[activeTabIndex]?.type;
   useEffect(() => {
-    if (
-      activeTabType &&
-      activeTabType !== "terminal" &&
-      activeTabType !== "diagram"
-    ) {
-      setViewMode("terminal");
-    }
+    const nextViewMode = getViewModeForActiveTab(activeTabType);
+    if (nextViewMode) setViewMode(nextViewMode);
   }, [activeTabType]);
   // 全ての添付ファイル（画像/非画像）を共通でプレビューダイアログに集約する
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
