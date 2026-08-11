@@ -19,6 +19,7 @@
 import fs from "node:fs";
 import { createServer, type Server as HttpServer } from "node:http";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   DiagramCommentsResponse,
   DiagramCommentThread,
@@ -29,6 +30,10 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import express from "express";
 import { z } from "zod";
 import { getErrorMessage } from "./errors.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const AUTHORING_GUIDE_FILENAME = "diagram-authoring-guide.md";
+const AUTHORING_GUIDE_SOURCE_PATH = ".claude/skills/diagram-authoring/SKILL.md";
 
 /** text content だけの CallToolResult を生成するヘルパー */
 function textResult(text: string) {
@@ -72,6 +77,8 @@ export interface BoardMcpDeps {
     worktreePath: string,
     relPath: string
   ): Promise<DiagramCommentsResponse>;
+  /** `.diagram.html` の作図・文書規約を返す。 */
+  readAuthoringGuide?(): Promise<string>;
 }
 
 export interface BoardOpenInput {
@@ -106,6 +113,62 @@ export type BoardCommentsResult = {
     | { path: string; error: string }
   >;
 };
+
+/**
+ * 明示された同梱パス、server の配布物、リポジトリの正本の順で作図規約を読む。
+ * runtimeDir はパス解決テストで差し替えるための引数。
+ */
+export async function readDiagramAuthoringGuide(
+  runtimeDir = __dirname,
+  authoringGuidePath?: string
+): Promise<string> {
+  let configuredError: unknown;
+  if (authoringGuidePath) {
+    try {
+      return await fs.promises.readFile(authoringGuidePath, "utf-8");
+    } catch (error) {
+      configuredError = error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new Error(
+          `作図規約を読み出せません: ${authoringGuidePath}: ${getErrorMessage(error)}`
+        );
+      }
+    }
+  }
+
+  const distributedPath = path.resolve(
+    runtimeDir,
+    path.basename(runtimeDir) === "lib" ? ".." : ".",
+    AUTHORING_GUIDE_FILENAME
+  );
+  let distributedError: unknown;
+  try {
+    return await fs.promises.readFile(distributedPath, "utf-8");
+  } catch (error) {
+    distributedError = error;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new Error(
+        `作図規約を読み出せません: ${distributedPath}: ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  const sourcePath = path.resolve(
+    runtimeDir,
+    "../../../..",
+    AUTHORING_GUIDE_SOURCE_PATH
+  );
+  try {
+    return await fs.promises.readFile(sourcePath, "utf-8");
+  } catch (sourceError) {
+    const configuredDetail = authoringGuidePath
+      ? `同梱指定 ${authoringGuidePath}: ${getErrorMessage(configuredError)} / `
+      : "";
+    throw new Error(
+      `作図規約を読み出せません。${configuredDetail}配布用 ${distributedPath}: ${getErrorMessage(distributedError)} / 正本 ${sourcePath}: ${getErrorMessage(sourceError)}`
+    );
+  }
+}
 
 /** board_open の純ロジック（HTTP/MCP から分離してテスト可能にする）。 */
 export async function handleBoardOpen(
@@ -274,6 +337,27 @@ export function createBoardMcpServer(
             diagrams: [],
             error: `board_comments 失敗: ${getErrorMessage(error)}`,
           })
+        );
+      }
+    }
+  );
+
+  server.registerTool(
+    "board_authoring_guide",
+    {
+      description:
+        ".diagram.html を書く前に必ず呼ぶ。図・文書の生成規約（type と kind の語彙、data-ark-id の対応、label の書き方、figure のキャプション）を返す。",
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        const guide = await (
+          deps.readAuthoringGuide ?? readDiagramAuthoringGuide
+        )();
+        return textResult(guide);
+      } catch (error) {
+        return textResult(
+          `board_authoring_guide 失敗: ${getErrorMessage(error)}`
         );
       }
     }

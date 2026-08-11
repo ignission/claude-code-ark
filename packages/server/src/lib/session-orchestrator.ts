@@ -197,16 +197,18 @@ export class SessionOrchestrator extends EventEmitter {
       { mode: 0o600 }
     );
     tmuxManager.setClaudeMcpConfigPath(cfgPath);
-    // 図解要求でモデルが .diagram.html を書いて board_open を呼ぶよう促す
-    // （description だけでは弱いため）。旧 board_write（Excalidraw 直接書き込み）
-    // は B-1 で撤去済み。生成規約自体は diagram-authoring skill が持つ。
+    // ボードの図・文書機能に加え、コメント機能の存在と、コメントを受けて
+    // 修正・再表示する往復手順を全セッションへ伝える。
+    // tmux send-keys に -l がなく、改行は Enter キーとして解釈されるため、
+    // append-system-prompt に渡す文字列は必ず 1 行にする。
     tmuxManager.setClaudeAppendSystemPrompt(
-      "あなたはこのセッションのボードペインに図ファイルを開かせる board_open ツールを持っている。" +
-        "ユーザーが「図解して」「図で説明して」「ボードに描いて」「フロー図/構成図にして」等、" +
-        "図解・作図・可視化・図示を求めたら、チャットに mermaid や ASCII 図を出すのではなく、" +
-        `${DIAGRAM_DIR}/ 配下に *.diagram.html を書くこと（作図規約は diagram-authoring skill を参照）。` +
-        "書き込む直前に parent directory が存在しない場合だけ作成し、" +
-        "書いた後は必ず board_open ツールでこのセッションのボードペインに開かせること。"
+      [
+        "このセッションにはボードペインがあり、図と文書を表示できる。board_open（ボードに開く）、board_comments（人間が付けたコメントを読む）、board_authoring_guide（作図・文書規約を読む）の 3 つのツールを持っている。",
+        `ユーザーが「図解して」「図で説明して」「フロー図/構成図にして」等、図解・作図・可視化を求めたら、チャットに mermaid や ASCII 図を出すのではなく、${DIAGRAM_DIR}/ 配下に *.diagram.html を書き、board_open で開くこと。`,
+        '設計メモ・仕様・調査結果など「人に読ませる文書」も同じ形式で書ける。model の type を "doc" にすると、ユーザーが本文をテキスト選択してコメントを付けられる、レビュー可能な文書になる。',
+        "ユーザーが「コメントした」「図を見て」等と言ったら、board_comments で未解決コメントを読み、引用された箇所を直してから board_open で開き直すこと。",
+        "書き込む直前に parent directory が存在しない場合だけ作成する。.diagram.html を書く前に必ず board_authoring_guide で規約を取得し、その内容に従う。",
+      ].join(" ")
     );
     return { token, cfgPath };
   }

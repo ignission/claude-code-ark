@@ -1,5 +1,9 @@
 import { build } from "esbuild";
-import { readFile } from "node:fs/promises";
+import { copyFile, readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const packageDir = path.dirname(fileURLToPath(import.meta.url));
 
 // package.json の dependencies を読み込み、@ark/* (ワークスペース内パッケージ) を除外して external とする。
 // これにより @ark/shared 等のワークスペース依存はバンドルに inline され、
@@ -23,3 +27,11 @@ await build({
   external: externals,
   outExtension: { ".js": ".js" },
 });
+
+await copyFile(
+  path.resolve(
+    packageDir,
+    "../../.claude/skills/diagram-authoring/SKILL.md",
+  ),
+  path.resolve(packageDir, "dist/diagram-authoring-guide.md"),
+);

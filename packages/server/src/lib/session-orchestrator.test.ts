@@ -650,11 +650,13 @@ describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
     createdWorktrees = [];
   });
 
-  it("setBoardMcp 未呼び出しなら setClaudeMcpConfigPath(null) が呼ばれ、mcp-config は書かれない", async () => {
+  it("setBoardMcp 未呼び出しなら MCP config と append system prompt が null になる", async () => {
     await orchestrator.startSession("wt-1", "/path/to/work", "/repo");
 
     expect(mockedTmux.setClaudeMcpConfigPath).toHaveBeenCalledWith(null);
     expect(mockedTmux.setClaudeMcpConfigPath).toHaveBeenCalledTimes(1);
+    expect(mockedTmux.setClaudeAppendSystemPrompt).toHaveBeenCalledWith(null);
+    expect(mockedTmux.setClaudeAppendSystemPrompt).toHaveBeenCalledTimes(1);
   });
 
   it("setBoardMcp 後の新規セッションで per-session token を生成し、mcp-config を書いて registry に登録する", async () => {
@@ -695,7 +697,7 @@ describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
     expect(mode).toBe(0o600);
   });
 
-  it("新規セッションの作図 prompt は正準 directory を書込時だけ作り、書込後に board_open するよう指示する", async () => {
+  it("新規セッションの prompt はボード上の図・文書とコメントの往復手順を案内する", async () => {
     const registry = new BoardSessionRegistry();
     orchestrator.setBoardMcp(fakeBoardMcp, registry);
 
@@ -703,12 +705,20 @@ describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
 
     const prompt =
       mockedTmux.setClaudeAppendSystemPrompt.mock.calls.at(-1)?.[0];
+    expect(prompt).not.toContain("\n");
     expect(prompt).toContain(DIAGRAM_DIR);
     expect(prompt).not.toContain("docs/diagrams");
     expect(prompt).toContain("書き込む直前");
     expect(prompt).toContain("存在しない場合");
-    expect(prompt).toContain("書いた後");
     expect(prompt).toContain("board_open");
+    expect(prompt).toContain("board_comments");
+    expect(prompt).toContain("board_authoring_guide");
+    expect(prompt).not.toContain("diagram-authoring skill");
+    expect(prompt).toContain('model の type を "doc"');
+    expect(prompt).toContain("本文をテキスト選択してコメントを付けられる");
+    expect(prompt).toContain(
+      "引用された箇所を直してから board_open で開き直す"
+    );
   });
 
   it("既存セッション再利用パスでは token を発行しない (setClaudeMcpConfigPath も呼ばれない)", async () => {
