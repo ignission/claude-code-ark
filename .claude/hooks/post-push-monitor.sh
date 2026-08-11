@@ -63,7 +63,8 @@ CHECK_SCRIPT="$PROJECT_DIR/.claude/hooks/check-ci-coderabbit.sh"
 if $IS_GIT_PUSH; then
   UNRESOLVED_CONTEXT=""
   TARGET_REPO_DIR=$(push_marker_resolve_repo_dir "$HOOK_INPUT_CWD" "$COMMAND" "$HOOK_CWD")
-  git -C "$TARGET_REPO_DIR" rev-parse HEAD > "$PROJECT_DIR/.claude/push-completed.marker"
+  PUSH_HEAD=$(git -C "$TARGET_REPO_DIR" rev-parse HEAD)
+  printf '%s\n%s\n' "$PUSH_HEAD" "$TARGET_REPO_DIR" > "$PROJECT_DIR/.claude/push-completed.marker"
 
   source "$PROJECT_DIR/.claude/hooks/fetch-unresolved-threads.sh"
   fetch_unresolved_threads

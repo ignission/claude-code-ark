@@ -231,16 +231,22 @@ push_marker_resolve_repo_dir() {
   local input_cwd="$1"
   local command="$2"
   local fallback_cwd="$3"
-  local current_dir="$fallback_cwd"
+  local input_dir=""
+  local fallback_dir=""
+  local current_dir=""
   local segment resolved_dir
   local found_cd=false
 
-  # Claude Code の hook 共通入力に cwd がある場合は最優先する。
-  if [ -n "$input_cwd" ]; then
-    printf '%s' "$input_cwd"
-    return 0
+  if [ -d "$input_cwd" ]; then
+    input_dir=$(cd "$input_cwd" && pwd -P)
+    current_dir="$input_dir"
+  fi
+  if [ -d "$fallback_cwd" ]; then
+    fallback_dir=$(cd "$fallback_cwd" && pwd -P)
+    [ -n "$current_dir" ] || current_dir="$fallback_dir"
   fi
 
+  # コマンド中の cd は、hook 入力の cwd より実際の実行場所を具体的に示す。
   _push_marker_split_shell_command "$command"
   for segment in "${PUSH_MARKER_SEGMENTS[@]}"; do
     if resolved_dir="$(_push_marker_resolve_cd_dir "$segment" "$current_dir")"; then
@@ -248,14 +254,21 @@ push_marker_resolve_repo_dir() {
       found_cd=true
     fi
     if _push_marker_is_git_push_segment "$segment"; then
-      printf '%s' "$current_dir"
-      return 0
+      if [ -n "$current_dir" ]; then
+        printf '%s' "$current_dir"
+        return 0
+      fi
+      return 1
     fi
   done
 
   if $found_cd; then
     printf '%s' "$current_dir"
+  elif [ -n "$input_dir" ]; then
+    printf '%s' "$input_dir"
+  elif [ -n "$fallback_dir" ]; then
+    printf '%s' "$fallback_dir"
   else
-    printf '%s' "$fallback_cwd"
+    return 1
   fi
 }

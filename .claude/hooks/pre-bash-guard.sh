@@ -272,7 +272,6 @@ if $IS_PR_COMMENT; then
   SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
   # shellcheck source=./push-marker-utils.sh
   source "$SCRIPT_DIR/push-marker-utils.sh"
-  TARGET_REPO_DIR=$(push_marker_resolve_repo_dir "$HOOK_INPUT_CWD" "$COMMAND" "$HOOK_CWD")
   MARKER="$PROJECT_DIR/.claude/push-completed.marker"
   if [ ! -f "$MARKER" ]; then
     echo "BLOCKED: push完了前にCodeRabbit返信はできません" >&2
@@ -296,8 +295,20 @@ if $IS_PR_COMMENT; then
   fi
   # push時のcommit SHAと現在のHEADが一致するか検証（バックグラウンドpush対策）
   MARKER_HEAD=$(head -1 "$MARKER" 2>/dev/null) || MARKER_HEAD=""
-  CURRENT_HEAD=$(git -C "$TARGET_REPO_DIR" rev-parse HEAD 2>/dev/null) || CURRENT_HEAD=""
-  if [ -n "$CURRENT_HEAD" ] && [ "$MARKER_HEAD" != "$CURRENT_HEAD" ]; then
+  MARKER_REPO_DIR=$(sed -n '2p' "$MARKER" 2>/dev/null) || MARKER_REPO_DIR=""
+  if [ -n "$MARKER_REPO_DIR" ]; then
+    TARGET_REPO_DIR="$MARKER_REPO_DIR"
+  else
+    # 旧形式（SHA 1行のみ）のマーカーは返信コマンドから照合先を解決する。
+    TARGET_REPO_DIR=$(push_marker_resolve_repo_dir "$HOOK_INPUT_CWD" "$COMMAND" "$HOOK_CWD") || TARGET_REPO_DIR=""
+  fi
+  if [ -z "$TARGET_REPO_DIR" ] || ! CURRENT_HEAD=$(git -C "$TARGET_REPO_DIR" rev-parse HEAD 2>/dev/null); then
+    echo "BLOCKED: pushしたリポジトリのHEADを確認できません" >&2
+    echo "  WHY: 照合対象のディレクトリが存在しないか、Gitリポジトリではない" >&2
+    echo "  FIX: 対象リポジトリでgit pushを再実行してください" >&2
+    exit 2
+  fi
+  if [ "$MARKER_HEAD" != "$CURRENT_HEAD" ]; then
     echo "BLOCKED: push後に新しいコミットが追加されています" >&2
     echo "  WHY: マーカーのSHA(${MARKER_HEAD:0:8})と現在のHEAD(${CURRENT_HEAD:0:8})が不一致" >&2
     echo "  FIX: 最新の変更をgit pushしてから返信してください" >&2

@@ -142,7 +142,21 @@ assert_eq "クォートなしの ~ を展開して cd 先の HEAD を記録す�
   "$TILDE_HEAD" "$(head -1 "$MARKER" 2>/dev/null)"
 
 run_post "cd '$REPO_WORKTREE' && git push" "$REPO_MAIN"
-assert_eq "stdin の cwd をコマンド中の cd より優先する" \
+assert_eq "stdin の cwd が main でもコマンド中の cd を優先する" \
+  "$WORKTREE_HEAD" "$(head -1 "$MARKER" 2>/dev/null)"
+assert_eq "マーカーの2行目に push したリポジトリを記録する" \
+  "$REPO_WORKTREE" "$(sed -n '2p' "$MARKER" 2>/dev/null)"
+
+run_post "git push" "$REPO_WORKTREE"
+assert_eq "コマンド中に cd がなければ stdin の cwd を使う" \
+  "$WORKTREE_HEAD" "$(head -1 "$MARKER" 2>/dev/null)"
+
+run_post "cd '$TMP_TEST_DIR/missing-repo' && git push" "$REPO_MAIN"
+assert_eq "存在しない cd 先は採用せず stdin の cwd に戻る" \
+  "$MAIN_HEAD" "$(head -1 "$MARKER" 2>/dev/null)"
+
+run_post "git push" "$TMP_TEST_DIR/missing-cwd"
+assert_eq "存在しない stdin の cwd は採用せず hook の cwd に戻る" \
   "$MAIN_HEAD" "$(head -1 "$MARKER" 2>/dev/null)"
 
 echo ""
@@ -153,7 +167,7 @@ COMMENT_INPUT=$(jq -n --arg command "cd '$REPO_WORKTREE' && gh pr comment 1 --bo
   '{tool_input: {command: $command}}')
 (cd "$REPO_MAIN" && printf '%s\n' "$COMMENT_INPUT" | \
   CLAUDE_PROJECT_DIR="$HOOK_PROJECT" bash "$PRE_HOOK" >/dev/null 2>&1)
-assert_eq "コメント時も cd 先の HEAD とマーカーを照合する" "0" "$?"
+assert_eq "2行目がない旧形式でも cd 先の HEAD と照合する" "0" "$?"
 
 printf '%s\n' "$MAIN_HEAD" > "$MARKER"
 set +e
@@ -162,6 +176,21 @@ set +e
 MISMATCH_STATUS=$?
 set -e
 assert_eq "cd 先と異なる SHA のマーカーはブロックする" "2" "$MISMATCH_STATUS"
+
+printf '%s\n%s\n' "$WORKTREE_HEAD" "$REPO_WORKTREE" > "$MARKER"
+COMMENT_WITHOUT_CD_INPUT=$(jq -n --arg command "gh pr comment 1 --body ok" \
+  --arg cwd "$REPO_MAIN" '{cwd: $cwd, tool_input: {command: $command}}')
+(cd "$REPO_MAIN" && printf '%s\n' "$COMMENT_WITHOUT_CD_INPUT" | \
+  CLAUDE_PROJECT_DIR="$HOOK_PROJECT" bash "$PRE_HOOK" >/dev/null 2>&1)
+assert_eq "返信コマンドに cd がなくてもマーカーのリポジトリで照合する" "0" "$?"
+
+printf '%s\n%s\n' "$WORKTREE_HEAD" "$TMP_TEST_DIR/deleted-repo" > "$MARKER"
+set +e
+(cd "$REPO_MAIN" && printf '%s\n' "$COMMENT_WITHOUT_CD_INPUT" | \
+  CLAUDE_PROJECT_DIR="$HOOK_PROJECT" bash "$PRE_HOOK" >/dev/null 2>&1)
+HEAD_FAILURE_STATUS=$?
+set -e
+assert_eq "照合先で git rev-parse が失敗したらブロックする" "2" "$HEAD_FAILURE_STATUS"
 
 echo ""
 echo "Tests: $TESTS, Passed: $PASSES, Failed: $FAILURES"
