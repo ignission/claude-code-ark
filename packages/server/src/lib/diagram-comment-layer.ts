@@ -90,7 +90,18 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     };
   }
   function send(type,payload,options){
-    if(pendingRequestId)return;
+    if(pendingRequestId){
+      if(type!=="ark:diagram-comments-load"){
+        operationError={
+          type:type,
+          anchorId:payload&&payload.anchorId,
+          threadId:payload&&payload.threadId,
+          message:"更新中です。もう一度お試しください"
+        };
+        render();
+      }
+      return;
+    }
     if(!port){
       if(type!=="ark:diagram-comments-load"){
         operationError={

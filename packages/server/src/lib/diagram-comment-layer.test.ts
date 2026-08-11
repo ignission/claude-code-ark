@@ -574,9 +574,38 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected.indexOf("if(!port){")).toBeLessThan(
       injected.indexOf("pendingRequestId=requestId()")
     );
-    expect(injected.indexOf("if(pendingRequestId)return")).toBeLessThan(
+    expect(injected.indexOf("if(pendingRequestId){")).toBeLessThan(
       injected.indexOf("if(!port){")
     );
+  });
+
+  it("pending 中の操作は対象へ理由を表示して再描画する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const send = injected.slice(
+      injected.indexOf("function send("),
+      injected.indexOf("if(!port){")
+    );
+
+    expect(send).toContain("if(pendingRequestId){");
+    expect(send).toContain('if(type!=="ark:diagram-comments-load"){');
+    expect(send).toContain("type:type");
+    expect(send).toContain("anchorId:payload&&payload.anchorId");
+    expect(send).toContain("threadId:payload&&payload.threadId");
+    expect(send).toContain('message:"更新中です。もう一度お試しください"');
+    expect(send).toContain("render()");
+  });
+
+  it("pending 中の load は理由を表示せず無言で破棄する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const send = injected.slice(
+      injected.indexOf("function send("),
+      injected.indexOf("if(!port){")
+    );
+
+    expect(send).toContain(
+      'if(type!=="ark:diagram-comments-load"){\n        operationError='
+    );
+    expect(send).toContain("      }\n      return;\n    }");
   });
 
   it("空本文は送信前に拒否し、名前入力と author payload を持たない", () => {
