@@ -55,13 +55,14 @@ HOOK_PROJECT="$TMP_TEST_DIR/hook-project"
 REPO_MAIN="$TMP_TEST_DIR/main-repo"
 REPO_WORKTREE="$TMP_TEST_DIR/work tree"
 REPO_WITHOUT_HEAD="$TMP_TEST_DIR/repo-without-head"
+NON_GIT_DIR="$TMP_TEST_DIR/non-git-dir"
 TEST_HOME="$TMP_TEST_DIR/home"
 REPO_TILDE="$TEST_HOME/tilde-repo"
 MARKER="$HOOK_PROJECT/.claude/push-completed.marker"
 POST_STDERR="$TMP_TEST_DIR/post.stderr"
 
 mkdir -p "$HOOK_PROJECT/.claude/hooks" "$REPO_MAIN" "$REPO_WORKTREE" \
-  "$REPO_WITHOUT_HEAD" "$REPO_TILDE"
+  "$REPO_WITHOUT_HEAD" "$NON_GIT_DIR" "$REPO_TILDE"
 
 # post hook のマーカー書き込み後の処理だけを無害な fixture に差し替える。
 printf '%s\n' \
@@ -189,6 +190,11 @@ assert_marker_absent "HEAD を解決できない場合はマーカーを書か�
 assert_eq "HEAD を解決できなくても post hook は正常終了する" \
   "0" "$POST_STATUS"
 assert_eq "HEAD を解決できなくても監視の起動 JSON を出力する" \
+  "PostToolUse" "$(printf '%s\n' "$POST_OUTPUT" | jq -r '.hookSpecificOutput.hookEventName // ""' 2>/dev/null)"
+
+run_post "git push" "$NON_GIT_DIR"
+assert_marker_absent "非 Git ディレクトリが cwd の場合はマーカーを書かない"
+assert_eq "非 Git ディレクトリが cwd でも監視の起動 JSON を出力する" \
   "PostToolUse" "$(printf '%s\n' "$POST_OUTPUT" | jq -r '.hookSpecificOutput.hookEventName // ""' 2>/dev/null)"
 
 echo ""
