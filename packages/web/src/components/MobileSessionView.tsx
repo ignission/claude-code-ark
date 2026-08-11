@@ -53,7 +53,9 @@ import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { useVisualViewport } from "../hooks/useVisualViewport";
 import {
-  getViewModeForActiveTab,
+  type DiagramOpenRequest,
+  getViewModeForDiagramOpenRequest,
+  getViewModeForViewerTab,
   type MobileSessionViewMode,
   readSavedViewMode,
   writeSavedViewMode,
@@ -118,6 +120,7 @@ export interface MobileSessionViewProps extends MobileDiagramPaneProps {
   onCopyBuffer?: () => Promise<string | null>;
   tabs: ViewerTab[];
   activeTabIndex: number;
+  diagramOpenRequest: DiagramOpenRequest | null;
   onTabSelect: (index: number) => void;
   onTabClose: (index: number) => void;
   messageShortcuts: MessageShortcut[];
@@ -142,6 +145,7 @@ export function MobileSessionView({
   onCopyBuffer,
   tabs,
   activeTabIndex,
+  diagramOpenRequest,
   onTabSelect,
   onTabClose,
   messageShortcuts,
@@ -170,13 +174,34 @@ export function MobileSessionView({
     setViewMode(next);
   }, []);
 
-  // 図タブが active になったら board モードへ切り替え、board_open とタブ選択の
-  // 両方に追従する。他のビューワータブは従来どおり terminal モードで可視化する。
+  // diagram:open の明示通知がこのセッション向けに変化したときだけ board を開く。
+  const handledDiagramOpenSequenceRef = useRef<number | null>(null);
+  useEffect(() => {
+    const nextViewMode = getViewModeForDiagramOpenRequest(
+      session.id,
+      diagramOpenRequest,
+      handledDiagramOpenSequenceRef.current
+    );
+    handledDiagramOpenSequenceRef.current =
+      diagramOpenRequest?.sequence ?? null;
+    if (nextViewMode) setViewMode(nextViewMode);
+  }, [diagramOpenRequest, session.id]);
+
+  // ファイル/HTML のビューワータブは従来どおり terminal モードで可視化する。
   const activeTabType = tabs[activeTabIndex]?.type;
   useEffect(() => {
-    const nextViewMode = getViewModeForActiveTab(activeTabType);
+    const nextViewMode = getViewModeForViewerTab(activeTabType);
     if (nextViewMode) setViewMode(nextViewMode);
   }, [activeTabType]);
+
+  // モバイルのタブバーでユーザー自身が図を選んだ場合も board を開く。
+  const handleViewerTabSelect = useCallback(
+    (index: number) => {
+      onTabSelect(index);
+      if (tabs[index]?.type === "diagram") setViewMode("board");
+    },
+    [onTabSelect, tabs]
+  );
   // 全ての添付ファイル（画像/非画像）を共通でプレビューダイアログに集約する
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [uploadMessage, setUploadMessage] = useState("");
@@ -521,7 +546,7 @@ export function MobileSessionView({
         <ViewerTabBar
           tabs={tabs}
           activeTabIndex={activeTabIndex}
-          onTabSelect={onTabSelect}
+          onTabSelect={handleViewerTabSelect}
           onTabClose={onTabClose}
         />
 

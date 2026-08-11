@@ -73,6 +73,7 @@ function createProps(): ComponentProps<typeof MobileLayout> {
     handleTabSelect: vi.fn(),
     handleTabClose: vi.fn(),
     openDiagramTab: vi.fn(),
+    diagramOpenRequest: null,
     listDiagrams: vi.fn(async () => []),
     deleteDiagram: vi.fn(),
     getDiagramComments: vi.fn(),

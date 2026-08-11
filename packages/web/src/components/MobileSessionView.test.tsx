@@ -2,7 +2,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
-  getViewModeForActiveTab,
+  createDiagramOpenRequest,
+  getViewModeForDiagramOpenRequest,
+  getViewModeForViewerTab,
   normalizeMobileSessionViewMode,
   writeSavedViewMode,
 } from "../lib/mobile-session-view-mode";
@@ -36,19 +38,55 @@ describe("mobile session view mode", () => {
     );
   });
 
-  it.each([
-    { activeTabType: "diagram", expected: "board", label: "図" },
-    { activeTabType: "file", expected: "terminal", label: "ファイル" },
-    { activeTabType: "html", expected: "terminal", label: "HTML" },
-  ] as const)(
-    "active な $label タブに合わせて $expected モードへ切り替える",
-    ({ activeTabType, expected }) => {
-      expect(getViewModeForActiveTab(activeTabType)).toBe(expected);
+  it("同じ図を続けて開いても通知が変化し、毎回 board へ切り替える", () => {
+    const first = createDiagramOpenRequest(
+      null,
+      "session-1",
+      ".claude/diagrams/mobile.diagram.html"
+    );
+    const second = createDiagramOpenRequest(
+      first,
+      "session-1",
+      ".claude/diagrams/mobile.diagram.html"
+    );
+
+    expect(second.sequence).toBeGreaterThan(first.sequence);
+    expect(getViewModeForDiagramOpenRequest("session-1", first, null)).toBe(
+      "board"
+    );
+    expect(
+      getViewModeForDiagramOpenRequest("session-1", second, first.sequence)
+    ).toBe("board");
+  });
+
+  it("別セッション向け、処理済み、通知なしでは表示モードを変えない", () => {
+    const request = createDiagramOpenRequest(
+      null,
+      "session-2",
+      ".claude/diagrams/mobile.diagram.html"
+    );
+
+    expect(
+      getViewModeForDiagramOpenRequest("session-1", request, null)
+    ).toBeNull();
+    expect(
+      getViewModeForDiagramOpenRequest("session-2", request, request.sequence)
+    ).toBeNull();
+    // reload 復元は diagram:open 通知を作らない。
+    expect(
+      getViewModeForDiagramOpenRequest("session-1", null, null)
+    ).toBeNull();
+  });
+
+  it.each(["file", "html"] as const)(
+    "active な %s ビューワータブでは従来どおり terminal へ切り替える",
+    activeTabType => {
+      expect(getViewModeForViewerTab(activeTabType)).toBe("terminal");
     }
   );
 
   it("terminal タブでは表示モードを変えない", () => {
-    expect(getViewModeForActiveTab("terminal")).toBeNull();
+    expect(getViewModeForViewerTab("terminal")).toBeNull();
   });
 
   it("現在モードが分かる 3 択トグルを表示する", () => {

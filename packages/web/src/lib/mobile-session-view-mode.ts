@@ -9,6 +9,12 @@ export type MobileSessionViewMode =
 
 type MobileActiveTabType = "terminal" | "file" | "html" | "diagram";
 
+export interface DiagramOpenRequest {
+  sessionId: string;
+  relPath: string;
+  sequence: number;
+}
+
 interface ViewModeStorageReader {
   getItem(key: string): string | null;
 }
@@ -19,11 +25,37 @@ interface ViewModeStorageWriter {
 
 export const STORAGE_KEY_MOBILE_VIEW = "ark-mobile-session-view";
 
-export function getViewModeForActiveTab(
+export function createDiagramOpenRequest(
+  previous: DiagramOpenRequest | null,
+  sessionId: string,
+  relPath: string
+): DiagramOpenRequest {
+  return {
+    sessionId,
+    relPath,
+    sequence: (previous?.sequence ?? 0) + 1,
+  };
+}
+
+export function getViewModeForDiagramOpenRequest(
+  sessionId: string,
+  request: DiagramOpenRequest | null,
+  handledSequence: number | null
+): MobileSessionViewMode | null {
+  if (
+    request &&
+    request.sessionId === sessionId &&
+    request.sequence !== handledSequence
+  ) {
+    return "board";
+  }
+  return null;
+}
+
+export function getViewModeForViewerTab(
   activeTabType: MobileActiveTabType | undefined
 ): MobileSessionViewMode | null {
-  if (activeTabType === "diagram") return "board";
-  if (activeTabType && activeTabType !== "terminal") return "terminal";
+  if (activeTabType === "file" || activeTabType === "html") return "terminal";
   return null;
 }
 

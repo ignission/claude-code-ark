@@ -32,6 +32,7 @@ import { MobileChatView } from "@/components/MobileChatView";
 import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
 import type { ViewerTab } from "@/components/TerminalPane";
+import type { DiagramOpenRequest } from "@/lib/mobile-session-view-mode";
 
 // MobileTab / SessionSubView は配列を真実源にし、union 型を派生させる。
 // こうしないと runtime 検証配列と型が二重化し、union に値を足したとき配列更新を
@@ -100,6 +101,8 @@ interface MobileLayoutProps {
     worktreePath: string,
     relPath: string
   ) => void;
+  /** diagram:open のたびに sequence が増えるモバイル表示用の明示通知 */
+  diagramOpenRequest: DiagramOpenRequest | null;
   // 図ペイン transport（PC の SplitViewPane と同じ集合）
   listDiagrams: (worktreePath: string) => Promise<DiagramListItem[]>;
   deleteDiagram: (
@@ -199,6 +202,7 @@ export function MobileLayout({
   handleTabSelect,
   handleTabClose,
   openDiagramTab,
+  diagramOpenRequest,
   listDiagrams,
   deleteDiagram,
   getDiagramComments,
@@ -404,6 +408,7 @@ export function MobileLayout({
                 }
                 tabs={getTabsForSession(sessionId)}
                 activeTabIndex={getActiveTabForSession(sessionId)}
+                diagramOpenRequest={diagramOpenRequest}
                 onTabSelect={idx => handleTabSelect(sessionId, idx)}
                 onTabClose={idx => handleTabClose(sessionId, idx)}
                 isConnected={isSocketConnected}
