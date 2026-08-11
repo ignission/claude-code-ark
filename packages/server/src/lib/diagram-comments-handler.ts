@@ -212,15 +212,23 @@ function buildDiagramCommentMessage(
   >["comments"]["threads"][number],
   otherOpenCount: number
 ): string | null {
-  const message = thread.messages.at(-1);
-  if (!message) return null;
+  const latestMessage = thread.messages.at(-1);
+  if (!latestMessage) return null;
+  // 人間のメッセージが無い旧形式・外部生成 sidecar も送れるよう、最後のメッセージへフォールバックする。
+  const message =
+    thread.messages.findLast(candidate => candidate.author === undefined) ??
+    latestMessage;
   const anchorText = truncate(oneLine(thread.anchorText), 80);
   const quote = oneLine(thread.anchorQuote ?? thread.anchorText);
-  const suffix =
+  const replyCount = thread.messages.filter(
+    candidate => candidate.author !== undefined
+  ).length;
+  const replySuffix = replyCount > 0 ? ` / 返信済み ${replyCount} 件` : "";
+  const otherOpenSuffix =
     otherOpenCount > 0
       ? ` / 他に未解決 ${otherOpenCount} 件（board_comments で全件取得できる）`
       : "";
-  return `図のコメント（${oneLine(relPath)}） 対象: ${anchorText} / 引用: 「${quote}」 / コメント: ${oneLine(message.body)}${suffix}`;
+  return `図のコメント（${oneLine(relPath)}） 対象: ${anchorText} / 引用: 「${quote}」 / コメント: ${oneLine(message.body)}${replySuffix}${otherOpenSuffix}`;
 }
 
 function requestContext(
