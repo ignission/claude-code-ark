@@ -5,6 +5,7 @@ import {
   type DiagramCommentsHandlerDeps,
   handleDiagramCommentCreate,
   handleDiagramCommentDelete,
+  handleDiagramCommentReply,
   handleDiagramCommentResolve,
   handleDiagramCommentSend,
   handleDiagramCommentsGet,
@@ -28,11 +29,32 @@ function deps(): DiagramCommentsHandlerDeps {
     resolveManagedWorktreePath: vi.fn(() => "/managed/worktree"),
     getComments: vi.fn(async () => snapshot),
     createComment: vi.fn(async () => snapshot),
+    replyComment: vi.fn(async () => snapshot),
     deleteComment: vi.fn(async () => snapshot),
     resolveComment: vi.fn(async () => snapshot),
     sendMessage: vi.fn(),
   };
 }
+
+describe("handleDiagramCommentReply", () => {
+  it("人間の返信は author を渡さない", async () => {
+    const dependencies = deps();
+
+    await handleDiagramCommentReply(dependencies, {
+      sessionId: "session-1",
+      relPath: "sample.diagram.html",
+      threadId: "th-1",
+      body: " 人間の返信 ",
+    });
+
+    expect(dependencies.replyComment).toHaveBeenCalledWith(
+      "/managed/worktree",
+      "sample.diagram.html",
+      "th-1",
+      { body: "人間の返信" }
+    );
+  });
+});
 
 const sendSnapshot: DiagramCommentsResponse = {
   ok: true,

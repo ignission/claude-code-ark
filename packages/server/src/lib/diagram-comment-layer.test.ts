@@ -215,6 +215,39 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain("composerActions.appendChild(createButton)");
   });
 
+  it("open card だけにメッセージ列と actions の間の返信 UI を描画する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const threadRenderer = injected.slice(
+      injected.indexOf("function renderThread"),
+      injected.indexOf("function renderComposer")
+    );
+
+    expect(threadRenderer).toContain('if(thread.status==="open"){');
+    expect(threadRenderer).toContain('element("textarea",undefined,"ark-comment-input")');
+    expect(threadRenderer).toContain('element("button","返信","ark-comment-reply")');
+    expect(threadRenderer).toContain('send("ark:diagram-comment-reply",{threadId:thread.id,body:replyInput.value})');
+    expect(threadRenderer.indexOf("replyInput")).toBeLessThan(
+      threadRenderer.indexOf('var actions=element("div",undefined,"ark-comment-actions")')
+    );
+  });
+
+  it("返信下書きを thread ごとに render 間で保持し成功時だけ消す", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("var replyDraftBodies=new Map()");
+    expect(injected).toContain("replyDraftBodies.set(thread.id,replyInput.value)");
+    expect(injected).toContain('replyInput.value=replyDraftBodies.get(thread.id)||""');
+    expect(injected).toContain("replyDraftBodies.delete(completedAction.threadId)");
+  });
+
+  it("sidecar 更新通知は pending 中を避けて既存 load を再実行する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain('data.type==="ark:diagram-comments-changed"');
+    expect(injected).toContain("if(pendingRequestId)return");
+    expect(injected).toContain('send("ark:diagram-comments-load",{})');
+  });
+
   it("時刻は元の ISO 値を datetime に保ち、日本語形式へ短く整形する", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 

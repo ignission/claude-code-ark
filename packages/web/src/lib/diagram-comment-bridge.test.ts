@@ -8,6 +8,20 @@ import {
 describe("parseDiagramCommentPortRequest", () => {
   it.each([
     [
+      {
+        type: "ark:diagram-comment-reply",
+        requestId: "req-reply",
+        threadId: "th-1",
+        body: "返信本文",
+      },
+      {
+        type: "ark:diagram-comment-reply",
+        requestId: "req-reply",
+        threadId: "th-1",
+        body: "返信本文",
+      },
+    ],
+    [
       { type: "ark:diagram-comments-load", requestId: "req-load" },
       { type: "ark:diagram-comments-load", requestId: "req-load" },
     ],
@@ -141,6 +155,23 @@ describe("parseDiagramCommentPortRequest", () => {
       kind: "invalid",
       requestId: "req-author",
       error: expect.stringContaining("author"),
+    });
+  });
+
+  it.each([
+    { threadId: "", body: "本文" },
+    { threadId: "th-1", body: "   " },
+    { threadId: "th-1", body: "本文", author: "Reviewer" },
+  ])("不正な reply %j を requestId 付き invalid にする", fields => {
+    expect(
+      parseDiagramCommentPortRequest({
+        type: "ark:diagram-comment-reply",
+        requestId: "req-reply-invalid",
+        ...fields,
+      })
+    ).toMatchObject({
+      kind: "invalid",
+      requestId: "req-reply-invalid",
     });
   });
 
