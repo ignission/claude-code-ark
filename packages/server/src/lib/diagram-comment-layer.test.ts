@@ -231,6 +231,19 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain('time.setAttribute("datetime",message.at)');
   });
 
+  it("author があるメッセージだけ投稿者を控えめに表示し、代替テキストは出さない", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain("if(message.author)");
+    expect(injected).toContain(
+      'element("span",message.author,"ark-comment-author")'
+    );
+    expect(injected).toContain(
+      ".ark-comment-state,.ark-comment-time,.ark-comment-author{display:block;color:#64748b;font-size:11px}"
+    );
+    expect(injected).not.toContain("名無し");
+  });
+
   it("テキスト node を連結して occurrence を解決し、分割 span を再描画前に戻す", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
@@ -425,14 +438,17 @@ describe("injectDiagramCommentLayer", () => {
 
   it("空本文は送信前に拒否し、名前入力と author payload を持たない", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
+    const composer = injected.slice(
+      injected.indexOf("function renderComposer"),
+      injected.indexOf("function updateLayout")
+    );
 
     expect(injected).toContain("bodyInput.value.trim()");
     expect(injected).toContain("コメント本文を入力してください");
-    expect(injected).not.toContain("authorInput");
-    expect(injected).not.toContain("rememberedAuthor");
-    expect(injected).not.toContain("composerDraftAuthor");
-    expect(injected).not.toContain("message.author");
-    expect(injected).not.toContain("ark-comment-author");
+    expect(composer).not.toContain("authorInput");
+    expect(composer).not.toContain("rememberedAuthor");
+    expect(composer).not.toContain("composerDraftAuthor");
+    expect(composer).not.toContain("author");
   });
 
   it("composer の本文だけを render 間で退避・復元し、成功時と閉じる時にクリアする", () => {
