@@ -312,6 +312,13 @@ describe("injectDiagramCommentLayer", () => {
       injected.indexOf("function handleTouchStart"),
       injected.indexOf('window.addEventListener("touchstart"')
     );
+    const touchStartHandler = touchHandlers.slice(
+      touchHandlers.indexOf("function handleTouchStart"),
+      touchHandlers.indexOf("function handleTouchMove")
+    );
+    const touchMoveHandler = touchHandlers.slice(
+      touchHandlers.indexOf("function handleTouchMove")
+    );
 
     expect(injected).toContain('addEventListener("wheel"');
     expect(injected).toContain("ctrlKey");
@@ -326,6 +333,12 @@ describe("injectDiagramCommentLayer", () => {
     expect(touchHandlers.indexOf("touches.length!==2")).toBeLessThan(
       touchHandlers.indexOf("event.preventDefault()")
     );
+    for (const handler of [touchStartHandler, touchMoveHandler]) {
+      expect(handler).toContain("if(!port){resetTouchPinch();return;}");
+      expect(handler.indexOf("if(!port)")).toBeLessThan(
+        handler.indexOf("event.preventDefault()")
+      );
+    }
     expect(
       injected.match(/\{passive:false\}/gu)?.length
     ).toBeGreaterThanOrEqual(3);

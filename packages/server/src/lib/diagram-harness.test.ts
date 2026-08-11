@@ -202,6 +202,13 @@ describe("injectHarness", () => {
       out.indexOf("function handleTouchStart"),
       out.indexOf('window.addEventListener("touchstart"')
     );
+    const touchStartHandler = touchHandlers.slice(
+      touchHandlers.indexOf("function handleTouchStart"),
+      touchHandlers.indexOf("function handleTouchMove")
+    );
+    const touchMoveHandler = touchHandlers.slice(
+      touchHandlers.indexOf("function handleTouchMove")
+    );
 
     expect(out).toContain('addEventListener("wheel"');
     expect(out).toContain("ctrlKey");
@@ -216,6 +223,12 @@ describe("injectHarness", () => {
     expect(touchHandlers.indexOf("touches.length!==2")).toBeLessThan(
       touchHandlers.indexOf("event.preventDefault()")
     );
+    for (const handler of [touchStartHandler, touchMoveHandler]) {
+      expect(handler).toContain("if(!submitPort){resetTouchPinch();return;}");
+      expect(handler.indexOf("if(!submitPort)")).toBeLessThan(
+        handler.indexOf("event.preventDefault()")
+      );
+    }
     expect(out.match(/\{passive:false\}/gu)?.length).toBeGreaterThanOrEqual(3);
   });
 

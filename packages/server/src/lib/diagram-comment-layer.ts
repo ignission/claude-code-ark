@@ -593,11 +593,13 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
   }
   function resetTouchPinch(){pinchDistance=null;}
   function handleTouchStart(event){
+    if(!port){resetTouchPinch();return;}
     if(event.touches.length!==2){resetTouchPinch();return;}
     pinchDistance=touchDistance(event);
     event.preventDefault();
   }
   function handleTouchMove(event){
+    if(!port){resetTouchPinch();return;}
     if(event.touches.length!==2){resetTouchPinch();return;}
     var nextDistance=touchDistance(event);
     event.preventDefault();
