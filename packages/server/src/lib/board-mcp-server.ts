@@ -77,6 +77,13 @@ export interface BoardMcpDeps {
     worktreePath: string,
     relPath: string
   ): Promise<DiagramCommentsResponse>;
+  /** doc/anchor trust boundary を通して既存 thread へ返信する。 */
+  replyDiagramComment(
+    worktreePath: string,
+    relPath: string,
+    threadId: string,
+    input: { body: string; author: "claude" }
+  ): Promise<DiagramCommentsResponse>;
   /** `.diagram.html` の作図・文書規約を返す。 */
   readAuthoringGuide?(): Promise<string>;
 }
@@ -93,6 +100,12 @@ export interface BoardOpenResult {
 export interface BoardCommentsInput {
   path?: string;
   includeResolved?: boolean;
+}
+
+export interface BoardReplyInput {
+  path: string;
+  threadId: string;
+  body: string;
 }
 
 type BoardCommentThread = Pick<
@@ -225,6 +238,18 @@ export async function handleBoardComments(
   }
 
   return { diagrams };
+}
+
+/** board_reply の純ロジック。投稿者はモデル入力ではなく server 側で固定する。 */
+export async function handleBoardReply(
+  deps: Pick<BoardMcpDeps, "replyDiagramComment">,
+  worktreePath: string,
+  input: BoardReplyInput
+): Promise<DiagramCommentsResponse> {
+  return deps.replyDiagramComment(worktreePath, input.path, input.threadId, {
+    body: input.body,
+    author: "claude",
+  });
 }
 
 async function collectDiagramPaths(
@@ -360,6 +385,35 @@ export function createBoardMcpServer(
         return textResult(
           `board_authoring_guide 失敗: ${getErrorMessage(error)}`
         );
+      }
+    }
+  );
+
+  server.registerTool(
+    "board_reply",
+    {
+      description:
+        "board_comments で読んだコメントに返信する。返信はボード上のカードに表示され、人間がそこで読む。文書を直した場合はその旨も書くこと。",
+      inputSchema: {
+        path: z.string().describe("worktree 相対の図ファイルパス"),
+        threadId: z.string().describe("board_comments が返した thread ID"),
+        body: z.string().describe("人間へ返す返信本文"),
+      },
+    },
+    async args => {
+      try {
+        const response = await handleBoardReply(deps, worktreePath, {
+          path: args.path,
+          threadId: args.threadId,
+          body: args.body,
+        });
+        return textResult(
+          response.ok
+            ? JSON.stringify({ replied: args.threadId })
+            : `board_reply 失敗: ${response.error}`
+        );
+      } catch (error) {
+        return textResult(`board_reply 失敗: ${getErrorMessage(error)}`);
       }
     }
   );

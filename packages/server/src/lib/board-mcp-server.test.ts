@@ -368,11 +368,13 @@ describe("createBoardMcpServer", () => {
     expect(replyConfig?.inputSchema).toHaveProperty("threadId");
     expect(replyConfig?.inputSchema).toHaveProperty("body");
     expect(replyConfig?.inputSchema).not.toHaveProperty("author");
-    await (replyHandler as unknown as (args: {
-      path: string;
-      threadId: string;
-      body: string;
-    }) => Promise<unknown>)({
+    await (
+      replyHandler as unknown as (args: {
+        path: string;
+        threadId: string;
+        body: string;
+      }) => Promise<unknown>
+    )({
       path: `${DIAGRAM_DIR}/a.diagram.html`,
       threadId: "thread-open",
       body: "修正しました",

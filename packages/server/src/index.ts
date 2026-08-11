@@ -68,6 +68,10 @@ import {
 } from "./lib/constants.js";
 import { db } from "./lib/database.js";
 import {
+  appendDiagramCommentMessage,
+  resolveDiagramCommentsPath,
+} from "./lib/diagram-comments.js";
+import {
   createDiagramCommentsSocketHandlers,
   diagramCommentsStore,
   getDiagramCommentsForDoc,
@@ -774,6 +778,22 @@ export async function startServer(
         };
       }
       return getDiagramCommentsForDoc(resolved.path, relPath);
+    },
+    async replyDiagramComment(worktreePath, relPath, threadId, input) {
+      const resolved = resolveManagedWorktreeDetailed(worktreePath);
+      if (!resolved.ok) {
+        return {
+          ok: false,
+          code: "FORBIDDEN",
+          error: `worktree を解決できません: ${resolved.reason}`,
+        };
+      }
+      return appendDiagramCommentMessage(
+        resolved.path,
+        relPath,
+        threadId,
+        input
+      );
     },
     async openDiagram(worktreePath, relPath) {
       const resolved = resolveManagedWorktreeDetailed(worktreePath);
