@@ -32,7 +32,7 @@ import { DiagramSwitcher } from "./DiagramSwitcher";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
-interface DiagramPaneProps {
+export interface DiagramPaneProps {
   sessionId: string;
   worktreePath: string;
   relPath?: string;
