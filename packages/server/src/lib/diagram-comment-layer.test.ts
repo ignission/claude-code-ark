@@ -291,22 +291,34 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain("cleanupExpandedThreads()");
   });
 
-  it("render 前後でコメント欄 textarea のフォーカスと選択範囲を復元する", () => {
+  it("受動的な再取得の発行直前に textarea のフォーカスと選択範囲を記録する", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
+    const changedHandler = injected.slice(
+      injected.indexOf('data.type==="ark:diagram-comments-changed"'),
+      injected.indexOf('data.type!=="ark:diagram-comments-result"')
+    );
     const render = injected.slice(
-      injected.indexOf("function render(){"),
+      injected.indexOf("function render(focusedInput){"),
       injected.indexOf("function commonSelectionAnchor")
     );
 
-    expect(render).toContain("document.activeElement");
-    expect(render).toContain("root.contains(activeElement)");
-    expect(render).toContain('activeElement.tagName==="TEXTAREA"');
-    expect(render).toContain("selectionStart:activeElement.selectionStart");
-    expect(render).toContain("selectionEnd:activeElement.selectionEnd");
-    expect(render).toContain('activeElement.closest(".ark-comment-card")');
+    expect(injected).toContain("function captureFocusedInput()");
+    expect(injected).toContain("document.activeElement");
+    expect(injected).toContain("root.contains(activeElement)");
+    expect(injected).toContain('activeElement.tagName!=="TEXTAREA"');
+    expect(injected).toContain("selectionStart:activeElement.selectionStart");
+    expect(injected).toContain("selectionEnd:activeElement.selectionEnd");
+    expect(injected).toContain('activeElement.closest(".ark-comment-card")');
+    expect(changedHandler.indexOf("captureFocusedInput()")).toBeLessThan(
+      changedHandler.indexOf('send("ark:diagram-comments-load"')
+    );
+    expect(render).not.toContain("document.activeElement");
     expect(render).toContain("focusedInput.threadId");
     expect(render).toContain("restoredInput.focus()");
     expect(render).toContain("restoredInput.setSelectionRange(");
+    expect(injected).toContain(
+      "render(completedAction&&completedAction.focusedInput)"
+    );
   });
 
   it("返信下書きを thread ごとに render 間で保持し成功時だけ消す", () => {
@@ -329,7 +341,21 @@ describe("injectDiagramCommentLayer", () => {
 
     expect(injected).toContain('data.type==="ark:diagram-comments-changed"');
     expect(injected).toContain("if(pendingRequestId)return");
-    expect(injected).toContain('send("ark:diagram-comments-load",{})');
+    expect(injected).toContain('send("ark:diagram-comments-load",{}');
+  });
+
+  it("sidecar 更新通知による受動 load では pending 中もコントロールを無効化しない", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const send = injected.slice(
+      injected.indexOf("function send("),
+      injected.indexOf("function setActiveAnchor")
+    );
+
+    expect(injected).toContain("passive:true");
+    expect(injected).toContain(
+      "Boolean(pendingRequestId)&&!(pendingAction&&pendingAction.passive)"
+    );
+    expect(send).toContain("if(!pendingAction.passive)updatePendingControls()");
   });
 
   it("時刻は元の ISO 値を datetime に保ち、日本語形式へ短く整形する", () => {
@@ -499,7 +525,7 @@ describe("injectDiagramCommentLayer", () => {
       'querySelectorAll(".ark-comment-create,.ark-comment-reply,.ark-comment-resolve,.ark-comment-send,.ark-comment-delete,.ark-comment-input")'
     );
     expect(injected).toContain(
-      'control.disabled=Boolean(pendingRequestId)||control.getAttribute("data-sent")==="true"'
+      'control.disabled=disableForPending||control.getAttribute("data-sent")==="true"'
     );
   });
 
@@ -537,7 +563,7 @@ describe("injectDiagramCommentLayer", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
     expect(injected).toContain(
-      "function render(){\n    clearDeleteConfirmation();"
+      "function render(focusedInput){\n    clearDeleteConfirmation();"
     );
   });
 

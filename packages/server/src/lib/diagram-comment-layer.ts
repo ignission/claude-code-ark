@@ -56,8 +56,9 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     return anchors.filter(function(entry){return entry.anchorId===anchorId;})[0]||null;
   }
   function updatePendingControls(){
+    var disableForPending=Boolean(pendingRequestId)&&!(pendingAction&&pendingAction.passive);
     root.querySelectorAll(".ark-comment-create,.ark-comment-reply,.ark-comment-resolve,.ark-comment-send,.ark-comment-delete,.ark-comment-input").forEach(function(control){
-      control.disabled=Boolean(pendingRequestId)||control.getAttribute("data-sent")==="true";
+      control.disabled=disableForPending||control.getAttribute("data-sent")==="true";
     });
   }
   function clearDeleteConfirmation(){
@@ -76,7 +77,19 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
   function clearComposerInputs(){
     composerDraftBody="";
   }
-  function send(type,payload){
+  function captureFocusedInput(){
+    var activeElement=document.activeElement;
+    if(!activeElement||!root.contains(activeElement)||activeElement.tagName!=="TEXTAREA")return null;
+    var replyCard=activeElement.closest(".ark-comment-card");
+    var composer=activeElement.closest(".ark-comment-composer");
+    if(!replyCard&&!composer)return null;
+    return {
+      threadId:replyCard?replyCard.getAttribute("data-thread-id"):null,
+      selectionStart:activeElement.selectionStart,
+      selectionEnd:activeElement.selectionEnd
+    };
+  }
+  function send(type,payload,options){
     if(pendingRequestId)return;
     if(!port){
       if(type!=="ark:diagram-comments-load"){
@@ -91,11 +104,17 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
       return;
     }
     pendingRequestId=requestId();
-    pendingAction={type:type,anchorId:payload&&payload.anchorId,threadId:payload&&payload.threadId};
+    pendingAction={
+      type:type,
+      anchorId:payload&&payload.anchorId,
+      threadId:payload&&payload.threadId,
+      passive:Boolean(options&&options.passive),
+      focusedInput:options&&options.focusedInput||null
+    };
     operationError=null;
     var message={type:type,requestId:pendingRequestId};
     Object.keys(payload||{}).forEach(function(key){message[key]=payload[key];});
-    updatePendingControls();
+    if(!pendingAction.passive)updatePendingControls();
     pendingTimer=window.setTimeout(function(){
       var timedOutAction=pendingAction;
       pendingRequestId=null;
@@ -110,7 +129,7 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
           message:"応答がありません。もう一度お試しください"
         };
       }
-      render();
+      render(timedOutAction&&timedOutAction.focusedInput);
     },15000);
     port.postMessage(message);
   }
@@ -488,19 +507,9 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
       if(!existingThreadIds.has(threadId))expandedThreadIds.delete(threadId);
     });
   }
-  function render(){
+  function render(focusedInput){
     clearDeleteConfirmation();
     // 無関係な再描画でも確認を押し直す方が、誤削除を防ぐ安全側の挙動になる。
-    var focusedInput=null;
-    var activeElement=document.activeElement;
-    if(activeElement&&root.contains(activeElement)&&activeElement.tagName==="TEXTAREA"){
-      var replyCard=activeElement.closest(".ark-comment-card");
-      focusedInput={
-        threadId:replyCard?replyCard.getAttribute("data-thread-id"):null,
-        selectionStart:activeElement.selectionStart,
-        selectionEnd:activeElement.selectionEnd
-      };
-    }
     cleanupExpandedThreads();
     renderHighlights();
     root.querySelectorAll(".ark-comment-card,.ark-comment-composer").forEach(function(card){
@@ -619,7 +628,8 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     var data=event.data;
     if(data&&data.type==="ark:diagram-comments-changed"){
       if(pendingRequestId)return;
-      send("ark:diagram-comments-load",{});
+      var focusedInput=captureFocusedInput();
+      send("ark:diagram-comments-load",{},{passive:true,focusedInput:focusedInput});
       return;
     }
     if(!data||data.type!=="ark:diagram-comments-result"||data.requestId!==pendingRequestId)return;
@@ -652,7 +662,7 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
         message:data.error||"コメント処理に失敗しました"
       };
     }
-    render();
+    render(completedAction&&completedAction.focusedInput);
   }
   window.addEventListener("wheel",function(event){
     if(!event.ctrlKey||!port)return;
