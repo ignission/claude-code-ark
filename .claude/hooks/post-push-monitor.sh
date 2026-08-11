@@ -6,16 +6,18 @@ set -eo pipefail
 
 STDIN_INPUT=$(cat)
 COMMAND=$(echo "$STDIN_INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
+HOOK_INPUT_CWD=$(echo "$STDIN_INPUT" | jq -r '.cwd // ""' 2>/dev/null) || HOOK_INPUT_CWD=""
+HOOK_CWD=$(pwd -P)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=./push-marker-utils.sh
+source "$SCRIPT_DIR/push-marker-utils.sh"
 
 IS_GIT_PUSH=false
 IS_GH_PR_CREATE=false
 
-if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+(.+[[:space:]]+)?push([[:space:]]|$) ]] && ! [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+(stash|submodule)[[:space:]] ]]; then
-  IS_GIT_PUSH=true
-  if [[ "$COMMAND" =~ (^|[[:space:]])(-n|--dry-run)([[:space:]]|$) ]]; then
-    exit 0
-  fi
-fi
+push_marker_detect_git_push "$COMMAND"
+IS_GIT_PUSH=$PUSH_MARKER_IS_GIT_PUSH
+$PUSH_MARKER_IS_DRY_RUN && exit 0
 
 if [[ "$COMMAND" =~ ^[[:space:]]*gh[[:space:]]+(.+[[:space:]]+)?pr[[:space:]]+create([[:space:]]|$) ]]; then
   IS_GH_PR_CREATE=true
@@ -60,7 +62,15 @@ CHECK_SCRIPT="$PROJECT_DIR/.claude/hooks/check-ci-coderabbit.sh"
 
 if $IS_GIT_PUSH; then
   UNRESOLVED_CONTEXT=""
-  git rev-parse HEAD > "$PROJECT_DIR/.claude/push-completed.marker"
+  TARGET_REPO_DIR=""
+  PUSH_HEAD=""
+  if ! TARGET_REPO_DIR=$(push_marker_resolve_repo_dir "$HOOK_INPUT_CWD" "$COMMAND" "$HOOK_CWD"); then
+    echo "push-marker: push 対象のリポジトリを解決できないためマーカーを更新しません" >&2
+  elif ! PUSH_HEAD=$(git -C "$TARGET_REPO_DIR" rev-parse HEAD 2>/dev/null); then
+    echo "push-marker: push 対象の HEAD を解決できないためマーカーを更新しません" >&2
+  else
+    printf '%s\n%s\n' "$PUSH_HEAD" "$TARGET_REPO_DIR" > "$PROJECT_DIR/.claude/push-completed.marker"
+  fi
 
   source "$PROJECT_DIR/.claude/hooks/fetch-unresolved-threads.sh"
   fetch_unresolved_threads
