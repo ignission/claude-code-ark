@@ -47,6 +47,10 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useSettings } from "@/hooks/useSettings";
 import { useSocket } from "@/hooks/useSocket";
 import { useViewerTabs } from "@/hooks/useViewerTabs";
+import {
+  createDiagramOpenRequest,
+  type DiagramOpenRequest,
+} from "@/lib/mobile-session-view-mode";
 import { getBaseName } from "@/utils/pathUtils";
 import {
   findRepoForSession,
@@ -180,6 +184,8 @@ export default function Dashboard() {
   const [mobileActiveTab, setMobileActiveTab] = useState<MobileTab>("session");
   const [mobileSessionSubView, setMobileSessionSubView] =
     useState<SessionSubView>("list");
+  const [diagramOpenRequest, setDiagramOpenRequest] =
+    useState<DiagramOpenRequest | null>(null);
   // ブラウザビューを一度でも開いたかどうかのフラグ
   // 一度開いたら常に描画してdisplay:hiddenで切り替え、BrowserPaneの再マウント（VNC再接続）を防ぐ
   const [hasBrowserOpened, setHasBrowserOpened] = useState(false);
@@ -214,6 +220,10 @@ export default function Dashboard() {
   const handleOpenUrl = useCallback(
     (url: string) => {
       if (isRemote) {
+        if (isMobile) {
+          handleSelectBrowser();
+          setMobileActiveTab("browser");
+        }
         navigateBrowser(url);
         setSelectedSessionId("browser");
         setHasBrowserOpened(true);
@@ -225,9 +235,11 @@ export default function Dashboard() {
         a.click();
       }
     },
-    [isRemote, navigateBrowser]
+    [isRemote, isMobile, handleSelectBrowser, navigateBrowser]
   );
 
+  // PC / モバイル共通の単一インスタンス。MobileLayout で再度呼ぶとリンクタップの
+  // ハンドラが二重登録され、URL オープンが 2 回走るため、ここだけで管理する。
   const {
     getTabsForSession,
     getActiveTabForSession,
@@ -241,7 +253,7 @@ export default function Dashboard() {
     readFile,
     fileContent,
     handleOpenUrl,
-    !isMobile
+    true
   );
 
   // diagram:open を受けて図タブを開く。worktreePath はサーバーから送られない
@@ -253,6 +265,9 @@ export default function Dashboard() {
       const session = sessions.get(data.sessionId);
       if (!session?.worktreePath) return;
       openDiagramTab(data.sessionId, session.worktreePath, data.relPath);
+      setDiagramOpenRequest(previous =>
+        createDiagramOpenRequest(previous, data.sessionId, data.relPath)
+      );
     };
     socket.on("diagram:open", onDiagramOpen);
     return () => {
@@ -635,8 +650,19 @@ export default function Dashboard() {
           onUploadFile={uploadFile}
           onCopyBuffer={copyBuffer}
           onNewSession={handleNewSession}
-          readFile={readFile}
-          fileContent={fileContent}
+          getTabsForSession={getTabsForSession}
+          getActiveTabForSession={getActiveTabForSession}
+          handleTabSelect={handleTabSelect}
+          handleTabClose={handleTabClose}
+          openDiagramTab={openDiagramTab}
+          diagramOpenRequest={diagramOpenRequest}
+          listDiagrams={listDiagrams}
+          deleteDiagram={deleteDiagram}
+          getDiagramComments={getDiagramComments}
+          createDiagramComment={createDiagramComment}
+          resolveDiagramComment={resolveDiagramComment}
+          deleteDiagramComment={deleteDiagramComment}
+          sendDiagramComment={sendDiagramComment}
           beaconMessages={beaconMessages}
           beaconStreaming={beaconStreaming}
           beaconStreamText={beaconStreamText}
@@ -652,7 +678,6 @@ export default function Dashboard() {
           multiProfileSupported={capabilities.multiProfileSupported}
           activeBrowserSession={activeBrowserSession}
           onSelectBrowser={handleSelectBrowser}
-          navigateBrowser={navigateBrowser}
           isRemote={isRemote}
           onOpenMcpManager={() => setShowMcpManager(true)}
           messageShortcuts={messageShortcuts}

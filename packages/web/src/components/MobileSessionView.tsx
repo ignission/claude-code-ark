@@ -52,30 +52,30 @@ import { Textarea } from "@/components/ui/textarea";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { useVisualViewport } from "../hooks/useVisualViewport";
+import {
+  type DiagramOpenRequest,
+  getViewModeForDiagramOpenRequest,
+  getViewModeForViewerTab,
+  type MobileSessionViewMode,
+  readSavedViewMode,
+  writeSavedViewMode,
+} from "../lib/mobile-session-view-mode";
+import { DiagramPane, type DiagramPaneProps } from "./DiagramPane";
 import { FileViewerPane } from "./FileViewerPane";
 import { HtmlViewerPane } from "./HtmlViewerPane";
 import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
 import { MessageShortcutMenu } from "./MessageShortcutMenu";
+import { MobileSessionViewModeToggle } from "./MobileSessionViewModeToggle";
 import { SplitChatPane } from "./SplitChatPane";
 import type { ViewerTab } from "./TerminalPane";
 import { ViewerTabBar } from "./ViewerTabBar";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
-const STORAGE_KEY_MOBILE_VIEW = "ark-mobile-session-view";
-
-/** モバイルセッションの表示モード（会話 / ターミナル）。既定は会話。 */
-type MobileSessionViewMode = "chat" | "terminal";
-
-function readSavedViewMode(): MobileSessionViewMode {
-  try {
-    return localStorage.getItem(STORAGE_KEY_MOBILE_VIEW) === "terminal"
-      ? "terminal"
-      : "chat";
-  } catch {
-    return "chat";
-  }
-}
+type MobileDiagramPaneProps = Omit<
+  DiagramPaneProps,
+  "sessionId" | "worktreePath" | "relPath"
+>;
 
 /** プレビューダイアログに蓄積する添付ファイル */
 interface PendingFile {
@@ -87,7 +87,7 @@ interface PendingFile {
   size: number;
 }
 
-interface MobileSessionViewProps {
+export interface MobileSessionViewProps extends MobileDiagramPaneProps {
   /** 会話ビュー（SplitChatPane）の JSONL 購読・AUQ 受信に使う */
   socket: TypedSocket | null;
   /** この詳細が現在表示中か。会話ビューの購読を表示中に限定する */
@@ -120,6 +120,7 @@ interface MobileSessionViewProps {
   onCopyBuffer?: () => Promise<string | null>;
   tabs: ViewerTab[];
   activeTabIndex: number;
+  diagramOpenRequest: DiagramOpenRequest | null;
   onTabSelect: (index: number) => void;
   onTabClose: (index: number) => void;
   messageShortcuts: MessageShortcut[];
@@ -144,41 +145,63 @@ export function MobileSessionView({
   onCopyBuffer,
   tabs,
   activeTabIndex,
+  diagramOpenRequest,
   onTabSelect,
   onTabClose,
   messageShortcuts,
   onCreateShortcut,
   onUpdateShortcut,
   onDeleteShortcut,
+  isConnected,
+  listDiagrams,
+  deleteDiagram,
+  getDiagramComments,
+  createDiagramComment,
+  resolveDiagramComment,
+  deleteDiagramComment,
+  sendDiagramComment,
+  onSelectDiagram,
 }: MobileSessionViewProps) {
   const { height: viewportHeight, isKeyboardVisible } = useVisualViewport();
   const [inputValue, setInputValue] = useState("");
   const [iframeKey, setIframeKey] = useState(0);
-  // 表示モード（会話 / ターミナル）。既定は会話。最後の選択を localStorage に永続化。
+  // 表示モード（会話 / ターミナル / 図）。既定は会話。最後の選択を永続化。
   const [viewMode, setViewMode] =
     useState<MobileSessionViewMode>(readSavedViewMode);
 
-  const toggleViewMode = useCallback(() => {
-    setViewMode(prev => {
-      const next = prev === "chat" ? "terminal" : "chat";
-      try {
-        localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, next);
-      } catch {
-        // ignore
-      }
-      return next;
-    });
+  const handleViewModeChange = useCallback((next: MobileSessionViewMode) => {
+    writeSavedViewMode(next);
+    setViewMode(next);
   }, []);
 
-  // ファイル/HTML/キャンバスのビューワータブが開かれた（active が terminal 以外に
-  // なった）ら、ターミナルモードへ自動で切り替えてビューワーを可視化する。
-  // 会話内のファイルリンクや「キャンバスで開く」タップに追従する。
+  // diagram:open の明示通知がこのセッション向けに変化したときだけ board を開く。
+  const handledDiagramOpenSequenceRef = useRef<number | null>(null);
+  useEffect(() => {
+    const nextViewMode = getViewModeForDiagramOpenRequest(
+      session.id,
+      diagramOpenRequest,
+      handledDiagramOpenSequenceRef.current
+    );
+    handledDiagramOpenSequenceRef.current =
+      diagramOpenRequest?.sequence ?? null;
+    if (nextViewMode) setViewMode(nextViewMode);
+  }, [diagramOpenRequest, session.id]);
+
+  // ファイル/HTML のビューワータブは従来どおり terminal モードで可視化する。
   const activeTabType = tabs[activeTabIndex]?.type;
   useEffect(() => {
-    if (activeTabType && activeTabType !== "terminal") {
-      setViewMode("terminal");
-    }
+    const nextViewMode = getViewModeForViewerTab(activeTabType);
+    if (nextViewMode) setViewMode(nextViewMode);
   }, [activeTabType]);
+
+  // モバイルのタブバーでユーザー自身が図を選んだ場合も board を開く。
+  const handleViewerTabSelect = useCallback(
+    (index: number) => {
+      onTabSelect(index);
+      if (tabs[index]?.type === "diagram") setViewMode("board");
+    },
+    [onTabSelect, tabs]
+  );
   // 全ての添付ファイル（画像/非画像）を共通でプレビューダイアログに集約する
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [uploadMessage, setUploadMessage] = useState("");
@@ -422,16 +445,10 @@ export function MobileSessionView({
           </span>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {/* 会話 / ターミナル 表示切替 */}
-          <button
-            type="button"
-            onClick={toggleViewMode}
-            className="flex items-center gap-1 rounded-md bg-muted px-2 py-1.5 font-medium text-foreground text-xs shrink-0 hover:bg-muted/70"
-            title={viewMode === "chat" ? "ターミナルに切替" : "会話に切替"}
-          >
-            <span>{viewMode === "chat" ? "🖥" : "💬"}</span>
-            <span>{viewMode === "chat" ? "端末" : "会話"}</span>
-          </button>
+          <MobileSessionViewModeToggle
+            value={viewMode}
+            onChange={handleViewModeChange}
+          />
           <MessageShortcutMenu
             shortcuts={messageShortcuts}
             onSendMessage={onSendMessage}
@@ -529,7 +546,7 @@ export function MobileSessionView({
         <ViewerTabBar
           tabs={tabs}
           activeTabIndex={activeTabIndex}
-          onTabSelect={onTabSelect}
+          onTabSelect={handleViewerTabSelect}
           onTabClose={onTabClose}
         />
 
@@ -756,6 +773,30 @@ export function MobileSessionView({
             </Button>
           </div>
         </form>
+      </div>
+
+      {/* 図モード: DiagramPane は他モードでもマウントしたまま hidden で切り替える。
+          MessageChannel port と iframe の接続をモード切替で張り直さない。 */}
+      <div
+        className={
+          viewMode === "board" ? "flex-1 flex flex-col min-h-0" : "hidden"
+        }
+      >
+        <DiagramPane
+          socket={socket}
+          isConnected={isConnected}
+          listDiagrams={listDiagrams}
+          deleteDiagram={deleteDiagram}
+          getDiagramComments={getDiagramComments}
+          createDiagramComment={createDiagramComment}
+          resolveDiagramComment={resolveDiagramComment}
+          deleteDiagramComment={deleteDiagramComment}
+          sendDiagramComment={sendDiagramComment}
+          sessionId={session.id}
+          worktreePath={session.worktreePath}
+          relPath={tabs.find(tab => tab.type === "diagram")?.relPath}
+          onSelectDiagram={onSelectDiagram}
+        />
       </div>
 
       {/* 添付ファイル選択用の隠しinput

@@ -12,6 +12,9 @@ import type {
   BrowserSession,
   ChatMessage,
   ClientToServerEvents,
+  DiagramCommentsResponse,
+  DiagramDeleteResponse,
+  DiagramListItem,
   ManagedSession,
   MessageShortcut,
   ServerToClientEvents,
@@ -28,7 +31,8 @@ import { MobileControls } from "@/components/frontline/MobileControls";
 import { MobileChatView } from "@/components/MobileChatView";
 import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
-import { useViewerTabs } from "../hooks/useViewerTabs";
+import type { ViewerTab } from "@/components/TerminalPane";
+import type { DiagramOpenRequest } from "@/lib/mobile-session-view-mode";
 
 // MobileTab / SessionSubView は配列を真実源にし、union 型を派生させる。
 // こうしないと runtime 検証配列と型が二重化し、union に値を足したとき配列更新を
@@ -87,15 +91,52 @@ interface MobileLayoutProps {
   }>;
   onCopyBuffer?: (sessionId: string) => Promise<string | null>;
   onNewSession: () => void;
-  // ファイルビューワー
-  readFile: (sessionId: string, filePath: string) => void;
-  fileContent: {
-    filePath: string;
-    content: string;
-    mimeType: string;
-    size: number;
-    error?: string;
-  } | null;
+  // ビューアタブ状態は Dashboard から props で受け取り、ここでは useViewerTabs を呼ばない
+  getTabsForSession: (sessionId: string) => ViewerTab[];
+  getActiveTabForSession: (sessionId: string) => number;
+  handleTabSelect: (sessionId: string, index: number) => void;
+  handleTabClose: (sessionId: string, index: number) => void;
+  openDiagramTab: (
+    sessionId: string,
+    worktreePath: string,
+    relPath: string
+  ) => void;
+  /** diagram:open のたびに sequence が増えるモバイル表示用の明示通知 */
+  diagramOpenRequest: DiagramOpenRequest | null;
+  // 図ペイン transport（PC の SplitViewPane と同じ集合）
+  listDiagrams: (worktreePath: string) => Promise<DiagramListItem[]>;
+  deleteDiagram: (
+    sessionId: string,
+    relPath: string,
+    expectedTracked: boolean
+  ) => Promise<DiagramDeleteResponse>;
+  getDiagramComments: (
+    sessionId: string,
+    relPath: string
+  ) => Promise<DiagramCommentsResponse>;
+  createDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    anchorId: string,
+    body: string,
+    anchorQuote?: string,
+    anchorOccurrence?: number
+  ) => Promise<DiagramCommentsResponse>;
+  resolveDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
+  deleteDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
+  sendDiagramComment: (
+    sessionId: string,
+    relPath: string,
+    threadId: string
+  ) => Promise<DiagramCommentsResponse>;
   // Beaconチャット
   beaconMessages: ChatMessage[];
   beaconStreaming: boolean;
@@ -120,7 +161,6 @@ interface MobileLayoutProps {
   // ブラウザ（noVNC）
   activeBrowserSession: BrowserSession | null;
   onSelectBrowser: () => void;
-  navigateBrowser: (url: string) => void;
   isRemote: boolean;
   // メッセージショートカット
   messageShortcuts: MessageShortcut[];
@@ -157,8 +197,19 @@ export function MobileLayout({
   onUploadFile,
   onCopyBuffer,
   onNewSession,
-  readFile,
-  fileContent,
+  getTabsForSession,
+  getActiveTabForSession,
+  handleTabSelect,
+  handleTabClose,
+  openDiagramTab,
+  diagramOpenRequest,
+  listDiagrams,
+  deleteDiagram,
+  getDiagramComments,
+  createDiagramComment,
+  resolveDiagramComment,
+  deleteDiagramComment,
+  sendDiagramComment,
   beaconMessages,
   beaconStreaming,
   beaconStreamText,
@@ -175,7 +226,6 @@ export function MobileLayout({
   onOpenMcpManager,
   activeBrowserSession,
   onSelectBrowser,
-  navigateBrowser,
   isRemote,
   messageShortcuts,
   onCreateShortcut,
@@ -208,41 +258,6 @@ export function MobileLayout({
   // ブラウザビューを一度でも開いたかどうかのフラグ
   // 一度開いたらdisplay:hiddenで切り替え、BrowserPaneの再マウント（WebSocket再接続）を防ぐ
   const [hasBrowserOpened, setHasBrowserOpened] = useState(false);
-
-  const handleOpenUrl = useCallback(
-    (url: string) => {
-      if (isRemote) {
-        onSelectBrowser();
-        onChangeActiveTab("browser");
-        setHasBrowserOpened(true);
-        navigateBrowser(url);
-      } else {
-        const a = document.createElement("a");
-        a.href = url;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        a.click();
-      }
-    },
-    [isRemote, onSelectBrowser, navigateBrowser, onChangeActiveTab]
-  );
-
-  // タブ状態管理（共通フック）
-  const {
-    getTabsForSession,
-    getActiveTabForSession,
-    handleTabSelect,
-    handleTabClose,
-  } = useViewerTabs(
-    selectedSessionId,
-    sessions,
-    readFile,
-    fileContent,
-    handleOpenUrl,
-    // モバイルでは MobileLayout 側がリンクタップ受信を担う (Dashboard 側は無効化)。
-    // 排他制御を呼び出し側両方で明示することで意図を契約レベルで完結させる。
-    true
-  );
 
   // セッションを選択して詳細画面に遷移
   const handleOpenSession = useCallback(
@@ -393,8 +408,20 @@ export function MobileLayout({
                 }
                 tabs={getTabsForSession(sessionId)}
                 activeTabIndex={getActiveTabForSession(sessionId)}
+                diagramOpenRequest={diagramOpenRequest}
                 onTabSelect={idx => handleTabSelect(sessionId, idx)}
                 onTabClose={idx => handleTabClose(sessionId, idx)}
+                isConnected={isSocketConnected}
+                listDiagrams={listDiagrams}
+                deleteDiagram={deleteDiagram}
+                getDiagramComments={getDiagramComments}
+                createDiagramComment={createDiagramComment}
+                resolveDiagramComment={resolveDiagramComment}
+                deleteDiagramComment={deleteDiagramComment}
+                sendDiagramComment={sendDiagramComment}
+                onSelectDiagram={(relPath, worktreePath) =>
+                  openDiagramTab(sessionId, worktreePath, relPath)
+                }
                 messageShortcuts={messageShortcuts}
                 onCreateShortcut={onCreateShortcut}
                 onUpdateShortcut={onUpdateShortcut}
