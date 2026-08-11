@@ -96,7 +96,9 @@ function timestamp(
 ): { ok: true; value: string } | { ok: false; error: string } {
   if (
     typeof value !== "string" ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(value) ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(
+      value
+    ) ||
     !Number.isFinite(Date.parse(value))
   ) {
     return { ok: false, error: `${name} は ISO timestamp が必要です` };

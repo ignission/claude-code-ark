@@ -33,6 +33,13 @@ afterEach(() => {
 
 const target = "order-flow.diagram.html";
 const timestamp = "2026-08-09T01:02:03.456Z";
+const acceptedTimestamps = [
+  "2026-08-10T12:18:59.377337Z",
+  "2026-08-10T12:18:59Z",
+  "2026-08-10T12:18:59.377Z",
+  "2026-08-10T21:18:59.377337+09:00",
+  "2026-08-10T07:18:59.377337-05:00",
+] as const;
 
 function comments(overrides: Record<string, unknown> = {}) {
   return {
@@ -127,6 +134,48 @@ describe("parseDiagramComments", () => {
       comments: authorless,
     });
   });
+
+  it.each(acceptedTimestamps)(
+    "ISO timestamp %s を表現を変えずに受け付ける",
+    value => {
+      const thread = comments().threads[0];
+      const sidecar = comments({
+        threads: [
+          {
+            ...thread,
+            createdAt: value,
+            messages: [{ ...thread.messages[0], at: value }],
+          },
+        ],
+      });
+
+      expect(parseDiagramComments(JSON.stringify(sidecar), target)).toEqual({
+        ok: true,
+        comments: sidecar,
+      });
+    }
+  );
+
+  it.each(["2026-08-10 12:18:59", "not-a-date", "", 1])(
+    "不正な timestamp %j を拒否する",
+    value => {
+      const thread = comments().threads[0];
+      const sidecar = comments({
+        threads: [
+          {
+            ...thread,
+            createdAt: value,
+            messages: [{ ...thread.messages[0], at: value }],
+          },
+        ],
+      });
+
+      const result = parseDiagramComments(JSON.stringify(sidecar), target);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe("INVALID_SIDECAR");
+    }
+  );
 
   it.each([
     ["壊れた JSON", "{"],
@@ -781,6 +830,39 @@ describe("comment mutations", () => {
     }
     expect(again).toEqual(resolved);
   });
+
+  it.each(acceptedTimestamps)(
+    "resolve 後も timestamp %s の表現を維持する",
+    async value => {
+      writeDoc();
+      const thread = comments().threads[0];
+      const sidecarPath = path.join(
+        worktree,
+        ".claude/diagrams/order-flow.comments.json"
+      );
+      fs.writeFileSync(
+        sidecarPath,
+        JSON.stringify(
+          comments({
+            threads: [
+              {
+                ...thread,
+                createdAt: value,
+                messages: [{ ...thread.messages[0], at: value }],
+              },
+            ],
+          })
+        )
+      );
+
+      const result = await resolveDiagramComment(worktree, relPath, thread.id);
+
+      expect(result.ok).toBe(true);
+      const saved = JSON.parse(fs.readFileSync(sidecarPath, "utf8"));
+      expect(saved.threads[0].createdAt).toBe(value);
+      expect(saved.threads[0].messages[0].at).toBe(value);
+    }
+  );
 
   it("未知 thread を THREAD_NOT_FOUND にする", async () => {
     writeDoc();
