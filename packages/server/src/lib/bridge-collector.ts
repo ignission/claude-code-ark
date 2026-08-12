@@ -299,8 +299,8 @@ function readUserRepoList(): Set<string> | null {
  *   2. それ以外（メインブランチ or repoPath 不明）→ repo basename
  *
  * 例:
- *   worktreePath=/.../promarche-feat-x, repoPath=/.../promarche → "promarche-feat-x"
- *   worktreePath=/.../tally,            repoPath=/.../tally    → "tally"
+ *   worktreePath=/.../sample-project-feat-x, repoPath=/.../sample-project → "sample-project-feat-x"
+ *   worktreePath=/.../demo,                  repoPath=/.../demo           → "demo"
  */
 function deriveDisplayName(
   worktreePath: string,
