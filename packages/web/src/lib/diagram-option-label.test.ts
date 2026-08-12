@@ -6,9 +6,9 @@ describe("formatDiagramOptionLabel", () => {
     expect(
       formatDiagramOptionLabel(
         "注文フロー",
-        ".claude/diagrams/promarche-order-status.diagram.html"
+        ".claude/diagrams/sample-order-status.diagram.html"
       )
-    ).toBe("注文フロー — promarche-order-status.diagram.html");
+    ).toBe("注文フロー — sample-order-status.diagram.html");
   });
 
   it("displayName が basename と同じ場合は path だけを表示する", () => {

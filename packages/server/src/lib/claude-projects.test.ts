@@ -27,9 +27,9 @@ describe("encodeProjectDir", () => {
     );
   });
 
-  it("アンダースコアも - に置換する (haus_3rd regression)", () => {
-    expect(encodeProjectDir("/home/admin/dev/MATLyS-Co-Ltd/haus_3rd")).toBe(
-      "-home-admin-dev-MATLyS-Co-Ltd-haus-3rd"
+  it("アンダースコアも - に置換する (sample_3rd regression)", () => {
+    expect(encodeProjectDir("/home/admin/dev/Example-Co-Ltd/sample_3rd")).toBe(
+      "-home-admin-dev-Example-Co-Ltd-sample-3rd"
     );
   });
 
@@ -40,8 +40,8 @@ describe("encodeProjectDir", () => {
   });
 
   it("英大文字は保持する", () => {
-    expect(encodeProjectDir("/home/admin/MATLyS-Co-Ltd")).toBe(
-      "-home-admin-MATLyS-Co-Ltd"
+    expect(encodeProjectDir("/home/admin/Example-Co-Ltd")).toBe(
+      "-home-admin-Example-Co-Ltd"
     );
   });
 
