@@ -13,7 +13,7 @@
 
 - **takt** (nrslib): 「エージェントは信頼せず外部から制御する」— 決定論をエンジン側に置く思想。
   ただし takt 自体は導入しない（人間ゲートが同期的・deploy まで閉じない・fleet 運転がない）
-- **flow-loop** (carot-inc/promarche PR #886): 冪等 tick の reconciler パターン・非同期人間ゲート・
+- **flow-loop** (別リポジトリの PR): 冪等 tick の reconciler パターン・非同期人間ゲート・
   WIP 上限/ブレーカー/kill switch 等の安全装置。ただしゲートの置き場は PR 上ではなく Ark UI に変更
   （epoch 鮮度判定の複雑さが構造的に消える）
 - **agmsg**: 導入しない。搬送路と人間ゲートは Ark 自身の UI・SQLite・PushNotification で賄う
@@ -108,7 +108,7 @@ queued → planning → [plan-gate] → implementing → ci-watch → [merge-gat
   状態はすべて SQLite（/tmp 消失リスクなし）
 - **ブレーカー** → リポジトリ単位で連続 halt 3 → ループ自動 pause + 通知。前進があればカウンタリセット
 - **kill switch** → `pause_loop`（UI ボタン / Beacon ツールの両方から）
-- **中止（abort）** → セッション停止 + worktree は残置（削除は人間判断。haus 運用と同じ）
+- **中止（abort）** → セッション停止 + worktree は残置（削除は人間判断。既存運用と同じ）
 - **遷移の冪等性** → 遷移は SQLite 上の現 phase を条件にガード。同一シグナル2回で遷移は1回
 
 ## 既存 Beacon への影響
