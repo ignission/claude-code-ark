@@ -456,6 +456,88 @@ describe("injectDiagramCommentLayer", () => {
     );
   });
 
+  it("コメント本文のインラインコード・太字・斜体を DOM 要素として組み立てる", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const inlineRenderer = injected.slice(
+      injected.indexOf("function appendInlineMarkdown"),
+      injected.indexOf("function renderCommentBody")
+    );
+
+    expect(inlineRenderer).toContain('element("code",token.slice(1,-1))');
+    expect(inlineRenderer).toContain('element("strong",token.slice(2,-2))');
+    expect(inlineRenderer).toContain('element("em",token.slice(1,-1))');
+    expect(inlineRenderer).toContain("document.createTextNode");
+  });
+
+  it("コメント本文のコードブロック・箇条書き・番号付きリストを DOM 要素として組み立てる", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const bodyRenderer = injected.slice(
+      injected.indexOf("function renderCommentBody"),
+      injected.indexOf("function renderThread")
+    );
+
+    for (const contract of [
+      'element("pre")',
+      'element("code",codeLines.join("\\n"))',
+      'element("ul")',
+      'element("ol")',
+      'element("li")',
+    ]) {
+      expect(bodyRenderer).toContain(contract);
+    }
+    expect(injected).toContain(
+      ".ark-comment-body pre{max-width:100%;margin:6px 0;padding:7px;box-sizing:border-box;overflow-x:auto"
+    );
+  });
+
+  it("コードブロックは未閉じでも末尾まで literal とし、内部の太字を解釈しない", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const bodyRenderer = injected.slice(
+      injected.indexOf("function renderCommentBody"),
+      injected.indexOf("function renderThread")
+    );
+
+    expect(bodyRenderer).toContain("while(index<lines.length");
+    expect(bodyRenderer).toContain('element("code",codeLines.join("\\n"))');
+    expect(bodyRenderer).not.toContain("appendInlineMarkdown(code");
+  });
+
+  it("対になっていないインライン記号とリンク記法は literal のまま描画する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const inlineRenderer = injected.slice(
+      injected.indexOf("function appendInlineMarkdown"),
+      injected.indexOf("function renderCommentBody")
+    );
+
+    expect(inlineRenderer).toContain(
+      "container.appendChild(document.createTextNode(text.slice(textStart)))"
+    );
+    expect(inlineRenderer).toContain("var valid=close>cursor+markerLength-1");
+    expect(inlineRenderer).not.toContain('element("a"');
+  });
+
+  it("Markdown は message.body だけへ適用し anchorQuote・anchorText は literal のままにする", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const threadRenderer = injected.slice(
+      injected.indexOf("function renderThread"),
+      injected.indexOf("function renderComposer")
+    );
+    const composerRenderer = injected.slice(
+      injected.indexOf("function renderComposer"),
+      injected.indexOf("function updateLayout")
+    );
+
+    expect(threadRenderer).toContain("renderCommentBody(message.body)");
+    expect(threadRenderer.match(/renderCommentBody\(/gu)).toHaveLength(1);
+    expect(composerRenderer).not.toContain("renderCommentBody(");
+    expect(threadRenderer).toContain(
+      'element("strong",thread.anchorText,"ark-comment-anchor-text")'
+    );
+    expect(threadRenderer).toContain(
+      'element("p",thread.anchorQuote||thread.anchorText,"ark-comment-unresolved-quote")'
+    );
+  });
+
   it("明示状態がなければ広幅で開き、狭幅で畳む", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const threadRenderer = injected.slice(
