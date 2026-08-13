@@ -68,6 +68,35 @@ describe("validateDiagramDocAnchors", () => {
     expect(validateDiagramDocAnchors(html, model("doc"))).toEqual({ ok: true });
   });
 
+  it("data-ark-id の数値文字参照をデコードして node と照合する", () => {
+    const html =
+      '<section data-ark-id="&#X73;1"><p data-ark-id="s1-p1"></p><div data-ark-id="s1-t1-r1"></div></section>';
+
+    expect(validateDiagramDocAnchors(html, model("doc"))).toEqual({ ok: true });
+  });
+
+  it("script 内の </scriptx> を raw-text の終端として扱わない", () => {
+    const html = `
+      <section data-ark-id="s1">
+        <p data-ark-id="s1-p1"></p>
+        <div data-ark-id="s1-t1-r1"></div>
+        <script>
+          const marker = "</scriptx>";
+          const sample = '<i data-ark-id="unknown">';
+        </script>
+      </section>
+    `;
+
+    expect(validateDiagramDocAnchors(html, model("doc"))).toEqual({ ok: true });
+  });
+
+  it("空白が続く </style x> を raw-text の終端として扱う", () => {
+    const html =
+      '<style>.sample { color: red; }</style x><section data-ark-id="s1"><p data-ark-id="s1-p1"></p><div data-ark-id="s1-t1-r1"></div></section>';
+
+    expect(validateDiagramDocAnchors(html, model("doc"))).toEqual({ ok: true });
+  });
+
   it("別の属性値に含まれる data-ark-id を anchor と数えない", () => {
     const emptyModel = { ...model("doc"), nodes: [] };
 

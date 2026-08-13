@@ -66,6 +66,44 @@ describe("validateDiagramGraphKinds", () => {
     expect(validateDiagramGraphKinds(html, model())).toEqual({ ok: true });
   });
 
+  it("data-model-id の数値文字参照をデコードして node と照合する", () => {
+    const result = validateDiagramGraphKinds(
+      '<article data-model-id="&#x78;" data-kind="a">X</article>',
+      model()
+    );
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("data-kind の数値文字参照をデコードして kind と照合する", () => {
+    expect(
+      validateDiagramGraphKinds(
+        '<article data-model-id="x" data-kind="&#98;">X</article>',
+        model()
+      )
+    ).toEqual({ ok: true });
+  });
+
+  it("script 内の </scriptx> を raw-text の終端として扱わない", () => {
+    const html = `
+      <script>
+        const marker = "</scriptx>";
+        const sample = '<i data-model-id="x" data-kind="a">';
+      </script>
+    `;
+
+    expect(validateDiagramGraphKinds(html, model())).toEqual({ ok: true });
+  });
+
+  it("空白が続く </style x> を raw-text の終端として扱う", () => {
+    const result = validateDiagramGraphKinds(
+      '<style>.sample { color: red; }</style x><i data-model-id="x" data-kind="a"></i>',
+      model()
+    );
+
+    expect(result.ok).toBe(false);
+  });
+
   it("エラーに node id と model・投影両側の値を含める", () => {
     const result = validateDiagramGraphKinds(
       '<article data-model-id="x" data-kind="a">X</article>',
