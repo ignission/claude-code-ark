@@ -414,7 +414,7 @@ async function withMutationQueue<T>(
   }
 }
 
-async function readCurrentDoc(
+async function readCurrentDiagram(
   worktreeReal: string,
   relPath: string
 ): Promise<
@@ -429,12 +429,11 @@ async function readCurrentDoc(
       error: diagram.error,
     };
   }
-  if (diagram.model.type !== "doc") {
-    return { ok: false, code: "NOT_DOC", error: "文書型の図ではありません" };
-  }
-  const anchors = validateDiagramDocAnchors(diagram.raw, diagram.model);
-  if (!anchors.ok) {
-    return { ok: false, code: "ANCHOR_NOT_FOUND", error: anchors.error };
+  if (diagram.model.type === "doc") {
+    const anchors = validateDiagramDocAnchors(diagram.raw, diagram.model);
+    if (!anchors.ok) {
+      return { ok: false, code: "ANCHOR_NOT_FOUND", error: anchors.error };
+    }
   }
   return diagram;
 }
@@ -514,7 +513,7 @@ async function writeDiagramCommentsFile(
   }
 }
 
-/** 最新の doc/sidecar を再検証して単発コメントを追加する。 */
+/** 最新の diagram/sidecar を再検証して単発コメントを追加する。 */
 export async function createDiagramComment(
   worktreeReal: string,
   relPath: string,
@@ -526,7 +525,7 @@ export async function createDiagramComment(
   const resolved = resolveDiagramCommentsPath(worktreeReal, relPath);
   if (!resolved.ok) return resolved;
   return withMutationQueue(resolved.commentsAbsPath, async () => {
-    const diagram = await readCurrentDoc(worktreeReal, relPath);
+    const diagram = await readCurrentDiagram(worktreeReal, relPath);
     if (!diagram.ok) return diagram;
     const anchor = diagram.model.nodes.find(node => node.id === anchorId);
     if (anchor === undefined) {
@@ -625,7 +624,7 @@ export async function createDiagramComment(
   });
 }
 
-/** 最新の doc/sidecar を再検証して既存 thread へメッセージを追加する。 */
+/** 最新の diagram/sidecar を再検証して既存 thread へメッセージを追加する。 */
 export async function appendDiagramCommentMessage(
   worktreeReal: string,
   relPath: string,
@@ -635,7 +634,7 @@ export async function appendDiagramCommentMessage(
   const resolved = resolveDiagramCommentsPath(worktreeReal, relPath);
   if (!resolved.ok) return resolved;
   return withMutationQueue(resolved.commentsAbsPath, async () => {
-    const diagram = await readCurrentDoc(worktreeReal, relPath);
+    const diagram = await readCurrentDiagram(worktreeReal, relPath);
     if (!diagram.ok) return diagram;
     const current = await readDiagramCommentsFile(worktreeReal, relPath);
     if (!current.ok) return current;
@@ -709,7 +708,7 @@ export async function appendDiagramCommentMessage(
   });
 }
 
-/** 最新の doc/sidecar を再検証して thread を解決済みにする。 */
+/** 最新の diagram/sidecar を再検証して thread を解決済みにする。 */
 export async function resolveDiagramComment(
   worktreeReal: string,
   relPath: string,
@@ -718,7 +717,7 @@ export async function resolveDiagramComment(
   const resolved = resolveDiagramCommentsPath(worktreeReal, relPath);
   if (!resolved.ok) return resolved;
   return withMutationQueue(resolved.commentsAbsPath, async () => {
-    const diagram = await readCurrentDoc(worktreeReal, relPath);
+    const diagram = await readCurrentDiagram(worktreeReal, relPath);
     if (!diagram.ok) return diagram;
     const current = await readDiagramCommentsFile(worktreeReal, relPath);
     if (!current.ok) return current;
@@ -797,7 +796,7 @@ async function removeEmptyDiagramCommentsFile(
   }
 }
 
-/** 最新の doc/sidecar を再検証して thread を物理削除する。 */
+/** 最新の diagram/sidecar を再検証して thread を物理削除する。 */
 export async function deleteDiagramComment(
   worktreeReal: string,
   relPath: string,
@@ -815,7 +814,7 @@ export async function deleteDiagramComment(
     };
   }
   return withMutationQueue(resolved.commentsAbsPath, async () => {
-    const diagram = await readCurrentDoc(worktreeReal, relPath);
+    const diagram = await readCurrentDiagram(worktreeReal, relPath);
     if (!diagram.ok) return diagram;
     const current = await readDiagramCommentsFile(worktreeReal, relPath);
     if (!current.ok) return current;
