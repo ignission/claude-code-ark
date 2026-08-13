@@ -61,7 +61,7 @@ export interface DiagramCommentsHandlerDeps {
   sendMessage: (sessionId: string, message: string) => void;
 }
 
-/** get でも mutation と同じ doc/anchor trust boundary を通す。 */
+/** get でも mutation と同じ diagram/anchor trust boundary を通す。 */
 export async function getDiagramCommentsForDoc(
   worktreeReal: string,
   relPath: string
@@ -74,12 +74,11 @@ export async function getDiagramCommentsForDoc(
       error: diagram.error,
     };
   }
-  if (diagram.model.type !== "doc") {
-    return { ok: false, code: "NOT_DOC", error: "文書型の図ではありません" };
-  }
-  const anchors = validateDiagramDocAnchors(diagram.raw, diagram.model);
-  if (!anchors.ok) {
-    return { ok: false, code: "ANCHOR_NOT_FOUND", error: anchors.error };
+  if (diagram.model.type === "doc") {
+    const anchors = validateDiagramDocAnchors(diagram.raw, diagram.model);
+    if (!anchors.ok) {
+      return { ok: false, code: "ANCHOR_NOT_FOUND", error: anchors.error };
+    }
   }
   return readDiagramCommentsFile(worktreeReal, relPath);
 }

@@ -2,12 +2,15 @@ import { createCachedMinifier } from "./injected-minify.js";
 
 export const DIAGRAM_COMMENT_LAYER_MARKER = "ark-diagram-comment-layer";
 
-export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
+export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-ark-comment-mode="doc" data-ark-harness-ui="1">
 (function(){
   "use strict";
   var CARD_WIDTH=300;
   var CARD_GAP=10;
   var RAIL_GAP=12;
+  var GRAPH_CLICK_MOVE_LIMIT=5;
+  var mode=document.currentScript.getAttribute("data-ark-comment-mode");
+  var graphMode=mode==="graph";
   var port=null;
   var pinchDistance=null;
   var comments={version:1,target:"",threads:[]};
@@ -34,6 +37,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
   var selectedThreadId=null;
   var selectionAddButton=null;
   var selectionCandidate=null;
+  var graphPointerStart=null;
   var threadHighlightResolved=Object.create(null);
   var narrow=false;
 
@@ -302,7 +306,8 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     root.appendChild(card);
   }
   function renderComposer(){
-    if(!composerAnchorId||!anchorEntry(composerAnchorId))return;
+    var entry=anchorEntry(composerAnchorId);
+    if(!composerAnchorId||!entry)return;
     var anchorId=composerAnchorId;
     var composer=element("section",undefined,"ark-comment-composer");
     composer.setAttribute("data-anchor-id",anchorId);
@@ -322,8 +327,9 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     });
     header.appendChild(closeButton);
     composer.appendChild(header);
-    if(composerAnchorQuote){
-      composer.appendChild(element("blockquote",composerAnchorQuote,"ark-comment-composer-quote"));
+    var composerText=graphMode?entry.anchorText:composerAnchorQuote;
+    if(composerText){
+      composer.appendChild(element("blockquote",composerText,"ark-comment-composer-quote"));
     }
     var bodyInput=element("textarea",undefined,"ark-comment-input");
     bodyInput.setAttribute("maxlength","4000");
@@ -340,7 +346,10 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
         render();
         return;
       }
-      var payload=composerAnchorQuote?{
+      var payload=graphMode?{
+        anchorId:anchorId,
+        body:bodyInput.value
+      }:composerAnchorQuote?{
         anchorId:anchorId,
         anchorQuote:composerAnchorQuote,
         anchorOccurrence:composerAnchorOccurrence,
@@ -376,6 +385,9 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
       var parent=highlight.parentNode;
       highlight.replaceWith(document.createTextNode(highlight.textContent||""));
       if(parent&&parent.normalize)parent.normalize();
+    });
+    document.querySelectorAll(".ark-comment-node-highlight").forEach(function(anchor){
+      anchor.classList.remove("ark-comment-node-highlight");
     });
     threadHighlightResolved=Object.create(null);
   }
@@ -459,10 +471,17 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
   }
   function renderHighlights(){
     clearHighlights();
+    if(graphMode){renderGraphHighlights();return;}
     comments.threads.forEach(function(thread){
       if(!thread.anchorQuote)return;
       var entry=anchorEntry(thread.anchorId);
       threadHighlightResolved[thread.id]=Boolean(entry&&wrapThreadQuote(thread,entry));
+    });
+  }
+  function renderGraphHighlights(){
+    comments.threads.forEach(function(thread){
+      var entry=anchorEntry(thread.anchorId);
+      if(entry)entry.anchor.classList.add("ark-comment-node-highlight");
     });
   }
   function positionCards(){
@@ -512,7 +531,8 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
   function refreshLayout(){
     updateLayout();
     positionCards();
-    updateSelectionAdd();
+    if(graphMode)positionGraphSelectionAdd();
+    else updateSelectionAdd();
   }
   function cleanupExpandedThreads(){
     var existingThreadIds=new Set(comments.threads.map(function(thread){return thread.id;}));
@@ -606,35 +626,108 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     selectionAddButton.setAttribute("data-visible","true");
   }
   function buildSelectionAdd(){
-    selectionAddButton=element("button","コメント","ark-comment-selection-add");
-    selectionAddButton.setAttribute("type","button");
-    selectionAddButton.setAttribute("data-visible","false");
-    selectionAddButton.addEventListener("mousedown",function(event){event.preventDefault();});
+    createSelectionAddButton();
     selectionAddButton.addEventListener("click",function(){
       if(!selectionCandidate)return;
       openComposer(selectionCandidate.anchorId,selectionCandidate.anchorQuote,selectionCandidate.anchorOccurrence);
     });
-    root.appendChild(selectionAddButton);
     document.addEventListener("selectionchange",updateSelectionAdd);
     document.addEventListener("mouseup",updateSelectionAdd);
     document.addEventListener("keyup",updateSelectionAdd);
   }
+  function createSelectionAddButton(){
+    root.querySelectorAll(".ark-comment-selection-add").forEach(function(button){
+      root.removeChild(button);
+    });
+    selectionAddButton=element("button","コメント","ark-comment-selection-add");
+    selectionAddButton.setAttribute("type","button");
+    selectionAddButton.setAttribute("data-visible","false");
+    selectionAddButton.addEventListener("mousedown",function(event){event.preventDefault();});
+    root.appendChild(selectionAddButton);
+  }
+  function graphAnchorFromTarget(target){
+    if(!target||target.nodeType!==Node.ELEMENT_NODE||root.contains(target))return null;
+    var candidate=target.closest(".ark-harness-graph-node[data-model-id]");
+    if(!candidate)return null;
+    return anchorEntry(candidate.getAttribute("data-model-id"));
+  }
+  function positionGraphSelectionAdd(){
+    if(!selectionCandidate)return;
+    var entry=anchorEntry(selectionCandidate.anchorId);
+    if(!entry){hideSelectionAdd();return;}
+    var rect=entry.anchor.getBoundingClientRect();
+    selectionAddButton.style.top=Math.max(8,rect.bottom+6)+"px";
+    selectionAddButton.style.left=Math.max(8,Math.min(window.innerWidth-96,rect.left+rect.width/2-40))+"px";
+    selectionAddButton.setAttribute("data-visible","true");
+  }
+  function buildGraphSelectionAdd(){
+    createSelectionAddButton();
+    selectionAddButton.addEventListener("click",function(){
+      if(!selectionCandidate)return;
+      openComposer(selectionCandidate.anchorId,null,null);
+    });
+    document.addEventListener("pointerdown",function(event){
+      var entry=graphAnchorFromTarget(event.target);
+      graphPointerStart=entry?{anchorId:entry.anchorId,x:event.clientX,y:event.clientY}:null;
+    });
+    document.addEventListener("click",function(event){
+      var entry=graphAnchorFromTarget(event.target);
+      if(!entry){hideSelectionAdd();return;}
+      var moved=graphPointerStart&&(
+        graphPointerStart.anchorId!==entry.anchorId||
+        Math.hypot(event.clientX-graphPointerStart.x,event.clientY-graphPointerStart.y)>=GRAPH_CLICK_MOVE_LIMIT
+      );
+      graphPointerStart=null;
+      if(moved){hideSelectionAdd();return;}
+      selectionCandidate={anchorId:entry.anchorId,anchorText:entry.anchorText};
+      selectedAnchorId=entry.anchorId;
+      selectedThreadId=null;
+      setActiveAnchor(entry.anchorId,null);
+      positionGraphSelectionAdd();
+    });
+  }
+  function hasSameIdAncestor(anchor,anchorId){
+    var parent=anchor.parentElement;
+    while(parent){
+      if(parent.getAttribute("data-model-id")===anchorId)return true;
+      parent=parent.parentElement;
+    }
+    return false;
+  }
   function buildAnchors(){
-    document.querySelectorAll("[data-ark-id]").forEach(function(anchor){
-      var anchorId=anchor.getAttribute("data-ark-id");
+    var selector=graphMode?".ark-harness-graph-node[data-model-id]":"[data-ark-id]";
+    document.querySelectorAll(selector).forEach(function(anchor){
+      var anchorId=anchor.getAttribute(graphMode?"data-model-id":"data-ark-id");
       if(!anchorId)return;
-      anchors.push({anchor:anchor,anchorId:anchorId});
+      if(graphMode&&hasSameIdAncestor(anchor,anchorId))return;
+      var visibleText=typeof anchor.innerText==="string"?anchor.innerText:anchor.textContent||"";
+      var anchorText=graphMode?visibleText.trim().slice(0,256):null;
+      anchors.push({anchor:anchor,anchorId:anchorId,anchorText:anchorText});
+      if(graphMode){
+        anchor.addEventListener("mouseenter",function(){setActiveAnchor(anchorId,null);});
+        anchor.addEventListener("mouseleave",function(){setActiveAnchor(selectedAnchorId,selectedThreadId);});
+      }
     });
   }
   function build(){
+    document.querySelectorAll(".ark-comment-layer").forEach(function(existingRoot){
+      existingRoot.remove();
+    });
+    document.querySelectorAll("style").forEach(function(existingStyle){
+      if(existingStyle.textContent.indexOf(".ark-comment-layer{position:fixed;z-index:2147483000")>=0){
+        existingStyle.remove();
+      }
+    });
     var style=element("style");
-    style.textContent=".ark-comment-layer{position:fixed;z-index:2147483000;inset:0;pointer-events:none;color:#172033;font:13px/1.5 system-ui,sans-serif}.ark-comment-card{position:fixed;right:12px;width:300px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-composer{position:fixed;right:12px;width:300px;box-sizing:border-box;border:1px solid #93c5fd;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-card[data-active=true],.ark-comment-composer[data-active=true]{border-color:#3b82f6;box-shadow:0 3px 16px #2563eb33}.ark-comment-card[data-status=resolved]{background:#f8fafc;border-color:#e2e8f0;color:#64748b;opacity:.78}.ark-comment-card[data-unresolved=true]{border-style:dashed}.ark-comment-badge{display:none}.ark-comment-card-content{display:block}.ark-comment-state,.ark-comment-time,.ark-comment-author{display:block;color:#64748b;font-size:11px}.ark-comment-unresolved-anchor{display:block;color:#b45309;font-weight:700}.ark-comment-unresolved-quote,.ark-comment-composer-quote{margin:7px 0;padding:7px;border-left:3px solid #f59e0b;background:#fffbeb;white-space:pre-wrap}.ark-comment-message{border-top:1px solid #e2e8f0;margin-top:8px;padding-top:8px}.ark-comment-body{white-space:pre-wrap}.ark-comment-input{display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:7px;border:1px solid #94a3b8;border-radius:5px;font:inherit}.ark-comment-actions{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;margin-top:8px}.ark-comment-create,.ark-comment-reply,.ark-comment-resolve,.ark-comment-send{border:0;border-radius:5px;background:#2563eb;color:#fff;padding:7px 10px;cursor:pointer}.ark-comment-delete{border:0;background:transparent;color:#b91c1c;padding:7px 8px;cursor:pointer}.ark-comment-create:disabled,.ark-comment-reply:disabled,.ark-comment-resolve:disabled,.ark-comment-send:disabled,.ark-comment-delete:disabled,.ark-comment-input:disabled{opacity:.5;cursor:default}.ark-comment-error{color:#b91c1c;margin:8px 0 0}.ark-comment-composer-header{display:flex;align-items:center;justify-content:space-between}.ark-comment-close{border:0;background:transparent;color:#64748b;font-size:18px;cursor:pointer}.ark-comment-selection-add{position:fixed;z-index:2147483002;border:0;border-radius:14px;background:#2563eb;color:#fff;padding:5px 10px;box-shadow:0 2px 8px #0003;cursor:pointer;opacity:0;pointer-events:none}.ark-comment-selection-add[data-visible=true]{opacity:1;pointer-events:auto}.ark-comment-highlight{background:#fde68a;border-radius:2px;cursor:pointer}.ark-comment-highlight[data-active=true]{background:#fbbf24;box-shadow:0 0 0 2px #f59e0b55}.ark-comment-anchor-active{background-color:rgba(219,234,254,.45);outline:1px solid rgba(37,99,235,.28);outline-offset:2px}.ark-comment-layer[data-narrow=true] .ark-comment-card{right:8px;width:auto;min-width:34px;padding:0;border:0;background:transparent;box-shadow:none;opacity:1}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=true] .ark-comment-card-content{display:none}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=true] .ark-comment-badge{display:block;width:34px;height:28px;border:0;border-radius:14px;background:#2563eb;color:#fff;box-shadow:0 2px 8px #0003;cursor:pointer}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-status=resolved][data-collapsed=true] .ark-comment-badge{background:#94a3b8}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=false]{width:300px;padding:11px;border:1px solid #cbd5e1;background:#fff;box-shadow:0 3px 14px #0003}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=false] .ark-comment-badge{display:none}";
+    style.setAttribute("data-ark-harness-ui","1");
+    style.textContent=".ark-comment-layer{position:fixed;z-index:2147483000;inset:0;pointer-events:none;color:#172033;font:13px/1.5 system-ui,sans-serif}.ark-comment-card{position:fixed;right:12px;width:300px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-composer{position:fixed;right:12px;width:300px;box-sizing:border-box;border:1px solid #93c5fd;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-card[data-active=true],.ark-comment-composer[data-active=true]{border-color:#3b82f6;box-shadow:0 3px 16px #2563eb33}.ark-comment-card[data-status=resolved]{background:#f8fafc;border-color:#e2e8f0;color:#64748b;opacity:.78}.ark-comment-card[data-unresolved=true]{border-style:dashed}.ark-comment-badge{display:none}.ark-comment-card-content{display:block}.ark-comment-state,.ark-comment-time,.ark-comment-author{display:block;color:#64748b;font-size:11px}.ark-comment-unresolved-anchor{display:block;color:#b45309;font-weight:700}.ark-comment-unresolved-quote,.ark-comment-composer-quote{margin:7px 0;padding:7px;border-left:3px solid #f59e0b;background:#fffbeb;white-space:pre-wrap}.ark-comment-message{border-top:1px solid #e2e8f0;margin-top:8px;padding-top:8px}.ark-comment-body{white-space:pre-wrap}.ark-comment-input{display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:7px;border:1px solid #94a3b8;border-radius:5px;font:inherit}.ark-comment-actions{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;margin-top:8px}.ark-comment-create,.ark-comment-reply,.ark-comment-resolve,.ark-comment-send{border:0;border-radius:5px;background:#2563eb;color:#fff;padding:7px 10px;cursor:pointer}.ark-comment-delete{border:0;background:transparent;color:#b91c1c;padding:7px 8px;cursor:pointer}.ark-comment-create:disabled,.ark-comment-reply:disabled,.ark-comment-resolve:disabled,.ark-comment-send:disabled,.ark-comment-delete:disabled,.ark-comment-input:disabled{opacity:.5;cursor:default}.ark-comment-error{color:#b91c1c;margin:8px 0 0}.ark-comment-composer-header{display:flex;align-items:center;justify-content:space-between}.ark-comment-close{border:0;background:transparent;color:#64748b;font-size:18px;cursor:pointer}.ark-comment-selection-add{position:fixed;z-index:2147483002;border:0;border-radius:14px;background:#2563eb;color:#fff;padding:5px 10px;box-shadow:0 2px 8px #0003;cursor:pointer;opacity:0;pointer-events:none}.ark-comment-selection-add[data-visible=true]{opacity:1;pointer-events:auto}.ark-comment-highlight{background:#fde68a;border-radius:2px;cursor:pointer}.ark-comment-highlight[data-active=true]{background:#fbbf24;box-shadow:0 0 0 2px #f59e0b55}.ark-comment-node-highlight{outline:1px solid rgba(245,158,11,.45);outline-offset:2px}.ark-comment-anchor-active{background-color:rgba(219,234,254,.45);outline:1px solid rgba(37,99,235,.28);outline-offset:2px}.ark-comment-layer[data-narrow=true] .ark-comment-card{right:8px;width:auto;min-width:34px;padding:0;border:0;background:transparent;box-shadow:none;opacity:1}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=true] .ark-comment-card-content{display:none}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=true] .ark-comment-badge{display:block;width:34px;height:28px;border:0;border-radius:14px;background:#2563eb;color:#fff;box-shadow:0 2px 8px #0003;cursor:pointer}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-status=resolved][data-collapsed=true] .ark-comment-badge{background:#94a3b8}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=false]{width:300px;padding:11px;border:1px solid #cbd5e1;background:#fff;box-shadow:0 3px 14px #0003}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=false] .ark-comment-badge{display:none}";
     document.head.appendChild(style);
     root=element("div",undefined,"ark-comment-layer");
+    root.setAttribute("data-ark-harness-ui","1");
     root.setAttribute("data-narrow","false");
     document.body.appendChild(root);
-    buildSelectionAdd();
     buildAnchors();
+    if(graphMode)buildGraphSelectionAdd();else buildSelectionAdd();
     render();
   }
   function onPortMessage(event){
@@ -677,7 +770,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
     }
     render(completedAction&&completedAction.focusedInput);
   }
-  window.addEventListener("wheel",function(event){
+  if(!graphMode)window.addEventListener("wheel",function(event){
     if(!event.ctrlKey||!port)return;
     event.preventDefault();
     port.postMessage({type:"ark:diagram-pinch",deltaY:event.deltaY});
@@ -706,10 +799,12 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
       port.postMessage({type:"ark:diagram-pinch",deltaY:deltaY});
     }
   }
-  window.addEventListener("touchstart",handleTouchStart,{passive:false});
-  window.addEventListener("touchmove",handleTouchMove,{passive:false});
-  window.addEventListener("touchend",resetTouchPinch,{passive:false});
-  window.addEventListener("touchcancel",resetTouchPinch,{passive:false});
+  if(!graphMode){
+    window.addEventListener("touchstart",handleTouchStart,{passive:false});
+    window.addEventListener("touchmove",handleTouchMove,{passive:false});
+    window.addEventListener("touchend",resetTouchPinch,{passive:false});
+    window.addEventListener("touchcancel",resetTouchPinch,{passive:false});
+  }
   window.addEventListener("scroll",positionCards,{passive:true});
   window.addEventListener("resize",refreshLayout);
   var observer=new ResizeObserver(refreshLayout);
@@ -736,10 +831,36 @@ const MINIFIED_COMMENT_LAYER = `${COMMENT_LAYER.slice(
   scriptContentStart
 )}${minifyCommentLayerJavaScript()}${COMMENT_LAYER.slice(scriptContentEnd)}`;
 
-/** 文書型ページだけへ独立したコメント層を注入する。 */
-export function injectDiagramCommentLayer(html: string): string {
-  if (html.includes(DIAGRAM_COMMENT_LAYER_MARKER)) return html;
+export type DiagramCommentMode = "doc" | "graph";
+
+/** 指定されたページ種別の独立したコメント層を注入する。 */
+export function injectDiagramCommentLayer(
+  html: string,
+  mode: DiagramCommentMode = "doc"
+): string {
+  const markerIndex = html.indexOf(DIAGRAM_COMMENT_LAYER_MARKER);
+  if (markerIndex >= 0) {
+    // graph の保存 HTML に旧コメント層の runtime root が混入した版だけを回復する。
+    // 正常な注入済み HTML は従来どおり byte-for-byte で返し、二重注入しない。
+    if (!/<div\b[^>]*class=["'][^"']*\bark-comment-layer\b/iu.test(html)) {
+      return html;
+    }
+    const scriptStart = html.lastIndexOf("<script", markerIndex);
+    const scriptClose = html.indexOf("</script>", markerIndex);
+    if (scriptStart >= 0 && scriptClose >= 0) {
+      html = `${html.slice(0, scriptStart)}${html.slice(scriptClose + 9)}`;
+    } else {
+      return html;
+    }
+  }
+  const layer =
+    mode === "doc"
+      ? MINIFIED_COMMENT_LAYER
+      : MINIFIED_COMMENT_LAYER.replace(
+          'data-ark-comment-mode="doc"',
+          'data-ark-comment-mode="graph"'
+        );
   const bodyClose = html.toLowerCase().lastIndexOf("</body>");
-  if (bodyClose < 0) return `${html}${MINIFIED_COMMENT_LAYER}`;
-  return `${html.slice(0, bodyClose)}${MINIFIED_COMMENT_LAYER}${html.slice(bodyClose)}`;
+  if (bodyClose < 0) return `${html}${layer}`;
+  return `${html.slice(0, bodyClose)}${layer}${html.slice(bodyClose)}`;
 }

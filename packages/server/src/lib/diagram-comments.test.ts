@@ -17,6 +17,7 @@ import {
   resolveDiagramComment,
   resolveDiagramCommentsPath,
 } from "./diagram-comments.js";
+import { getDiagramCommentsForDoc } from "./diagram-comments-handler.js";
 
 let worktree: string;
 
@@ -967,7 +968,7 @@ describe("comment mutations", () => {
     ).toBe(false);
   });
 
-  it("doc 以外を NOT_DOC にする", async () => {
+  it("graph node は quote/occurrence なしでコメントを作成する", async () => {
     const graphModel = {
       version: 1,
       nodes: [{ id: "s1-p1", label: "Graph" }],
@@ -979,9 +980,26 @@ describe("comment mutations", () => {
       `<script type="application/json" id="ark-diagram-model">${JSON.stringify(graphModel)}</script><div data-model-id="s1-p1"></div>`
     );
 
-    await expect(
-      createDiagramComment(worktree, relPath, "s1-p1", "本文")
-    ).resolves.toMatchObject({ ok: false, code: "NOT_DOC" });
+    const result = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p1",
+      "本文"
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.comments.threads[0]).toMatchObject({
+        anchorId: "s1-p1",
+        anchorText: "Graph",
+      });
+      expect(result.comments.threads[0]).not.toHaveProperty("anchorQuote");
+      expect(result.comments.threads[0]).not.toHaveProperty("anchorOccurrence");
+
+      await expect(
+        getDiagramCommentsForDoc(worktree, relPath)
+      ).resolves.toEqual(result);
+    }
   });
 
   it("resolve は open thread だけを resolved にし、再実行は冪等", async () => {
