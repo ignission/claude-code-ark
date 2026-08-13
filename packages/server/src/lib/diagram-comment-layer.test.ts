@@ -321,6 +321,87 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain('element("button","解決する"');
   });
 
+  it("解決済み thread は既定の card・badge 描画対象から外す", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const visibleThreads = injected.slice(
+      injected.indexOf("function visibleThreads()"),
+      injected.indexOf("function renderResolvedToggle()")
+    );
+    const render = injected.slice(
+      injected.indexOf("function render(focusedInput){"),
+      injected.indexOf("function commonSelectionAnchor")
+    );
+
+    expect(injected).toContain("var showResolved=false");
+    expect(visibleThreads).toContain(
+      'return showResolved?comments.threads:comments.threads.filter(function(thread){return thread.status==="open";})'
+    );
+    expect(render).toContain("visibleThreads().forEach(renderThread)");
+    expect(render).not.toContain("comments.threads.forEach(renderThread)");
+  });
+
+  it("解決済み thread は既定の doc・graph アンカーハイライト対象から外す", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const highlights = injected.slice(
+      injected.indexOf("function renderHighlights()"),
+      injected.indexOf("function positionCards()")
+    );
+
+    expect(highlights.match(/visibleThreads\(\)\.forEach/gu)).toHaveLength(2);
+    expect(highlights).not.toContain("comments.threads.forEach");
+  });
+
+  it("解決済みが 1 件以上あるときだけ件数付きトグルを描画する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const toggleRenderer = injected.slice(
+      injected.indexOf("function renderResolvedToggle()"),
+      injected.indexOf("function renderThread")
+    );
+
+    expect(toggleRenderer).toContain(
+      'comments.threads.filter(function(thread){return thread.status==="resolved";}).length'
+    );
+    expect(toggleRenderer).toContain("if(resolvedCount===0)return");
+    expect(toggleRenderer.indexOf("if(resolvedCount===0)return")).toBeLessThan(
+      toggleRenderer.indexOf('element("button"')
+    );
+    expect(toggleRenderer).toContain('"解決済み "+resolvedCount+" 件"');
+    expect(toggleRenderer).toContain("ark-comment-resolved-toggle");
+  });
+
+  it("解決済みトグルはページ内状態を反転して再描画する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const toggleRenderer = injected.slice(
+      injected.indexOf("function renderResolvedToggle()"),
+      injected.indexOf("function renderThread")
+    );
+
+    expect(toggleRenderer).toContain(
+      'toggle.setAttribute("aria-pressed",showResolved?"true":"false")'
+    );
+    expect(toggleRenderer).toContain("showResolved=!showResolved");
+    expect(toggleRenderer).toContain("render()");
+  });
+
+  it("未解決 0 件・解決済み 0 件ならコメント層由来の可視要素を描画しない", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const render = injected.slice(
+      injected.indexOf("function render(focusedInput){"),
+      injected.indexOf("function commonSelectionAnchor")
+    );
+    const toggleRenderer = injected.slice(
+      injected.indexOf("function renderResolvedToggle()"),
+      injected.indexOf("function renderThread")
+    );
+
+    expect(render).toContain("visibleThreads().forEach(renderThread)");
+    expect(render).toContain("renderResolvedToggle()");
+    expect(toggleRenderer).toContain("if(resolvedCount===0)return");
+    expect(injected).toContain(
+      'selectionAddButton.setAttribute("data-visible","false")'
+    );
+  });
+
   it("card と composer の操作ボタンを折り返し可能な専用コンテナで整列する", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
