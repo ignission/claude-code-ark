@@ -263,7 +263,7 @@ describe("injectDiagramCommentLayer", () => {
     }
   });
 
-  it("本文の padding を変更せず、実測した右側の空き幅で badge 表示を切り替える", () => {
+  it("本文の padding を変更せず、実測した右側の空き幅で既定の開閉を切り替える", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const updateLayout = injected.slice(
       injected.indexOf("function updateLayout()"),
@@ -300,12 +300,29 @@ describe("injectDiagramCommentLayer", () => {
       'setAttribute("data-narrow",narrow?"true":"false")'
     );
     expect(injected).toContain(
-      'card.setAttribute("data-collapsed",expandedThreadIds.has(thread.id)?"false":"true")'
+      'return explicitState?explicitState==="open":!narrow'
     );
     expect(injected).toContain(
       'element("button",String(openCount),"ark-comment-badge")'
     );
     expect(injected).toContain(".ark-comment-layer[data-narrow=true]");
+  });
+
+  it("折り畳みの本文・badge CSS をペイン幅に依存させない", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain(
+      ".ark-comment-card[data-collapsed=true] .ark-comment-card-content{display:none}"
+    );
+    expect(injected).toContain(
+      ".ark-comment-card[data-collapsed=true] .ark-comment-badge{display:block"
+    );
+    expect(injected).not.toContain(
+      ".ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=true] .ark-comment-card-content"
+    );
+    expect(injected).not.toContain(
+      ".ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=true] .ark-comment-badge"
+    );
   });
 
   it("card と anchor を相互 highlight し、解決済みを控えめに表示する", () => {
@@ -439,61 +456,78 @@ describe("injectDiagramCommentLayer", () => {
     );
   });
 
-  it("card の展開状態を集合から復元し、選択された thread も集合へ追加する", () => {
+  it("明示状態がなければ広幅で開き、狭幅で畳む", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const threadRenderer = injected.slice(
       injected.indexOf("function renderThread"),
       injected.indexOf("function renderComposer")
+    );
+
+    expect(injected).toContain("var threadOpenStates=new Map()");
+    expect(injected).toContain("function isThreadOpen(threadId)");
+    expect(injected).toContain(
+      "var explicitState=threadOpenStates.get(threadId)"
+    );
+    expect(threadRenderer).toContain("updateCardCollapsed(card,thread.id)");
+  });
+
+  it("card の閉じるボタンで閉じ、badge で開き直す", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const threadRenderer = injected.slice(
+      injected.indexOf("function renderThread"),
+      injected.indexOf("function renderComposer")
+    );
+
+    expect(threadRenderer).toContain(
+      'element("button","×","ark-comment-close")'
+    );
+    expect(threadRenderer).toContain(
+      'closeButton.setAttribute("aria-label","コメントを閉じる")'
+    );
+    expect(threadRenderer).toContain(
+      'threadOpenStates.set(thread.id,"closed")'
+    );
+    expect(threadRenderer).toContain('threadOpenStates.set(thread.id,"open")');
+  });
+
+  it("明示的に開閉した thread は幅が変わっても指定を保つ", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const updateLayout = injected.slice(
+      injected.indexOf("function updateLayout()"),
+      injected.indexOf("function clearHighlights()")
     );
     const activateThread = injected.slice(
       injected.indexOf("function activateThread"),
       injected.indexOf("function wrapThreadQuote")
     );
 
-    expect(injected).toContain("var expandedThreadIds=new Set()");
-    expect(threadRenderer).toContain(
-      'card.setAttribute("data-collapsed",expandedThreadIds.has(thread.id)?"false":"true")'
+    expect(updateLayout).toContain(
+      'root.querySelectorAll(".ark-comment-card").forEach(function(card)'
     );
-    expect(threadRenderer).not.toContain(
-      'card.setAttribute("data-collapsed","true")'
+    expect(updateLayout).toContain(
+      'updateCardCollapsed(card,card.getAttribute("data-thread-id"))'
     );
-    expect(activateThread).toContain("expandedThreadIds.add(thread.id)");
+    expect(activateThread).toContain('threadOpenStates.set(thread.id,"open")');
   });
 
-  it("badge のクリックで thread の展開状態を集合上でトグルする", () => {
-    const injected = injectDiagramCommentLayer(minimalDoc);
-    const threadRenderer = injected.slice(
-      injected.indexOf("function renderThread"),
-      injected.indexOf("function renderComposer")
-    );
-
-    expect(threadRenderer).toContain(
-      "if(expandedThreadIds.has(thread.id))expandedThreadIds.delete(thread.id)"
-    );
-    expect(threadRenderer).toContain("else expandedThreadIds.add(thread.id)");
-    expect(threadRenderer).toContain(
-      'card.setAttribute("data-collapsed",expandedThreadIds.has(thread.id)?"false":"true")'
-    );
-  });
-
-  it("sidecar から消えた thread の展開状態を render 時に掃除する", () => {
+  it("sidecar から消えた thread の明示状態を render 時に掃除する", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
-    expect(injected).toContain("function cleanupExpandedThreads()");
+    expect(injected).toContain("function cleanupThreadOpenStates()");
     expect(injected).toContain(
       "var existingThreadIds=new Set(comments.threads.map(function(thread){return thread.id;}))"
     );
     expect(injected).toContain(
-      "if(!existingThreadIds.has(threadId))expandedThreadIds.delete(threadId)"
+      "if(!existingThreadIds.has(threadId))threadOpenStates.delete(threadId)"
     );
-    expect(injected).toContain("cleanupExpandedThreads()");
+    expect(injected).toContain("cleanupThreadOpenStates()");
   });
 
   it("作成成功時は応答前後の差分にある新 thread を展開する", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const selectCreatedThread = injected.slice(
       injected.indexOf("function selectCreatedThread"),
-      injected.indexOf("function cleanupExpandedThreads")
+      injected.indexOf("function cleanupThreadOpenStates")
     );
     const resultHandler = injected.slice(
       injected.indexOf("function onPortMessage"),
@@ -510,15 +544,16 @@ describe("injectDiagramCommentLayer", () => {
       "comments.threads.filter(function(thread){return !previousThreadIds.has(thread.id);})"
     );
     expect(selectCreatedThread).toContain(
-      "expandedThreadIds.add(createdThread.id)"
+      'threadOpenStates.set(createdThread.id,"open")'
     );
+    expect(selectCreatedThread).not.toContain("narrow");
   });
 
   it("作成成功時の増加 thread が 0 件または複数件なら展開・選択しない", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const selectCreatedThread = injected.slice(
       injected.indexOf("function selectCreatedThread"),
-      injected.indexOf("function cleanupExpandedThreads")
+      injected.indexOf("function cleanupThreadOpenStates")
     );
 
     expect(selectCreatedThread).toContain(
@@ -528,7 +563,7 @@ describe("injectDiagramCommentLayer", () => {
       "if(createdThreads.length!==1)return"
     );
     for (const mutation of [
-      "expandedThreadIds.add(createdThread.id)",
+      'threadOpenStates.set(createdThread.id,"open")',
       "selectedThreadId=createdThread.id",
       "selectedAnchorId=createdThread.anchorId",
     ]) {
@@ -540,7 +575,7 @@ describe("injectDiagramCommentLayer", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const selectCreatedThread = injected.slice(
       injected.indexOf("function selectCreatedThread"),
-      injected.indexOf("function cleanupExpandedThreads")
+      injected.indexOf("function cleanupThreadOpenStates")
     );
 
     expect(selectCreatedThread).toContain("selectedThreadId=createdThread.id");
@@ -579,11 +614,11 @@ describe("injectDiagramCommentLayer", () => {
     expect(otherSuccesses).not.toContain("selectCreatedThread");
   });
 
-  it("解決成功時は対象 thread を展開集合から取り除く", () => {
+  it("解決成功時は対象 thread を明示的に閉じる", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const collapseResolvedThread = injected.slice(
       injected.indexOf("function collapseResolvedThread"),
-      injected.indexOf("function cleanupExpandedThreads")
+      injected.indexOf("function cleanupThreadOpenStates")
     );
     const resultHandler = injected.slice(
       injected.indexOf("function onPortMessage"),
@@ -591,7 +626,7 @@ describe("injectDiagramCommentLayer", () => {
     );
 
     expect(collapseResolvedThread).toContain(
-      "expandedThreadIds.delete(threadId)"
+      'threadOpenStates.set(threadId,"closed")'
     );
     expect(resultHandler).toContain(
       'completedAction.type==="ark:diagram-comment-resolve"'
@@ -605,7 +640,7 @@ describe("injectDiagramCommentLayer", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const collapseResolvedThread = injected.slice(
       injected.indexOf("function collapseResolvedThread"),
-      injected.indexOf("function cleanupExpandedThreads")
+      injected.indexOf("function cleanupThreadOpenStates")
     );
 
     expect(collapseResolvedThread).toContain(
