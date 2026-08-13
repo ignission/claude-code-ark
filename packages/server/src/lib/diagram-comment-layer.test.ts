@@ -7,6 +7,8 @@ import {
 
 const minimalDoc =
   '<!doctype html><html><head></head><body><p data-ark-id="s1">本文</p></body></html>';
+const minimalGraph =
+  '<!doctype html><html><head></head><body><article data-model-id="n1"><h2 data-model-id="n1">注文</h2></article></body></html>';
 
 // 部分一致で振る舞いを固定する契約テストは、読みやすいソースを検証する。
 const injectDiagramCommentLayer = (_html: string) => COMMENT_LAYER;
@@ -37,6 +39,75 @@ describe("injectDiagramCommentLayer", () => {
     const once = injectMinifiedCommentLayer(minimalDoc);
 
     expect(injectMinifiedCommentLayer(once)).toBe(once);
+  });
+
+  it("script 属性で doc / graph モードを明示する", () => {
+    const injectWithMode = injectMinifiedCommentLayer as (
+      html: string,
+      mode: "doc" | "graph"
+    ) => string;
+
+    expect(injectWithMode(minimalDoc, "doc")).toContain(
+      'data-ark-comment-mode="doc"'
+    );
+    expect(injectWithMode(minimalGraph, "graph")).toContain(
+      'data-ark-comment-mode="graph"'
+    );
+    expect(COMMENT_LAYER).toContain(
+      'document.currentScript.getAttribute("data-ark-comment-mode")'
+    );
+  });
+
+  it("graph は node ID と可視テキストだけで composer と create payload を作る", () => {
+    const injected = injectDiagramCommentLayer(minimalGraph);
+    const composer = injected.slice(
+      injected.indexOf("function renderComposer"),
+      injected.indexOf("function updateLayout")
+    );
+
+    expect(injected).toContain('graphMode?"[data-model-id]":"[data-ark-id]"');
+    expect(injected).toContain("anchor.innerText");
+    expect(injected).toContain("slice(0,256)");
+    expect(composer).toContain("graphMode?{");
+    expect(composer).toContain("anchorId:anchorId");
+    expect(composer).not.toContain("graphMode?{anchorId:anchorId,anchorQuote");
+    expect(composer).toContain("entry.anchorText");
+  });
+
+  it("graph はテキスト選択と span highlight を動かさず node class を使う", () => {
+    const injected = injectDiagramCommentLayer(minimalGraph);
+
+    expect(injected).toContain(
+      "if(graphMode)buildGraphSelectionAdd();else buildSelectionAdd()"
+    );
+    expect(injected).toContain(
+      "if(graphMode){renderGraphHighlights();return;}"
+    );
+    expect(injected).toContain("ark-comment-node-highlight");
+  });
+
+  it("graph の node click は drag 距離を検査しイベントを止めない", () => {
+    const injected = injectDiagramCommentLayer(minimalGraph);
+    const graphSelection = injected.slice(
+      injected.indexOf("function buildGraphSelectionAdd"),
+      injected.indexOf("function buildAnchors")
+    );
+
+    expect(graphSelection).toContain('document.addEventListener("pointerdown"');
+    expect(graphSelection).toContain('document.addEventListener("click"');
+    expect(graphSelection).toContain("Math.hypot");
+    expect(graphSelection).toContain("GRAPH_CLICK_MOVE_LIMIT");
+    expect(graphSelection).not.toContain("preventDefault");
+    expect(graphSelection).not.toContain("stopPropagation");
+  });
+
+  it("同じ data-model-id が入れ子なら最も外側だけを anchor にする", () => {
+    const injected = injectDiagramCommentLayer(minimalGraph);
+
+    expect(injected).toContain("function hasSameIdAncestor(anchor,anchorId)");
+    expect(injected).toContain(
+      "if(graphMode&&hasSameIdAncestor(anchor,anchorId))return"
+    );
   });
 
   it("ark:diagram-init の transferred port で load/result を相関する", () => {

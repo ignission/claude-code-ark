@@ -18,6 +18,9 @@ const MODEL = JSON.stringify({
   nodes: [{ id: "order", label: "Order" }],
 });
 
+const occurrences = (value: string, token: string) =>
+  value.split(token).length - 1;
+
 beforeEach(() => {
   wt = fs.realpathSync(
     fs.mkdtempSync(path.join(os.tmpdir(), "ark-diagram-read-"))
@@ -57,7 +60,7 @@ describe("readDiagram", () => {
     }
   });
 
-  it("graph の ext と配信時 harness を返す", async () => {
+  it("graph の ext と配信時 harness・コメント層を返す", async () => {
     const graphModel = JSON.stringify({
       version: 1,
       nodes: [
@@ -82,9 +85,11 @@ describe("readDiagram", () => {
       expect(result.model.nodes[0]?.ext).toEqual({ x: 40, y: 50 });
       expect(result.model.nodes[1]?.ext).toEqual({ x: 360, y: 180 });
       expect(result.html).toContain(DIAGRAM_CSP);
-      expect(result.html).toContain(DIAGRAM_HARNESS_MARKER);
-      expect(result.html).not.toContain(DIAGRAM_COMMENT_LAYER_MARKER);
+      expect(occurrences(result.html, DIAGRAM_HARNESS_MARKER)).toBe(1);
+      expect(occurrences(result.html, DIAGRAM_COMMENT_LAYER_MARKER)).toBe(1);
+      expect(result.html).toContain('data-ark-comment-mode="graph"');
       expect(result.html).toContain('data-ark-container="graph"');
+      expect(Buffer.byteLength(result.html, "utf8")).toBeLessThan(128 * 1024);
     }
   });
 
@@ -107,8 +112,9 @@ describe("readDiagram", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.html).toContain(DIAGRAM_CSP);
-      expect(result.html).toContain(DIAGRAM_COMMENT_LAYER_MARKER);
-      expect(result.html).not.toContain(DIAGRAM_HARNESS_MARKER);
+      expect(occurrences(result.html, DIAGRAM_COMMENT_LAYER_MARKER)).toBe(1);
+      expect(occurrences(result.html, DIAGRAM_HARNESS_MARKER)).toBe(0);
+      expect(result.html).toContain('data-ark-comment-mode="doc"');
     }
   });
 

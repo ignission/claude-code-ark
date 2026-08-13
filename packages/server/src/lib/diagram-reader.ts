@@ -121,15 +121,15 @@ export async function readDiagram(
     return { ok: false, status: 422, error: graphKinds.error };
   }
   // 内蔵図種の投影生成 → CSP → 専用層の順。doc 本文は自前 HTML が正なので
-  // 編集ハーネスを混ぜず、コメント層だけを載せる。
+  // コメント層だけ、graph は編集ハーネスとコメント層の両方を載せる。
   const projected = injectCsp(injectBuiltinProjection(read.raw, model.model));
   return {
     ok: true,
     absPath: read.absPath,
     html:
       model.model.type === "doc"
-        ? injectDiagramCommentLayer(projected)
-        : injectHarness(projected),
+        ? injectDiagramCommentLayer(projected, "doc")
+        : injectDiagramCommentLayer(injectHarness(projected), "graph"),
     model: model.model,
   };
 }
