@@ -534,6 +534,14 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     if(graphMode)positionGraphSelectionAdd();
     else updateSelectionAdd();
   }
+  function selectCreatedThread(previousThreadIds){
+    var createdThreads=comments.threads.filter(function(thread){return !previousThreadIds.has(thread.id);});
+    if(createdThreads.length!==1)return;
+    var createdThread=createdThreads[0];
+    expandedThreadIds.add(createdThread.id);
+    selectedThreadId=createdThread.id;
+    selectedAnchorId=createdThread.anchorId;
+  }
   function cleanupExpandedThreads(){
     var existingThreadIds=new Set(comments.threads.map(function(thread){return thread.id;}));
     expandedThreadIds.forEach(function(threadId){
@@ -745,10 +753,12 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     pendingRequestId=null;
     pendingAction=null;
     if(data.ok){
+      var previousThreadIds=new Set(comments.threads.map(function(thread){return thread.id;}));
       comments=data.comments;
       operationError=null;
       if(completedAction&&completedAction.type==="ark:diagram-comment-create"){
         clearComposerInputs();
+        selectCreatedThread(previousThreadIds);
         composerAnchorId=null;
         composerAnchorQuote=null;
         composerAnchorOccurrence=null;

@@ -408,6 +408,97 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain("cleanupExpandedThreads()");
   });
 
+  it("作成成功時は応答前後の差分にある新 thread を展開する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const selectCreatedThread = injected.slice(
+      injected.indexOf("function selectCreatedThread"),
+      injected.indexOf("function cleanupExpandedThreads")
+    );
+    const resultHandler = injected.slice(
+      injected.indexOf("function onPortMessage"),
+      injected.indexOf('if(!graphMode)window.addEventListener("wheel"')
+    );
+
+    expect(resultHandler).toContain(
+      "var previousThreadIds=new Set(comments.threads.map(function(thread){return thread.id;}))"
+    );
+    expect(resultHandler.indexOf("var previousThreadIds=")).toBeLessThan(
+      resultHandler.indexOf("comments=data.comments")
+    );
+    expect(selectCreatedThread).toContain(
+      "comments.threads.filter(function(thread){return !previousThreadIds.has(thread.id);})"
+    );
+    expect(selectCreatedThread).toContain(
+      "expandedThreadIds.add(createdThread.id)"
+    );
+  });
+
+  it("作成成功時の増加 thread が 0 件または複数件なら展開・選択しない", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const selectCreatedThread = injected.slice(
+      injected.indexOf("function selectCreatedThread"),
+      injected.indexOf("function cleanupExpandedThreads")
+    );
+
+    expect(selectCreatedThread).toContain(
+      "if(createdThreads.length!==1)return"
+    );
+    const fallbackGuard = selectCreatedThread.indexOf(
+      "if(createdThreads.length!==1)return"
+    );
+    for (const mutation of [
+      "expandedThreadIds.add(createdThread.id)",
+      "selectedThreadId=createdThread.id",
+      "selectedAnchorId=createdThread.anchorId",
+    ]) {
+      expect(fallbackGuard).toBeLessThan(selectCreatedThread.indexOf(mutation));
+    }
+  });
+
+  it("作成成功時は選択状態を新 thread とその anchor に向ける", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const selectCreatedThread = injected.slice(
+      injected.indexOf("function selectCreatedThread"),
+      injected.indexOf("function cleanupExpandedThreads")
+    );
+
+    expect(selectCreatedThread).toContain("selectedThreadId=createdThread.id");
+    expect(selectCreatedThread).toContain(
+      "selectedAnchorId=createdThread.anchorId"
+    );
+  });
+
+  it("返信・解決・削除成功時は新 thread の展開・選択を行わない", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const resultHandler = injected.slice(
+      injected.indexOf("function onPortMessage"),
+      injected.indexOf('if(!graphMode)window.addEventListener("wheel"')
+    );
+    const createSuccess = resultHandler.slice(
+      resultHandler.indexOf(
+        'completedAction.type==="ark:diagram-comment-create"'
+      ),
+      resultHandler.indexOf(
+        'completedAction.type==="ark:diagram-comment-reply"'
+      )
+    );
+    const otherSuccesses = resultHandler.slice(
+      resultHandler.indexOf(
+        'completedAction.type==="ark:diagram-comment-reply"'
+      ),
+      resultHandler.indexOf(
+        'completedAction.type!=="ark:diagram-comments-load"'
+      )
+    );
+
+    expect(createSuccess).toContain("selectCreatedThread(previousThreadIds)");
+    expect(
+      resultHandler.match(/selectCreatedThread\(previousThreadIds\)/gu)
+    ).toHaveLength(1);
+    expect(otherSuccesses).not.toContain("selectCreatedThread");
+    expect(otherSuccesses).not.toContain("expandedThreadIds");
+  });
+
   it("受動的な再取得の発行直前に textarea のフォーカスと選択範囲を記録する", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const changedHandler = injected.slice(
