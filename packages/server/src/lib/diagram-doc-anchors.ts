@@ -1,3 +1,7 @@
+import {
+  type DiagramHtmlAttribute,
+  scanDiagramHtmlStartTags,
+} from "./diagram-html-scan.js";
 import type { DiagramModel } from "./diagram-model.js";
 
 export type DiagramDocAnchorValidation =
@@ -6,84 +10,18 @@ export type DiagramDocAnchorValidation =
 
 const ATTRIBUTE_NAME = "data-ark-id";
 
-function tagEnd(html: string, start: number): number {
-  let quote: '"' | "'" | null = null;
-  for (let index = start; index < html.length; index += 1) {
-    const char = html[index];
-    if (quote !== null) {
-      if (char === quote) quote = null;
-      continue;
-    }
-    if (char === '"' || char === "'") quote = char;
-    else if (char === ">") return index;
-  }
-  return html.length - 1;
-}
-
-function attributeValues(tag: string): string[] {
+function attributeValues(attributes: DiagramHtmlAttribute[]): string[] {
   const values: string[] = [];
-  let index = tag.match(/^[^\s/>]+/u)?.[0].length ?? 0;
-  while (index < tag.length) {
-    while (/\s/u.test(tag[index] ?? "")) index += 1;
-    if (index >= tag.length || tag[index] === "/") break;
-    const name = tag.slice(index).match(/^[^\s"'=<>`/]+/u)?.[0];
-    if (name === undefined) {
-      index += 1;
-      continue;
-    }
-    index += name.length;
-    while (/\s/u.test(tag[index] ?? "")) index += 1;
-    let value = "";
-    if (tag[index] === "=") {
-      index += 1;
-      while (/\s/u.test(tag[index] ?? "")) index += 1;
-      const quote = tag[index];
-      if (quote === '"' || quote === "'") {
-        const end = tag.indexOf(quote, index + 1);
-        if (end < 0) {
-          index = tag.length;
-        } else {
-          value = tag.slice(index + 1, end);
-          index = end + 1;
-        }
-      } else {
-        value = tag.slice(index).match(/^[^\s"'=<>`]+/u)?.[0] ?? "";
-        index += value.length;
-      }
-    }
-    if (name.toLowerCase() === ATTRIBUTE_NAME) values.push(value);
+  for (const attribute of attributes) {
+    if (attribute.name === ATTRIBUTE_NAME) values.push(attribute.value);
   }
   return values;
 }
 
 function extractAnchorIds(html: string): string[] {
   const ids: string[] = [];
-  const lower = html.toLowerCase();
-  let index = 0;
-  while (index < html.length) {
-    const open = html.indexOf("<", index);
-    if (open < 0) break;
-    if (html.startsWith("<!--", open)) {
-      const end = html.indexOf("-->", open + 4);
-      index = end < 0 ? html.length : end + 3;
-      continue;
-    }
-    const name = html.slice(open + 1).match(/^([a-z][\w:-]*)/iu)?.[1];
-    if (name === undefined) {
-      index = open + 1;
-      continue;
-    }
-    const end = tagEnd(html, open + 1);
-    const normalizedName = name.toLowerCase();
-    if (normalizedName === "script" || normalizedName === "style") {
-      const close = lower.indexOf(`</${normalizedName}`, end + 1);
-      if (close < 0) break;
-      const closeEnd = html.indexOf(">", close + normalizedName.length + 2);
-      index = closeEnd < 0 ? html.length : closeEnd + 1;
-      continue;
-    }
-    ids.push(...attributeValues(html.slice(open + 1, end)));
-    index = end + 1;
+  for (const tag of scanDiagramHtmlStartTags(html)) {
+    ids.push(...attributeValues(tag.attributes));
   }
   return ids;
 }
