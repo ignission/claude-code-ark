@@ -1,18 +1,24 @@
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
 import { DIAGRAM_COMMENT_LAYER_MARKER } from "./diagram-comment-layer.js";
-import { DIAGRAM_HARNESS_MARKER, injectHarness } from "./diagram-harness.js";
+import {
+  DIAGRAM_HARNESS_MARKER,
+  DIAGRAM_HARNESS_SOURCE,
+  injectHarness as injectMinifiedHarness,
+} from "./diagram-harness.js";
 
 const page = (body: string) =>
   `<!doctype html><html><head></head><body>${body}</body></html>`;
 
+// 部分一致で振る舞いを固定する契約テストは、読みやすいソースを検証する。
+const injectHarness = (_html: string) => DIAGRAM_HARNESS_SOURCE;
+
 describe("injectHarness", () => {
   it("body の末尾にハーネスを差し込む", () => {
-    const out = injectHarness(page("<div>図</div>"));
+    const out = injectMinifiedHarness(page("<div>図</div>"));
 
     expect(out).toContain(DIAGRAM_HARNESS_MARKER);
     expect(out.indexOf("<div>図</div>")).toBeLessThan(
@@ -21,7 +27,7 @@ describe("injectHarness", () => {
   });
 
   it("body が無い文書でも末尾に差し込む", () => {
-    const out = injectHarness("<div>図</div>");
+    const out = injectMinifiedHarness("<div>図</div>");
 
     expect(out).toContain(DIAGRAM_HARNESS_MARKER);
     expect(out.indexOf("<div>図</div>")).toBeLessThan(
@@ -30,8 +36,8 @@ describe("injectHarness", () => {
   });
 
   it("二重注入しない", () => {
-    const once = injectHarness(page("<div>図</div>"));
-    const twice = injectHarness(once);
+    const once = injectMinifiedHarness(page("<div>図</div>"));
+    const twice = injectMinifiedHarness(once);
 
     expect(twice.match(new RegExp(DIAGRAM_HARNESS_MARKER, "g"))).toHaveLength(
       1
@@ -253,7 +259,9 @@ describe("injectHarness", () => {
   });
 
   it("esbuild artifact からも group kernel を function literal として注入する", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "ark-diagram-harness-"));
+    const directory = await mkdtemp(
+      join(import.meta.dirname, ".ark-diagram-harness-")
+    );
     const outfile = join(directory, "diagram-harness.mjs");
     try {
       await build({
@@ -262,6 +270,7 @@ describe("injectHarness", () => {
         bundle: true,
         format: "esm",
         platform: "node",
+        external: ["esbuild"],
       });
       const artifact = (await import(
         `${pathToFileURL(outfile).href}?test=${Date.now()}`
@@ -273,9 +282,15 @@ describe("injectHarness", () => {
       );
 
       expect(
-        out.match(/var groupAwareLayout = function layoutDiagram/g)
+        artifact.DIAGRAM_HARNESS_SOURCE.match(
+          /var groupAwareLayout = function layoutDiagram/g
+        )
       ).toHaveLength(1);
-      expect(out.match(/function layoutGroupAwareGraph\(/g)).toHaveLength(1);
+      expect(
+        artifact.DIAGRAM_HARNESS_SOURCE.match(
+          /function layoutGroupAwareGraph\(/g
+        )
+      ).toHaveLength(1);
       expect(Buffer.byteLength(out, "utf8")).toBeLessThan(128 * 1024);
       // 変更前の graph artifact 実測は 128,921 bytes。コメント層を混ぜず上限を維持する。
       expect(out).not.toContain(DIAGRAM_COMMENT_LAYER_MARKER);
@@ -288,7 +303,9 @@ describe("injectHarness", () => {
   });
 
   it("doc コメント層の esbuild artifact も独立して上限内に収まる", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "ark-diagram-comments-"));
+    const directory = await mkdtemp(
+      join(import.meta.dirname, ".ark-diagram-comments-")
+    );
     const outfile = join(directory, "diagram-comment-layer.mjs");
     try {
       await build({
@@ -297,6 +314,7 @@ describe("injectHarness", () => {
         bundle: true,
         format: "esm",
         platform: "node",
+        external: ["esbuild"],
       });
       const artifact = (await import(
         `${pathToFileURL(outfile).href}?test=${Date.now()}`

@@ -21,6 +21,7 @@
     "@ark/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "better-sqlite3": "^12.11.1",
+    "esbuild": "^0.28.2",
     "express": "^5.2.1",
     "http-proxy": "^1.18.1",
     "nanoid": "^5.1.16",
@@ -35,7 +36,6 @@
     "@types/http-proxy": "^1.17.17",
     "@types/node": "^24.13.3",
     "@types/qrcode": "^1.5.6",
-    "esbuild": "^0.28.2",
     "tsx": "^4.23.11",
     "typescript": "6.0.3",
     "vitest": "^4.1.10"

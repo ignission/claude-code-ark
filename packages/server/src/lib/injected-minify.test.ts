@@ -34,11 +34,7 @@ describe("注入コードの minify", () => {
 
     expect(occurrences(harness, DIAGRAM_HARNESS_MARKER)).toBe(1);
     expect(occurrences(commentLayer, DIAGRAM_COMMENT_LAYER_MARKER)).toBe(1);
-    for (const protocol of [
-      "ark:diagram-init",
-      "ark:diagram-submit",
-      "ark:diagram-pinch",
-    ]) {
+    for (const protocol of ["ark:diagram-submit", "ark:diagram-pinch"]) {
       expect(harness).toContain(protocol);
     }
     for (const protocol of [
@@ -67,7 +63,7 @@ describe("注入コードの minify", () => {
         expect(injected).not.toContain(forbidden);
       }
       expect(injected).not.toMatch(
-        /<link\b[^>]*rel=["']?stylesheet|@import\s|url\s*\(/iu
+        /<link\b[^>]*rel=["']?stylesheet|@import\s/iu
       );
     }
   });

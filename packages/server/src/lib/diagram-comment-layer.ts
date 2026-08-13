@@ -1,6 +1,8 @@
+import { createCachedMinifier } from "./injected-minify.js";
+
 export const DIAGRAM_COMMENT_LAYER_MARKER = "ark-diagram-comment-layer";
 
-const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
+export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
 (function(){
   "use strict";
   var CARD_WIDTH=300;
@@ -723,10 +725,21 @@ const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}">
 })();
 </script>`;
 
+const scriptContentStart = COMMENT_LAYER.indexOf(">") + 1;
+const scriptContentEnd = COMMENT_LAYER.lastIndexOf("</script>");
+const minifyCommentLayerJavaScript = createCachedMinifier(
+  COMMENT_LAYER.slice(scriptContentStart, scriptContentEnd),
+  "js"
+);
+const MINIFIED_COMMENT_LAYER = `${COMMENT_LAYER.slice(
+  0,
+  scriptContentStart
+)}${minifyCommentLayerJavaScript()}${COMMENT_LAYER.slice(scriptContentEnd)}`;
+
 /** 文書型ページだけへ独立したコメント層を注入する。 */
 export function injectDiagramCommentLayer(html: string): string {
   if (html.includes(DIAGRAM_COMMENT_LAYER_MARKER)) return html;
   const bodyClose = html.toLowerCase().lastIndexOf("</body>");
-  if (bodyClose < 0) return `${html}${COMMENT_LAYER}`;
-  return `${html.slice(0, bodyClose)}${COMMENT_LAYER}${html.slice(bodyClose)}`;
+  if (bodyClose < 0) return `${html}${MINIFIED_COMMENT_LAYER}`;
+  return `${html.slice(0, bodyClose)}${MINIFIED_COMMENT_LAYER}${html.slice(bodyClose)}`;
 }
