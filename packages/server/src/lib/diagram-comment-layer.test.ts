@@ -496,7 +496,65 @@ describe("injectDiagramCommentLayer", () => {
       resultHandler.match(/selectCreatedThread\(previousThreadIds\)/gu)
     ).toHaveLength(1);
     expect(otherSuccesses).not.toContain("selectCreatedThread");
-    expect(otherSuccesses).not.toContain("expandedThreadIds");
+  });
+
+  it("解決成功時は対象 thread を展開集合から取り除く", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const collapseResolvedThread = injected.slice(
+      injected.indexOf("function collapseResolvedThread"),
+      injected.indexOf("function cleanupExpandedThreads")
+    );
+    const resultHandler = injected.slice(
+      injected.indexOf("function onPortMessage"),
+      injected.indexOf('if(!graphMode)window.addEventListener("wheel"')
+    );
+
+    expect(collapseResolvedThread).toContain(
+      "expandedThreadIds.delete(threadId)"
+    );
+    expect(resultHandler).toContain(
+      'completedAction.type==="ark:diagram-comment-resolve"'
+    );
+    expect(resultHandler).toContain(
+      "collapseResolvedThread(completedAction.threadId)"
+    );
+  });
+
+  it("解決した thread が選択中なら選択を解除する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const collapseResolvedThread = injected.slice(
+      injected.indexOf("function collapseResolvedThread"),
+      injected.indexOf("function cleanupExpandedThreads")
+    );
+
+    expect(collapseResolvedThread).toContain(
+      "if(selectedThreadId!==threadId)return"
+    );
+    expect(collapseResolvedThread).toContain("selectedAnchorId=null");
+    expect(collapseResolvedThread).toContain("selectedThreadId=null");
+  });
+
+  it("作成・返信・削除成功時は解決時の畳み処理を行わない", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const resultHandler = injected.slice(
+      injected.indexOf("function onPortMessage"),
+      injected.indexOf('if(!graphMode)window.addEventListener("wheel"')
+    );
+
+    expect(
+      resultHandler.match(
+        /collapseResolvedThread\(completedAction\.threadId\)/gu
+      )
+    ).toHaveLength(1);
+    const resolveSuccess = resultHandler.slice(
+      resultHandler.indexOf(
+        'completedAction.type==="ark:diagram-comment-resolve"'
+      ),
+      resultHandler.indexOf('completedAction.type==="ark:diagram-comment-send"')
+    );
+    expect(resolveSuccess).toContain(
+      "collapseResolvedThread(completedAction.threadId)"
+    );
   });
 
   it("受動的な再取得の発行直前に textarea のフォーカスと選択範囲を記録する", () => {

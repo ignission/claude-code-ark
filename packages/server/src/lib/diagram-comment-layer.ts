@@ -542,6 +542,12 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     selectedThreadId=createdThread.id;
     selectedAnchorId=createdThread.anchorId;
   }
+  function collapseResolvedThread(threadId){
+    expandedThreadIds.delete(threadId);
+    if(selectedThreadId!==threadId)return;
+    selectedAnchorId=null;
+    selectedThreadId=null;
+  }
   function cleanupExpandedThreads(){
     var existingThreadIds=new Set(comments.threads.map(function(thread){return thread.id;}));
     expandedThreadIds.forEach(function(threadId){
@@ -764,6 +770,8 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
         composerAnchorOccurrence=null;
       }else if(completedAction&&completedAction.type==="ark:diagram-comment-reply"){
         replyDraftBodies.delete(completedAction.threadId);
+      }else if(completedAction&&completedAction.type==="ark:diagram-comment-resolve"){
+        collapseResolvedThread(completedAction.threadId);
       }else if(completedAction&&completedAction.type==="ark:diagram-comment-send"){
         sentThreadIds.add(completedAction.threadId);
       }else if(completedAction&&completedAction.type==="ark:diagram-comment-delete"&&selectedThreadId===completedAction.threadId){
