@@ -81,4 +81,21 @@ describe("validateDiagramGraphKinds", () => {
       expect(result.error).toContain("投影");
     }
   });
+
+  it("不一致が複数ある場合は最初の数件と総数を示す", () => {
+    const html = Array.from(
+      { length: 6 },
+      (_, index) => `<i data-model-id="x" data-kind="a${index + 1}"></i>`
+    ).join("");
+
+    const result = validateDiagramGraphKinds(html, model());
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("6件");
+      expect(result.error).toContain('data-kind="a1"');
+      expect(result.error).toContain('data-kind="a5"');
+      expect(result.error).not.toContain('data-kind="a6"');
+    }
+  });
 });
