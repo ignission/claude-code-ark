@@ -247,6 +247,34 @@ describe("injectDiagramCommentLayer", () => {
     );
   });
 
+  it("積み上げ後の card 上端を viewport の上下端へクランプする", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const positionCards = injected.slice(
+      injected.indexOf("function positionCards()"),
+      injected.indexOf("function refreshLayout()")
+    );
+
+    expect(positionCards).toContain(
+      "var cardTop=Math.max(baseTop,previousBottom+CARD_GAP)"
+    );
+    expect(positionCards).toContain(
+      "cardTop=Math.max(viewportTop,Math.min(cardTop,viewportBottom-cardHeight))"
+    );
+  });
+
+  it("anchor が見つからない card も viewport の上下端へクランプする", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const positionCards = injected.slice(
+      injected.indexOf("unanchored.forEach"),
+      injected.indexOf("function refreshLayout()")
+    );
+
+    expect(positionCards).toContain("var cardHeight=card.offsetHeight");
+    expect(positionCards).toContain(
+      "cardTop=Math.max(viewportTop,Math.min(cardTop,viewportBottom-cardHeight))"
+    );
+  });
+
   it("block hover の＋導線・最内側 anchor 解決・close 遅延を含まない", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 
@@ -430,6 +458,30 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain("actions.appendChild(resolveButton)");
     expect(injected).toContain("actions.appendChild(deleteButton)");
     expect(injected).toContain("composerActions.appendChild(createButton)");
+  });
+
+  it("card と composer の高さを viewport 内に制限し、本文だけを縦スクロールする", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const positionCards = injected.slice(
+      injected.indexOf("function positionCards()"),
+      injected.indexOf("function refreshLayout()")
+    );
+
+    expect(injected).toContain(
+      ".ark-comment-card,.ark-comment-composer{display:flex;flex-direction:column;max-height:calc(100vh - 16px);overflow:hidden}"
+    );
+    expect(injected).toContain(
+      ".ark-comment-card-scroll,.ark-comment-composer-scroll{flex:1 1 auto;min-height:0;overflow-y:auto}"
+    );
+    expect(injected).toContain(".ark-comment-actions{flex:0 0 auto}");
+    expect(injected).toContain(
+      "content.appendChild(scroll);content.appendChild(actions)"
+    );
+    expect(injected).toContain(
+      "composer.appendChild(composerScroll);composer.appendChild(composerActions)"
+    );
+    expect(positionCards).toContain('style.display=""');
+    expect(positionCards).not.toContain('style.display="block"');
   });
 
   it("open card だけにメッセージ列と actions の間の返信 UI を描画する", () => {

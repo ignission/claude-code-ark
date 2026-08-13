@@ -351,6 +351,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     });
     card.appendChild(badge);
     var content=element("div",undefined,"ark-comment-card-content");
+    var scroll=element("div",undefined,"ark-comment-card-scroll");
     var header=element("div",undefined,"ark-comment-card-header");
     header.appendChild(element("strong",thread.anchorText,"ark-comment-anchor-text"));
     var closeButton=element("button","×","ark-comment-close");
@@ -363,12 +364,12 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
       positionCards();
     });
     header.appendChild(closeButton);
-    content.appendChild(header);
+    scroll.appendChild(header);
     if(unresolved){
-      content.appendChild(element("span","アンカー未解決","ark-comment-unresolved-anchor"));
-      content.appendChild(element("p",thread.anchorQuote||thread.anchorText,"ark-comment-unresolved-quote"));
+      scroll.appendChild(element("span","アンカー未解決","ark-comment-unresolved-anchor"));
+      scroll.appendChild(element("p",thread.anchorQuote||thread.anchorText,"ark-comment-unresolved-quote"));
     }
-    content.appendChild(element("span",thread.status==="open"?"未解決":"解決済み","ark-comment-state"));
+    scroll.appendChild(element("span",thread.status==="open"?"未解決":"解決済み","ark-comment-state"));
     thread.messages.forEach(function(message){
       var item=element("article",undefined,"ark-comment-message");
       var time=element("time",formatCommentTime(message.at),"ark-comment-time");
@@ -376,7 +377,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
       item.appendChild(time);
       if(message.author)item.appendChild(element("span",message.author,"ark-comment-author"));
       item.appendChild(renderCommentBody(message.body));
-      content.appendChild(item);
+      scroll.appendChild(item);
     });
     if(thread.status==="open"){
       var replyInput=element("textarea",undefined,"ark-comment-input");
@@ -384,7 +385,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
       replyInput.setAttribute("placeholder","返信");
       replyInput.value=replyDraftBodies.get(thread.id)||"";
       replyInput.addEventListener("input",function(){replyDraftBodies.set(thread.id,replyInput.value);});
-      content.appendChild(replyInput);
+      scroll.appendChild(replyInput);
       var replyButton=element("button","返信","ark-comment-reply");
       replyButton.setAttribute("type","button");
       replyButton.addEventListener("click",function(event){
@@ -397,7 +398,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
         }
         send("ark:diagram-comment-reply",{threadId:thread.id,body:replyInput.value});
       });
-      content.appendChild(replyButton);
+      scroll.appendChild(replyButton);
     }
     var actions=element("div",undefined,"ark-comment-actions");
     if(thread.status==="open"){
@@ -442,10 +443,10 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
       },5000);
     });
     actions.appendChild(deleteButton);
-    content.appendChild(actions);
     if(operationError&&(operationError.type==="ark:diagram-comment-reply"||operationError.type==="ark:diagram-comment-resolve"||operationError.type==="ark:diagram-comment-send"||operationError.type==="ark:diagram-comment-delete")&&operationError.threadId===thread.id){
-      addError(content,operationError.message);
+      addError(scroll,operationError.message);
     }
+    content.appendChild(scroll);content.appendChild(actions);
     card.appendChild(content);
     cardInteraction(card,thread.anchorId,thread.id);
     root.appendChild(card);
@@ -472,15 +473,16 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     });
     header.appendChild(closeButton);
     composer.appendChild(header);
+    var composerScroll=element("div",undefined,"ark-comment-composer-scroll");
     var composerText=graphMode?entry.anchorText:composerAnchorQuote;
     if(composerText){
-      composer.appendChild(element("blockquote",composerText,"ark-comment-composer-quote"));
+      composerScroll.appendChild(element("blockquote",composerText,"ark-comment-composer-quote"));
     }
     var bodyInput=element("textarea",undefined,"ark-comment-input");
     bodyInput.setAttribute("maxlength","4000");
     bodyInput.setAttribute("placeholder","コメント");
     bodyInput.value=composerDraftBody;
-    composer.appendChild(bodyInput);
+    composerScroll.appendChild(bodyInput);
     bodyInput.addEventListener("input",function(){rememberComposerInput(bodyInput.value);});
     var createButton=element("button","コメントする","ark-comment-create");
     createButton.setAttribute("type","button");
@@ -507,10 +509,10 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     });
     var composerActions=element("div",undefined,"ark-comment-actions");
     composerActions.appendChild(createButton);
-    composer.appendChild(composerActions);
     if(operationError&&operationError.type==="ark:diagram-comment-create"&&operationError.anchorId===anchorId){
-      addError(composer,operationError.message);
+      addError(composerScroll,operationError.message);
     }
+    composer.appendChild(composerScroll);composer.appendChild(composerActions);
     cardInteraction(composer,anchorId,null);
     root.appendChild(composer);
   }
@@ -651,7 +653,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
         entry.card.style.display="none";
         return;
       }
-      entry.card.style.display="block";
+      entry.card.style.display="";
       var cardHeight=entry.card.offsetHeight;
       var anchorTop=Math.max(viewportTop,rect.top);
       var baseTop=anchorTop;
@@ -667,14 +669,17 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
         else baseTop=Math.max(viewportTop,Math.min(belowTop,viewportBottom-cardHeight));
       }
       var cardTop=Math.max(baseTop,previousBottom+CARD_GAP);
+      cardTop=Math.max(viewportTop,Math.min(cardTop,viewportBottom-cardHeight));
       entry.card.style.top=cardTop+"px";
       previousBottom=cardTop+cardHeight;
     });
     unanchored.forEach(function(card){
-      card.style.display="block";
-      var cardTop=Math.max(8,previousBottom+CARD_GAP);
+      card.style.display="";
+      var cardHeight=card.offsetHeight;
+      var cardTop=Math.max(viewportTop,previousBottom+CARD_GAP);
+      cardTop=Math.max(viewportTop,Math.min(cardTop,viewportBottom-cardHeight));
       card.style.top=cardTop+"px";
-      previousBottom=cardTop+card.offsetHeight;
+      previousBottom=cardTop+cardHeight;
     });
   }
   function refreshLayout(){
@@ -892,7 +897,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     });
     var style=element("style");
     style.setAttribute("data-ark-harness-ui","1");
-    style.textContent=".ark-comment-layer{position:fixed;z-index:2147483000;inset:0;pointer-events:none;color:#172033;font:13px/1.5 system-ui,sans-serif}.ark-comment-resolved-toggle{position:fixed;top:8px;right:12px;border:1px solid #cbd5e1;border-radius:14px;background:#f8fafc;color:#64748b;padding:5px 10px;box-shadow:0 1px 5px #0002;cursor:pointer;pointer-events:auto;font:inherit}.ark-comment-resolved-toggle[aria-pressed=true]{background:#e2e8f0;color:#475569}.ark-comment-card{position:fixed;right:12px;width:300px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-composer{position:fixed;right:12px;width:300px;box-sizing:border-box;border:1px solid #93c5fd;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-card[data-active=true],.ark-comment-composer[data-active=true]{border-color:#3b82f6;box-shadow:0 3px 16px #2563eb33}.ark-comment-card[data-status=resolved]{background:#f8fafc;border-color:#e2e8f0;color:#64748b;opacity:.78}.ark-comment-card[data-unresolved=true]{border-style:dashed}.ark-comment-badge{display:none}.ark-comment-card-content{display:block}.ark-comment-state,.ark-comment-time,.ark-comment-author{display:block;color:#64748b;font-size:11px}.ark-comment-unresolved-anchor{display:block;color:#b45309;font-weight:700}.ark-comment-unresolved-quote,.ark-comment-composer-quote{margin:7px 0;padding:7px;border-left:3px solid #f59e0b;background:#fffbeb;white-space:pre-wrap}.ark-comment-message{border-top:1px solid #e2e8f0;margin-top:8px;padding-top:8px}.ark-comment-body{margin:1em 0;white-space:pre-wrap;overflow-wrap:anywhere}.ark-comment-body>p{margin:0}.ark-comment-body ul,.ark-comment-body ol{margin:6px 0;padding-left:20px}.ark-comment-body pre{max-width:100%;margin:6px 0;padding:7px;box-sizing:border-box;overflow-x:auto;background:#f1f5f9;border-radius:5px;white-space:pre}.ark-comment-body code{font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;background:#f1f5f9;border-radius:3px;padding:1px 3px}.ark-comment-body pre code{background:transparent;padding:0}.ark-comment-input{display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:7px;border:1px solid #94a3b8;border-radius:5px;font:inherit}.ark-comment-actions{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;margin-top:8px}.ark-comment-create,.ark-comment-reply,.ark-comment-resolve,.ark-comment-send{border:0;border-radius:5px;background:#2563eb;color:#fff;padding:7px 10px;cursor:pointer}.ark-comment-delete{border:0;background:transparent;color:#b91c1c;padding:7px 8px;cursor:pointer}.ark-comment-create:disabled,.ark-comment-reply:disabled,.ark-comment-resolve:disabled,.ark-comment-send:disabled,.ark-comment-delete:disabled,.ark-comment-input:disabled{opacity:.5;cursor:default}.ark-comment-error{color:#b91c1c;margin:8px 0 0}.ark-comment-card-header,.ark-comment-composer-header{display:flex;align-items:center;justify-content:space-between}.ark-comment-close{border:0;background:transparent;color:#64748b;font-size:18px;cursor:pointer}.ark-comment-selection-add{position:fixed;z-index:2147483002;border:0;border-radius:14px;background:#2563eb;color:#fff;padding:5px 10px;box-shadow:0 2px 8px #0003;cursor:pointer;opacity:0;pointer-events:none}.ark-comment-selection-add[data-visible=true]{opacity:1;pointer-events:auto}.ark-comment-highlight{background:#fde68a;border-radius:2px;cursor:pointer}.ark-comment-highlight[data-active=true]{background:#fbbf24;box-shadow:0 0 0 2px #f59e0b55}.ark-comment-node-highlight{outline:1px solid rgba(245,158,11,.45);outline-offset:2px}.ark-comment-anchor-active{background-color:rgba(219,234,254,.45);outline:1px solid rgba(37,99,235,.28);outline-offset:2px}.ark-comment-card[data-collapsed=true]{right:8px;width:auto;min-width:34px;padding:0;border:0;background:transparent;box-shadow:none;opacity:1}.ark-comment-card[data-collapsed=true] .ark-comment-card-content{display:none}.ark-comment-card[data-collapsed=true] .ark-comment-badge{display:block;width:34px;height:28px;border:0;border-radius:14px;background:#2563eb;color:#fff;box-shadow:0 2px 8px #0003;cursor:pointer}.ark-comment-card[data-status=resolved][data-collapsed=true] .ark-comment-badge{background:#94a3b8}.ark-comment-layer[data-narrow=true] .ark-comment-resolved-toggle{right:8px}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=false]{right:8px;box-shadow:0 3px 14px #0003}";
+    style.textContent=".ark-comment-layer{position:fixed;z-index:2147483000;inset:0;pointer-events:none;color:#172033;font:13px/1.5 system-ui,sans-serif}.ark-comment-resolved-toggle{position:fixed;top:8px;right:12px;border:1px solid #cbd5e1;border-radius:14px;background:#f8fafc;color:#64748b;padding:5px 10px;box-shadow:0 1px 5px #0002;cursor:pointer;pointer-events:auto;font:inherit}.ark-comment-resolved-toggle[aria-pressed=true]{background:#e2e8f0;color:#475569}.ark-comment-card{position:fixed;right:12px;width:300px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-composer{position:fixed;right:12px;width:300px;box-sizing:border-box;border:1px solid #93c5fd;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-card,.ark-comment-composer{display:flex;flex-direction:column;max-height:calc(100vh - 16px);overflow:hidden}.ark-comment-card[data-active=true],.ark-comment-composer[data-active=true]{border-color:#3b82f6;box-shadow:0 3px 16px #2563eb33}.ark-comment-card[data-status=resolved]{background:#f8fafc;border-color:#e2e8f0;color:#64748b;opacity:.78}.ark-comment-card[data-unresolved=true]{border-style:dashed}.ark-comment-badge{display:none}.ark-comment-card-content{display:flex;flex:1 1 auto;flex-direction:column;min-height:0;overflow:hidden}.ark-comment-card-scroll,.ark-comment-composer-scroll{flex:1 1 auto;min-height:0;overflow-y:auto}.ark-comment-state,.ark-comment-time,.ark-comment-author{display:block;color:#64748b;font-size:11px}.ark-comment-unresolved-anchor{display:block;color:#b45309;font-weight:700}.ark-comment-unresolved-quote,.ark-comment-composer-quote{margin:7px 0;padding:7px;border-left:3px solid #f59e0b;background:#fffbeb;white-space:pre-wrap}.ark-comment-message{border-top:1px solid #e2e8f0;margin-top:8px;padding-top:8px}.ark-comment-body{margin:1em 0;white-space:pre-wrap;overflow-wrap:anywhere}.ark-comment-body>p{margin:0}.ark-comment-body ul,.ark-comment-body ol{margin:6px 0;padding-left:20px}.ark-comment-body pre{max-width:100%;margin:6px 0;padding:7px;box-sizing:border-box;overflow-x:auto;background:#f1f5f9;border-radius:5px;white-space:pre}.ark-comment-body code{font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;background:#f1f5f9;border-radius:3px;padding:1px 3px}.ark-comment-body pre code{background:transparent;padding:0}.ark-comment-input{display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:7px;border:1px solid #94a3b8;border-radius:5px;font:inherit}.ark-comment-actions{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;margin-top:8px}.ark-comment-actions{flex:0 0 auto}.ark-comment-create,.ark-comment-reply,.ark-comment-resolve,.ark-comment-send{border:0;border-radius:5px;background:#2563eb;color:#fff;padding:7px 10px;cursor:pointer}.ark-comment-delete{border:0;background:transparent;color:#b91c1c;padding:7px 8px;cursor:pointer}.ark-comment-create:disabled,.ark-comment-reply:disabled,.ark-comment-resolve:disabled,.ark-comment-send:disabled,.ark-comment-delete:disabled,.ark-comment-input:disabled{opacity:.5;cursor:default}.ark-comment-error{color:#b91c1c;margin:8px 0 0}.ark-comment-card-header,.ark-comment-composer-header{display:flex;align-items:center;justify-content:space-between}.ark-comment-close{border:0;background:transparent;color:#64748b;font-size:18px;cursor:pointer}.ark-comment-selection-add{position:fixed;z-index:2147483002;border:0;border-radius:14px;background:#2563eb;color:#fff;padding:5px 10px;box-shadow:0 2px 8px #0003;cursor:pointer;opacity:0;pointer-events:none}.ark-comment-selection-add[data-visible=true]{opacity:1;pointer-events:auto}.ark-comment-highlight{background:#fde68a;border-radius:2px;cursor:pointer}.ark-comment-highlight[data-active=true]{background:#fbbf24;box-shadow:0 0 0 2px #f59e0b55}.ark-comment-node-highlight{outline:1px solid rgba(245,158,11,.45);outline-offset:2px}.ark-comment-anchor-active{background-color:rgba(219,234,254,.45);outline:1px solid rgba(37,99,235,.28);outline-offset:2px}.ark-comment-card[data-collapsed=true]{right:8px;width:auto;min-width:34px;padding:0;border:0;background:transparent;box-shadow:none;opacity:1}.ark-comment-card[data-collapsed=true] .ark-comment-card-content{display:none}.ark-comment-card[data-collapsed=true] .ark-comment-badge{display:block;width:34px;height:28px;border:0;border-radius:14px;background:#2563eb;color:#fff;box-shadow:0 2px 8px #0003;cursor:pointer}.ark-comment-card[data-status=resolved][data-collapsed=true] .ark-comment-badge{background:#94a3b8}.ark-comment-layer[data-narrow=true] .ark-comment-resolved-toggle{right:8px}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=false]{right:8px;box-shadow:0 3px 14px #0003}";
     document.head.appendChild(style);
     root=element("div",undefined,"ark-comment-layer");
     root.setAttribute("data-ark-harness-ui","1");
