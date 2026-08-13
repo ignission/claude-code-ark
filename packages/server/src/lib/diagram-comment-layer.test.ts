@@ -41,6 +41,20 @@ describe("injectDiagramCommentLayer", () => {
     expect(injectMinifiedCommentLayer(once)).toBe(once);
   });
 
+  it("保存 HTML に混入した旧 runtime を現行コメント層へ置き換える", () => {
+    const persisted = minimalGraph.replace(
+      "</body>",
+      '<script id="ark-diagram-comment-layer" data-ark-comment-mode="graph">oldLayer()</script><div class="ark-comment-layer"><button class="ark-comment-selection-add"></button></div></body>'
+    );
+
+    const recovered = injectMinifiedCommentLayer(persisted, "graph");
+
+    expect(recovered.match(/id="ark-diagram-comment-layer"/gu)).toHaveLength(1);
+    expect(recovered).not.toContain("oldLayer()");
+    expect(recovered).toContain('data-ark-comment-mode="graph"');
+    expect(recovered).toContain('data-ark-harness-ui="1"');
+  });
+
   it("script 属性で doc / graph モードを明示する", () => {
     const injectWithMode = injectMinifiedCommentLayer as (
       html: string,
@@ -65,7 +79,9 @@ describe("injectDiagramCommentLayer", () => {
       injected.indexOf("function updateLayout")
     );
 
-    expect(injected).toContain('graphMode?"[data-model-id]":"[data-ark-id]"');
+    expect(injected).toContain(
+      'graphMode?".ark-harness-graph-node[data-model-id]":"[data-ark-id]"'
+    );
     expect(injected).toContain("anchor.innerText");
     expect(injected).toContain("slice(0,256)");
     expect(composer).toContain("graphMode?{");
@@ -97,8 +113,34 @@ describe("injectDiagramCommentLayer", () => {
     expect(graphSelection).toContain('document.addEventListener("click"');
     expect(graphSelection).toContain("Math.hypot");
     expect(graphSelection).toContain("GRAPH_CLICK_MOVE_LIMIT");
+    expect(injected).toContain(
+      'target.closest(".ark-harness-graph-node[data-model-id]")'
+    );
     expect(graphSelection).not.toContain("preventDefault");
     expect(graphSelection).not.toContain("stopPropagation");
+  });
+
+  it("コメント runtime は graph の保存 HTML から除外される", () => {
+    const injected = injectDiagramCommentLayer(minimalGraph);
+
+    expect(injected).toContain(
+      `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-ark-comment-mode="doc" data-ark-harness-ui="1">`
+    );
+    expect(injected).toContain('style.setAttribute("data-ark-harness-ui","1")');
+    expect(injected).toContain('root.setAttribute("data-ark-harness-ui","1")');
+  });
+
+  it("selection button の再構築時は既存 button を除去する", () => {
+    const injected = injectDiagramCommentLayer(minimalGraph);
+    const createButton = injected.slice(
+      injected.indexOf("function createSelectionAddButton"),
+      injected.indexOf("function graphAnchorFromTarget")
+    );
+
+    expect(createButton).toContain(
+      'root.querySelectorAll(".ark-comment-selection-add")'
+    );
+    expect(createButton).toContain("root.removeChild(button)");
   });
 
   it("同じ data-model-id が入れ子なら最も外側だけを anchor にする", () => {
