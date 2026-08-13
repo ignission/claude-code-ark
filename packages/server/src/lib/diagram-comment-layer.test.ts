@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import {
   COMMENT_LAYER,
@@ -12,6 +13,42 @@ const minimalGraph =
 
 // 部分一致で振る舞いを固定する契約テストは、読みやすいソースを検証する。
 const injectDiagramCommentLayer = (_html: string) => COMMENT_LAYER;
+
+type InlineNode = {
+  tagName?: string;
+  textContent: string;
+};
+
+const renderInlineMarkdown = (text: string): InlineNode[] => {
+  const inlineRenderer = COMMENT_LAYER.slice(
+    COMMENT_LAYER.indexOf("function appendInlineMarkdown"),
+    COMMENT_LAYER.indexOf("function renderCommentBody")
+  );
+  const nodes: InlineNode[] = [];
+  const appendInlineMarkdown = runInNewContext(
+    `${inlineRenderer};appendInlineMarkdown`,
+    {
+      document: {
+        createTextNode: (textContent: string): InlineNode => ({ textContent }),
+      },
+      element: (tagName: string, textContent = ""): InlineNode => ({
+        tagName,
+        textContent,
+      }),
+    }
+  ) as (
+    container: { appendChild: (node: InlineNode) => void },
+    value: string
+  ) => void;
+
+  appendInlineMarkdown(
+    {
+      appendChild: node => nodes.push(node),
+    },
+    text
+  );
+  return nodes;
+};
 
 describe("injectDiagramCommentLayer", () => {
   it("</body> 直前へ marker を1回だけ注入する", () => {
@@ -521,6 +558,16 @@ describe("injectDiagramCommentLayer", () => {
     expect(inlineRenderer).toContain("document.createTextNode");
   });
 
+  it("空のインラインコードと太字は記号を literal のまま描画する", () => {
+    expect(renderInlineMarkdown("``")).toEqual([{ textContent: "``" }]);
+    expect(renderInlineMarkdown("****")).toEqual([{ textContent: "****" }]);
+    expect(renderInlineMarkdown("`code` **bold**")).toEqual([
+      { tagName: "code", textContent: "code" },
+      { textContent: " " },
+      { tagName: "strong", textContent: "bold" },
+    ]);
+  });
+
   it("コメント本文のコードブロック・箇条書き・番号付きリストを DOM 要素として組み立てる", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const bodyRenderer = injected.slice(
@@ -564,7 +611,7 @@ describe("injectDiagramCommentLayer", () => {
     expect(inlineRenderer).toContain(
       "container.appendChild(document.createTextNode(text.slice(textStart)))"
     );
-    expect(inlineRenderer).toContain("var valid=close>cursor+markerLength-1");
+    expect(inlineRenderer).toContain("var valid=close>cursor+markerLength");
     expect(inlineRenderer).not.toContain('element("a"');
   });
 

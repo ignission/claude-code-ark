@@ -242,7 +242,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
       var close=text.indexOf(marker,cursor+markerLength);
       var tokenEnd=close+markerLength;
       var tokenText=close<0?"":text.slice(cursor+markerLength,close);
-      var valid=close>cursor+markerLength-1;
+      var valid=close>cursor+markerLength;
       if(tag!=="code"&&tokenText.indexOf("*")>=0)valid=false;
       if(tag==="em"&&text.charAt(tokenEnd)==="*")valid=false;
       if(!valid){cursor=close<0?cursor+1:tokenEnd;continue;}
