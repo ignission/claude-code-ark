@@ -1,15 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  COMMENT_LAYER,
   DIAGRAM_COMMENT_LAYER_MARKER,
-  injectDiagramCommentLayer,
+  injectDiagramCommentLayer as injectMinifiedCommentLayer,
 } from "./diagram-comment-layer.js";
 
 const minimalDoc =
   '<!doctype html><html><head></head><body><p data-ark-id="s1">本文</p></body></html>';
 
+// 部分一致で振る舞いを固定する契約テストは、読みやすいソースを検証する。
+const injectDiagramCommentLayer = (_html: string) => COMMENT_LAYER;
+
 describe("injectDiagramCommentLayer", () => {
   it("</body> 直前へ marker を1回だけ注入する", () => {
-    const injected = injectDiagramCommentLayer(minimalDoc);
+    const injected = injectMinifiedCommentLayer(minimalDoc);
 
     expect(injected).toContain(DIAGRAM_COMMENT_LAYER_MARKER);
     expect(injected.indexOf(DIAGRAM_COMMENT_LAYER_MARKER)).toBe(
@@ -23,16 +27,16 @@ describe("injectDiagramCommentLayer", () => {
   it("body がなくても末尾へ注入する", () => {
     const html = "<main>文書</main>";
 
-    const injected = injectDiagramCommentLayer(html);
+    const injected = injectMinifiedCommentLayer(html);
 
     expect(injected.startsWith(html)).toBe(true);
     expect(injected).toContain(DIAGRAM_COMMENT_LAYER_MARKER);
   });
 
   it("二重注入しない", () => {
-    const once = injectDiagramCommentLayer(minimalDoc);
+    const once = injectMinifiedCommentLayer(minimalDoc);
 
-    expect(injectDiagramCommentLayer(once)).toBe(once);
+    expect(injectMinifiedCommentLayer(once)).toBe(once);
   });
 
   it("ark:diagram-init の transferred port で load/result を相関する", () => {

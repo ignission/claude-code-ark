@@ -28,6 +28,7 @@
 
 import { MODEL_SCRIPT_ID } from "./diagram-file.js";
 import { layoutDiagram } from "./diagram-layout.js";
+import { createCachedMinifier } from "./injected-minify.js";
 
 /**
  * 二重注入検出に使うマーカー。注入する `<script>` タグの id 属性の値として
@@ -3603,10 +3604,25 @@ const HARNESS_JS =
   ) +
   INIT_COMPACTED_HARNESS_JS.slice(portHandlerEnd);
 
-export const DIAGRAM_HARNESS_SCRIPT = `${HARNESS_STYLE}
+export const DIAGRAM_HARNESS_SOURCE = `${HARNESS_STYLE}
 <script id="${DIAGRAM_HARNESS_MARKER}" data-ark-harness-ui="1">
 ${HARNESS_JS}
 </script>`;
+
+const styleContentStart = HARNESS_STYLE.indexOf(">") + 1;
+const styleContentEnd = HARNESS_STYLE.lastIndexOf("</style>");
+const minifyHarnessStyle = createCachedMinifier(
+  HARNESS_STYLE.slice(styleContentStart, styleContentEnd),
+  "css"
+);
+const minifyHarnessJavaScript = createCachedMinifier(HARNESS_JS, "js");
+
+export const DIAGRAM_HARNESS_SCRIPT = `${HARNESS_STYLE.slice(
+  0,
+  styleContentStart
+)}${minifyHarnessStyle()}${HARNESS_STYLE.slice(styleContentEnd)}
+<script id="${DIAGRAM_HARNESS_MARKER}" data-ark-harness-ui="1">
+${minifyHarnessJavaScript()}</script>`;
 
 /**
  * ハーネスを本文へ差し込む。`injectCsp` と同じ「本文に差し込む」形。
