@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DIAGRAM_COMMENT_LAYER_MARKER } from "./diagram-comment-layer.js";
 import { DIAGRAM_CSP } from "./diagram-file.js";
 import { DIAGRAM_HARNESS_MARKER } from "./diagram-harness.js";
-import { readDiagram } from "./diagram-reader.js";
+import { readDiagram, readDiagramModel } from "./diagram-reader.js";
 
 let wt: string;
 let dir: string;
@@ -232,6 +232,50 @@ describe("readDiagram", () => {
       expect(result.html).toContain(DIAGRAM_CSP);
       expect(result.html).toContain(DIAGRAM_HARNESS_MARKER);
     }
+  });
+
+  it("投影 data-kind が model の node.kind と異なる graph は 422 で拒否する", async () => {
+    const kindModel = JSON.stringify({
+      version: 1,
+      nodes: [{ id: "command", label: "Command", kind: "command" }],
+      edges: [],
+      groups: [],
+    });
+    write(
+      "mismatched-kind.diagram.html",
+      '<article data-model-id="command" data-kind="event">Command</article>',
+      kindModel
+    );
+
+    const result = await readDiagram(wt, "mismatched-kind.diagram.html");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(422);
+      expect(result.error).toContain("command");
+    }
+  });
+
+  it("投影 data-kind が不一致でも readDiagramModel はモデルを返す", async () => {
+    const kindModel = JSON.stringify({
+      version: 1,
+      nodes: [{ id: "command", label: "Command", kind: "command" }],
+      edges: [],
+      groups: [],
+    });
+    write(
+      "mismatched-kind-model.diagram.html",
+      '<article data-model-id="command" data-kind="event">Command</article>',
+      kindModel
+    );
+
+    const result = await readDiagramModel(
+      wt,
+      "mismatched-kind-model.diagram.html"
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.model.nodes[0]?.kind).toBe("command");
   });
 
   it("存在しないファイルは 404 を返す", async () => {

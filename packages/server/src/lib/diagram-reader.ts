@@ -15,6 +15,7 @@ import { injectBuiltinProjection } from "./diagram-builtin.js";
 import { injectDiagramCommentLayer } from "./diagram-comment-layer.js";
 import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
 import { extractModel, injectCsp } from "./diagram-file.js";
+import { validateDiagramGraphKinds } from "./diagram-graph-kinds.js";
 import { injectHarness } from "./diagram-harness.js";
 import type { DiagramModel } from "./diagram-model.js";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
@@ -115,6 +116,10 @@ export async function readDiagram(
   if (!model.ok) return { ok: false, status: 422, error: model.error };
   const anchors = validateDiagramDocAnchors(read.raw, model.model);
   if (!anchors.ok) return { ok: false, status: 422, error: anchors.error };
+  const graphKinds = validateDiagramGraphKinds(read.raw, model.model);
+  if (!graphKinds.ok) {
+    return { ok: false, status: 422, error: graphKinds.error };
+  }
   // 内蔵図種の投影生成 → CSP → 専用層の順。doc 本文は自前 HTML が正なので
   // 編集ハーネスを混ぜず、コメント層だけを載せる。
   const projected = injectCsp(injectBuiltinProjection(read.raw, model.model));
