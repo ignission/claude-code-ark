@@ -393,6 +393,30 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain('element("button","解決する"');
   });
 
+  it("解決済みカードを opacity で半透明にしない", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const resolvedCardStyle = injected.match(
+      /\.ark-comment-card\[data-status=resolved\]\{([^}]*)\}/u
+    )?.[1];
+
+    expect(resolvedCardStyle).toBeDefined();
+    expect(resolvedCardStyle).not.toMatch(/(?:^|;)opacity:/u);
+  });
+
+  it("解決済みカードは未解決カードと異なる背景色で区別する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const openCardStyle = injected.match(/\.ark-comment-card\{([^}]*)\}/u)?.[1];
+    const resolvedCardStyle = injected.match(
+      /\.ark-comment-card\[data-status=resolved\]\{([^}]*)\}/u
+    )?.[1];
+    const background = (style: string | undefined) =>
+      style?.match(/(?:^|;)background:([^;]+)/u)?.[1];
+
+    expect(background(openCardStyle)).toBeDefined();
+    expect(background(resolvedCardStyle)).toBeDefined();
+    expect(background(resolvedCardStyle)).not.toBe(background(openCardStyle));
+  });
+
   it("解決済み thread は既定の card・badge 描画対象から外す", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const visibleThreads = injected.slice(
