@@ -23,10 +23,11 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
   var deleteConfirmTimer=null;
   var composerDraftBody="";
   var replyDraftBodies=new Map();
-  var expandedThreadIds=new Set();
+  var threadOpenStates=new Map();
   // 送信はコメントの状態ではなく、その場の行為なので sidecar へ保存しない。
   // リロードで消えてよいページ内メモリとして threadId だけを覚える。
   var sentThreadIds=new Set();
+  var showResolved=false;
   var requestSequence=0;
   var root=null;
   var anchors=[];
@@ -60,6 +61,13 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
   function requestId(){requestSequence+=1;return "comment-"+Date.now()+"-"+requestSequence;}
   function anchorEntry(anchorId){
     return anchors.filter(function(entry){return entry.anchorId===anchorId;})[0]||null;
+  }
+  function isThreadOpen(threadId){
+    var explicitState=threadOpenStates.get(threadId);
+    return explicitState?explicitState==="open":!narrow;
+  }
+  function updateCardCollapsed(card,threadId){
+    card.setAttribute("data-collapsed",isThreadOpen(threadId)?"false":"true");
   }
   function updatePendingControls(){
     var disableForPending=Boolean(pendingRequestId)&&!(pendingAction&&pendingAction.passive);
@@ -194,6 +202,132 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     var input=root.querySelector(".ark-comment-composer .ark-comment-input");
     if(input)input.focus();
   }
+  function visibleThreads(){
+    return showResolved?comments.threads:comments.threads.filter(function(thread){return thread.status==="open";});
+  }
+  function renderResolvedToggle(){
+    var resolvedCount=comments.threads.filter(function(thread){return thread.status==="resolved";}).length;
+    if(resolvedCount===0)return;
+    var toggle=element("button","解決済み "+resolvedCount+" 件","ark-comment-resolved-toggle");
+    toggle.setAttribute("type","button");
+    toggle.setAttribute("aria-pressed",showResolved?"true":"false");
+    toggle.setAttribute("aria-label",showResolved?"解決済みコメントを隠す":"解決済みコメントを表示");
+    toggle.addEventListener("click",function(){
+      showResolved=!showResolved;
+      render();
+    });
+    root.appendChild(toggle);
+  }
+  function appendInlineMarkdown(container,text){
+    var cursor=0;
+    var textStart=0;
+    while(cursor<text.length){
+      var marker=null;
+      var markerLength=0;
+      var tag=null;
+      if(text.charCodeAt(cursor)===96){
+        marker=String.fromCharCode(96);
+        markerLength=1;
+        tag="code";
+      }else if(text.slice(cursor,cursor+2)==="**"&&text.charAt(cursor-1)!=="*"){
+        marker="**";
+        markerLength=2;
+        tag="strong";
+      }else if(text.charAt(cursor)==="*"&&text.charAt(cursor-1)!=="*"&&text.charAt(cursor+1)!=="*"){
+        marker="*";
+        markerLength=1;
+        tag="em";
+      }
+      if(!marker){cursor+=1;continue;}
+      var close=text.indexOf(marker,cursor+markerLength);
+      var tokenEnd=close+markerLength;
+      var tokenText=close<0?"":text.slice(cursor+markerLength,close);
+      var valid=close>cursor+markerLength;
+      if(tag!=="code"&&tokenText.indexOf("*")>=0)valid=false;
+      if(tag==="em"&&text.charAt(tokenEnd)==="*")valid=false;
+      if(!valid){cursor+=1;continue;}
+      if(cursor>textStart){
+        container.appendChild(document.createTextNode(text.slice(textStart,cursor)));
+      }
+      var token=text.slice(cursor,tokenEnd);
+      if(tag==="code")container.appendChild(element("code",token.slice(1,-1)));
+      else if(tag==="strong")container.appendChild(element("strong",token.slice(2,-2)));
+      else container.appendChild(element("em",token.slice(1,-1)));
+      cursor=tokenEnd;
+      textStart=cursor;
+    }
+    if(textStart<text.length){
+      container.appendChild(document.createTextNode(text.slice(textStart)));
+    }
+  }
+  function isCodeFence(line){
+    return line.charCodeAt(0)===96&&line.charCodeAt(1)===96&&line.charCodeAt(2)===96;
+  }
+  function unorderedListText(line){
+    return line.slice(0,2)==="- "?line.slice(2):null;
+  }
+  function orderedListText(line){
+    var separator=line.indexOf(". ");
+    if(separator<1)return null;
+    for(var digit=0;digit<separator;digit+=1){
+      var code=line.charCodeAt(digit);
+      if(code<48||code>57)return null;
+    }
+    return line.slice(separator+2);
+  }
+  function renderCommentBody(body){
+    var container=element("div",undefined,"ark-comment-body");
+    var lines=body.split("\\n");
+    var index=0;
+    while(index<lines.length){
+      if(isCodeFence(lines[index])){
+        var codeLines=[];
+        index+=1;
+        while(index<lines.length&&!(lines[index].trim().length===3&&isCodeFence(lines[index].trim()))){
+          codeLines.push(lines[index]);
+          index+=1;
+        }
+        if(index<lines.length)index+=1;
+        var pre=element("pre");
+        pre.appendChild(element("code",codeLines.join("\\n")));
+        container.appendChild(pre);
+        continue;
+      }
+      var unordered=unorderedListText(lines[index]);
+      if(unordered!==null){
+        var unorderedList=element("ul");
+        while(index<lines.length&&(unordered=unorderedListText(lines[index]))!==null){
+          var unorderedItem=element("li");
+          appendInlineMarkdown(unorderedItem,unordered);
+          unorderedList.appendChild(unorderedItem);
+          index+=1;
+        }
+        container.appendChild(unorderedList);
+        continue;
+      }
+      var ordered=orderedListText(lines[index]);
+      if(ordered!==null){
+        var orderedList=element("ol");
+        while(index<lines.length&&(ordered=orderedListText(lines[index]))!==null){
+          var orderedItem=element("li");
+          appendInlineMarkdown(orderedItem,ordered);
+          orderedList.appendChild(orderedItem);
+          index+=1;
+        }
+        container.appendChild(orderedList);
+        continue;
+      }
+      var paragraphLines=[];
+      while(index<lines.length&&!isCodeFence(lines[index])&&unorderedListText(lines[index])===null&&orderedListText(lines[index])===null){
+        paragraphLines.push(lines[index]);
+        index+=1;
+      }
+      var paragraph=element("p");
+      appendInlineMarkdown(paragraph,paragraphLines.join("\\n"));
+      container.appendChild(paragraph);
+    }
+    return container;
+  }
   function renderThread(thread){
     var entry=anchorEntry(thread.anchorId);
     var unresolved=!entry||Boolean(thread.anchorQuote&&!threadHighlightResolved[thread.id]);
@@ -202,7 +336,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     card.setAttribute("data-thread-id",thread.id);
     card.setAttribute("data-status",thread.status);
     card.setAttribute("data-unresolved",unresolved?"true":"false");
-    card.setAttribute("data-collapsed",expandedThreadIds.has(thread.id)?"false":"true");
+    updateCardCollapsed(card,thread.id);
     var openCount=comments.threads.filter(function(candidate){
       return candidate.anchorId===thread.anchorId&&candidate.status==="open";
     }).length;
@@ -211,27 +345,39 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     badge.setAttribute("aria-label",openCount>0?"未解決コメント "+openCount+" 件":"解決済みコメント");
     badge.addEventListener("click",function(event){
       event.stopPropagation();
-      if(expandedThreadIds.has(thread.id))expandedThreadIds.delete(thread.id);
-      else expandedThreadIds.add(thread.id);
-      card.setAttribute("data-collapsed",expandedThreadIds.has(thread.id)?"false":"true");
+      threadOpenStates.set(thread.id,"open");
+      updateCardCollapsed(card,thread.id);
       positionCards();
     });
     card.appendChild(badge);
     var content=element("div",undefined,"ark-comment-card-content");
-    content.appendChild(element("strong",thread.anchorText,"ark-comment-anchor-text"));
+    var scroll=element("div",undefined,"ark-comment-card-scroll");
+    var header=element("div",undefined,"ark-comment-card-header");
+    header.appendChild(element("strong",thread.anchorText,"ark-comment-anchor-text"));
+    var closeButton=element("button","×","ark-comment-close");
+    closeButton.setAttribute("type","button");
+    closeButton.setAttribute("aria-label","コメントを閉じる");
+    closeButton.addEventListener("click",function(event){
+      event.stopPropagation();
+      threadOpenStates.set(thread.id,"closed");
+      updateCardCollapsed(card,thread.id);
+      positionCards();
+    });
+    header.appendChild(closeButton);
+    scroll.appendChild(header);
     if(unresolved){
-      content.appendChild(element("span","アンカー未解決","ark-comment-unresolved-anchor"));
-      content.appendChild(element("p",thread.anchorQuote||thread.anchorText,"ark-comment-unresolved-quote"));
+      scroll.appendChild(element("span","アンカー未解決","ark-comment-unresolved-anchor"));
+      scroll.appendChild(element("p",thread.anchorQuote||thread.anchorText,"ark-comment-unresolved-quote"));
     }
-    content.appendChild(element("span",thread.status==="open"?"未解決":"解決済み","ark-comment-state"));
+    scroll.appendChild(element("span",thread.status==="open"?"未解決":"解決済み","ark-comment-state"));
     thread.messages.forEach(function(message){
       var item=element("article",undefined,"ark-comment-message");
       var time=element("time",formatCommentTime(message.at),"ark-comment-time");
       time.setAttribute("datetime",message.at);
       item.appendChild(time);
       if(message.author)item.appendChild(element("span",message.author,"ark-comment-author"));
-      item.appendChild(element("p",message.body,"ark-comment-body"));
-      content.appendChild(item);
+      item.appendChild(renderCommentBody(message.body));
+      scroll.appendChild(item);
     });
     if(thread.status==="open"){
       var replyInput=element("textarea",undefined,"ark-comment-input");
@@ -239,7 +385,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
       replyInput.setAttribute("placeholder","返信");
       replyInput.value=replyDraftBodies.get(thread.id)||"";
       replyInput.addEventListener("input",function(){replyDraftBodies.set(thread.id,replyInput.value);});
-      content.appendChild(replyInput);
+      scroll.appendChild(replyInput);
       var replyButton=element("button","返信","ark-comment-reply");
       replyButton.setAttribute("type","button");
       replyButton.addEventListener("click",function(event){
@@ -252,7 +398,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
         }
         send("ark:diagram-comment-reply",{threadId:thread.id,body:replyInput.value});
       });
-      content.appendChild(replyButton);
+      scroll.appendChild(replyButton);
     }
     var actions=element("div",undefined,"ark-comment-actions");
     if(thread.status==="open"){
@@ -297,10 +443,10 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
       },5000);
     });
     actions.appendChild(deleteButton);
-    content.appendChild(actions);
     if(operationError&&(operationError.type==="ark:diagram-comment-reply"||operationError.type==="ark:diagram-comment-resolve"||operationError.type==="ark:diagram-comment-send"||operationError.type==="ark:diagram-comment-delete")&&operationError.threadId===thread.id){
-      addError(content,operationError.message);
+      addError(scroll,operationError.message);
     }
+    content.appendChild(scroll);content.appendChild(actions);
     card.appendChild(content);
     cardInteraction(card,thread.anchorId,thread.id);
     root.appendChild(card);
@@ -327,15 +473,16 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     });
     header.appendChild(closeButton);
     composer.appendChild(header);
+    var composerScroll=element("div",undefined,"ark-comment-composer-scroll");
     var composerText=graphMode?entry.anchorText:composerAnchorQuote;
     if(composerText){
-      composer.appendChild(element("blockquote",composerText,"ark-comment-composer-quote"));
+      composerScroll.appendChild(element("blockquote",composerText,"ark-comment-composer-quote"));
     }
     var bodyInput=element("textarea",undefined,"ark-comment-input");
     bodyInput.setAttribute("maxlength","4000");
     bodyInput.setAttribute("placeholder","コメント");
     bodyInput.value=composerDraftBody;
-    composer.appendChild(bodyInput);
+    composerScroll.appendChild(bodyInput);
     bodyInput.addEventListener("input",function(){rememberComposerInput(bodyInput.value);});
     var createButton=element("button","コメントする","ark-comment-create");
     createButton.setAttribute("type","button");
@@ -362,10 +509,10 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     });
     var composerActions=element("div",undefined,"ark-comment-actions");
     composerActions.appendChild(createButton);
-    composer.appendChild(composerActions);
     if(operationError&&operationError.type==="ark:diagram-comment-create"&&operationError.anchorId===anchorId){
-      addError(composer,operationError.message);
+      addError(composerScroll,operationError.message);
     }
+    composer.appendChild(composerScroll);composer.appendChild(composerActions);
     cardInteraction(composer,anchorId,null);
     root.appendChild(composer);
   }
@@ -379,6 +526,9 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     var availableWidth=contentRight===null?0:document.documentElement.clientWidth-contentRight;
     narrow=contentRight===null||availableWidth<CARD_WIDTH+RAIL_GAP*2;
     root.setAttribute("data-narrow",narrow?"true":"false");
+    root.querySelectorAll(".ark-comment-card").forEach(function(card){
+      updateCardCollapsed(card,card.getAttribute("data-thread-id"));
+    });
   }
   function clearHighlights(){
     document.querySelectorAll('.ark-comment-highlight[data-ark-comment-owned="true"]').forEach(function(highlight){
@@ -431,10 +581,10 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
   function activateThread(thread){
     selectedAnchorId=thread.anchorId;
     selectedThreadId=thread.id;
-    expandedThreadIds.add(thread.id);
+    threadOpenStates.set(thread.id,"open");
     root.querySelectorAll(".ark-comment-card").forEach(function(card){
       if(card.getAttribute("data-thread-id")===thread.id){
-        card.setAttribute("data-collapsed",expandedThreadIds.has(thread.id)?"false":"true");
+        updateCardCollapsed(card,thread.id);
       }
     });
     setActiveAnchor(thread.anchorId,thread.id);
@@ -472,14 +622,14 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
   function renderHighlights(){
     clearHighlights();
     if(graphMode){renderGraphHighlights();return;}
-    comments.threads.forEach(function(thread){
+    visibleThreads().forEach(function(thread){
       if(!thread.anchorQuote)return;
       var entry=anchorEntry(thread.anchorId);
       threadHighlightResolved[thread.id]=Boolean(entry&&wrapThreadQuote(thread,entry));
     });
   }
   function renderGraphHighlights(){
-    comments.threads.forEach(function(thread){
+    visibleThreads().forEach(function(thread){
       var entry=anchorEntry(thread.anchorId);
       if(entry)entry.anchor.classList.add("ark-comment-node-highlight");
     });
@@ -493,40 +643,32 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
       entries.push({card:card,anchor:entry.anchor,rect:entry.anchor.getBoundingClientRect()});
     });
     entries.sort(function(left,right){return left.rect.top-right.rect.top;});
-    var viewportTop=8;
-    var viewportBottom=window.innerHeight-8;
+    var resolvedToggle=root.querySelector(".ark-comment-resolved-toggle");
     var previousBottom=-CARD_GAP;
     entries.forEach(function(entry){
-      var rect=entry.anchor.getBoundingClientRect();
-      if(rect.bottom<0||rect.top>window.innerHeight){
-        entry.card.style.display="none";
-        return;
-      }
-      entry.card.style.display="block";
+      var rect=entry.rect;
       var cardHeight=entry.card.offsetHeight;
-      var anchorTop=Math.max(viewportTop,rect.top);
+      var anchorTop=rect.top+window.scrollY;
       var baseTop=anchorTop;
       var isNarrowPanel=narrow&&(
         entry.card.classList.contains("ark-comment-composer")||
         entry.card.getAttribute("data-collapsed")==="false"
       );
       if(isNarrowPanel){
-        var belowTop=rect.bottom+CARD_GAP;
-        var aboveTop=rect.top-cardHeight-CARD_GAP;
-        if(belowTop+cardHeight<=viewportBottom)baseTop=belowTop;
-        else if(aboveTop>=viewportTop)baseTop=aboveTop;
-        else baseTop=Math.max(viewportTop,Math.min(belowTop,viewportBottom-cardHeight));
+        baseTop=rect.bottom+window.scrollY+CARD_GAP;
       }
       var cardTop=Math.max(baseTop,previousBottom+CARD_GAP);
       entry.card.style.top=cardTop+"px";
       previousBottom=cardTop+cardHeight;
     });
     unanchored.forEach(function(card){
-      card.style.display="block";
-      var cardTop=Math.max(8,previousBottom+CARD_GAP);
+      var cardHeight=card.offsetHeight;
+      var cardTop=previousBottom+CARD_GAP;
       card.style.top=cardTop+"px";
-      previousBottom=cardTop+card.offsetHeight;
+      previousBottom=cardTop+cardHeight;
     });
+    var trailingClearance=resolvedToggle?resolvedToggle.offsetHeight+8+CARD_GAP:0;
+    root.style.height=Math.max(0,previousBottom+trailingClearance)+"px";
   }
   function refreshLayout(){
     updateLayout();
@@ -534,22 +676,45 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     if(graphMode)positionGraphSelectionAdd();
     else updateSelectionAdd();
   }
-  function cleanupExpandedThreads(){
+  function selectCreatedThread(previousThreadIds){
+    var createdThreads=comments.threads.filter(function(thread){return !previousThreadIds.has(thread.id);});
+    if(createdThreads.length!==1)return;
+    var createdThread=createdThreads[0];
+    threadOpenStates.set(createdThread.id,"open");
+    selectedThreadId=createdThread.id;
+    selectedAnchorId=createdThread.anchorId;
+  }
+  function collapseResolvedThread(threadId){
+    threadOpenStates.set(threadId,"closed");
+    if(selectedThreadId!==threadId)return;
+    selectedAnchorId=null;
+    selectedThreadId=null;
+  }
+  function cleanupThreadOpenStates(){
     var existingThreadIds=new Set(comments.threads.map(function(thread){return thread.id;}));
-    expandedThreadIds.forEach(function(threadId){
-      if(!existingThreadIds.has(threadId))expandedThreadIds.delete(threadId);
+    threadOpenStates.forEach(function(_state,threadId){
+      if(!existingThreadIds.has(threadId))threadOpenStates.delete(threadId);
     });
+  }
+  function clearHiddenResolvedSelection(){
+    if(showResolved||!selectedThreadId)return;
+    var selectedThread=comments.threads.filter(function(thread){return thread.id===selectedThreadId;})[0];
+    if(!selectedThread||selectedThread.status!=="resolved")return;
+    selectedAnchorId=null;
+    selectedThreadId=null;
   }
   function render(focusedInput){
     clearDeleteConfirmation();
     // 無関係な再描画でも確認を押し直す方が、誤削除を防ぐ安全側の挙動になる。
-    cleanupExpandedThreads();
+    cleanupThreadOpenStates();
+    clearHiddenResolvedSelection();
     renderHighlights();
-    root.querySelectorAll(".ark-comment-card,.ark-comment-composer").forEach(function(card){
+    root.querySelectorAll(".ark-comment-card,.ark-comment-composer,.ark-comment-resolved-toggle").forEach(function(card){
       root.removeChild(card);
     });
-    comments.threads.forEach(renderThread);
+    visibleThreads().forEach(renderThread);
     renderComposer();
+    renderResolvedToggle();
     updatePendingControls();
     updateLayout();
     setActiveAnchor(selectedAnchorId,selectedThreadId);
@@ -714,13 +879,13 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
       existingRoot.remove();
     });
     document.querySelectorAll("style").forEach(function(existingStyle){
-      if(existingStyle.textContent.indexOf(".ark-comment-layer{position:fixed;z-index:2147483000")>=0){
+      if(existingStyle.getAttribute("data-ark-harness-ui")==="1"&&existingStyle.textContent.indexOf(".ark-comment-layer{")>=0){
         existingStyle.remove();
       }
     });
     var style=element("style");
     style.setAttribute("data-ark-harness-ui","1");
-    style.textContent=".ark-comment-layer{position:fixed;z-index:2147483000;inset:0;pointer-events:none;color:#172033;font:13px/1.5 system-ui,sans-serif}.ark-comment-card{position:fixed;right:12px;width:300px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-composer{position:fixed;right:12px;width:300px;box-sizing:border-box;border:1px solid #93c5fd;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-card[data-active=true],.ark-comment-composer[data-active=true]{border-color:#3b82f6;box-shadow:0 3px 16px #2563eb33}.ark-comment-card[data-status=resolved]{background:#f8fafc;border-color:#e2e8f0;color:#64748b;opacity:.78}.ark-comment-card[data-unresolved=true]{border-style:dashed}.ark-comment-badge{display:none}.ark-comment-card-content{display:block}.ark-comment-state,.ark-comment-time,.ark-comment-author{display:block;color:#64748b;font-size:11px}.ark-comment-unresolved-anchor{display:block;color:#b45309;font-weight:700}.ark-comment-unresolved-quote,.ark-comment-composer-quote{margin:7px 0;padding:7px;border-left:3px solid #f59e0b;background:#fffbeb;white-space:pre-wrap}.ark-comment-message{border-top:1px solid #e2e8f0;margin-top:8px;padding-top:8px}.ark-comment-body{white-space:pre-wrap}.ark-comment-input{display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:7px;border:1px solid #94a3b8;border-radius:5px;font:inherit}.ark-comment-actions{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;margin-top:8px}.ark-comment-create,.ark-comment-reply,.ark-comment-resolve,.ark-comment-send{border:0;border-radius:5px;background:#2563eb;color:#fff;padding:7px 10px;cursor:pointer}.ark-comment-delete{border:0;background:transparent;color:#b91c1c;padding:7px 8px;cursor:pointer}.ark-comment-create:disabled,.ark-comment-reply:disabled,.ark-comment-resolve:disabled,.ark-comment-send:disabled,.ark-comment-delete:disabled,.ark-comment-input:disabled{opacity:.5;cursor:default}.ark-comment-error{color:#b91c1c;margin:8px 0 0}.ark-comment-composer-header{display:flex;align-items:center;justify-content:space-between}.ark-comment-close{border:0;background:transparent;color:#64748b;font-size:18px;cursor:pointer}.ark-comment-selection-add{position:fixed;z-index:2147483002;border:0;border-radius:14px;background:#2563eb;color:#fff;padding:5px 10px;box-shadow:0 2px 8px #0003;cursor:pointer;opacity:0;pointer-events:none}.ark-comment-selection-add[data-visible=true]{opacity:1;pointer-events:auto}.ark-comment-highlight{background:#fde68a;border-radius:2px;cursor:pointer}.ark-comment-highlight[data-active=true]{background:#fbbf24;box-shadow:0 0 0 2px #f59e0b55}.ark-comment-node-highlight{outline:1px solid rgba(245,158,11,.45);outline-offset:2px}.ark-comment-anchor-active{background-color:rgba(219,234,254,.45);outline:1px solid rgba(37,99,235,.28);outline-offset:2px}.ark-comment-layer[data-narrow=true] .ark-comment-card{right:8px;width:auto;min-width:34px;padding:0;border:0;background:transparent;box-shadow:none;opacity:1}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=true] .ark-comment-card-content{display:none}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=true] .ark-comment-badge{display:block;width:34px;height:28px;border:0;border-radius:14px;background:#2563eb;color:#fff;box-shadow:0 2px 8px #0003;cursor:pointer}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-status=resolved][data-collapsed=true] .ark-comment-badge{background:#94a3b8}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=false]{width:300px;padding:11px;border:1px solid #cbd5e1;background:#fff;box-shadow:0 3px 14px #0003}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=false] .ark-comment-badge{display:none}";
+    style.textContent=".ark-comment-layer{position:absolute;z-index:2147483000;top:0;left:0;width:100%;height:0;pointer-events:none;color:#172033;font:13px/1.5 system-ui,sans-serif}.ark-comment-resolved-toggle{position:fixed;bottom:8px;right:12px;border:1px solid #cbd5e1;border-radius:14px;background:#f8fafc;color:#64748b;padding:5px 10px;box-shadow:0 1px 5px #0002;cursor:pointer;pointer-events:auto;font:inherit}.ark-comment-resolved-toggle[aria-pressed=true]{background:#e2e8f0;color:#475569}.ark-comment-card{position:absolute;right:12px;width:300px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-composer{position:absolute;right:12px;width:300px;box-sizing:border-box;border:1px solid #93c5fd;border-radius:9px;background:#fff;box-shadow:0 3px 14px #0002;padding:11px;pointer-events:auto}.ark-comment-card[data-active=true],.ark-comment-composer[data-active=true]{border-color:#3b82f6;box-shadow:0 3px 16px #2563eb33}.ark-comment-card[data-status=resolved]{background:#f8fafc;border-color:#e2e8f0;color:#64748b}.ark-comment-card[data-unresolved=true]{border-style:dashed}.ark-comment-badge{display:none}.ark-comment-state,.ark-comment-time,.ark-comment-author{display:block;color:#64748b;font-size:11px}.ark-comment-unresolved-anchor{display:block;color:#b45309;font-weight:700}.ark-comment-unresolved-quote,.ark-comment-composer-quote{margin:7px 0;padding:7px;border-left:3px solid #f59e0b;background:#fffbeb;white-space:pre-wrap}.ark-comment-message{border-top:1px solid #e2e8f0;margin-top:8px;padding-top:8px}.ark-comment-body{margin:1em 0;white-space:pre-wrap;overflow-wrap:anywhere}.ark-comment-body>p{margin:0}.ark-comment-body ul,.ark-comment-body ol{margin:6px 0;padding-left:20px}.ark-comment-body pre{max-width:100%;margin:6px 0;padding:7px;box-sizing:border-box;overflow-x:auto;background:#f1f5f9;border-radius:5px;white-space:pre}.ark-comment-body code{font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;background:#f1f5f9;border-radius:3px;padding:1px 3px}.ark-comment-body pre code{background:transparent;padding:0}.ark-comment-input{display:block;width:100%;box-sizing:border-box;margin:7px 0;padding:7px;border:1px solid #94a3b8;border-radius:5px;font:inherit}.ark-comment-actions{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;margin-top:8px}.ark-comment-create,.ark-comment-reply,.ark-comment-resolve,.ark-comment-send{border:0;border-radius:5px;background:#2563eb;color:#fff;padding:7px 10px;cursor:pointer}.ark-comment-delete{border:0;background:transparent;color:#b91c1c;padding:7px 8px;cursor:pointer}.ark-comment-create:disabled,.ark-comment-reply:disabled,.ark-comment-resolve:disabled,.ark-comment-send:disabled,.ark-comment-delete:disabled,.ark-comment-input:disabled{opacity:.5;cursor:default}.ark-comment-error{color:#b91c1c;margin:8px 0 0}.ark-comment-card-header,.ark-comment-composer-header{display:flex;align-items:center;justify-content:space-between}.ark-comment-close{border:0;background:transparent;color:#64748b;font-size:18px;cursor:pointer}.ark-comment-selection-add{position:fixed;z-index:2147483002;border:0;border-radius:14px;background:#2563eb;color:#fff;padding:5px 10px;box-shadow:0 2px 8px #0003;cursor:pointer;opacity:0;pointer-events:none}.ark-comment-selection-add[data-visible=true]{opacity:1;pointer-events:auto}.ark-comment-highlight{background:#fde68a;border-radius:2px;cursor:pointer}.ark-comment-highlight[data-active=true]{background:#fbbf24;box-shadow:0 0 0 2px #f59e0b55}.ark-comment-node-highlight{outline:1px solid rgba(245,158,11,.45);outline-offset:2px}.ark-comment-anchor-active{background-color:rgba(219,234,254,.45);outline:1px solid rgba(37,99,235,.28);outline-offset:2px}.ark-comment-card[data-collapsed=true]{right:8px;width:auto;min-width:34px;padding:0;border:0;background:transparent;box-shadow:none}.ark-comment-card[data-collapsed=true] .ark-comment-card-content{display:none}.ark-comment-card[data-collapsed=true] .ark-comment-badge{display:block;width:34px;height:28px;border:0;border-radius:14px;background:#2563eb;color:#fff;box-shadow:0 2px 8px #0003;cursor:pointer}.ark-comment-card[data-status=resolved][data-collapsed=true] .ark-comment-badge{background:#94a3b8}.ark-comment-layer[data-narrow=true] .ark-comment-resolved-toggle{right:8px}.ark-comment-layer[data-narrow=true] .ark-comment-card[data-collapsed=false]{right:8px;box-shadow:0 3px 14px #0003}";
     document.head.appendChild(style);
     root=element("div",undefined,"ark-comment-layer");
     root.setAttribute("data-ark-harness-ui","1");
@@ -745,15 +910,19 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     pendingRequestId=null;
     pendingAction=null;
     if(data.ok){
+      var previousThreadIds=new Set(comments.threads.map(function(thread){return thread.id;}));
       comments=data.comments;
       operationError=null;
       if(completedAction&&completedAction.type==="ark:diagram-comment-create"){
         clearComposerInputs();
+        selectCreatedThread(previousThreadIds);
         composerAnchorId=null;
         composerAnchorQuote=null;
         composerAnchorOccurrence=null;
       }else if(completedAction&&completedAction.type==="ark:diagram-comment-reply"){
         replyDraftBodies.delete(completedAction.threadId);
+      }else if(completedAction&&completedAction.type==="ark:diagram-comment-resolve"){
+        collapseResolvedThread(completedAction.threadId);
       }else if(completedAction&&completedAction.type==="ark:diagram-comment-send"){
         sentThreadIds.add(completedAction.threadId);
       }else if(completedAction&&completedAction.type==="ark:diagram-comment-delete"&&selectedThreadId===completedAction.threadId){
@@ -805,7 +974,6 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     window.addEventListener("touchend",resetTouchPinch,{passive:false});
     window.addEventListener("touchcancel",resetTouchPinch,{passive:false});
   }
-  window.addEventListener("scroll",positionCards,{passive:true});
   window.addEventListener("resize",refreshLayout);
   var observer=new ResizeObserver(refreshLayout);
   observer.observe(document.documentElement);
