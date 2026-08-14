@@ -455,6 +455,41 @@ describe("injectDiagramCommentLayer", () => {
     expect(toggleRenderer).toContain("render()");
   });
 
+  it("解決済みトグルを右下に固定し、狭いペインでは右余白を詰める", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const toggleStyle = injected.slice(
+      injected.indexOf(".ark-comment-resolved-toggle{"),
+      injected.indexOf(".ark-comment-resolved-toggle[aria-pressed=true]")
+    );
+
+    expect(toggleStyle).toContain("position:fixed");
+    expect(toggleStyle).toContain("bottom:8px");
+    expect(toggleStyle).toContain("right:12px");
+    expect(toggleStyle).not.toContain("top:8px");
+    expect(injected).toContain(
+      ".ark-comment-layer[data-narrow=true] .ark-comment-resolved-toggle{right:8px}"
+    );
+  });
+
+  it("最下部のカード後方にトグル分のスクロール余白を確保する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const positionCards = injected.slice(
+      injected.indexOf("function positionCards()"),
+      injected.indexOf("function refreshLayout()")
+    );
+
+    expect(positionCards).toContain("var previousBottom=-CARD_GAP");
+    expect(positionCards).toContain(
+      "var trailingClearance=resolvedToggle?resolvedToggle.offsetHeight+8+CARD_GAP:0"
+    );
+    expect(positionCards).toContain(
+      'root.style.height=Math.max(0,previousBottom+trailingClearance)+"px"'
+    );
+    expect(positionCards).not.toContain(
+      "resolvedToggle.offsetTop+resolvedToggle.offsetHeight"
+    );
+  });
+
   it("未解決 0 件・解決済み 0 件ならコメント層由来の可視要素を描画しない", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const render = injected.slice(
