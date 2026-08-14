@@ -231,7 +231,6 @@ describe("injectDiagramCommentLayer", () => {
       "appendChild",
       "[data-ark-id]",
       "ResizeObserver",
-      "scroll",
       "resize",
     ]) {
       expect(injected).toContain(contract);
@@ -260,10 +259,15 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain(
       'setAttribute("data-anchor-id",thread.anchorId)'
     );
-    expect(injected).toContain(".ark-comment-card{position:fixed");
+    expect(injected).toContain(
+      ".ark-comment-layer{position:absolute;z-index:2147483000;top:0;left:0;width:100%;height:0"
+    );
+    expect(injected).toContain(".ark-comment-card{position:absolute");
+    expect(injected).toContain(".ark-comment-composer{position:absolute");
+    expect(injected).toContain("var anchorTop=rect.top+window.scrollY");
   });
 
-  it("狭幅の展開 panel を anchor の下へ置き、入らなければ上へ回して重なりを避ける", () => {
+  it("狭幅の展開 panel を文書座標で anchor の下へ置き、重なりを避ける", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const positionCards = injected.slice(
       injected.indexOf("function positionCards()"),
@@ -273,18 +277,15 @@ describe("injectDiagramCommentLayer", () => {
     expect(positionCards).toContain("narrow&&");
     expect(positionCards).toContain("ark-comment-composer");
     expect(positionCards).toContain('getAttribute("data-collapsed")==="false"');
-    expect(positionCards).toContain("var belowTop=rect.bottom+CARD_GAP");
     expect(positionCards).toContain(
-      "var aboveTop=rect.top-cardHeight-CARD_GAP"
+      "baseTop=rect.bottom+window.scrollY+CARD_GAP"
     );
-    expect(positionCards).toContain("if(belowTop+cardHeight<=viewportBottom)");
-    expect(positionCards).toContain("else if(aboveTop>=viewportTop)");
     expect(positionCards).toContain(
       "Math.max(baseTop,previousBottom+CARD_GAP)"
     );
   });
 
-  it("積み上げ後の card 上端を viewport の上下端へクランプする", () => {
+  it("card を viewport にクランプせず、画面外 anchor も表示したままにする", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const positionCards = injected.slice(
       injected.indexOf("function positionCards()"),
@@ -294,22 +295,11 @@ describe("injectDiagramCommentLayer", () => {
     expect(positionCards).toContain(
       "var cardTop=Math.max(baseTop,previousBottom+CARD_GAP)"
     );
-    expect(positionCards).toContain(
-      "cardTop=Math.max(viewportTop,Math.min(cardTop,viewportBottom-cardHeight))"
-    );
-  });
-
-  it("anchor が見つからない card も viewport の上下端へクランプする", () => {
-    const injected = injectDiagramCommentLayer(minimalDoc);
-    const positionCards = injected.slice(
-      injected.indexOf("unanchored.forEach"),
-      injected.indexOf("function refreshLayout()")
-    );
-
-    expect(positionCards).toContain("var cardHeight=card.offsetHeight");
-    expect(positionCards).toContain(
-      "cardTop=Math.max(viewportTop,Math.min(cardTop,viewportBottom-cardHeight))"
-    );
+    expect(positionCards).not.toContain("viewportTop");
+    expect(positionCards).not.toContain("viewportBottom");
+    expect(positionCards).not.toContain("window.innerHeight");
+    expect(positionCards).not.toContain('style.display="none"');
+    expect(positionCards).not.toContain('style.display=""');
   });
 
   it("block hover の＋導線・最内側 anchor 解決・close 遅延を含まない", () => {
@@ -342,7 +332,7 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).not.toContain("MIN_CONTENT_WIDTH");
     expect(injected).not.toContain("originalBodyPaddingRight");
     expect(injected).not.toContain("originalComputedPaddingRight");
-    expect(injected).not.toContain("document.body.style.paddingRight=");
+    expect(injected).not.toContain("document.body.style");
     expect(injected).toContain("var contentRight=null");
     expect(updateLayout).not.toContain(
       'document.querySelectorAll("[data-ark-id]")'
@@ -497,28 +487,33 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain("composerActions.appendChild(createButton)");
   });
 
-  it("card と composer の高さを viewport 内に制限し、本文だけを縦スクロールする", () => {
+  it("card と composer の高さを制限せず、内部に縦スクロールを作らない", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
-    const positionCards = injected.slice(
-      injected.indexOf("function positionCards()"),
-      injected.indexOf("function refreshLayout()")
-    );
 
-    expect(injected).toContain(
-      ".ark-comment-card,.ark-comment-composer{display:flex;flex-direction:column;max-height:calc(100vh - 16px);overflow:hidden}"
+    expect(injected).not.toContain("max-height:calc(100vh - 16px)");
+    expect(injected).not.toContain(
+      ".ark-comment-card-scroll,.ark-comment-composer-scroll"
     );
-    expect(injected).toContain(
-      ".ark-comment-card-scroll,.ark-comment-composer-scroll{flex:1 1 auto;min-height:0;overflow-y:auto}"
-    );
-    expect(injected).toContain(".ark-comment-actions{flex:0 0 auto}");
+    expect(injected).not.toContain("overflow-y:auto");
     expect(injected).toContain(
       "content.appendChild(scroll);content.appendChild(actions)"
     );
     expect(injected).toContain(
       "composer.appendChild(composerScroll);composer.appendChild(composerActions)"
     );
-    expect(positionCards).toContain('style.display=""');
-    expect(positionCards).not.toContain('style.display="block"');
+  });
+
+  it("scroll では再配置せず、resize・ResizeObserver・再描画では再計算する", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).not.toContain(
+      'window.addEventListener("scroll",positionCards'
+    );
+    expect(injected).toContain(
+      'window.addEventListener("resize",refreshLayout)'
+    );
+    expect(injected).toContain("new ResizeObserver(refreshLayout)");
+    expect(injected).toContain("window.requestAnimationFrame(positionCards)");
   });
 
   it("open card だけにメッセージ列と actions の間の返信 UI を描画する", () => {
