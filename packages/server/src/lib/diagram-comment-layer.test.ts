@@ -622,6 +622,20 @@ describe("injectDiagramCommentLayer", () => {
     ]);
   });
 
+  it("無効な斜体区切りの後にある太字を描画する", () => {
+    expect(renderInlineMarkdown("*未閉じ **太字**")).toEqual([
+      { textContent: "*未閉じ " },
+      { tagName: "strong", textContent: "太字" },
+    ]);
+  });
+
+  it("無効なバッククォートの後にあるインラインコードを描画する", () => {
+    expect(renderInlineMarkdown("``code`")).toEqual([
+      { textContent: "`" },
+      { tagName: "code", textContent: "code" },
+    ]);
+  });
+
   it("コメント本文のコードブロック・箇条書き・番号付きリストを DOM 要素として組み立てる", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
     const bodyRenderer = injected.slice(

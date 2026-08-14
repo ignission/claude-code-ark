@@ -245,7 +245,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
       var valid=close>cursor+markerLength;
       if(tag!=="code"&&tokenText.indexOf("*")>=0)valid=false;
       if(tag==="em"&&text.charAt(tokenEnd)==="*")valid=false;
-      if(!valid){cursor=close<0?cursor+1:tokenEnd;continue;}
+      if(!valid){cursor+=1;continue;}
       if(cursor>textStart){
         container.appendChild(document.createTextNode(text.slice(textStart,cursor)));
       }
