@@ -200,7 +200,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     hideSelectionAdd();
     render();
     var input=root.querySelector(".ark-comment-composer .ark-comment-input");
-    if(input)input.focus();
+    if(input)input.focus({preventScroll:true});
   }
   function visibleThreads(){
     return showResolved?comments.threads:comments.threads.filter(function(thread){return thread.status==="open";});
@@ -732,7 +732,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
       }
       if(restoredInput){
         var restoredLength=restoredInput.value.length;
-        restoredInput.focus();
+        restoredInput.focus({preventScroll:true});
         restoredInput.setSelectionRange(
           Math.min(focusedInput.selectionStart,restoredLength),
           Math.min(focusedInput.selectionEnd,restoredLength)
