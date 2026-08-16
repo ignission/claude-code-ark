@@ -945,11 +945,21 @@ describe("injectDiagramCommentLayer", () => {
     );
     expect(render).not.toContain("document.activeElement");
     expect(render).toContain("focusedInput.threadId");
-    expect(render).toContain("restoredInput.focus()");
+    expect(render).toContain("restoredInput.focus({preventScroll:true})");
     expect(render).toContain("restoredInput.setSelectionRange(");
     expect(injected).toContain(
       "render(completedAction&&completedAction.focusedInput)"
     );
+  });
+
+  it("すべてのフォーカス操作でページをスクロールさせない", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const focusCalls = [...injected.matchAll(/\.focus\(([^)]*)\)/gu)];
+
+    expect(focusCalls.length).toBeGreaterThan(0);
+    for (const focusCall of focusCalls) {
+      expect(focusCall[1]).toContain("preventScroll:true");
+    }
   });
 
   it("返信下書きを thread ごとに render 間で保持し成功時だけ消す", () => {
