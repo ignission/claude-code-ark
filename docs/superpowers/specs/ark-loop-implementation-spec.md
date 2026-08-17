@@ -92,6 +92,8 @@ ${XDG_DATA_HOME:-$HOME/.local/share}/ark/loop/
 │   ├── errors/
 │   │   ├── raw.log
 │   │   └── summary.md
+│   ├── knowledge/
+│   │   └── failures.md
 │   └── handoff.md
 └── knowledge/
     ├── failures.md
@@ -268,4 +270,80 @@ adapter は §3-3 の単一正本を変えてはならない。将来の Codex a
 
 ## §6 セッションライフサイクル script
 
+### §6-1 session-init.sh
+
+init の順序を次で固定する。
+
+1. XDG path を解決する。
+2. `.claude/settings.local.json.ark-loop-original` という孤児 backup を検出したら、注入設定を除去して original を `mv` で復元する。
+3. session ID を生成または再取得し、session directory と cache directory を作る。
+4. config を読み、§3-1 の環境変数を export する。
+5. 新規 session に限って template を展開する。
+6. host の `failures.md` を session へ read-only copy する。
+7. 現在の settings.local を再退避し、loop settings を注入する。
+
+settings.local の退避と復元は同一 filesystem 上の `mv` を使い、各境界で存在確認する。teardown を通らない kill を通常系として扱う。連続する2回の kill 後も、「元設定1個」または「注入設定1個と backup 1個」だけが存在する解釈可能な状態を保ち、次回 init の手順2で元設定へ収束させる。元設定がなかった場合は専用 marker でその事実を保持し、復元時に settings.local を残さない。
+
+repo `.gitignore` には `.claude/settings.local.json` を完全一致の1行として重複なく追加し、グローバル ignore に依存しない。対象 repo にそれ以外の永続変更を残さない。
+
+`--restart <session-id>` は指定 session の `errors/summary.md` から UTF-8 で最大2000 bytesの抜粋と `errors/raw.log` の path を `{{PREV_FAILURE_SUMMARY}}` に埋める。通常 init は固定文 `なし（通常起動）` を埋める。`step_count` は新 session ごとに0から始めるが、同じ init の再実行では既存 `task.md` と進捗を上書きしない。
+
+### §6-2 session-teardown.sh
+
+teardown の順序を次で固定し、各段階を単独で再実行可能にする。
+
+1. 機械的 error summary を生成する。
+2. `handoff.md` を更新する。
+3. 再発性のある候補を host の `failures-inbox.md` へ重複なく追記する。
+4. settings.local の loop 注入物を除去し、original を `mv` で復元する。元設定なし marker の場合は注入 file を除去する。
+5. `stop_once` 等の transient flag を cleanup する。
+
+`handoff.md` の固定項目は Goal、完了 Plan、未完了 Plan、現在の `← NOW`、artifact path と1行要約、直近の error summary path、次の最小 action、WORK_ID、session ID とする。artifact 本文と flow JSON は複製しない。
+
+`handoff.md` は次のモデルへ意味的文脈を渡す data plane である。`/flow --resume` は現行 `.claude/skills/flow/SKILL.md:152-168` と `.claude/lib/state-io.sh` に従って phase / gate を復元する control plane である。競合時は flow state を phase の正本とし、handoff は助言情報として扱う。自動マージも相互上書きもしない。
+
+teardown が未実行なら、次回 init は summary、handoff、settings 復元をこの順で補償してから新しい注入へ進む。最終的な repo 状態は teardown 実行済みの場合と同じでなければならない。
+
+### §6-3 summarize-errors.sh
+
+既定の summary は LLM を呼ばない機械的 compaction とする。JSONL を `tool`、次に `error_type` の bytewise 昇順で決定的に集計し、各 group に件数、最初の行番号、最後の行番号、`詳細: errors/raw.log:L{n}-L{m}` を出す。同じ bytes の input からは時刻や locale に依存しない同じ本文を生成する。
+
+`config.toml` の `[loop.summarize] llm = true` のときだけ、Haiku API に機械 summary と raw 行参照を渡し、「禁止手」付き要約を機械 summary の後へ追加する。config の該当行の直前には `# API 従量課金が発生し、Claude プラン枠の対象外` と記す。API key 不在、5秒 timeout、非0終了、JSON schema 不一致、raw 行参照欠落を含む invalid output は、すべて機械 summary を保持したまま成功 fallback とする。
+
+LLM 出力の各項目にも `errors/raw.log:L{n}-L{m}` 形式の参照を必須とする。`raw.log` は削除も書換えもしない。次 session の `task.md.tmpl` への継承は summary 本文の UTF-8 で最大2000 bytesの抜粋と raw path だけとし、原ログ全体を注入しない。
+
 ## §7 横断知識・flow 接続・足場撤去
+
+### §7-1 failures 横断共有
+
+host knowledge の `failures.md` だけを curated 正本とする。session 開始時に `$ARK_SESSION_DIR/knowledge/failures.md` へ copy して read-only にし、実行中の agent と hook は書き換えない。session 終了時は候補を host の `failures-inbox.md` へ追記する。
+
+昇格は人間だけが行う。人間は inbox の候補について重複、機密情報、再現性を確認し、採用した項目を inbox から `failures.md` へ移す。session output や raw log から直接 `failures.md` へ昇格する経路を作らない。
+
+### §7-2 flow-loop 接続
+
+現行 `.claude/skills/flow-loop/SKILL.md:67-73,107-112` のブレーカーと `loop-exclude` は失敗 run を止める隔離側、`failures.md` は失敗を知識化して次の run で避ける学習側である。学習側はブレーカー、kill switch、`loop-exclude`、flow-x の safety を解除も迂回もしない。
+
+ブレーカー event には配布した `failures.md` の SHA-256 と、その run が file を参照したかを記録する。知識注入 cohort について consecutive halt、breaker 発動、`loop-exclude` 適用の頻度が下がるかを観察する。この計測は安全装置の作動条件を変更しない。
+
+| 認知維持層 | flow / flow-loop | 関係と同期禁止 |
+| --- | --- | --- |
+| `artifacts/`（data plane） | `flow-progress-*.json`（control plane） | 作業内容と運転状態を分離し、内容を重複保存・同期しない |
+| `handoff.md`（意味文脈） | `/flow --resume`（phase 復元） | resume の判断は flow state を正とし、自動マージ・相互上書きしない |
+| `failures.md`（学習） | breaker / `loop-exclude`（隔離） | 知識は再発を減らすだけで、安全状態やラベルを同期・解除しない |
+
+### §7-3 足場撤去プロトコル
+
+撤去 gate の既定は人間の判断とする。recitation、summary 継承、artifact / index、review rotation、Stop / handoff のうち1要素だけを実セッションで無効化し、少なくとも3日かつ3セッション運用する。人間の体感上または明らかな劣化がなければ撤去してよい。
+
+定量計測を取得できる場合も判断の補強材料に留め、統計的有意性、最低 sample 数、閾値達成を撤去条件にしない。軽量な観察指標は次とする。
+
+| 足場 | 観察する劣化 |
+| --- | --- |
+| recitation | ゴールドリフトと Goal から外れた action |
+| summary 継承 | 同種 error の再発 |
+| artifact / index | 長出力後の path・根拠の参照回収失敗 |
+| review rotation | 固定順の後半を含む観点漏れ |
+| Stop / handoff | 再開後の誤 action と未完了 Plan の放置 |
+
+既定方針は「疑わしきは外す」とする。効果が不明な足場を保守し続けるより、撤去後に問題が確認された時点で git 履歴から復元する方が安い。撤去判断、観察期間、見えた劣化だけを commit または Issue に残す。
