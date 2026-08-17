@@ -112,6 +112,56 @@ session data と knowledge は永続 data であり、cache は消失しても�
 
 ## §3 設定・状態・正本
 
+### §3-1 config と環境変数
+
+`session-init.sh` は config を読み、次を同じ process tree の hook へ export する。
+
+| 変数 | 導出契約 |
+| --- | --- |
+| `ARK_SESSION_ID` | init が新規生成する衝突しない session ID。再実行時は既存 ID を保持 |
+| `ARK_SESSION_DIR` | §2-2 の session data root + `$ARK_SESSION_ID` |
+| `ARK_CACHE_DIR` | §2-2 の session cache root + `$ARK_SESSION_ID` |
+| `ARK_RECITE_INTERVAL` | config 値。未指定時は `10` |
+| `ARK_KNOWLEDGE_DIR` | §2-2 の host knowledge path |
+
+`ARK_SESSION_DIR` または必要な session 変数が未設定なら、全 hook は入力へ副作用を与えず即座に成功終了する。これにより Ark 外で起動した Claude Code を隔離する。config の既定は `[loop.summarize] llm = false` とする。
+
+### §3-2 file ownership
+
+| file | 所有権と更新規則 |
+| --- | --- |
+| `task.md` | session 内の進捗の唯一の正本。init と作業 agent が契約された欄だけを更新 |
+| `artifacts/` | context に保持しない大きな中間成果。`index.md` が path と要約の目次 |
+| `errors/raw.log` | capture hook だけが追記する append-only 原記録 |
+| `errors/summary.md` | raw log から再生成可能な派生物 |
+| `handoff.md` | task、artifact index、error summary から再生成可能な派生物 |
+| `knowledge/failures.md` | 人間がキュレーションした host 正本。session へ read-only 配布 |
+| `knowledge/failures-inbox.md` | session の候補を受け取る昇格待ち。配布正本として扱わない |
+
+### §3-3 native todo との関係
+
+選択肢 (a) を採用する。loop 有効セッションでは `task.md` を唯一の正本とし、作業項目を `TodoWrite` または native Task todo state に複製しない。hook と別セッションから読めること、process 再起動後も残ること、双方向の同期競合がないこと、現行 `.claude/` に先行利用がないことを優先する。
+
+この選択は Claude Code の native todo が提供するユーザー可視の進捗表示を失う。そのコストを受け入れ、hook、再起動、別セッションで一貫して扱える単一正本を選ぶ。
+
+この判断から次を拘束する。
+
+- P1 の `recite-todo.sh` は `task.md` だけを読み、native todo を参照も更新もしない。
+- P2 の `loop-rules.md` は native todo の使用禁止、Plan status と `← NOW` の現実に合わせた更新、Goal / Constraints の不変条件を含む。
+- native todo が必要な作業は loop を無効化するか、項目を `task.md` へ移してから loop を継続する。
+- 将来 adapter も native todo との同期を追加してはならない。
+
+### §3-4 flow state との所有権表
+
+現行 `.claude/lib/state-io.sh:99-119` の progress は phase、gate 相当、safety、warning 等の制御面を、同 `:141-161` の context は WORK_ID、Issue、worktree 等の運転参照を持つ。本層はこの schema を拡張しない。
+
+| 正本 | plane | 境界 |
+| --- | --- | --- |
+| `flow-progress-*.json` および flow state | control plane | phase、gate、safety、warning、run context |
+| session `task.md` / `artifacts/` / `errors/` | data plane | 目標、進捗、作業内容、失敗原記録 |
+
+両 plane の内容を相互コピー、双方向同期、自動マージしない。接続は WORK_ID と session path の参照だけに留め、flow state schema に認知維持用 field を追加しない。
+
 ## §4 hook 契約
 
 ## §5 テンプレート・ループ規約・アダプタ
