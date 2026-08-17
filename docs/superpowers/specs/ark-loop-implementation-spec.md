@@ -59,6 +59,57 @@ recitation、error capture、summary、handoff、knowledge 配布は個別に無
 
 ## §2 配置と XDG ディレクトリ契約
 
+### §2-1 配布物
+
+配布物の境界は次で固定する。
+
+```text
+ark/loop/
+├── templates/
+├── hooks/
+├── scripts/
+└── adapters/
+    └── claude-code/
+```
+
+`templates/`、ループ規約、file format は agent 非依存とする。settings 注入、hook matcher、hook 入出力 JSON の解釈は `adapters/claude-code/` に閉じ込める。将来の `adapters/codex/` は同じ正本と format を使い、AGENTS.md 注入と実行 wrapper だけを追加すればよい構造とする。
+
+### §2-2 XDG runtime
+
+正規配置は次のとおりとする。
+
+- config: `${XDG_CONFIG_HOME:-$HOME/.config}/ark/loop/config.toml`
+- session data: `${XDG_DATA_HOME:-$HOME/.local/share}/ark/loop/sessions/$ARK_SESSION_ID/`
+- host knowledge: `${XDG_DATA_HOME:-$HOME/.local/share}/ark/loop/knowledge/`
+- session cache: `${XDG_CACHE_HOME:-$HOME/.cache}/ark/loop/$ARK_SESSION_ID/`
+
+```text
+${XDG_DATA_HOME:-$HOME/.local/share}/ark/loop/
+├── sessions/$ARK_SESSION_ID/
+│   ├── task.md
+│   ├── artifacts/
+│   │   └── index.md
+│   ├── errors/
+│   │   ├── raw.log
+│   │   └── summary.md
+│   └── handoff.md
+└── knowledge/
+    ├── failures.md
+    └── failures-inbox.md
+
+${XDG_CACHE_HOME:-$HOME/.cache}/ark/loop/$ARK_SESSION_ID/
+├── step_count
+└── stop_once
+```
+
+session data と knowledge は永続 data であり、cache は消失しても再生成できる counter と one-shot Stop flag だけを持つ。両者を相互に代用しない。
+
+### §2-3 対象 repo への影響
+
+実行時に対象 repo へ加えてよい一時変更は、注入中の `.claude/settings.local.json` と、repo `.gitignore` の `.claude/settings.local.json` 明示 entry だけとする。認知維持の成果物本体は XDG data 配下に置く。
+
+正常終了は settings 注入物を除去し、異常終了は次回 init が同じ復元を行う。どちらも元の repo 設定へ収束し、それ以外の永続変更を残さない。
+
 ## §3 設定・状態・正本
 
 ## §4 hook 契約
