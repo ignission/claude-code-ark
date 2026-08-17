@@ -44,6 +44,7 @@ Manus の context engineering を Ark が起動する1セッション内の認�
 
 - https://manus.im/blog/Context-Engineering-for-AI-Agents-Lessons-from-Building-Manus
 - https://www.youtube.com/watch?v=6_BcCthVvb8
+- https://rlancemartin.github.io/2025/10/15/manus/
 
 ### §1-3 層の定義
 
@@ -81,6 +82,7 @@ ark/loop/
 - config: `${XDG_CONFIG_HOME:-$HOME/.config}/ark/loop/config.toml`
 - session data: `${XDG_DATA_HOME:-$HOME/.local/share}/ark/loop/sessions/$ARK_SESSION_ID/`
 - host knowledge: `${XDG_DATA_HOME:-$HOME/.local/share}/ark/loop/knowledge/`
+- repo state: `${XDG_DATA_HOME:-$HOME/.local/share}/ark/loop/repos/$ARK_REPO_KEY/`
 - session cache: `${XDG_CACHE_HOME:-$HOME/.cache}/ark/loop/$ARK_SESSION_ID/`
 
 ```text
@@ -95,20 +97,23 @@ ${XDG_DATA_HOME:-$HOME/.local/share}/ark/loop/
 │   ├── knowledge/
 │   │   └── failures.md
 │   └── handoff.md
-└── knowledge/
-    ├── failures.md
-    └── failures-inbox.md
+├── knowledge/
+│   ├── failures.md
+│   └── failures-inbox.md
+└── repos/$ARK_REPO_KEY/
+    ├── settings.local.json.ark-loop-original
+    └── settings.local.json.ark-loop-no-original
 
 ${XDG_CACHE_HOME:-$HOME/.cache}/ark/loop/$ARK_SESSION_ID/
 ├── step_count
 └── stop_once
 ```
 
-session data と knowledge は永続 data であり、cache は消失しても再生成できる counter と one-shot Stop flag だけを持つ。両者を相互に代用しない。
+session data、knowledge、repo state は永続 data であり、cache は消失しても再生成できる counter と one-shot Stop flag だけを持つ。両者を相互に代用しない。`ARK_REPO_KEY` は対象 repo の canonical な絶対パスの UTF-8 bytes に対する SHA-256 lowercase hex とし、session ID に依存させない。
 
 ### §2-3 対象 repo への影響
 
-実行時に対象 repo へ加えてよい一時変更は、注入中の `.claude/settings.local.json` と、repo `.gitignore` の `.claude/settings.local.json` 明示 entry だけとする。認知維持の成果物本体は XDG data 配下に置く。
+実行時に対象 repo へ加えてよい一時変更は、注入中の `.claude/settings.local.json` と、repo `.gitignore` の `.claude/settings.local.json` 明示 entry だけとする。認知維持の成果物本体と settings の backup / marker は XDG data 配下に置き、対象 repo 内に backup / marker を作らない。
 
 正常終了は settings 注入物を除去し、異常終了は次回 init が同じ復元を行う。どちらも元の repo 設定へ収束し、それ以外の永続変更を残さない。
 
@@ -125,8 +130,9 @@ session data と knowledge は永続 data であり、cache は消失しても�
 | `ARK_CACHE_DIR` | §2-2 の session cache root + `$ARK_SESSION_ID` |
 | `ARK_RECITE_INTERVAL` | config 値。未指定時は `10` |
 | `ARK_KNOWLEDGE_DIR` | §2-2 の host knowledge path |
+| `ARK_REPO_KEY` | 対象 repo の canonical な絶対パスから §2-2 の規則で導出 |
 
-`ARK_SESSION_DIR` または必要な session 変数が未設定なら、全 hook は入力へ副作用を与えず即座に成功終了する。これにより Ark 外で起動した Claude Code を隔離する。config の既定は `[loop.summarize] llm = false` とする。
+`ARK_SESSION_DIR` または必要な session 変数が未設定なら、全 hook は入力へ副作用を与えず即座に成功終了する。これにより Ark 外で起動した Claude Code を隔離する。config の既定は `[loop.summarize] llm = false` とする。同 table の `model = "<model-id>"` は LLM 要約に使う小型・低コストモデルの API model ID とし、`llm = true` の場合は必須、未指定または空なら機械 summary への成功 fallback とする。
 
 ### §3-2 file ownership
 
@@ -274,15 +280,17 @@ adapter は §3-3 の単一正本を変えてはならない。将来の Codex a
 
 init の順序を次で固定する。
 
-1. XDG path を解決する。
-2. `.claude/settings.local.json.ark-loop-original` という孤児 backup を検出したら、注入設定を除去して original を `mv` で復元する。
+1. XDG path と対象 repo の canonical な絶対パスを解決し、§2-2 の `ARK_REPO_KEY` と repo state directory を導出する。
+2. repo state directory の孤児 backup または元設定なし marker を検出したら、注入設定から元の有無へ復元する。
 3. session ID を生成または再取得し、session directory と cache directory を作る。
 4. config を読み、§3-1 の環境変数を export する。
 5. 新規 session に限って template を展開する。
 6. host の `failures.md` を session へ read-only copy する。
 7. 現在の settings.local を再退避し、loop settings を注入する。
 
-settings.local の退避と復元は同一 filesystem 上の `mv` を使い、各境界で存在確認する。teardown を通らない kill を通常系として扱う。連続する2回の kill 後も、「元設定1個」または「注入設定1個と backup 1個」だけが存在する解釈可能な状態を保ち、次回 init の手順2で元設定へ収束させる。元設定がなかった場合は専用 marker でその事実を保持し、復元時に settings.local を残さない。
+backup は repo state directory の `settings.local.json.ark-loop-original`、元設定なし marker は同 directory の `settings.local.json.ark-loop-no-original` とし、同時に存在させない。repo state directory と file は owner のみ読み書き可能にする。元設定がある場合は XDG 側の一時 file へ copy してから同 filesystem 上の `mv` で backup を確定し、元設定がない場合は XDG 側で marker を原子的に確定した後、repo 側の一時 file から loop settings を `.claude/settings.local.json` へ `mv` する。復元時は backup を repo 側の一時 file へ copy してから同 filesystem 上の `mv` で settings.local を置換し、置換成功後だけ backup を除去する。marker の場合は注入 file の除去成功後だけ marker を除去する。各境界で存在確認し、repo と XDG data が異なる filesystem でも rename に依存しない。
+
+teardown を通らない kill を通常系として扱う。連続する2回の kill 後も、backup があればそれを元設定の正本、marker があれば元設定なしの正本として解釈し、次回 init の手順2で元の有無へ収束させる。repo state は session directory の外にあり `ARK_REPO_KEY` が session ID に依存しないため、次回 init が前回の session ID を知らなくても孤児 backup / marker を発見して復元できる。
 
 repo `.gitignore` には `.claude/settings.local.json` を完全一致の1行として重複なく追加し、グローバル ignore に依存しない。対象 repo にそれ以外の永続変更を残さない。
 
@@ -295,7 +303,7 @@ teardown の順序を次で固定し、各段階を単独で再実行可能に�
 1. 機械的 error summary を生成する。
 2. `handoff.md` を更新する。
 3. 再発性のある候補を host の `failures-inbox.md` へ重複なく追記する。
-4. settings.local の loop 注入物を除去し、original を `mv` で復元する。元設定なし marker の場合は注入 file を除去する。
+4. settings.local の loop 注入物を除去し、repo state directory の backup から §6-1 の原子的手順で original を復元する。元設定なし marker の場合は注入 file を除去し、成功後に marker を除去する。
 5. `stop_once` 等の transient flag を cleanup する。
 
 `handoff.md` の固定項目は Goal、完了 Plan、未完了 Plan、現在の `← NOW`、artifact path と1行要約、直近の error summary path、次の最小 action、WORK_ID、session ID とする。artifact 本文と flow JSON は複製しない。
@@ -308,7 +316,7 @@ teardown が未実行なら、次回 init は summary、handoff、settings 復�
 
 既定の summary は LLM を呼ばない機械的 compaction とする。JSONL を `tool`、次に `error_type` の bytewise 昇順で決定的に集計し、各 group に件数、最初の行番号、最後の行番号、`詳細: errors/raw.log:L{n}-L{m}` を出す。同じ bytes の input からは時刻や locale に依存しない同じ本文を生成する。
 
-`config.toml` の `[loop.summarize] llm = true` のときだけ、Haiku API に機械 summary と raw 行参照を渡し、「禁止手」付き要約を機械 summary の後へ追加する。config の該当行の直前には `# API 従量課金が発生し、Claude プラン枠の対象外` と記す。API key 不在、5秒 timeout、非0終了、JSON schema 不一致、raw 行参照欠落を含む invalid output は、すべて機械 summary を保持したまま成功 fallback とする。
+`config.toml` の `[loop.summarize] llm = true` のときだけ、同 table の `model` で指定した小型・低コストモデルの API に機械 summary と raw 行参照を渡し、「禁止手」付き要約を機械 summary の後へ追加する。実装にモデル名を直書きしない。config の `llm` 行の直前には `# API 従量課金が発生し、Claude プラン枠の対象外` と記す。API key 不在、model 未指定、5秒 timeout、非0終了、JSON schema 不一致、raw 行参照欠落を含む invalid output は、すべて機械 summary を保持したまま成功 fallback とする。
 
 LLM 出力の各項目にも `errors/raw.log:L{n}-L{m}` 形式の参照を必須とする。`raw.log` は削除も書換えもしない。次 session の `task.md.tmpl` への継承は summary 本文の UTF-8 で最大2000 bytesの抜粋と raw path だけとし、原ログ全体を注入しない。
 
