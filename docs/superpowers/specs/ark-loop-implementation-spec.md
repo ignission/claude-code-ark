@@ -164,7 +164,107 @@ session data と knowledge は永続 data であり、cache は消失しても�
 
 ## §4 hook 契約
 
+hook input は非信頼データとして parse し、path、文字列、数値を検証する。全 script は loop 用環境変数が未設定なら no-op で成功し、counter を session cache 以外で共有せず、自身の失敗で本来の tool result を握りつぶさない。追加 hook の counter 更新などの fast path は合計100ms以内とする。
+
+現行 `.claude/settings.json:52-70` の PostToolUse 2件を保持する。後続実装での論理順は、同一 tool event ごとに次とする。
+
+1. `capture-error`
+2. 既存の該当 hook（Bash は `post-push-monitor.sh`、Write / Edit は `post-edit-lint.sh`）
+3. `recite-todo`
+
+Claude Code が配列内の command hook を実際に直列実行するかは #333 と #335 で実機確認し、既存分を含む計測値を両 PR に残す。直列性が成立しなければ、この論理順を保証する単一 dispatcher に adapter 内で束ねる。
+
+### §4-1 recite-todo.sh
+
+成功した tool step ごとに `ARK_CACHE_DIR/step_count` を排他的に1増加させ、`ARK_RECITE_INTERVAL`（既定10）step ごとに次の固定形式だけを `additionalContext` へ出す。
+
+```text
+Goal: <1行>
+NOW: <← NOW の付いた1行>
+Remaining: <未完了件数>
+```
+
+task 全文、timestamp、artifact 本文、native todo は注入しない。概念上は1回200 token以下とし、tokenizer に依存しない実装上の代理指標として UTF-8 で600 bytes以下であることを #333 で検証する。
+
+compaction 直後も `task.md` 正本から同じ key、同じ順序、同じ行数で再構成し、変動する prefix を加えない。interval の変更と hook の無効化だけで、他の足場に触れず recitation を撤去できなければならない。
+
+### §4-2 capture-error.sh
+
+PostToolUse の失敗 event だけを `errors/raw.log` へ、次の field を持つ1物理行の JSONL として append する。
+
+```json
+{"at":"RFC3339","tool":"tool name","error_type":"input field or tool_error","exit_code":1,"message":"escaped message"}
+```
+
+`at`、`tool`、`error_type`、`exit_code`、`message` は常に同じ key 順で出力する。message の改行は JSON escape し、UTF-8 で4096 bytesを上限として code point 境界で切る。成功 event は書き込まない。1 entry を必ず1行に収め、`L{n}-L{n}` の参照を安定させる。
+
+capture は入力にある型の正規化以外の分類、要約、「禁止手」の生成を行わず、原 tool error の表示・終了状態を変更しない。同一 tool event の capture は recite より先に完了させる。hook input の実 field 名と成功・失敗判定は #335 で実機ダンプを fixture 化して確定し、fixture にない field を推測して補わない。
+
+### §4-3 Stop
+
+新しい Stop hook は登録しない。現行 `.claude/settings.json:72-80` の登録先を保ち、現在 no-op の `.claude/hooks/stop-gate.sh:1-8` の実体を `on-stop.sh` 相当へ置換する。
+
+未完了 Plan があり、`ARK_CACHE_DIR/stop_once` がなければ flag を原子的に作成して1回だけ継続を要求する。同じ session の2回目以降は未完了でも Stop を通し、flag は teardown まで保持して無限 Stop loop を防ぐ。
+
+Stop 通過時は `handoff.md` を生成するが、Stop hook は teardown 完了を保証しない。tmux kill、pm2 restart、process crash を含め、teardown を通らない終了では次回 init が同じ収束処理を担う。
+
 ## §5 テンプレート・ループ規約・アダプタ
+
+### §5-1 task.md.tmpl
+
+通常 task の schema は次で固定する。
+
+```markdown
+# Task
+
+## Goal
+<1行>
+
+## Constraints
+- <不変条件>
+
+Previous failure summary: {{PREV_FAILURE_SUMMARY}}
+
+## Plan
+- [ ] <未完了項目> ← NOW
+- [ ] <未完了項目>
+
+## Artifacts
+- <path> — <1行要約>
+```
+
+Plan には checkbox を使い、`← NOW` は常にちょうど1個だけ置く。全項目完了時は完了した最後の項目に残す。Goal と Constraints は init 後に編集してはならず、作業中に更新できるのは Plan の項目、status、`← NOW` と artifact 参照だけとする。
+
+`task-review.md.tmpl` は、diff 全ファイルの通読、規約遵守、artifact / index の整合、エラー握りつぶし、Goal 逸脱、再発性のある指摘の inbox 候補化を、同じ checkbox schema の Plan に持つ。session ID の SHA-256 を seed にした決定的な順列で提示順だけを変え、観点集合を削らず、同一 session 内では順序を安定させる。
+
+### §5-2 loop-rules.md
+
+規約は次の10則で固定する。
+
+タスク管理:
+
+1. `task.md` だけを正本にし、native todo を使用しない。
+2. 各 tool step の前後で Plan status と `← NOW` を現実に合わせる。
+3. Goal / Constraints を書き換えず、逸脱が必要なら作業を停止する。
+
+エラー:
+
+1. 失敗 action と原文を `errors/raw.log` に残す。
+2. 再試行前に直前の失敗と既知の禁止手を読む。
+3. 回復結果と再発性のある知見を `failures-inbox.md` 候補にする。
+
+外部化:
+
+1. 20行を超える中間成果は `artifacts/` に外部化する。
+2. `artifacts/index.md` に path と1行要約を append する。
+3. artifact 本文の再掲より path 参照を優先する。
+4. 可逆な compaction を尽くした後にだけ不可逆な summary を行う。
+
+### §5-3 Claude Code adapter
+
+Claude Code adapter だけが、既存 `.claude/settings.local.json` の退避・loop settings の注入・復元、hook matcher、hook input JSON、`additionalContext` output、Claude Code の `allowed-tools` を扱う。agent 非依存の template、規約、session file format に Claude Code 固有 key を入れない。
+
+adapter は §3-3 の単一正本を変えてはならない。将来の Codex adapter も AGENTS.md と wrapper の接続に留め、native todo 同期や別の進捗正本を持ち込んではならない。
 
 ## §6 セッションライフサイクル script
 
