@@ -113,9 +113,9 @@ session data、knowledge、repo state は永続 data であり、cache は消失
 
 ### §2-3 対象 repo への影響
 
-実行時に対象 repo へ加えてよい一時変更は、注入中の `.claude/settings.local.json` と、repo `.gitignore` の `.claude/settings.local.json` 明示 entry だけとする。認知維持の成果物本体と settings の backup / marker は XDG data 配下に置き、対象 repo 内に backup / marker を作らない。
+実行時に対象 repo へ加えてよい一時変更は、注入中の `.claude/settings.local.json`、固定名の `.claude/settings.local.json.ark-loop-tmp`、repo `.gitignore` の `.claude/settings.local.json` と `.claude/settings.local.json.ark-loop-tmp` の明示 entry だけとする。認知維持の成果物本体と settings の backup / marker は XDG data 配下に置き、対象 repo 内に backup / marker を作らない。
 
-正常終了は settings 注入物を除去し、異常終了は次回 init が同じ復元を行う。どちらも元の repo 設定へ収束し、それ以外の永続変更を残さない。
+正常終了は settings 注入物と repo 側の一時 file を除去し、異常終了は次回 init が同じ復元と除去を行う。どちらも元の repo 設定へ収束し、それ以外の永続変更を残さない。#333 の完了条件は、対象 repo に `.claude/settings.local.json` と repo `.gitignore` への上記2 entry の追記以外の変更が入らず、repo 側の一時 file が残存しないこととする。
 
 ## §3 設定・状態・正本
 
@@ -281,18 +281,18 @@ adapter は §3-3 の単一正本を変えてはならない。将来の Codex a
 init の順序を次で固定する。
 
 1. XDG path と対象 repo の canonical な絶対パスを解決し、§2-2 の `ARK_REPO_KEY` と repo state directory を導出する。
-2. repo state directory の孤児 backup または元設定なし marker を検出したら、注入設定から元の有無へ復元する。
+2. repo state directory の孤児 backup / 元設定なし marker、および repo 側の `.claude/settings.local.json.ark-loop-tmp` を検出したら、backup / marker が示す元の有無へ復元し、repo 側の一時 file を回収する。
 3. session ID を生成または再取得し、session directory と cache directory を作る。
 4. config を読み、§3-1 の環境変数を export する。
 5. 新規 session に限って template を展開する。
 6. host の `failures.md` を session へ read-only copy する。
 7. 現在の settings.local を再退避し、loop settings を注入する。
 
-backup は repo state directory の `settings.local.json.ark-loop-original`、元設定なし marker は同 directory の `settings.local.json.ark-loop-no-original` とし、同時に存在させない。repo state directory と file は owner のみ読み書き可能にする。元設定がある場合は XDG 側の一時 file へ copy してから同 filesystem 上の `mv` で backup を確定し、元設定がない場合は XDG 側で marker を原子的に確定した後、repo 側の一時 file から loop settings を `.claude/settings.local.json` へ `mv` する。復元時は backup を repo 側の一時 file へ copy してから同 filesystem 上の `mv` で settings.local を置換し、置換成功後だけ backup を除去する。marker の場合は注入 file の除去成功後だけ marker を除去する。各境界で存在確認し、repo と XDG data が異なる filesystem でも rename に依存しない。
+backup は repo state directory の `settings.local.json.ark-loop-original`、元設定なし marker は同 directory の `settings.local.json.ark-loop-no-original` とし、同時に存在させない。repo state directory と file は owner のみ読み書き可能にする。repo 側の一時 file は `.claude/settings.local.json.ark-loop-tmp` の固定名とし、`mktemp` 等による可変名を使わない。元設定がある場合は XDG 側の一時 file へ copy してから同 filesystem 上の `mv` で backup を確定し、元設定がない場合は XDG 側で marker を原子的に確定した後、repo 側の一時 file から loop settings を `.claude/settings.local.json` へ `mv` する。復元時は backup を repo 側の一時 file へ copy してから同 filesystem 上の `mv` で settings.local を置換し、置換成功後だけ backup を除去する。marker の場合は注入 file の除去成功後だけ marker を除去する。復元中に残った repo 側の一時 file は中間状態でしかないため、孤児回収では backup / marker が示す正本の状態へ収束させたうえで無条件に削除する。各境界で存在確認し、repo と XDG data が異なる filesystem でも rename に依存しない。
 
 teardown を通らない kill を通常系として扱う。連続する2回の kill 後も、backup があればそれを元設定の正本、marker があれば元設定なしの正本として解釈し、次回 init の手順2で元の有無へ収束させる。repo state は session directory の外にあり `ARK_REPO_KEY` が session ID に依存しないため、次回 init が前回の session ID を知らなくても孤児 backup / marker を発見して復元できる。
 
-repo `.gitignore` には `.claude/settings.local.json` を完全一致の1行として重複なく追加し、グローバル ignore に依存しない。対象 repo にそれ以外の永続変更を残さない。
+repo `.gitignore` には `.claude/settings.local.json` と `.claude/settings.local.json.ark-loop-tmp` を完全一致の2行としてそれぞれ重複なく追加し、グローバル ignore に依存しない。対象 repo にそれ以外の永続変更を残さない。
 
 `--restart <session-id>` は指定 session の `errors/summary.md` から UTF-8 で最大2000 bytesの抜粋と `errors/raw.log` の path を `{{PREV_FAILURE_SUMMARY}}` に埋める。通常 init は固定文 `なし（通常起動）` を埋める。`step_count` は新 session ごとに0から始めるが、同じ init の再実行では既存 `task.md` と進捗を上書きしない。
 
