@@ -103,8 +103,7 @@ ${XDG_DATA_HOME:-$HOME/.local/share}/ark/loop/
 │   └── failures-inbox.md
 └── repos/$ARK_REPO_KEY/
     ├── owner
-    ├── settings.local.json.ark-loop-original
-    └── settings.local.json.ark-loop-no-original
+    └── settings-ownership.json
 
 ${XDG_CACHE_HOME:-$HOME/.cache}/ark/loop/$ARK_SESSION_ID/
 └── step_count
@@ -112,13 +111,13 @@ ${XDG_CACHE_HOME:-$HOME/.cache}/ark/loop/$ARK_SESSION_ID/
 
 session data、knowledge、repo state は永続 data であり、cache は消失しても再生成できる `step_count` だけを持つ。cache に正しさに関わる状態を置かず、永続 data と相互に代用しない。`ARK_REPO_KEY` は対象 repo の canonical な絶対パスの UTF-8 bytes に対する SHA-256 lowercase hex とし、session ID に依存させない。
 
-XDG 配下の session data、repo state、cache の各 directory は mode `0700`、その file は mode `0600` とする。使用前に各 path が期待する regular directory / regular file であり symlink でないことと、owner・mode を検証する。repo 内の `.claude/settings.local.json` も読み取り前に symlink でないことを検証する。検証は既存 `.claude/lib/flow-state-dir.sh` の secure default 規則に準拠し、不一致時は使用しない。
+XDG 配下の session data、repo state、cache の各 directory は mode `0700`、その file は mode `0600` とする。使用前に各 path が期待する regular directory / regular file であり symlink でないことと、owner・mode を検証する。repo 内は `.claude`、`.claude/settings.local.json`、`.claude/settings.local.json.ark-loop-tmp` の3 pathを読み書きの直前に検証し、`.claude` は symlink でない regular directory、後二者は存在する場合に symlink でない regular file で、いずれも owner・mode が許可条件を満たさなければならない。後二者の不存在だけは許容する。検証は既存 `.claude/lib/flow-state-dir.sh` の secure default 規則に準拠し、不一致時は settings を変更せず loop を無効化する。
 
 ### §2-3 対象 repo への影響
 
-実行時に対象 repo へ加えてよい一時変更は、注入中の `.claude/settings.local.json` と固定名の `.claude/settings.local.json.ark-loop-tmp` だけとする。`.claude/settings.local.json` と `.claude/settings.local.json.ark-loop-tmp` の ignore entry は、adapter の有効化前に versioned な repo 設定または明示的な一回限りの install で導入する前提とし、`session-init.sh` と `session-teardown.sh` は repo `.gitignore` を変更してはならない。entry がない対象 repo では、adapter は settings を変更せず loop を無効化して理由を返す。認知維持の成果物本体と settings の元ファイル有無 marker は XDG data 配下に置き、対象 repo 内に marker を作らない。
+実行時に対象 repo へ加えてよい一時変更は、注入中の `.claude/settings.local.json` と固定名の `.claude/settings.local.json.ark-loop-tmp` だけとする。両 path の ignore entry は、adapter の有効化前に versioned な repo 設定または明示的な一回限りの install で導入し、両 path が tracked でないことも確認する。entry 不足またはいずれかが tracked の対象 repo では、ignore 対象でも versioned file を変更せず、adapter は settings を変更せず loop を無効化して理由を返す。`session-init.sh` と `session-teardown.sh` は repo `.gitignore` を変更してはならない。認知維持の成果物本体と settings ownership manifest は XDG data 配下に置き、対象 repo 内に marker を作らない。
 
-正常終了は settings 注入物と repo 側の一時 file を除去し、異常終了は次回 init が同じ回収を行う。どちらも session 中の非 Ark 変更を保持して Ark 所有 entry のない repo 設定へ収束し、実行だけで versioned file を dirty にしない。#333 の完了条件は、対象 repo に versioned な事前設定以外の変更が入らず、repo 側の一時 file が残存しないこととする。
+正常終了は settings 注入物と repo 側の一時 file を除去し、異常終了は次回 init が同じ回収を行う。どちらも session 中の非 Ark 変更を保持して Ark 所有 entry のない repo 設定へ収束し、実行だけで versioned file を dirty にしない。#333 では既存設定から注入、teardown、孤児回収までの round-trip fixture により内容と mode の復元を検証し、`test ! -e .claude/settings.local.json.ark-loop-tmp` と `git status --short --ignored` により ignored file を含む残留がないことを完了条件とする。
 
 ## §3 設定・状態・正本
 
@@ -190,7 +189,7 @@ hook input は非信頼データとして parse し、path、文字列、数値�
 
 現行 `.claude/settings.json:52-70` の PostToolUse 2件を保持する。Claude Code は同一eventに一致する hook を並列実行し、並列 tool call では PostToolUse も呼出しごとに並行するため、adapter は settings 配列の記載順または hook 間の完了順を契約にしてはならない。
 
-`capture-error` は実行開始後に失敗した tool だけを対象とする `PostToolUseFailure` に登録する。`recite-todo` は一連の tool call が完了して次のモデル呼出し前に一度だけ走る `PostToolBatch` に登録し、既存 PostToolUse hook・error captureの完了順へ依存しない。既存 hook の保持、各hookの個別100ms fast path、event種別と追加contextの実機fixtureを #333 / #335 の PR に記録する。
+`capture-error` は実行開始後に失敗した tool だけを対象とする `PostToolUseFailure` に登録する。`recite-todo` は一連の tool call が完了して次のモデル呼出し前に一度だけ走る `PostToolBatch` に登録し、既存 PostToolUse hook・error captureの完了順へ依存しない。`PostToolBatch` の hook entry には非対応の `matcher` を付けず、生成 settings fixture でも不在を検証する。既存 hook の保持、各hookの個別100ms fast path、event種別と追加contextの実機fixtureを #333 / #335 の PR に記録する。
 
 ### §4-1 recite-todo.sh
 
@@ -211,10 +210,10 @@ compaction 直後も `task.md` 正本から同じ key、同じ順序、同じ行
 `PostToolUseFailure` で通知される、実行を開始した後に失敗した tool event だけを `errors/raw.log` へ、次の field を持つ1物理行の JSONL として append する。
 
 ```json
-{"at":"RFC3339","tool":"tool name","error_type":"input field or tool_error","exit_code":1,"message":"escaped message"}
+{"at":"RFC3339","tool":"tool name","error_type":"input field or tool_error","exit_code":null,"is_interrupt":false,"error":"original error text","details":{}}
 ```
 
-`at`、`tool`、`error_type`、`exit_code`、`message` は常に同じ key 順で出力する。message の改行は JSON escape し、UTF-8 で4096 bytesを上限として code point 境界で切る。成功 event は書き込まない。1 entry を必ず1行に収め、`L{n}-L{n}` の参照を安定させる。
+top-level key は例の順で固定し、`details` 内の key は bytewise 昇順とする。`error` は原文を欠落なく保存して改行だけを JSON escape する。`exit_code` は `error` から抽出できた場合だけ数値、それ以外は `null` とし、`is_interrupt` は入力値を保ち、不在時は `null` とする。`details` はこれら以外の失敗 field を元の型と値のまま保持する。成功 event は書き込まず、1 entry を必ず1物理行に収めて `L{n}-L{n}` の参照を安定させる。#335 の fixture は Bash / PowerShell、MCP failure、process 起動失敗、interrupt に同じ変換規則を適用し、原文と失敗情報が失われないことを検証する。
 
 capture は入力にある型の正規化以外の分類、要約、「禁止手」の生成を行わず、原 tool error の表示・終了状態を変更しない。permission deny と tool input のschema / tool固有validation拒否は `PostToolUseFailure` の対象外であるため、P3では raw.log に記録しない。これらを将来の学習対象にする場合は `PermissionDenied`等の別eventを使う独立した契約を追加する。hook input の実 field 名と成功・失敗判定は #335 で実機ダンプを fixture 化して確定し、fixture にない field を推測して補わない。
 
@@ -282,7 +281,9 @@ Plan には checkbox を使い、`← NOW` は常にちょうど1個だけ置く
 
 Claude Code adapter だけが、既存 `.claude/settings.local.json` の有無の記録・非破壊な loop settings 注入・復元、hook matcher、hook input JSON、`additionalContext` output、Claude Code の `allowed-tools` / permission deny を扱う。agent 非依存の template、規約、session file format に Claude Code 固有 key を入れない。
 
-注入前に既存settingsをJSONとして構文・型検証し、Arkが所有する識別子付きhookとpermission ruleだけを深く追加する。既存のMCP、permission、hook、その他のkeyを削除・置換・並べ替えてはならず、teardownはArk所有entryだけを除去して元の意味を復元する。解析不能、symlink、安全でないownership・mode、または§2-3の事前ignore設定がない場合は、元settingsを変更せずloopを無効化する。
+repo state directory の `settings-ownership.json` は、注入前の settings file の有無と、Ark が実際に追加した entry ごとの配列／key pathおよび canonical な permission 文字列または hook objectだけを記録し、従来の元ファイル有無 markerを置き換える。追加候補と同一の entry が既にあれば追加も記録もせず、存在しない場合だけ非破壊に追加して manifest に記録する。settings schema に所有判定用の `id` 等を加えてはならない。
+
+復元は manifest に記録された entry のうち現在も注入時と同一内容のものだけを除去する。変更された entry は所有を放棄して残し、manifest の該当 entry に `abandoned` と記録する。manifest が元ファイルなしを示し、除去後に Ark 以外の entry が1つも残らない場合だけ settings file を削除する。既存の MCP、permission、hook、その他の key を削除・置換・並べ替えてはならない。解析不能、§2-2 の path・ownership・mode 検証失敗、または§2-3の事前ignore・tracked検証失敗の場合は、settingsを変更せずloopを無効化する。#333 は既存設定・注入・teardown・孤児回収を通す round-trip fixture と、`PostToolBatch` entry に `matcher` がない fixture を完了条件とする。
 
 adapter は §3-3 の単一正本を変えてはならない。将来の Codex adapter も AGENTS.md と wrapper の接続に留め、native todo 同期や別の進捗正本を持ち込んではならない。
 
@@ -294,21 +295,21 @@ init の順序を次で固定する。
 
 1. XDG path と対象 repo の canonical な絶対パスを解決し、§2-2 の `ARK_REPO_KEY` と repo state directory を導出する。
 2. session ID を生成または再取得し、session ID と Ark が管理する owner process の PID を持つ repo state directory の `owner` marker を検査する。別 session の owner が生存中なら孤児回収と settings 注入を行わず、loop を無効化して起動を続ける。
-3. owner が存在しないか消滅している場合は ownership を原子的に取得し、同じ session が owner の場合は保持する。owner だけが現在の settings から Ark 所有 entry を除去し、元ファイル有無 marker が示す有無へ収束させ、孤児化した repo 側の `.claude/settings.local.json.ark-loop-tmp` を無条件に削除してから、session directory と cache directory を作る。
+3. owner が存在しないか消滅している場合は ownership を原子的に取得し、同じ session が owner の場合は保持する。owner は settings に触れる前に `.claude`、settings file、一時 file の§2-2の安全性と、両 file の§2-3のignore・tracked状態を検証する。失敗時は settings を変更せず loop を無効化する。成功時だけ manifest に従って孤児 Ark entry を回収し、安全性を確認済みの regular な一時 file を除去してから、session directory と cache directory を作る。
 4. config を読み、§3-1 の値を Ark へ返す。
 5. 新規 session に限って template を展開する。
 6. host の `failures.md` を session へ read-only copy する。
-7. §2-3の事前ignore設定と既存settingsの安全性・JSON schemaを検証してから、Ark所有entryだけを非破壊に追加する。前提を満たさない場合は settings を変更せず loop を無効化する。
+7. 既存settingsのJSON schemaを検証してから、manifestへ記録するArk所有entryだけを非破壊に追加する。前提を満たさない場合は settings を変更せず loop を無効化する。
 
-`owner` marker の取得・生存確認・消滅 owner からの引継ぎは per-repo で排他的に行う。同じ session の再実行だけは既存 ownership を継続できる。repo state directory の `settings.local.json.ark-loop-original` と `settings.local.json.ark-loop-no-original` は注入前の settings file の有無だけを記録する marker とし、内容の復元元にはせず、同時に存在させない。repo state directory と file は owner のみ読み書き可能にする。Ark 所有 entry は §5-3 の識別子で判定できることを注入と復元の前提とする。
+`owner` marker の取得・生存確認・消滅 owner からの引継ぎは per-repo で排他的に行う。同じ session の再実行だけは既存 ownership を継続できる。repo state directory と file は owner のみ読み書き可能にする。`settings-ownership.json` は§5-3の契約に従い、注入前の有無とArkが実際に追加したentryだけを所有の根拠とする。
 
-注入時は現在の `.claude/settings.local.json` を読み、§5-3 の構文・型を検証し、その有無を対応する marker へ原子的に記録してから Ark 所有 entry だけを deep merge する。結果は repo 側の固定名 `.claude/settings.local.json.ark-loop-tmp` に書き、同 filesystem 上の `mv` で原子的に確定する。`mktemp` 等による可変名を使わない。
+注入時は現在の `.claude/settings.local.json` を読み、§5-3 の構文・型を検証する。同一 entry がない候補だけを追加対象としてmanifestへ原子的に記録し、deep mergeする。結果は repo 側の固定名 `.claude/settings.local.json.ark-loop-tmp` に書き、既存 file の mode を保持し、新規 file は mode `0600` として、同 filesystem 上の `mv` で原子的に確定する。`mktemp` 等による可変名を使わない。
 
-復元時は現在の `.claude/settings.local.json` を読み、Ark 所有 entry だけを除去し、その他の key・値・順序を保持する。元設定なし marker があり、除去後に Ark 以外の entry が残らない場合に限り settings file を削除し、それ以外は固定名一時 file を経由した同 filesystem 上の `mv` で原子的に書き戻す。成功後に元ファイル有無 marker を除去する。session 中に Claude Code やユーザーが settings.local を更新しうるため、backup による置換はそれらを失う。repo と XDG data が異なる filesystem でも rename に依存せず、孤児化した repo 側の一時 file は中間状態として無条件に削除する。
+復元時は現在の `.claude/settings.local.json` を読み、manifest に記録された entry と同一内容のものだけを除去し、その他の key・値・順序を保持する。変更された entry は残して manifest に `abandoned` と記録する。manifest が元設定なしを示し、除去後に Ark 以外の entry が残らない場合に限り settings file を削除し、それ以外は内容と mode を保持して固定名一時 file 経由の同 filesystem 上の `mv` で原子的に書き戻す。session 中に Claude Code やユーザーが settings.local を更新しうるため、backup による置換はそれらを失う。repo と XDG data が異なる filesystem でも rename に依存せず、安全性を確認できた孤児一時 fileだけを中間状態として除去する。
 
-teardown を通らない kill を通常系として扱う。連続する2回の kill 後も、現在の settings、元ファイル有無 marker、Ark 所有 entry、破棄可能な一時 file から状態を解釈でき、次回 init の手順3で session 中の非 Ark 変更を保持したまま元の有無へ収束させる。repo state は session directory の外にあり `ARK_REPO_KEY` が session ID に依存しないため、次回 init が前回の session ID を知らなくても孤児 marker を発見して Ark 所有 entry を回収できる。
+teardown を通らない kill を通常系として扱う。連続する2回の kill 後も、現在の settings、ownership manifest、破棄可能な一時 file から状態を解釈でき、次回 init の手順3で session 中の非 Ark 変更を保持したまま元の有無へ収束させる。repo state は session directory の外にあり `ARK_REPO_KEY` が session ID に依存しないため、次回 init が前回の session ID を知らなくても manifest を発見して孤児 Ark entry を回収できる。
 
-repo `.gitignore` の `.claude/settings.local.json` と `.claude/settings.local.json.ark-loop-tmp` の完全一致2行は、adapterを有効化する前にversionedな設定または明示的な一回限りのinstallで導入する。`session-init.sh`と`session-teardown.sh`は `.gitignore` を変更しない。対象 repo にそれ以外の永続変更を残さず、前提entryがない場合は settings に触れず loop を無効化する。
+repo `.gitignore` の `.claude/settings.local.json` と `.claude/settings.local.json.ark-loop-tmp` の完全一致2行は、adapterを有効化する前にversionedな設定または明示的な一回限りのinstallで導入する。両 path が tracked でないことも確認し、ignore entry があってもいずれかが tracked なら settings に触れず loop を無効化する。`session-init.sh`と`session-teardown.sh`は `.gitignore` を変更せず、対象 repo にそれ以外の永続変更を残さない。
 
 `--restart <session-id>` は指定 session の `errors/summary.md` から UTF-8 で最大2000 bytesの抜粋と `errors/raw.log` の path を `{{PREV_FAILURE_SUMMARY}}` に埋める。通常 init は固定文 `なし（通常起動）` を埋める。`step_count` は新 session ごとに0から始めるが、同じ init の再実行では既存 `task.md` と進捗を上書きしない。
 
@@ -319,14 +320,14 @@ teardown の順序を次で固定し、各段階を単独で再実行可能に�
 1. 機械的 error summary を生成する。
 2. `handoff.md` を更新する。
 3. 再発性のある候補を host の `failures-inbox.md` へ重複なく追記する。
-4. 自分の session ID が repo state directory の `owner` marker と一致する場合に限り、現在の settings.local から Ark 所有 entry だけを除去し、非 Ark 変更を保持して §6-1 の原子的手順で書き戻す。元設定なし marker があり、Ark 以外の entry が残らない場合に限り file を削除し、成功後に元ファイル有無 marker を除去する。
+4. 自分の session ID が repo state directory の `owner` marker と一致する場合に限り、manifest 記録と現在の settings.local が同一の Ark 所有 entry だけを除去し、非 Ark 変更を保持して §6-1 の原子的手順で内容と mode を書き戻す。変更済み entry は所有を放棄して残し、その結果をmanifestへ記録する。manifest が元設定なしを示し、Ark 以外の entry が残らない場合に限り file を削除する。
 5. `stop_once` 等の transient flag を cleanup し、手順4の書き戻しまたは削除が成功した自分が owner の場合に限って `owner` marker を除去する。
 
 `handoff.md` の固定項目は Goal、完了 Plan、未完了 Plan、現在の `← NOW`、artifact path と1行要約、直近の error summary path、次の最小 action、WORK_ID、session ID とする。artifact 本文と flow JSON は複製しない。
 
 `handoff.md` は次のモデルへ意味的文脈を渡す data plane である。`/flow --resume` は現行 `.claude/skills/flow/SKILL.md:152-168` と `.claude/lib/state-io.sh` に従って phase / gate を復元する control plane である。競合時は flow state を phase の正本とし、handoff は助言情報として扱う。自動マージも相互上書きもしない。
 
-teardown が未実行なら、次回 init は summary、handoff、現在の settings からの Ark 所有 entry 除去をこの順で補償してから新しい注入へ進む。session 中の非 Ark 変更を保持し、最終的な repo 状態は teardown 実行済みの場合と同じでなければならない。
+teardown が未実行なら、次回 init は summary、handoff、ownership manifest と現在の settings が一致する Ark 所有 entry の除去をこの順で補償してから新しい注入へ進む。session 中の非 Ark 変更を保持し、最終的な repo 状態は teardown 実行済みの場合と同じでなければならない。
 
 ### §6-3 summarize-errors.sh
 
