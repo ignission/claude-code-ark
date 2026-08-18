@@ -153,9 +153,17 @@ tmux session は起動時の環境を生存中保持するため、稼働中 ses
 
 ### §3-3 native todo との関係
 
-選択肢 (a) を採用する。loop 有効セッションでは `task.md` を唯一の正本とし、作業項目を `TodoWrite` または native Task todo state に複製しない。hook と別セッションから読めること、process 再起動後も残ること、双方向の同期競合がないこと、現行 `.claude/` に先行利用がないことを優先する。
+選択肢 (a) を採用する。loop 有効セッションでは `task.md` を唯一の正本とし、作業項目を `TodoWrite` または native Task todo state に複製しない。Claude Code の native task state も `~/.claude/tasks/session-<id>/<n>.json` に `id`、`subject`、`description`、`activeForm`、`status`、`blocks`、`blockedBy` を持つ JSON file として永続化され、同 directory の `.lock` による排他がある。したがって hook や別 process から読め、process 再起動後も残る。
 
-この選択は Claude Code の native todo が提供するユーザー可視の進捗表示を失う。そのコストを受け入れ、hook、再起動、別セッションで一貫して扱える単一正本を選ぶ。
+それでも `task.md` を正本とする根拠は次の3点である。
+
+1. native schema には Goal、Constraints、`← NOW` に対応する field がなく、§4-1 の recitation と、§5-1 が固定する更新可能欄の不変条件を構造で表現できない。
+2. native task state は Claude Code 固有の内部形式である。これを正本にすると、agent 非依存の template、ループ規約、file format と Claude Code 固有処理を分け、将来の `adapters/codex/` も同じ正本を共有する §2-1 の adapter 境界を壊す。
+3. `~/.claude/tasks/` の directory 構成と JSON schema は公開契約ではなく、version 間で変わりうる。`task.md` は本 spec が定義し固定できる契約である。
+
+native 側の `.lock` は native state 単体の排他を提供するが、選択肢 (c) の2つの表現間の整合性までは保証しないため、双方向同期は導入しない。native task の保存先の `session-<id>` は会話 transcript の session ID と別体系であり、実機でも `session-e4e83ed6` と `b32015e5-...` の不一致を確認した。hook から辿るには対応付けが必要で、解決可能だが自明ではない。
+
+この選択は Claude Code の native todo が提供するユーザー可視の進捗表示を失う。そのコストを受け入れ、recitation schema と adapter 境界を満たす安定した単一正本を選ぶ。
 
 この判断から次を拘束する。
 
