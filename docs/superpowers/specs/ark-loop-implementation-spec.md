@@ -9,7 +9,7 @@ Manus の context engineering を Ark が起動する1セッション内の認�
 ## 対象と非対象
 
 - 対象: 後続 Issue #333〜#336 が実装する `ark/loop/`、XDG runtime、Claude Code adapter。
-- 非対象: Ark アプリ本体の `server/`、`client/`、`shared/`、既存 flow の運転仕様、Issue #332 での hook・settings・script 実装。
+- 非対象: Ark アプリ本体の `packages/server/`、`packages/web/`、`packages/shared/`、`packages/desktop/`、既存 flow の運転仕様、Issue #332 での hook・settings・script 実装。
 
 ## Issue 参照表
 
@@ -96,20 +96,23 @@ ${XDG_DATA_HOME:-$HOME/.local/share}/ark/loop/
 │   │   └── summary.md
 │   ├── knowledge/
 │   │   └── failures.md
-│   └── handoff.md
+│   ├── handoff.md
+│   └── stop_once
 ├── knowledge/
 │   ├── failures.md
 │   └── failures-inbox.md
 └── repos/$ARK_REPO_KEY/
+    ├── owner
     ├── settings.local.json.ark-loop-original
     └── settings.local.json.ark-loop-no-original
 
 ${XDG_CACHE_HOME:-$HOME/.cache}/ark/loop/$ARK_SESSION_ID/
-├── step_count
-└── stop_once
+└── step_count
 ```
 
-session data、knowledge、repo state は永続 data であり、cache は消失しても再生成できる counter と one-shot Stop flag だけを持つ。両者を相互に代用しない。`ARK_REPO_KEY` は対象 repo の canonical な絶対パスの UTF-8 bytes に対する SHA-256 lowercase hex とし、session ID に依存させない。
+session data、knowledge、repo state は永続 data であり、cache は消失しても再生成できる `step_count` だけを持つ。cache に正しさに関わる状態を置かず、永続 data と相互に代用しない。`ARK_REPO_KEY` は対象 repo の canonical な絶対パスの UTF-8 bytes に対する SHA-256 lowercase hex とし、session ID に依存させない。
+
+XDG 配下の session data、repo state、cache の各 directory は mode `0700`、その file は mode `0600` とする。使用前に各 path が期待する regular directory / regular file であり symlink でないことと、owner・mode を検証する。repo 内の `.claude/settings.local.json` も読み取り前に symlink でないことを検証する。検証は既存 `.claude/lib/flow-state-dir.sh` の secure default 規則に準拠し、不一致時は使用しない。
 
 ### §2-3 対象 repo への影響
 
@@ -121,7 +124,7 @@ session data、knowledge、repo state は永続 data であり、cache は消失
 
 ### §3-1 config と環境変数
 
-`session-init.sh` は config を読み、次を同じ process tree の hook へ export する。
+`session-init.sh` は Ark が tmux session を作成する前に実行し、config を読んで session ID と次の値を Ark へ返す。Ark は `CLAUDE_CONFIG_DIR` と同じ経路で `tmux new-session -e KEY=VALUE` により tmux session へ注入し、その子 process の Claude Code と hook が継承する。
 
 | 変数 | 導出契約 |
 | --- | --- |
@@ -131,6 +134,8 @@ session data、knowledge、repo state は永続 data であり、cache は消失
 | `ARK_RECITE_INTERVAL` | config 値。未指定時は `10` |
 | `ARK_KNOWLEDGE_DIR` | §2-2 の host knowledge path |
 | `ARK_REPO_KEY` | 対象 repo の canonical な絶対パスから §2-2 の規則で導出 |
+
+tmux session は起動時の環境を生存中保持するため、稼働中 session の loop 設定は変更せず、反映には session の再起動を必要とする。将来 tmux 以外の adapter を追加する場合は、同じ継承を保証する別の伝播手段を adapter が定義する。
 
 `ARK_SESSION_DIR` または必要な session 変数が未設定なら、全 hook は入力へ副作用を与えず即座に成功終了する。これにより Ark 外で起動した Claude Code を隔離する。config の既定は `[loop.summarize] llm = false` とする。同 table の `model = "<model-id>"` は LLM 要約に使う小型・低コストモデルの API model ID とし、`llm = true` の場合は必須、未指定または空なら機械 summary への成功 fallback とする。
 
@@ -212,7 +217,7 @@ capture は入力にある型の正規化以外の分類、要約、「禁止手
 
 新しい Stop hook は登録しない。現行 `.claude/settings.json:72-80` の登録先を保ち、現在 no-op の `.claude/hooks/stop-gate.sh:1-8` の実体を `on-stop.sh` 相当へ置換する。
 
-未完了 Plan があり、`ARK_CACHE_DIR/stop_once` がなければ flag を原子的に作成して1回だけ継続を要求する。同じ session の2回目以降は未完了でも Stop を通し、flag は teardown まで保持して無限 Stop loop を防ぐ。
+未完了 Plan があり、`ARK_SESSION_DIR/stop_once` がなければ flag を原子的に作成して1回だけ継続を要求する。同じ session の2回目以降は未完了でも Stop を通し、flag は teardown まで保持して無限 Stop loop を防ぐ。
 
 Stop 通過時は `handoff.md` を生成するが、Stop hook は teardown 完了を保証しない。tmux kill、pm2 restart、process crash を含め、teardown を通らない終了では次回 init が同じ収束処理を担う。
 
@@ -281,16 +286,16 @@ adapter は §3-3 の単一正本を変えてはならない。将来の Codex a
 init の順序を次で固定する。
 
 1. XDG path と対象 repo の canonical な絶対パスを解決し、§2-2 の `ARK_REPO_KEY` と repo state directory を導出する。
-2. repo state directory の孤児 backup / 元設定なし marker、および repo 側の `.claude/settings.local.json.ark-loop-tmp` を検出したら、backup / marker が示す元の有無へ復元し、repo 側の一時 file を回収する。
-3. session ID を生成または再取得し、session directory と cache directory を作る。
-4. config を読み、§3-1 の環境変数を export する。
+2. session ID を生成または再取得し、session ID と Ark が管理する owner process の PID を持つ repo state directory の `owner` marker を検査する。別 session の owner が生存中なら孤児回収と settings 注入を行わず、loop を無効化して起動を続ける。
+3. owner が存在しないか消滅している場合は ownership を原子的に取得し、同じ session が owner の場合は保持する。owner だけが孤児 backup / 元設定なし marker と repo 側の `.claude/settings.local.json.ark-loop-tmp` を元の有無へ復元・回収してから、session directory と cache directory を作る。
+4. config を読み、§3-1 の値を Ark へ返す。
 5. 新規 session に限って template を展開する。
 6. host の `failures.md` を session へ read-only copy する。
 7. 現在の settings.local を再退避し、loop settings を注入する。
 
-backup は repo state directory の `settings.local.json.ark-loop-original`、元設定なし marker は同 directory の `settings.local.json.ark-loop-no-original` とし、同時に存在させない。repo state directory と file は owner のみ読み書き可能にする。repo 側の一時 file は `.claude/settings.local.json.ark-loop-tmp` の固定名とし、`mktemp` 等による可変名を使わない。元設定がある場合は XDG 側の一時 file へ copy してから同 filesystem 上の `mv` で backup を確定し、元設定がない場合は XDG 側で marker を原子的に確定した後、repo 側の一時 file から loop settings を `.claude/settings.local.json` へ `mv` する。復元時は backup を repo 側の一時 file へ copy してから同 filesystem 上の `mv` で settings.local を置換し、置換成功後だけ backup を除去する。marker の場合は注入 file の除去成功後だけ marker を除去する。復元中に残った repo 側の一時 file は中間状態でしかないため、孤児回収では backup / marker が示す正本の状態へ収束させたうえで無条件に削除する。各境界で存在確認し、repo と XDG data が異なる filesystem でも rename に依存しない。
+`owner` marker の取得・生存確認・消滅 owner からの引継ぎは per-repo で排他的に行う。同じ session の再実行だけは既存 ownership を継続できる。backup は repo state directory の `settings.local.json.ark-loop-original`、元設定なし marker は同 directory の `settings.local.json.ark-loop-no-original` とし、同時に存在させない。repo state directory と file は owner のみ読み書き可能にする。repo 側の一時 file は `.claude/settings.local.json.ark-loop-tmp` の固定名とし、`mktemp` 等による可変名を使わない。元設定がある場合は XDG 側の一時 file へ copy してから同 filesystem 上の `mv` で backup を確定し、元設定がない場合は XDG 側で marker を原子的に確定した後、repo 側の一時 file から loop settings を `.claude/settings.local.json` へ `mv` する。復元時は backup を repo 側の一時 file へ copy してから同 filesystem 上の `mv` で settings.local を置換し、置換成功後だけ backup を除去する。marker の場合は注入 file の除去成功後だけ marker を除去する。復元中に残った repo 側の一時 file は中間状態でしかないため、孤児回収では backup / marker が示す正本の状態へ収束させたうえで無条件に削除する。各境界で存在確認し、repo と XDG data が異なる filesystem でも rename に依存しない。
 
-teardown を通らない kill を通常系として扱う。連続する2回の kill 後も、backup があればそれを元設定の正本、marker があれば元設定なしの正本として解釈し、次回 init の手順2で元の有無へ収束させる。repo state は session directory の外にあり `ARK_REPO_KEY` が session ID に依存しないため、次回 init が前回の session ID を知らなくても孤児 backup / marker を発見して復元できる。
+teardown を通らない kill を通常系として扱う。連続する2回の kill 後も、backup があればそれを元設定の正本、marker があれば元設定なしの正本として解釈し、次回 init の手順3で元の有無へ収束させる。repo state は session directory の外にあり `ARK_REPO_KEY` が session ID に依存しないため、次回 init が前回の session ID を知らなくても孤児 backup / marker を発見して復元できる。
 
 repo `.gitignore` には `.claude/settings.local.json` と `.claude/settings.local.json.ark-loop-tmp` を完全一致の2行としてそれぞれ重複なく追加し、グローバル ignore に依存しない。対象 repo にそれ以外の永続変更を残さない。
 
@@ -303,8 +308,8 @@ teardown の順序を次で固定し、各段階を単独で再実行可能に�
 1. 機械的 error summary を生成する。
 2. `handoff.md` を更新する。
 3. 再発性のある候補を host の `failures-inbox.md` へ重複なく追記する。
-4. settings.local の loop 注入物を除去し、repo state directory の backup から §6-1 の原子的手順で original を復元する。元設定なし marker の場合は注入 file を除去し、成功後に marker を除去する。
-5. `stop_once` 等の transient flag を cleanup する。
+4. 自分の session ID が repo state directory の `owner` marker と一致する場合に限り、settings.local の loop 注入物を除去し、backup から §6-1 の原子的手順で original を復元する。元設定なし marker の場合は注入 file を除去し、成功後に marker を除去する。
+5. `stop_once` 等の transient flag を cleanup し、手順4の復元・除去が成功した自分が owner の場合に限って `owner` marker を除去する。
 
 `handoff.md` の固定項目は Goal、完了 Plan、未完了 Plan、現在の `← NOW`、artifact path と1行要約、直近の error summary path、次の最小 action、WORK_ID、session ID とする。artifact 本文と flow JSON は複製しない。
 
