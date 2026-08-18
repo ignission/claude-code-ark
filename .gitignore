@@ -119,6 +119,9 @@ test-results/
 .claude/push-completed.marker
 .claude/scheduled_tasks.lock
 .claude/stop_hook_active
+# Ark loop adapter: session-init/teardown never mutate .gitignore at runtime
+.claude/settings.local.json
+.claude/settings.local.json.ark-loop-tmp
 
 # Superpowers
 .superpowers/
