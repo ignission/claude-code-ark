@@ -11,8 +11,9 @@ FLOW_GUARD_SESSION_LIFECYCLE_PATHS=(
   "packages/server/src/lib/ttyd-manager.ts"
 )
 
-# DB schema の対象 path に schema 語句を含む diff がある場合は 0、
+# DB schema の対象 path に schema 操作を含む diff がある場合は 0、
 # 変更なしは 1、git diff などで評価できない場合は 2 を返す。
+# git config の色設定に関わらず判定するため、すべての diff で --no-color を指定する。
 flow_guard_db_schema_changed() {
   local diff_range="${1:-origin/main...HEAD}"
   local changed_paths
@@ -20,7 +21,7 @@ flow_guard_db_schema_changed() {
   local schema_diff
   local grep_status
 
-  changed_paths=$(git diff --name-only "$diff_range" -- "${FLOW_GUARD_DB_SCHEMA_PATHS[@]}")
+  changed_paths=$(git diff --no-color --name-only "$diff_range" -- "${FLOW_GUARD_DB_SCHEMA_PATHS[@]}")
   git_status=$?
   if [ "$git_status" -ne 0 ]; then
     printf 'DB スキーマ変更の判定不能: git diff が失敗しました (range: %s)\n' "$diff_range" >&2
@@ -28,7 +29,7 @@ flow_guard_db_schema_changed() {
   fi
   [ -n "$changed_paths" ] || return 1
 
-  schema_diff=$(git diff --unified=0 "$diff_range" -- "${FLOW_GUARD_DB_SCHEMA_PATHS[@]}")
+  schema_diff=$(git diff --no-color --unified=0 "$diff_range" -- "${FLOW_GUARD_DB_SCHEMA_PATHS[@]}")
   git_status=$?
   if [ "$git_status" -ne 0 ]; then
     printf 'DB スキーマ変更の判定不能: git diff が失敗しました (range: %s)\n' "$diff_range" >&2
@@ -37,7 +38,7 @@ flow_guard_db_schema_changed() {
 
   grep -E '^[+-]' <<< "$schema_diff" \
     | grep -vE '^(\+\+\+|---)' \
-    | grep -qE '(CREATE TABLE|ALTER TABLE|DROP TABLE|ADD COLUMN|DROP COLUMN)'
+    | grep -qE '(CREATE TABLE|ALTER TABLE|DROP TABLE|ADD COLUMN|DROP COLUMN|CREATE (UNIQUE )?INDEX|DROP INDEX)'
   grep_status=$?
   case "$grep_status" in
     0) return 0 ;;

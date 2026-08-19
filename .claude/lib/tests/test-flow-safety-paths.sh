@@ -136,13 +136,45 @@ db_schema_invalid_range_status() {
   printf '%s' "$guard_status"
 }
 
+db_schema_operation_changed() {
+  local sql="$1"
+  local commit_message="$2"
+
+  reset_to_baseline
+  printf '%s\n' "$sql" >> "$TMP_REPO/packages/server/src/lib/database.ts"
+  git -C "$TMP_REPO" add packages/server/src/lib/database.ts
+  git -C "$TMP_REPO" commit -q -m "$commit_message"
+  db_schema_changed
+}
+
 echo ""
 echo "=== DB schema guard ==="
-printf '%s\n' 'ALTER TABLE sessions ADD COLUMN archived INTEGER;' \
-  >> "$TMP_REPO/packages/server/src/lib/database.ts"
-git -C "$TMP_REPO" add packages/server/src/lib/database.ts
-git -C "$TMP_REPO" commit -q -m 'database schema change'
-assert_success "database.ts の schema diff を検出する" db_schema_changed
+git -C "$TMP_REPO" config color.ui always
+assert_success "color.ui=always でも database.ts の schema diff を検出する" \
+  db_schema_operation_changed \
+  'ALTER TABLE sessions ADD COLUMN archived INTEGER;' \
+  'database schema change with forced color'
+git -C "$TMP_REPO" config --unset-all color.ui
+assert_success "ALTER TABLE RENAME TO を検出する" \
+  db_schema_operation_changed \
+  'ALTER TABLE sessions RENAME TO archived_sessions;' \
+  'rename table'
+assert_success "ALTER TABLE RENAME COLUMN を検出する" \
+  db_schema_operation_changed \
+  'ALTER TABLE sessions RENAME COLUMN id TO session_id;' \
+  'rename column'
+assert_success "CREATE INDEX を検出する" \
+  db_schema_operation_changed \
+  'CREATE INDEX idx_sessions_id ON sessions(id);' \
+  'create index'
+assert_success "CREATE UNIQUE INDEX を検出する" \
+  db_schema_operation_changed \
+  'CREATE UNIQUE INDEX sessions_id_unique ON sessions(id);' \
+  'create unique index'
+assert_success "DROP INDEX を検出する" \
+  db_schema_operation_changed \
+  'DROP INDEX idx_sessions_id;' \
+  'drop index'
 assert_eq "DB schema halt message" \
   "DB スキーマ変更検出 (packages/server/src/lib/database.ts、人間レビュー必須)" \
   "$(flow_guard_db_schema_halt_message)"
