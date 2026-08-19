@@ -1,1 +1,22 @@
-{"session_id":"01b8652f-b0b2-41cb-8fd3-6b30b7e86917","transcript_path":"/home/admin/.claude/projects/-tmp-tmp-EMzB8mBw0P/01b8652f-b0b2-41cb-8fd3-6b30b7e86917.jsonl","cwd":"/tmp/tmp.EMzB8mBw0P","prompt_id":"5f210151-9f62-47c5-a557-c5d783c535b7","permission_mode":"bypassPermissions","hook_event_name":"PostToolBatch","tool_calls":[{"tool_name":"Read","tool_input":{"file_path":"/tmp/tmp.EMzB8mBw0P/a.txt"},"tool_use_id":"toolu_01XKgWycLZpPfhe5mp6dW2rT","tool_response":"1\talpha\n2\t"},{"tool_name":"Read","tool_input":{"file_path":"/tmp/tmp.EMzB8mBw0P/b.txt"},"tool_use_id":"toolu_01EM7r36y7wzJPpaqNLBvG8Q","tool_response":"1\tbeta\n2\t"}]}
+{
+  "session_id": "01b8652f-b0b2-41cb-8fd3-6b30b7e86917",
+  "transcript_path": "/home/admin/.claude/projects/-tmp-tmp-EMzB8mBw0P/01b8652f-b0b2-41cb-8fd3-6b30b7e86917.jsonl",
+  "cwd": "/tmp/tmp.EMzB8mBw0P",
+  "prompt_id": "5f210151-9f62-47c5-a557-c5d783c535b7",
+  "permission_mode": "bypassPermissions",
+  "hook_event_name": "PostToolBatch",
+  "tool_calls": [
+    {
+      "tool_name": "Read",
+      "tool_input": { "file_path": "/tmp/tmp.EMzB8mBw0P/a.txt" },
+      "tool_use_id": "toolu_01XKgWycLZpPfhe5mp6dW2rT",
+      "tool_response": "1\talpha\n2\t"
+    },
+    {
+      "tool_name": "Read",
+      "tool_input": { "file_path": "/tmp/tmp.EMzB8mBw0P/b.txt" },
+      "tool_use_id": "toolu_01EM7r36y7wzJPpaqNLBvG8Q",
+      "tool_response": "1\tbeta\n2\t"
+    }
+  ]
+}

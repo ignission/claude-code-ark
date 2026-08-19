@@ -22,7 +22,7 @@
     "test:e2e": "playwright test",
     "check": "biome check . && tsc -b",
     "test": "vitest run && pnpm test:harness",
-    "test:harness": "/bin/bash .claude/lib/tests/test-flow-safety-paths.sh && /bin/bash .claude/lib/tests/test-codex-stdin.sh && /bin/bash .claude/lib/tests/test-setup-worktree.sh && /bin/bash .claude/lib/tests/test-state-lock.sh && /bin/bash .claude/hooks/tests/test-push-marker.sh && /bin/bash .claude/lib/tests/test-zsh-compat.sh",
+    "test:harness": "/bin/bash .claude/lib/tests/test-flow-safety-paths.sh && /bin/bash .claude/lib/tests/test-codex-stdin.sh && /bin/bash .claude/lib/tests/test-setup-worktree.sh && /bin/bash .claude/lib/tests/test-state-lock.sh && /bin/bash .claude/hooks/tests/test-push-marker.sh && /bin/bash .claude/lib/tests/test-zsh-compat.sh && /bin/bash ark/loop/tests/run.sh",
     "format": "biome check --write .",
     "lint": "biome lint ."
   },
