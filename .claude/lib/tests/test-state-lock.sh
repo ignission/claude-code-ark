@@ -148,7 +148,7 @@ env PATH="$NO_FLOCK_BIN" CLAUDE_PROJECT_DIR="$PROJECT_DIR" \
   /bin/bash -c '
     source "$1"
     exec 9>"$2"
-    flow_lock_acquire "$2" 9 0 30 auto || exit 1
+    flow_lock_acquire "$2" 9 0 1 auto || exit 1
     [ "$FLOW_LOCK_ACQUIRED_BACKEND" = "mkdir" ] || exit 2
     printf "holder \$\$: %s\nholder BASHPID: %s\nrecorded owner pid: %s\n" \
       "$$" "${BASHPID-<unavailable>}" "$FLOW_LOCK_ACQUIRED_PID" > "$4"
@@ -179,7 +179,7 @@ if [ -f "$READY_FILE" ]; then
       printf "contender \$\$: %s\ncontender BASHPID: %s\nobserved owner pid: %s\nobserved owner kill -0: %s\n" \
         "$$" "${BASHPID-<unavailable>}" "$observed_owner" \
         "$observed_owner_liveness" > "$3"
-      flow_lock_acquire "$2" 9 0 30 auto
+      flow_lock_acquire "$2" 9 0 1 auto
     ' bash "$STATE_IO" "$LOCK_FILE" "$CONTENDER_DIAGNOSTICS" >/dev/null 2>&1; then
     contention_result="acquired"
   else
@@ -197,17 +197,60 @@ fi
 kill -9 "$HOLDER_PID" 2>/dev/null || true
 wait "$HOLDER_PID" 2>/dev/null || true
 HOLDER_PID=""
+sleep 1
 stale_result=$(env PATH="$NO_FLOCK_BIN" CLAUDE_PROJECT_DIR="$PROJECT_DIR" \
   /bin/bash -c '
     source "$1"
     exec 9>"$2"
-    flow_lock_acquire "$2" 9 0 30 auto || exit 1
+    flow_lock_acquire "$2" 9 0 1 auto || exit 1
     backend="$FLOW_LOCK_ACQUIRED_BACKEND"
-    flow_lock_release "$2" "$backend"
+    owner_pid="$FLOW_LOCK_ACQUIRED_PID"
+    owner_token="$FLOW_LOCK_ACQUIRED_TOKEN"
+    flow_lock_release "$2" "$backend" "$owner_pid" "$owner_token"
     printf "%s" "$backend"
   ' bash "$STATE_IO" "$LOCK_FILE" 2>&1)
 assert_eq "異常終了した process の pid lock は stale として奪取できる" \
   "mkdir" "$stale_result"
+
+REUSED_PID_LOCK="$TMP_TEST_DIR/state-no-flock/reused-pid.lock"
+mkdir "$REUSED_PID_LOCK.d"
+printf '%s\n' "$$" > "$REUSED_PID_LOCK.d/pid"
+printf '%s\n' "simulated-reused-pid" > "$REUSED_PID_LOCK.d/token"
+if env PATH="$NO_FLOCK_BIN" CLAUDE_PROJECT_DIR="$PROJECT_DIR" \
+  /bin/bash -c '
+    source "$1"
+    exec 9>"$2"
+    flow_lock_acquire "$2" 9 0 0 auto
+  ' bash "$STATE_IO" "$REUSED_PID_LOCK" >/dev/null 2>&1; then
+  reused_pid_result="acquired"
+else
+  reused_pid_result="blocked"
+fi
+assert_eq "pid が別の生存 process に再利用された場合は stale lock を奪取しない" \
+  "blocked" "$reused_pid_result"
+rm -f "$REUSED_PID_LOCK.d/pid" "$REUSED_PID_LOCK.d/token"
+rmdir "$REUSED_PID_LOCK.d"
+
+OWNERSHIP_LOCK="$TMP_TEST_DIR/state-no-flock/ownership.lock"
+ownership_result=$(env PATH="$NO_FLOCK_BIN" CLAUDE_PROJECT_DIR="$PROJECT_DIR" \
+  /bin/bash -c '
+    source "$1"
+    exec 9>"$2"
+    flow_lock_acquire "$2" 9 0 1 auto || exit 1
+    old_pid="$FLOW_LOCK_ACQUIRED_PID"
+    old_token="$FLOW_LOCK_ACQUIRED_TOKEN"
+    flow_lock_release "$2" mkdir "$old_pid" "$old_token" || exit 2
+    flow_lock_acquire "$2" 9 0 1 auto || exit 3
+    new_pid="$FLOW_LOCK_ACQUIRED_PID"
+    new_token="$FLOW_LOCK_ACQUIRED_TOKEN"
+    flow_lock_release "$2" mkdir "$old_pid" "$old_token" 2>/dev/null && exit 4
+    [ -d "$2.d" ] || exit 5
+    [ "$(cat "$2.d/token")" = "$new_token" ] || exit 6
+    flow_lock_release "$2" mkdir "$new_pid" "$new_token" || exit 7
+    printf protected
+  ' bash "$STATE_IO" "$OWNERSHIP_LOCK" 2>&1)
+assert_eq "release は取得時 token が一致する自分の lock だけを解放する" \
+  "protected" "$ownership_result"
 
 NO_FLOCK_CLEANUP_SCOPE="no-flock-cleanup-$$"
 cleanup_result=$(env PATH="$NO_FLOCK_BIN" CLAUDE_PROJECT_DIR="$PROJECT_DIR" \
@@ -243,7 +286,10 @@ normal_output=$(CLAUDE_PROJECT_DIR="$PROJECT_DIR" FLOW_STATE_DIR="$TMP_TEST_DIR/
     exec 9>"$2/backend.lock"
     flow_lock_acquire "$2/backend.lock" 9 0 30 auto || exit 1
     selected_backend="$FLOW_LOCK_ACQUIRED_BACKEND"
-    flow_lock_release "$2/backend.lock" "$selected_backend"
+    selected_pid="$FLOW_LOCK_ACQUIRED_PID"
+    selected_token="$FLOW_LOCK_ACQUIRED_TOKEN"
+    flow_lock_release "$2/backend.lock" "$selected_backend" \
+      "$selected_pid" "$selected_token"
     scope=$(flow_state_init "$3" "feature/$3" /tmp/normal-worktree) || exit 2
     flow_state_update progress '\''.phase = "P3"'\'' "$scope" || exit 3
     printf "%s|" "$selected_backend"

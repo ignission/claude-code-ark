@@ -193,7 +193,8 @@ cleanup_flow_state_files() {
       fi
       local _lock_backend="$FLOW_LOCK_ACQUIRED_BACKEND"
       local _lock_owner_pid="$FLOW_LOCK_ACQUIRED_PID"
-      trap 'flow_lock_release "$lock_file" "$_lock_backend" "$_lock_owner_pid" || true' EXIT
+      local _lock_owner_token="$FLOW_LOCK_ACQUIRED_TOKEN"
+      trap 'flow_lock_release "$lock_file" "$_lock_backend" "$_lock_owner_pid" "$_lock_owner_token" || true' EXIT
       $_action
     )
   }
@@ -232,7 +233,8 @@ cleanup_flow_state_files() {
       fi
       local _history_lock_backend="$FLOW_LOCK_ACQUIRED_BACKEND"
       local _history_lock_owner_pid="$FLOW_LOCK_ACQUIRED_PID"
-      trap 'flow_lock_release "$hist_lock" "$_history_lock_backend" "$_history_lock_owner_pid" || true' EXIT
+      local _history_lock_owner_token="$FLOW_LOCK_ACQUIRED_TOKEN"
+      trap 'flow_lock_release "$hist_lock" "$_history_lock_backend" "$_history_lock_owner_pid" "$_history_lock_owner_token" || true' EXIT
       jq -c . "$base/flow-kpi-${scope_key}.json" >> "$base/flow-kpi-history.jsonl"
     )
   }

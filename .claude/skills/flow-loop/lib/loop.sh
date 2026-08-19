@@ -17,7 +17,7 @@
 #   - パス解決に BASH_SOURCE を使わない。Claude の Bash ツールは実体が zsh のことがあり、
 #     zsh で source すると BASH_SOURCE が空になるため CLAUDE_PROJECT_DIR を使う。
 #   - tick 排他は state-io.sh の共通 mkdir lock を使う。呼び出し間で fd を保持できないため
-#     flock backend は選ばず、既存どおり pid / mtime による 1h stale 回収を行う。
+#     flock backend は選ばず、pid 死亡 + mtime 1h 超の AND で stale 回収を行う。
 #   - pick は GitHub Issue のみ対応。pick_query は gh issue list --search 用の
 #     GitHub 検索構文で持つ。
 
@@ -95,13 +95,20 @@ flow_loop_breaker_tripped() {
 # 共通 helper の mkdir-direct backend で既存の flow-loop.lock directory path を維持する。
 flow_loop_lock() {
   mkdir -p "$FLOW_LOOP_STATE_DIR"
-  flow_lock_acquire "$FLOW_LOOP_LOCK" 9 0 "$FLOW_LOOP_LOCK_STALE_SECONDS" mkdir-direct
+  flow_lock_acquire "$FLOW_LOOP_LOCK" 9 0 "$FLOW_LOOP_LOCK_STALE_SECONDS" mkdir-direct \
+    || return 1
+  FLOW_LOOP_LOCK_PID="$FLOW_LOCK_ACQUIRED_PID"
+  FLOW_LOOP_LOCK_TOKEN="$FLOW_LOCK_ACQUIRED_TOKEN"
+  export FLOW_LOOP_LOCK_PID FLOW_LOOP_LOCK_TOKEN
 }
 
-# 自分の lock を解放する。別 invocation から呼ばれた場合も、owner が既に死亡して
-# いれば共通 stale 回収を使い、生存中の別 owner の lock は触らない。
+# 自分の token と一致する lock だけを解放する。別 invocation から呼ぶ場合は、取得時の
+# FLOW_LOOP_LOCK_PID / FLOW_LOOP_LOCK_TOKEN を引数で明示的に受け渡す。
 flow_loop_unlock() {
-  flow_lock_release "$FLOW_LOOP_LOCK" mkdir-direct "" 0
+  local owner_pid="${1:-${FLOW_LOOP_LOCK_PID:-}}"
+  local owner_token="${2:-${FLOW_LOOP_LOCK_TOKEN:-}}"
+  [ -n "$owner_token" ] || return 1
+  flow_lock_release "$FLOW_LOOP_LOCK" mkdir-direct "$owner_pid" "$owner_token"
 }
 
 # 現在のプロジェクト (repo) の git-common-dir。run の所属判定に使う。

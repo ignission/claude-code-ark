@@ -75,12 +75,12 @@ loop で処理**できない / させたくない** Issue には GitHub ラベ�
 ## tick の手順
 
 **STEP 0 前提**: `flow_loop_stopped` が真 → 「停止中。`/flow-loop start` で再開」と報告して終了。`flow_loop_within_active_hours` が偽 (かつ `--force` なし) → 「稼働時間外 (active_hours)」と報告して終了。
-**STEP 1 排他**: `flow_loop_lock` 失敗 → 「別 tick 実行中 (stale なら 1h で自動回収)」と報告して終了。**以降どの経路で終わる場合も必ず `flow_loop_unlock` する** (halt 提示で中断する場合も含む)。
+**STEP 1 排他**: `flow_loop_lock` 失敗 → 「別 tick 実行中 (owner pid が死亡し、かつ lock が 1h 超なら自動回収)」と報告して終了。取得した shell の `FLOW_LOOP_LOCK_PID` / `FLOW_LOOP_LOCK_TOKEN` を tick 中保持する。**以降どの経路で終わる場合も、取得時の値を `flow_loop_unlock "$FLOW_LOOP_LOCK_PID" "$FLOW_LOOP_LOCK_TOKEN"` に渡して必ず解錠する** (別 Bash invocation からの解錠、halt 提示で中断する場合も含む)。取得 token が異なる他 tick の lock は解錠しない。
 **STEP 2 ブレーカー**: `flow_loop_init` 後、`flow_loop_breaker_tripped` が真 → unlock して「ブレーカー作動中 (連続 halt ≥ 3)。原因を確認し `/flow-loop start` でリセット」と報告・終了。
 **STEP 3 run 走査**: `flow_loop_active_scope_keys` で全 run を列挙し、各 state (`flow_state_read progress '.phase / .gate / .gate_mode / .safety_level / .work_id / .branch'` と `context '.worktree_path / .pr_number / .codex_pid'`) を読み、下の**シグナル判定表**に従って前進できるものから処理する。1 つの run が halt しても tick 全体は止めず、記録して次の run へ。**cwd 規律**: セッションの cwd は main worktree から動かさない。run の worktree 内の操作はサブシェル `(cd "$WT" && ...)` または `git -C "$WT"` で行う (flow-x 共通ルールと同じ。cwd を worktree に置き去りにすると以後の run 処理を壊す)。
 **STEP 4 pick**: アクティブ run 数 (`flow_loop_active_count`) < `wip_limit` **かつ** `flow_loop_pick_budget_left` > 0 なら `pick_query` で候補を検索し (`gh issue list --search "$(flow_loop_read '.pick_query')" --json number,title,body,labels --limit 20`)、除外 (同 Issue の進行中 state 既存 / body 空 = DoR 未達) を除いた先頭 1 件を新規着手する。**依存検出**: 採用前に候補 Issue 本文の「連携/依存」と open PR (`gh pr list` → `gh pr diff <n> --name-only`) の変更ファイル群を照合し、作業対象が重なるものは「依存待ち」として skip (ダイジェストに列挙。ブロッカー PR のマージ後に自然に候補へ戻る)。着手は `$CLAUDE_PROJECT_DIR/.claude/skills/flow-x/SKILL.md` を Read し、`--async-gates` 相当 (`GATE_MODE="async"`) で STEP 0 から実行、**P2.5 の設計承認 park (plan コミット済み draft PR) まで**進める。着手したら `flow_loop_record_pick` で予算を消費し、metrics に `pick` を記録。**1 tick の新規着手は 1 件まで** (時間予算・暴走防止)。
 **STEP 5 集計と計測**: この tick のイベントを `flow_loop_metrics_append` で記録する — pick (`pick`) / 新規 park (`park`・gate 付き) / 設計承認 (`plan-approved`) / 差し戻し検知 (`fix`) / マージ (`merged`) / 新規 halt (`halt`・理由付き) / P12 terminal (`done`・deploy_status 付き)。`flow_loop_update '.last_tick_at = '"$(date +%s)"` で更新。この tick で**新たに halt が発生**したら `.consecutive_halts += 1`、**前進があれば** (フェーズ遷移・マージ・pick 成功のいずれか) `.consecutive_halts = 0`。
-**STEP 6 解錠**: `flow_loop_unlock`。
+**STEP 6 解錠**: `flow_loop_unlock "$FLOW_LOOP_LOCK_PID" "$FLOW_LOOP_LOCK_TOKEN"`。
 **STEP 7 ダイジェスト報告と通知**: 表で報告 — 前進した run / 設計承認待ち (PR URL) / マージ承認待ち (PR URL) / halt 中 (理由) / 実装中 (detached codex) / CI・CodeRabbit 監視中 / deploy 監視中 / pick・skip (DoR 未達・依存待ち・予算到達含む)。最後に「人間が次にやること」を 1〜2 行で明示する。
 **通知 (イベント駆動・スパム防止)**: この tick で**新規 park (plan-review / merge-review)・新規 halt・ブレーカー発動**が起きた場合のみ `PushNotification` を送る (本文例: 「設計承認待ち 1 件: PR #90」)。イベントの無い tick では通知しない。
 
