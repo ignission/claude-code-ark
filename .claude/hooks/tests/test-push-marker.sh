@@ -171,7 +171,33 @@ assert_marker_absent "値が結合したグローバルオプション後の sub
 
 run_post "git -C '$REPO_WORKTREE' push"
 assert_eq "グローバルオプション後の git push は検出する" \
-  "$MAIN_HEAD" "$(head -1 "$MARKER" 2>/dev/null)"
+  "$WORKTREE_HEAD" "$(head -1 "$MARKER" 2>/dev/null)"
+assert_eq "git -C の指定先をマーカー2行目に記録する" \
+  "$REPO_WORKTREE" "$(sed -n '2p' "$MARKER" 2>/dev/null)"
+
+run_post "git -c key=value -C '$REPO_WORKTREE' --no-pager push"
+assert_eq "mixed global options の git -C は指定先 HEAD を記録する" \
+  "$WORKTREE_HEAD" "$(head -1 "$MARKER" 2>/dev/null)"
+assert_eq "mixed global options の git -C は指定先 path を記録する" \
+  "$REPO_WORKTREE" "$(sed -n '2p' "$MARKER" 2>/dev/null)"
+
+run_post "git -C '../work tree' push" "$REPO_MAIN"
+assert_eq "relative git -C は input cwd 基準の HEAD を記録する" \
+  "$WORKTREE_HEAD" "$(head -1 "$MARKER" 2>/dev/null)"
+assert_eq "relative git -C は canonical path を記録する" \
+  "$REPO_WORKTREE" "$(sed -n '2p' "$MARKER" 2>/dev/null)"
+
+run_post "git -C '$TMP_TEST_DIR' -C 'work tree' push" "$REPO_MAIN"
+assert_eq "repeated git -C は直前の指定先基準の HEAD を記録する" \
+  "$WORKTREE_HEAD" "$(head -1 "$MARKER" 2>/dev/null)"
+assert_eq "repeated git -C は最終 canonical path を記録する" \
+  "$REPO_WORKTREE" "$(sed -n '2p' "$MARKER" 2>/dev/null)"
+
+run_post "git -C '$TMP_TEST_DIR/missing-repo' push" "$REPO_MAIN"
+assert_marker_absent "存在しない git -C は hook cwd へ fallback しない"
+
+run_post "git -C '$REPO_WORKTREE' push -n" "$REPO_MAIN"
+assert_marker_absent "git -C <dir> push -n はマーカーを書かない"
 
 run_post "git push --dry-run" "$REPO_MAIN"
 assert_marker_absent "git push --dry-run はマーカーを書かない"

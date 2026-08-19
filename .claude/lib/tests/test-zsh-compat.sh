@@ -13,6 +13,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 LIB_DIR="$REPO_ROOT/.claude/lib"
+HOOK_UTILS="$REPO_ROOT/.claude/hooks/push-marker-utils.sh"
 
 TESTS=0
 PASSES=0
@@ -116,7 +117,41 @@ unset_rc=$(zsh -c "
 assert_eq "worktree: CLAUDE_PROJECT_DIR 未設定時は source が fail loud" "failed" "$unset_rc"
 
 # -----------------------------------------------------------------------------
-# Test 3: 静的ガード — zsh 特殊変数を local に使う / 素の mv を使う退行を防ぐ
+# Test 3: push marker utils が zsh source でも bash と同じ判定を返す
+# -----------------------------------------------------------------------------
+zsh_push_detect=$(zsh -c '
+  source "$1" || exit 7
+  push_marker_detect_git_push "git -C /tmp push"
+  print -r -- "$PUSH_MARKER_IS_GIT_PUSH:$PUSH_MARKER_IS_DRY_RUN"
+' zsh "$HOOK_UTILS" 2>&1)
+assert_eq "push marker: zsh でも git -C push を検出する" \
+  "true:false" "$zsh_push_detect"
+
+zsh_stash_detect=$(zsh -c '
+  source "$1" || exit 7
+  push_marker_detect_git_push "git -C /tmp stash push"
+  print -r -- "$PUSH_MARKER_IS_GIT_PUSH:$PUSH_MARKER_IS_DRY_RUN"
+' zsh "$HOOK_UTILS" 2>&1)
+assert_eq "push marker: zsh でも stash push を除外する" \
+  "false:false" "$zsh_stash_detect"
+
+zsh_dry_run_detect=$(zsh -c '
+  source "$1" || exit 7
+  push_marker_detect_git_push "git push -n"
+  print -r -- "$PUSH_MARKER_IS_GIT_PUSH:$PUSH_MARKER_IS_DRY_RUN"
+' zsh "$HOOK_UTILS" 2>&1)
+assert_eq "push marker: zsh でも push -n を dry-run 判定する" \
+  "true:true" "$zsh_dry_run_detect"
+
+zsh_repo_dir=$(zsh -c '
+  source "$1" || exit 7
+  push_marker_resolve_repo_dir "" "git -C \"$2\" push" /tmp
+' zsh "$HOOK_UTILS" "$TMP_STATE" 2>&1)
+assert_eq "push marker: zsh でも git -C の effective cwd を解決する" \
+  "$TMP_STATE" "$zsh_repo_dir"
+
+# -----------------------------------------------------------------------------
+# Test 4: 静的ガード — zsh 特殊変数を local に使う / 素の mv を使う退行を防ぐ
 #   awk スクリプト内の path= は対象外（シェル変数ではない）なので `local` 行に限定。
 #   lib 配下の全シェルスクリプトを対象にし、将来の新規追加でも zsh 特殊変数
 #   （PATH を破壊する path / read-only な status 等）の混入を検出する。
