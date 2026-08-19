@@ -98,6 +98,11 @@ for guard_path in "${FLOW_GUARD_DB_SCHEMA_PATHS[@]}" "${FLOW_GUARD_SESSION_LIFEC
   mkdir -p "$TMP_REPO/$(dirname "$guard_path")"
   printf '%s\n' '// baseline' > "$TMP_REPO/$guard_path"
 done
+printf '%s\n' \
+  'CREATE TABLE sessions (id TEXT);' \
+  'logger.info("schema ready");' \
+  'DROP TABLE obsolete_sessions;' \
+  > "$TMP_REPO/packages/server/src/lib/database.ts"
 printf '%s\n' '# baseline' > "$TMP_REPO/README.md"
 git -C "$TMP_REPO" add .
 git -C "$TMP_REPO" commit -q -m baseline
@@ -117,6 +122,13 @@ db_schema_changed() {
   (cd "$TMP_REPO" && flow_guard_db_schema_changed 'origin/main...HEAD')
 }
 
+db_schema_changed_status() {
+  local guard_status
+  (cd "$TMP_REPO" && flow_guard_db_schema_changed 'origin/main...HEAD')
+  guard_status=$?
+  printf '%s' "$guard_status"
+}
+
 db_schema_invalid_range_status() {
   local guard_status
   (cd "$TMP_REPO" && flow_guard_db_schema_changed 'nonexistent/ref...HEAD')
@@ -134,6 +146,23 @@ assert_success "database.ts の schema diff を検出する" db_schema_changed
 assert_eq "DB schema halt message" \
   "DB スキーマ変更検出 (packages/server/src/lib/database.ts、人間レビュー必須)" \
   "$(flow_guard_db_schema_halt_message)"
+
+reset_to_baseline
+sed -i.bak 's/schema ready/schema ready (v2)/' \
+  "$TMP_REPO/packages/server/src/lib/database.ts"
+rm "$TMP_REPO/packages/server/src/lib/database.ts.bak"
+git -C "$TMP_REPO" add packages/server/src/lib/database.ts
+git -C "$TMP_REPO" commit -q -m 'database log change'
+assert_eq "schema 行の隣接行だけの変更は 1（非検出）" "1" \
+  "$(db_schema_changed_status)"
+
+reset_to_baseline
+sed -i.bak '/DROP TABLE obsolete_sessions;/d' \
+  "$TMP_REPO/packages/server/src/lib/database.ts"
+rm "$TMP_REPO/packages/server/src/lib/database.ts.bak"
+git -C "$TMP_REPO" add packages/server/src/lib/database.ts
+git -C "$TMP_REPO" commit -q -m 'remove drop table statement'
+assert_success "削除行の schema 語句を検出する" db_schema_changed
 
 reset_to_baseline
 printf '%s\n' 'CREATE TABLE ignored' >> "$TMP_REPO/README.md"

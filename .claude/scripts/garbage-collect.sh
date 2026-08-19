@@ -23,7 +23,7 @@ if [ -d "$PROJECT_ROOT/packages/server/src/lib" ]; then
     # index.ts はスキップ
     [[ "$basename" == "index" ]] && continue
     # このファイル以外から参照されているか
-    refs=$(grep -rlE "(from.*['\"].*/${basename}['\"]|import.*['\"].*/${basename})" "$PROJECT_ROOT/packages/server/src" --include='*.ts' --include='*.tsx' --include='*.js' 2>/dev/null | grep -v "$f" | head -1)
+    refs=$(grep -rlE "(from.*['\"].*/${basename}['\"]|import.*['\"].*/${basename})" "$PROJECT_ROOT/packages/server/src" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' 2>/dev/null | grep -v "$f" | head -1)
     if [ -z "$refs" ]; then
       echo "  孤立候補 (server): $f"
       FOUND=$((FOUND + 1))
@@ -46,7 +46,7 @@ if [ -d "$PROJECT_ROOT/packages/web/src" ]; then
     # エントリポイントはスキップ
     [[ "$basename" == "App" || "$basename" == "main" || "$basename" == "index" ]] && continue
     # このファイル以外から参照されているか
-    refs=$(grep -rlE "(from.*['\"].*/${basename}['\"]|import.*['\"].*/${basename})" "$PROJECT_ROOT/packages/web/src" --include='*.tsx' --include='*.ts' --include='*.js' 2>/dev/null | grep -v "$f" | head -1)
+    refs=$(grep -rlE "(from.*['\"].*/${basename}['\"]|import.*['\"].*/${basename})" "$PROJECT_ROOT/packages/web/src" --include='*.tsx' --include='*.ts' --include='*.js' --include='*.jsx' 2>/dev/null | grep -v "$f" | head -1)
     if [ -z "$refs" ]; then
       echo "  孤立候補 (web): $f"
       FOUND=$((FOUND + 1))

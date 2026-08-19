@@ -263,7 +263,7 @@ packages/server/src/lib/
 ```
 claude-code-ark/
 ├── packages/
-│   ├── ./server/
+│   ├── server/
 │   │   ├── src/
 │   │   │   ├── cli.ts
 │   │   │   ├── index.ts
@@ -274,7 +274,7 @@ claude-code-ark/
 │   │   │       └── database.ts
 │   │   ├── build.mjs
 │   │   └── ecosystem.config.cjs
-│   ├── ./shared/
+│   ├── shared/
 │   │   └── src/
 │   │       ├── types.ts
 │   │       └── file-paths.ts

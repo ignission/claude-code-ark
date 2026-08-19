@@ -28,15 +28,16 @@ flow_guard_db_schema_changed() {
   fi
   [ -n "$changed_paths" ] || return 1
 
-  schema_diff=$(git diff "$diff_range" -- "${FLOW_GUARD_DB_SCHEMA_PATHS[@]}")
+  schema_diff=$(git diff --unified=0 "$diff_range" -- "${FLOW_GUARD_DB_SCHEMA_PATHS[@]}")
   git_status=$?
   if [ "$git_status" -ne 0 ]; then
     printf 'DB スキーマ変更の判定不能: git diff が失敗しました (range: %s)\n' "$diff_range" >&2
     return 2
   fi
 
-  grep -qE '(CREATE TABLE|ALTER TABLE|DROP TABLE|ADD COLUMN|DROP COLUMN)' \
-    <<< "$schema_diff"
+  grep -E '^[+-]' <<< "$schema_diff" \
+    | grep -vE '^(\+\+\+|---)' \
+    | grep -qE '(CREATE TABLE|ALTER TABLE|DROP TABLE|ADD COLUMN|DROP COLUMN)'
   grep_status=$?
   case "$grep_status" in
     0) return 0 ;;
