@@ -48,6 +48,10 @@ session_dir=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
 cache_dir=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
 [ -f "$session_dir/task.md" ] || test_fail "init did not create task.md"
 jq -e '.permissions.deny == ["TodoWrite","TaskCreate","TaskUpdate"]' "$settings" >/dev/null 2>&1 || test_fail "init did not inject deny"
+repo_key=$(loop_sha256 "$repo")
+state="$XDG_DATA_HOME/ark/loop/repos/$repo_key"
+assert_eq "owner marker mode" 600 "$(loop_stat "$state/owner" | awk '{print $2}')"
+assert_eq "owner marker bytes" "$sid" "$(cut -f1 "$state/owner")"
 
 printf '7\n' >"$cache_dir/step_count"; chmod 600 "$cache_dir/step_count"
 task_before=$(cat "$session_dir/task.md")
@@ -66,8 +70,6 @@ run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$sid"
 assert_success "teardown succeeds"
 cmp -s "$settings" "$TEST_TMP/lifecycle-original" || test_fail "teardown did not byte-restore settings"
 assert_eq "teardown restores mode" 640 "$(loop_stat "$settings" | awk '{print $2}')"
-repo_key=$(loop_sha256 "$repo")
-state="$XDG_DATA_HOME/ark/loop/repos/$repo_key"
 [ ! -e "$state/owner" ] || test_fail "teardown left owner"
 [ ! -e "$state/settings.lock" ] || test_fail "teardown left lock"
 [ ! -e "$repo/.claude/settings.local.json.ark-loop-tmp" ] || test_fail "teardown left tmp"
@@ -94,5 +96,47 @@ assert_eq "concurrent init has one disabled" 1 "$(grep -l $'enabled\t0' "$out1" 
 winner=$(awk -F '\t' '$1=="ARK_SESSION_ID"{print $2}' "$out1" "$out2")
 run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$winner"
 assert_success "concurrent winner teardown succeeds"
+
+setup_repo orphan-chain
+settings="$repo/.claude/settings.local.json"
+printf '{"base":true}\n' >"$settings"; chmod 600 "$settings"
+/bin/sleep 60 & owner1=$!
+/bin/bash "$INIT" --repo "$repo" --owner-pid "$owner1" --session-id 44444444444444444444444444444444 \
+  --goal goal --constraint safe --plan-item one >"$TEST_TMP/orphan-1.out" 2>"$TEST_TMP/orphan-1.err"
+assert_eq "first orphan-chain init enabled" $'enabled\t1' "$(sed -n '1p' "$TEST_TMP/orphan-1.out")"
+kill "$owner1"; wait "$owner1" 2>/dev/null || true
+content=$(cat "$settings")
+printf '%s\n' "${content%\}},\"user-kept\":1}" >"$settings"; chmod 600 "$settings"
+/bin/sleep 60 & owner2=$!
+/bin/bash "$INIT" --repo "$repo" --owner-pid "$owner2" --session-id 55555555555555555555555555555555 \
+  --goal goal --constraint safe --plan-item two >"$TEST_TMP/orphan-2.out" 2>"$TEST_TMP/orphan-2.err"
+assert_eq "first dead owner recovered" $'enabled\t1' "$(sed -n '1p' "$TEST_TMP/orphan-2.out")"
+kill "$owner2"; wait "$owner2" 2>/dev/null || true
+/bin/sleep 60 & owner3=$!
+/bin/bash "$INIT" --repo "$repo" --owner-pid "$owner3" --session-id 66666666666666666666666666666666 \
+  --goal goal --constraint safe --plan-item three >"$TEST_TMP/orphan-3.out" 2>"$TEST_TMP/orphan-3.err"
+assert_eq "second dead owner recovered" $'enabled\t1' "$(sed -n '1p' "$TEST_TMP/orphan-3.out")"
+run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id 66666666666666666666666666666666
+assert_success "orphan-chain teardown succeeds"
+kill "$owner3"; wait "$owner3" 2>/dev/null || true
+jq -e '.base == true and .["user-kept"] == 1 and (.permissions | not) and (.hooks | not)' "$settings" >/dev/null 2>&1 \
+  || test_fail "orphan recovery lost non-Ark changes or retained Ark entries"
+
+setup_repo independent-a
+repo_a=$repo
+setup_repo independent-b
+repo_b=$repo
+/bin/bash "$INIT" --repo "$repo_a" --owner-pid "$$" --session-id 77777777777777777777777777777777 \
+  --goal goal --constraint safe --plan-item one >"$TEST_TMP/independent-a.out"
+/bin/bash "$INIT" --repo "$repo_b" --owner-pid "$$" --session-id 88888888888888888888888888888888 \
+  --goal goal --constraint safe --plan-item one >"$TEST_TMP/independent-b.out"
+assert_eq "independent repo A enabled" $'enabled\t1' "$(sed -n '1p' "$TEST_TMP/independent-a.out")"
+assert_eq "independent repo B enabled" $'enabled\t1' "$(sed -n '1p' "$TEST_TMP/independent-b.out")"
+run_case /bin/bash "$TEARDOWN" --repo "$repo_a" --session-id 77777777777777777777777777777777
+assert_success "independent repo A teardown"
+run_case /bin/bash "$TEARDOWN" --repo "$repo_b" --session-id 88888888888888888888888888888888
+assert_success "independent repo B teardown"
+
+if grep -F '.gitignore' "$INIT" "$TEARDOWN" >/dev/null 2>&1; then test_fail "lifecycle script references .gitignore writes"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
 
 finish_tests session-lifecycle

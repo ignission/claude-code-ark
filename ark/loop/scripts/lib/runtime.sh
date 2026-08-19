@@ -110,7 +110,7 @@ loop_secure_dir() {
   loop_validate_xdg_dir "$target"
 }
 
-loop_runtime_resolve() {
+loop_runtime_paths() {
   local repo_arg=${1:-}
   local session_id=${2:-}
   local config_home data_home cache_home managed
@@ -138,13 +138,28 @@ loop_runtime_resolve() {
   ARK_KNOWLEDGE_DIR="$LOOP_DATA_ROOT/knowledge"
   LOOP_REPO_STATE_DIR="$LOOP_DATA_ROOT/repos/$ARK_REPO_KEY"
 
-  for managed in \
-    "$LOOP_CONFIG_DIR" "$LOOP_DATA_ROOT" "$LOOP_DATA_ROOT/sessions" \
-    "$ARK_SESSION_DIR" "$ARK_SESSION_DIR/artifacts" "$ARK_SESSION_DIR/errors" \
-    "$ARK_SESSION_DIR/knowledge" "$ARK_KNOWLEDGE_DIR" "$LOOP_DATA_ROOT/repos" \
-    "$LOOP_REPO_STATE_DIR" "$LOOP_CACHE_ROOT" "$ARK_CACHE_DIR"; do
-    loop_secure_dir "$managed" || return 1
-  done
   export ARK_REPO ARK_REPO_KEY ARK_SESSION_ID ARK_SESSION_DIR ARK_CACHE_DIR ARK_KNOWLEDGE_DIR
   export LOOP_CONFIG_DIR LOOP_CONFIG_FILE LOOP_DATA_ROOT LOOP_CACHE_ROOT LOOP_REPO_STATE_DIR
+}
+
+loop_runtime_prepare_base() {
+  local managed
+  for managed in "$LOOP_CONFIG_DIR" "$LOOP_DATA_ROOT" "$LOOP_DATA_ROOT/sessions" \
+    "$ARK_KNOWLEDGE_DIR" "$LOOP_DATA_ROOT/repos" "$LOOP_REPO_STATE_DIR" "$LOOP_CACHE_ROOT"; do
+    loop_secure_dir "$managed" || return 1
+  done
+}
+
+loop_runtime_prepare_session() {
+  local managed
+  for managed in "$ARK_SESSION_DIR" "$ARK_SESSION_DIR/artifacts" "$ARK_SESSION_DIR/errors" \
+    "$ARK_SESSION_DIR/knowledge" "$ARK_CACHE_DIR"; do
+    loop_secure_dir "$managed" || return 1
+  done
+}
+
+loop_runtime_resolve() {
+  loop_runtime_paths "$1" "$2" || return 1
+  loop_runtime_prepare_base || return 1
+  loop_runtime_prepare_session
 }
