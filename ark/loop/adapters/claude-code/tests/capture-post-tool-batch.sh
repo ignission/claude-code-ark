@@ -14,4 +14,3 @@ IFS= read -r first || first=
   done
   printf '\n'
 } >"$out"
-
