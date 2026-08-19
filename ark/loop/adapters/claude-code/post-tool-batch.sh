@@ -8,17 +8,22 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-input=$(LC_ALL=C awk '
-  {
-    if (NR > 1) total++
-    total += length($0)
-    if (total > 1048576) exit 42
-    print
-  }
-  END { if (total > 1048576) exit 42 }
-')
-read_status=$?
-[ "$read_status" -eq 0 ] || exit 0
+LC_ALL=C
+export LC_ALL
+input=
+while :; do
+  chunk=
+  IFS= read -r -n 4096 chunk
+  read_status=$?
+  input="$input$chunk"
+  [ "${#input}" -le 1048576 ] || exit 0
+  if [ "$read_status" -eq 0 ] && [ "${#chunk}" -lt 4096 ]; then
+    input="$input
+"
+    [ "${#input}" -le 1048576 ] || exit 0
+  fi
+  [ "$read_status" -eq 0 ] || break
+done
 
 printf '%s' "$input" | jq -e \
   'type == "object" and .hook_event_name == "PostToolBatch"' >/dev/null 2>&1 \

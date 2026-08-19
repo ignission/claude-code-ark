@@ -26,7 +26,31 @@ loop_hook_safe_dir() {
 "*|*""*|*"	"*) return 1 ;; esac
   value=$(loop_hook_stat "$1") || return 1
   set -- $value
-  [ "$1" = "$(id -u)" ] && [ "$2" = 700 ]
+  [ "$1" = "$LOOP_HOOK_UID" ] && [ "$2" = 700 ]
+}
+
+loop_hook_safe_runtime_dirs() {
+  local first=$1 second=$2 values line count uid mode
+  for line in "$first" "$second"; do
+    [ -n "$line" ] && [ "${line#/}" != "$line" ] && [ ! -L "$line" ] && [ -d "$line" ] || return 1
+    case "$line" in *"
+"*|*""*|*"	"*) return 1 ;; esac
+  done
+  values=$(stat -c '%u %a' "$first" "$second" 2>/dev/null) \
+    || values=$(stat -f '%u %Lp' "$first" "$second" 2>/dev/null) \
+    || return 1
+  count=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    set -- $line
+    [ "$#" -eq 2 ] || return 1
+    uid=$1; mode=$2
+    while [ "${mode#0}" != "$mode" ]; do mode=${mode#0}; done
+    [ "$uid" = "$LOOP_HOOK_UID" ] && [ "$mode" = 700 ] || return 1
+    count=$((count + 1))
+  done <<EOF
+$values
+EOF
+  [ "$count" -eq 2 ]
 }
 
 loop_hook_safe_file() {
@@ -34,7 +58,7 @@ loop_hook_safe_file() {
   [ ! -L "$1" ] && [ -f "$1" ] || return 1
   value=$(loop_hook_stat "$1") || return 1
   set -- $value
-  [ "$1" = "$(id -u)" ] && [ "$2" = 600 ]
+  [ "$1" = "$LOOP_HOOK_UID" ] && [ "$2" = 600 ]
 }
 
 loop_step_discard_lock() {
@@ -77,7 +101,8 @@ loop_step_reclaim_stale() {
 loop_step_lock_acquire() {
   local directory=$1
   local token attempt observed delay_index delay
-  token=$(od -An -tx1 -N16 /dev/urandom 2>/dev/null | tr -d ' \n') || return 2
+  token=$(od -An -tx1 -N16 /dev/urandom 2>/dev/null) || return 2
+  token=${token// /}
   case "$token" in *[!0-9a-f]*) return 2 ;; esac
   [ "${#token}" -eq 32 ] || return 2
   attempt=0
@@ -230,8 +255,8 @@ loop_task_parse() {
 
 loop_recite_main() {
   local interval output bytes
-  loop_hook_safe_dir "${ARK_SESSION_DIR:-}" || return 1
-  loop_hook_safe_dir "${ARK_CACHE_DIR:-}" || return 1
+  LOOP_HOOK_UID=$(id -u 2>/dev/null) || return 1
+  loop_hook_safe_runtime_dirs "${ARK_SESSION_DIR:-}" "${ARK_CACHE_DIR:-}" || return 1
   interval=${ARK_RECITE_INTERVAL:-10}
   case "$interval" in ''|*[!0-9]*) return 1 ;; esac
   [ "$interval" -ge 1 ] 2>/dev/null && [ "$interval" -le 100000 ] 2>/dev/null || return 1
