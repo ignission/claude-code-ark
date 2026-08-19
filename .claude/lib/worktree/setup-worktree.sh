@@ -17,6 +17,26 @@ fi
 # shellcheck source=./compute-worktree-path.sh
 source "$CLAUDE_PROJECT_DIR/.claude/lib/worktree/compute-worktree-path.sh"
 
+# main worktree と同一内容の .mise.toml だけを自動 trust する。
+_trust_worktree_mise_config() {
+  local main_root="$1"
+  local wt_path="$2"
+
+  command -v mise >/dev/null 2>&1 || return 0
+  [ -f "$main_root/.mise.toml" ] || return 0
+  [ -f "$wt_path/.mise.toml" ] || return 0
+
+  if ! cmp -s "$main_root/.mise.toml" "$wt_path/.mise.toml"; then
+    echo "mise trust をスキップ: worktree の .mise.toml は main と内容が異なります" >&2
+    return 0
+  fi
+
+  if ! mise trust --yes "$wt_path/.mise.toml"; then
+    echo "ERROR: mise trust に失敗: $wt_path/.mise.toml" >&2
+    return 1
+  fi
+}
+
 # 引数:
 #   $1 main_root   main worktree の絶対パス
 #   $2 branch      ブランチ名 (feature/issue-NNN/<slug> or feature/<slug>)
@@ -57,7 +77,8 @@ create_worktree() {
 
   if git -C "$main_root" worktree list --porcelain 2>/dev/null | grep -q "^worktree $wt_path$"; then
     echo "既存 worktree を再利用: $wt_path" >&2
-    return 0
+    _trust_worktree_mise_config "$main_root" "$wt_path"
+    return $?
   fi
 
   if ! git -C "$main_root" fetch origin --quiet 2>/dev/null; then
@@ -71,7 +92,8 @@ create_worktree() {
       echo "ERROR: worktree 作成に失敗 (既存 branch $branch)" >&2
       return 1
     }
-    return 0
+    _trust_worktree_mise_config "$main_root" "$wt_path"
+    return $?
   fi
 
   # ローカルに無いがリモートに既存 branch があれば、それをベースに track する
@@ -80,11 +102,13 @@ create_worktree() {
       echo "ERROR: worktree 作成に失敗 (remote branch origin/$branch)" >&2
       return 1
     }
-    return 0
+    _trust_worktree_mise_config "$main_root" "$wt_path"
+    return $?
   fi
 
   git -C "$main_root" worktree add "$wt_path" -b "$branch" origin/main >/dev/null 2>&1 || {
     echo "ERROR: worktree 作成に失敗 (新規 branch $branch from origin/main)" >&2
     return 1
   }
+  _trust_worktree_mise_config "$main_root" "$wt_path"
 }
