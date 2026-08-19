@@ -42,6 +42,41 @@ run_case() {
   CASE_STATUS=$?
 }
 
+step_count() {
+  local cache=$1 steps path name number highest found entries entry
+  steps="$cache/steps"
+  [ -d "$steps" ] && [ ! -L "$steps" ] || { printf '0\n'; return; }
+  highest=0
+  found=0
+  for path in "$steps"/bucket-*; do
+    [ -d "$path" ] && [ ! -L "$path" ] || continue
+    name=${path##*/}
+    number=${name#bucket-}
+    case "$number" in ''|*[!0-9]*|0[0-9]*) continue ;; esac
+    if [ "$found" -eq 0 ] || [ "$number" -gt "$highest" ]; then highest=$number; fi
+    found=1
+  done
+  [ "$found" -eq 1 ] || { printf '0\n'; return; }
+  entries=0
+  for entry in "$steps/bucket-$highest"/step-*; do
+    [ -d "$entry" ] && [ ! -L "$entry" ] || continue
+    entries=$((entries + 1))
+  done
+  printf '%s\n' "$((highest + entries))"
+}
+
+seed_step_count() {
+  local cache=$1 count=$2 slot
+  command rm -rf "$cache/steps"
+  [ "$count" -gt 0 ] || return 0
+  mkdir -m 700 "$cache/steps" "$cache/steps/bucket-0" "$cache/steps/initialized" || return 1
+  slot=1
+  while [ "$slot" -le "$count" ]; do
+    mkdir -m 700 "$cache/steps/bucket-0/step-0-$slot" || return 1
+    slot=$((slot + 1))
+  done
+}
+
 finish_tests() {
   if [ "$FAILURES" -ne 0 ]; then
     printf '%s: %s/%s passed, %s failed\n' "$1" "$PASSES" "$TESTS" "$FAILURES" >&2

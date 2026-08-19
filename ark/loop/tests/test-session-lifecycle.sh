@@ -53,12 +53,12 @@ state="$XDG_DATA_HOME/ark/loop/repos/$repo_key"
 assert_eq "owner marker mode" 600 "$(loop_stat "$state/owner" | awk '{print $2}')"
 assert_eq "owner marker bytes" "$sid" "$(cut -f1 "$state/owner")"
 
-printf '7\n' >"$cache_dir/step_count"; chmod 600 "$cache_dir/step_count"
+seed_step_count "$cache_dir" 7
 task_before=$(cat "$session_dir/task.md")
 run_case run_init "$sid"
 assert_success "same session re-init succeeds"
 assert_eq "same session keeps task" "$task_before" "$(cat "$session_dir/task.md")"
-assert_eq "same session keeps count" 7 "$(cat "$cache_dir/step_count")"
+assert_eq "same session keeps count" 7 "$(step_count "$cache_dir")"
 
 cp "$settings" "$TEST_TMP/live-owner-settings"
 run_case run_init 22222222222222222222222222222222
@@ -73,6 +73,7 @@ assert_eq "teardown restores mode" 640 "$(loop_stat "$settings" | awk '{print $2
 [ ! -e "$state/owner" ] || test_fail "teardown left owner"
 [ ! -e "$state/settings.lock" ] || test_fail "teardown left lock"
 [ ! -e "$repo/.claude/settings.local.json.ark-loop-tmp" ] || test_fail "teardown left tmp"
+[ ! -e "$cache_dir/steps" ] || test_fail "teardown left recitation steps"
 
 setup_repo missing-settings
 sid=33333333333333333333333333333333

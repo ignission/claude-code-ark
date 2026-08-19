@@ -193,9 +193,11 @@ hook input は非信頼データとして parse し、path、文字列、数値�
 
 ### §4-1 recite-todo.sh
 
-`PostToolBatch` ごとに `ARK_CACHE_DIR/step_count` を排他的に1増加させ、`ARK_RECITE_INTERVAL`（既定10）batch ごとに次の固定形式だけを `additionalContext` へ出す。ここで batch は Claude Code が次のモデル呼出し前に完了させた tool call 群を指し、並列 tool call があっても復唱は最大1回とする。
+`PostToolBatch` ごとに `ARK_CACHE_DIR/steps/bucket-<base>/step-<pid>-<sequence>` を atomic `mkdir` で1個作り、bucket の base と entry 数から batch 数を得る。`ARK_RECITE_INTERVAL`（既定10）batch ごとに次の固定形式だけを `additionalContext` へ出す。ここで batch は Claude Code が次のモデル呼出し前に完了させた tool call 群を指し、並列 tool call があっても復唱は最大1回とする。interval ごとの `emitted-<count>` directory は同じ bucket 内で atomic `mkdir` し、作成に成功した process だけが出力を試みるため二重出力しない。
 
-interval 到達時は additionalContext の出力試行を1回だけ行い、host への delivery を保証しない。turn 終了や control stream close では host が block を破棄し得る。`step_count` は観測した batch 数であって delivery receipt ではない。hook には delivery acknowledgment がないため pending/retry state を作らない。10 batchごとの試行が欠落しても11回目には再送せず、欠落を次の interval まで補償しない。`task.md` が唯一の永続正本なので、配信欠落は進捗 state を変更しない。
+interval 到達時は additionalContext の出力試行を1回だけ行い、host への delivery を保証しない。turn 終了や control stream close では host が block を破棄し得る。entry 数は観測した batch 数であって delivery receipt ではない。hook には delivery acknowledgment がないため pending/retry state を作らない。10 batchごとの試行が欠落しても11回目には再送せず、欠落を次の interval まで補償しない。`task.md` が唯一の永続正本なので、配信欠落は進捗 state を変更しない。
+
+active bucket が64 entries以上になり、到達済みintervalの markerが全て存在するときは、bucketを atomic renameでsealし、seal後のentry数を次の `bucket-<base>` のbaseへ畳み込んで旧bucketを削除する。renameとmarker確認だけで集約し、排他lockや待機を導入しない。通常時の永続量は active bucket 1個につきbatch entry最大64件とmarker最大64件に制限し、途中停止したsealed bucketは次回hookが復旧する。session teardownは`steps/`を削除する。
 
 ```text
 Goal: <1行>

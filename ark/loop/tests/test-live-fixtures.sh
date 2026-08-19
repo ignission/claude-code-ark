@@ -10,6 +10,7 @@ TEST_TMP=$(cd "$TEST_TMP" && pwd -P)
 trap 'rm -rf "$TEST_TMP"' EXIT HUP INT TERM
 . "$ROOT/ark/loop/scripts/lib/runtime.sh"
 . "$ROOT/ark/loop/adapters/claude-code/settings.sh"
+. "$ROOT/ark/loop/tests/test-helper.sh"
 
 now_ns() { date +%s%N; }
 probe=$(now_ns)
@@ -32,11 +33,11 @@ while [ "$i" -le 20 ]; do
   [ "$elapsed" -le "$recite_max" ] || recite_max=$elapsed
   i=$((i + 1))
 done
-[ "$(cat "$cache/step_count")" -eq 20 ] || { printf 'single fixture lost a batch\n' >&2; exit 1; }
+[ "$(step_count "$cache")" -eq 20 ] || { printf 'single fixture lost a batch\n' >&2; exit 1; }
 [ "$(grep -l 'hookSpecificOutput' "$TEST_TMP"/recite-*.out | wc -l | tr -d ' ')" -eq 2 ] \
   || { printf 'single fixture did not output exactly at 10 and 20\n' >&2; exit 1; }
 
-rm -f "$cache/step_count"
+seed_step_count "$cache" 0
 parallel_start=$(now_ns)
 pids=
 i=1
@@ -54,7 +55,7 @@ for pid in $pids; do wait "$pid" || { printf 'parallel wrapper failed\n' >&2; ex
 parallel_finish=$(now_ns)
 parallel_wall=$(((parallel_finish - parallel_start) / 1000000))
 parallel_max=$(awk '{if ($1 > max) max=$1} END {print max+0}' "$TEST_TMP"/parallel-*.ms)
-[ "$(cat "$cache/step_count")" -eq 20 ] || { printf 'parallel fixture lost a batch\n' >&2; exit 1; }
+[ "$(step_count "$cache")" -eq 20 ] || { printf 'parallel fixture lost a batch\n' >&2; exit 1; }
 [ "$(grep -l 'step_count lock unavailable' "$TEST_TMP"/parallel-*.err 2>/dev/null | wc -l | tr -d ' ')" -eq 0 ] \
   || { printf 'parallel fixture exhausted lock retries\n' >&2; exit 1; }
 [ "$recite_max" -le 100 ] && [ "$parallel_max" -le 100 ] \

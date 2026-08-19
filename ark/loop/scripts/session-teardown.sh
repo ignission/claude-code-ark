@@ -35,6 +35,10 @@ if loop_validate_xdg_file "$owner" >/dev/null 2>&1; then
   [ "$owner_session" = "$session" ] && owned=1
 fi
 if [ "$owned" -eq 1 ]; then
+  if loop_validate_xdg_dir "$ARK_CACHE_DIR" >/dev/null 2>&1 \
+    && loop_validate_xdg_dir "$ARK_CACHE_DIR/steps" >/dev/null 2>&1; then
+    command rm -rf "$ARK_CACHE_DIR/steps" 2>/dev/null || true
+  fi
   if claude_settings_restore "$repo" "$LOOP_REPO_STATE_DIR" >/dev/null 2>&1; then
     command rm -f "$owner" "$LOOP_REPO_STATE_DIR/owner.new" 2>/dev/null || true
   fi
