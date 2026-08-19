@@ -574,14 +574,19 @@ flow_state_update context ".codex_pid = $CODEX_PID" "$SCOPE_KEY"
 ### 3-2. DB スキーマ変更検出 (flow と同一)
 ark の SQLite スキーマは `packages/server/src/lib/database.ts` の `CREATE TABLE` 群で定義される。
 ```bash
-if flow_guard_db_schema_changed 'origin/main...HEAD'; then
-  halt "DB スキーマ変更検出 (${FLOW_GUARD_DB_SCHEMA_PATHS[*]}、人間レビュー必須)"
-fi
+flow_guard_db_schema_changed 'origin/main...HEAD'
+case $? in
+  0) halt "DB スキーマ変更検出 (${FLOW_GUARD_DB_SCHEMA_PATHS[*]}、人間レビュー必須)" ;;
+  2) halt "DB スキーマ変更の判定に失敗しました (git diff が失敗)。origin/main の存在と diff range を確認すること" ;;
+esac
 ```
 
 ### 3-3. tmux/ttyd セッションライフサイクル変更検出 (flow と同一)
 ```bash
 flow_guard_warn_session_lifecycle_change "$SCOPE_KEY" 'origin/main...HEAD'
+case $? in
+  2) printf '%s\n' 'warning: セッションライフサイクル変更を判定不能 (state に warning 記録済み)' >&2 ;;
+esac
 ```
 
 ### 3-4. Claude による実装レビュー (中間ゲート)

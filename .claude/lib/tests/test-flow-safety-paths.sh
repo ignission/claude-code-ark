@@ -117,6 +117,13 @@ db_schema_changed() {
   (cd "$TMP_REPO" && flow_guard_db_schema_changed 'origin/main...HEAD')
 }
 
+db_schema_invalid_range_status() {
+  local guard_status
+  (cd "$TMP_REPO" && flow_guard_db_schema_changed 'nonexistent/ref...HEAD')
+  guard_status=$?
+  printf '%s' "$guard_status"
+}
+
 echo ""
 echo "=== DB schema guard ==="
 printf '%s\n' 'ALTER TABLE sessions ADD COLUMN archived INTEGER;' \
@@ -140,6 +147,8 @@ printf '%s\n' '// no schema keyword here' \
 git -C "$TMP_REPO" add packages/server/src/lib/database.ts
 git -C "$TMP_REPO" commit -q -m 'database comment only'
 assert_failure "database.ts の schema 語句なし diff では検出しない" db_schema_changed
+assert_eq "不正な diff range の DB schema 判定は 2" "2" \
+  "$(db_schema_invalid_range_status)"
 
 FLOW_STATE_UPDATE_CALLS=0
 FLOW_STATE_UPDATE_TYPE=''
@@ -159,6 +168,24 @@ warn_session_lifecycle() {
   cd "$TMP_REPO" || return 1
   flow_guard_warn_session_lifecycle_change 'test-scope' 'origin/main...HEAD'
   cd "$original_dir" || return 1
+}
+
+session_lifecycle_invalid_range_status() {
+  local guard_status
+  (cd "$TMP_REPO" && flow_guard_session_lifecycle_changed 'nonexistent/ref...HEAD')
+  guard_status=$?
+  printf '%s' "$guard_status"
+}
+
+warn_session_lifecycle_invalid_range() {
+  local original_dir
+  local guard_status
+  original_dir=$(pwd)
+  cd "$TMP_REPO" || return 1
+  flow_guard_warn_session_lifecycle_change 'test-scope' 'nonexistent/ref...HEAD'
+  guard_status=$?
+  cd "$original_dir" || return 1
+  return "$guard_status"
 }
 
 echo ""
@@ -183,6 +210,14 @@ git -C "$TMP_REPO" commit -q -m 'unrelated change'
 assert_success "対象外 diff の warning 判定は正常終了する" warn_session_lifecycle
 assert_eq "対象外 diff では warning を追加しない" "1" "$FLOW_STATE_UPDATE_CALLS"
 
+assert_eq "不正な diff range の session lifecycle 判定は 2" "2" \
+  "$(session_lifecycle_invalid_range_status)"
+warn_session_lifecycle_invalid_range
+assert_eq "評価不能時は warning を 1 件追加する" "2" "$FLOW_STATE_UPDATE_CALLS"
+assert_eq "評価不能 warning は通常の変更 warning と区別できる" \
+  '.warnings += ["tmux/ttyd セッションライフサイクル変更を判定不能 (git diff が失敗)、origin/main と diff range を確認すること"]' \
+  "$FLOW_STATE_UPDATE_EXPR"
+
 count_literal() {
   local file="$1"
   local literal="$2"
@@ -204,6 +239,10 @@ for skill_path in \
     "$(count_literal "$skill_path" "flow_guard_warn_session_lifecycle_change \"\$SCOPE_KEY\" 'origin/main...HEAD'")"
   assert_eq "$skill_name の DB branch は halt 指示を維持する" "1" \
     "$(count_literal "$skill_path" 'halt "DB スキーマ変更検出 (${FLOW_GUARD_DB_SCHEMA_PATHS[*]}、人間レビュー必須)"')"
+  assert_eq "$skill_name の P3-2 は exit code 2 で halt する" "1" \
+    "$(count_literal "$skill_path" '2) halt "DB スキーマ変更の判定に失敗しました (git diff が失敗)。origin/main の存在と diff range を確認すること" ;;')"
+  assert_eq "$skill_name の P3-3 は exit code 2 を扱う" "1" \
+    "$(count_literal "$skill_path" "2) printf '%s\\n' 'warning: セッションライフサイクル変更を判定不能 (state に warning 記録済み)' >&2 ;;")"
   assert_eq "$skill_name の P3 に旧 DB pathspec がない" "0" \
     "$(count_literal "$skill_path" "'$LEGACY_SERVER_LIB/database.ts'")"
   assert_eq "$skill_name の P3 に旧 session pathspec がない" "0" \
