@@ -60,6 +60,7 @@ TEST_HOME="$TMP_TEST_DIR/home"
 REPO_TILDE="$TEST_HOME/tilde-repo"
 MARKER="$HOOK_PROJECT/.claude/push-completed.marker"
 POST_STDERR="$TMP_TEST_DIR/post.stderr"
+PRE_STDERR="$TMP_TEST_DIR/pre.stderr"
 
 mkdir -p "$HOOK_PROJECT/.claude/hooks" "$REPO_MAIN" "$REPO_WORKTREE" \
   "$REPO_WITHOUT_HEAD" "$NON_GIT_DIR" "$REPO_TILDE"
@@ -114,6 +115,21 @@ run_post() {
     POST_STATUS=0
   else
     POST_STATUS=$?
+  fi
+}
+
+run_pre() {
+  local command="$1"
+  local input_cwd="${2:-$REPO_MAIN}"
+  local input
+
+  input=$(jq -n --arg command "$command" --arg cwd "$input_cwd" \
+    '{cwd: $cwd, tool_input: {command: $command}}')
+  if PRE_OUTPUT=$(cd "$input_cwd" && printf '%s\n' "$input" | \
+    CLAUDE_PROJECT_DIR="$HOOK_PROJECT" bash "$PRE_HOOK" 2>"$PRE_STDERR"); then
+    PRE_STATUS=0
+  else
+    PRE_STATUS=$?
   fi
 }
 
@@ -196,6 +212,57 @@ run_post "git push" "$NON_GIT_DIR"
 assert_marker_absent "非 Git ディレクトリが cwd の場合はマーカーを書かない"
 assert_eq "非 Git ディレクトリが cwd でも監視の起動 JSON を出力する" \
   "PostToolUse" "$(printf '%s\n' "$POST_OUTPUT" | jq -r '.hookSpecificOutput.hookEventName // ""' 2>/dev/null)"
+
+echo ""
+echo "=== pre-bash-guard: git hook bypass ==="
+
+run_pre "printf 'git docs' | grep -n docs.md"
+assert_eq "unrelated grep -n is allowed" "0" "$PRE_STATUS"
+
+run_pre "git status && sed -n '1,3p' file"
+assert_eq "unrelated sed -n after git status is allowed" "0" "$PRE_STATUS"
+
+run_pre "git commit -m 'document --no-verify and -n'"
+assert_eq "bypass strings in commit message are allowed" "0" "$PRE_STATUS"
+
+run_pre "git commit -m '-n'"
+assert_eq "short bypass string as commit message is allowed" "0" "$PRE_STATUS"
+
+run_pre "git tag -n"
+assert_eq "git tag -n is allowed" "0" "$PRE_STATUS"
+
+run_pre "git push -n"
+assert_eq "git push -n dry-run is allowed" "0" "$PRE_STATUS"
+
+run_pre "git commit -m '破壊的削除コマンドの扱いを修正'"
+assert_eq "destructive-command wording in commit message is allowed" "0" "$PRE_STATUS"
+
+run_pre "git commit -m '過剰な権限付与のガードを追加'"
+assert_eq "permission wording in commit message is allowed" "0" "$PRE_STATUS"
+
+run_pre "git commit -m '自動 resolve ガードの誤検知を直す'"
+assert_eq "resolve wording in commit message is allowed" "0" "$PRE_STATUS"
+
+run_pre "git commit -m 'claude-pre-push-review-done の誤検知を修正'"
+assert_eq "review flag basename in commit message is allowed" "0" "$PRE_STATUS"
+
+run_pre "git commit -n -m x"
+assert_eq "actual git commit -n is blocked" "2" "$PRE_STATUS"
+
+run_pre "git commit -an -m x"
+assert_eq "actual git commit short option cluster containing n is blocked" "2" "$PRE_STATUS"
+
+run_pre "git commit --no-verify -m x"
+assert_eq "actual git commit --no-verify is blocked" "2" "$PRE_STATUS"
+
+run_pre "git -C '$REPO_WORKTREE' commit --no-verify -m x"
+assert_eq "git global options do not hide commit --no-verify" "2" "$PRE_STATUS"
+
+run_pre "git push --no-verify"
+assert_eq "actual git push --no-verify is blocked" "2" "$PRE_STATUS"
+
+run_pre "echo ok && git commit -n -m x"
+assert_eq "linked actual git commit -n is blocked" "2" "$PRE_STATUS"
 
 echo ""
 echo "=== pre-bash-guard: マーカー SHA 照合 ==="
