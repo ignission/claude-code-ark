@@ -111,8 +111,20 @@ one
   assert_eq "parse failure keeps increment" 10 "$(cat "$cache/step_count")"
 done
 
-long_goal=$(printf '目%.0s' $(seq 1 100))
-long_now=$(printf '進%.0s' $(seq 1 180))
+printf '# Task\n\n## Goal\nbad\377\n\n## Plan\n- [ ] work ← NOW\n' >"$session/task.md"
+chmod 600 "$session/task.md"
+printf '9\n' >"$cache/step_count"; chmod 600 "$cache/step_count"
+run_case env ARK_SESSION_DIR="$session" ARK_CACHE_DIR="$cache" ARK_RECITE_INTERVAL=10 /bin/bash "$HOOK"
+assert_success "invalid UTF-8 does not block"
+assert_eq "invalid UTF-8 emits no context" '' "$(cat "$CASE_STDOUT")"
+assert_eq "invalid UTF-8 still advances count" 10 "$(cat "$cache/step_count")"
+
+long_goal=
+i=0
+while [ "$i" -lt 100 ]; do long_goal="${long_goal}目"; i=$((i + 1)); done
+long_now=
+i=0
+while [ "$i" -lt 180 ]; do long_now="${long_now}進"; i=$((i + 1)); done
 write_task "# Task
 
 ## Goal
@@ -129,6 +141,13 @@ assert_eq "recitation has three lines" 3 "$(wc -l <"$CASE_STDOUT" | tr -d ' ')"
 
 if grep -F '.claude/lib/state-io.sh' "$HOOK" >/dev/null 2>&1; then test_fail "hook sources state-io.sh"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
 if grep -E '\$(ARK_SESSION_DIR|ARK_CACHE_DIR|ARK_RECITE_INTERVAL)([^:{A-Za-z0-9_]|$)' "$HOOK" >/dev/null 2>&1; then test_fail "hook has unsafe env expansion"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
+
+bash_env="$TEST_TMP/bash-env"
+nounset_out="$TEST_TMP/nounset.out"
+printf '%s\n' "trap 'undefined_value=\$ARK_TEST_UNDEFINED; printf \"%s\\n\" \"\$-\" >\"\$NOUNSET_OUT\"' EXIT" >"$bash_env"
+run_case env BASH_ENV="$bash_env" NOUNSET_OUT="$nounset_out" ARK_SESSION_DIR="$session" ARK_CACHE_DIR="$cache" ARK_RECITE_INTERVAL=10 /bin/bash "$HOOK"
+assert_success "BASH_ENV EXIT trap preserves exit zero"
+case "$(cat "$nounset_out")" in *u*) test_fail "hook leaked nounset to EXIT trap" ;; *) TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)) ;; esac
 
 # One batch remains one increment under contention; delivery attempts at 10 and 20 are not lost.
 write_task '# Task
