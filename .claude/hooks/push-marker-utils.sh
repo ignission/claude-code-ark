@@ -22,7 +22,7 @@ _push_marker_split_shell_command() {
   PUSH_MARKER_SEPARATORS=()
 
   for ((i = 0; i < ${#command}; i++)); do
-    char="${command:i:1}"
+    char="${command:$((i)):1}"
 
     if $escaped; then
       current+="$char"
@@ -61,7 +61,7 @@ _push_marker_split_shell_command() {
         current=""
         ;;
       '&'|'|')
-        next="${command:i+1:1}"
+        next="${command:$((i + 1)):1}"
         if [ "$next" = "$char" ]; then
           PUSH_MARKER_SEGMENTS+=("$current")
           PUSH_MARKER_SEPARATORS+=("${char}${char}")
@@ -82,17 +82,18 @@ _push_marker_split_shell_command() {
 
 _push_marker_tokenize_segment() {
   local input="$1"
+  local split_operators="${2:-false}"
   local token=""
   local quote=""
   local escaped=false
   local started=false
-  local char
+  local char next operand operator_prefix redirection_operator
   local i
 
   PUSH_MARKER_TOKENS=()
 
   for ((i = 0; i < ${#input}; i++)); do
-    char="${input:i:1}"
+    char="${input:$((i)):1}"
 
     if $escaped; then
       token+="$char"
@@ -137,6 +138,67 @@ _push_marker_tokenize_segment() {
           started=false
         fi
         ;;
+      '<'|'>')
+        if $split_operators; then
+          operator_prefix=""
+          case "$token" in
+            "")
+              ;;
+            *[!0-9])
+              case "${char}:${token}" in
+                '>:'*'&')
+                  operand="${token%&}"
+                  [ -n "$operand" ] && PUSH_MARKER_TOKENS+=("$operand")
+                  operator_prefix="&"
+                  ;;
+                *)
+                  PUSH_MARKER_TOKENS+=("$token")
+                  ;;
+              esac
+              ;;
+            *)
+              # file descriptor 番号はリダイレクト演算子の一部として保持する。
+              operator_prefix="$token"
+              ;;
+          esac
+
+          redirection_operator="${operator_prefix}${char}"
+          next="${input:$((i + 1)):1}"
+          case "${char}${next}" in
+            '>>'|'>&'|'>|'|'<<'|'<>'|'<&')
+              redirection_operator+="$next"
+              i=$((i + 1))
+              if [ "$redirection_operator" = "<<" ] && \
+                 [ "${input:$((i + 1)):1}" = "<" ]; then
+                redirection_operator+="<"
+                i=$((i + 1))
+              fi
+              ;;
+          esac
+          PUSH_MARKER_TOKENS+=("$redirection_operator")
+          token=""
+          started=false
+        else
+          token+="$char"
+          started=true
+        fi
+        ;;
+      '|')
+        if $split_operators; then
+          if $started; then
+            PUSH_MARKER_TOKENS+=("$token")
+          fi
+          PUSH_MARKER_TOKENS+=("|")
+          token=""
+          started=false
+          # |& も command 境界として扱う。
+          next="${input:$((i + 1)):1}"
+          [ "$next" = "&" ] && i=$((i + 1))
+        else
+          token+="$char"
+          started=true
+        fi
+        ;;
       *)
         token+="$char"
         started=true
@@ -149,12 +211,11 @@ _push_marker_tokenize_segment() {
   return 0
 }
 
-_push_marker_is_git_push_segment() {
-  local segment token
+# tokenized git segment から global option を飛ばし、actual subcommand index を返す。
+_push_marker_git_subcommand_index() {
+  local token
   local i=1
 
-  segment="$(_push_marker_trim "$1")"
-  _push_marker_tokenize_segment "$segment" || return 1
   [ "${#PUSH_MARKER_TOKENS[@]}" -gt 1 ] || return 1
   [ "${PUSH_MARKER_TOKENS[0]}" = "git" ] || return 1
 
@@ -162,6 +223,7 @@ _push_marker_is_git_push_segment() {
     token="${PUSH_MARKER_TOKENS[$i]}"
     case "$token" in
       -C|-c|--git-dir|--work-tree|--exec-path|--namespace|--super-prefix|--config-env)
+        [ $((i + 1)) -lt "${#PUSH_MARKER_TOKENS[@]}" ] || return 1
         i=$((i + 2))
         ;;
       --git-dir=*|--work-tree=*|--exec-path=*|--namespace=*|--super-prefix=*|--config-env=*)
@@ -181,12 +243,113 @@ _push_marker_is_git_push_segment() {
   done
 
   [ "$i" -lt "${#PUSH_MARKER_TOKENS[@]}" ] || return 1
-  [ "${PUSH_MARKER_TOKENS[$i]}" = "push" ]
+  printf '%s' "$i"
+}
+
+_push_marker_is_git_push_segment() {
+  local segment subcommand_index
+
+  segment="$(_push_marker_trim "$1")"
+  _push_marker_tokenize_segment "$segment" || return 1
+  subcommand_index=$(_push_marker_git_subcommand_index) || return 1
+  [ "${PUSH_MARKER_TOKENS[$subcommand_index]}" = "push" ]
+}
+
+_push_marker_commit_short_has_no_verify() {
+  local token="${1#-}"
+  local char
+  local i
+
+  # caller が、cluster 末尾 option の値である次 token を再解析しないための出力値。
+  PUSH_MARKER_COMMIT_SHORT_TAKES_NEXT=false
+  for ((i = 0; i < ${#token}; i++)); do
+    char="${token:$((i)):1}"
+    case "$char" in
+      n) return 0 ;;
+      # 以降は同じ token 内の option value なので、その中の n は flag ではない。
+      m|F|C|c|t)
+        [ $((i + 1)) -eq "${#token}" ] && PUSH_MARKER_COMMIT_SHORT_TAKES_NEXT=true
+        return 1
+        ;;
+    esac
+  done
+  return 1
+}
+
+# actual git commit / push の hook bypass flag だけを検出する。
+push_marker_detect_hook_bypass() {
+  local command="$1"
+  local segment subcommand subcommand_index token
+  local i
+
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    setopt localoptions ksharrays
+  fi
+
+  PUSH_MARKER_BYPASS_FLAG=""
+  _push_marker_split_shell_command "$command"
+
+  for segment in "${PUSH_MARKER_SEGMENTS[@]}"; do
+    segment="$(_push_marker_trim "$segment")"
+    _push_marker_tokenize_segment "$segment" || continue
+    subcommand_index=$(_push_marker_git_subcommand_index) || continue
+    subcommand="${PUSH_MARKER_TOKENS[$subcommand_index]}"
+
+    case "$subcommand" in
+      commit)
+        i=$((subcommand_index + 1))
+        while [ "$i" -lt "${#PUSH_MARKER_TOKENS[@]}" ]; do
+          token="${PUSH_MARKER_TOKENS[$i]}"
+          [ "$token" = "--" ] && break
+          case "$token" in
+            --no-verify)
+              PUSH_MARKER_BYPASS_FLAG="--no-verify"
+              return 0
+              ;;
+            -m|-F|-C|-c|--message|--file|--reuse-message|--reedit-message|--fixup|--squash|--author|--date|--cleanup|--trailer|--pathspec-from-file)
+              i=$((i + 2))
+              continue
+              ;;
+            --message=*|--file=*|--reuse-message=*|--reedit-message=*|--fixup=*|--squash=*|--author=*|--date=*|--cleanup=*|--trailer=*|--pathspec-from-file=*)
+              ;;
+            -?*)
+              if _push_marker_commit_short_has_no_verify "$token"; then
+                PUSH_MARKER_BYPASS_FLAG="-n"
+                return 0
+              fi
+              if $PUSH_MARKER_COMMIT_SHORT_TAKES_NEXT; then
+                i=$((i + 2))
+                continue
+              fi
+              ;;
+          esac
+          i=$((i + 1))
+        done
+        ;;
+      push)
+        i=$((subcommand_index + 1))
+        while [ "$i" -lt "${#PUSH_MARKER_TOKENS[@]}" ]; do
+          token="${PUSH_MARKER_TOKENS[$i]}"
+          [ "$token" = "--" ] && break
+          if [ "$token" = "--no-verify" ]; then
+            PUSH_MARKER_BYPASS_FLAG="--no-verify"
+            return 0
+          fi
+          i=$((i + 1))
+        done
+        ;;
+    esac
+  done
+  return 1
 }
 
 push_marker_detect_git_push() {
   local command="$1"
   local segment
+
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    setopt localoptions ksharrays
+  fi
 
   # shellcheck disable=SC2034 # 呼び出し元へ返す出力変数
   PUSH_MARKER_IS_GIT_PUSH=false
@@ -235,7 +398,7 @@ _push_marker_parse_cd_argument() {
   fi
 
   for ((i = 0; i < ${#rest}; i++)); do
-    char="${rest:i:1}"
+    char="${rest:$((i)):1}"
 
     if $trailing; then
       [[ "$char" =~ [[:space:]] ]] || return 1
@@ -322,6 +485,49 @@ _push_marker_resolve_cd_dir() {
   (cd "$candidate" && pwd -P)
 }
 
+_push_marker_resolve_git_cwd() {
+  local base_dir="$1"
+  local subcommand_index="$2"
+  local effective_dir="$base_dir"
+  local token cd_arg candidate
+  local i=1
+
+  while [ "$i" -lt "$subcommand_index" ]; do
+    token="${PUSH_MARKER_TOKENS[$i]}"
+    case "$token" in
+      -C)
+        [ $((i + 1)) -lt "$subcommand_index" ] || return 1
+        cd_arg="${PUSH_MARKER_TOKENS[$((i + 1))]}"
+        i=$((i + 2))
+        ;;
+      -C?*)
+        cd_arg="${token#-C}"
+        i=$((i + 1))
+        ;;
+      -c|--git-dir|--work-tree|--exec-path|--namespace|--super-prefix|--config-env)
+        i=$((i + 2))
+        continue
+        ;;
+      *)
+        i=$((i + 1))
+        continue
+        ;;
+    esac
+
+    if [[ "$cd_arg" = /* ]]; then
+      candidate="$cd_arg"
+    else
+      [ -n "$effective_dir" ] || return 1
+      candidate="$effective_dir/$cd_arg"
+    fi
+    [ -d "$candidate" ] || return 1
+    effective_dir=$(cd "$candidate" && pwd -P) || return 1
+  done
+
+  [ -n "$effective_dir" ] || return 1
+  printf '%s' "$effective_dir"
+}
+
 push_marker_resolve_repo_dir() {
   local input_cwd="$1"
   local command="$2"
@@ -329,8 +535,12 @@ push_marker_resolve_repo_dir() {
   local input_dir=""
   local fallback_dir=""
   local current_dir=""
-  local segment resolved_dir
+  local segment resolved_dir subcommand_index
   local found_cd=false
+
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    setopt localoptions ksharrays
+  fi
 
   if [ -d "$input_cwd" ]; then
     input_dir=$(cd "$input_cwd" && pwd -P)
@@ -349,11 +559,10 @@ push_marker_resolve_repo_dir() {
       found_cd=true
     fi
     if _push_marker_is_git_push_segment "$segment"; then
-      if [ -n "$current_dir" ]; then
-        printf '%s' "$current_dir"
-        return 0
-      fi
-      return 1
+      subcommand_index=$(_push_marker_git_subcommand_index) || return 1
+      resolved_dir=$(_push_marker_resolve_git_cwd "$current_dir" "$subcommand_index") || return 1
+      printf '%s' "$resolved_dir"
+      return 0
     fi
   done
 

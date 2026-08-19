@@ -17,6 +17,85 @@ fi
 # shellcheck source=./compute-worktree-path.sh
 source "$CLAUDE_PROJECT_DIR/.claude/lib/worktree/compute-worktree-path.sh"
 
+# パス比較専用に symlink を解決する。対象が未作成なら、存在する親だけを
+# 解決して basename を戻す。解決できない場合は元の文字列へフォールバックする。
+_normalize_path_for_comparison() {
+  local input_path="$1"
+  local normalized parent basename normalized_parent
+
+  if [ -d "$input_path" ]; then
+    if normalized=$(cd "$input_path" 2>/dev/null && pwd -P); then
+      printf '%s\n' "$normalized"
+      return 0
+    fi
+  else
+    parent="${input_path%/*}"
+    basename="${input_path##*/}"
+    if [ "$parent" = "$input_path" ]; then
+      parent='.'
+    elif [ -z "$parent" ]; then
+      parent='/'
+    fi
+    if normalized_parent=$(cd "$parent" 2>/dev/null && pwd -P); then
+      if [ "$normalized_parent" = '/' ]; then
+        printf '/%s\n' "$basename"
+      else
+        printf '%s/%s\n' "$normalized_parent" "$basename"
+      fi
+      return 0
+    fi
+  fi
+
+  printf '%s\n' "$input_path"
+}
+
+_worktree_path_is_registered() {
+  local main_root="$1"
+  local expected_path="$2"
+  local expected_normalized worktree_output line registered_path registered_normalized
+
+  expected_normalized=$(_normalize_path_for_comparison "$expected_path")
+  if ! worktree_output=$(git -C "$main_root" worktree list --porcelain 2>/dev/null); then
+    return 1
+  fi
+
+  while IFS= read -r line; do
+    case "$line" in
+      worktree\ *)
+        registered_path="${line#worktree }"
+        registered_normalized=$(_normalize_path_for_comparison "$registered_path")
+        if [ "$registered_normalized" = "$expected_normalized" ]; then
+          return 0
+        fi
+        ;;
+    esac
+  done <<EOF
+$worktree_output
+EOF
+
+  return 1
+}
+
+# main worktree と同一内容の .mise.toml だけを自動 trust する。
+_trust_worktree_mise_config() {
+  local main_root="$1"
+  local wt_path="$2"
+
+  command -v mise >/dev/null 2>&1 || return 0
+  [ -f "$main_root/.mise.toml" ] || return 0
+  [ -f "$wt_path/.mise.toml" ] || return 0
+
+  if ! cmp -s "$main_root/.mise.toml" "$wt_path/.mise.toml"; then
+    echo "mise trust をスキップ: worktree の .mise.toml は main と内容が異なります" >&2
+    return 0
+  fi
+
+  if ! mise trust --yes "$wt_path/.mise.toml"; then
+    echo "ERROR: mise trust に失敗: $wt_path/.mise.toml" >&2
+    return 1
+  fi
+}
+
 # 引数:
 #   $1 main_root   main worktree の絶対パス
 #   $2 branch      ブランチ名 (feature/issue-NNN/<slug> or feature/<slug>)
@@ -44,20 +123,18 @@ create_worktree() {
     echo "ERROR: $main_root は git repo として認識できません" >&2
     return 1
   }
-  if command -v realpath >/dev/null 2>&1; then
-    realmain=$(realpath "$main_root/.git" 2>/dev/null) || realmain="$main_root/.git"
-  else
-    realmain="$main_root/.git"
-  fi
+  common_dir=$(_normalize_path_for_comparison "$common_dir")
+  realmain=$(_normalize_path_for_comparison "$main_root/.git")
   if [ "$common_dir" != "$realmain" ]; then
     echo "ERROR: $main_root は main worktree ではありません（追加 worktree からの flow 起動は禁止）" >&2
     echo "  main worktree に cd してから再実行してください" >&2
     return 1
   fi
 
-  if git -C "$main_root" worktree list --porcelain 2>/dev/null | grep -q "^worktree $wt_path$"; then
+  if _worktree_path_is_registered "$main_root" "$wt_path"; then
     echo "既存 worktree を再利用: $wt_path" >&2
-    return 0
+    _trust_worktree_mise_config "$main_root" "$wt_path"
+    return $?
   fi
 
   if ! git -C "$main_root" fetch origin --quiet 2>/dev/null; then
@@ -71,7 +148,8 @@ create_worktree() {
       echo "ERROR: worktree 作成に失敗 (既存 branch $branch)" >&2
       return 1
     }
-    return 0
+    _trust_worktree_mise_config "$main_root" "$wt_path"
+    return $?
   fi
 
   # ローカルに無いがリモートに既存 branch があれば、それをベースに track する
@@ -80,11 +158,13 @@ create_worktree() {
       echo "ERROR: worktree 作成に失敗 (remote branch origin/$branch)" >&2
       return 1
     }
-    return 0
+    _trust_worktree_mise_config "$main_root" "$wt_path"
+    return $?
   fi
 
   git -C "$main_root" worktree add "$wt_path" -b "$branch" origin/main >/dev/null 2>&1 || {
     echo "ERROR: worktree 作成に失敗 (新規 branch $branch from origin/main)" >&2
     return 1
   }
+  _trust_worktree_mise_config "$main_root" "$wt_path"
 }

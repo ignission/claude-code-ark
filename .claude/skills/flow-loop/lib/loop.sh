@@ -16,7 +16,8 @@
 #     PR で変える。runtime directory の loop.json 直接編集は一時的な調整用。
 #   - パス解決に BASH_SOURCE を使わない。Claude の Bash ツールは実体が zsh のことがあり、
 #     zsh で source すると BASH_SOURCE が空になるため CLAUDE_PROJECT_DIR を使う。
-#   - tick 排他は mkdir の atomic 性を使う (flock ファイルと違い stale 回収を mtime で判定できる)。
+#   - tick 排他は state-io.sh の共通 mkdir lock を使う。呼び出し間で fd を保持できないため
+#     flock backend は選ばず、pid 死亡 + mtime 1h 超の AND で stale 回収を行う。
 #   - pick は GitHub Issue のみ対応。pick_query は gh issue list --search 用の
 #     GitHub 検索構文で持つ。
 
@@ -27,7 +28,7 @@ if [ -z "${CLAUDE_PROJECT_DIR:-}" ]; then
   return 1
 fi
 # shellcheck source=/dev/null
-source "$CLAUDE_PROJECT_DIR/.claude/lib/flow-state-dir.sh"
+source "$CLAUDE_PROJECT_DIR/.claude/lib/state-io.sh"
 
 # 限定 override が無い用途だけ共通 directory を解決する。
 if [ -z "${FLOW_LOOP_STATE_DIR:-}" ] || [ -z "${FLOW_LOOP_RUNS_DIR:-}" ]; then
@@ -90,81 +91,24 @@ flow_loop_breaker_tripped() {
   [ -n "$n" ] && [ "$n" -eq "$n" ] 2>/dev/null && [ "$n" -ge "$FLOW_LOOP_BREAKER_THRESHOLD" ]
 }
 
-# tick 排他。mkdir の atomic 性で取得し、lock dir 内に所有者 pid を記録する。
-# 回収条件: 所有 pid が死んでいる、または pid 不明かつ mtime が閾値超 (stale)。
-# 所有 pid が生存している限り mtime に関わらず回収しない (1h を超える正当な長時間 tick を
-# 横取りして二重実行になる事故を防ぐ)。
-#
-# 設計制約: tick は Claude が複数の Bash 呼び出しにまたがって実行するため、fd を保持し
-# 続ける flock は使えない (呼び出し間で fd が生きない)。mkdir + pid 記録 + 取得後検証で
-# 近似する。取得後検証 (pid read-back) により、reclaim レースで他プロセスに lock を
-# 奪われた側は取得失敗を自覚して撤退する。pid 書き込み直前の極小窓は残るが、tick 間隔
-# (分単位) に対して十分小さく、シングルユーザー運用では実害がない。
-
-# 取得後検証: lock の pid が自分であること (reclaim レースの敗者検出)
-_flow_loop_lock_owned_by_self() {
-  [ "$(cat "$FLOW_LOOP_LOCK/pid" 2>/dev/null || echo "")" = "$$" ]
-}
-
+# tick は複数の Bash 呼び出しにまたがり得るため flock fd を保持できない。
+# 共通 helper の mkdir-direct backend で既存の flow-loop.lock directory path を維持する。
 flow_loop_lock() {
   mkdir -p "$FLOW_LOOP_STATE_DIR"
-  if mkdir "$FLOW_LOOP_LOCK" 2>/dev/null; then
-    printf '%s' "$$" > "$FLOW_LOOP_LOCK/pid" 2>/dev/null || true
-    _flow_loop_lock_owned_by_self && return 0
-    return 1
-  fi
-  local owner
-  owner="$(cat "$FLOW_LOOP_LOCK/pid" 2>/dev/null || echo "")"
-  case "$owner" in *[!0-9]*) owner="" ;; esac
-  # 所有者が生きている → 正当な実行中。回収しない
-  if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
-    return 1
-  fi
-  local now mtime
-  now="$(date +%s)"
-  # GNU (stat -c %Y) を先に試す。BSD 先行 (stat -f %m) にすると GNU stat では
-  # -f がファイルシステムモードになり %m が「マウントポイント文字列」で成功してしまう
-  # (mtime に mount path が入り算術式が爆発、stale 回収も永久に効かない) ため順序が重要。
-  mtime="$(stat -c %Y "$FLOW_LOOP_LOCK" 2>/dev/null || stat -f %m "$FLOW_LOOP_LOCK" 2>/dev/null || echo "$now")"
-  case "$mtime" in ''|*[!0-9]*) mtime="$now" ;; esac
-  if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } \
-     || [ $((now - mtime)) -ge "$FLOW_LOOP_LOCK_STALE_SECONDS" ]; then
-    # 回収は rename (atomic) で勝者を 1 人に絞る。素の削除だと、2 つの tick が
-    # 同時に stale を観測したとき、一方が取得し直した新 lock をもう一方が削除して
-    # 両者とも取得成功する二重実行レースがある。mv は同一パスに対して 1 プロセスしか
-    # 成功しないため、敗者はそのまま通常の mkdir 競争 (どちらか一方だけ成功) に戻る。
-    local reclaim="$FLOW_LOOP_LOCK.reclaim.$$"
-    if command mv "$FLOW_LOOP_LOCK" "$reclaim" 2>/dev/null; then
-      # mv した dir が本当に自分が stale 判定した旧 lock か検証してから捨てる。
-      # 別プロセスが先に reclaim → 新 lock を作った直後だと、その新 lock を
-      # 掴んでしまう可能性があるため、生存所有者の lock なら黙って返却する
-      local stolen_owner
-      stolen_owner="$(cat "$reclaim/pid" 2>/dev/null || echo "")"
-      case "$stolen_owner" in *[!0-9]*) stolen_owner="" ;; esac
-      if [ -n "$stolen_owner" ] && [ "$stolen_owner" != "$$" ] && kill -0 "$stolen_owner" 2>/dev/null; then
-        command mv "$reclaim" "$FLOW_LOOP_LOCK" 2>/dev/null || rm -rf "$reclaim"
-        return 1
-      fi
-      rm -rf "$reclaim"
-    fi
-    if mkdir "$FLOW_LOOP_LOCK" 2>/dev/null; then
-      printf '%s' "$$" > "$FLOW_LOOP_LOCK/pid" 2>/dev/null || true
-      _flow_loop_lock_owned_by_self && return 0
-    fi
-  fi
-  return 1
+  flow_lock_acquire "$FLOW_LOOP_LOCK" 9 0 "$FLOW_LOOP_LOCK_STALE_SECONDS" mkdir-direct \
+    || return 1
+  FLOW_LOOP_LOCK_PID="$FLOW_LOCK_ACQUIRED_PID"
+  FLOW_LOOP_LOCK_TOKEN="$FLOW_LOCK_ACQUIRED_TOKEN"
+  export FLOW_LOOP_LOCK_PID FLOW_LOOP_LOCK_TOKEN
 }
 
-# 解錠は自分が所有する lock のみ。他プロセスが生存所有している lock は触らない
-# (旧所有者の遅延 unlock が新所有者の lock を消して二重実行になる事故を防ぐ)。
+# 自分の token と一致する lock だけを解放する。別 invocation から呼ぶ場合は、取得時の
+# FLOW_LOOP_LOCK_PID / FLOW_LOOP_LOCK_TOKEN を引数で明示的に受け渡す。
 flow_loop_unlock() {
-  local owner
-  owner="$(cat "$FLOW_LOOP_LOCK/pid" 2>/dev/null || echo "")"
-  case "$owner" in *[!0-9]*) owner="" ;; esac
-  if [ -n "$owner" ] && [ "$owner" != "$$" ] && kill -0 "$owner" 2>/dev/null; then
-    return 0
-  fi
-  rm -rf "$FLOW_LOOP_LOCK" 2>/dev/null || true
+  local owner_pid="${1:-${FLOW_LOOP_LOCK_PID:-}}"
+  local owner_token="${2:-${FLOW_LOOP_LOCK_TOKEN:-}}"
+  [ -n "$owner_token" ] || return 1
+  flow_lock_release "$FLOW_LOOP_LOCK" mkdir-direct "$owner_pid" "$owner_token"
 }
 
 # 現在のプロジェクト (repo) の git-common-dir。run の所属判定に使う。

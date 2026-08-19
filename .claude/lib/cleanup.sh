@@ -19,7 +19,7 @@ if [ -z "${CLAUDE_PROJECT_DIR:-}" ]; then
   return 1
 fi
 # shellcheck source=/dev/null
-source "$CLAUDE_PROJECT_DIR/.claude/lib/flow-state-dir.sh"
+source "$CLAUDE_PROJECT_DIR/.claude/lib/state-io.sh"
 
 # === 公開関数 ===
 
@@ -134,7 +134,7 @@ EOF
 #     . 空白 等を全て拒否)。ark の SCOPE_KEY (work_id) は元から whitelist 内
 #   - .lock ファイルは削除しない (state-io.sh の inode 差し替え invariant のため)。
 #     terminal 後の lock は永続化させて並行 reader との race を未然に防ぐ
-#   - final mode の state 削除は state-io と同じ flock を取得して atomic に行う
+#   - final mode の state 削除は state-io と同じ排他 lock を取得して atomic に行う
 #     (並行 writer (--resume / cron callback) が `mv` で recreate するレースを防ぐ)。
 #     lock 取得失敗時は削除をスキップ (best-effort)
 #   - codex-gate ログと .new.* (atomic write 中間) は両モードで削除 (履歴のみ)
@@ -167,7 +167,7 @@ cleanup_flow_state_files() {
     base="$FLOW_STATE_DIR"
   fi
   # 削除対象 (state-io.sh / codex-gate.sh の出力に対応):
-  #   final mode のみ削除 (flock 取得して atomic):
+  #   final mode のみ削除 (state-io 共通 lock を取得して atomic):
   #     flow-progress-<scope>.json
   #     flow-kpi-<scope>.json (削除前に flow-kpi-history.jsonl に append)
   #     flow-context-<scope>.json
@@ -181,23 +181,22 @@ cleanup_flow_state_files() {
   : > "$lock_file" 2>/dev/null || true
 
   # 内部ヘルパー: scope-specific lock を取って関数を実行する。
-  # bash/zsh ともに動く。flock 無し環境では裸実行。lock 取得失敗時は warning + return 0
-  # (cleanup は best-effort)。state-io の writer / reader と race しないことを保証する。
+  # state-io の共通 helper により flock / mkdir fallback のどちらでも writer と race
+  # しない。lock 取得失敗時は warning + return 0 (cleanup は best-effort)。
   _cleanup_with_scope_lock() {
     local _action="$1"
-    if command -v flock >/dev/null 2>&1; then
-      (
-        exec 9<"$lock_file"
-        if ! flock -x -w 30 9; then
-          echo "WARNING: cleanup_flow_state_files ($mode): flock 30 秒待機 timeout、$_action をスキップ" >&2
-          exit 0
-        fi
-        $_action
-      )
-    else
-      # flock 無し環境: state-io の writer も flock を取れないので race は元から制御外
+    (
+      exec 9>"$lock_file"
+      if ! flow_lock_acquire "$lock_file" 9 30 30 auto; then
+        echo "WARNING: cleanup_flow_state_files ($mode): state lock 30 秒待機 timeout、$_action をスキップ" >&2
+        exit 0
+      fi
+      local _lock_backend="$FLOW_LOCK_ACQUIRED_BACKEND"
+      local _lock_owner_pid="$FLOW_LOCK_ACQUIRED_PID"
+      local _lock_owner_token="$FLOW_LOCK_ACQUIRED_TOKEN"
+      trap 'flow_lock_release "$lock_file" "$_lock_backend" "$_lock_owner_pid" "$_lock_owner_token" || true' EXIT
       $_action
-    fi
+    )
   }
 
   # 内部ヘルパー: .new.* (writer の atomic-write 中間ファイル) を削除する。
@@ -225,15 +224,17 @@ cleanup_flow_state_files() {
     local hist_lock="$base/flow-kpi-history.lock"
     : > "$hist_lock" 2>/dev/null || true
     (
-      if command -v flock >/dev/null 2>&1; then
-        exec 8<"$hist_lock"
-        # scope lock と同じ -w 30 で timeout を統一。操作は jq -c の 1 行 append で
-        # 短時間だが、stuck 時に無限待機する事態を避ける。
-        if ! flock -x -w 30 8; then
-          echo "WARNING: _cleanup_archive_kpi_to_history: history lock 30 秒待機 timeout" >&2
-          exit 1
-        fi
+      exec 8>"$hist_lock"
+      # scope lock と同じ 30 秒 timeout。操作は jq -c の 1 行 append で短時間だが、
+      # stuck 時に無限待機する事態を避ける。
+      if ! flow_lock_acquire "$hist_lock" 8 30 30 auto; then
+        echo "WARNING: _cleanup_archive_kpi_to_history: history lock 30 秒待機 timeout" >&2
+        exit 1
       fi
+      local _history_lock_backend="$FLOW_LOCK_ACQUIRED_BACKEND"
+      local _history_lock_owner_pid="$FLOW_LOCK_ACQUIRED_PID"
+      local _history_lock_owner_token="$FLOW_LOCK_ACQUIRED_TOKEN"
+      trap 'flow_lock_release "$hist_lock" "$_history_lock_backend" "$_history_lock_owner_pid" "$_history_lock_owner_token" || true' EXIT
       jq -c . "$base/flow-kpi-${scope_key}.json" >> "$base/flow-kpi-history.jsonl"
     )
   }

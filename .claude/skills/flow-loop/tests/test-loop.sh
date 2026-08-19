@@ -169,15 +169,28 @@ else
   echo "WARN: touch -t 不可 → stale lock テストを skip"
   rm -rf "$FLOW_LOOP_LOCK"
 fi
-# 所有者 pid ベースの回収判定
+# 所有者 pid と経過時間の AND による回収判定
 mkdir -p "$FLOW_LOOP_LOCK"; printf '%s' "999999" > "$FLOW_LOOP_LOCK/pid"
-assert_rc "所有 pid が死んでいる lock は mtime に関わらず即回収できる" 0 'flow_loop_lock'
-flow_loop_unlock
-mkdir -p "$FLOW_LOOP_LOCK"; printf '%s' "$$" > "$FLOW_LOOP_LOCK/pid"
+assert_rc "所有 pid が死んでいても fresh lock は回収しない" 1 'flow_loop_lock'
 if touch -t "$(date -v-2H +%Y%m%d%H%M 2>/dev/null || date -d '2 hours ago' +%Y%m%d%H%M)" "$FLOW_LOOP_LOCK" 2>/dev/null; then
-  assert_rc "所有 pid が生存中なら mtime が stale でも横取りしない" 1 'flow_loop_lock'
+  assert_rc "所有 pid が死亡かつ 1h 超の lock は回収できる" 0 'flow_loop_lock'
+  flow_loop_unlock
+else
+  echo "WARN: touch -t 不可 → dead owner stale lock テストを skip"
+  rm -f "$FLOW_LOOP_LOCK/pid"
+  rmdir "$FLOW_LOOP_LOCK"
 fi
-# 所有者が自分 (生存) の lock は unlock で消える (後始末を兼ねる)
+mkdir -p "$FLOW_LOOP_LOCK"
+printf '%s' "$$" > "$FLOW_LOOP_LOCK/pid"
+printf '%s' "simulated-reused-pid" > "$FLOW_LOOP_LOCK/token"
+if touch -t "$(date -v-2H +%Y%m%d%H%M 2>/dev/null || date -d '2 hours ago' +%Y%m%d%H%M)" "$FLOW_LOOP_LOCK" 2>/dev/null; then
+  assert_rc "pid が生存中なら別 process への再利用を想定して横取りしない" 1 'flow_loop_lock'
+fi
+assert_rc "取得 token が異なる lock は unlock で消さない" 1 'flow_loop_unlock'
+rm -f "$FLOW_LOOP_LOCK/pid" "$FLOW_LOOP_LOCK/token"
+rmdir "$FLOW_LOOP_LOCK"
+# 自分が取得した lock は token 一致で unlock できる。
+flow_loop_lock
 flow_loop_unlock
 assert_rc "自分所有の lock は unlock で消える" 1 '[ -d "$FLOW_LOOP_LOCK" ]'
 

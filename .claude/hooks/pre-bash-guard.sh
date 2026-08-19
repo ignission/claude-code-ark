@@ -7,6 +7,21 @@ set -eo pipefail
 # stdinからツール入力JSONを読み取り、コマンドを抽出（パース失敗時はスキップ）
 STDIN_INPUT=$(cat)
 COMMAND=$(echo "$STDIN_INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=./push-marker-utils.sh
+source "$SCRIPT_DIR/push-marker-utils.sh"
+
+# --- actual git commit / push の hook bypass だけを拒否する ---
+if push_marker_detect_hook_bypass "$COMMAND"; then
+  if [ "$PUSH_MARKER_BYPASS_FLAG" = "-n" ]; then
+    echo "BLOCKED: -n（--no-verify短縮形）によるgit hookのバイパスは禁止されています" >&2
+  else
+    echo "BLOCKED: --no-verify によるgit hookのバイパスは禁止されています" >&2
+  fi
+  echo "  WHY: pre-bash-guard の品質ゲート、または flow P4/P5 のローカル検証がスキップされ、CI で失敗するコードが送信される" >&2
+  echo "  FIX: 失敗の根本原因を修正してから commit / push してください" >&2
+  exit 2
+fi
 
 # --- git commit / git tag はメッセージ内容を検査しない（誤検出防止） ---
 if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+(commit|tag)[[:space:]] ]]; then
@@ -16,26 +31,117 @@ fi
 
 
 # --- pre-push-reviewフラグファイル作成のガード ---
-# コマンド文字列にフラグ名が含まれていれば検査
-# スキルの正規パターンのみ許可、それ以外は全てブロック
-if [[ "$COMMAND" =~ claude-pre-push-review-done ]]; then
-  # スキルの厳密なパターン: touch "$(git rev-parse --git-dir)/claude-pre-push-review-done"
-  # 5条件全て満たす場合のみ許可:
-  # (1) touchで始まる (2) git rev-parseを含む (3) コマンド連結(;|&)なし
-  # (4) コメント(#)なし (5) リダイレクト(>)なし (6) 改行なし
-  if [[ "$COMMAND" =~ ^[[:space:]]*touch[[:space:]] ]] && \
-     [[ "$COMMAND" =~ git[[:space:]]+rev-parse[[:space:]]+--git-dir ]] && \
-     ! [[ "$COMMAND" =~ [\;\|\&] ]] && \
-     ! [[ "$COMMAND" =~ \# ]] && \
-     ! [[ "$COMMAND" =~ \> ]] && \
-     ! [[ "$COMMAND" =~ $'\n' ]]; then
-    exit 0
+_review_flag_token_is_target() {
+  case "$1" in
+    claude-pre-push-review-done|*/claude-pre-push-review-done) return 0 ;;
+  esac
+  return 1
+}
+
+_review_flag_is_canonical_touch_segment() {
+  local segment target inner subcommand_index
+
+  segment="$(_push_marker_trim "$1")"
+  _push_marker_tokenize_segment "$segment" || return 1
+  [ "${#PUSH_MARKER_TOKENS[@]}" -eq 2 ] || return 1
+  [ "${PUSH_MARKER_TOKENS[0]}" = "touch" ] || return 1
+  target="${PUSH_MARKER_TOKENS[1]}"
+  case "$target" in
+    \$\(*\)/claude-pre-push-review-done) ;;
+    *) return 1 ;;
+  esac
+
+  inner="${target#\$(}"
+  inner="${inner%)/claude-pre-push-review-done}"
+  _push_marker_tokenize_segment "$inner" || return 1
+  subcommand_index=$(_push_marker_git_subcommand_index) || return 1
+  [ "${PUSH_MARKER_TOKENS[$subcommand_index]}" = "rev-parse" ] || return 1
+  [ $((subcommand_index + 2)) -eq "${#PUSH_MARKER_TOKENS[@]}" ] || return 1
+  case "${PUSH_MARKER_TOKENS[$((subcommand_index + 1))]}" in
+    --git-dir|--absolute-git-dir) return 0 ;;
+  esac
+  return 1
+}
+
+_review_flag_segment_creates_flag() {
+  local segment token command_token redirection_target
+  local command_position=true
+  local skip_redirection_target=false
+  local i j
+
+  segment="$(_push_marker_trim "$1")"
+  _push_marker_tokenize_segment "$segment" true || return 1
+
+  for ((i = 0; i < ${#PUSH_MARKER_TOKENS[@]}; i++)); do
+    token="${PUSH_MARKER_TOKENS[$i]}"
+
+    if $skip_redirection_target; then
+      skip_redirection_target=false
+      continue
+    fi
+
+    case "$token" in
+      '|')
+        command_position=true
+        continue
+        ;;
+      *\>*)
+        redirection_target="${token##*>}"
+        redirection_target="${redirection_target#|}"
+        redirection_target="${redirection_target#&}"
+        if [ -z "$redirection_target" ] && [ $((i + 1)) -lt "${#PUSH_MARKER_TOKENS[@]}" ]; then
+          redirection_target="${PUSH_MARKER_TOKENS[$((i + 1))]}"
+        fi
+        _review_flag_token_is_target "$redirection_target" && return 0
+        skip_redirection_target=true
+        continue
+        ;;
+      *\<*)
+        # 入力リダイレクトも command より前に置けるため、対象 word を飛ばして
+        # command_position を維持する。<> の作成先は上の > branch で検査済み。
+        skip_redirection_target=true
+        continue
+        ;;
+    esac
+
+    if $command_position; then
+      command_token="$token"
+      command_position=false
+      case "$command_token" in
+        touch|install|cp|mv|ln|tee|truncate)
+          j=$((i + 1))
+          while [ "$j" -lt "${#PUSH_MARKER_TOKENS[@]}" ] && [ "${PUSH_MARKER_TOKENS[$j]}" != "|" ]; do
+            _review_flag_token_is_target "${PUSH_MARKER_TOKENS[$j]}" && return 0
+            j=$((j + 1))
+          done
+          ;;
+        dd)
+          j=$((i + 1))
+          while [ "$j" -lt "${#PUSH_MARKER_TOKENS[@]}" ] && [ "${PUSH_MARKER_TOKENS[$j]}" != "|" ]; do
+            case "${PUSH_MARKER_TOKENS[$j]}" in
+              of=*)
+                _review_flag_token_is_target "${PUSH_MARKER_TOKENS[$j]#of=}" && return 0
+                ;;
+            esac
+            j=$((j + 1))
+          done
+          ;;
+      esac
+    fi
+  done
+  return 1
+}
+
+_push_marker_split_shell_command "$COMMAND"
+for REVIEW_FLAG_SEGMENT in "${PUSH_MARKER_SEGMENTS[@]}"; do
+  if _review_flag_segment_creates_flag "$REVIEW_FLAG_SEGMENT" && \
+     ! _review_flag_is_canonical_touch_segment "$REVIEW_FLAG_SEGMENT"; then
+    echo "BLOCKED: pre-push-reviewフラグファイルの手動作成は禁止されています" >&2
+    echo "  WHY: /flow の P5 (push 前 codex ゲート) を経ずに PR 作成ガードをバイパスするのを防止" >&2
+    echo "  FIX: /flow を実行してください。P5 PASS 時にフラグを自動作成します" >&2
+    exit 2
   fi
-  echo "BLOCKED: pre-push-reviewフラグファイルの手動作成は禁止されています" >&2
-  echo "  WHY: /flow の P5 (push 前 codex ゲート) を経ずに PR 作成ガードをバイパスするのを防止" >&2
-  echo "  FIX: /flow を実行してください。P5 PASS 時にフラグを自動作成します" >&2
-  exit 2
-fi
+done
 
 
 # --- 破壊的コマンドガード ---
@@ -96,28 +202,6 @@ if [[ "$COMMAND" =~ git[[:space:]]+(.+[[:space:]]+)?push[[:space:]]+.*--force ]]
     echo "BLOCKED: git push --force は危険なコマンドです" >&2
     echo "  WHY: リモートの他の人のコミットを上書きし、チームの作業が失われる" >&2
     echo "  FIX: --force-with-lease を使用（リモートが変更されていない場合のみ上書き）" >&2
-    exit 2
-  fi
-fi
-
-# --no-verify: git hooksのバイパスを禁止（エージェントが品質チェックをスキップするのを防ぐ）
-# git push --no-verify もpre-pushフックをバイパスするためブロック対象
-if [[ "$COMMAND" =~ git[[:space:]]+.+--no-verify ]]; then
-  echo "BLOCKED: --no-verify によるgit hookのバイパスは禁止されています" >&2
-  echo "  WHY: pre-bash-guard の biome check / tsc --noEmit ゲート、または flow P4/P5 のローカル検証がスキップされ、CI で失敗するコードが push される" >&2
-  echo "  FIX: 失敗の根本原因 (型エラー / lint 違反 / テスト失敗) を修正してから push" >&2
-  exit 2
-fi
-
-# -n フラグ: git commit -n は --no-verify の短縮形なのでブロック
-# ただし git push -n はdry-runなので許可
-if [[ "$COMMAND" =~ git[[:space:]]+.+-n([[:space:]]|$) ]]; then
-  if [[ "$COMMAND" =~ git[[:space:]]+push ]] || [[ "$COMMAND" =~ git[[:space:]]+.*push ]]; then
-    : # git push -n はdry-run、許可
-  else
-    echo "BLOCKED: -n（--no-verify短縮形）によるgit hookのバイパスは禁止されています" >&2
-    echo "  WHY: pre-bash-guard の biome check / tsc --noEmit ゲート、または flow P4/P5 のローカル検証がスキップされ、CI で失敗するコードが push される" >&2
-    echo "  FIX: 失敗の根本原因 (型エラー / lint 違反 / テスト失敗) を修正してからコミット" >&2
     exit 2
   fi
 fi
@@ -265,13 +349,11 @@ elif ! $IS_PR_COMMENT && [[ "$COMMAND" =~ /replies.sh ]]; then
   IS_PR_COMMENT=true
 fi
 if $IS_PR_COMMENT; then
-  # push完了マーカーの確認（60秒以内に作成されたものが必要）
+  # push完了マーカーの repository + HEAD identity を確認する。
+  # 時刻ではなく、現在の project worktree 群に属する同一 commit かで判定する。
   PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
   HOOK_INPUT_CWD=$(echo "$STDIN_INPUT" | jq -r '.cwd // ""' 2>/dev/null) || HOOK_INPUT_CWD=""
   HOOK_CWD=$(pwd -P)
-  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-  # shellcheck source=./push-marker-utils.sh
-  source "$SCRIPT_DIR/push-marker-utils.sh"
   MARKER="$PROJECT_DIR/.claude/push-completed.marker"
   if [ ! -f "$MARKER" ]; then
     echo "BLOCKED: push完了前にCodeRabbit返信はできません" >&2
@@ -279,23 +361,14 @@ if $IS_PR_COMMENT; then
     echo "  FIX: 先にgit pushを実行してください" >&2
     exit 2
   fi
-  # GNU stat (-c) と BSD stat (-f) の両方に対応。両方失敗時は明示的にブロック
-  MARKER_MTIME=$(stat -c %Y "$MARKER" 2>/dev/null || stat -f %m "$MARKER" 2>/dev/null) || {
-    echo "BLOCKED: pushマーカーの読み取りに失敗しました" >&2
-    echo "  WHY: マーカーファイルが削除された可能性がある" >&2
-    echo "  FIX: git pushを再実行してください" >&2
-    exit 2
-  }
-  MARKER_AGE=$(( $(date +%s) - MARKER_MTIME ))
-  if [ "$MARKER_AGE" -gt 60 ]; then
-    echo "BLOCKED: pushマーカーが古くなっています（${MARKER_AGE}秒前、有効期限60秒）" >&2
-    echo "  WHY: 古いpushの後に新しい変更がある可能性がある" >&2
-    echo "  FIX: 最新の変更をgit pushしてから返信してください" >&2
-    exit 2
-  fi
-  # push時のcommit SHAと現在のHEADが一致するか検証（バックグラウンドpush対策）
   MARKER_HEAD=$(head -1 "$MARKER" 2>/dev/null) || MARKER_HEAD=""
   MARKER_REPO_DIR=$(sed -n '2p' "$MARKER" 2>/dev/null) || MARKER_REPO_DIR=""
+  if [ -z "$MARKER_HEAD" ]; then
+    echo "BLOCKED: pushマーカーのcommit SHAが空です" >&2
+    echo "  WHY: push完了を示すcommit identityを確認できない" >&2
+    echo "  FIX: 対象リポジトリでgit pushを再実行してください" >&2
+    exit 2
+  fi
   if [ -n "$MARKER_REPO_DIR" ]; then
     TARGET_REPO_DIR="$MARKER_REPO_DIR"
   else
@@ -306,6 +379,19 @@ if $IS_PR_COMMENT; then
     echo "BLOCKED: pushしたリポジトリのHEADを確認できません" >&2
     echo "  WHY: 照合対象のディレクトリが存在しないか、Gitリポジトリではない" >&2
     echo "  FIX: 対象リポジトリでgit pushを再実行してください" >&2
+    exit 2
+  fi
+  if ! TARGET_COMMON_DIR=$(git -C "$TARGET_REPO_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || \
+     ! PROJECT_COMMON_DIR=$(git -C "$PROJECT_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+    echo "BLOCKED: pushしたリポジトリのgit common dirを確認できません" >&2
+    echo "  WHY: marker または現在のprojectが有効なGitリポジトリではない" >&2
+    echo "  FIX: 現在のprojectのworktreeでgit pushを再実行してください" >&2
+    exit 2
+  fi
+  if [ "$TARGET_COMMON_DIR" != "$PROJECT_COMMON_DIR" ]; then
+    echo "BLOCKED: pushマーカーが別のリポジトリを指しています" >&2
+    echo "  WHY: markerのrepositoryが現在のprojectのworktreeツリーに属していない" >&2
+    echo "  FIX: 現在のprojectの対象worktreeでgit pushを再実行してください" >&2
     exit 2
   fi
   if [ "$MARKER_HEAD" != "$CURRENT_HEAD" ]; then
