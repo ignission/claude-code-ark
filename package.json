@@ -21,7 +21,8 @@
     "preview": "pnpm --filter @ark/web preview",
     "test:e2e": "playwright test",
     "check": "biome check . && tsc -b",
-    "test": "vitest run",
+    "test": "vitest run && pnpm test:harness",
+    "test:harness": "/bin/bash .claude/lib/tests/test-flow-safety-paths.sh",
     "format": "biome check --write .",
     "lint": "biome lint ."
   },
