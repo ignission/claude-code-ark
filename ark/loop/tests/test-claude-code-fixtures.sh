@@ -51,6 +51,24 @@ printf '{}\n' | ARK_HOOK_FIXTURE_OUT="$tmp/out" "$capture" >/dev/null 2>&1 \
   || fail "capture rejected an existing regular file"
 [ "$(cat "$tmp/out")" = '{}' ] || fail "capture did not write stdin once"
 
+spec="$ROOT/docs/superpowers/specs/ark-loop-implementation-spec.md"
+for phrase in \
+  'permission deny の対象は `TodoWrite`、`TaskCreate`、`TaskUpdate` の3件だけ' \
+  '`TaskGet` / `TaskList` は read-only' \
+  '`TaskOutput` / `TaskStop` は background task' \
+  '`Task` / `Agent` は subagent' \
+  'additionalContext の出力試行' \
+  'delivery receipt ではない' \
+  'pending/retry state を作らない' \
+  '欠落を次の interval まで補償しない' \
+  '`task.md` が唯一の永続正本' \
+  '並列 tool call があっても復唱は最大1回' \
+  '10 batchごと' \
+  '600 bytes以下' \
+  'task 全文'; do
+  grep -F "$phrase" "$spec" >/dev/null 2>&1 || fail "spec misses: $phrase"
+done
+
 if [ "$FAILURES" -ne 0 ]; then
   printf 'claude fixture tests: %s failure(s)\n' "$FAILURES" >&2
   exit 1

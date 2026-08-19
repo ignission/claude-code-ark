@@ -170,7 +170,7 @@ native 側の `.lock` は native state 単体の排他を提供するが、選�
 - P2 の `loop-rules.md` は native todo の使用禁止、Plan status と `← NOW` の現実に合わせた更新、Goal / Constraints の不変条件を含む。
 - native todo が必要な作業は loop を無効化するか、項目を `task.md` へ移してから loop を継続する。
 - 将来 adapter も native todo との同期を追加してはならない。
-- Claude Code adapter は loop 有効 session で `TodoWrite`、`TaskCreate`、`TaskGet`、`TaskList`、`TaskUpdate` を permission deny または同等の tool allowlist により利用不能にし、指示だけで二重正本を防ごうとしてはならない。対象 Claude Code version に tool が存在しない場合も設定エラーにせず、この制約を no-op として扱う。
+- Claude Code adapter の permission deny の対象は `TodoWrite`、`TaskCreate`、`TaskUpdate` の3件だけとし、指示だけで二重正本を防ごうとしてはならない。`TaskGet` / `TaskList` は read-only、`TaskOutput` / `TaskStop` は background task の参照・停止、`Task` / `Agent` は subagent 機能なので deny 対象外とする。対象 Claude Code version に tool が存在しない場合も設定エラーにせず、この制約を no-op として扱う。
 
 ### §3-4 flow state との所有権表
 
@@ -194,6 +194,8 @@ hook input は非信頼データとして parse し、path、文字列、数値�
 ### §4-1 recite-todo.sh
 
 `PostToolBatch` ごとに `ARK_CACHE_DIR/step_count` を排他的に1増加させ、`ARK_RECITE_INTERVAL`（既定10）batch ごとに次の固定形式だけを `additionalContext` へ出す。ここで batch は Claude Code が次のモデル呼出し前に完了させた tool call 群を指し、並列 tool call があっても復唱は最大1回とする。
+
+interval 到達時は additionalContext の出力試行を1回だけ行い、host への delivery を保証しない。turn 終了や control stream close では host が block を破棄し得る。`step_count` は観測した batch 数であって delivery receipt ではない。hook には delivery acknowledgment がないため pending/retry state を作らない。10 batchごとの試行が欠落しても11回目には再送せず、欠落を次の interval まで補償しない。`task.md` が唯一の永続正本なので、配信欠落は進捗 state を変更しない。
 
 ```text
 Goal: <1行>
