@@ -82,6 +82,11 @@ for guard_path in "${FLOW_GUARD_DB_SCHEMA_PATHS[@]}" "${FLOW_GUARD_SESSION_LIFEC
   assert_success "guard path が実在する: $guard_path" test -f "$PROJECT_DIR/$guard_path"
 done
 
+ZSH_DB_PATH=$(cd "$PROJECT_DIR" && zsh -c \
+  'source .claude/lib/flow-safety-paths.sh; print -r -- ${FLOW_GUARD_DB_SCHEMA_PATHS[1]}')
+assert_eq "zsh でも DB schema path を参照できる" \
+  "packages/server/src/lib/database.ts" "$ZSH_DB_PATH"
+
 TMP_REPO=$(mktemp -d "/tmp/test-flow-safety-paths.XXXXXX")
 trap 'rm -rf "$TMP_REPO"' EXIT
 
