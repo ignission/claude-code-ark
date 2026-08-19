@@ -45,9 +45,6 @@ require_zsh() {
 }
 require_zsh
 
-# pnpm test:harness の既存経路から、flock 有無を切り替える共通 lock 回帰テストも実行する。
-/bin/bash "$SCRIPT_DIR/test-state-lock.sh" || exit 1
-
 # -----------------------------------------------------------------------------
 # Test 1: state-io の atomic 書き込みが zsh の `mv -i` エイリアス下でも成功する
 #   state-io.sh が素の `mv` を使うと、ユーザの `alias mv='mv -i'` が効いた zsh で

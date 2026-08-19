@@ -77,6 +77,9 @@ no_flock_state_output=$(env PATH="$NO_FLOCK_BIN" \
 assert_eq "flock 不在でも init → update → read が成功する" \
   "$NO_FLOCK_SCOPE|P2" "$no_flock_state_output"
 
+# zsh 経路も lock の backend 切り替えと一体で検証するため、この専用テストに置く。
+# test-zsh-compat.sh は汎用の zsh 互換検証に専念でき、かつ本テストの単独実行でも
+# mkdir fallback が zsh から利用できる保証を失わない。
 ZSH_BIN=$(command -v zsh) || { echo "ERROR: zsh が必要です" >&2; exit 1; }
 NO_FLOCK_ZSH_SCOPE="no-flock-zsh-state-$$"
 no_flock_zsh_output=$(env PATH="$NO_FLOCK_BIN" \
