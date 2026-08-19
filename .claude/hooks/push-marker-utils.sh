@@ -82,11 +82,12 @@ _push_marker_split_shell_command() {
 
 _push_marker_tokenize_segment() {
   local input="$1"
+  local split_operators="${2:-false}"
   local token=""
   local quote=""
   local escaped=false
   local started=false
-  local char
+  local char next operand operator_prefix redirection_operator
   local i
 
   PUSH_MARKER_TOKENS=()
@@ -135,6 +136,67 @@ _push_marker_tokenize_segment() {
           PUSH_MARKER_TOKENS+=("$token")
           token=""
           started=false
+        fi
+        ;;
+      '<'|'>')
+        if $split_operators; then
+          operator_prefix=""
+          case "$token" in
+            "")
+              ;;
+            *[!0-9])
+              case "${char}:${token}" in
+                '>:'*'&')
+                  operand="${token%&}"
+                  [ -n "$operand" ] && PUSH_MARKER_TOKENS+=("$operand")
+                  operator_prefix="&"
+                  ;;
+                *)
+                  PUSH_MARKER_TOKENS+=("$token")
+                  ;;
+              esac
+              ;;
+            *)
+              # file descriptor 番号はリダイレクト演算子の一部として保持する。
+              operator_prefix="$token"
+              ;;
+          esac
+
+          redirection_operator="${operator_prefix}${char}"
+          next="${input:$((i + 1)):1}"
+          case "${char}${next}" in
+            '>>'|'>&'|'>|'|'<<'|'<>'|'<&')
+              redirection_operator+="$next"
+              i=$((i + 1))
+              if [ "$redirection_operator" = "<<" ] && \
+                 [ "${input:$((i + 1)):1}" = "<" ]; then
+                redirection_operator+="<"
+                i=$((i + 1))
+              fi
+              ;;
+          esac
+          PUSH_MARKER_TOKENS+=("$redirection_operator")
+          token=""
+          started=false
+        else
+          token+="$char"
+          started=true
+        fi
+        ;;
+      '|')
+        if $split_operators; then
+          if $started; then
+            PUSH_MARKER_TOKENS+=("$token")
+          fi
+          PUSH_MARKER_TOKENS+=("|")
+          token=""
+          started=false
+          # |& も command 境界として扱う。
+          next="${input:$((i + 1)):1}"
+          [ "$next" = "&" ] && i=$((i + 1))
+        else
+          token+="$char"
+          started=true
         fi
         ;;
       *)
@@ -198,12 +260,17 @@ _push_marker_commit_short_has_no_verify() {
   local char
   local i
 
+  # caller が、cluster 末尾 option の値である次 token を再解析しないための出力値。
+  PUSH_MARKER_COMMIT_SHORT_TAKES_NEXT=false
   for ((i = 0; i < ${#token}; i++)); do
     char="${token:$((i)):1}"
     case "$char" in
       n) return 0 ;;
       # 以降は同じ token 内の option value なので、その中の n は flag ではない。
-      m|F|C|c) return 1 ;;
+      m|F|C|c|t)
+        [ $((i + 1)) -eq "${#token}" ] && PUSH_MARKER_COMMIT_SHORT_TAKES_NEXT=true
+        return 1
+        ;;
     esac
   done
   return 1
@@ -249,6 +316,10 @@ push_marker_detect_hook_bypass() {
               if _push_marker_commit_short_has_no_verify "$token"; then
                 PUSH_MARKER_BYPASS_FLAG="-n"
                 return 0
+              fi
+              if $PUSH_MARKER_COMMIT_SHORT_TAKES_NEXT; then
+                i=$((i + 2))
+                continue
               fi
               ;;
           esac

@@ -66,21 +66,41 @@ _review_flag_is_canonical_touch_segment() {
 _review_flag_segment_creates_flag() {
   local segment token command_token redirection_target
   local command_position=true
+  local skip_redirection_target=false
   local i j
 
   segment="$(_push_marker_trim "$1")"
-  _push_marker_tokenize_segment "$segment" || return 1
+  _push_marker_tokenize_segment "$segment" true || return 1
 
   for ((i = 0; i < ${#PUSH_MARKER_TOKENS[@]}; i++)); do
     token="${PUSH_MARKER_TOKENS[$i]}"
 
+    if $skip_redirection_target; then
+      skip_redirection_target=false
+      continue
+    fi
+
     case "$token" in
+      '|')
+        command_position=true
+        continue
+        ;;
       *\>*)
-        redirection_target="${token#*>}"
+        redirection_target="${token##*>}"
+        redirection_target="${redirection_target#|}"
+        redirection_target="${redirection_target#&}"
         if [ -z "$redirection_target" ] && [ $((i + 1)) -lt "${#PUSH_MARKER_TOKENS[@]}" ]; then
           redirection_target="${PUSH_MARKER_TOKENS[$((i + 1))]}"
         fi
         _review_flag_token_is_target "$redirection_target" && return 0
+        skip_redirection_target=true
+        continue
+        ;;
+      *\<*)
+        # 入力リダイレクトも command より前に置けるため、対象 word を飛ばして
+        # command_position を維持する。<> の作成先は上の > branch で検査済み。
+        skip_redirection_target=true
+        continue
         ;;
     esac
 
@@ -108,7 +128,6 @@ _review_flag_segment_creates_flag() {
           ;;
       esac
     fi
-    [ "$token" = "|" ] && command_position=true
   done
   return 1
 }

@@ -49,6 +49,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 TMP_TEST_DIR=$(mktemp -d "/tmp/test-push-marker.XXXXXX")
+TMP_TEST_DIR=$(cd "$TMP_TEST_DIR" && pwd -P)
 trap 'rm -rf "$TMP_TEST_DIR"' EXIT
 
 REPO_MAIN="$TMP_TEST_DIR/main-repo"
@@ -290,6 +291,12 @@ assert_eq "actual git commit -n is blocked" "2" "$PRE_STATUS"
 run_pre "git commit -an -m x"
 assert_eq "actual git commit short option cluster containing n is blocked" "2" "$PRE_STATUS"
 
+run_pre "git commit -am '-n'"
+assert_eq "short option cluster value is not reparsed as no-verify" "0" "$PRE_STATUS"
+
+run_pre "git commit -at '-n'"
+assert_eq "template option cluster value is not reparsed as no-verify" "0" "$PRE_STATUS"
+
 run_pre "git commit --no-verify -m x"
 assert_eq "actual git commit --no-verify is blocked" "2" "$PRE_STATUS"
 
@@ -341,6 +348,30 @@ assert_eq "manual touch of review flag is blocked" "2" "$PRE_STATUS"
 run_pre "printf x > '$TMP_TEST_DIR/claude-pre-push-review-done'"
 assert_eq "redirection creation of review flag is blocked" "2" "$PRE_STATUS"
 
+run_pre "echo x >> '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "spaced append redirection creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "echo x >>'$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "joined append redirection creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "echo x >| '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "noclobber override redirection creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "echo x &> '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "combined output redirection creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "echo x &>> '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "combined append redirection creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "echo x >& '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "legacy combined output redirection creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "echo x 1>> '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "file descriptor append redirection creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "touch '$TMP_TEST_DIR/claude-pre-push-review-done'>/dev/null"
+assert_eq "redirection joined after touch target is blocked" "2" "$PRE_STATUS"
+
 run_pre "install /dev/null '$TMP_TEST_DIR/claude-pre-push-review-done'"
 assert_eq "install creation of review flag is blocked" "2" "$PRE_STATUS"
 
@@ -356,11 +387,38 @@ assert_eq "ln creation of review flag is blocked" "2" "$PRE_STATUS"
 run_pre "printf x | tee '$TMP_TEST_DIR/claude-pre-push-review-done'"
 assert_eq "tee creation of review flag is blocked" "2" "$PRE_STATUS"
 
+run_pre "printf x|tee '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "joined pipe tee creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "printf x |tee '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "pipe joined to tee creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "printf x|  tee '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "joined pipe with extra spacing tee creation is blocked" "2" "$PRE_STATUS"
+
+run_pre "printf x|&tee '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "stderr pipe tee creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "tee '$TMP_TEST_DIR/claude-pre-push-review-done'</dev/null"
+assert_eq "input redirection joined after tee target is blocked" "2" "$PRE_STATUS"
+
+run_pre "2>/dev/null tee '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "leading joined redirection before tee is blocked" "2" "$PRE_STATUS"
+
+run_pre "2> /dev/null tee '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "leading spaced redirection before tee is blocked" "2" "$PRE_STATUS"
+
 run_pre "truncate -s 0 '$TMP_TEST_DIR/claude-pre-push-review-done'"
 assert_eq "truncate creation of review flag is blocked" "2" "$PRE_STATUS"
 
 run_pre "dd if=/dev/null of='$TMP_TEST_DIR/claude-pre-push-review-done'"
 assert_eq "dd creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "printf x|dd of='$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "joined pipe dd creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "dd of='$TMP_TEST_DIR/claude-pre-push-review-done'</dev/null"
+assert_eq "input redirection joined after dd target is blocked" "2" "$PRE_STATUS"
 
 run_pre "touch \"\$(git rev-parse --absolute-git-dir)/claude-pre-push-review-done\" && touch '$TMP_TEST_DIR/claude-pre-push-review-done'"
 assert_eq "canonical touch cannot hide another creation" "2" "$PRE_STATUS"

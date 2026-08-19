@@ -52,14 +52,19 @@ FLOW_X_COMMANDS=$(awk '
 ' "$FLOW_X_SKILL")
 
 FLOW_X_INVOCATIONS=$(printf '%s\n' "$FLOW_X_COMMANDS" | grep -c '^nohup codex exec ' || true)
-FLOW_X_CLOSED_STDIN=$(printf '%s\n' "$FLOW_X_COMMANDS" | grep -c ' < /dev/null ' || true)
-FLOW_X_EXPECTED_LOGS=$(printf '%s\n' "$FLOW_X_COMMANDS" \
-  | grep -Ec 'codex-(<phase>|p2|p3)-\$\{SCOPE_KEY\}-run\.log' || true)
+FLOW_X_OPEN_STDIN=$(printf '%s\n' "$FLOW_X_COMMANDS" | awk '
+  /^nohup codex exec / && index($0, " < /dev/null ") == 0 { missing++ }
+  END { print missing + 0 }
+')
+FLOW_X_UNSCOPED_LOGS=$(printf '%s\n' "$FLOW_X_COMMANDS" | awk '
+  /^nohup codex exec / && $0 !~ /codex-(<phase>|p2|p3)-\$\{SCOPE_KEY\}-run\.log/ { missing++ }
+  END { print missing + 0 }
+')
 
 echo "=== flow-x detached codex stdin ==="
 assert_eq "detached codex invocation count" "4" "$FLOW_X_INVOCATIONS"
-assert_eq "all detached codex invocations close stdin" "4" "$FLOW_X_CLOSED_STDIN"
-assert_eq "all detached codex invocations keep scoped run logs" "4" "$FLOW_X_EXPECTED_LOGS"
+assert_eq "detached codex invocation missing closed stdin" "0" "$FLOW_X_OPEN_STDIN"
+assert_eq "detached codex invocation missing scoped run log" "0" "$FLOW_X_UNSCOPED_LOGS"
 assert_eq "P8 reuses the documented codex invocation" "1" \
   "$(grep -c 'codex exec.*前節.*invocation.*各 auto-fixable' "$FLOW_X_SKILL" || true)"
 

@@ -48,6 +48,7 @@ require_zsh
 # 進行中の場合にその state をテストが破壊するため。pid で衝突を避ける)
 SK="zshcompat-test-$$"
 TMP_STATE=$(mktemp -d "/tmp/test-zsh-flow-state.XXXXXX")
+TMP_STATE=$(cd "$TMP_STATE" && pwd -P)
 cleanup_state() {
   rm -f "$TMP_STATE"/flow-progress-"$SK".json "$TMP_STATE"/flow-kpi-"$SK".json \
     "$TMP_STATE"/flow-context-"$SK".json "$TMP_STATE"/flow-"$SK".lock \

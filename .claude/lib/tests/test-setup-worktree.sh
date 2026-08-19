@@ -71,6 +71,7 @@ if [ ! -f "$SETUP_WORKTREE" ]; then
 fi
 
 TMP_TEST_DIR=$(mktemp -d "/tmp/test-setup-worktree.XXXXXX")
+TMP_TEST_DIR=$(cd "$TMP_TEST_DIR" && pwd -P)
 trap 'rm -rf "$TMP_TEST_DIR"' EXIT
 
 ORIGIN_REPO="$TMP_TEST_DIR/origin.git"
