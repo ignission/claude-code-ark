@@ -265,6 +265,85 @@ run_pre "echo ok && git commit -n -m x"
 assert_eq "linked actual git commit -n is blocked" "2" "$PRE_STATUS"
 
 echo ""
+echo "=== pre-bash-guard: review flag creation ==="
+
+run_pre "grep -r claude-pre-push-review-done '$TMP_TEST_DIR'"
+assert_eq "grep mention of review flag is allowed" "0" "$PRE_STATUS"
+
+run_pre "cat '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "cat mention of review flag is allowed" "0" "$PRE_STATUS"
+
+run_pre "ls '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "ls mention of review flag is allowed" "0" "$PRE_STATUS"
+
+run_pre "find '$TMP_TEST_DIR' -name claude-pre-push-review-done"
+assert_eq "find mention of review flag is allowed" "0" "$PRE_STATUS"
+
+run_pre "gh issue create --body 'claude-pre-push-review-done is documented'"
+assert_eq "issue body mention of review flag is allowed" "0" "$PRE_STATUS"
+
+run_pre "echo 'claude-pre-push-review-done' > '$TMP_TEST_DIR/note.txt'"
+assert_eq "review flag text redirected to another basename is allowed" "0" "$PRE_STATUS"
+
+run_pre 'touch "$(git rev-parse --git-dir)/claude-pre-push-review-done"'
+assert_eq "canonical git-dir touch is allowed" "0" "$PRE_STATUS"
+
+run_pre 'touch "$(git rev-parse --absolute-git-dir)/claude-pre-push-review-done"'
+assert_eq "canonical absolute-git-dir touch is allowed" "0" "$PRE_STATUS"
+
+run_pre "cd '$REPO_WORKTREE' && touch \"\$(git rev-parse --absolute-git-dir)/claude-pre-push-review-done\""
+assert_eq "canonical touch after cd is allowed" "0" "$PRE_STATUS"
+
+run_pre "touch \"\$(git -C '$REPO_WORKTREE' rev-parse --absolute-git-dir)/claude-pre-push-review-done\""
+assert_eq "canonical git -C touch is allowed" "0" "$PRE_STATUS"
+
+run_pre "touch '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "manual touch of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "printf x > '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "redirection creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "install /dev/null '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "install creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "cp /dev/null '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "cp creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "mv '$TMP_TEST_DIR/note.txt' '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "mv creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "ln '$TMP_TEST_DIR/note.txt' '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "ln creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "printf x | tee '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "tee creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "truncate -s 0 '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "truncate creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "dd if=/dev/null of='$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "dd creation of review flag is blocked" "2" "$PRE_STATUS"
+
+run_pre "touch \"\$(git rev-parse --absolute-git-dir)/claude-pre-push-review-done\" && touch '$TMP_TEST_DIR/claude-pre-push-review-done'"
+assert_eq "canonical touch cannot hide another creation" "2" "$PRE_STATUS"
+
+REVIEW_FLAG="$(git -C "$REPO_MAIN" rev-parse --absolute-git-dir)/claude-pre-push-review-done"
+rm -f "$REVIEW_FLAG"
+run_pre "gh pr create --title test --body test"
+assert_eq "PR create without review flag is blocked" "2" "$PRE_STATUS"
+
+touch "$REVIEW_FLAG"
+run_pre "gh pr create --title test --body test"
+assert_eq "PR create with recent review flag is allowed" "0" "$PRE_STATUS"
+assert_eq "recent review flag is consumed" "0" "$([ -e "$REVIEW_FLAG" ] && echo 1 || echo 0)"
+
+touch "$REVIEW_FLAG"
+touch -t 202001010000 "$REVIEW_FLAG"
+run_pre "gh pr create --title test --body test"
+assert_eq "PR create with stale review flag is blocked" "2" "$PRE_STATUS"
+rm -f "$REVIEW_FLAG"
+
+echo ""
 echo "=== pre-bash-guard: マーカー SHA 照合 ==="
 
 printf '%s\n' "$WORKTREE_HEAD" > "$MARKER"
