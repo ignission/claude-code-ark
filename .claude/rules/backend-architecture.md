@@ -1,6 +1,6 @@
 ---
 paths:
-  - "server/**"
+  - "packages/server/**"
 ---
 
 # バックエンドアーキテクチャ実装パターン
@@ -8,7 +8,7 @@ paths:
 ## ディレクトリ構成
 
 ```
-server/
+packages/server/src/
 ├── index.ts                    # Express + Socket.IO サーバー（ハンドラー定義含む）
 └── lib/
     ├── session-orchestrator.ts # tmux + ttyd 統合管理（Orchestratorパターン）
@@ -38,7 +38,7 @@ server/
 
 - 下位マネージャーのイベントを `setupEventForwarding()` でリッスンし、上位イベントに変換して再emitする
 - サーバー起動時に `restoreExistingSessions()` で前回のtmuxセッションを復元し、対応するttydインスタンスも自動起動する
-- `ManagedSession` 型（`shared/types.ts`）を返すことで、クライアントに統一的な情報を提供する
+- `ManagedSession` 型（`packages/shared/src/types.ts`）を返すことで、クライアントに統一的な情報を提供する
 
 ### ttydのポート管理と重複起動防止
 
@@ -65,13 +65,13 @@ server/
 
 ## Socket.IOイベント設計
 
-`shared/types.ts` の `ServerToClientEvents` / `ClientToServerEvents` インターフェースで型安全に定義する。
+`packages/shared/src/types.ts` の `ServerToClientEvents` / `ClientToServerEvents` インターフェースで型安全に定義する。
 
 - サーバー → クライアント: `namespace:verb` 形式（例: `session:created`, `worktree:list`）
 - クライアント → サーバー: `namespace:verb` 形式（例: `session:start`, `repo:select`）
 - コールバック付きイベント: `session:copy` のように第2引数で `callback` を受け取るパターン
 
-イベントを追加・変更する場合は `shared/types.ts` の型定義を必ず更新すること。型定義とハンドラーの不一致はコンパイルエラーで検出される。
+イベントを追加・変更する場合は `packages/shared/src/types.ts` の型定義を必ず更新すること。型定義とハンドラーの不一致はコンパイルエラーで検出される。
 
 ## エラーハンドリング
 
