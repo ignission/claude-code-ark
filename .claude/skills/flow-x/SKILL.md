@@ -648,7 +648,7 @@ flow_state_update progress '.iter += 1' "$SCOPE_KEY"
 
 PASS 後、`.git/claude-pre-push-review-done` flag を作成 (`pre-bash-guard.sh` の push ゲート用):
 ```bash
-touch "$(git rev-parse --git-dir)/claude-pre-push-review-done"
+touch "$(git -C "$WORKTREE_PATH" rev-parse --absolute-git-dir)/claude-pre-push-review-done"
 flow_state_update progress '.phase = "P6" | .iter = 0' "$SCOPE_KEY"
 ```
 

@@ -31,26 +31,98 @@ fi
 
 
 # --- pre-push-reviewフラグファイル作成のガード ---
-# コマンド文字列にフラグ名が含まれていれば検査
-# スキルの正規パターンのみ許可、それ以外は全てブロック
-if [[ "$COMMAND" =~ claude-pre-push-review-done ]]; then
-  # スキルの厳密なパターン: touch "$(git rev-parse --git-dir)/claude-pre-push-review-done"
-  # 5条件全て満たす場合のみ許可:
-  # (1) touchで始まる (2) git rev-parseを含む (3) コマンド連結(;|&)なし
-  # (4) コメント(#)なし (5) リダイレクト(>)なし (6) 改行なし
-  if [[ "$COMMAND" =~ ^[[:space:]]*touch[[:space:]] ]] && \
-     [[ "$COMMAND" =~ git[[:space:]]+rev-parse[[:space:]]+--git-dir ]] && \
-     ! [[ "$COMMAND" =~ [\;\|\&] ]] && \
-     ! [[ "$COMMAND" =~ \# ]] && \
-     ! [[ "$COMMAND" =~ \> ]] && \
-     ! [[ "$COMMAND" =~ $'\n' ]]; then
-    exit 0
+_review_flag_token_is_target() {
+  case "$1" in
+    claude-pre-push-review-done|*/claude-pre-push-review-done) return 0 ;;
+  esac
+  return 1
+}
+
+_review_flag_is_canonical_touch_segment() {
+  local segment target inner subcommand_index
+
+  segment="$(_push_marker_trim "$1")"
+  _push_marker_tokenize_segment "$segment" || return 1
+  [ "${#PUSH_MARKER_TOKENS[@]}" -eq 2 ] || return 1
+  [ "${PUSH_MARKER_TOKENS[0]}" = "touch" ] || return 1
+  target="${PUSH_MARKER_TOKENS[1]}"
+  case "$target" in
+    \$\(*\)/claude-pre-push-review-done) ;;
+    *) return 1 ;;
+  esac
+
+  inner="${target#\$(}"
+  inner="${inner%)/claude-pre-push-review-done}"
+  _push_marker_tokenize_segment "$inner" || return 1
+  subcommand_index=$(_push_marker_git_subcommand_index) || return 1
+  [ "${PUSH_MARKER_TOKENS[$subcommand_index]}" = "rev-parse" ] || return 1
+  [ $((subcommand_index + 2)) -eq "${#PUSH_MARKER_TOKENS[@]}" ] || return 1
+  case "${PUSH_MARKER_TOKENS[$((subcommand_index + 1))]}" in
+    --git-dir|--absolute-git-dir) return 0 ;;
+  esac
+  return 1
+}
+
+_review_flag_segment_creates_flag() {
+  local segment token command_token redirection_target
+  local command_position=true
+  local i j
+
+  segment="$(_push_marker_trim "$1")"
+  _push_marker_tokenize_segment "$segment" || return 1
+
+  for ((i = 0; i < ${#PUSH_MARKER_TOKENS[@]}; i++)); do
+    token="${PUSH_MARKER_TOKENS[$i]}"
+
+    case "$token" in
+      *\>*)
+        redirection_target="${token#*>}"
+        if [ -z "$redirection_target" ] && [ $((i + 1)) -lt "${#PUSH_MARKER_TOKENS[@]}" ]; then
+          redirection_target="${PUSH_MARKER_TOKENS[$((i + 1))]}"
+        fi
+        _review_flag_token_is_target "$redirection_target" && return 0
+        ;;
+    esac
+
+    if $command_position; then
+      command_token="$token"
+      command_position=false
+      case "$command_token" in
+        touch|install|cp|mv|ln|tee|truncate)
+          j=$((i + 1))
+          while [ "$j" -lt "${#PUSH_MARKER_TOKENS[@]}" ] && [ "${PUSH_MARKER_TOKENS[$j]}" != "|" ]; do
+            _review_flag_token_is_target "${PUSH_MARKER_TOKENS[$j]}" && return 0
+            j=$((j + 1))
+          done
+          ;;
+        dd)
+          j=$((i + 1))
+          while [ "$j" -lt "${#PUSH_MARKER_TOKENS[@]}" ] && [ "${PUSH_MARKER_TOKENS[$j]}" != "|" ]; do
+            case "${PUSH_MARKER_TOKENS[$j]}" in
+              of=*)
+                _review_flag_token_is_target "${PUSH_MARKER_TOKENS[$j]#of=}" && return 0
+                ;;
+            esac
+            j=$((j + 1))
+          done
+          ;;
+      esac
+    fi
+    [ "$token" = "|" ] && command_position=true
+  done
+  return 1
+}
+
+_push_marker_split_shell_command "$COMMAND"
+for REVIEW_FLAG_SEGMENT in "${PUSH_MARKER_SEGMENTS[@]}"; do
+  if _review_flag_segment_creates_flag "$REVIEW_FLAG_SEGMENT" && \
+     ! _review_flag_is_canonical_touch_segment "$REVIEW_FLAG_SEGMENT"; then
+    echo "BLOCKED: pre-push-reviewフラグファイルの手動作成は禁止されています" >&2
+    echo "  WHY: /flow の P5 (push 前 codex ゲート) を経ずに PR 作成ガードをバイパスするのを防止" >&2
+    echo "  FIX: /flow を実行してください。P5 PASS 時にフラグを自動作成します" >&2
+    exit 2
   fi
-  echo "BLOCKED: pre-push-reviewフラグファイルの手動作成は禁止されています" >&2
-  echo "  WHY: /flow の P5 (push 前 codex ゲート) を経ずに PR 作成ガードをバイパスするのを防止" >&2
-  echo "  FIX: /flow を実行してください。P5 PASS 時にフラグを自動作成します" >&2
-  exit 2
-fi
+done
 
 
 # --- 破壊的コマンドガード ---

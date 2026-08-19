@@ -341,7 +341,7 @@ fi
 
 PASS 後、`pre-bash-guard.sh` の `gh pr create` ガード用フラグを作成:
 ```bash
-touch "$(git rev-parse --git-dir)/claude-pre-push-review-done"
+touch "$(git -C "$WORKTREE_PATH" rev-parse --absolute-git-dir)/claude-pre-push-review-done"
 ```
 
 このフラグは `pre-bash-guard.sh` の正規パターン (touch + git rev-parse のみ) に準拠している。
