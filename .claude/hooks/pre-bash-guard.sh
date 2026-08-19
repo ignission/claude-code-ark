@@ -7,6 +7,21 @@ set -eo pipefail
 # stdinからツール入力JSONを読み取り、コマンドを抽出（パース失敗時はスキップ）
 STDIN_INPUT=$(cat)
 COMMAND=$(echo "$STDIN_INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=./push-marker-utils.sh
+source "$SCRIPT_DIR/push-marker-utils.sh"
+
+# --- actual git commit / push の hook bypass だけを拒否する ---
+if push_marker_detect_hook_bypass "$COMMAND"; then
+  if [ "$PUSH_MARKER_BYPASS_FLAG" = "-n" ]; then
+    echo "BLOCKED: -n（--no-verify短縮形）によるgit hookのバイパスは禁止されています" >&2
+  else
+    echo "BLOCKED: --no-verify によるgit hookのバイパスは禁止されています" >&2
+  fi
+  echo "  WHY: pre-bash-guard の品質ゲート、または flow P4/P5 のローカル検証がスキップされ、CI で失敗するコードが送信される" >&2
+  echo "  FIX: 失敗の根本原因を修正してから commit / push してください" >&2
+  exit 2
+fi
 
 # --- git commit / git tag はメッセージ内容を検査しない（誤検出防止） ---
 if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+(commit|tag)[[:space:]] ]]; then
@@ -96,28 +111,6 @@ if [[ "$COMMAND" =~ git[[:space:]]+(.+[[:space:]]+)?push[[:space:]]+.*--force ]]
     echo "BLOCKED: git push --force は危険なコマンドです" >&2
     echo "  WHY: リモートの他の人のコミットを上書きし、チームの作業が失われる" >&2
     echo "  FIX: --force-with-lease を使用（リモートが変更されていない場合のみ上書き）" >&2
-    exit 2
-  fi
-fi
-
-# --no-verify: git hooksのバイパスを禁止（エージェントが品質チェックをスキップするのを防ぐ）
-# git push --no-verify もpre-pushフックをバイパスするためブロック対象
-if [[ "$COMMAND" =~ git[[:space:]]+.+--no-verify ]]; then
-  echo "BLOCKED: --no-verify によるgit hookのバイパスは禁止されています" >&2
-  echo "  WHY: pre-bash-guard の biome check / tsc --noEmit ゲート、または flow P4/P5 のローカル検証がスキップされ、CI で失敗するコードが push される" >&2
-  echo "  FIX: 失敗の根本原因 (型エラー / lint 違反 / テスト失敗) を修正してから push" >&2
-  exit 2
-fi
-
-# -n フラグ: git commit -n は --no-verify の短縮形なのでブロック
-# ただし git push -n はdry-runなので許可
-if [[ "$COMMAND" =~ git[[:space:]]+.+-n([[:space:]]|$) ]]; then
-  if [[ "$COMMAND" =~ git[[:space:]]+push ]] || [[ "$COMMAND" =~ git[[:space:]]+.*push ]]; then
-    : # git push -n はdry-run、許可
-  else
-    echo "BLOCKED: -n（--no-verify短縮形）によるgit hookのバイパスは禁止されています" >&2
-    echo "  WHY: pre-bash-guard の biome check / tsc --noEmit ゲート、または flow P4/P5 のローカル検証がスキップされ、CI で失敗するコードが push される" >&2
-    echo "  FIX: 失敗の根本原因 (型エラー / lint 違反 / テスト失敗) を修正してからコミット" >&2
     exit 2
   fi
 fi
@@ -269,9 +262,6 @@ if $IS_PR_COMMENT; then
   PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
   HOOK_INPUT_CWD=$(echo "$STDIN_INPUT" | jq -r '.cwd // ""' 2>/dev/null) || HOOK_INPUT_CWD=""
   HOOK_CWD=$(pwd -P)
-  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-  # shellcheck source=./push-marker-utils.sh
-  source "$SCRIPT_DIR/push-marker-utils.sh"
   MARKER="$PROJECT_DIR/.claude/push-completed.marker"
   if [ ! -f "$MARKER" ]; then
     echo "BLOCKED: push完了前にCodeRabbit返信はできません" >&2

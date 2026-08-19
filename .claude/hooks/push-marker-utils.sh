@@ -149,12 +149,11 @@ _push_marker_tokenize_segment() {
   return 0
 }
 
-_push_marker_is_git_push_segment() {
-  local segment token
+# tokenized git segment から global option を飛ばし、actual subcommand index を返す。
+_push_marker_git_subcommand_index() {
+  local token
   local i=1
 
-  segment="$(_push_marker_trim "$1")"
-  _push_marker_tokenize_segment "$segment" || return 1
   [ "${#PUSH_MARKER_TOKENS[@]}" -gt 1 ] || return 1
   [ "${PUSH_MARKER_TOKENS[0]}" = "git" ] || return 1
 
@@ -162,6 +161,7 @@ _push_marker_is_git_push_segment() {
     token="${PUSH_MARKER_TOKENS[$i]}"
     case "$token" in
       -C|-c|--git-dir|--work-tree|--exec-path|--namespace|--super-prefix|--config-env)
+        [ $((i + 1)) -lt "${#PUSH_MARKER_TOKENS[@]}" ] || return 1
         i=$((i + 2))
         ;;
       --git-dir=*|--work-tree=*|--exec-path=*|--namespace=*|--super-prefix=*|--config-env=*)
@@ -181,7 +181,91 @@ _push_marker_is_git_push_segment() {
   done
 
   [ "$i" -lt "${#PUSH_MARKER_TOKENS[@]}" ] || return 1
-  [ "${PUSH_MARKER_TOKENS[$i]}" = "push" ]
+  printf '%s' "$i"
+}
+
+_push_marker_is_git_push_segment() {
+  local segment subcommand_index
+
+  segment="$(_push_marker_trim "$1")"
+  _push_marker_tokenize_segment "$segment" || return 1
+  subcommand_index=$(_push_marker_git_subcommand_index) || return 1
+  [ "${PUSH_MARKER_TOKENS[$subcommand_index]}" = "push" ]
+}
+
+_push_marker_commit_short_has_no_verify() {
+  local token="${1#-}"
+  local char
+  local i
+
+  for ((i = 0; i < ${#token}; i++)); do
+    char="${token:i:1}"
+    case "$char" in
+      n) return 0 ;;
+      # 以降は同じ token 内の option value なので、その中の n は flag ではない。
+      m|F|C|c) return 1 ;;
+    esac
+  done
+  return 1
+}
+
+# actual git commit / push の hook bypass flag だけを検出する。
+push_marker_detect_hook_bypass() {
+  local command="$1"
+  local segment subcommand subcommand_index token
+  local i
+
+  PUSH_MARKER_BYPASS_FLAG=""
+  _push_marker_split_shell_command "$command"
+
+  for segment in "${PUSH_MARKER_SEGMENTS[@]}"; do
+    segment="$(_push_marker_trim "$segment")"
+    _push_marker_tokenize_segment "$segment" || continue
+    subcommand_index=$(_push_marker_git_subcommand_index) || continue
+    subcommand="${PUSH_MARKER_TOKENS[$subcommand_index]}"
+
+    case "$subcommand" in
+      commit)
+        i=$((subcommand_index + 1))
+        while [ "$i" -lt "${#PUSH_MARKER_TOKENS[@]}" ]; do
+          token="${PUSH_MARKER_TOKENS[$i]}"
+          [ "$token" = "--" ] && break
+          case "$token" in
+            --no-verify)
+              PUSH_MARKER_BYPASS_FLAG="--no-verify"
+              return 0
+              ;;
+            -m|-F|-C|-c|--message|--file|--reuse-message|--reedit-message|--fixup|--squash|--author|--date|--cleanup|--trailer|--pathspec-from-file)
+              i=$((i + 2))
+              continue
+              ;;
+            --message=*|--file=*|--reuse-message=*|--reedit-message=*|--fixup=*|--squash=*|--author=*|--date=*|--cleanup=*|--trailer=*|--pathspec-from-file=*)
+              ;;
+            -?*)
+              if _push_marker_commit_short_has_no_verify "$token"; then
+                PUSH_MARKER_BYPASS_FLAG="-n"
+                return 0
+              fi
+              ;;
+          esac
+          i=$((i + 1))
+        done
+        ;;
+      push)
+        i=$((subcommand_index + 1))
+        while [ "$i" -lt "${#PUSH_MARKER_TOKENS[@]}" ]; do
+          token="${PUSH_MARKER_TOKENS[$i]}"
+          [ "$token" = "--" ] && break
+          if [ "$token" = "--no-verify" ]; then
+            PUSH_MARKER_BYPASS_FLAG="--no-verify"
+            return 0
+          fi
+          i=$((i + 1))
+        done
+        ;;
+    esac
+  done
+  return 1
 }
 
 push_marker_detect_git_push() {
