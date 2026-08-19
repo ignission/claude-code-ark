@@ -51,19 +51,20 @@ fi
 TMP_TEST_DIR=$(mktemp -d "/tmp/test-push-marker.XXXXXX")
 trap 'rm -rf "$TMP_TEST_DIR"' EXIT
 
-HOOK_PROJECT="$TMP_TEST_DIR/hook-project"
 REPO_MAIN="$TMP_TEST_DIR/main-repo"
 REPO_WORKTREE="$TMP_TEST_DIR/work tree"
 REPO_WITHOUT_HEAD="$TMP_TEST_DIR/repo-without-head"
 NON_GIT_DIR="$TMP_TEST_DIR/non-git-dir"
 TEST_HOME="$TMP_TEST_DIR/home"
 REPO_TILDE="$TEST_HOME/tilde-repo"
+OTHER_REPO="$TMP_TEST_DIR/other-repo"
+HOOK_PROJECT="$REPO_MAIN"
 MARKER="$HOOK_PROJECT/.claude/push-completed.marker"
 POST_STDERR="$TMP_TEST_DIR/post.stderr"
 PRE_STDERR="$TMP_TEST_DIR/pre.stderr"
 
-mkdir -p "$HOOK_PROJECT/.claude/hooks" "$REPO_MAIN" "$REPO_WORKTREE" \
-  "$REPO_WITHOUT_HEAD" "$NON_GIT_DIR" "$REPO_TILDE"
+mkdir -p "$REPO_MAIN" "$REPO_WITHOUT_HEAD" "$NON_GIT_DIR" "$REPO_TILDE" \
+  "$OTHER_REPO" "$HOOK_PROJECT/.claude/hooks"
 
 # post hook のマーカー書き込み後の処理だけを無害な fixture に差し替える。
 printf '%s\n' \
@@ -88,13 +89,18 @@ init_repo() {
 }
 
 init_repo "$REPO_MAIN" "main"
-init_repo "$REPO_WORKTREE" "worktree"
+git -C "$REPO_MAIN" worktree add -q -b worktree-test "$REPO_WORKTREE"
+printf '%s\n' "worktree" > "$REPO_WORKTREE/fixture.txt"
+git -C "$REPO_WORKTREE" add fixture.txt
+git -C "$REPO_WORKTREE" commit -qm "worktree fixture"
 init_repo "$REPO_TILDE" "tilde"
+init_repo "$OTHER_REPO" "other"
 git -C "$REPO_WITHOUT_HEAD" init -q
 
 MAIN_HEAD=$(git -C "$REPO_MAIN" rev-parse HEAD)
 WORKTREE_HEAD=$(git -C "$REPO_WORKTREE" rev-parse HEAD)
 TILDE_HEAD=$(git -C "$REPO_TILDE" rev-parse HEAD)
+OTHER_HEAD=$(git -C "$OTHER_REPO" rev-parse HEAD)
 
 run_post() {
   local command="$1"
@@ -407,6 +413,45 @@ set +e
 HEAD_FAILURE_STATUS=$?
 set -e
 assert_eq "照合先で git rev-parse が失敗したらブロックする" "2" "$HEAD_FAILURE_STATUS"
+
+echo ""
+echo "=== pre-bash-guard: marker identity and age ==="
+
+printf '%s\n%s\n' "$WORKTREE_HEAD" "$REPO_WORKTREE" > "$MARKER"
+touch -t 202001010000 "$MARKER"
+run_pre "cd '$REPO_WORKTREE' && gh pr comment 1 --body ok"
+assert_eq "old matching marker allows PR comment" "0" "$PRE_STATUS"
+
+run_pre "gh issue comment 340 --body ok" "$REPO_MAIN"
+assert_eq "old matching marker allows Issue comment" "0" "$PRE_STATUS"
+
+rm -f "$MARKER"
+run_pre "gh issue comment 340 --body ok" "$REPO_MAIN"
+assert_eq "missing marker blocks comment" "2" "$PRE_STATUS"
+
+printf '\n%s\n' "$REPO_WORKTREE" > "$MARKER"
+run_pre "gh issue comment 340 --body ok" "$REPO_MAIN"
+assert_eq "empty marker SHA blocks comment" "2" "$PRE_STATUS"
+
+printf '%s\n%s\n' "$WORKTREE_HEAD" "$TMP_TEST_DIR/missing-repo" > "$MARKER"
+run_pre "gh issue comment 340 --body ok" "$REPO_MAIN"
+assert_eq "missing marker repository blocks comment" "2" "$PRE_STATUS"
+
+printf '%s\n%s\n' "$MAIN_HEAD" "$REPO_WORKTREE" > "$MARKER"
+touch -t 202001010000 "$MARKER"
+run_pre "gh issue comment 340 --body ok" "$REPO_MAIN"
+assert_eq "mismatched marker HEAD blocks comment regardless of age" "2" "$PRE_STATUS"
+
+printf '%s\n%s\n' "$WORKTREE_HEAD" "$REPO_WORKTREE" > "$MARKER"
+printf '%s\n' "after push" >> "$REPO_WORKTREE/fixture.txt"
+git -C "$REPO_WORKTREE" add fixture.txt
+git -C "$REPO_WORKTREE" commit -qm "after push"
+run_pre "gh issue comment 340 --body ok" "$REPO_MAIN"
+assert_eq "new commit after marker blocks comment" "2" "$PRE_STATUS"
+
+printf '%s\n%s\n' "$OTHER_HEAD" "$OTHER_REPO" > "$MARKER"
+run_pre "gh issue comment 340 --body ok" "$REPO_MAIN"
+assert_eq "self-consistent marker from another repository is blocked" "2" "$PRE_STATUS"
 
 echo ""
 echo "Tests: $TESTS, Passed: $PASSES, Failed: $FAILURES"
