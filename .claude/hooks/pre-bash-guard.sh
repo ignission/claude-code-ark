@@ -330,7 +330,8 @@ elif ! $IS_PR_COMMENT && [[ "$COMMAND" =~ /replies.sh ]]; then
   IS_PR_COMMENT=true
 fi
 if $IS_PR_COMMENT; then
-  # push完了マーカーの確認（60秒以内に作成されたものが必要）
+  # push完了マーカーの repository + HEAD identity を確認する。
+  # 時刻ではなく、現在の project worktree 群に属する同一 commit かで判定する。
   PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
   HOOK_INPUT_CWD=$(echo "$STDIN_INPUT" | jq -r '.cwd // ""' 2>/dev/null) || HOOK_INPUT_CWD=""
   HOOK_CWD=$(pwd -P)
@@ -341,23 +342,14 @@ if $IS_PR_COMMENT; then
     echo "  FIX: 先にgit pushを実行してください" >&2
     exit 2
   fi
-  # GNU stat (-c) と BSD stat (-f) の両方に対応。両方失敗時は明示的にブロック
-  MARKER_MTIME=$(stat -c %Y "$MARKER" 2>/dev/null || stat -f %m "$MARKER" 2>/dev/null) || {
-    echo "BLOCKED: pushマーカーの読み取りに失敗しました" >&2
-    echo "  WHY: マーカーファイルが削除された可能性がある" >&2
-    echo "  FIX: git pushを再実行してください" >&2
-    exit 2
-  }
-  MARKER_AGE=$(( $(date +%s) - MARKER_MTIME ))
-  if [ "$MARKER_AGE" -gt 60 ]; then
-    echo "BLOCKED: pushマーカーが古くなっています（${MARKER_AGE}秒前、有効期限60秒）" >&2
-    echo "  WHY: 古いpushの後に新しい変更がある可能性がある" >&2
-    echo "  FIX: 最新の変更をgit pushしてから返信してください" >&2
-    exit 2
-  fi
-  # push時のcommit SHAと現在のHEADが一致するか検証（バックグラウンドpush対策）
   MARKER_HEAD=$(head -1 "$MARKER" 2>/dev/null) || MARKER_HEAD=""
   MARKER_REPO_DIR=$(sed -n '2p' "$MARKER" 2>/dev/null) || MARKER_REPO_DIR=""
+  if [ -z "$MARKER_HEAD" ]; then
+    echo "BLOCKED: pushマーカーのcommit SHAが空です" >&2
+    echo "  WHY: push完了を示すcommit identityを確認できない" >&2
+    echo "  FIX: 対象リポジトリでgit pushを再実行してください" >&2
+    exit 2
+  fi
   if [ -n "$MARKER_REPO_DIR" ]; then
     TARGET_REPO_DIR="$MARKER_REPO_DIR"
   else
@@ -368,6 +360,19 @@ if $IS_PR_COMMENT; then
     echo "BLOCKED: pushしたリポジトリのHEADを確認できません" >&2
     echo "  WHY: 照合対象のディレクトリが存在しないか、Gitリポジトリではない" >&2
     echo "  FIX: 対象リポジトリでgit pushを再実行してください" >&2
+    exit 2
+  fi
+  if ! TARGET_COMMON_DIR=$(git -C "$TARGET_REPO_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || \
+     ! PROJECT_COMMON_DIR=$(git -C "$PROJECT_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+    echo "BLOCKED: pushしたリポジトリのgit common dirを確認できません" >&2
+    echo "  WHY: marker または現在のprojectが有効なGitリポジトリではない" >&2
+    echo "  FIX: 現在のprojectのworktreeでgit pushを再実行してください" >&2
+    exit 2
+  fi
+  if [ "$TARGET_COMMON_DIR" != "$PROJECT_COMMON_DIR" ]; then
+    echo "BLOCKED: pushマーカーが別のリポジトリを指しています" >&2
+    echo "  WHY: markerのrepositoryが現在のprojectのworktreeツリーに属していない" >&2
+    echo "  FIX: 現在のprojectの対象worktreeでgit pushを再実行してください" >&2
     exit 2
   fi
   if [ "$MARKER_HEAD" != "$CURRENT_HEAD" ]; then
