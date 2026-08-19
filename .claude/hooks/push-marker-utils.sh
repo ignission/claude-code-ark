@@ -22,7 +22,7 @@ _push_marker_split_shell_command() {
   PUSH_MARKER_SEPARATORS=()
 
   for ((i = 0; i < ${#command}; i++)); do
-    char="${command:i:1}"
+    char="${command:$((i)):1}"
 
     if $escaped; then
       current+="$char"
@@ -61,7 +61,7 @@ _push_marker_split_shell_command() {
         current=""
         ;;
       '&'|'|')
-        next="${command:i+1:1}"
+        next="${command:$((i + 1)):1}"
         if [ "$next" = "$char" ]; then
           PUSH_MARKER_SEGMENTS+=("$current")
           PUSH_MARKER_SEPARATORS+=("${char}${char}")
@@ -92,7 +92,7 @@ _push_marker_tokenize_segment() {
   PUSH_MARKER_TOKENS=()
 
   for ((i = 0; i < ${#input}; i++)); do
-    char="${input:i:1}"
+    char="${input:$((i)):1}"
 
     if $escaped; then
       token+="$char"
@@ -199,7 +199,7 @@ _push_marker_commit_short_has_no_verify() {
   local i
 
   for ((i = 0; i < ${#token}; i++)); do
-    char="${token:i:1}"
+    char="${token:$((i)):1}"
     case "$char" in
       n) return 0 ;;
       # 以降は同じ token 内の option value なので、その中の n は flag ではない。
@@ -214,6 +214,10 @@ push_marker_detect_hook_bypass() {
   local command="$1"
   local segment subcommand subcommand_index token
   local i
+
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    setopt localoptions ksharrays
+  fi
 
   PUSH_MARKER_BYPASS_FLAG=""
   _push_marker_split_shell_command "$command"
@@ -272,6 +276,10 @@ push_marker_detect_git_push() {
   local command="$1"
   local segment
 
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    setopt localoptions ksharrays
+  fi
+
   # shellcheck disable=SC2034 # 呼び出し元へ返す出力変数
   PUSH_MARKER_IS_GIT_PUSH=false
   # shellcheck disable=SC2034 # 呼び出し元へ返す出力変数
@@ -319,7 +327,7 @@ _push_marker_parse_cd_argument() {
   fi
 
   for ((i = 0; i < ${#rest}; i++)); do
-    char="${rest:i:1}"
+    char="${rest:$((i)):1}"
 
     if $trailing; then
       [[ "$char" =~ [[:space:]] ]] || return 1
@@ -406,6 +414,49 @@ _push_marker_resolve_cd_dir() {
   (cd "$candidate" && pwd -P)
 }
 
+_push_marker_resolve_git_cwd() {
+  local base_dir="$1"
+  local subcommand_index="$2"
+  local effective_dir="$base_dir"
+  local token cd_arg candidate
+  local i=1
+
+  while [ "$i" -lt "$subcommand_index" ]; do
+    token="${PUSH_MARKER_TOKENS[$i]}"
+    case "$token" in
+      -C)
+        [ $((i + 1)) -lt "$subcommand_index" ] || return 1
+        cd_arg="${PUSH_MARKER_TOKENS[$((i + 1))]}"
+        i=$((i + 2))
+        ;;
+      -C?*)
+        cd_arg="${token#-C}"
+        i=$((i + 1))
+        ;;
+      -c|--git-dir|--work-tree|--exec-path|--namespace|--super-prefix|--config-env)
+        i=$((i + 2))
+        continue
+        ;;
+      *)
+        i=$((i + 1))
+        continue
+        ;;
+    esac
+
+    if [[ "$cd_arg" = /* ]]; then
+      candidate="$cd_arg"
+    else
+      [ -n "$effective_dir" ] || return 1
+      candidate="$effective_dir/$cd_arg"
+    fi
+    [ -d "$candidate" ] || return 1
+    effective_dir=$(cd "$candidate" && pwd -P) || return 1
+  done
+
+  [ -n "$effective_dir" ] || return 1
+  printf '%s' "$effective_dir"
+}
+
 push_marker_resolve_repo_dir() {
   local input_cwd="$1"
   local command="$2"
@@ -413,8 +464,12 @@ push_marker_resolve_repo_dir() {
   local input_dir=""
   local fallback_dir=""
   local current_dir=""
-  local segment resolved_dir
+  local segment resolved_dir subcommand_index
   local found_cd=false
+
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    setopt localoptions ksharrays
+  fi
 
   if [ -d "$input_cwd" ]; then
     input_dir=$(cd "$input_cwd" && pwd -P)
@@ -433,11 +488,10 @@ push_marker_resolve_repo_dir() {
       found_cd=true
     fi
     if _push_marker_is_git_push_segment "$segment"; then
-      if [ -n "$current_dir" ]; then
-        printf '%s' "$current_dir"
-        return 0
-      fi
-      return 1
+      subcommand_index=$(_push_marker_git_subcommand_index) || return 1
+      resolved_dir=$(_push_marker_resolve_git_cwd "$current_dir" "$subcommand_index") || return 1
+      printf '%s' "$resolved_dir"
+      return 0
     fi
   done
 

@@ -181,6 +181,12 @@ assert_eq "mixed global options の git -C は指定先 HEAD を記録する" \
 assert_eq "mixed global options の git -C は指定先 path を記録する" \
   "$REPO_WORKTREE" "$(sed -n '2p' "$MARKER" 2>/dev/null)"
 
+run_post "git -C'$REPO_WORKTREE' push"
+assert_eq "value-joined git -C は指定先 HEAD を記録する" \
+  "$WORKTREE_HEAD" "$(head -1 "$MARKER" 2>/dev/null)"
+assert_eq "value-joined git -C は指定先 path を記録する" \
+  "$REPO_WORKTREE" "$(sed -n '2p' "$MARKER" 2>/dev/null)"
+
 run_post "git -C '../work tree' push" "$REPO_MAIN"
 assert_eq "relative git -C は input cwd 基準の HEAD を記録する" \
   "$WORKTREE_HEAD" "$(head -1 "$MARKER" 2>/dev/null)"
