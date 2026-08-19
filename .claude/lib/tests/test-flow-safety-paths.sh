@@ -183,6 +183,37 @@ git -C "$TMP_REPO" commit -q -m 'unrelated change'
 assert_success "対象外 diff の warning 判定は正常終了する" warn_session_lifecycle
 assert_eq "対象外 diff では warning を追加しない" "1" "$FLOW_STATE_UPDATE_CALLS"
 
+count_literal() {
+  local file="$1"
+  local literal="$2"
+  grep -F -c -- "$literal" "$file" || true
+}
+
+echo ""
+echo "=== flow / flow-x connection audit ==="
+LEGACY_SERVER_LIB="server""/lib"
+for skill_path in \
+  "$PROJECT_DIR/.claude/skills/flow/SKILL.md" \
+  "$PROJECT_DIR/.claude/skills/flow-x/SKILL.md"; do
+  skill_name=$(basename "$(dirname "$skill_path")")
+  assert_eq "$skill_name は共有 safety lib を 1 回 source する" "1" \
+    "$(count_literal "$skill_path" 'source "$CLAUDE_PROJECT_DIR/.claude/lib/flow-safety-paths.sh"')"
+  assert_eq "$skill_name は DB schema 述語を 1 回呼ぶ" "1" \
+    "$(count_literal "$skill_path" "flow_guard_db_schema_changed 'origin/main...HEAD'")"
+  assert_eq "$skill_name は session warning を 1 回呼ぶ" "1" \
+    "$(count_literal "$skill_path" "flow_guard_warn_session_lifecycle_change \"\$SCOPE_KEY\" 'origin/main...HEAD'")"
+  assert_eq "$skill_name の DB branch は halt 指示を維持する" "1" \
+    "$(count_literal "$skill_path" 'halt "DB スキーマ変更検出 (${FLOW_GUARD_DB_SCHEMA_PATHS[*]}、人間レビュー必須)"')"
+  assert_eq "$skill_name の P3 に旧 DB pathspec がない" "0" \
+    "$(count_literal "$skill_path" "'$LEGACY_SERVER_LIB/database.ts'")"
+  assert_eq "$skill_name の P3 に旧 session pathspec がない" "0" \
+    "$(count_literal "$skill_path" "'$LEGACY_SERVER_LIB/session-orchestrator.ts'")"
+  assert_eq "$skill_name の P3 に旧 tmux pathspec がない" "0" \
+    "$(count_literal "$skill_path" "'$LEGACY_SERVER_LIB/tmux-manager.ts'")"
+  assert_eq "$skill_name の P3 に旧 ttyd pathspec がない" "0" \
+    "$(count_literal "$skill_path" "'$LEGACY_SERVER_LIB/ttyd-manager.ts'")"
+done
+
 echo ""
 echo "========================================"
 echo "Tests: $TESTS, Passed: $PASSES, Failed: $FAILURES"

@@ -194,6 +194,7 @@ flow_state_update progress '.gate = "codex-impl"' "$SCOPE_KEY"
 
 ```bash
 source "$CLAUDE_PROJECT_DIR/.claude/lib/state-io.sh"
+source "$CLAUDE_PROJECT_DIR/.claude/lib/flow-safety-paths.sh"
 source "$CLAUDE_PROJECT_DIR/.claude/lib/check-cr-threads.sh"
 source "$CLAUDE_PROJECT_DIR/.claude/lib/cleanup.sh"
 source "$CLAUDE_PROJECT_DIR/.claude/lib/ticket-source.sh"
@@ -443,7 +444,7 @@ cd "$WORKTREE_PATH"
 #### 1-4b. 既存 flow worktree から起動 (`IN_FLOW_WORKTREE=1`)
 ```bash
 # 既に flow worktree 内なので create_worktree は呼ばない。
-# サブディレクトリ (server/, client/ 等) から起動された場合に備えて worktree root に必ず cd する。
+# サブディレクトリ (packages/server/, packages/web/ 等) から起動された場合に備えて worktree root に必ず cd する。
 WORKTREE_PATH="$CURRENT_WORKTREE"
 cd "$WORKTREE_PATH"
 echo "P1: 既存 worktree から起動: $WORKTREE_PATH ($BRANCH)" >&2
@@ -551,8 +552,8 @@ plan は**成果物としてコミットし、作業の PR に含める** (CLAUD
 - codex への指示に必ず明示:
   - **plan (`$PLAN_PATH`) を読んで Task 順に TDD 実装**
   - **TDD (Red → Green → Refactor) 必須**、Red を先に書く
-  - **プロジェクト規約厳守**: `CLAUDE.md`, `.claude/rules/*.md`。サーバ側 (`server/`) の変更は vitest テスト優先 (`server/lib/*.test.ts` パターン)、フロントエンド (`client/`) は新規 vitest 不要 (必要なら e2e)。**Socket.IO イベント追加は `shared/types.ts` + `server/index.ts` + `client/src/hooks/useSocket.ts` の 3 点セットで更新**
-  - **DB スキーマ変更 (`server/lib/database.ts` のテーブル定義変更) は禁止** — 必要なら停止して報告 (人間レビュー必須スコープ)
+  - **プロジェクト規約厳守**: `CLAUDE.md`, `.claude/rules/*.md`。サーバ側 (`packages/server/`) の変更は vitest テスト優先 (`packages/server/src/lib/*.test.ts` パターン)、フロントエンド (`packages/web/`) は新規 vitest 不要 (必要なら e2e)。**Socket.IO イベント追加は `packages/shared/src/types.ts` + `packages/server/src/index.ts` + `packages/web/src/hooks/useSocket.ts` の 3 点セットで更新**
+  - **DB スキーマ変更 (`packages/server/src/lib/database.ts` のテーブル定義変更) は禁止** — 必要なら停止して報告 (人間レビュー必須スコープ)
   - 検証コマンド (`pnpm check` / `pnpm exec vitest run`) を自分で走らせて green を確認してからコミット
   - 小さくコミット、メッセージは日本語で `<内容>` 形式、Co-Authored-By なし
   - ❌ git push / PR 作成はしない (P6 以降で flow-x がコントロール)
@@ -571,21 +572,16 @@ flow_state_update context ".codex_pid = $CODEX_PID" "$SCOPE_KEY"
 > **検証の分担**: sandbox 無効で起動するため codex はテストも自分で走らせられるが、**フル検証は P4 (Claude 実行) で必ず再走する**（codex が `-o` 完了前に異常終了する事例があり、その場合 `pnpm check` が通れば Claude が検証を引き継ぐ。前節 3 参照）。codex には「コンパイル + 可能な範囲のテストまで確認してコミット」を求める。
 
 ### 3-2. DB スキーマ変更検出 (flow と同一)
-ark の SQLite スキーマは `server/lib/database.ts` の `CREATE TABLE` 群で定義される。
+ark の SQLite スキーマは `packages/server/src/lib/database.ts` の `CREATE TABLE` 群で定義される。
 ```bash
-if git diff --name-only origin/main...HEAD -- 'server/lib/database.ts' | grep -q . \
-  && git diff origin/main...HEAD -- 'server/lib/database.ts' | grep -qE '(CREATE TABLE|ALTER TABLE|DROP TABLE|ADD COLUMN|DROP COLUMN)'; then
-  halt "DB スキーマ変更検出 (server/lib/database.ts、人間レビュー必須)"
+if flow_guard_db_schema_changed 'origin/main...HEAD'; then
+  halt "DB スキーマ変更検出 (${FLOW_GUARD_DB_SCHEMA_PATHS[*]}、人間レビュー必須)"
 fi
 ```
 
 ### 3-3. tmux/ttyd セッションライフサイクル変更検出 (flow と同一)
 ```bash
-if git diff --name-only origin/main...HEAD \
-  -- 'server/lib/session-orchestrator.ts' 'server/lib/tmux-manager.ts' 'server/lib/ttyd-manager.ts' \
-  | grep -q .; then
-  flow_state_update progress '.warnings += ["tmux/ttyd セッションライフサイクル変更あり、再起動時の挙動を確認すること"]' "$SCOPE_KEY"
-fi
+flow_guard_warn_session_lifecycle_change "$SCOPE_KEY" 'origin/main...HEAD'
 ```
 
 ### 3-4. Claude による実装レビュー (中間ゲート)
@@ -593,7 +589,7 @@ fi
 P5 (push 前) で本格レビューするが、**P3 完了時点でも Claude が diff をざっと確認**し、明らかな規約違反・plan 逸脱・TDD 不履行 (テストなし実装) があれば codex に差し戻す:
 1. `git diff --stat origin/main...HEAD` で変更範囲を把握、plan のスコープと一致するか
 2. テストが追加されているか (TDD 履行。server 変更なら vitest)
-3. 規約違反の明白なもの (Socket.IO 3 点セット漏れ、shared/types.ts 未更新等)
+3. 規約違反の明白なもの (Socket.IO 3 点セット漏れ、packages/shared/src/types.ts 未更新等)
 4. 問題があれば codex exec で修正依頼、なければ P4 へ
 
 ### 3-5. 遷移
@@ -609,8 +605,8 @@ flow_state_update progress '.phase = "P4"' "$SCOPE_KEY"
 
 | 変更対象 | コマンド (作業ディレクトリ: `$WORKTREE_PATH`) |
 |---|---|
-| `server/`, `client/`, `shared/` の `.ts` / `.tsx` | `pnpm check`  (= `biome check . && tsc --noEmit`) |
-| `server/lib/*.test.ts` 追加・変更時 | `pnpm exec vitest run` |
+| `packages/{server,shared,web,desktop}/` の `.ts` / `.tsx` | `pnpm check`  (= `biome check . && tsc --noEmit`) |
+| `packages/server/src/lib/*.test.ts` 追加・変更時 | `pnpm exec vitest run` |
 | `e2e/*.spec.ts` 追加・変更時 | `pnpm test:e2e` (実機が必要なため、CI で十分なら warn でスキップ可) |
 | `package.json` / `pnpm-lock.yaml` | `pnpm install --frozen-lockfile` で整合性確認 |
 
@@ -833,7 +829,7 @@ ark の本番デプロイは `pnpm install --frozen-lockfile && pnpm build && pk
 
 | 条件 | 動作 |
 |---|---|
-| merge commit が `server/`, `client/`, `shared/`, `package.json` 等を含まない | **no-target finalize** (deploy 不要) |
+| merge commit が `packages/server/`, `packages/web/`, `packages/shared/`, `packages/desktop/`, `package.json`, `packages/server/ecosystem.config.cjs`, `packages/web/vite.config.ts` 等を含まない | **no-target finalize** (deploy 不要) |
 | `pm2 jlist` で `claude-code-ark` が `online` でない | **no-target finalize** (`pnpm dev` 想定、デプロイ不要) |
 | 上記以外 | **deploy 実行 + health 監視** (30 秒 × 5 = 最大 2.5 分) |
 
