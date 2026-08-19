@@ -35,6 +35,53 @@ CLEANUP_LIB="$PROJECT_DIR/.claude/lib/cleanup.sh"
 TMP_TEST_DIR=$(mktemp -d "/tmp/test-state-lock.XXXXXX")
 NO_FLOCK_BIN="$TMP_TEST_DIR/bin-no-flock"
 HOLDER_PID=""
+HOLDER_DIAGNOSTICS="$TMP_TEST_DIR/holder-diagnostics"
+CONTENDER_DIAGNOSTICS="$TMP_TEST_DIR/contender-diagnostics"
+
+print_lock_failure_diagnostics() {
+  local lock_dir="${LOCK_FILE}.d"
+
+  echo "  --- lock contention environment:"
+  echo "  uname -s: $(uname -s 2>&1)"
+  echo "  bash --version: $(/bin/bash --version 2>&1 | sed -n '1p')"
+  echo "  test shell \$\$: $$"
+  echo "  test shell BASHPID: ${BASHPID-<unavailable>}"
+  echo "  holder process pid (\$!): $HOLDER_PID"
+  if kill -0 "$HOLDER_PID" 2>/dev/null; then
+    echo "  holder process kill -0: alive"
+  else
+    echo "  holder process kill -0: dead"
+  fi
+  echo "  --- holder observations:"
+  if [ -s "$HOLDER_DIAGNOSTICS" ]; then
+    sed 's/^/  /' "$HOLDER_DIAGNOSTICS"
+  else
+    echo "  (unavailable)"
+  fi
+  echo "  --- contender observations before acquire:"
+  if [ -s "$CONTENDER_DIAGNOSTICS" ]; then
+    sed 's/^/  /' "$CONTENDER_DIAGNOSTICS"
+  else
+    echo "  (unavailable)"
+  fi
+  echo "  --- zsh pid observations:"
+  "$ZSH_BIN" -c '
+    zmodload zsh/system 2>/dev/null || true
+    print -r -- "zsh \$\$: $$"
+    print -r -- "zsh sysparams[pid]: ${sysparams[pid]-<unavailable>}"
+  ' 2>&1 | sed 's/^/  /'
+  echo "  --- lock directory after contender: $lock_dir"
+  if [ -d "$lock_dir" ]; then
+    ls -la "$lock_dir" 2>&1 | sed 's/^/  /'
+    for lock_entry in "$lock_dir"/*; do
+      [ -f "$lock_entry" ] || continue
+      echo "  file ${lock_entry##*/}:"
+      sed 's/^/    /' "$lock_entry" 2>&1
+    done
+  else
+    echo "  (missing)"
+  fi
+}
 
 cleanup_test() {
   if [ -n "$HOLDER_PID" ] && kill -0 "$HOLDER_PID" 2>/dev/null; then
@@ -103,9 +150,11 @@ env PATH="$NO_FLOCK_BIN" CLAUDE_PROJECT_DIR="$PROJECT_DIR" \
     exec 9>"$2"
     flow_lock_acquire "$2" 9 0 30 auto || exit 1
     [ "$FLOW_LOCK_ACQUIRED_BACKEND" = "mkdir" ] || exit 2
+    printf "holder \$\$: %s\nholder BASHPID: %s\nrecorded owner pid: %s\n" \
+      "$$" "${BASHPID-<unavailable>}" "$FLOW_LOCK_ACQUIRED_PID" > "$4"
     : > "$3"
     sleep 30
-  ' bash "$STATE_IO" "$LOCK_FILE" "$READY_FILE" &
+  ' bash "$STATE_IO" "$LOCK_FILE" "$READY_FILE" "$HOLDER_DIAGNOSTICS" &
 HOLDER_PID=$!
 
 ready_attempts=0
@@ -121,8 +170,17 @@ if [ -f "$READY_FILE" ]; then
     /bin/bash -c '
       source "$1"
       exec 9>"$2"
+      observed_owner=$(cat "$2.d/pid" 2>/dev/null || true)
+      if [ -n "$observed_owner" ] && kill -0 "$observed_owner" 2>/dev/null; then
+        observed_owner_liveness=alive
+      else
+        observed_owner_liveness=dead
+      fi
+      printf "contender \$\$: %s\ncontender BASHPID: %s\nobserved owner pid: %s\nobserved owner kill -0: %s\n" \
+        "$$" "${BASHPID-<unavailable>}" "$observed_owner" \
+        "$observed_owner_liveness" > "$3"
       flow_lock_acquire "$2" 9 0 30 auto
-    ' bash "$STATE_IO" "$LOCK_FILE" >/dev/null 2>&1; then
+    ' bash "$STATE_IO" "$LOCK_FILE" "$CONTENDER_DIAGNOSTICS" >/dev/null 2>&1; then
     contention_result="acquired"
   else
     contention_result="blocked"
@@ -130,6 +188,9 @@ if [ -f "$READY_FILE" ]; then
 fi
 assert_eq "mkdir lock 保持中は別 process の non-blocking 取得が失敗する" \
   "blocked" "$contention_result"
+if [ "$contention_result" != "blocked" ]; then
+  print_lock_failure_diagnostics
+fi
 
 # SIGKILL では release trap を実行できない。directory に残った holder pid が死亡済みと
 # 判定され、次の process が stale lock を奪取できることを検証する。
