@@ -1,6 +1,6 @@
 ---
 paths:
-  - "client/**"
+  - "packages/web/**"
 ---
 
 # フロントエンド開発ルール
@@ -14,10 +14,10 @@ paths:
 
 ## コンポーネント設計
 
-- UIコンポーネントは `client/src/components/` に配置
-- shadcn/uiベースのコンポーネントは `client/src/components/ui/` に配置
-- ページコンポーネントは `client/src/pages/` に配置
-- カスタムフックは `client/src/hooks/` に配置
+- UIコンポーネントは `packages/web/src/components/` に配置
+- shadcn/uiベースのコンポーネントは `packages/web/src/components/ui/` に配置
+- ページコンポーネントは `packages/web/src/pages/` に配置
+- カスタムフックは `packages/web/src/hooks/` に配置
 
 ## モバイル対応
 
@@ -29,8 +29,8 @@ paths:
 ## Socket.IO通信
 
 - 全Socket.IOイベントは `useSocket.ts` に集約
-- イベント型定義は `shared/types.ts` の `ServerToClientEvents` / `ClientToServerEvents` を参照
-- 新しいイベントを追加する場合は `shared/types.ts` の型定義も更新すること
+- イベント型定義は `packages/shared/src/types.ts` の `ServerToClientEvents` / `ClientToServerEvents` を参照
+- 新しいイベントを追加する場合は `packages/shared/src/types.ts` の型定義も更新すること
 
 ## 注意事項
 

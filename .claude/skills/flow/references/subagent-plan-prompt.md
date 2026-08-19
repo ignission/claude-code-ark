@@ -38,10 +38,10 @@
 3. 関連ファイル・既存実装をコードベースから探索する。**必ず以下を確認**:
    - プロジェクト直下の `CLAUDE.md`
    - `.claude/rules/` 配下の関連ルール (backend-architecture / backend-testing / frontend-codegen / backend-migration)
-   - `shared/types.ts` (Socket.IO イベント型・共通型)
-   - `server/index.ts` (Express + Socket.IO ハンドラー)
-   - `server/lib/` の既存マネージャー (session-orchestrator / tmux-manager / ttyd-manager / database 等)
-   - frontend 変更時は `client/src/components/` `client/src/hooks/` の既存パターン
+   - `packages/shared/src/types.ts` (Socket.IO イベント型・共通型)
+   - `packages/server/src/index.ts` (Express + Socket.IO ハンドラー)
+   - `packages/server/src/lib/` の既存マネージャー (session-orchestrator / tmux-manager / ttyd-manager / database 等)
+   - frontend 変更時は `packages/web/src/components/` `packages/web/src/hooks/` の既存パターン
 4. superpowers:writing-plans 規約に従い、以下のヘッダー形式で plan を作成する:
 
    ```markdown
@@ -76,11 +76,11 @@
 
 ### ark 固有制約
 
-- **DB スキーマ変更**: `server/lib/database.ts` の SQLite テーブル定義を変更する場合は plan で明示。マイグレーションは `database.ts` の起動時 `CREATE TABLE IF NOT EXISTS` で対応するのが既存パターン
-- **Socket.IO イベント追加**: 必ず `shared/types.ts` の型と `server/index.ts` のハンドラー、`client/src/hooks/useSocket.ts` の購読を 3 点セットで更新する旨を plan に書く
+- **DB スキーマ変更**: `packages/server/src/lib/database.ts` の SQLite テーブル定義を変更する場合は plan で明示。マイグレーションは `database.ts` の起動時 `CREATE TABLE IF NOT EXISTS` で対応するのが既存パターン
+- **Socket.IO イベント追加**: 必ず `packages/shared/src/types.ts` の型と `packages/server/src/index.ts` のハンドラー、`packages/web/src/hooks/useSocket.ts` の購読を 3 点セットで更新する旨を plan に書く
 - **tmux/ttyd 関連**: セッションライフサイクル (start / stop / restart / restore) を変える場合、`SessionOrchestrator` への影響と再起動時の挙動を plan で言及
 - **モバイル対応**: 新しい UI を追加する場合、`MobileLayout` / `MobileSessionView` への対応有無を plan に記載
-- **テスト**: 既存の vitest テスト (`server/lib/*.test.ts`) と Playwright e2e (`e2e/`) のどちらでカバーするか plan に明示
+- **テスト**: 既存の vitest テスト (`packages/server/src/lib/*.test.ts`) と Playwright e2e (`e2e/`) のどちらでカバーするか plan に明示
 
 ### 制約
 

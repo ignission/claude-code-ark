@@ -234,7 +234,7 @@ brew install cloudflared
 ### 関連ファイル
 
 ```
-server/lib/
+packages/server/src/lib/
 ├── tunnel.ts   # Cloudflare Tunnel管理（Quick / Named）
 ├── auth.ts     # トークン認証（Quick Tunnel用）
 └── qrcode.ts   # QRコード生成
@@ -262,53 +262,36 @@ server/lib/
 
 ```
 claude-code-ark/
-├── client/
-│   └── src/
-│       ├── components/
-│       │   ├── TerminalPane.tsx        # ttyd iframe + 入力バー（PC用）
-│       │   ├── MultiPaneLayout.tsx     # PC向けグリッドレイアウト
-│       │   ├── MobileLayout.tsx        # モバイル用ルートコンポーネント
-│       │   ├── MobileSessionList.tsx   # モバイル用セッション一覧
-│       │   ├── MobileSessionView.tsx   # モバイル用セッション詳細
-│       │   ├── SessionDashboard.tsx    # セッション管理ダッシュボード
-│       │   ├── RepoSelectDialog.tsx    # リポジトリ選択ダイアログ
-│       │   ├── CreateWorktreeDialog.tsx # Worktree作成ダイアログ
-│       │   ├── WorktreeContextMenu.tsx # Worktreeコンテキストメニュー
-│       │   ├── ProfileManagerDialog.tsx # プロファイル管理ダイアログ（Linux限定）
-│       │   ├── RepoProfileMenu.tsx     # リポジトリのプロファイル切替サブメニュー
-│       │   ├── ErrorBoundary.tsx       # エラーバウンダリ
-│       │   └── ui/                     # shadcn/ui コンポーネント群
-│       ├── hooks/
-│       │   ├── useSocket.ts            # Socket.IO通信（全イベント管理）
-│       │   ├── useVisualViewport.ts    # モバイルキーボード対応
-│       │   ├── useComposition.ts       # IME入力対応
-│       │   ├── useMobile.tsx           # モバイル判定
-│       │   └── usePersistFn.ts         # コールバック安定化
-│       └── pages/
-│           ├── Dashboard.tsx           # メインページ
-│           └── NotFound.tsx            # 404ページ
-├── server/
-│   ├── index.ts                        # Expressサーバー + Socket.IOハンドラー
-│   └── lib/
-│       ├── session-orchestrator.ts     # tmux + ttyd 統合管理
-│       ├── tmux-manager.ts             # tmuxセッション管理
-│       ├── ttyd-manager.ts             # ttyd Webターミナル管理
-│       ├── system.ts                   # 実行環境の機能判定（multiProfileSupported等）
-│       ├── database.ts                 # SQLite永続化
-│       ├── git.ts                      # Git worktree操作
-│       ├── tunnel.ts                   # Cloudflare Tunnel管理
-│       ├── auth.ts                     # トークン認証
-│       ├── qrcode.ts                   # QRコード生成
-│       ├── port-scanner.ts             # ポートスキャン
-│       ├── file-manager.ts             # ファイル管理
-│       ├── file-upload-manager.ts      # ファイルアップロード管理
-│       ├── constants.ts                # 定数定義
-│       └── errors.ts                   # エラーユーティリティ
-├── shared/
-│   └── types.ts                        # クライアント/サーバー共通型定義
+├── packages/
+│   ├── server/
+│   │   ├── src/
+│   │   │   ├── cli.ts
+│   │   │   ├── index.ts
+│   │   │   └── lib/
+│   │   │       ├── session-orchestrator.ts
+│   │   │       ├── tmux-manager.ts
+│   │   │       ├── ttyd-manager.ts
+│   │   │       └── database.ts
+│   │   ├── build.mjs
+│   │   └── ecosystem.config.cjs
+│   ├── shared/
+│   │   └── src/
+│   │       ├── types.ts
+│   │       └── file-paths.ts
+│   ├── web/
+│   │   └── src/
+│   │       ├── components/
+│   │       ├── hooks/
+│   │       └── pages/
+│   └── desktop/
+│       ├── src/
+│       │   ├── main.ts
+│       │   └── preload.ts
+│       └── electron-builder.yml
 ├── data/
-│   └── sessions.db                     # SQLiteデータベース（自動生成）
-└── package.json
+│   └── sessions.db
+├── package.json
+└── pnpm-workspace.yaml
 ```
 
 ---

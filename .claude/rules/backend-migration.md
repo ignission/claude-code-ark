@@ -1,6 +1,6 @@
 ---
 paths:
-  - "server/lib/database.ts"
+  - "packages/server/src/lib/database.ts"
   - "data/**"
 ---
 
@@ -9,7 +9,7 @@ paths:
 ## SQLite (better-sqlite3)
 
 - データベースファイル: `data/sessions.db`（自動生成、gitignore対象）
-- スキーマ定義: `server/lib/database.ts` 内で CREATE TABLE IF NOT EXISTS で管理
+- スキーマ定義: `packages/server/src/lib/database.ts` 内で CREATE TABLE IF NOT EXISTS で管理
 - マイグレーションツールは使用しない（スキーマ変更はコード内で直接実行）
 
 ## スキーマ変更時の注意

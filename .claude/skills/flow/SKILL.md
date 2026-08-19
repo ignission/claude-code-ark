@@ -58,6 +58,7 @@ argument-hint: [#<issue> | <slug>] [--resume | --from PHASE | --dry-run | --plan
 
 ```bash
 source "$CLAUDE_PROJECT_DIR/.claude/lib/state-io.sh"
+source "$CLAUDE_PROJECT_DIR/.claude/lib/flow-safety-paths.sh"
 source "$CLAUDE_PROJECT_DIR/.claude/lib/codex-gate.sh"
 source "$CLAUDE_PROJECT_DIR/.claude/lib/check-cr-threads.sh"
 source "$CLAUDE_PROJECT_DIR/.claude/lib/cleanup.sh"
@@ -270,28 +271,28 @@ flow_state_update progress '.phase = "P3"' "$SCOPE_KEY"
 - `Agent` ツール (subagent_type: `general-purpose` or `Explore`) を必要に応じて spawn
 - subagent への指示文に必ず以下を明示:
   - **TDD (Red → Green → Refactor) 必須**
-  - サーバ側 (`server/`) の変更は vitest テストを優先 (`server/lib/*.test.ts` パターン)
-  - フロントエンド (`client/`) の変更は新規 vitest テストの追加は不要、必要なら e2e (Playwright) を追加
-  - 共通型 (`shared/types.ts`) と Socket.IO ハンドラー (`server/index.ts`) は同時に更新する
+  - サーバ側 (`packages/server/`) の変更は vitest テストを優先 (`packages/server/src/lib/*.test.ts` パターン)
+  - フロントエンド (`packages/web/`) の変更は新規 vitest テストの追加は不要、必要なら e2e (Playwright) を追加
+  - 共通型 (`packages/shared/src/types.ts`) と Socket.IO ハンドラー (`packages/server/src/index.ts`) は同時に更新する
 
 ### 3-2. DB スキーマ変更検出
-ark の SQLite スキーマは `server/lib/database.ts` の `CREATE TABLE` 群で定義される。
+ark の SQLite スキーマは `packages/server/src/lib/database.ts` の `CREATE TABLE` 群で定義される。
 スキーマ変更 (テーブル追加・カラム追加・rename・削除) は人間レビュー必須。
 ```bash
-if git diff --name-only origin/main...HEAD -- 'server/lib/database.ts' | grep -q . \
-  && git diff origin/main...HEAD -- 'server/lib/database.ts' | grep -qE '(CREATE TABLE|ALTER TABLE|DROP TABLE|ADD COLUMN|DROP COLUMN)'; then
-  halt "DB スキーマ変更検出 (server/lib/database.ts、人間レビュー必須)"
-fi
+flow_guard_db_schema_changed 'origin/main...HEAD'
+case $? in
+  0) halt "DB スキーマ変更検出 (${FLOW_GUARD_DB_SCHEMA_PATHS[*]}、人間レビュー必須)" ;;
+  2) halt "DB スキーマ変更の判定に失敗しました (git diff が失敗)。origin/main の存在と diff range を確認すること" ;;
+esac
 ```
 
 ### 3-3. tmux/ttyd セッションライフサイクル変更検出
 セッション周りは安全装置の塊。SessionOrchestrator / TmuxManager / TtydManager のいずれかが変わったら warn:
 ```bash
-if git diff --name-only origin/main...HEAD \
-  -- 'server/lib/session-orchestrator.ts' 'server/lib/tmux-manager.ts' 'server/lib/ttyd-manager.ts' \
-  | grep -q .; then
-  flow_state_update progress '.warnings += ["tmux/ttyd セッションライフサイクル変更あり、再起動時の挙動を確認すること"]' "$SCOPE_KEY"
-fi
+flow_guard_warn_session_lifecycle_change "$SCOPE_KEY" 'origin/main...HEAD'
+case $? in
+  2) printf '%s\n' 'warning: セッションライフサイクル変更を判定不能 (state に warning 記録済み)' >&2 ;;
+esac
 ```
 
 ### 3-4. 遷移
@@ -307,8 +308,8 @@ flow_state_update progress '.phase = "P4"' "$SCOPE_KEY"
 
 | 変更対象 | コマンド (作業ディレクトリ: `$WORKTREE_PATH`) |
 |---|---|
-| `server/`, `client/`, `shared/` の `.ts` / `.tsx` | `pnpm check`  (= `biome check . && tsc --noEmit`) |
-| `server/lib/*.test.ts` 追加・変更時 | `pnpm exec vitest run` |
+| `packages/{server,shared,web,desktop}/` の `.ts` / `.tsx` | `pnpm check`  (= `biome check . && tsc --noEmit`) |
+| `packages/server/src/lib/*.test.ts` 追加・変更時 | `pnpm exec vitest run` |
 | `e2e/*.spec.ts` 追加・変更時 | `pnpm test:e2e` (実機が必要なため、CI で十分なら warn でスキップ可) |
 | `package.json` / `pnpm-lock.yaml` | `pnpm install --frozen-lockfile` で整合性確認 |
 
@@ -523,7 +524,7 @@ P12 では以下の判定で動作を分ける:
 
 | 条件 | 動作 |
 |---|---|
-| merge commit が `server/`, `client/`, `shared/`, `package.json`, `ecosystem.config.cjs`, `vite.config.ts` 等を含まない | **no-target finalize** (deploy 不要) |
+| merge commit が `packages/server/`, `packages/web/`, `packages/shared/`, `packages/desktop/`, `package.json`, `packages/server/ecosystem.config.cjs`, `packages/web/vite.config.ts` 等を含まない | **no-target finalize** (deploy 不要) |
 | `pm2 jlist` で `claude-code-ark` が `online` でない | **no-target finalize** (`pnpm dev` 想定、デプロイ不要) |
 | 上記以外 | **deploy 実行 + health 監視** (30 秒 × 5 = 最大 2.5 分) |
 

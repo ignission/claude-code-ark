@@ -1,7 +1,7 @@
 ---
 paths:
-  - "server/**"
-  - "shared/**"
+  - "packages/server/**"
+  - "packages/shared/**"
 ---
 
 # バックエンドテストルール
@@ -16,7 +16,7 @@ paths:
 
 ### ユニットテスト
 
-- `server/lib/` 配下の各マネージャーを個別にテスト
+- `packages/server/src/lib/` 配下の各マネージャーを個別にテスト
 - 外部プロセス（tmux, ttyd, cloudflared）の呼び出しはモック化
 - `child_process.execSync` / `spawnSync` を `vi.mock` でスタブ
 
