@@ -11,6 +11,7 @@ loop_has_control() {
 }
 
 loop_resolve_repo() {
+  local resolved top
   [ -n "${1:-}" ] || { loop_error "unsafe repo path"; return 1; }
   loop_has_control "$1" && { loop_error "unsafe repo path"; return 1; }
   [ "${1#/}" != "$1" ] || { loop_error "unsafe repo path"; return 1; }
@@ -23,7 +24,7 @@ loop_resolve_repo() {
 }
 
 loop_sha256() {
-  value=${1-}
+  local value=${1-}
   if command -v sha256sum >/dev/null 2>&1; then
     printf '%s' "$value" | sha256sum | awk '{print $1}'
   elif command -v shasum >/dev/null 2>&1; then
@@ -37,6 +38,7 @@ loop_sha256() {
 }
 
 loop_stat() {
+  local stat_value mode
   stat_value=$(stat -c '%u %a' "$1" 2>/dev/null) \
     || stat_value=$(stat -f '%u %Lp' "$1" 2>/dev/null) \
     || { loop_error "stat failed"; return 1; }
@@ -50,7 +52,8 @@ loop_stat() {
 }
 
 loop_validate_xdg_dir() {
-  target=${1:-}
+  local target=${1:-}
+  local values
   [ -n "$target" ] && [ ! -L "$target" ] && [ -d "$target" ] \
     || { loop_error "unsafe XDG directory"; return 1; }
   values=$(loop_stat "$target") || { loop_error "unsafe XDG directory"; return 1; }
@@ -59,7 +62,8 @@ loop_validate_xdg_dir() {
 }
 
 loop_validate_xdg_file() {
-  target=${1:-}
+  local target=${1:-}
+  local values
   [ -n "$target" ] && [ ! -L "$target" ] && [ -f "$target" ] \
     || { loop_error "unsafe XDG file"; return 1; }
   values=$(loop_stat "$target") || { loop_error "unsafe XDG file"; return 1; }
@@ -68,9 +72,10 @@ loop_validate_xdg_file() {
 }
 
 loop_validate_repo_path() {
-  target=${1:-}
-  expected=${2:-file}
-  presence=${3:-optional}
+  local target=${1:-}
+  local expected=${2:-file}
+  local presence=${3:-optional}
+  local values mode group
   if [ ! -e "$target" ] && [ ! -L "$target" ]; then
     [ "$presence" = optional ] && return 0
     loop_error "unsafe repo path"
@@ -92,7 +97,8 @@ loop_validate_repo_path() {
 }
 
 loop_secure_dir() {
-  target=$1
+  local target=$1
+  local old_umask create_status
   if [ ! -e "$target" ] && [ ! -L "$target" ]; then
     old_umask=$(umask)
     umask 077
@@ -105,8 +111,9 @@ loop_secure_dir() {
 }
 
 loop_runtime_resolve() {
-  repo_arg=${1:-}
-  session_id=${2:-}
+  local repo_arg=${1:-}
+  local session_id=${2:-}
+  local config_home data_home cache_home managed
   case "$session_id" in ''|*[!0-9a-f]*) loop_error "invalid session id"; return 1 ;; esac
   [ "${#session_id}" -eq 32 ] || { loop_error "invalid session id"; return 1; }
 

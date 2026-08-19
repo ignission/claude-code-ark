@@ -4,6 +4,7 @@ LOOP_CONFIG_LIB_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 LOOP_SOURCE_ROOT=$(cd "$LOOP_CONFIG_LIB_DIR/../.." && pwd -P)
 
 loop_config_ensure() {
+  local new old_umask
   [ -n "${LOOP_CONFIG_FILE:-}" ] && [ -n "${LOOP_CONFIG_DIR:-}" ] \
     || { loop_error "config path unavailable"; return 1; }
   loop_validate_xdg_dir "$LOOP_CONFIG_DIR" || return 1
@@ -31,13 +32,14 @@ loop_config_ensure() {
 }
 
 loop_trim_spaces() {
-  trimmed=$1
+  local trimmed=$1
   while [ "${trimmed# }" != "$trimmed" ]; do trimmed=${trimmed# }; done
   while [ "${trimmed% }" != "$trimmed" ]; do trimmed=${trimmed% }; done
   printf '%s\n' "$trimmed"
 }
 
 loop_config_read_recite_interval() {
+  local table seen interval raw content key value
   loop_validate_xdg_file "${LOOP_CONFIG_FILE:-}" || return 1
   if LC_ALL=C tr -d '\r\n' <"$LOOP_CONFIG_FILE" | LC_ALL=C grep '[[:cntrl:]]' >/dev/null 2>&1; then
     loop_error "invalid recite_interval"
@@ -80,8 +82,9 @@ loop_config_read_recite_interval() {
 }
 
 loop_session_id_generate() {
-  previous=${1:-}
-  tries=0
+  local previous=${1:-}
+  local tries=0
+  local candidate
   while [ "$tries" -lt 5 ]; do
     candidate=$(od -An -tx1 -N16 /dev/urandom 2>/dev/null | tr -d ' \n') || candidate=
     tries=$((tries + 1))
@@ -95,4 +98,3 @@ loop_session_id_generate() {
   done
   loop_error "session id unavailable"
 }
-
