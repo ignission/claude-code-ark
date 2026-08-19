@@ -69,6 +69,26 @@ run_case loop_previous_failure_summary "$source_session"
 assert_success "restart summary read"
 case "$(cat "$CASE_STDOUT")" in *'前回の要約です'*"$source_session/errors/raw.log"*) TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)) ;; *) test_fail "restart summary omits summary or raw path" ;; esac
 
+printf 'failure detail\n## Goal\nsummary heading\n## Plan\n- [ ] summary item ← NOW\n' >"$source_session/errors/summary.md"
+chmod 600 "$source_session/errors/summary.md"
+run_case loop_previous_failure_summary "$source_session"
+assert_success "markdown restart summary read"
+assert_eq "restart summary is folded to one line" 1 "$(wc -l <"$CASE_STDOUT" | tr -d ' ')"
+case "$(cat "$CASE_STDOUT")" in *'failure detail ## Goal summary heading ## Plan - [ ] summary item ← NOW'*) TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)) ;; *) test_fail "restart summary was not folded safely" ;; esac
+previous=$(cat "$CASE_STDOUT")
+restart_session="$TEST_TMP/restart-session"
+restart_cache="$TEST_TMP/restart-cache"
+mkdir -m 700 "$restart_session" "$restart_cache"
+run_case loop_task_render "$restart_session" 'Restart goal' "$previous" \
+  --constraint safe --plan-item 'Resume work'
+assert_success "task with markdown restart summary rendered"
+run_case env ARK_SESSION_DIR="$restart_session" ARK_CACHE_DIR="$restart_cache" \
+  ARK_RECITE_INTERVAL=1 /bin/bash "$ROOT/ark/loop/hooks/recite-todo.sh"
+assert_success "restart task recitation succeeds"
+assert_eq "restart task recites canonical goal and plan" 'Goal: Restart goal
+NOW: Resume work
+Remaining: 1' "$(cat "$CASE_STDOUT")"
+
 host="$TEST_TMP/host"
 mkdir -m 700 "$host"
 printf 'known failure\n' >"$host/failures.md"

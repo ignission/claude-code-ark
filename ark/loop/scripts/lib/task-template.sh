@@ -105,6 +105,8 @@ loop_previous_failure_summary() {
   local prefix
   loop_validate_xdg_file "$summary" || return 1
   prefix=$(loop_utf8_file_prefix "$summary") || { loop_error "invalid failure summary"; return 1; }
+  prefix=$(printf '%s' "$prefix" | LC_ALL=C tr '\001-\037\177' ' ') \
+    || { loop_error "invalid failure summary"; return 1; }
   printf '%s; raw log: %s\n' "$prefix" "$raw"
 }
 

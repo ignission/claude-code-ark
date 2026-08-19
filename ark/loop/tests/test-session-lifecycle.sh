@@ -83,6 +83,26 @@ run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$sid"
 assert_success "missing settings teardown succeeds"
 [ ! -e "$repo/.claude/settings.local.json" ] || test_fail "teardown retained originally missing settings"
 
+setup_repo owner-write-failure
+repo_key=$(loop_sha256 "$repo")
+state="$XDG_DATA_HOME/ark/loop/repos/$repo_key"
+fake_bin="$TEST_TMP/owner-write-failure-bin"
+mkdir -m 700 "$fake_bin"
+real_mv=$(command -v mv)
+printf '%s\n' '#!/bin/sh' \
+  'case "$2" in */owner) exit 1 ;; esac' \
+  'exec "$ARK_TEST_REAL_MV" "$@"' >"$fake_bin/mv"
+chmod 700 "$fake_bin/mv"
+run_case env PATH="$fake_bin:$PATH" ARK_TEST_REAL_MV="$real_mv" /bin/bash "$INIT" \
+  --repo "$repo" --owner-pid "$$" --session-id 99999999999999999999999999999999 \
+  --goal goal --constraint safe --plan-item one
+assert_success "owner publish failure disables without process failure"
+assert_eq "owner publish failure is explicit" $'enabled\t0' "$(sed -n '1p' "$CASE_STDOUT")"
+owner_new_exists=0; [ ! -e "$state/owner.new" ] || owner_new_exists=1
+owner_exists=0; [ ! -e "$state/owner" ] || owner_exists=1
+assert_eq "owner publish failure removes owner.new" 0 "$owner_new_exists"
+assert_eq "owner publish failure does not publish owner" 0 "$owner_exists"
+
 setup_repo concurrent
 out1="$TEST_TMP/init-1.out"; out2="$TEST_TMP/init-2.out"
 /bin/bash "$INIT" --repo "$repo" --owner-pid "$$" --session-id aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \

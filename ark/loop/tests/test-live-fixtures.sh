@@ -12,6 +12,11 @@ trap 'rm -rf "$TEST_TMP"' EXIT HUP INT TERM
 . "$ROOT/ark/loop/adapters/claude-code/settings.sh"
 . "$ROOT/ark/loop/tests/test-helper.sh"
 
+command -v claude >/dev/null 2>&1 \
+  || { printf 'live fixture requires claude command\n' >&2; exit 1; }
+command -v strings >/dev/null 2>&1 \
+  || { printf 'live fixture requires strings command\n' >&2; exit 1; }
+
 now_ns() { date +%s%N; }
 probe=$(now_ns)
 case "$probe" in *[!0-9]*) printf 'live fixture requires nanosecond date support\n' >&2; exit 1 ;; esac
@@ -95,10 +100,13 @@ git -C "$repo" config user.email fixture@example.invalid
 mkdir -m 755 "$repo/.claude"
 printf '.claude/settings.local.json\n.claude/settings.local.json.ark-loop-tmp\n' >"$repo/.gitignore"
 git -C "$repo" add .gitignore && git -C "$repo" commit -qm init
-claude_settings_inject "$repo" "$state"
+claude_settings_inject "$repo" "$state" \
+  || { printf 'permission settings injection failed\n' >&2; exit 1; }
 settings="$repo/.claude/settings.local.json"
-jq -e '.permissions.deny == ["TodoWrite","TaskCreate","TaskUpdate"]' "$settings" >/dev/null
-jq -e '["TaskGet","TaskList","TaskOutput","TaskStop","Task","Agent"] - .permissions.deny | length == 6' "$settings" >/dev/null
+jq -e '.permissions.deny == ["TodoWrite","TaskCreate","TaskUpdate"]' "$settings" >/dev/null \
+  || { printf 'permission deny set mismatch\n' >&2; exit 1; }
+jq -e '["TaskGet","TaskList","TaskOutput","TaskStop","Task","Agent"] - .permissions.deny | length == 6' "$settings" >/dev/null \
+  || { printf 'read/background/subagent permission unexpectedly denied\n' >&2; exit 1; }
 
 printf '%s\n' '=== issue-333 live fixture ==='
 printf 'claude_version=%s\n' "$version"

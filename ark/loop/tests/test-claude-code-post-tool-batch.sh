@@ -52,10 +52,11 @@ run_case run_wrapper "$TEST_TMP/command"
 assert_success "command-shaped data accepted without execution"
 [ ! -e "$marker" ] || test_fail "wrapper executed fixture data"
 
+before=$(step_count "$cache")
 dd if=/dev/zero bs=1024 count=1025 2>/dev/null | tr '\0' x >"$TEST_TMP/huge"
 run_case run_wrapper "$TEST_TMP/huge"
 assert_success "oversized stdin does not block"
-assert_eq "oversized stdin has no side effect" 3 "$(step_count "$cache")"
+assert_eq "oversized stdin has no side effect" "$before" "$(step_count "$cache")"
 
 if grep -E 'tool_calls|tool_uses|\.batch' "$WRAPPER" >/dev/null 2>&1; then test_fail "wrapper branches on batch internals"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
 

@@ -45,10 +45,10 @@ owner_write() {
   printf '%s\t%s\n' "$session" "$pid" >"$new"
   write_status=$?
   umask "$old_umask"
-  [ "$write_status" -eq 0 ] || return 1
-  chmod 600 "$new" || return 1
-  loop_validate_xdg_file "$new" || return 1
-  command mv "$new" "$owner" || return 1
+  [ "$write_status" -eq 0 ] || { command rm -f "$new" 2>/dev/null || true; return 1; }
+  chmod 600 "$new" || { command rm -f "$new" 2>/dev/null || true; return 1; }
+  loop_validate_xdg_file "$new" || { command rm -f "$new" 2>/dev/null || true; return 1; }
+  command mv "$new" "$owner" || { command rm -f "$new" 2>/dev/null || true; return 1; }
 }
 
 repo=

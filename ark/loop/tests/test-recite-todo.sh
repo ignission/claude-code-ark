@@ -140,7 +140,17 @@ assert_eq "recitation has three lines" 3 "$(wc -l <"$CASE_STDOUT" | tr -d ' ')"
 
 if grep -F '.claude/lib/state-io.sh' "$HOOK" >/dev/null 2>&1; then test_fail "hook sources state-io.sh"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
 if grep -E '\$(ARK_SESSION_DIR|ARK_CACHE_DIR|ARK_RECITE_INTERVAL)([^:{A-Za-z0-9_]|$)' "$HOOK" >/dev/null 2>&1; then test_fail "hook has unsafe env expansion"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
-if grep -E 'step_count\.lock|/bin/sleep|flock' "$HOOK" >/dev/null 2>&1; then test_fail "hook retains lock or wait path"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
+if grep -E 'step_count\.lock|loop_step_(lock|discard_lock)|/bin/sleep|flock' "$HOOK" >/dev/null 2>&1; then test_fail "hook retains lock or wait path"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
+
+# A token mismatch could strand the legacy lock implementation for 30 seconds.
+# The lock-free counter must ignore that residue and count the very next batch.
+seed_step_count "$cache" 0
+mkdir -m 700 "$cache/step_count.lock"
+printf '%s\n' "$$" >"$cache/step_count.lock/pid"
+printf '%s\n' mismatched-token >"$cache/step_count.lock/token"
+run_case env ARK_SESSION_DIR="$session" ARK_CACHE_DIR="$cache" ARK_RECITE_INTERVAL=10 /bin/bash "$HOOK"
+assert_success "legacy token mismatch residue does not block"
+assert_eq "batch after token mismatch is counted" 1 "$(step_count "$cache")"
 
 seed_step_count "$cache" 9
 run_case env ARK_SESSION_DIR="$session" ARK_CACHE_DIR="$cache" ARK_RECITE_INTERVAL=10 /bin/zsh "$HOOK"
@@ -156,7 +166,9 @@ run_case env BASH_ENV="$bash_env" NOUNSET_OUT="$nounset_out" ARK_SESSION_DIR="$s
 assert_success "BASH_ENV EXIT trap preserves exit zero"
 case "$(cat "$nounset_out")" in *u*) test_fail "hook leaked nounset to EXIT trap" ;; *) TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)) ;; esac
 
-# One batch remains one increment under contention; delivery attempts at 10 and 20 are not lost.
+# One batch remains one increment under contention; delivery attempts at 10 and
+# 20 are not lost. This exact assertion is not timing-dependent: the lock-free
+# path uses atomic mkdir/rename without waits, stale reclaim, or retry deadlines.
 write_task '# Task
 
 ## Goal

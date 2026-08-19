@@ -9,6 +9,9 @@ trap 'rm -rf "$TEST_TMP"' EXIT HUP INT TERM
 . "$ROOT/ark/loop/scripts/lib/runtime.sh"
 . "$ROOT/ark/loop/adapters/claude-code/settings.sh"
 
+assert_eq "mode extraction rejects empty output in both paths" 2 \
+  "$(grep -c '\[ -n "\$mode" \] || return 1' "$ROOT/ark/loop/adapters/claude-code/settings.sh" | tr -d ' ')"
+
 setup_repo() {
   name=$1
   repo="$TEST_TMP/$name"

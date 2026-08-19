@@ -42,6 +42,12 @@ run_case loop_config_read_recite_interval
 assert_success "valid interval parsed"
 assert_eq "interval from loop table" 3 "$(cat "$CASE_STDOUT")"
 
+printf '\t[loop]\t\n\trecite_interval\t=\t7\t# tab-indented\n' >"$LOOP_CONFIG_FILE"
+chmod 600 "$LOOP_CONFIG_FILE"
+run_case loop_config_read_recite_interval
+assert_success "tab-indented config parsed"
+assert_eq "tab-trimmed interval" 7 "$(cat "$CASE_STDOUT")"
+
 for bad in 'recite_interval = 0' 'recite_interval = -1' 'recite_interval = nope' \
   'recite_interval = 1.5' 'recite_interval = 2\nrecite_interval = 3'; do
   printf '[loop]\n%b\n' "$bad" >"$LOOP_CONFIG_FILE"

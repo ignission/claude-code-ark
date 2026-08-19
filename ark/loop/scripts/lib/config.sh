@@ -33,15 +33,19 @@ loop_config_ensure() {
 
 loop_trim_spaces() {
   local trimmed=$1
-  while [ "${trimmed# }" != "$trimmed" ]; do trimmed=${trimmed# }; done
-  while [ "${trimmed% }" != "$trimmed" ]; do trimmed=${trimmed% }; done
+  while :; do
+    case "$trimmed" in ' '*) trimmed=${trimmed# } ;; $'\t'*) trimmed=${trimmed#$'\t'} ;; *) break ;; esac
+  done
+  while :; do
+    case "$trimmed" in *' ') trimmed=${trimmed% } ;; *$'\t') trimmed=${trimmed%$'\t'} ;; *) break ;; esac
+  done
   printf '%s\n' "$trimmed"
 }
 
 loop_config_read_recite_interval() {
   local table seen interval raw content key value
   loop_validate_xdg_file "${LOOP_CONFIG_FILE:-}" || return 1
-  if LC_ALL=C tr -d '\r\n' <"$LOOP_CONFIG_FILE" | LC_ALL=C grep '[[:cntrl:]]' >/dev/null 2>&1; then
+  if LC_ALL=C tr -d '\r\n\t' <"$LOOP_CONFIG_FILE" | LC_ALL=C grep '[[:cntrl:]]' >/dev/null 2>&1; then
     loop_error "invalid recite_interval"
     return 1
   fi

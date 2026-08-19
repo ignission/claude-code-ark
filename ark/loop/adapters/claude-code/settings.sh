@@ -229,6 +229,7 @@ claude_settings_inject() {
     claude_settings_validate_schema "$settings" || return 1
     settings_existed=true
     mode=$(loop_stat "$settings" | awk '{print $2}') || return 1
+    [ -n "$mode" ] || return 1
     claude_content_read "$settings" || return 1
   else
     settings_existed=false
@@ -315,6 +316,7 @@ claude_settings_restore() {
   loop_validate_repo_path "$settings" file required || return 1
   claude_settings_validate_schema "$settings" || return 1
   mode=$(loop_stat "$settings" | awk '{print $2}') || return 1
+  [ -n "$mode" ] || return 1
   claude_content_read "$settings" || return 1
   entries=$(jq -c '.entries | reverse[]' "$manifest") || return 1
   while IFS= read -r entry || [ -n "$entry" ]; do
