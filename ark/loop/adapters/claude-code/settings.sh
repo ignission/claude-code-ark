@@ -171,6 +171,47 @@ claude_manifest_add_json() {
     '. + [{path:$path,value:$value,abandoned:false}]') || return 1
 }
 
+claude_settings_exact_ignore() {
+  local repo=$1
+  local path=$2
+  local output metadata source pattern
+  output=$(git -C "$repo" check-ignore -v --no-index -- "$path" 2>/dev/null) \
+    || { claude_settings_error "required exact ignore missing"; return 1; }
+  metadata=${output%%$'\t'*}
+  source=${metadata%%:*}
+  pattern=${metadata##*:}
+  [ "$source" = .gitignore ] && [ "$pattern" = "$path" ] \
+    || { claude_settings_error "required exact ignore missing"; return 1; }
+  git -C "$repo" ls-files --error-unmatch -- .gitignore >/dev/null 2>&1 \
+    || { claude_settings_error "required exact ignore missing"; return 1; }
+}
+
+claude_settings_preflight() {
+  local repo=$1
+  local state=$2
+  local canonical settings tmp manifest manifest_new path
+  canonical=$(loop_resolve_repo "$repo") || return 1
+  [ "$canonical" = "$repo" ] || { claude_settings_error "unsafe repo path"; return 1; }
+  loop_validate_repo_path "$repo/.claude" directory required || return 1
+  loop_validate_xdg_dir "$state" || return 1
+  settings="$repo/.claude/settings.local.json"
+  tmp="$repo/.claude/settings.local.json.ark-loop-tmp"
+  manifest="$state/settings-ownership.json"
+  manifest_new="$state/settings-ownership.json.new"
+  loop_validate_repo_path "$settings" file optional || return 1
+  loop_validate_repo_path "$tmp" file optional || return 1
+  if [ -e "$manifest" ] || [ -L "$manifest" ]; then loop_validate_xdg_file "$manifest" || return 1; fi
+  if [ -e "$manifest_new" ] || [ -L "$manifest_new" ]; then loop_validate_xdg_file "$manifest_new" || return 1; fi
+  for path in .claude/settings.local.json .claude/settings.local.json.ark-loop-tmp; do
+    if git -C "$repo" ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+      claude_settings_error "tracked settings path"
+      return 1
+    fi
+    claude_settings_exact_ignore "$repo" "$path" || return 1
+  done
+  if [ -f "$tmp" ]; then command rm -f "$tmp" || return 1; fi
+}
+
 claude_settings_inject() {
   local repo=${1:-}
   local state=${2:-}
@@ -180,8 +221,7 @@ claude_settings_inject() {
   tmp="$repo/.claude/settings.local.json.ark-loop-tmp"
   manifest="$state/settings-ownership.json"
   manifest_new="$state/settings-ownership.json.new"
-  loop_validate_repo_path "$repo/.claude" directory required || return 1
-  loop_validate_xdg_dir "$state" || return 1
+  claude_settings_preflight "$repo" "$state" || return 1
   if [ -e "$manifest" ] || [ -L "$manifest" ]; then loop_validate_xdg_file "$manifest" || return 1; return 0; fi
 
   if [ -e "$settings" ] || [ -L "$settings" ]; then
@@ -266,6 +306,7 @@ claude_settings_restore() {
   settings="$repo/.claude/settings.local.json"
   tmp="$repo/.claude/settings.local.json.ark-loop-tmp"
   manifest="$state/settings-ownership.json"
+  claude_settings_preflight "$repo" "$state" || return 1
   [ -e "$manifest" ] || return 0
   loop_validate_xdg_file "$manifest" || return 1
   jq -e '.schema_version == 1 and (.settings_existed|type)=="boolean" and (.entries|type)=="array"' "$manifest" >/dev/null 2>&1 || return 1

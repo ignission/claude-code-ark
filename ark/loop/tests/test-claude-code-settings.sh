@@ -141,4 +141,51 @@ jq -e '.hooks.PostToolBatch[0].hooks[0].command | endswith("changed-by-user.sh")
 jq -e 'any(.entries[]; .path == "hooks/PostToolBatch" and .abandoned == true)' "$state/settings-ownership.json" >/dev/null 2>&1 \
   || test_fail "changed owner hook was not abandoned"
 
+assert_preflight_rejects() {
+  description=$1
+  cp "$repo/.gitignore" "$TEST_TMP/preflight-ignore"
+  if [ -f "$repo/.claude/settings.local.json" ]; then cp "$repo/.claude/settings.local.json" "$TEST_TMP/preflight-settings"; had_settings=1; else had_settings=0; fi
+  before_status=$(git -C "$repo" status --short --ignored)
+  run_case claude_settings_inject "$repo" "$state"
+  if [ "$CASE_STATUS" -eq 0 ]; then test_fail "$description was accepted"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
+  cmp -s "$repo/.gitignore" "$TEST_TMP/preflight-ignore" || test_fail "$description changed .gitignore"
+  if [ "$had_settings" -eq 1 ]; then cmp -s "$repo/.claude/settings.local.json" "$TEST_TMP/preflight-settings" || test_fail "$description changed settings"; fi
+  assert_eq "$description preserves status" "$before_status" "$(git -C "$repo" status --short --ignored)"
+  [ ! -e "$state/settings-ownership.json" ] || test_fail "$description created ownership"
+}
+
+setup_repo unsafe-claude
+chmod 775 "$repo/.claude"
+assert_preflight_rejects "group-writable .claude"
+
+setup_repo settings-symlink
+ln -s "$ROOT/package.json" "$repo/.claude/settings.local.json"
+assert_preflight_rejects "settings symlink"
+
+setup_repo unsafe-tmp
+printf '{}\n' >"$repo/.claude/settings.local.json"; chmod 600 "$repo/.claude/settings.local.json"
+ln -s "$ROOT/package.json" "$repo/.claude/settings.local.json.ark-loop-tmp"
+assert_preflight_rejects "tmp symlink"
+
+setup_repo ignore-missing
+printf '.claude/settings.local.json\n' >"$repo/.gitignore"
+git -C "$repo" add .gitignore && git -C "$repo" commit -qm missing
+assert_preflight_rejects "missing exact tmp ignore"
+
+setup_repo ignore-wildcard
+printf '.claude/settings.local.json*\n' >"$repo/.gitignore"
+git -C "$repo" add .gitignore && git -C "$repo" commit -qm wildcard
+assert_preflight_rejects "wildcard-only ignore"
+
+setup_repo tracked-settings
+printf '{}\n' >"$repo/.claude/settings.local.json"; chmod 600 "$repo/.claude/settings.local.json"
+git -C "$repo" add -f .claude/settings.local.json && git -C "$repo" commit -qm tracked
+assert_preflight_rejects "tracked settings"
+
+setup_repo safe-orphan
+printf '{}\n' >"$repo/.claude/settings.local.json.ark-loop-tmp"; chmod 600 "$repo/.claude/settings.local.json.ark-loop-tmp"
+run_case claude_settings_inject "$repo" "$state"
+assert_success "safe orphan tmp is recovered"
+[ ! -e "$repo/.claude/settings.local.json.ark-loop-tmp" ] || test_fail "safe orphan tmp remained"
+
 finish_tests claude-settings
