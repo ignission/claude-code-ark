@@ -61,7 +61,7 @@ assert_eq "detached codex invocation count" "4" "$FLOW_X_INVOCATIONS"
 assert_eq "all detached codex invocations close stdin" "4" "$FLOW_X_CLOSED_STDIN"
 assert_eq "all detached codex invocations keep scoped run logs" "4" "$FLOW_X_EXPECTED_LOGS"
 assert_eq "P8 reuses the documented codex invocation" "1" \
-  "$(grep -c 'codex exec.*前節参照.*各 auto-fixable' "$FLOW_X_SKILL" || true)"
+  "$(grep -c 'codex exec.*前節.*invocation.*各 auto-fixable' "$FLOW_X_SKILL" || true)"
 
 GATE_EXEC_COUNT=$(grep -c '_run_codex exec ' "$CODEX_GATE" || true)
 GATE_DIFF_STDIN=$(awk '

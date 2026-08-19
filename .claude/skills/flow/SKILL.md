@@ -26,7 +26,7 @@ argument-hint: [#<issue> | <slug>] [--resume | --from PHASE | --dry-run | --plan
 
 - main worktree からのみ起動可 (追加 worktree からの起動は P1 で物理拒否)
 - 全 phase で `.claude/lib/state-io.sh` の 3 ファイル分離 state を使う (progress / kpi / context)
-- AI ゲート (P2 / P5 / P8 / P9) は `.claude/lib/codex-gate.sh` を使い、fingerprint で重複抑止
+- AI ゲート (P2 / P5 / P8 / P9) は `.claude/lib/codex-gate.sh` を使い、fingerprint で重複抑止。diff / plan を明示的に stdin で渡すため `/dev/null` へ差し替えない
 - worktree は `<repo-parent>/ark-<sanitized-branch>/` のみ (Ark/Conductor 規約)
 - ブランチ名:
   - Issue 紐付けあり: `feature/issue-<N>/<slug>` (例: `feature/issue-123/html-viewer-tab`)

@@ -79,7 +79,7 @@ issue 形式の判定とブランチ規約の共通化は `.claude/lib/ticket-so
 
 ## codex 実行の運用知見（実運用で検証済み）
 
-flow-x を実運用で回して判明した、codex exec の安定運用に必須の知見。**全 codex 起動はこの形に従う**。
+flow-x を実運用で回して判明した、codex exec の安定運用に必須の知見。**全 codex 起動はこの形に従う**。detached 起動は prompt を argv で渡し、stdin は `/dev/null` で閉じる。
 
 ### 1. 起動は `--dangerously-bypass-approvals-and-sandbox` を使う（`--full-auto` は使わない）
 
@@ -89,7 +89,7 @@ flow-x を実運用で回して判明した、codex exec の安定運用に必�
 # 完了判定・ログが混線するのを防ぐ)。起動 pid は必ず記録する (停止は pid 指名で行う)
 nohup codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
   -o "$FLOW_STATE_DIR/codex-<phase>-${SCOPE_KEY}-last.txt" -c 'model_reasoning_effort="high"' \
-  "$(cat "$FLOW_STATE_DIR/flowx-<phase>-prompt-${SCOPE_KEY}.md")" > "$FLOW_STATE_DIR/codex-<phase>-${SCOPE_KEY}-run.log" 2>&1 &
+  "$(cat "$FLOW_STATE_DIR/flowx-<phase>-prompt-${SCOPE_KEY}.md")" < /dev/null > "$FLOW_STATE_DIR/codex-<phase>-${SCOPE_KEY}-run.log" 2>&1 &
 CODEX_PID=$!
 flow_state_update context ".codex_pid = $CODEX_PID" "$SCOPE_KEY"
 ```
@@ -166,7 +166,7 @@ codex が log 成長後に**プロセス消失・`-o` 未生成**で終わる事
 ```bash
 nohup codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
   -o "$FLOW_STATE_DIR/codex-p3-${SCOPE_KEY}-last.txt" -c 'model_reasoning_effort="high"' \
-  "$(cat "$FLOW_STATE_DIR/flowx-impl-prompt-${SCOPE_KEY}.md")" > "$FLOW_STATE_DIR/codex-p3-${SCOPE_KEY}-run.log" 2>&1 &
+  "$(cat "$FLOW_STATE_DIR/flowx-impl-prompt-${SCOPE_KEY}.md")" < /dev/null > "$FLOW_STATE_DIR/codex-p3-${SCOPE_KEY}-run.log" 2>&1 &
 CODEX_PID=$!
 flow_state_update context ".codex_pid = $CODEX_PID" "$SCOPE_KEY"
 flow_state_update progress '.gate = "codex-impl"' "$SCOPE_KEY"
@@ -476,7 +476,7 @@ PLAN_PATH="$WORKTREE_PATH/docs/superpowers/plans/<TODAY>-<WORK_ID>.md"
 # プロンプトはファイルに書いて渡す (shell escape 事故回避)
 nohup codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
   -o "$FLOW_STATE_DIR/codex-p2-${SCOPE_KEY}-last.txt" -c 'model_reasoning_effort="high"' \
-  "$(cat "$FLOW_STATE_DIR/flowx-plan-prompt-${SCOPE_KEY}.md")" > "$FLOW_STATE_DIR/codex-p2-${SCOPE_KEY}-run.log" 2>&1 &
+  "$(cat "$FLOW_STATE_DIR/flowx-plan-prompt-${SCOPE_KEY}.md")" < /dev/null > "$FLOW_STATE_DIR/codex-p2-${SCOPE_KEY}-run.log" 2>&1 &
 CODEX_PID=$!
 flow_state_update context ".codex_pid = $CODEX_PID" "$SCOPE_KEY"
 # Monitor で log 成長 + last.txt 生成を監視 (前節参照)。完了後:
@@ -561,7 +561,7 @@ plan は**成果物としてコミットし、作業の PR に含める** (CLAUD
 # 実装プロンプトをファイルに書いて渡す
 nohup codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
   -o "$FLOW_STATE_DIR/codex-p3-${SCOPE_KEY}-last.txt" -c 'model_reasoning_effort="high"' \
-  "$(cat "$FLOW_STATE_DIR/flowx-impl-prompt-${SCOPE_KEY}.md")" > "$FLOW_STATE_DIR/codex-p3-${SCOPE_KEY}-run.log" 2>&1 &
+  "$(cat "$FLOW_STATE_DIR/flowx-impl-prompt-${SCOPE_KEY}.md")" < /dev/null > "$FLOW_STATE_DIR/codex-p3-${SCOPE_KEY}-run.log" 2>&1 &
 CODEX_PID=$!
 flow_state_update context ".codex_pid = $CODEX_PID" "$SCOPE_KEY"
 # 対話モード: Monitor で log 成長 + 完了ファイルを監視 (前節「codex 実行の運用知見」)
@@ -730,7 +730,7 @@ ITER=$(flow_state_read progress '.iter' "$SCOPE_KEY")
 
 **役割逆転**: codex が CodeRabbit 指摘を修正し、Claude がレビューする。
 
-1. **codex exec** (`--dangerously-bypass-approvals-and-sandbox`、前節参照) で各 auto-fixable 指摘を修正させる。指示に「プロジェクト規約厳守、CodeRabbit の指摘でも規約に反するものは適用せず報告」を明示
+1. **codex exec** (`--dangerously-bypass-approvals-and-sandbox`、前節と同じ invocation を参照。detached 起動は prompt を argv で渡し、stdin は `/dev/null` で閉じる) で各 auto-fixable 指摘を修正させる。指示に「プロジェクト規約厳守、CodeRabbit の指摘でも規約に反するものは適用せず報告」を明示
 2. codex がコミット (`CodeRabbit指摘対応: <要約>`)
 3. **Claude が修正 diff をレビュー** (P5 と同じ要領、規約準拠を最優先で判定)。`[P0]`/`[P1]` あれば codex に再修正、なければ通過
 4. push (フォアグラウンド) → 各スレッドへ返信 (修正コミット → push → 返信の順を厳守)
