@@ -74,11 +74,17 @@ TMP_TEST_DIR=$(mktemp -d "/tmp/test-setup-worktree.XXXXXX")
 trap 'rm -rf "$TMP_TEST_DIR"' EXIT
 
 ORIGIN_REPO="$TMP_TEST_DIR/origin.git"
-MAIN_REPO="$TMP_TEST_DIR/main"
+REAL_ROOT="$TMP_TEST_DIR/real"
+LINK_ROOT="$TMP_TEST_DIR/link"
+MAIN_REPO="$REAL_ROOT/main"
+LINK_MAIN_REPO="$LINK_ROOT/main"
 FAKE_BIN="$TMP_TEST_DIR/bin"
 MISE_LOG="$TMP_TEST_DIR/mise.log"
+GIT_WORKTREE_ADD_LOG="$TMP_TEST_DIR/git-worktree-add.log"
 
 git init -q --bare "$ORIGIN_REPO"
+mkdir -p "$REAL_ROOT"
+ln -s "$REAL_ROOT" "$LINK_ROOT"
 git init -q "$MAIN_REPO"
 git -C "$MAIN_REPO" config user.email harness-test@example.invalid
 git -C "$MAIN_REPO" config user.name 'harness test'
@@ -91,17 +97,29 @@ git -C "$MAIN_REPO" push -q -u origin main
 git -C "$ORIGIN_REPO" symbolic-ref HEAD refs/heads/main
 
 mkdir -p "$FAKE_BIN"
+REAL_GIT_BIN=$(command -v git)
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'printf "%s\n" "$*" >> "$MISE_TEST_LOG"' \
   'exit "${MISE_TEST_STATUS:-0}"' \
   > "$FAKE_BIN/mise"
 chmod 700 "$FAKE_BIN/mise"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'if [ "${1:-}" = "-C" ] && [ "${3:-}" = "worktree" ] && [ "${4:-}" = "add" ]; then' \
+  '  printf "%s\n" "$*" >> "$GIT_WORKTREE_ADD_TEST_LOG"' \
+  'fi' \
+  'exec "$REAL_GIT_TEST_BIN" "$@"' \
+  > "$FAKE_BIN/git"
+chmod 700 "$FAKE_BIN/git"
 : > "$MISE_LOG"
+: > "$GIT_WORKTREE_ADD_LOG"
 
 export CLAUDE_PROJECT_DIR="$PROJECT_DIR"
 export MISE_TEST_LOG="$MISE_LOG"
 export MISE_TEST_STATUS=0
+export REAL_GIT_TEST_BIN="$REAL_GIT_BIN"
+export GIT_WORKTREE_ADD_TEST_LOG="$GIT_WORKTREE_ADD_LOG"
 export PATH="$FAKE_BIN:$PATH"
 # shellcheck disable=SC1090
 source "$SETUP_WORKTREE"
@@ -112,6 +130,14 @@ mise_call_count() {
     return
   fi
   wc -l < "$MISE_LOG" | tr -d ' '
+}
+
+git_worktree_add_count() {
+  if [ ! -s "$GIT_WORKTREE_ADD_LOG" ]; then
+    printf '0\n'
+    return
+  fi
+  wc -l < "$GIT_WORKTREE_ADD_LOG" | tr -d ' '
 }
 
 worktree_path() {
@@ -165,12 +191,25 @@ assert_success "mise command 不在でも作成できる" \
 assert_eq "mise command 不在は trust しない" "3" "$(mise_call_count)"
 
 echo ""
+echo "=== symlink path reuse ==="
+SYMLINK_BRANCH='fix/issue-340/symlink-path-reuse'
+: > "$GIT_WORKTREE_ADD_LOG"
+assert_success "symlink 経由で worktree を作成できる" \
+  create_worktree "$LINK_MAIN_REPO" "$SYMLINK_BRANCH"
+assert_success "symlink 経由でも existing worktree を再利用できる" \
+  create_worktree "$LINK_MAIN_REPO" "$SYMLINK_BRANCH"
+assert_eq "symlink 経由の reuse では worktree add を再実行しない" \
+  "1" "$(git_worktree_add_count)"
+assert_eq "symlink 経由の reuse でも trust check を 1 回行う" \
+  "5" "$(mise_call_count)"
+
+echo ""
 echo "=== trust failure is fail-fast ==="
 export MISE_TEST_STATUS=23
 FAIL_BRANCH='fix/issue-340/mise-failure'
 assert_failure_reason "mise trust failure で create_worktree が失敗する" \
   "mise trust に失敗" create_worktree "$MAIN_REPO" "$FAIL_BRANCH"
-assert_eq "failure case でも trust は 1 回だけ" "4" "$(mise_call_count)"
+assert_eq "failure case でも trust は 1 回だけ" "6" "$(mise_call_count)"
 
 echo ""
 echo "========================================"
