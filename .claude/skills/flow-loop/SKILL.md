@@ -66,7 +66,7 @@ slug 運用 (Issue 紐付けなし) の run は pick クエリに乗らないた
 
 ### `loop-exclude` ラベル (キュー衛生)
 
-loop で処理**できない / させたくない** Issue には GitHub ラベル `loop-exclude` を付けて pick 対象から外す (人間が付け外しする運用マーカー)。対象の典型: 外部提供・デザイン確定待ち / DB スキーマ変更 (`server/lib/database.ts`) が主作業の Issue (flow-x P3 で必ず halt するため loop に乗せる意味がない) / `.claude/` 配下のハーネス自改修 (ループ稼働中の自己書き換えは挙動が予測しにくい。人間同席の単発 `/flow-x` か直接作業を推奨)。
+loop で処理**できない / させたくない** Issue には GitHub ラベル `loop-exclude` を付けて pick 対象から外す (人間が付け外しする運用マーカー)。対象の典型: 外部提供・デザイン確定待ち / DB スキーマ変更 (`packages/server/src/lib/database.ts`) が主作業の Issue (flow-x P3 で必ず halt するため loop に乗せる意味がない) / `.claude/` 配下のハーネス自改修 (ループ稼働中の自己書き換えは挙動が予測しにくい。人間同席の単発 `/flow-x` か直接作業を推奨)。
 
 - **目的はブレーカー保護**: 処理不能 Issue を pick → 即 halt が続くと連続 halt 3 でブレーカーが落ち、処理可能な Issue まで止まる。ラベルで入口を絞る方が安い。
 - ブロッカーが解消したら**ラベルを外すだけ**で次 tick から自然に候補へ戻る。state もフラグも不要。

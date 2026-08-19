@@ -26,6 +26,6 @@ sqlite3 data/sessions.db "SELECT * FROM sessions;"
 
 ## 注意事項
 
-- サーバー起動時にテーブルが自動作成される（`server/lib/database.ts` 参照）
+- サーバー起動時にテーブルが自動作成される（`packages/server/src/lib/database.ts` 参照）
 - SQLiteファイルはgitignoreに含まれている
 - サーバー稼働中にSQLite CLIで書き込むとロック競合の可能性がある
