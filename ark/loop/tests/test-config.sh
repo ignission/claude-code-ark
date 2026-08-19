@@ -66,4 +66,11 @@ chmod 644 "$LOOP_CONFIG_FILE"
 run_case loop_config_read_recite_interval
 assert_failure_reason "config mode rejected" "unsafe XDG file"
 
+rm -f "$LOOP_CONFIG_FILE"
+session_id=$(loop_session_id_generate)
+assert_eq "generated session id length" 32 "${#session_id}"
+case "$session_id" in *[!0-9a-f]*) test_fail "generated session id is not lowercase hex" ;; *) TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)) ;; esac
+restart_id=$(loop_session_id_generate "$session_id")
+if [ "$restart_id" = "$session_id" ]; then test_fail "restart reused the prior session id"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
+
 finish_tests config

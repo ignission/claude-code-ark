@@ -11,15 +11,14 @@ loop_has_control() {
 }
 
 loop_resolve_repo() {
-  [ -n "${1:-}" ] || loop_error "unsafe repo path"
-  loop_has_control "$1" && loop_error "unsafe repo path"
-  [ "${1#/}" != "$1" ] || loop_error "unsafe repo path"
-  [ ! -L "$1" ] || loop_error "unsafe repo path"
-  [ -d "$1" ] || loop_error "unsafe repo path"
-  resolved=$(cd "$1" 2>/dev/null && pwd -P) || loop_error "unsafe repo path"
-  top=$(git -C "$resolved" rev-parse --show-toplevel 2>/dev/null) || loop_error "not a git repository"
-  top=$(cd "$top" 2>/dev/null && pwd -P) || loop_error "unsafe repo path"
-  [ "$resolved" = "$top" ] || loop_error "repo must be its git toplevel"
+  [ -n "${1:-}" ] || { loop_error "unsafe repo path"; return 1; }
+  loop_has_control "$1" && { loop_error "unsafe repo path"; return 1; }
+  [ "${1#/}" != "$1" ] || { loop_error "unsafe repo path"; return 1; }
+  [ ! -L "$1" ] && [ -d "$1" ] || { loop_error "unsafe repo path"; return 1; }
+  resolved=$(cd "$1" 2>/dev/null && pwd -P) || { loop_error "unsafe repo path"; return 1; }
+  top=$(git -C "$resolved" rev-parse --show-toplevel 2>/dev/null) || { loop_error "not a git repository"; return 1; }
+  top=$(cd "$top" 2>/dev/null && pwd -P) || { loop_error "unsafe repo path"; return 1; }
+  [ "$resolved" = "$top" ] || { loop_error "repo must be its git toplevel"; return 1; }
   printf '%s\n' "$resolved"
 }
 
@@ -33,17 +32,18 @@ loop_sha256() {
     printf '%s' "$value" | openssl dgst -sha256 | sed 's/^.*= //'
   else
     loop_error "sha256 command unavailable"
+    return 1
   fi
 }
 
 loop_stat() {
   stat_value=$(stat -c '%u %a' "$1" 2>/dev/null) \
     || stat_value=$(stat -f '%u %Lp' "$1" 2>/dev/null) \
-    || loop_error "stat failed"
+    || { loop_error "stat failed"; return 1; }
   set -- $stat_value
-  [ "$#" -eq 2 ] || loop_error "stat failed"
-  case "$1" in ''|*[!0-9]*) loop_error "stat failed" ;; esac
-  case "$2" in ''|*[!0-7]*) loop_error "stat failed" ;; esac
+  [ "$#" -eq 2 ] || { loop_error "stat failed"; return 1; }
+  case "$1" in ''|*[!0-9]*) loop_error "stat failed"; return 1 ;; esac
+  case "$2" in ''|*[!0-7]*) loop_error "stat failed"; return 1 ;; esac
   mode=$2
   while [ "${mode#0}" != "$mode" ]; do mode=${mode#0}; done
   printf '%s %s\n' "$1" "${mode:-0}"
@@ -52,19 +52,19 @@ loop_stat() {
 loop_validate_xdg_dir() {
   target=${1:-}
   [ -n "$target" ] && [ ! -L "$target" ] && [ -d "$target" ] \
-    || loop_error "unsafe XDG directory"
-  values=$(loop_stat "$target") || loop_error "unsafe XDG directory"
+    || { loop_error "unsafe XDG directory"; return 1; }
+  values=$(loop_stat "$target") || { loop_error "unsafe XDG directory"; return 1; }
   set -- $values
-  [ "$1" = "$(id -u)" ] && [ "$2" = 700 ] || loop_error "unsafe XDG directory"
+  [ "$1" = "$(id -u)" ] && [ "$2" = 700 ] || { loop_error "unsafe XDG directory"; return 1; }
 }
 
 loop_validate_xdg_file() {
   target=${1:-}
   [ -n "$target" ] && [ ! -L "$target" ] && [ -f "$target" ] \
-    || loop_error "unsafe XDG file"
-  values=$(loop_stat "$target") || loop_error "unsafe XDG file"
+    || { loop_error "unsafe XDG file"; return 1; }
+  values=$(loop_stat "$target") || { loop_error "unsafe XDG file"; return 1; }
   set -- $values
-  [ "$1" = "$(id -u)" ] && [ "$2" = 600 ] || loop_error "unsafe XDG file"
+  [ "$1" = "$(id -u)" ] && [ "$2" = 600 ] || { loop_error "unsafe XDG file"; return 1; }
 }
 
 loop_validate_repo_path() {
@@ -74,20 +74,21 @@ loop_validate_repo_path() {
   if [ ! -e "$target" ] && [ ! -L "$target" ]; then
     [ "$presence" = optional ] && return 0
     loop_error "unsafe repo path"
+    return 1
   fi
-  [ ! -L "$target" ] || loop_error "unsafe repo path"
+  [ ! -L "$target" ] || { loop_error "unsafe repo path"; return 1; }
   case "$expected" in
-    directory) [ -d "$target" ] || loop_error "unsafe repo path" ;;
-    file) [ -f "$target" ] || loop_error "unsafe repo path" ;;
-    *) loop_error "unsafe repo path" ;;
+    directory) [ -d "$target" ] || { loop_error "unsafe repo path"; return 1; } ;;
+    file) [ -f "$target" ] || { loop_error "unsafe repo path"; return 1; } ;;
+    *) loop_error "unsafe repo path"; return 1 ;;
   esac
-  values=$(loop_stat "$target") || loop_error "unsafe repo path"
+  values=$(loop_stat "$target") || { loop_error "unsafe repo path"; return 1; }
   set -- $values
-  [ "$1" = "$(id -u)" ] || loop_error "unsafe repo path"
+  [ "$1" = "$(id -u)" ] || { loop_error "unsafe repo path"; return 1; }
   mode=$2
   while [ "${#mode}" -lt 3 ]; do mode="0$mode"; done
   group=${mode#${mode%??}}
-  case "$group" in *[2367]*) loop_error "unsafe repo path" ;; esac
+  case "$group" in *[2367]*) loop_error "unsafe repo path"; return 1 ;; esac
 }
 
 loop_secure_dir() {
@@ -98,7 +99,7 @@ loop_secure_dir() {
     mkdir -p "$target"
     create_status=$?
     umask "$old_umask"
-    [ "$create_status" -eq 0 ] || loop_error "cannot create XDG directory"
+    [ "$create_status" -eq 0 ] || { loop_error "cannot create XDG directory"; return 1; }
   fi
   loop_validate_xdg_dir "$target"
 }
@@ -106,19 +107,19 @@ loop_secure_dir() {
 loop_runtime_resolve() {
   repo_arg=${1:-}
   session_id=${2:-}
-  case "$session_id" in ''|*[!0-9a-f]*) loop_error "invalid session id" ;; esac
-  [ "${#session_id}" -eq 32 ] || loop_error "invalid session id"
+  case "$session_id" in ''|*[!0-9a-f]*) loop_error "invalid session id"; return 1 ;; esac
+  [ "${#session_id}" -eq 32 ] || { loop_error "invalid session id"; return 1; }
 
   ARK_REPO=$(loop_resolve_repo "$repo_arg") || return 1
   ARK_REPO_KEY=$(loop_sha256 "$ARK_REPO") || return 1
-  case "$ARK_REPO_KEY" in *[!0-9a-f]*) loop_error "invalid repo key" ;; esac
-  [ "${#ARK_REPO_KEY}" -eq 64 ] || loop_error "invalid repo key"
+  case "$ARK_REPO_KEY" in *[!0-9a-f]*) loop_error "invalid repo key"; return 1 ;; esac
+  [ "${#ARK_REPO_KEY}" -eq 64 ] || { loop_error "invalid repo key"; return 1; }
 
   config_home=${XDG_CONFIG_HOME:-${HOME:-}/.config}
   data_home=${XDG_DATA_HOME:-${HOME:-}/.local/share}
   cache_home=${XDG_CACHE_HOME:-${HOME:-}/.cache}
-  [ -n "$config_home" ] && [ -n "$data_home" ] && [ -n "$cache_home" ] || loop_error "XDG home unavailable"
-  loop_has_control "$config_home$data_home$cache_home" && loop_error "unsafe XDG path"
+  [ -n "$config_home" ] && [ -n "$data_home" ] && [ -n "$cache_home" ] || { loop_error "XDG home unavailable"; return 1; }
+  loop_has_control "$config_home$data_home$cache_home" && { loop_error "unsafe XDG path"; return 1; }
 
   LOOP_CONFIG_DIR="$config_home/ark/loop"
   LOOP_CONFIG_FILE="$LOOP_CONFIG_DIR/config.toml"
@@ -140,4 +141,3 @@ loop_runtime_resolve() {
   export ARK_REPO ARK_REPO_KEY ARK_SESSION_ID ARK_SESSION_DIR ARK_CACHE_DIR ARK_KNOWLEDGE_DIR
   export LOOP_CONFIG_DIR LOOP_CONFIG_FILE LOOP_DATA_ROOT LOOP_CACHE_ROOT LOOP_REPO_STATE_DIR
 }
-
