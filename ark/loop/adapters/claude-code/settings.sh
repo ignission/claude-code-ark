@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-CLAUDE_LOOP_HOOK_JSON='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/loop/adapters/claude-code/post-tool-batch.sh"}]}'
+CLAUDE_LOOP_BATCH_HOOK_JSON='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/loop/adapters/claude-code/post-tool-batch.sh"}]}'
+CLAUDE_LOOP_FAILURE_HOOK_JSON='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/loop/adapters/claude-code/post-tool-use-failure.sh"}]}'
 
 claude_settings_error() {
   printf '%s\n' "$*" >&2
@@ -16,7 +17,8 @@ claude_settings_validate_schema() {
         ((has("deny") | not) or (.deny | type == "array" and all(.[]; type == "string"))))) and
     ((has("hooks") | not) or
       (.hooks | type == "object" and
-        ((has("PostToolBatch") | not) or (.PostToolBatch | type == "array"))))
+        ((has("PostToolBatch") | not) or (.PostToolBatch | type == "array")) and
+        ((has("PostToolUseFailure") | not) or (.PostToolUseFailure | type == "array"))))
   ' "$1" >/dev/null 2>&1 || { claude_settings_error "invalid Claude settings schema"; return 1; }
 }
 
@@ -215,7 +217,7 @@ claude_settings_preflight() {
 claude_settings_inject() {
   local repo=${1:-}
   local state=${2:-}
-  local settings tmp manifest manifest_new settings_existed mode root range permissions_start deny_start hooks_start batch_start tool
+  local settings tmp manifest manifest_new settings_existed mode root range permissions_start deny_start hooks_start batch_start failure_start tool
   command -v jq >/dev/null 2>&1 || { claude_settings_error "jq command unavailable"; return 1; }
   settings="$repo/.claude/settings.local.json"
   tmp="$repo/.claude/settings.local.json.ark-loop-tmp"
@@ -262,19 +264,29 @@ claude_settings_inject() {
   fi
 
   if ! printf '%s' "$CLAUDE_CONTENT" | jq -e 'has("hooks")' >/dev/null; then
-    claude_content_add_to_container "$root" "\"hooks\"                   :{\"PostToolBatch\":[${CLAUDE_LOOP_HOOK_JSON}]}" || return 1
-    claude_manifest_add_json hooks/PostToolBatch "$CLAUDE_LOOP_HOOK_JSON" || return 1
+    claude_content_add_to_container "$root" "\"hooks\"                   :{\"PostToolBatch\":[${CLAUDE_LOOP_BATCH_HOOK_JSON}],\"PostToolUseFailure\":[${CLAUDE_LOOP_FAILURE_HOOK_JSON}]}" || return 1
+    claude_manifest_add_json hooks/PostToolBatch "$CLAUDE_LOOP_BATCH_HOOK_JSON" || return 1
+    claude_manifest_add_json hooks/PostToolUseFailure "$CLAUDE_LOOP_FAILURE_HOOK_JSON" || return 1
   else
     range=$(claude_content_property "$root" hooks) || return 1
     set -- $range; hooks_start=$3
     if ! printf '%s' "$CLAUDE_CONTENT" | jq -e '.hooks | has("PostToolBatch")' >/dev/null; then
-      claude_content_add_to_container "$hooks_start" "\"PostToolBatch\"                 :[${CLAUDE_LOOP_HOOK_JSON}]" || return 1
-      claude_manifest_add_json hooks/PostToolBatch "$CLAUDE_LOOP_HOOK_JSON" || return 1
-    elif ! printf '%s' "$CLAUDE_CONTENT" | jq -e --argjson hook "$CLAUDE_LOOP_HOOK_JSON" '.hooks.PostToolBatch | index($hook) != null' >/dev/null; then
+      claude_content_add_to_container "$hooks_start" "\"PostToolBatch\"                 :[${CLAUDE_LOOP_BATCH_HOOK_JSON}]" || return 1
+      claude_manifest_add_json hooks/PostToolBatch "$CLAUDE_LOOP_BATCH_HOOK_JSON" || return 1
+    elif ! printf '%s' "$CLAUDE_CONTENT" | jq -e --argjson hook "$CLAUDE_LOOP_BATCH_HOOK_JSON" '.hooks.PostToolBatch | index($hook) != null' >/dev/null; then
       range=$(claude_content_property "$hooks_start" PostToolBatch) || return 1
       set -- $range; batch_start=$3
-      claude_content_add_to_container "$batch_start" "$CLAUDE_LOOP_HOOK_JSON" || return 1
-      claude_manifest_add_json hooks/PostToolBatch "$CLAUDE_LOOP_HOOK_JSON" || return 1
+      claude_content_add_to_container "$batch_start" "$CLAUDE_LOOP_BATCH_HOOK_JSON" || return 1
+      claude_manifest_add_json hooks/PostToolBatch "$CLAUDE_LOOP_BATCH_HOOK_JSON" || return 1
+    fi
+    if ! printf '%s' "$CLAUDE_CONTENT" | jq -e '.hooks | has("PostToolUseFailure")' >/dev/null; then
+      claude_content_add_to_container "$hooks_start" "\"PostToolUseFailure\"                 :[${CLAUDE_LOOP_FAILURE_HOOK_JSON}]" || return 1
+      claude_manifest_add_json hooks/PostToolUseFailure "$CLAUDE_LOOP_FAILURE_HOOK_JSON" || return 1
+    elif ! printf '%s' "$CLAUDE_CONTENT" | jq -e --argjson hook "$CLAUDE_LOOP_FAILURE_HOOK_JSON" '.hooks.PostToolUseFailure | index($hook) != null' >/dev/null; then
+      range=$(claude_content_property "$hooks_start" PostToolUseFailure) || return 1
+      set -- $range; failure_start=$3
+      claude_content_add_to_container "$failure_start" "$CLAUDE_LOOP_FAILURE_HOOK_JSON" || return 1
+      claude_manifest_add_json hooks/PostToolUseFailure "$CLAUDE_LOOP_FAILURE_HOOK_JSON" || return 1
     fi
   fi
 
@@ -301,8 +313,8 @@ claude_settings_inject() {
 claude_settings_restore() {
   local repo=${1:-}
   local state=${2:-}
-  local settings tmp manifest settings_existed mode entries entry path value index range root permissions_start deny_start hooks_start batch_start item_range
-  local abandoned=false property_between deny_length batch_length LC_ALL=C
+  local settings tmp manifest settings_existed mode entries entry path value index range root permissions_start deny_start hooks_start batch_start failure_start item_range
+  local abandoned=false batch_abandoned=false failure_abandoned=false property_between deny_length batch_length failure_length hooks_items_length LC_ALL=C
   command -v jq >/dev/null 2>&1 || { claude_settings_error "jq command unavailable"; return 1; }
   settings="$repo/.claude/settings.local.json"
   tmp="$repo/.claude/settings.local.json.ark-loop-tmp"
@@ -338,13 +350,26 @@ claude_settings_restore() {
         index=$(printf '%s' "$CLAUDE_CONTENT" | jq -r --argjson value "$value" '.hooks.PostToolBatch // [] | index($value) // -1')
         if [ "$index" -lt 0 ]; then
           batch_length=$(printf '%s' "$CLAUDE_CONTENT" | jq -r '.hooks.PostToolBatch // [] | length')
-          [ "$batch_length" -eq 0 ] || abandoned=true
+          if [ "$batch_length" -ne 0 ]; then abandoned=true; batch_abandoned=true; fi
           continue
         fi
         range=$(claude_content_property "$root" hooks); set -- $range; hooks_start=$3
         range=$(claude_content_property "$hooks_start" PostToolBatch); set -- $range; batch_start=$3
         item_range=$(printf '%s' "$CLAUDE_CONTENT" | claude_json_array_item_range "$batch_start" "$index"); set -- $item_range
         claude_content_remove_value "$1" "$2" "$batch_start" || return 1
+        ;;
+      hooks/PostToolUseFailure)
+        value=$(printf '%s' "$entry" | jq -c '.value') || return 1
+        index=$(printf '%s' "$CLAUDE_CONTENT" | jq -r --argjson value "$value" '.hooks.PostToolUseFailure // [] | index($value) // -1')
+        if [ "$index" -lt 0 ]; then
+          failure_length=$(printf '%s' "$CLAUDE_CONTENT" | jq -r '.hooks.PostToolUseFailure // [] | length')
+          if [ "$failure_length" -ne 0 ]; then abandoned=true; failure_abandoned=true; fi
+          continue
+        fi
+        range=$(claude_content_property "$root" hooks); set -- $range; hooks_start=$3
+        range=$(claude_content_property "$hooks_start" PostToolUseFailure); set -- $range; failure_start=$3
+        item_range=$(printf '%s' "$CLAUDE_CONTENT" | claude_json_array_item_range "$failure_start" "$index"); set -- $item_range
+        claude_content_remove_value "$1" "$2" "$failure_start" || return 1
         ;;
     esac
   done <<EOF
@@ -373,14 +398,26 @@ EOF
   if [ -n "$range" ]; then
     set -- $range; hooks_start=$3
     property_between=${CLAUDE_CONTENT:$2:$((hooks_start - $2 - 1))}
-    batch_length=$(printf '%s' "$CLAUDE_CONTENT" | jq -r '.hooks.PostToolBatch // [] | length')
-    if [ "$property_between" = '                   :' ] && [ "$batch_length" -eq 0 ]; then
+    hooks_items_length=$(printf '%s' "$CLAUDE_CONTENT" | jq -r '[.hooks[] | length] | add // 0')
+    if [ "$property_between" = '                   :' ] && [ "$hooks_items_length" -eq 0 ]; then
       claude_content_remove_value "$1" "$4" "$root"
     else
+      batch_length=$(printf '%s' "$CLAUDE_CONTENT" | jq -r '.hooks.PostToolBatch // [] | length')
       range=$(claude_content_property "$hooks_start" PostToolBatch || true)
       if [ -n "$range" ] && [ "$batch_length" -eq 0 ]; then
         set -- $range; property_between=${CLAUDE_CONTENT:$2:$(( $3 - $2 - 1 ))}
         [ "$property_between" != '                 :' ] || claude_content_remove_value "$1" "$4" "$hooks_start"
+      fi
+      root=$(printf '%s' "$CLAUDE_CONTENT" | LC_ALL=C awk '{if(NR>1)s=s"\n";s=s$0}END{for(i=1;i<=length(s);i++)if(substr(s,i,1)=="{"){print i;exit}}')
+      range=$(claude_content_property "$root" hooks || true)
+      if [ -n "$range" ]; then
+        set -- $range; hooks_start=$3
+        failure_length=$(printf '%s' "$CLAUDE_CONTENT" | jq -r '.hooks.PostToolUseFailure // [] | length')
+        range=$(claude_content_property "$hooks_start" PostToolUseFailure || true)
+        if [ -n "$range" ] && [ "$failure_length" -eq 0 ]; then
+          set -- $range; property_between=${CLAUDE_CONTENT:$2:$(( $3 - $2 - 1 ))}
+          [ "$property_between" != '                 :' ] || claude_content_remove_value "$1" "$4" "$hooks_start"
+        fi
       fi
     fi
   fi
@@ -396,7 +433,10 @@ EOF
     command mv "$tmp" "$settings" || return 1
   fi
   if [ "$abandoned" = true ]; then
-    jq '(.entries[] | select(.path == "hooks/PostToolBatch")).abandoned = true' "$manifest" >"$manifest.new" || return 1
+    jq --argjson batch "$batch_abandoned" --argjson failure "$failure_abandoned" '
+      if $batch then (.entries[] | select(.path == "hooks/PostToolBatch")).abandoned = true else . end
+      | if $failure then (.entries[] | select(.path == "hooks/PostToolUseFailure")).abandoned = true else . end
+    ' "$manifest" >"$manifest.new" || return 1
     chmod 600 "$manifest.new" || return 1
     command mv "$manifest.new" "$manifest" || return 1
   else

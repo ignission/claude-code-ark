@@ -73,6 +73,8 @@ settings="$repo/.claude/settings.local.json"
 run_case claude_settings_inject "$repo" "$state"
 assert_success "missing settings injected"
 [ -f "$settings" ] || test_fail "missing settings was not created"
+jq -e '.hooks | keys_unsorted == ["PostToolBatch","PostToolUseFailure"]' "$settings" >/dev/null 2>&1 \
+  || test_fail "new hooks object property order is not Batch then Failure"
 run_case claude_settings_restore "$repo" "$state"
 assert_success "missing settings restored"
 [ ! -e "$settings" ] || test_fail "originally missing settings was not removed"
@@ -93,12 +95,15 @@ settings="$repo/.claude/settings.local.json"
 printf '{"existing":1}\n' >"$settings"; chmod 600 "$settings"
 run_case claude_settings_inject "$repo" "$state"
 assert_success "session-change fixture injected"
-content=$(cat "$settings")
-printf '%s\n' "${content%\}},\"user-added\":true}" >"$settings"
+jq '.hooks.PostToolUseFailure += [{"hooks":[{"type":"command","command":"user-added.sh"}]}] | .["user-added"]=true' \
+  "$settings" >"$settings.changed"
+mv "$settings.changed" "$settings"
 chmod 600 "$settings"
 run_case claude_settings_restore "$repo" "$state"
 assert_success "session change restored"
-jq -e '.existing == 1 and .["user-added"] == true and (.permissions | not) and (.hooks | not)' "$settings" >/dev/null 2>&1 \
+jq -e '.existing == 1 and .["user-added"] == true and .permissions.deny == []
+  and .hooks.PostToolBatch == []
+  and .hooks.PostToolUseFailure == [{"hooks":[{"type":"command","command":"user-added.sh"}]}]' "$settings" >/dev/null 2>&1 \
   || test_fail "restore lost non-Ark session changes"
 
 setup_repo batch-only
