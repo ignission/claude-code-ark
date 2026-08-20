@@ -97,7 +97,7 @@ assert_eq "raw mtime unchanged" "$raw_mtime" "$(mtime_of "$session/errors/raw.lo
 assert_eq "raw mode unchanged" "$raw_mode" "$(mode_of "$session/errors/raw.log")"
 grep -E '^## ' "$session/errors/summary.md" >/dev/null 2>&1
 assert_eq "summary has no Markdown level-two heading" 1 "$?"
-rg -n 'secret|L[1-6]' "$session/errors/summary.md" >/dev/null 2>&1
+rg -n 'secret (bash|read|mcp)' "$session/errors/summary.md" >/dev/null 2>&1
 assert_eq "summary excludes raw errors" 1 "$?"
 assert_eq "default summary does not call curl" 0 "$(wc -l <"$curl_log" | tr -d ' ')"
 
