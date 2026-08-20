@@ -9,6 +9,7 @@ for test_script in \
   test-task-template.sh \
   test-recite-todo.sh \
   test-capture-error.sh \
+  test-claude-code-post-tool-use-failure.sh \
   test-claude-code-post-tool-batch.sh \
   test-claude-code-settings.sh \
   test-session-lifecycle.sh \
