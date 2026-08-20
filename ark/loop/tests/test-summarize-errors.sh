@@ -17,7 +17,43 @@ fakebin="$TEST_TMP/fakebin"
 mkdir -m 700 "$fakebin"
 curl_log="$TEST_TMP/curl.log"
 : >"$curl_log"
-printf '#!/usr/bin/env bash\nprintf "called\\n" >>"%s"\nexit 99\n' "$curl_log" >"$fakebin/curl"
+curl_args="$TEST_TMP/curl.args"
+curl_request="$TEST_TMP/curl.request"
+: >"$curl_args"
+: >"$curl_request"
+export FAKE_CURL_LOG="$curl_log" FAKE_CURL_ARGS="$curl_args" FAKE_CURL_REQUEST="$curl_request"
+cat >"$fakebin/curl" <<'EOF'
+#!/usr/bin/env bash
+printf 'CALL\n' >>"$FAKE_CURL_LOG"
+: >"$FAKE_CURL_ARGS"
+: >"$FAKE_CURL_REQUEST"
+while [ "$#" -gt 0 ]; do
+  printf '%s\n' "$1" >>"$FAKE_CURL_ARGS"
+  if [ "$1" = --data-binary ]; then
+    shift
+    [ "$#" -gt 0 ] || exit 2
+    printf '%s' "$1" >"$FAKE_CURL_REQUEST"
+    printf '%s\n' "$1" >>"$FAKE_CURL_ARGS"
+  fi
+  shift
+done
+case "${FAKE_CURL_MODE:-nonzero}" in
+  success)
+    printf '%s\n' '{"content":[{"type":"text","text":"{\"items\":[{\"prohibited_action\":\"repeat failed command\",\"reason\":\"same failure\",\"reference\":\"errors/raw.log:L1-L6\"}]}"}]}'
+    ;;
+  timeout) exit 28 ;;
+  nonzero) exit 7 ;;
+  http_error) printf '%s\n' '{"type":"error"}'; exit 22 ;;
+  invalid_response) printf '%s\n' 'not json' ;;
+  no_content) printf '%s\n' '{"content":[]}' ;;
+  bad_schema) printf '%s\n' '{"content":[{"type":"text","text":"{\"items\":[{\"prohibited_action\":7,\"reason\":\"bad\",\"reference\":\"errors/raw.log:L1-L6\"}]}"}]}' ;;
+  empty_items) printf '%s\n' '{"content":[{"type":"text","text":"{\"items\":[]}"}]}' ;;
+  control) printf '%s\n' '{"content":[{"type":"text","text":"{\"items\":[{\"prohibited_action\":\"bad\\nact\",\"reason\":\"bad\",\"reference\":\"errors/raw.log:L1-L6\"}]}"}]}' ;;
+  bad_reference) printf '%s\n' '{"content":[{"type":"text","text":"{\"items\":[{\"prohibited_action\":\"bad\",\"reason\":\"bad\",\"reference\":\"raw.log:L1\"}]}"}]}' ;;
+  missing_reference) printf '%s\n' '{"content":[{"type":"text","text":"{\"items\":[{\"prohibited_action\":\"bad\",\"reason\":\"bad\",\"reference\":\"errors/raw.log:L9-L9\"}]}"}]}' ;;
+  *) exit 9 ;;
+esac
+EOF
 printf '#!/usr/bin/env bash\nprintf "2099-01-01T01:02:03Z\\n"\n' >"$fakebin/date"
 chmod 700 "$fakebin/curl" "$fakebin/date"
 
@@ -113,6 +149,120 @@ assert_success "missing raw summarizes as empty"
 printf 'Error summary (mechanical)\n- なし\n' >"$TEST_TMP/empty-expected"
 TESTS=$((TESTS + 1))
 if cmp -s "$TEST_TMP/empty-expected" "$empty_session/errors/summary.md"; then PASSES=$((PASSES + 1)); else test_fail "empty summary mismatch"; fi
+
+write_summary_config() {
+  config_target=$1
+  config_llm=$2
+  config_model=$3
+  {
+    printf '%s\n' '[loop.summarize]'
+    printf 'llm = %s\n' "$config_llm"
+    printf 'model = "%s"\n' "$config_model"
+  } >"$config_target"
+  chmod 600 "$config_target"
+}
+
+run_fallback_case() {
+  fallback_label=$1
+  fallback_llm=$2
+  fallback_model=$3
+  fallback_key=$4
+  fallback_mode=$5
+  fallback_path=$6
+  fallback_session=$(new_session "fallback-$fallback_label")
+  write_raw "$fallback_session"
+  fallback_config="$fallback_session/config.toml"
+  write_summary_config "$fallback_config" "$fallback_llm" "$fallback_model"
+  : >"$curl_log"
+  : >"$curl_args"
+  : >"$curl_request"
+  if [ "$fallback_key" = absent ]; then
+    run_case env -u ANTHROPIC_API_KEY PATH="$fallback_path" ARK_SESSION_DIR="$fallback_session" \
+      LOOP_CONFIG_FILE="$fallback_config" FAKE_CURL_MODE="$fallback_mode" /bin/bash "$SUMMARIZE"
+  else
+    run_case env PATH="$fallback_path" ARK_SESSION_DIR="$fallback_session" LOOP_CONFIG_FILE="$fallback_config" \
+      ANTHROPIC_API_KEY="$fallback_key" FAKE_CURL_MODE="$fallback_mode" /bin/bash "$SUMMARIZE"
+  fi
+  assert_eq "$fallback_label exits zero" 0 "$CASE_STATUS"
+  TESTS=$((TESTS + 1))
+  if cmp -s "$expected" "$fallback_session/errors/summary.md"; then PASSES=$((PASSES + 1)); else test_fail "$fallback_label did not preserve mechanical summary"; fi
+  assert_eq "$fallback_label key not on stdout" 1 "$(if grep -F 'fixture-secret-key' "$CASE_STDOUT" >/dev/null 2>&1; then printf 0; else printf 1; fi)"
+  assert_eq "$fallback_label key not on stderr" 1 "$(if grep -F 'fixture-secret-key' "$CASE_STDERR" >/dev/null 2>&1; then printf 0; else printf 1; fi)"
+}
+
+run_fallback_case llm-false false fixture-model fixture-secret-key success "$fakebin:$PATH"
+assert_eq "llm false curl calls" 0 "$(wc -l <"$curl_log" | tr -d ' ')"
+run_fallback_case key-absent true fixture-model absent success "$fakebin:$PATH"
+assert_eq "key absent curl calls" 0 "$(wc -l <"$curl_log" | tr -d ' ')"
+run_fallback_case model-empty true '' fixture-secret-key success "$fakebin:$PATH"
+assert_eq "model empty curl calls" 0 "$(wc -l <"$curl_log" | tr -d ' ')"
+
+no_curl_bin="$TEST_TMP/no-curl-bin"
+mkdir -m 700 "$no_curl_bin"
+for required_command in dirname stat id rm chmod jq grep sort awk iconv mv tr sed; do
+  command_path=$(command -v "$required_command")
+  ln -s "$command_path" "$no_curl_bin/$required_command"
+done
+run_fallback_case curl-missing true fixture-model fixture-secret-key success "$no_curl_bin"
+assert_eq "curl missing calls" 0 "$(wc -l <"$curl_log" | tr -d ' ')"
+
+for fallback_mode in timeout nonzero http_error invalid_response no_content bad_schema empty_items control bad_reference missing_reference; do
+  run_fallback_case "$fallback_mode" true fixture-model fixture-secret-key "$fallback_mode" "$fakebin:$PATH"
+  assert_eq "$fallback_mode curl calls" 1 "$(wc -l <"$curl_log" | tr -d ' ')"
+done
+
+success_session=$(new_session llm-success)
+write_raw "$success_session"
+success_config="$success_session/config.toml"
+write_summary_config "$success_config" true fixture-model
+: >"$curl_log"; : >"$curl_args"; : >"$curl_request"
+run_case env PATH="$fakebin:$PATH" ARK_SESSION_DIR="$success_session" LOOP_CONFIG_FILE="$success_config" \
+  ANTHROPIC_API_KEY=fixture-secret-key FAKE_CURL_MODE=success /bin/bash "$SUMMARIZE"
+assert_success "LLM opt-in summary succeeds"
+assert_eq "LLM success calls curl once" 1 "$(wc -l <"$curl_log" | tr -d ' ')"
+cat >"$TEST_TMP/llm-expected" <<'EOF'
+Error summary (mechanical)
+- tool: Bash
+  error_type: tool_error
+  count: 3
+  first_line: 1
+  last_line: 6
+  詳細: errors/raw.log:L1-L6
+- tool: Read
+  error_type: tool_error
+  count: 1
+  first_line: 2
+  last_line: 2
+  詳細: errors/raw.log:L2-L2
+- tool: mcp__fixture
+  error_type: failure
+  count: 2
+  first_line: 4
+  last_line: 5
+  詳細: errors/raw.log:L4-L5
+LLM summary (opt-in)
+- 禁止手: repeat failed command
+  理由: same failure
+  詳細: errors/raw.log:L1-L6
+EOF
+TESTS=$((TESTS + 1))
+if cmp -s "$TEST_TMP/llm-expected" "$success_session/errors/summary.md"; then PASSES=$((PASSES + 1)); else test_fail "LLM summary bytes mismatch"; fi
+grep -Fx 'https://api.anthropic.com/v1/messages' "$curl_args" >/dev/null 2>&1
+assert_eq "Messages endpoint" 0 "$?"
+grep -Fx -- '--max-time' "$curl_args" >/dev/null 2>&1
+assert_eq "curl max-time flag" 0 "$?"
+grep -Fx '5' "$curl_args" >/dev/null 2>&1
+assert_eq "curl exact five second timeout" 0 "$?"
+grep -Fx 'anthropic-version: 2023-06-01' "$curl_args" >/dev/null 2>&1
+assert_eq "Anthropic API version header" 0 "$?"
+jq -e '.model == "fixture-model" and .max_tokens == 512 and .temperature == 0
+  and (.messages|length)==1 and (.messages[0].content|contains("Error summary (mechanical)"))
+  and (.messages[0].content|contains("errors/raw.log:L1-L6"))' "$curl_request" >/dev/null 2>&1
+assert_eq "LLM request contract" 0 "$?"
+rg -n 'L1 secret bash|L2 secret read|tool_input|transcript_path|fixture-secret-key' "$curl_request" >/dev/null 2>&1
+assert_eq "LLM request excludes raw details and key" 1 "$?"
+rg -n 'fixture-secret-key|^## ' "$success_session/errors/summary.md" "$CASE_STDOUT" "$CASE_STDERR" >/dev/null 2>&1
+assert_eq "LLM output excludes key and headings" 1 "$?"
 
 invalid_session=$(new_session invalid)
 write_raw "$invalid_session"
