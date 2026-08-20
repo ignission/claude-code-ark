@@ -68,7 +68,7 @@ jq -e -s '
 assert_eq "adapter fixed mapping" 0 "$?"
 jq -e -s '
   all(.[].details;
-    has("session_id")|not
+    (has("session_id")|not)
     and (has("transcript_path")|not)
     and (has("cwd")|not)
     and (has("prompt_id")|not)
@@ -114,8 +114,8 @@ jq --arg command "touch $marker" --arg error "\$(touch $marker); \\`touch $marke
 run_wrapper "$command_data"
 assert_quiet_success "command-shaped data"
 assert_eq "command-shaped data is not executed" no "$(if [ -e "$marker" ]; then printf yes; else printf no; fi)"
-jq -e --arg command "touch $marker" --arg error "\$(touch $marker); \\`touch $marker\\`" \
-  'select(.tool_input.command == $command and .error == $error)' "$session/errors/raw.log" >/dev/null 2>&1
+jq -e -s --arg command "touch $marker" --arg error "\$(touch $marker); \\`touch $marker\\`" \
+  'any(.[]; .details.tool_input.command == $command and .error == $error)' "$session/errors/raw.log" >/dev/null 2>&1
 assert_eq "command-shaped data remains data" 0 "$?"
 
 run_case env -u ARK_SESSION_DIR /bin/bash "$WRAPPER" <"$FIXTURES/post-tool-use-failure-bash-exit-7-$version.json"
