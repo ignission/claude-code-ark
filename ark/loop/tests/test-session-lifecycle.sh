@@ -75,6 +75,56 @@ assert_eq "teardown restores mode" 640 "$(loop_stat "$settings" | awk '{print $2
 [ ! -e "$repo/.claude/settings.local.json.ark-loop-tmp" ] || test_fail "teardown left tmp"
 [ ! -e "$cache_dir/steps" ] || test_fail "teardown left recitation steps"
 
+setup_repo restart-flow
+old_sid=abababababababababababababababab
+new_sid=cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd
+run_case run_init "$old_sid"
+assert_success "restart source session init succeeds"
+old_session=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
+old_cache=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
+normalized_capture="$TEST_TMP/restart-capture.json"
+cp "$ROOT/ark/loop/tests/fixtures/capture-interrupt.json" "$normalized_capture"
+run_case env ARK_SESSION_DIR="$old_session" /bin/bash "$ROOT/ark/loop/hooks/capture-error.sh" <"$normalized_capture"
+assert_success "restart source failure captured"
+run_case env ARK_SESSION_DIR="$old_session" LOOP_CONFIG_FILE="$XDG_CONFIG_HOME/ark/loop/config.toml" \
+  /bin/bash "$ROOT/ark/loop/scripts/summarize-errors.sh"
+assert_success "restart source summary generated"
+grep -E '^## ' "$old_session/errors/summary.md" >/dev/null 2>&1
+assert_eq "generated summary has no level-two headings" 1 "$?"
+old_raw_hash=$(cksum "$old_session/errors/raw.log")
+run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$old_sid"
+assert_success "restart source teardown succeeds"
+assert_eq "teardown retains raw" "$old_raw_hash" "$(cksum "$old_session/errors/raw.log")"
+[ -f "$old_session/errors/summary.md" ] || test_fail "teardown removed summary"
+
+run_case /bin/bash "$INIT" --repo "$repo" --owner-pid "$$" --session-id "$new_sid" --restart "$old_sid" \
+  --goal 'Restart lifecycle goal' --constraint 'Preserve raw' --plan-item 'Resume safely'
+assert_success "restart destination init succeeds"
+assert_eq "restart destination enabled" $'enabled\t1' "$(sed -n '1p' "$CASE_STDOUT")"
+new_session=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
+new_cache=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
+[ "$new_session" != "$old_session" ] || test_fail "restart reused old session directory"
+grep -F 'Previous failure summary: Error summary (mechanical)' "$new_session/task.md" >/dev/null 2>&1 \
+  || test_fail "restart task omits mechanical summary"
+assert_eq "restart raw path appears once" 1 "$(grep -oF "$old_session/errors/raw.log" "$new_session/task.md" | wc -l | tr -d ' ')"
+grep -F 'Interrupted by user' "$new_session/task.md" >/dev/null 2>&1
+assert_eq "restart task excludes raw error body" 1 "$?"
+assert_eq "restart cache starts at zero" 0 "$(step_count "$new_cache")"
+assert_eq "restart preserves old raw" "$old_raw_hash" "$(cksum "$old_session/errors/raw.log")"
+restart_task_before=$(cksum "$new_session/task.md")
+run_case /bin/bash "$INIT" --repo "$repo" --owner-pid "$$" --session-id "$new_sid" --restart "$old_sid" \
+  --goal changed --constraint changed --plan-item changed
+assert_success "same restart session re-init succeeds"
+assert_eq "same restart session keeps task" "$restart_task_before" "$(cksum "$new_session/task.md")"
+run_case env ARK_SESSION_DIR="$new_session" ARK_CACHE_DIR="$new_cache" ARK_RECITE_INTERVAL=1 \
+  /bin/bash "$ROOT/ark/loop/hooks/recite-todo.sh"
+assert_success "restart destination recitation succeeds"
+assert_eq "restart recitation uses destination goal" 'Goal: Restart lifecycle goal
+NOW: Resume safely
+Remaining: 1' "$(cat "$CASE_STDOUT")"
+run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$new_sid"
+assert_success "restart destination teardown succeeds"
+
 setup_repo missing-settings
 sid=33333333333333333333333333333333
 run_case run_init "$sid"
