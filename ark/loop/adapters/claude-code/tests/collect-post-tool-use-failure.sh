@@ -97,6 +97,10 @@ tmp=$(mktemp -d)
 tmp=$(cd "$tmp" && pwd -P)
 cleanup() {
   if [ "${ARK_KEEP_FIXTURE_TMP:-}" = 1 ]; then
+    if [ -f "$config_dir/.credentials.json" ]; then
+      : >"$config_dir/.credentials.json"
+      chmod 600 "$config_dir/.credentials.json"
+    fi
     printf 'collector temporary directory retained: %s\n' "$tmp" >&2
   else
     rm -rf "$tmp"
@@ -159,7 +163,9 @@ run_claude() {
   invocations="$tmp/$case_name.invocations"
   mkdir -m 700 "$invocations"
   permission_mode=bypassPermissions
-  [ "$deny_bash" = 0 ] || permission_mode=dontAsk
+  [ "$deny_bash" = 0 ] || permission_mode=manual
+  tool_options="--tools $tools --allowedTools $tools"
+  [ "$deny_bash" = 0 ] || tool_options=
   : >"$out"
   chmod 600 "$out"
   write_settings "$settings" "$deny_bash"
@@ -168,9 +174,10 @@ run_claude() {
     cd "$repo" || exit 1
     ARK_HOOK_FIXTURE_OUT="$out" ARK_HOOK_FIXTURE_INVOCATIONS="$invocations" \
       ARK_MCP_CALL_MARKER="$marker" CLAUDE_CONFIG_DIR="$config_dir" \
-      "$binary" -p "$prompt" --tools "$tools" --permission-mode "$permission_mode" \
+      "$binary" -p "$prompt" $tool_options \
+      --permission-mode "$permission_mode" \
       --setting-sources user --strict-mcp-config --mcp-config "$mcp" \
-      --no-session-persistence --debug-file "$debug" >"$transcript" 2>"$tmp/$case_name.stderr"
+      --debug-file "$debug" >"$transcript" 2>"$tmp/$case_name.stderr"
   )
   claude_status=$?
   printf '%s\n' "$claude_status" >"$tmp/$case_name.status"
@@ -215,12 +222,78 @@ if [ "$MODE" = positive ] || [ "$MODE" = all ]; then
 fi
 
 if [ "$MODE" = negative ] || [ "$MODE" = all ]; then
+  permission_prompt="Call Bash exactly once with the exact command printf denied. Do not call another tool. After the denial, reply done."
   run_claude permission-deny \
-    "Call Bash exactly once with the exact command printf denied. Do not call another tool. After the denial, reply done." \
+    "$permission_prompt" \
     Bash 1 0
+  permission_invocations=$(find "$tmp/permission-deny.invocations" -type f -name 'invocation-*' | wc -l | tr -d ' ')
+  [ "$permission_invocations" = 0 ] || fail "permission deny unexpectedly fired PostToolUseFailure"
+  [ ! -s "$tmp/permission-deny.json" ] || fail "permission deny capture output was not empty"
+  grep -F 'Applying permission update: Adding 1 deny rule(s)' "$tmp/permission-deny.debug" >/dev/null 2>&1 \
+    || fail "permission deny debug evidence was not observed"
+  permission_transcript=$(find "$config_dir/projects" -type f -name '*.jsonl' -exec grep -l -F 'Call Bash exactly once' {} \; | head -1)
+  [ -n "$permission_transcript" ] || fail "permission deny transcript was not found"
+  if grep -F 'No such tool available: Bash. Bash is disabled for this session' "$permission_transcript" >/dev/null 2>&1; then
+    permission_result_type=no_such_tool_available_bash_disabled
+    permission_transcript_evidence='Bash tool_use rejected because Bash is disabled for this session'
+  elif grep -E 'don.t have a Bash tool|no Bash tool|Bash tool.*not available' "$permission_transcript" >/dev/null 2>&1; then
+    permission_result_type=tool_catalog_excluded_bash_by_deny
+    permission_transcript_evidence='Bash was excluded from the available tool catalog by deny'
+  else
+    fail "permission deny transcript evidence was not observed"
+  fi
+
+  validation_prompt='Call mcp__fixture__fixture_fail exactly once. Set required_integer to the JSON string value "one". It is essential that the value is a string rather than the integer 1. Do not call another tool and do not retry. After validation rejects it, reply done.'
   run_claude validation-rejection \
-    "Call mcp__fixture__fixture_fail exactly once with required_integer set to the string not-an-integer, not a number. Do not call another tool. After validation rejects it, reply done." \
+    "$validation_prompt" \
     mcp__fixture__fixture_fail 0 1
+  validation_invocations=$(find "$tmp/validation-rejection.invocations" -type f -name 'invocation-*' | wc -l | tr -d ' ')
+  [ "$validation_invocations" = 0 ] || fail "validation rejection unexpectedly fired PostToolUseFailure"
+  [ ! -s "$tmp/validation-rejection.json" ] || fail "validation rejection capture output was not empty"
+  [ ! -s "$tmp/validation-rejection.tools-call" ] \
+    || fail "validation rejection reached the MCP tools/call handler"
+  validation_transcript=$(find "$config_dir/projects" -type f -name '*.jsonl' -exec grep -l -F 'Call mcp__fixture__fixture_fail exactly once' {} \; | head -1)
+  [ -n "$validation_transcript" ] || fail "validation rejection transcript was not found"
+  grep -F 'InputValidationError: mcp__fixture__fixture_fail was called with input that could not be parsed as JSON.' "$validation_transcript" >/dev/null 2>&1 \
+    || fail "validation rejection tool result was not observed"
+
+  permission_fixture="$FIXTURES/post-tool-use-failure-permission-deny-$version.txt"
+  {
+    printf 'claude_version=%s\n' "$version_output"
+    printf 'binary=%s\n' "$binary"
+    printf 'package=%s\n' "$package_name"
+    printf 'platform=%s\n' "$platform"
+    printf 'arch=%s\n' "$arch"
+    printf 'case=permission-deny\n'
+    printf 'tool_result_type=%s\n' "$permission_result_type"
+    printf 'post_tool_use_failure_invocations=0\n'
+    printf 'capture_bytes=0\n'
+    printf 'debug_evidence=permission deny rule applied to Bash\n'
+    printf 'transcript_evidence=%s\n' "$permission_transcript_evidence"
+    printf 'reason=PostToolUseFailure did not fire\n'
+    printf 'future_scope=Other events or inferred classifications require an independent Issue\n'
+  } >"$permission_fixture"
+  chmod 644 "$permission_fixture"
+
+  validation_fixture="$FIXTURES/post-tool-use-failure-validation-rejection-$version.txt"
+  {
+    printf 'claude_version=%s\n' "$version_output"
+    printf 'binary=%s\n' "$binary"
+    printf 'package=%s\n' "$package_name"
+    printf 'platform=%s\n' "$platform"
+    printf 'arch=%s\n' "$arch"
+    printf 'case=validation-rejection\n'
+    printf 'tool_result_type=InputValidationError\n'
+    printf 'requested_value_type=string\n'
+    printf 'observed_rejection_stage=JSON parse before integer schema check\n'
+    printf 'mcp_tools_call_invocations=0\n'
+    printf 'post_tool_use_failure_invocations=0\n'
+    printf 'capture_bytes=0\n'
+    printf 'transcript_evidence=tool input could not be parsed as JSON\n'
+    printf 'reason=PostToolUseFailure did not fire\n'
+    printf 'future_scope=Other events or inferred classifications require an independent Issue\n'
+  } >"$validation_fixture"
+  chmod 644 "$validation_fixture"
 fi
 
 provenance="$FIXTURES/post-tool-use-failure-provenance-$version.txt"
@@ -231,7 +304,9 @@ provenance="$FIXTURES/post-tool-use-failure-provenance-$version.txt"
   printf 'arch=%s\n' "$arch"
   printf 'claude_version=%s\n' "$version_output"
   printf 'version_exit_code=%s\n' "$version_status"
-  if [ "$MODE" = positive ] || [ "$MODE" = all ]; then
+  if [ -f "$FIXTURES/post-tool-use-failure-bash-exit-7-$version.json" ] \
+    && [ -f "$FIXTURES/post-tool-use-failure-mcp-error-$version.json" ] \
+    && [ -f "$FIXTURES/post-tool-use-failure-read-missing-$version.json" ]; then
     for recorded_case in bash-exit-7 mcp-error read-missing; do
       recorded_fixture="$FIXTURES/post-tool-use-failure-$recorded_case-$version.json"
       printf '%s_capture_count=1\n' "$recorded_case"

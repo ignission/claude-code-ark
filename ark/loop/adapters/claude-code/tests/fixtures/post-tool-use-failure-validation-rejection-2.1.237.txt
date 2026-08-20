@@ -1,0 +1,15 @@
+claude_version=2.1.237 (Claude Code)
+binary=/home/admin/dev/github.com/ignission/ark-feature-issue-335-loop-error-capture/node_modules/.pnpm/@anthropic-ai+claude-code-linux-arm64@2.1.237/node_modules/@anthropic-ai/claude-code-linux-arm64/claude
+package=@anthropic-ai/claude-code-linux-arm64
+platform=linux
+arch=arm64
+case=validation-rejection
+tool_result_type=InputValidationError
+requested_value_type=string
+observed_rejection_stage=JSON parse before integer schema check
+mcp_tools_call_invocations=0
+post_tool_use_failure_invocations=0
+capture_bytes=0
+transcript_evidence=tool input could not be parsed as JSON
+reason=PostToolUseFailure did not fire
+future_scope=Other events or inferred classifications require an independent Issue
