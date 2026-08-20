@@ -18,7 +18,24 @@ fi
 
 lock=${out}.capture-lock
 mkdir -m 700 "$lock" 2>/dev/null || exit 69
-trap 'rmdir "$lock" >/dev/null 2>&1 || :' EXIT HUP INT TERM
+
+invocations=${ARK_HOOK_FIXTURE_INVOCATIONS:-}
+if [ -n "$invocations" ]; then
+  [ ! -L "$invocations" ] || exit 75
+  [ -d "$invocations" ] || exit 76
+  invocation_owner=
+  if invocation_owner=$(stat -c '%u' "$invocations" 2>/dev/null); then
+    :
+  elif invocation_owner=$(stat -f '%u' "$invocations" 2>/dev/null); then
+    :
+  else
+    exit 77
+  fi
+  [ "$invocation_owner" = "$(id -u)" ] || exit 78
+  invocation_marker="$invocations/invocation-$$"
+  (set -C; : >"$invocation_marker") 2>/dev/null || exit 79
+  chmod 600 "$invocation_marker" 2>/dev/null || exit 80
+fi
 
 tmp=${out}.capture-$$
 [ ! -e "$tmp" ] && [ ! -L "$tmp" ] || exit 70
@@ -33,6 +50,4 @@ umask 077
 ) >"$tmp" || exit 71
 [ -f "$tmp" ] && [ ! -L "$tmp" ] || exit 72
 mv "$tmp" "$out" || exit 73
-trap - EXIT HUP INT TERM
-rmdir "$lock" >/dev/null 2>&1 || exit 74
 exit 0
