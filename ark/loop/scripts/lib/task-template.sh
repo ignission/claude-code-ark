@@ -102,8 +102,15 @@ loop_previous_failure_summary() {
   local old_session=${1:-}
   local summary="$old_session/errors/summary.md"
   local raw="$old_session/errors/raw.log"
-  local prefix
+  local prefix canonical errors
+  [ -n "$old_session" ] && [ "${old_session#/}" != "$old_session" ] || { loop_error "unsafe XDG directory"; return 1; }
+  loop_validate_xdg_dir "$old_session" || return 1
+  canonical=$(cd "$old_session" 2>/dev/null && pwd -P) || { loop_error "unsafe XDG directory"; return 1; }
+  [ "$canonical" = "$old_session" ] || { loop_error "unsafe XDG directory"; return 1; }
+  errors="$old_session/errors"
+  loop_validate_xdg_dir "$errors" || return 1
   loop_validate_xdg_file "$summary" || return 1
+  if [ -e "$raw" ] || [ -L "$raw" ]; then loop_validate_xdg_file "$raw" || return 1; fi
   prefix=$(loop_utf8_file_prefix "$summary") || { loop_error "invalid failure summary"; return 1; }
   prefix=$(printf '%s' "$prefix" | LC_ALL=C tr '\001-\037\177' ' ') \
     || { loop_error "invalid failure summary"; return 1; }
