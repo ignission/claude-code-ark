@@ -208,6 +208,131 @@ assert_success "independent repo A teardown"
 run_case /bin/bash "$TEARDOWN" --repo "$repo_b" --session-id 88888888888888888888888888888888
 assert_success "independent repo B teardown"
 
+failure_wrapper="$ROOT/ark/loop/adapters/claude-code/post-tool-use-failure.sh"
+batch_wrapper="$ROOT/ark/loop/adapters/claude-code/post-tool-batch.sh"
+failure_version=$(sed -n 's/^claude_version=\([0-9][0-9.]*\) .*/\1/p' \
+  "$ROOT"/ark/loop/adapters/claude-code/tests/fixtures/post-tool-use-failure-provenance-*.txt)
+failure_fixture="$ROOT/ark/loop/adapters/claude-code/tests/fixtures/post-tool-use-failure-bash-exit-7-$failure_version.json"
+batch_fixture="$ROOT/ark/loop/adapters/claude-code/tests/fixtures/post-tool-batch-single-2.1.215.json"
+failure_fixture_hash=$(cksum "$failure_fixture")
+integration_bin="$TEST_TMP/integration-bin"
+mkdir -m 700 "$integration_bin"
+printf '#!/usr/bin/env bash\nprintf "2026-08-20T00:00:00Z\\n"\n' >"$integration_bin/date"
+chmod 700 "$integration_bin/date"
+
+prepare_hook_case() {
+  hook_name=$1
+  hook_session="$TEST_TMP/hook-$hook_name-session"
+  hook_cache="$TEST_TMP/hook-$hook_name-cache"
+  mkdir -m 700 "$hook_session" "$hook_session/errors" "$hook_cache"
+  printf '# Task\n\n## Goal\nHook ordering\n\n## Plan\n- [ ] preserve order ← NOW\n' >"$hook_session/task.md"
+  chmod 600 "$hook_session/task.md"
+}
+
+run_failure_hook() {
+  target_session=$1
+  output=$2
+  error_output=$3
+  env PATH="$integration_bin:$PATH" ARK_SESSION_DIR="$target_session" \
+    /bin/bash "$failure_wrapper" <"$failure_fixture" >"$output" 2>"$error_output"
+}
+
+run_batch_hook() {
+  target_session=$1
+  target_cache=$2
+  output=$3
+  error_output=$4
+  env ARK_SESSION_DIR="$target_session" ARK_CACHE_DIR="$target_cache" ARK_RECITE_INTERVAL=1 \
+    /bin/bash "$batch_wrapper" <"$batch_fixture" >"$output" 2>"$error_output"
+}
+
+prepare_hook_case ab
+ab_session=$hook_session; ab_cache=$hook_cache
+run_failure_hook "$ab_session" "$TEST_TMP/ab-failure.out" "$TEST_TMP/ab-failure.err"
+run_batch_hook "$ab_session" "$ab_cache" "$TEST_TMP/ab-batch.out" "$TEST_TMP/ab-batch.err"
+prepare_hook_case ba
+ba_session=$hook_session; ba_cache=$hook_cache
+run_batch_hook "$ba_session" "$ba_cache" "$TEST_TMP/ba-batch.out" "$TEST_TMP/ba-batch.err"
+run_failure_hook "$ba_session" "$TEST_TMP/ba-failure.out" "$TEST_TMP/ba-failure.err"
+assert_eq "A-B and B-A raw entry count" "1 1" "$(wc -l <"$ab_session/errors/raw.log" | tr -d ' ') $(wc -l <"$ba_session/errors/raw.log" | tr -d ' ')"
+TESTS=$((TESTS + 1))
+if cmp -s "$ab_session/errors/raw.log" "$ba_session/errors/raw.log"; then PASSES=$((PASSES + 1)); else test_fail "A-B and B-A raw bytes differ"; fi
+assert_eq "A-B and B-A step count" "1 1" "$(step_count "$ab_cache") $(step_count "$ba_cache")"
+TESTS=$((TESTS + 1))
+if cmp -s "$TEST_TMP/ab-batch.out" "$TEST_TMP/ba-batch.out"; then PASSES=$((PASSES + 1)); else test_fail "A-B and B-A additionalContext differ"; fi
+assert_eq "failure wrappers stay quiet by order" 0 "$(wc -c "$TEST_TMP"/ab-failure.out "$TEST_TMP"/ab-failure.err "$TEST_TMP"/ba-failure.out "$TEST_TMP"/ba-failure.err | tail -1 | awk '{print $1}')"
+
+prepare_hook_case concurrent-hooks
+concurrent_session=$hook_session; concurrent_cache=$hook_cache
+run_failure_hook "$concurrent_session" "$TEST_TMP/concurrent-failure.out" "$TEST_TMP/concurrent-failure.err" & failure_pid=$!
+run_batch_hook "$concurrent_session" "$concurrent_cache" "$TEST_TMP/concurrent-batch.out" "$TEST_TMP/concurrent-batch.err" & batch_pid=$!
+/bin/bash -c 'while IFS= read -r line; do :; done' <"$failure_fixture" >"$TEST_TMP/existing-post-tool-use.out" 2>"$TEST_TMP/existing-post-tool-use.err" & noop_pid=$!
+wait "$failure_pid"; failure_status=$?
+wait "$batch_pid"; batch_status=$?
+wait "$noop_pid"; noop_status=$?
+assert_eq "concurrent independent hooks exit zero" "0 0 0" "$failure_status $batch_status $noop_status"
+assert_eq "concurrent raw entry count" 1 "$(wc -l <"$concurrent_session/errors/raw.log" | tr -d ' ')"
+assert_eq "concurrent batch step count" 1 "$(step_count "$concurrent_cache")"
+TESTS=$((TESTS + 1))
+if cmp -s "$ab_session/errors/raw.log" "$concurrent_session/errors/raw.log"; then PASSES=$((PASSES + 1)); else test_fail "concurrent raw bytes differ"; fi
+TESTS=$((TESTS + 1))
+if cmp -s "$TEST_TMP/ab-batch.out" "$TEST_TMP/concurrent-batch.out"; then PASSES=$((PASSES + 1)); else test_fail "concurrent additionalContext differs"; fi
+assert_eq "concurrent no-op stays quiet" 0 "$(wc -c "$TEST_TMP/existing-post-tool-use.out" "$TEST_TMP/existing-post-tool-use.err" | tail -1 | awk '{print $1}')"
+assert_eq "hook fixture remains immutable" "$failure_fixture_hash" "$(cksum "$failure_fixture")"
+
+assert_failure_wrapper_quiet() {
+  failure_label=$1
+  failure_session=$2
+  failure_path=$3
+  before_steps=$4
+  run_case env PATH="$failure_path" ARK_SESSION_DIR="$failure_session" /bin/bash "$failure_wrapper" <"$failure_fixture"
+  assert_success "$failure_label wrapper exits zero"
+  assert_eq "$failure_label stdout empty" 0 "$(wc -c <"$CASE_STDOUT" | tr -d ' ')"
+  assert_eq "$failure_label stderr empty" 0 "$(wc -c <"$CASE_STDERR" | tr -d ' ')"
+  assert_eq "$failure_label recitation unchanged" "$before_steps" "$(step_count "$concurrent_cache")"
+  assert_eq "$failure_label fixture unchanged" "$failure_fixture_hash" "$(cksum "$failure_fixture")"
+}
+
+no_jq_bin="$TEST_TMP/no-jq-bin"
+mkdir -m 700 "$no_jq_bin"
+for required_command in dirname mktemp dd wc tr rm chmod stat id date iconv mkdir sed cat rmdir; do
+  command_path=$(command -v "$required_command")
+  ln -s "$command_path" "$no_jq_bin/$required_command"
+done
+prepare_hook_case no-jq-hook
+assert_failure_wrapper_quiet "jq unavailable" "$hook_session" "$no_jq_bin" 1
+
+fake_adapter_root="$TEST_TMP/fake-adapter-root"
+mkdir -m 700 "$fake_adapter_root"
+mkdir -m 700 "$fake_adapter_root/adapters" "$fake_adapter_root/hooks"
+mkdir -m 700 "$fake_adapter_root/adapters/claude-code"
+cp "$failure_wrapper" "$fake_adapter_root/adapters/claude-code/post-tool-use-failure.sh"
+printf '#!/usr/bin/env bash\nexit 99\n' >"$fake_adapter_root/hooks/capture-error.sh"
+chmod 000 "$fake_adapter_root/hooks/capture-error.sh"
+prepare_hook_case core-unreadable
+run_case env PATH="$integration_bin:$PATH" ARK_SESSION_DIR="$hook_session" \
+  /bin/bash "$fake_adapter_root/adapters/claude-code/post-tool-use-failure.sh" <"$failure_fixture"
+assert_success "unreadable core wrapper exits zero"
+assert_eq "unreadable core wrapper stdout empty" 0 "$(wc -c <"$CASE_STDOUT" | tr -d ' ')"
+assert_eq "unreadable core wrapper stderr empty" 0 "$(wc -c <"$CASE_STDERR" | tr -d ' ')"
+chmod 600 "$fake_adapter_root/hooks/capture-error.sh"
+
+prepare_hook_case lock-held
+mkdir -m 700 "$hook_session/errors/.raw.lock"
+printf '%s live-token\n' "$$" >"$hook_session/errors/.raw.lock/owner"
+chmod 600 "$hook_session/errors/.raw.lock/owner"
+assert_failure_wrapper_quiet "raw lock held" "$hook_session" "$integration_bin:$PATH" 1
+
+prepare_hook_case unsafe-raw-hook
+printf 'sentinel\n' >"$hook_session/errors/raw.log"; chmod 644 "$hook_session/errors/raw.log"
+assert_failure_wrapper_quiet "unsafe raw" "$hook_session" "$integration_bin:$PATH" 1
+assert_eq "unsafe raw remains unchanged" sentinel "$(cat "$hook_session/errors/raw.log")"
+
+for hook_output in "$TEST_TMP"/ab-failure.out "$TEST_TMP"/ba-failure.out "$TEST_TMP"/concurrent-failure.out; do
+  grep -E 'decision|continue|additionalContext|hookSpecificOutput' "$hook_output" >/dev/null 2>&1
+  assert_eq "failure hook emits no control output" 1 "$?"
+done
+
 if grep -F '.gitignore' "$INIT" "$TEARDOWN" >/dev/null 2>&1; then test_fail "lifecycle script references .gitignore writes"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
 
 finish_tests session-lifecycle
