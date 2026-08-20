@@ -32,7 +32,10 @@ while [ "$#" -gt 0 ]; do
   if [ "$1" = --data-binary ]; then
     shift
     [ "$#" -gt 0 ] || exit 2
-    printf '%s' "$1" >"$FAKE_CURL_REQUEST"
+    case "$1" in
+      @*) cat "${1#@}" >"$FAKE_CURL_REQUEST" ;;
+      *) printf '%s' "$1" >"$FAKE_CURL_REQUEST" ;;
+    esac
     printf '%s\n' "$1" >>"$FAKE_CURL_ARGS"
   fi
   shift
@@ -199,7 +202,7 @@ assert_eq "model empty curl calls" 0 "$(wc -l <"$curl_log" | tr -d ' ')"
 
 no_curl_bin="$TEST_TMP/no-curl-bin"
 mkdir -m 700 "$no_curl_bin"
-for required_command in dirname stat id rm chmod jq grep sort awk iconv mv tr sed; do
+for required_command in dirname stat id rm chmod jq grep sort awk iconv mv tr sed wc; do
   command_path=$(command -v "$required_command")
   ln -s "$command_path" "$no_curl_bin/$required_command"
 done

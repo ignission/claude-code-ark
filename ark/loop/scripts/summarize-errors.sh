@@ -8,10 +8,15 @@ fi
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P) || exit 1
 . "$SCRIPT_DIR/lib/runtime.sh" || exit 1
+. "$SCRIPT_DIR/lib/config.sh" || exit 1
 
 SUMMARY_INDEX=
 SUMMARY_SORTED=
 SUMMARY_NEW=
+SUMMARY_REQUEST=
+SUMMARY_RESPONSE=
+SUMMARY_TEXT=
+SUMMARY_ITEMS=
 
 summary_cleanup() {
   if [ -n "$SUMMARY_INDEX" ] && [ ! -L "$SUMMARY_INDEX" ] && [ -f "$SUMMARY_INDEX" ]; then
@@ -23,6 +28,11 @@ summary_cleanup() {
   if [ -n "$SUMMARY_NEW" ] && [ ! -L "$SUMMARY_NEW" ] && [ -f "$SUMMARY_NEW" ]; then
     command rm -f "$SUMMARY_NEW" >/dev/null 2>&1 || :
   fi
+  for cleanup_file in "$SUMMARY_REQUEST" "$SUMMARY_RESPONSE" "$SUMMARY_TEXT" "$SUMMARY_ITEMS"; do
+    if [ -n "$cleanup_file" ] && [ ! -L "$cleanup_file" ] && [ -f "$cleanup_file" ]; then
+      command rm -f "$cleanup_file" >/dev/null 2>&1 || :
+    fi
+  done
 }
 
 summary_create_private_file() {
@@ -47,6 +57,111 @@ summary_emit_group() {
     printf '%s\n' "  last_line: $last"
     printf '%s\n' "  詳細: errors/raw.log:L$first-L$last"
   } >>"$output"
+}
+
+summary_file_size() {
+  local value
+  value=$(stat -c '%s' "$1" 2>/dev/null) || value=$(stat -f '%z' "$1" 2>/dev/null) || return 1
+  case "$value" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$value"
+}
+
+summary_try_llm() {
+  local summary=$1 errors=$2 api_key response_status response_size action reason reference extra
+  LOOP_SUMMARIZE_LLM=0
+  LOOP_SUMMARIZE_MODEL=
+  if [ -n "${LOOP_CONFIG_FILE:-}" ]; then
+    loop_config_read_summarize >/dev/null 2>&1 || return 0
+  fi
+  [ "$LOOP_SUMMARIZE_LLM" -eq 1 ] || return 0
+  api_key=${ANTHROPIC_API_KEY:-}
+  [ -n "$api_key" ] || return 0
+  [ -n "$LOOP_SUMMARIZE_MODEL" ] || return 0
+  command -v curl >/dev/null 2>&1 || return 0
+
+  SUMMARY_REQUEST="$errors/.summary-request-$$"
+  SUMMARY_RESPONSE="$errors/.summary-response-$$"
+  SUMMARY_TEXT="$errors/.summary-text-$$"
+  SUMMARY_ITEMS="$errors/.summary-items-$$"
+  summary_create_private_file "$SUMMARY_REQUEST" || return 0
+  summary_create_private_file "$SUMMARY_RESPONSE" || return 0
+  summary_create_private_file "$SUMMARY_TEXT" || return 0
+  summary_create_private_file "$SUMMARY_ITEMS" || return 0
+
+  jq -n --arg model "$LOOP_SUMMARIZE_MODEL" --rawfile mechanical "$summary" '
+    {
+      model:$model,
+      max_tokens:512,
+      temperature:0,
+      system:(
+        "Return JSON only with schema {items:[{prohibited_action:string,reason:string,reference:string}]}. "
+        + "Every reference must be copied exactly from the supplied mechanical summary. "
+        + "Do not request or infer raw error text, tool input, transcript paths, credentials, or secrets."
+      ),
+      messages:[{role:"user",content:$mechanical}]
+    }
+  ' >"$SUMMARY_REQUEST" 2>/dev/null || return 0
+  chmod 600 "$SUMMARY_REQUEST" || return 0
+
+  curl -sS --fail-with-body --max-time 5 -X POST 'https://api.anthropic.com/v1/messages' \
+    -H "x-api-key: $api_key" \
+    -H 'anthropic-version: 2023-06-01' \
+    -H 'content-type: application/json' \
+    --data-binary "@$SUMMARY_REQUEST" 2>/dev/null \
+    | dd bs=1048577 count=1 of="$SUMMARY_RESPONSE" 2>/dev/null
+  response_status=$?
+  [ "$response_status" -eq 0 ] || return 0
+  response_size=$(summary_file_size "$SUMMARY_RESPONSE") || return 0
+  [ "$response_size" -le 1048576 ] || return 0
+  iconv -f UTF-8 -t UTF-8 "$SUMMARY_RESPONSE" >/dev/null 2>&1 || return 0
+  jq -er '.content[0].text | select(type == "string")' "$SUMMARY_RESPONSE" >"$SUMMARY_TEXT" 2>/dev/null || return 0
+  jq -e '
+    type == "object"
+    and keys == ["items"]
+    and (.items | type) == "array"
+    and (.items | length) > 0
+    and all(.items[];
+      type == "object"
+      and keys == ["prohibited_action","reason","reference"]
+      and (.prohibited_action | type) == "string" and (.prohibited_action | length) > 0
+      and (.reason | type) == "string" and (.reason | length) > 0
+      and (.reference | type) == "string"
+      and (.prohibited_action | utf8bytelength) <= 400
+      and (.reason | utf8bytelength) <= 400
+      and (.reference | utf8bytelength) <= 400
+      and (.prohibited_action | test("[\u0000-\u001f\u007f]") | not)
+      and (.reason | test("[\u0000-\u001f\u007f]") | not)
+      and (.reference | test("[\u0000-\u001f\u007f]") | not)
+      and (.reference | test("^errors/raw\\.log:L[0-9]+-L[0-9]+$"))
+    )
+  ' "$SUMMARY_TEXT" >/dev/null 2>&1 || return 0
+  jq -e --rawfile mechanical "$summary" '
+    [$mechanical | split("\n")[] | select(startswith("  詳細: ")) | ltrimstr("  詳細: ")] as $references
+    | all(.items[]; .reference as $reference | ($references | index($reference) != null))
+  ' "$SUMMARY_TEXT" >/dev/null 2>&1 || return 0
+
+  jq -c '.items[]' "$SUMMARY_TEXT" >"$SUMMARY_ITEMS" 2>/dev/null || return 0
+  SUMMARY_NEW="$errors/summary.md.new"
+  summary_create_private_file "$SUMMARY_NEW" || return 0
+  command cat "$summary" >"$SUMMARY_NEW" || return 0
+  printf '%s\n' 'LLM summary (opt-in)' >>"$SUMMARY_NEW" || return 0
+  while IFS= read -r item || [ -n "$item" ]; do
+    [ -n "$item" ] || return 0
+    action=$(printf '%s\n' "$item" | jq -r '.prohibited_action') || return 0
+    reason=$(printf '%s\n' "$item" | jq -r '.reason') || return 0
+    reference=$(printf '%s\n' "$item" | jq -r '.reference') || return 0
+    [ -n "$action" ] && [ -n "$reason" ] && [ -n "$reference" ] || return 0
+    printf '%s\n' "- 禁止手: $action" >>"$SUMMARY_NEW" || return 0
+    printf '%s\n' "  理由: $reason" >>"$SUMMARY_NEW" || return 0
+    printf '%s\n' "  詳細: $reference" >>"$SUMMARY_NEW" || return 0
+  done <"$SUMMARY_ITEMS"
+  iconv -f UTF-8 -t UTF-8 "$SUMMARY_NEW" >/dev/null 2>&1 || return 0
+  grep -E '^## ' "$SUMMARY_NEW" >/dev/null 2>&1 && return 0
+  chmod 600 "$SUMMARY_NEW" || return 0
+  loop_validate_xdg_file "$SUMMARY_NEW" >/dev/null 2>&1 || return 0
+  command mv "$SUMMARY_NEW" "$summary" || return 0
+  SUMMARY_NEW=
+  return 0
 }
 
 summary_main() {
@@ -149,6 +264,7 @@ summary_main() {
   loop_validate_xdg_file "$SUMMARY_NEW" || return 1
   command mv "$SUMMARY_NEW" "$summary" || return 1
   SUMMARY_NEW=
+  summary_try_llm "$summary" "$errors"
   return 0
 }
 
