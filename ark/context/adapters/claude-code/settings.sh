@@ -5,6 +5,7 @@ CLAUDE_CTX_FAILURE_HOOK_JSON=
 CLAUDE_CTX_SESSION_START_HOOK_JSON=
 
 claude_settings_error() {
+  CLAUDE_SETTINGS_FAILURE_REASON=$*
   printf '%s\n' "$*" >&2
   return 1
 }
@@ -36,7 +37,15 @@ claude_settings_prepare_hooks() {
     '{hooks:[{type:"command",command:($command|@sh)}]}') || return 1
 }
 
+claude_settings_repo_path_valid() {
+  ctx_validate_repo_path "$1" "$2" "$3" "$4" || {
+    CLAUDE_SETTINGS_FAILURE_REASON=${CTX_VALIDATION_ERROR:-"unsafe repo path: $4"}
+    return 1
+  }
+}
+
 claude_settings_validate_schema() {
+  local display=${2:-.claude/settings.local.json}
   command -v jq >/dev/null 2>&1 || { claude_settings_error "jq command unavailable"; return 1; }
   jq -e '
     type == "object" and
@@ -48,7 +57,7 @@ claude_settings_validate_schema() {
         ((has("PostToolBatch") | not) or (.PostToolBatch | type == "array")) and
         ((has("PostToolUseFailure") | not) or (.PostToolUseFailure | type == "array")) and
         ((has("SessionStart") | not) or (.SessionStart | type == "array"))))
-  ' "$1" >/dev/null 2>&1 || { claude_settings_error "invalid Claude settings schema"; return 1; }
+  ' "$1" >/dev/null 2>&1 || { claude_settings_error "settings schema invalid: $display"; return 1; }
 }
 
 claude_json_property_range() {
@@ -207,14 +216,14 @@ claude_settings_exact_ignore() {
   local path=$2
   local output metadata source pattern
   output=$(git -C "$repo" check-ignore -v --no-index -- "$path" 2>/dev/null) \
-    || { claude_settings_error "required exact ignore missing"; return 1; }
+    || { claude_settings_error "gitignore entry missing: $path"; return 1; }
   metadata=${output%%$'\t'*}
   source=${metadata%%:*}
   pattern=${metadata##*:}
   [ "$source" = .gitignore ] && [ "$pattern" = "$path" ] \
-    || { claude_settings_error "required exact ignore missing"; return 1; }
+    || { claude_settings_error "gitignore entry missing: $path"; return 1; }
   git -C "$repo" ls-files --error-unmatch -- .gitignore >/dev/null 2>&1 \
-    || { claude_settings_error "required exact ignore missing"; return 1; }
+    || { claude_settings_error "gitignore entry missing: $path"; return 1; }
 }
 
 claude_settings_preflight() {
@@ -223,19 +232,19 @@ claude_settings_preflight() {
   local canonical settings tmp manifest manifest_new path
   canonical=$(ctx_resolve_repo "$repo") || return 1
   [ "$canonical" = "$repo" ] || { claude_settings_error "unsafe repo path"; return 1; }
-  ctx_validate_repo_path "$repo/.claude" directory required || return 1
+  claude_settings_repo_path_valid "$repo/.claude" directory required .claude || return 1
   ctx_validate_xdg_dir "$state" || return 1
   settings="$repo/.claude/settings.local.json"
   tmp="$repo/.claude/settings.local.json.ark-context-tmp"
   manifest="$state/settings-ownership.json"
   manifest_new="$state/settings-ownership.json.new"
-  ctx_validate_repo_path "$settings" file optional || return 1
-  ctx_validate_repo_path "$tmp" file optional || return 1
+  claude_settings_repo_path_valid "$settings" file optional .claude/settings.local.json || return 1
+  claude_settings_repo_path_valid "$tmp" file optional .claude/settings.local.json.ark-context-tmp || return 1
   if [ -e "$manifest" ] || [ -L "$manifest" ]; then ctx_validate_xdg_file "$manifest" || return 1; fi
   if [ -e "$manifest_new" ] || [ -L "$manifest_new" ]; then ctx_validate_xdg_file "$manifest_new" || return 1; fi
   for path in .claude/settings.local.json .claude/settings.local.json.ark-context-tmp; do
     if git -C "$repo" ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
-      claude_settings_error "tracked settings path"
+      claude_settings_error "tracked file: $path"
       return 1
     fi
     claude_settings_exact_ignore "$repo" "$path" || return 1
@@ -281,6 +290,7 @@ claude_settings_inject() {
   local state=${2:-}
   local source_root=${3:-${ARK_SOURCE_ROOT:-}}
   local settings tmp manifest manifest_new settings_existed mode root range permissions_start deny_start hooks_start batch_start failure_start session_start_start tool
+  CLAUDE_SETTINGS_FAILURE_REASON=
   claude_settings_prepare_hooks "$source_root" || return 1
   settings="$repo/.claude/settings.local.json"
   tmp="$repo/.claude/settings.local.json.ark-context-tmp"
@@ -298,8 +308,8 @@ claude_settings_inject() {
   fi
 
   if [ -e "$settings" ] || [ -L "$settings" ]; then
-    ctx_validate_repo_path "$settings" file required || return 1
-    claude_settings_validate_schema "$settings" || return 1
+    claude_settings_repo_path_valid "$settings" file required .claude/settings.local.json || return 1
+    claude_settings_validate_schema "$settings" .claude/settings.local.json || return 1
     settings_existed=true
     mode=$(ctx_stat "$settings" | awk '{print $2}') || return 1
     [ -n "$mode" ] || return 1
@@ -373,21 +383,26 @@ claude_settings_inject() {
 
   printf '%s' "$CLAUDE_CONTENT" | jq -e . >/dev/null 2>&1 || return 1
   [ "$(printf '%s' "$CLAUDE_ENTRIES" | jq 'length')" -gt 0 ] || return 0
-  if [ -e "$manifest_new" ] || [ -L "$manifest_new" ]; then ctx_validate_xdg_file "$manifest_new" || return 1; fi
+  if [ -e "$manifest_new" ] || [ -L "$manifest_new" ]; then
+    ctx_validate_xdg_file "$manifest_new" || { claude_settings_error "manifest write failed"; return 1; }
+  fi
   jq -n --argjson existed "$settings_existed" --argjson entries "$CLAUDE_ENTRIES" \
-    '{schema_version:1,settings_existed:$existed,entries:$entries}' >"$manifest_new" || return 1
-  chmod 600 "$manifest_new" || return 1
-  ctx_validate_xdg_file "$manifest_new" || return 1
-  command mv "$manifest_new" "$manifest" || return 1
+    '{schema_version:1,settings_existed:$existed,entries:$entries}' >"$manifest_new" \
+    || { claude_settings_error "manifest write failed"; return 1; }
+  chmod 600 "$manifest_new" || { claude_settings_error "manifest write failed"; return 1; }
+  ctx_validate_xdg_file "$manifest_new" || { claude_settings_error "manifest write failed"; return 1; }
+  command mv "$manifest_new" "$manifest" || { claude_settings_error "manifest write failed"; return 1; }
 
-  if [ -e "$tmp" ] || [ -L "$tmp" ]; then ctx_validate_repo_path "$tmp" file required || return 1; fi
+  if [ -e "$tmp" ] || [ -L "$tmp" ]; then
+    claude_settings_repo_path_valid "$tmp" file required .claude/settings.local.json.ark-context-tmp || return 1
+  fi
   old_umask=$(umask); umask 077
   printf '%s' "$CLAUDE_CONTENT" >"$tmp"
   write_status=$?
   umask "$old_umask"
   [ "$write_status" -eq 0 ] || return 1
   chmod "$mode" "$tmp" || return 1
-  ctx_validate_repo_path "$tmp" file required || return 1
+  claude_settings_repo_path_valid "$tmp" file required .claude/settings.local.json.ark-context-tmp || return 1
   command mv "$tmp" "$settings" || return 1
 }
 
@@ -396,6 +411,7 @@ claude_settings_restore() {
   local state=${2:-}
   local settings tmp manifest settings_existed mode entries entry path value index range root permissions_start deny_start hooks_start batch_start failure_start session_start_start item_range
   local abandoned=false batch_abandoned=false failure_abandoned=false session_start_abandoned=false property_between deny_length batch_length failure_length session_start_length hooks_items_length LC_ALL=C
+  CLAUDE_SETTINGS_FAILURE_REASON=
   command -v jq >/dev/null 2>&1 || { claude_settings_error "jq command unavailable"; return 1; }
   settings="$repo/.claude/settings.local.json"
   tmp="$repo/.claude/settings.local.json.ark-context-tmp"
@@ -406,8 +422,8 @@ claude_settings_restore() {
   jq -e '.schema_version == 1 and (.settings_existed|type)=="boolean" and (.entries|type)=="array"' "$manifest" >/dev/null 2>&1 || return 1
   settings_existed=$(jq -r '.settings_existed' "$manifest")
   if [ ! -e "$settings" ]; then command rm -f "$manifest"; return 0; fi
-  ctx_validate_repo_path "$settings" file required || return 1
-  claude_settings_validate_schema "$settings" || return 1
+  claude_settings_repo_path_valid "$settings" file required .claude/settings.local.json || return 1
+  claude_settings_validate_schema "$settings" .claude/settings.local.json || return 1
   mode=$(ctx_stat "$settings" | awk '{print $2}') || return 1
   [ -n "$mode" ] || return 1
   claude_content_read "$settings" || return 1
@@ -543,9 +559,9 @@ EOF
       if $batch then (.entries[] | select(.path == "hooks/PostToolBatch")).abandoned = true else . end
       | if $failure then (.entries[] | select(.path == "hooks/PostToolUseFailure")).abandoned = true else . end
       | if $session_start then (.entries[] | select(.path == "hooks/SessionStart")).abandoned = true else . end
-    ' "$manifest" >"$manifest.new" || return 1
-    chmod 600 "$manifest.new" || return 1
-    command mv "$manifest.new" "$manifest" || return 1
+    ' "$manifest" >"$manifest.new" || { claude_settings_error "manifest write failed"; return 1; }
+    chmod 600 "$manifest.new" || { claude_settings_error "manifest write failed"; return 1; }
+    command mv "$manifest.new" "$manifest" || { claude_settings_error "manifest write failed"; return 1; }
   else
     command rm -f "$manifest"
   fi

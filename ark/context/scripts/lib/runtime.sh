@@ -75,25 +75,58 @@ ctx_validate_repo_path() {
   local target=${1:-}
   local expected=${2:-file}
   local presence=${3:-optional}
+  local display=${4:-repo path}
   local values mode group
+  CTX_VALIDATION_ERROR=
   if [ ! -e "$target" ] && [ ! -L "$target" ]; then
     [ "$presence" = optional ] && return 0
-    ctx_error "unsafe repo path"
+    CTX_VALIDATION_ERROR="unsafe repo path: $display is missing"
+    ctx_error "$CTX_VALIDATION_ERROR"
     return 1
   fi
-  [ ! -L "$target" ] || { ctx_error "unsafe repo path"; return 1; }
+  if [ -L "$target" ]; then
+    CTX_VALIDATION_ERROR="unsafe repo path: $display is a symlink"
+    ctx_error "$CTX_VALIDATION_ERROR"
+    return 1
+  fi
   case "$expected" in
-    directory) [ -d "$target" ] || { ctx_error "unsafe repo path"; return 1; } ;;
-    file) [ -f "$target" ] || { ctx_error "unsafe repo path"; return 1; } ;;
-    *) ctx_error "unsafe repo path"; return 1 ;;
+    directory) [ -d "$target" ] || {
+      CTX_VALIDATION_ERROR="unsafe repo path: $display is not a directory"
+      ctx_error "$CTX_VALIDATION_ERROR"
+      return 1
+    } ;;
+    file) [ -f "$target" ] || {
+      CTX_VALIDATION_ERROR="unsafe repo path: $display is not a regular file"
+      ctx_error "$CTX_VALIDATION_ERROR"
+      return 1
+    } ;;
+    *)
+      CTX_VALIDATION_ERROR="unsafe repo path: $display has an invalid expected type"
+      ctx_error "$CTX_VALIDATION_ERROR"
+      return 1
+      ;;
   esac
-  values=$(ctx_stat "$target") || { ctx_error "unsafe repo path"; return 1; }
+  values=$(ctx_stat "$target") || {
+    CTX_VALIDATION_ERROR="unsafe repo path: $display metadata unavailable"
+    ctx_error "$CTX_VALIDATION_ERROR"
+    return 1
+  }
   set -- $values
-  [ "$1" = "$(id -u)" ] || { ctx_error "unsafe repo path"; return 1; }
+  if [ "$1" != "$(id -u)" ]; then
+    CTX_VALIDATION_ERROR="unsafe repo path: $display owner mismatch"
+    ctx_error "$CTX_VALIDATION_ERROR"
+    return 1
+  fi
   mode=$2
   while [ "${#mode}" -lt 3 ]; do mode="0$mode"; done
   group=${mode#${mode%??}}
-  case "$group" in *[2367]*) ctx_error "unsafe repo path"; return 1 ;; esac
+  case "$group" in
+    *[2367]*)
+      CTX_VALIDATION_ERROR="unsafe repo path: $display is group/other writable (mode $mode)"
+      ctx_error "$CTX_VALIDATION_ERROR"
+      return 1
+      ;;
+  esac
 }
 
 ctx_secure_dir() {

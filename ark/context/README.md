@@ -1,17 +1,36 @@
 # Ark Context runtime data
 
+## 有効化前に確認する repo の前提条件
+
+Ark Context を有効化する対象 repo は、事前に次の条件をすべて満たす必要がある。
+満たさない場合は settings を変更せず、その repo の context を無効化する。
+
+- `.claude` と、存在する場合の `.claude/settings.local.json` は、実行ユーザーが所有する
+  non-symlink の directory / regular file であり、group / other 書き込み可でないこと
+- versioned な `.gitignore` に `.claude/settings.local.json` と
+  `.claude/settings.local.json.ark-context-tmp` の完全一致行がそれぞれあること
+- `.claude/settings.local.json` と `.claude/settings.local.json.ark-context-tmp` が
+  Git に tracked されていないこと
+
+有効化前に mode、`.gitignore` の2行、`git ls-files` の結果を確認する。たとえば
+`.claude` が mode `775` の場合は group 書き込み可なので前提を満たさない。
+
 Ark Context の session data は XDG data home 配下に保存する。session directory とその
 `errors/` は mode `0700`、`raw.log` と `summary.md` は mode `0600` で、実行 uid が
 所有する non-symlink の regular path だけを受理する。
 
-session init は mode `0600` の空の `artifacts/index.md` も作る。artifact の目次行は
-`- artifacts/<path> — <1行要約>` とし、handoff はこの形式だけを取り込む。
+session init は mode `0600` の空の `artifacts/index.md` と session 固有の
+`failures-inbox.md` も作る。artifact の目次行は `- artifacts/<path> — <1行要約>`
+とし、handoff はこの形式だけを取り込む。
 
 ## SessionStart の task 規約
 
 Claude Code adapter は `SessionStart` に agent 非依存の
-`hooks/inject-context-rules.sh` を接続し、10則、`task.md` の絶対 path、artifact 目次の
-形式を `additionalContext` として渡す。Goal が空なら最初のユーザー要求から Goal と
+`hooks/inject-context-rules.sh` を接続し、10則に続けて `task.md`、`artifacts/`、
+`artifacts/index.md`、`knowledge/failures.md`、`failures-inbox.md` の絶対 path を
+session directory の1ブロックとして `additionalContext` に渡す。
+`knowledge/failures.md` の行だけは安全な snapshot が非空のときに出し、それ以外の
+4 path は常に出す。Goal が空なら最初のユーザー要求から Goal と
 Plan を起票する指示を、埋まっていれば現在の Goal / NOW を添える。`task.md` 自体には
 規約本文を展開せず、`templates/context-rules.md` の絶対 path だけを1行で置くため、
 recitation の `## Goal` / `## Plan` parse 境界は増えない。
@@ -39,9 +58,13 @@ summary とそこに含まれる `errors/raw.log:Lx-Ly` 参照だけであり、
 | --- | --- | --- |
 | host failures.md | 人間だけ | レビュー済みの curated 正本 |
 | session knowledge/failures.md | session init だけ | init 時点の curated 正本の snapshot。agent と hook は論理 read-only として扱う |
-| host failures-inbox.md | lifecycle の候補 append と人間の整理 | 機械 summary からの候補を受ける唯一の自動出力先 |
+| session failures-inbox.md | agent、init | agent が候補を書く session 固有の受け皿。init は mode `0600` で作成 |
+| host failures-inbox.md | lifecycle の候補 append と人間の整理 | 機械 summary と session inbox の候補を受ける唯一の自動出力先 |
 
-agent と hook は host / session の failures.md を編集しない。raw log や機械・LLM
+agent と hook は host / session の failures.md を編集せず、agent は host inbox にも
+直接書かない。teardown と次回 init の孤児回収は session inbox が安全な regular file・
+mode `0600`・UTF-8・最大 64 KiB の場合だけ、knowledge lock 下で内容 SHA-256 marker を
+付けて host inbox へ追記する。上限超過は切り詰めず候補全体をスキップする。raw log や機械・LLM
 summary から curated 正本へ直接昇格する経路、および候補を意味的に自動統合する経路は
 持たない。marker による重複排除は、同じ evidence block の再 append を防ぐためだけに
 使う。

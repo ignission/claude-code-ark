@@ -46,6 +46,17 @@ run_case ctx_knowledge_initialize "$session" "$knowledge"
 assert_success "knowledge re-init succeeds"
 assert_eq "knowledge re-init preserves snapshot" "$session_copy_before" "$(cksum "$session/knowledge/failures.md")"
 
+run_case ctx_session_failures_inbox_initialize "$session"
+assert_success "session failures inbox initializes"
+session_inbox="$session/failures-inbox.md"
+assert_eq "session failures inbox mode" 600 "$(ctx_stat "$session_inbox" | awk '{print $2}')"
+assert_eq "session failures inbox starts empty" 0 "$(wc -c <"$session_inbox" | tr -d ' ')"
+printf '%s\n' 'preserve session candidate' >"$session_inbox"
+run_case ctx_session_failures_inbox_initialize "$session"
+assert_success "session failures inbox re-init succeeds"
+assert_eq "session failures inbox re-init preserves content" 'preserve session candidate' \
+  "$(command cat "$session_inbox")"
+
 missing_session="$XDG_DATA_HOME/ark/context/sessions/44444444444444444444444444444444"
 missing_knowledge="$XDG_DATA_HOME/ark/context/missing-knowledge"
 mkdir -m 700 "$missing_session" "$missing_knowledge"
@@ -80,6 +91,22 @@ append_with_lock() {
   return "$append_status"
 }
 
+append_session_with_lock() {
+  target_session=$1
+  target_knowledge=$2
+  target_work=$3
+  target_sid=$4
+  target_lock="$target_knowledge/failures-inbox.lock"
+  flow_lock_acquire "$target_lock" 9 30 30 mkdir-direct >/dev/null 2>&1 || return 1
+  target_backend=$FLOW_LOCK_ACQUIRED_BACKEND
+  target_pid=$FLOW_LOCK_ACQUIRED_PID
+  target_token=$FLOW_LOCK_ACQUIRED_TOKEN
+  ctx_session_failures_inbox_append "$target_session" "$target_knowledge" "$target_work" "$target_sid"
+  append_status=$?
+  flow_lock_release "$target_lock" "$target_backend" "$target_pid" "$target_token" >/dev/null 2>&1 || return 1
+  return "$append_status"
+}
+
 run_case append_with_lock "$session" "$knowledge" issue-336 "$sid"
 assert_success "inbox append succeeds"
 inbox="$knowledge/failures-inbox.md"
@@ -105,6 +132,49 @@ inbox_once=$(cksum "$inbox")
 run_case append_with_lock "$session" "$knowledge" issue-336 "$sid"
 assert_success "second inbox append succeeds"
 assert_eq "second append is deduplicated" "$inbox_once" "$(cksum "$inbox")"
+
+session_candidate='## Reusable recovery
+- Check the generated path before retrying.
+- Keep this candidate for human review.'
+printf '%s\n' "$session_candidate" >"$session_inbox"
+chmod 600 "$session_inbox"
+run_case append_session_with_lock "$session" "$knowledge" issue-336 "$sid"
+assert_success "session candidate append succeeds"
+session_separator=$(printf '\037')
+session_hash=$(ctx_sha256 "session-inbox-v1$session_separator$session_candidate")
+session_marker="<!-- ark-context-session-candidate:$session_hash -->"
+assert_eq "session candidate marker count" 1 "$(grep -F -x -c "$session_marker" "$inbox")"
+assert_eq "session candidate content count" 1 \
+  "$(grep -F -x -c -- '- Check the generated path before retrying.' "$inbox")"
+session_inbox_once=$(cksum "$inbox")
+run_case append_session_with_lock "$session" "$knowledge" issue-336 "$sid"
+assert_success "second session candidate append succeeds"
+assert_eq "session candidate append is idempotent" "$session_inbox_once" "$(cksum "$inbox")"
+
+printf '%s\n' 'unsafe mode candidate must not publish' >"$session_inbox"
+chmod 644 "$session_inbox"
+unsafe_session_before=$(cksum "$inbox")
+run_case append_session_with_lock "$session" "$knowledge" issue-336 "$sid"
+assert_success "unsafe session inbox is skipped"
+assert_eq "unsafe session inbox preserves host inbox" "$unsafe_session_before" "$(cksum "$inbox")"
+chmod 600 "$session_inbox"
+
+head -c 65537 /dev/zero | tr '\000' x >"$session_inbox"
+chmod 600 "$session_inbox"
+oversized_session_before=$(cksum "$inbox")
+run_case append_session_with_lock "$session" "$knowledge" issue-336 "$sid"
+assert_success "oversized session inbox is skipped"
+assert_eq "oversized session inbox preserves host inbox" "$oversized_session_before" "$(cksum "$inbox")"
+
+command rm -f "$session_inbox"
+ln -s "$session/errors/summary.md" "$session_inbox"
+symlink_session_before=$(cksum "$inbox")
+run_case append_session_with_lock "$session" "$knowledge" issue-336 "$sid"
+assert_success "symlink session inbox is skipped"
+assert_eq "symlink session inbox preserves host inbox" "$symlink_session_before" "$(cksum "$inbox")"
+command rm -f "$session_inbox"
+run_case ctx_session_failures_inbox_initialize "$session"
+assert_success "session failures inbox recreates after unsafe fixture"
 
 publish_failure_knowledge="$TEST_TMP/publish-failure-knowledge"
 publish_failure_bin="$TEST_TMP/publish-failure-bin"

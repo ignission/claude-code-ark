@@ -156,6 +156,8 @@ if owner_read "$owner"; then
           knowledge_token=$FLOW_LOCK_ACQUIRED_TOKEN
           ctx_failures_inbox_append "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" \
             "$old_work_id" "$OWNER_SESSION" >/dev/null 2>&1 || true
+          ctx_session_failures_inbox_append "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" \
+            "$old_work_id" "$OWNER_SESSION" >/dev/null 2>&1 || true
           flow_lock_release "$knowledge_lock" "$knowledge_backend" "$knowledge_pid" "$knowledge_token" \
             >/dev/null 2>&1 || true
         fi
@@ -168,7 +170,12 @@ if owner_read "$owner"; then
         command rm -f "$ARK_SESSION_DIR/stop_once" 2>/dev/null || true
       fi
     fi
-    claude_settings_restore "$repo" "$CTX_REPO_STATE_DIR" >/dev/null 2>&1 || { release_lock; session_disabled "orphan settings restore failed"; }
+    CLAUDE_SETTINGS_FAILURE_REASON=
+    if ! claude_settings_restore "$repo" "$CTX_REPO_STATE_DIR" >/dev/null 2>&1; then
+      reason=${CLAUDE_SETTINGS_FAILURE_REASON:-orphan settings restore failed}
+      release_lock
+      session_disabled "$reason"
+    fi
     command rm -f "$owner" || { release_lock; session_disabled "orphan owner cleanup failed"; }
   fi
 elif [ "$?" -eq 2 ]; then
@@ -224,8 +231,11 @@ else
   ctx_task_render "$@" >/dev/null 2>&1 || init_failed "task initialization failed"
 fi
 ctx_knowledge_initialize "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" >/dev/null 2>&1 || init_failed "knowledge initialization failed"
+ctx_session_failures_inbox_initialize "$ARK_SESSION_DIR" >/dev/null 2>&1 \
+  || init_failed "session failures inbox initialization failed"
+CLAUDE_SETTINGS_FAILURE_REASON=
 claude_settings_inject "$repo" "$CTX_REPO_STATE_DIR" "$ARK_SOURCE_ROOT" >/dev/null 2>&1 \
-  || init_failed "settings injection failed"
+  || init_failed "${CLAUDE_SETTINGS_FAILURE_REASON:-settings injection failed}"
 release_lock
 
 printf 'enabled\t1\n'
