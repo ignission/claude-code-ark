@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import { AboutDialog } from "@/components/AboutDialog";
 import { BrowserPane } from "@/components/BrowserPane";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
-import { FrontLineModal } from "@/components/frontline/FrontLineModal";
 import { McpManagerDialog } from "@/components/McpManagerDialog";
 import { MobileChatView } from "@/components/MobileChatView";
 import {
@@ -403,7 +402,6 @@ export default function Dashboard() {
    */
   const [previousRepoPath, setPreviousRepoPath] = useState<string | null>(null);
   const [isSelectRepoOpen, setIsSelectRepoOpen] = useState(false);
-  const [showFrontLine, setShowFrontLine] = useState(false);
   const [showTunnelDialog, setShowTunnelDialog] = useState(false);
   const [selectedPort, setSelectedPort] = useState<number | null>(null);
   const [showPortSelector, setShowPortSelector] = useState(false);
@@ -874,7 +872,6 @@ export default function Dashboard() {
           }
           initialSidebarWidth={getSetting<number>("ark-sidebar-width", 250)}
           onSidebarWidthChange={w => setSetting("ark-sidebar-width", w)}
-          onOpenFrontLine={() => setShowFrontLine(true)}
           onOpenMcpManager={() => setShowMcpManager(true)}
           onOpenAboutDialog={() => setShowAboutDialog(true)}
           hostMetrics={bridgeSnapshot?.metrics ?? null}
@@ -1047,13 +1044,6 @@ export default function Dashboard() {
         onOpenChange={handleCreateWorktreeOpenChange}
         selectedRepoPath={repoPath}
         onCreateWorktree={handleCreateWorktree}
-      />
-
-      {/* FrontLine モーダル */}
-      <FrontLineModal
-        open={showFrontLine}
-        onClose={() => setShowFrontLine(false)}
-        socket={socket}
       />
 
       {/* プロファイル管理 (Linux限定) */}

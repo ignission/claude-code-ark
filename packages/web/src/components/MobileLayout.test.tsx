@@ -5,13 +5,6 @@ import { describe, expect, it, vi } from "vitest";
 import { MobileLayout } from "./MobileLayout";
 import type { ViewerTab } from "./TerminalPane";
 
-vi.mock("@/components/frontline/FrontLineGame", () => ({
-  FrontLineGame: () => null,
-}));
-vi.mock("@/components/frontline/MobileControls", () => ({
-  MobileControls: () => null,
-}));
-
 const session: ManagedSession = {
   id: "session-1",
   worktreeId: "worktree-1",

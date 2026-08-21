@@ -22,12 +22,9 @@ import type {
   UsageProgress,
   Worktree,
 } from "@ark/shared";
-import type Phaser from "phaser";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { BrowserPane } from "@/components/BrowserPane";
-import { FrontLineGame } from "@/components/frontline/FrontLineGame";
-import { MobileControls } from "@/components/frontline/MobileControls";
 import { MobileChatView } from "@/components/MobileChatView";
 import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
@@ -37,7 +34,7 @@ import type { DiagramOpenRequest } from "@/lib/mobile-session-view-mode";
 // MobileTab / SessionSubView は配列を真実源にし、union 型を派生させる。
 // こうしないと runtime 検証配列と型が二重化し、union に値を足したとき配列更新を
 // 忘れても型エラーにならず正当な値が静かに潰れる。
-const MOBILE_TABS = ["session", "browser", "frontline", "beacon"] as const;
+const MOBILE_TABS = ["session", "browser", "beacon"] as const;
 const SESSION_SUB_VIEWS = ["list", "detail"] as const;
 export type MobileTab = (typeof MOBILE_TABS)[number];
 export type SessionSubView = (typeof SESSION_SUB_VIEWS)[number];
@@ -253,7 +250,6 @@ export function MobileLayout({
   sessionStatuses,
   sessionAwaitingTexts,
 }: MobileLayoutProps) {
-  const [frontlineOpened, setFrontlineOpened] = useState(false);
   const [openedSessions, setOpenedSessions] = useState<Set<string>>(() =>
     selectedSessionId ? new Set([selectedSessionId]) : new Set()
   );
@@ -332,26 +328,6 @@ export function MobileLayout({
   }, [onSelectBrowser, onChangeActiveTab]);
 
   const showBottomNav = true;
-
-  // FrontLineタブ離脱/復帰時にpause/resume
-  const prevActiveTabRef = useRef(activeTab);
-  useEffect(() => {
-    const prev = prevActiveTabRef.current;
-    prevActiveTabRef.current = activeTab;
-    if (prev === activeTab) return;
-
-    const game = (window as unknown as Record<string, unknown>)
-      .__FRONTLINE_GAME__ as Phaser.Game | undefined;
-    if (!game) return;
-
-    if (prev === "frontline" && activeTab !== "frontline") {
-      game.events.emit("modal:pause");
-      game.loop.sleep();
-    } else if (prev !== "frontline" && activeTab === "frontline") {
-      game.loop.wake();
-      game.events.emit("modal:resume");
-    }
-  }, [activeTab]);
 
   return (
     <div className="h-full flex flex-col min-h-0 overflow-hidden">
@@ -534,20 +510,6 @@ export function MobileLayout({
           <button
             type="button"
             className={`flex-1 py-3 text-center text-sm font-medium ${
-              activeTab === "frontline"
-                ? "text-primary border-t-2 border-primary"
-                : "text-muted-foreground"
-            }`}
-            onClick={() => {
-              onChangeActiveTab("frontline");
-              setFrontlineOpened(true);
-            }}
-          >
-            🎯
-          </button>
-          <button
-            type="button"
-            className={`flex-1 py-3 text-center text-sm font-medium ${
               activeTab === "beacon"
                 ? "text-primary border-t-2 border-primary"
                 : "text-muted-foreground"
@@ -557,24 +519,6 @@ export function MobileLayout({
             Beacon
           </button>
         </nav>
-      )}
-
-      {/* FrontLine ビュー — 一度開いたら常に描画（ゲーム状態保持） */}
-      {frontlineOpened && (
-        <div
-          className={
-            activeTab === "frontline"
-              ? "flex-1 flex flex-col min-h-0 pb-14 bg-black"
-              : "hidden"
-          }
-        >
-          <div className="flex-1 flex items-center justify-center min-h-0">
-            <FrontLineGame socket={socket} />
-          </div>
-          <div className="shrink-0">
-            <MobileControls />
-          </div>
-        </div>
       )}
     </div>
   );

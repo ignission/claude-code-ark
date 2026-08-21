@@ -33,7 +33,6 @@ interface SidebarMainLayoutProps {
   beacon: ReactNode;
   initialSidebarWidth?: number;
   onSidebarWidthChange?: (width: number) => void;
-  onOpenFrontLine?: () => void;
   /** Beacon の外部 MCP server (OAuth) 管理ダイアログを開く */
   onOpenMcpManager?: () => void;
   /** About ダイアログを開く (同梱バイナリの LICENSE 一覧) */
@@ -63,7 +62,6 @@ export function SidebarMainLayout({
   beacon,
   initialSidebarWidth = SIDEBAR_DEFAULT_WIDTH,
   onSidebarWidthChange,
-  onOpenFrontLine,
   onOpenMcpManager,
   onOpenAboutDialog,
   hostMetrics = null,
@@ -243,15 +241,6 @@ export function SidebarMainLayout({
             className="w-full py-2 text-sm text-muted-foreground hover:text-foreground border-t border-border transition-colors block text-center"
           >
             🔌 MCP server
-          </button>
-        )}
-        {onOpenFrontLine && (
-          <button
-            type="button"
-            onClick={onOpenFrontLine}
-            className="w-full py-2 text-sm text-muted-foreground hover:text-foreground border-t border-border transition-colors block text-center"
-          >
-            🎯 FrontLine
           </button>
         )}
         {onOpenAboutDialog && (
