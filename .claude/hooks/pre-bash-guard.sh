@@ -1,12 +1,334 @@
 #!/bin/bash
 set -eo pipefail
 
+# zsh で直接実行された場合も Bash と同じ 0 始まりの配列添字に揃える。
+if [ -n "${ZSH_VERSION:-}" ]; then
+  setopt KSH_ARRAYS
+fi
+
 # PreToolUse (Bash) 統合ガードフック
 # 危険なコマンドと git push 前の品質チェックを実行する
 
 # stdinからツール入力JSONを読み取り、コマンドを抽出（パース失敗時はスキップ）
 STDIN_INPUT=$(cat)
 COMMAND=$(echo "$STDIN_INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
+
+# 生のコマンドと、引用文字列・ヒアドキュメント本文を除いた検査用コマンドを
+# セグメント単位で対にして保持する。Bash 3.2 互換のため連想配列は使わない。
+GUARD_RAW_SEGMENTS=()
+GUARD_SEGMENTS=()
+
+_guard_add_segment() {
+  local raw="$1"
+  local executable="$2"
+
+  if [ -n "$raw$executable" ]; then
+    GUARD_RAW_SEGMENTS+=("$raw")
+    GUARD_SEGMENTS+=("$executable")
+  fi
+}
+
+_guard_extract_dollar_substitution() {
+  local input="$1"
+  local start="$2"
+  local depth=1
+  local quote=""
+  local escaped=false
+  local char next
+  local i
+
+  GUARD_SUB_FOUND=false
+  GUARD_SUB_CONTENT=""
+  GUARD_SUB_END="$start"
+  for ((i = start + 2; i < ${#input}; i++)); do
+    char="${input:$i:1}"
+    next="${input:$((i + 1)):1}"
+    if [ "$escaped" = true ]; then
+      escaped=false
+    elif [ "$char" = "\\" ] && [ "$quote" != "'" ]; then
+      escaped=true
+    elif [ -n "$quote" ]; then
+      if [ "$char" = "$quote" ]; then
+        quote=""
+      elif [ "$quote" = '"' ] && [ "$char" = '$' ] && [ "$next" = '(' ]; then
+        _guard_extract_dollar_substitution "$input" "$i"
+        if [ "$GUARD_SUB_FOUND" = true ]; then
+          i="$GUARD_SUB_END"
+        fi
+      fi
+    else
+      case "$char" in
+        \"|\'|\`) quote="$char" ;;
+        '(') depth=$((depth + 1)) ;;
+        ')')
+          depth=$((depth - 1))
+          if [ "$depth" -eq 0 ]; then
+            GUARD_SUB_CONTENT="${input:$((start + 2)):$((i - start - 2))}"
+            GUARD_SUB_END="$i"
+            GUARD_SUB_FOUND=true
+            return
+          fi
+          ;;
+      esac
+    fi
+  done
+}
+
+_guard_extract_backtick_substitution() {
+  local input="$1"
+  local start="$2"
+  local escaped=false
+  local char
+  local i
+
+  GUARD_SUB_FOUND=false
+  GUARD_SUB_CONTENT=""
+  GUARD_SUB_END="$start"
+  for ((i = start + 1; i < ${#input}; i++)); do
+    char="${input:$i:1}"
+    if [ "$escaped" = true ]; then
+      escaped=false
+    elif [ "$char" = "\\" ]; then
+      escaped=true
+    elif [ "$char" = '`' ]; then
+      GUARD_SUB_CONTENT="${input:$((start + 1)):$((i - start - 1))}"
+      GUARD_SUB_END="$i"
+      GUARD_SUB_FOUND=true
+      return
+    fi
+  done
+}
+
+_guard_skip_one_heredoc() {
+  local input="$1"
+  local start="$2"
+  local delimiter="$3"
+  local strip_tabs="$4"
+  local line compare
+  local line_start="$start"
+  local line_end
+
+  GUARD_HEREDOC_NEXT_INDEX="${#input}"
+  while [ "$line_start" -le "${#input}" ]; do
+    line_end="$line_start"
+    while [ "$line_end" -lt "${#input}" ] && [ "${input:$line_end:1}" != $'\n' ]; do
+      line_end=$((line_end + 1))
+    done
+    line="${input:$line_start:$((line_end - line_start))}"
+    [ "${line%$'\r'}" != "$line" ] && line="${line%$'\r'}"
+    compare="$line"
+    if [ "$strip_tabs" = true ]; then
+      while [ "${compare#$'\t'}" != "$compare" ]; do
+        compare="${compare#$'\t'}"
+      done
+    fi
+    if [ "$compare" = "$delimiter" ]; then
+      if [ "$line_end" -lt "${#input}" ]; then
+        GUARD_HEREDOC_NEXT_INDEX=$((line_end + 1))
+      else
+        GUARD_HEREDOC_NEXT_INDEX="$line_end"
+      fi
+      return
+    fi
+    if [ "$line_end" -ge "${#input}" ]; then
+      return
+    fi
+    line_start=$((line_end + 1))
+  done
+}
+
+_guard_parse_command() {
+  local input="$1"
+  local raw=""
+  local executable=""
+  local quote=""
+  local escaped=false
+  local char next third previous
+  local delimiter delimiter_quote delimiter_raw strip_tabs
+  local sub_content sub_end
+  local i j h next_index
+  local -a heredoc_delimiters=()
+  local -a heredoc_strip_tabs=()
+
+  for ((i = 0; i < ${#input}; i++)); do
+    char="${input:$i:1}"
+    next="${input:$((i + 1)):1}"
+    third="${input:$((i + 2)):1}"
+    previous=""
+    if [ "$i" -gt 0 ]; then
+      previous="${input:$((i - 1)):1}"
+    fi
+
+    if [ "$escaped" = true ]; then
+      raw+="$char"
+      executable+="$char"
+      escaped=false
+    elif [ "$char" = "\\" ] && [ "$quote" != "'" ]; then
+      raw+="$char"
+      executable+="$char"
+      escaped=true
+    elif [ -n "$quote" ]; then
+      raw+="$char"
+      if [ "$char" = "$quote" ]; then
+        quote=""
+      elif [ "$quote" = '"' ] && [ "$char" = '$' ] && [ "$next" = '(' ]; then
+        _guard_extract_dollar_substitution "$input" "$i"
+        if [ "$GUARD_SUB_FOUND" = true ]; then
+          sub_content="$GUARD_SUB_CONTENT"
+          sub_end="$GUARD_SUB_END"
+          raw+="${input:$((i + 1)):$((sub_end - i))}"
+          executable+=' '
+          _guard_parse_command "$sub_content"
+          i="$sub_end"
+        fi
+      elif [ "$quote" = '"' ] && [ "$char" = '`' ]; then
+        _guard_extract_backtick_substitution "$input" "$i"
+        if [ "$GUARD_SUB_FOUND" = true ]; then
+          sub_content="$GUARD_SUB_CONTENT"
+          sub_end="$GUARD_SUB_END"
+          raw+="${input:$((i + 1)):$((sub_end - i))}"
+          executable+=' '
+          _guard_parse_command "$sub_content"
+          i="$sub_end"
+        fi
+      fi
+    else
+      case "$char" in
+        '#')
+          case "$previous" in
+            ''|' '|$'\t'|$'\n')
+              # シェルコメントは実行されない。改行は次の反復で通常どおり
+              # セグメント境界として扱い、ヒアドキュメント処理も維持する。
+              while [ $((i + 1)) -lt "${#input}" ] &&
+                    [ "${input:$((i + 1)):1}" != $'\n' ]; do
+                i=$((i + 1))
+              done
+              ;;
+            *) raw+="$char"; executable+="$char" ;;
+          esac
+          ;;
+        \"|\')
+          raw+="$char"
+          executable+=' '
+          quote="$char"
+          ;;
+        '$')
+          if [ "$next" = '(' ]; then
+            _guard_extract_dollar_substitution "$input" "$i"
+            if [ "$GUARD_SUB_FOUND" = true ]; then
+              sub_content="$GUARD_SUB_CONTENT"
+              sub_end="$GUARD_SUB_END"
+              raw+="${input:$i:$((sub_end - i + 1))}"
+              executable+=' '
+              _guard_parse_command "$sub_content"
+              i="$sub_end"
+            else
+              raw+="$char"
+              executable+="$char"
+            fi
+          else
+            raw+="$char"
+            executable+="$char"
+          fi
+          ;;
+        '`')
+          _guard_extract_backtick_substitution "$input" "$i"
+          if [ "$GUARD_SUB_FOUND" = true ]; then
+            sub_content="$GUARD_SUB_CONTENT"
+            sub_end="$GUARD_SUB_END"
+            raw+="${input:$i:$((sub_end - i + 1))}"
+            executable+=' '
+            _guard_parse_command "$sub_content"
+            i="$sub_end"
+          else
+            raw+="$char"
+            executable+="$char"
+          fi
+          ;;
+        '<')
+          if [ "$next" = '<' ] && [ "$third" != '<' ]; then
+            j=$((i + 2))
+            strip_tabs=false
+            if [ "${input:$j:1}" = '-' ]; then
+              strip_tabs=true
+              j=$((j + 1))
+            fi
+            while [ "${input:$j:1}" = ' ' ] || [ "${input:$j:1}" = $'\t' ]; do
+              j=$((j + 1))
+            done
+            delimiter=""
+            delimiter_raw=""
+            delimiter_quote=""
+            while [ "$j" -lt "${#input}" ]; do
+              char="${input:$j:1}"
+              if [ -n "$delimiter_quote" ]; then
+                delimiter_raw+="$char"
+                if [ "$char" = "$delimiter_quote" ]; then
+                  delimiter_quote=""
+                else
+                  delimiter+="$char"
+                fi
+              else
+                case "$char" in
+                  \"|\') delimiter_quote="$char"; delimiter_raw+="$char" ;;
+                  \\)
+                    delimiter_raw+="$char"
+                    j=$((j + 1))
+                    if [ "$j" -lt "${#input}" ]; then
+                      char="${input:$j:1}"
+                      delimiter_raw+="$char"
+                      delimiter+="$char"
+                    fi
+                    ;;
+                  ' '|$'\t'|$'\n'|';'|'&'|'|') break ;;
+                  *) delimiter_raw+="$char"; delimiter+="$char" ;;
+                esac
+              fi
+              j=$((j + 1))
+            done
+            raw+="${input:$i:$((j - i))}"
+            executable+=' << '
+            if [ -n "$delimiter" ]; then
+              heredoc_delimiters+=("$delimiter")
+              heredoc_strip_tabs+=("$strip_tabs")
+            fi
+            i=$((j - 1))
+          else
+            raw+="$char"
+            executable+="$char"
+          fi
+          ;;
+        ';'|'&'|'|')
+          _guard_add_segment "$raw" "$executable"
+          raw=""
+          executable=""
+          if { [ "$char" = '&' ] && [ "$next" = '&' ]; } ||
+             { [ "$char" = '|' ] && [ "$next" = '|' ]; }; then
+            i=$((i + 1))
+          fi
+          ;;
+        $'\n')
+          _guard_add_segment "$raw" "$executable"
+          raw=""
+          executable=""
+          if [ "${#heredoc_delimiters[@]}" -gt 0 ]; then
+            next_index=$((i + 1))
+            for ((h = 0; h < ${#heredoc_delimiters[@]}; h++)); do
+              _guard_skip_one_heredoc "$input" "$next_index" \
+                "${heredoc_delimiters[$h]}" "${heredoc_strip_tabs[$h]}"
+              next_index="$GUARD_HEREDOC_NEXT_INDEX"
+            done
+            heredoc_delimiters=()
+            heredoc_strip_tabs=()
+            i=$((next_index - 1))
+          fi
+          ;;
+        *) raw+="$char"; executable+="$char" ;;
+      esac
+    fi
+  done
+  _guard_add_segment "$raw" "$executable"
+}
 
 # --- actual git commit / push の hook bypass だけを拒否する ---
 _guard_tokenize_command() {
@@ -15,17 +337,22 @@ _guard_tokenize_command() {
   local quote=""
   local char
   local i
+  local token_start=0
   local started=false
   local escaped=false
 
   GUARD_TOKENS=()
+  GUARD_TOKEN_STARTS=()
   for ((i = 0; i < ${#input}; i++)); do
     char="${input:$i:1}"
     if $escaped; then
       token+="$char"
       started=true
       escaped=false
-    elif [ "$char" = "\\" ]; then
+    elif [ "$char" = "\\" ] && [ "$quote" != "'" ]; then
+      if ! $started; then
+        token_start="$i"
+      fi
       escaped=true
       started=true
     elif [ -n "$quote" ]; then
@@ -37,10 +364,17 @@ _guard_tokenize_command() {
       started=true
     else
       case "$char" in
-        \"|\') quote="$char"; started=true ;;
+        \"|\')
+          if ! $started; then
+            token_start="$i"
+          fi
+          quote="$char"
+          started=true
+          ;;
         ' '|$'\t'|$'\n')
           if $started; then
             GUARD_TOKENS+=("$token")
+            GUARD_TOKEN_STARTS+=("$token_start")
             token=""
             started=false
           fi
@@ -48,16 +382,28 @@ _guard_tokenize_command() {
         ';'|'&'|'|')
           if $started; then
             GUARD_TOKENS+=("$token")
+            GUARD_TOKEN_STARTS+=("$token_start")
             token=""
             started=false
           fi
           GUARD_TOKENS+=("__GUARD_SEPARATOR__")
+          GUARD_TOKEN_STARTS+=("$i")
           ;;
-        *) token+="$char"; started=true ;;
+        *)
+          if ! $started; then
+            token_start="$i"
+          fi
+          token+="$char"
+          started=true
+          ;;
       esac
     fi
   done
-  $started && GUARD_TOKENS+=("$token")
+  if $started; then
+    GUARD_TOKENS+=("$token")
+    GUARD_TOKEN_STARTS+=("$token_start")
+  fi
+  return 0
 }
 
 _guard_commit_short_has_no_verify() {
@@ -80,17 +426,20 @@ _guard_commit_short_has_no_verify() {
 }
 
 _guard_detect_hook_bypass() {
-  local state="segment-start"
+  local state
   local token
+  local raw_segment
 
-  _guard_tokenize_command "$1"
-  for token in "${GUARD_TOKENS[@]}"; do
-    if [ "$token" = "__GUARD_SEPARATOR__" ]; then
-      state="segment-start"
-      continue
-    fi
+  for raw_segment in "${GUARD_RAW_SEGMENTS[@]}"; do
+    state="segment-start"
+    _guard_tokenize_command "$raw_segment"
+    for token in "${GUARD_TOKENS[@]}"; do
+      if [ "$token" = "__GUARD_SEPARATOR__" ]; then
+        state="segment-start"
+        continue
+      fi
 
-    case "$state" in
+      case "$state" in
       segment-start)
         if [ "$token" = "git" ]; then
           state="git-options"
@@ -147,13 +496,165 @@ _guard_detect_hook_bypass() {
           return 0
         fi
         ;;
-    esac
+      esac
+    done
   done
   return 1
 }
 
+_guard_wrapper_option_takes_value() {
+  case "$1:$2" in
+    xargs:-E|xargs:-I|xargs:-L|xargs:-n|xargs:-P|xargs:-s|xargs:-d|xargs:--eof|xargs:--replace|xargs:--max-lines|xargs:--max-args|xargs:--max-procs|xargs:--max-chars|xargs:--delimiter|\
+    env:-u|env:--unset|env:-C|env:--chdir|env:--argv0|\
+    sudo:-C|sudo:-D|sudo:-g|sudo:-h|sudo:-p|sudo:-R|sudo:-r|sudo:-T|sudo:-t|sudo:-U|sudo:-u|sudo:--chdir|sudo:--close-from|sudo:--group|sudo:--host|sudo:--other-user|sudo:--prompt|sudo:--role|sudo:--type|sudo:--user|\
+    time:-f|time:-o|time:--format|time:--output|\
+    nice:-n|nice:--adjustment|\
+    timeout:-k|timeout:-s|timeout:--kill-after|timeout:--signal)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+_guard_unwrap_command() {
+  local raw_segment="$1"
+  local command_name option
+  local i=0
+  local start_offset
+  local found_wrapper=false
+  local xargs_input=false
+  local -a tokens=()
+  local -a token_starts=()
+
+  _guard_tokenize_command "$raw_segment"
+  tokens=("${GUARD_TOKENS[@]}")
+  token_starts=("${GUARD_TOKEN_STARTS[@]}")
+
+  while [ "$i" -lt "${#tokens[@]}" ]; do
+    command_name="${tokens[$i]##*/}"
+    case "$command_name" in
+      xargs|env|sudo|nohup|time|nice|timeout|command) ;;
+      *) break ;;
+    esac
+
+    found_wrapper=true
+    [ "$command_name" = "xargs" ] && xargs_input=true
+    i=$((i + 1))
+    while [ "$i" -lt "${#tokens[@]}" ]; do
+      option="${tokens[$i]}"
+      case "$option" in
+        --) i=$((i + 1)); break ;;
+        -*)
+          if _guard_wrapper_option_takes_value "$command_name" "$option"; then
+            i=$((i + 2))
+          else
+            i=$((i + 1))
+          fi
+          ;;
+        *) break ;;
+      esac
+    done
+    if [ "$command_name" = "env" ]; then
+      while [ "$i" -lt "${#tokens[@]}" ] && [[ "${tokens[$i]}" == *=* ]]; do
+        i=$((i + 1))
+      done
+    elif [ "$command_name" = "timeout" ] && [ "$i" -lt "${#tokens[@]}" ]; then
+      # timeout の最初の非オプションは duration。
+      i=$((i + 1))
+    fi
+  done
+
+  if [ "$found_wrapper" = true ] && [ "$i" -lt "${#tokens[@]}" ]; then
+    start_offset="${token_starts[$i]}"
+    GUARD_UNWRAPPED_COMMAND="${raw_segment:$((start_offset))}"
+    if [ "$xargs_input" = true ]; then
+      # xargs の標準入力は静的には分からないため、operand 不明として安全側へ倒す。
+      GUARD_UNWRAPPED_COMMAND+=" __GUARD_XARGS_INPUT__"
+    fi
+    return 0
+  fi
+  return 1
+}
+
+GUARD_MAX_EXECUTION_DEPTH=3
+
+_guard_collect_executed_commands() {
+  local raw_segment="$1"
+  local depth="$2"
+  local command_name token command_text unwrapped child_segment
+  local start_index end_index
+  local i
+  local -a tokens=()
+
+  if _guard_unwrap_command "$raw_segment"; then
+    unwrapped="$GUARD_UNWRAPPED_COMMAND"
+    start_index="${#GUARD_RAW_SEGMENTS[@]}"
+    _guard_parse_command "$unwrapped"
+    end_index="${#GUARD_RAW_SEGMENTS[@]}"
+    for ((i = start_index; i < end_index; i++)); do
+      child_segment="${GUARD_RAW_SEGMENTS[$i]}"
+      _guard_collect_executed_commands "$child_segment" "$depth"
+    done
+    return
+  fi
+
+  _guard_tokenize_command "$raw_segment"
+  tokens=("${GUARD_TOKENS[@]}")
+  [ "${#tokens[@]}" -gt 0 ] || return 0
+  command_name="${tokens[0]##*/}"
+  command_text=""
+
+  case "$command_name" in
+    sh|bash|zsh)
+      for ((i = 1; i < ${#tokens[@]}; i++)); do
+        token="${tokens[$i]}"
+        case "$token" in
+          -c|-[^-]*c*)
+            if [ $((i + 1)) -lt "${#tokens[@]}" ]; then
+              command_text="${tokens[$((i + 1))]}"
+            fi
+            break
+            ;;
+        esac
+      done
+      ;;
+    eval)
+      for ((i = 1; i < ${#tokens[@]}; i++)); do
+        if [ -n "$command_text" ]; then
+          command_text+=" "
+        fi
+        command_text+="${tokens[$i]}"
+      done
+      ;;
+    *) return ;;
+  esac
+
+  [ -n "$command_text" ] || return 0
+  if [ "$depth" -ge "$GUARD_MAX_EXECUTION_DEPTH" ]; then
+    # 上限は再帰停止のためだけに使う。未展開の実行文字列は引用部も含めて
+    # 検査対象へ残し、深い入れ子を allow にしない。
+    _guard_add_segment "$raw_segment" "$raw_segment"
+    return 0
+  fi
+
+  start_index="${#GUARD_RAW_SEGMENTS[@]}"
+  _guard_parse_command "$command_text"
+  end_index="${#GUARD_RAW_SEGMENTS[@]}"
+  for ((i = start_index; i < end_index; i++)); do
+    child_segment="${GUARD_RAW_SEGMENTS[$i]}"
+    _guard_collect_executed_commands "$child_segment" "$((depth + 1))"
+  done
+  return 0
+}
+
+_guard_parse_command "$COMMAND"
+GUARD_INITIAL_SEGMENT_COUNT="${#GUARD_RAW_SEGMENTS[@]}"
+for ((GUARD_INDEX = 0; GUARD_INDEX < GUARD_INITIAL_SEGMENT_COUNT; GUARD_INDEX++)); do
+  _guard_collect_executed_commands "${GUARD_RAW_SEGMENTS[$GUARD_INDEX]}" 0
+done
+
 HOOK_BYPASS_FLAG=""
-_guard_detect_hook_bypass "$COMMAND" || true
+_guard_detect_hook_bypass || true
 if [ -n "$HOOK_BYPASS_FLAG" ]; then
   if [ "$HOOK_BYPASS_FLAG" = "-n" ]; then
     echo "BLOCKED: -n（--no-verify短縮形）によるgit hookのバイパスは禁止されています" >&2
@@ -165,90 +666,112 @@ if [ -n "$HOOK_BYPASS_FLAG" ]; then
   exit 2
 fi
 
-# --- git commit / git tag はメッセージ内容を検査しない（誤検出防止） ---
-if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+(commit|tag)[[:space:]] ]]; then
-  exit 0
-fi
 # --- 破壊的コマンドガード ---
-# rm -rf: ビルドキャッシュ（node_modules, target, dist, .next, build等）削除のみ許可
-# 引数を個別に検査し、全operandがキャッシュ系ディレクトリの場合のみ通過させる
-if [[ "$COMMAND" =~ rm[[:space:]]+-[[:alpha:]]*r[[:alpha:]]*f ]] || [[ "$COMMAND" =~ rm[[:space:]]+-[[:alpha:]]*f[[:alpha:]]*r ]] || [[ "$COMMAND" =~ rm[[:space:]]+--recursive[[:space:]]+--force ]] || [[ "$COMMAND" =~ rm[[:space:]]+--force[[:space:]]+--recursive ]] || [[ "$COMMAND" =~ rm[[:space:]]+-r[[:space:]]+-f ]] || [[ "$COMMAND" =~ rm[[:space:]]+-f[[:space:]]+-r ]]; then
-  # rm コマンドの引数を抽出（オプション以外）
-  SAFE_DIRS="node_modules|target|dist|\.next|build|__pycache__|\.pytest_cache"
-  # 引数を1つずつ検査し、全てがキャッシュ系ディレクトリパスか確認
-  ALL_SAFE=true
-  for arg in $COMMAND; do
-    # rm自体とオプション（-で始まる）はスキップ
-    case "$arg" in
-      rm|-*) continue ;;
-    esac
-    # 引数のbasenameがキャッシュ系ディレクトリか判定
-    arg_base=$(basename "$arg" 2>/dev/null) || arg_base="$arg"
-    if ! [[ "$arg_base" =~ ^(${SAFE_DIRS})$ ]]; then
-      ALL_SAFE=false
-      break
+# 各セグメントを独立して検査し、前の git push の状態を後続へ持ち越さない。
+_guard_check_dangerous_segment() {
+  local segment="$1"
+  local raw_segment="$2"
+  local arg arg_base
+  local found_rm=false
+  local found_operand=false
+  local all_safe=true
+  local safe_dirs="node_modules|target|dist|\.next|build|__pycache__|\.pytest_cache"
+
+  # git commit / git tag はメッセージ内容を検査しない（誤検出防止）。
+  if [[ "$segment" =~ ^[[:space:]]*git[[:space:]]+(commit|tag)([[:space:]]|$) ]]; then
+    return
+  fi
+
+  # rm -rf: 全 operand がキャッシュ系ディレクトリの場合のみ通過させる。
+  if [[ "$segment" =~ rm[[:space:]]+-[[:alpha:]]*r[[:alpha:]]*f ]] || [[ "$segment" =~ rm[[:space:]]+-[[:alpha:]]*f[[:alpha:]]*r ]] || [[ "$segment" =~ rm[[:space:]]+--recursive[[:space:]]+--force ]] || [[ "$segment" =~ rm[[:space:]]+--force[[:space:]]+--recursive ]] || [[ "$segment" =~ rm[[:space:]]+-r[[:space:]]+-f ]] || [[ "$segment" =~ rm[[:space:]]+-f[[:space:]]+-r ]]; then
+    _guard_tokenize_command "$raw_segment"
+    for arg in "${GUARD_TOKENS[@]}"; do
+      if [ "$found_rm" = false ]; then
+        [ "$arg" = "rm" ] && found_rm=true
+        continue
+      fi
+      case "$arg" in
+        -*) continue ;;
+      esac
+      found_operand=true
+      arg_base=$(basename "$arg" 2>/dev/null) || arg_base="$arg"
+      if ! [[ "$arg_base" =~ ^(${safe_dirs})$ ]]; then
+        all_safe=false
+        break
+      fi
+    done
+    if [ "$found_rm" = false ] || [ "$found_operand" = false ]; then
+      all_safe=false
     fi
-  done
-  if ! $ALL_SAFE; then
-    echo "BLOCKED: rm -rf は危険なコマンドです" >&2
-    echo "  WHY: エージェントが意図せず重要ファイルを削除するインシデントを防止" >&2
-    echo "  FIX: ビルドキャッシュ削除なら rm -rf node_modules / rm -rf target を使用" >&2
+    if [ "$all_safe" = false ]; then
+      echo "BLOCKED: rm -rf は危険なコマンドです" >&2
+      echo "  WHY: エージェントが意図せず重要ファイルを削除するインシデントを防止" >&2
+      echo "  FIX: ビルドキャッシュ削除なら rm -rf node_modules / rm -rf target を使用" >&2
+      exit 2
+    fi
+  fi
+
+  if [[ "$segment" =~ git[[:space:]]+reset[[:space:]]+--hard ]]; then
+    echo "BLOCKED: git reset --hard は作業ツリーの全変更を破棄する危険なコマンドです" >&2
+    echo "  WHY: 未コミットの作業内容が全て失われ、復元不可能になる" >&2
+    echo "  FIX: 特定ファイルの復元は git checkout -- <file> を使用" >&2
     exit 2
   fi
-fi
 
-# git reset --hard: 作業ツリーの全変更を破棄する危険なコマンド
-if [[ "$COMMAND" =~ git[[:space:]]+reset[[:space:]]+--hard ]]; then
-  echo "BLOCKED: git reset --hard は作業ツリーの全変更を破棄する危険なコマンドです" >&2
-  echo "  WHY: 未コミットの作業内容が全て失われ、復元不可能になる" >&2
-  echo "  FIX: 特定ファイルの復元は git checkout -- <file> を使用" >&2
-  exit 2
-fi
-
-# git clean -f / git clean -fd: 未追跡ファイルを削除する危険なコマンド
-if [[ "$COMMAND" =~ git[[:space:]]+clean[[:space:]]+-[[:alpha:]]*f ]]; then
-  echo "BLOCKED: git clean -f は未追跡ファイルを削除する危険なコマンドです" >&2
-  echo "  WHY: 新規作成したファイルが全て失われ、復元不可能になる" >&2
-  echo "  FIX: 特定ファイルの削除は rm <file> を使用" >&2
-  exit 2
-fi
-
-# git checkout -- .: ファイル全体の変更を復元する危険なコマンド
-if [[ "$COMMAND" =~ git[[:space:]]+checkout[[:space:]]+--[[:space:]]+\. ]]; then
-  echo "BLOCKED: git checkout -- . は作業ツリーの全変更を破棄する危険なコマンドです" >&2
-  echo "  WHY: 全ファイルの変更が一括で破棄され、復元不可能になる" >&2
-  echo "  FIX: 特定ファイルの復元は git checkout -- <specific-file> を使用" >&2
-  exit 2
-fi
-
-# git push --force / git push -f: --force-with-leaseは許可
-if [[ "$COMMAND" =~ git[[:space:]]+(.+[[:space:]]+)?push[[:space:]]+.*--force ]] || [[ "$COMMAND" =~ git[[:space:]]+(.+[[:space:]]+)?push[[:space:]]+.*-f([[:space:]]|$) ]]; then
-  if ! [[ "$COMMAND" =~ --force-with-lease ]]; then
-    echo "BLOCKED: git push --force は危険なコマンドです" >&2
-    echo "  WHY: リモートの他の人のコミットを上書きし、チームの作業が失われる" >&2
-    echo "  FIX: --force-with-lease を使用（リモートが変更されていない場合のみ上書き）" >&2
+  if [[ "$segment" =~ git[[:space:]]+clean[[:space:]]+-[[:alpha:]]*f ]]; then
+    echo "BLOCKED: git clean -f は未追跡ファイルを削除する危険なコマンドです" >&2
+    echo "  WHY: 新規作成したファイルが全て失われ、復元不可能になる" >&2
+    echo "  FIX: 特定ファイルの削除は rm <file> を使用" >&2
     exit 2
   fi
-fi
 
-# chmod 777: 過度な権限付与
-if [[ "$COMMAND" =~ chmod[[:space:]]+777 ]]; then
-  echo "BLOCKED: chmod 777 は過度な権限付与です" >&2
-  echo "  WHY: 全ユーザーに読み書き実行権限を付与し、セキュリティリスクとなる" >&2
-  echo "  FIX: 適切な権限 644（ファイル）/ 755（実行可能ファイル）を使用" >&2
-  exit 2
-fi
+  if [[ "$segment" =~ git[[:space:]]+checkout[[:space:]]+--[[:space:]]+\. ]]; then
+    echo "BLOCKED: git checkout -- . は作業ツリーの全変更を破棄する危険なコマンドです" >&2
+    echo "  WHY: 全ファイルの変更が一括で破棄され、復元不可能になる" >&2
+    echo "  FIX: 特定ファイルの復元は git checkout -- <specific-file> を使用" >&2
+    exit 2
+  fi
 
-# デバイス直接書き込み: /dev/sdX 等への書き込みをブロック
-if [[ "$COMMAND" =~ \>[[:space:]]*/dev/sd ]] || [[ "$COMMAND" =~ \>[[:space:]]*/dev/nvme ]] || [[ "$COMMAND" =~ \>[[:space:]]*/dev/hd ]]; then
-  echo "BLOCKED: デバイスファイルへの直接書き込みは禁止されています" >&2
-  echo "  WHY: ディスクデバイスへの直接書き込みはデータ破壊・OS破損の原因となる" >&2
-  echo "  FIX: ファイルへの書き込みは > output.txt を使用" >&2
-  exit 2
-fi
+  if [[ "$segment" =~ git[[:space:]]+(.+[[:space:]]+)?push[[:space:]]+.*--force ]] || [[ "$segment" =~ git[[:space:]]+(.+[[:space:]]+)?push[[:space:]]+.*-f([[:space:]]|$) ]]; then
+    if ! [[ "$segment" =~ --force-with-lease ]]; then
+      echo "BLOCKED: git push --force は危険なコマンドです" >&2
+      echo "  WHY: リモートの他の人のコミットを上書きし、チームの作業が失われる" >&2
+      echo "  FIX: --force-with-lease を使用（リモートが変更されていない場合のみ上書き）" >&2
+      exit 2
+    fi
+  fi
+
+  if [[ "$segment" =~ chmod[[:space:]]+777 ]]; then
+    echo "BLOCKED: chmod 777 は過度な権限付与です" >&2
+    echo "  WHY: 全ユーザーに読み書き実行権限を付与し、セキュリティリスクとなる" >&2
+    echo "  FIX: 適切な権限 644（ファイル）/ 755（実行可能ファイル）を使用" >&2
+    exit 2
+  fi
+
+  if [[ "$segment" =~ \>[[:space:]]*/dev/sd ]] || [[ "$segment" =~ \>[[:space:]]*/dev/nvme ]] || [[ "$segment" =~ \>[[:space:]]*/dev/hd ]]; then
+    echo "BLOCKED: デバイスファイルへの直接書き込みは禁止されています" >&2
+    echo "  WHY: ディスクデバイスへの直接書き込みはデータ破壊・OS破損の原因となる" >&2
+    echo "  FIX: ファイルへの書き込みは > output.txt を使用" >&2
+    exit 2
+  fi
+
+  if [[ "$segment" =~ resolveReviewThread ]]; then
+    echo "BLOCKED: resolveReviewThreadの実行は禁止されています。レビューコメントの解決はユーザーが手動で行ってください" >&2
+    exit 2
+  fi
+}
+
+GUARD_HAS_PUSH=false
+for ((GUARD_INDEX = 0; GUARD_INDEX < ${#GUARD_SEGMENTS[@]}; GUARD_INDEX++)); do
+  GUARD_SEGMENT="${GUARD_SEGMENTS[$GUARD_INDEX]}"
+  _guard_check_dangerous_segment "$GUARD_SEGMENT" "${GUARD_RAW_SEGMENTS[$GUARD_INDEX]}"
+  if [[ "$GUARD_SEGMENT" =~ ^[[:space:]]*git[[:space:]]+(.+[[:space:]]+)?push([[:space:]]|$) ]]; then
+    GUARD_HAS_PUSH=true
+  fi
+done
 
 # --- git push ガード: ソースコード変更時のCIチェック ---
-if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+(.+[[:space:]]+)?push([[:space:]]|$) ]]; then
+if [ "$GUARD_HAS_PUSH" = true ]; then
   PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
   LOG=""
 
@@ -290,10 +813,4 @@ if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+(.+[[:space:]]+)?push([[:space:]
 fi
 
 # 対象外コマンドは何もせず通過
-# --- 自動 resolve ガード: レビューコメントの自動 resolve を禁止 ---
-if [[ "$COMMAND" =~ resolveReviewThread ]]; then
-  echo "BLOCKED: resolveReviewThreadの実行は禁止されています。レビューコメントの解決はユーザーが手動で行ってください" >&2
-  exit 2
-fi
-
 exit 0

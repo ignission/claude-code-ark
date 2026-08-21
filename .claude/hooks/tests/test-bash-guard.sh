@@ -5,7 +5,7 @@ set -uo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 PROJECT_DIR=$(cd "$SCRIPT_DIR/../../.." && pwd)
-GUARD="$PROJECT_DIR/.claude/hooks/pre-bash-guard.sh"
+GUARD="${GUARD_UNDER_TEST:-$PROJECT_DIR/.claude/hooks/pre-bash-guard.sh}"
 
 TESTS=0
 FAILURES=0
@@ -56,6 +56,8 @@ CLEAN_UNTRACKED="git cl""ean -fd"
 FORCE_PUSH="git push --for""ce origin main"
 CHMOD_OPEN="chmo""d 777"
 NO_VERIFY="--no-""verify"
+DOLLAR_OPEN='$('
+BACKTICK='`'
 
 echo "=== 危険操作はブロックされる ==="
 assert_verdict block "再帰削除" "$RM_RECURSIVE /home/user/data"
@@ -63,6 +65,7 @@ assert_verdict block "作業ツリーの巻き戻し" "$RESET_HARD"
 assert_verdict block "未追跡ファイルの削除" "$CLEAN_UNTRACKED"
 assert_verdict block "強制 push" "$FORCE_PUSH"
 assert_verdict block "過剰な権限付与" "$CHMOD_OPEN /etc/passwd"
+assert_verdict block "引用された危険な削除先" "$RM_RECURSIVE '/home/user/data'"
 
 echo
 echo "=== git hook のバイパスはブロックされる ==="
@@ -85,6 +88,84 @@ assert_verdict allow "普通の commit" "git commit -m 'メッセージ'"
 assert_verdict allow "-am の組み合わせ" "git commit -am 'メッセージ'"
 assert_verdict allow "依存の削除" "$RM_RECURSIVE node_modules"
 assert_verdict allow "status" "git status --short"
+
+echo
+echo "=== セグメント区切りで解析状態をリセットする ==="
+assert_verdict allow "セミコロン" "git push; pgrep -f x"
+assert_verdict allow "AND リスト" "git push && pgrep -f x"
+assert_verdict allow "OR リスト" "git push || pgrep -f x"
+assert_verdict allow "パイプ" "git push | pgrep -f x"
+assert_verdict allow "改行" "git push"$'\n'"pgrep -f x"
+assert_verdict allow "バックグラウンド" "git push & pgrep -f x"
+assert_verdict block "後続セグメントの危険操作" "echo safe && $RM_RECURSIVE /home/user/data"
+
+echo
+echo "=== 引用文字列は検査せず、コマンド置換は検査する ==="
+assert_verdict allow "単一引用符の危険文字列" "grep -n '$RM_RECURSIVE /' somefile"
+assert_verdict allow "二重引用符の危険文字列" "echo \"$RM_RECURSIVE /\""
+assert_verdict allow "二重引用符内の単一引用符" "echo \"outer '$RM_RECURSIVE /' text\""
+assert_verdict block "単一引用符内のバックスラッシュ" \
+  "echo 'text\\'; $RM_RECURSIVE /"
+assert_verdict block "ドル形式のコマンド置換" \
+  "echo \"${DOLLAR_OPEN}${RM_RECURSIVE} /)\""
+assert_verdict block "バッククォート形式のコマンド置換" \
+  "echo \"${BACKTICK}${RM_RECURSIVE} /${BACKTICK}\""
+
+echo
+echo "=== ヒアドキュメント本文は検査しない ==="
+HEREDOC_PLAIN="python3 <<EOF"$'\n'"$RM_RECURSIVE /"$'\n'"EOF"
+HEREDOC_QUOTED="python3 <<'EOF'"$'\n'"$RM_RECURSIVE /"$'\n'"EOF"
+HEREDOC_TABS="python3 <<-'EOF'"$'\n\t'"$RM_RECURSIVE /"$'\n\t'"EOF"
+assert_verdict allow "引用なし終端子" "$HEREDOC_PLAIN"
+assert_verdict allow "単一引用符付き終端子" "$HEREDOC_QUOTED"
+assert_verdict allow "タブ除去付き終端子" "$HEREDOC_TABS"
+assert_verdict block "終端行の後は検査を再開" \
+  "$HEREDOC_QUOTED"$'\n'"$RM_RECURSIVE /"
+
+echo
+echo "=== シェルインタプリタの -c 引数は深さ3まで再解析する ==="
+assert_verdict block "sh -c" "sh -c '$RM_RECURSIVE /'"
+assert_verdict block "bash -c" "bash -c '$RM_RECURSIVE /'"
+assert_verdict block "zsh -c" "zsh -c '$RM_RECURSIVE /'"
+assert_verdict block "bash の複合短縮オプション" "bash -lc '$RM_RECURSIVE /'"
+assert_verdict block "-c 内の入れ子引用符" \
+  "bash -c \"echo 'safe'; $RM_RECURSIVE /\""
+assert_verdict block "-c の2段ネスト" \
+  "sh -c \"sh -c '$RM_RECURSIVE /home/user/data'\""
+assert_verdict block "-c の3段ネスト" \
+  "sh -c \"sh -c \\\"sh -c '$RM_RECURSIVE /home/user/data'\\\"\""
+assert_verdict block "-c の深さ上限超過" \
+  "sh -c \"sh -c \\\"sh -c \\\\\\\"sh -c '$RM_RECURSIVE /home/user/data'\\\\\\\"\\\"\""
+
+echo
+echo "=== eval とラッパーの実コマンドを検査する ==="
+assert_verdict block "eval" "eval '$RM_RECURSIVE /home/user/data'"
+assert_verdict block "eval の入れ子" "eval \"eval '$RM_RECURSIVE /home/user/data'\""
+assert_verdict block "xargs" "echo /home/user/data | xargs -0 -n1 $RM_RECURSIVE"
+assert_verdict block "env" "env TEST_MODE=1 sh -c '$RM_RECURSIVE /home/user/data'"
+assert_verdict block "sudo" "sudo -n sh -c '$RM_RECURSIVE /home/user/data'"
+assert_verdict block "nohup" "nohup sh -c '$RM_RECURSIVE /home/user/data'"
+assert_verdict block "time" "time -p sh -c '$RM_RECURSIVE /home/user/data'"
+assert_verdict block "nice" "nice -n 5 sh -c '$RM_RECURSIVE /home/user/data'"
+assert_verdict block "timeout" "timeout 10 sh -c '$RM_RECURSIVE /home/user/data'"
+assert_verdict block "command" "command -- sh -c '$RM_RECURSIVE /home/user/data'"
+assert_verdict allow "ラッパー後の引用文字列" "env echo '$RM_RECURSIVE /home/user/data'"
+
+echo
+echo "=== クォート外のシェルコメントだけを無視する ==="
+assert_verdict allow "空白後のコメント" "ls  # $RM_RECURSIVE は使わない"
+assert_verdict allow "タブ後のコメント" "ls"$'\t'"# $RM_RECURSIVE は使わない"
+assert_verdict allow "行頭コメント" "# $RM_RECURSIVE は使わない"
+assert_verdict block "コメントは行末まで" \
+  "ls # $RM_RECURSIVE は使わない"$'\n'"$RM_RECURSIVE /home/user/data"
+assert_verdict allow "引用符内の #" 'echo "a#b"'
+assert_verdict block "引用符内の # の後も検査" \
+  "echo \"a#b\"; $RM_RECURSIVE /home/user/data"
+assert_verdict allow 'パラメータ長展開の ${#var}' 'var=abc; echo "${#var}"'
+assert_verdict block '特殊パラメータ $# をコメント扱いしない' \
+  "sh -c 'echo \$#; $RM_RECURSIVE /home/user/data'"
+assert_verdict block 'パラメータ長展開後も検査' \
+  "var=abc; echo \"\${#var}\"; $RM_RECURSIVE /home/user/data"
 
 echo
 if [ "$FAILURES" -eq 0 ]; then
