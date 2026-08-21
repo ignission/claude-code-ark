@@ -50,6 +50,7 @@ function enabledOutput(sessionId = "a".repeat(32)): string {
     "printf 'ARK_RECITE_INTERVAL\\t10\\n'",
     "printf 'ARK_KNOWLEDGE_DIR\\t/context/knowledge\\n'",
     "printf 'ARK_REPO_KEY\\trepo-key\\n'",
+    "printf 'CLAUDE_CODE_DISABLE_AUTO_MEMORY\\t1\\n'",
   ].join("\n");
 }
 
@@ -62,7 +63,7 @@ afterEach(() => {
 describe("ArkContextHarness", () => {
   it("opt-in が true 以外なら script を実行せず無効のままにする", async () => {
     const logger = { error: vi.fn(), warn: vi.fn() };
-    const readSetting = vi.fn(() => undefined);
+    const readSetting = vi.fn(() => false);
     const harness = new ArkContextHarness({
       scriptDirectory: "/does/not/exist",
       readSetting,
@@ -102,6 +103,7 @@ describe("ArkContextHarness", () => {
       ARK_RECITE_INTERVAL: "10",
       ARK_KNOWLEDGE_DIR: "/context/knowledge",
       ARK_REPO_KEY: "repo-key",
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
     });
     expect(fs.readFileSync(argumentsFile, "utf8").trim().split("\n")).toEqual([
       "--repo",
@@ -112,6 +114,76 @@ describe("ArkContextHarness", () => {
       "b".repeat(32),
     ]);
     fs.rmSync(argumentsFile, { force: true });
+  });
+
+  it("auto memory 無効化 key が欠落していれば通常起動へフォールバックする", async () => {
+    const scriptDirectory = makeScriptDirectory(
+      enabledOutput().replace(
+        "printf 'CLAUDE_CODE_DISABLE_AUTO_MEMORY\\t1\\n'",
+        ""
+      )
+    );
+    const logger = { error: vi.fn(), warn: vi.fn() };
+    const harness = new ArkContextHarness({
+      scriptDirectory,
+      readSetting: () => true,
+      logger,
+    });
+
+    await expect(
+      harness.initializeSession(makeWorktreeDirectory())
+    ).resolves.toBeUndefined();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "missing context environment: CLAUDE_CODE_DISABLE_AUTO_MEMORY"
+      )
+    );
+  });
+
+  it.each(["", "0", "true", "2"])(
+    "auto memory 無効化の不正値 %j を拒否する",
+    async invalidValue => {
+      const scriptDirectory = makeScriptDirectory(
+        enabledOutput().replace(
+          "CLAUDE_CODE_DISABLE_AUTO_MEMORY\\t1",
+          `CLAUDE_CODE_DISABLE_AUTO_MEMORY\\t${invalidValue}`
+        )
+      );
+      const logger = { error: vi.fn(), warn: vi.fn() };
+      const harness = new ArkContextHarness({
+        scriptDirectory,
+        readSetting: () => true,
+        logger,
+      });
+
+      await expect(
+        harness.initializeSession(makeWorktreeDirectory())
+      ).resolves.toBeUndefined();
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining("CLAUDE_CODE_DISABLE_AUTO_MEMORY")
+      );
+    }
+  );
+
+  it("許可されていない余分な TSV key を拒否する", async () => {
+    const scriptDirectory = makeScriptDirectory(
+      `${enabledOutput()}\nprintf 'UNEXPECTED_CONTEXT_KEY\\tvalue\\n'`
+    );
+    const logger = { error: vi.fn(), warn: vi.fn() };
+    const harness = new ArkContextHarness({
+      scriptDirectory,
+      readSetting: () => true,
+      logger,
+    });
+
+    await expect(
+      harness.initializeSession(makeWorktreeDirectory())
+    ).resolves.toBeUndefined();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "invalid context environment entry: UNEXPECTED_CONTEXT_KEY"
+      )
+    );
   });
 
   it("enabled 0 は理由をログして通常起動へフォールバックする", async () => {

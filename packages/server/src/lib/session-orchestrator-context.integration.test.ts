@@ -135,6 +135,7 @@ describe("SessionOrchestrator + real Ark context harness", () => {
     expect(fs.realpathSync(worktreePath)).not.toBe(worktreePath);
     expect(contextEnv?.ARK_SESSION_ID).toMatch(/^[0-9a-f]{32}$/);
     expect(contextEnv?.ARK_SESSION_DIR).toBeTruthy();
+    expect(contextEnv?.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
     const expectedRepoKey = createHash("sha256")
       .update(fs.realpathSync(worktreePath))
       .digest("hex");

@@ -19,6 +19,7 @@ const CONTEXT_ENV_KEYS = new Set([
   "ARK_RECITE_INTERVAL",
   "ARK_KNOWLEDGE_DIR",
   "ARK_REPO_KEY",
+  "CLAUDE_CODE_DISABLE_AUTO_MEMORY",
 ]);
 const REQUIRED_CONTEXT_ENV_KEYS = [
   "ARK_SESSION_ID",
@@ -26,6 +27,7 @@ const REQUIRED_CONTEXT_ENV_KEYS = [
   "ARK_CACHE_DIR",
   "ARK_RECITE_INTERVAL",
   "ARK_KNOWLEDGE_DIR",
+  "CLAUDE_CODE_DISABLE_AUTO_MEMORY",
 ] as const;
 
 type Logger = Pick<Console, "error" | "warn">;
@@ -92,6 +94,9 @@ function parseInitOutput(stdout: string): ParsedInitOutput {
   }
   if (!/^[0-9a-f]{32}$/.test(env.ARK_SESSION_ID)) {
     throw new Error("invalid ARK_SESSION_ID");
+  }
+  if (env.CLAUDE_CODE_DISABLE_AUTO_MEMORY !== "1") {
+    throw new Error("invalid CLAUDE_CODE_DISABLE_AUTO_MEMORY");
   }
   return { enabled: true, env };
 }

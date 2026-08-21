@@ -104,9 +104,24 @@ assert_success "missing settings injected"
 [ -f "$settings" ] || test_fail "missing settings was not created"
 jq -e '.hooks | keys_unsorted == ["PostToolBatch","PostToolUseFailure","SessionStart"]' "$settings" >/dev/null 2>&1 \
   || test_fail "new hooks object property order is not Batch then Failure then SessionStart"
+jq -e 'has("autoMemoryEnabled") | not' "$settings" >/dev/null 2>&1 \
+  || test_fail "settings injection added native auto memory configuration"
 run_case claude_settings_restore "$repo" "$state"
 assert_success "missing settings restored"
 [ ! -e "$settings" ] || test_fail "originally missing settings was not removed"
+
+setup_repo native-memory-setting
+settings="$repo/.claude/settings.local.json"
+printf '{"autoMemoryEnabled":true}\n' >"$settings"; chmod 600 "$settings"
+cp "$settings" "$TEST_TMP/native-memory-setting-original"
+run_case claude_settings_inject "$repo" "$state"
+assert_success "native auto memory setting injected"
+jq -e '.autoMemoryEnabled == true' "$settings" >/dev/null 2>&1 \
+  || test_fail "settings injection changed native auto memory configuration"
+run_case claude_settings_restore "$repo" "$state"
+assert_success "native auto memory setting restored"
+cmp -s "$settings" "$TEST_TMP/native-memory-setting-original" \
+  || test_fail "native auto memory setting was not byte-restored"
 
 setup_repo existing-canonical
 settings="$repo/.claude/settings.local.json"
