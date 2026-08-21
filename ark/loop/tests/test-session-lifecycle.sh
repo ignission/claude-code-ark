@@ -33,6 +33,22 @@ run_init() {
     --goal 'Lifecycle goal' --constraint 'Preserve bytes' --plan-item 'Run lifecycle'
 }
 
+prepare_lifecycle_output() {
+  output_session=$1
+  output_cache=$2
+  mkdir -p "$output_session/artifacts" "$output_session/errors"
+  chmod 700 "$output_session/artifacts" "$output_session/errors"
+  printf '%s\n' '- artifacts/lifecycle.txt — Lifecycle evidence' >"$output_session/artifacts/index.md"
+  printf '%s\n' 'artifact body must not enter handoff' >"$output_session/artifacts/lifecycle.txt"
+  printf '%s\n' \
+    '{"at":"2026-08-21T00:00:00Z","tool":"Bash","error_type":"nonzero_exit","exit_code":7,"is_interrupt":false,"error":"raw lifecycle secret","details":{}}' \
+    >"$output_session/errors/raw.log"
+  : >"$output_session/stop_once"
+  chmod 600 "$output_session/artifacts/index.md" "$output_session/artifacts/lifecycle.txt" \
+    "$output_session/errors/raw.log" "$output_session/stop_once"
+  seed_step_count "$output_cache" 7
+}
+
 setup_repo lifecycle
 settings="$repo/.claude/settings.local.json"
 printf '{\n "before" : "日本語"\n}\n\n' >"$settings"; chmod 640 "$settings"
@@ -66,6 +82,7 @@ assert_success "live competing owner disables without process failure"
 assert_eq "live owner disabled" $'enabled\t0' "$(sed -n '1p' "$CASE_STDOUT")"
 cmp -s "$settings" "$TEST_TMP/live-owner-settings" || test_fail "live competitor changed settings"
 
+prepare_lifecycle_output "$session_dir" "$cache_dir"
 run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$sid"
 assert_success "teardown succeeds"
 cmp -s "$settings" "$TEST_TMP/lifecycle-original" || test_fail "teardown did not byte-restore settings"
@@ -74,6 +91,55 @@ assert_eq "teardown restores mode" 640 "$(loop_stat "$settings" | awk '{print $2
 [ ! -e "$state/settings.lock" ] || test_fail "teardown left lock"
 [ ! -e "$repo/.claude/settings.local.json.ark-loop-tmp" ] || test_fail "teardown left tmp"
 [ ! -e "$cache_dir/steps" ] || test_fail "teardown left recitation steps"
+[ ! -e "$session_dir/stop_once" ] || test_fail "teardown left stop_once"
+[ -f "$session_dir/errors/summary.md" ] || test_fail "teardown did not generate summary"
+[ -f "$session_dir/handoff.md" ] || test_fail "teardown did not generate handoff"
+grep -F 'Goal: Lifecycle goal' "$session_dir/handoff.md" >/dev/null 2>&1 \
+  || test_fail "teardown handoff lacks Goal"
+grep -F 'Current NOW: Run lifecycle' "$session_dir/handoff.md" >/dev/null 2>&1 \
+  || test_fail "teardown handoff lacks NOW"
+grep -F 'artifact body must not enter handoff' "$session_dir/handoff.md" >/dev/null 2>&1
+assert_eq "teardown handoff excludes artifact body" 1 "$?"
+knowledge="$XDG_DATA_HOME/ark/loop/knowledge"
+inbox="$knowledge/failures-inbox.md"
+assert_eq "teardown appends one inbox marker" 1 \
+  "$(grep -Fc -- "- Session ID: $sid" "$inbox" 2>/dev/null)"
+[ ! -e "$knowledge/failures-inbox.lock" ] || test_fail "teardown left knowledge lock"
+
+handoff_once=$(cksum "$session_dir/handoff.md")
+inbox_once=$(cksum "$inbox")
+run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$sid"
+assert_success "second teardown succeeds"
+assert_eq "second teardown keeps deterministic handoff" "$handoff_once" "$(cksum "$session_dir/handoff.md")"
+assert_eq "second teardown deduplicates inbox" "$inbox_once" "$(cksum "$inbox")"
+[ ! -e "$state/owner" ] || test_fail "second teardown recreated owner"
+[ ! -e "$state/settings.lock" ] || test_fail "second teardown left settings lock"
+[ ! -e "$knowledge/failures-inbox.lock" ] || test_fail "second teardown left knowledge lock"
+
+setup_repo teardown-restore-failure
+restore_fail_sid=12121212121212121212121212121212
+run_case run_init "$restore_fail_sid"
+assert_success "restore-failure init succeeds"
+restore_fail_session=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
+restore_fail_cache=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
+restore_fail_settings="$repo/.claude/settings.local.json"
+restore_fail_key=$(loop_sha256 "$repo")
+restore_fail_state="$XDG_DATA_HOME/ark/loop/repos/$restore_fail_key"
+prepare_lifecycle_output "$restore_fail_session" "$restore_fail_cache"
+chmod 644 "$restore_fail_state/settings-ownership.json"
+run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$restore_fail_sid"
+assert_success "restore-failure teardown remains best effort"
+[ -f "$restore_fail_session/errors/summary.md" ] || test_fail "restore failure skipped summary"
+[ -f "$restore_fail_session/handoff.md" ] || test_fail "restore failure skipped handoff"
+assert_eq "restore failure still appends inbox" 1 \
+  "$(grep -Fc -- "- Session ID: $restore_fail_sid" "$inbox" 2>/dev/null)"
+[ -e "$restore_fail_state/owner" ] || test_fail "restore failure removed owner"
+jq -e '.permissions.deny | index("TodoWrite") != null' "$restore_fail_settings" >/dev/null 2>&1 \
+  || test_fail "restore failure removed Ark settings"
+[ ! -e "$restore_fail_session/stop_once" ] || test_fail "restore failure left stop_once"
+[ ! -e "$restore_fail_cache/steps" ] || test_fail "restore failure left steps"
+[ ! -e "$restore_fail_state/settings.lock" ] || test_fail "restore failure left settings lock"
+[ ! -e "$knowledge/failures-inbox.lock" ] || test_fail "restore failure left knowledge lock"
 
 setup_repo restart-flow
 old_sid=abababababababababababababababab
@@ -171,10 +237,17 @@ assert_success "concurrent winner teardown succeeds"
 setup_repo orphan-chain
 settings="$repo/.claude/settings.local.json"
 printf '{"base":true}\n' >"$settings"; chmod 600 "$settings"
+knowledge="$XDG_DATA_HOME/ark/loop/knowledge"
+printf '%s\n' '# Human curated knowledge' '- never distribute inbox candidates' >"$knowledge/failures.md"
+chmod 600 "$knowledge/failures.md"
+curated_hash=$(cksum "$knowledge/failures.md")
 /bin/sleep 60 & owner1=$!
 /bin/bash "$INIT" --repo "$repo" --owner-pid "$owner1" --session-id 44444444444444444444444444444444 \
   --goal goal --constraint safe --plan-item one >"$TEST_TMP/orphan-1.out" 2>"$TEST_TMP/orphan-1.err"
 assert_eq "first orphan-chain init enabled" $'enabled\t1' "$(sed -n '1p' "$TEST_TMP/orphan-1.out")"
+orphan1_session=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$TEST_TMP/orphan-1.out")
+orphan1_cache=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$TEST_TMP/orphan-1.out")
+prepare_lifecycle_output "$orphan1_session" "$orphan1_cache"
 kill "$owner1"; wait "$owner1" 2>/dev/null || true
 content=$(cat "$settings")
 printf '%s\n' "${content%\}},\"user-kept\":1}" >"$settings"; chmod 600 "$settings"
@@ -182,11 +255,34 @@ printf '%s\n' "${content%\}},\"user-kept\":1}" >"$settings"; chmod 600 "$setting
 /bin/bash "$INIT" --repo "$repo" --owner-pid "$owner2" --session-id 55555555555555555555555555555555 \
   --goal goal --constraint safe --plan-item two >"$TEST_TMP/orphan-2.out" 2>"$TEST_TMP/orphan-2.err"
 assert_eq "first dead owner recovered" $'enabled\t1' "$(sed -n '1p' "$TEST_TMP/orphan-2.out")"
+[ -f "$orphan1_session/errors/summary.md" ] || test_fail "first dead owner recovery skipped summary"
+[ -f "$orphan1_session/handoff.md" ] || test_fail "first dead owner recovery skipped handoff"
+[ ! -e "$orphan1_session/stop_once" ] || test_fail "first dead owner recovery left stop_once"
+[ ! -e "$orphan1_cache/steps" ] || test_fail "first dead owner recovery left steps"
+assert_eq "first dead owner inbox marker is unique" 1 \
+  "$(grep -Fc -- '- Session ID: 44444444444444444444444444444444' "$knowledge/failures-inbox.md")"
+orphan2_session=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$TEST_TMP/orphan-2.out")
+orphan2_cache=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$TEST_TMP/orphan-2.out")
+cmp -s "$knowledge/failures.md" "$orphan2_session/knowledge/failures.md" \
+  || test_fail "new session knowledge was not copied from curated source"
+grep -F 'ark-loop-candidate:' "$orphan2_session/knowledge/failures.md" >/dev/null 2>&1
+assert_eq "new session knowledge excludes inbox" 1 "$?"
+prepare_lifecycle_output "$orphan2_session" "$orphan2_cache"
+settings_after_first_recovery=$(cksum "$settings")
 kill "$owner2"; wait "$owner2" 2>/dev/null || true
 /bin/sleep 60 & owner3=$!
 /bin/bash "$INIT" --repo "$repo" --owner-pid "$owner3" --session-id 66666666666666666666666666666666 \
   --goal goal --constraint safe --plan-item three >"$TEST_TMP/orphan-3.out" 2>"$TEST_TMP/orphan-3.err"
 assert_eq "second dead owner recovered" $'enabled\t1' "$(sed -n '1p' "$TEST_TMP/orphan-3.out")"
+[ -f "$orphan2_session/errors/summary.md" ] || test_fail "second dead owner recovery skipped summary"
+[ -f "$orphan2_session/handoff.md" ] || test_fail "second dead owner recovery skipped handoff"
+[ ! -e "$orphan2_session/stop_once" ] || test_fail "second dead owner recovery left stop_once"
+[ ! -e "$orphan2_cache/steps" ] || test_fail "second dead owner recovery left steps"
+assert_eq "second dead owner inbox marker is unique" 1 \
+  "$(grep -Fc -- '- Session ID: 55555555555555555555555555555555' "$knowledge/failures-inbox.md")"
+assert_eq "consecutive recovery settings bytes converge" "$settings_after_first_recovery" "$(cksum "$settings")"
+assert_eq "orphan recovery preserves curated host bytes" "$curated_hash" "$(cksum "$knowledge/failures.md")"
+[ ! -e "$knowledge/failures-inbox.lock" ] || test_fail "orphan recovery left knowledge lock"
 run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id 66666666666666666666666666666666
 assert_success "orphan-chain teardown succeeds"
 kill "$owner3"; wait "$owner3" 2>/dev/null || true

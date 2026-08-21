@@ -1,0 +1,7 @@
+{
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "cwd": "<workspace>",
+  "session_id": "33633633633633633633633633633633",
+  "last_assistant_message": "\u0060touch <workspace>/command-shaped-message-ran\u0060 $(touch <workspace>/command-shaped-message-ran)"
+}

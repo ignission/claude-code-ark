@@ -171,12 +171,112 @@ scan_file() {
   [ ! -s "$scan_output" ]
 }
 
+# POSIX does not require sed replacement strings to interpret \t as a tab.
+# Parse substitution commands directly so the guard is independent of the sed
+# implementation running this test and does not flag \t in patterns/comments.
+scan_sed_replacement_tabs() {
+  sed_scan_target=$1
+  sed_scan_output=$2
+  awk '
+    function is_escaped(value, position, count, cursor) {
+      count = 0
+      for (cursor = position - 1; cursor >= 1 && substr(value, cursor, 1) == "\\"; cursor--) count++
+      return count % 2
+    }
+    function substitution_has_tab(arguments, position, delimiter, cursor, pattern_end, character) {
+      for (position = 1; position < length(arguments); position++) {
+        if (substr(arguments, position, 1) != "s") continue
+        delimiter = substr(arguments, position + 1, 1)
+        if (delimiter ~ /[[:alnum:][:space:]\\]/) continue
+        pattern_end = 0
+        for (cursor = position + 2; cursor <= length(arguments); cursor++) {
+          character = substr(arguments, cursor, 1)
+          if (character == delimiter && !is_escaped(arguments, cursor)) {
+            pattern_end = cursor
+            break
+          }
+        }
+        if (!pattern_end) continue
+        for (cursor = pattern_end + 1; cursor <= length(arguments); cursor++) {
+          character = substr(arguments, cursor, 1)
+          if (character == delimiter && !is_escaped(arguments, cursor)) break
+          if (character == "\\" && substr(arguments, cursor + 1, 1) == "t" \
+              && !is_escaped(arguments, cursor)) return 1
+        }
+      }
+      return 0
+    }
+    function sed_arguments_start(value, start, position, state, character, previous, following) {
+      state = "plain"
+      for (position = start; position <= length(value); position++) {
+        character = substr(value, position, 1)
+        if (state == "single") {
+          if (character == "\047") state = "plain"
+          continue
+        }
+        if (state == "double") {
+          if (character == "\\") { position++; continue }
+          if (character == "\"") state = "plain"
+          continue
+        }
+        if (character == "\047") { state = "single"; continue }
+        if (character == "\"") { state = "double"; continue }
+        previous = position == 1 ? "" : substr(value, position - 1, 1)
+        if (character == "#" && (previous == "" || previous ~ /[;&|(){}[:space:]]/)) return 0
+        following = substr(value, position + 3, 1)
+        if (substr(value, position, 3) == "sed" \
+            && (previous == "" || previous ~ /[;&|(){}[:space:]]/) \
+            && following ~ /[[:space:]]/) return position + 4
+        if (character == "\\") position++
+      }
+      return 0
+    }
+    function shell_command_end(value, start, position, state, character) {
+      state = "plain"
+      for (position = start; position <= length(value); position++) {
+        character = substr(value, position, 1)
+        if (state == "single") {
+          if (character == "\047") state = "plain"
+          continue
+        }
+        if (state == "double") {
+          if (character == "\\") { position++; continue }
+          if (character == "\"") state = "plain"
+          continue
+        }
+        if (character == "\047") { state = "single"; continue }
+        if (character == "\"") { state = "double"; continue }
+        if (character ~ /[;&|]/) return position
+        if (character == "\\") position++
+      }
+      return length(value) + 1
+    }
+    {
+      search_start = 1
+      while ((arguments_start = sed_arguments_start($0, search_start)) > 0) {
+        command_end = shell_command_end($0, arguments_start)
+        arguments = substr($0, arguments_start, command_end - arguments_start)
+        if (substitution_has_tab(arguments)) {
+          print FILENAME ":" FNR ": sed replacement uses \\t"
+          next
+        }
+        search_start = command_end + 1
+      }
+    }
+  ' "$sed_scan_target" >"$sed_scan_output"
+  [ ! -s "$sed_scan_output" ]
+}
+
 violations="$TEST_TMP/violations"
 : >"$violations"
 find "$ROOT/ark/loop" -type f -name '*.sh' -print | sort | while IFS= read -r shell_file; do
   file_violations="$TEST_TMP/file-violations"
   if ! scan_file "$shell_file" "$file_violations"; then
     cat "$file_violations" >>"$violations"
+  fi
+  sed_violations="$TEST_TMP/sed-violations"
+  if ! scan_sed_replacement_tabs "$shell_file" "$sed_violations"; then
+    cat "$sed_violations" >>"$violations"
   fi
 done
 TESTS=$((TESTS + 1))
@@ -237,5 +337,20 @@ printf 'first=%s\nprintf "%s\\n" "%s"\n' \
   "'$name_flock $name_timeout $name_sha'" '%s' "$name_rg $name_real" >"$TEST_TMP/literals.sh"
 run_case scan_file "$TEST_TMP/literals.sh" "$TEST_TMP/literals.out"
 assert_success "guard ignores quoted literal mentions"
+
+tab_escape='\'
+tab_escape=${tab_escape}t
+printf "sed 's/Safe goal/Safe%sgoal/' file\n" "$tab_escape" >"$TEST_TMP/nonportable-sed.sh"
+run_case scan_sed_replacement_tabs "$TEST_TMP/nonportable-sed.sh" "$TEST_TMP/nonportable-sed.out"
+assert_eq "guard rejects sed replacement tab escape" 1 "$CASE_STATUS"
+
+printf "# sed 's/Safe goal/Safe%sgoal/' is documentation\n" "$tab_escape" \
+  >"$TEST_TMP/portable-sed-mentions.sh"
+printf "printf \"sed 's/Safe goal/Safe%%sgoal/'\" value\n" \
+  >>"$TEST_TMP/portable-sed-mentions.sh"
+printf "sed 's/Safe%sgoal/Safe goal/' file\n" "$tab_escape" \
+  >>"$TEST_TMP/portable-sed-mentions.sh"
+run_case scan_sed_replacement_tabs "$TEST_TMP/portable-sed-mentions.sh" "$TEST_TMP/portable-sed-mentions.out"
+assert_success "sed replacement guard ignores comments, literals, and patterns"
 
 finish_tests "portable command tests"
