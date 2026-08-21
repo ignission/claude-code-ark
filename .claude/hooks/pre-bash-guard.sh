@@ -287,4 +287,10 @@ if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+(.+[[:space:]]+)?push([[:space:]
 fi
 
 # 対象外コマンドは何もせず通過
+# --- 自動 resolve ガード: レビューコメントの自動 resolve を禁止 ---
+if [[ "$COMMAND" =~ resolveReviewThread ]]; then
+  echo "BLOCKED: resolveReviewThreadの実行は禁止されています。レビューコメントの解決はユーザーが手動で行ってください" >&2
+  exit 2
+fi
+
 exit 0

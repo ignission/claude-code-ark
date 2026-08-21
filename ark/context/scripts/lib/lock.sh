@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
 
-_ctx_lock_file() {
-  local key="$1"
-  printf '%s/flow-%s.lock\n' "$FLOW_STATE_DIR" "$key"
-}
-
 # lock ownership / reclaim directory 用の一意 token を生成する。
 _ctx_lock_generate_token() {
   if command -v uuidgen >/dev/null 2>&1; then

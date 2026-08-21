@@ -82,13 +82,12 @@ summary から curated 正本へ直接昇格する経路、および候補を意
 
 各 session の handoff.md は Goal、完了 Plan、未完了 Plan、現在の NOW、artifact
 path と一行要約、error summary path、次の最小 action、WORK_ID、session ID を固定順で
-持つ。artifact 本文、raw error、flow の control-plane JSON は含めず、level-2 見出しも
-生成しない。
+持つ。artifact 本文、raw error、外部ワークフローの control-plane JSON は含めず、
+level-2 見出しも生成しない。
 
-次 session の人間 operator が /flow --resume の前に読み、必要な項目を助言情報として
-モデルへ提示する。phase / gate の正本は flow state であり、handoff と自動 merge、
-相互上書きしない。モデルや /flow --resume が handoff を自動 Read する規則は #334
-の範囲であり、ここでは追加しない。
+handoff.md は次 session への**助言情報**であり、正本ではない。session の正本は
+task.md と knowledge/ に置く。外部のワークフローツールが phase / gate を持つ場合、
+その state と handoff を自動 merge したり相互に上書きしたりしない。
 
 ## 足場の撤去観測
 
