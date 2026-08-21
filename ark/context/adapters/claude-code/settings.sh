@@ -1,12 +1,39 @@
 #!/usr/bin/env bash
 
-CLAUDE_CTX_BATCH_HOOK_JSON='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/context/adapters/claude-code/post-tool-batch.sh"}]}'
-CLAUDE_CTX_FAILURE_HOOK_JSON='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/context/adapters/claude-code/post-tool-use-failure.sh"}]}'
-CLAUDE_CTX_SESSION_START_HOOK_JSON='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/context/adapters/claude-code/session-start.sh"}]}'
+CLAUDE_CTX_BATCH_HOOK_JSON=
+CLAUDE_CTX_FAILURE_HOOK_JSON=
+CLAUDE_CTX_SESSION_START_HOOK_JSON=
 
 claude_settings_error() {
   printf '%s\n' "$*" >&2
   return 1
+}
+
+claude_settings_prepare_hooks() {
+  local source_root=${1:-}
+  local canonical adapter_dir batch failure session_start hook_script
+  command -v jq >/dev/null 2>&1 || { claude_settings_error "jq command unavailable"; return 1; }
+  [ -n "$source_root" ] && [ "${source_root#/}" != "$source_root" ] \
+    || { claude_settings_error "invalid Ark source root"; return 1; }
+  case "$source_root" in *$'\n'*|*$'\r'*|*$'\t'*) claude_settings_error "invalid Ark source root"; return 1 ;; esac
+  canonical=$(cd "$source_root" 2>/dev/null && pwd -P) \
+    || { claude_settings_error "invalid Ark source root"; return 1; }
+  [ "$canonical" = "$source_root" ] \
+    || { claude_settings_error "non-canonical Ark source root"; return 1; }
+  adapter_dir="$source_root/ark/context/adapters/claude-code"
+  batch="$adapter_dir/post-tool-batch.sh"
+  failure="$adapter_dir/post-tool-use-failure.sh"
+  session_start="$adapter_dir/session-start.sh"
+  for hook_script in "$batch" "$failure" "$session_start"; do
+    [ -f "$hook_script" ] && [ ! -L "$hook_script" ] && [ -x "$hook_script" ] \
+      || { claude_settings_error "Ark hook unavailable"; return 1; }
+  done
+  CLAUDE_CTX_BATCH_HOOK_JSON=$(jq -cn --arg command "$batch" \
+    '{hooks:[{type:"command",command:($command|@sh)}]}') || return 1
+  CLAUDE_CTX_FAILURE_HOOK_JSON=$(jq -cn --arg command "$failure" \
+    '{hooks:[{type:"command",command:($command|@sh)}]}') || return 1
+  CLAUDE_CTX_SESSION_START_HOOK_JSON=$(jq -cn --arg command "$session_start" \
+    '{hooks:[{type:"command",command:($command|@sh)}]}') || return 1
 }
 
 claude_settings_validate_schema() {
@@ -252,8 +279,9 @@ claude_settings_manifest_matches() {
 claude_settings_inject() {
   local repo=${1:-}
   local state=${2:-}
+  local source_root=${3:-${ARK_SOURCE_ROOT:-}}
   local settings tmp manifest manifest_new settings_existed mode root range permissions_start deny_start hooks_start batch_start failure_start session_start_start tool
-  command -v jq >/dev/null 2>&1 || { claude_settings_error "jq command unavailable"; return 1; }
+  claude_settings_prepare_hooks "$source_root" || return 1
   settings="$repo/.claude/settings.local.json"
   tmp="$repo/.claude/settings.local.json.ark-context-tmp"
   manifest="$state/settings-ownership.json"

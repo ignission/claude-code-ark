@@ -2,13 +2,24 @@
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd -P)
-INIT="$ROOT/ark/context/scripts/session-init.sh"
-TEARDOWN="$ROOT/ark/context/scripts/session-teardown.sh"
 TEST_TMP=$(mktemp -d)
 TEST_TMP=$(cd "$TEST_TMP" && pwd -P)
 trap 'rm -rf "$TEST_TMP"' EXIT HUP INT TERM
 . "$ROOT/ark/context/tests/test-helper.sh"
 . "$ROOT/ark/context/scripts/lib/runtime.sh"
+
+ARK_SOURCE_FIXTURE="$TEST_TMP/Ark source's tree"
+mkdir -m 700 -p "$ARK_SOURCE_FIXTURE/.claude"
+cp -R "$ROOT/ark" "$ARK_SOURCE_FIXTURE/ark"
+cp -R "$ROOT/.claude/lib" "$ARK_SOURCE_FIXTURE/.claude/lib"
+chmod 755 "$ARK_SOURCE_FIXTURE/.claude"
+INIT="$ARK_SOURCE_FIXTURE/ark/context/scripts/session-init.sh"
+TEARDOWN="$ARK_SOURCE_FIXTURE/ark/context/scripts/session-teardown.sh"
+REGISTERED_BATCH_INPUT="$ROOT/ark/context/adapters/claude-code/tests/fixtures/post-tool-batch-single-2.1.215.json"
+REGISTERED_FAILURE_INPUT="$ROOT/ark/context/adapters/claude-code/tests/fixtures/post-tool-use-failure-bash-exit-7-2.1.237.json"
+REGISTERED_SESSION_INPUT="$TEST_TMP/registered-session-start.json"
+printf '%s\n' '{"session_id":"registered","hook_event_name":"SessionStart","source":"startup"}' \
+  >"$REGISTERED_SESSION_INPUT"
 
 export HOME="$TEST_TMP/home"
 export XDG_CONFIG_HOME="$TEST_TMP/config"
@@ -47,6 +58,48 @@ prepare_lifecycle_output() {
   chmod 600 "$output_session/artifacts/index.md" "$output_session/artifacts/lifecycle.txt" \
     "$output_session/errors/raw.log" "$output_session/stop_once"
   seed_step_count "$output_cache" 7
+}
+
+run_registered_hook() {
+  registered_command=$1
+  registered_input=$2
+  (cd "$repo" && env CLAUDE_PROJECT_DIR="$repo" ARK_SESSION_DIR="$session_dir" \
+    ARK_CACHE_DIR="$cache_dir" ARK_RECITE_INTERVAL=1 /bin/sh -c "$registered_command") \
+    <"$registered_input"
+}
+
+assert_registered_hooks_fire() {
+  registered_label=$1
+  batch_command=$(jq -r '.hooks.PostToolBatch[0].hooks[0].command' "$settings")
+  failure_command=$(jq -r '.hooks.PostToolUseFailure[0].hooks[0].command' "$settings")
+  session_command=$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$settings")
+  case "$batch_command$failure_command$session_command" in
+    *'$CLAUDE_PROJECT_DIR'*|*'$ARK_SOURCE_ROOT'*) test_fail "$registered_label hook command retained an environment-relative path" ;;
+    *) TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)) ;;
+  esac
+
+  run_case run_registered_hook "$batch_command" "$REGISTERED_BATCH_INPUT"
+  assert_success "$registered_label registered PostToolBatch command exits zero"
+  jq -e '.hookSpecificOutput.hookEventName == "PostToolBatch"
+    and (.hookSpecificOutput.additionalContext | contains("Goal: Lifecycle goal"))' \
+    "$CASE_STDOUT" >/dev/null 2>&1 \
+    || test_fail "$registered_label registered PostToolBatch command did not recite the task"
+
+  run_case run_registered_hook "$session_command" "$REGISTERED_SESSION_INPUT"
+  assert_success "$registered_label registered SessionStart command exits zero"
+  jq -e '.hookSpecificOutput.hookEventName == "SessionStart"
+    and (.hookSpecificOutput.additionalContext | contains("Lifecycle goal"))' \
+    "$CASE_STDOUT" >/dev/null 2>&1 \
+    || test_fail "$registered_label registered SessionStart command did not inject context"
+
+  raw_before=0
+  [ ! -f "$session_dir/errors/raw.log" ] || raw_before=$(wc -l <"$session_dir/errors/raw.log" | tr -d ' ')
+  run_case run_registered_hook "$failure_command" "$REGISTERED_FAILURE_INPUT"
+  assert_success "$registered_label registered PostToolUseFailure command exits zero"
+  assert_eq "$registered_label registered PostToolUseFailure command stays quiet" 0 \
+    "$(wc -c "$CASE_STDOUT" "$CASE_STDERR" | tail -1 | awk '{print $1}')"
+  assert_eq "$registered_label registered PostToolUseFailure command captures the failure" \
+    "$((raw_before + 1))" "$(wc -l <"$session_dir/errors/raw.log" | tr -d ' ')"
 }
 
 setup_repo invalid-owner-pid
@@ -96,7 +149,7 @@ cache_dir=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
 [ -f "$session_dir/artifacts/index.md" ] || test_fail "init did not create artifacts/index.md"
 assert_eq "artifact index mode" 600 "$(ctx_stat "$session_dir/artifacts/index.md" | awk '{print $2}')"
 assert_eq "artifact index starts empty" 0 "$(wc -c <"$session_dir/artifacts/index.md" | tr -d ' ')"
-grep -Fx "Context rules: $ROOT/ark/context/templates/context-rules.md" "$session_dir/task.md" >/dev/null 2>&1 \
+grep -Fx "Context rules: $ARK_SOURCE_FIXTURE/ark/context/templates/context-rules.md" "$session_dir/task.md" >/dev/null 2>&1 \
   || test_fail "task does not reference context rules by absolute path"
 jq -e '.permissions.deny == ["TodoWrite","TaskCreate","TaskUpdate"]' "$settings" >/dev/null 2>&1 || test_fail "init did not inject deny"
 jq -e '(.hooks.SessionStart | length) == 1' "$settings" >/dev/null 2>&1 \
@@ -116,7 +169,7 @@ empty_session_dir=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT"
 grep -F '← NOW' "$empty_session_dir/task.md" >/dev/null 2>&1
 assert_eq "empty task has no NOW marker" 1 "$?"
 assert_eq "empty Goal body" '' "$(sed -n '/^## Goal$/,/^## Constraints$/p' "$empty_session_dir/task.md" | sed '1d;$d' | tr -d '\n')"
-assert_eq "empty Constraints body" "Context rules: $ROOT/ark/context/templates/context-rules.md
+assert_eq "empty Constraints body" "Context rules: $ARK_SOURCE_FIXTURE/ark/context/templates/context-rules.md
 Previous failure summary: なし（通常起動）" \
   "$(sed -n '/^## Constraints$/,/^## Plan$/p' "$empty_session_dir/task.md" | sed '1d;$d' | sed '/^$/d')"
 assert_eq "empty Plan body" '' "$(sed -n '/^## Plan$/,/^## Artifacts$/p' "$empty_session_dir/task.md" | sed '1d;$d' | tr -d '\n')"
@@ -139,6 +192,7 @@ run_case run_init "$sid"
 assert_success "populated task can initialize after empty scaffold case"
 session_dir=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
 cache_dir=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
+assert_registered_hooks_fire "non-Ark target repo"
 
 seed_step_count "$cache_dir" 7
 task_before=$(cat "$session_dir/task.md")
@@ -514,6 +568,30 @@ for hook_output in "$TEST_TMP"/ab-failure.out "$TEST_TMP"/ba-failure.out "$TEST_
   grep -E 'decision|continue|additionalContext|hookSpecificOutput' "$hook_output" >/dev/null 2>&1
   assert_eq "failure hook emits no control output" 1 "$?"
 done
+
+repo=$ARK_SOURCE_FIXTURE
+git -C "$repo" init -q
+git -C "$repo" config user.name fixture
+git -C "$repo" config user.email fixture@example.invalid
+printf '.claude/settings.local.json\n.claude/settings.local.json.ark-context-tmp\n' >"$repo/.gitignore"
+git -C "$repo" add .gitignore
+git -C "$repo" commit -qm init
+settings="$repo/.claude/settings.local.json"
+printf '{\n  "source-repo-before": true\n}\n\n' >"$settings"
+chmod 640 "$settings"
+cp "$settings" "$TEST_TMP/source-repo-original"
+source_repo_sid=12121212121212121212121212121212
+run_case /bin/bash "$INIT" --repo "$repo" --owner-pid "$$" --session-id "$source_repo_sid" \
+  --goal 'Lifecycle goal' --constraint 'Preserve bytes' --plan-item 'Run lifecycle'
+assert_success "Ark source target session init succeeds"
+assert_eq "Ark source target session is enabled" $'enabled\t1' "$(sed -n '1p' "$CASE_STDOUT")"
+session_dir=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
+cache_dir=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
+assert_registered_hooks_fire "Ark source target repo"
+run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$source_repo_sid"
+assert_success "Ark source target teardown succeeds"
+cmp -s "$settings" "$TEST_TMP/source-repo-original" \
+  || test_fail "Ark source target teardown did not byte-restore settings"
 
 if grep -F '.gitignore' "$INIT" "$TEARDOWN" >/dev/null 2>&1; then test_fail "lifecycle script references .gitignore writes"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
 

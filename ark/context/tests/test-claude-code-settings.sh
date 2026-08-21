@@ -9,9 +9,18 @@ trap 'rm -rf "$TEST_TMP"' EXIT HUP INT TERM
 . "$ROOT/ark/context/scripts/lib/runtime.sh"
 . "$ROOT/ark/context/adapters/claude-code/settings.sh"
 
-batch_hook='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/context/adapters/claude-code/post-tool-batch.sh"}]}'
-failure_hook='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/context/adapters/claude-code/post-tool-use-failure.sh"}]}'
-session_hook='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/context/adapters/claude-code/session-start.sh"}]}'
+ARK_TEST_SOURCE_ROOT="$TEST_TMP/Ark source's tree"
+ARK_SOURCE_ROOT=$ARK_TEST_SOURCE_ROOT
+adapter_fixture="$ARK_TEST_SOURCE_ROOT/ark/context/adapters/claude-code"
+mkdir -m 700 -p "$adapter_fixture"
+for hook_script in post-tool-batch.sh post-tool-use-failure.sh session-start.sh; do
+  cp "$ROOT/ark/context/adapters/claude-code/$hook_script" "$adapter_fixture/$hook_script"
+  chmod 700 "$adapter_fixture/$hook_script"
+done
+claude_settings_prepare_hooks "$ARK_TEST_SOURCE_ROOT" || exit 1
+batch_hook=$CLAUDE_CTX_BATCH_HOOK_JSON
+failure_hook=$CLAUDE_CTX_FAILURE_HOOK_JSON
+session_hook=$CLAUDE_CTX_SESSION_START_HOOK_JSON
 
 assert_eq "mode extraction rejects empty output in both paths" 2 \
   "$(grep -c '\[ -n "\$mode" \] || return 1' "$ROOT/ark/context/adapters/claude-code/settings.sh" | tr -d ' ')"
@@ -65,13 +74,28 @@ chmod 755 "$repo/.claude"
 cmp -s "$settings" "$TEST_TMP/injected" || test_fail "second injection changed settings"
 cmp -s "$manifest" "$TEST_TMP/manifest" || test_fail "second injection changed ownership"
 
+ARK_RELOCATED_SOURCE_ROOT="$TEST_TMP/relocated Ark source"
+relocated_adapter="$ARK_RELOCATED_SOURCE_ROOT/ark/context/adapters/claude-code"
+mkdir -m 700 -p "$relocated_adapter"
+for hook_script in post-tool-batch.sh post-tool-use-failure.sh session-start.sh; do
+  cp "$ROOT/ark/context/adapters/claude-code/$hook_script" "$relocated_adapter/$hook_script"
+  chmod 700 "$relocated_adapter/$hook_script"
+done
+ARK_SOURCE_ROOT=$ARK_RELOCATED_SOURCE_ROOT
+claude_settings_prepare_hooks "$ARK_SOURCE_ROOT" || exit 1
+manifest_batch_hook=$(jq -c '.entries[] | select(.path == "hooks/PostToolBatch") | .value' "$manifest")
+[ "$manifest_batch_hook" != "$CLAUDE_CTX_BATCH_HOOK_JSON" ]
+assert_eq "source relocation changes the candidate hook identity" 0 "$?"
 run_case claude_settings_restore "$repo" "$state"
-assert_success "existing settings restored"
+assert_success "settings restore uses manifest after Ark source relocation"
 if ! cmp -s "$settings" "$TEST_TMP/original"; then
   test_fail "restore was not byte-identical"
   diff -u "$TEST_TMP/original" "$settings" >&2 || true
 fi
 assert_eq "restored mode" "$original_mode" "$(ctx_stat "$settings" | awk '{print $2}')"
+[ ! -e "$manifest" ] || test_fail "source relocation incorrectly abandoned an unchanged manifest entry"
+ARK_SOURCE_ROOT=$ARK_TEST_SOURCE_ROOT
+claude_settings_prepare_hooks "$ARK_SOURCE_ROOT" || exit 1
 
 setup_repo missing
 settings="$repo/.claude/settings.local.json"
@@ -181,6 +205,26 @@ cmp -s "$settings" "$TEST_TMP/invalid-before" || test_fail "invalid settings was
 [ ! -e "$state/settings-ownership.json" ] || test_fail "invalid settings created ownership"
 [ ! -e "$repo/.claude/settings.local.json.ark-context-tmp" ] || test_fail "invalid settings created tmp"
 
+setup_repo missing-source-hook
+settings="$repo/.claude/settings.local.json"
+printf '{"before":true}\n' >"$settings"; chmod 600 "$settings"
+cp "$settings" "$TEST_TMP/missing-source-hook-before"
+incomplete_source="$TEST_TMP/incomplete Ark source"
+incomplete_adapter="$incomplete_source/ark/context/adapters/claude-code"
+mkdir -m 700 -p "$incomplete_adapter"
+for hook_script in post-tool-batch.sh post-tool-use-failure.sh; do
+  cp "$ROOT/ark/context/adapters/claude-code/$hook_script" "$incomplete_adapter/$hook_script"
+  chmod 700 "$incomplete_adapter/$hook_script"
+done
+ARK_SOURCE_ROOT=$incomplete_source
+run_case claude_settings_inject "$repo" "$state"
+assert_failure_reason "missing Ark source hook fails closed" "Ark hook unavailable"
+cmp -s "$settings" "$TEST_TMP/missing-source-hook-before" \
+  || test_fail "missing Ark source hook changed settings"
+[ ! -e "$state/settings-ownership.json" ] || test_fail "missing Ark source hook created ownership"
+ARK_SOURCE_ROOT=$ARK_TEST_SOURCE_ROOT
+claude_settings_prepare_hooks "$ARK_SOURCE_ROOT" || exit 1
+
 setup_repo invalid-failure-schema
 settings="$repo/.claude/settings.local.json"
 printf '{"hooks":{"PostToolUseFailure":{}}}\n' >"$settings"; chmod 600 "$settings"
@@ -282,7 +326,7 @@ content=${content/post-tool-use-failure.sh/changed-by-user.sh}
 printf '%s\n' "$content" >"$settings"; chmod 600 "$settings"
 run_case claude_settings_restore "$repo" "$state"
 assert_success "changed owner entry does not block restore"
-jq -e '.hooks.PostToolUseFailure[0].hooks[0].command | endswith("changed-by-user.sh")' "$settings" >/dev/null 2>&1 \
+jq -e '.hooks.PostToolUseFailure[0].hooks[0].command | contains("changed-by-user.sh")' "$settings" >/dev/null 2>&1 \
   || test_fail "changed owner hook was removed"
 jq -e 'any(.entries[]; .path == "hooks/PostToolUseFailure" and .abandoned == true)
   and all(.entries[]; select(.path != "hooks/PostToolUseFailure") | .abandoned == false)' "$state/settings-ownership.json" >/dev/null 2>&1 \
@@ -302,7 +346,7 @@ content=${content/session-start.sh/session-start-user.sh}
 printf '%s\n' "$content" >"$settings"; chmod 600 "$settings"
 run_case claude_settings_restore "$repo" "$state"
 assert_success "changed SessionStart owner entry does not block restore"
-jq -e '.hooks.SessionStart[0].hooks[0].command | endswith("session-start-user.sh")' \
+jq -e '.hooks.SessionStart[0].hooks[0].command | contains("session-start-user.sh")' \
   "$settings" >/dev/null 2>&1 || test_fail "changed SessionStart hook was removed"
 jq -e 'any(.entries[]; .path == "hooks/SessionStart" and .abandoned == true)
   and all(.entries[]; select(.path != "hooks/SessionStart") | .abandoned == false)' \

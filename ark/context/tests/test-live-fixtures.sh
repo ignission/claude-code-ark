@@ -101,7 +101,7 @@ git -C "$repo" config user.email fixture@example.invalid
 mkdir -m 755 "$repo/.claude"
 printf '.claude/settings.local.json\n.claude/settings.local.json.ark-context-tmp\n' >"$repo/.gitignore"
 git -C "$repo" add .gitignore && git -C "$repo" commit -qm init
-claude_settings_inject "$repo" "$state" \
+claude_settings_inject "$repo" "$state" "$ROOT" \
   || { printf 'permission settings injection failed\n' >&2; exit 1; }
 settings="$repo/.claude/settings.local.json"
 jq -e '.permissions.deny == ["TodoWrite","TaskCreate","TaskUpdate"]' "$settings" >/dev/null \
