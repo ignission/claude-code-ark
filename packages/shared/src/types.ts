@@ -643,12 +643,6 @@ export interface ServerToClientEvents {
   "browser:stopped": (data: { browserId: string }) => void;
   "browser:error": (data: { message: string }) => void;
 
-  // フロントライン
-  "frontline:stats": (stats: FrontlineStats) => void;
-  "frontline:records": (records: FrontlineRecord[]) => void;
-  "frontline:record_saved": (data: FrontlineRecordSaved) => void;
-  "frontline:error": (data: FrontlineError) => void;
-
   // プロファイル切替 (Linux限定)
   "system:capabilities": (caps: SystemCapabilities) => void;
   "profile:list": (profiles: Profile[]) => void;
@@ -917,13 +911,6 @@ export interface ClientToServerEvents {
   "browser:stop": (data: { browserId: string }) => void;
   "browser:navigate": (data: { url: string }) => void;
 
-  // フロントライン
-  "frontline:save_record": (
-    record: Omit<FrontlineRecord, "id" | "createdAt">
-  ) => void;
-  "frontline:get_stats": () => void;
-  "frontline:get_records": (data?: { limit?: number }) => void;
-
   // プロファイル切替 (Linux限定)
   "profile:list": () => void;
   "profile:create": (data: { name: string; configDir: string }) => void;
@@ -1097,51 +1084,6 @@ export interface BeaconProfileState {
   stale: boolean;
   /** 選択肢として提示する登録済みプロファイル一覧 */
   profiles: Array<{ id: string; name: string }>;
-}
-
-// ============================================================
-// フロントライン（ゲーム）
-// ============================================================
-
-export interface FrontlineRecord {
-  id: string;
-  distance: number;
-  kills: number;
-  headshots: number;
-  totalShots: number;
-  playTime: number;
-  meritPoints: number;
-  blocks: number;
-  heliKills: number;
-  createdAt: string;
-}
-
-export interface FrontlineStats {
-  totalPlays: number;
-  totalPlayTime: number;
-  totalKills: number;
-  totalHeadshots: number;
-  totalShots: number;
-  totalMeritPoints: number;
-  bestDistance: number;
-  bestKills: number;
-  rank: string;
-  playHours: Record<string, number>;
-  medals: string[];
-  deathPositions: number[];
-}
-
-export interface FrontlineRecordSaved {
-  record: FrontlineRecord;
-  stats: FrontlineStats;
-  newMedals: string[];
-  newBestDistance: boolean;
-  newBestKills: boolean;
-}
-
-export interface FrontlineError {
-  action: "get_stats" | "get_records" | "save_record";
-  message: string;
 }
 
 // ============================================================

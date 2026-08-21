@@ -11,8 +11,6 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   type ChatMessage,
-  type FrontlineRecord,
-  type FrontlineStats,
   type McpServerConfig,
   type McpServerConfigInput,
   MESSAGE_SHORTCUT_MAX_LENGTH,
@@ -496,46 +494,13 @@ export class SessionDatabase {
     this.db.exec(
       "UPDATE mcp_servers SET url = 'https://mcp.atlassian.com/v1/mcp' WHERE url = 'https://mcp.atlassian.com/v1/sse'"
     );
-
-    // フロントライン記録テーブル
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS frontline_records (
-        id TEXT PRIMARY KEY,
-        distance INTEGER NOT NULL,
-        kills INTEGER NOT NULL,
-        headshots INTEGER NOT NULL,
-        total_shots INTEGER NOT NULL,
-        play_time INTEGER NOT NULL,
-        merit_points INTEGER NOT NULL,
-        blocks INTEGER NOT NULL DEFAULT 0,
-        heli_kills INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS frontline_stats (
-        id TEXT PRIMARY KEY DEFAULT 'player',
-        total_plays INTEGER NOT NULL DEFAULT 0,
-        total_play_time INTEGER NOT NULL DEFAULT 0,
-        total_kills INTEGER NOT NULL DEFAULT 0,
-        total_headshots INTEGER NOT NULL DEFAULT 0,
-        total_shots INTEGER NOT NULL DEFAULT 0,
-        total_merit_points INTEGER NOT NULL DEFAULT 0,
-        best_distance INTEGER NOT NULL DEFAULT 0,
-        best_kills INTEGER NOT NULL DEFAULT 0,
-        rank TEXT NOT NULL DEFAULT '二等兵',
-        play_hours TEXT NOT NULL DEFAULT '{}',
-        medals TEXT NOT NULL DEFAULT '[]',
-        death_positions TEXT NOT NULL DEFAULT '[]',
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
   }
 
   private safeJsonParse<T>(json: string, fallback: T, fieldName: string): T {
     try {
       return JSON.parse(json) as T;
     } catch {
-      console.warn(`[DB] Failed to parse frontline_stats.${fieldName}:`, json);
+      console.warn(`[DB] Failed to parse ${fieldName}:`, json);
       return fallback;
     }
   }
@@ -1304,143 +1269,6 @@ export class SessionDatabase {
   deleteSetting(key: string): void {
     const stmt = this.db.prepare("DELETE FROM settings WHERE key = ?");
     stmt.run(key);
-  }
-
-  // ============================================================
-  // フロントラインCRUD操作
-  // ============================================================
-
-  /** フロントライン記録の行データ */
-  createFrontlineRecord(record: FrontlineRecord): void {
-    const stmt = this.db.prepare(`
-      INSERT INTO frontline_records (id, distance, kills, headshots, total_shots, play_time, merit_points, blocks, heli_kills, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-      record.id,
-      record.distance,
-      record.kills,
-      record.headshots,
-      record.totalShots,
-      record.playTime,
-      record.meritPoints,
-      record.blocks,
-      record.heliKills,
-      record.createdAt
-    );
-  }
-
-  getFrontlineRecords(limit = 50): FrontlineRecord[] {
-    const stmt = this.db.prepare(
-      "SELECT * FROM frontline_records ORDER BY created_at DESC LIMIT ?"
-    );
-    const rows = stmt.all(limit) as Array<{
-      id: string;
-      distance: number;
-      kills: number;
-      headshots: number;
-      total_shots: number;
-      play_time: number;
-      merit_points: number;
-      blocks: number;
-      heli_kills: number;
-      created_at: string;
-    }>;
-    return rows.map(row => ({
-      id: row.id,
-      distance: row.distance,
-      kills: row.kills,
-      headshots: row.headshots,
-      totalShots: row.total_shots,
-      playTime: row.play_time,
-      meritPoints: row.merit_points,
-      blocks: row.blocks,
-      heliKills: row.heli_kills,
-      createdAt: row.created_at,
-    }));
-  }
-
-  getFrontlineStats(): FrontlineStats | null {
-    const stmt = this.db.prepare(
-      "SELECT * FROM frontline_stats WHERE id = 'player'"
-    );
-    const row = stmt.get() as
-      | {
-          id: string;
-          total_plays: number;
-          total_play_time: number;
-          total_kills: number;
-          total_headshots: number;
-          total_shots: number;
-          total_merit_points: number;
-          best_distance: number;
-          best_kills: number;
-          rank: string;
-          play_hours: string;
-          medals: string;
-          death_positions: string;
-        }
-      | undefined;
-    if (!row) return null;
-    return {
-      totalPlays: row.total_plays,
-      totalPlayTime: row.total_play_time,
-      totalKills: row.total_kills,
-      totalHeadshots: row.total_headshots,
-      totalShots: row.total_shots,
-      totalMeritPoints: row.total_merit_points,
-      bestDistance: row.best_distance,
-      bestKills: row.best_kills,
-      rank: row.rank,
-      playHours: this.safeJsonParse<Record<string, number>>(
-        row.play_hours,
-        {},
-        "play_hours"
-      ),
-      medals: this.safeJsonParse<string[]>(row.medals, [], "medals"),
-      deathPositions: this.safeJsonParse<number[]>(
-        row.death_positions,
-        [],
-        "death_positions"
-      ),
-    };
-  }
-
-  upsertFrontlineStats(stats: FrontlineStats): void {
-    const now = new Date().toISOString();
-    const stmt = this.db.prepare(`
-      INSERT INTO frontline_stats (id, total_plays, total_play_time, total_kills, total_headshots, total_shots, total_merit_points, best_distance, best_kills, rank, play_hours, medals, death_positions, updated_at)
-      VALUES ('player', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        total_plays = excluded.total_plays,
-        total_play_time = excluded.total_play_time,
-        total_kills = excluded.total_kills,
-        total_headshots = excluded.total_headshots,
-        total_shots = excluded.total_shots,
-        total_merit_points = excluded.total_merit_points,
-        best_distance = excluded.best_distance,
-        best_kills = excluded.best_kills,
-        rank = excluded.rank,
-        play_hours = excluded.play_hours,
-        medals = excluded.medals,
-        death_positions = excluded.death_positions,
-        updated_at = excluded.updated_at
-    `);
-    stmt.run(
-      stats.totalPlays,
-      stats.totalPlayTime,
-      stats.totalKills,
-      stats.totalHeadshots,
-      stats.totalShots,
-      stats.totalMeritPoints,
-      stats.bestDistance,
-      stats.bestKills,
-      stats.rank,
-      JSON.stringify(stats.playHours),
-      JSON.stringify(stats.medals),
-      JSON.stringify(stats.deathPositions),
-      now
-    );
   }
 
   // ============================================================
