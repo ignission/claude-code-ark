@@ -41,6 +41,12 @@ assert_quiet_success() {
   assert_eq "$label stderr empty" 0 "$(wc -c <"$CASE_STDERR" | tr -d ' ')"
 }
 
+mode_of() {
+  value=$(stat -c '%a' "$1" 2>/dev/null) || value=$(stat -f '%Lp' "$1" 2>/dev/null) || return 1
+  while [ "${value#0}" != "$value" ]; do value=${value#0}; done
+  printf '%s\n' "${value:-0}"
+}
+
 expected="$TEST_TMP/expected.jsonl"
 : >"$expected"
 for case_name in bash-exit-7 mcp-error read-missing; do
@@ -89,19 +95,61 @@ jq -e -s '
 ' "$session/errors/raw.log" >/dev/null 2>&1
 assert_eq "transport envelope excluded" 0 "$?"
 
+reordered="$TEST_TMP/reordered.json"
+jq -S . "$FIXTURES/post-tool-use-failure-bash-exit-7-$version.json" >"$reordered"
+run_wrapper "$reordered"
+assert_quiet_success "reordered valid input"
+assert_eq "reordered valid input is appended" 4 "$(wc -l <"$session/errors/raw.log" | tr -d ' ')"
+jq -e -s '
+  .[3].tool == "Bash"
+  and .[3].exit_code == 7
+  and .[3].error == "Exit code 7"
+  and .[3].details.duration_ms == 80
+  and .[3].details.tool_input.command == "/bin/sh -c '\''exit 7'\''"
+' "$session/errors/raw.log" >/dev/null 2>&1
+assert_eq "reordered valid input mapping" 0 "$?"
+assert_eq "reordered valid input is not rejected" no "$(if [ -e "$session/errors/rejected.log" ]; then printf yes; else printf no; fi)"
+
 invalid_dir="$TEST_TMP/invalid"
 mkdir -m 700 "$invalid_dir"
 printf 'not json\n' >"$invalid_dir/json"
 printf '[]\n' >"$invalid_dir/array"
 jq '.hook_event_name="PostToolUse"' "$FIXTURES/post-tool-use-failure-bash-exit-7-$version.json" >"$invalid_dir/event"
 jq 'del(.error)' "$FIXTURES/post-tool-use-failure-bash-exit-7-$version.json" >"$invalid_dir/missing"
-jq '.duration_ms="slow"' "$FIXTURES/post-tool-use-failure-bash-exit-7-$version.json" >"$invalid_dir/type"
+rejected_secret='issue-352-tool-input-must-not-be-copied'
+jq --arg secret "$rejected_secret" \
+  '.duration_ms="slow" | .tool_input={command:$secret} | .error=$secret' \
+  "$FIXTURES/post-tool-use-failure-bash-exit-7-$version.json" >"$invalid_dir/type"
 before=$(cksum "$session/errors/raw.log")
 for invalid in "$invalid_dir"/*; do
   run_wrapper "$invalid"
   assert_quiet_success "invalid adapter input"
 done
 assert_eq "invalid adapter input preserves raw" "$before" "$(cksum "$session/errors/raw.log")"
+assert_eq "invalid adapter input rejection count" 5 "$(wc -l <"$session/errors/rejected.log" | tr -d ' ')"
+assert_eq "rejected log mode" 600 "$(mode_of "$session/errors/rejected.log")"
+jq -e -s '
+  length == 5
+  and ([.[].reason] | sort) == [
+    "field_set_mismatch", "field_type_mismatch", "hook_event_name_mismatch",
+    "input_not_object", "malformed_json"
+  ]
+  and any(.[]; .reason == "field_set_mismatch" and .missing_fields == ["error"])
+  and any(.[]; .reason == "field_type_mismatch" and .invalid_type_fields == ["duration_ms"])
+  and all(.[].missing_fields[]; IN(
+    "cwd", "duration_ms", "effort", "error", "hook_event_name", "is_interrupt",
+    "permission_mode", "prompt_id", "session_id", "tool_input", "tool_name",
+    "tool_use_id", "transcript_path"
+  ))
+  and all(.[];
+    (has("error") | not)
+    and (has("tool_input") | not)
+    and (has("input") | not)
+  )
+' "$session/errors/rejected.log" >/dev/null 2>&1
+assert_eq "invalid adapter rejection reasons are sanitized" 0 "$?"
+grep -F "$rejected_secret" "$session/errors/rejected.log" >/dev/null 2>&1
+assert_eq "rejected log omits input body" 1 "$?"
 
 oversize="$TEST_TMP/oversize.json"
 printf '%s' '{"session_id":"' >"$oversize"
@@ -111,6 +159,8 @@ before=$(cksum "$session/errors/raw.log")
 run_wrapper "$oversize"
 assert_quiet_success "oversize adapter input"
 assert_eq "oversize adapter input preserves raw" "$before" "$(cksum "$session/errors/raw.log")"
+jq -e -s '.[-1].reason == "input_too_large"' "$session/errors/rejected.log" >/dev/null 2>&1
+assert_eq "oversize adapter rejection is visible" 0 "$?"
 
 pipe_error="$TEST_TMP/pipe-300kb.error"
 pipe_input="$TEST_TMP/pipe-300kb.json"
@@ -136,8 +186,17 @@ jq -e -s --arg command "touch $marker" --arg error "$command_error" \
   'any(.[]; .details.tool_input.command == $command and .error == $error)' "$session/errors/raw.log" >/dev/null 2>&1
 assert_eq "command-shaped data remains data" 0 "$?"
 
-run_case env -u ARK_SESSION_DIR /bin/bash "$WRAPPER" <"$FIXTURES/post-tool-use-failure-bash-exit-7-$version.json"
-assert_quiet_success "Ark outside adapter no-op"
+fifo="$TEST_TMP/unreadable-input"
+mkfifo "$fifo"
+external_out="$TEST_TMP/external.out"
+external_err="$TEST_TMP/external.err"
+env -u ARK_SESSION_DIR /bin/bash "$WRAPPER" <>"$fifo" >"$external_out" 2>"$external_err" &
+external_pid=$!
+wait "$external_pid"
+external_status=$?
+assert_eq "Ark outside adapter no-op exits zero" 0 "$external_status"
+assert_eq "Ark outside adapter no-op stdout empty" 0 "$(wc -c <"$external_out" | tr -d ' ')"
+assert_eq "Ark outside adapter no-op stderr empty" 0 "$(wc -c <"$external_err" | tr -d ' ')"
 
 for forbidden in exitCode errorType failure_type tool_response tool_uses batch PostToolUseSuccess; do
   grep -F "$forbidden" "$WRAPPER" >/dev/null 2>&1
