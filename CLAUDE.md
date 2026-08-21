@@ -377,4 +377,5 @@ claude-code-ark/
 - **pnpm**
 - **tmux**
 - **ttyd**
+- **jq**
 - **cloudflared**（リモートアクセス使用時のみ）

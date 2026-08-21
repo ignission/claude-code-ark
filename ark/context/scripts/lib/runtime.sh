@@ -38,37 +38,163 @@ ctx_sha256() {
 }
 
 ctx_stat() {
-  local stat_value mode
+  local stat_value uid mode extra
   stat_value=$(stat -c '%u %a' "$1" 2>/dev/null) \
     || stat_value=$(stat -f '%u %Lp' "$1" 2>/dev/null) \
     || { ctx_error "stat failed"; return 1; }
-  set -- $stat_value
-  [ "$#" -eq 2 ] || { ctx_error "stat failed"; return 1; }
-  case "$1" in ''|*[!0-9]*) ctx_error "stat failed"; return 1 ;; esac
-  case "$2" in ''|*[!0-7]*) ctx_error "stat failed"; return 1 ;; esac
-  mode=$2
+  IFS=' ' read -r uid mode extra <<EOF
+$stat_value
+EOF
+  [ -n "$uid" ] && [ -n "$mode" ] && [ -z "$extra" ] \
+    || { ctx_error "stat failed"; return 1; }
+  case "$uid" in ''|*[!0-9]*) ctx_error "stat failed"; return 1 ;; esac
+  case "$mode" in ''|*[!0-7]*) ctx_error "stat failed"; return 1 ;; esac
   while [ "${mode#0}" != "$mode" ]; do mode=${mode#0}; done
-  printf '%s %s\n' "$1" "${mode:-0}"
+  printf '%s %s\n' "$uid" "${mode:-0}"
 }
 
 ctx_validate_xdg_dir() {
   local target=${1:-}
-  local values
+  local values uid mode extra
   [ -n "$target" ] && [ ! -L "$target" ] && [ -d "$target" ] \
     || { ctx_error "unsafe XDG directory"; return 1; }
   values=$(ctx_stat "$target") || { ctx_error "unsafe XDG directory"; return 1; }
-  set -- $values
-  [ "$1" = "$(id -u)" ] && [ "$2" = 700 ] || { ctx_error "unsafe XDG directory"; return 1; }
+  IFS=' ' read -r uid mode extra <<EOF
+$values
+EOF
+  [ -z "$extra" ] && [ "$uid" = "$(id -u)" ] && [ "$mode" = 700 ] \
+    || { ctx_error "unsafe XDG directory"; return 1; }
 }
 
 ctx_validate_xdg_file() {
   local target=${1:-}
-  local values
+  local values uid mode extra
   [ -n "$target" ] && [ ! -L "$target" ] && [ -f "$target" ] \
     || { ctx_error "unsafe XDG file"; return 1; }
   values=$(ctx_stat "$target") || { ctx_error "unsafe XDG file"; return 1; }
-  set -- $values
-  [ "$1" = "$(id -u)" ] && [ "$2" = 600 ] || { ctx_error "unsafe XDG file"; return 1; }
+  IFS=' ' read -r uid mode extra <<EOF
+$values
+EOF
+  [ -z "$extra" ] && [ "$uid" = "$(id -u)" ] && [ "$mode" = 600 ] \
+    || { ctx_error "unsafe XDG file"; return 1; }
+}
+
+_ctx_missing_jq_recover_lock() {
+  local lock=$1 owner=$2 owner_value owner_pid owner_token owner_extra confirmed_owner
+  local now lock_mtime
+  ctx_validate_xdg_dir "$lock" || return 1
+  if [ ! -e "$owner" ] && [ ! -L "$owner" ]; then
+    now=$(date +%s) || return 1
+    lock_mtime=$(stat -c '%Y' "$lock" 2>/dev/null) \
+      || lock_mtime=$(stat -f '%m' "$lock" 2>/dev/null) \
+      || return 1
+    case "$now$lock_mtime" in *[!0-9]*) return 1 ;; esac
+    [ $((now - lock_mtime)) -ge 30 ] || return 1
+    rmdir "$lock" >/dev/null 2>&1
+    return $?
+  fi
+  ctx_validate_xdg_file "$owner" || return 1
+  owner_value=$(sed -n '1p' "$owner" 2>/dev/null) || return 1
+  IFS=' ' read -r owner_pid owner_token owner_extra <<EOF
+$owner_value
+EOF
+  [ -n "$owner_pid" ] && [ -n "$owner_token" ] && [ -z "$owner_extra" ] || return 1
+  case "$owner_pid" in ''|*[!0-9]*) return 1 ;; esac
+  case "$owner_token" in *[!0-9-]*|'') return 1 ;; esac
+  kill -0 "$owner_pid" >/dev/null 2>&1 && return 1
+  ctx_validate_xdg_file "$owner" || return 1
+  confirmed_owner=$(sed -n '1p' "$owner" 2>/dev/null) || return 1
+  [ "$confirmed_owner" = "$owner_value" ] || return 1
+  command rm -f "$owner" >/dev/null 2>&1 || return 1
+  rmdir "$lock" >/dev/null 2>&1
+}
+
+_ctx_record_missing_jq_locked() {
+  local raw=$1 marker=$2 at raw_size entry entry_size
+  if [ -f "$raw" ] && grep -F "$marker" "$raw" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ -e "$raw" ] || [ -L "$raw" ]; then
+    ctx_validate_xdg_file "$raw" || return 1
+  else
+    (set -C; : >"$raw") 2>/dev/null || return 1
+    chmod 600 "$raw" || return 1
+    ctx_validate_xdg_file "$raw" || return 1
+  fi
+  raw_size=$(stat -c '%s' "$raw" 2>/dev/null) \
+    || raw_size=$(stat -f '%z' "$raw" 2>/dev/null) \
+    || return 1
+  case "$raw_size" in ''|*[!0-9]*) return 1 ;; esac
+  at=$(date -u '+%Y-%m-%dT%H:%M:%SZ') || return 1
+  case "$at" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
+    *) return 1 ;;
+  esac
+  entry=$(printf '{"at":"%s",%s' "$at" "$marker") || return 1
+  entry_size=$((${#entry} + 1))
+  [ "$entry_size" -le $((67108864 - raw_size)) ] || return 1
+  printf '%s\n' "$entry" >>"$raw" || return 1
+}
+
+_ctx_record_missing_jq() {
+  local session errors raw lock owner token attempt marker owner_value record_status old_umask
+  session=${ARK_SESSION_DIR:-}
+  [ -n "$session" ] && [ "${session#/}" != "$session" ] || return 1
+  ctx_has_control "$session" && return 1
+  ctx_validate_xdg_dir "$session" || return 1
+  errors="$session/errors"
+  ctx_validate_xdg_dir "$errors" || return 1
+  raw="$errors/raw.log"
+  if [ -e "$raw" ] || [ -L "$raw" ]; then
+    ctx_validate_xdg_file "$raw" || return 1
+  fi
+
+  lock="$errors/.raw.lock"
+  owner="$lock/owner"
+  token="$$-0"
+  attempt=0
+  while [ "$attempt" -lt 200 ]; do
+    old_umask=$(umask)
+    umask 077
+    if mkdir -m 700 "$lock" 2>/dev/null; then
+      (set -C; printf '%s %s\n' "$$" "$token" >"$owner") 2>/dev/null || {
+        umask "$old_umask"
+        rmdir "$lock" >/dev/null 2>&1 || :
+        return 1
+      }
+      chmod 600 "$owner" || {
+        umask "$old_umask"
+        command rm -f "$owner" >/dev/null 2>&1 || :
+        rmdir "$lock" >/dev/null 2>&1 || :
+        return 1
+      }
+      umask "$old_umask"
+      break
+    fi
+    umask "$old_umask"
+    _ctx_missing_jq_recover_lock "$lock" "$owner" >/dev/null 2>&1 || :
+    attempt=$((attempt + 1))
+  done
+  [ "$attempt" -lt 200 ] || return 1
+  ctx_validate_xdg_dir "$lock" || return 1
+  ctx_validate_xdg_file "$owner" || return 1
+  owner_value=$(sed -n '1p' "$owner") || return 1
+  [ "$owner_value" = "$$ $token" ] || return 1
+
+  marker='"tool":"ark/context","error_type":"missing_prerequisite","exit_code":null,"is_interrupt":null,"error":"jq command unavailable","details":{}}'
+  _ctx_record_missing_jq_locked "$raw" "$marker"
+  record_status=$?
+  owner_value=$(sed -n '1p' "$owner" 2>/dev/null) || owner_value=
+  if [ "$owner_value" = "$$ $token" ]; then
+    command rm -f "$owner" >/dev/null 2>&1 || return 1
+    rmdir "$lock" >/dev/null 2>&1 || return 1
+  fi
+  return "$record_status"
+}
+
+ctx_record_missing_jq() {
+  _ctx_record_missing_jq >/dev/null 2>&1 || :
+  return 0
 }
 
 ctx_validate_repo_path() {
@@ -76,7 +202,7 @@ ctx_validate_repo_path() {
   local expected=${2:-file}
   local presence=${3:-optional}
   local display=${4:-repo path}
-  local values mode group
+  local values uid mode extra group
   CTX_VALIDATION_ERROR=
   if [ ! -e "$target" ] && [ ! -L "$target" ]; then
     [ "$presence" = optional ] && return 0
@@ -111,13 +237,14 @@ ctx_validate_repo_path() {
     ctx_error "$CTX_VALIDATION_ERROR"
     return 1
   }
-  set -- $values
-  if [ "$1" != "$(id -u)" ]; then
+  IFS=' ' read -r uid mode extra <<EOF
+$values
+EOF
+  if [ -n "$extra" ] || [ "$uid" != "$(id -u)" ]; then
     CTX_VALIDATION_ERROR="unsafe repo path: $display owner mismatch"
     ctx_error "$CTX_VALIDATION_ERROR"
     return 1
   fi
-  mode=$2
   while [ "${#mode}" -lt 3 ]; do mode="0$mode"; done
   group=${mode#${mode%??}}
   case "$group" in

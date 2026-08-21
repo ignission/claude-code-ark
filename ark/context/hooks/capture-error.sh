@@ -5,6 +5,16 @@ if [ -z "${ARK_SESSION_DIR:-}" ]; then
   exit 0
 fi
 
+hook_dir=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P) || exit 0
+runtime="$hook_dir/../scripts/lib/runtime.sh"
+[ -f "$runtime" ] && [ ! -L "$runtime" ] || exit 0
+. "$runtime" || exit 0
+
+if ! command -v jq >/dev/null 2>&1; then
+  ctx_record_missing_jq
+  exit 0
+fi
+
 capture_stat() {
   local value uid mode size extra
   value=$(stat -c '%u %a %s' "$1" 2>/dev/null) \
@@ -84,22 +94,7 @@ capture_cleanup() {
 }
 
 capture_try_recover_dead_lock() {
-  local owner_value owner_pid owner_token owner_extra confirmed_owner
-  capture_safe_dir "$CAPTURE_LOCK" || return 1
-  capture_safe_file "$CAPTURE_LOCK_OWNER" || return 1
-  owner_value=$(sed -n '1p' "$CAPTURE_LOCK_OWNER" 2>/dev/null) || return 1
-  IFS=' ' read -r owner_pid owner_token owner_extra <<EOF
-$owner_value
-EOF
-  [ -n "$owner_pid" ] && [ -n "$owner_token" ] && [ -z "$owner_extra" ] || return 1
-  case "$owner_pid" in ''|*[!0-9]*) return 1 ;; esac
-  case "$owner_token" in *[!0-9-]*|'') return 1 ;; esac
-  kill -0 "$owner_pid" >/dev/null 2>&1 && return 1
-  capture_safe_file "$CAPTURE_LOCK_OWNER" || return 1
-  confirmed_owner=$(sed -n '1p' "$CAPTURE_LOCK_OWNER" 2>/dev/null) || return 1
-  [ "$confirmed_owner" = "$owner_value" ] || return 1
-  command rm -f "$CAPTURE_LOCK_OWNER" >/dev/null 2>&1 || return 1
-  rmdir "$CAPTURE_LOCK" >/dev/null 2>&1
+  _ctx_missing_jq_recover_lock "$CAPTURE_LOCK" "$CAPTURE_LOCK_OWNER"
 }
 
 capture_main() {

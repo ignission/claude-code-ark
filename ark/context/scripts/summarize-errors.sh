@@ -8,6 +8,10 @@ fi
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P) || exit 1
 . "$SCRIPT_DIR/lib/runtime.sh" || exit 1
+if ! command -v jq >/dev/null 2>&1; then
+  ctx_record_missing_jq
+  exit 0
+fi
 . "$SCRIPT_DIR/lib/config.sh" || exit 1
 
 SUMMARY_INDEX=
