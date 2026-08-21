@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-CLAUDE_LOOP_BATCH_HOOK_JSON='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/context/adapters/claude-code/post-tool-batch.sh"}]}'
-CLAUDE_LOOP_FAILURE_HOOK_JSON='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/context/adapters/claude-code/post-tool-use-failure.sh"}]}'
+CLAUDE_CTX_BATCH_HOOK_JSON='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/context/adapters/claude-code/post-tool-batch.sh"}]}'
+CLAUDE_CTX_FAILURE_HOOK_JSON='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/context/adapters/claude-code/post-tool-use-failure.sh"}]}'
 
 claude_settings_error() {
   printf '%s\n' "$*" >&2
@@ -264,29 +264,29 @@ claude_settings_inject() {
   fi
 
   if ! printf '%s' "$CLAUDE_CONTENT" | jq -e 'has("hooks")' >/dev/null; then
-    claude_content_add_to_container "$root" "\"hooks\"                   :{\"PostToolBatch\":[${CLAUDE_LOOP_BATCH_HOOK_JSON}],\"PostToolUseFailure\":[${CLAUDE_LOOP_FAILURE_HOOK_JSON}]}" || return 1
-    claude_manifest_add_json hooks/PostToolBatch "$CLAUDE_LOOP_BATCH_HOOK_JSON" || return 1
-    claude_manifest_add_json hooks/PostToolUseFailure "$CLAUDE_LOOP_FAILURE_HOOK_JSON" || return 1
+    claude_content_add_to_container "$root" "\"hooks\"                   :{\"PostToolBatch\":[${CLAUDE_CTX_BATCH_HOOK_JSON}],\"PostToolUseFailure\":[${CLAUDE_CTX_FAILURE_HOOK_JSON}]}" || return 1
+    claude_manifest_add_json hooks/PostToolBatch "$CLAUDE_CTX_BATCH_HOOK_JSON" || return 1
+    claude_manifest_add_json hooks/PostToolUseFailure "$CLAUDE_CTX_FAILURE_HOOK_JSON" || return 1
   else
     range=$(claude_content_property "$root" hooks) || return 1
     set -- $range; hooks_start=$3
     if ! printf '%s' "$CLAUDE_CONTENT" | jq -e '.hooks | has("PostToolBatch")' >/dev/null; then
-      claude_content_add_to_container "$hooks_start" "\"PostToolBatch\"                 :[${CLAUDE_LOOP_BATCH_HOOK_JSON}]" || return 1
-      claude_manifest_add_json hooks/PostToolBatch "$CLAUDE_LOOP_BATCH_HOOK_JSON" || return 1
-    elif ! printf '%s' "$CLAUDE_CONTENT" | jq -e --argjson hook "$CLAUDE_LOOP_BATCH_HOOK_JSON" '.hooks.PostToolBatch | index($hook) != null' >/dev/null; then
+      claude_content_add_to_container "$hooks_start" "\"PostToolBatch\"                 :[${CLAUDE_CTX_BATCH_HOOK_JSON}]" || return 1
+      claude_manifest_add_json hooks/PostToolBatch "$CLAUDE_CTX_BATCH_HOOK_JSON" || return 1
+    elif ! printf '%s' "$CLAUDE_CONTENT" | jq -e --argjson hook "$CLAUDE_CTX_BATCH_HOOK_JSON" '.hooks.PostToolBatch | index($hook) != null' >/dev/null; then
       range=$(claude_content_property "$hooks_start" PostToolBatch) || return 1
       set -- $range; batch_start=$3
-      claude_content_add_to_container "$batch_start" "$CLAUDE_LOOP_BATCH_HOOK_JSON" || return 1
-      claude_manifest_add_json hooks/PostToolBatch "$CLAUDE_LOOP_BATCH_HOOK_JSON" || return 1
+      claude_content_add_to_container "$batch_start" "$CLAUDE_CTX_BATCH_HOOK_JSON" || return 1
+      claude_manifest_add_json hooks/PostToolBatch "$CLAUDE_CTX_BATCH_HOOK_JSON" || return 1
     fi
     if ! printf '%s' "$CLAUDE_CONTENT" | jq -e '.hooks | has("PostToolUseFailure")' >/dev/null; then
-      claude_content_add_to_container "$hooks_start" "\"PostToolUseFailure\"                 :[${CLAUDE_LOOP_FAILURE_HOOK_JSON}]" || return 1
-      claude_manifest_add_json hooks/PostToolUseFailure "$CLAUDE_LOOP_FAILURE_HOOK_JSON" || return 1
-    elif ! printf '%s' "$CLAUDE_CONTENT" | jq -e --argjson hook "$CLAUDE_LOOP_FAILURE_HOOK_JSON" '.hooks.PostToolUseFailure | index($hook) != null' >/dev/null; then
+      claude_content_add_to_container "$hooks_start" "\"PostToolUseFailure\"                 :[${CLAUDE_CTX_FAILURE_HOOK_JSON}]" || return 1
+      claude_manifest_add_json hooks/PostToolUseFailure "$CLAUDE_CTX_FAILURE_HOOK_JSON" || return 1
+    elif ! printf '%s' "$CLAUDE_CONTENT" | jq -e --argjson hook "$CLAUDE_CTX_FAILURE_HOOK_JSON" '.hooks.PostToolUseFailure | index($hook) != null' >/dev/null; then
       range=$(claude_content_property "$hooks_start" PostToolUseFailure) || return 1
       set -- $range; failure_start=$3
-      claude_content_add_to_container "$failure_start" "$CLAUDE_LOOP_FAILURE_HOOK_JSON" || return 1
-      claude_manifest_add_json hooks/PostToolUseFailure "$CLAUDE_LOOP_FAILURE_HOOK_JSON" || return 1
+      claude_content_add_to_container "$failure_start" "$CLAUDE_CTX_FAILURE_HOOK_JSON" || return 1
+      claude_manifest_add_json hooks/PostToolUseFailure "$CLAUDE_CTX_FAILURE_HOOK_JSON" || return 1
     fi
   fi
 

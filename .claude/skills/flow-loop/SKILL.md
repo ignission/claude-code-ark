@@ -124,4 +124,4 @@ phase は flow-x の run state (`progress.phase`)。async モードで park す�
 - `../flow-x/SKILL.md` — 実行エンジン (`--async-gates` の非同期ゲート仕様は flow-x 側に定義)
 - `../../lib/state-io.sh` — run state (flow / flow-x と共用。loop は読み取りが主)
 - `../../lib/check-cr-threads.sh` / `../../lib/deploy-watch.sh` / `../../lib/cleanup.sh` — P7 / P12 / abort で再利用
-- `../../../docs/superpowers/specs/ark-loop-implementation-spec.md` — 1セッション内認知維持ループの下層 spec
+- `../../../docs/superpowers/specs/ark-context-implementation-spec.md` — 1セッション内認知維持ループの下層 spec

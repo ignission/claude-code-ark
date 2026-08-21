@@ -1,6 +1,6 @@
-# Ark Loop runtime data
+# Ark Context runtime data
 
-Ark Loop の session data は XDG data home 配下に保存する。session directory とその
+Ark Context の session data は XDG data home 配下に保存する。session directory とその
 `errors/` は mode `0700`、`raw.log` と `summary.md` は mode `0600` で、実行 uid が
 所有する non-symlink の regular path だけを受理する。
 
@@ -59,3 +59,22 @@ recitation、summary 継承、artifact / index、review rotation、Stop / handof
 誤 action / 未完了 Plan 放置とする。定量値は人間判断の補助に留め、統計閾値を撤去条件に
 しない。効果が不明なら撤去し、判断・観察期間・確認した劣化だけを commit または Issue
 へ残す。breaker、kill switch、loop-exclude の作動条件はこの観測で変更しない。
+
+## 旧 `ark/loop` 名前空間との非互換
+
+この runtime は `$XDG_DATA_HOME/ark/context/` を使う。旧 `ark/loop/` 配下の
+session、knowledge、ownership manifest、config は**検出も移行もしない**。
+
+改名時点で本番データが存在しなかったため（ハーネスは Ark へ未配線で、
+fixture でしか動いていなかった）、移行処理は意図的に実装していない。
+
+万一、旧名前空間の state を持つ環境がある場合は次の点に注意すること。
+
+- 旧 ownership manifest が見えないため、対象 repo の `.claude/settings.local.json`
+  に残った旧 hook（`ark/loop/...` を指すもの）は teardown で除去されない。
+  **手動で削除する必要がある**
+- 旧 `failures-inbox.md` の marker は prefix が異なるため重複排除が効かず、
+  同じ候補が再追加される
+- 旧 `$XDG_DATA_HOME/ark/loop/` と `$XDG_CONFIG_HOME/ark/loop/` は
+  参照されなくなるので、不要なら手動で削除する
+
