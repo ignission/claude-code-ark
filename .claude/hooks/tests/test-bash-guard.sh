@@ -5,7 +5,7 @@ set -uo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 PROJECT_DIR=$(cd "$SCRIPT_DIR/../../.." && pwd)
-GUARD="$PROJECT_DIR/.claude/hooks/pre-bash-guard.sh"
+GUARD="${GUARD_UNDER_TEST:-$PROJECT_DIR/.claude/hooks/pre-bash-guard.sh}"
 
 TESTS=0
 FAILURES=0
@@ -123,13 +123,49 @@ assert_verdict block "終端行の後は検査を再開" \
   "$HEREDOC_QUOTED"$'\n'"$RM_RECURSIVE /"
 
 echo
-echo "=== シェルインタプリタの -c 引数は一段だけ再解析する ==="
+echo "=== シェルインタプリタの -c 引数は深さ3まで再解析する ==="
 assert_verdict block "sh -c" "sh -c '$RM_RECURSIVE /'"
 assert_verdict block "bash -c" "bash -c '$RM_RECURSIVE /'"
 assert_verdict block "zsh -c" "zsh -c '$RM_RECURSIVE /'"
 assert_verdict block "bash の複合短縮オプション" "bash -lc '$RM_RECURSIVE /'"
 assert_verdict block "-c 内の入れ子引用符" \
   "bash -c \"echo 'safe'; $RM_RECURSIVE /\""
+assert_verdict block "-c の2段ネスト" \
+  "sh -c \"sh -c '$RM_RECURSIVE /home/user/data'\""
+assert_verdict block "-c の3段ネスト" \
+  "sh -c \"sh -c \\\"sh -c '$RM_RECURSIVE /home/user/data'\\\"\""
+assert_verdict block "-c の深さ上限超過" \
+  "sh -c \"sh -c \\\"sh -c \\\\\\\"sh -c '$RM_RECURSIVE /home/user/data'\\\\\\\"\\\"\""
+
+echo
+echo "=== eval とラッパーの実コマンドを検査する ==="
+assert_verdict block "eval" "eval '$RM_RECURSIVE /home/user/data'"
+assert_verdict block "eval の入れ子" "eval \"eval '$RM_RECURSIVE /home/user/data'\""
+assert_verdict block "xargs" "echo /home/user/data | xargs -0 -n1 $RM_RECURSIVE"
+assert_verdict block "env" "env TEST_MODE=1 sh -c '$RM_RECURSIVE /home/user/data'"
+assert_verdict block "sudo" "sudo -n sh -c '$RM_RECURSIVE /home/user/data'"
+assert_verdict block "nohup" "nohup sh -c '$RM_RECURSIVE /home/user/data'"
+assert_verdict block "time" "time -p sh -c '$RM_RECURSIVE /home/user/data'"
+assert_verdict block "nice" "nice -n 5 sh -c '$RM_RECURSIVE /home/user/data'"
+assert_verdict block "timeout" "timeout 10 sh -c '$RM_RECURSIVE /home/user/data'"
+assert_verdict block "command" "command -- sh -c '$RM_RECURSIVE /home/user/data'"
+assert_verdict allow "ラッパー後の引用文字列" "env echo '$RM_RECURSIVE /home/user/data'"
+
+echo
+echo "=== クォート外のシェルコメントだけを無視する ==="
+assert_verdict allow "空白後のコメント" "ls  # $RM_RECURSIVE は使わない"
+assert_verdict allow "タブ後のコメント" "ls"$'\t'"# $RM_RECURSIVE は使わない"
+assert_verdict allow "行頭コメント" "# $RM_RECURSIVE は使わない"
+assert_verdict block "コメントは行末まで" \
+  "ls # $RM_RECURSIVE は使わない"$'\n'"$RM_RECURSIVE /home/user/data"
+assert_verdict allow "引用符内の #" 'echo "a#b"'
+assert_verdict block "引用符内の # の後も検査" \
+  "echo \"a#b\"; $RM_RECURSIVE /home/user/data"
+assert_verdict allow 'パラメータ長展開の ${#var}' 'var=abc; echo "${#var}"'
+assert_verdict block '特殊パラメータ $# をコメント扱いしない' \
+  "sh -c 'echo \$#; $RM_RECURSIVE /home/user/data'"
+assert_verdict block 'パラメータ長展開後も検査' \
+  "var=abc; echo \"\${#var}\"; $RM_RECURSIVE /home/user/data"
 
 echo
 if [ "$FAILURES" -eq 0 ]; then

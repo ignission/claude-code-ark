@@ -143,7 +143,7 @@ _guard_parse_command() {
   local executable=""
   local quote=""
   local escaped=false
-  local char next third
+  local char next third previous
   local delimiter delimiter_quote delimiter_raw strip_tabs
   local sub_content sub_end
   local i j h next_index
@@ -154,6 +154,10 @@ _guard_parse_command() {
     char="${input:$i:1}"
     next="${input:$((i + 1)):1}"
     third="${input:$((i + 2)):1}"
+    previous=""
+    if [ "$i" -gt 0 ]; then
+      previous="${input:$((i - 1)):1}"
+    fi
 
     if [ "$escaped" = true ]; then
       raw+="$char"
@@ -190,6 +194,19 @@ _guard_parse_command() {
       fi
     else
       case "$char" in
+        '#')
+          case "$previous" in
+            ''|' '|$'\t'|$'\n')
+              # シェルコメントは実行されない。改行は次の反復で通常どおり
+              # セグメント境界として扱い、ヒアドキュメント処理も維持する。
+              while [ $((i + 1)) -lt "${#input}" ] &&
+                    [ "${input:$((i + 1)):1}" != $'\n' ]; do
+                i=$((i + 1))
+              done
+              ;;
+            *) raw+="$char"; executable+="$char" ;;
+          esac
+          ;;
         \"|\')
           raw+="$char"
           executable+=' '
@@ -320,10 +337,12 @@ _guard_tokenize_command() {
   local quote=""
   local char
   local i
+  local token_start=0
   local started=false
   local escaped=false
 
   GUARD_TOKENS=()
+  GUARD_TOKEN_STARTS=()
   for ((i = 0; i < ${#input}; i++)); do
     char="${input:$i:1}"
     if $escaped; then
@@ -331,6 +350,9 @@ _guard_tokenize_command() {
       started=true
       escaped=false
     elif [ "$char" = "\\" ] && [ "$quote" != "'" ]; then
+      if ! $started; then
+        token_start="$i"
+      fi
       escaped=true
       started=true
     elif [ -n "$quote" ]; then
@@ -342,10 +364,17 @@ _guard_tokenize_command() {
       started=true
     else
       case "$char" in
-        \"|\') quote="$char"; started=true ;;
+        \"|\')
+          if ! $started; then
+            token_start="$i"
+          fi
+          quote="$char"
+          started=true
+          ;;
         ' '|$'\t'|$'\n')
           if $started; then
             GUARD_TOKENS+=("$token")
+            GUARD_TOKEN_STARTS+=("$token_start")
             token=""
             started=false
           fi
@@ -353,16 +382,27 @@ _guard_tokenize_command() {
         ';'|'&'|'|')
           if $started; then
             GUARD_TOKENS+=("$token")
+            GUARD_TOKEN_STARTS+=("$token_start")
             token=""
             started=false
           fi
           GUARD_TOKENS+=("__GUARD_SEPARATOR__")
+          GUARD_TOKEN_STARTS+=("$i")
           ;;
-        *) token+="$char"; started=true ;;
+        *)
+          if ! $started; then
+            token_start="$i"
+          fi
+          token+="$char"
+          started=true
+          ;;
       esac
     fi
   done
-  $started && GUARD_TOKENS+=("$token")
+  if $started; then
+    GUARD_TOKENS+=("$token")
+    GUARD_TOKEN_STARTS+=("$token_start")
+  fi
   return 0
 }
 
@@ -462,29 +502,147 @@ _guard_detect_hook_bypass() {
   return 1
 }
 
-_guard_collect_interpreter_command() {
+_guard_wrapper_option_takes_value() {
+  case "$1:$2" in
+    xargs:-E|xargs:-I|xargs:-L|xargs:-n|xargs:-P|xargs:-s|xargs:-d|xargs:--eof|xargs:--replace|xargs:--max-lines|xargs:--max-args|xargs:--max-procs|xargs:--max-chars|xargs:--delimiter|\
+    env:-u|env:--unset|env:-C|env:--chdir|env:--argv0|\
+    sudo:-C|sudo:-D|sudo:-g|sudo:-h|sudo:-p|sudo:-R|sudo:-r|sudo:-T|sudo:-t|sudo:-U|sudo:-u|sudo:--chdir|sudo:--close-from|sudo:--group|sudo:--host|sudo:--other-user|sudo:--prompt|sudo:--role|sudo:--type|sudo:--user|\
+    time:-f|time:-o|time:--format|time:--output|\
+    nice:-n|nice:--adjustment|\
+    timeout:-k|timeout:-s|timeout:--kill-after|timeout:--signal)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+_guard_unwrap_command() {
   local raw_segment="$1"
-  local shell_name token
-  local i
+  local command_name option
+  local i=0
+  local start_offset
+  local found_wrapper=false
+  local xargs_input=false
+  local -a tokens=()
+  local -a token_starts=()
 
   _guard_tokenize_command "$raw_segment"
-  [ "${#GUARD_TOKENS[@]}" -gt 0 ] || return 0
-  shell_name="${GUARD_TOKENS[0]##*/}"
-  case "$shell_name" in
-    sh|bash|zsh) ;;
+  tokens=("${GUARD_TOKENS[@]}")
+  token_starts=("${GUARD_TOKEN_STARTS[@]}")
+
+  while [ "$i" -lt "${#tokens[@]}" ]; do
+    command_name="${tokens[$i]##*/}"
+    case "$command_name" in
+      xargs|env|sudo|nohup|time|nice|timeout|command) ;;
+      *) break ;;
+    esac
+
+    found_wrapper=true
+    [ "$command_name" = "xargs" ] && xargs_input=true
+    i=$((i + 1))
+    while [ "$i" -lt "${#tokens[@]}" ]; do
+      option="${tokens[$i]}"
+      case "$option" in
+        --) i=$((i + 1)); break ;;
+        -*)
+          if _guard_wrapper_option_takes_value "$command_name" "$option"; then
+            i=$((i + 2))
+          else
+            i=$((i + 1))
+          fi
+          ;;
+        *) break ;;
+      esac
+    done
+    if [ "$command_name" = "env" ]; then
+      while [ "$i" -lt "${#tokens[@]}" ] && [[ "${tokens[$i]}" == *=* ]]; do
+        i=$((i + 1))
+      done
+    elif [ "$command_name" = "timeout" ] && [ "$i" -lt "${#tokens[@]}" ]; then
+      # timeout の最初の非オプションは duration。
+      i=$((i + 1))
+    fi
+  done
+
+  if [ "$found_wrapper" = true ] && [ "$i" -lt "${#tokens[@]}" ]; then
+    start_offset="${token_starts[$i]}"
+    GUARD_UNWRAPPED_COMMAND="${raw_segment:$((start_offset))}"
+    if [ "$xargs_input" = true ]; then
+      # xargs の標準入力は静的には分からないため、operand 不明として安全側へ倒す。
+      GUARD_UNWRAPPED_COMMAND+=" __GUARD_XARGS_INPUT__"
+    fi
+    return 0
+  fi
+  return 1
+}
+
+GUARD_MAX_EXECUTION_DEPTH=3
+
+_guard_collect_executed_commands() {
+  local raw_segment="$1"
+  local depth="$2"
+  local command_name token command_text unwrapped child_segment
+  local start_index end_index
+  local i
+  local -a tokens=()
+
+  if _guard_unwrap_command "$raw_segment"; then
+    unwrapped="$GUARD_UNWRAPPED_COMMAND"
+    start_index="${#GUARD_RAW_SEGMENTS[@]}"
+    _guard_parse_command "$unwrapped"
+    end_index="${#GUARD_RAW_SEGMENTS[@]}"
+    for ((i = start_index; i < end_index; i++)); do
+      child_segment="${GUARD_RAW_SEGMENTS[$i]}"
+      _guard_collect_executed_commands "$child_segment" "$depth"
+    done
+    return
+  fi
+
+  _guard_tokenize_command "$raw_segment"
+  tokens=("${GUARD_TOKENS[@]}")
+  [ "${#tokens[@]}" -gt 0 ] || return 0
+  command_name="${tokens[0]##*/}"
+  command_text=""
+
+  case "$command_name" in
+    sh|bash|zsh)
+      for ((i = 1; i < ${#tokens[@]}; i++)); do
+        token="${tokens[$i]}"
+        case "$token" in
+          -c|-[^-]*c*)
+            if [ $((i + 1)) -lt "${#tokens[@]}" ]; then
+              command_text="${tokens[$((i + 1))]}"
+            fi
+            break
+            ;;
+        esac
+      done
+      ;;
+    eval)
+      for ((i = 1; i < ${#tokens[@]}; i++)); do
+        if [ -n "$command_text" ]; then
+          command_text+=" "
+        fi
+        command_text+="${tokens[$i]}"
+      done
+      ;;
     *) return ;;
   esac
 
-  for ((i = 1; i < ${#GUARD_TOKENS[@]}; i++)); do
-    token="${GUARD_TOKENS[$i]}"
-    case "$token" in
-      -c|-[^-]*c*)
-        if [ $((i + 1)) -lt "${#GUARD_TOKENS[@]}" ]; then
-          _guard_parse_command "${GUARD_TOKENS[$((i + 1))]}"
-        fi
-        return
-        ;;
-    esac
+  [ -n "$command_text" ] || return 0
+  if [ "$depth" -ge "$GUARD_MAX_EXECUTION_DEPTH" ]; then
+    # 上限は再帰停止のためだけに使う。未展開の実行文字列は引用部も含めて
+    # 検査対象へ残し、深い入れ子を allow にしない。
+    _guard_add_segment "$raw_segment" "$raw_segment"
+    return 0
+  fi
+
+  start_index="${#GUARD_RAW_SEGMENTS[@]}"
+  _guard_parse_command "$command_text"
+  end_index="${#GUARD_RAW_SEGMENTS[@]}"
+  for ((i = start_index; i < end_index; i++)); do
+    child_segment="${GUARD_RAW_SEGMENTS[$i]}"
+    _guard_collect_executed_commands "$child_segment" "$((depth + 1))"
   done
   return 0
 }
@@ -492,7 +650,7 @@ _guard_collect_interpreter_command() {
 _guard_parse_command "$COMMAND"
 GUARD_INITIAL_SEGMENT_COUNT="${#GUARD_RAW_SEGMENTS[@]}"
 for ((GUARD_INDEX = 0; GUARD_INDEX < GUARD_INITIAL_SEGMENT_COUNT; GUARD_INDEX++)); do
-  _guard_collect_interpreter_command "${GUARD_RAW_SEGMENTS[$GUARD_INDEX]}"
+  _guard_collect_executed_commands "${GUARD_RAW_SEGMENTS[$GUARD_INDEX]}" 0
 done
 
 HOOK_BYPASS_FLAG=""
@@ -515,6 +673,7 @@ _guard_check_dangerous_segment() {
   local raw_segment="$2"
   local arg arg_base
   local found_rm=false
+  local found_operand=false
   local all_safe=true
   local safe_dirs="node_modules|target|dist|\.next|build|__pycache__|\.pytest_cache"
 
@@ -534,12 +693,16 @@ _guard_check_dangerous_segment() {
       case "$arg" in
         -*) continue ;;
       esac
+      found_operand=true
       arg_base=$(basename "$arg" 2>/dev/null) || arg_base="$arg"
       if ! [[ "$arg_base" =~ ^(${safe_dirs})$ ]]; then
         all_safe=false
         break
       fi
     done
+    if [ "$found_rm" = false ] || [ "$found_operand" = false ]; then
+      all_safe=false
+    fi
     if [ "$all_safe" = false ]; then
       echo "BLOCKED: rm -rf は危険なコマンドです" >&2
       echo "  WHY: エージェントが意図せず重要ファイルを削除するインシデントを防止" >&2
