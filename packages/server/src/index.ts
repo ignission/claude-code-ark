@@ -25,13 +25,10 @@ import {
   type ServerToClientEvents,
   type SessionGridSnapshot,
   type SystemCapabilities,
-  type UsageEntry,
   type UsageProgress,
-  type UsageReport,
 } from "@ark/shared";
 import httpProxy from "http-proxy";
-import { nanoid } from "nanoid";
-import { Server, type Socket } from "socket.io";
+import { Server } from "socket.io";
 import {
   AUQ_EVENT_PATH,
   AUQ_TOKEN_HEADER,
@@ -42,7 +39,6 @@ import {
   buildAuqScreenContext,
 } from "./lib/auq-screen-context.js";
 import { authManager } from "./lib/auth.js";
-import { beaconManager } from "./lib/beacon-manager.js";
 import {
   type BoardMcpDeps,
   BoardMcpServer,
@@ -111,9 +107,6 @@ import {
   describeWorktreeFailure,
   resolveWorktreeRealPath,
 } from "./lib/managed-worktree.js";
-import { DiscoveryError } from "./lib/mcp-oauth/discovery.js";
-import { mcpOAuthOrchestrator } from "./lib/mcp-oauth/oauth-flow-orchestrator.js";
-import { getProvider, listProviders } from "./lib/mcp-oauth/providers.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import {
@@ -249,191 +242,10 @@ function loadTunnelState(): { active: boolean; port: number } | null {
   }
 }
 
-/** 進捗バーの幅 (文字数) */
-const USAGE_BAR_WIDTH = 24;
-
-/**
- * 0-100 の percent から `█████░░░░░...` 形式のバー文字列を生成する。
- * モバイル幅を考慮して 24 文字幅 (= 約4%/char)。
- */
-function renderUsageBar(percent: number): string {
-  const clamped = Math.max(0, Math.min(100, percent));
-  const filled = Math.round((clamped / 100) * USAGE_BAR_WIDTH);
-  return "█".repeat(filled) + "░".repeat(USAGE_BAR_WIDTH - filled);
-}
-
-/**
- * UsageReport をBeaconチャットに表示するMarkdownへ変換する。
- *
- * code block (monospace) でバーを描画してプロファイル間の使用率を視覚的に
- * 比較できるようにする。週次 (Sonnetのみ) は省略 (主要シグナルのみ表示)。
- */
-function formatUsageMarkdown(report: UsageReport): string {
-  const lines: string[] = ["## Claude Code 使用量サマリ", ""];
-  for (const entry of report.entries) {
-    lines.push(`### ${entry.profileName}`);
-    lines.push(...formatUsageEntryLines(entry, report.collectedAt));
-    lines.push("");
-  }
-  const collected = new Date(report.collectedAt).toLocaleString("ja-JP", {
-    timeZone: "Asia/Tokyo",
-  });
-  const okCount = report.entries.filter(e => e.status === "ok").length;
-  lines.push(
-    `取得時刻: ${collected} (${report.entries.length}件中${okCount}件取得成功)`
-  );
-  return lines.join("\n");
-}
-
-/**
- * Claude /usage の Resets 文字列を `M/D HH:MM` (時刻のみなら `HH:MM`)
- * の 24時間表記に変換する。Ark は JST 前提のため `(Asia/Tokyo)` は除去。
- *
- * 入力例:
- *   `8:20pm (Asia/Tokyo)`         -> `20:20`
- *   `3am (Asia/Tokyo)`            -> `03:00`
- *   `May 4, 1pm (Asia/Tokyo)`     -> `5/4 13:00`
- *   `May 4, 11:30am (Asia/Tokyo)` -> `5/4 11:30`
- *
- * パース不能なものは `(Asia/Tokyo)` だけ除いて返す (フォールバック)。
- */
-const MONTH_NAMES = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
-
-function formatResetTimestamp(resets: string, refMs: number): string {
-  const stripped = resets.replace(/\s*\(Asia\/Tokyo\)\s*$/, "").trim();
-
-  const dated =
-    /^([A-Za-z]+)\s+(\d{1,2}),\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i.exec(
-      stripped
-    );
-  if (dated) {
-    const monthIdx = MONTH_NAMES.findIndex(
-      m => m.toLowerCase() === dated[1].slice(0, 3).toLowerCase()
-    );
-    if (monthIdx >= 0) {
-      const day = Number.parseInt(dated[2], 10);
-      const time24 = to24Hour(dated[3], dated[4], dated[5]);
-      return `${monthIdx + 1}/${day} ${time24}`;
-    }
-  }
-
-  // 時刻のみのケース (例 "8:20pm") は日付情報が無いので、refMs 時点の JST
-  // 時刻と比較して today/tomorrow を判定し、`M/D HH:MM` 形式に揃える。
-  // refMs には report.collectedAt を渡すことで深夜跨ぎ時の整合性を担保。
-  const timeOnly = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i.exec(stripped);
-  if (timeOnly) {
-    const time24 = to24Hour(timeOnly[1], timeOnly[2], timeOnly[3]);
-    return appendJstDate(time24, refMs);
-  }
-
-  return stripped;
-}
-
-/**
- * `HH:MM` 形式の時刻に JST の日付を補って `M/D HH:MM` を返す。
- * `refMs` 時点 (collectedAt) の JST と比較し、与えられた時刻が refMs 以後
- * 今日中ならtoday、過ぎていれば tomorrow を採用する (claude /usage が示す
- * reset は常に「次回」)。
- *
- * refMs を引数で受け取ることで、render 時刻ではなく capture 時刻を基準に
- * できる (深夜跨ぎ時の整合性確保)。
- *
- * 注: host TZ に依存しないよう Intl.DateTimeFormat.formatToParts で
- * JST の年/月/日/時/分を直接取得する。`new Date(toLocaleString)` 経由だと
- * UTC コンテナ等で再パース時に host TZ で解釈され翌日判定がズレる。
- */
-function appendJstDate(time24: string, refMs: number): string {
-  const [hStr, mStr] = time24.split(":");
-  const targetH = Number.parseInt(hStr, 10);
-  const targetM = Number.parseInt(mStr, 10);
-  const targetMinutes = targetH * 60 + targetM;
-
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "numeric",
-    minute: "numeric",
-    hour12: false,
-  }).formatToParts(new Date(refMs));
-  const getPart = (type: string) =>
-    Number.parseInt(parts.find(p => p.type === type)?.value ?? "0", 10);
-  // hour=24 になるケース (formatToParts の en-US 仕様) を 0 に補正
-  const nowH = getPart("hour") % 24;
-  const nowM = getPart("minute");
-  const nowMinutes = nowH * 60 + nowM;
-  const isTomorrow = targetMinutes <= nowMinutes;
-
-  // JST のローカル年/月/日 として扱える Date を構築 (UTC 値で持ちながら
-  // 表示時は JST 換算ではなく getMonth/getDate で参照する。
-  // ※ Date.UTC で組み立てることで host TZ に依存しない)
-  const target = new Date(
-    Date.UTC(getPart("year"), getPart("month") - 1, getPart("day"))
-  );
-  if (isTomorrow) target.setUTCDate(target.getUTCDate() + 1);
-  return `${target.getUTCMonth() + 1}/${target.getUTCDate()} ${time24}`;
-}
-
-function to24Hour(
-  hourStr: string,
-  minuteStr: string | undefined,
-  ampm: string
-): string {
-  let h = Number.parseInt(hourStr, 10);
-  const m = minuteStr ? Number.parseInt(minuteStr, 10) : 0;
-  const isPm = ampm.toLowerCase() === "pm";
-  if (h === 12) {
-    h = isPm ? 12 : 0;
-  } else if (isPm) {
-    h += 12;
-  }
-  return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
-}
-
-function formatUsageEntryLines(entry: UsageEntry, refMs: number): string[] {
-  if (entry.status === "ok" && entry.parsed) {
-    const p = entry.parsed;
-    const sessionPct = p.sessionPercent.toString().padStart(3, " ");
-    const weeklyPct = p.weeklyAllPercent.toString().padStart(3, " ");
-    const sessionReset = formatResetTimestamp(p.sessionResets, refMs);
-    const weeklyReset = formatResetTimestamp(p.weeklyAllResets, refMs);
-    // ラベル / バー / % / リセット時刻 を 1 行に並べる。
-    // 「セ」「週」は両方 1 文字 (ほとんどの monospace 環境で同じセル幅で
-    // 描画される) なので column 整列が壊れない。
-    return [
-      "```",
-      `セ ${renderUsageBar(p.sessionPercent)} ${sessionPct}% ${sessionReset}`,
-      `週 ${renderUsageBar(p.weeklyAllPercent)} ${weeklyPct}% ${weeklyReset}`,
-      "```",
-    ];
-  }
-  if (entry.status === "unauthenticated") {
-    return ["- 状態: 未認証 (オンボーディング画面)"];
-  }
-  if (entry.status === "timeout") {
-    return ["- 状態: タイムアウト"];
-  }
-  return [`- 状態: エラー (${entry.errorMessage ?? "詳細不明"})`];
-}
-
 /**
  * Ark サーバーを起動し、ハンドルを返す。
  *
- * **重要**: このサーバーは module-level singleton (sessionOrchestrator, beaconManager,
+ * **重要**: このサーバーは module-level singleton (sessionOrchestrator,
  * browserManager, htmlScreenshotter) を内部で使用するため、**同一プロセスで複数回呼び
  * 出すことはできない**。`stop()` 後に再度 `startServer()` を呼ぶと、破壊済み singleton
  * が再利用され予期しない挙動になる。再起動が必要な場合は別プロセスを起動すること。
@@ -472,9 +284,6 @@ export async function startServer(
   if (allowedRepos.length > 0) {
     console.log(`Allowed repositories: ${allowedRepos.join(", ")}`);
   }
-
-  // クライアントが選択・スキャンしたリポジトリを追跡（Beaconが参照する）
-  const knownRepos = new Set<string>(allowedRepos);
 
   /**
    * resolveManagedWorktreePath の検証成功結果のみを保持するキャッシュ（TTL 30 秒）。
@@ -558,16 +367,6 @@ export async function startServer(
   function resolveManagedWorktreePath(worktreePath: string): string | null {
     const result = resolveManagedWorktreeDetailed(worktreePath);
     return result.ok ? result.path : null;
-  }
-
-  /**
-   * linkWorktreeProfile 専用の boolean ラッパー。worktree_profile_links の
-   * 既存キーは非正規化パスのままのため、こちらは呼び出し側の worktreePath を
-   * 正規化せずに使い続ける既存挙動を維持する（検証自体は正規化済みパスに対して
-   * 行われるが、DB へは元の worktreePath を渡す = link 側の挙動は変えない）。
-   */
-  function isManagedWorktreePath(worktreePath: string): boolean {
-    return resolveManagedWorktreePath(worktreePath) !== null;
   }
 
   // トンネル状態管理 (startServer のライフタイム内に閉じ込める)
@@ -835,8 +634,8 @@ export async function startServer(
       return { ok: true };
     },
   };
-  // 永続化ポート（C-B3 の ark-beacon MCP と同型）。前回 bind したポートに
-  // 再度 bind し直すことで、稼働中セッションの mcp-config の url を維持する。
+  // 前回 bind したポートに再度 bind し直すことで、稼働中セッションの
+  // mcp-config の url を維持する。
   // 1〜65535 の整数以外（範囲外・非整数・NaN・不正値混入）は無視して ephemeral 起動にフォールバックする
   // （httpServer.listen() への不正値渡しによる例外を防ぐ）。
   const savedBoardMcpPort = db.getSetting("board_mcp_port");
@@ -856,229 +655,6 @@ export async function startServer(
   // 会話セッション起動時に per-session token/mcp-config を注入できるよう、
   // SessionOrchestrator へ boardMcp/boardRegistry を配線する (Task 4)。
   sessionOrchestrator.setBoardMcp(boardMcp, boardRegistry);
-
-  // BeaconにArk操作の依存を注入（MCPツールで利用）
-  beaconManager.configure({
-    getAllSessions: () => sessionOrchestrator.getAllSessions(),
-    startSession: (worktreeId, worktreePath) =>
-      sessionOrchestrator.startSession(worktreeId, worktreePath),
-    stopSession: sessionId => sessionOrchestrator.stopSession(sessionId),
-    sendMessage: (sessionId, message) =>
-      sessionOrchestrator.sendMessage(sessionId, message),
-    sendKey: (sessionId, key) =>
-      sessionOrchestrator.sendSpecialKey(sessionId, key),
-    capturePane: (sessionId, lines) =>
-      tmuxManager.capturePane(sessionId, lines),
-    listWorktrees: repoPath => listWorktrees(repoPath),
-    createWorktree: async (repoPath, branchName, baseBranch) => {
-      const worktree = await createWorktree(repoPath, branchName, baseBranch);
-      // 通知は操作の成否に影響させない
-      try {
-        io.emit("worktree:created", { repoPath, worktree });
-        const worktrees = await listWorktrees(repoPath);
-        io.emit("worktree:list", { repoPath, worktrees });
-      } catch {
-        console.error("[Beacon] worktree通知に失敗しました");
-      }
-      return worktree;
-    },
-    listProfiles: () => {
-      // multiProfileSupported が false (Linux 以外 / claude or tmux 未検出)
-      // の環境では DB の内容を返さず空配列にする。Beacon 側でこれを見て
-      // プロファイル選択 step をスキップできるようにする。
-      if (!capabilities.multiProfileSupported) return [];
-      // configDir はサーバ内部の filesystem path であり、UI / モデルの
-      // 選択には id と name のみで十分。最小権限の観点で公開しない。
-      return db.listProfiles().map(p => ({ id: p.id, name: p.name }));
-    },
-    linkWorktreeProfile: (worktreePath, profileId) => {
-      // 無効な profileId / worktreePath で DB に書き込んで UI 側だけ
-      // 「成功した」状態になるのを防ぐため、書き込み前に存在確認する。
-      // (worktree_profile_links は FK 制約を持たないため明示チェックが必要)
-      if (!db.getProfile(profileId)) return false;
-      // worktree 側の trust boundary チェック（実在ディレクトリ / git worktree /
-      // allowedRepos 許可リスト）は diagram:subscribe と共通の isManagedWorktreePath に委譲する。
-      if (!isManagedWorktreePath(worktreePath)) return false;
-      db.setWorktreeProfileLink(worktreePath, profileId);
-      // UIの worktreeProfileLinks マップ / プロファイルバッジを更新するため
-      // 全クライアントに通知する。worktree:set-profile ハンドラと同じイベント。
-      io.emit("worktree:profile-changed", { worktreePath, profileId });
-      return true;
-    },
-    deleteWorktree: async (repoPath, worktreePath) => {
-      // 削除前にworktreeのセッションを停止
-      const session = sessionOrchestrator.getSessionByWorktree(worktreePath);
-      if (session) {
-        sessionOrchestrator.stopSession(session.id);
-      }
-      // worktreeのIDをパスから決定的に導出（listWorktreesと同じロジック）
-      const deletedWorktreeId = Buffer.from(worktreePath)
-        .toString("base64")
-        .replace(/[/+=]/g, "");
-      await deleteWorktree(repoPath, worktreePath);
-      // 通知は操作の成否に影響させない
-      try {
-        io.emit("worktree:deleted", {
-          repoPath,
-          worktreeId: deletedWorktreeId,
-        });
-        const worktrees = await listWorktrees(repoPath);
-        io.emit("worktree:list", { repoPath, worktrees });
-      } catch {
-        console.error("[Beacon] worktree通知に失敗しました");
-      }
-    },
-    listAllWorktrees: async repos => {
-      const all: unknown[] = [];
-      for (const repo of repos) {
-        try {
-          const wts = await listWorktrees(repo);
-          all.push(...wts.map(w => ({ ...w, repoPath: repo })));
-        } catch {
-          // 個別リポジトリのエラーはスキップ
-        }
-      }
-      return all;
-    },
-    getRepos: () => Array.from(knownRepos),
-    getPrUrl: async worktreePath => {
-      try {
-        const { stdout } = await execAsync("gh pr view --json url -q .url", {
-          cwd: worktreePath,
-        });
-        return stdout.trim() || null;
-      } catch {
-        return null;
-      }
-    },
-  });
-
-  // Beaconイベントを要求元のSocket.IOクライアントのみに転送
-  type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
-  let activeBeaconSocket: TypedSocket | null = null;
-
-  beaconManager.on("beacon:message", message => {
-    if (activeBeaconSocket?.connected) {
-      activeBeaconSocket.emit("beacon:message", message);
-    }
-  });
-  beaconManager.on("beacon:stream", data => {
-    if (activeBeaconSocket?.connected) {
-      activeBeaconSocket.emit("beacon:stream", data);
-    }
-  });
-  beaconManager.on("beacon:error", data => {
-    if (activeBeaconSocket?.connected) {
-      activeBeaconSocket.emit("beacon:error", data);
-    }
-  });
-  // 外部メッセージ (Usage取得結果など) は LLM streaming 中の場合に
-  // BeaconManager 側で flush タイミングを制御してから emit する。
-  // ここで全クライアントへブロードキャスト (Beacon利用状況に関わらず共有)。
-  beaconManager.on("beacon:external-message", message => {
-    io.emit("beacon:external-message", message);
-  });
-  // 履歴の再同期。kill による user プロンプト除去 / close→reopen を跨いだ応答確定など、
-  // 単発の beacon:message では追従できない変化を全クライアントへ反映する。
-  beaconManager.on("beacon:history", data => {
-    io.emit("beacon:history", data);
-  });
-  // Beacon 専用プロファイルの状態変化 (設定変更 / staleProfile 解消) を全クライアントへ反映。
-  beaconManager.on("beacon:profile", data => {
-    io.emit("beacon:profile", data);
-  });
-
-  // MCP OAuth フローの完了/失敗を全クライアントに通知。
-  // 認証成功時は Beacon セッションに stale マークを付ける: startSession で
-  // 構築済みの mcpServers map / Bearer token は freeze されているため、
-  // 次の send 時に idle なら新セッションに作り直して反映する。
-  // 進行中ターンを途中で中断しないために close は呼ばない。
-  mcpOAuthOrchestrator.on("auth-completed", data => {
-    io.emit("mcp:auth-completed", { connectionId: data.connectionId });
-    io.emit("mcp:state", buildMcpSnapshot());
-    beaconManager.markMcpConfigStale();
-  });
-  mcpOAuthOrchestrator.on("auth-failed", data => {
-    io.emit("mcp:auth-failed", {
-      connectionId: data.connectionId,
-      message: data.message,
-    });
-    io.emit("mcp:state", buildMcpSnapshot());
-  });
-  // refresh 失敗で token が無効化されたとき UI に再認証を促せるよう state を再送 +
-  // Beacon にも stale マーク (systemPrompt / allowedTools 内の死んだ connection を消す)
-  mcpOAuthOrchestrator.on("token-invalidated", () => {
-    io.emit("mcp:state", buildMcpSnapshot());
-    beaconManager.markMcpConfigStale();
-  });
-
-  /**
-   * カタログ (registry) + 全 connection スナップショット。
-   * 同 providerId に複数 connection が存在し得る (マルチアカウント)。
-   */
-  function buildMcpSnapshot(): import("@ark/shared").McpProvidersSnapshot {
-    const now = Date.now();
-    const catalog = listProviders().map(p => ({
-      id: p.id,
-      name: p.name,
-      description: p.description,
-    }));
-    const dbConnections = db.listMcpServers().map(config => {
-      const token = db.getMcpToken(config.id);
-      let status: import("@ark/shared").McpAuthStatus;
-      if (mcpOAuthOrchestrator.getStatus(config.id)?.status === "pending") {
-        status = "authenticating";
-      } else if (!token) {
-        status = "unauthenticated";
-      } else if (token.expiresAt !== null && token.expiresAt <= now) {
-        status = "expired";
-      } else {
-        status = "authenticated";
-      }
-      return {
-        id: config.id,
-        providerId: config.providerId,
-        label: config.label,
-        status,
-        ...(token ? { acquiredAt: token.acquiredAt } : {}),
-        ...(token?.expiresAt !== null && token?.expiresAt !== undefined
-          ? { expiresAt: token.expiresAt }
-          : {}),
-      };
-    });
-    // 新規 connection 起動直後は DB に行が無い (token 受領時に作る)。
-    // pending flow を別ソースから合成して、UI から「認証中」が見える + paste UI が出るようにする。
-    const pending = mcpOAuthOrchestrator.listPendingFlows();
-    const dbIds = new Set(dbConnections.map(c => c.id));
-    const pendingConnections: import("@ark/shared").McpConnectionInfo[] =
-      pending
-        .filter(f => !dbIds.has(f.connectionId))
-        .map(f => ({
-          id: f.connectionId,
-          providerId: f.providerId,
-          label: f.label,
-          status: "authenticating" as const,
-        }));
-    // 認可 URL を再接続/リロード後にも UI から開けるよう snapshot に同梱する
-    const pendingAuthUrls: Record<string, string> = {};
-    for (const f of pending) {
-      pendingAuthUrls[f.connectionId] = f.authorizationUrl;
-    }
-    return {
-      catalog,
-      connections: [...dbConnections, ...pendingConnections],
-      pendingAuthUrls,
-    };
-  }
-
-  /**
-   * provider 別のラベル予約カウンタ。
-   * mcp:connect ハンドラ内で discovery / DCR の await 前に同期的にインクリメントし、
-   * 同 provider に並列で「アカウント追加」されても重複 #N にならないようにする
-   * (DB 件数 + orchestrator の pending flow 件数だけでは、await 開始前に複数の
-   *  ハンドラが同じ count を読んでしまう競合がある)。
-   */
-  const mcpLabelReservation = new Map<string, number>();
 
   /**
    * Quick Tunnelを起動する共通関数
@@ -1811,12 +1387,6 @@ export async function startServer(
     // Send allowed repos list to client on connection
     socket.emit("repos:list", allowedRepos);
 
-    // Beaconのチャット履歴を接続時に自動送信（クライアント側の取得タイミング問題を回避）
-    socket.emit("beacon:history", { messages: beaconManager.getHistory() });
-
-    // Beacon 専用プロファイルの状態を接続時に送信 (UI 初期化用)
-    socket.emit("beacon:profile", beaconManager.getProfileState());
-
     // 接続時にショートカット一覧を即時送信（クライアント側のキャッシュ初期化用）
     try {
       socket.emit("shortcut:list", db.listMessageShortcuts());
@@ -1903,12 +1473,7 @@ export async function startServer(
       const savedBasePath = db.getSetting("scanBasePath") as string | undefined;
       if (savedBasePath) {
         scanRepositories(savedBasePath)
-          .then(repos => {
-            for (const repo of repos) {
-              knownRepos.add(repo.path);
-            }
-            socket.emit("repos:scanned", repos);
-          })
+          .then(repos => socket.emit("repos:scanned", repos))
           .catch(err => {
             console.error("[Socket] 自動スキャン失敗:", getErrorMessage(err));
             socket.emit("repos:scanning", {
@@ -1926,10 +1491,6 @@ export async function startServer(
       try {
         socket.emit("repos:scanning", { basePath, status: "start" });
         const repos = await scanRepositories(basePath);
-        // スキャンで見つかったリポジトリをknownReposに追加
-        for (const repo of repos) {
-          knownRepos.add(repo.path);
-        }
         // スキャン成功時にbasePathを永続化（リロード時の自動スキャン用）
         db.setSetting("scanBasePath", basePath);
         socket.emit("repos:scanned", repos);
@@ -1983,8 +1544,6 @@ export async function startServer(
         }
         socket.emit("repo:set", repoPath);
         currentRepoPath = repoPath;
-        knownRepos.add(repoPath);
-
         const worktrees = await listWorktrees(repoPath);
         socket.emit("worktree:list", { repoPath, worktrees });
       } catch (error) {
@@ -2893,288 +2452,6 @@ export async function startServer(
       }
     });
 
-    // ===== Beacon Commands =====
-
-    // Beaconメッセージ送信
-    socket.on("beacon:send", async (data: { message: string }) => {
-      // 入力検証
-      if (
-        typeof data?.message !== "string" ||
-        data.message.trim().length === 0
-      ) {
-        socket.emit("beacon:error", { error: "メッセージが空です" });
-        return;
-      }
-      activeBeaconSocket = socket;
-      try {
-        await beaconManager.sendMessage(data.message.trim());
-      } catch (error) {
-        socket.emit("beacon:error", { error: getErrorMessage(error) });
-      }
-    });
-
-    // Beacon履歴取得
-    socket.on("beacon:history", () => {
-      // activeBeaconSocketは設定しない（ストリーミング中の横取り防止）
-      const messages = beaconManager.getHistory();
-      socket.emit("beacon:history", { messages });
-    });
-
-    // Beaconセッション終了 (明示的な close)。
-    // CLI 会話 (cliSessionId) は破棄しない: DB のチャット履歴は残り再接続時に
-    // 再表示されるため、resume を維持して「UI 履歴 = LLM 文脈」を一致させる。
-    // 文脈を完全に捨てたい場合は beacon:clear (履歴ごと削除) を使う。
-    socket.on("beacon:close", () => {
-      beaconManager.closeSession();
-    });
-
-    // Beacon応答停止 + セッションリセット (UI の停止ボタン)
-    //
-    // 名前で意図を明示: 単なる「キャンセル」ではなく、abort + session 破棄を伴う。
-    // SDK の AbortController が単発 (一度 abort すると同じ query を再開不可) のため
-    // 次の sendMessage は新規 session で起動し、LLM の multi-turn 中間状態は失われる。
-    // チャット履歴 (DB / messages) は残るので UI 上の見た目は連続するが、
-    // モデル側の文脈は仕切り直しになる。「応答が止まらない」よりは ましという判断。
-    //
-    // ガード: 進行中の session が無いときの誤送信は no-op にする。idle 状態で
-    // closeSession を呼んでもメソッド側の `if (!this.session) return;` で安全だが、
-    // ここで明示的に弾くことで「destructive 操作は条件成立時のみ受理」を契約として
-    // 表明する (Assertive Programming)。
-    //
-    // セキュリティ: payload なしで停止できるが、これは既存 beacon:close /
-    // beacon:clear と同じ trust model (Beacon は接続クライアント間で共有資源)。
-    // Cloudflare Tunnel + token 認証の後ろにある前提で、追加の所有者制御は持たない。
-    socket.on("beacon:stop-and-reset", () => {
-      // 「仕切り直し」: CLI 会話 (cliSessionId) も破棄し、次の sendMessage は
-      // --resume せず新規会話で開始する (モデル側の文脈をリセットする)。
-      // hasSession() ガードは付けない: サーバー再起動 / idle close 後は live session が
-      // 無くても cliSessionId が settings に残るため、その状態でも破棄する必要がある
-      // (closeSession 内で resetConversation を live session の有無に関わらず処理する)。
-      beaconManager.closeSession({ resetConversation: true });
-    });
-
-    // Beacon履歴クリア（LLMコンテキスト・DB履歴もリセット）
-    // 履歴は全接続クライアントで共有されるため、broadcastで他タブ・他端末も同期する
-    socket.on("beacon:clear", () => {
-      beaconManager.clearHistory();
-      io.emit("beacon:history", { messages: [] });
-    });
-
-    // Beacon 専用プロファイルの現在状態を要求 (接続後の再取得用)
-    socket.on("beacon:get-profile", () => {
-      socket.emit("beacon:profile", beaconManager.getProfileState());
-    });
-
-    // Beacon 専用プロファイルを設定 (null で既定)。稼働中セッションは即時切替せず
-    // staleProfile になる (C-1)。setProfile が broadcastProfile するので個別 emit は不要。
-    socket.on("beacon:set-profile", (data: { profileId: string | null }) => {
-      const profileId = data?.profileId ?? null;
-      const ok = beaconManager.setProfile(profileId);
-      if (!ok) {
-        socket.emit("beacon:error", {
-          error: "指定されたプロファイルが見つかりません",
-        });
-        // 失敗時は要求元に現状態を返して UI を巻き戻す
-        socket.emit("beacon:profile", beaconManager.getProfileState());
-      }
-    });
-
-    // ===== MCP OAuth Commands (whitelist 形式) =====
-
-    socket.on("mcp:state", () => {
-      try {
-        socket.emit("mcp:state", buildMcpSnapshot());
-      } catch (e) {
-        socket.emit("mcp:error", { message: getErrorMessage(e) });
-      }
-    });
-
-    /**
-     * 新しい connection を作成して接続を開始する。
-     * - サーバが connection ID を `<providerId>-<nanoid>` で生成
-     * - label 省略時は `<provider.name> #<index>` を自動採番
-     * - discovery + DCR で client_id を取得 → loopback callback サーバ起動
-     */
-    socket.on(
-      "mcp:connect",
-      async ({ providerId, label, connectionId: existingId, requestId }) => {
-        try {
-          // provider 検証は popup correlation のため inline で行う
-          // (共通ヘルパだと requestId を保持できず mcp:error を相関できないため)。
-          if (typeof providerId !== "string" || providerId.length === 0) {
-            socket.emit("mcp:error", {
-              message: "providerId は必須です",
-              code: "invalid_provider_id",
-              ...(requestId ? { requestId } : {}),
-            });
-            return;
-          }
-          const provider = getProvider(providerId);
-          if (!provider) {
-            socket.emit("mcp:error", {
-              message: `サポート対象外のプロバイダ: ${providerId}`,
-              code: "unknown_provider",
-              providerId,
-              ...(requestId ? { requestId } : {}),
-            });
-            return;
-          }
-
-          // connectionId が指定されていれば再認証 (in-place 更新)。指定なら新規作成。
-          let connectionId: string;
-          let resolvedLabel: string;
-          if (typeof existingId === "string" && existingId.length > 0) {
-            const existing = db.getMcpServer(existingId);
-            if (!existing) {
-              socket.emit("mcp:error", {
-                message: `connection が見つかりません: ${existingId}`,
-                code: "not_found",
-              });
-              return;
-            }
-            if (existing.providerId !== provider.id) {
-              socket.emit("mcp:error", {
-                message: "connection の provider 種別が一致しません",
-                code: "provider_mismatch",
-              });
-              return;
-            }
-            connectionId = existingId;
-            // 再認証時は既存 label を維持 (resolveAccountLabel が後で上書きする可能性あり)
-            const trimmed =
-              typeof label === "string" && label.trim() ? label.trim() : null;
-            resolvedLabel = trimmed ?? existing.label;
-            // 古いトークンは破棄しない: ユーザがブラウザ認可を中断/失敗した場合に
-            // 既存の有効トークンを失わないように、orchestrator の _processCallback での
-            // upsertMcpToken 成功時にのみ上書きする方針。
-          } else {
-            // 新規 connection ID を生成
-            connectionId = `${provider.id}-${nanoid(6)}`;
-            const trimmed =
-              typeof label === "string" && label.trim() ? label.trim() : null;
-            // 連番採番: 競合を避けるため synchronous な予約カウンタで採番する。
-            // 初回呼び出し時のみ DB count + pending flow count で初期化し、以降は
-            // インクリメントだけ。同 provider への並列 connect でも重複しない。
-            const counter = mcpLabelReservation;
-            if (!counter.has(provider.id)) {
-              const dbCount = db.countMcpServersByProvider(provider.id);
-              const pendingCount = mcpOAuthOrchestrator
-                .listPendingFlows()
-                .filter(f => f.providerId === provider.id).length;
-              counter.set(provider.id, dbCount + pendingCount);
-            }
-            const next = (counter.get(provider.id) ?? 0) + 1;
-            counter.set(provider.id, next);
-            resolvedLabel = trimmed ?? `${provider.name} #${next}`;
-          }
-
-          const result = await mcpOAuthOrchestrator.startFlowForConnection(
-            provider,
-            connectionId,
-            resolvedLabel
-          );
-          socket.emit("mcp:auth-started", {
-            connectionId,
-            providerId: provider.id,
-            ...(requestId ? { requestId } : {}),
-            authorizationUrl: result.authorizationUrl,
-          });
-          io.emit("mcp:state", buildMcpSnapshot());
-        } catch (e) {
-          // providerId / requestId を同梱して client 側で popup correlation する。
-          // requestId が含まれていれば該当 popup のみ close、無ければ provider の
-          // FIFO キューから最古を close する fallback。
-          const base: { providerId: string; requestId?: string } = {
-            providerId,
-            ...(requestId ? { requestId } : {}),
-          };
-          if (e instanceof DiscoveryError) {
-            socket.emit("mcp:error", {
-              message: `自動登録に失敗 (${e.stage}): ${e.message}`,
-              code: e.stage,
-              ...base,
-            });
-          } else {
-            socket.emit("mcp:error", {
-              message: getErrorMessage(e),
-              ...base,
-            });
-          }
-        }
-      }
-    );
-
-    /** リモート接続時のフォールバック (URL ペースト) */
-    socket.on("mcp:submit-redirect", async ({ redirectUrl }) => {
-      try {
-        if (
-          typeof redirectUrl !== "string" ||
-          redirectUrl.trim().length === 0
-        ) {
-          socket.emit("mcp:error", {
-            message: "URL が空です",
-            code: "invalid_redirect_url",
-          });
-          return;
-        }
-        await mcpOAuthOrchestrator.submitPastedRedirect(redirectUrl.trim());
-        // 成功時は orchestrator の auth-completed イベントが mcp:state を再送する
-      } catch (e) {
-        socket.emit("mcp:error", { message: getErrorMessage(e) });
-      }
-    });
-
-    socket.on("mcp:disconnect", ({ connectionId }) => {
-      try {
-        if (typeof connectionId !== "string" || !connectionId) {
-          socket.emit("mcp:error", { message: "connectionId は必須です" });
-          return;
-        }
-        // pending な OAuth フローがあれば中断 (loopback server を閉じる)
-        mcpOAuthOrchestrator.clearFlow(connectionId);
-        db.deleteMcpServer(connectionId);
-        // 稼働中 Beacon セッションは旧 mcpServers map (削除済み connection 含む) を
-        // 保持しているため stale マーク → 次回 send で idle なら再構成
-        beaconManager.markMcpConfigStale();
-        io.emit("mcp:state", buildMcpSnapshot());
-      } catch (e) {
-        socket.emit("mcp:error", { message: getErrorMessage(e) });
-      }
-    });
-
-    socket.on("mcp:auth-cancel", ({ connectionId }) => {
-      try {
-        if (typeof connectionId !== "string" || !connectionId) {
-          socket.emit("mcp:error", { message: "connectionId は必須です" });
-          return;
-        }
-        mcpOAuthOrchestrator.clearFlow(connectionId);
-        io.emit("mcp:state", buildMcpSnapshot());
-      } catch (e) {
-        socket.emit("mcp:error", { message: getErrorMessage(e) });
-      }
-    });
-
-    socket.on("mcp:rename", ({ connectionId, label }) => {
-      try {
-        if (typeof connectionId !== "string" || !connectionId) {
-          socket.emit("mcp:error", { message: "connectionId は必須です" });
-          return;
-        }
-        if (typeof label !== "string" || !label.trim()) {
-          socket.emit("mcp:error", { message: "label は必須です" });
-          return;
-        }
-        db.updateMcpServer(connectionId, { label: label.trim() });
-        io.emit("mcp:state", buildMcpSnapshot());
-        // Beacon system prompt が旧 label を保持しているため stale マーク
-        // (次の send で idle なら新 label で再構成される)
-        beaconManager.markMcpConfigStale();
-      } catch (e) {
-        socket.emit("mcp:error", { message: getErrorMessage(e) });
-      }
-    });
-
     // ===== Profile Commands (Linux限定) =====
 
     /** プロファイル切替機能未サポート時の共通レスポンス */
@@ -3901,22 +3178,8 @@ export async function startServer(
         `[UsageCollector] 開始: ${profiles.length} プロファイル (要求元: ${socket.id})`
       );
 
-      // 完了時に Beacon履歴がクリアされていないか判定するため、開始時の
-      // 世代をcaptureする。背景処理 (~30s) 中に clearHistory されていたら
-      // postExternalMessage は no-op になり、新しい transcript を汚染しない。
-      const beaconVersionAtStart = beaconManager.getHistoryVersion();
       try {
         const report = await usageCollector.collect(profiles);
-        const markdown = formatUsageMarkdown(report);
-        // postExternalMessage は LLM streaming 中なら pending queue に入れ、
-        // turn 完了 / セッション close 時に "beacon:external-message" を emit
-        // する。emit を購読する beaconManager.on(...) → io.emit が全クライ
-        // アントへブロードキャストする (live UI と DB reload の順序を一致)。
-        // expectedVersion を渡すことで、開始後に clearHistory された場合は
-        // 投稿スキップ (cleared chat 復活防止)。
-        // null が返っても client は usage:complete + toast.success で結果を
-        // 認識できるので、ここでエラー扱いはしない。
-        beaconManager.postExternalMessage(markdown, beaconVersionAtStart);
         io.emit("usage:complete", report);
         console.log(
           `[UsageCollector] 完了: ok=${report.entries.filter(e => e.status === "ok").length}/${report.entries.length}`
@@ -4160,7 +3423,6 @@ export async function startServer(
     clearInterval(bridgeBroadcastInterval);
     clearInterval(gridBroadcastInterval);
     sessionOrchestrator.cleanup();
-    beaconManager.cleanup();
     browserManager.cleanup();
     boardMcp.stop();
     if (activeTunnel) {

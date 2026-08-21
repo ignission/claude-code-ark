@@ -184,7 +184,7 @@ export class SessionOrchestrator extends EventEmitter {
     } catch {
       // ベストエフォート (所有権が異なる等で失敗しても続行)
     }
-    // bearer token を含むため 0600 で書く (beacon の mcp-config.json と同方針)
+    // bearer token を含むため 0600 で書く
     fs.writeFileSync(
       cfgPath,
       JSON.stringify({

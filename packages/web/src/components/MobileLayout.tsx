@@ -1,16 +1,14 @@
 /**
  * MobileLayout - モバイル専用ルートコンポーネント
  *
- * 「セッション一覧」「セッション詳細」「Beaconチャット」を
+ * 「セッション一覧」「セッション詳細」「ブラウザ」を
  * ボトムナビゲーションと画面遷移で切り替える。
  * iframe再マウント防止のため、display:none/blockで表示を切り替える。
  */
 
 import type {
-  BeaconProfileState,
   BridgeSessionStatus,
   BrowserSession,
-  ChatMessage,
   ClientToServerEvents,
   DiagramCommentsResponse,
   DiagramDeleteResponse,
@@ -19,13 +17,11 @@ import type {
   MessageShortcut,
   ServerToClientEvents,
   SpecialKey,
-  UsageProgress,
   Worktree,
 } from "@ark/shared";
 import { useCallback, useEffect, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { BrowserPane } from "@/components/BrowserPane";
-import { MobileChatView } from "@/components/MobileChatView";
 import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
 import type { ViewerTab } from "@/components/TerminalPane";
@@ -34,7 +30,7 @@ import type { DiagramOpenRequest } from "@/lib/mobile-session-view-mode";
 // MobileTab / SessionSubView は配列を真実源にし、union 型を派生させる。
 // こうしないと runtime 検証配列と型が二重化し、union に値を足したとき配列更新を
 // 忘れても型エラーにならず正当な値が静かに潰れる。
-const MOBILE_TABS = ["session", "browser", "beacon"] as const;
+const MOBILE_TABS = ["session", "browser"] as const;
 const SESSION_SUB_VIEWS = ["list", "detail"] as const;
 export type MobileTab = (typeof MOBILE_TABS)[number];
 export type SessionSubView = (typeof SESSION_SUB_VIEWS)[number];
@@ -140,32 +136,13 @@ interface MobileLayoutProps {
     relPath: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
-  // Beaconチャット
-  beaconMessages: ChatMessage[];
-  beaconStreaming: boolean;
-  beaconStreamText: string;
-  onBeaconSend: (message: string) => void;
-  onBeaconClear?: () => void;
-  /** 応答停止 + セッションリセット。required: 型で「停止不能」を防ぐ */
-  onBeaconStopAndReset: () => void;
-  /** Beacon 専用プロファイルの状態（Linux のプロファイル切替。null = 未取得） */
-  beaconProfile?: BeaconProfileState | null;
-  /** Beacon 専用プロファイルを設定（profileId=null で既定。反映は再起動時 C-1） */
-  onBeaconSetProfile?: (profileId: string | null) => void;
-  /** Socket.IO 接続状態。停止ボタンを切断時に disabled にするために使う */
+  /** Socket.IO 接続状態 */
   isSocketConnected: boolean;
   diagramCommentsUpdate: {
     worktreePath: string;
     relPath: string;
     sequence: number;
   } | null;
-  // Usage取得（Linux + multiProfileSupported のみ）
-  onRequestUsage?: () => void;
-  usageRequesting?: boolean;
-  usageProgress?: UsageProgress | null;
-  multiProfileSupported?: boolean;
-  /** MCP server (Beacon の OAuth MCP) マネージャを開く */
-  onOpenMcpManager?: () => void;
   // ブラウザ（noVNC）
   activeBrowserSession: BrowserSession | null;
   onSelectBrowser: () => void;
@@ -219,21 +196,8 @@ export function MobileLayout({
   replyDiagramComment,
   deleteDiagramComment,
   sendDiagramComment,
-  beaconMessages,
-  beaconStreaming,
-  beaconStreamText,
-  onBeaconSend,
-  onBeaconClear,
-  onBeaconStopAndReset,
-  beaconProfile,
-  onBeaconSetProfile,
   isSocketConnected,
   diagramCommentsUpdate,
-  onRequestUsage,
-  usageRequesting,
-  usageProgress,
-  multiProfileSupported,
-  onOpenMcpManager,
   activeBrowserSession,
   onSelectBrowser,
   isRemote,
@@ -422,32 +386,6 @@ export function MobileLayout({
           );
         })}
 
-      {/* Beaconチャットビュー */}
-      <div
-        className={
-          activeTab === "beacon"
-            ? "flex-1 flex flex-col min-h-0 pb-14"
-            : "hidden"
-        }
-      >
-        <MobileChatView
-          messages={beaconMessages}
-          isStreaming={beaconStreaming}
-          streamingText={beaconStreamText}
-          onSendMessage={onBeaconSend}
-          onStopAndReset={onBeaconStopAndReset}
-          isConnected={isSocketConnected}
-          onClear={onBeaconClear}
-          onRequestUsage={onRequestUsage}
-          usageRequesting={usageRequesting}
-          usageProgress={usageProgress}
-          multiProfileSupported={multiProfileSupported}
-          onOpenMcpManager={onOpenMcpManager}
-          beaconProfile={beaconProfile}
-          onSetProfile={onBeaconSetProfile}
-        />
-      </div>
-
       {/* ブラウザビュー（noVNC）- 一度開いたら常に描画し、display:hiddenで切り替え。
           BrowserPaneの再マウントによるVNC再接続を防ぐ。 */}
       {hasBrowserOpened && (
@@ -507,17 +445,6 @@ export function MobileLayout({
               ブラウザ
             </button>
           )}
-          <button
-            type="button"
-            className={`flex-1 py-3 text-center text-sm font-medium ${
-              activeTab === "beacon"
-                ? "text-primary border-t-2 border-primary"
-                : "text-muted-foreground"
-            }`}
-            onClick={() => onChangeActiveTab("beacon")}
-          >
-            Beacon
-          </button>
         </nav>
       )}
     </div>
