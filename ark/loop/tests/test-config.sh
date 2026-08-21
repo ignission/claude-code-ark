@@ -13,8 +13,9 @@ expected='[loop]
 recite_interval = 10
 
 [loop.summarize]
-# LLM summary is opt-in because it may incur usage charges.
-llm = false'
+# API 従量課金が発生し、Claude プラン枠の対象外
+llm = false
+model = ""'
 assert_eq "config template bytes" "$expected" "$(cat "$ROOT/ark/loop/templates/config.toml.tmpl")"
 
 repo="$TEST_TMP/repo"
@@ -61,6 +62,44 @@ chmod 600 "$LOOP_CONFIG_FILE"
 run_case loop_config_read_recite_interval
 assert_success "unknown config retained"
 assert_eq "missing interval defaults" 10 "$(cat "$CASE_STDOUT")"
+
+read_summarize() {
+  loop_config_read_summarize || return 1
+  printf 'llm=%s\nmodel=%s\n' "$LOOP_SUMMARIZE_LLM" "$LOOP_SUMMARIZE_MODEL"
+}
+
+printf '[loop.summarize]\nllm = true\nmodel = "fixture-model"\n' >"$LOOP_CONFIG_FILE"
+chmod 600 "$LOOP_CONFIG_FILE"
+run_case read_summarize
+assert_success "summarize opt-in parsed"
+assert_eq "summarize globals parsed" 'llm=1
+model=fixture-model' "$(cat "$CASE_STDOUT")"
+
+printf '[loop]\nllm = true\nmodel = "wrong-table"\n\n[loop.summarize]\nunknown = 7\n' >"$LOOP_CONFIG_FILE"
+chmod 600 "$LOOP_CONFIG_FILE"
+run_case read_summarize
+assert_success "summarize unknown keys ignored"
+assert_eq "summarize missing keys default" 'llm=0
+model=' "$(cat "$CASE_STDOUT")"
+
+long_model=$(printf '%0201d' 0 | tr 0 x)
+for bad_summary in \
+  'llm = yes' \
+  'llm = true\nllm = false' \
+  'model = bare' \
+  'model = "unterminated' \
+  'model = "one"\nmodel = "two"' \
+  "model = \"$long_model\""; do
+  printf '[loop.summarize]\n%b\n' "$bad_summary" >"$LOOP_CONFIG_FILE"
+  chmod 600 "$LOOP_CONFIG_FILE"
+  run_case read_summarize
+  assert_failure_reason "invalid summarize config rejected" "invalid summarize config"
+done
+
+printf '[loop.summarize]\nmodel = "bad\tmodel"\n' >"$LOOP_CONFIG_FILE"
+chmod 600 "$LOOP_CONFIG_FILE"
+run_case read_summarize
+assert_failure_reason "summarize control rejected" "invalid summarize config"
 
 rm -f "$LOOP_CONFIG_FILE"
 ln -s "$ROOT/package.json" "$LOOP_CONFIG_FILE"

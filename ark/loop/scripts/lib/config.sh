@@ -85,6 +85,75 @@ loop_config_read_recite_interval() {
   printf '%s\n' "$interval"
 }
 
+loop_config_read_summarize() {
+  local table seen_llm seen_model raw content key value model_size
+  loop_validate_xdg_file "${LOOP_CONFIG_FILE:-}" || return 1
+  if LC_ALL=C tr -d '\r\n\t' <"$LOOP_CONFIG_FILE" | LC_ALL=C grep '[[:cntrl:]]' >/dev/null 2>&1; then
+    loop_error "invalid summarize config"
+    return 1
+  fi
+
+  table=
+  seen_llm=0
+  seen_model=0
+  LOOP_SUMMARIZE_LLM=0
+  LOOP_SUMMARIZE_MODEL=
+  while IFS= read -r raw || [ -n "$raw" ]; do
+    raw=${raw%$'\r'}
+    content=${raw%%#*}
+    content=$(loop_trim_spaces "$content")
+    [ -n "$content" ] || continue
+    case "$content" in
+      \[*\])
+        case "$content" in
+          '[loop.summarize]') table=summarize ;;
+          *) table=other ;;
+        esac
+        continue
+        ;;
+    esac
+    [ "$table" = summarize ] || continue
+    case "$content" in
+      *=*)
+        key=$(loop_trim_spaces "${content%%=*}")
+        value=$(loop_trim_spaces "${content#*=}")
+        case "$key" in
+          llm)
+            seen_llm=$((seen_llm + 1))
+            [ "$seen_llm" -le 1 ] || { loop_error "invalid summarize config"; return 1; }
+            case "$value" in
+              true) LOOP_SUMMARIZE_LLM=1 ;;
+              false) LOOP_SUMMARIZE_LLM=0 ;;
+              *) loop_error "invalid summarize config"; return 1 ;;
+            esac
+            ;;
+          model)
+            seen_model=$((seen_model + 1))
+            [ "$seen_model" -le 1 ] || { loop_error "invalid summarize config"; return 1; }
+            case "$value" in
+              \"*\")
+                LOOP_SUMMARIZE_MODEL=${value#\"}
+                LOOP_SUMMARIZE_MODEL=${LOOP_SUMMARIZE_MODEL%\"}
+                case "$LOOP_SUMMARIZE_MODEL" in *\"*|*\\*) loop_error "invalid summarize config"; return 1 ;; esac
+                if printf '%s' "$LOOP_SUMMARIZE_MODEL" | LC_ALL=C grep '[[:cntrl:]]' >/dev/null 2>&1; then
+                  loop_error "invalid summarize config"
+                  return 1
+                fi
+                ;;
+              *) loop_error "invalid summarize config"; return 1 ;;
+            esac
+            model_size=$(LC_ALL=C printf '%s' "$LOOP_SUMMARIZE_MODEL" | wc -c | tr -d ' ')
+            case "$model_size" in ''|*[!0-9]*) loop_error "invalid summarize config"; return 1 ;; esac
+            [ "$model_size" -le 200 ] || { loop_error "invalid summarize config"; return 1; }
+            ;;
+          *) ;;
+        esac
+        ;;
+    esac
+  done <"$LOOP_CONFIG_FILE"
+  return 0
+}
+
 loop_session_id_generate() {
   local previous=${1:-}
   local tries=0

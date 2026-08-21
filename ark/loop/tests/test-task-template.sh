@@ -65,6 +65,8 @@ source_session="$TEST_TMP/source"
 mkdir -m 700 "$source_session" "$source_session/errors"
 printf '前回の要約です\n' >"$source_session/errors/summary.md"
 chmod 600 "$source_session/errors/summary.md"
+printf 'raw detail\n' >"$source_session/errors/raw.log"
+chmod 600 "$source_session/errors/raw.log"
 run_case loop_previous_failure_summary "$source_session"
 assert_success "restart summary read"
 case "$(cat "$CASE_STDOUT")" in *'前回の要約です'*"$source_session/errors/raw.log"*) TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)) ;; *) test_fail "restart summary omits summary or raw path" ;; esac
@@ -88,6 +90,54 @@ assert_success "restart task recitation succeeds"
 assert_eq "restart task recites canonical goal and plan" 'Goal: Restart goal
 NOW: Resume work
 Remaining: 1' "$(cat "$CASE_STDOUT")"
+
+for boundary in 1999 2000 2001; do
+  dd if=/dev/zero bs=1 count="$boundary" 2>/dev/null | tr '\000' x >"$source_session/errors/summary.md"
+  chmod 600 "$source_session/errors/summary.md"
+  raw_before=$(cksum "$source_session/errors/raw.log")
+  run_case loop_previous_failure_summary "$source_session"
+  assert_success "restart summary boundary $boundary"
+  previous_output=$(cat "$CASE_STDOUT")
+  previous_prefix=${previous_output%; raw log:*}
+  expected_prefix=$boundary
+  [ "$expected_prefix" -le 2000 ] || expected_prefix=2000
+  assert_eq "restart prefix byte boundary $boundary" "$expected_prefix" "$(printf '%s' "$previous_prefix" | wc -c | tr -d ' ')"
+  printf '%s' "$previous_prefix" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1
+  assert_eq "restart prefix UTF-8 boundary $boundary" 0 "$?"
+  assert_eq "raw path appears once boundary $boundary" 1 "$(printf '%s' "$previous_output" | grep -oF "$source_session/errors/raw.log" | wc -l | tr -d ' ')"
+  assert_eq "restart raw unchanged boundary $boundary" "$raw_before" "$(cksum "$source_session/errors/raw.log")"
+done
+
+dd if=/dev/zero bs=1 count=1999 2>/dev/null | tr '\000' x >"$source_session/errors/summary.md"
+printf 'あ' >>"$source_session/errors/summary.md"
+chmod 600 "$source_session/errors/summary.md"
+run_case loop_previous_failure_summary "$source_session"
+assert_success "restart summary avoids split Japanese code point"
+japanese_output=$(cat "$CASE_STDOUT")
+japanese_prefix=${japanese_output%; raw log:*}
+assert_eq "Japanese boundary falls back to valid prefix" 1999 "$(printf '%s' "$japanese_prefix" | wc -c | tr -d ' ')"
+printf '%s' "$japanese_prefix" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1
+assert_eq "Japanese boundary remains UTF-8" 0 "$?"
+
+printf 'safe summary\n' >"$source_session/errors/summary.md"; chmod 600 "$source_session/errors/summary.md"
+chmod 644 "$source_session/errors/raw.log"
+run_case loop_previous_failure_summary "$source_session"
+assert_failure_reason "unsafe restart raw mode rejected" "unsafe XDG file"
+chmod 600 "$source_session/errors/raw.log"
+raw_target="$TEST_TMP/raw-target"
+printf 'target\n' >"$raw_target"
+rm -f "$source_session/errors/raw.log"
+ln -s "$raw_target" "$source_session/errors/raw.log"
+run_case loop_previous_failure_summary "$source_session"
+assert_failure_reason "restart raw symlink rejected" "unsafe XDG file"
+rm -f "$source_session/errors/raw.log"
+run_case loop_previous_failure_summary "$source_session"
+assert_success "missing restart raw is allowed with predicted path"
+case "$(cat "$CASE_STDOUT")" in *"$source_session/errors/raw.log") TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)) ;; *) test_fail "missing raw path was not predicted" ;; esac
+chmod 755 "$source_session/errors"
+run_case loop_previous_failure_summary "$source_session"
+assert_failure_reason "unsafe restart errors directory rejected" "unsafe XDG directory"
+chmod 700 "$source_session/errors"
 
 host="$TEST_TMP/host"
 mkdir -m 700 "$host"

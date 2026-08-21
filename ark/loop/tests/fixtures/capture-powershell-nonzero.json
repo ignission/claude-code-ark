@@ -1,0 +1,12 @@
+{
+  "tool": "PowerShell",
+  "error_type": "tool_error",
+  "exit_code": 23,
+  "is_interrupt": false,
+  "error": "line 1\nline \"2\" \\ 日本語",
+  "details": {
+    "z_array": [1, "two", false, null],
+    "a_object": { "nested": true },
+    "m_number": 3.5
+  }
+}

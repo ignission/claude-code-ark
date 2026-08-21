@@ -9,6 +9,9 @@ trap 'rm -rf "$TEST_TMP"' EXIT HUP INT TERM
 . "$ROOT/ark/loop/scripts/lib/runtime.sh"
 . "$ROOT/ark/loop/adapters/claude-code/settings.sh"
 
+batch_hook='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/loop/adapters/claude-code/post-tool-batch.sh"}]}'
+failure_hook='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/loop/adapters/claude-code/post-tool-use-failure.sh"}]}'
+
 assert_eq "mode extraction rejects empty output in both paths" 2 \
   "$(grep -c '\[ -n "\$mode" \] || return 1' "$ROOT/ark/loop/adapters/claude-code/settings.sh" | tr -d ' ')"
 
@@ -42,8 +45,10 @@ jq -e '[.permissions.deny[] | select(. == "TaskGet" or . == "TaskList" or . == "
   || test_fail "read/background/subagent tool was denied"
 jq -e '(.hooks.PostToolBatch | length) == 1 and (.hooks.PostToolBatch[0] | has("matcher") | not)' "$settings" >/dev/null 2>&1 \
   || test_fail "PostToolBatch hook is missing or has matcher"
-jq -e '.schema_version == 1 and .settings_existed == true and (.entries | length) == 4 and
-  [.entries[].path] == ["permissions/deny","permissions/deny","permissions/deny","hooks/PostToolBatch"] and
+jq -e '(.hooks.PostToolUseFailure | length) == 1 and (.hooks.PostToolUseFailure[0] | has("matcher") | not)' "$settings" >/dev/null 2>&1 \
+  || test_fail "PostToolUseFailure hook is missing or has matcher"
+jq -e '.schema_version == 1 and .settings_existed == true and (.entries | length) == 5 and
+  ([.entries[].path] | sort) == ["hooks/PostToolBatch","hooks/PostToolUseFailure","permissions/deny","permissions/deny","permissions/deny"] and
   all(.entries[]; .abandoned == false)' "$manifest" >/dev/null 2>&1 \
   || test_fail "ownership manifest schema is invalid"
 assert_eq "settings mode preserved" "$original_mode" "$(loop_stat "$settings" | awk '{print $2}')"
@@ -68,14 +73,16 @@ settings="$repo/.claude/settings.local.json"
 run_case claude_settings_inject "$repo" "$state"
 assert_success "missing settings injected"
 [ -f "$settings" ] || test_fail "missing settings was not created"
+jq -e '.hooks | keys_unsorted == ["PostToolBatch","PostToolUseFailure"]' "$settings" >/dev/null 2>&1 \
+  || test_fail "new hooks object property order is not Batch then Failure"
 run_case claude_settings_restore "$repo" "$state"
 assert_success "missing settings restored"
 [ ! -e "$settings" ] || test_fail "originally missing settings was not removed"
 
 setup_repo existing-canonical
 settings="$repo/.claude/settings.local.json"
-hook='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/loop/adapters/claude-code/post-tool-batch.sh"}]}'
-jq -n --argjson hook "$hook" '{permissions:{deny:["TodoWrite","TaskCreate","TaskUpdate"]},hooks:{PostToolBatch:[$hook]}}' >"$settings"
+jq -n --argjson batch "$batch_hook" --argjson failure "$failure_hook" \
+  '{permissions:{deny:["TodoWrite","TaskCreate","TaskUpdate"]},hooks:{PostToolBatch:[$batch],PostToolUseFailure:[$failure]}}' >"$settings"
 chmod 600 "$settings"
 cp "$settings" "$TEST_TMP/canonical"
 run_case claude_settings_inject "$repo" "$state"
@@ -88,13 +95,70 @@ settings="$repo/.claude/settings.local.json"
 printf '{"existing":1}\n' >"$settings"; chmod 600 "$settings"
 run_case claude_settings_inject "$repo" "$state"
 assert_success "session-change fixture injected"
-content=$(cat "$settings")
-printf '%s\n' "${content%\}},\"user-added\":true}" >"$settings"
+jq '.hooks.PostToolUseFailure += [{"hooks":[{"type":"command","command":"user-added.sh"}]}] | .["user-added"]=true' \
+  "$settings" >"$settings.changed"
+mv "$settings.changed" "$settings"
 chmod 600 "$settings"
 run_case claude_settings_restore "$repo" "$state"
 assert_success "session change restored"
-jq -e '.existing == 1 and .["user-added"] == true and (.permissions | not) and (.hooks | not)' "$settings" >/dev/null 2>&1 \
+jq -e '.existing == 1 and .["user-added"] == true and .permissions.deny == []
+  and .hooks.PostToolBatch == []
+  and .hooks.PostToolUseFailure == [{"hooks":[{"type":"command","command":"user-added.sh"}]}]' "$settings" >/dev/null 2>&1 \
   || test_fail "restore lost non-Ark session changes"
+
+setup_repo batch-only
+settings="$repo/.claude/settings.local.json"
+jq -n --argjson batch "$batch_hook" \
+  '{permissions:{deny:["TodoWrite","TaskCreate","TaskUpdate"]},hooks:{PostToolBatch:[$batch]}}' >"$settings"
+chmod 600 "$settings"
+cp "$settings" "$TEST_TMP/batch-only-original"
+run_case claude_settings_inject "$repo" "$state"
+assert_success "batch-only settings injected"
+jq -e --argjson batch "$batch_hook" --argjson failure "$failure_hook" '
+  .hooks.PostToolBatch == [$batch] and .hooks.PostToolUseFailure == [$failure]
+' "$settings" >/dev/null 2>&1 || test_fail "batch-only settings did not gain canonical failure hook"
+jq -e --argjson failure "$failure_hook" '
+  .entries == [{path:"hooks/PostToolUseFailure",value:$failure,abandoned:false}]
+' "$state/settings-ownership.json" >/dev/null 2>&1 \
+  || test_fail "batch-only manifest owns more than the added failure hook"
+run_case claude_settings_restore "$repo" "$state"
+assert_success "batch-only settings restored"
+cmp -s "$settings" "$TEST_TMP/batch-only-original" || test_fail "batch-only restore was not byte-identical"
+
+setup_repo existing-failure-hook
+settings="$repo/.claude/settings.local.json"
+user_failure='{"hooks":[{"type":"command","command":"user-failure-hook.sh"}]}'
+jq -n --argjson user "$user_failure" \
+  '{permissions:{deny:["TodoWrite","TaskCreate","TaskUpdate"]},hooks:{PostToolBatch:[],PostToolUseFailure:[$user]}}' >"$settings"
+chmod 640 "$settings"
+cp "$settings" "$TEST_TMP/existing-failure-original"
+run_case claude_settings_inject "$repo" "$state"
+assert_success "existing failure hook injected"
+jq -e --argjson user "$user_failure" --argjson batch "$batch_hook" --argjson failure "$failure_hook" '
+  .hooks.PostToolBatch == [$batch]
+  and .hooks.PostToolUseFailure == [$user,$failure]
+' "$settings" >/dev/null 2>&1 || test_fail "existing failure hook was not preserved"
+jq -e '([.entries[].path] | sort) == ["hooks/PostToolBatch","hooks/PostToolUseFailure"]' \
+  "$state/settings-ownership.json" >/dev/null 2>&1 \
+  || test_fail "existing failure manifest paths mismatch"
+run_case claude_settings_restore "$repo" "$state"
+assert_success "existing failure hook restored"
+cmp -s "$settings" "$TEST_TMP/existing-failure-original" || test_fail "existing failure restore was not byte-identical"
+assert_eq "existing failure mode restored" 640 "$(loop_stat "$settings" | awk '{print $2}')"
+
+setup_repo canonical-failure
+settings="$repo/.claude/settings.local.json"
+jq -n --argjson failure "$failure_hook" \
+  '{permissions:{deny:["TodoWrite","TaskCreate","TaskUpdate"]},hooks:{PostToolUseFailure:[$failure]}}' >"$settings"
+chmod 600 "$settings"
+run_case claude_settings_inject "$repo" "$state"
+assert_success "canonical failure remains unique"
+jq -e --argjson failure "$failure_hook" --argjson batch "$batch_hook" '
+  .hooks.PostToolUseFailure == [$failure] and .hooks.PostToolBatch == [$batch]
+' "$settings" >/dev/null 2>&1 || test_fail "canonical failure was duplicated"
+jq -e '.entries == [{path:"hooks/PostToolBatch",value:.entries[0].value,abandoned:false}]' \
+  "$state/settings-ownership.json" >/dev/null 2>&1 \
+  || test_fail "canonical failure was incorrectly recorded as owned"
 
 setup_repo invalid-schema
 settings="$repo/.claude/settings.local.json"
@@ -105,6 +169,14 @@ assert_failure_reason "invalid settings schema rejected" "invalid Claude setting
 cmp -s "$settings" "$TEST_TMP/invalid-before" || test_fail "invalid settings was modified"
 [ ! -e "$state/settings-ownership.json" ] || test_fail "invalid settings created ownership"
 [ ! -e "$repo/.claude/settings.local.json.ark-loop-tmp" ] || test_fail "invalid settings created tmp"
+
+setup_repo invalid-failure-schema
+settings="$repo/.claude/settings.local.json"
+printf '{"hooks":{"PostToolUseFailure":{}}}\n' >"$settings"; chmod 600 "$settings"
+cp "$settings" "$TEST_TMP/invalid-failure-before"
+run_case claude_settings_inject "$repo" "$state"
+assert_failure_reason "invalid failure hook schema rejected" "invalid Claude settings schema"
+cmp -s "$settings" "$TEST_TMP/invalid-failure-before" || test_fail "invalid failure settings was modified"
 
 setup_repo no-jq
 settings="$repo/.claude/settings.local.json"
@@ -135,14 +207,17 @@ printf '{}\n' >"$settings"; chmod 600 "$settings"
 run_case claude_settings_inject "$repo" "$state"
 assert_success "changed-owner fixture injected"
 content=$(cat "$settings")
-content=${content/post-tool-batch.sh/changed-by-user.sh}
+content=${content/post-tool-use-failure.sh/changed-by-user.sh}
 printf '%s\n' "$content" >"$settings"; chmod 600 "$settings"
 run_case claude_settings_restore "$repo" "$state"
 assert_success "changed owner entry does not block restore"
-jq -e '.hooks.PostToolBatch[0].hooks[0].command | endswith("changed-by-user.sh")' "$settings" >/dev/null 2>&1 \
+jq -e '.hooks.PostToolUseFailure[0].hooks[0].command | endswith("changed-by-user.sh")' "$settings" >/dev/null 2>&1 \
   || test_fail "changed owner hook was removed"
-jq -e 'any(.entries[]; .path == "hooks/PostToolBatch" and .abandoned == true)' "$state/settings-ownership.json" >/dev/null 2>&1 \
+jq -e 'any(.entries[]; .path == "hooks/PostToolUseFailure" and .abandoned == true)
+  and all(.entries[]; select(.path != "hooks/PostToolUseFailure") | .abandoned == false)' "$state/settings-ownership.json" >/dev/null 2>&1 \
   || test_fail "changed owner hook was not abandoned"
+jq -e '(.hooks.PostToolBatch // []) | length == 0' "$settings" >/dev/null 2>&1 \
+  || test_fail "unchanged batch hook was not restored"
 
 assert_preflight_rejects() {
   description=$1

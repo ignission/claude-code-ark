@@ -7,7 +7,11 @@ for test_script in \
   test-runtime.sh \
   test-config.sh \
   test-task-template.sh \
+  test-portable-commands.sh \
   test-recite-todo.sh \
+  test-capture-error.sh \
+  test-summarize-errors.sh \
+  test-claude-code-post-tool-use-failure.sh \
   test-claude-code-post-tool-batch.sh \
   test-claude-code-settings.sh \
   test-session-lifecycle.sh \
