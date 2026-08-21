@@ -106,6 +106,37 @@ run_case append_with_lock "$session" "$knowledge" issue-336 "$sid"
 assert_success "second inbox append succeeds"
 assert_eq "second append is deduplicated" "$inbox_once" "$(cksum "$inbox")"
 
+publish_failure_knowledge="$TEST_TMP/publish-failure-knowledge"
+publish_failure_bin="$TEST_TMP/publish-failure-bin"
+mkdir -m 700 "$publish_failure_knowledge" "$publish_failure_bin"
+printf '%s\n' '# Existing inbox' 'preserve every byte 日本語' \
+  >"$publish_failure_knowledge/failures-inbox.md"
+chmod 600 "$publish_failure_knowledge/failures-inbox.md"
+cp "$publish_failure_knowledge/failures-inbox.md" "$TEST_TMP/publish-failure-before"
+printf '%s\n' '#!/bin/sh' \
+  'cp "$1" "$ARK_TEST_FAILED_REPLACEMENT" || exit 2' \
+  'exit 1' >"$publish_failure_bin/mv"
+chmod 700 "$publish_failure_bin/mv"
+append_with_failing_publish() {
+  ARK_TEST_FAILED_REPLACEMENT="$TEST_TMP/publish-failure-replacement"
+  export ARK_TEST_FAILED_REPLACEMENT
+  PATH="$publish_failure_bin:$PATH" \
+    append_with_lock "$session" "$publish_failure_knowledge" issue-336 "$sid"
+}
+run_case append_with_failing_publish
+assert_eq "inbox publish failure is reported" 1 "$CASE_STATUS"
+[ -f "$TEST_TMP/publish-failure-replacement" ] \
+  || test_fail "inbox publish failure did not reach atomic replacement"
+assert_eq "failed replacement held two complete candidates" 2 \
+  "$(grep -Fc -- "- Session ID: $sid" "$TEST_TMP/publish-failure-replacement")"
+cmp -s "$TEST_TMP/publish-failure-before" "$publish_failure_knowledge/failures-inbox.md" \
+  || test_fail "inbox publish failure changed existing bytes"
+assert_eq "inbox publish failure preserves mode" 600 \
+  "$(loop_stat "$publish_failure_knowledge/failures-inbox.md" | awk '{print $2}')"
+publish_failure_temps=$(find "$publish_failure_knowledge" -maxdepth 1 \
+  -type f -name '.failures-inbox.*' | wc -l | tr -d ' ')
+assert_eq "inbox publish failure cleans replacement" 0 "$publish_failure_temps"
+
 parallel_root=$(mktemp -d "$TEST_TMP/parallel.XXXXXX")
 parallel_root=$(cd "$parallel_root" && pwd -P)
 parallel_knowledge="$parallel_root/knowledge"

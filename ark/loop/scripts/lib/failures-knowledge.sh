@@ -27,8 +27,8 @@ loop_failures_inbox_append() {
   local knowledge=${2:-}
   local work_id=${3:-}
   local session_id=${4:-}
-  local canonical errors summary inbox lock parsed block line tool error_type count first last evidence
-  local extra separator hash_input marker hash parsed_count empty_seen lock_pid lock_token old_umask create_status
+  local canonical errors summary inbox lock parsed replacement line tool error_type count first last evidence
+  local extra separator hash_input marker hash marker_count parsed_count empty_seen appended_count lock_pid lock_token
 
   case "$session_id" in ''|*[!0-9a-f]*) return 1 ;; esac
   [ "${#session_id}" -eq 32 ] || return 1
@@ -123,29 +123,33 @@ loop_failures_inbox_append() {
     loop_validate_xdg_file "$inbox" || { command rm -f "$parsed" 2>/dev/null || :; return 1; }
     iconv -f UTF-8 -t UTF-8 "$inbox" >/dev/null 2>&1 \
       || { command rm -f "$parsed" 2>/dev/null || :; return 1; }
-  else
-    old_umask=$(umask)
-    umask 077
-    (set -C; : >"$inbox") 2>/dev/null
-    create_status=$?
-    umask "$old_umask"
-    [ "$create_status" -eq 0 ] || { command rm -f "$parsed" 2>/dev/null || :; return 1; }
-    chmod 600 "$inbox" || { command rm -f "$parsed" 2>/dev/null || :; return 1; }
-    loop_validate_xdg_file "$inbox" || { command rm -f "$parsed" 2>/dev/null || :; return 1; }
+  fi
+
+  # The caller-held lock checked above covers this same-directory replacement.
+  replacement=$(loop_failures_private_file "$knowledge") \
+    || { command rm -f "$parsed" 2>/dev/null || :; return 1; }
+  if [ -e "$inbox" ]; then
+    command cat "$inbox" >"$replacement" \
+      || { command rm -f "$replacement" "$parsed" 2>/dev/null || :; return 1; }
   fi
 
   separator=$(printf '\037')
+  appended_count=0
   while IFS=$(printf '\t') read -r tool error_type count first last extra || [ -n "$tool$error_type$count$first$last${extra:-}" ]; do
     [ -n "$tool" ] && [ -n "$error_type" ] && [ -n "$count" ] && [ -n "$first" ] && [ -n "$last" ] \
-      && [ -z "${extra:-}" ] || { command rm -f "$parsed" 2>/dev/null || :; return 1; }
+      && [ -z "${extra:-}" ] || { command rm -f "$replacement" "$parsed" 2>/dev/null || :; return 1; }
     hash_input="$session_id$separator$tool$separator$error_type$separator$first$separator$last"
-    hash=$(loop_sha256 "$hash_input") || { command rm -f "$parsed" 2>/dev/null || :; return 1; }
-    case "$hash" in *[!0-9a-f]*) command rm -f "$parsed" 2>/dev/null || :; return 1 ;; esac
-    [ "${#hash}" -eq 64 ] || { command rm -f "$parsed" 2>/dev/null || :; return 1; }
+    hash=$(loop_sha256 "$hash_input") \
+      || { command rm -f "$replacement" "$parsed" 2>/dev/null || :; return 1; }
+    case "$hash" in *[!0-9a-f]*) command rm -f "$replacement" "$parsed" 2>/dev/null || :; return 1 ;; esac
+    [ "${#hash}" -eq 64 ] \
+      || { command rm -f "$replacement" "$parsed" 2>/dev/null || :; return 1; }
     marker="<!-- ark-loop-candidate:$hash -->"
-    if grep -F -x "$marker" "$inbox" >/dev/null 2>&1; then continue; fi
-    block=$(loop_failures_private_file "$errors") \
-      || { command rm -f "$parsed" 2>/dev/null || :; return 1; }
+    if grep -F -x "$marker" "$replacement" >/dev/null 2>&1; then continue; fi
+    if [ -s "$replacement" ]; then
+      printf '\n' >>"$replacement" \
+        || { command rm -f "$replacement" "$parsed" 2>/dev/null || :; return 1; }
+    fi
     {
       printf '%s\n' "$marker"
       printf '%s\n' "### Candidate: $tool / $error_type"
@@ -155,15 +159,27 @@ loop_failures_inbox_append() {
       printf '%s\n' "- Evidence: errors/raw.log:L$first-L$last"
       printf '%s\n' "- WORK_ID: $work_id"
       printf '%s\n' "- Session ID: $session_id"
-    } >"$block" || { command rm -f "$block" "$parsed" 2>/dev/null || :; return 1; }
-    chmod 600 "$block" || { command rm -f "$block" "$parsed" 2>/dev/null || :; return 1; }
-    loop_validate_xdg_file "$block" || { command rm -f "$block" "$parsed" 2>/dev/null || :; return 1; }
-    if [ -s "$inbox" ]; then printf '\n' >>"$inbox" || { command rm -f "$block" "$parsed" 2>/dev/null || :; return 1; }; fi
-    command cat "$block" >>"$inbox" \
-      || { command rm -f "$block" "$parsed" 2>/dev/null || :; return 1; }
-    command rm -f "$block" 2>/dev/null || :
+    } >>"$replacement" \
+      || { command rm -f "$replacement" "$parsed" 2>/dev/null || :; return 1; }
+    marker_count=$(grep -F -x -c "$marker" "$replacement") \
+      || { command rm -f "$replacement" "$parsed" 2>/dev/null || :; return 1; }
+    [ "$marker_count" -eq 1 ] \
+      || { command rm -f "$replacement" "$parsed" 2>/dev/null || :; return 1; }
+    appended_count=$((appended_count + 1))
   done <"$parsed"
   command rm -f "$parsed" 2>/dev/null || :
-  iconv -f UTF-8 -t UTF-8 "$inbox" >/dev/null 2>&1 || return 1
+
+  if [ "$appended_count" -eq 0 ]; then
+    command rm -f "$replacement" 2>/dev/null || :
+    iconv -f UTF-8 -t UTF-8 "$inbox" >/dev/null 2>&1 || return 1
+    loop_validate_xdg_file "$inbox"
+    return $?
+  fi
+  loop_validate_xdg_file "$replacement" \
+    || { command rm -f "$replacement" 2>/dev/null || :; return 1; }
+  iconv -f UTF-8 -t UTF-8 "$replacement" >/dev/null 2>&1 \
+    || { command rm -f "$replacement" 2>/dev/null || :; return 1; }
+  command mv "$replacement" "$inbox" \
+    || { command rm -f "$replacement" 2>/dev/null || :; return 1; }
   loop_validate_xdg_file "$inbox"
 }
