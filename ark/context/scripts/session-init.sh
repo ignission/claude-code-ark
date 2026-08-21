@@ -224,7 +224,8 @@ else
   ctx_task_render "$@" >/dev/null 2>&1 || init_failed "task initialization failed"
 fi
 ctx_knowledge_initialize "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" >/dev/null 2>&1 || init_failed "knowledge initialization failed"
-claude_settings_inject "$repo" "$CTX_REPO_STATE_DIR" >/dev/null 2>&1 || init_failed "settings injection failed"
+claude_settings_inject "$repo" "$CTX_REPO_STATE_DIR" "$ARK_SOURCE_ROOT" >/dev/null 2>&1 \
+  || init_failed "settings injection failed"
 release_lock
 
 printf 'enabled\t1\n'
