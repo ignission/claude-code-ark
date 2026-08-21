@@ -24,10 +24,8 @@ ctx_failures_private_file() {
 
 ctx_session_failures_inbox_initialize() {
   local session=${1:-}
-  local canonical inbox old_umask create_status
+  local inbox old_umask create_status
   ctx_validate_xdg_dir "$session" || return 1
-  canonical=$(cd "$session" 2>/dev/null && pwd -P) || return 1
-  [ "$canonical" = "$session" ] || return 1
   inbox="$session/failures-inbox.md"
   if [ -e "$inbox" ] || [ -L "$inbox" ]; then
     ctx_validate_xdg_file "$inbox"
@@ -213,7 +211,7 @@ ctx_session_failures_inbox_append() {
   local knowledge=${2:-}
   local work_id=${3:-}
   local session_id=${4:-}
-  local canonical source source_size confirmed_size content inbox lock lock_pid lock_token
+  local source source_size confirmed_size content inbox lock lock_pid lock_token
   local separator hash marker replacement marker_count
 
   case "$session_id" in ''|*[!0-9a-f]*) return 1 ;; esac
@@ -227,8 +225,6 @@ ctx_session_failures_inbox_append() {
   esac
 
   ctx_validate_xdg_dir "$session" || return 1
-  canonical=$(cd "$session" 2>/dev/null && pwd -P) || return 1
-  [ "$canonical" = "$session" ] || return 1
   source="$session/failures-inbox.md"
   [ -e "$source" ] || [ -L "$source" ] || return 0
   # A model-written candidate is optional. Unsafe, invalid, or oversized input is
@@ -245,8 +241,6 @@ ctx_session_failures_inbox_append() {
   ctx_failures_value_safe "$content" || return 0
 
   ctx_validate_xdg_dir "$knowledge" || return 1
-  canonical=$(cd "$knowledge" 2>/dev/null && pwd -P) || return 1
-  [ "$canonical" = "$knowledge" ] || return 1
   lock="$knowledge/failures-inbox.lock"
   [ -d "$lock" ] && [ ! -L "$lock" ] || return 1
   ctx_validate_repo_path "$lock" directory required || return 1

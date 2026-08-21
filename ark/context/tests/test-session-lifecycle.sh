@@ -732,6 +732,36 @@ assert_success "Ark source target teardown succeeds"
 cmp -s "$settings" "$TEST_TMP/source-repo-original" \
   || test_fail "Ark source target teardown did not byte-restore settings"
 
+symlink_data_real="$TEST_TMP/symlink-data-real"
+symlink_data_home="$TEST_TMP/symlink-data-home"
+mkdir -m 700 "$symlink_data_real"
+ln -s "$symlink_data_real" "$symlink_data_home"
+XDG_DATA_HOME=$symlink_data_home
+export XDG_DATA_HOME
+setup_repo symlink-data-repo
+symlink_data_sid=16161616161616161616161616161616
+run_case run_init "$symlink_data_sid"
+assert_success "symlink data home init succeeds"
+assert_eq "symlink data home init is enabled" $'enabled\t1' "$(sed -n '1p' "$CASE_STDOUT")"
+symlink_session_dir=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
+assert_eq "symlink data home preserves logical session path" \
+  "$symlink_data_home/ark/context/sessions/$symlink_data_sid" "$symlink_session_dir"
+symlink_session_inbox="$symlink_session_dir/failures-inbox.md"
+[ -f "$symlink_session_inbox" ] || test_fail "symlink data home init did not create session inbox"
+assert_eq "symlink data home session inbox mode" 600 \
+  "$(ctx_stat "$symlink_session_inbox" | awk '{print $2}')"
+printf '%s\n' '## Symlink data recovery' '- Absorb this session candidate through teardown.' \
+  >"$symlink_session_inbox"
+chmod 600 "$symlink_session_inbox"
+run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$symlink_data_sid"
+assert_success "symlink data home teardown succeeds"
+symlink_host_inbox="$symlink_data_home/ark/context/knowledge/failures-inbox.md"
+[ -f "$symlink_host_inbox" ] || test_fail "symlink data home teardown did not create host inbox"
+assert_eq "symlink data home teardown absorbs session inbox" 1 \
+  "$(grep -Fxc -- '- Absorb this session candidate through teardown.' "$symlink_host_inbox")"
+assert_eq "symlink data home teardown records one session candidate" 1 \
+  "$(grep -Ec '^<!-- ark-context-session-candidate:[0-9a-f]{64} -->$' "$symlink_host_inbox")"
+
 if grep -F '.gitignore' "$INIT" "$TEARDOWN" >/dev/null 2>&1; then test_fail "lifecycle script references .gitignore writes"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
 
 finish_tests session-lifecycle
