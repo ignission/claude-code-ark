@@ -252,6 +252,7 @@ describe("SessionOrchestrator - プロファイル切替", () => {
         ARK_RECITE_INTERVAL: "10",
         ARK_KNOWLEDGE_DIR: "/context/knowledge",
         ARK_REPO_KEY: "repo-key",
+        CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
       });
 
       await orchestrator.startSession("wt-1", "/path/to/work", "/repo");
@@ -265,6 +266,7 @@ describe("SessionOrchestrator - プロファイル切替", () => {
           ARK_RECITE_INTERVAL: "10",
           ARK_KNOWLEDGE_DIR: "/context/knowledge",
           ARK_REPO_KEY: "repo-key",
+          CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
         },
       });
     });
@@ -475,6 +477,7 @@ describe("SessionOrchestrator - プロファイル切替", () => {
         ARK_CACHE_DIR: "/context/new-cache",
         ARK_RECITE_INTERVAL: "10",
         ARK_KNOWLEDGE_DIR: "/context/knowledge",
+        CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
       });
       mockedTmux.createSession.mockResolvedValue(
         makeTmuxSession({ id: "sess-id-2", tmuxSessionName: "ark-sess2" })
@@ -508,7 +511,10 @@ describe("SessionOrchestrator - プロファイル切替", () => {
       expect(mockedTmux.createSession).toHaveBeenCalledWith(
         "/path/to/work",
         expect.objectContaining({
-          env: expect.objectContaining({ ARK_SESSION_ID: newContextId }),
+          env: expect.objectContaining({
+            ARK_SESSION_ID: newContextId,
+            CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+          }),
         })
       );
     });

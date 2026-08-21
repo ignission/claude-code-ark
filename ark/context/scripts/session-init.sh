@@ -240,4 +240,5 @@ printf 'ARK_CACHE_DIR\t%s\n' "$ARK_CACHE_DIR"
 printf 'ARK_RECITE_INTERVAL\t%s\n' "$interval"
 printf 'ARK_KNOWLEDGE_DIR\t%s\n' "$ARK_KNOWLEDGE_DIR"
 printf 'ARK_REPO_KEY\t%s\n' "$ARK_REPO_KEY"
+printf 'CLAUDE_CODE_DISABLE_AUTO_MEMORY\t1\n'
 exit 0

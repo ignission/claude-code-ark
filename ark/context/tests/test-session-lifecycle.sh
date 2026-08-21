@@ -253,9 +253,11 @@ sid=11111111111111111111111111111111
 run_case run_init "$sid"
 assert_success "session init succeeds"
 assert_eq "init enabled line" $'enabled\t1' "$(sed -n '1p' "$CASE_STDOUT")"
-assert_eq "init output line count" 7 "$(wc -l <"$CASE_STDOUT" | tr -d ' ')"
-assert_eq "init environment order" 'ARK_SESSION_ID ARK_SESSION_DIR ARK_CACHE_DIR ARK_RECITE_INTERVAL ARK_KNOWLEDGE_DIR ARK_REPO_KEY' \
-  "$(sed -n '2,7p' "$CASE_STDOUT" | cut -f1 | tr '\n' ' ' | sed 's/ $//')"
+assert_eq "init output line count" 8 "$(wc -l <"$CASE_STDOUT" | tr -d ' ')"
+assert_eq "init environment order" 'ARK_SESSION_ID ARK_SESSION_DIR ARK_CACHE_DIR ARK_RECITE_INTERVAL ARK_KNOWLEDGE_DIR ARK_REPO_KEY CLAUDE_CODE_DISABLE_AUTO_MEMORY' \
+  "$(sed -n '2,8p' "$CASE_STDOUT" | cut -f1 | tr '\n' ' ' | sed 's/ $//')"
+assert_eq "initial session disables native auto memory" '1' \
+  "$(awk -F '\t' '$1=="CLAUDE_CODE_DISABLE_AUTO_MEMORY"{print $2}' "$CASE_STDOUT")"
 session_dir=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
 cache_dir=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
 [ -f "$session_dir/task.md" ] || test_fail "init did not create task.md"
@@ -437,6 +439,8 @@ run_case /bin/bash "$INIT" --repo "$repo" --owner-pid "$$" --session-id "$new_si
   --goal 'Restart lifecycle goal' --constraint 'Preserve raw' --plan-item 'Resume safely'
 assert_success "restart destination init succeeds"
 assert_eq "restart destination enabled" $'enabled\t1' "$(sed -n '1p' "$CASE_STDOUT")"
+assert_eq "restart session disables native auto memory" '1' \
+  "$(awk -F '\t' '$1=="CLAUDE_CODE_DISABLE_AUTO_MEMORY"{print $2}' "$CASE_STDOUT")"
 new_session=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
 new_cache=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
 [ "$new_session" != "$old_session" ] || test_fail "restart reused old session directory"
