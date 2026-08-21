@@ -7,6 +7,7 @@ for test_script in \
   test-runtime.sh \
   test-config.sh \
   test-task-template.sh \
+  test-review-template.sh \
   test-portable-commands.sh \
   test-stop-gate.sh \
   test-handoff.sh \
@@ -16,6 +17,7 @@ for test_script in \
   test-summarize-errors.sh \
   test-claude-code-post-tool-use-failure.sh \
   test-claude-code-post-tool-batch.sh \
+  test-claude-code-session-start.sh \
   test-claude-code-settings.sh \
   test-session-lifecycle.sh \
   test-claude-code-fixtures.sh; do

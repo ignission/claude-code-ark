@@ -93,7 +93,14 @@ assert_eq "init environment order" 'ARK_SESSION_ID ARK_SESSION_DIR ARK_CACHE_DIR
 session_dir=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
 cache_dir=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
 [ -f "$session_dir/task.md" ] || test_fail "init did not create task.md"
+[ -f "$session_dir/artifacts/index.md" ] || test_fail "init did not create artifacts/index.md"
+assert_eq "artifact index mode" 600 "$(ctx_stat "$session_dir/artifacts/index.md" | awk '{print $2}')"
+assert_eq "artifact index starts empty" 0 "$(wc -c <"$session_dir/artifacts/index.md" | tr -d ' ')"
+grep -Fx "Context rules: $ROOT/ark/context/templates/context-rules.md" "$session_dir/task.md" >/dev/null 2>&1 \
+  || test_fail "task does not reference context rules by absolute path"
 jq -e '.permissions.deny == ["TodoWrite","TaskCreate","TaskUpdate"]' "$settings" >/dev/null 2>&1 || test_fail "init did not inject deny"
+jq -e '(.hooks.SessionStart | length) == 1' "$settings" >/dev/null 2>&1 \
+  || test_fail "init did not inject SessionStart"
 repo_key=$(ctx_sha256 "$repo")
 state="$XDG_DATA_HOME/ark/context/repos/$repo_key"
 assert_eq "owner marker mode" 600 "$(ctx_stat "$state/owner" | awk '{print $2}')"
@@ -109,11 +116,24 @@ empty_session_dir=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT"
 grep -F '← NOW' "$empty_session_dir/task.md" >/dev/null 2>&1
 assert_eq "empty task has no NOW marker" 1 "$?"
 assert_eq "empty Goal body" '' "$(sed -n '/^## Goal$/,/^## Constraints$/p' "$empty_session_dir/task.md" | sed '1d;$d' | tr -d '\n')"
-assert_eq "empty Constraints body" 'Previous failure summary: なし（通常起動）' \
+assert_eq "empty Constraints body" "Context rules: $ROOT/ark/context/templates/context-rules.md
+Previous failure summary: なし（通常起動）" \
   "$(sed -n '/^## Constraints$/,/^## Plan$/p' "$empty_session_dir/task.md" | sed '1d;$d' | sed '/^$/d')"
 assert_eq "empty Plan body" '' "$(sed -n '/^## Plan$/,/^## Artifacts$/p' "$empty_session_dir/task.md" | sed '1d;$d' | tr -d '\n')"
 run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$empty_sid"
 assert_success "empty task teardown succeeds"
+
+review_sid=13131313131313131313131313131313
+run_case /bin/bash "$INIT" --repo "$repo" --owner-pid "$$" --session-id "$review_sid" \
+  --review --goal 'Review lifecycle' --constraint 'Keep every perspective'
+assert_success "review session init succeeds"
+review_session_dir=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
+assert_eq "review session has six checklist items" 6 \
+  "$(grep -c '^- \[ \] ' "$review_session_dir/task.md")"
+assert_eq "review session has exactly one NOW" 1 \
+  "$(grep -Fc ' ← NOW' "$review_session_dir/task.md")"
+run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$review_sid"
+assert_success "review session teardown succeeds"
 
 run_case run_init "$sid"
 assert_success "populated task can initialize after empty scaffold case"
@@ -254,7 +274,8 @@ command rm -f "$repo/.claude/settings.local.json"
 run_case run_init "$sid"
 assert_success "same session repairs manifest without settings"
 assert_eq "repaired same session remains enabled" $'enabled\t1' "$(sed -n '1p' "$CASE_STDOUT")"
-jq -e '.hooks.PostToolBatch | length == 1' "$repo/.claude/settings.local.json" >/dev/null 2>&1 \
+jq -e '(.hooks.PostToolBatch | length) == 1 and (.hooks.SessionStart | length) == 1' \
+  "$repo/.claude/settings.local.json" >/dev/null 2>&1 \
   || test_fail "same session reported enabled without repairing settings"
 run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$sid"
 assert_success "missing settings teardown succeeds"

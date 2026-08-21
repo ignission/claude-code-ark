@@ -8,11 +8,14 @@ trap 'rm -rf "$TEST_TMP"' EXIT HUP INT TERM
 . "$ROOT/ark/context/tests/test-helper.sh"
 . "$ROOT/ark/context/scripts/lib/runtime.sh"
 . "$ROOT/ark/context/scripts/lib/task-template.sh"
+ARK_SOURCE_ROOT=$ROOT
+context_rules="$ROOT/ark/context/templates/context-rules.md"
 
 template=$(cat "$ROOT/ark/context/templates/task.md.tmpl")
 last=0
 for token in '# Task' '## Goal' '{{GOAL}}' '## Constraints' '{{CONSTRAINTS}}' \
-  'Previous failure summary: {{PREV_FAILURE_SUMMARY}}' '## Plan' '{{PLAN_ITEMS}}' '## Artifacts'; do
+  'Context rules: {{CONTEXT_RULES}}' 'Previous failure summary: {{PREV_FAILURE_SUMMARY}}' \
+  '## Plan' '{{PLAN_ITEMS}}' '## Artifacts'; do
   line=$(printf '%s\n' "$template" | grep -nF "$token" | head -1 | cut -d: -f1)
   if [ -z "$line" ] || [ "$line" -le "$last" ]; then test_fail "template token order: $token"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
   last=${line:-$last}
@@ -32,6 +35,8 @@ expected='# Task
 - 壊さない
 - 速くする
 
+Context rules: CONTEXT_RULES_PATH
+
 Previous failure summary: なし（通常起動）
 
 ## Plan
@@ -40,6 +45,7 @@ Previous failure summary: なし（通常起動）
 
 ## Artifacts
 - (なし)'
+expected=${expected/CONTEXT_RULES_PATH/$context_rules}
 assert_eq "rendered task bytes" "$expected" "$(cat "$session/task.md")"
 assert_eq "task mode" 600 "$(ctx_stat "$session/task.md" | awk '{print $2}')"
 
@@ -59,12 +65,15 @@ empty_expected='# Task
 
 ## Constraints
 
+Context rules: CONTEXT_RULES_PATH
+
 Previous failure summary: なし（通常起動）
 
 ## Plan
 
 ## Artifacts
 - (なし)'
+empty_expected=${empty_expected/CONTEXT_RULES_PATH/$context_rules}
 assert_eq "empty task scaffold bytes" "$empty_expected" "$(cat "$empty_session/task.md")"
 empty_cache="$TEST_TMP/empty-cache"
 mkdir -m 700 "$empty_cache"
@@ -72,6 +81,18 @@ run_case env ARK_SESSION_DIR="$empty_session" ARK_CACHE_DIR="$empty_cache" \
   ARK_RECITE_INTERVAL=1 /bin/bash "$ROOT/ark/context/hooks/recite-todo.sh"
 assert_success "empty task recitation succeeds"
 assert_eq "empty task recitation stays silent" 0 "$(wc -c <"$CASE_STDOUT" | tr -d ' ')"
+
+artifact_session="$TEST_TMP/artifact-session"
+mkdir -m 700 "$artifact_session" "$artifact_session/artifacts"
+run_case ctx_artifacts_index_initialize "$artifact_session"
+assert_success "artifact index initialized"
+assert_eq "artifact index starts empty" 0 "$(wc -c <"$artifact_session/artifacts/index.md" | tr -d ' ')"
+assert_eq "artifact index mode" 600 "$(ctx_stat "$artifact_session/artifacts/index.md" | awk '{print $2}')"
+printf '%s\n' '- artifacts/evidence.md — 1行要約' >>"$artifact_session/artifacts/index.md"
+run_case ctx_artifacts_index_initialize "$artifact_session"
+assert_success "artifact index initialization is idempotent"
+assert_eq "artifact index keeps append format" '- artifacts/evidence.md — 1行要約' \
+  "$(cat "$artifact_session/artifacts/index.md")"
 
 for bad in 'line
 break' '{{GOAL}}'; do

@@ -2,6 +2,7 @@
 
 CLAUDE_CTX_BATCH_HOOK_JSON='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/context/adapters/claude-code/post-tool-batch.sh"}]}'
 CLAUDE_CTX_FAILURE_HOOK_JSON='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/context/adapters/claude-code/post-tool-use-failure.sh"}]}'
+CLAUDE_CTX_SESSION_START_HOOK_JSON='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/context/adapters/claude-code/session-start.sh"}]}'
 
 claude_settings_error() {
   printf '%s\n' "$*" >&2
@@ -18,7 +19,8 @@ claude_settings_validate_schema() {
     ((has("hooks") | not) or
       (.hooks | type == "object" and
         ((has("PostToolBatch") | not) or (.PostToolBatch | type == "array")) and
-        ((has("PostToolUseFailure") | not) or (.PostToolUseFailure | type == "array"))))
+        ((has("PostToolUseFailure") | not) or (.PostToolUseFailure | type == "array")) and
+        ((has("SessionStart") | not) or (.SessionStart | type == "array"))))
   ' "$1" >/dev/null 2>&1 || { claude_settings_error "invalid Claude settings schema"; return 1; }
 }
 
@@ -238,6 +240,8 @@ claude_settings_manifest_matches() {
             (($settings.hooks.PostToolBatch // []) | index($entry.value) != null)
           elif $entry.path == "hooks/PostToolUseFailure" then
             (($settings.hooks.PostToolUseFailure // []) | index($entry.value) != null)
+          elif $entry.path == "hooks/SessionStart" then
+            (($settings.hooks.SessionStart // []) | index($entry.value) != null)
           else
             false
           end)
@@ -248,7 +252,7 @@ claude_settings_manifest_matches() {
 claude_settings_inject() {
   local repo=${1:-}
   local state=${2:-}
-  local settings tmp manifest manifest_new settings_existed mode root range permissions_start deny_start hooks_start batch_start failure_start tool
+  local settings tmp manifest manifest_new settings_existed mode root range permissions_start deny_start hooks_start batch_start failure_start session_start_start tool
   command -v jq >/dev/null 2>&1 || { claude_settings_error "jq command unavailable"; return 1; }
   settings="$repo/.claude/settings.local.json"
   tmp="$repo/.claude/settings.local.json.ark-context-tmp"
@@ -303,9 +307,10 @@ claude_settings_inject() {
   fi
 
   if ! printf '%s' "$CLAUDE_CONTENT" | jq -e 'has("hooks")' >/dev/null; then
-    claude_content_add_to_container "$root" "\"hooks\"                   :{\"PostToolBatch\":[${CLAUDE_CTX_BATCH_HOOK_JSON}],\"PostToolUseFailure\":[${CLAUDE_CTX_FAILURE_HOOK_JSON}]}" || return 1
+    claude_content_add_to_container "$root" "\"hooks\"                   :{\"PostToolBatch\":[${CLAUDE_CTX_BATCH_HOOK_JSON}],\"PostToolUseFailure\":[${CLAUDE_CTX_FAILURE_HOOK_JSON}],\"SessionStart\":[${CLAUDE_CTX_SESSION_START_HOOK_JSON}]}" || return 1
     claude_manifest_add_json hooks/PostToolBatch "$CLAUDE_CTX_BATCH_HOOK_JSON" || return 1
     claude_manifest_add_json hooks/PostToolUseFailure "$CLAUDE_CTX_FAILURE_HOOK_JSON" || return 1
+    claude_manifest_add_json hooks/SessionStart "$CLAUDE_CTX_SESSION_START_HOOK_JSON" || return 1
   else
     range=$(claude_content_property "$root" hooks) || return 1
     set -- $range; hooks_start=$3
@@ -326,6 +331,15 @@ claude_settings_inject() {
       set -- $range; failure_start=$3
       claude_content_add_to_container "$failure_start" "$CLAUDE_CTX_FAILURE_HOOK_JSON" || return 1
       claude_manifest_add_json hooks/PostToolUseFailure "$CLAUDE_CTX_FAILURE_HOOK_JSON" || return 1
+    fi
+    if ! printf '%s' "$CLAUDE_CONTENT" | jq -e '.hooks | has("SessionStart")' >/dev/null; then
+      claude_content_add_to_container "$hooks_start" "\"SessionStart\"                 :[${CLAUDE_CTX_SESSION_START_HOOK_JSON}]" || return 1
+      claude_manifest_add_json hooks/SessionStart "$CLAUDE_CTX_SESSION_START_HOOK_JSON" || return 1
+    elif ! printf '%s' "$CLAUDE_CONTENT" | jq -e --argjson hook "$CLAUDE_CTX_SESSION_START_HOOK_JSON" '.hooks.SessionStart | index($hook) != null' >/dev/null; then
+      range=$(claude_content_property "$hooks_start" SessionStart) || return 1
+      set -- $range; session_start_start=$3
+      claude_content_add_to_container "$session_start_start" "$CLAUDE_CTX_SESSION_START_HOOK_JSON" || return 1
+      claude_manifest_add_json hooks/SessionStart "$CLAUDE_CTX_SESSION_START_HOOK_JSON" || return 1
     fi
   fi
 
@@ -352,8 +366,8 @@ claude_settings_inject() {
 claude_settings_restore() {
   local repo=${1:-}
   local state=${2:-}
-  local settings tmp manifest settings_existed mode entries entry path value index range root permissions_start deny_start hooks_start batch_start failure_start item_range
-  local abandoned=false batch_abandoned=false failure_abandoned=false property_between deny_length batch_length failure_length hooks_items_length LC_ALL=C
+  local settings tmp manifest settings_existed mode entries entry path value index range root permissions_start deny_start hooks_start batch_start failure_start session_start_start item_range
+  local abandoned=false batch_abandoned=false failure_abandoned=false session_start_abandoned=false property_between deny_length batch_length failure_length session_start_length hooks_items_length LC_ALL=C
   command -v jq >/dev/null 2>&1 || { claude_settings_error "jq command unavailable"; return 1; }
   settings="$repo/.claude/settings.local.json"
   tmp="$repo/.claude/settings.local.json.ark-context-tmp"
@@ -410,6 +424,19 @@ claude_settings_restore() {
         item_range=$(printf '%s' "$CLAUDE_CONTENT" | claude_json_array_item_range "$failure_start" "$index"); set -- $item_range
         claude_content_remove_value "$1" "$2" "$failure_start" || return 1
         ;;
+      hooks/SessionStart)
+        value=$(printf '%s' "$entry" | jq -c '.value') || return 1
+        index=$(printf '%s' "$CLAUDE_CONTENT" | jq -r --argjson value "$value" '.hooks.SessionStart // [] | index($value) // -1')
+        if [ "$index" -lt 0 ]; then
+          session_start_length=$(printf '%s' "$CLAUDE_CONTENT" | jq -r '.hooks.SessionStart // [] | length')
+          if [ "$session_start_length" -ne 0 ]; then abandoned=true; session_start_abandoned=true; fi
+          continue
+        fi
+        range=$(claude_content_property "$root" hooks); set -- $range; hooks_start=$3
+        range=$(claude_content_property "$hooks_start" SessionStart); set -- $range; session_start_start=$3
+        item_range=$(printf '%s' "$CLAUDE_CONTENT" | claude_json_array_item_range "$session_start_start" "$index"); set -- $item_range
+        claude_content_remove_value "$1" "$2" "$session_start_start" || return 1
+        ;;
     esac
   done <<EOF
 $entries
@@ -458,6 +485,17 @@ EOF
           [ "$property_between" != '                 :' ] || claude_content_remove_value "$1" "$4" "$hooks_start"
         fi
       fi
+      root=$(printf '%s' "$CLAUDE_CONTENT" | LC_ALL=C awk '{if(NR>1)s=s"\n";s=s$0}END{for(i=1;i<=length(s);i++)if(substr(s,i,1)=="{"){print i;exit}}')
+      range=$(claude_content_property "$root" hooks || true)
+      if [ -n "$range" ]; then
+        set -- $range; hooks_start=$3
+        session_start_length=$(printf '%s' "$CLAUDE_CONTENT" | jq -r '.hooks.SessionStart // [] | length')
+        range=$(claude_content_property "$hooks_start" SessionStart || true)
+        if [ -n "$range" ] && [ "$session_start_length" -eq 0 ]; then
+          set -- $range; property_between=${CLAUDE_CONTENT:$2:$(( $3 - $2 - 1 ))}
+          [ "$property_between" != '                 :' ] || claude_content_remove_value "$1" "$4" "$hooks_start"
+        fi
+      fi
     fi
   fi
 
@@ -472,9 +510,11 @@ EOF
     command mv "$tmp" "$settings" || return 1
   fi
   if [ "$abandoned" = true ]; then
-    jq --argjson batch "$batch_abandoned" --argjson failure "$failure_abandoned" '
+    jq --argjson batch "$batch_abandoned" --argjson failure "$failure_abandoned" \
+      --argjson session_start "$session_start_abandoned" '
       if $batch then (.entries[] | select(.path == "hooks/PostToolBatch")).abandoned = true else . end
       | if $failure then (.entries[] | select(.path == "hooks/PostToolUseFailure")).abandoned = true else . end
+      | if $session_start then (.entries[] | select(.path == "hooks/SessionStart")).abandoned = true else . end
     ' "$manifest" >"$manifest.new" || return 1
     chmod 600 "$manifest.new" || return 1
     command mv "$manifest.new" "$manifest" || return 1

@@ -4,6 +4,22 @@ Ark Context の session data は XDG data home 配下に保存する。session d
 `errors/` は mode `0700`、`raw.log` と `summary.md` は mode `0600` で、実行 uid が
 所有する non-symlink の regular path だけを受理する。
 
+session init は mode `0600` の空の `artifacts/index.md` も作る。artifact の目次行は
+`- artifacts/<path> — <1行要約>` とし、handoff はこの形式だけを取り込む。
+
+## SessionStart の task 規約
+
+Claude Code adapter は `SessionStart` に agent 非依存の
+`hooks/inject-context-rules.sh` を接続し、10則、`task.md` の絶対 path、artifact 目次の
+形式を `additionalContext` として渡す。Goal が空なら最初のユーザー要求から Goal と
+Plan を起票する指示を、埋まっていれば現在の Goal / NOW を添える。`task.md` 自体には
+規約本文を展開せず、`templates/context-rules.md` の絶対 path だけを1行で置くため、
+recitation の `## Goal` / `## Plan` parse 境界は増えない。
+
+レビュー session は `session-init.sh --review` で作る。通常の任意 Plan の代わりに固定の
+6観点を checkbox として持ち、session ID の SHA-256 を seed に提示順だけを変える。
+同じ session ID では順序が安定し、観点集合は変化しない。
+
 `errors/raw.log` は追記専用 JSONL である。1 entry の上限は 1 MiB、session 全体の
 上限は 64 MiB とし、上限を超える新 entry だけを記録しない。既存 raw を truncate、
 rotate、rewrite しない。capture、summary、restart は raw/summary の削除 API を
@@ -77,4 +93,3 @@ fixture でしか動いていなかった）、移行処理は意図的に実装
   同じ候補が再追加される
 - 旧 `$XDG_DATA_HOME/ark/loop/` と `$XDG_CONFIG_HOME/ark/loop/` は
   参照されなくなるので、不要なら手動で削除する
-
