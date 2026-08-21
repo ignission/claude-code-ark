@@ -195,6 +195,16 @@ setup_repo missing-settings
 sid=33333333333333333333333333333333
 run_case run_init "$sid"
 assert_success "missing settings init succeeds"
+[ -f "$repo/.claude/settings.local.json" ] || test_fail "missing settings init did not create settings"
+repo_key=$(ctx_sha256 "$repo")
+state="$XDG_DATA_HOME/ark/context/repos/$repo_key"
+[ -f "$state/settings-ownership.json" ] || test_fail "missing settings init did not create manifest"
+command rm -f "$repo/.claude/settings.local.json"
+run_case run_init "$sid"
+assert_success "same session repairs manifest without settings"
+assert_eq "repaired same session remains enabled" $'enabled\t1' "$(sed -n '1p' "$CASE_STDOUT")"
+jq -e '.hooks.PostToolBatch | length == 1' "$repo/.claude/settings.local.json" >/dev/null 2>&1 \
+  || test_fail "same session reported enabled without repairing settings"
 run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$sid"
 assert_success "missing settings teardown succeeds"
 [ ! -e "$repo/.claude/settings.local.json" ] || test_fail "teardown retained originally missing settings"

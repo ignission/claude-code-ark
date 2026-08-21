@@ -55,8 +55,10 @@ assert_eq "settings mode preserved" "$original_mode" "$(ctx_stat "$settings" | a
 
 cp "$settings" "$TEST_TMP/injected"
 cp "$manifest" "$TEST_TMP/manifest"
+chmod 555 "$repo/.claude"
 run_case claude_settings_inject "$repo" "$state"
 assert_success "second injection succeeds"
+chmod 755 "$repo/.claude"
 cmp -s "$settings" "$TEST_TMP/injected" || test_fail "second injection changed settings"
 cmp -s "$manifest" "$TEST_TMP/manifest" || test_fail "second injection changed ownership"
 
@@ -200,6 +202,54 @@ run_case claude_settings_restore "$repo" "$state"
 assert_success "manifest-before-settings interruption converges"
 cmp -s "$settings" "$TEST_TMP/interrupted-original" || test_fail "interrupted restore changed original"
 [ ! -e "$state/settings-ownership.json" ] || test_fail "interrupted ownership remained"
+
+setup_repo interrupted-missing-settings
+settings="$repo/.claude/settings.local.json"
+run_case claude_settings_inject "$repo" "$state"
+assert_success "missing-settings interruption fixture injected"
+[ -f "$state/settings-ownership.json" ] || test_fail "missing-settings interruption fixture lacks manifest"
+command rm -f "$settings"
+run_case claude_settings_inject "$repo" "$state"
+assert_success "manifest without settings is reinjected"
+jq -e --argjson batch "$batch_hook" --argjson failure "$failure_hook" '
+  .permissions.deny == ["TodoWrite","TaskCreate","TaskUpdate"]
+  and .hooks.PostToolBatch == [$batch]
+  and .hooks.PostToolUseFailure == [$failure]
+' "$settings" >/dev/null 2>&1 || test_fail "manifest without settings did not regenerate managed entries"
+jq -e '.settings_existed == false and (.entries | length) == 5 and all(.entries[]; .abandoned == false)' \
+  "$state/settings-ownership.json" >/dev/null 2>&1 \
+  || test_fail "regenerated missing settings recorded incorrect ownership"
+run_case claude_settings_restore "$repo" "$state"
+assert_success "regenerated missing settings restored"
+[ ! -e "$settings" ] || test_fail "teardown retained regenerated originally missing settings"
+
+setup_repo interrupted-partial-settings
+settings="$repo/.claude/settings.local.json"
+printf '{"user-before":true}\n' >"$settings"; chmod 600 "$settings"
+run_case claude_settings_inject "$repo" "$state"
+assert_success "partial-settings interruption fixture injected"
+jq 'del(.hooks.PostToolBatch) | .["user-during"] = {"kept":true}' "$settings" >"$settings.changed"
+command mv "$settings.changed" "$settings"; chmod 600 "$settings"
+run_case claude_settings_inject "$repo" "$state"
+assert_success "settings missing a managed entry is reinjected"
+jq -e --argjson batch "$batch_hook" --argjson failure "$failure_hook" '
+  .["user-before"] == true
+  and .["user-during"] == {"kept":true}
+  and .permissions.deny == ["TodoWrite","TaskCreate","TaskUpdate"]
+  and .hooks.PostToolBatch == [$batch]
+  and .hooks.PostToolUseFailure == [$failure]
+' "$settings" >/dev/null 2>&1 \
+  || test_fail "partial settings reinjection lost non-Ark entries or managed entries"
+jq -e '.settings_existed == true and (.entries | length) == 5 and all(.entries[]; .abandoned == false)' \
+  "$state/settings-ownership.json" >/dev/null 2>&1 \
+  || test_fail "partial settings reinjection recorded incorrect ownership"
+run_case claude_settings_restore "$repo" "$state"
+assert_success "reinjected partial settings restored"
+jq -e '.["user-before"] == true and .["user-during"] == {"kept":true}
+  and ((.permissions.deny // []) | length) == 0
+  and ((.hooks.PostToolBatch // []) | length) == 0
+  and ((.hooks.PostToolUseFailure // []) | length) == 0' "$settings" >/dev/null 2>&1 \
+  || test_fail "partial settings teardown lost non-Ark entries or retained Ark entries"
 
 setup_repo changed-owner
 settings="$repo/.claude/settings.local.json"
