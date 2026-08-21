@@ -30,7 +30,7 @@ adapter_main() {
   [ ! -L "$ADAPTER_NORMALIZED" ] && [ -f "$ADAPTER_NORMALIZED" ] || return 1
   chmod 600 "$ADAPTER_INPUT" "$ADAPTER_NORMALIZED" || return 1
 
-  dd bs=1048577 count=1 of="$ADAPTER_INPUT" 2>/dev/null || return 1
+  head -c 1048577 >"$ADAPTER_INPUT" 2>/dev/null || return 1
   input_size=$(wc -c <"$ADAPTER_INPUT" | tr -d ' ') || return 1
   case "$input_size" in ''|*[!0-9]*) return 1 ;; esac
   [ "$input_size" -le 1048576 ] || return 1

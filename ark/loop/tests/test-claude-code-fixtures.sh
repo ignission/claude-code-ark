@@ -21,6 +21,8 @@ assert_fixture() {
   # Claude Code 2.1.215 の実ダンプでは tool_calls が実 field。production は参照しない。
   count=$(jq -r 'if (.tool_calls | type) == "array" then (.tool_calls | length) else -1 end' "$file" 2>/dev/null)
   [ "$count" -ge "$minimum" ] 2>/dev/null || fail "$name has fewer than $minimum batch entries"
+  jq -e '(.transcript_path | type) == "string" and (.transcript_path | startswith("<workspace>/"))' \
+    "$file" >/dev/null 2>&1 || fail "$name transcript path is not anonymized"
 }
 
 assert_fixture post-tool-batch-single-2.1.215.json 1
@@ -36,7 +38,7 @@ if [ -n "$failure_provenance" ] && [ -f "$failure_provenance" ]; then
   [ -n "$failure_version" ] || fail "failure provenance misses claude_version"
   [ "$(basename "$failure_provenance")" = "post-tool-use-failure-provenance-$failure_version.txt" ] \
     || fail "failure provenance suffix does not match claude_version"
-  grep -E '^binary=/.*@anthropic-ai\+claude-code-[^/]+@[^/]+/node_modules/@anthropic-ai/claude-code-[^/]+/claude$' "$failure_provenance" >/dev/null 2>&1 \
+  grep -E '^binary=<workspace>/node_modules/\.pnpm/@anthropic-ai\+claude-code-[^/]+@[^/]+/node_modules/@anthropic-ai/claude-code-[^/]+/claude$' "$failure_provenance" >/dev/null 2>&1 \
     || fail "failure provenance misses the resolved platform package binary path"
   grep -E '^package=@anthropic-ai/claude-code-(darwin|linux)-' "$failure_provenance" >/dev/null 2>&1 \
     || fail "failure provenance misses the platform package"
@@ -143,6 +145,10 @@ if [ -n "$failure_version" ]; then
     "$FIXTURES/post-tool-use-failure-validation-rejection-$failure_version.txt" >/dev/null 2>&1 \
     || fail "validation rejection reached the MCP server"
   # Unknown tools, PermissionDenied 等の推測 event は補完しない。学習対象化は独立 Issue。
+fi
+
+if grep -R -E '/(home|Users)/[^/]+' "$FIXTURES" >/dev/null 2>&1; then
+  fail "Claude Code fixtures contain an absolute local home path"
 fi
 
 catalog="$FIXTURES/tool-catalog-2.1.215.txt"

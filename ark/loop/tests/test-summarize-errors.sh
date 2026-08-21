@@ -44,6 +44,15 @@ case "${FAKE_CURL_MODE:-nonzero}" in
   success)
     printf '%s\n' '{"content":[{"type":"text","text":"{\"items\":[{\"prohibited_action\":\"repeat failed command\",\"reason\":\"same failure\",\"reference\":\"errors/raw.log:L1-L6\"}]}"}]}'
     ;;
+  large_success)
+    printf '%s' '{"padding":"'
+    dd if=/dev/zero bs=1000 count=300 2>/dev/null | tr '\000' x
+    printf '%s\n' '","content":[{"type":"text","text":"{\"items\":[{\"prohibited_action\":\"repeat failed command\",\"reason\":\"same failure\",\"reference\":\"errors/raw.log:L1-L6\"}]}"}]}'
+    ;;
+  oversize_success)
+    printf '%s\n' '{"content":[{"type":"text","text":"{\"items\":[{\"prohibited_action\":\"repeat failed command\",\"reason\":\"same failure\",\"reference\":\"errors/raw.log:L1-L6\"}]}"}]}'
+    dd if=/dev/zero bs=1048577 count=1 2>/dev/null | tr '\000' ' '
+    ;;
   timeout) exit 28 ;;
   nonzero) exit 7 ;;
   http_error) printf '%s\n' '{"type":"error"}'; exit 22 ;;
@@ -202,7 +211,7 @@ assert_eq "model empty curl calls" 0 "$(wc -l <"$curl_log" | tr -d ' ')"
 
 no_curl_bin="$TEST_TMP/no-curl-bin"
 mkdir -m 700 "$no_curl_bin"
-for required_command in dirname stat id rm chmod jq grep sort awk iconv mv tr sed wc; do
+for required_command in dirname stat id rm chmod jq grep sort awk iconv mv tr sed wc head; do
   command_path=$(command -v "$required_command")
   ln -s "$command_path" "$no_curl_bin/$required_command"
 done
@@ -266,6 +275,24 @@ grep -nE 'L1 secret bash|L2 secret read|tool_input|transcript_path|fixture-secre
 assert_eq "LLM request excludes raw details and key" 1 "$?"
 grep -nE 'fixture-secret-key|^## ' "$success_session/errors/summary.md" "$CASE_STDOUT" "$CASE_STDERR" >/dev/null 2>&1
 assert_eq "LLM output excludes key and headings" 1 "$?"
+
+large_response_session=$(new_session llm-large-response)
+write_raw "$large_response_session"
+large_response_config="$large_response_session/config.toml"
+write_summary_config "$large_response_config" true fixture-model
+: >"$curl_log"
+run_case env PATH="$fakebin:$PATH" ARK_SESSION_DIR="$large_response_session" LOOP_CONFIG_FILE="$large_response_config" \
+  ANTHROPIC_API_KEY=fixture-secret-key FAKE_CURL_MODE=large_success /bin/bash "$SUMMARIZE"
+assert_success "300KB piped LLM response succeeds"
+TESTS=$((TESTS + 1))
+if cmp -s "$TEST_TMP/llm-expected" "$large_response_session/errors/summary.md"; then
+  PASSES=$((PASSES + 1))
+else
+  test_fail "300KB piped LLM response was not read completely"
+fi
+
+run_fallback_case oversize-response true fixture-model fixture-secret-key oversize_success "$fakebin:$PATH"
+assert_eq "oversize LLM response calls curl once" 1 "$(wc -l <"$curl_log" | tr -d ' ')"
 
 invalid_session=$(new_session invalid)
 write_raw "$invalid_session"

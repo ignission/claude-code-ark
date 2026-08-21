@@ -1,4 +1,4 @@
-binary=/home/admin/dev/github.com/ignission/ark-feature-issue-335-loop-error-capture/node_modules/.pnpm/@anthropic-ai+claude-code-linux-arm64@2.1.237/node_modules/@anthropic-ai/claude-code-linux-arm64/claude
+binary=<workspace>/node_modules/.pnpm/@anthropic-ai+claude-code-linux-arm64@2.1.237/node_modules/@anthropic-ai/claude-code-linux-arm64/claude
 package=@anthropic-ai/claude-code-linux-arm64
 platform=linux
 arch=arm64

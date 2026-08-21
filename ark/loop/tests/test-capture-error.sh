@@ -38,6 +38,13 @@ run_capture() {
   run_case env PATH="$fakebin:$PATH" ARK_SESSION_DIR="$target_session" /bin/bash "$CAPTURE" <"$input"
 }
 
+run_capture_pipe() {
+  input=$1
+  target_session=$2
+  run_case env PATH="$fakebin:$PATH" ARK_SESSION_DIR="$target_session" \
+    /bin/bash -c 'cat "$1" | /bin/bash "$2"' capture-pipe "$input" "$CAPTURE"
+}
+
 assert_quiet_success() {
   label=$1
   assert_eq "$label exits zero" 0 "$CASE_STATUS"
@@ -56,6 +63,18 @@ assert_eq "raw mode" 600 "$(mode_of "$session/errors/raw.log")"
 assert_eq "one physical line" 1 "$(wc -l <"$session/errors/raw.log" | tr -d ' ')"
 jq -e 'keys_unsorted == ["at","tool","error_type","exit_code","is_interrupt","error","details"] and (.details|keys_unsorted)==["a_object","m_number","z_array"]' "$session/errors/raw.log" >/dev/null 2>&1
 assert_eq "fixed key order" 0 "$?"
+
+pipe_payload="$TEST_TMP/pipe-300kb.json"
+pipe_error="$TEST_TMP/pipe-300kb.error"
+dd if=/dev/zero bs=1000 count=300 2>/dev/null | tr '\000' x >"$pipe_error"
+jq -n --rawfile error "$pipe_error" \
+  '{tool:"Bash",error_type:"tool_error",exit_code:null,is_interrupt:false,error:$error,details:{}}' \
+  >"$pipe_payload"
+pipe_session=$(new_session pipe-300kb)
+run_capture_pipe "$pipe_payload" "$pipe_session"
+assert_quiet_success "300KB piped capture"
+jq -e '(.error | utf8bytelength) == 300000' "$pipe_session/errors/raw.log" >/dev/null 2>&1
+assert_eq "300KB piped capture preserves the complete error" 0 "$?"
 
 for fixture_name in capture-process-start-failure.json capture-interrupt.json; do
   run_capture "$FIXTURES/$fixture_name" "$session"
@@ -176,6 +195,64 @@ assert_eq "parallel stderr empty" 0 "$(wc -c "$TEST_TMP"/parallel-*.err | tail -
 assert_eq "parallel entry count" 20 "$(wc -l <"$parallel_session/errors/raw.log" | tr -d ' ')"
 jq -e -s 'length == 20 and ([.[].error] | unique | length) == 20' "$parallel_session/errors/raw.log" >/dev/null 2>&1
 assert_eq "parallel JSON complete and unique" 0 "$?"
+
+race_session=$(new_session lock-recovery-race)
+race_lock="$race_session/errors/.raw.lock"
+race_owner="$race_lock/owner"
+mkdir -m 700 "$race_lock"
+printf '%s\n' '99999999 stale-token' >"$race_owner"
+chmod 600 "$race_owner"
+race_bin="$TEST_TMP/race-bin"
+mkdir -m 700 "$race_bin"
+race_sed=$(command -v sed)
+race_observed="$TEST_TMP/race-observed"
+race_replaced="$TEST_TMP/race-replaced"
+cat >"$race_bin/sed" <<'EOF'
+#!/usr/bin/env bash
+if [ "$#" -eq 3 ] && [ "$1" = -n ] && [ "$2" = 1p ] && [ "$3" = "$RACE_LOCK_OWNER" ] \
+  && [ ! -e "$RACE_OBSERVED" ]; then
+  observed=$($RACE_REAL_SED "$@") || exit 1
+  : >"$RACE_OBSERVED"
+  attempt=0
+  while [ ! -e "$RACE_REPLACED" ] && [ "$attempt" -lt 1000000 ]; do
+    attempt=$((attempt + 1))
+  done
+  [ -e "$RACE_REPLACED" ] || exit 1
+  printf '%s\n' "$observed"
+  exit 0
+fi
+exec "$RACE_REAL_SED" "$@"
+EOF
+chmod 700 "$race_bin/sed"
+race_out="$TEST_TMP/race.out"
+race_err="$TEST_TMP/race.err"
+env PATH="$race_bin:$fakebin:$PATH" ARK_SESSION_DIR="$race_session" \
+  RACE_LOCK_OWNER="$race_owner" RACE_OBSERVED="$race_observed" \
+  RACE_REPLACED="$race_replaced" RACE_REAL_SED="$race_sed" \
+  /bin/bash "$CAPTURE" <"$FIXTURES/capture-interrupt.json" >"$race_out" 2>"$race_err" &
+race_capture_pid=$!
+race_wait=0
+while [ ! -e "$race_observed" ] && [ "$race_wait" -lt 1000000 ]; do
+  race_wait=$((race_wait + 1))
+done
+race_observed_result=no
+if [ -e "$race_observed" ]; then
+  race_observed_result=yes
+  command rm -f "$race_owner"
+  rmdir "$race_lock"
+  mkdir -m 700 "$race_lock"
+  printf '%s %s\n' "$$" live-token >"$race_owner"
+  chmod 600 "$race_owner"
+fi
+: >"$race_replaced"
+wait "$race_capture_pid"
+race_status=$?
+assert_eq "dead-lock recovery race reached owner observation" yes "$race_observed_result"
+assert_eq "dead-lock recovery race exits zero" 0 "$race_status"
+assert_eq "replacement live lock directory survives recovery" yes "$(if [ -d "$race_lock" ]; then printf yes; else printf no; fi)"
+assert_eq "replacement live lock owner survives recovery" "$$ live-token" "$(sed -n '1p' "$race_owner" 2>/dev/null)"
+assert_eq "dead-lock recovery race stdout empty" 0 "$(wc -c <"$race_out" | tr -d ' ')"
+assert_eq "dead-lock recovery race stderr empty" 0 "$(wc -c <"$race_err" | tr -d ' ')"
 
 assert_eq "errors directory mode remains 700" 700 "$(mode_of "$parallel_session/errors")"
 assert_eq "raw mode remains 600" 600 "$(mode_of "$parallel_session/errors/raw.log")"

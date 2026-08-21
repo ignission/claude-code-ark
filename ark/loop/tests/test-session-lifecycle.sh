@@ -210,8 +210,12 @@ assert_success "independent repo B teardown"
 
 failure_wrapper="$ROOT/ark/loop/adapters/claude-code/post-tool-use-failure.sh"
 batch_wrapper="$ROOT/ark/loop/adapters/claude-code/post-tool-batch.sh"
-failure_version=$(sed -n 's/^claude_version=\([0-9][0-9.]*\) .*/\1/p' \
-  "$ROOT"/ark/loop/adapters/claude-code/tests/fixtures/post-tool-use-failure-provenance-*.txt)
+failure_provenance_matches=$(find "$ROOT/ark/loop/adapters/claude-code/tests/fixtures" \
+  -type f -name 'post-tool-use-failure-provenance-*.txt' | LC_ALL=C sort)
+failure_provenance_count=$(printf '%s\n' "$failure_provenance_matches" | grep -c .)
+assert_eq "exactly one failure provenance fixture" 1 "$failure_provenance_count"
+failure_provenance=$(printf '%s\n' "$failure_provenance_matches" | sed -n '1p')
+failure_version=$(sed -n 's/^claude_version=\([0-9][0-9.]*\) .*/\1/p' "$failure_provenance")
 failure_fixture="$ROOT/ark/loop/adapters/claude-code/tests/fixtures/post-tool-use-failure-bash-exit-7-$failure_version.json"
 batch_fixture="$ROOT/ark/loop/adapters/claude-code/tests/fixtures/post-tool-batch-single-2.1.215.json"
 failure_fixture_hash=$(cksum "$failure_fixture")
@@ -295,7 +299,7 @@ assert_failure_wrapper_quiet() {
 
 no_jq_bin="$TEST_TMP/no-jq-bin"
 mkdir -m 700 "$no_jq_bin"
-for required_command in dirname mktemp dd wc tr rm chmod stat id date iconv mkdir sed cat rmdir; do
+for required_command in dirname mktemp head wc tr rm chmod stat id date iconv mkdir sed cat rmdir; do
   command_path=$(command -v "$required_command")
   ln -s "$command_path" "$no_jq_bin/$required_command"
 done

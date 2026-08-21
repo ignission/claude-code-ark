@@ -148,6 +148,8 @@ sanitize_text() {
   sed -e "s|$tmp|<fixture-tmp>|g" -e "s|$ROOT|<workspace>|g" -e "s|${HOME:-/nonexistent}|<home>|g"
 }
 
+sanitized_binary=$(printf '%s\n' "$binary" | sanitize_text)
+
 run_claude() {
   case_name=$1
   prompt=$2
@@ -260,7 +262,7 @@ if [ "$MODE" = negative ] || [ "$MODE" = all ]; then
   permission_fixture="$FIXTURES/post-tool-use-failure-permission-deny-$version.txt"
   {
     printf 'claude_version=%s\n' "$version_output"
-    printf 'binary=%s\n' "$binary"
+    printf 'binary=%s\n' "$sanitized_binary"
     printf 'package=%s\n' "$package_name"
     printf 'platform=%s\n' "$platform"
     printf 'arch=%s\n' "$arch"
@@ -278,7 +280,7 @@ if [ "$MODE" = negative ] || [ "$MODE" = all ]; then
   validation_fixture="$FIXTURES/post-tool-use-failure-validation-rejection-$version.txt"
   {
     printf 'claude_version=%s\n' "$version_output"
-    printf 'binary=%s\n' "$binary"
+    printf 'binary=%s\n' "$sanitized_binary"
     printf 'package=%s\n' "$package_name"
     printf 'platform=%s\n' "$platform"
     printf 'arch=%s\n' "$arch"
@@ -298,7 +300,7 @@ fi
 
 provenance="$FIXTURES/post-tool-use-failure-provenance-$version.txt"
 {
-  printf 'binary=%s\n' "$binary"
+  printf 'binary=%s\n' "$sanitized_binary"
   printf 'package=%s\n' "$package_name"
   printf 'platform=%s\n' "$platform"
   printf 'arch=%s\n' "$arch"

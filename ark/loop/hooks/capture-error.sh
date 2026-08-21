@@ -84,7 +84,7 @@ capture_cleanup() {
 }
 
 capture_try_recover_dead_lock() {
-  local owner_value owner_pid owner_token owner_extra
+  local owner_value owner_pid owner_token owner_extra confirmed_owner
   capture_safe_dir "$CAPTURE_LOCK" || return 1
   capture_safe_file "$CAPTURE_LOCK_OWNER" || return 1
   owner_value=$(sed -n '1p' "$CAPTURE_LOCK_OWNER" 2>/dev/null) || return 1
@@ -95,6 +95,9 @@ EOF
   case "$owner_pid" in ''|*[!0-9]*) return 1 ;; esac
   case "$owner_token" in *[!0-9-]*|'') return 1 ;; esac
   kill -0 "$owner_pid" >/dev/null 2>&1 && return 1
+  capture_safe_file "$CAPTURE_LOCK_OWNER" || return 1
+  confirmed_owner=$(sed -n '1p' "$CAPTURE_LOCK_OWNER" 2>/dev/null) || return 1
+  [ "$confirmed_owner" = "$owner_value" ] || return 1
   command rm -f "$CAPTURE_LOCK_OWNER" >/dev/null 2>&1 || return 1
   rmdir "$CAPTURE_LOCK" >/dev/null 2>&1
 }
@@ -124,7 +127,7 @@ capture_main() {
   done
   [ -n "$CAPTURE_INPUT" ] || return 1
   chmod 600 "$CAPTURE_INPUT" || return 1
-  dd bs=1048577 count=1 of="$CAPTURE_INPUT" 2>/dev/null || return 1
+  head -c 1048577 >"$CAPTURE_INPUT" 2>/dev/null || return 1
   input_size=$(capture_file_size "$CAPTURE_INPUT") || return 1
   [ "$input_size" -le 1048576 ] || return 1
   command -v iconv >/dev/null 2>&1 || return 1

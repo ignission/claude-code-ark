@@ -28,6 +28,12 @@ run_wrapper() {
   run_case env PATH="$fakebin:$PATH" ARK_SESSION_DIR="$session" /bin/bash "$WRAPPER" <"$input"
 }
 
+run_wrapper_pipe() {
+  input=$1
+  run_case env PATH="$fakebin:$PATH" ARK_SESSION_DIR="$session" \
+    /bin/bash -c 'cat "$1" | /bin/bash "$2"' wrapper-pipe "$input" "$WRAPPER"
+}
+
 assert_quiet_success() {
   label=$1
   assert_eq "$label exits zero" 0 "$CASE_STATUS"
@@ -106,15 +112,27 @@ run_wrapper "$oversize"
 assert_quiet_success "oversize adapter input"
 assert_eq "oversize adapter input preserves raw" "$before" "$(cksum "$session/errors/raw.log")"
 
+pipe_error="$TEST_TMP/pipe-300kb.error"
+pipe_input="$TEST_TMP/pipe-300kb.json"
+dd if=/dev/zero bs=1000 count=300 2>/dev/null | tr '\000' x >"$pipe_error"
+jq --rawfile error "$pipe_error" '.error=$error' \
+  "$FIXTURES/post-tool-use-failure-bash-exit-7-$version.json" >"$pipe_input"
+run_wrapper_pipe "$pipe_input"
+assert_quiet_success "300KB piped adapter input"
+jq -e -s 'any(.[]; (.error | utf8bytelength) == 300000)' "$session/errors/raw.log" >/dev/null 2>&1
+assert_eq "300KB piped adapter input preserves the complete error" 0 "$?"
+
 marker="$TEST_TMP/must-not-exist"
 command_data="$TEST_TMP/command-data.json"
-jq --arg command "touch $marker" --arg error "\$(touch $marker); \\`touch $marker\\`" \
+command_error='$(touch '"$marker"'); `touch '"$marker"'`'
+jq --arg command "touch $marker" --arg error "$command_error" \
   '.tool_input={command:$command} | .error=$error' \
   "$FIXTURES/post-tool-use-failure-bash-exit-7-$version.json" >"$command_data"
+assert_eq "command-shaped test data construction is not executed" no "$(if [ -e "$marker" ]; then printf yes; else printf no; fi)"
 run_wrapper "$command_data"
 assert_quiet_success "command-shaped data"
 assert_eq "command-shaped data is not executed" no "$(if [ -e "$marker" ]; then printf yes; else printf no; fi)"
-jq -e -s --arg command "touch $marker" --arg error "\$(touch $marker); \\`touch $marker\\`" \
+jq -e -s --arg command "touch $marker" --arg error "$command_error" \
   'any(.[]; .details.tool_input.command == $command and .error == $error)' "$session/errors/raw.log" >/dev/null 2>&1
 assert_eq "command-shaped data remains data" 0 "$?"
 

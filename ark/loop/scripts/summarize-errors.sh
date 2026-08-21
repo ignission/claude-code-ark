@@ -108,7 +108,7 @@ summary_try_llm() {
     -H 'anthropic-version: 2023-06-01' \
     -H 'content-type: application/json' \
     --data-binary "@$SUMMARY_REQUEST" 2>/dev/null \
-    | dd bs=1048577 count=1 of="$SUMMARY_RESPONSE" 2>/dev/null
+    | head -c 1048577 >"$SUMMARY_RESPONSE" 2>/dev/null
   response_status=$?
   [ "$response_status" -eq 0 ] || return 0
   response_size=$(summary_file_size "$SUMMARY_RESPONSE") || return 0
