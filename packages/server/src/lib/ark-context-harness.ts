@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -111,6 +111,17 @@ export class ArkContextHarness {
     this.logger = options.logger ?? console;
   }
 
+  private resolveWorktreePath(worktreePath: string): string | undefined {
+    try {
+      return realpathSync(worktreePath);
+    } catch (error) {
+      this.logger.warn(
+        `[ArkContext] context disabled for ${worktreePath}: worktree path resolution failed: ${getErrorMessage(error)}`
+      );
+      return undefined;
+    }
+  }
+
   async initializeSession(
     worktreePath: string,
     restartSessionId?: string
@@ -119,10 +130,13 @@ export class ArkContextHarness {
       return undefined;
     }
 
+    const resolvedWorktreePath = this.resolveWorktreePath(worktreePath);
+    if (!resolvedWorktreePath) return undefined;
+
     const args = [
       join(this.scriptDirectory, "session-init.sh"),
       "--repo",
-      worktreePath,
+      resolvedWorktreePath,
       "--owner-pid",
       String(this.ownerPid),
     ];
@@ -154,12 +168,15 @@ export class ArkContextHarness {
     worktreePath: string,
     contextSessionId: string
   ): Promise<void> {
+    const resolvedWorktreePath = this.resolveWorktreePath(worktreePath);
+    if (!resolvedWorktreePath) return;
+
     await execFileAsync(
       "/bin/bash",
       [
         join(this.scriptDirectory, "session-teardown.sh"),
         "--repo",
-        worktreePath,
+        resolvedWorktreePath,
         "--session-id",
         contextSessionId,
       ],

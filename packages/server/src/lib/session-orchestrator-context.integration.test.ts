@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -66,7 +67,11 @@ const savedXdg = {
 
 beforeAll(() => {
   testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ark-context-integration-"));
-  worktreePath = path.join(testRoot, "worktree");
+  const realRoot = path.join(testRoot, "real");
+  const linkedRoot = path.join(testRoot, "link");
+  fs.mkdirSync(realRoot, { mode: 0o700 });
+  fs.symlinkSync(realRoot, linkedRoot, "dir");
+  worktreePath = path.join(linkedRoot, "worktree");
   fs.mkdirSync(worktreePath, { mode: 0o700 });
   fs.mkdirSync(path.join(worktreePath, ".claude"), { mode: 0o755 });
   fs.writeFileSync(
@@ -106,7 +111,7 @@ afterAll(() => {
 });
 
 describe("SessionOrchestrator + real Ark context harness", () => {
-  it("session-init の env を tmux に渡し、空 task を生成して stop 後に teardown する", async () => {
+  it("symlink 経由でも context を有効化し、同じ repo state を teardown する", async () => {
     const tmuxSession = {
       id: "tmux-context-integration",
       tmuxSessionName: "ark-context-integration",
@@ -127,26 +132,43 @@ describe("SessionOrchestrator + real Ark context harness", () => {
     const createOptions = mockedTmux.createSession.mock.calls[0]?.[1];
     const contextEnv = createOptions?.env;
 
+    expect(fs.realpathSync(worktreePath)).not.toBe(worktreePath);
     expect(contextEnv?.ARK_SESSION_ID).toMatch(/^[0-9a-f]{32}$/);
     expect(contextEnv?.ARK_SESSION_DIR).toBeTruthy();
-    expect(contextEnv?.ARK_REPO_KEY).toMatch(/^[0-9a-f]{64}$/);
+    const expectedRepoKey = createHash("sha256")
+      .update(fs.realpathSync(worktreePath))
+      .digest("hex");
+    expect(contextEnv?.ARK_REPO_KEY).toBe(expectedRepoKey);
+    const repoStateDirectory = path.join(
+      process.env.XDG_DATA_HOME ?? "",
+      "ark",
+      "context",
+      "repos",
+      expectedRepoKey
+    );
+    const ownerPath = path.join(repoStateDirectory, "owner");
+    expect(fs.readFileSync(ownerPath, "utf8")).toContain(
+      contextEnv?.ARK_SESSION_ID
+    );
     const taskPath = path.join(contextEnv?.ARK_SESSION_DIR ?? "", "task.md");
     expect(fs.readFileSync(taskPath, "utf8")).toContain("## Goal\n\n");
     expect(fs.readFileSync(taskPath, "utf8")).not.toContain("← NOW");
+    const settingsPath = path.join(
+      worktreePath,
+      ".claude",
+      "settings.local.json"
+    );
+    expect(fs.existsSync(settingsPath)).toBe(true);
 
     mockedTmux.getEnv.mockImplementation((_sessionId, name) =>
       contextEnv?.[name] ? contextEnv[name] : null
     );
     orchestrator.stopSession(managed.id);
 
-    const settingsPath = path.join(
-      worktreePath,
-      ".claude",
-      "settings.local.json"
-    );
     await vi.waitFor(() => expect(fs.existsSync(settingsPath)).toBe(false), {
       timeout: 5_000,
       interval: 20,
     });
+    expect(fs.existsSync(ownerPath)).toBe(false);
   });
 });

@@ -33,6 +33,14 @@ function makeScriptDirectory(
   return directory;
 }
 
+function makeWorktreeDirectory(): string {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "ark-context-worktree-")
+  );
+  temporaryDirectories.push(directory);
+  return directory;
+}
+
 function enabledOutput(sessionId = "a".repeat(32)): string {
   return [
     "printf 'enabled\\t1\\n'",
@@ -83,11 +91,9 @@ describe("ArkContextHarness", () => {
       ownerPid: 4242,
       readSetting: () => true,
     });
+    const worktreePath = makeWorktreeDirectory();
 
-    const env = await harness.initializeSession(
-      "/worktree path",
-      "b".repeat(32)
-    );
+    const env = await harness.initializeSession(worktreePath, "b".repeat(32));
 
     expect(env).toEqual({
       ARK_SESSION_ID: "a".repeat(32),
@@ -99,7 +105,7 @@ describe("ArkContextHarness", () => {
     });
     expect(fs.readFileSync(argumentsFile, "utf8").trim().split("\n")).toEqual([
       "--repo",
-      "/worktree path",
+      fs.realpathSync(worktreePath),
       "--owner-pid",
       "4242",
       "--restart",
@@ -118,9 +124,10 @@ describe("ArkContextHarness", () => {
       readSetting: () => true,
       logger,
     });
+    const worktreePath = makeWorktreeDirectory();
 
     await expect(
-      harness.initializeSession("/worktree")
+      harness.initializeSession(worktreePath)
     ).resolves.toBeUndefined();
 
     expect(logger.warn).toHaveBeenCalledWith(
@@ -136,9 +143,10 @@ describe("ArkContextHarness", () => {
       readSetting: () => true,
       logger,
     });
+    const worktreePath = makeWorktreeDirectory();
 
     await expect(
-      harness.initializeSession("/worktree")
+      harness.initializeSession(worktreePath)
     ).resolves.toBeUndefined();
 
     expect(logger.error).toHaveBeenCalledWith(
@@ -155,9 +163,10 @@ describe("ArkContextHarness", () => {
       readSetting: () => true,
       logger,
     });
+    const worktreePath = makeWorktreeDirectory();
 
     await expect(
-      harness.initializeSession("/worktree")
+      harness.initializeSession(worktreePath)
     ).resolves.toBeUndefined();
 
     expect(logger.error).toHaveBeenCalledWith(
@@ -171,9 +180,36 @@ describe("ArkContextHarness", () => {
       scriptDirectory,
       readSetting: () => true,
     });
+    const worktreePath = makeWorktreeDirectory();
 
     await expect(
-      harness.teardownSession("/worktree", "a".repeat(32))
+      harness.teardownSession(worktreePath, "a".repeat(32))
     ).rejects.toThrow();
+  });
+
+  it("worktree の実体パスを解決できなければログして無効化する", async () => {
+    const scriptDirectory = makeScriptDirectory(enabledOutput());
+    const logger = { error: vi.fn(), warn: vi.fn() };
+    const harness = new ArkContextHarness({
+      scriptDirectory,
+      readSetting: () => true,
+      logger,
+    });
+    const missingWorktreePath = path.join(
+      makeWorktreeDirectory(),
+      "does-not-exist"
+    );
+
+    await expect(
+      harness.initializeSession(missingWorktreePath)
+    ).resolves.toBeUndefined();
+    await expect(
+      harness.teardownSession(missingWorktreePath, "a".repeat(32))
+    ).resolves.toBeUndefined();
+
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("worktree path resolution failed")
+    );
   });
 });
