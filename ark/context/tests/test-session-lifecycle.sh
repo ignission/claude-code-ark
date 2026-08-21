@@ -39,6 +39,32 @@ setup_repo() {
   git -C "$repo" commit -qm init
 }
 
+assert_init_disabled_reason() {
+  disabled_label=$1
+  expected_reason=$2
+  forbidden_value=${3:-}
+  assert_success "$disabled_label exits successfully"
+  assert_eq "$disabled_label disabled line" $'enabled\t0' "$(sed -n '1p' "$CASE_STDOUT")"
+  assert_eq "$disabled_label reason" "reason"$'\t'"$expected_reason" "$(sed -n '2p' "$CASE_STDOUT")"
+  assert_eq "$disabled_label TSV line count" 2 "$(wc -l <"$CASE_STDOUT" | tr -d ' ')"
+  if awk -F '\t' 'NF != 2 { exit 1 }' "$CASE_STDOUT"; then
+    TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1))
+  else
+    test_fail "$disabled_label broke the two-column TSV contract"
+  fi
+  if grep -F "$repo" "$CASE_STDOUT" "$CASE_STDERR" >/dev/null 2>&1; then
+    test_fail "$disabled_label leaked the absolute repo path"
+  else
+    TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1))
+  fi
+  if [ -n "$forbidden_value" ] \
+    && grep -F "$forbidden_value" "$CASE_STDOUT" "$CASE_STDERR" >/dev/null 2>&1; then
+    test_fail "$disabled_label leaked settings content"
+  else
+    TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1))
+  fi
+}
+
 run_init() {
   /bin/bash "$INIT" --repo "$repo" --owner-pid "$$" --session-id "$1" \
     --goal 'Lifecycle goal' --constraint 'Preserve bytes' --plan-item 'Run lifecycle'
@@ -131,6 +157,72 @@ cmp -s "$invalid_marker_state/owner" "$TEST_TMP/invalid-owner-marker-original" \
 assert_eq "invalid owner marker mode is preserved" "$invalid_marker_mode" \
   "$(ctx_stat "$invalid_marker_state/owner" | awk '{print $2}')"
 [ ! -e "$repo/.claude/settings.local.json" ] || test_fail "invalid owner marker changed settings"
+
+setup_repo disabled-mode
+chmod 775 "$repo/.claude"
+run_case run_init 01010101010101010101010101010101
+assert_init_disabled_reason "group-writable .claude" \
+  "unsafe repo path: .claude is group/other writable (mode 775)"
+
+setup_repo disabled-ignore
+printf '.claude/settings.local.json.ark-context-tmp\n' >"$repo/.gitignore"
+git -C "$repo" add .gitignore && git -C "$repo" commit -qm missing-settings-ignore
+run_case run_init 02020202020202020202020202020202
+assert_init_disabled_reason "missing gitignore entry" \
+  "gitignore entry missing: .claude/settings.local.json"
+
+setup_repo disabled-tracked
+printf '{}\n' >"$repo/.claude/settings.local.json"
+chmod 600 "$repo/.claude/settings.local.json"
+git -C "$repo" add -f .claude/settings.local.json && git -C "$repo" commit -qm tracked-settings
+run_case run_init 03030303030303030303030303030303
+assert_init_disabled_reason "tracked settings" "tracked file: .claude/settings.local.json"
+
+setup_repo disabled-schema
+settings_secret='private-settings-value-must-not-leak'
+printf '{"private":"%s"\n' "$settings_secret" >"$repo/.claude/settings.local.json"
+chmod 600 "$repo/.claude/settings.local.json"
+run_case run_init 04040404040404040404040404040404
+assert_init_disabled_reason "invalid settings JSON" \
+  "settings schema invalid: .claude/settings.local.json" "$settings_secret"
+
+setup_repo disabled-symlink
+symlink_secret='symlink-target-content-must-not-leak'
+printf '%s\n' "$symlink_secret" >"$repo/settings-source"
+ln -s ../settings-source "$repo/.claude/settings.local.json"
+run_case run_init 05050505050505050505050505050505
+assert_init_disabled_reason "settings symlink" \
+  "unsafe repo path: .claude/settings.local.json is a symlink" "$symlink_secret"
+
+setup_repo disabled-manifest
+fake_mv_bin="$TEST_TMP/manifest-write-failure-bin"
+mkdir -m 700 "$fake_mv_bin"
+real_mv=$(command -v mv)
+test_sh=$(command -v sh)
+printf '#!%s\n%s\n%s\n' "$test_sh" \
+  'case "$2" in */settings-ownership.json) exit 1 ;; esac' \
+  'exec "$ARK_TEST_REAL_MV" "$@"' >"$fake_mv_bin/mv"
+chmod 700 "$fake_mv_bin/mv"
+run_case env PATH="$fake_mv_bin:$PATH" ARK_TEST_REAL_MV="$real_mv" /bin/bash "$INIT" \
+  --repo "$repo" --owner-pid "$$" --session-id 06060606060606060606060606060606 \
+  --goal 'Lifecycle goal' --constraint 'Preserve bytes' --plan-item 'Run lifecycle'
+assert_init_disabled_reason "manifest publish failure" "manifest write failed"
+
+setup_repo disabled-orphan-schema
+/bin/sleep 60 & orphan_reason_owner=$!
+run_case /bin/bash "$INIT" --repo "$repo" --owner-pid "$orphan_reason_owner" \
+  --session-id 15151515151515151515151515151515 --goal 'Lifecycle goal' \
+  --constraint 'Preserve bytes' --plan-item 'Run lifecycle'
+assert_success "orphan reason source init succeeds"
+assert_eq "orphan reason source is enabled" $'enabled\t1' "$(sed -n '1p' "$CASE_STDOUT")"
+kill "$orphan_reason_owner"
+wait "$orphan_reason_owner" 2>/dev/null || true
+orphan_schema_secret='orphan-settings-value-must-not-leak'
+printf '{"private":"%s"\n' "$orphan_schema_secret" >"$repo/.claude/settings.local.json"
+chmod 600 "$repo/.claude/settings.local.json"
+run_case run_init 14141414141414141414141414141414
+assert_init_disabled_reason "orphan restore invalid settings JSON" \
+  "settings schema invalid: .claude/settings.local.json" "$orphan_schema_secret"
 
 setup_repo lifecycle
 settings="$repo/.claude/settings.local.json"

@@ -55,6 +55,13 @@ chmod 755 "$repo/.claude"
 run_case ctx_validate_repo_path "$repo/.claude" directory required
 assert_success "current-owner repo directory 0755 accepted"
 
+foreign_repo_owner_case() {
+  stat() { printf '99999 0755\n'; }
+  ctx_validate_repo_path "$repo/.claude" directory required .claude
+}
+run_case foreign_repo_owner_case
+assert_failure_reason "foreign repo owner reason is specific" "unsafe repo path: .claude owner mismatch"
+
 unsafe="$TEST_TMP/unsafe"
 mkdir -m 755 "$unsafe"
 run_case ctx_validate_xdg_dir "$unsafe"

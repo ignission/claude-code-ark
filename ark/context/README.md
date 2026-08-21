@@ -1,5 +1,20 @@
 # Ark Context runtime data
 
+## 有効化前に確認する repo の前提条件
+
+Ark Context を有効化する対象 repo は、事前に次の条件をすべて満たす必要がある。
+満たさない場合は settings を変更せず、その repo の context を無効化する。
+
+- `.claude` と、存在する場合の `.claude/settings.local.json` は、実行ユーザーが所有する
+  non-symlink の directory / regular file であり、group / other 書き込み可でないこと
+- versioned な `.gitignore` に `.claude/settings.local.json` と
+  `.claude/settings.local.json.ark-context-tmp` の完全一致行がそれぞれあること
+- `.claude/settings.local.json` と `.claude/settings.local.json.ark-context-tmp` が
+  Git に tracked されていないこと
+
+有効化前に mode、`.gitignore` の2行、`git ls-files` の結果を確認する。たとえば
+`.claude` が mode `775` の場合は group 書き込み可なので前提を満たさない。
+
 Ark Context の session data は XDG data home 配下に保存する。session directory とその
 `errors/` は mode `0700`、`raw.log` と `summary.md` は mode `0600` で、実行 uid が
 所有する non-symlink の regular path だけを受理する。
