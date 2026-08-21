@@ -90,30 +90,12 @@ PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`Spli
 ## Git・PRワークフロー
 
 - **実装完了後はユーザーに確認せず即pushすること**（「pushしますか？」と聞かない）
-- **PR作成時に `/pre-push-review` が必須**（`gh pr create` のhookがフラグファイルを確認し、なければBLOCKEDエラーでPR作成をブロックする。指摘対応後の再pushでは不要）
-- **`/pre-push-review`のフラグファイルを`touch`で手動作成してスキップしてはならない**
-- `/pre-push-review` の指摘は「スコープ外」として無視せず修正すること
-- push後のCI結果・CodeRabbitレビューはhookで自動取得 → 指摘があればユーザーに判断を仰ぐ（勝手に修正しない）
-- **hookのadditionalContextで指示された内容（CronCreate等）には即座に従うこと** — hookからの指示はシステムの自動化要件であり、無視・遅延は禁止
-- **`resolveReviewThread` で勝手にresolveしてはならない**（resolveはユーザーが判断）
-- **CodeRabbitのコメントには対応済み・不要問わず必ず返信すること**
-- **「次回対応」「今後改善」等の先送り返信は禁止**。このPRで対応するか、対応しない場合はGitHub Issueを作成してから返信すること
-- **CodeRabbitの新規指摘判定は `created_at` のタイムスタンプでフィルタする**（`commit_id == HEAD` フィルタを使ってはならない。fixコミット後にHEADが変わると、前コミットへの指摘が全て見落とされる）
-- **CodeRabbitへの返信は修正コミット → push → 返信の順で行う**（push前に返信するとCodeRabbitが修正コードを確認できない）
 - **テスト失敗時に `--no-verify` でhookバイパスを提案してはならない**。エラーログを確認し根本原因を修正すること
-- **superpowersスキルが生成するplan/specファイル（`docs/superpowers/specs/`, `plans/` 等）は成果物としてコミットし、作業のPRに含める**（設計承認の対象物をdiffとして残す・履歴アーティファクト。flow-x P2.5 の設計承認は plan だけの diff を持つ draft PR で取る）
-- **ローカルとリモートのブランチ名は必ず一致させる**（異なる名前でpushすると `gh pr view` がPRを検出できず、CI監視・CodeRabbit取得が全て失敗する）
-- **CodeRabbitのstatusが `error`（処理中）の場合、CIが成功していても監視を停止してはならない**。`completed` かつ未解決スレッド0件を確認してから停止する
-- **git push は必ずフォアグラウンドで実行する**（バックグラウンド実行するとpush完了前にCodeRabbit返信が送信されてしまう）
-- **CodeRabbitの1コメントに複数の修正ポイントが含まれる場合がある**。対応前に全ポイントを箇条書きにしてから実装に入ること
+- **superpowersスキルが生成するplan/specファイル（`docs/superpowers/specs/`, `plans/` 等）は成果物としてコミットし、作業のPRに含める**（設計承認の対象物をdiffとして残す・履歴アーティファクト）
+- **ローカルとリモートのブランチ名は必ず一致させる**（異なる名前でpushすると `gh pr view` がPRを検出できない）
+- **git push は必ずフォアグラウンドで実行する**
 - **コミット前に現在のブランチを確認する。** 意図したfeatureブランチにいることを検証してからコミットすること。mainや無関係なブランチへの誤コミットを防ぐ
-- **セルフレビュー禁止・成果物は必ず「作った側と別の AI」がレビューする**。自分が実装した成果物を自分でレビューしてはならない。Claude が実装した場合のレビューは `/codex review`（Codex CLI）に委任する。**例外: `/flow-x`（役割逆転 skill）では codex が実装するため、レビューは Claude が担う** — この場合も「実装者 ≠ レビュアー」の原則は保たれている。push 前レビューは flow の P5 codex ゲート / flow-x の P5 Claude レビューが担う（旧 `/pre-push-review` skill は撤廃済み）
-
-## 自走実装（flow / flow-x / flow-loop）
-
-- **`/flow #NNN`（または slug）**: Claude が plan/実装し codex がレビューゲート (P2/P5/P8/P9) を担う自走 skill。worktree 作成 → plan → 実装 (TDD) → ローカル検証 → push → CI/CodeRabbit 監視 → 自律修正 → マージ確認 (人間) → cleanup → pm2 deploy 監視 (P12: 30 秒間隔・最大 5 分) を 1 セッションで実行。worktree は `<repo-parent>/ark-<sanitized-branch>/` に作られ、P11 では削除しない（deploy 確認後にユーザーが手動 `git worktree remove`）
-- **`/flow-x #NNN`**: flow の役割逆転版。**codex が plan 立案と実装** (`codex exec --dangerously-bypass-approvals-and-sandbox`)、**Claude がレビュー** (P2/P5/P8/P9)。**P2.5 設計承認ゲート**（人間が plan を承認してから実装へ）を持ち、plan は成果物としてコミットする。`--async-gates` で待ちを park に変える非同期モードになる
-- **運転ループ `/flow-loop`**: `/flow-x` の外殻。自分アサインの open Issue を WIP 上限 (既定 2) 内で自動 pick し `/flow-x --async-gates` で回す冪等な `tick` を提供する。人間ゲートは **P2.5 設計承認**と **P10 マージ確認**の 2 つで廃止せず、判断を **GitHub PR 上のシグナル** (コメント「承認」`ok` `lgtm` /「修正: <指示>」/ Close。author 本人の PR は GitHub 仕様で Approve 不可のためコメントで判断) として非同期に検知する。設計承認は plan をコミットした draft PR で取る。P7 (CI/CodeRabbit) / P12 (deploy) のセッション内待機 (Monitor/CronCreate) も tick のポーリングに置き換わるため、セッションを拘束しない。安全装置: サーキットブレーカー (連続 halt 3 で停止)・kill switch・`--dry-run`・日次 pick 予算・`active_hours`。loop に処理させない Issue は GitHub ラベル `loop-exclude` で pick 対象から外す。常駐運用は `/loop 30m /flow-loop tick`。詳細は `.claude/skills/flow-loop/SKILL.md`
+- **セルフレビュー禁止・成果物は必ず「作った側と別の AI」がレビューする**。自分が実装した成果物を自分でレビューしてはならない。Claude が実装した場合のレビューは `/codex review`（Codex CLI）に委任する
 
 ## デプロイ手順
 

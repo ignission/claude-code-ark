@@ -2,23 +2,162 @@
 set -eo pipefail
 
 # PreToolUse (Bash) 統合ガードフック
-# git push / gh pr create 時のみチェックを実行し、それ以外は即スキップ
+# 危険なコマンドと git push 前の品質チェックを実行する
 
 # stdinからツール入力JSONを読み取り、コマンドを抽出（パース失敗時はスキップ）
 STDIN_INPUT=$(cat)
 COMMAND=$(echo "$STDIN_INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=./push-marker-utils.sh
-source "$SCRIPT_DIR/push-marker-utils.sh"
 
 # --- actual git commit / push の hook bypass だけを拒否する ---
-if push_marker_detect_hook_bypass "$COMMAND"; then
-  if [ "$PUSH_MARKER_BYPASS_FLAG" = "-n" ]; then
+_guard_tokenize_command() {
+  local input="$1"
+  local token=""
+  local quote=""
+  local char
+  local i
+  local started=false
+  local escaped=false
+
+  GUARD_TOKENS=()
+  for ((i = 0; i < ${#input}; i++)); do
+    char="${input:$i:1}"
+    if $escaped; then
+      token+="$char"
+      started=true
+      escaped=false
+    elif [ "$char" = "\\" ]; then
+      escaped=true
+      started=true
+    elif [ -n "$quote" ]; then
+      if [ "$char" = "$quote" ]; then
+        quote=""
+      else
+        token+="$char"
+      fi
+      started=true
+    else
+      case "$char" in
+        \"|\') quote="$char"; started=true ;;
+        ' '|$'\t'|$'\n')
+          if $started; then
+            GUARD_TOKENS+=("$token")
+            token=""
+            started=false
+          fi
+          ;;
+        ';'|'&'|'|')
+          if $started; then
+            GUARD_TOKENS+=("$token")
+            token=""
+            started=false
+          fi
+          GUARD_TOKENS+=("__GUARD_SEPARATOR__")
+          ;;
+        *) token+="$char"; started=true ;;
+      esac
+    fi
+  done
+  $started && GUARD_TOKENS+=("$token")
+}
+
+_guard_commit_short_has_no_verify() {
+  local token="${1#-}"
+  local char
+  local i
+
+  GUARD_SHORT_TAKES_VALUE=false
+  for ((i = 0; i < ${#token}; i++)); do
+    char="${token:$i:1}"
+    case "$char" in
+      n) return 0 ;;
+      m|F|C|c|t)
+        [ $((i + 1)) -eq "${#token}" ] && GUARD_SHORT_TAKES_VALUE=true
+        return 1
+        ;;
+    esac
+  done
+  return 1
+}
+
+_guard_detect_hook_bypass() {
+  local state="segment-start"
+  local token
+
+  _guard_tokenize_command "$1"
+  for token in "${GUARD_TOKENS[@]}"; do
+    if [ "$token" = "__GUARD_SEPARATOR__" ]; then
+      state="segment-start"
+      continue
+    fi
+
+    case "$state" in
+      segment-start)
+        if [ "$token" = "git" ]; then
+          state="git-options"
+        else
+          state="segment-ignore"
+        fi
+        ;;
+      git-options)
+        case "$token" in
+          -C|-c|--git-dir|--work-tree|--exec-path|--namespace|--super-prefix|--config-env)
+            state="git-option-value"
+            ;;
+          --git-dir=*|--work-tree=*|--exec-path=*|--namespace=*|--super-prefix=*|--config-env=*|-*) ;;
+          commit) state="commit-args" ;;
+          push) state="push-args" ;;
+          *) state="segment-ignore" ;;
+        esac
+        ;;
+      git-option-value)
+        state="git-options"
+        ;;
+      commit-args)
+        case "$token" in
+          --) state="segment-ignore" ;;
+          --no-verify)
+            HOOK_BYPASS_FLAG="--no-verify"
+            return 0
+            ;;
+          -m|-F|-C|-c|--message|--file|--reuse-message|--reedit-message|--fixup|--squash|--author|--date|--cleanup|--trailer|--pathspec-from-file)
+            state="commit-option-value"
+            ;;
+          --message=*|--file=*|--reuse-message=*|--reedit-message=*|--fixup=*|--squash=*|--author=*|--date=*|--cleanup=*|--trailer=*|--pathspec-from-file=*) ;;
+          -?*)
+            if _guard_commit_short_has_no_verify "$token"; then
+              HOOK_BYPASS_FLAG="-n"
+              return 0
+            elif $GUARD_SHORT_TAKES_VALUE; then
+              state="commit-option-value"
+            fi
+            ;;
+        esac
+        ;;
+      commit-option-value)
+        state="commit-args"
+        ;;
+      push-args)
+        if [ "$token" = "--" ]; then
+          state="segment-ignore"
+        elif [ "$token" = "--no-verify" ]; then
+          HOOK_BYPASS_FLAG="--no-verify"
+          return 0
+        fi
+        ;;
+    esac
+  done
+  return 1
+}
+
+HOOK_BYPASS_FLAG=""
+_guard_detect_hook_bypass "$COMMAND" || true
+if [ -n "$HOOK_BYPASS_FLAG" ]; then
+  if [ "$HOOK_BYPASS_FLAG" = "-n" ]; then
     echo "BLOCKED: -n（--no-verify短縮形）によるgit hookのバイパスは禁止されています" >&2
   else
     echo "BLOCKED: --no-verify によるgit hookのバイパスは禁止されています" >&2
   fi
-  echo "  WHY: pre-bash-guard の品質ゲート、または flow P4/P5 のローカル検証がスキップされ、CI で失敗するコードが送信される" >&2
+  echo "  WHY: pre-bash-guard の品質ゲートがスキップされ、CI で失敗するコードが送信される" >&2
   echo "  FIX: 失敗の根本原因を修正してから commit / push してください" >&2
   exit 2
 fi
@@ -27,123 +166,6 @@ fi
 if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+(commit|tag)[[:space:]] ]]; then
   exit 0
 fi
-
-
-
-# --- pre-push-reviewフラグファイル作成のガード ---
-_review_flag_token_is_target() {
-  case "$1" in
-    claude-pre-push-review-done|*/claude-pre-push-review-done) return 0 ;;
-  esac
-  return 1
-}
-
-_review_flag_is_canonical_touch_segment() {
-  local segment target inner subcommand_index
-
-  segment="$(_push_marker_trim "$1")"
-  _push_marker_tokenize_segment "$segment" || return 1
-  [ "${#PUSH_MARKER_TOKENS[@]}" -eq 2 ] || return 1
-  [ "${PUSH_MARKER_TOKENS[0]}" = "touch" ] || return 1
-  target="${PUSH_MARKER_TOKENS[1]}"
-  case "$target" in
-    \$\(*\)/claude-pre-push-review-done) ;;
-    *) return 1 ;;
-  esac
-
-  inner="${target#\$(}"
-  inner="${inner%)/claude-pre-push-review-done}"
-  _push_marker_tokenize_segment "$inner" || return 1
-  subcommand_index=$(_push_marker_git_subcommand_index) || return 1
-  [ "${PUSH_MARKER_TOKENS[$subcommand_index]}" = "rev-parse" ] || return 1
-  [ $((subcommand_index + 2)) -eq "${#PUSH_MARKER_TOKENS[@]}" ] || return 1
-  case "${PUSH_MARKER_TOKENS[$((subcommand_index + 1))]}" in
-    --git-dir|--absolute-git-dir) return 0 ;;
-  esac
-  return 1
-}
-
-_review_flag_segment_creates_flag() {
-  local segment token command_token redirection_target
-  local command_position=true
-  local skip_redirection_target=false
-  local i j
-
-  segment="$(_push_marker_trim "$1")"
-  _push_marker_tokenize_segment "$segment" true || return 1
-
-  for ((i = 0; i < ${#PUSH_MARKER_TOKENS[@]}; i++)); do
-    token="${PUSH_MARKER_TOKENS[$i]}"
-
-    if $skip_redirection_target; then
-      skip_redirection_target=false
-      continue
-    fi
-
-    case "$token" in
-      '|')
-        command_position=true
-        continue
-        ;;
-      *\>*)
-        redirection_target="${token##*>}"
-        redirection_target="${redirection_target#|}"
-        redirection_target="${redirection_target#&}"
-        if [ -z "$redirection_target" ] && [ $((i + 1)) -lt "${#PUSH_MARKER_TOKENS[@]}" ]; then
-          redirection_target="${PUSH_MARKER_TOKENS[$((i + 1))]}"
-        fi
-        _review_flag_token_is_target "$redirection_target" && return 0
-        skip_redirection_target=true
-        continue
-        ;;
-      *\<*)
-        # 入力リダイレクトも command より前に置けるため、対象 word を飛ばして
-        # command_position を維持する。<> の作成先は上の > branch で検査済み。
-        skip_redirection_target=true
-        continue
-        ;;
-    esac
-
-    if $command_position; then
-      command_token="$token"
-      command_position=false
-      case "$command_token" in
-        touch|install|cp|mv|ln|tee|truncate)
-          j=$((i + 1))
-          while [ "$j" -lt "${#PUSH_MARKER_TOKENS[@]}" ] && [ "${PUSH_MARKER_TOKENS[$j]}" != "|" ]; do
-            _review_flag_token_is_target "${PUSH_MARKER_TOKENS[$j]}" && return 0
-            j=$((j + 1))
-          done
-          ;;
-        dd)
-          j=$((i + 1))
-          while [ "$j" -lt "${#PUSH_MARKER_TOKENS[@]}" ] && [ "${PUSH_MARKER_TOKENS[$j]}" != "|" ]; do
-            case "${PUSH_MARKER_TOKENS[$j]}" in
-              of=*)
-                _review_flag_token_is_target "${PUSH_MARKER_TOKENS[$j]#of=}" && return 0
-                ;;
-            esac
-            j=$((j + 1))
-          done
-          ;;
-      esac
-    fi
-  done
-  return 1
-}
-
-_push_marker_split_shell_command "$COMMAND"
-for REVIEW_FLAG_SEGMENT in "${PUSH_MARKER_SEGMENTS[@]}"; do
-  if _review_flag_segment_creates_flag "$REVIEW_FLAG_SEGMENT" && \
-     ! _review_flag_is_canonical_touch_segment "$REVIEW_FLAG_SEGMENT"; then
-    echo "BLOCKED: pre-push-reviewフラグファイルの手動作成は禁止されています" >&2
-    echo "  WHY: /flow の P5 (push 前 codex ゲート) を経ずに PR 作成ガードをバイパスするのを防止" >&2
-    echo "  FIX: /flow を実行してください。P5 PASS 時にフラグを自動作成します" >&2
-    exit 2
-  fi
-done
-
-
 # --- 破壊的コマンドガード ---
 # rm -rf: ビルドキャッシュ（node_modules, target, dist, .next, build等）削除のみ許可
 # 引数を個別に検査し、全operandがキャッシュ系ディレクトリの場合のみ通過させる
@@ -262,174 +284,6 @@ if [[ "$COMMAND" =~ ^[[:space:]]*git[[:space:]]+(.+[[:space:]]+)?push([[:space:]
     }
   }'
   exit 0
-fi
-
-# --- gh pr create ガード: pre-push-review 実行済み確認 ---
-if [[ "$COMMAND" =~ ^[[:space:]]*gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$) ]]; then
-  FLAG_FILE="$(git rev-parse --git-dir)/claude-pre-push-review-done"
-
-  if [ -f "$FLAG_FILE" ]; then
-    if find "$FLAG_FILE" -mmin -30 | grep -q .; then
-      rm -f "$FLAG_FILE"
-      exit 0
-    fi
-  fi
-
-  echo "BLOCKED: PR作成前に /flow (P5 push 前 codex ゲート) を実行してください" >&2
-  echo "  WHY: codex review でのセキュリティ・品質チェックを通さずに PR を作成するのを防止" >&2
-  echo "  FIX: /flow を実行 → P5 PASS でフラグ自動作成、または既存 flow なら /flow <#issue|slug> --resume --from P5" >&2
-  exit 2
-fi
-
-# --- resolveReviewThread ガード: レビューコメントの自動resolveを禁止 ---
-if [[ "$COMMAND" =~ resolveReviewThread ]]; then
-  echo "BLOCKED: resolveReviewThreadの実行は禁止されています。レビューコメントの解決はユーザーが手動で行ってください" >&2
-  exit 2
-fi
-
-
-# --- GitHub PRコメント・返信ガード: push完了マーカー確認 + 先送り表現禁止 ---
-# push完了前の返信を防止（バックグラウンドpush時にCodeRabbitが修正を確認できない問題の対策）
-# 全てのGitHub PRコメント・返信コマンドをキャッチする（gh api / gh pr comment / gh pr review）
-
-# シェルトークンの引用符・末尾区切りを正規化するヘルパー
-_normalize_shell_token() {
-  local token="$1"
-  token="${token%%[;&|]*}"
-  token="${token%\"}"; token="${token#\"}"
-  token="${token%\'}"; token="${token#\'}"
-  printf '%s' "$token"
-}
-
-# GraphQL mutation検出ヘルパー（インライン・query=@file・--input fileに対応）
-_is_graphql_mutation() {
-  local segment="$1"
-  # インラインのmutationキーワードを検出
-  [[ "$segment" =~ mutation([[:space:]]|\{|\() ]] && return 0
-  # query=@file のファイル内容を検査
-  if [[ "$segment" =~ query=@([^[:space:]]+) ]]; then
-    local file
-    file="$(_normalize_shell_token "${BASH_REMATCH[1]}")"
-    [[ -f "$file" ]] && grep -qE 'mutation([[:space:]]|\{|\()' "$file" 2>/dev/null && return 0
-  fi
-  # --input file のファイル内容を検査（--input - は検査不能なのでスキップ）
-  if [[ "$segment" =~ --input[=[:space:]]([^[:space:]]+) ]]; then
-    local file
-    file="$(_normalize_shell_token "${BASH_REMATCH[1]}")"
-    [[ "$file" != "-" ]] && [[ -f "$file" ]] && grep -qE 'mutation([[:space:]]|\{|\()' "$file" 2>/dev/null && return 0
-  fi
-  return 1
-}
-
-# gh apiセグメントを全て抽出して走査（tail -n1ではなく全セグメント対象）
-IS_PR_COMMENT=false
-if [[ "$COMMAND" =~ gh[[:space:]]+api ]]; then
-  while IFS= read -r GH_API_SEGMENT; do
-    [[ -z "$GH_API_SEGMENT" ]] && continue
-    # gh api REST: コメント系エンドポイント + 書き込みフラグの両方が必要（GETは許可）
-    if [[ "$GH_API_SEGMENT" =~ (/issues/[0-9]+/comments|/pulls/[0-9]+/comments|/pulls/[0-9]+/reviews|/comments/[0-9]+/replies) ]] \
-      && [[ "$GH_API_SEGMENT" =~ (-f[[:space:]]|-F[[:space:]]|--field[[:space:]]|--raw-field[[:space:]]|--input|(-X|--method)[[:space:]]*(POST|PATCH|PUT)) ]]; then
-      IS_PR_COMMENT=true
-      break
-    # gh api GraphQL: mutationのみキャッチ（queryは許可）
-    elif [[ "$GH_API_SEGMENT" =~ graphql ]] && _is_graphql_mutation "$GH_API_SEGMENT"; then
-      IS_PR_COMMENT=true
-      break
-    fi
-  done < <(printf '%s\n' "$COMMAND" | grep -oE '(^|[|;&]+[[:space:]]*)gh[[:space:]]+api[^|;&]*')
-fi
-# gh pr comment / gh pr review: CLIコマンド経由
-if ! $IS_PR_COMMENT && [[ "$COMMAND" =~ gh[[:space:]]+pr[[:space:]]+(comment|review)[[:space:]] ]]; then
-  IS_PR_COMMENT=true
-# gh issue comment: Issue向けコメント
-elif ! $IS_PR_COMMENT && [[ "$COMMAND" =~ gh[[:space:]]+issue[[:space:]]+comment[[:space:]] ]]; then
-  IS_PR_COMMENT=true
-# レガシーパターン: replies.shスクリプト経由
-elif ! $IS_PR_COMMENT && [[ "$COMMAND" =~ /replies.sh ]]; then
-  IS_PR_COMMENT=true
-fi
-if $IS_PR_COMMENT; then
-  # push完了マーカーの repository + HEAD identity を確認する。
-  # 時刻ではなく、現在の project worktree 群に属する同一 commit かで判定する。
-  PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
-  HOOK_INPUT_CWD=$(echo "$STDIN_INPUT" | jq -r '.cwd // ""' 2>/dev/null) || HOOK_INPUT_CWD=""
-  HOOK_CWD=$(pwd -P)
-  MARKER="$PROJECT_DIR/.claude/push-completed.marker"
-  if [ ! -f "$MARKER" ]; then
-    echo "BLOCKED: push完了前にCodeRabbit返信はできません" >&2
-    echo "  WHY: push前に返信するとCodeRabbitが修正を確認できない" >&2
-    echo "  FIX: 先にgit pushを実行してください" >&2
-    exit 2
-  fi
-  MARKER_HEAD=$(head -1 "$MARKER" 2>/dev/null) || MARKER_HEAD=""
-  MARKER_REPO_DIR=$(sed -n '2p' "$MARKER" 2>/dev/null) || MARKER_REPO_DIR=""
-  if [ -z "$MARKER_HEAD" ]; then
-    echo "BLOCKED: pushマーカーのcommit SHAが空です" >&2
-    echo "  WHY: push完了を示すcommit identityを確認できない" >&2
-    echo "  FIX: 対象リポジトリでgit pushを再実行してください" >&2
-    exit 2
-  fi
-  if [ -n "$MARKER_REPO_DIR" ]; then
-    TARGET_REPO_DIR="$MARKER_REPO_DIR"
-  else
-    # 旧形式（SHA 1行のみ）のマーカーは返信コマンドから照合先を解決する。
-    TARGET_REPO_DIR=$(push_marker_resolve_repo_dir "$HOOK_INPUT_CWD" "$COMMAND" "$HOOK_CWD") || TARGET_REPO_DIR=""
-  fi
-  if [ -z "$TARGET_REPO_DIR" ] || ! CURRENT_HEAD=$(git -C "$TARGET_REPO_DIR" rev-parse HEAD 2>/dev/null); then
-    echo "BLOCKED: pushしたリポジトリのHEADを確認できません" >&2
-    echo "  WHY: 照合対象のディレクトリが存在しないか、Gitリポジトリではない" >&2
-    echo "  FIX: 対象リポジトリでgit pushを再実行してください" >&2
-    exit 2
-  fi
-  if ! TARGET_COMMON_DIR=$(git -C "$TARGET_REPO_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || \
-     ! PROJECT_COMMON_DIR=$(git -C "$PROJECT_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
-    echo "BLOCKED: pushしたリポジトリのgit common dirを確認できません" >&2
-    echo "  WHY: marker または現在のprojectが有効なGitリポジトリではない" >&2
-    echo "  FIX: 現在のprojectのworktreeでgit pushを再実行してください" >&2
-    exit 2
-  fi
-  if [ "$TARGET_COMMON_DIR" != "$PROJECT_COMMON_DIR" ]; then
-    echo "BLOCKED: pushマーカーが別のリポジトリを指しています" >&2
-    echo "  WHY: markerのrepositoryが現在のprojectのworktreeツリーに属していない" >&2
-    echo "  FIX: 現在のprojectの対象worktreeでgit pushを再実行してください" >&2
-    exit 2
-  fi
-  if [ "$MARKER_HEAD" != "$CURRENT_HEAD" ]; then
-    echo "BLOCKED: push後に新しいコミットが追加されています" >&2
-    echo "  WHY: マーカーのSHA(${MARKER_HEAD:0:8})と現在のHEAD(${CURRENT_HEAD:0:8})が不一致" >&2
-    echo "  FIX: 最新の変更をgit pushしてから返信してください" >&2
-    exit 2
-  fi
-
-  # 先送り表現の検出対象テキストを決定（--body-file等からのファイル内容を抽出）
-  COMMENT_TEXT="$COMMAND"
-  if [[ "$COMMAND" =~ --body-file[=[:space:]]([^[:space:]]+) ]]; then
-    BODY_FILE="$(_normalize_shell_token "${BASH_REMATCH[1]}")"
-    [[ -f "$BODY_FILE" ]] && COMMENT_TEXT="$(cat "$BODY_FILE")"
-  elif [[ "$COMMAND" =~ (-f|-F|--field|--raw-field)[[:space:]]*body=@([^[:space:]]+) ]]; then
-    BODY_FILE="$(_normalize_shell_token "${BASH_REMATCH[2]}")"
-    [[ -f "$BODY_FILE" ]] && COMMENT_TEXT="$(cat "$BODY_FILE")"
-  elif [[ "$COMMAND" =~ --input[=[:space:]]([^[:space:]]+) ]] && [[ "${BASH_REMATCH[1]}" != "-" ]]; then
-    INPUT_FILE="$(_normalize_shell_token "${BASH_REMATCH[1]}")"
-    [[ -f "$INPUT_FILE" ]] && COMMENT_TEXT="$(jq -r '.. | objects | .body? // empty' "$INPUT_FILE" 2>/dev/null)"
-  elif [[ "$COMMAND" =~ --input[=[:space:]]- ]] || [[ "$COMMAND" =~ (--editor|--web) ]]; then
-    echo "BLOCKED: 本文を事前検査できないコメント投稿方法は禁止です（--editor / --input - / --web）" >&2
-    exit 2
-  fi
-
-  # 先送り表現の検出（エージェントはステートレスなので「次回」の保証がない）
-  # 「スコープ外」のバリアント（スコープから除外）、「見送り」、「現時点では」「優先度が低い」も検出
-  if [[ "$COMMENT_TEXT" =~ (次回|今後|後日|将来的に|検討します|改善予定|後で対応|いずれ対応|追って対応|別チケット|別ticket|後続チケット|後続対応|後続で|スコープ外|スコープから除外|別途対応|見送り|現時点では|優先度が低い) ]]; then
-    # Issue番号（#数字）またはJiraチケット番号が含まれていれば許可
-    if [[ "$COMMENT_TEXT" =~ \#[0-9]+ ]]; then
-      : # Issue番号付きなので許可
-    else
-      echo "BLOCKED: PRコメント返信に先送り表現が含まれています" >&2
-      echo "  WHY: エージェントはステートレスなので次回の保証がない" >&2
-      echo "  FIX: (1) このPRで修正する (2) gh issue createでIssue作成してからIssue番号を含めて返信する (3) 技術的根拠を示して対応不要と返信する" >&2
-      exit 2
-    fi
-  fi
 fi
 
 # 対象外コマンドは何もせず通過
