@@ -77,8 +77,8 @@ ctx_failures_inbox_append() {
   lock="$knowledge/failures-inbox.lock"
   [ -d "$lock" ] && [ ! -L "$lock" ] || return 1
   ctx_validate_repo_path "$lock" directory required || return 1
-  lock_pid=${FLOW_LOCK_ACQUIRED_PID:-}
-  lock_token=${FLOW_LOCK_ACQUIRED_TOKEN:-}
+  lock_pid=${CTX_LOCK_ACQUIRED_PID:-}
+  lock_token=${CTX_LOCK_ACQUIRED_TOKEN:-}
   case "$lock_pid" in ''|*[!0-9]*) return 1 ;; esac
   ctx_failures_value_safe "$lock_token" || return 1
   [ "$(command cat "$lock/pid" 2>/dev/null)" = "$lock_pid" ] || return 1
@@ -244,8 +244,8 @@ ctx_session_failures_inbox_append() {
   lock="$knowledge/failures-inbox.lock"
   [ -d "$lock" ] && [ ! -L "$lock" ] || return 1
   ctx_validate_repo_path "$lock" directory required || return 1
-  lock_pid=${FLOW_LOCK_ACQUIRED_PID:-}
-  lock_token=${FLOW_LOCK_ACQUIRED_TOKEN:-}
+  lock_pid=${CTX_LOCK_ACQUIRED_PID:-}
+  lock_token=${CTX_LOCK_ACQUIRED_TOKEN:-}
   case "$lock_pid" in ''|*[!0-9]*) return 1 ;; esac
   ctx_failures_value_safe "$lock_token" || return 1
   [ "$(command cat "$lock/pid" 2>/dev/null)" = "$lock_pid" ] || return 1

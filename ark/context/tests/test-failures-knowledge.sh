@@ -8,6 +8,7 @@ TEST_TMP=$(cd "$TEST_TMP" && pwd -P)
 trap 'rm -rf "$TEST_TMP"' EXIT HUP INT TERM
 . "$ROOT/ark/context/tests/test-helper.sh"
 . "$ROOT/ark/context/scripts/lib/runtime.sh"
+. "$ROOT/ark/context/scripts/lib/lock.sh"
 . "$ROOT/ark/context/scripts/lib/task-template.sh"
 
 if [ ! -f "$FAILURES_LIB" ]; then
@@ -16,10 +17,6 @@ if [ ! -f "$FAILURES_LIB" ]; then
   finish_tests "failures knowledge tests"
 fi
 . "$FAILURES_LIB"
-CLAUDE_PROJECT_DIR=$ROOT
-export CLAUDE_PROJECT_DIR
-. "$ROOT/.claude/lib/state-io.sh"
-set +e
 set -uo pipefail
 
 export HOME="$TEST_TMP/home"
@@ -81,13 +78,13 @@ append_with_lock() {
   target_work=$3
   target_sid=$4
   target_lock="$target_knowledge/failures-inbox.lock"
-  flow_lock_acquire "$target_lock" 9 30 30 mkdir-direct >/dev/null 2>&1 || return 1
-  target_backend=$FLOW_LOCK_ACQUIRED_BACKEND
-  target_pid=$FLOW_LOCK_ACQUIRED_PID
-  target_token=$FLOW_LOCK_ACQUIRED_TOKEN
+  ctx_lock_acquire "$target_lock" 9 30 30 mkdir-direct >/dev/null 2>&1 || return 1
+  target_backend=$CTX_LOCK_ACQUIRED_BACKEND
+  target_pid=$CTX_LOCK_ACQUIRED_PID
+  target_token=$CTX_LOCK_ACQUIRED_TOKEN
   ctx_failures_inbox_append "$target_session" "$target_knowledge" "$target_work" "$target_sid"
   append_status=$?
-  flow_lock_release "$target_lock" "$target_backend" "$target_pid" "$target_token" >/dev/null 2>&1 || return 1
+  ctx_lock_release "$target_lock" "$target_backend" "$target_pid" "$target_token" >/dev/null 2>&1 || return 1
   return "$append_status"
 }
 
@@ -97,13 +94,13 @@ append_session_with_lock() {
   target_work=$3
   target_sid=$4
   target_lock="$target_knowledge/failures-inbox.lock"
-  flow_lock_acquire "$target_lock" 9 30 30 mkdir-direct >/dev/null 2>&1 || return 1
-  target_backend=$FLOW_LOCK_ACQUIRED_BACKEND
-  target_pid=$FLOW_LOCK_ACQUIRED_PID
-  target_token=$FLOW_LOCK_ACQUIRED_TOKEN
+  ctx_lock_acquire "$target_lock" 9 30 30 mkdir-direct >/dev/null 2>&1 || return 1
+  target_backend=$CTX_LOCK_ACQUIRED_BACKEND
+  target_pid=$CTX_LOCK_ACQUIRED_PID
+  target_token=$CTX_LOCK_ACQUIRED_TOKEN
   ctx_session_failures_inbox_append "$target_session" "$target_knowledge" "$target_work" "$target_sid"
   append_status=$?
-  flow_lock_release "$target_lock" "$target_backend" "$target_pid" "$target_token" >/dev/null 2>&1 || return 1
+  ctx_lock_release "$target_lock" "$target_backend" "$target_pid" "$target_token" >/dev/null 2>&1 || return 1
   return "$append_status"
 }
 

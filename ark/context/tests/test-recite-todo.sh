@@ -138,7 +138,7 @@ bytes=$(wc -c <"$CASE_STDOUT" | tr -d ' ')
 iconv -f UTF-8 -t UTF-8 "$CASE_STDOUT" >/dev/null 2>&1 || test_fail "recitation is invalid UTF-8"
 assert_eq "recitation has three lines" 3 "$(wc -l <"$CASE_STDOUT" | tr -d ' ')"
 
-if grep -F '.claude/lib/state-io.sh' "$HOOK" >/dev/null 2>&1; then test_fail "hook sources state-io.sh"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
+if grep -F 'scripts/lib/lock.sh' "$HOOK" >/dev/null 2>&1; then test_fail "hook sources lock.sh"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
 if grep -E '\$(ARK_SESSION_DIR|ARK_CACHE_DIR|ARK_RECITE_INTERVAL)([^:{A-Za-z0-9_]|$)' "$HOOK" >/dev/null 2>&1; then test_fail "hook has unsafe env expansion"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
 if grep -E 'step_count\.lock|ctx_step_(lock|discard_lock)|/bin/sleep|flock' "$HOOK" >/dev/null 2>&1; then test_fail "hook retains lock or wait path"; else TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)); fi
 
