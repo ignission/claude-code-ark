@@ -123,6 +123,9 @@ _guard_detect_hook_bypass() {
             state="commit-option-value"
             ;;
           --message=*|--file=*|--reuse-message=*|--reedit-message=*|--fixup=*|--squash=*|--author=*|--date=*|--cleanup=*|--trailer=*|--pathspec-from-file=*) ;;
+          # 未知の long option は短縮形クラスタではない。先に落とさないと
+          # `--no-edit` / `--dry-run` が `-n` と誤認される。
+          --*) ;;
           -?*)
             if _guard_commit_short_has_no_verify "$token"; then
               HOOK_BYPASS_FLAG="-n"
