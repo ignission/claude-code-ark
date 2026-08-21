@@ -52,12 +52,16 @@ assert_eq "artifact append format is injected" 0 "$?"
 printf '# Task\n\n## Goal\nCurrent goal\n\n## Constraints\n- fixed\n\n## Plan\n- [ ] Current step ← NOW\n' \
   >"$session/task.md"
 chmod 600 "$session/task.md"
-run_case env ARK_SESSION_DIR="$session" /usr/bin/zsh "$CORE"
-assert_success "populated task context works in zsh"
-grep -F '現在の Goal: Current goal' "$CASE_STDOUT" >/dev/null 2>&1
-assert_eq "populated context presents current Goal" 0 "$?"
-grep -F '現在の NOW: Current step' "$CASE_STDOUT" >/dev/null 2>&1
-assert_eq "populated context presents current NOW" 0 "$?"
+if [ -n "$CTX_ZSH" ]; then
+  run_case env ARK_SESSION_DIR="$session" "$CTX_ZSH" "$CORE"
+  assert_success "populated task context works in zsh"
+  grep -F '現在の Goal: Current goal' "$CASE_STDOUT" >/dev/null 2>&1
+  assert_eq "populated context presents current Goal" 0 "$?"
+  grep -F '現在の NOW: Current step' "$CASE_STDOUT" >/dev/null 2>&1
+  assert_eq "populated context presents current NOW" 0 "$?"
+else
+  printf '%s\n' 'SKIP: zsh is unavailable; populated task context zsh case skipped'
+fi
 
 input="$TEST_TMP/session-start.json"
 printf '%s\n' '{"session_id":"fixture","hook_event_name":"SessionStart","source":"startup"}' >"$input"

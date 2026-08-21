@@ -6,6 +6,7 @@ FAILURES=${FAILURES:-0}
 CASE_STATUS=0
 CASE_STDOUT=
 CASE_STDERR=
+CTX_ZSH=$(command -v zsh 2>/dev/null || true)
 
 test_fail() {
   FAILURES=$((FAILURES + 1))

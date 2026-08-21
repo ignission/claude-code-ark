@@ -149,12 +149,18 @@ scan_file() {
   simple_commands='(rg|timeout|sha256sum|realpath|flock|xxd|stdbuf|setsid)([[:space:]]|$)'
   option_commands='(readlink[[:space:]]+-f|stat[[:space:]]+-c)([[:space:]]|$)'
   all_commands="(${simple_commands}|${option_commands})"
+  absolute_interpreters='(/bin/zsh|/usr/bin/zsh|/usr/local/bin/[^[:space:];&|()]+|/opt/homebrew/bin/[^[:space:];&|()]+)([[:space:]]|$)'
   environment_prefix='env[[:space:]]+(((-i|--ignore-environment)[[:space:]]+|(-u|--unset)[[:space:]]+[^[:space:]]+[[:space:]]+|--unset=[^[:space:]]+[[:space:]]+|[[:alpha:]_][[:alnum:]_]*=([^[:space:];&|()]|q)+[[:space:]]+)*)'
   : >"$scan_output"
   sanitize_shell "$scan_target" >"$sanitized_output" || return 2
-  grep -nE "${command_prefix}${all_commands}|${command_prefix}(command|exec)[[:space:]]+(--[[:space:]]+)?${all_commands}|${command_prefix}${environment_prefix}${all_commands}|[$][(][[:space:]]*(rg|timeout|sha256sum|realpath|flock|xxd|stdbuf|setsid)[)]" \
+  grep -nE "${command_prefix}(${all_commands}|${absolute_interpreters})|${command_prefix}(command|exec)[[:space:]]+(--[[:space:]]+)?(${all_commands}|${absolute_interpreters})|${command_prefix}${environment_prefix}(${all_commands}|${absolute_interpreters})|[$][(][[:space:]]*(rg|timeout|sha256sum|realpath|flock|xxd|stdbuf|setsid)[)]" \
     "$sanitized_output" >"${sanitized_output}.candidates" || :
   while IFS=: read -r scan_line scan_source; do
+    if printf '%s\n' "$scan_source" | grep -E "${command_prefix}${absolute_interpreters}" >/dev/null 2>&1 \
+      || printf '%s\n' "$scan_source" | grep -E "${command_prefix}(command|exec)[[:space:]]+(--[[:space:]]+)?${absolute_interpreters}" >/dev/null 2>&1 \
+      || printf '%s\n' "$scan_source" | grep -E "${command_prefix}${environment_prefix}${absolute_interpreters}" >/dev/null 2>&1; then
+      printf '%s:%s: absolute interpreter path\n' "$scan_target" "$scan_line" >>"$scan_output"
+    fi
     for scan_command in rg timeout sha256sum realpath readlink stat flock xxd stdbuf setsid; do
       scan_pattern=$(command_pattern "$scan_command")
       if printf '%s\n' "$scan_source" | grep -E "${command_prefix}${scan_pattern}" >/dev/null 2>&1 \
@@ -300,6 +306,9 @@ name_flock=fl; name_flock=${name_flock}ock
 name_xxd=x; name_xxd=${name_xxd}xd
 name_stdbuf=std; name_stdbuf=${name_stdbuf}buf
 name_setsid=set; name_setsid=${name_setsid}sid
+path_zsh=/usr/bin/z; path_zsh=${path_zsh}sh
+path_local=/usr/local/bin/py; path_local=${path_local}thon3
+path_homebrew=/opt/homebrew/bin/ba; path_homebrew=${path_homebrew}sh
 
 for prohibited in \
   "$name_rg -n file" \
@@ -337,6 +346,20 @@ printf 'first=%s\nprintf "%s\\n" "%s"\n' \
   "'$name_flock $name_timeout $name_sha'" '%s' "$name_rg $name_real" >"$TEST_TMP/literals.sh"
 run_case scan_file "$TEST_TMP/literals.sh" "$TEST_TMP/literals.out"
 assert_success "guard ignores quoted literal mentions"
+
+for absolute_interpreter in "$path_zsh" "$path_local" "$path_homebrew"; do
+  printf 'env MODE=test %s script\n' "$absolute_interpreter" >"$TEST_TMP/absolute-interpreter.sh"
+  run_case scan_file "$TEST_TMP/absolute-interpreter.sh" "$TEST_TMP/absolute-interpreter.out"
+  assert_eq "guard rejects absolute interpreter $absolute_interpreter" 1 "$CASE_STATUS"
+done
+
+printf '%s\n' '#!/bin/zsh' 'printf portable' >"$TEST_TMP/shebang.sh"
+run_case scan_file "$TEST_TMP/shebang.sh" "$TEST_TMP/shebang.out"
+assert_success "absolute interpreter guard ignores shebang"
+
+printf '%s\n' '/bin/bash script' '/bin/sh script' >"$TEST_TMP/allowed-system-shells.sh"
+run_case scan_file "$TEST_TMP/allowed-system-shells.sh" "$TEST_TMP/allowed-system-shells.out"
+assert_success "absolute interpreter guard allows system bash and sh"
 
 tab_escape='\'
 tab_escape=${tab_escape}t

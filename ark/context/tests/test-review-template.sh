@@ -32,10 +32,14 @@ order_one=$(cat "$CASE_STDOUT")
 run_case ctx_review_plan_items "$sid_one"
 assert_success "same session review order generated again"
 assert_eq "same session review order is stable" "$order_one" "$(cat "$CASE_STDOUT")"
-run_case /usr/bin/zsh -c '. "$1"; . "$2"; ctx_review_plan_items "$3"' review-zsh \
-  "$ROOT/ark/context/scripts/lib/runtime.sh" "$ROOT/ark/context/scripts/lib/task-template.sh" "$sid_one"
-assert_success "review order works in zsh"
-assert_eq "zsh review order matches bash" "$order_one" "$(cat "$CASE_STDOUT")"
+if [ -n "$CTX_ZSH" ]; then
+  run_case "$CTX_ZSH" -c '. "$1"; . "$2"; ctx_review_plan_items "$3"' review-zsh \
+    "$ROOT/ark/context/scripts/lib/runtime.sh" "$ROOT/ark/context/scripts/lib/task-template.sh" "$sid_one"
+  assert_success "review order works in zsh"
+  assert_eq "zsh review order matches bash" "$order_one" "$(cat "$CASE_STDOUT")"
+else
+  printf '%s\n' 'SKIP: zsh is unavailable; review order zsh case skipped'
+fi
 run_case ctx_review_plan_items "$sid_two"
 assert_success "consecutive review order generated"
 order_two=$(cat "$CASE_STDOUT")
