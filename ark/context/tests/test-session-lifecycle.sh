@@ -11,7 +11,6 @@ trap 'rm -rf "$TEST_TMP"' EXIT HUP INT TERM
 ARK_SOURCE_FIXTURE="$TEST_TMP/Ark source's tree"
 mkdir -m 700 -p "$ARK_SOURCE_FIXTURE/.claude"
 cp -R "$ROOT/ark" "$ARK_SOURCE_FIXTURE/ark"
-cp -R "$ROOT/.claude/lib" "$ARK_SOURCE_FIXTURE/.claude/lib"
 chmod 755 "$ARK_SOURCE_FIXTURE/.claude"
 INIT="$ARK_SOURCE_FIXTURE/ark/context/scripts/session-init.sh"
 TEARDOWN="$ARK_SOURCE_FIXTURE/ark/context/scripts/session-teardown.sh"

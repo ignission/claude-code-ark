@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
 
 ARK_SOURCE_ROOT=$(cd "$(dirname "$0")/../../.." 2>/dev/null && pwd -P) || exit 1
-CLAUDE_PROJECT_DIR=$ARK_SOURCE_ROOT
-export CLAUDE_PROJECT_DIR
-# shellcheck source=/dev/null
-. "$ARK_SOURCE_ROOT/.claude/lib/state-io.sh"
-set +eu
-set +o pipefail
 . "$ARK_SOURCE_ROOT/ark/context/scripts/lib/runtime.sh"
+. "$ARK_SOURCE_ROOT/ark/context/scripts/lib/lock.sh"
 . "$ARK_SOURCE_ROOT/ark/context/scripts/lib/config.sh"
 . "$ARK_SOURCE_ROOT/ark/context/scripts/lib/task-template.sh"
 . "$ARK_SOURCE_ROOT/ark/context/scripts/lib/handoff.sh"
@@ -113,11 +108,11 @@ placeholder=${requested_session:-00000000000000000000000000000000}
 ctx_runtime_paths "$repo" "$placeholder" >/dev/null 2>&1 || session_disabled "runtime resolution failed"
 ctx_runtime_prepare_base >/dev/null 2>&1 || session_disabled "runtime preparation failed"
 lock="$CTX_REPO_STATE_DIR/settings.lock"
-flow_lock_acquire "$lock" 9 5 30 mkdir-direct >/dev/null 2>&1 || session_disabled "settings lock unavailable"
-lock_backend=$FLOW_LOCK_ACQUIRED_BACKEND
-lock_pid=$FLOW_LOCK_ACQUIRED_PID
-lock_token=$FLOW_LOCK_ACQUIRED_TOKEN
-release_lock() { flow_lock_release "$lock" "$lock_backend" "$lock_pid" "$lock_token" >/dev/null 2>&1 || true; }
+ctx_lock_acquire "$lock" 9 5 30 mkdir-direct >/dev/null 2>&1 || session_disabled "settings lock unavailable"
+lock_backend=$CTX_LOCK_ACQUIRED_BACKEND
+lock_pid=$CTX_LOCK_ACQUIRED_PID
+lock_token=$CTX_LOCK_ACQUIRED_TOKEN
+release_lock() { ctx_lock_release "$lock" "$lock_backend" "$lock_pid" "$lock_token" >/dev/null 2>&1 || true; }
 
 owner="$CTX_REPO_STATE_DIR/owner"
 same_owner=0
@@ -150,15 +145,15 @@ if owner_read "$owner"; then
       old_work_id=$(ctx_work_id_from_repo "$repo" 2>/dev/null) || old_work_id=
       if [ -n "$old_work_id" ]; then
         knowledge_lock="$ARK_KNOWLEDGE_DIR/failures-inbox.lock"
-        if flow_lock_acquire "$knowledge_lock" 8 5 30 mkdir-direct >/dev/null 2>&1; then
-          knowledge_backend=$FLOW_LOCK_ACQUIRED_BACKEND
-          knowledge_pid=$FLOW_LOCK_ACQUIRED_PID
-          knowledge_token=$FLOW_LOCK_ACQUIRED_TOKEN
+        if ctx_lock_acquire "$knowledge_lock" 8 5 30 mkdir-direct >/dev/null 2>&1; then
+          knowledge_backend=$CTX_LOCK_ACQUIRED_BACKEND
+          knowledge_pid=$CTX_LOCK_ACQUIRED_PID
+          knowledge_token=$CTX_LOCK_ACQUIRED_TOKEN
           ctx_failures_inbox_append "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" \
             "$old_work_id" "$OWNER_SESSION" >/dev/null 2>&1 || true
           ctx_session_failures_inbox_append "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" \
             "$old_work_id" "$OWNER_SESSION" >/dev/null 2>&1 || true
-          flow_lock_release "$knowledge_lock" "$knowledge_backend" "$knowledge_pid" "$knowledge_token" \
+          ctx_lock_release "$knowledge_lock" "$knowledge_backend" "$knowledge_pid" "$knowledge_token" \
             >/dev/null 2>&1 || true
         fi
       fi
