@@ -48,7 +48,32 @@ run_case ctx_task_render "$session" changed changed --constraint changed --plan-
 assert_success "second render is idempotent"
 assert_eq "second render preserves task" "$before" "$(cat "$session/task.md")"
 
-for bad in '' 'line
+empty_session="$TEST_TMP/empty"
+mkdir -m 700 "$empty_session"
+run_case ctx_task_render "$empty_session" '' 'なし（通常起動）'
+assert_success "empty task scaffold rendered"
+empty_expected='# Task
+
+## Goal
+
+
+## Constraints
+
+Previous failure summary: なし（通常起動）
+
+## Plan
+
+## Artifacts
+- (なし)'
+assert_eq "empty task scaffold bytes" "$empty_expected" "$(cat "$empty_session/task.md")"
+empty_cache="$TEST_TMP/empty-cache"
+mkdir -m 700 "$empty_cache"
+run_case env ARK_SESSION_DIR="$empty_session" ARK_CACHE_DIR="$empty_cache" \
+  ARK_RECITE_INTERVAL=1 /bin/bash "$ROOT/ark/context/hooks/recite-todo.sh"
+assert_success "empty task recitation succeeds"
+assert_eq "empty task recitation stays silent" 0 "$(wc -c <"$CASE_STDOUT" | tr -d ' ')"
+
+for bad in 'line
 break' '{{GOAL}}'; do
   fresh="$TEST_TMP/bad-$((TESTS + 1))"
   mkdir -m 700 "$fresh"

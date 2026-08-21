@@ -19,12 +19,14 @@ import {
   type SpecialKey,
 } from "@ark/shared";
 import { stripAnsi } from "./ansi.js";
+import { arkContextHarness } from "./ark-context-harness.js";
 import type {
   BoardMcpServer,
   BoardSessionRegistry,
 } from "./board-mcp-server.js";
 import { analyzeBridgeStatus } from "./bridge-collector.js";
 import { db } from "./database.js";
+import { getErrorMessage } from "./errors.js";
 import { type TmuxSession, tmuxManager } from "./tmux-manager.js";
 import { ttydManager } from "./ttyd-manager.js";
 
@@ -576,6 +578,23 @@ export class SessionOrchestrator extends EventEmitter {
   }
 
   /**
+   * Ark context の teardown を実行し、失敗を必ずログへ残す。
+   * stopSession() からは fire-and-forget、restart/rollback からは await して使う。
+   */
+  private async teardownArkContext(
+    worktreePath: string,
+    contextSessionId: string
+  ): Promise<void> {
+    try {
+      await arkContextHarness.teardownSession(worktreePath, contextSessionId);
+    } catch (error) {
+      console.error(
+        `[ArkContext] session teardown failed for ${worktreePath} (${contextSessionId}): ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  /**
    * 新規セッションを開始
    */
   async startSession(
@@ -621,6 +640,10 @@ export class SessionOrchestrator extends EventEmitter {
       worktreePath,
       resolvedRepoPath
     );
+    const contextEnv = await arkContextHarness.initializeSession(worktreePath);
+    const sessionEnv =
+      env || contextEnv ? { ...(env ?? {}), ...(contextEnv ?? {}) } : undefined;
+    const contextSessionId = contextEnv?.ARK_SESSION_ID;
 
     // board MCP (ark-board / board_write) 用の per-session token/config を用意する。
     // 未起動/未注入なら tmuxManager の --mcp-config 設定を null にリセットする
@@ -632,10 +655,13 @@ export class SessionOrchestrator extends EventEmitter {
     try {
       tmuxSession = await tmuxManager.createSession(
         worktreePath,
-        env ? { env } : undefined
+        sessionEnv ? { env: sessionEnv } : undefined
       );
     } catch (e) {
       if (boardPrep) this.discardBoardMcpConfig(boardPrep.cfgPath);
+      if (contextSessionId) {
+        await this.teardownArkContext(worktreePath, contextSessionId);
+      }
       throw e;
     }
     if (boardPrep) {
@@ -661,22 +687,35 @@ export class SessionOrchestrator extends EventEmitter {
     } catch (e) {
       this.unregisterBoardToken(tmuxSession.id);
       tmuxManager.killSession(tmuxSession.id);
+      if (contextSessionId) {
+        await this.teardownArkContext(worktreePath, contextSessionId);
+      }
       throw e;
     }
 
     // DBに保存（既存レコードがあればupsertで更新）
-    db.upsertSession({
-      id: tmuxSession.id,
-      worktreeId,
-      worktreePath,
-      repoPath: resolvedRepoPath,
-      status: "active",
-      profileId: snapshot?.id ?? null,
-      profileConfigDir: snapshot?.configDir ?? null,
-      // サーバー再起動後に token を registry へ復帰させるため、
-      // mcp-config のパスを永続化する (token 自体は 0600 のファイル内のみ)
-      boardMcpConfigPath: boardPrep?.cfgPath ?? null,
-    });
+    try {
+      db.upsertSession({
+        id: tmuxSession.id,
+        worktreeId,
+        worktreePath,
+        repoPath: resolvedRepoPath,
+        status: "active",
+        profileId: snapshot?.id ?? null,
+        profileConfigDir: snapshot?.configDir ?? null,
+        // サーバー再起動後に token を registry へ復帰させるため、
+        // mcp-config のパスを永続化する (token 自体は 0600 のファイル内のみ)
+        boardMcpConfigPath: boardPrep?.cfgPath ?? null,
+      });
+    } catch (error) {
+      ttydManager.stopInstance(tmuxSession.id);
+      tmuxManager.killSession(tmuxSession.id);
+      this.unregisterBoardToken(tmuxSession.id);
+      if (contextSessionId) {
+        await this.teardownArkContext(worktreePath, contextSessionId);
+      }
+      throw error;
+    }
 
     // プロファイルスナップショットをsession-id毎に記憶
     // (restartSession / staleProfile判定用)
@@ -703,17 +742,17 @@ export class SessionOrchestrator extends EventEmitter {
    * 稼働中セッションを kill して、現在の紐付けで再起動する。
    * staleProfile となったセッションをユーザが「再起動」した際に呼ぶ。
    *
-   * 失敗時の安全性: 新セッションの起動 (tmux/ttyd) が成功するまで旧セッション
-   * には触らない。新側で失敗したら旧は無傷で残り、エラーが上に伝播するだけ。
-   * 旧tmux/ttyd は「新セッションが usable と確認できた後」にだけ停止する。
+   * 失敗時の安全性: 旧 tmux/ttyd は新セッションが usable と確認できるまで
+   * 停止しない。context を有効にしていた場合だけ、repo 所有権を渡すため旧 context は
+   * 新 init より先に teardown する。新側で失敗しても旧 terminal process は残る。
    *
    * 内部処理:
-   * 1. プロファイル解決 (envと configDir スナップショット)
+   * 1. プロファイル解決、旧 context teardown、新 context init
    * 2. 新tmuxセッションを **別ID** で作成 (旧と並走)
-   * 3. 新ttydを起動。失敗時は新tmuxを kill して throw
-   * 4. 旧 ttyd 停止 / 旧 tmux kill / sessionProfiles/repoPathCache クリア
-   * 5. DB を upsert (worktree_path UNIQUE により旧行が新IDで上書きされる)
-   * 6. session:stopped (旧ID) → session:created (新ID) を emit
+   * 3. 新ttydを起動。失敗時は新tmuxと新 context を teardown して throw
+   * 4. DB を transaction で新セッションへ置換
+   * 5. 旧 ttyd 停止 / 旧 tmux kill / sessionProfiles/repoPathCache クリア
+   * 6. session:created → session:restarted → session:stopped を emit
    *
    * @throws sessionId に対応する tmux セッションが見つからない場合
    * @throws 新セッション起動失敗 (旧セッションは無傷)
@@ -755,6 +794,20 @@ export class SessionOrchestrator extends EventEmitter {
       repoPath
     );
 
+    // context owner を旧セッションから解放してから新セッションを init する。
+    // tmux env はサーバー再起動後も残るため、永続化を追加せず session ID を復元できる。
+    const oldContextSessionId = tmuxManager.getEnv(sessionId, "ARK_SESSION_ID");
+    if (oldContextSessionId) {
+      await this.teardownArkContext(worktreePath, oldContextSessionId);
+    }
+    const contextEnv = await arkContextHarness.initializeSession(
+      worktreePath,
+      oldContextSessionId ?? undefined
+    );
+    const sessionEnv =
+      env || contextEnv ? { ...(env ?? {}), ...(contextEnv ?? {}) } : undefined;
+    const newContextSessionId = contextEnv?.ARK_SESSION_ID;
+
     // 2. board MCP 用の per-session token/config を用意してから、
     //    新tmuxセッションを別IDで作成する (失敗時は旧セッション無傷)。
     //    旧セッションの token はまだ解除しない (新側が usable と確認できてから)。
@@ -763,10 +816,13 @@ export class SessionOrchestrator extends EventEmitter {
     try {
       newTmux = await tmuxManager.createSession(
         worktreePath,
-        env ? { env } : undefined
+        sessionEnv ? { env: sessionEnv } : undefined
       );
     } catch (e) {
       if (boardPrep) this.discardBoardMcpConfig(boardPrep.cfgPath);
+      if (newContextSessionId) {
+        await this.teardownArkContext(worktreePath, newContextSessionId);
+      }
       throw e;
     }
 
@@ -780,6 +836,9 @@ export class SessionOrchestrator extends EventEmitter {
     } catch (e) {
       tmuxManager.killSession(newTmux.id);
       if (boardPrep) this.discardBoardMcpConfig(boardPrep.cfgPath);
+      if (newContextSessionId) {
+        await this.teardownArkContext(worktreePath, newContextSessionId);
+      }
       throw e;
     }
 
@@ -814,6 +873,9 @@ export class SessionOrchestrator extends EventEmitter {
       ttydManager.stopInstance(newTmux.id);
       tmuxManager.killSession(newTmux.id);
       if (boardPrep) this.discardBoardMcpConfig(boardPrep.cfgPath);
+      if (newContextSessionId) {
+        await this.teardownArkContext(worktreePath, newContextSessionId);
+      }
       throw e;
     }
     this.sessionProfiles.set(newTmux.id, snapshot);
@@ -918,9 +980,15 @@ export class SessionOrchestrator extends EventEmitter {
     const repoPath =
       dbSession?.repoPath ||
       (worktreePath ? this.deriveRepoPath(worktreePath) : undefined);
+    const contextSessionId = tmuxSession
+      ? tmuxManager.getEnv(sessionId, "ARK_SESSION_ID")
+      : null;
 
     ttydManager.stopInstance(sessionId);
     tmuxManager.killSession(sessionId);
+    if (worktreePath && contextSessionId) {
+      void this.teardownArkContext(worktreePath, contextSessionId);
+    }
     db.deleteSession(sessionId);
     this.sessionProfiles.delete(sessionId);
     this.unregisterBoardToken(sessionId);

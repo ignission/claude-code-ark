@@ -11,6 +11,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("./ark-context-harness.js", () => ({
+  arkContextHarness: {
+    initializeSession: vi.fn(async () => undefined),
+    teardownSession: vi.fn(async () => undefined),
+  },
+}));
+
 // TmuxManager / TtydManager / SessionDatabase のシングルトンをモック化。
 // SessionOrchestrator は constructor で `tmuxManager.getAllSessions()` を呼ぶため、
 // 必ず import 前にスタブを用意する。
@@ -83,6 +90,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DIAGRAM_DIR } from "@ark/shared";
+import { arkContextHarness } from "./ark-context-harness.js";
 import type { BoardMcpServer } from "./board-mcp-server.js";
 // BoardSessionRegistry は単純な token→worktreePath の in-memory map なので
 // モック化せず実体を使い、register/resolve/unregister の実挙動を検証する。
@@ -93,6 +101,7 @@ import { tmuxManager } from "./tmux-manager.js";
 import { ttydManager } from "./ttyd-manager.js";
 
 const mockedDb = vi.mocked(db);
+const mockedContext = vi.mocked(arkContextHarness);
 const mockedTmux = vi.mocked(tmuxManager);
 const mockedTtyd = vi.mocked(ttydManager);
 
@@ -208,6 +217,57 @@ describe("SessionOrchestrator - プロファイル切替", () => {
       expect(callArgs[1]).toBeUndefined();
       expect(managed.profileId).toBeNull();
     });
+
+    it("context が無効なら従来どおり env 無しで起動する", async () => {
+      mockedContext.initializeSession.mockResolvedValueOnce(undefined);
+
+      await orchestrator.startSession("wt-1", "/path/to/work", "/repo");
+
+      expect(mockedContext.initializeSession).toHaveBeenCalledWith(
+        "/path/to/work"
+      );
+      expect(mockedTmux.createSession).toHaveBeenCalledWith(
+        "/path/to/work",
+        undefined
+      );
+    });
+
+    it("context が有効なら TSV 由来 env を profile env とマージする", async () => {
+      mockedDb.getRepoProfileLink.mockReturnValue({
+        repoPath: "/repo",
+        profileId: "prof-1",
+        updatedAt: 0,
+      });
+      mockedDb.getProfile.mockReturnValue({
+        id: "prof-1",
+        name: "work",
+        configDir: "/home/user/.claude-work",
+        createdAt: 0,
+        updatedAt: 0,
+      });
+      mockedContext.initializeSession.mockResolvedValueOnce({
+        ARK_SESSION_ID: "a".repeat(32),
+        ARK_SESSION_DIR: "/context/session",
+        ARK_CACHE_DIR: "/context/cache",
+        ARK_RECITE_INTERVAL: "10",
+        ARK_KNOWLEDGE_DIR: "/context/knowledge",
+        ARK_REPO_KEY: "repo-key",
+      });
+
+      await orchestrator.startSession("wt-1", "/path/to/work", "/repo");
+
+      expect(mockedTmux.createSession).toHaveBeenCalledWith("/path/to/work", {
+        env: {
+          CLAUDE_CONFIG_DIR: "/home/user/.claude-work",
+          ARK_SESSION_ID: "a".repeat(32),
+          ARK_SESSION_DIR: "/context/session",
+          ARK_CACHE_DIR: "/context/cache",
+          ARK_RECITE_INTERVAL: "10",
+          ARK_KNOWLEDGE_DIR: "/context/knowledge",
+          ARK_REPO_KEY: "repo-key",
+        },
+      });
+    });
   });
 
   // ============================================================
@@ -215,6 +275,14 @@ describe("SessionOrchestrator - プロファイル切替", () => {
   // ============================================================
 
   describe("startSession (既存セッション再利用)", () => {
+    it("復元パスでは context init を再実行しない", async () => {
+      mockedTmux.getSessionByWorktree.mockReturnValue(makeTmuxSession());
+
+      await orchestrator.startSession("wt-1", "/path/to/work", "/repo");
+
+      expect(mockedContext.initializeSession).not.toHaveBeenCalled();
+    });
+
     it("既存セッションのprofileIdが現在の紐付けと異なる: staleProfile=true", async () => {
       // まず prof-1 で新規作成
       mockedDb.getRepoProfileLink.mockReturnValue({
@@ -386,6 +454,65 @@ describe("SessionOrchestrator - プロファイル切替", () => {
   // ============================================================
 
   describe("restartSession", () => {
+    it("旧 context を teardown してから restart 情報付きで再 init する", async () => {
+      const oldSession = makeTmuxSession({ id: "sess-id-1" });
+      const oldContextId = "b".repeat(32);
+      const newContextId = "c".repeat(32);
+      mockedTmux.getSession.mockReturnValue(oldSession);
+      mockedTmux.getEnv.mockReturnValue(oldContextId);
+      mockedDb.getSessionByWorktreePath.mockReturnValue({
+        id: "sess-id-1",
+        worktreeId: "wt-1",
+        worktreePath: "/path/to/work",
+        repoPath: "/repo",
+        status: "active",
+        createdAt: "2026-04-25T00:00:00Z",
+        updatedAt: "2026-04-25T00:00:00Z",
+      } as never);
+      mockedContext.initializeSession.mockResolvedValueOnce({
+        ARK_SESSION_ID: newContextId,
+        ARK_SESSION_DIR: "/context/new-session",
+        ARK_CACHE_DIR: "/context/new-cache",
+        ARK_RECITE_INTERVAL: "10",
+        ARK_KNOWLEDGE_DIR: "/context/knowledge",
+      });
+      mockedTmux.createSession.mockResolvedValue(
+        makeTmuxSession({ id: "sess-id-2", tmuxSessionName: "ark-sess2" })
+      );
+      mockedTtyd.startInstance.mockResolvedValue({
+        sessionId: "sess-id-2",
+        port: 7682,
+        tmuxSessionName: "ark-sess2",
+        basePath: "/ttyd/sess-id-2",
+      } as never);
+
+      await orchestrator.restartSession("sess-id-1");
+
+      expect(mockedTmux.getEnv).toHaveBeenCalledWith(
+        "sess-id-1",
+        "ARK_SESSION_ID"
+      );
+      expect(mockedContext.teardownSession).toHaveBeenCalledWith(
+        "/path/to/work",
+        oldContextId
+      );
+      expect(mockedContext.initializeSession).toHaveBeenCalledWith(
+        "/path/to/work",
+        oldContextId
+      );
+      expect(
+        mockedContext.teardownSession.mock.invocationCallOrder[0]
+      ).toBeLessThan(
+        mockedContext.initializeSession.mock.invocationCallOrder[0]
+      );
+      expect(mockedTmux.createSession).toHaveBeenCalledWith(
+        "/path/to/work",
+        expect.objectContaining({
+          env: expect.objectContaining({ ARK_SESSION_ID: newContextId }),
+        })
+      );
+    });
+
     it("既存セッションをkillし、新しい env で再起動する", async () => {
       // 1) prof-1 で起動（古いセッション）
       mockedDb.getRepoProfileLink.mockReturnValue({
@@ -576,6 +703,27 @@ describe("SessionOrchestrator - プロファイル切替", () => {
       expect(r2.id).toBe("sess-id-2");
     });
   });
+
+  describe("stopSession", () => {
+    it("fire-and-forget teardown の失敗をログへ残す", async () => {
+      const contextSessionId = "e".repeat(32);
+      mockedTmux.getSession.mockReturnValue(makeTmuxSession());
+      mockedTmux.getEnv.mockReturnValue(contextSessionId);
+      mockedContext.teardownSession.mockRejectedValueOnce(
+        new Error("teardown timeout")
+      );
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      orchestrator.stopSession("sess-id-1");
+
+      await vi.waitFor(() => {
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining("teardown timeout")
+        );
+      });
+      errorSpy.mockRestore();
+    });
+  });
 });
 
 /**
@@ -750,11 +898,24 @@ describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
 
     // stopSession は tmuxManager.getSession() から worktreePath を得る
     mockedTmux.getSession.mockReturnValue(makeTmuxSession());
+    const contextSessionId = "d".repeat(32);
+    mockedTmux.getEnv.mockReturnValue(contextSessionId);
 
     orchestrator.stopSession(managed.id);
 
     expect(registry.resolve(token)).toBeNull();
     expect(fs.existsSync(cfgPath)).toBe(false);
+    expect(mockedTmux.getEnv).toHaveBeenCalledWith(
+      managed.id,
+      "ARK_SESSION_ID"
+    );
+    expect(mockedContext.teardownSession).toHaveBeenCalledWith(
+      "/path/to/work",
+      contextSessionId
+    );
+    expect(mockedTmux.killSession.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      mockedContext.teardownSession.mock.invocationCallOrder.at(-1) ?? 0
+    );
   });
 
   it("getAllSessions の孤児クリーンアップ (worktree 削除済み) でも token を unregister し mcp-config を削除する", async () => {
