@@ -287,6 +287,8 @@ Goal と Constraints は init 後に編集してはならない。ただし、in
 
 Claude Code adapter だけが、既存 `.claude/settings.local.json` の有無の記録・非破壊な context settings 注入・復元、hook matcher、hook input JSON、`additionalContext` output、Claude Code の `allowed-tools` / permission deny を扱う。agent 非依存の template、規約、session file format に Claude Code 固有 key を入れない。
 
+SessionStart の `additionalContext` は、安全性を検証した session の `knowledge/failures.md` が size 0 でなく、かつ非空白行を1行以上持つ場合だけ、その絶対 path と「作業開始前および失敗後の再試行前に読む」という指示を加える。file 本文は注入しない。空の file、symlink、mode または所有者が契約と異なる file は案内せず、他の規約、`task.md` path、artifact 形式、Goal 分岐の注入を継続する。これにより §6-1 の read-only copy を配布だけで終わらせず、モデルが参照する consumer 経路を定義する。
+
 repo state directory の `settings-ownership.json` は、注入前の settings file の有無と、Ark が実際に追加した entry ごとの配列／key pathおよび canonical な permission 文字列または hook objectだけを記録し、従来の元ファイル有無 markerを置き換える。追加候補と同一の entry が既にあれば追加も記録もせず、存在しない場合だけ非破壊に追加して manifest に記録する。settings schema に所有判定用の `id` 等を加えてはならない。
 
 復元は manifest に記録された entry のうち現在も注入時と同一内容のものだけを除去する。変更された entry は所有を放棄して残し、manifest の該当 entry に `abandoned` と記録する。manifest が元ファイルなしを示し、除去後に Ark 以外の entry が1つも残らない場合だけ settings file を削除する。既存の MCP、permission、hook、その他の key を削除・置換・並べ替えてはならない。解析不能、§2-2 の path・ownership・mode 検証失敗、または§2-3の事前ignore・tracked検証失敗の場合は、settingsを変更せずcontextを無効化する。#333 は既存設定・注入・teardown・孤児回収を通す round-trip fixture と、`PostToolBatch` entry に `matcher` がない fixture を完了条件とする。

@@ -153,11 +153,15 @@ assert_success "legacy token mismatch residue does not block"
 assert_eq "batch after token mismatch is counted" 1 "$(step_count "$cache")"
 
 seed_step_count "$cache" 9
-run_case env ARK_SESSION_DIR="$session" ARK_CACHE_DIR="$cache" ARK_RECITE_INTERVAL=10 /bin/zsh "$HOOK"
-assert_success "zsh invocation exits zero"
-assert_eq "zsh invocation increments" 10 "$(step_count "$cache")"
-assert_eq "zsh invocation recites" 1 "$(grep -c '^Goal:' "$CASE_STDOUT" | tr -d ' ')"
-assert_eq "zsh invocation stderr" '' "$(cat "$CASE_STDERR")"
+if [ -n "$CTX_ZSH" ]; then
+  run_case env ARK_SESSION_DIR="$session" ARK_CACHE_DIR="$cache" ARK_RECITE_INTERVAL=10 "$CTX_ZSH" "$HOOK"
+  assert_success "zsh invocation exits zero"
+  assert_eq "zsh invocation increments" 10 "$(step_count "$cache")"
+  assert_eq "zsh invocation recites" 1 "$(grep -c '^Goal:' "$CASE_STDOUT" | tr -d ' ')"
+  assert_eq "zsh invocation stderr" '' "$(cat "$CASE_STDERR")"
+else
+  printf '%s\n' 'SKIP: zsh is unavailable; recite-todo zsh case skipped'
+fi
 
 bash_env="$TEST_TMP/bash-env"
 nounset_out="$TEST_TMP/nounset.out"

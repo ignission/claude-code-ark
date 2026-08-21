@@ -18,7 +18,7 @@ ctx_task_render() {
   local session=${1:-}
   local goal=${2:-}
   local previous=${3:-}
-  local task constraints plans constraint_count plan_count option value marker new old_umask write_status
+  local task constraints plans constraint_count plan_count option value marker new old_umask write_status context_rules
   shift 3 2>/dev/null || { ctx_error "invalid task input"; return 1; }
   ctx_validate_xdg_dir "$session" || return 1
   task="$session/task.md"
@@ -31,6 +31,10 @@ ctx_task_render() {
   [ -n "$previous" ] || { ctx_error "invalid task input"; return 1; }
   printf '%s' "$previous" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 \
     || { ctx_error "invalid task input"; return 1; }
+  context_rules="${ARK_SOURCE_ROOT:-}/ark/context/templates/context-rules.md"
+  [ "${context_rules#/}" != "$context_rules" ] && [ -f "$context_rules" ] && [ ! -L "$context_rules" ] \
+    || { ctx_error "context rules unavailable"; return 1; }
+  ctx_has_control "$context_rules" && { ctx_error "context rules unavailable"; return 1; }
 
   constraints=
   plans=
@@ -65,6 +69,7 @@ ctx_task_render() {
   {
     printf '# Task\n\n## Goal\n%s\n\n## Constraints\n' "$goal"
     printf '%s' "$constraints"
+    printf '\nContext rules: %s\n' "$context_rules"
     printf '\nPrevious failure summary: %s\n\n## Plan\n' "$previous"
     printf '%s' "$plans"
     printf '\n## Artifacts\n- (なし)\n'
@@ -76,6 +81,68 @@ ctx_task_render() {
   ctx_validate_xdg_file "$new" || return 1
   command mv "$new" "$task" || { ctx_error "task publish failed"; return 1; }
   ctx_validate_xdg_file "$task"
+}
+
+ctx_artifacts_index_initialize() {
+  local session=${1:-} artifacts index old_umask write_status
+  ctx_validate_xdg_dir "$session" || return 1
+  artifacts="$session/artifacts"
+  ctx_validate_xdg_dir "$artifacts" || return 1
+  index="$artifacts/index.md"
+  if [ -e "$index" ] || [ -L "$index" ]; then
+    ctx_validate_xdg_file "$index"
+    return $?
+  fi
+  old_umask=$(umask)
+  umask 077
+  (set -C; : >"$index") 2>/dev/null
+  write_status=$?
+  umask "$old_umask"
+  if [ "$write_status" -ne 0 ]; then
+    ctx_validate_xdg_file "$index"
+    return $?
+  fi
+  chmod 600 "$index" || { ctx_error "artifact index create failed"; return 1; }
+  ctx_validate_xdg_file "$index"
+}
+
+ctx_review_plan_items() {
+  local session_id=${1:-} seed review_id score tab sorted
+  case "$session_id" in ''|*[!0-9a-f]*) ctx_error "invalid session id"; return 1 ;; esac
+  [ "${#session_id}" -eq 32 ] || { ctx_error "invalid session id"; return 1; }
+  seed=$(ctx_sha256 "$session_id") || return 1
+  sorted=
+  for review_id in diff rules artifacts errors goal inbox; do
+    score=$(ctx_sha256 "$seed:$review_id") || return 1
+    sorted="${sorted}${score}	${review_id}
+"
+  done
+  tab=$(printf '\t')
+  printf '%s' "$sorted" | LC_ALL=C sort | while IFS="$tab" read -r score review_id; do
+    case "$review_id" in
+      diff) printf '%s\n' 'diff 全ファイルを通読する' ;;
+      rules) printf '%s\n' 'artifacts/index.md の更新を含む規約遵守を検査する' ;;
+      artifacts) printf '%s\n' 'artifact 本文と artifacts/index.md の整合を検査する' ;;
+      errors) printf '%s\n' 'エラー握りつぶしがないことを検査する' ;;
+      goal) printf '%s\n' 'Goal からの逸脱がないことを検査する' ;;
+      inbox) printf '%s\n' '再発性のある指摘を failures-inbox.md 候補にする' ;;
+      *) return 1 ;;
+    esac
+  done
+}
+
+ctx_task_render_review() {
+  local session=${1:-} session_id=${2:-} goal=${3:-} previous=${4:-} review_items item
+  shift 4 2>/dev/null || { ctx_error "invalid task input"; return 1; }
+  review_items=$(ctx_review_plan_items "$session_id") || return 1
+  set -- "$session" "$goal" "$previous" "$@"
+  while IFS= read -r item || [ -n "$item" ]; do
+    [ -n "$item" ] || continue
+    set -- "$@" --plan-item "$item"
+  done <<EOF
+$review_items
+EOF
+  ctx_task_render "$@"
 }
 
 ctx_utf8_file_prefix() {

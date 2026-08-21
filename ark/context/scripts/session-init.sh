@@ -65,9 +65,14 @@ restart_session=
 goal=
 constraints=
 plans=
+review=0
 while [ "$#" -gt 0 ]; do
   option=$1; shift
   case "$option" in
+    --review)
+      [ "$review" -eq 0 ] || session_disabled "invalid arguments"
+      review=1
+      ;;
     --repo|--owner-pid|--session-id|--restart|--goal|--constraint|--plan-item)
       [ "$#" -gt 0 ] || session_disabled "invalid arguments"
       value=$1; shift
@@ -85,6 +90,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -n "$repo" ] && [ -n "$owner_pid" ] || session_disabled "invalid arguments"
+[ "$review" -eq 0 ] || [ -z "$plans" ] || session_disabled "review task does not accept plan items"
 owner_pid_valid "$owner_pid" || session_disabled "invalid owner pid"
 kill -0 "$owner_pid" 2>/dev/null || session_disabled "owner pid is not alive"
 [ -z "$goal" ] || ctx_task_input_valid "$goal" 200 || session_disabled "invalid task input"
@@ -193,6 +199,8 @@ init_failed() {
 ctx_config_ensure >/dev/null 2>&1 || init_failed "config initialization failed"
 interval=$(ctx_config_read_recite_interval 2>/dev/null) || init_failed "config parse failed"
 ctx_runtime_prepare_session >/dev/null 2>&1 || init_failed "session preparation failed"
+ctx_artifacts_index_initialize "$ARK_SESSION_DIR" >/dev/null 2>&1 \
+  || init_failed "artifact index initialization failed"
 if [ -n "$restart_session" ]; then
   old_session="$CTX_DATA_ROOT/sessions/$restart_session"
   previous=$(ctx_previous_failure_summary "$old_session" 2>/dev/null) || init_failed "restart summary unavailable"
@@ -208,7 +216,13 @@ if [ -n "$plans" ]; then while IFS= read -r value || [ -n "$value" ]; do set -- 
 $plans
 EOF
 fi
-ctx_task_render "$@" >/dev/null 2>&1 || init_failed "task initialization failed"
+if [ "$review" -eq 1 ]; then
+  shift 3
+  ctx_task_render_review "$ARK_SESSION_DIR" "$ARK_SESSION_ID" "$goal" "$previous" "$@" \
+    >/dev/null 2>&1 || init_failed "review task initialization failed"
+else
+  ctx_task_render "$@" >/dev/null 2>&1 || init_failed "task initialization failed"
+fi
 ctx_knowledge_initialize "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" >/dev/null 2>&1 || init_failed "knowledge initialization failed"
 claude_settings_inject "$repo" "$CTX_REPO_STATE_DIR" >/dev/null 2>&1 || init_failed "settings injection failed"
 release_lock

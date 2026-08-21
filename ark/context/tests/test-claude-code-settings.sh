@@ -11,6 +11,7 @@ trap 'rm -rf "$TEST_TMP"' EXIT HUP INT TERM
 
 batch_hook='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/context/adapters/claude-code/post-tool-batch.sh"}]}'
 failure_hook='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/context/adapters/claude-code/post-tool-use-failure.sh"}]}'
+session_hook='{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/ark/context/adapters/claude-code/session-start.sh"}]}'
 
 assert_eq "mode extraction rejects empty output in both paths" 2 \
   "$(grep -c '\[ -n "\$mode" \] || return 1' "$ROOT/ark/context/adapters/claude-code/settings.sh" | tr -d ' ')"
@@ -47,8 +48,10 @@ jq -e '(.hooks.PostToolBatch | length) == 1 and (.hooks.PostToolBatch[0] | has("
   || test_fail "PostToolBatch hook is missing or has matcher"
 jq -e '(.hooks.PostToolUseFailure | length) == 1 and (.hooks.PostToolUseFailure[0] | has("matcher") | not)' "$settings" >/dev/null 2>&1 \
   || test_fail "PostToolUseFailure hook is missing or has matcher"
-jq -e '.schema_version == 1 and .settings_existed == true and (.entries | length) == 5 and
-  ([.entries[].path] | sort) == ["hooks/PostToolBatch","hooks/PostToolUseFailure","permissions/deny","permissions/deny","permissions/deny"] and
+jq -e '(.hooks.SessionStart | length) == 1 and (.hooks.SessionStart[0] | has("matcher") | not)' "$settings" >/dev/null 2>&1 \
+  || test_fail "SessionStart hook is missing or has matcher"
+jq -e '.schema_version == 1 and .settings_existed == true and (.entries | length) == 6 and
+  ([.entries[].path] | sort) == ["hooks/PostToolBatch","hooks/PostToolUseFailure","hooks/SessionStart","permissions/deny","permissions/deny","permissions/deny"] and
   all(.entries[]; .abandoned == false)' "$manifest" >/dev/null 2>&1 \
   || test_fail "ownership manifest schema is invalid"
 assert_eq "settings mode preserved" "$original_mode" "$(ctx_stat "$settings" | awk '{print $2}')"
@@ -75,16 +78,16 @@ settings="$repo/.claude/settings.local.json"
 run_case claude_settings_inject "$repo" "$state"
 assert_success "missing settings injected"
 [ -f "$settings" ] || test_fail "missing settings was not created"
-jq -e '.hooks | keys_unsorted == ["PostToolBatch","PostToolUseFailure"]' "$settings" >/dev/null 2>&1 \
-  || test_fail "new hooks object property order is not Batch then Failure"
+jq -e '.hooks | keys_unsorted == ["PostToolBatch","PostToolUseFailure","SessionStart"]' "$settings" >/dev/null 2>&1 \
+  || test_fail "new hooks object property order is not Batch then Failure then SessionStart"
 run_case claude_settings_restore "$repo" "$state"
 assert_success "missing settings restored"
 [ ! -e "$settings" ] || test_fail "originally missing settings was not removed"
 
 setup_repo existing-canonical
 settings="$repo/.claude/settings.local.json"
-jq -n --argjson batch "$batch_hook" --argjson failure "$failure_hook" \
-  '{permissions:{deny:["TodoWrite","TaskCreate","TaskUpdate"]},hooks:{PostToolBatch:[$batch],PostToolUseFailure:[$failure]}}' >"$settings"
+jq -n --argjson batch "$batch_hook" --argjson failure "$failure_hook" --argjson session "$session_hook" \
+  '{permissions:{deny:["TodoWrite","TaskCreate","TaskUpdate"]},hooks:{PostToolBatch:[$batch],PostToolUseFailure:[$failure],SessionStart:[$session]}}' >"$settings"
 chmod 600 "$settings"
 cp "$settings" "$TEST_TMP/canonical"
 run_case claude_settings_inject "$repo" "$state"
@@ -105,7 +108,8 @@ run_case claude_settings_restore "$repo" "$state"
 assert_success "session change restored"
 jq -e '.existing == 1 and .["user-added"] == true and .permissions.deny == []
   and .hooks.PostToolBatch == []
-  and .hooks.PostToolUseFailure == [{"hooks":[{"type":"command","command":"user-added.sh"}]}]' "$settings" >/dev/null 2>&1 \
+  and .hooks.PostToolUseFailure == [{"hooks":[{"type":"command","command":"user-added.sh"}]}]
+  and .hooks.SessionStart == []' "$settings" >/dev/null 2>&1 \
   || test_fail "restore lost non-Ark session changes"
 
 setup_repo batch-only
@@ -116,13 +120,15 @@ chmod 600 "$settings"
 cp "$settings" "$TEST_TMP/batch-only-original"
 run_case claude_settings_inject "$repo" "$state"
 assert_success "batch-only settings injected"
-jq -e --argjson batch "$batch_hook" --argjson failure "$failure_hook" '
+jq -e --argjson batch "$batch_hook" --argjson failure "$failure_hook" --argjson session "$session_hook" '
   .hooks.PostToolBatch == [$batch] and .hooks.PostToolUseFailure == [$failure]
+  and .hooks.SessionStart == [$session]
 ' "$settings" >/dev/null 2>&1 || test_fail "batch-only settings did not gain canonical failure hook"
-jq -e --argjson failure "$failure_hook" '
-  .entries == [{path:"hooks/PostToolUseFailure",value:$failure,abandoned:false}]
+jq -e --argjson failure "$failure_hook" --argjson session "$session_hook" '
+  .entries == [{path:"hooks/PostToolUseFailure",value:$failure,abandoned:false},
+    {path:"hooks/SessionStart",value:$session,abandoned:false}]
 ' "$state/settings-ownership.json" >/dev/null 2>&1 \
-  || test_fail "batch-only manifest owns more than the added failure hook"
+  || test_fail "batch-only manifest does not own exactly the added hooks"
 run_case claude_settings_restore "$repo" "$state"
 assert_success "batch-only settings restored"
 cmp -s "$settings" "$TEST_TMP/batch-only-original" || test_fail "batch-only restore was not byte-identical"
@@ -136,11 +142,12 @@ chmod 640 "$settings"
 cp "$settings" "$TEST_TMP/existing-failure-original"
 run_case claude_settings_inject "$repo" "$state"
 assert_success "existing failure hook injected"
-jq -e --argjson user "$user_failure" --argjson batch "$batch_hook" --argjson failure "$failure_hook" '
+jq -e --argjson user "$user_failure" --argjson batch "$batch_hook" --argjson failure "$failure_hook" --argjson session "$session_hook" '
   .hooks.PostToolBatch == [$batch]
   and .hooks.PostToolUseFailure == [$user,$failure]
+  and .hooks.SessionStart == [$session]
 ' "$settings" >/dev/null 2>&1 || test_fail "existing failure hook was not preserved"
-jq -e '([.entries[].path] | sort) == ["hooks/PostToolBatch","hooks/PostToolUseFailure"]' \
+jq -e '([.entries[].path] | sort) == ["hooks/PostToolBatch","hooks/PostToolUseFailure","hooks/SessionStart"]' \
   "$state/settings-ownership.json" >/dev/null 2>&1 \
   || test_fail "existing failure manifest paths mismatch"
 run_case claude_settings_restore "$repo" "$state"
@@ -155,10 +162,12 @@ jq -n --argjson failure "$failure_hook" \
 chmod 600 "$settings"
 run_case claude_settings_inject "$repo" "$state"
 assert_success "canonical failure remains unique"
-jq -e --argjson failure "$failure_hook" --argjson batch "$batch_hook" '
+jq -e --argjson failure "$failure_hook" --argjson batch "$batch_hook" --argjson session "$session_hook" '
   .hooks.PostToolUseFailure == [$failure] and .hooks.PostToolBatch == [$batch]
+  and .hooks.SessionStart == [$session]
 ' "$settings" >/dev/null 2>&1 || test_fail "canonical failure was duplicated"
-jq -e '.entries == [{path:"hooks/PostToolBatch",value:.entries[0].value,abandoned:false}]' \
+jq -e '([.entries[].path] | sort) == ["hooks/PostToolBatch","hooks/SessionStart"]
+  and all(.entries[]; .abandoned == false)' \
   "$state/settings-ownership.json" >/dev/null 2>&1 \
   || test_fail "canonical failure was incorrectly recorded as owned"
 
@@ -179,6 +188,15 @@ cp "$settings" "$TEST_TMP/invalid-failure-before"
 run_case claude_settings_inject "$repo" "$state"
 assert_failure_reason "invalid failure hook schema rejected" "invalid Claude settings schema"
 cmp -s "$settings" "$TEST_TMP/invalid-failure-before" || test_fail "invalid failure settings was modified"
+
+setup_repo invalid-session-start-schema
+settings="$repo/.claude/settings.local.json"
+printf '{"hooks":{"SessionStart":{}}}\n' >"$settings"; chmod 600 "$settings"
+cp "$settings" "$TEST_TMP/invalid-session-start-before"
+run_case claude_settings_inject "$repo" "$state"
+assert_failure_reason "invalid SessionStart hook schema rejected" "invalid Claude settings schema"
+cmp -s "$settings" "$TEST_TMP/invalid-session-start-before" \
+  || test_fail "invalid SessionStart settings was modified"
 
 setup_repo no-jq
 settings="$repo/.claude/settings.local.json"
@@ -211,12 +229,13 @@ assert_success "missing-settings interruption fixture injected"
 command rm -f "$settings"
 run_case claude_settings_inject "$repo" "$state"
 assert_success "manifest without settings is reinjected"
-jq -e --argjson batch "$batch_hook" --argjson failure "$failure_hook" '
+jq -e --argjson batch "$batch_hook" --argjson failure "$failure_hook" --argjson session "$session_hook" '
   .permissions.deny == ["TodoWrite","TaskCreate","TaskUpdate"]
   and .hooks.PostToolBatch == [$batch]
   and .hooks.PostToolUseFailure == [$failure]
+  and .hooks.SessionStart == [$session]
 ' "$settings" >/dev/null 2>&1 || test_fail "manifest without settings did not regenerate managed entries"
-jq -e '.settings_existed == false and (.entries | length) == 5 and all(.entries[]; .abandoned == false)' \
+jq -e '.settings_existed == false and (.entries | length) == 6 and all(.entries[]; .abandoned == false)' \
   "$state/settings-ownership.json" >/dev/null 2>&1 \
   || test_fail "regenerated missing settings recorded incorrect ownership"
 run_case claude_settings_restore "$repo" "$state"
@@ -232,15 +251,16 @@ jq 'del(.hooks.PostToolBatch) | .["user-during"] = {"kept":true}' "$settings" >"
 command mv "$settings.changed" "$settings"; chmod 600 "$settings"
 run_case claude_settings_inject "$repo" "$state"
 assert_success "settings missing a managed entry is reinjected"
-jq -e --argjson batch "$batch_hook" --argjson failure "$failure_hook" '
+jq -e --argjson batch "$batch_hook" --argjson failure "$failure_hook" --argjson session "$session_hook" '
   .["user-before"] == true
   and .["user-during"] == {"kept":true}
   and .permissions.deny == ["TodoWrite","TaskCreate","TaskUpdate"]
   and .hooks.PostToolBatch == [$batch]
   and .hooks.PostToolUseFailure == [$failure]
+  and .hooks.SessionStart == [$session]
 ' "$settings" >/dev/null 2>&1 \
   || test_fail "partial settings reinjection lost non-Ark entries or managed entries"
-jq -e '.settings_existed == true and (.entries | length) == 5 and all(.entries[]; .abandoned == false)' \
+jq -e '.settings_existed == true and (.entries | length) == 6 and all(.entries[]; .abandoned == false)' \
   "$state/settings-ownership.json" >/dev/null 2>&1 \
   || test_fail "partial settings reinjection recorded incorrect ownership"
 run_case claude_settings_restore "$repo" "$state"
@@ -248,7 +268,8 @@ assert_success "reinjected partial settings restored"
 jq -e '.["user-before"] == true and .["user-during"] == {"kept":true}
   and ((.permissions.deny // []) | length) == 0
   and ((.hooks.PostToolBatch // []) | length) == 0
-  and ((.hooks.PostToolUseFailure // []) | length) == 0' "$settings" >/dev/null 2>&1 \
+  and ((.hooks.PostToolUseFailure // []) | length) == 0
+  and ((.hooks.SessionStart // []) | length) == 0' "$settings" >/dev/null 2>&1 \
   || test_fail "partial settings teardown lost non-Ark entries or retained Ark entries"
 
 setup_repo changed-owner
@@ -268,6 +289,28 @@ jq -e 'any(.entries[]; .path == "hooks/PostToolUseFailure" and .abandoned == tru
   || test_fail "changed owner hook was not abandoned"
 jq -e '(.hooks.PostToolBatch // []) | length == 0' "$settings" >/dev/null 2>&1 \
   || test_fail "unchanged batch hook was not restored"
+jq -e '(.hooks.SessionStart // []) | length == 0' "$settings" >/dev/null 2>&1 \
+  || test_fail "unchanged SessionStart hook was not restored"
+
+setup_repo changed-session-start-owner
+settings="$repo/.claude/settings.local.json"
+printf '{}\n' >"$settings"; chmod 600 "$settings"
+run_case claude_settings_inject "$repo" "$state"
+assert_success "changed SessionStart owner fixture injected"
+content=$(cat "$settings")
+content=${content/session-start.sh/session-start-user.sh}
+printf '%s\n' "$content" >"$settings"; chmod 600 "$settings"
+run_case claude_settings_restore "$repo" "$state"
+assert_success "changed SessionStart owner entry does not block restore"
+jq -e '.hooks.SessionStart[0].hooks[0].command | endswith("session-start-user.sh")' \
+  "$settings" >/dev/null 2>&1 || test_fail "changed SessionStart hook was removed"
+jq -e 'any(.entries[]; .path == "hooks/SessionStart" and .abandoned == true)
+  and all(.entries[]; select(.path != "hooks/SessionStart") | .abandoned == false)' \
+  "$state/settings-ownership.json" >/dev/null 2>&1 \
+  || test_fail "changed SessionStart hook was not abandoned"
+jq -e '((.hooks.PostToolBatch // []) | length) == 0
+  and ((.hooks.PostToolUseFailure // []) | length) == 0' "$settings" >/dev/null 2>&1 \
+  || test_fail "unchanged existing hooks were not restored around abandoned SessionStart"
 
 assert_preflight_rejects() {
   description=$1
