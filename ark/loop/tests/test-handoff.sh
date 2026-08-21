@@ -166,7 +166,8 @@ ln -s "$session/task.md" "$invalid/task.md"
 assert_unchanged_on_failure "symlink task" "$invalid" "$repo" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 invalid_session bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-sed 's/Safe goal/Safe\tgoal/' "$invalid/task.md" >"$invalid/task.md.changed"
+tab=$(printf '\t')
+sed "s/Safe goal/Safe${tab}goal/" "$invalid/task.md" >"$invalid/task.md.changed"
 chmod 600 "$invalid/task.md.changed"
 command mv "$invalid/task.md.changed" "$invalid/task.md"
 assert_unchanged_on_failure "control character" "$invalid" "$repo" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

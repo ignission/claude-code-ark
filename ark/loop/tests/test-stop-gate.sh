@@ -114,7 +114,22 @@ assert_quiet_stop "active Stop" env ARK_SESSION_DIR="$session" /bin/bash "$HOOK"
 
 complete_session="$XDG_DATA_HOME/ark/loop/sessions/44444444444444444444444444444444"
 make_session "$complete_session" complete
-assert_quiet_stop "completed Plan Stop" env ARK_SESSION_DIR="$complete_session" /bin/bash "$HOOK" <"$input"
+complete_input="$TEST_TMP/complete-input.json"
+jq '.session_id = "44444444444444444444444444444444"' "$input" >"$complete_input"
+assert_quiet_stop "completed Plan Stop" env ARK_SESSION_DIR="$complete_session" /bin/bash "$HOOK" <"$complete_input"
+[ -f "$complete_session/handoff.md" ] || test_fail "completed Plan Stop did not write handoff"
+
+# A valid payload for another session must not mutate the target session, even
+# after repeated delivery would otherwise create stop_once and then handoff.md.
+mismatch_session="$XDG_DATA_HOME/ark/loop/sessions/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+make_session "$mismatch_session" incomplete
+assert_quiet_stop "mismatched session Stop first delivery" \
+  env ARK_SESSION_DIR="$mismatch_session" /bin/bash "$HOOK" <"$input"
+assert_quiet_stop "mismatched session Stop second delivery" \
+  env ARK_SESSION_DIR="$mismatch_session" /bin/bash "$HOOK" <"$input"
+[ ! -e "$mismatch_session/stop_once" ] || test_fail "mismatched session Stop created stop_once"
+[ ! -e "$mismatch_session/handoff.md" ] || test_fail "mismatched session Stop wrote handoff"
+
 printf '%s\n' '{invalid' >"$TEST_TMP/invalid.json"
 assert_quiet_stop "invalid JSON Stop" env ARK_SESSION_DIR="$complete_session" /bin/bash "$HOOK" <"$TEST_TMP/invalid.json"
 jq '.hook_event_name = "PostToolUse"' "$input" >"$TEST_TMP/other-event.json"
@@ -122,14 +137,16 @@ assert_quiet_stop "other event" env ARK_SESSION_DIR="$complete_session" /bin/bas
 
 unsafe_session="$XDG_DATA_HOME/ark/loop/sessions/55555555555555555555555555555555"
 make_session "$unsafe_session" incomplete
+unsafe_input="$TEST_TMP/unsafe-input.json"
+jq '.session_id = "55555555555555555555555555555555"' "$input" >"$unsafe_input"
 chmod 755 "$unsafe_session"
-assert_quiet_stop "unsafe session mode" env ARK_SESSION_DIR="$unsafe_session" /bin/bash "$HOOK" <"$input"
+assert_quiet_stop "unsafe session mode" env ARK_SESSION_DIR="$unsafe_session" /bin/bash "$HOOK" <"$unsafe_input"
 chmod 700 "$unsafe_session"
 chmod 644 "$unsafe_session/task.md"
-assert_quiet_stop "unsafe task mode" env ARK_SESSION_DIR="$unsafe_session" /bin/bash "$HOOK" <"$input"
+assert_quiet_stop "unsafe task mode" env ARK_SESSION_DIR="$unsafe_session" /bin/bash "$HOOK" <"$unsafe_input"
 command rm -f "$unsafe_session/task.md"
 ln -s "$session/task.md" "$unsafe_session/task.md"
-assert_quiet_stop "symlink task" env ARK_SESSION_DIR="$unsafe_session" /bin/bash "$HOOK" <"$input"
+assert_quiet_stop "symlink task" env ARK_SESSION_DIR="$unsafe_session" /bin/bash "$HOOK" <"$unsafe_input"
 
 no_jq_bin="$TEST_TMP/no-jq-bin"
 mkdir -m 700 "$no_jq_bin"
@@ -143,9 +160,11 @@ assert_quiet_stop "missing jq" env PATH="$no_jq_bin" ARK_SESSION_DIR="$complete_
 
 bad_flag_session="$XDG_DATA_HOME/ark/loop/sessions/77777777777777777777777777777777"
 make_session "$bad_flag_session" incomplete
+bad_flag_input="$TEST_TMP/bad-flag-input.json"
+jq '.session_id = "77777777777777777777777777777777"' "$input" >"$bad_flag_input"
 : >"$bad_flag_session/stop_once"
 chmod 644 "$bad_flag_session/stop_once"
-assert_quiet_stop "unsafe one-shot mode" env ARK_SESSION_DIR="$bad_flag_session" /bin/bash "$HOOK" <"$input"
+assert_quiet_stop "unsafe one-shot mode" env ARK_SESSION_DIR="$bad_flag_session" /bin/bash "$HOOK" <"$bad_flag_input"
 
 ln -s "$complete_session" "$XDG_DATA_HOME/ark/loop/sessions/symlink-session"
 assert_quiet_stop "symlink session" env ARK_SESSION_DIR="$XDG_DATA_HOME/ark/loop/sessions/symlink-session" \
@@ -156,7 +175,9 @@ assert_quiet_stop "symlink session" env ARK_SESSION_DIR="$XDG_DATA_HOME/ark/loop
 large_message="$TEST_TMP/large-message"
 LC_ALL=C awk 'BEGIN { for (i = 0; i < 300000; i++) printf "x" }' >"$large_message"
 large_input="$TEST_TMP/large-input.json"
-jq --rawfile message "$large_message" '.last_assistant_message = $message' "$input" >"$large_input"
+jq --rawfile message "$large_message" \
+  '.session_id = "88888888888888888888888888888888" | .last_assistant_message = $message' \
+  "$input" >"$large_input"
 large_session="$XDG_DATA_HOME/ark/loop/sessions/88888888888888888888888888888888"
 make_session "$large_session" incomplete
 run_case env ARK_SESSION_DIR="$large_session" /bin/bash "$HOOK" <"$large_input"
@@ -168,13 +189,39 @@ oversize_input="$TEST_TMP/oversize-input.json"
 LC_ALL=C awk 'BEGIN { for (i = 0; i < 1048578; i++) printf "x" }' >"$oversize_input"
 assert_quiet_stop "oversize Stop" env ARK_SESSION_DIR="$complete_session" /bin/bash "$HOOK" <"$oversize_input"
 
+# jq emits one trailing LF. Grow an otherwise valid payload so it is exactly
+# 1,048,576 bytes before that LF and must therefore be rejected as 1,048,577.
+lf_session="$XDG_DATA_HOME/ark/loop/sessions/abababababababababababababababab"
+make_session "$lf_session" incomplete
+lf_base_input="$TEST_TMP/lf-base-input.json"
+lf_empty_message="$TEST_TMP/lf-empty-message"
+: >"$lf_empty_message"
+jq --rawfile message "$lf_empty_message" \
+  '.session_id = "abababababababababababababababab" | .last_assistant_message = $message' \
+  "$input" >"$lf_base_input"
+lf_padding_size=$((1048577 - $(wc -c <"$lf_base_input")))
+lf_message="$TEST_TMP/lf-message"
+LC_ALL=C awk -v size="$lf_padding_size" 'BEGIN { for (i = 0; i < size; i++) printf "x" }' >"$lf_message"
+lf_oversize_input="$TEST_TMP/lf-oversize-input.json"
+jq --rawfile message "$lf_message" \
+  '.session_id = "abababababababababababababababab" | .last_assistant_message = $message' \
+  "$input" >"$lf_oversize_input"
+assert_eq "trailing-LF payload size" 1048577 "$(wc -c <"$lf_oversize_input" | tr -d ' ')"
+jq -e . "$lf_oversize_input" >/dev/null 2>&1 || test_fail "trailing-LF payload is not valid JSON"
+assert_quiet_stop "trailing-LF oversize Stop" \
+  env ARK_SESSION_DIR="$lf_session" /bin/bash "$HOOK" <"$lf_oversize_input"
+[ ! -e "$lf_session/stop_once" ] || test_fail "trailing-LF oversize Stop created stop_once"
+[ ! -e "$lf_session/handoff.md" ] || test_fail "trailing-LF oversize Stop wrote handoff"
+
 parallel_session="$XDG_DATA_HOME/ark/loop/sessions/66666666666666666666666666666666"
 make_session "$parallel_session" incomplete
+parallel_input="$TEST_TMP/parallel-input.json"
+jq '.session_id = "66666666666666666666666666666666"' "$input" >"$parallel_input"
 parallel_dir="$TEST_TMP/parallel"
 mkdir -m 700 "$parallel_dir"
 parallel_pid=1
 while [ "$parallel_pid" -le 20 ]; do
-  env ARK_SESSION_DIR="$parallel_session" /bin/bash "$HOOK" <"$input" \
+  env ARK_SESSION_DIR="$parallel_session" /bin/bash "$HOOK" <"$parallel_input" \
     >"$parallel_dir/$parallel_pid.out" 2>"$parallel_dir/$parallel_pid.err" &
   eval "parallel_process_$parallel_pid=$!"
   parallel_pid=$((parallel_pid + 1))

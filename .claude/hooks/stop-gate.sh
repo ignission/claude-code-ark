@@ -2,9 +2,10 @@
 [ -z "${ARK_SESSION_DIR:-}" ] && exit 0
 
 stop_exit() {
+  [ -z "${input_file:-}" ] || command rm -f "$input_file" >/dev/null 2>&1 || :
   exit 0
 }
-trap stop_exit HUP INT TERM
+trap stop_exit EXIT HUP INT TERM
 
 session=${ARK_SESSION_DIR:-}
 ARK_SOURCE_ROOT=$(cd "$(dirname "$0")/../.." 2>/dev/null && pwd -P) || exit 0
@@ -13,8 +14,11 @@ ARK_SOURCE_ROOT=$(cd "$(dirname "$0")/../.." 2>/dev/null && pwd -P) || exit 0
 
 command -v head >/dev/null 2>&1 || exit 0
 command -v jq >/dev/null 2>&1 || exit 0
-input=$(head -c 1048577 2>/dev/null) || exit 0
-input_size=$(printf '%s' "$input" | wc -c | tr -d ' ') || exit 0
+command -v mktemp >/dev/null 2>&1 || exit 0
+umask 077
+input_file=$(mktemp "${TMPDIR:-/tmp}/ark-stop-gate.XXXXXX") || exit 0
+head -c 1048577 >"$input_file" 2>/dev/null || exit 0
+input_size=$(wc -c <"$input_file" | tr -d ' ') || exit 0
 case "$input_size" in ''|*[!0-9]*) exit 0 ;; esac
 [ "$input_size" -le 1048576 ] || exit 0
 
@@ -23,7 +27,7 @@ session_id=${session##*/}
 case "$session_id" in ''|*[!0-9a-f]*) exit 0 ;; esac
 [ "${#session_id}" -eq 32 ] || exit 0
 
-validated=$(printf '%s' "$input" | jq -cer '
+validated=$(jq -cer '
   select(
     type == "object"
     and .hook_event_name == "Stop"
@@ -33,13 +37,14 @@ validated=$(printf '%s' "$input" | jq -cer '
     and (.session_id | test("^[0-9a-f]{32}$"))
     and ((has("last_assistant_message") | not) or (.last_assistant_message | type) == "string")
   )
-  | [.cwd, .stop_hook_active]
+  | [.session_id, .cwd, .stop_hook_active]
   | @tsv
-' 2>/dev/null) || exit 0
-IFS=$(printf '\t') read -r cwd stop_hook_active extra <<EOF
+' "$input_file" 2>/dev/null) || exit 0
+IFS=$(printf '\t') read -r input_session_id cwd stop_hook_active extra <<EOF
 $validated
 EOF
 [ -n "$cwd" ] && [ -z "${extra:-}" ] || exit 0
+[ "$input_session_id" = "$session_id" ] || exit 0
 canonical_repo=$(loop_resolve_repo "$cwd" 2>/dev/null) || exit 0
 [ "$canonical_repo" = "$cwd" ] || exit 0
 
