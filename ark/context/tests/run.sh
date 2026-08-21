@@ -15,6 +15,7 @@ for test_script in \
   test-recite-todo.sh \
   test-capture-error.sh \
   test-summarize-errors.sh \
+  test-jq-prerequisite.sh \
   test-claude-code-post-tool-use-failure.sh \
   test-claude-code-post-tool-batch.sh \
   test-claude-code-session-start.sh \

@@ -1,5 +1,10 @@
 # Ark Context runtime data
 
+## 実行環境の前提条件
+
+Ark Context の有効化と hook の実行には `jq` が必要である。macOS では標準で
+インストールされていないため、事前に `brew install jq` などで導入する。
+
 ## 有効化前に確認する repo の前提条件
 
 Ark Context を有効化する対象 repo は、事前に次の条件をすべて満たす必要がある。

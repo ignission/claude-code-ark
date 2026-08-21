@@ -4,7 +4,14 @@ if [ -z "${ARK_SESSION_DIR:-}" ]; then
   exit 0
 fi
 
+adapter_dir=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P) || exit 0
+source_root=$(cd "$adapter_dir/../.." 2>/dev/null && pwd -P) || exit 0
+runtime="$source_root/scripts/lib/runtime.sh"
+[ -f "$runtime" ] && [ ! -L "$runtime" ] || exit 0
+. "$runtime" || exit 0
+
 if ! command -v jq >/dev/null 2>&1; then
+  ctx_record_missing_jq
   exit 0
 fi
 
@@ -29,8 +36,6 @@ printf '%s' "$input" | jq -e \
   'type == "object" and .hook_event_name == "SessionStart"' >/dev/null 2>&1 \
   || exit 0
 
-adapter_dir=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P) || exit 0
-source_root=$(cd "$adapter_dir/../.." 2>/dev/null && pwd -P) || exit 0
 core="$source_root/hooks/inject-context-rules.sh"
 [ -f "$core" ] && [ ! -L "$core" ] || exit 0
 

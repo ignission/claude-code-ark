@@ -98,6 +98,23 @@ assert_success "teardown without ARK_SESSION_DIR is a no-op"
 assert_eq "teardown without ARK_SESSION_DIR stdout is empty" 0 "$(wc -c <"$CASE_STDOUT" | tr -d ' ')"
 assert_eq "teardown without ARK_SESSION_DIR stderr is empty" 0 "$(wc -c <"$CASE_STDERR" | tr -d ' ')"
 
+setup_repo missing-jq-init
+no_jq_init_bin="$TEST_TMP/no-jq-init-bin"
+mkdir -m 700 "$no_jq_init_bin"
+for required_command in awk basename cat chmod cp cut date dirname env git grep head iconv id \
+  mkdir mktemp mv od openssl rm rmdir sed shasum sort stat tail tr uniq wc; do
+  command_path=$(command -v "$required_command")
+  ln -s "$command_path" "$no_jq_init_bin/$required_command"
+done
+run_case env PATH="$no_jq_init_bin" /bin/bash "$INIT" --repo "$repo" --owner-pid "$$" \
+  --session-id 07070707070707070707070707070707 --goal 'Missing jq' --plan-item 'Stay disabled'
+assert_init_disabled_reason "missing jq init" "jq command unavailable"
+[ ! -e "$repo/.claude/settings.local.json" ] \
+  || test_fail "missing jq init changed settings"
+missing_jq_state="$XDG_DATA_HOME/ark/context/repos/$(ctx_sha256 "$repo")"
+[ ! -e "$missing_jq_state/settings-ownership.json" ] \
+  || test_fail "missing jq init created settings ownership"
+
 assert_registered_hooks_fire() {
   registered_label=$1
   batch_command=$(jq -r '.hooks.PostToolBatch[0].hooks[0].command' "$settings")
