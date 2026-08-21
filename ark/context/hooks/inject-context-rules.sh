@@ -89,11 +89,12 @@ ctx_rules_parse_task() {
 }
 
 ctx_rules_main() {
-  local session=${ARK_SESSION_DIR:-} task failures context_root rules state_context failures_context context bytes
+  local session=${ARK_SESSION_DIR:-} task failures session_inbox context_root rules state_context failures_context context bytes
   CTX_RULES_UID=$(id -u 2>/dev/null) || return 1
   ctx_rules_safe_session "$session" || return 1
   task="$session/task.md"
   failures="$session/knowledge/failures.md"
+  session_inbox="$session/failures-inbox.md"
   context_root=$(cd "$CTX_RULES_HOOK_DIR/.." 2>/dev/null && pwd -P) || return 1
   rules="$context_root/templates/context-rules.md"
   [ -f "$rules" ] && [ ! -L "$rules" ] || return 1
@@ -111,14 +112,17 @@ ctx_rules_main() {
   fi
   failures_context=
   if ctx_rules_has_failures "$failures"; then
-    failures_context="knowledge/failures.md: $failures
-作業開始前と、失敗して再試行する前に上記 knowledge/failures.md を読むこと。"
+    failures_context="knowledge/failures.md: $failures       ← 作業開始前と、失敗して再試行する前に読む"
   fi
   context=$({
     command cat "$rules"
-    printf '\ntask.md: %s\n' "$task"
-    printf '%s\n' 'artifacts/index.md の追記形式: - artifacts/<path> — <1行要約>'
+    printf '\nsession directory:\n'
+    printf 'task.md:               %s\n' "$task"
+    printf 'artifacts/:            %s       ← 20行超の中間成果はここへ\n' "$session/artifacts"
+    printf 'artifacts/index.md:    %s       ← 形式: - artifacts/<path> — <1行要約>\n' \
+      "$session/artifacts/index.md"
     [ -z "$failures_context" ] || printf '%s\n' "$failures_context"
+    printf 'failures-inbox.md:     %s       ← 候補を書く先\n' "$session_inbox"
     printf '%s\n' "$state_context"
   }) || return 1
   bytes=$(printf '%s\n' "$context" | wc -c | tr -d ' ')

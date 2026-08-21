@@ -96,6 +96,7 @@ ${XDG_DATA_HOME:-$HOME/.local/share}/ark/context/
 │   │   └── summary.md
 │   ├── knowledge/
 │   │   └── failures.md
+│   ├── failures-inbox.md
 │   ├── handoff.md
 │   └── stop_once
 ├── knowledge/
@@ -147,8 +148,9 @@ tmux session は起動時の環境を生存中保持するため、稼働中 ses
 | `errors/raw.log` | capture hook だけが追記する append-only 原記録 |
 | `errors/summary.md` | raw log から再生成可能な派生物 |
 | `handoff.md` | task、artifact index、error summary から再生成可能な派生物 |
-| `knowledge/failures.md` | 人間がキュレーションした host 正本。session へ read-only 配布 |
-| `knowledge/failures-inbox.md` | session の候補を受け取る昇格待ち。配布正本として扱わない |
+| session `knowledge/failures.md` | 人間がキュレーションした host 正本の init 時 snapshot。read-only 配布 |
+| session `failures-inbox.md` | agent が候補を書く session 固有の受け皿。init が mode `0600` で作成 |
+| host `knowledge/failures-inbox.md` | teardown が session の候補を lock 下で吸い上げる昇格待ち。配布正本として扱わない |
 
 ### §3-3 native todo との関係
 
@@ -287,7 +289,7 @@ Goal と Constraints は init 後に編集してはならない。ただし、in
 
 Claude Code adapter だけが、既存 `.claude/settings.local.json` の有無の記録・非破壊な context settings 注入・復元、hook matcher、hook input JSON、`additionalContext` output、Claude Code の `allowed-tools` / permission deny を扱う。agent 非依存の template、規約、session file format に Claude Code 固有 key を入れない。
 
-SessionStart の `additionalContext` は、安全性を検証した session の `knowledge/failures.md` が size 0 でなく、かつ非空白行を1行以上持つ場合だけ、その絶対 path と「作業開始前および失敗後の再試行前に読む」という指示を加える。file 本文は注入しない。空の file、symlink、mode または所有者が契約と異なる file は案内せず、他の規約、`task.md` path、artifact 形式、Goal 分岐の注入を継続する。これにより §6-1 の read-only copy を配布だけで終わらせず、モデルが参照する consumer 経路を定義する。
+SessionStart の `additionalContext` は、規約本文に続けて session directory の構造を1ブロックで示し、`task.md`、`artifacts/`、`artifacts/index.md`、`failures-inbox.md` の絶対 path と、artifact の用途・index 追記形式・候補の書き先を渡す。安全性を検証した session の `knowledge/failures.md` が size 0 でなく、かつ非空白行を1行以上持つ場合だけ、同じブロック内にその絶対 path と「作業開始前および失敗後の再試行前に読む」という指示を加える。file 本文は注入しない。空の file、symlink、mode または所有者が契約と異なる file は `knowledge/failures.md` の行だけを省略し、他の規約、path 一覧、Goal 分岐の注入を継続する。規約本文に現れる session file / directory 名は静的テストでこの path ブロックと照合し、hook が自動管理する `errors/raw.log` だけを明示除外する。
 
 repo state directory の `settings-ownership.json` は、注入前の settings file の有無と、Ark が実際に追加した entry ごとの配列／key pathおよび canonical な permission 文字列または hook objectだけを記録し、従来の元ファイル有無 markerを置き換える。追加候補と同一の entry が既にあれば追加も記録もせず、存在しない場合だけ非破壊に追加して manifest に記録する。settings schema に所有判定用の `id` 等を加えてはならない。
 
@@ -306,7 +308,7 @@ init の順序を次で固定する。
 3. owner が存在しないか消滅している場合は ownership を原子的に取得し、同じ session が owner の場合は保持する。owner は settings に触れる前に `.claude`、settings file、一時 file の§2-2の安全性と、両 file の§2-3のignore・tracked状態を検証する。失敗時は settings を変更せず context を無効化する。成功時だけ manifest に従って孤児 Ark entry を回収し、安全性を確認済みの regular な一時 file を除去してから、session directory と cache directory を作る。
 4. config を読み、§3-1 の値を Ark へ返す。
 5. 新規 session に限って template を展開する。
-6. host の `failures.md` を session へ read-only copy する。
+6. host の `failures.md` を session へ read-only copy し、agent 用の session `failures-inbox.md` を mode `0600` で作る。同じ session の再 init では既存内容を保持する。
 7. 既存settingsのJSON schemaを検証してから、manifestへ記録するArk所有entryだけを非破壊に追加する。前提を満たさない場合は settings を変更せず context を無効化する。
 
 `owner` marker の取得・生存確認・消滅 owner からの引継ぎは per-repo で排他的に行う。同じ session の再実行だけは既存 ownership を継続できる。repo state directory と file は owner のみ読み書き可能にする。`settings-ownership.json` は§5-3の契約に従い、注入前の有無とArkが実際に追加したentryだけを所有の根拠とする。
@@ -329,7 +331,7 @@ teardown の順序を次で固定し、各段階を単独で再実行可能に�
 
 1. 機械的 error summary を生成する。
 2. `handoff.md` を更新する。
-3. 再発性のある候補を host の `failures-inbox.md` へ重複なく追記する。
+3. 機械 summary の候補と session `failures-inbox.md` の手書き候補を、knowledge lock 下で host の `failures-inbox.md` へ重複なく追記する。手書き候補は UTF-8 の安全な regular file、mode `0600`、最大 64 KiB の場合だけ内容全体を採用し、内容 SHA-256 marker で再実行を重複排除する。上限超過を切り詰めず、symlink・mode / owner 不一致・不正 UTF-8 とともにその候補だけをスキップして後続 teardown を続ける。
 4. 自分の session ID が repo state directory の `owner` marker と一致する場合に限り、manifest 記録と現在の settings.local が同一の Ark 所有 entry だけを除去し、非 Ark 変更を保持して §6-1 の原子的手順で内容と mode を書き戻す。変更済み entry は所有を放棄して残し、その結果をmanifestへ記録する。manifest が元設定なしを示し、Ark 以外の entry が残らない場合に限り file を削除する。
 5. `stop_once` 等の transient flag を cleanup し、手順4の書き戻しまたは削除が成功した自分が owner の場合に限って `owner` marker を除去する。
 
@@ -351,7 +353,7 @@ LLM 出力の各項目にも `errors/raw.log:L{n}-L{m}` 形式の参照を必須
 
 ### §7-1 failures 横断共有
 
-host knowledge の `failures.md` だけを curated 正本とする。session 開始時に `$ARK_SESSION_DIR/knowledge/failures.md` へ copy して read-only にし、実行中の agent と hook は書き換えない。session 終了時は候補を host の `failures-inbox.md` へ追記する。
+host knowledge の `failures.md` だけを curated 正本とする。session 開始時に `$ARK_SESSION_DIR/knowledge/failures.md` へ copy して read-only にし、実行中の agent と hook は書き換えない。agent は候補を session 固有の `$ARK_SESSION_DIR/failures-inbox.md` へ書き、host knowledge へ直接書かない。session 終了時または次回 init の孤児回収時に、per-repo lock と knowledge lock の順で取得した critical section から host の `failures-inbox.md` へ吸い上げる。
 
 昇格は人間だけが行う。人間は inbox の候補について重複、機密情報、再現性を確認し、採用した項目を inbox から `failures.md` へ移す。session output や raw log から直接 `failures.md` へ昇格する経路を作らない。
 

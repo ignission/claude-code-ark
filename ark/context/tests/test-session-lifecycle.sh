@@ -94,6 +94,11 @@ run_registered_hook() {
     <"$registered_input"
 }
 
+run_case env -u ARK_SESSION_DIR /bin/bash "$TEARDOWN"
+assert_success "teardown without ARK_SESSION_DIR is a no-op"
+assert_eq "teardown without ARK_SESSION_DIR stdout is empty" 0 "$(wc -c <"$CASE_STDOUT" | tr -d ' ')"
+assert_eq "teardown without ARK_SESSION_DIR stderr is empty" 0 "$(wc -c <"$CASE_STDERR" | tr -d ' ')"
+
 assert_registered_hooks_fire() {
   registered_label=$1
   batch_command=$(jq -r '.hooks.PostToolBatch[0].hooks[0].command' "$settings")
@@ -241,6 +246,9 @@ cache_dir=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
 [ -f "$session_dir/artifacts/index.md" ] || test_fail "init did not create artifacts/index.md"
 assert_eq "artifact index mode" 600 "$(ctx_stat "$session_dir/artifacts/index.md" | awk '{print $2}')"
 assert_eq "artifact index starts empty" 0 "$(wc -c <"$session_dir/artifacts/index.md" | tr -d ' ')"
+[ -f "$session_dir/failures-inbox.md" ] || test_fail "init did not create session failures inbox"
+assert_eq "session failures inbox mode" 600 "$(ctx_stat "$session_dir/failures-inbox.md" | awk '{print $2}')"
+assert_eq "session failures inbox starts empty" 0 "$(wc -c <"$session_dir/failures-inbox.md" | tr -d ' ')"
 grep -Fx "Context rules: $ARK_SOURCE_FIXTURE/ark/context/templates/context-rules.md" "$session_dir/task.md" >/dev/null 2>&1 \
   || test_fail "task does not reference context rules by absolute path"
 jq -e '.permissions.deny == ["TodoWrite","TaskCreate","TaskUpdate"]' "$settings" >/dev/null 2>&1 || test_fail "init did not inject deny"
@@ -300,6 +308,9 @@ assert_eq "live owner disabled" $'enabled\t0' "$(sed -n '1p' "$CASE_STDOUT")"
 cmp -s "$settings" "$TEST_TMP/live-owner-settings" || test_fail "live competitor changed settings"
 
 prepare_lifecycle_output "$session_dir" "$cache_dir"
+printf '%s\n' '## Lifecycle recovery' '- Preserve this model-written candidate.' \
+  >"$session_dir/failures-inbox.md"
+chmod 600 "$session_dir/failures-inbox.md"
 run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$sid"
 assert_success "teardown succeeds"
 cmp -s "$settings" "$TEST_TMP/lifecycle-original" || test_fail "teardown did not byte-restore settings"
@@ -319,8 +330,12 @@ grep -F 'artifact body must not enter handoff' "$session_dir/handoff.md" >/dev/n
 assert_eq "teardown handoff excludes artifact body" 1 "$?"
 knowledge="$XDG_DATA_HOME/ark/context/knowledge"
 inbox="$knowledge/failures-inbox.md"
-assert_eq "teardown appends one inbox marker" 1 \
+assert_eq "teardown appends mechanical and session inbox candidates" 2 \
   "$(grep -Fc -- "- Session ID: $sid" "$inbox" 2>/dev/null)"
+assert_eq "teardown appends one session candidate marker" 1 \
+  "$(grep -Ec '^<!-- ark-context-session-candidate:[0-9a-f]{64} -->$' "$inbox")"
+assert_eq "teardown preserves session candidate content once" 1 \
+  "$(grep -Fxc -- '- Preserve this model-written candidate.' "$inbox")"
 [ ! -e "$knowledge/failures-inbox.lock" ] || test_fail "teardown left knowledge lock"
 
 handoff_once=$(cksum "$session_dir/handoff.md")
@@ -332,6 +347,28 @@ assert_eq "second teardown deduplicates inbox" "$inbox_once" "$(cksum "$inbox")"
 [ ! -e "$state/owner" ] || test_fail "second teardown recreated owner"
 [ ! -e "$state/settings.lock" ] || test_fail "second teardown left settings lock"
 [ ! -e "$knowledge/failures-inbox.lock" ] || test_fail "second teardown left knowledge lock"
+
+setup_repo teardown-unsafe-session-inbox
+unsafe_session_sid=13131313131313131313131313131313
+run_case run_init "$unsafe_session_sid"
+assert_success "unsafe-session-inbox init succeeds"
+unsafe_session_dir=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
+unsafe_session_cache=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
+unsafe_session_state="$XDG_DATA_HOME/ark/context/repos/$(ctx_sha256 "$repo")"
+prepare_lifecycle_output "$unsafe_session_dir" "$unsafe_session_cache"
+printf '%s\n' 'UNSAFE SESSION CANDIDATE MUST NOT PUBLISH' >"$unsafe_session_dir/failures-inbox.md"
+chmod 644 "$unsafe_session_dir/failures-inbox.md"
+run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$unsafe_session_sid"
+assert_success "unsafe session inbox teardown continues"
+[ -f "$unsafe_session_dir/errors/summary.md" ] || test_fail "unsafe session inbox skipped summary"
+[ -f "$unsafe_session_dir/handoff.md" ] || test_fail "unsafe session inbox skipped handoff"
+[ ! -e "$unsafe_session_state/owner" ] || test_fail "unsafe session inbox skipped owner cleanup"
+[ ! -e "$unsafe_session_state/settings.lock" ] || test_fail "unsafe session inbox left settings lock"
+[ ! -e "$repo/.claude/settings.local.json" ] || test_fail "unsafe session inbox skipped settings restore"
+assert_eq "unsafe session inbox still allows mechanical candidate" 1 \
+  "$(grep -Fc -- "- Session ID: $unsafe_session_sid" "$inbox")"
+grep -F 'UNSAFE SESSION CANDIDATE MUST NOT PUBLISH' "$inbox" >/dev/null 2>&1
+assert_eq "unsafe session inbox content is not published" 1 "$?"
 
 setup_repo teardown-restore-failure
 restore_fail_sid=12121212121212121212121212121212
@@ -476,6 +513,9 @@ assert_eq "first orphan-chain init enabled" $'enabled\t1' "$(sed -n '1p' "$TEST_
 orphan1_session=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$TEST_TMP/orphan-1.out")
 orphan1_cache=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$TEST_TMP/orphan-1.out")
 prepare_lifecycle_output "$orphan1_session" "$orphan1_cache"
+printf '%s\n' '## Compensated recovery' '- Deduplicate this session candidate.' \
+  >"$orphan1_session/failures-inbox.md"
+chmod 600 "$orphan1_session/failures-inbox.md"
 kill "$owner1"; wait "$owner1" 2>/dev/null || true
 content=$(cat "$settings")
 printf '%s\n' "${content%\}},\"user-kept\":1}" >"$settings"; chmod 600 "$settings"
@@ -487,8 +527,10 @@ assert_eq "first dead owner recovered" $'enabled\t1' "$(sed -n '1p' "$TEST_TMP/o
 [ -f "$orphan1_session/handoff.md" ] || test_fail "first dead owner recovery skipped handoff"
 [ ! -e "$orphan1_session/stop_once" ] || test_fail "first dead owner recovery left stop_once"
 [ ! -e "$orphan1_cache/steps" ] || test_fail "first dead owner recovery left steps"
-assert_eq "first dead owner inbox marker is unique" 1 \
+assert_eq "first dead owner appends mechanical and session candidates" 2 \
   "$(grep -Fc -- '- Session ID: 44444444444444444444444444444444' "$knowledge/failures-inbox.md")"
+assert_eq "first dead owner absorbs session inbox" 1 \
+  "$(grep -Fxc -- '- Deduplicate this session candidate.' "$knowledge/failures-inbox.md")"
 orphan2_session=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$TEST_TMP/orphan-2.out")
 orphan2_cache=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$TEST_TMP/orphan-2.out")
 cmp -s "$knowledge/failures.md" "$orphan2_session/knowledge/failures.md" \
@@ -496,6 +538,9 @@ cmp -s "$knowledge/failures.md" "$orphan2_session/knowledge/failures.md" \
 grep -F 'ark-context-candidate:' "$orphan2_session/knowledge/failures.md" >/dev/null 2>&1
 assert_eq "new session knowledge excludes inbox" 1 "$?"
 prepare_lifecycle_output "$orphan2_session" "$orphan2_cache"
+printf '%s\n' '## Compensated recovery' '- Deduplicate this session candidate.' \
+  >"$orphan2_session/failures-inbox.md"
+chmod 600 "$orphan2_session/failures-inbox.md"
 settings_after_first_recovery=$(cksum "$settings")
 kill "$owner2"; wait "$owner2" 2>/dev/null || true
 /bin/sleep 60 & owner3=$!
@@ -508,6 +553,8 @@ assert_eq "second dead owner recovered" $'enabled\t1' "$(sed -n '1p' "$TEST_TMP/
 [ ! -e "$orphan2_cache/steps" ] || test_fail "second dead owner recovery left steps"
 assert_eq "second dead owner inbox marker is unique" 1 \
   "$(grep -Fc -- '- Session ID: 55555555555555555555555555555555' "$knowledge/failures-inbox.md")"
+assert_eq "repeated dead owner recovery deduplicates session inbox" 1 \
+  "$(grep -Fxc -- '- Deduplicate this session candidate.' "$knowledge/failures-inbox.md")"
 assert_eq "consecutive recovery settings bytes converge" "$settings_after_first_recovery" "$(cksum "$settings")"
 assert_eq "orphan recovery preserves curated host bytes" "$curated_hash" "$(cksum "$knowledge/failures.md")"
 [ ! -e "$knowledge/failures-inbox.lock" ] || test_fail "orphan recovery left knowledge lock"

@@ -156,6 +156,8 @@ if owner_read "$owner"; then
           knowledge_token=$FLOW_LOCK_ACQUIRED_TOKEN
           ctx_failures_inbox_append "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" \
             "$old_work_id" "$OWNER_SESSION" >/dev/null 2>&1 || true
+          ctx_session_failures_inbox_append "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" \
+            "$old_work_id" "$OWNER_SESSION" >/dev/null 2>&1 || true
           flow_lock_release "$knowledge_lock" "$knowledge_backend" "$knowledge_pid" "$knowledge_token" \
             >/dev/null 2>&1 || true
         fi
@@ -229,6 +231,8 @@ else
   ctx_task_render "$@" >/dev/null 2>&1 || init_failed "task initialization failed"
 fi
 ctx_knowledge_initialize "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" >/dev/null 2>&1 || init_failed "knowledge initialization failed"
+ctx_session_failures_inbox_initialize "$ARK_SESSION_DIR" >/dev/null 2>&1 \
+  || init_failed "session failures inbox initialization failed"
 CLAUDE_SETTINGS_FAILURE_REASON=
 claude_settings_inject "$repo" "$CTX_REPO_STATE_DIR" "$ARK_SOURCE_ROOT" >/dev/null 2>&1 \
   || init_failed "${CLAUDE_SETTINGS_FAILURE_REASON:-settings injection failed}"

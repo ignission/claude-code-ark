@@ -49,6 +49,8 @@ if [ -n "$work_id" ]; then
     knowledge_token=$FLOW_LOCK_ACQUIRED_TOKEN
     ctx_failures_inbox_append "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" "$work_id" "$session" \
       >/dev/null 2>&1 || true
+    ctx_session_failures_inbox_append "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" "$work_id" "$session" \
+      >/dev/null 2>&1 || true
     flow_lock_release "$knowledge_lock" "$knowledge_backend" "$knowledge_pid" "$knowledge_token" \
       >/dev/null 2>&1 || true
   fi

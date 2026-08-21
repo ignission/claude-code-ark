@@ -29,7 +29,7 @@ for hook in "$CORE" "$WRAPPER"; do
 done
 
 session="$TEST_TMP/session"
-mkdir -m 700 "$session" "$session/knowledge"
+mkdir -m 700 "$session" "$session/artifacts" "$session/knowledge"
 printf '# Task\n\n## Goal\n\n\n## Constraints\n\n## Plan\n\n## Artifacts\n- (なし)\n' \
   >"$session/task.md"
 : >"$session/knowledge/failures.md"
@@ -44,11 +44,15 @@ case "$context" in
   *) test_fail "additional context does not begin with the canonical rules" ;;
 esac
 assert_eq "additional context includes absolute task path" 1 \
-  "$(grep -Fxc -- "task.md: $session/task.md" "$CASE_STDOUT")"
+  "$(grep -Fxc -- "task.md:               $session/task.md" "$CASE_STDOUT")"
 grep -F '最初のユーザー要求から Goal と Plan を task.md に起票' "$CASE_STDOUT" >/dev/null 2>&1
 assert_eq "empty task receives initial filing instruction" 0 "$?"
-grep -F -- 'artifacts/index.md の追記形式: - artifacts/<path> — <1行要約>' "$CASE_STDOUT" >/dev/null 2>&1
-assert_eq "artifact append format is injected" 0 "$?"
+assert_eq "artifacts directory absolute path is injected" 1 \
+  "$(grep -Fxc -- "artifacts/:            $session/artifacts       ← 20行超の中間成果はここへ" "$CASE_STDOUT")"
+assert_eq "artifact index absolute path and format are injected" 1 \
+  "$(grep -Fxc -- "artifacts/index.md:    $session/artifacts/index.md       ← 形式: - artifacts/<path> — <1行要約>" "$CASE_STDOUT")"
+assert_eq "session failures inbox absolute path is injected" 1 \
+  "$(grep -Fxc -- "failures-inbox.md:     $session/failures-inbox.md       ← 候補を書く先" "$CASE_STDOUT")"
 assert_eq "empty failures path is not injected" 0 \
   "$(grep -Fc -- "$session/knowledge/failures.md" "$CASE_STDOUT")"
 empty_failures_context=$(cat "$CASE_STDOUT")
@@ -60,14 +64,36 @@ chmod 600 "$session/knowledge/failures.md"
 run_case env ARK_SESSION_DIR="$session" /bin/bash "$CORE"
 assert_success "non-empty failures context is generated"
 assert_eq "non-empty failures absolute path is injected once" 1 \
-  "$(grep -Fxc -- "knowledge/failures.md: $session/knowledge/failures.md" "$CASE_STDOUT")"
-grep -F '作業開始前と、失敗して再試行する前に上記 knowledge/failures.md を読むこと。' \
-  "$CASE_STDOUT" >/dev/null 2>&1
-assert_eq "failures read instruction is injected" 0 "$?"
+  "$(grep -Fxc -- "knowledge/failures.md: $session/knowledge/failures.md       ← 作業開始前と、失敗して再試行する前に読む" "$CASE_STDOUT")"
+assert_eq "non-empty context injects all five session paths" 5 \
+  "$(grep -Ec '^(task\.md|artifacts/|artifacts/index\.md|knowledge/failures\.md|failures-inbox\.md):' "$CASE_STDOUT")"
 assert_eq "failures contents are not injected" 0 \
   "$(grep -Fc -- "$failure_sentinel" "$CASE_STDOUT")"
 grep -F '最初のユーザー要求から Goal と Plan を task.md に起票' "$CASE_STDOUT" >/dev/null 2>&1
 assert_eq "failures hint preserves empty Goal branch" 0 "$?"
+
+rules_paths=$(grep -Eo '([[:alnum:]_-]+/)*[[:alnum:]_.-]+\.md|artifacts/' "$RULES" | LC_ALL=C sort -u)
+rules_path_exclusions='errors/raw.log'
+while IFS= read -r rules_path || [ -n "$rules_path" ]; do
+  [ -n "$rules_path" ] || continue
+  case "$rules_path" in
+    errors/raw.log)
+      printf '%s\n' "$rules_path_exclusions" | grep -F -x "$rules_path" >/dev/null 2>&1 \
+        || test_fail "rules path exclusion is not explicit: $rules_path"
+      TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1))
+      ;;
+    task.md) injected_line="task.md:               $session/task.md" ;;
+    artifacts/) injected_line="artifacts/:            $session/artifacts       ← 20行超の中間成果はここへ" ;;
+    artifacts/index.md) injected_line="artifacts/index.md:    $session/artifacts/index.md       ← 形式: - artifacts/<path> — <1行要約>" ;;
+    failures-inbox.md) injected_line="failures-inbox.md:     $session/failures-inbox.md       ← 候補を書く先" ;;
+    *) test_fail "rules mention an unmapped session path: $rules_path"; continue ;;
+  esac
+  [ "$rules_path" = errors/raw.log ] && continue
+  assert_eq "rules path is injected: $rules_path" 1 \
+    "$(grep -Fxc -- "$injected_line" "$CASE_STDOUT")"
+done <<EOF
+$rules_paths
+EOF
 
 : >"$session/knowledge/failures.md"
 printf ' \t\n' >>"$session/knowledge/failures.md"
@@ -127,7 +153,7 @@ jq -e 'keys == ["hookSpecificOutput"]
   "$CASE_STDOUT" >/dev/null 2>&1 || test_fail "SessionStart output schema or context is invalid"
 adapter_context=$(jq -r '.hookSpecificOutput.additionalContext' "$CASE_STDOUT")
 assert_eq "SessionStart additionalContext includes failures absolute path once" 1 \
-  "$(printf '%s\n' "$adapter_context" | grep -Fxc -- "knowledge/failures.md: $session/knowledge/failures.md")"
+  "$(printf '%s\n' "$adapter_context" | grep -Fxc -- "knowledge/failures.md: $session/knowledge/failures.md       ← 作業開始前と、失敗して再試行する前に読む")"
 assert_eq "SessionStart additionalContext excludes failures contents" 0 \
   "$(printf '%s\n' "$adapter_context" | grep -Fc -- "$failure_sentinel")"
 
