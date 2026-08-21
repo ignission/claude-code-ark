@@ -57,9 +57,9 @@ sid=11111111111111111111111111111111
 run_case run_init "$sid"
 assert_success "session init succeeds"
 assert_eq "init enabled line" $'enabled\t1' "$(sed -n '1p' "$CASE_STDOUT")"
-assert_eq "init output line count" 6 "$(wc -l <"$CASE_STDOUT" | tr -d ' ')"
-assert_eq "init environment order" 'ARK_SESSION_ID ARK_SESSION_DIR ARK_CACHE_DIR ARK_RECITE_INTERVAL ARK_KNOWLEDGE_DIR' \
-  "$(sed -n '2,6p' "$CASE_STDOUT" | cut -f1 | tr '\n' ' ' | sed 's/ $//')"
+assert_eq "init output line count" 7 "$(wc -l <"$CASE_STDOUT" | tr -d ' ')"
+assert_eq "init environment order" 'ARK_SESSION_ID ARK_SESSION_DIR ARK_CACHE_DIR ARK_RECITE_INTERVAL ARK_KNOWLEDGE_DIR ARK_REPO_KEY' \
+  "$(sed -n '2,7p' "$CASE_STDOUT" | cut -f1 | tr '\n' ' ' | sed 's/ $//')"
 session_dir=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
 cache_dir=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
 [ -f "$session_dir/task.md" ] || test_fail "init did not create task.md"
@@ -68,6 +68,27 @@ repo_key=$(ctx_sha256 "$repo")
 state="$XDG_DATA_HOME/ark/context/repos/$repo_key"
 assert_eq "owner marker mode" 600 "$(ctx_stat "$state/owner" | awk '{print $2}')"
 assert_eq "owner marker bytes" "$sid" "$(cut -f1 "$state/owner")"
+
+run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$sid"
+assert_success "populated task teardown before empty scaffold case"
+empty_sid=10101010101010101010101010101010
+run_case /bin/bash "$INIT" --repo "$repo" --owner-pid "$$" --session-id "$empty_sid"
+assert_success "session init accepts omitted task arguments"
+assert_eq "empty task init enabled" $'enabled\t1' "$(sed -n '1p' "$CASE_STDOUT")"
+empty_session_dir=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
+grep -F '← NOW' "$empty_session_dir/task.md" >/dev/null 2>&1
+assert_eq "empty task has no NOW marker" 1 "$?"
+assert_eq "empty Goal body" '' "$(sed -n '/^## Goal$/,/^## Constraints$/p' "$empty_session_dir/task.md" | sed '1d;$d' | tr -d '\n')"
+assert_eq "empty Constraints body" 'Previous failure summary: なし（通常起動）' \
+  "$(sed -n '/^## Constraints$/,/^## Plan$/p' "$empty_session_dir/task.md" | sed '1d;$d' | sed '/^$/d')"
+assert_eq "empty Plan body" '' "$(sed -n '/^## Plan$/,/^## Artifacts$/p' "$empty_session_dir/task.md" | sed '1d;$d' | tr -d '\n')"
+run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$empty_sid"
+assert_success "empty task teardown succeeds"
+
+run_case run_init "$sid"
+assert_success "populated task can initialize after empty scaffold case"
+session_dir=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
+cache_dir=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
 
 seed_step_count "$cache_dir" 7
 task_before=$(cat "$session_dir/task.md")

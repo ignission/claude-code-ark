@@ -307,6 +307,8 @@ init の順序を次で固定する。
 
 `owner` marker の取得・生存確認・消滅 owner からの引継ぎは per-repo で排他的に行う。同じ session の再実行だけは既存 ownership を継続できる。repo state directory と file は owner のみ読み書き可能にする。`settings-ownership.json` は§5-3の契約に従い、注入前の有無とArkが実際に追加したentryだけを所有の根拠とする。
 
+`--repo` と `--owner-pid` は必須とするが、`--goal`、`--constraint`、`--plan-item` はすべて任意とする。省略時も context を有効化し、Goal、Constraints、Plan が空の `task.md` の骨組みを生成する。値が与えられた項目は従来どおり template へ展開する。Manus では自然言語の依頼を受けた agent 自身が `todo.md` を作り、ユーザーへ Goal のフォーム入力を要求しないため、この起動契約もその設計に合わせる。Ark は素のターミナルを開く用途があるので Goal 未設定を正常系とし、task を埋める agent 規約は別途定める。Goal と `← NOW` が空の `task.md` に対して復唱 hook が出力ゼロで沈黙し、両方が埋まった時点から復唱を開始することは実測済みであり、空の骨組みは通常のターミナル利用を妨げない。
+
 注入時は現在の `.claude/settings.local.json` を読み、§5-3 の構文・型を検証する。同一 entry がない候補だけを追加対象としてmanifestへ原子的に記録し、deep mergeする。結果は repo 側の固定名 `.claude/settings.local.json.ark-context-tmp` に書き、既存 file の mode を保持し、新規 file は mode `0600` として、同 filesystem 上の `mv` で原子的に確定する。`mktemp` 等による可変名を使わない。
 
 復元時は現在の `.claude/settings.local.json` を読み、manifest に記録された entry と同一内容のものだけを除去し、その他の key・値・順序を保持する。変更された entry は残して manifest に `abandoned` と記録する。manifest が元設定なしを示し、除去後に Ark 以外の entry が残らない場合に限り settings file を削除し、それ以外は内容と mode を保持して固定名一時 file 経由の同 filesystem 上の `mv` で原子的に書き戻す。session 中に Claude Code やユーザーが settings.local を更新しうるため、backup による置換はそれらを失う。repo と XDG data が異なる filesystem でも rename に依存せず、安全性を確認できた孤児一時 fileだけを中間状態として除去する。

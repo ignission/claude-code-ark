@@ -79,17 +79,18 @@ while [ "$#" -gt 0 ]; do
     *) session_disabled "invalid arguments" ;;
   esac
 done
-[ -n "$repo" ] && [ -n "$owner_pid" ] && [ -n "$goal" ] && [ -n "$constraints" ] && [ -n "$plans" ] \
-  || session_disabled "invalid arguments"
+[ -n "$repo" ] && [ -n "$owner_pid" ] || session_disabled "invalid arguments"
 case "$owner_pid" in *[!0-9]*) session_disabled "invalid owner pid" ;; esac
 kill -0 "$owner_pid" 2>/dev/null || session_disabled "owner pid is not alive"
-ctx_task_input_valid "$goal" 200 || session_disabled "invalid task input"
-while IFS= read -r value || [ -n "$value" ]; do ctx_task_input_valid "$value" 400 || session_disabled "invalid task input"; done <<EOF
+[ -z "$goal" ] || ctx_task_input_valid "$goal" 200 || session_disabled "invalid task input"
+if [ -n "$constraints" ]; then while IFS= read -r value || [ -n "$value" ]; do ctx_task_input_valid "$value" 400 || session_disabled "invalid task input"; done <<EOF
 $constraints
 EOF
-while IFS= read -r value || [ -n "$value" ]; do ctx_task_input_valid "$value" 400 || session_disabled "invalid task input"; done <<EOF
+fi
+if [ -n "$plans" ]; then while IFS= read -r value || [ -n "$value" ]; do ctx_task_input_valid "$value" 400 || session_disabled "invalid task input"; done <<EOF
 $plans
 EOF
+fi
 for value in "$requested_session" "$restart_session"; do
   [ -z "$value" ] && continue
   case "$value" in *[!0-9a-f]*) session_disabled "invalid session id" ;; esac
@@ -194,12 +195,14 @@ else
   previous='なし（通常起動）'
 fi
 set -- "$ARK_SESSION_DIR" "$goal" "$previous"
-while IFS= read -r value || [ -n "$value" ]; do set -- "$@" --constraint "$value"; done <<EOF
+if [ -n "$constraints" ]; then while IFS= read -r value || [ -n "$value" ]; do set -- "$@" --constraint "$value"; done <<EOF
 $constraints
 EOF
-while IFS= read -r value || [ -n "$value" ]; do set -- "$@" --plan-item "$value"; done <<EOF
+fi
+if [ -n "$plans" ]; then while IFS= read -r value || [ -n "$value" ]; do set -- "$@" --plan-item "$value"; done <<EOF
 $plans
 EOF
+fi
 ctx_task_render "$@" >/dev/null 2>&1 || init_failed "task initialization failed"
 ctx_knowledge_initialize "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" >/dev/null 2>&1 || init_failed "knowledge initialization failed"
 claude_settings_inject "$repo" "$CTX_REPO_STATE_DIR" >/dev/null 2>&1 || init_failed "settings injection failed"
@@ -211,4 +214,5 @@ printf 'ARK_SESSION_DIR\t%s\n' "$ARK_SESSION_DIR"
 printf 'ARK_CACHE_DIR\t%s\n' "$ARK_CACHE_DIR"
 printf 'ARK_RECITE_INTERVAL\t%s\n' "$interval"
 printf 'ARK_KNOWLEDGE_DIR\t%s\n' "$ARK_KNOWLEDGE_DIR"
+printf 'ARK_REPO_KEY\t%s\n' "$ARK_REPO_KEY"
 exit 0

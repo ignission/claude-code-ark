@@ -26,7 +26,8 @@ ctx_task_render() {
     ctx_validate_xdg_file "$task"
     return $?
   fi
-  ctx_task_input_valid "$goal" 200 || { ctx_error "invalid task input"; return 1; }
+  [ -z "$goal" ] || ctx_task_input_valid "$goal" 200 \
+    || { ctx_error "invalid task input"; return 1; }
   [ -n "$previous" ] || { ctx_error "invalid task input"; return 1; }
   printf '%s' "$previous" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 \
     || { ctx_error "invalid task input"; return 1; }
@@ -57,9 +58,6 @@ ctx_task_render() {
       *) ctx_error "invalid task input"; return 1 ;;
     esac
   done
-  [ "$constraint_count" -gt 0 ] && [ "$plan_count" -gt 0 ] \
-    || { ctx_error "invalid task input"; return 1; }
-
   new="$session/task.md.new"
   if [ -e "$new" ] || [ -L "$new" ]; then ctx_validate_xdg_file "$new" || return 1; fi
   old_umask=$(umask)
