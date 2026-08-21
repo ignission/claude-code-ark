@@ -254,7 +254,9 @@ Previous failure summary: {{PREV_FAILURE_SUMMARY}}
 - <path> — <1行要約>
 ```
 
-Plan には checkbox を使い、`← NOW` は常にちょうど1個だけ置く。全項目完了時は完了した最後の項目に残す。Goal と Constraints は init 後に編集してはならない。ただし、init 時に空で生成された Goal / Constraints は、空から記入済みへの一方向に限って一度だけ埋めてよい。初回記入後を含め、既に値が入っている Goal / Constraints の書き換えはドリフト防止のため従来どおり禁止する。空の項目を埋める主体と手順は #334 の §5 ループ規約の範囲とし、ここではこの初回記入が許されることだけを定める。作業中にそれ以外で更新できるのは Plan の項目、status、`← NOW` と artifact 参照だけとする。
+Plan には checkbox を使う。Plan が空のあいだは `← NOW` を置かず、Plan 項目を追加した時点で `← NOW` をちょうど1個置く。項目がある状態では `← NOW` を常にちょうど1個だけ置き、全項目完了時は完了した最後の項目に残す。
+
+Goal と Constraints は init 後に編集してはならない。ただし、init 時に空で生成された Goal / Constraints は、空から記入済みへの一方向に限って一度だけ埋めてよい。初回記入後を含め、既に値が入っている Goal / Constraints の書き換えはドリフト防止のため従来どおり禁止する。空の項目を埋める主体と手順は #334 の §5 ループ規約の範囲とし、ここではこの初回記入が許されることだけを定める。作業中にそれ以外で更新できるのは Plan の項目、status、`← NOW` と artifact 参照だけとする。
 
 `task-review.md.tmpl` は、diff 全ファイルの通読、規約遵守、artifact / index の整合、エラー握りつぶし、Goal 逸脱、再発性のある指摘の inbox 候補化を、同じ checkbox schema の Plan に持つ。session ID の SHA-256 を seed にした決定的な順列で提示順だけを変え、観点集合を削らず、同一 session 内では順序を安定させる。
 

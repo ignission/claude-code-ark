@@ -65,13 +65,18 @@ chmod 700 "$XDG_DATA_HOME/ark" "$XDG_DATA_HOME/ark/context" \
   "$XDG_DATA_HOME/ark/context/repos" "$invalid_marker_state"
 printf '%s\t0\n' "$invalid_marker_sid" >"$invalid_marker_state/owner"
 chmod 600 "$invalid_marker_state/owner"
+cp "$invalid_marker_state/owner" "$TEST_TMP/invalid-owner-marker-original"
+invalid_marker_mode=$(ctx_stat "$invalid_marker_state/owner" | awk '{print $2}')
 run_case /bin/bash "$INIT" --repo "$repo" --owner-pid "$$" \
   --session-id 07070707070707070707070707070707
 assert_success "PID zero owner marker disables without process failure"
 assert_eq "PID zero owner marker is rejected" $'enabled\t0' "$(sed -n '1p' "$CASE_STDOUT")"
 assert_eq "PID zero owner marker is not treated as live" $'reason\tinvalid owner marker' \
   "$(sed -n '2p' "$CASE_STDOUT")"
-[ -e "$invalid_marker_state/owner" ] || test_fail "invalid owner marker was claimed or removed"
+cmp -s "$invalid_marker_state/owner" "$TEST_TMP/invalid-owner-marker-original" \
+  || test_fail "invalid owner marker content changed"
+assert_eq "invalid owner marker mode is preserved" "$invalid_marker_mode" \
+  "$(ctx_stat "$invalid_marker_state/owner" | awk '{print $2}')"
 [ ! -e "$repo/.claude/settings.local.json" ] || test_fail "invalid owner marker changed settings"
 
 setup_repo lifecycle
