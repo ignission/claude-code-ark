@@ -46,6 +46,12 @@ EOF
   [ -z "$extra" ] && [ "$uid" = "$CTX_RULES_UID" ] && [ "$mode" = 600 ]
 }
 
+ctx_rules_has_failures() {
+  ctx_rules_safe_task "$1" || return 1
+  [ -s "$1" ] || return 1
+  LC_ALL=C grep -q '[^[:space:]]' "$1" 2>/dev/null
+}
+
 ctx_rules_parse_task() {
   local task=$1 section line goal_count now_count item
   CTX_RULES_GOAL=
@@ -83,10 +89,11 @@ ctx_rules_parse_task() {
 }
 
 ctx_rules_main() {
-  local session=${ARK_SESSION_DIR:-} task context_root rules state_context context bytes
+  local session=${ARK_SESSION_DIR:-} task failures context_root rules state_context failures_context context bytes
   CTX_RULES_UID=$(id -u 2>/dev/null) || return 1
   ctx_rules_safe_session "$session" || return 1
   task="$session/task.md"
+  failures="$session/knowledge/failures.md"
   context_root=$(cd "$CTX_RULES_HOOK_DIR/.." 2>/dev/null && pwd -P) || return 1
   rules="$context_root/templates/context-rules.md"
   [ -f "$rules" ] && [ ! -L "$rules" ] || return 1
@@ -102,10 +109,16 @@ ctx_rules_main() {
     state_context="現在の Goal: $CTX_RULES_GOAL
 現在の NOW: ${CTX_RULES_NOW:-（未設定）}"
   fi
+  failures_context=
+  if ctx_rules_has_failures "$failures"; then
+    failures_context="knowledge/failures.md: $failures
+作業開始前と、失敗して再試行する前に上記 knowledge/failures.md を読むこと。"
+  fi
   context=$({
     command cat "$rules"
     printf '\ntask.md: %s\n' "$task"
     printf '%s\n' 'artifacts/index.md の追記形式: - artifacts/<path> — <1行要約>'
+    [ -z "$failures_context" ] || printf '%s\n' "$failures_context"
     printf '%s\n' "$state_context"
   }) || return 1
   bytes=$(printf '%s\n' "$context" | wc -c | tr -d ' ')

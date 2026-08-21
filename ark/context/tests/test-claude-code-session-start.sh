@@ -29,10 +29,11 @@ for hook in "$CORE" "$WRAPPER"; do
 done
 
 session="$TEST_TMP/session"
-mkdir -m 700 "$session"
+mkdir -m 700 "$session" "$session/knowledge"
 printf '# Task\n\n## Goal\n\n\n## Constraints\n\n## Plan\n\n## Artifacts\n- (なし)\n' \
   >"$session/task.md"
-chmod 600 "$session/task.md"
+: >"$session/knowledge/failures.md"
+chmod 600 "$session/task.md" "$session/knowledge/failures.md"
 
 run_case env ARK_SESSION_DIR="$session" /bin/bash "$CORE"
 assert_success "empty task context is generated"
@@ -48,6 +49,56 @@ grep -F '最初のユーザー要求から Goal と Plan を task.md に起票' 
 assert_eq "empty task receives initial filing instruction" 0 "$?"
 grep -F -- 'artifacts/index.md の追記形式: - artifacts/<path> — <1行要約>' "$CASE_STDOUT" >/dev/null 2>&1
 assert_eq "artifact append format is injected" 0 "$?"
+assert_eq "empty failures path is not injected" 0 \
+  "$(grep -Fc -- "$session/knowledge/failures.md" "$CASE_STDOUT")"
+empty_failures_context=$(cat "$CASE_STDOUT")
+
+failure_sentinel='FAILURES_CONTENT_MUST_STAY_OUT_OF_CONTEXT'
+printf '%s\n' '   ' "$failure_sentinel" \
+  >"$session/knowledge/failures.md"
+chmod 600 "$session/knowledge/failures.md"
+run_case env ARK_SESSION_DIR="$session" /bin/bash "$CORE"
+assert_success "non-empty failures context is generated"
+assert_eq "non-empty failures absolute path is injected once" 1 \
+  "$(grep -Fxc -- "knowledge/failures.md: $session/knowledge/failures.md" "$CASE_STDOUT")"
+grep -F '作業開始前と、失敗して再試行する前に上記 knowledge/failures.md を読むこと。' \
+  "$CASE_STDOUT" >/dev/null 2>&1
+assert_eq "failures read instruction is injected" 0 "$?"
+assert_eq "failures contents are not injected" 0 \
+  "$(grep -Fc -- "$failure_sentinel" "$CASE_STDOUT")"
+grep -F '最初のユーザー要求から Goal と Plan を task.md に起票' "$CASE_STDOUT" >/dev/null 2>&1
+assert_eq "failures hint preserves empty Goal branch" 0 "$?"
+
+: >"$session/knowledge/failures.md"
+printf ' \t\n' >>"$session/knowledge/failures.md"
+chmod 600 "$session/knowledge/failures.md"
+run_case env ARK_SESSION_DIR="$session" /bin/bash "$CORE"
+assert_success "whitespace-only failures context is generated"
+assert_eq "whitespace-only failures path is not injected" 0 \
+  "$(grep -Fc -- "$session/knowledge/failures.md" "$CASE_STDOUT")"
+assert_eq "empty failures leaves existing context unchanged" "$empty_failures_context" "$(cat "$CASE_STDOUT")"
+
+printf '%s\n' 'unsafe mode knowledge' >"$session/knowledge/failures.md"
+chmod 644 "$session/knowledge/failures.md"
+run_case env ARK_SESSION_DIR="$session" /bin/bash "$CORE"
+assert_success "unsafe failures mode does not block context"
+assert_eq "unsafe failures mode path is not injected" 0 \
+  "$(grep -Fc -- "$session/knowledge/failures.md" "$CASE_STDOUT")"
+assert_eq "unsafe failures mode preserves other injection" "$empty_failures_context" "$(cat "$CASE_STDOUT")"
+
+unsafe_target="$TEST_TMP/unsafe-failures-target"
+printf '%s\n' 'unsafe knowledge' >"$unsafe_target"
+chmod 600 "$unsafe_target"
+command rm -f "$session/knowledge/failures.md"
+ln -s "$unsafe_target" "$session/knowledge/failures.md"
+run_case env ARK_SESSION_DIR="$session" /bin/bash "$CORE"
+assert_success "unsafe failures does not block context"
+assert_eq "unsafe failures path is not injected" 0 \
+  "$(grep -Fc -- "$session/knowledge/failures.md" "$CASE_STDOUT")"
+assert_eq "unsafe failures preserves other injection" "$empty_failures_context" "$(cat "$CASE_STDOUT")"
+command rm -f "$session/knowledge/failures.md"
+: >"$session/knowledge/failures.md"
+chmod 600 "$session/knowledge/failures.md"
 
 printf '# Task\n\n## Goal\nCurrent goal\n\n## Constraints\n- fixed\n\n## Plan\n- [ ] Current step ← NOW\n' \
   >"$session/task.md"
@@ -63,6 +114,8 @@ else
   printf '%s\n' 'SKIP: zsh is unavailable; populated task context zsh case skipped'
 fi
 
+printf '%s\n' "$failure_sentinel" >"$session/knowledge/failures.md"
+chmod 600 "$session/knowledge/failures.md"
 input="$TEST_TMP/session-start.json"
 printf '%s\n' '{"session_id":"fixture","hook_event_name":"SessionStart","source":"startup"}' >"$input"
 run_case env ARK_SESSION_DIR="$session" /bin/bash "$WRAPPER" <"$input"
@@ -72,6 +125,11 @@ jq -e 'keys == ["hookSpecificOutput"]
   and (.hookSpecificOutput.additionalContext | contains("タスク管理:"))
   and (.hookSpecificOutput.additionalContext | contains("現在の Goal: Current goal"))' \
   "$CASE_STDOUT" >/dev/null 2>&1 || test_fail "SessionStart output schema or context is invalid"
+adapter_context=$(jq -r '.hookSpecificOutput.additionalContext' "$CASE_STDOUT")
+assert_eq "SessionStart additionalContext includes failures absolute path once" 1 \
+  "$(printf '%s\n' "$adapter_context" | grep -Fxc -- "knowledge/failures.md: $session/knowledge/failures.md")"
+assert_eq "SessionStart additionalContext excludes failures contents" 0 \
+  "$(printf '%s\n' "$adapter_context" | grep -Fc -- "$failure_sentinel")"
 
 printf '%s\n' '{"hook_event_name":"PostToolBatch"}' >"$TEST_TMP/other.json"
 run_case env ARK_SESSION_DIR="$session" /bin/bash "$WRAPPER" <"$TEST_TMP/other.json"
