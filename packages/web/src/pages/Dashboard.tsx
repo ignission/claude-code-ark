@@ -6,8 +6,6 @@ import { toast } from "sonner";
 import { AboutDialog } from "@/components/AboutDialog";
 import { BrowserPane } from "@/components/BrowserPane";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
-import { McpManagerDialog } from "@/components/McpManagerDialog";
-import { MobileChatView } from "@/components/MobileChatView";
 import {
   MobileLayout,
   type MobileTab,
@@ -110,15 +108,6 @@ export default function Dashboard() {
     copyBuffer,
     deletedWorktreeId,
     clearDeletedWorktreeId,
-    beaconMessages,
-    beaconStreaming,
-    beaconStreamText,
-    beaconSend,
-    beaconLoadHistory,
-    beaconClear,
-    beaconStopAndReset,
-    beaconProfile,
-    beaconSetProfile,
     sessionPreviews,
     sessionActivityTexts,
     sessionAwaitingTexts,
@@ -135,7 +124,6 @@ export default function Dashboard() {
     repoProfileLinks,
     worktreeProfileLinks,
     capabilities,
-    loadProfiles,
     createProfile,
     updateProfile,
     deleteProfile,
@@ -144,17 +132,6 @@ export default function Dashboard() {
     worktreeDisplayNames,
     setWorktreeDisplayName,
     restartSessionWithProfile,
-    mcpCatalog,
-    mcpConnections,
-    mcpPendingAuthUrls,
-    mcpConnect,
-    mcpSubmitRedirect,
-    mcpDisconnect,
-    mcpAuthCancel,
-    mcpRename,
-    usageRequesting,
-    usageProgress,
-    requestUsage,
     messageShortcuts,
     createShortcut,
     updateShortcut,
@@ -406,7 +383,6 @@ export default function Dashboard() {
   const [selectedPort, setSelectedPort] = useState<number | null>(null);
   const [showPortSelector, setShowPortSelector] = useState(false);
   const [showProfileManager, setShowProfileManager] = useState(false);
-  const [showMcpManager, setShowMcpManager] = useState(false);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
 
   const copyToClipboard = (text: string | null) => {
@@ -419,11 +395,6 @@ export default function Dashboard() {
   useEffect(() => {
     if (error) toast.error(error);
   }, [error]);
-
-  // Beacon履歴をマウント時に読み込む
-  useEffect(() => {
-    beaconLoadHistory();
-  }, [beaconLoadHistory]);
 
   // トンネル新規起動時のみ自動でダイアログを表示（リロード時の復元では表示しない）
   useEffect(() => {
@@ -540,17 +511,6 @@ export default function Dashboard() {
     toast.success("Session started");
   };
 
-  const handleStopSession = (sessionId: string) => {
-    stopSession(sessionId);
-    if (selectedSessionId === sessionId) {
-      const remaining = Array.from(sessions.values()).filter(
-        s => s.id !== sessionId
-      );
-      setSelectedSessionId(remaining.length > 0 ? remaining[0].id : null);
-    }
-    toast.info("Session stopped");
-  };
-
   /**
    * セッションを削除（統合アクション）
    * - セッションを停止
@@ -664,24 +624,11 @@ export default function Dashboard() {
           resolveDiagramComment={resolveDiagramComment}
           deleteDiagramComment={deleteDiagramComment}
           sendDiagramComment={sendDiagramComment}
-          beaconMessages={beaconMessages}
-          beaconStreaming={beaconStreaming}
-          beaconStreamText={beaconStreamText}
-          onBeaconSend={beaconSend}
-          onBeaconClear={beaconClear}
-          onBeaconStopAndReset={beaconStopAndReset}
-          beaconProfile={beaconProfile}
-          onBeaconSetProfile={beaconSetProfile}
           isSocketConnected={isConnected}
           diagramCommentsUpdate={diagramCommentsUpdate}
-          onRequestUsage={requestUsage}
-          usageRequesting={usageRequesting}
-          usageProgress={usageProgress}
-          multiProfileSupported={capabilities.multiProfileSupported}
           activeBrowserSession={activeBrowserSession}
           onSelectBrowser={handleSelectBrowser}
           isRemote={isRemote}
-          onOpenMcpManager={() => setShowMcpManager(true)}
           messageShortcuts={messageShortcuts}
           onCreateShortcut={createShortcut}
           onUpdateShortcut={updateShortcut}
@@ -853,32 +800,10 @@ export default function Dashboard() {
               </div>
             </div>
           }
-          beacon={
-            <MobileChatView
-              messages={beaconMessages}
-              isStreaming={beaconStreaming}
-              streamingText={beaconStreamText}
-              onSendMessage={beaconSend}
-              onStopAndReset={beaconStopAndReset}
-              isConnected={isConnected}
-              onClear={beaconClear}
-              onRequestUsage={requestUsage}
-              usageRequesting={usageRequesting}
-              usageProgress={usageProgress}
-              multiProfileSupported={capabilities.multiProfileSupported}
-              beaconProfile={beaconProfile}
-              onSetProfile={beaconSetProfile}
-            />
-          }
           initialSidebarWidth={getSetting<number>("ark-sidebar-width", 250)}
           onSidebarWidthChange={w => setSetting("ark-sidebar-width", w)}
-          onOpenMcpManager={() => setShowMcpManager(true)}
           onOpenAboutDialog={() => setShowAboutDialog(true)}
           hostMetrics={bridgeSnapshot?.metrics ?? null}
-          beaconVisible={getSetting<boolean>("ark-beacon-visible", true)}
-          onBeaconVisibleChange={v => setSetting("ark-beacon-visible", v)}
-          initialBeaconWidth={getSetting<number>("ark-beacon-width", 350)}
-          onBeaconWidthChange={w => setSetting("ark-beacon-width", w)}
         />
       )}
 
@@ -1057,20 +982,6 @@ export default function Dashboard() {
           onDelete={deleteProfile}
         />
       )}
-
-      {/* MCP server (Beacon の外部 OAuth MCP) 管理 */}
-      <McpManagerDialog
-        open={showMcpManager}
-        onOpenChange={setShowMcpManager}
-        catalog={mcpCatalog}
-        connections={mcpConnections}
-        pendingAuthUrls={mcpPendingAuthUrls}
-        onConnect={mcpConnect}
-        onSubmitRedirect={mcpSubmitRedirect}
-        onDisconnect={mcpDisconnect}
-        onAuthCancel={mcpAuthCancel}
-        onRename={mcpRename}
-      />
 
       {/* About Ark (同梱バイナリ LICENSE 一覧) */}
       <AboutDialog open={showAboutDialog} onOpenChange={setShowAboutDialog} />

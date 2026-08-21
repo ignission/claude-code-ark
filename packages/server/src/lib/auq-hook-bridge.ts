@@ -52,7 +52,7 @@ const TOKEN_SETTING_KEY = "auq_hook_token";
  * hook token は DB (settings テーブル) に永続化して再利用する。
  * 対話版 claude は起動時に読んだ settings (hook command 内の token) を
  * 生存中ずっと保持するため、サーバー再起動で token が変わると既存
- * セッションの hook がすべて 403 になる (Beacon の C-B3 と同じ構造)。
+ * セッションの hook がすべて 403 になる。
  */
 function loadOrCreateToken(): string {
   try {

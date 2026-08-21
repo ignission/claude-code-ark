@@ -7,20 +7,14 @@
  */
 
 import type {
-  BeaconProfileState,
-  BeaconStreamChunk,
   BridgeSessionStatus,
   BrowserSession,
-  ChatMessage,
   ClientToServerEvents,
   DiagramCommentsResponse,
   DiagramDeleteResponse,
   DiagramListItem,
   FsListResult,
   ManagedSession,
-  McpConnectionInfo,
-  McpProviderCatalog,
-  McpProvidersSnapshot,
   MessageShortcut,
   Profile,
   RepoInfo,
@@ -223,20 +217,6 @@ interface UseSocketReturn {
    */
   sessionAwaitingTexts: Map<string, string>;
 
-  // Beacon
-  beaconMessages: ChatMessage[];
-  beaconStreaming: boolean;
-  beaconStreamText: string;
-  beaconSend: (message: string) => void;
-  beaconLoadHistory: () => void;
-  beaconClose: () => void;
-  beaconClear: () => void;
-  beaconStopAndReset: () => void;
-  /** Beacon 専用プロファイルの状態 (Linux のプロファイル切替。null = 未取得) */
-  beaconProfile: BeaconProfileState | null;
-  /** Beacon 専用プロファイルを設定する (profileId=null で既定)。反映は再起動時 (C-1) */
-  beaconSetProfile: (profileId: string | null) => void;
-
   // Browser sessions
   browserSessions: Map<string, BrowserSession>;
   browserError: string | null;
@@ -276,21 +256,6 @@ interface UseSocketReturn {
     patch: { message?: string; sortOrder?: number }
   ) => void;
   deleteShortcut: (id: string) => void;
-
-  // MCP server (Beacon の外部 OAuth MCP) — マルチアカウント
-  mcpCatalog: McpProviderCatalog[];
-  mcpConnections: McpConnectionInfo[];
-  /** 認可フロー進行中の connectionId → authorizationUrl */
-  mcpPendingAuthUrls: Record<string, string>;
-  mcpRefresh: () => void;
-  mcpConnect: (
-    providerId: string,
-    options?: { label?: string; connectionId?: string }
-  ) => void;
-  mcpSubmitRedirect: (redirectUrl: string) => void;
-  mcpDisconnect: (connectionId: string) => void;
-  mcpAuthCancel: (connectionId: string) => void;
-  mcpRename: (connectionId: string, label: string) => void;
 
   // Usage取得 (Linux + multiProfileSupported 限定)
   /** /usage 取得が進行中か（全クライアント横断ではなく、自身が依頼中の状態） */
@@ -422,14 +387,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   >(new Map());
   const [browserError, setBrowserError] = useState<string | null>(null);
 
-  // Beacon状態
-  const [beaconMessages, setBeaconMessages] = useState<ChatMessage[]>([]);
-  const [beaconStreaming, setBeaconStreaming] = useState(false);
-  const [beaconStreamText, setBeaconStreamText] = useState("");
-  const [beaconProfile, setBeaconProfile] = useState<BeaconProfileState | null>(
-    null
-  );
-
   // プロファイル切替 (Linux限定)
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [repoProfileLinks, setRepoProfileLinks] = useState<Map<string, string>>(
@@ -450,26 +407,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [messageShortcuts, setMessageShortcuts] = useState<MessageShortcut[]>(
     []
   );
-
-  // MCP server (Beacon の外部 OAuth MCP) — マルチアカウント
-  const [mcpCatalog, setMcpCatalog] = useState<McpProviderCatalog[]>([]);
-  const [mcpConnections, setMcpConnections] = useState<McpConnectionInfo[]>([]);
-  // 認可フロー進行中の connectionId → authorize URL。
-  // ポップアップブロック時のフォールバックでダイアログから手動でリンクを開けるようにするため保持する。
-  const [mcpPendingAuthUrls, setMcpPendingAuthUrls] = useState<
-    Record<string, string>
-  >({});
-  // toast 内で connection の label を解決するための安定参照
-  const mcpConnectionsRef = useRef<McpConnectionInfo[]>([]);
-  useEffect(() => {
-    mcpConnectionsRef.current = mcpConnections;
-  }, [mcpConnections]);
-  /**
-   * `mcpConnect` 呼び出し時にユーザクリック由来で開いた空ポップアップ。
-   * client 発行 requestId をキーに保持し、`mcp:auth-started` 到着時に同じ requestId の
-   * popup を navigate する。並列の connect が完了順入れ替わっても誤関連付けが起きない。
-   */
-  const mcpPendingPopupsRef = useRef<Record<string, Window>>({});
 
   // Usage取得
   const [usageRequesting, setUsageRequesting] = useState(false);
@@ -558,10 +495,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       if (gridSubscribedRef.current) {
         socket.emit("session:grid:subscribe");
       }
-
-      // MCP server スナップショットを再取得 (切断中に他クライアントが追加/削除した
-      // 変更や、進行中フローの完了通知をミスっている可能性があるため)。
-      socket.emit("mcp:state");
     });
 
     socket.on("disconnect", () => {
@@ -840,50 +773,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       setFileContent(data);
     });
 
-    // Beaconイベント
-    socket.on("beacon:message", (message: ChatMessage) => {
-      setBeaconMessages(prev => [...prev, message]);
-      if (message.role === "assistant") {
-        setBeaconStreaming(false);
-        setBeaconStreamText("");
-      }
-    });
-
-    // 外部メッセージ (Usage取得結果など)。streaming state には影響させない
-    // (LLM応答 streaming 中に到着しても応答を切り捨てない)。
-    socket.on("beacon:external-message", (message: ChatMessage) => {
-      setBeaconMessages(prev => [...prev, message]);
-    });
-
-    socket.on("beacon:stream", (data: BeaconStreamChunk) => {
-      if (data.done) {
-        setBeaconStreaming(false);
-        setBeaconStreamText("");
-      } else {
-        setBeaconStreaming(true);
-        setBeaconStreamText(prev => prev + data.chunk);
-      }
-    });
-
-    socket.on("beacon:history", (data: { messages: ChatMessage[] }) => {
-      setBeaconMessages(data.messages);
-      // 履歴の完全同期は権威的な状態更新 (kill / reset / 再起動跨ぎの取りこぼし回収 等)。
-      // サーバー再起動を跨いだターンでは done が activeBeaconSocket 経由で届かないため、
-      // ここで streaming 状態も解除して入力を再有効化する (loading 固着を防ぐ)。
-      setBeaconStreaming(false);
-      setBeaconStreamText("");
-    });
-
-    socket.on("beacon:error", (data: { error: string }) => {
-      console.error("[Beacon] Error:", data.error);
-      setBeaconStreaming(false);
-      setBeaconStreamText("");
-    });
-
-    socket.on("beacon:profile", (data: BeaconProfileState) => {
-      setBeaconProfile(data);
-    });
-
     socket.on("session:previews", previews => {
       // セッションのstatusをプレビューから更新
       setSessions(prev => {
@@ -1115,95 +1004,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       toast.error(`Usage取得に失敗: ${message}`);
     });
 
-    // MCP server (Beacon の外部 OAuth MCP) ----------------------------
-    socket.on("mcp:state", (snapshot: McpProvidersSnapshot) => {
-      setMcpCatalog(snapshot.catalog);
-      setMcpConnections(snapshot.connections);
-      // 認可 URL は server snapshot を source of truth にする。
-      // - リロード / 再接続後でも進行中フローの URL を復元できる
-      // - cancel / disconnect 後は server 側で消えているのでクライアントも自動掃除
-      setMcpPendingAuthUrls(snapshot.pendingAuthUrls);
-    });
-    socket.on(
-      "mcp:auth-started",
-      ({ connectionId, requestId, authorizationUrl }) => {
-        // ポップアップブロック等のフォールバック用にダイアログ内のリンクへ残す
-        setMcpPendingAuthUrls(prev => ({
-          ...prev,
-          [connectionId]: authorizationUrl,
-        }));
-        // requestId に対応する popup を取り出して navigate する。
-        // 並列の別 connect の popup には影響しない。
-        const popup = requestId
-          ? mcpPendingPopupsRef.current[requestId]
-          : undefined;
-        if (requestId) delete mcpPendingPopupsRef.current[requestId];
-        if (popup && !popup.closed) {
-          try {
-            popup.location.href = authorizationUrl;
-            toast.success("認可ページを開きました", {
-              description: "ブラウザで認証を完了してください",
-            });
-            return;
-          } catch {
-            // クロスオリジンで location 設定を弾かれた等 → fallback 経路へ
-          }
-        }
-        toast.error("ポップアップがブロックされました", {
-          description:
-            "ダイアログ内の「認可ページを開く」リンクから手動で開いてください",
-        });
-      }
-    );
-    socket.on("mcp:auth-completed", ({ connectionId }) => {
-      setMcpPendingAuthUrls(prev => {
-        const next = { ...prev };
-        delete next[connectionId];
-        return next;
-      });
-      const label =
-        mcpConnectionsRef.current.find(c => c.id === connectionId)?.label ??
-        connectionId;
-      toast.success(`${label} を認証しました`);
-    });
-    socket.on("mcp:auth-failed", ({ connectionId, message }) => {
-      setMcpPendingAuthUrls(prev => {
-        const next = { ...prev };
-        delete next[connectionId];
-        return next;
-      });
-      const label =
-        mcpConnectionsRef.current.find(c => c.id === connectionId)?.label ??
-        connectionId;
-      toast.error(`${label} の認証に失敗`, { description: message });
-    });
-    socket.on("mcp:error", ({ message, requestId }) => {
-      toast.error(message);
-      // 該当 requestId の popup のみ close (並列の別フローには影響しない)。
-      // requestId が無い error (mcp:connect 以外) ではどの popup も触らない。
-      if (requestId) {
-        const popup = mcpPendingPopupsRef.current[requestId];
-        delete mcpPendingPopupsRef.current[requestId];
-        try {
-          popup?.close();
-        } catch {
-          /* ignore */
-        }
-      }
-    });
-    // 接続時にカタログ + connection 一覧を取得
-    socket.emit("mcp:state");
-
     // Cleanup on unmount
     return () => {
       socket.off("ports:list");
       socket.off("file:content");
-      socket.off("beacon:message");
-      socket.off("beacon:external-message");
-      socket.off("beacon:stream");
-      socket.off("beacon:history");
-      socket.off("beacon:error");
-      socket.off("beacon:profile");
       socket.off("session:previews");
       socket.off("session:grid:snapshot");
       socket.off("browser:started");
@@ -1525,67 +1329,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socketRef.current.emit("file:read", { sessionId, filePath });
   }, []);
 
-  // Beaconメッセージ送信
-  const beaconSend = useCallback((message: string) => {
-    // 切断時は楽観更新を起こさない（streamingイベントが届かず入力欄が永久ロックされるため）
-    // 無通知で消えるとUX上「送信したのに何も起きない」に見えるのでエラー通知する
-    const socket = socketRef.current;
-    if (!socket?.connected) {
-      setError("サーバーに接続していません。再接続後に再送してください。");
-      return;
-    }
-    // 楽観的にストリーミング状態を立てる（ツール実行先行ターンは最初のチャンクが遅れるため）
-    setBeaconStreaming(true);
-    setBeaconStreamText("");
-    socket.emit("beacon:send", { message });
-  }, []);
-
-  // Beacon履歴取得
-  const beaconLoadHistory = useCallback(() => {
-    socketRef.current?.emit("beacon:history");
-  }, []);
-
-  // Beaconセッション終了
-  const beaconClose = useCallback(() => {
-    socketRef.current?.emit("beacon:close");
-    setBeaconMessages([]);
-    setBeaconStreaming(false);
-    setBeaconStreamText("");
-  }, []);
-
-  // Beaconチャット履歴クリア（サーバー側のセッション・DB履歴も完全にリセット）
-  // 切断時はサーバーに届かないため何もしない（ローカルだけ消すと
-  // 次の再接続時にサーバー履歴が戻ってきて不整合になる）
-  const beaconClear = useCallback(() => {
-    const socket = socketRef.current;
-    if (!socket?.connected) return;
-    socket.emit("beacon:clear");
-    setBeaconMessages([]);
-    setBeaconStreaming(false);
-    setBeaconStreamText("");
-  }, []);
-
-  // Beacon応答停止 + セッションリセット (進行中の query を abort する)
-  // 楽観的なローカル state クリアは行わない。サーバ側の closeSession() の
-  // catch/finally で必ず beacon:stream(done) と beacon:error が emit されるため
-  // それを受信して streaming state が解除される。先回りクリアは race を生む
-  // (停止直前まで in-flight だった chunk が遅れて届くと、空の streamText に
-  // chunk が積もり「止めたのに新しい応答が始まる」ように見える)。
-  // 切断時はそもそも UI 側でボタンを disabled にする想定 (isConnected を expose 済)。
-  const beaconStopAndReset = useCallback(() => {
-    const socket = socketRef.current;
-    if (!socket?.connected) return;
-    socket.emit("beacon:stop-and-reset");
-  }, []);
-
-  // Beacon 専用プロファイルの設定 (profileId=null で既定)。
-  // 稼働中セッションは即時切替されず staleProfile になる (C-1。反映は再起動時)。
-  const beaconSetProfile = useCallback((profileId: string | null) => {
-    const socket = socketRef.current;
-    if (!socket?.connected) return;
-    socket.emit("beacon:set-profile", { profileId });
-  }, []);
-
   // Copy buffer action
   const copyBuffer = useCallback(
     (sessionId: string): Promise<string | null> => {
@@ -1696,68 +1439,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socketRef.current?.emit("shortcut:delete", { id });
   }, []);
 
-  // MCP server (Beacon の外部 OAuth MCP) actions
-  const mcpRefresh = useCallback(() => {
-    socketRef.current?.emit("mcp:state");
-  }, []);
-  const mcpConnect = useCallback(
-    (
-      providerId: string,
-      options?: { label?: string; connectionId?: string }
-    ) => {
-      // socket 未接続時は popup を開かない (server に届かず mcp:auth-started も
-      // mcp:error も来ないため、空 popup が永久に残ってしまう)。
-      const sock = socketRef.current;
-      if (!sock?.connected) {
-        toast.error("サーバーに接続されていません", {
-          description: "少し待ってから再試行してください",
-        });
-        return;
-      }
-      // 並列 connect の correlation のため requestId を生成
-      const requestId =
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `req-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      // ポップアップブロック対策: ボタンクリック由来の同期文脈で window.open する。
-      // authorize URL は非同期で返るので先に about:blank で空ウィンドウを開いておき、
-      // `mcp:auth-started` 受信時に requestId で popup を引いて location を差し替える。
-      // 注: `noopener` を付けると detached / null が返る browser があるので付けない。
-      // セキュリティ: same-origin (about:blank) のうちに popup.opener = null を設定し、
-      // 外部認可ページから親ウィンドウへアクセスできないようにする。
-      const popup = window.open("about:blank", "_blank");
-      if (popup) {
-        try {
-          popup.opener = null;
-        } catch {
-          /* ignore: ブラウザによっては既に detach されているケース */
-        }
-        mcpPendingPopupsRef.current[requestId] = popup;
-      }
-      sock.emit("mcp:connect", {
-        providerId,
-        requestId,
-        ...(options?.label !== undefined ? { label: options.label } : {}),
-        ...(options?.connectionId !== undefined
-          ? { connectionId: options.connectionId }
-          : {}),
-      });
-    },
-    []
-  );
-  const mcpSubmitRedirect = useCallback((redirectUrl: string) => {
-    socketRef.current?.emit("mcp:submit-redirect", { redirectUrl });
-  }, []);
-  const mcpDisconnect = useCallback((connectionId: string) => {
-    socketRef.current?.emit("mcp:disconnect", { connectionId });
-  }, []);
-  const mcpAuthCancel = useCallback((connectionId: string) => {
-    socketRef.current?.emit("mcp:auth-cancel", { connectionId });
-  }, []);
-  const mcpRename = useCallback((connectionId: string, label: string) => {
-    socketRef.current?.emit("mcp:rename", { connectionId, label });
-  }, []);
-
   // Usage取得
   const requestUsage = useCallback(() => {
     if (usageRequesting) return;
@@ -1857,17 +1538,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     subscribeGrid,
     unsubscribeGrid,
     sessionStatuses,
-    // Beacon
-    beaconMessages,
-    beaconStreaming,
-    beaconStreamText,
-    beaconSend,
-    beaconLoadHistory,
-    beaconClose,
-    beaconClear,
-    beaconStopAndReset,
-    beaconProfile,
-    beaconSetProfile,
     // Browser sessions
     browserSessions,
     browserError,
@@ -1893,16 +1563,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     createShortcut,
     updateShortcut,
     deleteShortcut,
-    // MCP server (Beacon の外部 OAuth MCP) — マルチアカウント
-    mcpCatalog,
-    mcpConnections,
-    mcpPendingAuthUrls,
-    mcpRefresh,
-    mcpConnect,
-    mcpSubmitRedirect,
-    mcpDisconnect,
-    mcpAuthCancel,
-    mcpRename,
     // Usage取得
     usageRequesting,
     usageProgress,

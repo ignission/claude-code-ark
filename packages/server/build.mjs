@@ -18,7 +18,6 @@ await build({
     "src/index.ts",
     "src/cli.ts",
     "src/lib/*.ts",
-    "src/lib/mcp-oauth/*.ts",
   ],
   outdir: "dist",
   bundle: true,

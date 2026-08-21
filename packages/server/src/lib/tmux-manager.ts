@@ -58,9 +58,8 @@ function posixShellQuote(s: string): string {
  *     入力行や terminal state を壊し得る。single-quote 済みでも readline 経路で
  *     脱出される余地があるため、全 control char を一律拒否する。
  *
- * 対話版 Beacon (beacon-cli-session.ts) も同じ信頼境界を共有するため export する。
  */
-export function resolveValidatedClaudePath(): string {
+function resolveValidatedClaudePath(): string {
   const resolved = resolveClaudePath();
   if (resolved === null) return "claude";
   if (!path.isAbsolute(resolved)) {
@@ -71,7 +70,6 @@ export function resolveValidatedClaudePath(): string {
   // 全 ASCII 制御文字 (`\x00`-`\x1F` + `\x7F`) を一律拒否。
   // 個別列挙でなく範囲指定にすることで、将来も terminal / shell エスケープ
   // 経路を増やさないよう assertive に保つ。
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: shell/terminal injection 防御のため制御文字を明示拒否
   if (/[\x00-\x1F\x7F]/.test(resolved)) {
     throw new Error(
       "resolveClaudePath returned path containing control char (rejected for shell/terminal injection safety)"
@@ -261,13 +259,6 @@ export class TmuxManager extends EventEmitter {
             }
             continue;
           }
-          // ark-beacon は Beacon 司令塔チャット専用セッション。ttyd を持たず
-          // BeaconManager が独自に管理 (JSONL tail で描画) するため、ここでは
-          // 通常セッションとして登録しない (登録すると ttyd が起動してしまう)。
-          // kill もしない: 対話版 claude の会話文脈を保持して継続させる。
-          if (name === "ark-beacon" || name.startsWith("ark-beacon-")) {
-            continue;
-          }
           const id = name.replace(this.SESSION_PREFIX, "");
           const cwd = this.getTmuxSessionCwd(name);
 
@@ -361,10 +352,9 @@ export class TmuxManager extends EventEmitter {
       : "";
     // board_write 等の per-session MCP server を注入する --mcp-config。
     // SessionOrchestrator が起動直前に setClaudeMcpConfigPath で設定する。
-    // beacon と異なり --strict-mcp-config は**付けない**: strict を付けると
-    // ユーザーの project .mcp.json / global 設定の他 MCP (Slack/Jira/Figma 等)
-    // が全て無効化されてしまう。会話セッションはそれら他 MCP を使いたいので、
-    // board MCP は既存 MCP に**上乗せ**する (strict なしなら追加マージされる)。
+    // --strict-mcp-config は付けない。strict を付けるとユーザーの project
+    // .mcp.json / global 設定の他 MCP が全て無効化されるため、board MCP は
+    // 既存 MCP に上乗せする（strict なしなら追加マージされる）。
     const mcpConfigArg = this.claudeMcpConfigPath
       ? ` --mcp-config ${posixShellQuote(this.claudeMcpConfigPath)}`
       : "";

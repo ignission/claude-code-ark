@@ -2,9 +2,7 @@
  * claude-projects.ts - Claude Code が会話 transcript (JSONL) を永続化する
  * `<configDir>/projects/` ディレクトリに関する純粋ヘルパー群。
  *
- * beacon-cli-session.ts にも同等のロジック (encodeProjectDir / locateJsonl)
- * があるが、あちらは Beacon のターン同期と密結合しているため共通化しない
- * (実機調整済みコードを不可侵に保つ)。将来寄せる場合はこのモジュールを正とする。
+ * 通常セッションの JSONL 解決のみを担う。
  */
 
 import fs from "node:fs";
@@ -24,7 +22,7 @@ export function projectsDirFor(configDir?: string | null): string {
  * cwd 絶対パスを Claude Code の project ディレクトリ名へエンコードする。
  * Claude Code 本体は **すべての非英数字** を `-` に置換する。
  * 過去に `/` `.` `_` だけ置換する実装で `+` や空白を含むパスを取りこぼした
- * regression があるため、必ず全非英数置換にする (beacon-cli-session.ts と同一)。
+ * regression があるため、必ず全非英数置換にする。
  */
 export function encodeProjectDir(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, "-");

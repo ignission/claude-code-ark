@@ -158,15 +158,6 @@ pm2 restart claude-code-ark
 - **C-2: 同一プロファイルの並行セッションは非推奨**。1プロファイル=1`.credentials.json`を共有するため、複数セッション同時稼働でリフレッシュトークン競合が発生する可能性あり（[claude-code#24317](https://github.com/anthropics/claude-code/issues/24317) 等）
 - **C-3: macOS / Windows非対応**。macOSはOAuth credentialsをKeychainに保存するため、`CLAUDE_CONFIG_DIR`分離だけではプロファイル切替できない。`multiProfileSupported=false`でUIを完全非表示
 
-### Beacon（tmux 対話版 claude）
-
-Beacon は専用 tmux セッション `ark-beacon` で**対話版 claude を常駐起動**し、JSONL transcript を tail して描画する（`claude -p` ではない＝プラン枠課金を維持）。対話版 claude は**起動時の構成を生存中ずっと保持する**ため、以下の制約がある:
-
-- **C-B1: 起動後の `--add-dir` / 外部 OAuth MCP は固定される**。Beacon 起動後に追加した登録リポジトリ・新規 worktree や、回復した外部 MCP（Jira/Linear 等）は、稼働中の会話には反映されない。反映するには Beacon をリセット（停止ボタン = stop-and-reset、または 🗑 = clear）して再起動する必要がある。`create_worktree` 直後に同一会話でその worktree を Beacon 自身が `Read` するケースが該当（タスク着手フローは新 worktree を別セッションへ委譲する設計のため実害は小さい）。**外部 OAuth MCP の access token も launch 時点で固定される**ため、長時間（>1h）セッションでは token 失効後に Jira/Linear 等が失敗する → [#202](https://github.com/ignission/claude-code-ark/issues/202)（token-refresh プロキシ等で対応予定。回避策はリセット）。ark-beacon MCP は Ark 管理の固定 token なので影響なし
-- **C-B2: ark-beacon MCP の degraded 起動のみ自己回復する**。ArkMcpServer 起動失敗時は司令塔ツール無し（degraded）で起動するが、次ターンで MCP が回復していれば自動でセッションを貼り直す（会話文脈はリセットされる）。外部 OAuth MCP の起動時失敗は自己回復せず C-B1 のリセットで対応する
-- **C-B3: ark-beacon MCP は固定 port + 永続 token で起動する**。常駐 claude は起動時の mcp-config（url/token）を保持し続けるため、サーバー再起動後も同じ endpoint へ再接続できるよう port/token を settings に永続化している（`beacon_ark_mcp_port` / `beacon_ark_mcp_token`）。port が他プロセスに奪われた場合のみ ephemeral にフォールバックし、その会話の司令塔ツールはリセットまで失敗する
-- **C-B4: MCP 接続の追加/削除（auth-completed / disconnect）は会話文脈をリセットする**。`markMcpConfigStale` が次ターンで tmux セッションを貼り直すため。**この貼り直し（C-B2 の degraded 復旧 / C-B3 のポート変化を含む）では UI 履歴も同時にクリアされる**（claude 文脈が消えるのに履歴だけ残ると「モデルが覚えていない履歴」に追記してしまうため、整合させて全クライアントへ空履歴を broadcast する）
-
 ## 開発原則
 
 ### クロスレイヤー変更の検証
