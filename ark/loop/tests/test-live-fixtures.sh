@@ -85,7 +85,7 @@ measure_hook() {
 push_max=$(measure_hook "$ROOT/.claude/hooks/post-push-monitor.sh" "$TEST_TMP/non-push.json")
 edit_max=$(measure_hook "$ROOT/.claude/hooks/post-edit-lint.sh" "$TEST_TMP/non-edit.json")
 
-binary=$(readlink -f "$(command -v claude)")
+binary=$(command -v claude)
 version=$(claude --version)
 strings "$binary" | grep -F '[end-turn] PostToolBatch block discarded' >/dev/null \
   || { printf 'discard debug string missing\n' >&2; exit 1; }

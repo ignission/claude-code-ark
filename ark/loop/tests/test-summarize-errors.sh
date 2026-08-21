@@ -136,7 +136,7 @@ assert_eq "raw mtime unchanged" "$raw_mtime" "$(mtime_of "$session/errors/raw.lo
 assert_eq "raw mode unchanged" "$raw_mode" "$(mode_of "$session/errors/raw.log")"
 grep -E '^## ' "$session/errors/summary.md" >/dev/null 2>&1
 assert_eq "summary has no Markdown level-two heading" 1 "$?"
-rg -n 'secret (bash|read|mcp)' "$session/errors/summary.md" >/dev/null 2>&1
+grep -nE 'secret (bash|read|mcp)' "$session/errors/summary.md" >/dev/null 2>&1
 assert_eq "summary excludes raw errors" 1 "$?"
 assert_eq "default summary does not call curl" 0 "$(wc -l <"$curl_log" | tr -d ' ')"
 
@@ -262,9 +262,9 @@ jq -e '.model == "fixture-model" and .max_tokens == 512 and .temperature == 0
   and (.messages|length)==1 and (.messages[0].content|contains("Error summary (mechanical)"))
   and (.messages[0].content|contains("errors/raw.log:L1-L6"))' "$curl_request" >/dev/null 2>&1
 assert_eq "LLM request contract" 0 "$?"
-rg -n 'L1 secret bash|L2 secret read|tool_input|transcript_path|fixture-secret-key' "$curl_request" >/dev/null 2>&1
+grep -nE 'L1 secret bash|L2 secret read|tool_input|transcript_path|fixture-secret-key' "$curl_request" >/dev/null 2>&1
 assert_eq "LLM request excludes raw details and key" 1 "$?"
-rg -n 'fixture-secret-key|^## ' "$success_session/errors/summary.md" "$CASE_STDOUT" "$CASE_STDERR" >/dev/null 2>&1
+grep -nE 'fixture-secret-key|^## ' "$success_session/errors/summary.md" "$CASE_STDOUT" "$CASE_STDERR" >/dev/null 2>&1
 assert_eq "LLM output excludes key and headings" 1 "$?"
 
 invalid_session=$(new_session invalid)

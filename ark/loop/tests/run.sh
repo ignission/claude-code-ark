@@ -7,6 +7,7 @@ for test_script in \
   test-runtime.sh \
   test-config.sh \
   test-task-template.sh \
+  test-portable-commands.sh \
   test-recite-todo.sh \
   test-capture-error.sh \
   test-summarize-errors.sh \
