@@ -214,6 +214,37 @@ claude_settings_preflight() {
   if [ -f "$tmp" ]; then command rm -f "$tmp" || return 1; fi
 }
 
+claude_settings_manifest_matches() {
+  local settings=$1
+  local manifest=$2
+  [ -e "$settings" ] || return 1
+  jq -e --slurpfile ownership "$manifest" '
+    . as $settings
+    | ($ownership | length) == 1
+      and ($ownership[0].schema_version == 1)
+      and (($ownership[0].settings_existed | type) == "boolean")
+      and (($ownership[0].entries | type) == "array")
+      and (($ownership[0].entries | length) > 0)
+      and all($ownership[0].entries[];
+        . as $entry
+        | (($entry | type) == "object")
+          and (($entry.path | type) == "string")
+          and (($entry.abandoned | type) == "boolean")
+          and ($entry.abandoned == false)
+          and (if $entry.path == "permissions/deny" then
+            (($entry.value | type) == "string")
+              and (($settings.permissions.deny // []) | index($entry.value) != null)
+          elif $entry.path == "hooks/PostToolBatch" then
+            (($settings.hooks.PostToolBatch // []) | index($entry.value) != null)
+          elif $entry.path == "hooks/PostToolUseFailure" then
+            (($settings.hooks.PostToolUseFailure // []) | index($entry.value) != null)
+          else
+            false
+          end)
+      )
+  ' "$settings" >/dev/null 2>&1
+}
+
 claude_settings_inject() {
   local repo=${1:-}
   local state=${2:-}
@@ -224,7 +255,15 @@ claude_settings_inject() {
   manifest="$state/settings-ownership.json"
   manifest_new="$state/settings-ownership.json.new"
   claude_settings_preflight "$repo" "$state" || return 1
-  if [ -e "$manifest" ] || [ -L "$manifest" ]; then ctx_validate_xdg_file "$manifest" || return 1; return 0; fi
+  if [ -e "$manifest" ] || [ -L "$manifest" ]; then
+    ctx_validate_xdg_file "$manifest" || return 1
+    if claude_settings_manifest_matches "$settings" "$manifest"; then return 0; fi
+    claude_settings_restore "$repo" "$state" || return 1
+    if [ -e "$manifest" ] || [ -L "$manifest" ]; then
+      ctx_validate_xdg_file "$manifest" || return 1
+      command rm -f "$manifest" || return 1
+    fi
+  fi
 
   if [ -e "$settings" ] || [ -L "$settings" ]; then
     ctx_validate_repo_path "$settings" file required || return 1
