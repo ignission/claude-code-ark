@@ -165,10 +165,15 @@ describe("SessionOrchestrator + real Ark context harness", () => {
     );
     orchestrator.stopSession(managed.id);
 
-    await vi.waitFor(() => expect(fs.existsSync(settingsPath)).toBe(false), {
-      timeout: 5_000,
-      interval: 20,
-    });
-    expect(fs.existsSync(ownerPath)).toBe(false);
+    await vi.waitFor(
+      () => {
+        expect(fs.existsSync(settingsPath)).toBe(false);
+        expect(fs.existsSync(ownerPath)).toBe(false);
+      },
+      {
+        timeout: 5_000,
+        interval: 20,
+      }
+    );
   });
 });

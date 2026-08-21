@@ -49,6 +49,31 @@ prepare_lifecycle_output() {
   seed_step_count "$output_cache" 7
 }
 
+setup_repo invalid-owner-pid
+invalid_owner_sid=09090909090909090909090909090909
+run_case /bin/bash "$INIT" --repo "$repo" --owner-pid 0 --session-id "$invalid_owner_sid"
+assert_success "PID zero input disables without process failure"
+assert_eq "PID zero input is rejected" $'enabled\t0' "$(sed -n '1p' "$CASE_STDOUT")"
+assert_eq "PID zero input reports invalid owner PID" $'reason\tinvalid owner pid' "$(sed -n '2p' "$CASE_STDOUT")"
+
+setup_repo invalid-owner-marker
+invalid_marker_sid=08080808080808080808080808080808
+repo_key=$(ctx_sha256 "$repo")
+invalid_marker_state="$XDG_DATA_HOME/ark/context/repos/$repo_key"
+mkdir -p "$invalid_marker_state"
+chmod 700 "$XDG_DATA_HOME/ark" "$XDG_DATA_HOME/ark/context" \
+  "$XDG_DATA_HOME/ark/context/repos" "$invalid_marker_state"
+printf '%s\t0\n' "$invalid_marker_sid" >"$invalid_marker_state/owner"
+chmod 600 "$invalid_marker_state/owner"
+run_case /bin/bash "$INIT" --repo "$repo" --owner-pid "$$" \
+  --session-id 07070707070707070707070707070707
+assert_success "PID zero owner marker disables without process failure"
+assert_eq "PID zero owner marker is rejected" $'enabled\t0' "$(sed -n '1p' "$CASE_STDOUT")"
+assert_eq "PID zero owner marker is not treated as live" $'reason\tinvalid owner marker' \
+  "$(sed -n '2p' "$CASE_STDOUT")"
+[ -e "$invalid_marker_state/owner" ] || test_fail "invalid owner marker was claimed or removed"
+[ ! -e "$repo/.claude/settings.local.json" ] || test_fail "invalid owner marker changed settings"
+
 setup_repo lifecycle
 settings="$repo/.claude/settings.local.json"
 printf '{\n "before" : "日本語"\n}\n\n' >"$settings"; chmod 640 "$settings"

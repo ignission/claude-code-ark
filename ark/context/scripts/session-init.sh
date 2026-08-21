@@ -23,6 +23,11 @@ session_disabled() {
   exit 0
 }
 
+owner_pid_valid() {
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  case "$1" in *[1-9]*) return 0 ;; *) return 1 ;; esac
+}
+
 owner_read() {
   local owner=$1 line extra
   OWNER_SESSION=
@@ -35,7 +40,7 @@ $line
 EOF
   case "$OWNER_SESSION" in *[!0-9a-f]*) return 2 ;; esac
   [ "${#OWNER_SESSION}" -eq 32 ] || return 2
-  case "$OWNER_PID" in ''|*[!0-9]*) return 2 ;; esac
+  owner_pid_valid "$OWNER_PID" || return 2
   [ -z "${extra:-}" ] || return 2
 }
 
@@ -80,7 +85,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -n "$repo" ] && [ -n "$owner_pid" ] || session_disabled "invalid arguments"
-case "$owner_pid" in *[!0-9]*) session_disabled "invalid owner pid" ;; esac
+owner_pid_valid "$owner_pid" || session_disabled "invalid owner pid"
 kill -0 "$owner_pid" 2>/dev/null || session_disabled "owner pid is not alive"
 [ -z "$goal" ] || ctx_task_input_valid "$goal" 200 || session_disabled "invalid task input"
 if [ -n "$constraints" ]; then while IFS= read -r value || [ -n "$value" ]; do ctx_task_input_valid "$value" 400 || session_disabled "invalid task input"; done <<EOF

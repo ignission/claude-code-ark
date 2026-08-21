@@ -254,7 +254,7 @@ Previous failure summary: {{PREV_FAILURE_SUMMARY}}
 - <path> — <1行要約>
 ```
 
-Plan には checkbox を使い、`← NOW` は常にちょうど1個だけ置く。全項目完了時は完了した最後の項目に残す。Goal と Constraints は init 後に編集してはならず、作業中に更新できるのは Plan の項目、status、`← NOW` と artifact 参照だけとする。
+Plan には checkbox を使い、`← NOW` は常にちょうど1個だけ置く。全項目完了時は完了した最後の項目に残す。Goal と Constraints は init 後に編集してはならない。ただし、init 時に空で生成された Goal / Constraints は、空から記入済みへの一方向に限って一度だけ埋めてよい。初回記入後を含め、既に値が入っている Goal / Constraints の書き換えはドリフト防止のため従来どおり禁止する。空の項目を埋める主体と手順は #334 の §5 ループ規約の範囲とし、ここではこの初回記入が許されることだけを定める。作業中にそれ以外で更新できるのは Plan の項目、status、`← NOW` と artifact 参照だけとする。
 
 `task-review.md.tmpl` は、diff 全ファイルの通読、規約遵守、artifact / index の整合、エラー握りつぶし、Goal 逸脱、再発性のある指摘の inbox 候補化を、同じ checkbox schema の Plan に持つ。session ID の SHA-256 を seed にした決定的な順列で提示順だけを変え、観点集合を削らず、同一 session 内では順序を安定させる。
 
@@ -307,7 +307,7 @@ init の順序を次で固定する。
 
 `owner` marker の取得・生存確認・消滅 owner からの引継ぎは per-repo で排他的に行う。同じ session の再実行だけは既存 ownership を継続できる。repo state directory と file は owner のみ読み書き可能にする。`settings-ownership.json` は§5-3の契約に従い、注入前の有無とArkが実際に追加したentryだけを所有の根拠とする。
 
-`--repo` と `--owner-pid` は必須とするが、`--goal`、`--constraint`、`--plan-item` はすべて任意とする。省略時も context を有効化し、Goal、Constraints、Plan が空の `task.md` の骨組みを生成する。値が与えられた項目は従来どおり template へ展開する。Manus では自然言語の依頼を受けた agent 自身が `todo.md` を作り、ユーザーへ Goal のフォーム入力を要求しないため、この起動契約もその設計に合わせる。Ark は素のターミナルを開く用途があるので Goal 未設定を正常系とし、task を埋める agent 規約は別途定める。Goal と `← NOW` が空の `task.md` に対して復唱 hook が出力ゼロで沈黙し、両方が埋まった時点から復唱を開始することは実測済みであり、空の骨組みは通常のターミナル利用を妨げない。
+`--repo` と `--owner-pid` は必須とするが、`--goal`、`--constraint`、`--plan-item` はすべて任意とする。省略時も context を有効化し、Goal、Constraints、Plan が空の `task.md` の骨組みを生成する。値が与えられた項目は従来どおり template へ展開する。Manus では自然言語の依頼を受けた agent 自身が `todo.md` を作り、ユーザーへ Goal のフォーム入力を要求しないため、この起動契約もその設計に合わせる。Ark は素のターミナルを開く用途があるので Goal 未設定を正常系とする。空で生成された Goal / Constraints は §5-1 に従い、空から記入済みへの一方向に限って一度だけ埋めてよいが、既に値が入っている Goal / Constraints の書き換えは禁止する。空の項目を埋める主体と手順は #334 の §5 ループ規約の範囲とし、ここでは空から埋める操作が許されることだけを定める。Goal と `← NOW` が空の `task.md` に対して復唱 hook が出力ゼロで沈黙し、両方が埋まった時点から復唱を開始することは実測済みであり、空の骨組みは通常のターミナル利用を妨げない。
 
 注入時は現在の `.claude/settings.local.json` を読み、§5-3 の構文・型を検証する。同一 entry がない候補だけを追加対象としてmanifestへ原子的に記録し、deep mergeする。結果は repo 側の固定名 `.claude/settings.local.json.ark-context-tmp` に書き、既存 file の mode を保持し、新規 file は mode `0600` として、同 filesystem 上の `mv` で原子的に確定する。`mktemp` 等による可変名を使わない。
 
