@@ -22,7 +22,7 @@
     "test:e2e": "playwright test",
     "check": "biome check . && tsc -b",
     "test": "vitest run && pnpm test:harness",
-    "test:harness": "/bin/bash ark/context/tests/run.sh",
+    "test:harness": "/bin/bash .claude/hooks/tests/test-bash-guard.sh && /bin/bash ark/context/tests/run.sh",
     "format": "biome check --write .",
     "lint": "biome lint ."
   },
