@@ -10,6 +10,8 @@ set +o pipefail
 . "$ARK_SOURCE_ROOT/ark/loop/scripts/lib/runtime.sh"
 . "$ARK_SOURCE_ROOT/ark/loop/scripts/lib/config.sh"
 . "$ARK_SOURCE_ROOT/ark/loop/scripts/lib/task-template.sh"
+. "$ARK_SOURCE_ROOT/ark/loop/scripts/lib/handoff.sh"
+. "$ARK_SOURCE_ROOT/ark/loop/scripts/lib/failures-knowledge.sh"
 . "$ARK_SOURCE_ROOT/ark/loop/adapters/claude-code/settings.sh"
 
 session_disabled() {
@@ -118,6 +120,42 @@ if owner_read "$owner"; then
       session_disabled "another live session owns this repo"
     fi
   else
+    old_session="$LOOP_DATA_ROOT/sessions/$OWNER_SESSION"
+    old_cache="$LOOP_CACHE_ROOT/$OWNER_SESSION"
+    old_session_safe=0
+    if loop_validate_xdg_dir "$old_session" >/dev/null 2>&1; then
+      old_session_canonical=$(cd "$old_session" 2>/dev/null && pwd -P) || old_session_canonical=
+      [ "$old_session_canonical" = "$old_session" ] && old_session_safe=1
+    fi
+    if [ "$old_session_safe" -eq 1 ]; then
+      ARK_SESSION_ID=$OWNER_SESSION
+      ARK_SESSION_DIR=$old_session
+      ARK_CACHE_DIR=$old_cache
+      export ARK_SESSION_ID ARK_SESSION_DIR ARK_CACHE_DIR
+      env ARK_SESSION_DIR="$ARK_SESSION_DIR" LOOP_CONFIG_FILE="$LOOP_CONFIG_FILE" \
+        /bin/bash "$ARK_SOURCE_ROOT/ark/loop/scripts/summarize-errors.sh" >/dev/null 2>&1 || true
+      loop_handoff_write "$ARK_SESSION_DIR" "$repo" "$OWNER_SESSION" >/dev/null 2>&1 || true
+      old_work_id=$(loop_work_id_from_repo "$repo" 2>/dev/null) || old_work_id=
+      if [ -n "$old_work_id" ]; then
+        knowledge_lock="$ARK_KNOWLEDGE_DIR/failures-inbox.lock"
+        if flow_lock_acquire "$knowledge_lock" 8 5 30 mkdir-direct >/dev/null 2>&1; then
+          knowledge_backend=$FLOW_LOCK_ACQUIRED_BACKEND
+          knowledge_pid=$FLOW_LOCK_ACQUIRED_PID
+          knowledge_token=$FLOW_LOCK_ACQUIRED_TOKEN
+          loop_failures_inbox_append "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" \
+            "$old_work_id" "$OWNER_SESSION" >/dev/null 2>&1 || true
+          flow_lock_release "$knowledge_lock" "$knowledge_backend" "$knowledge_pid" "$knowledge_token" \
+            >/dev/null 2>&1 || true
+        fi
+      fi
+      if loop_validate_xdg_dir "$ARK_CACHE_DIR" >/dev/null 2>&1 \
+        && loop_validate_xdg_dir "$ARK_CACHE_DIR/steps" >/dev/null 2>&1; then
+        command rm -rf "$ARK_CACHE_DIR/steps" 2>/dev/null || true
+      fi
+      if loop_validate_xdg_file "$ARK_SESSION_DIR/stop_once" >/dev/null 2>&1; then
+        command rm -f "$ARK_SESSION_DIR/stop_once" 2>/dev/null || true
+      fi
+    fi
     claude_settings_restore "$repo" "$LOOP_REPO_STATE_DIR" >/dev/null 2>&1 || { release_lock; session_disabled "orphan settings restore failed"; }
     command rm -f "$owner" || { release_lock; session_disabled "orphan owner cleanup failed"; }
   fi

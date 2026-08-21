@@ -8,6 +8,9 @@ for test_script in \
   test-config.sh \
   test-task-template.sh \
   test-portable-commands.sh \
+  test-stop-gate.sh \
+  test-handoff.sh \
+  test-failures-knowledge.sh \
   test-recite-todo.sh \
   test-capture-error.sh \
   test-summarize-errors.sh \

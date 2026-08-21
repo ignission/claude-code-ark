@@ -7,6 +7,8 @@ export CLAUDE_PROJECT_DIR
 set +eu
 set +o pipefail
 . "$ARK_SOURCE_ROOT/ark/loop/scripts/lib/runtime.sh"
+. "$ARK_SOURCE_ROOT/ark/loop/scripts/lib/handoff.sh"
+. "$ARK_SOURCE_ROOT/ark/loop/scripts/lib/failures-knowledge.sh"
 . "$ARK_SOURCE_ROOT/ark/loop/adapters/claude-code/settings.sh"
 
 repo=
@@ -34,14 +36,40 @@ if loop_validate_xdg_file "$owner" >/dev/null 2>&1; then
   owner_session=${line%%$'\t'*}
   [ "$owner_session" = "$session" ] && owned=1
 fi
+
+env ARK_SESSION_DIR="$ARK_SESSION_DIR" LOOP_CONFIG_FILE="$LOOP_CONFIG_FILE" \
+  /bin/bash "$ARK_SOURCE_ROOT/ark/loop/scripts/summarize-errors.sh" >/dev/null 2>&1 || true
+loop_handoff_write "$ARK_SESSION_DIR" "$repo" "$session" >/dev/null 2>&1 || true
+work_id=$(loop_work_id_from_repo "$repo" 2>/dev/null) || work_id=
+if [ -n "$work_id" ]; then
+  knowledge_lock="$ARK_KNOWLEDGE_DIR/failures-inbox.lock"
+  if flow_lock_acquire "$knowledge_lock" 8 5 30 mkdir-direct >/dev/null 2>&1; then
+    knowledge_backend=$FLOW_LOCK_ACQUIRED_BACKEND
+    knowledge_pid=$FLOW_LOCK_ACQUIRED_PID
+    knowledge_token=$FLOW_LOCK_ACQUIRED_TOKEN
+    loop_failures_inbox_append "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" "$work_id" "$session" \
+      >/dev/null 2>&1 || true
+    flow_lock_release "$knowledge_lock" "$knowledge_backend" "$knowledge_pid" "$knowledge_token" \
+      >/dev/null 2>&1 || true
+  fi
+fi
+
+restore_succeeded=0
 if [ "$owned" -eq 1 ]; then
-  if loop_validate_xdg_dir "$ARK_CACHE_DIR" >/dev/null 2>&1 \
-    && loop_validate_xdg_dir "$ARK_CACHE_DIR/steps" >/dev/null 2>&1; then
-    command rm -rf "$ARK_CACHE_DIR/steps" 2>/dev/null || true
-  fi
   if claude_settings_restore "$repo" "$LOOP_REPO_STATE_DIR" >/dev/null 2>&1; then
-    command rm -f "$owner" "$LOOP_REPO_STATE_DIR/owner.new" 2>/dev/null || true
+    restore_succeeded=1
   fi
+fi
+if loop_validate_xdg_dir "$ARK_CACHE_DIR" >/dev/null 2>&1 \
+  && loop_validate_xdg_dir "$ARK_CACHE_DIR/steps" >/dev/null 2>&1; then
+  command rm -rf "$ARK_CACHE_DIR/steps" 2>/dev/null || true
+fi
+if loop_validate_xdg_dir "$ARK_SESSION_DIR" >/dev/null 2>&1 \
+  && loop_validate_xdg_file "$ARK_SESSION_DIR/stop_once" >/dev/null 2>&1; then
+  command rm -f "$ARK_SESSION_DIR/stop_once" 2>/dev/null || true
+fi
+if [ "$owned" -eq 1 ] && [ "$restore_succeeded" -eq 1 ]; then
+  command rm -f "$owner" "$LOOP_REPO_STATE_DIR/owner.new" 2>/dev/null || true
 fi
 flow_lock_release "$lock" "$lock_backend" "$lock_pid" "$lock_token" >/dev/null 2>&1 || true
 exit 0
