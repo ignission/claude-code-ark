@@ -55,6 +55,36 @@ git やその他のツールは解決済みパスを返すため、正規化し�
 （`post-tool-use-failure.sh` / `summarize-errors.sh` / `handoff.sh` の
 `canonical == input` 検査など）は別の目的を持つので、この規約の対象外。
 
+### TypeScript のテスト fixture も正規化する
+
+shell だけの話ではない。`os.tmpdir()` は macOS で `/var/...` を返し、実体は
+`/private/var/...`。**`fs.mkdtempSync(path.join(os.tmpdir(), ...))` の戻り値は
+非正規パス**になる。
+
+```ts
+// 正規化する
+testRoot = fs.realpathSync(
+  fs.mkdtempSync(path.join(os.tmpdir(), "ark-context-integration-"))
+);
+```
+
+実害の例: `session-orchestrator-context.integration.test.ts` が macOS CI だけで
+5 秒 timeout した。非正規な XDG パスを渡された `ark/context` が派生物の生成に失敗し、
+owner marker が残り、その削除を待つ `waitFor` が期限切れになっていた。
+**症状はタイムアウトで、原因はパスだった。**
+
+Linux では `/tmp` が symlink ではないため再現しない。切り分けるときは
+**TMPDIR を symlink にして 1 変数だけ動かす**。
+
+```
+修正前  TMPDIR 正規 → 通る 0.7 秒 / 非正規 → 落ちる 5.5 秒
+修正後  TMPDIR 正規 → 通る 0.7 秒 / 非正規 → 通る  0.8 秒
+```
+
+**すべての fixture に必要なわけではない。** 正規化が要るのは、そのパスを
+**パス検証を行うコードへ渡す**場合と、**パスを比較する**場合。単に読み書きするだけの
+fixture は影響を受けない。
+
 ## 2. bash 3.2 で動く記法に限定する
 
 macOS の `/bin/bash` は 3.2 系。次は使えない。
