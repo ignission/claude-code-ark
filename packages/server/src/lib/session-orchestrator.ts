@@ -27,7 +27,25 @@ import { analyzeBridgeStatus } from "./bridge-collector.js";
 import { db } from "./database.js";
 import { getErrorMessage } from "./errors.js";
 import { type TmuxSession, tmuxManager } from "./tmux-manager.js";
+import {
+  describeTmuxReadFailure,
+  TmuxReadFailureReporter,
+  type TmuxReadResult,
+} from "./tmux-read-result.js";
 import { ttydManager } from "./ttyd-manager.js";
+
+/**
+ * tmux 読み取りが「値なし」として正常に扱える失敗かどうか。
+ * not-set (変数が無い) と unsupported-platform (macOS で /proc が無い) は
+ * 想定内の「値なし」であり、ログに残すべき異常ではない。
+ */
+function isExpectedAbsence(result: TmuxReadResult<unknown>): boolean {
+  return (
+    !result.ok &&
+    (result.failure.kind === "not-set" ||
+      result.failure.kind === "unsupported-platform")
+  );
+}
 
 export type { ManagedSession };
 
@@ -54,6 +72,15 @@ export class SessionOrchestrator extends EventEmitter {
     string,
     { id: string; configDir: string } | null
   >();
+
+  /**
+   * getAllPreviews (1 秒間隔 polling) での capture-pane 失敗を、同じ内容なら
+   * 1 度だけログに残すための reporter。tmux が死んだ・セッションが消えた
+   * 原因を事後に追えるようにしつつ、毎 tick のログ洪水を避ける。
+   */
+  private readonly previewCaptureFailures = new TmuxReadFailureReporter(
+    "[Preview]"
+  );
 
   /**
    * board_open MCP (BoardMcpServer / BoardSessionRegistry) への依存。
@@ -413,14 +440,50 @@ export class SessionOrchestrator extends EventEmitter {
     id: string;
     tmuxSessionName: string;
   }): { id: string; configDir: string } | null {
-    const envConfigDir =
-      tmuxManager.getEnv(tmuxSession.id, "CLAUDE_CONFIG_DIR") ??
-      tmuxManager.getPaneEnv(tmuxSession.id, "CLAUDE_CONFIG_DIR");
-    if (!envConfigDir) return null;
+    // tmux の失敗 (サーバー停止・セッション不在) と「変数が無い」を区別する。
+    // 失敗なら理由を残したうえで次の情報源へフォールバックする (#393)
+    const fromSessionEnv = tmuxManager.getEnv(
+      tmuxSession.id,
+      "CLAUDE_CONFIG_DIR"
+    );
+    if (!fromSessionEnv.ok && !isExpectedAbsence(fromSessionEnv)) {
+      console.warn(
+        `[Orchestrator] ${tmuxSession.tmuxSessionName}: CLAUDE_CONFIG_DIR を tmux session env から読めません (${describeTmuxReadFailure(fromSessionEnv.failure)})。pane environ へフォールバックします`
+      );
+    }
+    const fromPaneEnv = fromSessionEnv.ok
+      ? fromSessionEnv
+      : tmuxManager.getPaneEnv(tmuxSession.id, "CLAUDE_CONFIG_DIR");
+    if (!fromPaneEnv.ok && !isExpectedAbsence(fromPaneEnv)) {
+      console.warn(
+        `[Orchestrator] ${tmuxSession.tmuxSessionName}: CLAUDE_CONFIG_DIR を pane environ から読めません (${describeTmuxReadFailure(fromPaneEnv.failure)})。プロファイル無しで復元します`
+      );
+    }
+    if (!fromPaneEnv.ok || !fromPaneEnv.value) return null;
+    const envConfigDir = fromPaneEnv.value;
     console.log(
       `[Orchestrator] Restored profile from env: ${tmuxSession.tmuxSessionName} -> ${envConfigDir}`
     );
     return { id: "__env__", configDir: envConfigDir };
+  }
+
+  /**
+   * ark context harness の session ID (ARK_SESSION_ID) を tmux env から読む。
+   * tmux の失敗は「未設定」と区別して警告に残す。teardown を飛ばした理由が
+   * 事後に追えないと、context owner の残留と tmux の異常を切り分けられない (#393)。
+   */
+  private readContextSessionId(
+    sessionId: string,
+    purpose: string
+  ): string | undefined {
+    const result = tmuxManager.getEnv(sessionId, "ARK_SESSION_ID");
+    if (result.ok) return result.value;
+    if (!isExpectedAbsence(result)) {
+      console.warn(
+        `[Orchestrator] ${purpose} ${sessionId}: ARK_SESSION_ID を tmux env から読めないため旧 context を teardown せずに進めます (${describeTmuxReadFailure(result.failure)})`
+      );
+    }
+    return undefined;
   }
 
   /**
@@ -780,13 +843,16 @@ export class SessionOrchestrator extends EventEmitter {
 
     // context owner を旧セッションから解放してから新セッションを init する。
     // tmux env はサーバー再起動後も残るため、永続化を追加せず session ID を復元できる。
-    const oldContextSessionId = tmuxManager.getEnv(sessionId, "ARK_SESSION_ID");
+    const oldContextSessionId = this.readContextSessionId(
+      sessionId,
+      "restartSession"
+    );
     if (oldContextSessionId) {
       await this.teardownArkContext(worktreePath, oldContextSessionId);
     }
     const contextEnv = await arkContextHarness.initializeSession(
       worktreePath,
-      oldContextSessionId ?? undefined
+      oldContextSessionId
     );
     const sessionEnv =
       env || contextEnv ? { ...(env ?? {}), ...(contextEnv ?? {}) } : undefined;
@@ -864,6 +930,7 @@ export class SessionOrchestrator extends EventEmitter {
     }
     this.sessionProfiles.set(newTmux.id, snapshot);
     this.sessionProfiles.delete(sessionId);
+    this.previewCaptureFailures.forget(sessionId);
     this.repoPathCache.delete(worktreePath);
     if (boardPrep) {
       this.registerBoardToken(
@@ -974,8 +1041,8 @@ export class SessionOrchestrator extends EventEmitter {
       dbSession?.repoPath ||
       (worktreePath ? this.deriveRepoPath(worktreePath) : undefined);
     const contextSessionId = tmuxSession
-      ? tmuxManager.getEnv(sessionId, "ARK_SESSION_ID")
-      : null;
+      ? this.readContextSessionId(sessionId, "stopSession")
+      : undefined;
 
     ttydManager.stopInstance(sessionId);
     tmuxManager.killSession(sessionId);
@@ -984,6 +1051,7 @@ export class SessionOrchestrator extends EventEmitter {
     }
     db.deleteSession(sessionId);
     this.sessionProfiles.delete(sessionId);
+    this.previewCaptureFailures.forget(sessionId);
     this.unregisterBoardToken(sessionId);
     if (worktreePath) {
       this.repoPathCache.delete(worktreePath);
@@ -1068,6 +1136,7 @@ export class SessionOrchestrator extends EventEmitter {
           db.deleteSession(dbSession.id);
         }
         this.sessionProfiles.delete(s.id);
+        this.previewCaptureFailures.forget(s.id);
         this.repoPathCache.delete(s.worktreePath);
         this.emit("session:stopped", s.id);
       }
@@ -1121,8 +1190,11 @@ export class SessionOrchestrator extends EventEmitter {
     for (const session of allSessions) {
       // 可視範囲のみ取得 (scrollback 込みだと /clear 後にも過去ログが残り、
       // BridgeSessionStatus の READY 判定や preview 表示が壊れる)
-      const raw = tmuxManager.capturePaneVisible(session.id);
-      if (raw === null) continue;
+      const captured = tmuxManager.capturePaneVisible(session.id);
+      // 失敗は同内容なら 1 度だけ警告し (回復時も 1 行)、プレビューから除外する
+      this.previewCaptureFailures.report(session.id, captured);
+      if (!captured.ok) continue;
+      const raw = captured.value;
       // Bridge dashboard / サイドバードット / RepoGridView で共通利用する状態判定。
       // 既存の text/activityText/status (legacy SessionStatus) と同じ raw から
       // 派生させて、tmux capture を1回で済ませる

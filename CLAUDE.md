@@ -98,6 +98,26 @@ PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`Spli
 - 「前回開いたときから何が変わったか」の差分可視化と、複数エージェントの同時編集の
   競合（last-write-wins）は本機能の範囲外
 
+### tmux 読み取りの結果型（TmuxReadResult）
+
+`TmuxManager` の読み取り系（`getEnv` / `getPaneEnv` / `getBuffer` / `capturePane` /
+`capturePaneVisible`）は `string | null` ではなく `TmuxReadResult<string>`
+（`tmux-read-result.ts`）を返す。以前は **tmux コマンドの失敗**と**値が無いこと**を
+同じ `null` に畳んでいたため、セッション消滅・復元失敗の原因が事後に追えなかった（#393）。
+
+- `{ ok: true, value }` または `{ ok: false, failure }`。`failure.kind` は
+  `no-session`（管理外 ID）/ `tmux-failed`（非 0 終了・起動失敗・timeout。`status` /
+  `signal` / `code` / `stderr` を持つ）/ `not-set` / `no-buffer` / `invalid-pane-pid` /
+  `proc-error` / `unsupported-platform`
+- 呼び出し側は `not-set` と `unsupported-platform` だけを「想定内の値なし」として
+  静かに扱い、それ以外は `describeTmuxReadFailure` でログに理由を残す
+- 1 秒間隔の polling 経路（`getAllPreviews` / bridge-collector）は
+  `TmuxReadFailureReporter` で同じ失敗を 1 度だけ出し、回復時も 1 行残す
+- `getEnv` は `show-environment -t <session>` の一覧から自前で探す（変数名指定だと
+  未設定時も exit 1 になり tmux 失敗と区別できない）。`getBuffer` は `show-buffer` の
+  前に `list-buffers` で有無を見る（同じ理由）
+- 書き込み系（`sendKeys` 等）は従来どおり throw
+
 ### セッション永続化
 
 - **tmuxセッション**: サーバー再起動後も維持される（`cleanup()`でttydのみ停止、tmuxは残す）

@@ -11,20 +11,110 @@ import fs from "node:fs";
 import path from "node:path";
 import type { SpecialKey } from "@ark/shared";
 import { nanoid } from "nanoid";
+import { errnoCode, errnoMessage } from "./errors.js";
 import { resolveClaudePath, resolveTmuxPath } from "./system.js";
+import {
+  describeTmuxReadFailure,
+  type TmuxReadFailure,
+  type TmuxReadResult,
+} from "./tmux-read-result.js";
 
 // tmux 絶対パス (pm2/systemd で PATH に tmux が無くても動作させるため)。
 // 解決不能なら "tmux" にフォールバック (PATH依存)。
 const TMUX_BINARY_PATH = resolveTmuxPath() ?? "tmux";
 
 /**
- * セッション作成/破棄系の tmux コマンドの打ち切り時間 (ms)。
+ * セッション作成/破棄系および読み取り系の tmux コマンドの打ち切り時間 (ms)。
  * spawnSync は同期呼び出しでハングするとイベントループごと停止し、
  * JS 側のタイムアウト (Promise.race 等) では救えない。timeout で子プロセスを
  * kill させ error → throw に変換することで、restartSession の in-flight guard
- * が finally で確実に解放される (通常の tmux コマンドは数十 ms で完了する)
+ * が finally で確実に解放される (通常の tmux コマンドは数十 ms で完了する)。
+ * 読み取り系では timeout は `tmux-failed` (code=ETIMEDOUT, signal=SIGTERM) として
+ * 結果に残る。
  */
 const TMUX_CMD_TIMEOUT_MS = 10_000;
+
+type TmuxCommandFailure = Extract<TmuxReadFailure, { kind: "tmux-failed" }>;
+
+type TmuxCommandResult =
+  | { ok: true; stdout: string }
+  | { ok: false; failure: TmuxCommandFailure };
+
+/**
+ * 読み取り系の tmux コマンドを実行し、失敗要因を型で返す。
+ *
+ * spawnSync は通常 throw せず `result.error` (ENOENT / ETIMEDOUT 等) と
+ * `status` / `signal` で失敗を表すため、それらをまとめて `tmux-failed` に詰める。
+ * stdout は encoding 指定で string になるが、テストのモックが Buffer を返す
+ * 場合もあるので String() で正規化する。
+ */
+function runTmux(args: string[]): TmuxCommandResult {
+  const command = args[0] ?? "";
+  try {
+    const result = spawnSync(TMUX_BINARY_PATH, args, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: TMUX_CMD_TIMEOUT_MS,
+    });
+    const stderr = String(result.stderr ?? "").trim();
+    if (result.error || result.status !== 0) {
+      return {
+        ok: false,
+        failure: {
+          kind: "tmux-failed",
+          command,
+          status: result.status ?? null,
+          signal: result.signal ?? null,
+          stderr,
+          ...(result.error
+            ? {
+                code: errnoCode(result.error),
+                message: errnoMessage(result.error),
+              }
+            : {}),
+        },
+      };
+    }
+    return { ok: true, stdout: String(result.stdout ?? "") };
+  } catch (e) {
+    // spawnSync が throw するのは引数不正等の例外的なケース。握り潰さず残す
+    return {
+      ok: false,
+      failure: {
+        kind: "tmux-failed",
+        command,
+        status: null,
+        signal: null,
+        stderr: "",
+        code: errnoCode(e),
+        message: errnoMessage(e),
+      },
+    };
+  }
+}
+
+const NO_SESSION: TmuxReadResult<never> = {
+  ok: false,
+  failure: { kind: "no-session" },
+};
+const NOT_SET: TmuxReadResult<never> = {
+  ok: false,
+  failure: { kind: "not-set" },
+};
+
+/**
+ * `tmux show-environment -t <session>` の一覧出力から変数の値を取り出す。
+ * 出力形式は 1 行 1 変数で `NAME=value` または `-NAME` (unset マーカー)。
+ * 変数名を指定した `show-environment NAME` は未設定時に exit 1 となり
+ * tmux 失敗と区別できないため、一覧を取って自前で探す。
+ */
+function findEnvValue(listing: string, name: string): string | null {
+  for (const line of listing.split("\n")) {
+    if (line === `-${name}`) return null;
+    if (line.startsWith(`${name}=`)) return line.slice(name.length + 1);
+  }
+  return null;
+}
 
 /**
  * POSIX shell の single-quote 文字列にエスケープする。
@@ -216,14 +306,17 @@ export class TmuxManager extends EventEmitter {
    */
   private discoverExistingSessions(): void {
     try {
-      const result = spawnSync(
-        TMUX_BINARY_PATH,
-        ["list-sessions", "-F", "#{session_name}"],
-        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
-      );
-      if (result.status !== 0) return;
-      const output = result.stdout ?? "";
-      const sessionNames = output.trim().split("\n").filter(Boolean);
+      const result = runTmux(["list-sessions", "-F", "#{session_name}"]);
+      if (!result.ok) {
+        // サーバー未起動 ("no server running on ...") は正常な初回起動だが、
+        // socket の権限エラー等でも同じ分岐に入る。セッションが「全消滅した」
+        // ように見えたとき事後に切り分けられるよう、理由を必ず残す
+        console.log(
+          `[TmuxManager] 既存セッションを検出できません: ${describeTmuxReadFailure(result.failure)}`
+        );
+        return;
+      }
+      const sessionNames = result.stdout.trim().split("\n").filter(Boolean);
 
       for (const name of sessionNames) {
         if (name.startsWith(this.SESSION_PREFIX)) {
@@ -245,11 +338,18 @@ export class TmuxManager extends EventEmitter {
           }
           const id = name.replace(this.SESSION_PREFIX, "");
           const cwd = this.getTmuxSessionCwd(name);
+          if (!cwd.ok) {
+            // worktreePath が空のまま復元されると orphan 判定も DB 照合も
+            // 効かず黙って進むため、理由をログに残す
+            console.warn(
+              `[TmuxManager] ${name}: pane_current_path を取得できません (${describeTmuxReadFailure(cwd.failure)})。worktreePath を空で復元します`
+            );
+          }
 
           this.sessions.set(id, {
             id,
             tmuxSessionName: name,
-            worktreePath: cwd || "",
+            worktreePath: cwd.ok ? cwd.value : "",
             createdAt: new Date(),
             lastActivity: new Date(),
             status: "running",
@@ -277,18 +377,16 @@ export class TmuxManager extends EventEmitter {
   /**
    * tmuxセッションの作業ディレクトリを取得
    */
-  private getTmuxSessionCwd(sessionName: string): string | null {
-    try {
-      const result = spawnSync(
-        TMUX_BINARY_PATH,
-        ["display-message", "-p", "-t", sessionName, "#{pane_current_path}"],
-        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
-      );
-      if (result.status !== 0) return null;
-      return (result.stdout ?? "").trim();
-    } catch {
-      return null;
-    }
+  private getTmuxSessionCwd(sessionName: string): TmuxReadResult<string> {
+    const result = runTmux([
+      "display-message",
+      "-p",
+      "-t",
+      sessionName,
+      "#{pane_current_path}",
+    ]);
+    if (!result.ok) return result;
+    return { ok: true, value: result.stdout.trim() };
   }
 
   /**
@@ -589,108 +687,120 @@ export class TmuxManager extends EventEmitter {
   }
 
   /**
-   * 指定セッションの tmux 環境変数を取得する。未定義/未取得は null。
+   * 指定セッションの tmux 環境変数を取得する。
    *
-   * `tmux show-environment -t <session> <NAME>` を使用。変数名指定は
-   * 該当変数が無い場合に exit code 非 0 になるので、ステータスのみ判定する。
+   * `tmux show-environment -t <session>` で session env の一覧を取り、自前で
+   * 変数を探す (findEnvValue 参照)。失敗要因は型で区別する:
+   *   - no-session: TmuxManager が管理していない ID
+   *   - tmux-failed: tmux が失敗 (セッション不在 / サーバー停止 / 起動失敗 / timeout)
+   *   - not-set: tmux は成功したが変数が無い (または `-NAME` で unset)
    */
-  getEnv(sessionId: string, name: string): string | null {
+  getEnv(sessionId: string, name: string): TmuxReadResult<string> {
     const session = this.sessions.get(sessionId);
-    if (!session) return null;
-    try {
-      const result = spawnSync(
-        TMUX_BINARY_PATH,
-        ["show-environment", "-t", session.tmuxSessionName, name],
-        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
-      );
-      if (result.status !== 0) return null;
-      const line = (result.stdout ?? "").trim();
-      // 出力形式: `NAME=value` または `-NAME` (unset)
-      if (line.startsWith("-")) return null;
-      const eq = line.indexOf("=");
-      if (eq < 0) return null;
-      return line.slice(eq + 1);
-    } catch {
-      return null;
-    }
+    if (!session) return NO_SESSION;
+    const result = runTmux(["show-environment", "-t", session.tmuxSessionName]);
+    if (!result.ok) return result;
+    const value = findEnvValue(result.stdout, name);
+    return value === null ? NOT_SET : { ok: true, value };
   }
 
   /**
    * pane のシェルプロセスの環境変数を /proc/<pane_pid>/environ から読む。
-   * Linux 限定 (/proc が無い環境では null)。
+   * Linux 限定 (/proc が無い環境では `unsupported-platform`)。
    *
    * tmux session env (`show-environment`) に変数が無くても、tmux サーバー
    * プロセスの env を継承してシェル/claude に変数が渡っているケースがある
    * (旧コードで起動されたセッションの CLAUDE_CONFIG_DIR 継承等)。
    * 「claude が実際にどの env で動いているか」の事実はプロセス environ が
    * 唯一の情報源なので、復元時のプロファイル補完フォールバックに使う。
+   *
+   * 失敗要因: no-session / unsupported-platform / tmux-failed (list-panes) /
+   * invalid-pane-pid / proc-error (/proc 読み取り失敗) / not-set
    */
-  getPaneEnv(sessionId: string, name: string): string | null {
+  getPaneEnv(sessionId: string, name: string): TmuxReadResult<string> {
     const session = this.sessions.get(sessionId);
-    if (!session) return null;
-    try {
-      const result = spawnSync(
-        TMUX_BINARY_PATH,
-        ["list-panes", "-t", session.tmuxSessionName, "-F", "#{pane_pid}"],
-        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
-      );
-      if (result.status !== 0) return null;
-      const pid = Number.parseInt(
-        (result.stdout ?? "").trim().split("\n")[0] ?? "",
-        10
-      );
-      if (!Number.isFinite(pid) || pid <= 0) return null;
-      const environ = fs.readFileSync(`/proc/${pid}/environ`, "utf-8");
-      for (const entry of environ.split("\0")) {
-        if (entry.startsWith(`${name}=`)) return entry.slice(name.length + 1);
-      }
-      return null;
-    } catch {
-      return null;
+    if (!session) return NO_SESSION;
+    if (process.platform !== "linux") {
+      return {
+        ok: false,
+        failure: { kind: "unsupported-platform", platform: process.platform },
+      };
     }
+    const result = runTmux([
+      "list-panes",
+      "-t",
+      session.tmuxSessionName,
+      "-F",
+      "#{pane_pid}",
+    ]);
+    if (!result.ok) return result;
+    const raw = result.stdout.trim().split("\n")[0] ?? "";
+    const pid = Number.parseInt(raw, 10);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      return { ok: false, failure: { kind: "invalid-pane-pid", raw } };
+    }
+    let environ: string;
+    try {
+      environ = fs.readFileSync(`/proc/${pid}/environ`, "utf-8");
+    } catch (e) {
+      return {
+        ok: false,
+        failure: {
+          kind: "proc-error",
+          code: errnoCode(e),
+          message: errnoMessage(e),
+        },
+      };
+    }
+    for (const entry of environ.split("\0")) {
+      if (entry.startsWith(`${name}=`)) {
+        return { ok: true, value: entry.slice(name.length + 1) };
+      }
+    }
+    return NOT_SET;
   }
 
   /**
    * tmuxのペーストバッファの内容を取得
+   *
+   * `show-buffer` はバッファが無いときも exit 1 ("no buffers") になり tmux 失敗と
+   * 区別できないため、先に `list-buffers` (空でも exit 0) で有無を確認する。
+   * 失敗要因: no-session / tmux-failed / no-buffer
    */
-  getBuffer(sessionId: string): string | null {
+  getBuffer(sessionId: string): TmuxReadResult<string> {
     const session = this.sessions.get(sessionId);
-    if (!session) return null;
-    const result = spawnSync(TMUX_BINARY_PATH, ["show-buffer"], {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    if (result.status !== 0) return null;
-    return (result.stdout ?? "").trimEnd();
+    if (!session) return NO_SESSION;
+    const list = runTmux(["list-buffers", "-F", "#{buffer_name}"]);
+    if (!list.ok) return list;
+    if (list.stdout.trim() === "") {
+      return { ok: false, failure: { kind: "no-buffer" } };
+    }
+    const shown = runTmux(["show-buffer"]);
+    if (!shown.ok) return shown;
+    return { ok: true, value: shown.stdout.trimEnd() };
   }
 
   /**
    * tmux capture-paneでターミナルの現在の表示内容を取得する
    * @param sessionId セッションID
    * @param lines 取得する行数（デフォルト: 100）
+   *
+   * 失敗要因: no-session / tmux-failed。空画面は失敗ではなく `value: ""`
    */
-  capturePane(sessionId: string, lines = 100): string | null {
+  capturePane(sessionId: string, lines = 100): TmuxReadResult<string> {
     const session = this.sessions.get(sessionId);
-    if (!session) return null;
-    try {
-      // -p: stdoutに出力、-S: 開始行（負数で過去の行）
-      const result = spawnSync(
-        TMUX_BINARY_PATH,
-        [
-          "capture-pane",
-          "-t",
-          session.tmuxSessionName,
-          "-p",
-          "-S",
-          `-${lines}`,
-        ],
-        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
-      );
-      if (result.status !== 0) return null;
-      return (result.stdout ?? "").trimEnd();
-    } catch {
-      return null;
-    }
+    if (!session) return NO_SESSION;
+    // -p: stdoutに出力、-S: 開始行（負数で過去の行）
+    const result = runTmux([
+      "capture-pane",
+      "-t",
+      session.tmuxSessionName,
+      "-p",
+      "-S",
+      `-${lines}`,
+    ]);
+    if (!result.ok) return result;
+    return { ok: true, value: result.stdout.trimEnd() };
   }
 
   /**
@@ -698,21 +808,20 @@ export class TmuxManager extends EventEmitter {
    *
    * `capturePane` は -S -N で scrollback を含むが、こちらは引数なしで visible 範囲のみ。
    * 用途: /clear 後に「現状の見え方」を取りたい場合、scrollback を含まないことが必要。
+   *
+   * 失敗要因: no-session / tmux-failed。空画面は失敗ではなく `value: ""`
    */
-  capturePaneVisible(sessionId: string): string | null {
+  capturePaneVisible(sessionId: string): TmuxReadResult<string> {
     const session = this.sessions.get(sessionId);
-    if (!session) return null;
-    try {
-      const result = spawnSync(
-        TMUX_BINARY_PATH,
-        ["capture-pane", "-t", session.tmuxSessionName, "-p"],
-        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
-      );
-      if (result.status !== 0) return null;
-      return (result.stdout ?? "").trimEnd();
-    } catch {
-      return null;
-    }
+    if (!session) return NO_SESSION;
+    const result = runTmux([
+      "capture-pane",
+      "-t",
+      session.tmuxSessionName,
+      "-p",
+    ]);
+    if (!result.ok) return result;
+    return { ok: true, value: result.stdout.trimEnd() };
   }
 
   /**

@@ -33,10 +33,11 @@ vi.mock("./tmux-manager.js", async () => {
     sendKeys = vi.fn();
     sendSpecialKey = vi.fn();
     capturePane = vi.fn();
+    capturePaneVisible = vi.fn();
     setClaudeMcpConfigPath = vi.fn();
-    // restoreExistingSessions → detectEnvProfile が参照する (env 無し = null 相当)
-    getEnv = vi.fn(() => undefined);
-    getPaneEnv = vi.fn(() => undefined);
+    // restoreExistingSessions → detectEnvProfile が参照する (env 無し = not-set)
+    getEnv = vi.fn(() => ({ ok: false, failure: { kind: "not-set" } }));
+    getPaneEnv = vi.fn(() => ({ ok: false, failure: { kind: "not-set" } }));
   }
   const tmuxManager = new TmuxManagerStub();
   // 複数の SessionOrchestrator インスタンス（各testで生成）が listener を追加するため
@@ -459,7 +460,7 @@ describe("SessionOrchestrator - プロファイル切替", () => {
       const oldContextId = "b".repeat(32);
       const newContextId = "c".repeat(32);
       mockedTmux.getSession.mockReturnValue(oldSession);
-      mockedTmux.getEnv.mockReturnValue(oldContextId);
+      mockedTmux.getEnv.mockReturnValue({ ok: true, value: oldContextId });
       mockedDb.getSessionByWorktreePath.mockReturnValue({
         id: "sess-id-1",
         worktreeId: "wt-1",
@@ -741,7 +742,7 @@ describe("SessionOrchestrator - プロファイル切替", () => {
     it("fire-and-forget teardown の失敗をログへ残す", async () => {
       const contextSessionId = "e".repeat(32);
       mockedTmux.getSession.mockReturnValue(makeTmuxSession());
-      mockedTmux.getEnv.mockReturnValue(contextSessionId);
+      mockedTmux.getEnv.mockReturnValue({ ok: true, value: contextSessionId });
       mockedContext.teardownSession.mockRejectedValueOnce(
         new Error("teardown timeout")
       );
@@ -905,7 +906,7 @@ describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
     // stopSession は tmuxManager.getSession() から worktreePath を得る
     mockedTmux.getSession.mockReturnValue(makeTmuxSession());
     const contextSessionId = "d".repeat(32);
-    mockedTmux.getEnv.mockReturnValue(contextSessionId);
+    mockedTmux.getEnv.mockReturnValue({ ok: true, value: contextSessionId });
 
     orchestrator.stopSession(managed.id);
 
@@ -1054,5 +1055,200 @@ describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
     // 失敗時は registerBoardToken に到達しないため、後始末でファイルが消える
     // (createSession 失敗時点では registry.register も未実行)
     expect(fs.existsSync(cfgPath)).toBe(false);
+  });
+});
+
+/**
+ * tmux 読み取り失敗の区別 (#393)
+ *
+ * 以前は tmux 失敗と「値なし」が同じ null だったため、復元・再起動・停止の分岐が
+ * 黙って「値なし」側へ進んでいた。ここでは tmux-failed のとき理由 (stderr) が
+ * ログに残り、not-set / unsupported-platform は正常な「値なし」として静かに
+ * 扱われることを検証する。
+ */
+describe("SessionOrchestrator - tmux 読み取り失敗の区別 (#393)", () => {
+  const tmuxFailed = (command: string, stderr: string) => ({
+    ok: false as const,
+    failure: {
+      kind: "tmux-failed" as const,
+      command,
+      status: 1,
+      signal: null,
+      stderr,
+    },
+  });
+  const notSet = { ok: false as const, failure: { kind: "not-set" as const } };
+  const unsupported = {
+    ok: false as const,
+    failure: { kind: "unsupported-platform" as const, platform: "darwin" },
+  };
+  const okValue = (value: string) => ({ ok: true as const, value });
+
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedTmux.getAllSessions.mockReturnValue([]);
+    mockedTmux.getSessionByWorktree.mockReturnValue(undefined);
+    mockedTmux.getSession.mockReturnValue(undefined);
+    mockedTmux.getEnv.mockReturnValue(notSet);
+    mockedTmux.getPaneEnv.mockReturnValue(notSet);
+    mockedTtyd.getInstance.mockReturnValue(undefined);
+    mockedDb.getRepoProfileLink.mockReturnValue(null);
+    mockedDb.getWorktreeProfileLink.mockReturnValue(null);
+    mockedDb.getProfile.mockReturnValue(null);
+    mockedDb.getSessionByWorktreePath.mockReturnValue(null);
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  describe("復元時の CLAUDE_CONFIG_DIR 検出 (detectEnvProfile)", () => {
+    // 復元対象の worktree は実在する必要がある (orphan 判定を通すため)
+    const worktreePath = os.tmpdir();
+
+    it("session env が tmux-failed でも pane environ へフォールバックし、理由を警告に残す", () => {
+      mockedTmux.getAllSessions.mockReturnValue([
+        makeTmuxSession({ worktreePath }) as never,
+      ]);
+      mockedTmux.getEnv.mockReturnValue(
+        tmuxFailed("show-environment", "no such session: ark-sess1")
+      );
+      mockedTmux.getPaneEnv.mockReturnValue(okValue("/home/u/.claude-work"));
+
+      const orchestrator = new SessionOrchestrator();
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("no such session: ark-sess1")
+      );
+      const managed = orchestrator
+        .getAllSessions()
+        .find(s => s.id === "sess-id-1");
+      expect(managed?.profileConfigDir).toBe("/home/u/.claude-work");
+    });
+
+    it("not-set / unsupported-platform は正常な「値なし」なので警告せず profile 無しで復元する", () => {
+      mockedTmux.getAllSessions.mockReturnValue([
+        makeTmuxSession({ worktreePath }) as never,
+      ]);
+      mockedTmux.getEnv.mockReturnValue(notSet);
+      mockedTmux.getPaneEnv.mockReturnValue(unsupported);
+
+      const orchestrator = new SessionOrchestrator();
+
+      expect(warnSpy).not.toHaveBeenCalled();
+      const managed = orchestrator
+        .getAllSessions()
+        .find(s => s.id === "sess-id-1");
+      expect(managed?.profileConfigDir).toBeNull();
+    });
+
+    it("session env と pane environ の両方が失敗したら両方の理由を警告に残す", () => {
+      mockedTmux.getAllSessions.mockReturnValue([
+        makeTmuxSession({ worktreePath }) as never,
+      ]);
+      mockedTmux.getEnv.mockReturnValue(
+        tmuxFailed("show-environment", "no server running")
+      );
+      mockedTmux.getPaneEnv.mockReturnValue({
+        ok: false,
+        failure: {
+          kind: "proc-error",
+          code: "EACCES",
+          message: "permission denied",
+        },
+      });
+
+      new SessionOrchestrator();
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("no server running")
+      );
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("EACCES"));
+    });
+  });
+
+  describe("restartSession", () => {
+    it("ARK_SESSION_ID が tmux-failed なら旧 context の teardown を飛ばし、理由を警告に残す", async () => {
+      const orchestrator = new SessionOrchestrator();
+      mockedTmux.getSession.mockReturnValue(makeTmuxSession());
+      mockedTmux.getEnv.mockReturnValue(
+        tmuxFailed("show-environment", "no such session: ark-sess1")
+      );
+      mockedTmux.createSession.mockResolvedValue(
+        makeTmuxSession({ id: "sess-id-2", tmuxSessionName: "ark-sess2" })
+      );
+      mockedTtyd.startInstance.mockResolvedValue({
+        sessionId: "sess-id-2",
+        port: 7682,
+        tmuxSessionName: "ark-sess2",
+        basePath: "/ttyd/sess-id-2",
+      } as never);
+
+      await orchestrator.restartSession("sess-id-1");
+
+      expect(mockedContext.teardownSession).not.toHaveBeenCalled();
+      expect(mockedContext.initializeSession).toHaveBeenCalledWith(
+        "/path/to/work",
+        undefined
+      );
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("no such session: ark-sess1")
+      );
+    });
+
+    it("ARK_SESSION_ID が not-set なら警告せず新規 context で再起動する", async () => {
+      const orchestrator = new SessionOrchestrator();
+      mockedTmux.getSession.mockReturnValue(makeTmuxSession());
+      mockedTmux.getEnv.mockReturnValue(notSet);
+      mockedTmux.createSession.mockResolvedValue(
+        makeTmuxSession({ id: "sess-id-2", tmuxSessionName: "ark-sess2" })
+      );
+
+      await orchestrator.restartSession("sess-id-1");
+
+      expect(mockedContext.teardownSession).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("stopSession", () => {
+    it("ARK_SESSION_ID が tmux-failed なら teardown を飛ばし、理由を警告に残す", () => {
+      const orchestrator = new SessionOrchestrator();
+      mockedTmux.getSession.mockReturnValue(makeTmuxSession());
+      mockedTmux.getEnv.mockReturnValue(
+        tmuxFailed("show-environment", "no server running")
+      );
+
+      orchestrator.stopSession("sess-id-1");
+
+      expect(mockedTmux.killSession).toHaveBeenCalledWith("sess-id-1");
+      expect(mockedContext.teardownSession).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("no server running")
+      );
+    });
+  });
+
+  describe("getAllPreviews", () => {
+    it("capture-pane が失敗したセッションは理由を 1 度だけ警告し、プレビューから除外する", () => {
+      const orchestrator = new SessionOrchestrator();
+      mockedTmux.getAllSessions.mockReturnValue([
+        makeTmuxSession({ worktreePath: os.tmpdir() }) as never,
+      ]);
+      mockedTmux.capturePaneVisible.mockReturnValue(
+        tmuxFailed("capture-pane", "can't find pane: ark-sess1")
+      );
+
+      expect(orchestrator.getAllPreviews()).toEqual([]);
+      expect(orchestrator.getAllPreviews()).toEqual([]);
+
+      const matching = warnSpy.mock.calls.filter(([msg]) =>
+        String(msg).includes("can't find pane: ark-sess1")
+      );
+      expect(matching).toHaveLength(1);
+    });
   });
 });

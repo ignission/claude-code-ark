@@ -122,6 +122,7 @@ import { listSlashCommands } from "./lib/slash-command-scanner.js";
 import { SPA_FALLBACK_ROUTE_PATTERN } from "./lib/spa-fallback.js";
 import { detectMultiProfileSupported } from "./lib/system.js";
 import { tmuxManager } from "./lib/tmux-manager.js";
+import { describeTmuxReadFailure } from "./lib/tmux-read-result.js";
 import { TunnelManager } from "./lib/tunnel.js";
 import { UsageCollector } from "./lib/usage-collector.js";
 
@@ -472,9 +473,18 @@ export async function startServer(
     // 直前の会話文脈は AUQ 解決まで JSONL に書かれないため、hook 受信の
     // この瞬間 (質問ボックス描画前後) の tmux 画面を verbatim で添付する。
     // 解釈はしない (auq-screen-context.ts の原則境界コメント参照)
-    const screen = buildAuqScreenContext(
-      tmuxManager.capturePane(session.id, AUQ_SCREEN_CAPTURE_LINES)
+    // capture に失敗しても AUQ カード自体は出す (画面添付だけ欠ける)。
+    // 「値が無い」のではなく tmux が失敗したことを、理由付きで残す (#393)
+    const captured = tmuxManager.capturePane(
+      session.id,
+      AUQ_SCREEN_CAPTURE_LINES
     );
+    if (!captured.ok) {
+      console.warn(
+        `[AuqHook] ${session.id}: 直前の画面を取得できません (${describeTmuxReadFailure(captured.failure)})`
+      );
+    }
+    const screen = buildAuqScreenContext(captured.ok ? captured.value : null);
     const entry = auqHookBridge.setPending(
       session.id,
       body.tool_input.questions,
@@ -2206,11 +2216,30 @@ export async function startServer(
     // コピー: tmuxバッファの内容をクライアントに返す（コールバックパターン）
     socket.on("session:copy", (sessionId, callback) => {
       try {
-        const text = tmuxManager.getBuffer(sessionId);
-        if (text) {
-          callback({ text });
-        } else {
-          callback({ error: "バッファが空です" });
+        const result = tmuxManager.getBuffer(sessionId);
+        if (result.ok) {
+          callback(
+            result.value
+              ? { text: result.value }
+              : { error: "バッファが空です" }
+          );
+          return;
+        }
+        // 「バッファが無い」と tmux の失敗を区別して返す (#393)
+        switch (result.failure.kind) {
+          case "no-buffer":
+            callback({ error: "バッファが空です" });
+            break;
+          case "no-session":
+            callback({ error: "セッションが見つかりません" });
+            break;
+          default:
+            console.warn(
+              `[Copy] ${sessionId}: ${describeTmuxReadFailure(result.failure)}`
+            );
+            callback({
+              error: `tmux バッファを取得できません: ${describeTmuxReadFailure(result.failure)}`,
+            });
         }
       } catch (error) {
         callback({ error: String(error) });
