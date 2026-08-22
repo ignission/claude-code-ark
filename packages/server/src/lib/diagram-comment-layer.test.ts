@@ -1423,6 +1423,21 @@ describe("comment layer の operationId (#306)", () => {
     );
   });
 
+  it("本文や引用に改行が含まれても別の操作と key が衝突しない", () => {
+    const helpers = loadHelpers();
+
+    const bodyWithNewline = helpers.operationKeyFor(
+      "ark:diagram-comment-create",
+      { anchorId: "s1", body: "x\ny", anchorQuote: "z" }
+    );
+    const quoteWithNewline = helpers.operationKeyFor(
+      "ark:diagram-comment-create",
+      { anchorId: "s1", body: "x", anchorQuote: "y\nz" }
+    );
+
+    expect(bodyWithNewline).not.toBe(quoteWithNewline);
+  });
+
   it("crypto.randomUUID があればそれを使い、無ければ時刻と乱数で代替する", () => {
     const secure = loadHelpers({ randomUUID: () => "uuid-fixed" });
     expect(secure.operationIdFor("k")).toBe("op-uuid-fixed-1");

@@ -444,7 +444,7 @@ export async function handleDiagramCommentSend(
   const operationLog = deps.operationLog ?? diagramCommentOperationLog;
   const operationKey = diagramCommentOperationKey(
     "send",
-    `${context.worktreeReal}\0${context.relPath}`,
+    JSON.stringify([context.worktreeReal, context.relPath]),
     payload.operationId
   );
   return containStoreError(async () => {

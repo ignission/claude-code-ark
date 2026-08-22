@@ -935,9 +935,18 @@ export class SessionOrchestrator extends EventEmitter {
   sendMessage(sessionId: string, message: string): void {
     tmuxManager.sendKeys(sessionId, message);
 
-    const session = tmuxManager.getSession(sessionId);
-    if (session) {
-      db.updateSessionStatus(sessionId, "active");
+    // ここから先は tmux への投入が完了している。status 更新の失敗で throw すると
+    // 呼び出し側（図解コメントの send 等）が「未送信」と誤認して再送し、同じ
+    // メッセージが二重に届くため、付随処理の失敗はログに留める。
+    try {
+      const session = tmuxManager.getSession(sessionId);
+      if (session) {
+        db.updateSessionStatus(sessionId, "active");
+      }
+    } catch (error) {
+      console.error(
+        `[SessionOrchestrator] sendMessage 後の status 更新に失敗 (${sessionId}): ${getErrorMessage(error)}`
+      );
     }
   }
 

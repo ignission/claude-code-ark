@@ -74,15 +74,17 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     return "op-"+random+"-"+operationSequence;
   }
   function operationKeyFor(type,payload){
+    // 本文や引用は改行を含みうるので、区切り文字の連結ではなく JSON で符号化し、
+    // 別の操作が同じ key に潰れないようにする。
     var source=payload||{};
-    return [
+    return JSON.stringify([
       type,
       source.anchorId||"",
       source.threadId||"",
       source.body||"",
       source.anchorQuote||"",
       source.anchorOccurrence===undefined||source.anchorOccurrence===null?"":String(source.anchorOccurrence)
-    ].join("\\n");
+    ]);
   }
   function operationIdFor(operationKey){
     var existing=operationIds.get(operationKey);
