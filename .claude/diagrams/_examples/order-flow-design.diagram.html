@@ -68,19 +68,19 @@
 }
 </script>
 
-<main class="document" data-ark-id="s1">
+<main class="document" data-ark-id="s1" data-ark-author="claude">
   <p class="eyebrow">ORDER FLOW / DESIGN NOTE</p>
   <h1>受注フロー 設計</h1>
-  <p class="lead" data-ark-id="s1-p1">受付から確定までの判断点を明示し、担当者が同じ基準で処理できる状態を目指します。</p>
+  <p class="lead" data-ark-id="s1-p1" data-ark-author="claude">受付から確定までの判断点を明示し、担当者が同じ基準で処理できる状態を目指します。</p>
 
-  <aside class="panel" data-ark-id="s1-panel1">
+  <aside class="panel" data-ark-id="s1-panel1" data-ark-author="human">
     <h2>確定前に確認すること</h2>
     <p>在庫、取引条件、納期の三点を確認します。不明点がある場合は、注文を確定する前に依頼元へ確認します。</p>
   </aside>
 
   <section class="flow">
     <h2>標準の処理手順</h2>
-    <table data-ark-id="s1-t1">
+    <table data-ark-id="s1-t1" data-ark-author="claude">
       <thead>
         <tr>
           <th>段階</th>
@@ -90,25 +90,25 @@
         </tr>
       </thead>
       <tbody>
-        <tr data-ark-id="s1-t1-r1">
+        <tr data-ark-id="s1-t1-r1" data-ark-author="claude">
           <td>受付</td>
           <td>依頼内容と連絡先を記録する</td>
           <td>必要な情報がそろっている</td>
           <td>条件確認担当</td>
         </tr>
-        <tr data-ark-id="s1-t1-r2">
+        <tr data-ark-id="s1-t1-r2" data-ark-author="claude">
           <td>条件確認</td>
           <td>在庫、取引条件、希望納期を照合する</td>
           <td>対応可否と回答期限が決まっている</td>
           <td>受注確定担当</td>
         </tr>
-        <tr data-ark-id="s1-t1-r3">
+        <tr data-ark-id="s1-t1-r3" data-ark-author="human">
           <td>受注確定</td>
           <td>注文内容を固定し、受付番号を発行する</td>
           <td>依頼元へ受付番号と確定納期を通知している</td>
           <td>出荷担当</td>
         </tr>
-        <tr data-ark-id="s1-t1-r4">
+        <tr data-ark-id="s1-t1-r4" data-ark-author="claude">
           <td>引き渡し</td>
           <td>確定済みの注文情報を出荷担当へ渡す</td>
           <td>出荷担当の受領が記録されている</td>
@@ -116,10 +116,10 @@
         </tr>
       </tbody>
     </table>
-    <p class="note" data-ark-id="s1-p2">例外が生じた場合は理由と確認先を記録し、判断を保留したまま次工程へ渡しません。</p>
+    <p class="note" data-ark-id="s1-p2" data-ark-author="claude">例外が生じた場合は理由と確認先を記録し、判断を保留したまま次工程へ渡しません。</p>
   </section>
 
-  <section class="summary" data-ark-id="s1-summary1">
+  <section class="summary" data-ark-id="s1-summary1" data-ark-author="claude">
     <h2>完了の定義</h2>
     <p>確定条件と受け渡し記録をそろえ、受付番号から現在の処理状況を追跡できる状態を維持します。</p>
   </section>

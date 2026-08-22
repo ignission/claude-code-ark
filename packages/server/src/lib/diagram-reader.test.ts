@@ -345,6 +345,55 @@ describe("readDiagram", () => {
     }
   });
 
+  it("語彙外の data-ark-author を持つ doc は 422 を返す", async () => {
+    const docModel = JSON.stringify({
+      version: 1,
+      type: "doc",
+      nodes: [{ id: "section-1", label: "概要" }],
+      edges: [],
+      groups: [],
+    });
+    write(
+      "bad-author-doc.diagram.html",
+      '<section data-ark-id="section-1" data-ark-author="agent">概要</section>',
+      docModel
+    );
+
+    const result = await readDiagram(wt, "bad-author-doc.diagram.html");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(422);
+      expect(result.error).toContain("data-ark-author");
+      expect(result.error).toContain("agent");
+    }
+  });
+
+  it("human / claude の data-ark-author を持つ doc は配信する", async () => {
+    const docModel = JSON.stringify({
+      version: 1,
+      type: "doc",
+      nodes: [
+        { id: "section-1", label: "概要" },
+        { id: "section-1-p1", label: "回答" },
+      ],
+      edges: [],
+      groups: [],
+    });
+    write(
+      "authored-doc.diagram.html",
+      '<section data-ark-id="section-1" data-ark-author="claude">概要<p data-ark-id="section-1-p1" data-ark-author="human">回答</p></section>',
+      docModel
+    );
+
+    const result = await readDiagram(wt, "authored-doc.diagram.html");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.html).toContain('data-ark-author="human"');
+    }
+  });
+
   it("graph は data-ark-id がなくても従来どおり配信する", async () => {
     write(
       "unanchored-graph.diagram.html",

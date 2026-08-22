@@ -14,6 +14,7 @@ import path from "node:path";
 import { injectBuiltinProjection } from "./diagram-builtin.js";
 import { injectDiagramCommentLayer } from "./diagram-comment-layer.js";
 import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
+import { validateDiagramDocAuthorship } from "./diagram-doc-authorship.js";
 import { extractModel, injectCsp } from "./diagram-file.js";
 import { validateDiagramGraphKinds } from "./diagram-graph-kinds.js";
 import { injectHarness } from "./diagram-harness.js";
@@ -116,6 +117,10 @@ export async function readDiagram(
   if (!model.ok) return { ok: false, status: 422, error: model.error };
   const anchors = validateDiagramDocAnchors(read.raw, model.model);
   if (!anchors.ok) return { ok: false, status: 422, error: anchors.error };
+  const authorship = validateDiagramDocAuthorship(read.raw, model.model);
+  if (!authorship.ok) {
+    return { ok: false, status: 422, error: authorship.error };
+  }
   const graphKinds = validateDiagramGraphKinds(read.raw, model.model);
   if (!graphKinds.ok) {
     return { ok: false, status: 422, error: graphKinds.error };

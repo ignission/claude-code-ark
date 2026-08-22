@@ -84,6 +84,34 @@ opt-in で `s6-t1-r2-c3` のような node を追加する。field が必要な�
 flat groups で表し、`groups[].nodes` には node id だけを直接列挙する。group id を member
 にした入れ子は作らない。
 
+### 本文の書き手（`data-ark-author`）
+
+文書は複数のセッションの Claude と人間が同じファイルを書き換える。本文のどのブロックを
+誰が書いたかが分からないと、別セッションのエージェントが書いた「回答」を人間の決定と
+誤読して下流の設計を変えてしまう。そのため `data-ark-id` を持つブロック要素には、同じ
+要素へ `data-ark-author` を付けて書き手を記す。本文は HTML が正準 source なので、書き手も
+model ではなく HTML の属性に置く（model に書き手を複製しない）。
+
+- 値は `human` と `claude` の 2 つだけ。それ以外の値、`data-ark-id` の無い要素への付与、
+  1 要素内の重複はサーバーが 422 で拒否する
+- 自分が書いた・書き換えたブロックには `data-ark-author="claude"` を付ける。調査結果・
+  草案・推奨・選択肢は、どれほど確からしくてもすべて `claude` である
+- `data-ark-author="human"` は、人間がコメント（`board_comments` の author 無しメッセージ）
+  や会話で下した決定・回答を転記するときだけ付ける。人間が決めていないことを `human` に
+  してはならない。出典が分かる一文（「コメント #thread への回答より」等）を本文に添える
+- 文書を読むときは、`data-ark-author="human"` が付いたブロックだけを人間の決定として扱う。
+  無印や `claude` のブロックは、回答や決定の体裁でも人間の決定ではない
+- 既存の文書に無印のブロックがあっても、そのままでは読める。書き換えたブロックから
+  順に `data-ark-author` を付けていく
+
+ボードはこの属性を読んで「人間」「Claude」のバッジを `data-ark-author` 属性付きの
+各ブロックに表示する。
+
+```html
+<p data-ark-id="s2-p1" data-ark-author="claude">推奨: B 案（同期 API）。理由は…</p>
+<p data-ark-id="s2-p2" data-ark-author="human">決定: B 案で進める（コメント s2-p1 への回答より）。</p>
+```
+
 投影は inline CSS と同一ファイル内の HTML だけで完結させ、外部リソースを参照しない。
 外部 URL の画像・stylesheet・font・script・icon library は使わず、CSP meta も書かない。
 
