@@ -34,7 +34,6 @@ vi.mock("./tmux-manager.js", async () => {
     sendSpecialKey = vi.fn();
     capturePane = vi.fn();
     setClaudeMcpConfigPath = vi.fn();
-    setClaudeAppendSystemPrompt = vi.fn();
     // restoreExistingSessions → detectEnvProfile が参照する (env 無し = null 相当)
     getEnv = vi.fn(() => undefined);
     getPaneEnv = vi.fn(() => undefined);
@@ -89,7 +88,6 @@ vi.mock("node:child_process", () => ({
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DIAGRAM_DIR } from "@ark/shared";
 import { arkContextHarness } from "./ark-context-harness.js";
 import type { BoardMcpServer } from "./board-mcp-server.js";
 // BoardSessionRegistry は単純な token→worktreePath の in-memory map なので
@@ -804,13 +802,11 @@ describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
     createdWorktrees = [];
   });
 
-  it("setBoardMcp 未呼び出しなら MCP config と append system prompt が null になる", async () => {
+  it("setBoardMcp 未呼び出しなら MCP config が null になる", async () => {
     await orchestrator.startSession("wt-1", "/path/to/work", "/repo");
 
     expect(mockedTmux.setClaudeMcpConfigPath).toHaveBeenCalledWith(null);
     expect(mockedTmux.setClaudeMcpConfigPath).toHaveBeenCalledTimes(1);
-    expect(mockedTmux.setClaudeAppendSystemPrompt).toHaveBeenCalledWith(null);
-    expect(mockedTmux.setClaudeAppendSystemPrompt).toHaveBeenCalledTimes(1);
   });
 
   it("setBoardMcp 後の新規セッションで per-session token を生成し、mcp-config を書いて registry に登録する", async () => {
@@ -849,31 +845,6 @@ describe("SessionOrchestrator - board MCP 注入 (Task 4)", () => {
     // bearer token を含むため 0600 で書かれている
     const mode = fs.statSync(cfgPath).mode & 0o777;
     expect(mode).toBe(0o600);
-  });
-
-  it("新規セッションの prompt はボード上の図・文書とコメントの往復手順を案内する", async () => {
-    const registry = new BoardSessionRegistry();
-    orchestrator.setBoardMcp(fakeBoardMcp, registry);
-
-    await orchestrator.startSession("wt-1", "/path/to/work", "/repo");
-
-    const prompt =
-      mockedTmux.setClaudeAppendSystemPrompt.mock.calls.at(-1)?.[0];
-    expect(prompt).not.toContain("\n");
-    expect(prompt).toContain(DIAGRAM_DIR);
-    expect(prompt).not.toContain("docs/diagrams");
-    expect(prompt).toContain("書き込む直前");
-    expect(prompt).toContain("存在しない場合");
-    expect(prompt).toContain("board_open");
-    expect(prompt).toContain("board_comments");
-    expect(prompt).toContain("board_authoring_guide");
-    expect(prompt).toContain("board_reply");
-    expect(prompt).not.toContain("diagram-authoring skill");
-    expect(prompt).toContain('model の type を "doc"');
-    expect(prompt).toContain("本文をテキスト選択してコメントを付けられる");
-    expect(prompt).toContain(
-      "引用された箇所を直してから board_open で開き直し、board_reply で対応内容を返信する"
-    );
   });
 
   it("既存セッション再利用パスでは token を発行しない (setClaudeMcpConfigPath も呼ばれない)", async () => {

@@ -1,5 +1,5 @@
 /**
- * auq-hook-bridge - AskUserQuestion の PreToolUse hook 連携
+ * auq-hook-bridge - Claude hooks 用 settings の生成と AUQ 連携
  *
  * 背景 (チャット UI v3):
  *   対話版 claude は AskUserQuestion の tool_use を「ユーザーが回答/拒否した
@@ -25,6 +25,10 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  boardSessionStartHookCommand,
+  writeBoardSessionStartHookFile,
+} from "./board-session-start-hook.js";
 import { db } from "./database.js";
 import { getDataDir } from "./paths.js";
 
@@ -92,11 +96,24 @@ export class AuqHookBridge {
     const dataDir = getDataDir();
     fs.mkdirSync(dataDir, { recursive: true });
     const settingsPath = path.join(dataDir, "ark-claude-settings.json");
+    const boardSessionStartHookPath = writeBoardSessionStartHookFile(dataDir);
     // curl: -m 3 で TUI をブロックしない / 失敗は無視 (hook が claude の
     // 進行を止めないことを最優先)。stdin の JSON をそのまま転送する。
     const command = `curl -s -m 3 -X POST 'http://127.0.0.1:${port}${AUQ_EVENT_PATH}' -H 'Content-Type: application/json' -H '${AUQ_TOKEN_HEADER}: ${this.token}' --data-binary @- >/dev/null 2>&1 || true`;
     const settings = {
       hooks: {
+        SessionStart: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command: boardSessionStartHookCommand(
+                  boardSessionStartHookPath
+                ),
+              },
+            ],
+          },
+        ],
         PreToolUse: [
           {
             matcher: "AskUserQuestion",

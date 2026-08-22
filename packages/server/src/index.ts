@@ -3315,8 +3315,9 @@ export async function startServer(
 
   console.log(`Ark server running on http://localhost:${port}/`);
 
-  // AskUserQuestion hook 入りの claude 用 settings を書き出し、以降の
-  // セッション起動コマンドに --settings として注入する (listen 後 = port 確定後)
+  // Board SessionStart / AskUserQuestion hooks 入りの claude 用 settings を
+  // 書き出し、以降のセッション起動コマンドに --settings として注入する
+  // (listen 後 = port 確定後)
   try {
     const hookSettingsPath = auqHookBridge.writeSettingsFile(port);
     tmuxManager.setClaudeSettingsPath(hookSettingsPath);
