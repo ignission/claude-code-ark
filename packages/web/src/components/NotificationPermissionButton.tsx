@@ -35,8 +35,11 @@ export function NotificationPermissionButton({
       disabled={requesting || denied || granted}
       onClick={async () => {
         setRequesting(true);
-        await onRequestPermission();
-        setRequesting(false);
+        try {
+          await onRequestPermission();
+        } finally {
+          setRequesting(false);
+        }
       }}
       aria-label={label}
       title={label}

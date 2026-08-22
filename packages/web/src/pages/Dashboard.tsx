@@ -51,9 +51,9 @@ import {
   type DiagramOpenRequest,
 } from "@/lib/mobile-session-view-mode";
 import {
+  createSessionNotificationEnabledChangeHandler,
   isNotificationEnabledForSession,
   normalizeSessionNotificationSettings,
-  updateSessionNotificationSettings,
 } from "@/lib/session-notifications";
 import { getBaseName } from "@/utils/pathUtils";
 import {
@@ -232,18 +232,9 @@ export default function Dashboard() {
     [sessionNotificationSettings]
   );
 
-  const handleSessionNotificationEnabledChange = useCallback(
-    (sessionId: string, enabled: boolean) => {
-      setSetting(
-        "sessionNotifications.enabledBySession",
-        updateSessionNotificationSettings(
-          sessionNotificationSettings,
-          sessionId,
-          enabled
-        )
-      );
-    },
-    [sessionNotificationSettings, setSetting]
+  const handleSessionNotificationEnabledChange = useMemo(
+    () => createSessionNotificationEnabledChangeHandler(getSetting, setSetting),
+    [getSetting, setSetting]
   );
 
   const notificationControl = (

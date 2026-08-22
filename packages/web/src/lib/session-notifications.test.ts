@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   BrowserNotificationTransport,
   buildSessionNotificationPayload,
+  createSessionNotificationEnabledChangeHandler,
   deliverSessionNotification,
   isNotificationEnabledForSession,
   type NotificationApiLike,
@@ -376,5 +377,26 @@ describe("normalizeSessionNotificationSettings", () => {
         false
       )
     ).toEqual({ existing: true, target: false });
+  });
+
+  it("同一renderのハンドラで2セッションを連続更新しても両方の変更を保持する", () => {
+    const settings: Record<string, unknown> = {};
+    const getSetting = <T>(key: string, defaultValue: T): T =>
+      (settings[key] === undefined ? defaultValue : settings[key]) as T;
+    const setSetting = (key: string, value: unknown) => {
+      settings[key] = value;
+    };
+    const handleChange = createSessionNotificationEnabledChangeHandler(
+      getSetting,
+      setSetting
+    );
+
+    handleChange("session-1", false);
+    handleChange("session-2", false);
+
+    expect(settings["sessionNotifications.enabledBySession"]).toEqual({
+      "session-1": false,
+      "session-2": false,
+    });
   });
 });

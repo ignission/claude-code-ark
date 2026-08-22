@@ -50,6 +50,12 @@ export interface SessionNotificationTransport {
   show: (payload: SessionNotificationPayload, onClick: () => void) => boolean;
 }
 
+type GetSetting = <T>(key: string, defaultValue: T) => T;
+type SetSetting = (key: string, value: unknown) => void;
+
+const SESSION_NOTIFICATION_SETTINGS_KEY =
+  "sessionNotifications.enabledBySession";
+
 const RUNNING_STATUSES = new Set<BridgeSessionStatus>(["TOOL", "THINK"]);
 const COMPLETED_STATUSES = new Set<BridgeSessionStatus>([
   "IDLE",
@@ -216,6 +222,21 @@ export function normalizeSessionNotificationSettings(
       (entry): entry is [string, boolean] => typeof entry[1] === "boolean"
     )
   );
+}
+
+export function createSessionNotificationEnabledChangeHandler(
+  getSetting: GetSetting,
+  setSetting: SetSetting
+): (sessionId: string, enabled: boolean) => void {
+  return (sessionId, enabled) => {
+    const latestSettings = normalizeSessionNotificationSettings(
+      getSetting<unknown>(SESSION_NOTIFICATION_SETTINGS_KEY, {})
+    );
+    setSetting(
+      SESSION_NOTIFICATION_SETTINGS_KEY,
+      updateSessionNotificationSettings(latestSettings, sessionId, enabled)
+    );
+  };
 }
 
 export function isNotificationEnabledForSession(
