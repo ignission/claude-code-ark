@@ -137,19 +137,13 @@ export class TmuxManager extends EventEmitter {
   private readonly SESSION_PREFIX = "ark-";
   /** パーミッションスキップフラグ（--dangerously-skip-permissions を付与するか） */
   private skipPermissions = false;
-  /** claude 起動時に --settings で注入する settings JSON のパス (AUQ hook 用) */
+  /** claude 起動時に --settings で注入する hooks 設定 JSON のパス */
   private claudeSettingsPath: string | null = null;
   /**
    * claude 起動時に --mcp-config で注入する per-session MCP config JSON のパス
    * (board_write 等)。SessionOrchestrator がセッション起動直前に設定する。
    */
   private claudeMcpConfigPath: string | null = null;
-  /**
-   * claude 起動時に --append-system-prompt で注入する追加指示。
-   * board_write 等のセッション固有ツールの使い方をモデルに促すために使う。
-   * claudeMcpConfigPath と同様、SessionOrchestrator が起動直前に設定する。
-   */
-  private claudeAppendSystemPrompt: string | null = null;
 
   constructor() {
     super();
@@ -168,7 +162,7 @@ export class TmuxManager extends EventEmitter {
 
   /**
    * claude 起動コマンドに `--settings <path>` で注入する settings JSON を
-   * 設定する (AskUserQuestion の PreToolUse hook 等)。
+   * 設定する (SessionStart / AskUserQuestion の hooks 等)。
    * サーバー起動時 (listen 後、port 確定後) に呼ばれる。
    */
   setClaudeSettingsPath(value: string | null): void {
@@ -185,16 +179,6 @@ export class TmuxManager extends EventEmitter {
    */
   setClaudeMcpConfigPath(value: string | null): void {
     this.claudeMcpConfigPath = value;
-  }
-
-  /**
-   * claude 起動コマンドに `--append-system-prompt <text>` で注入する追加指示を
-   * 設定する。board MCP を持つセッションに「図解要求はボードに描く」等を促す。
-   * 共有インスタンスなので、各セッション起動直前に必ず設定し直すこと
-   * (board MCP 非対応セッションでは null を渡して前回値を持ち越さない)。
-   */
-  setClaudeAppendSystemPrompt(value: string | null): void {
-    this.claudeAppendSystemPrompt = value;
   }
 
   /**
@@ -358,11 +342,6 @@ export class TmuxManager extends EventEmitter {
     const mcpConfigArg = this.claudeMcpConfigPath
       ? ` --mcp-config ${posixShellQuote(this.claudeMcpConfigPath)}`
       : "";
-    // board_write 等のツールの使い方をモデルに促す追加 system prompt。
-    // SessionOrchestrator が board MCP を注入するセッションにだけ設定する。
-    const appendPromptArg = this.claudeAppendSystemPrompt
-      ? ` --append-system-prompt ${posixShellQuote(this.claudeAppendSystemPrompt)}`
-      : "";
     // プロファイル未指定のセッションが、Ark サーバープロセス (やその親、
     // tmux サーバー) の CLAUDE_CONFIG_DIR を意図せず継承すると、transcript が
     // 想定外の config dir 配下に書かれ、JSONL tail (チャットビュー) が
@@ -378,7 +357,7 @@ export class TmuxManager extends EventEmitter {
       : "";
     const claudeCmd =
       options?.commandLine ??
-      `${envPrefix}${claudeArg}${skipFlag}${settingsArg}${mcpConfigArg}${appendPromptArg}`;
+      `${envPrefix}${claudeArg}${skipFlag}${settingsArg}${mcpConfigArg}`;
 
     let tmuxCreated = false;
 

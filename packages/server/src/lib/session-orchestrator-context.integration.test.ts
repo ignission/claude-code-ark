@@ -16,7 +16,6 @@ vi.mock("./tmux-manager.js", async () => {
     getEnv = vi.fn();
     getPaneEnv = vi.fn();
     setClaudeMcpConfigPath = vi.fn();
-    setClaudeAppendSystemPrompt = vi.fn();
   }
   return { tmuxManager: new TmuxManagerStub() };
 });

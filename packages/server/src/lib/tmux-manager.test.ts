@@ -314,6 +314,19 @@ describe("TmuxManager.createSession - options互換", () => {
     );
   });
 
+  it("--settings と --mcp-config は渡し、--append-system-prompt は起動コマンドに含めない", async () => {
+    manager.setClaudeSettingsPath("/tmp/ark-claude-settings.json");
+    manager.setClaudeMcpConfigPath("/tmp/sess-mcp.json");
+    await manager.createSession("/path/to/worktree");
+
+    const sendKeys = findCommandSendKeysArgs();
+    if (!sendKeys) throw new Error("send-keys args not found");
+    expect(sendKeys[3]).toBe(
+      "unset CLAUDE_CONFIG_DIR; claude --settings '/tmp/ark-claude-settings.json' --mcp-config '/tmp/sess-mcp.json'"
+    );
+    expect(sendKeys[3]).not.toContain("--append-system-prompt");
+  });
+
   it("setClaudeMcpConfigPath(null) にリセットすると --mcp-config は付与されない (tmuxManager 共有インスタンスの安全確認)", async () => {
     manager.setClaudeMcpConfigPath("/tmp/sess-mcp.json");
     manager.setClaudeMcpConfigPath(null);
