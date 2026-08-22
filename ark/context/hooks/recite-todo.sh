@@ -8,6 +8,11 @@ if [ -n "${ZSH_VERSION:-}" ]; then
   setopt nonomatch 2>/dev/null || exit 0
 fi
 
+CTX_RECITE_HOOK_DIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P) || exit 0
+CTX_RECITE_RUNTIME="$CTX_RECITE_HOOK_DIR/../scripts/lib/runtime.sh"
+[ -f "$CTX_RECITE_RUNTIME" ] && [ ! -L "$CTX_RECITE_RUNTIME" ] || exit 0
+. "$CTX_RECITE_RUNTIME" || exit 0
+
 ctx_hook_stat() {
   local value uid mode extra
   value=$(stat -c '%u %a' "$1" 2>/dev/null) \
@@ -313,69 +318,19 @@ ctx_step_increment() {
   done
 }
 
-ctx_sanitize_line() {
-  local cleaned expression
-  cleaned=$(printf '%s' "$1" | LC_ALL=C tr '\001-\037\177' ' ') || return 1
-  expression=$(printf 's/\302[\200-\237]/ /g')
-  printf '%s' "$cleaned" | LC_ALL=C sed "$expression"
-}
-
-ctx_limit_utf8() {
-  local value=$1
-  local maximum=$2
-  local bytes count candidate
-  bytes=$(printf '%s' "$value" | wc -c | tr -d ' ')
-  if [ "$bytes" -le "$maximum" ]; then printf '%s' "$value"; return 0; fi
-  count=$maximum
-  while [ "$count" -ge $((maximum - 3)) ]; do
-    candidate=$(printf '%s' "$value" | dd bs=1 count="$count" 2>/dev/null | iconv -f UTF-8 -t UTF-8 2>/dev/null) && {
-      printf '%s' "$candidate"
-      return 0
-    }
-    count=$((count - 1))
-  done
-  return 1
-}
-
 ctx_task_parse() {
   local task=$1
-  local section line goal_count now_count item
-  ctx_hook_safe_file "$task" || return 1
-  iconv -f UTF-8 -t UTF-8 "$task" >/dev/null 2>&1 || return 1
-  section=
-  goal_count=0
-  now_count=0
   CTX_TASK_GOAL=
   CTX_TASK_NOW=
   CTX_TASK_REMAINING=0
-  while IFS= read -r line || [ -n "$line" ]; do
-    line=${line%$'\r'}
-    case "$line" in
-      '## Goal') section=goal; continue ;;
-      '## Plan') section=plan; continue ;;
-      '## '*) section=other; continue ;;
-    esac
-    if [ "$section" = goal ] && [ -n "$line" ]; then
-      goal_count=$((goal_count + 1))
-      CTX_TASK_GOAL=$line
-    elif [ "$section" = plan ]; then
-      case "$line" in '- [ ] '*) CTX_TASK_REMAINING=$((CTX_TASK_REMAINING + 1)) ;; esac
-      case "$line" in
-        '- [ ] '*' ← NOW'|'- [x] '*' ← NOW')
-          now_count=$((now_count + 1))
-          item=${line#- \[ \] }
-          [ "$item" != "$line" ] || item=${line#- \[x\] }
-          CTX_TASK_NOW=${item% ← NOW}
-          ;;
-      esac
-    fi
-  done <"$task"
-  [ "$goal_count" -eq 1 ] && [ "$now_count" -eq 1 ] || return 1
-  [ "$CTX_TASK_REMAINING" -le 999999 ] || return 1
-  CTX_TASK_GOAL=$(ctx_sanitize_line "$CTX_TASK_GOAL") || return 1
-  CTX_TASK_NOW=$(ctx_sanitize_line "$CTX_TASK_NOW") || return 1
-  CTX_TASK_GOAL=$(ctx_limit_utf8 "$CTX_TASK_GOAL" 180) || return 1
-  CTX_TASK_NOW=$(ctx_limit_utf8 "$CTX_TASK_NOW" 300) || return 1
+  if ! ctx_parse_task_state "$task"; then
+    ctx_record_task_parse_failure "$CTX_TASK_PARSED_GOAL_COUNT" \
+      "$CTX_TASK_PARSED_NOW_COUNT" "$CTX_TASK_PARSE_REASON"
+    return 1
+  fi
+  CTX_TASK_GOAL=$CTX_TASK_PARSED_GOAL
+  CTX_TASK_NOW=$CTX_TASK_PARSED_NOW
+  CTX_TASK_REMAINING=$CTX_TASK_PARSED_REMAINING
 }
 
 ctx_recite_main() {
@@ -390,7 +345,7 @@ ctx_recite_main() {
   # additionalContext is best-effort: a due batch is attempted once and never retried.
   ctx_task_parse "${ARK_SESSION_DIR:-}/task.md" || return 0
   output="Goal: $CTX_TASK_GOAL
-NOW: $CTX_TASK_NOW
+NOW: ${CTX_TASK_NOW:-（未設定）}
 Remaining: $CTX_TASK_REMAINING"
   bytes=$(printf '%s\n' "$output" | wc -c | tr -d ' ')
   [ "$bytes" -le 600 ] || return 0

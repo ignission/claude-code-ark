@@ -89,17 +89,13 @@ Remaining: 0' "$(cat "$CASE_STDOUT")"
 
 for broken in '# Task
 ## Goal
-one
-two
 ## Plan
 - [ ] work ← NOW' '# Task
-## Goal
-one
 ## Plan
 - [ ] a ← NOW
 - [ ] b ← NOW' '# Task
-## Goal
-one
+## Constraints
+- no Goal section
 ## Plan
 - [ ] no marker'; do
   write_task "$broken"

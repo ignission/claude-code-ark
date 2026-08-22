@@ -13,6 +13,7 @@ for test_script in \
   test-handoff.sh \
   test-failures-knowledge.sh \
   test-recite-todo.sh \
+  test-recite-task-parser.sh \
   test-capture-error.sh \
   test-summarize-errors.sh \
   test-jq-prerequisite.sh \

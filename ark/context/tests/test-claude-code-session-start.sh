@@ -14,6 +14,16 @@ assert_eq "context rules contain ten numbered rules" 10 \
   "$(grep -Ec '^[1-4]\. ' "$RULES")"
 grep -F '空から記入済みへの一方向の初回記入を除いて' "$RULES" >/dev/null 2>&1
 assert_eq "Goal and Constraints initial-fill exception is explicit" 0 "$?"
+expected_task_format='   ## Goal
+   <1 行で書く>
+
+   ## Plan
+   - [x] 済んだ項目
+   - [ ] いま進めている項目 ← NOW'
+case "$(cat "$RULES")" in
+  *"$expected_task_format"*) TESTS=$((TESTS + 1)); PASSES=$((PASSES + 1)) ;;
+  *) test_fail "context rules omit the exact task.md format" ;;
+esac
 
 fifo="$TEST_TMP/unreadable-input"
 mkfifo "$fifo"
