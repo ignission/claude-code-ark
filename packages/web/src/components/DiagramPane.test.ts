@@ -5,6 +5,7 @@ import type {
   DiagramCommentPortParse,
   DiagramCommentPortRequest,
 } from "../lib/diagram-comment-bridge";
+import { parseDiagramCommentPortRequest } from "../lib/diagram-comment-bridge";
 import {
   applyDiagramPinchZoom,
   DIAGRAM_ZOOM_MAX,
@@ -286,6 +287,29 @@ describe("replyToInvalidDiagramCommentPortRequest", () => {
     ).toBe(false);
     expect(reply).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("operationId を持たない古いタブへ BAD_REQUEST の理由を返して画面にも表示する", () => {
+    const parsed = parseDiagramCommentPortRequest({
+      type: "ark:diagram-comment-create",
+      requestId: "req-old-tab",
+      anchorId: "s1",
+      body: "本文",
+    });
+    const reply = vi.fn();
+    const onError = vi.fn();
+
+    expect(
+      replyToInvalidDiagramCommentPortRequest(parsed, reply, onError)
+    ).toBe(true);
+    expect(reply).toHaveBeenCalledWith({
+      type: "ark:diagram-comments-result",
+      requestId: "req-old-tab",
+      ok: false,
+      code: "BAD_REQUEST",
+      error: "操作 ID（operationId）が不正です",
+    });
+    expect(onError).toHaveBeenCalledWith("操作 ID（operationId）が不正です");
   });
 });
 

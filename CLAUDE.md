@@ -75,6 +75,7 @@ PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`Spli
 - MCP 経由（Claude の `board_reply` 等）は `operationId` 無しで呼び、冪等化しない
 - 記録は sidecar に持たせない（成果物に再試行の都合を混ぜない。再起動をまたぐ
   再試行は socket も切れるため稀）
+- サーバー再起動をまたぐ再試行は冪等化の対象外とする
 
 ### セッション永続化
 
