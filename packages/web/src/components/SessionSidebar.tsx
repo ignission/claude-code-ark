@@ -182,20 +182,20 @@ export function SessionSidebar({
   );
 
   // リポジトリヘッダのプロファイルキャプション。
-  // ピル型バッジではなく "・ デフォルト: KB2" のような小さなテキストで表示し、
+  // ピル型バッジではなく "・ KB2" のような小さなテキストで表示し、
   // worktree 側のピル型バッジと視覚的に区別する。
   // クリックでプロファイル選択ドロップダウンを開ける (3点リーダーからは撤去済)。
   const renderRepoProfileCaption = (repoPath: string | undefined) => {
     if (!multiProfileEnabled || !repoPath) return null;
     const linkedId = repoProfileLinks?.get(repoPath) ?? null;
     const profile = linkedId ? profileById.get(linkedId) : undefined;
-    const labelText = profile ? profile.name : "既定 (~/.claude)";
+    const labelText = profile ? profile.name : "既定";
     const canChange = !!onSetRepoProfile && !!onOpenProfileManager;
 
     const caption = (
-      <span className="shrink-0 normal-case text-[11px] text-muted-foreground/80">
+      <span className="min-w-[3.5rem] max-w-[45%] shrink normal-case text-[11px] text-muted-foreground/80 truncate">
         <span className="mr-1">・</span>
-        デフォルト: <span className="text-foreground/80">{labelText}</span>
+        <span className="text-foreground/80">{labelText}</span>
       </span>
     );
 
@@ -217,15 +217,15 @@ export function SessionSidebar({
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="shrink-0 normal-case text-[11px] text-muted-foreground/80 hover:text-foreground transition-colors"
+            className="min-w-[3.5rem] max-w-[45%] shrink normal-case text-[11px] text-muted-foreground/80 hover:text-foreground transition-colors truncate"
             title={
               profile
-                ? `リポジトリのデフォルトプロファイル: ${profile.name} (クリックで変更)`
-                : "リポジトリのデフォルトプロファイル: 既定 (~/.claude) (クリックで変更)"
+                ? `リポジトリのデフォルトプロファイル: ${profile.name} (${profile.configDir})。クリックで変更`
+                : "リポジトリのデフォルトプロファイル: 既定 (~/.claude を使用)。クリックで変更"
             }
           >
             <span className="mr-1">・</span>
-            デフォルト: <span className="text-foreground/80">{labelText}</span>
+            <span className="text-foreground/80">{labelText}</span>
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-56">
@@ -514,7 +514,7 @@ export function SessionSidebar({
                     <button
                       type="button"
                       onClick={() => onSelectRepoGrid(repoPath)}
-                      className={`text-xs font-medium uppercase tracking-wider truncate text-left hover:text-foreground transition-colors ${
+                      className={`min-w-0 flex-1 basis-0 text-xs font-medium uppercase tracking-wider truncate text-left hover:text-foreground transition-colors ${
                         gridRepoPath === repoPath
                           ? "text-foreground"
                           : "text-muted-foreground"
@@ -530,7 +530,7 @@ export function SessionSidebar({
                     </button>
                   ) : (
                     <span
-                      className="text-xs font-medium text-muted-foreground uppercase tracking-wider truncate"
+                      className="min-w-0 flex-1 basis-0 text-xs font-medium text-muted-foreground uppercase tracking-wider truncate"
                       title={repoPath}
                     >
                       {repoName}
