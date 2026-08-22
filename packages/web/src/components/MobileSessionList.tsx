@@ -8,6 +8,8 @@
 
 import type { ManagedSession, Worktree } from "@ark/shared";
 import {
+  Bell,
+  BellOff,
   FolderOpen,
   GitBranch,
   MoreVertical,
@@ -15,7 +17,7 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -47,6 +49,13 @@ interface MobileSessionListProps {
   onDeleteSession: (sessionId: string, worktree: Worktree | undefined) => void;
   onDeleteWorktree: (worktree: Worktree) => void;
   onNewSession: () => void;
+  notificationControl?: ReactNode;
+  notificationsSupported?: boolean;
+  isSessionNotificationEnabled?: (sessionId: string) => boolean;
+  onSessionNotificationEnabledChange?: (
+    sessionId: string,
+    enabled: boolean
+  ) => void;
 }
 
 /**
@@ -74,6 +83,10 @@ export function MobileSessionList({
   onDeleteSession,
   onDeleteWorktree,
   onNewSession,
+  notificationControl,
+  notificationsSupported = false,
+  isSessionNotificationEnabled,
+  onSessionNotificationEnabledChange,
 }: MobileSessionListProps) {
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const { groupedItems } = useGroupedWorktreeItems(
@@ -89,15 +102,18 @@ export function MobileSessionList({
         <span className="text-sm font-semibold text-sidebar-foreground">
           Ark
         </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-12 w-12"
-          onClick={onNewSession}
-          title="新規セッション"
-        >
-          <Plus className="w-4 h-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {notificationControl}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-12 w-12"
+            onClick={onNewSession}
+            title="新規セッション"
+          >
+            <Plus className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
 
       {/* リポジトリ別グルーピングリスト */}
@@ -173,19 +189,55 @@ export function MobileSessionList({
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" className="w-48">
                                 {session ? (
-                                  <DropdownMenuItem
-                                    className="text-destructive focus:text-destructive"
-                                    onSelect={() =>
-                                      setDeleteTarget({
-                                        type: "session",
-                                        sessionId: session.id,
-                                        worktree,
-                                      })
-                                    }
-                                  >
-                                    <Trash2 className="w-4 h-4 mr-2" />
-                                    セッションを削除
-                                  </DropdownMenuItem>
+                                  <>
+                                    {notificationsSupported &&
+                                      onSessionNotificationEnabledChange && (
+                                        <DropdownMenuItem
+                                          onSelect={() => {
+                                            const enabled =
+                                              isSessionNotificationEnabled?.(
+                                                session.id
+                                              ) ?? true;
+                                            onSessionNotificationEnabledChange(
+                                              session.id,
+                                              !enabled
+                                            );
+                                          }}
+                                        >
+                                          {(isSessionNotificationEnabled?.(
+                                            session.id
+                                          ) ?? true) ? (
+                                            <BellOff className="w-4 h-4 mr-2" />
+                                          ) : (
+                                            <Bell className="w-4 h-4 mr-2" />
+                                          )}
+                                          通知を
+                                          {(isSessionNotificationEnabled?.(
+                                            session.id
+                                          ) ?? true)
+                                            ? "オフ"
+                                            : "オン"}
+                                          にする
+                                        </DropdownMenuItem>
+                                      )}
+                                    {notificationsSupported &&
+                                      onSessionNotificationEnabledChange && (
+                                        <DropdownMenuSeparator />
+                                      )}
+                                    <DropdownMenuItem
+                                      className="text-destructive focus:text-destructive"
+                                      onSelect={() =>
+                                        setDeleteTarget({
+                                          type: "session",
+                                          sessionId: session.id,
+                                          worktree,
+                                        })
+                                      }
+                                    >
+                                      <Trash2 className="w-4 h-4 mr-2" />
+                                      セッションを削除
+                                    </DropdownMenuItem>
+                                  </>
                                 ) : (
                                   <>
                                     <DropdownMenuItem
@@ -254,6 +306,39 @@ export function MobileSessionList({
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="w-48">
+                              {notificationsSupported &&
+                                onSessionNotificationEnabledChange && (
+                                  <>
+                                    <DropdownMenuItem
+                                      onSelect={() => {
+                                        const enabled =
+                                          isSessionNotificationEnabled?.(
+                                            session.id
+                                          ) ?? true;
+                                        onSessionNotificationEnabledChange(
+                                          session.id,
+                                          !enabled
+                                        );
+                                      }}
+                                    >
+                                      {(isSessionNotificationEnabled?.(
+                                        session.id
+                                      ) ?? true) ? (
+                                        <BellOff className="w-4 h-4 mr-2" />
+                                      ) : (
+                                        <Bell className="w-4 h-4 mr-2" />
+                                      )}
+                                      通知を
+                                      {(isSessionNotificationEnabled?.(
+                                        session.id
+                                      ) ?? true)
+                                        ? "オフ"
+                                        : "オン"}
+                                      にする
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                  </>
+                                )}
                               <DropdownMenuItem
                                 className="text-destructive focus:text-destructive"
                                 onSelect={() =>

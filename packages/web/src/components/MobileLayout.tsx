@@ -19,7 +19,7 @@ import type {
   SpecialKey,
   Worktree,
 } from "@ark/shared";
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { BrowserPane } from "@/components/BrowserPane";
 import { MobileSessionList } from "@/components/MobileSessionList";
@@ -164,6 +164,13 @@ interface MobileLayoutProps {
   sessionStatuses: Map<string, BridgeSessionStatus>;
   /** AWAITING 時の確認 UI 生テキストマップ（チャットビューのバナー用） */
   sessionAwaitingTexts: Map<string, string>;
+  notificationControl?: ReactNode;
+  notificationsSupported?: boolean;
+  isSessionNotificationEnabled?: (sessionId: string) => boolean;
+  onSessionNotificationEnabledChange?: (
+    sessionId: string,
+    enabled: boolean
+  ) => void;
 }
 
 export function MobileLayout({
@@ -213,6 +220,10 @@ export function MobileLayout({
   sessionsLoaded,
   sessionStatuses,
   sessionAwaitingTexts,
+  notificationControl,
+  notificationsSupported = false,
+  isSessionNotificationEnabled,
+  onSessionNotificationEnabledChange,
 }: MobileLayoutProps) {
   const [openedSessions, setOpenedSessions] = useState<Set<string>>(() =>
     selectedSessionId ? new Set([selectedSessionId]) : new Set()
@@ -312,6 +323,12 @@ export function MobileLayout({
           onDeleteSession={onDeleteSession}
           onDeleteWorktree={onDeleteWorktree}
           onNewSession={onNewSession}
+          notificationControl={notificationControl}
+          notificationsSupported={notificationsSupported}
+          isSessionNotificationEnabled={isSessionNotificationEnabled}
+          onSessionNotificationEnabledChange={
+            onSessionNotificationEnabledChange
+          }
         />
       </div>
 
