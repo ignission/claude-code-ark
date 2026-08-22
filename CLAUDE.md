@@ -77,6 +77,26 @@ PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`Spli
   再試行は socket も切れるため稀）
 - サーバー再起動をまたぐ再試行は冪等化の対象外とする
 
+### 図解ボード doc 本文の書き手（data-ark-author）
+
+`type: "doc"` の本文は人間も別セッションの Claude も同じファイルを書き換えるため、
+本文だけでは「人間の決定」と「エージェントの出力」を見分けられない（#319）。
+そこで `data-ark-id` を持つブロック要素へ `data-ark-author="human" | "claude"` を
+付けて書き手を記す。本文 HTML が正準 source なので、モデル側には持たせない。
+
+- 語彙は `human` / `claude` の 2 値。語彙外の値、`data-ark-id` の無い要素への付与、
+  1 要素内の重複は配信（`readDiagram`）と保存（`saveDiagramEdit`）の両境界で 422
+  （`diagram-doc-authorship.ts`）。無印は既存文書を壊さないよう許容する
+- コメント側（`author` 無し = 人間、`"claude"` = Claude）と語は揃えるが、本文の既定の
+  書き手はエージェントなので、読み手の規則は「`human` が付いたブロックだけを人間の
+  決定として扱う」に一本化する
+- `human` はサーバーで検証できない（ファイルは worktree 外から自由に書き換えられる）。
+  「人間がコメント・会話で下した決定を転記したときだけ `human`」という規約を
+  SessionStart hook の context と `diagram-authoring` skill で配り、doc モードの
+  コメント層が各ブロックに「人間」「Claude」のバッジを出す
+- 「前回開いたときから何が変わったか」の差分可視化と、複数エージェントの同時編集の
+  競合（last-write-wins）は本機能の範囲外
+
 ### セッション永続化
 
 - **tmuxセッション**: サーバー再起動後も維持される（`cleanup()`でttydのみ停止、tmuxは残す）

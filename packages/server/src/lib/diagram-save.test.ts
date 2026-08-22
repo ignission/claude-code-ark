@@ -103,6 +103,18 @@ describe("saveDiagramEdit", () => {
         '<main data-ark-id="section-1"><p data-ark-id="unknown">本文</p></main>',
       expectedId: "unknown",
     },
+    {
+      name: "data-ark-author が語彙外である",
+      projection:
+        '<main data-ark-id="section-1" data-ark-author="agent"><p>本文</p></main>',
+      expectedId: "agent",
+    },
+    {
+      name: "data-ark-author がブロック以外に付いている",
+      projection:
+        '<main data-ark-id="section-1"><p data-ark-author="human">本文</p></main>',
+      expectedId: "data-ark-id",
+    },
   ])("doc の $name 場合は元ファイルを変更しない", async testCase => {
     const original = fs.readFileSync(absPath, "utf8");
     const docModel: DiagramModel = {

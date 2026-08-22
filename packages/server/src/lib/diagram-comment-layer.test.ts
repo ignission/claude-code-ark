@@ -1028,6 +1028,145 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).not.toContain("名無し");
   });
 
+  describe("本文 authorship バッジ（#319）", () => {
+    type FakeNode = {
+      tagName: string;
+      parentNode: FakeNode | null;
+      firstChild: FakeNode | null;
+      children: FakeNode[];
+      attributes: Record<string, string>;
+      textContent: string;
+    };
+    const node = (
+      tagName: string,
+      attributes: Record<string, string> = {},
+      children: FakeNode[] = []
+    ): FakeNode => {
+      const value: FakeNode = {
+        tagName,
+        parentNode: null,
+        firstChild: children[0] ?? null,
+        children,
+        attributes,
+        textContent: "",
+      };
+      for (const child of children) child.parentNode = value;
+      return value;
+    };
+    const runBadgeBuilder = () => {
+      const source = COMMENT_LAYER.slice(
+        COMMENT_LAYER.indexOf("var AUTHOR_ATTRIBUTE="),
+        COMMENT_LAYER.indexOf("function buildAnchors()")
+      );
+      const inserted: Array<{
+        parent: FakeNode;
+        before: FakeNode | null;
+        badge: FakeNode;
+      }> = [];
+      const context = {
+        Object,
+        element: (tag: string, text = "", className = ""): FakeNode => {
+          const badge = node(tag.toUpperCase(), { class: className });
+          badge.textContent = text;
+          return Object.assign(badge, {
+            setAttribute: (name: string, attr: string) => {
+              badge.attributes[name] = attr;
+            },
+          });
+        },
+      };
+      runInNewContext(
+        `${source};this.buildAuthorBadge=buildAuthorBadge;`,
+        context
+      );
+      const buildAuthorBadge = (
+        context as unknown as { buildAuthorBadge: (anchor: unknown) => void }
+      ).buildAuthorBadge;
+      const wrap = (value: FakeNode): FakeNode & Record<string, unknown> =>
+        Object.assign(value, {
+          getAttribute: (name: string) => value.attributes[name] ?? null,
+          setAttribute: (name: string, attr: string) => {
+            value.attributes[name] = attr;
+          },
+          querySelector: (selector: string) =>
+            value.children.find(child =>
+              selector
+                .split(",")
+                .some(tag => tag.trim().toUpperCase() === child.tagName)
+            ) ?? null,
+          insertBefore: (badge: FakeNode, before: FakeNode | null) => {
+            inserted.push({ parent: value, before, badge });
+          },
+        });
+      return { buildAuthorBadge, wrap, inserted };
+    };
+
+    it("data-ark-author を読み、human は強調・claude は控えめなバッジを DOM API で生成する", () => {
+      const injected = injectDiagramCommentLayer(minimalDoc);
+
+      expect(injected).toContain('var AUTHOR_ATTRIBUTE="data-ark-author"');
+      expect(injected).toContain('human:"人間"');
+      expect(injected).toContain('claude:"Claude"');
+      expect(injected).toContain("anchor.getAttribute(AUTHOR_ATTRIBUTE)");
+      expect(injected).toContain(
+        'element("span",AUTHOR_LABELS[author],"ark-author-badge")'
+      );
+      expect(injected).toContain(
+        'badge.setAttribute("data-ark-harness-ui","1")'
+      );
+      expect(injected).toContain('badge.setAttribute("data-author",author)');
+      expect(injected).toContain(
+        'badge.setAttribute("title",AUTHOR_TITLES[author])'
+      );
+      expect(injected).toContain("人間の決定ではない");
+      expect(injected).toContain(
+        ".ark-author-badge[data-author=human]{border-color:#2563eb;background:#dbeafe;color:#1d4ed8}"
+      );
+      expect(injected).toMatch(/\.ark-author-badge\{[^}]*user-select:none/u);
+    });
+
+    it("doc の anchor 構築時だけバッジを作り、再構築時は既存バッジを除去する", () => {
+      const injected = injectDiagramCommentLayer(minimalDoc);
+
+      expect(injected).toContain("if(!graphMode)buildAuthorBadge(anchor);");
+      expect(injected).toContain(
+        'document.querySelectorAll(".ark-author-badge").forEach(function(badge){badge.remove();});'
+      );
+      expect(injected).toContain(
+        'parent.closest(".ark-comment-layer,.ark-author-badge,script,style,noscript")'
+      );
+    });
+
+    it("tr は先頭セル、table/ul/ol/dl は直前の兄弟、それ以外は先頭子として挿入する", () => {
+      const { buildAuthorBadge, wrap, inserted } = runBadgeBuilder();
+      const cell = wrap(node("TD"));
+      const row = wrap(node("TR", { "data-ark-author": "human" }, [cell]));
+      const table = wrap(node("TABLE", { "data-ark-author": "claude" }));
+      const container = wrap(node("DIV", {}, [table]));
+      const text = wrap(node("#text"));
+      const paragraph = wrap(
+        node("P", { "data-ark-author": "claude" }, [text])
+      );
+      const unmarked = wrap(node("P"));
+      const unknown = wrap(node("P", { "data-ark-author": "agent" }));
+
+      for (const anchor of [row, table, paragraph, unmarked, unknown]) {
+        buildAuthorBadge(anchor);
+      }
+
+      expect(inserted).toHaveLength(3);
+      expect(inserted[0]?.parent).toBe(cell);
+      expect(inserted[0]?.badge.textContent).toBe("人間");
+      expect(inserted[0]?.badge.attributes["data-author"]).toBe("human");
+      expect(inserted[1]?.parent).toBe(container);
+      expect(inserted[1]?.before).toBe(table);
+      expect(inserted[1]?.badge.textContent).toBe("Claude");
+      expect(inserted[2]?.parent).toBe(paragraph);
+      expect(inserted[2]?.before).toBe(text);
+      expect(inserted[2]?.badge.attributes["data-ark-harness-ui"]).toBe("1");
+    });
+  });
+
   it("テキスト node を連結して occurrence を解決し、分割 span を再描画前に戻す", () => {
     const injected = injectDiagramCommentLayer(minimalDoc);
 

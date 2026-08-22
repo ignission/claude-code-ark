@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
+import { validateDiagramDocAuthorship } from "./diagram-doc-authorship.js";
 import { extractModel } from "./diagram-file.js";
 
 const REPOSITORY_ROOT = path.resolve(
@@ -75,6 +76,18 @@ describe("diagram-authoring skill の書き出し先 contract", () => {
     expect(skill).toContain("全文を model に複製しない");
   });
 
+  it("文書型の本文 authorship（data-ark-author）の contract を定義する", () => {
+    const skill = fs.readFileSync(SKILL_PATH, "utf-8");
+
+    expect(skill).toContain("### 本文の書き手（`data-ark-author`）");
+    expect(skill).toContain('`data-ark-author="claude"`');
+    expect(skill).toContain('`data-ark-author="human"`');
+    expect(skill).toContain("値は `human` と `claude` の 2 つだけ");
+    expect(skill).toContain("model に書き手を複製しない");
+    expect(skill).toContain("人間の決定として扱う");
+    expect(skill).toContain("人間の決定ではない");
+  });
+
   it("公開用の受注フロー文書サンプルが doc contract を満たす", () => {
     const html = fs.readFileSync(DOC_SAMPLE_PATH, "utf-8");
     const result = extractModel(html);
@@ -83,6 +96,11 @@ describe("diagram-authoring skill の書き出し先 contract", () => {
     if (!result.ok) throw new Error(result.error);
     expect(result.model.type).toBe("doc");
     expect(validateDiagramDocAnchors(html, result.model)).toEqual({ ok: true });
+    expect(validateDiagramDocAuthorship(html, result.model)).toEqual({
+      ok: true,
+    });
+    expect(html).toContain('data-ark-author="human"');
+    expect(html).toContain('data-ark-author="claude"');
 
     const allowedKinds = new Set([
       "section",
