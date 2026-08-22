@@ -11,12 +11,14 @@ describe("parseDiagramCommentPortRequest", () => {
       {
         type: "ark:diagram-comment-reply",
         requestId: "req-reply",
+        operationId: "op-1",
         threadId: "th-1",
         body: "返信本文",
       },
       {
         type: "ark:diagram-comment-reply",
         requestId: "req-reply",
+        operationId: "op-1",
         threadId: "th-1",
         body: "返信本文",
       },
@@ -29,6 +31,7 @@ describe("parseDiagramCommentPortRequest", () => {
       {
         type: "ark:diagram-comment-create",
         requestId: "req-create",
+        operationId: "op-1",
         anchorId: "s1-p1",
         anchorQuote: "選択した本文",
         anchorOccurrence: 1,
@@ -37,6 +40,7 @@ describe("parseDiagramCommentPortRequest", () => {
       {
         type: "ark:diagram-comment-create",
         requestId: "req-create",
+        operationId: "op-1",
         anchorId: "s1-p1",
         anchorQuote: "選択した本文",
         anchorOccurrence: 1,
@@ -47,6 +51,7 @@ describe("parseDiagramCommentPortRequest", () => {
       {
         type: "ark:diagram-comment-create",
         requestId: "req-create-first",
+        operationId: "op-1",
         anchorId: "s1-p1",
         anchorQuote: "先頭の一致",
         body: "本文",
@@ -54,6 +59,7 @@ describe("parseDiagramCommentPortRequest", () => {
       {
         type: "ark:diagram-comment-create",
         requestId: "req-create-first",
+        operationId: "op-1",
         anchorId: "s1-p1",
         anchorQuote: "先頭の一致",
         body: "本文",
@@ -63,11 +69,13 @@ describe("parseDiagramCommentPortRequest", () => {
       {
         type: "ark:diagram-comment-resolve",
         requestId: "req-resolve",
+        operationId: "op-1",
         threadId: "th-1",
       },
       {
         type: "ark:diagram-comment-resolve",
         requestId: "req-resolve",
+        operationId: "op-1",
         threadId: "th-1",
       },
     ],
@@ -75,11 +83,13 @@ describe("parseDiagramCommentPortRequest", () => {
       {
         type: "ark:diagram-comment-delete",
         requestId: "req-delete",
+        operationId: "op-1",
         threadId: "th-1",
       },
       {
         type: "ark:diagram-comment-delete",
         requestId: "req-delete",
+        operationId: "op-1",
         threadId: "th-1",
       },
     ],
@@ -87,11 +97,13 @@ describe("parseDiagramCommentPortRequest", () => {
       {
         type: "ark:diagram-comment-send",
         requestId: "req-send",
+        operationId: "op-1",
         threadId: "th-1",
       },
       {
         type: "ark:diagram-comment-send",
         requestId: "req-send",
+        operationId: "op-1",
         threadId: "th-1",
       },
     ],
@@ -107,6 +119,7 @@ describe("parseDiagramCommentPortRequest", () => {
       {
         type: "ark:diagram-comment-create",
         requestId: "req-anchor",
+        operationId: "op-1",
         anchorId: "",
         body: "本文",
       },
@@ -116,6 +129,7 @@ describe("parseDiagramCommentPortRequest", () => {
       {
         type: "ark:diagram-comment-create",
         requestId: "req-body",
+        operationId: "op-1",
         anchorId: "s1",
         body: "\n\t",
       },
@@ -125,6 +139,7 @@ describe("parseDiagramCommentPortRequest", () => {
       {
         type: "ark:diagram-comment-create",
         requestId: "req-quote",
+        operationId: "op-1",
         anchorId: "s1",
         anchorQuote: "q".repeat(1001),
         body: "本文",
@@ -147,6 +162,7 @@ describe("parseDiagramCommentPortRequest", () => {
       parseDiagramCommentPortRequest({
         type: "ark:diagram-comment-create",
         requestId: "req-author",
+        operationId: "op-1",
         anchorId: "s1",
         author: "Reviewer",
         body: "本文",
@@ -167,6 +183,7 @@ describe("parseDiagramCommentPortRequest", () => {
       parseDiagramCommentPortRequest({
         type: "ark:diagram-comment-reply",
         requestId: "req-reply-invalid",
+        operationId: "op-1",
         ...fields,
       })
     ).toMatchObject({
@@ -184,12 +201,14 @@ describe("parseDiagramCommentPortRequest", () => {
     {
       type: "ark:diagram-comment-create",
       requestId: "req",
+      operationId: "op-1",
       anchorId: "a".repeat(257),
       body: "本文",
     },
     {
       type: "ark:diagram-comment-create",
       requestId: "req",
+      operationId: "op-1",
       anchorId: "s1",
       anchorOccurrence: 0,
       body: "本文",
@@ -197,6 +216,7 @@ describe("parseDiagramCommentPortRequest", () => {
     {
       type: "ark:diagram-comment-create",
       requestId: "req",
+      operationId: "op-1",
       anchorId: "s1",
       anchorQuote: "本文",
       anchorOccurrence: -1,
@@ -205,6 +225,7 @@ describe("parseDiagramCommentPortRequest", () => {
     {
       type: "ark:diagram-comment-create",
       requestId: "req",
+      operationId: "op-1",
       anchorId: "s1",
       anchorQuote: "本文",
       anchorOccurrence: 0,
@@ -214,34 +235,40 @@ describe("parseDiagramCommentPortRequest", () => {
     {
       type: "ark:diagram-comment-create",
       requestId: "req",
+      operationId: "op-1",
       anchorId: "s1",
       body: "b".repeat(4001),
     },
     {
       type: "ark:diagram-comment-resolve",
       requestId: "req",
+      operationId: "op-1",
       threadId: null,
     },
     {
       type: "ark:diagram-comment-resolve",
       requestId: "req",
+      operationId: "op-1",
       threadId: "t".repeat(257),
     },
     {
       type: "ark:diagram-comment-delete",
       requestId: "req",
+      operationId: "op-1",
       threadId: "th-1",
       body: "余計な値",
     },
     {
       type: "ark:diagram-comment-send",
       requestId: "req",
+      operationId: "op-1",
       threadId: "th-1",
       body: "クライアントから文面を送らない",
     },
     {
       type: "ark:diagram-comment-send",
       requestId: "req",
+      operationId: "op-1",
       threadId: " ",
     },
   ])("その他の検証失敗 %j も invalid として返す", input => {
@@ -249,6 +276,52 @@ describe("parseDiagramCommentPortRequest", () => {
       kind: "invalid",
       requestId: "req",
       error: expect.any(String),
+    });
+  });
+
+  it.each([
+    "ark:diagram-comment-create",
+    "ark:diagram-comment-reply",
+    "ark:diagram-comment-resolve",
+    "ark:diagram-comment-delete",
+    "ark:diagram-comment-send",
+  ] as const)(
+    "%s の operationId 欠落・不正を requestId 付き invalid にする (#306)",
+    type => {
+      const fields =
+        type === "ark:diagram-comment-create"
+          ? { anchorId: "s1", body: "本文" }
+          : type === "ark:diagram-comment-reply"
+            ? { threadId: "th-1", body: "本文" }
+            : { threadId: "th-1" };
+      for (const operationId of [undefined, "", " ", "o".repeat(257), 1]) {
+        const input: Record<string, unknown> = {
+          type,
+          requestId: "req-op",
+          ...fields,
+        };
+        if (operationId !== undefined) input.operationId = operationId;
+
+        expect(parseDiagramCommentPortRequest(input)).toMatchObject({
+          kind: "invalid",
+          requestId: "req-op",
+          error: expect.stringContaining("operationId"),
+        });
+      }
+    }
+  );
+
+  it("load は operationId を受け付けない（読み取りは冪等化不要）", () => {
+    expect(
+      parseDiagramCommentPortRequest({
+        type: "ark:diagram-comments-load",
+        requestId: "req-load",
+        operationId: "op-1",
+      })
+    ).toMatchObject({
+      kind: "invalid",
+      requestId: "req-load",
+      error: expect.stringContaining("operationId"),
     });
   });
 

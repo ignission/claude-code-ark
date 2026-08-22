@@ -708,6 +708,35 @@ describe("SessionOrchestrator - プロファイル切替", () => {
     });
   });
 
+  describe("sendMessage", () => {
+    it("tmux への投入後に status 更新が失敗しても throw せずログへ残す (#306)", () => {
+      mockedTmux.getSession.mockReturnValue(makeTmuxSession());
+      mockedDb.updateSessionStatus.mockImplementationOnce(() => {
+        throw new Error("db locked");
+      });
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      expect(() => orchestrator.sendMessage("sess-id-1", "本文")).not.toThrow();
+
+      expect(mockedTmux.sendKeys).toHaveBeenCalledWith("sess-id-1", "本文");
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("db locked")
+      );
+      errorSpy.mockRestore();
+    });
+
+    it("tmux への投入自体の失敗はそのまま throw する", () => {
+      mockedTmux.sendKeys.mockImplementationOnce(() => {
+        throw new Error("Session not found");
+      });
+
+      expect(() => orchestrator.sendMessage("sess-id-1", "本文")).toThrow(
+        "Session not found"
+      );
+      expect(mockedDb.updateSessionStatus).not.toHaveBeenCalled();
+    });
+  });
+
   describe("stopSession", () => {
     it("fire-and-forget teardown の失敗をログへ残す", async () => {
       const contextSessionId = "e".repeat(32);

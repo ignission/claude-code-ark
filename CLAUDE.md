@@ -59,6 +59,24 @@ PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`Spli
 - **カードを閉じる**: JSONL に解決イベントが出現したとき (`hasResolvedAuqSince`)
 - permission prompt 等は AWAITING バナー (+[1][2] クイックキー + ターミナル誘導)
 
+### 図解コメントの操作 ID（operationId）
+
+コメントの mutation（create / reply / resolve / delete / send）はクライアント側
+（transport）の ACK タイムアウトがサーバー処理を取り消さないため、再試行で
+同じ操作が二重に適用されうる（#306）。そのため mutation payload には
+クライアント生成の `operationId` を必須で載せ、サーバーはプロセス内 LRU
+（`diagram-comment-operation-log.ts`）で適用済み ID を記録して、同じ ID の
+再送は再適用せず現在の sidecar を返す。
+
+- `operationId` は iframe のコメント層が「ユーザー操作」単位で生成し、
+  タイムアウト後にユーザーが同じ操作をやり直しても同じ値を送る（成功時に破棄）
+- transport は ACK が 5 秒戻らなければ同じ payload をそのまま 1 回再送する
+  （合計 10 秒。iframe 側 watchdog の 15 秒より短い）
+- MCP 経由（Claude の `board_reply` 等）は `operationId` 無しで呼び、冪等化しない
+- 記録は sidecar に持たせない（成果物に再試行の都合を混ぜない。再起動をまたぐ
+  再試行は socket も切れるため稀）
+- サーバー再起動をまたぐ再試行は冪等化の対象外とする
+
 ### セッション永続化
 
 - **tmuxセッション**: サーバー再起動後も維持される（`cleanup()`でttydのみ停止、tmuxは残す）
@@ -300,6 +318,12 @@ claude-code-ark/
 | `session:jsonl-unsubscribe` | `sessionId: string`           | JSONL 購読解除                   |
 | `session:jsonl-load-more` | `{ sessionId, limit }`          | 過去履歴を limit 行で snapshot 再送 |
 | `session:send-literal` | `{ sessionId, text }`              | Enter 無しの literal 送信（AUQ 自由入力用）|
+| `diagram:comments:get` | `{ sessionId, relPath }, callback`  | 図のコメント sidecar を取得（コールバック） |
+| `diagram:comment:create` | `{ sessionId, relPath, operationId, anchorId, body, anchorQuote?, anchorOccurrence? }, callback` | コメント thread 作成 |
+| `diagram:comment:reply` | `{ sessionId, relPath, operationId, threadId, body }, callback` | thread へ返信 |
+| `diagram:comment:resolve` | `{ sessionId, relPath, operationId, threadId }, callback` | thread を解決済みにする |
+| `diagram:comment:delete` | `{ sessionId, relPath, operationId, threadId }, callback` | thread を削除 |
+| `diagram:comment:send` | `{ sessionId, relPath, operationId, threadId }, callback` | thread の内容を会話セッションへ送る |
 | `diagram:subscribe` | `{ worktreePath, relPath }`           | 図ファイルの更新監視を開始（1セッション1図を想定） |
 | `diagram:unsubscribe` | `{ worktreePath, relPath }`         | 図ファイルの更新監視を解除                       |
 | `slash:list`      | `sessionId, callback`                   | slash command 候補一覧（コールバック）|

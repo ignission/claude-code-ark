@@ -56,6 +56,7 @@ export interface DiagramPaneProps {
   createDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     anchorId: string,
     body: string,
     anchorQuote?: string,
@@ -64,22 +65,26 @@ export interface DiagramPaneProps {
   resolveDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
   replyDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     threadId: string,
     body: string
   ) => Promise<DiagramCommentsResponse>;
   deleteDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
   sendDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
   /** 未接続時は null。null の間は診断購読をスキップする */
@@ -274,6 +279,7 @@ interface DiagramCommentForwardDeps {
   createDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     anchorId: string,
     body: string,
     anchorQuote?: string,
@@ -282,22 +288,26 @@ interface DiagramCommentForwardDeps {
   resolveDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
   replyDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     threadId: string,
     body: string
   ) => Promise<DiagramCommentsResponse>;
   deleteDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
   sendDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
   isCurrent: () => boolean;
@@ -360,6 +370,7 @@ export async function forwardDiagramCommentPortRequest(
         response = await deps.createDiagramComment(
           deps.sessionId,
           deps.relPath,
+          request.operationId,
           request.anchorId,
           request.body,
           request.anchorQuote,
@@ -369,12 +380,14 @@ export async function forwardDiagramCommentPortRequest(
         response = await deps.resolveDiagramComment(
           deps.sessionId,
           deps.relPath,
+          request.operationId,
           request.threadId
         );
       } else if (request.type === "ark:diagram-comment-reply") {
         response = await deps.replyDiagramComment(
           deps.sessionId,
           deps.relPath,
+          request.operationId,
           request.threadId,
           request.body
         );
@@ -382,12 +395,14 @@ export async function forwardDiagramCommentPortRequest(
         response = await deps.deleteDiagramComment(
           deps.sessionId,
           deps.relPath,
+          request.operationId,
           request.threadId
         );
       } else {
         response = await deps.sendDiagramComment(
           deps.sessionId,
           deps.relPath,
+          request.operationId,
           request.threadId
         );
       }

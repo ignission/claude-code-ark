@@ -1292,3 +1292,171 @@ describe("injectDiagramCommentLayer", () => {
     expect(injected).toContain("data.requestId!==pendingRequestId");
   });
 });
+
+describe("comment layer の operationId (#306)", () => {
+  type OperationHelpers = {
+    operationKeyFor: (
+      type: string,
+      payload?: Record<string, unknown>
+    ) => string;
+    operationIdFor: (key: string) => string;
+    operationIds: Map<string, string>;
+  };
+
+  const loadHelpers = (
+    options: { limit?: number; randomUUID?: () => string } = {}
+  ): OperationHelpers => {
+    const source = COMMENT_LAYER.slice(
+      COMMENT_LAYER.indexOf("function newOperationId"),
+      COMMENT_LAYER.indexOf("function anchorEntry")
+    );
+    const context: Record<string, unknown> = {
+      window: {
+        crypto:
+          options.randomUUID === undefined
+            ? undefined
+            : { randomUUID: options.randomUUID },
+      },
+      Date,
+      Math,
+      Map,
+      String,
+      operationIds: new Map<string, string>(),
+      operationSequence: 0,
+      OPERATION_ID_LIMIT: options.limit ?? 100,
+    };
+    runInNewContext(
+      `${source};this.operationKeyFor=operationKeyFor;this.operationIdFor=operationIdFor;`,
+      context
+    );
+    return context as unknown as OperationHelpers;
+  };
+
+  it("mutation だけに operationId を載せ、load には載せない", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+
+    expect(injected).toContain(
+      'if(type!=="ark:diagram-comments-load"){\n      pendingAction.operationKey=operationKeyFor(type,payload);\n      message.operationId=operationIdFor(pendingAction.operationKey);\n    }'
+    );
+    expect(injected.indexOf("message.operationId=")).toBeGreaterThan(
+      injected.indexOf("var message={type:type,requestId:pendingRequestId};")
+    );
+    expect(injected.indexOf("message.operationId=")).toBeLessThan(
+      injected.indexOf("port.postMessage(message);")
+    );
+    expect(injected.match(/message\.operationId=/gu)).toHaveLength(1);
+  });
+
+  it("成功した操作の operationId だけを捨て、失敗・タイムアウトでは残す", () => {
+    const injected = injectDiagramCommentLayer(minimalDoc);
+    const success = injected.indexOf(
+      "if(data.ok){\n      if(completedAction&&completedAction.operationKey)operationIds.delete(completedAction.operationKey);"
+    );
+
+    expect(success).toBeGreaterThan(0);
+    expect(
+      injected.match(/operationIds\.delete\(completedAction/gu)
+    ).toHaveLength(1);
+    const timeoutHandler = injected.slice(
+      injected.indexOf("pendingTimer=window.setTimeout(function(){"),
+      injected.indexOf("},15000);")
+    );
+    expect(timeoutHandler).not.toContain("operationIds");
+  });
+
+  it("同じ操作の再試行は同じ operationId を返し、成功後は新しい ID になる", () => {
+    const helpers = loadHelpers();
+    const key = helpers.operationKeyFor("ark:diagram-comment-create", {
+      anchorId: "s1",
+      body: "本文",
+    });
+
+    const first = helpers.operationIdFor(key);
+    const retried = helpers.operationIdFor(key);
+    helpers.operationIds.delete(key);
+    const afterSuccess = helpers.operationIdFor(key);
+
+    expect(retried).toBe(first);
+    expect(afterSuccess).not.toBe(first);
+    expect(first).toMatch(/^op-[A-Za-z0-9-]+-1$/u);
+  });
+
+  it("操作の種別・対象・本文のどれかが違えば別の operationId になる", () => {
+    const helpers = loadHelpers();
+    const keys = [
+      helpers.operationKeyFor("ark:diagram-comment-create", {
+        anchorId: "s1",
+        body: "本文",
+      }),
+      helpers.operationKeyFor("ark:diagram-comment-create", {
+        anchorId: "s1",
+        body: "本文を直した",
+      }),
+      helpers.operationKeyFor("ark:diagram-comment-create", {
+        anchorId: "s1",
+        anchorQuote: "引用",
+        anchorOccurrence: 0,
+        body: "本文",
+      }),
+      helpers.operationKeyFor("ark:diagram-comment-create", {
+        anchorId: "s1",
+        anchorQuote: "引用",
+        anchorOccurrence: 1,
+        body: "本文",
+      }),
+      helpers.operationKeyFor("ark:diagram-comment-resolve", {
+        threadId: "th-1",
+      }),
+      helpers.operationKeyFor("ark:diagram-comment-delete", {
+        threadId: "th-1",
+      }),
+      helpers.operationKeyFor("ark:diagram-comment-send", { threadId: "th-1" }),
+      helpers.operationKeyFor("ark:diagram-comment-reply", {
+        threadId: "th-1",
+        body: "返信",
+      }),
+    ];
+
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(new Set(keys.map(key => helpers.operationIdFor(key))).size).toBe(
+      keys.length
+    );
+  });
+
+  it("本文や引用に改行が含まれても別の操作と key が衝突しない", () => {
+    const helpers = loadHelpers();
+
+    const bodyWithNewline = helpers.operationKeyFor(
+      "ark:diagram-comment-create",
+      { anchorId: "s1", body: "x\ny", anchorQuote: "z" }
+    );
+    const quoteWithNewline = helpers.operationKeyFor(
+      "ark:diagram-comment-create",
+      { anchorId: "s1", body: "x", anchorQuote: "y\nz" }
+    );
+
+    expect(bodyWithNewline).not.toBe(quoteWithNewline);
+  });
+
+  it("crypto.randomUUID があればそれを使い、無ければ時刻と乱数で代替する", () => {
+    const secure = loadHelpers({ randomUUID: () => "uuid-fixed" });
+    expect(secure.operationIdFor("k")).toBe("op-uuid-fixed-1");
+
+    const insecure = loadHelpers();
+    const generated = insecure.operationIdFor("k");
+    expect(generated).toMatch(/^op-[a-z0-9]+-[a-z0-9]+-1$/u);
+    expect(generated).not.toBe(insecure.operationIdFor("other"));
+  });
+
+  it("覚える operationId は上限を超えると古いものから捨てる", () => {
+    const helpers = loadHelpers({ limit: 2 });
+
+    const first = helpers.operationIdFor("a");
+    helpers.operationIdFor("b");
+    helpers.operationIdFor("c");
+
+    expect(helpers.operationIds.size).toBe(2);
+    expect(helpers.operationIds.has("a")).toBe(false);
+    expect(helpers.operationIdFor("a")).not.toBe(first);
+  });
+});

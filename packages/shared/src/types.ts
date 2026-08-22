@@ -292,16 +292,34 @@ export interface DiagramCommentsFile {
   threads: DiagramCommentThread[];
 }
 
-export interface DiagramCommentDeleteRequest {
+/**
+ * mutation の同一性を示す操作 ID。ACK タイムアウト後の再試行で同じ値を送ると、
+ * サーバーは適用済みの操作を再適用せず現在の sidecar を返す（冪等）。
+ * クライアントが生成する 1〜256 文字の任意文字列。
+ */
+export interface DiagramCommentOperation {
+  operationId: string;
+}
+
+export interface DiagramCommentThreadRequest extends DiagramCommentOperation {
   sessionId: string;
   relPath: string;
   threadId: string;
 }
 
-export interface DiagramCommentReplyRequest {
+export interface DiagramCommentCreateRequest extends DiagramCommentOperation {
   sessionId: string;
   relPath: string;
-  threadId: string;
+  anchorId: string;
+  anchorQuote?: string;
+  anchorOccurrence?: number;
+  body: string;
+}
+
+export type DiagramCommentDeleteRequest = DiagramCommentThreadRequest;
+
+export interface DiagramCommentReplyRequest
+  extends DiagramCommentThreadRequest {
   body: string;
 }
 
@@ -601,16 +619,12 @@ export interface ClientToServerEvents {
     callback: (response: DiagramCommentsResponse) => void
   ) => void;
 
-  /** 文書ブロックまたはそのテキスト選択範囲へ単発コメントを作成する */
+  /**
+   * 文書ブロックまたはそのテキスト選択範囲へ単発コメントを作成する。
+   * mutation 系は operationId を必須とし、同じ ID の再送は再適用しない
+   */
   "diagram:comment:create": (
-    data: {
-      sessionId: string;
-      relPath: string;
-      anchorId: string;
-      anchorQuote?: string;
-      anchorOccurrence?: number;
-      body: string;
-    },
+    data: DiagramCommentCreateRequest,
     callback: (response: DiagramCommentsResponse) => void
   ) => void;
 
@@ -622,7 +636,7 @@ export interface ClientToServerEvents {
 
   /** 文書コメントを解決済みにする */
   "diagram:comment:resolve": (
-    data: { sessionId: string; relPath: string; threadId: string },
+    data: DiagramCommentThreadRequest,
     callback: (response: DiagramCommentsResponse) => void
   ) => void;
 
@@ -632,9 +646,9 @@ export interface ClientToServerEvents {
     callback: (response: DiagramCommentsResponse) => void
   ) => void;
 
-  /** 文書コメントを会話セッションへ送る */
+  /** 文書コメントを会話セッションへ送る（同じ operationId の再送は二重送信しない） */
   "diagram:comment:send": (
-    data: { sessionId: string; relPath: string; threadId: string },
+    data: DiagramCommentThreadRequest,
     callback: (response: DiagramCommentsResponse) => void
   ) => void;
 

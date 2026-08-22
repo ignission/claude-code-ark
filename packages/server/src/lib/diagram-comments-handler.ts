@@ -1,7 +1,13 @@
 import type { DiagramCommentsResponse } from "@ark/shared";
 import {
+  type DiagramCommentOperationLog,
+  diagramCommentOperationKey,
+  diagramCommentOperationLog,
+} from "./diagram-comment-operation-log.js";
+import {
   appendDiagramCommentMessage,
   createDiagramComment,
+  type DiagramCommentMutationOptions,
   deleteDiagramComment,
   readDiagramCommentsFile,
   resolveDiagramComment,
@@ -16,13 +22,18 @@ const MAX_BODY_LENGTH = 4000;
 const MAX_ANCHOR_QUOTE_LENGTH = 1000;
 
 type GetPayload = { sessionId: string; relPath: string };
-type CreatePayload = GetPayload & {
+/**
+ * mutation は操作 ID を必須とする。クライアントの ACK タイムアウトは
+ * サーバー処理を取り消さないため、再試行を同じ ID で受けて冪等に扱う。
+ */
+type MutationPayload = GetPayload & { operationId: string };
+type CreatePayload = MutationPayload & {
   anchorId: string;
   anchorQuote?: string;
   anchorOccurrence?: number;
   body: string;
 };
-type ResolvePayload = GetPayload & { threadId: string };
+type ResolvePayload = MutationPayload & { threadId: string };
 type ReplyPayload = ResolvePayload & { body: string };
 
 export interface DiagramCommentsHandlerDeps {
@@ -40,25 +51,34 @@ export interface DiagramCommentsHandlerDeps {
     anchorId: string,
     body: string,
     anchorQuote?: string,
-    anchorOccurrence?: number
+    anchorOccurrence?: number,
+    options?: DiagramCommentMutationOptions
   ) => Promise<DiagramCommentsResponse>;
   replyComment: (
     worktreeReal: string,
     relPath: string,
     threadId: string,
-    input: { body: string; author?: string }
+    input: { body: string; author?: string },
+    options?: DiagramCommentMutationOptions
   ) => Promise<DiagramCommentsResponse>;
   resolveComment: (
     worktreeReal: string,
     relPath: string,
-    threadId: string
+    threadId: string,
+    options?: DiagramCommentMutationOptions
   ) => Promise<DiagramCommentsResponse>;
   deleteComment: (
     worktreeReal: string,
     relPath: string,
-    threadId: string
+    threadId: string,
+    options?: DiagramCommentMutationOptions
   ) => Promise<DiagramCommentsResponse>;
   sendMessage: (sessionId: string, message: string) => void;
+  /**
+   * send の二重送信防止に使う適用済み操作の記録。省略時はプロセス共有の
+   * 記録を使う（sidecar mutation 側も同じ記録を共有する）。
+   */
+  operationLog?: DiagramCommentOperationLog;
 }
 
 /** get でも mutation と同じ diagram/anchor trust boundary を通す。 */
@@ -141,6 +161,7 @@ function parseCreatePayload(value: unknown): CreatePayload | null {
       [
         "sessionId",
         "relPath",
+        "operationId",
         "anchorId",
         "anchorQuote",
         "anchorOccurrence",
@@ -149,6 +170,7 @@ function parseCreatePayload(value: unknown): CreatePayload | null {
     ) ||
     !validString(value.sessionId, MAX_SESSION_OR_PATH_LENGTH) ||
     !validString(value.relPath, MAX_SESSION_OR_PATH_LENGTH) ||
+    !validString(value.operationId, MAX_ANCHOR_OR_ID_LENGTH) ||
     !validString(value.anchorId, MAX_ANCHOR_OR_ID_LENGTH) ||
     typeof value.body !== "string"
   ) {
@@ -171,6 +193,7 @@ function parseCreatePayload(value: unknown): CreatePayload | null {
   const payload: CreatePayload = {
     sessionId: value.sessionId,
     relPath: value.relPath,
+    operationId: value.operationId,
     anchorId: value.anchorId,
     body,
   };
@@ -186,9 +209,10 @@ function parseCreatePayload(value: unknown): CreatePayload | null {
 function parseResolvePayload(value: unknown): ResolvePayload | null {
   if (
     !isRecord(value) ||
-    !hasOnlyKeys(value, ["sessionId", "relPath", "threadId"]) ||
+    !hasOnlyKeys(value, ["sessionId", "relPath", "operationId", "threadId"]) ||
     !validString(value.sessionId, MAX_SESSION_OR_PATH_LENGTH) ||
     !validString(value.relPath, MAX_SESSION_OR_PATH_LENGTH) ||
+    !validString(value.operationId, MAX_ANCHOR_OR_ID_LENGTH) ||
     !validString(value.threadId, MAX_ANCHOR_OR_ID_LENGTH)
   ) {
     return null;
@@ -196,6 +220,7 @@ function parseResolvePayload(value: unknown): ResolvePayload | null {
   return {
     sessionId: value.sessionId,
     relPath: value.relPath,
+    operationId: value.operationId,
     threadId: value.threadId,
   };
 }
@@ -203,9 +228,16 @@ function parseResolvePayload(value: unknown): ResolvePayload | null {
 function parseReplyPayload(value: unknown): ReplyPayload | null {
   if (
     !isRecord(value) ||
-    !hasOnlyKeys(value, ["sessionId", "relPath", "threadId", "body"]) ||
+    !hasOnlyKeys(value, [
+      "sessionId",
+      "relPath",
+      "operationId",
+      "threadId",
+      "body",
+    ]) ||
     !validString(value.sessionId, MAX_SESSION_OR_PATH_LENGTH) ||
     !validString(value.relPath, MAX_SESSION_OR_PATH_LENGTH) ||
+    !validString(value.operationId, MAX_ANCHOR_OR_ID_LENGTH) ||
     !validString(value.threadId, MAX_ANCHOR_OR_ID_LENGTH) ||
     typeof value.body !== "string"
   ) {
@@ -216,6 +248,7 @@ function parseReplyPayload(value: unknown): ReplyPayload | null {
   return {
     sessionId: value.sessionId,
     relPath: value.relPath,
+    operationId: value.operationId,
     threadId: value.threadId,
     body,
   };
@@ -336,7 +369,8 @@ export async function handleDiagramCommentCreate(
       payload.anchorId,
       payload.body,
       payload.anchorQuote,
-      payload.anchorOccurrence
+      payload.anchorOccurrence,
+      { operationId: payload.operationId }
     )
   );
 }
@@ -350,7 +384,12 @@ export async function handleDiagramCommentResolve(
   const context = requestContext(deps, payload);
   if (!context.valid) return context.response;
   return containStoreError(() =>
-    deps.resolveComment(context.worktreeReal, context.relPath, payload.threadId)
+    deps.resolveComment(
+      context.worktreeReal,
+      context.relPath,
+      payload.threadId,
+      { operationId: payload.operationId }
+    )
   );
 }
 
@@ -363,9 +402,13 @@ export async function handleDiagramCommentReply(
   const context = requestContext(deps, payload);
   if (!context.valid) return context.response;
   return containStoreError(() =>
-    deps.replyComment(context.worktreeReal, context.relPath, payload.threadId, {
-      body: payload.body,
-    })
+    deps.replyComment(
+      context.worktreeReal,
+      context.relPath,
+      payload.threadId,
+      { body: payload.body },
+      { operationId: payload.operationId }
+    )
   );
 }
 
@@ -378,7 +421,12 @@ export async function handleDiagramCommentDelete(
   const context = requestContext(deps, payload);
   if (!context.valid) return context.response;
   return containStoreError(() =>
-    deps.deleteComment(context.worktreeReal, context.relPath, payload.threadId)
+    deps.deleteComment(
+      context.worktreeReal,
+      context.relPath,
+      payload.threadId,
+      { operationId: payload.operationId }
+    )
   );
 }
 
@@ -390,12 +438,22 @@ export async function handleDiagramCommentSend(
   if (payload === null) return badRequest();
   const context = requestContext(deps, payload);
   if (!context.valid) return context.response;
+  // send は sidecar を変えないが tmux への送信という副作用を持つ。ACK
+  // タイムアウト後の再試行で同じコメントを二重に送らないよう、適用済みの
+  // 操作 ID なら現在のコメントだけを返す。
+  const operationLog = deps.operationLog ?? diagramCommentOperationLog;
+  const operationKey = diagramCommentOperationKey(
+    "send",
+    JSON.stringify([context.worktreeReal, context.relPath]),
+    payload.operationId
+  );
   return containStoreError(async () => {
     const response = await deps.getComments(
       context.worktreeReal,
       context.relPath
     );
     if (!response.ok) return response;
+    if (operationLog.has(operationKey)) return response;
     const thread = response.comments.threads.find(
       candidate => candidate.id === payload.threadId
     );
@@ -422,6 +480,7 @@ export async function handleDiagramCommentSend(
       };
     }
     deps.sendMessage(context.sessionId, message);
+    operationLog.record(operationKey);
     return response;
   });
 }

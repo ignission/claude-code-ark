@@ -1,16 +1,23 @@
 import type { DiagramCommentsFile, DiagramCommentsResponse } from "@ark/shared";
 
+/**
+ * requestId は port ↔ DiagramPane の 1 往復を相関させる ID（再試行で変わる）。
+ * operationId はユーザー操作の同一性を示す ID で、iframe がタイムアウト後の
+ * 再試行でも同じ値を使う。socket まで透過的に渡し、サーバーが冪等化に使う。
+ */
 export type DiagramCommentPortRequest =
   | { type: "ark:diagram-comments-load"; requestId: string }
   | {
       type: "ark:diagram-comment-reply";
       requestId: string;
+      operationId: string;
       threadId: string;
       body: string;
     }
   | {
       type: "ark:diagram-comment-create";
       requestId: string;
+      operationId: string;
       anchorId: string;
       anchorQuote?: string;
       anchorOccurrence?: number;
@@ -19,16 +26,19 @@ export type DiagramCommentPortRequest =
   | {
       type: "ark:diagram-comment-resolve";
       requestId: string;
+      operationId: string;
       threadId: string;
     }
   | {
       type: "ark:diagram-comment-delete";
       requestId: string;
+      operationId: string;
       threadId: string;
     }
   | {
       type: "ark:diagram-comment-send";
       requestId: string;
+      operationId: string;
       threadId: string;
     };
 
@@ -128,10 +138,16 @@ export function parseDiagramCommentPortRequest(
     };
   }
 
+  // mutation は operationId を必須とする（サーバー側の冪等化に使う）
+  if (!validString(value.operationId, 256)) {
+    return invalid("操作 ID（operationId）が不正です");
+  }
+
   if (value.type === "ark:diagram-comment-create") {
     const allowedKeys = [
       "type",
       "requestId",
+      "operationId",
       "anchorId",
       "anchorQuote",
       "anchorOccurrence",
@@ -169,6 +185,7 @@ export function parseDiagramCommentPortRequest(
     > = {
       type: value.type,
       requestId: value.requestId,
+      operationId: value.operationId,
       anchorId: value.anchorId,
       body: value.body,
     };
@@ -182,7 +199,13 @@ export function parseDiagramCommentPortRequest(
   }
 
   if (value.type === "ark:diagram-comment-reply") {
-    const allowedKeys = ["type", "requestId", "threadId", "body"];
+    const allowedKeys = [
+      "type",
+      "requestId",
+      "operationId",
+      "threadId",
+      "body",
+    ];
     const unexpected = unknownKeys(value, allowedKeys);
     if (unexpected.length > 0) {
       return invalid(
@@ -200,13 +223,19 @@ export function parseDiagramCommentPortRequest(
       request: {
         type: value.type,
         requestId: value.requestId,
+        operationId: value.operationId,
         threadId: value.threadId,
         body: value.body,
       },
     };
   }
 
-  const unexpected = unknownKeys(value, ["type", "requestId", "threadId"]);
+  const unexpected = unknownKeys(value, [
+    "type",
+    "requestId",
+    "operationId",
+    "threadId",
+  ]);
   if (unexpected.length > 0) {
     const action =
       value.type === "ark:diagram-comment-send"
@@ -226,6 +255,7 @@ export function parseDiagramCommentPortRequest(
     request: {
       type: value.type,
       requestId: value.requestId,
+      operationId: value.operationId,
       threadId: value.threadId,
     },
   };
