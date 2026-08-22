@@ -38,6 +38,10 @@ import {
   requestDiagramCommentsGet,
 } from "../lib/diagram-comment-transport";
 import { requestDiagramDelete } from "../lib/diagram-delete-transport";
+import type {
+  SessionAuqSignal,
+  SessionStatusSignal,
+} from "../lib/session-notifications";
 import {
   addWorktree,
   clearRepo,
@@ -210,6 +214,12 @@ interface UseSocketReturn {
    */
   sessionStatuses: Map<string, BridgeSessionStatus>;
 
+  /** 通知判定用の最新statusシグナル（既存session:previewsから派生） */
+  sessionStatusSignals: Map<string, SessionStatusSignal>;
+
+  /** 通知判定用の最新AskUserQuestionシグナル（既存session:auqから派生） */
+  sessionAuqSignals: Map<string, SessionAuqSignal>;
+
   /**
    * sessionId → AWAITING 時の確認 UI 生テキスト。
    * チャットビューのバナーで「何を聞かれているか」をそのまま表示する。
@@ -373,6 +383,12 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   // サイドバードット色用。RepoGridView 購読の有無に関わらず常時更新される。
   const [sessionStatuses, setSessionStatuses] = useState<
     Map<string, BridgeSessionStatus>
+  >(new Map());
+  const [sessionStatusSignals, setSessionStatusSignals] = useState<
+    Map<string, SessionStatusSignal>
+  >(new Map());
+  const [sessionAuqSignals, setSessionAuqSignals] = useState<
+    Map<string, SessionAuqSignal>
   >(new Map());
 
   // AWAITING 時の確認 UI 生テキスト (チャットビューのバナーで内容を表示する)。
@@ -773,6 +789,18 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       setFileContent(data);
     });
 
+    const handleAuqSignal = (data: { sessionId: string; at: number }) => {
+      setSessionAuqSignals(prev => {
+        const current = prev.get(data.sessionId);
+        if (current && current.at >= data.at) return prev;
+        return new Map(prev).set(data.sessionId, {
+          sessionId: data.sessionId,
+          at: data.at,
+        });
+      });
+    };
+    socket.on("session:auq", handleAuqSignal);
+
     socket.on("session:previews", previews => {
       // セッションのstatusをプレビューから更新
       setSessions(prev => {
@@ -805,6 +833,17 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         const next = new Map(prev);
         for (const p of previews) {
           next.set(p.sessionId, p.bridgeStatus);
+        }
+        return next;
+      });
+      setSessionStatusSignals(prev => {
+        const next = new Map(prev);
+        for (const p of previews) {
+          next.set(p.sessionId, {
+            sessionId: p.sessionId,
+            status: p.bridgeStatus,
+            at: p.timestamp,
+          });
         }
         return next;
       });
@@ -1008,6 +1047,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     return () => {
       socket.off("ports:list");
       socket.off("file:content");
+      socket.off("session:auq", handleAuqSignal);
       socket.off("session:previews");
       socket.off("session:grid:snapshot");
       socket.off("browser:started");
@@ -1534,6 +1574,8 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     sessionPreviews,
     sessionActivityTexts,
     sessionAwaitingTexts,
+    sessionStatusSignals,
+    sessionAuqSignals,
     gridSnapshots,
     subscribeGrid,
     unsubscribeGrid,

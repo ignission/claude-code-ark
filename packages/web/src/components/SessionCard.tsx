@@ -3,7 +3,14 @@ import type {
   ManagedSession,
   Worktree,
 } from "@ark/shared";
-import { MessageSquare, Pencil, RotateCw, Trash2 } from "lucide-react";
+import {
+  Bell,
+  BellOff,
+  MessageSquare,
+  Pencil,
+  RotateCw,
+  Trash2,
+} from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   AlertDialog,
@@ -66,6 +73,10 @@ interface SessionCardProps {
    * 渡されたときだけ編集UI (鉛筆アイコン) が表示される。
    */
   onSetCustomDisplayName?: (displayName: string | null) => void;
+  /** Notification API対応環境でのみセッション別通知設定を表示する。 */
+  notificationsSupported?: boolean;
+  notificationsEnabled?: boolean;
+  onNotificationsEnabledChange?: (enabled: boolean) => void;
 }
 
 export function SessionCard({
@@ -82,6 +93,9 @@ export function SessionCard({
   profileBadgeSlot,
   customDisplayName,
   onSetCustomDisplayName,
+  notificationsSupported = false,
+  notificationsEnabled = true,
+  onNotificationsEnabledChange,
 }: SessionCardProps) {
   const branch =
     worktree?.branch ||
@@ -319,6 +333,20 @@ export function SessionCard({
             <ContextMenuItem onSelect={() => startEditing()}>
               <Pencil className="w-4 h-4 mr-2" />
               表示名を変更
+            </ContextMenuItem>
+          )}
+          {notificationsSupported && onNotificationsEnabledChange && (
+            <ContextMenuItem
+              onSelect={() =>
+                onNotificationsEnabledChange(!notificationsEnabled)
+              }
+            >
+              {notificationsEnabled ? (
+                <BellOff className="w-4 h-4 mr-2" />
+              ) : (
+                <Bell className="w-4 h-4 mr-2" />
+              )}
+              通知を{notificationsEnabled ? "オフ" : "オン"}にする
             </ContextMenuItem>
           )}
           <ContextMenuSeparator />

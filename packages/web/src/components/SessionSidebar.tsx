@@ -30,7 +30,7 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -118,6 +118,13 @@ interface SessionSidebarProps {
    * 未設定 (Map empty) の場合は SessionCard 側のフォールバック判定が使われる。
    */
   gridStatuses?: Map<string, BridgeSessionStatus>;
+  notificationControl?: ReactNode;
+  notificationsSupported?: boolean;
+  isSessionNotificationEnabled?: (sessionId: string) => boolean;
+  onSessionNotificationEnabledChange?: (
+    sessionId: string,
+    enabled: boolean
+  ) => void;
 }
 
 export function SessionSidebar({
@@ -149,6 +156,10 @@ export function SessionSidebar({
   onSelectRepoGrid,
   gridRepoPath,
   gridStatuses,
+  notificationControl,
+  notificationsSupported = false,
+  isSessionNotificationEnabled,
+  onSessionNotificationEnabledChange,
 }: SessionSidebarProps) {
   const { groupedItems } = useGroupedWorktreeItems(
     worktrees,
@@ -406,6 +417,7 @@ export function SessionSidebar({
           <h1 className="font-semibold text-sm text-sidebar-foreground">Ark</h1>
         </div>
         <div className="flex items-center gap-1">
+          {notificationControl}
           {isRemote && onSelectBrowser && (
             <Button
               variant={isBrowserSelected ? "default" : "ghost"}
@@ -620,6 +632,22 @@ export function SessionSidebar({
                                     onSetWorktreeDisplayName(wtPath, name);
                                   }
                                 }
+                              : undefined
+                          }
+                          notificationsSupported={notificationsSupported}
+                          notificationsEnabled={
+                            session
+                              ? (isSessionNotificationEnabled?.(session.id) ??
+                                true)
+                              : true
+                          }
+                          onNotificationsEnabledChange={
+                            session && onSessionNotificationEnabledChange
+                              ? enabled =>
+                                  onSessionNotificationEnabledChange(
+                                    session.id,
+                                    enabled
+                                  )
                               : undefined
                           }
                         />

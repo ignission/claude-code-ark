@@ -1,7 +1,7 @@
 import type { ManagedSession, SpecialKey, Worktree } from "@ark/shared";
 import { AlertCircle, Copy, Loader2, Terminal } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AboutDialog } from "@/components/AboutDialog";
 import { BrowserPane } from "@/components/BrowserPane";
@@ -14,6 +14,7 @@ import {
   normalizeSessionSubView,
   type SessionSubView,
 } from "@/components/MobileLayout";
+import { NotificationPermissionButton } from "@/components/NotificationPermissionButton";
 import { ProfileManagerDialog } from "@/components/ProfileManagerDialog";
 import { RepoGridView } from "@/components/RepoGridView";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
@@ -41,6 +42,7 @@ import {
 } from "@/components/ui/select";
 import { useBridgeSnapshot } from "@/hooks/useBridgeSnapshot";
 import { useIsMobile } from "@/hooks/useMobile";
+import { useSessionNotifications } from "@/hooks/useSessionNotifications";
 import { useSettings } from "@/hooks/useSettings";
 import { useSocket } from "@/hooks/useSocket";
 import { useViewerTabs } from "@/hooks/useViewerTabs";
@@ -48,6 +50,11 @@ import {
   createDiagramOpenRequest,
   type DiagramOpenRequest,
 } from "@/lib/mobile-session-view-mode";
+import {
+  createSessionNotificationEnabledChangeHandler,
+  isNotificationEnabledForSession,
+  normalizeSessionNotificationSettings,
+} from "@/lib/session-notifications";
 import { getBaseName } from "@/utils/pathUtils";
 import {
   findRepoForSession,
@@ -56,6 +63,7 @@ import {
 
 export default function Dashboard() {
   const {
+    settings,
     isLoading: isSettingsLoading,
     getSetting,
     setSetting,
@@ -115,6 +123,8 @@ export default function Dashboard() {
     subscribeGrid,
     unsubscribeGrid,
     sessionStatuses,
+    sessionStatusSignals,
+    sessionAuqSignals,
     readFile,
     fileContent,
     browserSessions,
@@ -172,6 +182,69 @@ export default function Dashboard() {
   // null 以外のとき main 領域は RepoGridView に切り替わる。
   // selectedSessionId とは独立。セルクリックで selectedSessionId に切替えてターミナル表示に潜る
   const [gridRepoPath, setGridRepoPath] = useState<string | null>(null);
+
+  const sessionNotificationSettings = useMemo(
+    () =>
+      normalizeSessionNotificationSettings(
+        settings["sessionNotifications.enabledBySession"]
+      ),
+    [settings]
+  );
+
+  const sessionNotificationLabels = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const session of sessions.values()) {
+      const worktree = worktrees.find(item => item.id === session.worktreeId);
+      const customName = worktreeDisplayNames
+        .get(worktree?.path ?? session.worktreePath)
+        ?.trim();
+      labels.set(
+        session.id,
+        customName || worktree?.branch || getBaseName(session.worktreePath)
+      );
+    }
+    return labels;
+  }, [sessions, worktreeDisplayNames, worktrees]);
+
+  const handleOpenSessionFromNotification = useCallback(
+    (sessionId: string) => {
+      setGridRepoPath(null);
+      setSelectedSessionId(sessionId);
+      if (isMobile) {
+        setMobileActiveTab("session");
+        setMobileSessionSubView("detail");
+      }
+    },
+    [isMobile]
+  );
+
+  const sessionNotifications = useSessionNotifications({
+    statusSignals: sessionStatusSignals,
+    auqSignals: sessionAuqSignals,
+    sessionLabels: sessionNotificationLabels,
+    enabledBySession: sessionNotificationSettings,
+    onOpenSession: handleOpenSessionFromNotification,
+  });
+
+  const isSessionNotificationEnabled = useCallback(
+    (sessionId: string) =>
+      isNotificationEnabledForSession(sessionNotificationSettings, sessionId),
+    [sessionNotificationSettings]
+  );
+
+  const handleSessionNotificationEnabledChange = useMemo(
+    () => createSessionNotificationEnabledChangeHandler(getSetting, setSetting),
+    [getSetting, setSetting]
+  );
+
+  const notificationControl = (
+    <NotificationPermissionButton
+      supported={sessionNotifications.supported}
+      permission={sessionNotifications.permission}
+      onRequestPermission={sessionNotifications.requestPermission}
+      className={isMobile ? "h-12 w-12" : "h-8 w-8"}
+    />
+  );
 
   /** リポジトリヘッダクリック時: グリッドビューを開く */
   const handleSelectRepoGrid = useCallback((repoPath: string) => {
@@ -641,6 +714,12 @@ export default function Dashboard() {
           sessionsLoaded={sessionsLoaded}
           sessionStatuses={sessionStatuses}
           sessionAwaitingTexts={sessionAwaitingTexts}
+          notificationControl={notificationControl}
+          notificationsSupported={sessionNotifications.supported}
+          isSessionNotificationEnabled={isSessionNotificationEnabled}
+          onSessionNotificationEnabledChange={
+            handleSessionNotificationEnabledChange
+          }
         />
       ) : (
         <SidebarMainLayout
@@ -674,6 +753,12 @@ export default function Dashboard() {
               onSelectRepoGrid={handleSelectRepoGrid}
               gridRepoPath={gridRepoPath}
               gridStatuses={sessionStatuses}
+              notificationControl={notificationControl}
+              notificationsSupported={sessionNotifications.supported}
+              isSessionNotificationEnabled={isSessionNotificationEnabled}
+              onSessionNotificationEnabledChange={
+                handleSessionNotificationEnabledChange
+              }
             />
           }
           main={
