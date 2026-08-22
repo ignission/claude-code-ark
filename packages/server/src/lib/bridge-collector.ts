@@ -22,6 +22,16 @@ import { stripAnsi } from "./ansi.js";
 import { db } from "./database.js";
 import { sessionOrchestrator } from "./session-orchestrator.js";
 import { tmuxManager } from "./tmux-manager.js";
+import { TmuxReadFailureReporter } from "./tmux-read-result.js";
+
+/**
+ * capture-pane 失敗の重複抑制ロガー (#393)。
+ *
+ * 3 つの collector は 1〜1.5 秒間隔の polling で呼ばれるため、tmux が死んだ /
+ * セッションが消えた理由 (stderr) を残しつつ、同じ失敗を毎 tick 出さない。
+ * 収集経路ごとに key を分け、回復時も 1 行残す。
+ */
+const captureFailures = new TmuxReadFailureReporter("[Bridge]");
 
 /** capture-pane を独自フォーマットでパースした結果 */
 interface PaneAnalysis {
@@ -59,13 +69,18 @@ export function collectBridgeSessions(): BridgeSession[] {
   for (const ms of filtered) {
     // 可視範囲のみ取得 (scrollback を含めると /clear 後でも過去ログが残り、
     // READY 判定や preview 表示が壊れる)
-    const raw = tmuxManager.capturePaneVisible(ms.id);
+    const captured = tmuxManager.capturePaneVisible(ms.id);
+    captureFailures.report(`sessions:${ms.id}`, captured);
+    const raw = captured.ok ? captured.value : null;
     const analysis = raw ? analyzePane(raw) : EMPTY_ANALYSIS;
     const paneId = lookupPaneId(ms.tmuxSessionName);
     const previewText = raw ? extractPreviewText(raw, 12) : "";
     let status: BridgeSessionStatus;
     if (ms.status === "stopped") {
       status = "STOP";
+    } else if (!captured.ok) {
+      // tmux 停止・セッション消失などの取得失敗を、空画面の READY と区別する。
+      status = "ERR";
     } else if (analysis.status === "IDLE" && previewText.trim().length === 0) {
       // /clear 直後・起動直後など、画面に意味あるテキストがない場合は READY (グレー)
       status = "READY";
@@ -132,9 +147,10 @@ export function collectStreamLines(
   sessionId: string,
   maxLines = 20
 ): BridgeStreamLine[] {
-  const raw = tmuxManager.capturePane(sessionId, 400);
-  if (!raw) return [];
-  const analysis = analyzePane(raw);
+  const captured = tmuxManager.capturePane(sessionId, 400);
+  captureFailures.report(`stream:${sessionId}`, captured);
+  if (!captured.ok || !captured.value) return [];
+  const analysis = analyzePane(captured.value);
   return analysis.streamLines.slice(-maxLines);
 }
 
@@ -166,13 +182,18 @@ export function collectGridSnapshots(maxLines = 12): SessionGridSnapshot[] {
   const result: SessionGridSnapshot[] = [];
   for (const ms of filtered) {
     // 可視範囲のみ取得 (collectBridgeSessions と統一)
-    const raw = tmuxManager.capturePaneVisible(ms.id);
+    const captured = tmuxManager.capturePaneVisible(ms.id);
+    captureFailures.report(`grid:${ms.id}`, captured);
+    const raw = captured.ok ? captured.value : null;
     const analysis = raw ? analyzePane(raw) : EMPTY_ANALYSIS;
     const previewText = raw ? extractPreviewText(raw, maxLines) : "";
     // collectBridgeSessions と同じ READY 判定を適用
     let status: BridgeSessionStatus;
     if (ms.status === "stopped") {
       status = "STOP";
+    } else if (!captured.ok) {
+      // tmux 停止・セッション消失などの取得失敗を、空画面の READY と区別する。
+      status = "ERR";
     } else if (analysis.status === "IDLE" && previewText.trim().length === 0) {
       status = "READY";
     } else {

@@ -4,7 +4,7 @@
  * spawnSync / execSync をモックして、tmuxへ渡す引数を直接検証する。
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // child_process全体をモック化（top-level mockはhoistされる）
 vi.mock("node:child_process", () => ({
@@ -27,6 +27,7 @@ vi.mock("./system.js", () => ({
 }));
 
 import { execSync, spawnSync } from "node:child_process";
+import fs from "node:fs";
 import { resolveClaudePath } from "./system.js";
 import { TmuxManager } from "./tmux-manager.js";
 
@@ -566,6 +567,393 @@ describe("TmuxManager - 入力系メソッド", () => {
       expect(() =>
         manager.sendSpecialKey(sessionId, "DangerousKey" as never)
       ).toThrow();
+    });
+  });
+});
+
+/**
+ * 読み取り系メソッドの失敗分類 (#393)
+ *
+ * 以前は tmux コマンドの失敗と「値が無い」を同じ null に畳んでいたため、
+ * セッション消滅・復元失敗の原因を事後に追えなかった。ここでは spawnSync を
+ * 失敗させたとき、失敗要因が型 (failure.kind) で区別され、tmux の stderr /
+ * exit status / errno が結果に残ることを検証する。
+ */
+describe("TmuxManager - 読み取り系メソッドの失敗分類 (#393)", () => {
+  let manager: TmuxManager;
+  let sessionId: string;
+  let tmuxSessionName: string;
+
+  /** encoding: "utf-8" 指定時の spawnSync 戻り値 (stdout/stderr は string) */
+  const textResult = (over: {
+    status?: number | null;
+    signal?: NodeJS.Signals | null;
+    stdout?: string;
+    stderr?: string;
+    error?: Error;
+  }) => ({
+    pid: 1234,
+    output: [null, over.stdout ?? "", over.stderr ?? ""],
+    stdout: over.stdout ?? "",
+    stderr: over.stderr ?? "",
+    // null は「signal で終了 / 起動失敗」を表す正当な値なので ?? で潰さない
+    status: over.status === undefined ? 0 : over.status,
+    signal: over.signal ?? null,
+    error: over.error,
+  });
+
+  /** 指定の tmux サブコマンドだけ差し替え、他は成功扱いにする */
+  function mockTmux(
+    handlers: Record<string, (args: string[]) => ReturnType<typeof textResult>>
+  ) {
+    mockedSpawnSync.mockImplementation((_cmd, args) => {
+      const list = Array.isArray(args) ? (args as string[]) : [];
+      const handler = handlers[list[0] ?? ""];
+      return (handler ? handler(list) : textResult({})) as never;
+    });
+  }
+
+  function callsOf(sub: string): string[][] {
+    return mockedSpawnSync.mock.calls
+      .map(call => call[1])
+      .filter((args): args is string[] => Array.isArray(args))
+      .filter(args => args[0] === sub);
+  }
+
+  beforeEach(async () => {
+    mockedSpawnSync.mockReset();
+    mockedExecSync.mockReset();
+    mockedSpawnSync.mockReturnValue(successResult as never);
+    manager = new TmuxManager();
+    const session = await manager.createSession("/wt");
+    sessionId = session.id;
+    tmuxSessionName = session.tmuxSessionName;
+    mockedSpawnSync.mockClear();
+  });
+
+  describe("getEnv", () => {
+    it("不明なセッション ID は no-session (tmux を呼ばない)", () => {
+      const result = manager.getEnv("unknown", "FOO");
+      expect(result).toEqual({ ok: false, failure: { kind: "no-session" } });
+      expect(mockedSpawnSync).not.toHaveBeenCalled();
+    });
+
+    it("session env 一覧 (show-environment -t <session>) から値を取り出す", () => {
+      mockTmux({
+        "show-environment": () =>
+          textResult({ stdout: "-DISPLAY\nFOO=bar=baz\nOTHER=1\n" }),
+      });
+      expect(manager.getEnv(sessionId, "FOO")).toEqual({
+        ok: true,
+        value: "bar=baz",
+      });
+      expect(callsOf("show-environment")).toEqual([
+        ["show-environment", "-t", tmuxSessionName],
+      ]);
+    });
+
+    it("一覧に変数が無ければ not-set", () => {
+      mockTmux({
+        "show-environment": () => textResult({ stdout: "OTHER=1\n" }),
+      });
+      expect(manager.getEnv(sessionId, "FOO")).toEqual({
+        ok: false,
+        failure: { kind: "not-set" },
+      });
+    });
+
+    it("unset マーカー (-NAME) は not-set", () => {
+      mockTmux({
+        "show-environment": () => textResult({ stdout: "-FOO\nFOOBAR=1\n" }),
+      });
+      expect(manager.getEnv(sessionId, "FOO")).toEqual({
+        ok: false,
+        failure: { kind: "not-set" },
+      });
+    });
+
+    it("前方一致する別名 (FOOBAR) を FOO と誤認しない", () => {
+      mockTmux({
+        "show-environment": () => textResult({ stdout: "FOOBAR=1\n" }),
+      });
+      expect(manager.getEnv(sessionId, "FOO")).toEqual({
+        ok: false,
+        failure: { kind: "not-set" },
+      });
+    });
+
+    it("空文字の値は not-set ではなく ok (値が空) として返す", () => {
+      mockTmux({
+        "show-environment": () => textResult({ stdout: "FOO=\n" }),
+      });
+      expect(manager.getEnv(sessionId, "FOO")).toEqual({ ok: true, value: "" });
+    });
+
+    it("tmux が非 0 で終了したら tmux-failed で status と stderr を残す", () => {
+      mockTmux({
+        "show-environment": () =>
+          textResult({ status: 1, stderr: "no such session: ark-x\n" }),
+      });
+      expect(manager.getEnv(sessionId, "FOO")).toEqual({
+        ok: false,
+        failure: {
+          kind: "tmux-failed",
+          command: "show-environment",
+          status: 1,
+          signal: null,
+          stderr: "no such session: ark-x",
+        },
+      });
+    });
+
+    it("tmux の起動自体に失敗 (spawnSync error) したら errno code と message を残す", () => {
+      const error = Object.assign(new Error("spawnSync tmux ENOENT"), {
+        code: "ENOENT",
+      });
+      mockTmux({
+        "show-environment": () => textResult({ status: null, error }),
+      });
+      const result = manager.getEnv(sessionId, "FOO");
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.failure).toMatchObject({
+        kind: "tmux-failed",
+        command: "show-environment",
+        status: null,
+        code: "ENOENT",
+        message: "spawnSync tmux ENOENT",
+      });
+    });
+
+    it("timeout で kill された場合は signal と ETIMEDOUT を残す", () => {
+      const error = Object.assign(new Error("spawnSync tmux ETIMEDOUT"), {
+        code: "ETIMEDOUT",
+      });
+      mockTmux({
+        "show-environment": () =>
+          textResult({ status: null, signal: "SIGTERM", error }),
+      });
+      const result = manager.getEnv(sessionId, "FOO");
+      if (result.ok) throw new Error("unreachable");
+      expect(result.failure).toMatchObject({
+        kind: "tmux-failed",
+        signal: "SIGTERM",
+        code: "ETIMEDOUT",
+      });
+      // ハング時にイベントループごと止まらないよう timeout を付けて呼ぶ
+      const opts = callsOf("show-environment").length
+        ? (mockedSpawnSync.mock.calls.find(
+            ([, args]) => Array.isArray(args) && args[0] === "show-environment"
+          )?.[2] as { timeout?: number } | undefined)
+        : undefined;
+      expect(opts?.timeout).toBeGreaterThan(0);
+    });
+  });
+
+  describe("getPaneEnv", () => {
+    const originalPlatform = process.platform;
+    const setPlatform = (value: string) =>
+      Object.defineProperty(process, "platform", { value, configurable: true });
+
+    afterEach(() => {
+      setPlatform(originalPlatform);
+      vi.restoreAllMocks();
+    });
+
+    it("不明なセッション ID は no-session", () => {
+      expect(manager.getPaneEnv("unknown", "FOO")).toEqual({
+        ok: false,
+        failure: { kind: "no-session" },
+      });
+    });
+
+    it("Linux 以外では /proc を読まずに unsupported-platform", () => {
+      setPlatform("darwin");
+      expect(manager.getPaneEnv(sessionId, "FOO")).toEqual({
+        ok: false,
+        failure: { kind: "unsupported-platform", platform: "darwin" },
+      });
+      expect(mockedSpawnSync).not.toHaveBeenCalled();
+    });
+
+    it("list-panes が失敗したら tmux-failed", () => {
+      setPlatform("linux");
+      mockTmux({
+        "list-panes": () =>
+          textResult({ status: 1, stderr: "can't find session: ark-x" }),
+      });
+      expect(manager.getPaneEnv(sessionId, "FOO")).toMatchObject({
+        ok: false,
+        failure: {
+          kind: "tmux-failed",
+          command: "list-panes",
+          status: 1,
+          stderr: "can't find session: ark-x",
+        },
+      });
+    });
+
+    it("pane_pid が数値でなければ invalid-pane-pid", () => {
+      setPlatform("linux");
+      mockTmux({ "list-panes": () => textResult({ stdout: "abc\n" }) });
+      expect(manager.getPaneEnv(sessionId, "FOO")).toEqual({
+        ok: false,
+        failure: { kind: "invalid-pane-pid", raw: "abc" },
+      });
+    });
+
+    it("/proc/<pid>/environ が読めなければ proc-error (errno 付き)", () => {
+      setPlatform("linux");
+      mockTmux({ "list-panes": () => textResult({ stdout: "4242\n" }) });
+      vi.spyOn(fs, "readFileSync").mockImplementation(() => {
+        throw Object.assign(new Error("EACCES: permission denied"), {
+          code: "EACCES",
+        });
+      });
+      expect(manager.getPaneEnv(sessionId, "FOO")).toEqual({
+        ok: false,
+        failure: {
+          kind: "proc-error",
+          code: "EACCES",
+          message: "EACCES: permission denied",
+        },
+      });
+      expect(fs.readFileSync).toHaveBeenCalledWith(
+        "/proc/4242/environ",
+        "utf-8"
+      );
+    });
+
+    it("environ に変数があれば ok、無ければ not-set", () => {
+      setPlatform("linux");
+      mockTmux({ "list-panes": () => textResult({ stdout: "4242\n" }) });
+      vi.spyOn(fs, "readFileSync").mockReturnValue(
+        "PATH=/bin\0FOO=/home/u/.claude-work\0"
+      );
+      expect(manager.getPaneEnv(sessionId, "FOO")).toEqual({
+        ok: true,
+        value: "/home/u/.claude-work",
+      });
+      expect(manager.getPaneEnv(sessionId, "BAR")).toEqual({
+        ok: false,
+        failure: { kind: "not-set" },
+      });
+    });
+  });
+
+  describe("getBuffer", () => {
+    it("不明なセッション ID は no-session", () => {
+      expect(manager.getBuffer("unknown")).toEqual({
+        ok: false,
+        failure: { kind: "no-session" },
+      });
+    });
+
+    it("バッファが 1 つも無い場合は tmux-failed ではなく no-buffer", () => {
+      mockTmux({ "list-buffers": () => textResult({ stdout: "" }) });
+      expect(manager.getBuffer(sessionId)).toEqual({
+        ok: false,
+        failure: { kind: "no-buffer" },
+      });
+      expect(callsOf("show-buffer")).toHaveLength(0);
+    });
+
+    it("list-buffers が失敗したら tmux-failed", () => {
+      mockTmux({
+        "list-buffers": () =>
+          textResult({ status: 1, stderr: "no server running" }),
+      });
+      expect(manager.getBuffer(sessionId)).toMatchObject({
+        ok: false,
+        failure: {
+          kind: "tmux-failed",
+          command: "list-buffers",
+          stderr: "no server running",
+        },
+      });
+    });
+
+    it("show-buffer が失敗したら tmux-failed (command=show-buffer)", () => {
+      mockTmux({
+        "list-buffers": () => textResult({ stdout: "buffer0\n" }),
+        "show-buffer": () => textResult({ status: 1, stderr: "boom" }),
+      });
+      expect(manager.getBuffer(sessionId)).toMatchObject({
+        ok: false,
+        failure: { kind: "tmux-failed", command: "show-buffer" },
+      });
+    });
+
+    it("名前付きバッファだけが存在して show-buffer が no buffers なら no-buffer", () => {
+      mockTmux({
+        "list-buffers": () => textResult({ stdout: "named-buffer\n" }),
+        "show-buffer": () => textResult({ status: 1, stderr: "no buffers\n" }),
+      });
+      expect(manager.getBuffer(sessionId)).toEqual({
+        ok: false,
+        failure: { kind: "no-buffer" },
+      });
+    });
+
+    it("バッファがあれば末尾改行を落として返す", () => {
+      mockTmux({
+        "list-buffers": () => textResult({ stdout: "buffer0\n" }),
+        "show-buffer": () => textResult({ stdout: "copied text\n" }),
+      });
+      expect(manager.getBuffer(sessionId)).toEqual({
+        ok: true,
+        value: "copied text",
+      });
+    });
+  });
+
+  describe("capturePane / capturePaneVisible", () => {
+    it("不明なセッション ID は no-session", () => {
+      expect(manager.capturePane("unknown")).toEqual({
+        ok: false,
+        failure: { kind: "no-session" },
+      });
+      expect(manager.capturePaneVisible("unknown")).toEqual({
+        ok: false,
+        failure: { kind: "no-session" },
+      });
+    });
+
+    it("capture-pane が失敗したら tmux-failed に stderr を残す", () => {
+      mockTmux({
+        "capture-pane": () =>
+          textResult({ status: 1, stderr: "can't find pane: ark-x" }),
+      });
+      const expected = {
+        ok: false,
+        failure: {
+          kind: "tmux-failed",
+          command: "capture-pane",
+          status: 1,
+          stderr: "can't find pane: ark-x",
+        },
+      };
+      expect(manager.capturePane(sessionId, 50)).toMatchObject(expected);
+      expect(manager.capturePaneVisible(sessionId)).toMatchObject(expected);
+    });
+
+    it("成功時は画面テキストを返し、空画面は失敗ではなく空文字", () => {
+      mockTmux({
+        "capture-pane": args =>
+          textResult({ stdout: args.includes("-S") ? "scrollback\n" : "" }),
+      });
+      expect(manager.capturePane(sessionId, 50)).toEqual({
+        ok: true,
+        value: "scrollback",
+      });
+      expect(manager.capturePaneVisible(sessionId)).toEqual({
+        ok: true,
+        value: "",
+      });
+      expect(callsOf("capture-pane")).toEqual([
+        ["capture-pane", "-t", tmuxSessionName, "-p", "-S", "-50"],
+        ["capture-pane", "-t", tmuxSessionName, "-p"],
+      ]);
     });
   });
 });

@@ -165,7 +165,9 @@ describe("SessionOrchestrator + real Ark context harness", () => {
     expect(fs.existsSync(settingsPath)).toBe(true);
 
     mockedTmux.getEnv.mockImplementation((_sessionId, name) =>
-      contextEnv?.[name] ? contextEnv[name] : null
+      contextEnv?.[name]
+        ? { ok: true, value: contextEnv[name] }
+        : { ok: false, failure: { kind: "not-set" } }
     );
     orchestrator.stopSession(managed.id);
 
