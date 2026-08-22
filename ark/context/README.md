@@ -50,6 +50,13 @@ rotate、rewrite しない。capture、summary、restart は raw/summary の削�
 持たず、session 終了後も保持する。削除は Ark lifecycle が session directory 全体を
 明示的に削除するときだけ行う。
 
+teardown の summary / handoff / inbox 最終化が失敗した場合も、失敗 stage を
+`session_finalization_failed` として同じ raw.log へ記録し、settings は独立して復元する。
+owner は pending marker として残し、次回 init が settings lock 下で再試行する。再試行は
+3 回までとし、上限到達時は `session_finalization_abandoned` を raw.log へ記録してから
+新しい owner へ進む。Goal / Plan がまだ起票されていない空 task scaffold は handoff の
+最終化対象外であり、それだけを理由に owner を残さない。
+
 機械 summary は時刻・locale 非依存で、raw の error 本文を含めず、必ず raw line
 参照を持つ。LLM summary は `[context.summarize] llm = true` と model、API key がすべて
 揃った明示 opt-in の場合だけ試行する。Anthropic Messages API へ送る入力は機械

@@ -7,6 +7,7 @@ ARK_SOURCE_ROOT=$(cd "$(dirname "$0")/../../.." 2>/dev/null && pwd -P) || exit 1
 . "$ARK_SOURCE_ROOT/ark/context/scripts/lib/task-template.sh"
 . "$ARK_SOURCE_ROOT/ark/context/scripts/lib/handoff.sh"
 . "$ARK_SOURCE_ROOT/ark/context/scripts/lib/failures-knowledge.sh"
+. "$ARK_SOURCE_ROOT/ark/context/scripts/lib/finalization.sh"
 . "$ARK_SOURCE_ROOT/ark/context/adapters/claude-code/settings.sh"
 
 session_disabled() {
@@ -130,6 +131,9 @@ if owner_read "$owner"; then
     old_session="$CTX_DATA_ROOT/sessions/$OWNER_SESSION"
     old_cache="$CTX_CACHE_ROOT/$OWNER_SESSION"
     old_session_safe=0
+    finalization_succeeded=1
+    recovery_attempt=0
+    finalization_abandoned=0
     if ctx_validate_xdg_dir "$old_session" >/dev/null 2>&1; then
       old_session_canonical=$(cd "$old_session" 2>/dev/null && pwd -P) || old_session_canonical=
       [ "$old_session_canonical" = "$old_session" ] && old_session_safe=1
@@ -139,22 +143,15 @@ if owner_read "$owner"; then
       ARK_SESSION_DIR=$old_session
       ARK_CACHE_DIR=$old_cache
       export ARK_SESSION_ID ARK_SESSION_DIR ARK_CACHE_DIR
-      env ARK_SESSION_DIR="$ARK_SESSION_DIR" CTX_CONFIG_FILE="$CTX_CONFIG_FILE" \
-        /bin/bash "$ARK_SOURCE_ROOT/ark/context/scripts/summarize-errors.sh" >/dev/null 2>&1 || true
-      ctx_handoff_write "$ARK_SESSION_DIR" "$repo" "$OWNER_SESSION" >/dev/null 2>&1 || true
-      old_work_id=$(ctx_work_id_from_repo "$repo" 2>/dev/null) || old_work_id=
-      if [ -n "$old_work_id" ]; then
-        knowledge_lock="$ARK_KNOWLEDGE_DIR/failures-inbox.lock"
-        if ctx_lock_acquire "$knowledge_lock" 8 5 30 mkdir-direct >/dev/null 2>&1; then
-          knowledge_backend=$CTX_LOCK_ACQUIRED_BACKEND
-          knowledge_pid=$CTX_LOCK_ACQUIRED_PID
-          knowledge_token=$CTX_LOCK_ACQUIRED_TOKEN
-          ctx_failures_inbox_append "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" \
-            "$old_work_id" "$OWNER_SESSION" >/dev/null 2>&1 || true
-          ctx_session_failures_inbox_append "$ARK_SESSION_DIR" "$ARK_KNOWLEDGE_DIR" \
-            "$old_work_id" "$OWNER_SESSION" >/dev/null 2>&1 || true
-          ctx_lock_release "$knowledge_lock" "$knowledge_backend" "$knowledge_pid" "$knowledge_token" \
-            >/dev/null 2>&1 || true
+      recovery_attempt=$(ctx_finalization_next_recovery_attempt "$ARK_SESSION_DIR" 2>/dev/null) \
+        || recovery_attempt=3
+      if ! ctx_finalize_session_derivatives "$ARK_SESSION_DIR" "$repo" "$OWNER_SESSION" \
+        recovery "$recovery_attempt"; then
+        finalization_succeeded=0
+        if [ "$recovery_attempt" -ge 3 ]; then
+          ctx_finalization_record_abandoned "$ARK_SESSION_DIR" "$recovery_attempt" \
+            "$CTX_FINALIZATION_FAILED_STAGES" >/dev/null 2>&1 || true
+          finalization_abandoned=1
         fi
       fi
       if ctx_validate_xdg_dir "$ARK_CACHE_DIR" >/dev/null 2>&1 \
@@ -170,6 +167,10 @@ if owner_read "$owner"; then
       reason=${CLAUDE_SETTINGS_FAILURE_REASON:-orphan settings restore failed}
       release_lock
       session_disabled "$reason"
+    fi
+    if [ "$finalization_succeeded" -eq 0 ] && [ "$finalization_abandoned" -eq 0 ]; then
+      release_lock
+      session_disabled "pending session finalization retry failed"
     fi
     command rm -f "$owner" || { release_lock; session_disabled "orphan owner cleanup failed"; }
   fi
