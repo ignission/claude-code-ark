@@ -1,6 +1,13 @@
 タスク管理:
 1. task.md だけを正本にし、native todo を使用しない。
 2. 各 tool step の前後で Plan status と ← NOW を現実に合わせる。
+   task.md は次の書式にする:
+   ## Goal
+   <1 行で書く>
+
+   ## Plan
+   - [x] 済んだ項目
+   - [ ] いま進めている項目 ← NOW
 3. Goal / Constraints は空から記入済みへの一方向の初回記入を除いて書き換えず、逸脱が必要なら作業を停止する。
 
 エラー:

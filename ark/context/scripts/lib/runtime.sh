@@ -109,17 +109,17 @@ EOF
   rmdir "$lock" >/dev/null 2>&1
 }
 
-_ctx_record_missing_jq_locked() {
-  local raw=$1 marker=$2 at raw_size entry entry_size
-  if [ -f "$raw" ] && grep -F "$marker" "$raw" >/dev/null 2>&1; then
-    return 0
-  fi
+_ctx_record_once_locked() {
+  local raw=$1 dedupe_marker=$2 fields=$3 at raw_size entry entry_size
   if [ -e "$raw" ] || [ -L "$raw" ]; then
     ctx_validate_xdg_file "$raw" || return 1
   else
     (set -C; : >"$raw") 2>/dev/null || return 1
     chmod 600 "$raw" || return 1
     ctx_validate_xdg_file "$raw" || return 1
+  fi
+  if grep -F "$dedupe_marker" "$raw" >/dev/null 2>&1; then
+    return 0
   fi
   raw_size=$(stat -c '%s' "$raw" 2>/dev/null) \
     || raw_size=$(stat -f '%z' "$raw" 2>/dev/null) \
@@ -130,14 +130,15 @@ _ctx_record_missing_jq_locked() {
     [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
     *) return 1 ;;
   esac
-  entry=$(printf '{"at":"%s",%s' "$at" "$marker") || return 1
+  entry=$(printf '{"at":"%s",%s' "$at" "$fields") || return 1
   entry_size=$((${#entry} + 1))
   [ "$entry_size" -le $((67108864 - raw_size)) ] || return 1
   printf '%s\n' "$entry" >>"$raw" || return 1
 }
 
-_ctx_record_missing_jq() {
-  local session errors raw lock owner token attempt marker owner_value record_status old_umask
+_ctx_record_once() {
+  local dedupe_marker=$1 fields=$2
+  local session errors raw lock owner token attempt owner_value record_status old_umask
   session=${ARK_SESSION_DIR:-}
   [ -n "$session" ] && [ "${session#/}" != "$session" ] || return 1
   ctx_has_control "$session" && return 1
@@ -181,8 +182,7 @@ _ctx_record_missing_jq() {
   owner_value=$(sed -n '1p' "$owner") || return 1
   [ "$owner_value" = "$$ $token" ] || return 1
 
-  marker='"tool":"ark/context","error_type":"missing_prerequisite","exit_code":null,"is_interrupt":null,"error":"jq command unavailable","details":{}}'
-  _ctx_record_missing_jq_locked "$raw" "$marker"
+  _ctx_record_once_locked "$raw" "$dedupe_marker" "$fields"
   record_status=$?
   owner_value=$(sed -n '1p' "$owner" 2>/dev/null) || owner_value=
   if [ "$owner_value" = "$$ $token" ]; then
@@ -192,9 +192,143 @@ _ctx_record_missing_jq() {
   return "$record_status"
 }
 
+_ctx_record_missing_jq() {
+  local fields
+  fields='"tool":"ark/context","error_type":"missing_prerequisite","exit_code":null,"is_interrupt":null,"error":"jq command unavailable","details":{}}'
+  _ctx_record_once '"tool":"ark/context","error_type":"missing_prerequisite"' "$fields"
+}
+
 ctx_record_missing_jq() {
   _ctx_record_missing_jq >/dev/null 2>&1 || :
   return 0
+}
+
+ctx_record_task_parse_failure() {
+  local goal_lines=${1:-} now_items=${2:-} reason=${3:-} fields
+  case "$goal_lines" in ''|*[!0-9]*) return 0 ;; esac
+  case "$now_items" in ''|*[!0-9]*) return 0 ;; esac
+  case "$reason" in
+    unsafe_task|iconv_unavailable|invalid_utf8|goal_missing|remaining_overflow|sanitize_failed|limit_failed) ;;
+    *) return 0 ;;
+  esac
+  fields=$(printf '%s' \
+    '"tool":"ark/context","error_type":"task_parse_failed","exit_code":null,"is_interrupt":null,"error":"task.md parse failed","details":{' \
+    '"goal_lines":' "$goal_lines" ',"now_items":' "$now_items" ',"reason":"' "$reason" '"}}') \
+    || return 0
+  _ctx_record_once '"tool":"ark/context","error_type":"task_parse_failed"' "$fields" \
+    >/dev/null 2>&1 || :
+  return 0
+}
+
+_ctx_task_trim_marker_space() {
+  local value=$1 original=$1 tab
+  tab=$(printf '\t') || return 1
+  while :; do
+    case "$value" in
+      *' ') value=${value% } ;;
+      *"$tab") value=${value%"$tab"} ;;
+      *'　') value=${value%　} ;;
+      *) break ;;
+    esac
+  done
+  [ "$value" != "$original" ] || return 1
+  CTX_TASK_TRIMMED=$value
+}
+
+_ctx_task_extract_now() {
+  local item=$1 before_now before_arrow
+  case "$item" in
+    *NOW) before_now=${item%NOW} ;;
+    *) return 1 ;;
+  esac
+  _ctx_task_trim_marker_space "$before_now" || return 1
+  case "$CTX_TASK_TRIMMED" in
+    *'←') before_arrow=${CTX_TASK_TRIMMED%←} ;;
+    *'<-') before_arrow=${CTX_TASK_TRIMMED%<-} ;;
+    *) return 1 ;;
+  esac
+  _ctx_task_trim_marker_space "$before_arrow" || return 1
+  CTX_TASK_PARSED_ITEM=$CTX_TASK_TRIMMED
+}
+
+_ctx_task_sanitize_line() {
+  local cleaned expression
+  cleaned=$(printf '%s' "$1" | LC_ALL=C tr '\001-\037\177' ' ') || return 1
+  expression=$(printf 's/\302[\200-\237]/ /g')
+  printf '%s' "$cleaned" | LC_ALL=C sed "$expression"
+}
+
+_ctx_task_limit_utf8() {
+  local value=$1 maximum=$2 bytes count candidate
+  bytes=$(printf '%s' "$value" | wc -c | tr -d ' ')
+  if [ "$bytes" -le "$maximum" ]; then printf '%s' "$value"; return 0; fi
+  count=$maximum
+  while [ "$count" -ge $((maximum - 3)) ]; do
+    candidate=$(printf '%s' "$value" | dd bs=1 count="$count" 2>/dev/null \
+      | iconv -f UTF-8 -t UTF-8 2>/dev/null) && {
+      printf '%s' "$candidate"
+      return 0
+    }
+    count=$((count - 1))
+  done
+  return 1
+}
+
+ctx_parse_task_state() {
+  local task=$1 section line item
+  CTX_TASK_PARSED_GOAL=
+  CTX_TASK_PARSED_NOW=
+  CTX_TASK_PARSED_REMAINING=0
+  CTX_TASK_PARSED_GOAL_COUNT=0
+  CTX_TASK_PARSED_NOW_COUNT=0
+  CTX_TASK_PARSE_REASON=unsafe_task
+  ctx_validate_xdg_file "$task" >/dev/null 2>&1 || return 1
+  CTX_TASK_PARSE_REASON=iconv_unavailable
+  command -v iconv >/dev/null 2>&1 || return 1
+  CTX_TASK_PARSE_REASON=invalid_utf8
+  iconv -f UTF-8 -t UTF-8 "$task" >/dev/null 2>&1 || return 1
+  section=
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    case "$line" in
+      '## Goal') section=goal; continue ;;
+      '## Plan') section=plan; continue ;;
+      '## '*) section=other; continue ;;
+    esac
+    if [ "$section" = goal ] && [ -n "$line" ]; then
+      CTX_TASK_PARSED_GOAL_COUNT=$((CTX_TASK_PARSED_GOAL_COUNT + 1))
+      if [ -n "$CTX_TASK_PARSED_GOAL" ]; then
+        CTX_TASK_PARSED_GOAL="$CTX_TASK_PARSED_GOAL $line"
+      else
+        CTX_TASK_PARSED_GOAL=$line
+      fi
+    elif [ "$section" = plan ]; then
+      case "$line" in '- [ ] '*) CTX_TASK_PARSED_REMAINING=$((CTX_TASK_PARSED_REMAINING + 1)) ;; esac
+      case "$line" in
+        '- [ ] '*|'- [x] '*)
+          item=${line#- \[ \] }
+          [ "$item" != "$line" ] || item=${line#- \[x\] }
+          if _ctx_task_extract_now "$item"; then
+            CTX_TASK_PARSED_NOW_COUNT=$((CTX_TASK_PARSED_NOW_COUNT + 1))
+            if [ "$CTX_TASK_PARSED_NOW_COUNT" -eq 1 ]; then
+              CTX_TASK_PARSED_NOW=$CTX_TASK_PARSED_ITEM
+            fi
+          fi
+          ;;
+      esac
+    fi
+  done <"$task"
+  CTX_TASK_PARSE_REASON=goal_missing
+  [ "$CTX_TASK_PARSED_GOAL_COUNT" -ge 1 ] || return 1
+  CTX_TASK_PARSE_REASON=remaining_overflow
+  [ "$CTX_TASK_PARSED_REMAINING" -le 999999 ] || return 1
+  CTX_TASK_PARSE_REASON=sanitize_failed
+  CTX_TASK_PARSED_GOAL=$(_ctx_task_sanitize_line "$CTX_TASK_PARSED_GOAL") || return 1
+  CTX_TASK_PARSED_NOW=$(_ctx_task_sanitize_line "$CTX_TASK_PARSED_NOW") || return 1
+  CTX_TASK_PARSE_REASON=limit_failed
+  CTX_TASK_PARSED_GOAL=$(_ctx_task_limit_utf8 "$CTX_TASK_PARSED_GOAL" 180) || return 1
+  CTX_TASK_PARSED_NOW=$(_ctx_task_limit_utf8 "$CTX_TASK_PARSED_NOW" 300) || return 1
+  CTX_TASK_PARSE_REASON=
 }
 
 ctx_validate_repo_path() {

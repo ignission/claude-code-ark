@@ -6,6 +6,9 @@ if [ -z "${ARK_SESSION_DIR:-}" ]; then
 fi
 
 CTX_RULES_HOOK_DIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P) || exit 0
+CTX_RULES_RUNTIME="$CTX_RULES_HOOK_DIR/../scripts/lib/runtime.sh"
+[ -f "$CTX_RULES_RUNTIME" ] && [ ! -L "$CTX_RULES_RUNTIME" ] || exit 0
+. "$CTX_RULES_RUNTIME" || exit 0
 
 ctx_rules_stat() {
   local value uid mode extra
@@ -53,39 +56,16 @@ ctx_rules_has_failures() {
 }
 
 ctx_rules_parse_task() {
-  local task=$1 section line goal_count now_count item
+  local task=$1
   CTX_RULES_GOAL=
   CTX_RULES_NOW=
-  ctx_rules_safe_task "$task" || return 1
-  command -v iconv >/dev/null 2>&1 || return 1
-  iconv -f UTF-8 -t UTF-8 "$task" >/dev/null 2>&1 || return 1
-  section=
-  goal_count=0
-  now_count=0
-  while IFS= read -r line || [ -n "$line" ]; do
-    line=${line%$'\r'}
-    case "$line" in
-      '## Goal') section=goal; continue ;;
-      '## Plan') section=plan; continue ;;
-      '## '*) section=other; continue ;;
-    esac
-    if [ "$section" = goal ] && [ -n "$line" ]; then
-      goal_count=$((goal_count + 1))
-      CTX_RULES_GOAL=$line
-    elif [ "$section" = plan ]; then
-      case "$line" in
-        '- [ ] '*' ← NOW'|'- [x] '*' ← NOW')
-          now_count=$((now_count + 1))
-          item=${line#- \[ \] }
-          [ "$item" != "$line" ] || item=${line#- \[x\] }
-          CTX_RULES_NOW=${item% ← NOW}
-          ;;
-      esac
-    fi
-  done <"$task"
-  [ "$goal_count" -le 1 ] && [ "$now_count" -le 1 ] || return 1
-  case "$CTX_RULES_GOAL$CTX_RULES_NOW" in *"
-"*|*""*|*"	"*) return 1 ;; esac
+  if ! ctx_parse_task_state "$task"; then
+    ctx_record_task_parse_failure "$CTX_TASK_PARSED_GOAL_COUNT" \
+      "$CTX_TASK_PARSED_NOW_COUNT" "$CTX_TASK_PARSE_REASON"
+    return 1
+  fi
+  CTX_RULES_GOAL=$CTX_TASK_PARSED_GOAL
+  CTX_RULES_NOW=$CTX_TASK_PARSED_NOW
 }
 
 ctx_rules_main() {
