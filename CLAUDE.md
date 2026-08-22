@@ -109,8 +109,8 @@ PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`Spli
   `no-session`（管理外 ID）/ `tmux-failed`（非 0 終了・起動失敗・timeout。`status` /
   `signal` / `code` / `stderr` を持つ）/ `not-set` / `no-buffer` / `invalid-pane-pid` /
   `proc-error` / `unsupported-platform`
-- 呼び出し側は `not-set` と `unsupported-platform` だけを「想定内の値なし」として
-  静かに扱い、それ以外は `describeTmuxReadFailure` でログに理由を残す
+- 呼び出し側は `not-set` / `unsupported-platform` / `no-buffer` を「想定内の値なし」として
+  静かに扱い（`no-buffer` は `session:copy` が「バッファが空です」を返す）、それ以外は `describeTmuxReadFailure` でログに理由を残す
 - 1 秒間隔の polling 経路（`getAllPreviews` / bridge-collector）は
   `TmuxReadFailureReporter` で同じ失敗を 1 度だけ出し、回復時も 1 行残す
 - `getEnv` は `show-environment -t <session>` の一覧から自前で探す（変数名指定だと
