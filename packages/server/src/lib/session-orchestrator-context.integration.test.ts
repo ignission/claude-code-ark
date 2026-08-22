@@ -66,7 +66,11 @@ const savedXdg = {
 };
 
 beforeAll(() => {
-  testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ark-context-integration-"));
+  // macOS の os.tmpdir() は /var 配下を返すが、/var は /private/var への
+  // symlink。XDG fixture は派生物生成の正常系にするため、先に正規化する。
+  testRoot = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "ark-context-integration-"))
+  );
   const realRoot = path.join(testRoot, "real");
   const linkedRoot = path.join(testRoot, "link");
   fs.mkdirSync(realRoot, { mode: 0o700 });
