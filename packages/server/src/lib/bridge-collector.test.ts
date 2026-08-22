@@ -81,7 +81,7 @@ describe("bridge-collector - tmux 読み取り失敗 (#393)", () => {
     warnSpy.mockRestore();
   });
 
-  it("collectBridgeSessions: capture-pane 失敗でもセッションは READY で残り、理由は 1 度だけ警告する", () => {
+  it("collectBridgeSessions: capture-pane 失敗は ERR で残り、理由は 1 度だけ警告する", () => {
     mockedTmux.capturePaneVisible.mockReturnValue(
       tmuxFailed("can't find pane: ark-sess-1")
     );
@@ -90,7 +90,7 @@ describe("bridge-collector - tmux 読み取り失敗 (#393)", () => {
     const second = collectBridgeSessions();
 
     expect(first).toHaveLength(1);
-    expect(first[0]?.status).toBe("READY");
+    expect(first[0]?.status).toBe("ERR");
     expect(first[0]?.previewText).toBe("");
     expect(second).toHaveLength(1);
     const matching = warnSpy.mock.calls.filter(([msg]) =>
@@ -99,7 +99,7 @@ describe("bridge-collector - tmux 読み取り失敗 (#393)", () => {
     expect(matching).toHaveLength(1);
   });
 
-  it("collectGridSnapshots: capture-pane 失敗でも snapshot は返り、理由は 1 度だけ警告する", () => {
+  it("collectGridSnapshots: capture-pane 失敗は ERR の snapshot で返り、理由は 1 度だけ警告する", () => {
     mockedTmux.capturePaneVisible.mockReturnValue(
       tmuxFailed("no server running")
     );
@@ -108,7 +108,7 @@ describe("bridge-collector - tmux 読み取り失敗 (#393)", () => {
     const second = collectGridSnapshots();
 
     expect(first).toHaveLength(1);
-    expect(first[0]?.status).toBe("READY");
+    expect(first[0]?.status).toBe("ERR");
     expect(second).toHaveLength(1);
     const matching = warnSpy.mock.calls.filter(([msg]) =>
       String(msg).includes("no server running")

@@ -1212,6 +1212,35 @@ describe("SessionOrchestrator - tmux 読み取り失敗の区別 (#393)", () => 
       expect(mockedContext.teardownSession).not.toHaveBeenCalled();
       expect(warnSpy).not.toHaveBeenCalled();
     });
+
+    it.each([
+      ["空値", ""],
+      ["不正値", "not-a-session-id"],
+    ])(
+      "ARK_SESSION_ID が%sなら破損を警告し、teardown と restart ID への利用を避ける",
+      async (_label, invalidContextId) => {
+        const orchestrator = new SessionOrchestrator();
+        mockedTmux.getSession.mockReturnValue(makeTmuxSession());
+        mockedTmux.getEnv.mockReturnValue({
+          ok: true,
+          value: invalidContextId,
+        });
+        mockedTmux.createSession.mockResolvedValue(
+          makeTmuxSession({ id: "sess-id-2", tmuxSessionName: "ark-sess2" })
+        );
+
+        await orchestrator.restartSession("sess-id-1");
+
+        expect(mockedContext.teardownSession).not.toHaveBeenCalled();
+        expect(mockedContext.initializeSession).toHaveBeenCalledWith(
+          "/path/to/work",
+          undefined
+        );
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining("ARK_SESSION_ID が破損しています")
+        );
+      }
+    );
   });
 
   describe("stopSession", () => {

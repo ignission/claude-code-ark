@@ -477,7 +477,15 @@ export class SessionOrchestrator extends EventEmitter {
     purpose: string
   ): string | undefined {
     const result = tmuxManager.getEnv(sessionId, "ARK_SESSION_ID");
-    if (result.ok) return result.value;
+    if (result.ok) {
+      if (/^[0-9a-f]{32}$/.test(result.value)) return result.value;
+      const reason =
+        result.value === "" ? "空値です" : "32 桁の hex ではありません";
+      console.warn(
+        `[Orchestrator] ${purpose} ${sessionId}: tmux env の ARK_SESSION_ID が破損しています (${reason})。旧 context を teardown せずに進めます`
+      );
+      return undefined;
+    }
     if (!isExpectedAbsence(result)) {
       console.warn(
         `[Orchestrator] ${purpose} ${sessionId}: ARK_SESSION_ID を tmux env から読めないため旧 context を teardown せずに進めます (${describeTmuxReadFailure(result.failure)})`

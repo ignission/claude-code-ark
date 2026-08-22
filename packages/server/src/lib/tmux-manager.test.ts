@@ -884,6 +884,17 @@ describe("TmuxManager - 読み取り系メソッドの失敗分類 (#393)", () =
       });
     });
 
+    it("名前付きバッファだけが存在して show-buffer が no buffers なら no-buffer", () => {
+      mockTmux({
+        "list-buffers": () => textResult({ stdout: "named-buffer\n" }),
+        "show-buffer": () => textResult({ status: 1, stderr: "no buffers\n" }),
+      });
+      expect(manager.getBuffer(sessionId)).toEqual({
+        ok: false,
+        failure: { kind: "no-buffer" },
+      });
+    });
+
     it("バッファがあれば末尾改行を落として返す", () => {
       mockTmux({
         "list-buffers": () => textResult({ stdout: "buffer0\n" }),

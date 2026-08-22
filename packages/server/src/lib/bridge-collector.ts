@@ -78,6 +78,9 @@ export function collectBridgeSessions(): BridgeSession[] {
     let status: BridgeSessionStatus;
     if (ms.status === "stopped") {
       status = "STOP";
+    } else if (!captured.ok) {
+      // tmux 停止・セッション消失などの取得失敗を、空画面の READY と区別する。
+      status = "ERR";
     } else if (analysis.status === "IDLE" && previewText.trim().length === 0) {
       // /clear 直後・起動直後など、画面に意味あるテキストがない場合は READY (グレー)
       status = "READY";
@@ -188,6 +191,9 @@ export function collectGridSnapshots(maxLines = 12): SessionGridSnapshot[] {
     let status: BridgeSessionStatus;
     if (ms.status === "stopped") {
       status = "STOP";
+    } else if (!captured.ok) {
+      // tmux 停止・セッション消失などの取得失敗を、空画面の READY と区別する。
+      status = "ERR";
     } else if (analysis.status === "IDLE" && previewText.trim().length === 0) {
       status = "READY";
     } else {

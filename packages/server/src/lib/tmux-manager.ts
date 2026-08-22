@@ -776,7 +776,14 @@ export class TmuxManager extends EventEmitter {
       return { ok: false, failure: { kind: "no-buffer" } };
     }
     const shown = runTmux(["show-buffer"]);
-    if (!shown.ok) return shown;
+    if (!shown.ok) {
+      // show-buffer (引数なし) は最新の自動バッファだけを対象にするため、
+      // 名前付きバッファしか無い場合や一覧取得後に消えた場合も no buffers になる。
+      if (shown.failure.stderr === "no buffers") {
+        return { ok: false, failure: { kind: "no-buffer" } };
+      }
+      return shown;
+    }
     return { ok: true, value: shown.stdout.trimEnd() };
   }
 
