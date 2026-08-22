@@ -85,6 +85,36 @@ prepare_lifecycle_output() {
   seed_step_count "$output_cache" 7
 }
 
+break_finalization_stage() {
+  broken_stage=$1
+  case "$broken_stage" in
+    summary) broken_target="$ARK_SOURCE_FIXTURE/ark/context/scripts/summarize-errors.sh" ;;
+    handoff) broken_target="$ARK_SOURCE_FIXTURE/ark/context/scripts/lib/handoff.sh" ;;
+    inbox) broken_target="$ARK_SOURCE_FIXTURE/ark/context/scripts/lib/failures-knowledge.sh" ;;
+    *) return 1 ;;
+  esac
+  broken_backup="$TEST_TMP/finalization-$broken_stage.backup"
+  command cp -f "$broken_target" "$broken_backup" || return 1
+  broken_checksum=$(cksum <"$broken_backup") || return 1
+  case "$broken_stage" in
+    summary)
+      printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$broken_target" || return 1
+      ;;
+    handoff)
+      printf '%s\n' '' 'ctx_handoff_write() { return 1; }' >>"$broken_target" || return 1
+      ;;
+    inbox)
+      printf '%s\n' '' 'ctx_failures_inbox_append() { return 1; }' >>"$broken_target" || return 1
+      ;;
+  esac
+}
+
+restore_finalization_stage() {
+  command cp -f "$broken_backup" "$broken_target" || return 1
+  [ "$broken_checksum" = "$(cksum <"$broken_target")" ] || return 1
+  command diff -q "$broken_backup" "$broken_target" >/dev/null 2>&1
+}
+
 run_registered_hook() {
   registered_command=$1
   registered_input=$2
@@ -412,6 +442,184 @@ jq -e '.permissions.deny | index("TodoWrite") != null' "$restore_fail_settings" 
 [ ! -e "$restore_fail_cache/steps" ] || test_fail "restore failure left steps"
 [ ! -e "$restore_fail_state/settings.lock" ] || test_fail "restore failure left settings lock"
 [ ! -e "$knowledge/failures-inbox.lock" ] || test_fail "restore failure left knowledge lock"
+
+for failed_stage in summary handoff inbox; do
+  setup_repo "teardown-$failed_stage-failure"
+  failed_settings="$repo/.claude/settings.local.json"
+  printf '{\n  "before": "%s-finalization"\n}\n' "$failed_stage" >"$failed_settings"
+  chmod 640 "$failed_settings"
+  command cp -f "$failed_settings" "$TEST_TMP/$failed_stage-settings-original"
+  case "$failed_stage" in
+    summary)
+      failed_sid=d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4
+      recovered_sid=e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4
+      ;;
+    handoff)
+      failed_sid=d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5
+      recovered_sid=e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5
+      ;;
+    inbox)
+      failed_sid=d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6
+      recovered_sid=e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6
+      ;;
+  esac
+  /bin/sleep 60 & failed_owner_pid=$!
+  run_case /bin/bash "$INIT" --repo "$repo" --owner-pid "$failed_owner_pid" \
+    --session-id "$failed_sid" --goal "Finalization $failed_stage" --plan-item "Finish $failed_stage"
+  assert_success "$failed_stage failure source init succeeds"
+  assert_eq "$failed_stage failure source is enabled" $'enabled\t1' "$(sed -n '1p' "$CASE_STDOUT")"
+  failed_session=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
+  failed_cache=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
+  failed_state="$XDG_DATA_HOME/ark/context/repos/$(ctx_sha256 "$repo")"
+  prepare_lifecycle_output "$failed_session" "$failed_cache"
+  finalization_host_inbox="$XDG_DATA_HOME/ark/context/knowledge/failures-inbox.md"
+  finalization_candidate_before=$(grep -Fc -- \
+    '### Candidate: ark/context / session_finalization_failed' \
+    "$finalization_host_inbox" 2>/dev/null || true)
+  command cp -f "$failed_state/owner" "$TEST_TMP/$failed_stage-owner-original"
+  failed_owner_mode=$(ctx_stat "$failed_state/owner" | awk '{print $2}')
+  break_finalization_stage "$failed_stage" || test_fail "$failed_stage fault injection failed"
+  run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$failed_sid"
+  assert_success "$failed_stage failure teardown reaches the end"
+  cmp -s "$failed_settings" "$TEST_TMP/$failed_stage-settings-original" \
+    || test_fail "$failed_stage failure teardown did not restore settings bytes"
+  assert_eq "$failed_stage failure teardown restores settings mode" 640 \
+    "$(ctx_stat "$failed_settings" | awk '{print $2}')"
+  cmp -s "$failed_state/owner" "$TEST_TMP/$failed_stage-owner-original" \
+    || test_fail "$failed_stage failure changed pending owner content"
+  assert_eq "$failed_stage failure preserves owner mode" "$failed_owner_mode" \
+    "$(ctx_stat "$failed_state/owner" | awk '{print $2}')"
+  assert_eq "$failed_stage failure records exact JSONL stage" 1 \
+    "$(jq -c --arg stage "$failed_stage" '
+      select(.tool == "ark/context"
+        and .error_type == "session_finalization_failed"
+        and .exit_code == null
+        and .is_interrupt == null
+        and .error == "session finalization failed"
+        and .details == {attempt:0,phase:"teardown",stage:$stage})
+    ' "$failed_session/errors/raw.log" | wc -l | tr -d ' ')"
+  restore_finalization_stage || test_fail "$failed_stage fault injection was not restored"
+  kill "$failed_owner_pid"; wait "$failed_owner_pid" 2>/dev/null || true
+  run_case /bin/bash "$INIT" --repo "$repo" --owner-pid "$$" --session-id "$recovered_sid" \
+    --goal "Recovered $failed_stage" --plan-item "Continue $failed_stage"
+  assert_success "$failed_stage pending recovery exits successfully"
+  assert_eq "$failed_stage pending recovery enables the new session" $'enabled\t1' \
+    "$(sed -n '1p' "$CASE_STDOUT")"
+  assert_eq "$failed_stage recovery publishes exact new owner session" "$recovered_sid" \
+    "$(cut -f1 "$failed_state/owner")"
+  grep -F 'session_finalization_failed' "$failed_session/errors/summary.md" >/dev/null 2>&1 \
+    || test_fail "$failed_stage recovery summary omits the recorded failure"
+  grep -F "Goal: Finalization $failed_stage" "$failed_session/handoff.md" >/dev/null 2>&1 \
+    || test_fail "$failed_stage recovery handoff content is wrong"
+  assert_eq "$failed_stage recovery inbox adds the recorded error type once" \
+    "$((finalization_candidate_before + 1))" \
+    "$(grep -Fc -- '### Candidate: ark/context / session_finalization_failed' \
+      "$finalization_host_inbox")"
+  run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$recovered_sid"
+  assert_success "$failed_stage recovered session teardown succeeds"
+done
+
+setup_repo finalization-retry-limit
+retry_settings="$repo/.claude/settings.local.json"
+printf '%s\n' '{"retry-limit":"original"}' >"$retry_settings"
+chmod 640 "$retry_settings"
+command cp -f "$retry_settings" "$TEST_TMP/retry-settings-original"
+retry_old_sid=d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7
+retry_new_sid=e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7
+/bin/sleep 60 & retry_owner_pid=$!
+run_case /bin/bash "$INIT" --repo "$repo" --owner-pid "$retry_owner_pid" \
+  --session-id "$retry_old_sid" --goal 'Retry finalization' --plan-item 'Retry handoff'
+assert_success "retry-limit source init succeeds"
+retry_session=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
+retry_cache=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
+retry_state="$XDG_DATA_HOME/ark/context/repos/$(ctx_sha256 "$repo")"
+prepare_lifecycle_output "$retry_session" "$retry_cache"
+command cp -f "$retry_state/owner" "$TEST_TMP/retry-owner-original"
+break_finalization_stage handoff || test_fail "retry-limit fault injection failed"
+run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$retry_old_sid"
+assert_success "retry-limit teardown reaches settings restore"
+cmp -s "$retry_settings" "$TEST_TMP/retry-settings-original" \
+  || test_fail "retry-limit teardown did not restore settings bytes"
+cmp -s "$retry_state/owner" "$TEST_TMP/retry-owner-original" \
+  || test_fail "retry-limit teardown did not preserve owner bytes"
+kill "$retry_owner_pid"; wait "$retry_owner_pid" 2>/dev/null || true
+retry_number=1
+while [ "$retry_number" -le 2 ]; do
+  run_case /bin/bash "$INIT" --repo "$repo" --owner-pid "$$" --session-id "$retry_new_sid" \
+    --goal 'After retry limit' --plan-item 'Start replacement'
+  assert_success "pending retry $retry_number exits successfully"
+  assert_eq "pending retry $retry_number stays disabled" $'enabled\t0' "$(sed -n '1p' "$CASE_STDOUT")"
+  assert_eq "pending retry $retry_number reports finalization failure" \
+    $'reason\tpending session finalization retry failed' "$(sed -n '2p' "$CASE_STDOUT")"
+  cmp -s "$retry_state/owner" "$TEST_TMP/retry-owner-original" \
+    || test_fail "pending retry $retry_number changed owner bytes"
+  cmp -s "$retry_settings" "$TEST_TMP/retry-settings-original" \
+    || test_fail "pending retry $retry_number changed restored settings bytes"
+  retry_number=$((retry_number + 1))
+done
+run_case /bin/bash "$INIT" --repo "$repo" --owner-pid "$$" --session-id "$retry_new_sid" \
+  --goal 'After retry limit' --plan-item 'Start replacement'
+assert_success "pending retry limit exits successfully"
+assert_eq "pending retry limit gives up and enables replacement" $'enabled\t1' "$(sed -n '1p' "$CASE_STDOUT")"
+assert_eq "retry limit records each exact recovery attempt" '1 2 3' \
+  "$(jq -r '
+    select(.tool == "ark/context"
+      and .error_type == "session_finalization_failed"
+      and .details.phase == "recovery"
+      and .details.stage == "handoff")
+    | .details.attempt
+  ' "$retry_session/errors/raw.log" | tr '\n' ' ' | sed 's/ $//')"
+assert_eq "retry limit records exact abandonment content" 1 \
+  "$(jq -c '
+    select(.tool == "ark/context"
+      and .error_type == "session_finalization_abandoned"
+      and .exit_code == null
+      and .is_interrupt == null
+      and .error == "pending session finalization abandoned"
+      and .details == {attempt:3,stages:"handoff"})
+  ' "$retry_session/errors/raw.log" | wc -l | tr -d ' ')"
+assert_eq "retry limit replaces old owner with requested session" "$retry_new_sid" \
+  "$(cut -f1 "$retry_state/owner")"
+restore_finalization_stage || test_fail "retry-limit fault injection was not restored"
+run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$retry_new_sid"
+assert_success "retry-limit replacement teardown succeeds"
+
+setup_repo concurrent-pending-finalization
+concurrent_old_sid=d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8
+/bin/sleep 60 & concurrent_pending_owner=$!
+run_case /bin/bash "$INIT" --repo "$repo" --owner-pid "$concurrent_pending_owner" \
+  --session-id "$concurrent_old_sid" --goal 'Concurrent pending' --plan-item 'Recover once'
+assert_success "concurrent pending source init succeeds"
+concurrent_old_session=$(awk -F '\t' '$1=="ARK_SESSION_DIR"{print $2}' "$CASE_STDOUT")
+concurrent_old_cache=$(awk -F '\t' '$1=="ARK_CACHE_DIR"{print $2}' "$CASE_STDOUT")
+concurrent_pending_state="$XDG_DATA_HOME/ark/context/repos/$(ctx_sha256 "$repo")"
+prepare_lifecycle_output "$concurrent_old_session" "$concurrent_old_cache"
+break_finalization_stage summary || test_fail "concurrent pending fault injection failed"
+run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$concurrent_old_sid"
+assert_success "concurrent pending teardown reaches the end"
+restore_finalization_stage || test_fail "concurrent pending fault injection was not restored"
+kill "$concurrent_pending_owner"; wait "$concurrent_pending_owner" 2>/dev/null || true
+concurrent_pending_out1="$TEST_TMP/concurrent-pending-1.out"
+concurrent_pending_out2="$TEST_TMP/concurrent-pending-2.out"
+/bin/bash "$INIT" --repo "$repo" --owner-pid "$$" --session-id e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8 \
+  --goal 'Pending winner one' --plan-item 'Own repo' >"$concurrent_pending_out1" 2>"$TEST_TMP/concurrent-pending-1.err" & pending_p1=$!
+/bin/bash "$INIT" --repo "$repo" --owner-pid "$$" --session-id e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9 \
+  --goal 'Pending winner two' --plan-item 'Own repo' >"$concurrent_pending_out2" 2>"$TEST_TMP/concurrent-pending-2.err" & pending_p2=$!
+wait "$pending_p1"; pending_c1=$?; wait "$pending_p2"; pending_c2=$?
+assert_eq "concurrent pending init process one" 0 "$pending_c1"
+assert_eq "concurrent pending init process two" 0 "$pending_c2"
+assert_eq "concurrent pending recovery has one winner" 1 \
+  "$(grep -l $'enabled\t1' "$concurrent_pending_out1" "$concurrent_pending_out2" | wc -l | tr -d ' ')"
+assert_eq "concurrent pending recovery has one loser" 1 \
+  "$(grep -l $'enabled\t0' "$concurrent_pending_out1" "$concurrent_pending_out2" | wc -l | tr -d ' ')"
+concurrent_pending_winner=$(awk -F '\t' '$1=="ARK_SESSION_ID"{print $2}' \
+  "$concurrent_pending_out1" "$concurrent_pending_out2")
+assert_eq "concurrent pending owner content matches winner" "$concurrent_pending_winner" \
+  "$(cut -f1 "$concurrent_pending_state/owner")"
+grep -F 'Goal: Concurrent pending' "$concurrent_old_session/handoff.md" >/dev/null 2>&1 \
+  || test_fail "concurrent pending recovery did not finalize old handoff content"
+run_case /bin/bash "$TEARDOWN" --repo "$repo" --session-id "$concurrent_pending_winner"
+assert_success "concurrent pending winner teardown succeeds"
 
 setup_repo restart-flow
 old_sid=abababababababababababababababab
