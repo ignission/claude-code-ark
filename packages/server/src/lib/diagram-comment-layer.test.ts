@@ -1094,6 +1094,15 @@ describe("injectDiagramCommentLayer", () => {
                 .split(",")
                 .some(tag => tag.trim().toUpperCase() === child.tagName)
             ) ?? null,
+          closest: (selector: string) => {
+            const tagName = selector.toUpperCase();
+            let current: FakeNode | null = value;
+            while (current) {
+              if (current.tagName === tagName) return current;
+              current = current.parentNode;
+            }
+            return null;
+          },
           insertBefore: (badge: FakeNode, before: FakeNode | null) => {
             inserted.push({ parent: value, before, badge });
           },
@@ -1125,16 +1134,36 @@ describe("injectDiagramCommentLayer", () => {
       expect(injected).toMatch(/\.ark-author-badge\{[^}]*user-select:none/u);
     });
 
-    it("doc の anchor 構築時だけバッジを作り、再構築時は既存バッジを除去する", () => {
+    it("doc の anchor 構築時だけバッジを作り、再構築時は注入済みバッジだけを除去する", () => {
       const injected = injectDiagramCommentLayer(minimalDoc);
 
       expect(injected).toContain("if(!graphMode)buildAuthorBadge(anchor);");
       expect(injected).toContain(
-        'document.querySelectorAll(".ark-author-badge").forEach(function(badge){badge.remove();});'
+        `document.querySelectorAll('.ark-author-badge[data-ark-harness-ui="1"]').forEach(function(badge){badge.remove();});`
       );
       expect(injected).toContain(
         'parent.closest(".ark-comment-layer,.ark-author-badge,script,style,noscript")'
       );
+    });
+
+    it("thead/tbody/tfoot は最寄りの table の直前へ挿入し、table の子にしない", () => {
+      const { buildAuthorBadge, wrap, inserted } = runBadgeBuilder();
+      const tableHead = wrap(node("THEAD", { "data-ark-author": "human" }));
+      const tableBody = wrap(node("TBODY", { "data-ark-author": "claude" }));
+      const tableFoot = wrap(node("TFOOT", { "data-ark-author": "human" }));
+      const table = wrap(node("TABLE", {}, [tableHead, tableBody, tableFoot]));
+      const container = wrap(node("DIV", {}, [table]));
+
+      for (const section of [tableHead, tableBody, tableFoot]) {
+        buildAuthorBadge(section);
+      }
+
+      expect(inserted).toHaveLength(3);
+      for (const insertion of inserted) {
+        expect(insertion.parent).toBe(container);
+        expect(insertion.parent).not.toBe(table);
+        expect(insertion.before).toBe(table);
+      }
     });
 
     it("tr は先頭セル、table/ul/ol/dl は直前の兄弟、それ以外は先頭子として挿入する", () => {
@@ -1164,6 +1193,52 @@ describe("injectDiagramCommentLayer", () => {
       expect(inserted[2]?.parent).toBe(paragraph);
       expect(inserted[2]?.before).toBe(text);
       expect(inserted[2]?.badge.attributes["data-ark-harness-ui"]).toBe("1");
+    });
+
+    it("再構築しても本文に元からある ark-author-badge は残す", () => {
+      const fakeBadge = (attributes: Record<string, string>) => ({
+        tagName: "SPAN",
+        attributes,
+        removed: false,
+        remove() {
+          this.removed = true;
+        },
+      });
+      const originalBadge = fakeBadge({ class: "ark-author-badge" });
+      const injectedBadge = fakeBadge({
+        class: "ark-author-badge",
+        "data-ark-harness-ui": "1",
+      });
+      const badgeSelectorPosition = COMMENT_LAYER.indexOf(
+        ".ark-author-badge",
+        COMMENT_LAYER.indexOf("function build()")
+      );
+      const cleanup = COMMENT_LAYER.slice(
+        COMMENT_LAYER.lastIndexOf(
+          "document.querySelectorAll",
+          badgeSelectorPosition
+        ),
+        COMMENT_LAYER.indexOf('document.querySelectorAll("style")')
+      );
+
+      runInNewContext(cleanup, {
+        document: {
+          querySelectorAll: (selector: string) => {
+            const requiresHarnessUi = selector.includes(
+              '[data-ark-harness-ui="1"]'
+            );
+            return [originalBadge, injectedBadge].filter(
+              badge =>
+                badge.attributes.class === "ark-author-badge" &&
+                (!requiresHarnessUi ||
+                  badge.attributes["data-ark-harness-ui"] === "1")
+            );
+          },
+        },
+      });
+
+      expect(originalBadge.removed).toBe(false);
+      expect(injectedBadge.removed).toBe(true);
     });
   });
 

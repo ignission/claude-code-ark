@@ -912,12 +912,17 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     claude:"Claude（エージェント）が書いた本文。人間の決定ではない"
   };
   // バッジを中に入れると表示が崩れる要素は直前の兄弟に置く
-  var AUTHOR_SIBLING_TAGS={TABLE:true,THEAD:true,TBODY:true,TFOOT:true,UL:true,OL:true,DL:true};
+  var AUTHOR_TABLE_SECTION_TAGS={THEAD:true,TBODY:true,TFOOT:true};
+  var AUTHOR_SIBLING_TAGS={TABLE:true,UL:true,OL:true,DL:true};
   function authorBadgeTarget(anchor){
     var tag=anchor.tagName;
     if(tag==="TR"){
       var cell=anchor.querySelector("th,td");
       return cell?{parent:cell,before:cell.firstChild}:null;
+    }
+    if(AUTHOR_TABLE_SECTION_TAGS[tag]){
+      var table=anchor.closest("table");
+      return table&&table.parentNode?{parent:table.parentNode,before:table}:null;
     }
     if(AUTHOR_SIBLING_TAGS[tag]){
       return anchor.parentNode?{parent:anchor.parentNode,before:anchor}:null;
@@ -955,7 +960,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     document.querySelectorAll(".ark-comment-layer").forEach(function(existingRoot){
       existingRoot.remove();
     });
-    document.querySelectorAll(".ark-author-badge").forEach(function(badge){badge.remove();});
+    document.querySelectorAll('.ark-author-badge[data-ark-harness-ui="1"]').forEach(function(badge){badge.remove();});
     document.querySelectorAll("style").forEach(function(existingStyle){
       if(existingStyle.getAttribute("data-ark-harness-ui")==="1"&&existingStyle.textContent.indexOf(".ark-comment-layer{")>=0){
         existingStyle.remove();

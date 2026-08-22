@@ -104,7 +104,8 @@ model ではなく HTML の属性に置く（model に書き手を複製しな�
 - 既存の文書に無印のブロックがあっても、そのままでは読める。書き換えたブロックから
   順に `data-ark-author` を付けていく
 
-ボードはこの属性を読んで「人間」「Claude」のバッジを各ブロックに表示する。
+ボードはこの属性を読んで「人間」「Claude」のバッジを `data-ark-author` 属性付きの
+各ブロックに表示する。
 
 ```html
 <p data-ark-id="s2-p1" data-ark-author="claude">推奨: B 案（同期 API）。理由は…</p>

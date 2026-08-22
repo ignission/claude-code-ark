@@ -93,7 +93,8 @@ PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`Spli
 - `human` はサーバーで検証できない（ファイルは worktree 外から自由に書き換えられる）。
   「人間がコメント・会話で下した決定を転記したときだけ `human`」という規約を
   SessionStart hook の context と `diagram-authoring` skill で配り、doc モードの
-  コメント層が各ブロックに「人間」「Claude」のバッジを出す
+  コメント層が `data-ark-author` 属性付きブロックに「人間」「Claude」のバッジを出す。
+  無印ブロックには著者バッジを表示しない
 - 「前回開いたときから何が変わったか」の差分可視化と、複数エージェントの同時編集の
   競合（last-write-wins）は本機能の範囲外
 
