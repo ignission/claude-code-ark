@@ -77,12 +77,14 @@ describe("forwardDiagramCommentPortRequest", () => {
     {
       type: "ark:diagram-comment-reply",
       requestId: "req-reply",
+      operationId: "op-reply",
       threadId: "th-1",
       body: "返信本文",
     },
     {
       type: "ark:diagram-comment-create",
       requestId: "req-create",
+      operationId: "op-create",
       anchorId: "s1",
       anchorQuote: "選択した本文",
       anchorOccurrence: 1,
@@ -91,16 +93,19 @@ describe("forwardDiagramCommentPortRequest", () => {
     {
       type: "ark:diagram-comment-resolve",
       requestId: "req-resolve",
+      operationId: "op-resolve",
       threadId: "th-1",
     },
     {
       type: "ark:diagram-comment-delete",
       requestId: "req-delete",
+      operationId: "op-delete",
       threadId: "th-1",
     },
     {
       type: "ark:diagram-comment-send",
       requestId: "req-send",
+      operationId: "op-send",
       threadId: "th-1",
     },
   ];
@@ -138,9 +143,11 @@ describe("forwardDiagramCommentPortRequest", () => {
     }
 
     expect(deps.getDiagramComments).toHaveBeenCalledWith("session-1", REL_PATH);
+    // operationId は iframe 由来の値をそのまま透過させる（#306）
     expect(deps.createDiagramComment).toHaveBeenCalledWith(
       "session-1",
       REL_PATH,
+      "op-create",
       "s1",
       "本文",
       "選択した本文",
@@ -149,22 +156,26 @@ describe("forwardDiagramCommentPortRequest", () => {
     expect(deps.replyDiagramComment).toHaveBeenCalledWith(
       "session-1",
       REL_PATH,
+      "op-reply",
       "th-1",
       "返信本文"
     );
     expect(deps.resolveDiagramComment).toHaveBeenCalledWith(
       "session-1",
       REL_PATH,
+      "op-resolve",
       "th-1"
     );
     expect(deps.deleteDiagramComment).toHaveBeenCalledWith(
       "session-1",
       REL_PATH,
+      "op-delete",
       "th-1"
     );
     expect(deps.sendDiagramComment).toHaveBeenCalledWith(
       "session-1",
       REL_PATH,
+      "op-send",
       "th-1"
     );
     expect(deps.reply.mock.calls.map(call => call[0].requestId)).toEqual([

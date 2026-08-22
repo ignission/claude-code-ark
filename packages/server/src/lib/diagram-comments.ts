@@ -7,6 +7,10 @@ import type {
   DiagramCommentsResponse,
   DiagramCommentThread,
 } from "@ark/shared";
+import {
+  diagramCommentOperationKey,
+  diagramCommentOperationLog,
+} from "./diagram-comment-operation-log.js";
 import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
 import { readDiagramModel } from "./diagram-reader.js";
@@ -47,7 +51,16 @@ export type DiagramCommentsPathResult =
       error: string;
     };
 
-interface DeleteDiagramCommentOptions {
+/**
+ * mutation の操作 ID。省略時（MCP 経由の Claude の返信など）は冪等化しない。
+ * 指定時は同じ (種別, sidecar, operationId) の再送を再適用せず、現在の
+ * sidecar を返す（Issue #306: ACK タイムアウト後の再試行による重複防止）。
+ */
+export interface DiagramCommentMutationOptions {
+  operationId?: string;
+}
+
+interface DeleteDiagramCommentOptions extends DiagramCommentMutationOptions {
   platform?: NodeJS.Platform;
 }
 
@@ -414,6 +427,77 @@ async function withMutationQueue<T>(
   }
 }
 
+type OperationKind = Parameters<typeof diagramCommentOperationKey>[0];
+
+interface MutationGate {
+  ok: true;
+  commentsAbsPath: string;
+  /** 適用済み判定用の key。操作 ID 無し（MCP 経由など）は null */
+  operationKey: string | null;
+  worktreeReal: string;
+  relPath: string;
+}
+
+/**
+ * 操作 ID を検証し、mutation queue と冪等化に必要な文脈をまとめる。
+ * 検証は queue に入る前に行い、不正値で queue を占有しない。
+ */
+function openMutation(
+  kind: OperationKind,
+  resolved: Extract<DiagramCommentsPathResult, { ok: true }>,
+  worktreeReal: string,
+  relPath: string,
+  operationId: string | undefined
+): MutationGate | DiagramCommentsError {
+  const base = {
+    ok: true as const,
+    commentsAbsPath: resolved.commentsAbsPath,
+    worktreeReal,
+    relPath,
+  };
+  if (operationId === undefined) return { ...base, operationKey: null };
+  const valid = boundedString(
+    operationId,
+    "operationId",
+    DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH
+  );
+  if (!valid.ok) return { ok: false, code: "BAD_REQUEST", error: valid.error };
+  return {
+    ...base,
+    operationKey: diagramCommentOperationKey(
+      kind,
+      resolved.commentsAbsPath,
+      valid.value
+    ),
+  };
+}
+
+/**
+ * sidecar 単位の mutation queue 内で operation を 1 回だけ適用する。
+ * 適用済みの操作 ID が再送されたら再適用せず、現在の sidecar を読んで返す。
+ * 初回適用が ok で終わったときだけ記録するので、失敗した操作は再試行で
+ * 改めて適用される。queue 内で判定するため、同時に届いた同一操作も
+ * 2 件目は再適用されない。
+ */
+function withIdempotentMutation(
+  gate: MutationGate,
+  operation: () => Promise<DiagramCommentsResponse>
+): Promise<DiagramCommentsResponse> {
+  return withMutationQueue(gate.commentsAbsPath, async () => {
+    if (
+      gate.operationKey !== null &&
+      diagramCommentOperationLog.has(gate.operationKey)
+    ) {
+      return readDiagramCommentsFile(gate.worktreeReal, gate.relPath);
+    }
+    const result = await operation();
+    if (result.ok && gate.operationKey !== null) {
+      diagramCommentOperationLog.record(gate.operationKey);
+    }
+    return result;
+  });
+}
+
 async function readCurrentDiagram(
   worktreeReal: string,
   relPath: string
@@ -520,11 +604,20 @@ export async function createDiagramComment(
   anchorId: string,
   body: string,
   anchorQuote?: string,
-  anchorOccurrence?: number
+  anchorOccurrence?: number,
+  options: DiagramCommentMutationOptions = {}
 ): Promise<DiagramCommentsResponse> {
   const resolved = resolveDiagramCommentsPath(worktreeReal, relPath);
   if (!resolved.ok) return resolved;
-  return withMutationQueue(resolved.commentsAbsPath, async () => {
+  const gate = openMutation(
+    "create",
+    resolved,
+    worktreeReal,
+    relPath,
+    options.operationId
+  );
+  if (!gate.ok) return gate;
+  return withIdempotentMutation(gate, async () => {
     const diagram = await readCurrentDiagram(worktreeReal, relPath);
     if (!diagram.ok) return diagram;
     const anchor = diagram.model.nodes.find(node => node.id === anchorId);
@@ -629,11 +722,20 @@ export async function appendDiagramCommentMessage(
   worktreeReal: string,
   relPath: string,
   threadId: string,
-  input: { body: string; author?: string }
+  input: { body: string; author?: string },
+  options: DiagramCommentMutationOptions = {}
 ): Promise<DiagramCommentsResponse> {
   const resolved = resolveDiagramCommentsPath(worktreeReal, relPath);
   if (!resolved.ok) return resolved;
-  return withMutationQueue(resolved.commentsAbsPath, async () => {
+  const gate = openMutation(
+    "reply",
+    resolved,
+    worktreeReal,
+    relPath,
+    options.operationId
+  );
+  if (!gate.ok) return gate;
+  return withIdempotentMutation(gate, async () => {
     const diagram = await readCurrentDiagram(worktreeReal, relPath);
     if (!diagram.ok) return diagram;
     const current = await readDiagramCommentsFile(worktreeReal, relPath);
@@ -712,11 +814,20 @@ export async function appendDiagramCommentMessage(
 export async function resolveDiagramComment(
   worktreeReal: string,
   relPath: string,
-  threadId: string
+  threadId: string,
+  options: DiagramCommentMutationOptions = {}
 ): Promise<DiagramCommentsResponse> {
   const resolved = resolveDiagramCommentsPath(worktreeReal, relPath);
   if (!resolved.ok) return resolved;
-  return withMutationQueue(resolved.commentsAbsPath, async () => {
+  const gate = openMutation(
+    "resolve",
+    resolved,
+    worktreeReal,
+    relPath,
+    options.operationId
+  );
+  if (!gate.ok) return gate;
+  return withIdempotentMutation(gate, async () => {
     const diagram = await readCurrentDiagram(worktreeReal, relPath);
     if (!diagram.ok) return diagram;
     const current = await readDiagramCommentsFile(worktreeReal, relPath);
@@ -813,7 +924,15 @@ export async function deleteDiagramComment(
         "この環境では symlink を安全に検証できないためコメントを削除できません",
     };
   }
-  return withMutationQueue(resolved.commentsAbsPath, async () => {
+  const gate = openMutation(
+    "delete",
+    resolved,
+    worktreeReal,
+    relPath,
+    options.operationId
+  );
+  if (!gate.ok) return gate;
+  return withIdempotentMutation(gate, async () => {
     const diagram = await readCurrentDiagram(worktreeReal, relPath);
     if (!diagram.ok) return diagram;
     const current = await readDiagramCommentsFile(worktreeReal, relPath);

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { diagramCommentOperationLog } from "./diagram-comment-operation-log.js";
 import {
   appendDiagramCommentMessage,
   createDiagramComment,
@@ -1338,4 +1339,296 @@ describe("comment mutations", () => {
         .filter(name => name.includes(".tmp"))
     ).toEqual([]);
   });
+});
+
+describe("comment mutations: operationId による冪等化 (#306)", () => {
+  const relPath = ".claude/diagrams/order-flow.diagram.html";
+
+  beforeEach(() => {
+    diagramCommentOperationLog.clear();
+  });
+
+  async function createOnce(operationId: string, body = "本文") {
+    const created = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p1",
+      body,
+      undefined,
+      undefined,
+      { operationId }
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error("create expected to succeed");
+    const threadId = created.comments.threads.at(-1)?.id;
+    if (!threadId) throw new Error("thread expected");
+    return { created, threadId };
+  }
+
+  it("同じ operationId の create 再送は thread を増やさず現在の sidecar を返す", async () => {
+    writeDoc();
+
+    const first = await createOnce("op-create");
+    const again = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p1",
+      "本文",
+      undefined,
+      undefined,
+      { operationId: "op-create" }
+    );
+
+    expect(again).toEqual(first.created);
+    expect(again.ok && again.comments.threads).toHaveLength(1);
+  });
+
+  it("別の operationId の create は通常どおり thread を増やす", async () => {
+    writeDoc();
+
+    await createOnce("op-create-1");
+    const second = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p1",
+      "本文",
+      undefined,
+      undefined,
+      { operationId: "op-create-2" }
+    );
+
+    expect(second.ok && second.comments.threads).toHaveLength(2);
+  });
+
+  it("operationId 無し（MCP 経由など）は冪等化せず毎回適用する", async () => {
+    writeDoc();
+
+    await createDiagramComment(worktree, relPath, "s1-p1", "本文");
+    const second = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p1",
+      "本文"
+    );
+
+    expect(second.ok && second.comments.threads).toHaveLength(2);
+  });
+
+  it("同時に届いた同一 operationId の create も 1 件しか適用しない", async () => {
+    writeDoc();
+
+    const results = await Promise.all([
+      createDiagramComment(
+        worktree,
+        relPath,
+        "s1-p1",
+        "本文",
+        undefined,
+        undefined,
+        {
+          operationId: "op-race",
+        }
+      ),
+      createDiagramComment(
+        worktree,
+        relPath,
+        "s1-p1",
+        "本文",
+        undefined,
+        undefined,
+        {
+          operationId: "op-race",
+        }
+      ),
+    ]);
+
+    for (const result of results) {
+      expect(result.ok && result.comments.threads).toHaveLength(1);
+    }
+    const stored = await readDiagramCommentsFile(worktree, relPath);
+    expect(stored.ok && stored.comments.threads).toHaveLength(1);
+  });
+
+  it("同じ operationId の reply 再送はメッセージを増やさない", async () => {
+    writeDoc();
+    const { threadId } = await createOnce("op-create");
+
+    const first = await appendDiagramCommentMessage(
+      worktree,
+      relPath,
+      threadId,
+      { body: "返信" },
+      { operationId: "op-reply" }
+    );
+    const again = await appendDiagramCommentMessage(
+      worktree,
+      relPath,
+      threadId,
+      { body: "返信" },
+      { operationId: "op-reply" }
+    );
+
+    expect(first.ok && first.comments.threads[0]?.messages).toHaveLength(2);
+    expect(again).toEqual(first);
+  });
+
+  it("同じ operationId の delete 再送は THREAD_NOT_FOUND にせず現在の sidecar を返す", async () => {
+    writeDoc();
+    const { threadId } = await createOnce("op-create");
+
+    const first = await deleteDiagramComment(worktree, relPath, threadId, {
+      operationId: "op-delete",
+    });
+    const again = await deleteDiagramComment(worktree, relPath, threadId, {
+      operationId: "op-delete",
+    });
+
+    expect(first).toEqual({
+      ok: true,
+      comments: { version: 1, target, threads: [] },
+    });
+    expect(again).toEqual(first);
+  });
+
+  it("delete 再送は別 operationId なら従来どおり THREAD_NOT_FOUND", async () => {
+    writeDoc();
+    const { threadId } = await createOnce("op-create");
+
+    await deleteDiagramComment(worktree, relPath, threadId, {
+      operationId: "op-delete-1",
+    });
+
+    await expect(
+      deleteDiagramComment(worktree, relPath, threadId, {
+        operationId: "op-delete-2",
+      })
+    ).resolves.toMatchObject({ ok: false, code: "THREAD_NOT_FOUND" });
+  });
+
+  it("resolve 後に thread が消えても同じ operationId の再送は現在の sidecar を返す", async () => {
+    writeDoc();
+    const { threadId } = await createOnce("op-create");
+
+    const resolved = await resolveDiagramComment(worktree, relPath, threadId, {
+      operationId: "op-resolve",
+    });
+    expect(resolved.ok && resolved.comments.threads[0]?.status).toBe(
+      "resolved"
+    );
+    await deleteDiagramComment(worktree, relPath, threadId, {
+      operationId: "op-delete",
+    });
+
+    await expect(
+      resolveDiagramComment(worktree, relPath, threadId, {
+        operationId: "op-resolve",
+      })
+    ).resolves.toEqual({
+      ok: true,
+      comments: { version: 1, target, threads: [] },
+    });
+  });
+
+  it("失敗した操作の operationId は記録されず、再送で改めて適用される", async () => {
+    writeDoc();
+    await createOnce("op-create");
+    vi.spyOn(fs.promises, "rename").mockRejectedValueOnce(
+      Object.assign(new Error("rename failed"), { code: "EIO" })
+    );
+
+    const failed = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p2",
+      "second",
+      undefined,
+      undefined,
+      { operationId: "op-retry" }
+    );
+    const retried = await createDiagramComment(
+      worktree,
+      relPath,
+      "s1-p2",
+      "second",
+      undefined,
+      undefined,
+      { operationId: "op-retry" }
+    );
+
+    expect(failed).toMatchObject({ ok: false, code: "IO_ERROR" });
+    expect(retried.ok && retried.comments.threads).toHaveLength(2);
+  });
+
+  it("operationId は図ファイルごとに区別され、別の図の同じ ID に影響しない", async () => {
+    writeDoc();
+    writeDoc("other-flow");
+    const otherRelPath = ".claude/diagrams/other-flow.diagram.html";
+
+    await createOnce("op-shared");
+    const other = await createDiagramComment(
+      worktree,
+      otherRelPath,
+      "s1-p1",
+      "本文",
+      undefined,
+      undefined,
+      { operationId: "op-shared" }
+    );
+
+    expect(other.ok && other.comments.threads).toHaveLength(1);
+    expect(other.ok && other.comments.target).toBe("other-flow.diagram.html");
+  });
+
+  it("operationId は操作種別ごとに区別される", async () => {
+    writeDoc();
+    const { threadId } = await createOnce("op-shared");
+
+    const resolved = await resolveDiagramComment(worktree, relPath, threadId, {
+      operationId: "op-shared",
+    });
+
+    expect(resolved.ok && resolved.comments.threads[0]?.status).toBe(
+      "resolved"
+    );
+  });
+
+  it.each(["", " ", "o".repeat(DIAGRAM_COMMENTS_MAX_ANCHOR_OR_ID_LENGTH + 1)])(
+    "不正な operationId %j は BAD_REQUEST にして適用しない",
+    async operationId => {
+      writeDoc();
+
+      await expect(
+        createDiagramComment(
+          worktree,
+          relPath,
+          "s1-p1",
+          "本文",
+          undefined,
+          undefined,
+          { operationId }
+        )
+      ).resolves.toMatchObject({ ok: false, code: "BAD_REQUEST" });
+      await expect(
+        resolveDiagramComment(worktree, relPath, "th-1", { operationId })
+      ).resolves.toMatchObject({ ok: false, code: "BAD_REQUEST" });
+      await expect(
+        deleteDiagramComment(worktree, relPath, "th-1", { operationId })
+      ).resolves.toMatchObject({ ok: false, code: "BAD_REQUEST" });
+      await expect(
+        appendDiagramCommentMessage(
+          worktree,
+          relPath,
+          "th-1",
+          { body: "返信" },
+          { operationId }
+        )
+      ).resolves.toMatchObject({ ok: false, code: "BAD_REQUEST" });
+      await expect(readDiagramCommentsFile(worktree, relPath)).resolves.toEqual(
+        {
+          ok: true,
+          comments: { version: 1, target, threads: [] },
+        }
+      );
+    }
+  );
 });

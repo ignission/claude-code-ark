@@ -57,6 +57,7 @@ interface SplitViewPaneProps {
   createDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     anchorId: string,
     body: string,
     anchorQuote?: string,
@@ -65,22 +66,26 @@ interface SplitViewPaneProps {
   resolveDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
   replyDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     threadId: string,
     body: string
   ) => Promise<DiagramCommentsResponse>;
   deleteDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
   sendDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
   session: ManagedSession;

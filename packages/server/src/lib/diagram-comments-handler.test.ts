@@ -1,5 +1,6 @@
 import type { DiagramCommentsResponse } from "@ark/shared";
 import { describe, expect, it, vi } from "vitest";
+import { DiagramCommentOperationLog } from "./diagram-comment-operation-log.js";
 import {
   createDiagramCommentsSocketHandlers,
   type DiagramCommentsHandlerDeps,
@@ -33,6 +34,8 @@ function deps(): DiagramCommentsHandlerDeps {
     deleteComment: vi.fn(async () => snapshot),
     resolveComment: vi.fn(async () => snapshot),
     sendMessage: vi.fn(),
+    // send の冪等化記録はプロセス共有なので、テスト間で漏れないよう毎回新しくする
+    operationLog: new DiagramCommentOperationLog(),
   };
 }
 
@@ -43,6 +46,7 @@ describe("handleDiagramCommentReply", () => {
     await handleDiagramCommentReply(dependencies, {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
+      operationId: "op-1",
       threadId: "th-1",
       body: " 人間の返信 ",
     });
@@ -51,7 +55,8 @@ describe("handleDiagramCommentReply", () => {
       "/managed/worktree",
       "sample.diagram.html",
       "th-1",
-      { body: "人間の返信" }
+      { body: "人間の返信" },
+      { operationId: "op-1" }
     );
   });
 });
@@ -158,24 +163,28 @@ describe("diagram comments handler core", () => {
     {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
+      operationId: "op-1",
       anchorId: "",
       body: "本文",
     },
     {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
+      operationId: "op-1",
       anchorId: "a".repeat(257),
       body: "本文",
     },
     {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
+      operationId: "op-1",
       anchorId: "s1",
       body: " ",
     },
     {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
+      operationId: "op-1",
       anchorId: "s1",
       body: "b".repeat(4001),
     },
@@ -195,6 +204,7 @@ describe("diagram comments handler core", () => {
       handleDiagramCommentCreate(dependencies, {
         sessionId: "session-1",
         relPath: "sample.diagram.html",
+        operationId: "op-1",
         anchorId: "s1",
         author: "Reviewer",
         body: "本文",
@@ -210,11 +220,13 @@ describe("diagram comments handler core", () => {
     {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
+      operationId: "op-1",
       threadId: "th-1\0",
     },
     {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
+      operationId: "op-1",
       threadId: "t".repeat(257),
     },
   ])("resolve の不正 payload %j を BAD_REQUEST にする", async payload => {
@@ -233,6 +245,7 @@ describe("diagram comments handler core", () => {
       handleDiagramCommentDelete(dependencies, {
         sessionId: "session-1",
         relPath: "sample.diagram.html",
+        operationId: "op-1",
         threadId: "th-1",
       })
     ).resolves.toEqual(snapshot);
@@ -243,7 +256,8 @@ describe("diagram comments handler core", () => {
     expect(dependencies.deleteComment).toHaveBeenCalledWith(
       "/managed/worktree",
       "sample.diagram.html",
-      "th-1"
+      "th-1",
+      { operationId: "op-1" }
     );
   });
 
@@ -253,6 +267,7 @@ describe("diagram comments handler core", () => {
     {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
+      operationId: "op-1",
       threadId: "th-1",
       unknown: true,
     },
@@ -263,6 +278,165 @@ describe("diagram comments handler core", () => {
       handleDiagramCommentDelete(dependencies, payload)
     ).resolves.toMatchObject({ ok: false, code: "BAD_REQUEST" });
     expect(dependencies.deleteComment).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: "create",
+      handle: handleDiagramCommentCreate,
+      store: "createComment",
+    },
+    { name: "reply", handle: handleDiagramCommentReply, store: "replyComment" },
+    {
+      name: "resolve",
+      handle: handleDiagramCommentResolve,
+      store: "resolveComment",
+    },
+    {
+      name: "delete",
+      handle: handleDiagramCommentDelete,
+      store: "deleteComment",
+    },
+    { name: "send", handle: handleDiagramCommentSend, store: "getComments" },
+  ] as const)(
+    "$name は operationId が無い・不正な payload を BAD_REQUEST にする",
+    async ({ handle, store }) => {
+      const base = {
+        sessionId: "session-1",
+        relPath: "sample.diagram.html",
+        anchorId: "s1",
+        threadId: "th-1",
+        body: "本文",
+      };
+      const { anchorId, threadId, body, ...common } = base;
+      const valid =
+        handle === handleDiagramCommentCreate
+          ? { ...common, anchorId, body }
+          : handle === handleDiagramCommentReply
+            ? { ...common, threadId, body }
+            : { ...common, threadId };
+      for (const operationId of [
+        undefined,
+        "",
+        " ",
+        "o".repeat(257),
+        "op\0",
+        1,
+      ]) {
+        const dependencies = deps();
+        const payload =
+          operationId === undefined ? valid : { ...valid, operationId };
+
+        await expect(handle(dependencies, payload)).resolves.toMatchObject({
+          ok: false,
+          code: "BAD_REQUEST",
+        });
+        expect(dependencies[store]).not.toHaveBeenCalled();
+        expect(dependencies.sendMessage).not.toHaveBeenCalled();
+      }
+    }
+  );
+
+  it("resolve は operationId を store へ渡す", async () => {
+    const dependencies = deps();
+
+    await expect(
+      handleDiagramCommentResolve(dependencies, {
+        sessionId: "session-1",
+        relPath: "sample.diagram.html",
+        operationId: "op-resolve",
+        threadId: "th-1",
+      })
+    ).resolves.toEqual(snapshot);
+
+    expect(dependencies.resolveComment).toHaveBeenCalledWith(
+      "/managed/worktree",
+      "sample.diagram.html",
+      "th-1",
+      { operationId: "op-resolve" }
+    );
+  });
+
+  it("同じ operationId の send 再送は二重に sendMessage しない", async () => {
+    const dependencies = deps();
+    vi.mocked(dependencies.getComments).mockResolvedValue(sendSnapshot);
+    const payload = {
+      sessionId: "session-1",
+      relPath: "sample.diagram.html",
+      operationId: "op-send",
+      threadId: "th-send",
+    };
+
+    await expect(
+      handleDiagramCommentSend(dependencies, payload)
+    ).resolves.toEqual(sendSnapshot);
+    await expect(
+      handleDiagramCommentSend(dependencies, payload)
+    ).resolves.toEqual(sendSnapshot);
+
+    expect(dependencies.sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it("別の operationId の send は改めて sendMessage する", async () => {
+    const dependencies = deps();
+    vi.mocked(dependencies.getComments).mockResolvedValue(sendSnapshot);
+
+    await handleDiagramCommentSend(dependencies, {
+      sessionId: "session-1",
+      relPath: "sample.diagram.html",
+      operationId: "op-send-1",
+      threadId: "th-send",
+    });
+    await handleDiagramCommentSend(dependencies, {
+      sessionId: "session-1",
+      relPath: "sample.diagram.html",
+      operationId: "op-send-2",
+      threadId: "th-send",
+    });
+
+    expect(dependencies.sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("send が失敗した operationId は記録せず、再送で送信する", async () => {
+    const dependencies = deps();
+    const failing = structuredClone(sendSnapshot);
+    if (!failing.ok) throw new Error("successful comments response expected");
+    const thread = failing.comments.threads[0];
+    if (!thread) throw new Error("comment thread expected");
+    thread.messages = [];
+    vi.mocked(dependencies.getComments).mockResolvedValueOnce(failing);
+    vi.mocked(dependencies.getComments).mockResolvedValue(sendSnapshot);
+    const payload = {
+      sessionId: "session-1",
+      relPath: "sample.diagram.html",
+      operationId: "op-send",
+      threadId: "th-send",
+    };
+
+    await expect(
+      handleDiagramCommentSend(dependencies, payload)
+    ).resolves.toMatchObject({ ok: false, code: "INVALID_SIDECAR" });
+    await expect(
+      handleDiagramCommentSend(dependencies, payload)
+    ).resolves.toEqual(sendSnapshot);
+
+    expect(dependencies.sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it("operationLog 省略時はプロセス共有の記録で send を冪等化する", async () => {
+    const { operationLog: _omitted, ...shared } = deps();
+    vi.mocked(shared.getComments).mockResolvedValue(sendSnapshot);
+    const payload = {
+      sessionId: "session-1",
+      relPath: "sample.diagram.html",
+      operationId: `op-shared-${Math.random()}`,
+      threadId: "th-send",
+    };
+
+    await handleDiagramCommentSend(shared, payload);
+    await handleDiagramCommentSend(shared, payload);
+
+    expect(shared.sendMessage).toHaveBeenCalledOnce();
   });
 
   it("存在しない session を SESSION_NOT_FOUND にする", async () => {
@@ -317,6 +491,7 @@ describe("diagram comments handler core", () => {
     await handleDiagramCommentSend(dependencies, {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
+      operationId: "op-1",
       threadId: "th-send",
     });
 
@@ -337,6 +512,7 @@ describe("diagram comments handler core", () => {
       handleDiagramCommentSend(dependencies, {
         sessionId: "session-1",
         relPath: "sample.diagram.html",
+        operationId: "op-1",
         threadId: "missing",
       })
     ).resolves.toMatchObject({ ok: false, code: "THREAD_NOT_FOUND" });
@@ -351,6 +527,7 @@ describe("diagram comments handler core", () => {
       handleDiagramCommentSend(dependencies, {
         sessionId: "session-1",
         relPath: "sample.diagram.html",
+        operationId: "op-1",
         threadId: "th-send",
       })
     ).resolves.toEqual(sendSnapshot);
@@ -391,6 +568,7 @@ describe("diagram comments handler core", () => {
     await handleDiagramCommentSend(dependencies, {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
+      operationId: "op-1",
       threadId: "th-send",
     });
 
@@ -418,6 +596,7 @@ describe("diagram comments handler core", () => {
     await handleDiagramCommentSend(dependencies, {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
+      operationId: "op-1",
       threadId: "th-send",
     });
 
@@ -440,6 +619,7 @@ describe("diagram comments handler core", () => {
       handleDiagramCommentSend(dependencies, {
         sessionId: "session-1",
         relPath: "sample.diagram.html",
+        operationId: "op-1",
         threadId: "th-send",
       })
     ).resolves.toEqual({
@@ -456,6 +636,7 @@ describe("diagram comments handler core", () => {
     await handleDiagramCommentCreate(dependencies, {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
+      operationId: "op-1",
       anchorId: "s1",
       body: "  本文  ",
     });
@@ -466,7 +647,8 @@ describe("diagram comments handler core", () => {
       "s1",
       "本文",
       undefined,
-      undefined
+      undefined,
+      { operationId: "op-1" }
     );
   });
 
@@ -476,6 +658,7 @@ describe("diagram comments handler core", () => {
     await handleDiagramCommentCreate(dependencies, {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
+      operationId: "op-1",
       anchorId: "s1",
       anchorQuote: "選択した本文",
       anchorOccurrence: 1,
@@ -488,7 +671,8 @@ describe("diagram comments handler core", () => {
       "s1",
       "本文",
       "選択した本文",
-      1
+      1,
+      { operationId: "op-1" }
     );
   });
 
@@ -498,6 +682,7 @@ describe("diagram comments handler core", () => {
     await handleDiagramCommentCreate(dependencies, {
       sessionId: "session-1",
       relPath: "sample.diagram.html",
+      operationId: "op-1",
       anchorId: "s1",
       anchorQuote: "選択した本文",
       body: "本文",
@@ -509,7 +694,8 @@ describe("diagram comments handler core", () => {
       "s1",
       "本文",
       "選択した本文",
-      undefined
+      undefined,
+      { operationId: "op-1" }
     );
   });
 
@@ -541,6 +727,7 @@ describe("diagram comments handler core", () => {
       handleDiagramCommentCreate(dependencies, {
         sessionId: "session-1",
         relPath: "sample.diagram.html",
+        operationId: "op-1",
         anchorId: "s1",
         body: "本文",
         ...extra,
@@ -579,6 +766,7 @@ describe("diagram comments handler core", () => {
       handleDiagramCommentResolve(dependencies, {
         sessionId: "session-1",
         relPath: "sample.diagram.html",
+        operationId: "op-1",
         threadId: "th-1",
       })
     ).resolves.toEqual({
@@ -629,6 +817,7 @@ describe("createDiagramCommentsSocketHandlers", () => {
           {
             sessionId: "session-1",
             relPath: "sample.diagram.html",
+            operationId: "op-1",
             anchorId: "s1",
             body: "本文",
           },
@@ -652,6 +841,7 @@ describe("createDiagramCommentsSocketHandlers", () => {
       {
         sessionId: "session-1",
         relPath: "sample.diagram.html",
+        operationId: "op-1",
         threadId: "th-1",
       },
       callback

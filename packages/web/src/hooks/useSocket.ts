@@ -105,6 +105,7 @@ interface UseSocketReturn {
   createDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     anchorId: string,
     body: string,
     anchorQuote?: string,
@@ -113,22 +114,26 @@ interface UseSocketReturn {
   resolveDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
   replyDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     threadId: string,
     body: string
   ) => Promise<DiagramCommentsResponse>;
   deleteDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
   sendDiagramComment: (
     sessionId: string,
     relPath: string,
+    operationId: string,
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
 
@@ -1163,10 +1168,13 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
+  // mutation の operationId は iframe（comment layer）が生成し、ここでは
+  // 透過的に transport へ渡す。再試行で同じ値が届けばサーバー側で冪等化される
   const createDiagramComment = useCallback(
     (
       sessionId: string,
       relPath: string,
+      operationId: string,
       anchorId: string,
       body: string,
       anchorQuote?: string,
@@ -1176,6 +1184,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         socketRef.current,
         sessionId,
         relPath,
+        operationId,
         anchorId,
         body,
         anchorQuote,
@@ -1185,22 +1194,35 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   );
 
   const resolveDiagramComment = useCallback(
-    (sessionId: string, relPath: string, threadId: string) =>
+    (
+      sessionId: string,
+      relPath: string,
+      operationId: string,
+      threadId: string
+    ) =>
       requestDiagramCommentResolve(
         socketRef.current,
         sessionId,
         relPath,
+        operationId,
         threadId
       ),
     []
   );
 
   const replyDiagramComment = useCallback(
-    (sessionId: string, relPath: string, threadId: string, body: string) =>
+    (
+      sessionId: string,
+      relPath: string,
+      operationId: string,
+      threadId: string,
+      body: string
+    ) =>
       requestDiagramCommentReply(
         socketRef.current,
         sessionId,
         relPath,
+        operationId,
         threadId,
         body
       ),
@@ -1208,22 +1230,34 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   );
 
   const deleteDiagramComment = useCallback(
-    (sessionId: string, relPath: string, threadId: string) =>
+    (
+      sessionId: string,
+      relPath: string,
+      operationId: string,
+      threadId: string
+    ) =>
       requestDiagramCommentDelete(
         socketRef.current,
         sessionId,
         relPath,
+        operationId,
         threadId
       ),
     []
   );
 
   const sendDiagramComment = useCallback(
-    (sessionId: string, relPath: string, threadId: string) =>
+    (
+      sessionId: string,
+      relPath: string,
+      operationId: string,
+      threadId: string
+    ) =>
       requestDiagramCommentSend(
         socketRef.current,
         sessionId,
         relPath,
+        operationId,
         threadId
       ),
     []

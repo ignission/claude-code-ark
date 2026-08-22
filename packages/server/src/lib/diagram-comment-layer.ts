@@ -29,6 +29,13 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
   var sentThreadIds=new Set();
   var showResolved=false;
   var requestSequence=0;
+  // ACK タイムアウト後にユーザーが同じ操作をやり直しても、サーバーへは同じ
+  // operationId を送る（#306）。サーバーは適用済みの ID を再適用しないので
+  // 二重作成・二重送信にならない。成功した操作の ID は捨て、失敗・タイムアウト
+  // した操作の ID は次の再試行まで残す。
+  var OPERATION_ID_LIMIT=100;
+  var operationIds=new Map();
+  var operationSequence=0;
   var root=null;
   var anchors=[];
   var composerAnchorId=null;
@@ -59,6 +66,36 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
   }
   function clear(value){while(value.firstChild)value.removeChild(value.firstChild);}
   function requestId(){requestSequence+=1;return "comment-"+Date.now()+"-"+requestSequence;}
+  function newOperationId(){
+    operationSequence+=1;
+    var random=window.crypto&&typeof window.crypto.randomUUID==="function"
+      ?window.crypto.randomUUID()
+      :Date.now().toString(36)+"-"+Math.random().toString(36).slice(2);
+    return "op-"+random+"-"+operationSequence;
+  }
+  function operationKeyFor(type,payload){
+    var source=payload||{};
+    return [
+      type,
+      source.anchorId||"",
+      source.threadId||"",
+      source.body||"",
+      source.anchorQuote||"",
+      source.anchorOccurrence===undefined||source.anchorOccurrence===null?"":String(source.anchorOccurrence)
+    ].join("\\n");
+  }
+  function operationIdFor(operationKey){
+    var existing=operationIds.get(operationKey);
+    if(existing)return existing;
+    var created=newOperationId();
+    operationIds.set(operationKey,created);
+    while(operationIds.size>OPERATION_ID_LIMIT){
+      var oldest=operationIds.keys().next();
+      if(oldest.done)break;
+      operationIds.delete(oldest.value);
+    }
+    return created;
+  }
   function anchorEntry(anchorId){
     return anchors.filter(function(entry){return entry.anchorId===anchorId;})[0]||null;
   }
@@ -139,6 +176,10 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     operationError=null;
     var message={type:type,requestId:pendingRequestId};
     Object.keys(payload||{}).forEach(function(key){message[key]=payload[key];});
+    if(type!=="ark:diagram-comments-load"){
+      pendingAction.operationKey=operationKeyFor(type,payload);
+      message.operationId=operationIdFor(pendingAction.operationKey);
+    }
     if(!pendingAction.passive)updatePendingControls();
     pendingTimer=window.setTimeout(function(){
       var timedOutAction=pendingAction;
@@ -910,6 +951,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     pendingRequestId=null;
     pendingAction=null;
     if(data.ok){
+      if(completedAction&&completedAction.operationKey)operationIds.delete(completedAction.operationKey);
       var previousThreadIds=new Set(comments.threads.map(function(thread){return thread.id;}));
       comments=data.comments;
       operationError=null;
