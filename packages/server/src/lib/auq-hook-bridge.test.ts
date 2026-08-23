@@ -119,8 +119,11 @@ describe("AuqHookBridge - hooks settings", () => {
     const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
     const command = settings.hooks.SessionStart[0].hooks[0].command;
 
+    // hook は stdin を読まず静的 JSON を返す契約なので、stdin を渡さない。
+    // input を書き込むと子プロセスが先に終了して EPIPE になり、
+    // 負荷のかかるフルスイートでだけ落ちる flaky になる。
     const stdout = execSync(command, {
-      input: '{"hook_event_name":"SessionStart","source":"startup"}\n',
+      stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf-8",
     });
     const output = JSON.parse(stdout);
