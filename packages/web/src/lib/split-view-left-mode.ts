@@ -14,6 +14,10 @@ export const SPLIT_VIEW_LEFT_MODE_VALUES = ["terminal", "chat"] as const;
 
 export type SplitViewLeftMode = (typeof SPLIT_VIEW_LEFT_MODE_VALUES)[number];
 
+export interface SplitViewLeftModeChangeDetail {
+  mode: SplitViewLeftMode;
+}
+
 interface LeftModeStorageReader {
   getItem(key: string): string | null;
 }
@@ -51,15 +55,21 @@ export function writeSavedSplitViewLeftMode(
   mode: SplitViewLeftMode,
   storage?: LeftModeStorageWriter
 ): void {
+  // storage イベントは同じ window には発火しない。Dashboard で常時
+  // マウントされている別セッションにも、Storage の成否にかかわらず
+  // 選択値を直接反映できるよう、書き込みより先に同一タブへ通知する。
+  if (storage === undefined && typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent<SplitViewLeftModeChangeDetail>(
+        SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT,
+        { detail: { mode } }
+      )
+    );
+  }
+
   try {
     const target = storage ?? window.localStorage;
     target.setItem(STORAGE_KEY_SPLIT_LEFT_MODE, mode);
-    // storage イベントは同じ window には発火しない。Dashboard で常時
-    // マウントされている別セッションにも即座に反映するため、通常の
-    // localStorage 書き込み時だけ同一タブ向けイベントを補う。
-    if (storage === undefined) {
-      window.dispatchEvent(new Event(SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT));
-    }
   } catch {
     // Storage unavailable (SSR / private mode / quota) must not break switching.
   }

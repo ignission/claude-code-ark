@@ -165,8 +165,10 @@ function latestChatProps(sessionId: string): ObservedChatProps {
   return latest as ObservedChatProps;
 }
 
-function textContent(scope: ParentNode): string {
-  return scope.textContent ?? "";
+function hasTerminalUploadPreview(scope: ParentNode): boolean {
+  return (
+    scope.querySelector('[data-testid="terminal-upload-preview"]') !== null
+  );
 }
 
 beforeEach(() => {
@@ -251,6 +253,29 @@ describe("PC 左ペインの表示モード", () => {
     ).toBe("h-full");
   });
 
+  it("localStorage 書き込み失敗時も全セッションへ選択モードを通知する", () => {
+    const sessions = [makeSession("storage-a"), makeSession("storage-b")];
+    const container = mount(renderSessions("storage-a", sessions));
+    const paneA = container.querySelector('[data-testid="pane-storage-a"]');
+    const paneB = container.querySelector('[data-testid="pane-storage-b"]');
+    expect(paneA).not.toBeNull();
+    expect(paneB).not.toBeNull();
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("storage disabled");
+    });
+
+    clickButton(paneA as ParentNode, "会話");
+
+    expect(localStorage.getItem(STORAGE_KEY_SPLIT_LEFT_MODE)).toBeNull();
+    for (const pane of [paneA, paneB]) {
+      expect(
+        pane
+          ?.querySelector('button[aria-label="会話"]')
+          ?.getAttribute("aria-pressed")
+      ).toBe("true");
+    }
+  });
+
   it("active session と left mode に応じて会話購読と端末 D&D を一枚だけ有効にする", async () => {
     const sessions = [makeSession("a"), makeSession("b")];
     const container = mount(renderSessions("a", sessions));
@@ -265,15 +290,15 @@ describe("PC 左ペインの表示モード", () => {
       await new Promise(resolve => setTimeout(resolve, 10));
     });
     expect(
-      textContent(
+      hasTerminalUploadPreview(
         container.querySelector('[data-testid="pane-a"]') as ParentNode
       )
-    ).toContain("ファイルを送信（1件）");
+    ).toBe(true);
     expect(
-      textContent(
+      hasTerminalUploadPreview(
         container.querySelector('[data-testid="pane-b"]') as ParentNode
       )
-    ).not.toContain("ファイルを送信（1件）");
+    ).toBe(false);
 
     act(() => root?.render(renderSessions("b", sessions)));
     expect(latestChatProps("a").isActive).toBe(false);
@@ -296,7 +321,7 @@ describe("PC 左ペインの表示モード", () => {
     });
 
     expect(readSpy).not.toHaveBeenCalled();
-    expect(textContent(container)).not.toContain("ファイルを送信（1件）");
+    expect(hasTerminalUploadPreview(container)).toBe(false);
 
     // 陽性対照: 同じペインを端末表示に戻せば、同じ window drop が処理される。
     clickButton(container, "端末");
@@ -305,6 +330,6 @@ describe("PC 左ペインの表示モード", () => {
       await new Promise(resolve => setTimeout(resolve, 0));
     });
     expect(readSpy).toHaveBeenCalledTimes(1);
-    expect(textContent(container)).toContain("ファイルを送信（1件）");
+    expect(hasTerminalUploadPreview(container)).toBe(true);
   });
 });

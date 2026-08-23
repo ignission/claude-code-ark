@@ -34,9 +34,11 @@ import type {
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 import {
+  normalizeSplitViewLeftMode,
   readSavedSplitViewLeftMode,
   SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT,
   type SplitViewLeftMode,
+  type SplitViewLeftModeChangeDetail,
   STORAGE_KEY_SPLIT_LEFT_MODE,
   shouldAcceptTerminalFileDrop,
   shouldSubscribeChat,
@@ -178,17 +180,26 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   );
 
   useEffect(() => {
-    const syncFromStorage = () => setLeftMode(readSavedSplitViewLeftMode());
+    const handleLeftModeChange = (event: Event) => {
+      const { mode } = (event as CustomEvent<SplitViewLeftModeChangeDetail>)
+        .detail;
+      setLeftMode(mode);
+    };
     const handleStorage = (event: StorageEvent) => {
-      if (event.key === STORAGE_KEY_SPLIT_LEFT_MODE) syncFromStorage();
+      if (event.key === STORAGE_KEY_SPLIT_LEFT_MODE) {
+        setLeftMode(normalizeSplitViewLeftMode(event.newValue));
+      }
     };
 
-    window.addEventListener(SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT, syncFromStorage);
+    window.addEventListener(
+      SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT,
+      handleLeftModeChange
+    );
     window.addEventListener("storage", handleStorage);
     return () => {
       window.removeEventListener(
         SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT,
-        syncFromStorage
+        handleLeftModeChange
       );
       window.removeEventListener("storage", handleStorage);
     };
