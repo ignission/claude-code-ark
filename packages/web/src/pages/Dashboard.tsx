@@ -858,6 +858,11 @@ export default function Dashboard() {
                       <SplitViewPane
                         socket={socket}
                         isConnected={isConnected}
+                        // 会話ビュー（左ペイン）用。全セッションぶんが常時
+                        // マウントされるため、JSONL 購読は isActive で絞る
+                        isActive={isActive}
+                        bridgeStatus={sessionStatuses.get(session.id)}
+                        awaitingText={sessionAwaitingTexts.get(session.id)}
                         diagramCommentsUpdate={diagramCommentsUpdate}
                         listDiagrams={listDiagrams}
                         deleteDiagram={deleteDiagram}

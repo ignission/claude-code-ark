@@ -8,20 +8,29 @@
 
 ## アーキテクチャ
 
-### PC: ttyd ターミナル方式 / モバイル: チャットビュー (JSONL tail) 併用
+### ttyd ターミナル方式 / チャットビュー (JSONL tail) 併用
 
-PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`SplitViewPane` の
-左ペインに常時表示）。右ペインは図解タブが開かれたときだけ意味を持ち、
-上部バーのトグルで開閉する（中身は `DiagramPane`。詳細は下記「セッションボード」）。
-チャット形式で会話を描画する `SplitChatPane`（JSONL transcript を tail）は
-モバイル専用（`MobileSessionView` の🖥/💬トグルで ttyd 表示と切替）。
+PC・モバイルとも、ttyd の生ターミナル（`TerminalPane`）と、チャット形式で会話を
+描画する `SplitChatPane`（JSONL transcript を tail）を切り替えて使う。
+
+- **PC**: `SplitViewPane` の左ペインを上部バーの🖥/💬トグルで切り替える（既定は端末）。
+  右ペインは図解で、上部バー右端のトグルで開閉する（中身は `DiagramPane`。
+  詳細は下記「セッションボード」）。左ペインの選択・右ペインの幅と開閉は localStorage
+  に永続化する
+- **モバイル**: `MobileSessionView` の🖥/💬/📐トグルで 1 画面ずつ切り替える（既定は会話）
+
+左ペインは端末・会話の両方をマウントしたまま `display` で切り替える。ttyd は
+iframe（別ブラウジングコンテキスト）なので、アンマウントすると再接続になるため。
+その代わり「見えていないペイン」も生きているので、JSONL 購読と window レベルの
+ファイル D&D は表示中の 1 枚だけに絞る（`split-view-left-mode.ts`）。
+
 エンジンは PC・モバイル共通で tmux 上の対話版 claude
 (プラン枠課金を維持。Agent SDK / claude -p は使わない)。
 
 ```text
-表示: <configDir>/projects/<encoded-cwd>/*.jsonl → JsonlTailManager → Socket.IO → チャット描画（モバイル専用）
+表示: <configDir>/projects/<encoded-cwd>/*.jsonl → JsonlTailManager → Socket.IO → チャット描画
 入力: チャット入力欄 / ターミナル入力欄 → Socket.IO → tmux send-keys → claude CLI
-補助: tmux(セッション) ←→ ttyd(WebSocket) ←→ iframe (PC は常時表示 / モバイルはトグル)
+補助: tmux(セッション) ←→ ttyd(WebSocket) ←→ iframe (どちらもトグルで表示切替)
 ```
 
 **情報源分離の原則 (チャット UI v3 の核心)**: 会話内容は 100% JSONL transcript
@@ -33,7 +42,7 @@ PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`Spli
 
 1. **tmux**: Claude CLIプロセスをdetachedセッションで管理。サーバー再起動後もセッションが永続化される
 2. **JsonlTailManager**: worktree 毎の JSONL を fs.watch + 1 秒 polling で tail し、新規行を購読 socket に push。/clear のファイル切替は onReset → 空 snapshot で追従
-3. **ttyd**: tmuxセッションにWebターミナルアクセスを提供（PC は常時表示、モバイルは🖥/💬トグルで表示切替）
+3. **ttyd**: tmuxセッションにWebターミナルアクセスを提供（PC は左ペイン、モバイルは全画面。どちらも🖥/💬トグルで会話ビューと切替）
 4. **SessionOrchestrator**: tmuxとttydを統合管理し、セッションのライフサイクルを制御する
 
 ### メッセージ送信の流れ
@@ -131,9 +140,9 @@ PC のデフォルト UI は ttyd の生ターミナル（`TerminalPane`。`Spli
 | リポジトリスキャン     | 指定パス配下のGitリポジトリを探索（fd/findコマンド使用）                    |
 | Git Worktree管理       | 一覧表示、作成、削除                                                        |
 | セッション管理         | tmux + ttydベースの起動、停止、復元、状態管理                               |
-| チャットビュー (モバイル専用) | JSONL tail ベースの会話描画 + pending reconcile + AskUserQuestion カード + slash 補完 + busy/AWAITING 表示（`MobileSessionView` の🖥/💬トグルで ttyd 表示と切替） |
+| チャットビュー           | JSONL tail ベースの会話描画 + pending reconcile + AskUserQuestion カード + slash 補完 + busy/AWAITING 表示（PC は `SplitViewPane` の左ペイン、モバイルは `MobileSessionView`。どちらも🖥/💬トグルで ttyd 表示と切替） |
 | セッションボード       | worktree の `.claude/diagrams/*.diagram.html`（意味モデル + HTML 投影）を表示する図解ペイン（右ペインタブ・PC のみ）。Claude が MCP ツール `board_open` で開き、ファイル更新を検知して自動再読込する |
-| Webターミナル          | ttyd iframeによるフルターミナル体験（PC はデフォルト表示、モバイルは🖥/💬トグルでチャットビューと切替） |
+| Webターミナル          | ttyd iframeによるフルターミナル体験（PC は左ペインの既定、モバイルは🖥/💬トグルでチャットビューと切替） |
 | マルチペインビュー     | 複数セッションの同時表示（1列 / 2x2グリッド切り替え）                       |
 | モバイル対応           | セッション一覧/詳細の画面遷移、Quick Keys、スクロールモード、キーボード対応 |
 | 特殊キー送信           | Enter, Ctrl+C, Ctrl+D, y, n, S-Tab, Escape, スクロール等                    |
