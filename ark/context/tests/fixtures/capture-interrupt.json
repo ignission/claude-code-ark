@@ -1,8 +1,0 @@
-{
-  "tool": "Bash",
-  "error_type": "tool_error",
-  "exit_code": null,
-  "is_interrupt": true,
-  "error": "Interrupted by user\n停止",
-  "details": { "signal": null, "elapsed_ms": 12 }
-}
