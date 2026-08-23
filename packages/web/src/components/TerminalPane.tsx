@@ -48,6 +48,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useIsMobile } from "../hooks/useMobile";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
+import { useTtydReconnect } from "../hooks/useTtydReconnect";
 import { FileViewerPane } from "./FileViewerPane";
 import { HtmlViewerPane } from "./HtmlViewerPane";
 import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
@@ -457,6 +458,14 @@ export function TerminalPane({
   const safeVisibleActiveTabIndex = isActiveTabHidden
     ? 0
     : visibleActiveTabIndex;
+
+  // スリープ復帰やモバイルのバックグラウンド復帰で ttyd の WebSocket が落ちると
+  // 端末は "Press ⏎ to Reconnect" のまま固まる。表示中のターミナルに限って
+  // 検出し、iframe を貼り直して復帰させる。
+  useTtydReconnect(iframeRef, iframeKey, {
+    isVisible: isVisible && tabs[effectiveActiveTabIndex]?.type === "terminal",
+    onReload: handleReloadIframe,
+  });
 
   return (
     <div className="h-full flex flex-col bg-card border border-border rounded-lg overflow-hidden">

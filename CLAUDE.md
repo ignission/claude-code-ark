@@ -52,6 +52,27 @@ iframe（別ブラウジングコンテキスト）なので、アンマウン�
 3. tmuxの `C-u` (入力欄クリア) → `send-keys -l` でリテラル入力 + `Enter` キーを送信
 4. claude が transcript (JSONL) に追記 → tail がクライアントへ push → pending と reconcile して確定描画
 
+### ttyd の切断復帰 (Press ⏎ to Reconnect)
+
+ttyd 1.7.4 の自動再接続は「socket が落ちたら 1 度だけ繋ぎ直す」だけで、その試行が
+失敗すると WebSocket の error イベントで `doReconnect=false` になり、以後
+"Press ⏎ to Reconnect" のまま二度と繋ぎ直さない。モバイルで Chrome を
+バックグラウンドへ送ると、電波が戻る前に再接続を試すのでこの状態に落ちる
+(実機再現で確認: close 1006 → token fetch 失敗 → connect 失敗 → 停止)。
+
+`useTtydReconnect` が iframe 内の overlay を 1.5 秒ごとに見て、停止状態を検出したら
+iframe を貼り直す (判定と抑止は `@/lib/ttyd-reconnect`)。
+
+- **復帰手段は iframe リロード**。Enter の合成入力は、実は生きている接続に撃つと
+  permission prompt や AUQ を誤って確定させるので使わない。リロードは tmux に
+  1 バイトも送らない
+- overlay は "Reconnected" / "Reconnecting..." / "80x24" にも使い回される。
+  `/Reconnect/` で判定すると復帰直後に再リロードする無限ループになる
+- **表示中のペインだけ**貼り直す。隠れた iframe を貼り直すと ttyd の `fit()` が
+  サイズ 0 に対して走り、端末が歪んだままになる
+- オフラインのあいだは貼り直さない (白い iframe が残るだけ)。復帰しないまま
+  3 回に達したら諦め、以後は手動リロードボタンに委ねる
+
 ### AskUserQuestion (重要な実機知見)
 
 対話版 claude は AUQ の tool_use を**回答/拒否が確定した瞬間**に tool_result と
