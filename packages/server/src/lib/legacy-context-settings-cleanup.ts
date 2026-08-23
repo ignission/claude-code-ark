@@ -88,11 +88,36 @@ export function cleanupLegacyContextSettings(
     for (const event of INJECTED_HOOK_EVENTS) {
       const entries = hooks[event];
       if (!Array.isArray(entries)) continue;
-      const kept = entries.filter(entry => !referencesLegacyContext(entry));
-      removedHooks += entries.length - kept.length;
-      if (kept.length === entries.length) continue;
-      if (kept.length === 0) delete hooks[event];
-      else hooks[event] = kept;
+      let changed = false;
+      const keptEntries: unknown[] = [];
+      for (const entry of entries) {
+        // legacy と利用者の command が 1 グループに同居しうる。entry 単位で落とすと
+        // 利用者の hook と matcher まで消えるため、command 単位で除く。
+        if (!isRecord(entry) || !Array.isArray(entry.hooks)) {
+          if (referencesLegacyContext(entry)) {
+            removedHooks += 1;
+            changed = true;
+          } else {
+            keptEntries.push(entry);
+          }
+          continue;
+        }
+        const keptCommands = entry.hooks.filter(
+          hook => !referencesLegacyContext(hook)
+        );
+        const removedHere = entry.hooks.length - keptCommands.length;
+        if (removedHere > 0) {
+          removedHooks += removedHere;
+          changed = true;
+        }
+        // command が全部消えたグループだけを落とす（matcher ごと消える）。
+        if (keptCommands.length === 0) continue;
+        entry.hooks = keptCommands;
+        keptEntries.push(entry);
+      }
+      if (!changed) continue;
+      if (keptEntries.length === 0) delete hooks[event];
+      else hooks[event] = keptEntries;
     }
     if (Object.keys(hooks).length === 0) delete settings.hooks;
   }
@@ -118,7 +143,17 @@ export function cleanupLegacyContextSettings(
 
   if (removedHooks === 0 && removedDeny.length === 0) return NOOP;
 
-  fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+  try {
+    fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+  } catch (error) {
+    // 掃除はセッション起動の前提ではない。read-only 等で書けなくても起動は続ける。
+    console.warn(
+      `[LegacyContext] ${settingsPath} を書き換えられないため掃除を見送ります: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return NOOP;
+  }
   console.log(
     `[LegacyContext] ${settingsPath}: hook ${removedHooks} 件 / deny ${removedDeny.length} 件を撤去しました`
   );

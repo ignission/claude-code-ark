@@ -93,6 +93,57 @@ describe("cleanupLegacyContextSettings", () => {
     });
   });
 
+  it("同じグループに legacy と利用者の command が同居しても利用者側を残す", () => {
+    // entry 単位で落とすと matcher ごと消える。command 単位で除けているかを固定する。
+    write({
+      hooks: {
+        PostToolBatch: [
+          {
+            matcher: "Bash",
+            hooks: [
+              {
+                type: "command",
+                command:
+                  '"$CLAUDE_PROJECT_DIR"/ark/context/adapters/claude-code/post-tool-batch.sh',
+              },
+              { type: "command", command: "echo mine" },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(cleanupLegacyContextSettings(worktree).removedHooks).toBe(1);
+    expect(read().hooks).toEqual({
+      PostToolBatch: [
+        {
+          matcher: "Bash",
+          hooks: [{ type: "command", command: "echo mine" }],
+        },
+      ],
+    });
+  });
+
+  it("settings が書き込めなくても例外を投げず no-op で返す", () => {
+    // 掃除の失敗でセッション起動が止まってはならない。
+    write({
+      permissions: { deny: ["TodoWrite", "TaskCreate", "TaskUpdate"] },
+      hooks: { PostToolBatch: [legacyHook("post-tool-batch.sh")] },
+    });
+    const before = fs.readFileSync(settingsPath, "utf-8");
+    const spy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
+      throw new Error("EROFS: read-only file system");
+    });
+    const warn = vi.spyOn(console, "warn");
+
+    expect(() => cleanupLegacyContextSettings(worktree)).not.toThrow();
+    expect(cleanupLegacyContextSettings(worktree).changed).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("EROFS"));
+
+    spy.mockRestore();
+    expect(fs.readFileSync(settingsPath, "utf-8")).toBe(before);
+  });
+
   it("ark/context の hook が無ければ deny に触れない", () => {
     // 同じ tool を利用者が自分で拒否しているだけ、という可能性を潰さない。
     // ファイルは ark/context を含む (= 早期 return では抜けない) が、

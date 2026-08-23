@@ -618,6 +618,10 @@ export class SessionOrchestrator extends EventEmitter {
     // 別リポジトリのworktreeに対して誤った値が渡るケースがある。
     const resolvedRepoPath = this.deriveRepoPath(worktreePath) ?? repoPath;
 
+    // 撤去済み ark/context が注入したままの hook / deny を取り除く (#367 の移行)。
+    // 既存セッションを再利用する経路でも掃除するため、existingTmux の判定より前に置く。
+    cleanupLegacyContextSettings(worktreePath);
+
     // 既存セッションがあれば再利用
     const existingTmux = tmuxManager.getSessionByWorktree(worktreePath);
     if (existingTmux) {
@@ -651,10 +655,6 @@ export class SessionOrchestrator extends EventEmitter {
       worktreePath,
       resolvedRepoPath
     );
-    // 撤去済み ark/context が注入したままの hook / deny を取り除く (#367 の移行)。
-    // 永続 tmux セッションを持つ環境では teardown が走らないまま撤去されるため、
-    // セッション起動のたびに冪等に掃除する。
-    cleanupLegacyContextSettings(worktreePath);
     const sessionEnv = env;
 
     // board MCP (ark-board / board_write) 用の per-session token/config を用意する。

@@ -14,6 +14,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // TmuxManager / TtydManager / SessionDatabase のシングルトンをモック化。
 // SessionOrchestrator は constructor で `tmuxManager.getAllSessions()` を呼ぶため、
 // 必ず import 前にスタブを用意する。
+import { cleanupLegacyContextSettings } from "./legacy-context-settings-cleanup.js";
+
 vi.mock("./tmux-manager.js", async () => {
   const { EventEmitter } = await import("node:events");
   // EventEmitter継承のスタブ（on/emit が必要）
@@ -75,6 +77,14 @@ vi.mock("./database.js", () => {
 // child_process は deriveRepoPath() の execFileSync 用にモック。
 // テスト中は repoPath を resolveProfileForRepo に直接渡せるよう
 // worktreePath==="/path/to/work" → repoPath==="/repo" を返す。
+vi.mock("./legacy-context-settings-cleanup.js", () => ({
+  cleanupLegacyContextSettings: vi.fn(() => ({
+    changed: false,
+    removedHooks: 0,
+    removedDeny: [],
+  })),
+}));
+
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(() => "/repo/.git\n"),
 }));
@@ -92,6 +102,7 @@ import { tmuxManager } from "./tmux-manager.js";
 import { ttydManager } from "./ttyd-manager.js";
 
 const mockedDb = vi.mocked(db);
+const mockedCleanup = vi.mocked(cleanupLegacyContextSettings);
 const mockedTmux = vi.mocked(tmuxManager);
 const mockedTtyd = vi.mocked(ttydManager);
 
@@ -214,6 +225,18 @@ describe("SessionOrchestrator - プロファイル切替", () => {
   // ============================================================
 
   describe("startSession (既存セッション再利用)", () => {
+    it("既存セッションを再利用する経路でも legacy settings を掃除する", async () => {
+      // 早期 return より前で掃除しないと、旧 hook が repo に残り続ける（#401 の指摘）。
+      const orchestrator = new SessionOrchestrator();
+      mockedTmux.getSessionByWorktree.mockReturnValue(makeTmuxSession());
+      mockedCleanup.mockClear();
+
+      await orchestrator.startSession("wt-1", "/path/to/work", "/repo");
+
+      expect(mockedCleanup).toHaveBeenCalledWith("/path/to/work");
+      expect(mockedTmux.createSession).not.toHaveBeenCalled();
+    });
+
     it("既存セッションのprofileIdが現在の紐付けと異なる: staleProfile=true", async () => {
       // まず prof-1 で新規作成
       mockedDb.getRepoProfileLink.mockReturnValue({
