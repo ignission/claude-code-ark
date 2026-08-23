@@ -171,6 +171,29 @@ function hasTerminalUploadPreview(scope: ParentNode): boolean {
   );
 }
 
+async function waitForTerminalUploadPreview(scope: ParentNode): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!hasTerminalUploadPreview(scope)) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        "terminal upload preview did not appear within 5 seconds"
+      );
+    }
+    await act(
+      () =>
+        new Promise<void>(resolve => {
+          const channel = new MessageChannel();
+          channel.port1.onmessage = () => {
+            channel.port1.close();
+            channel.port2.close();
+            resolve();
+          };
+          channel.port2.postMessage(undefined);
+        })
+    );
+  }
+}
+
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear();
@@ -285,10 +308,10 @@ describe("PC 左ペインの表示モード", () => {
     expect(latestChatProps("a").isActive).toBe(false);
     expect(latestChatProps("b").isActive).toBe(false);
 
-    await act(async () => {
-      dispatchFileDrop("active-a.txt");
-      await new Promise(resolve => setTimeout(resolve, 10));
-    });
+    act(() => dispatchFileDrop("active-a.txt"));
+    await waitForTerminalUploadPreview(
+      container.querySelector('[data-testid="pane-a"]') as ParentNode
+    );
     expect(
       hasTerminalUploadPreview(
         container.querySelector('[data-testid="pane-a"]') as ParentNode
@@ -315,21 +338,16 @@ describe("PC 左ペインの表示モード", () => {
     const container = mount(paneSection(session, true));
     const readSpy = vi.spyOn(FileReader.prototype, "readAsDataURL");
 
-    await act(async () => {
-      dispatchFileDrop("must-not-be-read.txt");
-      await new Promise(resolve => setTimeout(resolve, 0));
-    });
+    act(() => dispatchFileDrop("must-not-be-read.txt"));
 
     expect(readSpy).not.toHaveBeenCalled();
     expect(hasTerminalUploadPreview(container)).toBe(false);
 
     // 陽性対照: 同じペインを端末表示に戻せば、同じ window drop が処理される。
     clickButton(container, "端末");
-    await act(async () => {
-      dispatchFileDrop("visible-terminal.txt");
-      await new Promise(resolve => setTimeout(resolve, 0));
-    });
+    act(() => dispatchFileDrop("visible-terminal.txt"));
     expect(readSpy).toHaveBeenCalledTimes(1);
+    await waitForTerminalUploadPreview(container);
     expect(hasTerminalUploadPreview(container)).toBe(true);
   });
 });
