@@ -1,19 +1,26 @@
 /**
- * SplitViewPane - PC 用セッションビュー（ターミナル + 右ペインの左右2ペイン）
+ * SplitViewPane - PC 用セッションビュー（左ペイン + 右ペインの左右2ペイン）
  *
- * 左ペイン = TerminalPane（ttyd + file/html タブ）を常時表示、
+ * 左ペインは上部バーのトグルで「端末（TerminalPane = ttyd + file/html タブ）」と
+ * 「会話（SplitChatPane = JSONL tail のチャットビュー）」を切り替える。
  * 右ペインは図が未選択でも上部バーのトグルで開閉できる。
  * 中身は DiagramPane（B-0a の図ペイン）。
- * 会話ビュー（SplitChatPane）は使わない — チャット内容を確認したい場合は
- * ttyd の生ターミナル（左ペイン）を直接見る。
  *
  * - diagram は TerminalPane のタブ機構から外れ、右ペイン専属になった
  *   （タブ自体は sessionTabs 上には残るが、非表示のまま「開いている印」として使う）
  * - 図（openDiagramTab）の activation id が変わると showBoard を自動 true にする
- * - 右ペイン幅 / 開閉状態は localStorage に永続化
+ * - 左ペインのモード / 右ペイン幅 / 右ペイン開閉状態は localStorage に永続化
+ * - 左ペインは端末・会話の両方をマウントしたまま display 切替する。ttyd は
+ *   iframe（別ブラウジングコンテキスト）なので、アンマウントすると再接続に
+ *   なってしまう（.claude/rules/frontend-codegen.md）
+ * - 会話ビューには showTerminal / onToggleTerminal を渡さない。渡すとチャット
+ *   ヘッダにもう 1 つ 🖥 トグルが出て、上部バーの切替と二重になる。AUQ カードや
+ *   AWAITING バナーの「ターミナルへ」導線も同 props 由来で消えるが、
+ *   切替は 1 行上の上部バーにあり、モバイル（MobileSessionView）とも揃う
  */
 
 import type {
+  BridgeSessionStatus,
   ClientToServerEvents,
   DiagramCommentsResponse,
   DiagramDeleteResponse,
@@ -26,7 +33,20 @@ import type {
 } from "@ark/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
+import {
+  normalizeSplitViewLeftMode,
+  readSavedSplitViewLeftMode,
+  SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT,
+  type SplitViewLeftMode,
+  type SplitViewLeftModeChangeDetail,
+  STORAGE_KEY_SPLIT_LEFT_MODE,
+  shouldAcceptTerminalFileDrop,
+  shouldSubscribeChat,
+  writeSavedSplitViewLeftMode,
+} from "../lib/split-view-left-mode";
 import { DiagramPane } from "./DiagramPane";
+import { SplitChatPane } from "./SplitChatPane";
+import { SplitViewLeftModeToggle } from "./SplitViewLeftModeToggle";
 import { TerminalPane, type ViewerTab } from "./TerminalPane";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -89,6 +109,16 @@ interface SplitViewPaneProps {
     threadId: string
   ) => Promise<DiagramCommentsResponse>;
   session: ManagedSession;
+  /**
+   * このセッションが現在選択中か。SplitViewPane は Dashboard で全セッション
+   * ぶんが常時マウントされる（非選択は `hidden`）ため、会話ビューの JSONL
+   * 購読はこれと左ペインのモードの両方で絞る（shouldSubscribeChat）
+   */
+  isActive: boolean;
+  /** session:previews 由来のセッション状態（会話ビューの busy / AWAITING 表示） */
+  bridgeStatus?: BridgeSessionStatus;
+  /** AWAITING 時の確認 UI 生テキスト（会話ビューのバナー表示） */
+  awaitingText?: string;
   worktree: Worktree | undefined;
   repoName?: string;
   tabs: ViewerTab[];
@@ -143,6 +173,42 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   const [showBoard, setShowBoard] = useState<boolean>(() =>
     readSavedShowBoard()
   );
+  // 左ペインのモード。選択は PC 全体で共有し、常時マウント済みの別セッション
+  // および別ブラウザタブからの変更にも追随する。
+  const [leftMode, setLeftMode] = useState<SplitViewLeftMode>(
+    readSavedSplitViewLeftMode
+  );
+
+  useEffect(() => {
+    const handleLeftModeChange = (event: Event) => {
+      const { mode } = (event as CustomEvent<SplitViewLeftModeChangeDetail>)
+        .detail;
+      setLeftMode(mode);
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === STORAGE_KEY_SPLIT_LEFT_MODE) {
+        setLeftMode(normalizeSplitViewLeftMode(event.newValue));
+      }
+    };
+
+    window.addEventListener(
+      SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT,
+      handleLeftModeChange
+    );
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener(
+        SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT,
+        handleLeftModeChange
+      );
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
+
+  const handleLeftModeChange = useCallback((next: SplitViewLeftMode) => {
+    writeSavedSplitViewLeftMode(next);
+    setLeftMode(next);
+  }, []);
 
   // 現在図は session ごとに最大1件。diagram タブは左タブバーから除外され、
   // ここでのみ参照する。
@@ -243,8 +309,12 @@ export function SplitViewPane(props: SplitViewPaneProps) {
 
   return (
     <div className="h-full flex flex-col">
-      {/* 上部バー: 右ペイン開閉トグル */}
-      <div className="h-8 shrink-0 border-b border-border bg-sidebar flex items-center justify-end px-2">
+      {/* 上部バー: 左は左ペイン切替（端末 / 会話）、右は右ペイン開閉トグル */}
+      <div className="h-8 shrink-0 border-b border-border bg-sidebar flex items-center justify-between px-2">
+        <SplitViewLeftModeToggle
+          value={leftMode}
+          onChange={handleLeftModeChange}
+        />
         <button
           type="button"
           onClick={handleToggleBoard}
@@ -261,7 +331,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       </div>
 
       <div ref={containerRef} className="flex-1 min-h-0 flex relative">
-        {/* 左ペイン: ターミナル（常時表示）
+        {/* 左ペイン: 端末 / 会話（上部バーで切替。両方マウントしたまま display 切替）
             リサイズ中は pointer-events-none にする。ターミナルは ttyd の iframe
             （別ブラウジングコンテキスト）で、分割線を左へドラッグしてカーソルが
             この上に乗ると mousemove / mouseup を iframe が飲み込み、window の
@@ -273,24 +343,43 @@ export function SplitViewPane(props: SplitViewPaneProps) {
             isDragging ? "pointer-events-none" : ""
           }`}
         >
-          <TerminalPane
-            session={props.session}
-            worktree={props.worktree}
-            repoName={props.repoName}
-            tabs={props.tabs}
-            activeTabIndex={props.activeTabIndex}
-            onTabSelect={props.onTabSelect}
-            onTabClose={props.onTabClose}
-            onSendMessage={props.onSendMessage}
-            onSendKey={props.onSendKey}
-            onDeleteSession={props.onDeleteSession}
-            onUploadFile={props.onUploadFile}
-            onCopyBuffer={props.onCopyBuffer}
-            messageShortcuts={props.messageShortcuts}
-            onCreateShortcut={props.onCreateShortcut}
-            onUpdateShortcut={props.onUpdateShortcut}
-            onDeleteShortcut={props.onDeleteShortcut}
-          />
+          {/* 端末: ttyd の再接続を避けるため hidden で残置する */}
+          <div className={leftMode === "terminal" ? "h-full" : "hidden"}>
+            <TerminalPane
+              session={props.session}
+              worktree={props.worktree}
+              repoName={props.repoName}
+              isVisible={shouldAcceptTerminalFileDrop(props.isActive, leftMode)}
+              tabs={props.tabs}
+              activeTabIndex={props.activeTabIndex}
+              onTabSelect={props.onTabSelect}
+              onTabClose={props.onTabClose}
+              onSendMessage={props.onSendMessage}
+              onSendKey={props.onSendKey}
+              onDeleteSession={props.onDeleteSession}
+              onUploadFile={props.onUploadFile}
+              onCopyBuffer={props.onCopyBuffer}
+              messageShortcuts={props.messageShortcuts}
+              onCreateShortcut={props.onCreateShortcut}
+              onUpdateShortcut={props.onUpdateShortcut}
+              onDeleteShortcut={props.onDeleteShortcut}
+            />
+          </div>
+
+          {/* 会話: JSONL tail のチャットビュー。入力欄 / AUQ カード / slash 補完 /
+              ファイルアップロード / busy・AWAITING 表示を内包する */}
+          <div className={leftMode === "chat" ? "h-full" : "hidden"}>
+            <SplitChatPane
+              socket={props.socket}
+              session={props.session}
+              isActive={shouldSubscribeChat(props.isActive, leftMode)}
+              bridgeStatus={props.bridgeStatus}
+              awaitingText={props.awaitingText}
+              onSendMessage={props.onSendMessage}
+              onSendKey={props.onSendKey}
+              onUploadFile={props.onUploadFile}
+            />
+          </div>
         </div>
 
         {/* リサイザ・右ペイン */}

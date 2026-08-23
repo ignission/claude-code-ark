@@ -20,12 +20,7 @@ import { EventEmitter } from "node:events";
 import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type {
-  Profile,
-  UsageEntry,
-  UsageProgress,
-  UsageReport,
-} from "@ark/shared";
+import type { Profile, UsageEntry, UsageReport } from "@ark/shared";
 import { stripAnsi } from "./ansi.js";
 import { resolveClaudePath, resolveTmuxPath } from "./system.js";
 

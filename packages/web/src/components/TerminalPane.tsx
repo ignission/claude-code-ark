@@ -99,6 +99,17 @@ interface TerminalPaneProps {
   session: ManagedSession;
   worktree: Worktree | undefined;
   repoName?: string;
+  /**
+   * このペインが実際に画面へ出ているか（既定 true）。
+   *
+   * ファイル D&D は ttyd iframe がドラッグイベントを親に届けないため
+   * window レベルで受けている。TerminalPane は全セッションぶんが常時
+   * マウントされ、さらに左ペインが会話モードのときも `display:none` で
+   * 残置されるので、無条件に window で受けると「見えていないペイン」にも
+   * ドロップが入り、あとで開いたときに身に覚えのない送信プレビューが出る。
+   * 表示中の 1 枚だけが受け取るようにこれで絞る。
+   */
+  isVisible?: boolean;
   onSendMessage: (message: string) => void;
   onSendKey: (key: SpecialKey) => void;
   /** セッション削除（停止 + メイン以外のWorktree削除） */
@@ -127,6 +138,7 @@ export function TerminalPane({
   session,
   worktree,
   repoName,
+  isVisible = true,
   onSendMessage,
   onSendKey,
   onDeleteSession,
@@ -352,8 +364,10 @@ export function TerminalPane({
   // ttyd iframe はクロスフレーム分離でドラッグイベントを親に届けないため、
   // window レベルのリスナーで検知して全画面オーバーレイを表示する
   // onUploadFile が未定義（アップロード非対応）の場合はリスナーを登録しない
+  // 非表示のペイン（他セッション / 左ペインが会話モード）でも登録しない。
+  // window リスナーは表示状態と無関係に発火するため（isVisible の項参照）
   useEffect(() => {
-    if (!onUploadFile) return;
+    if (!onUploadFile || !isVisible) return;
     let dragCounter = 0;
 
     const handleDragEnter = (e: DragEvent) => {
@@ -393,7 +407,7 @@ export function TerminalPane({
       window.removeEventListener("dragleave", handleDragLeave);
       window.removeEventListener("drop", handleDrop);
     };
-  }, [onUploadFile, handleFilesSelected]);
+  }, [onUploadFile, isVisible, handleFilesSelected]);
 
   // ファイル選択/D&D後のtextarea自動挿入は廃止（プレビューダイアログ経由に統一）
 
@@ -622,7 +636,10 @@ export function TerminalPane({
         })()}
       {/* 添付ファイル プレビューダイアログ（画像/非画像共通） */}
       {pendingFiles.length > 0 && (
-        <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div
+          className="absolute inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          data-testid="terminal-upload-preview"
+        >
           <div className="bg-card border border-border rounded-lg p-4 max-w-md w-full">
             <h3 className="text-sm font-semibold mb-3">
               ファイルを送信（{pendingFiles.length}件）
