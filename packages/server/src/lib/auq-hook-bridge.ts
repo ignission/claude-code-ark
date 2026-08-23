@@ -30,10 +30,6 @@ import {
   writeBoardSessionStartHookFile,
 } from "./board-session-start-hook.js";
 import { db } from "./database.js";
-import {
-  knowledgeSessionStartHookCommand,
-  writeKnowledgeSessionStartHookFile,
-} from "./knowledge-session-start-hook.js";
 import { getDataDir } from "./paths.js";
 
 export const AUQ_EVENT_PATH = "/api/internal/auq-event";
@@ -101,8 +97,6 @@ export class AuqHookBridge {
     fs.mkdirSync(dataDir, { recursive: true });
     const settingsPath = path.join(dataDir, "ark-claude-settings.json");
     const boardSessionStartHookPath = writeBoardSessionStartHookFile(dataDir);
-    const knowledgeSessionStartHookPath =
-      writeKnowledgeSessionStartHookFile(dataDir);
     // curl: -m 3 で TUI をブロックしない / 失敗は無視 (hook が claude の
     // 進行を止めないことを最優先)。stdin の JSON をそのまま転送する。
     const command = `curl -s -m 3 -X POST 'http://127.0.0.1:${port}${AUQ_EVENT_PATH}' -H 'Content-Type: application/json' -H '${AUQ_TOKEN_HEADER}: ${this.token}' --data-binary @- >/dev/null 2>&1 || true`;
@@ -115,12 +109,6 @@ export class AuqHookBridge {
                 type: "command",
                 command: boardSessionStartHookCommand(
                   boardSessionStartHookPath
-                ),
-              },
-              {
-                type: "command",
-                command: knowledgeSessionStartHookCommand(
-                  knowledgeSessionStartHookPath
                 ),
               },
             ],
