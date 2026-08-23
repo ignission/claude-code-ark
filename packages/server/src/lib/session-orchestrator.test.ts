@@ -225,6 +225,21 @@ describe("SessionOrchestrator - プロファイル切替", () => {
   // ============================================================
 
   describe("startSession (既存セッション再利用)", () => {
+    it("サーバー再起動で復元されたセッションの worktree も掃除する", async () => {
+      // 復元は startSession を通らない。ここで掃除しないと、
+      // 再起動で戻ってきた worktree だけ旧設定が残り続ける。
+      // worktree が実在しないと孤児として扱われ、掃除の前に continue される。
+      const restored = os.tmpdir();
+      mockedTmux.getAllSessions.mockReturnValue([
+        makeTmuxSession({ worktreePath: restored }),
+      ]);
+      mockedCleanup.mockClear();
+
+      new SessionOrchestrator();
+
+      expect(mockedCleanup).toHaveBeenCalledWith(restored);
+    });
+
     it("既存セッションを再利用する経路でも legacy settings を掃除する", async () => {
       // 早期 return より前で掃除しないと、旧 hook が repo に残り続ける（#401 の指摘）。
       const orchestrator = new SessionOrchestrator();
