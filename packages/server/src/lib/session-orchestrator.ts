@@ -25,6 +25,7 @@ import type {
 import { analyzeBridgeStatus } from "./bridge-collector.js";
 import { db } from "./database.js";
 import { getErrorMessage } from "./errors.js";
+import { cleanupLegacyContextSettings } from "./legacy-context-settings-cleanup.js";
 import { type TmuxSession, tmuxManager } from "./tmux-manager.js";
 import {
   describeTmuxReadFailure,
@@ -650,6 +651,10 @@ export class SessionOrchestrator extends EventEmitter {
       worktreePath,
       resolvedRepoPath
     );
+    // 撤去済み ark/context が注入したままの hook / deny を取り除く (#367 の移行)。
+    // 永続 tmux セッションを持つ環境では teardown が走らないまま撤去されるため、
+    // セッション起動のたびに冪等に掃除する。
+    cleanupLegacyContextSettings(worktreePath);
     const sessionEnv = env;
 
     // board MCP (ark-board / board_write) 用の per-session token/config を用意する。
@@ -794,6 +799,10 @@ export class SessionOrchestrator extends EventEmitter {
 
     // context owner を旧セッションから解放してから新セッションを init する。
     // tmux env はサーバー再起動後も残るため、永続化を追加せず session ID を復元できる。
+    // 撤去済み ark/context が注入したままの hook / deny を取り除く (#367 の移行)。
+    // 永続 tmux セッションを持つ環境では teardown が走らないまま撤去されるため、
+    // セッション起動のたびに冪等に掃除する。
+    cleanupLegacyContextSettings(worktreePath);
     const sessionEnv = env;
 
     // 2. board MCP 用の per-session token/config を用意してから、
