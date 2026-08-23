@@ -24,6 +24,10 @@ interface LeftModeStorageWriter {
 
 export const STORAGE_KEY_SPLIT_LEFT_MODE = "ark-split-left-mode";
 
+/** 同じタブ内で、常時マウント済みの全 SplitViewPane へ変更を伝える。 */
+export const SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT =
+  "ark:split-view-left-mode-change";
+
 export function normalizeSplitViewLeftMode(value: unknown): SplitViewLeftMode {
   return SPLIT_VIEW_LEFT_MODE_VALUES.includes(value as SplitViewLeftMode)
     ? (value as SplitViewLeftMode)
@@ -50,6 +54,12 @@ export function writeSavedSplitViewLeftMode(
   try {
     const target = storage ?? window.localStorage;
     target.setItem(STORAGE_KEY_SPLIT_LEFT_MODE, mode);
+    // storage イベントは同じ window には発火しない。Dashboard で常時
+    // マウントされている別セッションにも即座に反映するため、通常の
+    // localStorage 書き込み時だけ同一タブ向けイベントを補う。
+    if (storage === undefined) {
+      window.dispatchEvent(new Event(SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT));
+    }
   } catch {
     // Storage unavailable (SSR / private mode / quota) must not break switching.
   }

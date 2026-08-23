@@ -35,7 +35,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 import {
   readSavedSplitViewLeftMode,
+  SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT,
   type SplitViewLeftMode,
+  STORAGE_KEY_SPLIT_LEFT_MODE,
   shouldAcceptTerminalFileDrop,
   shouldSubscribeChat,
   writeSavedSplitViewLeftMode,
@@ -169,12 +171,28 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   const [showBoard, setShowBoard] = useState<boolean>(() =>
     readSavedShowBoard()
   );
-  // 左ペインのモード。showBoard / boardWidth と同じく、保存値の読み出しは
-  // マウント時の初期化のみ。既にマウント済みの他セッションのペインは、
-  // こちらで切り替えても追随しない（右ペインの開閉と同じ挙動）
+  // 左ペインのモード。選択は PC 全体で共有し、常時マウント済みの別セッション
+  // および別ブラウザタブからの変更にも追随する。
   const [leftMode, setLeftMode] = useState<SplitViewLeftMode>(
     readSavedSplitViewLeftMode
   );
+
+  useEffect(() => {
+    const syncFromStorage = () => setLeftMode(readSavedSplitViewLeftMode());
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === STORAGE_KEY_SPLIT_LEFT_MODE) syncFromStorage();
+    };
+
+    window.addEventListener(SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT, syncFromStorage);
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener(
+        SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT,
+        syncFromStorage
+      );
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
 
   const handleLeftModeChange = useCallback((next: SplitViewLeftMode) => {
     writeSavedSplitViewLeftMode(next);

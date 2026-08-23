@@ -1,113 +1,310 @@
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+// @vitest-environment jsdom
+
+import type { BridgeSessionStatus, ManagedSession } from "@ark/shared";
+import { act, type ComponentProps, type ReactElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   normalizeSplitViewLeftMode,
   readSavedSplitViewLeftMode,
-  SPLIT_VIEW_LEFT_MODE_VALUES,
-  shouldAcceptTerminalFileDrop,
-  shouldSubscribeChat,
+  STORAGE_KEY_SPLIT_LEFT_MODE,
   writeSavedSplitViewLeftMode,
 } from "../lib/split-view-left-mode";
-import {
-  SPLIT_VIEW_LEFT_MODES,
-  SplitViewLeftModeToggle,
-} from "./SplitViewLeftModeToggle";
+import { SplitViewPane } from "./SplitViewPane";
+
+interface ObservedChatProps {
+  session: ManagedSession;
+  isActive: boolean;
+  bridgeStatus?: BridgeSessionStatus;
+  awaitingText?: string;
+}
+
+const testDoubles = vi.hoisted(() => ({
+  splitChatPane: vi.fn(),
+}));
+
+vi.mock("./SplitChatPane", () => ({
+  SplitChatPane: (props: ObservedChatProps) => {
+    testDoubles.splitChatPane(props);
+    return <div data-testid={`chat-${props.session.id}`} />;
+  },
+}));
+
+vi.mock("./DiagramPane", () => ({
+  DiagramPane: () => <div data-testid="diagram-pane" />,
+}));
+
+vi.mock("../hooks/useMobile", () => ({
+  useIsMobile: () => false,
+}));
+
+vi.mock("../hooks/useTerminalLinkInjection", () => ({
+  useTerminalLinkInjection: () => undefined,
+}));
+
+const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
+
+function mount(element: ReactElement): HTMLDivElement {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  act(() => root.render(element));
+  mountedRoots.push({ root, container });
+  return container;
+}
+
+function makeSession(id: string): ManagedSession {
+  return {
+    id,
+    worktreeId: `worktree-${id}`,
+    worktreePath: `/worktrees/${id}`,
+    status: "active",
+    createdAt: new Date("2026-08-23T00:00:00Z"),
+    tmuxSessionName: `tmux-${id}`,
+    ttydPort: 4100,
+    ttydUrl: `/ttyd/${id}/`,
+  };
+}
+
+const notCalled = async (): Promise<never> => {
+  throw new Error("このテストでは呼ばれない関数です");
+};
+
+function makePaneProps(
+  session: ManagedSession,
+  isActive: boolean
+): ComponentProps<typeof SplitViewPane> {
+  return {
+    socket: null,
+    isConnected: true,
+    diagramCommentsUpdate: null,
+    listDiagrams: async () => [],
+    deleteDiagram: notCalled,
+    getDiagramComments: notCalled,
+    createDiagramComment: notCalled,
+    resolveDiagramComment: notCalled,
+    replyDiagramComment: notCalled,
+    deleteDiagramComment: notCalled,
+    sendDiagramComment: notCalled,
+    session,
+    isActive,
+    worktree: undefined,
+    tabs: [{ type: "terminal", id: `terminal-${session.id}` }],
+    activeTabIndex: 0,
+    onTabSelect: vi.fn(),
+    onTabClose: vi.fn(),
+    onSelectDiagram: vi.fn(),
+    onSendMessage: vi.fn(),
+    onSendKey: vi.fn(),
+    onDeleteSession: vi.fn(),
+    onUploadFile: vi.fn(async data => ({
+      path: `/uploads/${data.originalFilename ?? "file"}`,
+      filename: data.originalFilename ?? "file",
+    })),
+    messageShortcuts: [],
+    onCreateShortcut: vi.fn(),
+    onUpdateShortcut: vi.fn(),
+    onDeleteShortcut: vi.fn(),
+  };
+}
+
+function paneSection(
+  session: ManagedSession,
+  isActive: boolean,
+  overrides: Partial<ComponentProps<typeof SplitViewPane>> = {}
+): ReactElement {
+  return (
+    <section key={session.id} data-testid={`pane-${session.id}`}>
+      <SplitViewPane {...makePaneProps(session, isActive)} {...overrides} />
+    </section>
+  );
+}
+
+function renderSessions(
+  activeSessionId: string,
+  sessions: ManagedSession[],
+  overrides: Partial<ComponentProps<typeof SplitViewPane>> = {}
+): ReactElement {
+  return (
+    <>
+      {sessions.map(session =>
+        paneSection(session, session.id === activeSessionId, overrides)
+      )}
+    </>
+  );
+}
+
+function clickButton(scope: ParentNode, label: string): void {
+  const button = scope.querySelector<HTMLButtonElement>(
+    `button[aria-label="${label}"]`
+  );
+  expect(button).not.toBeNull();
+  act(() => button?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+}
+
+function dispatchFileDrop(filename: string): void {
+  const event = new Event("drop", {
+    bubbles: true,
+    cancelable: true,
+  });
+  Object.defineProperty(event, "dataTransfer", {
+    value: {
+      types: ["Files"],
+      files: [new File(["review"], filename, { type: "text/plain" })],
+    },
+  });
+  window.dispatchEvent(event);
+}
+
+function latestChatProps(sessionId: string): ObservedChatProps {
+  const calls = testDoubles.splitChatPane.mock.calls
+    .map(([props]) => props as ObservedChatProps)
+    .filter(props => props.session.id === sessionId);
+  const latest = calls.at(-1);
+  expect(latest).toBeDefined();
+  return latest as ObservedChatProps;
+}
+
+function textContent(scope: ParentNode): string {
+  return scope.textContent ?? "";
+}
+
+beforeEach(() => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  localStorage.clear();
+  testDoubles.splitChatPane.mockClear();
+});
+
+afterEach(() => {
+  for (const { root, container } of mountedRoots.splice(0)) {
+    act(() => root.unmount());
+    container.remove();
+  }
+  vi.restoreAllMocks();
+});
 
 describe("PC 左ペインの表示モード", () => {
-  it("terminal / chat を正規化し、不正値は terminal へ戻す", () => {
-    expect(SPLIT_VIEW_LEFT_MODES.map(option => option.value)).toEqual([
-      "terminal",
-      "chat",
-    ]);
+  it("保存値を正規化し、localStorage が使えなくても既定へ戻る", () => {
     expect(normalizeSplitViewLeftMode("terminal")).toBe("terminal");
     expect(normalizeSplitViewLeftMode("chat")).toBe("chat");
-    // モバイル側の値（board）は PC の左ペインには無い
     expect(normalizeSplitViewLeftMode("board")).toBe("terminal");
-    expect(normalizeSplitViewLeftMode(null)).toBe("terminal");
-    expect(normalizeSplitViewLeftMode(undefined)).toBe("terminal");
-  });
-
-  it("chat を永続化し、保存値から復元する", () => {
-    const writer = { setItem: vi.fn() };
-
-    writeSavedSplitViewLeftMode("chat", writer);
-
-    expect(writer.setItem).toHaveBeenCalledWith("ark-split-left-mode", "chat");
-    expect(readSavedSplitViewLeftMode({ getItem: () => "chat" })).toBe("chat");
-  });
-
-  it("保存が無いユーザーは従来どおりターミナルで開く", () => {
     expect(readSavedSplitViewLeftMode({ getItem: () => null })).toBe(
       "terminal"
     );
-  });
-
-  it("localStorage が使えなくても既定へ落ちて切替を壊さない", () => {
-    const throwingReader = {
-      getItem: () => {
-        throw new Error("storage disabled");
-      },
-    };
-    const throwingWriter = {
-      setItem: () => {
-        throw new Error("storage disabled");
-      },
-    };
-
-    expect(readSavedSplitViewLeftMode(throwingReader)).toBe("terminal");
+    expect(
+      readSavedSplitViewLeftMode({
+        getItem: () => {
+          throw new Error("storage disabled");
+        },
+      })
+    ).toBe("terminal");
     expect(() =>
-      writeSavedSplitViewLeftMode("chat", throwingWriter)
+      writeSavedSplitViewLeftMode("chat", {
+        setItem: () => {
+          throw new Error("storage disabled");
+        },
+      })
     ).not.toThrow();
   });
 
-  it("会話ビューの JSONL 購読は選択中セッションの会話モード 1 枚だけ", () => {
-    // 全セッションぶんの SplitViewPane が常時マウントされ、さらに左ペインは
-    // 端末・会話の両方をマウントしたままなので、両方の条件で絞らないと
-    // セッション数ぶんの tail が走る
-    expect(shouldSubscribeChat(true, "chat")).toBe(true);
-    expect(shouldSubscribeChat(true, "terminal")).toBe(false);
-    expect(shouldSubscribeChat(false, "chat")).toBe(false);
-    expect(shouldSubscribeChat(false, "terminal")).toBe(false);
-  });
+  it("SplitViewPane から会話ビューへ bridgeStatus / awaitingText を渡す", () => {
+    localStorage.setItem(STORAGE_KEY_SPLIT_LEFT_MODE, "chat");
+    const session = makeSession("wiring");
 
-  it("端末の window D&D も表示中の 1 枚だけが受け取る", () => {
-    // 会話モードでチャット欄へ落としたファイルが裏の端末ペインへ二重に
-    // 入らないこと（window リスナーは display:none でも発火する）
-    expect(shouldAcceptTerminalFileDrop(true, "terminal")).toBe(true);
-    expect(shouldAcceptTerminalFileDrop(true, "chat")).toBe(false);
-    expect(shouldAcceptTerminalFileDrop(false, "terminal")).toBe(false);
-    expect(shouldAcceptTerminalFileDrop(false, "chat")).toBe(false);
-  });
-
-  it("選択中セッションではどちらか一方だけが「表示中」になる", () => {
-    // 2 つの述語は左ペインの排他な 2 モードに 1 対 1 で対応する。
-    // 同時 true（二重動作）も、選択中なのに同時 false（どちらのペインも
-    // 動いていない）も、モードを増やしたときに壊れる形なのでここで縛る
-    // モードを増やしたら自動でこの検査の対象になるよう、定義から回す
-    for (const mode of SPLIT_VIEW_LEFT_MODE_VALUES) {
-      expect(shouldSubscribeChat(true, mode)).toBe(
-        !shouldAcceptTerminalFileDrop(true, mode)
-      );
-      // 非選択セッションはどちらのペインも見えていない
-      expect(shouldSubscribeChat(false, mode)).toBe(false);
-      expect(shouldAcceptTerminalFileDrop(false, mode)).toBe(false);
-    }
-  });
-
-  it("トグルは選択中のモードだけを aria-pressed で示す", () => {
-    const html = renderToStaticMarkup(
-      createElement(SplitViewLeftModeToggle, {
-        value: "chat",
-        onChange: () => {},
+    mount(
+      paneSection(session, true, {
+        bridgeStatus: "AWAITING",
+        awaitingText: "レビューを続けますか？",
       })
     );
 
-    expect(html).toContain('aria-label="会話"');
-    expect(html).toContain('aria-label="端末"');
-    expect(html.match(/aria-pressed="true"/g)).toHaveLength(1);
-    // 会話が選択されている＝会話ボタンだけが pressed
-    const chatButton = html.slice(html.indexOf('aria-label="会話"'));
-    expect(chatButton.slice(0, 120)).toContain('aria-pressed="true"');
+    expect(latestChatProps(session.id)).toMatchObject({
+      isActive: true,
+      bridgeStatus: "AWAITING",
+      awaitingText: "レビューを続けますか？",
+    });
+  });
+
+  it("トグル操作で状態と localStorage が変わり、全セッションで共有される", () => {
+    const sessions = [makeSession("a"), makeSession("b")];
+    const container = mount(renderSessions("a", sessions));
+    const paneA = container.querySelector('[data-testid="pane-a"]');
+    const paneB = container.querySelector('[data-testid="pane-b"]');
+    expect(paneA).not.toBeNull();
+    expect(paneB).not.toBeNull();
+
+    clickButton(paneA as ParentNode, "会話");
+
+    expect(localStorage.getItem(STORAGE_KEY_SPLIT_LEFT_MODE)).toBe("chat");
+    for (const pane of [paneA, paneB]) {
+      expect(
+        pane
+          ?.querySelector('button[aria-label="会話"]')
+          ?.getAttribute("aria-pressed")
+      ).toBe("true");
+    }
+    expect(
+      paneA?.querySelector('[data-testid="chat-a"]')?.parentElement?.className
+    ).toBe("h-full");
+    expect(
+      paneB?.querySelector('[data-testid="chat-b"]')?.parentElement?.className
+    ).toBe("h-full");
+  });
+
+  it("active session と left mode に応じて会話購読と端末 D&D を一枚だけ有効にする", async () => {
+    const sessions = [makeSession("a"), makeSession("b")];
+    const container = mount(renderSessions("a", sessions));
+    const root = mountedRoots.at(-1)?.root;
+    expect(root).toBeDefined();
+
+    expect(latestChatProps("a").isActive).toBe(false);
+    expect(latestChatProps("b").isActive).toBe(false);
+
+    await act(async () => {
+      dispatchFileDrop("active-a.txt");
+      await new Promise(resolve => setTimeout(resolve, 10));
+    });
+    expect(
+      textContent(
+        container.querySelector('[data-testid="pane-a"]') as ParentNode
+      )
+    ).toContain("ファイルを送信（1件）");
+    expect(
+      textContent(
+        container.querySelector('[data-testid="pane-b"]') as ParentNode
+      )
+    ).not.toContain("ファイルを送信（1件）");
+
+    act(() => root?.render(renderSessions("b", sessions)));
+    expect(latestChatProps("a").isActive).toBe(false);
+    expect(latestChatProps("b").isActive).toBe(false);
+
+    clickButton(container, "会話");
+    expect(latestChatProps("a").isActive).toBe(false);
+    expect(latestChatProps("b").isActive).toBe(true);
+  });
+
+  it("display:none の TerminalPane は window drop を処理しない", async () => {
+    localStorage.setItem(STORAGE_KEY_SPLIT_LEFT_MODE, "chat");
+    const session = makeSession("hidden-terminal");
+    const container = mount(paneSection(session, true));
+    const readSpy = vi.spyOn(FileReader.prototype, "readAsDataURL");
+
+    await act(async () => {
+      dispatchFileDrop("must-not-be-read.txt");
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    expect(readSpy).not.toHaveBeenCalled();
+    expect(textContent(container)).not.toContain("ファイルを送信（1件）");
+
+    // 陽性対照: 同じペインを端末表示に戻せば、同じ window drop が処理される。
+    clickButton(container, "端末");
+    await act(async () => {
+      dispatchFileDrop("visible-terminal.txt");
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(readSpy).toHaveBeenCalledTimes(1);
+    expect(textContent(container)).toContain("ファイルを送信（1件）");
   });
 });
