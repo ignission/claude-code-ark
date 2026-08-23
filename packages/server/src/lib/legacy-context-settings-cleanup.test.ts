@@ -176,6 +176,31 @@ describe("cleanupLegacyContextSettings", () => {
     expect(fs.readFileSync(settingsPath, "utf-8")).toBe(afterFirst);
   });
 
+  it("空文字や相対パスでは呼び出し元の cwd を掃除しない", () => {
+    // worktreePath は pane_current_path を取れないと空文字で復元される。
+    // そのまま渡すとサーバーの cwd を掃除してしまう。
+    const cwdSettings = path.join(
+      process.cwd(),
+      ".claude",
+      "settings.local.json"
+    );
+    const before = fs.existsSync(cwdSettings)
+      ? fs.readFileSync(cwdSettings, "utf-8")
+      : null;
+
+    for (const bad of ["", ".", "./somewhere", "relative/path"]) {
+      expect(cleanupLegacyContextSettings(bad)).toMatchObject({
+        changed: false,
+        removedHooks: 0,
+      });
+    }
+
+    const after = fs.existsSync(cwdSettings)
+      ? fs.readFileSync(cwdSettings, "utf-8")
+      : null;
+    expect(after).toBe(before);
+  });
+
   it("settings が無ければ何もしない", () => {
     expect(cleanupLegacyContextSettings(worktree).changed).toBe(false);
     expect(fs.existsSync(settingsPath)).toBe(false);

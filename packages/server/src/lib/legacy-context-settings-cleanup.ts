@@ -57,6 +57,9 @@ function referencesLegacyContext(entry: unknown): boolean {
 export function cleanupLegacyContextSettings(
   worktreePath: string
 ): LegacyContextCleanupResult {
+  // 空文字や相対パスを受けると、呼び出し元プロセスの cwd を掃除してしまう。
+  // 掃除は「この worktree の設定を戻す」操作なので、絶対パス以外は扱わない。
+  if (!worktreePath || !path.isAbsolute(worktreePath)) return NOOP;
   const settingsPath = path.join(
     worktreePath,
     ".claude",
