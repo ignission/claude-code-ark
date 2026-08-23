@@ -225,6 +225,18 @@ describe("SessionOrchestrator - プロファイル切替", () => {
   // ============================================================
 
   describe("startSession (既存セッション再利用)", () => {
+    it("worktreePath が空で復元されたセッションでは掃除しない", () => {
+      // 空のまま渡すとサーバーの cwd (= Ark 自身の repo) を掃除してしまう。
+      mockedTmux.getAllSessions.mockReturnValue([
+        makeTmuxSession({ worktreePath: "" }),
+      ]);
+      mockedCleanup.mockClear();
+
+      new SessionOrchestrator();
+
+      expect(mockedCleanup).not.toHaveBeenCalled();
+    });
+
     it("サーバー再起動で復元されたセッションの worktree も掃除する", async () => {
       // 復元は startSession を通らない。ここで掃除しないと、
       // 再起動で戻ってきた worktree だけ旧設定が残り続ける。

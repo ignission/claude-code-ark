@@ -312,7 +312,12 @@ export class SessionOrchestrator extends EventEmitter {
       // 撤去済み ark/context が注入したままの hook / deny を取り除く (#367 の移行)。
       // 復元はセッション起動を通らないため、ここでも掃除しないと
       // サーバー再起動で戻ってきた worktree だけ旧設定が残り続ける。
-      cleanupLegacyContextSettings(tmuxSession.worktreePath);
+      //
+      // worktreePath は pane_current_path を取れないと空文字で復元される。
+      // 空のまま渡すとサーバーの cwd (= Ark 自身の repo) を掃除してしまうため弾く。
+      if (tmuxSession.worktreePath) {
+        cleanupLegacyContextSettings(tmuxSession.worktreePath);
+      }
 
       // DBにセッション情報があればstatusを尊重（idle等の永続化された状態を維持）
       // repoPathの不整合はttyd起動完了時のtoManagedSession()が修正するので
