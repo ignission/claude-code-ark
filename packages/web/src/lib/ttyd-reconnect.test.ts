@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createTtydReconnectState,
+  hasTerminalOutput,
   isTtydStuckOverlay,
   stepTtydReconnect,
   TTYD_LOAD_TIMEOUT_MS,
@@ -67,9 +68,37 @@ describe("isTtydStuckOverlay", () => {
   });
 });
 
+describe("hasTerminalOutput", () => {
+  const buildTerm = (lines: string[]) => ({
+    rows: lines.length,
+    buffer: {
+      active: {
+        length: lines.length,
+        getLine: (y: number) =>
+          lines[y] === undefined
+            ? undefined
+            : { translateToString: () => lines[y] },
+      },
+    },
+  });
+
+  it("画面に文字があれば繋がっているとみなす", () => {
+    expect(hasTerminalOutput(buildTerm(["", "$ claude", ""]))).toBe(true);
+  });
+
+  it("空白だけの画面は繋がっていないとみなす", () => {
+    expect(hasTerminalOutput(buildTerm(["", "   ", ""]))).toBe(false);
+  });
+
+  it("xterm がまだ無いときは繋がっていないとみなす", () => {
+    expect(hasTerminalOutput(null)).toBe(false);
+    expect(hasTerminalOutput({})).toBe(false);
+  });
+});
+
 describe("stepTtydReconnect", () => {
   const base = {
-    ready: true,
+    connected: true,
     stuck: true,
     isVisible: true,
     online: true,
@@ -83,10 +112,10 @@ describe("stepTtydReconnect", () => {
     expect(r.state.lastReloadAt).toBe(1_000);
   });
 
-  it("初回読み込み中 (ready=false かつ未リロード) は何もしない", () => {
+  it("初回読み込み中 (画面がまだ来ておらず未リロード) は何もしない", () => {
     const r = stepTtydReconnect(createTtydReconnectState(), {
       ...base,
-      ready: false,
+      connected: false,
       stuck: false,
     });
     expect(r.reload).toBe(false);
@@ -110,11 +139,11 @@ describe("stepTtydReconnect", () => {
     expect(online.reload).toBe(true);
   });
 
-  it("貼り直した iframe に xterm が出てこないままなら再度貼り直す", () => {
+  it("貼り直しても画面が届かないまま (読み込み失敗・handshake 保留) なら再度貼り直す", () => {
     const first = stepTtydReconnect(createTtydReconnectState(), base);
     const stillLoading = stepTtydReconnect(first.state, {
       ...base,
-      ready: false,
+      connected: false,
       stuck: false,
       now: base.now + TTYD_LOAD_TIMEOUT_MS - 1,
     });
@@ -122,7 +151,7 @@ describe("stepTtydReconnect", () => {
 
     const timedOut = stepTtydReconnect(first.state, {
       ...base,
-      ready: false,
+      connected: false,
       stuck: false,
       now: base.now + TTYD_LOAD_TIMEOUT_MS,
     });
@@ -189,11 +218,47 @@ describe("stepTtydReconnect", () => {
     expect(connecting.state.attempts).toBe(1);
   });
 
-  it("復帰確認時間だけ stuck にならなければ試行回数を戻す", () => {
+  it("handshake 保留 (画面が来ていない) を復帰と誤認しない", () => {
+    // codex review 指摘: stuck でないだけで試行回数を戻すと、
+    // 繋がらない回線で上限が効かず無限に貼り直し続ける
+    const first = stepTtydReconnect(createTtydReconnectState(), base);
+    const pending = stepTtydReconnect(first.state, {
+      ...base,
+      connected: false,
+      stuck: false,
+      now: base.now + TTYD_RECOVERY_CONFIRM_MS,
+    });
+    expect(pending.state.attempts).toBe(2); // 戻さず、時間切れで再試行
+    expect(pending.state.lastReloadAt).not.toBe(null);
+  });
+
+  it("貼り直しても繋がらないまま時間だけ過ぎる場合、上限で止まる", () => {
+    // 1 回目は stuck 検出で貼り直し、以後は画面が来ないまま時間切れを繰り返す
+    const first = stepTtydReconnect(createTtydReconnectState(), base);
+    let state = first.state;
+    let now = base.now;
+    let reloads = first.reload ? 1 : 0;
+    for (let i = 0; i < 20; i++) {
+      now += TTYD_LOAD_TIMEOUT_MS;
+      const r = stepTtydReconnect(state, {
+        ...base,
+        connected: false,
+        stuck: false,
+        now,
+      });
+      if (r.reload) reloads++;
+      state = r.state;
+    }
+    expect(reloads).toBe(TTYD_RELOAD_MAX_ATTEMPTS);
+    expect(state.attempts).toBe(TTYD_RELOAD_MAX_ATTEMPTS);
+  });
+
+  it("復帰確認時間だけ繋がっていれば試行回数を戻す", () => {
     const first = stepTtydReconnect(createTtydReconnectState(), base);
     const recovered = stepTtydReconnect(first.state, {
       ...base,
       stuck: false,
+      connected: true,
       now: base.now + TTYD_RECOVERY_CONFIRM_MS,
     });
     expect(recovered.state.attempts).toBe(0);

@@ -43,7 +43,7 @@ export const TTYD_RELOAD_MAX_ATTEMPTS = 3;
 /** リロード後この時間 stuck にならなければ復帰とみなし、試行回数を戻す (ms) */
 export const TTYD_RECOVERY_CONFIRM_MS = 10_000;
 
-/** リロード後この時間 xterm が現れなければ読み込み失敗とみなす (ms) */
+/** リロード後この時間 画面が届かなければ読み込み失敗・handshake 保留とみなす (ms) */
 export const TTYD_LOAD_TIMEOUT_MS = 10_000;
 
 /**
@@ -66,6 +66,45 @@ export function isTtydStuckOverlay(
   return false;
 }
 
+/**
+ * xterm のバッファに何か描画されているか。
+ *
+ * 「stuck overlay が出ていない」だけでは接続できたことにならない。iframe を
+ * 貼り直した直後や、パケットが落ちるだけで RST が返らない回線では、xterm は
+ * 出来ているのに WebSocket の handshake が延々と保留になる。この状態を復帰と
+ * 誤認すると試行回数が戻ってしまい、上限が効かなくなる (codex review 指摘)。
+ *
+ * 接続できていれば tmux が画面を描き直すので、バッファに文字が入ることを
+ * 「繋がった」の肯定的な証拠として使う。空の判定は保守的側 (繋がっていない扱い)
+ * に倒れるので、誤っても暴走はしない。
+ */
+export function hasTerminalOutput(term: XtermLike | null | undefined): boolean {
+  const buffer = term?.buffer?.active;
+  if (!buffer) return false;
+  const rows = Math.min(term?.rows ?? 0, buffer.length ?? 0);
+  // 先頭から数行見れば足りる (繋がっていれば 1 行目から埋まる)
+  const limit = Math.min(rows, 24);
+  for (let y = 0; y < limit; y++) {
+    if ((buffer.getLine(y)?.translateToString(true) ?? "").trim() !== "") {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** `window.term` (xterm.js の Terminal) のうち、ここで使う部分だけ */
+export interface XtermLike {
+  rows?: number;
+  buffer?: {
+    active?: {
+      length?: number;
+      getLine(
+        y: number
+      ): { translateToString(trim?: boolean): string } | undefined;
+    };
+  };
+}
+
 export interface TtydReconnectState {
   /** 復帰を確認できていない連続自動リロード回数 */
   attempts: number;
@@ -78,8 +117,8 @@ export function createTtydReconnectState(): TtydReconnectState {
 }
 
 export interface TtydReconnectInput {
-  /** iframe 内に xterm が出来ているか (読み込み中・読み込み失敗は false) */
-  ready: boolean;
+  /** WebSocket が繋がって画面が届いているか (xterm 未生成・handshake 保留は false) */
+  connected: boolean;
   /** Enter 待ちで停止しているか */
   stuck: boolean;
   /** ターミナルが実際に画面へ出ているか */
@@ -103,9 +142,8 @@ export interface TtydReconnectStep {
  * - 表示されていないペインはリロードしない。隠れた iframe を貼り直すと
  *   ttyd の `fitAddon.fit()` がサイズ 0 に対して走り、次の resize まで
  *   端末が歪んだままになる。表示に戻った次の観測でリロードする
- * - 復帰の確認は「リロードから `TTYD_RECOVERY_CONFIRM_MS` 経っても stuck に
- *   ならないこと」で行う。直後の非 stuck は単に接続中の可能性があるため、
- *   ここで試行回数を戻すと壊れたセッションを延々リロードし続ける
+ * - 復帰の確認は「画面が届いている状態が `TTYD_RECOVERY_CONFIRM_MS` 続くこと」。
+ *   stuck でないだけでは handshake 保留と区別できず、試行回数の上限が効かなくなる
  * - オフラインのあいだは貼り直さない。回線が戻る前にリロードすると
  *   iframe が読み込み失敗のまま残り、xterm が現れないので次の検出もできない
  */
@@ -113,13 +151,13 @@ export function stepTtydReconnect(
   state: TtydReconnectState,
   input: TtydReconnectInput
 ): TtydReconnectStep {
-  const { ready, stuck, isVisible, online, now } = input;
+  const { connected, stuck, isVisible, online, now } = input;
   const sinceReload =
     state.lastReloadAt === null ? null : now - state.lastReloadAt;
 
-  if (ready && !stuck) {
-    // リロード直後の非 stuck は「まだ接続中」かもしれないので復帰とみなさない。
-    // ここで試行回数を戻すと、壊れたセッションを延々リロードし続ける
+  if (!stuck && connected) {
+    // 繋がった状態が `TTYD_RECOVERY_CONFIRM_MS` 続いたら復帰とみなす。
+    // 直後に戻さないのは、貼り直した直後の一瞬を復帰と誤認しないため
     if (sinceReload !== null && sinceReload >= TTYD_RECOVERY_CONFIRM_MS) {
       return {
         state: createTtydReconnectState(),
@@ -130,11 +168,11 @@ export function stepTtydReconnect(
     return { state, reload: false, exhausted: false };
   }
 
-  // 貼り直した iframe に xterm が出てこない = 読み込み自体が失敗している
-  // (回線が戻る前にリロードしてしまった場合など)。時間切れで再度貼り直す
-  const loadFailed =
-    !ready && sinceReload !== null && sinceReload >= TTYD_LOAD_TIMEOUT_MS;
-  if (!stuck && !loadFailed) return { state, reload: false, exhausted: false };
+  // 貼り直したのに画面が来ない = 読み込み失敗か handshake が保留のまま
+  // (回線が戻る前に貼り直した場合など)。時間切れでもう一度貼り直す
+  const stalled =
+    !connected && sinceReload !== null && sinceReload >= TTYD_LOAD_TIMEOUT_MS;
+  if (!stuck && !stalled) return { state, reload: false, exhausted: false };
 
   if (!isVisible) return { state, reload: false, exhausted: false };
 

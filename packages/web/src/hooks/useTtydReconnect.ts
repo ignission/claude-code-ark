@@ -1,6 +1,7 @@
 import { type RefObject, useEffect, useRef } from "react";
 import {
   createTtydReconnectState,
+  hasTerminalOutput,
   isTtydStuckOverlay,
   stepTtydReconnect,
   type TtydReconnectState,
@@ -46,16 +47,17 @@ export function useTtydReconnect(
   // biome-ignore lint/correctness/useExhaustiveDependencies: iframeKey は iframe 貼り直し後に監視を張り直すために必要
   useEffect(() => {
     const check = () => {
-      let ready = false;
+      let connected = false;
       let stuck = false;
       try {
         const iframeWindow = iframeRef.current?.contentWindow;
         if (!iframeWindow) return;
         // biome-ignore lint/suspicious/noExplicitAny: ttyd iframe 内の xterm オブジェクトにアクセスするため
         const term = (iframeWindow as any).term;
-        const element: Element | undefined = term?.element;
-        ready = Boolean(element);
-        stuck = isTtydStuckOverlay(element);
+        stuck = isTtydStuckOverlay(term?.element);
+        // 「stuck でない」だけでは handshake 保留と区別できないので、
+        // 画面が届いていることを繋がった証拠にする
+        connected = hasTerminalOutput(term);
       } catch {
         // 読み込み途中でクロスオリジン扱いになる等。次の観測に任せる
         return;
@@ -65,7 +67,7 @@ export function useTtydReconnect(
       const pageVisible = document.visibilityState === "visible";
 
       const result = stepTtydReconnect(stateRef.current, {
-        ready,
+        connected,
         stuck,
         isVisible: isVisible && pageVisible,
         online: navigator.onLine,
