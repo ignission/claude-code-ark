@@ -127,6 +127,37 @@ iframe（別ブラウジングコンテキスト）なので、アンマウン�
   前に `list-buffers` で有無を見る（同じ理由）
 - 書き込み系（`sendKeys` 等）は従来どおり throw
 
+### 横断知識の受け渡し（failures.md）
+
+セッションには **知識ファイルへのポインタだけ** を SessionStart hook で渡す
+(`knowledge-session-start-hook.ts`)。中身はコンテキストに載せない。
+
+```
+knowledge/failures.md: ~/.local/share/ark/context/knowledge/failures.md   ← 作業開始前と、失敗して再試行する前に読む
+failures-inbox.md:     ~/.local/share/ark/context/knowledge/failures-inbox.md   ← 再発しそうな失敗の候補を書く先
+```
+
+- `failures.md` が無い / 空なら hook は何も出力しない。有無は **hook 実行時** に見る
+  （サーバー起動後に知識が生まれることがあるため、生成時点の判定では取りこぼす）
+- **failures.md は手で書く。** 自動昇格の仕組みは持たない
+  （inbox は候補置き場であり、何を知識にするかは人間とセッションの判断に委ねる）
+- XDG のパスは `ark/context/knowledge` のまま。ディレクトリ名の由来は撤去済みの
+  ark/context 機構だが、rename は移行の失敗経路を増やすだけなので変えていない
+
+#### なぜこの形なのか（#367）
+
+task.md 規約・復唱（PostToolBatch）・失敗の自動収集・セッション lifecycle を持つ
+9,634 行の機構（ark/context）を運用し、実 Issue を 2 群に並行で解かせる対照実験を
+6 回行った。
+
+- **復唱**: 4 回の直接対決で 1 勝 1 分 2 敗。効果を示せなかった
+- **failures.md のポインタ**: n=6 で効果を観測。モデルが failures.md を名指しで引用し、
+  検索式（`-i` で大小無視）と陽性対照の両方に反映した
+- 機構自体が「実装済みなのに発火しない / 無音で止まる」不具合を 9 件生んだ
+
+効果を確認できた 1 点だけを残し、残りを撤去した（11,452 行削減）。
+経緯は #367 に記録がある。
+
 ### セッション永続化
 
 - **tmuxセッション**: サーバー再起動後も維持される（`cleanup()`でttydのみ停止、tmuxは残す）

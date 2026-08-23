@@ -1,8 +1,0 @@
-{
-  "tool": "process",
-  "error_type": "tool_error",
-  "exit_code": null,
-  "is_interrupt": null,
-  "error": "spawn ENOENT: \"missing-command\"",
-  "details": { "path": "/fixture/bin", "retry": false }
-}

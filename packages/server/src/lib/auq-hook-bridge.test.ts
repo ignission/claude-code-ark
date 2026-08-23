@@ -27,6 +27,7 @@ import {
   BOARD_SESSION_CONTEXT,
   BOARD_SESSION_START_HOOK_FILENAME,
 } from "./board-session-start-hook.js";
+import { KNOWLEDGE_SESSION_START_HOOK_FILENAME } from "./knowledge-session-start-hook.js";
 import { getDataDir } from "./paths.js";
 
 const mockedGetDataDir = vi.mocked(getDataDir);
@@ -71,6 +72,10 @@ describe("AuqHookBridge - hooks settings", () => {
             type: "command",
             command: `/bin/sh '${path.join(dataDir, BOARD_SESSION_START_HOOK_FILENAME)}'`,
           },
+          {
+            type: "command",
+            command: `/bin/sh '${path.join(dataDir, KNOWLEDGE_SESSION_START_HOOK_FILENAME)}'`,
+          },
         ],
       },
     ]);
@@ -86,6 +91,10 @@ describe("AuqHookBridge - hooks settings", () => {
     expect(
       fs.statSync(path.join(dataDir, BOARD_SESSION_START_HOOK_FILENAME)).mode &
         0o777
+    ).toBe(0o600);
+    expect(
+      fs.statSync(path.join(dataDir, KNOWLEDGE_SESSION_START_HOOK_FILENAME))
+        .mode & 0o777
     ).toBe(0o600);
   });
 
