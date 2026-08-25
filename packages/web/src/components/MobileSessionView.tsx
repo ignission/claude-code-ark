@@ -51,6 +51,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
+import { useTtydReconnect } from "../hooks/useTtydReconnect";
 import { useVisualViewport } from "../hooks/useVisualViewport";
 import {
   type DiagramOpenRequest,
@@ -407,6 +408,15 @@ export function MobileSessionView({
 
   // ttyd iframe内のxterm.jsにリンク検出をインジェクト（共通フック）
   useTerminalLinkInjection(iframeRef, iframeKey);
+
+  // バックグラウンド復帰で ttyd の WebSocket が落ちると端末は
+  // "Press ⏎ to Reconnect" のまま固まる。表示中のターミナルに限って検出し、
+  // iframe を貼り直して復帰させる（共通フック）。
+  useTtydReconnect(iframeRef, iframeKey, {
+    isVisible:
+      isActive && viewMode === "terminal" && activeTabType === "terminal",
+    onReload: handleReloadIframe,
+  });
 
   // スラッシュコマンド
   const slashCommands = [
