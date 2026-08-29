@@ -1707,7 +1707,10 @@ export async function startServer(
                 .replace(/[/+=]/g, "");
               await deleteWorktree(result.repoPath, result.worktreePath);
               managedWorktreeCache.delete(result.worktreePath);
-              socket.emit("worktree:deleted", {
+              // worktree の消滅は全クライアント共通の事実なので、削除を要求した
+              // socket だけでなく io で broadcast する。socket.emit だと他タブの
+              // サイドバーに消えた worktree が残る（worktree:delete 経路と非対称）。
+              io.emit("worktree:deleted", {
                 repoPath: result.repoPath,
                 worktreeId: deletedWorktreeId,
               });
@@ -1724,7 +1727,7 @@ export async function startServer(
 
             try {
               const worktrees = await listWorktrees(result.repoPath);
-              socket.emit("worktree:list", {
+              io.emit("worktree:list", {
                 repoPath: result.repoPath,
                 worktrees,
               });
