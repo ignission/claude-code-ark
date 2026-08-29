@@ -85,7 +85,7 @@ jobs:
       - name: Restore build cache
         if: ${{ inputs.force_rebuild != 'true' }}
         id: restore-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ env.BUILD_DIR }}/prefix
