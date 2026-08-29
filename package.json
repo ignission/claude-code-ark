@@ -27,18 +27,18 @@
     "lint": "biome lint ."
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.8",
+    "@biomejs/biome": "^2.5.11",
     "@playwright/test": "^1.62.1",
     "@types/node": "^24.13.3",
     "concurrently": "^9.2.4",
-    "pnpm": "10.33.4",
+    "pnpm": "10.34.5",
     "typescript": "6.0.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
-  "packageManager": "pnpm@10.33.4+sha512.1c67b3b359b2d408119ba1ed289f34b8fc3c6873412bec6fd264fbdc82489e510fcbecb9ce9d22dae7f3b76269d8441046014bdca53b9979cd7a561ad631b800",
+  "packageManager": "pnpm@10.34.5+sha512.a4ee05f2f73658255bd6a89859c065a45c28a57daefae2c893a168ee2b73168c37b91e83e57ea67654ad03f03031746430e8bce38e362e042605fb8abc80192e",
   "pnpm": {
     "overrides": {
-      "tailwindcss>nanoid": "5.1.11"
+      "tailwindcss>nanoid": "5.1.16"
     },
     "onlyBuiltDependencies": [
       "better-sqlite3",
