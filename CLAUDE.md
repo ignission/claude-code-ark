@@ -238,6 +238,11 @@ mainブランチをpullした後は、以下の手順で **順番通りに** ビ
 #    毎日の bump-claude-code ワークフローによる同梱 @anthropic-ai/claude-code の
 #    更新は install で初めて node_modules に反映される。省略すると稼働中の Ark が
 #    旧バージョンの claude を配り続ける
+#
+#    pnpm 11 が要る (.mise.toml / packageManager が 11 系を指す)。mise が古いと
+#    `no asset found: pnpm-linux-arm64` で pnpm 自体が入らず、この行が失敗する。
+#    その場合は `mise self-update` するか、corepack 経由に切り替える:
+#      corepack pnpm install --frozen-lockfile
 pnpm install --frozen-lockfile
 
 # 2. ビルド
