@@ -47,7 +47,7 @@ jobs:
       latest: ${{ steps.check.outputs.latest }}
       current: ${{ steps.check.outputs.current }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - id: check
         env:
           GH_TOKEN: ${{ github.token }}
@@ -139,7 +139,7 @@ jobs:
     outputs:
       gate_outcome: ${{ steps.gate.outcome }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.sha }} # detect と同一コミットを対象にする
           persist-credentials: false # 未検証コードに git 認証情報を渡さない
@@ -238,7 +238,7 @@ jobs:
       CURRENT: ${{ needs.detect.outputs.current }}
       LATEST: ${{ needs.detect.outputs.latest }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.sha }} # detect/verify と同一コミット
       - name: Download bumped manifests
