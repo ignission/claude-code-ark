@@ -24,6 +24,12 @@
   // PRの同時作成数: 最大10件に制限してレビュー負荷を抑える
   "prConcurrentLimit": 10,
 
+  // 最低リリース経過時間: 3 日。
+  // pnpm 11 は公開から 24 時間未満のバージョンを install 時に拒否するため
+  // (ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION)、公開直後の版を掴んだ PR は
+  // CI が必ず赤になる。Renovate 側でも寝かせてから提案させて衝突を防ぐ。
+  "minimumReleaseAge": "3 days",
+
   // ラベル: 全PRに付与する共通ラベル
   "labels": [
     "dependencies"
@@ -42,7 +48,6 @@
       "matchUpdateTypes": ["patch"],
       "groupName": "npm devDependencies (patch)",
       "automerge": true,
-      "minimumReleaseAge": "3 days",
       "addLabels": ["dev-dependencies", "automerge"]
     },
 
@@ -62,7 +67,6 @@
       "matchDepTypes": ["dependencies"],
       "matchUpdateTypes": ["patch"],
       "automerge": true,
-      "minimumReleaseAge": "3 days",
       "addLabels": ["automerge"]
     },
 
