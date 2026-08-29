@@ -1,2 +1,22 @@
 packages:
   - "packages/*"
+
+# pnpm 11 は package.json の "pnpm" フィールドを読まなくなり、ビルドスクリプトの
+# 許可も onlyBuiltDependencies から allowBuilds（明示的な true/false）に変わった。
+# @anthropic-ai/claude-code は postinstall で native binary を配置するので、
+# false にすると `claude native binary not installed` で起動できなくなる。
+allowBuilds:
+  "@anthropic-ai/claude-code": true
+  "@tailwindcss/oxide": true
+  better-sqlite3: true
+  electron: true
+  esbuild: true
+  # Windows インストーラ生成用。macOS 向けにしか配布しないので実行しない。
+  electron-winstaller: false
+
+# pnpm 11 は既定で「公開から 24 時間未満のバージョン」を install 時に拒否する
+# (ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION)。@anthropic-ai/claude-code は
+# bump-claude-code ワークフローが公開直後の版へ毎日追従する運用なので、
+# この 1 スコープだけ除外する（追従の可否はワークフロー内の pnpm check + build で担保）。
+minimumReleaseAgeExclude:
+  - "@anthropic-ai/*"

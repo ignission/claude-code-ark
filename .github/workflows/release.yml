@@ -59,7 +59,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           # push (tag) trigger: GITHUB_REF (refs/tags/...) が tag を指す → そのまま
           # workflow_dispatch: inputs.ref があれば branch/SHA、なければ caller ref。
@@ -85,12 +85,12 @@ jobs:
           echo "::notice::Tag ${TAG} matches package version ${PKG_VERSION}"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "pnpm"
 
       # build-bin ジョブが upload した artifact (tmux / ttyd / Frameworks / licenses)
@@ -102,7 +102,7 @@ jobs:
       #   packages/desktop/build-assets/Frameworks/* (静的リンク済なら空)
       # artifact 名 (ark-bin-macos-arm64) は build-bin.yml の upload-artifact name と一致。
       - name: Download tmux/ttyd artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ark-bin-macos-arm64
           path: packages/desktop/build-assets
@@ -496,7 +496,7 @@ jobs:
         # workflow_dispatch では inputs.tag が空ならドライラン (upload skip)、
         # 指定があれば release を作成・上書きする。
         if: ${{ github.event_name == 'push' || inputs.tag != '' }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           files: ${{ steps.artifact.outputs.zip }}
@@ -541,7 +541,7 @@ jobs:
 
       - name: Checkout homebrew-tap
         if: steps.token_check.outputs.has_token == '1'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ignission/homebrew-tap
           # checkout 対象を publish 先と一致させる。tap 側の default branch
