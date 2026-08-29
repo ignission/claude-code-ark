@@ -143,7 +143,7 @@ jobs:
         with:
           ref: ${{ github.sha }} # detect と同一コミットを対象にする
           persist-credentials: false # 未検証コードに git 認証情報を渡さない
-      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
       - name: Bump version (assert + perl)
         run: |
           set -euo pipefail
