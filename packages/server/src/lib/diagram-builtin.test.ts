@@ -291,3 +291,127 @@ describe("injectBuiltinProjection", () => {
     expect(out).not.toContain('rel="stylesheet"');
   });
 });
+
+function backlogModel(overrides: Partial<DiagramModel> = {}): DiagramModel {
+  return {
+    version: 1,
+    type: "backlog",
+    title: "AEO 2026-09",
+    nodes: [
+      {
+        id: "ga4",
+        label: "GA4 初回セットアップ",
+        kind: "task",
+        ext: { status: "doing" },
+        fields: [{ id: "ga4-own", label: "担当: あなた" }],
+      },
+      {
+        id: "lh",
+        label: "Lighthouse 計測",
+        kind: "task",
+        ext: { status: "done" },
+      },
+      { id: "works", label: "/works の被引用性", kind: "story" },
+      { id: "loose", label: "未分類の項目", kind: "chore" },
+    ],
+    edges: [],
+    groups: [
+      { id: "now", label: "いま", nodes: ["ga4"] },
+      { id: "done", label: "済んだこと", nodes: ["lh"] },
+      { id: "later", label: "あとで", nodes: ["works"] },
+    ],
+    ...overrides,
+  };
+}
+
+describe("injectBuiltinProjection: backlog", () => {
+  it("graph ではない容れ物を作る（自動レイアウトと edge に載せない）", () => {
+    const out = injectBuiltinProjection(page(modelScript), backlogModel());
+
+    expect(out).toContain('data-ark-container="list"');
+    expect(out).toContain('data-ark-builtin="backlog"');
+    expect(out).not.toContain('data-ark-container="graph"');
+  });
+
+  it("group を見出しにして、その直後にメンバー行を並べる", () => {
+    const out = injectBuiltinProjection(page(modelScript), backlogModel());
+
+    expect(out).toContain("ark-backlog-section");
+    expect(out).toContain('data-model-id="now"');
+    expect(out.indexOf('data-model-id="now"')).toBeLessThan(
+      out.indexOf('data-model-id="ga4"')
+    );
+    expect(out.indexOf('data-model-id="ga4"')).toBeLessThan(
+      out.indexOf('data-model-id="done"')
+    );
+  });
+
+  it("group に属さない node は最後に出る", () => {
+    const out = injectBuiltinProjection(page(modelScript), backlogModel());
+
+    expect(out.indexOf('data-model-id="works"')).toBeLessThan(
+      out.indexOf('data-model-id="loose"')
+    );
+  });
+
+  it("複数 group に入れても行は 1 回だけ出す（順位が二つにならない）", () => {
+    const out = injectBuiltinProjection(
+      page(modelScript),
+      backlogModel({
+        groups: [
+          { id: "now", label: "いま", nodes: ["ga4"] },
+          { id: "dup", label: "重複", nodes: ["ga4"] },
+        ],
+      })
+    );
+    const rows = out.match(/<article[^>]*data-model-id="ga4"/g) ?? [];
+
+    expect(rows).toHaveLength(1);
+  });
+
+  it("ext.status を行の data-status に載せ、無い node には付けない", () => {
+    const out = injectBuiltinProjection(page(modelScript), backlogModel());
+
+    expect(out).toMatch(
+      /<article[^>]*data-status="doing"[^>]*data-model-id="ga4"/
+    );
+    expect(out).toMatch(
+      /<article[^>]*data-status="done"[^>]*data-model-id="lh"/
+    );
+    expect(out).not.toMatch(
+      /<article[^>]*data-status[^>]*data-model-id="works"/
+    );
+  });
+
+  it("状態を色だけで伝えない（CSS に状態名の文字列を持つ）", () => {
+    const out = injectBuiltinProjection(page(modelScript), backlogModel());
+    const style = out.slice(out.indexOf("<style"), out.indexOf("</style>"));
+
+    for (const label of ['"TODO"', '"DOING"', '"BLOCKED"', '"DONE"']) {
+      expect(style).toContain(label);
+    }
+  });
+
+  it("行は既存図種と同じ投影契約を保つ（label と field の id）", () => {
+    const out = injectBuiltinProjection(page(modelScript), backlogModel());
+
+    expect(out).toContain('class="ark-builtin-node"');
+    expect(out).toContain('data-kind="task"');
+    expect(out).toContain('data-model-id="ga4-own"');
+    expect(out).toContain("担当: あなた");
+  });
+
+  it("既存 5 種は graph container のまま変わらない", () => {
+    for (const type of [
+      "er",
+      "event-storming",
+      "flow",
+      "state",
+      "context-map",
+    ]) {
+      const out = injectBuiltinProjection(page(modelScript), model({ type }));
+      expect(out).toContain('data-ark-container="graph"');
+      expect(out).not.toContain('data-ark-container="list"');
+    }
+  });
+});

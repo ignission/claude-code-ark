@@ -35,6 +35,14 @@ export const GENERATED_ATTR = "data-ark-harness-generated";
 interface BuiltinType {
   /** 図種専用の CSS（外部リソースを参照しない） */
   css: string;
+  /**
+   * graph 以外の容れ物を持つ図種だけが実装する DOM builder。
+   *
+   * 既存 5 種はすべて graph（絶対配置 + edge + drag で x/y 保存）なので
+   * 共通の `renderGraph` を使う。バックログのように「順位付きリスト」が
+   * 主役の図種は node の並びそのものが意味を持ち、絶対配置に載せられない。
+   */
+  render?: (model: DiagramModel) => string;
 }
 
 const BASE_CSS = `
@@ -142,12 +150,60 @@ const CONTEXT_MAP_CSS = `${BASE_CSS}
 [data-ark-builtin="context-map"] .ark-builtin-node[data-kind="note"]{--kn:"note";--k:#94a3b8;--kb:#1b2130;width:19rem;border-style:dashed;border-left-style:solid}
 `;
 
+/**
+ * バックログ。順位付きリストが主役で、graph ではない唯一の図種。
+ *
+ * 行は既存 5 種と同じ `.ark-builtin-node` / `data-model-id` / `data-kind` の
+ * 投影契約をそのまま使う（label 編集も field 編集もハーネス側の実装が効く）。
+ * 変えるのは容れ物と並べ方だけ。`node.ext.status` は行の `data-status` に載せ、
+ * 状態名は CSS 変数から文字として出す（色だけで状態を伝えない）。
+ */
+const BACKLOG_CSS = `${BASE_CSS}
+[data-ark-builtin="backlog"]{min-height:0;counter-reset:ark-backlog}
+.ark-backlog-section{margin:1.1rem 0 .5rem;padding:0 0 .3rem;
+border-bottom:1px solid #334155}
+.ark-backlog-section:first-child{margin-top:0}
+.ark-backlog-section .group-label{font-size:.78rem;font-weight:700;color:#7dd3fc}
+[data-ark-builtin="backlog"] .ark-builtin-node{display:grid;
+grid-template-columns:6.5rem minmax(0,1fr) auto;gap:.1rem .8rem;
+align-items:baseline;width:auto;margin:.3rem 0;padding:.5rem .7rem;
+counter-increment:ark-backlog}
+[data-ark-builtin="backlog"] .ark-builtin-node::before{grid-column:1;grid-row:1;
+content:counter(ark-backlog) "\\00A0" var(--kg,"\\25A3") "\\00A0" var(--kn,"story");
+font-size:.6rem;letter-spacing:.04em;white-space:nowrap}
+[data-ark-builtin="backlog"] .ark-builtin-label{grid-column:2;grid-row:1;
+margin-top:0;font-size:.86rem}
+[data-ark-builtin="backlog"] .ark-builtin-note{grid-column:2;grid-row:1}
+[data-ark-builtin="backlog"] .ark-builtin-fields{grid-column:2;grid-row:2;
+display:flex;flex-wrap:wrap;gap:.25rem .5rem;margin:.3rem 0 0;padding:0;
+border-top:none}
+[data-ark-builtin="backlog"] .ark-builtin-fields li{padding:.05rem .4rem;
+border:1px solid rgba(148,163,184,.35);border-radius:3px;font-size:.65rem}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status]::after{grid-column:3;
+grid-row:1;content:var(--st,"");padding:.05rem .45rem;border-radius:999px;
+border:1px solid var(--sc,#94a3b8);color:var(--sc,#94a3b8);
+font-size:.6rem;font-weight:700;letter-spacing:.04em;white-space:nowrap}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="todo"]{--st:"TODO";--sc:#94a3b8}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="doing"]{--st:"DOING";--sc:#38bdf8}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="blocked"]{--st:"BLOCKED";--sc:#f87171}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="done"]{--st:"DONE";--sc:#4ade80;opacity:.62}
+[data-ark-builtin="backlog"] .ark-builtin-node{--kn:"story";--k:#60a5fa;--kb:#172a46;--kg:"\\25A3"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="story"]{--kn:"story";--k:#60a5fa;--kb:#172a46;--kg:"\\25A3"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="bug"]{--kn:"bug";--k:#f87171;--kb:#3a1a1a;--kg:"\\2716"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="task"]{--kn:"task";--k:#38bdf8;--kb:#12283a;--kg:"\\2714"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="spike"]{--kn:"spike";--k:#c084fc;--kb:#2a2044;--kg:"\\25C7"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="chore"]{--kn:"chore";--k:#a3a3a3;--kb:#26262b;--kg:"\\25A4"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="epic"]{--kn:"epic";--k:#facc15;--kb:#332b0e;--kg:"\\2605";border-width:2px;border-left-width:5px}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="note"]{--kn:"note";--k:#94a3b8;--kb:#1b2130;border-style:dashed;border-left-style:solid}
+`;
+
 export const BUILTIN_DIAGRAM_TYPES: Readonly<Record<string, BuiltinType>> = {
   er: { css: ER_CSS },
   "event-storming": { css: STORMING_CSS },
   flow: { css: FLOW_CSS },
   state: { css: STATE_CSS },
   "context-map": { css: CONTEXT_MAP_CSS },
+  backlog: { css: BACKLOG_CSS, render: renderBacklog },
 };
 
 function escapeHtml(value: string): string {
@@ -197,6 +253,56 @@ function renderNode(node: DiagramNode): string {
   return `<article class="ark-builtin-node" data-model-id="${id}"${kindAttr}>${parts.join("")}</article>`;
 }
 
+/**
+ * バックログの 1 行。`renderNode` と同じ投影契約に `data-status` だけ足す。
+ *
+ * status を kind に混ぜないのは、種別（story / bug）と状態（todo / done）が
+ * 直交するから。kind に done を作ると「done な bug」が表せなくなる。
+ */
+function renderBacklogRow(node: DiagramNode): string {
+  const status = node.ext?.status;
+  if (typeof status !== "string" || status === "") return renderNode(node);
+  return renderNode(node).replace(
+    "<article ",
+    `<article data-status="${escapeHtml(status)}" `
+  );
+}
+
+/**
+ * バックログ投影。順位は `model.nodes` の並び、区切りは group。
+ *
+ * group に属さない node は最後にまとめて出す。同じ node を複数 group に入れた
+ * 場合は最初の group にだけ出し、行の重複は作らない（順位が二つになるため）。
+ */
+function renderBacklog(model: DiagramModel): string {
+  const placed = new Set<string>();
+  const sections: string[] = [];
+
+  for (const group of model.groups) {
+    const rows = model.nodes
+      .filter(node => group.nodes.includes(node.id) && !placed.has(node.id))
+      .map(node => {
+        placed.add(node.id);
+        return renderBacklogRow(node);
+      });
+    if (rows.length === 0) continue;
+    const safeId = escapeHtml(group.id);
+    sections.push(
+      `<section class="ark-backlog-section" data-ark-group data-model-id="${safeId}">` +
+        `<span class="group-label" data-model-id="${safeId}">${escapeHtml(group.label)}</span>` +
+        "</section>" +
+        rows.join("")
+    );
+  }
+
+  const rest = model.nodes
+    .filter(node => !placed.has(node.id))
+    .map(node => renderBacklogRow(node));
+  if (rest.length > 0) sections.push(rest.join(""));
+
+  return sections.join("");
+}
+
 function renderGroup(id: string, label: string): string {
   const safeId = escapeHtml(id);
   return (
@@ -242,16 +348,19 @@ export function injectBuiltinProjection(
   const title = model.title
     ? `<h1 class="ark-builtin-title" ${GENERATED_ATTR}="1">${escapeHtml(model.title)}</h1>`
     : "";
-  const groups = model.groups
-    .map(group => renderGroup(group.id, group.label))
-    .join("");
-  const nodes = model.nodes.map(node => renderNode(node)).join("");
+  // graph 以外の容れ物を持つ図種は自前の DOM を組む。graph という値は
+  // ハーネスの自動レイアウト・edge 描画・drag の入口なので、リストの図種に
+  // 付けてはならない（付けると絶対配置に載せられて行が重なる）。
+  const container = type.render ? "list" : "graph";
+  const body = type.render
+    ? type.render(model)
+    : model.groups.map(g => renderGroup(g.id, g.label)).join("") +
+      model.nodes.map(node => renderNode(node)).join("");
   const projection =
     `<style data-ark-harness-ui="1">${type.css}</style>` +
     title +
-    `<div data-ark-container="graph" data-ark-builtin="${safeType}" ${GENERATED_ATTR}="1">` +
-    groups +
-    nodes +
+    `<div data-ark-container="${container}" data-ark-builtin="${safeType}" ${GENERATED_ATTR}="1">` +
+    body +
     "</div>";
 
   const closing = html.toLowerCase().lastIndexOf("</body>");
