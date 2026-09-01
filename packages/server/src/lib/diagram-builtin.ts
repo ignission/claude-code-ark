@@ -159,39 +159,49 @@ const CONTEXT_MAP_CSS = `${BASE_CSS}
  * 状態名は CSS 変数から文字として出す（色だけで状態を伝えない）。
  */
 const BACKLOG_CSS = `${BASE_CSS}
-[data-ark-builtin="backlog"]{min-height:0}
-.ark-backlog-section{margin:1.1rem 0 .5rem;padding:0 0 .3rem;
-border-bottom:1px solid #334155}
-.ark-backlog-section:first-child{margin-top:0}
-.ark-backlog-section .group-label{font-size:.78rem;font-weight:700;color:#7dd3fc}
+[data-ark-builtin="backlog"]{min-height:0;border-top:1px solid #1e2532}
+.ark-backlog-section{display:flex;align-items:center;gap:.5rem;
+margin:0;padding:.42rem .6rem;background:#161b25;border-bottom:1px solid #1e2532}
+.ark-backlog-section .group-label{font-size:.72rem;font-weight:700;color:#cbd5e1}
+.ark-backlog-count{font-size:.66rem;color:#64748b}
 [data-ark-builtin="backlog"] .ark-builtin-node{display:grid;
-grid-template-columns:6.5rem minmax(0,1fr) auto;gap:.1rem .8rem;
-align-items:baseline;width:auto;margin:.3rem 0;padding:.5rem .7rem}
+grid-template-columns:6.2rem minmax(0,1fr) minmax(0,17rem) 5.2rem;align-items:center;
+gap:0 .8rem;width:auto;margin:0;padding:.4rem .6rem;
+border:0;border-radius:0;border-bottom:1px solid #1e2532;background:transparent}
+[data-ark-builtin="backlog"] .ark-builtin-node:hover{background:#151b26}
 [data-ark-builtin="backlog"] .ark-builtin-node::before{grid-column:1;grid-row:1;
-content:attr(data-rank) "\\00A0" var(--kg,"\\25A3") "\\00A0" var(--kn,"story");
-font-size:.6rem;letter-spacing:.04em;white-space:nowrap}
+display:block;content:attr(data-rank) "\\00A0" var(--kg,"\\25A3") "\\00A0" var(--kn,"story");
+font-size:.62rem;letter-spacing:.03em;color:var(--k,#94a3b8);white-space:nowrap;
+overflow:hidden;text-overflow:ellipsis}
 [data-ark-builtin="backlog"] .ark-builtin-label{grid-column:2;grid-row:1;
-margin-top:0;font-size:.86rem}
-[data-ark-builtin="backlog"] .ark-builtin-fields{grid-column:2;grid-row:2;
-display:flex;flex-wrap:wrap;gap:.25rem .5rem;margin:.3rem 0 0;padding:0;
-border-top:none}
-[data-ark-builtin="backlog"] .ark-builtin-fields li{padding:.05rem .4rem;
-border:1px solid rgba(148,163,184,.35);border-radius:3px;font-size:.65rem}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-status]::after{grid-column:3;
-grid-row:1;content:var(--st,"");padding:.05rem .45rem;border-radius:999px;
-border:1px solid var(--sc,#94a3b8);color:var(--sc,#94a3b8);
-font-size:.6rem;font-weight:700;letter-spacing:.04em;white-space:nowrap}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-status="todo"]{--st:"TODO";--sc:#94a3b8}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-status="doing"]{--st:"DOING";--sc:#38bdf8}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-status="blocked"]{--st:"BLOCKED";--sc:#f87171}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-status="done"]{--st:"DONE";--sc:#4ade80;opacity:.62}
-[data-ark-builtin="backlog"] .ark-builtin-node{--kn:"story";--k:#60a5fa;--kb:#172a46;--kg:"\\25A3"}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="story"]{--kn:"story";--k:#60a5fa;--kb:#172a46;--kg:"\\25A3"}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="bug"]{--kn:"bug";--k:#f87171;--kb:#3a1a1a;--kg:"\\2716"}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="task"]{--kn:"task";--k:#38bdf8;--kb:#12283a;--kg:"\\2714"}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="spike"]{--kn:"spike";--k:#c084fc;--kb:#2a2044;--kg:"\\25C7"}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="chore"]{--kn:"chore";--k:#a3a3a3;--kb:#26262b;--kg:"\\25A4"}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="epic"]{--kn:"epic";--k:#facc15;--kb:#332b0e;--kg:"\\2605";border-width:2px;border-left-width:5px}
+margin-top:0;font-size:.79rem;font-weight:500;color:#e2e8f0;
+white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+[data-ark-builtin="backlog"] .ark-builtin-fields{grid-column:3;grid-row:1;
+display:flex;flex-wrap:nowrap;gap:.3rem;margin:0;padding:0;border-top:none;
+overflow:hidden;
+-webkit-mask-image:linear-gradient(to right,#000 88%,transparent);
+mask-image:linear-gradient(to right,#000 88%,transparent)}
+[data-ark-builtin="backlog"] .ark-builtin-fields li{flex:0 0 auto;
+padding:.02rem .38rem;border:1px solid #2c3648;border-radius:3px;
+background:#161b25;font-size:.62rem;color:#94a3b8;white-space:nowrap;
+max-width:8rem;overflow:hidden;text-overflow:ellipsis}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status]::after{grid-column:4;
+grid-row:1;justify-self:end;content:var(--st,"");box-sizing:border-box;
+min-width:5.2rem;padding:.09rem 0;border-radius:3px;text-align:center;
+background:var(--sb,#232a38);color:var(--sc,#94a3b8);
+font-size:.58rem;font-weight:800;letter-spacing:.06em;white-space:nowrap}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="todo"]{--st:"TO DO";--sb:#232a38;--sc:#b6c2d4}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="doing"]{--st:"IN PROGRESS";--sb:#123054;--sc:#7cc2ff}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="blocked"]{--st:"BLOCKED";--sb:#3d1a1a;--sc:#ff8f7a}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="done"]{--st:"DONE";--sb:#123527;--sc:#5fdca4}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="done"] .ark-builtin-label{color:#8b97ab}
+[data-ark-builtin="backlog"] .ark-builtin-node{--kn:"story";--k:#36b37e;--kg:"\\25A3"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="story"]{--kn:"story";--k:#36b37e;--kg:"\\25A3"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="bug"]{--kn:"bug";--k:#ff5630;--kg:"\\2716"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="task"]{--kn:"task";--k:#4bade8;--kg:"\\2714"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="spike"]{--kn:"spike";--k:#c084fc;--kg:"\\25C7"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="chore"]{--kn:"chore";--k:#8993a4;--kg:"\\25A4"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="epic"]{--kn:"epic";--k:#904ee2;--kg:"\\2605"}
 `;
 
 export const BUILTIN_DIAGRAM_TYPES: Readonly<Record<string, BuiltinType>> = {
@@ -267,7 +277,7 @@ function renderBacklogRow(node: DiagramNode, rank: number): string {
   // という規約と食い違う（codex review 指摘）。
   return renderNode(node).replace(
     "<article ",
-    `<article data-rank="${rank}"${statusAttr} `
+    `<article data-rank="${rank}"${statusAttr} title="${escapeHtml(node.label)}" `
   );
 }
 
@@ -296,6 +306,7 @@ function renderBacklog(model: DiagramModel): string {
     sections.push(
       `<section class="ark-backlog-section" data-ark-group data-model-id="${safeId}">` +
         `<span class="group-label" data-model-id="${safeId}">${escapeHtml(group.label)}</span>` +
+        `<span class="ark-backlog-count">${rows.length} 件</span>` +
         "</section>" +
         rows.join("")
     );

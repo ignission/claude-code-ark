@@ -387,7 +387,7 @@ describe("injectBuiltinProjection: backlog", () => {
     const out = injectBuiltinProjection(page(modelScript), backlogModel());
     const style = out.slice(out.indexOf("<style"), out.indexOf("</style>"));
 
-    for (const label of ['"TODO"', '"DOING"', '"BLOCKED"', '"DONE"']) {
+    for (const label of ['"TO DO"', '"IN PROGRESS"', '"BLOCKED"', '"DONE"']) {
       expect(style).toContain(label);
     }
   });
