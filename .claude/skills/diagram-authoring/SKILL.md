@@ -21,7 +21,7 @@ Ark が配信時に生成し、生成物はファイルへ焼き付かない（�
 | `flow` | 業務フロー・シナリオ・処理の分岐 | `step`（既定）/ `command` / `decision` / `policy` / `event` / `outcome` / `error` / `actor` / `note` |
 | `state` | 状態遷移 | `state`（既定）/ `initial` / `terminal-ok` / `terminal-cancel` / `note` |
 | `context-map` | コンテキストマップ（戦略設計） | `supporting`（既定）/ `core` / `generic` / `developed` / `external` / `note` |
-| `backlog` | バックログ・タスク一覧（順位付きリスト） | `story`（既定）/ `bug` / `task` / `spike` / `chore` / `epic` / `note` |
+| `backlog` | バックログ・タスク一覧（順位付きリスト） | `story`（既定）/ `bug` / `task` / `spike` / `chore` / `epic` |
 
 語彙にない kind を書くとその図種の既定スタイルになる。`flow` の出口は成功を
 `outcome`、失敗を `error` に分けると、色に頼らず読めるようになる。区間の枠
@@ -37,6 +37,10 @@ Ark が配信時に生成し、生成物はファイルへ焼き付かない（�
   種別（`kind`）と状態（`status`）は直交させる。`kind` に done を作らない
 - `node.fields` は行の下にチップとして並ぶ。担当・見積り・Issue 番号のような列に使う
 - `ext.layout` と `ext.x` / `ext.y` は効かない（自動レイアウトを使わないため）
+- **`note` kind は使わない。**行の補足は `fields` に置く。note 本文の編集は graph
+  のハーネスに載っているため、リストの図種では同期されない
+- **行にコメントは付けられない**（コメント層のアンカーが graph 前提のため）。
+  指摘は会話か Issue で行う
 
 順位そのものが意味を持つので、**状態を `backlog` に持たせすぎないこと**。
 GitHub Issue のように別に正本がある情報を写すと、その瞬間から腐りはじめる。

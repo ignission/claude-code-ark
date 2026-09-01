@@ -159,21 +159,19 @@ const CONTEXT_MAP_CSS = `${BASE_CSS}
  * 状態名は CSS 変数から文字として出す（色だけで状態を伝えない）。
  */
 const BACKLOG_CSS = `${BASE_CSS}
-[data-ark-builtin="backlog"]{min-height:0;counter-reset:ark-backlog}
+[data-ark-builtin="backlog"]{min-height:0}
 .ark-backlog-section{margin:1.1rem 0 .5rem;padding:0 0 .3rem;
 border-bottom:1px solid #334155}
 .ark-backlog-section:first-child{margin-top:0}
 .ark-backlog-section .group-label{font-size:.78rem;font-weight:700;color:#7dd3fc}
 [data-ark-builtin="backlog"] .ark-builtin-node{display:grid;
 grid-template-columns:6.5rem minmax(0,1fr) auto;gap:.1rem .8rem;
-align-items:baseline;width:auto;margin:.3rem 0;padding:.5rem .7rem;
-counter-increment:ark-backlog}
+align-items:baseline;width:auto;margin:.3rem 0;padding:.5rem .7rem}
 [data-ark-builtin="backlog"] .ark-builtin-node::before{grid-column:1;grid-row:1;
-content:counter(ark-backlog) "\\00A0" var(--kg,"\\25A3") "\\00A0" var(--kn,"story");
+content:attr(data-rank) "\\00A0" var(--kg,"\\25A3") "\\00A0" var(--kn,"story");
 font-size:.6rem;letter-spacing:.04em;white-space:nowrap}
 [data-ark-builtin="backlog"] .ark-builtin-label{grid-column:2;grid-row:1;
 margin-top:0;font-size:.86rem}
-[data-ark-builtin="backlog"] .ark-builtin-note{grid-column:2;grid-row:1}
 [data-ark-builtin="backlog"] .ark-builtin-fields{grid-column:2;grid-row:2;
 display:flex;flex-wrap:wrap;gap:.25rem .5rem;margin:.3rem 0 0;padding:0;
 border-top:none}
@@ -194,7 +192,6 @@ font-size:.6rem;font-weight:700;letter-spacing:.04em;white-space:nowrap}
 [data-ark-builtin="backlog"] .ark-builtin-node[data-kind="spike"]{--kn:"spike";--k:#c084fc;--kb:#2a2044;--kg:"\\25C7"}
 [data-ark-builtin="backlog"] .ark-builtin-node[data-kind="chore"]{--kn:"chore";--k:#a3a3a3;--kb:#26262b;--kg:"\\25A4"}
 [data-ark-builtin="backlog"] .ark-builtin-node[data-kind="epic"]{--kn:"epic";--k:#facc15;--kb:#332b0e;--kg:"\\2605";border-width:2px;border-left-width:5px}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="note"]{--kn:"note";--k:#94a3b8;--kb:#1b2130;border-style:dashed;border-left-style:solid}
 `;
 
 export const BUILTIN_DIAGRAM_TYPES: Readonly<Record<string, BuiltinType>> = {
@@ -259,12 +256,18 @@ function renderNode(node: DiagramNode): string {
  * status を kind に混ぜないのは、種別（story / bug）と状態（todo / done）が
  * 直交するから。kind に done を作ると「done な bug」が表せなくなる。
  */
-function renderBacklogRow(node: DiagramNode): string {
+function renderBacklogRow(node: DiagramNode, rank: number): string {
   const status = node.ext?.status;
-  if (typeof status !== "string" || status === "") return renderNode(node);
+  const statusAttr =
+    typeof status === "string" && status !== ""
+      ? ` data-status="${escapeHtml(status)}"`
+      : "";
+  // 順位は CSS counter ではなく nodes 配列の位置から出す。counter は DOM の
+  // 並び順で振られるため、group 順が nodes 順と違う図で「nodes の並びが順位」
+  // という規約と食い違う（codex review 指摘）。
   return renderNode(node).replace(
     "<article ",
-    `<article data-status="${escapeHtml(status)}" `
+    `<article data-rank="${rank}"${statusAttr} `
   );
 }
 
@@ -277,13 +280,16 @@ function renderBacklogRow(node: DiagramNode): string {
 function renderBacklog(model: DiagramModel): string {
   const placed = new Set<string>();
   const sections: string[] = [];
+  const rankOf = new Map(
+    model.nodes.map((node, index) => [node.id, index + 1])
+  );
 
   for (const group of model.groups) {
     const rows = model.nodes
       .filter(node => group.nodes.includes(node.id) && !placed.has(node.id))
       .map(node => {
         placed.add(node.id);
-        return renderBacklogRow(node);
+        return renderBacklogRow(node, rankOf.get(node.id) ?? 0);
       });
     if (rows.length === 0) continue;
     const safeId = escapeHtml(group.id);
@@ -297,7 +303,7 @@ function renderBacklog(model: DiagramModel): string {
 
   const rest = model.nodes
     .filter(node => !placed.has(node.id))
-    .map(node => renderBacklogRow(node));
+    .map(node => renderBacklogRow(node, rankOf.get(node.id) ?? 0));
   if (rest.length > 0) sections.push(rest.join(""));
 
   return sections.join("");
@@ -318,15 +324,19 @@ function renderGroup(id: string, label: string): string {
  * HTML は引用符なしの属性値も許すため `data-ark-container=graph` も拾う。
  * 逆に script 本文（モデル JSON の label 等）や HTML コメントの中の同じ文字列は
  * 属性ではないので、判定前に取り除く。誤検出すると投影を生成せず白紙になり、
- * 見落とすと graph が二重になる。
+ * 見落とすと容れ物が二重になる。
+ *
+ * これから生成する容れ物と同じ名前だけを見る。graph 固定にすると、既に list を
+ * 持つ HTML へ二度目の注入が通り、投影がまるごと重複する（codex review 指摘）。
  */
-function hasAuthoredGraph(html: string): boolean {
+function hasContainer(html: string, name: string): boolean {
   const markup = html
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
-  return /data-ark-container\s*=\s*(?:"graph"|'graph'|graph(?=[\s/>]|$))/i.test(
-    markup
-  );
+  return new RegExp(
+    `data-ark-container\\s*=\\s*(?:"${name}"|'${name}'|${name}(?=[\\s/>]|$))`,
+    "i"
+  ).test(markup);
 }
 
 /**
@@ -342,16 +352,16 @@ export function injectBuiltinProjection(
   if (!Object.hasOwn(BUILTIN_DIAGRAM_TYPES, typeName)) return html;
   const type = BUILTIN_DIAGRAM_TYPES[typeName];
   if (!type) return html;
-  if (hasAuthoredGraph(html)) return html;
+  // graph 以外の容れ物を持つ図種は自前の DOM を組む。graph という値は
+  // ハーネスの自動レイアウト・edge 描画・drag の入口なので、リストの図種に
+  // 付けてはならない（付けると絶対配置に載せられて行が重なる）。
+  const container = type.render ? "list" : "graph";
+  if (hasContainer(html, container)) return html;
 
   const safeType = escapeHtml(typeName);
   const title = model.title
     ? `<h1 class="ark-builtin-title" ${GENERATED_ATTR}="1">${escapeHtml(model.title)}</h1>`
     : "";
-  // graph 以外の容れ物を持つ図種は自前の DOM を組む。graph という値は
-  // ハーネスの自動レイアウト・edge 描画・drag の入口なので、リストの図種に
-  // 付けてはならない（付けると絶対配置に載せられて行が重なる）。
-  const container = type.render ? "list" : "graph";
   const body = type.render
     ? type.render(model)
     : model.groups.map(g => renderGroup(g.id, g.label)).join("") +

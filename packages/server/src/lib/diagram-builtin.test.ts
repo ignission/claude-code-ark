@@ -415,3 +415,51 @@ describe("injectBuiltinProjection: backlog", () => {
     }
   });
 });
+
+describe("injectBuiltinProjection: backlog の順位と再注入", () => {
+  it("順位は group 順ではなく nodes 配列の位置で決まる", () => {
+    // nodes は [A(g2), B(g1)]、groups は [g1, g2]。行は g1 が先に出るが、
+    // 順位は nodes の並びどおり A=1 / B=2 でなければならない
+    const out = injectBuiltinProjection(
+      page(modelScript),
+      backlogModel({
+        nodes: [
+          { id: "a", label: "A", kind: "task" },
+          { id: "b", label: "B", kind: "task" },
+        ],
+        groups: [
+          { id: "g1", label: "先に出る", nodes: ["b"] },
+          { id: "g2", label: "後に出る", nodes: ["a"] },
+        ],
+      })
+    );
+
+    expect(out).toMatch(/<article[^>]*data-rank="2"[^>]*data-model-id="b"/);
+    expect(out).toMatch(/<article[^>]*data-rank="1"[^>]*data-model-id="a"/);
+    // 行の並びは group 順のまま
+    expect(out.indexOf('data-model-id="b"')).toBeLessThan(
+      out.indexOf('data-model-id="a"')
+    );
+  });
+
+  it("group に属さない node にも nodes 配列どおりの順位が付く", () => {
+    const out = injectBuiltinProjection(page(modelScript), backlogModel());
+
+    expect(out).toMatch(/<article[^>]*data-rank="4"[^>]*data-model-id="loose"/);
+  });
+
+  it("既に list 容れ物がある HTML には二度目の投影を足さない", () => {
+    const once = injectBuiltinProjection(page(modelScript), backlogModel());
+    const twice = injectBuiltinProjection(once, backlogModel());
+
+    expect(twice).toBe(once);
+    expect(twice.match(/data-ark-container="list"/g)).toHaveLength(1);
+  });
+
+  it("graph 図種の再注入ガードは従来どおり効く", () => {
+    const once = injectBuiltinProjection(page(modelScript), model());
+    const twice = injectBuiltinProjection(once, model());
+
+    expect(twice).toBe(once);
+  });
+});
