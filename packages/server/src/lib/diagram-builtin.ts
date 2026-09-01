@@ -159,49 +159,54 @@ const CONTEXT_MAP_CSS = `${BASE_CSS}
  * 状態名は CSS 変数から文字として出す（色だけで状態を伝えない）。
  */
 const BACKLOG_CSS = `${BASE_CSS}
-[data-ark-builtin="backlog"]{min-height:0;border-top:1px solid #1e2532}
-.ark-backlog-section{display:flex;align-items:center;gap:.5rem;
-margin:0;padding:.42rem .6rem;background:#161b25;border-bottom:1px solid #1e2532}
-.ark-backlog-section .group-label{font-size:.72rem;font-weight:700;color:#cbd5e1}
-.ark-backlog-count{font-size:.66rem;color:#64748b}
+body{background:#f4f5f7;color:#172b4d}
+.ark-builtin-title{color:#172b4d;font-size:1rem}
+[data-ark-builtin="backlog"]{min-height:0;border:1px solid #dfe1e6;border-radius:3px;
+background:#fff;overflow:hidden}
+.ark-backlog-section{display:flex;align-items:center;gap:.5rem;margin:0;
+padding:.42rem .7rem;background:#f4f5f7;border-bottom:1px solid #dfe1e6}
+.ark-backlog-section .group-label{font-size:.72rem;font-weight:700;color:#172b4d}
+.ark-backlog-count{font-size:.66rem;color:#6b778c}
 [data-ark-builtin="backlog"] .ark-builtin-node{display:grid;
-grid-template-columns:6.2rem minmax(0,1fr) minmax(0,17rem) 5.2rem;align-items:center;
-gap:0 .8rem;width:auto;margin:0;padding:.4rem .6rem;
-border:0;border-radius:0;border-bottom:1px solid #1e2532;background:transparent}
-[data-ark-builtin="backlog"] .ark-builtin-node:hover{background:#151b26}
-[data-ark-builtin="backlog"] .ark-builtin-node::before{grid-column:1;grid-row:1;
-display:block;content:attr(data-rank) "\\00A0" var(--kg,"\\25A3") "\\00A0" var(--kn,"story");
-font-size:.62rem;letter-spacing:.03em;color:var(--k,#94a3b8);white-space:nowrap;
+grid-template-columns:1.05rem 4.4rem minmax(0,1fr) minmax(0,16rem) 6rem;
+align-items:center;gap:0 .6rem;width:auto;margin:0;padding:.42rem .7rem;
+border:0;border-radius:0;border-bottom:1px solid #ebecf0;background:#fff}
+[data-ark-builtin="backlog"] .ark-builtin-node:last-child{border-bottom:0}
+[data-ark-builtin="backlog"] .ark-builtin-node:hover{background:#f4f5f7}
+[data-ark-builtin="backlog"] .ark-builtin-node::before{content:none}
+.ark-backlog-type{grid-column:1;display:grid;place-items:center;
+width:1.05rem;height:1.05rem;border-radius:3px;background:var(--k,#8993a4)}
+.ark-backlog-type::before{content:var(--kg,"\\25A3");color:#fff;font-size:.62rem;line-height:1}
+.ark-backlog-key{grid-column:2;font-size:.68rem;color:#6b778c;white-space:nowrap;
 overflow:hidden;text-overflow:ellipsis}
-[data-ark-builtin="backlog"] .ark-builtin-label{grid-column:2;grid-row:1;
-margin-top:0;font-size:.79rem;font-weight:500;color:#e2e8f0;
+[data-ark-builtin="backlog"] .ark-builtin-label{grid-column:3;margin-top:0;
+font-size:.8rem;font-weight:400;color:#172b4d;
 white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-[data-ark-builtin="backlog"] .ark-builtin-fields{grid-column:3;grid-row:1;
-display:flex;flex-wrap:nowrap;gap:.3rem;margin:0;padding:0;border-top:none;
-overflow:hidden;
+[data-ark-builtin="backlog"] .ark-builtin-node:hover .ark-builtin-label{color:#0052cc}
+[data-ark-builtin="backlog"] .ark-builtin-fields{grid-column:4;display:flex;
+flex-wrap:nowrap;gap:.28rem;margin:0;padding:0;border-top:none;overflow:hidden;
 -webkit-mask-image:linear-gradient(to right,#000 88%,transparent);
 mask-image:linear-gradient(to right,#000 88%,transparent)}
 [data-ark-builtin="backlog"] .ark-builtin-fields li{flex:0 0 auto;
-padding:.02rem .38rem;border:1px solid #2c3648;border-radius:3px;
-background:#161b25;font-size:.62rem;color:#94a3b8;white-space:nowrap;
-max-width:8rem;overflow:hidden;text-overflow:ellipsis}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-status]::after{grid-column:4;
-grid-row:1;justify-self:end;content:var(--st,"");box-sizing:border-box;
-min-width:5.2rem;padding:.09rem 0;border-radius:3px;text-align:center;
-background:var(--sb,#232a38);color:var(--sc,#94a3b8);
-font-size:.58rem;font-weight:800;letter-spacing:.06em;white-space:nowrap}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-status="todo"]{--st:"TO DO";--sb:#232a38;--sc:#b6c2d4}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-status="doing"]{--st:"IN PROGRESS";--sb:#123054;--sc:#7cc2ff}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-status="blocked"]{--st:"BLOCKED";--sb:#3d1a1a;--sc:#ff8f7a}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-status="done"]{--st:"DONE";--sb:#123527;--sc:#5fdca4}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-status="done"] .ark-builtin-label{color:#8b97ab}
+padding:.06rem .4rem;border:0;border-radius:3px;background:#ebecf0;
+font-size:.62rem;color:#42526e;white-space:nowrap;max-width:7.5rem;
+overflow:hidden;text-overflow:ellipsis}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status]::after{grid-column:5;
+justify-self:end;content:var(--st,"");box-sizing:border-box;min-width:6rem;
+padding:.11rem 0;border-radius:3px;text-align:center;
+background:var(--sb,#dfe1e6);color:var(--sc,#42526e);
+font-size:.58rem;font-weight:700;letter-spacing:.05em;white-space:nowrap}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="todo"]{--st:"TO DO";--sb:#dfe1e6;--sc:#42526e}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="doing"]{--st:"IN PROGRESS";--sb:#deebff;--sc:#0747a6}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="blocked"]{--st:"BLOCKED";--sb:#ffebe6;--sc:#bf2600}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="done"]{--st:"DONE";--sb:#e3fcef;--sc:#006644}
 [data-ark-builtin="backlog"] .ark-builtin-node{--kn:"story";--k:#36b37e;--kg:"\\25A3"}
 [data-ark-builtin="backlog"] .ark-builtin-node[data-kind="story"]{--kn:"story";--k:#36b37e;--kg:"\\25A3"}
 [data-ark-builtin="backlog"] .ark-builtin-node[data-kind="bug"]{--kn:"bug";--k:#ff5630;--kg:"\\2716"}
 [data-ark-builtin="backlog"] .ark-builtin-node[data-kind="task"]{--kn:"task";--k:#4bade8;--kg:"\\2714"}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="spike"]{--kn:"spike";--k:#c084fc;--kg:"\\25C7"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="spike"]{--kn:"spike";--k:#8777d9;--kg:"\\25C7"}
 [data-ark-builtin="backlog"] .ark-builtin-node[data-kind="chore"]{--kn:"chore";--k:#8993a4;--kg:"\\25A4"}
-[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="epic"]{--kn:"epic";--k:#904ee2;--kg:"\\2605"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="epic"]{--kn:"epic";--k:#6554c0;--kg:"\\2605"}
 `;
 
 export const BUILTIN_DIAGRAM_TYPES: Readonly<Record<string, BuiltinType>> = {
@@ -267,17 +272,36 @@ function renderNode(node: DiagramNode): string {
  * 直交するから。kind に done を作ると「done な bug」が表せなくなる。
  */
 function renderBacklogRow(node: DiagramNode, rank: number): string {
+  const id = escapeHtml(node.id);
+  const kind = node.kind && node.kind !== "" ? node.kind : "story";
   const status = node.ext?.status;
   const statusAttr =
     typeof status === "string" && status !== ""
       ? ` data-status="${escapeHtml(status)}"`
       : "";
-  // 順位は CSS counter ではなく nodes 配列の位置から出す。counter は DOM の
-  // 並び順で振られるため、group 順が nodes 順と違う図で「nodes の並びが順位」
-  // という規約と食い違う（codex review 指摘）。
-  return renderNode(node).replace(
-    "<article ",
-    `<article data-rank="${rank}"${statusAttr} title="${escapeHtml(node.label)}" `
+  // 種別は色の付いた四角（Jira の type icon）で示すが、色だけに頼らないよう
+  // 種別名を key 欄に文字としても出す。順位は nodes 配列の位置（rank）。
+  const parts = [
+    '<span class="ark-backlog-type" aria-hidden="true"></span>',
+    `<span class="ark-backlog-key">${rank} \u00B7 ${escapeHtml(kind)}</span>`,
+    `<span class="ark-builtin-label" data-model-id="${id}">${escapeHtml(node.label)}</span>`,
+  ];
+  const fields = node.fields ?? [];
+  if (fields.length > 0) {
+    const items = fields
+      .map(
+        field =>
+          `<li data-model-id="${escapeHtml(field.id)}">${escapeHtml(field.label)}</li>`
+      )
+      .join("");
+    parts.push(`<ul class="ark-builtin-fields">${items}</ul>`);
+  }
+  // 1 行に収めるので、切り詰められた要約は title で読めるようにする
+  return (
+    `<article class="ark-builtin-node" data-model-id="${id}" data-kind="${escapeHtml(kind)}"` +
+    ` data-rank="${rank}"${statusAttr} title="${escapeHtml(node.label)}">` +
+    parts.join("") +
+    "</article>"
   );
 }
 

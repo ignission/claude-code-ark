@@ -292,6 +292,14 @@ describe("injectBuiltinProjection", () => {
   });
 });
 
+/** 属性の並び順に依存せず、その node の <article> 開始タグだけを取り出す */
+function rowTag(html: string, id: string): string {
+  const match = html.match(
+    new RegExp(`<article[^>]*data-model-id="${id}"[^>]*>`)
+  );
+  return match?.[0] ?? "";
+}
+
 function backlogModel(overrides: Partial<DiagramModel> = {}): DiagramModel {
   return {
     version: 1,
@@ -372,15 +380,9 @@ describe("injectBuiltinProjection: backlog", () => {
   it("ext.status を行の data-status に載せ、無い node には付けない", () => {
     const out = injectBuiltinProjection(page(modelScript), backlogModel());
 
-    expect(out).toMatch(
-      /<article[^>]*data-status="doing"[^>]*data-model-id="ga4"/
-    );
-    expect(out).toMatch(
-      /<article[^>]*data-status="done"[^>]*data-model-id="lh"/
-    );
-    expect(out).not.toMatch(
-      /<article[^>]*data-status[^>]*data-model-id="works"/
-    );
+    expect(rowTag(out, "ga4")).toContain('data-status="doing"');
+    expect(rowTag(out, "lh")).toContain('data-status="done"');
+    expect(rowTag(out, "works")).not.toContain("data-status");
   });
 
   it("状態を色だけで伝えない（CSS に状態名の文字列を持つ）", () => {
@@ -434,8 +436,8 @@ describe("injectBuiltinProjection: backlog の順位と再注入", () => {
       })
     );
 
-    expect(out).toMatch(/<article[^>]*data-rank="2"[^>]*data-model-id="b"/);
-    expect(out).toMatch(/<article[^>]*data-rank="1"[^>]*data-model-id="a"/);
+    expect(rowTag(out, "b")).toContain('data-rank="2"');
+    expect(rowTag(out, "a")).toContain('data-rank="1"');
     // 行の並びは group 順のまま
     expect(out.indexOf('data-model-id="b"')).toBeLessThan(
       out.indexOf('data-model-id="a"')
@@ -445,7 +447,7 @@ describe("injectBuiltinProjection: backlog の順位と再注入", () => {
   it("group に属さない node にも nodes 配列どおりの順位が付く", () => {
     const out = injectBuiltinProjection(page(modelScript), backlogModel());
 
-    expect(out).toMatch(/<article[^>]*data-rank="4"[^>]*data-model-id="loose"/);
+    expect(rowTag(out, "loose")).toContain('data-rank="4"');
   });
 
   it("既に list 容れ物がある HTML には二度目の投影を足さない", () => {
