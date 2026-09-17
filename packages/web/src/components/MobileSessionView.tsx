@@ -1,8 +1,9 @@
 /**
  * MobileSessionView - モバイル用セッション詳細画面
  *
- * ターミナル全画面表示 + Quick Keys + 入力バー常時表示。
- * Opsドロップダウンで追加操作（Copy Buffer, Paste Image, Reload, スラッシュコマンド）。
+ * ヘッダー (戻る・主ラベル・ブランチ・状態チップ・操作メニュー) と、その直下の状態の帯、
+ * 「会話 / 端末 / 図」の本文と下部バーで組む。
+ * 3モードの本文はマウントしたまま display で切り替える (ttyd と図の iframe を張り直さない)。
  */
 
 import type {
@@ -15,15 +16,18 @@ import type {
   Worktree,
 } from "@ark/shared";
 import {
+  Bell,
+  BellOff,
   ChevronLeft,
   Copy,
+  Ellipsis,
   File as FileIcon,
-  GitBranch,
   ImageIcon,
-  MoreVertical,
+  MessageSquareQuote,
   RefreshCw,
   RotateCw,
   Send,
+  Settings,
   Trash2,
   X,
 } from "lucide-react";
@@ -44,11 +48,18 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  deleteSessionDescription,
+  notificationMenuLabel,
+  resolveSessionHeaderLabels,
+} from "@/lib/session-header";
+import { resolveStatusKey } from "@/lib/status-tone";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { useTtydReconnect } from "../hooks/useTtydReconnect";
@@ -65,9 +76,10 @@ import { DiagramPane, type DiagramPaneProps } from "./DiagramPane";
 import { FileViewerPane } from "./FileViewerPane";
 import { HtmlViewerPane } from "./HtmlViewerPane";
 import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
-import { MessageShortcutMenu } from "./MessageShortcutMenu";
+import { previewOf } from "./MessageShortcutMenu";
 import { MobileSessionViewModeToggle } from "./MobileSessionViewModeToggle";
 import { SplitChatPane } from "./SplitChatPane";
+import { StatusChip } from "./StatusChip";
 import type { ViewerTab } from "./TerminalPane";
 import { ViewerTabBar } from "./ViewerTabBar";
 
@@ -99,6 +111,15 @@ export interface MobileSessionViewProps extends MobileDiagramPaneProps {
   awaitingText?: string;
   session: ManagedSession;
   worktree: Worktree | undefined;
+  /** 主ラベルに使うリポジトリ名 (basename)。所属が分からなければ undefined */
+  repoName?: string;
+  /** worktree のカスタム表示名。あれば主ラベルにする */
+  displayName?: string | null;
+  /** Notification API 対応環境でだけ「このセッションの通知をオン/オフにする」を出す */
+  notificationsSupported?: boolean;
+  /** このセッションの通知が有効か (未設定なら有効) */
+  notificationsEnabled?: boolean;
+  onNotificationsEnabledChange?: (enabled: boolean) => void;
   onBack: () => void;
   onSendMessage: (message: string) => void;
   onSendKey: (key: SpecialKey) => void;
@@ -137,6 +158,11 @@ export function MobileSessionView({
   awaitingText,
   session,
   worktree,
+  repoName,
+  displayName,
+  notificationsSupported = false,
+  notificationsEnabled = true,
+  onNotificationsEnabledChange,
   onBack,
   onSendMessage,
   onSendKey,
@@ -427,6 +453,14 @@ export function MobileSessionView({
     { label: "/compact", cmd: "/compact" },
   ];
 
+  // ヘッダーの主ラベル (表示名 → リポジトリ名 → worktree のフォルダ名) とブランチ。PC の上部バーと同じ決め方
+  const headerLabels = resolveSessionHeaderLabels({
+    displayName,
+    repoName,
+    branch: worktree?.branch,
+    worktreePath: session.worktreePath,
+  });
+
   return (
     <div
       className="flex-1 flex flex-col min-h-0 safe-area-x"
@@ -436,70 +470,107 @@ export function MobileSessionView({
           : undefined
       }
     >
-      {/* ヘッダー: 戻る、ブランチ名、Opsドロップダウン、Stopボタン */}
-      <header className="h-12 border-b border-border flex items-center justify-between px-2 bg-sidebar shrink-0 safe-area-top">
-        <div className="flex items-center gap-1 min-w-0">
+      {/* ヘッダー: 戻る・主ラベル・ブランチ・状態チップ・操作メニュー。
+          safe area の余白は外側の header に付け、行の高さ (56px) と分ける */}
+      <header className="shrink-0 bg-background safe-area-top">
+        <div className="flex h-14 items-center gap-1 pl-1.5 pr-2">
           <Button
             variant="ghost"
             size="icon"
-            className="h-10 w-10 shrink-0"
+            className="size-10 shrink-0 rounded-sm"
             onClick={onBack}
+            aria-label="一覧へ戻る"
           >
-            <ChevronLeft className="w-5 h-5" />
+            <ChevronLeft className="size-[22px]" />
           </Button>
-          <div className={`status-indicator ${session.status} shrink-0`} />
-          <GitBranch className="w-4 h-4 text-muted-foreground shrink-0" />
-          <span className="font-mono text-sm truncate">
-            {worktree?.branch ||
-              session.worktreePath.substring(
-                session.worktreePath.lastIndexOf("/") + 1
-              )}
-          </span>
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
+          <div className="flex min-w-0 flex-1 items-baseline gap-2">
+            <span className="min-w-0 truncate text-[17px] font-semibold tracking-[-0.01em]">
+              {headerLabels.primary}
+            </span>
+            <span className="min-w-0 max-w-[40%] shrink-0 truncate text-[13px] text-muted-foreground">
+              {headerLabels.branch}
+            </span>
+          </div>
+          <StatusChip statusKey={resolveStatusKey(true, bridgeStatus)} />
           <MobileSessionViewModeToggle
             value={viewMode}
             onChange={handleViewModeChange}
           />
-          <MessageShortcutMenu
-            shortcuts={messageShortcuts}
-            onSendMessage={onSendMessage}
-            onOpenManager={() => setShowShortcutManager(true)}
-            size="lg"
-          />
-          {/* Opsドロップダウン */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-10 w-10">
-                <MoreVertical className="w-5 h-5" />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-10 shrink-0 rounded-sm"
+                aria-label="セッションの操作"
+              >
+                <Ellipsis className="size-[22px]" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
+            {/* メッセージショートカットはサブメニューにせず見出し付きで並べる
+                (サブメニューはスクロールせず、幅390pxでは左右どちらにも収まらない)。
+                アイコンの大きさと間隔は DropdownMenuItem が付ける (PC の … と同じ) */}
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
+                メッセージショートカット
+              </DropdownMenuLabel>
+              {messageShortcuts.map(shortcut => (
+                <DropdownMenuItem
+                  key={shortcut.id}
+                  onSelect={() => onSendMessage(shortcut.message)}
+                  title={shortcut.message.slice(0, 200)}
+                >
+                  <MessageSquareQuote />
+                  <span className="truncate">
+                    {previewOf(shortcut.message)}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuItem onSelect={() => setShowShortcutManager(true)}>
+                <Settings />
+                ショートカットを管理
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {notificationsSupported && onNotificationsEnabledChange && (
+                <>
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      onNotificationsEnabledChange(!notificationsEnabled)
+                    }
+                  >
+                    {notificationsEnabled ? <BellOff /> : <Bell />}
+                    {notificationMenuLabel(notificationsEnabled)}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               {onCopyBuffer && (
-                <DropdownMenuItem onClick={handleCopyBuffer}>
-                  <Copy className="w-4 h-4 mr-2" />
-                  Copy Buffer
+                <DropdownMenuItem onSelect={handleCopyBuffer}>
+                  <Copy />
+                  端末のバッファをコピー
                 </DropdownMenuItem>
               )}
               {onUploadFile && (
-                <DropdownMenuItem onClick={handlePasteButtonClick}>
-                  <ImageIcon className="w-4 h-4 mr-2" />
-                  Paste Image
+                <DropdownMenuItem onSelect={handlePasteButtonClick}>
+                  <ImageIcon />
+                  画像を貼り付け
                 </DropdownMenuItem>
               )}
               {onUploadFile && (
-                <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
-                  <FileIcon className="mr-2 h-4 w-4" />
+                <DropdownMenuItem
+                  onSelect={() => fileInputRef.current?.click()}
+                >
+                  <FileIcon />
                   ファイルを添付
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem onClick={handleReloadIframe}>
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Reload Terminal
+              <DropdownMenuItem onSelect={handleReloadIframe}>
+                <RefreshCw />
+                端末を再読み込み
               </DropdownMenuItem>
               {onRestartSession && (
-                <DropdownMenuItem onClick={() => setShowRestartDialog(true)}>
-                  <RotateCw className="w-4 h-4 mr-2" />
+                <DropdownMenuItem onSelect={() => setShowRestartDialog(true)}>
+                  <RotateCw />
                   セッションを再起動
                 </DropdownMenuItem>
               )}
@@ -507,24 +578,22 @@ export function MobileSessionView({
               {slashCommands.map(({ label, cmd }) => (
                 <DropdownMenuItem
                   key={cmd}
-                  onClick={() => onSendMessage(cmd)}
-                  className="font-mono text-xs"
+                  onSelect={() => onSendMessage(cmd)}
+                  className="text-xs"
                 >
                   {label}
                 </DropdownMenuItem>
               ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => setShowDeleteDialog(true)}
+              >
+                <Trash2 />
+                セッションを削除
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          {/* 削除ボタン（セッション停止 + メイン以外のWorktree削除） */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10 text-destructive hover:text-destructive"
-            onClick={() => setShowDeleteDialog(true)}
-            title="セッションを削除"
-          >
-            <Trash2 className="w-5 h-5" />
-          </Button>
         </div>
       </header>
 
@@ -836,11 +905,7 @@ export function MobileSessionView({
           <AlertDialogHeader>
             <AlertDialogTitle>セッションを削除</AlertDialogTitle>
             <AlertDialogDescription>
-              {worktree === undefined
-                ? "このセッションを削除しますか？"
-                : worktree.isMain
-                  ? "このセッションを削除しますか？メインWorktreeは削除されません。"
-                  : "このセッションとWorktreeを削除しますか？関連するブランチも削除されます。"}
+              {deleteSessionDescription(worktree)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-col gap-2 sm:flex-row">

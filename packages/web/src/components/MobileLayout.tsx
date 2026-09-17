@@ -28,6 +28,8 @@ import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
 import type { ViewerTab } from "@/components/TerminalPane";
 import type { DiagramOpenRequest } from "@/lib/mobile-session-view-mode";
+import { getBaseName } from "@/utils/pathUtils";
+import { findRepoForSession } from "@/utils/sessionUtils";
 
 // MobileTab / SessionSubView は配列を真実源にし、union 型を派生させる。
 // こうしないと runtime 検証配列と型が二重化し、union に値を足したとき配列更新を
@@ -417,6 +419,16 @@ export function MobileLayout({
             activeTab === "session" &&
             effectiveSessionSubView === "detail" &&
             selectedSessionId === sessionId;
+          const worktree = getWorktreeForSession(session);
+          // 主ラベルに使うリポジトリ名。PC の上部バー (Dashboard) とサイドバー
+          // (useGroupedWorktreeItems) と同じ順 (session.repoPath → worktree のパス →
+          // 兄弟ディレクトリの推定) で決める
+          const repoPathOfSession =
+            session.repoPath ??
+            (worktree
+              ? repoList.find(repo => worktree.path.startsWith(repo))
+              : undefined) ??
+            findRepoForSession(session, repoList);
           return (
             <div
               key={sessionId}
@@ -428,13 +440,29 @@ export function MobileLayout({
                 bridgeStatus={sessionStatuses.get(sessionId)}
                 awaitingText={sessionAwaitingTexts.get(sessionId)}
                 session={session}
-                worktree={getWorktreeForSession(session)}
+                worktree={worktree}
+                repoName={
+                  repoPathOfSession ? getBaseName(repoPathOfSession) : undefined
+                }
+                displayName={
+                  worktreeDisplayNames.get(
+                    worktree?.path ?? session.worktreePath
+                  ) ?? null
+                }
+                notificationsSupported={notificationsSupported}
+                notificationsEnabled={
+                  isSessionNotificationEnabled?.(sessionId) ?? true
+                }
+                onNotificationsEnabledChange={
+                  onSessionNotificationEnabledChange
+                    ? enabled =>
+                        onSessionNotificationEnabledChange(sessionId, enabled)
+                    : undefined
+                }
                 onBack={handleBack}
                 onSendMessage={message => onSendMessage(sessionId, message)}
                 onSendKey={key => onSendKey(sessionId, key)}
-                onDeleteSession={() =>
-                  onDeleteSession(sessionId, getWorktreeForSession(session))
-                }
+                onDeleteSession={() => onDeleteSession(sessionId, worktree)}
                 onRestartSession={
                   onRestartSession
                     ? () => onRestartSession(sessionId)
