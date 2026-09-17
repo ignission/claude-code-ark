@@ -17,6 +17,7 @@
 - **`pnpm build` を実行しない**。本番のArk (pm2, port 4001) はmainのチェックアウトの `packages/web/dist` を配信している。worktreeでのビルドは本番を変えないが、取り違えの事故を避けるため、検証ビルドは必ず `--outDir` で別の場所に出す (Task 12)
 - テストの実行: リポジトリのルートで `pnpm vitest run <path>`。全体は `pnpm test`、型とlintは `pnpm check`
 - 整形: `pnpm check` (= `biome check . && tsc -b`) はBiomeの整形差分もエラーにする。コミット前に `pnpm biome check --write <変更したファイル>` で整形してから `pnpm check` を通す
+- **preview は必ず `--host 127.0.0.1` で立てる**。`vite.config.ts` は `host: true` なので、付けないと LAN やDockerのブリッジにも公開される。preview は `/api` と `/socket.io` を localhost から 4001 へ中継するため、外から届くと Ark の認証 (localhost は認証を省く) をすり抜けてしまう
 - **稼働中のArk (http://localhost:4001) の画面をブラウザで開くときは、`/ttyd/` への通信を必ず遮断する** (開くだけでユーザーのtmuxペインが検証側の画面サイズに縮む)
 - コミットメッセージは日本語。`Co-Authored-By` を付けない
 - 日本語の文言・コメントは、日本語と半角英数字の間に空白を入れない (例: 「作業3件」「PCサイドバー」)。括弧は半角で、開き括弧の前と閉じ括弧の後ろに半角スペース
@@ -13082,7 +13083,7 @@ git commit -m "fix(web): 残っていた直書き色と絵文字のアイコン�
 ### Task 12: 撮影による確認とプレビュー
 
 **Files:**
-- Create (コミットしない): `$VERIFY/shoot.mjs` / `$VERIFY/verify-terminal.mjs`、worktree直下の `playwright.verify.config.ts` (実行後に削除)
+- Create (コミットしない): `$VERIFY/shoot.mjs` / `$VERIFY/verify-terminal.mjs`、worktree直下の `playwright.verify.config.ts` と `packages/web/vite.verify.config.ts` (どちらも実行後に削除)
 - Modify: 撮影で見つかった崩れに応じて、Task 1〜11 のファイル
 
 `$VERIFY` は `/tmp/claude-1000/-home-admin-dev-github-com-ignission-claude-code-manager/24cbab82-54a8-45db-9396-4357159c0fd5/scratchpad/verify` とする。
@@ -13124,16 +13125,36 @@ pnpm --filter @ark/web exec vite build --outDir "$VERIFY/dist" --emptyOutDir
 
 Expected: `✓ built in …`。`packages/web/dist` と、main のチェックアウトの `packages/web/dist` は変わらない
 
+撮影と e2e 用の preview は、**`/ttyd` をどこにも中継しない設定**で立てる。ブラウザ側の遮断を書き忘れても、
+ユーザーの tmux ペインに触れないようにするため。`packages/web/vite.verify.config.ts` を作る (コミットしない):
+
+```ts
+import { defineConfig, mergeConfig } from "vite";
+import base from "./vite.config";
+
+// 検証用: /api と /socket.io は稼働中の Ark (4001) へ中継し、/ttyd だけは閉じたポートへ向ける
+export default mergeConfig(
+  base,
+  defineConfig({
+    server: {
+      proxy: {
+        "/ttyd": { target: "http://127.0.0.1:9", ws: true, changeOrigin: true },
+      },
+    },
+  })
+);
+```
+
 続けて、preview をバックグラウンドで起動する (Bash の `run_in_background: true`):
 
 ```bash
 VERIFY=/tmp/claude-1000/-home-admin-dev-github-com-ignission-claude-code-manager/24cbab82-54a8-45db-9396-4357159c0fd5/scratchpad/verify
-cd /home/admin/dev/github.com/ignission/claude-code-manager-feat-visual-redesign-paper
-pnpm --filter @ark/web exec vite preview --outDir "$VERIFY/dist" --port 4020 --strictPort
+cd /home/admin/dev/github.com/ignission/claude-code-manager-feat-visual-redesign-paper/packages/web
+pnpm exec vite preview --config vite.verify.config.ts --outDir "$VERIFY/dist" --port 4020 --strictPort --host 127.0.0.1
 ```
 
-Run: `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:4020/`
-Expected: `200`。preview は `/api` `/socket.io` `/ttyd` を稼働中の Ark (4001) へ中継する
+Run: `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:4020/ && curl -s -o /dev/null -w "%{http_code}\n" http://localhost:4020/api/settings && curl -s -o /dev/null -w "%{http_code}\n" http://localhost:4020/ttyd/x/`
+Expected: `200` / `200` / `5xx` (`/ttyd` だけが中継されない)
 
 - [ ] **Step 4: 撮影スクリプトを書く**
 
@@ -13166,7 +13187,22 @@ function rewriter(offset) {
   };
 }
 
+// 前の撮影でセッションを開くと「詳細画面を表示中」が保存され、次の撮影で一覧が出なくなる。
+// 撮影ごとに一覧の状態へ戻す (最後に settingsBackup で元に戻す)
+async function resetViewSettings() {
+  await fetch(`${BASE}/api/settings`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      selectedSessionId: null,
+      "mobile.activeTab": "session",
+      "mobile.sessionSubView": "list",
+    }),
+  });
+}
+
 async function newPage(browser, { viewport, isMobile, scheme, offset, leftMode }) {
+  await resetViewSettings();
   const context = await browser.newContext({
     viewport,
     isMobile,
@@ -13286,7 +13322,7 @@ Expected: `テーマ追従: … → OK`、`settings を復元した`、画像が
 
 - [ ] **Step 6: 直した e2e を preview に対して実行する**
 
-`/api/settings` を書き換える spec なので、実行の前後で退避・復元する。
+`/api/settings` を書き換える spec なので、実行の前後で退避・復元する。4020 の preview は `/ttyd` を中継しないので、この spec が画面を開いてもユーザーの tmux ペインには触れない。
 
 worktree直下に `playwright.verify.config.ts` を作る (コミットしない):
 
@@ -13322,6 +13358,15 @@ Expected: spec がすべて PASS。settings の PUT が `{"success":true}` 等�
 ほかのセッションの ttyd に触ると、ユーザーの tmux ペインが検証側の画面サイズに縮む。検証用の worktree とセッションを作り、
 その ttyd だけを通す。`session:stop` は main 以外の worktree をブランチごと片付ける。
 
+このステップだけは本物の ttyd が要るので、`/ttyd` も中継する通常の設定の preview を 4021 に立てる (Bash の `run_in_background: true`)。
+ブラウザ側で検証用セッション以外の `/ttyd/` を必ず遮断する (スクリプトに入っている)。
+
+```bash
+VERIFY=/tmp/claude-1000/-home-admin-dev-github-com-ignission-claude-code-manager/24cbab82-54a8-45db-9396-4357159c0fd5/scratchpad/verify
+cd /home/admin/dev/github.com/ignission/claude-code-manager-feat-visual-redesign-paper
+pnpm --filter @ark/web exec vite preview --outDir "$VERIFY/dist" --port 4021 --strictPort --host 127.0.0.1
+```
+
 `$VERIFY/verify-terminal.mjs`:
 
 ```js
@@ -13330,7 +13375,7 @@ import { createRequire } from "node:module";
 const WT = "/home/admin/dev/github.com/ignission/claude-code-manager-feat-visual-redesign-paper";
 const MAIN_REPO = "/home/admin/dev/github.com/ignission/claude-code-manager";
 const BRANCH = "verify/ui-redesign-terminal";
-const BASE = "http://localhost:4020";
+const BASE = "http://localhost:4021";
 const { chromium } = createRequire(`${WT}/package.json`)("@playwright/test");
 const { io } = createRequire(`${WT}/packages/web/package.json`)("socket.io-client");
 
@@ -13437,12 +13482,21 @@ Expected: `OK:` が3行、`NG:` が無い。最後に `片付け済み`。残っ
 
 注: preview は稼働中の Ark (main のビルド) につながっているので、ttyd の色 (Task 4) はまだ古い `#1a1b26` のまま。額縁の色との段差はこの時点では想定どおり。
 
-- [ ] **Step 8: preview を止める**
+- [ ] **Step 8: preview を止め、一時ファイルを消す**
 
-Step 3 でバックグラウンド起動した `vite preview` を止める。
+Step 3 と Step 7 でバックグラウンド起動した `vite preview` を止め、検証用の設定ファイルを消す。
 
-Run: `lsof -ti tcp:4020 | xargs -r kill`
-Expected: `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:4020/` が `000`
+Run:
+
+```bash
+lsof -ti tcp:4020 | xargs -r kill
+lsof -ti tcp:4021 | xargs -r kill
+cd /home/admin/dev/github.com/ignission/claude-code-manager-feat-visual-redesign-paper
+rm -f packages/web/vite.verify.config.ts playwright.verify.config.ts
+git status --short
+```
+
+Expected: `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:4020/` と 4021 がどちらも `000`。`git status --short` に一時ファイルが出ない
 
 - [ ] **Step 9: 別のAIに実装をレビューさせる**
 
