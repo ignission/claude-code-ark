@@ -6,8 +6,8 @@
  * ここには含めない。モバイルの `mobile-session-view-mode.ts` と形は似ているが、
  * 取りうる値も保存キーも別物なので独立したモジュールとして持つ。
  *
- * 既定は "terminal"。従来の PC は常にターミナルだったため、未保存の
- * ユーザーには従来どおりの見え方を返す。
+ * 既定は "chat" (見た目の刷新で PC も会話を主画面にした。設計書 3 節)。
+ * 保存済みの選択は尊重する。
  */
 
 export const SPLIT_VIEW_LEFT_MODE_VALUES = ["terminal", "chat"] as const;
@@ -35,7 +35,7 @@ export const SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT =
 export function normalizeSplitViewLeftMode(value: unknown): SplitViewLeftMode {
   return SPLIT_VIEW_LEFT_MODE_VALUES.includes(value as SplitViewLeftMode)
     ? (value as SplitViewLeftMode)
-    : "terminal";
+    : "chat";
 }
 
 export function readSavedSplitViewLeftMode(
@@ -47,7 +47,7 @@ export function readSavedSplitViewLeftMode(
       source.getItem(STORAGE_KEY_SPLIT_LEFT_MODE)
     );
   } catch {
-    return "terminal";
+    return "chat";
   }
 }
 

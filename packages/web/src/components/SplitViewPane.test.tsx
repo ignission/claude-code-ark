@@ -209,11 +209,13 @@ afterEach(() => {
 });
 
 describe("PC 左ペインの表示モード", () => {
-  it("保存値を正規化し、localStorage が使えなくても既定へ戻る", () => {
+  it("保存値を正規化し、保存なし・不正値・localStorage の例外では会話を既定にする", () => {
     expect(normalizeSplitViewLeftMode("terminal")).toBe("terminal");
     expect(normalizeSplitViewLeftMode("chat")).toBe("chat");
-    expect(normalizeSplitViewLeftMode("board")).toBe("terminal");
-    expect(readSavedSplitViewLeftMode({ getItem: () => null })).toBe(
+    expect(normalizeSplitViewLeftMode("board")).toBe("chat");
+    expect(normalizeSplitViewLeftMode(null)).toBe("chat");
+    expect(readSavedSplitViewLeftMode({ getItem: () => null })).toBe("chat");
+    expect(readSavedSplitViewLeftMode({ getItem: () => "terminal" })).toBe(
       "terminal"
     );
     expect(
@@ -222,7 +224,7 @@ describe("PC 左ペインの表示モード", () => {
           throw new Error("storage disabled");
         },
       })
-    ).toBe("terminal");
+    ).toBe("chat");
     expect(() =>
       writeSavedSplitViewLeftMode("chat", {
         setItem: () => {
@@ -300,6 +302,7 @@ describe("PC 左ペインの表示モード", () => {
   });
 
   it("active session と left mode に応じて会話購読と端末 D&D を一枚だけ有効にする", async () => {
+    localStorage.setItem(STORAGE_KEY_SPLIT_LEFT_MODE, "terminal");
     const sessions = [makeSession("a"), makeSession("b")];
     const container = mount(renderSessions("a", sessions));
     const root = mountedRoots.at(-1)?.root;

@@ -1017,3 +1017,14 @@ export interface SessionGridSnapshot {
   /** 取得時刻 UNIX ms */
   capturedAt: number;
 }
+
+// ============================================================
+// 端末 (ttyd) の色
+// ============================================================
+
+/**
+ * ttyd の背景色と文字色。web の端末の額縁 (TerminalPane / MobileSessionView) も
+ * 同じ値を使い、iframe の中と外で段差が出ないようにする (設計書 8.6 節)
+ */
+export const TERMINAL_BG = "#1c1a17";
+export const TERMINAL_FG = "#e6e1da";
