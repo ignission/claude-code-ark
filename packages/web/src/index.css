@@ -256,9 +256,10 @@
 }
 
 /* ===== JSONL assistant text 用 markdown プロース =====
- * react-markdown が出力する要素にチャットらしい spacing と code/blockquote 装飾を当てる */
+ * react-markdown が出力する要素にチャットらしい spacing と code/blockquote 装飾を当てる。
+ * 色はトークンだけで指定し、ライト/ダークの切り替えはトークンの定義側に任せる */
 .md-prose {
-  line-height: 1.65;
+  line-height: 1.6;
 }
 .md-prose > * + * {
   margin-top: 0.75em;
@@ -300,49 +301,39 @@
   margin: 0;
 }
 .md-prose code {
-  font-family: ui-monospace, SFMono-Regular, "Menlo", monospace;
-  background: rgba(120, 120, 120, 0.15);
+  font-family: var(--font-mono);
+  background: var(--muted);
   border-radius: 4px;
   padding: 1px 5px;
   font-size: 0.9em;
 }
 .md-prose pre {
-  background: rgba(0, 0, 0, 0.06);
-  border: 1px solid rgba(120, 120, 120, 0.2);
-  border-radius: 6px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 4px);
   padding: 10px 12px;
   overflow-x: auto;
-}
-@media (prefers-color-scheme: dark) {
-  .md-prose pre {
-    background: rgba(255, 255, 255, 0.04);
-    border-color: rgba(255, 255, 255, 0.08);
-  }
 }
 .md-prose pre code {
   background: transparent;
   padding: 0;
-  font-size: 0.9em;
+  font-size: 13px;
 }
 .md-prose blockquote {
-  border-left: 3px solid rgba(120, 120, 120, 0.4);
+  border-left: 3px solid var(--border);
   padding-left: 0.8em;
-  color: rgba(120, 120, 120, 0.9);
+  color: var(--muted-foreground);
 }
 .md-prose a {
-  color: #2563eb;
+  color: var(--primary);
   text-decoration: underline;
-}
-@media (prefers-color-scheme: dark) {
-  .md-prose a {
-    color: #60a5fa;
-  }
+  text-underline-offset: 2px;
 }
 .md-prose table {
   border-collapse: collapse;
 }
 .md-prose th,
 .md-prose td {
-  border: 1px solid rgba(120, 120, 120, 0.3);
+  border: 1px solid var(--border);
   padding: 4px 8px;
 }

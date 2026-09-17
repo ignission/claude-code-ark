@@ -285,3 +285,86 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
     expect(onActiveAuqChange).toHaveBeenLastCalledWith(false);
   });
 });
+
+/** 要約・外部画像・サブエージェント・回答済みの質問を含む履歴 */
+const DECORATED_SNAPSHOT = [
+  line({
+    type: "user",
+    uuid: "c1",
+    isCompactSummary: true,
+    message: { role: "user", content: "これまでの要約" },
+  }),
+  line({
+    type: "assistant",
+    uuid: "a1",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "text", text: "図です ![構成図](https://example.com/a.png)" },
+      ],
+    },
+  }),
+  line({
+    type: "assistant",
+    uuid: "sc1",
+    isSidechain: true,
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "調べた結果" }],
+    },
+  }),
+  line({
+    type: "assistant",
+    uuid: "q1",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "auq1",
+          name: "AskUserQuestion",
+          input: {
+            questions: [
+              {
+                question: "どちらにしますか？",
+                options: [{ label: "A" }, { label: "B" }],
+              },
+            ],
+          },
+        },
+      ],
+    },
+  }),
+  line({
+    type: "user",
+    uuid: "q1r",
+    toolUseResult: { answers: { "どちらにしますか？": "A" } },
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "auq1",
+          content: '"どちらにしますか？"="A"',
+        },
+      ],
+    },
+  }),
+];
+
+describe("SplitChatPane: アイコン", () => {
+  it("絵文字をアイコンに使わない", () => {
+    const { container, emitServer } = renderChat();
+    emitServer("session:jsonl-snapshot", {
+      sessionId: "s1",
+      lines: DECORATED_SNAPSHOT,
+    });
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("会話を要約しました");
+    expect(text).toContain("構成図");
+    expect(text).toContain("サブエージェント");
+    expect(text).toContain("質問への回答");
+    expect(text).not.toMatch(/⚙|❓|⏳|🧵|🖼|✂|🎨|🖥|▸|▾/u);
+  });
+});

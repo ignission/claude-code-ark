@@ -21,11 +21,15 @@ import type {
 import { isImagePath, splitTextWithFilePaths } from "@ark/shared/file-paths";
 import {
   ArrowDown,
+  Bot,
   ChevronDown,
   ChevronRight,
+  CircleQuestionMark,
   Download,
+  ImageOff,
   Loader2,
   Paperclip,
+  Scissors,
   Send,
   Workflow,
   Wrench,
@@ -130,7 +134,7 @@ function PendingMessageCard({ text }: { text: string }) {
 function SlashCommandCard({ name, args }: { name: string; args?: string }) {
   return (
     <div className="flex justify-end px-4 pt-4 pb-2">
-      <div className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 rounded-full px-3 py-1 text-sm font-mono">
+      <div className="rounded-full bg-muted px-3 py-1 text-sm font-medium text-muted-foreground">
         {name}
         {args ? ` ${args}` : ""}
       </div>
@@ -238,7 +242,7 @@ function FileLink({
       <a
         href={downloadUrl}
         download
-        className="text-blue-600 dark:text-blue-400 underline break-all"
+        className="break-all text-primary underline underline-offset-2"
       >
         {filePath}
       </a>
@@ -313,10 +317,11 @@ function createMarkdownComponents(sessionId: string): Components {
   return {
     img: ({ alt }) => (
       <span
-        className="inline-block text-xs text-muted-foreground bg-muted rounded px-1.5 py-0.5"
+        className="inline-flex items-center gap-1 rounded-sm bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
         title="モデル出力由来の外部画像は自動表示しません"
       >
-        🖼 {alt || "画像"}
+        <ImageOff aria-hidden="true" className="size-3.5 shrink-0" />
+        {alt || "画像"}
       </span>
     ),
     a: ({ href, children }) => {
@@ -392,8 +397,9 @@ function CompactMarkerCard() {
   return (
     <div className="flex items-center gap-3 px-6 py-3 select-none">
       <div className="flex-1 border-t border-dashed border-border" />
-      <span className="text-[11px] text-muted-foreground shrink-0">
-        ✂ 会話を要約しました (/compact)
+      <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+        <Scissors aria-hidden="true" className="size-3" />
+        会話を要約しました (/compact)
       </span>
       <div className="flex-1 border-t border-dashed border-border" />
     </div>
@@ -413,7 +419,7 @@ function Linkify({ text }: { text: string }) {
         href={seg.value}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-blue-600 dark:text-blue-400 underline break-all"
+        className="break-all text-primary underline underline-offset-2"
       >
         {seg.value}
       </a>
@@ -471,17 +477,17 @@ function AskUserQuestionResultCard({
 
   return (
     <div className="px-4 py-2.5">
-      <div className="text-sm text-muted-foreground mb-1.5 flex items-center gap-1.5">
-        <span>❓</span>
+      <div className="mb-1.5 flex items-center gap-1.5 text-sm text-muted-foreground">
+        <CircleQuestionMark aria-hidden="true" className="size-4 shrink-0" />
         <span className="font-medium">
           {result
             ? isDecline
               ? "質問はキャンセルされました"
-              : "質問への回答:"
+              : "質問への回答"
             : "AskUserQuestion"}
         </span>
       </div>
-      <div className="text-base space-y-1">
+      <div className="space-y-1 text-[15px]">
         {questions.map((q, i) => {
           const answer = answers.get(q.question);
           return (
@@ -760,15 +766,18 @@ function SidechainGroupCard({
   sessionId: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const Chevron = expanded ? ChevronDown : ChevronRight;
   return (
     <div className="px-4 py-1">
       <button
         type="button"
         onClick={() => setExpanded(v => !v)}
-        className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        aria-expanded={expanded}
+        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
       >
-        <span>{expanded ? "▾" : "▸"}</span>
-        <span>🧵 サブエージェント ({events.length} イベント)</span>
+        <Chevron aria-hidden="true" className="size-3.5 shrink-0" />
+        <Bot aria-hidden="true" className="size-3.5 shrink-0" />
+        <span>サブエージェント ({events.length}件)</span>
       </button>
       {expanded && (
         <div className="mt-1 border-l-2 border-border pl-2 opacity-80">
