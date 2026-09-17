@@ -107,6 +107,11 @@ export function SessionListRow({
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const cancelEditRef = useRef(false);
+  // keepFocusWhileEditing はDropdownMenu/ContextMenuのonCloseAutoFocusに渡す。Radixの
+  // close-autofocusはFocusScopeのunmount後に走るため、描画時のクロージャで`editing`を
+  // 閉じ込めると古い値 (前の描画のfalse) で呼ばれうる。refで常に最新値を読む
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
 
   useEffect(() => {
     if (!editing) return;
@@ -173,7 +178,7 @@ export function SessionListRow({
   // メニューが閉じるとき、Radixは直前のフォーカス先 (行や `…`) へフォーカスを戻す。
   // 「表示名を変更」を選んだ直後は、入力欄のフォーカスを奪わせない
   const keepFocusWhileEditing = (event: Event) => {
-    if (editing) event.preventDefault();
+    if (editingRef.current) event.preventDefault();
   };
 
   const detailSegments: { key: string; node: ReactNode }[] = [];
@@ -315,7 +320,11 @@ export function SessionListRow({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              aria-label={`${primaryLabel}のメニュー`}
+              aria-label={
+                branch
+                  ? `${primaryLabel} (${branch}) のメニュー`
+                  : `${primaryLabel}のメニュー`
+              }
               className={cn(
                 "inline-flex shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground",
                 variant === "sidebar"

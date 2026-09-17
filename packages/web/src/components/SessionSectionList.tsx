@@ -329,25 +329,25 @@ export function SessionSectionList({
 
   return (
     <>
-      {visibleRows.length === 0 ? (
-        <div className="px-4 py-10 text-center text-sm text-muted-foreground">
-          <p>セッションがありません</p>
-          <p className="mt-1 text-xs">「+」から新規作成</p>
-        </div>
-      ) : (
-        <div
-          data-session-list=""
-          className={cn(
-            "flex flex-col",
-            variant === "sidebar" ? "gap-1" : "gap-2"
-          )}
-          {...bindings}
-        >
-          {visibleRows.map(row =>
+      <div
+        data-session-list=""
+        className={cn(
+          "flex flex-col",
+          variant === "sidebar" ? "gap-1" : "gap-2"
+        )}
+        {...bindings}
+      >
+        {visibleRows.length === 0 ? (
+          <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+            <p>セッションがありません</p>
+            <p className="mt-1 text-xs">「+」から新規作成</p>
+          </div>
+        ) : (
+          visibleRows.map(row =>
             row.kind === "section" ? renderSection(row) : renderRow(row.entry)
-          )}
-        </div>
-      )}
+          )
+        )}
+      </div>
 
       <AlertDialog
         open={deleteTarget !== null}

@@ -300,7 +300,7 @@ describe("SessionListRowの中身", () => {
       </div>
     );
     const menuButton = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="appのメニュー"]'
+      'button[aria-label="app (feature/login) のメニュー"]'
     );
     const openArea = openAreaOf(container);
     act(() => menuButton?.focus());
@@ -321,7 +321,9 @@ describe("SessionListRowの中身", () => {
   it("sidebarは右クリックと…の2か所、cardは⋮の1か所に行メニューを置く", () => {
     const sidebar = mount(<SessionListRow {...rowProps()} />);
     expect(
-      sidebar.querySelector('button[aria-label="appのメニュー"]')
+      sidebar.querySelector(
+        'button[aria-label="app (feature/login) のメニュー"]'
+      )
     ).not.toBeNull();
     expect(
       new Set(

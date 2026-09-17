@@ -343,7 +343,9 @@ describe("SessionSectionListの並べ方", () => {
     const menuButtonA = rowElementOf(
       container,
       "wt:a"
-    ).querySelector<HTMLButtonElement>('button[aria-label="appのメニュー"]');
+    ).querySelector<HTMLButtonElement>(
+      'button[aria-label="app (feature/a) のメニュー"]'
+    );
     act(() => menuButtonA?.focus());
 
     rerender({
@@ -411,6 +413,14 @@ describe("SessionSectionListの並べ方", () => {
     const { container } = mountList(listProps({ repoList: [] }));
 
     expect(container.textContent).toContain("セッションがありません");
+  });
+
+  it("行が1件も無くてもdata-session-listの要素は残り、案内文を含む", () => {
+    const { container } = mountList(listProps({ repoList: [] }));
+
+    const list = container.querySelector("[data-session-list]");
+    expect(list).not.toBeNull();
+    expect(list?.textContent).toContain("セッションがありません");
   });
 });
 
