@@ -49,7 +49,7 @@ Webには本物の屈折が無いので、ガラスは `backdrop-filter: blur(18
 
 ## 4. デザイントークン
 
-`packages/web/src/index.css` の `:root` をライト、`.dark` をダークにする (今は両方が同じダーク値)。
+`packages/web/src/index.css` の `:root` をライト、`@media (prefers-color-scheme: dark)` の中の `:root` をダークにする (今は `:root` と `.dark` が同じダーク値)。
 shadcn/uiの既存トークン名はそのまま使い、状態色5つと影を新設する。
 
 ### ライト (`:root`)
@@ -94,7 +94,7 @@ shadcn/uiの既存トークン名はそのまま使い、状態色5つと影を�
 --radius: 0.75rem;
 ```
 
-### ダーク (`.dark`)
+### ダーク (`@media (prefers-color-scheme: dark)`)
 
 ```css
 --background: oklch(0.19 0.01 60);
@@ -350,14 +350,14 @@ PCサイドバーとモバイル一覧を、リポジトリ順ではなく**注�
   - 端末モード: ガラスをやめて不透明にし、端末に重ねない (端末の領域はバーの上端までにする)。
     下段は今の端末用の入力部をそのまま使う: Quick Keys (↑ ↓ Esc Ctrl+C S-Tabなど) と入力欄。
     空のまま送信するとEnterを送る今の挙動を保つ
-  - 図モード: 上段のセグメントだけを出す
+  - 図モード: 上段のセグメントだけを、図の下に置く不透明なバーで出す (図の中に下端固定のツールバーがあり、ガラスを重ねると隠れる)
   - 会話と端末の入力欄は、今と同じく別々のコンポーネントで、入力途中の文字もそれぞれに保つ
 - 添付があると端末モードに切り替える今の挙動は保つ
 
 ### 8.6. そのほか
 
 - `App.tsx` のToasterの直書き色を外し、トークンに従わせる
-- `ThemeProvider` をOSの設定に追従させる (`matchMedia` の変化も拾い、実行中の切り替えにも追従する)
+- OSの設定に追従させる。JSで `<html>` に `.dark` を付ける `ThemeProvider` をやめ、`@custom-variant dark (@media (prefers-color-scheme: dark))` とメディアクエリのトークンで切り替える。初回表示のちらつきが無く、実行中の切り替えにも追従する
 - ダイアログ類 (RepoSelect / FolderBrowser / CreateWorktree / ProfileManager / MessageShortcutManager /
   About) の `glow-green` と直書き色をトークンに置き換える。パスの表示と入力は等幅のまま
 - `RepoGridView` の状態色を7節の対応表に置き換える
