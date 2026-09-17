@@ -43,6 +43,7 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { SessionListEntry } from "@/lib/session-sections";
+import { cn } from "@/lib/utils";
 
 export interface ProfileChoice {
   profiles: Profile[];
@@ -83,6 +84,11 @@ type MenuParts = {
   Sub: ComponentType<ComponentProps<typeof ContextMenuSub>>;
   SubContent: ComponentType<ComponentProps<typeof ContextMenuSubContent>>;
   SubTrigger: ComponentType<ComponentProps<typeof ContextMenuSubTrigger>>;
+  /**
+   * プロファイルが多いとサブメニューが画面の下にはみ出すので、使える高さに収めてスクロールさせる。
+   * Radixが渡す高さの変数名はメニューの種類ごとに違う
+   */
+  subContentClassName: string;
 };
 
 const PARTS_BY_VARIANT: Record<SessionRowMenuProps["variant"], MenuParts> = {
@@ -94,6 +100,8 @@ const PARTS_BY_VARIANT: Record<SessionRowMenuProps["variant"], MenuParts> = {
     Sub: ContextMenuSub,
     SubContent: ContextMenuSubContent,
     SubTrigger: ContextMenuSubTrigger,
+    subContentClassName:
+      "max-h-(--radix-context-menu-content-available-height) overflow-y-auto",
   },
   dropdown: {
     Group: DropdownMenuGroup as MenuParts["Group"],
@@ -103,6 +111,8 @@ const PARTS_BY_VARIANT: Record<SessionRowMenuProps["variant"], MenuParts> = {
     Sub: DropdownMenuSub as MenuParts["Sub"],
     SubContent: DropdownMenuSubContent as MenuParts["SubContent"],
     SubTrigger: DropdownMenuSubTrigger as MenuParts["SubTrigger"],
+    subContentClassName:
+      "max-h-(--radix-dropdown-menu-content-available-height) overflow-y-auto",
   },
 };
 
@@ -161,7 +171,7 @@ export function SessionRowMenu({
               <UserRound />
               このworktreeのプロファイル
             </Menu.SubTrigger>
-            <Menu.SubContent className="w-60">
+            <Menu.SubContent className={cn("w-60", Menu.subContentClassName)}>
               <ProfileChoiceItems
                 Menu={Menu}
                 choice={worktreeProfile}
@@ -197,7 +207,9 @@ export function SessionRowMenu({
                   <UserRound />
                   リポジトリの既定プロファイル
                 </Menu.SubTrigger>
-                <Menu.SubContent className="w-60">
+                <Menu.SubContent
+                  className={cn("w-60", Menu.subContentClassName)}
+                >
                   <ProfileChoiceItems
                     Menu={Menu}
                     choice={repoProfile}

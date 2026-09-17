@@ -162,7 +162,8 @@ export function SessionHeaderMenu({
               <MessageSquareQuote />
               メッセージショートカット
             </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="w-64">
+            {/* ショートカットが多いと画面の下にはみ出すので、使える高さに収めてスクロールさせる */}
+            <DropdownMenuSubContent className="max-h-(--radix-dropdown-menu-content-available-height) w-64 overflow-y-auto">
               {messageShortcuts.length === 0 ? (
                 <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
                   ショートカットがありません

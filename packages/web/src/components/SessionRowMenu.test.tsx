@@ -15,8 +15,16 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuSub: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
-  DropdownMenuSubContent: ({ children }: { children?: ReactNode }) => (
-    <div>{children}</div>
+  DropdownMenuSubContent: ({
+    children,
+    className,
+  }: {
+    children?: ReactNode;
+    className?: string;
+  }) => (
+    <div data-menu-sub-content="" className={className}>
+      {children}
+    </div>
   ),
   DropdownMenuSubTrigger: ({ children }: { children?: ReactNode }) => (
     <div data-menu-sub-trigger="">{children}</div>
@@ -54,8 +62,16 @@ vi.mock("@/components/ui/context-menu", () => ({
   ContextMenuSub: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
-  ContextMenuSubContent: ({ children }: { children?: ReactNode }) => (
-    <div>{children}</div>
+  ContextMenuSubContent: ({
+    children,
+    className,
+  }: {
+    children?: ReactNode;
+    className?: string;
+  }) => (
+    <div data-menu-sub-content="" className={className}>
+      {children}
+    </div>
   ),
   ContextMenuSubTrigger: ({ children }: { children?: ReactNode }) => (
     <div data-menu-sub-trigger="">{children}</div>
@@ -345,4 +361,40 @@ describe("SessionRowMenu", () => {
     expect(onSelect).toHaveBeenNthCalledWith(1, "p-home");
     expect(onSelect).toHaveBeenNthCalledWith(2, null);
   });
+});
+
+describe("SessionRowMenuのサブメニューの高さ", () => {
+  it.each([
+    ["dropdown", "dropdown-menu"],
+    ["context", "context-menu"],
+  ] as const)(
+    "%sのプロファイルのサブメニューは画面の高さに収め、はみ出す分はスクロールさせる",
+    (variant, radixName) => {
+      const container = mount(
+        <SessionRowMenu
+          variant={variant}
+          entry={entryOf()}
+          onOpen={vi.fn()}
+          worktreeProfile={{
+            profiles,
+            currentProfileId: null,
+            inheritedProfileName: null,
+            onSelect: vi.fn(),
+          }}
+          repoProfile={{ profiles, currentProfileId: null, onSelect: vi.fn() }}
+        />
+      );
+
+      const subContents = Array.from(
+        container.querySelectorAll("[data-menu-sub-content]")
+      );
+      expect(subContents).toHaveLength(2);
+      for (const subContent of subContents) {
+        expect(subContent.classList).toContain(
+          `max-h-(--radix-${radixName}-content-available-height)`
+        );
+        expect(subContent.classList).toContain("overflow-y-auto");
+      }
+    }
+  );
 });
