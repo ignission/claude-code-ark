@@ -10,7 +10,7 @@
  * - 単問 single-select: 選択肢クリックで即送出 (1 タップ)
  * - multiSelect / 複数質問: 全問選択 → 「回答を送信」で一括送出
  * - 送出列の各 wait 後に確定済みチェック (余分なキーの誤爆防止)
- * - 送出完了から 10 秒 tool_result が来なければ desync 警告 + ターミナル誘導
+ * - 送出完了から10秒tool_resultが来なければdesync警告 (端末側の確認を促す)
  */
 
 import type {
@@ -42,8 +42,6 @@ interface AskUserQuestionCardProps {
    */
   screenContext?: string | null;
   onSendKey: (key: SpecialKey) => void;
-  /** desync 時の「ターミナルで確認」(ttyd を開く)。未指定なら文言のみ */
-  onOpenTerminal?: () => void;
 }
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -62,7 +60,6 @@ export function AskUserQuestionCard({
   auq,
   screenContext,
   onSendKey,
-  onOpenTerminal,
 }: AskUserQuestionCardProps) {
   const [phase, setPhase] = useState<Phase>("selecting");
   const [drafts, setDrafts] = useState<Draft[]>(() =>
@@ -185,15 +182,6 @@ export function AskUserQuestionCard({
           <span>
             回答を確認できませんでした。ターミナル側の状態を確認してください
           </span>
-          {onOpenTerminal && (
-            <button
-              type="button"
-              onClick={onOpenTerminal}
-              className="shrink-0 underline font-medium"
-            >
-              ターミナルで確認
-            </button>
-          )}
         </div>
       )}
 

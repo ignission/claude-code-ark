@@ -216,3 +216,72 @@ describe("SplitChatPane: ツール行の折りたたみ", () => {
     expect(runningLabels).toHaveLength(1);
   });
 });
+
+describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
+  it("自前のヘッダー行 (busy表示・購読ドット) を出さない", () => {
+    const { container } = renderChat({ bridgeStatus: "TOOL" });
+
+    expect(container.querySelector("header")).toBeNull();
+    expect(container.textContent).not.toContain("ツール実行中");
+    expect(container.querySelector('[title="JSONL 購読中"]')).toBeNull();
+  });
+
+  it("質問カードの表示有無が変わるたびにonActiveAuqChangeを呼ぶ", () => {
+    const at = Date.parse("2026-09-17T00:00:00Z");
+    const questions = [
+      {
+        question: "どちらにしますか？",
+        options: [{ label: "A" }, { label: "B" }],
+      },
+    ];
+    const onActiveAuqChange = vi.fn();
+    const { emitServer } = renderChat({ onActiveAuqChange });
+    expect(onActiveAuqChange).toHaveBeenLastCalledWith(false);
+
+    emitServer("session:auq", {
+      sessionId: "s1",
+      at,
+      questions,
+      screen: null,
+    });
+    expect(onActiveAuqChange).toHaveBeenLastCalledWith(true);
+
+    // 回答がJSONLに書かれるとカードが閉じる
+    emitServer("session:jsonl-snapshot", {
+      sessionId: "s1",
+      lines: [
+        line({
+          type: "assistant",
+          uuid: "q1",
+          timestamp: new Date(at + 1000).toISOString(),
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "auq1",
+                name: "AskUserQuestion",
+                input: { questions },
+              },
+            ],
+          },
+        }),
+        line({
+          type: "user",
+          uuid: "q1r",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "auq1",
+                content: '"どちらにしますか？"="A"',
+              },
+            ],
+          },
+        }),
+      ],
+    });
+    expect(onActiveAuqChange).toHaveBeenLastCalledWith(false);
+  });
+});

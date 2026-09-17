@@ -97,12 +97,11 @@ interface SplitChatPaneProps {
     mimeType: string;
     originalFilename?: string;
   }) => Promise<{ path: string; filename: string; originalFilename?: string }>;
-  /** 右側 ttyd の表示状態 (ヘッダのトグルボタンを ON/OFF 表示するために使う) */
-  showTerminal?: boolean;
-  /** ターミナルの表示切替 (undefined のとき トグルボタンを描画しない) */
-  onToggleTerminal?: () => void;
-  /** 空のホワイトボードを直接開く (undefined のとき ボタンを描画しない) */
-  onOpenBoard?: () => void;
+  /**
+   * 質問カード (AskUserQuestion) の表示有無が変わったときに呼ぶ。
+   * マウント時にも現在の値 (false) で1回呼ぶ。モバイルの状態の帯が文言の切り替えに使う
+   */
+  onActiveAuqChange?: (hasActiveAuq: boolean) => void;
 }
 
 // ===== JSONL イベントカード =====
@@ -666,13 +665,11 @@ function AwaitingPad({
   sessionId,
   awaitingText,
   onSendKey,
-  onOpenTerminal,
 }: {
   socket: TypedSocket | null;
   sessionId: string;
   awaitingText?: string;
   onSendKey: (key: SpecialKey) => void;
-  onOpenTerminal?: () => void;
 }) {
   const [freeText, setFreeText] = useState("");
 
@@ -706,15 +703,6 @@ function AwaitingPad({
         <span className="text-[13px] text-amber-700 dark:text-amber-300 min-w-0 font-medium">
           ⏳ Claude が入力を求めています
         </span>
-        {onOpenTerminal && (
-          <button
-            type="button"
-            onClick={onOpenTerminal}
-            className="text-[12px] underline text-amber-700 dark:text-amber-300 px-1 shrink-0"
-          >
-            ターミナルで確認
-          </button>
-        )}
       </div>
       {awaitingText && (
         <pre className="mt-1.5 text-[11px] leading-[1.5] font-mono bg-background/70 border border-border rounded-md px-2.5 py-2 overflow-x-auto whitespace-pre text-foreground/80">
@@ -847,19 +835,15 @@ export function SplitChatPane({
   onSendMessage,
   onSendKey,
   onUploadFile,
-  showTerminal,
-  onToggleTerminal,
-  onOpenBoard,
+  onActiveAuqChange,
 }: SplitChatPaneProps) {
   const [inputValue, setInputValue] = useState("");
 
   // JSONL: 会話の構造化履歴 (markdown レンダリング用)。アクティブ時のみ購読
-  const {
-    events,
-    isSubscribed: jsonlSubscribed,
-    loadMore,
-    hasMore,
-  } = useSessionJsonl(socket, isActive ? session.id : null);
+  const { events, loadMore, hasMore } = useSessionJsonl(
+    socket,
+    isActive ? session.id : null
+  );
 
   // Claude 処理中に送ったメッセージを即時表示するための pending state。
   // JSONL に同じテキストの user-input が現れたら自動で消える。
@@ -1000,6 +984,12 @@ export function SplitChatPane({
   }, [events, hookAuq]);
 
   const activeAuq = hookAuq?.auq ?? null;
+
+  // 質問カードの有無を親へ知らせる (モバイルの状態の帯が文言の切り替えに使う)
+  const hasActiveAuq = activeAuq !== null;
+  useEffect(() => {
+    onActiveAuqChange?.(hasActiveAuq);
+  }, [hasActiveAuq, onActiveAuqChange]);
 
   // 連続するsubagentイベントと、sidechainの外で連続するツール呼び出しを
   // それぞれ折りたたみのまとまりへ
@@ -1322,47 +1312,6 @@ export function SplitChatPane({
 
   return (
     <div className="h-full flex flex-col bg-background">
-      <header className="border-b border-border px-4 py-1.5 flex items-center justify-end shrink-0">
-        <div className="flex items-center gap-1.5 shrink-0">
-          {(bridgeStatus === "THINK" || bridgeStatus === "TOOL") && (
-            <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              {bridgeStatus === "TOOL" ? "ツール実行中" : "考え中"}
-            </span>
-          )}
-          <span
-            className={`w-1.5 h-1.5 rounded-full ${jsonlSubscribed ? "bg-emerald-500" : "bg-slate-400"}`}
-            title={jsonlSubscribed ? "JSONL 購読中" : "未購読"}
-          />
-          {onOpenBoard && (
-            <button
-              type="button"
-              onClick={onOpenBoard}
-              className="text-[11px] px-2 py-1 rounded-md font-medium flex items-center gap-1 transition-colors bg-muted hover:bg-muted/70 text-foreground"
-              title="ホワイトボードを開く"
-            >
-              <span>🎨</span>
-              <span>ボード</span>
-            </button>
-          )}
-          {onToggleTerminal && (
-            <button
-              type="button"
-              onClick={onToggleTerminal}
-              className={`text-[11px] px-2 py-1 rounded-md font-medium flex items-center gap-1 transition-colors ${
-                showTerminal
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted hover:bg-muted/70 text-foreground"
-              }`}
-              title={showTerminal ? "ターミナルを閉じる" : "ターミナルを開く"}
-            >
-              <span>🖥</span>
-              <span>{showTerminal ? "閉じる" : "ターミナル"}</span>
-            </button>
-          )}
-        </div>
-      </header>
-
       {/* JSONL イベントリスト (上段、flex-1)。
           relative ラッパーで囲み「下へジャンプ」ボタンをスクロール領域に
           重ねて配置する。スクロール領域自体は absolute inset-0 で内側を埋める。 */}
@@ -1447,9 +1396,6 @@ export function SplitChatPane({
           auq={activeAuq}
           screenContext={hookAuq?.screen ?? null}
           onSendKey={onSendKey}
-          onOpenTerminal={
-            onToggleTerminal && !showTerminal ? onToggleTerminal : undefined
-          }
         />
       )}
 
@@ -1462,9 +1408,6 @@ export function SplitChatPane({
           sessionId={session.id}
           awaitingText={awaitingText}
           onSendKey={onSendKey}
-          onOpenTerminal={
-            onToggleTerminal && !showTerminal ? onToggleTerminal : undefined
-          }
         />
       )}
 
