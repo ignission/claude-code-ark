@@ -123,6 +123,18 @@ function findButtonByText(scope: ParentNode, text: string): HTMLButtonElement {
   return button as HTMLButtonElement;
 }
 
+/** 制御されたtextareaに値を入れてReactのonChangeを起こす */
+function typeInto(el: HTMLTextAreaElement, value: string): void {
+  const setValue = Object.getOwnPropertyDescriptor(
+    HTMLTextAreaElement.prototype,
+    "value"
+  )?.set;
+  act(() => {
+    setValue?.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 });
@@ -170,9 +182,10 @@ describe("SplitChatPane: ツール行の折りたたみ", () => {
       lines: TOOL_SNAPSHOT,
     });
 
-    const scrollEl = container.querySelector<HTMLDivElement>(
-      ".overflow-y-auto.py-2"
-    );
+    // スクロール領域は本文 (chat-scroll-content) の親
+    const scrollEl = container.querySelector<HTMLElement>(
+      '[data-testid="chat-scroll-content"]'
+    )?.parentElement;
     if (!scrollEl) throw new Error("スクロール領域が見つからない");
 
     // jsdomはレイアウトを計算しないため、scrollHeight/clientHeightを
@@ -366,5 +379,27 @@ describe("SplitChatPane: アイコン", () => {
     expect(text).toContain("サブエージェント");
     expect(text).toContain("質問への回答");
     expect(text).not.toMatch(/⚙|❓|⏳|🧵|🖼|✂|🎨|🖥|▸|▾/u);
+  });
+});
+
+describe("SplitChatPane: 入力欄", () => {
+  it("送信ボタンは空のあいだ押せず、入力して押すと送信し、送信中の吹き出しを出す", () => {
+    const { container, onSendMessage } = renderChat();
+    const textarea = container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="メッセージ"]'
+    );
+    const send = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="送信"]'
+    );
+    expect(textarea).not.toBeNull();
+    expect(send?.disabled).toBe(true);
+
+    typeInto(textarea as HTMLTextAreaElement, "ログイン画面を作って");
+    expect(send?.disabled).toBe(false);
+
+    act(() => send?.click());
+    expect(onSendMessage).toHaveBeenCalledWith("ログイン画面を作って");
+    expect(container.querySelector('svg[aria-label="送信中"]')).not.toBeNull();
+    expect(container.textContent).toContain("ログイン画面を作って");
   });
 });

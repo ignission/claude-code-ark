@@ -21,6 +21,7 @@ import type {
 import { isImagePath, splitTextWithFilePaths } from "@ark/shared/file-paths";
 import {
   ArrowDown,
+  ArrowUp,
   Bot,
   ChevronDown,
   ChevronRight,
@@ -30,7 +31,6 @@ import {
   Loader2,
   Paperclip,
   Scissors,
-  Send,
   Workflow,
   Wrench,
 } from "lucide-react";
@@ -49,7 +49,6 @@ import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
 import { AskUserQuestionCard } from "@/components/AskUserQuestionCard";
 import { MermaidBlock } from "@/components/MermaidBlock";
-import { Button } from "@/components/ui/button";
 import { fileToBase64, validateFile } from "@/hooks/useFileUpload";
 import { useSessionJsonl } from "@/hooks/useSessionJsonl";
 import { useSlashCommands } from "@/hooks/useSlashCommands";
@@ -108,12 +107,25 @@ interface SplitChatPaneProps {
   onActiveAuqChange?: (hasActiveAuq: boolean) => void;
 }
 
+/** 入力欄の横の丸いアイコンボタン (添付・図解)。大きさはCOMPOSER_SIZEで足す */
+const ROUND_ICON_BUTTON =
+  "inline-flex shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50";
+
+/**
+ * 入力欄まわりの寸法と入力欄の地の色 (参照モック)。
+ * PCは36pxで紙 (カードの上に一段沈める)、モバイルは指で押しやすい40pxで白
+ */
+const COMPOSER_SIZE = {
+  pane: { button: "size-9", input: "min-h-9 py-[7px] bg-background" },
+  mobile: { button: "size-10", input: "min-h-10 py-[9px] bg-card" },
+} as const;
+
 // ===== JSONL イベントカード =====
 
 function UserInputCard({ text }: { text: string }) {
   return (
     <div className="flex justify-end px-4 pt-4 pb-2">
-      <div className="max-w-[85%] bg-primary text-primary-foreground rounded-2xl rounded-tr-md px-4 py-2.5 text-[16px] leading-relaxed whitespace-pre-wrap break-words shadow-sm">
+      <div className="max-w-[78%] whitespace-pre-wrap break-words rounded-xl rounded-br-[4px] bg-primary/14 px-3.5 py-2.5 text-[15px] leading-[1.6] text-foreground">
         {text}
       </div>
     </div>
@@ -123,8 +135,11 @@ function UserInputCard({ text }: { text: string }) {
 function PendingMessageCard({ text }: { text: string }) {
   return (
     <div className="flex justify-end px-4 pt-4 pb-2">
-      <div className="max-w-[85%] bg-primary/70 text-primary-foreground rounded-2xl rounded-tr-md px-4 py-2.5 text-[16px] leading-relaxed whitespace-pre-wrap break-words shadow-sm flex items-start gap-2">
-        <Loader2 className="w-3.5 h-3.5 animate-spin mt-1 shrink-0 opacity-80" />
+      <div className="flex max-w-[78%] items-start gap-2 whitespace-pre-wrap break-words rounded-xl rounded-br-[4px] bg-primary/14 px-3.5 py-2.5 text-[15px] leading-[1.6] text-foreground opacity-60">
+        <Loader2
+          aria-label="送信中"
+          className="mt-1 size-3.5 shrink-0 animate-spin motion-reduce:animate-none"
+        />
         <span className="min-w-0">{text}</span>
       </div>
     </div>
@@ -379,7 +394,7 @@ function AssistantTextCard({
   );
   return (
     <div className="px-4 py-2">
-      <div className="md-prose text-[16px] text-foreground leading-[1.65]">
+      <div className="md-prose text-[15px] text-foreground">
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkFilePaths]}
           urlTransform={MD_URL_TRANSFORM}
@@ -1319,234 +1334,252 @@ export function SplitChatPane({
     }
   };
 
+  // 補完候補。PCは入力欄の枠の上端に合わせて出す
+  const slashMenu = slashOpen && filteredSlashCommands.length > 0 && (
+    <div className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-lg border border-border bg-popover shadow-card">
+      {filteredSlashCommands.map((cmd, i) => (
+        <button
+          type="button"
+          key={cmd.name}
+          onMouseDown={e => {
+            e.preventDefault();
+            applySlashCommand(cmd);
+          }}
+          onMouseEnter={() => setSlashIndex(i)}
+          className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm ${
+            i === slashIndex
+              ? "bg-accent text-accent-foreground"
+              : "hover:bg-muted/50"
+          }`}
+        >
+          <span className="shrink-0 font-medium text-foreground">
+            {cmd.name}
+          </span>
+          {cmd.description && (
+            <span className="flex-1 truncate text-xs text-muted-foreground">
+              {cmd.description}
+            </span>
+          )}
+          {/* 種類は文言で見分ける。状態の色をカテゴリの色に転用しない */}
+          <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+            {cmd.source}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+
+  const composerSize = COMPOSER_SIZE.pane;
+
+  const composerForm = (
+    <form
+      onSubmit={handleSubmit}
+      onDragEnter={e => {
+        if (!onUploadFile) return;
+        e.preventDefault();
+        setIsDragging(true);
+      }}
+      onDragOver={e => {
+        if (!onUploadFile) return;
+        e.preventDefault();
+      }}
+      onDragLeave={e => {
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setIsDragging(false);
+      }}
+      onDrop={handleDrop}
+      className={`relative flex items-end gap-1.5 rounded-[20px] ${
+        isDragging ? "ring-2 ring-primary/50" : ""
+      }`}
+    >
+      {onUploadFile && (
+        <>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*,application/pdf,text/*,.md,.json,.csv"
+            className="hidden"
+            onChange={e => {
+              const files = Array.from(e.target.files ?? []);
+              if (files.length > 0) uploadAndAppend(files);
+              if (fileInputRef.current) fileInputRef.current.value = "";
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className={`${ROUND_ICON_BUTTON} ${composerSize.button}`}
+            aria-label="ファイルを添付"
+            title="ファイルを添付 (D&D・貼り付けも可)"
+            disabled={uploadingCount > 0}
+          >
+            {uploadingCount > 0 ? (
+              <Loader2 className="size-5 animate-spin motion-reduce:animate-none" />
+            ) : (
+              <Paperclip className="size-5" />
+            )}
+          </button>
+        </>
+      )}
+      <button
+        type="button"
+        onClick={handleVisualizeConversation}
+        className={`${ROUND_ICON_BUTTON} ${composerSize.button}`}
+        aria-label="会話を図解"
+        title="会話を図解 (Claudeにmermaid図で要約させる)"
+      >
+        <Workflow className="size-5" />
+      </button>
+      <textarea
+        ref={inputRef}
+        value={inputValue}
+        onChange={e => setInputValue(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onPaste={onUploadFile ? handlePaste : undefined}
+        aria-label="メッセージ"
+        placeholder={
+          onUploadFile
+            ? "メッセージを入力 (Enterで送信、Shift+Enterで改行。画像はD&D・貼り付けも可)"
+            : "メッセージを入力 (Enterで送信、Shift+Enterで改行)"
+        }
+        rows={1}
+        className={`field-sizing-content max-h-32 min-w-0 flex-1 resize-none rounded-[20px] border border-border px-3.5 text-[15px] leading-[1.4] placeholder:text-muted-foreground focus:border-primary focus:outline-none ${composerSize.input}`}
+      />
+      <button
+        type="submit"
+        disabled={!inputValue.trim()}
+        aria-label="送信"
+        className={`inline-flex shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity disabled:cursor-not-allowed disabled:opacity-40 ${composerSize.button}`}
+      >
+        <ArrowUp className="size-5" />
+      </button>
+      {isDragging && onUploadFile && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-[20px] border-2 border-dashed border-primary bg-background/90 text-sm font-medium text-primary">
+          ここにドロップ
+        </div>
+      )}
+    </form>
+  );
+
+  // permission prompt 等のユーザー判断待ちフォールバック。
+  // AskUserQuestion は専用カードが出る (hook 経由) ため、カード表示中
+  // は出さない。hook が取りこぼされた場合のセーフティネットも兼ねる
+  const showAwaitingPad = bridgeStatus === "AWAITING" && !activeAuq;
+  // 入力欄の上に固定で出すカード (質問カード / 確認待ちのキー操作)
+  const dockedCard = activeAuq ? (
+    <AskUserQuestionCard
+      key={activeAuq.toolUseId}
+      socket={socket}
+      sessionId={session.id}
+      auq={activeAuq}
+      screenContext={hookAuq?.screen ?? null}
+      onSendKey={onSendKey}
+    />
+  ) : showAwaitingPad ? (
+    <AwaitingPad
+      socket={socket}
+      sessionId={session.id}
+      awaitingText={awaitingText}
+      onSendKey={onSendKey}
+    />
+  ) : null;
+
   return (
-    <div className="h-full flex flex-col bg-background">
+    <div className="relative flex h-full flex-col">
       {/* JSONL イベントリスト (上段、flex-1)。
           relative ラッパーで囲み「下へジャンプ」ボタンをスクロール領域に
           重ねて配置する。スクロール領域自体は absolute inset-0 で内側を埋める。 */}
-      <div className="flex-1 min-h-0 relative">
+      <div className="relative min-h-0 flex-1">
         {/* biome-ignore lint/a11y/noStaticElementInteractions: クリックで入力欄にフォーカスを移すだけの補助操作。会話ログ自体は非対話要素のまま */}
         {/* biome-ignore lint/a11y/useKeyWithClickEvents: キーボード利用者は Tab で入力欄 (textarea) に直接到達できるため、キーハンドラは不要 */}
         <div
           ref={jsonlScrollRef}
           onClick={handleConversationClick}
-          className="absolute inset-0 overflow-y-auto py-2"
+          className="absolute inset-0 overflow-y-auto"
         >
-          {events.length === 0 &&
-          pending.length === 0 &&
-          localSlashCommands.length === 0 ? (
-            <div className="text-center text-sm text-muted-foreground pt-8">
-              このセッションの履歴はまだありません
-            </div>
-          ) : (
-            <>
-              {hasMore && (
-                <div className="flex justify-center py-2 text-sm text-muted-foreground">
-                  読み込み中...
-                </div>
-              )}
-              {renderItems.map(item => {
-                if (item.kind === "sidechain") {
+          <div
+            data-testid="chat-scroll-content"
+            className="mx-auto w-full max-w-[760px] py-2"
+          >
+            {events.length === 0 &&
+            pending.length === 0 &&
+            localSlashCommands.length === 0 ? (
+              <div className="pt-8 text-center text-sm text-muted-foreground">
+                このセッションの履歴はまだありません
+              </div>
+            ) : (
+              <>
+                {hasMore && (
+                  <div className="flex justify-center py-2 text-sm text-muted-foreground">
+                    読み込み中...
+                  </div>
+                )}
+                {renderItems.map(item => {
+                  if (item.kind === "sidechain") {
+                    return (
+                      <SidechainGroupCard
+                        key={item.id}
+                        events={item.events}
+                        sessionId={session.id}
+                      />
+                    );
+                  }
+                  if (item.kind === "tool-group") {
+                    return (
+                      <ToolGroupCard
+                        key={item.id}
+                        calls={item.calls}
+                        latestRunning={item.latestRunning}
+                        expanded={expandedToolGroups.has(item.id)}
+                        onToggle={() => toggleToolGroup(item.id)}
+                        surfaceClassName="bg-background"
+                      />
+                    );
+                  }
                   return (
-                    <SidechainGroupCard
-                      key={item.id}
-                      events={item.events}
+                    <EventCard
+                      key={item.event.id}
+                      event={item.event}
                       sessionId={session.id}
                     />
                   );
-                }
-                if (item.kind === "tool-group") {
-                  return (
-                    <ToolGroupCard
-                      key={item.id}
-                      calls={item.calls}
-                      latestRunning={item.latestRunning}
-                      expanded={expandedToolGroups.has(item.id)}
-                      onToggle={() => toggleToolGroup(item.id)}
-                      surfaceClassName="bg-background"
-                    />
-                  );
-                }
-                return (
-                  <EventCard
-                    key={item.event.id}
-                    event={item.event}
-                    sessionId={session.id}
-                  />
-                );
-              })}
-              {localSlashCommands.map(c => (
-                <SlashCommandCard key={c.id} name={c.name} args={c.args} />
-              ))}
-              {pending.map(p => (
-                <PendingMessageCard key={p.id} text={p.text} />
-              ))}
-            </>
-          )}
+                })}
+                {localSlashCommands.map(c => (
+                  <SlashCommandCard key={c.id} name={c.name} args={c.args} />
+                ))}
+                {pending.map(p => (
+                  <PendingMessageCard key={p.id} text={p.text} />
+                ))}
+              </>
+            )}
+          </div>
         </div>
         {!isNearBottom && (
           <button
             type="button"
             onClick={scrollToBottom}
-            className="absolute bottom-3 left-1/2 -translate-x-1/2 w-9 h-9 rounded-full bg-foreground/85 text-background shadow-lg hover:bg-foreground flex items-center justify-center transition-colors"
+            className="absolute bottom-3 left-1/2 z-10 flex size-9 -translate-x-1/2 items-center justify-center rounded-full bg-foreground/85 text-background shadow-card transition-colors hover:bg-foreground"
             title="最新まで一気にスクロール"
             aria-label="最新まで一気にスクロール"
           >
-            <ArrowDown className="w-4 h-4" />
+            <ArrowDown className="size-4" />
           </button>
         )}
       </div>
 
-      {activeAuq && (
-        <AskUserQuestionCard
-          key={activeAuq.toolUseId}
-          socket={socket}
-          sessionId={session.id}
-          auq={activeAuq}
-          screenContext={hookAuq?.screen ?? null}
-          onSendKey={onSendKey}
-        />
+      {dockedCard && (
+        <div className="max-h-[45%] shrink-0 overflow-y-auto px-4 pt-2 pb-3">
+          <div className="mx-auto w-full max-w-[760px]">{dockedCard}</div>
+        </div>
       )}
 
-      {/* permission prompt 等のユーザー判断待ちフォールバック。
-          AskUserQuestion は専用カードが出る (hook 経由) ため、カード表示中
-          は出さない。hook が取りこぼされた場合のセーフティネットも兼ねる */}
-      {bridgeStatus === "AWAITING" && !activeAuq && (
-        <AwaitingPad
-          socket={socket}
-          sessionId={session.id}
-          awaitingText={awaitingText}
-          onSendKey={onSendKey}
-        />
-      )}
-
-      <form
-        onSubmit={handleSubmit}
-        onDragEnter={e => {
-          if (!onUploadFile) return;
-          e.preventDefault();
-          setIsDragging(true);
-        }}
-        onDragOver={e => {
-          if (!onUploadFile) return;
-          e.preventDefault();
-        }}
-        onDragLeave={e => {
-          if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
-          setIsDragging(false);
-        }}
-        onDrop={handleDrop}
-        className={`border-t border-border px-3 py-2.5 shrink-0 flex gap-2 items-end relative ${
-          isDragging ? "ring-2 ring-primary/50 bg-primary/5" : ""
-        }`}
-      >
-        {onUploadFile && (
-          <>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*,application/pdf,text/*,.md,.json,.csv"
-              className="hidden"
-              onChange={e => {
-                const files = Array.from(e.target.files ?? []);
-                if (files.length > 0) uploadAndAppend(files);
-                if (fileInputRef.current) fileInputRef.current.value = "";
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="p-2 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors self-end"
-              title="ファイル添付 (D&D / ペーストも可)"
-              disabled={uploadingCount > 0}
-            >
-              {uploadingCount > 0 ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Paperclip className="w-4 h-4" />
-              )}
-            </button>
-          </>
-        )}
-        <button
-          type="button"
-          onClick={handleVisualizeConversation}
-          className="p-2 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors self-end"
-          title="会話を図解 (Claude に mermaid 図で要約させる)"
-        >
-          <Workflow className="w-4 h-4" />
-        </button>
-        <textarea
-          ref={inputRef}
-          value={inputValue}
-          onChange={e => setInputValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onPaste={onUploadFile ? handlePaste : undefined}
-          placeholder={
-            onUploadFile
-              ? "メッセージを入力 (Enter で送信、Shift+Enter で改行、画像は D&D / ペーストも可)"
-              : "メッセージを入力 (Enter で送信、Shift+Enter で改行)"
-          }
-          rows={1}
-          className="flex-1 px-3 py-2 text-sm bg-muted/40 border border-border rounded-lg focus:outline-none focus:border-primary placeholder:text-muted-foreground resize-none min-h-[36px] max-h-32"
-        />
-        {slashOpen && filteredSlashCommands.length > 0 && (
-          <div className="absolute left-3 right-3 bottom-full mb-1 bg-popover border border-border rounded-lg shadow-lg overflow-hidden z-20">
-            {filteredSlashCommands.map((cmd, i) => (
-              <button
-                type="button"
-                key={cmd.name}
-                onMouseDown={e => {
-                  e.preventDefault();
-                  applySlashCommand(cmd);
-                }}
-                onMouseEnter={() => setSlashIndex(i)}
-                className={`w-full text-left px-3 py-1.5 flex items-center gap-2 text-sm ${
-                  i === slashIndex
-                    ? "bg-accent text-accent-foreground"
-                    : "hover:bg-muted/50"
-                }`}
-              >
-                <span className="font-mono text-foreground shrink-0">
-                  {cmd.name}
-                </span>
-                {cmd.description && (
-                  <span className="text-xs text-muted-foreground truncate flex-1">
-                    {cmd.description}
-                  </span>
-                )}
-                <span
-                  className={`text-[9px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
-                    cmd.source === "project"
-                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                      : cmd.source === "global"
-                        ? "bg-blue-500/15 text-blue-700 dark:text-blue-300"
-                        : cmd.source === "plugin"
-                          ? "bg-violet-500/15 text-violet-700 dark:text-violet-300"
-                          : "bg-muted text-muted-foreground"
-                  }`}
-                >
-                  {cmd.source}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-        <Button
-          type="submit"
-          size="sm"
-          disabled={!inputValue.trim()}
-          className="self-end"
-        >
-          <Send className="w-3.5 h-3.5" />
-        </Button>
-        {isDragging && onUploadFile && (
-          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm border-2 border-dashed border-primary rounded-lg flex items-center justify-center text-sm font-medium text-primary pointer-events-none">
-            ここにドロップ
-          </div>
-        )}
-      </form>
+      <div className="shrink-0 border-t border-border px-4 pt-3 pb-3.5">
+        <div className="relative mx-auto w-full max-w-[792px]">
+          {slashMenu}
+          {composerForm}
+        </div>
+      </div>
     </div>
   );
 }
