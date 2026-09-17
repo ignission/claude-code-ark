@@ -34,7 +34,7 @@ export function SegmentedControl<V extends string>({
   return (
     <fieldset
       className={cn(
-        "m-0 inline-flex min-w-0 shrink-0 items-center gap-0.5 rounded-md border-0 bg-muted p-0.5",
+        "m-0 inline-flex min-w-0 shrink-0 items-center gap-0.5 rounded-md border-0 bg-muted p-0.5 dark:bg-background",
         className
       )}
     >

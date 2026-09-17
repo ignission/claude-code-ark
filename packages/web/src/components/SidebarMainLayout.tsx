@@ -15,7 +15,7 @@ import {
 
 const SIDEBAR_MIN_WIDTH = 180;
 const SIDEBAR_MAX_WIDTH = 450;
-const SIDEBAR_DEFAULT_WIDTH = 250;
+const SIDEBAR_DEFAULT_WIDTH = 300;
 
 interface SidebarMainLayoutProps {
   sidebar: ReactNode;

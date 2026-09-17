@@ -925,7 +925,7 @@ export default function Dashboard() {
               </div>
             </div>
           }
-          initialSidebarWidth={getSetting<number>("ark-sidebar-width", 250)}
+          initialSidebarWidth={getSetting<number>("ark-sidebar-width", 300)}
           onSidebarWidthChange={w => setSetting("ark-sidebar-width", w)}
         />
       )}
