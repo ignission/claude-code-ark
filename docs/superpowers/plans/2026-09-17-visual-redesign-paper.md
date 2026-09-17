@@ -808,7 +808,7 @@ Expected: エラー無しで終わる。`ThemeContext` を import している�
 
 ```bash
 git branch --show-current   # feat/visual-redesign-paper であること
-git add packages/web/src/index.css packages/web/src/index-css.test.ts packages/web/index.html packages/web/src/App.tsx packages/web/src/components/ui/sonner.tsx packages/web/src/contexts/ThemeContext.tsx
+git add packages/web/src/index.css packages/web/src/index-css.test.ts packages/web/index.html packages/web/src/App.tsx packages/web/src/components/ui/sonner.tsx   # ThemeContext.tsx の削除は Step 5 の git rm でステージ済み
 git commit -m "feat(web): 紙のトークンとOSのテーマ追従に切り替える
 
 ダーク固定の :root/.dark をライトとダークのトークンに分け、ダークは
