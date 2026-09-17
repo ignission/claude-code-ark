@@ -89,7 +89,7 @@ describe("mobile session view mode", () => {
     expect(getViewModeForViewerTab("terminal")).toBeNull();
   });
 
-  it("現在モードが分かる 3 択トグルを表示する", () => {
+  it("現在モードが分かる3択のセグメントを、絵文字を使わずに表示する", () => {
     const markup = renderToStaticMarkup(
       createElement(MobileSessionViewModeToggle, {
         value: "board",
@@ -98,13 +98,12 @@ describe("mobile session view mode", () => {
     );
 
     expect(markup.match(/<button/g)).toHaveLength(3);
-    expect(markup).toContain("💬");
-    expect(markup).toContain("会話");
-    expect(markup).toContain("🖥");
-    expect(markup).toContain("端末");
-    expect(markup).toContain("📐");
-    expect(markup).toContain("図");
-    expect(markup).toContain('aria-pressed="true"');
-    expect(markup).toContain('aria-label="図"');
+    for (const label of ["会話", "端末", "図"]) {
+      expect(markup).toContain(`aria-label="${label}"`);
+    }
+    expect(markup).toMatch(
+      /aria-label="図"[^>]*aria-pressed="true"|aria-pressed="true"[^>]*aria-label="図"/
+    );
+    expect(markup).not.toMatch(/💬|🖥|📐/);
   });
 });
