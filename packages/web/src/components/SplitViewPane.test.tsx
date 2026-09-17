@@ -265,6 +265,10 @@ describe("PC 左ペインの表示モード", () => {
     const paneB = container.querySelector('[data-testid="pane-b"]');
     expect(paneA).not.toBeNull();
     expect(paneB).not.toBeNull();
+    const iframeBeforeA = paneA?.querySelector("iframe");
+    const iframeBeforeB = paneB?.querySelector("iframe");
+    expect(iframeBeforeA).not.toBeNull();
+    expect(iframeBeforeB).not.toBeNull();
 
     clickButton(paneA as ParentNode, "会話");
 
@@ -284,6 +288,14 @@ describe("PC 左ペインの表示モード", () => {
       ).toBeNull();
       expect(pane?.querySelector("iframe")?.closest(".hidden")).not.toBeNull();
     }
+
+    clickButton(paneA as ParentNode, "端末");
+
+    // 会話へ切り替えて端末へ戻っても、同じiframe要素が残っている
+    // (作り直されていない = ttydが再接続していない証拠。要素の同一性で確認する)
+    expect(localStorage.getItem(STORAGE_KEY_SPLIT_LEFT_MODE)).toBe("terminal");
+    expect(paneA?.querySelector("iframe")).toBe(iframeBeforeA);
+    expect(paneB?.querySelector("iframe")).toBe(iframeBeforeB);
   });
 
   it("localStorage 書き込み失敗時も全セッションへ選択モードを通知する", () => {

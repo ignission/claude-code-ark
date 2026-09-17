@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useGroupedWorktreeItems } from "@/hooks/useGroupedWorktreeItems";
 import { useHeldOrder, useListHold } from "@/hooks/useHeldOrder";
+import { deleteSessionDescription } from "@/lib/session-header";
 import {
   buildSessionEntries,
   type SessionListRow as ListRow,
@@ -106,10 +107,7 @@ function deleteDescription(target: DeleteTarget): string {
   if (target.kind === "worktree") {
     return "このWorktreeを削除しますか？関連するブランチも削除されます。";
   }
-  if (target.worktree === undefined) return "このセッションを削除しますか？";
-  return target.worktree.isMain
-    ? "このセッションを削除しますか？メインWorktreeは削除されません。"
-    : "このセッションとWorktreeを削除しますか？関連するブランチも削除されます。";
+  return deleteSessionDescription(target.worktree);
 }
 
 export function SessionSectionList({

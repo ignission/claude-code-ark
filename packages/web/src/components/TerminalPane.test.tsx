@@ -171,4 +171,42 @@ describe("TerminalPane (PC上部バーから呼ぶ操作)", () => {
     });
     expect(writeText).toHaveBeenCalledWith("tmux buffer");
   });
+
+  it("pasteImageはクリップボードに画像が無いとトーストで知らせる", async () => {
+    const read = vi.fn(async () => [
+      { types: ["text/plain"], getType: vi.fn() },
+    ]);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { read },
+      configurable: true,
+    });
+    const { ref } = mountTerminal();
+
+    act(() => handleOf(ref).pasteImage());
+
+    await vi.waitFor(() => {
+      expect(toastDoubles.info).toHaveBeenCalledWith(
+        "クリップボードに画像がありません"
+      );
+    });
+  });
+
+  it("pasteImageはクリップボード読み取りに失敗するとトーストで知らせる", async () => {
+    const read = vi.fn(async () => {
+      throw new Error("denied");
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      value: { read },
+      configurable: true,
+    });
+    const { ref } = mountTerminal();
+
+    act(() => handleOf(ref).pasteImage());
+
+    await vi.waitFor(() => {
+      expect(toastDoubles.error).toHaveBeenCalledWith(
+        "クリップボードを読み取れませんでした"
+      );
+    });
+  });
 });

@@ -1,8 +1,8 @@
 /**
- * TerminalPane Component - ttyd iframe with mobile-friendly input
+ * TerminalPane Component - PC左ペインの端末表示
  *
- * PCの左ペインの端末表示。操作は上部バー (SplitViewPane) が持ち、
- * 端末専用の操作はTerminalPaneHandleとして公開する。
+ * 操作は上部バー (SplitViewPane) が持ち、端末専用の操作は
+ * TerminalPaneHandleとして公開する。
  * - ttyd iframeを暗い額縁 (TERMINAL_BG) で囲む
  * - 入力バー (Quick Keysと入力欄) は `…` メニューから出し入れする
  * - ファイルのD&D・貼り付け・添付は、このペインの中の確認画面を経て送る
@@ -289,7 +289,8 @@ export function TerminalPane({
     return () => document.removeEventListener("paste", handleDocumentPaste);
   }, [handlePaste]);
 
-  // クリップボードから画像を読み取るボタン用
+  // クリップボードから画像を読み取るボタン用。`…` メニューは選んだ時点で
+  // 閉じるので、結果はcopyBufferと同様にトーストで知らせる
   const handlePasteButtonClick = useCallback(async () => {
     if (!onUploadFile) return;
     try {
@@ -307,9 +308,12 @@ export function TerminalPane({
       }
       if (files.length > 0) {
         await addPendingFiles(files);
+      } else {
+        toast.info("クリップボードに画像がありません");
       }
     } catch (err) {
       console.error("Failed to read clipboard:", err);
+      toast.error("クリップボードを読み取れませんでした");
     }
   }, [onUploadFile, addPendingFiles]);
 
