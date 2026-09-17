@@ -581,6 +581,26 @@ describe('SplitChatPane: layout="mobile"', () => {
     );
   });
 
+  it("バーが高くなると、本文の下端に確保する余白もその高さに追従する", () => {
+    // 1タップの操作の行をaccessoryに積むとバーは高くなる。余白はバーの実測
+    // (offsetHeight) から作るので、jsdomでは測れる高さを差し込んで追従を見る。
+    // jsdomのCSSOMはcalcのpx項をまとめるので、180 + 余白12 が 192px になる
+    const offsetHeight = vi
+      .spyOn(HTMLElement.prototype, "offsetHeight", "get")
+      .mockReturnValue(180);
+    const { container } = renderChat({
+      layout: "mobile",
+      composerAccessory: <div data-testid="accessory" />,
+    });
+
+    const content = container.querySelector<HTMLElement>(
+      '[data-testid="chat-scroll-content"]'
+    );
+    expect(content?.style.paddingBottom).toContain("192px");
+
+    offsetHeight.mockRestore();
+  });
+
   it("質問カードはガラスバーの外 (上) に積む", () => {
     const { container } = renderChat({
       layout: "mobile",

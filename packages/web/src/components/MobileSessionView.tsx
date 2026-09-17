@@ -4,6 +4,10 @@
  * ヘッダー (戻る・主ラベル・ブランチ・状態チップ・操作メニュー) と、その直下の状態の帯、
  * 「会話 / 端末 / 図」の本文と下部バーで組む。
  * 3モードの本文はマウントしたまま display で切り替える (ttyd と図の iframe を張り直さない)。
+ *
+ * 下部バーはセグメントの下に1タップの操作 (MobileQuickActionRow) を置く。
+ * 添付と画像の実体はモードで違い、会話モードは会話の入力欄 (SplitChatPaneHandle。
+ * `@path` を入力欄に足す)、端末・図モードは端末側の確認ダイアログへ渡す。
  */
 
 import {
@@ -26,13 +30,9 @@ import {
   Copy,
   Ellipsis,
   File as FileIcon,
-  ImagePlus,
-  MessageSquareQuote,
-  Paperclip,
   RefreshCw,
   RotateCw,
   Send,
-  Settings,
   Trash2,
   X,
 } from "lucide-react";
@@ -53,7 +53,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -88,9 +87,9 @@ import { DiagramPane, type DiagramPaneProps } from "./DiagramPane";
 import { FileViewerPane } from "./FileViewerPane";
 import { HtmlViewerPane } from "./HtmlViewerPane";
 import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
-import { previewOf } from "./MessageShortcutMenu";
+import { MobileQuickActionRow } from "./MobileQuickActionRow";
 import { MobileSessionViewModeToggle } from "./MobileSessionViewModeToggle";
-import { SplitChatPane } from "./SplitChatPane";
+import { SplitChatPane, type SplitChatPaneHandle } from "./SplitChatPane";
 import { StatusChip } from "./StatusChip";
 import type { ViewerTab } from "./TerminalPane";
 import { ViewerTabBar } from "./ViewerTabBar";
@@ -282,6 +281,8 @@ export function MobileSessionView({
 
   const inputRef = useRef<HTMLInputElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  // 会話モードの添付を会話の入力欄の流儀 (`@path` を入力欄に足す) で行うための取っ手
+  const chatRef = useRef<SplitChatPaneHandle>(null);
   // ファイル選択input は DropdownMenuContent (Radix Portal) の外に配置する。
   // 内部に置くとメニューを閉じた瞬間に Portal が unmount され、
   // OS のファイル選択画面から戻った時に input が DOM に存在せず onChange が発火しない。
@@ -477,14 +478,32 @@ export function MobileSessionView({
     onReload: handleReloadIframe,
   });
 
-  // スラッシュコマンド
-  const slashCommands = [
-    { label: "/resume", cmd: "/resume" },
-    { label: "/help", cmd: "/help" },
-    { label: "/status", cmd: "/status" },
-    { label: "/clear", cmd: "/clear" },
-    { label: "/compact", cmd: "/compact" },
-  ];
+  // 1タップの操作。セグメントと同じく3つのモードのバーすべてに置く (見えるのは1枚)。
+  // 添付と画像は、会話モードだけ会話の入力欄の流儀にする。端末側の確認ダイアログは
+  // ターミナルペインの中にあり、会話モードでは親ごと隠れているため
+  const quickActionRow = (
+    <MobileQuickActionRow
+      messageShortcuts={messageShortcuts}
+      onSendMessage={onSendMessage}
+      onManageShortcuts={() => setShowShortcutManager(true)}
+      onAttachFile={
+        onUploadFile
+          ? () => {
+              if (viewMode === "chat") chatRef.current?.openFilePicker();
+              else fileInputRef.current?.click();
+            }
+          : undefined
+      }
+      onPasteImage={
+        onUploadFile
+          ? () => {
+              if (viewMode === "chat") chatRef.current?.pasteImage();
+              else handlePasteButtonClick();
+            }
+          : undefined
+      }
+    />
+  );
 
   // ヘッダーの主ラベル (表示名 → リポジトリ名 → worktree のフォルダ名) とブランチ。PC の上部バーと同じ決め方
   const headerLabels = resolveSessionHeaderLabels({
@@ -536,36 +555,9 @@ export function MobileSessionView({
                 <Ellipsis className="size-[22px]" />
               </Button>
             </DropdownMenuTrigger>
-            {/* メッセージショートカットはサブメニューにせず見出し付きで並べる
-                (サブメニューはスクロールせず、幅390pxでは左右どちらにも収まらない)。
-                アイコンの大きさと間隔は DropdownMenuItem が付ける (PC の … と同じ) */}
+            {/* 添付・画像・ショートカット・スラッシュコマンドは下部バーの
+                1タップの操作へ移した。ここに残すのは端末とセッションの操作だけ */}
             <DropdownMenuContent align="end" className="w-64">
-              <DropdownMenuLabel className="text-xs text-muted-foreground">
-                メッセージショートカット
-              </DropdownMenuLabel>
-              {messageShortcuts.length === 0 ? (
-                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                  ショートカットがありません
-                </DropdownMenuLabel>
-              ) : (
-                messageShortcuts.map(shortcut => (
-                  <DropdownMenuItem
-                    key={shortcut.id}
-                    onSelect={() => onSendMessage(shortcut.message)}
-                    title={shortcut.message.slice(0, 200)}
-                  >
-                    <MessageSquareQuote />
-                    <span className="truncate">
-                      {previewOf(shortcut.message)}
-                    </span>
-                  </DropdownMenuItem>
-                ))
-              )}
-              <DropdownMenuItem onSelect={() => setShowShortcutManager(true)}>
-                <Settings />
-                ショートカットを管理
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
               {notificationsSupported && onNotificationsEnabledChange && (
                 <>
                   <DropdownMenuItem
@@ -585,20 +577,6 @@ export function MobileSessionView({
                   端末のバッファをコピー
                 </DropdownMenuItem>
               )}
-              {onUploadFile && (
-                <DropdownMenuItem onSelect={handlePasteButtonClick}>
-                  <ImagePlus />
-                  画像を貼り付け
-                </DropdownMenuItem>
-              )}
-              {onUploadFile && (
-                <DropdownMenuItem
-                  onSelect={() => fileInputRef.current?.click()}
-                >
-                  <Paperclip />
-                  ファイルを添付
-                </DropdownMenuItem>
-              )}
               <DropdownMenuItem onSelect={handleReloadIframe}>
                 <RefreshCw />
                 端末を再読み込み
@@ -609,16 +587,6 @@ export function MobileSessionView({
                   セッションを再起動
                 </DropdownMenuItem>
               )}
-              <DropdownMenuSeparator />
-              {slashCommands.map(({ label, cmd }) => (
-                <DropdownMenuItem
-                  key={cmd}
-                  onSelect={() => onSendMessage(cmd)}
-                  className="text-xs"
-                >
-                  {label}
-                </DropdownMenuItem>
-              ))}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 variant="destructive"
@@ -677,6 +645,7 @@ export function MobileSessionView({
         }
       >
         <SplitChatPane
+          ref={chatRef}
           socket={socket}
           session={session}
           // 端末・図モードの間も購読を続ける。止めると、そのあいだに答えた質問の解決が
@@ -689,7 +658,12 @@ export function MobileSessionView({
           onUploadFile={onUploadFile}
           onActiveAuqChange={setHasActiveAuq}
           layout="mobile"
-          composerAccessory={viewModeSegment}
+          composerAccessory={
+            <>
+              {viewModeSegment}
+              {quickActionRow}
+            </>
+          }
         />
       </div>
 
@@ -868,6 +842,7 @@ export function MobileSessionView({
           style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
         >
           {viewModeSegment}
+          {quickActionRow}
 
           {/* Quick Keys: ↑/↓/Esc/Ctrl+C/S-Tab 常時表示 */}
           <div className="mt-1 flex items-center gap-1 overflow-x-auto select-none">
@@ -971,7 +946,7 @@ export function MobileSessionView({
             onSelectDiagram={onSelectDiagram}
           />
         </div>
-        {/* 図モードの下部バーはセグメントだけ。図の iframe は中に下端固定の UI
+        {/* 図モードの下部バーはセグメントと1タップの操作だけ。図の iframe は中に下端固定の UI
             (diagram-harness.ts の .ark-harness-toolbar、コメント層の解決済みトグル) を持つので、
             ガラスを重ねずに図の領域をバーの上端までにする。
             端末モードのバーと同じく罫線と紙の色で、図の下端 UI と分ける */}
@@ -982,6 +957,7 @@ export function MobileSessionView({
           style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
         >
           {viewModeSegment}
+          {quickActionRow}
         </div>
       </div>
 

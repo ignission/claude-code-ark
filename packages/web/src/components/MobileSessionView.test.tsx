@@ -7,6 +7,7 @@ import {
   createElement,
   type ReactElement,
   type ReactNode,
+  type Ref,
 } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -24,26 +25,38 @@ import {
   MOBILE_SESSION_VIEW_MODES,
   MobileSessionViewModeToggle,
 } from "./MobileSessionViewModeToggle";
+import type { SplitChatPaneHandle } from "./SplitChatPane";
 
 interface ObservedChatProps {
   isActive: boolean;
   layout?: "pane" | "mobile";
   composerAccessory?: ReactNode;
   onActiveAuqChange?: (hasActiveAuq: boolean) => void;
+  ref?: Ref<SplitChatPaneHandle>;
 }
 
 const testDoubles = vi.hoisted(() => ({
   splitChatPane: vi.fn(),
+  chatOpenFilePicker: vi.fn(),
+  chatPasteImage: vi.fn(),
 }));
 
 // 会話ビューの中身は Task 9 のテストで確かめる。ここでは受け取った props と、
-// ガラスバーの上段に置かれる composerAccessory の描画だけを見る
-vi.mock("./SplitChatPane", () => ({
-  SplitChatPane: (props: ObservedChatProps) => {
-    testDoubles.splitChatPane(props);
-    return <div data-testid="chat-pane">{props.composerAccessory}</div>;
-  },
-}));
+// ガラスバーの上段に置かれる composerAccessory の描画、そして下部バーから
+// 呼ばれる取っ手 (SplitChatPaneHandle) だけを見る
+vi.mock("./SplitChatPane", async () => {
+  const { useImperativeHandle } = await import("react");
+  return {
+    SplitChatPane: (props: ObservedChatProps) => {
+      testDoubles.splitChatPane(props);
+      useImperativeHandle(props.ref, () => ({
+        openFilePicker: testDoubles.chatOpenFilePicker,
+        pasteImage: testDoubles.chatPasteImage,
+      }));
+      return <div data-testid="chat-pane">{props.composerAccessory}</div>;
+    },
+  };
+});
 
 vi.mock("./DiagramPane", () => ({
   DiagramPane: () => <div data-testid="diagram-pane" />,
@@ -165,6 +178,8 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear();
   testDoubles.splitChatPane.mockClear();
+  testDoubles.chatOpenFilePicker.mockClear();
+  testDoubles.chatPasteImage.mockClear();
 });
 
 afterEach(() => {
@@ -484,7 +499,8 @@ describe("MobileSessionView の下部バー", () => {
     const bar = board?.querySelector('[data-testid="mobile-board-bar"]');
 
     expect(bar?.hasAttribute("data-mobile-bottom-bar")).toBe(true);
-    expect(bar?.querySelectorAll("button")).toHaveLength(3);
+    // セグメント3つ + 1タップ操作 (アップロードできないので添付と画像は出ない)
+    expect(bar?.querySelectorAll("button")).toHaveLength(5);
     expect(
       bar
         ?.querySelector('button[aria-label="図"]')
@@ -494,17 +510,23 @@ describe("MobileSessionView の下部バー", () => {
   });
 });
 
-describe("MobileSessionView の操作メニュー", () => {
-  it("ショートカットが無ければ、PCの『…』と同じ文言を出す", () => {
+describe("MobileSessionView のショートカット", () => {
+  function openShortcuts(container: HTMLDivElement): Element | null {
+    const bar = container.querySelector('[data-testid="mobile-terminal-bar"]');
+    openDropdown(
+      bar?.querySelector('button[aria-label="メッセージのショートカット"]')
+    );
+    return document.body.querySelector('[role="menu"]');
+  }
+
+  it("ショートカットが無ければ、PCと同じ文言を出す", () => {
     const container = mount(
       <MobileSessionView {...makeProps({ messageShortcuts: [] })} />
     );
-    const header = container.querySelector("header");
 
-    openDropdown(header?.querySelector('button[aria-label="その他の操作"]'));
-
-    const menu = document.body.querySelector('[role="menu"]');
-    expect(menu?.textContent).toContain("ショートカットがありません");
+    expect(openShortcuts(container)?.textContent).toContain(
+      "ショートカットがありません"
+    );
   });
 
   it("ショートカットがあれば一覧を出し、無いことの文言は出さない", () => {
@@ -523,12 +545,171 @@ describe("MobileSessionView の操作メニュー", () => {
         })}
       />
     );
-    const header = container.querySelector("header");
 
-    openDropdown(header?.querySelector('button[aria-label="その他の操作"]'));
-
-    const menu = document.body.querySelector('[role="menu"]');
+    const menu = openShortcuts(container);
     expect(menu?.textContent).toContain("続けて");
     expect(menu?.textContent).not.toContain("ショートカットがありません");
+  });
+});
+
+describe("MobileSessionView の下部バーの1タップ操作", () => {
+  const uploadFile = async () => ({
+    path: "/uploads/a.png",
+    filename: "a.png",
+  });
+
+  function barOf(
+    container: HTMLDivElement,
+    mode: "chat" | "terminal" | "board"
+  ) {
+    const selector =
+      mode === "chat"
+        ? '[data-testid="mobile-view-chat"] [data-testid="chat-pane"]'
+        : `[data-testid="mobile-${mode === "terminal" ? "terminal" : "board"}-bar"]`;
+    const bar = container.querySelector(selector);
+    expect(bar).not.toBeNull();
+    return bar as ParentNode;
+  }
+
+  function labelsOf(scope: ParentNode): string[] {
+    return Array.from(scope.querySelectorAll("button"))
+      .map(button => button.getAttribute("aria-label"))
+      .filter((label): label is string => label !== null);
+  }
+
+  it("会話・端末・図のどのモードでも、同じ4つの操作を並べる", () => {
+    const container = mount(
+      <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
+    );
+
+    for (const mode of ["chat", "terminal", "board"] as const) {
+      const labels = labelsOf(barOf(container, mode));
+      expect(labels).toContain("ファイルを添付");
+      expect(labels).toContain("画像を貼り付け");
+      expect(labels).toContain("メッセージのショートカット");
+      expect(labels).toContain("スラッシュコマンド");
+    }
+  });
+
+  it("アップロードできない環境では、ファイルの操作を出さない", () => {
+    const container = mount(<MobileSessionView {...makeProps()} />);
+    const labels = labelsOf(barOf(container, "terminal"));
+
+    expect(labels).not.toContain("ファイルを添付");
+    expect(labels).not.toContain("画像を貼り付け");
+    expect(labels).toContain("メッセージのショートカット");
+    expect(labels).toContain("スラッシュコマンド");
+  });
+
+  it("会話モードの添付と画像は、会話の入力欄の流儀 (@path) で処理する", () => {
+    const container = mount(
+      <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
+    );
+    const bar = barOf(container, "chat");
+
+    click(bar.querySelector('button[aria-label="ファイルを添付"]'));
+    expect(testDoubles.chatOpenFilePicker).toHaveBeenCalledTimes(1);
+
+    click(bar.querySelector('button[aria-label="画像を貼り付け"]'));
+    expect(testDoubles.chatPasteImage).toHaveBeenCalledTimes(1);
+  });
+
+  it("端末モードの添付は、端末側の確認ダイアログへ渡すファイル選択を開く", () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+    const container = mount(
+      <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
+    );
+    const input =
+      container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+    const inputClick = vi.spyOn(input as HTMLInputElement, "click");
+
+    click(
+      barOf(container, "terminal").querySelector(
+        'button[aria-label="ファイルを添付"]'
+      )
+    );
+
+    expect(inputClick).toHaveBeenCalledTimes(1);
+    expect(testDoubles.chatOpenFilePicker).not.toHaveBeenCalled();
+  });
+
+  it("ショートカットとスラッシュコマンドは1タップで一覧を出し、選ぶと送る", () => {
+    const onSendMessage = vi.fn();
+    const container = mount(
+      <MobileSessionView
+        {...makeProps({
+          onSendMessage,
+          messageShortcuts: [
+            {
+              id: "sc-1",
+              message: "続けて",
+              sortOrder: 1,
+              createdAt: 0,
+              updatedAt: 0,
+            },
+          ],
+        })}
+      />
+    );
+    const bar = barOf(container, "chat");
+
+    openDropdown(
+      bar.querySelector('button[aria-label="メッセージのショートカット"]')
+    );
+    expect(document.body.querySelector('[role="menu"]')?.textContent).toContain(
+      "続けて"
+    );
+    click(
+      Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+      ).find(el => el.textContent === "続けて")
+    );
+    expect(onSendMessage).toHaveBeenCalledWith("続けて");
+
+    openDropdown(bar.querySelector('button[aria-label="スラッシュコマンド"]'));
+    const clear = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find(el => el.textContent === "/clear");
+    click(clear);
+    expect(onSendMessage).toHaveBeenCalledWith("/clear");
+  });
+
+  it("`…` からは4つを外し、端末・セッションの操作は残す", () => {
+    const container = mount(
+      <MobileSessionView
+        {...makeProps({
+          onUploadFile: uploadFile,
+          onCopyBuffer: async () => "buffer",
+          onRestartSession: vi.fn(),
+          messageShortcuts: [
+            {
+              id: "sc-1",
+              message: "続けて",
+              sortOrder: 1,
+              createdAt: 0,
+              updatedAt: 0,
+            },
+          ],
+        })}
+      />
+    );
+
+    openDropdown(
+      container
+        .querySelector("header")
+        ?.querySelector('button[aria-label="その他の操作"]')
+    );
+
+    const menu = document.body.querySelector('[role="menu"]');
+    expect(menu?.textContent).not.toContain("メッセージショートカット");
+    expect(menu?.textContent).not.toContain("続けて");
+    expect(menu?.textContent).not.toContain("ファイルを添付");
+    expect(menu?.textContent).not.toContain("画像を貼り付け");
+    expect(menu?.textContent).not.toContain("/clear");
+    expect(menu?.textContent).toContain("端末のバッファをコピー");
+    expect(menu?.textContent).toContain("端末を再読み込み");
+    expect(menu?.textContent).toContain("セッションを再起動");
+    expect(menu?.textContent).toContain("セッションを削除");
   });
 });
