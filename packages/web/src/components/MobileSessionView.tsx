@@ -971,11 +971,12 @@ export function MobileSessionView({
         </div>
         {/* 図モードの下部バーはセグメントだけ。図の iframe は中に下端固定の UI
             (diagram-harness.ts の .ark-harness-toolbar、コメント層の解決済みトグル) を持つので、
-            ガラスを重ねずに図の領域をバーの上端までにする */}
+            ガラスを重ねずに図の領域をバーの上端までにする。
+            端末モードのバーと同じく罫線と紙の色で、図の下端 UI と分ける */}
         <div
           data-testid="mobile-board-bar"
           data-mobile-bottom-bar=""
-          className="shrink-0 bg-background px-3 pt-2"
+          className="shrink-0 border-t border-border bg-card px-3 pt-2"
           style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
         >
           {viewModeSegment}
