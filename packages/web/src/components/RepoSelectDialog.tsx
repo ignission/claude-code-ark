@@ -224,7 +224,7 @@ function RepoSelectContent({
             type="button"
             onClick={handleSelectRepo}
             disabled={!repoInput.trim()}
-            className="glow-green h-12"
+            className="h-12"
           >
             選択
           </Button>
@@ -251,7 +251,7 @@ function RepoSelectContent({
             type="button"
             onClick={handleSelectRepo}
             disabled={!repoInput.trim()}
-            className="glow-green h-12 md:h-10"
+            className="h-12 md:h-10"
           >
             選択
           </Button>

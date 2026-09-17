@@ -120,7 +120,7 @@ export function AboutDialog({ open, onOpenChange, metrics }: AboutDialogProps) {
                   size="sm"
                   variant="ghost"
                 >
-                  <span className="font-mono text-sm">
+                  <span className="text-sm">
                     {pkg.name}
                     {pkg.version ? ` (v${pkg.version})` : ""}
                   </span>

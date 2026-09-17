@@ -98,7 +98,7 @@ export function CreateWorktreeDialog({
               value={newBranchName}
               onChange={e => setNewBranchName(e.target.value)}
               onKeyDown={handleBranchNameKeyDown}
-              className="font-mono h-12 md:h-10 text-base md:text-sm"
+              className="h-12 md:h-10 text-base md:text-sm"
             />
           </div>
           <div className="space-y-2">
@@ -109,7 +109,7 @@ export function CreateWorktreeDialog({
               value={baseBranch}
               onChange={e => setBaseBranch(e.target.value)}
               onKeyDown={handleBaseBranchKeyDown}
-              className="font-mono h-12 md:h-10 text-base md:text-sm"
+              className="h-12 md:h-10 text-base md:text-sm"
             />
           </div>
           <div className="space-y-2">
@@ -130,7 +130,7 @@ export function CreateWorktreeDialog({
           >
             Cancel
           </Button>
-          <Button onClick={handleCreate} className="glow-green h-12 md:h-10">
+          <Button onClick={handleCreate} className="h-12 md:h-10">
             Create Worktree
           </Button>
         </DialogFooter>
