@@ -18,9 +18,16 @@ import type {
   ServerToClientEvents,
   SpecialKey,
 } from "@ark/shared";
-import { Loader2 } from "lucide-react";
+import {
+  CircleAlert,
+  Loader2,
+  Pencil,
+  Square,
+  SquareCheck,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
+import { StatusChip } from "@/components/StatusChip";
 import {
   type ActiveAuq,
   type AuqAnswer,
@@ -175,10 +182,27 @@ export function AskUserQuestionCard({
     onSendKey("Escape");
   };
 
+  // 単問ならheaderをチップの横に、複数の質問なら各質問の上に出す
+  const isSingleQuestion = auq.questions.length === 1;
+  const singleHeader = isSingleQuestion ? auq.questions[0].header : undefined;
+
   return (
-    <div className="border-t border-border bg-muted/30 px-3 py-2.5 shrink-0 max-h-[45%] overflow-y-auto">
+    // biome-ignore lint/a11y/useSemanticElements: fieldsetは既定でmin-inline-size: min-contentを持ち、見出しのtruncateや長い選択肢の折り返しがカードの幅を押し広げるため、divにroleを付ける
+    <div
+      role="group"
+      aria-label="質問"
+      className="rounded-lg border border-border bg-card px-4 pt-4 pb-3 shadow-card"
+    >
+      <div className="flex min-w-0 items-center gap-2 text-[13px] font-semibold text-muted-foreground">
+        <StatusChip statusKey="AWAITING" />
+        {singleHeader && (
+          <span className="min-w-0 truncate">{singleHeader}</span>
+        )}
+      </div>
+
       {phase === "desync" && (
-        <div className="mb-2 text-[13px] bg-amber-500/15 text-amber-700 dark:text-amber-300 rounded-md px-2.5 py-1.5 flex items-center justify-between gap-2">
+        <div className="mt-3 flex items-start gap-2 rounded-sm bg-status-awaiting/15 px-3 py-2 text-[13px] text-foreground">
+          <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
           <span>
             回答を確認できませんでした。ターミナル側の状態を確認してください
           </span>
@@ -190,24 +214,21 @@ export function AskUserQuestionCard({
       {auq.questions.map((q, qi) => {
         const draft = drafts[qi];
         return (
-          <div key={`${auq.toolUseId}:${qi}`} className="mb-2 last:mb-0">
-            <div className="text-sm font-medium text-foreground mb-2 flex items-start gap-2">
-              <span className="shrink-0 leading-[1.4]">❓</span>
-              <span className="break-words min-w-0">
-                {q.header && (
-                  <span className="inline-block text-[11px] bg-muted text-muted-foreground rounded px-1.5 py-0.5 mr-1.5 align-middle">
-                    {q.header}
-                  </span>
-                )}
-                {q.question}
-                {q.multiSelect && (
-                  <span className="text-[11px] text-muted-foreground ml-1.5">
-                    (複数選択可)
-                  </span>
-                )}
-              </span>
+          <div key={`${auq.toolUseId}:${qi}`} className="mt-3">
+            {!isSingleQuestion && q.header && (
+              <div className="mb-1 text-[13px] font-semibold text-muted-foreground">
+                {q.header}
+              </div>
+            )}
+            <div className="break-words text-[15px] font-semibold leading-normal text-foreground">
+              {q.question}
+              {q.multiSelect && (
+                <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                  (複数選択可)
+                </span>
+              )}
             </div>
-            <div className="flex flex-col gap-1.5">
+            <div className="mt-3 flex flex-col gap-2">
               {q.options.map((opt, oi) => {
                 const selected =
                   draft?.kind === "options" && draft.indexes.includes(oi);
@@ -225,20 +246,33 @@ export function AskUserQuestionCard({
                         setDraft(qi, { kind: "options", indexes: [oi] });
                       }
                     }}
-                    className={`text-sm border rounded-md px-2.5 py-1.5 flex items-start gap-2 transition-colors text-left disabled:opacity-50 ${
+                    className={`flex w-full items-start gap-3 rounded-sm border px-3 py-2.5 text-left transition-colors disabled:opacity-50 ${
                       selected
-                        ? "bg-primary/10 border-primary text-foreground"
-                        : "bg-background hover:bg-accent hover:text-accent-foreground border-border"
+                        ? "border-primary bg-primary/10"
+                        : "border-border bg-card hover:border-primary hover:bg-primary/5"
                     }`}
                     title={`${oi + 1}. ${opt.label}`}
                   >
-                    <span className="font-mono text-muted-foreground shrink-0">
-                      {q.multiSelect ? (selected ? "☑" : "☐") : `${oi + 1}.`}
+                    <span className="mt-px inline-flex size-[22px] shrink-0 items-center justify-center rounded-[6px] bg-muted text-xs font-semibold text-muted-foreground">
+                      {q.multiSelect ? (
+                        selected ? (
+                          <SquareCheck
+                            aria-hidden="true"
+                            className="size-3.5"
+                          />
+                        ) : (
+                          <Square aria-hidden="true" className="size-3.5" />
+                        )
+                      ) : (
+                        oi + 1
+                      )}
                     </span>
                     <span className="min-w-0">
-                      <span className="block">{opt.label}</span>
+                      <span className="block text-[15px] font-semibold leading-normal text-foreground">
+                        {opt.label}
+                      </span>
                       {opt.description && (
-                        <span className="block text-xs text-muted-foreground mt-0.5">
+                        <span className="mt-px block text-[13px] leading-normal text-muted-foreground">
                           {opt.description}
                         </span>
                       )}
@@ -266,20 +300,23 @@ export function AskUserQuestionCard({
         );
       })}
 
-      <div className="mt-2 flex items-center justify-between gap-2">
+      <div className="mt-3 flex items-center justify-between gap-2">
         <button
           type="button"
           onClick={handleCancel}
           disabled={phase === "submitting"}
-          className="text-[13px] text-muted-foreground hover:text-foreground px-2 py-0.5 transition-colors disabled:opacity-50"
+          className="rounded-sm px-2 py-1 text-[13px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
           title="キャンセル (Esc)"
         >
           キャンセル
         </button>
         <div className="flex items-center gap-2">
           {phase === "submitting" && (
-            <span className="text-[12px] text-muted-foreground flex items-center gap-1.5">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Loader2
+                aria-hidden="true"
+                className="size-3.5 animate-spin motion-reduce:animate-none"
+              />
               送信中...
             </span>
           )}
@@ -288,7 +325,7 @@ export function AskUserQuestionCard({
               type="button"
               onClick={handleSubmitAll}
               disabled={!allAnswered}
-              className="text-[13px] bg-primary text-primary-foreground rounded-md px-3 py-1 font-medium disabled:opacity-30 disabled:cursor-not-allowed"
+              className="rounded-sm bg-primary px-3 py-1.5 text-[13px] font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-30"
             >
               回答を送信
             </button>
@@ -315,15 +352,15 @@ function ScreenContextBlock({ text }: { text: string }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [text]);
   return (
-    <div className="mb-2">
-      <div className="text-[11px] text-muted-foreground mb-1">
-        直前の画面（ターミナルの表示そのまま）
+    <div className="mt-3">
+      <div className="mb-1 text-[11px] text-muted-foreground">
+        直前の画面 (ターミナルの表示そのまま)
       </div>
       <div
         ref={scrollRef}
-        className="max-h-36 overflow-y-auto rounded-md border border-border bg-background/60 px-2.5 py-1.5"
+        className="max-h-36 overflow-y-auto rounded-sm border border-border bg-muted/50 px-2.5 py-1.5"
       >
-        <pre className="text-[11px] font-mono whitespace-pre-wrap break-words text-muted-foreground leading-[1.55]">
+        <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-[1.55] text-muted-foreground">
           {text}
         </pre>
       </div>
@@ -346,9 +383,12 @@ function FreeTextRow({
   onSubmit?: (text: string) => void;
 }) {
   return (
-    <div className="flex items-center gap-2 bg-background border border-border rounded-md px-2.5 py-1.5 focus-within:border-primary">
-      <span className="font-mono text-muted-foreground text-sm shrink-0">
-        {digitLabel}.
+    <div
+      className="flex items-center gap-3 rounded-sm border border-dashed border-border px-3 py-2 focus-within:border-primary focus-within:border-solid"
+      title={`${digitLabel}. その他 (自由入力)`}
+    >
+      <span className="inline-flex size-[22px] shrink-0 items-center justify-center rounded-[6px] bg-muted text-muted-foreground">
+        <Pencil aria-hidden="true" className="size-3.5" />
       </span>
       <input
         type="text"
@@ -366,17 +406,18 @@ function FreeTextRow({
             onSubmit(value);
           }
         }}
+        aria-label="その他 (自由入力)"
         placeholder={
-          onSubmit ? "自由に入力 (Enter で送信)" : "自由に入力 (任意)"
+          onSubmit ? "その他 (自由入力、Enterで送信)" : "その他 (自由入力)"
         }
-        className="flex-1 text-sm bg-transparent focus:outline-none placeholder:text-muted-foreground disabled:opacity-50"
+        className="min-w-0 flex-1 bg-transparent text-[15px] placeholder:text-muted-foreground focus:outline-none disabled:opacity-50"
       />
       {onSubmit && (
         <button
           type="button"
           onClick={() => onSubmit(value)}
           disabled={!value.trim() || disabled}
-          className="text-[10px] bg-primary text-primary-foreground rounded px-2 py-0.5 disabled:opacity-30 disabled:cursor-not-allowed"
+          className="shrink-0 rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-30"
         >
           送信
         </button>

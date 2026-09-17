@@ -49,6 +49,7 @@ import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
 import { AskUserQuestionCard } from "@/components/AskUserQuestionCard";
 import { MermaidBlock } from "@/components/MermaidBlock";
+import { StatusChip } from "@/components/StatusChip";
 import { fileToBase64, validateFile } from "@/hooks/useFileUpload";
 import { useSessionJsonl } from "@/hooks/useSessionJsonl";
 import { useSlashCommands } from "@/hooks/useSlashCommands";
@@ -711,7 +712,7 @@ function AwaitingPad({
       key={label}
       type="button"
       onClick={() => onSendKey(key)}
-      className="text-[12px] font-mono bg-background border border-border rounded px-2 py-0.5 hover:bg-accent transition-colors"
+      className="rounded-sm border border-border bg-background px-2 py-0.5 font-mono text-xs transition-colors hover:bg-muted"
       title={title}
     >
       {label}
@@ -719,30 +720,31 @@ function AwaitingPad({
   );
 
   return (
-    <div className="border-t border-border bg-amber-500/10 px-3 py-2 shrink-0 max-h-[50%] overflow-y-auto">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[13px] text-amber-700 dark:text-amber-300 min-w-0 font-medium">
-          ⏳ Claude が入力を求めています
+    <div className="rounded-lg border border-border bg-card px-4 pt-3.5 pb-3 shadow-card">
+      <div className="flex min-w-0 items-center gap-2">
+        <StatusChip statusKey="AWAITING" />
+        <span className="min-w-0 text-[13px] font-semibold text-foreground">
+          Claudeが入力を求めています
         </span>
       </div>
       {awaitingText && (
-        <pre className="mt-1.5 text-[11px] leading-[1.5] font-mono bg-background/70 border border-border rounded-md px-2.5 py-2 overflow-x-auto whitespace-pre text-foreground/80">
+        <pre className="mt-2 overflow-x-auto whitespace-pre rounded-sm border border-border bg-muted/50 px-2.5 py-2 font-mono text-[11px] leading-[1.5] text-foreground/80">
           {awaitingText}
         </pre>
       )}
-      <div className="mt-1.5 flex items-center gap-1 flex-wrap">
+      <div className="mt-2 flex flex-wrap items-center gap-1">
         {(["1", "2", "3", "4", "5", "6"] as const).map(d =>
-          keyBtn(d, d, `${d} を送信 (選択肢ジャンプ/トグル)`)
+          keyBtn(d, d, `${d}を送信 (選択肢ジャンプ/トグル)`)
         )}
         <span className="w-2" />
         {keyBtn("↑", "Up", "フォーカスを上へ")}
         {keyBtn("↓", "Down", "フォーカスを下へ")}
-        {keyBtn("→", "Right", "次のタブ / Submit へ")}
+        {keyBtn("→", "Right", "次のタブ / Submitへ")}
         {keyBtn("Space", "Space", "チェックをトグル")}
         {keyBtn("Enter", "Enter", "フォーカス中の項目を選択/確定")}
         {keyBtn("Esc", "Escape", "キャンセル")}
       </div>
-      <div className="mt-1.5 flex items-center gap-2 bg-background border border-border rounded-md px-2.5 py-1 focus-within:border-primary">
+      <div className="mt-2 flex items-center gap-2 rounded-full border border-border bg-background py-1 pr-1 pl-3 focus-within:border-primary">
         <input
           type="text"
           value={freeText}
@@ -753,14 +755,15 @@ function AwaitingPad({
               submitFreeText();
             }
           }}
-          placeholder="自由入力 — 先に Type something の番号を押してから入力 (Enter で確定)"
-          className="flex-1 text-[12px] bg-transparent focus:outline-none placeholder:text-muted-foreground py-0.5"
+          aria-label="自由入力"
+          placeholder="自由入力: 先にType somethingの番号を押してから入力 (Enterで確定)"
+          className="min-w-0 flex-1 bg-transparent py-0.5 text-[13px] placeholder:text-muted-foreground focus:outline-none"
         />
         <button
           type="button"
           onClick={submitFreeText}
           disabled={!freeText.trim()}
-          className="text-[11px] bg-primary text-primary-foreground rounded px-2 py-0.5 disabled:opacity-30 disabled:cursor-not-allowed"
+          className="shrink-0 rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-30"
         >
           入力して確定
         </button>

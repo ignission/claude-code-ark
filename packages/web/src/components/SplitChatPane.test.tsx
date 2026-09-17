@@ -403,3 +403,23 @@ describe("SplitChatPane: 入力欄", () => {
     expect(container.textContent).toContain("ログイン画面を作って");
   });
 });
+
+describe("SplitChatPane: 確認待ちのカード", () => {
+  it("質問カードが無い確認待ちは「確認待ち」のチップ付きのカードで出し、キーを送れる", () => {
+    const { container, onSendKey } = renderChat({
+      bridgeStatus: "AWAITING",
+      awaitingText: "Do you want to proceed?\n  1. Yes\n  2. No",
+    });
+
+    expect(container.textContent).toContain("確認待ち");
+    expect(container.querySelector("pre")?.textContent).toContain(
+      "Do you want to proceed?"
+    );
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('button[title^="1を送信"]')
+        ?.click()
+    );
+    expect(onSendKey).toHaveBeenCalledWith("1");
+  });
+});
