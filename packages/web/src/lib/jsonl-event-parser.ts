@@ -21,8 +21,8 @@
 /**
  * 全 event 共通の任意プロパティ。
  *  - `timestamp`: epoch ms (パース失敗時 undefined)
- *  - `isSidechain`: subagent の対話に true。連続する true は SplitChatPane 側で
- *    1 ブロックに集約される。
+ *  - `isSidechain`: subagentの対話にtrue。連続するtrueはchat-render-items.tsの
+ *    groupSidechainで1ブロックに集約される。
  */
 interface CommonEventFields {
   timestamp?: number;

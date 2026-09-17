@@ -21,11 +21,14 @@ import type {
 import { isImagePath, splitTextWithFilePaths } from "@ark/shared/file-paths";
 import {
   ArrowDown,
+  ChevronDown,
+  ChevronRight,
   Download,
   Loader2,
   Paperclip,
   Send,
   Workflow,
+  Wrench,
 } from "lucide-react";
 import {
   type FormEvent,
@@ -51,6 +54,11 @@ import {
   hasResolvedAuqSince,
   parseAuqInput,
 } from "@/lib/ask-user-question-state";
+import {
+  groupSidechain,
+  groupToolCalls,
+  type ToolCallEvent,
+} from "@/lib/chat-render-items";
 import type { JsonlParsedEvent } from "@/lib/jsonl-event-parser";
 import { splitTextWithUrls } from "@/lib/linkify";
 import { isMermaidCodeClass } from "@/lib/mermaid-block-utils";
@@ -505,6 +513,54 @@ function AskUserQuestionResultCard({
   );
 }
 
+/** 入力引数から1行サマリを取る: file_path / command / pattern / urlなど、最初に見つかった "らしい" 値 */
+function summarizeToolInput(input: Record<string, unknown>): string {
+  const keys = [
+    "file_path",
+    "command",
+    "pattern",
+    "query",
+    "url",
+    "path",
+    "description",
+    "prompt",
+  ];
+  for (const k of keys) {
+    const v = input[k];
+    if (typeof v === "string" && v.length > 0) {
+      return v.length > 100 ? `${v.slice(0, 100)}…` : v;
+    }
+  }
+  return "";
+}
+
+/** ツール呼び出し1件の1行表示 (ツール名 + 引数の要約) */
+function ToolCallRow({
+  tool,
+  input,
+  running = false,
+}: {
+  tool: string;
+  input: Record<string, unknown>;
+  /** 折りたたんだまとまりの下に出す「実行中の最新の1件」か */
+  running?: boolean;
+}) {
+  const summary = useMemo(() => summarizeToolInput(input), [input]);
+  return (
+    <div className="inline-flex max-w-full items-center gap-2 text-xs text-muted-foreground">
+      <Wrench
+        aria-hidden="true"
+        className={`size-3.5 shrink-0 ${running ? "text-status-busy" : "opacity-60"}`}
+      />
+      {running && <span className="sr-only">実行中:</span>}
+      <span className="shrink-0 font-medium text-foreground">{tool}</span>
+      {summary && (
+        <span className="min-w-0 truncate font-mono opacity-70">{summary}</span>
+      )}
+    </div>
+  );
+}
+
 function ToolCallCard({
   tool,
   input,
@@ -518,27 +574,6 @@ function ToolCallCard({
   structuredResult?: unknown;
   isError?: boolean;
 }) {
-  // 1 行サマリを抽出: file_path / command / pattern / url など、最初に見つかった "らしい" 値
-  const summary = useMemo(() => {
-    const keys = [
-      "file_path",
-      "command",
-      "pattern",
-      "query",
-      "url",
-      "path",
-      "description",
-      "prompt",
-    ];
-    for (const k of keys) {
-      const v = input[k];
-      if (typeof v === "string" && v.length > 0) {
-        return v.length > 100 ? `${v.slice(0, 100)}…` : v;
-      }
-    }
-    return "";
-  }, [input]);
-
   // AskUserQuestion は専用レンダリング
   if (tool === "AskUserQuestion") {
     return (
@@ -553,15 +588,62 @@ function ToolCallCard({
 
   return (
     <div className="px-4 py-1">
-      <div className="inline-flex items-center gap-2 text-xs text-muted-foreground max-w-full">
-        <span className="opacity-60 shrink-0">⚙</span>
-        <span className="font-mono text-foreground shrink-0">{tool}</span>
-        {summary && (
-          <span className="font-mono opacity-70 truncate min-w-0">
-            {summary}
-          </span>
-        )}
-      </div>
+      <ToolCallRow tool={tool} input={input} />
+    </div>
+  );
+}
+
+/**
+ * sidechainの外で連続するツール呼び出しの折りたたみ表示 (「作業N件」)。
+ * 閉じているときは、実行中のまとまりに限りrunningのうち最新の1件を下に出す
+ */
+function ToolGroupCard({
+  calls,
+  latestRunning,
+  expanded,
+  onToggle,
+  surfaceClassName,
+}: {
+  calls: ToolCallEvent[];
+  latestRunning: ToolCallEvent | null;
+  expanded: boolean;
+  onToggle: () => void;
+  /** 要約ボタンの背景。周りの面から1段ずらす */
+  surfaceClassName: string;
+}) {
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+  return (
+    <div className="px-4 py-1.5">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className={`inline-flex h-9 max-w-full items-center gap-2 rounded-sm border border-border pr-3 pl-2.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground ${surfaceClassName}`}
+      >
+        <Chevron aria-hidden="true" className="size-4 shrink-0" />
+        <span className="font-semibold text-foreground">
+          作業{calls.length}件
+        </span>
+      </button>
+      {expanded ? (
+        <div className="mt-1 border-l-2 border-border pl-3">
+          {calls.map(call => (
+            <div key={call.id} className="py-0.5">
+              <ToolCallRow tool={call.tool} input={call.input} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        latestRunning && (
+          <div className="mt-1 pl-1">
+            <ToolCallRow
+              tool={latestRunning.tool}
+              input={latestRunning.input}
+              running
+            />
+          </div>
+        )
+      )}
     </div>
   );
 }
@@ -705,31 +787,6 @@ function SidechainGroupCard({
       )}
     </div>
   );
-}
-
-/** 連続する sidechain イベントを 1 グループに畳む */
-function groupSidechain(events: JsonlParsedEvent[]): (
-  | { kind: "event"; event: JsonlParsedEvent }
-  | {
-      kind: "sidechain";
-      id: string;
-      events: JsonlParsedEvent[];
-    }
-)[] {
-  const out: ReturnType<typeof groupSidechain> = [];
-  for (const ev of events) {
-    if (ev.isSidechain === true) {
-      const last = out[out.length - 1];
-      if (last && last.kind === "sidechain") {
-        last.events.push(ev);
-      } else {
-        out.push({ kind: "sidechain", id: `sc:${ev.id}`, events: [ev] });
-      }
-    } else {
-      out.push({ kind: "event", event: ev });
-    }
-  }
-  return out;
 }
 
 function EventCard({
@@ -940,8 +997,35 @@ export function SplitChatPane({
 
   const activeAuq = hookAuq?.auq ?? null;
 
-  // 連続する subagent イベントを折りたたみグループへ
-  const groupedEvents = useMemo(() => groupSidechain(events), [events]);
+  // 連続するsubagentイベントと、sidechainの外で連続するツール呼び出しを
+  // それぞれ折りたたみのまとまりへ
+  const renderItems = useMemo(
+    () => groupToolCalls(groupSidechain(events)),
+    [events]
+  );
+
+  // 「作業N件」の展開状態 (まとまりのidの集合)。カード内のstateにしないのは、
+  // 非表示 (isActive=false) の間はuseSessionJsonlがeventsを空にしてカードが
+  // アンマウントされるため。本体に持てば端末と会話を切り替えても開いたまま残る
+  const [expandedToolGroups, setExpandedToolGroups] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  const toggleToolGroup = useCallback((id: string) => {
+    setExpandedToolGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies(session.id): セッション切替を検知して展開状態を破棄するための意図的な依存
+  useEffect(() => {
+    setExpandedToolGroups(new Set());
+  }, [session.id]);
 
   // 入力欄。会話エリアのクリックでここにフォーカスを移す
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -1298,21 +1382,36 @@ export function SplitChatPane({
                   読み込み中...
                 </div>
               )}
-              {groupedEvents.map(g =>
-                g.kind === "sidechain" ? (
-                  <SidechainGroupCard
-                    key={g.id}
-                    events={g.events}
-                    sessionId={session.id}
-                  />
-                ) : (
+              {renderItems.map(item => {
+                if (item.kind === "sidechain") {
+                  return (
+                    <SidechainGroupCard
+                      key={item.id}
+                      events={item.events}
+                      sessionId={session.id}
+                    />
+                  );
+                }
+                if (item.kind === "tool-group") {
+                  return (
+                    <ToolGroupCard
+                      key={item.id}
+                      calls={item.calls}
+                      latestRunning={item.latestRunning}
+                      expanded={expandedToolGroups.has(item.id)}
+                      onToggle={() => toggleToolGroup(item.id)}
+                      surfaceClassName="bg-background"
+                    />
+                  );
+                }
+                return (
                   <EventCard
-                    key={g.event.id}
-                    event={g.event}
+                    key={item.event.id}
+                    event={item.event}
                     sessionId={session.id}
                   />
-                )
-              )}
+                );
+              })}
               {localSlashCommands.map(c => (
                 <SlashCommandCard key={c.id} name={c.name} args={c.args} />
               ))}
