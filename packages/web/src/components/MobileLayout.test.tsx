@@ -1,4 +1,4 @@
-import type { ManagedSession } from "@ark/shared";
+import type { ManagedSession, Worktree } from "@ark/shared";
 import { type ComponentProps, createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -56,6 +56,8 @@ function createProps(): ComponentProps<typeof MobileLayout> {
     sessionsLoaded: true,
     sessionStatuses: new Map(),
     sessionAwaitingTexts: new Map(),
+    sessionPreviews: new Map(),
+    worktreeDisplayNames: new Map(),
     getTabsForSession: vi.fn(() => tabs),
     getActiveTabForSession: vi.fn(() => 0),
     handleTabSelect: vi.fn(),
@@ -82,5 +84,73 @@ describe("MobileLayout diagram wiring", () => {
 
     expect(markup).toContain('aria-label="表示する図"');
     expect(markup).toContain("mobile.diagram.html");
+  });
+});
+
+describe("MobileLayoutの下部タブ", () => {
+  it("ローカルでは下部タブを出さず、画面の下端に余白も足さない", () => {
+    const markup = renderToStaticMarkup(
+      createElement(MobileLayout, {
+        ...createProps(),
+        sessionSubView: "list",
+        isRemote: false,
+      })
+    );
+
+    expect(markup).not.toContain("<nav");
+    expect(markup).not.toContain("pb-14");
+  });
+
+  it("リモートでは下部タブを出し、選択中のタブをaria-currentで示す", () => {
+    const markup = renderToStaticMarkup(
+      createElement(MobileLayout, {
+        ...createProps(),
+        sessionSubView: "list",
+        isRemote: true,
+      })
+    );
+
+    expect(markup).toContain("<nav");
+    expect(markup).toContain('aria-current="page"');
+    expect(markup).toContain("ブラウザ");
+    expect(markup).toContain("pb-14");
+    expect(markup).not.toContain("border-t-2");
+  });
+
+  it("リモートでも会話の詳細画面では下部タブを出さず、余白も付けない", () => {
+    const markup = renderToStaticMarkup(
+      createElement(MobileLayout, { ...createProps(), isRemote: true })
+    );
+
+    expect(markup).toContain('aria-label="表示する図"');
+    expect(markup).not.toContain("<nav");
+    expect(markup).not.toContain("pb-14");
+  });
+});
+
+describe("MobileLayoutの一覧の配線", () => {
+  it("一覧の行にプレビュー文と表示名を出す", () => {
+    const worktree: Worktree = {
+      id: session.worktreeId,
+      path: session.worktreePath,
+      branch: "feature/list",
+      commit: "abc1234",
+      isMain: false,
+      isBare: false,
+    };
+    const markup = renderToStaticMarkup(
+      createElement(MobileLayout, {
+        ...createProps(),
+        sessionSubView: "list",
+        repoList: ["/repo"],
+        worktrees: [worktree],
+        sessionStatuses: new Map([[session.id, "TOOL"]]),
+        sessionPreviews: new Map([[session.id, "テストを実行しています"]]),
+        worktreeDisplayNames: new Map([[worktree.path, "一覧の表示名"]]),
+      })
+    );
+
+    expect(markup).toContain("テストを実行しています");
+    expect(markup).toContain("一覧の表示名");
   });
 });

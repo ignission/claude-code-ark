@@ -712,6 +712,18 @@ export default function Dashboard() {
           sessionsLoaded={sessionsLoaded}
           sessionStatuses={sessionStatuses}
           sessionAwaitingTexts={sessionAwaitingTexts}
+          sessionPreviews={sessionPreviews}
+          worktreeDisplayNames={worktreeDisplayNames}
+          onSetWorktreeDisplayName={setWorktreeDisplayName}
+          capabilities={capabilities}
+          profiles={profiles}
+          repoProfileLinks={repoProfileLinks}
+          worktreeProfileLinks={worktreeProfileLinks}
+          onSetRepoProfile={setRepoProfile}
+          onSetWorktreeProfile={setWorktreeProfile}
+          onOpenProfileManager={() => setShowProfileManager(true)}
+          onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
+          onRemoveRepo={handleRemoveRepo}
           notificationControl={notificationControl}
           notificationsSupported={sessionNotifications.supported}
           isSessionNotificationEnabled={isSessionNotificationEnabled}

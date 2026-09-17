@@ -13,6 +13,8 @@ const testDoubles = vi.hoisted(() => ({
   sessionSidebar: vi.fn(),
   aboutDialog: vi.fn(),
   bridgeSnapshotEnabled: vi.fn(),
+  mobileLayout: vi.fn(),
+  isMobile: false,
   socketState: {} as Record<string, unknown>,
 }));
 
@@ -30,7 +32,7 @@ vi.mock("@/hooks/useSocket", () => ({
 }));
 
 vi.mock("@/hooks/useMobile", () => ({
-  useIsMobile: () => false,
+  useIsMobile: () => testDoubles.isMobile,
 }));
 
 vi.mock("@/hooks/useBridgeSnapshot", () => ({
@@ -120,7 +122,10 @@ vi.mock("@/components/SessionSidebar", () => ({
 vi.mock("@/components/UpdateBanner", () => ({ UpdateBanner: () => null }));
 
 vi.mock("@/components/MobileLayout", () => ({
-  MobileLayout: () => null,
+  MobileLayout: (props: Record<string, unknown>) => {
+    testDoubles.mobileLayout(props);
+    return null;
+  },
   normalizeMobileTab: (value: unknown) => value,
   normalizeSessionId: (value: unknown) => value,
   normalizeSessionSubView: (value: unknown) => value,
@@ -257,6 +262,8 @@ function latestProps(mock: ReturnType<typeof vi.fn>): Record<string, unknown> {
 
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  testDoubles.isMobile = false;
+  testDoubles.mobileLayout.mockClear();
   localStorage.clear();
   localStorage.setItem("ark-split-left-mode", "chat");
   testDoubles.splitChatPane.mockClear();
@@ -315,5 +322,28 @@ describe("Dashboardのサイドバー配線", () => {
 
     expect(latestProps(testDoubles.aboutDialog)).toMatchObject({ open: true });
     expect(testDoubles.bridgeSnapshotEnabled).toHaveBeenLastCalledWith(true);
+  });
+});
+
+describe("Dashboardのモバイル一覧の配線", () => {
+  it("状態・プレビュー・表示名・プロファイルと、リポジトリの操作をMobileLayoutへ渡す", () => {
+    testDoubles.isMobile = true;
+    mount(<Dashboard />);
+
+    const state = testDoubles.socketState;
+    const layout = latestProps(testDoubles.mobileLayout);
+    expect(layout.sessionStatuses).toBe(state.sessionStatuses);
+    expect(layout.sessionPreviews).toBe(state.sessionPreviews);
+    expect(layout.worktreeDisplayNames).toBe(state.worktreeDisplayNames);
+    expect(layout.onSetWorktreeDisplayName).toBe(state.setWorktreeDisplayName);
+    expect(layout.capabilities).toBe(state.capabilities);
+    expect(layout.profiles).toBe(state.profiles);
+    expect(layout.repoProfileLinks).toBe(state.repoProfileLinks);
+    expect(layout.worktreeProfileLinks).toBe(state.worktreeProfileLinks);
+    expect(layout.onSetRepoProfile).toBe(state.setRepoProfile);
+    expect(layout.onSetWorktreeProfile).toBe(state.setWorktreeProfile);
+    expect(layout.onOpenProfileManager).toBeTypeOf("function");
+    expect(layout.onCreateWorktreeForRepo).toBeTypeOf("function");
+    expect(layout.onRemoveRepo).toBeTypeOf("function");
   });
 });
