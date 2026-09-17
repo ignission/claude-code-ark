@@ -237,6 +237,7 @@ export function AskUserQuestionCard({
                     key={`${oi}-${opt.label}`}
                     type="button"
                     disabled={phase === "submitting"}
+                    aria-pressed={q.multiSelect ? selected : undefined}
                     onClick={() => {
                       if (isInstantMode) {
                         handleInstantOption(oi);

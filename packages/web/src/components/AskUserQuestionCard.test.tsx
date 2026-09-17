@@ -64,6 +64,17 @@ describe("AskUserQuestionCard", () => {
     expect(html).not.toMatch(/☐|☑/u);
   });
 
+  it("複数選択の選択肢はaria-pressedで選択状態を読み上げに伝え、単問即送出の選択肢には付けない", () => {
+    const multi = render({
+      toolUseId: "hook:3",
+      questions: [{ ...SINGLE.questions[0], multiSelect: true }],
+    });
+    expect(multi).toContain('aria-pressed="false"');
+
+    const single = render(SINGLE);
+    expect(single).not.toContain("aria-pressed");
+  });
+
   it("等幅は「直前の画面」だけに使う", () => {
     expect(render(SINGLE)).not.toContain("font-mono");
     expect(render(SINGLE, "● 画面の内容")).toContain("font-mono");

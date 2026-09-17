@@ -116,7 +116,9 @@ interface SplitChatPaneProps {
   composerAccessory?: ReactNode;
   /**
    * 質問カード (AskUserQuestion) の表示有無が変わったときに呼ぶ。
-   * マウント時にも現在の値 (false) で1回呼ぶ。モバイルの状態の帯が文言の切り替えに使う
+   * マウント時にも現在の値 (false) で1回呼ぶ。モバイルの状態の帯が文言の切り替えに使う。
+   * アンマウント時には呼ばない。effectの依存に使うため、呼び出し側は安定した
+   * 関数 (useCallback等) を渡すこと
    */
   onActiveAuqChange?: (hasActiveAuq: boolean) => void;
 }
@@ -151,6 +153,7 @@ function PendingMessageCard({ text }: { text: string }) {
     <div className="flex justify-end px-4 pt-4 pb-2">
       <div className="flex max-w-[78%] items-start gap-2 whitespace-pre-wrap break-words rounded-xl rounded-br-[4px] bg-primary/14 px-3.5 py-2.5 text-[15px] leading-[1.6] text-foreground opacity-60">
         <Loader2
+          role="img"
           aria-label="送信中"
           className="mt-1 size-3.5 shrink-0 animate-spin motion-reduce:animate-none"
         />
