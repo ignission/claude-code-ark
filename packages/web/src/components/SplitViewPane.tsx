@@ -29,7 +29,6 @@ import type {
   SpecialKey,
   Worktree,
 } from "@ark/shared";
-import { MessagesSquare, SquareTerminal, Workflow } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { resolveSessionHeaderLabels } from "../lib/session-header";
@@ -45,6 +44,7 @@ import {
   writeSavedSplitViewLeftMode,
 } from "../lib/split-view-left-mode";
 import { resolveStatusKey } from "../lib/status-tone";
+import { VIEW_MODE_ICONS } from "../lib/view-mode-icons";
 import { DiagramPane } from "./DiagramPane";
 import { SegmentedControl, type SegmentOption } from "./SegmentedControl";
 import { SessionHeaderMenu } from "./SessionHeaderMenu";
@@ -64,8 +64,8 @@ const STORAGE_KEY_BOARD_WIDTH = "ark-split-board-width";
 const STORAGE_KEY_SHOW_BOARD = "ark-split-show-board";
 
 const LEFT_MODE_OPTIONS: readonly SegmentOption<SplitViewLeftMode>[] = [
-  { value: "terminal", label: "端末", icon: SquareTerminal },
-  { value: "chat", label: "会話", icon: MessagesSquare },
+  { value: "terminal", label: "端末", icon: VIEW_MODE_ICONS.terminal },
+  { value: "chat", label: "会話", icon: VIEW_MODE_ICONS.chat },
 ];
 
 interface SplitViewPaneProps {
@@ -381,7 +381,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                 : "text-muted-foreground hover:bg-muted hover:text-foreground"
             }`}
           >
-            <Workflow className="size-4.5" aria-hidden="true" />
+            <VIEW_MODE_ICONS.board className="size-4.5" aria-hidden="true" />
             <span>図</span>
           </button>
           <SessionHeaderMenu

@@ -26,8 +26,9 @@ import {
   Copy,
   Ellipsis,
   File as FileIcon,
-  ImageIcon,
+  ImagePlus,
   MessageSquareQuote,
+  Paperclip,
   RefreshCw,
   RotateCw,
   Send,
@@ -529,7 +530,7 @@ export function MobileSessionView({
                 variant="ghost"
                 size="icon"
                 className="size-10 shrink-0 rounded-sm"
-                aria-label="セッションの操作"
+                aria-label="その他の操作"
               >
                 <Ellipsis className="size-[22px]" />
               </Button>
@@ -541,18 +542,24 @@ export function MobileSessionView({
               <DropdownMenuLabel className="text-xs text-muted-foreground">
                 メッセージショートカット
               </DropdownMenuLabel>
-              {messageShortcuts.map(shortcut => (
-                <DropdownMenuItem
-                  key={shortcut.id}
-                  onSelect={() => onSendMessage(shortcut.message)}
-                  title={shortcut.message.slice(0, 200)}
-                >
-                  <MessageSquareQuote />
-                  <span className="truncate">
-                    {previewOf(shortcut.message)}
-                  </span>
-                </DropdownMenuItem>
-              ))}
+              {messageShortcuts.length === 0 ? (
+                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                  ショートカットがありません
+                </DropdownMenuLabel>
+              ) : (
+                messageShortcuts.map(shortcut => (
+                  <DropdownMenuItem
+                    key={shortcut.id}
+                    onSelect={() => onSendMessage(shortcut.message)}
+                    title={shortcut.message.slice(0, 200)}
+                  >
+                    <MessageSquareQuote />
+                    <span className="truncate">
+                      {previewOf(shortcut.message)}
+                    </span>
+                  </DropdownMenuItem>
+                ))
+              )}
               <DropdownMenuItem onSelect={() => setShowShortcutManager(true)}>
                 <Settings />
                 ショートカットを管理
@@ -579,7 +586,7 @@ export function MobileSessionView({
               )}
               {onUploadFile && (
                 <DropdownMenuItem onSelect={handlePasteButtonClick}>
-                  <ImageIcon />
+                  <ImagePlus />
                   画像を貼り付け
                 </DropdownMenuItem>
               )}
@@ -587,7 +594,7 @@ export function MobileSessionView({
                 <DropdownMenuItem
                   onSelect={() => fileInputRef.current?.click()}
                 >
-                  <FileIcon />
+                  <Paperclip />
                   ファイルを添付
                 </DropdownMenuItem>
               )}

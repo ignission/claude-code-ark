@@ -1,12 +1,12 @@
-import { MessageCircle, Shapes, SquareTerminal } from "lucide-react";
 import type { MobileSessionViewMode } from "../lib/mobile-session-view-mode";
+import { VIEW_MODE_ICONS } from "../lib/view-mode-icons";
 import { SegmentedControl, type SegmentOption } from "./SegmentedControl";
 
 export const MOBILE_SESSION_VIEW_MODES: readonly SegmentOption<MobileSessionViewMode>[] =
   [
-    { value: "chat", label: "会話", icon: MessageCircle },
-    { value: "terminal", label: "端末", icon: SquareTerminal },
-    { value: "board", label: "図", icon: Shapes },
+    { value: "chat", label: "会話", icon: VIEW_MODE_ICONS.chat },
+    { value: "terminal", label: "端末", icon: VIEW_MODE_ICONS.terminal },
+    { value: "board", label: "図", icon: VIEW_MODE_ICONS.board },
   ];
 
 interface MobileSessionViewModeToggleProps {

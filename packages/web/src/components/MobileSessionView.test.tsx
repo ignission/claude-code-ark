@@ -144,6 +144,23 @@ function click(element: Element | null | undefined): void {
   act(() => (element as HTMLElement).click());
 }
 
+/**
+ * Radix の DropdownMenuTrigger は pointerdown で開くため、素の click() だけでは
+ * 開かない (jsdom で確認済み)。開いた内容は Portal で document.body 直下に出る。
+ */
+function openDropdown(trigger: Element | null | undefined): void {
+  expect(trigger).not.toBeNull();
+  expect(trigger).toBeDefined();
+  act(() => {
+    (trigger as HTMLElement).dispatchEvent(
+      new MouseEvent("pointerdown", { bubbles: true })
+    );
+    (trigger as HTMLElement).dispatchEvent(
+      new MouseEvent("click", { bubbles: true })
+    );
+  });
+}
+
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear();
@@ -250,6 +267,21 @@ describe("mobile session view mode", () => {
     );
     expect(markup).not.toMatch(/💬|🖥|📐/);
   });
+
+  it("PCの上部バー (SplitViewPane) と同じ lucide アイコンを使う", () => {
+    const markup = renderToStaticMarkup(
+      createElement(MobileSessionViewModeToggle, {
+        value: "chat",
+        onChange: vi.fn(),
+      })
+    );
+
+    // PC: 会話=MessagesSquare / 端末=SquareTerminal / 図=Workflow (SplitViewPane.tsx)
+    expect(markup).toContain("lucide-messages-square");
+    expect(markup).toContain("lucide-square-terminal");
+    expect(markup).toContain("lucide-workflow");
+    expect(markup).not.toMatch(/lucide-message-circle|lucide-shapes\b/);
+  });
 });
 
 describe("MobileSessionView のヘッダー", () => {
@@ -284,8 +316,9 @@ describe("MobileSessionView のヘッダー", () => {
     expect(header?.textContent).toContain("recipe-app");
     click(header?.querySelector('button[aria-label="一覧へ戻る"]'));
     expect(onBack).toHaveBeenCalledTimes(1);
+    // PCの `…` (SessionHeaderMenu) と同じ aria-label にそろえる
     expect(
-      header?.querySelector('button[aria-label="セッションの操作"]')
+      header?.querySelector('button[aria-label="その他の操作"]')
     ).not.toBeNull();
     expect(
       header?.querySelector('button[title="セッションを削除"]')
@@ -439,5 +472,44 @@ describe("MobileSessionView の下部バー", () => {
         ?.getAttribute("aria-pressed")
     ).toBe("true");
     expect(board?.lastElementChild).toBe(bar);
+  });
+});
+
+describe("MobileSessionView の操作メニュー", () => {
+  it("ショートカットが無ければ、PCの『…』と同じ文言を出す", () => {
+    const container = mount(
+      <MobileSessionView {...makeProps({ messageShortcuts: [] })} />
+    );
+    const header = container.querySelector("header");
+
+    openDropdown(header?.querySelector('button[aria-label="その他の操作"]'));
+
+    const menu = document.body.querySelector('[role="menu"]');
+    expect(menu?.textContent).toContain("ショートカットがありません");
+  });
+
+  it("ショートカットがあれば一覧を出し、無いことの文言は出さない", () => {
+    const container = mount(
+      <MobileSessionView
+        {...makeProps({
+          messageShortcuts: [
+            {
+              id: "sc-1",
+              message: "続けて",
+              sortOrder: 1,
+              createdAt: 0,
+              updatedAt: 0,
+            },
+          ],
+        })}
+      />
+    );
+    const header = container.querySelector("header");
+
+    openDropdown(header?.querySelector('button[aria-label="その他の操作"]'));
+
+    const menu = document.body.querySelector('[role="menu"]');
+    expect(menu?.textContent).toContain("続けて");
+    expect(menu?.textContent).not.toContain("ショートカットがありません");
   });
 });
