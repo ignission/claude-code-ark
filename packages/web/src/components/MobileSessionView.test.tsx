@@ -375,19 +375,38 @@ describe("MobileSessionView の状態の帯", () => {
     ).toBeNull();
   });
 
+  it("端末モードでも会話の購読を続け、質問カードが閉じたことを帯に反映する", () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+    const container = mount(
+      <MobileSessionView {...makeProps({ bridgeStatus: "AWAITING" })} />
+    );
+    // 購読を止めると、端末モードで答えた質問の解決が届かず「質問があります」が残る
+    expect(latestChatProps().isActive).toBe(true);
+
+    act(() => latestChatProps().onActiveAuqChange?.(true));
+    expect(stripText(container)).toBe("質問があります");
+
+    act(() => latestChatProps().onActiveAuqChange?.(false));
+    expect(stripText(container)).toBe("確認を求めています");
+  });
+
   it("端末モードで確認を求められたら「会話で答える」で会話モードへ切り替える", () => {
     localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
     const container = mount(
       <MobileSessionView {...makeProps({ bridgeStatus: "AWAITING" })} />
     );
-    expect(latestChatProps().isActive).toBe(false);
+    expect(
+      container.querySelector('[data-testid="mobile-view-chat"]')?.className
+    ).toBe("hidden");
 
     const button = Array.from(
       container.querySelectorAll('[data-testid="mobile-status-strip"] button')
     ).find(b => b.textContent?.includes("会話で答える"));
     click(button);
 
-    expect(latestChatProps().isActive).toBe(true);
+    expect(
+      container.querySelector('[data-testid="mobile-view-chat"]')?.className
+    ).not.toBe("hidden");
     expect(localStorage.getItem(STORAGE_KEY_MOBILE_VIEW)).toBe("chat");
     expect(
       container.querySelector('[data-testid="mobile-status-strip"] button')

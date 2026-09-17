@@ -679,7 +679,9 @@ export function MobileSessionView({
         <SplitChatPane
           socket={socket}
           session={session}
-          isActive={isActive && viewMode === "chat"}
+          // 端末・図モードの間も購読を続ける。止めると、そのあいだに答えた質問の解決が
+          // JSONL から届かず、状態の帯が「質問があります」のまま残る
+          isActive={isActive}
           bridgeStatus={bridgeStatus}
           awaitingText={awaitingText}
           onSendMessage={onSendMessage}

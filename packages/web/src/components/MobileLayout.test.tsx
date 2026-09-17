@@ -2,7 +2,7 @@ import type { ManagedSession, Worktree } from "@ark/shared";
 import { type ComponentProps, createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { MobileLayout } from "./MobileLayout";
+import { MobileLayout, normalizeMobileTab } from "./MobileLayout";
 import type { ViewerTab } from "./TerminalPane";
 
 const session: ManagedSession = {
@@ -170,5 +170,19 @@ describe("MobileLayoutの一覧の配線", () => {
 
     expect(markup).toContain("テストを実行しています");
     expect(markup).toContain("一覧の表示名");
+  });
+});
+
+describe("normalizeMobileTab", () => {
+  // localhost の e2e では isRemote=false で下部タブが出ず、保存値の正規化を画面から確かめられないので、ここで固定する
+  it("不正な保存値は session に戻す", () => {
+    expect(normalizeMobileTab("garbage")).toBe("session");
+    expect(normalizeMobileTab(42)).toBe("session");
+    expect(normalizeMobileTab(undefined)).toBe("session");
+  });
+
+  it("正しい保存値はそのまま使う", () => {
+    expect(normalizeMobileTab("session")).toBe("session");
+    expect(normalizeMobileTab("browser")).toBe("browser");
   });
 });
