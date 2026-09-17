@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
-import type { BridgeSessionStatus, ManagedSession } from "@ark/shared";
+import type {
+  BridgeSessionStatus,
+  ManagedSession,
+  Worktree,
+} from "@ark/shared";
 import { act, type ComponentProps, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -206,6 +210,7 @@ afterEach(() => {
     container.remove();
   }
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("PC 左ペインの表示モード", () => {
@@ -253,6 +258,7 @@ describe("PC 左ペインの表示モード", () => {
   });
 
   it("トグル操作で状態と localStorage が変わり、全セッションで共有される", () => {
+    localStorage.setItem(STORAGE_KEY_SPLIT_LEFT_MODE, "terminal");
     const sessions = [makeSession("a"), makeSession("b")];
     const container = mount(renderSessions("a", sessions));
     const paneA = container.querySelector('[data-testid="pane-a"]');
@@ -263,22 +269,25 @@ describe("PC 左ペインの表示モード", () => {
     clickButton(paneA as ParentNode, "会話");
 
     expect(localStorage.getItem(STORAGE_KEY_SPLIT_LEFT_MODE)).toBe("chat");
-    for (const pane of [paneA, paneB]) {
+    for (const [pane, id] of [
+      [paneA, "a"],
+      [paneB, "b"],
+    ] as const) {
       expect(
         pane
           ?.querySelector('button[aria-label="会話"]')
           ?.getAttribute("aria-pressed")
       ).toBe("true");
+      // 会話を表示し、端末は隠したまま残す (ttydのiframeを作り直さない)
+      expect(
+        pane?.querySelector(`[data-testid="chat-${id}"]`)?.closest(".hidden")
+      ).toBeNull();
+      expect(pane?.querySelector("iframe")?.closest(".hidden")).not.toBeNull();
     }
-    expect(
-      paneA?.querySelector('[data-testid="chat-a"]')?.parentElement?.className
-    ).toBe("h-full");
-    expect(
-      paneB?.querySelector('[data-testid="chat-b"]')?.parentElement?.className
-    ).toBe("h-full");
   });
 
   it("localStorage 書き込み失敗時も全セッションへ選択モードを通知する", () => {
+    localStorage.setItem(STORAGE_KEY_SPLIT_LEFT_MODE, "terminal");
     const sessions = [makeSession("storage-a"), makeSession("storage-b")];
     const container = mount(renderSessions("storage-a", sessions));
     const paneA = container.querySelector('[data-testid="pane-storage-a"]');
@@ -291,7 +300,8 @@ describe("PC 左ペインの表示モード", () => {
 
     clickButton(paneA as ParentNode, "会話");
 
-    expect(localStorage.getItem(STORAGE_KEY_SPLIT_LEFT_MODE)).toBeNull();
+    // 書き込みは失敗し、保存値は切り替え前のまま
+    expect(localStorage.getItem(STORAGE_KEY_SPLIT_LEFT_MODE)).toBe("terminal");
     for (const pane of [paneA, paneB]) {
       expect(
         pane
@@ -352,5 +362,87 @@ describe("PC 左ペインの表示モード", () => {
     expect(readSpy).toHaveBeenCalledTimes(1);
     await waitForTerminalUploadPreview(container);
     expect(hasTerminalUploadPreview(container)).toBe(true);
+  });
+});
+
+function makeWorktree(branch: string): Worktree {
+  return {
+    id: "worktree-header",
+    path: "/worktrees/header",
+    branch,
+    commit: "0000000",
+    isMain: false,
+    isBare: false,
+  };
+}
+
+describe("PC上部バー", () => {
+  it("主ラベルは表示名、無ければリポジトリ名。ブランチと状態チップを並べる", () => {
+    const session = makeSession("header");
+    const container = mount(
+      paneSection(session, true, {
+        displayName: "ログイン画面",
+        repoName: "recipe-app",
+        worktree: makeWorktree("feature/login"),
+        bridgeStatus: "AWAITING",
+      })
+    );
+
+    const header = container.querySelector("header");
+    expect(header?.textContent).toContain("ログイン画面");
+    expect(header?.textContent).not.toContain("recipe-app");
+    expect(header?.textContent).toContain("feature/login");
+    expect(header?.textContent).toContain("確認待ち");
+
+    const root = mountedRoots.at(-1)?.root;
+    act(() =>
+      root?.render(
+        paneSection(session, true, {
+          displayName: null,
+          repoName: "recipe-app",
+          worktree: makeWorktree("feature/login"),
+          bridgeStatus: "AWAITING",
+        })
+      )
+    );
+    expect(container.querySelector("header")?.textContent).toContain(
+      "recipe-app"
+    );
+  });
+
+  it("端末 / 会話の切り替え・図の開閉・その他の操作を上部バーに置く", () => {
+    // 図を開くとSplitViewPaneが幅の追従にResizeObserverを使う (jsdomに無い)
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe = vi.fn();
+        disconnect = vi.fn();
+      }
+    );
+    const container = mount(paneSection(makeSession("header-actions"), true));
+    const header = container.querySelector("header");
+    expect(header).not.toBeNull();
+    const scope = header as ParentNode;
+    expect(scope.querySelector('button[aria-label="端末"]')).not.toBeNull();
+    expect(scope.querySelector('button[aria-label="会話"]')).not.toBeNull();
+    expect(
+      scope.querySelector('button[aria-label="その他の操作"]')
+    ).not.toBeNull();
+    expect(
+      scope
+        .querySelector('button[aria-label="図"]')
+        ?.getAttribute("aria-pressed")
+    ).toBe("false");
+
+    clickButton(scope, "図");
+
+    expect(
+      scope
+        .querySelector('button[aria-label="図"]')
+        ?.getAttribute("aria-pressed")
+    ).toBe("true");
+    expect(
+      container.querySelector('[data-testid="diagram-pane"]')
+    ).not.toBeNull();
   });
 });

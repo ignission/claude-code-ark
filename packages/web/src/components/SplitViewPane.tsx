@@ -1,8 +1,9 @@
 /**
- * SplitViewPane - PC 用セッションビュー（左ペイン + 右ペインの左右2ペイン）
+ * SplitViewPane - PC用セッションビュー (上部バー + 左ペイン + 右ペインの左右2ペイン)
  *
- * 左ペインは上部バーのトグルで「端末（TerminalPane = ttyd + file/html タブ）」と
- * 「会話（SplitChatPane = JSONL tail のチャットビュー）」を切り替える。
+ * 上部バーは1本にまとめる。左にセッションの主ラベル・ブランチ・状態チップ、
+ * 中央に「端末 / 会話」の切り替え、右に図の開閉と `…` メニュー (SessionHeaderMenu)。
+ * 端末専用の操作 (バッファのコピー等) はTerminalPaneHandle経由でTerminalPaneに頼む。
  * 右ペインは図が未選択でも上部バーのトグルで開閉できる。
  * 中身は DiagramPane（B-0a の図ペイン）。
  *
@@ -13,10 +14,7 @@
  * - 左ペインは端末・会話の両方をマウントしたまま display 切替する。ttyd は
  *   iframe（別ブラウジングコンテキスト）なので、アンマウントすると再接続に
  *   なってしまう（.claude/rules/frontend-codegen.md）
- * - 会話ビューには showTerminal / onToggleTerminal を渡さない。渡すとチャット
- *   ヘッダにもう 1 つ 🖥 トグルが出て、上部バーの切替と二重になる。AUQ カードや
- *   AWAITING バナーの「ターミナルへ」導線も同 props 由来で消えるが、
- *   切替は 1 行上の上部バーにあり、モバイル（MobileSessionView）とも揃う
+ * - 会話ビューには端末への切り替えを持たせない。切り替えは上部バーだけが担う
  */
 
 import type {
@@ -31,8 +29,10 @@ import type {
   SpecialKey,
   Worktree,
 } from "@ark/shared";
+import { MessagesSquare, SquareTerminal, Workflow } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
+import { resolveSessionHeaderLabels } from "../lib/session-header";
 import {
   normalizeSplitViewLeftMode,
   readSavedSplitViewLeftMode,
@@ -44,10 +44,17 @@ import {
   shouldSubscribeChat,
   writeSavedSplitViewLeftMode,
 } from "../lib/split-view-left-mode";
+import { resolveStatusKey } from "../lib/status-tone";
 import { DiagramPane } from "./DiagramPane";
+import { SegmentedControl, type SegmentOption } from "./SegmentedControl";
+import { SessionHeaderMenu } from "./SessionHeaderMenu";
 import { SplitChatPane } from "./SplitChatPane";
-import { SplitViewLeftModeToggle } from "./SplitViewLeftModeToggle";
-import { TerminalPane, type ViewerTab } from "./TerminalPane";
+import { StatusChip } from "./StatusChip";
+import {
+  TerminalPane,
+  type TerminalPaneHandle,
+  type ViewerTab,
+} from "./TerminalPane";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -55,6 +62,11 @@ const BOARD_MIN_WIDTH = 320;
 const BOARD_MAX_RATIO = 0.6;
 const STORAGE_KEY_BOARD_WIDTH = "ark-split-board-width";
 const STORAGE_KEY_SHOW_BOARD = "ark-split-show-board";
+
+const LEFT_MODE_OPTIONS: readonly SegmentOption<SplitViewLeftMode>[] = [
+  { value: "terminal", label: "端末", icon: SquareTerminal },
+  { value: "chat", label: "会話", icon: MessagesSquare },
+];
 
 interface SplitViewPaneProps {
   socket: TypedSocket | null;
@@ -120,7 +132,10 @@ interface SplitViewPaneProps {
   /** AWAITING 時の確認 UI 生テキスト（会話ビューのバナー表示） */
   awaitingText?: string;
   worktree: Worktree | undefined;
+  /** 所属リポジトリの名前。表示名が無いときの主ラベル */
   repoName?: string;
+  /** サイドバーで設定したworktreeの表示名。未設定はnull */
+  displayName?: string | null;
   tabs: ViewerTab[];
   activeTabIndex: number;
   onTabSelect: (index: number) => void;
@@ -139,6 +154,11 @@ interface SplitViewPaneProps {
   onCreateShortcut: (message: string) => void;
   onUpdateShortcut: (id: string, patch: { message?: string }) => void;
   onDeleteShortcut: (id: string) => void;
+  /** Notification APIが使える環境か。falseなら `…` メニューに通知の項目を出さない */
+  notificationsSupported?: boolean;
+  /** このセッションの通知が有効か (未設定は有効) */
+  notificationsEnabled?: boolean;
+  onNotificationsEnabledChange?: (enabled: boolean) => void;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -209,6 +229,18 @@ export function SplitViewPane(props: SplitViewPaneProps) {
     writeSavedSplitViewLeftMode(next);
     setLeftMode(next);
   }, []);
+
+  // 端末専用の操作は `…` メニューからTerminalPaneに頼む。入力バーの表示は、
+  // メニューのチェック表示のためにTerminalPaneから知らせてもらう
+  const terminalRef = useRef<TerminalPaneHandle>(null);
+  const [terminalInputBarVisible, setTerminalInputBarVisible] = useState(false);
+
+  const labels = resolveSessionHeaderLabels({
+    displayName: props.displayName,
+    repoName: props.repoName,
+    branch: props.worktree?.branch,
+    worktreePath: props.session.worktreePath,
+  });
 
   // 現在図は session ごとに最大1件。diagram タブは左タブバーから除外され、
   // ここでのみ参照する。
@@ -308,27 +340,83 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   }, []);
 
   return (
-    <div className="h-full flex flex-col">
-      {/* 上部バー: 左は左ペイン切替（端末 / 会話）、右は右ペイン開閉トグル */}
-      <div className="h-8 shrink-0 border-b border-border bg-sidebar flex items-center justify-between px-2">
-        <SplitViewLeftModeToggle
+    <div className="h-full flex flex-col overflow-hidden rounded-xl border border-border bg-card shadow-card">
+      {/* 上部バー: 左 = 主ラベル・ブランチ・状態チップ、中央 = 端末 / 会話、
+          右 = 図の開閉と `…` メニュー */}
+      <header className="h-13 shrink-0 border-b border-border flex items-center gap-3 pl-5 pr-3">
+        <div className="flex flex-1 basis-0 min-w-0 items-center gap-2.5">
+          <span
+            className="min-w-0 truncate text-[17px] font-semibold tracking-[-0.01em]"
+            title={labels.primary}
+          >
+            {labels.primary}
+          </span>
+          <span
+            className="min-w-0 truncate text-[13px] text-muted-foreground"
+            title={labels.branch}
+          >
+            {labels.branch}
+          </span>
+          <StatusChip
+            statusKey={resolveStatusKey(true, props.bridgeStatus)}
+            className="shrink-0"
+          />
+        </div>
+        <SegmentedControl
+          label="左ペインの表示"
+          options={LEFT_MODE_OPTIONS}
           value={leftMode}
           onChange={handleLeftModeChange}
         />
-        <button
-          type="button"
-          onClick={handleToggleBoard}
-          className={`text-[11px] px-2 py-1 rounded-md font-medium flex items-center gap-1 transition-colors ${
-            showBoard
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted hover:bg-muted/70 text-foreground"
-          }`}
-          title={showBoard ? "右ペインを閉じる" : "図を開く"}
-        >
-          <span>📐</span>
-          <span>{showBoard ? "閉じる" : "図"}</span>
-        </button>
-      </div>
+        <div className="flex flex-1 basis-0 min-w-0 items-center justify-end gap-1">
+          <button
+            type="button"
+            onClick={handleToggleBoard}
+            aria-label="図"
+            aria-pressed={showBoard}
+            title={showBoard ? "図を閉じる" : "図を開く"}
+            className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sm px-2.5 text-[13px] font-semibold transition-colors ${
+              showBoard
+                ? "bg-muted text-foreground"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+          >
+            <Workflow className="size-4.5" aria-hidden="true" />
+            <span>図</span>
+          </button>
+          <SessionHeaderMenu
+            leftMode={leftMode}
+            worktree={props.worktree}
+            messageShortcuts={props.messageShortcuts}
+            onSendMessage={props.onSendMessage}
+            onCreateShortcut={props.onCreateShortcut}
+            onUpdateShortcut={props.onUpdateShortcut}
+            onDeleteShortcut={props.onDeleteShortcut}
+            notificationsSupported={props.notificationsSupported ?? false}
+            notificationsEnabled={props.notificationsEnabled ?? true}
+            onNotificationsEnabledChange={props.onNotificationsEnabledChange}
+            onDeleteSession={props.onDeleteSession}
+            onCopyBuffer={
+              props.onCopyBuffer
+                ? () => terminalRef.current?.copyBuffer()
+                : undefined
+            }
+            onPasteImage={
+              props.onUploadFile
+                ? () => terminalRef.current?.pasteImage()
+                : undefined
+            }
+            onAttachFile={
+              props.onUploadFile
+                ? () => terminalRef.current?.openFilePicker()
+                : undefined
+            }
+            onReloadTerminal={() => terminalRef.current?.reload()}
+            inputBarVisible={terminalInputBarVisible}
+            onToggleInputBar={() => terminalRef.current?.toggleInputBar()}
+          />
+        </div>
+      </header>
 
       <div ref={containerRef} className="flex-1 min-h-0 flex relative">
         {/* 左ペイン: 端末 / 会話（上部バーで切替。両方マウントしたまま display 切替）
@@ -346,9 +434,9 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           {/* 端末: ttyd の再接続を避けるため hidden で残置する */}
           <div className={leftMode === "terminal" ? "h-full" : "hidden"}>
             <TerminalPane
+              ref={terminalRef}
               session={props.session}
               worktree={props.worktree}
-              repoName={props.repoName}
               isVisible={shouldAcceptTerminalFileDrop(props.isActive, leftMode)}
               tabs={props.tabs}
               activeTabIndex={props.activeTabIndex}
@@ -356,13 +444,9 @@ export function SplitViewPane(props: SplitViewPaneProps) {
               onTabClose={props.onTabClose}
               onSendMessage={props.onSendMessage}
               onSendKey={props.onSendKey}
-              onDeleteSession={props.onDeleteSession}
               onUploadFile={props.onUploadFile}
               onCopyBuffer={props.onCopyBuffer}
-              messageShortcuts={props.messageShortcuts}
-              onCreateShortcut={props.onCreateShortcut}
-              onUpdateShortcut={props.onUpdateShortcut}
-              onDeleteShortcut={props.onDeleteShortcut}
+              onInputBarVisibleChange={setTerminalInputBarVisible}
             />
           </div>
 
