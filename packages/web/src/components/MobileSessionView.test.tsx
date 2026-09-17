@@ -16,6 +16,7 @@ import {
   getViewModeForDiagramOpenRequest,
   getViewModeForViewerTab,
   normalizeMobileSessionViewMode,
+  STORAGE_KEY_MOBILE_VIEW,
   writeSavedViewMode,
 } from "../lib/mobile-session-view-mode";
 import { MobileSessionView } from "./MobileSessionView";
@@ -291,6 +292,72 @@ describe("MobileSessionView のヘッダー", () => {
     ).toBeNull();
     expect(
       header?.querySelector('button[title="メッセージショートカット"]')
+    ).toBeNull();
+  });
+});
+
+function stripText(scope: ParentNode): string | null | undefined {
+  return scope.querySelector(
+    '[data-testid="mobile-status-strip"] [role="status"]'
+  )?.textContent;
+}
+
+describe("MobileSessionView の状態の帯", () => {
+  it("入力待ちでは帯を出さない", () => {
+    const container = mount(
+      <MobileSessionView {...makeProps({ bridgeStatus: "IDLE" })} />
+    );
+    expect(
+      container.querySelector('[data-testid="mobile-status-strip"]')
+    ).toBeNull();
+  });
+
+  it("考え中は「考えています」を出す", () => {
+    const container = mount(
+      <MobileSessionView {...makeProps({ bridgeStatus: "THINK" })} />
+    );
+    expect(stripText(container)).toBe("考えています");
+  });
+
+  it("サーバーと切断中はほかの状態より優先する", () => {
+    const container = mount(
+      <MobileSessionView
+        {...makeProps({ bridgeStatus: "TOOL", isConnected: false })}
+      />
+    );
+    expect(stripText(container)).toBe("サーバーとつながっていません");
+  });
+
+  it("会話モードで質問カードが出ていれば「質問があります」にし、ボタンは付けない", () => {
+    const container = mount(
+      <MobileSessionView {...makeProps({ bridgeStatus: "AWAITING" })} />
+    );
+    expect(stripText(container)).toBe("確認を求めています");
+
+    act(() => latestChatProps().onActiveAuqChange?.(true));
+
+    expect(stripText(container)).toBe("質問があります");
+    expect(
+      container.querySelector('[data-testid="mobile-status-strip"] button')
+    ).toBeNull();
+  });
+
+  it("端末モードで確認を求められたら「会話で答える」で会話モードへ切り替える", () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+    const container = mount(
+      <MobileSessionView {...makeProps({ bridgeStatus: "AWAITING" })} />
+    );
+    expect(latestChatProps().isActive).toBe(false);
+
+    const button = Array.from(
+      container.querySelectorAll('[data-testid="mobile-status-strip"] button')
+    ).find(b => b.textContent?.includes("会話で答える"));
+    click(button);
+
+    expect(latestChatProps().isActive).toBe(true);
+    expect(localStorage.getItem(STORAGE_KEY_MOBILE_VIEW)).toBe("chat");
+    expect(
+      container.querySelector('[data-testid="mobile-status-strip"] button')
     ).toBeNull();
   });
 });

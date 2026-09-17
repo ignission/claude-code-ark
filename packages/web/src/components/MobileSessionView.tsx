@@ -19,6 +19,9 @@ import {
   Bell,
   BellOff,
   ChevronLeft,
+  ChevronRight,
+  CircleAlert,
+  CircleHelp,
   Copy,
   Ellipsis,
   File as FileIcon,
@@ -59,7 +62,13 @@ import {
   notificationMenuLabel,
   resolveSessionHeaderLabels,
 } from "@/lib/session-header";
-import { resolveStatusKey } from "@/lib/status-tone";
+import {
+  resolveStatusKey,
+  resolveStatusStrip,
+  type StatusTone,
+  TONE_CLASSES,
+} from "@/lib/status-tone";
+import { cn } from "@/lib/utils";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { useTtydReconnect } from "../hooks/useTtydReconnect";
@@ -239,6 +248,17 @@ export function MobileSessionView({
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showRestartDialog, setShowRestartDialog] = useState(false);
   const [showShortcutManager, setShowShortcutManager] = useState(false);
+  // 質問カード (AskUserQuestion) の表示有無。SplitChatPane から受け取り、状態の帯の文言に使う。
+  // 会話モード以外では JSONL の購読が止まり、カードを閉じる判定が遅れて true が残ることがある。
+  // 帯は AWAITING のときだけこの値を見る (resolveStatusStrip) ので、確認が済めば帯は消える。
+  // この値だけで帯を出す形に書き換えないこと
+  const [hasActiveAuq, setHasActiveAuq] = useState(false);
+  const statusStrip = resolveStatusStrip({
+    bridgeStatus,
+    hasActiveAuq,
+    isConnected,
+    viewMode,
+  });
 
   // Ops メニューからの添付（pendingFiles）はターミナルペイン内のダイアログで
   // 表示するため、会話モードのときはターミナルへ切り替えてダイアログを可視化する。
@@ -597,6 +617,41 @@ export function MobileSessionView({
         </div>
       </header>
 
+      {/* 状態の帯 (32px)。文言は状態と質問カードの有無だけから作り、端末の画面は解釈しない。
+          会話モードでは質問カードと AwaitingPad が入力欄の上に出ているので、ボタンを付けない */}
+      {statusStrip && (
+        <div className="shrink-0 px-3 pb-2">
+          <div
+            data-testid="mobile-status-strip"
+            className={cn(
+              "flex h-8 items-center gap-2 rounded-sm px-3 text-[13px] font-semibold text-foreground",
+              TONE_CLASSES[statusStrip.tone].softBg
+            )}
+          >
+            <StatusStripIcon tone={statusStrip.tone} />
+            <span role="status" className="min-w-0 flex-1 truncate">
+              {statusStrip.text}
+            </span>
+            {statusStrip.offerChat && (
+              <button
+                type="button"
+                onClick={() => handleViewModeChange("chat")}
+                className="flex h-8 shrink-0 items-center gap-0.5 text-[13px] font-semibold text-foreground"
+              >
+                会話で答える
+                <ChevronRight
+                  className={cn(
+                    "size-3.5",
+                    TONE_CLASSES[statusStrip.tone].text
+                  )}
+                  aria-hidden="true"
+                />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* 会話モード（既定）: JSONL チャットビュー。入力欄・AUQ・AWAITING を内包する。
           ttyd を持たないため display:none で残置しても再接続コストはない。 */}
       <div
@@ -613,6 +668,7 @@ export function MobileSessionView({
           onSendMessage={onSendMessage}
           onSendKey={onSendKey}
           onUploadFile={onUploadFile}
+          onActiveAuqChange={setHasActiveAuq}
         />
       </div>
 
@@ -961,4 +1017,25 @@ export function MobileSessionView({
       />
     </div>
   );
+}
+
+/** 状態の帯の先頭のアイコン。帯の文言と同じく、トーンだけから決める */
+function StatusStripIcon({ tone }: { tone: StatusTone }) {
+  if (tone === "busy") {
+    return (
+      <span
+        className={cn("status-dots", TONE_CLASSES.busy.text)}
+        aria-hidden="true"
+      >
+        <span />
+        <span />
+        <span />
+      </span>
+    );
+  }
+  const className = cn("size-4 shrink-0", TONE_CLASSES[tone].text);
+  if (tone === "awaiting") {
+    return <CircleHelp className={className} aria-hidden="true" />;
+  }
+  return <CircleAlert className={className} aria-hidden="true" />;
 }
