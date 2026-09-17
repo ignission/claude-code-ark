@@ -629,7 +629,11 @@ function ToolGroupCard({
         <div className="mt-1 border-l-2 border-border pl-3">
           {calls.map(call => (
             <div key={call.id} className="py-0.5">
-              <ToolCallRow tool={call.tool} input={call.input} />
+              <ToolCallRow
+                tool={call.tool}
+                input={call.input}
+                running={call.status === "running"}
+              />
             </div>
           ))}
         </div>
@@ -1042,6 +1046,7 @@ export function SplitChatPane({
   );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies(events): イベント追加 (高さ変化) のたびに末尾追従スクロールを再実行するための意図的な依存
+  // biome-ignore lint/correctness/useExhaustiveDependencies(expandedToolGroups): 「作業N件」の開閉 (高さ変化) のたびに末尾追従スクロールを再実行するための意図的な依存
   useEffect(() => {
     const el = jsonlScrollRef.current;
     if (!el) return;
@@ -1057,7 +1062,7 @@ export function SplitChatPane({
     if (isNearBottom) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [events, isNearBottom]);
+  }, [events, isNearBottom, expandedToolGroups]);
 
   // 「下までジャンプ」ボタン用。一気に末尾へ飛ばす副作用ハンドラ。
   // isNearBottom も true にしておくことで以降の自動追従も復活する。

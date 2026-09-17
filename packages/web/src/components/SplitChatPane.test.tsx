@@ -162,4 +162,57 @@ describe("SplitChatPane: ツール行の折りたたみ", () => {
     expect(container.textContent).toContain("src/app.ts");
     expect(container.textContent?.split("pnpm test")).toHaveLength(2);
   });
+
+  it("末尾にいるとき、最後の「作業N件」を開くと末尾まで追従する", () => {
+    const { container, emitServer } = renderChat();
+    emitServer("session:jsonl-snapshot", {
+      sessionId: "s1",
+      lines: TOOL_SNAPSHOT,
+    });
+
+    const scrollEl = container.querySelector<HTMLDivElement>(
+      ".overflow-y-auto.py-2"
+    );
+    if (!scrollEl) throw new Error("スクロール領域が見つからない");
+
+    // jsdomはレイアウトを計算しないため、scrollHeight/clientHeightを
+    // 差し替えて「末尾付近にいる」状態を作る
+    Object.defineProperty(scrollEl, "clientHeight", {
+      value: 100,
+      configurable: true,
+    });
+    Object.defineProperty(scrollEl, "scrollHeight", {
+      value: 200,
+      configurable: true,
+    });
+    scrollEl.scrollTop = 100; // 200 - 100 - 100 = 0 (< 100) → 末尾付近
+    act(() => scrollEl.dispatchEvent(new Event("scroll")));
+
+    const summary = findButtonByText(container, "作業2件");
+
+    // 展開でまとまりの行が増え、コンテンツの高さが伸びたことを再現する
+    Object.defineProperty(scrollEl, "scrollHeight", {
+      value: 500,
+      configurable: true,
+    });
+    act(() => summary.click());
+
+    expect(scrollEl.scrollTop).toBe(500);
+  });
+
+  it("開いたまとまりでも実行中の行に「実行中」を示す", () => {
+    const { container, emitServer } = renderChat();
+    emitServer("session:jsonl-snapshot", {
+      sessionId: "s1",
+      lines: TOOL_SNAPSHOT,
+    });
+
+    const summary = findButtonByText(container, "作業2件");
+    act(() => summary.click());
+
+    const runningLabels = Array.from(
+      container.querySelectorAll<HTMLElement>(".sr-only")
+    ).filter(el => el.textContent === "実行中:");
+    expect(runningLabels).toHaveLength(1);
+  });
 });
