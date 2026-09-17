@@ -505,6 +505,15 @@ export function MobileSessionView({
     />
   );
 
+  // 下部バーの上段。3つのモードのバーで同じ間隔 (4px) になるよう、
+  // セグメントと1タップの操作をここでひとまとまりにする
+  const bottomBarTop = (
+    <div className="flex flex-col gap-1">
+      {viewModeSegment}
+      {quickActionRow}
+    </div>
+  );
+
   // ヘッダーの主ラベル (表示名 → リポジトリ名 → worktree のフォルダ名) とブランチ。PC の上部バーと同じ決め方
   const headerLabels = resolveSessionHeaderLabels({
     displayName,
@@ -658,12 +667,7 @@ export function MobileSessionView({
           onUploadFile={onUploadFile}
           onActiveAuqChange={setHasActiveAuq}
           layout="mobile"
-          composerAccessory={
-            <>
-              {viewModeSegment}
-              {quickActionRow}
-            </>
-          }
+          composerAccessory={bottomBarTop}
         />
       </div>
 
@@ -841,8 +845,7 @@ export function MobileSessionView({
           className="shrink-0 border-t border-border bg-card px-3 pt-2"
           style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
         >
-          {viewModeSegment}
-          {quickActionRow}
+          {bottomBarTop}
 
           {/* Quick Keys: ↑/↓/Esc/Ctrl+C/S-Tab 常時表示 */}
           <div className="mt-1 flex items-center gap-1 overflow-x-auto select-none">
@@ -956,8 +959,7 @@ export function MobileSessionView({
           className="shrink-0 border-t border-border bg-card px-3 pt-2"
           style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
         >
-          {viewModeSegment}
-          {quickActionRow}
+          {bottomBarTop}
         </div>
       </div>
 

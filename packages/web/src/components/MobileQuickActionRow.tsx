@@ -51,7 +51,7 @@ export function MobileQuickActionRow({
   onPasteImage,
 }: MobileQuickActionRowProps) {
   return (
-    <div className="mt-1 flex items-center gap-1">
+    <div className="flex items-center gap-1">
       {onAttachFile && (
         <button
           type="button"
