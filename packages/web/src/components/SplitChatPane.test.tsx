@@ -406,6 +406,60 @@ describe("SplitChatPane: 入力欄", () => {
   });
 });
 
+describe("SplitChatPane: 作業中の表示", () => {
+  const indicator = (container: HTMLElement) =>
+    container.querySelector('[data-testid="chat-working-indicator"]');
+
+  it("考えている間と作業している間は、会話の最後に呼吸する3点と文言を出す", () => {
+    const thinking = renderChat({ bridgeStatus: "THINK" });
+    expect(indicator(thinking.container)?.textContent).toBe("考えています");
+    expect(
+      indicator(thinking.container)?.querySelectorAll(".status-dots > span")
+    ).toHaveLength(3);
+    expect(indicator(thinking.container)?.getAttribute("role")).toBe("status");
+
+    const working = renderChat({ bridgeStatus: "TOOL" });
+    expect(indicator(working.container)?.textContent).toBe("作業しています");
+  });
+
+  it("入力待ち・待機・停止・状態未着では出さない", () => {
+    for (const bridgeStatus of ["IDLE", "READY", "STOP", undefined] as const) {
+      const { container } = renderChat({ bridgeStatus });
+      expect(indicator(container)).toBeNull();
+    }
+  });
+
+  it("送った直後、状態が切り替わる前でも送信中の吹き出しがある間は「考えています」を出す", () => {
+    const { container } = renderChat({ bridgeStatus: "IDLE" });
+    const textarea = container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="メッセージ"]'
+    );
+    typeInto(textarea as HTMLTextAreaElement, "テスト");
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="送信"]')
+        ?.click()
+    );
+    expect(indicator(container)?.textContent).toBe("考えています");
+  });
+
+  it("質問カードが出ている間は出さない", () => {
+    const { container, emitServer } = renderChat({ bridgeStatus: "THINK" });
+    emitServer("session:auq", {
+      sessionId: "s1",
+      at: Date.parse("2026-09-17T00:00:00Z"),
+      questions: [
+        {
+          question: "どちらにしますか？",
+          options: [{ label: "A" }, { label: "B" }],
+        },
+      ],
+      screen: null,
+    });
+    expect(indicator(container)).toBeNull();
+  });
+});
+
 describe("SplitChatPane: 確認待ちのカード", () => {
   it("質問カードが無い確認待ちは「確認待ち」のチップ付きのカードで出し、キーを送れる", () => {
     const { container, onSendKey } = renderChat({

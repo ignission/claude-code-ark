@@ -148,6 +148,44 @@ function UserInputCard({ text }: { text: string }) {
   );
 }
 
+/**
+ * Claude が動いている間、会話の最後に出す「入力中」表示。
+ * 返事の本文は書き終わってから JSONL にまとめて届くので、そのあいだ目線の先に動きを出す
+ */
+function WorkingIndicator({ label }: { label: string }) {
+  return (
+    <div
+      data-testid="chat-working-indicator"
+      role="status"
+      aria-live="polite"
+      className="flex items-center gap-2 px-4 py-3 text-[13px] text-muted-foreground"
+    >
+      <span className="status-dots text-status-busy" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+      <span>{label}</span>
+    </div>
+  );
+}
+
+/**
+ * 作業中の表示の文言。状態は BridgeSessionStatus だけから決め、画面テキストは解釈しない。
+ * 送った直後は状態の切り替わり (1秒間隔) より送信中の吹き出しが先に出るので、それも作業中として扱う
+ */
+function workingIndicatorLabel(
+  bridgeStatus: BridgeSessionStatus | undefined,
+  hasPending: boolean,
+  hasActiveAuq: boolean
+): string | null {
+  if (hasActiveAuq) return null;
+  if (bridgeStatus === "THINK") return "考えています";
+  if (bridgeStatus === "TOOL") return "作業しています";
+  if (hasPending && bridgeStatus !== "AWAITING") return "考えています";
+  return null;
+}
+
 function PendingMessageCard({ text }: { text: string }) {
   return (
     <div className="flex justify-end px-4 pt-4 pb-2">
@@ -1057,6 +1095,11 @@ export function SplitChatPane({
 
   // 質問カードの有無を親へ知らせる (モバイルの状態の帯が文言の切り替えに使う)
   const hasActiveAuq = activeAuq !== null;
+  const workingLabel = workingIndicatorLabel(
+    bridgeStatus,
+    pending.length > 0,
+    hasActiveAuq
+  );
   useEffect(() => {
     onActiveAuqChange?.(hasActiveAuq);
   }, [hasActiveAuq, onActiveAuqChange]);
@@ -1115,6 +1158,7 @@ export function SplitChatPane({
   // biome-ignore lint/correctness/useExhaustiveDependencies(events): イベント追加 (高さ変化) のたびに末尾追従スクロールを再実行するための意図的な依存
   // biome-ignore lint/correctness/useExhaustiveDependencies(expandedToolGroups): 「作業N件」の開閉 (高さ変化) のたびに末尾追従スクロールを再実行するための意図的な依存
   // biome-ignore lint/correctness/useExhaustiveDependencies(floatingStackHeight): モバイルで入力欄が伸びて本文の下端の余白が増えるたびに末尾追従スクロールを再実行するための意図的な依存
+  // biome-ignore lint/correctness/useExhaustiveDependencies(workingLabel): 作業中の表示が出入りする (高さ変化) たびに末尾追従スクロールを再実行するための意図的な依存
   useEffect(() => {
     const el = jsonlScrollRef.current;
     if (!el) return;
@@ -1130,7 +1174,13 @@ export function SplitChatPane({
     if (isNearBottom) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [events, isNearBottom, expandedToolGroups, floatingStackHeight]);
+  }, [
+    events,
+    isNearBottom,
+    expandedToolGroups,
+    floatingStackHeight,
+    workingLabel,
+  ]);
 
   // 「下までジャンプ」ボタン用。一気に末尾へ飛ばす副作用ハンドラ。
   // isNearBottom も true にしておくことで以降の自動追従も復活する。
@@ -1614,6 +1664,7 @@ export function SplitChatPane({
                 ))}
               </>
             )}
+            {workingLabel && <WorkingIndicator label={workingLabel} />}
           </div>
         </div>
         {!isNearBottom && (
