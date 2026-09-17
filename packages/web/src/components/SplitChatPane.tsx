@@ -6,7 +6,8 @@
  * tool call は軽量 chip)。**tmux 画面パースは行わない** (チャット UI v3 の
  * 設計原則。busy/AWAITING 等の状態は session:previews の bridgeStatus を使う)。
  *
- * 入力欄は最下部に固定。送信は tmux send-keys 経由 (onSendMessage)。
+ * 入力欄は最下部に固定 (layout="mobile" では本文の上に浮かぶガラスバー)。
+ * 送信は tmux send-keys 経由 (onSendMessage)。
  * ファイルアップロード (D&D / ペースト / 選択) に対応。
  */
 
@@ -37,6 +38,7 @@ import {
 import {
   type FormEvent,
   type ReactNode,
+  type RefObject,
   useCallback,
   useEffect,
   useMemo,
@@ -63,6 +65,10 @@ import {
   groupToolCalls,
   type ToolCallEvent,
 } from "@/lib/chat-render-items";
+import {
+  FLOATING_BAR_BOTTOM,
+  floatingBarReserve,
+} from "@/lib/floating-composer";
 import type { JsonlParsedEvent } from "@/lib/jsonl-event-parser";
 import { splitTextWithUrls } from "@/lib/linkify";
 import { isMermaidCodeClass } from "@/lib/mermaid-block-utils";
@@ -101,6 +107,13 @@ interface SplitChatPaneProps {
     mimeType: string;
     originalFilename?: string;
   }) => Promise<{ path: string; filename: string; originalFilename?: string }>;
+  /**
+   * "pane" = PC (入力欄は通常の配置)、"mobile" = 入力欄を浮かぶガラスバーにし、
+   * 本文をその下に通す。既定は "pane"
+   */
+  layout?: "pane" | "mobile";
+  /** layout="mobile" のとき、ガラスバーの上段 (入力欄の上) に置く要素 */
+  composerAccessory?: ReactNode;
   /**
    * 質問カード (AskUserQuestion) の表示有無が変わったときに呼ぶ。
    * マウント時にも現在の値 (false) で1回呼ぶ。モバイルの状態の帯が文言の切り替えに使う
@@ -851,6 +864,31 @@ function EventCard({
   }
 }
 
+/**
+ * 要素の高さ (px) をResizeObserverで追う。enabledがfalseの間は0。
+ * ResizeObserverの無い環境 (jsdom等) では最初の1回だけ測る
+ */
+function useElementHeight(
+  ref: RefObject<HTMLElement | null>,
+  enabled: boolean
+): number {
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!enabled || !el) {
+      setHeight(0);
+      return;
+    }
+    const measure = () => setHeight(el.offsetHeight);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [ref, enabled]);
+  return height;
+}
+
 // ===== 本体 =====
 
 export function SplitChatPane({
@@ -862,6 +900,8 @@ export function SplitChatPane({
   onSendMessage,
   onSendKey,
   onUploadFile,
+  layout = "pane",
+  composerAccessory,
   onActiveAuqChange,
 }: SplitChatPaneProps) {
   const [inputValue, setInputValue] = useState("");
@@ -1053,6 +1093,13 @@ export function SplitChatPane({
 
   // ===== スクロール追従 + 上端で過去読み込み =====
   const jsonlScrollRef = useRef<HTMLDivElement>(null);
+  // モバイルの浮かぶバー (と上に積んだカード) の高さ。本文の下端の余白に使う
+  const isMobile = layout === "mobile";
+  const floatingStackRef = useRef<HTMLDivElement>(null);
+  const floatingStackHeight = useElementHeight(floatingStackRef, isMobile);
+  const bottomReserve = isMobile
+    ? floatingBarReserve(floatingStackHeight)
+    : undefined;
   const [isNearBottom, setIsNearBottom] = useState(true);
   // 「過去読み込み中」を ref で持つ。同じスクロールイベントで多重発火させないため
   const loadingMoreRef = useRef(false);
@@ -1064,6 +1111,7 @@ export function SplitChatPane({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies(events): イベント追加 (高さ変化) のたびに末尾追従スクロールを再実行するための意図的な依存
   // biome-ignore lint/correctness/useExhaustiveDependencies(expandedToolGroups): 「作業N件」の開閉 (高さ変化) のたびに末尾追従スクロールを再実行するための意図的な依存
+  // biome-ignore lint/correctness/useExhaustiveDependencies(floatingStackHeight): モバイルで入力欄が伸びて本文の下端の余白が増えるたびに末尾追従スクロールを再実行するための意図的な依存
   useEffect(() => {
     const el = jsonlScrollRef.current;
     if (!el) return;
@@ -1079,7 +1127,7 @@ export function SplitChatPane({
     if (isNearBottom) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [events, isNearBottom, expandedToolGroups]);
+  }, [events, isNearBottom, expandedToolGroups, floatingStackHeight]);
 
   // 「下までジャンプ」ボタン用。一気に末尾へ飛ばす副作用ハンドラ。
   // isNearBottom も true にしておくことで以降の自動追従も復活する。
@@ -1337,7 +1385,7 @@ export function SplitChatPane({
     }
   };
 
-  // 補完候補。PCは入力欄の枠の上端に合わせて出す
+  // 補完候補。PCは入力欄の枠、モバイルは下部のスタックの上端に合わせて出す
   const slashMenu = slashOpen && filteredSlashCommands.length > 0 && (
     <div className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-lg border border-border bg-popover shadow-card">
       {filteredSlashCommands.map((cmd, i) => (
@@ -1372,7 +1420,7 @@ export function SplitChatPane({
     </div>
   );
 
-  const composerSize = COMPOSER_SIZE.pane;
+  const composerSize = COMPOSER_SIZE[layout];
 
   const composerForm = (
     <form
@@ -1442,9 +1490,11 @@ export function SplitChatPane({
         onPaste={onUploadFile ? handlePaste : undefined}
         aria-label="メッセージ"
         placeholder={
-          onUploadFile
-            ? "メッセージを入力 (Enterで送信、Shift+Enterで改行。画像はD&D・貼り付けも可)"
-            : "メッセージを入力 (Enterで送信、Shift+Enterで改行)"
+          isMobile
+            ? "メッセージを入力"
+            : onUploadFile
+              ? "メッセージを入力 (Enterで送信、Shift+Enterで改行。画像はD&D・貼り付けも可)"
+              : "メッセージを入力 (Enterで送信、Shift+Enterで改行)"
         }
         rows={1}
         className={`field-sizing-content max-h-32 min-w-0 flex-1 resize-none rounded-[20px] border border-border px-3.5 text-[15px] leading-[1.4] placeholder:text-muted-foreground focus:border-primary focus:outline-none ${composerSize.input}`}
@@ -1504,6 +1554,7 @@ export function SplitChatPane({
           <div
             data-testid="chat-scroll-content"
             className="mx-auto w-full max-w-[760px] py-2"
+            style={bottomReserve ? { paddingBottom: bottomReserve } : undefined}
           >
             {events.length === 0 &&
             pending.length === 0 &&
@@ -1536,7 +1587,9 @@ export function SplitChatPane({
                         latestRunning={item.latestRunning}
                         expanded={expandedToolGroups.has(item.id)}
                         onToggle={() => toggleToolGroup(item.id)}
-                        surfaceClassName="bg-background"
+                        surfaceClassName={
+                          isMobile ? "bg-card" : "bg-background"
+                        }
                       />
                     );
                   }
@@ -1562,7 +1615,8 @@ export function SplitChatPane({
           <button
             type="button"
             onClick={scrollToBottom}
-            className="absolute bottom-3 left-1/2 z-10 flex size-9 -translate-x-1/2 items-center justify-center rounded-full bg-foreground/85 text-background shadow-card transition-colors hover:bg-foreground"
+            className="absolute left-1/2 z-10 flex size-9 -translate-x-1/2 items-center justify-center rounded-full bg-foreground/85 text-background shadow-card transition-colors hover:bg-foreground"
+            style={{ bottom: bottomReserve ?? "12px" }}
             title="最新まで一気にスクロール"
             aria-label="最新まで一気にスクロール"
           >
@@ -1571,18 +1625,46 @@ export function SplitChatPane({
         )}
       </div>
 
-      {dockedCard && (
-        <div className="max-h-[45%] shrink-0 overflow-y-auto px-4 pt-2 pb-3">
-          <div className="mx-auto w-full max-w-[760px]">{dockedCard}</div>
-        </div>
-      )}
-
-      <div className="shrink-0 border-t border-border px-4 pt-3 pb-3.5">
-        <div className="relative mx-auto w-full max-w-[792px]">
+      {isMobile ? (
+        // カードとガラスバーを1つのスタックに積み、本文コンテナの下端から浮かせる。
+        // ガラスはバーだけに使い、カードは不透明のまま上に置く
+        <div
+          ref={floatingStackRef}
+          data-testid="floating-composer"
+          className="absolute inset-x-3 z-10 flex max-h-[70%] flex-col gap-2"
+          style={{ bottom: FLOATING_BAR_BOTTOM }}
+        >
           {slashMenu}
-          {composerForm}
+          {dockedCard && (
+            <div className="-mx-1 min-h-0 overflow-y-auto px-1 pb-2">
+              {dockedCard}
+            </div>
+          )}
+          {/* data-mobile-bottom-bar: Task 12の検証スクリプトが下部バーの位置を測る目印
+              (端末・図モードのバーにはTask 10が付ける) */}
+          <div
+            data-mobile-bottom-bar=""
+            className="glass-bar flex shrink-0 flex-col gap-2 rounded-[28px] p-2"
+          >
+            {composerAccessory}
+            {composerForm}
+          </div>
         </div>
-      </div>
+      ) : (
+        <>
+          {dockedCard && (
+            <div className="max-h-[45%] shrink-0 overflow-y-auto px-4 pt-2 pb-3">
+              <div className="mx-auto w-full max-w-[760px]">{dockedCard}</div>
+            </div>
+          )}
+          <div className="shrink-0 border-t border-border px-4 pt-3 pb-3.5">
+            <div className="relative mx-auto w-full max-w-[792px]">
+              {slashMenu}
+              {composerForm}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

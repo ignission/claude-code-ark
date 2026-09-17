@@ -423,3 +423,80 @@ describe("SplitChatPane: 確認待ちのカード", () => {
     expect(onSendKey).toHaveBeenCalledWith("1");
   });
 });
+
+describe('SplitChatPane: layout="mobile"', () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      }
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("入力欄を浮かぶガラスバーに入れ、composerAccessoryを入力欄の上段に置く", () => {
+    const { container } = renderChat({
+      layout: "mobile",
+      composerAccessory: <div data-testid="accessory">会話 / 端末 / 図</div>,
+    });
+
+    const bar = container.querySelector("[data-mobile-bottom-bar]");
+    expect(bar?.classList.contains("glass-bar")).toBe(true);
+    const accessory = bar?.querySelector('[data-testid="accessory"]');
+    const textarea = bar?.querySelector('textarea[aria-label="メッセージ"]');
+    expect(accessory).not.toBeNull();
+    expect(textarea).not.toBeNull();
+    expect(accessory?.compareDocumentPosition(textarea as Node)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    );
+  });
+
+  it("バーを下端から浮かせ、本文の下端にバーの高さと下端からの距離を足した余白を取る", () => {
+    const { container } = renderChat({ layout: "mobile" });
+
+    const stack = container.querySelector<HTMLElement>(
+      '[data-testid="floating-composer"]'
+    );
+    const content = container.querySelector<HTMLElement>(
+      '[data-testid="chat-scroll-content"]'
+    );
+    expect(stack?.style.bottom).toBe("max(12px, env(safe-area-inset-bottom))");
+    expect(content?.style.paddingBottom).toContain(
+      "env(safe-area-inset-bottom)"
+    );
+  });
+
+  it("質問カードはガラスバーの外 (上) に積む", () => {
+    const { container } = renderChat({
+      layout: "mobile",
+      bridgeStatus: "AWAITING",
+    });
+
+    const stack = container.querySelector('[data-testid="floating-composer"]');
+    const bar = stack?.querySelector("[data-mobile-bottom-bar]");
+    expect(bar).not.toBeNull();
+    expect(stack?.textContent).toContain("確認待ち");
+    expect(bar?.textContent).not.toContain("確認待ち");
+  });
+
+  it("layoutを渡さない (PC) ときはガラスバーもaccessoryも出さず、本文の余白も足さない", () => {
+    const { container } = renderChat({
+      composerAccessory: <div data-testid="accessory" />,
+    });
+
+    expect(container.querySelector(".glass-bar")).toBeNull();
+    expect(container.querySelector("[data-mobile-bottom-bar]")).toBeNull();
+    expect(container.querySelector('[data-testid="accessory"]')).toBeNull();
+    expect(
+      container.querySelector<HTMLElement>(
+        '[data-testid="chat-scroll-content"]'
+      )?.style.paddingBottom
+    ).toBe("");
+  });
+});
