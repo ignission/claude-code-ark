@@ -117,7 +117,6 @@ export default function Dashboard() {
     deletedWorktreeId,
     clearDeletedWorktreeId,
     sessionPreviews,
-    sessionActivityTexts,
     sessionAwaitingTexts,
     gridSnapshots,
     subscribeGrid,
@@ -728,37 +727,36 @@ export default function Dashboard() {
               sessions={sessions}
               worktrees={worktrees}
               repoList={repoList}
-              selectedSessionId={selectedSessionId}
+              sessionStatuses={sessionStatuses}
               sessionPreviews={sessionPreviews}
-              sessionActivityTexts={sessionActivityTexts}
-              onSelectSession={handleSelectSession}
-              onDeleteSession={handleDeleteSession}
-              onStartSession={handleStartSession}
-              onNewSession={handleNewSession}
-              onRemoveRepo={handleRemoveRepo}
-              onSelectBrowser={handleSelectBrowser}
-              isBrowserSelected={selectedSessionId === "browser"}
-              isRemote={isRemote}
+              selectedSessionId={selectedSessionId}
+              worktreeDisplayNames={worktreeDisplayNames}
+              capabilities={capabilities}
               profiles={profiles}
               repoProfileLinks={repoProfileLinks}
               worktreeProfileLinks={worktreeProfileLinks}
-              capabilities={capabilities}
-              onSetRepoProfile={setRepoProfile}
-              onSetWorktreeProfile={setWorktreeProfile}
-              worktreeDisplayNames={worktreeDisplayNames}
-              onSetWorktreeDisplayName={setWorktreeDisplayName}
-              onOpenProfileManager={() => setShowProfileManager(true)}
-              onRestartSession={handleRestartSession}
-              onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
-              onSelectRepoGrid={handleSelectRepoGrid}
-              gridRepoPath={gridRepoPath}
-              gridStatuses={sessionStatuses}
-              notificationControl={notificationControl}
               notificationsSupported={sessionNotifications.supported}
               isSessionNotificationEnabled={isSessionNotificationEnabled}
+              onOpenSession={handleSelectSession}
+              onStartSession={handleStartSession}
+              onDeleteSession={handleDeleteSession}
+              onRestartSession={handleRestartSession}
+              onSetWorktreeDisplayName={setWorktreeDisplayName}
               onSessionNotificationEnabledChange={
                 handleSessionNotificationEnabledChange
               }
+              onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
+              onSelectRepoGrid={handleSelectRepoGrid}
+              onRemoveRepo={handleRemoveRepo}
+              onSetRepoProfile={setRepoProfile}
+              onSetWorktreeProfile={setWorktreeProfile}
+              onOpenProfileManager={() => setShowProfileManager(true)}
+              onNewSession={handleNewSession}
+              onOpenAbout={() => setShowAboutDialog(true)}
+              onSelectBrowser={handleSelectBrowser}
+              isBrowserSelected={selectedSessionId === "browser"}
+              isRemote={isRemote}
+              notificationControl={notificationControl}
             />
           }
           main={
