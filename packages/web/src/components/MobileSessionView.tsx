@@ -6,14 +6,15 @@
  * 3モードの本文はマウントしたまま display で切り替える (ttyd と図の iframe を張り直さない)。
  */
 
-import type {
-  BridgeSessionStatus,
-  ClientToServerEvents,
-  ManagedSession,
-  MessageShortcut,
-  ServerToClientEvents,
-  SpecialKey,
-  Worktree,
+import {
+  type BridgeSessionStatus,
+  type ClientToServerEvents,
+  type ManagedSession,
+  type MessageShortcut,
+  type ServerToClientEvents,
+  type SpecialKey,
+  TERMINAL_BG,
+  type Worktree,
 } from "@ark/shared";
 import {
   Bell,
@@ -57,6 +58,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { FLOATING_BAR_BOTTOM } from "@/lib/floating-composer";
 import {
   deleteSessionDescription,
   notificationMenuLabel,
@@ -259,6 +261,15 @@ export function MobileSessionView({
     isConnected,
     viewMode,
   });
+  // 下部バーの上段に置く「会話 / 端末 / 図」。3モードの本文はマウントしたまま
+  // display で切り替えるので、同じ要素を各モードのバーに置く (表示されるのは1つだけ)
+  const viewModeSegment = (
+    <MobileSessionViewModeToggle
+      value={viewMode}
+      onChange={handleViewModeChange}
+      className="w-full [&_button]:h-[34px] [&_button]:flex-1 [&_button]:justify-center"
+    />
+  );
 
   // Ops メニューからの添付（pendingFiles）はターミナルペイン内のダイアログで
   // 表示するため、会話モードのときはターミナルへ切り替えてダイアログを可視化する。
@@ -512,10 +523,6 @@ export function MobileSessionView({
             </span>
           </div>
           <StatusChip statusKey={resolveStatusKey(true, bridgeStatus)} />
-          <MobileSessionViewModeToggle
-            value={viewMode}
-            onChange={handleViewModeChange}
-          />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -652,9 +659,11 @@ export function MobileSessionView({
         </div>
       )}
 
-      {/* 会話モード（既定）: JSONL チャットビュー。入力欄・AUQ・AWAITING を内包する。
+      {/* 会話モード (既定): JSONL チャットビュー。入力欄はセグメントと一体の浮かぶガラスバーで、
+          本文はバーの下を通る (位置と本文の余白は SplitChatPane の layout="mobile" が持つ)。
           ttyd を持たないため display:none で残置しても再接続コストはない。 */}
       <div
+        data-testid="mobile-view-chat"
         className={
           viewMode === "chat" ? "flex-1 flex flex-col min-h-0" : "hidden"
         }
@@ -669,12 +678,15 @@ export function MobileSessionView({
           onSendKey={onSendKey}
           onUploadFile={onUploadFile}
           onActiveAuqChange={setHasActiveAuq}
+          layout="mobile"
+          composerAccessory={viewModeSegment}
         />
       </div>
 
       {/* ターミナルモード: タブ + ttyd + ファイル/HTML/キャンバスビューワー +
           Quick Keys + 入力バー。display:none 切替で ttyd 接続を維持する。 */}
       <div
+        data-testid="mobile-view-terminal"
         className={
           viewMode === "terminal" ? "flex-1 flex flex-col min-h-0" : "hidden"
         }
@@ -689,10 +701,11 @@ export function MobileSessionView({
 
         {/* ttyd iframe */}
         <div
-          className="flex-1 min-h-0 bg-[#1a1b26] overflow-hidden relative"
+          className="flex-1 min-h-0 overflow-hidden relative"
           style={{
             display:
               tabs[activeTabIndex]?.type === "terminal" ? undefined : "none",
+            backgroundColor: TERMINAL_BG,
           }}
         >
           {session.ttydUrl || session.ttydPort ? (
@@ -835,107 +848,130 @@ export function MobileSessionView({
           </div>
         )}
 
-        {/* Quick Keys: ↑/↓/Esc/Ctrl+C/S-Tab 常時表示 */}
-        <div className="flex items-center gap-1 px-3 py-1.5 border-t border-border/50 bg-sidebar overflow-x-auto select-none">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 px-3 text-xs shrink-0"
-            onClick={() => onSendKey("Up")}
-          >
-            ↑
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 px-3 text-xs shrink-0"
-            onClick={() => onSendKey("Down")}
-          >
-            ↓
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 px-3 text-xs shrink-0"
-            onClick={() => onSendKey("Escape")}
-          >
-            Esc
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 px-3 text-xs text-destructive hover:text-destructive shrink-0"
-            onClick={() => onSendKey("C-c")}
-          >
-            Ctrl+C
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 px-3 text-xs shrink-0"
-            onClick={() => onSendKey("S-Tab")}
-          >
-            S-Tab
-          </Button>
-        </div>
-
-        {/* 入力バー: 常時表示 */}
-        <form
-          onSubmit={handleSubmit}
-          className="p-3 border-t border-border bg-sidebar safe-area-bottom"
+        {/* 端末モードの下部バー。ガラスをやめて不透明にし、端末に重ねない
+            (ttyd は iframe の大きさに合わせて描くので、端末の領域はバーの上端までにする)。
+            上段にセグメント、下段に Quick Keys と入力欄 */}
+        <div
+          data-testid="mobile-terminal-bar"
+          data-mobile-bottom-bar=""
+          className="shrink-0 border-t border-border bg-card px-3 pt-2"
+          style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
         >
-          <div className="flex gap-2 items-end">
-            <div className="flex-1">
-              <Input
-                ref={inputRef}
-                value={inputValue}
-                onChange={e => setInputValue(e.target.value)}
-                onKeyDown={handleKeyDown}
-                enterKeyHint="send"
-                placeholder="メッセージを入力... (Enter送信)"
-                className="h-11 font-mono text-sm bg-input"
-              />
-            </div>
+          {viewModeSegment}
+
+          {/* Quick Keys: ↑/↓/Esc/Ctrl+C/S-Tab 常時表示 */}
+          <div className="mt-1 flex items-center gap-1 overflow-x-auto select-none">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs shrink-0"
+              onClick={() => onSendKey("Up")}
+            >
+              ↑
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs shrink-0"
+              onClick={() => onSendKey("Down")}
+            >
+              ↓
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs shrink-0"
+              onClick={() => onSendKey("Escape")}
+            >
+              Esc
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs text-destructive hover:text-destructive shrink-0"
+              onClick={() => onSendKey("C-c")}
+            >
+              Ctrl+C
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs shrink-0"
+              onClick={() => onSendKey("S-Tab")}
+            >
+              S-Tab
+            </Button>
+          </div>
+
+          {/* 入力欄: 空のまま送るとEnterを送る (handleSubmit) */}
+          <form
+            onSubmit={handleSubmit}
+            className="mt-1 flex items-center gap-2"
+          >
+            <Input
+              ref={inputRef}
+              value={inputValue}
+              onChange={e => setInputValue(e.target.value)}
+              onKeyDown={handleKeyDown}
+              enterKeyHint="send"
+              placeholder="メッセージを入力... (Enter送信)"
+              className="h-11 flex-1 rounded-full bg-background px-4 text-sm"
+            />
             <Button
               type="submit"
               size="icon"
-              className="h-11 w-11 glow-green shrink-0"
+              aria-label="送信"
+              className="size-11 shrink-0 rounded-full"
             >
-              <Send className="w-5 h-5" />
+              <Send className="size-5" />
             </Button>
-          </div>
-        </form>
+          </form>
+        </div>
       </div>
 
       {/* 図モード: DiagramPane は他モードでもマウントしたまま hidden で切り替える。
           MessageChannel port と iframe の接続をモード切替で張り直さない。 */}
       <div
+        data-testid="mobile-view-board"
         className={
           viewMode === "board" ? "flex-1 flex flex-col min-h-0" : "hidden"
         }
       >
-        <DiagramPane
-          socket={socket}
-          isConnected={isConnected}
-          diagramCommentsUpdate={diagramCommentsUpdate}
-          listDiagrams={listDiagrams}
-          deleteDiagram={deleteDiagram}
-          getDiagramComments={getDiagramComments}
-          createDiagramComment={createDiagramComment}
-          replyDiagramComment={replyDiagramComment}
-          resolveDiagramComment={resolveDiagramComment}
-          deleteDiagramComment={deleteDiagramComment}
-          sendDiagramComment={sendDiagramComment}
-          sessionId={session.id}
-          worktreePath={session.worktreePath}
-          relPath={tabs.find(tab => tab.type === "diagram")?.relPath}
-          onSelectDiagram={onSelectDiagram}
-        />
+        <div className="flex min-h-0 flex-1 flex-col">
+          <DiagramPane
+            socket={socket}
+            isConnected={isConnected}
+            diagramCommentsUpdate={diagramCommentsUpdate}
+            listDiagrams={listDiagrams}
+            deleteDiagram={deleteDiagram}
+            getDiagramComments={getDiagramComments}
+            createDiagramComment={createDiagramComment}
+            replyDiagramComment={replyDiagramComment}
+            resolveDiagramComment={resolveDiagramComment}
+            deleteDiagramComment={deleteDiagramComment}
+            sendDiagramComment={sendDiagramComment}
+            sessionId={session.id}
+            worktreePath={session.worktreePath}
+            relPath={tabs.find(tab => tab.type === "diagram")?.relPath}
+            onSelectDiagram={onSelectDiagram}
+          />
+        </div>
+        {/* 図モードの下部バーはセグメントだけ。図の iframe は中に下端固定の UI
+            (diagram-harness.ts の .ark-harness-toolbar、コメント層の解決済みトグル) を持つので、
+            ガラスを重ねずに図の領域をバーの上端までにする */}
+        <div
+          data-testid="mobile-board-bar"
+          data-mobile-bottom-bar=""
+          className="shrink-0 bg-background px-3 pt-2"
+          style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
+        >
+          {viewModeSegment}
+        </div>
       </div>
 
       {/* 添付ファイル選択用の隠しinput

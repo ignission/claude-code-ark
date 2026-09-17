@@ -361,3 +361,83 @@ describe("MobileSessionView の状態の帯", () => {
     ).toBeNull();
   });
 });
+
+describe("MobileSessionView の下部バー", () => {
+  it("会話モードは SplitChatPane のガラスバーの上段にセグメントを渡し、ヘッダーには置かない", () => {
+    const container = mount(<MobileSessionView {...makeProps()} />);
+
+    expect(
+      container.querySelector('header button[aria-label="会話"]')
+    ).toBeNull();
+    expect(latestChatProps().layout).toBe("mobile");
+    const chat = container.querySelector('[data-testid="mobile-view-chat"]');
+    expect(
+      chat
+        ?.querySelector('[data-testid="chat-pane"] button[aria-label="会話"]')
+        ?.getAttribute("aria-pressed")
+    ).toBe("true");
+  });
+
+  it("セグメントでモードを切り替えると保存し、端末の本文を出す", () => {
+    const container = mount(<MobileSessionView {...makeProps()} />);
+    const chat = container.querySelector('[data-testid="mobile-view-chat"]');
+
+    click(chat?.querySelector('button[aria-label="端末"]'));
+
+    expect(localStorage.getItem(STORAGE_KEY_MOBILE_VIEW)).toBe("terminal");
+    expect(
+      container.querySelector('[data-testid="mobile-view-terminal"]')?.className
+    ).not.toContain("hidden");
+    expect(
+      container.querySelector('[data-testid="mobile-view-chat"]')?.className
+    ).toBe("hidden");
+  });
+
+  it("端末モードは不透明なバーにセグメント・Quick Keys・入力欄を置き、空のまま送るとEnterを送る", () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+    const onSendMessage = vi.fn();
+    const container = mount(
+      <MobileSessionView {...makeProps({ onSendMessage })} />
+    );
+    const bar = container.querySelector('[data-testid="mobile-terminal-bar"]');
+
+    expect(bar?.hasAttribute("data-mobile-bottom-bar")).toBe(true);
+    expect(bar?.className).not.toContain("glass-bar");
+    expect(
+      bar
+        ?.querySelector('button[aria-label="端末"]')
+        ?.getAttribute("aria-pressed")
+    ).toBe("true");
+    expect(bar?.textContent).toContain("Ctrl+C");
+    expect(bar?.querySelector("input")?.className).not.toContain("font-mono");
+
+    // jsdom は submit ボタンの click で form の submit イベントを発火する (React の onSubmit が受ける)
+    click(bar?.querySelector('button[aria-label="送信"]'));
+    expect(onSendMessage).toHaveBeenCalledWith("");
+  });
+
+  it("端末の背景は ttyd と同じ暖色の暗色にする", () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+    const container = mount(<MobileSessionView {...makeProps()} />);
+
+    expect(
+      container.querySelector("iframe")?.parentElement?.style.backgroundColor
+    ).toBe("rgb(28, 26, 23)");
+  });
+
+  it("図モードはセグメントだけのバーを図の下に置く", () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "board");
+    const container = mount(<MobileSessionView {...makeProps()} />);
+    const board = container.querySelector('[data-testid="mobile-view-board"]');
+    const bar = board?.querySelector('[data-testid="mobile-board-bar"]');
+
+    expect(bar?.hasAttribute("data-mobile-bottom-bar")).toBe(true);
+    expect(bar?.querySelectorAll("button")).toHaveLength(3);
+    expect(
+      bar
+        ?.querySelector('button[aria-label="図"]')
+        ?.getAttribute("aria-pressed")
+    ).toBe("true");
+    expect(board?.lastElementChild).toBe(bar);
+  });
+});
