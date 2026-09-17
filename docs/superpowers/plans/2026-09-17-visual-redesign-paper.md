@@ -193,7 +193,7 @@ export function useListHold(): {
 // packages/web/src/lib/chat-render-items.ts
 import type { JsonlParsedEvent } from "./jsonl-event-parser";
 
-export type ToolCallEvent = Extract<JsonlParsedEvent, { kind: "tool-call" }>;
+export type { ToolCallEvent } from "./jsonl-event-parser"; // jsonl-event-parser.ts で Extract<JsonlParsedEvent, { kind: "tool-call" }> として定義済み
 export type SidechainGroupedItem =
   | { kind: "event"; event: JsonlParsedEvent }
   | { kind: "sidechain"; id: string; events: JsonlParsedEvent[] };
@@ -245,7 +245,7 @@ notificationsEnabled?: boolean;
 onNotificationsEnabledChange?: (enabled: boolean) => void;
 
 // MobileLayout (Task 6 が足す)
-worktreeDisplayNames: Map<string, string>; // worktreePath → 表示名。Task 10 は `?.` で読む (必須・任意のどちらでも通る)
+worktreeDisplayNames: Map<string, string>; // worktreePath → 表示名。Task 6 が必須で足すので、Task 10 は直接 `.get()` で読む
 ```
 
 ```ts
@@ -7860,7 +7860,7 @@ import { Copy, Loader2, Terminal, WifiOff } from "lucide-react";
                   const rn = repoPathOfSession
                     ? getBaseName(repoPathOfSession)
                     : undefined;
-                  // サイドバーのSessionCardと通知の文言と同じ出所
+                  // サイドバー (SessionSectionList) と通知の文言と同じ出所
                   const displayName =
                     worktreeDisplayNames.get(wt?.path ?? session.worktreePath) ??
                     null;
@@ -11009,7 +11009,7 @@ Expected: FAIL (`MobileSessionView のヘッダー` の2件。1件目は `expect
 
 - [ ] **Step 8: `MobileSessionView` の import を置き換える**
 
-`packages/web/src/components/MobileSessionView.tsx` の先頭のコメントと import (1-73行目) を、次に置き換える。
+`packages/web/src/components/MobileSessionView.tsx` の先頭のコメントから `MobileDiagramPaneProps` の閉じ `>;` まで (1-79行目) を、次に置き換える (末尾の `TypedSocket` と `MobileDiagramPaneProps` も置き換えに含めるので、二重に宣言しない)。
 ヘッダーの差し替えで使わなくなる `GitBranch` `MoreVertical` と、コンポーネントの `MessageShortcutMenu` はここで外す (本文の要約に使う `previewOf` だけを取り込む)。状態の帯と端末の背景で使う import は Step 16・23 で足す。
 
 ```tsx
