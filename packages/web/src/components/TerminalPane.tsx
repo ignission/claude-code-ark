@@ -510,7 +510,7 @@ export function TerminalPane({
       />
 
       {/* ttyd iframe。明るい画面の中の「暗い窓」として額縁で囲む。
-          背景色はttydと同じTERMINAL_BG (Tailwindのbg-[#...]は使わない) */}
+          背景色はttydと同じTERMINAL_BG (Tailwindの任意値クラスでの直書きはしない) */}
       <div
         className="flex-1 min-h-0 p-1"
         style={{
