@@ -21,6 +21,7 @@ import type {
   SystemCapabilities,
   Worktree,
 } from "@ark/shared";
+import { ChevronLeft } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { BrowserPane } from "@/components/BrowserPane";
@@ -510,10 +511,11 @@ export function MobileLayout({
           <div className="h-12 border-b border-border flex items-center px-4 shrink-0">
             <button
               type="button"
-              className="text-sm text-muted-foreground mr-3"
+              className="mr-3 inline-flex items-center gap-0.5 text-sm text-muted-foreground"
               onClick={() => onChangeActiveTab("session")}
             >
-              ← 戻る
+              <ChevronLeft className="size-4" aria-hidden="true" />
+              戻る
             </button>
             <span className="text-sm font-medium">ブラウザ</span>
           </div>
