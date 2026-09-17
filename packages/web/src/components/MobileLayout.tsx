@@ -242,7 +242,7 @@ export function MobileLayout({
   onUpdateShortcut,
   onDeleteShortcut,
   selectedSessionId,
-  activeTab,
+  activeTab: storedActiveTab,
   sessionSubView,
   onChangeActiveTab,
   onChangeSessionSubView,
@@ -307,6 +307,11 @@ export function MobileLayout({
   );
   const effectiveSessionSubView: SessionSubView =
     sessionSubView === "detail" && !canShowDetail ? "list" : sessionSubView;
+  // ブラウザのタブはリモート時だけある。設定はサーバーに保存され端末をまたぐので、
+  // リモートの端末で開いたブラウザのタブが残っていても、ローカルでは一覧に戻す
+  // (ローカルには下部タブが無く、戻る手段の無い空の画面になるため)。
+  // 以降の描画と判定はこの activeTab を使い、保存された値は触らない
+  const activeTab: MobileTab = isRemote ? storedActiveTab : "session";
 
   // 選択中のセッションが恒久的に存在しない（削除等）場合は、永続化state も
   // 全てクリアする（sessionSubView=list + 不在 selectedSessionId の解除）。

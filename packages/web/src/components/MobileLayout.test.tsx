@@ -117,6 +117,24 @@ describe("MobileLayoutの下部タブ", () => {
     expect(markup).not.toContain("border-t-2");
   });
 
+  it("ローカルではブラウザのタブが保存されていても一覧を出す", () => {
+    // 設定はサーバーに保存され端末をまたぐので、リモートの端末で開いたブラウザのタブが残りうる。
+    // ローカルには下部タブが無いので、一覧に戻さないと戻る手段の無い空の画面になる
+    const markup = renderToStaticMarkup(
+      createElement(MobileLayout, {
+        ...createProps(),
+        activeTab: "browser",
+        sessionSubView: "list",
+        isRemote: false,
+      })
+    );
+
+    const listWrapperClass = markup.match(
+      /<div class="([^"]*)"><div class="[^"]*safe-area-x/
+    )?.[1];
+    expect(listWrapperClass).toBe("flex-1 flex flex-col min-h-0");
+  });
+
   it("リモートでも会話の詳細画面では下部タブを出さず、余白も付けない", () => {
     const markup = renderToStaticMarkup(
       createElement(MobileLayout, { ...createProps(), isRemote: true })
