@@ -18,3 +18,13 @@ export function getParentPath(path: string): string {
 export function getBaseName(path: string): string {
   return path.substring(path.lastIndexOf("/") + 1);
 }
+
+/**
+ * path が base そのものか、base の配下にあるか。
+ * 単純な前方一致だと `/repos/app-copy` が `/repos/app` に一致してしまうので、
+ * ディレクトリの区切りまで含めて比べる
+ */
+export function isPathWithin(path: string, base: string): boolean {
+  const normalizedBase = base.replace(/\/+$/, "");
+  return path === normalizedBase || path.startsWith(`${normalizedBase}/`);
+}

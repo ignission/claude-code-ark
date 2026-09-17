@@ -29,7 +29,7 @@ import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
 import type { ViewerTab } from "@/components/TerminalPane";
 import type { DiagramOpenRequest } from "@/lib/mobile-session-view-mode";
-import { getBaseName } from "@/utils/pathUtils";
+import { getBaseName, isPathWithin } from "@/utils/pathUtils";
 import { findRepoForSession } from "@/utils/sessionUtils";
 
 // MobileTab / SessionSubView は配列を真実源にし、union 型を派生させる。
@@ -427,7 +427,7 @@ export function MobileLayout({
           const repoPathOfSession =
             session.repoPath ??
             (worktree
-              ? repoList.find(repo => worktree.path.startsWith(repo))
+              ? repoList.find(repo => isPathWithin(worktree.path, repo))
               : undefined) ??
             findRepoForSession(session, repoList);
           return (

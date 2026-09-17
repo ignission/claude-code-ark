@@ -55,7 +55,7 @@ import {
   isNotificationEnabledForSession,
   normalizeSessionNotificationSettings,
 } from "@/lib/session-notifications";
-import { getBaseName } from "@/utils/pathUtils";
+import { getBaseName, isPathWithin } from "@/utils/pathUtils";
 import {
   findRepoForSession,
   isSessionBelongsToRepo,
@@ -833,7 +833,7 @@ export default function Dashboard() {
                   const repoPathOfSession =
                     session.repoPath ??
                     (wt
-                      ? repoList.find(repo => wt.path.startsWith(repo))
+                      ? repoList.find(repo => isPathWithin(wt.path, repo))
                       : undefined) ??
                     findRepoForSession(session, repoList);
                   const rn = repoPathOfSession
