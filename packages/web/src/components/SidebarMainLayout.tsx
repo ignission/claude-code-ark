@@ -5,7 +5,6 @@
  * サイドバー幅はドラッグでリサイズできる。
  */
 
-import type { HostMetrics } from "@ark/shared";
 import {
   type ReactNode,
   useCallback,
@@ -13,7 +12,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { SystemStatusBar } from "./bridge/SystemStatusBar";
 
 const SIDEBAR_MIN_WIDTH = 180;
 const SIDEBAR_MAX_WIDTH = 450;
@@ -24,9 +22,6 @@ interface SidebarMainLayoutProps {
   main: ReactNode;
   initialSidebarWidth?: number;
   onSidebarWidthChange?: (width: number) => void;
-  /** About ダイアログを開く (同梱バイナリの LICENSE 一覧) */
-  onOpenAboutDialog?: () => void;
-  hostMetrics?: HostMetrics | null;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -38,8 +33,6 @@ export function SidebarMainLayout({
   main,
   initialSidebarWidth = SIDEBAR_DEFAULT_WIDTH,
   onSidebarWidthChange,
-  onOpenAboutDialog,
-  hostMetrics = null,
 }: SidebarMainLayoutProps) {
   const [sidebarWidth, setSidebarWidth] = useState(() =>
     clamp(initialSidebarWidth, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
@@ -110,16 +103,6 @@ export function SidebarMainLayout({
         style={{ width: `${sidebarWidth}px` }}
       >
         <div className="flex-1 min-h-0 overflow-hidden">{sidebar}</div>
-        {onOpenAboutDialog && (
-          <button
-            type="button"
-            onClick={onOpenAboutDialog}
-            className="w-full py-2 text-sm text-muted-foreground hover:text-foreground border-t border-border transition-colors block text-center"
-          >
-            ℹ About Ark
-          </button>
-        )}
-        <SystemStatusBar metrics={hostMetrics} />
         {/* biome-ignore lint/a11y/noStaticElementInteractions: リサイズハンドルはマウス操作専用 */}
         <div
           className={`absolute top-0 -right-1 w-3 h-full cursor-col-resize hover:bg-primary/50 transition-colors ${

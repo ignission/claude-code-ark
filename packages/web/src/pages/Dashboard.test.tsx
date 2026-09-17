@@ -10,6 +10,9 @@ const testDoubles = vi.hoisted(() => ({
   getSetting: vi.fn(),
   setSetting: vi.fn(),
   splitChatPane: vi.fn(),
+  sessionSidebar: vi.fn(),
+  aboutDialog: vi.fn(),
+  bridgeSnapshotEnabled: vi.fn(),
   socketState: {} as Record<string, unknown>,
 }));
 
@@ -31,7 +34,10 @@ vi.mock("@/hooks/useMobile", () => ({
 }));
 
 vi.mock("@/hooks/useBridgeSnapshot", () => ({
-  useBridgeSnapshot: () => null,
+  useBridgeSnapshot: (_socket: unknown, enabled: boolean) => {
+    testDoubles.bridgeSnapshotEnabled(enabled);
+    return null;
+  },
 }));
 
 vi.mock("@/hooks/useSessionNotifications", () => ({
@@ -71,10 +77,26 @@ vi.mock("@/components/DiagramPane", () => ({
 }));
 
 vi.mock("@/components/SidebarMainLayout", () => ({
-  SidebarMainLayout: ({ main }: { main: ReactNode }) => <>{main}</>,
+  SidebarMainLayout: ({
+    sidebar,
+    main,
+  }: {
+    sidebar: ReactNode;
+    main: ReactNode;
+  }) => (
+    <>
+      {sidebar}
+      {main}
+    </>
+  ),
 }));
 
-vi.mock("@/components/AboutDialog", () => ({ AboutDialog: () => null }));
+vi.mock("@/components/AboutDialog", () => ({
+  AboutDialog: (props: Record<string, unknown>) => {
+    testDoubles.aboutDialog(props);
+    return null;
+  },
+}));
 vi.mock("@/components/BrowserPane", () => ({ BrowserPane: () => null }));
 vi.mock("@/components/CreateWorktreeDialog", () => ({
   CreateWorktreeDialog: () => null,
@@ -90,7 +112,10 @@ vi.mock("@/components/RepoSelectDialog", () => ({
   RepoSelectDialog: () => null,
 }));
 vi.mock("@/components/SessionSidebar", () => ({
-  SessionSidebar: () => null,
+  SessionSidebar: (props: Record<string, unknown>) => {
+    testDoubles.sessionSidebar(props);
+    return null;
+  },
 }));
 vi.mock("@/components/UpdateBanner", () => ({ UpdateBanner: () => null }));
 
@@ -224,12 +249,21 @@ function mount(element: ReactElement): void {
   mountedRoot = { root, container };
 }
 
+function latestProps(mock: ReturnType<typeof vi.fn>): Record<string, unknown> {
+  const props = mock.mock.calls.at(-1)?.[0];
+  expect(props).toBeDefined();
+  return props as Record<string, unknown>;
+}
+
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear();
   localStorage.setItem("ark-split-left-mode", "chat");
   testDoubles.splitChatPane.mockClear();
   testDoubles.setSetting.mockClear();
+  testDoubles.sessionSidebar.mockClear();
+  testDoubles.aboutDialog.mockClear();
+  testDoubles.bridgeSnapshotEnabled.mockClear();
 
   const session = makeSession();
   testDoubles.socketState = socketState(session);
@@ -258,5 +292,28 @@ describe("Dashboard の会話ビュー配線", () => {
       bridgeStatus: "AWAITING",
       awaitingText: "Dashboard から届く AWAITING テキスト",
     });
+  });
+});
+
+describe("Dashboardのサイドバー配線", () => {
+  it("状態とプレビューをサイドバーへ渡し、Aboutを開いている間だけホストの状態を購読する", () => {
+    mount(<Dashboard />);
+
+    const state = testDoubles.socketState;
+    const sidebar = latestProps(testDoubles.sessionSidebar);
+    expect(sidebar.sessionStatuses).toBe(state.sessionStatuses);
+    expect(sidebar.sessionPreviews).toBe(state.sessionPreviews);
+    expect(sidebar.selectedSessionId).toBe("dashboard-session");
+    expect(sidebar).not.toHaveProperty("sessionActivityTexts");
+    expect(latestProps(testDoubles.aboutDialog)).toMatchObject({
+      open: false,
+      metrics: null,
+    });
+    expect(testDoubles.bridgeSnapshotEnabled).toHaveBeenLastCalledWith(false);
+
+    act(() => (sidebar.onOpenAbout as () => void)());
+
+    expect(latestProps(testDoubles.aboutDialog)).toMatchObject({ open: true });
+    expect(testDoubles.bridgeSnapshotEnabled).toHaveBeenLastCalledWith(true);
   });
 });

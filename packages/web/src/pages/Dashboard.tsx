@@ -155,9 +155,6 @@ export default function Dashboard() {
 
   const isMobile = useIsMobile();
 
-  // PCサイドバー下部のシステムステータスバー用に bridge:snapshot を購読
-  const bridgeSnapshot = useBridgeSnapshot(socket, !isMobile);
-
   const isRemote =
     typeof window !== "undefined" &&
     window.location.hostname !== "localhost" &&
@@ -456,6 +453,8 @@ export default function Dashboard() {
   const [showPortSelector, setShowPortSelector] = useState(false);
   const [showProfileManager, setShowProfileManager] = useState(false);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
+  // AboutダイアログのCPU/MEM/DISK用。開いている間だけbridge:snapshotを購読する
+  const bridgeSnapshot = useBridgeSnapshot(socket, showAboutDialog);
 
   const copyToClipboard = (text: string | null) => {
     if (text) {
@@ -890,8 +889,6 @@ export default function Dashboard() {
           }
           initialSidebarWidth={getSetting<number>("ark-sidebar-width", 250)}
           onSidebarWidthChange={w => setSetting("ark-sidebar-width", w)}
-          onOpenAboutDialog={() => setShowAboutDialog(true)}
-          hostMetrics={bridgeSnapshot?.metrics ?? null}
         />
       )}
 
@@ -1072,7 +1069,11 @@ export default function Dashboard() {
       )}
 
       {/* About Ark (同梱バイナリ LICENSE 一覧) */}
-      <AboutDialog open={showAboutDialog} onOpenChange={setShowAboutDialog} />
+      <AboutDialog
+        open={showAboutDialog}
+        onOpenChange={setShowAboutDialog}
+        metrics={bridgeSnapshot?.metrics ?? null}
+      />
     </>
   );
 }
