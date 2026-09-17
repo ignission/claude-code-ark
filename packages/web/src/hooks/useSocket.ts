@@ -203,7 +203,6 @@ interface UseSocketReturn {
 
   // Session previews
   sessionPreviews: Map<string, string>;
-  sessionActivityTexts: Map<string, string>;
 
   // Repo Grid View (主 Dashboard 用、購読中のみ更新される)
   /** sessionId → 最新スナップショット。購読していなければ空 */
@@ -375,9 +374,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [sessionPreviews, setSessionPreviews] = useState<Map<string, string>>(
     new Map()
   );
-  const [sessionActivityTexts, setSessionActivityTexts] = useState<
-    Map<string, string>
-  >(new Map());
 
   // Repo Grid View 用 (主 Dashboard が購読中のみ更新)
   const [gridSnapshots, setGridSnapshots] = useState<
@@ -822,13 +818,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         const next = new Map(prev);
         for (const p of previews) {
           next.set(p.sessionId, p.text);
-        }
-        return next;
-      });
-      setSessionActivityTexts(prev => {
-        const next = new Map(prev);
-        for (const p of previews) {
-          next.set(p.sessionId, p.activityText);
         }
         return next;
       });
@@ -1606,7 +1595,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     copyBuffer,
     // Session previews
     sessionPreviews,
-    sessionActivityTexts,
     sessionAwaitingTexts,
     sessionStatusSignals,
     sessionAuqSignals,

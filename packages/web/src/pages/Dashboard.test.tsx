@@ -212,7 +212,6 @@ function socketState(session: ManagedSession): Record<string, unknown> {
     deletedWorktreeId: null,
     clearDeletedWorktreeId: fn,
     sessionPreviews: new Map(),
-    sessionActivityTexts: new Map(),
     sessionAwaitingTexts: new Map([
       [session.id, "Dashboard から届く AWAITING テキスト"],
     ]),
