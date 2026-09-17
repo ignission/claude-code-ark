@@ -38,9 +38,11 @@ import {
 import {
   type FormEvent,
   type ReactNode,
+  type Ref,
   type RefObject,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -121,6 +123,20 @@ interface SplitChatPaneProps {
    * 関数 (useCallback等) を渡すこと
    */
   onActiveAuqChange?: (hasActiveAuq: boolean) => void;
+  /** 外のバー (モバイル下部バーの1タップ操作) から添付を呼ぶための取っ手 */
+  ref?: Ref<SplitChatPaneHandle>;
+}
+
+/**
+ * 入力欄の外 (モバイル下部バーの1タップ操作) から添付を呼ぶための取っ手。
+ * 上げたファイルは入力欄に `@path` として足される。端末側の添付
+ * (TerminalPaneHandle) とは別で、確認ダイアログを挟まない
+ */
+export interface SplitChatPaneHandle {
+  /** ファイル選択を開く (入力欄の隠し input の click) */
+  openFilePicker: () => void;
+  /** クリップボードの画像を読み取って上げる */
+  pasteImage: () => void;
 }
 
 /** 入力欄の横の丸いアイコンボタン (添付・図解)。大きさはCOMPOSER_SIZEで足す */
@@ -978,6 +994,7 @@ export function SplitChatPane({
   layout = "pane",
   composerAccessory,
   onActiveAuqChange,
+  ref,
 }: SplitChatPaneProps) {
   const [inputValue, setInputValue] = useState("");
 
@@ -1416,6 +1433,42 @@ export function SplitChatPane({
     },
     [onUploadFile, uploadAndAppend]
   );
+
+  // クリップボードから画像を読み取る。ボタンを押した時点でバーは閉じているので、
+  // 空振りと失敗はトーストで知らせる (端末側の TerminalPane と同じ作法)
+  const pasteImageFromClipboard = useCallback(async () => {
+    if (!onUploadFile) return;
+    try {
+      const clipboardItems = await navigator.clipboard.read();
+      const files: File[] = [];
+      for (const item of clipboardItems) {
+        const imageType = item.types.find(type => type.startsWith("image/"));
+        if (!imageType) continue;
+        const blob = await item.getType(imageType);
+        const ext = imageType.split("/")[1] || "png";
+        files.push(
+          new File([blob], `pasted-image.${ext}`, { type: imageType })
+        );
+      }
+      if (files.length === 0) {
+        toast.info("クリップボードに画像がありません");
+        return;
+      }
+      await uploadAndAppend(files);
+    } catch (err) {
+      console.error("Failed to read clipboard:", err);
+      toast.error("クリップボードを読み取れませんでした");
+    }
+  }, [onUploadFile, uploadAndAppend]);
+
+  useImperativeHandle(ref, () => ({
+    openFilePicker: () => {
+      fileInputRef.current?.click();
+    },
+    pasteImage: () => {
+      pasteImageFromClipboard();
+    },
+  }));
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (slashOpen && filteredSlashCommands.length > 0) {

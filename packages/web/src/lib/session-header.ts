@@ -29,25 +29,41 @@ export function resolveSessionHeaderLabels(input: {
 }
 
 /** 端末モードのときだけ `…` メニューに出す操作。配列の順がメニューの表示順 */
-export type TerminalMenuAction =
-  | "copy-buffer"
-  | "paste-image"
-  | "attach-file"
-  | "reload"
-  | "toggle-input-bar";
+export type TerminalMenuAction = "copy-buffer" | "reload" | "toggle-input-bar";
 
 export function terminalMenuActions(input: {
   leftMode: SplitViewLeftMode;
   canCopyBuffer: boolean;
-  canUploadFile: boolean;
 }): TerminalMenuAction[] {
-  // 会話モードの添付と貼り付けは会話の入力欄が担う。端末側の添付確認画面は
-  // 端末ペインの中にあり、会話モードでは親ごと隠れているので呼ばない
+  // 端末の操作は端末ペインの中の UI (添付確認画面・入力バー) を動かす。
+  // 会話モードでは親ごと隠れているので呼ばない
   if (input.leftMode !== "terminal") return [];
   const actions: TerminalMenuAction[] = [];
   if (input.canCopyBuffer) actions.push("copy-buffer");
-  if (input.canUploadFile) actions.push("paste-image", "attach-file");
   actions.push("reload", "toggle-input-bar");
+  return actions;
+}
+
+/**
+ * 上部バーに 1 タップのボタンとして並べる操作。配列の順が左からの並び順。
+ * `…` を開かずに届かせたい操作をここに出し、`…` からは外す
+ */
+export type HeaderQuickAction =
+  | "attach-file"
+  | "paste-image"
+  | "message-shortcuts";
+
+export function headerQuickActions(input: {
+  leftMode: SplitViewLeftMode;
+  canUploadFile: boolean;
+}): HeaderQuickAction[] {
+  const actions: HeaderQuickAction[] = [];
+  // 会話モードの添付と貼り付けは会話の入力欄が担う。端末側の添付確認画面は
+  // 端末ペインの中にあり、会話モードでは親ごと隠れているので呼ばない
+  if (input.leftMode === "terminal" && input.canUploadFile) {
+    actions.push("attach-file", "paste-image");
+  }
+  actions.push("message-shortcuts");
   return actions;
 }
 

@@ -146,6 +146,28 @@ function clickButton(scope: ParentNode, label: string): void {
   act(() => button?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
+/**
+ * Radix の DropdownMenuTrigger は pointerdown で開くため、素の click() だけでは
+ * 開かない (jsdom で確認済み)。開いた内容は Portal で document.body 直下に出る。
+ */
+function openDropdown(trigger: Element | null | undefined): void {
+  expect(trigger).not.toBeNull();
+  act(() => {
+    (trigger as HTMLElement).dispatchEvent(
+      new MouseEvent("pointerdown", { bubbles: true })
+    );
+    (trigger as HTMLElement).dispatchEvent(
+      new MouseEvent("click", { bubbles: true })
+    );
+  });
+}
+
+function headerButtonLabels(scope: ParentNode): string[] {
+  return Array.from(scope.querySelectorAll("button"))
+    .map(button => button.getAttribute("aria-label"))
+    .filter((label): label is string => label !== null);
+}
+
 function dispatchFileDrop(filename: string): void {
   const event = new Event("drop", {
     bubbles: true,
@@ -456,5 +478,137 @@ describe("PC上部バー", () => {
     expect(
       container.querySelector('[data-testid="diagram-pane"]')
     ).not.toBeNull();
+  });
+});
+
+describe("PC上部バーの1タップ操作", () => {
+  const QUICK_LABELS = [
+    "ファイルを添付",
+    "画像を貼り付け",
+    "メッセージのショートカット",
+  ];
+
+  it("端末モードでは添付・画像・ショートカットを図の手前に並べる", () => {
+    writeSavedSplitViewLeftMode("terminal");
+    const container = mount(paneSection(makeSession("quick-terminal"), true));
+    const scope = container.querySelector("header") as ParentNode;
+
+    const labels = headerButtonLabels(scope);
+    expect(labels).toContain("ファイルを添付");
+    expect(labels).toContain("画像を貼り付け");
+    expect(labels).toContain("メッセージのショートカット");
+    for (const label of QUICK_LABELS) {
+      expect(labels.indexOf(label)).toBeLessThan(labels.indexOf("図"));
+    }
+  });
+
+  it("会話モードの添付と画像は会話の入力欄が担うので、ショートカットだけ置く", () => {
+    writeSavedSplitViewLeftMode("chat");
+    const container = mount(paneSection(makeSession("quick-chat"), true));
+    const scope = container.querySelector("header") as ParentNode;
+
+    const labels = headerButtonLabels(scope);
+    expect(labels).not.toContain("ファイルを添付");
+    expect(labels).not.toContain("画像を貼り付け");
+    expect(labels).toContain("メッセージのショートカット");
+  });
+
+  it("アップロードできない環境では、端末モードでも添付と画像を出さない", () => {
+    writeSavedSplitViewLeftMode("terminal");
+    const container = mount(
+      paneSection(makeSession("quick-no-upload"), true, {
+        onUploadFile: undefined,
+      })
+    );
+    const scope = container.querySelector("header") as ParentNode;
+
+    const labels = headerButtonLabels(scope);
+    expect(labels).not.toContain("ファイルを添付");
+    expect(labels).not.toContain("画像を貼り付け");
+    expect(labels).toContain("メッセージのショートカット");
+  });
+
+  it("添付のボタンは端末ペインのファイル選択を開く", () => {
+    writeSavedSplitViewLeftMode("terminal");
+    const container = mount(paneSection(makeSession("quick-attach"), true));
+    const input =
+      container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+    const click = vi.spyOn(input as HTMLInputElement, "click");
+
+    clickButton(
+      container.querySelector("header") as ParentNode,
+      "ファイルを添付"
+    );
+
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  it("画像のボタンはクリップボードを読みに行く", () => {
+    writeSavedSplitViewLeftMode("terminal");
+    const read = vi.fn(async () => []);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { read },
+      configurable: true,
+    });
+    const container = mount(paneSection(makeSession("quick-paste"), true));
+
+    clickButton(
+      container.querySelector("header") as ParentNode,
+      "画像を貼り付け"
+    );
+
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it("ショートカットのボタンは1タップで一覧を出す", () => {
+    writeSavedSplitViewLeftMode("chat");
+    const container = mount(
+      paneSection(makeSession("quick-shortcuts"), true, {
+        messageShortcuts: [
+          {
+            id: "sc-1",
+            message: "続けて",
+            sortOrder: 1,
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        ],
+      })
+    );
+
+    openDropdown(
+      container
+        .querySelector("header")
+        ?.querySelector('button[aria-label="メッセージのショートカット"]')
+    );
+
+    expect(document.body.querySelector('[role="menu"]')?.textContent).toContain(
+      "続けて"
+    );
+  });
+
+  it("`…` からはショートカット・添付・画像を外し、端末の操作と削除を残す", () => {
+    writeSavedSplitViewLeftMode("terminal");
+    const container = mount(
+      paneSection(makeSession("quick-rest"), true, {
+        onCopyBuffer: vi.fn(async () => "buffer"),
+      })
+    );
+
+    openDropdown(
+      container
+        .querySelector("header")
+        ?.querySelector('button[aria-label="その他の操作"]')
+    );
+
+    const menu = document.body.querySelector('[role="menu"]');
+    expect(menu?.textContent).not.toContain("メッセージショートカット");
+    expect(menu?.textContent).not.toContain("ファイルを添付");
+    expect(menu?.textContent).not.toContain("画像を貼り付け");
+    expect(menu?.textContent).toContain("端末のバッファをコピー");
+    expect(menu?.textContent).toContain("端末を再読み込み");
+    expect(menu?.textContent).toContain("入力バーを表示");
+    expect(menu?.textContent).toContain("セッションを削除");
   });
 });

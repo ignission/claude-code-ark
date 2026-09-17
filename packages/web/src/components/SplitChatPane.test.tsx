@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
 import type { ManagedSession } from "@ark/shared";
-import { act, type ComponentProps, type ReactElement } from "react";
+import { act, type ComponentProps, createRef, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SplitChatPane } from "./SplitChatPane";
+import { SplitChatPane, type SplitChatPaneHandle } from "./SplitChatPane";
 
 type ChatSocket = NonNullable<ComponentProps<typeof SplitChatPane>["socket"]>;
 
@@ -607,5 +607,72 @@ describe('SplitChatPane: layout="mobile"', () => {
         '[data-testid="chat-scroll-content"]'
       )?.style.paddingBottom
     ).toBe("");
+  });
+});
+
+describe("SplitChatPane: 外のバーから呼ぶ添付の操作 (ref)", () => {
+  const uploaded = {
+    path: "/uploads/pasted-image.png",
+    filename: "pasted-image.png",
+  };
+
+  function renderWithHandle() {
+    const ref = createRef<SplitChatPaneHandle>();
+    const onUploadFile = vi.fn(async () => uploaded);
+    const { socket } = createFakeSocket();
+    const container = mount(
+      <SplitChatPane
+        ref={ref}
+        socket={socket}
+        session={makeSession("s1")}
+        isActive
+        onSendMessage={vi.fn()}
+        onSendKey={vi.fn()}
+        onUploadFile={onUploadFile}
+      />
+    );
+    return { ref, container, onUploadFile };
+  }
+
+  /** FileReader と fetch のマイクロタスクが片付くまで待つ */
+  async function settle(): Promise<void> {
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+  }
+
+  it("openFilePicker は入力欄の隠しファイル選択を開く", () => {
+    const { ref, container } = renderWithHandle();
+    const input =
+      container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+    const click = vi.spyOn(input as HTMLInputElement, "click");
+
+    act(() => ref.current?.openFilePicker());
+
+    expect(click).toHaveBeenCalledTimes(1);
+  });
+
+  it("pasteImage はクリップボードの画像を上げて、入力欄に @path を足す", async () => {
+    const blob = new Blob(["dummy"], { type: "image/png" });
+    const read = vi.fn(async () => [
+      { types: ["image/png"], getType: async () => blob },
+    ]);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { read },
+      configurable: true,
+    });
+    const { ref, container, onUploadFile } = renderWithHandle();
+
+    act(() => {
+      ref.current?.pasteImage();
+    });
+    await settle();
+    await settle();
+
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(onUploadFile).toHaveBeenCalledTimes(1);
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
+    expect(textarea?.value).toContain("@/uploads/pasted-image.png");
   });
 });
