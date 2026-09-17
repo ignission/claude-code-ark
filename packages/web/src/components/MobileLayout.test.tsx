@@ -110,7 +110,7 @@ describe("MobileLayoutの下部タブ", () => {
       })
     );
 
-    expect(markup).toContain("<nav");
+    expect(markup).toMatch(/<nav [^>]*aria-label="画面の切り替え"/);
     expect(markup).toContain('aria-current="page"');
     expect(markup).toContain("ブラウザ");
     expect(markup).toContain("pb-14");

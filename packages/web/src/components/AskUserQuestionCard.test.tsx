@@ -75,6 +75,23 @@ describe("AskUserQuestionCard", () => {
     expect(single).not.toContain("aria-pressed");
   });
 
+  it("複数の質問では、単一選択の選択肢もaria-pressedで選択状態を伝える", () => {
+    const html = render({
+      toolUseId: "hook:4",
+      questions: [
+        SINGLE.questions[0],
+        {
+          question: "ボタンの色はどれにしますか？",
+          header: "色",
+          multiSelect: false,
+          options: [{ label: "青" }, { label: "緑" }],
+        },
+      ],
+    });
+
+    expect(html.match(/aria-pressed="false"/g)).toHaveLength(4);
+  });
+
   it("等幅は「直前の画面」だけに使う", () => {
     expect(render(SINGLE)).not.toContain("font-mono");
     expect(render(SINGLE, "● 画面の内容")).toContain("font-mono");

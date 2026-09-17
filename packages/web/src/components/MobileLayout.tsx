@@ -533,7 +533,10 @@ export function MobileLayout({
 
       {/* 下部タブ。選択中は緑の線ではなく、文字色とウェイトで示す */}
       {showBottomNav && (
-        <nav className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-border bg-background">
+        <nav
+          aria-label="画面の切り替え"
+          className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-border bg-background"
+        >
           <button
             type="button"
             aria-current={activeTab === "session" ? "page" : undefined}
