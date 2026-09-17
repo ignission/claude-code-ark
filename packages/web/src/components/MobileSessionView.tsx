@@ -263,12 +263,13 @@ export function MobileSessionView({
     viewMode,
   });
   // 下部バーの上段に置く「会話 / 端末 / 図」。3モードの本文はマウントしたまま
-  // display で切り替えるので、同じ要素を各モードのバーに置く (表示されるのは1つだけ)
+  // display で切り替えるので、同じ要素を各モードのバーに置く (表示されるのは1つだけ)。
+  // 角丸は会話モードのガラスバー (28px角丸・内側の余白8px) と同心になるよう丸くする
   const viewModeSegment = (
     <MobileSessionViewModeToggle
       value={viewMode}
       onChange={handleViewModeChange}
-      className="w-full [&_button]:h-[34px] [&_button]:flex-1 [&_button]:justify-center"
+      className="w-full rounded-full [&_button]:h-[34px] [&_button]:flex-1 [&_button]:justify-center [&_button]:rounded-full"
     />
   );
 
