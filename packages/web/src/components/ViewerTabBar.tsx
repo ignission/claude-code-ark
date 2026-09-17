@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import type { ViewerTab } from "./TerminalPane";
 
 interface ViewerTabBarProps {
@@ -48,7 +49,7 @@ export function ViewerTabBar({
                 }}
                 aria-label={`Close ${getTabLabel(tab)}`}
               >
-                ×
+                <X className="h-3 w-3" />
               </button>
             )}
           </button>

@@ -67,7 +67,7 @@ export function FileViewerPane({
 
 function MarkdownRenderer({ content }: { content: string }) {
   return (
-    <div className="p-6 prose prose-invert max-w-none prose-headings:text-foreground prose-p:text-foreground prose-li:text-foreground prose-strong:text-foreground prose-code:text-primary prose-a:text-primary">
+    <div className="p-6 prose dark:prose-invert max-w-none prose-headings:text-foreground prose-p:text-foreground prose-li:text-foreground prose-strong:text-foreground prose-code:text-primary prose-a:text-primary">
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
     </div>
   );
@@ -154,7 +154,8 @@ function CodeRenderer({
     );
     if (lineEl) {
       lineEl.scrollIntoView({ block: "center" });
-      (lineEl as HTMLElement).style.backgroundColor = "rgba(59, 130, 246, 0.2)";
+      (lineEl as HTMLElement).style.backgroundColor =
+        "color-mix(in oklab, var(--primary) 20%, transparent)";
     }
     return () => {
       if (lineEl) {
@@ -179,7 +180,7 @@ function CodeRenderer({
           {Array.from({ length: lineCount }, (_, i) => (
             <div
               key={`line-${i}`}
-              className={targetLine === i + 1 ? "bg-blue-500/20" : ""}
+              className={targetLine === i + 1 ? "bg-primary/20" : ""}
             >
               {i + 1}
             </div>
@@ -201,7 +202,7 @@ function CodeRenderer({
         {lines.map((line, i) => (
           <div
             key={`line-${i}`}
-            className={`flex ${targetLine === i + 1 ? "bg-blue-500/20" : ""}`}
+            className={`flex ${targetLine === i + 1 ? "bg-primary/20" : ""}`}
           >
             <span className="inline-block w-12 text-right pr-4 text-muted-foreground select-none shrink-0">
               {i + 1}

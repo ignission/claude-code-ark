@@ -11,6 +11,7 @@
  *  - 閉じる (セッション内で再表示しない。次回起動時に新版があれば再通知)
  */
 
+import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -65,7 +66,7 @@ export function UpdateBanner() {
   };
 
   return (
-    <Alert className="m-2 border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950">
+    <Alert className="m-2 border-primary/30 bg-primary/10">
       <AlertTitle>新しいバージョンが利用可能です</AlertTitle>
       <AlertDescription className="flex flex-wrap items-center gap-3 mt-1">
         <span>Ark {info.latestVersion}</span>
@@ -81,9 +82,10 @@ export function UpdateBanner() {
         <Button
           size="sm"
           variant="ghost"
+          aria-label="閉じる"
           onClick={() => setDismissedVersion(info.latestVersion)}
         >
-          ×
+          <X />
         </Button>
       </AlertDescription>
     </Alert>
