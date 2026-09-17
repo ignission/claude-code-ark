@@ -191,7 +191,7 @@ export function AskUserQuestionCard({
     <div
       role="group"
       aria-label="質問"
-      className="rounded-lg border border-border bg-card px-4 pt-4 pb-3 shadow-card"
+      className="min-h-0 overflow-y-auto rounded-lg border border-border bg-card px-4 pt-4 pb-3 shadow-card"
     >
       <div className="flex min-w-0 items-center gap-2 text-[13px] font-semibold text-muted-foreground">
         <StatusChip statusKey="AWAITING" />

@@ -736,7 +736,7 @@ function AwaitingPad({
   );
 
   return (
-    <div className="rounded-lg border border-border bg-card px-4 pt-3.5 pb-3 shadow-card">
+    <div className="min-h-0 overflow-y-auto rounded-lg border border-border bg-card px-4 pt-3.5 pb-3 shadow-card">
       <div className="flex min-w-0 items-center gap-2">
         <StatusChip statusKey="AWAITING" />
         <span className="min-w-0 text-[13px] font-semibold text-foreground">
@@ -1522,7 +1522,9 @@ export function SplitChatPane({
   // AskUserQuestion は専用カードが出る (hook 経由) ため、カード表示中
   // は出さない。hook が取りこぼされた場合のセーフティネットも兼ねる
   const showAwaitingPad = bridgeStatus === "AWAITING" && !activeAuq;
-  // 入力欄の上に固定で出すカード (質問カード / 確認待ちのキー操作)
+  // 入力欄の上に固定で出すカード (質問カード / 確認待ちのキー操作)。
+  // 高さが足りないときはカード自身の中をスクロールさせる。外側の枠でスクロールさせると
+  // カードの下端 (罫線と角丸) が切れて、途中で途切れたように見えるため
   const dockedCard = activeAuq ? (
     <AskUserQuestionCard
       key={activeAuq.toolUseId}
@@ -1639,7 +1641,7 @@ export function SplitChatPane({
         >
           {slashMenu}
           {dockedCard && (
-            <div className="-mx-1 min-h-0 overflow-y-auto px-1 pb-2">
+            <div className="-mx-1 flex min-h-0 flex-col px-1 pb-2">
               {dockedCard}
             </div>
           )}
@@ -1656,8 +1658,10 @@ export function SplitChatPane({
       ) : (
         <>
           {dockedCard && (
-            <div className="max-h-[45%] shrink-0 overflow-y-auto px-4 pt-2 pb-3">
-              <div className="mx-auto w-full max-w-[760px]">{dockedCard}</div>
+            <div className="flex max-h-[45%] shrink-0 flex-col px-4 pt-2 pb-3">
+              <div className="mx-auto flex min-h-0 w-full max-w-[760px] flex-col">
+                {dockedCard}
+              </div>
             </div>
           )}
           <div className="shrink-0 border-t border-border px-4 pt-3 pb-3.5">
