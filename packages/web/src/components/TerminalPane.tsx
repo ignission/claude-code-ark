@@ -1,48 +1,39 @@
 /**
- * TerminalPane Component - ttyd iframe with mobile-friendly input
+ * TerminalPane Component - PC左ペインの端末表示
  *
- * Design: Full terminal experience with mobile input overlay
- * - ttyd iframe for terminal rendering (handles all output display)
- * - Mobile-friendly input bar at bottom
- * - Support for special keys (Ctrl+C, etc.)
- * - Quick command buttons for common operations
+ * 操作は上部バー (SplitViewPane) が持ち、端末専用の操作は
+ * TerminalPaneHandleとして公開する。
+ * - ttyd iframeを暗い額縁 (TERMINAL_BG) で囲む
+ * - 入力バー (Quick Keysと入力欄) は `…` メニューから出し入れする
+ * - ファイルのD&D・貼り付け・添付は、このペインの中の確認画面を経て送る
  */
 
-import type {
-  ManagedSession,
-  MessageShortcut,
-  SpecialKey,
-  Worktree,
+import {
+  type ManagedSession,
+  type SpecialKey,
+  TERMINAL_BG,
+  TERMINAL_FG,
+  type Worktree,
 } from "@ark/shared";
 import {
-  Check,
   ChevronDown,
   ChevronLeft,
   ChevronUp,
-  Copy,
   File as FileIcon,
-  GitBranch,
-  ImageIcon,
-  Keyboard,
-  Paperclip,
-  RefreshCw,
   Send,
   StopCircle,
-  Trash2,
   X,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+  type Ref,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
@@ -51,8 +42,6 @@ import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { useTtydReconnect } from "../hooks/useTtydReconnect";
 import { FileViewerPane } from "./FileViewerPane";
 import { HtmlViewerPane } from "./HtmlViewerPane";
-import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
-import { MessageShortcutMenu } from "./MessageShortcutMenu";
 import { ViewerTabBar } from "./ViewerTabBar";
 
 /** プレビューダイアログに蓄積する添付ファイル */
@@ -96,10 +85,24 @@ export type ViewerTab =
       restoredOnLoad?: boolean;
     };
 
+/** PC上部バーの `…` メニューから呼ぶ、端末専用の操作 */
+export interface TerminalPaneHandle {
+  /** tmuxバッファをクリップボードへ */
+  copyBuffer: () => void;
+  /** クリップボードの画像を添付プレビューへ */
+  pasteImage: () => void;
+  /** TerminalPane内に残した <input type="file"> をclick() */
+  openFilePicker: () => void;
+  /** ttyd iframeを作り直す */
+  reload: () => void;
+  /** 入力バーの表示切替 */
+  toggleInputBar: () => void;
+}
+
 interface TerminalPaneProps {
+  ref?: Ref<TerminalPaneHandle>;
   session: ManagedSession;
   worktree: Worktree | undefined;
-  repoName?: string;
   /**
    * このペインが実際に画面へ出ているか（既定 true）。
    *
@@ -113,8 +116,6 @@ interface TerminalPaneProps {
   isVisible?: boolean;
   onSendMessage: (message: string) => void;
   onSendKey: (key: SpecialKey) => void;
-  /** セッション削除（停止 + メイン以外のWorktree削除） */
-  onDeleteSession: () => void;
   onUploadFile?: (data: {
     base64Data: string;
     mimeType: string;
@@ -129,38 +130,30 @@ interface TerminalPaneProps {
   activeTabIndex: number;
   onTabSelect: (index: number) => void;
   onTabClose: (index: number) => void;
-  messageShortcuts: MessageShortcut[];
-  onCreateShortcut: (message: string) => void;
-  onUpdateShortcut: (id: string, patch: { message?: string }) => void;
-  onDeleteShortcut: (id: string) => void;
+  /** 入力バーの表示が変わったとき。`…` メニューのチェック表示に使う */
+  onInputBarVisibleChange?: (visible: boolean) => void;
 }
 
 export function TerminalPane({
+  ref,
   session,
   worktree,
-  repoName,
   isVisible = true,
   onSendMessage,
   onSendKey,
-  onDeleteSession,
   onUploadFile,
   onCopyBuffer,
   tabs,
   activeTabIndex,
   onTabSelect,
   onTabClose,
-  messageShortcuts,
-  onCreateShortcut,
-  onUpdateShortcut,
-  onDeleteShortcut,
+  onInputBarVisibleChange,
 }: TerminalPaneProps) {
   const isMobile = useIsMobile();
   const [inputValue, setInputValue] = useState("");
   const [showInput, setShowInput] = useState(true);
   const [showQuickCommands, setShowQuickCommands] = useState(false);
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [showShortcutManager, setShowShortcutManager] = useState(false);
 
   // PCでは入力バーをデフォルト非表示にする
   useEffect(() => {
@@ -170,6 +163,10 @@ export function TerminalPane({
   }, [isMobile]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  // ファイル選択のinput。上部バーの `…` メニュー (Radix Portal) の中に置くと、
+  // メニューが閉じた瞬間に消えて、OSのファイル選択画面から戻ってもonChangeが
+  // 届かない。このペインに残し、openFilePicker()でclick()だけを呼ばせる
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [iframeKey, setIframeKey] = useState(0);
 
   // ttyd iframe内のxterm.jsにリンク検出をインジェクト（共通フック）
@@ -180,20 +177,22 @@ export function TerminalPane({
   const [uploadMessage, setUploadMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [copySuccess, setCopySuccess] = useState(false);
 
-  // tmuxバッファの内容をクリップボードにコピー
+  // tmuxバッファの内容をクリップボードにコピーする。`…` メニューは選んだ
+  // 時点で閉じるので、結果はトーストで知らせる
   const handleCopyBuffer = async () => {
     if (!onCopyBuffer) return;
     try {
       const text = await onCopyBuffer();
       if (text) {
         await navigator.clipboard.writeText(text);
-        setCopySuccess(true);
-        setTimeout(() => setCopySuccess(false), 2000);
+        toast.success("端末のバッファをコピーしました");
+      } else {
+        toast.info("コピーできる内容がありません");
       }
     } catch (err) {
       console.error("Failed to copy:", err);
+      toast.error("バッファをコピーできませんでした");
     }
   };
 
@@ -290,7 +289,8 @@ export function TerminalPane({
     return () => document.removeEventListener("paste", handleDocumentPaste);
   }, [handlePaste]);
 
-  // クリップボードから画像を読み取るボタン用
+  // クリップボードから画像を読み取るボタン用。`…` メニューは選んだ時点で
+  // 閉じるので、結果はcopyBufferと同様にトーストで知らせる
   const handlePasteButtonClick = useCallback(async () => {
     if (!onUploadFile) return;
     try {
@@ -308,9 +308,12 @@ export function TerminalPane({
       }
       if (files.length > 0) {
         await addPendingFiles(files);
+      } else {
+        toast.info("クリップボードに画像がありません");
       }
     } catch (err) {
       console.error("Failed to read clipboard:", err);
+      toast.error("クリップボードを読み取れませんでした");
     }
   }, [onUploadFile, addPendingFiles]);
 
@@ -467,113 +470,35 @@ export function TerminalPane({
     onReload: handleReloadIframe,
   });
 
+  // 上部バー (SplitViewPane) の `…` メニューから端末専用の操作を呼べるようにする
+  useImperativeHandle(ref, () => ({
+    copyBuffer: () => {
+      handleCopyBuffer();
+    },
+    pasteImage: () => {
+      handlePasteButtonClick();
+    },
+    openFilePicker: () => {
+      fileInputRef.current?.click();
+    },
+    reload: handleReloadIframe,
+    toggleInputBar: () => setShowInput(prev => !prev),
+  }));
+
+  useEffect(() => {
+    onInputBarVisibleChange?.(showInput);
+  }, [showInput, onInputBarVisibleChange]);
+
   return (
-    <div className="h-full flex flex-col bg-card border border-border rounded-lg overflow-hidden">
+    <div className="relative h-full flex flex-col overflow-hidden">
       {/* ウィンドウ全体のD&Dオーバーレイ（ドラッグ中のみ表示） */}
       {isDragging && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-blue-500/20 border-4 border-dashed border-blue-500 pointer-events-none">
-          <div className="text-2xl font-semibold text-blue-700 dark:text-blue-200 bg-white/90 dark:bg-gray-800/90 px-6 py-4 rounded-lg shadow-lg">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-primary/15 border-4 border-dashed border-primary pointer-events-none">
+          <div className="text-2xl font-semibold text-primary bg-card/90 px-6 py-4 rounded-lg shadow-card">
             ファイルをドロップして送信
           </div>
         </div>
       )}
-
-      {/* Header */}
-      <header className="h-14 md:h-10 border-b border-border flex items-center justify-between px-4 md:px-3 bg-sidebar shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className={`status-indicator ${session.status}`} />
-          {repoName && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary font-medium shrink-0">
-              {repoName}
-            </span>
-          )}
-          <GitBranch className="w-4 h-4 md:w-3 md:h-3 text-muted-foreground shrink-0" />
-          <span className="font-mono text-sm md:text-xs truncate text-sidebar-foreground">
-            {worktree?.branch ||
-              session.worktreePath.substring(
-                session.worktreePath.lastIndexOf("/") + 1
-              )}
-          </span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10 md:h-6 md:w-6"
-            onClick={handleCopyBuffer}
-            title="Copy tmux buffer to clipboard"
-          >
-            {copySuccess ? (
-              <Check className="w-5 h-5 md:w-3 md:h-3 text-green-500" />
-            ) : (
-              <Copy className="w-5 h-5 md:w-3 md:h-3" />
-            )}
-          </Button>
-          {onUploadFile && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-10 w-10 md:h-6 md:w-6"
-              onClick={handlePasteButtonClick}
-              title="Paste image from clipboard"
-            >
-              <ImageIcon className="w-5 h-5 md:w-3 md:h-3" />
-            </Button>
-          )}
-          {onUploadFile && (
-            <label
-              className="h-10 w-10 md:h-6 md:w-6 inline-flex items-center justify-center rounded-md cursor-pointer hover:bg-accent hover:text-accent-foreground"
-              title="ファイルを添付"
-            >
-              <input
-                type="file"
-                multiple
-                className="hidden"
-                onChange={e => {
-                  const files = Array.from(e.target.files ?? []);
-                  if (files.length > 0) handleFilesSelected(files);
-                  e.target.value = "";
-                }}
-              />
-              <Paperclip className="w-5 h-5 md:w-3 md:h-3" />
-            </label>
-          )}
-          <MessageShortcutMenu
-            shortcuts={messageShortcuts}
-            onSendMessage={onSendMessage}
-            onOpenManager={() => setShowShortcutManager(true)}
-          />
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10 md:h-6 md:w-6"
-            onClick={handleReloadIframe}
-            title="Reload terminal"
-          >
-            <RefreshCw className="w-5 h-5 md:w-3 md:h-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10 md:h-6 md:w-6"
-            onClick={() => setShowInput(!showInput)}
-            title={showInput ? "Hide input" : "Show input"}
-          >
-            <Keyboard
-              className={`w-5 h-5 md:w-3 md:h-3 ${showInput ? "text-primary" : ""}`}
-            />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10 md:h-6 md:w-6 text-destructive hover:text-destructive"
-            onClick={() => setShowDeleteDialog(true)}
-            title="セッションを削除"
-          >
-            <Trash2 className="w-5 h-5 md:w-3 md:h-3" />
-          </Button>
-        </div>
-      </header>
 
       {/* タブバー（共通コンポーネント）。diagram は右ペイン専属になったのでタブ一覧からは除外し、
           表示用インデックスと元の tabs 配列インデックスを相互変換する */}
@@ -584,9 +509,10 @@ export function TerminalPane({
         onTabClose={idx => onTabClose(visibleTabIndexMap[idx])}
       />
 
-      {/* ttyd iframe */}
+      {/* ttyd iframe。明るい画面の中の「暗い窓」として額縁で囲む。
+          背景色はttydと同じTERMINAL_BG (Tailwindの任意値クラスでの直書きはしない) */}
       <div
-        className="flex-1 min-h-0 bg-[#1a1b26] overflow-hidden"
+        className="flex-1 min-h-0 p-1"
         style={{
           display:
             tabs[effectiveActiveTabIndex]?.type === "terminal"
@@ -594,23 +520,32 @@ export function TerminalPane({
               : "none",
         }}
       >
-        {session.ttydUrl || session.ttydPort ? (
-          <iframe
-            key={iframeKey}
-            ref={iframeRef}
-            src={ttydIframeSrc}
-            className="w-full h-full border-0"
-            title={`Terminal - ${worktree?.branch || session.id}`}
-            allow="clipboard-read; clipboard-write; keyboard-map"
-          />
-        ) : (
-          <div className="flex items-center justify-center h-full text-muted-foreground">
-            <div className="text-center">
-              <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4" />
-              <p>Starting terminal...</p>
+        <div
+          data-testid="terminal-frame"
+          className="h-full rounded-lg p-2 overflow-hidden"
+          style={{ backgroundColor: TERMINAL_BG }}
+        >
+          {session.ttydUrl || session.ttydPort ? (
+            <iframe
+              key={iframeKey}
+              ref={iframeRef}
+              src={ttydIframeSrc}
+              className="block w-full h-full border-0"
+              title={`Terminal - ${worktree?.branch || session.id}`}
+              allow="clipboard-read; clipboard-write; keyboard-map"
+            />
+          ) : (
+            <div
+              className="flex items-center justify-center h-full"
+              style={{ color: TERMINAL_FG }}
+            >
+              <div className="text-center">
+                <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4" />
+                <p>端末を起動しています</p>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* ファイルビューワー / ブラウザ */}
@@ -849,7 +784,7 @@ export function TerminalPane({
               <Button
                 type="submit"
                 size="icon"
-                className="h-11 w-11 md:h-9 md:w-9 glow-green shrink-0"
+                className="h-11 w-11 md:h-9 md:w-9 shrink-0"
                 disabled={!inputValue.trim()}
               >
                 <Send className="w-5 h-5 md:w-4 md:h-4" />
@@ -859,44 +794,20 @@ export function TerminalPane({
         </div>
       )}
 
-      <MessageShortcutManagerDialog
-        open={showShortcutManager}
-        onOpenChange={setShowShortcutManager}
-        shortcuts={messageShortcuts}
-        onCreate={onCreateShortcut}
-        onUpdate={onUpdateShortcut}
-        onDelete={onDeleteShortcut}
-      />
-
-      {/* 削除確認ダイアログ */}
-      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <AlertDialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
-          <AlertDialogHeader>
-            <AlertDialogTitle>セッションを削除</AlertDialogTitle>
-            <AlertDialogDescription>
-              {worktree === undefined
-                ? "このセッションを削除しますか？"
-                : worktree.isMain
-                  ? "このセッションを削除しますか？メインWorktreeは削除されません。"
-                  : "このセッションとWorktreeを削除しますか？関連するブランチも削除されます。"}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
-            <AlertDialogCancel className="h-12 md:h-10">
-              キャンセル
-            </AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-12 md:h-10"
-              onClick={() => {
-                onDeleteSession();
-                setShowDeleteDialog(false);
-              }}
-            >
-              削除
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* 添付ファイル選択用の隠しinput (fileInputRefの説明を参照) */}
+      {onUploadFile && (
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={e => {
+            const files = Array.from(e.target.files ?? []);
+            if (files.length > 0) handleFilesSelected(files);
+            e.target.value = "";
+          }}
+        />
+      )}
     </div>
   );
 }

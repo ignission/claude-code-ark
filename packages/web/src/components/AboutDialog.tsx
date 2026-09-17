@@ -12,7 +12,9 @@
  *   - Electron main の `Menu > About Ark` (menu.ts) からの IPC、または
  *   - Header の About ボタンから直接 onOpenChange で開く想定
  */
+import type { HostMetrics } from "@ark/shared";
 import { useEffect, useState } from "react";
+import { SystemStatusBar } from "@/components/bridge/SystemStatusBar";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -37,9 +39,11 @@ interface LicensesResponse {
 interface AboutDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** CPU/MEM/DISK。Aboutを開いている間だけ購読した値 (未着はnull) */
+  metrics: HostMetrics | null;
 }
 
-export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
+export function AboutDialog({ open, onOpenChange, metrics }: AboutDialogProps) {
   const [data, setData] = useState<LicensesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -78,6 +82,11 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
         </DialogHeader>
 
         <section className="space-y-2">
+          <h3 className="font-semibold text-sm">このマシン</h3>
+          <SystemStatusBar metrics={metrics} />
+        </section>
+
+        <section className="space-y-2">
           <h3 className="font-semibold text-sm">同梱コンポーネント</h3>
           {loading && (
             <p className="text-muted-foreground text-sm">Loading...</p>
@@ -111,7 +120,7 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
                   size="sm"
                   variant="ghost"
                 >
-                  <span className="font-mono text-sm">
+                  <span className="text-sm">
                     {pkg.name}
                     {pkg.version ? ` (v${pkg.version})` : ""}
                   </span>

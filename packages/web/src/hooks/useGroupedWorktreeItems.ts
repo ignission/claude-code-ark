@@ -11,6 +11,7 @@
 
 import type { ManagedSession, Worktree } from "@ark/shared";
 import { useMemo } from "react";
+import { isPathWithin } from "@/utils/pathUtils";
 import { findRepoForSession } from "@/utils/sessionUtils";
 
 export type GroupedItem = {
@@ -77,7 +78,7 @@ export function useGroupedWorktreeItems(
     for (const wt of sortedWorktrees) {
       if (repoListEmpty) break;
       const session = sessionByWorktreeId.get(wt.id) ?? null;
-      const matchedRepo = repoList.find(repo => wt.path.startsWith(repo));
+      const matchedRepo = repoList.find(repo => isPathWithin(wt.path, repo));
       const sessionRepoMatched = session?.repoPath
         ? repoList.includes(session.repoPath)
         : false;

@@ -1,4 +1,5 @@
 import type { HostMetrics } from "@ark/shared";
+import { ExternalLink } from "lucide-react";
 import { clamp } from "./utils";
 
 interface SystemStatusBarProps {
@@ -28,18 +29,22 @@ export function SystemStatusBar({ metrics }: SystemStatusBarProps) {
       href={bridgeHref}
       target="_blank"
       rel="noopener noreferrer"
-      title="Bridge を別タブで開く"
-      className="flex items-center gap-5 px-3 py-2 border-t border-white/10 bg-black/60 text-sm font-mono text-gray-200 select-none hover:bg-black/80 hover:text-white transition-colors cursor-pointer"
+      title="Bridgeを別タブで開く"
+      className="flex items-center gap-5 rounded-lg border border-border bg-muted px-3 py-2 text-sm text-foreground select-none transition-colors hover:bg-accent cursor-pointer"
     >
       <span className="flex items-center gap-2 flex-1 min-w-0">
-        <span className="text-gray-500 shrink-0">CPU</span>
+        <span className="text-muted-foreground shrink-0">CPU</span>
         <Sparkline values={cpuHistory} />
-        <span className="text-gray-100 tabular-nums shrink-0">
+        <span className="tabular-nums shrink-0">
           {cpu !== null ? `${cpu}%` : "--"}
         </span>
       </span>
       <Metric label="MEM" percent={mem} />
       <Metric label="DISK" percent={disk} />
+      <ExternalLink
+        className="size-4 shrink-0 text-muted-foreground"
+        aria-hidden="true"
+      />
     </a>
   );
 }
@@ -47,8 +52,8 @@ export function SystemStatusBar({ metrics }: SystemStatusBarProps) {
 function Metric({ label, percent }: { label: string; percent: number | null }) {
   return (
     <span className="flex items-center gap-1.5 shrink-0">
-      <span className="text-gray-500">{label}</span>
-      <span className="text-gray-100 tabular-nums">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="tabular-nums">
         {percent !== null ? `${percent}%` : "--"}
       </span>
     </span>
@@ -79,7 +84,7 @@ function Sparkline({ values }: { values: number[] }) {
     <svg
       viewBox={`0 0 100 ${SPARK_H}`}
       preserveAspectRatio="none"
-      className="flex-1 min-w-0 h-4 text-gray-400"
+      className="flex-1 min-w-0 h-4 text-muted-foreground"
       aria-hidden="true"
     >
       {points ? (

@@ -167,7 +167,7 @@ export function MessageShortcutManagerDialog({
                     value={d.message}
                     onChange={e => setDraft(s.id, { message: e.target.value })}
                     placeholder="送信本文（1〜4000字、複数行可）"
-                    className="min-h-[80px] text-sm font-mono"
+                    className="min-h-[80px] text-sm"
                   />
                   <div className="flex justify-end gap-2">
                     <Button
@@ -198,7 +198,7 @@ export function MessageShortcutManagerDialog({
                 value={newMessage}
                 onChange={e => setNewMessage(e.target.value)}
                 placeholder="送信本文（例: 現在のタスクの進捗を教えて）"
-                className="min-h-[80px] text-sm font-mono"
+                className="min-h-[80px] text-sm"
               />
               <div className="flex justify-end">
                 <Button

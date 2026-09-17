@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<style>
+  /* A: Paper — 紙と付箋 (PC / ライト) */
+  :root {
+    --background: oklch(0.985 0.005 80);
+    --foreground: oklch(0.24 0.02 60);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.24 0.02 60);
+    --muted: oklch(0.955 0.008 80);
+    --muted-foreground: oklch(0.48 0.02 60);
+    --primary: oklch(0.50 0.16 262);
+    --primary-foreground: oklch(0.99 0 0);
+    --border: oklch(0.90 0.01 80);
+    --status-busy: oklch(0.52 0.14 240);
+    --status-idle: oklch(0.55 0.15 150);
+    --status-awaiting: oklch(0.56 0.15 70);
+    --status-error: oklch(0.55 0.20 25);
+    --status-stopped: oklch(0.55 0.015 60);
+    --shadow-card: 0 1px 2px oklch(0 0 0 / 0.06), 0 4px 12px oklch(0 0 0 / 0.05);
+    --font-sans: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--background); }
+  .root {
+    position: relative;
+    display: flex;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  textarea { font: inherit; color: inherit; }
+  svg { display: block; flex: none; }
+
+  /* ---------- サイドバー ---------- */
+  .sidebar {
+    width: 300px;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    padding: 12px 8px 12px 12px;
+  }
+  .sb-head {
+    display: flex;
+    align-items: center;
+    height: 44px;
+    padding: 0 4px 0 12px;
+    gap: 4px;
+  }
+  .wordmark {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    flex: 1;
+  }
+  .icon-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted-foreground);
+  }
+  .icon-btn:hover { background: var(--muted); color: var(--foreground); }
+  .icon-btn svg { width: 20px; height: 20px; }
+
+  .section { margin-top: 16px; }
+  .section + .section { margin-top: 20px; }
+  .section-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 28px;
+    padding: 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted-foreground);
+  }
+  .badge {
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--status-awaiting);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 20px;
+    text-align: center;
+  }
+  .row {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid transparent;
+  }
+  .row + .row { margin-top: 4px; }
+  .row:hover { background: var(--muted); }
+  .row.selected {
+    background: var(--card);
+    border-color: var(--border);
+    box-shadow: var(--shadow-card);
+  }
+  .row-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .row-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 15px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .row-time {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted-foreground);
+    flex: none;
+  }
+  .row-sub {
+    display: block;
+    margin-top: 4px;
+    font-size: 13px;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .row-sub .branch { color: var(--foreground); opacity: 0.8; }
+  .row-sub .dot { margin: 0 5px; }
+  .row.quiet .row-name { color: var(--muted-foreground); }
+
+  /* 状態チップ: 12px/600、淡い背景 14% + 色文字 + 小アイコン */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 22px;
+    padding: 0 8px 0 6px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    flex: none;
+    color: var(--tone);
+    background: color-mix(in oklch, var(--tone) 14%, transparent);
+  }
+  .chip svg { width: 13px; height: 13px; }
+  .chip.awaiting { --tone: var(--status-awaiting); }
+  .chip.idle { --tone: var(--status-idle); }
+  .chip.busy { --tone: var(--status-busy); }
+  .chip.error { --tone: var(--status-error); }
+  .chip.stopped { --tone: var(--status-stopped); }
+
+  /* busy の 3 点は opacity だけで呼吸する */
+  .dots { display: inline-flex; gap: 2px; width: 13px; justify-content: center; }
+  .dots i {
+    width: 3px; height: 3px; border-radius: 50%;
+    background: currentColor;
+    display: inline-block;
+    animation: breathe 1.2s ease-in-out infinite;
+  }
+  .dots i:nth-child(2) { animation-delay: 0.2s; }
+  .dots i:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes breathe { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .dots i { animation: none; opacity: 0.7; } }
+
+  /* ---------- メインペイン ---------- */
+  .main {
+    flex: 1;
+    min-width: 0;
+    padding: 12px 12px 12px 4px;
+    display: flex;
+  }
+  .pane {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    height: 52px;
+    padding: 0 12px 0 20px;
+    border-bottom: 1px solid var(--border);
+    gap: 12px;
+  }
+  .topbar-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+  }
+  .topbar-title .name {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+  }
+  .topbar-title .branch {
+    font-size: 13px;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+  }
+  .segment {
+    display: inline-flex;
+    padding: 2px;
+    border-radius: 10px;
+    background: var(--muted);
+    gap: 2px;
+  }
+  .segment button {
+    height: 28px;
+    padding: 0 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted-foreground);
+  }
+  .segment button.on {
+    background: var(--card);
+    color: var(--foreground);
+    box-shadow: 0 1px 2px oklch(0 0 0 / 0.08), 0 0 0 1px oklch(0 0 0 / 0.03);
+  }
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    justify-content: flex-end;
+  }
+  .ghost-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted-foreground);
+  }
+  .ghost-btn:hover { background: var(--muted); color: var(--foreground); }
+  .ghost-btn svg { width: 18px; height: 18px; }
+
+  /* 会話 */
+  .chat {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 24px 32px 20px;
+    overflow: hidden;
+  }
+  .thread {
+    width: 100%;
+    max-width: 760px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .msg-user {
+    align-self: flex-end;
+    max-width: 78%;
+    padding: 10px 14px;
+    border-radius: 16px 16px 4px 16px;
+    background: color-mix(in oklch, var(--primary) 14%, transparent);
+    color: var(--foreground);
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  .msg-assistant {
+    font-size: 15px;
+    line-height: 1.6;
+    max-width: 92%;
+  }
+  .worklog {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 36px;
+    padding: 0 12px 0 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--background);
+    font-size: 13px;
+    color: var(--muted-foreground);
+    width: fit-content;
+    max-width: 100%;
+  }
+  .worklog svg { width: 16px; height: 16px; }
+  .worklog b { font-weight: 600; color: var(--foreground); }
+
+  /* AskUserQuestion カード */
+  .auq {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--card);
+    box-shadow: var(--shadow-card);
+    padding: 16px 16px 12px;
+    max-width: 640px;
+  }
+  .auq-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted-foreground);
+  }
+  .auq-q {
+    margin-top: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.5;
+  }
+  .options { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .option {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    width: 100%;
+    text-align: left;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--card);
+  }
+  .option:hover { border-color: var(--primary); background: color-mix(in oklch, var(--primary) 5%, transparent); }
+  .key {
+    flex: none;
+    width: 22px; height: 22px;
+    margin-top: 1px;
+    border-radius: 6px;
+    background: var(--muted);
+    color: var(--muted-foreground);
+    font-size: 12px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .key svg { width: 13px; height: 13px; }
+  .option-body { display: block; min-width: 0; }
+  .option-title { display: block; font-size: 15px; font-weight: 600; line-height: 1.5; }
+  .option-desc { display: block; font-size: 13px; color: var(--muted-foreground); line-height: 1.5; margin-top: 1px; }
+  .option.other { border-style: dashed; }
+  .option.other .option-title { font-weight: 500; color: var(--muted-foreground); }
+
+  /* 入力バー (不透明の紙) */
+  .composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 12px 16px 14px;
+    border-top: 1px solid var(--border);
+    background: var(--card);
+  }
+  .composer-inner {
+    width: 100%;
+    max-width: 792px;
+    margin: 0 auto;
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+  }
+  .round-btn {
+    width: 36px; height: 36px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted-foreground);
+    flex: none;
+  }
+  .round-btn:hover { background: var(--muted); color: var(--foreground); }
+  .round-btn svg { width: 20px; height: 20px; }
+  .round-btn.send { background: var(--primary); color: var(--primary-foreground); }
+  .input-pill {
+    flex: 1;
+    min-height: 36px;
+    max-height: 120px;
+    resize: none;
+    padding: 7px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--background);
+    font-size: 15px;
+    line-height: 1.4;
+    outline: none;
+  }
+  .input-pill::placeholder { color: var(--muted-foreground); }
+</style>
+</head>
+<body>
+<div class="root" style="width: 1440px; height: 900px; overflow: hidden;">
+
+  <aside class="sidebar">
+    <div class="sb-head">
+      <div class="wordmark">Ark</div>
+      <button class="icon-btn" aria-label="新規セッション">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button class="icon-btn" aria-label="通知">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 8 2.5 8h-17S6 15 6 9"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+      </button>
+    </div>
+
+    <div class="section">
+      <div class="section-head"><span>あなたの番</span><span class="badge">2</span></div>
+      <button class="row selected">
+        <span class="row-top">
+          <span class="chip awaiting"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.1 1-1.1 1.8"/><path d="M12 17h.01"/></svg>質問</span>
+          <span class="row-name">recipe-app</span>
+          <span class="row-time">2分前</span>
+        </span>
+        <span class="row-sub"><span class="branch">main</span><span class="dot">·</span>ログイン画面のデザインはどちらにしますか？</span>
+      </button>
+      <button class="row">
+        <span class="row-top">
+          <span class="chip idle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>完了</span>
+          <span class="row-name">team-site</span>
+          <span class="row-time">12分前</span>
+        </span>
+        <span class="row-sub"><span class="branch">feature/news-page</span><span class="dot">·</span>お知らせページを追加しました。プレビューで確認できます</span>
+      </button>
+    </div>
+
+    <div class="section">
+      <div class="section-head"><span>作業中</span></div>
+      <button class="row">
+        <span class="row-top">
+          <span class="chip busy"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>作業中</span>
+          <span class="row-name">invoice-tool</span>
+          <span class="row-time">今</span>
+        </span>
+        <span class="row-sub"><span class="branch">main</span><span class="dot">·</span>テストを実行しています</span>
+      </button>
+      <button class="row">
+        <span class="row-top">
+          <span class="chip busy"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>作業中</span>
+          <span class="row-name">ark</span>
+          <span class="row-time">今</span>
+        </span>
+        <span class="row-sub"><span class="branch">fix/reconnect</span><span class="dot">·</span>ファイルを読んでいます</span>
+      </button>
+    </div>
+
+    <div class="section">
+      <div class="section-head"><span>休止中</span></div>
+      <button class="row">
+        <span class="row-top">
+          <span class="chip error"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5h.01"/></svg>問題</span>
+          <span class="row-name">photo-sync</span>
+          <span class="row-time">1時間前</span>
+        </span>
+        <span class="row-sub"><span class="branch">main</span><span class="dot">·</span>ビルドに失敗しました</span>
+      </button>
+      <button class="row quiet">
+        <span class="row-top">
+          <span class="chip stopped"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 12h7"/></svg>停止</span>
+          <span class="row-name">notes</span>
+          <span class="row-time">昨日</span>
+        </span>
+        <span class="row-sub"><span class="branch">main</span></span>
+      </button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <section class="pane">
+      <header class="topbar">
+        <div class="topbar-title">
+          <span class="name">recipe-app</span>
+          <span class="branch">main</span>
+          <span class="chip awaiting"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.1 1-1.1 1.8"/><path d="M12 17h.01"/></svg>質問</span>
+        </div>
+        <div class="segment" role="tablist" aria-label="表示の切替">
+          <button role="tab" aria-selected="false">端末</button>
+          <button role="tab" aria-selected="true" class="on">会話</button>
+        </div>
+        <div class="topbar-right">
+          <button class="ghost-btn" aria-pressed="false" aria-label="図を開く">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="6" rx="1.5"/><rect x="13" y="15" width="8" height="6" rx="1.5"/><path d="M7 9v4h10v2"/></svg>
+            <span>図</span>
+          </button>
+          <button class="icon-btn" aria-label="その他の操作">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="chat">
+        <div class="thread">
+          <div class="msg-user">ログイン画面を作ってください。メールアドレスとGoogleアカウントでログインできるようにしたいです</div>
+
+          <div class="msg-assistant">ログイン画面の土台を作りました。メールアドレスでのログインは動く状態です。Googleログインを追加する前に、画面の見せ方を決めたいので1つ質問させてください。</div>
+
+          <button class="worklog" aria-expanded="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+            <span><b>作業6件</b> — ファイルを4つ編集、テストを2回実行</span>
+          </button>
+
+          <div class="auq" role="group" aria-label="質問">
+            <div class="auq-head">
+              <span class="chip awaiting"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.1 1-1.1 1.8"/><path d="M12 17h.01"/></svg>質問</span>
+              <span>デザイン</span>
+            </div>
+            <div class="auq-q">ログイン画面のデザインはどちらにしますか？</div>
+            <div class="options">
+              <button class="option">
+                <span class="key">1</span>
+                <span class="option-body">
+                  <span class="option-title">シンプル</span>
+                  <span class="option-desc">メールアドレスの入力欄を先に見せ、Googleは下に小さく置く</span>
+                </span>
+              </button>
+              <button class="option">
+                <span class="key">2</span>
+                <span class="option-body">
+                  <span class="option-title">並べる</span>
+                  <span class="option-desc">メールアドレスとGoogleを同じ大きさで並べる</span>
+                </span>
+              </button>
+              <button class="option other">
+                <span class="key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L18 10l-4-4L4 16v4z"/><path d="M13 7l4 4"/></svg></span>
+                <span class="option-body">
+                  <span class="option-title">その他 (自由入力)</span>
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <footer class="composer">
+        <div class="composer-inner">
+          <button class="round-btn" aria-label="ファイルを添付">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.5 8.5a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8"/></svg>
+          </button>
+          <textarea class="input-pill" rows="1" aria-label="メッセージ" placeholder="メッセージを入力"></textarea>
+          <button class="round-btn send" aria-label="送信">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </button>
+        </div>
+      </footer>
+    </section>
+  </main>
+
+</div>
+</body>
+</html>

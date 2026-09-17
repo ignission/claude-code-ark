@@ -1,29 +1,38 @@
 /**
  * MobileSessionView - モバイル用セッション詳細画面
  *
- * ターミナル全画面表示 + Quick Keys + 入力バー常時表示。
- * Opsドロップダウンで追加操作（Copy Buffer, Paste Image, Reload, スラッシュコマンド）。
+ * ヘッダー (戻る・主ラベル・ブランチ・状態チップ・操作メニュー) と、その直下の状態の帯、
+ * 「会話 / 端末 / 図」の本文と下部バーで組む。
+ * 3モードの本文はマウントしたまま display で切り替える (ttyd と図の iframe を張り直さない)。
  */
 
-import type {
-  BridgeSessionStatus,
-  ClientToServerEvents,
-  ManagedSession,
-  MessageShortcut,
-  ServerToClientEvents,
-  SpecialKey,
-  Worktree,
+import {
+  type BridgeSessionStatus,
+  type ClientToServerEvents,
+  type ManagedSession,
+  type MessageShortcut,
+  type ServerToClientEvents,
+  type SpecialKey,
+  TERMINAL_BG,
+  type Worktree,
 } from "@ark/shared";
 import {
+  Bell,
+  BellOff,
   ChevronLeft,
+  ChevronRight,
+  CircleAlert,
+  CircleHelp,
   Copy,
+  Ellipsis,
   File as FileIcon,
-  GitBranch,
-  ImageIcon,
-  MoreVertical,
+  ImagePlus,
+  MessageSquareQuote,
+  Paperclip,
   RefreshCw,
   RotateCw,
   Send,
+  Settings,
   Trash2,
   X,
 } from "lucide-react";
@@ -44,11 +53,25 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { FLOATING_BAR_BOTTOM } from "@/lib/floating-composer";
+import {
+  deleteSessionDescription,
+  notificationMenuLabel,
+  resolveSessionHeaderLabels,
+} from "@/lib/session-header";
+import {
+  resolveStatusKey,
+  resolveStatusStrip,
+  type StatusTone,
+  TONE_CLASSES,
+} from "@/lib/status-tone";
+import { cn } from "@/lib/utils";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { useTtydReconnect } from "../hooks/useTtydReconnect";
@@ -65,9 +88,10 @@ import { DiagramPane, type DiagramPaneProps } from "./DiagramPane";
 import { FileViewerPane } from "./FileViewerPane";
 import { HtmlViewerPane } from "./HtmlViewerPane";
 import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
-import { MessageShortcutMenu } from "./MessageShortcutMenu";
+import { previewOf } from "./MessageShortcutMenu";
 import { MobileSessionViewModeToggle } from "./MobileSessionViewModeToggle";
 import { SplitChatPane } from "./SplitChatPane";
+import { StatusChip } from "./StatusChip";
 import type { ViewerTab } from "./TerminalPane";
 import { ViewerTabBar } from "./ViewerTabBar";
 
@@ -99,6 +123,15 @@ export interface MobileSessionViewProps extends MobileDiagramPaneProps {
   awaitingText?: string;
   session: ManagedSession;
   worktree: Worktree | undefined;
+  /** 主ラベルに使うリポジトリ名 (basename)。所属が分からなければ undefined */
+  repoName?: string;
+  /** worktree のカスタム表示名。あれば主ラベルにする */
+  displayName?: string | null;
+  /** Notification API 対応環境でだけ「このセッションの通知をオン/オフにする」を出す */
+  notificationsSupported?: boolean;
+  /** このセッションの通知が有効か (未設定なら有効) */
+  notificationsEnabled?: boolean;
+  onNotificationsEnabledChange?: (enabled: boolean) => void;
   onBack: () => void;
   onSendMessage: (message: string) => void;
   onSendKey: (key: SpecialKey) => void;
@@ -137,6 +170,11 @@ export function MobileSessionView({
   awaitingText,
   session,
   worktree,
+  repoName,
+  displayName,
+  notificationsSupported = false,
+  notificationsEnabled = true,
+  onNotificationsEnabledChange,
   onBack,
   onSendMessage,
   onSendKey,
@@ -213,6 +251,27 @@ export function MobileSessionView({
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showRestartDialog, setShowRestartDialog] = useState(false);
   const [showShortcutManager, setShowShortcutManager] = useState(false);
+  // 質問カード (AskUserQuestion) の表示有無。SplitChatPane から受け取り、状態の帯の文言に使う。
+  // 会話モード以外では JSONL の購読が止まり、カードを閉じる判定が遅れて true が残ることがある。
+  // 帯は AWAITING のときだけこの値を見る (resolveStatusStrip) ので、確認が済めば帯は消える。
+  // この値だけで帯を出す形に書き換えないこと
+  const [hasActiveAuq, setHasActiveAuq] = useState(false);
+  const statusStrip = resolveStatusStrip({
+    bridgeStatus,
+    hasActiveAuq,
+    isConnected,
+    viewMode,
+  });
+  // 下部バーの上段に置く「会話 / 端末 / 図」。3モードの本文はマウントしたまま
+  // display で切り替えるので、同じ要素を各モードのバーに置く (表示されるのは1つだけ)。
+  // 角丸は会話モードのガラスバー (28px角丸・内側の余白8px) と同心になるよう丸くする
+  const viewModeSegment = (
+    <MobileSessionViewModeToggle
+      value={viewMode}
+      onChange={handleViewModeChange}
+      className="w-full rounded-full [&_button]:h-[34px] [&_button]:flex-1 [&_button]:justify-center [&_button]:rounded-full"
+    />
+  );
 
   // Ops メニューからの添付（pendingFiles）はターミナルペイン内のダイアログで
   // 表示するため、会話モードのときはターミナルへ切り替えてダイアログを可視化する。
@@ -427,6 +486,14 @@ export function MobileSessionView({
     { label: "/compact", cmd: "/compact" },
   ];
 
+  // ヘッダーの主ラベル (表示名 → リポジトリ名 → worktree のフォルダ名) とブランチ。PC の上部バーと同じ決め方
+  const headerLabels = resolveSessionHeaderLabels({
+    displayName,
+    repoName,
+    branch: worktree?.branch,
+    worktreePath: session.worktreePath,
+  });
+
   return (
     <div
       className="flex-1 flex flex-col min-h-0 safe-area-x"
@@ -436,70 +503,109 @@ export function MobileSessionView({
           : undefined
       }
     >
-      {/* ヘッダー: 戻る、ブランチ名、Opsドロップダウン、Stopボタン */}
-      <header className="h-12 border-b border-border flex items-center justify-between px-2 bg-sidebar shrink-0 safe-area-top">
-        <div className="flex items-center gap-1 min-w-0">
+      {/* ヘッダー: 戻る・主ラベル・ブランチ・状態チップ・操作メニュー。
+          safe area の余白は外側の header に付け、行の高さ (56px) と分ける */}
+      <header className="shrink-0 bg-background safe-area-top">
+        <div className="flex h-14 items-center gap-1 pl-1.5 pr-2">
           <Button
             variant="ghost"
             size="icon"
-            className="h-10 w-10 shrink-0"
+            className="size-10 shrink-0 rounded-sm"
             onClick={onBack}
+            aria-label="一覧へ戻る"
           >
-            <ChevronLeft className="w-5 h-5" />
+            <ChevronLeft className="size-[22px]" />
           </Button>
-          <div className={`status-indicator ${session.status} shrink-0`} />
-          <GitBranch className="w-4 h-4 text-muted-foreground shrink-0" />
-          <span className="font-mono text-sm truncate">
-            {worktree?.branch ||
-              session.worktreePath.substring(
-                session.worktreePath.lastIndexOf("/") + 1
-              )}
-          </span>
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <MobileSessionViewModeToggle
-            value={viewMode}
-            onChange={handleViewModeChange}
-          />
-          <MessageShortcutMenu
-            shortcuts={messageShortcuts}
-            onSendMessage={onSendMessage}
-            onOpenManager={() => setShowShortcutManager(true)}
-            size="lg"
-          />
-          {/* Opsドロップダウン */}
+          <div className="flex min-w-0 flex-1 items-baseline gap-2">
+            <span className="min-w-0 truncate text-[17px] font-semibold tracking-[-0.01em]">
+              {headerLabels.primary}
+            </span>
+            <span className="min-w-0 max-w-[40%] shrink-0 truncate text-[13px] text-muted-foreground">
+              {headerLabels.branch}
+            </span>
+          </div>
+          <StatusChip statusKey={resolveStatusKey(true, bridgeStatus)} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-10 w-10">
-                <MoreVertical className="w-5 h-5" />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-10 shrink-0 rounded-sm"
+                aria-label="その他の操作"
+              >
+                <Ellipsis className="size-[22px]" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
+            {/* メッセージショートカットはサブメニューにせず見出し付きで並べる
+                (サブメニューはスクロールせず、幅390pxでは左右どちらにも収まらない)。
+                アイコンの大きさと間隔は DropdownMenuItem が付ける (PC の … と同じ) */}
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
+                メッセージショートカット
+              </DropdownMenuLabel>
+              {messageShortcuts.length === 0 ? (
+                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                  ショートカットがありません
+                </DropdownMenuLabel>
+              ) : (
+                messageShortcuts.map(shortcut => (
+                  <DropdownMenuItem
+                    key={shortcut.id}
+                    onSelect={() => onSendMessage(shortcut.message)}
+                    title={shortcut.message.slice(0, 200)}
+                  >
+                    <MessageSquareQuote />
+                    <span className="truncate">
+                      {previewOf(shortcut.message)}
+                    </span>
+                  </DropdownMenuItem>
+                ))
+              )}
+              <DropdownMenuItem onSelect={() => setShowShortcutManager(true)}>
+                <Settings />
+                ショートカットを管理
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {notificationsSupported && onNotificationsEnabledChange && (
+                <>
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      onNotificationsEnabledChange(!notificationsEnabled)
+                    }
+                  >
+                    {notificationsEnabled ? <BellOff /> : <Bell />}
+                    {notificationMenuLabel(notificationsEnabled)}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               {onCopyBuffer && (
-                <DropdownMenuItem onClick={handleCopyBuffer}>
-                  <Copy className="w-4 h-4 mr-2" />
-                  Copy Buffer
+                <DropdownMenuItem onSelect={handleCopyBuffer}>
+                  <Copy />
+                  端末のバッファをコピー
                 </DropdownMenuItem>
               )}
               {onUploadFile && (
-                <DropdownMenuItem onClick={handlePasteButtonClick}>
-                  <ImageIcon className="w-4 h-4 mr-2" />
-                  Paste Image
+                <DropdownMenuItem onSelect={handlePasteButtonClick}>
+                  <ImagePlus />
+                  画像を貼り付け
                 </DropdownMenuItem>
               )}
               {onUploadFile && (
-                <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
-                  <FileIcon className="mr-2 h-4 w-4" />
+                <DropdownMenuItem
+                  onSelect={() => fileInputRef.current?.click()}
+                >
+                  <Paperclip />
                   ファイルを添付
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem onClick={handleReloadIframe}>
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Reload Terminal
+              <DropdownMenuItem onSelect={handleReloadIframe}>
+                <RefreshCw />
+                端末を再読み込み
               </DropdownMenuItem>
               {onRestartSession && (
-                <DropdownMenuItem onClick={() => setShowRestartDialog(true)}>
-                  <RotateCw className="w-4 h-4 mr-2" />
+                <DropdownMenuItem onSelect={() => setShowRestartDialog(true)}>
+                  <RotateCw />
                   セッションを再起動
                 </DropdownMenuItem>
               )}
@@ -507,30 +613,65 @@ export function MobileSessionView({
               {slashCommands.map(({ label, cmd }) => (
                 <DropdownMenuItem
                   key={cmd}
-                  onClick={() => onSendMessage(cmd)}
-                  className="font-mono text-xs"
+                  onSelect={() => onSendMessage(cmd)}
+                  className="text-xs"
                 >
                   {label}
                 </DropdownMenuItem>
               ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => setShowDeleteDialog(true)}
+              >
+                <Trash2 />
+                セッションを削除
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          {/* 削除ボタン（セッション停止 + メイン以外のWorktree削除） */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10 text-destructive hover:text-destructive"
-            onClick={() => setShowDeleteDialog(true)}
-            title="セッションを削除"
-          >
-            <Trash2 className="w-5 h-5" />
-          </Button>
         </div>
       </header>
 
-      {/* 会話モード（既定）: JSONL チャットビュー。入力欄・AUQ・AWAITING を内包する。
+      {/* 状態の帯 (32px)。文言は状態と質問カードの有無だけから作り、端末の画面は解釈しない。
+          会話モードでは質問カードと AwaitingPad が入力欄の上に出ているので、ボタンを付けない */}
+      {statusStrip && (
+        <div className="shrink-0 px-3 pb-2">
+          <div
+            data-testid="mobile-status-strip"
+            className={cn(
+              "flex h-8 items-center gap-2 rounded-sm px-3 text-[13px] font-semibold text-foreground",
+              TONE_CLASSES[statusStrip.tone].softBg
+            )}
+          >
+            <StatusStripIcon tone={statusStrip.tone} />
+            <span role="status" className="min-w-0 flex-1 truncate">
+              {statusStrip.text}
+            </span>
+            {statusStrip.offerChat && (
+              <button
+                type="button"
+                onClick={() => handleViewModeChange("chat")}
+                className="flex h-8 shrink-0 items-center gap-0.5 text-[13px] font-semibold text-foreground"
+              >
+                会話で答える
+                <ChevronRight
+                  className={cn(
+                    "size-3.5",
+                    TONE_CLASSES[statusStrip.tone].text
+                  )}
+                  aria-hidden="true"
+                />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 会話モード (既定): JSONL チャットビュー。入力欄はセグメントと一体の浮かぶガラスバーで、
+          本文はバーの下を通る (位置と本文の余白は SplitChatPane の layout="mobile" が持つ)。
           ttyd を持たないため display:none で残置しても再接続コストはない。 */}
       <div
+        data-testid="mobile-view-chat"
         className={
           viewMode === "chat" ? "flex-1 flex flex-col min-h-0" : "hidden"
         }
@@ -538,18 +679,24 @@ export function MobileSessionView({
         <SplitChatPane
           socket={socket}
           session={session}
-          isActive={isActive && viewMode === "chat"}
+          // 端末・図モードの間も購読を続ける。止めると、そのあいだに答えた質問の解決が
+          // JSONL から届かず、状態の帯が「質問があります」のまま残る
+          isActive={isActive}
           bridgeStatus={bridgeStatus}
           awaitingText={awaitingText}
           onSendMessage={onSendMessage}
           onSendKey={onSendKey}
           onUploadFile={onUploadFile}
+          onActiveAuqChange={setHasActiveAuq}
+          layout="mobile"
+          composerAccessory={viewModeSegment}
         />
       </div>
 
       {/* ターミナルモード: タブ + ttyd + ファイル/HTML/キャンバスビューワー +
           Quick Keys + 入力バー。display:none 切替で ttyd 接続を維持する。 */}
       <div
+        data-testid="mobile-view-terminal"
         className={
           viewMode === "terminal" ? "flex-1 flex flex-col min-h-0" : "hidden"
         }
@@ -564,10 +711,11 @@ export function MobileSessionView({
 
         {/* ttyd iframe */}
         <div
-          className="flex-1 min-h-0 bg-[#1a1b26] overflow-hidden relative"
+          className="flex-1 min-h-0 overflow-hidden relative"
           style={{
             display:
               tabs[activeTabIndex]?.type === "terminal" ? undefined : "none",
+            backgroundColor: TERMINAL_BG,
           }}
         >
           {session.ttydUrl || session.ttydPort ? (
@@ -710,107 +858,131 @@ export function MobileSessionView({
           </div>
         )}
 
-        {/* Quick Keys: ↑/↓/Esc/Ctrl+C/S-Tab 常時表示 */}
-        <div className="flex items-center gap-1 px-3 py-1.5 border-t border-border/50 bg-sidebar overflow-x-auto select-none">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 px-3 text-xs shrink-0"
-            onClick={() => onSendKey("Up")}
-          >
-            ↑
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 px-3 text-xs shrink-0"
-            onClick={() => onSendKey("Down")}
-          >
-            ↓
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 px-3 text-xs shrink-0"
-            onClick={() => onSendKey("Escape")}
-          >
-            Esc
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 px-3 text-xs text-destructive hover:text-destructive shrink-0"
-            onClick={() => onSendKey("C-c")}
-          >
-            Ctrl+C
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 px-3 text-xs shrink-0"
-            onClick={() => onSendKey("S-Tab")}
-          >
-            S-Tab
-          </Button>
-        </div>
-
-        {/* 入力バー: 常時表示 */}
-        <form
-          onSubmit={handleSubmit}
-          className="p-3 border-t border-border bg-sidebar safe-area-bottom"
+        {/* 端末モードの下部バー。ガラスをやめて不透明にし、端末に重ねない
+            (ttyd は iframe の大きさに合わせて描くので、端末の領域はバーの上端までにする)。
+            上段にセグメント、下段に Quick Keys と入力欄 */}
+        <div
+          data-testid="mobile-terminal-bar"
+          data-mobile-bottom-bar=""
+          className="shrink-0 border-t border-border bg-card px-3 pt-2"
+          style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
         >
-          <div className="flex gap-2 items-end">
-            <div className="flex-1">
-              <Input
-                ref={inputRef}
-                value={inputValue}
-                onChange={e => setInputValue(e.target.value)}
-                onKeyDown={handleKeyDown}
-                enterKeyHint="send"
-                placeholder="メッセージを入力... (Enter送信)"
-                className="h-11 font-mono text-sm bg-input"
-              />
-            </div>
+          {viewModeSegment}
+
+          {/* Quick Keys: ↑/↓/Esc/Ctrl+C/S-Tab 常時表示 */}
+          <div className="mt-1 flex items-center gap-1 overflow-x-auto select-none">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs shrink-0"
+              onClick={() => onSendKey("Up")}
+            >
+              ↑
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs shrink-0"
+              onClick={() => onSendKey("Down")}
+            >
+              ↓
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs shrink-0"
+              onClick={() => onSendKey("Escape")}
+            >
+              Esc
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs text-destructive hover:text-destructive shrink-0"
+              onClick={() => onSendKey("C-c")}
+            >
+              Ctrl+C
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs shrink-0"
+              onClick={() => onSendKey("S-Tab")}
+            >
+              S-Tab
+            </Button>
+          </div>
+
+          {/* 入力欄: 空のまま送るとEnterを送る (handleSubmit) */}
+          <form
+            onSubmit={handleSubmit}
+            className="mt-1 flex items-center gap-2"
+          >
+            <Input
+              ref={inputRef}
+              value={inputValue}
+              onChange={e => setInputValue(e.target.value)}
+              onKeyDown={handleKeyDown}
+              enterKeyHint="send"
+              placeholder="メッセージを入力... (Enter送信)"
+              className="h-11 flex-1 rounded-full bg-background px-4 text-sm"
+            />
             <Button
               type="submit"
               size="icon"
-              className="h-11 w-11 glow-green shrink-0"
+              aria-label="送信"
+              className="size-11 shrink-0 rounded-full"
             >
-              <Send className="w-5 h-5" />
+              <Send className="size-5" />
             </Button>
-          </div>
-        </form>
+          </form>
+        </div>
       </div>
 
       {/* 図モード: DiagramPane は他モードでもマウントしたまま hidden で切り替える。
           MessageChannel port と iframe の接続をモード切替で張り直さない。 */}
       <div
+        data-testid="mobile-view-board"
         className={
           viewMode === "board" ? "flex-1 flex flex-col min-h-0" : "hidden"
         }
       >
-        <DiagramPane
-          socket={socket}
-          isConnected={isConnected}
-          diagramCommentsUpdate={diagramCommentsUpdate}
-          listDiagrams={listDiagrams}
-          deleteDiagram={deleteDiagram}
-          getDiagramComments={getDiagramComments}
-          createDiagramComment={createDiagramComment}
-          replyDiagramComment={replyDiagramComment}
-          resolveDiagramComment={resolveDiagramComment}
-          deleteDiagramComment={deleteDiagramComment}
-          sendDiagramComment={sendDiagramComment}
-          sessionId={session.id}
-          worktreePath={session.worktreePath}
-          relPath={tabs.find(tab => tab.type === "diagram")?.relPath}
-          onSelectDiagram={onSelectDiagram}
-        />
+        <div className="flex min-h-0 flex-1 flex-col">
+          <DiagramPane
+            socket={socket}
+            isConnected={isConnected}
+            diagramCommentsUpdate={diagramCommentsUpdate}
+            listDiagrams={listDiagrams}
+            deleteDiagram={deleteDiagram}
+            getDiagramComments={getDiagramComments}
+            createDiagramComment={createDiagramComment}
+            replyDiagramComment={replyDiagramComment}
+            resolveDiagramComment={resolveDiagramComment}
+            deleteDiagramComment={deleteDiagramComment}
+            sendDiagramComment={sendDiagramComment}
+            sessionId={session.id}
+            worktreePath={session.worktreePath}
+            relPath={tabs.find(tab => tab.type === "diagram")?.relPath}
+            onSelectDiagram={onSelectDiagram}
+          />
+        </div>
+        {/* 図モードの下部バーはセグメントだけ。図の iframe は中に下端固定の UI
+            (diagram-harness.ts の .ark-harness-toolbar、コメント層の解決済みトグル) を持つので、
+            ガラスを重ねずに図の領域をバーの上端までにする。
+            端末モードのバーと同じく罫線と紙の色で、図の下端 UI と分ける */}
+        <div
+          data-testid="mobile-board-bar"
+          data-mobile-bottom-bar=""
+          className="shrink-0 border-t border-border bg-card px-3 pt-2"
+          style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
+        >
+          {viewModeSegment}
+        </div>
       </div>
 
       {/* 添付ファイル選択用の隠しinput
@@ -836,11 +1008,7 @@ export function MobileSessionView({
           <AlertDialogHeader>
             <AlertDialogTitle>セッションを削除</AlertDialogTitle>
             <AlertDialogDescription>
-              {worktree === undefined
-                ? "このセッションを削除しますか？"
-                : worktree.isMain
-                  ? "このセッションを削除しますか？メインWorktreeは削除されません。"
-                  : "このセッションとWorktreeを削除しますか？関連するブランチも削除されます。"}
+              {deleteSessionDescription(worktree)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
@@ -896,4 +1064,25 @@ export function MobileSessionView({
       />
     </div>
   );
+}
+
+/** 状態の帯の先頭のアイコン。帯の文言と同じく、トーンだけから決める */
+function StatusStripIcon({ tone }: { tone: StatusTone }) {
+  if (tone === "busy") {
+    return (
+      <span
+        className={cn("status-dots", TONE_CLASSES.busy.text)}
+        aria-hidden="true"
+      >
+        <span />
+        <span />
+        <span />
+      </span>
+    );
+  }
+  const className = cn("size-4 shrink-0", TONE_CLASSES[tone].text);
+  if (tone === "awaiting") {
+    return <CircleHelp className={className} aria-hidden="true" />;
+  }
+  return <CircleAlert className={className} aria-hidden="true" />;
 }

@@ -2,7 +2,7 @@
  * MobileLayout - モバイル専用ルートコンポーネント
  *
  * 「セッション一覧」「セッション詳細」「ブラウザ」を
- * ボトムナビゲーションと画面遷移で切り替える。
+ * 画面遷移と、リモート時だけ出す下部タブで切り替える。
  * iframe再マウント防止のため、display:none/blockで表示を切り替える。
  */
 
@@ -15,10 +15,13 @@ import type {
   DiagramListItem,
   ManagedSession,
   MessageShortcut,
+  Profile,
   ServerToClientEvents,
   SpecialKey,
+  SystemCapabilities,
   Worktree,
 } from "@ark/shared";
+import { ChevronLeft } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { BrowserPane } from "@/components/BrowserPane";
@@ -26,6 +29,8 @@ import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
 import type { ViewerTab } from "@/components/TerminalPane";
 import type { DiagramOpenRequest } from "@/lib/mobile-session-view-mode";
+import { getBaseName, isPathWithin } from "@/utils/pathUtils";
+import { findRepoForSession } from "@/utils/sessionUtils";
 
 // MobileTab / SessionSubView は配列を真実源にし、union 型を派生させる。
 // こうしないと runtime 検証配列と型が二重化し、union に値を足したとき配列更新を
@@ -169,6 +174,28 @@ interface MobileLayoutProps {
   sessionStatuses: Map<string, BridgeSessionStatus>;
   /** AWAITING 時の確認 UI 生テキストマップ（チャットビューのバナー用） */
   sessionAwaitingTexts: Map<string, string>;
+  /** session:previews由来の端末の最後の内容行 (一覧の2行目) */
+  sessionPreviews: Map<string, string>;
+  /** worktreePath → 表示名 (一覧の行とTask 10のヘッダーの主ラベル) */
+  worktreeDisplayNames: Map<string, string>;
+  onSetWorktreeDisplayName?: (
+    worktreePath: string,
+    displayName: string | null
+  ) => void;
+  /** プロファイル切替 (Linux限定) */
+  capabilities?: SystemCapabilities;
+  profiles?: Profile[];
+  repoProfileLinks?: Map<string, string>;
+  worktreeProfileLinks?: Map<string, string>;
+  onSetRepoProfile?: (repoPath: string, profileId: string | null) => void;
+  onSetWorktreeProfile?: (
+    worktreePath: string,
+    profileId: string | null
+  ) => void;
+  onOpenProfileManager?: () => void;
+  /** 行メニューの「リポジトリ」の操作 */
+  onCreateWorktreeForRepo?: (repoPath: string) => void;
+  onRemoveRepo?: (repoPath: string) => void;
   notificationControl?: ReactNode;
   notificationsSupported?: boolean;
   isSessionNotificationEnabled?: (sessionId: string) => boolean;
@@ -218,13 +245,25 @@ export function MobileLayout({
   onUpdateShortcut,
   onDeleteShortcut,
   selectedSessionId,
-  activeTab,
+  activeTab: storedActiveTab,
   sessionSubView,
   onChangeActiveTab,
   onChangeSessionSubView,
   sessionsLoaded,
   sessionStatuses,
   sessionAwaitingTexts,
+  sessionPreviews,
+  worktreeDisplayNames,
+  onSetWorktreeDisplayName,
+  capabilities,
+  profiles,
+  repoProfileLinks,
+  worktreeProfileLinks,
+  onSetRepoProfile,
+  onSetWorktreeProfile,
+  onOpenProfileManager,
+  onCreateWorktreeForRepo,
+  onRemoveRepo,
   notificationControl,
   notificationsSupported = false,
   isSessionNotificationEnabled,
@@ -271,6 +310,11 @@ export function MobileLayout({
   );
   const effectiveSessionSubView: SessionSubView =
     sessionSubView === "detail" && !canShowDetail ? "list" : sessionSubView;
+  // ブラウザのタブはリモート時だけある。設定はサーバーに保存され端末をまたぐので、
+  // リモートの端末で開いたブラウザのタブが残っていても、ローカルでは一覧に戻す
+  // (ローカルには下部タブが無く、戻る手段の無い空の画面になるため)。
+  // 以降の描画と判定はこの activeTab を使い、保存された値は触らない
+  const activeTab: MobileTab = isRemote ? storedActiveTab : "session";
 
   // 選択中のセッションが恒久的に存在しない（削除等）場合は、永続化state も
   // 全てクリアする（sessionSubView=list + 不在 selectedSessionId の解除）。
@@ -307,7 +351,21 @@ export function MobileLayout({
     setHasBrowserOpened(true);
   }, [onSelectBrowser, onChangeActiveTab]);
 
-  const showBottomNav = true;
+  // 下部タブはブラウザタブがあるリモート時だけ、一覧とブラウザの画面に出す。
+  // 会話の詳細画面は自前の下部バーを画面の下端に置くので、タブを重ねない
+  const isDetailShown =
+    activeTab === "session" && effectiveSessionSubView === "detail";
+  const showBottomNav = isRemote && !isDetailShown;
+  // 一覧とブラウザのラッパーだけが、下部タブの高さぶんの余白を持つ
+  const paneClassName = isRemote
+    ? "flex-1 flex flex-col min-h-0 pb-14"
+    : "flex-1 flex flex-col min-h-0";
+  const tabClassName = (selected: boolean) =>
+    `flex-1 py-3 text-center text-sm ${
+      selected
+        ? "font-semibold text-foreground"
+        : "font-medium text-muted-foreground"
+    }`;
 
   return (
     <div className="h-full flex flex-col min-h-0 overflow-hidden">
@@ -315,7 +373,7 @@ export function MobileLayout({
       <div
         className={
           activeTab === "session" && effectiveSessionSubView === "list"
-            ? "flex-1 flex flex-col min-h-0 pb-14"
+            ? paneClassName
             : "hidden"
         }
       >
@@ -323,17 +381,31 @@ export function MobileLayout({
           sessions={sessions}
           worktrees={worktrees}
           repoList={repoList}
+          sessionStatuses={sessionStatuses}
+          sessionPreviews={sessionPreviews}
+          worktreeDisplayNames={worktreeDisplayNames}
+          capabilities={capabilities}
+          profiles={profiles}
+          repoProfileLinks={repoProfileLinks}
+          worktreeProfileLinks={worktreeProfileLinks}
+          notificationsSupported={notificationsSupported}
+          isSessionNotificationEnabled={isSessionNotificationEnabled}
           onOpenSession={handleOpenSession}
           onStartSession={onStartSession}
           onDeleteSession={onDeleteSession}
           onDeleteWorktree={onDeleteWorktree}
-          onNewSession={onNewSession}
-          notificationControl={notificationControl}
-          notificationsSupported={notificationsSupported}
-          isSessionNotificationEnabled={isSessionNotificationEnabled}
+          onRestartSession={onRestartSession}
+          onSetWorktreeDisplayName={onSetWorktreeDisplayName}
           onSessionNotificationEnabledChange={
             onSessionNotificationEnabledChange
           }
+          onCreateWorktreeForRepo={onCreateWorktreeForRepo}
+          onRemoveRepo={onRemoveRepo}
+          onSetRepoProfile={onSetRepoProfile}
+          onSetWorktreeProfile={onSetWorktreeProfile}
+          onOpenProfileManager={onOpenProfileManager}
+          onNewSession={onNewSession}
+          notificationControl={notificationControl}
         />
       </div>
 
@@ -348,12 +420,20 @@ export function MobileLayout({
             activeTab === "session" &&
             effectiveSessionSubView === "detail" &&
             selectedSessionId === sessionId;
+          const worktree = getWorktreeForSession(session);
+          // 主ラベルに使うリポジトリ名。PC の上部バー (Dashboard) とサイドバー
+          // (useGroupedWorktreeItems) と同じ順 (session.repoPath → worktree のパス →
+          // 兄弟ディレクトリの推定) で決める
+          const repoPathOfSession =
+            session.repoPath ??
+            (worktree
+              ? repoList.find(repo => isPathWithin(worktree.path, repo))
+              : undefined) ??
+            findRepoForSession(session, repoList);
           return (
             <div
               key={sessionId}
-              className={
-                isActive ? "flex-1 flex flex-col min-h-0 pb-14" : "hidden"
-              }
+              className={isActive ? "flex-1 flex flex-col min-h-0" : "hidden"}
             >
               <MobileSessionView
                 socket={socket}
@@ -361,13 +441,29 @@ export function MobileLayout({
                 bridgeStatus={sessionStatuses.get(sessionId)}
                 awaitingText={sessionAwaitingTexts.get(sessionId)}
                 session={session}
-                worktree={getWorktreeForSession(session)}
+                worktree={worktree}
+                repoName={
+                  repoPathOfSession ? getBaseName(repoPathOfSession) : undefined
+                }
+                displayName={
+                  worktreeDisplayNames.get(
+                    worktree?.path ?? session.worktreePath
+                  ) ?? null
+                }
+                notificationsSupported={notificationsSupported}
+                notificationsEnabled={
+                  isSessionNotificationEnabled?.(sessionId) ?? true
+                }
+                onNotificationsEnabledChange={
+                  onSessionNotificationEnabledChange
+                    ? enabled =>
+                        onSessionNotificationEnabledChange(sessionId, enabled)
+                    : undefined
+                }
                 onBack={handleBack}
                 onSendMessage={message => onSendMessage(sessionId, message)}
                 onSendKey={key => onSendKey(sessionId, key)}
-                onDeleteSession={() =>
-                  onDeleteSession(sessionId, getWorktreeForSession(session))
-                }
+                onDeleteSession={() => onDeleteSession(sessionId, worktree)}
                 onRestartSession={
                   onRestartSession
                     ? () => onRestartSession(sessionId)
@@ -411,20 +507,15 @@ export function MobileLayout({
       {/* ブラウザビュー（noVNC）- 一度開いたら常に描画し、display:hiddenで切り替え。
           BrowserPaneの再マウントによるVNC再接続を防ぐ。 */}
       {hasBrowserOpened && (
-        <div
-          className={
-            activeTab === "browser"
-              ? "flex-1 flex flex-col min-h-0 pb-14"
-              : "hidden"
-          }
-        >
+        <div className={activeTab === "browser" ? paneClassName : "hidden"}>
           <div className="h-12 border-b border-border flex items-center px-4 shrink-0">
             <button
               type="button"
-              className="text-sm text-muted-foreground mr-3"
+              className="mr-3 inline-flex items-center gap-0.5 text-sm text-muted-foreground"
               onClick={() => onChangeActiveTab("session")}
             >
-              ← 戻る
+              <ChevronLeft className="size-4" aria-hidden="true" />
+              戻る
             </button>
             <span className="text-sm font-medium">ブラウザ</span>
           </div>
@@ -440,33 +531,28 @@ export function MobileLayout({
         </div>
       )}
 
-      {/* ボトムナビゲーション */}
+      {/* 下部タブ。選択中は緑の線ではなく、文字色とウェイトで示す */}
       {showBottomNav && (
-        <nav className="fixed bottom-0 left-0 right-0 border-t border-border bg-background z-50 flex">
+        <nav
+          aria-label="画面の切り替え"
+          className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-border bg-background"
+        >
           <button
             type="button"
-            className={`flex-1 py-3 text-center text-sm font-medium ${
-              activeTab === "session"
-                ? "text-primary border-t-2 border-primary"
-                : "text-muted-foreground"
-            }`}
+            aria-current={activeTab === "session" ? "page" : undefined}
+            className={tabClassName(activeTab === "session")}
             onClick={() => onChangeActiveTab("session")}
           >
             セッション
           </button>
-          {isRemote && (
-            <button
-              type="button"
-              className={`flex-1 py-3 text-center text-sm font-medium ${
-                activeTab === "browser"
-                  ? "text-primary border-t-2 border-primary"
-                  : "text-muted-foreground"
-              }`}
-              onClick={handleOpenBrowser}
-            >
-              ブラウザ
-            </button>
-          )}
+          <button
+            type="button"
+            aria-current={activeTab === "browser" ? "page" : undefined}
+            className={tabClassName(activeTab === "browser")}
+            onClick={handleOpenBrowser}
+          >
+            ブラウザ
+          </button>
         </nav>
       )}
     </div>

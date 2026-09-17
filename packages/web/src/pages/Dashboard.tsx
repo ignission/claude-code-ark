@@ -1,5 +1,5 @@
 import type { ManagedSession, SpecialKey, Worktree } from "@ark/shared";
-import { AlertCircle, Copy, Loader2, Terminal } from "lucide-react";
+import { Copy, Loader2, Terminal, WifiOff } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -55,7 +55,7 @@ import {
   isNotificationEnabledForSession,
   normalizeSessionNotificationSettings,
 } from "@/lib/session-notifications";
-import { getBaseName } from "@/utils/pathUtils";
+import { getBaseName, isPathWithin } from "@/utils/pathUtils";
 import {
   findRepoForSession,
   isSessionBelongsToRepo,
@@ -117,7 +117,6 @@ export default function Dashboard() {
     deletedWorktreeId,
     clearDeletedWorktreeId,
     sessionPreviews,
-    sessionActivityTexts,
     sessionAwaitingTexts,
     gridSnapshots,
     subscribeGrid,
@@ -155,9 +154,6 @@ export default function Dashboard() {
   });
 
   const isMobile = useIsMobile();
-
-  // PCサイドバー下部のシステムステータスバー用に bridge:snapshot を購読
-  const bridgeSnapshot = useBridgeSnapshot(socket, !isMobile);
 
   const isRemote =
     typeof window !== "undefined" &&
@@ -457,6 +453,8 @@ export default function Dashboard() {
   const [showPortSelector, setShowPortSelector] = useState(false);
   const [showProfileManager, setShowProfileManager] = useState(false);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
+  // AboutダイアログのCPU/MEM/DISK用。開いている間だけbridge:snapshotを購読する
+  const bridgeSnapshot = useBridgeSnapshot(socket, showAboutDialog);
 
   const copyToClipboard = (text: string | null) => {
     if (text) {
@@ -714,6 +712,18 @@ export default function Dashboard() {
           sessionsLoaded={sessionsLoaded}
           sessionStatuses={sessionStatuses}
           sessionAwaitingTexts={sessionAwaitingTexts}
+          sessionPreviews={sessionPreviews}
+          worktreeDisplayNames={worktreeDisplayNames}
+          onSetWorktreeDisplayName={setWorktreeDisplayName}
+          capabilities={capabilities}
+          profiles={profiles}
+          repoProfileLinks={repoProfileLinks}
+          worktreeProfileLinks={worktreeProfileLinks}
+          onSetRepoProfile={setRepoProfile}
+          onSetWorktreeProfile={setWorktreeProfile}
+          onOpenProfileManager={() => setShowProfileManager(true)}
+          onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
+          onRemoveRepo={handleRemoveRepo}
           notificationControl={notificationControl}
           notificationsSupported={sessionNotifications.supported}
           isSessionNotificationEnabled={isSessionNotificationEnabled}
@@ -728,45 +738,47 @@ export default function Dashboard() {
               sessions={sessions}
               worktrees={worktrees}
               repoList={repoList}
-              selectedSessionId={selectedSessionId}
+              sessionStatuses={sessionStatuses}
               sessionPreviews={sessionPreviews}
-              sessionActivityTexts={sessionActivityTexts}
-              onSelectSession={handleSelectSession}
-              onDeleteSession={handleDeleteSession}
-              onStartSession={handleStartSession}
-              onNewSession={handleNewSession}
-              onRemoveRepo={handleRemoveRepo}
-              onSelectBrowser={handleSelectBrowser}
-              isBrowserSelected={selectedSessionId === "browser"}
-              isRemote={isRemote}
+              selectedSessionId={selectedSessionId}
+              worktreeDisplayNames={worktreeDisplayNames}
+              capabilities={capabilities}
               profiles={profiles}
               repoProfileLinks={repoProfileLinks}
               worktreeProfileLinks={worktreeProfileLinks}
-              capabilities={capabilities}
-              onSetRepoProfile={setRepoProfile}
-              onSetWorktreeProfile={setWorktreeProfile}
-              worktreeDisplayNames={worktreeDisplayNames}
-              onSetWorktreeDisplayName={setWorktreeDisplayName}
-              onOpenProfileManager={() => setShowProfileManager(true)}
-              onRestartSession={handleRestartSession}
-              onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
-              onSelectRepoGrid={handleSelectRepoGrid}
-              gridRepoPath={gridRepoPath}
-              gridStatuses={sessionStatuses}
-              notificationControl={notificationControl}
               notificationsSupported={sessionNotifications.supported}
               isSessionNotificationEnabled={isSessionNotificationEnabled}
+              onOpenSession={handleSelectSession}
+              onStartSession={handleStartSession}
+              onDeleteSession={handleDeleteSession}
+              onRestartSession={handleRestartSession}
+              onSetWorktreeDisplayName={setWorktreeDisplayName}
               onSessionNotificationEnabledChange={
                 handleSessionNotificationEnabledChange
               }
+              onCreateWorktreeForRepo={handleCreateWorktreeForRepo}
+              onSelectRepoGrid={handleSelectRepoGrid}
+              onRemoveRepo={handleRemoveRepo}
+              onSetRepoProfile={setRepoProfile}
+              onSetWorktreeProfile={setWorktreeProfile}
+              onOpenProfileManager={() => setShowProfileManager(true)}
+              onNewSession={handleNewSession}
+              onOpenAbout={() => setShowAboutDialog(true)}
+              onSelectBrowser={handleSelectBrowser}
+              isBrowserSelected={selectedSessionId === "browser"}
+              isRemote={isRemote}
+              notificationControl={notificationControl}
             />
           }
           main={
             <div className="h-full flex flex-col">
               {!isConnected && (
-                <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 flex items-center gap-2 text-destructive text-sm shrink-0">
-                  <AlertCircle className="w-4 h-4" />
-                  <span>Not connected to server</span>
+                <div
+                  role="status"
+                  className="border-b border-status-error/30 bg-status-error/15 px-4 py-2 flex items-center gap-2 text-status-error text-sm font-medium shrink-0"
+                >
+                  <WifiOff className="w-4 h-4" aria-hidden="true" />
+                  <span>サーバーとつながっていません</span>
                 </div>
               )}
               <div className="flex-1 overflow-hidden relative">
@@ -816,15 +828,27 @@ export default function Dashboard() {
                 {Array.from(sessions.values()).map(session => {
                   const isActive = selectedSessionId === session.id;
                   const wt = worktrees.find(w => w.id === session.worktreeId);
-                  const rn = (() => {
-                    if (repoList.length === 0) return undefined;
-                    const repo = findRepoForSession(session, repoList);
-                    return repo ? getBaseName(repo) : undefined;
-                  })();
+                  // 主ラベルに使うリポジトリ名。サイドバー (useGroupedWorktreeItems) と
+                  // 同じ順 (session.repoPath → worktreeのパス → 兄弟ディレクトリの推定) で決める
+                  const repoPathOfSession =
+                    session.repoPath ??
+                    (wt
+                      ? repoList.find(repo => isPathWithin(wt.path, repo))
+                      : undefined) ??
+                    findRepoForSession(session, repoList);
+                  const rn = repoPathOfSession
+                    ? getBaseName(repoPathOfSession)
+                    : undefined;
+                  // サイドバー (SessionSectionList) と通知の文言と同じ出所
+                  const displayName =
+                    worktreeDisplayNames.get(
+                      wt?.path ?? session.worktreePath
+                    ) ?? null;
                   const paneProps = {
                     session,
                     worktree: wt,
                     repoName: rn,
+                    displayName,
                     tabs: getTabsForSession(session.id),
                     activeTabIndex: getActiveTabForSession(session.id),
                     onTabSelect: (idx: number) =>
@@ -849,11 +873,22 @@ export default function Dashboard() {
                     onCreateShortcut: createShortcut,
                     onUpdateShortcut: updateShortcut,
                     onDeleteShortcut: deleteShortcut,
+                    notificationsSupported: sessionNotifications.supported,
+                    notificationsEnabled: isSessionNotificationEnabled(
+                      session.id
+                    ),
+                    onNotificationsEnabledChange: (enabled: boolean) =>
+                      handleSessionNotificationEnabledChange(
+                        session.id,
+                        enabled
+                      ),
                   };
                   return (
                     <div
                       key={session.id}
-                      className={isActive ? "h-full flex flex-col" : "hidden"}
+                      className={
+                        isActive ? "h-full flex flex-col p-3 pl-1" : "hidden"
+                      }
                     >
                       <SplitViewPane
                         socket={socket}
@@ -890,10 +925,8 @@ export default function Dashboard() {
               </div>
             </div>
           }
-          initialSidebarWidth={getSetting<number>("ark-sidebar-width", 250)}
+          initialSidebarWidth={getSetting<number>("ark-sidebar-width", 300)}
           onSidebarWidthChange={w => setSetting("ark-sidebar-width", w)}
-          onOpenAboutDialog={() => setShowAboutDialog(true)}
-          hostMetrics={bridgeSnapshot?.metrics ?? null}
         />
       )}
 
@@ -1074,7 +1107,11 @@ export default function Dashboard() {
       )}
 
       {/* About Ark (同梱バイナリ LICENSE 一覧) */}
-      <AboutDialog open={showAboutDialog} onOpenChange={setShowAboutDialog} />
+      <AboutDialog
+        open={showAboutDialog}
+        onOpenChange={setShowAboutDialog}
+        metrics={bridgeSnapshot?.metrics ?? null}
+      />
     </>
   );
 }

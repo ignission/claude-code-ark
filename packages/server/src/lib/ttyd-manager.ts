@@ -16,6 +16,7 @@ import {
   TTYD_PORT_START,
 } from "./constants.js";
 import { getBundledBinDir } from "./paths.js";
+import { buildTtydTerminalOptions } from "./ttyd-theme.js";
 
 /**
  * ttyd の実体パスを解決する。
@@ -238,12 +239,7 @@ export class TtydManager extends EventEmitter {
         process.platform === "darwin" ? "lo0" : "lo",
         "--base-path",
         basePath, // プロキシ経由でのWebSocket接続に必要
-        "-t",
-        "fontSize=14",
-        "-t",
-        "fontFamily=JetBrains Mono, Menlo, Monaco, monospace",
-        "-t",
-        'theme={"background":"#1a1b26","foreground":"#a9b1d6"}',
+        ...buildTtydTerminalOptions(),
         "tmux",
         "attach-session",
         "-t",

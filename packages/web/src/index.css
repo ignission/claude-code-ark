@@ -2,7 +2,7 @@
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (@media (prefers-color-scheme: dark));
 
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
@@ -28,11 +28,6 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -42,88 +37,107 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  /* Terminal-inspired custom colors */
-  --color-terminal-green: oklch(0.85 0.25 145);
-  --color-terminal-cyan: oklch(0.8 0.2 200);
-  --color-terminal-yellow: oklch(0.85 0.2 85);
-  --color-terminal-red: oklch(0.7 0.25 25);
+  /* セッションの状態色 (status-tone.ts の TONE_CLASSES が使う) */
+  --color-status-busy: var(--status-busy);
+  --color-status-idle: var(--status-idle);
+  --color-status-awaiting: var(--status-awaiting);
+  --color-status-error: var(--status-error);
+  --color-status-neutral: var(--status-neutral);
 
-  /* Custom font */
+  --shadow-card: var(--elevation-card);
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Inter", "Hiragino Sans",
+    "Hiragino Kaku Gothic ProN", "Noto Sans JP", system-ui, sans-serif;
   --font-mono:
-    "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-    monospace;
+    ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
 
 :root {
-  --radius: 0.5rem;
-  /* Dark theme as default for terminal-inspired design */
-  --primary: oklch(0.85 0.25 145);
-  --primary-foreground: oklch(0.1 0.02 145);
-  --background: oklch(0.13 0.015 260);
-  --foreground: oklch(0.9 0.01 260);
-  --card: oklch(0.17 0.015 260);
-  --card-foreground: oklch(0.9 0.01 260);
-  --popover: oklch(0.17 0.015 260);
-  --popover-foreground: oklch(0.9 0.01 260);
-  --secondary: oklch(0.22 0.015 260);
-  --secondary-foreground: oklch(0.85 0.01 260);
-  --muted: oklch(0.25 0.015 260);
-  --muted-foreground: oklch(0.65 0.02 260);
-  --accent: oklch(0.8 0.2 200);
-  --accent-foreground: oklch(0.1 0.02 200);
-  --destructive: oklch(0.65 0.25 25);
-  --destructive-foreground: oklch(0.98 0 0);
-  --border: oklch(0.3 0.02 260);
-  --input: oklch(0.22 0.015 260);
-  --ring: oklch(0.85 0.25 145);
-  --chart-1: oklch(0.85 0.25 145);
-  --chart-2: oklch(0.8 0.2 200);
-  --chart-3: oklch(0.85 0.2 85);
-  --chart-4: oklch(0.7 0.25 25);
-  --chart-5: oklch(0.75 0.2 280);
-  --sidebar: oklch(0.1 0.015 260);
-  --sidebar-foreground: oklch(0.9 0.01 260);
-  --sidebar-primary: oklch(0.85 0.25 145);
-  --sidebar-primary-foreground: oklch(0.1 0.02 145);
-  --sidebar-accent: oklch(0.2 0.015 260);
-  --sidebar-accent-foreground: oklch(0.9 0.01 260);
-  --sidebar-border: oklch(0.25 0.02 260);
-  --sidebar-ring: oklch(0.85 0.25 145);
+  color-scheme: light dark;
+  --radius: 0.75rem;
+
+  --background: oklch(0.985 0.005 80);
+  --foreground: oklch(0.24 0.02 60);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.24 0.02 60);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.24 0.02 60);
+  --primary: oklch(0.5 0.16 262);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.955 0.008 80);
+  --secondary-foreground: oklch(0.24 0.02 60);
+  --muted: oklch(0.955 0.008 80);
+  --muted-foreground: oklch(0.48 0.02 60);
+  --accent: oklch(0.94 0.01 80);
+  --accent-foreground: oklch(0.24 0.02 60);
+  --destructive: oklch(0.55 0.2 25);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0.9 0.01 80);
+  --input: oklch(0.9 0.01 80);
+  --ring: oklch(0.5 0.16 262);
+  --sidebar: oklch(0.985 0.005 80);
+  --sidebar-foreground: oklch(0.24 0.02 60);
+  --sidebar-primary: oklch(0.5 0.16 262);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.955 0.008 80);
+  --sidebar-accent-foreground: oklch(0.24 0.02 60);
+  --sidebar-border: oklch(0.9 0.01 80);
+  --sidebar-ring: oklch(0.5 0.16 262);
+
+  --status-busy: oklch(0.52 0.14 240);
+  --status-idle: oklch(0.55 0.15 150);
+  --status-awaiting: oklch(0.56 0.15 70);
+  --status-error: oklch(0.55 0.2 25);
+  --status-neutral: oklch(0.55 0.015 60);
+
+  --elevation-card:
+    0 1px 2px oklch(0 0 0 / 0.06), 0 4px 12px oklch(0 0 0 / 0.05);
+  --glass: oklch(1 0 0 / 0.72);
 }
 
-.dark {
-  --primary: oklch(0.85 0.25 145);
-  --primary-foreground: oklch(0.1 0.02 145);
-  --background: oklch(0.13 0.015 260);
-  --foreground: oklch(0.9 0.01 260);
-  --card: oklch(0.17 0.015 260);
-  --card-foreground: oklch(0.9 0.01 260);
-  --popover: oklch(0.17 0.015 260);
-  --popover-foreground: oklch(0.9 0.01 260);
-  --secondary: oklch(0.22 0.015 260);
-  --secondary-foreground: oklch(0.85 0.01 260);
-  --muted: oklch(0.25 0.015 260);
-  --muted-foreground: oklch(0.65 0.02 260);
-  --accent: oklch(0.8 0.2 200);
-  --accent-foreground: oklch(0.1 0.02 200);
-  --destructive: oklch(0.65 0.25 25);
-  --destructive-foreground: oklch(0.98 0 0);
-  --border: oklch(0.3 0.02 260);
-  --input: oklch(0.22 0.015 260);
-  --ring: oklch(0.85 0.25 145);
-  --chart-1: oklch(0.85 0.25 145);
-  --chart-2: oklch(0.8 0.2 200);
-  --chart-3: oklch(0.85 0.2 85);
-  --chart-4: oklch(0.7 0.25 25);
-  --chart-5: oklch(0.75 0.2 280);
-  --sidebar: oklch(0.1 0.015 260);
-  --sidebar-foreground: oklch(0.9 0.01 260);
-  --sidebar-primary: oklch(0.85 0.25 145);
-  --sidebar-primary-foreground: oklch(0.1 0.02 145);
-  --sidebar-accent: oklch(0.2 0.015 260);
-  --sidebar-accent-foreground: oklch(0.9 0.01 260);
-  --sidebar-border: oklch(0.25 0.02 260);
-  --sidebar-ring: oklch(0.85 0.25 145);
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: light dark;
+    --radius: 0.75rem;
+
+    --background: oklch(0.19 0.01 60);
+    --foreground: oklch(0.93 0.01 80);
+    --card: oklch(0.23 0.01 60);
+    --card-foreground: oklch(0.93 0.01 80);
+    --popover: oklch(0.23 0.01 60);
+    --popover-foreground: oklch(0.93 0.01 80);
+    --primary: oklch(0.74 0.13 262);
+    --primary-foreground: oklch(0.18 0.03 262);
+    --secondary: oklch(0.27 0.01 60);
+    --secondary-foreground: oklch(0.93 0.01 80);
+    --muted: oklch(0.27 0.01 60);
+    --muted-foreground: oklch(0.72 0.015 80);
+    --accent: oklch(0.29 0.01 60);
+    --accent-foreground: oklch(0.93 0.01 80);
+    --destructive: oklch(0.74 0.16 25);
+    --destructive-foreground: oklch(0.18 0.03 25);
+    --border: oklch(0.3 0.01 60);
+    --input: oklch(0.3 0.01 60);
+    --ring: oklch(0.74 0.13 262);
+    --sidebar: oklch(0.19 0.01 60);
+    --sidebar-foreground: oklch(0.93 0.01 80);
+    --sidebar-primary: oklch(0.74 0.13 262);
+    --sidebar-primary-foreground: oklch(0.18 0.03 262);
+    --sidebar-accent: oklch(0.27 0.01 60);
+    --sidebar-accent-foreground: oklch(0.93 0.01 80);
+    --sidebar-border: oklch(0.3 0.01 60);
+    --sidebar-ring: oklch(0.74 0.13 262);
+
+    --status-busy: oklch(0.76 0.12 240);
+    --status-idle: oklch(0.78 0.13 150);
+    --status-awaiting: oklch(0.82 0.14 75);
+    --status-error: oklch(0.74 0.16 25);
+    --status-neutral: oklch(0.65 0.015 60);
+
+    --elevation-card: 0 1px 2px oklch(0 0 0 / 0.3);
+    --glass: oklch(0.23 0.01 60 / 0.72);
+  }
 }
 
 @layer base {
@@ -132,9 +146,8 @@
   }
   html,
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans antialiased;
 
-    font-family: Inter, system-ui, -apple-system, sans-serif;
     height: 100dvh;
     overflow: hidden;
     overscroll-behavior: none;
@@ -155,7 +168,6 @@
     @apply cursor-pointer;
   }
 
-  /* Terminal-style code blocks */
   code,
   pre,
   .font-mono {
@@ -164,85 +176,68 @@
 }
 
 @layer components {
-  .container {
-    width: 100%;
-    margin-left: auto;
-    margin-right: auto;
-    padding-left: 1rem;
-    padding-right: 1rem;
-  }
-
   .flex {
     min-height: 0;
     min-width: 0;
   }
 
-  @media (min-width: 640px) {
-    .container {
-      padding-left: 1.5rem;
-      padding-right: 1.5rem;
+  /* 浮かぶガラスバー。操作とナビゲーションの層だけに使う (設計書 6 節) */
+  .glass-bar {
+    background: var(--glass);
+    -webkit-backdrop-filter: blur(18px) saturate(170%);
+    backdrop-filter: blur(18px) saturate(170%);
+    border: 1px solid var(--border);
+    box-shadow: var(--elevation-card);
+  }
+  @supports not (
+      (backdrop-filter: blur(1px)) or
+      (-webkit-backdrop-filter: blur(1px))
+    ) {
+    .glass-bar {
+      background: var(--card);
+    }
+  }
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    .glass-bar {
+      background: var(--card);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
     }
   }
 
-  @media (min-width: 1024px) {
-    .container {
-      padding-left: 2rem;
-      padding-right: 2rem;
-      max-width: 1280px;
-    }
+  /* 作業中の3点。opacity だけで呼吸させる */
+  .status-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
   }
-
-  /* Terminal-inspired components */
-  .terminal-prompt {
-    @apply font-mono text-terminal-green;
+  .status-dots > span {
+    width: 3px;
+    height: 3px;
+    border-radius: 9999px;
+    background: currentColor;
+    animation: status-breathe 1.2s ease-in-out infinite;
   }
-
-  .terminal-prompt::before {
-    content: ">_ ";
-    @apply text-terminal-cyan;
+  .status-dots > span:nth-child(2) {
+    animation-delay: 0.2s;
   }
-
-  /* Status indicator with pulse animation */
-  .status-indicator {
-    @apply w-2 h-2 rounded-full;
+  .status-dots > span:nth-child(3) {
+    animation-delay: 0.4s;
   }
-
-  .status-indicator.active {
-    @apply bg-terminal-green;
-    animation: pulse-glow 2s ease-in-out infinite;
-  }
-
-  .status-indicator.idle {
-    @apply bg-terminal-yellow;
-  }
-
-  .status-indicator.error {
-    @apply bg-terminal-red;
-  }
-
-  .status-indicator.stopped {
-    @apply bg-muted-foreground;
-  }
-
-  @keyframes pulse-glow {
+  @keyframes status-breathe {
     0%,
     100% {
-      opacity: 1;
-      box-shadow: 0 0 4px currentColor;
+      opacity: 0.35;
     }
     50% {
-      opacity: 0.6;
-      box-shadow: 0 0 12px currentColor;
+      opacity: 1;
     }
   }
-
-  /* Glow effect for primary elements */
-  .glow-green {
-    box-shadow: 0 0 20px oklch(0.85 0.25 145 / 0.3);
-  }
-
-  .glow-cyan {
-    box-shadow: 0 0 20px oklch(0.8 0.2 200 / 0.3);
+  @media (prefers-reduced-motion: reduce) {
+    .status-dots > span {
+      animation: none;
+      opacity: 1;
+    }
   }
 }
 
@@ -260,61 +255,11 @@
   }
 }
 
-/* ペットアニメーション */
-@keyframes pet-bounce {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-4px);
-  }
-}
-
-@keyframes heart-float {
-  0% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-20px) scale(1.5);
-  }
-}
-
-@keyframes level-up-flash {
-  0% {
-    opacity: 0;
-    transform: scale(0.5);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.2);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(1.5);
-  }
-}
-
-.pet-bounce {
-  animation: pet-bounce 1s ease-in-out infinite;
-}
-
-.heart-float {
-  animation: heart-float 0.8s ease-out forwards;
-  pointer-events: none;
-}
-
-.level-up-flash {
-  animation: level-up-flash 1s ease-out forwards;
-  pointer-events: none;
-}
-
 /* ===== JSONL assistant text 用 markdown プロース =====
- * react-markdown が出力する要素にチャットらしい spacing と code/blockquote 装飾を当てる */
+ * react-markdown が出力する要素にチャットらしい spacing と code/blockquote 装飾を当てる。
+ * 色はトークンだけで指定し、ライト/ダークの切り替えはトークンの定義側に任せる */
 .md-prose {
-  line-height: 1.65;
+  line-height: 1.6;
 }
 .md-prose > * + * {
   margin-top: 0.75em;
@@ -356,45 +301,39 @@
   margin: 0;
 }
 .md-prose code {
-  font-family: ui-monospace, SFMono-Regular, "Menlo", monospace;
-  background: rgba(120, 120, 120, 0.15);
+  font-family: var(--font-mono);
+  background: var(--muted);
   border-radius: 4px;
   padding: 1px 5px;
   font-size: 0.9em;
 }
 .md-prose pre {
-  background: rgba(0, 0, 0, 0.06);
-  border: 1px solid rgba(120, 120, 120, 0.2);
-  border-radius: 6px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 4px);
   padding: 10px 12px;
   overflow-x: auto;
-}
-.dark .md-prose pre {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.08);
 }
 .md-prose pre code {
   background: transparent;
   padding: 0;
-  font-size: 0.9em;
+  font-size: 13px;
 }
 .md-prose blockquote {
-  border-left: 3px solid rgba(120, 120, 120, 0.4);
+  border-left: 3px solid var(--border);
   padding-left: 0.8em;
-  color: rgba(120, 120, 120, 0.9);
+  color: var(--muted-foreground);
 }
 .md-prose a {
-  color: #2563eb;
+  color: var(--primary);
   text-decoration: underline;
-}
-.dark .md-prose a {
-  color: #60a5fa;
+  text-underline-offset: 2px;
 }
 .md-prose table {
   border-collapse: collapse;
 }
 .md-prose th,
 .md-prose td {
-  border: 1px solid rgba(120, 120, 120, 0.3);
+  border: 1px solid var(--border);
   padding: 4px 8px;
 }

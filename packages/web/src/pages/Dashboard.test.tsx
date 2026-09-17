@@ -10,6 +10,11 @@ const testDoubles = vi.hoisted(() => ({
   getSetting: vi.fn(),
   setSetting: vi.fn(),
   splitChatPane: vi.fn(),
+  sessionSidebar: vi.fn(),
+  aboutDialog: vi.fn(),
+  bridgeSnapshotEnabled: vi.fn(),
+  mobileLayout: vi.fn(),
+  isMobile: false,
   socketState: {} as Record<string, unknown>,
 }));
 
@@ -27,11 +32,14 @@ vi.mock("@/hooks/useSocket", () => ({
 }));
 
 vi.mock("@/hooks/useMobile", () => ({
-  useIsMobile: () => false,
+  useIsMobile: () => testDoubles.isMobile,
 }));
 
 vi.mock("@/hooks/useBridgeSnapshot", () => ({
-  useBridgeSnapshot: () => null,
+  useBridgeSnapshot: (_socket: unknown, enabled: boolean) => {
+    testDoubles.bridgeSnapshotEnabled(enabled);
+    return null;
+  },
 }));
 
 vi.mock("@/hooks/useSessionNotifications", () => ({
@@ -71,10 +79,26 @@ vi.mock("@/components/DiagramPane", () => ({
 }));
 
 vi.mock("@/components/SidebarMainLayout", () => ({
-  SidebarMainLayout: ({ main }: { main: ReactNode }) => <>{main}</>,
+  SidebarMainLayout: ({
+    sidebar,
+    main,
+  }: {
+    sidebar: ReactNode;
+    main: ReactNode;
+  }) => (
+    <>
+      {sidebar}
+      {main}
+    </>
+  ),
 }));
 
-vi.mock("@/components/AboutDialog", () => ({ AboutDialog: () => null }));
+vi.mock("@/components/AboutDialog", () => ({
+  AboutDialog: (props: Record<string, unknown>) => {
+    testDoubles.aboutDialog(props);
+    return null;
+  },
+}));
 vi.mock("@/components/BrowserPane", () => ({ BrowserPane: () => null }));
 vi.mock("@/components/CreateWorktreeDialog", () => ({
   CreateWorktreeDialog: () => null,
@@ -90,12 +114,18 @@ vi.mock("@/components/RepoSelectDialog", () => ({
   RepoSelectDialog: () => null,
 }));
 vi.mock("@/components/SessionSidebar", () => ({
-  SessionSidebar: () => null,
+  SessionSidebar: (props: Record<string, unknown>) => {
+    testDoubles.sessionSidebar(props);
+    return null;
+  },
 }));
 vi.mock("@/components/UpdateBanner", () => ({ UpdateBanner: () => null }));
 
 vi.mock("@/components/MobileLayout", () => ({
-  MobileLayout: () => null,
+  MobileLayout: (props: Record<string, unknown>) => {
+    testDoubles.mobileLayout(props);
+    return null;
+  },
   normalizeMobileTab: (value: unknown) => value,
   normalizeSessionId: (value: unknown) => value,
   normalizeSessionSubView: (value: unknown) => value,
@@ -182,7 +212,6 @@ function socketState(session: ManagedSession): Record<string, unknown> {
     deletedWorktreeId: null,
     clearDeletedWorktreeId: fn,
     sessionPreviews: new Map(),
-    sessionActivityTexts: new Map(),
     sessionAwaitingTexts: new Map([
       [session.id, "Dashboard から届く AWAITING テキスト"],
     ]),
@@ -224,12 +253,23 @@ function mount(element: ReactElement): void {
   mountedRoot = { root, container };
 }
 
+function latestProps(mock: ReturnType<typeof vi.fn>): Record<string, unknown> {
+  const props = mock.mock.calls.at(-1)?.[0];
+  expect(props).toBeDefined();
+  return props as Record<string, unknown>;
+}
+
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  testDoubles.isMobile = false;
+  testDoubles.mobileLayout.mockClear();
   localStorage.clear();
   localStorage.setItem("ark-split-left-mode", "chat");
   testDoubles.splitChatPane.mockClear();
   testDoubles.setSetting.mockClear();
+  testDoubles.sessionSidebar.mockClear();
+  testDoubles.aboutDialog.mockClear();
+  testDoubles.bridgeSnapshotEnabled.mockClear();
 
   const session = makeSession();
   testDoubles.socketState = socketState(session);
@@ -258,5 +298,78 @@ describe("Dashboard の会話ビュー配線", () => {
       bridgeStatus: "AWAITING",
       awaitingText: "Dashboard から届く AWAITING テキスト",
     });
+  });
+});
+
+describe("Dashboardのサイドバー配線", () => {
+  it("状態とプレビューをサイドバーへ渡し、Aboutを開いている間だけホストの状態を購読する", () => {
+    mount(<Dashboard />);
+
+    const state = testDoubles.socketState;
+    const sidebar = latestProps(testDoubles.sessionSidebar);
+    expect(sidebar.sessionStatuses).toBe(state.sessionStatuses);
+    expect(sidebar.sessionPreviews).toBe(state.sessionPreviews);
+    expect(sidebar.selectedSessionId).toBe("dashboard-session");
+    expect(sidebar).not.toHaveProperty("sessionActivityTexts");
+    expect(latestProps(testDoubles.aboutDialog)).toMatchObject({
+      open: false,
+      metrics: null,
+    });
+    expect(testDoubles.bridgeSnapshotEnabled).toHaveBeenLastCalledWith(false);
+
+    act(() => (sidebar.onOpenAbout as () => void)());
+
+    expect(latestProps(testDoubles.aboutDialog)).toMatchObject({ open: true });
+    expect(testDoubles.bridgeSnapshotEnabled).toHaveBeenLastCalledWith(true);
+  });
+});
+
+describe("Dashboardのモバイル一覧の配線", () => {
+  it("状態・プレビュー・表示名・プロファイルと、リポジトリの操作をMobileLayoutへ渡す", () => {
+    testDoubles.isMobile = true;
+    mount(<Dashboard />);
+
+    const state = testDoubles.socketState;
+    const layout = latestProps(testDoubles.mobileLayout);
+    expect(layout.sessionStatuses).toBe(state.sessionStatuses);
+    expect(layout.sessionPreviews).toBe(state.sessionPreviews);
+    expect(layout.worktreeDisplayNames).toBe(state.worktreeDisplayNames);
+    expect(layout.onSetWorktreeDisplayName).toBe(state.setWorktreeDisplayName);
+    expect(layout.capabilities).toBe(state.capabilities);
+    expect(layout.profiles).toBe(state.profiles);
+    expect(layout.repoProfileLinks).toBe(state.repoProfileLinks);
+    expect(layout.worktreeProfileLinks).toBe(state.worktreeProfileLinks);
+    expect(layout.onSetRepoProfile).toBe(state.setRepoProfile);
+    expect(layout.onSetWorktreeProfile).toBe(state.setWorktreeProfile);
+    expect(layout.onOpenProfileManager).toBeTypeOf("function");
+    expect(layout.onCreateWorktreeForRepo).toBeTypeOf("function");
+    expect(layout.onRemoveRepo).toBeTypeOf("function");
+  });
+});
+
+describe("Dashboardの上部バー配線", () => {
+  it("上部バーに表示名と状態チップを出す", () => {
+    const session = makeSession();
+    testDoubles.socketState = {
+      ...socketState(session),
+      worktreeDisplayNames: new Map([[session.worktreePath, "ログイン画面"]]),
+    };
+
+    mount(<Dashboard />);
+
+    const header = mountedRoot?.container.querySelector("header");
+    expect(header?.textContent).toContain("ログイン画面");
+    expect(header?.textContent).toContain("確認待ち");
+  });
+
+  it("サーバーとの切断を日本語の帯で知らせる", () => {
+    const session = makeSession();
+    testDoubles.socketState = { ...socketState(session), isConnected: false };
+
+    mount(<Dashboard />);
+
+    const text = mountedRoot?.container.textContent ?? "";
+    expect(text).toContain("サーバーとつながっていません");
+    expect(text).not.toContain("Not connected to server");
   });
 });

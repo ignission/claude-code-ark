@@ -229,7 +229,7 @@ function FolderBrowserContent({
             type="button"
             onClick={handleConfirm}
             disabled={isConfirmDisabled}
-            className="glow-green h-12"
+            className="h-12"
           >
             <FolderOpen className="mr-2 h-4 w-4" />
             このフォルダを選択
@@ -252,7 +252,6 @@ function FolderBrowserContent({
             type="button"
             onClick={handleConfirm}
             disabled={isConfirmDisabled}
-            className="glow-green"
           >
             <FolderOpen className="mr-2 h-4 w-4" />
             このフォルダを選択

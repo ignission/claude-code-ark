@@ -214,7 +214,7 @@ function ListView({
       {/* Linuxのみバッジ */}
       <div className="px-5 py-3 text-xs text-muted-foreground bg-muted/30 border-b border-border">
         <p className="flex items-center gap-2 flex-wrap">
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">
+          <span className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 font-medium text-foreground">
             Linuxのみ
           </span>
           <span>macOS/Windowsでは利用できません</span>
@@ -227,12 +227,7 @@ function ListView({
           <span className="text-xs text-muted-foreground font-medium">
             登録済みプロファイル ({profiles.length})
           </span>
-          <Button
-            type="button"
-            size="sm"
-            onClick={onAdd}
-            className="bg-blue-600 hover:bg-blue-500 text-white"
-          >
+          <Button type="button" size="sm" onClick={onAdd}>
             <Plus className="w-3 h-3 mr-1" />
             新規追加
           </Button>
@@ -298,7 +293,7 @@ function ProfileRow({
             type="button"
             onClick={onAskDelete}
             title="削除"
-            className="p-1.5 text-muted-foreground hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"
+            className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition-colors"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
@@ -349,7 +344,7 @@ function AddOrEditView({
     <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
       <DialogHeader className="px-5 py-4 border-b border-border">
         <DialogTitle className="flex items-center gap-2">
-          <UsersRound className="w-4 h-4 text-blue-400" />
+          <UsersRound className="w-4 h-4 text-primary" />
           {isAdd ? "新規プロファイル追加" : "プロファイル編集"}
         </DialogTitle>
       </DialogHeader>
@@ -372,7 +367,7 @@ function AddOrEditView({
             }}
             placeholder="例: 仕事Max"
             autoFocus
-            className="bg-background border-border focus-visible:border-blue-500"
+            className="bg-background border-border"
           />
           {error?.field === "name" && (
             <p className="text-xs text-destructive mt-1">{error.message}</p>
@@ -401,7 +396,7 @@ function AddOrEditView({
               if (error?.field === "configDir") setError(null);
             }}
             placeholder="~/.claude-personal"
-            className="bg-background border-border font-mono focus-visible:border-blue-500"
+            className="bg-background border-border font-mono"
           />
           {error?.field === "configDir" && (
             <p className="text-xs text-destructive mt-1">{error.message}</p>
@@ -412,9 +407,9 @@ function AddOrEditView({
         </div>
 
         {isAdd && (
-          <div className="bg-blue-500/5 border border-blue-500/20 rounded-md p-3 flex gap-2">
-            <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-            <div className="text-xs text-blue-200/80">
+          <div className="bg-primary/5 border border-primary/20 rounded-md p-3 flex gap-2">
+            <Info className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+            <div className="text-xs text-foreground/80">
               <p>
                 追加後、このプロファイルを紐付けたリポジトリでセッションを起動すると、
                 claude CLIが自動でログイン画面を表示します。
@@ -428,11 +423,7 @@ function AddOrEditView({
         <Button type="button" variant="outline" size="sm" onClick={onCancel}>
           キャンセル
         </Button>
-        <Button
-          type="submit"
-          size="sm"
-          className="bg-blue-600 hover:bg-blue-500 text-white"
-        >
+        <Button type="submit" size="sm">
           {isAdd ? (
             <>
               <Plus className="w-3.5 h-3.5 mr-1" />

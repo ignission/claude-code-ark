@@ -6,7 +6,8 @@
  * tool call は軽量 chip)。**tmux 画面パースは行わない** (チャット UI v3 の
  * 設計原則。busy/AWAITING 等の状態は session:previews の bridgeStatus を使う)。
  *
- * 入力欄は最下部に固定。送信は tmux send-keys 経由 (onSendMessage)。
+ * 入力欄は最下部に固定 (layout="mobile" では本文の上に浮かぶガラスバー)。
+ * 送信は tmux send-keys 経由 (onSendMessage)。
  * ファイルアップロード (D&D / ペースト / 選択) に対応。
  */
 
@@ -21,15 +22,23 @@ import type {
 import { isImagePath, splitTextWithFilePaths } from "@ark/shared/file-paths";
 import {
   ArrowDown,
+  ArrowUp,
+  Bot,
+  ChevronDown,
+  ChevronRight,
+  CircleQuestionMark,
   Download,
+  ImageOff,
   Loader2,
   Paperclip,
-  Send,
+  Scissors,
   Workflow,
+  Wrench,
 } from "lucide-react";
 import {
   type FormEvent,
   type ReactNode,
+  type RefObject,
   useCallback,
   useEffect,
   useMemo,
@@ -42,7 +51,7 @@ import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
 import { AskUserQuestionCard } from "@/components/AskUserQuestionCard";
 import { MermaidBlock } from "@/components/MermaidBlock";
-import { Button } from "@/components/ui/button";
+import { StatusChip } from "@/components/StatusChip";
 import { fileToBase64, validateFile } from "@/hooks/useFileUpload";
 import { useSessionJsonl } from "@/hooks/useSessionJsonl";
 import { useSlashCommands } from "@/hooks/useSlashCommands";
@@ -51,6 +60,15 @@ import {
   hasResolvedAuqSince,
   parseAuqInput,
 } from "@/lib/ask-user-question-state";
+import {
+  groupSidechain,
+  groupToolCalls,
+  type ToolCallEvent,
+} from "@/lib/chat-render-items";
+import {
+  FLOATING_BAR_BOTTOM,
+  floatingBarReserve,
+} from "@/lib/floating-composer";
 import type { JsonlParsedEvent } from "@/lib/jsonl-event-parser";
 import { splitTextWithUrls } from "@/lib/linkify";
 import { isMermaidCodeClass } from "@/lib/mermaid-block-utils";
@@ -89,31 +107,128 @@ interface SplitChatPaneProps {
     mimeType: string;
     originalFilename?: string;
   }) => Promise<{ path: string; filename: string; originalFilename?: string }>;
-  /** 右側 ttyd の表示状態 (ヘッダのトグルボタンを ON/OFF 表示するために使う) */
-  showTerminal?: boolean;
-  /** ターミナルの表示切替 (undefined のとき トグルボタンを描画しない) */
-  onToggleTerminal?: () => void;
-  /** 空のホワイトボードを直接開く (undefined のとき ボタンを描画しない) */
-  onOpenBoard?: () => void;
+  /**
+   * "pane" = PC (入力欄は通常の配置)、"mobile" = 入力欄を浮かぶガラスバーにし、
+   * 本文をその下に通す。既定は "pane"
+   */
+  layout?: "pane" | "mobile";
+  /** layout="mobile" のとき、ガラスバーの上段 (入力欄の上) に置く要素 */
+  composerAccessory?: ReactNode;
+  /**
+   * 質問カード (AskUserQuestion) の表示有無が変わったときに呼ぶ。
+   * マウント時にも現在の値 (false) で1回呼ぶ。モバイルの状態の帯が文言の切り替えに使う。
+   * アンマウント時には呼ばない。effectの依存に使うため、呼び出し側は安定した
+   * 関数 (useCallback等) を渡すこと
+   */
+  onActiveAuqChange?: (hasActiveAuq: boolean) => void;
 }
+
+/** 入力欄の横の丸いアイコンボタン (添付・図解)。大きさはCOMPOSER_SIZEで足す */
+const ROUND_ICON_BUTTON =
+  "inline-flex shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50";
+
+/**
+ * 入力欄まわりの寸法と入力欄の地の色 (参照モック)。
+ * PCは36pxで紙 (カードの上に一段沈める)、モバイルは指で押しやすい40pxで白
+ */
+const COMPOSER_SIZE = {
+  pane: { button: "size-9", input: "min-h-9 py-[7px] bg-background" },
+  mobile: { button: "size-10", input: "min-h-10 py-[9px] bg-card" },
+} as const;
 
 // ===== JSONL イベントカード =====
 
 function UserInputCard({ text }: { text: string }) {
   return (
     <div className="flex justify-end px-4 pt-4 pb-2">
-      <div className="max-w-[85%] bg-primary text-primary-foreground rounded-2xl rounded-tr-md px-4 py-2.5 text-[16px] leading-relaxed whitespace-pre-wrap break-words shadow-sm">
+      <div className="max-w-[78%] whitespace-pre-wrap break-words rounded-xl rounded-br-[4px] bg-primary/14 px-3.5 py-2.5 text-[15px] leading-[1.6] text-foreground">
         {text}
       </div>
     </div>
   );
 }
 
+/**
+ * Claude が動いている間、会話の最後に出す「入力中」表示。
+ * 返事の本文は書き終わってから JSONL にまとめて届くので、そのあいだ目線の先に動きを出す
+ */
+function WorkingIndicator({
+  label,
+  announce,
+}: {
+  label: string;
+  /** false (モバイル) のときは状態の帯が読み上げるので、読み上げ領域にしない */
+  announce: boolean;
+}) {
+  const dots = (
+    <span className="status-dots text-status-busy" aria-hidden="true">
+      <span />
+      <span />
+      <span />
+    </span>
+  );
+  if (!announce) {
+    return (
+      <div
+        data-testid="chat-working-indicator"
+        aria-hidden="true"
+        className="flex items-center gap-2 px-4 py-3 text-[13px] text-muted-foreground"
+      >
+        {dots}
+        <span>{label}</span>
+      </div>
+    );
+  }
+  // 可視の文言は THINK と TOOL で 1 秒ごとに切り替わりうるので、読み上げは固定の文にして
+  // 出現したときに 1 回だけ読まれるようにする
+  return (
+    <div
+      data-testid="chat-working-indicator"
+      role="status"
+      aria-live="polite"
+      className="flex items-center gap-2 px-4 py-3 text-[13px] text-muted-foreground"
+    >
+      {dots}
+      <span aria-hidden="true">{label}</span>
+      <span className="sr-only">Claudeが作業しています</span>
+    </div>
+  );
+}
+
+/**
+ * 作業中の表示の文言。状態は BridgeSessionStatus だけから決め、画面テキストは解釈しない。
+ * 送った直後は状態の切り替わり (1秒間隔) より送信中の吹き出しが先に出るので、それも作業中として扱う
+ */
+function workingIndicatorLabel(
+  bridgeStatus: BridgeSessionStatus | undefined,
+  hasPending: boolean,
+  hasActiveAuq: boolean
+): string | null {
+  if (hasActiveAuq) return null;
+  if (bridgeStatus === "THINK") return "考えています";
+  if (bridgeStatus === "TOOL") return "作業しています";
+  // 送った直後の、状態がまだ切り替わっていない間だけ。停止・問題・確認待ちでは出さない
+  // (送信が届かず吹き出しが残っても、止まったセッションに「考えています」を出し続けない)
+  if (
+    hasPending &&
+    (bridgeStatus === undefined ||
+      bridgeStatus === "IDLE" ||
+      bridgeStatus === "READY")
+  ) {
+    return "考えています";
+  }
+  return null;
+}
+
 function PendingMessageCard({ text }: { text: string }) {
   return (
     <div className="flex justify-end px-4 pt-4 pb-2">
-      <div className="max-w-[85%] bg-primary/70 text-primary-foreground rounded-2xl rounded-tr-md px-4 py-2.5 text-[16px] leading-relaxed whitespace-pre-wrap break-words shadow-sm flex items-start gap-2">
-        <Loader2 className="w-3.5 h-3.5 animate-spin mt-1 shrink-0 opacity-80" />
+      <div className="flex max-w-[78%] items-start gap-2 whitespace-pre-wrap break-words rounded-xl rounded-br-[4px] bg-primary/14 px-3.5 py-2.5 text-[15px] leading-[1.6] text-foreground opacity-60">
+        <Loader2
+          role="img"
+          aria-label="送信中"
+          className="mt-1 size-3.5 shrink-0 animate-spin motion-reduce:animate-none"
+        />
         <span className="min-w-0">{text}</span>
       </div>
     </div>
@@ -123,7 +238,7 @@ function PendingMessageCard({ text }: { text: string }) {
 function SlashCommandCard({ name, args }: { name: string; args?: string }) {
   return (
     <div className="flex justify-end px-4 pt-4 pb-2">
-      <div className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 rounded-full px-3 py-1 text-sm font-mono">
+      <div className="rounded-full bg-muted px-3 py-1 text-sm font-medium text-muted-foreground">
         {name}
         {args ? ` ${args}` : ""}
       </div>
@@ -231,7 +346,7 @@ function FileLink({
       <a
         href={downloadUrl}
         download
-        className="text-blue-600 dark:text-blue-400 underline break-all"
+        className="break-all text-primary underline underline-offset-2"
       >
         {filePath}
       </a>
@@ -306,10 +421,11 @@ function createMarkdownComponents(sessionId: string): Components {
   return {
     img: ({ alt }) => (
       <span
-        className="inline-block text-xs text-muted-foreground bg-muted rounded px-1.5 py-0.5"
+        className="inline-flex items-center gap-1 rounded-sm bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
         title="モデル出力由来の外部画像は自動表示しません"
       >
-        🖼 {alt || "画像"}
+        <ImageOff aria-hidden="true" className="size-3.5 shrink-0" />
+        {alt || "画像"}
       </span>
     ),
     a: ({ href, children }) => {
@@ -367,7 +483,7 @@ function AssistantTextCard({
   );
   return (
     <div className="px-4 py-2">
-      <div className="md-prose text-[16px] text-foreground leading-[1.65]">
+      <div className="md-prose text-[15px] text-foreground">
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkFilePaths]}
           urlTransform={MD_URL_TRANSFORM}
@@ -385,8 +501,9 @@ function CompactMarkerCard() {
   return (
     <div className="flex items-center gap-3 px-6 py-3 select-none">
       <div className="flex-1 border-t border-dashed border-border" />
-      <span className="text-[11px] text-muted-foreground shrink-0">
-        ✂ 会話を要約しました (/compact)
+      <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+        <Scissors aria-hidden="true" className="size-3" />
+        会話を要約しました (/compact)
       </span>
       <div className="flex-1 border-t border-dashed border-border" />
     </div>
@@ -406,7 +523,7 @@ function Linkify({ text }: { text: string }) {
         href={seg.value}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-blue-600 dark:text-blue-400 underline break-all"
+        className="break-all text-primary underline underline-offset-2"
       >
         {seg.value}
       </a>
@@ -464,17 +581,17 @@ function AskUserQuestionResultCard({
 
   return (
     <div className="px-4 py-2.5">
-      <div className="text-sm text-muted-foreground mb-1.5 flex items-center gap-1.5">
-        <span>❓</span>
+      <div className="mb-1.5 flex items-center gap-1.5 text-sm text-muted-foreground">
+        <CircleQuestionMark aria-hidden="true" className="size-4 shrink-0" />
         <span className="font-medium">
           {result
             ? isDecline
               ? "質問はキャンセルされました"
-              : "質問への回答:"
+              : "質問への回答"
             : "AskUserQuestion"}
         </span>
       </div>
-      <div className="text-base space-y-1">
+      <div className="space-y-1 text-[15px]">
         {questions.map((q, i) => {
           const answer = answers.get(q.question);
           return (
@@ -505,6 +622,54 @@ function AskUserQuestionResultCard({
   );
 }
 
+/** 入力引数から1行サマリを取る: file_path / command / pattern / urlなど、最初に見つかった "らしい" 値 */
+function summarizeToolInput(input: Record<string, unknown>): string {
+  const keys = [
+    "file_path",
+    "command",
+    "pattern",
+    "query",
+    "url",
+    "path",
+    "description",
+    "prompt",
+  ];
+  for (const k of keys) {
+    const v = input[k];
+    if (typeof v === "string" && v.length > 0) {
+      return v.length > 100 ? `${v.slice(0, 100)}…` : v;
+    }
+  }
+  return "";
+}
+
+/** ツール呼び出し1件の1行表示 (ツール名 + 引数の要約) */
+function ToolCallRow({
+  tool,
+  input,
+  running = false,
+}: {
+  tool: string;
+  input: Record<string, unknown>;
+  /** 折りたたんだまとまりの下に出す「実行中の最新の1件」か */
+  running?: boolean;
+}) {
+  const summary = useMemo(() => summarizeToolInput(input), [input]);
+  return (
+    <div className="inline-flex max-w-full items-center gap-2 text-xs text-muted-foreground">
+      <Wrench
+        aria-hidden="true"
+        className={`size-3.5 shrink-0 ${running ? "text-status-busy" : "opacity-60"}`}
+      />
+      {running && <span className="sr-only">実行中:</span>}
+      <span className="shrink-0 font-medium text-foreground">{tool}</span>
+      {summary && (
+        <span className="min-w-0 truncate font-mono opacity-70">{summary}</span>
+      )}
+    </div>
+  );
+}
+
 function ToolCallCard({
   tool,
   input,
@@ -518,27 +683,6 @@ function ToolCallCard({
   structuredResult?: unknown;
   isError?: boolean;
 }) {
-  // 1 行サマリを抽出: file_path / command / pattern / url など、最初に見つかった "らしい" 値
-  const summary = useMemo(() => {
-    const keys = [
-      "file_path",
-      "command",
-      "pattern",
-      "query",
-      "url",
-      "path",
-      "description",
-      "prompt",
-    ];
-    for (const k of keys) {
-      const v = input[k];
-      if (typeof v === "string" && v.length > 0) {
-        return v.length > 100 ? `${v.slice(0, 100)}…` : v;
-      }
-    }
-    return "";
-  }, [input]);
-
   // AskUserQuestion は専用レンダリング
   if (tool === "AskUserQuestion") {
     return (
@@ -553,15 +697,66 @@ function ToolCallCard({
 
   return (
     <div className="px-4 py-1">
-      <div className="inline-flex items-center gap-2 text-xs text-muted-foreground max-w-full">
-        <span className="opacity-60 shrink-0">⚙</span>
-        <span className="font-mono text-foreground shrink-0">{tool}</span>
-        {summary && (
-          <span className="font-mono opacity-70 truncate min-w-0">
-            {summary}
-          </span>
-        )}
-      </div>
+      <ToolCallRow tool={tool} input={input} />
+    </div>
+  );
+}
+
+/**
+ * sidechainの外で連続するツール呼び出しの折りたたみ表示 (「作業N件」)。
+ * 閉じているときは、実行中のまとまりに限りrunningのうち最新の1件を下に出す
+ */
+function ToolGroupCard({
+  calls,
+  latestRunning,
+  expanded,
+  onToggle,
+  surfaceClassName,
+}: {
+  calls: ToolCallEvent[];
+  latestRunning: ToolCallEvent | null;
+  expanded: boolean;
+  onToggle: () => void;
+  /** 要約ボタンの背景。周りの面から1段ずらす */
+  surfaceClassName: string;
+}) {
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+  return (
+    <div className="px-4 py-1.5">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className={`inline-flex h-9 max-w-full items-center gap-2 rounded-sm border border-border pr-3 pl-2.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground ${surfaceClassName}`}
+      >
+        <Chevron aria-hidden="true" className="size-4 shrink-0" />
+        <span className="font-semibold text-foreground">
+          作業{calls.length}件
+        </span>
+      </button>
+      {expanded ? (
+        <div className="mt-1 border-l-2 border-border pl-3">
+          {calls.map(call => (
+            <div key={call.id} className="py-0.5">
+              <ToolCallRow
+                tool={call.tool}
+                input={call.input}
+                running={call.status === "running"}
+              />
+            </div>
+          ))}
+        </div>
+      ) : (
+        latestRunning && (
+          <div className="mt-1 pl-1">
+            <ToolCallRow
+              tool={latestRunning.tool}
+              input={latestRunning.input}
+              running
+            />
+          </div>
+        )
+      )}
     </div>
   );
 }
@@ -580,13 +775,11 @@ function AwaitingPad({
   sessionId,
   awaitingText,
   onSendKey,
-  onOpenTerminal,
 }: {
   socket: TypedSocket | null;
   sessionId: string;
   awaitingText?: string;
   onSendKey: (key: SpecialKey) => void;
-  onOpenTerminal?: () => void;
 }) {
   const [freeText, setFreeText] = useState("");
 
@@ -607,7 +800,7 @@ function AwaitingPad({
       key={label}
       type="button"
       onClick={() => onSendKey(key)}
-      className="text-[12px] font-mono bg-background border border-border rounded px-2 py-0.5 hover:bg-accent transition-colors"
+      className="rounded-sm border border-border bg-background px-2 py-0.5 font-mono text-xs transition-colors hover:bg-muted"
       title={title}
     >
       {label}
@@ -615,39 +808,31 @@ function AwaitingPad({
   );
 
   return (
-    <div className="border-t border-border bg-amber-500/10 px-3 py-2 shrink-0 max-h-[50%] overflow-y-auto">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[13px] text-amber-700 dark:text-amber-300 min-w-0 font-medium">
-          ⏳ Claude が入力を求めています
+    <div className="min-h-0 overflow-y-auto rounded-lg border border-border bg-card px-4 pt-3.5 pb-3 shadow-card">
+      <div className="flex min-w-0 items-center gap-2">
+        <StatusChip statusKey="AWAITING" />
+        <span className="min-w-0 text-[13px] font-semibold text-foreground">
+          Claudeが入力を求めています
         </span>
-        {onOpenTerminal && (
-          <button
-            type="button"
-            onClick={onOpenTerminal}
-            className="text-[12px] underline text-amber-700 dark:text-amber-300 px-1 shrink-0"
-          >
-            ターミナルで確認
-          </button>
-        )}
       </div>
       {awaitingText && (
-        <pre className="mt-1.5 text-[11px] leading-[1.5] font-mono bg-background/70 border border-border rounded-md px-2.5 py-2 overflow-x-auto whitespace-pre text-foreground/80">
+        <pre className="mt-2 overflow-x-auto whitespace-pre rounded-sm border border-border bg-muted/50 px-2.5 py-2 font-mono text-[11px] leading-[1.5] text-foreground/80">
           {awaitingText}
         </pre>
       )}
-      <div className="mt-1.5 flex items-center gap-1 flex-wrap">
+      <div className="mt-2 flex flex-wrap items-center gap-1">
         {(["1", "2", "3", "4", "5", "6"] as const).map(d =>
-          keyBtn(d, d, `${d} を送信 (選択肢ジャンプ/トグル)`)
+          keyBtn(d, d, `${d}を送信 (選択肢ジャンプ/トグル)`)
         )}
         <span className="w-2" />
         {keyBtn("↑", "Up", "フォーカスを上へ")}
         {keyBtn("↓", "Down", "フォーカスを下へ")}
-        {keyBtn("→", "Right", "次のタブ / Submit へ")}
+        {keyBtn("→", "Right", "次のタブ / Submitへ")}
         {keyBtn("Space", "Space", "チェックをトグル")}
         {keyBtn("Enter", "Enter", "フォーカス中の項目を選択/確定")}
         {keyBtn("Esc", "Escape", "キャンセル")}
       </div>
-      <div className="mt-1.5 flex items-center gap-2 bg-background border border-border rounded-md px-2.5 py-1 focus-within:border-primary">
+      <div className="mt-2 flex items-center gap-2 rounded-full border border-border bg-background py-1 pr-1 pl-3 focus-within:border-primary">
         <input
           type="text"
           value={freeText}
@@ -658,14 +843,15 @@ function AwaitingPad({
               submitFreeText();
             }
           }}
-          placeholder="自由入力 — 先に Type something の番号を押してから入力 (Enter で確定)"
-          className="flex-1 text-[12px] bg-transparent focus:outline-none placeholder:text-muted-foreground py-0.5"
+          aria-label="自由入力"
+          placeholder="自由入力: 先にType somethingの番号を押してから入力 (Enterで確定)"
+          className="min-w-0 flex-1 bg-transparent py-0.5 text-[13px] placeholder:text-muted-foreground focus:outline-none"
         />
         <button
           type="button"
           onClick={submitFreeText}
           disabled={!freeText.trim()}
-          className="text-[11px] bg-primary text-primary-foreground rounded px-2 py-0.5 disabled:opacity-30 disabled:cursor-not-allowed"
+          className="shrink-0 rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-30"
         >
           入力して確定
         </button>
@@ -686,15 +872,18 @@ function SidechainGroupCard({
   sessionId: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const Chevron = expanded ? ChevronDown : ChevronRight;
   return (
     <div className="px-4 py-1">
       <button
         type="button"
         onClick={() => setExpanded(v => !v)}
-        className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        aria-expanded={expanded}
+        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
       >
-        <span>{expanded ? "▾" : "▸"}</span>
-        <span>🧵 サブエージェント ({events.length} イベント)</span>
+        <Chevron aria-hidden="true" className="size-3.5 shrink-0" />
+        <Bot aria-hidden="true" className="size-3.5 shrink-0" />
+        <span>サブエージェント ({events.length}件)</span>
       </button>
       {expanded && (
         <div className="mt-1 border-l-2 border-border pl-2 opacity-80">
@@ -705,31 +894,6 @@ function SidechainGroupCard({
       )}
     </div>
   );
-}
-
-/** 連続する sidechain イベントを 1 グループに畳む */
-function groupSidechain(events: JsonlParsedEvent[]): (
-  | { kind: "event"; event: JsonlParsedEvent }
-  | {
-      kind: "sidechain";
-      id: string;
-      events: JsonlParsedEvent[];
-    }
-)[] {
-  const out: ReturnType<typeof groupSidechain> = [];
-  for (const ev of events) {
-    if (ev.isSidechain === true) {
-      const last = out[out.length - 1];
-      if (last && last.kind === "sidechain") {
-        last.events.push(ev);
-      } else {
-        out.push({ kind: "sidechain", id: `sc:${ev.id}`, events: [ev] });
-      }
-    } else {
-      out.push({ kind: "event", event: ev });
-    }
-  }
-  return out;
 }
 
 function EventCard({
@@ -775,6 +939,31 @@ function EventCard({
   }
 }
 
+/**
+ * 要素の高さ (px) をResizeObserverで追う。enabledがfalseの間は0。
+ * ResizeObserverの無い環境 (jsdom等) では最初の1回だけ測る
+ */
+function useElementHeight(
+  ref: RefObject<HTMLElement | null>,
+  enabled: boolean
+): number {
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!enabled || !el) {
+      setHeight(0);
+      return;
+    }
+    const measure = () => setHeight(el.offsetHeight);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [ref, enabled]);
+  return height;
+}
+
 // ===== 本体 =====
 
 export function SplitChatPane({
@@ -786,19 +975,17 @@ export function SplitChatPane({
   onSendMessage,
   onSendKey,
   onUploadFile,
-  showTerminal,
-  onToggleTerminal,
-  onOpenBoard,
+  layout = "pane",
+  composerAccessory,
+  onActiveAuqChange,
 }: SplitChatPaneProps) {
   const [inputValue, setInputValue] = useState("");
 
   // JSONL: 会話の構造化履歴 (markdown レンダリング用)。アクティブ時のみ購読
-  const {
-    events,
-    isSubscribed: jsonlSubscribed,
-    loadMore,
-    hasMore,
-  } = useSessionJsonl(socket, isActive ? session.id : null);
+  const { events, loadMore, hasMore } = useSessionJsonl(
+    socket,
+    isActive ? session.id : null
+  );
 
   // Claude 処理中に送ったメッセージを即時表示するための pending state。
   // JSONL に同じテキストの user-input が現れたら自動で消える。
@@ -808,9 +995,12 @@ export function SplitChatPane({
 
   // events 更新のたびに pending を整理: マッチしたものを除去。ロジックは
   // テスト容易性のため reconcilePending に純粋関数として切り出してある。
+  // 状態が変わったときも整理し直す。送信が届かず JSONL に何も来ない場合でも、
+  // 時間の規則で古い吹き出し (と作業中の表示) を片付けられるようにするため
+  // biome-ignore lint/correctness/useExhaustiveDependencies(bridgeStatus): 状態の遷移のたびに時間の規則を再評価するための意図的な依存
   useEffect(() => {
     setPending(prev => reconcilePending(prev, events, Date.now()));
-  }, [events]);
+  }, [events, bridgeStatus]);
 
   // built-in slash command (/compact, /clear 等) は JSONL に user-input として
   // 記録されないため、ローカルで永続的に表示する slash-command イベントを保持する。
@@ -940,14 +1130,59 @@ export function SplitChatPane({
 
   const activeAuq = hookAuq?.auq ?? null;
 
-  // 連続する subagent イベントを折りたたみグループへ
-  const groupedEvents = useMemo(() => groupSidechain(events), [events]);
+  // 質問カードの有無を親へ知らせる (モバイルの状態の帯が文言の切り替えに使う)
+  const hasActiveAuq = activeAuq !== null;
+  const workingLabel = workingIndicatorLabel(
+    bridgeStatus,
+    pending.length > 0,
+    hasActiveAuq
+  );
+  useEffect(() => {
+    onActiveAuqChange?.(hasActiveAuq);
+  }, [hasActiveAuq, onActiveAuqChange]);
+
+  // 連続するsubagentイベントと、sidechainの外で連続するツール呼び出しを
+  // それぞれ折りたたみのまとまりへ
+  const renderItems = useMemo(
+    () => groupToolCalls(groupSidechain(events)),
+    [events]
+  );
+
+  // 「作業N件」の展開状態 (まとまりのidの集合)。カード内のstateにしないのは、
+  // 非表示 (isActive=false) の間はuseSessionJsonlがeventsを空にしてカードが
+  // アンマウントされるため。本体に持てば端末と会話を切り替えても開いたまま残る
+  const [expandedToolGroups, setExpandedToolGroups] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  const toggleToolGroup = useCallback((id: string) => {
+    setExpandedToolGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies(session.id): セッション切替を検知して展開状態を破棄するための意図的な依存
+  useEffect(() => {
+    setExpandedToolGroups(new Set());
+  }, [session.id]);
 
   // 入力欄。会話エリアのクリックでここにフォーカスを移す
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // ===== スクロール追従 + 上端で過去読み込み =====
   const jsonlScrollRef = useRef<HTMLDivElement>(null);
+  // モバイルの浮かぶバー (と上に積んだカード) の高さ。本文の下端の余白に使う
+  const isMobile = layout === "mobile";
+  const floatingStackRef = useRef<HTMLDivElement>(null);
+  const floatingStackHeight = useElementHeight(floatingStackRef, isMobile);
+  const bottomReserve = isMobile
+    ? floatingBarReserve(floatingStackHeight)
+    : undefined;
   const [isNearBottom, setIsNearBottom] = useState(true);
   // 「過去読み込み中」を ref で持つ。同じスクロールイベントで多重発火させないため
   const loadingMoreRef = useRef(false);
@@ -958,6 +1193,9 @@ export function SplitChatPane({
   );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies(events): イベント追加 (高さ変化) のたびに末尾追従スクロールを再実行するための意図的な依存
+  // biome-ignore lint/correctness/useExhaustiveDependencies(expandedToolGroups): 「作業N件」の開閉 (高さ変化) のたびに末尾追従スクロールを再実行するための意図的な依存
+  // biome-ignore lint/correctness/useExhaustiveDependencies(floatingStackHeight): モバイルで入力欄が伸びて本文の下端の余白が増えるたびに末尾追従スクロールを再実行するための意図的な依存
+  // biome-ignore lint/correctness/useExhaustiveDependencies(workingLabel): 作業中の表示が出入りする (高さ変化) たびに末尾追従スクロールを再実行するための意図的な依存
   useEffect(() => {
     const el = jsonlScrollRef.current;
     if (!el) return;
@@ -973,7 +1211,13 @@ export function SplitChatPane({
     if (isNearBottom) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [events, isNearBottom]);
+  }, [
+    events,
+    isNearBottom,
+    expandedToolGroups,
+    floatingStackHeight,
+    workingLabel,
+  ]);
 
   // 「下までジャンプ」ボタン用。一気に末尾へ飛ばす副作用ハンドラ。
   // isNearBottom も true にしておくことで以降の自動追従も復活する。
@@ -1231,266 +1475,293 @@ export function SplitChatPane({
     }
   };
 
-  return (
-    <div className="h-full flex flex-col bg-background">
-      <header className="border-b border-border px-4 py-1.5 flex items-center justify-end shrink-0">
-        <div className="flex items-center gap-1.5 shrink-0">
-          {(bridgeStatus === "THINK" || bridgeStatus === "TOOL") && (
-            <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              {bridgeStatus === "TOOL" ? "ツール実行中" : "考え中"}
+  // 補完候補。PCは入力欄の枠、モバイルは下部のスタックの上端に合わせて出す
+  const slashMenu = slashOpen && filteredSlashCommands.length > 0 && (
+    <div className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-lg border border-border bg-popover shadow-card">
+      {filteredSlashCommands.map((cmd, i) => (
+        <button
+          type="button"
+          key={cmd.name}
+          onMouseDown={e => {
+            e.preventDefault();
+            applySlashCommand(cmd);
+          }}
+          onMouseEnter={() => setSlashIndex(i)}
+          className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm ${
+            i === slashIndex
+              ? "bg-accent text-accent-foreground"
+              : "hover:bg-muted/50"
+          }`}
+        >
+          <span className="shrink-0 font-medium text-foreground">
+            {cmd.name}
+          </span>
+          {cmd.description && (
+            <span className="flex-1 truncate text-xs text-muted-foreground">
+              {cmd.description}
             </span>
           )}
-          <span
-            className={`w-1.5 h-1.5 rounded-full ${jsonlSubscribed ? "bg-emerald-500" : "bg-slate-400"}`}
-            title={jsonlSubscribed ? "JSONL 購読中" : "未購読"}
-          />
-          {onOpenBoard && (
-            <button
-              type="button"
-              onClick={onOpenBoard}
-              className="text-[11px] px-2 py-1 rounded-md font-medium flex items-center gap-1 transition-colors bg-muted hover:bg-muted/70 text-foreground"
-              title="ホワイトボードを開く"
-            >
-              <span>🎨</span>
-              <span>ボード</span>
-            </button>
-          )}
-          {onToggleTerminal && (
-            <button
-              type="button"
-              onClick={onToggleTerminal}
-              className={`text-[11px] px-2 py-1 rounded-md font-medium flex items-center gap-1 transition-colors ${
-                showTerminal
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted hover:bg-muted/70 text-foreground"
-              }`}
-              title={showTerminal ? "ターミナルを閉じる" : "ターミナルを開く"}
-            >
-              <span>🖥</span>
-              <span>{showTerminal ? "閉じる" : "ターミナル"}</span>
-            </button>
-          )}
-        </div>
-      </header>
+          {/* 種類は文言で見分ける。状態の色をカテゴリの色に転用しない */}
+          <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+            {cmd.source}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
 
+  const composerSize = COMPOSER_SIZE[layout];
+
+  const composerForm = (
+    <form
+      onSubmit={handleSubmit}
+      onDragEnter={e => {
+        if (!onUploadFile) return;
+        e.preventDefault();
+        setIsDragging(true);
+      }}
+      onDragOver={e => {
+        if (!onUploadFile) return;
+        e.preventDefault();
+      }}
+      onDragLeave={e => {
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setIsDragging(false);
+      }}
+      onDrop={handleDrop}
+      className={`relative flex items-end gap-1.5 rounded-[20px] ${
+        isDragging ? "ring-2 ring-primary/50" : ""
+      }`}
+    >
+      {onUploadFile && (
+        <>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*,application/pdf,text/*,.md,.json,.csv"
+            className="hidden"
+            onChange={e => {
+              const files = Array.from(e.target.files ?? []);
+              if (files.length > 0) uploadAndAppend(files);
+              if (fileInputRef.current) fileInputRef.current.value = "";
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className={`${ROUND_ICON_BUTTON} ${composerSize.button}`}
+            aria-label="ファイルを添付"
+            title="ファイルを添付 (D&D・貼り付けも可)"
+            disabled={uploadingCount > 0}
+          >
+            {uploadingCount > 0 ? (
+              <Loader2 className="size-5 animate-spin motion-reduce:animate-none" />
+            ) : (
+              <Paperclip className="size-5" />
+            )}
+          </button>
+        </>
+      )}
+      <button
+        type="button"
+        onClick={handleVisualizeConversation}
+        className={`${ROUND_ICON_BUTTON} ${composerSize.button}`}
+        aria-label="会話を図解"
+        title="会話を図解 (Claudeにmermaid図で要約させる)"
+      >
+        <Workflow className="size-5" />
+      </button>
+      <textarea
+        ref={inputRef}
+        value={inputValue}
+        onChange={e => setInputValue(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onPaste={onUploadFile ? handlePaste : undefined}
+        aria-label="メッセージ"
+        placeholder={
+          isMobile
+            ? "メッセージを入力"
+            : onUploadFile
+              ? "メッセージを入力 (Enterで送信、Shift+Enterで改行。画像はD&D・貼り付けも可)"
+              : "メッセージを入力 (Enterで送信、Shift+Enterで改行)"
+        }
+        rows={1}
+        className={`field-sizing-content max-h-32 min-w-0 flex-1 resize-none rounded-[20px] border border-border px-3.5 text-[15px] leading-[1.4] placeholder:text-muted-foreground focus:border-primary focus:outline-none ${composerSize.input}`}
+      />
+      <button
+        type="submit"
+        disabled={!inputValue.trim()}
+        aria-label="送信"
+        className={`inline-flex shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity disabled:cursor-not-allowed disabled:opacity-40 ${composerSize.button}`}
+      >
+        <ArrowUp className="size-5" />
+      </button>
+      {isDragging && onUploadFile && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-[20px] border-2 border-dashed border-primary bg-background/90 text-sm font-medium text-primary">
+          ここにドロップ
+        </div>
+      )}
+    </form>
+  );
+
+  // permission prompt 等のユーザー判断待ちフォールバック。
+  // AskUserQuestion は専用カードが出る (hook 経由) ため、カード表示中
+  // は出さない。hook が取りこぼされた場合のセーフティネットも兼ねる
+  const showAwaitingPad = bridgeStatus === "AWAITING" && !activeAuq;
+  // 入力欄の上に固定で出すカード (質問カード / 確認待ちのキー操作)。
+  // 高さが足りないときはカード自身の中をスクロールさせる。外側の枠でスクロールさせると
+  // カードの下端 (罫線と角丸) が切れて、途中で途切れたように見えるため
+  const dockedCard = activeAuq ? (
+    <AskUserQuestionCard
+      key={activeAuq.toolUseId}
+      socket={socket}
+      sessionId={session.id}
+      auq={activeAuq}
+      screenContext={hookAuq?.screen ?? null}
+      onSendKey={onSendKey}
+    />
+  ) : showAwaitingPad ? (
+    <AwaitingPad
+      socket={socket}
+      sessionId={session.id}
+      awaitingText={awaitingText}
+      onSendKey={onSendKey}
+    />
+  ) : null;
+
+  return (
+    <div className="relative flex h-full flex-col">
       {/* JSONL イベントリスト (上段、flex-1)。
           relative ラッパーで囲み「下へジャンプ」ボタンをスクロール領域に
           重ねて配置する。スクロール領域自体は absolute inset-0 で内側を埋める。 */}
-      <div className="flex-1 min-h-0 relative">
+      <div className="relative min-h-0 flex-1">
         {/* biome-ignore lint/a11y/noStaticElementInteractions: クリックで入力欄にフォーカスを移すだけの補助操作。会話ログ自体は非対話要素のまま */}
         {/* biome-ignore lint/a11y/useKeyWithClickEvents: キーボード利用者は Tab で入力欄 (textarea) に直接到達できるため、キーハンドラは不要 */}
         <div
           ref={jsonlScrollRef}
           onClick={handleConversationClick}
-          className="absolute inset-0 overflow-y-auto py-2"
+          className="absolute inset-0 overflow-y-auto"
         >
-          {events.length === 0 &&
-          pending.length === 0 &&
-          localSlashCommands.length === 0 ? (
-            <div className="text-center text-sm text-muted-foreground pt-8">
-              このセッションの履歴はまだありません
-            </div>
-          ) : (
-            <>
-              {hasMore && (
-                <div className="flex justify-center py-2 text-sm text-muted-foreground">
-                  読み込み中...
-                </div>
-              )}
-              {groupedEvents.map(g =>
-                g.kind === "sidechain" ? (
-                  <SidechainGroupCard
-                    key={g.id}
-                    events={g.events}
-                    sessionId={session.id}
-                  />
-                ) : (
-                  <EventCard
-                    key={g.event.id}
-                    event={g.event}
-                    sessionId={session.id}
-                  />
-                )
-              )}
-              {localSlashCommands.map(c => (
-                <SlashCommandCard key={c.id} name={c.name} args={c.args} />
-              ))}
-              {pending.map(p => (
-                <PendingMessageCard key={p.id} text={p.text} />
-              ))}
-            </>
-          )}
+          <div
+            data-testid="chat-scroll-content"
+            className="mx-auto w-full max-w-[760px] py-2"
+            style={bottomReserve ? { paddingBottom: bottomReserve } : undefined}
+          >
+            {events.length === 0 &&
+            pending.length === 0 &&
+            localSlashCommands.length === 0 ? (
+              <div className="pt-8 text-center text-sm text-muted-foreground">
+                このセッションの履歴はまだありません
+              </div>
+            ) : (
+              <>
+                {hasMore && (
+                  <div className="flex justify-center py-2 text-sm text-muted-foreground">
+                    読み込み中...
+                  </div>
+                )}
+                {renderItems.map(item => {
+                  if (item.kind === "sidechain") {
+                    return (
+                      <SidechainGroupCard
+                        key={item.id}
+                        events={item.events}
+                        sessionId={session.id}
+                      />
+                    );
+                  }
+                  if (item.kind === "tool-group") {
+                    return (
+                      <ToolGroupCard
+                        key={item.id}
+                        calls={item.calls}
+                        latestRunning={item.latestRunning}
+                        expanded={expandedToolGroups.has(item.id)}
+                        onToggle={() => toggleToolGroup(item.id)}
+                        surfaceClassName={
+                          isMobile ? "bg-card" : "bg-background"
+                        }
+                      />
+                    );
+                  }
+                  return (
+                    <EventCard
+                      key={item.event.id}
+                      event={item.event}
+                      sessionId={session.id}
+                    />
+                  );
+                })}
+                {localSlashCommands.map(c => (
+                  <SlashCommandCard key={c.id} name={c.name} args={c.args} />
+                ))}
+                {pending.map(p => (
+                  <PendingMessageCard key={p.id} text={p.text} />
+                ))}
+              </>
+            )}
+            {workingLabel && (
+              <WorkingIndicator label={workingLabel} announce={!isMobile} />
+            )}
+          </div>
         </div>
         {!isNearBottom && (
           <button
             type="button"
             onClick={scrollToBottom}
-            className="absolute bottom-3 left-1/2 -translate-x-1/2 w-9 h-9 rounded-full bg-foreground/85 text-background shadow-lg hover:bg-foreground flex items-center justify-center transition-colors"
+            className="absolute left-1/2 z-10 flex size-9 -translate-x-1/2 items-center justify-center rounded-full bg-foreground/85 text-background shadow-card transition-colors hover:bg-foreground"
+            style={{ bottom: bottomReserve ?? "12px" }}
             title="最新まで一気にスクロール"
             aria-label="最新まで一気にスクロール"
           >
-            <ArrowDown className="w-4 h-4" />
+            <ArrowDown className="size-4" />
           </button>
         )}
       </div>
 
-      {activeAuq && (
-        <AskUserQuestionCard
-          key={activeAuq.toolUseId}
-          socket={socket}
-          sessionId={session.id}
-          auq={activeAuq}
-          screenContext={hookAuq?.screen ?? null}
-          onSendKey={onSendKey}
-          onOpenTerminal={
-            onToggleTerminal && !showTerminal ? onToggleTerminal : undefined
-          }
-        />
-      )}
-
-      {/* permission prompt 等のユーザー判断待ちフォールバック。
-          AskUserQuestion は専用カードが出る (hook 経由) ため、カード表示中
-          は出さない。hook が取りこぼされた場合のセーフティネットも兼ねる */}
-      {bridgeStatus === "AWAITING" && !activeAuq && (
-        <AwaitingPad
-          socket={socket}
-          sessionId={session.id}
-          awaitingText={awaitingText}
-          onSendKey={onSendKey}
-          onOpenTerminal={
-            onToggleTerminal && !showTerminal ? onToggleTerminal : undefined
-          }
-        />
-      )}
-
-      <form
-        onSubmit={handleSubmit}
-        onDragEnter={e => {
-          if (!onUploadFile) return;
-          e.preventDefault();
-          setIsDragging(true);
-        }}
-        onDragOver={e => {
-          if (!onUploadFile) return;
-          e.preventDefault();
-        }}
-        onDragLeave={e => {
-          if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
-          setIsDragging(false);
-        }}
-        onDrop={handleDrop}
-        className={`border-t border-border px-3 py-2.5 shrink-0 flex gap-2 items-end relative ${
-          isDragging ? "ring-2 ring-primary/50 bg-primary/5" : ""
-        }`}
-      >
-        {onUploadFile && (
-          <>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*,application/pdf,text/*,.md,.json,.csv"
-              className="hidden"
-              onChange={e => {
-                const files = Array.from(e.target.files ?? []);
-                if (files.length > 0) uploadAndAppend(files);
-                if (fileInputRef.current) fileInputRef.current.value = "";
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="p-2 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors self-end"
-              title="ファイル添付 (D&D / ペーストも可)"
-              disabled={uploadingCount > 0}
-            >
-              {uploadingCount > 0 ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Paperclip className="w-4 h-4" />
-              )}
-            </button>
-          </>
-        )}
-        <button
-          type="button"
-          onClick={handleVisualizeConversation}
-          className="p-2 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors self-end"
-          title="会話を図解 (Claude に mermaid 図で要約させる)"
+      {isMobile ? (
+        // カードとガラスバーを1つのスタックに積み、本文コンテナの下端から浮かせる。
+        // ガラスはバーだけに使い、カードは不透明のまま上に置く
+        <div
+          ref={floatingStackRef}
+          data-testid="floating-composer"
+          className="absolute inset-x-3 z-10 flex max-h-[70%] flex-col gap-2"
+          style={{ bottom: FLOATING_BAR_BOTTOM }}
         >
-          <Workflow className="w-4 h-4" />
-        </button>
-        <textarea
-          ref={inputRef}
-          value={inputValue}
-          onChange={e => setInputValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onPaste={onUploadFile ? handlePaste : undefined}
-          placeholder={
-            onUploadFile
-              ? "メッセージを入力 (Enter で送信、Shift+Enter で改行、画像は D&D / ペーストも可)"
-              : "メッセージを入力 (Enter で送信、Shift+Enter で改行)"
-          }
-          rows={1}
-          className="flex-1 px-3 py-2 text-sm bg-muted/40 border border-border rounded-lg focus:outline-none focus:border-primary placeholder:text-muted-foreground resize-none min-h-[36px] max-h-32"
-        />
-        {slashOpen && filteredSlashCommands.length > 0 && (
-          <div className="absolute left-3 right-3 bottom-full mb-1 bg-popover border border-border rounded-lg shadow-lg overflow-hidden z-20">
-            {filteredSlashCommands.map((cmd, i) => (
-              <button
-                type="button"
-                key={cmd.name}
-                onMouseDown={e => {
-                  e.preventDefault();
-                  applySlashCommand(cmd);
-                }}
-                onMouseEnter={() => setSlashIndex(i)}
-                className={`w-full text-left px-3 py-1.5 flex items-center gap-2 text-sm ${
-                  i === slashIndex
-                    ? "bg-accent text-accent-foreground"
-                    : "hover:bg-muted/50"
-                }`}
-              >
-                <span className="font-mono text-foreground shrink-0">
-                  {cmd.name}
-                </span>
-                {cmd.description && (
-                  <span className="text-xs text-muted-foreground truncate flex-1">
-                    {cmd.description}
-                  </span>
-                )}
-                <span
-                  className={`text-[9px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
-                    cmd.source === "project"
-                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                      : cmd.source === "global"
-                        ? "bg-blue-500/15 text-blue-700 dark:text-blue-300"
-                        : cmd.source === "plugin"
-                          ? "bg-violet-500/15 text-violet-700 dark:text-violet-300"
-                          : "bg-muted text-muted-foreground"
-                  }`}
-                >
-                  {cmd.source}
-                </span>
-              </button>
-            ))}
+          {slashMenu}
+          {dockedCard && (
+            <div className="-mx-1 flex min-h-0 flex-col px-1 pb-2">
+              {dockedCard}
+            </div>
+          )}
+          {/* data-mobile-bottom-bar: Task 12の検証スクリプトが下部バーの位置を測る目印
+              (端末・図モードのバーにはTask 10が付ける) */}
+          <div
+            data-mobile-bottom-bar=""
+            className="glass-bar flex shrink-0 flex-col gap-2 rounded-[28px] p-2"
+          >
+            {composerAccessory}
+            {composerForm}
           </div>
-        )}
-        <Button
-          type="submit"
-          size="sm"
-          disabled={!inputValue.trim()}
-          className="self-end"
-        >
-          <Send className="w-3.5 h-3.5" />
-        </Button>
-        {isDragging && onUploadFile && (
-          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm border-2 border-dashed border-primary rounded-lg flex items-center justify-center text-sm font-medium text-primary pointer-events-none">
-            ここにドロップ
+        </div>
+      ) : (
+        <>
+          {dockedCard && (
+            <div className="flex max-h-[45%] shrink-0 flex-col px-4 pt-2 pb-3">
+              <div className="mx-auto flex min-h-0 w-full max-w-[760px] flex-col">
+                {dockedCard}
+              </div>
+            </div>
+          )}
+          <div className="shrink-0 border-t border-border px-4 pt-3 pb-3.5">
+            <div className="relative mx-auto w-full max-w-[792px]">
+              {slashMenu}
+              {composerForm}
+            </div>
           </div>
-        )}
-      </form>
+        </>
+      )}
     </div>
   );
 }
