@@ -107,16 +107,22 @@ export function sectionize(entries: SessionListEntry[]): SessionSectionGroup[] {
   })).filter(g => g.entries.length > 0);
 }
 
+/**
+ * 見出しは空のセクションも含めて3つとも出す (件数0)。保留中にセクションが空になったとき
+ * 見出しのkeyが消えると、useHeldOrderがそれを落として下の行が繰り上がるため。
+ * 空の見出しを描くかどうかは描く側 (SessionSectionList) が決める
+ */
 export function toListRows(groups: SessionSectionGroup[]): SessionListRow[] {
   const rows: SessionListRow[] = [];
-  for (const g of groups) {
+  for (const section of SECTION_ORDER) {
+    const entries = groups.find(g => g.section === section)?.entries ?? [];
     rows.push({
       kind: "section",
-      key: `section:${g.section}`,
-      section: g.section,
-      count: g.entries.length,
+      key: `section:${section}`,
+      section,
+      count: entries.length,
     });
-    for (const entry of g.entries) {
+    for (const entry of entries) {
       rows.push({ kind: "entry", key: entry.key, entry });
     }
   }

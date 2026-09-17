@@ -16,7 +16,7 @@ import type {
   SystemCapabilities,
   Worktree,
 } from "@ark/shared";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -155,11 +155,21 @@ export function SessionSectionList({
     [groupedItems, sessionStatuses]
   );
   const shownRows = useHeldOrder(rows, rowKey, held);
-  // 保留中に初めて出たセクションの見出しは並びの末尾に足される。直後に行が続かない見出しは描かない
-  const visibleRows = shownRows.filter(
-    (row, index) =>
-      row.kind === "entry" || shownRows[index + 1]?.kind === "entry"
-  );
+  // 保留していなければ、直後に行が続かない (空の) 見出しは描かない。
+  // 保留中は描く見出しを保留の前のまま固定する。空になった見出しも残して下の行を動かさず、
+  // 保留の前に空だった見出しは行が入っても出さない (出すとその分だけ下の行が押し下がる)
+  const visibleHeadingKeysRef = useRef<ReadonlySet<string>>(new Set());
+  const visibleRows = shownRows.filter((row, index) => {
+    if (row.kind === "entry") return true;
+    return held
+      ? visibleHeadingKeysRef.current.has(row.key)
+      : shownRows[index + 1]?.kind === "entry";
+  });
+  useEffect(() => {
+    visibleHeadingKeysRef.current = new Set(
+      visibleRows.filter(row => row.kind === "section").map(rowKey)
+    );
+  });
 
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
@@ -265,7 +275,7 @@ export function SessionSectionList({
       )}
     >
       <span>{SECTION_LABELS[row.section]}</span>
-      {row.section === "your-turn" && (
+      {row.section === "your-turn" && row.count > 0 && (
         <span
           data-testid="section-count"
           className={cn(

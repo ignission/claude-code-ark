@@ -136,7 +136,7 @@ describe("sortSessionEntries", () => {
 });
 
 describe("sectionize と toListRows", () => {
-  it("空のセクションは出さず、見出しの行に件数を持たせる", () => {
+  it("sectionizeは空のセクションを出さず、toListRowsは空のセクションも件数0の見出しで出す", () => {
     const groups = new Map<string, RepoGroup>([
       [
         "/a/alpha",
@@ -163,17 +163,26 @@ describe("sectionize と toListRows", () => {
       ["your-turn", 2],
     ]);
 
+    // 保留中にセクションが空になっても見出しのkeyが消えないよう、3つの見出しを常に出す
     const rows = toListRows(sections);
     expect(rows.map(r => r.key)).toEqual([
       "section:your-turn",
       "wt:a2",
       "wt:a1",
+      "section:working",
+      "section:resting",
     ]);
     expect(rows[0]).toEqual({
       kind: "section",
       key: "section:your-turn",
       section: "your-turn",
       count: 2,
+    });
+    expect(rows[3]).toEqual({
+      kind: "section",
+      key: "section:working",
+      section: "working",
+      count: 0,
     });
   });
 });

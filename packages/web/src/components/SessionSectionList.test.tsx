@@ -300,18 +300,68 @@ describe("SessionSectionListの並べ方", () => {
     ]);
   });
 
-  it("保留中にセクションが空になると、その見出しは消えるが行の順は保つ", () => {
+  it("保留中にセクションが空になっても、その見出しを同じ位置に残して下の行を動かさず、保留が解けたら消す", () => {
     const props = listProps();
     const { container, rerender } = mountList(props);
-    act(() => pressableOf(container, "wt:a").focus());
+    const before = [
+      "# あなたの番",
+      "wt:a",
+      "# 作業中",
+      "wt:b",
+      "# 休止中",
+      "wt:c",
+    ];
+    expect(sequence(container)).toEqual(before);
+    const openA = pressableOf(container, "wt:a");
+    act(() => openA.focus());
 
     rerender({
       ...props,
       sessionStatuses: statusesOf("IDLE", "AWAITING", "READY"),
     });
 
+    expect(sequence(container)).toEqual(before);
+    expect(
+      container.querySelector('[data-testid="section-count"]')?.textContent
+    ).toBe("2");
+
+    act(() => openA.blur());
+
     expect(sequence(container)).toEqual([
       "# あなたの番",
+      "wt:b",
+      "wt:a",
+      "# 休止中",
+      "wt:c",
+    ]);
+    expect(container.querySelector('[data-section="working"]')).toBeNull();
+  });
+
+  it("保留中に「あなたの番」が空になると、見出しは残して件数のバッジだけ隠す", () => {
+    const props = listProps();
+    const { container, rerender } = mountList(props);
+    const openB = pressableOf(container, "wt:b");
+    act(() => openB.focus());
+
+    rerender({
+      ...props,
+      sessionStatuses: statusesOf("TOOL", "TOOL", "READY"),
+    });
+
+    expect(sequence(container)).toEqual([
+      "# あなたの番",
+      "wt:a",
+      "# 作業中",
+      "wt:b",
+      "# 休止中",
+      "wt:c",
+    ]);
+    expect(container.querySelector('[data-testid="section-count"]')).toBeNull();
+
+    act(() => openB.blur());
+
+    expect(sequence(container)).toEqual([
+      "# 作業中",
       "wt:a",
       "wt:b",
       "# 休止中",
@@ -319,12 +369,14 @@ describe("SessionSectionListの並べ方", () => {
     ]);
   });
 
-  it("保留中に初めて出たセクションの見出しは、直後に行が無ければ描かない", () => {
+  it("保留の前に空だったセクションの見出しは、保留中に行が入っても描かない", () => {
     const props = listProps({
       sessionStatuses: statusesOf("TOOL", "TOOL", "TOOL"),
     });
     const { container, rerender } = mountList(props);
-    act(() => pressableOf(container, "wt:a").focus());
+    const openA = pressableOf(container, "wt:a");
+    act(() => openA.focus());
+    expect(sequence(container)).toEqual(["# 作業中", "wt:a", "wt:b", "wt:c"]);
 
     rerender({
       ...props,
@@ -333,6 +385,16 @@ describe("SessionSectionListの並べ方", () => {
 
     expect(sequence(container)).toEqual(["# 作業中", "wt:a", "wt:b", "wt:c"]);
     expect(container.querySelector('[data-section="your-turn"]')).toBeNull();
+
+    act(() => openA.blur());
+
+    expect(sequence(container)).toEqual([
+      "# あなたの番",
+      "wt:a",
+      "# 作業中",
+      "wt:b",
+      "wt:c",
+    ]);
   });
 
   it("…のメニューを閉じてフォーカスがボタンに残っても、行を押せば保留が解けて並べ直す", () => {
