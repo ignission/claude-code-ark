@@ -1,5 +1,5 @@
 import type { ManagedSession, SpecialKey, Worktree } from "@ark/shared";
-import { AlertCircle, Copy, Loader2, Terminal } from "lucide-react";
+import { Copy, Loader2, Terminal, WifiOff } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -773,9 +773,12 @@ export default function Dashboard() {
           main={
             <div className="h-full flex flex-col">
               {!isConnected && (
-                <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 flex items-center gap-2 text-destructive text-sm shrink-0">
-                  <AlertCircle className="w-4 h-4" />
-                  <span>Not connected to server</span>
+                <div
+                  role="status"
+                  className="border-b border-status-error/30 bg-status-error/15 px-4 py-2 flex items-center gap-2 text-status-error text-sm font-medium shrink-0"
+                >
+                  <WifiOff className="w-4 h-4" aria-hidden="true" />
+                  <span>サーバーとつながっていません</span>
                 </div>
               )}
               <div className="flex-1 overflow-hidden relative">
@@ -825,15 +828,27 @@ export default function Dashboard() {
                 {Array.from(sessions.values()).map(session => {
                   const isActive = selectedSessionId === session.id;
                   const wt = worktrees.find(w => w.id === session.worktreeId);
-                  const rn = (() => {
-                    if (repoList.length === 0) return undefined;
-                    const repo = findRepoForSession(session, repoList);
-                    return repo ? getBaseName(repo) : undefined;
-                  })();
+                  // 主ラベルに使うリポジトリ名。サイドバー (useGroupedWorktreeItems) と
+                  // 同じ順 (session.repoPath → worktreeのパス → 兄弟ディレクトリの推定) で決める
+                  const repoPathOfSession =
+                    session.repoPath ??
+                    (wt
+                      ? repoList.find(repo => wt.path.startsWith(repo))
+                      : undefined) ??
+                    findRepoForSession(session, repoList);
+                  const rn = repoPathOfSession
+                    ? getBaseName(repoPathOfSession)
+                    : undefined;
+                  // サイドバー (SessionSectionList) と通知の文言と同じ出所
+                  const displayName =
+                    worktreeDisplayNames.get(
+                      wt?.path ?? session.worktreePath
+                    ) ?? null;
                   const paneProps = {
                     session,
                     worktree: wt,
                     repoName: rn,
+                    displayName,
                     tabs: getTabsForSession(session.id),
                     activeTabIndex: getActiveTabForSession(session.id),
                     onTabSelect: (idx: number) =>
@@ -858,11 +873,22 @@ export default function Dashboard() {
                     onCreateShortcut: createShortcut,
                     onUpdateShortcut: updateShortcut,
                     onDeleteShortcut: deleteShortcut,
+                    notificationsSupported: sessionNotifications.supported,
+                    notificationsEnabled: isSessionNotificationEnabled(
+                      session.id
+                    ),
+                    onNotificationsEnabledChange: (enabled: boolean) =>
+                      handleSessionNotificationEnabledChange(
+                        session.id,
+                        enabled
+                      ),
                   };
                   return (
                     <div
                       key={session.id}
-                      className={isActive ? "h-full flex flex-col" : "hidden"}
+                      className={
+                        isActive ? "h-full flex flex-col p-3 pl-1" : "hidden"
+                      }
                     >
                       <SplitViewPane
                         socket={socket}

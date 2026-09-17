@@ -99,7 +99,7 @@ export function SidebarMainLayout({
     <div className="h-[100dvh] flex relative">
       {resizing && <div className="fixed inset-0 z-50 cursor-col-resize" />}
       <div
-        className="shrink-0 border-r border-border relative flex flex-col"
+        className="shrink-0 relative flex flex-col"
         style={{ width: `${sidebarWidth}px` }}
       >
         <div className="flex-1 min-h-0 overflow-hidden">{sidebar}</div>

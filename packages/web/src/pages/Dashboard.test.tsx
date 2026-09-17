@@ -347,3 +347,30 @@ describe("Dashboardのモバイル一覧の配線", () => {
     expect(layout.onRemoveRepo).toBeTypeOf("function");
   });
 });
+
+describe("Dashboardの上部バー配線", () => {
+  it("上部バーに表示名と状態チップを出す", () => {
+    const session = makeSession();
+    testDoubles.socketState = {
+      ...socketState(session),
+      worktreeDisplayNames: new Map([[session.worktreePath, "ログイン画面"]]),
+    };
+
+    mount(<Dashboard />);
+
+    const header = mountedRoot?.container.querySelector("header");
+    expect(header?.textContent).toContain("ログイン画面");
+    expect(header?.textContent).toContain("確認待ち");
+  });
+
+  it("サーバーとの切断を日本語の帯で知らせる", () => {
+    const session = makeSession();
+    testDoubles.socketState = { ...socketState(session), isConnected: false };
+
+    mount(<Dashboard />);
+
+    const text = mountedRoot?.container.textContent ?? "";
+    expect(text).toContain("サーバーとつながっていません");
+    expect(text).not.toContain("Not connected to server");
+  });
+});
