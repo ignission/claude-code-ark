@@ -412,21 +412,74 @@ describe("SplitChatPane: 作業中の表示", () => {
 
   it("考えている間と作業している間は、会話の最後に呼吸する3点と文言を出す", () => {
     const thinking = renderChat({ bridgeStatus: "THINK" });
-    expect(indicator(thinking.container)?.textContent).toBe("考えています");
+    expect(indicator(thinking.container)?.textContent).toContain(
+      "考えています"
+    );
     expect(
       indicator(thinking.container)?.querySelectorAll(".status-dots > span")
     ).toHaveLength(3);
     expect(indicator(thinking.container)?.getAttribute("role")).toBe("status");
 
     const working = renderChat({ bridgeStatus: "TOOL" });
-    expect(indicator(working.container)?.textContent).toBe("作業しています");
+    expect(indicator(working.container)?.textContent).toContain(
+      "作業しています"
+    );
   });
 
-  it("入力待ち・待機・停止・状態未着では出さない", () => {
-    for (const bridgeStatus of ["IDLE", "READY", "STOP", undefined] as const) {
+  it("入力待ち・待機・停止・問題・状態未着では出さない", () => {
+    for (const bridgeStatus of [
+      "IDLE",
+      "READY",
+      "STOP",
+      "ERR",
+      undefined,
+    ] as const) {
       const { container } = renderChat({ bridgeStatus });
       expect(indicator(container)).toBeNull();
     }
+  });
+
+  it("送信中の吹き出しがあっても、確認待ち・停止・問題のときは出さない", () => {
+    for (const bridgeStatus of ["AWAITING", "STOP", "ERR"] as const) {
+      const { container } = renderChat({ bridgeStatus });
+      const textarea = container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="メッセージ"]'
+      );
+      typeInto(textarea as HTMLTextAreaElement, "テスト");
+      act(() =>
+        container
+          .querySelector<HTMLButtonElement>('button[aria-label="送信"]')
+          ?.click()
+      );
+      expect(
+        container.querySelector('svg[aria-label="送信中"]')
+      ).not.toBeNull();
+      expect(indicator(container)).toBeNull();
+    }
+  });
+
+  it("PCでは切り替わる文言ではなく固定の文を1つの読み上げ領域で伝える", () => {
+    const { container } = renderChat({ bridgeStatus: "TOOL" });
+    const el = indicator(container);
+    expect(el?.getAttribute("role")).toBe("status");
+    expect(el?.querySelector(".sr-only")?.textContent).toBe(
+      "Claudeが作業しています"
+    );
+    const visible = Array.from(el?.querySelectorAll("span") ?? []).find(
+      span => span.textContent === "作業しています"
+    );
+    expect(visible?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("モバイルでは状態の帯が読み上げるので、3点と文言は出しても読み上げ領域にしない", () => {
+    const { container } = renderChat({
+      bridgeStatus: "THINK",
+      layout: "mobile",
+    });
+    const el = indicator(container);
+    expect(el).not.toBeNull();
+    expect(el?.getAttribute("role")).toBeNull();
+    expect(el?.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("送った直後、状態が切り替わる前でも送信中の吹き出しがある間は「考えています」を出す", () => {
@@ -440,7 +493,7 @@ describe("SplitChatPane: 作業中の表示", () => {
         .querySelector<HTMLButtonElement>('button[aria-label="送信"]')
         ?.click()
     );
-    expect(indicator(container)?.textContent).toBe("考えています");
+    expect(indicator(container)?.textContent).toContain("考えています");
   });
 
   it("質問カードが出ている間は出さない", () => {

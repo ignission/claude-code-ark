@@ -152,7 +152,35 @@ function UserInputCard({ text }: { text: string }) {
  * Claude が動いている間、会話の最後に出す「入力中」表示。
  * 返事の本文は書き終わってから JSONL にまとめて届くので、そのあいだ目線の先に動きを出す
  */
-function WorkingIndicator({ label }: { label: string }) {
+function WorkingIndicator({
+  label,
+  announce,
+}: {
+  label: string;
+  /** false (モバイル) のときは状態の帯が読み上げるので、読み上げ領域にしない */
+  announce: boolean;
+}) {
+  const dots = (
+    <span className="status-dots text-status-busy" aria-hidden="true">
+      <span />
+      <span />
+      <span />
+    </span>
+  );
+  if (!announce) {
+    return (
+      <div
+        data-testid="chat-working-indicator"
+        aria-hidden="true"
+        className="flex items-center gap-2 px-4 py-3 text-[13px] text-muted-foreground"
+      >
+        {dots}
+        <span>{label}</span>
+      </div>
+    );
+  }
+  // 可視の文言は THINK と TOOL で 1 秒ごとに切り替わりうるので、読み上げは固定の文にして
+  // 出現したときに 1 回だけ読まれるようにする
   return (
     <div
       data-testid="chat-working-indicator"
@@ -160,12 +188,9 @@ function WorkingIndicator({ label }: { label: string }) {
       aria-live="polite"
       className="flex items-center gap-2 px-4 py-3 text-[13px] text-muted-foreground"
     >
-      <span className="status-dots text-status-busy" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </span>
-      <span>{label}</span>
+      {dots}
+      <span aria-hidden="true">{label}</span>
+      <span className="sr-only">Claudeが作業しています</span>
     </div>
   );
 }
@@ -182,7 +207,16 @@ function workingIndicatorLabel(
   if (hasActiveAuq) return null;
   if (bridgeStatus === "THINK") return "考えています";
   if (bridgeStatus === "TOOL") return "作業しています";
-  if (hasPending && bridgeStatus !== "AWAITING") return "考えています";
+  // 送った直後の、状態がまだ切り替わっていない間だけ。停止・問題・確認待ちでは出さない
+  // (送信が届かず吹き出しが残っても、止まったセッションに「考えています」を出し続けない)
+  if (
+    hasPending &&
+    (bridgeStatus === undefined ||
+      bridgeStatus === "IDLE" ||
+      bridgeStatus === "READY")
+  ) {
+    return "考えています";
+  }
   return null;
 }
 
@@ -961,9 +995,12 @@ export function SplitChatPane({
 
   // events 更新のたびに pending を整理: マッチしたものを除去。ロジックは
   // テスト容易性のため reconcilePending に純粋関数として切り出してある。
+  // 状態が変わったときも整理し直す。送信が届かず JSONL に何も来ない場合でも、
+  // 時間の規則で古い吹き出し (と作業中の表示) を片付けられるようにするため
+  // biome-ignore lint/correctness/useExhaustiveDependencies(bridgeStatus): 状態の遷移のたびに時間の規則を再評価するための意図的な依存
   useEffect(() => {
     setPending(prev => reconcilePending(prev, events, Date.now()));
-  }, [events]);
+  }, [events, bridgeStatus]);
 
   // built-in slash command (/compact, /clear 等) は JSONL に user-input として
   // 記録されないため、ローカルで永続的に表示する slash-command イベントを保持する。
@@ -1664,7 +1701,9 @@ export function SplitChatPane({
                 ))}
               </>
             )}
-            {workingLabel && <WorkingIndicator label={workingLabel} />}
+            {workingLabel && (
+              <WorkingIndicator label={workingLabel} announce={!isMobile} />
+            )}
           </div>
         </div>
         {!isNearBottom && (
