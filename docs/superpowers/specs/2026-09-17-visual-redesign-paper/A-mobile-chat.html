@@ -109,21 +109,10 @@
     color: var(--foreground);
     font-size: 13px;
     font-weight: 600;
-    text-align: left;
     flex: none;
   }
   .strip svg { width: 16px; height: 16px; color: var(--status-awaiting); }
   .strip .text { flex: 1; }
-  .strip .goto {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    height: 32px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--status-awaiting);
-  }
-  .strip .goto svg { width: 14px; height: 14px; }
 
   /* 会話本文。最後の要素はガラスバーの上で止める */
   .chat {
@@ -294,11 +283,10 @@
     <span class="chip awaiting"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.1 1-1.1 1.8"/><path d="M12 17h.01"/></svg>質問</span>
   </header>
 
-  <button class="strip" aria-label="質問があります。カードへ移動">
+  <div class="strip" role="status">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.1 1-1.1 1.8"/><path d="M12 17h.01"/></svg>
     <span class="text">質問があります</span>
-    <span class="goto">カードへ<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span>
-  </button>
+  </div>
 
   <div class="chat">
     <div class="msg-user">ログイン画面を作ってください。メールアドレスとGoogleアカウントでログインできるようにしたいです</div>
