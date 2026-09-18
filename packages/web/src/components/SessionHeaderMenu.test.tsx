@@ -30,14 +30,10 @@ function menuProps(
   overrides: Partial<SessionHeaderMenuProps> = {}
 ): SessionHeaderMenuProps {
   return {
-    leftMode: "chat",
     worktree: undefined,
     notificationsSupported: false,
     notificationsEnabled: false,
     onDeleteSession: vi.fn(),
-    onReloadTerminal: vi.fn(),
-    inputBarVisible: true,
-    onToggleInputBar: vi.fn(),
     ...overrides,
   };
 }
@@ -72,45 +68,48 @@ afterEach(() => {
 
 describe("SessionHeaderMenu", () => {
   it("1タップのボタンへ移した操作は残さない", () => {
-    const content = menuContent(
-      mount(menuProps({ leftMode: "terminal", onCopyBuffer: vi.fn() }))
-    );
+    const content = menuContent(mount(menuProps()));
 
     expect(content.textContent).not.toContain("メッセージショートカット");
     expect(content.textContent).not.toContain("ファイルを添付");
     expect(content.textContent).not.toContain("画像を貼り付け");
+    expect(content.textContent).not.toContain("端末のバッファをコピー");
+    expect(content.textContent).not.toContain("端末を再読み込み");
+    expect(content.textContent).not.toContain("入力バー");
   });
 
-  it("端末モードでは、バッファのコピー・再読み込み・入力バーと削除を出す", () => {
-    const content = menuContent(
-      mount(menuProps({ leftMode: "terminal", onCopyBuffer: vi.fn() }))
-    );
-
-    expect(content.textContent).toContain("端末のバッファをコピー");
-    expect(content.textContent).toContain("端末を再読み込み");
-    expect(content.textContent).toContain("入力バーを表示");
-    expect(content.textContent).toContain("セッションを削除");
-  });
-
-  it("出す項目が削除だけのときは、先頭に区切り線を残さない", () => {
-    const content = menuContent(mount(menuProps({ leftMode: "chat" })));
-
-    expect(content.firstElementChild?.tagName).not.toBe("HR");
-    expect(content.querySelectorAll("hr")).toHaveLength(0);
-  });
-
-  it("通知と端末の操作が両方出るときだけ、そのあいだにも区切り線を引く", () => {
+  it("残すのはセッション全体の操作だけ (通知と、最下段の削除)", () => {
     const content = menuContent(
       mount(
         menuProps({
-          leftMode: "terminal",
-          onCopyBuffer: vi.fn(),
           notificationsSupported: true,
           onNotificationsEnabledChange: vi.fn(),
         })
       )
     );
 
-    expect(content.querySelectorAll("hr")).toHaveLength(2);
+    expect(content.textContent).toContain("このセッションの通知をオンにする");
+    expect(content.textContent).toContain("セッションを削除");
+    expect(content.lastElementChild?.textContent).toBe("セッションを削除");
+  });
+
+  it("出す項目が削除だけのときは、先頭に区切り線を残さない", () => {
+    const content = menuContent(mount(menuProps()));
+
+    expect(content.firstElementChild?.tagName).not.toBe("HR");
+    expect(content.querySelectorAll("hr")).toHaveLength(0);
+  });
+
+  it("通知を出せるときだけ、削除とのあいだに区切り線を引く", () => {
+    const content = menuContent(
+      mount(
+        menuProps({
+          notificationsSupported: true,
+          onNotificationsEnabledChange: vi.fn(),
+        })
+      )
+    );
+
+    expect(content.querySelectorAll("hr")).toHaveLength(1);
   });
 });

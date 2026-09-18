@@ -28,43 +28,44 @@ export function resolveSessionHeaderLabels(input: {
   };
 }
 
-/** 端末モードのときだけ `…` メニューに出す操作。配列の順がメニューの表示順 */
-export type TerminalMenuAction = "copy-buffer" | "reload" | "toggle-input-bar";
-
-export function terminalMenuActions(input: {
-  leftMode: SplitViewLeftMode;
-  canCopyBuffer: boolean;
-}): TerminalMenuAction[] {
-  // 端末の操作は端末ペインの中の UI (添付確認画面・入力バー) を動かす。
-  // 会話モードでは親ごと隠れているので呼ばない
-  if (input.leftMode !== "terminal") return [];
-  const actions: TerminalMenuAction[] = [];
-  if (input.canCopyBuffer) actions.push("copy-buffer");
-  actions.push("reload", "toggle-input-bar");
-  return actions;
-}
-
 /**
  * 上部バーに 1 タップのボタンとして並べる操作。配列の順が左からの並び順。
- * `…` を開かずに届かせたい操作をここに出し、`…` からは外す
+ * `…` を開かずに届かせたい操作をここに出し、`…` からは外す。
+ * `…` に残すのはセッション全体の操作 (通知・削除) だけ
  */
 export type HeaderQuickAction =
   | "attach-file"
   | "paste-image"
-  | "message-shortcuts";
+  | "message-shortcuts"
+  | "copy-buffer"
+  | "reload-terminal"
+  | "toggle-input-bar";
 
 export function headerQuickActions(input: {
   leftMode: SplitViewLeftMode;
   canUploadFile: boolean;
+  canCopyBuffer: boolean;
 }): HeaderQuickAction[] {
   const actions: HeaderQuickAction[] = [];
   // 会話モードの添付と貼り付けは会話の入力欄が担う。端末側の添付確認画面は
   // 端末ペインの中にあり、会話モードでは親ごと隠れているので呼ばない
-  if (input.leftMode === "terminal" && input.canUploadFile) {
+  const isTerminal = input.leftMode === "terminal";
+  if (isTerminal && input.canUploadFile) {
     actions.push("attach-file", "paste-image");
   }
   actions.push("message-shortcuts");
+  // 端末の操作も端末ペインの中の UI (バッファ・iframe・入力バー) を動かすので、
+  // 会話モードでは出さない。送る操作のあと、`図` と `…` の手前にまとめる
+  if (isTerminal) {
+    if (input.canCopyBuffer) actions.push("copy-buffer");
+    actions.push("reload-terminal", "toggle-input-bar");
+  }
   return actions;
+}
+
+/** 入力バーのボタンの文言。今の状態ではなく、押すと起きることを書く */
+export function inputBarToggleLabel(visible: boolean): string {
+  return visible ? "入力バーを隠す" : "入力バーを表示";
 }
 
 export function notificationMenuLabel(enabled: boolean): string {

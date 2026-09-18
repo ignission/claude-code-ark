@@ -3,6 +3,14 @@
  *
  * サイドバー（セッション一覧） + メイン（ttyd 1ペイン）の構成。
  * サイドバー幅はドラッグでリサイズできる。
+ *
+ * 幅の上限はウィンドウ幅に連動する（`lib/sidebar-width.ts`）。メインペインの
+ * 上部バーには端末モードで1タップの操作が並ぶので、狭いウィンドウで
+ * サイドバーを広げると右端の `…` が切れてしまうため。
+ * ドラッグ中だけでなく、ウィンドウのリサイズと保存値の読み込みでも丸める。
+ *
+ * ユーザーが選んだ幅（preferredWidthRef）は丸めた値とは別に覚えておき、
+ * ウィンドウを広げ直したときは、丸める前の幅へ戻す。
  */
 
 import {
@@ -12,10 +20,7 @@ import {
   useRef,
   useState,
 } from "react";
-
-const SIDEBAR_MIN_WIDTH = 180;
-const SIDEBAR_MAX_WIDTH = 450;
-const SIDEBAR_DEFAULT_WIDTH = 300;
+import { clampSidebarWidth, SIDEBAR_DEFAULT_WIDTH } from "@/lib/sidebar-width";
 
 interface SidebarMainLayoutProps {
   sidebar: ReactNode;
@@ -24,8 +29,9 @@ interface SidebarMainLayoutProps {
   onSidebarWidthChange?: (width: number) => void;
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
+/** ウィンドウ幅。取れない環境では上限の判断から外す（NaN で「制限なし」） */
+function viewportWidth(): number {
+  return typeof window === "undefined" ? Number.NaN : window.innerWidth;
 }
 
 export function SidebarMainLayout({
@@ -35,21 +41,35 @@ export function SidebarMainLayout({
   onSidebarWidthChange,
 }: SidebarMainLayoutProps) {
   const [sidebarWidth, setSidebarWidth] = useState(() =>
-    clamp(initialSidebarWidth, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
+    clampSidebarWidth(initialSidebarWidth, viewportWidth())
   );
   const [resizing, setResizing] = useState(false);
   const sidebarWidthRef = useRef(sidebarWidth);
+  // ユーザーが選んだ幅。ウィンドウを狭めて丸めたあと、また広げたら戻す
+  const preferredWidthRef = useRef(initialSidebarWidth);
   const cleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    const clamped = clamp(
-      initialSidebarWidth,
-      SIDEBAR_MIN_WIDTH,
-      SIDEBAR_MAX_WIDTH
-    );
+    preferredWidthRef.current = initialSidebarWidth;
+    const clamped = clampSidebarWidth(initialSidebarWidth, viewportWidth());
     setSidebarWidth(clamped);
     sidebarWidthRef.current = clamped;
   }, [initialSidebarWidth]);
+
+  // ウィンドウのリサイズでも上限を当て直す。先に広げてから縮める経路で
+  // メインペインが潰れないようにする。保存はしない（選んだ幅は覚えたまま）
+  useEffect(() => {
+    const handleResize = () => {
+      const clamped = clampSidebarWidth(
+        preferredWidthRef.current,
+        viewportWidth()
+      );
+      sidebarWidthRef.current = clamped;
+      setSidebarWidth(clamped);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   const handleSidebarResizeStart = useCallback(
     (e: React.MouseEvent) => {
@@ -57,11 +77,8 @@ export function SidebarMainLayout({
       setResizing(true);
 
       const handleMouseMove = (ev: MouseEvent) => {
-        const newWidth = clamp(
-          ev.clientX,
-          SIDEBAR_MIN_WIDTH,
-          SIDEBAR_MAX_WIDTH
-        );
+        const newWidth = clampSidebarWidth(ev.clientX, viewportWidth());
+        preferredWidthRef.current = newWidth;
         sidebarWidthRef.current = newWidth;
         setSidebarWidth(newWidth);
       };

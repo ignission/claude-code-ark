@@ -3,9 +3,11 @@
  *
  * 上部バーは1本にまとめる。左にセッションの主ラベル・ブランチ・状態チップ、
  * 中央に「端末 / 会話」の切り替え、右に1タップの操作 (ファイルの添付 / 画像の
- * 貼り付け / メッセージのショートカット)・図の開閉と `…` メニュー
- * (SessionHeaderMenu)。1タップの操作は `…` の中に畳まない。
- * 端末専用の操作 (バッファのコピー等) はTerminalPaneHandle経由でTerminalPaneに頼む。
+ * 貼り付け / メッセージのショートカット / 端末のバッファのコピー / 端末の再読み込み /
+ * 入力バーの表示)・図の開閉と `…` メニュー (SessionHeaderMenu)。
+ * 端末に関する操作はすべて1タップで届かせ、`…` にはセッション全体の操作
+ * (通知・削除) だけを残す。端末専用の操作はTerminalPaneHandle経由で
+ * TerminalPaneに頼む。
  * 右ペインは図が未選択でも上部バーのトグルで開閉できる。
  * 中身は DiagramPane（B-0a の図ペイン）。
  *
@@ -31,7 +33,7 @@ import type {
   SpecialKey,
   Worktree,
 } from "@ark/shared";
-import { ImagePlus, Paperclip } from "lucide-react";
+import { Copy, ImagePlus, Keyboard, Paperclip, RefreshCw } from "lucide-react";
 import {
   type ReactNode,
   useCallback,
@@ -40,9 +42,11 @@ import {
   useState,
 } from "react";
 import type { Socket } from "socket.io-client";
+import { cn } from "@/lib/utils";
 import {
   type HeaderQuickAction,
   headerQuickActions,
+  inputBarToggleLabel,
   resolveSessionHeaderLabels,
 } from "../lib/session-header";
 import {
@@ -249,8 +253,8 @@ export function SplitViewPane(props: SplitViewPaneProps) {
     setLeftMode(next);
   }, []);
 
-  // 端末専用の操作は `…` メニューからTerminalPaneに頼む。入力バーの表示は、
-  // メニューのチェック表示のためにTerminalPaneから知らせてもらう
+  // 端末専用の操作は1タップのボタンからTerminalPaneに頼む。入力バーの表示は、
+  // ボタンの文言と押下状態 (aria-pressed) のためにTerminalPaneから知らせてもらう
   const terminalRef = useRef<TerminalPaneHandle>(null);
   const [terminalInputBarVisible, setTerminalInputBarVisible] = useState(false);
   // ショートカットの管理ダイアログは1タップのボタンから開く。ボタン側に持たせると
@@ -261,7 +265,9 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   const quickActions = headerQuickActions({
     leftMode,
     canUploadFile: props.onUploadFile !== undefined,
+    canCopyBuffer: props.onCopyBuffer !== undefined,
   });
+  const inputBarLabel = inputBarToggleLabel(terminalInputBarVisible);
   // Recordにして、HeaderQuickActionを足したときの描き忘れを型で拾う
   const quickActionItems: Record<HeaderQuickAction, ReactNode> = {
     "attach-file": (
@@ -296,6 +302,48 @@ export function SplitViewPane(props: SplitViewPaneProps) {
         onManage={() => setShowShortcutManager(true)}
         className={HEADER_ICON_BUTTON}
       />
+    ),
+    "copy-buffer": (
+      <button
+        key="copy-buffer"
+        type="button"
+        aria-label="端末のバッファをコピー"
+        title="端末のバッファをコピー"
+        onClick={() => terminalRef.current?.copyBuffer()}
+        className={HEADER_ICON_BUTTON}
+      >
+        <Copy className="size-5" aria-hidden="true" />
+      </button>
+    ),
+    "reload-terminal": (
+      <button
+        key="reload-terminal"
+        type="button"
+        aria-label="端末を再読み込み"
+        title="端末を再読み込み"
+        onClick={() => terminalRef.current?.reload()}
+        className={HEADER_ICON_BUTTON}
+      >
+        <RefreshCw className="size-5" aria-hidden="true" />
+      </button>
+    ),
+    // 出したままにできる操作なので、今の状態を押下状態 (aria-pressed) で示す
+    "toggle-input-bar": (
+      <button
+        key="toggle-input-bar"
+        type="button"
+        aria-label={inputBarLabel}
+        aria-pressed={terminalInputBarVisible}
+        title={inputBarLabel}
+        onClick={() => terminalRef.current?.toggleInputBar()}
+        // text-muted-foreground と競合するので、cn (tailwind-merge) で解決させる
+        className={cn(
+          HEADER_ICON_BUTTON,
+          terminalInputBarVisible && "bg-muted text-foreground"
+        )}
+      >
+        <Keyboard className="size-5" aria-hidden="true" />
+      </button>
     ),
   };
 
@@ -406,20 +454,31 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   return (
     <div className="h-full flex flex-col overflow-hidden rounded-xl border border-border bg-card shadow-card">
       {/* 上部バー: 左 = 主ラベル・ブランチ・状態チップ、中央 = 端末 / 会話、
-          右 = 図の開閉と `…` メニュー */}
+          右 = 1タップの操作・図の開閉と `…` メニュー */}
       {/* 狭い幅 (1024px前後) では右側を中身の幅に縮め、主ラベルに幅を回す。
-          広い幅だけ左右を同じ幅にしてセグメントを中央に置く */}
+          広い幅だけ左右を同じ幅にしてセグメントを中央に置く。
+
+          さらに狭いとき (コンテナ42rem未満) は「装飾から削る」順で畳む。
+          1タップの操作は最後まで消さない:
+          1. 文言を読み上げだけに残してアイコンにする (ブランチ・状態チップ・
+             セグメント・図)。`sr-only` は position:absolute なので、
+             文字だけでなく flex の gap も消える
+          2. それでも足りない分は左の箱が引き受ける。主ラベルが縮み、
+             最後は `overflow-hidden` で箱の中に収める (上部バーは横に溢れない) */}
       <header className="@container h-13 shrink-0 border-b border-border flex items-center gap-3 pl-5 pr-3">
-        <div className="flex flex-1 basis-0 min-w-0 items-center gap-2.5">
-          {/* 主ラベルを先に守り、ブランチから省略する */}
+        <div className="flex flex-1 basis-0 min-w-0 items-center gap-2.5 overflow-hidden">
+          {/* 主ラベルを先に守り、ブランチから省略する。縮み率をブランチ側に
+              大きく振ることで、ブランチが尽きるまで主ラベルは縮まない。
+              主ラベルも縮めるのは、右側 (1タップの操作) が増えて左が
+              狭まったとき、状態チップを押し出して上部バーからはみ出さないため */}
           <span
-            className="min-w-0 max-w-[60%] shrink-0 truncate text-[17px] font-semibold tracking-[-0.01em]"
+            className="min-w-0 max-w-[60%] truncate text-[17px] font-semibold tracking-[-0.01em]"
             title={labels.primary}
           >
             {labels.primary}
           </span>
           <span
-            className="min-w-0 truncate text-[13px] text-muted-foreground"
+            className="min-w-0 shrink-[999] truncate text-[13px] text-muted-foreground @max-2xl:sr-only"
             title={labels.branch}
           >
             {labels.branch}
@@ -427,6 +486,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           <StatusChip
             statusKey={resolveStatusKey(true, props.bridgeStatus)}
             className="shrink-0"
+            labelClassName="@max-2xl:sr-only"
           />
         </div>
         <SegmentedControl
@@ -434,6 +494,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           options={LEFT_MODE_OPTIONS}
           value={leftMode}
           onChange={handleLeftModeChange}
+          labelClassName="@max-2xl:sr-only"
         />
         <div className="flex flex-none @4xl:flex-1 @4xl:basis-0 min-w-0 items-center justify-end gap-1">
           {quickActions.map(action => quickActionItems[action])}
@@ -450,23 +511,14 @@ export function SplitViewPane(props: SplitViewPaneProps) {
             }`}
           >
             <VIEW_MODE_ICONS.board className="size-4.5" aria-hidden="true" />
-            <span>図</span>
+            <span className="@max-2xl:sr-only">図</span>
           </button>
           <SessionHeaderMenu
-            leftMode={leftMode}
             worktree={props.worktree}
             notificationsSupported={props.notificationsSupported ?? false}
             notificationsEnabled={props.notificationsEnabled ?? true}
             onNotificationsEnabledChange={props.onNotificationsEnabledChange}
             onDeleteSession={props.onDeleteSession}
-            onCopyBuffer={
-              props.onCopyBuffer
-                ? () => terminalRef.current?.copyBuffer()
-                : undefined
-            }
-            onReloadTerminal={() => terminalRef.current?.reload()}
-            inputBarVisible={terminalInputBarVisible}
-            onToggleInputBar={() => terminalRef.current?.toggleInputBar()}
           />
         </div>
       </header>

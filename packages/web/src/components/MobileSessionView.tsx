@@ -8,6 +8,8 @@
  * 下部バーはセグメントの下に1タップの操作 (MobileQuickActionRow) を置く。
  * 添付と画像の実体はモードで違い、会話モードは会話の入力欄 (SplitChatPaneHandle。
  * `@path` を入力欄に足す)、端末・図モードは端末側の確認ダイアログへ渡す。
+ * 端末に関する操作 (バッファのコピー・再読み込み) も1タップの行に出し (端末モード
+ * だけ)、`…` にはセッション全体の操作 (通知・再起動・削除) だけを残す。
  */
 
 import {
@@ -27,10 +29,8 @@ import {
   ChevronRight,
   CircleAlert,
   CircleHelp,
-  Copy,
   Ellipsis,
   File as FileIcon,
-  RefreshCw,
   RotateCw,
   Send,
   Trash2,
@@ -482,7 +482,12 @@ export function MobileSessionView({
   const quickActions = mobileQuickActions({
     viewMode,
     canUploadFile: onUploadFile !== undefined,
+    canCopyBuffer: onCopyBuffer !== undefined,
   });
+  // `…` に残すのはセッション全体の操作だけ。通知を出せない環境 (Notification API の
+  // 無いブラウザ) もあるので、区切り線は直前のまとまりが実際に出たときだけ引く
+  const canChangeNotifications =
+    notificationsSupported && onNotificationsEnabledChange !== undefined;
   const quickActionRow = (
     <MobileQuickActionRow
       actions={quickActions}
@@ -505,6 +510,8 @@ export function MobileSessionView({
             }
           : undefined
       }
+      onCopyBuffer={onCopyBuffer ? handleCopyBuffer : undefined}
+      onReloadTerminal={handleReloadIframe}
     />
   );
 
@@ -567,10 +574,12 @@ export function MobileSessionView({
                 <Ellipsis className="size-[22px]" />
               </Button>
             </DropdownMenuTrigger>
-            {/* 添付・画像・ショートカット・スラッシュコマンドは下部バーの
-                1タップの操作へ移した。ここに残すのは端末とセッションの操作だけ */}
+            {/* 添付・画像・ショートカット・スラッシュコマンドと、端末に関する操作
+                (バッファのコピー・再読み込み) は下部バーの1タップの操作へ移した。
+                ここに残すのはセッション全体の操作だけ。
+                区切り線は、直前のまとまりが実際に出たときだけ引く */}
             <DropdownMenuContent align="end" className="w-64">
-              {notificationsSupported && onNotificationsEnabledChange && (
+              {canChangeNotifications && (
                 <>
                   <DropdownMenuItem
                     onSelect={() =>
@@ -580,26 +589,18 @@ export function MobileSessionView({
                     {notificationsEnabled ? <BellOff /> : <Bell />}
                     {notificationMenuLabel(notificationsEnabled)}
                   </DropdownMenuItem>
-                  <DropdownMenuSeparator />
+                  {onRestartSession && <DropdownMenuSeparator />}
                 </>
               )}
-              {onCopyBuffer && (
-                <DropdownMenuItem onSelect={handleCopyBuffer}>
-                  <Copy />
-                  端末のバッファをコピー
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem onSelect={handleReloadIframe}>
-                <RefreshCw />
-                端末を再読み込み
-              </DropdownMenuItem>
               {onRestartSession && (
                 <DropdownMenuItem onSelect={() => setShowRestartDialog(true)}>
                   <RotateCw />
                   セッションを再起動
                 </DropdownMenuItem>
               )}
-              <DropdownMenuSeparator />
+              {(canChangeNotifications || onRestartSession) && (
+                <DropdownMenuSeparator />
+              )}
               <DropdownMenuItem
                 variant="destructive"
                 onSelect={() => setShowDeleteDialog(true)}

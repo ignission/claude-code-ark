@@ -79,6 +79,33 @@ describe("SegmentedControl", () => {
     );
   });
 
+  it("labelClassNameは各項目の文言のspanにだけ当て、読み上げからは消さない", () => {
+    const container = mount(
+      <SegmentedControl
+        options={OPTIONS}
+        value="terminal"
+        onChange={vi.fn()}
+        labelClassName="@max-2xl:sr-only"
+      />
+    );
+
+    const button = findButton(container, "端末");
+    expect(button.querySelector("span")?.className).toBe("@max-2xl:sr-only");
+    // 視覚的に隠すだけなので、文言そのものは残る
+    expect(button.textContent).toBe("端末");
+    expect(button.className).not.toContain("sr-only");
+  });
+
+  it("labelClassNameを渡さない既存の呼び出しでは、文言のspanに class を付けない", () => {
+    const container = mount(
+      <SegmentedControl options={OPTIONS} value="terminal" onChange={vi.fn()} />
+    );
+
+    expect(
+      findButton(container, "端末").querySelector("span")?.getAttribute("class")
+    ).toBeNull();
+  });
+
   it("labelを渡すと、まとまりの読み上げ名にする", () => {
     const container = mount(
       <SegmentedControl
