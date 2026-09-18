@@ -223,7 +223,7 @@ describe("SessionSectionListの並べ方", () => {
     expect(container.querySelector('[data-section="resting"]')).toBeNull();
   });
 
-  it("セクションの中は会話の最終更新が新しい順に並べる", () => {
+  it("あなたの番は会話の最終更新が新しい順に並べる", () => {
     const { container } = mountList(
       listProps({
         sessionStatuses: statusesOf("IDLE", "IDLE", "IDLE"),

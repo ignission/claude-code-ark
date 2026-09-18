@@ -2,12 +2,13 @@
  * PCサイドバーとモバイル一覧の並べ方 (設計書 7 節)。
  *
  * リポジトリ順ではなく注意の順に並べる。比較キーは
- * セクション → 最終更新の降順 → 状態の優先度 → リポジトリ名 →
+ * セクション → (あなたの番だけ) 最終更新の降順 → 状態の優先度 → リポジトリ名 →
  * リポジトリの絶対パス → worktreeのパス (worktreeの無いセッションは後ろ)。
  *
- * セクションの中は「上から見ていけばいい」ように最後に動いた会話を先頭に置く。
- * 3セクションとも同じ規則で並べる。最終更新の不明な行 (未起動・会話がまだ無い)
- * はそのセクションの最後へ回す。
+ * 最終更新で並べ替えるのは「あなたの番」だけ。上から順に片付ける列なので、
+ * 最後に動いた会話が先頭に来てほしい。作業中・休止中は眺めるだけの列なので、
+ * 会話が動くたびに場所が変わらない方がよく、従来のキーのままにする。
+ * 最終更新の不明な行 (未起動・会話がまだ無い) はあなたの番の最後へ回す。
  * 同着で並びが毎秒揺れないよう、従来の比較キーはそのまま tiebreaker に残す。
  */
 
@@ -93,7 +94,7 @@ function itemPath(entry: SessionListEntry): string {
 }
 
 /**
- * 最終更新の降順。不明 (null) は常に後ろ。
+ * 最終更新の降順 (あなたの番でだけ使う)。不明 (null) は常に後ろ。
  * 同着 (両方不明を含む) は 0 を返し、後続の比較キーに委ねる
  */
 function compareLastUpdated(a: SessionListEntry, b: SessionListEntry): number {
@@ -106,9 +107,14 @@ function compareLastUpdated(a: SessionListEntry, b: SessionListEntry): number {
 function compareEntries(a: SessionListEntry, b: SessionListEntry): number {
   const pa = presentStatus(a.statusKey);
   const pb = presentStatus(b.statusKey);
+  const bySection = SECTION_RANK[pa.section] - SECTION_RANK[pb.section];
+  if (bySection !== 0) return bySection;
+  // ここから先は同じセクション。最終更新を見るのは「あなたの番」だけ
+  if (pa.section === "your-turn") {
+    const byLastUpdated = compareLastUpdated(a, b);
+    if (byLastUpdated !== 0) return byLastUpdated;
+  }
   return (
-    SECTION_RANK[pa.section] - SECTION_RANK[pb.section] ||
-    compareLastUpdated(a, b) ||
     pa.priority - pb.priority ||
     a.repoName.localeCompare(b.repoName) ||
     a.repoPath.localeCompare(b.repoPath) ||
