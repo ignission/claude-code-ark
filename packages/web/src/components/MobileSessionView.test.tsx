@@ -41,6 +41,14 @@ const testDoubles = vi.hoisted(() => ({
   chatPasteImage: vi.fn(),
 }));
 
+const toastDoubles = vi.hoisted(() => ({
+  success: vi.fn(),
+  info: vi.fn(),
+  error: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({ toast: toastDoubles }));
+
 // 会話ビューの中身は Task 9 のテストで確かめる。ここでは受け取った props と、
 // ガラスバーの上段に置かれる composerAccessory の描画、そして下部バーから
 // 呼ばれる取っ手 (SplitChatPaneHandle) だけを見る
@@ -180,6 +188,9 @@ beforeEach(() => {
   testDoubles.splitChatPane.mockClear();
   testDoubles.chatOpenFilePicker.mockClear();
   testDoubles.chatPasteImage.mockClear();
+  toastDoubles.success.mockClear();
+  toastDoubles.info.mockClear();
+  toastDoubles.error.mockClear();
 });
 
 afterEach(() => {
@@ -187,6 +198,7 @@ afterEach(() => {
     act(() => root.unmount());
     container.remove();
   }
+  Reflect.deleteProperty(navigator, "clipboard");
 });
 
 describe("mobile session view mode", () => {
@@ -577,18 +589,32 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
       .filter((label): label is string => label !== null);
   }
 
-  it("会話・端末・図のどのモードでも、同じ4つの操作を並べる", () => {
-    const container = mount(
-      <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
-    );
-
-    for (const mode of ["chat", "terminal", "board"] as const) {
+  it("端末・図モードは、添付・画像・ショートカット・スラッシュコマンドの4つを並べる", () => {
+    // bottomBarTop は3モードのバーで共有する1つの要素で、内容は現在の viewMode で決まる
+    // (見えているのは1枚だけなので、行の中身を確かめるには対象のモードを開いておく)
+    for (const mode of ["terminal", "board"] as const) {
+      localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, mode);
+      const container = mount(
+        <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
+      );
       const labels = labelsOf(barOf(container, mode));
       expect(labels).toContain("ファイルを添付");
       expect(labels).toContain("画像を貼り付け");
       expect(labels).toContain("メッセージのショートカット");
       expect(labels).toContain("スラッシュコマンド");
     }
+  });
+
+  it("会話モードは添付を出さない (会話の入力欄が自前のボタンを持つため)。画像・ショートカット・スラッシュコマンドは出す", () => {
+    const container = mount(
+      <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
+    );
+
+    const labels = labelsOf(barOf(container, "chat"));
+    expect(labels).not.toContain("ファイルを添付");
+    expect(labels).toContain("画像を貼り付け");
+    expect(labels).toContain("メッセージのショートカット");
+    expect(labels).toContain("スラッシュコマンド");
   });
 
   it("アップロードできない環境では、ファイルの操作を出さない", () => {
@@ -601,14 +627,13 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     expect(labels).toContain("スラッシュコマンド");
   });
 
-  it("会話モードの添付と画像は、会話の入力欄の流儀 (@path) で処理する", () => {
+  it("会話モードの画像は、会話の入力欄の流儀 (@path) で処理する。添付は行に出さない (会話の入力欄が自前のボタンを持つため)", () => {
     const container = mount(
       <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
     );
     const bar = barOf(container, "chat");
 
-    click(bar.querySelector('button[aria-label="ファイルを添付"]'));
-    expect(testDoubles.chatOpenFilePicker).toHaveBeenCalledTimes(1);
+    expect(bar.querySelector('button[aria-label="ファイルを添付"]')).toBeNull();
 
     click(bar.querySelector('button[aria-label="画像を貼り付け"]'));
     expect(testDoubles.chatPasteImage).toHaveBeenCalledTimes(1);
@@ -632,6 +657,78 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
 
     expect(inputClick).toHaveBeenCalledTimes(1);
     expect(testDoubles.chatOpenFilePicker).not.toHaveBeenCalled();
+  });
+
+  it("図モードの添付も、端末モードと同じファイル選択 (端末側の確認ダイアログの流儀) を開く", () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "board");
+    const container = mount(
+      <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
+    );
+    const input =
+      container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+    const inputClick = vi.spyOn(input as HTMLInputElement, "click");
+
+    click(
+      barOf(container, "board").querySelector(
+        'button[aria-label="ファイルを添付"]'
+      )
+    );
+
+    expect(inputClick).toHaveBeenCalledTimes(1);
+    expect(testDoubles.chatOpenFilePicker).not.toHaveBeenCalled();
+  });
+
+  it("端末モードの画像の貼り付けは、クリップボードに画像が無いとトーストで知らせる", async () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        read: vi.fn(async () => [{ types: ["text/plain"], getType: vi.fn() }]),
+      },
+      configurable: true,
+    });
+    const container = mount(
+      <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
+    );
+
+    click(
+      barOf(container, "terminal").querySelector(
+        'button[aria-label="画像を貼り付け"]'
+      )
+    );
+
+    await vi.waitFor(() => {
+      expect(toastDoubles.info).toHaveBeenCalledWith(
+        "クリップボードに画像がありません"
+      );
+    });
+  });
+
+  it("端末モードの画像の貼り付けは、クリップボード読み取りに失敗するとトーストで知らせる", async () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        read: vi.fn(async () => {
+          throw new Error("denied");
+        }),
+      },
+      configurable: true,
+    });
+    const container = mount(
+      <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
+    );
+
+    click(
+      barOf(container, "terminal").querySelector(
+        'button[aria-label="画像を貼り付け"]'
+      )
+    );
+
+    await vi.waitFor(() => {
+      expect(toastDoubles.error).toHaveBeenCalledWith(
+        "クリップボードを読み取れませんでした"
+      );
+    });
   });
 
   it("ショートカットとスラッシュコマンドは1タップで一覧を出し、選ぶと送る", () => {

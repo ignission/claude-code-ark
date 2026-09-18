@@ -36,6 +36,7 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { readClipboardImages } from "@/lib/clipboard-images";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useIsMobile } from "../hooks/useMobile";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
@@ -294,18 +295,7 @@ export function TerminalPane({
   const handlePasteButtonClick = useCallback(async () => {
     if (!onUploadFile) return;
     try {
-      const clipboardItems = await navigator.clipboard.read();
-      const files: File[] = [];
-      for (const item of clipboardItems) {
-        const imageType = item.types.find(type => type.startsWith("image/"));
-        if (imageType) {
-          const blob = await item.getType(imageType);
-          const ext = imageType.split("/")[1] || "png";
-          files.push(
-            new File([blob], `pasted-image.${ext}`, { type: imageType })
-          );
-        }
-      }
+      const files = await readClipboardImages();
       if (files.length > 0) {
         await addPendingFiles(files);
       } else {

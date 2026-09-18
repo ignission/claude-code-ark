@@ -67,6 +67,7 @@ import {
   groupToolCalls,
   type ToolCallEvent,
 } from "@/lib/chat-render-items";
+import { readClipboardImages } from "@/lib/clipboard-images";
 import {
   FLOATING_BAR_BOTTOM,
   floatingBarReserve,
@@ -1439,17 +1440,7 @@ export function SplitChatPane({
   const pasteImageFromClipboard = useCallback(async () => {
     if (!onUploadFile) return;
     try {
-      const clipboardItems = await navigator.clipboard.read();
-      const files: File[] = [];
-      for (const item of clipboardItems) {
-        const imageType = item.types.find(type => type.startsWith("image/"));
-        if (!imageType) continue;
-        const blob = await item.getType(imageType);
-        const ext = imageType.split("/")[1] || "png";
-        files.push(
-          new File([blob], `pasted-image.${ext}`, { type: imageType })
-        );
-      }
+      const files = await readClipboardImages();
       if (files.length === 0) {
         toast.info("クリップボードに画像がありません");
         return;

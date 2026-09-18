@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
+import { toast } from "sonner";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -58,6 +59,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { readClipboardImages } from "@/lib/clipboard-images";
 import { FLOATING_BAR_BOTTOM } from "@/lib/floating-composer";
 import {
   deleteSessionDescription,
@@ -75,6 +77,7 @@ import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { useTtydReconnect } from "../hooks/useTtydReconnect";
 import { useVisualViewport } from "../hooks/useVisualViewport";
+import { mobileQuickActions } from "../lib/mobile-quick-actions";
 import {
   type DiagramOpenRequest,
   getViewModeForDiagramOpenRequest,
@@ -383,27 +386,20 @@ export function MobileSessionView({
     return () => document.removeEventListener("paste", handleDocumentPaste);
   }, [handlePaste]);
 
-  // クリップボードからの画像ペーストボタン
+  // クリップボードからの画像ペーストボタン。空振りと失敗はトーストで知らせる
+  // (端末側の TerminalPane / 会話側の SplitChatPane と同じ作法)
   const handlePasteButtonClick = useCallback(async () => {
     if (!onUploadFile) return;
     try {
-      const clipboardItems = await navigator.clipboard.read();
-      const files: File[] = [];
-      for (const item of clipboardItems) {
-        const imageType = item.types.find(type => type.startsWith("image/"));
-        if (imageType) {
-          const blob = await item.getType(imageType);
-          const ext = imageType.split("/")[1] || "png";
-          files.push(
-            new File([blob], `pasted-image.${ext}`, { type: imageType })
-          );
-        }
-      }
+      const files = await readClipboardImages();
       if (files.length > 0) {
         await addPendingFiles(files);
+      } else {
+        toast.info("クリップボードに画像がありません");
       }
     } catch (err) {
       console.error("Failed to read clipboard:", err);
+      toast.error("クリップボードを読み取れませんでした");
     }
   }, [onUploadFile, addPendingFiles]);
 
@@ -480,9 +476,16 @@ export function MobileSessionView({
 
   // 1タップの操作。セグメントと同じく3つのモードのバーすべてに置く (見えるのは1枚)。
   // 添付と画像は、会話モードだけ会話の入力欄の流儀にする。端末側の確認ダイアログは
-  // ターミナルペインの中にあり、会話モードでは親ごと隠れているため
+  // ターミナルペインの中にあり、会話モードでは親ごと隠れているため。
+  // どのボタンを出すかは lib/mobile-quick-actions.ts に寄せる (会話モードは
+  // 会話の入力欄が自前の添付ボタンを持つので、行には出さない)
+  const quickActions = mobileQuickActions({
+    viewMode,
+    canUploadFile: onUploadFile !== undefined,
+  });
   const quickActionRow = (
     <MobileQuickActionRow
+      actions={quickActions}
       messageShortcuts={messageShortcuts}
       onSendMessage={onSendMessage}
       onManageShortcuts={() => setShowShortcutManager(true)}
