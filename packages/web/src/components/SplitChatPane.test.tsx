@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { ManagedSession } from "@ark/shared";
+import type { ManagedSession, SlashCommandInfo } from "@ark/shared";
 import { act, type ComponentProps, createRef, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,8 +8,11 @@ import { SplitChatPane, type SplitChatPaneHandle } from "./SplitChatPane";
 
 type ChatSocket = NonNullable<ComponentProps<typeof SplitChatPane>["socket"]>;
 
-/** on / off / emitだけを持つsocketの偽物。サーバーからのpushはemitServerで起こす */
-function createFakeSocket() {
+/**
+ * on / off / emitだけを持つsocketの偽物。サーバーからのpushはemitServerで起こす。
+ * `slash:list` だけはコールバック型なので、渡された候補をその場で返す
+ */
+function createFakeSocket(slashCommands: SlashCommandInfo[] = []) {
   const handlers = new Map<string, Set<(data: unknown) => void>>();
   const fake = {
     on(event: string, handler: (data: unknown) => void) {
@@ -22,7 +25,16 @@ function createFakeSocket() {
       handlers.get(event)?.delete(handler);
       return fake;
     },
-    emit: vi.fn(),
+    emit: vi.fn((event: string, ...args: unknown[]) => {
+      if (event !== "slash:list") return fake;
+      const callback = args[1] as
+        | ((response: { commands?: SlashCommandInfo[] }) => void)
+        | undefined;
+      // 呼び出し元 (useSlashCommands の effect) は既に act の中なので、
+      // ここで act を重ねるとレイアウト計測の effect と順序が入れ替わる
+      callback?.({ commands: slashCommands });
+      return fake;
+    }),
   };
   const emitServer = (event: string, data: unknown) => {
     act(() => {
@@ -57,9 +69,10 @@ function makeSession(id: string): ManagedSession {
 }
 
 function renderChat(
-  overrides: Partial<ComponentProps<typeof SplitChatPane>> = {}
+  overrides: Partial<ComponentProps<typeof SplitChatPane>> = {},
+  slashCommands: SlashCommandInfo[] = []
 ) {
-  const { socket, emitServer } = createFakeSocket();
+  const { socket, emitServer } = createFakeSocket(slashCommands);
   const onSendMessage = vi.fn();
   const onSendKey = vi.fn();
   const container = mount(
@@ -776,5 +789,62 @@ describe("SplitChatPane: コードブロックのコピー", () => {
 
     expect(container.textContent).toContain("flowchart LR");
     expect(copyButton(container)).toBeNull();
+  });
+});
+
+describe("SplitChatPane: 組み込みスラッシュコマンドのカード", () => {
+  const BUILT_IN_CLEAR: SlashCommandInfo[] = [
+    { name: "/clear", source: "built-in" },
+  ];
+
+  /** Claude Code が新しい transcript の先頭に書く /clear の記録 */
+  const clearRecord = (at: number, uuid = "c1") =>
+    line({
+      type: "user",
+      uuid,
+      timestamp: new Date(at).toISOString(),
+      message: {
+        role: "user",
+        content:
+          "<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>",
+      },
+    });
+
+  const countClearCards = (container: HTMLElement) =>
+    (container.textContent?.split("/clear").length ?? 1) - 1;
+
+  function sendClear(container: HTMLElement) {
+    const textarea = container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="メッセージ"]'
+    );
+    typeInto(textarea as HTMLTextAreaElement, "/clear");
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="送信"]')
+        ?.click()
+    );
+  }
+
+  it("送信直後はローカルのカードを1枚出す (記録が来るまでの間)", () => {
+    const { container, onSendMessage } = renderChat({}, BUILT_IN_CLEAR);
+    sendClear(container);
+
+    expect(onSendMessage).toHaveBeenCalledWith("/clear");
+    expect(countClearCards(container)).toBe(1);
+    // 記録されないコマンドと同じ扱いで spinner は出さない
+    expect(container.querySelector('svg[aria-label="送信中"]')).toBeNull();
+  });
+
+  it("記録の slash-command が届いてもカードは1枚のまま (二重表示しない)", () => {
+    const { container, emitServer } = renderChat({}, BUILT_IN_CLEAR);
+    sendClear(container);
+
+    // /clear は transcript を切り替えるので、新しい snapshot が記録だけを運ぶ
+    emitServer("session:jsonl-snapshot", {
+      sessionId: "s1",
+      lines: [clearRecord(Date.now() + 1_000)],
+    });
+
+    expect(countClearCards(container)).toBe(1);
   });
 });

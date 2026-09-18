@@ -77,6 +77,10 @@ import type { JsonlParsedEvent } from "@/lib/jsonl-event-parser";
 import { splitTextWithUrls } from "@/lib/linkify";
 import { isMermaidCodeClass } from "@/lib/mermaid-block-utils";
 import { reconcileEscape } from "@/lib/reconcile-escape";
+import {
+  type LocalSlashCommand,
+  reconcileLocalSlash,
+} from "@/lib/reconcile-local-slash";
 import { reconcilePending } from "@/lib/reconcile-pending";
 import { buildVisualizeConversationPrompt } from "@/lib/visualize-conversation";
 
@@ -1035,8 +1039,15 @@ export function SplitChatPane({
   // built-in slash command (/compact, /clear 等) は JSONL に user-input として
   // 記録されないため、ローカルで永続的に表示する slash-command イベントを保持する。
   const [localSlashCommands, setLocalSlashCommands] = useState<
-    { id: string; name: string; args?: string; sentAt: number }[]
+    LocalSlashCommand[]
   >([]);
+
+  // /clear のように JSONL へ slash-command として記録されるコマンドは、記録が
+  // 現れた時点でローカルのカードを消さないと同じコマンドが 2 枚並ぶ。
+  // ロジックは reconcilePending と同様に純粋関数へ切り出してある
+  useEffect(() => {
+    setLocalSlashCommands(prev => reconcileLocalSlash(prev, events));
+  }, [events]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies(session.id): セッション切替を検知して pending を破棄するための意図的な依存
   useEffect(() => {
