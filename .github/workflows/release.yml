@@ -595,9 +595,16 @@ jobs:
         # ログに残し、原因を切り分けられるようにする。
         run: |
           set -euo pipefail
-          APP="packages/desktop/release/mac-arm64/Ark.app"
+          # APP は **絶対パス**にする。ASAR_MAIN を `createRequire` に渡すので、
+          # 相対パスだと ERR_INVALID_ARG_VALUE
+          # ("must be a file URL object, file URL string, or absolute path string")
+          # で STAGE=resolve 相当の位置に到達する前に落ちる (main への dry run で実測)。
+          # asar 内のパスは実在のディレクトリではないため `realpath` は使えない。
+          # $PWD を前置する (job に working-directory 指定は無く、workspace 直下)。
+          APP="$PWD/packages/desktop/release/mac-arm64/Ark.app"
           ARK_BIN="$APP/Contents/MacOS/Ark"
-          ASAR_MAIN="$APP/Contents/Resources/app.asar/dist/main.js"
+          RESOURCES="$APP/Contents/Resources"
+          ASAR_MAIN="$RESOURCES/app.asar/dist/main.js"
           if [ ! -x "$ARK_BIN" ]; then
             echo "::error::Ark executable not found at $ARK_BIN"
             ls -la "$APP/Contents/MacOS" 2>&1 || echo "(MacOS directory not found)"
@@ -680,7 +687,16 @@ jobs:
           echo "::${END_TOKEN}::"
           if [ "$RUN_EXIT" -ne 0 ]; then
             echo "::error::packaged .app 内で esbuild の transformSync が通らない (exit=$RUN_EXIT)。上の STAGE= で切り分けること"
-            ls -la "$(dirname "$ASAR_MAIN")" 2>&1 || echo "(app.asar/dist not listable)"
+            # app.asar の中身は実ファイルではないので ls では覗けない
+            # ("Not a directory" になるだけ)。asar 本体と unpacked の有無を出す。
+            ls -la "$RESOURCES" 2>&1 || echo "(Resources directory not found)"
+            for entry in app.asar app.asar.unpacked; do
+              if [ -e "$RESOURCES/$entry" ]; then
+                echo "present: $RESOURCES/$entry"
+              else
+                echo "missing: $RESOURCES/$entry"
+              fi
+            done
             exit 1
           fi
 
