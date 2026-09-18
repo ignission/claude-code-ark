@@ -4,7 +4,7 @@
  * 操作は上部バー (SplitViewPane) が持ち、端末専用の操作は
  * TerminalPaneHandleとして公開する。
  * - ttyd iframeを暗い額縁 (TERMINAL_BG) で囲む
- * - 入力バー (Quick Keysと入力欄) は `…` メニューから出し入れする
+ * - 入力バー (Quick Keysと入力欄) は上部バーの `…` メニューから出し入れする
  * - ファイルのD&D・貼り付け・添付は、このペインの中の確認画面を経て送る
  */
 
@@ -36,6 +36,7 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { readClipboardImages } from "@/lib/clipboard-images";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useIsMobile } from "../hooks/useMobile";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
@@ -163,7 +164,7 @@ export function TerminalPane({
   }, [isMobile]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  // ファイル選択のinput。上部バーの `…` メニュー (Radix Portal) の中に置くと、
+  // ファイル選択のinput。上部バーのメニュー (Radix Portal) の中に置くと、
   // メニューが閉じた瞬間に消えて、OSのファイル選択画面から戻ってもonChangeが
   // 届かない。このペインに残し、openFilePicker()でclick()だけを呼ばせる
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -289,23 +290,12 @@ export function TerminalPane({
     return () => document.removeEventListener("paste", handleDocumentPaste);
   }, [handlePaste]);
 
-  // クリップボードから画像を読み取るボタン用。`…` メニューは選んだ時点で
-  // 閉じるので、結果はcopyBufferと同様にトーストで知らせる
+  // クリップボードから画像を読み取るボタン用。押した時点で上部バーの
+  // メニューは閉じているので、結果はcopyBufferと同様にトーストで知らせる
   const handlePasteButtonClick = useCallback(async () => {
     if (!onUploadFile) return;
     try {
-      const clipboardItems = await navigator.clipboard.read();
-      const files: File[] = [];
-      for (const item of clipboardItems) {
-        const imageType = item.types.find(type => type.startsWith("image/"));
-        if (imageType) {
-          const blob = await item.getType(imageType);
-          const ext = imageType.split("/")[1] || "png";
-          files.push(
-            new File([blob], `pasted-image.${ext}`, { type: imageType })
-          );
-        }
-      }
+      const files = await readClipboardImages();
       if (files.length > 0) {
         await addPendingFiles(files);
       } else {
@@ -470,7 +460,8 @@ export function TerminalPane({
     onReload: handleReloadIframe,
   });
 
-  // 上部バー (SplitViewPane) の `…` メニューから端末専用の操作を呼べるようにする
+  // 上部バー (SplitViewPane) から端末専用の操作を呼べるようにする。
+  // 添付と画像の貼り付けは1タップのボタン、バッファのコピー等は `…` メニューから
   useImperativeHandle(ref, () => ({
     copyBuffer: () => {
       handleCopyBuffer();

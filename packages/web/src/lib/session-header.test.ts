@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   deleteSessionDescription,
+  headerQuickActions,
   notificationMenuLabel,
   resolveSessionHeaderLabels,
   terminalMenuActions,
@@ -42,38 +43,49 @@ describe("resolveSessionHeaderLabels", () => {
 describe("terminalMenuActions", () => {
   it("会話モードでは端末の操作を出さない", () => {
     expect(
-      terminalMenuActions({
-        leftMode: "chat",
-        canCopyBuffer: true,
-        canUploadFile: true,
-      })
+      terminalMenuActions({ leftMode: "chat", canCopyBuffer: true })
     ).toEqual([]);
   });
 
-  it("端末モードでは、コピー・貼り付け・添付・再読み込み・入力バーの順に出す", () => {
+  it("端末モードでは、コピー・再読み込み・入力バーの順に出す", () => {
     expect(
-      terminalMenuActions({
-        leftMode: "terminal",
-        canCopyBuffer: true,
-        canUploadFile: true,
-      })
-    ).toEqual([
-      "copy-buffer",
-      "paste-image",
-      "attach-file",
-      "reload",
-      "toggle-input-bar",
-    ]);
+      terminalMenuActions({ leftMode: "terminal", canCopyBuffer: true })
+    ).toEqual(["copy-buffer", "reload", "toggle-input-bar"]);
   });
 
-  it("コピーとアップロードができないときは、その項目を外す", () => {
+  it("添付と画像の貼り付けは上部バーのボタンへ移したので、ここには出さない", () => {
     expect(
-      terminalMenuActions({
-        leftMode: "terminal",
-        canCopyBuffer: false,
-        canUploadFile: false,
-      })
+      terminalMenuActions({ leftMode: "terminal", canCopyBuffer: true })
+    ).not.toContain("attach-file");
+    expect(
+      terminalMenuActions({ leftMode: "terminal", canCopyBuffer: true })
+    ).not.toContain("paste-image");
+  });
+
+  it("コピーができないときは、その項目を外す", () => {
+    expect(
+      terminalMenuActions({ leftMode: "terminal", canCopyBuffer: false })
     ).toEqual(["reload", "toggle-input-bar"]);
+  });
+});
+
+describe("headerQuickActions", () => {
+  it("端末モードでは、添付・画像・ショートカットの順に出す", () => {
+    expect(
+      headerQuickActions({ leftMode: "terminal", canUploadFile: true })
+    ).toEqual(["attach-file", "paste-image", "message-shortcuts"]);
+  });
+
+  it("会話モードの添付と画像は会話の入力欄が担うので、ショートカットだけ出す", () => {
+    expect(
+      headerQuickActions({ leftMode: "chat", canUploadFile: true })
+    ).toEqual(["message-shortcuts"]);
+  });
+
+  it("アップロードできない環境では、端末モードでもショートカットだけ出す", () => {
+    expect(
+      headerQuickActions({ leftMode: "terminal", canUploadFile: false })
+    ).toEqual(["message-shortcuts"]);
   });
 });
 

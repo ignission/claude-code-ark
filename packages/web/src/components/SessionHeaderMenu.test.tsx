@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 
-import type { MessageShortcut } from "@ark/shared";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,19 +16,8 @@ vi.mock("@/components/ui/dropdown-menu", () => {
   return {
     DropdownMenu: Pass,
     DropdownMenuTrigger: Pass,
-    DropdownMenuContent: Pass,
-    DropdownMenuSub: Pass,
-    DropdownMenuSubTrigger: Pass,
-    DropdownMenuSubContent: ({
-      children,
-      className,
-    }: {
-      children?: ReactNode;
-      className?: string;
-    }) => (
-      <div data-menu-sub-content="" className={className}>
-        {children}
-      </div>
+    DropdownMenuContent: ({ children }: { children?: ReactNode }) => (
+      <div data-menu-content="">{children}</div>
     ),
     DropdownMenuLabel: Pass,
     DropdownMenuSeparator: () => <hr />,
@@ -38,37 +26,38 @@ vi.mock("@/components/ui/dropdown-menu", () => {
   };
 });
 
-vi.mock("./MessageShortcutManagerDialog", () => ({
-  MessageShortcutManagerDialog: () => null,
-}));
-
-const shortcuts: MessageShortcut[] = Array.from({ length: 30 }, (_, i) => ({
-  id: `shortcut-${i}`,
-  message: `定型文${i}`,
-  sortOrder: i,
-  createdAt: 0,
-  updatedAt: 0,
-}));
-
-function menuProps(): SessionHeaderMenuProps {
+function menuProps(
+  overrides: Partial<SessionHeaderMenuProps> = {}
+): SessionHeaderMenuProps {
   return {
     leftMode: "chat",
     worktree: undefined,
-    messageShortcuts: shortcuts,
-    onSendMessage: vi.fn(),
-    onCreateShortcut: vi.fn(),
-    onUpdateShortcut: vi.fn(),
-    onDeleteShortcut: vi.fn(),
     notificationsSupported: false,
     notificationsEnabled: false,
     onDeleteSession: vi.fn(),
     onReloadTerminal: vi.fn(),
     inputBarVisible: true,
     onToggleInputBar: vi.fn(),
+    ...overrides,
   };
 }
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
+
+function mount(props: SessionHeaderMenuProps): HTMLDivElement {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  act(() => root.render(<SessionHeaderMenu {...props} />));
+  mountedRoots.push({ root, container });
+  return container;
+}
+
+function menuContent(container: HTMLDivElement): HTMLElement {
+  const content = container.querySelector<HTMLElement>("[data-menu-content]");
+  expect(content).not.toBeNull();
+  return content as HTMLElement;
+}
 
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -82,18 +71,46 @@ afterEach(() => {
 });
 
 describe("SessionHeaderMenu", () => {
-  it("メッセージショートカットのサブメニューは画面の高さに収め、はみ出す分はスクロールさせる", () => {
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    act(() => root.render(<SessionHeaderMenu {...menuProps()} />));
-    mountedRoots.push({ root, container });
-
-    const subContent = container.querySelector("[data-menu-sub-content]");
-    expect(subContent?.textContent).toContain("定型文29");
-    expect(subContent?.classList).toContain(
-      "max-h-(--radix-dropdown-menu-content-available-height)"
+  it("1タップのボタンへ移した操作は残さない", () => {
+    const content = menuContent(
+      mount(menuProps({ leftMode: "terminal", onCopyBuffer: vi.fn() }))
     );
-    expect(subContent?.classList).toContain("overflow-y-auto");
+
+    expect(content.textContent).not.toContain("メッセージショートカット");
+    expect(content.textContent).not.toContain("ファイルを添付");
+    expect(content.textContent).not.toContain("画像を貼り付け");
+  });
+
+  it("端末モードでは、バッファのコピー・再読み込み・入力バーと削除を出す", () => {
+    const content = menuContent(
+      mount(menuProps({ leftMode: "terminal", onCopyBuffer: vi.fn() }))
+    );
+
+    expect(content.textContent).toContain("端末のバッファをコピー");
+    expect(content.textContent).toContain("端末を再読み込み");
+    expect(content.textContent).toContain("入力バーを表示");
+    expect(content.textContent).toContain("セッションを削除");
+  });
+
+  it("出す項目が削除だけのときは、先頭に区切り線を残さない", () => {
+    const content = menuContent(mount(menuProps({ leftMode: "chat" })));
+
+    expect(content.firstElementChild?.tagName).not.toBe("HR");
+    expect(content.querySelectorAll("hr")).toHaveLength(0);
+  });
+
+  it("通知と端末の操作が両方出るときだけ、そのあいだにも区切り線を引く", () => {
+    const content = menuContent(
+      mount(
+        menuProps({
+          leftMode: "terminal",
+          onCopyBuffer: vi.fn(),
+          notificationsSupported: true,
+          onNotificationsEnabledChange: vi.fn(),
+        })
+      )
+    );
+
+    expect(content.querySelectorAll("hr")).toHaveLength(2);
   });
 });

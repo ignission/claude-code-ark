@@ -2,7 +2,9 @@
  * SplitViewPane - PC用セッションビュー (上部バー + 左ペイン + 右ペインの左右2ペイン)
  *
  * 上部バーは1本にまとめる。左にセッションの主ラベル・ブランチ・状態チップ、
- * 中央に「端末 / 会話」の切り替え、右に図の開閉と `…` メニュー (SessionHeaderMenu)。
+ * 中央に「端末 / 会話」の切り替え、右に1タップの操作 (ファイルの添付 / 画像の
+ * 貼り付け / メッセージのショートカット)・図の開閉と `…` メニュー
+ * (SessionHeaderMenu)。1タップの操作は `…` の中に畳まない。
  * 端末専用の操作 (バッファのコピー等) はTerminalPaneHandle経由でTerminalPaneに頼む。
  * 右ペインは図が未選択でも上部バーのトグルで開閉できる。
  * 中身は DiagramPane（B-0a の図ペイン）。
@@ -29,9 +31,20 @@ import type {
   SpecialKey,
   Worktree,
 } from "@ark/shared";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { ImagePlus, Paperclip } from "lucide-react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { Socket } from "socket.io-client";
-import { resolveSessionHeaderLabels } from "../lib/session-header";
+import {
+  type HeaderQuickAction,
+  headerQuickActions,
+  resolveSessionHeaderLabels,
+} from "../lib/session-header";
 import {
   normalizeSplitViewLeftMode,
   readSavedSplitViewLeftMode,
@@ -46,6 +59,8 @@ import {
 import { resolveStatusKey } from "../lib/status-tone";
 import { VIEW_MODE_ICONS } from "../lib/view-mode-icons";
 import { DiagramPane } from "./DiagramPane";
+import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
+import { MessageShortcutQuickButton } from "./MessageShortcutQuickButton";
 import { SegmentedControl, type SegmentOption } from "./SegmentedControl";
 import { SessionHeaderMenu } from "./SessionHeaderMenu";
 import { SplitChatPane } from "./SplitChatPane";
@@ -62,6 +77,10 @@ const BOARD_MIN_WIDTH = 320;
 const BOARD_MAX_RATIO = 0.6;
 const STORAGE_KEY_BOARD_WIDTH = "ark-split-board-width";
 const STORAGE_KEY_SHOW_BOARD = "ark-split-show-board";
+
+/** 上部バーの1タップ操作と `…` に共通の見た目 (32px・角丸・押すと紙色) */
+const HEADER_ICON_BUTTON =
+  "inline-flex size-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground";
 
 const LEFT_MODE_OPTIONS: readonly SegmentOption<SplitViewLeftMode>[] = [
   { value: "terminal", label: "端末", icon: VIEW_MODE_ICONS.terminal },
@@ -234,6 +253,51 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   // メニューのチェック表示のためにTerminalPaneから知らせてもらう
   const terminalRef = useRef<TerminalPaneHandle>(null);
   const [terminalInputBarVisible, setTerminalInputBarVisible] = useState(false);
+  // ショートカットの管理ダイアログは1タップのボタンから開く。ボタン側に持たせると
+  // メニューが閉じた時点でダイアログごと消えるので、ここ (バーの外) に置く
+  const [showShortcutManager, setShowShortcutManager] = useState(false);
+
+  // 1タップで届かせる操作。どれを出すかの判断はlib/session-header.tsに寄せる
+  const quickActions = headerQuickActions({
+    leftMode,
+    canUploadFile: props.onUploadFile !== undefined,
+  });
+  // Recordにして、HeaderQuickActionを足したときの描き忘れを型で拾う
+  const quickActionItems: Record<HeaderQuickAction, ReactNode> = {
+    "attach-file": (
+      <button
+        key="attach-file"
+        type="button"
+        aria-label="ファイルを添付"
+        title="ファイルを添付"
+        onClick={() => terminalRef.current?.openFilePicker()}
+        className={HEADER_ICON_BUTTON}
+      >
+        <Paperclip className="size-5" aria-hidden="true" />
+      </button>
+    ),
+    "paste-image": (
+      <button
+        key="paste-image"
+        type="button"
+        aria-label="画像を貼り付け"
+        title="画像を貼り付け"
+        onClick={() => terminalRef.current?.pasteImage()}
+        className={HEADER_ICON_BUTTON}
+      >
+        <ImagePlus className="size-5" aria-hidden="true" />
+      </button>
+    ),
+    "message-shortcuts": (
+      <MessageShortcutQuickButton
+        key="message-shortcuts"
+        shortcuts={props.messageShortcuts}
+        onSendMessage={props.onSendMessage}
+        onManage={() => setShowShortcutManager(true)}
+        className={HEADER_ICON_BUTTON}
+      />
+    ),
+  };
 
   const labels = resolveSessionHeaderLabels({
     displayName: props.displayName,
@@ -372,6 +436,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           onChange={handleLeftModeChange}
         />
         <div className="flex flex-none @4xl:flex-1 @4xl:basis-0 min-w-0 items-center justify-end gap-1">
+          {quickActions.map(action => quickActionItems[action])}
           <button
             type="button"
             onClick={handleToggleBoard}
@@ -390,11 +455,6 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           <SessionHeaderMenu
             leftMode={leftMode}
             worktree={props.worktree}
-            messageShortcuts={props.messageShortcuts}
-            onSendMessage={props.onSendMessage}
-            onCreateShortcut={props.onCreateShortcut}
-            onUpdateShortcut={props.onUpdateShortcut}
-            onDeleteShortcut={props.onDeleteShortcut}
             notificationsSupported={props.notificationsSupported ?? false}
             notificationsEnabled={props.notificationsEnabled ?? true}
             onNotificationsEnabledChange={props.onNotificationsEnabledChange}
@@ -402,16 +462,6 @@ export function SplitViewPane(props: SplitViewPaneProps) {
             onCopyBuffer={
               props.onCopyBuffer
                 ? () => terminalRef.current?.copyBuffer()
-                : undefined
-            }
-            onPasteImage={
-              props.onUploadFile
-                ? () => terminalRef.current?.pasteImage()
-                : undefined
-            }
-            onAttachFile={
-              props.onUploadFile
-                ? () => terminalRef.current?.openFilePicker()
                 : undefined
             }
             onReloadTerminal={() => terminalRef.current?.reload()}
@@ -511,6 +561,15 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           </>
         )}
       </div>
+
+      <MessageShortcutManagerDialog
+        open={showShortcutManager}
+        onOpenChange={setShowShortcutManager}
+        shortcuts={props.messageShortcuts}
+        onCreate={props.onCreateShortcut}
+        onUpdate={props.onUpdateShortcut}
+        onDelete={props.onDeleteShortcut}
+      />
     </div>
   );
 }

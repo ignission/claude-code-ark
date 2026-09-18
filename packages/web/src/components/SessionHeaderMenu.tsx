@@ -1,27 +1,17 @@
 /**
  * SessionHeaderMenu - PC上部バー右端の `…` メニュー
  *
- * 両モード共通: メッセージショートカット (送信と管理) / このセッションの通知 / 削除 (最下段)
- * 端末モードだけ: バッファのコピー / 画像の貼り付け / ファイルの添付 / 端末の再読み込み /
- * 入力バーの表示。端末の操作の実体はTerminalPaneが持ち (TerminalPaneHandle)、
- * ここは呼ぶだけ。どの項目を出すかはlib/session-header.tsが決める。
- * 確認ダイアログとショートカット管理ダイアログはメニューの外に置き、
- * メニューが閉じても開いたままにする。
+ * 1タップで届かせたい操作 (ファイルの添付 / 画像の貼り付け / メッセージの
+ * ショートカット) は上部バーのボタンへ出したので、ここには残さない。
+ * ここに残るのは、両モード共通のこのセッションの通知 / 削除 (最下段) と、
+ * 端末モードだけのバッファのコピー / 端末の再読み込み / 入力バーの表示。
+ * 端末の操作の実体はTerminalPaneが持ち (TerminalPaneHandle)、ここは呼ぶだけ。
+ * どの項目を出すかはlib/session-header.tsが決める。
+ * 確認ダイアログはメニューの外に置き、メニューが閉じても開いたままにする。
  */
 
-import type { MessageShortcut, Worktree } from "@ark/shared";
-import {
-  Bell,
-  BellOff,
-  Copy,
-  Ellipsis,
-  ImagePlus,
-  MessageSquareQuote,
-  Paperclip,
-  RefreshCw,
-  Settings,
-  Trash2,
-} from "lucide-react";
+import type { Worktree } from "@ark/shared";
+import { Bell, BellOff, Copy, Ellipsis, RefreshCw, Trash2 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import {
   AlertDialog,
@@ -38,11 +28,7 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -52,17 +38,10 @@ import {
   terminalMenuActions,
 } from "@/lib/session-header";
 import type { SplitViewLeftMode } from "@/lib/split-view-left-mode";
-import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
-import { previewOf } from "./MessageShortcutMenu";
 
 export interface SessionHeaderMenuProps {
   leftMode: SplitViewLeftMode;
   worktree: Worktree | undefined;
-  messageShortcuts: MessageShortcut[];
-  onSendMessage: (message: string) => void;
-  onCreateShortcut: (message: string) => void;
-  onUpdateShortcut: (id: string, patch: { message?: string }) => void;
-  onDeleteShortcut: (id: string) => void;
   notificationsSupported: boolean;
   notificationsEnabled: boolean;
   onNotificationsEnabledChange?: (enabled: boolean) => void;
@@ -70,8 +49,6 @@ export interface SessionHeaderMenuProps {
   onDeleteSession: () => void;
   /** 以下は端末モードだけの操作。未指定の操作は出さない */
   onCopyBuffer?: () => void;
-  onPasteImage?: () => void;
-  onAttachFile?: () => void;
   onReloadTerminal: () => void;
   inputBarVisible: boolean;
   onToggleInputBar: () => void;
@@ -80,29 +57,20 @@ export interface SessionHeaderMenuProps {
 export function SessionHeaderMenu({
   leftMode,
   worktree,
-  messageShortcuts,
-  onSendMessage,
-  onCreateShortcut,
-  onUpdateShortcut,
-  onDeleteShortcut,
   notificationsSupported,
   notificationsEnabled,
   onNotificationsEnabledChange,
   onDeleteSession,
   onCopyBuffer,
-  onPasteImage,
-  onAttachFile,
   onReloadTerminal,
   inputBarVisible,
   onToggleInputBar,
 }: SessionHeaderMenuProps) {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [showShortcutManager, setShowShortcutManager] = useState(false);
 
   const terminalActions = terminalMenuActions({
     leftMode,
     canCopyBuffer: onCopyBuffer !== undefined,
-    canUploadFile: onPasteImage !== undefined && onAttachFile !== undefined,
   });
   const canChangeNotifications =
     notificationsSupported && onNotificationsEnabledChange !== undefined;
@@ -112,18 +80,6 @@ export function SessionHeaderMenu({
       <DropdownMenuItem key="copy-buffer" onSelect={onCopyBuffer}>
         <Copy />
         端末のバッファをコピー
-      </DropdownMenuItem>
-    ),
-    "paste-image": (
-      <DropdownMenuItem key="paste-image" onSelect={onPasteImage}>
-        <ImagePlus />
-        画像を貼り付け
-      </DropdownMenuItem>
-    ),
-    "attach-file": (
-      <DropdownMenuItem key="attach-file" onSelect={onAttachFile}>
-        <Paperclip />
-        ファイルを添付
       </DropdownMenuItem>
     ),
     reload: (
@@ -157,37 +113,6 @@ export function SessionHeaderMenu({
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-64">
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
-              <MessageSquareQuote />
-              メッセージショートカット
-            </DropdownMenuSubTrigger>
-            {/* ショートカットが多いと画面の下にはみ出すので、使える高さに収めてスクロールさせる */}
-            <DropdownMenuSubContent className="max-h-(--radix-dropdown-menu-content-available-height) w-64 overflow-y-auto">
-              {messageShortcuts.length === 0 ? (
-                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                  ショートカットがありません
-                </DropdownMenuLabel>
-              ) : (
-                messageShortcuts.map(shortcut => (
-                  <DropdownMenuItem
-                    key={shortcut.id}
-                    title={shortcut.message.slice(0, 200)}
-                    onSelect={() => onSendMessage(shortcut.message)}
-                  >
-                    <span className="truncate">
-                      {previewOf(shortcut.message)}
-                    </span>
-                  </DropdownMenuItem>
-                ))
-              )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => setShowShortcutManager(true)}>
-                <Settings />
-                ショートカットを管理
-              </DropdownMenuItem>
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
           {canChangeNotifications && (
             <DropdownMenuItem
               onSelect={() =>
@@ -198,9 +123,15 @@ export function SessionHeaderMenu({
               {notificationMenuLabel(notificationsEnabled)}
             </DropdownMenuItem>
           )}
-          {terminalActions.length > 0 && <DropdownMenuSeparator />}
+          {/* 区切り線は、直前のまとまりが実際に出たときだけ引く
+              (会話モードで通知も出せないと、先頭に線だけが残ってしまう) */}
+          {canChangeNotifications && terminalActions.length > 0 && (
+            <DropdownMenuSeparator />
+          )}
           {terminalActions.map(action => terminalItems[action])}
-          <DropdownMenuSeparator />
+          {(canChangeNotifications || terminalActions.length > 0) && (
+            <DropdownMenuSeparator />
+          )}
           <DropdownMenuItem
             variant="destructive"
             onSelect={() => setShowDeleteDialog(true)}
@@ -210,15 +141,6 @@ export function SessionHeaderMenu({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-
-      <MessageShortcutManagerDialog
-        open={showShortcutManager}
-        onOpenChange={setShowShortcutManager}
-        shortcuts={messageShortcuts}
-        onCreate={onCreateShortcut}
-        onUpdate={onUpdateShortcut}
-        onDelete={onDeleteShortcut}
-      />
 
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
