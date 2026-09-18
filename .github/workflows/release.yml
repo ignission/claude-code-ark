@@ -321,6 +321,24 @@ jobs:
             echo "::${END_TOKEN}::"
             exit 1
           fi
+          # 図解注入の圧縮が縮退していないことを確認する。
+          # `injected-minify.ts` は esbuild を解決できない / 変換に失敗した場合に
+          # `[injected-minify]` 接頭辞で警告して非圧縮のソースを返す。落ちないので
+          # HTTP 200 だけ見ていると劣化を見逃す。接頭辞は grep 用に固定してある。
+          #
+          # 注意: この smoke test は図を 1 枚も読まないため、通常この経路は走らない。
+          # あくまで「bootstrap 中に圧縮が走ってしかも失敗した」場合を捕まえる
+          # tripwire であり、圧縮経路そのものの検査は後続の
+          # "Smoke test bundled esbuild runtime" が担当する。
+          if grep -qF "[injected-minify]" "$LOG"; then
+            echo "::error::注入コードの圧縮が縮退している ([injected-minify] 警告を検出)"
+            END_TOKEN="ark-log-$(uuidgen)"
+            echo "::stop-commands::${END_TOKEN}"
+            echo "--- Ark stdout/stderr ---"
+            cat "$LOG"
+            echo "::${END_TOKEN}::"
+            exit 1
+          fi
           echo "Bootstrap smoke passed (port=${ARK_PORT} http=${HTTP})"
           # cleanup は trap EXIT に委譲
 
@@ -453,6 +471,109 @@ jobs:
           echo "::stop-commands::${END_TOKEN}"
           echo "Bundled claude binary OK: ${VERSION}"
           echo "::${END_TOKEN}::"
+
+      - name: Smoke test bundled esbuild runtime
+        # PR #447: 図解注入コードの圧縮に使う esbuild が `.unpacked` 配下に
+        # 素のファイルとして配置され、かつ起動できることを確認する。
+        #
+        # bootstrap smoke test は `/` の 200 しか見ないので、esbuild の解決に
+        # 失敗しても `injected-minify.ts` が警告を出して非圧縮のソースに縮退する
+        # だけで CI は success になる。壊れうる箇所をここで直接検査する。
+        #
+        # 検査対象は 2 つ:
+        #   1. JS パッケージ (`esbuild/lib/main.js`)
+        #      → `createRequire(import.meta.url)("esbuild")` が解決する実体
+        #   2. platform バイナリ (`@esbuild/darwin-arm64/bin/esbuild`)
+        #      → 1 が `require.resolve` して execFileSync で起動する実体
+        # どちらも asar 内の仮想パスでは動かないため asarUnpack が必須で、
+        # electron-builder.yml の pattern が崩れるとここで fail する。
+        #
+        # 探索は claude の step と同じく flat / pnpm isolated の 2 レイアウトを
+        # 対象にする。パスを固定で書くと pnpm のバージョン付きディレクトリ名に
+        # 追従できない。arch は arm64 に限定する (.app の target は darwin-arm64)。
+        #
+        # macOS runner の /bin/bash は 3.2 系なので mapfile (bash 4.0+) は使えない。
+        run: |
+          set -euo pipefail
+          UNPACKED="packages/desktop/release/mac-arm64/Ark.app/Contents/Resources/app.asar.unpacked/node_modules"
+
+          # 1. JS パッケージ。深さは .pnpm/<pkg>@<ver>/node_modules/esbuild/lib/main.js = 5。
+          PKGS=()
+          FLAT_PKG="${UNPACKED}/esbuild/lib/main.js"
+          [ -f "$FLAT_PKG" ] && PKGS+=("$FLAT_PKG")
+          while IFS= read -r line; do
+            [ -n "$line" ] && PKGS+=("$line")
+          done < <(find "${UNPACKED}/.pnpm" -mindepth 5 -maxdepth 5 -type f -name main.js \
+            -path "*/node_modules/esbuild/lib/main.js" 2>/dev/null | sort)
+          if [ "${#PKGS[@]}" -eq 0 ]; then
+            echo "::error::esbuild package not unpacked under ${UNPACKED}"
+            ls -la "$UNPACKED" 2>&1 | head -30 || echo "(node_modules not unpacked)"
+            ls -la "$UNPACKED/.pnpm" 2>&1 | head -30 || echo "(.pnpm not unpacked)"
+            exit 1
+          fi
+          echo "Found esbuild package(s):"
+          printf '  %s\n' "${PKGS[@]}"
+
+          # 2. platform バイナリ。
+          #    深さは .pnpm/<pkg>@<ver>/node_modules/@esbuild/darwin-arm64/bin/esbuild = 6。
+          PKG="@esbuild/darwin-arm64"
+          BINS=()
+          FLAT_BIN="${UNPACKED}/${PKG}/bin/esbuild"
+          [ -f "$FLAT_BIN" ] && BINS+=("$FLAT_BIN")
+          while IFS= read -r line; do
+            [ -n "$line" ] && BINS+=("$line")
+          done < <(find "${UNPACKED}/.pnpm" -mindepth 6 -maxdepth 6 -type f -name esbuild \
+            -path "*/node_modules/${PKG}/bin/esbuild" 2>/dev/null | sort)
+          if [ "${#BINS[@]}" -eq 0 ]; then
+            echo "::error::esbuild platform binary (darwin-arm64) not unpacked under ${UNPACKED}"
+            ls -la "$UNPACKED/@esbuild" 2>&1 || echo "(@esbuild not unpacked)"
+            ls -la "$UNPACKED/.pnpm" 2>&1 | head -30 || echo "(.pnpm not unpacked)"
+            exit 1
+          fi
+          echo "Found esbuild binary(ies):"
+          printf '  %s\n' "${BINS[@]}"
+          # claude の step と違い「厳密に 1 件」は要求しない。bootstrap が固定パスを
+          # 決め打ちする claude と違って、esbuild は require の解決結果を使うため、
+          # 複数コピーがあっても壊れない。ここで見たいのは「実体が unpack され、
+          # 起動できること」なので、代表として先頭を検査する。
+          BIN="${BINS[0]}"
+          if [ ! -x "$BIN" ]; then
+            echo "::error::esbuild binary is not executable: $BIN"
+            ls -la "$(dirname "$BIN")"
+            exit 1
+          fi
+          file "$BIN"
+
+          # `--version` は network 不要で即終了する safe な smoke。
+          # 壊れたバイナリ / dyld loader 問題で hang した場合に job timeout (60min)
+          # まで走らせないよう、background + sleep race で 15s で kill する
+          # (macos runner には GNU `timeout` が無い)。claude の step と同じ形。
+          OUT_FILE=$(mktemp -t ark-esbuild-version.XXXXXX)
+          "$BIN" --version > "$OUT_FILE" 2>&1 &
+          BIN_PID=$!
+          (
+            sleep 15
+            if kill -0 "$BIN_PID" 2>/dev/null; then
+              kill -TERM "$BIN_PID" 2>/dev/null || true
+              sleep 3
+              kill -KILL "$BIN_PID" 2>/dev/null || true
+            fi
+          ) &
+          KILLER_PID=$!
+          set +e
+          wait "$BIN_PID"
+          BIN_EXIT=$?
+          set -e
+          kill "$KILLER_PID" 2>/dev/null || true
+          wait "$KILLER_PID" 2>/dev/null || true
+          END_TOKEN="ark-esbuild-version-$(uuidgen)"
+          echo "::stop-commands::${END_TOKEN}"
+          cat "$OUT_FILE" 2>&1 || true
+          echo "::${END_TOKEN}::"
+          if [ "$BIN_EXIT" -ne 0 ]; then
+            echo "::error::Bundled esbuild --version failed or timed out (exit=$BIN_EXIT)"
+            exit 1
+          fi
 
       - name: Compute artifact metadata
         id: artifact
