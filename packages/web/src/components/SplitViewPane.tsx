@@ -458,15 +458,18 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           広い幅だけ左右を同じ幅にしてセグメントを中央に置く */}
       <header className="@container h-13 shrink-0 border-b border-border flex items-center gap-3 pl-5 pr-3">
         <div className="flex flex-1 basis-0 min-w-0 items-center gap-2.5">
-          {/* 主ラベルを先に守り、ブランチから省略する */}
+          {/* 主ラベルを先に守り、ブランチから省略する。縮み率をブランチ側に
+              大きく振ることで、ブランチが尽きるまで主ラベルは縮まない。
+              主ラベルも縮めるのは、右側 (1タップの操作) が増えて左が
+              狭まったとき、状態チップを押し出して上部バーからはみ出さないため */}
           <span
-            className="min-w-0 max-w-[60%] shrink-0 truncate text-[17px] font-semibold tracking-[-0.01em]"
+            className="min-w-0 max-w-[60%] truncate text-[17px] font-semibold tracking-[-0.01em]"
             title={labels.primary}
           >
             {labels.primary}
           </span>
           <span
-            className="min-w-0 truncate text-[13px] text-muted-foreground"
+            className="min-w-0 shrink-[999] truncate text-[13px] text-muted-foreground"
             title={labels.branch}
           >
             {labels.branch}
