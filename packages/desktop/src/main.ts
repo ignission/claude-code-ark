@@ -108,6 +108,18 @@ function configureAppPaths(): void {
     );
   }
 
+  // esbuild の同期 API (図解 payload の圧縮) は既定で worker thread を作り、
+  // `new Worker(__filename)` を呼ぶ。packaged .app では `__filename` が
+  // `app.asar/...` の仮想パスになるが、Electron の asar 対応が worker_threads に
+  // 及ぶかは document 化されていない。"0" を渡すと esbuild は worker を作らず
+  // 同一スレッドで `child_process.execFileSync` を使う経路に入る
+  // (esbuild 0.28.2 lib/main.js:2088 の `ESBUILD_WORKER_THREADS !== "0"` ガード)。
+  // execFileSync は Electron が asar 対応を明記している側なので、こちらに寄せる。
+  // 圧縮は memoize 済みで .app の生存期間に高々 3 回しか走らないため、
+  // worker を捨てるコストは問題にならない。
+  // 明示的に set されていれば尊重する ("" も明示的な選択とみなす)。
+  process.env.ESBUILD_WORKER_THREADS ??= "0";
+
   // electron-log の書き出し先を ARK_LOGS_DIR (override or Electron default) に揃える。
   // v5 系の resolvePathFn signature を使う。
   log.transports.file.resolvePathFn = () =>
