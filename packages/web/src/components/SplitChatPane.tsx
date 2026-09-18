@@ -1042,17 +1042,30 @@ export function SplitChatPane({
     LocalSlashCommand[]
   >([]);
 
+  // 消費済みの記録イベント id。events は更新のたびに全履歴を突き合わせ直すので、
+  // 1 回の呼び出しの中だけで 1 対 1 を守っても、次の呼び出しで同じ記録が
+  // 再利用されてしまう。呼び出しをまたいで覚えるために ref で持ち回る
+  const consumedSlashEventIdsRef = useRef<ReadonlySet<string>>(new Set());
+
   // /clear のように JSONL へ slash-command として記録されるコマンドは、記録が
   // 現れた時点でローカルのカードを消さないと同じコマンドが 2 枚並ぶ。
   // ロジックは reconcilePending と同様に純粋関数へ切り出してある
   useEffect(() => {
-    setLocalSlashCommands(prev => reconcileLocalSlash(prev, events));
-  }, [events]);
+    const result = reconcileLocalSlash(
+      localSlashCommands,
+      events,
+      consumedSlashEventIdsRef.current
+    );
+    consumedSlashEventIdsRef.current = result.consumedEventIds;
+    if (result.local !== localSlashCommands)
+      setLocalSlashCommands(result.local);
+  }, [events, localSlashCommands]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies(session.id): セッション切替を検知して pending を破棄するための意図的な依存
   useEffect(() => {
     setPending([]);
     setLocalSlashCommands([]);
+    consumedSlashEventIdsRef.current = new Set();
   }, [session.id]);
 
   // ===== Slash command 補完 =====
