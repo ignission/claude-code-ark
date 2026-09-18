@@ -77,6 +77,10 @@ import type { JsonlParsedEvent } from "@/lib/jsonl-event-parser";
 import { splitTextWithUrls } from "@/lib/linkify";
 import { isMermaidCodeClass } from "@/lib/mermaid-block-utils";
 import { reconcileEscape } from "@/lib/reconcile-escape";
+import {
+  type LocalSlashCommand,
+  reconcileLocalSlash,
+} from "@/lib/reconcile-local-slash";
 import { reconcilePending } from "@/lib/reconcile-pending";
 import { buildVisualizeConversationPrompt } from "@/lib/visualize-conversation";
 
@@ -1035,13 +1039,33 @@ export function SplitChatPane({
   // built-in slash command (/compact, /clear 等) は JSONL に user-input として
   // 記録されないため、ローカルで永続的に表示する slash-command イベントを保持する。
   const [localSlashCommands, setLocalSlashCommands] = useState<
-    { id: string; name: string; args?: string; sentAt: number }[]
+    LocalSlashCommand[]
   >([]);
+
+  // 消費済みの記録イベント id。events は更新のたびに全履歴を突き合わせ直すので、
+  // 1 回の呼び出しの中だけで 1 対 1 を守っても、次の呼び出しで同じ記録が
+  // 再利用されてしまう。呼び出しをまたいで覚えるために ref で持ち回る
+  const consumedSlashEventIdsRef = useRef<ReadonlySet<string>>(new Set());
+
+  // /clear のように JSONL へ slash-command として記録されるコマンドは、記録が
+  // 現れた時点でローカルのカードを消さないと同じコマンドが 2 枚並ぶ。
+  // ロジックは reconcilePending と同様に純粋関数へ切り出してある
+  useEffect(() => {
+    const result = reconcileLocalSlash(
+      localSlashCommands,
+      events,
+      consumedSlashEventIdsRef.current
+    );
+    consumedSlashEventIdsRef.current = result.consumedEventIds;
+    if (result.local !== localSlashCommands)
+      setLocalSlashCommands(result.local);
+  }, [events, localSlashCommands]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies(session.id): セッション切替を検知して pending を破棄するための意図的な依存
   useEffect(() => {
     setPending([]);
     setLocalSlashCommands([]);
+    consumedSlashEventIdsRef.current = new Set();
   }, [session.id]);
 
   // ===== Slash command 補完 =====
