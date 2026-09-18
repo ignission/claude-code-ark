@@ -484,6 +484,54 @@ describe("PC上部バー", () => {
   });
 });
 
+describe("PC上部バーの狭い幅の畳み方", () => {
+  // jsdom はコンテナクエリを解決しないので、ここで見るのは
+  // 「どこに何のclassを付けたか」と「読み上げから消えていないこと」。
+  // 実際に畳まれる幅はブラウザでの実測で決める
+  it("狭いときアイコンだけにする文言は、読み上げには残す", () => {
+    writeSavedSplitViewLeftMode("terminal");
+    const container = mount(
+      paneSection(makeSession("narrow"), true, {
+        displayName: "ログイン画面",
+        worktree: makeWorktree("feature/login"),
+        bridgeStatus: "AWAITING",
+      })
+    );
+    const header = container.querySelector("header") as HTMLElement;
+
+    for (const label of ["feature/login", "確認待ち", "端末", "会話", "図"]) {
+      // 文言そのものを持つ一番内側の span を見る
+      // (状態チップは外側の span も同じ textContent を持つ)
+      const span = Array.from(header.querySelectorAll("span")).find(
+        el => el.textContent === label && el.childElementCount === 0
+      );
+      expect(span?.className).toContain("@max-2xl:sr-only");
+    }
+    // sr-only は視覚的に隠すだけなので、文言そのものは残る
+    expect(header.textContent).toContain("feature/login");
+    expect(header.textContent).toContain("確認待ち");
+  });
+
+  it("図のボタンは文言を隠しても aria-label と title を保つ", () => {
+    const container = mount(paneSection(makeSession("narrow-board"), true));
+    const button = container
+      .querySelector("header")
+      ?.querySelector('button[aria-label="図"]');
+
+    expect(button?.getAttribute("title")).toBe("図を開く");
+  });
+
+  it("左のまとまりは、縮みきったぶんを箱の中で抱える (上部バーを横に溢れさせない)", () => {
+    const container = mount(paneSection(makeSession("narrow-left"), true));
+    const left = container
+      .querySelector("header")
+      ?.querySelector("div.min-w-0");
+
+    expect(left?.className).toContain("overflow-hidden");
+    expect(left?.className).toContain("min-w-0");
+  });
+});
+
 describe("PC上部バーの1タップ操作", () => {
   /** 端末モードで並ぶ6つ。入力バーはPCの初期状態 (非表示) の文言で引く */
   const QUICK_LABELS = [

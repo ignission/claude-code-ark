@@ -454,11 +454,19 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   return (
     <div className="h-full flex flex-col overflow-hidden rounded-xl border border-border bg-card shadow-card">
       {/* 上部バー: 左 = 主ラベル・ブランチ・状態チップ、中央 = 端末 / 会話、
-          右 = 図の開閉と `…` メニュー */}
+          右 = 1タップの操作・図の開閉と `…` メニュー */}
       {/* 狭い幅 (1024px前後) では右側を中身の幅に縮め、主ラベルに幅を回す。
-          広い幅だけ左右を同じ幅にしてセグメントを中央に置く */}
+          広い幅だけ左右を同じ幅にしてセグメントを中央に置く。
+
+          さらに狭いとき (コンテナ42rem未満) は「装飾から削る」順で畳む。
+          1タップの操作は最後まで消さない:
+          1. 文言を読み上げだけに残してアイコンにする (ブランチ・状態チップ・
+             セグメント・図)。`sr-only` は position:absolute なので、
+             文字だけでなく flex の gap も消える
+          2. それでも足りない分は左の箱が引き受ける。主ラベルが縮み、
+             最後は `overflow-hidden` で箱の中に収める (上部バーは横に溢れない) */}
       <header className="@container h-13 shrink-0 border-b border-border flex items-center gap-3 pl-5 pr-3">
-        <div className="flex flex-1 basis-0 min-w-0 items-center gap-2.5">
+        <div className="flex flex-1 basis-0 min-w-0 items-center gap-2.5 overflow-hidden">
           {/* 主ラベルを先に守り、ブランチから省略する。縮み率をブランチ側に
               大きく振ることで、ブランチが尽きるまで主ラベルは縮まない。
               主ラベルも縮めるのは、右側 (1タップの操作) が増えて左が
@@ -470,7 +478,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
             {labels.primary}
           </span>
           <span
-            className="min-w-0 shrink-[999] truncate text-[13px] text-muted-foreground"
+            className="min-w-0 shrink-[999] truncate text-[13px] text-muted-foreground @max-2xl:sr-only"
             title={labels.branch}
           >
             {labels.branch}
@@ -478,6 +486,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           <StatusChip
             statusKey={resolveStatusKey(true, props.bridgeStatus)}
             className="shrink-0"
+            labelClassName="@max-2xl:sr-only"
           />
         </div>
         <SegmentedControl
@@ -485,6 +494,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           options={LEFT_MODE_OPTIONS}
           value={leftMode}
           onChange={handleLeftModeChange}
+          labelClassName="@max-2xl:sr-only"
         />
         <div className="flex flex-none @4xl:flex-1 @4xl:basis-0 min-w-0 items-center justify-end gap-1">
           {quickActions.map(action => quickActionItems[action])}
@@ -501,7 +511,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
             }`}
           >
             <VIEW_MODE_ICONS.board className="size-4.5" aria-hidden="true" />
-            <span>図</span>
+            <span className="@max-2xl:sr-only">図</span>
           </button>
           <SessionHeaderMenu
             worktree={props.worktree}

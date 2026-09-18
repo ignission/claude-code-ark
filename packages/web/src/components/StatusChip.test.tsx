@@ -51,6 +51,31 @@ describe("StatusChip", () => {
     expect(chip.className).not.toContain("bg-status-neutral/15");
   });
 
+  it("labelClassNameは文言のspanにだけ当て、読み上げからは消さない", () => {
+    act(() =>
+      root.render(
+        <StatusChip statusKey="AWAITING" labelClassName="@max-2xl:sr-only" />
+      )
+    );
+    const chip = container.querySelector(
+      '[data-status="AWAITING"]'
+    ) as HTMLElement;
+
+    const label = chip.querySelector("span:last-child");
+    expect(label?.className).toBe("@max-2xl:sr-only");
+    // 視覚的に隠すだけなので、文言そのものは残る
+    expect(chip.textContent).toBe("確認待ち");
+    expect(chip.className).not.toContain("sr-only");
+  });
+
+  it("labelClassNameを渡さない既存の呼び出しでは、文言のspanに class を付けない", () => {
+    const chip = render("AWAITING");
+
+    expect(
+      chip.querySelector("span:last-child")?.getAttribute("class")
+    ).toBeNull();
+  });
+
   it("状態が未着なら文言なしの小さな印だけを出し、読み上げない", () => {
     const chip = render("UNKNOWN");
     expect(chip.textContent).toBe("");

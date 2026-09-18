@@ -22,6 +22,12 @@ interface SegmentedControlProps<V extends string> {
   /** まとまりの読み上げ名 (例: 「左ペインの表示」)。画面には出さない */
   label?: string;
   className?: string;
+  /**
+   * 各項目の文言の span にだけ当てる class。狭いときアイコンだけにするために、
+   * 呼び出し側から `sr-only` 相当を渡す。読み上げからは消さないので
+   * `hidden` (display:none) は渡さないこと
+   */
+  labelClassName?: string;
 }
 
 export function SegmentedControl<V extends string>({
@@ -30,6 +36,7 @@ export function SegmentedControl<V extends string>({
   onChange,
   label,
   className,
+  labelClassName,
 }: SegmentedControlProps<V>) {
   return (
     <fieldset
@@ -57,7 +64,7 @@ export function SegmentedControl<V extends string>({
             )}
           >
             <Icon className="size-3.5" aria-hidden="true" />
-            <span>{option.label}</span>
+            <span className={labelClassName}>{option.label}</span>
           </button>
         );
       })}

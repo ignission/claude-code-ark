@@ -17,10 +17,20 @@ import { cn } from "@/lib/utils";
 interface StatusChipProps {
   statusKey: StatusKey;
   className?: string;
+  /**
+   * 文言の span にだけ当てる class。狭いときアイコンだけにするために、
+   * 呼び出し側から `sr-only` 相当を渡す。読み上げからは消さないので
+   * `hidden` (display:none) は渡さないこと
+   */
+  labelClassName?: string;
 }
 
 /** セッションの状態を「アイコン + 文言」のチップで出す。色だけに頼らない */
-export function StatusChip({ statusKey, className }: StatusChipProps) {
+export function StatusChip({
+  statusKey,
+  className,
+  labelClassName,
+}: StatusChipProps) {
   const p = presentStatus(statusKey);
 
   if (p.label === "") {
@@ -49,7 +59,7 @@ export function StatusChip({ statusKey, className }: StatusChipProps) {
       )}
     >
       <StatusGlyph icon={p.icon} />
-      <span>{p.label}</span>
+      <span className={labelClassName}>{p.label}</span>
     </span>
   );
 }
