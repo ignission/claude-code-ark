@@ -146,6 +146,9 @@ afterEach(() => {
     act(() => root.unmount());
     container.remove();
   }
+  // navigator.clipboard を Object.defineProperty で差し替えるテストがあるので、
+  // 他のテストへ漏れないよう毎回外す
+  Reflect.deleteProperty(navigator, "clipboard");
 });
 
 describe("SplitChatPane: ツール行の折りたたみ", () => {

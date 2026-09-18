@@ -233,6 +233,9 @@ afterEach(() => {
   }
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  // navigator.clipboard は Object.defineProperty で差し替えているので、
+  // vi.restoreAllMocks() では戻らない。明示的に外して他のテストへ漏れないようにする
+  Reflect.deleteProperty(navigator, "clipboard");
 });
 
 describe("PC 左ペインの表示モード", () => {
