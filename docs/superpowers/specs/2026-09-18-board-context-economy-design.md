@@ -7,7 +7,7 @@ doc 型ボードの本文を、人間がその場で直接編集できるよう�
 出発点は「Confluence のリアルタイム文章みたいに編集したい」という要望だった。掘り下げた
 結果、求められていたのは共同編集 ( CRDT / OT ) ではなく、**doc 型ボードが read only で
 あることそのもの**だった。本文の言い回しを1つ直すのに、コメントを書いて、送信して、
-Claude に数万文字を全文書き直させている。「コメントして送信が鬱陶しい」と「文脈を食う」は
+Claude に2万文字超を全文書き直させている。「コメントして送信が鬱陶しい」と「文脈を食う」は
 同じ1つの問題で、原因は doc が書けないことにある。
 
 ## 測ったこと
@@ -32,10 +32,10 @@ graph 側 ( `er` / `flow` / `state` / `event-storming` / `context-map` ほか ) 
 
 `_examples` と `_archive` を除いた実物。
 
-| ボード | type | node | 文字数 |
+| ボード | type | node | 文字数 ( UTF-8 の bytes ではなく文字 ) |
 | --- | --- | --- | --- |
-| `orista-app-ios/stripe-native-overview` | **doc** | 66 | **36,610** |
-| `shomatan/note/nisa-yutai-stocks` | **doc** | 34 | **24,528** |
+| `orista-app-ios/stripe-native-overview` | **doc** | 66 | **26,504** |
+| `shomatan/note/nisa-yutai-stocks` | **doc** | 34 | **19,784** |
 | `claude-code-manager/aeo-2026-09-todo` | flow | 16 | 3,861 |
 | `claude-code-manager/aeo-2026-09-backlog` | backlog | 10 | 3,948 |
 
@@ -84,17 +84,23 @@ Read が2回しかないのは、Claude が自分で書いたボードを文脈�
 
 `injectDiagramDocEditor` を新設する。**`diagram-harness.ts` には触らない。**
 
-**読む / 書く のモード切替を置く。既定は読む。** doc のコメント anchor はテキスト選択で
-作るため、`contenteditable` と選択の意味が正面から衝突する。両立させず、Confluence と
-同じく明示的に切り替える。
+**モード切替は置かない。本文は常に編集できる。**
 
-書くモードで起きること。
+当初は「読む / 書く」の切替を置く設計にしていた。doc のコメント anchor がテキスト選択で
+作られるため `contenteditable` と衝突すると考えたからだが、**これは誤りだった**。
+コメント層には既に「選択したら浮くボタン」がある ( `diagram-comment-layer.ts:828` の
+`updateSelectionAdd` が選択範囲の rect にボタンを置き、`:838` のクリックで composer が
+開く )。選択がそのままコメントになるわけではないので、衝突しない。Notion や
+Google Docs と同じ形が既に組まれている。
+
+常時編集可にしたうえで起きること。
 
 - `[data-ark-id]` を持つブロックを `contenteditable="true"` にする
 - 人間が触ったブロックへ **`data-ark-author="human"` を自動で付ける**。#319 でこの属性を
   作った理由そのものであり、人間が書いた本文が初めて機械的に `human` になる
 - 新しいブロックを作ったら id を採番し、model に node を足す。消したら node も消す。
   `validateDiagramDocAnchors` の1対1制約を満たすため、これをやらないと保存が422になる
+- 折り畳まれた選択 ( キャレットだけ ) では浮くボタンを出さない。入力中に出ると邪魔になる
 - 保存は既存の `diagram:autosave` / `diagram:submit` に乗せる。新しい保存経路を作らない
 - 送信 HTML から `[data-ark-harness-ui]` を除く ( graph と同型 )
 
@@ -116,7 +122,7 @@ board_patch(path, ops: [
 ```
 
 サーバーが該当 `data-ark-id` の要素だけ差し替え、`validateDiagramDocAnchors` と
-`validateDiagramDocAuthorship` を再実行して書く。36,610文字 → 300文字程度。
+`validateDiagramDocAuthorship` を再実行して書く。26,504文字 → 300文字程度。
 
 **返却にモデルも本文も返さない**。適用した op 数だけ返す。返すと文脈に戻って節約が消える。
 
@@ -226,8 +232,8 @@ board_read(path, ids: ["s6-p1", "s6-p2", "s6-t1"])
 ## 検証
 
 - doc ボードに編集層が注入され、graph ボードには注入されない
-- 読むモードではテキスト選択がコメント anchor になり、書くモードでは `contenteditable` が
-  効く。両者が同時に有効にならない
+- 本文が常に `contenteditable` で、かつ範囲選択でコメントの浮くボタンが出る ( 共存する )
+- キャレットだけの折り畳まれた選択では浮くボタンが出ない
 - 人間が触ったブロックに `data-ark-author="human"` が付き、保存が422にならない
 - 新しいブロックを作ると id が採番され model に node が増える。消すと node も減る。
   どちらも `validateDiagramDocAnchors` を通る
