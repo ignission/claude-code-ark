@@ -699,3 +699,82 @@ describe("SplitChatPane: 外のバーから呼ぶ添付の操作 (ref)", () => {
     expect(textarea?.value).toContain("@/uploads/pasted-image.png");
   });
 });
+
+/** ファイルパスを含む fenced code block。表示側はパスをリンクに変える */
+const CODE_BLOCK_SNAPSHOT = [
+  line({
+    type: "assistant",
+    uuid: "a1",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: "直しました\n\n```bash\ncat /home/admin/dev/app/src/deep/main.ts\necho done\n```\n",
+        },
+      ],
+    },
+  }),
+];
+
+const RAW_CODE = "cat /home/admin/dev/app/src/deep/main.ts\necho done";
+
+function copyButton(scope: ParentNode): HTMLButtonElement | null {
+  return scope.querySelector<HTMLButtonElement>(
+    'button[aria-label="コードをコピー"]'
+  );
+}
+
+describe("SplitChatPane: コードブロックのコピー", () => {
+  it("リンク化された表示ではなく、生のコード文字列をコピーする", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    const { container, emitServer } = renderChat();
+    emitServer("session:jsonl-snapshot", {
+      sessionId: "s1",
+      lines: CODE_BLOCK_SNAPSHOT,
+    });
+
+    const button = copyButton(container);
+    if (!button)
+      throw new Error('コピーボタン (aria-label="コードをコピー") が無い');
+    // 表示側はパスを <a download> に置き換えている (= 生テキストそのままではない)
+    expect(
+      button.closest(".ark-code-block")?.querySelector("a[download]")
+    ).not.toBeNull();
+
+    await act(async () => {
+      button.click();
+    });
+
+    expect(writeText).toHaveBeenCalledWith(RAW_CODE);
+  });
+
+  it("mermaid ブロックにはコピーボタンを付けない", () => {
+    const { container, emitServer } = renderChat();
+    emitServer("session:jsonl-snapshot", {
+      sessionId: "s1",
+      lines: [
+        line({
+          type: "assistant",
+          uuid: "a1",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "text",
+                text: "図です\n\n```mermaid\nflowchart LR\nA-->B\n```\n",
+              },
+            ],
+          },
+        }),
+      ],
+    });
+
+    expect(container.textContent).toContain("flowchart LR");
+    expect(copyButton(container)).toBeNull();
+  });
+});

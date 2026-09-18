@@ -52,6 +52,7 @@ import remarkGfm from "remark-gfm";
 import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
 import { AskUserQuestionCard } from "@/components/AskUserQuestionCard";
+import { CodeBlock } from "@/components/CodeBlock";
 import { MermaidBlock } from "@/components/MermaidBlock";
 import { StatusChip } from "@/components/StatusChip";
 import { fileToBase64, validateFile } from "@/hooks/useFileUpload";
@@ -463,12 +464,23 @@ function createMarkdownComponents(sessionId: string): Components {
     pre: ({ children, node: _node, ...props }) => {
       // mermaid ブロックは MermaidBlock 自身が描画するので pre を被せない
       const child = Array.isArray(children) ? children[0] : children;
-      const cls =
+      const childProps =
         child && typeof child === "object" && "props" in child
-          ? (child as { props?: { className?: string } }).props?.className
+          ? (
+              child as {
+                props?: { className?: string; children?: ReactNode };
+              }
+            ).props
           : undefined;
-      if (isMermaidCodeClass(cls)) return <>{children}</>;
-      return <pre {...props}>{children}</pre>;
+      if (isMermaidCodeClass(childProps?.className)) return <>{children}</>;
+      // コピーするのは code の描画前の子 (生テキスト)。フェンス由来の末尾の
+      // 改行 1 個だけ落とす (端末へ貼ると余分な Enter になるため)
+      const code = reactNodeToText(childProps?.children).replace(/\n$/, "");
+      return (
+        <CodeBlock code={code} {...props}>
+          {children}
+        </CodeBlock>
+      );
     },
     code: ({ className, children, node: _node, ...props }) => {
       if (isMermaidCodeClass(className)) {

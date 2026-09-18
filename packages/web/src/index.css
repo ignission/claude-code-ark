@@ -319,6 +319,25 @@
   padding: 0;
   font-size: 13px;
 }
+
+/* コードブロックのコピーボタン。レイヤー外の `.md-prose pre` に競り勝つ必要が
+   あるので、Tailwind のユーティリティではなくここに書く */
+.ark-code-block pre {
+  padding-right: 40px;
+}
+.ark-code-block .ark-code-copy {
+  opacity: 1;
+}
+/* マウスのある環境では hover / フォーカス時だけ出す (タッチでは常時表示) */
+@media (hover: hover) {
+  .ark-code-block .ark-code-copy {
+    opacity: 0;
+  }
+  .ark-code-block:hover .ark-code-copy,
+  .ark-code-block:focus-within .ark-code-copy {
+    opacity: 1;
+  }
+}
 .md-prose blockquote {
   border-left: 3px solid var(--border);
   padding-left: 0.8em;
