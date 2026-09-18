@@ -575,6 +575,115 @@ jobs:
             exit 1
           fi
 
+      - name: Smoke test esbuild transform in packaged app
+        # PR #447 (CodeRabbit 追撃): 直前の step は「配置」と `--version` しか見て
+        # いない。本番で必要なのはそこではなく、
+        #   1. packaged な module 位置から `require("esbuild")` が解決できること
+        #   2. 解決された esbuild が platform binary を見つけて起動できること
+        #   3. `ESBUILD_WORKER_THREADS=0` の経路で `transformSync` が通ること
+        # の 3 つ。製品コードにテスト専用の分岐やエンドポイントは足さず、
+        # `.app` の Electron を `ELECTRON_RUN_AS_NODE=1` で node として起動し、
+        # **本番と同じ機構** (`createRequire` + `require`) で 1 回だけ圧縮する。
+        #
+        # `createRequire` の基準はアプリ本体と同じ `app.asar/dist/main.js` にする。
+        # `injected-minify.ts` が `createRequire(import.meta.url)` で見るのと同じ
+        # 位置なので、ここが通れば本番の解決経路が通ることになる。
+        #
+        # 失敗した場合は workflow を通すための回避をしない。ELECTRON_RUN_AS_NODE で
+        # asar 解決が効かないとしても、それ自体が本番と同じ機構だからである。
+        # 代わりに STAGE=resolve / STAGE=transform / STAGE=assert のどれで落ちたかを
+        # ログに残し、原因を切り分けられるようにする。
+        run: |
+          set -euo pipefail
+          APP="packages/desktop/release/mac-arm64/Ark.app"
+          ARK_BIN="$APP/Contents/MacOS/Ark"
+          ASAR_MAIN="$APP/Contents/Resources/app.asar/dist/main.js"
+          if [ ! -x "$ARK_BIN" ]; then
+            echo "::error::Ark executable not found at $ARK_BIN"
+            ls -la "$APP/Contents/MacOS" 2>&1 || echo "(MacOS directory not found)"
+            exit 1
+          fi
+          # 引用符の入れ子を避けるため、script は quoted heredoc で組み立てる
+          # (展開させない)。asar パスは env で渡す。
+          SCRIPT=$(cat <<'NODESCRIPT'
+          const { createRequire } = require("node:module");
+
+          const base = process.env.ARK_ASAR_MAIN;
+          if (!base) {
+            console.error("STAGE=setup ARK_ASAR_MAIN が空");
+            process.exit(1);
+          }
+
+          // esbuild は module 読み込み時にこの値を見る (lib/main.js の
+          // `ESBUILD_WORKER_THREADS !== "0"` ガード)。require より前に設定する。
+          process.env.ESBUILD_WORKER_THREADS = "0";
+
+          let resolvedPath;
+          let transformSync;
+          try {
+            const requireFromApp = createRequire(base);
+            resolvedPath = requireFromApp.resolve("esbuild");
+            ({ transformSync } = requireFromApp("esbuild"));
+          } catch (e) {
+            console.error(`STAGE=resolve base=${base}`);
+            console.error(e && e.stack ? e.stack : String(e));
+            process.exit(1);
+          }
+
+          let code;
+          try {
+            code = transformSync("const x = 1", { loader: "js", minify: true }).code;
+          } catch (e) {
+            console.error(`STAGE=transform resolved=${resolvedPath}`);
+            console.error(e && e.stack ? e.stack : String(e));
+            process.exit(1);
+          }
+
+          const compact = code.replace(/\n/g, "");
+          if (!compact.includes("x=1") || compact.includes("const x = 1")) {
+            console.error(
+              `STAGE=assert resolved=${resolvedPath} output=${JSON.stringify(code)}`
+            );
+            process.exit(1);
+          }
+          console.log(
+            `esbuild OK resolved=${resolvedPath} output=${JSON.stringify(code)}`
+          );
+          NODESCRIPT
+          )
+          # 壊れたバイナリ / dyld loader 問題で hang した場合に job timeout (60min)
+          # まで走らせないよう、background + sleep race で 15s で kill する
+          # (macos runner には GNU `timeout` が無い)。直前の step と同じ形。
+          OUT_FILE=$(mktemp -t ark-esbuild-transform.XXXXXX)
+          ELECTRON_RUN_AS_NODE=1 ARK_ASAR_MAIN="$ASAR_MAIN" \
+            "$ARK_BIN" -e "$SCRIPT" > "$OUT_FILE" 2>&1 &
+          RUN_PID=$!
+          (
+            sleep 15
+            if kill -0 "$RUN_PID" 2>/dev/null; then
+              kill -TERM "$RUN_PID" 2>/dev/null || true
+              sleep 3
+              kill -KILL "$RUN_PID" 2>/dev/null || true
+            fi
+          ) &
+          KILLER_PID=$!
+          set +e
+          wait "$RUN_PID"
+          RUN_EXIT=$?
+          set -e
+          kill "$KILLER_PID" 2>/dev/null || true
+          wait "$KILLER_PID" 2>/dev/null || true
+          # 出力に workflow command が混入する可能性に備えて escape する。
+          END_TOKEN="ark-esbuild-transform-$(uuidgen)"
+          echo "::stop-commands::${END_TOKEN}"
+          cat "$OUT_FILE" 2>&1 || true
+          echo "::${END_TOKEN}::"
+          if [ "$RUN_EXIT" -ne 0 ]; then
+            echo "::error::packaged .app 内で esbuild の transformSync が通らない (exit=$RUN_EXIT)。上の STAGE= で切り分けること"
+            ls -la "$(dirname "$ASAR_MAIN")" 2>&1 || echo "(app.asar/dist not listable)"
+            exit 1
+          fi
+
       - name: Compute artifact metadata
         id: artifact
         # electron-builder 25 の macOS zip target はデフォルトで
