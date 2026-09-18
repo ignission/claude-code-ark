@@ -31,18 +31,21 @@ function isControlCodePoint(codePoint: number): boolean {
 }
 
 /**
- * 空白 (改行含む) を1つの半角空白に畳んでから、残った制御文字を落として
- * maxLength で切る。
+ * 空白 (改行含む) は残し、それ以外の制御文字だけを落としたうえで、
+ * 空白を1つの半角空白に畳んで maxLength で切る。
  *
- * 先に空白を畳むのは、改行を「単語の連結」ではなく「区切り」として扱うため。
- * 制御文字の除去を先にすると改行そのものが消えて隣接語がくっつくため、
- * 必ず空白畳み込み → 制御文字除去の順にする。
+ * 制御文字除去を先に (改行も含めて) 行うと、改行が「区切り」ではなく
+ * 「単語の連結」として消えてしまう (例: "あ\nい" → "あい")。かといって
+ * 空白畳み込みを先にしても、空白ではない制御文字 (NUL 等) が2つの空白に
+ * 挟まれている場合にそれだけを消すと空白が連続して残る。そのため
+ * 「空白文字は無条件に残す」を filter の条件に含め、除去と畳み込みを
+ * 1回の走査に統一する。
  */
 function sanitizeText(text: string, maxLength: number): string {
-  const collapsed = text.replace(/\s+/gu, " ");
-  const stripped = Array.from(collapsed)
-    .filter(ch => !isControlCodePoint(ch.codePointAt(0) ?? 0))
+  const stripped = Array.from(text)
+    .filter(ch => /\s/u.test(ch) || !isControlCodePoint(ch.codePointAt(0) ?? 0))
     .join("")
+    .replace(/\s+/gu, " ")
     .trim();
   const characters = Array.from(stripped);
   if (characters.length <= maxLength) return stripped;
