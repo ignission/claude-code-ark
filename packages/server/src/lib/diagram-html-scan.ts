@@ -6,6 +6,10 @@ export interface DiagramHtmlAttribute {
 export interface DiagramHtmlStartTag {
   name: string;
   attributes: DiagramHtmlAttribute[];
+  /** `<` の位置 */
+  start: number;
+  /** `>` の位置 */
+  end: number;
 }
 
 const NAMED_CHARACTER_REFERENCES: Readonly<Record<string, string>> = {
@@ -150,6 +154,8 @@ export function scanDiagramHtmlStartTags(html: string): DiagramHtmlStartTag[] {
     tags.push({
       name: normalizedName,
       attributes: attributes(html.slice(open + 1, end)),
+      start: open,
+      end,
     });
     index = end + 1;
   }
