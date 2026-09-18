@@ -41,6 +41,17 @@ vi.mock("./tmux-manager.js", async () => {
   return { tmuxManager };
 });
 
+// CLI の状態ファイル読み取りは実機の ~/.claude/sessions を見るため、
+// テストでは常に「読めない」に固定する (格上げは bridge-collector 側で検証)
+vi.mock("./cli-session-status.js", async importOriginal => {
+  const actual =
+    await importOriginal<typeof import("./cli-session-status.js")>();
+  return {
+    ...actual,
+    cliSessionStatusReader: { stateFor: vi.fn(() => null) },
+  };
+});
+
 vi.mock("./ttyd-manager.js", async () => {
   const { EventEmitter } = await import("node:events");
   class TtydManagerStub extends EventEmitter {
