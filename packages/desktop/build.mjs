@@ -28,10 +28,15 @@ const serverPkg = JSON.parse(
 // esbuild は bundle できない。ESM 出力に inline すると同期 API の実装
 // (startWorkerThreadService) が ESM に存在しない `__filename` を参照して
 // ReferenceError になり、server module の評価中 = Electron の bootstrap 中に
-// .app が落ちる (v1.5.0 の release smoke test 失敗)。さらに esbuild は
-// 自分のパッケージ位置から platform 別バイナリ (@esbuild/<platform>-<arch>)
-// を解決して spawn するため、asar の外に素のファイルとして存在する必要がある
+// .app が落ちる (v1.5.0 の release smoke test 失敗)。esbuild 自身も
+// `esbuildCommandAndArgs()` で bundle を検出して throw する: 自分のパッケージ位置
+// から platform 別バイナリ (@esbuild/<platform>-<arch>) を相対パスで解決して
+// 起動するため、asar の外に素のファイルとして存在する必要がある
 // (electron-builder.yml の asarUnpack を参照)。
+//
+// なお server 側は `createRequire` で実行時に esbuild を取りに行くようになった
+// (injected-minify.ts) ので、現状この external 指定は bundle graph に効いていない。
+// 静的 import が復活したときに黙って inline されないための歯止めとして残す。
 const nativeOrCli = new Set(["better-sqlite3", "esbuild", "playwright-core"]);
 const serverExternals = Object.keys(serverPkg.dependencies ?? {}).filter(
   name => nativeOrCli.has(name)

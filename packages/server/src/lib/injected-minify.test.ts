@@ -1,4 +1,3 @@
-import { transformSync } from "esbuild";
 import { describe, expect, it, vi } from "vitest";
 import {
   COMMENT_LAYER,
@@ -12,39 +11,9 @@ import {
 } from "./diagram-harness.js";
 import { createCachedMinifier } from "./injected-minify.js";
 
-// 本物の transformSync を通す spy。呼ばれた回数だけを見たいので、圧縮結果は
-// そのまま (後続のサイズ比較テストは実際に圧縮された出力を検証する)。
-vi.mock("esbuild", async importOriginal => {
-  const actual = await importOriginal<typeof import("esbuild")>();
-  return { ...actual, transformSync: vi.fn(actual.transformSync) };
-});
-
-const transformSpy = vi.mocked(transformSync);
-
 const byteLength = (value: string) => Buffer.byteLength(value, "utf8");
 const occurrences = (value: string, token: string) =>
   value.split(token).length - 1;
-
-// 最初に実行される必要がある: 他のテストが注入を走らせると呼び出し回数が動く。
-describe("注入 payload の遅延生成", () => {
-  it("import しただけでは圧縮せず、初回注入時に 1 度だけ走る", () => {
-    // module 評価で esbuild を呼ぶと、bundle した Electron の bootstrap が
-    // server module の読み込み中に落ちる (#446 後の v1.5.0 release 失敗)。
-    expect(transformSpy).not.toHaveBeenCalled();
-
-    // ハーネスは style (css) と script (js) の 2 回。
-    injectHarness("");
-    expect(transformSpy).toHaveBeenCalledTimes(2);
-    injectHarness("");
-    expect(transformSpy).toHaveBeenCalledTimes(2);
-
-    // コメント層は script (js) の 1 回だけ。
-    injectDiagramCommentLayer("");
-    expect(transformSpy).toHaveBeenCalledTimes(3);
-    injectDiagramCommentLayer("");
-    expect(transformSpy).toHaveBeenCalledTimes(3);
-  });
-});
 
 describe("注入コードの minify", () => {
   it("ハーネスとコメント層をソースより明確に小さくする", () => {
@@ -103,7 +72,7 @@ describe("注入コードの minify", () => {
 describe("createCachedMinifier", () => {
   it("初回だけ変換し、2 回目以降はキャッシュを返す", () => {
     const transform = vi.fn(() => ({ code: "minified" }));
-    const minify = createCachedMinifier("source", "js", transform);
+    const minify = createCachedMinifier("source", "js", () => transform);
 
     expect(minify()).toBe("minified");
     expect(minify()).toBe("minified");
@@ -120,12 +89,28 @@ describe("createCachedMinifier", () => {
     const transform = vi.fn(() => {
       throw new Error("syntax error");
     });
-    const minify = createCachedMinifier("broken", "js", transform);
+    const minify = createCachedMinifier("broken", "js", () => transform);
 
     expect(minify()).toBe("broken");
     expect(minify()).toBe("broken");
     // 失敗も cache するので、変換も警告も 1 度きり。
     expect(transform).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledOnce();
+
+    warn.mockRestore();
+  });
+
+  it("esbuild を解決できなくても元のソースを返す", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // packaged .app で `require("esbuild")` が解決できない状況。
+    const resolve = vi.fn((): never => {
+      throw new Error("Cannot find module 'esbuild'");
+    });
+    const minify = createCachedMinifier("source", "css", resolve);
+
+    expect(minify()).toBe("source");
+    expect(minify()).toBe("source");
+    expect(resolve).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledOnce();
 
     warn.mockRestore();
