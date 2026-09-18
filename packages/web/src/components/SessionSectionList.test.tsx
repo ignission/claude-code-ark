@@ -223,6 +223,72 @@ describe("SessionSectionListの並べ方", () => {
     expect(container.querySelector('[data-section="resting"]')).toBeNull();
   });
 
+  it("あなたの番は会話の最終更新が新しい順に並べる", () => {
+    const { container } = mountList(
+      listProps({
+        sessionStatuses: statusesOf("IDLE", "IDLE", "IDLE"),
+        sessionLastUpdatedAt: new Map([
+          ["session-a", 100],
+          ["session-b", 300],
+          ["session-c", 200],
+        ]),
+      })
+    );
+
+    expect(sequence(container)).toEqual([
+      "# あなたの番",
+      "wt:b",
+      "wt:c",
+      "wt:a",
+    ]);
+  });
+
+  it("一覧の中にフォーカスがある間は、最終更新が動いても位置を保ち、外れたら並べ直す", () => {
+    // 最終更新は会話のたびに動くので、押そうとした行が足元で入れ替わりやすい
+    const props = listProps({
+      sessionStatuses: statusesOf("IDLE", "IDLE", "IDLE"),
+      sessionLastUpdatedAt: new Map([
+        ["session-a", 300],
+        ["session-b", 200],
+        ["session-c", 100],
+      ]),
+    });
+    const { container, rerender } = mountList(props);
+    expect(sequence(container)).toEqual([
+      "# あなたの番",
+      "wt:a",
+      "wt:b",
+      "wt:c",
+    ]);
+    const openA = pressableOf(container, "wt:a");
+    act(() => openA.focus());
+
+    rerender({
+      ...props,
+      sessionLastUpdatedAt: new Map([
+        ["session-a", 300],
+        ["session-b", 200],
+        ["session-c", 400],
+      ]),
+    });
+
+    expect(sequence(container)).toEqual([
+      "# あなたの番",
+      "wt:a",
+      "wt:b",
+      "wt:c",
+    ]);
+
+    act(() => openA.blur());
+
+    expect(sequence(container)).toEqual([
+      "# あなたの番",
+      "wt:c",
+      "wt:a",
+      "wt:b",
+    ]);
+  });
+
   it("セクションをまたいで移っても、行は同じ親の同じDOM要素のまま", () => {
     const props = listProps();
     const { container, rerender } = mountList(props);

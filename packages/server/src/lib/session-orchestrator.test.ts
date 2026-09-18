@@ -1071,5 +1071,24 @@ describe("SessionOrchestrator - tmux 読み取り失敗の区別 (#393)", () => 
       );
       expect(matching).toHaveLength(1);
     });
+
+    it("会話 (JSONL) が見つからないセッションは lastUpdatedAt を null で載せる", () => {
+      // 一覧の並べ替えに使う値。読めなくても preview 自体は落とさず、
+      // クライアント側では「不明」としてセクションの最後へ回る
+      const orchestrator = new SessionOrchestrator();
+      const worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), "ark-wt-"));
+      mockedTmux.getAllSessions.mockReturnValue([
+        makeTmuxSession({ worktreePath }) as never,
+      ]);
+      mockedTmux.capturePaneVisible.mockReturnValue(
+        okValue("直前の出力です\n> ")
+      );
+
+      const previews = orchestrator.getAllPreviews();
+      expect(previews).toHaveLength(1);
+      expect(previews[0].lastUpdatedAt).toBeNull();
+
+      fs.rmSync(worktreePath, { recursive: true, force: true });
+    });
   });
 });
