@@ -217,6 +217,18 @@ describe("SessionListRowの中身", () => {
     expect(openArea.textContent).toContain(presentStatus("IDLE").label);
   });
 
+  it("状態の文言は見た目から外し、読み上げには残す (名前に幅を回す)", () => {
+    const openArea = openAreaOf(mount(<SessionListRow {...rowProps()} />));
+
+    const chip = openArea.querySelector('[data-status="IDLE"]') as HTMLElement;
+    const label = chip.querySelector("span:not([aria-hidden])") as HTMLElement;
+    expect(label.textContent).toBe(presentStatus("IDLE").label);
+    expect(label.className).toContain("sr-only");
+    // 読み上げから消える hidden / display:none は使わない
+    expect(label.hasAttribute("hidden")).toBe(false);
+    expect(chip.querySelector("svg")).not.toBeNull();
+  });
+
   it("表示名があれば主ラベルにし、2行目の先頭にリポジトリ名を足す", () => {
     const openArea = openAreaOf(
       mount(<SessionListRow {...rowProps({ displayName: "ログイン画面" })} />)

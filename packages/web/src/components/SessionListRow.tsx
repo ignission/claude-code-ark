@@ -251,7 +251,13 @@ export function SessionListRow({
           }}
         >
           <div className="flex min-w-0 items-center gap-2">
-            <StatusChip statusKey={entry.statusKey} />
+            {/* 一覧では状態の文言を出さない。見出し (作業中 / 確認待ち / 待機) が
+                同じことを言っており、行の幅は名前に回したい。読み上げには残す */}
+            <StatusChip
+              statusKey={entry.statusKey}
+              labelClassName="sr-only"
+              className="px-1"
+            />
             {editing ? (
               <input
                 ref={inputRef}
