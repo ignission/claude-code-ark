@@ -1,0 +1,49 @@
+import { describe, expect, it } from "vitest";
+import { extractDocBlocks } from "./diagram-doc-blocks.js";
+
+describe("extractDocBlocks", () => {
+  it("data-ark-id を持つ要素を id で引けるようにする", () => {
+    const html = `<body><p data-ark-id="s1-p1">ひとつめ</p><p data-ark-id="s1-p2">ふたつめ</p></body>`;
+    const blocks = extractDocBlocks(html);
+    expect([...blocks.keys()]).toEqual(["s1-p1", "s1-p2"]);
+    expect(blocks.get("s1-p1")?.text).toBe("ひとつめ");
+    expect(blocks.get("s1-p1")?.html).toBe(
+      `<p data-ark-id="s1-p1">ひとつめ</p>`
+    );
+  });
+
+  it("入れ子のブロックを取り違えない", () => {
+    const html = `<section data-ark-id="s1"><p data-ark-id="s1-p1">なか</p></section>`;
+    const blocks = extractDocBlocks(html);
+    expect(blocks.get("s1")?.text).toBe("なか");
+    expect(blocks.get("s1-p1")?.html).toBe(`<p data-ark-id="s1-p1">なか</p>`);
+  });
+
+  it("同じタグ名の入れ子でも対応する閉じタグを選ぶ", () => {
+    const html = `<div data-ark-id="a"><div>なか</div>そと</div>`;
+    expect(extractDocBlocks(html).get("a")?.text).toBe("なか そと");
+  });
+
+  it("void 要素は内側を持たない", () => {
+    const html = `<img data-ark-id="s1-f1" alt="図">`;
+    const blocks = extractDocBlocks(html);
+    expect(blocks.get("s1-f1")?.text).toBe("");
+    expect(blocks.get("s1-f1")?.html).toBe(
+      `<img data-ark-id="s1-f1" alt="図">`
+    );
+  });
+
+  it("本文の空白を1つに畳む", () => {
+    const html = '<p data-ark-id="p">  あ\n  い  </p>';
+    expect(extractDocBlocks(html).get("p")?.text).toBe("あ い");
+  });
+
+  it("閉じタグ名の前方一致に惑わされない（`</p` と `</pre`）", () => {
+    const html = `<p data-ark-id="p1">まえ<pre>なか</pre>あと</p>`;
+    const blocks = extractDocBlocks(html);
+    expect(blocks.get("p1")?.html).toBe(
+      `<p data-ark-id="p1">まえ<pre>なか</pre>あと</p>`
+    );
+    expect(blocks.get("p1")?.text).toBe("まえ なか あと");
+  });
+});
