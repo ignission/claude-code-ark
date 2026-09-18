@@ -8,6 +8,7 @@
 import {
   decodeCharacterReferences,
   scanDiagramHtmlStartTags,
+  tagEnd,
 } from "./diagram-html-scan.js";
 
 export interface DocBlock {
@@ -46,28 +47,12 @@ interface DocMarkupToken {
 }
 
 /**
- * タグ内の引用符を追跡しながら `>` を探す。`diagram-html-scan.ts` の
- * `tagEnd` と同じ考え方だが、そちらは本タスクの範囲外としてこの export
- * 追加だけに留めるため、ここに複製する。
- */
-function tagEnd(html: string, start: number): number {
-  let quote: '"' | "'" | null = null;
-  for (let index = start; index < html.length; index += 1) {
-    const char = html[index];
-    if (quote !== null) {
-      if (char === quote) quote = null;
-      continue;
-    }
-    if (char === '"' || char === "'") quote = char;
-    else if (char === ">") return index;
-  }
-  return html.length - 1;
-}
-
-/**
  * 開始タグ・閉じタグ・コメントを、コメントの中身や属性値の引用符の中身を
  * タグとして誤認せずに走査する。`scanDiagramHtmlStartTags` は開始タグしか
  * 返さないため、閉じタグの深さ数えに使えるようここで別途スキャンする。
+ *
+ * `<script>`/`<style>` の raw text（中身をタグとして解釈しない特殊扱い）
+ * には対応していない。doc 本文にこれらのタグが来ることは想定していない。
  */
 function scanDocMarkup(html: string): DocMarkupToken[] {
   const tokens: DocMarkupToken[] = [];

@@ -46,7 +46,7 @@ export function decodeCharacterReferences(value: string): string {
   );
 }
 
-function tagEnd(html: string, start: number): number {
+export function tagEnd(html: string, start: number): number {
   let quote: '"' | "'" | null = null;
   for (let index = start; index < html.length; index += 1) {
     const char = html[index];
