@@ -118,3 +118,15 @@ asarUnpack:
   - "**/node_modules/@anthropic-ai/claude-code-*/**"
   - "**/node_modules/.pnpm/**/@anthropic-ai/claude-code/**"
   - "**/node_modules/.pnpm/**/@anthropic-ai/claude-code-*/**"
+  # esbuild は bundle できないため build.mjs で external にしている。
+  # 理由は 2 つある:
+  #   1. ESM 出力に inline すると同期 API (transformSync) の実装が
+  #      ESM に存在しない `__filename` を参照して ReferenceError になり、
+  #      server module の評価中 = bootstrap 中に .app が落ちる
+  #   2. esbuild は自分のパッケージ位置から platform 別バイナリ
+  #      (@esbuild/darwin-arm64/bin/esbuild) を解決して spawn するため、
+  #      asar 内の仮想パスではなく素のファイルとして存在する必要がある
+  - "**/node_modules/esbuild/**"
+  - "**/node_modules/@esbuild/**"
+  - "**/node_modules/.pnpm/**/node_modules/esbuild/**"
+  - "**/node_modules/.pnpm/**/@esbuild/**"

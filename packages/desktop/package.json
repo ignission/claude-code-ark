@@ -16,6 +16,7 @@
     "@anthropic-ai/claude-code": "^2.1.274",
     "better-sqlite3": "^13.0.3",
     "electron-log": "^5.4.4",
+    "esbuild": "^0.28.2",
     "playwright-core": "^1.62.1"
   },
   "devDependencies": {
@@ -25,7 +26,6 @@
     "concurrently": "^10.0.5",
     "electron": "^44.0.0",
     "electron-builder": "^26.15.3",
-    "esbuild": "^0.28.2",
     "tsx": "^4.23.12",
     "typescript": "7.0.2",
     "wait-on": "^9.1.0"

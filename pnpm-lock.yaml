@@ -41,6 +41,9 @@ importers:
       electron-log:
         specifier: ^5.4.4
         version: 5.4.4
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
       playwright-core:
         specifier: ^1.62.1
         version: 1.62.1
@@ -63,9 +66,6 @@ importers:
       electron-builder:
         specifier: ^26.15.3
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)(supports-color@10.2.2)
-      esbuild:
-        specifier: ^0.28.2
-        version: 0.28.2
       tsx:
         specifier: ^4.23.12
         version: 4.23.12

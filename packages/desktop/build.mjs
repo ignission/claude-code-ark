@@ -6,9 +6,9 @@
  * - @ark/server / @ark/shared は ESM の workspace 依存を bundle に inline する
  *   (Electron がそれぞれを直接解決すると native module の rebuild が複雑に
  *   なるため、main.js に取り込んで Resources 配下を asar に詰める想定)
- * - ただし native module の better-sqlite3 と CLI バイナリ依存の
- *   playwright-core は external のままにし、electron-builder の asarUnpack /
- *   extraResources で素のファイルとして配置する
+ * - ただし native module の better-sqlite3、CLI バイナリ依存の playwright-core、
+ *   自前のバイナリを spawn する esbuild は external のままにし、
+ *   electron-builder の asarUnpack / extraResources で素のファイルとして配置する
  * - cloudflared を起動する execa / spawn 系もそのまま (server コード内で
  *   child_process を使う)
  *
@@ -25,7 +25,14 @@ const serverPkg = JSON.parse(
 // claude バイナリ (@anthropic-ai/claude-code) は import せず resolveClaudePath() で
 // 同梱パスを直接解決するため、bundle 対象にならない (desktop の直接 dependency として
 // .app に同梱され、electron-builder の smartUnpack で展開される)。
-const nativeOrCli = new Set(["better-sqlite3", "playwright-core"]);
+// esbuild は bundle できない。ESM 出力に inline すると同期 API の実装
+// (startWorkerThreadService) が ESM に存在しない `__filename` を参照して
+// ReferenceError になり、server module の評価中 = Electron の bootstrap 中に
+// .app が落ちる (v1.5.0 の release smoke test 失敗)。さらに esbuild は
+// 自分のパッケージ位置から platform 別バイナリ (@esbuild/<platform>-<arch>)
+// を解決して spawn するため、asar の外に素のファイルとして存在する必要がある
+// (electron-builder.yml の asarUnpack を参照)。
+const nativeOrCli = new Set(["better-sqlite3", "esbuild", "playwright-core"]);
 const serverExternals = Object.keys(serverPkg.dependencies ?? {}).filter(
   name => nativeOrCli.has(name)
 );
