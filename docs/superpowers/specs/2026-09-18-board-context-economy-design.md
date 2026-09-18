@@ -36,8 +36,8 @@ graph 側 ( `er` / `flow` / `state` / `event-storming` / `context-map` ほか ) 
 | --- | --- | --- | --- |
 | `orista-app-ios/stripe-native-overview` | **doc** | 66 | **26,504** |
 | `shomatan/note/nisa-yutai-stocks` | **doc** | 34 | **19,784** |
-| `claude-code-manager/aeo-2026-09-todo` | flow | 16 | 3,861 |
-| `claude-code-manager/aeo-2026-09-backlog` | backlog | 10 | 3,948 |
+| `claude-code-manager/aeo-2026-09-todo` | flow | 16 | 3,340 |
+| `claude-code-manager/aeo-2026-09-backlog` | backlog | 10 | 3,279 |
 
 read only なのが、一番大きく一番よく使うボードである。
 
