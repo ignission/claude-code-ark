@@ -1583,7 +1583,7 @@ export function SplitChatPane({
             ref={fileInputRef}
             type="file"
             multiple
-            accept="image/*,application/pdf,text/*,.md,.json,.csv"
+            accept="image/*,application/pdf,text/*,.md,.json,.csv,.xlsx,.xls,.xlsm"
             className="hidden"
             onChange={e => {
               const files = Array.from(e.target.files ?? []);
