@@ -39,7 +39,14 @@ vi.mock("./cli-session-status.js", async importOriginal => {
   };
 });
 
+// transcript の読み取りも実機の ~/.claude/projects を見るので差し替える。
+// 既定は「判定できない」= 画面だけで決まる (このファイルの既存テストの前提)
+vi.mock("./transcript-conversation.js", () => ({
+  readTranscriptConversationState: vi.fn(() => "unknown"),
+}));
+
 import {
+  analyzeBridgeStatus,
   collectBridgeSessions,
   collectGridSnapshots,
   collectStreamLines,
@@ -47,10 +54,12 @@ import {
 import { cliSessionStatusReader } from "./cli-session-status.js";
 import { sessionOrchestrator } from "./session-orchestrator.js";
 import { tmuxManager } from "./tmux-manager.js";
+import * as transcriptConversation from "./transcript-conversation.js";
 
 const mockedOrchestrator = vi.mocked(sessionOrchestrator);
 const mockedTmux = vi.mocked(tmuxManager);
 const mockedCliStatus = vi.mocked(cliSessionStatusReader);
+const mockedTranscript = vi.mocked(transcriptConversation);
 
 const tmuxFailed = (stderr: string) => ({
   ok: false as const,
@@ -228,5 +237,164 @@ describe("bridge-collector - CLI の状態ファイルによる格上げ", () =>
       worktreePath: "/repo/wt",
       configDir: "/home/tester/.claude-alt",
     });
+  });
+});
+
+/**
+ * `/clear` 直後の実測画面 (Claude Code v2.1.276、2026-09-18 に使い捨ての tmux
+ * セッションで capture-pane したもの。空行の連なりだけ詰めてある)。
+ *
+ * 起動バナーと `❯ /clear` は isUiLine が落とすが、行頭 `▎` のお知らせは
+ * 落とす文字の並び (▘▝▛▜▐▌█) に無いのですり抜ける。この 1 種類だけで
+ * previewText は 327 文字になり、「空なら READY」には掛からない。
+ */
+const AFTER_CLEAR_SCREEN = [
+  "",
+  " ▐▛███▛█   Claude Code v2.1.276",
+  "▝▜██████▀  Opus 5 (1M context) with xhigh effort · Claude Max",
+  "  ▝▝ ▝▝    /…/scratchpad/clearprobe",
+  "",
+  "▎ Auto mode is now Claude Code's default permission mode.",
+  "▎ Auto mode lets Claude handle permission prompts automatically.",
+  "▎ Claude checks each tool call for risky actions and prompt",
+  "▎ injection before executing, runs the ones it assesses as",
+  "▎ lower-risk, and blocks the rest.",
+  "▎ https://code.claude.com/docs/en/permission-modes",
+  "",
+  "❯ /clear",
+  "",
+  "─────────────────────────────────────────────────────────────────",
+  "❯ ",
+  "─────────────────────────────────────────────────────────────────",
+  "  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
+].join("\n");
+
+describe("bridge-collector - /clear 直後を待機にする", () => {
+  it("この画面は空にならない (だから「空なら READY」では効かない)", () => {
+    const { previewText } = analyzeBridgeStatus(AFTER_CLEAR_SCREEN, false);
+    expect(previewText.trim().length).toBeGreaterThan(0);
+  });
+
+  it("画面が IDLE で、現行 transcript に会話が無ければ READY", () => {
+    expect(
+      analyzeBridgeStatus(
+        AFTER_CLEAR_SCREEN,
+        false,
+        null,
+        () => "no-conversation"
+      ).status
+    ).toBe("READY");
+  });
+
+  it("会話がある transcript では IDLE のまま (あなたの番)", () => {
+    expect(
+      analyzeBridgeStatus(
+        AFTER_CLEAR_SCREEN,
+        false,
+        null,
+        () => "has-conversation"
+      ).status
+    ).toBe("IDLE");
+  });
+
+  it("判定できないときは既存の画面判定のまま", () => {
+    expect(
+      analyzeBridgeStatus(AFTER_CLEAR_SCREEN, false, null, () => "unknown")
+        .status
+    ).toBe("IDLE");
+    // 渡さない呼び出し (既存の挙動) も同じ
+    expect(analyzeBridgeStatus(AFTER_CLEAR_SCREEN, false).status).toBe("IDLE");
+  });
+
+  it("画面が空なら transcript を読まずに READY (読み取りを増やさない)", () => {
+    const read = vi.fn(() => "has-conversation" as const);
+    expect(analyzeBridgeStatus("❯ ", false, null, read).status).toBe("READY");
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("IDLE 以外は transcript が空でも格下げしない", () => {
+    const empty = () => "no-conversation" as const;
+    // AWAITING (許諾プロンプト): ユーザーの操作が要る
+    expect(
+      analyzeBridgeStatus(
+        "Do you want to proceed?\n1. Yes\n2. No",
+        false,
+        null,
+        empty
+      ).status
+    ).toBe("AWAITING");
+    // ERR (セッションが壊れている)
+    expect(
+      analyzeBridgeStatus("panicked at 'boom'", false, null, empty).status
+    ).toBe("ERR");
+    // THINK / TOOL (進行中の行がある)
+    expect(
+      analyzeBridgeStatus("✻ Wibbling… (4s · 23 tokens)", false, null, empty)
+        .status
+    ).toBe("THINK");
+    expect(
+      analyzeBridgeStatus(
+        "⏺ Bash(ls)\n✻ Wibbling… (4s · 23 tokens)",
+        false,
+        null,
+        empty
+      ).status
+    ).toBe("TOOL");
+    // STOP (ライフサイクル上の停止)
+    expect(
+      analyzeBridgeStatus(AFTER_CLEAR_SCREEN, true, null, empty).status
+    ).toBe("STOP");
+  });
+
+  it("CLI が busy なら READY へ落とさず作業中に格上げする", () => {
+    expect(
+      analyzeBridgeStatus(
+        AFTER_CLEAR_SCREEN,
+        false,
+        "busy",
+        () => "no-conversation"
+      ).status
+    ).toBe("TOOL");
+  });
+});
+
+describe("bridge-collector - collector も transcript を見る", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedOrchestrator.getAllSessions.mockReturnValue([
+      managedSession as never,
+    ]);
+    mockedCliStatus.stateFor.mockReturnValue(null);
+    mockedTmux.capturePaneVisible.mockReturnValue({
+      ok: true,
+      value: AFTER_CLEAR_SCREEN,
+    });
+  });
+
+  it("collectBridgeSessions / collectGridSnapshots とも会話が無ければ READY", () => {
+    mockedTranscript.readTranscriptConversationState.mockReturnValue(
+      "no-conversation"
+    );
+    expect(collectBridgeSessions()[0]?.status).toBe("READY");
+    expect(collectGridSnapshots()[0]?.status).toBe("READY");
+  });
+
+  it("会話があれば IDLE のまま", () => {
+    mockedTranscript.readTranscriptConversationState.mockReturnValue(
+      "has-conversation"
+    );
+    expect(collectBridgeSessions()[0]?.status).toBe("IDLE");
+    expect(collectGridSnapshots()[0]?.status).toBe("IDLE");
+  });
+
+  it("worktree とプロファイルの configDir で引く", () => {
+    mockedTranscript.readTranscriptConversationState.mockReturnValue("unknown");
+    mockedOrchestrator.getAllSessions.mockReturnValue([
+      { ...managedSession, profileConfigDir: "/home/tester/.claude-alt" },
+    ] as never);
+    collectBridgeSessions();
+    expect(
+      mockedTranscript.readTranscriptConversationState
+    ).toHaveBeenCalledWith("/repo/wt", "/home/tester/.claude-alt");
   });
 });

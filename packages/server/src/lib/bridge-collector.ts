@@ -28,6 +28,10 @@ import { db } from "./database.js";
 import { sessionOrchestrator } from "./session-orchestrator.js";
 import { tmuxManager } from "./tmux-manager.js";
 import { TmuxReadFailureReporter } from "./tmux-read-result.js";
+import {
+  readTranscriptConversationState,
+  type TranscriptConversationState,
+} from "./transcript-conversation.js";
 
 /**
  * capture-pane 失敗の重複抑制ロガー (#393)。
@@ -43,6 +47,32 @@ interface PaneAnalysis {
   status: BridgeSessionStatus;
   currentTask: string;
   streamLines: BridgeStreamLine[];
+}
+
+/**
+ * 画面が IDLE のとき、「あなたの番」(IDLE) と「待機」(READY) を分ける。
+ *
+ * 画面に意味あるテキストが無ければ READY。それに加えて、**現行 transcript に
+ * 会話が 1 件も無ければ READY に倒す**。
+ *
+ * 画面だけでは /clear 直後と応答直後を区別できないため。/clear 直後の画面は
+ * 空にならず、起動バナー・起動時のお知らせ・打った `❯ /clear` が残る。この
+ * うちお知らせの行頭 `▎` は isUiLine をすり抜けるので previewText が埋まり、
+ * 上の「空なら READY」には掛からない (実測。詳細は transcript-conversation.ts)。
+ * 会話がまだ無い transcript を映しているセッションは、まだ誰の番でもない。
+ *
+ * 触るのは IDLE だけ。busy / AWAITING / ERR / STOP は画面と CLI の判定を
+ * 優先する (transcript は「いま誰の番か」を知らない)。readTranscript は
+ * ファイル読みを伴うので、必要になったときだけ呼ぶ。
+ */
+function resolveIdleStatus(
+  screen: BridgeSessionStatus,
+  previewText: string,
+  readTranscript: () => TranscriptConversationState
+): BridgeSessionStatus {
+  if (screen !== "IDLE") return screen;
+  if (previewText.trim().length === 0) return "READY";
+  return readTranscript() === "no-conversation" ? "READY" : screen;
 }
 
 /**
@@ -86,11 +116,13 @@ export function collectBridgeSessions(): BridgeSession[] {
     } else if (!captured.ok) {
       // tmux 停止・セッション消失などの取得失敗を、空画面の READY と区別する。
       status = "ERR";
-    } else if (analysis.status === "IDLE" && previewText.trim().length === 0) {
-      // /clear 直後・起動直後など、画面に意味あるテキストがない場合は READY (グレー)
-      status = "READY";
     } else {
-      status = analysis.status;
+      status = resolveIdleStatus(analysis.status, previewText, () =>
+        readTranscriptConversationState(
+          ms.worktreePath,
+          ms.profileConfigDir ?? null
+        )
+      );
     }
     // 画面に進行中の行が無くても、CLI が busy を書いていれば「作業中」に格上げする
     // (subagent だけが動いているあいだ、本体は入力待ちに戻って行が消える)
@@ -129,22 +161,22 @@ export function collectBridgeSessions(): BridgeSession[] {
  * Bridge と主 Dashboard の重複ポーリングを避けるためのヘルパー。
  *
  * raw は capturePaneVisible() の戻り値を渡すこと。scrollback 込みだと READY 判定が壊れる。
+ *
+ * readTranscript は「現行 transcript に会話があるか」を返す遅延読み取り
+ * (resolveIdleStatus 参照)。渡されなければ判定できない扱いになり、従来どおり
+ * 画面だけで決まる。
  */
 export function analyzeBridgeStatus(
   raw: string,
   sessionStopped: boolean,
-  cliState: CliSessionState | null = null
+  cliState: CliSessionState | null = null,
+  readTranscript: () => TranscriptConversationState = () => "unknown"
 ): { status: BridgeSessionStatus; previewText: string } {
   const analysis = analyzePane(raw);
   const previewText = extractPreviewText(raw, 12);
-  let status: BridgeSessionStatus;
-  if (sessionStopped) {
-    status = "STOP";
-  } else if (analysis.status === "IDLE" && previewText.trim().length === 0) {
-    status = "READY";
-  } else {
-    status = analysis.status;
-  }
+  const status = sessionStopped
+    ? "STOP"
+    : resolveIdleStatus(analysis.status, previewText, readTranscript);
   return { status: mergeCliSessionState(status, cliState), previewText };
 }
 
@@ -203,10 +235,13 @@ export function collectGridSnapshots(maxLines = 12): SessionGridSnapshot[] {
     } else if (!captured.ok) {
       // tmux 停止・セッション消失などの取得失敗を、空画面の READY と区別する。
       status = "ERR";
-    } else if (analysis.status === "IDLE" && previewText.trim().length === 0) {
-      status = "READY";
     } else {
-      status = analysis.status;
+      status = resolveIdleStatus(analysis.status, previewText, () =>
+        readTranscriptConversationState(
+          ms.worktreePath,
+          ms.profileConfigDir ?? null
+        )
+      );
     }
     // collectBridgeSessions と同じ格上げ (subagent 実行中を「あなたの番」にしない)
     status = mergeCliSessionState(status, readCliSessionState(ms));
