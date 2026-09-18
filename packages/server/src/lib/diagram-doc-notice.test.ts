@@ -127,7 +127,7 @@ describe("describeDocBodyChanges", () => {
     expect(lines).toEqual(["[(id不明)] ブロックを追加: いま"]);
   });
 
-  it("10件打ち切り後の列挙行そのものも300文字で切る", () => {
+  it("10件打ち切り後の列挙行は300文字に収まり、末尾の board_read 誘導は残る", () => {
     const before = new Map<string, DocBlock>();
     const after = new Map<string, DocBlock>();
     for (let i = 1; i <= 10; i += 1) {
@@ -148,7 +148,32 @@ describe("describeDocBodyChanges", () => {
     const overflowLine = lines[lines.length - 1];
     expect(lines).toHaveLength(11);
     expect(Array.from(overflowLine).length).toBeLessThanOrEqual(300);
-    expect(overflowLine.endsWith("…")).toBe(true);
+    // id 列挙がどれだけ長くても、board_read への誘導文言は必ず末尾に残る
+    expect(overflowLine.endsWith("（board_read で引ける）")).toBe(true);
+    // 列挙が実際に切れたことが省略記号で分かる
+    expect(overflowLine).toContain("…");
+    // 切り詰められた分の id はもう含まれない
     expect(overflowLine).not.toContain(longIds[longIds.length - 1]);
+  });
+
+  it("列挙が切れても件数はそのまま正しく出る", () => {
+    const before = new Map<string, DocBlock>();
+    const after = new Map<string, DocBlock>();
+    for (let i = 1; i <= 10; i += 1) {
+      before.set(`p${i}`, block(`p${i}`, "まえ"));
+      after.set(`p${i}`, block(`p${i}`, `あと${i}`));
+    }
+    const longIdBase = "a".repeat(30);
+    const restCount = 20;
+    for (let i = 1; i <= restCount; i += 1) {
+      const id = `${longIdBase}${String(i).padStart(2, "0")}`;
+      before.set(id, block(id, "まえ"));
+      after.set(id, block(id, "あと"));
+    }
+
+    const lines = describeDocBodyChanges(before, after);
+    const overflowLine = lines[lines.length - 1];
+    // id 列挙は300文字に収めるため切られても、実際の残り件数 (N) はそのまま出す
+    expect(overflowLine.startsWith(`他に ${restCount} 件変更: `)).toBe(true);
   });
 });

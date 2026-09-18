@@ -23,6 +23,16 @@ const ELLIPSIS = "…";
 const MAX_DETAILED_BLOCKS = 10;
 /** id が無害化で空文字になったときの代替。diagram-diff.ts の LABEL_FALLBACK と同じ理由 */
 const ID_FALLBACK = "(id不明)";
+/** 10件打ち切り後の列挙行の末尾。board_read への誘導であり、切り詰めても必ず残す */
+const OVERFLOW_SUFFIX = "（board_read で引ける）";
+
+/** 末尾を省略記号に置き換えて maxLength (コードポイント数) 以内に切り詰める */
+function truncate(text: string, maxLength: number): string {
+  const characters = Array.from(text);
+  if (characters.length <= maxLength) return text;
+  if (maxLength <= 0) return "";
+  return characters.slice(0, maxLength - 1).join("") + ELLIPSIS;
+}
 
 /**
  * 空白 (改行含む) は残し、それ以外の制御文字だけを落としたうえで、
@@ -41,9 +51,7 @@ function sanitizeText(text: string, maxLength: number): string {
     .join("")
     .replace(/\s+/gu, " ")
     .trim();
-  const characters = Array.from(stripped);
-  if (characters.length <= maxLength) return stripped;
-  return characters.slice(0, maxLength - 1).join("") + ELLIPSIS;
+  return truncate(stripped, maxLength);
 }
 
 /** ブロック本文を無害化する (300文字で切る) */
@@ -64,6 +72,28 @@ interface ChangeEntry {
   /** 無害化済みの id。10件打ち切り後の列挙でそのまま使う (再計算しない) */
   label: string;
   line: string;
+}
+
+/**
+ * 10件打ち切り後の列挙行を組む。
+ *
+ * 「まだ変更がある、board_read で引ける」という前置きと誘導文言は、この行の
+ * 存在意義そのものであり、件数 (N) は id の列挙より重要な情報。切り詰めが
+ * 一番必要になる大量変更のときにこそこれらが欠けては本末転倒なので、300文字に
+ * 収めるための切り詰めは id 列挙部分だけに適用し、前置きと誘導文言・件数は
+ * 削らない (300文字を超える場合は id 列挙が0文字になっても前置きと誘導文言を
+ * 優先する)。
+ */
+function describeOverflow(restIds: string[]): string {
+  const prefix = `他に ${restIds.length} 件変更: `;
+  const idsBudget = Math.max(
+    0,
+    BODY_MAX_LENGTH -
+      Array.from(prefix).length -
+      Array.from(OVERFLOW_SUFFIX).length
+  );
+  const idsPart = truncate(restIds.join(", "), idsBudget);
+  return `${prefix}${idsPart}${OVERFLOW_SUFFIX}`;
 }
 
 export function describeDocBodyChanges(
@@ -97,12 +127,6 @@ export function describeDocBodyChanges(
 
   const head = entries.slice(0, MAX_DETAILED_BLOCKS).map(e => e.line);
   const rest = entries.slice(MAX_DETAILED_BLOCKS);
-  const restIds = rest.map(e => e.label);
-  // 新しい上限は増やさず、ブロック本文と同じ300文字上限を列挙行全体にも適用する
-  const overflowLine = sanitizeText(
-    `他に ${restIds.length} 件変更: ${restIds.join(", ")}（board_read で引ける）`,
-    BODY_MAX_LENGTH
-  );
-  head.push(overflowLine);
+  head.push(describeOverflow(rest.map(e => e.label)));
   return head;
 }
