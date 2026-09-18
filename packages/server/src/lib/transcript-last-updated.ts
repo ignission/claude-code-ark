@@ -40,6 +40,9 @@ export function readTranscriptLastUpdatedAt(
   configDir: string | null | undefined,
   io: TranscriptIo = defaultIo
 ): number | null {
+  // 復元時に pane_current_path を取れなかったセッションは worktreePath が空になる。
+  // 空のまま進むと pickLatestJsonl が cwd 検証なしで projects 直下を見てしまうため弾く
+  if (!worktreePath) return null;
   try {
     const dir = path.join(
       projectsDirFor(configDir),

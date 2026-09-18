@@ -92,6 +92,19 @@ describe("readTranscriptLastUpdatedAt", () => {
     ]);
   });
 
+  it("worktreePath が空なら、ディレクトリを見ずに null (復元で pane_current_path を取れなかったセッション)", () => {
+    let called = false;
+    const io: TranscriptIo = {
+      pickLatestJsonl: () => {
+        called = true;
+        return "/cfg/projects/other.jsonl";
+      },
+      statMtimeMs: () => 1,
+    };
+    expect(readTranscriptLastUpdatedAt("", "/cfg", io)).toBeNull();
+    expect(called).toBe(false);
+  });
+
   it("既定の io は実ファイルの mtime を返し、JSONL が無ければ null", () => {
     const configDir = makeConfigDir();
     const worktreePath = path.join(configDir, "wt");
