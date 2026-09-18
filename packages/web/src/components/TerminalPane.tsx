@@ -4,7 +4,7 @@
  * 操作は上部バー (SplitViewPane) が持ち、端末専用の操作は
  * TerminalPaneHandleとして公開する。
  * - ttyd iframeを暗い額縁 (TERMINAL_BG) で囲む
- * - 入力バー (Quick Keysと入力欄) は上部バーの `…` メニューから出し入れする
+ * - 入力バー (Quick Keysと入力欄) は上部バーの1タップのボタンから出し入れする
  * - ファイルのD&D・貼り付け・添付は、このペインの中の確認画面を経て送る
  */
 
@@ -461,7 +461,7 @@ export function TerminalPane({
   });
 
   // 上部バー (SplitViewPane) から端末専用の操作を呼べるようにする。
-  // 添付と画像の貼り付けは1タップのボタン、バッファのコピー等は `…` メニューから
+  // どれも上部バーの1タップのボタンから呼ぶ (`…` には残していない)
   useImperativeHandle(ref, () => ({
     copyBuffer: () => {
       handleCopyBuffer();

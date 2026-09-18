@@ -589,20 +589,104 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
       .filter((label): label is string => label !== null);
   }
 
-  it("端末・図モードは、添付・画像・ショートカット・スラッシュコマンドの4つを並べる", () => {
+  /** 1タップの操作の行だけを並び順で取る (同じバーのセグメントや送信ボタンを含めない) */
+  function quickLabelsOf(scope: ParentNode): string[] {
+    const row = scope.querySelector('[data-testid="mobile-quick-actions"]');
+    expect(row).not.toBeNull();
+    return labelsOf(row as ParentNode);
+  }
+
+  it("端末モードは、添付・画像・ショートカット・スラッシュのあとに端末の操作を並べる", () => {
     // bottomBarTop は3モードのバーで共有する1つの要素で、内容は現在の viewMode で決まる
     // (見えているのは1枚だけなので、行の中身を確かめるには対象のモードを開いておく)
-    for (const mode of ["terminal", "board"] as const) {
-      localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, mode);
-      const container = mount(
-        <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
-      );
-      const labels = labelsOf(barOf(container, mode));
-      expect(labels).toContain("ファイルを添付");
-      expect(labels).toContain("画像を貼り付け");
-      expect(labels).toContain("メッセージのショートカット");
-      expect(labels).toContain("スラッシュコマンド");
-    }
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+    const container = mount(
+      <MobileSessionView
+        {...makeProps({
+          onUploadFile: uploadFile,
+          onCopyBuffer: async () => "buffer",
+        })}
+      />
+    );
+
+    expect(quickLabelsOf(barOf(container, "terminal"))).toEqual([
+      "ファイルを添付",
+      "画像を貼り付け",
+      "メッセージのショートカット",
+      "スラッシュコマンド",
+      "端末のバッファをコピー",
+      "端末を再読み込み",
+    ]);
+  });
+
+  it("図モードの添付は端末モードと同じ流儀だが、端末の操作は出さない", () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "board");
+    const container = mount(
+      <MobileSessionView
+        {...makeProps({
+          onUploadFile: uploadFile,
+          onCopyBuffer: async () => "buffer",
+        })}
+      />
+    );
+
+    expect(quickLabelsOf(barOf(container, "board"))).toEqual([
+      "ファイルを添付",
+      "画像を貼り付け",
+      "メッセージのショートカット",
+      "スラッシュコマンド",
+    ]);
+  });
+
+  it("バッファを取れない環境では、端末モードでもコピーだけを出さない", () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+    const container = mount(
+      <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
+    );
+
+    const labels = labelsOf(barOf(container, "terminal"));
+    expect(labels).not.toContain("端末のバッファをコピー");
+    expect(labels).toContain("端末を再読み込み");
+  });
+
+  it("コピーのボタンは `…` と同じく tmux バッファをクリップボードへ書く", async () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    const onCopyBuffer = vi.fn(async () => "端末の中身");
+    const container = mount(
+      <MobileSessionView {...makeProps({ onCopyBuffer })} />
+    );
+
+    click(
+      barOf(container, "terminal").querySelector(
+        'button[aria-label="端末のバッファをコピー"]'
+      )
+    );
+
+    expect(onCopyBuffer).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("端末の中身");
+    });
+  });
+
+  it("再読み込みのボタンは ttyd の iframe を貼り直す", () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+    const container = mount(<MobileSessionView {...makeProps()} />);
+    const before = container.querySelector("iframe");
+    expect(before).not.toBeNull();
+
+    click(
+      barOf(container, "terminal").querySelector(
+        'button[aria-label="端末を再読み込み"]'
+      )
+    );
+
+    // key が変わって作り直される = ttyd へ繋ぎ直す (要素の同一性で確認する)
+    expect(container.querySelector("iframe")).not.toBe(before);
   });
 
   it("会話モードは添付を出さない (会話の入力欄が自前のボタンを持つため)。画像・ショートカット・スラッシュコマンドは出す", () => {
@@ -772,7 +856,7 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     expect(onSendMessage).toHaveBeenCalledWith("/clear");
   });
 
-  it("`…` からは4つを外し、端末・セッションの操作は残す", () => {
+  it("`…` からは端末に関する操作をすべて外し、セッション全体の操作だけを残す", () => {
     const container = mount(
       <MobileSessionView
         {...makeProps({
@@ -804,9 +888,29 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     expect(menu?.textContent).not.toContain("ファイルを添付");
     expect(menu?.textContent).not.toContain("画像を貼り付け");
     expect(menu?.textContent).not.toContain("/clear");
-    expect(menu?.textContent).toContain("端末のバッファをコピー");
-    expect(menu?.textContent).toContain("端末を再読み込み");
+    expect(menu?.textContent).not.toContain("端末のバッファをコピー");
+    expect(menu?.textContent).not.toContain("端末を再読み込み");
     expect(menu?.textContent).toContain("セッションを再起動");
     expect(menu?.textContent).toContain("セッションを削除");
+  });
+
+  it("再起動を出せない環境では、`…` の区切り線が2本並ばない", () => {
+    const container = mount(
+      <MobileSessionView
+        {...makeProps({
+          notificationsSupported: true,
+          onNotificationsEnabledChange: vi.fn(),
+        })}
+      />
+    );
+
+    openDropdown(
+      container
+        .querySelector("header")
+        ?.querySelector('button[aria-label="その他の操作"]')
+    );
+
+    const menu = document.body.querySelector('[role="menu"]');
+    expect(menu?.querySelectorAll('[role="separator"]')).toHaveLength(1);
   });
 });

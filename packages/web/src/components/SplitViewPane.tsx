@@ -3,9 +3,11 @@
  *
  * 上部バーは1本にまとめる。左にセッションの主ラベル・ブランチ・状態チップ、
  * 中央に「端末 / 会話」の切り替え、右に1タップの操作 (ファイルの添付 / 画像の
- * 貼り付け / メッセージのショートカット)・図の開閉と `…` メニュー
- * (SessionHeaderMenu)。1タップの操作は `…` の中に畳まない。
- * 端末専用の操作 (バッファのコピー等) はTerminalPaneHandle経由でTerminalPaneに頼む。
+ * 貼り付け / メッセージのショートカット / 端末のバッファのコピー / 端末の再読み込み /
+ * 入力バーの表示)・図の開閉と `…` メニュー (SessionHeaderMenu)。
+ * 端末に関する操作はすべて1タップで届かせ、`…` にはセッション全体の操作
+ * (通知・削除) だけを残す。端末専用の操作はTerminalPaneHandle経由で
+ * TerminalPaneに頼む。
  * 右ペインは図が未選択でも上部バーのトグルで開閉できる。
  * 中身は DiagramPane（B-0a の図ペイン）。
  *
@@ -31,7 +33,7 @@ import type {
   SpecialKey,
   Worktree,
 } from "@ark/shared";
-import { ImagePlus, Paperclip } from "lucide-react";
+import { Copy, ImagePlus, Keyboard, Paperclip, RefreshCw } from "lucide-react";
 import {
   type ReactNode,
   useCallback,
@@ -43,6 +45,7 @@ import type { Socket } from "socket.io-client";
 import {
   type HeaderQuickAction,
   headerQuickActions,
+  inputBarToggleLabel,
   resolveSessionHeaderLabels,
 } from "../lib/session-header";
 import {
@@ -249,8 +252,8 @@ export function SplitViewPane(props: SplitViewPaneProps) {
     setLeftMode(next);
   }, []);
 
-  // 端末専用の操作は `…` メニューからTerminalPaneに頼む。入力バーの表示は、
-  // メニューのチェック表示のためにTerminalPaneから知らせてもらう
+  // 端末専用の操作は1タップのボタンからTerminalPaneに頼む。入力バーの表示は、
+  // ボタンの文言と押下状態 (aria-pressed) のためにTerminalPaneから知らせてもらう
   const terminalRef = useRef<TerminalPaneHandle>(null);
   const [terminalInputBarVisible, setTerminalInputBarVisible] = useState(false);
   // ショートカットの管理ダイアログは1タップのボタンから開く。ボタン側に持たせると
@@ -261,7 +264,9 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   const quickActions = headerQuickActions({
     leftMode,
     canUploadFile: props.onUploadFile !== undefined,
+    canCopyBuffer: props.onCopyBuffer !== undefined,
   });
+  const inputBarLabel = inputBarToggleLabel(terminalInputBarVisible);
   // Recordにして、HeaderQuickActionを足したときの描き忘れを型で拾う
   const quickActionItems: Record<HeaderQuickAction, ReactNode> = {
     "attach-file": (
@@ -296,6 +301,48 @@ export function SplitViewPane(props: SplitViewPaneProps) {
         onManage={() => setShowShortcutManager(true)}
         className={HEADER_ICON_BUTTON}
       />
+    ),
+    "copy-buffer": (
+      <button
+        key="copy-buffer"
+        type="button"
+        aria-label="端末のバッファをコピー"
+        title="端末のバッファをコピー"
+        onClick={() => terminalRef.current?.copyBuffer()}
+        className={HEADER_ICON_BUTTON}
+      >
+        <Copy className="size-5" aria-hidden="true" />
+      </button>
+    ),
+    "reload-terminal": (
+      <button
+        key="reload-terminal"
+        type="button"
+        aria-label="端末を再読み込み"
+        title="端末を再読み込み"
+        onClick={() => terminalRef.current?.reload()}
+        className={HEADER_ICON_BUTTON}
+      >
+        <RefreshCw className="size-5" aria-hidden="true" />
+      </button>
+    ),
+    // 出したままにできる操作なので、今の状態を押下状態 (aria-pressed) で示す
+    "toggle-input-bar": (
+      <button
+        key="toggle-input-bar"
+        type="button"
+        aria-label={inputBarLabel}
+        aria-pressed={terminalInputBarVisible}
+        title={inputBarLabel}
+        onClick={() => terminalRef.current?.toggleInputBar()}
+        className={
+          terminalInputBarVisible
+            ? `${HEADER_ICON_BUTTON} bg-muted text-foreground`
+            : HEADER_ICON_BUTTON
+        }
+      >
+        <Keyboard className="size-5" aria-hidden="true" />
+      </button>
     ),
   };
 
@@ -453,20 +500,11 @@ export function SplitViewPane(props: SplitViewPaneProps) {
             <span>図</span>
           </button>
           <SessionHeaderMenu
-            leftMode={leftMode}
             worktree={props.worktree}
             notificationsSupported={props.notificationsSupported ?? false}
             notificationsEnabled={props.notificationsEnabled ?? true}
             onNotificationsEnabledChange={props.onNotificationsEnabledChange}
             onDeleteSession={props.onDeleteSession}
-            onCopyBuffer={
-              props.onCopyBuffer
-                ? () => terminalRef.current?.copyBuffer()
-                : undefined
-            }
-            onReloadTerminal={() => terminalRef.current?.reload()}
-            inputBarVisible={terminalInputBarVisible}
-            onToggleInputBar={() => terminalRef.current?.toggleInputBar()}
           />
         </div>
       </header>

@@ -485,34 +485,51 @@ describe("PC上部バー", () => {
 });
 
 describe("PC上部バーの1タップ操作", () => {
+  /** 端末モードで並ぶ6つ。入力バーはPCの初期状態 (非表示) の文言で引く */
   const QUICK_LABELS = [
     "ファイルを添付",
     "画像を貼り付け",
     "メッセージのショートカット",
+    "端末のバッファをコピー",
+    "端末を再読み込み",
+    "入力バーを表示",
   ];
 
-  it("端末モードでは添付・画像・ショートカットを図の手前に並べる", () => {
+  it("端末モードでは添付・画像・ショートカットと端末の操作を図の手前に並べる", () => {
     writeSavedSplitViewLeftMode("terminal");
-    const container = mount(paneSection(makeSession("quick-terminal"), true));
+    const container = mount(
+      paneSection(makeSession("quick-terminal"), true, {
+        onCopyBuffer: vi.fn(async () => "buffer"),
+      })
+    );
     const scope = container.querySelector("header") as ParentNode;
 
     const labels = headerButtonLabels(scope);
-    expect(labels).toContain("ファイルを添付");
-    expect(labels).toContain("画像を貼り付け");
-    expect(labels).toContain("メッセージのショートカット");
     for (const label of QUICK_LABELS) {
+      expect(labels).toContain(label);
       expect(labels.indexOf(label)).toBeLessThan(labels.indexOf("図"));
     }
+    // 並び順も固定する (送る操作が先、端末の操作があと)
+    expect(labels.filter(label => QUICK_LABELS.includes(label))).toEqual(
+      QUICK_LABELS
+    );
   });
 
-  it("会話モードの添付と画像は会話の入力欄が担うので、ショートカットだけ置く", () => {
+  it("会話モードでは端末の操作も出さない (端末ペインごと隠れているため)", () => {
     writeSavedSplitViewLeftMode("chat");
-    const container = mount(paneSection(makeSession("quick-chat"), true));
+    const container = mount(
+      paneSection(makeSession("quick-chat"), true, {
+        onCopyBuffer: vi.fn(async () => "buffer"),
+      })
+    );
     const scope = container.querySelector("header") as ParentNode;
 
     const labels = headerButtonLabels(scope);
     expect(labels).not.toContain("ファイルを添付");
     expect(labels).not.toContain("画像を貼り付け");
+    expect(labels).not.toContain("端末のバッファをコピー");
+    expect(labels).not.toContain("端末を再読み込み");
+    expect(labels).not.toContain("入力バーを表示");
     expect(labels).toContain("メッセージのショートカット");
   });
 
@@ -521,6 +538,7 @@ describe("PC上部バーの1タップ操作", () => {
     const container = mount(
       paneSection(makeSession("quick-no-upload"), true, {
         onUploadFile: undefined,
+        onCopyBuffer: vi.fn(async () => "buffer"),
       })
     );
     const scope = container.querySelector("header") as ParentNode;
@@ -529,6 +547,18 @@ describe("PC上部バーの1タップ操作", () => {
     expect(labels).not.toContain("ファイルを添付");
     expect(labels).not.toContain("画像を貼り付け");
     expect(labels).toContain("メッセージのショートカット");
+    expect(labels).toContain("端末のバッファをコピー");
+  });
+
+  it("バッファを取れない環境では、コピーだけを出さない", () => {
+    writeSavedSplitViewLeftMode("terminal");
+    const container = mount(paneSection(makeSession("quick-no-copy"), true));
+    const scope = container.querySelector("header") as ParentNode;
+
+    const labels = headerButtonLabels(scope);
+    expect(labels).not.toContain("端末のバッファをコピー");
+    expect(labels).toContain("端末を再読み込み");
+    expect(labels).toContain("入力バーを表示");
   });
 
   it("添付のボタンは端末ペインのファイル選択を開く", () => {
@@ -562,6 +592,67 @@ describe("PC上部バーの1タップ操作", () => {
     );
 
     expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it("コピーのボタンは `…` と同じく tmux バッファをクリップボードへ書く", async () => {
+    writeSavedSplitViewLeftMode("terminal");
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    const onCopyBuffer = vi.fn(async () => "端末の中身");
+    const container = mount(
+      paneSection(makeSession("quick-copy"), true, { onCopyBuffer })
+    );
+
+    clickButton(
+      container.querySelector("header") as ParentNode,
+      "端末のバッファをコピー"
+    );
+
+    expect(onCopyBuffer).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("端末の中身");
+    });
+  });
+
+  it("再読み込みのボタンは ttyd の iframe を貼り直す", () => {
+    writeSavedSplitViewLeftMode("terminal");
+    const container = mount(paneSection(makeSession("quick-reload"), true));
+    const before = container.querySelector("iframe");
+    expect(before).not.toBeNull();
+
+    clickButton(
+      container.querySelector("header") as ParentNode,
+      "端末を再読み込み"
+    );
+
+    // key が変わって作り直される = ttyd へ繋ぎ直す (要素の同一性で確認する)
+    expect(container.querySelector("iframe")).not.toBe(before);
+  });
+
+  it("入力バーのボタンは押すたびに文言と aria-pressed が入れ替わる", () => {
+    writeSavedSplitViewLeftMode("terminal");
+    const container = mount(paneSection(makeSession("quick-input-bar"), true));
+    const scope = container.querySelector("header") as ParentNode;
+    // PCの入力バーは既定で隠れている (TerminalPane)
+    expect(
+      scope
+        .querySelector('button[aria-label="入力バーを表示"]')
+        ?.getAttribute("aria-pressed")
+    ).toBe("false");
+
+    clickButton(scope, "入力バーを表示");
+
+    expect(
+      scope.querySelector('button[aria-label="入力バーを表示"]')
+    ).toBeNull();
+    expect(
+      scope
+        .querySelector('button[aria-label="入力バーを隠す"]')
+        ?.getAttribute("aria-pressed")
+    ).toBe("true");
   });
 
   it("ショートカットのボタンは1タップで一覧を出す", () => {
@@ -609,11 +700,13 @@ describe("PC上部バーの1タップ操作", () => {
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
   });
 
-  it("`…` からはショートカット・添付・画像を外し、端末の操作と削除を残す", () => {
+  it("`…` には端末の操作を残さず、セッション全体の操作だけを置く", () => {
     writeSavedSplitViewLeftMode("terminal");
     const container = mount(
       paneSection(makeSession("quick-rest"), true, {
         onCopyBuffer: vi.fn(async () => "buffer"),
+        notificationsSupported: true,
+        onNotificationsEnabledChange: vi.fn(),
       })
     );
 
@@ -627,9 +720,10 @@ describe("PC上部バーの1タップ操作", () => {
     expect(menu?.textContent).not.toContain("メッセージショートカット");
     expect(menu?.textContent).not.toContain("ファイルを添付");
     expect(menu?.textContent).not.toContain("画像を貼り付け");
-    expect(menu?.textContent).toContain("端末のバッファをコピー");
-    expect(menu?.textContent).toContain("端末を再読み込み");
-    expect(menu?.textContent).toContain("入力バーを表示");
+    expect(menu?.textContent).not.toContain("端末のバッファをコピー");
+    expect(menu?.textContent).not.toContain("端末を再読み込み");
+    expect(menu?.textContent).not.toContain("入力バー");
+    expect(menu?.textContent).toContain("このセッションの通知をオフにする");
     expect(menu?.textContent).toContain("セッションを削除");
   });
 });
