@@ -33,6 +33,7 @@ import {
   TmuxReadFailureReporter,
   type TmuxReadResult,
 } from "./tmux-read-result.js";
+import { readTranscriptConversationState } from "./transcript-conversation.js";
 import { readTranscriptLastUpdatedAt } from "./transcript-last-updated.js";
 import { ttydManager } from "./ttyd-manager.js";
 
@@ -1153,10 +1154,18 @@ export class SessionOrchestrator extends EventEmitter {
         worktreePath: session.worktreePath,
         configDir: this.sessionProfiles.get(session.id)?.configDir ?? null,
       });
+      // 画面が IDLE でも、現行 transcript に会話が 1 件も無ければ待機に倒す。
+      // /clear 直後の画面は空にならない (起動バナー・お知らせ・打った `/clear` が
+      // 残る) ので、画面だけでは応答直後と区別できない
       const { status: bridgeStatus } = analyzeBridgeStatus(
         raw,
         session.status === "stopped",
-        cliState
+        cliState,
+        () =>
+          readTranscriptConversationState(
+            session.worktreePath,
+            this.sessionProfiles.get(session.id)?.configDir ?? null
+          )
       );
       const allLines = stripAnsi(raw)
         .split("\n")
