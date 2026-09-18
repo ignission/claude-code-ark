@@ -53,6 +53,10 @@ const MIME_TO_EXTENSION: Record<string, string> = {
   "application/xml": "xml",
   "application/yaml": "yaml",
   "application/x-yaml": "yaml",
+  // Excel。Claude はシートを読むのにコマンドを使うので、保存できれば @パスで渡せる
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.ms-excel.sheet.macroEnabled.12": "xlsm",
 };
 
 /**
@@ -86,6 +90,9 @@ const SAFE_EXTENSION_WHITELIST = new Set([
   "ts",
   "tsx",
   "jsx",
+  "xlsx",
+  "xls",
+  "xlsm",
 ]);
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;

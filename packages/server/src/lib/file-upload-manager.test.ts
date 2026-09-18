@@ -51,6 +51,32 @@ describe("FileUploadManager", () => {
       expect(result.filename).toMatch(/\.md$/);
     });
 
+    it("Excelのブックを保存できる", async () => {
+      const xlsx = await manager.saveFile(
+        "session-1",
+        makeBase64(100),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      );
+      expect(xlsx.filename).toMatch(/\.xlsx$/);
+
+      const xls = await manager.saveFile(
+        "session-1",
+        makeBase64(100),
+        "application/vnd.ms-excel"
+      );
+      expect(xls.filename).toMatch(/\.xls$/);
+    });
+
+    it("Excelのブックのファイル名で拡張子を救済できる", async () => {
+      const result = await manager.saveFile(
+        "session-1",
+        makeBase64(100),
+        "application/octet-stream",
+        "売上.xlsx"
+      );
+      expect(result.filename).toMatch(/\.xlsx$/);
+    });
+
     it("text/plainを保存できる", async () => {
       const result = await manager.saveFile(
         "session-1",

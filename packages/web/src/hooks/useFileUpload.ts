@@ -15,6 +15,9 @@ const ALLOWED_MIME_EXACT = new Set([
   "application/xml",
   "application/yaml",
   "application/x-yaml",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-excel.sheet.macroEnabled.12",
 ]);
 
 const CLIENT_EXTENSION_WHITELIST = new Set([
@@ -44,6 +47,9 @@ const CLIENT_EXTENSION_WHITELIST = new Set([
   "ts",
   "tsx",
   "jsx",
+  "xlsx",
+  "xls",
+  "xlsm",
 ]);
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -66,7 +72,7 @@ export function validateFile(file: File): UploadValidation {
     ALLOWED_MIME_PREFIXES.some(p => mime.startsWith(p));
   if (mimeAllowed) return { ok: true };
 
-  // 曖昧MIME（octet-stream、空文字列、ms-excel等）はファイル拡張子で救済
+  // 曖昧MIME（octet-stream、空文字列等）はファイル拡張子で救済
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
   if (ext && CLIENT_EXTENSION_WHITELIST.has(ext)) {
     return { ok: true };
