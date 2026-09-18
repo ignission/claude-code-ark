@@ -1,38 +1,47 @@
-# ボード更新の文脈経済 設計
+# doc 型ボードを人間が直接書けるようにする 設計
 
 ## 目的
 
-図解ボードの「直し」を、ボード1枚分ではなく1行分のコストで回せるようにする。
+doc 型ボードの本文を、人間がその場で直接編集できるようにする。
 
-出発点は「Confluence のようにリアルタイムで編集したい」という要望だった。掘った結果、
-求められていたのは共同編集そのものではなく、**小さな直しが小さく済むこと**だった。
-いま label を1つ直すのにボード全体を書き直しており、そこが鬱陶しさの実体である。
+出発点は「Confluence のリアルタイム文章みたいに編集したい」という要望だった。掘り下げた
+結果、求められていたのは共同編集 ( CRDT / OT ) ではなく、**doc 型ボードが read only で
+あることそのもの**だった。本文の言い回しを1つ直すのに、コメントを書いて、送信して、
+Claude に数万文字を全文書き直させている。「コメントして送信が鬱陶しい」と「文脈を食う」は
+同じ1つの問題で、原因は doc が書けないことにある。
 
 ## 測ったこと
 
-新しい機構を足す前に、いまどこに文脈が消えているかを実測した
+新しい機構を足す前に、いまどこが詰まっているかを実測した
 ( `.claude/rules/context-engineering.md` §1 )。
 
-### 送信文は既に小さい
+### doc 型は仕様として read only
 
-`diagram:submit` はモデル差分を意味の文にして1行ずつ送る。
+`diagram-reader.ts:137` がすべてで、`doc` にだけ編集ハーネスが載らない。
 
-```
-図を編集しました（.claude/diagrams/foo.diagram.html）:
-- Order を Purchase Order に改名
-- Order に cancelled_at を追加
-```
-
-`diagram:comment:send` は1行。
-
-```
-図のコメント（…） 対象: Order / 引用: 「…」 / コメント: 「…」 / 他に未解決 3 件（board_comments で全件取得できる）
+```js
+model.model.type === "doc"
+  ? injectDiagramCommentLayer(projected, "doc")                   // コメント層だけ
+  : injectDiagramCommentLayer(injectHarness(projected), "graph")  // 編集ハーネス + コメント層
 ```
 
-典型で200文字前後。`anchorQuote` は256文字、`body` は4,000文字、`anchorText` は80文字で
-切ってある。**送信のデータ構造に無駄は無い。ここは変えない。**
+graph 側 ( `er` / `flow` / `state` / `event-storming` / `context-map` ほか ) は label の
+インライン編集・ドラッグ・kind 変更・edge 増減ができる。doc だけができない。
 
-### 消えているのは書き戻し
+### 実運用のボードは doc が主役
+
+`_examples` と `_archive` を除いた実物。
+
+| ボード | type | node | 文字数 |
+| --- | --- | --- | --- |
+| `orista-app-ios/stripe-native-overview` | **doc** | 66 | **36,610** |
+| `shomatan/note/nisa-yutai-stocks` | **doc** | 34 | **24,528** |
+| `claude-code-manager/aeo-2026-09-todo` | flow | 16 | 3,861 |
+| `claude-code-manager/aeo-2026-09-backlog` | backlog | 10 | 3,948 |
+
+read only なのが、一番大きく一番よく使うボードである。
+
+### 書き戻しのコスト
 
 全 transcript の `.diagram.html` へのツール呼び出しを走査した実測値。
 
@@ -43,141 +52,162 @@
 | 部分編集 ( Edit ) | 15 | 平均 1,054 |
 | Read | 2 | — |
 
-新規作成の文字数は中身そのものなので避けられない。**問題は更新の8回**で、ノード1個を
-直すためにボード全体12,127文字を書き直している。送信文の約60倍。
+新規作成の文字数は中身そのものなので避けられない。**問題は更新の8回**で、その大半が doc
+ボードである ( `stripe-native-overview` 2回、`chapter7-decision-drift` 4回 )。1ブロックを
+直すためにボード全体を書き直している。
 
-Read が2回しかないのは、Claude が自分で書いたボードを文脈に持ったまま書き戻している
-ため。裏を返すと、**人間がボードを編集した後は Claude の手元が古い**。
+Read が2回しかないのは、Claude が自分で書いたボードを文脈に持ったまま書き戻しているため。
+**「変更を送る」で人間の編集を Claude へ知らせる経路は、実質的に使われていない。**
 
-### 投影はファイルに焼き付いていない
+### 送信文は既に小さい
 
-稼働中のボード2枚を実測した。
+`diagram:submit` はモデル差分を意味の文にして1行ずつ、`diagram:comment:send` は1行。
+典型で200文字前後。`anchorQuote` は256文字、`body` は4,000文字、`anchorText` は80文字で
+切ってある。**送信のデータ構造に無駄は無い。ここは変えない。**
 
-| ファイル | 全体 | モデル | 投影+その他 |
-| --- | --- | --- | --- |
-| `aeo-2026-09-todo.diagram.html` | 3,340 | 3,150 | 188 |
-| `aeo-2026-09-backlog.diagram.html` | 3,279 | 3,088 | 189 |
+### 制約として確かめたこと
 
-投影は189文字しかない ( doctype と head と script タグのみ )。組み込みレンダラが配信時に
-投影を作るため、ファイルにはモデルだけが残る。**モデルだけ差し替えれば図として成立する。**
-これが本設計が成り立つ根拠である。
+- `validateDiagramDocAnchors` は **`data-ark-id` と model node の1対1を強制する**。
+  node id ごとにちょうど1個。人間がブロックを増減したら model 側も同時に動かさないと422
+- `validateDiagramDocAuthorship` は `data-ark-author` を `human` / `claude` の2値に限り、
+  `data-ark-id` を持つ要素にだけ許す。`claude` → `human` への変更は禁じていない
+- ハーネスのサイズ guard ( `diagram-harness.test.ts:187` ) は `injectHarness` の出力だけを
+  128KiB で測る。コメント層は別勘定 ( 同ファイル :295 )。**doc 編集層も別の注入文字列に
+  すれば graph の残り枠12KBを食わない**
+- `buildSubmissionHtml` は送信 HTML から `[data-ark-harness-ui]` を除去する
+  ( `diagram-harness.ts:3208` )。コメント層はこの印を持つので焼き付かない。doc 編集層も
+  同じ印と同じ除去を持てばよい
 
 ## 設計
 
-### 変更1: 送信文に `anchorId` を載せる
+### A. doc 編集層 ( 人間側・本体 )
 
-`buildDiagramCommentMessage` ( `diagram-comments-handler.ts` ) が組む文に、thread が既に
-持っている `anchorId` を加える。`anchorId` は `diagram-comments.ts:623` で
-`model.nodes` の id として検証済みなので、そのまま node id として使える。
+`injectDiagramDocEditor` を新設する。**`diagram-harness.ts` には触らない。**
 
-```
-図のコメント（…） 対象: Order [order] / 引用: 「…」 / コメント: 「…」
-```
+**読む / 書く のモード切替を置く。既定は読む。** doc のコメント anchor はテキスト選択で
+作るため、`contenteditable` と選択の意味が正面から衝突する。両立させず、Confluence と
+同じく明示的に切り替える。
 
-これが無いと Claude は node の id を知らず、id を知らなければ部分更新のしようがない。
-**変更3の前提**であり、単独では効かない。
+書くモードで起きること。
 
-あわせて、送るスレッドが1件だけのときは `他に未解決 N 件（board_comments で全件取得できる）`
-の誘い文句を落とす。要らないツール呼び出しを1回増やしている。
+- `[data-ark-id]` を持つブロックを `contenteditable="true"` にする
+- 人間が触ったブロックへ **`data-ark-author="human"` を自動で付ける**。#319 でこの属性を
+  作った理由そのものであり、人間が書いた本文が初めて機械的に `human` になる
+- 新しいブロックを作ったら id を採番し、model に node を足す。消したら node も消す。
+  `validateDiagramDocAnchors` の1対1制約を満たすため、これをやらないと保存が422になる
+- 保存は既存の `diagram:autosave` / `diagram:submit` に乗せる。新しい保存経路を作らない
+- 送信 HTML から `[data-ark-harness-ui]` を除く ( graph と同型 )
 
-### 変更2: `board_comments` の返却を行テキストへ
+**`label` 抜粋はサーバー側で本文から再生成する。** doc の model `label` は検索と一覧用の
+60〜80文字の抜粋である。人間が本文を直すと抜粋がずれ、`board_comments` が返す `anchorText`
+が嘘になる。保存経路で1回作り直す。
 
-いまは `JSON.stringify(result)` をそのまま返している。スレッド1件につき1行のテキストに
-変える。
+### B. `board_patch` の `set-block` ( Claude 側・同じ問題の裏側 )
 
-```
-#t3 [order] 対象:Order 引用:「…」 コメント:「…」 返信2
-```
-
-スレッド数が増えたときだけ効く小さい改善。JSON の構造が要るケースは無い
-( 受け手は Claude であって機械ではない )。
-
-### 変更3: `board_patch` MCP ツール
-
-id 指定でモデルの一部だけを差し替えるツールを足す。Claude の文脈に入るのは ops の
-数行だけで、ボード全文は入口にも出口にも現れない。
+doc の正準 source は本文 HTML なので、モデルを差し替えても意味が無い。ブロック単位で
+差し替えるツールを足す。
 
 ```
 board_patch(path, ops: [
-  { "op": "set-node",   "id": "order", "label": "Purchase Order", "kind": "root" },
-  { "op": "set-field",  "node": "order", "id": "order_status", "label": "status" },
-  { "op": "add-node",   "id": "refund", "label": "Refund", "kind": "entity" },
-  { "op": "add-edge",   "id": "e9", "from": "order", "to": "refund" },
-  { "op": "delete-node","id": "legacy" }
+  { "op": "set-block", "id": "s6-p1",
+    "html": "<p data-ark-id=\"s6-p1\" data-ark-author=\"claude\">…</p>" },
+  { "op": "delete-block", "id": "s6-p2" }
 ])
 ```
 
-**op の語彙**: `add-node` / `set-node` / `delete-node` / `add-field` / `set-field` /
-`delete-field` / `add-edge` / `set-edge` / `delete-edge` / `add-group` / `set-group` /
-`delete-group`。既存のコア語彙 ( node / edge / field / group / label / kind ) だけを
-扱い、図種固有の意味は従来どおり `ext` に入れる。新しい語彙は作らない。
+サーバーが該当 `data-ark-id` の要素だけ差し替え、`validateDiagramDocAnchors` と
+`validateDiagramDocAuthorship` を再実行して書く。36,610文字 → 300文字程度。
 
-**適用の流れ**: サーバーがファイルを読み、モデルへ ops を当て、`replaceModelBlock` し、
-既存の検証 ( `parseDiagramModel` / `validateDiagramDocAnchors` /
-`validateDiagramDocAuthorship` ) を通して書く。`saveDiagramEdit` の検証境界を再利用し、
-新しい保存経路を作らない。
+**返却にモデルも本文も返さない**。適用した op 数だけ返す。返すと文脈に戻って節約が消える。
 
-**all-or-nothing**: 1つでも op が失敗したら ( 存在しない id を指す、適用後にモデルが
-検証を通らない ) 1つも適用せず、失敗した op の位置と理由を返す。部分適用はボードの
-状態が読めなくなる。
+**all-or-nothing**。1つでも失敗したら1つも適用せず、失敗した op の位置と理由を返す。
 
-**返却はモデル全文を返さない**。適用した op 数と、適用後の node / edge / group 数だけ
-返す。モデルを返すと文脈に戻ってしまい、節約そのものが消える。
+**直列化する**。人間の autosave と競合しうるので、同一 absPath で直列化する。
 
-**参照整合性**: `delete-node` は incident edge と `groups[].nodes` の参照も同期除去する
-( #243 の既存契約と同じ。これをやらないと保存時に422で弾かれる )。
+### C. 送信文に `anchorId` を載せる
 
-**直列化**: `board_patch` はサーバー内の read-modify-write なので、人間の autosave と
-競合しうる。同一 absPath で直列化する。
+`buildDiagramCommentMessage` の文へ、thread が既に持つ `anchorId` を加える
+( `diagram-comments.ts:623` で `model.nodes` の id として検証済み )。
 
-**還流 baseline を進める**: patch 成功時に `rememberNotifiedModel(key, patchedModel)` を
-呼ぶ。
+```
+図のコメント（…） 対象: 6.2 決定 [s6-p1] / 引用: 「…」 / コメント: 「…」
+```
 
-**手書き投影のボードには使えない**。モデルを差し替えても投影が古いままになるため、
-`type` が組み込み ( `er` / `event-storming` / `flow` / `state` / `context-map` ) でない、
-かつ `data-model-id` を持つ投影がファイルにあるボードは拒否し、理由を返す。実測した
-稼働ボードには1本も該当が無い。
+これが無いと Claude はブロックの id を知らず、`set-block` を呼べない。**B の前提。**
+あわせて、送るスレッドが1件のときは「board_comments で全件取得できる」の誘い文句を落とす
+( 要らないツール呼び出しを1回増やしている )。
 
-### おまけで直るもの: 還流のエコー
+### D. `board_patch` のモデル ops ( graph 向け・二次 )
 
-いま Claude が外から図を書き換えても還流の baseline は進まない
-( `index.ts:765` と `:2001` は `if (!has)` 、進めるのは submit の `:2078` だけ )。
-そのため人間が次に「変更を送る」と、**Claude 自身の変更が差分に混ざって返ってくる**。
+graph 型は投影がサーバー生成でファイルに焼き付かないため ( 実測で投影は189文字 )、
+モデルだけ差し替えれば成立する。
 
-`board_patch` はサーバーが書き手を知っているので baseline を進められ、このエコーが消える。
-Claude が Write / Edit で直接書いた場合は従来どおりエコーが残るが、`board_patch` を
-使う限り起きない。
+`add-node` / `set-node` / `delete-node` / `add-field` / `set-field` / `delete-field` /
+`add-edge` / `set-edge` / `delete-edge` / `add-group` / `set-group` / `delete-group`。
+既存のコア語彙だけを扱い、図種固有の意味は従来どおり `ext` に入れる。
+
+`delete-node` は incident edge と `groups[].nodes` の参照も同期除去する ( #243 の既存契約 )。
+
+### E. `board_comments` の返却を行テキストへ
+
+いまは `JSON.stringify(result)` をそのまま返している。1スレッド1行にする。
+スレッド数が増えたときだけ効く小さい改善。
+
+### F. 未知 type のボードが真っ白になるのを直す
+
+`injectBuiltinProjection` は組み込みでない type に何もせず返す ( `diagram-builtin.ts:236` )。
+`aeo-2026-09-backlog.diagram.html` は `type: "backlog"` で手書き投影も無いため、
+**node 10個と group 4個が丸ごと描画されていない**。モデルから汎用 graph 投影を生成する
+フォールバックを足す ( `renderNode` / `renderGroup` は既にあるので、CSS を既定値にして
+type 判定を外すだけ )。
+
+## 決めたこと: doc の本文編集は会話へ還流しない
+
+人間が本文を直しても「変更を送る」で Claude へ知らせない。理由は2つ。
+
+- 非還流の原則 ( `context-engineering.md` §4 )。人間は誤字を直したいだけで、Claude を
+  巻き込みたくない。1文字直すたびに Claude の文脈へ行が入るのは逆行である
+- 実測で Claude の Read は2回しかない。そもそも「知らせる」経路として機能していない
+
+Claude は必要なら Read する。ファイルが正本なので読めば最新が読める。
 
 ## 境界 / 非ゴール
 
-- **人間の 編集 → 送信 の流れは変えない**。「変更を送る」ボタンは残す。人間の編集を
-  自動で会話へ流し込まない ( `context-engineering.md` §4 )
-- **コメント機能は残す**。コメント → 送信の2段も残す。減らすのは送信後のコストである
-- **共同編集 ( CRDT / OT ) はやらない**。ハーネスの注入サイズ枠 ( 残り約12KB ) に入らず、
-  かつ Claude の書き込みはツール呼び出し単位なので文字単位の同期には意味が無い
+- **共同編集 ( CRDT / OT ) はやらない**。Claude の書き込みはツール呼び出し単位なので
+  文字単位の同期に意味が無い。ハーネスの注入枠にも入らない
 - **`diagram:updated` の iframe 貼り直しは変えない**。今回の対象外
+- **コメント機能は残す**。コメント → 送信の2段も残す。減らすのは「そもそもコメントする
+  しかない」状況のほう
 - **Claude へ何も注入しない**。`board_patch` は Claude が呼ぶツールであって、ハーネスから
   Claude の文脈へ差し込む機構ではない
+- **graph ハーネスの発見性 ( 常時クロムが無く read only に見える ) は別件**とする
 
 ## 検証
 
-- `anchorId` が送信文に載り、thread に `anchorId` が無い旧形式 sidecar でも文が壊れない
-- 未解決が1件のときに `board_comments で全件取得できる` が出ない
-- `board_patch` の各 op がモデルへ正しく当たる ( node / field / edge / group の add / set / delete )
-- 存在しない id を指す op で、**ファイルが1バイトも変わらない**
-- `delete-node` で incident edge と `groups[].nodes` 参照が同期除去される
-- 適用後に `parseDiagramModel` を通らない ops が、書き込み前に弾かれる
-- 手書き投影のボードへの `board_patch` が拒否される
-- `board_patch` の返却にモデル全文が含まれない
-- patch 成功後に「変更を送る」を押しても、patch した内容が差分として返らない ( エコー解消 )
-- 同一ファイルへの並行 patch が直列化され、片方の変更が失われない
+- doc ボードに編集層が注入され、graph ボードには注入されない
+- 読むモードではテキスト選択がコメント anchor になり、書くモードでは `contenteditable` が
+  効く。両者が同時に有効にならない
+- 人間が触ったブロックに `data-ark-author="human"` が付き、保存が422にならない
+- 新しいブロックを作ると id が採番され model に node が増える。消すと node も減る。
+  どちらも `validateDiagramDocAnchors` を通る
+- 保存後の `label` が本文の先頭60〜80文字と一致する
+- 送信 HTML に編集層の DOM が焼き付かない
+- doc 編集層の注入後サイズが独自 guard を超えない。**graph ハーネスの128KiB guard が
+  変わらない**
+- `set-block` が該当ブロックだけを差し替え、他のブロックのバイト列が変わらない
+- `set-block` の返却に本文もモデルも含まれない
+- 存在しない id を指す op で、ファイルが1バイトも変わらない
+- 未知 type のボードが汎用投影で描画される
+- 人間が本文を直して「変更を送る」を押しても、本文の変更が会話へ流れない
 
 ## 段階
 
 | Phase | 内容 | 単独で効くこと |
 | --- | --- | --- |
-| 1 | `anchorId` の搭載 + 誘い文句の削除 | Claude が id を知る ( 2 の前提 ) |
-| 2 | `board_patch` | 更新 12,127文字 → 150文字程度 |
-| 3 | `board_comments` の行テキスト化 | スレッドが増えたときの返却を圧縮 |
+| 1 | doc 編集層 ( A ) | doc が書けるようになる ( 要望そのもの ) |
+| 2 | `board_patch` の `set-block` ( B ) | 更新 36,610文字 → 300文字 |
+| 3 | 送信文の `anchorId` ( C ) | Claude が id を知る ( 2 を実際に使えるようにする ) |
+| 4 | 未知 type の描画 ( F ) | backlog ボードが見えるようになる |
+| 5 | モデル ops ( D ) と `board_comments` ( E ) | graph 側の更新コストと返却を圧縮 |
 
-順序は 1 → 2 → 3。1 は数行、2 が本体、3 は独立して出せる。
+1 が要望そのもの。2 と 3 は対で、片方だけでは効かない。4 は独立した不具合修正。
