@@ -588,6 +588,24 @@ describe("PC上部バーの1タップ操作", () => {
     );
   });
 
+  it("ショートカットの管理ダイアログは上部バーの外で開く (メニューが閉じても残る)", () => {
+    writeSavedSplitViewLeftMode("chat");
+    const container = mount(paneSection(makeSession("quick-manage"), true));
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+
+    openDropdown(
+      container
+        .querySelector("header")
+        ?.querySelector('button[aria-label="メッセージのショートカット"]')
+    );
+    const manage = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find(el => el.textContent === "ショートカットを管理");
+    act(() => manage?.click());
+
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+  });
+
   it("`…` からはショートカット・添付・画像を外し、端末の操作と削除を残す", () => {
     writeSavedSplitViewLeftMode("terminal");
     const container = mount(

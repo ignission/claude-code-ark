@@ -272,8 +272,8 @@ export function MobileSessionView({
     />
   );
 
-  // Ops メニューからの添付（pendingFiles）はターミナルペイン内のダイアログで
-  // 表示するため、会話モードのときはターミナルへ切り替えてダイアログを可視化する。
+  // 端末の流儀の添付（pendingFiles）はターミナルペイン内のダイアログで
+  // 表示するため、他のモードのときはターミナルへ切り替えてダイアログを可視化する。
   const pendingCount = pendingFiles.length;
   useEffect(() => {
     if (pendingCount > 0) setViewMode("terminal");
@@ -283,8 +283,8 @@ export function MobileSessionView({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   // 会話モードの添付を会話の入力欄の流儀 (`@path` を入力欄に足す) で行うための取っ手
   const chatRef = useRef<SplitChatPaneHandle>(null);
-  // ファイル選択input は DropdownMenuContent (Radix Portal) の外に配置する。
-  // 内部に置くとメニューを閉じた瞬間に Portal が unmount され、
+  // ファイル選択input は下部バーの1タップの操作から click() だけを呼ばせる。
+  // Radix の Portal (メニュー) の中に置くと、閉じた瞬間に Portal が unmount され、
   // OS のファイル選択画面から戻った時に input が DOM に存在せず onChange が発火しない。
   const fileInputRef = useRef<HTMLInputElement>(null);
 
