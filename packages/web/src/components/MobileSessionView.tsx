@@ -484,6 +484,10 @@ export function MobileSessionView({
     canUploadFile: onUploadFile !== undefined,
     canCopyBuffer: onCopyBuffer !== undefined,
   });
+  // `…` に残すのはセッション全体の操作だけ。通知を出せない環境 (Notification API の
+  // 無いブラウザ) もあるので、区切り線は直前のまとまりが実際に出たときだけ引く
+  const canChangeNotifications =
+    notificationsSupported && onNotificationsEnabledChange !== undefined;
   const quickActionRow = (
     <MobileQuickActionRow
       actions={quickActions}
@@ -575,7 +579,7 @@ export function MobileSessionView({
                 ここに残すのはセッション全体の操作だけ。
                 区切り線は、直前のまとまりが実際に出たときだけ引く */}
             <DropdownMenuContent align="end" className="w-64">
-              {notificationsSupported && onNotificationsEnabledChange && (
+              {canChangeNotifications && (
                 <>
                   <DropdownMenuItem
                     onSelect={() =>
@@ -594,7 +598,9 @@ export function MobileSessionView({
                   セッションを再起動
                 </DropdownMenuItem>
               )}
-              <DropdownMenuSeparator />
+              {(canChangeNotifications || onRestartSession) && (
+                <DropdownMenuSeparator />
+              )}
               <DropdownMenuItem
                 variant="destructive"
                 onSelect={() => setShowDeleteDialog(true)}

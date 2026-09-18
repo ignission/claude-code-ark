@@ -42,6 +42,7 @@ import {
   useState,
 } from "react";
 import type { Socket } from "socket.io-client";
+import { cn } from "@/lib/utils";
 import {
   type HeaderQuickAction,
   headerQuickActions,
@@ -335,11 +336,11 @@ export function SplitViewPane(props: SplitViewPaneProps) {
         aria-pressed={terminalInputBarVisible}
         title={inputBarLabel}
         onClick={() => terminalRef.current?.toggleInputBar()}
-        className={
-          terminalInputBarVisible
-            ? `${HEADER_ICON_BUTTON} bg-muted text-foreground`
-            : HEADER_ICON_BUTTON
-        }
+        // text-muted-foreground と競合するので、cn (tailwind-merge) で解決させる
+        className={cn(
+          HEADER_ICON_BUTTON,
+          terminalInputBarVisible && "bg-muted text-foreground"
+        )}
       >
         <Keyboard className="size-5" aria-hidden="true" />
       </button>
