@@ -13,7 +13,7 @@
 import type { ManagedSession, Worktree } from "@ark/shared";
 import { act, type ComponentProps, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MobileSessionView } from "./MobileSessionView";
 
 vi.mock("./DiagramPane", () => ({
@@ -38,6 +38,10 @@ function mount(element: ReactElement): HTMLDivElement {
   mountedRoots.push({ root, container });
   return container;
 }
+
+beforeEach(() => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+});
 
 afterEach(() => {
   for (const { root, container } of mountedRoots.splice(0)) {
