@@ -15,20 +15,14 @@
  */
 
 import type { DocBlock } from "./diagram-doc-blocks.js";
+import { isControlCodePoint } from "./text-sanitize.js";
 
 const BODY_MAX_LENGTH = 300;
 const ID_MAX_LENGTH = 80;
 const ELLIPSIS = "…";
 const MAX_DETAILED_BLOCKS = 10;
-
-function isControlCodePoint(codePoint: number): boolean {
-  return (
-    codePoint <= 31 ||
-    (codePoint >= 127 && codePoint <= 159) ||
-    codePoint === 0x2028 ||
-    codePoint === 0x2029
-  );
-}
+/** id が無害化で空文字になったときの代替。diagram-diff.ts の LABEL_FALLBACK と同じ理由 */
+const ID_FALLBACK = "(id不明)";
 
 /**
  * 空白 (改行含む) は残し、それ以外の制御文字だけを落としたうえで、
@@ -57,14 +51,18 @@ function sanitizeBody(text: string): string {
   return sanitizeText(text, BODY_MAX_LENGTH);
 }
 
-/** id を無害化する (80文字で切る)。diagram-diff.ts の sanitizeLabel(node.id) と同じ扱い */
+/**
+ * id を無害化する (80文字で切る)。diagram-diff.ts の sanitizeLabel(node.id) と同じ扱い。
+ * 無害化で空文字になった場合は ID_FALLBACK にする (sanitizeLabel の空文字フォールバックと同じ)
+ */
 function sanitizeId(id: string): string {
-  return sanitizeText(id, ID_MAX_LENGTH);
+  const sanitized = sanitizeText(id, ID_MAX_LENGTH);
+  return sanitized.length === 0 ? ID_FALLBACK : sanitized;
 }
 
 interface ChangeEntry {
-  /** 元の (無害化前の) id。10件打ち切り後の列挙で使う */
-  id: string;
+  /** 無害化済みの id。10件打ち切り後の列挙でそのまま使う (再計算しない) */
+  label: string;
   line: string;
 }
 
@@ -79,18 +77,19 @@ export function describeDocBodyChanges(
     const label = sanitizeId(id);
     if (previous === undefined) {
       entries.push({
-        id,
+        label,
         line: `[${label}] ブロックを追加: ${sanitizeBody(block.text)}`,
       });
       continue;
     }
     if (previous.text !== block.text) {
-      entries.push({ id, line: `[${label}] ${sanitizeBody(block.text)}` });
+      entries.push({ label, line: `[${label}] ${sanitizeBody(block.text)}` });
     }
   }
   for (const id of before.keys()) {
     if (!after.has(id)) {
-      entries.push({ id, line: `[${sanitizeId(id)}] ブロックを削除` });
+      const label = sanitizeId(id);
+      entries.push({ label, line: `[${label}] ブロックを削除` });
     }
   }
 
@@ -98,9 +97,12 @@ export function describeDocBodyChanges(
 
   const head = entries.slice(0, MAX_DETAILED_BLOCKS).map(e => e.line);
   const rest = entries.slice(MAX_DETAILED_BLOCKS);
-  const restIds = rest.map(e => sanitizeId(e.id));
-  head.push(
-    `他に ${restIds.length} 件変更: ${restIds.join(", ")}（board_read で引ける）`
+  const restIds = rest.map(e => e.label);
+  // 新しい上限は増やさず、ブロック本文と同じ300文字上限を列挙行全体にも適用する
+  const overflowLine = sanitizeText(
+    `他に ${restIds.length} 件変更: ${restIds.join(", ")}（board_read で引ける）`,
+    BODY_MAX_LENGTH
   );
+  head.push(overflowLine);
   return head;
 }
