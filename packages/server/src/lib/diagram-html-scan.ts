@@ -21,7 +21,7 @@ const NAMED_CHARACTER_REFERENCES: Readonly<Record<string, string>> = {
   quot: '"',
 };
 
-function decodeCharacterReferences(value: string): string {
+export function decodeCharacterReferences(value: string): string {
   return value.replace(
     /&(?:#([0-9]+);|#[xX]([0-9a-fA-F]+);|(amp|lt|gt|quot|apos|nbsp);)/gu,
     (

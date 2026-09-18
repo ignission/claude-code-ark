@@ -46,4 +46,38 @@ describe("extractDocBlocks", () => {
     );
     expect(blocks.get("p1")?.text).toBe("まえ なか あと");
   });
+
+  it("text で HTML エンティティをデコードする", () => {
+    const html = '<p data-ark-id="e">if a &lt; b &amp; c &gt; d</p>';
+    const blocks = extractDocBlocks(html);
+    expect(blocks.get("e")?.text).toBe("if a < b & c > d");
+  });
+
+  it("コメントの中の `</p>` に惑わされず本文を最後まで拾う", () => {
+    const html =
+      '<p data-ark-id="x">a<!-- memo: </p> should not close -->b</p>';
+    const blocks = extractDocBlocks(html);
+    expect(blocks.get("x")?.html).toBe(html);
+    expect(blocks.get("x")?.text).toBe("a b");
+  });
+
+  it("属性値の中の `</p>` に惑わされず本文を最後まで拾う", () => {
+    const html = '<p data-ark-id="x">a<a title="</p>">link</a>b</p>';
+    const blocks = extractDocBlocks(html);
+    expect(blocks.get("x")?.html).toBe(html);
+    expect(blocks.get("x")?.text).toBe("a link b");
+  });
+
+  it("void 要素の一覧に param を含む", () => {
+    const html = '<param data-ark-id="s1-f1" name="v" value="1">';
+    const blocks = extractDocBlocks(html);
+    expect(blocks.get("s1-f1")?.text).toBe("");
+    expect(blocks.get("s1-f1")?.html).toBe(html);
+  });
+
+  it("閉じタグが見つからないブロックは黙って読み飛ばす（意図した仕様）", () => {
+    const html = '<p data-ark-id="p1">閉じタグが無い';
+    const blocks = extractDocBlocks(html);
+    expect(blocks.has("p1")).toBe(false);
+  });
 });
