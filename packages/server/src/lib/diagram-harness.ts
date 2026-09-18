@@ -3617,12 +3617,24 @@ const minifyHarnessStyle = createCachedMinifier(
 );
 const minifyHarnessJavaScript = createCachedMinifier(HARNESS_JS, "js");
 
-export const DIAGRAM_HARNESS_SCRIPT = `${HARNESS_STYLE.slice(
-  0,
-  styleContentStart
-)}${minifyHarnessStyle()}${HARNESS_STYLE.slice(styleContentEnd)}
+let harnessScript: string | undefined;
+
+/**
+ * 圧縮済みハーネスを組み立てる。module 評価時ではなく初回注入時に走らせる
+ * (esbuild の呼び出しを import の副作用にすると、bundle した Electron の
+ * bootstrap 中に実行されてしまう)。
+ */
+function getDiagramHarnessScript(): string {
+  if (harnessScript === undefined) {
+    harnessScript = `${HARNESS_STYLE.slice(
+      0,
+      styleContentStart
+    )}${minifyHarnessStyle()}${HARNESS_STYLE.slice(styleContentEnd)}
 <script id="${DIAGRAM_HARNESS_MARKER}" data-ark-harness-ui="1">
 ${minifyHarnessJavaScript()}</script>`;
+  }
+  return harnessScript;
+}
 
 /**
  * ハーネスを本文へ差し込む。`injectCsp` と同じ「本文に差し込む」形。
@@ -3631,8 +3643,9 @@ ${minifyHarnessJavaScript()}</script>`;
  */
 export function injectHarness(html: string): string {
   if (html.includes(DIAGRAM_HARNESS_MARKER)) return html;
+  const script = getDiagramHarnessScript();
   if (/<\/body>/i.test(html)) {
-    return html.replace(/<\/body>/i, `${DIAGRAM_HARNESS_SCRIPT}</body>`);
+    return html.replace(/<\/body>/i, `${script}</body>`);
   }
-  return html + DIAGRAM_HARNESS_SCRIPT;
+  return html + script;
 }

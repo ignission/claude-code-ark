@@ -72,7 +72,7 @@ describe("注入コードの minify", () => {
 describe("createCachedMinifier", () => {
   it("初回だけ変換し、2 回目以降はキャッシュを返す", () => {
     const transform = vi.fn(() => ({ code: "minified" }));
-    const minify = createCachedMinifier("source", "js", transform);
+    const minify = createCachedMinifier("source", "js", () => transform);
 
     expect(minify()).toBe("minified");
     expect(minify()).toBe("minified");
@@ -84,12 +84,35 @@ describe("createCachedMinifier", () => {
     });
   });
 
-  it("変換失敗を握りつぶさない", () => {
-    const error = new Error("syntax error");
-    const minify = createCachedMinifier("broken", "js", () => {
-      throw error;
+  it("変換に失敗したら警告して元のソースを返す", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const transform = vi.fn(() => {
+      throw new Error("syntax error");
     });
+    const minify = createCachedMinifier("broken", "js", () => transform);
 
-    expect(minify).toThrow(error);
+    expect(minify()).toBe("broken");
+    expect(minify()).toBe("broken");
+    // 失敗も cache するので、変換も警告も 1 度きり。
+    expect(transform).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledOnce();
+
+    warn.mockRestore();
+  });
+
+  it("esbuild を解決できなくても元のソースを返す", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // packaged .app で `require("esbuild")` が解決できない状況。
+    const resolve = vi.fn((): never => {
+      throw new Error("Cannot find module 'esbuild'");
+    });
+    const minify = createCachedMinifier("source", "css", resolve);
+
+    expect(minify()).toBe("source");
+    expect(minify()).toBe("source");
+    expect(resolve).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledOnce();
+
+    warn.mockRestore();
   });
 });

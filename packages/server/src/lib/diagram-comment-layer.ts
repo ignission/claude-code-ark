@@ -1078,10 +1078,23 @@ const minifyCommentLayerJavaScript = createCachedMinifier(
   COMMENT_LAYER.slice(scriptContentStart, scriptContentEnd),
   "js"
 );
-const MINIFIED_COMMENT_LAYER = `${COMMENT_LAYER.slice(
-  0,
-  scriptContentStart
-)}${minifyCommentLayerJavaScript()}${COMMENT_LAYER.slice(scriptContentEnd)}`;
+
+let minifiedCommentLayer: string | undefined;
+
+/**
+ * 圧縮済みコメント層を組み立てる。module 評価時ではなく初回注入時に走らせる
+ * (esbuild の呼び出しを import の副作用にすると、bundle した Electron の
+ * bootstrap 中に実行されてしまう)。
+ */
+function getMinifiedCommentLayer(): string {
+  if (minifiedCommentLayer === undefined) {
+    minifiedCommentLayer = `${COMMENT_LAYER.slice(
+      0,
+      scriptContentStart
+    )}${minifyCommentLayerJavaScript()}${COMMENT_LAYER.slice(scriptContentEnd)}`;
+  }
+  return minifiedCommentLayer;
+}
 
 export type DiagramCommentMode = "doc" | "graph";
 
@@ -1105,10 +1118,11 @@ export function injectDiagramCommentLayer(
       return html;
     }
   }
+  const minified = getMinifiedCommentLayer();
   const layer =
     mode === "doc"
-      ? MINIFIED_COMMENT_LAYER
-      : MINIFIED_COMMENT_LAYER.replace(
+      ? minified
+      : minified.replace(
           'data-ark-comment-mode="doc"',
           'data-ark-comment-mode="graph"'
         );
