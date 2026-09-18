@@ -97,7 +97,15 @@ Google Docs と同じ形が既に組まれている。
 
 - `[data-ark-id]` を持つブロックを `contenteditable="true"` にする
 - 人間が触ったブロックへ **`data-ark-author="human"` を自動で付ける**。#319 でこの属性を
-  作った理由そのものであり、人間が書いた本文が初めて機械的に `human` になる
+  作った理由そのものであり、人間が書いた本文が初めて機械的に `human` になる。
+  ただし **`human` の意味が変わる**。#319 では Claude が人間の決定を転記したときだけ付ける
+  規約だったので `human` = 「人間の決定」だったが、直接編集では
+  `human` = 「人間がその本文を打った」になる。誤字を1つ直しただけの段落も `human` になる。
+  検証できる事実 ( 誰が打ったか ) を記す方が属性として健全なので自動付与を採るが、
+  **読み手側の規約を3箇所で言い換える**: `CLAUDE.md` の「図解ボード doc 本文の書き手」節、
+  `diagram-authoring` skill、SessionStart hook の context。
+  「`human` が付いたブロックだけを人間の決定として扱う」→
+  「`human` が付いたブロックは人間が書いた本文である。決定かどうかは本文が述べる」
 - 新しいブロックを作ったら id を採番し、model に node を足す。消したら node も消す。
   `validateDiagramDocAnchors` の1対1制約を満たすため、これをやらないと保存が422になる
 - 折り畳まれた選択 ( キャレットだけ ) では浮くボタンを出さない。入力中に出ると邪魔になる
@@ -117,9 +125,15 @@ doc の正準 source は本文 HTML なので、モデルを差し替えても�
 board_patch(path, ops: [
   { "op": "set-block", "id": "s6-p1",
     "html": "<p data-ark-id=\"s6-p1\" data-ark-author=\"claude\">…</p>" },
+  { "op": "insert-block", "after": "s6-p1", "id": "s6-p1b",
+    "html": "<p data-ark-id=\"s6-p1b\" data-ark-author=\"claude\">…</p>" },
   { "op": "delete-block", "id": "s6-p2" }
 ])
 ```
+
+`insert-block` は model に node を足し、`delete-block` は model から node を消す
+( `validateDiagramDocAnchors` の1対1制約。これが無いと Claude は段落を1つ足すだけで
+全文 Write に落ちる )。
 
 サーバーが該当 `data-ark-id` の要素だけ差し替え、`validateDiagramDocAnchors` と
 `validateDiagramDocAuthorship` を再実行して書く。26,504文字 → 300文字程度。
@@ -197,8 +211,21 @@ Claude が次に動くときに人間の決定を知らず、逆方向へ進む�
   「`data-ark-author="human"` が付いたブロックだけを人間の決定として扱う」。送信文で
   そう言っておけば、別セッションのエージェントの出力と取り違えない
 
-変更ブロックが10個を超えたら、本文は先頭10件までにし、残りは id の列挙と
-「`board_read` で引ける」の1行に畳む。
+### 送る前に無害化する
+
+ブロック本文は外部入力である ( 人間のインライン編集、PR で持ち込まれた `.diagram.html` )。
+`diagram-diff.ts` が label に対してやっているのと同じ理由で、tmux へリテラル送出する前に
+落とす。
+
+- HTML タグを除去して本文テキストにする
+- 制御文字と改行を除去して1行へ畳む ( `oneLine` と同じ扱い )
+- 1ブロックあたり300文字で切り、超えたら `…` を付ける ( 実測の中央値は102文字、
+  最大は966文字 )
+- 変更ブロックが10個を超えたら本文は先頭10件までにし、残りは id の列挙と
+  「`board_read` で引ける」の1行に畳む
+
+エスケープではなく除去にするのは `diagram-diff.ts` と同じ判断による。受け手は tmux 越しの
+対話版 Claude であり、エスケープ記法を機械的に解釈する文脈ではない。
 
 ### 足りないときのために `board_read` を足す
 
@@ -209,9 +236,34 @@ Claude が次に動くときに人間の決定を知らず、逆方向へ進む�
 board_read(path, ids: ["s6-p1", "s6-p2", "s6-t1"])
 ```
 
+返すのは**ブロックの HTML** ( 本文テキストではない )。`set-block` がそのまま受け取れる形に
+して、読んで直して書き戻す往復を閉じる。
+
 - 送信は常にブロック本文 ( 安い )
 - 前後の文脈が要るときだけ Claude が `board_read` で節単位を引く
 - 全文 Read は最後の手段として残る
+
+### どのブロックが変わったかをどう知るか
+
+サーバー側に **doc 用の baseline ( `id → ブロック本文` ) を持つ**。`lastNotifiedModels` は
+モデルしか持っておらず、doc の本文変更を検出できない。
+
+- 既存の `lastNotifiedModels` と同じ寿命・同じ FIFO 上限で、`lastNotifiedDocBodies` を置く
+- 「変更を送る」で、保存後の本文と baseline を id 単位で比べ、変わった id だけを送る
+- 送信が成功したら baseline を進める ( 失敗したら進めない。既存の submit と同じ )
+
+クライアントから `touchedIds` を受け取る案は採らない。編集層が申告した id を信じると、
+外から書き換えられた本文や、申告漏れをそのまま見逃す。サーバーが実物を比べる。
+
+### doc ではモデル差分を送らない
+
+A の設計で `label` 抜粋を本文から再生成するため、本文を1文字直すだけで model の `label` が
+変わる。このまま `describeModelDiff` を通すと
+`[s6-p1] を 「新しい抜粋…」 に改名` という行が本文の還流と二重に出る。
+
+**`model.type === "doc"` のときは `describeModelDiff` を呼ばず、ブロック本文の経路だけを
+使う。** node の増減 ( ブロックの追加・削除 ) は本文の経路側で「ブロックを追加 / 削除」と
+して表す。
 
 ### 送るのは人間が押したときだけ
 
@@ -249,15 +301,24 @@ board_read(path, ids: ["s6-p1", "s6-p2", "s6-t1"])
   変更していないブロックは送られない
 - 変更ブロックが10個を超えたとき、本文が10件で打ち切られ残りが id の列挙になる
 - `board_read` が指定した id のブロックだけを返し、他のブロックを返さない
+- `board_read` の返却を `set-block` へそのまま渡して往復できる
+- `insert-block` で model に node が増え、`delete-block` で減る。どちらも
+  `validateDiagramDocAnchors` を通る
+- 送信文でブロック本文の HTML タグ・改行・制御文字が落ち、300文字で切られる
+- doc ボードの送信に `describeModelDiff` 由来の「改名」行が混ざらない
+- baseline が進むのは送信が成功したときだけで、失敗したら次回も同じブロックが送られる
 
 ## 段階
 
 | Phase | 内容 | 単独で効くこと |
 | --- | --- | --- |
-| 1 | doc 編集層 ( A ) | doc が書けるようになる ( 要望そのもの ) |
-| 2 | `board_patch` の `set-block` と `board_read` ( B ) | 更新 26,504文字 → 300文字 |
-| 3 | 送信文の `anchorId` と本文還流 ( C ) | 人間の決定が Claude へ届く |
+| 1 | doc 編集層 + 本文の還流 ( A ) | doc が書けて、直した意図が Claude へ届く |
+| 2 | `board_patch` の block ops と `board_read` ( B ) | 更新 26,504文字 → 300文字 |
+| 3 | 送信文の `anchorId` ( C ) | Claude が id を知り、2 を実際に使える |
 | 4 | 未知 type の描画 ( F ) | backlog ボードが見えるようになる |
 | 5 | モデル ops ( D ) と `board_comments` ( E ) | graph 側の更新コストと返却を圧縮 |
 
-1 が要望そのもの。2 と 3 は対で、片方だけでは効かない。4 は独立した不具合修正。
+**還流は Phase 1 に含める。** 書けるようになっても伝わらなければ、人間が直した決定を
+知らない Claude が逆方向へ進む。分けて出荷しない。
+
+2 と 3 は対で、片方だけでは効かない。4 は独立した不具合修正。
