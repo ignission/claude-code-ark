@@ -23,6 +23,7 @@ import type {
   BoardSessionRegistry,
 } from "./board-mcp-server.js";
 import { analyzeBridgeStatus } from "./bridge-collector.js";
+import { cliSessionStatusReader } from "./cli-session-status.js";
 import { db } from "./database.js";
 import { getErrorMessage } from "./errors.js";
 import { cleanupLegacyContextSettings } from "./legacy-context-settings-cleanup.js";
@@ -1142,10 +1143,20 @@ export class SessionOrchestrator extends EventEmitter {
       const raw = captured.value;
       // Bridge dashboard / サイドバードット / RepoGridView で共通利用する状態判定。
       // 既存の text/activityText/status (legacy SessionStatus) と同じ raw から
-      // 派生させて、tmux capture を1回で済ませる
+      // 派生させて、tmux capture を1回で済ませる。
+      //
+      // さらに Claude Code CLI が状態ファイルに busy を書いていれば「作業中」に格上げする。
+      // 画面には subagent 実行中の行が出ないため、これが無いと IDLE
+      // (=「あなたの番」) に落ちる。configDir は lastUpdatedAt と同じ出所を使う
+      const cliState = cliSessionStatusReader.stateFor({
+        tmuxSessionName: session.tmuxSessionName,
+        worktreePath: session.worktreePath,
+        configDir: this.sessionProfiles.get(session.id)?.configDir ?? null,
+      });
       const { status: bridgeStatus } = analyzeBridgeStatus(
         raw,
-        session.status === "stopped"
+        session.status === "stopped",
+        cliState
       );
       const allLines = stripAnsi(raw)
         .split("\n")

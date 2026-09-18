@@ -19,6 +19,11 @@ import type {
   SessionGridSnapshot,
 } from "@ark/shared";
 import { stripAnsi } from "./ansi.js";
+import {
+  type CliSessionState,
+  cliSessionStatusReader,
+  mergeCliSessionState,
+} from "./cli-session-status.js";
 import { db } from "./database.js";
 import { sessionOrchestrator } from "./session-orchestrator.js";
 import { tmuxManager } from "./tmux-manager.js";
@@ -87,6 +92,9 @@ export function collectBridgeSessions(): BridgeSession[] {
     } else {
       status = analysis.status;
     }
+    // 画面に進行中の行が無くても、CLI が busy を書いていれば「作業中」に格上げする
+    // (subagent だけが動いているあいだ、本体は入力待ちに戻って行が消える)
+    status = mergeCliSessionState(status, readCliSessionState(ms));
     result.push({
       id: ms.id,
       name: deriveDisplayName(ms.worktreePath, ms.repoPath),
@@ -124,7 +132,8 @@ export function collectBridgeSessions(): BridgeSession[] {
  */
 export function analyzeBridgeStatus(
   raw: string,
-  sessionStopped: boolean
+  sessionStopped: boolean,
+  cliState: CliSessionState | null = null
 ): { status: BridgeSessionStatus; previewText: string } {
   const analysis = analyzePane(raw);
   const previewText = extractPreviewText(raw, 12);
@@ -136,7 +145,7 @@ export function analyzeBridgeStatus(
   } else {
     status = analysis.status;
   }
-  return { status, previewText };
+  return { status: mergeCliSessionState(status, cliState), previewText };
 }
 
 /**
@@ -199,6 +208,8 @@ export function collectGridSnapshots(maxLines = 12): SessionGridSnapshot[] {
     } else {
       status = analysis.status;
     }
+    // collectBridgeSessions と同じ格上げ (subagent 実行中を「あなたの番」にしない)
+    status = mergeCliSessionState(status, readCliSessionState(ms));
     result.push({
       sessionId: ms.id,
       repoPath: ms.repoPath ?? ms.worktreePath,
@@ -263,6 +274,25 @@ export function buildTunnelEntries(input: {
 // ─────────────────────────────────────────────────────────────────
 // 内部
 // ─────────────────────────────────────────────────────────────────
+
+/**
+ * Claude Code CLI の状態ファイルから、そのセッションの状態を引く。
+ *
+ * 対応づけは tmux セッション名で行い、状態ファイルの cwd が Ark 側の worktree と
+ * 一致することを確かめてから採用する (取り違え防止)。プロファイル切替を使う
+ * セッションはファイルの置き場所も <configDir>/sessions になる。
+ */
+function readCliSessionState(ms: {
+  tmuxSessionName: string;
+  worktreePath: string;
+  profileConfigDir?: string | null;
+}): CliSessionState | null {
+  return cliSessionStatusReader.stateFor({
+    tmuxSessionName: ms.tmuxSessionName,
+    worktreePath: ms.worktreePath,
+    configDir: ms.profileConfigDir ?? null,
+  });
+}
 
 const EMPTY_ANALYSIS: PaneAnalysis = {
   status: "IDLE",
