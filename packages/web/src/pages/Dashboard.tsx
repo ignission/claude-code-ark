@@ -122,6 +122,7 @@ export default function Dashboard() {
     subscribeGrid,
     unsubscribeGrid,
     sessionStatuses,
+    sessionLastUpdatedAt,
     sessionStatusSignals,
     sessionAuqSignals,
     readFile,
@@ -711,6 +712,7 @@ export default function Dashboard() {
           onChangeSessionSubView={setMobileSessionSubView}
           sessionsLoaded={sessionsLoaded}
           sessionStatuses={sessionStatuses}
+          sessionLastUpdatedAt={sessionLastUpdatedAt}
           sessionAwaitingTexts={sessionAwaitingTexts}
           sessionPreviews={sessionPreviews}
           worktreeDisplayNames={worktreeDisplayNames}
@@ -739,6 +741,7 @@ export default function Dashboard() {
               worktrees={worktrees}
               repoList={repoList}
               sessionStatuses={sessionStatuses}
+              sessionLastUpdatedAt={sessionLastUpdatedAt}
               sessionPreviews={sessionPreviews}
               selectedSessionId={selectedSessionId}
               worktreeDisplayNames={worktreeDisplayNames}

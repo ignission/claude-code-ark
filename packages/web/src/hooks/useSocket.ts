@@ -218,6 +218,13 @@ interface UseSocketReturn {
    */
   sessionStatuses: Map<string, BridgeSessionStatus>;
 
+  /**
+   * sessionId → 会話 (JSONL transcript) の最終更新時刻 (epochミリ秒)。
+   * session:previews ペイロードから派生。一覧をセクションの中で最終更新の
+   * 降順に並べるために使う。まだ読めていないセッションはエントリ自体が無い
+   */
+  sessionLastUpdatedAt: Map<string, number>;
+
   /** 通知判定用の最新statusシグナル（既存session:previewsから派生） */
   sessionStatusSignals: Map<string, SessionStatusSignal>;
 
@@ -384,6 +391,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   // サイドバードット色用。RepoGridView 購読の有無に関わらず常時更新される。
   const [sessionStatuses, setSessionStatuses] = useState<
     Map<string, BridgeSessionStatus>
+  >(new Map());
+  // 会話の最終更新時刻 (一覧の並べ替え用)。既定の並びがこれで決まる。
+  const [sessionLastUpdatedAt, setSessionLastUpdatedAt] = useState<
+    Map<string, number>
   >(new Map());
   const [sessionStatusSignals, setSessionStatusSignals] = useState<
     Map<string, SessionStatusSignal>
@@ -827,6 +838,15 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         const next = new Map(prev);
         for (const p of previews) {
           next.set(p.sessionId, p.bridgeStatus);
+        }
+        return next;
+      });
+      // 一覧の並べ替え用。null (読めなかった) は前の値を残す。
+      // stat の一時的な失敗で行がセクションの最後へ飛んで戻るのを防ぐ
+      setSessionLastUpdatedAt(prev => {
+        const next = new Map(prev);
+        for (const p of previews) {
+          if (p.lastUpdatedAt !== null) next.set(p.sessionId, p.lastUpdatedAt);
         }
         return next;
       });
@@ -1602,6 +1622,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     subscribeGrid,
     unsubscribeGrid,
     sessionStatuses,
+    sessionLastUpdatedAt,
     // Browser sessions
     browserSessions,
     browserError,

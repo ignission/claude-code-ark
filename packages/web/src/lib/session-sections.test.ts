@@ -52,7 +52,7 @@ describe("buildSessionEntries", () => {
       ],
     ]);
     const statuses = new Map<string, BridgeSessionStatus>([["s1", "IDLE"]]);
-    const entries = buildSessionEntries(groups, statuses);
+    const entries = buildSessionEntries(groups, statuses, new Map([["s1", 5]]));
     expect(
       entries.map(e => [
         e.key,
@@ -65,6 +65,31 @@ describe("buildSessionEntries", () => {
       ["wt:w1", "/r/app", "app", "r", "IDLE"],
       ["wt:w2", "/r/app", "app", "r", "NOT_STARTED"],
       ["s:s3", "/r/app", "app", "r", "UNKNOWN"],
+    ]);
+  });
+
+  it("最終更新はセッションのものを引き当て、無ければ不明 (null) にする", () => {
+    const groups = new Map<string, RepoGroup>([
+      [
+        "/r/app",
+        group("app", [
+          {
+            worktree: worktree("w1", "/r/app"),
+            session: session("s1", "w1", "/r/app"),
+          },
+          // 未起動の worktree は会話そのものが無いので不明
+          { worktree: worktree("w2", "/r/app-x"), session: null },
+        ]),
+      ],
+    ]);
+    const entries = buildSessionEntries(
+      groups,
+      new Map<string, BridgeSessionStatus>([["s1", "IDLE"]]),
+      new Map([["s1", 1_700_000_000_000]])
+    );
+    expect(entries.map(e => [e.key, e.lastUpdatedAt])).toEqual([
+      ["wt:w1", 1_700_000_000_000],
+      ["wt:w2", null],
     ]);
   });
 });
@@ -96,39 +121,136 @@ describe("sortSessionEntries", () => {
     ],
   ]);
 
-  it("セクション → 状態の優先度 → リポジトリ名 → パスの順に並べる", () => {
+  const allIdle = new Map<string, BridgeSessionStatus>([
+    ["sz1", "IDLE"],
+    ["sa1", "IDLE"],
+    ["sa2", "IDLE"],
+    ["sa9", "IDLE"],
+  ]);
+
+  function sortWith(
+    statuses: Map<string, BridgeSessionStatus>,
+    lastUpdatedAt: Map<string, number>
+  ) {
+    return sortSessionEntries(
+      buildSessionEntries(groups, statuses, lastUpdatedAt)
+    ).map(e => e.key);
+  }
+
+  it("セクションの中は最終更新の新しい順に並べる", () => {
+    // 上から見ていけばよいように、最後に動いた会話を先頭に置く
+    expect(
+      sortWith(
+        allIdle,
+        new Map([
+          ["sa1", 100],
+          ["sz1", 200],
+          ["sa2", 300],
+          ["sa9", 50],
+        ])
+      )
+    ).toEqual(["wt:a2", "wt:z1", "wt:a1", "s:sa9"]);
+  });
+
+  it("最終更新の不明な行は、そのセクションの最後に既存のキーの順で並べる", () => {
+    // 未起動や会話の無い行。並べる根拠が無いので下げる
+    expect(sortWith(allIdle, new Map([["sz1", 200]]))).toEqual([
+      "wt:z1",
+      "wt:a1", // 以下は不明どうし: 状態の優先度 → リポジトリ名 → パス
+      "wt:a2",
+      "s:sa9", // worktreeの無いセッションは後ろ
+    ]);
+  });
+
+  it("最終更新が同着なら、既存のキーの順に落ちる (並びが毎秒揺れない)", () => {
+    // 状態の優先度 → リポジトリ名 → リポジトリの絶対パス → worktreeのパス
+    const sameMoment = new Map([
+      ["sz1", 1000],
+      ["sa1", 1000],
+      ["sa2", 1000],
+      ["sa9", 1000],
+    ]);
     const statuses = new Map<string, BridgeSessionStatus>([
       ["sz1", "AWAITING"],
       ["sa1", "IDLE"],
       ["sa2", "IDLE"],
       ["sa9", "IDLE"],
     ]);
-    const sorted = sortSessionEntries(buildSessionEntries(groups, statuses));
-    expect(sorted.map(e => e.key)).toEqual([
-      "wt:z1", // 確認待ちが入力待ちより先 (リポジトリ名より優先度が先)
-      "wt:a1", // 同じ優先度ならリポジトリ名 → worktreeのパス
+    expect(sortWith(statuses, sameMoment)).toEqual([
+      "wt:z1", // 確認待ちが入力待ちより先
+      "wt:a1",
       "wt:a2",
-      "s:sa9", // worktreeの無いセッションは後ろ
+      "s:sa9",
     ]);
   });
 
-  it("作業中と休止中は、あなたの番の後ろ", () => {
+  it("最終更新が新しくてもセクションはまたがない", () => {
+    // 作業中の会話はいま動いているので必ず新しい。それでも「あなたの番」より前には出さない
+    const statuses = new Map<string, BridgeSessionStatus>([
+      ["sz1", "TOOL"],
+      ["sa1", "IDLE"],
+      ["sa2", "STOP"],
+      ["sa9", "IDLE"],
+    ]);
+    expect(
+      sortWith(
+        statuses,
+        new Map([
+          ["sz1", 900],
+          ["sa1", 100],
+          ["sa2", 800],
+          ["sa9", 200],
+        ])
+      )
+    ).toEqual([
+      "s:sa9", // あなたの番 (新しい順)
+      "wt:a1",
+      "wt:z1", // 作業中
+      "wt:a2", // 休止中
+    ]);
+  });
+
+  it("最終更新の新しい入力待ちは、古い確認待ちより先に来る", () => {
+    // 状態の優先度はセクションの中では tiebreaker に下がり、最終更新が先に効く
+    const statuses = new Map<string, BridgeSessionStatus>([
+      ["sz1", "AWAITING"],
+      ["sa1", "IDLE"],
+      ["sa2", "IDLE"],
+      ["sa9", "IDLE"],
+    ]);
+    expect(
+      sortWith(
+        statuses,
+        new Map([
+          ["sz1", 100],
+          ["sa1", 300],
+          ["sa2", 200],
+          ["sa9", 50],
+        ])
+      )
+    ).toEqual(["wt:a1", "wt:a2", "wt:z1", "s:sa9"]);
+  });
+
+  it("休止中も同じ規則で並べる (3セクションで規則は1つ)", () => {
     const statuses = new Map<string, BridgeSessionStatus>([
       ["sz1", "STOP"],
-      ["sa1", "TOOL"],
-      ["sa2", "ERR"],
+      ["sa1", "READY"],
+      ["sa2", "READY"],
     ]);
-    const sorted = sortSessionEntries(buildSessionEntries(groups, statuses));
-    expect(sorted.map(e => [e.key, e.statusKey])).toEqual([
-      ["wt:a2", "ERR"],
-      ["wt:a1", "TOOL"],
-      ["wt:z1", "STOP"],
-      ["s:sa9", "UNKNOWN"],
-    ]);
+    expect(
+      sortWith(
+        statuses,
+        new Map([
+          ["sz1", 300],
+          ["sa1", 100],
+          ["sa2", 200],
+        ])
+      )
+    ).toEqual(["wt:z1", "wt:a2", "wt:a1", "s:sa9"]);
   });
 
   it("元の配列を書き換えない", () => {
-    const entries = buildSessionEntries(groups, new Map());
+    const entries = buildSessionEntries(groups, new Map(), new Map());
     const before = entries.map(e => e.key);
     sortSessionEntries(entries);
     expect(entries.map(e => e.key)).toEqual(before);

@@ -465,6 +465,12 @@ export interface ServerToClientEvents {
        * チャットビューのバナーで「何を聞かれているか」をそのまま表示する
        */
       awaitingText?: string;
+      /**
+       * 会話 (JSONL transcript) の最終更新時刻 (epochミリ秒)。読めなければ null。
+       * 一覧をセクションの中で最終更新の降順に並べるために使う。
+       * tmux の session_activity は端末の再描画でも動くので使わない
+       */
+      lastUpdatedAt: number | null;
       timestamp: number;
     }>
   ) => void;

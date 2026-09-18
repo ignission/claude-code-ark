@@ -52,6 +52,11 @@ export interface SessionSectionListProps {
   repoList: string[];
   /** sessionId → BridgeSessionStatus (session:previews由来) */
   sessionStatuses: Map<string, BridgeSessionStatus>;
+  /**
+   * sessionId → 会話の最終更新時刻 (session:previews由来)。
+   * セクションの中はこれの降順に並べる。未起動や読めていない行は不明として最後へ
+   */
+  sessionLastUpdatedAt?: Map<string, number>;
   /** sessionId → 端末の最後の内容行。2行目にそのまま出す */
   sessionPreviews: Map<string, string>;
   selectedSessionId: string | null;
@@ -116,6 +121,7 @@ export function SessionSectionList({
   worktrees,
   repoList,
   sessionStatuses,
+  sessionLastUpdatedAt,
   sessionPreviews,
   selectedSessionId,
   worktreeDisplayNames,
@@ -149,10 +155,16 @@ export function SessionSectionList({
     () =>
       toListRows(
         sectionize(
-          sortSessionEntries(buildSessionEntries(groupedItems, sessionStatuses))
+          sortSessionEntries(
+            buildSessionEntries(
+              groupedItems,
+              sessionStatuses,
+              sessionLastUpdatedAt
+            )
+          )
         )
       ),
-    [groupedItems, sessionStatuses]
+    [groupedItems, sessionStatuses, sessionLastUpdatedAt]
   );
   const shownRows = useHeldOrder(rows, rowKey, held);
   // 保留していなければ、直後に行が続かない (空の) 見出しは描かない。

@@ -172,6 +172,8 @@ interface MobileLayoutProps {
   sessionsLoaded: boolean;
   /** session:previews 由来のセッション状態マップ（チャットビューの busy/AWAITING 用） */
   sessionStatuses: Map<string, BridgeSessionStatus>;
+  /** sessionId → 会話の最終更新時刻 (一覧の並べ替え用) */
+  sessionLastUpdatedAt?: Map<string, number>;
   /** AWAITING 時の確認 UI 生テキストマップ（チャットビューのバナー用） */
   sessionAwaitingTexts: Map<string, string>;
   /** session:previews由来の端末の最後の内容行 (一覧の2行目) */
@@ -251,6 +253,7 @@ export function MobileLayout({
   onChangeSessionSubView,
   sessionsLoaded,
   sessionStatuses,
+  sessionLastUpdatedAt,
   sessionAwaitingTexts,
   sessionPreviews,
   worktreeDisplayNames,
@@ -382,6 +385,7 @@ export function MobileLayout({
           worktrees={worktrees}
           repoList={repoList}
           sessionStatuses={sessionStatuses}
+          sessionLastUpdatedAt={sessionLastUpdatedAt}
           sessionPreviews={sessionPreviews}
           worktreeDisplayNames={worktreeDisplayNames}
           capabilities={capabilities}

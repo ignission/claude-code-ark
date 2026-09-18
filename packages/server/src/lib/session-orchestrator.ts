@@ -32,6 +32,7 @@ import {
   TmuxReadFailureReporter,
   type TmuxReadResult,
 } from "./tmux-read-result.js";
+import { readTranscriptLastUpdatedAt } from "./transcript-last-updated.js";
 import { ttydManager } from "./ttyd-manager.js";
 
 /**
@@ -1116,6 +1117,7 @@ export class SessionOrchestrator extends EventEmitter {
     status: SessionStatus;
     bridgeStatus: BridgeSessionStatus;
     awaitingText?: string;
+    lastUpdatedAt: number | null;
     timestamp: number;
   }> {
     const allSessions = tmuxManager.getAllSessions();
@@ -1126,6 +1128,7 @@ export class SessionOrchestrator extends EventEmitter {
       status: SessionStatus;
       bridgeStatus: BridgeSessionStatus;
       awaitingText?: string;
+      lastUpdatedAt: number | null;
       timestamp: number;
     }> = [];
 
@@ -1307,6 +1310,15 @@ export class SessionOrchestrator extends EventEmitter {
         }
       }
 
+      // 一覧をセクションの中で最終更新の降順に並べるための値。
+      // configDir は toManagedSession の profileConfigDir と同じ出所を使い、
+      // チャットビューが映しているのと同じ JSONL の mtime を返す。
+      // 読めなければ null (不明) になり、一覧では後ろへ回る
+      const lastUpdatedAt = readTranscriptLastUpdatedAt(
+        session.worktreePath,
+        this.sessionProfiles.get(session.id)?.configDir ?? null
+      );
+
       previews.push({
         sessionId: session.id,
         text,
@@ -1314,6 +1326,7 @@ export class SessionOrchestrator extends EventEmitter {
         status,
         bridgeStatus,
         awaitingText,
+        lastUpdatedAt,
         timestamp: Date.now(),
       });
     }
