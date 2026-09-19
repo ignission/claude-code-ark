@@ -80,4 +80,20 @@ describe("extractDocBlocks", () => {
     const blocks = extractDocBlocks(html);
     expect(blocks.has("p1")).toBe(false);
   });
+
+  it("script の raw text 中の閉じタグに惑わされず、中身を本文に含めない", () => {
+    const html =
+      '<p data-ark-id="p1">前<script>const x = "</p>"</script>後</p>';
+    const blocks = extractDocBlocks(html);
+    expect(blocks.get("p1")?.html).toBe(html);
+    expect(blocks.get("p1")?.text).toBe("前 後");
+  });
+
+  it("style の raw text 中の閉じタグにも惑わされない", () => {
+    const html =
+      '<p data-ark-id="p1">前<style>p::after{content:"</p>"}</style>後</p>';
+    const blocks = extractDocBlocks(html);
+    expect(blocks.get("p1")?.html).toBe(html);
+    expect(blocks.get("p1")?.text).toBe("前 後");
+  });
 });

@@ -7,6 +7,7 @@
 
 import {
   decodeCharacterReferences,
+  rawTextClose,
   scanDiagramHtmlStartTags,
   tagEnd,
 } from "./diagram-html-scan.js";
@@ -37,12 +38,12 @@ const VOID_ELEMENTS = new Set([
 ]);
 
 interface DocMarkupToken {
-  kind: "start" | "end" | "comment";
+  kind: "start" | "end" | "comment" | "rawtext";
   /** comment には無いので空文字 */
   name: string;
   /** `<` の位置 */
   start: number;
-  /** `>` の位置 (コメントは `-->` の `>`) */
+  /** `>` の位置 (コメントは `-->` の `>`、rawtext は閉じタグの `>` の位置) */
   end: number;
 }
 
@@ -51,11 +52,14 @@ interface DocMarkupToken {
  * タグとして誤認せずに走査する。`scanDiagramHtmlStartTags` は開始タグしか
  * 返さないため、閉じタグの深さ数えに使えるようここで別途スキャンする。
  *
- * `<script>`/`<style>` の raw text（中身をタグとして解釈しない特殊扱い）
- * には対応していない。doc 本文にこれらのタグが来ることは想定していない。
+ * `<script>`/`<style>` は raw text 要素（中身をタグとして解釈しない特殊扱い）
+ * なので、`scanDiagramHtmlStartTags` と同じく `rawTextClose` で閉じタグまで
+ * 丸ごと1つの token として飛ばす。そうしないと中身の `</p>` 等を本物の閉じ
+ * タグと誤認し、ブロックの境界がずれる。
  */
 function scanDocMarkup(html: string): DocMarkupToken[] {
   const tokens: DocMarkupToken[] = [];
+  const lower = html.toLowerCase();
   let index = 0;
   while (index < html.length) {
     const open = html.indexOf("<", index);
@@ -74,10 +78,26 @@ function scanDocMarkup(html: string): DocMarkupToken[] {
       index = open + 1;
       continue;
     }
+    const normalizedName = name.toLowerCase();
     const end = tagEnd(html, nameStart);
+    if (!isEnd && (normalizedName === "script" || normalizedName === "style")) {
+      const close = rawTextClose(html, lower, end + 1, normalizedName);
+      if (close < 0) break;
+      const closeEnd = html.indexOf(">", close + normalizedName.length + 2);
+      const tokenEnd = closeEnd < 0 ? html.length - 1 : closeEnd;
+      tokens.push({
+        kind: "rawtext",
+        name: normalizedName,
+        start: open,
+        end: tokenEnd,
+      });
+      if (closeEnd < 0) break;
+      index = closeEnd + 1;
+      continue;
+    }
     tokens.push({
       kind: isEnd ? "end" : "start",
-      name: name.toLowerCase(),
+      name: normalizedName,
       start: open,
       end,
     });
@@ -95,7 +115,8 @@ function closeTagEnd(
   let depth = 1;
   for (const token of tokens) {
     if (token.start < afterStartTag) continue;
-    if (token.kind === "comment" || token.name !== name) continue;
+    if (token.kind === "comment" || token.kind === "rawtext") continue;
+    if (token.name !== name) continue;
     if (token.kind === "start") {
       depth += 1;
       continue;

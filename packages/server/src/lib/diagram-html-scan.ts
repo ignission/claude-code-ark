@@ -99,7 +99,7 @@ function attributes(tag: string): DiagramHtmlAttribute[] {
   return result;
 }
 
-function rawTextClose(
+export function rawTextClose(
   html: string,
   lower: string,
   start: number,
