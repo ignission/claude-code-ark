@@ -250,13 +250,42 @@ describe("reduceVoice", () => {
     expect(run(screen, { type: "expand" }).state.phase).toBe("ready");
   });
 
-  it("画面が隠れたら認識と読み上げを止めて待機にする", () => {
+  it("画面が隠れたら認識と読み上げを止めて一時停止にする", () => {
     const { state, effects } = run(speakingReply, { type: "hidden" });
-    expect(state.phase).toBe("ready");
+    expect(state.phase).toBe("paused");
     expect(effects).toEqual([
       { type: "abortRecognition" },
       { type: "cancelSpeech" },
     ]);
+  });
+
+  it("一時停止中に届いた返答は読まずに溜め、再開のタップで読む", () => {
+    const paused = run(working, { type: "hidden" }).state;
+    const held = run(paused, {
+      type: "turnEnd",
+      sentences: ["離れていた間の返答。"],
+    });
+    expect(held.state.phase).toBe("paused");
+    expect(held.effects).toEqual([]);
+    const resumed = run(held.state, { type: "resume" });
+    expect(resumed.state.phase).toBe("speaking");
+    expect(resumed.effects).toEqual([
+      { type: "speak", sentences: ["離れていた間の返答。"] },
+    ]);
+  });
+
+  it("溜めた返答が無ければ、再開のタップで聞き取りを始める", () => {
+    const paused = run(working, { type: "hidden" }).state;
+    const { state, effects } = run(paused, { type: "resume" });
+    expect(state.phase).toBe("listening");
+    expect(effects).toEqual([{ type: "startRecognition", auto: false }]);
+  });
+
+  it("一時停止中は、作業中の退路や権限確認で勝手に喋らない", () => {
+    const paused = run(working, { type: "hidden" }).state;
+    expect(run(paused, { type: "settled" }).effects).toEqual([]);
+    expect(run(paused, { type: "awaiting" }).effects).toEqual([]);
+    expect(run(paused, { type: "tapMic" }).state.phase).toBe("paused");
   });
 
   it("終えると、認識・読み上げ・画面の点灯維持をすべて止める", () => {

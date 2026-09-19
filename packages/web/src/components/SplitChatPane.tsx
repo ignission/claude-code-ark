@@ -131,9 +131,10 @@ interface SplitChatPaneProps {
   onActiveAuqChange?: (auq: ActiveAuq | null) => void;
   /**
    * JSONL のイベント列が変わったときに呼ぶ (音声モードがターンの終わりを拾う)。
-   * 購読は増やさず、このペインが持っている列をそのまま渡す。安定した関数を渡すこと
+   * 購読は増やさず、このペインが持っている列をそのまま渡す。hasSnapshot は最初の履歴が
+   * 届いているか (届く前の空の列と、本当に空の会話を区別する)。安定した関数を渡すこと
    */
-  onEventsChange?: (events: JsonlParsedEvent[]) => void;
+  onEventsChange?: (events: JsonlParsedEvent[], hasSnapshot: boolean) => void;
   /** 外のバー (モバイル下部バーの1タップ操作) から添付を呼ぶための取っ手 */
   ref?: Ref<SplitChatPaneHandle>;
 }
@@ -1022,7 +1023,7 @@ export function SplitChatPane({
   const [inputValue, setInputValue] = useState("");
 
   // JSONL: 会話の構造化履歴 (markdown レンダリング用)。アクティブ時のみ購読
-  const { events, loadMore, hasMore } = useSessionJsonl(
+  const { events, loadMore, hasMore, hasSnapshot } = useSessionJsonl(
     socket,
     isActive ? session.id : null
   );
@@ -1203,8 +1204,8 @@ export function SplitChatPane({
 
   // 音声モードがターンの終わりを拾う。購読は増やさず、この列を渡す
   useEffect(() => {
-    onEventsChange?.(events);
-  }, [events, onEventsChange]);
+    onEventsChange?.(events, hasSnapshot);
+  }, [events, hasSnapshot, onEventsChange]);
 
   // 連続するsubagentイベントと、sidechainの外で連続するツール呼び出しを
   // それぞれ折りたたみのまとまりへ

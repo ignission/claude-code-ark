@@ -322,9 +322,10 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
     expect(onActiveAuqChange).toHaveBeenLastCalledWith(null);
   });
 
-  it("JSONLのイベント列が変わるたびにonEventsChangeで渡す", () => {
+  it("JSONLのイベント列が変わるたびに、最初の履歴が届いたかと一緒にonEventsChangeで渡す", () => {
     const onEventsChange = vi.fn();
     const { emitServer } = renderChat({ onEventsChange });
+    expect(onEventsChange).toHaveBeenLastCalledWith([], false);
     emitServer("session:jsonl-snapshot", {
       sessionId: "s1",
       lines: [
@@ -339,13 +340,16 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
         }),
       ],
     });
-    expect(onEventsChange).toHaveBeenLastCalledWith([
-      expect.objectContaining({
-        kind: "assistant-text",
-        text: "直しました。",
-        endTurn: true,
-      }),
-    ]);
+    expect(onEventsChange).toHaveBeenLastCalledWith(
+      [
+        expect.objectContaining({
+          kind: "assistant-text",
+          text: "直しました。",
+          endTurn: true,
+        }),
+      ],
+      true
+    );
   });
 });
 

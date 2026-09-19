@@ -82,8 +82,17 @@ export interface VoiceModeControls {
   sendNow: () => void;
   stopSpeaking: () => void;
   expand: () => void;
-  /** 会話ビューの JSONL イベント列を受け取る (SplitChatPane の onEventsChange に渡す) */
-  pushEvents: (events: readonly JsonlParsedEvent[]) => void;
+  /** 一時停止 (画面が隠れた) から戻る。ユーザー操作の中で呼ぶ */
+  resume: () => void;
+  /**
+   * 会話ビューの JSONL イベント列を受け取る (SplitChatPane の onEventsChange に渡す)。
+   * hasSnapshot: 最初の履歴 (snapshot) が届いているか。届く前の空の列を起点にすると、
+   * 後から届いた過去の履歴を新しい返答として読んでしまう
+   */
+  pushEvents: (
+    events: readonly JsonlParsedEvent[],
+    hasSnapshot: boolean
+  ) => void;
 }
 
 export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
@@ -104,7 +113,10 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
     optionsRef.current = options;
   });
   const eventsRef = useRef<readonly JsonlParsedEvent[]>([]);
+  const hasSnapshotRef = useRef(false);
   const cursorRef = useRef<TurnEndCursor | null>(null);
+  /** 最初の履歴が届く前に入った。届いた時点の列を起点にする */
+  const baselinePendingRef = useRef(false);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dispatchRef = useRef<(action: VoiceAction) => void>(() => undefined);
 
@@ -202,11 +214,20 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
       if (next !== previous) {
         stateRef.current = next;
         setState(next);
-        // 入った時点の履歴は読まない。抜けたら忘れる
+        // 入った時点の履歴は読まない。最初の履歴がまだ届いていなければ、届いた時点を起点にする。
+        // 抜けたら忘れる
         if (previous.phase === "off") {
-          cursorRef.current = createTurnEndCursor(eventsRef.current);
+          if (hasSnapshotRef.current) {
+            cursorRef.current = createTurnEndCursor(eventsRef.current);
+          } else {
+            cursorRef.current = null;
+            baselinePendingRef.current = true;
+          }
         }
-        if (next.phase === "off") cursorRef.current = null;
+        if (next.phase === "off") {
+          cursorRef.current = null;
+          baselinePendingRef.current = false;
+        }
       }
       for (const effect of effects) runEffect(effect);
     },
@@ -245,14 +266,17 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
     if (!isActive) dispatch({ type: "exit" });
   }, [isActive, dispatch]);
 
-  // 質問 (AskUserQuestion)。同じ質問は一度だけ読む。抜けたら忘れ、入り直したら今の質問を読む
+  // 質問 (AskUserQuestion)。同じ質問は一度だけ読む。抜けたら忘れ、入り直したら今の質問を読む。
+  // 一時停止中は読まず、再開した後に読む
   const spokenAuqRef = useRef<string | null>(null);
   const isOff = state.phase === "off";
+  const isPaused = state.phase === "paused";
   useEffect(() => {
     if (isOff) {
       spokenAuqRef.current = null;
       return;
     }
+    if (isPaused) return;
     if (!activeAuq || spokenAuqRef.current === activeAuq.toolUseId) return;
     spokenAuqRef.current = activeAuq.toolUseId;
     diagnose("question", `${activeAuq.questions.length}問`);
@@ -260,7 +284,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
       type: "question",
       sentences: questionsToSpeechSentences(activeAuq.questions),
     });
-  }, [isOff, activeAuq, dispatch, diagnose]);
+  }, [isOff, isPaused, activeAuq, dispatch, diagnose]);
 
   // 権限確認など (質問カードの無い AWAITING) と、画面での操作が済んだこと
   useEffect(() => {
@@ -316,8 +340,15 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
   );
 
   const pushEvents = useCallback(
-    (events: readonly JsonlParsedEvent[]) => {
+    (events: readonly JsonlParsedEvent[], hasSnapshot: boolean) => {
       eventsRef.current = events;
+      hasSnapshotRef.current = hasSnapshot;
+      if (baselinePendingRef.current) {
+        if (!hasSnapshot) return;
+        baselinePendingRef.current = false;
+        cursorRef.current = createTurnEndCursor(events);
+        return;
+      }
       const cursor = cursorRef.current;
       if (!cursor) return;
       const { cursor: next, turnEnd } = scanTurnEnds(cursor, events);
@@ -338,6 +369,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
     [dispatch]
   );
   const expand = useCallback(() => dispatch({ type: "expand" }), [dispatch]);
+  const resume = useCallback(() => dispatch({ type: "resume" }), [dispatch]);
 
   return {
     state,
@@ -349,6 +381,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
     sendNow: commitNow,
     stopSpeaking,
     expand,
+    resume,
     pushEvents,
   };
 }

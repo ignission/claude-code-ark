@@ -33,7 +33,7 @@ interface ObservedChatProps {
   layout?: "pane" | "mobile";
   composerAccessory?: ReactNode;
   onActiveAuqChange?: (auq: ActiveAuq | null) => void;
-  onEventsChange?: (events: unknown[]) => void;
+  onEventsChange?: (events: unknown[], hasSnapshot: boolean) => void;
   ref?: Ref<SplitChatPaneHandle>;
 }
 
@@ -99,6 +99,7 @@ vi.mock("../hooks/useVoiceMode", async () => {
       sendNow: vi.fn(),
       stopSpeaking: vi.fn(),
       expand: vi.fn(),
+      resume: vi.fn(),
       pushEvents: voiceDoubles.pushEvents,
     }),
   };

@@ -18,7 +18,13 @@ export type VoicePhase =
   | "confirming"
   | "working"
   | "speaking"
-  | "screen";
+  | "screen"
+  /**
+   * 画面が隠れて止めた状態。隠れている間に届いた返答は溜め、勝手に喋らない
+   * (iOS はユーザー操作なしの読み上げ・認識を許さないことがあり、戻った直後に喋り出すのも驚く)。
+   * 再開のタップ (resume) で溜めた返答を読むか、聞き取りを始める
+   */
+  | "paused";
 
 /** 読み上げが終わった後に移る先 */
 export type AfterSpeech = "listen" | "ready" | "screen";
@@ -67,7 +73,8 @@ export type VoiceAction =
   | { type: "speechDone" }
   | { type: "stopSpeaking" }
   | { type: "screenResolved" }
-  | { type: "expand" };
+  | { type: "expand" }
+  | { type: "resume" };
 
 export type VoiceEffect =
   /** auto: 読み上げの後に自動で開くとき true (ユーザー操作の外なので iOS に拒否されうる) */
@@ -221,10 +228,26 @@ export function reduceVoice(
         ],
       };
     case "hidden":
-      return toReady({ ...state, heldSpeech: [] }, [
-        { type: "abortRecognition" },
-        { type: "cancelSpeech" },
-      ]);
+      return {
+        state: {
+          ...state,
+          phase: "paused",
+          transcript: "",
+          confirmDeadline: null,
+          speaking: [],
+          notice: null,
+        },
+        effects: [{ type: "abortRecognition" }, { type: "cancelSpeech" }],
+      };
+    case "resume":
+      if (state.phase !== "paused") return unchanged(state);
+      if (state.heldSpeech.length > 0) {
+        return speak({ ...state, heldSpeech: [] }, state.heldSpeech, "listen");
+      }
+      return {
+        state: { ...state, phase: "listening", transcript: "", notice: null },
+        effects: [{ type: "startRecognition", auto: false }],
+      };
     case "tapMic":
       if (state.phase !== "ready" && state.phase !== "working") {
         return unchanged(state);
@@ -310,7 +333,11 @@ export function reduceVoice(
     }
     case "turnEnd":
       if (action.sentences.length === 0) return unchanged(state);
-      if (state.phase === "listening" || state.phase === "confirming") {
+      if (
+        state.phase === "listening" ||
+        state.phase === "confirming" ||
+        state.phase === "paused"
+      ) {
         return {
           state: {
             ...state,
@@ -331,7 +358,10 @@ export function reduceVoice(
       }
       return speak(state, action.sentences, "listen");
     case "question": {
-      if (action.sentences.length === 0) return unchanged(state);
+      // 一時停止中は読まない。useVoiceMode が再開した後に改めて渡す
+      if (action.sentences.length === 0 || state.phase === "paused") {
+        return unchanged(state);
+      }
       if (state.phase === "speaking") {
         return {
           state: {

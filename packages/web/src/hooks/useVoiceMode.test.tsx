@@ -99,6 +99,16 @@ function render(overrides: Partial<UseVoiceModeOptions> = {}) {
   act(() => root.render(<Probe {...props} />));
 }
 
+function setVisibility(value: "hidden" | "visible") {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    value,
+  });
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+}
+
 /** 話して送り、作業中にする */
 function speakAndSend(text: string) {
   act(() => controls.enter());
@@ -180,12 +190,15 @@ describe("useVoiceMode", () => {
 
   it("入る前の返答は読まず、入った後のターンの終わりを読み、読み終えたら自動で聞き取る", () => {
     const history = [user("u1"), reply("a1", "前の返答。")];
-    act(() => controls.pushEvents(history));
+    act(() => controls.pushEvents(history, true));
     speakAndSend("テストを直して");
-    act(() => controls.pushEvents(history));
+    act(() => controls.pushEvents(history, true));
     expect(port.spoken).toEqual([]);
     act(() =>
-      controls.pushEvents([...history, user("u2"), reply("a2", "直しました。")])
+      controls.pushEvents(
+        [...history, user("u2"), reply("a2", "直しました。")],
+        true
+      )
     );
     expect(port.spoken).toEqual([["直しました。"]]);
     expect(controls.state.phase).toBe("speaking");
@@ -243,20 +256,43 @@ describe("useVoiceMode", () => {
     ]);
   });
 
-  it("画面が隠れたら止めて待機にする", () => {
-    act(() => controls.enter());
-    Object.defineProperty(document, "visibilityState", {
-      configurable: true,
-      value: "hidden",
-    });
-    act(() => {
-      document.dispatchEvent(new Event("visibilitychange"));
-    });
-    expect(controls.state.phase).toBe("ready");
-    Object.defineProperty(document, "visibilityState", {
-      configurable: true,
-      value: "visible",
-    });
+  it("最初の履歴が届く前に入っても、後から届いた履歴は読まない", () => {
+    act(() => controls.pushEvents([], false));
+    speakAndSend("テストを直して");
+    const history = [user("u1"), reply("a1", "前の返答。")];
+    act(() => controls.pushEvents(history, true));
+    expect(port.spoken).toEqual([]);
+    act(() =>
+      controls.pushEvents(
+        [...history, user("u2"), reply("a2", "直しました。")],
+        true
+      )
+    );
+    expect(port.spoken).toEqual([["直しました。"]]);
+  });
+
+  it("画面が隠れたら一時停止し、その間に届いた返答や質問は再開のタップまで読まない", () => {
+    const history = [user("u1")];
+    act(() => controls.pushEvents(history, true));
+    speakAndSend("テストを直して");
+    setVisibility("hidden");
+    expect(controls.state.phase).toBe("paused");
+    act(() =>
+      controls.pushEvents(
+        [...history, reply("a1", "離れていた間の返答。")],
+        true
+      )
+    );
+    render({ activeAuq: AUQ, bridgeStatus: "AWAITING" });
+    expect(port.spoken).toEqual([]);
+    setVisibility("visible");
+    expect(port.spoken).toEqual([]);
+    // 再開したら、溜めた返答に続けて、一時停止中に出た質問も読む
+    act(() => controls.resume());
+    expect(port.spoken[0]).toEqual(["離れていた間の返答。"]);
+    expect(port.spoken[1]?.[0]).toBe("Claudeから質問です。");
+    port.finishSpeech();
+    expect(controls.state.phase).toBe("screen");
   });
 
   it("診断を送る", () => {

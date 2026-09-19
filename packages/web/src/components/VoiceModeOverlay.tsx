@@ -22,6 +22,7 @@ export interface VoiceModeOverlayProps {
   onSendNow: () => void;
   onStopSpeaking: () => void;
   onExpand: () => void;
+  onResume: () => void;
 }
 
 export function voicePhaseLabel(
@@ -43,6 +44,8 @@ export function voicePhaseLabel(
       return "読み上げています";
     case "screen":
       return "画面で操作してください";
+    case "paused":
+      return "一時停止しています";
     case "off":
       return "";
   }
@@ -62,6 +65,7 @@ export function VoiceModeOverlay({
   onSendNow,
   onStopSpeaking,
   onExpand,
+  onResume,
 }: VoiceModeOverlayProps) {
   if (state.phase === "off") return null;
   const label = voicePhaseLabel(state, bridgeStatus);
@@ -137,6 +141,12 @@ export function VoiceModeOverlay({
         )}
       </div>
       <div className="flex shrink-0 flex-wrap items-center justify-center gap-3 px-6 pt-4 pb-[calc(env(safe-area-inset-bottom)+24px)]">
+        {state.phase === "paused" && (
+          <button type="button" onClick={onResume} className={PRIMARY_BUTTON}>
+            <Mic className="size-5" aria-hidden="true" />
+            再開
+          </button>
+        )}
         {state.phase === "ready" && (
           <button type="button" onClick={onTapMic} className={PRIMARY_BUTTON}>
             <Mic className="size-5" aria-hidden="true" />

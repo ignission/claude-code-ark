@@ -52,6 +52,7 @@ beforeEach(() => {
     onSendNow: vi.fn(),
     onStopSpeaking: vi.fn(),
     onExpand: vi.fn(),
+    onResume: vi.fn(),
   };
 });
 
@@ -118,6 +119,13 @@ describe("VoiceModeOverlay", () => {
     expect(bar?.textContent).toContain("画面で操作してください");
     act(() => (bar as HTMLButtonElement).click());
     expect(handlers.onExpand).toHaveBeenCalled();
+  });
+
+  it("一時停止中は再開ボタンを出す", () => {
+    render({ phase: "paused" });
+    expect(container.textContent).toContain("一時停止しています");
+    act(() => button("再開").click());
+    expect(handlers.onResume).toHaveBeenCalled();
   });
 
   it("終了ボタンで抜ける", () => {

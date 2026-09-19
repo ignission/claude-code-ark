@@ -38,7 +38,11 @@ export interface SpeechPort {
     onIdle: () => void,
     onWatchdog?: () => void
   ) => void;
-  /** 読み上げを止め、残りを捨てる。onIdle は呼ばない */
+  /**
+   * 読み上げを止め、残りを捨てる。onIdle は呼ばない。
+   * speechSynthesis はページで1つなので、この窓口が読んでいる最中のときだけページの読み上げを止める
+   * (音声モードを使っていない別セッションの後片付けで、表示中のセッションの読み上げを止めない)
+   */
   cancelSpeech: () => void;
   /** 画面の消灯を止める。取れたら true */
   requestWakeLock: () => Promise<boolean>;
@@ -249,12 +253,13 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
       if (!speakingNow) speakNext();
     },
     cancelSpeech() {
+      const owning = speakingNow;
       queue = [];
       generation++;
       clearWatchdog();
       speakingNow = false;
       onIdle = null;
-      env.speechSynthesis?.cancel();
+      if (owning) env.speechSynthesis?.cancel();
     },
     async requestWakeLock() {
       const lock = env.navigator.wakeLock;

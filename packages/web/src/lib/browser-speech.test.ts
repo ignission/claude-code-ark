@@ -259,3 +259,15 @@ describe("createSpeechPort の画面の点灯維持", () => {
     expect(released).toBe(1);
   });
 });
+
+describe("createSpeechPort の読み上げの持ち主", () => {
+  it("自分が読んでいないときに止めても、ページの読み上げは止めない (別セッションの読み上げを巻き込まない)", () => {
+    const idle = createSpeechPort(env);
+    const other = createSpeechPort(env);
+    other.speak(["表示中のセッションの返答。"], vi.fn());
+    idle.cancelSpeech();
+    expect(synth.cancelled).toBe(0);
+    other.cancelSpeech();
+    expect(synth.cancelled).toBe(1);
+  });
+});

@@ -1080,6 +1080,7 @@ export function MobileSessionView({
         onSendNow={voice.sendNow}
         onStopSpeaking={voice.stopSpeaking}
         onExpand={voice.expand}
+        onResume={voice.resume}
       />
     </div>
   );
