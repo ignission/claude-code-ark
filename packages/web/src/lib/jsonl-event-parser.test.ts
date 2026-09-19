@@ -456,3 +456,25 @@ describe("チャット UI v3 拡張", () => {
     expect(events[0].isSidechain).toBeUndefined();
   });
 });
+
+describe("assistant-text の endTurn", () => {
+  it("stop_reason が end_turn の本文にだけ endTurn を立てる", () => {
+    const record = (uuid: string, stopReason: string | null) => ({
+      uuid,
+      type: "assistant",
+      message: {
+        role: "assistant",
+        stop_reason: stopReason,
+        content: [{ type: "text", text: "本文" }],
+      },
+    });
+    const events = parseJsonlEvents([
+      JSON.stringify(record("a1", "end_turn")),
+      JSON.stringify(record("a2", "tool_use")),
+      JSON.stringify(record("a3", null)),
+    ]);
+    expect(
+      events.map(e => (e.kind === "assistant-text" ? e.endTurn : "other"))
+    ).toEqual([true, undefined, undefined]);
+  });
+});
