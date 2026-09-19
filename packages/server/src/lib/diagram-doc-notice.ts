@@ -14,6 +14,7 @@
  * 記法を機械的に解釈する文脈ではない。
  */
 
+import { isHumanAuthoredBlock } from "./diagram-doc-authorship.js";
 import type { DocBlock } from "./diagram-doc-blocks.js";
 import { isControlCodePoint } from "./text-sanitize.js";
 
@@ -25,6 +26,8 @@ const MAX_DETAILED_BLOCKS = 10;
 const ID_FALLBACK = "(id不明)";
 /** 10件打ち切り後の列挙行の末尾。board_read への誘導であり、切り詰めても必ず残す */
 const OVERFLOW_SUFFIX = "（board_read で引ける）";
+/** human 印の無いブロックの行に付ける断り。本文の前に置く */
+const UNMARKED_NOTE = "(human 印なし)";
 
 /** 末尾を省略記号に置き換えて maxLength (コードポイント数) 以内に切り詰める */
 function truncate(text: string, maxLength: number): string {
@@ -72,6 +75,18 @@ interface ChangeEntry {
   /** 無害化済みの id。10件打ち切り後の列挙でそのまま使う (再計算しない) */
   label: string;
   line: string;
+  /** 保存後の本文に `data-ark-author="human"` が付いているか */
+  human: boolean;
+}
+
+export interface DocBodyChanges {
+  lines: string[];
+  /**
+   * 報告する全ブロックが human 印を持つか。呼び出し側はこれが true のときだけ
+   * 「いずれも人間が書いた」と述べてよい。変更が無ければ false (空集合について
+   * 人間の決定だと主張しない)。
+   */
+  allHuman: boolean;
 }
 
 /**
@@ -99,34 +114,52 @@ function describeOverflow(restIds: string[]): string {
 export function describeDocBodyChanges(
   before: Map<string, DocBlock>,
   after: Map<string, DocBlock>
-): string[] {
+): DocBodyChanges {
   const entries: ChangeEntry[] = [];
 
   for (const [id, block] of after) {
     const previous = before.get(id);
     const label = sanitizeId(id);
+    const human = isHumanAuthoredBlock(block.html);
+    // 印の無いブロックは、人間が触っていないのに baseline から変わったもの
+    // (別セッションの Claude の出力、worktree 外からの書き換え) でありうる。
+    // 人間の決定として読まれないよう、その行にだけ印を付ける
+    const mark = human ? "" : `${UNMARKED_NOTE} `;
     if (previous === undefined) {
       entries.push({
         label,
-        line: `[${label}] ブロックを追加: ${sanitizeBody(block.text)}`,
+        human,
+        line: `[${label}] ${mark}ブロックを追加: ${sanitizeBody(block.text)}`,
       });
       continue;
     }
     if (previous.text !== block.text) {
-      entries.push({ label, line: `[${label}] ${sanitizeBody(block.text)}` });
+      entries.push({
+        label,
+        human,
+        line: `[${label}] ${mark}${sanitizeBody(block.text)}`,
+      });
     }
   }
   for (const id of before.keys()) {
     if (!after.has(id)) {
       const label = sanitizeId(id);
-      entries.push({ label, line: `[${label}] ブロックを削除` });
+      // 削除は本文が残らないので誰が消したかを属性から引けない。行に印は
+      // 付けず (付ける先の本文が無い)、human としても数えない
+      entries.push({ label, human: false, line: `[${label}] ブロックを削除` });
     }
   }
 
-  if (entries.length <= MAX_DETAILED_BLOCKS) return entries.map(e => e.line);
+  // 打ち切られて行が残らないブロックも主張の対象なので、allHuman は
+  // 切り詰める前の全件で判定する
+  const allHuman = entries.length > 0 && entries.every(e => e.human);
+
+  if (entries.length <= MAX_DETAILED_BLOCKS) {
+    return { lines: entries.map(e => e.line), allHuman };
+  }
 
   const head = entries.slice(0, MAX_DETAILED_BLOCKS).map(e => e.line);
   const rest = entries.slice(MAX_DETAILED_BLOCKS);
   head.push(describeOverflow(rest.map(e => e.label)));
-  return head;
+  return { lines: head, allHuman };
 }

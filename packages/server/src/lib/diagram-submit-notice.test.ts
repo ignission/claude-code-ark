@@ -29,13 +29,89 @@ describe("buildSubmitNotice", () => {
       relPath: "a.diagram.html",
       baselineModel: docModel("むかし"),
       savedModel: docModel("いま"),
-      baselineBodies: extractDocBlocks(`<p data-ark-id="p1">むかし</p>`),
-      savedHtmlRaw: `<p data-ark-id="p1">いま</p>`,
+      baselineBodies: extractDocBlocks(
+        `<p data-ark-id="p1" data-ark-author="human">むかし</p>`
+      ),
+      savedHtmlRaw: `<p data-ark-id="p1" data-ark-author="human">いま</p>`,
     });
     expect(out.lines).toEqual(["[p1] いま"]);
     expect(out.message).toContain("図の本文を編集しました（a.diagram.html）:");
     expect(out.message).toContain("（いずれも human として記録済み）");
     expect(out.message).not.toContain("改名");
+  });
+
+  it("human 印の無いブロックが混ざると、全体の主張を出さず行に印を付ける", () => {
+    const out = buildSubmitNotice({
+      relPath: "a.diagram.html",
+      baselineModel: docModel("むかし"),
+      savedModel: docModel("いま"),
+      baselineBodies: extractDocBlocks(
+        `<p data-ark-id="p1" data-ark-author="human">むかし</p>` +
+          `<p data-ark-id="p2" data-ark-author="human">むかし</p>`
+      ),
+      savedHtmlRaw:
+        `<p data-ark-id="p1" data-ark-author="human">いま</p>` +
+        `<p data-ark-id="p2">外から変わった</p>`,
+    });
+    expect(out.lines).toEqual([
+      "[p1] いま",
+      "[p2] (human 印なし) 外から変わった",
+    ]);
+    expect(out.message).toContain("図の本文を編集しました（a.diagram.html）:");
+    expect(out.message).not.toContain("いずれも human として記録済み");
+  });
+
+  it("human 印が1つも無ければ末尾の文言を出さない", () => {
+    const out = buildSubmitNotice({
+      relPath: "a.diagram.html",
+      baselineModel: docModel("むかし"),
+      savedModel: docModel("いま"),
+      baselineBodies: extractDocBlocks(`<p data-ark-id="p1">むかし</p>`),
+      savedHtmlRaw: `<p data-ark-id="p1">いま</p>`,
+    });
+    expect(out.lines).toEqual(["[p1] (human 印なし) いま"]);
+    expect(out.message).not.toContain("human として記録済み");
+  });
+
+  it("組み上がった文面の全文", () => {
+    const out = buildSubmitNotice({
+      relPath: "board.diagram.html",
+      baselineModel: docModel("むかし"),
+      savedModel: docModel("いま"),
+      baselineBodies: extractDocBlocks(
+        `<p data-ark-id="s1" data-ark-author="human">むかし</p>` +
+          `<p data-ark-id="s2" data-ark-author="human">むかし</p>`
+      ),
+      savedHtmlRaw:
+        `<p data-ark-id="s1" data-ark-author="human">人間が直した</p>` +
+        `<p data-ark-id="s2">別セッションが書いた</p>`,
+    });
+    expect(out.message).toBe(
+      [
+        "図の本文を編集しました（board.diagram.html）:",
+        "- [s1] 人間が直した",
+        "- [s2] (human 印なし) 別セッションが書いた",
+      ].join("\n")
+    );
+  });
+
+  it("全部 human なら末尾に記録済みの一文が付く", () => {
+    const out = buildSubmitNotice({
+      relPath: "board.diagram.html",
+      baselineModel: docModel("むかし"),
+      savedModel: docModel("いま"),
+      baselineBodies: extractDocBlocks(
+        `<p data-ark-id="s1" data-ark-author="human">むかし</p>`
+      ),
+      savedHtmlRaw: `<p data-ark-id="s1" data-ark-author="human">人間が直した</p>`,
+    });
+    expect(out.message).toBe(
+      [
+        "図の本文を編集しました（board.diagram.html）:",
+        "- [s1] 人間が直した",
+        "（いずれも human として記録済み）",
+      ].join("\n")
+    );
   });
 
   it("doc の baseline が無いときは何も送らず baseline だけ返す", () => {

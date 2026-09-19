@@ -40,14 +40,22 @@ function bullets(lines: string[]): string {
 export function buildSubmitNotice(input: SubmitNoticeInput): SubmitNotice {
   if (input.savedModel.type === "doc") {
     const savedBodies = extractDocBlocks(input.savedHtmlRaw);
-    const lines =
+    const changes =
       input.baselineBodies === undefined
-        ? []
+        ? { lines: [], allHuman: false }
         : describeDocBodyChanges(input.baselineBodies, savedBodies);
+    const { lines } = changes;
+    // 還流するのは「人間が編集したブロック」ではなく「baseline から変わった
+    // ブロック」なので、別セッションの Claude の出力や worktree 外からの
+    // 書き換えも混ざりうる。人間の決定だという主張は、実際に本文へ
+    // data-ark-author="human" が付いているときだけ述べる (#319)
+    const attestation = changes.allHuman
+      ? "\n（いずれも human として記録済み）"
+      : "";
     const message =
       lines.length === 0
         ? null
-        : `図の本文を編集しました（${input.relPath}）:\n${bullets(lines)}\n（いずれも human として記録済み）`;
+        : `図の本文を編集しました（${input.relPath}）:\n${bullets(lines)}${attestation}`;
     return { lines, message, savedBodies };
   }
 

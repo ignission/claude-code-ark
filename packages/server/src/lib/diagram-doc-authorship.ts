@@ -39,6 +39,21 @@ export function isDocAuthor(value: string): value is DocAuthor {
   return (DOC_AUTHOR_VALUES as readonly string[]).includes(value);
 }
 
+/**
+ * ブロックの外側 HTML（`extractDocBlocks` の `DocBlock.html`）が、自分自身の
+ * 開始タグに `data-ark-author="human"` を持つか。
+ *
+ * 読み手の規則は「`human` が付いたブロックだけを人間の決定として扱う」なので、
+ * 無印も語彙外も human ではないとして等しく false にする。入れ子のブロックが
+ * 持つ属性を拾わないよう、見るのは最初の開始タグ（= ブロック自身）だけ。
+ */
+export function isHumanAuthoredBlock(blockHtml: string): boolean {
+  for (const tag of scanDiagramHtmlStartTags(blockHtml)) {
+    return valuesOf(tag.attributes, DOC_AUTHOR_ATTRIBUTE)[0] === "human";
+  }
+  return false;
+}
+
 /** doc の本文ブロックに付く `data-ark-author` の語彙と置き場所を検査する。 */
 export function validateDiagramDocAuthorship(
   html: string,
