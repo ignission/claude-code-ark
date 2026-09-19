@@ -1,6 +1,19 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { extractModel } from "./diagram-file.js";
 import { refreshDocLabels } from "./diagram-doc-label.js";
 import type { DiagramModel } from "./diagram-model.js";
+
+const REPOSITORY_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../.."
+);
+const DOC_SAMPLE_PATH = path.resolve(
+  REPOSITORY_ROOT,
+  ".claude/diagrams/_examples/order-flow-design.diagram.html"
+);
 
 const docModel = (label: string): DiagramModel =>
   ({
@@ -62,6 +75,25 @@ describe("refreshDocLabels", () => {
     );
     expect(refreshed.nodes.find(n => n.id === "s1-p1")?.label).toBe(
       "あたらしい段落"
+    );
+  });
+
+  it("実物の受注フロー文書サンプルで容器 (s1, s1-t1) の label が不変であること", () => {
+    const html = fs.readFileSync(DOC_SAMPLE_PATH, "utf-8");
+    const result = extractModel(html);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error);
+
+    const before = new Map(result.model.nodes.map(n => [n.id, n.label]));
+    const refreshed = refreshDocLabels(result.model, html);
+
+    // s1 (<main>) と s1-t1 (<table>) はどちらも子孫に別の data-ark-id を
+    // 持つ容器ブロック。子孫本文のこだまで label を上書きしてはならない
+    expect(refreshed.nodes.find(n => n.id === "s1")?.label).toBe(
+      before.get("s1")
+    );
+    expect(refreshed.nodes.find(n => n.id === "s1-t1")?.label).toBe(
+      before.get("s1-t1")
     );
   });
 });
