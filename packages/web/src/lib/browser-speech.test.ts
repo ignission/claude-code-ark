@@ -331,23 +331,49 @@ describe("createSpeechPort のマイク音量", () => {
     const stream = { getTracks: () => [track] } as unknown as MediaStream;
     const audio = {
       resumed: 0,
+      suspended: 0,
+      closed: 0,
       created: 0,
+      disconnected: 0,
+      state: "suspended",
     };
     class FakeAudioContext {
       constructor() {
         audio.created++;
       }
+      get state() {
+        return audio.state;
+      }
       resume() {
         audio.resumed++;
+        audio.state = "running";
+        return Promise.resolve();
+      }
+      suspend() {
+        audio.suspended++;
+        audio.state = "suspended";
+        return Promise.resolve();
+      }
+      close() {
+        audio.closed++;
+        audio.state = "closed";
         return Promise.resolve();
       }
       createMediaStreamSource() {
-        return { connect: () => undefined, disconnect: () => undefined };
+        return {
+          connect: () => undefined,
+          disconnect: () => {
+            audio.disconnected++;
+          },
+        };
       }
       createAnalyser() {
         return {
           fftSize: 0,
           getByteTimeDomainData: (data: Uint8Array) => data.fill(options.level),
+          disconnect: () => {
+            audio.disconnected++;
+          },
         };
       }
     }
@@ -425,5 +451,73 @@ describe("createSpeechPort のマイク音量", () => {
     const onError = vi.fn();
     port.startLevelMeter(vi.fn(), onError);
     expect(onError).toHaveBeenCalledWith("unsupported");
+  });
+
+  it("計測を止めたら、マイクの入力をつなぎ替えから外し、音声の処理も休ませる (iOSのマイク表示を消すため)", async () => {
+    const { withMeter, track, audio } = meterEnv({ level: 144 });
+    const port = createSpeechPort(withMeter);
+    port.unlockSpeech();
+    port.startLevelMeter(vi.fn(), vi.fn());
+    await vi.advanceTimersByTimeAsync(50);
+    port.stopLevelMeter();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(track.stopped).toBe(true);
+    expect(audio.disconnected).toBe(2);
+    expect(audio.state).toBe("suspended");
+  });
+
+  it("計測を始めるときに、休ませた音声の処理を起こす", async () => {
+    const { withMeter, audio } = meterEnv({ level: 144 });
+    const port = createSpeechPort(withMeter);
+    port.unlockSpeech();
+    port.stopLevelMeter();
+    await vi.advanceTimersByTimeAsync(0);
+    const resumedBefore = audio.resumed;
+    port.startLevelMeter(vi.fn(), vi.fn());
+    expect(audio.resumed).toBe(resumedBefore + 1);
+  });
+
+  it("手放すと音声の処理を閉じ、音声セッションを自動に戻す。次に入れば作り直す", async () => {
+    const { withMeter, audio } = meterEnv({ level: 144 });
+    withMeter.navigator.audioSession = { type: "play-and-record" };
+    const port = createSpeechPort(withMeter);
+    port.unlockSpeech();
+    port.releaseAudio();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(audio.closed).toBe(1);
+    expect(withMeter.navigator.audioSession.type).toBe("auto");
+    port.unlockSpeech();
+    expect(audio.created).toBe(2);
+  });
+});
+
+describe("createSpeechPort の音声セッション", () => {
+  it("認識が終わったら、音声セッションを録音用から自動に戻す", () => {
+    const port = createSpeechPort(env);
+    port.startRecognition(handlers());
+    expect(audioSession.type).toBe("play-and-record");
+    FakeRecognition.instances[0].onend?.();
+    expect(audioSession.type).toBe("auto");
+  });
+
+  it("認識を捨てたときも自動に戻す", () => {
+    const port = createSpeechPort(env);
+    port.startRecognition(handlers());
+    port.abortRecognition();
+    expect(audioSession.type).toBe("auto");
+  });
+
+  it("読み終えたら自動に戻す", () => {
+    const port = createSpeechPort(env);
+    port.speak(["一文目。"], vi.fn());
+    expect(audioSession.type).toBe("playback");
+    synth.spoken[0].onend?.();
+    expect(audioSession.type).toBe("auto");
+  });
+
+  it("状態を診断用の1行で返す", () => {
+    const port = createSpeechPort(env);
+    port.startRecognition(handlers());
+    expect(port.describeAudio()).toBe("session=play-and-record context=none");
   });
 });

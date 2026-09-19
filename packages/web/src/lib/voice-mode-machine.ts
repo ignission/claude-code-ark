@@ -99,7 +99,9 @@ export type VoiceEffect =
   | { type: "cancelSpeech" }
   | { type: "send"; text: string }
   | { type: "requestWakeLock" }
-  | { type: "releaseWakeLock" };
+  | { type: "releaseWakeLock" }
+  /** マイク・音声の処理・音声セッションを手放す (抜けた後も iOS がマイク使用中と表示しないように) */
+  | { type: "releaseAudio" };
 
 export const INITIAL_VOICE_STATE: VoiceState = {
   phase: "off",
@@ -262,6 +264,7 @@ export function reduceVoice(
           { type: "abortRecognition" },
           { type: "cancelSpeech" },
           { type: "releaseWakeLock" },
+          { type: "releaseAudio" },
         ],
       };
     case "hidden":

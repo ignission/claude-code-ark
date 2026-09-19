@@ -33,6 +33,7 @@ class FakePort implements SpeechPort {
   startRecognition(handlers: RecognitionHandlers) {
     this.calls.push("startRecognition");
     this.handlers = handlers;
+    if (this.failStartSynchronously) handlers.onError("InvalidStateError");
   }
   stopRecognition() {
     this.calls.push("stopRecognition");
@@ -79,6 +80,14 @@ class FakePort implements SpeechPort {
     this.calls.push("stopLevelMeter");
     this.meter = null;
   }
+  releaseAudio() {
+    this.calls.push("releaseAudio");
+  }
+  describeAudio() {
+    return "session=auto context=suspended";
+  }
+  /** true なら startRecognition の中で同期的に onError を呼ぶ (開始で例外が出た iOS を真似る) */
+  failStartSynchronously = false;
   finishSpeech() {
     const idle = this.idle;
     this.idle = null;
@@ -276,12 +285,13 @@ describe("useVoiceMode", () => {
     act(() => controls.enter());
     render({ isActive: false });
     expect(controls.state.phase).toBe("off");
-    // 認識を捨て、マイク (音量の計測) を手放し、読み上げと画面の点灯維持を止める
-    expect(port.calls.slice(-4)).toEqual([
+    // 認識を捨て、マイク (音量の計測) を手放し、読み上げと画面の点灯維持を止め、音声の処理を閉じる
+    expect(port.calls.slice(-5)).toEqual([
       "abortRecognition",
       "stopLevelMeter",
       "cancelSpeech",
       "releaseWakeLock",
+      "releaseAudio",
     ]);
   });
 
@@ -461,5 +471,36 @@ describe("useVoiceMode", () => {
     expect(levels.at(-1)).toBeGreaterThan(0);
     act(() => vi.advanceTimersByTime(300));
     expect(levels.at(-1)).toBe(0);
+  });
+
+  it("認識の開始が同期的に失敗したら、音量の計測は始めない (止める人がいないマイクを残さない)", () => {
+    port.failStartSynchronously = true;
+    act(() => controls.enter());
+    expect(port.calls).not.toContain("startLevelMeter");
+    expect(controls.state.phase).toBe("ready");
+  });
+
+  it("聞き取りが確定した少し後と、抜けたときに、音声の状態を診断に残す", () => {
+    const onDiagnostic = vi.fn();
+    render({ onDiagnostic });
+    act(() => controls.enter());
+    act(() => port.handlers?.onFinal("テストを直して"));
+    act(() => vi.advanceTimersByTime(1000));
+    expect(onDiagnostic).toHaveBeenCalledWith(
+      "audio",
+      "after-listen session=auto context=suspended"
+    );
+    act(() => controls.exit());
+    expect(onDiagnostic).toHaveBeenCalledWith(
+      "audio",
+      "exit session=auto context=suspended"
+    );
+  });
+
+  it("画面から外れる (アンマウント) ときも音声の処理を閉じる", () => {
+    act(() => controls.enter());
+    act(() => root.unmount());
+    expect(port.calls).toContain("releaseAudio");
+    root = createRoot(container);
   });
 });
