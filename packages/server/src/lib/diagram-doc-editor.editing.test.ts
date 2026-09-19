@@ -146,6 +146,69 @@ describe("DOC_EDITOR_LAYER の貼り付け・ドロップ処理", () => {
     leaf.dispatchEvent(pasteEvent);
 
     expect(leaf.textContent).toBe("beforePASTED");
+    // execCommand 経由なら実ブラウザが input イベントを自動発火して human 印と
+    // dirty が付くが、Selection API フォールバックはプログラムによる DOM 操作で
+    // input イベントが発火しないため、ハンドラ側が明示的に付ける必要がある。
+    expect(leaf.getAttribute("data-ark-author")).toBe("human");
+    expect(
+      document.getElementById("ark-doc-bar")?.getAttribute("data-visible")
+    ).toBe("true");
+  });
+
+  it("Selection API フォールバックも失敗したときは human 印を付けず dirty にもしない", () => {
+    const dom = runInjectedDocEditor('<p data-ark-id="p1">before</p>');
+    const { document } = dom.window;
+    const leaf = document.querySelector('[data-ark-id="p1"]') as HTMLElement;
+    // biome-ignore lint/suspicious/noExplicitAny: jsdom Document 型に無いテスト用スタブ
+    (document as any).execCommand = vi.fn().mockReturnValue(false);
+    // Selection が無い状態（rangeCount === 0）を作る
+    dom.window.getSelection()?.removeAllRanges();
+
+    const pasteEvent = new dom.window.Event("paste", {
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(pasteEvent, "clipboardData", {
+      value: { getData: () => "PASTED" },
+    });
+    leaf.dispatchEvent(pasteEvent);
+
+    expect(leaf.textContent).toBe("before");
+    expect(leaf.hasAttribute("data-ark-author")).toBe(false);
+    expect(
+      document.getElementById("ark-doc-bar")?.getAttribute("data-visible")
+    ).toBe("false");
+  });
+
+  it("ドロップの Selection API フォールバックが成功したときも human 印と dirty を付ける", () => {
+    const dom = runInjectedDocEditor('<p data-ark-id="p1">before</p>');
+    const { document } = dom.window;
+    const leaf = document.querySelector('[data-ark-id="p1"]') as HTMLElement;
+    // biome-ignore lint/suspicious/noExplicitAny: jsdom Document 型に無いテスト用スタブ
+    (document as any).execCommand = vi.fn().mockReturnValue(false);
+
+    const textNode = leaf.firstChild as Text;
+    const range = document.createRange();
+    range.setStart(textNode, textNode.textContent?.length ?? 0);
+    range.setEnd(textNode, textNode.textContent?.length ?? 0);
+    const selection = dom.window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const dropEvent = new dom.window.Event("drop", {
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(dropEvent, "dataTransfer", {
+      value: { getData: () => "DROPPED" },
+    });
+    leaf.dispatchEvent(dropEvent);
+
+    expect(leaf.textContent).toBe("beforeDROPPED");
+    expect(leaf.getAttribute("data-ark-author")).toBe("human");
+    expect(
+      document.getElementById("ark-doc-bar")?.getAttribute("data-visible")
+    ).toBe("true");
   });
 
   it("ドロップも paste と同じく inline style 等を持ち込まず plain text だけを挿入する", () => {

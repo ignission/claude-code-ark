@@ -144,10 +144,17 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
   // 消える（今回の Critical と同じ型の事故）。Selection API で直接テキスト
   // ノードを挿入するフォールバックへ落とし、それも失敗したときだけ諦めて
   // 警告を残す。
+  //
+  // 戻り値は挿入方法（"native" / "fallback" / false）。execCommand 成功時は
+  // 実ブラウザが input イベントを自動発火し handleInput() が human 印と dirty を
+  // 付けるが、Selection API フォールバックはプログラムによる DOM 操作なので
+  // input イベントが発火しない。呼び出し側はこれで「フォールバックが実際に
+  // 挿入できたときだけ」明示的に stampAuthor()/markDirty() を呼ぶ（#C-2。
+  // 無条件に呼ぶと、両方失敗して何も変えていないブロックまで human になる）。
   function insertPlainText(text){
     var inserted=false;
     try{inserted=document.execCommand("insertText",false,text);}catch(e){inserted=false;}
-    if(inserted)return;
+    if(inserted)return"native";
     try{
       var selection=window.getSelection();
       if(!selection||selection.rangeCount===0)throw new Error("no selection");
@@ -159,8 +166,10 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
       range.setEndAfter(node);
       selection.removeAllRanges();
       selection.addRange(range);
+      return"fallback";
     }catch(e){
       console.warn("ark: 貼り付け/ドロップしたテキストを挿入できませんでした",e);
+      return false;
     }
   }
 
@@ -173,7 +182,8 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
     if(!el||!el.getAttribute("data-ark-doc-wired"))return;
     event.preventDefault();
     var clipboard=event.clipboardData||window.clipboardData;
-    insertPlainText(clipboard?clipboard.getData("text/plain"):"");
+    var result=insertPlainText(clipboard?clipboard.getData("text/plain"):"");
+    if(result==="fallback"){stampAuthor(el);markDirty();}
   }
 
   function handleDrop(event){
@@ -182,7 +192,8 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
     if(!el||!el.getAttribute("data-ark-doc-wired"))return;
     event.preventDefault();
     var data=event.dataTransfer;
-    insertPlainText(data?data.getData("text/plain"):"");
+    var result=insertPlainText(data?data.getData("text/plain"):"");
+    if(result==="fallback"){stampAuthor(el);markDirty();}
   }
 
   var idSequence=0;
