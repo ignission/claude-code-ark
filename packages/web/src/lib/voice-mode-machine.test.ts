@@ -229,6 +229,13 @@ describe("reduceVoice", () => {
     expect(run(listening, { type: "awaiting" }).state.phase).toBe("listening");
   });
 
+  it("待機中に権限確認が出ても、画面での操作へ移る", () => {
+    const ready = run(confirming, { type: "cancel" }).state;
+    const { state } = run(ready, { type: "awaiting" });
+    expect(state.speaking).toEqual([CONFIRM_ON_SCREEN]);
+    expect(state.afterSpeech).toBe("screen");
+  });
+
   it("作業中なのに止まったままなら、返答は画面でと言って待機に戻る", () => {
     const settled = run(working, { type: "settled" }).state;
     expect(settled.speaking).toEqual([REPLY_ON_SCREEN]);
@@ -321,10 +328,11 @@ describe("reduceVoice", () => {
     expect(run(resolved, { type: "dismissUnsent" }).state.unsent).toBeNull();
   });
 
-  it("送れたら未送信の指示を消す", () => {
+  it("別の指示を送っても、送っていない指示は「送る」か「消す」まで残す", () => {
     const withUnsent: VoiceState = { ...confirming, unsent: "前の指示" };
-    const { state } = run(withUnsent, { type: "commit", guard: null });
-    expect(state.unsent).toBeNull();
+    const { state, effects } = run(withUnsent, { type: "commit", guard: null });
+    expect(effects).toContainEqual({ type: "send", text: "テストを直して" });
+    expect(state.unsent).toBe("前の指示");
   });
 
   it("再開した時点で質問や確認が残っていれば、聞き取らずに画面での操作へ戻る", () => {

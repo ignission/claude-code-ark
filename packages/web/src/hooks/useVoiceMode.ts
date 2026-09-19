@@ -290,14 +290,21 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
     });
   }, [isOff, isPaused, activeAuq, dispatch, diagnose]);
 
-  // 権限確認など (質問カードの無い AWAITING) と、画面での操作が済んだこと
+  // 権限確認など (質問カードの無い AWAITING) と、画面での操作が済んだこと。
+  // 待機中は「出た瞬間」だけ拾う。確認が残ったまま帯から戻った直後にまた畳むと、
+  // 全画面の「終了」に手が届かなくなるため
+  const previousStatusRef = useRef(bridgeStatus);
   useEffect(() => {
-    if (
-      state.phase === "working" &&
-      bridgeStatus === "AWAITING" &&
-      !activeAuq
-    ) {
-      dispatch({ type: "awaiting" });
+    const becameAwaiting =
+      bridgeStatus === "AWAITING" && previousStatusRef.current !== "AWAITING";
+    previousStatusRef.current = bridgeStatus;
+    if (bridgeStatus === "AWAITING" && !activeAuq) {
+      if (
+        state.phase === "working" ||
+        (state.phase === "ready" && becameAwaiting)
+      ) {
+        dispatch({ type: "awaiting" });
+      }
     }
     if (state.phase === "screen" && bridgeStatus !== "AWAITING" && !activeAuq) {
       dispatch({ type: "screenResolved" });

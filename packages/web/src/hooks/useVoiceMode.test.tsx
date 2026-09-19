@@ -326,6 +326,28 @@ describe("useVoiceMode", () => {
     expect(controls.state.unsent).toBeNull();
   });
 
+  it("追加で話して取り消した後に権限確認が出たら、画面での操作へ移る", () => {
+    speakAndSend("テストを直して");
+    render({ bridgeStatus: "THINK" });
+    act(() => controls.tapMic());
+    act(() => controls.cancel());
+    expect(controls.state.phase).toBe("ready");
+    render({ bridgeStatus: "AWAITING" });
+    expect(port.spoken.at(-1)).toEqual([CONFIRM_ON_SCREEN]);
+    port.finishSpeech();
+    expect(controls.state.phase).toBe("screen");
+  });
+
+  it("確認が残ったまま帯から戻っても、また畳まない (終了に手が届くように)", () => {
+    speakAndSend("テストを直して");
+    render({ bridgeStatus: "AWAITING" });
+    port.finishSpeech();
+    expect(controls.state.phase).toBe("screen");
+    act(() => controls.expand());
+    expect(controls.state.phase).toBe("ready");
+    expect(port.spoken).toHaveLength(1);
+  });
+
   it("診断を送る", () => {
     const onDiagnostic = vi.fn();
     render({ onDiagnostic });

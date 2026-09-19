@@ -326,7 +326,7 @@ export function reduceVoice(
       const sent: VoiceEffect[] = [stop, { type: "send", text }];
       if (state.heldSpeech.length > 0) {
         return speak(
-          { ...state, heldSpeech: [], unsent: null },
+          { ...state, heldSpeech: [] },
           state.heldSpeech,
           "listen",
           sent
@@ -339,7 +339,6 @@ export function reduceVoice(
           transcript: "",
           confirmDeadline: null,
           notice: null,
-          unsent: null,
         },
         effects: sent,
       };
@@ -411,7 +410,9 @@ export function reduceVoice(
       );
     }
     case "awaiting":
-      if (state.phase !== "working") return unchanged(state);
+      if (state.phase !== "working" && state.phase !== "ready") {
+        return unchanged(state);
+      }
       return speak(state, [CONFIRM_ON_SCREEN], "screen");
     case "settled":
       if (state.phase !== "working") return unchanged(state);
