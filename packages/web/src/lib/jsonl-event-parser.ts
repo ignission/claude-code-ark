@@ -37,7 +37,16 @@ export type JsonlParsedEvent =
       name: string;
       args?: string;
     } & CommonEventFields)
-  | ({ id: string; kind: "assistant-text"; text: string } & CommonEventFields)
+  | ({
+      id: string;
+      kind: "assistant-text";
+      text: string;
+      /**
+       * このレコードの `message.stop_reason` が `"end_turn"` (Claude がターンを終えた最後の返答)。
+       * `"tool_use"` の本文 (ツール実行の合間の独り言) では立たない。音声モードが読み上げの合図に使う
+       */
+      endTurn?: boolean;
+    } & CommonEventFields)
   | ({ id: string; kind: "thinking"; text: string } & CommonEventFields)
   | ({
       id: string;
@@ -74,6 +83,8 @@ interface RawJsonlMessage {
   toolUseResult?: unknown;
   message?: {
     role?: string;
+    /** "end_turn" / "tool_use" など。ストリーミング途中のレコードでは null のことがある */
+    stop_reason?: string | null;
     content?:
       | string
       | Array<{
@@ -228,6 +239,7 @@ export function mergeJsonlLine(
     }
   } else if (obj.type === "assistant" && obj.message?.role === "assistant") {
     const content = obj.message.content;
+    const endTurn = obj.message.stop_reason === "end_turn" ? true : undefined;
     if (Array.isArray(content)) {
       let idx = 0;
       for (const block of content) {
@@ -236,6 +248,7 @@ export function mergeJsonlLine(
             id: `${uuid}:a:${idx}`,
             kind: "assistant-text",
             text: block.text,
+            endTurn,
             timestamp: ts,
             isSidechain: sc,
           });

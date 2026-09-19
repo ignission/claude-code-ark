@@ -10,6 +10,9 @@
  * `@path` を入力欄に足す)、端末・図モードは端末側の確認ダイアログへ渡す。
  * 端末に関する操作 (バッファのコピー・再読み込み) も1タップの行に出し (端末モード
  * だけ)、`…` にはセッション全体の操作 (通知・再起動・削除) だけを残す。
+ *
+ * 音声モード (iPhone) は会話モードの1タップ操作から入る。状態は useVoiceMode、画面は
+ * VoiceModeOverlay。JSONL の購読は増やさず、会話ビューのイベント列を onEventsChange で受け取る。
  */
 
 import {
@@ -59,6 +62,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import type { ActiveAuq } from "@/lib/ask-user-question-state";
 import { readClipboardImages } from "@/lib/clipboard-images";
 import { FLOATING_BAR_BOTTOM } from "@/lib/floating-composer";
 import {
@@ -77,6 +81,7 @@ import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { useTtydReconnect } from "../hooks/useTtydReconnect";
 import { useVisualViewport } from "../hooks/useVisualViewport";
+import { useVoiceMode } from "../hooks/useVoiceMode";
 import { mobileQuickActions } from "../lib/mobile-quick-actions";
 import {
   type DiagramOpenRequest,
@@ -96,6 +101,7 @@ import { SplitChatPane, type SplitChatPaneHandle } from "./SplitChatPane";
 import { StatusChip } from "./StatusChip";
 import type { ViewerTab } from "./TerminalPane";
 import { ViewerTabBar } from "./ViewerTabBar";
+import { VoiceModeOverlay } from "./VoiceModeOverlay";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -253,11 +259,28 @@ export function MobileSessionView({
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showRestartDialog, setShowRestartDialog] = useState(false);
   const [showShortcutManager, setShowShortcutManager] = useState(false);
-  // 質問カード (AskUserQuestion) の表示有無。SplitChatPane から受け取り、状態の帯の文言に使う。
+  // 質問カード (AskUserQuestion)。SplitChatPane から受け取り、状態の帯の文言と音声モードに使う。
   // 会話モード以外では JSONL の購読が止まり、カードを閉じる判定が遅れて true が残ることがある。
   // 帯は AWAITING のときだけこの値を見る (resolveStatusStrip) ので、確認が済めば帯は消える。
   // この値だけで帯を出す形に書き換えないこと
-  const [hasActiveAuq, setHasActiveAuq] = useState(false);
+  const [activeAuq, setActiveAuq] = useState<ActiveAuq | null>(null);
+  const hasActiveAuq = activeAuq !== null;
+  // 音声モード (iPhone)。会話ビューのイベント列と質問カードを受け取り、話して送り、返答を読む。
+  // 診断はサーバーのログに1行残す (本文は送らない)
+  const emitVoiceDiagnostic = useCallback(
+    (kind: string, detail: string) => {
+      socket?.emit("voice:diagnostic", { sessionId: session.id, kind, detail });
+    },
+    [socket, session.id]
+  );
+  const voice = useVoiceMode({
+    isActive,
+    isConnected,
+    bridgeStatus,
+    activeAuq,
+    onSendMessage,
+    onDiagnostic: emitVoiceDiagnostic,
+  });
   const statusStrip = resolveStatusStrip({
     bridgeStatus,
     hasActiveAuq,
@@ -483,6 +506,7 @@ export function MobileSessionView({
     viewMode,
     canUploadFile: onUploadFile !== undefined,
     canCopyBuffer: onCopyBuffer !== undefined,
+    canUseVoice: voice.supported,
   });
   // `…` に残すのはセッション全体の操作だけ。通知を出せない環境 (Notification API の
   // 無いブラウザ) もあるので、区切り線は直前のまとまりが実際に出たときだけ引く
@@ -494,6 +518,7 @@ export function MobileSessionView({
       messageShortcuts={messageShortcuts}
       onSendMessage={onSendMessage}
       onManageShortcuts={() => setShowShortcutManager(true)}
+      onStartVoice={voice.enter}
       onAttachFile={
         onUploadFile
           ? () => {
@@ -669,7 +694,8 @@ export function MobileSessionView({
           onSendMessage={onSendMessage}
           onSendKey={onSendKey}
           onUploadFile={onUploadFile}
-          onActiveAuqChange={setHasActiveAuq}
+          onActiveAuqChange={setActiveAuq}
+          onEventsChange={voice.pushEvents}
           layout="mobile"
           composerAccessory={bottomBarTop}
         />
@@ -1043,6 +1069,23 @@ export function MobileSessionView({
         onCreate={onCreateShortcut}
         onUpdate={onUpdateShortcut}
         onDelete={onDeleteShortcut}
+      />
+
+      <VoiceModeOverlay
+        state={voice.state}
+        bridgeStatus={bridgeStatus}
+        onExit={voice.exit}
+        onTapMic={voice.tapMic}
+        onCancel={voice.cancel}
+        onSendNow={voice.sendNow}
+        onStopSpeaking={voice.stopSpeaking}
+        onExpand={voice.expand}
+        onResume={voice.resume}
+        onRetryUnsent={voice.retryUnsent}
+        onDismissUnsent={voice.dismissUnsent}
+        rate={voice.rate}
+        onCycleRate={voice.cycleRate}
+        subscribeLevel={voice.subscribeLevel}
       />
     </div>
   );

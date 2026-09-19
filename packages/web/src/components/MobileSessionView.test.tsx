@@ -12,6 +12,7 @@ import {
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ActiveAuq } from "../lib/ask-user-question-state";
 import {
   createDiagramOpenRequest,
   getViewModeForDiagramOpenRequest,
@@ -31,7 +32,8 @@ interface ObservedChatProps {
   isActive: boolean;
   layout?: "pane" | "mobile";
   composerAccessory?: ReactNode;
-  onActiveAuqChange?: (hasActiveAuq: boolean) => void;
+  onActiveAuqChange?: (auq: ActiveAuq | null) => void;
+  onEventsChange?: (events: unknown[], hasSnapshot: boolean) => void;
   ref?: Ref<SplitChatPaneHandle>;
 }
 
@@ -77,6 +79,36 @@ vi.mock("../hooks/useTerminalLinkInjection", () => ({
 vi.mock("../hooks/useTtydReconnect", () => ({
   useTtydReconnect: () => undefined,
 }));
+
+const voiceDoubles = vi.hoisted(() => ({
+  supported: false,
+  enter: vi.fn(),
+  pushEvents: vi.fn(),
+}));
+
+vi.mock("../hooks/useVoiceMode", async () => {
+  const { INITIAL_VOICE_STATE } = await import("../lib/voice-mode-machine");
+  return {
+    useVoiceMode: () => ({
+      state: INITIAL_VOICE_STATE,
+      supported: voiceDoubles.supported,
+      enter: voiceDoubles.enter,
+      exit: vi.fn(),
+      tapMic: vi.fn(),
+      cancel: vi.fn(),
+      sendNow: vi.fn(),
+      stopSpeaking: vi.fn(),
+      expand: vi.fn(),
+      resume: vi.fn(),
+      retryUnsent: vi.fn(),
+      dismissUnsent: vi.fn(),
+      rate: 1.3,
+      cycleRate: vi.fn(),
+      subscribeLevel: () => () => undefined,
+      pushEvents: voiceDoubles.pushEvents,
+    }),
+  };
+});
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
@@ -153,6 +185,17 @@ function makeProps(
   };
 }
 
+const SAMPLE_AUQ: ActiveAuq = {
+  toolUseId: "hook:1",
+  questions: [
+    {
+      question: "どちらにしますか？",
+      multiSelect: false,
+      options: [{ label: "A" }, { label: "B" }],
+    },
+  ],
+};
+
 function latestChatProps(): ObservedChatProps {
   const latest = testDoubles.splitChatPane.mock.calls.at(-1)?.[0];
   expect(latest).toBeDefined();
@@ -186,6 +229,9 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear();
   testDoubles.splitChatPane.mockClear();
+  voiceDoubles.supported = false;
+  voiceDoubles.enter.mockClear();
+  voiceDoubles.pushEvents.mockClear();
   testDoubles.chatOpenFilePicker.mockClear();
   testDoubles.chatPasteImage.mockClear();
   toastDoubles.success.mockClear();
@@ -394,7 +440,7 @@ describe("MobileSessionView の状態の帯", () => {
     );
     expect(stripText(container)).toBe("確認を求めています");
 
-    act(() => latestChatProps().onActiveAuqChange?.(true));
+    act(() => latestChatProps().onActiveAuqChange?.(SAMPLE_AUQ));
 
     expect(stripText(container)).toBe("質問があります");
     expect(
@@ -410,10 +456,10 @@ describe("MobileSessionView の状態の帯", () => {
     // 購読を止めると、端末モードで答えた質問の解決が届かず「質問があります」が残る
     expect(latestChatProps().isActive).toBe(true);
 
-    act(() => latestChatProps().onActiveAuqChange?.(true));
+    act(() => latestChatProps().onActiveAuqChange?.(SAMPLE_AUQ));
     expect(stripText(container)).toBe("質問があります");
 
-    act(() => latestChatProps().onActiveAuqChange?.(false));
+    act(() => latestChatProps().onActiveAuqChange?.(null));
     expect(stripText(container)).toBe("確認を求めています");
   });
 
@@ -927,5 +973,29 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
 
     const menu = document.body.querySelector('[role="menu"]');
     expect(menu?.querySelectorAll('[role="separator"]')).toHaveLength(1);
+  });
+});
+
+describe("MobileSessionView の音声モード", () => {
+  it("音声が使えるブラウザでは、会話モードの1タップ操作に音声モードを出し、押すと入る", () => {
+    voiceDoubles.supported = true;
+    const container = mount(<MobileSessionView {...makeProps()} />);
+    const voiceButton = container.querySelector(
+      'button[aria-label="音声モード"]'
+    );
+    click(voiceButton);
+    expect(voiceDoubles.enter).toHaveBeenCalledTimes(1);
+  });
+
+  it("音声が使えないブラウザでは音声モードを出さない", () => {
+    const container = mount(<MobileSessionView {...makeProps()} />);
+    expect(
+      container.querySelector('button[aria-label="音声モード"]')
+    ).toBeNull();
+  });
+
+  it("会話ビューのイベント列を音声モードへ渡す", () => {
+    mount(<MobileSessionView {...makeProps()} />);
+    expect(latestChatProps().onEventsChange).toBe(voiceDoubles.pushEvents);
   });
 });
