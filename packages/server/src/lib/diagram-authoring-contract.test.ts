@@ -84,8 +84,9 @@ describe("diagram-authoring skill の書き出し先 contract", () => {
     expect(skill).toContain('`data-ark-author="human"`');
     expect(skill).toContain("値は `human` と `claude` の 2 つだけ");
     expect(skill).toContain("model に書き手を複製しない");
-    expect(skill).toContain("人間の決定として扱う");
-    expect(skill).toContain("人間の決定ではない");
+    expect(skill).toContain("人間が手を入れた本文");
+    expect(skill).not.toContain("だけを人間の決定として扱う");
+    expect(skill).toContain("容器ブロック");
   });
 
   it("公開用の受注フロー文書サンプルが doc contract を満たす", () => {
