@@ -607,6 +607,16 @@ export interface ClientToServerEvents {
    */
   "session:send-literal": (data: { sessionId: string; text: string }) => void;
 
+  /**
+   * 音声モード (iPhone) の診断。サーバーはログに1行出すだけで、保存も配信もしない。
+   * 認識した文や返答の本文は送らない (文字数だけ)
+   */
+  "voice:diagnostic": (data: {
+    sessionId: string;
+    kind: string;
+    detail: string;
+  }) => void;
+
   /** managed worktree にある有効な図を read-only で一覧する */
   "diagram:list": (
     data: { worktreePath: string },

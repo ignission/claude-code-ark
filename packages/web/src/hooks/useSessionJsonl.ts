@@ -94,14 +94,28 @@ export function useSessionJsonl(
       setEvents(prev => mergeJsonlLine(prev, toolMapRef.current, data.line));
     };
 
+    // サーバーは切断時にこの socket の JSONL 購読をすべて破棄する。socket のインスタンスは
+    // 再接続をまたいで同じで、この effect は再実行されないので、connect で購読し直す。
+    // 購読のたびにサーバーが snapshot を送るので、切断中に増えた行もそこで追いつく。
+    // snapshot は既定の行数で届くため、読み込み行数も初期値に戻す。
+    // 初回の接続前に送った購読と重なっても、サーバーは購読済みなら何もしない
+    const handleConnect = () => {
+      limitRef.current = INITIAL_LIMIT;
+      setLoadedLimit(INITIAL_LIMIT);
+      setHasMore(true);
+      socket.emit("session:jsonl-subscribe", sessionId);
+    };
+
     socket.on("session:jsonl-snapshot", handleSnapshot);
     socket.on("session:jsonl-line", handleLine);
+    socket.on("connect", handleConnect);
     socket.emit("session:jsonl-subscribe", sessionId);
     setIsSubscribed(true);
 
     return () => {
       socket.off("session:jsonl-snapshot", handleSnapshot);
       socket.off("session:jsonl-line", handleLine);
+      socket.off("connect", handleConnect);
       socket.emit("session:jsonl-unsubscribe", sessionId);
       setIsSubscribed(false);
     };

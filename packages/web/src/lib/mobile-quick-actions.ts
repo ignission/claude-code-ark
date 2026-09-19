@@ -9,11 +9,15 @@
  * 端末に関する操作 (バッファのコピー・再読み込み) は端末モードだけに出す。
  * 図モードの添付は端末側の流儀で受けるが、端末そのものは見えていないので出さない。
  * `…` に残すのはセッション全体の操作 (通知・再起動・削除) だけ。
+ *
+ * 音声モードは会話モードの先頭に出す。音声モードは会話ビューのイベント列を読み上げるので、
+ * 会話を見ているときの操作にする。音声APIの無いブラウザ (canUseVoice=false) では出さない。
  */
 
 import type { MobileSessionViewMode } from "./mobile-session-view-mode";
 
 export type MobileQuickAction =
+  | "voice-mode"
   | "attach-file"
   | "paste-image"
   | "message-shortcuts"
@@ -25,8 +29,13 @@ export function mobileQuickActions(input: {
   viewMode: MobileSessionViewMode;
   canUploadFile: boolean;
   canCopyBuffer: boolean;
+  /** 音声の認識と読み上げの両方が使えるブラウザか */
+  canUseVoice?: boolean;
 }): MobileQuickAction[] {
   const actions: MobileQuickAction[] = [];
+  if (input.viewMode === "chat" && input.canUseVoice) {
+    actions.push("voice-mode");
+  }
   if (input.canUploadFile) {
     if (input.viewMode !== "chat") actions.push("attach-file");
     actions.push("paste-image");
