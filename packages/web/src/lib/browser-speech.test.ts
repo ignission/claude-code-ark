@@ -305,3 +305,125 @@ describe("createSpeechPort の読み上げの持ち主", () => {
     expect(synth.cancelled).toBe(1);
   });
 });
+
+describe("createSpeechPort の読み上げの速さ", () => {
+  it("設定した速さで読む", () => {
+    const port = createSpeechPort(env);
+    port.setRate(1.3);
+    port.speak(["一文目。"], vi.fn());
+    expect((synth.spoken[0] as unknown as { rate: number }).rate).toBe(1.3);
+  });
+});
+
+describe("createSpeechPort のマイク音量", () => {
+  class FakeTrack {
+    stopped = false;
+    stop() {
+      this.stopped = true;
+    }
+  }
+
+  function meterEnv(options: {
+    level: number;
+    getUserMedia?: () => Promise<MediaStream>;
+  }) {
+    const track = new FakeTrack();
+    const stream = { getTracks: () => [track] } as unknown as MediaStream;
+    const audio = {
+      resumed: 0,
+      created: 0,
+    };
+    class FakeAudioContext {
+      constructor() {
+        audio.created++;
+      }
+      resume() {
+        audio.resumed++;
+        return Promise.resolve();
+      }
+      createMediaStreamSource() {
+        return { connect: () => undefined, disconnect: () => undefined };
+      }
+      createAnalyser() {
+        return {
+          fftSize: 0,
+          getByteTimeDomainData: (data: Uint8Array) => data.fill(options.level),
+        };
+      }
+    }
+    const getUserMedia = vi.fn(
+      options.getUserMedia ?? (() => Promise.resolve(stream))
+    );
+    const withMeter: SpeechEnvironment = {
+      ...env,
+      AudioContext:
+        FakeAudioContext as unknown as SpeechEnvironment["AudioContext"],
+      navigator: { ...env.navigator, mediaDevices: { getUserMedia } },
+    };
+    return { withMeter, track, audio, getUserMedia };
+  }
+
+  it("読み上げの解錠のときに音声の処理も起こしておく (iOSはタップの中でしか起こせない)", () => {
+    const { withMeter, audio } = meterEnv({ level: 128 });
+    createSpeechPort(withMeter).unlockSpeech();
+    expect(audio.created).toBe(1);
+    expect(audio.resumed).toBe(1);
+  });
+
+  it("マイクの音量を 0〜1 で届け、止めたらマイクを手放す", async () => {
+    const { withMeter, track } = meterEnv({ level: 144 });
+    const port = createSpeechPort(withMeter);
+    port.unlockSpeech();
+    const levels: number[] = [];
+    port.startLevelMeter(level => levels.push(level), vi.fn());
+    await vi.advanceTimersByTimeAsync(50);
+    expect(levels.length).toBeGreaterThan(0);
+    expect(levels[0]).toBeCloseTo(0.5, 2);
+    port.stopLevelMeter();
+    expect(track.stopped).toBe(true);
+    const count = levels.length;
+    await vi.advanceTimersByTimeAsync(50);
+    expect(levels.length).toBe(count);
+  });
+
+  it("マイクが取れる前に止めたら、取れた直後に手放して音量を届けない", async () => {
+    let resolve: (stream: MediaStream) => void = () => undefined;
+    const pending = new Promise<MediaStream>(r => {
+      resolve = r;
+    });
+    const { withMeter, track } = meterEnv({
+      level: 144,
+      getUserMedia: () => pending,
+    });
+    const port = createSpeechPort(withMeter);
+    port.unlockSpeech();
+    const onLevel = vi.fn();
+    port.startLevelMeter(onLevel, vi.fn());
+    port.stopLevelMeter();
+    resolve({ getTracks: () => [track] } as unknown as MediaStream);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(track.stopped).toBe(true);
+    expect(onLevel).not.toHaveBeenCalled();
+  });
+
+  it("マイクが取れなければエラーとして届ける", async () => {
+    const { withMeter } = meterEnv({
+      level: 128,
+      getUserMedia: () =>
+        Promise.reject(new DOMException("denied", "NotAllowedError")),
+    });
+    const port = createSpeechPort(withMeter);
+    port.unlockSpeech();
+    const onError = vi.fn();
+    port.startLevelMeter(vi.fn(), onError);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onError).toHaveBeenCalledWith("NotAllowedError");
+  });
+
+  it("マイクのAPIが無ければ unsupported を届ける", () => {
+    const port = createSpeechPort(env);
+    const onError = vi.fn();
+    port.startLevelMeter(vi.fn(), onError);
+    expect(onError).toHaveBeenCalledWith("unsupported");
+  });
+});

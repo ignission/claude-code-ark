@@ -56,6 +56,25 @@ const SETTLED_STATUSES: ReadonlySet<BridgeSessionStatus> = new Set([
   "STOP",
 ]);
 
+/** 読み上げの速さの選択肢。切り替えボタンはこの順に巡る */
+export const VOICE_RATES = [1, 1.3, 1.6] as const;
+/** 既定の速さ。iOS の標準 (1) は日本語だと遅く感じる */
+export const DEFAULT_VOICE_RATE = 1.3;
+export const STORAGE_KEY_VOICE_RATE = "ark-voice-rate";
+/** マイクの音量が取れないとき、途中結果が届いてから丸を戻すまでの時間 */
+const INTERIM_PULSE_MS = 200;
+
+function readSavedRate(): number {
+  try {
+    const saved = Number(localStorage.getItem(STORAGE_KEY_VOICE_RATE));
+    return (VOICE_RATES as readonly number[]).includes(saved)
+      ? saved
+      : DEFAULT_VOICE_RATE;
+  } catch {
+    return DEFAULT_VOICE_RATE;
+  }
+}
+
 export interface UseVoiceModeOptions {
   /** このセッションの画面が表示中か。離れたら音声モードを終える */
   isActive: boolean;
@@ -90,6 +109,15 @@ export interface VoiceModeControls {
   retryUnsent: () => void;
   /** 送らなかった指示を捨てる */
   dismissUnsent: () => void;
+  /** 読み上げの速さ (VOICE_RATES のどれか) */
+  rate: number;
+  /** 読み上げの速さを次の選択肢へ切り替え、この端末に保存する */
+  cycleRate: () => void;
+  /**
+   * 聞き取り中の音量 (0〜1) を受け取る。画面の描き替えの間隔で届くので、React の state に
+   * 置かず、受け取った側が要素を直接動かす。戻り値で購読をやめる
+   */
+  subscribeLevel: (listener: (level: number) => void) => () => void;
   /**
    * 会話ビューの JSONL イベント列を受け取る (SplitChatPane の onEventsChange に渡す)。
    * hasSnapshot: 最初の履歴 (snapshot) が届いているか。届く前の空の列を起点にすると、
@@ -129,6 +157,16 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
   const awaitingAnnouncedRef = useRef(false);
   /** 読み上げている返答で使った文字数。同じ返答の続きが届いたら残りだけ読む */
   const speechBudgetRef = useRef({ used: 0, exhausted: false });
+  const [rate, setRate] = useState(readSavedRate);
+  const levelListenersRef = useRef(new Set<(level: number) => void>());
+  /** 今の聞き取りでマイクの音量が届いているか。届かなければ途中結果で動かす */
+  const meterWorkingRef = useRef(false);
+  /**
+   * 認識がマイクのエラーで止まった。別に開いたマイクと取り合った可能性があるので、
+   * このセッションでは音量の計測をやめて認識を優先する
+   */
+  const meterDisabledRef = useRef(false);
+  const pulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const diagnose = useCallback((kind: string, detail = "") => {
     optionsRef.current.onDiagnostic?.(kind, detail);
@@ -141,6 +179,20 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
     }
   }, []);
 
+  const emitLevel = useCallback((level: number) => {
+    for (const listener of levelListenersRef.current) listener(level);
+  }, []);
+
+  /** 音量の計測を止めてマイクを手放し、丸を元の大きさに戻す */
+  const stopMeter = useCallback(() => {
+    if (pulseTimerRef.current !== null) {
+      clearTimeout(pulseTimerRef.current);
+      pulseTimerRef.current = null;
+    }
+    port.stopLevelMeter();
+    emitLevel(0);
+  }, [port, emitLevel]);
+
   const runEffect = useCallback(
     (effect: VoiceEffect) => {
       const dispatch = (action: VoiceAction) => dispatchRef.current(action);
@@ -148,6 +200,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
         case "startRecognition": {
           const auto = effect.auto;
           diagnose("listen", auto ? "auto" : "tap");
+          meterWorkingRef.current = false;
           port.startRecognition({
             onInterim: text => {
               dispatch({ type: "interim", text });
@@ -156,30 +209,62 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
                 silenceTimerRef.current = null;
                 dispatch({ type: "silence", now: Date.now() });
               }, SILENCE_MS);
+              // マイクの音量が取れないときは、途中結果が届くたびに丸を動かす
+              if (!meterWorkingRef.current) {
+                emitLevel(0.7);
+                if (pulseTimerRef.current !== null) {
+                  clearTimeout(pulseTimerRef.current);
+                }
+                pulseTimerRef.current = setTimeout(() => {
+                  pulseTimerRef.current = null;
+                  emitLevel(0);
+                }, INTERIM_PULSE_MS);
+              }
             },
             onFinal: text => {
               clearSilence();
+              stopMeter();
               diagnose("final", `${text.length}文字`);
               dispatch({ type: "final", text, now: Date.now() });
             },
             onEnd: () => {
               clearSilence();
+              stopMeter();
               dispatch({ type: "recognitionEnd", now: Date.now() });
             },
             onError: error => {
               clearSilence();
+              stopMeter();
               diagnose("recognition-error", auto ? `${error} (auto)` : error);
+              if (error === "audio-capture" && !meterDisabledRef.current) {
+                meterDisabledRef.current = true;
+                diagnose("meter-disabled", error);
+              }
               dispatch({ type: "recognitionError", error, auto });
             },
           });
+          if (!meterDisabledRef.current) {
+            port.startLevelMeter(
+              level => {
+                if (!meterWorkingRef.current) {
+                  meterWorkingRef.current = true;
+                  diagnose("meter", "ok");
+                }
+                emitLevel(level);
+              },
+              error => diagnose("meter-error", error)
+            );
+          }
           return;
         }
         case "stopRecognition":
           port.stopRecognition();
+          stopMeter();
           return;
         case "abortRecognition":
           clearSilence();
           port.abortRecognition();
+          stopMeter();
           return;
         case "unlockSpeech":
           port.unlockSpeech();
@@ -214,7 +299,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
           return;
       }
     },
-    [port, diagnose, clearSilence]
+    [port, diagnose, clearSilence, emitLevel, stopMeter]
   );
 
   const dispatch = useCallback(
@@ -347,10 +432,16 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [isOff, port, dispatch, diagnose]);
 
+  // 読み上げの速さを窓口へ渡す
+  useEffect(() => {
+    port.setRate(rate);
+  }, [port, rate]);
+
   // アンマウント (セッションの停止・削除) で止める
   useEffect(
     () => () => {
       clearSilence();
+      port.stopLevelMeter();
       port.abortRecognition();
       port.cancelSpeech();
       port.releaseWakeLock();
@@ -422,9 +513,31 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
     [dispatch]
   );
 
+  const cycleRate = useCallback(() => {
+    setRate(current => {
+      const index = (VOICE_RATES as readonly number[]).indexOf(current);
+      const next = VOICE_RATES[(index + 1) % VOICE_RATES.length];
+      try {
+        localStorage.setItem(STORAGE_KEY_VOICE_RATE, String(next));
+      } catch {
+        // 保存できなくても、この画面の間は切り替えた速さで読む
+      }
+      return next;
+    });
+  }, []);
+  const subscribeLevel = useCallback((listener: (level: number) => void) => {
+    levelListenersRef.current.add(listener);
+    return () => {
+      levelListenersRef.current.delete(listener);
+    };
+  }, []);
+
   return {
     state,
     supported,
+    rate,
+    cycleRate,
+    subscribeLevel,
     enter,
     exit,
     tapMic,

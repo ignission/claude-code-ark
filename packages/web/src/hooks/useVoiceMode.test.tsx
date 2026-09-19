@@ -12,8 +12,10 @@ import {
   REPLY_ON_SCREEN,
 } from "@/lib/speech-text";
 import {
+  DEFAULT_VOICE_RATE,
   SETTLED_MS,
   SILENCE_MS,
+  STORAGE_KEY_VOICE_RATE,
   type UseVoiceModeOptions,
   useVoiceMode,
   type VoiceModeControls,
@@ -57,6 +59,25 @@ class FakePort implements SpeechPort {
   }
   releaseWakeLock() {
     this.calls.push("releaseWakeLock");
+  }
+  rates: number[] = [];
+  meter: {
+    onLevel: (level: number) => void;
+    onError: (error: string) => void;
+  } | null = null;
+  setRate(rate: number) {
+    this.rates.push(rate);
+  }
+  startLevelMeter(
+    onLevel: (level: number) => void,
+    onError: (error: string) => void
+  ) {
+    this.calls.push("startLevelMeter");
+    this.meter = { onLevel, onError };
+  }
+  stopLevelMeter() {
+    this.calls.push("stopLevelMeter");
+    this.meter = null;
   }
   finishSpeech() {
     const idle = this.idle;
@@ -122,6 +143,7 @@ function speakAndSend(text: string) {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  localStorage.clear();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -151,6 +173,7 @@ describe("useVoiceMode", () => {
       "unlockSpeech",
       "requestWakeLock",
       "startRecognition",
+      "startLevelMeter",
     ]);
     expect(controls.state.phase).toBe("listening");
   });
@@ -253,8 +276,10 @@ describe("useVoiceMode", () => {
     act(() => controls.enter());
     render({ isActive: false });
     expect(controls.state.phase).toBe("off");
-    expect(port.calls.slice(-3)).toEqual([
+    // 認識を捨て、マイク (音量の計測) を手放し、読み上げと画面の点灯維持を止める
+    expect(port.calls.slice(-4)).toEqual([
       "abortRecognition",
+      "stopLevelMeter",
       "cancelSpeech",
       "releaseWakeLock",
     ]);
@@ -384,5 +409,57 @@ describe("useVoiceMode", () => {
       "recognition-error",
       "not-allowed"
     );
+  });
+
+  it("読み上げの速さは既定で1.3倍。切り替えると1.6→1.0→1.3と巡り、この端末に保存する", () => {
+    expect(controls.rate).toBe(DEFAULT_VOICE_RATE);
+    expect(port.rates.at(-1)).toBe(1.3);
+    act(() => controls.cycleRate());
+    expect(controls.rate).toBe(1.6);
+    expect(port.rates.at(-1)).toBe(1.6);
+    expect(localStorage.getItem(STORAGE_KEY_VOICE_RATE)).toBe("1.6");
+    act(() => controls.cycleRate());
+    expect(controls.rate).toBe(1);
+    act(() => controls.cycleRate());
+    expect(controls.rate).toBe(1.3);
+  });
+
+  it("保存した速さで始める", () => {
+    act(() => root.unmount());
+    localStorage.setItem(STORAGE_KEY_VOICE_RATE, "1.6");
+    root = createRoot(container);
+    render();
+    expect(controls.rate).toBe(1.6);
+  });
+
+  it("聞き取り中はマイクの音量を画面へ届け、確定したら計測を止めて0に戻す", () => {
+    const levels: number[] = [];
+    const unsubscribe = controls.subscribeLevel(level => levels.push(level));
+    act(() => controls.enter());
+    act(() => port.meter?.onLevel(0.4));
+    expect(levels).toEqual([0.4]);
+    act(() => port.handlers?.onFinal("テストを直して"));
+    expect(port.calls).toContain("stopLevelMeter");
+    expect(levels.at(-1)).toBe(0);
+    unsubscribe();
+  });
+
+  it("認識がマイクのエラーで止まったら、このセッションでは音量の計測をやめる", () => {
+    act(() => controls.enter());
+    act(() => port.handlers?.onError("audio-capture"));
+    const before = port.calls.filter(c => c === "startLevelMeter").length;
+    act(() => controls.tapMic());
+    expect(port.calls.filter(c => c === "startLevelMeter").length).toBe(before);
+  });
+
+  it("マイクの音量が取れないときは、途中結果が届くたびに動かす", () => {
+    const levels: number[] = [];
+    controls.subscribeLevel(level => levels.push(level));
+    act(() => controls.enter());
+    act(() => port.meter?.onError("NotAllowedError"));
+    act(() => port.handlers?.onInterim("テスト"));
+    expect(levels.at(-1)).toBeGreaterThan(0);
+    act(() => vi.advanceTimersByTime(300));
+    expect(levels.at(-1)).toBe(0);
   });
 });

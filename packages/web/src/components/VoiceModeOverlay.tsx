@@ -10,8 +10,9 @@
 
 import type { BridgeSessionStatus } from "@ark/shared";
 import { Mic, X } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
-import type { VoiceState } from "@/lib/voice-mode-machine";
+import type { VoicePhase, VoiceState } from "@/lib/voice-mode-machine";
 
 export interface VoiceModeOverlayProps {
   state: VoiceState;
@@ -25,6 +26,50 @@ export interface VoiceModeOverlayProps {
   onResume: () => void;
   onRetryUnsent: () => void;
   onDismissUnsent: () => void;
+  /** 読み上げの速さ (1 が標準) */
+  rate: number;
+  onCycleRate: () => void;
+  /** 聞き取り中の音量 (0〜1) を受け取る。戻り値で購読をやめる */
+  subscribeLevel: (listener: (level: number) => void) => () => void;
+}
+
+/** 声が最大のとき、丸をどこまで大きくするか (1 + この値 倍) */
+const ORB_MAX_GROWTH = 0.6;
+
+/**
+ * 真ん中の丸。聞き取り中は声の大きさに合わせて伸び縮みし、読み上げ中はゆっくり明滅する。
+ * 音量は画面の描き替えの間隔で届くので、React で描き直さず要素の transform を直接書き換える
+ */
+function VoiceOrb({
+  phase,
+  subscribeLevel,
+}: {
+  phase: VoicePhase;
+  subscribeLevel: VoiceModeOverlayProps["subscribeLevel"];
+}) {
+  const orbRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const orb = orbRef.current;
+    if (!orb) return;
+    orb.style.transform = "scale(1)";
+    return subscribeLevel(level => {
+      orb.style.transform = `scale(${1 + level * ORB_MAX_GROWTH})`;
+    });
+  }, [subscribeLevel]);
+  return (
+    <div
+      ref={orbRef}
+      aria-hidden="true"
+      data-testid="voice-mode-orb"
+      className={cn(
+        "flex size-28 items-center justify-center rounded-full bg-primary/15 transition-transform duration-75 ease-out",
+        phase === "listening" && "bg-primary/25 ring-4 ring-primary/30",
+        phase === "speaking" && "animate-pulse"
+      )}
+    >
+      <Mic className="size-10 text-primary" />
+    </div>
+  );
 }
 
 export function voicePhaseLabel(
@@ -70,6 +115,9 @@ export function VoiceModeOverlay({
   onResume,
   onRetryUnsent,
   onDismissUnsent,
+  rate,
+  onCycleRate,
+  subscribeLevel,
 }: VoiceModeOverlayProps) {
   if (state.phase === "off") return null;
   const label = voicePhaseLabel(state, bridgeStatus);
@@ -98,7 +146,6 @@ export function VoiceModeOverlay({
       : state.phase === "listening" || state.phase === "confirming"
         ? state.transcript
         : "";
-  const active = state.phase === "listening" || state.phase === "speaking";
 
   return (
     <div
@@ -110,25 +157,27 @@ export function VoiceModeOverlay({
     >
       <div className="flex h-14 shrink-0 items-center justify-between px-4">
         <span className="text-[17px] font-semibold">音声モード</span>
-        <button
-          type="button"
-          onClick={onExit}
-          aria-label="音声モードを終える"
-          className="inline-flex size-10 items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
-        >
-          <X className="size-5" aria-hidden="true" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onCycleRate}
+            aria-label="読み上げの速さ"
+            className="inline-flex h-9 min-w-14 items-center justify-center rounded-full border border-border px-3 text-[14px] font-semibold tabular-nums text-foreground hover:bg-muted"
+          >
+            {`${rate}倍`}
+          </button>
+          <button
+            type="button"
+            onClick={onExit}
+            aria-label="音声モードを終える"
+            className="inline-flex size-10 items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
+          >
+            <X className="size-5" aria-hidden="true" />
+          </button>
+        </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
-        <div
-          aria-hidden="true"
-          className={cn(
-            "flex size-28 items-center justify-center rounded-full bg-primary/15",
-            active && "animate-pulse"
-          )}
-        >
-          <Mic className="size-10 text-primary" />
-        </div>
+        <VoiceOrb phase={state.phase} subscribeLevel={subscribeLevel} />
         <p
           role="status"
           className="text-[15px] font-semibold text-muted-foreground"

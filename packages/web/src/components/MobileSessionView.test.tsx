@@ -102,6 +102,9 @@ vi.mock("../hooks/useVoiceMode", async () => {
       resume: vi.fn(),
       retryUnsent: vi.fn(),
       dismissUnsent: vi.fn(),
+      rate: 1.3,
+      cycleRate: vi.fn(),
+      subscribeLevel: () => () => undefined,
       pushEvents: voiceDoubles.pushEvents,
     }),
   };

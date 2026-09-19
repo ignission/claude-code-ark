@@ -16,6 +16,7 @@ import {
 let container: HTMLDivElement;
 let root: Root;
 let handlers: Omit<VoiceModeOverlayProps, "state" | "bridgeStatus">;
+let levelListener: ((level: number) => void) | null;
 
 function render(
   state: Partial<VoiceState>,
@@ -55,7 +56,16 @@ beforeEach(() => {
     onResume: vi.fn(),
     onRetryUnsent: vi.fn(),
     onDismissUnsent: vi.fn(),
+    rate: 1.3,
+    onCycleRate: vi.fn(),
+    subscribeLevel: listener => {
+      levelListener = listener;
+      return () => {
+        levelListener = null;
+      };
+    },
   };
+  levelListener = null;
 });
 
 afterEach(() => {
@@ -147,6 +157,26 @@ describe("VoiceModeOverlay", () => {
       container.querySelector('[data-testid="voice-mode-minimized"]')
         ?.textContent
     ).toContain("未送信あり");
+  });
+
+  it("右上で読み上げの速さを切り替えられる", () => {
+    render({ phase: "ready" });
+    const rateButton = button("読み上げの速さ");
+    expect(rateButton.textContent).toBe("1.3倍");
+    act(() => rateButton.click());
+    expect(handlers.onCycleRate).toHaveBeenCalled();
+  });
+
+  it("聞き取り中は、声の大きさに合わせて丸が伸び縮みする", () => {
+    render({ phase: "listening" });
+    const orb = container.querySelector(
+      '[data-testid="voice-mode-orb"]'
+    ) as HTMLElement;
+    expect(orb.style.transform).toBe("scale(1)");
+    act(() => levelListener?.(1));
+    expect(orb.style.transform).toBe("scale(1.6)");
+    act(() => levelListener?.(0));
+    expect(orb.style.transform).toBe("scale(1)");
   });
 
   it("終了ボタンで抜ける", () => {

@@ -1083,6 +1083,9 @@ export function MobileSessionView({
         onResume={voice.resume}
         onRetryUnsent={voice.retryUnsent}
         onDismissUnsent={voice.dismissUnsent}
+        rate={voice.rate}
+        onCycleRate={voice.cycleRate}
+        subscribeLevel={voice.subscribeLevel}
       />
     </div>
   );

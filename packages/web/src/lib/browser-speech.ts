@@ -10,6 +10,8 @@
  * - 発話の onend が来ないことがある → 発話ごとに見張りを置く
  * - 認識の後は音声の経路が録音用のままになり、読み上げが受話口から小さく鳴るおそれがある
  *   → navigator.audioSession があれば、読み上げの前は再生用、認識の前は録音用に切り替える
+ * - 認識の途中結果はなかなか届かない → 話している間の動きは、別に開いたマイクの音量で見せる。
+ *   マイクは聞き取り中だけ開く (開いたまま読み上げると、声が受話口から小さく鳴るため)
  */
 
 export interface RecognitionHandlers {
@@ -26,8 +28,23 @@ export interface SpeechPort {
   stopRecognition: () => void;
   /** 認識を捨てる。以後、その認識からは何も届かない */
   abortRecognition: () => void;
-  /** 無音の発話で読み上げを使える状態にする (ユーザー操作の中で呼ぶ) */
+  /**
+   * 無音の発話で読み上げを使える状態にし、音量を測る音声の処理も起こしておく
+   * (iOS はどちらもユーザー操作の中でしか始めさせないので、タップの中で呼ぶ)
+   */
   unlockSpeech: () => void;
+  /** 読み上げの速さ (1 が標準)。次に読む発話から効く */
+  setRate: (rate: number) => void;
+  /**
+   * マイクを開き、音量 (0〜1) を画面の描き替えの間隔で届ける。前の計測が残っていれば止める。
+   * マイクが取れなければ onError にエラー名を渡す
+   */
+  startLevelMeter: (
+    onLevel: (level: number) => void,
+    onError: (error: string) => void
+  ) => void;
+  /** 音量の計測を止め、マイクを手放す */
+  stopLevelMeter: () => void;
   /**
    * 文を順に読む。読んでいる途中なら後ろに足す。すべて読み終えたら onIdle を呼ぶ
    * (途中で足したときは、最後に渡した onIdle だけを呼ぶ)。
@@ -70,12 +87,29 @@ export interface SpeechEnvironment {
   webkitSpeechRecognition?: RecognitionConstructor;
   speechSynthesis?: SpeechSynthesis;
   SpeechSynthesisUtterance?: new (text?: string) => SpeechSynthesisUtterance;
+  AudioContext?: new () => AudioContext;
+  webkitAudioContext?: new () => AudioContext;
+  requestAnimationFrame?: (callback: () => void) => number;
+  cancelAnimationFrame?: (handle: number) => void;
   navigator: {
     wakeLock?: { request: (type: "screen") => Promise<WakeLockSentinel> };
     /** Safari の Audio Session API。無いブラウザもある */
     audioSession?: { type: string };
+    mediaDevices?: {
+      getUserMedia: (
+        constraints: MediaStreamConstraints
+      ) => Promise<MediaStream>;
+    };
   };
 }
+
+/**
+ * 音量の感度。話し声の RMS は 0.05〜0.25 程度なので、4倍して 0〜1 に収める
+ * (これより大きい声は 1 に張り付く)
+ */
+const LEVEL_GAIN = 4;
+/** requestAnimationFrame が無い環境 (テスト) での計測間隔 */
+const METER_FALLBACK_MS = 16;
 
 /** 発話の見張り。日本語の読み上げは1文字およそ150ミリ秒なので、倍の余裕を見る */
 const WATCHDOG_MS_PER_CHAR = 300;
@@ -114,6 +148,39 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
   let wakeLockWanted = false;
   /** 点灯維持の要求の番号。抜けて入り直したときに、古い要求で取れた分を手放すため */
   let wakeLockRequest = 0;
+  let rate = 1;
+  let audioContext: AudioContext | null = null;
+  let meterStream: MediaStream | null = null;
+  let meterFrame: number | ReturnType<typeof setTimeout> | null = null;
+  /** 音量の計測の世代。止めたときに進め、遅れて取れたマイクや古いループを捨てる */
+  let meterGeneration = 0;
+
+  const scheduleFrame = (callback: () => void) =>
+    env.requestAnimationFrame
+      ? env.requestAnimationFrame(callback)
+      : setTimeout(callback, METER_FALLBACK_MS);
+  const cancelFrame = (handle: number | ReturnType<typeof setTimeout>) => {
+    if (env.cancelAnimationFrame && typeof handle === "number") {
+      env.cancelAnimationFrame(handle);
+    } else {
+      clearTimeout(handle);
+    }
+  };
+  const releaseStream = (stream: MediaStream) => {
+    for (const track of stream.getTracks()) track.stop();
+  };
+
+  const stopLevelMeter = () => {
+    meterGeneration++;
+    if (meterFrame !== null) {
+      cancelFrame(meterFrame);
+      meterFrame = null;
+    }
+    if (meterStream) {
+      releaseStream(meterStream);
+      meterStream = null;
+    }
+  };
 
   const setAudioSession = (type: "playback" | "play-and-record") => {
     const session = env.navigator.audioSession;
@@ -163,6 +230,7 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
     let settled = false;
     const utterance = new Utterance(text);
     utterance.lang = "ja-JP";
+    utterance.rate = rate;
     const voice = japaneseVoice(synth);
     if (voice) utterance.voice = voice;
     const finish = () => {
@@ -241,6 +309,15 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
       recognition = null;
     },
     unlockSpeech() {
+      const Context = env.AudioContext ?? env.webkitAudioContext;
+      if (Context) {
+        try {
+          audioContext ??= new Context();
+          void audioContext.resume().catch(() => undefined);
+        } catch {
+          // 音量の表示は補助。起こせなくても読み上げと認識は続ける
+        }
+      }
       const synth = env.speechSynthesis;
       const Utterance = env.SpeechSynthesisUtterance;
       if (!synth || !Utterance) return;
@@ -248,6 +325,56 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
       utterance.volume = 0;
       synth.speak(utterance);
     },
+    setRate(next) {
+      rate = next;
+    },
+    startLevelMeter(onLevel, onError) {
+      stopLevelMeter();
+      const getUserMedia = env.navigator.mediaDevices?.getUserMedia;
+      const context = audioContext;
+      if (!getUserMedia || !context) {
+        onError("unsupported");
+        return;
+      }
+      meterGeneration++;
+      const mine = meterGeneration;
+      getUserMedia
+        .call(env.navigator.mediaDevices, {
+          audio: { echoCancellation: true, noiseSuppression: true },
+        })
+        .then(stream => {
+          if (mine !== meterGeneration) {
+            releaseStream(stream);
+            return;
+          }
+          meterStream = stream;
+          const source = context.createMediaStreamSource(stream);
+          const analyser = context.createAnalyser();
+          analyser.fftSize = 512;
+          source.connect(analyser);
+          const samples = new Uint8Array(analyser.fftSize);
+          const tick = () => {
+            if (mine !== meterGeneration) return;
+            analyser.getByteTimeDomainData(samples);
+            let sum = 0;
+            for (const sample of samples) {
+              const centered = (sample - 128) / 128;
+              sum += centered * centered;
+            }
+            const rms = Math.sqrt(sum / samples.length);
+            onLevel(Math.min(1, rms * LEVEL_GAIN));
+            meterFrame = scheduleFrame(tick);
+          };
+          tick();
+        })
+        .catch(err => {
+          if (mine !== meterGeneration) return;
+          onError(
+            err instanceof DOMException ? err.name : "getusermedia-failed"
+          );
+        });
+    },
+    stopLevelMeter,
     speak(sentences, idle, watchdogHandler) {
       onIdle = idle;
       onWatchdog = watchdogHandler ?? null;
