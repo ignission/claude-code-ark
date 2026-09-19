@@ -324,7 +324,8 @@ describe("reduceVoice", () => {
     expect(retried.state.phase).toBe("confirming");
     expect(retried.state.transcript).toBe("テストを直して");
     expect(retried.state.confirmDeadline).toBe(NOW + CONFIRM_MS);
-    expect(retried.state.unsent).toBeNull();
+    // 送れるまでは消さない (送信待ちで取り消されても残す)
+    expect(retried.state.unsent).toBe("テストを直して");
     expect(run(resolved, { type: "dismissUnsent" }).state.unsent).toBeNull();
   });
 
@@ -376,5 +377,49 @@ describe("reduceVoice", () => {
     }).state;
     const resumed = run(withHeld, { type: "resume", needsScreen: true });
     expect(resumed.state.afterSpeech).toBe("screen");
+  });
+
+  it("送信待ち中に画面が隠れたら、確定した指示を送っていない指示に残す", () => {
+    const { state } = run(confirming, { type: "hidden" });
+    expect(state.phase).toBe("paused");
+    expect(state.unsent).toBe("テストを直して");
+  });
+
+  it("送っていない指示を送る途中で取り消しても、指示は残る", () => {
+    const withUnsent: VoiceState = { ...working, unsent: "テストを直して" };
+    const { state } = run(
+      withUnsent,
+      { type: "retryUnsent", now: NOW },
+      { type: "cancel" }
+    );
+    expect(state.phase).toBe("ready");
+    expect(state.unsent).toBe("テストを直して");
+  });
+
+  it("送っていない指示を送れたら消す", () => {
+    const withUnsent: VoiceState = { ...working, unsent: "テストを直して" };
+    const { state, effects } = run(
+      withUnsent,
+      { type: "retryUnsent", now: NOW },
+      { type: "commit", guard: null }
+    );
+    expect(effects).toContainEqual({ type: "send", text: "テストを直して" });
+    expect(state.unsent).toBeNull();
+  });
+
+  it("送っていない指示を送り直しても止められたら、同じ指示を二重に足さない", () => {
+    const withUnsent: VoiceState = { ...working, unsent: "テストを直して" };
+    const blocked = run(
+      withUnsent,
+      { type: "retryUnsent", now: NOW },
+      { type: "commit", guard: "disconnected" }
+    ).state;
+    expect(blocked.unsent).toBe("テストを直して");
+    const hidden = run(
+      withUnsent,
+      { type: "retryUnsent", now: NOW },
+      { type: "hidden" }
+    ).state;
+    expect(hidden.unsent).toBe("テストを直して");
   });
 });

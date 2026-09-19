@@ -33,12 +33,10 @@ function render(
   );
 }
 
-function button(label: string): HTMLButtonElement {
-  const found = Array.from(container.querySelectorAll("button")).find(
-    b =>
-      b.textContent?.includes(label) || b.getAttribute("aria-label") === label
-  );
-  expect(found).toBeDefined();
+/** ボタンは表示文言ではなく data-testid で探す (文言を変えても配線のテストが壊れないように) */
+function button(testId: string): HTMLButtonElement {
+  const found = container.querySelector(`[data-testid="${testId}"]`);
+  expect(found).not.toBeNull();
   return found as HTMLButtonElement;
 }
 
@@ -83,7 +81,7 @@ describe("VoiceModeOverlay", () => {
     render({ phase: "ready", notice: "マイクが使えません (audio-capture)" });
     expect(container.textContent).toContain("タップして話す");
     expect(container.textContent).toContain("マイクが使えません");
-    act(() => button("話す").click());
+    act(() => button("voice-mode-talk").click());
     expect(handlers.onTapMic).toHaveBeenCalled();
   });
 
@@ -91,7 +89,7 @@ describe("VoiceModeOverlay", () => {
     render({ phase: "listening", transcript: "テストを" });
     expect(container.textContent).toContain("聞いています");
     expect(container.textContent).toContain("テストを");
-    act(() => button("やめる").click());
+    act(() => button("voice-mode-stop-listening").click());
     expect(handlers.onCancel).toHaveBeenCalled();
   });
 
@@ -99,8 +97,8 @@ describe("VoiceModeOverlay", () => {
     render({ phase: "confirming", transcript: "テストを直して" });
     expect(container.textContent).toContain("2秒後に送ります");
     expect(container.textContent).toContain("テストを直して");
-    act(() => button("取り消す").click());
-    act(() => button("すぐ送る").click());
+    act(() => button("voice-mode-cancel-send").click());
+    act(() => button("voice-mode-send-now").click());
     expect(handlers.onCancel).toHaveBeenCalled();
     expect(handlers.onSendNow).toHaveBeenCalled();
   });
@@ -108,7 +106,7 @@ describe("VoiceModeOverlay", () => {
   it("作業中はClaudeの状態を出し、追加で話せる", () => {
     render({ phase: "working" }, "TOOL");
     expect(container.textContent).toContain("作業しています");
-    act(() => button("追加で話す").click());
+    act(() => button("voice-mode-talk-more").click());
     expect(handlers.onTapMic).toHaveBeenCalled();
   });
 
@@ -118,7 +116,7 @@ describe("VoiceModeOverlay", () => {
       speaking: ["直しました。", "テストも通りました。"],
     });
     expect(container.textContent).toContain("直しました。テストも通りました。");
-    act(() => button("タップで止める").click());
+    act(() => button("voice-mode-stop-speaking").click());
     expect(handlers.onStopSpeaking).toHaveBeenCalled();
   });
 
@@ -136,7 +134,7 @@ describe("VoiceModeOverlay", () => {
   it("一時停止中は再開ボタンを出す", () => {
     render({ phase: "paused" });
     expect(container.textContent).toContain("一時停止しています");
-    act(() => button("再開").click());
+    act(() => button("voice-mode-resume").click());
     expect(handlers.onResume).toHaveBeenCalled();
   });
 
@@ -145,8 +143,8 @@ describe("VoiceModeOverlay", () => {
     expect(
       container.querySelector('[data-testid="voice-mode-unsent"]')?.textContent
     ).toContain("テストを直して");
-    act(() => button("送っていない指示を送る").click());
-    act(() => button("送っていない指示を消す").click());
+    act(() => button("voice-mode-unsent-send").click());
+    act(() => button("voice-mode-unsent-dismiss").click());
     expect(handlers.onRetryUnsent).toHaveBeenCalled();
     expect(handlers.onDismissUnsent).toHaveBeenCalled();
   });
@@ -161,7 +159,7 @@ describe("VoiceModeOverlay", () => {
 
   it("右上で読み上げの速さを切り替えられる", () => {
     render({ phase: "ready" });
-    const rateButton = button("読み上げの速さ");
+    const rateButton = button("voice-mode-rate");
     expect(rateButton.textContent).toBe("1.3倍");
     act(() => rateButton.click());
     expect(handlers.onCycleRate).toHaveBeenCalled();
@@ -181,7 +179,7 @@ describe("VoiceModeOverlay", () => {
 
   it("終了ボタンで抜ける", () => {
     render({ phase: "ready" });
-    act(() => button("音声モードを終える").click());
+    act(() => button("voice-mode-exit").click());
     expect(handlers.onExit).toHaveBeenCalled();
   });
 });

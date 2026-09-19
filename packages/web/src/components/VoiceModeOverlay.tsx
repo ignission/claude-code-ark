@@ -160,6 +160,7 @@ export function VoiceModeOverlay({
         <div className="flex items-center gap-1">
           <button
             type="button"
+            data-testid="voice-mode-rate"
             onClick={onCycleRate}
             aria-label="読み上げの速さ"
             className="inline-flex h-9 min-w-14 items-center justify-center rounded-full border border-border px-3 text-[14px] font-semibold tabular-nums text-foreground hover:bg-muted"
@@ -168,6 +169,7 @@ export function VoiceModeOverlay({
           </button>
           <button
             type="button"
+            data-testid="voice-mode-exit"
             onClick={onExit}
             aria-label="音声モードを終える"
             className="inline-flex size-10 items-center justify-center rounded-full text-muted-foreground hover:bg-muted"
@@ -210,6 +212,7 @@ export function VoiceModeOverlay({
               <div className="mt-2 flex justify-end gap-2">
                 <button
                   type="button"
+                  data-testid="voice-mode-unsent-dismiss"
                   onClick={onDismissUnsent}
                   aria-label="送っていない指示を消す"
                   className="h-9 rounded-full px-4 text-[14px] font-semibold text-muted-foreground hover:bg-muted"
@@ -218,6 +221,7 @@ export function VoiceModeOverlay({
                 </button>
                 <button
                   type="button"
+                  data-testid="voice-mode-unsent-send"
                   onClick={onRetryUnsent}
                   aria-label="送っていない指示を送る"
                   className="h-9 rounded-full bg-primary px-4 text-[14px] font-semibold text-primary-foreground"
@@ -231,19 +235,34 @@ export function VoiceModeOverlay({
       </div>
       <div className="flex shrink-0 flex-wrap items-center justify-center gap-3 px-6 pt-4 pb-[calc(env(safe-area-inset-bottom)+24px)]">
         {state.phase === "paused" && (
-          <button type="button" onClick={onResume} className={PRIMARY_BUTTON}>
+          <button
+            type="button"
+            data-testid="voice-mode-resume"
+            onClick={onResume}
+            className={PRIMARY_BUTTON}
+          >
             <Mic className="size-5" aria-hidden="true" />
             再開
           </button>
         )}
         {state.phase === "ready" && (
-          <button type="button" onClick={onTapMic} className={PRIMARY_BUTTON}>
+          <button
+            type="button"
+            data-testid="voice-mode-talk"
+            onClick={onTapMic}
+            className={PRIMARY_BUTTON}
+          >
             <Mic className="size-5" aria-hidden="true" />
             話す
           </button>
         )}
         {state.phase === "listening" && (
-          <button type="button" onClick={onCancel} className={SECONDARY_BUTTON}>
+          <button
+            type="button"
+            data-testid="voice-mode-stop-listening"
+            onClick={onCancel}
+            className={SECONDARY_BUTTON}
+          >
             やめる
           </button>
         )}
@@ -251,6 +270,7 @@ export function VoiceModeOverlay({
           <>
             <button
               type="button"
+              data-testid="voice-mode-cancel-send"
               onClick={onCancel}
               className={SECONDARY_BUTTON}
             >
@@ -258,6 +278,7 @@ export function VoiceModeOverlay({
             </button>
             <button
               type="button"
+              data-testid="voice-mode-send-now"
               onClick={onSendNow}
               className={PRIMARY_BUTTON}
             >
@@ -266,7 +287,12 @@ export function VoiceModeOverlay({
           </>
         )}
         {state.phase === "working" && (
-          <button type="button" onClick={onTapMic} className={SECONDARY_BUTTON}>
+          <button
+            type="button"
+            data-testid="voice-mode-talk-more"
+            onClick={onTapMic}
+            className={SECONDARY_BUTTON}
+          >
             <Mic className="size-5" aria-hidden="true" />
             追加で話す
           </button>
@@ -274,6 +300,7 @@ export function VoiceModeOverlay({
         {state.phase === "speaking" && (
           <button
             type="button"
+            data-testid="voice-mode-stop-speaking"
             onClick={onStopSpeaking}
             className={PRIMARY_BUTTON}
           >

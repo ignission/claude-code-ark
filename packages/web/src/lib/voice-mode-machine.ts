@@ -47,6 +47,11 @@ export interface VoiceState {
    * 画面での操作を経ても消さず、「送る」(retryUnsent) か「消す」(dismissUnsent) まで残す
    */
   unsent: string | null;
+  /**
+   * 送信待ちの文が「送っていない指示」の送り直し。送れたら unsent を消し、止められたり
+   * 取り消されたりしても unsent に同じ指示を二重に足さない
+   */
+  retrying: boolean;
 }
 
 /** 送信待ちの猶予 */
@@ -105,6 +110,7 @@ export const INITIAL_VOICE_STATE: VoiceState = {
   heldSpeech: [],
   notice: null,
   unsent: null,
+  retrying: false,
 };
 
 interface Transition {
@@ -192,6 +198,21 @@ function confirm(
   };
 }
 
+/**
+ * 送信待ちの文を送らずに抜けるときの unsent。送り直しなら既に unsent にあるので足さない。
+ * 抜けた後は送り直しではなくなる
+ */
+function holdTranscript(
+  state: VoiceState
+): Pick<VoiceState, "unsent" | "retrying"> {
+  return {
+    unsent: state.retrying
+      ? state.unsent
+      : appendUnsent(state.unsent, state.transcript),
+    retrying: false,
+  };
+}
+
 /** 認識のエラーを画面の一言にする。黙って待機に戻せばよいものは null */
 export function recognitionErrorNotice(
   error: string,
@@ -247,6 +268,8 @@ export function reduceVoice(
       return {
         state: {
           ...state,
+          // 送信待ちの文は捨てずに「送っていない指示」に残す
+          ...(state.phase === "confirming" ? holdTranscript(state) : {}),
           phase: "paused",
           transcript: "",
           confirmDeadline: null,
@@ -313,14 +336,17 @@ export function reduceVoice(
       if (state.phase !== "listening" && state.phase !== "confirming") {
         return unchanged(state);
       }
-      return toReady(state, [{ type: "abortRecognition" }]);
+      // 取り消しても、送り直し中の「送っていない指示」は残す
+      return toReady({ ...state, retrying: false }, [
+        { type: "abortRecognition" },
+      ]);
     case "commit": {
       if (state.phase !== "confirming") return unchanged(state);
       const text = state.transcript;
       const stop: VoiceEffect = { type: "abortRecognition" };
       if (action.guard === "awaiting") {
         return speak(
-          { ...state, unsent: appendUnsent(state.unsent, text) },
+          { ...state, ...holdTranscript(state) },
           [CONFIRM_ON_SCREEN],
           "screen",
           [stop],
@@ -329,15 +355,20 @@ export function reduceVoice(
       }
       if (action.guard === "disconnected") {
         return toReady(
-          { ...state, unsent: appendUnsent(state.unsent, text) },
+          { ...state, ...holdTranscript(state) },
           [stop],
           "接続が切れていたので送っていません"
         );
       }
       const sent: VoiceEffect[] = [stop, { type: "send", text }];
+      // 送り直しが送れたら「送っていない指示」を消す。別の指示を送っただけなら残す
+      const afterSend: Pick<VoiceState, "unsent" | "retrying"> = {
+        unsent: state.retrying ? null : state.unsent,
+        retrying: false,
+      };
       if (state.heldSpeech.length > 0) {
         return speak(
-          { ...state, heldSpeech: [] },
+          { ...state, ...afterSend, heldSpeech: [] },
           state.heldSpeech,
           "listen",
           sent
@@ -346,6 +377,7 @@ export function reduceVoice(
       return {
         state: {
           ...state,
+          ...afterSend,
           phase: "working",
           transcript: "",
           confirmDeadline: null,
@@ -363,11 +395,14 @@ export function reduceVoice(
       ) {
         return unchanged(state);
       }
-      // 送る直前の確認をもう一度通すため、送信待ちからやり直す
-      return confirm({ ...state, unsent: null }, state.unsent, action.now);
+      // 送る直前の確認をもう一度通すため、送信待ちからやり直す。送れるまで unsent は消さない
+      return confirm({ ...state, retrying: true }, state.unsent, action.now);
     case "dismissUnsent":
       if (state.unsent === null) return unchanged(state);
-      return { state: { ...state, unsent: null, notice: null }, effects: [] };
+      return {
+        state: { ...state, unsent: null, retrying: false, notice: null },
+        effects: [],
+      };
     case "turnEnd":
       if (action.sentences.length === 0) return unchanged(state);
       if (
@@ -414,9 +449,7 @@ export function reduceVoice(
         state.phase === "listening" || state.phase === "confirming";
       const wasConfirming = state.phase === "confirming";
       return speak(
-        wasConfirming
-          ? { ...state, unsent: appendUnsent(state.unsent, state.transcript) }
-          : state,
+        wasConfirming ? { ...state, ...holdTranscript(state) } : state,
         action.sentences,
         "screen",
         interrupted ? [{ type: "abortRecognition" }] : [],
