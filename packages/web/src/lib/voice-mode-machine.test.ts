@@ -299,13 +299,14 @@ describe("reduceVoice", () => {
     expect(run(paused, { type: "tapMic" }).state.phase).toBe("paused");
   });
 
-  it("終えると、認識・読み上げ・画面の点灯維持をすべて止める", () => {
+  it("終えると、認識・読み上げ・画面の点灯維持・音声の処理をすべて手放す", () => {
     const { state, effects } = run(speakingReply, { type: "exit" });
     expect(state).toEqual(INITIAL_VOICE_STATE);
     expect(effects).toEqual([
       { type: "abortRecognition" },
       { type: "cancelSpeech" },
       { type: "releaseWakeLock" },
+      { type: "releaseAudio" },
     ]);
   });
 

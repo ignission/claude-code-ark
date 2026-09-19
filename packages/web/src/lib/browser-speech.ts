@@ -12,6 +12,9 @@
  *   → navigator.audioSession があれば、読み上げの前は再生用、認識の前は録音用に切り替える
  * - 認識の途中結果はなかなか届かない → 話している間の動きは、別に開いたマイクの音量で見せる。
  *   マイクは聞き取り中だけ開く (開いたまま読み上げると、声が受話口から小さく鳴るため)
+ * - 音声セッションを録音用 (play-and-record) にしたまま AudioContext が動いていると、マイクの
+ *   トラックを止めても iOS はマイクを使用中と表示し続ける (実機で確認)。聞き取りを終えたら
+ *   音声セッションを自動 (auto) に戻し、AudioContext を休ませ、音声モードを抜けたら閉じる
  */
 
 export interface RecognitionHandlers {
@@ -43,8 +46,15 @@ export interface SpeechPort {
     onLevel: (level: number) => void,
     onError: (error: string) => void
   ) => void;
-  /** 音量の計測を止め、マイクを手放す */
+  /** 音量の計測を止め、マイクを手放し、音声の処理を休ませる */
   stopLevelMeter: () => void;
+  /**
+   * 音声モードを抜けるときに、マイク・音声の処理・音声セッションをすべて手放す。
+   * 次に入るときは unlockSpeech で作り直す
+   */
+  releaseAudio: () => void;
+  /** 音声セッションと音声の処理の状態を、診断ログ用の1行で返す */
+  describeAudio: () => string;
   /**
    * 文を順に読む。読んでいる途中なら後ろに足す。すべて読み終えたら onIdle を呼ぶ
    * (途中で足したときは、最後に渡した onIdle だけを呼ぶ)。
@@ -94,7 +104,7 @@ export interface SpeechEnvironment {
   navigator: {
     wakeLock?: { request: (type: "screen") => Promise<WakeLockSentinel> };
     /** Safari の Audio Session API。無いブラウザもある */
-    audioSession?: { type: string };
+    audioSession?: { type: string; state?: string };
     mediaDevices?: {
       getUserMedia: (
         constraints: MediaStreamConstraints
@@ -151,6 +161,7 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
   let rate = 1;
   let audioContext: AudioContext | null = null;
   let meterStream: MediaStream | null = null;
+  let meterNodes: AudioNode[] = [];
   let meterFrame: number | ReturnType<typeof setTimeout> | null = null;
   /** 音量の計測の世代。止めたときに進め、遅れて取れたマイクや古いループを捨てる */
   let meterGeneration = 0;
@@ -176,13 +187,25 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
       cancelFrame(meterFrame);
       meterFrame = null;
     }
+    for (const node of meterNodes) {
+      try {
+        node.disconnect();
+      } catch {
+        // つながっていないノードの disconnect は無視する
+      }
+    }
+    meterNodes = [];
     if (meterStream) {
       releaseStream(meterStream);
       meterStream = null;
     }
+    // 動いたままだと iOS がマイクを使用中と表示し続けるので休ませる
+    if (audioContext?.state === "running") {
+      void audioContext.suspend().catch(() => undefined);
+    }
   };
 
-  const setAudioSession = (type: "playback" | "play-and-record") => {
+  const setAudioSession = (type: "playback" | "play-and-record" | "auto") => {
     const session = env.navigator.audioSession;
     if (!session) return;
     try {
@@ -217,6 +240,7 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
     const Utterance = env.SpeechSynthesisUtterance;
     const text = queue.shift();
     if (text === undefined || !synth || !Utterance) {
+      if (speakingNow) setAudioSession("auto");
       speakingNow = false;
       const done = onIdle;
       onIdle = null;
@@ -286,6 +310,7 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
       rec.onerror = event => handlers.onError(event.error);
       rec.onend = () => {
         if (recognition === rec) recognition = null;
+        setAudioSession("auto");
         handlers.onEnd();
       };
       recognition = rec;
@@ -307,6 +332,7 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
       detach(recognition);
       recognition.abort();
       recognition = null;
+      setAudioSession("auto");
     },
     unlockSpeech() {
       const Context = env.AudioContext ?? env.webkitAudioContext;
@@ -338,6 +364,7 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
       }
       meterGeneration++;
       const mine = meterGeneration;
+      void context.resume().catch(() => undefined);
       getUserMedia
         .call(env.navigator.mediaDevices, {
           audio: { echoCancellation: true, noiseSuppression: true },
@@ -352,6 +379,7 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
           const analyser = context.createAnalyser();
           analyser.fftSize = 512;
           source.connect(analyser);
+          meterNodes = [source, analyser];
           const samples = new Uint8Array(analyser.fftSize);
           const tick = () => {
             if (mine !== meterGeneration) return;
@@ -375,6 +403,20 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
         });
     },
     stopLevelMeter,
+    releaseAudio() {
+      stopLevelMeter();
+      const context = audioContext;
+      audioContext = null;
+      if (context) void context.close().catch(() => undefined);
+      setAudioSession("auto");
+    },
+    describeAudio() {
+      const session = env.navigator.audioSession;
+      const sessionText = session
+        ? [session.type, session.state].filter(Boolean).join("/")
+        : "none";
+      return `session=${sessionText} context=${audioContext?.state ?? "none"}`;
+    },
     speak(sentences, idle, watchdogHandler) {
       onIdle = idle;
       onWatchdog = watchdogHandler ?? null;

@@ -63,6 +63,8 @@ export const DEFAULT_VOICE_RATE = 1.3;
 export const STORAGE_KEY_VOICE_RATE = "ark-voice-rate";
 /** マイクの音量が取れないとき、途中結果が届いてから丸を戻すまでの時間 */
 const INTERIM_PULSE_MS = 200;
+/** 聞き取りの後、音声の処理を休ませ終えたころに状態を診断へ残すまでの時間 */
+const AUDIO_DIAGNOSTIC_DELAY_MS = 1000;
 
 function readSavedRate(): number {
   try {
@@ -167,6 +169,9 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
    */
   const meterDisabledRef = useRef(false);
   const pulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const audioDiagnosticTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
 
   const diagnose = useCallback((kind: string, detail = "") => {
     optionsRef.current.onDiagnostic?.(kind, detail);
@@ -201,6 +206,9 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
           const auto = effect.auto;
           diagnose("listen", auto ? "auto" : "tap");
           meterWorkingRef.current = false;
+          // 認識が終わった (開始で同期的に失敗した場合を含む)。その後に音量の計測を始めると、
+          // 止める人がいないマイクが残る
+          let recognitionSettled = false;
           port.startRecognition({
             onInterim: text => {
               dispatch({ type: "interim", text });
@@ -222,17 +230,28 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
               }
             },
             onFinal: text => {
+              recognitionSettled = true;
               clearSilence();
               stopMeter();
               diagnose("final", `${text.length}文字`);
+              // マイクを手放した後の音声の状態を残す (iOS のマイク表示が消えないときの手がかり)
+              if (audioDiagnosticTimerRef.current !== null) {
+                clearTimeout(audioDiagnosticTimerRef.current);
+              }
+              audioDiagnosticTimerRef.current = setTimeout(() => {
+                audioDiagnosticTimerRef.current = null;
+                diagnose("audio", `after-listen ${port.describeAudio()}`);
+              }, AUDIO_DIAGNOSTIC_DELAY_MS);
               dispatch({ type: "final", text, now: Date.now() });
             },
             onEnd: () => {
+              recognitionSettled = true;
               clearSilence();
               stopMeter();
               dispatch({ type: "recognitionEnd", now: Date.now() });
             },
             onError: error => {
+              recognitionSettled = true;
               clearSilence();
               stopMeter();
               diagnose("recognition-error", auto ? `${error} (auto)` : error);
@@ -243,7 +262,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
               dispatch({ type: "recognitionError", error, auto });
             },
           });
-          if (!meterDisabledRef.current) {
+          if (!recognitionSettled && !meterDisabledRef.current) {
             port.startLevelMeter(
               level => {
                 if (!meterWorkingRef.current) {
@@ -296,6 +315,10 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
           return;
         case "releaseWakeLock":
           port.releaseWakeLock();
+          return;
+        case "releaseAudio":
+          diagnose("audio", `exit ${port.describeAudio()}`);
+          port.releaseAudio();
           return;
       }
     },
@@ -441,7 +464,10 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
   useEffect(
     () => () => {
       clearSilence();
-      port.stopLevelMeter();
+      if (audioDiagnosticTimerRef.current !== null) {
+        clearTimeout(audioDiagnosticTimerRef.current);
+      }
+      port.releaseAudio();
       port.abortRecognition();
       port.cancelSpeech();
       port.releaseWakeLock();
