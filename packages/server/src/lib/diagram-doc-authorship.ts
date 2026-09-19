@@ -7,8 +7,9 @@
  *
  * 既存の doc はすべて無印なので、無印は拒否しない。拒否するのは語彙外の値、
  * ブロックでない要素（`data-ark-id` の無い要素）への付与、1 要素内の重複だけ。
- * 読み手の規則は「`human` が付いたブロックだけを人間の決定として扱う」に
- * 一本化し、無印の意味論（= エージェント側）に依存させない。
+ * 読み手の規則は「`human` が付いたブロックは人間が手を入れた本文である」に
+ * 一本化し、無印の意味論（= エージェント側）に依存させない。決定かどうかは
+ * 属性ではなく本文の記述で判断する（誤字修正だけでも `human` が付くため）。
  */
 
 import {
@@ -37,6 +38,21 @@ function valuesOf(attributes: DiagramHtmlAttribute[], name: string): string[] {
 
 export function isDocAuthor(value: string): value is DocAuthor {
   return (DOC_AUTHOR_VALUES as readonly string[]).includes(value);
+}
+
+/**
+ * ブロックの外側 HTML（`extractDocBlocks` の `DocBlock.html`）が、自分自身の
+ * 開始タグに `data-ark-author="human"` を持つか。
+ *
+ * 読み手の規則は「`human` が付いたブロックは人間が手を入れた本文である」なので、
+ * 無印も語彙外も human ではないとして等しく false にする。入れ子のブロックが
+ * 持つ属性を拾わないよう、見るのは最初の開始タグ（= ブロック自身）だけ。
+ */
+export function isHumanAuthoredBlock(blockHtml: string): boolean {
+  for (const tag of scanDiagramHtmlStartTags(blockHtml)) {
+    return valuesOf(tag.attributes, DOC_AUTHOR_ATTRIBUTE)[0] === "human";
+  }
+  return false;
 }
 
 /** doc の本文ブロックに付く `data-ark-author` の語彙と置き場所を検査する。 */

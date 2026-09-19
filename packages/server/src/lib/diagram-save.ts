@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
 import { validateDiagramDocAuthorship } from "./diagram-doc-authorship.js";
+import { refreshDocLabels } from "./diagram-doc-label.js";
 import { ensureDoctype, replaceModelBlock } from "./diagram-file.js";
 import { type DiagramModel, parseDiagramModel } from "./diagram-model.js";
 import { resolveDiagramPath } from "./diagram-path.js";
@@ -18,14 +19,18 @@ export type SaveDiagramEditResult =
       ok: true;
       absPath: string;
       previousModel: DiagramModel;
+      /** 保存前のファイル本文。doc baseline の初期値に使う */
+      previousHtml: string;
       savedModel: DiagramModel;
+      /** 実際に書いた本文。doc の還流で id → ブロックを取り出すのに使う */
+      savedHtml: string;
     }
   | { ok: false; error: string };
 
 export async function saveDiagramEdit(
   worktreeReal: string,
   relPath: string,
-  model: unknown,
+  rawModel: unknown,
   html: string,
   beforeWrite?: (absPath: string) => void
 ): Promise<SaveDiagramEditResult> {
@@ -34,7 +39,7 @@ export async function saveDiagramEdit(
   const current = await readDiagramModel(worktreeReal, relPath);
   if (!current.ok) return { ok: false, error: current.error };
 
-  const modelJson = JSON.stringify(model);
+  const modelJson = JSON.stringify(rawModel);
   if (modelJson === undefined) {
     return { ok: false, error: "モデルが指定されていません" };
   }
@@ -45,13 +50,17 @@ export async function saveDiagramEdit(
     return { ok: false, error: "図のサイズが大きすぎます（上限 2MB）" };
   }
 
+  // doc は本文 HTML が正準 source なので、label 抜粋を本文から作り直す。
+  // 人間のインライン編集で本文と抜粋がずれると board_comments の anchorText が嘘になる。
+  const model = refreshDocLabels(parsed.model, html);
+
   // クライアント HTML 内のモデルブロックは編集前のままなので、検証済みの
   // 最新モデルへ差し替える。DOM 投影には触れない。
-  const replaced = replaceModelBlock(html, parsed.model);
+  const replaced = replaceModelBlock(html, model);
   if (!replaced.ok) return replaced;
-  const anchors = validateDiagramDocAnchors(replaced.html, parsed.model);
+  const anchors = validateDiagramDocAnchors(replaced.html, model);
   if (!anchors.ok) return anchors;
-  const authorship = validateDiagramDocAuthorship(replaced.html, parsed.model);
+  const authorship = validateDiagramDocAuthorship(replaced.html, model);
   if (!authorship.ok) return authorship;
 
   const pathResolved = resolveDiagramPath(worktreeReal, relPath);
@@ -68,8 +77,9 @@ export async function saveDiagramEdit(
   } catch {
     return { ok: false, error: "図ファイルの実体を検証できません" };
   }
+  const savedHtml = ensureDoctype(replaced.html);
   try {
-    const body = Buffer.from(ensureDoctype(replaced.html), "utf-8");
+    const body = Buffer.from(savedHtml, "utf-8");
     await writeHandle.write(body, 0, body.byteLength, 0);
     await writeHandle.truncate(body.byteLength);
   } finally {
@@ -80,6 +90,8 @@ export async function saveDiagramEdit(
     ok: true,
     absPath: pathResolved.absPath,
     previousModel: current.model,
-    savedModel: parsed.model,
+    previousHtml: current.raw,
+    savedModel: model,
+    savedHtml,
   };
 }

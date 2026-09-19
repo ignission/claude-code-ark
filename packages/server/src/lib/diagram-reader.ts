@@ -15,6 +15,7 @@ import { injectBuiltinProjection } from "./diagram-builtin.js";
 import { injectDiagramCommentLayer } from "./diagram-comment-layer.js";
 import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
 import { validateDiagramDocAuthorship } from "./diagram-doc-authorship.js";
+import { injectDiagramDocEditor } from "./diagram-doc-editor.js";
 import { extractModel, injectCsp } from "./diagram-file.js";
 import { validateDiagramGraphKinds } from "./diagram-graph-kinds.js";
 import { injectHarness } from "./diagram-harness.js";
@@ -23,7 +24,15 @@ import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
 import { errnoCode, errnoMessage } from "./errors.js";
 
 export type ReadDiagramResult =
-  | { ok: true; absPath: string; html: string; model: DiagramModel }
+  | {
+      ok: true;
+      absPath: string;
+      /** 配信用に注入した HTML */
+      html: string;
+      /** 注入前のファイル本文。doc の通知 baseline を本文から作るのに使う */
+      raw: string;
+      model: DiagramModel;
+    }
   | { ok: false; status: number; error: string };
 
 export type ReadDiagramModelResult =
@@ -126,15 +135,17 @@ export async function readDiagram(
     return { ok: false, status: 422, error: graphKinds.error };
   }
   // 内蔵図種の投影生成 → CSP → 専用層の順。doc 本文は自前 HTML が正なので
-  // コメント層だけ、graph は編集ハーネスとコメント層の両方を載せる。
+  // 編集層（本文の contenteditable 化）とコメント層、graph は編集ハーネスと
+  // コメント層の両方を載せる。
   const projected = injectCsp(injectBuiltinProjection(read.raw, model.model));
   return {
     ok: true,
     absPath: read.absPath,
     html:
       model.model.type === "doc"
-        ? injectDiagramCommentLayer(projected, "doc")
+        ? injectDiagramCommentLayer(injectDiagramDocEditor(projected), "doc")
         : injectDiagramCommentLayer(injectHarness(projected), "graph"),
+    raw: read.raw,
     model: model.model,
   };
 }

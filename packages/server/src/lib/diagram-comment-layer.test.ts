@@ -1127,7 +1127,15 @@ describe("injectDiagramCommentLayer", () => {
       expect(injected).toContain(
         'badge.setAttribute("title",AUTHOR_TITLES[author])'
       );
-      expect(injected).toContain("人間の決定ではない");
+      // バッジは既定でブロックの内側に挿入される（authorBadgeTarget）。
+      // doc が編集可能になった今、バッジを非編集にしておかないとキャレットが
+      // バッジの中に入った状態で打った文字がバッジごと保存時に消える（I-1）。
+      expect(injected).toContain('badge.contentEditable="false"');
+      // tooltip は著者だけを示す（#463）。author 属性は人間の決定の証拠として
+      // 扱わない規約になった（Claude が人間の決定を転記する場合もある）ので、
+      // 「人間の決定ではない」という断定はしない。
+      expect(injected).toContain("Claude（エージェント）が書いた本文");
+      expect(injected).not.toContain("人間の決定ではない");
       expect(injected).toContain(
         ".ark-author-badge[data-author=human]{border-color:#2563eb;background:#dbeafe;color:#1d4ed8}"
       );

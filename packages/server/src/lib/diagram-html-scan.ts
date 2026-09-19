@@ -6,6 +6,10 @@ export interface DiagramHtmlAttribute {
 export interface DiagramHtmlStartTag {
   name: string;
   attributes: DiagramHtmlAttribute[];
+  /** `<` の位置 */
+  start: number;
+  /** `>` の位置 */
+  end: number;
 }
 
 const NAMED_CHARACTER_REFERENCES: Readonly<Record<string, string>> = {
@@ -17,7 +21,7 @@ const NAMED_CHARACTER_REFERENCES: Readonly<Record<string, string>> = {
   quot: '"',
 };
 
-function decodeCharacterReferences(value: string): string {
+export function decodeCharacterReferences(value: string): string {
   return value.replace(
     /&(?:#([0-9]+);|#[xX]([0-9a-fA-F]+);|(amp|lt|gt|quot|apos|nbsp);)/gu,
     (
@@ -42,7 +46,7 @@ function decodeCharacterReferences(value: string): string {
   );
 }
 
-function tagEnd(html: string, start: number): number {
+export function tagEnd(html: string, start: number): number {
   let quote: '"' | "'" | null = null;
   for (let index = start; index < html.length; index += 1) {
     const char = html[index];
@@ -95,7 +99,7 @@ function attributes(tag: string): DiagramHtmlAttribute[] {
   return result;
 }
 
-function rawTextClose(
+export function rawTextClose(
   html: string,
   lower: string,
   start: number,
@@ -150,6 +154,8 @@ export function scanDiagramHtmlStartTags(html: string): DiagramHtmlStartTag[] {
     tags.push({
       name: normalizedName,
       attributes: attributes(html.slice(open + 1, end)),
+      start: open,
+      end,
     });
     index = end + 1;
   }

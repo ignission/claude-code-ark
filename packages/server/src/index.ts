@@ -77,12 +77,13 @@ import {
   deleteDiagramFile,
   isDiagramTracked,
 } from "./lib/diagram-delete.js";
-import { describeModelDiff } from "./lib/diagram-diff.js";
+import { type DocBlock, extractDocBlocks } from "./lib/diagram-doc-blocks.js";
 import { handleDiagramListRequest, listDiagrams } from "./lib/diagram-list.js";
 import type { DiagramModel } from "./lib/diagram-model.js";
 import { resolveDiagramPath } from "./lib/diagram-path.js";
 import { readDiagram } from "./lib/diagram-reader.js";
 import { saveDiagramEdit } from "./lib/diagram-save.js";
+import { buildSubmitNotice } from "./lib/diagram-submit-notice.js";
 import { diagramWatcher } from "./lib/diagram-watcher.js";
 import { getErrorMessage } from "./lib/errors.js";
 import { readFileFromWorktree } from "./lib/file-manager.js";
@@ -305,10 +306,28 @@ export async function startServer(
 
   /** 図ごとの、最後に Claude へ通知できたモデル。autosave では更新しない。 */
   const lastNotifiedModels = new Map<string, DiagramModel>();
+  /**
+   * doc の図ごとの、最後に Claude へ通知できたブロック本文。
+   * doc は本文が正準 source でモデル差分からは本文の変更を読めないため、
+   * lastNotifiedModels と同じ寿命・同じ上限で並べて持つ。
+   */
+  const lastNotifiedDocBodies = new Map<string, Map<string, DocBlock>>();
   const LAST_NOTIFIED_MODELS_MAX = 256;
 
   function rememberNotifiedModel(key: string, model: DiagramModel): void {
     rememberFifoEntry(lastNotifiedModels, key, model, LAST_NOTIFIED_MODELS_MAX);
+  }
+
+  function rememberNotifiedDocBodies(
+    key: string,
+    bodies: Map<string, DocBlock>
+  ): void {
+    rememberFifoEntry(
+      lastNotifiedDocBodies,
+      key,
+      bodies,
+      LAST_NOTIFIED_MODELS_MAX
+    );
   }
 
   /**
@@ -762,9 +781,18 @@ export async function startServer(
     }
     // 初回配信時のモデルは Claude が生成済みの状態として通知 baseline にする。
     // 既存値は未通知の autosave 差分を含み得るため上書きしない。
+    // doc は編集が必ずこの配信の後に来るので、本文 baseline もここで仕込む。
+    // モデル baseline と本文 baseline は別々の Map なので、それぞれ自分の
+    // 未登録判定で独立して初期化する（どちらかが既に登録済みでも、もう片方が
+    // 未登録なら仕込む。#463 で発覚: 両方を同じ if にまとめると、モデル
+    // baseline だけ先に登録された経路で本文 baseline が永久に仕込まれず、
+    // 図タブを開いてからの1回目の送信が無言になる）。
     const modelKey = diagramModelKey(resolved, relPath);
     if (!lastNotifiedModels.has(modelKey)) {
       rememberNotifiedModel(modelKey, result.model);
+    }
+    if (result.model.type === "doc" && !lastNotifiedDocBodies.has(modelKey)) {
+      rememberNotifiedDocBodies(modelKey, extractDocBlocks(result.raw));
     }
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     // 本文に meta CSP を注入済み。クライアントは srcDoc で描画するため
@@ -1858,7 +1886,9 @@ export async function startServer(
             ? resolveManagedWorktreePath(session.worktreePath)
             : null;
           if (resolved) {
-            lastNotifiedModels.delete(diagramModelKey(resolved, data.relPath));
+            const modelKey = diagramModelKey(resolved, data.relPath);
+            lastNotifiedModels.delete(modelKey);
+            lastNotifiedDocBodies.delete(modelKey);
           }
           io.emit("diagram:deleted", data);
         },
@@ -2005,9 +2035,22 @@ export async function startServer(
         }
         // 未登録時だけ保存前モデルを初期 baseline にする。以後の autosave は
         // baseline を進めず、明示 submit まで未通知差分を蓄積する。
+        // 通常は配信時に登録済みなので、ここが走るのはサーバー再起動を
+        // またいで図タブが開いたままだった場合。
+        // モデル baseline と本文 baseline は独立して初期化する（GET /api/diagram
+        // と同じ理由。#463）。
         const modelKey = diagramModelKey(resolved, d.relPath);
         if (!lastNotifiedModels.has(modelKey)) {
           rememberNotifiedModel(modelKey, saved.previousModel);
+        }
+        if (
+          saved.savedModel.type === "doc" &&
+          !lastNotifiedDocBodies.has(modelKey)
+        ) {
+          rememberNotifiedDocBodies(
+            modelKey,
+            extractDocBlocks(saved.previousHtml)
+          );
         }
         reply({ ok: true });
       } catch (error) {
@@ -2062,13 +2105,23 @@ export async function startServer(
         const modelKey = diagramModelKey(resolved, d.relPath);
         const baseline =
           lastNotifiedModels.get(modelKey) ?? saved.previousModel;
-        const sent = describeModelDiff(baseline, saved.savedModel);
-        if (sent.length > 0) {
-          const message = `図を編集しました（${d.relPath}）:\n${sent
-            .map(line => `- ${line}`)
-            .join("\n")}`;
+
+        // doc は本文が正準 source なので、モデル差分ではなくブロック本文を送る
+        const notice = buildSubmitNotice({
+          relPath: d.relPath,
+          baselineModel: baseline,
+          savedModel: saved.savedModel,
+          // モデル側と同じく保存前の状態へ倒す。baseline 未登録を「差分なし」に
+          // 畳むと、変更を送らないまま baseline だけ進めて永久に失う
+          baselineBodies:
+            lastNotifiedDocBodies.get(modelKey) ??
+            extractDocBlocks(saved.previousHtml),
+          savedHtmlRaw: saved.savedHtml,
+        });
+        const sent = notice.lines;
+        if (notice.message !== null) {
           try {
-            sessionOrchestrator.sendMessage(d.sessionId, message);
+            sessionOrchestrator.sendMessage(d.sessionId, notice.message);
           } catch (error) {
             console.error(
               "[Diagram] sendMessage failed:",
@@ -2082,8 +2135,16 @@ export async function startServer(
           }
         }
 
-        // 通知が成功した（または意味差分が無かった）時だけ baseline を進める。
+        // 通知が成功した（または送る差分が無かった）時だけ baseline を進める。
         rememberNotifiedModel(modelKey, saved.savedModel);
+        if (saved.savedModel.type === "doc") {
+          rememberNotifiedDocBodies(modelKey, notice.savedBodies);
+        } else {
+          // graph として通知した以上、この modelKey に残っている本文
+          // baseline は古い doc 由来で、以後 doc へ戻ったときに誤って
+          // 使われる（独立初期化が「既に登録済み」と誤判定する）ので消す。
+          lastNotifiedDocBodies.delete(modelKey);
+        }
         reply({ ok: true, sent });
       } catch (error) {
         reply({ ok: false, error: getErrorMessage(error) });

@@ -110,21 +110,26 @@ iframe を貼り直す (判定と抑止は `@/lib/ttyd-reconnect`)。
 ### 図解ボード doc 本文の書き手（data-ark-author）
 
 `type: "doc"` の本文は人間も別セッションの Claude も同じファイルを書き換えるため、
-本文だけでは「人間の決定」と「エージェントの出力」を見分けられない（#319）。
-そこで `data-ark-id` を持つブロック要素へ `data-ark-author="human" | "claude"` を
-付けて書き手を記す。本文 HTML が正準 source なので、モデル側には持たせない。
+本文だけでは誰が書いたブロックかを見分けられない（#319）。そこで `data-ark-id` を
+持つブロック要素へ `data-ark-author="human" | "claude"` を付けて書き手を記す。
+本文 HTML が正準 source なので、モデル側には持たせない。
 
 - 語彙は `human` / `claude` の 2 値。語彙外の値、`data-ark-id` の無い要素への付与、
   1 要素内の重複は配信（`readDiagram`）と保存（`saveDiagramEdit`）の両境界で 422
   （`diagram-doc-authorship.ts`）。無印は既存文書を壊さないよう許容する
-- コメント側（`author` 無し = 人間、`"claude"` = Claude）と語は揃えるが、本文の既定の
-  書き手はエージェントなので、読み手の規則は「`human` が付いたブロックだけを人間の
-  決定として扱う」に一本化する
+- 人間はボード上で doc 本文を直接編集でき、編集層は人間が手を入れたブロックへ
+  自動で `human` を付ける（誤字を1つ直しただけでも付く）。コメント側（`author` 無し =
+  人間、`"claude"` = Claude）と語は揃えるが、読み手の規則は「`human` が付いたブロックは
+  人間が手を入れた本文である」に一本化し、決定かどうかは属性ではなく本文の記述で判断する
+- 編集層が `human` を自動で付けるのは、他の `data-ark-id` を内包しない最内側の葉
+  ブロックだけ（文書全体を包む容器へ丸ごと付いてしまう事故を防ぐため）。容器ブロックに
+  `human` が無くても、その中身を人間が書いていないとは限らない
 - `human` はサーバーで検証できない（ファイルは worktree 外から自由に書き換えられる）。
-  「人間がコメント・会話で下した決定を転記したときだけ `human`」という規約を
-  SessionStart hook の context と `diagram-authoring` skill で配り、doc モードの
-  コメント層が `data-ark-author` 属性付きブロックに「人間」「Claude」のバッジを出す。
-  無印ブロックには著者バッジを表示しない
+  Claude が自分で `human` を付けてよいのは、人間がコメント・会話で下した決定を転記する
+  ときだけ（人間が自分で編集した分は編集層が自動で付ける）。この規約を SessionStart
+  hook の context と `diagram-authoring` skill で配り、doc モードのコメント層が
+  `data-ark-author` 属性付きブロックに「人間」「Claude」のバッジを出す。無印ブロックには
+  著者バッジを表示しない
 - 「前回開いたときから何が変わったか」の差分可視化と、複数エージェントの同時編集の
   競合（last-write-wins）は本機能の範囲外
 
@@ -196,7 +201,7 @@ task.md 規約・復唱・失敗の自動収集・セッション lifecycle を�
 | セッション管理         | tmux + ttydベースの起動、停止、復元、状態管理                               |
 | チャットビュー           | JSONL tail ベースの会話描画 + pending reconcile + AskUserQuestion カード + slash 補完 + busy/AWAITING 表示（PC は `SplitViewPane` の左ペイン、モバイルは `MobileSessionView`。どちらも🖥/💬トグルで ttyd 表示と切替） |
 | 音声モード（iPhone）   | 会話モードの1タップ操作から全画面の音声モードに入る。話した指示を2秒の取り消し猶予つきで送り、Claude がターンを終えた返答（JSONL の `stop_reason: "end_turn"`）を読み上げる。質問・権限確認は読み上げて画面での操作に回す。ブラウザ内蔵の音声認識・読み上げだけを使い、画面を点けて前面に出している間だけ動く |
-| セッションボード       | worktree の `.claude/diagrams/*.diagram.html`（意味モデル + HTML 投影）を表示する図解ペイン（右ペインタブ・PC のみ）。Claude が MCP ツール `board_open` で開き、ファイル更新を検知して自動再読込する |
+| セッションボード       | worktree の `.claude/diagrams/*.diagram.html`（意味モデル + HTML 投影）を表示する図解ペイン（右ペインタブ・PC のみ）。Claude が MCP ツール `board_open` で開き、ファイル更新を検知して自動再読込する。doc 型は本文を人間がその場で直接編集でき、変更をブロック単位で会話へ還流する |
 | Webターミナル          | ttyd iframeによるフルターミナル体験（PC は左ペインの既定、モバイルは🖥/💬トグルでチャットビューと切替） |
 | マルチペインビュー     | 複数セッションの同時表示（1列 / 2x2グリッド切り替え）                       |
 | モバイル対応           | セッション一覧/詳細の画面遷移、Quick Keys、スクロールモード、キーボード対応 |

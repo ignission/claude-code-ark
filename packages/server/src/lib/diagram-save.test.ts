@@ -2,10 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { extractDocBlocks } from "./diagram-doc-blocks.js";
 import { extractModel } from "./diagram-file.js";
 import type { DiagramModel } from "./diagram-model.js";
 import { DIAGRAM_DIR } from "./diagram-path.js";
 import { saveDiagramEdit } from "./diagram-save.js";
+import { buildSubmitNotice } from "./diagram-submit-notice.js";
 
 const initialModel: DiagramModel = {
   version: 1,
@@ -140,6 +142,90 @@ describe("saveDiagramEdit", () => {
     if (!result.ok) expect(result.error).toContain(testCase.expectedId);
     expect(beforeWriteCalled).toBe(false);
     expect(fs.readFileSync(absPath, "utf8")).toBe(original);
+  });
+
+  it("doc は本文から label を作り直し、保存前後の本文を返す", async () => {
+    const previousHtml = fs.readFileSync(absPath, "utf8");
+    const docModel: DiagramModel = {
+      version: 1,
+      type: "doc",
+      nodes: [{ id: "section-1", label: "古い抜粋" }],
+      edges: [],
+      groups: [],
+    };
+    const projection =
+      '<main data-ark-id="section-1" data-ark-author="human">新しい本文</main>';
+
+    const result = await saveDiagramEdit(
+      worktree,
+      "sample.diagram.html",
+      docModel,
+      `<html><body><script type="application/json" id="ark-diagram-model">${JSON.stringify(initialModel)}</script>${projection}</body></html>`
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // label は本文の写しであって、クライアントが送ってきた値ではない
+    expect(result.savedModel.nodes[0]?.label).toBe("新しい本文");
+    const written = fs.readFileSync(absPath, "utf8");
+    const writtenModel = extractModel(written);
+    expect(writtenModel.ok).toBe(true);
+    if (writtenModel.ok) {
+      expect(writtenModel.model.nodes[0]?.label).toBe("新しい本文");
+    }
+    expect(result.savedHtml).toBe(written);
+    expect(result.previousHtml).toBe(previousHtml);
+  });
+
+  it("通知 baseline が未登録でも、保存前の本文から組み直せば変更は握り潰されない", async () => {
+    // サーバー再起動をまたいで図タブが開いたままだと lastNotifiedDocBodies が
+    // 空になる。index.ts の submit はそのとき saved.previousHtml から
+    // baseline を組み直す。その式をここで同じ形で検査する
+    const docModel: DiagramModel = {
+      version: 1,
+      type: "doc",
+      nodes: [{ id: "section-1", label: "むかし" }],
+      edges: [],
+      groups: [],
+    };
+    const body = (text: string) =>
+      `<main data-ark-id="section-1" data-ark-author="human">${text}</main>`;
+    fs.writeFileSync(
+      absPath,
+      `<!doctype html>\n<html><body><script type="application/json" id="ark-diagram-model">${JSON.stringify(docModel)}</script>${body("むかし")}</body></html>`
+    );
+
+    const saved = await saveDiagramEdit(
+      worktree,
+      "sample.diagram.html",
+      docModel,
+      `<html><body><script type="application/json" id="ark-diagram-model">${JSON.stringify(docModel)}</script>${body("いま")}</body></html>`
+    );
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) return;
+
+    const baselineNotRemembered = undefined;
+    const notice = buildSubmitNotice({
+      relPath: "sample.diagram.html",
+      baselineModel: saved.previousModel,
+      savedModel: saved.savedModel,
+      baselineBodies:
+        baselineNotRemembered ?? extractDocBlocks(saved.previousHtml),
+      savedHtmlRaw: saved.savedHtml,
+    });
+
+    expect(notice.lines).toEqual(["[section-1] いま"]);
+    expect(notice.message).not.toBeNull();
+
+    // fallback を外すと「差分なし」に畳まれ、ok のまま変更が消える
+    const swallowed = buildSubmitNotice({
+      relPath: "sample.diagram.html",
+      baselineModel: saved.previousModel,
+      savedModel: saved.savedModel,
+      baselineBodies: baselineNotRemembered,
+      savedHtmlRaw: saved.savedHtml,
+    });
+    expect(swallowed.message).toBeNull();
   });
 
   it("write が失敗しても元ファイルを空にしない", async () => {

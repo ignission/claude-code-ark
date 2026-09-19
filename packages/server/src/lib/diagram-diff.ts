@@ -22,27 +22,12 @@ import type {
   DiagramModel,
   DiagramNode,
 } from "./diagram-model.js";
+import { isControlCodePoint } from "./text-sanitize.js";
 
 const LABEL_MAX_LENGTH = 80;
 const LABEL_ELLIPSIS = "…";
 const LABEL_FALLBACK = "(無題)";
 const NOTE_EXCERPT_LENGTH = 20;
-
-/**
- * 生成文から除去すべきコードポイントかを判定する。
- * C0 制御文字（0-31）・DEL（127）・C1 制御文字（128-159、改行扱いされうる
- * NEL U+0085 を含む）に加え、C0 ではないが改行として描画されうる
- * U+2028 LINE SEPARATOR / U+2029 PARAGRAPH SEPARATOR も対象にする
- * （1行封じ込めの注入対策を迂回させないため）
- */
-function isControlCodePoint(codePoint: number): boolean {
-  return (
-    codePoint <= 31 ||
-    (codePoint >= 127 && codePoint <= 159) ||
-    codePoint === 0x2028 ||
-    codePoint === 0x2029
-  );
-}
 
 /**
  * label を生成文へ挿入する前に無害化する。
