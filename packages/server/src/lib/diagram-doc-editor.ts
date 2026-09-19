@@ -132,16 +132,50 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
     markDirty();
   }
 
-  // 他サイトからの貼り付けは inline style / class / img 等を本文へ持ち込み、
-  // そのままファイルへ永続化されてしまう。plain text だけを挿入する。
+  // execCommand は非推奨だが insertText の代替が無い。false 返却/例外時に
+  // そのまま何もしないと、preventDefault 済みなので貼り付け内容が無言で
+  // 消える（今回の Critical と同じ型の事故）。Selection API で直接テキスト
+  // ノードを挿入するフォールバックへ落とし、それも失敗したときだけ諦めて
+  // 警告を残す。
+  function insertPlainText(text){
+    var inserted=false;
+    try{inserted=document.execCommand("insertText",false,text);}catch(e){inserted=false;}
+    if(inserted)return;
+    try{
+      var selection=window.getSelection();
+      if(!selection||selection.rangeCount===0)throw new Error("no selection");
+      var range=selection.getRangeAt(0);
+      range.deleteContents();
+      var node=document.createTextNode(text);
+      range.insertNode(node);
+      range.setStartAfter(node);
+      range.setEndAfter(node);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }catch(e){
+      console.warn("ark: 貼り付け/ドロップしたテキストを挿入できませんでした",e);
+    }
+  }
+
+  // 他サイトからの貼り付け・ドロップは inline style / class / img / a 等を
+  // 本文へ持ち込み、そのままファイルへ永続化されてしまう。plain text だけを
+  // 挿入する。
   function handlePaste(event){
     var target=event&&event.target;
     var el=target&&target.closest?target.closest("[data-ark-id]"):null;
     if(!el||!el.getAttribute("data-ark-doc-wired"))return;
     event.preventDefault();
     var clipboard=event.clipboardData||window.clipboardData;
-    var text=clipboard?clipboard.getData("text/plain"):"";
-    document.execCommand("insertText",false,text);
+    insertPlainText(clipboard?clipboard.getData("text/plain"):"");
+  }
+
+  function handleDrop(event){
+    var target=event&&event.target;
+    var el=target&&target.closest?target.closest("[data-ark-id]"):null;
+    if(!el||!el.getAttribute("data-ark-doc-wired"))return;
+    event.preventDefault();
+    var data=event.dataTransfer;
+    insertPlainText(data?data.getData("text/plain"):"");
   }
 
   function syncModelNodes(){}
@@ -177,6 +211,7 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
     wire();
     document.addEventListener("input",handleInput);
     document.addEventListener("paste",handlePaste);
+    document.addEventListener("drop",handleDrop);
     document.addEventListener("ark:doc-sync",syncModelNodes);
   }
   if(document.readyState==="loading"){
