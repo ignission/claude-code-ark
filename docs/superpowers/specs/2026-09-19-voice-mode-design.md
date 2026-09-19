@@ -220,7 +220,7 @@ timestampは判定に使わないので、無いレコードも同じ規則で�
 話す → SpeechRecognition → 送信待ち (2秒) → onSendMessage → session:send → tmux → claude
 claude → JSONL → JsonlTailManager → session:jsonl-line → useSessionJsonl (SplitChatPane)
   → onEventsChange → voice-turn-signals → speech-text → speechSynthesis
-session:auq → SplitChatPane → onActiveAuqDetail → 読み上げ → 画面で操作
+session:auq → SplitChatPane → onActiveAuqChange → 読み上げ → 画面で操作
 ```
 
 ## 7. iOSの制約と対処
