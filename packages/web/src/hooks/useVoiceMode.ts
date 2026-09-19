@@ -23,7 +23,9 @@ import {
 } from "@/lib/browser-speech";
 import type { JsonlParsedEvent } from "@/lib/jsonl-event-parser";
 import {
+  CONTINUED_SUFFIX,
   questionsToSpeechSentences,
+  SPEECH_MAX_CHARS,
   toSpeechSentences,
 } from "@/lib/speech-text";
 import {
@@ -123,6 +125,10 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
   const baselinePendingRef = useRef(false);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dispatchRef = useRef<(action: VoiceAction) => void>(() => undefined);
+  /** 今出ている権限確認を案内済みか。確認が消えたら外す */
+  const awaitingAnnouncedRef = useRef(false);
+  /** 読み上げている返答で使った文字数。同じ返答の続きが届いたら残りだけ読む */
+  const speechBudgetRef = useRef({ used: 0, exhausted: false });
 
   const diagnose = useCallback((kind: string, detail = "") => {
     optionsRef.current.onDiagnostic?.(kind, detail);
@@ -251,6 +257,10 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
           ? "disconnected"
           : null;
     if (guard) diagnose("send-held", guard);
+    // 送る直前の確認で「画面で確認が必要です」と言うので、同じ確認をもう一度案内しない
+    if (guard === "awaiting" && current.bridgeStatus === "AWAITING") {
+      awaitingAnnouncedRef.current = true;
+    }
     dispatch({ type: "commit", guard });
   }, [dispatch, diagnose]);
 
@@ -291,20 +301,18 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
   }, [isOff, isPaused, activeAuq, dispatch, diagnose]);
 
   // 権限確認など (質問カードの無い AWAITING) と、画面での操作が済んだこと。
-  // 待機中は「出た瞬間」だけ拾う。確認が残ったまま帯から戻った直後にまた畳むと、
-  // 全画面の「終了」に手が届かなくなるため
-  const previousStatusRef = useRef(bridgeStatus);
+  // 1回の確認につき1度だけ案内する。確認が残ったまま帯から戻った直後にまた畳むと、
+  // 全画面の「終了」に手が届かなくなるため。聞き取り中に出た確認は、聞き取りを抜けてから案内する
   useEffect(() => {
-    const becameAwaiting =
-      bridgeStatus === "AWAITING" && previousStatusRef.current !== "AWAITING";
-    previousStatusRef.current = bridgeStatus;
-    if (bridgeStatus === "AWAITING" && !activeAuq) {
-      if (
-        state.phase === "working" ||
-        (state.phase === "ready" && becameAwaiting)
-      ) {
-        dispatch({ type: "awaiting" });
-      }
+    if (bridgeStatus !== "AWAITING") awaitingAnnouncedRef.current = false;
+    if (
+      bridgeStatus === "AWAITING" &&
+      !activeAuq &&
+      !awaitingAnnouncedRef.current &&
+      (state.phase === "working" || state.phase === "ready")
+    ) {
+      awaitingAnnouncedRef.current = true;
+      dispatch({ type: "awaiting" });
     }
     if (state.phase === "screen" && bridgeStatus !== "AWAITING" && !activeAuq) {
       dispatch({ type: "screenResolved" });
@@ -366,7 +374,22 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
       cursorRef.current = next;
       if (!turnEnd) return;
       diagnose("turn-end", `${turnEnd.text.length}文字`);
-      dispatch({ type: "turnEnd", sentences: toSpeechSentences(turnEnd.text) });
+      // 読み上げの上限は返答全体で数える (本文ブロックが別々に届いても超えない)
+      if (!turnEnd.continues) {
+        speechBudgetRef.current = { used: 0, exhausted: false };
+      }
+      const budget = speechBudgetRef.current;
+      if (budget.exhausted) return;
+      const remaining = SPEECH_MAX_CHARS - budget.used;
+      const sentences =
+        remaining > 0
+          ? toSpeechSentences(turnEnd.text, remaining)
+          : [CONTINUED_SUFFIX];
+      budget.exhausted = sentences.at(-1) === CONTINUED_SUFFIX;
+      budget.used += sentences
+        .filter(sentence => sentence !== CONTINUED_SUFFIX)
+        .reduce((sum, sentence) => sum + sentence.length, 0);
+      dispatch({ type: "turnEnd", sentences });
     },
     [dispatch, diagnose]
   );

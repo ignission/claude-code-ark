@@ -47,6 +47,7 @@ describe("scanTurnEnds", () => {
     expect(scanTurnEnds(cursor, after).turnEnd).toEqual({
       ids: ["a2"],
       text: "直しました",
+      continues: false,
     });
   });
 
@@ -136,7 +137,34 @@ describe("scanTurnEnds", () => {
     expect(scanTurnEnds(cursor, events).turnEnd).toEqual({
       ids: ["a2"],
       text: "二つ目",
+      continues: false,
     });
+  });
+
+  it("同じ返答の本文が別々に届いたら、2つ目は続きとして返す", () => {
+    const first = scanTurnEnds(createTurnEndCursor([user("u1")]), [
+      user("u1"),
+      reply("b1", "前半"),
+    ]);
+    expect(first.turnEnd?.continues).toBe(false);
+    const second = scanTurnEnds(first.cursor, [
+      user("u1"),
+      reply("b1", "前半"),
+      reply("b2", "後半"),
+    ]);
+    expect(second.turnEnd).toEqual({
+      ids: ["b2"],
+      text: "後半",
+      continues: true,
+    });
+    const nextTurn = scanTurnEnds(second.cursor, [
+      user("u1"),
+      reply("b1", "前半"),
+      reply("b2", "後半"),
+      user("u2"),
+      reply("c1", "次のターン"),
+    ]);
+    expect(nextTurn.turnEnd?.continues).toBe(false);
   });
 
   it("最後の返答が複数の本文に分かれていれば、つないで読む", () => {
@@ -145,6 +173,7 @@ describe("scanTurnEnds", () => {
     expect(scanTurnEnds(cursor, events).turnEnd).toEqual({
       ids: ["b1", "b2"],
       text: "前半\n\n後半",
+      continues: false,
     });
   });
 });

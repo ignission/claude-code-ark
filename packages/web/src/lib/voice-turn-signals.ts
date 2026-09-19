@@ -25,6 +25,11 @@ export interface TurnEnd {
   /** 読み上げる返答のイベントid (最後の返答が複数の本文に分かれていれば複数) */
   ids: string[];
   text: string;
+  /**
+   * 前回返した返答の続き (同じ返答の本文ブロックが JSONL に別々に届いた)。
+   * 読み上げの文字数の上限を、ブロックごとではなく返答全体で数えるために使う
+   */
+  continues: boolean;
 }
 
 type AssistantText = Extract<JsonlParsedEvent, { kind: "assistant-text" }>;
@@ -91,11 +96,23 @@ export function scanTurnEnds(
     if (isSpeakableTurnEnd(event)) picked.unshift(event);
     else if (isTurnBoundary(event)) break;
   }
+  // 拾った本文の手前を遡り、ターンの切れ目より先に読み上げ対象の本文があれば、同じ返答の続き
+  const firstAt = events.findIndex(event => event.id === picked[0].id);
+  let continues = false;
+  for (let i = firstAt - 1; i >= 0; i--) {
+    const event = events[i];
+    if (isSpeakableTurnEnd(event)) {
+      continues = true;
+      break;
+    }
+    if (isTurnBoundary(event)) break;
+  }
   return {
     cursor: next,
     turnEnd: {
       ids: picked.map(event => event.id),
       text: picked.map(event => event.text).join("\n\n"),
+      continues,
     },
   };
 }

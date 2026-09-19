@@ -6,7 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ActiveAuq } from "@/lib/ask-user-question-state";
 import type { RecognitionHandlers, SpeechPort } from "@/lib/browser-speech";
 import type { JsonlParsedEvent } from "@/lib/jsonl-event-parser";
-import { CONFIRM_ON_SCREEN, REPLY_ON_SCREEN } from "@/lib/speech-text";
+import {
+  CONFIRM_ON_SCREEN,
+  CONTINUED_SUFFIX,
+  REPLY_ON_SCREEN,
+} from "@/lib/speech-text";
 import {
   SETTLED_MS,
   SILENCE_MS,
@@ -346,6 +350,29 @@ describe("useVoiceMode", () => {
     act(() => controls.expand());
     expect(controls.state.phase).toBe("ready");
     expect(port.spoken).toHaveLength(1);
+  });
+
+  it("聞き取り中に出た権限確認は、取り消して待機に戻ったときに案内する", () => {
+    speakAndSend("テストを直して");
+    render({ bridgeStatus: "THINK" });
+    act(() => controls.tapMic());
+    render({ bridgeStatus: "AWAITING" });
+    expect(port.spoken).toEqual([]);
+    act(() => controls.cancel());
+    expect(port.spoken.at(-1)).toEqual([CONFIRM_ON_SCREEN]);
+  });
+
+  it("同じ返答の本文が別々に届いても、読み上げは返答全体で300文字まで", () => {
+    act(() => controls.pushEvents([user("u1")], true));
+    speakAndSend("テストを直して");
+    const block = `${"あ".repeat(249)}。`;
+    const first = [user("u1"), user("u2"), reply("b1", block)];
+    act(() => controls.pushEvents(first, true));
+    act(() => controls.pushEvents([...first, reply("b2", block)], true));
+    const spokenText = port.spoken.flat();
+    expect(spokenText.at(-1)).toBe(CONTINUED_SUFFIX);
+    const body = spokenText.filter(t => t !== CONTINUED_SUFFIX).join("");
+    expect(body.length).toBeLessThanOrEqual(300);
   });
 
   it("診断を送る", () => {
