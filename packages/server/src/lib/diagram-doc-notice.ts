@@ -37,6 +37,14 @@ const DELETED_NOTE = "(human 印は残らない)";
  * あるのに、空にする操作にだけ何も残らないのは不自然)
  */
 const EMPTIED_NOTE = "(本文を空にした)";
+/**
+ * 空のブロックを追加したときに body の代わりに置く断り。EMPTIED_NOTE の
+ * 対称形 (こちらは新規ブロックが最初から空、EMPTIED_NOTE は既存ブロックが
+ * 空になった)。splitBlock のブロック先頭での Enter (上に空行を足す操作) で
+ * 実際に出る経路であり、断りが無いと "ブロックを追加: " で本文が無いのか
+ * 無害化で消えたのか読み手が区別できない
+ */
+const EMPTY_ADDED_NOTE = "(本文なし)";
 
 /** 末尾を省略記号に置き換えて maxLength (コードポイント数) 以内に切り詰める */
 function truncate(text: string, maxLength: number): string {
@@ -139,10 +147,12 @@ export function describeDocBodyChanges(
     // 人間の決定として読まれないよう、その行にだけ印を付ける
     const mark = human ? "" : `${UNMARKED_NOTE} `;
     if (previous === undefined) {
+      const body =
+        block.text === "" ? EMPTY_ADDED_NOTE : sanitizeBody(block.text);
       entries.push({
         label,
         human,
-        line: `[${label}] ${mark}ブロックを追加: ${sanitizeBody(block.text)}`,
+        line: `[${label}] ${mark}ブロックを追加: ${body}`,
       });
       continue;
     }

@@ -44,6 +44,17 @@ describe("describeDocBodyChanges", () => {
     ]);
   });
 
+  it("空のブロックを追加したときは本文なしと分かる断りを添える", () => {
+    // splitBlock のブロック先頭での Enter (上に空行を足す操作) で実際に出る経路。
+    // sanitizeBody("") は空文字を返すため、断りが無いと "ブロックを追加: " で
+    // 本文が無いのか無害化で消えたのか読み手が区別できない (EMPTIED_NOTE と対称)
+    const before = new Map<string, DocBlock>();
+    const after = map(block("p1", ""));
+    expect(describeDocBodyChanges(before, after).lines).toEqual([
+      "[p1] ブロックを追加: (本文なし)",
+    ]);
+  });
+
   it("制御文字と改行を落として1行にする", () => {
     const before = map(block("p1", "むかし"));
     const after = new Map<string, DocBlock>([
