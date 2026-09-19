@@ -938,6 +938,10 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     badge.setAttribute("data-ark-harness-ui","1");
     badge.setAttribute("data-author",author);
     badge.setAttribute("title",AUTHOR_TITLES[author]);
+    // バッジはブロックの内側に挿入されうる（authorBadgeTarget）。doc が
+    // contenteditable になった今、非編集にしておかないとキャレットがバッジの
+    // 中に入った状態で打った文字がバッジごと保存時に消える（I-1）。
+    badge.contentEditable="false";
     target.parent.insertBefore(badge,target.before);
   }
   function buildAnchors(){

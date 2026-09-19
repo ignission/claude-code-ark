@@ -1127,6 +1127,10 @@ describe("injectDiagramCommentLayer", () => {
       expect(injected).toContain(
         'badge.setAttribute("title",AUTHOR_TITLES[author])'
       );
+      // バッジは既定でブロックの内側に挿入される（authorBadgeTarget）。
+      // doc が編集可能になった今、バッジを非編集にしておかないとキャレットが
+      // バッジの中に入った状態で打った文字がバッジごと保存時に消える（I-1）。
+      expect(injected).toContain('badge.contentEditable="false"');
       expect(injected).toContain("人間の決定ではない");
       expect(injected).toContain(
         ".ark-author-badge[data-author=human]{border-color:#2563eb;background:#dbeafe;color:#1d4ed8}"
