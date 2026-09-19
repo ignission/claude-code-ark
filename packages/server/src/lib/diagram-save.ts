@@ -19,7 +19,11 @@ export type SaveDiagramEditResult =
       ok: true;
       absPath: string;
       previousModel: DiagramModel;
+      /** 保存前のファイル本文。doc baseline の初期値に使う */
+      previousHtml: string;
       savedModel: DiagramModel;
+      /** 実際に書いた本文。doc の還流で id → ブロックを取り出すのに使う */
+      savedHtml: string;
     }
   | { ok: false; error: string };
 
@@ -73,8 +77,9 @@ export async function saveDiagramEdit(
   } catch {
     return { ok: false, error: "図ファイルの実体を検証できません" };
   }
+  const savedHtml = ensureDoctype(replaced.html);
   try {
-    const body = Buffer.from(ensureDoctype(replaced.html), "utf-8");
+    const body = Buffer.from(savedHtml, "utf-8");
     await writeHandle.write(body, 0, body.byteLength, 0);
     await writeHandle.truncate(body.byteLength);
   } finally {
@@ -85,6 +90,8 @@ export async function saveDiagramEdit(
     ok: true,
     absPath: pathResolved.absPath,
     previousModel: current.model,
+    previousHtml: current.raw,
     savedModel: model,
+    savedHtml,
   };
 }

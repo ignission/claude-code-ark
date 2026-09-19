@@ -142,6 +142,39 @@ describe("saveDiagramEdit", () => {
     expect(fs.readFileSync(absPath, "utf8")).toBe(original);
   });
 
+  it("doc は本文から label を作り直し、保存前後の本文を返す", async () => {
+    const previousHtml = fs.readFileSync(absPath, "utf8");
+    const docModel: DiagramModel = {
+      version: 1,
+      type: "doc",
+      nodes: [{ id: "section-1", label: "古い抜粋" }],
+      edges: [],
+      groups: [],
+    };
+    const projection =
+      '<main data-ark-id="section-1" data-ark-author="human">新しい本文</main>';
+
+    const result = await saveDiagramEdit(
+      worktree,
+      "sample.diagram.html",
+      docModel,
+      `<html><body><script type="application/json" id="ark-diagram-model">${JSON.stringify(initialModel)}</script>${projection}</body></html>`
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // label は本文の写しであって、クライアントが送ってきた値ではない
+    expect(result.savedModel.nodes[0]?.label).toBe("新しい本文");
+    const written = fs.readFileSync(absPath, "utf8");
+    const writtenModel = extractModel(written);
+    expect(writtenModel.ok).toBe(true);
+    if (writtenModel.ok) {
+      expect(writtenModel.model.nodes[0]?.label).toBe("新しい本文");
+    }
+    expect(result.savedHtml).toBe(written);
+    expect(result.previousHtml).toBe(previousHtml);
+  });
+
   it("write が失敗しても元ファイルを空にしない", async () => {
     const original = fs.readFileSync(absPath, "utf8");
     const open = fs.promises.open.bind(fs.promises);

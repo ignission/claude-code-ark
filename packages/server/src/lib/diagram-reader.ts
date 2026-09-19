@@ -24,7 +24,15 @@ import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
 import { errnoCode, errnoMessage } from "./errors.js";
 
 export type ReadDiagramResult =
-  | { ok: true; absPath: string; html: string; model: DiagramModel }
+  | {
+      ok: true;
+      absPath: string;
+      /** 配信用に注入した HTML */
+      html: string;
+      /** 注入前のファイル本文。doc の通知 baseline を本文から作るのに使う */
+      raw: string;
+      model: DiagramModel;
+    }
   | { ok: false; status: number; error: string };
 
 export type ReadDiagramModelResult =
@@ -137,6 +145,7 @@ export async function readDiagram(
       model.model.type === "doc"
         ? injectDiagramCommentLayer(injectDiagramDocEditor(projected), "doc")
         : injectDiagramCommentLayer(injectHarness(projected), "graph"),
+    raw: read.raw,
     model: model.model,
   };
 }
