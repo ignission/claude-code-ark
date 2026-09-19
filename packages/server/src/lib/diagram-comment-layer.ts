@@ -903,12 +903,12 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     return false;
   }
   // 本文 authorship（#319）。doc のブロック要素に付いた data-ark-author を読み、
-  // 人間の決定とエージェントの出力を見分けるバッジを置く。無印は何も出さない
+  // 人間が手を入れたかエージェントが書いたかを示すバッジを置く。無印は何も出さない
   // （既存の doc はすべて無印）。語彙外の値は lint が 422 で弾くが、念のため無視する。
   var AUTHOR_ATTRIBUTE="data-ark-author";
   var AUTHOR_LABELS={human:"人間",claude:"Claude"};
   var AUTHOR_TITLES={
-    human:"人間が書いた・決めた本文",
+    human:"人間が手を入れた本文",
     claude:"Claude（エージェント）が書いた本文。人間の決定ではない"
   };
   // バッジを中に入れると表示が崩れる要素は直前の兄弟に置く
