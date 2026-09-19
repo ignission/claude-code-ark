@@ -174,6 +174,57 @@ describe("DOC_EDITOR_LAYER の貼り付け・ドロップ処理", () => {
   });
 });
 
+describe("writeModel() の < エスケープ", () => {
+  it("本文に </script> を打っても、送信 HTML のモデル script が途中で閉じない", () => {
+    // label を持たない node にする（syncModelNodes は label が既にある node を
+    // 上書きしないため、label 無しか minted id でないと本文の変更が model へ
+    // 反映されない）。
+    const dom = runInjectedDocEditor(
+      '<script type="application/json" id="ark-diagram-model">' +
+        '{"version":1,"type":"doc","nodes":[{"id":"p1"}],"edges":[],"groups":[]}' +
+        "</script>" +
+        '<p data-ark-id="p1">x</p>'
+    );
+    const { window } = dom;
+    const { document } = window;
+    const leaf = document.querySelector('[data-ark-id="p1"]') as HTMLElement;
+
+    // </script> と新しい <script> をまたぐ生の文字列を本文へ打ち込む
+    // （貼り付け・入力どちらでも起こり得る）
+    leaf.textContent = "abc</script><script>evil()</script>";
+    leaf.dispatchEvent(new window.Event("input", { bubbles: true }));
+
+    const fakePort = { start: vi.fn(), postMessage: vi.fn() };
+    const initEvent = new window.MessageEvent("message", {
+      data: { type: "ark:diagram-init" },
+    });
+    Object.defineProperty(initEvent, "ports", { value: [fakePort] });
+    window.dispatchEvent(initEvent);
+
+    const submitButton = document.querySelector(
+      "#ark-doc-bar button"
+    ) as HTMLElement;
+    submitButton.dispatchEvent(new window.Event("click", { bubbles: true }));
+
+    const message = fakePort.postMessage.mock.calls[0]?.[0] as {
+      html: string;
+    };
+
+    // 送信 HTML を実際に HTML パーサーへ通す。モデル script が本文中の
+    // </script> で早期に閉じていれば、本文の <script>evil()</script> が
+    // 本物の2個目の script 要素として生まれてしまう。
+    const reparsed = new JSDOM(message.html);
+    const scripts = reparsed.window.document.querySelectorAll("script");
+    expect(scripts.length).toBe(1);
+
+    const modelText =
+      reparsed.window.document.getElementById("ark-diagram-model")?.textContent;
+    expect(() => JSON.parse(modelText ?? "")).not.toThrow();
+    const model = JSON.parse(modelText ?? "null");
+    expect(model.nodes[0].label).toBe("abc</script><script>evil()</script>");
+  });
+});
+
 describe("submissionHtml() の焼き付き防止（実際の submit 経路で検証）", () => {
   it("著者バッジ・引用ハイライト・選択中クラス・CSP meta・contenteditable・wired 印を1つも残さず、本文は保持する", () => {
     const dom = runInjectedDocEditor(

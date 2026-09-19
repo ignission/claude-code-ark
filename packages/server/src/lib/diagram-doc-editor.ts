@@ -29,9 +29,16 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
     try{return JSON.parse(el.textContent||"");}catch(e){return null;}
   }
 
+  // 本文が </script> を含むと、model の textContent（raw text）にそのまま書いた
+  // 場合 script が途中で閉じ、残りの JSON が本文として漏れる。submissionHtml()
+  // の outerHTML はこの raw text をエスケープしないため、"<" を JSON の内側で
+  // Unicode エスケープしてから書く（"<" は JSON 構文上どこに出ても安全にエスケープ
+  // できる）。このレイヤは TS のテンプレートリテラルなので、配信物の文字列リテラル
+  // に \\u003c（バックスラッシュ2文字）を残すには、ソースへ4本書く必要がある
+  // （labelFor の /\\s+/g と同じ型の事故）。
   function writeModel(model){
     var el=modelScript();
-    if(el)el.textContent=JSON.stringify(model);
+    if(el)el.textContent=JSON.stringify(model).replace(/</g,"\\\\u003c");
   }
 
   // data-ark-id の入れ子は正規の構造（作図規約の階層 prefix）。編集可能にするのは
