@@ -257,7 +257,7 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
     expect(container.querySelector('[title="JSONL 購読中"]')).toBeNull();
   });
 
-  it("質問カードの表示有無が変わるたびにonActiveAuqChangeを呼ぶ", () => {
+  it("質問カードが変わるたびに、そのカードの中身 (無ければ null) でonActiveAuqChangeを呼ぶ", () => {
     const at = Date.parse("2026-09-17T00:00:00Z");
     const questions = [
       {
@@ -267,7 +267,7 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
     ];
     const onActiveAuqChange = vi.fn();
     const { emitServer } = renderChat({ onActiveAuqChange });
-    expect(onActiveAuqChange).toHaveBeenLastCalledWith(false);
+    expect(onActiveAuqChange).toHaveBeenLastCalledWith(null);
 
     emitServer("session:auq", {
       sessionId: "s1",
@@ -275,7 +275,13 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
       questions,
       screen: null,
     });
-    expect(onActiveAuqChange).toHaveBeenLastCalledWith(true);
+    expect(onActiveAuqChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        questions: [
+          expect.objectContaining({ question: "どちらにしますか？" }),
+        ],
+      })
+    );
 
     // 回答がJSONLに書かれるとカードが閉じる
     emitServer("session:jsonl-snapshot", {
@@ -313,7 +319,33 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
         }),
       ],
     });
-    expect(onActiveAuqChange).toHaveBeenLastCalledWith(false);
+    expect(onActiveAuqChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("JSONLのイベント列が変わるたびにonEventsChangeで渡す", () => {
+    const onEventsChange = vi.fn();
+    const { emitServer } = renderChat({ onEventsChange });
+    emitServer("session:jsonl-snapshot", {
+      sessionId: "s1",
+      lines: [
+        line({
+          type: "assistant",
+          uuid: "a1",
+          message: {
+            role: "assistant",
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: "直しました。" }],
+          },
+        }),
+      ],
+    });
+    expect(onEventsChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({
+        kind: "assistant-text",
+        text: "直しました。",
+        endTurn: true,
+      }),
+    ]);
   });
 });
 

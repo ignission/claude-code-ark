@@ -12,6 +12,7 @@ import {
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ActiveAuq } from "../lib/ask-user-question-state";
 import {
   createDiagramOpenRequest,
   getViewModeForDiagramOpenRequest,
@@ -31,7 +32,7 @@ interface ObservedChatProps {
   isActive: boolean;
   layout?: "pane" | "mobile";
   composerAccessory?: ReactNode;
-  onActiveAuqChange?: (hasActiveAuq: boolean) => void;
+  onActiveAuqChange?: (auq: ActiveAuq | null) => void;
   ref?: Ref<SplitChatPaneHandle>;
 }
 
@@ -152,6 +153,17 @@ function makeProps(
     ...overrides,
   };
 }
+
+const SAMPLE_AUQ: ActiveAuq = {
+  toolUseId: "hook:1",
+  questions: [
+    {
+      question: "どちらにしますか？",
+      multiSelect: false,
+      options: [{ label: "A" }, { label: "B" }],
+    },
+  ],
+};
 
 function latestChatProps(): ObservedChatProps {
   const latest = testDoubles.splitChatPane.mock.calls.at(-1)?.[0];
@@ -394,7 +406,7 @@ describe("MobileSessionView の状態の帯", () => {
     );
     expect(stripText(container)).toBe("確認を求めています");
 
-    act(() => latestChatProps().onActiveAuqChange?.(true));
+    act(() => latestChatProps().onActiveAuqChange?.(SAMPLE_AUQ));
 
     expect(stripText(container)).toBe("質問があります");
     expect(
@@ -410,10 +422,10 @@ describe("MobileSessionView の状態の帯", () => {
     // 購読を止めると、端末モードで答えた質問の解決が届かず「質問があります」が残る
     expect(latestChatProps().isActive).toBe(true);
 
-    act(() => latestChatProps().onActiveAuqChange?.(true));
+    act(() => latestChatProps().onActiveAuqChange?.(SAMPLE_AUQ));
     expect(stripText(container)).toBe("質問があります");
 
-    act(() => latestChatProps().onActiveAuqChange?.(false));
+    act(() => latestChatProps().onActiveAuqChange?.(null));
     expect(stripText(container)).toBe("確認を求めています");
   });
 

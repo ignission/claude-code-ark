@@ -59,6 +59,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import type { ActiveAuq } from "@/lib/ask-user-question-state";
 import { readClipboardImages } from "@/lib/clipboard-images";
 import { FLOATING_BAR_BOTTOM } from "@/lib/floating-composer";
 import {
@@ -253,11 +254,12 @@ export function MobileSessionView({
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showRestartDialog, setShowRestartDialog] = useState(false);
   const [showShortcutManager, setShowShortcutManager] = useState(false);
-  // 質問カード (AskUserQuestion) の表示有無。SplitChatPane から受け取り、状態の帯の文言に使う。
+  // 質問カード (AskUserQuestion)。SplitChatPane から受け取り、状態の帯の文言と音声モードに使う。
   // 会話モード以外では JSONL の購読が止まり、カードを閉じる判定が遅れて true が残ることがある。
   // 帯は AWAITING のときだけこの値を見る (resolveStatusStrip) ので、確認が済めば帯は消える。
   // この値だけで帯を出す形に書き換えないこと
-  const [hasActiveAuq, setHasActiveAuq] = useState(false);
+  const [activeAuq, setActiveAuq] = useState<ActiveAuq | null>(null);
+  const hasActiveAuq = activeAuq !== null;
   const statusStrip = resolveStatusStrip({
     bridgeStatus,
     hasActiveAuq,
@@ -669,7 +671,7 @@ export function MobileSessionView({
           onSendMessage={onSendMessage}
           onSendKey={onSendKey}
           onUploadFile={onUploadFile}
-          onActiveAuqChange={setHasActiveAuq}
+          onActiveAuqChange={setActiveAuq}
           layout="mobile"
           composerAccessory={bottomBarTop}
         />

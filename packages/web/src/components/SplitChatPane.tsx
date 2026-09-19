@@ -123,12 +123,17 @@ interface SplitChatPaneProps {
   /** layout="mobile" のとき、ガラスバーの上段 (入力欄の上) に置く要素 */
   composerAccessory?: ReactNode;
   /**
-   * 質問カード (AskUserQuestion) の表示有無が変わったときに呼ぶ。
-   * マウント時にも現在の値 (false) で1回呼ぶ。モバイルの状態の帯が文言の切り替えに使う。
+   * 回答待ちの質問カード (AskUserQuestion) が変わったときに、その中身 (無ければ null) で呼ぶ。
+   * マウント時にも現在の値 (null) で1回呼ぶ。モバイルの状態の帯と音声モードが使う。
    * アンマウント時には呼ばない。effectの依存に使うため、呼び出し側は安定した
    * 関数 (useCallback等) を渡すこと
    */
-  onActiveAuqChange?: (hasActiveAuq: boolean) => void;
+  onActiveAuqChange?: (auq: ActiveAuq | null) => void;
+  /**
+   * JSONL のイベント列が変わったときに呼ぶ (音声モードがターンの終わりを拾う)。
+   * 購読は増やさず、このペインが持っている列をそのまま渡す。安定した関数を渡すこと
+   */
+  onEventsChange?: (events: JsonlParsedEvent[]) => void;
   /** 外のバー (モバイル下部バーの1タップ操作) から添付を呼ぶための取っ手 */
   ref?: Ref<SplitChatPaneHandle>;
 }
@@ -1011,6 +1016,7 @@ export function SplitChatPane({
   layout = "pane",
   composerAccessory,
   onActiveAuqChange,
+  onEventsChange,
   ref,
 }: SplitChatPaneProps) {
   const [inputValue, setInputValue] = useState("");
@@ -1184,7 +1190,7 @@ export function SplitChatPane({
 
   const activeAuq = hookAuq?.auq ?? null;
 
-  // 質問カードの有無を親へ知らせる (モバイルの状態の帯が文言の切り替えに使う)
+  // 質問カードを親へ知らせる (モバイルの状態の帯と音声モードが使う)
   const hasActiveAuq = activeAuq !== null;
   const workingLabel = workingIndicatorLabel(
     bridgeStatus,
@@ -1192,8 +1198,13 @@ export function SplitChatPane({
     hasActiveAuq
   );
   useEffect(() => {
-    onActiveAuqChange?.(hasActiveAuq);
-  }, [hasActiveAuq, onActiveAuqChange]);
+    onActiveAuqChange?.(activeAuq);
+  }, [activeAuq, onActiveAuqChange]);
+
+  // 音声モードがターンの終わりを拾う。購読は増やさず、この列を渡す
+  useEffect(() => {
+    onEventsChange?.(events);
+  }, [events, onEventsChange]);
 
   // 連続するsubagentイベントと、sidechainの外で連続するツール呼び出しを
   // それぞれ折りたたみのまとまりへ
