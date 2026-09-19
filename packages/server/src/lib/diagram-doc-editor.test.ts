@@ -39,4 +39,17 @@ describe("injectDiagramDocEditor", () => {
       Buffer.byteLength(injectDiagramDocEditor(page), "utf8")
     ).toBeLessThan(48 * 1024);
   });
+
+  it("コメント層が本文へ直接書き込む引用ハイライトと選択中クラスを送信前に剥がす", () => {
+    // コメント層はこれまで読み取り専用の上に乗るだけだったので、本文へ書く
+    // ark-comment-highlight span や ark-comment-anchor-active class は
+    // data-ark-harness-ui が無くても焼き付かなかった。doc が編集可能になった今は
+    // submissionHtml() 側でこれらも剥がす必要がある（診断は静的な文字列検査で行う。
+    // 本ファイルの他のテストと同じくランタイム DOM は実行しない）。
+    const out = injectDiagramDocEditor(page);
+    expect(out).toContain(
+      'ark-comment-highlight[data-ark-comment-owned="true"]'
+    );
+    expect(out).toContain("ark-comment-anchor-active");
+  });
 });

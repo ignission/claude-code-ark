@@ -42,6 +42,19 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
   /** 送信用 HTML: 編集層の DOM と contenteditable を落とす */
   function submissionHtml(){
     var clone=document.documentElement.cloneNode(true);
+    // コメント層は引用ハイライトの <span> と選択中クラスをブロック本文へ直接
+    // 書き込む（data-ark-harness-ui は付かない。コメント層はこれまで読み取り専用の
+    // 上に乗るだけだったので焼き付かなかったが、doc が編集可能になった今はここで
+    // 剥がさないと autosave のたびにファイルへ残る）。
+    // 展開の手順は comment layer 自身の clearHighlights と同じにする。
+    clone.querySelectorAll('.ark-comment-highlight[data-ark-comment-owned="true"]').forEach(function(el){
+      var parent=el.parentNode;
+      el.replaceWith(document.createTextNode(el.textContent||""));
+      if(parent&&parent.normalize)parent.normalize();
+    });
+    clone.querySelectorAll(".ark-comment-anchor-active").forEach(function(el){
+      el.classList.remove("ark-comment-anchor-active");
+    });
     clone.querySelectorAll("[data-ark-harness-ui]").forEach(function(el){
       if(el.parentNode)el.parentNode.removeChild(el);
     });
