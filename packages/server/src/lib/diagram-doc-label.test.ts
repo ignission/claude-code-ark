@@ -2,8 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { extractModel } from "./diagram-file.js";
 import { refreshDocLabels } from "./diagram-doc-label.js";
+import { extractModel } from "./diagram-file.js";
 import type { DiagramModel } from "./diagram-model.js";
 
 const REPOSITORY_ROOT = path.resolve(
