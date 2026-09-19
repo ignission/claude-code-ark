@@ -291,3 +291,177 @@ describe("injectBuiltinProjection", () => {
     expect(out).not.toContain('rel="stylesheet"');
   });
 });
+
+/** 属性の並び順に依存せず、その node の <article> 開始タグだけを取り出す */
+function rowTag(html: string, id: string): string {
+  const match = html.match(
+    new RegExp(`<article[^>]*data-model-id="${id}"[^>]*>`)
+  );
+  return match?.[0] ?? "";
+}
+
+function backlogModel(overrides: Partial<DiagramModel> = {}): DiagramModel {
+  return {
+    version: 1,
+    type: "backlog",
+    title: "AEO 2026-09",
+    nodes: [
+      {
+        id: "ga4",
+        label: "GA4 初回セットアップ",
+        kind: "task",
+        ext: { status: "doing" },
+        fields: [{ id: "ga4-own", label: "担当: あなた" }],
+      },
+      {
+        id: "lh",
+        label: "Lighthouse 計測",
+        kind: "task",
+        ext: { status: "done" },
+      },
+      { id: "works", label: "/works の被引用性", kind: "story" },
+      { id: "loose", label: "未分類の項目", kind: "chore" },
+    ],
+    edges: [],
+    groups: [
+      { id: "now", label: "いま", nodes: ["ga4"] },
+      { id: "done", label: "済んだこと", nodes: ["lh"] },
+      { id: "later", label: "あとで", nodes: ["works"] },
+    ],
+    ...overrides,
+  };
+}
+
+describe("injectBuiltinProjection: backlog", () => {
+  it("graph ではない容れ物を作る（自動レイアウトと edge に載せない）", () => {
+    const out = injectBuiltinProjection(page(modelScript), backlogModel());
+
+    expect(out).toContain('data-ark-container="list"');
+    expect(out).toContain('data-ark-builtin="backlog"');
+    expect(out).not.toContain('data-ark-container="graph"');
+  });
+
+  it("group を見出しにして、その直後にメンバー行を並べる", () => {
+    const out = injectBuiltinProjection(page(modelScript), backlogModel());
+
+    expect(out).toContain("ark-backlog-section");
+    expect(out).toContain('data-model-id="now"');
+    expect(out.indexOf('data-model-id="now"')).toBeLessThan(
+      out.indexOf('data-model-id="ga4"')
+    );
+    expect(out.indexOf('data-model-id="ga4"')).toBeLessThan(
+      out.indexOf('data-model-id="done"')
+    );
+  });
+
+  it("group に属さない node は最後に出る", () => {
+    const out = injectBuiltinProjection(page(modelScript), backlogModel());
+
+    expect(out.indexOf('data-model-id="works"')).toBeLessThan(
+      out.indexOf('data-model-id="loose"')
+    );
+  });
+
+  it("複数 group に入れても行は 1 回だけ出す（順位が二つにならない）", () => {
+    const out = injectBuiltinProjection(
+      page(modelScript),
+      backlogModel({
+        groups: [
+          { id: "now", label: "いま", nodes: ["ga4"] },
+          { id: "dup", label: "重複", nodes: ["ga4"] },
+        ],
+      })
+    );
+    const rows = out.match(/<article[^>]*data-model-id="ga4"/g) ?? [];
+
+    expect(rows).toHaveLength(1);
+  });
+
+  it("ext.status を行の data-status に載せ、無い node には付けない", () => {
+    const out = injectBuiltinProjection(page(modelScript), backlogModel());
+
+    expect(rowTag(out, "ga4")).toContain('data-status="doing"');
+    expect(rowTag(out, "lh")).toContain('data-status="done"');
+    expect(rowTag(out, "works")).not.toContain("data-status");
+  });
+
+  it("状態を色だけで伝えない（CSS に状態名の文字列を持つ）", () => {
+    const out = injectBuiltinProjection(page(modelScript), backlogModel());
+    const style = out.slice(out.indexOf("<style"), out.indexOf("</style>"));
+
+    for (const label of ['"TO DO"', '"IN PROGRESS"', '"BLOCKED"', '"DONE"']) {
+      expect(style).toContain(label);
+    }
+  });
+
+  it("行は既存図種と同じ投影契約を保つ（label と field の id）", () => {
+    const out = injectBuiltinProjection(page(modelScript), backlogModel());
+
+    expect(out).toContain('class="ark-builtin-node"');
+    expect(out).toContain('data-kind="task"');
+    expect(out).toContain('data-model-id="ga4-own"');
+    expect(out).toContain("担当: あなた");
+  });
+
+  it("既存 5 種は graph container のまま変わらない", () => {
+    for (const type of [
+      "er",
+      "event-storming",
+      "flow",
+      "state",
+      "context-map",
+    ]) {
+      const out = injectBuiltinProjection(page(modelScript), model({ type }));
+      expect(out).toContain('data-ark-container="graph"');
+      expect(out).not.toContain('data-ark-container="list"');
+    }
+  });
+});
+
+describe("injectBuiltinProjection: backlog の順位と再注入", () => {
+  it("順位は group 順ではなく nodes 配列の位置で決まる", () => {
+    // nodes は [A(g2), B(g1)]、groups は [g1, g2]。行は g1 が先に出るが、
+    // 順位は nodes の並びどおり A=1 / B=2 でなければならない
+    const out = injectBuiltinProjection(
+      page(modelScript),
+      backlogModel({
+        nodes: [
+          { id: "a", label: "A", kind: "task" },
+          { id: "b", label: "B", kind: "task" },
+        ],
+        groups: [
+          { id: "g1", label: "先に出る", nodes: ["b"] },
+          { id: "g2", label: "後に出る", nodes: ["a"] },
+        ],
+      })
+    );
+
+    expect(rowTag(out, "b")).toContain('data-rank="2"');
+    expect(rowTag(out, "a")).toContain('data-rank="1"');
+    // 行の並びは group 順のまま
+    expect(out.indexOf('data-model-id="b"')).toBeLessThan(
+      out.indexOf('data-model-id="a"')
+    );
+  });
+
+  it("group に属さない node にも nodes 配列どおりの順位が付く", () => {
+    const out = injectBuiltinProjection(page(modelScript), backlogModel());
+
+    expect(rowTag(out, "loose")).toContain('data-rank="4"');
+  });
+
+  it("既に list 容れ物がある HTML には二度目の投影を足さない", () => {
+    const once = injectBuiltinProjection(page(modelScript), backlogModel());
+    const twice = injectBuiltinProjection(once, backlogModel());
+
+    expect(twice).toBe(once);
+    expect(twice.match(/data-ark-container="list"/g)).toHaveLength(1);
+  });
+
+  it("graph 図種の再注入ガードは従来どおり効く", () => {
+    const once = injectBuiltinProjection(page(modelScript), model());
+    const twice = injectBuiltinProjection(once, model());
+
+    expect(twice).toBe(once);
+  });
+});

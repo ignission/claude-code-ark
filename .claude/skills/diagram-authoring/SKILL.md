@@ -21,10 +21,29 @@ Ark が配信時に生成し、生成物はファイルへ焼き付かない（�
 | `flow` | 業務フロー・シナリオ・処理の分岐 | `step`（既定）/ `command` / `decision` / `policy` / `event` / `outcome` / `error` / `actor` / `note` |
 | `state` | 状態遷移 | `state`（既定）/ `initial` / `terminal-ok` / `terminal-cancel` / `note` |
 | `context-map` | コンテキストマップ（戦略設計） | `supporting`（既定）/ `core` / `generic` / `developed` / `external` / `note` |
+| `backlog` | バックログ・タスク一覧（順位付きリスト） | `story`（既定）/ `bug` / `task` / `spike` / `chore` / `epic` |
 
 語彙にない kind を書くとその図種の既定スタイルになる。`flow` の出口は成功を
 `outcome`、失敗を `error` に分けると、色に頼らず読めるようになる。区間の枠
 （単一Tx境界、スイムレーン、境界づけられたコンテキスト）は group で表す。
+
+`backlog` だけは graph ではなくリストとして描かれる。読み方が他の 5 種と違う。
+
+- **順位は `nodes` 配列の並び**。上から順に 1, 2, 3 と番号が振られる
+- `edges` は描かれない。バックログに矢印は無いので書かなくてよい
+- `group` は区切り見出しになる。group の順に並び、どの group にも属さない node は
+  最後にまとめて出る。同じ node を複数 group に入れても行は最初の group にだけ出す
+- `node.ext.status` に `todo` / `doing` / `blocked` / `done` を書くと状態バッジが付く。
+  種別（`kind`）と状態（`status`）は直交させる。`kind` に done を作らない
+- `node.fields` は行の下にチップとして並ぶ。担当・見積り・Issue 番号のような列に使う
+- `ext.layout` と `ext.x` / `ext.y` は効かない（自動レイアウトを使わないため）
+- **`note` kind は使わない。**行の補足は `fields` に置く。note 本文の編集は graph
+  のハーネスに載っているため、リストの図種では同期されない
+- **行にコメントは付けられない**（コメント層のアンカーが graph 前提のため）。
+  指摘は会話か Issue で行う
+
+順位そのものが意味を持つので、**状態を `backlog` に持たせすぎないこと**。
+GitHub Issue のように別に正本がある情報を写すと、その瞬間から腐りはじめる。
 
 ```html
 <!doctype html>
