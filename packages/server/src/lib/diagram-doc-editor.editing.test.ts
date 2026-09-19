@@ -389,6 +389,57 @@ describe("葉ブロックでの Enter による段落追加", () => {
     expect(leaf.getAttribute("data-ark-author")).toBe("human");
   });
 
+  it("ブロック先頭での Enter は上に空行を足すだけで、本文を別 id へ移さない", () => {
+    // 先頭で分割すると本文が丸ごと新しい id の human ブロックへ移り、1文字も
+    // 書き換えていない段落が人間の決定として読まれる上、その id に付いていた
+    // コメントの anchor も外れる。
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    const leaf = dom.window.document.querySelector(
+      '[data-ark-id="s1-p1"]'
+    ) as HTMLElement;
+    placeCaret(dom, leaf.firstChild as Text, 0);
+
+    pressEnter(dom, leaf);
+
+    expect(leaf.textContent).toBe("導入の段落");
+    expect(leaf.getAttribute("data-ark-id")).toBe("s1-p1");
+    expect(leaf.getAttribute("data-ark-author")).toBe("claude");
+
+    const added = leaf.previousElementSibling as HTMLElement;
+    expect(added.getAttribute("data-ark-author")).toBe("human");
+    expect(added.textContent).toBe("");
+
+    expect(readModelOf(dom).nodes.map((n: { id: string }) => n.id)).toEqual([
+      "s1",
+      added.getAttribute("data-ark-id"),
+      "s1-p1",
+      "s1-t1",
+      "s1-t1-r1",
+    ]);
+  });
+
+  it("先頭に著者バッジがあっても、その直後の Enter は先頭とみなす", () => {
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    const leaf = dom.window.document.querySelector(
+      '[data-ark-id="s1-p1"]'
+    ) as HTMLElement;
+    const badge = dom.window.document.createElement("span");
+    badge.setAttribute("data-ark-harness-ui", "1");
+    badge.textContent = "Claude";
+    leaf.insertBefore(badge, leaf.firstChild);
+    placeCaret(dom, leaf.lastChild as Text, 0);
+
+    pressEnter(dom, leaf);
+
+    expect(leaf.textContent).toBe("Claude導入の段落");
+    expect(leaf.getAttribute("data-ark-author")).toBe("claude");
+    expect(
+      (leaf.previousElementSibling as HTMLElement).getAttribute(
+        "data-ark-author"
+      )
+    ).toBe("human");
+  });
+
   it("キャレットを新しいブロックの先頭へ移す", () => {
     const dom = runInjectedDocEditor(NESTED_DOC_BODY);
     const leaf = dom.window.document.querySelector(

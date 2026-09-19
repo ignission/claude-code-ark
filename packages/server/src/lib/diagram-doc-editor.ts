@@ -282,6 +282,31 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
     wire();
   }
 
+  /** 本文として数えるものが無い断片か（注入 UI は本文ではないので数えない） */
+  function isBlankFragment(fragment){
+    var probe=document.createElement("div");
+    probe.appendChild(fragment);
+    Array.prototype.slice.call(probe.querySelectorAll("[data-ark-harness-ui]"))
+      .forEach(function(node){if(node.parentNode)node.parentNode.removeChild(node);});
+    return (probe.textContent||"").trim()===""&&!probe.querySelector("*");
+  }
+
+  /** キャレットがブロックの先頭にあるか（手前に本文が1つも無いか） */
+  function caretAtBlockStart(el){
+    try{
+      var selection=window.getSelection();
+      if(!selection||selection.rangeCount===0)return false;
+      var range=selection.getRangeAt(0);
+      if(!range.collapsed||!el.contains(range.startContainer))return false;
+      var head=document.createRange();
+      head.setStart(el,0);
+      head.setEnd(range.startContainer,range.startOffset);
+      return isBlankFragment(head.cloneContents());
+    }catch(e){
+      return false;
+    }
+  }
+
   /** キャレットから後ろの内容を next へ移す。移したものがあれば true */
   function moveTailInto(el,next){
     try{
@@ -332,6 +357,15 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
     // コメント層が付ける選択中クラスは submissionHtml() が剥がす。
     var className=el.getAttribute("class");
     if(className)next.setAttribute("class",className);
+    // 先頭での Enter は「上に空行を足す」。ここで分割すると本文が丸ごと新しい id の
+    // human ブロックへ移り、1文字も書き換えていない段落が人間の決定として読まれる上、
+    // その id に付いていたコメントの anchor も外れる。
+    if(caretAtBlockStart(el)){
+      parent.insertBefore(next,el);
+      markDirty();
+      focusBlockStart(el);
+      return;
+    }
     // 本文が実際に動いたときだけ、元ブロックも人間が触ったものとして印を付ける
     if(moveTailInto(el,next))stampAuthor(el);
     parent.insertBefore(next,el.nextSibling);
