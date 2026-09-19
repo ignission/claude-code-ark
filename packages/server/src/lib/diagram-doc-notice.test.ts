@@ -36,6 +36,14 @@ describe("describeDocBodyChanges", () => {
     ]);
   });
 
+  it("本文を空にしたときは追加・削除と区別できる断りを添える", () => {
+    const before = map(block("p1", "むかしの本文"));
+    const after = map(block("p1", ""));
+    expect(describeDocBodyChanges(before, after).lines).toEqual([
+      "[p1] (本文を空にした)",
+    ]);
+  });
+
   it("制御文字と改行を落として1行にする", () => {
     const before = map(block("p1", "むかし"));
     const after = new Map<string, DocBlock>([

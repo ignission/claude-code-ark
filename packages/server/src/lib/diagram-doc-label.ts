@@ -6,7 +6,7 @@
  * anchorText が嘘になるので、保存経路で1回だけ作り直す。
  */
 
-import { extractDocBlocks } from "./diagram-doc-blocks.js";
+import { extractDocBlocks, isContainerBlock } from "./diagram-doc-blocks.js";
 import type { DiagramModel } from "./diagram-model.js";
 
 const LABEL_MAX_LENGTH = 80;
@@ -28,9 +28,15 @@ export function refreshDocLabels(
   return {
     ...model,
     nodes: model.nodes.map(node => {
-      const text = blocks.get(node.id)?.text ?? "";
-      if (text === "") return node;
-      return { ...node, label: excerpt(text) };
+      const block = blocks.get(node.id);
+      // 容器 (子孫に別の data-ark-id を持つ要素) の text は子孫本文の連結
+      // (diagram-doc-blocks.ts の textOf)。それで label を上書きすると、
+      // 人間が書いた見出し的な label が子孫の地の文のこだまで静かに消える
+      // (describeDocBodyChanges が容器を報告から外すのと同じ理由)
+      if (!block || block.text === "" || isContainerBlock(block.html)) {
+        return node;
+      }
+      return { ...node, label: excerpt(block.text) };
     }),
   };
 }

@@ -30,6 +30,13 @@ const OVERFLOW_SUFFIX = "（board_read で引ける）";
 const UNMARKED_NOTE = "(human 印なし)";
 /** 削除の行に添える断り。末尾の「いずれも human」が消える理由になる */
 const DELETED_NOTE = "(human 印は残らない)";
+/**
+ * 本文を空にしたときに body の代わりに置く断り。sanitizeBody("") は
+ * 空文字を返すため、そのままだと行が `[id] ` になり本文が無いのか
+ * 無害化で消えたのか読み手が区別できない (追加・削除には専用の語彙が
+ * あるのに、空にする操作にだけ何も残らないのは不自然)
+ */
+const EMPTIED_NOTE = "(本文を空にした)";
 
 /** 末尾を省略記号に置き換えて maxLength (コードポイント数) 以内に切り詰める */
 function truncate(text: string, maxLength: number): string {
@@ -140,10 +147,11 @@ export function describeDocBodyChanges(
       continue;
     }
     if (previous.text !== block.text) {
+      const body = block.text === "" ? EMPTIED_NOTE : sanitizeBody(block.text);
       entries.push({
         label,
         human,
-        line: `[${label}] ${mark}${sanitizeBody(block.text)}`,
+        line: `[${label}] ${mark}${body}`,
       });
     }
   }

@@ -40,4 +40,28 @@ describe("refreshDocLabels", () => {
       model
     );
   });
+
+  it("容器ブロックの label は子孫本文のこだまで上書きしない", () => {
+    // extractDocBlocks は容器 (子孫に別の data-ark-id を持つ要素) の text を
+    // 子孫本文の連結にする。容器の label をそれで上書きすると、人間が書いた
+    // 見出し的な label が子孫の地の文で静かに消える
+    const html = `<section data-ark-id="s1"><p data-ark-id="s1-p1">あたらしい段落</p></section>`;
+    const model: DiagramModel = {
+      version: 1,
+      type: "doc",
+      nodes: [
+        { id: "s1", label: "ふるい容器ラベル" },
+        { id: "s1-p1", label: "ふるい段落ラベル" },
+      ],
+      edges: [],
+      groups: [],
+    };
+    const refreshed = refreshDocLabels(model, html);
+    expect(refreshed.nodes.find(n => n.id === "s1")?.label).toBe(
+      "ふるい容器ラベル"
+    );
+    expect(refreshed.nodes.find(n => n.id === "s1-p1")?.label).toBe(
+      "あたらしい段落"
+    );
+  });
 });
