@@ -320,7 +320,10 @@ describe("syncModelNodes の DOM と model の突き合わせ", () => {
   });
 
   it("重複した data-ark-id からは node を1個だけ作る（先勝ち）", () => {
-    // 2個作ると model の id が重複し、parseDiagramModel が保存ごと弾いてしまう。
+    // DOM に同じ id が2個ある時点で validateDiagramDocAnchors が
+    // 「1個必要です（2個）」で保存を弾くので、どのみち保存は通らない。
+    // ここで守るのは model 側で、node を2個作ると id 重複で parseDiagramModel が
+    // 落ち、422 の理由が本当の原因（本文の重複）から逸れること。
     // 取り方は extractDocBlocks（還流側）と揃えて先勝ちにする。
     const dom = runInjectedDocEditor(NESTED_DOC_BODY);
     const duplicated = dom.window.document.createElement("p");
@@ -369,6 +372,11 @@ describe("葉ブロックでの Enter による段落追加", () => {
     expect(newId).not.toBe("s1-p1");
     expect(next.getAttribute("data-ark-author")).toBe("human");
     expect(next.contentEditable).toBe("true");
+    // 末尾での Enter は元ブロックの本文を1文字も動かさないので、書き手は Claude のまま。
+    // Range.extractContents は末尾でも空の Text を1個返すため、断片の
+    // childNodes の数で「動いた」と判定すると、ここが human に化ける。
+    expect(leaf.textContent).toBe("導入の段落");
+    expect(leaf.getAttribute("data-ark-author")).toBe("claude");
 
     const model = readModelOf(dom);
     expect(model.nodes).toHaveLength(5);
@@ -458,6 +466,31 @@ describe("葉ブロックでの Enter による段落追加", () => {
     expect(selection?.anchorOffset).toBe(0);
   });
 
+  it("キャレット以降が文字の無い要素だけでも、その要素を捨てずに新ブロックへ移す", () => {
+    // extractContents は判定の前に DOM から中身を取り出してしまうので、「動いて
+    // いない」と判断した断片を捨てると本文が消える。Shift+Enter で入れた <br> の
+    // 手前で Enter を押す経路がこれに当たる。
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    const leaf = dom.window.document.querySelector(
+      '[data-ark-id="s1-p1"]'
+    ) as HTMLElement;
+    leaf.appendChild(dom.window.document.createElement("br"));
+    placeCaret(
+      dom,
+      leaf.firstChild as Text,
+      leaf.firstChild?.textContent?.length ?? 0
+    );
+
+    pressEnter(dom, leaf);
+
+    const next = leaf.nextElementSibling as HTMLElement;
+    expect(next.querySelector("br")).not.toBeNull();
+    expect(leaf.querySelector("br")).toBeNull();
+    expect(leaf.textContent).toBe("導入の段落");
+    // 本文（<br>）が実際に移ったので、元ブロックも人間が触ったものになる
+    expect(leaf.getAttribute("data-ark-author")).toBe("human");
+  });
+
   it("採番した id は既存の data-ark-id と衝突しない", () => {
     const dom = runInjectedDocEditor(NESTED_DOC_BODY);
     // 注入 script と同じ realm の Date を固定し、先に同じ形の id を占有させる
@@ -483,6 +516,27 @@ describe("葉ブロックでの Enter による段落追加", () => {
       dom.window.document.querySelectorAll("[data-ark-id]")
     ).map(el => el.getAttribute("data-ark-id"));
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("採番した id は model にだけ在る node id とも衝突しない", () => {
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    const fixed = 1_700_000_000_000;
+    dom.window.Date.now = () => fixed;
+    // DOM には無いが model には在る id（別セッションが消したブロックの残り等）
+    const model = readModelOf(dom);
+    model.nodes.push({ id: `h${fixed.toString(36)}-1`, label: "残り" });
+    const script = dom.window.document.getElementById("ark-diagram-model");
+    if (script) script.textContent = JSON.stringify(model);
+
+    const leaf = dom.window.document.querySelector(
+      '[data-ark-id="s1-p1"]'
+    ) as HTMLElement;
+    placeCaret(dom, leaf.firstChild as Text, leaf.textContent?.length ?? 0);
+    pressEnter(dom, leaf);
+
+    expect(
+      (leaf.nextElementSibling as HTMLElement).getAttribute("data-ark-id")
+    ).toBe(`h${fixed.toString(36)}-2`);
   });
 
   it("IME 変換確定の Enter ではブロックを分割しない", () => {

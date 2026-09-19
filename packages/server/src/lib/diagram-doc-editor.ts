@@ -320,7 +320,12 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
       tail.setStart(range.startContainer,range.startOffset);
       tail.setEnd(el,el.childNodes.length);
       var fragment=tail.extractContents();
-      if(!fragment.childNodes.length)return false;
+      // 断片の「数」で判定してはいけない。Range は部分的に含まれる先頭の Text を
+      // 必ず1個クローンするので、キャレットが Text の末尾にあるとき（段落末尾で
+      // 改段落する一番普通の操作）でも空の Text が1個入り、何も動いていないのに
+      // 動いたことになる。元ブロックが誤って human になる。
+      var moved=(fragment.textContent||"")!==""||!!fragment.querySelector("*");
+      if(!moved)return false;
       next.appendChild(fragment);
       return true;
     }catch(e){
