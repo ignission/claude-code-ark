@@ -178,12 +178,189 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
     insertPlainText(data?data.getData("text/plain"):"");
   }
 
-  function syncModelNodes(){}
+  var idSequence=0;
+  /** このセッションで人間が作ったブロック。label を本文から追従させてよい印 */
+  var mintedIds=Object.create(null);
+
+  /**
+   * data-ark-id を持つ要素を、葉に限らず全部返す。
+   *
+   * model との突き合わせに blocks() を使ってはいけない。blocks() は編集ホストに
+   * する葉だけを返すが、実物の文書では <main data-ark-id="s1"> が全体を包み、
+   * <table data-ark-id="s1-t1"> が <tr data-ark-id="s1-t1-r1"> を包む。どちらも
+   * 正規の node なので、葉だけで突き合わせると「DOM に無い」と誤判定し、
+   * その model node と groups[].nodes の参照まで消してしまう。
+   */
+  function allBlocks(){
+    return Array.prototype.slice.call(document.querySelectorAll("[data-ark-id]"))
+      .filter(function(el){return !el.closest("[data-ark-harness-ui]");});
+  }
+
+  /**
+   * node の label 用テキスト。注入 UI（著者バッジ等）の文字は混ぜない。
+   * このレイヤは TS のテンプレートリテラルなので、正規表現のバックスラッシュは
+   * 二重に書く（1本だと配信物では /s+/g になり、label から "s" の連なりが消える）。
+   */
+  function labelFor(el){
+    var clone=el.cloneNode(true);
+    Array.prototype.slice.call(clone.querySelectorAll("[data-ark-harness-ui]"))
+      .forEach(function(node){if(node.parentNode)node.parentNode.removeChild(node);});
+    return (clone.textContent||"").replace(/\\s+/g," ").trim().slice(0,80);
+  }
+
+  /** 作図規約が定める doc の kind 語彙へタグ名を写す（該当が無ければ paragraph） */
+  var KIND_BY_TAG={MAIN:"section",SECTION:"section",ARTICLE:"section",ASIDE:"panel",
+    TABLE:"table",TR:"table-row",UL:"list",OL:"list",LI:"list-item",
+    BLOCKQUOTE:"quote",PRE:"code",FIGURE:"figure"};
+  function kindFor(el){return KIND_BY_TAG[el.tagName]||"paragraph";}
+
+  /** 既存の data-ark-id とも model node id とも衝突しない id を採番する */
+  function mintBlockId(){
+    var model=readModel();
+    var taken=Object.create(null);
+    if(model&&Array.isArray(model.nodes)){
+      model.nodes.forEach(function(node){if(node&&node.id)taken[node.id]=true;});
+    }
+    var stamp=Date.now().toString(36);
+    for(;;){
+      idSequence+=1;
+      var candidate="h"+stamp+"-"+idSequence;
+      if(!taken[candidate]&&!document.querySelector('[data-ark-id="'+candidate+'"]')){
+        return candidate;
+      }
+    }
+  }
+
+  /**
+   * DOM の data-ark-id 集合と model の node 集合を一致させる。
+   * validateDiagramDocAnchors が1対1を強制するので、ここがずれると保存が 422 になる。
+   *
+   * 無印の要素へ機械的に id を振ることはしない。本文には <h1> や <td> のように
+   * 意図して node を持たない要素があり、一括で振ると一度の入力で大量の偽 node が
+   * 生まれる上、葉ブロックが葉でなくなって編集できなくなる。新しいブロックを
+   * 作れるのは splitBlock() だけで、id はそこで採番する。
+   *
+   * 並びは DOM 順に揃える。kept に残る node は定義上すべて DOM に在るので、
+   * これは「並べ替え」ではなく本文と同じ順に直すことになる。
+   */
+  function syncModelNodes(){
+    var model=readModel();
+    if(model&&Array.isArray(model.nodes)){
+      var byId=Object.create(null);
+      model.nodes.forEach(function(node){if(node&&node.id)byId[node.id]=node;});
+
+      var present=Object.create(null);
+      var kept=[];
+      allBlocks().forEach(function(el){
+        var id=el.getAttribute("data-ark-id");
+        // 重複した data-ark-id は先勝ち（extractDocBlocks と同じ扱い）。
+        // 2 個の node を作ると id 重複でモデルの parse ごと落ちる。
+        if(!id||present[id])return;
+        present[id]=true;
+        var node=byId[id];
+        if(node){
+          // 人間が作ったブロックと label の無い node だけ本文から補う。
+          // Claude が書いた要約 label は入力のたびに上書きしない。
+          if(mintedIds[id]||!node.label)node.label=labelFor(el);
+        }else{
+          node={id:id,label:labelFor(el),kind:kindFor(el)};
+        }
+        kept.push(node);
+      });
+
+      // 消えた node を参照する group member も落とす（参照整合性）
+      if(Array.isArray(model.groups)){
+        model.groups.forEach(function(group){
+          if(!group||!Array.isArray(group.nodes))return;
+          group.nodes=group.nodes.filter(function(id){return present[id];});
+        });
+      }
+      model.nodes=kept;
+      writeModel(model);
+    }
+    // model を読めない文書でも、増えたブロックは編集可能にする
+    wire();
+  }
+
+  /** キャレットから後ろの内容を next へ移す。移したものがあれば true */
+  function moveTailInto(el,next){
+    try{
+      var selection=window.getSelection();
+      if(!selection||selection.rangeCount===0)return false;
+      var range=selection.getRangeAt(0);
+      // 選択がブロックの外へ出ているときは触らない（他ブロックを巻き込まない）
+      if(!el.contains(range.startContainer)||!el.contains(range.endContainer))return false;
+      if(!range.collapsed)range.deleteContents();
+      var tail=document.createRange();
+      tail.setStart(range.startContainer,range.startOffset);
+      tail.setEnd(el,el.childNodes.length);
+      var fragment=tail.extractContents();
+      if(!fragment.childNodes.length)return false;
+      next.appendChild(fragment);
+      return true;
+    }catch(e){
+      console.warn("ark: ブロックを分割できませんでした",e);
+      return false;
+    }
+  }
+
+  function focusBlockStart(el){
+    try{
+      if(el.focus)el.focus();
+      var selection=window.getSelection();
+      if(!selection)return;
+      var range=document.createRange();
+      range.setStart(el,0);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }catch(e){
+      // キャレットを移せなくてもブロック自体は増えているので、編集は続けられる
+    }
+  }
+
+  /** 葉ブロックの直後に、同じタグの新しい兄弟ブロックを作る */
+  function splitBlock(el){
+    var parent=el.parentNode;
+    if(!parent)return;
+    var next=document.createElement(el.tagName);
+    var id=mintBlockId();
+    mintedIds[id]=true;
+    next.setAttribute("data-ark-id",id);
+    next.setAttribute("data-ark-author","human");
+    // 見た目の連続性のため class だけ引き継ぐ（<p class="lead"> 等）。
+    // コメント層が付ける選択中クラスは submissionHtml() が剥がす。
+    var className=el.getAttribute("class");
+    if(className)next.setAttribute("class",className);
+    // 本文が実際に動いたときだけ、元ブロックも人間が触ったものとして印を付ける
+    if(moveTailInto(el,next))stampAuthor(el);
+    parent.insertBefore(next,el.nextSibling);
+    markDirty();
+    focusBlockStart(next);
+  }
+
+  // 編集ホストは葉ブロック自身なので、既定の Enter は葉の「内側」へ改行を入れる
+  // だけで、新しい data-ark-id ブロックは生まれない。人間が段落を足す経路が
+  // 他に無いため、既定を止めて自分で兄弟ブロックを作る。
+  function handleKeydown(event){
+    if(!event||event.key!=="Enter")return;
+    if(event.shiftKey||event.ctrlKey||event.metaKey||event.altKey)return;
+    // IME の変換確定（日本語入力）の Enter で段落を割らない
+    if(event.isComposing||event.keyCode===229)return;
+    var target=event.target;
+    if(!target||!target.closest)return;
+    // 注入 UI（コメント層の入力欄等）の中の Enter は既定のまま通す
+    if(target.closest("[data-ark-harness-ui]"))return;
+    var el=target.closest("[data-ark-id]");
+    if(!el||!el.getAttribute("data-ark-doc-wired"))return;
+    event.preventDefault();
+    splitBlock(el);
+  }
 
   function buildBar(){
     var style=document.createElement("style");
     style.setAttribute("data-ark-harness-ui","1");
-    style.textContent='#ark-doc-bar{display:none}#ark-doc-bar[data-visible="true"]{display:block}[data-ark-id][contenteditable="true"]:focus{outline:2px solid #38bdf8;outline-offset:2px}';
+    style.textContent='#ark-doc-bar{display:none}#ark-doc-bar[data-visible="true"]{display:block}[data-ark-id][contenteditable="true"]:focus{outline:2px solid #38bdf8;outline-offset:2px}[data-ark-id][contenteditable="true"]:empty{min-height:1.2em}';
     document.head.appendChild(style);
 
     bar=document.createElement("div");
@@ -212,6 +389,7 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
     document.addEventListener("input",handleInput);
     document.addEventListener("paste",handlePaste);
     document.addEventListener("drop",handleDrop);
+    document.addEventListener("keydown",handleKeydown);
     document.addEventListener("ark:doc-sync",syncModelNodes);
   }
   if(document.readyState==="loading"){

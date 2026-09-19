@@ -7,12 +7,18 @@
  * 1つだけ付くため、window/document を使い回すとテストをまたいで listener が
  * 残り、二重発火系のバグを隠してしまう（#4）。
  */
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
 import { describe, expect, it, vi } from "vitest";
+import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
+import { validateDiagramDocAuthorship } from "./diagram-doc-authorship.js";
 import {
   DIAGRAM_DOC_EDITOR_MARKER,
   injectDiagramDocEditor,
 } from "./diagram-doc-editor.js";
+import type { DiagramModel } from "./diagram-model.js";
 
 /** injectDiagramDocEditor() の出力から、実際に配信される script 本文を取り出す。 */
 function extractInjectedScript(html: string): string {
@@ -33,7 +39,13 @@ function extractInjectedScript(html: string): string {
  * 取り出すので、常に「配信される成果物」を評価する。
  */
 function runInjectedDocEditor(bodyHtml: string, headExtra = "") {
-  const page = `<!doctype html><html><head>${headExtra}</head><body>${bodyHtml}</body></html>`;
+  return runInjectedDocEditorOnPage(
+    `<!doctype html><html><head>${headExtra}</head><body>${bodyHtml}</body></html>`
+  );
+}
+
+/** 実物のボード HTML をそのまま評価する入口。 */
+function runInjectedDocEditorOnPage(page: string) {
   const injected = injectDiagramDocEditor(page);
   const script = extractInjectedScript(injected);
   const dom = new JSDOM(page, { runScripts: "dangerously" });
@@ -211,5 +223,375 @@ describe("submissionHtml() の焼き付き防止（実際の submit 経路で検
 
     // ハイライト span を剥がすときに中身ごと落としていないか
     expect(html).toContain("見出しの本文です");
+  });
+});
+
+/** 実物のボードと同じ入れ子構造（コンテナ node + 無印の見出し・セル）。 */
+const NESTED_DOC_BODY =
+  '<script type="application/json" id="ark-diagram-model">' +
+  JSON.stringify({
+    version: 1,
+    type: "doc",
+    title: "受注フロー 設計",
+    nodes: [
+      { id: "s1", label: "文書全体", kind: "section" },
+      { id: "s1-p1", label: "導入の段落", kind: "paragraph" },
+      { id: "s1-t1", label: "処理手順の表", kind: "table" },
+      { id: "s1-t1-r1", label: "受付の行", kind: "table-row" },
+    ],
+    edges: [],
+    groups: [
+      { id: "g1", label: "全体", nodes: ["s1", "s1-p1"] },
+      { id: "g2", label: "手順", nodes: ["s1-t1", "s1-t1-r1"] },
+    ],
+  }) +
+  "</script>" +
+  '<main data-ark-id="s1" data-ark-author="claude">' +
+  '<p class="eyebrow">ORDER FLOW</p>' +
+  "<h1>受注フロー 設計</h1>" +
+  '<p class="lead" data-ark-id="s1-p1" data-ark-author="claude">導入の段落</p>' +
+  '<table data-ark-id="s1-t1" data-ark-author="claude"><tbody>' +
+  '<tr data-ark-id="s1-t1-r1" data-ark-author="claude">' +
+  "<td>受付</td><td>依頼内容を記録する</td>" +
+  "</tr>" +
+  "</tbody></table>" +
+  "</main>";
+
+function readModelOf(dom: JSDOM) {
+  const text =
+    dom.window.document.getElementById("ark-diagram-model")?.textContent;
+  return JSON.parse(text ?? "null");
+}
+
+function pressEnter(dom: JSDOM, target: Element, init: KeyboardEventInit = {}) {
+  const event = new dom.window.KeyboardEvent("keydown", {
+    key: "Enter",
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
+  target.dispatchEvent(event);
+  return event;
+}
+
+/** キャレットを collapsed でテキストノードの途中（または末尾）に置く。 */
+function placeCaret(dom: JSDOM, node: Node, offset: number) {
+  const range = dom.window.document.createRange();
+  range.setStart(node, offset);
+  range.collapse(true);
+  const selection = dom.window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+describe("syncModelNodes の DOM と model の突き合わせ", () => {
+  it("入れ子のコンテナ node（葉でない）と groups の参照を消さない", () => {
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    dom.window.document.dispatchEvent(
+      new dom.window.Event("ark:doc-sync", { bubbles: false })
+    );
+
+    const model = readModelOf(dom);
+    expect(model.nodes.map((n: { id: string }) => n.id)).toEqual([
+      "s1",
+      "s1-p1",
+      "s1-t1",
+      "s1-t1-r1",
+    ]);
+    expect(model.groups[0].nodes).toEqual(["s1", "s1-p1"]);
+    expect(model.groups[1].nodes).toEqual(["s1-t1", "s1-t1-r1"]);
+  });
+
+  it("本文の無印要素（見出し・セル）へ勝手に data-ark-id を振らない", () => {
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    const before = dom.window.document.querySelectorAll("[data-ark-id]").length;
+    dom.window.document.dispatchEvent(new dom.window.Event("ark:doc-sync"));
+
+    expect(dom.window.document.querySelectorAll("[data-ark-id]").length).toBe(
+      before
+    );
+    expect(
+      dom.window.document.querySelector("h1")?.hasAttribute("data-ark-id")
+    ).toBe(false);
+    expect(
+      dom.window.document.querySelector("td")?.hasAttribute("data-ark-id")
+    ).toBe(false);
+    expect(readModelOf(dom).nodes).toHaveLength(4);
+  });
+
+  it("重複した data-ark-id からは node を1個だけ作る（先勝ち）", () => {
+    // 2個作ると model の id が重複し、parseDiagramModel が保存ごと弾いてしまう。
+    // 取り方は extractDocBlocks（還流側）と揃えて先勝ちにする。
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    const duplicated = dom.window.document.createElement("p");
+    duplicated.setAttribute("data-ark-id", "s1-p1");
+    duplicated.textContent = "複製";
+    dom.window.document
+      .querySelector('[data-ark-id="s1"]')
+      ?.appendChild(duplicated);
+    dom.window.document.dispatchEvent(new dom.window.Event("ark:doc-sync"));
+
+    const ids = readModelOf(dom).nodes.map((n: { id: string }) => n.id);
+    expect(ids).toEqual(["s1", "s1-p1", "s1-t1", "s1-t1-r1"]);
+  });
+
+  it("DOM から消えたブロックの model node と groups の参照を落とす", () => {
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    dom.window.document.querySelector('[data-ark-id="s1-t1-r1"]')?.remove();
+    dom.window.document.dispatchEvent(new dom.window.Event("ark:doc-sync"));
+
+    const model = readModelOf(dom);
+    expect(model.nodes.map((n: { id: string }) => n.id)).toEqual([
+      "s1",
+      "s1-p1",
+      "s1-t1",
+    ]);
+    expect(model.groups[1].nodes).toEqual(["s1-t1"]);
+  });
+});
+
+describe("葉ブロックでの Enter による段落追加", () => {
+  it("同じタグの兄弟ブロックを作り、id と human 印を付け、model node を増やす", () => {
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    const leaf = dom.window.document.querySelector(
+      '[data-ark-id="s1-p1"]'
+    ) as HTMLElement;
+    placeCaret(dom, leaf.firstChild as Text, leaf.textContent?.length ?? 0);
+
+    const event = pressEnter(dom, leaf);
+
+    expect(event.defaultPrevented).toBe(true);
+    const next = leaf.nextElementSibling as HTMLElement;
+    expect(next.tagName).toBe("P");
+    expect(next.className).toBe("lead");
+    const newId = next.getAttribute("data-ark-id");
+    expect(newId).toBeTruthy();
+    expect(newId).not.toBe("s1-p1");
+    expect(next.getAttribute("data-ark-author")).toBe("human");
+    expect(next.contentEditable).toBe("true");
+
+    const model = readModelOf(dom);
+    expect(model.nodes).toHaveLength(5);
+    expect(model.nodes.map((n: { id: string }) => n.id)).toContain(newId);
+  });
+
+  it("キャレットが途中にあるときは後ろのテキストを新ブロックへ移し、元ブロックも human にする", () => {
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    const leaf = dom.window.document.querySelector(
+      '[data-ark-id="s1-p1"]'
+    ) as HTMLElement;
+    placeCaret(dom, leaf.firstChild as Text, 2);
+
+    pressEnter(dom, leaf);
+
+    expect(leaf.textContent).toBe("導入");
+    expect((leaf.nextElementSibling as HTMLElement).textContent).toBe("の段落");
+    expect(leaf.getAttribute("data-ark-author")).toBe("human");
+  });
+
+  it("キャレットを新しいブロックの先頭へ移す", () => {
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    const leaf = dom.window.document.querySelector(
+      '[data-ark-id="s1-p1"]'
+    ) as HTMLElement;
+    placeCaret(dom, leaf.firstChild as Text, leaf.textContent?.length ?? 0);
+
+    pressEnter(dom, leaf);
+
+    const next = leaf.nextElementSibling as HTMLElement;
+    const selection = dom.window.getSelection();
+    expect(
+      selection?.anchorNode === next ||
+        next.contains(selection?.anchorNode ?? null)
+    ).toBe(true);
+    expect(selection?.anchorOffset).toBe(0);
+  });
+
+  it("採番した id は既存の data-ark-id と衝突しない", () => {
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    // 注入 script と同じ realm の Date を固定し、先に同じ形の id を占有させる
+    const fixed = 1_700_000_000_000;
+    dom.window.Date.now = () => fixed;
+    const taken = dom.window.document.createElement("p");
+    taken.setAttribute("data-ark-id", `h${fixed.toString(36)}-1`);
+    taken.setAttribute("data-ark-author", "human");
+    dom.window.document.querySelector('[data-ark-id="s1"]')?.appendChild(taken);
+
+    const leaf = dom.window.document.querySelector(
+      '[data-ark-id="s1-p1"]'
+    ) as HTMLElement;
+    placeCaret(dom, leaf.firstChild as Text, leaf.textContent?.length ?? 0);
+    pressEnter(dom, leaf);
+
+    const minted = (leaf.nextElementSibling as HTMLElement).getAttribute(
+      "data-ark-id"
+    );
+    expect(minted).toMatch(/^h[0-9a-z]+-[0-9]+$/);
+    expect(minted).not.toBe(`h${fixed.toString(36)}-1`);
+    const ids = Array.from(
+      dom.window.document.querySelectorAll("[data-ark-id]")
+    ).map(el => el.getAttribute("data-ark-id"));
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("IME 変換確定の Enter ではブロックを分割しない", () => {
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    const leaf = dom.window.document.querySelector(
+      '[data-ark-id="s1-p1"]'
+    ) as HTMLElement;
+    placeCaret(dom, leaf.firstChild as Text, 2);
+
+    const event = pressEnter(dom, leaf, { isComposing: true });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(leaf.nextElementSibling?.getAttribute("data-ark-id")).toBe("s1-t1");
+    expect(readModelOf(dom).nodes).toHaveLength(4);
+  });
+
+  it("Shift+Enter は既定の改行のままブロックを分割しない", () => {
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    const leaf = dom.window.document.querySelector(
+      '[data-ark-id="s1-p1"]'
+    ) as HTMLElement;
+    placeCaret(dom, leaf.firstChild as Text, 2);
+
+    const event = pressEnter(dom, leaf, { shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(readModelOf(dom).nodes).toHaveLength(4);
+  });
+
+  it("label は空白の連なりを1つに畳むだけで、本文の文字は削らない", () => {
+    // 注入 script はテンプレートリテラルの中に書くので、\\s と書かないと配信物では
+    // /s+/g になり、label から "s" の連なりが消える。
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    const leaf = dom.window.document.querySelector(
+      '[data-ark-id="s1-p1"]'
+    ) as HTMLElement;
+    placeCaret(dom, leaf.firstChild as Text, leaf.textContent?.length ?? 0);
+    pressEnter(dom, leaf);
+
+    const next = leaf.nextElementSibling as HTMLElement;
+    next.textContent = "sss   分割\nした";
+    dom.window.document.dispatchEvent(new dom.window.Event("ark:doc-sync"));
+
+    const added = readModelOf(dom).nodes.find(
+      (n: { id: string }) => n.id === next.getAttribute("data-ark-id")
+    );
+    expect(added.label).toBe("sss 分割 した");
+  });
+
+  it("注入 UI（著者バッジ）の文字を新しい node の label に混ぜない", () => {
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    const leaf = dom.window.document.querySelector(
+      '[data-ark-id="s1-p1"]'
+    ) as HTMLElement;
+    placeCaret(dom, leaf.firstChild as Text, 2);
+    pressEnter(dom, leaf);
+
+    const next = leaf.nextElementSibling as HTMLElement;
+    const badge = dom.window.document.createElement("span");
+    badge.setAttribute("data-ark-harness-ui", "1");
+    badge.textContent = "人間";
+    next.insertBefore(badge, next.firstChild);
+    dom.window.document.dispatchEvent(new dom.window.Event("ark:doc-sync"));
+
+    const model = readModelOf(dom);
+    const added = model.nodes.find(
+      (n: { id: string }) => n.id === next.getAttribute("data-ark-id")
+    );
+    expect(added.label).toBe("の段落");
+  });
+});
+
+describe("編集後の成果物が保存側の検査を通る", () => {
+  it("段落追加とブロック削除の後も data-ark-id と model node が1対1を保つ", () => {
+    const dom = runInjectedDocEditor(NESTED_DOC_BODY);
+    const { window } = dom;
+    const { document } = window;
+
+    const fakePort = { start: vi.fn(), postMessage: vi.fn() };
+    const initEvent = new window.MessageEvent("message", {
+      data: { type: "ark:diagram-init" },
+    });
+    Object.defineProperty(initEvent, "ports", { value: [fakePort] });
+    window.dispatchEvent(initEvent);
+
+    const leaf = document.querySelector('[data-ark-id="s1-p1"]') as HTMLElement;
+    placeCaret(dom, leaf.firstChild as Text, 2);
+    pressEnter(dom, leaf);
+    document.querySelector('[data-ark-id="s1-t1-r1"]')?.remove();
+    document.dispatchEvent(new window.Event("ark:doc-sync"));
+
+    (
+      document.querySelector("#ark-doc-bar button") as HTMLElement
+    ).dispatchEvent(new window.Event("click", { bubbles: true }));
+    const message = fakePort.postMessage.mock.calls.at(-1)?.[0] as {
+      html: string;
+      model: DiagramModel;
+    };
+
+    expect(validateDiagramDocAnchors(message.html, message.model)).toEqual({
+      ok: true,
+    });
+    expect(validateDiagramDocAuthorship(message.html, message.model)).toEqual({
+      ok: true,
+    });
+  });
+});
+
+const EXAMPLE_DOC_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../../.claude/diagrams/_examples/order-flow-design.diagram.html"
+);
+
+describe("実物の doc ボードでの編集", () => {
+  it("段落追加と行削除の後も1対1と authorship を保ち、コンテナ node を落とさない", () => {
+    const dom = runInjectedDocEditorOnPage(
+      fs.readFileSync(EXAMPLE_DOC_PATH, "utf-8")
+    );
+    const { window } = dom;
+    const { document } = window;
+
+    const fakePort = { start: vi.fn(), postMessage: vi.fn() };
+    const initEvent = new window.MessageEvent("message", {
+      data: { type: "ark:diagram-init" },
+    });
+    Object.defineProperty(initEvent, "ports", { value: [fakePort] });
+    window.dispatchEvent(initEvent);
+
+    const lead = document.querySelector('[data-ark-id="s1-p1"]') as HTMLElement;
+    placeCaret(dom, lead.firstChild as Text, 6);
+    pressEnter(dom, lead);
+    document.querySelector('[data-ark-id="s1-t1-r2"]')?.remove();
+    document.dispatchEvent(new window.Event("ark:doc-sync"));
+
+    (
+      document.querySelector("#ark-doc-bar button") as HTMLElement
+    ).dispatchEvent(new window.Event("click", { bubbles: true }));
+    const message = fakePort.postMessage.mock.calls.at(-1)?.[0] as {
+      html: string;
+      model: DiagramModel;
+    };
+
+    expect(validateDiagramDocAnchors(message.html, message.model)).toEqual({
+      ok: true,
+    });
+    expect(validateDiagramDocAuthorship(message.html, message.model)).toEqual({
+      ok: true,
+    });
+
+    const ids = message.model.nodes.map(node => node.id);
+    // 葉でないコンテナ（文書全体と表）が残っている
+    expect(ids).toContain("s1");
+    expect(ids).toContain("s1-t1");
+    // 消した行だけが落ちている
+    expect(ids).not.toContain("s1-t1-r2");
+    for (const group of message.model.groups) {
+      expect(group.nodes).not.toContain("s1-t1-r2");
+    }
+    expect(
+      message.model.groups.find(group => group.id === "g-process")?.nodes
+    ).toEqual(["s1-t1", "s1-t1-r1", "s1-t1-r3", "s1-t1-r4", "s1-p2"]);
   });
 });
