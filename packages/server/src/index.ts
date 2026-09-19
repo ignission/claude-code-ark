@@ -2094,7 +2094,11 @@ export async function startServer(
           relPath: d.relPath,
           baselineModel: baseline,
           savedModel: saved.savedModel,
-          baselineBodies: lastNotifiedDocBodies.get(modelKey),
+          // モデル側と同じく保存前の状態へ倒す。baseline 未登録を「差分なし」に
+          // 畳むと、変更を送らないまま baseline だけ進めて永久に失う
+          baselineBodies:
+            lastNotifiedDocBodies.get(modelKey) ??
+            extractDocBlocks(saved.previousHtml),
           savedHtmlRaw: saved.savedHtml,
         });
         const sent = notice.lines;

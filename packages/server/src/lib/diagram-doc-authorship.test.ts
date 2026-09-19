@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DOC_AUTHOR_ATTRIBUTE,
   DOC_AUTHOR_VALUES,
+  isHumanAuthoredBlock,
   validateDiagramDocAuthorship,
 } from "./diagram-doc-authorship.js";
 import type { DiagramModel } from "./diagram-model.js";
@@ -114,4 +115,58 @@ describe("validateDiagramDocAuthorship", () => {
       });
     }
   );
+});
+
+describe("isHumanAuthoredBlock", () => {
+  it("ブロック自身の開始タグが human なら true", () => {
+    expect(
+      isHumanAuthoredBlock(
+        `<p data-ark-id="p1" data-ark-author="human">本文</p>`
+      )
+    ).toBe(true);
+  });
+
+  it("無印は false", () => {
+    expect(isHumanAuthoredBlock(`<p data-ark-id="p1">本文</p>`)).toBe(false);
+  });
+
+  it("claude は false", () => {
+    expect(
+      isHumanAuthoredBlock(
+        `<p data-ark-id="p1" data-ark-author="claude">本文</p>`
+      )
+    ).toBe(false);
+  });
+
+  it("語彙外の値も human ではないので false", () => {
+    expect(
+      isHumanAuthoredBlock(
+        `<p data-ark-id="p1" data-ark-author="agent">本文</p>`
+      )
+    ).toBe(false);
+  });
+
+  it("子孫が human でも、自身が無印なら false", () => {
+    expect(
+      isHumanAuthoredBlock(
+        `<section data-ark-id="s1">` +
+          `<p data-ark-id="s1-p1" data-ark-author="human">本文</p>` +
+          `</section>`
+      )
+    ).toBe(false);
+  });
+
+  it("自身が human なら、子孫が claude でも true", () => {
+    expect(
+      isHumanAuthoredBlock(
+        `<section data-ark-id="s1" data-ark-author="human">` +
+          `<p data-ark-id="s1-p1" data-ark-author="claude">本文</p>` +
+          `</section>`
+      )
+    ).toBe(true);
+  });
+
+  it("開始タグが無ければ false", () => {
+    expect(isHumanAuthoredBlock("ただの文字列")).toBe(false);
+  });
 });

@@ -119,6 +119,26 @@ function textOf(html: string): string {
   return decodeCharacterReferences(stripped).replace(/\s+/gu, " ").trim();
 }
 
+/**
+ * ブロックの外側 HTML が、自分の下に別のブロックを抱えているか。
+ *
+ * `text` は子孫の本文も畳み込むので、容器ブロックの本文は常に子の本文の
+ * こだまになる。編集層が `contenteditable` と `human` 印を葉だけに付けるのと
+ * 同じ境界 (`diagram-doc-editor.ts` の `isLeafBlock`) をサーバー側でも引く。
+ */
+export function isContainerBlock(blockHtml: string): boolean {
+  let first = true;
+  for (const tag of scanDiagramHtmlStartTags(blockHtml)) {
+    // 先頭はブロック自身の開始タグ
+    if (first) {
+      first = false;
+      continue;
+    }
+    if (tag.attributes.some(a => a.name === "data-ark-id")) return true;
+  }
+  return false;
+}
+
 export function extractDocBlocks(html: string): Map<string, DocBlock> {
   const blocks = new Map<string, DocBlock>();
   const markupTokens = scanDocMarkup(html);

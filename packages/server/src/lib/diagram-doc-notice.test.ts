@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DocBlock } from "./diagram-doc-blocks.js";
+import { type DocBlock, extractDocBlocks } from "./diagram-doc-blocks.js";
 import { describeDocBodyChanges } from "./diagram-doc-notice.js";
 
 function block(id: string, text: string): DocBlock {
@@ -32,7 +32,7 @@ describe("describeDocBodyChanges", () => {
       "[p2] ブロックを追加: ふえた",
     ]);
     expect(describeDocBodyChanges(after, before).lines).toEqual([
-      "[p2] ブロックを削除",
+      "[p2] ブロックを削除 (human 印は残らない)",
     ]);
   });
 
@@ -213,7 +213,7 @@ describe("describeDocBodyChanges", () => {
     const after = map(block("p1", "あ"));
 
     const changes = describeDocBodyChanges(before, after);
-    expect(changes.lines).toEqual(["[p2] ブロックを削除"]);
+    expect(changes.lines).toEqual(["[p2] ブロックを削除 (human 印は残らない)"]);
     expect(changes.allHuman).toBe(false);
   });
 
@@ -238,6 +238,50 @@ describe("describeDocBodyChanges", () => {
 
     const changes = describeDocBodyChanges(before, after);
     expect(changes.lines).toHaveLength(11);
+    expect(changes.allHuman).toBe(false);
+  });
+
+  it("容器ブロックの行は出さず、葉だけを報告する", () => {
+    // extractDocBlocks は祖先の text に子孫の本文を含める。エディタが human を
+    // 押すのは葉だけなので、容器を報告すると人間の編集に「印なし」が付く
+    const leaf = (text: string) =>
+      `<p data-ark-id="s1-p1" data-ark-author="human">${text}</p>`;
+    const before = extractDocBlocks(
+      `<section data-ark-id="s1">${leaf("むかし")}</section>`
+    );
+    const after = extractDocBlocks(
+      `<section data-ark-id="s1">${leaf("いま")}</section>`
+    );
+
+    const changes = describeDocBodyChanges(before, after);
+    expect(changes.lines).toEqual(["[s1-p1] いま"]);
+    expect(changes.allHuman).toBe(true);
+  });
+
+  it("容器の直下の地の文だけが変わっても報告しない (既知の取りこぼし)", () => {
+    const leaf = `<p data-ark-id="s1-p1" data-ark-author="human">かわらない</p>`;
+    const before = extractDocBlocks(
+      `<section data-ark-id="s1">まえがき${leaf}</section>`
+    );
+    const after = extractDocBlocks(
+      `<section data-ark-id="s1">あとがき${leaf}</section>`
+    );
+
+    const changes = describeDocBodyChanges(before, after);
+    expect(changes.lines).toEqual([]);
+    expect(changes.allHuman).toBe(false);
+  });
+
+  it("容器が丸ごと消えたときは葉の削除だけを述べる", () => {
+    const leaf = `<p data-ark-id="s1-p1" data-ark-author="human">きえる</p>`;
+    const before = extractDocBlocks(
+      `<section data-ark-id="s1">${leaf}</section>`
+    );
+
+    const changes = describeDocBodyChanges(before, new Map());
+    expect(changes.lines).toEqual([
+      "[s1-p1] ブロックを削除 (human 印は残らない)",
+    ]);
     expect(changes.allHuman).toBe(false);
   });
 

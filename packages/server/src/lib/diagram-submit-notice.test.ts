@@ -114,6 +114,27 @@ describe("buildSubmitNotice", () => {
     );
   });
 
+  it("入れ子の doc でも、容器を混ぜず葉だけを human として送る", () => {
+    const section = (text: string) =>
+      `<section data-ark-id="s1" data-ark-author="claude">` +
+      `<p data-ark-id="s1-p1" data-ark-author="human">${text}</p>` +
+      `</section>`;
+    const out = buildSubmitNotice({
+      relPath: "board.diagram.html",
+      baselineModel: docModel("むかし"),
+      savedModel: docModel("いま"),
+      baselineBodies: extractDocBlocks(section("むかし")),
+      savedHtmlRaw: section("人間が直した"),
+    });
+    expect(out.message).toBe(
+      [
+        "図の本文を編集しました（board.diagram.html）:",
+        "- [s1-p1] 人間が直した",
+        "（いずれも human として記録済み）",
+      ].join("\n")
+    );
+  });
+
   it("doc の baseline が無いときは何も送らず baseline だけ返す", () => {
     const out = buildSubmitNotice({
       relPath: "a.diagram.html",

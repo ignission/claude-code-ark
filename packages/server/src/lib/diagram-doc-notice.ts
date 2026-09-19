@@ -15,7 +15,7 @@
  */
 
 import { isHumanAuthoredBlock } from "./diagram-doc-authorship.js";
-import type { DocBlock } from "./diagram-doc-blocks.js";
+import { type DocBlock, isContainerBlock } from "./diagram-doc-blocks.js";
 import { isControlCodePoint } from "./text-sanitize.js";
 
 const BODY_MAX_LENGTH = 300;
@@ -28,6 +28,8 @@ const ID_FALLBACK = "(id不明)";
 const OVERFLOW_SUFFIX = "（board_read で引ける）";
 /** human 印の無いブロックの行に付ける断り。本文の前に置く */
 const UNMARKED_NOTE = "(human 印なし)";
+/** 削除の行に添える断り。末尾の「いずれも human」が消える理由になる */
+const DELETED_NOTE = "(human 印は残らない)";
 
 /** 末尾を省略記号に置き換えて maxLength (コードポイント数) 以内に切り詰める */
 function truncate(text: string, maxLength: number): string {
@@ -118,6 +120,10 @@ export function describeDocBodyChanges(
   const entries: ChangeEntry[] = [];
 
   for (const [id, block] of after) {
+    // 容器ブロックの text は子孫の本文のこだまなので、報告しても情報が増えず、
+    // 葉が1つ変わるだけで文書全体の本文を運ぶ行が何本も出る。さらに編集層は
+    // 葉にしか human を押さないため、人間がいま書いた本文へ「印なし」が付く
+    if (isContainerBlock(block.html)) continue;
     const previous = before.get(id);
     const label = sanitizeId(id);
     const human = isHumanAuthoredBlock(block.html);
@@ -141,13 +147,19 @@ export function describeDocBodyChanges(
       });
     }
   }
-  for (const id of before.keys()) {
-    if (!after.has(id)) {
-      const label = sanitizeId(id);
-      // 削除は本文が残らないので誰が消したかを属性から引けない。行に印は
-      // 付けず (付ける先の本文が無い)、human としても数えない
-      entries.push({ label, human: false, line: `[${label}] ブロックを削除` });
-    }
+  for (const [id, block] of before) {
+    if (after.has(id)) continue;
+    // 容器の消滅は、中の葉の削除として既に述べている
+    if (isContainerBlock(block.html)) continue;
+    const label = sanitizeId(id);
+    // 削除は本文が残らないので誰が消したかを属性から引けない。行に印は付けず
+    // (付ける先の本文が無い)、human としても数えない。末尾の一文が消える
+    // 理由が読み手に分かるよう、その旨だけ行に添える
+    entries.push({
+      label,
+      human: false,
+      line: `[${label}] ブロックを削除 ${DELETED_NOTE}`,
+    });
   }
 
   // 打ち切られて行が残らないブロックも主張の対象なので、allHuman は
