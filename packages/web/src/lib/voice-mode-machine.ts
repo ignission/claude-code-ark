@@ -42,6 +42,11 @@ export interface VoiceState {
   heldSpeech: string[];
   /** 画面に出す一言 (エラー、送らなかった理由)。無ければ null */
   notice: string | null;
+  /**
+   * 送らなかった指示 (送る直前に確認・質問が出ていた、接続が切れていた)。
+   * 画面での操作を経ても消さず、「送る」(retryUnsent) か「消す」(dismissUnsent) まで残す
+   */
+  unsent: string | null;
 }
 
 /** 送信待ちの猶予 */
@@ -74,7 +79,10 @@ export type VoiceAction =
   | { type: "stopSpeaking" }
   | { type: "screenResolved" }
   | { type: "expand" }
-  | { type: "resume" };
+  /** needsScreen: 再開した時点で質問カードか権限確認が残っている (画面での操作へ戻す) */
+  | { type: "resume"; needsScreen: boolean }
+  | { type: "retryUnsent"; now: number }
+  | { type: "dismissUnsent" };
 
 export type VoiceEffect =
   /** auto: 読み上げの後に自動で開くとき true (ユーザー操作の外なので iOS に拒否されうる) */
@@ -96,6 +104,7 @@ export const INITIAL_VOICE_STATE: VoiceState = {
   afterSpeech: "listen",
   heldSpeech: [],
   notice: null,
+  unsent: null,
 };
 
 interface Transition {
@@ -104,10 +113,6 @@ interface Transition {
 }
 
 const unchanged = (state: VoiceState): Transition => ({ state, effects: [] });
-
-function notSentNotice(text: string): string {
-  return `送っていません:「${text}」`;
-}
 
 function speak(
   state: VoiceState,
@@ -242,7 +247,14 @@ export function reduceVoice(
     case "resume":
       if (state.phase !== "paused") return unchanged(state);
       if (state.heldSpeech.length > 0) {
-        return speak({ ...state, heldSpeech: [] }, state.heldSpeech, "listen");
+        return speak(
+          { ...state, heldSpeech: [] },
+          state.heldSpeech,
+          action.needsScreen ? "screen" : "listen"
+        );
+      }
+      if (action.needsScreen) {
+        return { state: { ...state, phase: "screen" }, effects: [] };
       }
       return {
         state: { ...state, phase: "listening", transcript: "", notice: null },
@@ -297,24 +309,24 @@ export function reduceVoice(
       const stop: VoiceEffect = { type: "abortRecognition" };
       if (action.guard === "awaiting") {
         return speak(
-          state,
+          { ...state, unsent: text },
           [CONFIRM_ON_SCREEN],
           "screen",
           [stop],
-          notSentNotice(text)
+          "確認が出ていたので送っていません"
         );
       }
       if (action.guard === "disconnected") {
         return toReady(
-          state,
+          { ...state, unsent: text },
           [stop],
-          `接続が切れているため送っていません:「${text}」`
+          "接続が切れていたので送っていません"
         );
       }
       const sent: VoiceEffect[] = [stop, { type: "send", text }];
       if (state.heldSpeech.length > 0) {
         return speak(
-          { ...state, heldSpeech: [] },
+          { ...state, heldSpeech: [], unsent: null },
           state.heldSpeech,
           "listen",
           sent
@@ -327,10 +339,25 @@ export function reduceVoice(
           transcript: "",
           confirmDeadline: null,
           notice: null,
+          unsent: null,
         },
         effects: sent,
       };
     }
+    case "retryUnsent":
+      if (
+        state.unsent === null ||
+        (state.phase !== "ready" &&
+          state.phase !== "working" &&
+          state.phase !== "screen")
+      ) {
+        return unchanged(state);
+      }
+      // 送る直前の確認をもう一度通すため、送信待ちからやり直す
+      return confirm({ ...state, unsent: null }, state.unsent, action.now);
+    case "dismissUnsent":
+      if (state.unsent === null) return unchanged(state);
+      return { state: { ...state, unsent: null, notice: null }, effects: [] };
     case "turnEnd":
       if (action.sentences.length === 0) return unchanged(state);
       if (
@@ -374,12 +401,13 @@ export function reduceVoice(
       }
       const interrupted =
         state.phase === "listening" || state.phase === "confirming";
+      const wasConfirming = state.phase === "confirming";
       return speak(
-        state,
+        wasConfirming ? { ...state, unsent: state.transcript } : state,
         action.sentences,
         "screen",
         interrupted ? [{ type: "abortRecognition" }] : [],
-        state.phase === "confirming" ? notSentNotice(state.transcript) : null
+        wasConfirming ? "質問が来たので送っていません" : null
       );
     }
     case "awaiting":

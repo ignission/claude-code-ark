@@ -53,6 +53,8 @@ beforeEach(() => {
     onStopSpeaking: vi.fn(),
     onExpand: vi.fn(),
     onResume: vi.fn(),
+    onRetryUnsent: vi.fn(),
+    onDismissUnsent: vi.fn(),
   };
 });
 
@@ -126,6 +128,25 @@ describe("VoiceModeOverlay", () => {
     expect(container.textContent).toContain("一時停止しています");
     act(() => button("再開").click());
     expect(handlers.onResume).toHaveBeenCalled();
+  });
+
+  it("送っていない指示を出し、送るか消すかを選べる", () => {
+    render({ phase: "ready", unsent: "テストを直して" });
+    expect(
+      container.querySelector('[data-testid="voice-mode-unsent"]')?.textContent
+    ).toContain("テストを直して");
+    act(() => button("送っていない指示を送る").click());
+    act(() => button("送っていない指示を消す").click());
+    expect(handlers.onRetryUnsent).toHaveBeenCalled();
+    expect(handlers.onDismissUnsent).toHaveBeenCalled();
+  });
+
+  it("帯に畳んでいても、送っていない指示があることを出す", () => {
+    render({ phase: "screen", unsent: "テストを直して" });
+    expect(
+      container.querySelector('[data-testid="voice-mode-minimized"]')
+        ?.textContent
+    ).toContain("未送信あり");
   });
 
   it("終了ボタンで抜ける", () => {

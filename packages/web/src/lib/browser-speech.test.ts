@@ -250,6 +250,40 @@ describe("createSpeechPort の画面の点灯維持", () => {
     await expect(port.requestWakeLock()).resolves.toBe(false);
   });
 
+  it("取れる前に抜けて入り直しても、点灯維持を1つも残さない", async () => {
+    const resolvers: Array<(sentinel: WakeLockSentinel) => void> = [];
+    let heldLocks = 0;
+    const makeSentinel = () => {
+      heldLocks++;
+      return {
+        release: async () => {
+          heldLocks--;
+        },
+      } as unknown as WakeLockSentinel;
+    };
+    const port = createSpeechPort({
+      ...env,
+      navigator: {
+        wakeLock: {
+          request: () =>
+            new Promise<WakeLockSentinel>(resolve => resolvers.push(resolve)),
+        },
+      },
+    });
+    const first = port.requestWakeLock();
+    port.releaseWakeLock();
+    const second = port.requestWakeLock();
+    resolvers[0](makeSentinel());
+    resolvers[1](makeSentinel());
+    await first;
+    await second;
+    await vi.runAllTimersAsync();
+    expect(heldLocks).toBe(1);
+    port.releaseWakeLock();
+    await vi.runAllTimersAsync();
+    expect(heldLocks).toBe(0);
+  });
+
   it("取れる前に解放を頼まれていたら、取れた直後に手放す", async () => {
     const port = createSpeechPort(env);
     const pending = port.requestWakeLock();

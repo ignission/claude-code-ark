@@ -100,6 +100,8 @@ vi.mock("../hooks/useVoiceMode", async () => {
       stopSpeaking: vi.fn(),
       expand: vi.fn(),
       resume: vi.fn(),
+      retryUnsent: vi.fn(),
+      dismissUnsent: vi.fn(),
       pushEvents: voiceDoubles.pushEvents,
     }),
   };

@@ -116,7 +116,8 @@ describe("reduceVoice", () => {
     });
     expect(held.state.phase).toBe("speaking");
     expect(held.state.speaking).toEqual([CONFIRM_ON_SCREEN]);
-    expect(held.state.notice).toBe("送っていません:「テストを直して」");
+    expect(held.state.unsent).toBe("テストを直して");
+    expect(held.state.notice).toBe("確認が出ていたので送っていません");
     const done = run(held.state, { type: "speechDone" });
     expect(done.state.phase).toBe("screen");
     expect(run(done.state, { type: "screenResolved" }).state.phase).toBe(
@@ -130,9 +131,8 @@ describe("reduceVoice", () => {
       guard: "disconnected",
     });
     expect(state.phase).toBe("ready");
-    expect(state.notice).toBe(
-      "接続が切れているため送っていません:「テストを直して」"
-    );
+    expect(state.unsent).toBe("テストを直して");
+    expect(state.notice).toBe("接続が切れていたので送っていません");
     expect(effects).toEqual([{ type: "abortRecognition" }]);
   });
 
@@ -214,7 +214,8 @@ describe("reduceVoice", () => {
       sentences: ["Claudeから質問です。"],
     });
     expect(state.phase).toBe("speaking");
-    expect(state.notice).toBe("送っていません:「テストを直して」");
+    expect(state.unsent).toBe("テストを直して");
+    expect(state.notice).toBe("質問が来たので送っていません");
     expect(effects).toEqual([
       { type: "abortRecognition" },
       { type: "speak", sentences: ["Claudeから質問です。"] },
@@ -267,7 +268,7 @@ describe("reduceVoice", () => {
     });
     expect(held.state.phase).toBe("paused");
     expect(held.effects).toEqual([]);
-    const resumed = run(held.state, { type: "resume" });
+    const resumed = run(held.state, { type: "resume", needsScreen: false });
     expect(resumed.state.phase).toBe("speaking");
     expect(resumed.effects).toEqual([
       { type: "speak", sentences: ["離れていた間の返答。"] },
@@ -276,7 +277,10 @@ describe("reduceVoice", () => {
 
   it("溜めた返答が無ければ、再開のタップで聞き取りを始める", () => {
     const paused = run(working, { type: "hidden" }).state;
-    const { state, effects } = run(paused, { type: "resume" });
+    const { state, effects } = run(paused, {
+      type: "resume",
+      needsScreen: false,
+    });
     expect(state.phase).toBe("listening");
     expect(effects).toEqual([{ type: "startRecognition", auto: false }]);
   });
@@ -296,5 +300,46 @@ describe("reduceVoice", () => {
       { type: "cancelSpeech" },
       { type: "releaseWakeLock" },
     ]);
+  });
+
+  it("送らなかった指示は、画面での操作を経ても「送る」か「消す」まで残る", () => {
+    const held = run(
+      confirming,
+      { type: "commit", guard: "awaiting" },
+      { type: "speechDone" }
+    ).state;
+    expect(held.phase).toBe("screen");
+    const resolved = run(held, { type: "screenResolved" }).state;
+    expect(resolved.unsent).toBe("テストを直して");
+    const expanded = run(held, { type: "expand" }).state;
+    expect(expanded.unsent).toBe("テストを直して");
+    const retried = run(resolved, { type: "retryUnsent", now: NOW });
+    expect(retried.state.phase).toBe("confirming");
+    expect(retried.state.transcript).toBe("テストを直して");
+    expect(retried.state.confirmDeadline).toBe(NOW + CONFIRM_MS);
+    expect(retried.state.unsent).toBeNull();
+    expect(run(resolved, { type: "dismissUnsent" }).state.unsent).toBeNull();
+  });
+
+  it("送れたら未送信の指示を消す", () => {
+    const withUnsent: VoiceState = { ...confirming, unsent: "前の指示" };
+    const { state } = run(withUnsent, { type: "commit", guard: null });
+    expect(state.unsent).toBeNull();
+  });
+
+  it("再開した時点で質問や確認が残っていれば、聞き取らずに画面での操作へ戻る", () => {
+    const paused = run(working, { type: "hidden" }).state;
+    const { state, effects } = run(paused, {
+      type: "resume",
+      needsScreen: true,
+    });
+    expect(state.phase).toBe("screen");
+    expect(effects).toEqual([]);
+    const withHeld = run(paused, {
+      type: "turnEnd",
+      sentences: ["返答。"],
+    }).state;
+    const resumed = run(withHeld, { type: "resume", needsScreen: true });
+    expect(resumed.state.afterSpeech).toBe("screen");
   });
 });

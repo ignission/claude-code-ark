@@ -84,6 +84,10 @@ export interface VoiceModeControls {
   expand: () => void;
   /** 一時停止 (画面が隠れた) から戻る。ユーザー操作の中で呼ぶ */
   resume: () => void;
+  /** 送らなかった指示を、送る直前の確認からやり直す */
+  retryUnsent: () => void;
+  /** 送らなかった指示を捨てる */
+  dismissUnsent: () => void;
   /**
    * 会話ビューの JSONL イベント列を受け取る (SplitChatPane の onEventsChange に渡す)。
    * hasSnapshot: 最初の履歴 (snapshot) が届いているか。届く前の空の列を起点にすると、
@@ -369,7 +373,24 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
     [dispatch]
   );
   const expand = useCallback(() => dispatch({ type: "expand" }), [dispatch]);
-  const resume = useCallback(() => dispatch({ type: "resume" }), [dispatch]);
+  // 再開した時点で質問カードか権限確認が残っていれば、聞き取らずに画面での操作へ戻す
+  // (聞き取りの全画面が回答カードを覆わないように)
+  const resume = useCallback(() => {
+    const current = optionsRef.current;
+    dispatch({
+      type: "resume",
+      needsScreen:
+        current.activeAuq !== null || current.bridgeStatus === "AWAITING",
+    });
+  }, [dispatch]);
+  const retryUnsent = useCallback(
+    () => dispatch({ type: "retryUnsent", now: Date.now() }),
+    [dispatch]
+  );
+  const dismissUnsent = useCallback(
+    () => dispatch({ type: "dismissUnsent" }),
+    [dispatch]
+  );
 
   return {
     state,
@@ -382,6 +403,8 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
     stopSpeaking,
     expand,
     resume,
+    retryUnsent,
+    dismissUnsent,
     pushEvents,
   };
 }

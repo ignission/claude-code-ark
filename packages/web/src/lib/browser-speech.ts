@@ -112,6 +112,8 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
   let watchdog: ReturnType<typeof setTimeout> | null = null;
   let wakeLock: WakeLockSentinel | null = null;
   let wakeLockWanted = false;
+  /** 点灯維持の要求の番号。抜けて入り直したときに、古い要求で取れた分を手放すため */
+  let wakeLockRequest = 0;
 
   const setAudioSession = (type: "playback" | "play-and-record") => {
     const session = env.navigator.audioSession;
@@ -265,14 +267,18 @@ export function createSpeechPort(env: SpeechEnvironment): SpeechPort {
       const lock = env.navigator.wakeLock;
       if (!lock) return false;
       wakeLockWanted = true;
+      wakeLockRequest++;
+      const mine = wakeLockRequest;
       try {
         const sentinel = await lock.request("screen");
-        if (!wakeLockWanted) {
-          // 取れる前に解放を頼まれていた
+        if (!wakeLockWanted || mine !== wakeLockRequest) {
+          // 取れる前に解放を頼まれていたか、後から出した要求がある。古い要求で取れた分は手放す
           void sentinel.release().catch(() => undefined);
-          return false;
+          return wakeLockWanted;
         }
+        const previous = wakeLock;
         wakeLock = sentinel;
+        if (previous) void previous.release().catch(() => undefined);
         return true;
       } catch {
         return false;

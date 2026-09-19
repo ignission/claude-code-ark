@@ -295,6 +295,37 @@ describe("useVoiceMode", () => {
     expect(controls.state.phase).toBe("screen");
   });
 
+  it("質問を読んだ後に一時停止しても、再開したら聞き取らずに画面での操作へ戻る", () => {
+    speakAndSend("テストを直して");
+    render({ activeAuq: AUQ, bridgeStatus: "AWAITING" });
+    port.finishSpeech();
+    expect(controls.state.phase).toBe("screen");
+    setVisibility("hidden");
+    setVisibility("visible");
+    const startsBefore = port.calls.filter(
+      c => c === "startRecognition"
+    ).length;
+    act(() => controls.resume());
+    expect(controls.state.phase).toBe("screen");
+    expect(port.calls.filter(c => c === "startRecognition").length).toBe(
+      startsBefore
+    );
+  });
+
+  it("送らなかった指示は「送る」で送信待ちからやり直す", () => {
+    act(() => controls.enter());
+    act(() => port.handlers?.onFinal("テストを直して"));
+    render({ isConnected: false });
+    act(() => vi.advanceTimersByTime(2000));
+    expect(controls.state.unsent).toBe("テストを直して");
+    render({ isConnected: true });
+    act(() => controls.retryUnsent());
+    expect(controls.state.phase).toBe("confirming");
+    act(() => vi.advanceTimersByTime(2000));
+    expect(props.onSendMessage).toHaveBeenCalledWith("テストを直して");
+    expect(controls.state.unsent).toBeNull();
+  });
+
   it("診断を送る", () => {
     const onDiagnostic = vi.fn();
     render({ onDiagnostic });

@@ -23,6 +23,8 @@ export interface VoiceModeOverlayProps {
   onStopSpeaking: () => void;
   onExpand: () => void;
   onResume: () => void;
+  onRetryUnsent: () => void;
+  onDismissUnsent: () => void;
 }
 
 export function voicePhaseLabel(
@@ -66,6 +68,8 @@ export function VoiceModeOverlay({
   onStopSpeaking,
   onExpand,
   onResume,
+  onRetryUnsent,
+  onDismissUnsent,
 }: VoiceModeOverlayProps) {
   if (state.phase === "off") return null;
   const label = voicePhaseLabel(state, bridgeStatus);
@@ -79,7 +83,10 @@ export function VoiceModeOverlay({
         className="fixed inset-x-3 top-[calc(env(safe-area-inset-top)+64px)] z-50 flex h-11 items-center gap-2 rounded-full bg-primary px-4 text-left text-[14px] font-semibold text-primary-foreground shadow-lg"
       >
         <Mic className="size-4 shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate">音声モード: {label}</span>
+        <span className="min-w-0 flex-1 truncate">
+          音声モード: {label}
+          {state.unsent !== null && "・未送信あり"}
+        </span>
         <span className="shrink-0 text-[13px] opacity-90">戻る</span>
       </button>
     );
@@ -138,6 +145,39 @@ export function VoiceModeOverlay({
         )}
         {state.notice && (
           <p className="text-[13px] text-muted-foreground">{state.notice}</p>
+        )}
+        {state.unsent !== null && (
+          <div
+            data-testid="voice-mode-unsent"
+            className="w-full max-w-sm rounded-lg border border-border bg-card p-3 text-left"
+          >
+            <p className="text-[12px] font-semibold text-muted-foreground">
+              送っていない指示
+            </p>
+            <p className="mt-1 whitespace-pre-wrap break-words text-[15px]">
+              {state.unsent}
+            </p>
+            {(state.phase === "ready" || state.phase === "working") && (
+              <div className="mt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={onDismissUnsent}
+                  aria-label="送っていない指示を消す"
+                  className="h-9 rounded-full px-4 text-[14px] font-semibold text-muted-foreground hover:bg-muted"
+                >
+                  消す
+                </button>
+                <button
+                  type="button"
+                  onClick={onRetryUnsent}
+                  aria-label="送っていない指示を送る"
+                  className="h-9 rounded-full bg-primary px-4 text-[14px] font-semibold text-primary-foreground"
+                >
+                  送る
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
       <div className="flex shrink-0 flex-wrap items-center justify-center gap-3 px-6 pt-4 pb-[calc(env(safe-area-inset-bottom)+24px)]">

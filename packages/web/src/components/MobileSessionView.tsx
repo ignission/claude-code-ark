@@ -1081,6 +1081,8 @@ export function MobileSessionView({
         onStopSpeaking={voice.stopSpeaking}
         onExpand={voice.expand}
         onResume={voice.resume}
+        onRetryUnsent={voice.retryUnsent}
+        onDismissUnsent={voice.dismissUnsent}
       />
     </div>
   );
