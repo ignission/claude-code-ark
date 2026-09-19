@@ -428,6 +428,7 @@ claude-code-ark/
 | `session:jsonl-unsubscribe` | `sessionId: string`           | JSONL 購読解除                   |
 | `session:jsonl-load-more` | `{ sessionId, limit }`          | 過去履歴を limit 行で snapshot 再送 |
 | `session:send-literal` | `{ sessionId, text }`              | Enter 無しの literal 送信（AUQ 自由入力用）|
+| `voice:diagnostic` | `{ sessionId, kind, detail }`           | 音声モードの診断。サーバーのログに1行出すだけ（本文は送らない） |
 | `diagram:comments:get` | `{ sessionId, relPath }, callback`  | 図のコメント sidecar を取得（コールバック） |
 | `diagram:comment:create` | `{ sessionId, relPath, operationId, anchorId, body, anchorQuote?, anchorOccurrence? }, callback` | コメント thread 作成 |
 | `diagram:comment:reply` | `{ sessionId, relPath, operationId, threadId, body }, callback` | thread へ返信 |

@@ -125,6 +125,7 @@ import { tmuxManager } from "./lib/tmux-manager.js";
 import { describeTmuxReadFailure } from "./lib/tmux-read-result.js";
 import { TunnelManager } from "./lib/tunnel.js";
 import { UsageCollector } from "./lib/usage-collector.js";
+import { formatVoiceDiagnostic } from "./lib/voice-diagnostic.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1789,6 +1790,13 @@ export async function startServer(
           error: getErrorMessage(error),
         });
       }
+    });
+
+    // 音声モード (iPhone) の診断。実機での認識エラーや、自動でマイクを開けたかを
+    // pm2 のログに1行残すだけ。保存も配信もしない
+    socket.on("voice:diagnostic", (data: unknown) => {
+      const line = formatVoiceDiagnostic(data);
+      if (line) console.log(line);
     });
 
     // ===== 図解キャンバス（board_open による表示 + 更新監視） =====
