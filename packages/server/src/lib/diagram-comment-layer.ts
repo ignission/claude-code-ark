@@ -909,7 +909,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
   var AUTHOR_LABELS={human:"人間",claude:"Claude"};
   var AUTHOR_TITLES={
     human:"人間が手を入れた本文",
-    claude:"Claude（エージェント）が書いた本文。人間の決定ではない"
+    claude:"Claude（エージェント）が書いた本文"
   };
   // バッジを中に入れると表示が崩れる要素は直前の兄弟に置く
   var AUTHOR_TABLE_SECTION_TAGS={THEAD:true,TBODY:true,TFOOT:true};
