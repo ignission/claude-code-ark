@@ -34,9 +34,20 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
     if(el)el.textContent=JSON.stringify(model);
   }
 
+  // data-ark-id の入れ子は正規の構造（作図規約の階層 prefix）。編集可能にするのは
+  // 他の data-ark-id を内包しない最内側の葉ブロックだけにする。祖先まで
+  // contenteditable にすると、本文をクリックして全選択 → 削除するだけで
+  // 複数ブロックが同時に消える上、入力イベントが祖先へもバブルして
+  // 祖先の data-ark-author まで human に上書きしてしまう（#C-1）。
+  // 副作用として、非葉ブロックの直下に地の文があってもそこは編集できないが、
+  // 作図規約は本文を葉ブロックへ置く形なので許容する。
+  function isLeafBlock(el){
+    return !el.closest("[data-ark-harness-ui]")&&!el.querySelector("[data-ark-id]");
+  }
+
   function blocks(){
     return Array.prototype.slice.call(document.querySelectorAll("[data-ark-id]"))
-      .filter(function(el){return !el.closest("[data-ark-harness-ui]");});
+      .filter(isLeafBlock);
   }
 
   /** 送信用 HTML: 編集層の DOM と contenteditable を落とす */
@@ -54,6 +65,7 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
     });
     clone.querySelectorAll(".ark-comment-anchor-active").forEach(function(el){
       el.classList.remove("ark-comment-anchor-active");
+      if(!el.classList.length)el.removeAttribute("class");
     });
     clone.querySelectorAll("[data-ark-harness-ui]").forEach(function(el){
       if(el.parentNode)el.parentNode.removeChild(el);
@@ -65,11 +77,7 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
       el.removeAttribute("data-ark-doc-wired");
     });
     // サーバーが配信時に足す CSP meta を保存前に落とす（焼き付き防止）。
-    // http-equiv の値そのものをここに書くと、注入する script のソースに
-    // その文字列が現れてしまう（doc 編集層は CSP を自分で書かない制約に抵触して見える）。
-    // doc の head に http-equiv meta を書く正当な理由は無いため、値を見ずに
-    // http-equiv を持つ meta を一律で落とす。
-    clone.querySelectorAll("meta[http-equiv]").forEach(function(el){
+    clone.querySelectorAll('meta[http-equiv="Content-Security-Policy" i]').forEach(function(el){
       if(el.parentNode)el.parentNode.removeChild(el);
     });
     return "<!doctype html>"+String.fromCharCode(10)+clone.outerHTML;
@@ -109,8 +117,31 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
       if(el.getAttribute("data-ark-doc-wired"))return;
       el.setAttribute("data-ark-doc-wired","1");
       el.contentEditable="true";
-      el.addEventListener("input",function(){stampAuthor(el);markDirty();});
     });
+  }
+
+  // 個別の anchor へ listener を付けるのではなく document へ1つだけ付け、
+  // event.target から最も近い data-ark-id を1個だけ stamp する（delegated）。
+  // 葉だけが contenteditable なので、入力の実際の発生源から closest すれば
+  // 常にその葉自身に解決する。将来ブロックが増減しても listener の張り直しが要らない。
+  function handleInput(event){
+    var target=event&&event.target;
+    var el=target&&target.closest?target.closest("[data-ark-id]"):null;
+    if(!el||!el.getAttribute("data-ark-doc-wired"))return;
+    stampAuthor(el);
+    markDirty();
+  }
+
+  // 他サイトからの貼り付けは inline style / class / img 等を本文へ持ち込み、
+  // そのままファイルへ永続化されてしまう。plain text だけを挿入する。
+  function handlePaste(event){
+    var target=event&&event.target;
+    var el=target&&target.closest?target.closest("[data-ark-id]"):null;
+    if(!el||!el.getAttribute("data-ark-doc-wired"))return;
+    event.preventDefault();
+    var clipboard=event.clipboardData||window.clipboardData;
+    var text=clipboard?clipboard.getData("text/plain"):"";
+    document.execCommand("insertText",false,text);
   }
 
   function syncModelNodes(){}
@@ -141,7 +172,13 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
     port.start();
   });
 
-  function start(){buildBar();wire();document.addEventListener("ark:doc-sync",syncModelNodes);}
+  function start(){
+    buildBar();
+    wire();
+    document.addEventListener("input",handleInput);
+    document.addEventListener("paste",handlePaste);
+    document.addEventListener("ark:doc-sync",syncModelNodes);
+  }
   if(document.readyState==="loading"){
     document.addEventListener("DOMContentLoaded",start);
   }else{
@@ -165,8 +202,17 @@ function minifiedLayer(): string {
   );
 }
 
+// マーカー文字列の bare な includes() だけだと、doc の本文にたまたま
+// "ark-diagram-doc-editor" という語が書かれているだけで、以後その board は
+// 無言で二度と注入されなくなる。comment layer（injectDiagramCommentLayer）と
+// 同じ堅さにする: 実際に注入済みの <script id="..."> タグがあるかで判定する。
+const INJECTED_SCRIPT_RE = new RegExp(
+  `<script[^>]*\\bid=["']${DIAGRAM_DOC_EDITOR_MARKER}["']`,
+  "i"
+);
+
 export function injectDiagramDocEditor(html: string): string {
-  if (html.includes(DIAGRAM_DOC_EDITOR_MARKER)) return html;
+  if (INJECTED_SCRIPT_RE.test(html)) return html;
   const layer = minifiedLayer();
   const closing = html.toLowerCase().lastIndexOf("</body>");
   if (closing === -1) return html + layer;
