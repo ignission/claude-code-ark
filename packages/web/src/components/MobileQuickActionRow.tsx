@@ -24,6 +24,7 @@ import type { MessageShortcut } from "@ark/shared";
 import {
   Copy,
   ImagePlus,
+  Mic,
   Paperclip,
   RefreshCw,
   SquareSlash,
@@ -57,6 +58,8 @@ export interface MobileQuickActionRowProps {
   onSendMessage: (message: string) => void;
   /** 「ショートカットを管理」を選んだとき。ダイアログは呼び出し側が開く */
   onManageShortcuts: () => void;
+  /** 音声モードに入る。iOSはこのタップの中でしか認識を始めさせないので、そのまま呼ぶ */
+  onStartVoice?: () => void;
   onAttachFile?: () => void;
   onPasteImage?: () => void;
   /** 以下は端末モードだけの操作。未指定の操作は出さない */
@@ -69,6 +72,7 @@ export function MobileQuickActionRow({
   messageShortcuts,
   onSendMessage,
   onManageShortcuts,
+  onStartVoice,
   onAttachFile,
   onPasteImage,
   onCopyBuffer,
@@ -76,6 +80,17 @@ export function MobileQuickActionRow({
 }: MobileQuickActionRowProps) {
   return (
     <div data-testid="mobile-quick-actions" className="flex items-center gap-1">
+      {actions.includes("voice-mode") && onStartVoice && (
+        <button
+          type="button"
+          aria-label="音声モード"
+          title="音声モード"
+          onClick={onStartVoice}
+          className={TOUCH_ICON_BUTTON}
+        >
+          <Mic className="size-5" aria-hidden="true" />
+        </button>
+      )}
       {actions.includes("attach-file") && onAttachFile && (
         <button
           type="button"

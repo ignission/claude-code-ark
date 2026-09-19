@@ -76,4 +76,32 @@ describe("mobileQuickActions", () => {
       "slash-commands",
     ]);
   });
+  it("会話モードで音声が使えるときは、音声モードを先頭に出す", () => {
+    expect(
+      mobileQuickActions({
+        viewMode: "chat",
+        canUploadFile: true,
+        canCopyBuffer: true,
+        canUseVoice: true,
+      })
+    ).toEqual([
+      "voice-mode",
+      "paste-image",
+      "message-shortcuts",
+      "slash-commands",
+    ]);
+  });
+
+  it("端末モードと図モードでは、音声が使えても音声モードを出さない", () => {
+    for (const viewMode of ["terminal", "board"] as const) {
+      expect(
+        mobileQuickActions({
+          viewMode,
+          canUploadFile: false,
+          canCopyBuffer: false,
+          canUseVoice: true,
+        })
+      ).not.toContain("voice-mode");
+    }
+  });
 });

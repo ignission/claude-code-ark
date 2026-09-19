@@ -33,6 +33,7 @@ interface ObservedChatProps {
   layout?: "pane" | "mobile";
   composerAccessory?: ReactNode;
   onActiveAuqChange?: (auq: ActiveAuq | null) => void;
+  onEventsChange?: (events: unknown[]) => void;
   ref?: Ref<SplitChatPaneHandle>;
 }
 
@@ -78,6 +79,30 @@ vi.mock("../hooks/useTerminalLinkInjection", () => ({
 vi.mock("../hooks/useTtydReconnect", () => ({
   useTtydReconnect: () => undefined,
 }));
+
+const voiceDoubles = vi.hoisted(() => ({
+  supported: false,
+  enter: vi.fn(),
+  pushEvents: vi.fn(),
+}));
+
+vi.mock("../hooks/useVoiceMode", async () => {
+  const { INITIAL_VOICE_STATE } = await import("../lib/voice-mode-machine");
+  return {
+    useVoiceMode: () => ({
+      state: INITIAL_VOICE_STATE,
+      supported: voiceDoubles.supported,
+      enter: voiceDoubles.enter,
+      exit: vi.fn(),
+      tapMic: vi.fn(),
+      cancel: vi.fn(),
+      sendNow: vi.fn(),
+      stopSpeaking: vi.fn(),
+      expand: vi.fn(),
+      pushEvents: voiceDoubles.pushEvents,
+    }),
+  };
+});
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
@@ -198,6 +223,9 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear();
   testDoubles.splitChatPane.mockClear();
+  voiceDoubles.supported = false;
+  voiceDoubles.enter.mockClear();
+  voiceDoubles.pushEvents.mockClear();
   testDoubles.chatOpenFilePicker.mockClear();
   testDoubles.chatPasteImage.mockClear();
   toastDoubles.success.mockClear();
@@ -939,5 +967,29 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
 
     const menu = document.body.querySelector('[role="menu"]');
     expect(menu?.querySelectorAll('[role="separator"]')).toHaveLength(1);
+  });
+});
+
+describe("MobileSessionView の音声モード", () => {
+  it("音声が使えるブラウザでは、会話モードの1タップ操作に音声モードを出し、押すと入る", () => {
+    voiceDoubles.supported = true;
+    const container = mount(<MobileSessionView {...makeProps()} />);
+    const voiceButton = container.querySelector(
+      'button[aria-label="音声モード"]'
+    );
+    click(voiceButton);
+    expect(voiceDoubles.enter).toHaveBeenCalledTimes(1);
+  });
+
+  it("音声が使えないブラウザでは音声モードを出さない", () => {
+    const container = mount(<MobileSessionView {...makeProps()} />);
+    expect(
+      container.querySelector('button[aria-label="音声モード"]')
+    ).toBeNull();
+  });
+
+  it("会話ビューのイベント列を音声モードへ渡す", () => {
+    mount(<MobileSessionView {...makeProps()} />);
+    expect(latestChatProps().onEventsChange).toBe(voiceDoubles.pushEvents);
   });
 });

@@ -195,6 +195,7 @@ task.md 規約・復唱・失敗の自動収集・セッション lifecycle を�
 | Git Worktree管理       | 一覧表示、作成、削除                                                        |
 | セッション管理         | tmux + ttydベースの起動、停止、復元、状態管理                               |
 | チャットビュー           | JSONL tail ベースの会話描画 + pending reconcile + AskUserQuestion カード + slash 補完 + busy/AWAITING 表示（PC は `SplitViewPane` の左ペイン、モバイルは `MobileSessionView`。どちらも🖥/💬トグルで ttyd 表示と切替） |
+| 音声モード（iPhone）   | 会話モードの1タップ操作から全画面の音声モードに入る。話した指示を2秒の取り消し猶予つきで送り、Claude がターンを終えた返答（JSONL の `stop_reason: "end_turn"`）を読み上げる。質問・権限確認は読み上げて画面での操作に回す。ブラウザ内蔵の音声認識・読み上げだけを使い、画面を点けて前面に出している間だけ動く |
 | セッションボード       | worktree の `.claude/diagrams/*.diagram.html`（意味モデル + HTML 投影）を表示する図解ペイン（右ペインタブ・PC のみ）。Claude が MCP ツール `board_open` で開き、ファイル更新を検知して自動再読込する |
 | Webターミナル          | ttyd iframeによるフルターミナル体験（PC は左ペインの既定、モバイルは🖥/💬トグルでチャットビューと切替） |
 | マルチペインビュー     | 複数セッションの同時表示（1列 / 2x2グリッド切り替え）                       |
