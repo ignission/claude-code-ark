@@ -114,6 +114,17 @@ interface Transition {
 
 const unchanged = (state: VoiceState): Transition => ({ state, effects: [] });
 
+/**
+ * 送れなかった指示を、前の未送信の指示につなげる。改行でつなぐと、tmux に送ったときに途中の改行で
+ * 送信が確定しうるので「。」でつなぐ
+ */
+function appendUnsent(previous: string | null, text: string): string {
+  if (previous === null) return text;
+  return /[。！？!?]$/.test(previous)
+    ? `${previous}${text}`
+    : `${previous}。${text}`;
+}
+
 function speak(
   state: VoiceState,
   sentences: string[],
@@ -309,7 +320,7 @@ export function reduceVoice(
       const stop: VoiceEffect = { type: "abortRecognition" };
       if (action.guard === "awaiting") {
         return speak(
-          { ...state, unsent: text },
+          { ...state, unsent: appendUnsent(state.unsent, text) },
           [CONFIRM_ON_SCREEN],
           "screen",
           [stop],
@@ -318,7 +329,7 @@ export function reduceVoice(
       }
       if (action.guard === "disconnected") {
         return toReady(
-          { ...state, unsent: text },
+          { ...state, unsent: appendUnsent(state.unsent, text) },
           [stop],
           "接続が切れていたので送っていません"
         );
@@ -377,7 +388,8 @@ export function reduceVoice(
           state: {
             ...state,
             speaking: [...state.speaking, ...action.sentences],
-            afterSpeech: "listen",
+            // 質問を読んでいる途中なら、読み終えたら画面での操作へ移る予定を残す
+            afterSpeech: state.afterSpeech === "screen" ? "screen" : "listen",
           },
           effects: [{ type: "speak", sentences: action.sentences }],
         };
@@ -402,7 +414,9 @@ export function reduceVoice(
         state.phase === "listening" || state.phase === "confirming";
       const wasConfirming = state.phase === "confirming";
       return speak(
-        wasConfirming ? { ...state, unsent: state.transcript } : state,
+        wasConfirming
+          ? { ...state, unsent: appendUnsent(state.unsent, state.transcript) }
+          : state,
         action.sentences,
         "screen",
         interrupted ? [{ type: "abortRecognition" }] : [],

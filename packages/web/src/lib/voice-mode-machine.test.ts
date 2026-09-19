@@ -328,6 +328,33 @@ describe("reduceVoice", () => {
     expect(run(resolved, { type: "dismissUnsent" }).state.unsent).toBeNull();
   });
 
+  it("質問を読んでいる途中に返答が届いても、読み終えたら画面での操作へ移る", () => {
+    const asked = run(working, {
+      type: "question",
+      sentences: ["Claudeから質問です。"],
+    }).state;
+    const appended = run(asked, {
+      type: "turnEnd",
+      sentences: ["返答。"],
+    }).state;
+    expect(appended.afterSpeech).toBe("screen");
+    expect(run(appended, { type: "speechDone" }).state.phase).toBe("screen");
+  });
+
+  it("送れない指示が続いたら、前の指示につなげて残す", () => {
+    const first = run(confirming, {
+      type: "commit",
+      guard: "disconnected",
+    }).state;
+    const second = run(
+      first,
+      { type: "tapMic" },
+      { type: "final", text: "テストも足して", now: NOW },
+      { type: "commit", guard: "disconnected" }
+    ).state;
+    expect(second.unsent).toBe("テストを直して。テストも足して");
+  });
+
   it("別の指示を送っても、送っていない指示は「送る」か「消す」まで残す", () => {
     const withUnsent: VoiceState = { ...confirming, unsent: "前の指示" };
     const { state, effects } = run(withUnsent, { type: "commit", guard: null });
