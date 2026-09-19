@@ -33,7 +33,7 @@ export function refreshDocLabels(
       // (diagram-doc-blocks.ts の textOf)。それで label を上書きすると、
       // 人間が書いた見出し的な label が子孫の地の文のこだまで静かに消える
       // (describeDocBodyChanges が容器を報告から外すのと同じ理由)
-      if (!block || block.text === "" || isContainerBlock(block.html)) {
+      if (!block || isContainerBlock(block.html)) {
         return node;
       }
       return { ...node, label: excerpt(block.text) };

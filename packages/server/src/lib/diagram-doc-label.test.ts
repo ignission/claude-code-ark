@@ -40,10 +40,12 @@ describe("refreshDocLabels", () => {
     );
   });
 
-  it("本文が空のブロックは label を変えない", () => {
+  it("空の葉ブロックは label も空になる", () => {
+    // 葉ブロックの text が空になったのに古い label を残すと、anchorQuote 無しで
+    // 作ったコメントの anchorText（board_comments）が削除前の本文を指したままになる
     const html = `<p data-ark-id="p1"></p>`;
-    expect(refreshDocLabels(docModel("のこす"), html).nodes[0]?.label).toBe(
-      "のこす"
+    expect(refreshDocLabels(docModel("ふるい抜粋"), html).nodes[0]?.label).toBe(
+      ""
     );
   });
 
