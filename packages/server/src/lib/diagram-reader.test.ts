@@ -4,6 +4,7 @@ import path from "node:path";
 import { DIAGRAM_DIR } from "@ark/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DIAGRAM_COMMENT_LAYER_MARKER } from "./diagram-comment-layer.js";
+import { DIAGRAM_DOC_EDITOR_MARKER } from "./diagram-doc-editor.js";
 import { DIAGRAM_CSP } from "./diagram-file.js";
 import { DIAGRAM_HARNESS_MARKER } from "./diagram-harness.js";
 import { readDiagram, readDiagramModel } from "./diagram-reader.js";
@@ -87,13 +88,15 @@ describe("readDiagram", () => {
       expect(result.html).toContain(DIAGRAM_CSP);
       expect(occurrences(result.html, DIAGRAM_HARNESS_MARKER)).toBe(1);
       expect(occurrences(result.html, DIAGRAM_COMMENT_LAYER_MARKER)).toBe(1);
+      // doc 編集層は doc 専用。graph には入らない
+      expect(occurrences(result.html, DIAGRAM_DOC_EDITOR_MARKER)).toBe(0);
       expect(result.html).toContain('data-ark-comment-mode="graph"');
       expect(result.html).toContain('data-ark-container="graph"');
       expect(Buffer.byteLength(result.html, "utf8")).toBeLessThan(128 * 1024);
     }
   });
 
-  it("doc は CSP とコメント層だけを注入する", async () => {
+  it("doc は CSP と本文編集層・コメント層を注入する", async () => {
     const docModel = JSON.stringify({
       version: 1,
       type: "doc",
@@ -113,6 +116,8 @@ describe("readDiagram", () => {
     if (result.ok) {
       expect(result.html).toContain(DIAGRAM_CSP);
       expect(occurrences(result.html, DIAGRAM_COMMENT_LAYER_MARKER)).toBe(1);
+      // doc は本文編集層も乗る（graph の編集ハーネスとは別物）
+      expect(occurrences(result.html, DIAGRAM_DOC_EDITOR_MARKER)).toBe(1);
       expect(occurrences(result.html, DIAGRAM_HARNESS_MARKER)).toBe(0);
       expect(result.html).toContain('data-ark-comment-mode="doc"');
     }
