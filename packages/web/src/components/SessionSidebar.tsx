@@ -6,13 +6,22 @@
  * About (CPU/MEM/DISKとBridgeへのリンクを含む) はワードマークのメニューから開く。
  */
 
-import { ChevronDown, Globe, Info, Plus } from "lucide-react";
+import type { Screen } from "@ark/shared";
+import {
+  ChevronDown,
+  Globe,
+  Info,
+  Monitor,
+  Plus,
+  Settings,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -29,6 +38,11 @@ type SessionSidebarProps = Omit<SessionSectionListProps, "variant"> & {
   isBrowserSelected?: boolean;
   isRemote?: boolean;
   notificationControl?: ReactNode;
+  /** リモート画面。onOpenScreenManager が無ければメニューを出さない */
+  screens?: Screen[];
+  selectedScreenId?: string | null;
+  onSelectScreen?: (id: string) => void;
+  onOpenScreenManager?: () => void;
 };
 
 export function SessionSidebar({
@@ -38,6 +52,10 @@ export function SessionSidebar({
   isBrowserSelected = false,
   isRemote = false,
   notificationControl,
+  screens = [],
+  selectedScreenId = null,
+  onSelectScreen,
+  onOpenScreenManager,
   ...listProps
 }: SessionSidebarProps) {
   return (
@@ -76,6 +94,38 @@ export function SessionSidebar({
           <Plus className="size-5" />
         </Button>
         {notificationControl}
+        {onOpenScreenManager && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant={selectedScreenId ? "default" : "ghost"}
+                size="icon"
+                className="h-8 w-8"
+                aria-label="画面"
+                aria-pressed={selectedScreenId !== null}
+                title="画面"
+              >
+                <Monitor className="size-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              {screens.map(screen => (
+                <DropdownMenuItem
+                  key={screen.id}
+                  onSelect={() => onSelectScreen?.(screen.id)}
+                >
+                  <Monitor />
+                  {screen.name}
+                </DropdownMenuItem>
+              ))}
+              {screens.length > 0 && <DropdownMenuSeparator />}
+              <DropdownMenuItem onSelect={onOpenScreenManager}>
+                <Settings />
+                画面の管理...
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         {isRemote && onSelectBrowser && (
           <Button
             variant={isBrowserSelected ? "default" : "ghost"}

@@ -18,6 +18,8 @@ import { NotificationPermissionButton } from "@/components/NotificationPermissio
 import { ProfileManagerDialog } from "@/components/ProfileManagerDialog";
 import { RepoGridView } from "@/components/RepoGridView";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
+import { ScreenManagerDialog } from "@/components/ScreenManagerDialog";
+import { ScreenPane } from "@/components/ScreenPane";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
 import { SplitViewPane } from "@/components/SplitViewPane";
@@ -50,6 +52,10 @@ import {
   createDiagramOpenRequest,
   type DiagramOpenRequest,
 } from "@/lib/mobile-session-view-mode";
+import {
+  parseScreenSelection,
+  screenSelectionId,
+} from "@/lib/screen-selection";
 import {
   createSessionNotificationEnabledChangeHandler,
   isNotificationEnabledForSession,
@@ -130,6 +136,12 @@ export default function Dashboard() {
     browserSessions,
     startBrowser,
     navigateBrowser,
+    screens,
+    screensLoaded,
+    createScreen,
+    updateScreen,
+    deleteScreen,
+    requestScreenCredentials,
     profiles,
     repoProfileLinks,
     worktreeProfileLinks,
@@ -174,6 +186,29 @@ export default function Dashboard() {
   // ブラウザビューを一度でも開いたかどうかのフラグ
   // 一度開いたら常に描画してdisplay:hiddenで切り替え、BrowserPaneの再マウント（VNC再接続）を防ぐ
   const [hasBrowserOpened, setHasBrowserOpened] = useState(false);
+
+  // 一度開いた画面の id。開いた ScreenPane はマウントしたまま display で切り替える。
+  // リロードで復元された選択は openedScreenIds に無いので、描画条件は
+  // 「開いたことがある or いま選択中」にする
+  const [openedScreenIds, setOpenedScreenIds] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [showScreenManager, setShowScreenManager] = useState(false);
+  const selectedScreenId = parseScreenSelection(selectedSessionId);
+
+  const handleSelectScreen = useCallback((id: string) => {
+    setSelectedSessionId(screenSelectionId(id));
+    setOpenedScreenIds(prev => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }, []);
+
+  // 削除された画面を選択中なら選択を外す。screen:list を受ける前は
+  // 復元した選択を早まって外さない (sessionsLoaded と同じ扱い)
+  useEffect(() => {
+    if (!screensLoaded || !selectedScreenId) return;
+    if (!screens.some(s => s.id === selectedScreenId)) {
+      setSelectedSessionId(null);
+    }
+  }, [screens, screensLoaded, selectedScreenId]);
 
   // リポジトリ別セッショングリッドビュー (B案: スナップショット型)
   // null 以外のとき main 領域は RepoGridView に切り替わる。
@@ -515,8 +550,8 @@ export default function Dashboard() {
 
   // セッション自動選択
   useEffect(() => {
-    // ブラウザ選択中はリセットしない
-    if (selectedSessionId === "browser") return;
+    // ブラウザ・画面の選択中はリセットしない
+    if (selectedSessionId === "browser" || selectedScreenId) return;
 
     // グリッドビュー表示中は自動選択を抑制 (ユーザーがセルクリックで明示的に選ぶ)
     if (!selectedSessionId && sessions.size > 0 && !gridRepoPath) {
@@ -534,7 +569,13 @@ export default function Dashboard() {
       const remaining = Array.from(sessions.values());
       setSelectedSessionId(remaining.length > 0 ? remaining[0].id : null);
     }
-  }, [sessions, sessionsLoaded, selectedSessionId, gridRepoPath]);
+  }, [
+    sessions,
+    sessionsLoaded,
+    selectedSessionId,
+    gridRepoPath,
+    selectedScreenId,
+  ]);
 
   useEffect(() => {
     if (deletedWorktreeId) {
@@ -771,6 +812,10 @@ export default function Dashboard() {
               isBrowserSelected={selectedSessionId === "browser"}
               isRemote={isRemote}
               notificationControl={notificationControl}
+              screens={screens}
+              selectedScreenId={selectedScreenId}
+              onSelectScreen={handleSelectScreen}
+              onOpenScreenManager={() => setShowScreenManager(true)}
             />
           }
           main={
@@ -828,6 +873,27 @@ export default function Dashboard() {
                     )}
                   </div>
                 )}
+                {/* リモート画面: 一度開いた画面はマウントしたまま display で切り替え、
+                    再接続を防ぐ (ブラウザビューと同じ) */}
+                {screens
+                  .filter(
+                    screen =>
+                      openedScreenIds.has(screen.id) ||
+                      selectedScreenId === screen.id
+                  )
+                  .map(screen => (
+                    <div
+                      key={screen.id}
+                      className={
+                        selectedScreenId === screen.id ? "h-full" : "hidden"
+                      }
+                    >
+                      <ScreenPane
+                        screen={screen}
+                        requestCredentials={requestScreenCredentials}
+                      />
+                    </div>
+                  ))}
                 {Array.from(sessions.values()).map(session => {
                   const isActive = selectedSessionId === session.id;
                   const wt = worktrees.find(w => w.id === session.worktreeId);
@@ -1108,6 +1174,15 @@ export default function Dashboard() {
           onDelete={deleteProfile}
         />
       )}
+
+      <ScreenManagerDialog
+        open={showScreenManager}
+        onOpenChange={setShowScreenManager}
+        screens={screens}
+        onCreate={createScreen}
+        onUpdate={updateScreen}
+        onDelete={deleteScreen}
+      />
 
       {/* About Ark (同梱バイナリ LICENSE 一覧) */}
       <AboutDialog

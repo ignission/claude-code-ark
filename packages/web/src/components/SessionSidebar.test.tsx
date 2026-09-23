@@ -29,6 +29,7 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuContent: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
+  DropdownMenuSeparator: () => <hr />,
   DropdownMenuItem: ({
     children,
     onSelect,
@@ -120,5 +121,58 @@ describe("SessionSidebar", () => {
     expect(listProps.onSelectRepoGrid).toBe(props.onSelectRepoGrid);
     expect(listProps).not.toHaveProperty("onNewSession");
     expect(listProps).not.toHaveProperty("onOpenAbout");
+  });
+
+  it("画面メニューから登録済みの画面を選び、管理ダイアログを開ける", () => {
+    const props = {
+      ...sidebarProps(),
+      screens: [
+        {
+          id: "s1",
+          name: "ビルド VM",
+          sshHost: "build.example.internal",
+          sshPort: 22,
+          sshUser: "user",
+          vncHost: "127.0.0.1",
+          vncPort: 5900,
+          vncUser: "user",
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ],
+      selectedScreenId: null,
+      onSelectScreen: vi.fn(),
+      onOpenScreenManager: vi.fn(),
+    };
+    const container = mount(<SessionSidebar {...props} />);
+
+    expect(container.querySelector('button[aria-label="画面"]')).not.toBeNull();
+    const items = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("[data-menu-item]")
+    );
+    act(() => items.find(i => i.textContent === "ビルド VM")?.click());
+    expect(props.onSelectScreen).toHaveBeenCalledWith("s1");
+
+    act(() => items.find(i => i.textContent === "画面の管理...")?.click());
+    expect(props.onOpenScreenManager).toHaveBeenCalledTimes(1);
+  });
+
+  it("画面が未登録でも管理の項目だけは出す", () => {
+    const props = {
+      ...sidebarProps(),
+      screens: [],
+      onSelectScreen: vi.fn(),
+      onOpenScreenManager: vi.fn(),
+    };
+    const container = mount(<SessionSidebar {...props} />);
+    const items = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("[data-menu-item]")
+    ).map(i => i.textContent);
+    expect(items).toContain("画面の管理...");
+  });
+
+  it("onOpenScreenManager が無ければ画面メニューを出さない", () => {
+    const container = mount(<SessionSidebar {...sidebarProps()} />);
+    expect(container.querySelector('button[aria-label="画面"]')).toBeNull();
   });
 });

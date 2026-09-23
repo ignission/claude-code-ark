@@ -100,6 +100,7 @@ vi.mock("@/components/AboutDialog", () => ({
   },
 }));
 vi.mock("@/components/BrowserPane", () => ({ BrowserPane: () => null }));
+vi.mock("@/components/ScreenPane", () => ({ ScreenPane: () => null }));
 vi.mock("@/components/CreateWorktreeDialog", () => ({
   CreateWorktreeDialog: () => null,
 }));
@@ -226,6 +227,12 @@ function socketState(session: ManagedSession): Record<string, unknown> {
     browserSessions: new Map(),
     startBrowser: fn,
     navigateBrowser: fn,
+    screens: [],
+    screensLoaded: true,
+    createScreen: vi.fn(),
+    updateScreen: vi.fn(),
+    deleteScreen: vi.fn(),
+    requestScreenCredentials: vi.fn().mockResolvedValue(null),
     profiles: [],
     repoProfileLinks: new Map(),
     worktreeProfileLinks: new Map(),
