@@ -1,4 +1,4 @@
-import type { Screen, ScreenCredentials } from "@ark/shared";
+import type { Screen, ScreenCredentialsResult } from "@ark/shared";
 import RFB from "@novnc/novnc";
 import { Loader2, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -7,8 +7,8 @@ import { buildScreenWsUrl } from "@/lib/auth-token";
 
 interface ScreenPaneProps {
   screen: Screen;
-  /** 接続の直前に 1 回だけ呼ぶ。未登録なら null */
-  requestCredentials: (id: string) => Promise<ScreenCredentials | null>;
+  /** 接続の直前に 1 回だけ呼ぶ。未登録とサーバー不達を区別して返す */
+  requestCredentials: (id: string) => Promise<ScreenCredentialsResult>;
 }
 
 type Status =
@@ -17,6 +17,10 @@ type Status =
   | { kind: "disconnected"; reason: string };
 
 const DEFAULT_ERROR_REASON = "接続に失敗しました";
+const UNREGISTERED_REASON =
+  "画面の設定が見つかりません。画面の管理から登録し直してください";
+const UNAVAILABLE_REASON =
+  "サーバーに繋がりません。しばらくしてから再接続してください";
 
 /**
  * リモート画面 (noVNC)。
@@ -47,6 +51,7 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
     let cancelled = false;
     let ws: WebSocket | null = null;
     let rfb: RFB | null = null;
+    let sizeObserver: ResizeObserver | null = null;
     // RFB が disconnect イベントを一度でも出したかどうか。既に切断済みの RFB へ
     // cleanup 側から重ねて disconnect() を呼ぶと noVNC がエラーログを出すため、
     // その二重切断を避ける目印に使う
@@ -59,16 +64,38 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
       setStatus({ kind: "disconnected", reason });
     };
 
+    // 隠していたペインが戻ってきたとき、倍率を組み直させる保険。
+    // 表示の側 (Dashboard / MobileLayout) は display:none ではなく
+    // visibility で隠してサイズを保つが、それでも 0 で計算された状態に
+    // 落ちていたら、ここで scaleViewport を入れ直して再計算させる
+    // (noVNC の setter は毎回 _updateScale() を呼ぶので、代入するだけでよい)
+    const observeSize = (target: HTMLElement) => {
+      if (typeof ResizeObserver === "undefined") return;
+      let hadSize = target.clientWidth > 0 && target.clientHeight > 0;
+      sizeObserver = new ResizeObserver(() => {
+        const hasSize = target.clientWidth > 0 && target.clientHeight > 0;
+        // 0 → 非 0 の遷移だけを拾う (毎回の resize は noVNC 自身が見ている)
+        if (hasSize && !hadSize && !cancelled && !ended && rfb) {
+          rfb.scaleViewport = true;
+        }
+        hadSize = hasSize;
+      });
+      sizeObserver.observe(target);
+    };
+
     const run = async () => {
       try {
-        const creds = await requestCredentialsRef.current(screen.id);
+        const result = await requestCredentialsRef.current(screen.id);
         if (cancelled) return;
-        if (!creds) {
-          fail(
-            "画面の設定が見つかりません。画面の管理から登録し直してください"
-          );
+        if (result.kind === "unregistered") {
+          fail(UNREGISTERED_REASON);
           return;
         }
+        if (result.kind === "unavailable") {
+          fail(UNAVAILABLE_REASON);
+          return;
+        }
+        const creds = result.credentials;
 
         let closeReason = "";
         let securityReason = "";
@@ -89,6 +116,7 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
         rfb.addEventListener("securityfailure", event => {
           securityReason = `認証に失敗しました (${event.detail.reason ?? "理由不明"})`;
         });
+        observeSize(container);
         rfb.addEventListener("disconnect", event => {
           ended = true;
           if (cancelled) return;
@@ -114,6 +142,7 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
 
     return () => {
       cancelled = true;
+      sizeObserver?.disconnect();
       if (rfb && !ended) rfb.disconnect();
     };
   }, [screen.id, attempt]);

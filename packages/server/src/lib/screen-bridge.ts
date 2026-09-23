@@ -187,8 +187,10 @@ export class ScreenBridge {
         child.kill("SIGTERM");
       }
     }
+    // 終了経路なので graceful close (close frame の往復) は待たない。
+    // 相手が応答しないと ws は最大 30 秒 socket を握ったままになる
     for (const ws of this.sockets) {
-      ws.close(1001, "server shutdown");
+      ws.terminate();
     }
     this.children.clear();
     this.sockets.clear();

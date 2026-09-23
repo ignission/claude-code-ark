@@ -65,6 +65,7 @@ class FakeWebSocket extends EventTarget {
   send() {}
 }
 
+import type { ScreenCredentialsResult } from "@ark/shared";
 import { ScreenPane } from "./ScreenPane";
 
 const screenFixture = {
@@ -79,6 +80,10 @@ const screenFixture = {
   createdAt: 0,
   updatedAt: 0,
 };
+
+function okCredentials(): ScreenCredentialsResult {
+  return { kind: "ok", credentials: { username: "user", password: "pw" } };
+}
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
@@ -127,9 +132,7 @@ afterEach(() => {
 
 describe("ScreenPane", () => {
   it("credentials を取ってから RFB を作り、接続中の表示を出す", async () => {
-    const requestCredentials = vi
-      .fn()
-      .mockResolvedValue({ username: "user", password: "pw" });
+    const requestCredentials = vi.fn().mockResolvedValue(okCredentials());
     const { container } = mount(
       <ScreenPane
         screen={screenFixture}
@@ -155,9 +158,7 @@ describe("ScreenPane", () => {
   });
 
   it("切断されたら WebSocket の close reason を出し、再接続ボタンで繋ぎ直す", async () => {
-    const requestCredentials = vi
-      .fn()
-      .mockResolvedValue({ username: "user", password: "pw" });
+    const requestCredentials = vi.fn().mockResolvedValue(okCredentials());
     const { container } = mount(
       <ScreenPane
         screen={screenFixture}
@@ -190,9 +191,7 @@ describe("ScreenPane", () => {
   });
 
   it("接続中に screen が変わったら前の RFB を切断してから繋ぎ直す", async () => {
-    const requestCredentials = vi
-      .fn()
-      .mockResolvedValue({ username: "user", password: "pw" });
+    const requestCredentials = vi.fn().mockResolvedValue(okCredentials());
     const { root } = mount(
       <ScreenPane
         screen={screenFixture}
@@ -220,9 +219,7 @@ describe("ScreenPane", () => {
   });
 
   it("認証失敗は securityfailure の理由を出す", async () => {
-    const requestCredentials = vi
-      .fn()
-      .mockResolvedValue({ username: "user", password: "pw" });
+    const requestCredentials = vi.fn().mockResolvedValue(okCredentials());
     const { container } = mount(
       <ScreenPane
         screen={screenFixture}
@@ -243,8 +240,10 @@ describe("ScreenPane", () => {
     expect(container.textContent).toContain("Authentication failed");
   });
 
-  it("credentials が無ければ設定を促す", async () => {
-    const requestCredentials = vi.fn().mockResolvedValue(null);
+  it("登録が消えていれば設定を促す", async () => {
+    const requestCredentials = vi
+      .fn()
+      .mockResolvedValue({ kind: "unregistered" });
     const { container } = mount(
       <ScreenPane
         screen={screenFixture}
@@ -254,6 +253,26 @@ describe("ScreenPane", () => {
     await flush();
     expect(doubles.instances).toHaveLength(0);
     expect(container.textContent).toContain("画面の設定が見つかりません");
+  });
+
+  it("サーバーに届かなければ登録の案内ではなく再接続を促す", async () => {
+    const requestCredentials = vi
+      .fn()
+      .mockResolvedValue({ kind: "unavailable" });
+    const { container } = mount(
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials}
+      />
+    );
+    await flush();
+    expect(doubles.instances).toHaveLength(0);
+    expect(container.textContent).toContain("サーバーに繋がりません");
+    expect(container.textContent).not.toContain("画面の設定が見つかりません");
+    const retry = Array.from(container.querySelectorAll("button")).find(
+      b => b.textContent === "再接続"
+    );
+    expect(retry).toBeTruthy();
   });
 
   it("credentials 取得が失敗したら理由を出し、再接続ボタンで繋ぎ直せる", async () => {
@@ -279,9 +298,7 @@ describe("ScreenPane", () => {
 
   it("RFB の初期化に失敗したら WebSocket を閉じて理由を出す", async () => {
     doubles.throwNextConstruct = true;
-    const requestCredentials = vi
-      .fn()
-      .mockResolvedValue({ username: "user", password: "pw" });
+    const requestCredentials = vi.fn().mockResolvedValue(okCredentials());
     const { container } = mount(
       <ScreenPane
         screen={screenFixture}
@@ -297,9 +314,7 @@ describe("ScreenPane", () => {
   });
 
   it("requestCredentials の identity が変わっても繋ぎ直さない", async () => {
-    const requestCredentials1 = vi
-      .fn()
-      .mockResolvedValue({ username: "user", password: "pw" });
+    const requestCredentials1 = vi.fn().mockResolvedValue(okCredentials());
     const { root } = mount(
       <ScreenPane
         screen={screenFixture}
@@ -309,9 +324,7 @@ describe("ScreenPane", () => {
     await flush();
     expect(doubles.instances).toHaveLength(1);
 
-    const requestCredentials2 = vi
-      .fn()
-      .mockResolvedValue({ username: "user", password: "pw" });
+    const requestCredentials2 = vi.fn().mockResolvedValue(okCredentials());
     rerender(
       root,
       <ScreenPane
@@ -326,12 +339,11 @@ describe("ScreenPane", () => {
   });
 
   it("credentials 待ちの間にアンマウントすると何も作らない", async () => {
-    let resolveCredentials:
-      | ((value: { username: string; password: string } | null) => void)
-      | null = null;
+    let resolveCredentials: ((value: ScreenCredentialsResult) => void) | null =
+      null;
     const requestCredentials = vi.fn().mockImplementation(
       () =>
-        new Promise<{ username: string; password: string } | null>(resolve => {
+        new Promise<ScreenCredentialsResult>(resolve => {
           resolveCredentials = resolve;
         })
     );
@@ -349,7 +361,7 @@ describe("ScreenPane", () => {
       container.remove();
     }
 
-    resolveCredentials?.({ username: "user", password: "pw" });
+    resolveCredentials?.(okCredentials());
     await flush();
 
     expect(doubles.instances).toHaveLength(0);
@@ -374,9 +386,7 @@ describe("ScreenPane", () => {
   });
 
   it("アンマウントで RFB を切断する", async () => {
-    const requestCredentials = vi
-      .fn()
-      .mockResolvedValue({ username: "user", password: "pw" });
+    const requestCredentials = vi.fn().mockResolvedValue(okCredentials());
     mount(
       <ScreenPane
         screen={screenFixture}

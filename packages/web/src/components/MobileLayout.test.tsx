@@ -47,7 +47,9 @@ function createProps(): ComponentProps<typeof MobileLayout> {
     onSelectBrowser: vi.fn(),
     isRemote: false,
     screens: [],
-    requestScreenCredentials: vi.fn().mockResolvedValue(null),
+    requestScreenCredentials: vi
+      .fn()
+      .mockResolvedValue({ kind: "unregistered" }),
     onOpenScreenManager: vi.fn(),
     messageShortcuts: [],
     onCreateShortcut: vi.fn(),

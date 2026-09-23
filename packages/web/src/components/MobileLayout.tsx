@@ -4,6 +4,9 @@
  * 「セッション一覧」「セッション詳細」「ブラウザ」「リモート画面」を
  * 画面遷移と、リモート時または画面登録があるときに出す下部タブで切り替える。
  * iframe再マウント防止のため、display:none/blockで表示を切り替える。
+ * ただしリモート画面のタブだけは display:none を使わず、絶対配置 +
+ * visibility でサイズを保ったまま隠す (noVNC の倍率計算のため。
+ * 理由は screenPaneClassName のコメント)。
  */
 
 import type {
@@ -17,7 +20,7 @@ import type {
   MessageShortcut,
   Profile,
   Screen,
-  ScreenCredentials,
+  ScreenCredentialsResult,
   ServerToClientEvents,
   SpecialKey,
   SystemCapabilities,
@@ -162,7 +165,7 @@ interface MobileLayoutProps {
   isRemote: boolean;
   // リモート画面
   screens: Screen[];
-  requestScreenCredentials: (id: string) => Promise<ScreenCredentials | null>;
+  requestScreenCredentials: (id: string) => Promise<ScreenCredentialsResult>;
   onOpenScreenManager: () => void;
   // メッセージショートカット
   messageShortcuts: MessageShortcut[];
@@ -403,6 +406,14 @@ export function MobileLayout({
   const paneClassName = hasBottomNav
     ? "flex-1 flex flex-col min-h-0 pb-14"
     : "flex-1 flex flex-col min-h-0";
+  // 画面タブだけは display:none で隠さない。noVNC の scaleViewport は
+  // コンテナの実寸から倍率を決めるので、隠れている間に画面が回転したり
+  // キーボードが出たりすると autoscale(0,0) に落ち、戻しても戻らない。
+  // flex-1 のまま残すと一覧と高さを取り合うため、絶対配置で流れから外し、
+  // 見えているときも隠れているときも同じ箱 (inset-0) のままにする
+  const screenPaneClassName = hasBottomNav
+    ? "absolute inset-0 flex flex-col min-h-0 pb-14"
+    : "absolute inset-0 flex flex-col min-h-0";
   const tabClassName = (selected: boolean) =>
     `flex-1 py-3 text-center text-sm ${
       selected
@@ -411,7 +422,8 @@ export function MobileLayout({
     }`;
 
   return (
-    <div className="h-full flex flex-col min-h-0 overflow-hidden">
+    // relative は画面タブのラッパー (absolute inset-0) の基準に使う
+    <div className="relative h-full flex flex-col min-h-0 overflow-hidden">
       {/* 一覧画面 */}
       <div
         className={
@@ -575,9 +587,17 @@ export function MobileLayout({
         </div>
       )}
 
-      {/* リモート画面 - 一度開いた画面はマウントしたまま display で切り替える */}
+      {/* リモート画面 - 一度開いた画面はマウントしたまま、
+          サイズを保ったまま visibility だけで切り替える
+          (理由は screenPaneClassName のコメント) */}
       {openedScreenIds.size > 0 && (
-        <div className={activeTab === "screen" ? paneClassName : "hidden"}>
+        <div
+          className={
+            activeTab === "screen"
+              ? screenPaneClassName
+              : `${screenPaneClassName} invisible pointer-events-none`
+          }
+        >
           <div className="h-12 border-b border-border flex items-center gap-3 px-4 shrink-0">
             <button
               type="button"
@@ -620,7 +640,9 @@ export function MobileLayout({
                 <div
                   key={screen.id}
                   className={
-                    activeScreenId === screen.id ? "absolute inset-0" : "hidden"
+                    activeScreenId === screen.id
+                      ? "absolute inset-0"
+                      : "absolute inset-0 invisible pointer-events-none"
                   }
                 >
                   <ScreenPane

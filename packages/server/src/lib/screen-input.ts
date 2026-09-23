@@ -6,6 +6,7 @@
  */
 
 import type { ScreenInput, ScreenPatch } from "@ark/shared";
+import { getErrorMessage } from "./errors.js";
 
 export type ScreenValidation<T> =
   | { ok: true; value: T }
@@ -114,6 +115,33 @@ export function validateScreenInput(
     value[field] = result.value;
   }
   return { ok: true, value: value as unknown as ScreenInput };
+}
+
+/** `screens.name` の UNIQUE 制約違反。better-sqlite3 の SqliteError の message */
+const DUPLICATE_NAME_PATTERN = /UNIQUE constraint failed: screens\.name/;
+
+/**
+ * DB 由来の例外を `screen:error` の payload にする。
+ *
+ * 名前の重複だけは利用者の打ち手 (別の名前を付ける) がはっきりしているので、
+ * SQLite の英語メッセージをそのまま出さずに日本語へ訳す。
+ * 判定に使うのは message だけで、`code` (`SQLITE_CONSTRAINT_UNIQUE`) は見ない。
+ * code は「どこかの UNIQUE に触れた」しか言わないので、将来 `screens` の別の列に
+ * UNIQUE を足したときに名前の重複と区別できるのは message だけだから。
+ * `SqliteError` は better-sqlite3 の named export ではない
+ * (`Database.SqliteError`) ので、クラスではなく形で見る。
+ */
+export function describeScreenDbError(e: unknown): {
+  message: string;
+  code?: string;
+} {
+  if (e instanceof Error && DUPLICATE_NAME_PATTERN.test(e.message)) {
+    return {
+      message: "同じ名前の画面が既に登録されています",
+      code: "duplicate_name",
+    };
+  }
+  return { message: getErrorMessage(e) };
 }
 
 /** 部分更新。undefined と空の vncPassword は「変更しない」 */

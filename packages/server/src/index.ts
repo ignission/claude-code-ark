@@ -113,6 +113,7 @@ import { getListeningPorts } from "./lib/port-scanner.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import { screenBridge } from "./lib/screen-bridge.js";
 import {
+  describeScreenDbError,
   validateScreenInput,
   validateScreenPatch,
 } from "./lib/screen-input.js";
@@ -1364,14 +1365,27 @@ export async function startServer(
         socket.destroy();
         return;
       }
-      const record = db.getScreenRecord(screenMatch[1]);
-      if (!record) {
+      try {
+        const record = db.getScreenRecord(screenMatch[1]);
+        if (!record) {
+          socket.destroy();
+          return;
+        }
+        // ブリッジには ssh の宛先だけ渡す (パスワードを持つ record ごと渡さない)
+        const { sshHost, sshPort, sshUser, vncHost, vncPort } = record;
+        screenWss.handleUpgrade(req, socket, head, ws => {
+          screenBridge.attach(ws, {
+            sshHost,
+            sshPort,
+            sshUser,
+            vncHost,
+            vncPort,
+          });
+        });
+      } catch (e) {
+        console.error("[Screen] upgrade に失敗:", getErrorMessage(e));
         socket.destroy();
-        return;
       }
-      screenWss.handleUpgrade(req, socket, head, ws => {
-        screenBridge.attach(ws, record);
-      });
       return;
     }
 
@@ -2860,7 +2874,7 @@ export async function startServer(
         io.emit("screen:created", screen);
         io.emit("screen:list", db.listScreens());
       } catch (e) {
-        socket.emit("screen:error", { message: getErrorMessage(e) });
+        socket.emit("screen:error", describeScreenDbError(e));
       }
     });
 
@@ -2886,7 +2900,7 @@ export async function startServer(
         io.emit("screen:updated", screen);
         io.emit("screen:list", db.listScreens());
       } catch (e) {
-        socket.emit("screen:error", { message: getErrorMessage(e) });
+        socket.emit("screen:error", describeScreenDbError(e));
       }
     });
 

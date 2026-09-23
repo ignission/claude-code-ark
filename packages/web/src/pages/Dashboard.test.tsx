@@ -261,7 +261,9 @@ function socketState(session: ManagedSession): Record<string, unknown> {
     createScreen: vi.fn(),
     updateScreen: vi.fn(),
     deleteScreen: vi.fn(),
-    requestScreenCredentials: vi.fn().mockResolvedValue(null),
+    requestScreenCredentials: vi.fn().mockResolvedValue({
+      kind: "unregistered",
+    }),
     profiles: [],
     repoProfileLinks: new Map(),
     worktreeProfileLinks: new Map(),
@@ -454,10 +456,17 @@ describe("Dashboardのリモート画面復元", () => {
     expect(testDoubles.screenPaneUnmount).not.toHaveBeenCalled();
     expect(testDoubles.screenPaneMount).toHaveBeenCalledTimes(1);
 
-    // 画面へ選択を戻しても display 切替だけで再マウントは起きない
+    // 隠している間も display:none にはしない。noVNC の倍率計算がコンテナの
+    // 実寸を見るため、サイズを保つ visibility で隠す必要がある
+    const hidden = mountedRoot?.container.querySelector(".invisible");
+    expect(hidden).toBeTruthy();
+    expect(hidden?.classList.contains("hidden")).toBe(false);
+
+    // 画面へ選択を戻しても表示切替だけで再マウントは起きない
     act(() => (sidebar.onSelectScreen as (id: string) => void)("s1"));
 
     expect(testDoubles.screenPaneMount).toHaveBeenCalledTimes(1);
     expect(testDoubles.screenPaneUnmount).not.toHaveBeenCalled();
+    expect(mountedRoot?.container.querySelector(".invisible")).toBeNull();
   });
 });

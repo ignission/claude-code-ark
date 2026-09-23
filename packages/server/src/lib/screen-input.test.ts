@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { validateScreenInput, validateScreenPatch } from "./screen-input.js";
+import {
+  describeScreenDbError,
+  validateScreenInput,
+  validateScreenPatch,
+} from "./screen-input.js";
 
 const valid = {
   name: " ビルド VM ",
@@ -81,6 +85,40 @@ describe("validateScreenPatch", () => {
     expect(validateScreenPatch({ sshHost: "-bad" })).toMatchObject({
       ok: false,
       code: "invalid_host",
+    });
+  });
+});
+
+describe("describeScreenDbError", () => {
+  it("名前の重複は日本語にして code を付ける", () => {
+    // better-sqlite3 の SqliteError が持つ message と code を模す
+    const error = Object.assign(
+      new Error("UNIQUE constraint failed: screens.name"),
+      { code: "SQLITE_CONSTRAINT_UNIQUE" }
+    );
+    expect(describeScreenDbError(error)).toEqual({
+      message: "同じ名前の画面が既に登録されています",
+      code: "duplicate_name",
+    });
+  });
+
+  it("別の列の UNIQUE 違反は重複名として扱わない", () => {
+    const error = Object.assign(
+      new Error("UNIQUE constraint failed: screens.id"),
+      { code: "SQLITE_CONSTRAINT_UNIQUE" }
+    );
+    expect(describeScreenDbError(error)).toEqual({
+      message: "UNIQUE constraint failed: screens.id",
+    });
+  });
+
+  it("その他の例外はメッセージをそのまま返す", () => {
+    expect(describeScreenDbError(new Error("database is locked"))).toEqual({
+      message: "database is locked",
+    });
+    // Error でない値は getErrorMessage と同じく潰す
+    expect(describeScreenDbError("なにか")).toEqual({
+      message: "Unknown error",
     });
   });
 });

@@ -263,8 +263,11 @@ describe("ScreenBridge", () => {
     bridge.attach(sockets[1], target);
 
     bridge.closeAll();
-    expect(sockets[0].close).toHaveBeenCalledWith(1001, "server shutdown");
-    expect(sockets[1].close).toHaveBeenCalledWith(1001, "server shutdown");
+    // 終了経路では close frame の往復を待たずに切る
+    expect(sockets[0].terminate).toHaveBeenCalled();
+    expect(sockets[1].terminate).toHaveBeenCalled();
+    expect(sockets[0].close).not.toHaveBeenCalled();
+    expect(sockets[1].close).not.toHaveBeenCalled();
     expect(children[0].kill).toHaveBeenCalledWith("SIGTERM");
     expect(children[1].kill).toHaveBeenCalledWith("SIGTERM");
   });

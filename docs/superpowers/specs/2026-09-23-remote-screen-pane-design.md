@@ -107,23 +107,44 @@ VM はある 1 つのリポジトリのビルド用なので、そのリポの�
   `ws.on("message")` → `ssh.stdin`、`ssh.stdout` → `ws.send` で直結する。
   WebSocket はバイナリ (`binaryType = "arraybuffer"`)。noVNC の `RFB` に渡す URL は `ws(s)://<ark>/screen/<id>/ws`
 - WebSocket が閉じたら ssh を SIGTERM し、3 秒で SIGKILL。ssh が終わったら WebSocket を閉じる
+- ssh の終了は `exit` ではなく **`close` イベント**で検知する。`exit` の時点では stdio に
+  未配送のデータが残りうるため、stderr の最後の行 (= 失敗理由) が間に合わず
+  `ssh exited (255)` に劣化する。二重処理は `exited` フラグで防ぐ
+  (SIGTERM / SIGKILL で死んだ子プロセスは `exitCode` が null のままなので、フラグが要る)
 - ssh が非 0 で終わったときは stderr の最後の 1 行を `close` の reason (最大 123 バイト) に載せる。
   クライアントはこれを画面に出す (鍵の拒否 / 到達不能 / ポート閉塞を利用者が見分けられるように)
-- ssh の鍵はサーバプロセスのユーザーのもの。パスフレーズ付きの鍵は対象外 (BatchMode)
-- サーバ終了 (`cleanup()`) で残っている ssh をすべて止める。ttyd と違い再起動後に復元するものは無い
+- ssh の鍵はサーバプロセスのユーザーのもの。パスフレーズ付きの鍵は対象外 (BatchMode)。
+  前提 (known_hosts、pm2 の PATH) は CLAUDE.md の「リモート画面 (ssh) の前提」に書く
+- upgrade handler は `getScreenRecord` から `handleUpgrade` までを try/catch で囲み、
+  失敗したら理由をログに残して socket を destroy する。ブリッジに渡すのは
+  ssh の宛先 5 項目だけで、パスワードを持つレコードごとは渡さない
+- サーバ終了 (`cleanup()`) で残っている ssh をすべて止める。ttyd と違い再起動後に復元するものは無い。
+  WebSocket は `close(1001)` ではなく **`terminate()`** で切る。終了経路で close frame の
+  往復を待つと、応答しない相手に最大 30 秒ぶら下がる
 
 ### 4.4 クライアント
 
-- `ScreenPane` (`packages/web/src/components/ScreenPane.tsx`): `@novnc/novnc/core/rfb` の
-  `RFB` を `useEffect` で生成し、`scaleViewport = true` で領域にフィットさせる。
-  `screen:credentials` で取った値を `credentials` に渡す
+- `ScreenPane` (`packages/web/src/components/ScreenPane.tsx`): `RFB` を **パッケージルート**
+  (`@novnc/novnc`) から import する。1.7 の `exports` は `"./core/rfb.js"` という
+  ルートだけの指定なので、`@novnc/novnc/core/rfb` という深いパスは解決できない。`useEffect` で生成し、
+  `scaleViewport = true` で領域にフィットさせ、`screen:credentials` で取った値を `credentials` に渡す
 - 状態: `connecting` / `connected` / `disconnected(reason)`。切断時は理由と再接続ボタンを出す。
   自動再接続はしない (ブラウザと同じく、ユーザーが押す)
+- `screen:credentials` の結果はクライアント側で三値に分ける (`ScreenCredentialsResult`)。
+  サーバーの ack は `ScreenCredentials | null` のままで、`useSocket` が
+  `ok` / `unregistered` (ack が null) / `unavailable` (socket 未接続・ack タイムアウト) に振り分ける。
+  「登録し直せ」と「サーバーに繋がらない」は利用者の打ち手が違うので、同じ文言にしない
 - Dashboard: `selectedSessionId` に `"screen:<id>"` を持たせ、ブラウザと同じく一度開いた画面は
-  `display:none` で切り替えて再マウント (再接続) を防ぐ
-- サイドバー: 「ブラウザを開く」の隣に登録済みの画面を並べる。設定ダイアログは
-  `SessionHeaderMenu` / 設定メニューから開く (プロファイル管理と同じ入口)
-- モバイル: `MobileLayout` にも同じ `ScreenPane` を全画面で出す。タッチ操作は noVNC の既定に任せる
+  マウントしたまま切り替えて再マウント (再接続) を防ぐ。ただし **`display:none` は使わない**。
+  noVNC の `scaleViewport` はコンテナの実寸から倍率を決めるので、隠れている間に
+  window が resize されると `autoscale(0, 0)` に落ち、戻しても倍率が戻らない。
+  絶対配置 + `invisible pointer-events-none` でサイズを保ったまま隠す。
+  保険として `ScreenPane` 側でもコンテナを `ResizeObserver` で見て、
+  0 → 非 0 に戻ったら `scaleViewport` を入れ直す
+- サイドバー: 上部の Monitor アイコンのドロップダウンに登録済みの画面を並べ、同じメニューの
+  「画面の管理...」から設定ダイアログを開く (サイドバー本体には並べない)
+- モバイル: 下部タブの「画面」から全画面で出す。複数登録があれば上部バーの `<select>` で選ぶ。
+  ラッパーは PC と同じ理由でサイズを保ったまま隠す。タッチ操作は noVNC の既定に任せる
 - キーボード: noVNC の既定 (フォーカスがあるときキー入力を送る)。Cmd キーは Meta として届く
 
 ### 4.5 エラー
@@ -137,10 +158,19 @@ VM はある 1 つのリポジトリのビルド用なので、そのリポの�
 
 ## 5. テスト
 
-- `screen-bridge.test.ts`: `ssh` を偽の実行ファイル (stdin をそのまま stdout に返す / 非 0 で終わる) に
-  差し替え、WebSocket との双方向の疎通、close 時のプロセス終了、失敗理由の伝搬を見る
+- `screen-bridge.test.ts`: `.claude/rules/backend-testing.md` に従い `node:child_process` を
+  `vi.mock` で差し替える (偽の実行ファイルは置かない)。stdin をそのまま stdout に返す偽の子プロセスで、
+  WebSocket との双方向の疎通、close 時のプロセス終了と SIGKILL へのエスカレーション、
+  失敗理由の伝搬、`closeAll` の `terminate` を見る。
+  **実際の spawn と stdio を通る経路はユニットテストでは踏まない**ので、そこは実機の E2E でだけ確かめる
+- `screen-input.test.ts`: 入力検証と、`describeScreenDbError` が `screens.name` の UNIQUE 違反だけを
+  日本語 + `duplicate_name` に訳すこと
 - `database.test.ts`: `screens` の CRUD と、`Screen` 型にパスワードが載らないこと
+- `ScreenPane.test.tsx`: `@novnc/novnc` を偽 RFB に差し替え、credentials の三値それぞれの見え方、
+  切断理由の表示、再接続、再マウントしないことを見る
 - `ScreenManagerDialog.test.tsx`: `ProfileManagerDialog.test.tsx` と同型
+- `Dashboard.test.tsx`: 一度開いた画面が選択を移しても再マウントされないこと、
+  隠すときに `invisible` を使い `hidden` を使わないこと
 - 実機: 対象の VM に Ark 経由で繋ぎ、デスクトップの描画・クリック・キー入力・切断からの再接続を確認する
 
 ## 6. 範囲外

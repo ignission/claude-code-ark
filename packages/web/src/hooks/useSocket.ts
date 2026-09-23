@@ -19,7 +19,7 @@ import type {
   Profile,
   RepoInfo,
   Screen,
-  ScreenCredentials,
+  ScreenCredentialsResult,
   ScreenInput,
   ScreenPatch,
   ServerToClientEvents,
@@ -275,8 +275,11 @@ interface UseSocketReturn {
   createScreen: (input: ScreenInput) => void;
   updateScreen: (id: string, patch: ScreenPatch) => void;
   deleteScreen: (id: string) => void;
-  /** 接続直前に 1 回だけ呼ぶ。socket 未接続や未登録は null */
-  requestScreenCredentials: (id: string) => Promise<ScreenCredentials | null>;
+  /**
+   * 接続直前に 1 回だけ呼ぶ。「登録が消えている」(unregistered) と
+   * 「サーバーに届かない」(unavailable) は利用者の打ち手が違うので区別する
+   */
+  requestScreenCredentials: (id: string) => Promise<ScreenCredentialsResult>;
 
   // メッセージショートカット
   messageShortcuts: MessageShortcut[];
@@ -1534,16 +1537,27 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
   const requestScreenCredentials = useCallback(
     (id: string) =>
-      new Promise<ScreenCredentials | null>(resolve => {
+      // サーバーの ack は ScreenCredentials | null のまま。ここで
+      // 「socket が無い / ack が返らない」= unavailable と
+      // 「ack が null」= 登録が消えている、に振り分ける
+      new Promise<ScreenCredentialsResult>(resolve => {
         const socket = socketRef.current;
         if (!socket) {
-          resolve(null);
+          resolve({ kind: "unavailable" });
           return;
         }
         socket
           .timeout(SCREEN_CREDENTIALS_ACK_TIMEOUT_MS)
           .emit("screen:credentials", id, (err, creds) => {
-            resolve(err ? null : (creds ?? null));
+            if (err) {
+              resolve({ kind: "unavailable" });
+              return;
+            }
+            resolve(
+              creds
+                ? { kind: "ok", credentials: creds }
+                : { kind: "unregistered" }
+            );
           });
       }),
     []

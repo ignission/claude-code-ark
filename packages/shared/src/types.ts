@@ -155,6 +155,12 @@ export interface ScreenCredentials {
   password: string;
 }
 
+/** screen:credentials の結果。unavailable は socket 未接続や ack タイムアウト */
+export type ScreenCredentialsResult =
+  | { kind: "ok"; credentials: ScreenCredentials }
+  | { kind: "unregistered" }
+  | { kind: "unavailable" };
+
 /** メッセージショートカットの本文最大長（文字数） */
 export const MESSAGE_SHORTCUT_MAX_LENGTH = 4000;
 

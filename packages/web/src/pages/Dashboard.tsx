@@ -885,8 +885,12 @@ export default function Dashboard() {
                     )}
                   </div>
                 )}
-                {/* リモート画面: 一度開いた画面はマウントしたまま display で切り替え、
-                    再接続を防ぐ (ブラウザビューと同じ) */}
+                {/* リモート画面: 一度開いた画面はマウントしたまま切り替えて
+                    再接続を防ぐ (ブラウザビューと同じ)。ただし display:none は
+                    使わない。noVNC の scaleViewport はコンテナの実寸から倍率を
+                    決めるので、隠れている間に window が resize されると
+                    autoscale(0,0) に落ち、戻しても戻らないことがある。
+                    絶対配置 + visibility なら隠れていてもサイズを保てる */}
                 {screens
                   .filter(
                     screen =>
@@ -897,7 +901,9 @@ export default function Dashboard() {
                     <div
                       key={screen.id}
                       className={
-                        selectedScreenId === screen.id ? "h-full" : "hidden"
+                        selectedScreenId === screen.id
+                          ? "absolute inset-0"
+                          : "absolute inset-0 invisible pointer-events-none"
                       }
                     >
                       <ScreenPane
