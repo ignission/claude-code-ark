@@ -29,6 +29,7 @@ import {
 } from "@ark/shared";
 import httpProxy from "http-proxy";
 import { Server } from "socket.io";
+import { WebSocketServer } from "ws";
 import {
   AUQ_EVENT_PATH,
   AUQ_TOKEN_HEADER,
@@ -110,6 +111,11 @@ import {
 } from "./lib/managed-worktree.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
+import { screenBridge } from "./lib/screen-bridge.js";
+import {
+  validateScreenInput,
+  validateScreenPatch,
+} from "./lib/screen-input.js";
 import {
   attachmentDispositionForPath,
   buildAllowlistFromTranscriptFiles,
@@ -437,6 +443,9 @@ export async function startServer(
     proxyRes.headers["x-frame-options"] = "SAMEORIGIN";
     proxyRes.headers["content-security-policy"] = "frame-ancestors 'self'";
   });
+
+  // リモート画面: noVNC の WebSocket を ssh -W へ直結する (screen-bridge.ts)
+  const screenWss = new WebSocketServer({ noServer: true });
 
   if (enableRemote) {
     console.log(
@@ -1347,6 +1356,25 @@ export async function startServer(
       return;
     }
 
+    // Handle remote screen (noVNC → ssh -W) WebSocket connections
+    const screenMatch = pathname.match(/^\/screen\/([^/]+)\/ws$/);
+    if (screenMatch) {
+      // 認証検証（Quick Tunnel時のみ）
+      if (!authorizeWebSocketUpgrade(req, url)) {
+        socket.destroy();
+        return;
+      }
+      const record = db.getScreenRecord(screenMatch[1]);
+      if (!record) {
+        socket.destroy();
+        return;
+      }
+      screenWss.handleUpgrade(req, socket, head, ws => {
+        screenBridge.attach(ws, record);
+      });
+      return;
+    }
+
     // Let Socket.IO handle other WebSocket connections
     // (Socket.IO has its own upgrade handler)
   });
@@ -1422,6 +1450,9 @@ export async function startServer(
 
     // プロファイル切替機能のサポート状況を最初に通知
     socket.emit("system:capabilities", capabilities);
+
+    // リモート画面の一覧 (機能フラグに依らず常に送る)
+    socket.emit("screen:list", db.listScreens());
 
     // Send allowed repos list to client on connection
     socket.emit("repos:list", allowedRepos);
@@ -2801,6 +2832,80 @@ export async function startServer(
       }
     });
 
+    // ===== Remote Screen Commands =====
+
+    socket.on("screen:list", () => {
+      try {
+        socket.emit("screen:list", db.listScreens());
+      } catch (e) {
+        socket.emit("screen:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on("screen:create", data => {
+      const validated = validateScreenInput(data);
+      if (!validated.ok) {
+        socket.emit("screen:error", {
+          message: validated.message,
+          code: validated.code,
+        });
+        return;
+      }
+      try {
+        const screen = db.createScreen(validated.value);
+        io.emit("screen:created", screen);
+        io.emit("screen:list", db.listScreens());
+      } catch (e) {
+        socket.emit("screen:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on("screen:update", data => {
+      const { id, ...rest } = data ?? ({} as { id?: string });
+      if (typeof id !== "string" || id.length === 0) {
+        socket.emit("screen:error", {
+          message: "id は必須です",
+          code: "invalid_id",
+        });
+        return;
+      }
+      const validated = validateScreenPatch(rest);
+      if (!validated.ok) {
+        socket.emit("screen:error", {
+          message: validated.message,
+          code: validated.code,
+        });
+        return;
+      }
+      try {
+        const screen = db.updateScreen(id, validated.value);
+        io.emit("screen:updated", screen);
+        io.emit("screen:list", db.listScreens());
+      } catch (e) {
+        socket.emit("screen:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    socket.on("screen:delete", ({ id }) => {
+      try {
+        db.deleteScreen(id);
+        io.emit("screen:deleted", { id });
+        io.emit("screen:list", db.listScreens());
+      } catch (e) {
+        socket.emit("screen:error", { message: getErrorMessage(e) });
+      }
+    });
+
+    // パスワードはこの callback でだけ配る (一覧には載せない)
+    socket.on("screen:credentials", (id, callback) => {
+      const record = db.getScreenRecord(id);
+      callback(
+        record
+          ? { username: record.vncUser, password: record.vncPassword }
+          : null
+      );
+    });
+
     // ============================================================
     // メッセージショートカット
     // ============================================================
@@ -3526,6 +3631,7 @@ export async function startServer(
     clearInterval(gridBroadcastInterval);
     sessionOrchestrator.cleanup();
     browserManager.cleanup();
+    screenBridge.closeAll();
     boardMcp.stop();
     if (activeTunnel) {
       try {

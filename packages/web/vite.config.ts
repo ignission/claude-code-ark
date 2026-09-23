@@ -39,6 +39,11 @@ export default defineConfig({
         ws: true,
         changeOrigin: true,
       },
+      "/screen": {
+        target: process.env.VITE_API_URL || "http://localhost:4001",
+        ws: true,
+        changeOrigin: true,
+      },
     },
     fs: {
       strict: true,
