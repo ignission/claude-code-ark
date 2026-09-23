@@ -115,6 +115,46 @@ export interface Profile {
   updatedAt: number;
 }
 
+/**
+ * リモート画面 (SSH 越しに届く VNC 画面)。
+ * パスワードは含めない。`screen:credentials` の callback だけで配る
+ */
+export interface Screen {
+  id: string;
+  name: string;
+  sshHost: string;
+  sshPort: number;
+  sshUser: string;
+  /** SSH ホストから見た VNC ホスト。既定 127.0.0.1 */
+  vncHost: string;
+  vncPort: number;
+  /** ARD 認証のユーザー名。標準 VNC 認証のホストでは空文字 */
+  vncUser: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** 画面の作成入力 */
+export interface ScreenInput {
+  name: string;
+  sshHost: string;
+  sshPort: number;
+  sshUser: string;
+  vncHost: string;
+  vncPort: number;
+  vncUser: string;
+  vncPassword: string;
+}
+
+/** 画面の部分更新。vncPassword は指定したときだけ更新する */
+export type ScreenPatch = Partial<ScreenInput>;
+
+/** noVNC の credentials に渡す値 */
+export interface ScreenCredentials {
+  username: string;
+  password: string;
+}
+
 /** メッセージショートカットの本文最大長（文字数） */
 export const MESSAGE_SHORTCUT_MAX_LENGTH = 4000;
 
@@ -548,6 +588,13 @@ export interface ServerToClientEvents {
   "profile:updated": (profile: Profile) => void;
   "profile:deleted": (data: { id: string }) => void;
   "profile:error": (data: { message: string; code?: string }) => void;
+
+  // リモート画面
+  "screen:list": (screens: Screen[]) => void;
+  "screen:created": (screen: Screen) => void;
+  "screen:updated": (screen: Screen) => void;
+  "screen:deleted": (data: { id: string }) => void;
+  "screen:error": (data: { message: string; code?: string }) => void;
   "repo:profile-changed": (data: {
     repoPath: string;
     profileId: string | null;
@@ -785,6 +832,17 @@ export interface ClientToServerEvents {
     configDir?: string;
   }) => void;
   "profile:delete": (data: { id: string }) => void;
+
+  // リモート画面
+  "screen:list": () => void;
+  "screen:create": (data: ScreenInput) => void;
+  "screen:update": (data: { id: string } & ScreenPatch) => void;
+  "screen:delete": (data: { id: string }) => void;
+  /** 接続直前に 1 回だけ呼ぶ。未登録なら null */
+  "screen:credentials": (
+    id: string,
+    callback: (creds: ScreenCredentials | null) => void
+  ) => void;
   "repo:set-profile": (data: {
     repoPath: string;
     profileId: string | null;

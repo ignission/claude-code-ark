@@ -685,4 +685,75 @@ describe("SessionDatabase - profiles / repo_profile_links", () => {
       expect(testDb.getMessagesBySession("new-id")).toHaveLength(0);
     });
   });
+
+  describe("screens", () => {
+    const input = {
+      name: "ビルド VM",
+      sshHost: "build.example.internal",
+      sshPort: 2222,
+      sshUser: "user",
+      vncHost: "127.0.0.1",
+      vncPort: 5900,
+      vncUser: "user",
+      vncPassword: "secret",
+    };
+
+    it("作成した画面を一覧・取得でき、パスワードは載らない", () => {
+      const created = testDb.createScreen(input);
+      expect(created).toMatchObject({
+        name: "ビルド VM",
+        sshHost: "build.example.internal",
+        sshPort: 2222,
+        sshUser: "user",
+        vncHost: "127.0.0.1",
+        vncPort: 5900,
+        vncUser: "user",
+      });
+      expect(created).not.toHaveProperty("vncPassword");
+      expect(testDb.listScreens()).toEqual([created]);
+      expect(testDb.getScreen(created.id)).toEqual(created);
+      expect(testDb.getScreen("nope")).toBeNull();
+    });
+
+    it("getScreenRecord はパスワードを含む", () => {
+      const created = testDb.createScreen(input);
+      expect(testDb.getScreenRecord(created.id)).toMatchObject({
+        id: created.id,
+        vncPassword: "secret",
+      });
+      expect(testDb.getScreenRecord("nope")).toBeNull();
+    });
+
+    it("同名の画面は作成できない", () => {
+      testDb.createScreen(input);
+      expect(() => testDb.createScreen(input)).toThrow();
+    });
+
+    it("部分更新で指定した列だけ変わり、パスワード省略時は保持される", () => {
+      const created = testDb.createScreen(input);
+      const updated = testDb.updateScreen(created.id, {
+        name: "別名",
+        vncPort: 5901,
+      });
+      expect(updated.name).toBe("別名");
+      expect(updated.vncPort).toBe(5901);
+      expect(updated.sshHost).toBe("build.example.internal");
+      expect(testDb.getScreenRecord(created.id)?.vncPassword).toBe("secret");
+
+      testDb.updateScreen(created.id, { vncPassword: "new" });
+      expect(testDb.getScreenRecord(created.id)?.vncPassword).toBe("new");
+    });
+
+    it("存在しない id の更新は例外", () => {
+      expect(() => testDb.updateScreen("nope", { name: "x" })).toThrow(
+        /Screen not found/
+      );
+    });
+
+    it("削除すると一覧から消える", () => {
+      const created = testDb.createScreen(input);
+      testDb.deleteScreen(created.id);
+      expect(testDb.listScreens()).toEqual([]);
+    });
+  });
 });
