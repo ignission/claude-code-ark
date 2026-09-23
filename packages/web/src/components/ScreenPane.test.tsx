@@ -338,6 +338,64 @@ describe("ScreenPane", () => {
     expect(requestCredentials2).not.toHaveBeenCalled();
   });
 
+  it("接続先 (同じ id) が編集されたら前の RFB を切断して繋ぎ直す", async () => {
+    const requestCredentials = vi.fn().mockResolvedValue(okCredentials());
+    const { root } = mount(
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials}
+      />
+    );
+    await flush();
+    const firstRfb = doubles.instances[0];
+    act(() => firstRfb.listeners.get("connect")?.({ detail: {} }));
+
+    // screen:list の再配信で別インスタンスになっただけ (内容は同じ) なら繋ぎ直さない
+    rerender(
+      root,
+      <ScreenPane
+        screen={{ ...screenFixture }}
+        requestCredentials={requestCredentials}
+      />
+    );
+    await flush();
+    expect(doubles.instances).toHaveLength(1);
+
+    rerender(
+      root,
+      <ScreenPane
+        screen={{ ...screenFixture, vncPort: 5901 }}
+        requestCredentials={requestCredentials}
+      />
+    );
+    await flush();
+    expect(firstRfb.disconnect).toHaveBeenCalledTimes(1);
+    expect(doubles.instances).toHaveLength(2);
+  });
+
+  it("接続中も再接続ボタンで繋ぎ直せる", async () => {
+    const requestCredentials = vi.fn().mockResolvedValue(okCredentials());
+    const { container } = mount(
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials}
+      />
+    );
+    await flush();
+    const firstRfb = doubles.instances[0];
+    act(() => firstRfb.listeners.get("connect")?.({ detail: {} }));
+
+    const retry = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="再接続"]'
+    );
+    expect(retry).not.toBeNull();
+    act(() => retry?.click());
+    await flush();
+    expect(firstRfb.disconnect).toHaveBeenCalledTimes(1);
+    expect(doubles.instances).toHaveLength(2);
+    expect(requestCredentials).toHaveBeenCalledTimes(2);
+  });
+
   it("credentials 待ちの間にアンマウントすると何も作らない", async () => {
     let resolveCredentials: ((value: ScreenCredentialsResult) => void) | null =
       null;

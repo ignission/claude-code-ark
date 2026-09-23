@@ -42,7 +42,12 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
   const requestCredentialsRef = useRef(requestCredentials);
   requestCredentialsRef.current = requestCredentials;
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: secure (window.isSecureContext) は文書の生存期間中に変わらない値なので依存から外している。attempt は本文中では読まないが、再接続ボタン押下のたびに接続をやり直すためだけの trigger として依存に入れている
+  // 接続先の変更 (画面の管理で編集) は id が変わらないので、接続に使う列を個別に
+  // 依存へ入れて繋ぎ直す。screen オブジェクトそのものを依存にすると screen:list の
+  // 再配信のたびに別インスタンスになり、内容が同じでも繋ぎ直してしまう
+  const { sshHost, sshPort, sshUser, vncHost, vncPort, vncUser } = screen;
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: secure (window.isSecureContext) は文書の生存期間中に変わらない値なので依存から外している。attempt と接続先の各列は本文中では読まないが、再接続ボタン押下や接続先の編集のたびに接続をやり直すためだけの trigger として依存に入れている
   useEffect(() => {
     if (!secure) return;
     const container = containerRef.current;
@@ -145,7 +150,16 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
       sizeObserver?.disconnect();
       if (rfb && !ended) rfb.disconnect();
     };
-  }, [screen.id, attempt]);
+  }, [
+    screen.id,
+    attempt,
+    sshHost,
+    sshPort,
+    sshUser,
+    vncHost,
+    vncPort,
+    vncUser,
+  ]);
 
   if (!secure) {
     return (
@@ -159,6 +173,17 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
   return (
     <div className="relative h-full bg-black">
       <div ref={containerRef} className="absolute inset-0" />
+      {status.kind === "connected" && (
+        <button
+          type="button"
+          onClick={() => setAttempt(n => n + 1)}
+          aria-label="再接続"
+          title="再接続"
+          className="absolute top-2 right-2 rounded-md bg-background/60 p-1.5 text-muted-foreground opacity-40 transition-opacity hover:opacity-100 hover:text-foreground"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+        </button>
+      )}
       {status.kind === "connecting" && (
         <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground bg-background/80">
           <Loader2 className="h-5 w-5 animate-spin mr-2" />

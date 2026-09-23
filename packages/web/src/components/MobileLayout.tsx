@@ -433,6 +433,7 @@ export function MobileLayout({
         }
       >
         <MobileSessionList
+          onOpenScreenManager={onOpenScreenManager}
           sessions={sessions}
           worktrees={worktrees}
           repoList={repoList}
