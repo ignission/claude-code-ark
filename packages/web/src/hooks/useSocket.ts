@@ -302,6 +302,12 @@ interface UseSocketReturn {
   clearUsageError: () => void;
 }
 
+/**
+ * screen:credentials の ack 待ちタイムアウト。ack が戻らない場合は null に倒し、
+ * ScreenPane 側が「切断」表示と再接続ボタンを出せるようにする
+ */
+const SCREEN_CREDENTIALS_ACK_TIMEOUT_MS = 5000;
+
 export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const socketRef = useRef<TypedSocket | null>(null);
   const optionsRef = useRef(options);
@@ -442,6 +448,8 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
   // リモート画面
   const [screens, setScreens] = useState<Screen[]>([]);
+  // 「一覧を一度でも受け取ったか」だけを表す状態。再接続を跨いで true のまま維持し、
+  // 復元中の選択を早期に空判定でクリアしないようにする（false に戻すことは意図的にしない）
   const [screensLoaded, setScreensLoaded] = useState(false);
 
   // メッセージショートカット（全リポジトリ共通）
@@ -1532,7 +1540,11 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
           resolve(null);
           return;
         }
-        socket.emit("screen:credentials", id, creds => resolve(creds));
+        socket
+          .timeout(SCREEN_CREDENTIALS_ACK_TIMEOUT_MS)
+          .emit("screen:credentials", id, (err, creds) => {
+            resolve(err ? null : (creds ?? null));
+          });
       }),
     []
   );
