@@ -22,7 +22,10 @@ export interface BridgeSocket {
   send(data: Buffer): void;
   close(code?: number, reason?: string): void;
   terminate(): void;
-  on(event: "message", listener: (data: Buffer) => void): unknown;
+  on(
+    event: "message",
+    listener: (data: Buffer | ArrayBuffer | Buffer[]) => void
+  ): unknown;
   on(event: "close", listener: () => void): unknown;
   on(event: "error", listener: (error: Error) => void): unknown;
 }
@@ -70,9 +73,18 @@ function lastLine(text: string): string {
   return lines.at(-1) ?? "";
 }
 
+/** ws の RawData (Buffer | ArrayBuffer | Buffer[]) を Buffer に正規化する */
+function toBuffer(data: Buffer | ArrayBuffer | Buffer[]): Buffer {
+  if (Array.isArray(data)) return Buffer.concat(data);
+  if (Buffer.isBuffer(data)) return data;
+  return Buffer.from(data);
+}
+
 export class ScreenBridge {
   private readonly children = new Set<ChildProcess>();
   private readonly sockets = new Set<BridgeSocket>();
+  /** closeAll から attach 内の SIGTERM→SIGKILL エスカレーションを再利用するための対応表 */
+  private readonly stopFns = new Map<ChildProcess, () => void>();
 
   get activeCount(): number {
     return this.children.size;
@@ -87,6 +99,9 @@ export class ScreenBridge {
 
     let stderr = "";
     let killTimer: NodeJS.Timeout | null = null;
+    // child.exitCode は SIGTERM/SIGKILL で死んだ子プロセスでは null のまま
+    // (signalCode 側に入る) なので、終了検知には自前のフラグを使う
+    let exited = false;
 
     const closeSocket = (code: number, reason: string) => {
       if (ws.readyState === WS_OPEN) {
@@ -95,26 +110,44 @@ export class ScreenBridge {
     };
 
     const stopChild = () => {
-      if (child.exitCode !== null || killTimer) return;
+      if (exited || killTimer) return;
       child.kill("SIGTERM");
       killTimer = setTimeout(() => {
-        if (child.exitCode === null) child.kill("SIGKILL");
+        if (!exited) child.kill("SIGKILL");
       }, KILL_GRACE_MS);
     };
+    this.stopFns.set(child, stopChild);
 
     child.stderr?.on("data", (chunk: Buffer) => {
       stderr = (stderr + chunk.toString()).slice(-STDERR_CAP);
     });
+    // stdout → ws.send はバックプレッシャーを見ない: RFB はクライアント駆動
+    // (FramebufferUpdateRequest) で応答が来るプロトコルであり、本ツールも
+    // 単一ユーザ前提なので、無制限バッファリングを許容してよしとする
     child.stdout?.on("data", (chunk: Buffer) => {
       if (ws.readyState === WS_OPEN) ws.send(chunk);
     });
-    child.on("error", error => {
-      this.children.delete(child);
-      closeSocket(1011, error.message);
+    child.stdout?.on("error", error => {
+      console.warn(`[ScreenBridge] stdout error: ${error.message}`);
     });
-    child.on("exit", (code, signal) => {
+    child.stderr?.on("error", error => {
+      console.warn(`[ScreenBridge] stderr error: ${error.message}`);
+    });
+    child.on("error", error => {
+      exited = true;
       if (killTimer) clearTimeout(killTimer);
       this.children.delete(child);
+      this.stopFns.delete(child);
+      closeSocket(1011, error.message);
+    });
+    // exit ではなく close を見る: exit は子プロセスの終了時点で発火するが
+    // stdio に未配送のデータが残りうる。stderr の最後の行 (理由) が
+    // close 前に届き切らず `ssh exited (255)` に劣化することがあるため
+    child.on("close", (code, signal) => {
+      exited = true;
+      if (killTimer) clearTimeout(killTimer);
+      this.children.delete(child);
+      this.stopFns.delete(child);
       if (code === 0) {
         closeSocket(1000, "");
       } else {
@@ -123,11 +156,18 @@ export class ScreenBridge {
     });
 
     // ssh が終わった直後に届いた message を stdin に書くと EPIPE が非同期の
-    // error で出る。リスナが無いと未捕捉例外でサーバごと落ちるので握る
-    child.stdin?.on("error", () => {});
-    ws.on("message", (data: Buffer) => {
-      if (child.exitCode === null && child.stdin && !child.stdin.destroyed) {
-        child.stdin.write(data);
+    // error で出る。リスナが無いと未捕捉例外でサーバごと落ちるので握るが、
+    // EPIPE 以外は原因調査のためログに残す
+    child.stdin?.on("error", error => {
+      if ((error as NodeJS.ErrnoException).code !== "EPIPE") {
+        console.warn(`[ScreenBridge] stdin error: ${error.message}`);
+      }
+    });
+    ws.on("message", data => {
+      if (!exited && child.stdin && !child.stdin.destroyed) {
+        // handleUpgrade で生成した socket は既定で binaryType: "nodebuffer"
+        // なので通常は Buffer だが、型上は ArrayBuffer / Buffer[] もありうる
+        child.stdin.write(toBuffer(data));
       }
     });
     ws.on("close", () => {
@@ -140,12 +180,19 @@ export class ScreenBridge {
   /** サーバ停止時。残っている接続を閉じて ssh を止める */
   closeAll(): void {
     for (const child of this.children) {
-      child.kill("SIGTERM");
+      const stop = this.stopFns.get(child);
+      if (stop) {
+        stop();
+      } else {
+        child.kill("SIGTERM");
+      }
     }
     for (const ws of this.sockets) {
       ws.close(1001, "server shutdown");
     }
+    this.children.clear();
     this.sockets.clear();
+    this.stopFns.clear();
   }
 }
 

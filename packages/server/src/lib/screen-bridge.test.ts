@@ -36,16 +36,25 @@ function fakeChild() {
     kill: ReturnType<typeof vi.fn>;
     killed: boolean;
     exitCode: number | null;
+    signalCode: string | null;
+    /** Node の実際の挙動を模す: シグナル死は exitCode=null / signalCode=シグナル名 */
+    exit(code: number | null, signal: string | null): void;
   };
   child.stdin = new PassThrough();
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
   child.killed = false;
   child.exitCode = null;
+  child.signalCode = null;
   child.kill = vi.fn(() => {
     child.killed = true;
     return true;
   });
+  child.exit = (code, signal) => {
+    child.exitCode = code;
+    child.signalCode = signal;
+    child.emit("close", code, signal);
+  };
   return child;
 }
 
@@ -122,6 +131,18 @@ describe("ScreenBridge", () => {
     expect(Buffer.concat(socket.sent).toString()).toBe("RFB 003.889\n");
   });
 
+  it("message が Buffer[] のときは連結して stdin に書く", () => {
+    const child = fakeChild();
+    mockedSpawn.mockReturnValue(child as never);
+    const socket = fakeSocket();
+    bridge.attach(socket, target);
+
+    const received: Buffer[] = [];
+    child.stdin.on("data", chunk => received.push(chunk));
+    socket.emit("message", [Buffer.from("RFB "), Buffer.from("003.008\n")]);
+    expect(Buffer.concat(received).toString()).toBe("RFB 003.008\n");
+  });
+
   it("WebSocket が閉じたら ssh を SIGTERM し、猶予後に SIGKILL する", () => {
     const child = fakeChild();
     mockedSpawn.mockReturnValue(child as never);
@@ -134,6 +155,34 @@ describe("ScreenBridge", () => {
     expect(child.kill).toHaveBeenCalledWith("SIGKILL");
   });
 
+  it("SIGTERM でシグナル死したら SIGKILL へエスカレーションしない", () => {
+    const child = fakeChild();
+    mockedSpawn.mockReturnValue(child as never);
+    const socket = fakeSocket();
+    bridge.attach(socket, target);
+
+    socket.emit("close");
+    expect(child.kill).toHaveBeenCalledTimes(1);
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+
+    // 自分で送った SIGTERM によって子プロセスがシグナル死した状態を模す
+    child.exit(null, "SIGTERM");
+
+    vi.advanceTimersByTime(3000);
+    expect(child.kill).toHaveBeenCalledTimes(1);
+    expect(bridge.activeCount).toBe(0);
+  });
+
+  it("WebSocket の error は ssh を SIGTERM で止める", () => {
+    const child = fakeChild();
+    mockedSpawn.mockReturnValue(child as never);
+    const socket = fakeSocket();
+    bridge.attach(socket, target);
+
+    socket.emit("error", new Error("boom"));
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
   it("ssh が非 0 で終わったら stderr の最後の行を理由に載せて閉じる", () => {
     const child = fakeChild();
     mockedSpawn.mockReturnValue(child as never);
@@ -144,7 +193,7 @@ describe("ScreenBridge", () => {
     child.stderr.write(
       "user@build.example.internal: Permission denied (publickey).\n"
     );
-    child.emit("exit", 255, null);
+    child.exit(255, null);
 
     expect(socket.closed).toEqual([
       {
@@ -161,7 +210,7 @@ describe("ScreenBridge", () => {
     const socket = fakeSocket();
     bridge.attach(socket, target);
 
-    child.emit("exit", 0, null);
+    child.exit(0, null);
     expect(socket.closed).toEqual([{ code: 1000, reason: "" }]);
   });
 
@@ -171,11 +220,14 @@ describe("ScreenBridge", () => {
     const socket = fakeSocket();
     bridge.attach(socket, target);
 
-    child.stderr.write(`${"あ".repeat(100)}\n`);
-    child.emit("exit", 1, null);
-    expect(
-      Buffer.byteLength(socket.closed[0].reason ?? "")
-    ).toBeLessThanOrEqual(123);
+    const originalLine = "あ".repeat(100);
+    child.stderr.write(`${originalLine}\n`);
+    child.exit(1, null);
+
+    const reason = socket.closed[0].reason ?? "";
+    expect(Buffer.byteLength(reason)).toBeLessThanOrEqual(123);
+    expect(reason.length).toBeGreaterThan(0);
+    expect(originalLine.startsWith(reason)).toBe(true);
   });
 
   it("spawn の error は 1011 で閉じる", () => {
@@ -194,8 +246,7 @@ describe("ScreenBridge", () => {
     const socket = fakeSocket();
     bridge.attach(socket, target);
 
-    child.exitCode = 1;
-    child.emit("exit", 1, null);
+    child.exit(1, null);
     const received: Buffer[] = [];
     child.stdin.on("data", chunk => received.push(chunk));
     expect(() => socket.emit("message", Buffer.from("late"))).not.toThrow();
@@ -216,5 +267,23 @@ describe("ScreenBridge", () => {
     expect(sockets[1].close).toHaveBeenCalledWith(1001, "server shutdown");
     expect(children[0].kill).toHaveBeenCalledWith("SIGTERM");
     expect(children[1].kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("closeAll は activeCount を 0 にし、猶予後に SIGKILL へエスカレーションする", () => {
+    const children = [fakeChild(), fakeChild()];
+    mockedSpawn
+      .mockReturnValueOnce(children[0] as never)
+      .mockReturnValueOnce(children[1] as never);
+    const sockets = [fakeSocket(), fakeSocket()];
+    bridge.attach(sockets[0], target);
+    bridge.attach(sockets[1], target);
+
+    bridge.closeAll();
+    expect(bridge.activeCount).toBe(0);
+
+    // ssh がまだ生きている (close が来ていない) 想定で猶予を進める
+    vi.advanceTimersByTime(3000);
+    expect(children[0].kill).toHaveBeenCalledWith("SIGKILL");
+    expect(children[1].kill).toHaveBeenCalledWith("SIGKILL");
   });
 });
