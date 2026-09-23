@@ -38,6 +38,7 @@
 | 変更 | `packages/server/package.json` | `ws` / `@types/ws` |
 | 変更 | `packages/web/package.json` | `@novnc/novnc` |
 | 作成 | `packages/web/src/types/novnc.d.ts` | 使う範囲だけの型宣言 |
+| 作成 | `packages/web/src/lib/screen-selection.ts` | `"screen:<id>"` 番兵の生成と判定 |
 | 作成 | `packages/web/src/lib/auth-token.ts` | URL の token 取得と `/screen` WebSocket URL の組み立て |
 | 作成 | `packages/web/src/lib/auth-token.test.ts` | 同上のテスト |
 | 作成 | `packages/web/src/components/ScreenPane.tsx` | RFB を使う画面部品 |
@@ -881,6 +882,20 @@ describe("ScreenBridge", () => {
     expect(socket.closed).toEqual([{ code: 1011, reason: "spawn ssh ENOENT" }]);
   });
 
+  it("ssh 終了後に届いた message は書かず、例外も出さない", () => {
+    const child = fakeChild();
+    mockedSpawn.mockReturnValue(child as never);
+    const socket = fakeSocket();
+    bridge.attach(socket, target);
+
+    child.exitCode = 1;
+    child.emit("exit", 1, null);
+    const received: Buffer[] = [];
+    child.stdin.on("data", chunk => received.push(chunk));
+    expect(() => socket.emit("message", Buffer.from("late"))).not.toThrow();
+    expect(received).toEqual([]);
+  });
+
   it("closeAll は残っている接続をすべて閉じる", () => {
     const children = [fakeChild(), fakeChild()];
     mockedSpawn
@@ -1028,8 +1043,13 @@ export class ScreenBridge {
       }
     });
 
+    // ssh が終わった直後に届いた message を stdin に書くと EPIPE が非同期の
+    // error で出る。リスナが無いと未捕捉例外でサーバごと落ちるので握る
+    child.stdin?.on("error", () => {});
     ws.on("message", (data: Buffer) => {
-      child.stdin?.write(data);
+      if (child.exitCode === null && child.stdin && !child.stdin.destroyed) {
+        child.stdin.write(data);
+      }
     });
     ws.on("close", () => {
       this.sockets.delete(ws);
@@ -1056,7 +1076,7 @@ export const screenBridge = new ScreenBridge();
 - [ ] **Step 5: テストが通ることを確認する**
 
 Run: `pnpm --filter @ark/server exec vitest run src/lib/screen-bridge.test.ts`
-Expected: PASS (7 件)
+Expected: PASS (8 件)
 
 - [ ] **Step 6: コミット**
 
@@ -1296,7 +1316,9 @@ declare module "@novnc/novnc" {
     desktopname: CustomEvent<{ name: string }>;
   };
 
-  export default class RFB extends EventTarget {
+  // EventTarget を継承させると addEventListener の型が基底と衝突して tsc が落ちる。
+  // 使う API だけを自前で宣言する
+  export default class RFB {
     constructor(
       target: HTMLElement,
       urlOrChannel: string | WebSocket,
@@ -1798,6 +1820,8 @@ interface (`restartSessionWithProfile` の直後):
 ```ts
   // リモート画面
   screens: Screen[];
+  /** screen:list を 1 度でも受けたか。復元した選択を早まって外さないための印 */
+  screensLoaded: boolean;
   createScreen: (input: ScreenInput) => void;
   updateScreen: (id: string, patch: ScreenPatch) => void;
   deleteScreen: (id: string) => void;
@@ -1810,6 +1834,7 @@ state (`capabilities` の useState の直後):
 ```ts
   // リモート画面
   const [screens, setScreens] = useState<Screen[]>([]);
+  const [screensLoaded, setScreensLoaded] = useState(false);
 ```
 
 listener (`profile:error` の listener の直後):
@@ -1818,6 +1843,7 @@ listener (`profile:error` の listener の直後):
     // リモート画面 ---------------------------------------------------
     socket.on("screen:list", list => {
       setScreens(list);
+      setScreensLoaded(true);
     });
     socket.on("screen:created", screen => {
       setScreens(prev =>
@@ -1881,6 +1907,7 @@ return (`restartSessionWithProfile,` の直後):
 ```ts
     // リモート画面
     screens,
+    screensLoaded,
     createScreen,
     updateScreen,
     deleteScreen,
@@ -2576,18 +2603,69 @@ git commit -m "feat(web): リモート画面の state と管理ダイアログ�
 ### Task 7: サイドバーの画面メニューと Dashboard の全面表示 (PC)
 
 **Files:**
+- Create: `packages/web/src/lib/screen-selection.ts`
+- Test: `packages/web/src/lib/screen-selection.test.ts`
 - Modify: `packages/web/src/components/SessionSidebar.tsx`
 - Modify: `packages/web/src/components/SessionSidebar.test.tsx`
 - Modify: `packages/web/src/pages/Dashboard.tsx`
 
 **Interfaces:**
-- Consumes: `screens / createScreen / updateScreen / deleteScreen / requestScreenCredentials` (Task 6)、`ScreenPane` (Task 5)、`ScreenManagerDialog` (Task 6)
+- Consumes: `screens / screensLoaded / createScreen / updateScreen / deleteScreen / requestScreenCredentials` (Task 6)、`ScreenPane` (Task 5)、`ScreenManagerDialog` (Task 6)
 - Produces (SessionSidebar props):
   - `screens?: Screen[]`
   - `selectedScreenId?: string | null`
   - `onSelectScreen?: (id: string) => void`
   - `onOpenScreenManager?: () => void`
-- 選択の番兵: `selectedSessionId === "screen:<id>"`。判定は `parseScreenSelection(selectedSessionId)` (Dashboard 内の純関数)
+- 選択の番兵: `selectedSessionId === "screen:<id>"`。`screenSelectionId(id)` / `parseScreenSelection(selectedSessionId)` (`lib/screen-selection.ts`。ページから export すると Fast Refresh が効かなくなるので lib に置く)
+
+- [ ] **Step 0: 番兵の純関数を書く**
+
+`packages/web/src/lib/screen-selection.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { parseScreenSelection, screenSelectionId } from "./screen-selection";
+
+describe("screen-selection", () => {
+  it("screen:<id> を往復できる", () => {
+    expect(screenSelectionId("s1")).toBe("screen:s1");
+    expect(parseScreenSelection("screen:s1")).toBe("s1");
+  });
+
+  it("番兵でなければ null", () => {
+    expect(parseScreenSelection("session-1")).toBeNull();
+    expect(parseScreenSelection("browser")).toBeNull();
+    expect(parseScreenSelection(null)).toBeNull();
+  });
+});
+```
+
+`packages/web/src/lib/screen-selection.ts`:
+
+```ts
+/**
+ * Dashboard の selectedSessionId は「セッション id」「"browser"」「"screen:<id>"」を
+ * 1 本の文字列で持つ。画面の番兵はここで作り、ここで読む
+ */
+
+const PREFIX = "screen:";
+
+export function screenSelectionId(screenId: string): string {
+  return `${PREFIX}${screenId}`;
+}
+
+/** "screen:<id>" なら id、それ以外は null */
+export function parseScreenSelection(
+  selectedSessionId: string | null
+): string | null {
+  return selectedSessionId?.startsWith(PREFIX)
+    ? selectedSessionId.slice(PREFIX.length)
+    : null;
+}
+```
+
+Run: `pnpm exec vitest run packages/web/src/lib/screen-selection.test.ts`
+Expected: PASS
 
 - [ ] **Step 1: サイドバーのテストを書く**
 
@@ -2738,23 +2816,14 @@ import に追加:
 ```tsx
 import { ScreenManagerDialog } from "@/components/ScreenManagerDialog";
 import { ScreenPane } from "@/components/ScreenPane";
-```
-
-ファイル上部 (コンポーネント外) に純関数:
-
-```tsx
-/** selectedSessionId の "screen:<id>" 番兵を読む。該当しなければ null */
-export function parseScreenSelection(selectedSessionId: string | null): string | null {
-  return selectedSessionId?.startsWith("screen:")
-    ? selectedSessionId.slice("screen:".length)
-    : null;
-}
+import { parseScreenSelection, screenSelectionId } from "@/lib/screen-selection";
 ```
 
 `useSocket` の分割代入 (`navigateBrowser,` の直後) に:
 
 ```tsx
     screens,
+    screensLoaded,
     createScreen,
     updateScreen,
     deleteScreen,
@@ -2764,7 +2833,9 @@ export function parseScreenSelection(selectedSessionId: string | null): string |
 `hasBrowserOpened` の useState の直後に:
 
 ```tsx
-  // 一度開いた画面の id。開いた ScreenPane はマウントしたまま display で切り替える
+  // 一度開いた画面の id。開いた ScreenPane はマウントしたまま display で切り替える。
+  // リロードで復元された選択は openedScreenIds に無いので、描画条件は
+  // 「開いたことがある or いま選択中」にする
   const [openedScreenIds, setOpenedScreenIds] = useState<Set<string>>(
     () => new Set()
   );
@@ -2772,20 +2843,18 @@ export function parseScreenSelection(selectedSessionId: string | null): string |
   const selectedScreenId = parseScreenSelection(selectedSessionId);
 
   const handleSelectScreen = useCallback((id: string) => {
-    setSelectedSessionId(`screen:${id}`);
+    setSelectedSessionId(screenSelectionId(id));
     setOpenedScreenIds(prev => (prev.has(id) ? prev : new Set(prev).add(id)));
   }, []);
 
-  // 削除された画面を選択中なら選択を外し、マウントも解く (再接続先が無い)
+  // 削除された画面を選択中なら選択を外す。screen:list を受ける前は
+  // 復元した選択を早まって外さない (sessionsLoaded と同じ扱い)
   useEffect(() => {
-    if (selectedScreenId && !screens.some(s => s.id === selectedScreenId)) {
+    if (!screensLoaded || !selectedScreenId) return;
+    if (!screens.some(s => s.id === selectedScreenId)) {
       setSelectedSessionId(null);
     }
-    setOpenedScreenIds(prev => {
-      const next = new Set([...prev].filter(id => screens.some(s => s.id === id)));
-      return next.size === prev.size ? prev : next;
-    });
-  }, [screens, selectedScreenId]);
+  }, [screens, screensLoaded, selectedScreenId]);
 ```
 
 セッション自動選択の effect (`// ブラウザ選択中はリセットしない` の行) を:
@@ -2812,7 +2881,11 @@ main 領域のブラウザビュー (`{hasBrowserOpened && (...)}`) の直後に
                 {/* リモート画面: 一度開いた画面はマウントしたまま display で切り替え、
                     再接続を防ぐ (ブラウザビューと同じ) */}
                 {screens
-                  .filter(screen => openedScreenIds.has(screen.id))
+                  .filter(
+                    screen =>
+                      openedScreenIds.has(screen.id) ||
+                      selectedScreenId === screen.id
+                  )
                   .map(screen => (
                     <div
                       key={screen.id}
@@ -2847,6 +2920,7 @@ main 領域のブラウザビュー (`{hasBrowserOpened && (...)}`) の直後に
 
 ```tsx
     screens: [],
+    screensLoaded: true,
     createScreen: vi.fn(),
     updateScreen: vi.fn(),
     deleteScreen: vi.fn(),
@@ -2865,7 +2939,7 @@ Expected: PASS
 - [ ] **Step 6: コミット**
 
 ```bash
-git add packages/web/src/components/SessionSidebar.tsx packages/web/src/components/SessionSidebar.test.tsx packages/web/src/pages/Dashboard.tsx packages/web/src/pages/Dashboard.test.tsx
+git add packages/web/src/lib/screen-selection.ts packages/web/src/lib/screen-selection.test.ts packages/web/src/components/SessionSidebar.tsx packages/web/src/components/SessionSidebar.test.tsx packages/web/src/pages/Dashboard.tsx packages/web/src/pages/Dashboard.test.tsx
 git commit -m "feat(web): サイドバーの画面メニューからリモート画面を全面表示する"
 ```
 
@@ -3116,7 +3190,7 @@ git commit -m "feat(web): モバイルにリモート画面のタブを追加"
 1. サイドバーの Monitor アイコン → 「画面の管理...」 → 新規追加で対象 VM を登録 (値は環境変数から入力し、スクリーンショットや記録に残さない)
 2. メニューから画面を選び、デスクトップが描画されるスクリーンショットを取る (`.claude/` や repo の外、scratchpad に置く)
 3. 画面内をクリックしてウィンドウが反応すること、キー入力 (例: Cmd+Space) が届くことを見る
-4. 別のセッションに切り替えて戻り、再接続していない (接続中の表示が出ない) ことを見る
+4. 別のセッションに切り替えて戻り、再接続していない (接続中の表示が出ない) ことと、戻ったあとの拡縮が正しい (noVNC は `display:none` 中に size 0 で autoscale が走る) ことを見る。崩れていたら `hidden` の代わりに `invisible absolute inset-0` (サイズを保ったまま隠す) に切り替える
 5. サーバ側で該当 ssh を `kill` し、切断理由と再接続ボタンが出て、押すと繋ぎ直ることを見る
 6. `pnpm exec playwright` で viewport を iPhone 幅にし、下部タブの「画面」から同じ画面が出ることを見る
 
