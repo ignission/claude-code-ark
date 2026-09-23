@@ -751,6 +751,9 @@ export default function Dashboard() {
           activeBrowserSession={activeBrowserSession}
           onSelectBrowser={handleSelectBrowser}
           isRemote={isRemote}
+          screens={screens}
+          requestScreenCredentials={requestScreenCredentials}
+          onOpenScreenManager={() => setShowScreenManager(true)}
           messageShortcuts={messageShortcuts}
           onCreateShortcut={createShortcut}
           onUpdateShortcut={updateShortcut}
