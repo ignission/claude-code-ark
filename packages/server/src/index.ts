@@ -1452,7 +1452,11 @@ export async function startServer(
     socket.emit("system:capabilities", capabilities);
 
     // リモート画面の一覧 (機能フラグに依らず常に送る)
-    socket.emit("screen:list", db.listScreens());
+    try {
+      socket.emit("screen:list", db.listScreens());
+    } catch (e) {
+      socket.emit("screen:error", { message: getErrorMessage(e) });
+    }
 
     // Send allowed repos list to client on connection
     socket.emit("repos:list", allowedRepos);
@@ -2886,7 +2890,19 @@ export async function startServer(
       }
     });
 
-    socket.on("screen:delete", ({ id }) => {
+    socket.on("screen:delete", data => {
+      // payload は外部入力。分割代入前に型を検証しないと、引数なし emit や
+      // null/不正形状の payload でハンドラ内 throw → プロセスごと落ちる
+      // （socket.io の同期ハンドラ内例外は uncaughtException になる。
+      // diagram:subscribe と同じ理由）
+      const id = (data as { id?: unknown } | null)?.id;
+      if (typeof id !== "string" || id.length === 0) {
+        socket.emit("screen:error", {
+          message: "id は必須です",
+          code: "invalid_id",
+        });
+        return;
+      }
       try {
         db.deleteScreen(id);
         io.emit("screen:deleted", { id });
@@ -2898,12 +2914,22 @@ export async function startServer(
 
     // パスワードはこの callback でだけ配る (一覧には載せない)
     socket.on("screen:credentials", (id, callback) => {
-      const record = db.getScreenRecord(id);
-      callback(
-        record
-          ? { username: record.vncUser, password: record.vncPassword }
-          : null
-      );
+      if (typeof callback !== "function") return;
+      if (typeof id !== "string" || id.length === 0) {
+        callback(null);
+        return;
+      }
+      try {
+        const record = db.getScreenRecord(id);
+        callback(
+          record
+            ? { username: record.vncUser, password: record.vncPassword }
+            : null
+        );
+      } catch (e) {
+        console.error("[Screen] credentials に失敗:", getErrorMessage(e));
+        callback(null);
+      }
     });
 
     // ============================================================
