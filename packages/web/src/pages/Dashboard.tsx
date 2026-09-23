@@ -474,6 +474,15 @@ export default function Dashboard() {
     }
   }, [selectedSessionId, activeBrowserSession, isRemote, startBrowser]);
 
+  // リロードで復元された画面の選択も「開いたことがある」に入れ、
+  // 別の対象に移って戻っても再マウントしない
+  useEffect(() => {
+    if (!selectedScreenId) return;
+    setOpenedScreenIds(prev =>
+      prev.has(selectedScreenId) ? prev : new Set(prev).add(selectedScreenId)
+    );
+  }, [selectedScreenId]);
+
   const [isCreateWorktreeOpen, setIsCreateWorktreeOpen] = useState(false);
   /**
    * サイドバー+ボタンで他repoに切り替えた際の元repoPath。

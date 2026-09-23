@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import type { ManagedSession } from "@ark/shared";
-import { act, type ReactElement, type ReactNode } from "react";
+import type { ManagedSession, Screen } from "@ark/shared";
+import { act, type ReactElement, type ReactNode, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Dashboard from "./Dashboard";
@@ -16,6 +16,8 @@ const testDoubles = vi.hoisted(() => ({
   mobileLayout: vi.fn(),
   isMobile: false,
   socketState: {} as Record<string, unknown>,
+  screenPaneMount: vi.fn(),
+  screenPaneUnmount: vi.fn(),
 }));
 
 vi.mock("@/hooks/useSettings", () => ({
@@ -100,7 +102,19 @@ vi.mock("@/components/AboutDialog", () => ({
   },
 }));
 vi.mock("@/components/BrowserPane", () => ({ BrowserPane: () => null }));
-vi.mock("@/components/ScreenPane", () => ({ ScreenPane: () => null }));
+vi.mock("@/components/ScreenPane", () => ({
+  ScreenPane: () => {
+    // mount/unmount 回数を testDoubles 経由で記録し、再マウント（VNC再接続）の
+    // 有無をテストから検証できるようにする
+    useEffect(() => {
+      testDoubles.screenPaneMount();
+      return () => {
+        testDoubles.screenPaneUnmount();
+      };
+    }, []);
+    return null;
+  },
+}));
 vi.mock("@/components/CreateWorktreeDialog", () => ({
   CreateWorktreeDialog: () => null,
 }));
@@ -164,6 +178,21 @@ function makeSession(): ManagedSession {
     tmuxSessionName: "tmux-dashboard",
     ttydPort: 4100,
     ttydUrl: "/ttyd/dashboard-session/",
+  };
+}
+
+function makeScreen(): Screen {
+  return {
+    id: "s1",
+    name: "Build",
+    sshHost: "build.example.internal",
+    sshPort: 22,
+    sshUser: "user",
+    vncHost: "127.0.0.1",
+    vncPort: 5900,
+    vncUser: "",
+    createdAt: 0,
+    updatedAt: 0,
   };
 }
 
@@ -277,6 +306,8 @@ beforeEach(() => {
   testDoubles.sessionSidebar.mockClear();
   testDoubles.aboutDialog.mockClear();
   testDoubles.bridgeSnapshotEnabled.mockClear();
+  testDoubles.screenPaneMount.mockClear();
+  testDoubles.screenPaneUnmount.mockClear();
 
   const session = makeSession();
   testDoubles.socketState = socketState(session);
@@ -378,5 +409,55 @@ describe("Dashboardの上部バー配線", () => {
     const text = mountedRoot?.container.textContent ?? "";
     expect(text).toContain("サーバーとつながっていません");
     expect(text).not.toContain("Not connected to server");
+  });
+});
+
+describe("Dashboardのリモート画面復元", () => {
+  it("リロードで復元した画面選択も開いた画面として扱い、他対象へ移っても再マウントしない", () => {
+    const session = makeSession();
+    const screen = makeScreen();
+    // 初回マウント時点では session:list がまだ届いていない状態を再現する。
+    // sessions が最初から埋まっていると「セッション自動選択」effect が
+    // 同じコミットの中で復元した screen 選択を上書きしてしまうため
+    // (実際のアプリでも session:list はソケット接続後に非同期で届く)。
+    testDoubles.socketState = {
+      ...socketState(session),
+      sessions: new Map(),
+      screens: [screen],
+      screensLoaded: true,
+    };
+    // 設定ストアには "screen:s1" が selectedSessionId として永続化されている
+    // (前回リロード時に画面を選択していた状態を再現)
+    testDoubles.getSetting.mockImplementation(
+      (key: string, fallback: unknown) =>
+        key === "selectedSessionId" ? "screen:s1" : fallback
+    );
+
+    mount(<Dashboard />);
+
+    expect(testDoubles.screenPaneMount).toHaveBeenCalledTimes(1);
+    expect(testDoubles.screenPaneUnmount).not.toHaveBeenCalled();
+
+    // session:list 受信を模す (このセッションを選べるようにする)
+    testDoubles.socketState = {
+      ...testDoubles.socketState,
+      sessions: new Map([[session.id, session]]),
+    };
+    act(() => mountedRoot?.root.render(<Dashboard />));
+
+    // セッションへ選択を移す (サイドバーの onOpenSession 経由)
+    const sidebar = latestProps(testDoubles.sessionSidebar);
+    act(() => (sidebar.onOpenSession as (id: string) => void)(session.id));
+
+    // 修正前は openedScreenIds に "s1" が入らないため、この時点で
+    // ScreenPane が描画対象から外れてアンマウントされていた
+    expect(testDoubles.screenPaneUnmount).not.toHaveBeenCalled();
+    expect(testDoubles.screenPaneMount).toHaveBeenCalledTimes(1);
+
+    // 画面へ選択を戻しても display 切替だけで再マウントは起きない
+    act(() => (sidebar.onSelectScreen as (id: string) => void)("s1"));
+
+    expect(testDoubles.screenPaneMount).toHaveBeenCalledTimes(1);
+    expect(testDoubles.screenPaneUnmount).not.toHaveBeenCalled();
   });
 });
