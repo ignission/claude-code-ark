@@ -214,6 +214,7 @@ task.md 規約・復唱・失敗の自動収集・セッション lifecycle を�
 | IME対応                | 日本語入力時のcompositionイベント処理                                       |
 | パーミッションスキップ | `--skip-permissions` フラグでClaude CLIの権限確認をスキップ                 |
 | プロファイル切替（Linux限定） | リポジトリ単位で別々の `CLAUDE_CONFIG_DIR` を使用。認証は通常セッション内で `claude /login` 実行 |
+| リモート画面           | SSH で届くホストの VNC 画面 (macOS の画面共有など) を noVNC で全面表示する。サイドバーの画面メニュー (PC) / 下部タブ「画面」(モバイル) から開く。設定は SQLite の `screens`、WebSocket は Ark サーバ内で `ssh -W` に直結する (`screen-bridge.ts`。websockify もローカルポートも使わない)。ARD 認証に WebCrypto を使うため localhost か HTTPS でだけ繋がる |
 
 ## Git・PRワークフロー
 
@@ -454,6 +455,11 @@ claude-code-ark/
 | `profile:delete`  | `{ id }`                                | プロファイル削除（CASCADEで紐付けも削除） |
 | `repo:set-profile` | `{ repoPath, profileId \| null }` | リポジトリにプロファイルを紐付け（nullで解除） |
 | `session:restart-with-profile` | `{ sessionId }`            | セッションをkill→新envで再起動 |
+| `screen:list`     | -                                       | リモート画面一覧取得 |
+| `screen:create`   | `ScreenInput`                           | リモート画面作成 |
+| `screen:update`   | `{ id, ...ScreenPatch }`                | リモート画面更新 (`vncPassword` は指定時のみ) |
+| `screen:delete`   | `{ id }`                                | リモート画面削除 |
+| `screen:credentials` | `id, callback`                       | VNC の認証情報 (コールバック。一覧には載せない) |
 
 ### サーバー → クライアント
 
@@ -494,6 +500,10 @@ claude-code-ark/
 | `profile:deleted`        | `{ id }`                                  | プロファイル削除完了 |
 | `profile:error`          | `{ message, code? }`                      | プロファイル操作エラー |
 | `repo:profile-changed`   | `{ repoPath, profileId \| null }`  | 紐付け変更通知（バッジ更新用） |
+| `screen:list`            | `Screen[]`                     | リモート画面一覧 (接続時にも送る。パスワードは含まない) |
+| `screen:created` / `screen:updated` | `Screen`            | リモート画面の作成・更新完了 |
+| `screen:deleted`         | `{ id }`                       | リモート画面削除完了 |
+| `screen:error`           | `{ message, code? }`           | リモート画面エラー |
 
 ---
 
