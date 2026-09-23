@@ -18,6 +18,10 @@ import type {
   MessageShortcut,
   Profile,
   RepoInfo,
+  Screen,
+  ScreenCredentials,
+  ScreenInput,
+  ScreenPatch,
   ServerToClientEvents,
   SessionGridSnapshot,
   SpecialKey,
@@ -264,6 +268,16 @@ interface UseSocketReturn {
   ) => void;
   restartSessionWithProfile: (sessionId: string) => void;
 
+  // リモート画面
+  screens: Screen[];
+  /** screen:list を 1 度でも受けたか。復元した選択を早まって外さないための印 */
+  screensLoaded: boolean;
+  createScreen: (input: ScreenInput) => void;
+  updateScreen: (id: string, patch: ScreenPatch) => void;
+  deleteScreen: (id: string) => void;
+  /** 接続直前に 1 回だけ呼ぶ。socket 未接続や未登録は null */
+  requestScreenCredentials: (id: string) => Promise<ScreenCredentials | null>;
+
   // メッセージショートカット
   messageShortcuts: MessageShortcut[];
   createShortcut: (message: string) => void;
@@ -425,6 +439,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [capabilities, setCapabilities] = useState<SystemCapabilities>({
     multiProfileSupported: false,
   });
+
+  // リモート画面
+  const [screens, setScreens] = useState<Screen[]>([]);
+  const [screensLoaded, setScreensLoaded] = useState(false);
 
   // メッセージショートカット（全リポジトリ共通）
   const [messageShortcuts, setMessageShortcuts] = useState<MessageShortcut[]>(
@@ -937,6 +955,27 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       toast.error(message);
     });
 
+    // リモート画面 ---------------------------------------------------
+    socket.on("screen:list", list => {
+      setScreens(list);
+      setScreensLoaded(true);
+    });
+    socket.on("screen:created", screen => {
+      setScreens(prev =>
+        prev.some(s => s.id === screen.id) ? prev : [...prev, screen]
+      );
+    });
+    socket.on("screen:updated", screen => {
+      setScreens(prev => prev.map(s => (s.id === screen.id ? screen : s)));
+    });
+    socket.on("screen:deleted", ({ id }) => {
+      setScreens(prev => prev.filter(s => s.id !== id));
+    });
+    socket.on("screen:error", ({ message, code }) => {
+      console.error("[Socket] Screen error:", message, code);
+      toast.error(message);
+    });
+
     socket.on("repo:profile-changed", ({ repoPath, profileId }) => {
       setRepoProfileLinks(prev => {
         const next = new Map(prev);
@@ -1062,6 +1101,11 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       socket.off("browser:started");
       socket.off("browser:stopped");
       socket.off("browser:error");
+      socket.off("screen:list");
+      socket.off("screen:created");
+      socket.off("screen:updated");
+      socket.off("screen:deleted");
+      socket.off("screen:error");
       socket.off("usage:progress");
       socket.off("usage:complete");
       socket.off("usage:error");
@@ -1467,6 +1511,32 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socketRef.current?.emit("profile:delete", { id });
   }, []);
 
+  // リモート画面 actions
+  const createScreen = useCallback((input: ScreenInput) => {
+    socketRef.current?.emit("screen:create", input);
+  }, []);
+
+  const updateScreen = useCallback((id: string, patch: ScreenPatch) => {
+    socketRef.current?.emit("screen:update", { id, ...patch });
+  }, []);
+
+  const deleteScreen = useCallback((id: string) => {
+    socketRef.current?.emit("screen:delete", { id });
+  }, []);
+
+  const requestScreenCredentials = useCallback(
+    (id: string) =>
+      new Promise<ScreenCredentials | null>(resolve => {
+        const socket = socketRef.current;
+        if (!socket) {
+          resolve(null);
+          return;
+        }
+        socket.emit("screen:credentials", id, creds => resolve(creds));
+      }),
+    []
+  );
+
   const setRepoProfile = useCallback(
     (repoPath: string, profileId: string | null) => {
       socketRef.current?.emit("repo:set-profile", {
@@ -1638,6 +1708,13 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     worktreeDisplayNames,
     setWorktreeDisplayName,
     restartSessionWithProfile,
+    // リモート画面
+    screens,
+    screensLoaded,
+    createScreen,
+    updateScreen,
+    deleteScreen,
+    requestScreenCredentials,
     // メッセージショートカット
     messageShortcuts,
     createShortcut,
