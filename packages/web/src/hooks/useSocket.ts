@@ -29,6 +29,7 @@ import type {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import { toast } from "sonner";
+import { getAuthToken } from "../lib/auth-token";
 import {
   requestDiagramCommentCreate,
   requestDiagramCommentDelete,
@@ -53,12 +54,6 @@ import {
 } from "./worktreesByRepo";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
-
-// Extract token from URL
-function getTokenFromUrl(): string | null {
-  const params = new URLSearchParams(window.location.search);
-  return params.get("token");
-}
 
 interface UseSocketOptions {
   /** 設定読み込み完了後にtrueにする（falseの間はソケット接続しない） */
@@ -496,7 +491,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       ? "http://localhost:4001"
       : window.location.origin;
 
-    const token = getTokenFromUrl();
+    const token = getAuthToken();
     const socket: TypedSocket = io(serverUrl, {
       transports: ["websocket", "polling"],
       auth: token ? { token } : undefined,

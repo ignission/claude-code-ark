@@ -4,32 +4,42 @@ import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+interface FakeRFBInstance {
+  target: HTMLElement;
+  channel: unknown;
+  options: unknown;
+  listeners: Map<string, (event: { detail: unknown }) => void>;
+  disconnect: ReturnType<typeof vi.fn>;
+  scaleViewport: boolean;
+  background: string;
+}
+
 const doubles = vi.hoisted(() => ({
-  instances: [] as Array<{
-    target: HTMLElement;
-    channel: unknown;
-    options: unknown;
-    listeners: Map<string, (event: { detail: unknown }) => void>;
-    disconnect: ReturnType<typeof vi.fn>;
-    scaleViewport: boolean;
-  }>,
+  instances: [] as FakeRFBInstance[],
+  // 次の RFB 生成だけを失敗させるフラグ（1回使うと自動で戻る）
+  throwNextConstruct: false,
 }));
 
 vi.mock("@novnc/novnc", () => ({
   default: class FakeRFB {
-    scaleViewport = false;
+    target: HTMLElement;
+    channel: unknown;
+    options: unknown;
     background = "";
+    scaleViewport = false;
     disconnect = vi.fn();
     listeners = new Map<string, (event: { detail: unknown }) => void>();
     constructor(target: HTMLElement, channel: unknown, options: unknown) {
-      doubles.instances.push({
-        target,
-        channel,
-        options,
-        listeners: this.listeners,
-        disconnect: this.disconnect,
-        scaleViewport: false,
-      });
+      if (doubles.throwNextConstruct) {
+        doubles.throwNextConstruct = false;
+        throw new Error("RFB init failed");
+      }
+      this.target = target;
+      this.channel = channel;
+      this.options = options;
+      // インスタンス自体を保持する（スナップショットのコピーだと、後から
+      // 本体コードが設定する scaleViewport = true 等を観測できない）
+      doubles.instances.push(this);
     }
     addEventListener(
       type: string,
@@ -46,18 +56,18 @@ class FakeWebSocket extends EventTarget {
   binaryType = "blob";
   readyState = 0;
   url: string;
+  close = vi.fn();
   constructor(url: string) {
     super();
     this.url = url;
     FakeWebSocket.instances.push(this);
   }
   send() {}
-  close() {}
 }
 
 import { ScreenPane } from "./ScreenPane";
 
-const screen = {
+const screenFixture = {
   id: "s1",
   name: "ビルド VM",
   sshHost: "build.example.internal",
@@ -72,13 +82,20 @@ const screen = {
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
-function mount(element: ReactElement): HTMLDivElement {
+function mount(element: ReactElement): {
+  container: HTMLDivElement;
+  root: Root;
+} {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
   act(() => root.render(element));
   mountedRoots.push({ root, container });
-  return container;
+  return { container, root };
+}
+
+function rerender(root: Root, element: ReactElement) {
+  act(() => root.render(element));
 }
 
 async function flush() {
@@ -91,6 +108,7 @@ async function flush() {
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   doubles.instances.length = 0;
+  doubles.throwNextConstruct = false;
   FakeWebSocket.instances.length = 0;
   vi.stubGlobal("WebSocket", FakeWebSocket);
   Object.defineProperty(window, "isSecureContext", {
@@ -112,8 +130,11 @@ describe("ScreenPane", () => {
     const requestCredentials = vi
       .fn()
       .mockResolvedValue({ username: "user", password: "pw" });
-    const container = mount(
-      <ScreenPane screen={screen} requestCredentials={requestCredentials} />
+    const { container } = mount(
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials}
+      />
     );
     await flush();
 
@@ -122,9 +143,11 @@ describe("ScreenPane", () => {
     const rfb = doubles.instances[0];
     expect(rfb.channel).toBe(FakeWebSocket.instances[0]);
     expect(FakeWebSocket.instances[0].url).toContain("/screen/s1/ws");
+    expect(FakeWebSocket.instances[0].binaryType).toBe("arraybuffer");
     expect(rfb.options).toEqual({
       credentials: { username: "user", password: "pw" },
     });
+    expect(rfb.scaleViewport).toBe(true);
     expect(container.textContent).toContain("接続中");
 
     act(() => rfb.listeners.get("connect")?.({ detail: {} }));
@@ -135,17 +158,21 @@ describe("ScreenPane", () => {
     const requestCredentials = vi
       .fn()
       .mockResolvedValue({ username: "user", password: "pw" });
-    const container = mount(
-      <ScreenPane screen={screen} requestCredentials={requestCredentials} />
+    const { container } = mount(
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials}
+      />
     );
     await flush();
 
     const ws = FakeWebSocket.instances[0];
+    const firstRfb = doubles.instances[0];
     act(() => {
       ws.dispatchEvent(
         new CloseEvent("close", { code: 1011, reason: "Permission denied" })
       );
-      doubles.instances[0].listeners.get("disconnect")?.({
+      firstRfb.listeners.get("disconnect")?.({
         detail: { clean: false },
       });
     });
@@ -158,14 +185,49 @@ describe("ScreenPane", () => {
     await flush();
     expect(doubles.instances).toHaveLength(2);
     expect(requestCredentials).toHaveBeenCalledTimes(2);
+    // 既に disconnect イベントが出た RFB を cleanup 側で重ねて切断しない
+    expect(firstRfb.disconnect).not.toHaveBeenCalled();
+  });
+
+  it("接続中に screen が変わったら前の RFB を切断してから繋ぎ直す", async () => {
+    const requestCredentials = vi
+      .fn()
+      .mockResolvedValue({ username: "user", password: "pw" });
+    const { root } = mount(
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials}
+      />
+    );
+    await flush();
+    const firstRfb = doubles.instances[0];
+    act(() => firstRfb.listeners.get("connect")?.({ detail: {} }));
+
+    const otherScreen = { ...screenFixture, id: "s2" };
+    rerender(
+      root,
+      <ScreenPane
+        screen={otherScreen}
+        requestCredentials={requestCredentials}
+      />
+    );
+    await flush();
+
+    // まだ disconnect イベントを出していない（＝生きていた）RFB は明示的に切断する
+    expect(firstRfb.disconnect).toHaveBeenCalledTimes(1);
+    expect(doubles.instances).toHaveLength(2);
+    expect(requestCredentials).toHaveBeenCalledWith("s2");
   });
 
   it("認証失敗は securityfailure の理由を出す", async () => {
     const requestCredentials = vi
       .fn()
       .mockResolvedValue({ username: "user", password: "pw" });
-    const container = mount(
-      <ScreenPane screen={screen} requestCredentials={requestCredentials} />
+    const { container } = mount(
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials}
+      />
     );
     await flush();
 
@@ -183,12 +245,115 @@ describe("ScreenPane", () => {
 
   it("credentials が無ければ設定を促す", async () => {
     const requestCredentials = vi.fn().mockResolvedValue(null);
-    const container = mount(
-      <ScreenPane screen={screen} requestCredentials={requestCredentials} />
+    const { container } = mount(
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials}
+      />
     );
     await flush();
     expect(doubles.instances).toHaveLength(0);
     expect(container.textContent).toContain("画面の設定が見つかりません");
+  });
+
+  it("credentials 取得が失敗したら理由を出し、再接続ボタンで繋ぎ直せる", async () => {
+    const requestCredentials = vi
+      .fn()
+      .mockRejectedValue(new Error("ネットワークエラー"));
+    const { container } = mount(
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials}
+      />
+    );
+    await flush();
+
+    expect(doubles.instances).toHaveLength(0);
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(container.textContent).toContain("ネットワークエラー");
+    const retry = Array.from(container.querySelectorAll("button")).find(
+      b => b.textContent === "再接続"
+    );
+    expect(retry).toBeTruthy();
+  });
+
+  it("RFB の初期化に失敗したら WebSocket を閉じて理由を出す", async () => {
+    doubles.throwNextConstruct = true;
+    const requestCredentials = vi
+      .fn()
+      .mockResolvedValue({ username: "user", password: "pw" });
+    const { container } = mount(
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials}
+      />
+    );
+    await flush();
+
+    expect(doubles.instances).toHaveLength(0);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(FakeWebSocket.instances[0].close).toHaveBeenCalled();
+    expect(container.textContent).toContain("RFB init failed");
+  });
+
+  it("requestCredentials の identity が変わっても繋ぎ直さない", async () => {
+    const requestCredentials1 = vi
+      .fn()
+      .mockResolvedValue({ username: "user", password: "pw" });
+    const { root } = mount(
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials1}
+      />
+    );
+    await flush();
+    expect(doubles.instances).toHaveLength(1);
+
+    const requestCredentials2 = vi
+      .fn()
+      .mockResolvedValue({ username: "user", password: "pw" });
+    rerender(
+      root,
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials2}
+      />
+    );
+    await flush();
+
+    expect(doubles.instances).toHaveLength(1);
+    expect(requestCredentials2).not.toHaveBeenCalled();
+  });
+
+  it("credentials 待ちの間にアンマウントすると何も作らない", async () => {
+    let resolveCredentials:
+      | ((value: { username: string; password: string } | null) => void)
+      | null = null;
+    const requestCredentials = vi.fn().mockImplementation(
+      () =>
+        new Promise<{ username: string; password: string } | null>(resolve => {
+          resolveCredentials = resolve;
+        })
+    );
+    mount(
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials}
+      />
+    );
+    await flush();
+    expect(requestCredentials).toHaveBeenCalled();
+
+    for (const { root, container } of mountedRoots.splice(0)) {
+      act(() => root.unmount());
+      container.remove();
+    }
+
+    resolveCredentials?.({ username: "user", password: "pw" });
+    await flush();
+
+    expect(doubles.instances).toHaveLength(0);
+    expect(FakeWebSocket.instances).toHaveLength(0);
   });
 
   it("安全なコンテキストでなければ接続せずに案内する", async () => {
@@ -197,8 +362,11 @@ describe("ScreenPane", () => {
       configurable: true,
     });
     const requestCredentials = vi.fn();
-    const container = mount(
-      <ScreenPane screen={screen} requestCredentials={requestCredentials} />
+    const { container } = mount(
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials}
+      />
     );
     await flush();
     expect(requestCredentials).not.toHaveBeenCalled();
@@ -210,7 +378,10 @@ describe("ScreenPane", () => {
       .fn()
       .mockResolvedValue({ username: "user", password: "pw" });
     mount(
-      <ScreenPane screen={screen} requestCredentials={requestCredentials} />
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials}
+      />
     );
     await flush();
     const rfb = doubles.instances[0];

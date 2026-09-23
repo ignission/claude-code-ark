@@ -1,7 +1,7 @@
 import type { Screen, ScreenCredentials } from "@ark/shared";
 import RFB from "@novnc/novnc";
 import { Loader2, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { buildScreenWsUrl } from "@/lib/auth-token";
 
@@ -16,6 +16,8 @@ type Status =
   | { kind: "connected" }
   | { kind: "disconnected"; reason: string };
 
+const DEFAULT_ERROR_REASON = "接続に失敗しました";
+
 /**
  * リモート画面 (noVNC)。
  *
@@ -26,72 +28,95 @@ type Status =
  */
 export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const rfbRef = useRef<RFB | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "connecting" });
   const [attempt, setAttempt] = useState(0);
   const secure = window.isSecureContext;
 
-  const connect = useCallback(async () => {
-    const container = containerRef.current;
-    if (!container) return () => {};
-    setStatus({ kind: "connecting" });
+  // requestCredentials は親の再レンダーごとに別インスタンスで渡ってくることがある。
+  // effect の依存に入れるとその度にセッションを繋ぎ直してしまうため、最新の関数を
+  // ref に持たせておき、effect からは ref 経由で読む（依存には入れない）
+  const requestCredentialsRef = useRef(requestCredentials);
+  requestCredentialsRef.current = requestCredentials;
 
-    const creds = await requestCredentials(screen.id);
-    if (!creds) {
-      setStatus({
-        kind: "disconnected",
-        reason:
-          "画面の設定が見つかりません。画面の管理から登録し直してください",
-      });
-      return () => {};
-    }
-
-    let closeReason = "";
-    let securityReason = "";
-    const ws = new WebSocket(buildScreenWsUrl(screen.id));
-    ws.binaryType = "arraybuffer";
-    ws.addEventListener("close", event => {
-      closeReason = event.reason;
-    });
-
-    const rfb = new RFB(container, ws, {
-      credentials: { username: creds.username, password: creds.password },
-    });
-    rfb.scaleViewport = true;
-    rfb.background = "transparent";
-    rfb.addEventListener("connect", () => setStatus({ kind: "connected" }));
-    rfb.addEventListener("securityfailure", event => {
-      securityReason = `認証に失敗しました (${event.detail.reason ?? "理由不明"})`;
-    });
-    rfb.addEventListener("disconnect", event => {
-      const reason =
-        securityReason ||
-        closeReason ||
-        (event.detail.clean ? "切断されました" : "接続が切れました");
-      setStatus({ kind: "disconnected", reason });
-    });
-    rfbRef.current = rfb;
-
-    return () => {
-      rfb.disconnect();
-      if (rfbRef.current === rfb) rfbRef.current = null;
-    };
-  }, [screen.id, requestCredentials]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: secure と attempt (再接続ボタン押下時のカウンタ) の変化のたびに接続をやり直すための意図的な依存
+  // biome-ignore lint/correctness/useExhaustiveDependencies: secure (window.isSecureContext) は文書の生存期間中に変わらない値なので依存から外している。attempt は本文中では読まないが、再接続ボタン押下のたびに接続をやり直すためだけの trigger として依存に入れている
   useEffect(() => {
     if (!secure) return;
-    let cleanup: (() => void) | null = null;
+    const container = containerRef.current;
+    if (!container) return;
+
     let cancelled = false;
-    void connect().then(fn => {
-      if (cancelled) fn();
-      else cleanup = fn;
+    let ws: WebSocket | null = null;
+    let rfb: RFB | null = null;
+    // RFB が disconnect イベントを一度でも出したかどうか。既に切断済みの RFB へ
+    // cleanup 側から重ねて disconnect() を呼ぶと noVNC がエラーログを出すため、
+    // その二重切断を避ける目印に使う
+    let ended = false;
+
+    setStatus({ kind: "connecting" });
+
+    const fail = (reason: string) => {
+      if (cancelled) return;
+      setStatus({ kind: "disconnected", reason });
+    };
+
+    const run = async () => {
+      try {
+        const creds = await requestCredentialsRef.current(screen.id);
+        if (cancelled) return;
+        if (!creds) {
+          fail(
+            "画面の設定が見つかりません。画面の管理から登録し直してください"
+          );
+          return;
+        }
+
+        let closeReason = "";
+        let securityReason = "";
+        ws = new WebSocket(buildScreenWsUrl(screen.id));
+        ws.binaryType = "arraybuffer";
+        ws.addEventListener("close", event => {
+          closeReason = event.reason;
+        });
+
+        rfb = new RFB(container, ws, {
+          credentials: { username: creds.username, password: creds.password },
+        });
+        rfb.scaleViewport = true;
+        rfb.background = "transparent";
+        rfb.addEventListener("connect", () => {
+          if (!cancelled) setStatus({ kind: "connected" });
+        });
+        rfb.addEventListener("securityfailure", event => {
+          securityReason = `認証に失敗しました (${event.detail.reason ?? "理由不明"})`;
+        });
+        rfb.addEventListener("disconnect", event => {
+          ended = true;
+          if (cancelled) return;
+          const reason =
+            securityReason ||
+            closeReason ||
+            (event.detail.clean ? "切断されました" : "接続が切れました");
+          setStatus({ kind: "disconnected", reason });
+        });
+      } catch (error) {
+        // WebSocket が既に開かれていたら、RFB 初期化失敗などで捨てる際に
+        // サーバー側の ssh -W をぶら下げたままにしないよう明示的に閉じる
+        ws?.close();
+        fail(error instanceof Error ? error.message : DEFAULT_ERROR_REASON);
+      }
+    };
+
+    // run() 内は try/catch で全経路をカバーしているので基本的に reject しないが、
+    // 想定外の例外が漏れて unhandled rejection になることを避ける最後の砦として catch する
+    run().catch(error => {
+      fail(error instanceof Error ? error.message : DEFAULT_ERROR_REASON);
     });
+
     return () => {
       cancelled = true;
-      cleanup?.();
+      if (rfb && !ended) rfb.disconnect();
     };
-  }, [connect, secure, attempt]);
+  }, [screen.id, attempt]);
 
   if (!secure) {
     return (

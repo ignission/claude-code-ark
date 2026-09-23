@@ -1,16 +1,12 @@
 import type { BrowserSession } from "@ark/shared";
+import { getAuthToken } from "@/lib/auth-token";
 
 interface BrowserPaneProps {
   browserSession: BrowserSession;
 }
 
-/** URLからtokenパラメータを取得 */
-function getUrlToken(): string | null {
-  return new URLSearchParams(window.location.search).get("token");
-}
-
 export function BrowserPane({ browserSession }: BrowserPaneProps) {
-  const token = getUrlToken();
+  const token = getAuthToken();
   // tokenはpath内のクエリに含める必要がある。
   // noVNCは `path` をそのままWebSocket URLに使うため、
   // vnc.htmlのクエリに `token=` を付けるだけではupgradeリクエストに届かない。
