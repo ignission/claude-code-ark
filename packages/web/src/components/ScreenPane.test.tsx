@@ -414,6 +414,10 @@ describe("ScreenPane", () => {
 
     expect(rfb.disconnect).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain("切断しました");
+    // 切断ボタンは消えるので、結果は role="status" で読み上げに乗せる
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      "切断しました"
+    );
     expect(container.querySelector('button[aria-label="切断"]')).toBeNull();
     const retry = Array.from(container.querySelectorAll("button")).find(
       b => b.textContent?.trim() === "再接続"

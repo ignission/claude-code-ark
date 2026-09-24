@@ -217,15 +217,22 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
           </button>
         </div>
       )}
+      {/* 接続状態の文言は role="status" で読み上げに乗せる (切断ボタンは押した後に消えるため、
+          スクリーンリーダーには結果の通知が要る) */}
       {status.kind === "connecting" && (
-        <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground bg-background/80">
+        <div
+          role="status"
+          className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground bg-background/80"
+        >
           <Loader2 className="h-5 w-5 animate-spin mr-2" />
           {screen.name} に接続中...
         </div>
       )}
       {status.kind === "disconnected" && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm bg-background/90 px-6 text-center">
-          <p className="text-muted-foreground break-all">{status.reason}</p>
+          <p role="status" className="text-muted-foreground break-all">
+            {status.reason}
+          </p>
           <Button
             type="button"
             size="sm"
