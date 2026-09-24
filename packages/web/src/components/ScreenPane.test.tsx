@@ -71,6 +71,17 @@ class FakeWebSocket extends EventTarget {
 }
 
 import type { ScreenCredentialsResult } from "@ark/shared";
+
+// jsdom はタッチ端末に見えるので、カーソルの保険を非タッチとして動かす
+vi.mock("@/lib/screen-cursor", async importOriginal => {
+  const actual = await importOriginal<typeof import("@/lib/screen-cursor")>();
+  return {
+    ...actual,
+    keepLocalCursorUntilServerCursor: (target: HTMLElement) =>
+      actual.keepLocalCursorUntilServerCursor(target, { usesFallback: false }),
+  };
+});
+
 import { ScreenPane } from "./ScreenPane";
 
 const screenFixture = {
