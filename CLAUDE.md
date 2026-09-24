@@ -214,6 +214,7 @@ task.md 規約・復唱・失敗の自動収集・セッション lifecycle を�
 | IME対応                | 日本語入力時のcompositionイベント処理                                       |
 | パーミッションスキップ | `--skip-permissions` フラグでClaude CLIの権限確認をスキップ                 |
 | プロファイル切替（Linux限定） | リポジトリ単位で別々の `CLAUDE_CONFIG_DIR` を使用。認証は通常セッション内で `claude /login` 実行 |
+| リモート画面           | SSH で届くホストの VNC 画面 (macOS の画面共有など) を noVNC で全面表示する。サイドバーの画面メニュー (PC) / 下部タブ「画面」(モバイル) から開く。設定は SQLite の `screens`、WebSocket は Ark サーバ内で `ssh -W` に直結する (`screen-bridge.ts`。websockify もローカルポートも使わない)。ARD 認証に WebCrypto を使うため localhost か HTTPS でだけ繋がる |
 
 ## Git・PRワークフロー
 
@@ -454,6 +455,11 @@ claude-code-ark/
 | `profile:delete`  | `{ id }`                                | プロファイル削除（CASCADEで紐付けも削除） |
 | `repo:set-profile` | `{ repoPath, profileId \| null }` | リポジトリにプロファイルを紐付け（nullで解除） |
 | `session:restart-with-profile` | `{ sessionId }`            | セッションをkill→新envで再起動 |
+| `screen:list`     | -                                       | リモート画面一覧取得 |
+| `screen:create`   | `ScreenInput`                           | リモート画面作成 |
+| `screen:update`   | `{ id, ...ScreenPatch }`                | リモート画面更新 (`vncPassword` は指定時のみ) |
+| `screen:delete`   | `{ id }`                                | リモート画面削除 |
+| `screen:credentials` | `id, callback`                       | VNC の認証情報 (コールバック。一覧には載せない) |
 
 ### サーバー → クライアント
 
@@ -494,6 +500,10 @@ claude-code-ark/
 | `profile:deleted`        | `{ id }`                                  | プロファイル削除完了 |
 | `profile:error`          | `{ message, code? }`                      | プロファイル操作エラー |
 | `repo:profile-changed`   | `{ repoPath, profileId \| null }`  | 紐付け変更通知（バッジ更新用） |
+| `screen:list`            | `Screen[]`                     | リモート画面一覧 (接続時にも送る。パスワードは含まない) |
+| `screen:created` / `screen:updated` | `Screen`            | リモート画面の作成・更新完了 |
+| `screen:deleted`         | `{ id }`                       | リモート画面削除完了 |
+| `screen:error`           | `{ message, code? }`           | リモート画面エラー |
 
 ---
 
@@ -520,3 +530,19 @@ claude-code-ark/
 - **ttyd**
 - **jq**
 - **cloudflared**（リモートアクセス使用時のみ）
+- **ssh**（リモート画面使用時のみ）
+
+### リモート画面 (ssh) の前提
+
+ブリッジは Ark サーバーを動かしているユーザーの権限で `ssh -o BatchMode=yes -W` を起動する。
+`BatchMode=yes` は一切のプロンプトを出せないので、次を満たしていないと接続できない。
+
+- **鍵は Ark サーバーの実行ユーザーのもので、パスフレーズ無し** (または ssh-agent に登録済み)。
+  パスフレーズを聞けずに落ちる
+- **接続先が `known_hosts` に登録済み**。初回接続は `Host key verification failed` で失敗する。
+  この文字列は切断理由としてしか出ないので、先に一度 `ssh <user>@<host>` を手で通しておく
+- **pm2 で動かす場合は `ssh` が pm2 の PATH にあること**。無いと `spawn ssh ENOENT` が
+  切断理由に出る
+
+いずれも失敗は「画面が切断され、理由の 1 行が出る」形でしか見えないので、
+繋がらないときはまずこの 3 つを疑う。

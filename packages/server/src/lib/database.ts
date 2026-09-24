@@ -16,6 +16,9 @@ import {
   type MessageType,
   type Profile,
   type RepoProfileLink,
+  type Screen,
+  type ScreenInput,
+  type ScreenPatch,
   type Session,
   type SessionStatus,
   type WorktreeDisplayName,
@@ -64,6 +67,24 @@ interface MessageRow {
   type: string;
   timestamp: string;
 }
+
+/** screens テーブルの行 */
+interface ScreenRow {
+  id: string;
+  name: string;
+  ssh_host: string;
+  ssh_port: number;
+  ssh_user: string;
+  vnc_host: string;
+  vnc_port: number;
+  vnc_user: string;
+  vnc_password: string;
+  created_at: number;
+  updated_at: number;
+}
+
+/** パスワード込みの画面。サーバ内部だけで使い、クライアントへは出さない */
+export type ScreenRecord = Screen & { vncPassword: string };
 
 /** セッション作成時の入力データ */
 interface CreateSessionInput {
@@ -331,6 +352,24 @@ export class SessionDatabase {
     this.db.exec(
       "CREATE UNIQUE INDEX IF NOT EXISTS profiles_config_dir_unique ON profiles(config_dir)"
     );
+
+    // リモート画面 (SSH 越しの VNC)。vnc_password は平文で持つ
+    // (単一ユーザー前提。data/ は gitignore 済み)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS screens (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        ssh_host TEXT NOT NULL,
+        ssh_port INTEGER NOT NULL,
+        ssh_user TEXT NOT NULL,
+        vnc_host TEXT NOT NULL,
+        vnc_port INTEGER NOT NULL,
+        vnc_user TEXT NOT NULL,
+        vnc_password TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
 
     // マイグレーション: 旧 status 列を削除（認証ダイアログ廃止）
     try {
@@ -776,6 +815,123 @@ export class SessionDatabase {
   deleteProfile(id: string): void {
     const stmt = this.db.prepare("DELETE FROM profiles WHERE id = ?");
     stmt.run(id);
+  }
+
+  // ============================================================
+  // リモート画面 CRUD
+  // ============================================================
+
+  private rowToScreenRecord(row: ScreenRow): ScreenRecord {
+    return {
+      id: row.id,
+      name: row.name,
+      sshHost: row.ssh_host,
+      sshPort: row.ssh_port,
+      sshUser: row.ssh_user,
+      vncHost: row.vnc_host,
+      vncPort: row.vnc_port,
+      vncUser: row.vnc_user,
+      vncPassword: row.vnc_password,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private static stripScreenPassword(record: ScreenRecord): Screen {
+    const { vncPassword: _password, ...screen } = record;
+    return screen;
+  }
+
+  /** 登録済み画面を全件取得 (作成順)。パスワードは含めない */
+  listScreens(): Screen[] {
+    const rows = this.db
+      .prepare("SELECT * FROM screens ORDER BY created_at ASC")
+      .all() as ScreenRow[];
+    return rows.map(row =>
+      SessionDatabase.stripScreenPassword(this.rowToScreenRecord(row))
+    );
+  }
+
+  /** パスワード込みの行。ブリッジと credentials 配布だけが使う */
+  getScreenRecord(id: string): ScreenRecord | null {
+    const row = this.db.prepare("SELECT * FROM screens WHERE id = ?").get(id) as
+      | ScreenRow
+      | undefined;
+    return row ? this.rowToScreenRecord(row) : null;
+  }
+
+  getScreen(id: string): Screen | null {
+    const record = this.getScreenRecord(id);
+    return record ? SessionDatabase.stripScreenPassword(record) : null;
+  }
+
+  /** @throws name が既存と重複している場合 (UNIQUE 制約違反) */
+  createScreen(input: ScreenInput): Screen {
+    const id = nanoid();
+    const now = Date.now();
+    this.db
+      .prepare(`
+      INSERT INTO screens (id, name, ssh_host, ssh_port, ssh_user, vnc_host, vnc_port, vnc_user, vnc_password, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+      .run(
+        id,
+        input.name,
+        input.sshHost,
+        input.sshPort,
+        input.sshUser,
+        input.vncHost,
+        input.vncPort,
+        input.vncUser,
+        input.vncPassword,
+        now,
+        now
+      );
+    const created = this.getScreen(id);
+    if (!created) {
+      throw new Error(`Failed to create screen: ${id}`);
+    }
+    return created;
+  }
+
+  /** undefined のフィールドはスキップ。vncPassword も指定時だけ更新 */
+  updateScreen(id: string, patch: ScreenPatch): Screen {
+    const columns: Array<[keyof ScreenPatch, string]> = [
+      ["name", "name"],
+      ["sshHost", "ssh_host"],
+      ["sshPort", "ssh_port"],
+      ["sshUser", "ssh_user"],
+      ["vncHost", "vnc_host"],
+      ["vncPort", "vnc_port"],
+      ["vncUser", "vnc_user"],
+      ["vncPassword", "vnc_password"],
+    ];
+    const setClauses: string[] = [];
+    const params: Array<string | number> = [];
+    for (const [key, column] of columns) {
+      const value = patch[key];
+      if (value !== undefined) {
+        setClauses.push(`${column} = ?`);
+        params.push(value);
+      }
+    }
+    setClauses.push("updated_at = ?");
+    params.push(Date.now(), id);
+    const result = this.db
+      .prepare(`UPDATE screens SET ${setClauses.join(", ")} WHERE id = ?`)
+      .run(...params);
+    if (result.changes === 0) {
+      throw new Error(`Screen not found: ${id}`);
+    }
+    const updated = this.getScreen(id);
+    if (!updated) {
+      throw new Error(`Screen not found after update: ${id}`);
+    }
+    return updated;
+  }
+
+  deleteScreen(id: string): void {
+    this.db.prepare("DELETE FROM screens WHERE id = ?").run(id);
   }
 
   // ============================================================

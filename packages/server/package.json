@@ -28,6 +28,7 @@
     "playwright-core": "^1.62.1",
     "qrcode": "^1.5.4",
     "socket.io": "^4.8.3",
+    "ws": "^8.21.3",
     "zod": "^4.5.0"
   },
   "devDependencies": {
@@ -36,6 +37,7 @@
     "@types/http-proxy": "^1.17.17",
     "@types/node": "^26.4.0",
     "@types/qrcode": "^1.5.6",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.23.12",
     "typescript": "7.0.2",
     "vitest": "^4.1.11"

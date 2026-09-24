@@ -18,6 +18,10 @@ import type {
   MessageShortcut,
   Profile,
   RepoInfo,
+  Screen,
+  ScreenCredentialsResult,
+  ScreenInput,
+  ScreenPatch,
   ServerToClientEvents,
   SessionGridSnapshot,
   SpecialKey,
@@ -29,6 +33,7 @@ import type {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import { toast } from "sonner";
+import { getAuthToken } from "../lib/auth-token";
 import {
   requestDiagramCommentCreate,
   requestDiagramCommentDelete,
@@ -53,12 +58,6 @@ import {
 } from "./worktreesByRepo";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
-
-// Extract token from URL
-function getTokenFromUrl(): string | null {
-  const params = new URLSearchParams(window.location.search);
-  return params.get("token");
-}
 
 interface UseSocketOptions {
   /** 設定読み込み完了後にtrueにする（falseの間はソケット接続しない） */
@@ -269,6 +268,19 @@ interface UseSocketReturn {
   ) => void;
   restartSessionWithProfile: (sessionId: string) => void;
 
+  // リモート画面
+  screens: Screen[];
+  /** screen:list を 1 度でも受けたか。復元した選択を早まって外さないための印 */
+  screensLoaded: boolean;
+  createScreen: (input: ScreenInput) => void;
+  updateScreen: (id: string, patch: ScreenPatch) => void;
+  deleteScreen: (id: string) => void;
+  /**
+   * 接続直前に 1 回だけ呼ぶ。「登録が消えている」(unregistered) と
+   * 「サーバーに届かない」(unavailable) は利用者の打ち手が違うので区別する
+   */
+  requestScreenCredentials: (id: string) => Promise<ScreenCredentialsResult>;
+
   // メッセージショートカット
   messageShortcuts: MessageShortcut[];
   createShortcut: (message: string) => void;
@@ -292,6 +304,12 @@ interface UseSocketReturn {
   /** UI側で表示済みのusageErrorをクリア */
   clearUsageError: () => void;
 }
+
+/**
+ * screen:credentials の ack 待ちタイムアウト。ack が戻らない場合は null に倒し、
+ * ScreenPane 側が「切断」表示と再接続ボタンを出せるようにする
+ */
+const SCREEN_CREDENTIALS_ACK_TIMEOUT_MS = 5000;
 
 export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const socketRef = useRef<TypedSocket | null>(null);
@@ -431,6 +449,12 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     multiProfileSupported: false,
   });
 
+  // リモート画面
+  const [screens, setScreens] = useState<Screen[]>([]);
+  // 「一覧を一度でも受け取ったか」だけを表す状態。再接続を跨いで true のまま維持し、
+  // 復元中の選択を早期に空判定でクリアしないようにする（false に戻すことは意図的にしない）
+  const [screensLoaded, setScreensLoaded] = useState(false);
+
   // メッセージショートカット（全リポジトリ共通）
   const [messageShortcuts, setMessageShortcuts] = useState<MessageShortcut[]>(
     []
@@ -496,7 +520,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       ? "http://localhost:4001"
       : window.location.origin;
 
-    const token = getTokenFromUrl();
+    const token = getAuthToken();
     const socket: TypedSocket = io(serverUrl, {
       transports: ["websocket", "polling"],
       auth: token ? { token } : undefined,
@@ -942,6 +966,27 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       toast.error(message);
     });
 
+    // リモート画面 ---------------------------------------------------
+    socket.on("screen:list", list => {
+      setScreens(list);
+      setScreensLoaded(true);
+    });
+    socket.on("screen:created", screen => {
+      setScreens(prev =>
+        prev.some(s => s.id === screen.id) ? prev : [...prev, screen]
+      );
+    });
+    socket.on("screen:updated", screen => {
+      setScreens(prev => prev.map(s => (s.id === screen.id ? screen : s)));
+    });
+    socket.on("screen:deleted", ({ id }) => {
+      setScreens(prev => prev.filter(s => s.id !== id));
+    });
+    socket.on("screen:error", ({ message, code }) => {
+      console.error("[Socket] Screen error:", message, code);
+      toast.error(message);
+    });
+
     socket.on("repo:profile-changed", ({ repoPath, profileId }) => {
       setRepoProfileLinks(prev => {
         const next = new Map(prev);
@@ -1067,6 +1112,11 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       socket.off("browser:started");
       socket.off("browser:stopped");
       socket.off("browser:error");
+      socket.off("screen:list");
+      socket.off("screen:created");
+      socket.off("screen:updated");
+      socket.off("screen:deleted");
+      socket.off("screen:error");
       socket.off("usage:progress");
       socket.off("usage:complete");
       socket.off("usage:error");
@@ -1472,6 +1522,47 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socketRef.current?.emit("profile:delete", { id });
   }, []);
 
+  // リモート画面 actions
+  const createScreen = useCallback((input: ScreenInput) => {
+    socketRef.current?.emit("screen:create", input);
+  }, []);
+
+  const updateScreen = useCallback((id: string, patch: ScreenPatch) => {
+    socketRef.current?.emit("screen:update", { id, ...patch });
+  }, []);
+
+  const deleteScreen = useCallback((id: string) => {
+    socketRef.current?.emit("screen:delete", { id });
+  }, []);
+
+  const requestScreenCredentials = useCallback(
+    (id: string) =>
+      // サーバーの ack は ScreenCredentials | null のまま。ここで
+      // 「socket が無い / ack が返らない」= unavailable と
+      // 「ack が null」= 登録が消えている、に振り分ける
+      new Promise<ScreenCredentialsResult>(resolve => {
+        const socket = socketRef.current;
+        if (!socket) {
+          resolve({ kind: "unavailable" });
+          return;
+        }
+        socket
+          .timeout(SCREEN_CREDENTIALS_ACK_TIMEOUT_MS)
+          .emit("screen:credentials", id, (err, creds) => {
+            if (err) {
+              resolve({ kind: "unavailable" });
+              return;
+            }
+            resolve(
+              creds
+                ? { kind: "ok", credentials: creds }
+                : { kind: "unregistered" }
+            );
+          });
+      }),
+    []
+  );
+
   const setRepoProfile = useCallback(
     (repoPath: string, profileId: string | null) => {
       socketRef.current?.emit("repo:set-profile", {
@@ -1643,6 +1734,13 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     worktreeDisplayNames,
     setWorktreeDisplayName,
     restartSessionWithProfile,
+    // リモート画面
+    screens,
+    screensLoaded,
+    createScreen,
+    updateScreen,
+    deleteScreen,
+    requestScreenCredentials,
     // メッセージショートカット
     messageShortcuts,
     createShortcut,

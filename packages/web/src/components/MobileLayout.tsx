@@ -1,9 +1,12 @@
 /**
  * MobileLayout - モバイル専用ルートコンポーネント
  *
- * 「セッション一覧」「セッション詳細」「ブラウザ」を
- * 画面遷移と、リモート時だけ出す下部タブで切り替える。
+ * 「セッション一覧」「セッション詳細」「ブラウザ」「リモート画面」を
+ * 画面遷移と、リモート時または画面登録があるときに出す下部タブで切り替える。
  * iframe再マウント防止のため、display:none/blockで表示を切り替える。
+ * ただしリモート画面のタブだけは display:none を使わず、絶対配置 +
+ * visibility でサイズを保ったまま隠す (noVNC の倍率計算のため。
+ * 理由は screenPaneClassName のコメント)。
  */
 
 import type {
@@ -16,6 +19,8 @@ import type {
   ManagedSession,
   MessageShortcut,
   Profile,
+  Screen,
+  ScreenCredentialsResult,
   ServerToClientEvents,
   SpecialKey,
   SystemCapabilities,
@@ -27,6 +32,7 @@ import type { Socket } from "socket.io-client";
 import { BrowserPane } from "@/components/BrowserPane";
 import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
+import { ScreenPane } from "@/components/ScreenPane";
 import type { ViewerTab } from "@/components/TerminalPane";
 import type { DiagramOpenRequest } from "@/lib/mobile-session-view-mode";
 import { getBaseName, isPathWithin } from "@/utils/pathUtils";
@@ -35,7 +41,7 @@ import { findRepoForSession } from "@/utils/sessionUtils";
 // MobileTab / SessionSubView は配列を真実源にし、union 型を派生させる。
 // こうしないと runtime 検証配列と型が二重化し、union に値を足したとき配列更新を
 // 忘れても型エラーにならず正当な値が静かに潰れる。
-const MOBILE_TABS = ["session", "browser"] as const;
+const MOBILE_TABS = ["session", "browser", "screen"] as const;
 const SESSION_SUB_VIEWS = ["list", "detail"] as const;
 export type MobileTab = (typeof MOBILE_TABS)[number];
 export type SessionSubView = (typeof SESSION_SUB_VIEWS)[number];
@@ -157,6 +163,10 @@ interface MobileLayoutProps {
   activeBrowserSession: BrowserSession | null;
   onSelectBrowser: () => void;
   isRemote: boolean;
+  // リモート画面
+  screens: Screen[];
+  requestScreenCredentials: (id: string) => Promise<ScreenCredentialsResult>;
+  onOpenScreenManager: () => void;
   // メッセージショートカット
   messageShortcuts: MessageShortcut[];
   onCreateShortcut: (message: string) => void;
@@ -242,6 +252,9 @@ export function MobileLayout({
   activeBrowserSession,
   onSelectBrowser,
   isRemote,
+  screens,
+  requestScreenCredentials,
+  onOpenScreenManager,
   messageShortcuts,
   onCreateShortcut,
   onUpdateShortcut,
@@ -313,11 +326,14 @@ export function MobileLayout({
   );
   const effectiveSessionSubView: SessionSubView =
     sessionSubView === "detail" && !canShowDetail ? "list" : sessionSubView;
-  // ブラウザのタブはリモート時だけある。設定はサーバーに保存され端末をまたぐので、
-  // リモートの端末で開いたブラウザのタブが残っていても、ローカルでは一覧に戻す
-  // (ローカルには下部タブが無く、戻る手段の無い空の画面になるため)。
-  // 以降の描画と判定はこの activeTab を使い、保存された値は触らない
-  const activeTab: MobileTab = isRemote ? storedActiveTab : "session";
+  // ブラウザのタブはリモート時だけ、画面のタブは登録があるときだけある。
+  // 無いタブが保存されていたら一覧に戻す (戻る手段の無い空の画面を避ける)
+  const hasScreens = screens.length > 0;
+  const activeTab: MobileTab =
+    (storedActiveTab === "browser" && !isRemote) ||
+    (storedActiveTab === "screen" && !hasScreens)
+      ? "session"
+      : storedActiveTab;
 
   // 選択中のセッションが恒久的に存在しない（削除等）場合は、永続化state も
   // 全てクリアする（sessionSubView=list + 不在 selectedSessionId の解除）。
@@ -354,15 +370,50 @@ export function MobileLayout({
     setHasBrowserOpened(true);
   }, [onSelectBrowser, onChangeActiveTab]);
 
-  // 下部タブはブラウザタブがあるリモート時だけ、一覧とブラウザの画面に出す。
+  // 画面タブ。複数登録があれば上部の select で切り替える
+  const [selectedScreenId, setSelectedScreenId] = useState<string | null>(null);
+  const [openedScreenIds, setOpenedScreenIds] = useState<Set<string>>(
+    () => new Set()
+  );
+  const activeScreenId =
+    selectedScreenId && screens.some(s => s.id === selectedScreenId)
+      ? selectedScreenId
+      : (screens[0]?.id ?? null);
+  const handleOpenScreenTab = useCallback(() => {
+    onChangeActiveTab("screen");
+    if (activeScreenId) {
+      setOpenedScreenIds(prev =>
+        prev.has(activeScreenId) ? prev : new Set(prev).add(activeScreenId)
+      );
+    }
+  }, [onChangeActiveTab, activeScreenId]);
+  useEffect(() => {
+    if (activeTab === "screen" && activeScreenId) {
+      setOpenedScreenIds(prev =>
+        prev.has(activeScreenId) ? prev : new Set(prev).add(activeScreenId)
+      );
+    }
+  }, [activeTab, activeScreenId]);
+
+  // 下部タブはブラウザタブがあるリモート時、または画面タブがある登録時に、
+  // 一覧・ブラウザ・画面の画面に出す。
   // 会話の詳細画面は自前の下部バーを画面の下端に置くので、タブを重ねない
   const isDetailShown =
     activeTab === "session" && effectiveSessionSubView === "detail";
-  const showBottomNav = isRemote && !isDetailShown;
-  // 一覧とブラウザのラッパーだけが、下部タブの高さぶんの余白を持つ
-  const paneClassName = isRemote
+  const hasBottomNav = isRemote || hasScreens;
+  const showBottomNav = hasBottomNav && !isDetailShown;
+  // 一覧とブラウザ・画面のラッパーだけが、下部タブの高さぶんの余白を持つ
+  const paneClassName = hasBottomNav
     ? "flex-1 flex flex-col min-h-0 pb-14"
     : "flex-1 flex flex-col min-h-0";
+  // 画面タブだけは display:none で隠さない。noVNC の scaleViewport は
+  // コンテナの実寸から倍率を決めるので、隠れている間に画面が回転したり
+  // キーボードが出たりすると autoscale(0,0) に落ち、戻しても戻らない。
+  // flex-1 のまま残すと一覧と高さを取り合うため、絶対配置で流れから外し、
+  // 見えているときも隠れているときも同じ箱 (inset-0) のままにする
+  const screenPaneClassName = hasBottomNav
+    ? "absolute inset-0 flex flex-col min-h-0 pb-14"
+    : "absolute inset-0 flex flex-col min-h-0";
   const tabClassName = (selected: boolean) =>
     `flex-1 py-3 text-center text-sm ${
       selected
@@ -371,7 +422,8 @@ export function MobileLayout({
     }`;
 
   return (
-    <div className="h-full flex flex-col min-h-0 overflow-hidden">
+    // relative は画面タブのラッパー (absolute inset-0) の基準に使う
+    <div className="relative h-full flex flex-col min-h-0 overflow-hidden">
       {/* 一覧画面 */}
       <div
         className={
@@ -381,6 +433,7 @@ export function MobileLayout({
         }
       >
         <MobileSessionList
+          onOpenScreenManager={onOpenScreenManager}
           sessions={sessions}
           worktrees={worktrees}
           repoList={repoList}
@@ -535,6 +588,74 @@ export function MobileLayout({
         </div>
       )}
 
+      {/* リモート画面 - 一度開いた画面はマウントしたまま、
+          サイズを保ったまま visibility だけで切り替える
+          (理由は screenPaneClassName のコメント) */}
+      {openedScreenIds.size > 0 && (
+        <div
+          className={
+            activeTab === "screen"
+              ? screenPaneClassName
+              : `${screenPaneClassName} invisible pointer-events-none`
+          }
+        >
+          <div className="h-12 border-b border-border flex items-center gap-3 px-4 shrink-0">
+            <button
+              type="button"
+              className="inline-flex items-center gap-0.5 text-sm text-muted-foreground"
+              onClick={() => onChangeActiveTab("session")}
+            >
+              <ChevronLeft className="size-4" aria-hidden="true" />
+              戻る
+            </button>
+            {screens.length > 1 ? (
+              <select
+                aria-label="表示する画面"
+                className="text-sm bg-transparent"
+                value={activeScreenId ?? ""}
+                onChange={e => setSelectedScreenId(e.target.value)}
+              >
+                {screens.map(screen => (
+                  <option key={screen.id} value={screen.id}>
+                    {screen.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="text-sm font-medium">
+                {screens[0]?.name ?? "画面"}
+              </span>
+            )}
+            <button
+              type="button"
+              className="ml-auto text-sm text-muted-foreground"
+              onClick={onOpenScreenManager}
+            >
+              管理
+            </button>
+          </div>
+          <div className="flex-1 min-h-0 relative">
+            {screens
+              .filter(screen => openedScreenIds.has(screen.id))
+              .map(screen => (
+                <div
+                  key={screen.id}
+                  className={
+                    activeScreenId === screen.id
+                      ? "absolute inset-0"
+                      : "absolute inset-0 invisible pointer-events-none"
+                  }
+                >
+                  <ScreenPane
+                    screen={screen}
+                    requestCredentials={requestScreenCredentials}
+                  />
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
       {/* 下部タブ。選択中は緑の線ではなく、文字色とウェイトで示す */}
       {showBottomNav && (
         <nav
@@ -549,14 +670,26 @@ export function MobileLayout({
           >
             セッション
           </button>
-          <button
-            type="button"
-            aria-current={activeTab === "browser" ? "page" : undefined}
-            className={tabClassName(activeTab === "browser")}
-            onClick={handleOpenBrowser}
-          >
-            ブラウザ
-          </button>
+          {isRemote && (
+            <button
+              type="button"
+              aria-current={activeTab === "browser" ? "page" : undefined}
+              className={tabClassName(activeTab === "browser")}
+              onClick={handleOpenBrowser}
+            >
+              ブラウザ
+            </button>
+          )}
+          {hasScreens && (
+            <button
+              type="button"
+              aria-current={activeTab === "screen" ? "page" : undefined}
+              className={tabClassName(activeTab === "screen")}
+              onClick={handleOpenScreenTab}
+            >
+              画面
+            </button>
+          )}
         </nav>
       )}
     </div>

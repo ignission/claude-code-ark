@@ -83,4 +83,35 @@ describe("MobileSessionList", () => {
     expect(listProps).not.toHaveProperty("onSelectRepoGrid");
     expect(listProps).not.toHaveProperty("onNewSession");
   });
+
+  it("画面の管理は、画面が未登録でも見出しから開ける", () => {
+    const onOpenScreenManager = vi.fn();
+    const container = mount(
+      <MobileSessionList
+        sessions={new Map()}
+        worktrees={[]}
+        repoList={[]}
+        sessionStatuses={new Map()}
+        sessionPreviews={new Map()}
+        worktreeDisplayNames={new Map()}
+        onOpenSession={vi.fn()}
+        onStartSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onDeleteWorktree={vi.fn()}
+        onNewSession={vi.fn()}
+        onOpenScreenManager={onOpenScreenManager}
+      />
+    );
+    const button = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="画面の管理"]'
+    );
+    act(() => button?.click());
+    expect(onOpenScreenManager).toHaveBeenCalledTimes(1);
+
+    const listProps = testDoubles.sectionList.mock.calls.at(-1)?.[0] as Record<
+      string,
+      unknown
+    >;
+    expect(listProps).not.toHaveProperty("onOpenScreenManager");
+  });
 });

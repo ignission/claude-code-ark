@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import { MobileLayout, normalizeMobileTab } from "./MobileLayout";
 import type { ViewerTab } from "./TerminalPane";
 
+vi.mock("@/components/ScreenPane", () => ({ ScreenPane: () => null }));
+
 const session: ManagedSession = {
   id: "session-1",
   worktreeId: "worktree-1",
@@ -44,6 +46,11 @@ function createProps(): ComponentProps<typeof MobileLayout> {
     activeBrowserSession: null,
     onSelectBrowser: vi.fn(),
     isRemote: false,
+    screens: [],
+    requestScreenCredentials: vi
+      .fn()
+      .mockResolvedValue({ kind: "unregistered" }),
+    onOpenScreenManager: vi.fn(),
     messageShortcuts: [],
     onCreateShortcut: vi.fn(),
     onUpdateShortcut: vi.fn(),
@@ -144,6 +151,43 @@ describe("MobileLayoutの下部タブ", () => {
     expect(markup).not.toContain("<nav");
     expect(markup).not.toContain("pb-14");
   });
+
+  it("画面が登録されていればローカルでも下部タブに「画面」を出す", () => {
+    const props = {
+      ...createProps(),
+      sessionSubView: "list" as const,
+      isRemote: false,
+      screens: [
+        {
+          id: "s1",
+          name: "ビルド VM",
+          sshHost: "build.example.internal",
+          sshPort: 22,
+          sshUser: "user",
+          vncHost: "127.0.0.1",
+          vncPort: 5900,
+          vncUser: "user",
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(createElement(MobileLayout, props));
+    expect(html).toContain('aria-label="画面の切り替え"');
+    expect(html).toContain(">画面</button>");
+    expect(html).not.toContain(">ブラウザ</button>");
+  });
+
+  it("画面が未登録ならローカルでは下部タブを出さない", () => {
+    const props = {
+      ...createProps(),
+      sessionSubView: "list" as const,
+      isRemote: false,
+      screens: [],
+    };
+    const html = renderToStaticMarkup(createElement(MobileLayout, props));
+    expect(html).not.toContain('aria-label="画面の切り替え"');
+  });
 });
 
 describe("MobileLayoutの一覧の配線", () => {
@@ -184,5 +228,6 @@ describe("normalizeMobileTab", () => {
   it("正しい保存値はそのまま使う", () => {
     expect(normalizeMobileTab("session")).toBe("session");
     expect(normalizeMobileTab("browser")).toBe("browser");
+    expect(normalizeMobileTab("screen")).toBe("screen");
   });
 });
