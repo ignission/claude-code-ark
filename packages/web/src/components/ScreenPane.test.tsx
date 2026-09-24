@@ -37,6 +37,11 @@ vi.mock("@novnc/novnc", () => ({
       this.target = target;
       this.channel = channel;
       this.options = options;
+      // 実物と同じく target の中に canvas を作り、サーバーのカーソルが
+      // 届くまでは cursor を none にしておく
+      const canvas = document.createElement("canvas");
+      canvas.style.cursor = "none";
+      target.append(canvas);
       // インスタンス自体を保持する（スナップショットのコピーだと、後から
       // 本体コードが設定する scaleViewport = true 等を観測できない）
       doubles.instances.push(this);
@@ -66,6 +71,17 @@ class FakeWebSocket extends EventTarget {
 }
 
 import type { ScreenCredentialsResult } from "@ark/shared";
+
+// jsdom はタッチ端末に見えるので、カーソルの保険を非タッチとして動かす
+vi.mock("@/lib/screen-cursor", async importOriginal => {
+  const actual = await importOriginal<typeof import("@/lib/screen-cursor")>();
+  return {
+    ...actual,
+    keepLocalCursorUntilServerCursor: (target: HTMLElement) =>
+      actual.keepLocalCursorUntilServerCursor(target, { usesFallback: false }),
+  };
+});
+
 import { ScreenPane } from "./ScreenPane";
 
 const screenFixture = {
@@ -441,6 +457,19 @@ describe("ScreenPane", () => {
     await flush();
     expect(requestCredentials).not.toHaveBeenCalled();
     expect(container.textContent).toContain("HTTPS");
+  });
+
+  it("サーバーがカーソルを送らない間はブラウザの矢印を出す", async () => {
+    const requestCredentials = vi.fn().mockResolvedValue(okCredentials());
+    const { container } = mount(
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials}
+      />
+    );
+    await flush();
+    const canvas = container.querySelector("canvas");
+    expect(canvas?.style.cursor).toBe("default");
   });
 
   it("アンマウントで RFB を切断する", async () => {

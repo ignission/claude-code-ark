@@ -4,6 +4,7 @@ import { Loader2, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { buildScreenWsUrl } from "@/lib/auth-token";
+import { keepLocalCursorUntilServerCursor } from "@/lib/screen-cursor";
 
 interface ScreenPaneProps {
   screen: Screen;
@@ -57,6 +58,7 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
     let ws: WebSocket | null = null;
     let rfb: RFB | null = null;
     let sizeObserver: ResizeObserver | null = null;
+    let stopCursorGuard: (() => void) | null = null;
     // RFB が disconnect イベントを一度でも出したかどうか。既に切断済みの RFB へ
     // cleanup 側から重ねて disconnect() を呼ぶと noVNC がエラーログを出すため、
     // その二重切断を避ける目印に使う
@@ -122,6 +124,10 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
           securityReason = `認証に失敗しました (${event.detail.reason ?? "理由不明"})`;
         });
         observeSize(container);
+        // macOS の画面共有はカーソル形状を送らないので、届くまでは
+        // ブラウザの矢印を出しておく (screen-cursor.ts)
+        const canvas = container.querySelector("canvas");
+        if (canvas) stopCursorGuard = keepLocalCursorUntilServerCursor(canvas);
         rfb.addEventListener("disconnect", event => {
           ended = true;
           if (cancelled) return;
@@ -148,6 +154,7 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
     return () => {
       cancelled = true;
       sizeObserver?.disconnect();
+      stopCursorGuard?.();
       if (rfb && !ended) rfb.disconnect();
     };
   }, [
