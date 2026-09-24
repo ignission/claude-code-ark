@@ -1,6 +1,6 @@
 import type { Screen, ScreenCredentialsResult } from "@ark/shared";
 import RFB from "@novnc/novnc";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw, Unplug } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { buildScreenWsUrl } from "@/lib/auth-token";
@@ -22,6 +22,10 @@ const UNREGISTERED_REASON =
   "画面の設定が見つかりません。画面の管理から登録し直してください";
 const UNAVAILABLE_REASON =
   "サーバーに繋がりません。しばらくしてから再接続してください";
+const MANUAL_DISCONNECT_REASON = "切断しました";
+/** 接続中に右上へ出す小さなボタン。普段は薄く、hover で浮く */
+const CORNER_BUTTON_CLASS =
+  "rounded-md bg-background/60 p-1.5 text-muted-foreground opacity-40 transition-opacity hover:opacity-100 hover:text-foreground";
 
 /**
  * リモート画面 (noVNC)。
@@ -36,6 +40,8 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
   const [status, setStatus] = useState<Status>({ kind: "connecting" });
   const [attempt, setAttempt] = useState(0);
   const secure = window.isSecureContext;
+  // 接続中の RFB を手で切るための関数。effect が接続を作るたびに差し替える
+  const disconnectRef = useRef<(() => void) | null>(null);
 
   // requestCredentials は親の再レンダーごとに別インスタンスで渡ってくることがある。
   // effect の依存に入れるとその度にセッションを繋ぎ直してしまうため、最新の関数を
@@ -128,13 +134,21 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
         // ブラウザの矢印を出しておく (screen-cursor.ts)
         const canvas = container.querySelector("canvas");
         if (canvas) stopCursorGuard = keepLocalCursorUntilServerCursor(canvas);
+        // 切断ボタン。自分で切ったときは理由を「切断しました」に固定する
+        let manual = false;
+        disconnectRef.current = () => {
+          if (ended) return;
+          manual = true;
+          rfb?.disconnect();
+        };
         rfb.addEventListener("disconnect", event => {
           ended = true;
           if (cancelled) return;
-          const reason =
-            securityReason ||
-            closeReason ||
-            (event.detail.clean ? "切断されました" : "接続が切れました");
+          const reason = manual
+            ? MANUAL_DISCONNECT_REASON
+            : securityReason ||
+              closeReason ||
+              (event.detail.clean ? "切断されました" : "接続が切れました");
           setStatus({ kind: "disconnected", reason });
         });
       } catch (error) {
@@ -153,6 +167,7 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
 
     return () => {
       cancelled = true;
+      disconnectRef.current = null;
       sizeObserver?.disconnect();
       stopCursorGuard?.();
       if (rfb && !ended) rfb.disconnect();
@@ -181,15 +196,26 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
     <div className="relative h-full bg-black">
       <div ref={containerRef} className="absolute inset-0" />
       {status.kind === "connected" && (
-        <button
-          type="button"
-          onClick={() => setAttempt(n => n + 1)}
-          aria-label="再接続"
-          title="再接続"
-          className="absolute top-2 right-2 rounded-md bg-background/60 p-1.5 text-muted-foreground opacity-40 transition-opacity hover:opacity-100 hover:text-foreground"
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
-        </button>
+        <div className="absolute top-2 right-2 flex gap-1">
+          <button
+            type="button"
+            onClick={() => setAttempt(n => n + 1)}
+            aria-label="再接続"
+            title="再接続"
+            className={CORNER_BUTTON_CLASS}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => disconnectRef.current?.()}
+            aria-label="切断"
+            title="切断"
+            className={CORNER_BUTTON_CLASS}
+          >
+            <Unplug className="h-3.5 w-3.5" />
+          </button>
+        </div>
       )}
       {status.kind === "connecting" && (
         <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground bg-background/80">

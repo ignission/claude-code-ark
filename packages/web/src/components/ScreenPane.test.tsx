@@ -389,6 +389,41 @@ describe("ScreenPane", () => {
     expect(doubles.instances).toHaveLength(2);
   });
 
+  it("切断ボタンで RFB を切り、「切断しました」と再接続ボタンを出す", async () => {
+    const requestCredentials = vi.fn().mockResolvedValue(okCredentials());
+    const { container } = mount(
+      <ScreenPane
+        screen={screenFixture}
+        requestCredentials={requestCredentials}
+      />
+    );
+    await flush();
+    const rfb = doubles.instances[0];
+    act(() => rfb.listeners.get("connect")?.({ detail: {} }));
+
+    // 実物の disconnect() は非同期に disconnect イベントを出す。それを模す
+    rfb.disconnect.mockImplementation(() => {
+      rfb.listeners.get("disconnect")?.({ detail: { clean: true } });
+    });
+    const button = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="切断"]'
+    );
+    expect(button).not.toBeNull();
+    act(() => button?.click());
+    await flush();
+
+    expect(rfb.disconnect).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("切断しました");
+    expect(container.querySelector('button[aria-label="切断"]')).toBeNull();
+    const retry = Array.from(container.querySelectorAll("button")).find(
+      b => b.textContent?.trim() === "再接続"
+    );
+    expect(retry).toBeDefined();
+    act(() => retry?.click());
+    await flush();
+    expect(doubles.instances).toHaveLength(2);
+  });
+
   it("接続中も再接続ボタンで繋ぎ直せる", async () => {
     const requestCredentials = vi.fn().mockResolvedValue(okCredentials());
     const { container } = mount(
