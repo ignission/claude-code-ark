@@ -35,6 +35,14 @@ export const GENERATED_ATTR = "data-ark-harness-generated";
 interface BuiltinType {
   /** 図種専用の CSS（外部リソースを参照しない） */
   css: string;
+  /**
+   * graph 以外の容れ物を持つ図種だけが実装する DOM builder。
+   *
+   * 既存 5 種はすべて graph（絶対配置 + edge + drag で x/y 保存）なので
+   * 共通の `renderGraph` を使う。バックログのように「順位付きリスト」が
+   * 主役の図種は node の並びそのものが意味を持ち、絶対配置に載せられない。
+   */
+  render?: (model: DiagramModel) => string;
 }
 
 const BASE_CSS = `
@@ -142,12 +150,72 @@ const CONTEXT_MAP_CSS = `${BASE_CSS}
 [data-ark-builtin="context-map"] .ark-builtin-node[data-kind="note"]{--kn:"note";--k:#94a3b8;--kb:#1b2130;width:19rem;border-style:dashed;border-left-style:solid}
 `;
 
+/**
+ * バックログ。順位付きリストが主役で、graph ではない唯一の図種。
+ *
+ * 行は既存 5 種と同じ `.ark-builtin-node` / `data-model-id` / `data-kind` の
+ * 投影契約をそのまま使う（label 編集も field 編集もハーネス側の実装が効く）。
+ * 変えるのは容れ物と並べ方だけ。`node.ext.status` は行の `data-status` に載せ、
+ * 状態名は CSS 変数から文字として出す（色だけで状態を伝えない）。
+ */
+const BACKLOG_CSS = `${BASE_CSS}
+body{background:#f4f5f7;color:#172b4d}
+.ark-builtin-title{color:#172b4d;font-size:1rem}
+[data-ark-builtin="backlog"]{min-height:0;border:1px solid #dfe1e6;border-radius:3px;
+background:#fff;overflow:hidden}
+.ark-backlog-section{display:flex;align-items:center;gap:.5rem;margin:0;
+padding:.42rem .7rem;background:#f4f5f7;border-bottom:1px solid #dfe1e6}
+.ark-backlog-section .group-label{font-size:.72rem;font-weight:700;color:#172b4d}
+.ark-backlog-count{font-size:.66rem;color:#6b778c}
+[data-ark-builtin="backlog"] .ark-builtin-node{display:grid;
+grid-template-columns:1.05rem 4.4rem minmax(0,1fr) minmax(0,16rem) 6rem;
+align-items:center;gap:0 .6rem;width:auto;margin:0;padding:.42rem .7rem;
+border:0;border-radius:0;border-bottom:1px solid #ebecf0;background:#fff}
+[data-ark-builtin="backlog"] .ark-builtin-node:last-child{border-bottom:0}
+[data-ark-builtin="backlog"] .ark-builtin-node:hover{background:#f4f5f7}
+[data-ark-builtin="backlog"] .ark-builtin-node::before{content:none}
+.ark-backlog-type{grid-column:1;display:grid;place-items:center;
+width:1.05rem;height:1.05rem;border-radius:3px;background:var(--k,#8993a4)}
+.ark-backlog-type::before{content:var(--kg,"\\25A3");color:#fff;font-size:.62rem;line-height:1}
+.ark-backlog-key{grid-column:2;font-size:.68rem;color:#6b778c;white-space:nowrap;
+overflow:hidden;text-overflow:ellipsis}
+[data-ark-builtin="backlog"] .ark-builtin-label{grid-column:3;margin-top:0;
+font-size:.8rem;font-weight:400;color:#172b4d;
+white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+[data-ark-builtin="backlog"] .ark-builtin-node:hover .ark-builtin-label{color:#0052cc}
+[data-ark-builtin="backlog"] .ark-builtin-fields{grid-column:4;display:flex;
+flex-wrap:nowrap;gap:.28rem;margin:0;padding:0;border-top:none;overflow:hidden;
+-webkit-mask-image:linear-gradient(to right,#000 88%,transparent);
+mask-image:linear-gradient(to right,#000 88%,transparent)}
+[data-ark-builtin="backlog"] .ark-builtin-fields li{flex:0 0 auto;
+padding:.06rem .4rem;border:0;border-radius:3px;background:#ebecf0;
+font-size:.62rem;color:#42526e;white-space:nowrap;max-width:7.5rem;
+overflow:hidden;text-overflow:ellipsis}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status]::after{grid-column:5;
+justify-self:end;content:var(--st,"");box-sizing:border-box;min-width:6rem;
+padding:.11rem 0;border-radius:3px;text-align:center;
+background:var(--sb,#dfe1e6);color:var(--sc,#42526e);
+font-size:.58rem;font-weight:700;letter-spacing:.05em;white-space:nowrap}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="todo"]{--st:"TO DO";--sb:#dfe1e6;--sc:#42526e}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="doing"]{--st:"IN PROGRESS";--sb:#deebff;--sc:#0747a6}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="blocked"]{--st:"BLOCKED";--sb:#ffebe6;--sc:#bf2600}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-status="done"]{--st:"DONE";--sb:#e3fcef;--sc:#006644}
+[data-ark-builtin="backlog"] .ark-builtin-node{--kn:"story";--k:#36b37e;--kg:"\\25A3"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="story"]{--kn:"story";--k:#36b37e;--kg:"\\25A3"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="bug"]{--kn:"bug";--k:#ff5630;--kg:"\\2716"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="task"]{--kn:"task";--k:#4bade8;--kg:"\\2714"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="spike"]{--kn:"spike";--k:#8777d9;--kg:"\\25C7"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="chore"]{--kn:"chore";--k:#8993a4;--kg:"\\25A4"}
+[data-ark-builtin="backlog"] .ark-builtin-node[data-kind="epic"]{--kn:"epic";--k:#6554c0;--kg:"\\2605"}
+`;
+
 export const BUILTIN_DIAGRAM_TYPES: Readonly<Record<string, BuiltinType>> = {
   er: { css: ER_CSS },
   "event-storming": { css: STORMING_CSS },
   flow: { css: FLOW_CSS },
   state: { css: STATE_CSS },
   "context-map": { css: CONTEXT_MAP_CSS },
+  backlog: { css: BACKLOG_CSS, render: renderBacklog },
 };
 
 function escapeHtml(value: string): string {
@@ -197,6 +265,85 @@ function renderNode(node: DiagramNode): string {
   return `<article class="ark-builtin-node" data-model-id="${id}"${kindAttr}>${parts.join("")}</article>`;
 }
 
+/**
+ * バックログの 1 行。`renderNode` と同じ投影契約に `data-status` だけ足す。
+ *
+ * status を kind に混ぜないのは、種別（story / bug）と状態（todo / done）が
+ * 直交するから。kind に done を作ると「done な bug」が表せなくなる。
+ */
+function renderBacklogRow(node: DiagramNode, rank: number): string {
+  const id = escapeHtml(node.id);
+  const kind = node.kind && node.kind !== "" ? node.kind : "story";
+  const status = node.ext?.status;
+  const statusAttr =
+    typeof status === "string" && status !== ""
+      ? ` data-status="${escapeHtml(status)}"`
+      : "";
+  // 種別は色の付いた四角（Jira の type icon）で示すが、色だけに頼らないよう
+  // 種別名を key 欄に文字としても出す。順位は nodes 配列の位置（rank）。
+  const parts = [
+    '<span class="ark-backlog-type" aria-hidden="true"></span>',
+    `<span class="ark-backlog-key">${rank} \u00B7 ${escapeHtml(kind)}</span>`,
+    `<span class="ark-builtin-label" data-model-id="${id}">${escapeHtml(node.label)}</span>`,
+  ];
+  const fields = node.fields ?? [];
+  if (fields.length > 0) {
+    const items = fields
+      .map(
+        field =>
+          `<li data-model-id="${escapeHtml(field.id)}">${escapeHtml(field.label)}</li>`
+      )
+      .join("");
+    parts.push(`<ul class="ark-builtin-fields">${items}</ul>`);
+  }
+  // 1 行に収めるので、切り詰められた要約は title で読めるようにする
+  return (
+    `<article class="ark-builtin-node" data-model-id="${id}" data-kind="${escapeHtml(kind)}"` +
+    ` data-rank="${rank}"${statusAttr} title="${escapeHtml(node.label)}">` +
+    parts.join("") +
+    "</article>"
+  );
+}
+
+/**
+ * バックログ投影。順位は `model.nodes` の並び、区切りは group。
+ *
+ * group に属さない node は最後にまとめて出す。同じ node を複数 group に入れた
+ * 場合は最初の group にだけ出し、行の重複は作らない（順位が二つになるため）。
+ */
+function renderBacklog(model: DiagramModel): string {
+  const placed = new Set<string>();
+  const sections: string[] = [];
+  const rankOf = new Map(
+    model.nodes.map((node, index) => [node.id, index + 1])
+  );
+
+  for (const group of model.groups) {
+    const rows = model.nodes
+      .filter(node => group.nodes.includes(node.id) && !placed.has(node.id))
+      .map(node => {
+        placed.add(node.id);
+        return renderBacklogRow(node, rankOf.get(node.id) ?? 0);
+      });
+    if (rows.length === 0) continue;
+    const safeId = escapeHtml(group.id);
+    sections.push(
+      `<section class="ark-backlog-section" data-ark-group data-model-id="${safeId}">` +
+        `<span class="group-label" data-model-id="${safeId}">${escapeHtml(group.label)}</span>` +
+        `<span class="ark-backlog-count">${rows.length} 件</span>` +
+        "</section>" +
+        rows.join("")
+    );
+  }
+
+  const rest = model.nodes
+    .filter(node => !placed.has(node.id))
+    .map(node => renderBacklogRow(node, rankOf.get(node.id) ?? 0));
+  if (rest.length > 0) sections.push(rest.join(""));
+
+  return sections.join("");
+}
+
 function renderGroup(id: string, label: string): string {
   const safeId = escapeHtml(id);
   return (
@@ -212,15 +359,19 @@ function renderGroup(id: string, label: string): string {
  * HTML は引用符なしの属性値も許すため `data-ark-container=graph` も拾う。
  * 逆に script 本文（モデル JSON の label 等）や HTML コメントの中の同じ文字列は
  * 属性ではないので、判定前に取り除く。誤検出すると投影を生成せず白紙になり、
- * 見落とすと graph が二重になる。
+ * 見落とすと容れ物が二重になる。
+ *
+ * これから生成する容れ物と同じ名前だけを見る。graph 固定にすると、既に list を
+ * 持つ HTML へ二度目の注入が通り、投影がまるごと重複する（codex review 指摘）。
  */
-function hasAuthoredGraph(html: string): boolean {
+function hasContainer(html: string, name: string): boolean {
   const markup = html
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
-  return /data-ark-container\s*=\s*(?:"graph"|'graph'|graph(?=[\s/>]|$))/i.test(
-    markup
-  );
+  return new RegExp(
+    `data-ark-container\\s*=\\s*(?:"${name}"|'${name}'|${name}(?=[\\s/>]|$))`,
+    "i"
+  ).test(markup);
 }
 
 /**
@@ -236,22 +387,25 @@ export function injectBuiltinProjection(
   if (!Object.hasOwn(BUILTIN_DIAGRAM_TYPES, typeName)) return html;
   const type = BUILTIN_DIAGRAM_TYPES[typeName];
   if (!type) return html;
-  if (hasAuthoredGraph(html)) return html;
+  // graph 以外の容れ物を持つ図種は自前の DOM を組む。graph という値は
+  // ハーネスの自動レイアウト・edge 描画・drag の入口なので、リストの図種に
+  // 付けてはならない（付けると絶対配置に載せられて行が重なる）。
+  const container = type.render ? "list" : "graph";
+  if (hasContainer(html, container)) return html;
 
   const safeType = escapeHtml(typeName);
   const title = model.title
     ? `<h1 class="ark-builtin-title" ${GENERATED_ATTR}="1">${escapeHtml(model.title)}</h1>`
     : "";
-  const groups = model.groups
-    .map(group => renderGroup(group.id, group.label))
-    .join("");
-  const nodes = model.nodes.map(node => renderNode(node)).join("");
+  const body = type.render
+    ? type.render(model)
+    : model.groups.map(g => renderGroup(g.id, g.label)).join("") +
+      model.nodes.map(node => renderNode(node)).join("");
   const projection =
     `<style data-ark-harness-ui="1">${type.css}</style>` +
     title +
-    `<div data-ark-container="graph" data-ark-builtin="${safeType}" ${GENERATED_ATTR}="1">` +
-    groups +
-    nodes +
+    `<div data-ark-container="${container}" data-ark-builtin="${safeType}" ${GENERATED_ATTR}="1">` +
+    body +
     "</div>";
 
   const closing = html.toLowerCase().lastIndexOf("</body>");
