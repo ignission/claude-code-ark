@@ -12,6 +12,7 @@
  */
 
 import type {
+  BoardSuggestEvent,
   BridgeSessionStatus,
   ClientToServerEvents,
   ManagedSession,
@@ -809,6 +810,49 @@ function ToolGroupCard({
  * 自由入力 (Type something 用 literal 送信)。
  * 画面の構造はパースしない: ユーザーが生テキストを読んでキーを選ぶ。
  */
+/**
+ * ボード提案の通知。Jev の判定で Ark が返答をボードへ出した (doc) か、
+ * Claude に作図を頼んだ (figure) ことを 1 行で知らせる。ボードが開いたこと
+ * 自体が本体の合図で、これは「なぜ開いたか」を添えるだけ
+ */
+function BoardSuggestNotice({
+  event,
+  onDismiss,
+}: {
+  event: BoardSuggestEvent;
+  onDismiss: () => void;
+}) {
+  const percent = Math.round(event.probability * 100);
+  const body =
+    event.form === "doc"
+      ? `この説明はボードのほうが読みやすいと判定 (${percent}%)。文書にしてボードに出しました`
+      : `この説明は図のほうが分かりやすいと判定 (${percent}%)。Claude に作図を頼みました`;
+  return (
+    <div
+      data-testid="board-suggest-notice"
+      className="flex min-w-0 items-start gap-2 rounded-lg border border-border bg-card px-3 py-2 text-[12px] text-muted-foreground shadow-card"
+    >
+      <span className="min-w-0 flex-1">
+        {body}
+        {event.title && (
+          <span className="ml-1 font-semibold text-foreground">
+            「{event.title}」
+          </span>
+        )}
+      </span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="shrink-0 rounded-sm px-1 text-muted-foreground transition-colors hover:text-foreground"
+        aria-label="通知を閉じる"
+        title="閉じる"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
 function AwaitingPad({
   socket,
   sessionId,
@@ -1189,6 +1233,26 @@ export function SplitChatPane({
     if (hasResolvedAuqSince(events, hookAuq.at)) setHookAuq(null);
   }, [events, hookAuq]);
 
+  // ボード提案 (Jev 判定) の通知。次の送信・セッション切替・閉じるで消す
+  const [boardSuggest, setBoardSuggest] = useState<BoardSuggestEvent | null>(
+    null
+  );
+  useEffect(() => {
+    if (!socket) return;
+    const handler = (data: BoardSuggestEvent) => {
+      if (data.sessionId !== session.id) return;
+      setBoardSuggest(data);
+    };
+    socket.on("session:board-suggest", handler);
+    return () => {
+      socket.off("session:board-suggest", handler);
+    };
+  }, [socket, session.id]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies(session.id): セッション切替で通知を破棄
+  useEffect(() => {
+    setBoardSuggest(null);
+  }, [session.id]);
+
   const activeAuq = hookAuq?.auq ?? null;
 
   // 質問カードを親へ知らせる (モバイルの状態の帯と音声モードが使う)
@@ -1355,6 +1419,7 @@ export function SplitChatPane({
     if (!value) return;
     lastSubmittedRef.current = value;
     onSendMessage(value);
+    setBoardSuggest(null);
     // built-in slash command (/compact, /clear 等) は JSONL に user-input として
     // 記録されないため、pending bubble だと永遠に spinner が残る。
     // 代わりにローカル slash-command カードを即時追加する。
@@ -1719,6 +1784,12 @@ export function SplitChatPane({
       sessionId={session.id}
       awaitingText={awaitingText}
       onSendKey={onSendKey}
+    />
+  ) : boardSuggest ? (
+    <BoardSuggestNotice
+      key={boardSuggest.at}
+      event={boardSuggest}
+      onDismiss={() => setBoardSuggest(null)}
     />
   ) : null;
 

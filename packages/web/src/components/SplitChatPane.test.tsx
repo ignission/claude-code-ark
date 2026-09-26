@@ -257,6 +257,63 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
     expect(container.querySelector('[title="JSONL 購読中"]')).toBeNull();
   });
 
+  it("session:board-suggest を受けると通知を出し、閉じるか送信で消える", () => {
+    const { container, emitServer } = renderChat();
+    const notice = () =>
+      container.querySelector('[data-testid="board-suggest-notice"]');
+    expect(notice()).toBeNull();
+
+    // 別セッション宛は無視する
+    emitServer("session:board-suggest", {
+      sessionId: "other",
+      at: 1,
+      probability: 0.9,
+      form: "doc",
+      relPath: ".claude/diagrams/_auto/other/x.diagram.html",
+      title: "他",
+    });
+    expect(notice()).toBeNull();
+
+    emitServer("session:board-suggest", {
+      sessionId: "s1",
+      at: 2,
+      probability: 0.88,
+      form: "doc",
+      relPath: ".claude/diagrams/_auto/s1/x.diagram.html",
+      title: "3案の違い",
+    });
+    expect(notice()?.textContent).toContain("88%");
+    expect(notice()?.textContent).toContain("ボードに出しました");
+    expect(notice()?.textContent).toContain("3案の違い");
+
+    const closeButton = notice()?.querySelector(
+      'button[aria-label="通知を閉じる"]'
+    ) as HTMLButtonElement | null;
+    expect(closeButton).not.toBeNull();
+    act(() => {
+      closeButton?.click();
+    });
+    expect(notice()).toBeNull();
+
+    emitServer("session:board-suggest", {
+      sessionId: "s1",
+      at: 3,
+      probability: 0.75,
+      form: "figure",
+      relPath: null,
+      title: null,
+    });
+    expect(notice()?.textContent).toContain("作図を頼みました");
+
+    // 次の送信で消える
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    typeInto(textarea, "次の指示");
+    act(() => {
+      textarea.form?.requestSubmit();
+    });
+    expect(notice()).toBeNull();
+  });
+
   it("質問カードが変わるたびに、そのカードの中身 (無ければ null) でonActiveAuqChangeを呼ぶ", () => {
     const at = Date.parse("2026-09-17T00:00:00Z");
     const questions = [

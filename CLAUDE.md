@@ -153,6 +153,32 @@ iframe を貼り直す (判定と抑止は `@/lib/ttyd-reconnect`)。
   前に `list-buffers` で有無を見る（同じ理由）
 - 書き込み系（`sendKeys` 等）は従来どおり throw
 
+### ボード提案 (Jev 判定)
+
+長い説明をチャットで読む負担を減らすため、Claude の返答が終わるたび (JSONL の
+`stop_reason: "end_turn"`) に、直前のユーザー発話以降の text block を束ねて
+Jev に判定させる (`board-suggest-service.ts` / `board-suggest-turns.ts` / `jev-client.ts`)。
+
+- **Jev は生成しない分類器**。noul「ボードのほうが読みやすいか」と choice「doc / figure」の
+  2 問を 1 リクエストで問い、確率だけが返る (1 回 200〜400ms、入力 100 万トークン $0.042)。
+  本文は末尾 6,000 文字だけ送り、`provider.data_collection: "deny"` を付ける
+- **doc**: `markdown-to-board-doc.ts` が返答を doc 型 `.diagram.html` へ決定的に変換し
+  (`marked` の lexer → 全ブロックに `data-ark-id` と `data-ark-author="claude"`、本文は
+  すべてエスケープ)、`.claude/diagrams/_auto/<sessionId>/<時刻>.diagram.html` に書いて
+  `diagram:open` で開く。`_` 始まりなので図スイッチャーには出ないが、`lastDiagramPath` で
+  復元できる。既存ファイルは上書きしない (コメント sidecar が relPath に紐づくため)。
+  **Claude には何も送らない**ので、これはコンテキスト機構ではない
+- **figure**: Claude が手を止めている (bridgeStatus IDLE/READY) ときだけ
+  `FIGURE_REQUEST_MESSAGE` を `sendMessage` で送る。tmux に C-u + 文字列 + Enter が
+  入るので、動作中・確認待ちには送らない。検証した 197 ターンで figure が勝った例は 0
+- どちらも `session:board-suggest` をセッションの room に出し、チャットの入力欄の上に
+  1 行の通知を出す (次の送信・閉じるで消える)
+- 閾値は settings `board_suggest_threshold` (既定 0.7。0.5 付近は「分からない」)。
+  `ARK_FEATURE_BOARD_SUGGEST=false` で止められる。Jev の失敗はセッションごとに 1 回だけ
+  ログに出す
+- Decisions API は alpha (`/api/alpha/decisions`) なので endpoint と model は
+  `jev-client.ts` の定数に閉じ込めてある
+
 ### コンテキスト機構は持たない
 
 Ark はセッションに **task.md 規約・復唱・失敗の記録・知識の配布のいずれも注入しない**。
@@ -202,6 +228,7 @@ task.md 規約・復唱・失敗の自動収集・セッション lifecycle を�
 | チャットビュー           | JSONL tail ベースの会話描画 + pending reconcile + AskUserQuestion カード + slash 補完 + busy/AWAITING 表示（PC は `SplitViewPane` の左ペイン、モバイルは `MobileSessionView`。どちらも🖥/💬トグルで ttyd 表示と切替） |
 | 音声モード（iPhone）   | 会話モードの1タップ操作から全画面の音声モードに入る。話した指示を2秒の取り消し猶予つきで送り、Claude がターンを終えた返答（JSONL の `stop_reason: "end_turn"`）を読み上げる。質問・権限確認は読み上げて画面での操作に回す。ブラウザ内蔵の音声認識・読み上げだけを使い、画面を点けて前面に出している間だけ動く |
 | セッションボード       | worktree の `.claude/diagrams/*.diagram.html`（意味モデル + HTML 投影）を表示する図解ペイン（右ペインタブ・PC のみ）。Claude が MCP ツール `board_open` で開き、ファイル更新を検知して自動再読込する。doc 型は本文を人間がその場で直接編集でき、変更をブロック単位で会話へ還流する |
+| ボード提案 (Jev)       | Claude の返答が終わるたびに Jev (TypeSafe の決定モデル、OpenRouter 経由) へ「チャットよりボードのほうが読みやすいか」を問い、閾値以上なら Ark が動く。doc 判定なら返答の markdown を doc 型ボードへ機械変換して開く (Claude のトークン 0)、figure 判定なら Claude に 1 行の作図依頼を送る。`~/.config/openrouter/api-key` か `OPENROUTER_API_KEY` が無ければ無効 |
 | Webターミナル          | ttyd iframeによるフルターミナル体験（PC は左ペインの既定、モバイルは🖥/💬トグルでチャットビューと切替） |
 | マルチペインビュー     | 複数セッションの同時表示（1列 / 2x2グリッド切り替え）                       |
 | モバイル対応           | セッション一覧/詳細の画面遷移、Quick Keys、スクロールモード、キーボード対応 |
@@ -485,6 +512,7 @@ claude-code-ark/
 | `session:auq`            | `{ sessionId, at, questions }` | 回答待ち AskUserQuestion（PreToolUse hook 由来）|
 | `diagram:open`           | `{ sessionId, relPath }`       | Claude が `board_open` を呼んだ。クライアントは図タブを開く |
 | `diagram:updated`        | `{ worktreePath, relPath }`    | 監視中の図ファイルが更新された。クライアントは再読込する |
+| `session:board-suggest`  | `BoardSuggestEvent`            | ボード提案が動いた (doc: 変換して `diagram:open` 済み / figure: Claude に作図依頼済み)。セッションの room にだけ送る |
 | `session:error`          | `{ sessionId, error }`         | セッションエラー                 |
 | `tunnel:started`         | `{ url, token }`               | トンネル開始                     |
 | `tunnel:stopped`         | -                              | トンネル停止                     |
@@ -517,6 +545,8 @@ claude-code-ark/
 | `--repos /path1,/path2` | -                       | 許可するリポジトリパスを制限                             |
 | -                       | `PORT`                  | サーバーポート（デフォルト: 4001）                       |
 | -                       | `ARK_TUNNEL_NAME`       | Named Tunnel名（デフォルト: `claude-code-ark`）          |
+| -                       | `OPENROUTER_API_KEY`    | ボード提案 (Jev) の API キー。無ければ `~/.config/openrouter/api-key` を読む。どちらも無ければ機能は無効 |
+| -                       | `ARK_FEATURE_BOARD_SUGGEST` | `false` でボード提案を止める |
 
 ---
 

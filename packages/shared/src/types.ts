@@ -430,6 +430,13 @@ export interface ServerToClientEvents {
   /** 監視中の図ファイルが更新された。クライアントは再読込する */
   "diagram:updated": (data: { worktreePath: string; relPath: string }) => void;
 
+  /**
+   * ボード提案 (Jev 判定) が動いた。doc なら Ark が返答を doc 型ボードへ変換して
+   * 既に `diagram:open` を出している。figure なら Claude に作図依頼を送った。
+   * セッションの room にだけ送る。
+   */
+  "session:board-suggest": (data: BoardSuggestEvent) => void;
+
   /** 監視中のコメント sidecar が更新された。iframe はコメントだけを再取得する */
   "diagram:comments-updated": (data: {
     worktreePath: string;
@@ -952,6 +959,24 @@ export interface UsageProgress {
  *
  * 優先度 (高→低): ERR > AWAITING > TOOL > THINK > IDLE > READY
  */
+/**
+ * ボード提案の通知。Claude の返答が終わるたびに Jev (TypeSafe の決定モデル) が
+ * 「チャットよりボードのほうが読みやすいか」を判定し、閾値を超えたときだけ出る。
+ */
+export interface BoardSuggestEvent {
+  sessionId: string;
+  /** 判定した epoch ms */
+  at: number;
+  /** Jev の「ボードのほうが読みやすい」確率 (0〜1) */
+  probability: number;
+  /** doc: 返答を機械変換して開いた / figure: Claude に作図を依頼した */
+  form: "doc" | "figure";
+  /** doc のとき、開いたファイルの worktree 相対パス。figure は null */
+  relPath: string | null;
+  /** doc のとき、推定した題名。figure は null */
+  title: string | null;
+}
+
 export type BridgeSessionStatus =
   | "TOOL" // ツール実行中 (⏺ Tool(...) 直近、⎿ 結果未到着)
   | "THINK" // 思考中 (✻ Wibbling… / esc to interrupt)

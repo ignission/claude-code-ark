@@ -105,6 +105,9 @@ importers:
       http-proxy:
         specifier: ^1.18.1
         version: 1.18.1(debug@4.4.3(supports-color@10.2.2))
+      marked:
+        specifier: ^16.4.2
+        version: 16.4.2
       nanoid:
         specifier: ^6.0.1
         version: 6.0.1

@@ -21,6 +21,7 @@ import {
   type BridgeSnapshot,
   type ClientToServerEvents,
   type DiagramListResponse,
+  type ManagedSession,
   MESSAGE_SHORTCUT_MAX_LENGTH,
   type ServerToClientEvents,
   type SessionGridSnapshot,
@@ -47,6 +48,10 @@ import {
   listDiagramCommentPaths,
   readDiagramAuthoringGuide,
 } from "./lib/board-mcp-server.js";
+import {
+  BOARD_SUGGEST_DEFAULT_THRESHOLD,
+  BoardSuggestService,
+} from "./lib/board-suggest-service.js";
 import { rememberFifoEntry } from "./lib/bounded-fifo-map.js";
 import {
   buildTunnelEntries,
@@ -103,6 +108,10 @@ import {
 import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
 import { htmlScreenshotter } from "./lib/html-screenshotter.js";
+import {
+  decideBoardSuggestion,
+  loadOpenRouterApiKey,
+} from "./lib/jev-client.js";
 import { jsonlTailManager } from "./lib/jsonl-tail-manager.js";
 import {
   checkManagedWorktree,
@@ -596,6 +605,29 @@ export async function startServer(
   // saveBoardScene / notifyUpdated は撤去済み（B-1）。openDiagram のみ残る。
   const boardRegistry = new BoardSessionRegistry();
   const boardMcp = new BoardMcpServer();
+  /**
+   * 図をセッションのボードで開く (board_open とボード提案の共通経路)。
+   * 「開いた」と嘘をつかないよう、diagram:open を emit する前に実際に
+   * readDiagram で読めることを確認する (/api/diagram と同じ検証 = 403 パス不正・
+   * worktree外・symlink脱出 / 404 不在 / 422 モデルブロック無し・壊れている)。
+   * ファイル読み込みは realpath (worktreeReal) を使う規約。
+   */
+  const openDiagramForSession = async (
+    sessionId: string,
+    worktreeReal: string,
+    relPath: string
+  ): Promise<{ ok: true } | { ok: false; error: string }> => {
+    const result = await readDiagram(worktreeReal, relPath);
+    if (!result.ok) {
+      return { ok: false, error: result.error };
+    }
+    io.emit("diagram:open", { sessionId, relPath });
+    // 「セッションで最後に開いた図」を永続化する。リロード後も
+    // session:list 経由で lastDiagramPath を受け取り、クライアントが
+    // 右ペインの図タブを復元できるようにするため。
+    db.updateSessionLastDiagram(sessionId, relPath);
+    return { ok: true };
+  };
   const boardDeps: BoardMcpDeps = {
     readAuthoringGuide: () =>
       readDiagramAuthoringGuide(undefined, options.diagramAuthoringGuidePath),
@@ -657,21 +689,8 @@ export async function startServer(
           error: "この worktree のセッションが見つかりません",
         };
       }
-      // Claude に「開いた」と嘘をつかないよう、diagram:open を emit する前に
-      // 実際に readDiagram で読めることを確認する（/api/diagram と同じ検証
-      // = 403 パス不正・worktree外・symlink脱出 / 404 不在 / 422 モデルブロック
-      // 無し・壊れている、を理由付きで弾く）。ファイル読み込みは realpath
-      // （resolved.path）を使う規約なのでこちらはそのまま。
-      const result = await readDiagram(resolved.path, relPath);
-      if (!result.ok) {
-        return { ok: false, error: result.error };
-      }
-      io.emit("diagram:open", { sessionId: session.id, relPath });
-      // 「セッションで最後に開いた図」を永続化する。リロード後も
-      // session:list 経由で lastDiagramPath を受け取り、クライアントが
-      // 右ペインの図タブを復元できるようにするため。
-      db.updateSessionLastDiagram(session.id, relPath);
-      return { ok: true };
+      // ファイル読み込みは realpath（resolved.path）を使う規約なのでこちらはそのまま。
+      return openDiagramForSession(session.id, resolved.path, relPath);
     },
   };
   // 前回 bind したポートに再度 bind し直すことで、稼働中セッションの
@@ -1411,6 +1430,76 @@ export async function startServer(
    * 端末画面のような機微を含む配信を全 socket へ broadcast しないため。
    */
   const sessionRoom = (sessionId: string) => `session:${sessionId}`;
+
+  // ===== ボード提案 (Jev 判定) =====
+  // Claude の返答が終わるたびに Jev (TypeSafe の決定モデル) へ「チャットより
+  // ボードのほうが読みやすいか」を問い、閾値を超えたら Ark が動く。doc なら
+  // 返答を機械変換して開く (Claude のトークン 0)、figure なら Claude に作図を頼む。
+  // キーが無ければ機能ごと無効 (起動時に 1 行出すだけ)。
+  const openRouterApiKey =
+    process.env.ARK_FEATURE_BOARD_SUGGEST === "false"
+      ? null
+      : loadOpenRouterApiKey();
+  const boardSuggest = openRouterApiKey
+    ? new BoardSuggestService({
+        subscribeJsonl: (worktreePath, configDir, listener) =>
+          jsonlTailManager.subscribe(worktreePath, configDir, listener),
+        decide: text => decideBoardSuggestion(text, openRouterApiKey),
+        threshold: () => {
+          const saved = db.getSetting("board_suggest_threshold");
+          return typeof saved === "number" && saved >= 0 && saved <= 1
+            ? saved
+            : BOARD_SUGGEST_DEFAULT_THRESHOLD;
+        },
+        resolveWorktreeReal: worktreePath => {
+          const resolved = resolveManagedWorktreeDetailed(worktreePath);
+          return resolved.ok ? resolved.path : null;
+        },
+        openDiagram: async (sessionId, relPath) => {
+          const session = sessionOrchestrator.getSession(sessionId);
+          if (!session) return { ok: false, error: "セッションが無い" };
+          const resolved = resolveManagedWorktreeDetailed(session.worktreePath);
+          if (!resolved.ok) return { ok: false, error: resolved.reason };
+          return openDiagramForSession(sessionId, resolved.path, relPath);
+        },
+        isIdle: sessionId => {
+          const preview = sessionOrchestrator
+            .getAllPreviews()
+            .find(p => p.sessionId === sessionId);
+          return (
+            preview?.bridgeStatus === "IDLE" ||
+            preview?.bridgeStatus === "READY"
+          );
+        },
+        sendToClaude: (sessionId, message) =>
+          sessionOrchestrator.sendMessage(sessionId, message),
+        notify: event =>
+          io
+            .to(sessionRoom(event.sessionId))
+            .emit("session:board-suggest", event),
+      })
+    : null;
+  if (boardSuggest) {
+    // 起動時の自動復元は orchestrator のコンストラクタで済んでいるので、
+    // 既存分は明示的に attach し、以後はイベントで追従する
+    for (const session of sessionOrchestrator.getAllSessions()) {
+      boardSuggest.attach(session);
+    }
+    sessionOrchestrator.on("session:created", (session: ManagedSession) =>
+      boardSuggest.attach(session)
+    );
+    sessionOrchestrator.on("session:restored", (session: ManagedSession) =>
+      boardSuggest.attach(session)
+    );
+    sessionOrchestrator.on("session:stopped", (sessionId: string) =>
+      boardSuggest.detach(sessionId)
+    );
+    console.log("[BoardSuggest] 有効 (Jev 判定でボード提案を出す)");
+  } else {
+    console.log(
+      "[BoardSuggest] 無効 (OPENROUTER_API_KEY か ~/.config/openrouter/api-key が無い、または ARK_FEATURE_BOARD_SUGGEST=false)"
+    );
+  }
 
   // 直近のブロードキャスト結果。新規 subscribe 時に即時応答として送る
   // (subscribe ハンドラ内で hostMetrics.sample() を再実行すると、内部の prev*
@@ -3670,6 +3759,7 @@ export async function startServer(
     clearInterval(bridgeBroadcastInterval);
     clearInterval(gridBroadcastInterval);
     sessionOrchestrator.cleanup();
+    boardSuggest?.detachAll();
     browserManager.cleanup();
     screenBridge.closeAll();
     boardMcp.stop();
