@@ -859,6 +859,15 @@ export interface ClientToServerEvents {
   "screen:update": (data: { id: string } & ScreenPatch) => void;
   "screen:delete": (data: { id: string }) => void;
   /** 接続直前に 1 回だけ呼ぶ。未登録なら null */
+  /** ボード提案の設定を取得 (鍵は末尾 4 文字だけ) */
+  "board-suggest:get": (
+    callback: (result: BoardSuggestConfigResult) => void
+  ) => void;
+  /** ボード提案の設定を変更。保存後の設定を返す */
+  "board-suggest:set": (
+    patch: BoardSuggestConfigPatch,
+    callback: (result: BoardSuggestConfigResult) => void
+  ) => void;
   "screen:credentials": (
     id: string,
     callback: (creds: ScreenCredentials | null) => void
@@ -970,6 +979,29 @@ export interface UsageProgress {
  * ボード提案の通知。Claude の返答が終わるたびに Jev (TypeSafe の決定モデル) が
  * 「チャットよりボードのほうが読みやすいか」を判定し、閾値を超えたときだけ出る。
  */
+/** ボード提案の設定。鍵そのものは含めない (末尾 4 文字と出どころだけ) */
+export interface BoardSuggestConfig {
+  enabled: boolean;
+  /** Jev の「ボードのほうが読みやすい」確率がこの値以上なら動く (0〜1) */
+  threshold: number;
+  keyConfigured: boolean;
+  /** 設定済みの鍵の末尾 4 文字。未設定は null */
+  keyHint: string | null;
+  /** settings: 設定画面 / env: OPENROUTER_API_KEY / file: ~/.config/openrouter/api-key */
+  keySource: "settings" | "env" | "file" | null;
+}
+
+/** 設定画面からの変更。apiKey は文字列で保存、null で設定側の鍵を削除、未指定で変更なし */
+export interface BoardSuggestConfigPatch {
+  enabled?: boolean;
+  threshold?: number;
+  apiKey?: string | null;
+}
+
+export type BoardSuggestConfigResult =
+  | { ok: true; config: BoardSuggestConfig }
+  | { ok: false; error: string };
+
 export interface BoardSuggestEvent {
   sessionId: string;
   /** 判定した epoch ms */

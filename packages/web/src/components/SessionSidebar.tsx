@@ -14,6 +14,7 @@ import {
   Monitor,
   Plus,
   Settings,
+  SlidersHorizontal,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,8 @@ type SessionSidebarProps = Omit<SessionSectionListProps, "variant"> & {
   onNewSession: () => void;
   /** Aboutダイアログを開く */
   onOpenAbout: () => void;
+  /** ボード提案 (Jev 判定) の設定ダイアログを開く */
+  onOpenBoardSuggestSettings: () => void;
   /** ブラウザ選択コールバック (リモートアクセス時のみ使用) */
   onSelectBrowser?: () => void;
   isBrowserSelected?: boolean;
@@ -48,6 +51,7 @@ type SessionSidebarProps = Omit<SessionSectionListProps, "variant"> & {
 export function SessionSidebar({
   onNewSession,
   onOpenAbout,
+  onOpenBoardSuggestSettings,
   onSelectBrowser,
   isBrowserSelected = false,
   isRemote = false,
@@ -79,6 +83,10 @@ export function SessionSidebar({
             <DropdownMenuItem onSelect={onOpenAbout}>
               <Info />
               About Ark
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={onOpenBoardSuggestSettings}>
+              <SlidersHorizontal />
+              ボード提案の設定
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

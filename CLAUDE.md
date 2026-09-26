@@ -177,9 +177,14 @@ Jev に判定させる (`board-suggest-service.ts` / `board-suggest-turns.ts` / 
 - 判定中に会話が進んだ (新しい発話・/clear) か detach されたら、その判定の結果は捨てる
   (`TurnAssembler.generation`)。生成先は途中の symlink を lstat で拒否し、mkdir 後の
   realpath が worktree の中であることを確かめてから `O_EXCL | O_NOFOLLOW` で書く
-- 閾値は settings `board_suggest_threshold` (既定 0.7。0.5 付近は「分からない」)。
-  `ARK_FEATURE_BOARD_SUGGEST=false` で止められる。Jev の失敗はセッションごとに 1 回だけ
-  ログに出す
+- 設定は Ark メニュー (PC) / セッション一覧のスライダーアイコン (モバイル) の
+  「ボード提案の設定」ダイアログで変える (`board-suggest-config.ts`)。有効
+  `board_suggest_enabled`・閾値 `board_suggest_threshold` (既定 0.7。0.5 付近は
+  「分からない」)・鍵 `board_suggest_api_key` を settings に保存し、次のターンから効く。
+  鍵の優先順は 設定画面 > `OPENROUTER_API_KEY` > `~/.config/openrouter/api-key`。
+  鍵と `auq_hook_token` は `/api/settings` に載せず (`isSecretSettingKey`)、
+  `board-suggest:get` は末尾 4 文字だけ返す。`ARK_FEATURE_BOARD_SUGGEST=false` で
+  機能ごと止められる。Jev の失敗はセッションごとに 1 回だけログに出す
 - Decisions API は alpha (`/api/alpha/decisions`) なので endpoint と model は
   `jev-client.ts` の定数に閉じ込めてある
 
@@ -232,7 +237,7 @@ task.md 規約・復唱・失敗の自動収集・セッション lifecycle を�
 | チャットビュー           | JSONL tail ベースの会話描画 + pending reconcile + AskUserQuestion カード + slash 補完 + busy/AWAITING 表示（PC は `SplitViewPane` の左ペイン、モバイルは `MobileSessionView`。どちらも🖥/💬トグルで ttyd 表示と切替） |
 | 音声モード（iPhone）   | 会話モードの1タップ操作から全画面の音声モードに入る。話した指示を2秒の取り消し猶予つきで送り、Claude がターンを終えた返答（JSONL の `stop_reason: "end_turn"`）を読み上げる。質問・権限確認は読み上げて画面での操作に回す。ブラウザ内蔵の音声認識・読み上げだけを使い、画面を点けて前面に出している間だけ動く |
 | セッションボード       | worktree の `.claude/diagrams/*.diagram.html`（意味モデル + HTML 投影）を表示する図解ペイン（右ペインタブ・PC のみ）。Claude が MCP ツール `board_open` で開き、ファイル更新を検知して自動再読込する。doc 型は本文を人間がその場で直接編集でき、変更をブロック単位で会話へ還流する。本文の `<a href="src/foo.ts#L10">` はファイルビューアで該当行を開く |
-| ボード提案 (Jev)       | Claude の返答が終わるたびに Jev (TypeSafe の決定モデル、OpenRouter 経由) へ「チャットよりボードのほうが読みやすいか」を問い、閾値以上なら Ark が動く。doc 判定なら返答の markdown を doc 型ボードへ機械変換して開く (Claude のトークン 0)、figure 判定なら「図にする」ボタンを出す (押したときだけ Claude に頼む)。`~/.config/openrouter/api-key` か `OPENROUTER_API_KEY` が無ければ無効 |
+| ボード提案 (Jev)       | Claude の返答が終わるたびに Jev (TypeSafe の決定モデル、OpenRouter 経由) へ「チャットよりボードのほうが読みやすいか」を問い、閾値以上なら Ark が動く。doc 判定なら返答の markdown を doc 型ボードへ機械変換して開く (Claude のトークン 0)、figure 判定なら「図にする」ボタンを出す (押したときだけ Claude に頼む)。鍵は「ボード提案の設定」ダイアログから入れる (環境変数 / `~/.config/openrouter/api-key` でも可)。無ければ待機 |
 | Webターミナル          | ttyd iframeによるフルターミナル体験（PC は左ペインの既定、モバイルは🖥/💬トグルでチャットビューと切替） |
 | マルチペインビュー     | 複数セッションの同時表示（1列 / 2x2グリッド切り替え）                       |
 | モバイル対応           | セッション一覧/詳細の画面遷移、Quick Keys、スクロールモード、キーボード対応 |
@@ -476,6 +481,8 @@ claude-code-ark/
 | `diagram:subscribe` | `{ worktreePath, relPath }`           | 図ファイルの更新監視を開始（1セッション1図を想定） |
 | `diagram:unsubscribe` | `{ worktreePath, relPath }`         | 図ファイルの更新監視を解除                       |
 | `slash:list`      | `sessionId, callback`                   | slash command 候補一覧（コールバック）|
+| `board-suggest:get` | `callback`                            | ボード提案の設定を取得（鍵は末尾 4 文字だけ。コールバック）|
+| `board-suggest:set` | `{ enabled?, threshold?, apiKey? }, callback` | ボード提案の設定を変更（`apiKey: null` で設定側の鍵を削除。コールバック）|
 | `tunnel:start`    | `{ port? }`                             | Quick Tunnel起動                 |
 | `tunnel:stop`     | -                                       | トンネル停止                     |
 | `ports:scan`      | -                                       | ポートスキャン                   |
@@ -549,7 +556,7 @@ claude-code-ark/
 | `--repos /path1,/path2` | -                       | 許可するリポジトリパスを制限                             |
 | -                       | `PORT`                  | サーバーポート（デフォルト: 4001）                       |
 | -                       | `ARK_TUNNEL_NAME`       | Named Tunnel名（デフォルト: `claude-code-ark`）          |
-| -                       | `OPENROUTER_API_KEY`    | ボード提案 (Jev) の API キー。無ければ `~/.config/openrouter/api-key` を読む。どちらも無ければ機能は無効 |
+| -                       | `OPENROUTER_API_KEY`    | ボード提案 (Jev) の API キー。設定画面の鍵が優先、無ければこれ、次に `~/.config/openrouter/api-key`。どれも無ければ判定しない |
 | -                       | `ARK_FEATURE_BOARD_SUGGEST` | `false` でボード提案を止める |
 
 ---

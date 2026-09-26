@@ -49,9 +49,14 @@ import {
   readDiagramAuthoringGuide,
 } from "./lib/board-mcp-server.js";
 import {
-  BOARD_SUGGEST_DEFAULT_THRESHOLD,
-  BoardSuggestService,
-} from "./lib/board-suggest-service.js";
+  isSecretSettingKey,
+  readBoardSuggestConfig,
+  readBoardSuggestEnabled,
+  readBoardSuggestThreshold,
+  resolveBoardSuggestApiKey,
+  validateBoardSuggestPatch,
+} from "./lib/board-suggest-config.js";
+import { BoardSuggestService } from "./lib/board-suggest-service.js";
 import { rememberFifoEntry } from "./lib/bounded-fifo-map.js";
 import {
   buildTunnelEntries,
@@ -108,10 +113,7 @@ import {
 import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
 import { htmlScreenshotter } from "./lib/html-screenshotter.js";
-import {
-  decideBoardSuggestion,
-  loadOpenRouterApiKey,
-} from "./lib/jev-client.js";
+import { decideBoardSuggestion } from "./lib/jev-client.js";
 import { jsonlTailManager } from "./lib/jsonl-tail-manager.js";
 import {
   checkManagedWorktree,
@@ -982,6 +984,10 @@ export async function startServer(
   app.get("/api/settings", (_req, res) => {
     try {
       const settings = db.getAllSettings();
+      // 鍵やトークンはブラウザへ配らない (isSecretSettingKey)
+      for (const key of Object.keys(settings)) {
+        if (isSecretSettingKey(key)) delete settings[key];
+      }
       res.json(settings);
     } catch (e) {
       console.error("Settings API error:", getErrorMessage(e));
@@ -991,7 +997,10 @@ export async function startServer(
 
   // 特定キーの設定を取得
   app.get("/api/settings/:key", (req, res) => {
-    if (!isValidSettingKey(req.params.key)) {
+    if (
+      !isValidSettingKey(req.params.key) ||
+      isSecretSettingKey(req.params.key)
+    ) {
       res.status(400).json({ error: "Invalid setting key" });
       return;
     }
@@ -1022,7 +1031,8 @@ export async function startServer(
         return;
       }
       for (const key of keys) {
-        if (!isValidSettingKey(key)) {
+        // 秘密の設定は専用の socket イベント (board-suggest:set) からだけ書く
+        if (!isValidSettingKey(key) || isSecretSettingKey(key)) {
           res.status(400).json({ error: "Invalid setting key" });
           return;
         }
@@ -1037,7 +1047,10 @@ export async function startServer(
 
   // 単一キーを更新
   app.put("/api/settings/:key", (req, res) => {
-    if (!isValidSettingKey(req.params.key)) {
+    if (
+      !isValidSettingKey(req.params.key) ||
+      isSecretSettingKey(req.params.key)
+    ) {
       res.status(400).json({ error: "Invalid setting key" });
       return;
     }
@@ -1441,45 +1454,37 @@ export async function startServer(
   // ボードのほうが読みやすいか」を問い、閾値を超えたら Ark が動く。doc なら
   // 返答を機械変換して開く (Claude のトークン 0)、figure なら「図にする」ボタンを
   // 出すだけ (Claude への送信は人間が押したときだけ)。
-  // キーが無ければ機能ごと無効 (起動時に 1 行出すだけ)。
-  const openRouterApiKey =
-    process.env.ARK_FEATURE_BOARD_SUGGEST === "false"
-      ? null
-      : loadOpenRouterApiKey();
-  const boardSuggest = openRouterApiKey
-    ? new BoardSuggestService({
-        subscribeJsonl: (worktreePath, configDir, listener) =>
-          jsonlTailManager.subscribe(worktreePath, configDir, listener),
-        decide: text => decideBoardSuggestion(text, openRouterApiKey),
-        threshold: () => {
-          const saved = db.getSetting("board_suggest_threshold");
-          return typeof saved === "number" && saved >= 0 && saved <= 1
-            ? saved
-            : BOARD_SUGGEST_DEFAULT_THRESHOLD;
-        },
-        resolveWorktreeReal: worktreePath => {
-          const resolved = resolveManagedWorktreeDetailed(worktreePath);
-          return resolved.ok ? resolved.path : null;
-        },
-        openDiagram: async (sessionId, relPath, shouldAbort) => {
-          const session = sessionOrchestrator.getSession(sessionId);
-          if (!session) return { ok: false, error: "セッションが無い" };
-          const resolved = resolveManagedWorktreeDetailed(session.worktreePath);
-          if (!resolved.ok) return { ok: false, error: resolved.reason };
-          return openDiagramForSession(
-            sessionId,
-            resolved.path,
-            relPath,
-            shouldAbort
-          );
-        },
-        notify: event =>
-          io
-            .to(sessionRoom(event.sessionId))
-            .emit("session:board-suggest", event),
-      })
-    : null;
-  if (boardSuggest) {
+  // 有効/閾値/鍵は設定画面 (board-suggest:get/set) で変えられ、次のターンから効く。
+  // 鍵が無い間は静かに何もしない。
+  const boardSuggestFeatureOn =
+    process.env.ARK_FEATURE_BOARD_SUGGEST !== "false";
+  const boardSuggest = new BoardSuggestService({
+    subscribeJsonl: (worktreePath, configDir, listener) =>
+      jsonlTailManager.subscribe(worktreePath, configDir, listener),
+    decide: (text, apiKey) => decideBoardSuggestion(text, apiKey),
+    enabled: () => boardSuggestFeatureOn && readBoardSuggestEnabled(db),
+    apiKey: () => resolveBoardSuggestApiKey(db)?.key ?? null,
+    threshold: () => readBoardSuggestThreshold(db),
+    resolveWorktreeReal: worktreePath => {
+      const resolved = resolveManagedWorktreeDetailed(worktreePath);
+      return resolved.ok ? resolved.path : null;
+    },
+    openDiagram: async (sessionId, relPath, shouldAbort) => {
+      const session = sessionOrchestrator.getSession(sessionId);
+      if (!session) return { ok: false, error: "セッションが無い" };
+      const resolved = resolveManagedWorktreeDetailed(session.worktreePath);
+      if (!resolved.ok) return { ok: false, error: resolved.reason };
+      return openDiagramForSession(
+        sessionId,
+        resolved.path,
+        relPath,
+        shouldAbort
+      );
+    },
+    notify: event =>
+      io.to(sessionRoom(event.sessionId)).emit("session:board-suggest", event),
+  });
+  if (boardSuggestFeatureOn) {
     // 起動時の自動復元は orchestrator のコンストラクタで済んでいるので、
     // 既存分は明示的に attach し、以後はイベントで追従する
     for (const session of sessionOrchestrator.getAllSessions()) {
@@ -1494,11 +1499,14 @@ export async function startServer(
     sessionOrchestrator.on("session:stopped", (sessionId: string) =>
       boardSuggest.detach(sessionId)
     );
-    console.log("[BoardSuggest] 有効 (Jev 判定でボード提案を出す)");
-  } else {
+    const startupConfig = readBoardSuggestConfig(db);
     console.log(
-      "[BoardSuggest] 無効 (OPENROUTER_API_KEY か ~/.config/openrouter/api-key が無い、または ARK_FEATURE_BOARD_SUGGEST=false)"
+      startupConfig.keyConfigured
+        ? `[BoardSuggest] 鍵あり (${startupConfig.keySource}) / ${startupConfig.enabled ? "有効" : "設定で無効"} / 閾値 ${startupConfig.threshold}`
+        : "[BoardSuggest] 鍵が無いので待機中 (設定画面「ボード提案の設定」か OPENROUTER_API_KEY / ~/.config/openrouter/api-key で有効になる)"
     );
+  } else {
+    console.log("[BoardSuggest] 無効 (ARK_FEATURE_BOARD_SUGGEST=false)");
   }
 
   // 直近のブロードキャスト結果。新規 subscribe 時に即時応答として送る
@@ -3015,6 +3023,39 @@ export async function startServer(
       }
     });
 
+    // ===== ボード提案の設定 (鍵は末尾 4 文字だけ返す) =====
+    socket.on("board-suggest:get", callback => {
+      if (typeof callback !== "function") return;
+      try {
+        callback({ ok: true, config: readBoardSuggestConfig(db) });
+      } catch (e) {
+        console.error("[BoardSuggest] 設定の取得に失敗:", getErrorMessage(e));
+        callback({ ok: false, error: "設定を読めませんでした" });
+      }
+    });
+    socket.on("board-suggest:set", (patch, callback) => {
+      if (typeof callback !== "function") return;
+      const validated = validateBoardSuggestPatch(patch);
+      if (!validated.ok) {
+        callback({ ok: false, error: validated.error });
+        return;
+      }
+      try {
+        if (Object.keys(validated.set).length > 0) {
+          db.setSettings(validated.set);
+        }
+        for (const key of validated.remove) db.deleteSetting(key);
+        const config = readBoardSuggestConfig(db);
+        console.log(
+          `[BoardSuggest] 設定を更新: ${config.enabled ? "有効" : "無効"} / 閾値 ${config.threshold} / 鍵 ${config.keyConfigured ? `あり (${config.keySource})` : "なし"}`
+        );
+        callback({ ok: true, config });
+      } catch (e) {
+        console.error("[BoardSuggest] 設定の保存に失敗:", getErrorMessage(e));
+        callback({ ok: false, error: "設定を保存できませんでした" });
+      }
+    });
+
     // パスワードはこの callback でだけ配る (一覧には載せない)
     socket.on("screen:credentials", (id, callback) => {
       if (typeof callback !== "function") return;
@@ -3759,7 +3800,7 @@ export async function startServer(
     clearInterval(bridgeBroadcastInterval);
     clearInterval(gridBroadcastInterval);
     sessionOrchestrator.cleanup();
-    boardSuggest?.detachAll();
+    boardSuggest.detachAll();
     browserManager.cleanup();
     screenBridge.closeAll();
     boardMcp.stop();

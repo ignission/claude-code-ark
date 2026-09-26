@@ -4,6 +4,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AboutDialog } from "@/components/AboutDialog";
+import { BoardSuggestSettingsDialog } from "@/components/BoardSuggestSettingsDialog";
 import { BrowserPane } from "@/components/BrowserPane";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import {
@@ -142,6 +143,8 @@ export default function Dashboard() {
     updateScreen,
     deleteScreen,
     requestScreenCredentials,
+    getBoardSuggestConfig,
+    setBoardSuggestConfig,
     profiles,
     repoProfileLinks,
     worktreeProfileLinks,
@@ -498,6 +501,8 @@ export default function Dashboard() {
   const [showPortSelector, setShowPortSelector] = useState(false);
   const [showProfileManager, setShowProfileManager] = useState(false);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
+  const [showBoardSuggestSettings, setShowBoardSuggestSettings] =
+    useState(false);
   // AboutダイアログのCPU/MEM/DISK用。開いている間だけbridge:snapshotを購読する
   const bridgeSnapshot = useBridgeSnapshot(socket, showAboutDialog);
 
@@ -754,6 +759,7 @@ export default function Dashboard() {
           screens={screens}
           requestScreenCredentials={requestScreenCredentials}
           onOpenScreenManager={() => setShowScreenManager(true)}
+          onOpenBoardSuggestSettings={() => setShowBoardSuggestSettings(true)}
           messageShortcuts={messageShortcuts}
           onCreateShortcut={createShortcut}
           onUpdateShortcut={updateShortcut}
@@ -828,6 +834,9 @@ export default function Dashboard() {
               selectedScreenId={selectedScreenId}
               onSelectScreen={handleSelectScreen}
               onOpenScreenManager={() => setShowScreenManager(true)}
+              onOpenBoardSuggestSettings={() =>
+                setShowBoardSuggestSettings(true)
+              }
             />
           }
           main={
@@ -1200,6 +1209,14 @@ export default function Dashboard() {
         onCreate={createScreen}
         onUpdate={updateScreen}
         onDelete={deleteScreen}
+      />
+
+      {/* ボード提案 (Jev 判定) の設定 */}
+      <BoardSuggestSettingsDialog
+        open={showBoardSuggestSettings}
+        onOpenChange={setShowBoardSuggestSettings}
+        onLoad={getBoardSuggestConfig}
+        onSave={setBoardSuggestConfig}
       />
 
       {/* About Ark (同梱バイナリ LICENSE 一覧) */}

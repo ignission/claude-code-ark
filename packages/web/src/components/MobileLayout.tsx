@@ -167,6 +167,7 @@ interface MobileLayoutProps {
   screens: Screen[];
   requestScreenCredentials: (id: string) => Promise<ScreenCredentialsResult>;
   onOpenScreenManager: () => void;
+  onOpenBoardSuggestSettings: () => void;
   // メッセージショートカット
   messageShortcuts: MessageShortcut[];
   onCreateShortcut: (message: string) => void;
@@ -255,6 +256,7 @@ export function MobileLayout({
   screens,
   requestScreenCredentials,
   onOpenScreenManager,
+  onOpenBoardSuggestSettings,
   messageShortcuts,
   onCreateShortcut,
   onUpdateShortcut,
@@ -434,6 +436,7 @@ export function MobileLayout({
       >
         <MobileSessionList
           onOpenScreenManager={onOpenScreenManager}
+          onOpenBoardSuggestSettings={onOpenBoardSuggestSettings}
           sessions={sessions}
           worktrees={worktrees}
           repoList={repoList}

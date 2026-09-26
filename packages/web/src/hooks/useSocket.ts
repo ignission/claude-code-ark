@@ -7,6 +7,8 @@
  */
 
 import type {
+  BoardSuggestConfigPatch,
+  BoardSuggestConfigResult,
   BridgeSessionStatus,
   BrowserSession,
   ClientToServerEvents,
@@ -280,6 +282,12 @@ interface UseSocketReturn {
    * 「サーバーに届かない」(unavailable) は利用者の打ち手が違うので区別する
    */
   requestScreenCredentials: (id: string) => Promise<ScreenCredentialsResult>;
+
+  // ボード提案 (Jev 判定) の設定。鍵は末尾 4 文字だけ返る
+  getBoardSuggestConfig: () => Promise<BoardSuggestConfigResult>;
+  setBoardSuggestConfig: (
+    patch: BoardSuggestConfigPatch
+  ) => Promise<BoardSuggestConfigResult>;
 
   // メッセージショートカット
   messageShortcuts: MessageShortcut[];
@@ -1563,6 +1571,49 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
+  // ボード提案の設定。socket が無い / ack が返らないときは理由つきで失敗させる
+  const getBoardSuggestConfig = useCallback(
+    () =>
+      new Promise<BoardSuggestConfigResult>(resolve => {
+        const socket = socketRef.current;
+        if (!socket) {
+          resolve({ ok: false, error: "サーバーに接続していません" });
+          return;
+        }
+        socket
+          .timeout(SCREEN_CREDENTIALS_ACK_TIMEOUT_MS)
+          .emit("board-suggest:get", (err, result) => {
+            resolve(
+              err
+                ? { ok: false, error: "設定を読めませんでした (応答なし)" }
+                : result
+            );
+          });
+      }),
+    []
+  );
+
+  const setBoardSuggestConfig = useCallback(
+    (patch: BoardSuggestConfigPatch) =>
+      new Promise<BoardSuggestConfigResult>(resolve => {
+        const socket = socketRef.current;
+        if (!socket) {
+          resolve({ ok: false, error: "サーバーに接続していません" });
+          return;
+        }
+        socket
+          .timeout(SCREEN_CREDENTIALS_ACK_TIMEOUT_MS)
+          .emit("board-suggest:set", patch, (err, result) => {
+            resolve(
+              err
+                ? { ok: false, error: "保存できませんでした (応答なし)" }
+                : result
+            );
+          });
+      }),
+    []
+  );
+
   const setRepoProfile = useCallback(
     (repoPath: string, profileId: string | null) => {
       socketRef.current?.emit("repo:set-profile", {
@@ -1741,6 +1792,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     updateScreen,
     deleteScreen,
     requestScreenCredentials,
+    // ボード提案の設定
+    getBoardSuggestConfig,
+    setBoardSuggestConfig,
     // メッセージショートカット
     messageShortcuts,
     createShortcut,

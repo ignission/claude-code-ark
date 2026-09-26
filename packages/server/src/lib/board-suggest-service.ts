@@ -10,6 +10,9 @@
  * doc は人間に尋ねず動く。人間が見るのは「ボードが開いた」ことと、
  * チャットに出る 1 行の通知 (`session:board-suggest`) だけ。
  *
+ * 有効/閾値/鍵は毎ターン deps から読む (設定画面で変えたら次のターンから効く)。
+ * 鍵が無いターンは静かに何もしない。
+ *
  * これは Claude セッションへ context を注入する機構ではない (doc 経路は Claude に
  * 何も送らない)。`.claude/rules/context-engineering.md` の対象外。
  */
@@ -23,9 +26,6 @@ import { markdownToBoardDoc } from "./markdown-to-board-doc.js";
 
 /** 自動生成した doc の置き場。`_` 始まりなので図スイッチャーの一覧には出ない */
 export const BOARD_SUGGEST_AUTO_DIR = "_auto";
-
-/** Jev の noul がこの値以上なら動く。0.5 付近は「分からない」なので高めに置く */
-export const BOARD_SUGGEST_DEFAULT_THRESHOLD = 0.7;
 
 export interface BoardSuggestSession {
   id: string;
@@ -44,7 +44,11 @@ export interface BoardSuggestDeps {
     configDir: string | null,
     listener: { onLine(line: JsonlLineLike): void; onReset?(): void }
   ): () => void;
-  decide(text: string): Promise<BoardDecision>;
+  decide(text: string, apiKey: string): Promise<BoardDecision>;
+  /** 有効か。設定から毎回読む (設定画面で切り替えたら次のターンから効く) */
+  enabled(): boolean;
+  /** 使う鍵。無ければ null (そのターンは何もしない) */
+  apiKey(): string | null;
   /** 閾値。設定から毎回読む (再起動なしで変えられるように) */
   threshold(): number;
   /** worktree の realpath。解決できなければ null */
@@ -71,11 +75,14 @@ interface SessionState {
   failureReported: boolean;
 }
 
+/** プロセス内の連番。時刻が同じでもファイル名が衝突しないようにする (循環させない) */
+let stampSequence = 0;
+
 function formatStamp(at: number): string {
   const d = new Date(at);
   const pad = (n: number) => String(n).padStart(2, "0");
-  // 同じ秒に 2 ターン確定しても衝突しないようミリ秒まで入れる
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}-${String(d.getMilliseconds()).padStart(3, "0")}`;
+  stampSequence += 1;
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}-${String(d.getMilliseconds()).padStart(3, "0")}-${stampSequence}`;
 }
 
 export class BoardSuggestService {
@@ -136,6 +143,9 @@ export class BoardSuggestService {
   ): Promise<void> {
     // 判定中に次のターンが終わったら、そのターンは見送る (Jev は 1 秒以内に返るので稀)
     if (state.inflight) return;
+    if (!this.deps.enabled()) return;
+    const apiKey = this.deps.apiKey();
+    if (!apiKey) return;
     state.inflight = true;
     const generation = state.assembler.generation;
     // 判定の途中で会話が進んだ (新しい発話・/clear) か、detach されたら結果を捨てる。
@@ -145,7 +155,7 @@ export class BoardSuggestService {
       state.assembler.generation !== generation;
     let decision: BoardDecision;
     try {
-      decision = await this.deps.decide(text);
+      decision = await this.deps.decide(text, apiKey);
     } catch (err) {
       // Jev の同じ失敗を毎ターン出さない (ファイル操作の失敗はここに混ぜない)
       if (!state.failureReported) {

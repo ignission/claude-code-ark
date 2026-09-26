@@ -45,6 +45,8 @@ function setup(
       return unsubscribe;
     },
     decide: vi.fn(async () => decision),
+    enabled: () => true,
+    apiKey: () => "sk-test",
     threshold: () => 0.7,
     resolveWorktreeReal: () => worktree,
     openDiagram: vi.fn(async () => ({ ok: true })),
@@ -131,7 +133,10 @@ describe("BoardSuggestService", () => {
       cost: 0,
     });
     await push(endTurnLine("## 見出し\n\n本文です。"), () => events.length > 0);
-    expect(deps.decide).toHaveBeenCalledWith("## 見出し\n\n本文です。");
+    expect(deps.decide).toHaveBeenCalledWith(
+      "## 見出し\n\n本文です。",
+      "sk-test"
+    );
     expect(deps.openDiagram).toHaveBeenCalledTimes(1);
     const [, relPath, shouldAbort] = (
       deps.openDiagram as ReturnType<typeof vi.fn>
@@ -139,7 +144,7 @@ describe("BoardSuggestService", () => {
     expect(typeof shouldAbort).toBe("function");
     expect(shouldAbort()).toBe(false);
     expect(relPath).toMatch(
-      /^\.claude\/diagrams\/_auto\/s1\/\d{8}-\d{6}-\d{3}\.diagram\.html$/
+      /^\.claude\/diagrams\/_auto\/s1\/\d{8}-\d{6}-\d{3}-\d+\.diagram\.html$/
     );
     expect(fs.existsSync(path.join(worktree, relPath))).toBe(true);
     expect(events).toEqual([
@@ -152,6 +157,39 @@ describe("BoardSuggestService", () => {
         title: "見出し",
       },
     ]);
+  });
+
+  it("無効か鍵が無ければ Jev を呼ばない", async () => {
+    const off = setup(
+      { board: 0.9, form: "doc", figure: 0, cost: 0 },
+      { enabled: () => false }
+    );
+    off.listener()?.onLine({ raw: endTurnLine("長い説明") });
+    await new Promise(r => setTimeout(r, 30));
+    expect(off.deps.decide).not.toHaveBeenCalled();
+    const noKey = setup(
+      { board: 0.9, form: "doc", figure: 0, cost: 0 },
+      { apiKey: () => null }
+    );
+    noKey.listener()?.onLine({ raw: endTurnLine("長い説明") });
+    await new Promise(r => setTimeout(r, 30));
+    expect(noKey.deps.decide).not.toHaveBeenCalled();
+    expect(noKey.logs).toEqual([]);
+  });
+
+  it("同じ時刻で 2 ターン続いてもファイル名が衝突しない", async () => {
+    const { deps, events, push } = setup({
+      board: 0.9,
+      form: "doc",
+      figure: 0,
+      cost: 0,
+    });
+    await push(endTurnLine("一つ目"), () => events.length > 0);
+    await push(endTurnLine("二つ目"), () => events.length > 1);
+    const paths = (deps.openDiagram as ReturnType<typeof vi.fn>).mock.calls.map(
+      c => c[1]
+    );
+    expect(new Set(paths).size).toBe(2);
   });
 
   it("閾値未満なら何もしない", async () => {
@@ -279,7 +317,7 @@ describe("BoardSuggestService", () => {
 
   it("Jev の失敗は 1 回だけログに出し、回復したら 1 行出す", async () => {
     let fail = true;
-    const { logs, push } = setup(
+    const { logs, push, listener } = setup(
       { board: 0.1, form: "doc", figure: 0, cost: 0 },
       {
         decide: async () => {
@@ -289,7 +327,8 @@ describe("BoardSuggestService", () => {
       }
     );
     await push(endTurnLine("a"), () => logs.some(l => l.includes("boom")));
-    await push(endTurnLine("b"), () => false);
+    listener()?.onLine({ raw: endTurnLine("b") });
+    await new Promise(r => setTimeout(r, 30));
     expect(logs.filter(l => l.includes("boom"))).toHaveLength(1);
     fail = false;
     await push(endTurnLine("c"), () => logs.some(l => l.includes("回復")));
