@@ -11,6 +11,13 @@ describe("BOARD_SESSION_CONTEXT の data-ark-author=human 規約", () => {
     expect(BOARD_SESSION_CONTEXT).not.toContain("人間の決定として扱わない");
   });
 
+  it("自分の書き手印（claude）は付けないと述べる", () => {
+    expect(BOARD_SESSION_CONTEXT).toContain("自分の書き手印は付けない");
+    expect(BOARD_SESSION_CONTEXT).not.toContain(
+      'data-ark-author="claude" を付け'
+    );
+  });
+
   it("容器ブロックには human が付かない旨を述べる", () => {
     // 言い回しが変わっても壊れにくいよう、1つの完全一致ではなく2つの要素で見る。
     expect(BOARD_SESSION_CONTEXT).toContain("容器ブロック");
