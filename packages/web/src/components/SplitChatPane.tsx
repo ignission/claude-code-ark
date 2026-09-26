@@ -190,10 +190,16 @@ function UserInputCard({ text }: { text: string }) {
 function WorkingIndicator({
   label,
   announce,
+  visuallyHidden,
 }: {
   label: string;
   /** false (モバイル) のときは状態の帯が読み上げるので、読み上げ領域にしない */
   announce: boolean;
+  /**
+   * 端末の末尾を出している間は、枠が動きを見せるので目に見える表示は出さない。
+   * 読み上げ領域は同じ要素のまま残す (枠の出入りのたびに作り直すと読み上げが繰り返される)
+   */
+  visuallyHidden: boolean;
 }) {
   const dots = (
     <span className="status-dots text-status-busy" aria-hidden="true">
@@ -203,6 +209,7 @@ function WorkingIndicator({
     </span>
   );
   if (!announce) {
+    if (visuallyHidden) return null;
     return (
       <div
         data-testid="chat-working-indicator"
@@ -221,10 +228,14 @@ function WorkingIndicator({
       data-testid="chat-working-indicator"
       role="status"
       aria-live="polite"
-      className="flex items-center gap-2 px-4 py-3 text-[13px] text-muted-foreground"
+      className={
+        visuallyHidden
+          ? "sr-only"
+          : "flex items-center gap-2 px-4 py-3 text-[13px] text-muted-foreground"
+      }
     >
-      {dots}
-      <span aria-hidden="true">{label}</span>
+      {!visuallyHidden && dots}
+      {!visuallyHidden && <span aria-hidden="true">{label}</span>}
       <span className="sr-only">Claudeが作業しています</span>
     </div>
   );
@@ -1956,7 +1967,11 @@ export function SplitChatPane({
             )}
             {workingLabel && liveTail && <LiveTerminalTail text={liveTail} />}
             {workingLabel && (
-              <WorkingIndicator label={workingLabel} announce={!isMobile} />
+              <WorkingIndicator
+                label={workingLabel}
+                announce={!isMobile}
+                visuallyHidden={Boolean(liveTail)}
+              />
             )}
           </div>
         </div>

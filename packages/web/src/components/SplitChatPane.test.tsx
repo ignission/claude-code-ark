@@ -619,6 +619,24 @@ describe("SplitChatPane: 作業中の表示", () => {
     expect(tail(empty.container)).toBeNull();
   });
 
+  it("画面の末尾を出している間は「考えています」を見せず、読み上げだけ残す", () => {
+    const text = "✻ Cogitating… (32s · ↓ 1.2k tokens)";
+
+    const pc = renderChat({ bridgeStatus: "THINK", liveTail: text });
+    const status = indicator(pc.container);
+    expect(status?.getAttribute("role")).toBe("status");
+    expect(status?.className).toContain("sr-only");
+    expect(status?.querySelector(".status-dots")).toBeNull();
+
+    // 読み上げ領域にしないモバイルでは、要素ごと出さない
+    const mobile = renderChat({
+      bridgeStatus: "THINK",
+      liveTail: text,
+      layout: "mobile",
+    });
+    expect(indicator(mobile.container)).toBeNull();
+  });
+
   it("考えている間と作業している間は、会話の最後に呼吸する3点と文言を出す", () => {
     const thinking = renderChat({ bridgeStatus: "THINK" });
     expect(indicator(thinking.container)?.textContent).toContain(
