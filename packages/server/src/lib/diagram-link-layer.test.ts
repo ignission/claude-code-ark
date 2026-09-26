@@ -72,6 +72,15 @@ describe("injectDiagramLinkLayer", () => {
     expect(injectDiagramLinkLayer(injected)).toBe(injected);
   });
 
+  it("本文に marker の語があるだけの板にも注入する (bare includes にしない)", () => {
+    const prose = `<!doctype html><html><body><p data-ark-id="s1">この板は ${DIAGRAM_LINK_LAYER_MARKER} を説明する</p></body></html>`;
+    const injected = injectDiagramLinkLayer(prose);
+    expect(injected).toMatch(
+      new RegExp(`<script[^>]*\\bid=["']${DIAGRAM_LINK_LAYER_MARKER}["']`)
+    );
+    expect(injectDiagramLinkLayer(injected)).toBe(injected);
+  });
+
   it("</body> が無ければ末尾に付ける", () => {
     const injected = injectDiagramLinkLayer("<p>x</p>");
     expect(injected.endsWith("</script>")).toBe(true);

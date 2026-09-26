@@ -57,9 +57,17 @@ function getMinifiedLinkLayer(): string {
   return minifiedLinkLayer;
 }
 
+// 注入済みの判定は marker の bare な includes() ではなく、実際に注入された
+// <script id="..."> タグの有無で行う。本文に marker の語が書かれているだけの
+// 板が無言で二度と注入されなくなる事故を避ける (doc editor と同じ堅さ)
+const INJECTED_SCRIPT_RE = new RegExp(
+  `<script[^>]*\\bid=["']${DIAGRAM_LINK_LAYER_MARKER}["']`,
+  "i"
+);
+
 /** </body> 直前へ 1 回だけ注入する。注入済みならそのまま返す。 */
 export function injectDiagramLinkLayer(html: string): string {
-  if (html.includes(DIAGRAM_LINK_LAYER_MARKER)) return html;
+  if (INJECTED_SCRIPT_RE.test(html)) return html;
   const layer = getMinifiedLinkLayer();
   const bodyClose = html.toLowerCase().lastIndexOf("</body>");
   if (bodyClose < 0) return `${html}${layer}`;

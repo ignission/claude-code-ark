@@ -7,6 +7,7 @@ import { DIAGRAM_COMMENT_LAYER_MARKER } from "./diagram-comment-layer.js";
 import { DIAGRAM_DOC_EDITOR_MARKER } from "./diagram-doc-editor.js";
 import { DIAGRAM_CSP } from "./diagram-file.js";
 import { DIAGRAM_HARNESS_MARKER } from "./diagram-harness.js";
+import { DIAGRAM_LINK_LAYER_MARKER } from "./diagram-link-layer.js";
 import { readDiagram, readDiagramModel } from "./diagram-reader.js";
 
 let wt: string;
@@ -88,6 +89,11 @@ describe("readDiagram", () => {
       expect(result.html).toContain(DIAGRAM_CSP);
       expect(occurrences(result.html, DIAGRAM_HARNESS_MARKER)).toBe(1);
       expect(occurrences(result.html, DIAGRAM_COMMENT_LAYER_MARKER)).toBe(1);
+      // リンク層は投影の後、ハーネス・コメント層の前に 1 回
+      expect(occurrences(result.html, DIAGRAM_LINK_LAYER_MARKER)).toBe(1);
+      expect(result.html.indexOf(DIAGRAM_LINK_LAYER_MARKER)).toBeLessThan(
+        result.html.indexOf(DIAGRAM_HARNESS_MARKER)
+      );
       // doc 編集層は doc 専用。graph には入らない
       expect(occurrences(result.html, DIAGRAM_DOC_EDITOR_MARKER)).toBe(0);
       expect(result.html).toContain('data-ark-comment-mode="graph"');
