@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>リンクを押す経路 (#482)</title></head>
+<body>
+<script type="application/json" id="ark-diagram-model">
+{
+  "version": 1,
+  "type": "call-tree",
+  "title": "リンクを押す経路 (#482)",
+  "nodes": [
+    { "id": "doc", "label": "board doc", "ext": { "note": "コードを指す語をリンクで書く" } },
+    { "id": "layer", "label": "diagram-link-layer.ts", "kind": "added",
+      "ext": { "source": "packages/server/src/lib/diagram-link-layer.ts#L33-L48",
+               "added": 96, "removed": 0, "note": "遷移を止め href を渡す" } },
+    { "id": "reader", "label": "diagram-reader.ts",
+      "ext": { "source": "packages/server/src/lib/diagram-reader.ts#L138-L152",
+               "added": 5, "removed": 2, "note": "投影の後・コメント層の前に注入" } },
+    { "id": "pane", "label": "DiagramPane.tsx",
+      "ext": { "source": "packages/web/src/components/DiagramPane.tsx#L291-L337",
+               "added": 87, "removed": 0, "via": "callback",
+               "note": "parseDiagramLinkHref で .. と絶対パスを弾く" } },
+    { "id": "tabs", "label": "useViewerTabs.ts",
+      "ext": { "source": "packages/web/src/hooks/useViewerTabs.ts#L276-L289",
+               "added": 6, "removed": 0, "note": "既存の ark:open-file に相乗り" } }
+  ],
+  "edges": [
+    { "id": "e1", "from": "doc", "to": "layer" },
+    { "id": "e2", "from": "layer", "to": "reader" },
+    { "id": "e3", "from": "reader", "to": "pane" },
+    { "id": "e4", "from": "pane", "to": "tabs" }
+  ],
+  "groups": []
+}
+</script>
+</body>
+</html>

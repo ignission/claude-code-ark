@@ -22,6 +22,10 @@ import { injectHarness } from "./diagram-harness.js";
 import { injectDiagramLinkLayer } from "./diagram-link-layer.js";
 import type { DiagramModel } from "./diagram-model.js";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
+import {
+  injectStaticBuiltinProjection,
+  isStaticBuiltinType,
+} from "./diagram-static-builtin.js";
 import { errnoCode, errnoMessage } from "./errors.js";
 
 export type ReadDiagramResult =
@@ -138,8 +142,17 @@ export async function readDiagram(
   // 内蔵図種の投影生成 → CSP → 専用層の順。doc 本文は自前 HTML が正なので
   // 編集層（本文の contenteditable 化）とコメント層、graph は編集ハーネスと
   // コメント層の両方を載せる。リンク層は投影の後・編集層とコメント層の前。
+  //
+  // sequence / call-tree は時間順・入れ子が意味を持ち、座標を動かせる canvas に
+  // 載せると壊れるので graph ハーネスは載せない。投影が生成する行の data-ark-id
+  // に doc と同じ要領でコメントが付く（本文の編集は無い。正は常にモデル）。
   const projected = injectDiagramLinkLayer(
-    injectCsp(injectBuiltinProjection(read.raw, model.model))
+    injectCsp(
+      injectStaticBuiltinProjection(
+        injectBuiltinProjection(read.raw, model.model),
+        model.model
+      )
+    )
   );
   return {
     ok: true,
@@ -147,7 +160,9 @@ export async function readDiagram(
     html:
       model.model.type === "doc"
         ? injectDiagramCommentLayer(injectDiagramDocEditor(projected), "doc")
-        : injectDiagramCommentLayer(injectHarness(projected), "graph"),
+        : isStaticBuiltinType(model.model.type)
+          ? injectDiagramCommentLayer(projected, "doc")
+          : injectDiagramCommentLayer(injectHarness(projected), "graph"),
     raw: read.raw,
     model: model.model,
   };

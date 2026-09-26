@@ -471,3 +471,51 @@ describe("readDiagram", () => {
     }
   });
 });
+
+describe("静的な内蔵図種（sequence / call-tree）の配信", () => {
+  const SEQ_MODEL = JSON.stringify({
+    version: 1,
+    type: "sequence",
+    title: "クリックが行ハイライトに着くまで",
+    nodes: [
+      { id: "iframe", label: "board iframe" },
+      { id: "parent", label: "parent window" },
+    ],
+    edges: [
+      {
+        id: "s1",
+        from: "iframe",
+        to: "parent",
+        label: "postMessage(href)",
+        ext: { source: "packages/web/src/x.ts#L1-L2" },
+      },
+    ],
+  });
+
+  it("投影を生成し、コメント層は載せるが graph ハーネスは載せない", async () => {
+    write("seq.diagram.html", "", SEQ_MODEL);
+    const result = await readDiagram(wt, `${DIAGRAM_DIR}/seq.diagram.html`);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // 時間順が意味を持つので、node を動かせる canvas には載せない
+    expect(result.html).not.toContain(DIAGRAM_HARNESS_MARKER);
+    expect(result.html).not.toContain(DIAGRAM_DOC_EDITOR_MARKER);
+    expect(result.html).toContain(DIAGRAM_COMMENT_LAYER_MARKER);
+    expect(result.html).toContain(DIAGRAM_LINK_LAYER_MARKER);
+    expect(result.html).toContain(DIAGRAM_CSP);
+    expect(result.html).toContain('data-ark-static="sequence"');
+    // 生成した行にコメントが付くよう data-ark-id を出す
+    expect(result.html).toContain('data-ark-id="s1"');
+    expect(result.html).toContain('<a href="packages/web/src/x.ts#L1-L2">');
+  });
+
+  it("生成物はファイルへ書き戻さない（raw はモデルだけのまま）", async () => {
+    write("seq.diagram.html", "", SEQ_MODEL);
+    const result = await readDiagram(wt, `${DIAGRAM_DIR}/seq.diagram.html`);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.raw).not.toContain("ark-static-panel");
+  });
+});

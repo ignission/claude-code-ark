@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><title>リンクを押してから行が光るまで</title></head>
+<body>
+<script type="application/json" id="ark-diagram-model">
+{
+  "version": 1,
+  "type": "sequence",
+  "title": "リンクを押してから行が光るまで",
+  "nodes": [
+    { "id": "iframe", "label": "board iframe" },
+    { "id": "layer", "label": "link layer", "kind": "new" },
+    { "id": "parent", "label": "parent window" },
+    { "id": "viewer", "label": "file viewer" }
+  ],
+  "edges": [
+    { "id": "s1", "from": "iframe", "to": "layer", "label": "click a[href=\"…#L33-L48\"]" },
+    { "id": "s2", "from": "layer", "to": "layer", "label": "preventDefault()",
+      "ext": { "source": "packages/server/src/lib/diagram-link-layer.ts#L33-L48" } },
+    { "id": "s3", "from": "layer", "to": "parent", "label": "postMessage(href)",
+      "ext": { "style": "async" } },
+    { "id": "s4", "from": "parent", "to": "parent", "label": "parseDiagramLinkHref(href)",
+      "ext": { "source": "packages/web/src/components/DiagramPane.tsx#L291-L337" } },
+    { "id": "s5", "from": "parent", "to": "viewer", "label": "openFileTab(path,33,48)",
+      "ext": { "source": "packages/web/src/hooks/useViewerTabs.ts#L90-L101" } },
+    { "id": "s6", "from": "viewer", "to": "viewer", "label": "codeToHtml(transformers.line)",
+      "ext": { "source": "packages/web/src/components/FileViewerPane.tsx#L147-L170" } },
+    { "id": "s7", "from": "viewer", "to": "iframe", "label": "33〜48 行が光る",
+      "ext": { "style": "return" } }
+  ],
+  "groups": []
+}
+</script>
+</body>
+</html>

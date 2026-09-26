@@ -167,7 +167,28 @@ describe("diagram-authoring skill の書き出し先 contract", () => {
       expect(skill).toContain(kind);
     }
     expect(skill).toContain("エントリポイント");
+    // 実装の節は call-tree 1 枚で、文章で経路をなぞり直さない
+    expect(skill).toContain("`call-tree` を 1 枚");
+    expect(skill).toContain("文章で図をなぞり直さない");
     expect(skill).not.toMatch(/(?:docs|\.claude)\/diagrams/);
+  });
+
+  it("sequence と call-tree の語彙を定義する", () => {
+    const skill = fs.readFileSync(SKILL_PATH, "utf-8");
+
+    expect(skill).toContain("### sequence と call-tree の語彙");
+    expect(skill).toContain("| `sequence` |");
+    expect(skill).toContain("| `call-tree` |");
+    // 座標を持たないこと（canvas に載せると時間順と入れ子が壊れる）
+    expect(skill).toContain("この 2 つは座標を持たない");
+    for (const token of [
+      "`edge.ext.style`",
+      "`edge.ext.source`",
+      "`node.ext.added`",
+      "`node.ext.via`",
+    ]) {
+      expect(skill).toContain(token);
+    }
   });
 
   it("変更レビュー文書の見本が doc contract を満たし、コードへのリンクを含む", () => {
