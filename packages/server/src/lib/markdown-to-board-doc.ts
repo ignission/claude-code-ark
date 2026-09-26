@@ -7,8 +7,8 @@
  * 生成物は diagram-authoring の doc 規約に従う:
  * - model は `type: "doc"`、node の kind は 12 語彙のうち
  *   section / paragraph / list / list-item / task / table / table-row / code / quote
- * - 全 node に同じ id の `data-ark-id` をちょうど 1 つ付け、書き手は
- *   `data-ark-author="claude"` (本文は Claude が書いたものなので)
+ * - 全 node に同じ id の `data-ark-id` をちょうど 1 つ付ける。書き手印は付けない
+ *   (#484 で claude の印は廃止。human は人間がボードで編集したときに編集層が付ける)
  * - label は本文の 80 コードポイントまでの抜粋 (refreshDocLabels と同じ規則)
  * - 外部リソースを参照しない。本文はすべてエスケープし、返答に含まれる生 HTML も
  *   文字として出す (返答には `<configDir>` のような山括弧が頻出する)
@@ -19,7 +19,6 @@ import { MODEL_SCRIPT_ID } from "./diagram-file.js";
 import type { DiagramModel, DiagramNode } from "./diagram-model.js";
 
 const LABEL_MAX_LENGTH = 80;
-const AUTHOR_ATTR = 'data-ark-author="claude"';
 
 export interface BoardDocResult {
   html: string;
@@ -222,9 +221,7 @@ function renderBlock(b: Builder, token: Token): void {
       const level = Math.min(heading.depth + 1, 6);
       const id = nextId(b);
       addNode(b, id, "section", inner.text);
-      b.blocks.push(
-        `<h${level} data-ark-id="${id}" ${AUTHOR_ATTR}>${inner.html}</h${level}>`
-      );
+      b.blocks.push(`<h${level} data-ark-id="${id}">${inner.html}</h${level}>`);
       return;
     }
     case "paragraph": {
@@ -232,7 +229,7 @@ function renderBlock(b: Builder, token: Token): void {
       if (!inner.text.trim()) return;
       const id = nextId(b);
       addNode(b, id, "paragraph", inner.text);
-      b.blocks.push(`<p data-ark-id="${id}" ${AUTHOR_ATTR}>${inner.html}</p>`);
+      b.blocks.push(`<p data-ark-id="${id}">${inner.html}</p>`);
       return;
     }
     case "list": {
@@ -246,13 +243,13 @@ function renderBlock(b: Builder, token: Token): void {
         const isTask = item.task === true;
         addNode(b, itemId, isTask ? "task" : "list-item", inner.text);
         items.push(
-          `<li data-ark-id="${itemId}" ${AUTHOR_ATTR}${isTask ? ' class="task"' : ""}>${taskMark(item)}${inner.html}</li>`
+          `<li data-ark-id="${itemId}"${isTask ? ' class="task"' : ""}>${taskMark(item)}${inner.html}</li>`
         );
         itemTexts.push(inner.text);
       });
       addNode(b, id, "list", itemTexts.join(" "));
       b.blocks.push(
-        `${listOpenTag(list, ` data-ark-id="${id}" ${AUTHOR_ATTR}`)}${items.join("")}${list.ordered ? "</ol>" : "</ul>"}`
+        `${listOpenTag(list, ` data-ark-id="${id}"`)}${items.join("")}${list.ordered ? "</ol>" : "</ul>"}`
       );
       return;
     }
@@ -273,13 +270,13 @@ function renderBlock(b: Builder, token: Token): void {
         const rowText = cells.map(c => c.text).join(" ");
         addNode(b, rowId, "table-row", rowText);
         rows.push(
-          `<tr data-ark-id="${rowId}" ${AUTHOR_ATTR}>${cells.map(c => `<td>${c.html}</td>`).join("")}</tr>`
+          `<tr data-ark-id="${rowId}">${cells.map(c => `<td>${c.html}</td>`).join("")}</tr>`
         );
         rowTexts.push(rowText);
       });
       addNode(b, id, "table", `${headerText} ${rowTexts.join(" ")}`);
       b.blocks.push(
-        `<table data-ark-id="${id}" ${AUTHOR_ATTR}><thead><tr data-ark-id="${headerId}" ${AUTHOR_ATTR}>${header}</tr></thead><tbody>${rows.join("")}</tbody></table>`
+        `<table data-ark-id="${id}"><thead><tr data-ark-id="${headerId}">${header}</tr></thead><tbody>${rows.join("")}</tbody></table>`
       );
       return;
     }
@@ -289,7 +286,7 @@ function renderBlock(b: Builder, token: Token): void {
       addNode(b, id, "code", code.text);
       const lang = code.lang ? ` data-lang="${escapeHtml(code.lang)}"` : "";
       b.blocks.push(
-        `<pre data-ark-id="${id}" ${AUTHOR_ATTR}${lang}><code>${escapeHtml(code.text)}</code></pre>`
+        `<pre data-ark-id="${id}"${lang}><code>${escapeHtml(code.text)}</code></pre>`
       );
       return;
     }
@@ -300,7 +297,7 @@ function renderBlock(b: Builder, token: Token): void {
       const id = nextId(b);
       addNode(b, id, "quote", inner.text);
       b.blocks.push(
-        `<blockquote data-ark-id="${id}" ${AUTHOR_ATTR}>${inner.html}</blockquote>`
+        `<blockquote data-ark-id="${id}">${inner.html}</blockquote>`
       );
       return;
     }
@@ -310,9 +307,7 @@ function renderBlock(b: Builder, token: Token): void {
       if (!raw) return;
       const id = nextId(b);
       addNode(b, id, "paragraph", raw);
-      b.blocks.push(
-        `<p data-ark-id="${id}" ${AUTHOR_ATTR}>${escapeHtml(raw)}</p>`
-      );
+      b.blocks.push(`<p data-ark-id="${id}">${escapeHtml(raw)}</p>`);
     }
   }
 }

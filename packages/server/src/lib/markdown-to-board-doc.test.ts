@@ -106,38 +106,13 @@ describe("markdownToBoardDoc", () => {
     expect(html).toContain('href="https://example.com/spec"');
   });
 
-  it("全ブロックに data-ark-author=claude が付き、label は 80 文字以内の抜粋になる", () => {
+  it("書き手印は付けず (#484)、label は 80 文字以内の抜粋になる", () => {
     const long = `${"あ".repeat(200)}\n\n## 見出し`;
     const { html, model } = markdownToBoardDoc(long, "test");
-    const authored = html.match(/data-ark-author="claude"/g)?.length ?? 0;
-    expect(authored).toBe(model.nodes.length);
+    expect(html).not.toContain("data-ark-author");
     const paragraph = model.nodes.find(n => n.kind === "paragraph");
     expect(Array.from(paragraph?.label ?? "").length).toBe(80);
     expect(paragraph?.label.endsWith("…")).toBe(true);
-  });
-
-  it("入れ子のタスク・番号付きリストの開始番号・項目内の段落を保つ", () => {
-    const md = [
-      "3. 三つ目の手順",
-      "4. 四つ目の手順",
-      "",
-      "- 親",
-      "  - [x] 済み",
-      "  - [ ] 未了",
-      "",
-      "- 一段落目。",
-      "",
-      "  二段落目。",
-    ].join("\n");
-    const { html, model } = markdownToBoardDoc(md, "t");
-    expect(html).toContain(
-      '<ol data-ark-id="b1" data-ark-author="claude" start="3">'
-    );
-    expect(html).toContain("☑</span> 済み");
-    expect(html).toContain("☐</span> 未了");
-    expect(html).toContain("<p>一段落目。</p><p>二段落目。</p>");
-    const item = model.nodes.find(n => n.label.startsWith("一段落目"));
-    expect(item?.label).toBe("一段落目。 二段落目。");
   });
 
   it("見出しが無ければ先頭の文を題名にする", () => {

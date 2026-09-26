@@ -167,7 +167,7 @@ Jev に判定させる (`board-suggest-service.ts` / `board-suggest-turns.ts` / 
   2 問を 1 リクエストで問い、確率だけが返る (1 回 200〜400ms、入力 100 万トークン $0.042)。
   本文は末尾 6,000 文字だけ送り、`provider.data_collection: "deny"` を付ける
 - **doc**: `markdown-to-board-doc.ts` が返答を doc 型 `.diagram.html` へ決定的に変換し
-  (`marked` の lexer → 全ブロックに `data-ark-id` と `data-ark-author="claude"`、本文は
+  (`marked` の lexer → 全ブロックに `data-ark-id`。書き手印は付けない (#484)。本文は
   すべてエスケープ)、`.claude/diagrams/_auto/<sessionId>/<時刻>.diagram.html` に書いて
   `diagram:open` で開く。`_` 始まりなので図スイッチャーには出ないが、`lastDiagramPath` で
   復元できる。既存ファイルは上書きしない (コメント sidecar が relPath に紐づくため)。
