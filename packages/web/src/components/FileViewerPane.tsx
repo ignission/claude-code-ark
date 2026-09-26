@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { codeToHtml } from "shiki";
+import {
+  HIGHLIGHT_LINE_CLASS,
+  HIGHLIGHT_LINE_STYLE,
+  isHighlightedLine,
+} from "@/lib/file-viewer-highlight";
 
 interface FileViewerPaneProps {
   filePath: string;
@@ -9,6 +14,7 @@ interface FileViewerPaneProps {
   mimeType: string;
   size: number;
   targetLine?: number | null;
+  targetEndLine?: number | null;
   error?: string;
 }
 
@@ -18,6 +24,7 @@ export function FileViewerPane({
   mimeType,
   size,
   targetLine,
+  targetEndLine,
   error,
 }: FileViewerPaneProps) {
   if (error) {
@@ -54,6 +61,7 @@ export function FileViewerPane({
             content={content}
             filePath={filePath}
             targetLine={targetLine}
+            targetEndLine={targetEndLine}
           />
         ) : (
           <div className="flex items-center justify-center h-full text-muted-foreground">
@@ -124,10 +132,12 @@ function CodeRenderer({
   content,
   filePath,
   targetLine,
+  targetEndLine,
 }: {
   content: string;
   filePath: string;
   targetLine?: number | null;
+  targetEndLine?: number | null;
 }) {
   const [highlightedHtml, setHighlightedHtml] = useState<string>("");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -135,7 +145,24 @@ function CodeRenderer({
 
   useEffect(() => {
     let cancelled = false;
-    codeToHtml(content, { lang, theme: "github-dark" })
+    codeToHtml(content, {
+      lang,
+      theme: "github-dark",
+      // ハイライトは出力へ焼き込む。DOM を後から書き換えると再描画で消える (#481)
+      transformers: [
+        {
+          line(node, line) {
+            if (!isHighlightedLine(line, targetLine, targetEndLine)) return;
+            const current =
+              typeof node.properties.class === "string"
+                ? `${node.properties.class} `
+                : "";
+            node.properties.class = `${current}${HIGHLIGHT_LINE_CLASS}`;
+            node.properties.style = HIGHLIGHT_LINE_STYLE;
+          },
+        },
+      ],
+    })
       .then(html => {
         if (!cancelled) setHighlightedHtml(html);
       })
@@ -145,23 +172,14 @@ function CodeRenderer({
     return () => {
       cancelled = true;
     };
-  }, [content, lang]);
+  }, [content, lang, targetLine, targetEndLine]);
 
+  // 見た目は shiki の出力が持つので、ここは目的の行へ寄せるだけ
   useEffect(() => {
     if (!targetLine || !containerRef.current || !highlightedHtml) return;
-    const lineEl = containerRef.current.querySelector(
-      `.line:nth-child(${targetLine})`
-    );
-    if (lineEl) {
-      lineEl.scrollIntoView({ block: "center" });
-      (lineEl as HTMLElement).style.backgroundColor =
-        "color-mix(in oklab, var(--primary) 20%, transparent)";
-    }
-    return () => {
-      if (lineEl) {
-        (lineEl as HTMLElement).style.backgroundColor = "";
-      }
-    };
+    containerRef.current
+      .querySelector(`.${HIGHLIGHT_LINE_CLASS}`)
+      ?.scrollIntoView({ block: "center" });
   }, [targetLine, highlightedHtml]);
 
   if (highlightedHtml) {
@@ -174,20 +192,27 @@ function CodeRenderer({
     return (
       <div ref={containerRef} className="flex text-sm">
         <div
-          className="shrink-0 select-none text-muted-foreground text-right pr-4 py-4 pl-2"
+          className="shrink-0 select-none text-muted-foreground text-right pr-4 py-4 pl-2 leading-5"
           style={{ minWidth: "3rem" }}
         >
           {Array.from({ length: lineCount }, (_, i) => (
             <div
               key={`line-${i}`}
-              className={targetLine === i + 1 ? "bg-primary/20" : ""}
+              className={
+                isHighlightedLine(i + 1, targetLine, targetEndLine)
+                  ? "bg-primary/25 text-foreground"
+                  : ""
+              }
             >
               {i + 1}
             </div>
           ))}
         </div>
         <div
-          className="flex-1 [&_pre]:p-4 [&_pre]:m-0 [&_code]:text-sm overflow-x-auto"
+          // 行全体に背景を敷くため code を grid にする (span のままだと行末までしか
+          // 色が伸びない)。ただし grid では中身の無い .line が高さ 0 に潰れるので、
+          // min-h で 1 行分を確保しないと空行の数だけ左の行番号とずれる
+          className="flex-1 [&_pre]:p-4 [&_pre]:m-0 [&_pre]:leading-5 [&_code]:text-sm [&_code]:grid [&_code]:leading-5 [&_.line]:leading-5 [&_.line]:min-h-5 overflow-x-auto"
           // biome-ignore lint/security/noDangerouslySetInnerHtml: Shiki出力はscriptタグ除去済み
           dangerouslySetInnerHTML={{ __html: sanitized }}
         />
@@ -202,7 +227,11 @@ function CodeRenderer({
         {lines.map((line, i) => (
           <div
             key={`line-${i}`}
-            className={`flex ${targetLine === i + 1 ? "bg-primary/20" : ""}`}
+            className={`flex ${
+              isHighlightedLine(i + 1, targetLine, targetEndLine)
+                ? "bg-primary/25"
+                : ""
+            }`}
           >
             <span className="inline-block w-12 text-right pr-4 text-muted-foreground select-none shrink-0">
               {i + 1}

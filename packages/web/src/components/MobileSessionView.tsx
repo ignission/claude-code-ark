@@ -757,6 +757,7 @@ export function MobileSessionView({
                   mimeType={tab.mimeType}
                   size={tab.size}
                   targetLine={tab.targetLine}
+                  targetEndLine={tab.targetEndLine}
                   error={tab.error}
                 />
               </div>

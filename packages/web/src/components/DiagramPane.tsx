@@ -273,7 +273,12 @@ export type DiagramLinkTarget =
   | { kind: "file"; path: string; line: number | null; endLine: number | null };
 
 export type DiagramOpenMessage =
-  | { type: "ark:open-file"; path: string; line: number | null }
+  | {
+      type: "ark:open-file";
+      path: string;
+      line: number | null;
+      endLine: number | null;
+    }
   | { type: "ark:open-url"; url: string };
 
 /**
@@ -341,7 +346,12 @@ export function handleDiagramOpenLinkMessage(
   if (target.kind === "url") {
     post({ type: "ark:open-url", url: target.url });
   } else {
-    post({ type: "ark:open-file", path: target.path, line: target.line });
+    post({
+      type: "ark:open-file",
+      path: target.path,
+      line: target.line,
+      endLine: target.endLine,
+    });
   }
   return true;
 }
