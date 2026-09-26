@@ -718,3 +718,17 @@ describe("injectHarness", () => {
     expect(out).not.toContain("https://");
   });
 });
+
+describe("edge ラベルの可読性", () => {
+  it("明るい字と背景色の縁取りで、線や枠に重なっても読めるようにする", () => {
+    // 既定は濃色背景なので、以前の #475569 では線や group の枠に沈んでいた
+    expect(DIAGRAM_HARNESS_SOURCE).toContain(
+      "fill: var(--ark-harness-edge-label-color, #cbd5e1)"
+    );
+    expect(DIAGRAM_HARNESS_SOURCE).toContain("paint-order: stroke");
+    expect(DIAGRAM_HARNESS_SOURCE).toContain(
+      "stroke: var(--ark-harness-edge-label-halo, #0f1117)"
+    );
+    expect(DIAGRAM_HARNESS_SOURCE).not.toContain("fill: #475569");
+  });
+});

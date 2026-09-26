@@ -156,8 +156,15 @@ li.ark-harness-row .ark-harness-text { flex: 1 1 auto; min-width: 0; }
 .ark-harness-edge-cardinality line {
   stroke: #64748b; stroke-width: 1.5;
 }
+/* edge のラベルは線・node・group の枠に重なる。既定の濃色背景で沈まないよう
+   明るい字にし、背景色で縁取りして浮かせる (paint-order で塗りを縁の上に置く)。
+   明るい背景の図は authored CSS で 2 つの変数を上書きする */
 .ark-harness-edge-layer text {
-  fill: #475569; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  fill: var(--ark-harness-edge-label-color, #cbd5e1);
+  paint-order: stroke;
+  stroke: var(--ark-harness-edge-label-halo, #0f1117);
+  stroke-width: 4px; stroke-linejoin: round;
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
   font-size: 12px; text-anchor: middle; dominant-baseline: central;
 }
 .ark-harness-edge-hit-target {

@@ -599,6 +599,11 @@ ER 図の多重度・矢印方向・線の用途は、core 語彙を増やさず
 }
 ```
 
+edge のラベルは harness が明るい字 + 背景色の縁取りで描く（濃色背景が既定）。
+明るい背景の図を書くときは、authored CSS で
+`--ark-harness-edge-label-color` と `--ark-harness-edge-label-halo`（縁取り =
+その図の背景色）を上書きする。
+
 edge の main line / path には、harness が解釈済みの
 `data-ark-edge-direction` と string の `data-ark-edge-type` を付ける。authored CSS は
 これらを selector に使える。harness の汎用線 style より詳細度を高くするため、graph
