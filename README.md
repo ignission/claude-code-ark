@@ -26,6 +26,8 @@ Arkは、そういった問題をまとめて解決する。ブラウザを開�
 - **リモートアクセス** -- Cloudflare Tunnelで外出先からセッションにアクセス。QRコードですぐ接続
 - **Git Worktree統合** -- WebUIからworktreeの作成・削除・一覧表示
 - **画像送信** -- クリップボードから画像をペーストしてClaude Codeに送信（`@パス` 形式）
+- **セッションボード** -- Claude が書いた図や文書を右ペインに表示。本文を選んでコメントを付け、会話に戻せる
+- **ボード提案 (Jev)** -- 長い返答をチャットで読ませない。返答が終わるたびに Jev (TypeSafe の決定モデル) が「ボードのほうが読みやすいか」を判定し、そうなら Ark が返答を文書にしてボードに出す。Claude のトークンは使わない
 
 ## アーキテクチャ
 
@@ -119,6 +121,25 @@ pnpm start
 | `SKIP_PERMISSIONS`  | `true` で権限確認スキップ                       |
 | `ARK_PUBLIC_DOMAIN` | Named Tunnel用の固定ドメイン                    |
 | `ARK_TUNNEL_NAME`   | Named Tunnel名（デフォルト: `claude-code-ark`） |
+| `OPENROUTER_API_KEY` | ボード提案 (Jev) の API キー。設定画面のキーが優先 |
+| `ARK_FEATURE_BOARD_SUGGEST` | `false` でボード提案を止める |
+
+## ボード提案 (Jev)
+
+Claude の長い説明をチャットで読むのはしんどい。ボード提案は、返答が終わるたびに
+[Jev](https://openrouter.ai/docs/guides/community/jev) (TypeSafe の決定モデル。文章を生成せず、テキストと型付きの質問に確率だけ返す分類器) へ「この返答はチャットよりボードのほうが読みやすいか」を問い、閾値以上なら Ark が動く。
+
+- **文書と判定したら**: 返答の markdown を Ark が doc 型のボードへ機械変換して開く。Claude には何も送らないので、Claude のトークンは 0。生成物は worktree の `.claude/diagrams/_auto/<sessionId>/` に残り、ボードでコメントを付けて会話に戻せる
+- **図が要ると判定したら**: チャットに「図にする」ボタンを出す。押したときだけ Claude に作図を頼む (トークンを使うのは人が押したときだけ)
+- 判定は 1 回 200〜400ms、費用は 100 万トークンあたり $0.042 (1 ターン 0.002 円ほど)。会話本文は末尾 6,000 文字だけを送り、学習利用は拒否 (`data_collection: deny`) を指定する
+
+### 使い方
+
+1. [OpenRouter](https://openrouter.ai/settings/keys) で API キーを発行する
+2. Ark の左上「Ark ▾」メニュー (スマホはセッション一覧のスライダーアイコン) から **ボード提案の設定** を開き、キーを貼って保存する
+3. 以後、長い返答が終わるとボードが開く。うるさければ同じ画面で閾値 (既定 0.7) を上げるか、チェックを外して止める
+
+キーは Ark のデータベースに保存され、画面には末尾 4 文字しか戻さない。環境変数 `OPENROUTER_API_KEY` か `~/.config/openrouter/api-key` でも渡せる (設定画面のキーが優先)。キーが無い間は何もしない。
 
 ## リモートアクセス
 
