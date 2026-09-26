@@ -1101,5 +1101,33 @@ describe("SessionOrchestrator - tmux 読み取り失敗の区別 (#393)", () => 
 
       fs.rmSync(worktreePath, { recursive: true, force: true });
     });
+
+    it("作業中は画面の末尾をそのまま liveTail に載せ、入力待ちでは載せない", () => {
+      const orchestrator = new SessionOrchestrator();
+      const worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), "ark-wt-"));
+      mockedTmux.getAllSessions.mockReturnValue([
+        makeTmuxSession({ worktreePath }) as never,
+      ]);
+      const lines = Array.from({ length: 20 }, (_, i) => `出力${i}`);
+      lines.push("✻ Cogitating… (32s · ↓ 1.2k tokens)", "", "");
+      mockedTmux.capturePaneVisible.mockReturnValue(okValue(lines.join("\n")));
+
+      const [busy] = orchestrator.getAllPreviews();
+      expect(["THINK", "TOOL"]).toContain(busy.bridgeStatus);
+      // 末尾空行を落とした最後の 12 行。中身は判定しない
+      expect(busy.liveTail).toBe(
+        [...lines.slice(9, 20), "✻ Cogitating… (32s · ↓ 1.2k tokens)"].join(
+          "\n"
+        )
+      );
+
+      mockedTmux.capturePaneVisible.mockReturnValue(
+        okValue("直前の出力です\n> ")
+      );
+      const [idle] = orchestrator.getAllPreviews();
+      expect(idle.liveTail).toBeUndefined();
+
+      fs.rmSync(worktreePath, { recursive: true, force: true });
+    });
   });
 });
