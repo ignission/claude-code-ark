@@ -231,8 +231,8 @@ task.md 規約・復唱・失敗の自動収集・セッション lifecycle を�
 | セッション管理         | tmux + ttydベースの起動、停止、復元、状態管理                               |
 | チャットビュー           | JSONL tail ベースの会話描画 + pending reconcile + AskUserQuestion カード + slash 補完 + busy/AWAITING 表示（PC は `SplitViewPane` の左ペイン、モバイルは `MobileSessionView`。どちらも🖥/💬トグルで ttyd 表示と切替） |
 | 音声モード（iPhone）   | 会話モードの1タップ操作から全画面の音声モードに入る。話した指示を2秒の取り消し猶予つきで送り、Claude がターンを終えた返答（JSONL の `stop_reason: "end_turn"`）を読み上げる。質問・権限確認は読み上げて画面での操作に回す。ブラウザ内蔵の音声認識・読み上げだけを使い、画面を点けて前面に出している間だけ動く |
-| ボード提案 (Jev)       | Claude の返答が終わるたびに Jev (TypeSafe の決定モデル、OpenRouter 経由) へ「チャットよりボードのほうが読みやすいか」を問い、閾値以上なら Ark が動く。doc 判定なら返答の markdown を doc 型ボードへ機械変換して開く (Claude のトークン 0)、figure 判定なら「図にする」ボタンを出す (押したときだけ Claude に頼む)。`~/.config/openrouter/api-key` か `OPENROUTER_API_KEY` が無ければ無効 |
 | セッションボード       | worktree の `.claude/diagrams/*.diagram.html`（意味モデル + HTML 投影）を表示する図解ペイン（右ペインタブ・PC のみ）。Claude が MCP ツール `board_open` で開き、ファイル更新を検知して自動再読込する。doc 型は本文を人間がその場で直接編集でき、変更をブロック単位で会話へ還流する。本文の `<a href="src/foo.ts#L10">` はファイルビューアで該当行を開く |
+| ボード提案 (Jev)       | Claude の返答が終わるたびに Jev (TypeSafe の決定モデル、OpenRouter 経由) へ「チャットよりボードのほうが読みやすいか」を問い、閾値以上なら Ark が動く。doc 判定なら返答の markdown を doc 型ボードへ機械変換して開く (Claude のトークン 0)、figure 判定なら「図にする」ボタンを出す (押したときだけ Claude に頼む)。`~/.config/openrouter/api-key` か `OPENROUTER_API_KEY` が無ければ無効 |
 | Webターミナル          | ttyd iframeによるフルターミナル体験（PC は左ペインの既定、モバイルは🖥/💬トグルでチャットビューと切替） |
 | マルチペインビュー     | 複数セッションの同時表示（1列 / 2x2グリッド切り替え）                       |
 | モバイル対応           | セッション一覧/詳細の画面遷移、Quick Keys、スクロールモード、キーボード対応 |
