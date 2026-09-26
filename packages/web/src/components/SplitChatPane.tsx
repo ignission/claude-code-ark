@@ -66,6 +66,10 @@ import {
   parseAuqInput,
 } from "@/lib/ask-user-question-state";
 import {
+  isBoardSuggestDismissed,
+  markBoardSuggestDismissed,
+} from "@/lib/board-suggest-dismissed";
+import {
   groupSidechain,
   groupToolCalls,
   type ToolCallEvent,
@@ -1311,6 +1315,8 @@ export function SplitChatPane({
     if (!socket) return;
     const handler = (data: BoardSuggestEvent) => {
       if (data.sessionId !== session.id) return;
+      // 閉じた通知の送り直し (会話ビューを開き直したとき) は出さない
+      if (isBoardSuggestDismissed(data.sessionId, data.at)) return;
       setBoardSuggest(data);
     };
     socket.on("session:board-suggest", handler);
@@ -1890,7 +1896,10 @@ export function SplitChatPane({
     <BoardSuggestNotice
       key={boardSuggest.at}
       event={boardSuggest}
-      onDismiss={() => setBoardSuggest(null)}
+      onDismiss={() => {
+        markBoardSuggestDismissed(boardSuggest.sessionId, boardSuggest.at);
+        setBoardSuggest(null);
+      }}
       onRequestFigure={handleRequestFigure}
     />
   ) : null;

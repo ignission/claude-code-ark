@@ -388,6 +388,35 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
     ).toBeNull();
   });
 
+  it("閉じた通知が送り直されても出さず、新しい通知は出す", () => {
+    // サーバーは会話ビューを開き直すたびに直前の通知を送り直す
+    const { container, emitServer } = renderChat();
+    const notice = () =>
+      container.querySelector('[data-testid="board-suggest-notice"]');
+    const suggest = (at: number) =>
+      emitServer("session:board-suggest", {
+        sessionId: "s1",
+        at,
+        probability: 0.8,
+        form: "doc",
+        relPath: ".claude/diagrams/_auto/s1/r.diagram.html",
+        title: "題",
+      });
+    suggest(10);
+    const close = notice()?.querySelector<HTMLButtonElement>(
+      'button[aria-label="通知を閉じる"]'
+    );
+    expect(close).toBeTruthy();
+    act(() => {
+      close?.click();
+    });
+    expect(notice()).toBeNull();
+    suggest(10);
+    expect(notice()).toBeNull();
+    suggest(11);
+    expect(notice()).not.toBeNull();
+  });
+
   it("doc の通知にも「図にする」を出し、押したときだけ作図依頼を送る", () => {
     // 文書としても読めるが、時系列や関係など図にできる部分もある返答がある。
     // 機械変換では図にならないので、作図は人間が押したときだけ Claude に頼む
