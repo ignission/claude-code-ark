@@ -113,6 +113,21 @@ describe("hasResolvedAuqSince", () => {
     expect(hasResolvedAuqSince(events, AT)).toBe(true);
   });
 
+  it("tool_use の時刻が hook より前でも、回答 (tool_result) が後なら true", () => {
+    // tool_use の timestamp はモデルが出力した時刻で、回答確定の時刻ではない。
+    // PreToolUse hook が遅い (実測 30 秒) と、tool_use は at - 5 秒より前になる
+    const events = parseJsonlEvents(
+      jsonl(
+        {
+          ...auqToolUseLine("t1", FRUIT_INPUT),
+          timestamp: "2026-06-10T11:59:30.000Z",
+        },
+        { ...auqResultLine("t1"), timestamp: after }
+      )
+    );
+    expect(hasResolvedAuqSince(events, AT)).toBe(true);
+  });
+
   it("at より十分前の解決イベントしか無ければ false (過去の別質問)", () => {
     const events = parseJsonlEvents(
       jsonl(...resolvedAuqLines("t1", longBefore))

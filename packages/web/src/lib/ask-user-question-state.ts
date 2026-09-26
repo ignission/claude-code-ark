@@ -91,8 +91,9 @@ export function parseAuqInput(
  * そのため回答待ちカードの表示開始は PreToolUse hook (session:auq) が担い、
  * この関数は「カードを閉じてよいか」(解決イベントが書かれたか) の判定に使う。
  *
- * timestamp は tool_use レコードの書き込み時刻 = 回答確定時刻なので、
- * hook 受信時刻 at より必ず後になる (同一ホストなのでクロックずれは数 ms)。
+ * 比べるのは tool_result の時刻 (回答確定時刻)。hook 受信時刻 at より必ず後になる
+ * (同一ホストなのでクロックずれは数 ms)。tool_use の timestamp はモデルが出力した
+ * 時刻で、PreToolUse hook が遅いと at より数十秒前になる (実測 30 秒) ので使わない。
  * 5 秒のマージンは「直前の別 AUQ の解決」を誤検知しない範囲の安全幅。
  */
 export function hasResolvedAuqSince(
@@ -106,7 +107,8 @@ export function hasResolvedAuqSince(
     if (ev.isSidechain === true) continue;
     const tc = ev as ToolCallEvent;
     if (tc.status !== "done") continue;
-    if (tc.timestamp !== undefined && tc.timestamp >= at - 5000) return true;
+    const resolvedAt = tc.resultTimestamp ?? tc.timestamp;
+    if (resolvedAt !== undefined && resolvedAt >= at - 5000) return true;
     // これより古いイベントしか無いので打ち切り
     return false;
   }
