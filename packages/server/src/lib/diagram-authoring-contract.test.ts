@@ -84,9 +84,11 @@ describe("diagram-authoring skill の書き出し先 contract", () => {
     const skill = fs.readFileSync(SKILL_PATH, "utf-8");
 
     expect(skill).toContain("### 本文の書き手（`data-ark-author`）");
-    expect(skill).toContain('`data-ark-author="claude"`');
     expect(skill).toContain('`data-ark-author="human"`');
     expect(skill).toContain("値は `human` と `claude` の 2 つだけ");
+    // 自分の書き手印は廃止した。規約が「claude を付ける」に戻っていないこと
+    expect(skill).toContain("自分が書いたブロックに印は付けない");
+    expect(skill).not.toContain('`data-ark-author="claude"` を付ける');
     expect(skill).toContain("model に書き手を複製しない");
     expect(skill).toContain("人間が手を入れた本文");
     expect(skill).not.toContain("だけを人間の決定として扱う");
@@ -105,7 +107,8 @@ describe("diagram-authoring skill の書き出し先 contract", () => {
       ok: true,
     });
     expect(html).toContain('data-ark-author="human"');
-    expect(html).toContain('data-ark-author="claude"');
+    // Claude 側の印は廃止したので、公開サンプルにも残さない
+    expect(html).not.toContain('data-ark-author="claude"');
 
     const allowedKinds = new Set([
       "section",
