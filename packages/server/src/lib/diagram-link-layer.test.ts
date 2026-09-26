@@ -39,6 +39,23 @@ function loadLayer() {
       data: { type: "ark:diagram-init" },
       ports: [port],
     });
+  const aux = (href: string | null, button: number) => {
+    let prevented = false;
+    const anchor =
+      href === null
+        ? null
+        : { getAttribute: (name: string) => (name === "href" ? href : null) };
+    listeners["document:auxclick"]?.({
+      button,
+      target: {
+        closest: (selector: string) => (selector === "a[href]" ? anchor : null),
+      },
+      preventDefault: () => {
+        prevented = true;
+      },
+    });
+    return prevented;
+  };
   const click = (href: string | null, options: { button?: number } = {}) => {
     let prevented = false;
     const anchor =
@@ -56,7 +73,7 @@ function loadLayer() {
     });
     return prevented;
   };
-  return { init, click, sent };
+  return { init, click, aux, sent };
 }
 
 describe("injectDiagramLinkLayer", () => {
@@ -84,6 +101,15 @@ describe("injectDiagramLinkLayer", () => {
   it("</body> が無ければ末尾に付ける", () => {
     const injected = injectDiagramLinkLayer("<p>x</p>");
     expect(injected.endsWith("</script>")).toBe(true);
+  });
+});
+
+describe("保存 HTML への焼き付き防止", () => {
+  it("script に data-ark-harness-ui を付ける (保存時に落とされる印)", () => {
+    expect(LINK_LAYER).toContain('data-ark-harness-ui="1"');
+    expect(injectDiagramLinkLayer(minimalDoc)).toContain(
+      'data-ark-harness-ui="1"'
+    );
   });
 });
 
@@ -124,6 +150,22 @@ describe("リンク層のクリック処理", () => {
   it("port が届く前でも遷移だけは止める", () => {
     const layer = loadLayer();
     expect(layer.click("src/foo.ts")).toBe(true);
+    expect(layer.sent).toEqual([]);
+  });
+
+  it("中クリック (auxclick) も拾う。sandbox が新しいタブを塞ぐため", () => {
+    const layer = loadLayer();
+    layer.init();
+    expect(layer.aux("src/foo.ts#L10", 1)).toBe(true);
+    expect(layer.sent).toEqual([
+      { type: "ark:diagram-open-link", href: "src/foo.ts#L10" },
+    ]);
+  });
+
+  it("中クリック以外の auxclick (右クリック等) は触らない", () => {
+    const layer = loadLayer();
+    layer.init();
+    expect(layer.aux("src/foo.ts", 2)).toBe(false);
     expect(layer.sent).toEqual([]);
   });
 

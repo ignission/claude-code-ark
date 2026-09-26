@@ -11,8 +11,12 @@ export const DIAGRAM_LINK_LAYER_MARKER = "ark-diagram-link-layer";
  * 外部 URL か) は親 (DiagramPane) が行う。
  *
  * port は他の層と同じく window の ark:diagram-init で受け取り、共有する。
+ *
+ * `data-ark-harness-ui="1"` は必須。doc 編集層と graph ハーネスは保存する HTML から
+ * この属性を持つ要素を落とすので、付け忘れるとボードを編集・保存したときに
+ * この層が利用者のファイルへ焼き付き、以後 marker があるせいで注入も止まる。
  */
-export const LINK_LAYER = `<script id="${DIAGRAM_LINK_LAYER_MARKER}">
+export const LINK_LAYER = `<script id="${DIAGRAM_LINK_LAYER_MARKER}" data-ark-harness-ui="1">
 (function(){
   "use strict";
   var port=null;
@@ -20,7 +24,7 @@ export const LINK_LAYER = `<script id="${DIAGRAM_LINK_LAYER_MARKER}">
     var m=/^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(href);
     return m?m[1].toLowerCase():"";
   }
-  document.addEventListener("click",function(event){
+  function onActivate(event){
     var target=event.target&&event.target.closest?event.target.closest("a[href]"):null;
     if(!target)return;
     var href=target.getAttribute("href");
@@ -31,6 +35,13 @@ export const LINK_LAYER = `<script id="${DIAGRAM_LINK_LAYER_MARKER}">
     if(scheme&&scheme!=="http"&&scheme!=="https")return;
     if(!port)return;
     port.postMessage({type:"ark:diagram-open-link",href:href});
+  }
+  document.addEventListener("click",onActivate,true);
+  // 中クリックは click ではなく auxclick で来る。sandbox が既定の新しいタブを
+  // 塞ぐので、拾わないと「押しても何も起きない」になる
+  document.addEventListener("auxclick",function(event){
+    if(event.button!==1)return;
+    onActivate(event);
   },true);
   window.addEventListener("message",function(event){
     if(port||!event.data||event.data.type!=="ark:diagram-init"||!event.ports||!event.ports[0])return;
