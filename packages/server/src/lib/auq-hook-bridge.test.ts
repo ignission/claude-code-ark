@@ -39,6 +39,7 @@ const EXPECTED_BOARD_CONTEXT = [
   "ユーザーが「コメントした」「図を見て」等と言ったら、board_comments で未解決コメントを読み、引用された箇所を直してから board_open で開き直し、board_reply で対応内容を返信すること。",
   "書き込む直前に parent directory が存在しない場合だけ作成する。.diagram.html を書く前に必ず board_authoring_guide で規約を取得し、その内容に従う。",
   'doc の本文ブロック（data-ark-id を持つ要素）には書き手を data-ark-author で記す。自分が書いた・書き換えたブロックには data-ark-author="claude" を付け、人間がコメントや会話で下した決定を転記するときだけ data-ark-author="human" を付ける。人間が直接編集した葉ブロックには "human" が自動で付く（誤字修正でも付く、容器ブロックには付かない）。"human" は人間が手を入れた印であり、決定かどうかは本文の記述で判断する。',
+  "ユーザーに求められなくても、返答が長くなりそうなとき、目安として15行を超える、または3つ以上の構成要素の関係・分岐する手順・比較を説明するときは、チャットに書き切らずに .diagram.html を書いて board_open で開くこと。説明文なら doc 型、構造や流れなら図にする。チャットには結論と「ボードに出した」旨の1〜2行だけを書き、ボードに出すかどうかをユーザーに尋ねない。",
 ].join("\n");
 
 function createDataDir(): string {
@@ -104,7 +105,7 @@ describe("AuqHookBridge - hooks settings", () => {
     expect(fs.statSync(hookPath).mode & 0o777).toBe(0o600);
   });
 
-  it("SessionStart hook は元の 5 文と authorship 規約の 1 文を改行区切りの additionalContext として返す", () => {
+  it("SessionStart hook は元の 5 文、authorship 規約、長い説明をボードへ出す規約の 7 文を改行区切りの additionalContext として返す", () => {
     createDataDir();
     const settingsPath = new AuqHookBridge().writeSettingsFile(4012);
     const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
@@ -128,7 +129,7 @@ describe("AuqHookBridge - hooks settings", () => {
     expect(BOARD_SESSION_CONTEXT).toBe(EXPECTED_BOARD_CONTEXT);
     expect(
       output.hookSpecificOutput.additionalContext.split("\n")
-    ).toHaveLength(6);
+    ).toHaveLength(7);
     expect(output.hookSpecificOutput.additionalContext).toContain(
       'data-ark-author="human"'
     );

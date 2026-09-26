@@ -9,6 +9,8 @@ export const BOARD_SESSION_START_HOOK_FILENAME =
  * Board MCP を使うセッションへ SessionStart hook で渡す説明。
  * 移設前の 5 文は変えず、1 文ずつ改行して読みやすくする。
  * 6 文目は doc 本文の authorship 規約（#319）。直接編集の追加に伴い human の意味を言い換えた。
+ * 7 文目は、求められなくても長い説明はボードへ出す規約。ユーザーが長文を読む負担を減らすため、
+ * 出すかどうかを尋ねず自分で判断させる。
  */
 export const BOARD_SESSION_CONTEXT = [
   "このセッションにはボードペインがあり、図と文書を表示できる。board_open（ボードに開く）、board_comments（人間が付けたコメントを読む）、board_authoring_guide（作図・文書規約を読む）、board_reply（コメントへ返信する）の 4 つのツールを持っている。",
@@ -17,6 +19,7 @@ export const BOARD_SESSION_CONTEXT = [
   "ユーザーが「コメントした」「図を見て」等と言ったら、board_comments で未解決コメントを読み、引用された箇所を直してから board_open で開き直し、board_reply で対応内容を返信すること。",
   "書き込む直前に parent directory が存在しない場合だけ作成する。.diagram.html を書く前に必ず board_authoring_guide で規約を取得し、その内容に従う。",
   'doc の本文ブロック（data-ark-id を持つ要素）には書き手を data-ark-author で記す。自分が書いた・書き換えたブロックには data-ark-author="claude" を付け、人間がコメントや会話で下した決定を転記するときだけ data-ark-author="human" を付ける。人間が直接編集した葉ブロックには "human" が自動で付く（誤字修正でも付く、容器ブロックには付かない）。"human" は人間が手を入れた印であり、決定かどうかは本文の記述で判断する。',
+  "ユーザーに求められなくても、返答が長くなりそうなとき、目安として15行を超える、または3つ以上の構成要素の関係・分岐する手順・比較を説明するときは、チャットに書き切らずに .diagram.html を書いて board_open で開くこと。説明文なら doc 型、構造や流れなら図にする。チャットには結論と「ボードに出した」旨の1〜2行だけを書き、ボードに出すかどうかをユーザーに尋ねない。",
 ].join("\n");
 
 function posixShellQuote(value: string): string {
