@@ -3,9 +3,11 @@
  * 問い、閾値を超えたら Ark が動く。
  *
  * - form=doc: 返答の markdown を doc 型ボードへ機械変換して開く (Claude のトークン 0)
- * - form=figure: Claude に 1 行の作図依頼を送る (Jev がそう判定した稀な場合だけ)
+ * - form=figure: 通知だけ出す。クライアントが「図にする」ボタンを出し、人間が押した
+ *   ときだけ Claude へ作図依頼が送られる。サーバーが tmux へ自動送信すると、端末で
+ *   入力中の下書きを C-u で消しうる (bridgeStatus は入力中を IDLE と報告する)
  *
- * 判定も実行も人間に尋ねない。人間が見るのは「ボードが開いた」ことと、
+ * doc は人間に尋ねず動く。人間が見るのは「ボードが開いた」ことと、
  * チャットに出る 1 行の通知 (`session:board-suggest`) だけ。
  *
  * これは Claude セッションへ context を注入する機構ではない (doc 経路は Claude に
@@ -24,10 +26,6 @@ export const BOARD_SUGGEST_AUTO_DIR = "_auto";
 
 /** Jev の noul がこの値以上なら動く。0.5 付近は「分からない」なので高めに置く */
 export const BOARD_SUGGEST_DEFAULT_THRESHOLD = 0.7;
-
-/** form=figure のとき Claude に送る 1 行。board_open まで含めて依頼する */
-export const FIGURE_REQUEST_MESSAGE =
-  "直前の説明を図解して board_open で開いて (board_authoring_guide の規約に従う)";
 
 export interface BoardSuggestSession {
   id: string;
@@ -56,9 +54,6 @@ export interface BoardSuggestDeps {
     sessionId: string,
     relPath: string
   ): Promise<{ ok: boolean; error?: string }>;
-  /** Claude が手を止めているか (作図依頼を送ってよいか) */
-  isIdle(sessionId: string): boolean;
-  sendToClaude(sessionId: string, message: string): void;
   notify(event: BoardSuggestEvent): void;
   now?(): number;
   log?(message: string): void;
@@ -136,17 +131,31 @@ export class BoardSuggestService {
     // 判定中に次のターンが終わったら、そのターンは見送る (Jev は 1 秒以内に返るので稀)
     if (state.inflight) return;
     state.inflight = true;
+    const generation = state.assembler.generation;
+    // 判定の途中で会話が進んだ (新しい発話・/clear) か、detach されたら結果を捨てる。
+    // 古い判定で「直前の説明」を扱うと、別の会話に対して動いてしまう
+    const stale = () =>
+      this.sessions.get(session.id) !== state ||
+      state.assembler.generation !== generation;
     try {
       const decision = await this.deps.decide(text);
       if (state.failureReported) {
         this.log(`${session.id}: Jev が回復した`);
         state.failureReported = false;
       }
+      if (stale()) return;
       if (decision.board < this.deps.threshold()) return;
       if (decision.form === "figure") {
-        await this.requestFigure(session, decision);
+        this.deps.notify({
+          sessionId: session.id,
+          at: this.now(),
+          probability: decision.board,
+          form: "figure",
+          relPath: null,
+          title: null,
+        });
       } else {
-        await this.openAsDoc(session, decision, text);
+        await this.openAsDoc(session, decision, text, stale);
       }
     } catch (err) {
       // 同じ失敗を毎ターン出さない
@@ -164,7 +173,8 @@ export class BoardSuggestService {
   private async openAsDoc(
     session: BoardSuggestSession,
     decision: BoardDecision,
-    text: string
+    text: string,
+    stale: () => boolean
   ): Promise<void> {
     const worktreeReal = this.deps.resolveWorktreeReal(session.worktreePath);
     if (!worktreeReal) {
@@ -176,19 +186,36 @@ export class BoardSuggestService {
       text,
       `Claude の返答から自動生成 · ${new Date(at).toLocaleString("ja-JP")}`
     );
-    const relPath = path.posix.join(
+    const relDir = path.posix.join(
       DIAGRAM_DIR,
       BOARD_SUGGEST_AUTO_DIR,
-      session.id,
-      `${formatStamp(at)}.diagram.html`
+      session.id
     );
-    const absPath = path.join(worktreeReal, relPath);
-    await fs.promises.mkdir(path.dirname(absPath), { recursive: true });
-    // 既存ファイルは決して上書きしない (コメント sidecar が relPath に紐づくため)
-    await fs.promises.writeFile(absPath, doc.html, {
-      encoding: "utf-8",
-      flag: "wx",
-    });
+    const relPath = path.posix.join(relDir, `${formatStamp(at)}.diagram.html`);
+    const dirReal = await ensureContainedDir(worktreeReal, relDir);
+    if (!dirReal) {
+      this.log(
+        `${session.id}: ${relDir} が worktree の外を指す (symlink) ので doc を書かない`
+      );
+      return;
+    }
+    if (stale()) return;
+    // 既存ファイルは決して上書きしない (コメント sidecar が relPath に紐づくため)。
+    // O_NOFOLLOW で最後の要素の symlink も追わない
+    const absPath = path.join(dirReal, path.posix.basename(relPath));
+    const fd = await fs.promises.open(
+      absPath,
+      fs.constants.O_WRONLY |
+        fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        fs.constants.O_NOFOLLOW,
+      0o644
+    );
+    try {
+      await fd.writeFile(doc.html, "utf-8");
+    } finally {
+      await fd.close();
+    }
     const opened = await this.deps.openDiagram(session.id, relPath);
     if (!opened.ok) {
       this.log(
@@ -205,25 +232,31 @@ export class BoardSuggestService {
       title: doc.title,
     });
   }
+}
 
-  private async requestFigure(
-    session: BoardSuggestSession,
-    decision: BoardDecision
-  ): Promise<void> {
-    // tmux へ C-u + 文字列 + Enter を送るので、Claude が動いている最中や
-    // 確認待ちのときは送らない (入力中の行を消しかねない)
-    if (!this.deps.isIdle(session.id)) {
-      this.log(`${session.id}: Claude が手を止めていないので作図依頼を見送る`);
-      return;
+/**
+ * worktree 配下の相対ディレクトリを作り、その realpath が worktree の中に
+ * 収まっていることを確かめて返す。途中の既存要素が symlink なら作る前に拒否する
+ * (`.claude/diagrams/_auto` が外を指していると、mkdir も書き込みも外へ漏れる)。
+ */
+export async function ensureContainedDir(
+  worktreeReal: string,
+  relDir: string
+): Promise<string | null> {
+  const segments = relDir.split("/").filter(Boolean);
+  let current = worktreeReal;
+  for (const segment of segments) {
+    current = path.join(current, segment);
+    try {
+      const stat = await fs.promises.lstat(current);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) return null;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") return null;
+      break;
     }
-    this.deps.sendToClaude(session.id, FIGURE_REQUEST_MESSAGE);
-    this.deps.notify({
-      sessionId: session.id,
-      at: this.now(),
-      probability: decision.board,
-      form: "figure",
-      relPath: null,
-      title: null,
-    });
   }
+  const expected = path.join(worktreeReal, ...segments);
+  await fs.promises.mkdir(expected, { recursive: true });
+  const real = await fs.promises.realpath(expected);
+  return real === expected ? real : null;
 }

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type BoardSuggestDeps,
   BoardSuggestService,
-  FIGURE_REQUEST_MESSAGE,
+  ensureContainedDir,
 } from "./board-suggest-service.js";
 import type { BoardDecision } from "./jev-client.js";
 
@@ -47,8 +47,6 @@ function setup(
     threshold: () => 0.7,
     resolveWorktreeReal: () => worktree,
     openDiagram: vi.fn(async () => ({ ok: true })),
-    isIdle: () => true,
-    sendToClaude: vi.fn(),
     notify: e => events.push(e),
     now: () => 1_700_000_000_000,
     log: m => logs.push(m),
@@ -65,8 +63,31 @@ function setup(
       await new Promise(r => setTimeout(r, 5));
     }
   };
-  return { deps, service, worktree, events, logs, push, unsubscribe };
+  return {
+    deps,
+    service,
+    worktree,
+    events,
+    logs,
+    push,
+    unsubscribe,
+    listener: () => listener,
+  };
 }
+
+describe("ensureContainedDir", () => {
+  it("無ければ作り、realpath が worktree の中なら返す", async () => {
+    const worktree = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "ark-contain-"))
+    );
+    tempDirs.push(worktree);
+    const real = await ensureContainedDir(worktree, "a/b/c");
+    expect(real).toBe(path.join(worktree, "a", "b", "c"));
+    // 途中の要素がファイルなら拒否する
+    fs.writeFileSync(path.join(worktree, "file"), "");
+    expect(await ensureContainedDir(worktree, "file/x")).toBeNull();
+  });
+});
 
 describe("BoardSuggestService", () => {
   it("閾値以上かつ doc なら、返答を doc に書いて開き、通知する", async () => {
@@ -95,7 +116,6 @@ describe("BoardSuggestService", () => {
         title: "見出し",
       },
     ]);
-    expect(deps.sendToClaude).not.toHaveBeenCalled();
   });
 
   it("閾値未満なら何もしない", async () => {
@@ -115,32 +135,87 @@ describe("BoardSuggestService", () => {
     expect(events).toEqual([]);
   });
 
-  it("figure なら Claude が手を止めているときだけ作図依頼を送る", async () => {
-    const decision: BoardDecision = {
+  it("figure なら通知だけ出し、ファイルも書かず Claude にも送らない", async () => {
+    const { deps, events, worktree, push } = setup({
       board: 0.9,
       form: "figure",
       figure: 0.8,
       cost: 0,
-    };
-    const busy = setup(decision, { isIdle: () => false });
-    await busy.push(endTurnLine("フロー"), () =>
-      busy.logs.some(l => l.includes("見送る"))
-    );
-    expect(busy.deps.sendToClaude).not.toHaveBeenCalled();
-    expect(busy.events).toEqual([]);
-
-    const idle = setup(decision);
-    await idle.push(endTurnLine("フロー"), () => idle.events.length > 0);
-    expect(idle.deps.sendToClaude).toHaveBeenCalledWith(
-      "s1",
-      FIGURE_REQUEST_MESSAGE
-    );
-    expect(idle.events[0]).toMatchObject({
+    });
+    await push(endTurnLine("フロー"), () => events.length > 0);
+    expect(events[0]).toMatchObject({
       form: "figure",
       relPath: null,
       title: null,
+      probability: 0.9,
     });
-    expect(idle.deps.openDiagram).not.toHaveBeenCalled();
+    expect(deps.openDiagram).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(worktree, ".claude"))).toBe(false);
+  });
+
+  it("判定中に会話が進んだ (新しい発話 / clear) ら、その判定の結果は捨てる", async () => {
+    let resolveDecide: ((d: BoardDecision) => void) | null = null;
+    const { deps, events, push, listener } = setup(
+      { board: 0.9, form: "doc", figure: 0, cost: 0 },
+      {
+        decide: () =>
+          new Promise<BoardDecision>(resolve => {
+            resolveDecide = resolve;
+          }),
+      }
+    );
+    await push(endTurnLine("長い説明"), () => resolveDecide !== null);
+    // 判定を待っている間にユーザーが次の発話をした
+    listener()?.onLine({
+      raw: JSON.stringify({ type: "user", message: { content: "次" } }),
+    });
+    resolveDecide?.({ board: 0.9, form: "doc", figure: 0, cost: 0 });
+    await new Promise(r => setTimeout(r, 30));
+    expect(deps.openDiagram).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+  });
+
+  it("detach された後に判定が返っても何もしない", async () => {
+    let resolveDecide: ((d: BoardDecision) => void) | null = null;
+    const { deps, events, service, push } = setup(
+      { board: 0.9, form: "doc", figure: 0, cost: 0 },
+      {
+        decide: () =>
+          new Promise<BoardDecision>(resolve => {
+            resolveDecide = resolve;
+          }),
+      }
+    );
+    await push(endTurnLine("長い説明"), () => resolveDecide !== null);
+    service.detach("s1");
+    resolveDecide?.({ board: 0.9, form: "doc", figure: 0, cost: 0 });
+    await new Promise(r => setTimeout(r, 30));
+    expect(deps.openDiagram).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+  });
+
+  it("生成先の途中が worktree の外を指す symlink なら doc を書かない", async () => {
+    const { deps, events, worktree, logs, push } = setup({
+      board: 0.9,
+      form: "doc",
+      figure: 0,
+      cost: 0,
+    });
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "ark-bs-outside-"));
+    tempDirs.push(outside);
+    fs.mkdirSync(path.join(worktree, ".claude", "diagrams"), {
+      recursive: true,
+    });
+    fs.symlinkSync(
+      outside,
+      path.join(worktree, ".claude", "diagrams", "_auto")
+    );
+    await push(endTurnLine("長い説明"), () =>
+      logs.some(l => l.includes("symlink"))
+    );
+    expect(fs.readdirSync(outside)).toEqual([]);
+    expect(deps.openDiagram).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
   });
 
   it("Jev の失敗は 1 回だけログに出し、回復したら 1 行出す", async () => {

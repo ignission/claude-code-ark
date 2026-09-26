@@ -113,6 +113,30 @@ describe("markdownToBoardDoc", () => {
     expect(paragraph?.label.endsWith("…")).toBe(true);
   });
 
+  it("入れ子のタスク・番号付きリストの開始番号・項目内の段落を保つ", () => {
+    const md = [
+      "3. 三つ目の手順",
+      "4. 四つ目の手順",
+      "",
+      "- 親",
+      "  - [x] 済み",
+      "  - [ ] 未了",
+      "",
+      "- 一段落目。",
+      "",
+      "  二段落目。",
+    ].join("\n");
+    const { html, model } = markdownToBoardDoc(md, "t");
+    expect(html).toContain(
+      '<ol data-ark-id="b1" data-ark-author="claude" start="3">'
+    );
+    expect(html).toContain("☑</span> 済み");
+    expect(html).toContain("☐</span> 未了");
+    expect(html).toContain("<p>一段落目。</p><p>二段落目。</p>");
+    const item = model.nodes.find(n => n.label.startsWith("一段落目"));
+    expect(item?.label).toBe("一段落目。 二段落目。");
+  });
+
   it("見出しが無ければ先頭の文を題名にする", () => {
     const { title } = markdownToBoardDoc("まず結論から。\n\n本文。", "test");
     expect(title).toBe("まず結論から。");

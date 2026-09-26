@@ -32,10 +32,16 @@ export interface AssembledTurn {
 
 export class TurnAssembler {
   private buffer: string[] = [];
+  /**
+   * 会話の世代。ユーザーの新しい発話・/clear のたびに進む。
+   * 判定の途中で会話が進んだら、その判定の結果を捨てるために使う
+   */
+  generation = 0;
 
   /** /clear 等で transcript が切り替わったとき */
   reset(): void {
     this.buffer = [];
+    this.generation += 1;
   }
 
   /**
@@ -58,7 +64,10 @@ export class TurnAssembler {
       const isToolResult =
         Array.isArray(content) &&
         content.some(block => (block as ContentBlock)?.type === "tool_result");
-      if (!isToolResult) this.buffer = [];
+      if (!isToolResult) {
+        this.buffer = [];
+        this.generation += 1;
+      }
       return null;
     }
     if (record.type !== "assistant" || !Array.isArray(content)) return null;

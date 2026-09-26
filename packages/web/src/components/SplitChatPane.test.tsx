@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
-import type { ManagedSession, SlashCommandInfo } from "@ark/shared";
+import {
+  BOARD_FIGURE_REQUEST_MESSAGE,
+  type ManagedSession,
+  type SlashCommandInfo,
+} from "@ark/shared";
 import { act, type ComponentProps, createRef, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -303,7 +307,7 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
       relPath: null,
       title: null,
     });
-    expect(notice()?.textContent).toContain("作図を頼みました");
+    expect(notice()?.textContent).toContain("作図を頼めます");
 
     // 次の送信で消える
     const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
@@ -312,6 +316,36 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
       textarea.form?.requestSubmit();
     });
     expect(notice()).toBeNull();
+  });
+
+  it("figure の通知の「図にする」を押したときだけ、作図依頼を Claude に送る", () => {
+    const { container, emitServer, onSendMessage } = renderChat();
+    emitServer("session:board-suggest", {
+      sessionId: "s1",
+      at: 4,
+      probability: 0.8,
+      form: "figure",
+      relPath: null,
+      title: null,
+    });
+    expect(onSendMessage).not.toHaveBeenCalled();
+    act(() => {
+      findButtonByText(container, "図にする").click();
+    });
+    expect(onSendMessage).toHaveBeenCalledWith(BOARD_FIGURE_REQUEST_MESSAGE);
+    expect(
+      container.querySelector('[data-testid="board-suggest-notice"]')
+    ).toBeNull();
+    // doc の通知にはボタンが無い
+    emitServer("session:board-suggest", {
+      sessionId: "s1",
+      at: 5,
+      probability: 0.8,
+      form: "doc",
+      relPath: ".claude/diagrams/_auto/s1/y.diagram.html",
+      title: "題",
+    });
+    expect(container.textContent).not.toContain("図にする");
   });
 
   it("質問カードが変わるたびに、そのカードの中身 (無ければ null) でonActiveAuqChangeを呼ぶ", () => {

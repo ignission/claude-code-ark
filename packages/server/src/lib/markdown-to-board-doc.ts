@@ -121,25 +121,45 @@ function renderInline(tokens: Token[] | undefined): {
   return { html, text };
 }
 
-/** list item の中身 (block token 列) を inline 相当に落とす。入れ子の list は id 無しで描く */
+function taskMark(item: Tokens.ListItem): string {
+  if (item.task !== true) return "";
+  return `<span class="task-mark">${item.checked ? "☑" : "☐"}</span> `;
+}
+
+function listOpenTag(list: Tokens.List, attrs = ""): string {
+  if (!list.ordered) return `<ul${attrs}>`;
+  // 「3. から始まる続きの手順」の番号を保つ
+  const start =
+    typeof list.start === "number" && list.start !== 1
+      ? ` start="${list.start}"`
+      : "";
+  return `<ol${attrs}${start}>`;
+}
+
+/**
+ * list item の中身 (block token 列) を描く。入れ子の list は id 無しで描く。
+ * 段落が複数あるときは <p> で区切りを保つ (連結して 1 文にしない)
+ */
 function renderItemBody(tokens: Token[]): { html: string; text: string } {
+  const paragraphCount = tokens.filter(
+    t => t.type === "text" || t.type === "paragraph"
+  ).length;
   let html = "";
   let text = "";
   for (const token of tokens) {
     if (token.type === "text" || token.type === "paragraph") {
       const inner = renderInline((token as Tokens.Paragraph).tokens);
-      html += inner.html;
-      text += inner.text;
+      html += paragraphCount > 1 ? `<p>${inner.html}</p>` : inner.html;
+      text += ` ${inner.text}`;
     } else if (token.type === "list") {
       const list = token as Tokens.List;
-      const tag = list.ordered ? "ol" : "ul";
-      html += `<${tag}>`;
+      html += listOpenTag(list);
       for (const item of list.items) {
         const inner = renderItemBody(item.tokens);
-        html += `<li>${inner.html}</li>`;
+        html += `<li${item.task ? ' class="task"' : ""}>${taskMark(item)}${inner.html}</li>`;
         text += ` ${inner.text}`;
       }
-      html += `</${tag}>`;
+      html += list.ordered ? "</ol>" : "</ul>";
     } else if (token.type === "code") {
       const code = token as Tokens.Code;
       html += `<pre><code>${escapeHtml(code.text)}</code></pre>`;
@@ -147,10 +167,10 @@ function renderItemBody(tokens: Token[]): { html: string; text: string } {
     } else if (token.type !== "space") {
       const raw = (token as { raw?: string }).raw ?? "";
       html += escapeHtml(raw);
-      text += raw;
+      text += ` ${raw}`;
     }
   }
-  return { html, text: text.trim() };
+  return { html, text: text.replace(/\s+/g, " ").trim() };
 }
 
 /** blockquote の中身は id を付けずに描く (引用全体が 1 つの葉ブロック) */
@@ -218,25 +238,21 @@ function renderBlock(b: Builder, token: Token): void {
     case "list": {
       const list = token as Tokens.List;
       const id = nextId(b);
-      const tag = list.ordered ? "ol" : "ul";
       const items: string[] = [];
       const itemTexts: string[] = [];
       list.items.forEach((item, index) => {
         const itemId = `${id}-i${index + 1}`;
         const inner = renderItemBody(item.tokens);
         const isTask = item.task === true;
-        const mark = isTask
-          ? `<span class="task-mark">${item.checked ? "☑" : "☐"}</span> `
-          : "";
         addNode(b, itemId, isTask ? "task" : "list-item", inner.text);
         items.push(
-          `<li data-ark-id="${itemId}" ${AUTHOR_ATTR}${isTask ? ' class="task"' : ""}>${mark}${inner.html}</li>`
+          `<li data-ark-id="${itemId}" ${AUTHOR_ATTR}${isTask ? ' class="task"' : ""}>${taskMark(item)}${inner.html}</li>`
         );
         itemTexts.push(inner.text);
       });
       addNode(b, id, "list", itemTexts.join(" "));
       b.blocks.push(
-        `<${tag} data-ark-id="${id}" ${AUTHOR_ATTR}>${items.join("")}</${tag}>`
+        `${listOpenTag(list, ` data-ark-id="${id}" ${AUTHOR_ATTR}`)}${items.join("")}${list.ordered ? "</ol>" : "</ul>"}`
       );
       return;
     }
@@ -323,6 +339,7 @@ const STYLE = `
   ul, ol { margin: 0 0 14px; padding-left: 1.6em; }
   li { margin: 4px 0; }
   li.task { list-style: none; margin-left: -1.4em; }
+  li p { margin: 0 0 6px; }
   .task-mark { color: var(--accent); }
   table { width: 100%; margin: 0 0 18px; border-collapse: collapse; font-size: 14px; background: var(--card); }
   th, td { padding: 9px 11px; border: 1px solid var(--line); text-align: left; vertical-align: top; }

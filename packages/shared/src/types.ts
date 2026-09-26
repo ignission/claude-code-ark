@@ -4,6 +4,13 @@
 export const DIAGRAM_DIR = ".claude/diagrams";
 
 /**
+ * ボード提案が figure と判定したとき、人間が「図にする」を押すと Claude へ送る 1 行。
+ * サーバーは自動で送らない (tmux への送信は端末で入力中の下書きを消しうるため)
+ */
+export const BOARD_FIGURE_REQUEST_MESSAGE =
+  "直前の説明を図解して board_open で開いて (board_authoring_guide の規約に従う)";
+
+/**
  * Slash command 候補。チャットビュー入力欄の補完で使う。
  *  - `name`: `/foo` 形式 (先頭の `/` 含む)
  *  - `description`: 1 行説明 (frontmatter `description:` または組み込み定義)
@@ -432,7 +439,7 @@ export interface ServerToClientEvents {
 
   /**
    * ボード提案 (Jev 判定) が動いた。doc なら Ark が返答を doc 型ボードへ変換して
-   * 既に `diagram:open` を出している。figure なら Claude に作図依頼を送った。
+   * 既に `diagram:open` を出している。figure なら「図にする」ボタンを出す。
    * セッションの room にだけ送る。
    */
   "session:board-suggest": (data: BoardSuggestEvent) => void;
@@ -969,7 +976,11 @@ export interface BoardSuggestEvent {
   at: number;
   /** Jev の「ボードのほうが読みやすい」確率 (0〜1) */
   probability: number;
-  /** doc: 返答を機械変換して開いた / figure: Claude に作図を依頼した */
+  /**
+   * doc: 返答を機械変換して開いた
+   * figure: 作図が要ると判定した。クライアントが「図にする」ボタンを出し、
+   *   人間が押したときだけ BOARD_FIGURE_REQUEST_MESSAGE を送る
+   */
   form: "doc" | "figure";
   /** doc のとき、開いたファイルの worktree 相対パス。figure は null */
   relPath: string | null;

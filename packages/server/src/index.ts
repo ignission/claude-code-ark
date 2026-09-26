@@ -1434,7 +1434,8 @@ export async function startServer(
   // ===== ボード提案 (Jev 判定) =====
   // Claude の返答が終わるたびに Jev (TypeSafe の決定モデル) へ「チャットより
   // ボードのほうが読みやすいか」を問い、閾値を超えたら Ark が動く。doc なら
-  // 返答を機械変換して開く (Claude のトークン 0)、figure なら Claude に作図を頼む。
+  // 返答を機械変換して開く (Claude のトークン 0)、figure なら「図にする」ボタンを
+  // 出すだけ (Claude への送信は人間が押したときだけ)。
   // キーが無ければ機能ごと無効 (起動時に 1 行出すだけ)。
   const openRouterApiKey =
     process.env.ARK_FEATURE_BOARD_SUGGEST === "false"
@@ -1462,17 +1463,6 @@ export async function startServer(
           if (!resolved.ok) return { ok: false, error: resolved.reason };
           return openDiagramForSession(sessionId, resolved.path, relPath);
         },
-        isIdle: sessionId => {
-          const preview = sessionOrchestrator
-            .getAllPreviews()
-            .find(p => p.sessionId === sessionId);
-          return (
-            preview?.bridgeStatus === "IDLE" ||
-            preview?.bridgeStatus === "READY"
-          );
-        },
-        sendToClaude: (sessionId, message) =>
-          sessionOrchestrator.sendMessage(sessionId, message),
         notify: event =>
           io
             .to(sessionRoom(event.sessionId))

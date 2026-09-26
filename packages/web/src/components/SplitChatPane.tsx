@@ -20,6 +20,7 @@ import type {
   SlashCommandInfo,
   SpecialKey,
 } from "@ark/shared";
+import { BOARD_FIGURE_REQUEST_MESSAGE } from "@ark/shared";
 import { isImagePath, splitTextWithFilePaths } from "@ark/shared/file-paths";
 import {
   ArrowDown,
@@ -818,19 +819,22 @@ function ToolGroupCard({
 function BoardSuggestNotice({
   event,
   onDismiss,
+  onRequestFigure,
 }: {
   event: BoardSuggestEvent;
   onDismiss: () => void;
+  /** figure のとき「図にする」で Claude に作図を頼む (人間が押したときだけ送る) */
+  onRequestFigure: () => void;
 }) {
   const percent = Math.round(event.probability * 100);
   const body =
     event.form === "doc"
       ? `この説明はボードのほうが読みやすいと判定 (${percent}%)。文書にしてボードに出しました`
-      : `この説明は図のほうが分かりやすいと判定 (${percent}%)。Claude に作図を頼みました`;
+      : `この説明は図のほうが分かりやすいと判定 (${percent}%)。Claude に作図を頼めます`;
   return (
     <div
       data-testid="board-suggest-notice"
-      className="flex min-w-0 items-start gap-2 rounded-lg border border-border bg-card px-3 py-2 text-[12px] text-muted-foreground shadow-card"
+      className="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-[12px] text-muted-foreground shadow-card"
     >
       <span className="min-w-0 flex-1">
         {body}
@@ -840,6 +844,15 @@ function BoardSuggestNotice({
           </span>
         )}
       </span>
+      {event.form === "figure" && (
+        <button
+          type="button"
+          onClick={onRequestFigure}
+          className="shrink-0 rounded-sm border border-border bg-background px-2 py-0.5 text-xs text-foreground transition-colors hover:bg-muted"
+        >
+          図にする
+        </button>
+      )}
       <button
         type="button"
         onClick={onDismiss}
@@ -1456,6 +1469,23 @@ export function SplitChatPane({
     ]);
   };
 
+  // ボード提案が figure と判定したとき、人間が「図にする」を押したら Claude に頼む。
+  // サーバーは自動で送らない (tmux への送信は端末の下書きを消しうる)
+  const handleRequestFigure = () => {
+    const prompt = BOARD_FIGURE_REQUEST_MESSAGE;
+    lastSubmittedRef.current = prompt;
+    onSendMessage(prompt);
+    setBoardSuggest(null);
+    setPending(prev => [
+      ...prev,
+      {
+        id: `p:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+        text: prompt,
+        sentAt: Date.now(),
+      },
+    ]);
+  };
+
   // ===== ファイルアップロード =====
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -1790,6 +1820,7 @@ export function SplitChatPane({
       key={boardSuggest.at}
       event={boardSuggest}
       onDismiss={() => setBoardSuggest(null)}
+      onRequestFigure={handleRequestFigure}
     />
   ) : null;
 
