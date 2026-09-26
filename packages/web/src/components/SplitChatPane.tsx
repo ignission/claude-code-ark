@@ -12,6 +12,7 @@
  */
 
 import type {
+  BoardSuggestEvent,
   BridgeSessionStatus,
   ClientToServerEvents,
   ManagedSession,
@@ -19,6 +20,7 @@ import type {
   SlashCommandInfo,
   SpecialKey,
 } from "@ark/shared";
+import { BOARD_FIGURE_REQUEST_MESSAGE } from "@ark/shared";
 import { isImagePath, splitTextWithFilePaths } from "@ark/shared/file-paths";
 import {
   ArrowDown,
@@ -809,6 +811,84 @@ function ToolGroupCard({
  * 自由入力 (Type something 用 literal 送信)。
  * 画面の構造はパースしない: ユーザーが生テキストを読んでキーを選ぶ。
  */
+/** at 以降にユーザーの発話 (通常入力 / slash command / compact) が JSONL に出たか */
+export function hasUserTurnSince(
+  events: JsonlParsedEvent[],
+  at: number
+): boolean {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (
+      ev.kind !== "user-input" &&
+      ev.kind !== "slash-command" &&
+      ev.kind !== "compact-marker"
+    ) {
+      continue;
+    }
+    if (ev.isSidechain === true) continue;
+    // 時刻の無い行 (ローカル slash-command カード等) は「今」出たものとして扱う。
+    // 判定 (at) はサーバー時刻、JSONL の時刻は同じ機械の claude が書くので、
+    // 猶予は付けない (付けると、返答を引き出した直前の発話で自分を消してしまう)
+    return ev.timestamp === undefined || ev.timestamp > at;
+  }
+  return false;
+}
+
+/**
+ * ボード提案の通知。Jev の判定で Ark が返答をボードへ出した (doc) か、
+ * Claude に作図を頼んだ (figure) ことを 1 行で知らせる。ボードが開いたこと
+ * 自体が本体の合図で、これは「なぜ開いたか」を添えるだけ
+ */
+function BoardSuggestNotice({
+  event,
+  onDismiss,
+  onRequestFigure,
+}: {
+  event: BoardSuggestEvent;
+  onDismiss: () => void;
+  /** figure のとき「図にする」で Claude に作図を頼む (人間が押したときだけ送る) */
+  onRequestFigure: () => void;
+}) {
+  const percent = Math.round(event.probability * 100);
+  const body =
+    event.form === "doc"
+      ? `この説明はボードのほうが読みやすいと判定 (${percent}%)。文書にしてボードに出しました`
+      : `この説明は図のほうが分かりやすいと判定 (${percent}%)。Claude に作図を頼めます`;
+  return (
+    <div
+      data-testid="board-suggest-notice"
+      className="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-[12px] text-muted-foreground shadow-card"
+    >
+      <span className="min-w-0 flex-1">
+        {body}
+        {event.title && (
+          <span className="ml-1 font-semibold text-foreground">
+            「{event.title}」
+          </span>
+        )}
+      </span>
+      {event.form === "figure" && (
+        <button
+          type="button"
+          onClick={onRequestFigure}
+          className="shrink-0 rounded-sm border border-border bg-background px-2 py-0.5 text-xs text-foreground transition-colors hover:bg-muted"
+        >
+          図にする
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="shrink-0 rounded-sm px-1 text-muted-foreground transition-colors hover:text-foreground"
+        aria-label="通知を閉じる"
+        title="閉じる"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
 function AwaitingPad({
   socket,
   sessionId,
@@ -1189,6 +1269,37 @@ export function SplitChatPane({
     if (hasResolvedAuqSince(events, hookAuq.at)) setHookAuq(null);
   }, [events, hookAuq]);
 
+  // ボード提案 (Jev 判定) の通知。次の送信・セッション切替・閉じるで消す
+  const [boardSuggest, setBoardSuggest] = useState<BoardSuggestEvent | null>(
+    null
+  );
+  useEffect(() => {
+    if (!socket) return;
+    const handler = (data: BoardSuggestEvent) => {
+      if (data.sessionId !== session.id) return;
+      setBoardSuggest(data);
+    };
+    socket.on("session:board-suggest", handler);
+    return () => {
+      socket.off("session:board-suggest", handler);
+    };
+  }, [socket, session.id]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies(session.id): セッション切替で通知を破棄
+  useEffect(() => {
+    setBoardSuggest(null);
+  }, [session.id]);
+  // 会話が進んだら通知を捨てる。この画面の送信欄を通らない経路 (別クライアント・
+  // 端末・/clear) でも、JSONL に新しいユーザー発話が出るか履歴が空になれば消える
+  const prevEventCountRef = useRef(0);
+  useEffect(() => {
+    const emptied = prevEventCountRef.current > 0 && events.length === 0;
+    prevEventCountRef.current = events.length;
+    if (!boardSuggest) return;
+    if (emptied || hasUserTurnSince(events, boardSuggest.at)) {
+      setBoardSuggest(null);
+    }
+  }, [events, boardSuggest]);
+
   const activeAuq = hookAuq?.auq ?? null;
 
   // 質問カードを親へ知らせる (モバイルの状態の帯と音声モードが使う)
@@ -1355,6 +1466,7 @@ export function SplitChatPane({
     if (!value) return;
     lastSubmittedRef.current = value;
     onSendMessage(value);
+    setBoardSuggest(null);
     // built-in slash command (/compact, /clear 等) は JSONL に user-input として
     // 記録されないため、pending bubble だと永遠に spinner が残る。
     // 代わりにローカル slash-command カードを即時追加する。
@@ -1381,6 +1493,24 @@ export function SplitChatPane({
     const prompt = buildVisualizeConversationPrompt();
     lastSubmittedRef.current = prompt;
     onSendMessage(prompt);
+    setBoardSuggest(null);
+    setPending(prev => [
+      ...prev,
+      {
+        id: `p:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+        text: prompt,
+        sentAt: Date.now(),
+      },
+    ]);
+  };
+
+  // ボード提案が figure と判定したとき、人間が「図にする」を押したら Claude に頼む。
+  // サーバーは自動で送らない (tmux への送信は端末の下書きを消しうる)
+  const handleRequestFigure = () => {
+    const prompt = BOARD_FIGURE_REQUEST_MESSAGE;
+    lastSubmittedRef.current = prompt;
+    onSendMessage(prompt);
+    setBoardSuggest(null);
     setPending(prev => [
       ...prev,
       {
@@ -1719,6 +1849,13 @@ export function SplitChatPane({
       sessionId={session.id}
       awaitingText={awaitingText}
       onSendKey={onSendKey}
+    />
+  ) : boardSuggest ? (
+    <BoardSuggestNotice
+      key={boardSuggest.at}
+      event={boardSuggest}
+      onDismiss={() => setBoardSuggest(null)}
+      onRequestFigure={handleRequestFigure}
     />
   ) : null;
 

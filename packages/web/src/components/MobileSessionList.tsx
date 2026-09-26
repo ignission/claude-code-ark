@@ -5,7 +5,7 @@
  * RepoGridViewはPCだけなので、「このリポジトリの全セッションを並べて見る」は渡さない。
  */
 
-import { Monitor, Plus } from "lucide-react";
+import { Monitor, Plus, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,12 +20,15 @@ type MobileSessionListProps = Omit<
   onNewSession: () => void;
   /** 画面の管理ダイアログを開く。画面が未登録でも一覧の見出しから登録できるようにする */
   onOpenScreenManager?: () => void;
+  /** ボード提案 (Jev 判定) の設定ダイアログを開く */
+  onOpenBoardSuggestSettings?: () => void;
   notificationControl?: ReactNode;
 };
 
 export function MobileSessionList({
   onNewSession,
   onOpenScreenManager,
+  onOpenBoardSuggestSettings,
   notificationControl,
   ...listProps
 }: MobileSessionListProps) {
@@ -36,6 +39,18 @@ export function MobileSessionList({
           Ark
         </h1>
         {notificationControl}
+        {onOpenBoardSuggestSettings && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-12 w-12"
+            onClick={onOpenBoardSuggestSettings}
+            aria-label="ボード提案の設定"
+            title="ボード提案の設定"
+          >
+            <SlidersHorizontal className="size-6" />
+          </Button>
+        )}
         {onOpenScreenManager && (
           <Button
             variant="ghost"

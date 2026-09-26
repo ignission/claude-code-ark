@@ -4,6 +4,13 @@
 export const DIAGRAM_DIR = ".claude/diagrams";
 
 /**
+ * ボード提案が figure と判定したとき、人間が「図にする」を押すと Claude へ送る 1 行。
+ * サーバーは自動で送らない (tmux への送信は端末で入力中の下書きを消しうるため)
+ */
+export const BOARD_FIGURE_REQUEST_MESSAGE =
+  "直前の説明を図解して board_open で開いて (board_authoring_guide の規約に従う)";
+
+/**
  * Slash command 候補。チャットビュー入力欄の補完で使う。
  *  - `name`: `/foo` 形式 (先頭の `/` 含む)
  *  - `description`: 1 行説明 (frontmatter `description:` または組み込み定義)
@@ -430,6 +437,13 @@ export interface ServerToClientEvents {
   /** 監視中の図ファイルが更新された。クライアントは再読込する */
   "diagram:updated": (data: { worktreePath: string; relPath: string }) => void;
 
+  /**
+   * ボード提案 (Jev 判定) が動いた。doc なら Ark が返答を doc 型ボードへ変換して
+   * 既に `diagram:open` を出している。figure なら「図にする」ボタンを出す。
+   * セッションの room にだけ送る。
+   */
+  "session:board-suggest": (data: BoardSuggestEvent) => void;
+
   /** 監視中のコメント sidecar が更新された。iframe はコメントだけを再取得する */
   "diagram:comments-updated": (data: {
     worktreePath: string;
@@ -845,6 +859,15 @@ export interface ClientToServerEvents {
   "screen:update": (data: { id: string } & ScreenPatch) => void;
   "screen:delete": (data: { id: string }) => void;
   /** 接続直前に 1 回だけ呼ぶ。未登録なら null */
+  /** ボード提案の設定を取得 (鍵は末尾 4 文字だけ) */
+  "board-suggest:get": (
+    callback: (result: BoardSuggestConfigResult) => void
+  ) => void;
+  /** ボード提案の設定を変更。保存後の設定を返す */
+  "board-suggest:set": (
+    patch: BoardSuggestConfigPatch,
+    callback: (result: BoardSuggestConfigResult) => void
+  ) => void;
   "screen:credentials": (
     id: string,
     callback: (creds: ScreenCredentials | null) => void
@@ -952,6 +975,51 @@ export interface UsageProgress {
  *
  * 優先度 (高→低): ERR > AWAITING > TOOL > THINK > IDLE > READY
  */
+/**
+ * ボード提案の通知。Claude の返答が終わるたびに Jev (TypeSafe の決定モデル) が
+ * 「チャットよりボードのほうが読みやすいか」を判定し、閾値を超えたときだけ出る。
+ */
+/** ボード提案の設定。鍵そのものは含めない (末尾 4 文字と出どころだけ) */
+export interface BoardSuggestConfig {
+  enabled: boolean;
+  /** Jev の「ボードのほうが読みやすい」確率がこの値以上なら動く (0〜1) */
+  threshold: number;
+  keyConfigured: boolean;
+  /** 設定済みの鍵の末尾 4 文字。未設定は null */
+  keyHint: string | null;
+  /** settings: 設定画面 / env: OPENROUTER_API_KEY / file: ~/.config/openrouter/api-key */
+  keySource: "settings" | "env" | "file" | null;
+}
+
+/** 設定画面からの変更。apiKey は文字列で保存、null で設定側の鍵を削除、未指定で変更なし */
+export interface BoardSuggestConfigPatch {
+  enabled?: boolean;
+  threshold?: number;
+  apiKey?: string | null;
+}
+
+export type BoardSuggestConfigResult =
+  | { ok: true; config: BoardSuggestConfig }
+  | { ok: false; error: string };
+
+export interface BoardSuggestEvent {
+  sessionId: string;
+  /** 判定した epoch ms */
+  at: number;
+  /** Jev の「ボードのほうが読みやすい」確率 (0〜1) */
+  probability: number;
+  /**
+   * doc: 返答を機械変換して開いた
+   * figure: 作図が要ると判定した。クライアントが「図にする」ボタンを出し、
+   *   人間が押したときだけ BOARD_FIGURE_REQUEST_MESSAGE を送る
+   */
+  form: "doc" | "figure";
+  /** doc のとき、開いたファイルの worktree 相対パス。figure は null */
+  relPath: string | null;
+  /** doc のとき、推定した題名。figure は null */
+  title: string | null;
+}
+
 export type BridgeSessionStatus =
   | "TOOL" // ツール実行中 (⏺ Tool(...) 直近、⎿ 結果未到着)
   | "THINK" // 思考中 (✻ Wibbling… / esc to interrupt)

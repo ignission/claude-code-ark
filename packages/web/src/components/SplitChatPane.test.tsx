@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
-import type { ManagedSession, SlashCommandInfo } from "@ark/shared";
+import {
+  BOARD_FIGURE_REQUEST_MESSAGE,
+  type ManagedSession,
+  type SlashCommandInfo,
+} from "@ark/shared";
 import { act, type ComponentProps, createRef, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -255,6 +259,143 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
     expect(container.querySelector("header")).toBeNull();
     expect(container.textContent).not.toContain("ツール実行中");
     expect(container.querySelector('[title="JSONL 購読中"]')).toBeNull();
+  });
+
+  it("session:board-suggest を受けると通知を出し、閉じるか送信で消える", () => {
+    const { container, emitServer } = renderChat();
+    const notice = () =>
+      container.querySelector('[data-testid="board-suggest-notice"]');
+    expect(notice()).toBeNull();
+
+    // 別セッション宛は無視する
+    emitServer("session:board-suggest", {
+      sessionId: "other",
+      at: 1,
+      probability: 0.9,
+      form: "doc",
+      relPath: ".claude/diagrams/_auto/other/x.diagram.html",
+      title: "他",
+    });
+    expect(notice()).toBeNull();
+
+    emitServer("session:board-suggest", {
+      sessionId: "s1",
+      at: 2,
+      probability: 0.88,
+      form: "doc",
+      relPath: ".claude/diagrams/_auto/s1/x.diagram.html",
+      title: "3案の違い",
+    });
+    expect(notice()?.textContent).toContain("88%");
+    expect(notice()?.textContent).toContain("ボードに出しました");
+    expect(notice()?.textContent).toContain("3案の違い");
+
+    const closeButton = notice()?.querySelector(
+      'button[aria-label="通知を閉じる"]'
+    ) as HTMLButtonElement | null;
+    expect(closeButton).not.toBeNull();
+    act(() => {
+      closeButton?.click();
+    });
+    expect(notice()).toBeNull();
+
+    emitServer("session:board-suggest", {
+      sessionId: "s1",
+      at: 3,
+      probability: 0.75,
+      form: "figure",
+      relPath: null,
+      title: null,
+    });
+    expect(notice()?.textContent).toContain("作図を頼めます");
+
+    // 次の送信で消える
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    typeInto(textarea, "次の指示");
+    act(() => {
+      textarea.form?.requestSubmit();
+    });
+    expect(notice()).toBeNull();
+  });
+
+  it("この画面を通らずに会話が進んでも (JSONL に新しい発話 / 履歴が空) 通知は消える", () => {
+    const { container, emitServer } = renderChat();
+    const notice = () =>
+      container.querySelector('[data-testid="board-suggest-notice"]');
+    const at = Date.parse("2026-09-26T03:00:00Z");
+    const suggest = (n: number) =>
+      emitServer("session:board-suggest", {
+        sessionId: "s1",
+        at: at + n,
+        probability: 0.9,
+        form: "doc",
+        relPath: ".claude/diagrams/_auto/s1/z.diagram.html",
+        title: "題",
+      });
+
+    suggest(0);
+    expect(notice()).not.toBeNull();
+    // 古い発話 (通知より前) では消えない
+    emitServer("session:jsonl-line", {
+      sessionId: "s1",
+      line: line({
+        type: "user",
+        uuid: "u-old",
+        timestamp: new Date(at - 60_000).toISOString(),
+        message: { role: "user", content: "前の指示" },
+      }),
+    });
+    expect(notice()).not.toBeNull();
+    // 端末から打った新しい発話が JSONL に出たら消える
+    emitServer("session:jsonl-line", {
+      sessionId: "s1",
+      line: line({
+        type: "user",
+        uuid: "u-new",
+        timestamp: new Date(at + 1000).toISOString(),
+        message: { role: "user", content: "端末からの指示" },
+      }),
+    });
+    expect(notice()).toBeNull();
+
+    // /clear で履歴が空になっても消える (履歴が有った状態から空になったとき)
+    suggest(5000);
+    expect(notice()).not.toBeNull();
+    emitServer("session:jsonl-snapshot", { sessionId: "s1", lines: [] });
+    expect(notice()).toBeNull();
+    // 初回 (履歴がまだ無い) の通知は空の履歴で消さない
+    suggest(6000);
+    expect(notice()).not.toBeNull();
+  });
+
+  it("figure の通知の「図にする」を押したときだけ、作図依頼を Claude に送る", () => {
+    const { container, emitServer, onSendMessage } = renderChat();
+    emitServer("session:board-suggest", {
+      sessionId: "s1",
+      at: 4,
+      probability: 0.8,
+      form: "figure",
+      relPath: null,
+      title: null,
+    });
+    expect(onSendMessage).not.toHaveBeenCalled();
+    act(() => {
+      findButtonByText(container, "図にする").click();
+    });
+    expect(onSendMessage).toHaveBeenCalledWith(BOARD_FIGURE_REQUEST_MESSAGE);
+    expect(
+      container.querySelector('[data-testid="board-suggest-notice"]')
+    ).toBeNull();
+    // doc の通知にはボタンが無い
+    emitServer("session:board-suggest", {
+      sessionId: "s1",
+      at: 5,
+      probability: 0.8,
+      form: "doc",
+      relPath: ".claude/diagrams/_auto/s1/y.diagram.html",
+      title: "題",
+    });
+    expect(container.textContent).not.toContain("図にする");
   });
 
   it("質問カードが変わるたびに、そのカードの中身 (無ければ null) でonActiveAuqChangeを呼ぶ", () => {
