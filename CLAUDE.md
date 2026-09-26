@@ -182,6 +182,9 @@ Jev に判定させる (`board-suggest-service.ts` / `board-suggest-turns.ts` / 
 - 通知の「図にする」は **doc でも figure でも出す**。doc の機械変換は文章を写すだけで
   図にならない一方、文書として読める返答にも時系列や関係など図にできる部分があるため。
   押したときの動きは figure と同じ
+- 通知はその瞬間に会話ビューを開いていた画面 (セッションの room) にしか届かないので、
+  サーバーが直前の 1 件を持ち (`latestSuggestion`)、`session:jsonl-subscribe` のときに
+  送り直す。次の発言・/clear・detach で捨てる
 - 判定中に会話が進んだ (新しい発話・/clear) か detach されたら、その判定の結果は捨てる
   (`TurnAssembler.generation`)。生成先は途中の symlink を lstat で拒否し、mkdir 後の
   realpath が worktree の中であることを確かめてから `O_EXCL | O_NOFOLLOW` で書く

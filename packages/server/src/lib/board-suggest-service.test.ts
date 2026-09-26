@@ -354,6 +354,30 @@ describe("BoardSuggestService", () => {
     expect(logs.some(l => l.includes("回復"))).toBe(false);
   });
 
+  it("直前の通知を覚えておき、次の発言か detach で捨てる", async () => {
+    // 通知はその瞬間に会話ビューを開いていた画面にしか届かない。
+    // 開き直した画面へ送り直すため、サーバーが直前の 1 件を持つ
+    const { service, events, push, listener } = setup({
+      board: 0.9,
+      form: "figure",
+      figure: 0.8,
+      cost: 0,
+    });
+    expect(service.latestSuggestion("s1")).toBeNull();
+    await push(endTurnLine("説明"), () => events.length > 0);
+    expect(service.latestSuggestion("s1")).toEqual(events[0]);
+
+    listener()?.onLine({
+      raw: JSON.stringify({ type: "user", message: { content: "次の指示" } }),
+    });
+    expect(service.latestSuggestion("s1")).toBeNull();
+
+    await push(endTurnLine("別の説明"), () => events.length > 1);
+    expect(service.latestSuggestion("s1")).toEqual(events[1]);
+    service.detach("s1");
+    expect(service.latestSuggestion("s1")).toBeNull();
+  });
+
   it("detach で購読を解除し、以後の行を無視する", async () => {
     const { deps, service, push, unsubscribe } = setup({
       board: 0.9,

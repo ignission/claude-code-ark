@@ -74,6 +74,8 @@ interface SessionState {
   assembler: TurnAssembler;
   inflight: boolean;
   failureReported: boolean;
+  /** 直前に出した通知と、そのときの会話の世代 (発言や /clear で世代が進んだら無効) */
+  latest: { event: BoardSuggestEvent; generation: number } | null;
 }
 
 /** プロセス内の連番。時刻が同じでもファイル名が衝突しないようにする (循環させない) */
@@ -106,6 +108,7 @@ export class BoardSuggestService {
       assembler,
       inflight: false,
       failureReported: false,
+      latest: null,
     };
     state.unsubscribe = this.deps.subscribeJsonl(
       session.worktreePath,
@@ -124,6 +127,18 @@ export class BoardSuggestService {
       }
     );
     this.sessions.set(session.id, state);
+  }
+
+  /**
+   * 直前に出した通知。会話が進んでいれば null。
+   * 通知はその瞬間に会話ビューを開いていた画面にしか届かないので、会話ビューを
+   * 開き直した (再接続した) 画面へ送り直すために使う
+   */
+  latestSuggestion(sessionId: string): BoardSuggestEvent | null {
+    const state = this.sessions.get(sessionId);
+    if (!state?.latest) return null;
+    if (state.latest.generation !== state.assembler.generation) return null;
+    return state.latest.event;
   }
 
   detach(sessionId: string): void {
@@ -176,7 +191,7 @@ export class BoardSuggestService {
       if (stale()) return;
       if (decision.board < this.deps.threshold()) return;
       if (decision.form === "figure") {
-        this.deps.notify({
+        this.emit(state, {
           sessionId: session.id,
           at: this.now(),
           probability: decision.board,
@@ -185,7 +200,7 @@ export class BoardSuggestService {
           title: null,
         });
       } else {
-        await this.openAsDoc(session, decision, text, stale);
+        await this.openAsDoc(session, state, decision, text, stale);
       }
     } catch (err) {
       // doc の書き出し・open の失敗は毎回そのまま残す (判定の失敗とは別の事象)
@@ -195,8 +210,14 @@ export class BoardSuggestService {
     }
   }
 
+  private emit(state: SessionState, event: BoardSuggestEvent): void {
+    state.latest = { event, generation: state.assembler.generation };
+    this.deps.notify(event);
+  }
+
   private async openAsDoc(
     session: BoardSuggestSession,
+    state: SessionState,
     decision: BoardDecision,
     text: string,
     stale: () => boolean
@@ -245,7 +266,7 @@ export class BoardSuggestService {
       return;
     }
     if (stale()) return;
-    this.deps.notify({
+    this.emit(state, {
       sessionId: session.id,
       at,
       probability: decision.board,

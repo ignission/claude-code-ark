@@ -2356,6 +2356,14 @@ export async function startServer(
           screen: pendingAuq.screen,
         });
       }
+
+      // ボード提案の通知も、その瞬間に会話ビューを開いていた画面にしか届かないので
+      // 送り直す。その後に発言していれば、サーバーは null を返し、クライアントも
+      // JSONL の発言と at を比べて消す
+      const latestSuggestion = boardSuggest.latestSuggestion(sessionId);
+      if (latestSuggestion) {
+        socket.emit("session:board-suggest", latestSuggestion);
+      }
     });
 
     socket.on("session:jsonl-unsubscribe", (sessionId: unknown) => {
