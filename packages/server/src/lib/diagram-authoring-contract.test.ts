@@ -22,6 +22,10 @@ const DOC_SAMPLE_COMMENTS_PATH = DOC_SAMPLE_PATH.replace(
   /\.diagram\.html$/u,
   ".comments.json"
 );
+const REVIEW_SAMPLE_PATH = path.resolve(
+  REPOSITORY_ROOT,
+  ".claude/diagrams/_examples/change-review.diagram.html"
+);
 
 describe("diagram-authoring skill の書き出し先 contract", () => {
   it("board_open.path の説明を正準 source とし directory literal を保持しない", () => {
@@ -142,5 +146,41 @@ describe("diagram-authoring skill の書き出し先 contract", () => {
       /(?:https?:\/\/|<link\b|@import\b|@font-face\b|<meta\b[^>]*content-security-policy)/i
     );
     expect(fs.existsSync(DOC_SAMPLE_COMMENTS_PATH)).toBe(false);
+  });
+
+  it("コードを指す語のリンクと、変更レビュー文書の型を定義する", () => {
+    const skill = fs.readFileSync(SKILL_PATH, "utf-8");
+
+    expect(skill).toContain("コードを指す語はリンクにする");
+    expect(skill).toContain('href="src/');
+    expect(skill).toContain("#L10-L24");
+    expect(skill).toContain("worktree 相対");
+    expect(skill).toContain("## 変更レビュー文書");
+    for (const heading of ["what / why", "要件", "設計", "実装"]) {
+      expect(skill).toContain(heading);
+    }
+    expect(skill).toContain("図は 1 枚");
+    for (const kind of ["`flow`", "`state`", "`er`", "`context-map`"]) {
+      expect(skill).toContain(kind);
+    }
+    expect(skill).toContain("エントリポイント");
+    expect(skill).not.toMatch(/(?:docs|\.claude)\/diagrams/);
+  });
+
+  it("変更レビュー文書の見本が doc contract を満たし、コードへのリンクを含む", () => {
+    const html = fs.readFileSync(REVIEW_SAMPLE_PATH, "utf-8");
+    const result = extractModel(html);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error);
+    expect(result.model.type).toBe("doc");
+    expect(validateDiagramDocAnchors(html, result.model)).toEqual({ ok: true });
+    expect(validateDiagramDocAuthorship(html, result.model)).toEqual({
+      ok: true,
+    });
+    expect(html).toMatch(/<a href="[^"/#:][^"]*#L\d+(?:-L\d+)?">/);
+    expect(html).not.toMatch(/<a href="https?:/);
+    const kinds = new Set(result.model.nodes.map(node => node.kind));
+    expect(kinds.has("section")).toBe(true);
+    expect(kinds.has("figure")).toBe(true);
   });
 });
