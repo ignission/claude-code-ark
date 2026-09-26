@@ -19,6 +19,7 @@ import { injectDiagramDocEditor } from "./diagram-doc-editor.js";
 import { extractModel, injectCsp } from "./diagram-file.js";
 import { validateDiagramGraphKinds } from "./diagram-graph-kinds.js";
 import { injectHarness } from "./diagram-harness.js";
+import { injectDiagramLinkLayer } from "./diagram-link-layer.js";
 import type { DiagramModel } from "./diagram-model.js";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
 import { errnoCode, errnoMessage } from "./errors.js";
@@ -136,8 +137,10 @@ export async function readDiagram(
   }
   // 内蔵図種の投影生成 → CSP → 専用層の順。doc 本文は自前 HTML が正なので
   // 編集層（本文の contenteditable 化）とコメント層、graph は編集ハーネスと
-  // コメント層の両方を載せる。
-  const projected = injectCsp(injectBuiltinProjection(read.raw, model.model));
+  // コメント層の両方を載せる。リンク層は投影の後・編集層とコメント層の前。
+  const projected = injectDiagramLinkLayer(
+    injectCsp(injectBuiltinProjection(read.raw, model.model))
+  );
   return {
     ok: true,
     absPath: read.absPath,

@@ -268,6 +268,84 @@ export function handleDiagramPinchMessage(
   return true;
 }
 
+export type DiagramLinkTarget =
+  | { kind: "url"; url: string }
+  | { kind: "file"; path: string; line: number | null; endLine: number | null };
+
+export type DiagramOpenMessage =
+  | { type: "ark:open-file"; path: string; line: number | null }
+  | { type: "ark:open-url"; url: string };
+
+/**
+ * ボード内リンクの href を解釈する。
+ * - `http(s)://` は外部 URL
+ * - それ以外は worktree 相対のファイルパス。`#L<n>` / `#L<a>-L<b>` で行を指せる
+ * - `..` を含む・`/` 始まり・空・不明なスキーム・`#` だけは拒否 (null)
+ * 端末リンク (`isAllowedFilePath`) と同じ規則だが、/tmp と HTML 絶対パスの特例は持たない
+ */
+export function parseDiagramLinkHref(href: string): DiagramLinkTarget | null {
+  const trimmed = href.trim();
+  if (!trimmed || trimmed.startsWith("#")) return null;
+  if (/^https?:\/\//i.test(trimmed)) return { kind: "url", url: trimmed };
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) return null;
+
+  const hashIndex = trimmed.indexOf("#");
+  const rawPath = hashIndex >= 0 ? trimmed.slice(0, hashIndex) : trimmed;
+  const fragment = hashIndex >= 0 ? trimmed.slice(hashIndex + 1) : "";
+  // href は URL なので `my%20file.ts` のように符号化されて書かれうる。
+  // ファイルシステムに渡す前に戻し、traversal の判定は戻した後の値で行う
+  // (`%2e%2e` で `..` を隠せないようにする)
+  let path: string;
+  try {
+    path = decodeURIComponent(rawPath.replace(/^\.\//, ""));
+  } catch {
+    return null; // 壊れたエスケープ
+  }
+  if (!path || path.startsWith("/") || path.split("/").includes("..")) {
+    return null;
+  }
+
+  const lines = /^L(\d+)(?:-L(\d+))?$/.exec(fragment);
+  const line = lines ? Number.parseInt(lines[1], 10) : Number.NaN;
+  const endLine = lines?.[2] ? Number.parseInt(lines[2], 10) : Number.NaN;
+  return {
+    kind: "file",
+    path,
+    line: Number.isInteger(line) && line >= 1 ? line : null,
+    endLine: Number.isInteger(endLine) && endLine >= 1 ? endLine : null,
+  };
+}
+
+function isDiagramOpenLinkMessage(
+  data: unknown
+): data is { type: "ark:diagram-open-link"; href: string } {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as { type?: unknown }).type === "ark:diagram-open-link" &&
+    typeof (data as { href?: unknown }).href === "string"
+  );
+}
+
+/**
+ * リンク層からのメッセージを、端末リンクと同じ既存の入口 (`ark:open-file` /
+ * `ark:open-url` の window message) に流す。扱ったら true。
+ */
+export function handleDiagramOpenLinkMessage(
+  data: unknown,
+  post: (message: DiagramOpenMessage) => void
+): boolean {
+  if (!isDiagramOpenLinkMessage(data)) return false;
+  const target = parseDiagramLinkHref(data.href);
+  if (!target) return true;
+  if (target.kind === "url") {
+    post({ type: "ark:open-url", url: target.url });
+  } else {
+    post({ type: "ark:open-file", path: target.path, line: target.line });
+  }
+  return true;
+}
+
 interface DiagramCommentForwardDeps {
   isConnected: boolean;
   sessionId: string;
@@ -761,6 +839,15 @@ export function DiagramPane({
       const generation = ++portGenerationRef.current;
       channel.port1.onmessage = (event: MessageEvent) => {
         if (handleDiagramPinchMessage(event.data, setZoom)) return;
+        if (
+          handleDiagramOpenLinkMessage(event.data, message => {
+            // ボード iframe は opaque origin なので、親 (同一オリジン) が代わりに
+            // 自分の window へ送る。useViewerTabs が端末リンクと同じ経路で受ける
+            window.postMessage(message, window.location.origin);
+          })
+        ) {
+          return;
+        }
         if (isDiagramSubmitMessage(event.data)) {
           handleSubmit(event.data.model, event.data.html);
           return;
