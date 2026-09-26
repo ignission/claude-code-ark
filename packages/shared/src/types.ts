@@ -526,6 +526,12 @@ export interface ServerToClientEvents {
        */
       awaitingText?: string;
       /**
+       * THINK / TOOL のときのみ: 画面末尾の生テキスト (ANSI 除去・末尾空行除去済み)。
+       * 返事が JSONL に届くまでの間、チャットビューで動きを見せるためにそのまま表示する。
+       * 内容は解釈しない
+       */
+      liveTail?: string;
+      /**
        * 会話 (JSONL transcript) の最終更新時刻 (epochミリ秒)。読めなければ null。
        * 一覧をセクションの中で最終更新の降順に並べるために使う。
        * tmux の session_activity は端末の再描画でも動くので使わない

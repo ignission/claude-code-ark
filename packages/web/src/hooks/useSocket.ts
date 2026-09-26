@@ -239,6 +239,12 @@ interface UseSocketReturn {
    */
   sessionAwaitingTexts: Map<string, string>;
 
+  /**
+   * sessionId → THINK / TOOL 中の画面末尾の生テキスト。
+   * 会話ビューで返事が届くまでの動きを見せる。作業中でないセッションはエントリ自体が無い
+   */
+  sessionLiveTails: Map<string, string>;
+
   // Browser sessions
   browserSessions: Map<string, BrowserSession>;
   browserError: string | null;
@@ -434,6 +440,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [sessionAwaitingTexts, setSessionAwaitingTexts] = useState<
     Map<string, string>
   >(new Map());
+  // 作業中の画面末尾 (会話ビューで動きを見せる)。作業中でないセッションは undefined になる
+  const [sessionLiveTails, setSessionLiveTails] = useState<Map<string, string>>(
+    new Map()
+  );
 
   // Browser session state
   const [browserSessions, setBrowserSessions] = useState<
@@ -898,6 +908,17 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         for (const p of previews) {
           if (p.awaitingText) {
             next.set(p.sessionId, p.awaitingText);
+          } else {
+            next.delete(p.sessionId);
+          }
+        }
+        return next;
+      });
+      setSessionLiveTails(prev => {
+        const next = new Map(prev);
+        for (const p of previews) {
+          if (p.liveTail) {
+            next.set(p.sessionId, p.liveTail);
           } else {
             next.delete(p.sessionId);
           }
@@ -1758,6 +1779,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     // Session previews
     sessionPreviews,
     sessionAwaitingTexts,
+    sessionLiveTails,
     sessionStatusSignals,
     sessionAuqSignals,
     gridSnapshots,

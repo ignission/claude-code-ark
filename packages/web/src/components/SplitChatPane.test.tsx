@@ -603,6 +603,40 @@ describe("SplitChatPane: 作業中の表示", () => {
   const indicator = (container: HTMLElement) =>
     container.querySelector('[data-testid="chat-working-indicator"]');
 
+  it("作業中は画面の末尾をそのまま出し、作業中でなければ出さない", () => {
+    const tail = (container: HTMLElement) =>
+      container.querySelector('[data-testid="chat-live-tail"]');
+    const text = "⏺ Bash(pnpm test)\n✻ Cogitating… (32s · ↓ 1.2k tokens)";
+
+    const busy = renderChat({ bridgeStatus: "THINK", liveTail: text });
+    expect(tail(busy.container)?.textContent).toBe(text);
+    expect(tail(busy.container)?.getAttribute("aria-hidden")).toBe("true");
+
+    const idle = renderChat({ bridgeStatus: "IDLE", liveTail: text });
+    expect(tail(idle.container)).toBeNull();
+
+    const empty = renderChat({ bridgeStatus: "TOOL" });
+    expect(tail(empty.container)).toBeNull();
+  });
+
+  it("画面の末尾を出している間は「考えています」を見せず、読み上げだけ残す", () => {
+    const text = "✻ Cogitating… (32s · ↓ 1.2k tokens)";
+
+    const pc = renderChat({ bridgeStatus: "THINK", liveTail: text });
+    const status = indicator(pc.container);
+    expect(status?.getAttribute("role")).toBe("status");
+    expect(status?.className).toContain("sr-only");
+    expect(status?.querySelector(".status-dots")).toBeNull();
+
+    // 読み上げ領域にしないモバイルでは、要素ごと出さない
+    const mobile = renderChat({
+      bridgeStatus: "THINK",
+      liveTail: text,
+      layout: "mobile",
+    });
+    expect(indicator(mobile.container)).toBeNull();
+  });
+
   it("考えている間と作業している間は、会話の最後に呼吸する3点と文言を出す", () => {
     const thinking = renderChat({ bridgeStatus: "THINK" });
     expect(indicator(thinking.container)?.textContent).toContain(

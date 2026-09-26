@@ -187,6 +187,8 @@ interface MobileLayoutProps {
   sessionLastUpdatedAt?: Map<string, number>;
   /** AWAITING 時の確認 UI 生テキストマップ（チャットビューのバナー用） */
   sessionAwaitingTexts: Map<string, string>;
+  /** 作業中の画面末尾マップ（会話ビューで動きを見せる） */
+  sessionLiveTails: Map<string, string>;
   /** session:previews由来の端末の最後の内容行 (一覧の2行目) */
   sessionPreviews: Map<string, string>;
   /** worktreePath → 表示名 (一覧の行とTask 10のヘッダーの主ラベル) */
@@ -270,6 +272,7 @@ export function MobileLayout({
   sessionStatuses,
   sessionLastUpdatedAt,
   sessionAwaitingTexts,
+  sessionLiveTails,
   sessionPreviews,
   worktreeDisplayNames,
   onSetWorktreeDisplayName,
@@ -500,6 +503,7 @@ export function MobileLayout({
                 isActive={isActive}
                 bridgeStatus={sessionStatuses.get(sessionId)}
                 awaitingText={sessionAwaitingTexts.get(sessionId)}
+                liveTail={sessionLiveTails.get(sessionId)}
                 session={session}
                 worktree={worktree}
                 repoName={

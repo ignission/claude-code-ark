@@ -154,6 +154,8 @@ interface SplitViewPaneProps {
   bridgeStatus?: BridgeSessionStatus;
   /** AWAITING 時の確認 UI 生テキスト（会話ビューのバナー表示） */
   awaitingText?: string;
+  /** 作業中の画面末尾（会話ビューで動きを見せる） */
+  liveTail?: string;
   worktree: Worktree | undefined;
   /** 所属リポジトリの名前。表示名が無いときの主ラベル */
   repoName?: string;
@@ -564,6 +566,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
               isActive={shouldSubscribeChat(props.isActive, leftMode)}
               bridgeStatus={props.bridgeStatus}
               awaitingText={props.awaitingText}
+              liveTail={props.liveTail}
               onSendMessage={props.onSendMessage}
               onSendKey={props.onSendKey}
               onUploadFile={props.onUploadFile}

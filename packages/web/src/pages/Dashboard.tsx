@@ -125,6 +125,7 @@ export default function Dashboard() {
     clearDeletedWorktreeId,
     sessionPreviews,
     sessionAwaitingTexts,
+    sessionLiveTails,
     gridSnapshots,
     subscribeGrid,
     unsubscribeGrid,
@@ -773,6 +774,7 @@ export default function Dashboard() {
           sessionStatuses={sessionStatuses}
           sessionLastUpdatedAt={sessionLastUpdatedAt}
           sessionAwaitingTexts={sessionAwaitingTexts}
+          sessionLiveTails={sessionLiveTails}
           sessionPreviews={sessionPreviews}
           worktreeDisplayNames={worktreeDisplayNames}
           onSetWorktreeDisplayName={setWorktreeDisplayName}
@@ -994,6 +996,7 @@ export default function Dashboard() {
                         isActive={isActive}
                         bridgeStatus={sessionStatuses.get(session.id)}
                         awaitingText={sessionAwaitingTexts.get(session.id)}
+                        liveTail={sessionLiveTails.get(session.id)}
                         diagramCommentsUpdate={diagramCommentsUpdate}
                         listDiagrams={listDiagrams}
                         deleteDiagram={deleteDiagram}

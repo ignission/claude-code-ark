@@ -108,6 +108,11 @@ interface SplitChatPaneProps {
    * 「何を聞かれているか」をバナーにそのまま表示する。構造のパースはしない
    */
   awaitingText?: string;
+  /**
+   * THINK / TOOL 中の画面末尾の生テキスト。返事が JSONL に届くまでの間、
+   * 「考えています」の上にそのまま出して動きを見せる。内容は解釈しない
+   */
+  liveTail?: string;
   onSendMessage: (message: string) => void;
   /** AskUserQuestion のキャンセル (Esc) 等で使用 */
   onSendKey: (key: SpecialKey) => void;
@@ -185,10 +190,16 @@ function UserInputCard({ text }: { text: string }) {
 function WorkingIndicator({
   label,
   announce,
+  visuallyHidden,
 }: {
   label: string;
   /** false (モバイル) のときは状態の帯が読み上げるので、読み上げ領域にしない */
   announce: boolean;
+  /**
+   * 端末の末尾を出している間は、枠が動きを見せるので目に見える表示は出さない。
+   * 読み上げ領域は同じ要素のまま残す (枠の出入りのたびに作り直すと読み上げが繰り返される)
+   */
+  visuallyHidden: boolean;
 }) {
   const dots = (
     <span className="status-dots text-status-busy" aria-hidden="true">
@@ -198,6 +209,7 @@ function WorkingIndicator({
     </span>
   );
   if (!announce) {
+    if (visuallyHidden) return null;
     return (
       <div
         data-testid="chat-working-indicator"
@@ -216,12 +228,32 @@ function WorkingIndicator({
       data-testid="chat-working-indicator"
       role="status"
       aria-live="polite"
-      className="flex items-center gap-2 px-4 py-3 text-[13px] text-muted-foreground"
+      className={
+        visuallyHidden
+          ? "sr-only"
+          : "flex items-center gap-2 px-4 py-3 text-[13px] text-muted-foreground"
+      }
     >
-      {dots}
-      <span aria-hidden="true">{label}</span>
+      {!visuallyHidden && dots}
+      {!visuallyHidden && <span aria-hidden="true">{label}</span>}
       <span className="sr-only">Claudeが作業しています</span>
     </div>
+  );
+}
+
+/**
+ * 作業中の端末末尾を、加工せずに等幅で出す。1 秒ごとに差し替わるので読み上げない。
+ * 端末の幅は会話欄より広いことがあるため、折り返さずに横スクロールにする (枠線の文字を崩さない)
+ */
+function LiveTerminalTail({ text }: { text: string }) {
+  return (
+    <pre
+      data-testid="chat-live-tail"
+      aria-hidden="true"
+      className="mx-4 mt-2 overflow-x-auto whitespace-pre rounded-md border border-border/60 bg-muted/40 px-3 py-2 font-mono text-[11px] leading-[1.45] text-muted-foreground"
+    >
+      {text}
+    </pre>
   );
 }
 
@@ -1091,6 +1123,7 @@ export function SplitChatPane({
   isActive,
   bridgeStatus,
   awaitingText,
+  liveTail,
   onSendMessage,
   onSendKey,
   onUploadFile,
@@ -1373,6 +1406,7 @@ export function SplitChatPane({
   // biome-ignore lint/correctness/useExhaustiveDependencies(expandedToolGroups): 「作業N件」の開閉 (高さ変化) のたびに末尾追従スクロールを再実行するための意図的な依存
   // biome-ignore lint/correctness/useExhaustiveDependencies(floatingStackHeight): モバイルで入力欄が伸びて本文の下端の余白が増えるたびに末尾追従スクロールを再実行するための意図的な依存
   // biome-ignore lint/correctness/useExhaustiveDependencies(workingLabel): 作業中の表示が出入りする (高さ変化) たびに末尾追従スクロールを再実行するための意図的な依存
+  // biome-ignore lint/correctness/useExhaustiveDependencies(liveTail): 作業中の画面末尾が差し替わる (高さ変化) たびに末尾追従スクロールを再実行するための意図的な依存
   useEffect(() => {
     const el = jsonlScrollRef.current;
     if (!el) return;
@@ -1394,6 +1428,7 @@ export function SplitChatPane({
     expandedToolGroups,
     floatingStackHeight,
     workingLabel,
+    liveTail,
   ]);
 
   // 「下までジャンプ」ボタン用。一気に末尾へ飛ばす副作用ハンドラ。
@@ -1930,8 +1965,13 @@ export function SplitChatPane({
                 ))}
               </>
             )}
+            {workingLabel && liveTail && <LiveTerminalTail text={liveTail} />}
             {workingLabel && (
-              <WorkingIndicator label={workingLabel} announce={!isMobile} />
+              <WorkingIndicator
+                label={workingLabel}
+                announce={!isMobile}
+                visuallyHidden={Boolean(liveTail)}
+              />
             )}
           </div>
         </div>
