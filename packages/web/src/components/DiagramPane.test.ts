@@ -15,7 +15,9 @@ import {
   forwardDiagramCommentPortRequest,
   forwardDiagramCommentsUpdate,
   getDiagramZoomPercent,
+  handleDiagramOpenLinkMessage,
   handleDiagramPinchMessage,
+  parseDiagramLinkHref,
   readDiagramCommentConnectionState,
   replyToInvalidDiagramCommentPortRequest,
   resetDiagramZoom,
@@ -434,5 +436,105 @@ describe("DiagramPane zoom", () => {
     expect(getRenderedSrcDoc(before)).toBeDefined();
     expect(getRenderedSrcDoc(after)).toBe(getRenderedSrcDoc(before));
     expect(after).toContain('sandbox="allow-scripts"');
+  });
+});
+
+describe("parseDiagramLinkHref", () => {
+  it("相対パスと行を読む", () => {
+    expect(parseDiagramLinkHref("src/foo.ts#L10")).toEqual({
+      kind: "file",
+      path: "src/foo.ts",
+      line: 10,
+      endLine: null,
+    });
+    expect(parseDiagramLinkHref("src/foo.ts#L10-L24")).toEqual({
+      kind: "file",
+      path: "src/foo.ts",
+      line: 10,
+      endLine: 24,
+    });
+    expect(parseDiagramLinkHref("src/foo.ts")).toEqual({
+      kind: "file",
+      path: "src/foo.ts",
+      line: null,
+      endLine: null,
+    });
+  });
+
+  it("./ を剥がし、行が読めなければ行なしにする", () => {
+    expect(parseDiagramLinkHref("./src/foo.ts#L0")).toMatchObject({
+      kind: "file",
+      path: "src/foo.ts",
+      line: null,
+    });
+    expect(parseDiagramLinkHref("src/foo.ts#section")).toMatchObject({
+      path: "src/foo.ts",
+      line: null,
+    });
+  });
+
+  it("符号化されたパスは戻してから扱い、%2e%2e も traversal として弾く", () => {
+    expect(parseDiagramLinkHref("src/my%20file.ts#L10")).toMatchObject({
+      kind: "file",
+      path: "src/my file.ts",
+      line: 10,
+    });
+    expect(parseDiagramLinkHref("src/%2e%2e/%2e%2e/etc/passwd")).toBeNull();
+    expect(parseDiagramLinkHref("src/%zz.ts")).toBeNull();
+  });
+
+  it("http(s) は URL として返す", () => {
+    expect(parseDiagramLinkHref("https://example.com/a?b=1")).toEqual({
+      kind: "url",
+      url: "https://example.com/a?b=1",
+    });
+  });
+
+  it("危険なパスと不明なスキームは拒否する", () => {
+    expect(parseDiagramLinkHref("../etc/passwd")).toBeNull();
+    expect(parseDiagramLinkHref("src/../../x")).toBeNull();
+    expect(parseDiagramLinkHref("/etc/passwd")).toBeNull();
+    expect(parseDiagramLinkHref("")).toBeNull();
+    expect(parseDiagramLinkHref("#s6")).toBeNull();
+    expect(parseDiagramLinkHref("javascript:alert(1)")).toBeNull();
+    expect(parseDiagramLinkHref("mailto:a@example.com")).toBeNull();
+  });
+});
+
+describe("handleDiagramOpenLinkMessage", () => {
+  it("ファイルは ark:open-file、URL は ark:open-url にして post する", () => {
+    const posted: unknown[] = [];
+    const post = (message: unknown) => posted.push(message);
+    expect(
+      handleDiagramOpenLinkMessage(
+        { type: "ark:diagram-open-link", href: "src/foo.ts#L10-L24" },
+        post
+      )
+    ).toBe(true);
+    expect(
+      handleDiagramOpenLinkMessage(
+        { type: "ark:diagram-open-link", href: "https://example.com" },
+        post
+      )
+    ).toBe(true);
+    expect(posted).toEqual([
+      { type: "ark:open-file", path: "src/foo.ts", line: 10, endLine: 24 },
+      { type: "ark:open-url", url: "https://example.com" },
+    ]);
+  });
+
+  it("別のメッセージや不正な href は扱わない / 拒否する", () => {
+    const posted: unknown[] = [];
+    const post = (message: unknown) => posted.push(message);
+    expect(
+      handleDiagramOpenLinkMessage({ type: "ark:diagram-pinch" }, post)
+    ).toBe(false);
+    expect(
+      handleDiagramOpenLinkMessage(
+        { type: "ark:diagram-open-link", href: "../x" },
+        post
+      )
+    ).toBe(true);
+    expect(posted).toEqual([]);
   });
 });

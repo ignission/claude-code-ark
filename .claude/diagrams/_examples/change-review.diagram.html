@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>変更レビュー: セッション一覧を最終更新順にする</title>
+<style>
+  :root { color-scheme: light; --ink: #223047; --muted: #627086; --line: #d8e0ea; --paper: #f5f7fa; --card: #fff; --accent: #176b87; font-family: "Hiragino Sans", "Yu Gothic UI", sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: var(--ink); background: var(--paper); }
+  .document { width: min(960px, calc(100% - 48px)); margin: 40px auto 72px; }
+  h1 { margin: 0 0 24px; font-size: 28px; }
+  section { margin: 0 0 28px; padding: 20px 22px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+  h2 { margin: 0 0 12px; font-size: 18px; }
+  p, li { line-height: 1.75; }
+  a { color: var(--accent); }
+  figure { margin: 16px 0; }
+  figcaption { color: var(--muted); font-size: 13px; }
+  pre { padding: 12px 14px; border-radius: 8px; background: #eef2f6; overflow-x: auto; font-size: 13px; }
+  svg { width: 100%; height: auto; }
+</style>
+</head>
+<body>
+<script type="application/json" id="ark-diagram-model">
+{
+  "version": 1,
+  "type": "doc",
+  "title": "変更レビュー: セッション一覧を最終更新順にする",
+  "nodes": [
+    { "id": "s1", "label": "what / why: サイドバーのセッション一覧を作成順から最終更新順に変え、いま動いているものを上に出す。", "kind": "section" },
+    { "id": "s1-p1", "label": "セッションが 10 を超えると作成順では探しにくい。最後に応答があった順なら、注意を向けるべきものが上に来る。", "kind": "paragraph" },
+    { "id": "s2", "label": "要件: 利用者の言葉のままの箇条書き。", "kind": "section" },
+    { "id": "s2-l1", "label": "要件の一覧。", "kind": "list" },
+    { "id": "s2-l1-i1", "label": "直近に動いたセッションが一番上に来てほしい。", "kind": "list-item" },
+    { "id": "s2-l1-i2", "label": "止まっているセッションは下にまとめてほしい。", "kind": "list-item" },
+    { "id": "s3", "label": "設計: 並び替えはクライアント側で、session:previews が運ぶ最終更新時刻を鍵にする。", "kind": "section" },
+    { "id": "s3-p1", "label": "サーバは既に 1 秒ごとの previews で各セッションの最終更新時刻を配っている。並び替えはその値でクライアントが行い、サーバは変えない。", "kind": "paragraph" },
+    { "id": "s3-f1", "label": "図: 最終更新時刻がサーバの polling からサイドバーの並びに届くまでの流れ。", "kind": "figure" },
+    { "id": "s4", "label": "実装: サイドバーの並び替え関数と、それを呼ぶ一覧コンポーネント。", "kind": "section" },
+    { "id": "s4-l1", "label": "読む順序。", "kind": "list" },
+    { "id": "s4-l1-i1", "label": "エントリポイントはサイドバーの一覧描画。並び替えの鍵に最終更新時刻を渡す。", "kind": "list-item" },
+    { "id": "s4-l1-i2", "label": "並び替え関数は最終更新時刻の降順、同時刻は作成順で安定させる。", "kind": "list-item" },
+    { "id": "s4-c1", "label": "抜粋: 並び替えの比較関数。", "kind": "code" }
+  ],
+  "edges": [],
+  "groups": [
+    { "id": "g-s1", "label": "what / why", "nodes": ["s1", "s1-p1"] },
+    { "id": "g-s2", "label": "要件", "nodes": ["s2", "s2-l1", "s2-l1-i1", "s2-l1-i2"] },
+    { "id": "g-s3", "label": "設計", "nodes": ["s3", "s3-p1", "s3-f1"] },
+    { "id": "g-s4", "label": "実装", "nodes": ["s4", "s4-l1", "s4-l1-i1", "s4-l1-i2", "s4-c1"] }
+  ]
+}
+</script>
+<main class="document">
+<h1>変更レビュー: セッション一覧を最終更新順にする</h1>
+
+<section data-ark-id="s1" data-ark-author="claude">
+  <h2>what / why</h2>
+  <p data-ark-id="s1-p1" data-ark-author="claude">セッションが 10 を超えると作成順では探しにくい。最後に応答があった順なら、注意を向けるべきものが上に来る。並び替えは <a href="packages/web/src/components/SessionSectionList.tsx#L40-L58">SessionSectionList</a> の中だけで閉じる。</p>
+</section>
+
+<section data-ark-id="s2" data-ark-author="human">
+  <h2>要件</h2>
+  <ul data-ark-id="s2-l1" data-ark-author="human">
+    <li data-ark-id="s2-l1-i1" data-ark-author="human">直近に動いたセッションが一番上に来てほしい</li>
+    <li data-ark-id="s2-l1-i2" data-ark-author="human">止まっているセッションは下にまとめてほしい</li>
+  </ul>
+</section>
+
+<section data-ark-id="s3" data-ark-author="claude">
+  <h2>設計</h2>
+  <p data-ark-id="s3-p1" data-ark-author="claude">サーバは既に 1 秒ごとの <code>session:previews</code> で各セッションの最終更新時刻を配っている (<a href="packages/server/src/index.ts#L1417">接続時の初期送信</a>)。並び替えはその値でクライアントが行い、サーバは変えない。</p>
+  <figure data-ark-id="s3-f1" data-ark-author="claude">
+    <svg viewBox="0 0 640 120" role="img" aria-label="最終更新時刻の流れ">
+      <rect x="10" y="40" width="150" height="40" rx="8" fill="#e8f4f7" stroke="#176b87"/><text x="85" y="65" text-anchor="middle" font-size="13">tmux polling (1s)</text>
+      <path d="M160 60 H240" stroke="#176b87" stroke-width="2"/><polygon points="240,55 250,60 240,65" fill="#176b87"/>
+      <rect x="250" y="40" width="150" height="40" rx="8" fill="#e8f4f7" stroke="#176b87"/><text x="325" y="65" text-anchor="middle" font-size="13">session:previews</text>
+      <path d="M400 60 H480" stroke="#176b87" stroke-width="2"/><polygon points="480,55 490,60 480,65" fill="#176b87"/>
+      <rect x="490" y="40" width="140" height="40" rx="8" fill="#e8f4f7" stroke="#176b87"/><text x="560" y="65" text-anchor="middle" font-size="13">サイドバーの並び</text>
+    </svg>
+    <figcaption>最終更新時刻は polling → previews → 並び替え、の一方向に流れる。サーバ側の変更は無い。</figcaption>
+  </figure>
+</section>
+
+<section data-ark-id="s4" data-ark-author="claude">
+  <h2>実装</h2>
+  <ol data-ark-id="s4-l1" data-ark-author="claude">
+    <li data-ark-id="s4-l1-i1" data-ark-author="claude">エントリポイントは <a href="packages/web/src/components/SessionSectionList.tsx#L120">一覧の描画</a>。並び替えの鍵に最終更新時刻 (<code>sessionLastUpdatedAt</code>) を渡す</li>
+    <li data-ark-id="s4-l1-i2" data-ark-author="claude"><a href="packages/web/src/components/SessionSectionList.tsx#L40-L58">並び替え関数</a>は最終更新時刻の降順。同時刻は作成順で安定させる</li>
+  </ol>
+  <pre data-ark-id="s4-c1" data-ark-author="claude"><code>function byLastUpdated(a, b) {
+  return (b.lastUpdatedAt ?? 0) - (a.lastUpdatedAt ?? 0) || a.createdAt - b.createdAt;
+}</code></pre>
+</section>
+</main>
+</body>
+</html>

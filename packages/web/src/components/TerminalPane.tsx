@@ -65,6 +65,7 @@ export type ViewerTab =
       mimeType: string;
       size: number;
       targetLine?: number | null;
+      targetEndLine?: number | null;
       error?: string;
     }
   | {
@@ -553,6 +554,7 @@ export function TerminalPane({
                 mimeType={tab.mimeType}
                 size={tab.size}
                 targetLine={tab.targetLine}
+                targetEndLine={tab.targetEndLine}
                 error={tab.error}
               />
             </div>
