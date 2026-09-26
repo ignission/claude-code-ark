@@ -3,13 +3,12 @@
  * 問い、閾値を超えたら Ark が動く。
  *
  * - form=doc: 返答の markdown を doc 型ボードへ機械変換して開く (Claude のトークン 0)
- * - form=figure: 通知だけ出す。クライアントが「図にする」ボタンを出し、人間が押した
- *   ときだけ Claude へ作図依頼が送られる。サーバーが tmux へ自動送信すると、端末で
- *   入力中の下書きを C-u で消しうる (bridgeStatus は入力中を IDLE と報告する)
+ * - form=figure: 何もしない。機械変換では図にならず、Claude へ作図を自動で頼むと
+ *   端末で入力中の下書きを C-u で消しうる (bridgeStatus は入力中を IDLE と報告する)。
+ *   作図が欲しければ、人間が入力欄の「会話を図解」を押す
  *
- * doc は人間に尋ねず動く。人間が見るのは「ボードが開いた」ことと、
- * チャットに出る 1 行の通知 (`session:board-suggest`) だけ。doc の通知にも
- * 「図にする」を出す (機械変換は図にならないため。押したときだけ Claude に頼む)。
+ * doc は人間に尋ねず動く。人間が見るのは「ボードが開いた」ことだけで、通知は出さない
+ * (ボードが開いたこと自体が合図になり、作図は「会話を図解」で頼めるため)。
  *
  * 有効/閾値/鍵は毎ターン deps から読む (設定画面で変えたら次のターンから効く)。
  * 鍵が無いターンは静かに何もしない。
@@ -20,7 +19,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { type BoardSuggestEvent, DIAGRAM_DIR } from "@ark/shared";
+import { DIAGRAM_DIR } from "@ark/shared";
 import { TurnAssembler } from "./board-suggest-turns.js";
 import type { BoardDecision } from "./jev-client.js";
 import { markdownToBoardDoc } from "./markdown-to-board-doc.js";
@@ -64,7 +63,6 @@ export interface BoardSuggestDeps {
     relPath: string,
     shouldAbort: () => boolean
   ): Promise<{ ok: boolean; error?: string }>;
-  notify(event: BoardSuggestEvent): void;
   now?(): number;
   log?(message: string): void;
 }
@@ -74,8 +72,6 @@ interface SessionState {
   assembler: TurnAssembler;
   inflight: boolean;
   failureReported: boolean;
-  /** 直前に出した通知と、そのときの会話の世代 (発言や /clear で世代が進んだら無効) */
-  latest: { event: BoardSuggestEvent; generation: number } | null;
 }
 
 /** プロセス内の連番。時刻が同じでもファイル名が衝突しないようにする (循環させない) */
@@ -108,7 +104,6 @@ export class BoardSuggestService {
       assembler,
       inflight: false,
       failureReported: false,
-      latest: null,
     };
     state.unsubscribe = this.deps.subscribeJsonl(
       session.worktreePath,
@@ -127,18 +122,6 @@ export class BoardSuggestService {
       }
     );
     this.sessions.set(session.id, state);
-  }
-
-  /**
-   * 直前に出した通知。会話が進んでいれば null。
-   * 通知はその瞬間に会話ビューを開いていた画面にしか届かないので、会話ビューを
-   * 開き直した (再接続した) 画面へ送り直すために使う
-   */
-  latestSuggestion(sessionId: string): BoardSuggestEvent | null {
-    const state = this.sessions.get(sessionId);
-    if (!state?.latest) return null;
-    if (state.latest.generation !== state.assembler.generation) return null;
-    return state.latest.event;
   }
 
   detach(sessionId: string): void {
@@ -190,18 +173,8 @@ export class BoardSuggestService {
       }
       if (stale()) return;
       if (decision.board < this.deps.threshold()) return;
-      if (decision.form === "figure") {
-        this.emit(state, {
-          sessionId: session.id,
-          at: this.now(),
-          probability: decision.board,
-          form: "figure",
-          relPath: null,
-          title: null,
-        });
-      } else {
-        await this.openAsDoc(session, state, decision, text, stale);
-      }
+      if (decision.form === "figure") return;
+      await this.openAsDoc(session, text, stale);
     } catch (err) {
       // doc の書き出し・open の失敗は毎回そのまま残す (判定の失敗とは別の事象)
       this.log(`${session.id}: doc の書き出しに失敗: ${String(err)}`);
@@ -210,15 +183,8 @@ export class BoardSuggestService {
     }
   }
 
-  private emit(state: SessionState, event: BoardSuggestEvent): void {
-    state.latest = { event, generation: state.assembler.generation };
-    this.deps.notify(event);
-  }
-
   private async openAsDoc(
     session: BoardSuggestSession,
-    state: SessionState,
-    decision: BoardDecision,
     text: string,
     stale: () => boolean
   ): Promise<void> {
@@ -254,26 +220,15 @@ export class BoardSuggestService {
       );
       return;
     }
-    // 書いている間に会話が進んでいたら、開かず知らせない (ファイルは残るが害はない)。
+    // 書いている間に会話が進んでいたら開かない (ファイルは残るが害はない)。
     // open の中でも読み込み後に同じ判定を評価させる
     if (stale()) return;
     const opened = await this.deps.openDiagram(session.id, relPath, stale);
-    if (!opened.ok) {
-      if (stale()) return;
+    if (!opened.ok && !stale()) {
       this.log(
         `${session.id}: 書いた doc を開けない: ${opened.error ?? "unknown"}`
       );
-      return;
     }
-    if (stale()) return;
-    this.emit(state, {
-      sessionId: session.id,
-      at,
-      probability: decision.board,
-      form: "doc",
-      relPath,
-      title: doc.title,
-    });
   }
 }
 

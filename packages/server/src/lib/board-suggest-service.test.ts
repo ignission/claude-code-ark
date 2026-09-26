@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { BoardSuggestEvent } from "@ark/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type BoardSuggestDeps,
@@ -37,7 +36,8 @@ function setup(
     onReset?(): void;
   } | null = null;
   const unsubscribe = vi.fn();
-  const events: BoardSuggestEvent[] = [];
+  /** 開いたボードの relPath (openDiagram が成功した分) */
+  const opened: string[] = [];
   const logs: string[] = [];
   const deps: BoardSuggestDeps = {
     subscribeJsonl: (_wt, _cfg, l) => {
@@ -49,8 +49,10 @@ function setup(
     apiKey: () => "sk-test",
     threshold: () => 0.7,
     resolveWorktreeReal: () => worktree,
-    openDiagram: vi.fn(async () => ({ ok: true })),
-    notify: e => events.push(e),
+    openDiagram: vi.fn(async (_sid: string, relPath: string) => {
+      opened.push(relPath);
+      return { ok: true };
+    }),
     now: () => 1_700_000_000_000,
     log: m => logs.push(m),
     ...overrides,
@@ -70,7 +72,7 @@ function setup(
     deps,
     service,
     worktree,
-    events,
+    opened,
     logs,
     push,
     unsubscribe,
@@ -125,14 +127,14 @@ describe("writeFileConfined", () => {
 });
 
 describe("BoardSuggestService", () => {
-  it("閾値以上かつ doc なら、返答を doc に書いて開き、通知する", async () => {
-    const { deps, worktree, events, push } = setup({
+  it("閾値以上かつ doc なら、返答を doc に書いて開く", async () => {
+    const { deps, worktree, opened, push } = setup({
       board: 0.88,
       form: "doc",
       figure: 0.1,
       cost: 0,
     });
-    await push(endTurnLine("## 見出し\n\n本文です。"), () => events.length > 0);
+    await push(endTurnLine("## 見出し\n\n本文です。"), () => opened.length > 0);
     expect(deps.decide).toHaveBeenCalledWith(
       "## 見出し\n\n本文です。",
       "sk-test"
@@ -147,16 +149,7 @@ describe("BoardSuggestService", () => {
       /^\.claude\/diagrams\/_auto\/s1\/\d{8}-\d{6}-\d{3}-\d+\.diagram\.html$/
     );
     expect(fs.existsSync(path.join(worktree, relPath))).toBe(true);
-    expect(events).toEqual([
-      {
-        sessionId: "s1",
-        at: 1_700_000_000_000,
-        probability: 0.88,
-        form: "doc",
-        relPath,
-        title: "見出し",
-      },
-    ]);
+    expect(opened).toEqual([relPath]);
   });
 
   it("無効か鍵が無ければ Jev を呼ばない", async () => {
@@ -178,14 +171,14 @@ describe("BoardSuggestService", () => {
   });
 
   it("同じ時刻で 2 ターン続いてもファイル名が衝突しない", async () => {
-    const { deps, events, push } = setup({
+    const { deps, opened, push } = setup({
       board: 0.9,
       form: "doc",
       figure: 0,
       cost: 0,
     });
-    await push(endTurnLine("一つ目"), () => events.length > 0);
-    await push(endTurnLine("二つ目"), () => events.length > 1);
+    await push(endTurnLine("一つ目"), () => opened.length > 0);
+    await push(endTurnLine("二つ目"), () => opened.length > 1);
     const paths = (deps.openDiagram as ReturnType<typeof vi.fn>).mock.calls.map(
       c => c[1]
     );
@@ -193,7 +186,7 @@ describe("BoardSuggestService", () => {
   });
 
   it("閾値未満なら何もしない", async () => {
-    const { deps, events, push } = setup({
+    const { deps, opened, push } = setup({
       board: 0.4,
       form: "doc",
       figure: 0,
@@ -206,30 +199,28 @@ describe("BoardSuggestService", () => {
     await new Promise(r => setTimeout(r, 20));
     expect(deps.decide).toHaveBeenCalledTimes(1);
     expect(deps.openDiagram).not.toHaveBeenCalled();
-    expect(events).toEqual([]);
+    expect(opened).toEqual([]);
   });
 
-  it("figure なら通知だけ出し、ファイルも書かず Claude にも送らない", async () => {
-    const { deps, events, worktree, push } = setup({
+  it("figure なら何もしない (ファイルも書かず、開かない)", async () => {
+    const { deps, worktree, push } = setup({
       board: 0.9,
       form: "figure",
       figure: 0.8,
       cost: 0,
     });
-    await push(endTurnLine("フロー"), () => events.length > 0);
-    expect(events[0]).toMatchObject({
-      form: "figure",
-      relPath: null,
-      title: null,
-      probability: 0.9,
-    });
+    await push(
+      endTurnLine("フロー"),
+      () => (deps.decide as ReturnType<typeof vi.fn>).mock.calls.length > 0
+    );
+    await new Promise(r => setTimeout(r, 20));
     expect(deps.openDiagram).not.toHaveBeenCalled();
     expect(fs.existsSync(path.join(worktree, ".claude"))).toBe(false);
   });
 
   it("判定中に会話が進んだ (新しい発話 / clear) ら、その判定の結果は捨てる", async () => {
     let resolveDecide: ((d: BoardDecision) => void) | null = null;
-    const { deps, events, push, listener } = setup(
+    const { deps, opened, push, listener } = setup(
       { board: 0.9, form: "doc", figure: 0, cost: 0 },
       {
         decide: () =>
@@ -246,11 +237,11 @@ describe("BoardSuggestService", () => {
     resolveDecide?.({ board: 0.9, form: "doc", figure: 0, cost: 0 });
     await new Promise(r => setTimeout(r, 30));
     expect(deps.openDiagram).not.toHaveBeenCalled();
-    expect(events).toEqual([]);
+    expect(opened).toEqual([]);
   });
 
-  it("ボードを開く読み込みの間に会話が進んだら、open 側の判定で開かず、知らせない", async () => {
-    const { deps, events, push, listener } = setup(
+  it("ボードを開く読み込みの間に会話が進んだら、open 側の判定で開かず、失敗としても残さない", async () => {
+    const { deps, logs, push, listener } = setup(
       { board: 0.9, form: "doc", figure: 0, cost: 0 },
       {
         openDiagram: vi.fn(async (_sid, _rel, shouldAbort) => {
@@ -269,12 +260,12 @@ describe("BoardSuggestService", () => {
       () => (deps.openDiagram as ReturnType<typeof vi.fn>).mock.calls.length > 0
     );
     await new Promise(r => setTimeout(r, 30));
-    expect(events).toEqual([]);
+    expect(logs).toEqual([]);
   });
 
   it("detach された後に判定が返っても何もしない", async () => {
     let resolveDecide: ((d: BoardDecision) => void) | null = null;
-    const { deps, events, service, push } = setup(
+    const { deps, opened, service, push } = setup(
       { board: 0.9, form: "doc", figure: 0, cost: 0 },
       {
         decide: () =>
@@ -288,11 +279,11 @@ describe("BoardSuggestService", () => {
     resolveDecide?.({ board: 0.9, form: "doc", figure: 0, cost: 0 });
     await new Promise(r => setTimeout(r, 30));
     expect(deps.openDiagram).not.toHaveBeenCalled();
-    expect(events).toEqual([]);
+    expect(opened).toEqual([]);
   });
 
   it("生成先の途中が worktree の外を指す symlink なら doc を書かない", async () => {
-    const { deps, events, worktree, logs, push } = setup({
+    const { deps, opened, worktree, logs, push } = setup({
       board: 0.9,
       form: "doc",
       figure: 0,
@@ -312,7 +303,7 @@ describe("BoardSuggestService", () => {
     );
     expect(fs.readdirSync(outside)).toEqual([]);
     expect(deps.openDiagram).not.toHaveBeenCalled();
-    expect(events).toEqual([]);
+    expect(opened).toEqual([]);
   });
 
   it("Jev の失敗は 1 回だけログに出し、回復したら 1 行出す", async () => {
@@ -352,30 +343,6 @@ describe("BoardSuggestService", () => {
     expect(logs.filter(l => l.includes("書き出しに失敗"))).toHaveLength(2);
     expect(logs.some(l => l.includes("判定に失敗"))).toBe(false);
     expect(logs.some(l => l.includes("回復"))).toBe(false);
-  });
-
-  it("直前の通知を覚えておき、次の発言か detach で捨てる", async () => {
-    // 通知はその瞬間に会話ビューを開いていた画面にしか届かない。
-    // 開き直した画面へ送り直すため、サーバーが直前の 1 件を持つ
-    const { service, events, push, listener } = setup({
-      board: 0.9,
-      form: "figure",
-      figure: 0.8,
-      cost: 0,
-    });
-    expect(service.latestSuggestion("s1")).toBeNull();
-    await push(endTurnLine("説明"), () => events.length > 0);
-    expect(service.latestSuggestion("s1")).toEqual(events[0]);
-
-    listener()?.onLine({
-      raw: JSON.stringify({ type: "user", message: { content: "次の指示" } }),
-    });
-    expect(service.latestSuggestion("s1")).toBeNull();
-
-    await push(endTurnLine("別の説明"), () => events.length > 1);
-    expect(service.latestSuggestion("s1")).toEqual(events[1]);
-    service.detach("s1");
-    expect(service.latestSuggestion("s1")).toBeNull();
   });
 
   it("detach で購読を解除し、以後の行を無視する", async () => {
