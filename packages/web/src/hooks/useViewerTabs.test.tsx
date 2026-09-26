@@ -57,7 +57,7 @@ describe("useViewerTabs のファイルタブ", () => {
     window.addEventListener(SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT, listener);
 
     act(() => {
-      api().openFileTab("s1", "packages/web/src/x.ts", 40);
+      api().openFileTab("s1", "packages/web/src/x.ts", 40, 58);
     });
 
     window.removeEventListener(SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT, listener);
@@ -69,5 +69,7 @@ describe("useViewerTabs のファイルタブ", () => {
     expect(tabs.map(t => t.type)).toEqual(["terminal", "file"]);
     const fileTab = tabs[1];
     expect(fileTab.type === "file" && fileTab.targetLine).toBe(40);
+    // 範囲で指定されたときは終了行も持つ (ハイライトを 1 行で切らない)
+    expect(fileTab.type === "file" && fileTab.targetEndLine).toBe(58);
   });
 });

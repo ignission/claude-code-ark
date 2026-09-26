@@ -88,7 +88,12 @@ export function useViewerTabs(
   }, []);
 
   const openFileTab = useCallback(
-    (sessionId: string, filePath: string, targetLine?: number | null) => {
+    (
+      sessionId: string,
+      filePath: string,
+      targetLine?: number | null,
+      targetEndLine?: number | null
+    ) => {
       // ファイルタブは左ペインの端末側にぶら下がる。会話モードのまま開くと
       // タブは増えるのに画面は何も変わらない (図のリンクから開くと必ずこれになる)
       // ので、ビューアを載せている側へ切り替える。端末から開いたときは既に
@@ -136,7 +141,7 @@ export function useViewerTabs(
         if (existing >= 0) {
           const tab = tabs[existing];
           if (tab.type === "file") {
-            tabs[existing] = { ...tab, targetLine };
+            tabs[existing] = { ...tab, targetLine, targetEndLine };
           }
           setActive(existing);
           return { ...prev, [sessionId]: tabs };
@@ -149,6 +154,7 @@ export function useViewerTabs(
           mimeType: "text/plain",
           size: 0,
           targetLine,
+          targetEndLine,
         });
         setActive(tabs.length - 1);
         return { ...prev, [sessionId]: tabs };
@@ -268,12 +274,13 @@ export function useViewerTabs(
       if (!session) return;
 
       if (type === "ark:open-file") {
-        const { path: filePath, line } = event.data;
+        const { path: filePath, line, endLine } = event.data;
         if (typeof filePath !== "string" || !filePath) return;
         openFileTab(
           selectedSessionId,
           filePath,
-          typeof line === "number" ? line : undefined
+          typeof line === "number" ? line : undefined,
+          typeof endLine === "number" ? endLine : undefined
         );
         // 絶対パスのHTMLファイルはiframeで直接表示するのでreadFile不要
         if (!/\.html?$/i.test(filePath) || !filePath.startsWith("/")) {
@@ -311,6 +318,10 @@ export function useViewerTabs(
             size: fileContent.size,
             targetLine:
               existingTab.type === "file" ? existingTab.targetLine : undefined,
+            targetEndLine:
+              existingTab.type === "file"
+                ? existingTab.targetEndLine
+                : undefined,
             error: fileContent.error,
           };
           updated[sessionId] = tabs;

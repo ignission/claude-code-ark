@@ -518,7 +518,7 @@ describe("handleDiagramOpenLinkMessage", () => {
       )
     ).toBe(true);
     expect(posted).toEqual([
-      { type: "ark:open-file", path: "src/foo.ts", line: 10 },
+      { type: "ark:open-file", path: "src/foo.ts", line: 10, endLine: 24 },
       { type: "ark:open-url", url: "https://example.com" },
     ]);
   });
