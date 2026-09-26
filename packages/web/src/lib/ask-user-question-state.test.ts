@@ -128,6 +128,20 @@ describe("hasResolvedAuqSince", () => {
     expect(hasResolvedAuqSince(events, AT)).toBe(true);
   });
 
+  it("直前の質問への回答では、続けて出た新しい質問のカードを閉じない", () => {
+    // 前の質問に答えた 1 秒後に次の質問の hook が届く。前の回答は at より前
+    const events = parseJsonlEvents(
+      jsonl(
+        {
+          ...auqToolUseLine("t1", FRUIT_INPUT),
+          timestamp: "2026-06-10T11:59:50.000Z",
+        },
+        { ...auqResultLine("t1"), timestamp: "2026-06-10T11:59:59.000Z" }
+      )
+    );
+    expect(hasResolvedAuqSince(events, AT)).toBe(false);
+  });
+
   it("at より十分前の解決イベントしか無ければ false (過去の別質問)", () => {
     const events = parseJsonlEvents(
       jsonl(...resolvedAuqLines("t1", longBefore))
