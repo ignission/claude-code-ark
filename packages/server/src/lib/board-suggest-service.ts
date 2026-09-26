@@ -49,10 +49,15 @@ export interface BoardSuggestDeps {
   threshold(): number;
   /** worktree の realpath。解決できなければ null */
   resolveWorktreeReal(worktreePath: string): string | null;
-  /** 書いた doc をセッションのボードで開く (readDiagram の検証込み) */
+  /**
+   * 書いた doc をセッションのボードで開く (readDiagram の検証込み)。
+   * `shouldAbort` は読み込み後・emit 直前に評価し、true なら開かない
+   * (読んでいる間に会話が進んだ古い判定で、いま見ているボードを差し替えないため)
+   */
   openDiagram(
     sessionId: string,
-    relPath: string
+    relPath: string,
+    shouldAbort: () => boolean
   ): Promise<{ ok: boolean; error?: string }>;
   notify(event: BoardSuggestEvent): void;
   now?(): number;
@@ -216,10 +221,12 @@ export class BoardSuggestService {
     } finally {
       await fd.close();
     }
-    // 書いている間に会話が進んでいたら、開かず知らせない (ファイルは残るが害はない)
+    // 書いている間に会話が進んでいたら、開かず知らせない (ファイルは残るが害はない)。
+    // open の中でも読み込み後に同じ判定を評価させる
     if (stale()) return;
-    const opened = await this.deps.openDiagram(session.id, relPath);
+    const opened = await this.deps.openDiagram(session.id, relPath, stale);
     if (!opened.ok) {
+      if (stale()) return;
       this.log(
         `${session.id}: 書いた doc を開けない: ${opened.error ?? "unknown"}`
       );

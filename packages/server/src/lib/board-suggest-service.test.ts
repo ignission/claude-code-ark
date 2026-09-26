@@ -100,8 +100,11 @@ describe("BoardSuggestService", () => {
     await push(endTurnLine("## 見出し\n\n本文です。"), () => events.length > 0);
     expect(deps.decide).toHaveBeenCalledWith("## 見出し\n\n本文です。");
     expect(deps.openDiagram).toHaveBeenCalledTimes(1);
-    const [, relPath] = (deps.openDiagram as ReturnType<typeof vi.fn>).mock
-      .calls[0];
+    const [, relPath, shouldAbort] = (
+      deps.openDiagram as ReturnType<typeof vi.fn>
+    ).mock.calls[0];
+    expect(typeof shouldAbort).toBe("function");
+    expect(shouldAbort()).toBe(false);
     expect(relPath).toMatch(
       /^\.claude\/diagrams\/_auto\/s1\/\d{8}-\d{6}\.diagram\.html$/
     );
@@ -172,6 +175,29 @@ describe("BoardSuggestService", () => {
     resolveDecide?.({ board: 0.9, form: "doc", figure: 0, cost: 0 });
     await new Promise(r => setTimeout(r, 30));
     expect(deps.openDiagram).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+  });
+
+  it("ボードを開く読み込みの間に会話が進んだら、open 側の判定で開かず、知らせない", async () => {
+    const { deps, events, push, listener } = setup(
+      { board: 0.9, form: "doc", figure: 0, cost: 0 },
+      {
+        openDiagram: vi.fn(async (_sid, _rel, shouldAbort) => {
+          // readDiagram 相当の待ちの間にユーザーが発話した
+          listener()?.onLine({
+            raw: JSON.stringify({ type: "user", message: { content: "次" } }),
+          });
+          return shouldAbort()
+            ? { ok: false, error: "会話が進んだので開かない" }
+            : { ok: true };
+        }),
+      }
+    );
+    await push(
+      endTurnLine("長い説明"),
+      () => (deps.openDiagram as ReturnType<typeof vi.fn>).mock.calls.length > 0
+    );
+    await new Promise(r => setTimeout(r, 30));
     expect(events).toEqual([]);
   });
 

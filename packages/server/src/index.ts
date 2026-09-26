@@ -615,11 +615,16 @@ export async function startServer(
   const openDiagramForSession = async (
     sessionId: string,
     worktreeReal: string,
-    relPath: string
+    relPath: string,
+    /** readDiagram の後・emit の直前に評価し、true なら開かない (ボード提案の古い判定用) */
+    shouldAbort?: () => boolean
   ): Promise<{ ok: true } | { ok: false; error: string }> => {
     const result = await readDiagram(worktreeReal, relPath);
     if (!result.ok) {
       return { ok: false, error: result.error };
+    }
+    if (shouldAbort?.()) {
+      return { ok: false, error: "会話が進んだので開かない" };
     }
     io.emit("diagram:open", { sessionId, relPath });
     // 「セッションで最後に開いた図」を永続化する。リロード後も
@@ -1456,12 +1461,17 @@ export async function startServer(
           const resolved = resolveManagedWorktreeDetailed(worktreePath);
           return resolved.ok ? resolved.path : null;
         },
-        openDiagram: async (sessionId, relPath) => {
+        openDiagram: async (sessionId, relPath, shouldAbort) => {
           const session = sessionOrchestrator.getSession(sessionId);
           if (!session) return { ok: false, error: "セッションが無い" };
           const resolved = resolveManagedWorktreeDetailed(session.worktreePath);
           if (!resolved.ok) return { ok: false, error: resolved.reason };
-          return openDiagramForSession(sessionId, resolved.path, relPath);
+          return openDiagramForSession(
+            sessionId,
+            resolved.path,
+            relPath,
+            shouldAbort
+          );
         },
         notify: event =>
           io
