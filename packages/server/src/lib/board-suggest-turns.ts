@@ -7,6 +7,11 @@
  * すべて溜め、end_turn が来た時点で連結して 1 つの本文として返す。
  * この区切り方は Jev の検証スクリプトと同じにしてある (数値をそのまま持ち込むため)。
  *
+ * 1 つの返答は content block ごとに別の行で書かれ、どの行にも返答全体の
+ * stop_reason が付く (thinking の行と本文の行が、どちらも end_turn を持つ)。
+ * thinking の行で終えると、最後の本文が次のターン扱いになって判定から漏れる。
+ * そのため end_turn の行のうち、本文 (text block) を含む行でだけターンを終える。
+ *
  * JSONL の中身をパースするのは type / stop_reason / content block の種別だけで、
  * 画面テキストの解釈は一切しない (CLAUDE.md の情報源分離の原則)。
  */
@@ -72,6 +77,7 @@ export class TurnAssembler {
     }
     if (record.type !== "assistant" || !Array.isArray(content)) return null;
 
+    let hasText = false;
     for (const block of content as ContentBlock[]) {
       if (
         block?.type === "text" &&
@@ -79,9 +85,10 @@ export class TurnAssembler {
         block.text.trim()
       ) {
         this.buffer.push(block.text);
+        hasText = true;
       }
     }
-    if (record.message?.stop_reason !== "end_turn") return null;
+    if (record.message?.stop_reason !== "end_turn" || !hasText) return null;
 
     const text = this.buffer.join("\n\n").trim();
     this.buffer = [];

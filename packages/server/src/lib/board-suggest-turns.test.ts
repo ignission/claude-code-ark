@@ -35,6 +35,20 @@ describe("TurnAssembler", () => {
     expect(turn?.text).toBe("まず確認します。\n\n結論です。");
   });
 
+  it("thinking と本文が別の行で end_turn を持つとき、本文の行でターンを終える", () => {
+    // 対話版 claude は 1 つの返答を content block ごとに別の行で書き、どの行にも
+    // 返答全体の stop_reason が付く。thinking の行で終えると最後の本文が判定から漏れる
+    const a = new TurnAssembler();
+    a.push(user("調べて"));
+    a.push(assistant([{ type: "text", text: "確認します。" }], "tool_use"));
+    a.push(user([{ type: "tool_result", content: "ok" }]));
+    expect(a.push(assistant([{ type: "thinking" }], "end_turn"))).toBeNull();
+    const turn = a.push(
+      assistant([{ type: "text", text: "結論です。" }], "end_turn")
+    );
+    expect(turn?.text).toBe("確認します。\n\n結論です。");
+  });
+
   it("ユーザーの新しい発話で溜めた本文を捨てる", () => {
     const a = new TurnAssembler();
     a.push(assistant([{ type: "text", text: "途中" }], "tool_use"));
