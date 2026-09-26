@@ -16,6 +16,13 @@ function loadLayer() {
     LINK_LAYER.lastIndexOf("</script>")
   );
   const listeners: Record<string, (event: unknown) => void> = {};
+  let selection: { isCollapsed: boolean; toString: () => string } = {
+    isCollapsed: true,
+    toString: () => "",
+  };
+  const selectText = (text: string) => {
+    selection = { isCollapsed: false, toString: () => text };
+  };
   const sent: unknown[] = [];
   const port = {
     postMessage: (message: unknown) => sent.push(message),
@@ -32,6 +39,7 @@ function loadLayer() {
       addEventListener: (type: string, fn: (event: unknown) => void) => {
         listeners[`window:${type}`] = fn;
       },
+      getSelection: () => selection,
     },
   });
   const init = () =>
@@ -73,7 +81,7 @@ function loadLayer() {
     });
     return prevented;
   };
-  return { init, click, aux, sent };
+  return { init, click, aux, selectText, sent };
 }
 
 describe("injectDiagramLinkLayer", () => {
@@ -166,6 +174,14 @@ describe("リンク層のクリック処理", () => {
     const layer = loadLayer();
     layer.init();
     expect(layer.aux("src/foo.ts", 2)).toBe(false);
+    expect(layer.sent).toEqual([]);
+  });
+
+  it("本文を選択したままのクリックでは開かない (遷移は止める)", () => {
+    const layer = loadLayer();
+    layer.init();
+    layer.selectText("並び替えは SessionSectionList の");
+    expect(layer.click("packages/web/src/x.ts#L10")).toBe(true);
     expect(layer.sent).toEqual([]);
   });
 

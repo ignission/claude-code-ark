@@ -473,6 +473,16 @@ describe("parseDiagramLinkHref", () => {
     });
   });
 
+  it("符号化されたパスは戻してから扱い、%2e%2e も traversal として弾く", () => {
+    expect(parseDiagramLinkHref("src/my%20file.ts#L10")).toMatchObject({
+      kind: "file",
+      path: "src/my file.ts",
+      line: 10,
+    });
+    expect(parseDiagramLinkHref("src/%2e%2e/%2e%2e/etc/passwd")).toBeNull();
+    expect(parseDiagramLinkHref("src/%zz.ts")).toBeNull();
+  });
+
   it("http(s) は URL として返す", () => {
     expect(parseDiagramLinkHref("https://example.com/a?b=1")).toEqual({
       kind: "url",

@@ -292,7 +292,15 @@ export function parseDiagramLinkHref(href: string): DiagramLinkTarget | null {
   const hashIndex = trimmed.indexOf("#");
   const rawPath = hashIndex >= 0 ? trimmed.slice(0, hashIndex) : trimmed;
   const fragment = hashIndex >= 0 ? trimmed.slice(hashIndex + 1) : "";
-  const path = rawPath.replace(/^\.\//, "");
+  // href は URL なので `my%20file.ts` のように符号化されて書かれうる。
+  // ファイルシステムに渡す前に戻し、traversal の判定は戻した後の値で行う
+  // (`%2e%2e` で `..` を隠せないようにする)
+  let path: string;
+  try {
+    path = decodeURIComponent(rawPath.replace(/^\.\//, ""));
+  } catch {
+    return null; // 壊れたエスケープ
+  }
   if (!path || path.startsWith("/") || path.split("/").includes("..")) {
     return null;
   }

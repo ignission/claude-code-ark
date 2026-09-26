@@ -24,6 +24,12 @@ export const LINK_LAYER = `<script id="${DIAGRAM_LINK_LAYER_MARKER}" data-ark-ha
     var m=/^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(href);
     return m?m[1].toLowerCase():"";
   }
+  function hasTextSelection(){
+    try{
+      var sel=window.getSelection?window.getSelection():null;
+      return !!(sel&&sel.isCollapsed===false&&String(sel).length>0);
+    }catch(e){return false;}
+  }
   function onActivate(event){
     var target=event.target&&event.target.closest?event.target.closest("a[href]"):null;
     if(!target)return;
@@ -31,6 +37,10 @@ export const LINK_LAYER = `<script id="${DIAGRAM_LINK_LAYER_MARKER}" data-ark-ha
     if(href==null)return;
     if(href.charAt(0)==="#")return;
     event.preventDefault();
+    // doc の本文は選択してコメント・編集する。リンクの上で選択を終えたクリックで
+    // 飛んでしまうと選択が使えないので、選択が残っているときは開かない
+    // (遷移だけは止める)
+    if(hasTextSelection())return;
     var scheme=schemeOf(href);
     if(scheme&&scheme!=="http"&&scheme!=="https")return;
     if(!port)return;
