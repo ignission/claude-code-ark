@@ -386,7 +386,12 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
     expect(
       container.querySelector('[data-testid="board-suggest-notice"]')
     ).toBeNull();
-    // doc の通知にはボタンが無い
+  });
+
+  it("doc の通知にも「図にする」を出し、押したときだけ作図依頼を送る", () => {
+    // 文書としても読めるが、時系列や関係など図にできる部分もある返答がある。
+    // 機械変換では図にならないので、作図は人間が押したときだけ Claude に頼む
+    const { container, emitServer, onSendMessage } = renderChat();
     emitServer("session:board-suggest", {
       sessionId: "s1",
       at: 5,
@@ -395,7 +400,15 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
       relPath: ".claude/diagrams/_auto/s1/y.diagram.html",
       title: "題",
     });
-    expect(container.textContent).not.toContain("図にする");
+    const notice = () =>
+      container.querySelector('[data-testid="board-suggest-notice"]');
+    expect(notice()?.textContent).toContain("ボードに出しました");
+    expect(onSendMessage).not.toHaveBeenCalled();
+    act(() => {
+      findButtonByText(container, "図にする").click();
+    });
+    expect(onSendMessage).toHaveBeenCalledWith(BOARD_FIGURE_REQUEST_MESSAGE);
+    expect(notice()).toBeNull();
   });
 
   it("質問カードが変わるたびに、そのカードの中身 (無ければ null) でonActiveAuqChangeを呼ぶ", () => {

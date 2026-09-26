@@ -1016,8 +1016,9 @@ export interface BoardSuggestEvent {
   probability: number;
   /**
    * doc: 返答を機械変換して開いた
-   * figure: 作図が要ると判定した。クライアントが「図にする」ボタンを出し、
-   *   人間が押したときだけ BOARD_FIGURE_REQUEST_MESSAGE を送る
+   * figure: 作図が要ると判定した
+   * どちらでもクライアントは「図にする」ボタンを出し、人間が押したときだけ
+   * BOARD_FIGURE_REQUEST_MESSAGE を送る
    */
   form: "doc" | "figure";
   /** doc のとき、開いたファイルの worktree 相対パス。figure は null */

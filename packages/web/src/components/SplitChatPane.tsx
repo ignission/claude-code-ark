@@ -868,8 +868,11 @@ export function hasUserTurnSince(
 
 /**
  * ボード提案の通知。Jev の判定で Ark が返答をボードへ出した (doc) か、
- * Claude に作図を頼んだ (figure) ことを 1 行で知らせる。ボードが開いたこと
- * 自体が本体の合図で、これは「なぜ開いたか」を添えるだけ
+ * 作図が要ると判定した (figure) ことを 1 行で知らせる。ボードが開いたこと
+ * 自体が本体の合図で、これは「なぜ開いたか」を添えるだけ。
+ *
+ * どちらの判定でも「図にする」を出す。doc の機械変換は文章を写すだけで図にならず、
+ * 文書として読める返答にも時系列や関係など図にできる部分があるため
  */
 function BoardSuggestNotice({
   event,
@@ -878,13 +881,13 @@ function BoardSuggestNotice({
 }: {
   event: BoardSuggestEvent;
   onDismiss: () => void;
-  /** figure のとき「図にする」で Claude に作図を頼む (人間が押したときだけ送る) */
+  /** 「図にする」で Claude に作図を頼む (人間が押したときだけ送る) */
   onRequestFigure: () => void;
 }) {
   const percent = Math.round(event.probability * 100);
   const body =
     event.form === "doc"
-      ? `この説明はボードのほうが読みやすいと判定 (${percent}%)。文書にしてボードに出しました`
+      ? `この説明はボードのほうが読みやすいと判定 (${percent}%)。文書にしてボードに出しました。図にもできます`
       : `この説明は図のほうが分かりやすいと判定 (${percent}%)。Claude に作図を頼めます`;
   return (
     <div
@@ -899,15 +902,13 @@ function BoardSuggestNotice({
           </span>
         )}
       </span>
-      {event.form === "figure" && (
-        <button
-          type="button"
-          onClick={onRequestFigure}
-          className="shrink-0 rounded-sm border border-border bg-background px-2 py-0.5 text-xs text-foreground transition-colors hover:bg-muted"
-        >
-          図にする
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={onRequestFigure}
+        className="shrink-0 rounded-sm border border-border bg-background px-2 py-0.5 text-xs text-foreground transition-colors hover:bg-muted"
+      >
+        図にする
+      </button>
       <button
         type="button"
         onClick={onDismiss}

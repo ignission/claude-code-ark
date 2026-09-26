@@ -179,6 +179,9 @@ Jev に判定させる (`board-suggest-service.ts` / `board-suggest-turns.ts` / 
   報告する) ので自動では送らない。検証した 197 ターンで figure が勝った例は 0
 - どちらも `session:board-suggest` をセッションの room に出し、チャットの入力欄の上に
   1 行の通知を出す (次の送信・閉じるで消える)
+- 通知の「図にする」は **doc でも figure でも出す**。doc の機械変換は文章を写すだけで
+  図にならない一方、文書として読める返答にも時系列や関係など図にできる部分があるため。
+  押したときの動きは figure と同じ
 - 判定中に会話が進んだ (新しい発話・/clear) か detach されたら、その判定の結果は捨てる
   (`TurnAssembler.generation`)。生成先は途中の symlink を lstat で拒否し、mkdir 後の
   realpath が worktree の中であることを確かめてから `O_EXCL | O_NOFOLLOW` で書く
@@ -242,7 +245,7 @@ task.md 規約・復唱・失敗の自動収集・セッション lifecycle を�
 | チャットビュー           | JSONL tail ベースの会話描画 + pending reconcile + AskUserQuestion カード + slash 補完 + busy/AWAITING 表示（PC は `SplitViewPane` の左ペイン、モバイルは `MobileSessionView`。どちらも🖥/💬トグルで ttyd 表示と切替） |
 | 音声モード（iPhone）   | 会話モードの1タップ操作から全画面の音声モードに入る。話した指示を2秒の取り消し猶予つきで送り、Claude がターンを終えた返答（JSONL の `stop_reason: "end_turn"`）を読み上げる。質問・権限確認は読み上げて画面での操作に回す。ブラウザ内蔵の音声認識・読み上げだけを使い、画面を点けて前面に出している間だけ動く |
 | セッションボード       | worktree の `.claude/diagrams/*.diagram.html`（意味モデル + HTML 投影）を表示する図解ペイン（右ペインタブ・PC のみ）。Claude が MCP ツール `board_open` で開き、ファイル更新を検知して自動再読込する。doc 型は本文を人間がその場で直接編集でき、変更をブロック単位で会話へ還流する。本文の `<a href="src/foo.ts#L10">` はファイルビューアで該当行を開く。変更レビュー向けに `sequence`（時間順のやり取り）と `call-tree`（呼び出し経路と差分量）の内蔵図種があり、モデルだけ書けば投影が出る（`diagram-static-builtin.ts`） |
-| ボード提案 (Jev)       | Claude の返答が終わるたびに Jev (TypeSafe の決定モデル、OpenRouter 経由) へ「チャットよりボードのほうが読みやすいか」を問い、閾値以上なら Ark が動く。doc 判定なら返答の markdown を doc 型ボードへ機械変換して開く (Claude のトークン 0)、figure 判定なら「図にする」ボタンを出す (押したときだけ Claude に頼む)。鍵は「ボード提案の設定」ダイアログから入れる (環境変数 / `~/.config/openrouter/api-key` でも可)。無ければ待機 |
+| ボード提案 (Jev)       | Claude の返答が終わるたびに Jev (TypeSafe の決定モデル、OpenRouter 経由) へ「チャットよりボードのほうが読みやすいか」を問い、閾値以上なら Ark が動く。doc 判定なら返答の markdown を doc 型ボードへ機械変換して開く (Claude のトークン 0)、figure 判定なら「図にする」ボタンを出す (押したときだけ Claude に頼む。doc の通知にも同じボタンを出す)。鍵は「ボード提案の設定」ダイアログから入れる (環境変数 / `~/.config/openrouter/api-key` でも可)。無ければ待機 |
 | Webターミナル          | ttyd iframeによるフルターミナル体験（PC は左ペインの既定、モバイルは🖥/💬トグルでチャットビューと切替） |
 | マルチペインビュー     | 複数セッションの同時表示（1列 / 2x2グリッド切り替え）                       |
 | モバイル対応           | セッション一覧/詳細の画面遷移、Quick Keys、スクロールモード、キーボード対応 |
