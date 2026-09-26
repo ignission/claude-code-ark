@@ -1110,12 +1110,13 @@ describe("injectDiagramCommentLayer", () => {
       return { buildAuthorBadge, wrap, inserted };
     };
 
-    it("data-ark-author を読み、human は強調・claude は控えめなバッジを DOM API で生成する", () => {
+    it("data-ark-author を読み、human のバッジだけを DOM API で生成する", () => {
       const injected = injectDiagramCommentLayer(minimalDoc);
 
       expect(injected).toContain('var AUTHOR_ATTRIBUTE="data-ark-author"');
       expect(injected).toContain('human:"人間"');
-      expect(injected).toContain('claude:"Claude"');
+      // Claude の印はほぼ全ブロックに付いて本文より目立つので廃止した
+      expect(injected).not.toContain('claude:"Claude"');
       expect(injected).toContain("anchor.getAttribute(AUTHOR_ATTRIBUTE)");
       expect(injected).toContain(
         'element("span",AUTHOR_LABELS[author],"ark-author-badge")'
@@ -1132,12 +1133,11 @@ describe("injectDiagramCommentLayer", () => {
       // バッジの中に入った状態で打った文字がバッジごと保存時に消える（I-1）。
       expect(injected).toContain('badge.contentEditable="false"');
       // tooltip は著者だけを示す（#463）。author 属性は人間の決定の証拠として
-      // 扱わない規約になった（Claude が人間の決定を転記する場合もある）ので、
-      // 「人間の決定ではない」という断定はしない。
-      expect(injected).toContain("Claude（エージェント）が書いた本文");
+      // 扱わない規約なので、「人間の決定ではない」という断定はしない。
+      expect(injected).toContain("人間が手を入れた本文");
       expect(injected).not.toContain("人間の決定ではない");
-      expect(injected).toContain(
-        ".ark-author-badge[data-author=human]{border-color:#2563eb;background:#dbeafe;color:#1d4ed8}"
+      expect(injected).toMatch(
+        /\.ark-author-badge\{[^}]*border:1px solid #2563eb;[^}]*background:#dbeafe;color:#1d4ed8/u
       );
       expect(injected).toMatch(/\.ark-author-badge\{[^}]*user-select:none/u);
     });
@@ -1157,7 +1157,7 @@ describe("injectDiagramCommentLayer", () => {
     it("thead/tbody/tfoot は最寄りの table の直前へ挿入し、table の子にしない", () => {
       const { buildAuthorBadge, wrap, inserted } = runBadgeBuilder();
       const tableHead = wrap(node("THEAD", { "data-ark-author": "human" }));
-      const tableBody = wrap(node("TBODY", { "data-ark-author": "claude" }));
+      const tableBody = wrap(node("TBODY", { "data-ark-author": "human" }));
       const tableFoot = wrap(node("TFOOT", { "data-ark-author": "human" }));
       const table = wrap(node("TABLE", {}, [tableHead, tableBody, tableFoot]));
       const container = wrap(node("DIV", {}, [table]));
@@ -1178,12 +1178,10 @@ describe("injectDiagramCommentLayer", () => {
       const { buildAuthorBadge, wrap, inserted } = runBadgeBuilder();
       const cell = wrap(node("TD"));
       const row = wrap(node("TR", { "data-ark-author": "human" }, [cell]));
-      const table = wrap(node("TABLE", { "data-ark-author": "claude" }));
+      const table = wrap(node("TABLE", { "data-ark-author": "human" }));
       const container = wrap(node("DIV", {}, [table]));
       const text = wrap(node("#text"));
-      const paragraph = wrap(
-        node("P", { "data-ark-author": "claude" }, [text])
-      );
+      const paragraph = wrap(node("P", { "data-ark-author": "human" }, [text]));
       const unmarked = wrap(node("P"));
       const unknown = wrap(node("P", { "data-ark-author": "agent" }));
 
@@ -1197,10 +1195,18 @@ describe("injectDiagramCommentLayer", () => {
       expect(inserted[0]?.badge.attributes["data-author"]).toBe("human");
       expect(inserted[1]?.parent).toBe(container);
       expect(inserted[1]?.before).toBe(table);
-      expect(inserted[1]?.badge.textContent).toBe("Claude");
       expect(inserted[2]?.parent).toBe(paragraph);
       expect(inserted[2]?.before).toBe(text);
       expect(inserted[2]?.badge.attributes["data-ark-harness-ui"]).toBe("1");
+    });
+
+    it("既存文書に残る claude の印はバッジを出さない（受理はする）", () => {
+      const { buildAuthorBadge, wrap, inserted } = runBadgeBuilder();
+      const legacy = wrap(node("P", { "data-ark-author": "claude" }));
+
+      buildAuthorBadge(legacy);
+
+      expect(inserted).toHaveLength(0);
     });
 
     it("再構築しても本文に元からある ark-author-badge は残す", () => {
