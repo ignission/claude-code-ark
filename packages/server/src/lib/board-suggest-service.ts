@@ -216,6 +216,8 @@ export class BoardSuggestService {
     } finally {
       await fd.close();
     }
+    // 書いている間に会話が進んでいたら、開かず知らせない (ファイルは残るが害はない)
+    if (stale()) return;
     const opened = await this.deps.openDiagram(session.id, relPath);
     if (!opened.ok) {
       this.log(
@@ -223,6 +225,7 @@ export class BoardSuggestService {
       );
       return;
     }
+    if (stale()) return;
     this.deps.notify({
       sessionId: session.id,
       at,

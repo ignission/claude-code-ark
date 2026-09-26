@@ -811,6 +811,29 @@ function ToolGroupCard({
  * 自由入力 (Type something 用 literal 送信)。
  * 画面の構造はパースしない: ユーザーが生テキストを読んでキーを選ぶ。
  */
+/** at 以降にユーザーの発話 (通常入力 / slash command / compact) が JSONL に出たか */
+export function hasUserTurnSince(
+  events: JsonlParsedEvent[],
+  at: number
+): boolean {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (
+      ev.kind !== "user-input" &&
+      ev.kind !== "slash-command" &&
+      ev.kind !== "compact-marker"
+    ) {
+      continue;
+    }
+    if (ev.isSidechain === true) continue;
+    // 時刻の無い行 (ローカル slash-command カード等) は「今」出たものとして扱う。
+    // 判定 (at) はサーバー時刻、JSONL の時刻は同じ機械の claude が書くので、
+    // 猶予は付けない (付けると、返答を引き出した直前の発話で自分を消してしまう)
+    return ev.timestamp === undefined || ev.timestamp > at;
+  }
+  return false;
+}
+
 /**
  * ボード提案の通知。Jev の判定で Ark が返答をボードへ出した (doc) か、
  * Claude に作図を頼んだ (figure) ことを 1 行で知らせる。ボードが開いたこと
@@ -1265,6 +1288,17 @@ export function SplitChatPane({
   useEffect(() => {
     setBoardSuggest(null);
   }, [session.id]);
+  // 会話が進んだら通知を捨てる。この画面の送信欄を通らない経路 (別クライアント・
+  // 端末・/clear) でも、JSONL に新しいユーザー発話が出るか履歴が空になれば消える
+  const prevEventCountRef = useRef(0);
+  useEffect(() => {
+    const emptied = prevEventCountRef.current > 0 && events.length === 0;
+    prevEventCountRef.current = events.length;
+    if (!boardSuggest) return;
+    if (emptied || hasUserTurnSince(events, boardSuggest.at)) {
+      setBoardSuggest(null);
+    }
+  }, [events, boardSuggest]);
 
   const activeAuq = hookAuq?.auq ?? null;
 
@@ -1459,6 +1493,7 @@ export function SplitChatPane({
     const prompt = buildVisualizeConversationPrompt();
     lastSubmittedRef.current = prompt;
     onSendMessage(prompt);
+    setBoardSuggest(null);
     setPending(prev => [
       ...prev,
       {

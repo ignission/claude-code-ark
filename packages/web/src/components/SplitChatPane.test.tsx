@@ -318,6 +318,56 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
     expect(notice()).toBeNull();
   });
 
+  it("この画面を通らずに会話が進んでも (JSONL に新しい発話 / 履歴が空) 通知は消える", () => {
+    const { container, emitServer } = renderChat();
+    const notice = () =>
+      container.querySelector('[data-testid="board-suggest-notice"]');
+    const at = Date.parse("2026-09-26T03:00:00Z");
+    const suggest = (n: number) =>
+      emitServer("session:board-suggest", {
+        sessionId: "s1",
+        at: at + n,
+        probability: 0.9,
+        form: "doc",
+        relPath: ".claude/diagrams/_auto/s1/z.diagram.html",
+        title: "題",
+      });
+
+    suggest(0);
+    expect(notice()).not.toBeNull();
+    // 古い発話 (通知より前) では消えない
+    emitServer("session:jsonl-line", {
+      sessionId: "s1",
+      line: line({
+        type: "user",
+        uuid: "u-old",
+        timestamp: new Date(at - 60_000).toISOString(),
+        message: { role: "user", content: "前の指示" },
+      }),
+    });
+    expect(notice()).not.toBeNull();
+    // 端末から打った新しい発話が JSONL に出たら消える
+    emitServer("session:jsonl-line", {
+      sessionId: "s1",
+      line: line({
+        type: "user",
+        uuid: "u-new",
+        timestamp: new Date(at + 1000).toISOString(),
+        message: { role: "user", content: "端末からの指示" },
+      }),
+    });
+    expect(notice()).toBeNull();
+
+    // /clear で履歴が空になっても消える (履歴が有った状態から空になったとき)
+    suggest(5000);
+    expect(notice()).not.toBeNull();
+    emitServer("session:jsonl-snapshot", { sessionId: "s1", lines: [] });
+    expect(notice()).toBeNull();
+    // 初回 (履歴がまだ無い) の通知は空の履歴で消さない
+    suggest(6000);
+    expect(notice()).not.toBeNull();
+  });
+
   it("figure の通知の「図にする」を押したときだけ、作図依頼を Claude に送る", () => {
     const { container, emitServer, onSendMessage } = renderChat();
     emitServer("session:board-suggest", {

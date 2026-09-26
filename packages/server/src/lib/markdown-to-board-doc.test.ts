@@ -86,7 +86,10 @@ describe("markdownToBoardDoc", () => {
       ].sort()
     );
     const rows = model.nodes.filter(n => n.kind === "table-row").map(n => n.id);
-    expect(rows).toEqual(["b3-r1", "b3-r2", "b3-r3"]);
+    expect(rows).toEqual(["b3-h", "b3-r1", "b3-r2", "b3-r3"]);
+    expect(model.nodes.find(n => n.id === "b3-h")?.label).toBe(
+      "案 見た目 向く場面"
+    );
     const ids = model.nodes.map(n => n.id);
     expect(new Set(ids).size).toBe(ids.length);
   });

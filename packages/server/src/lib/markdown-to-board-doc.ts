@@ -259,9 +259,12 @@ function renderBlock(b: Builder, token: Token): void {
     case "table": {
       const table = token as Tokens.Table;
       const id = nextId(b);
-      const header = table.header
-        .map(cell => `<th>${renderInline(cell.tokens).html}</th>`)
-        .join("");
+      const headerCells = table.header.map(cell => renderInline(cell.tokens));
+      const header = headerCells.map(c => `<th>${c.html}</th>`).join("");
+      // 見出し行にも anchor を付ける (無いと本文行だけ編集でき、見出しが読み取り専用になる)
+      const headerId = `${id}-h`;
+      const headerText = headerCells.map(c => c.text).join(" ");
+      addNode(b, headerId, "table-row", headerText);
       const rows: string[] = [];
       const rowTexts: string[] = [];
       table.rows.forEach((row, index) => {
@@ -274,12 +277,9 @@ function renderBlock(b: Builder, token: Token): void {
         );
         rowTexts.push(rowText);
       });
-      const headerText = table.header
-        .map(cell => renderInline(cell.tokens).text)
-        .join(" ");
       addNode(b, id, "table", `${headerText} ${rowTexts.join(" ")}`);
       b.blocks.push(
-        `<table data-ark-id="${id}" ${AUTHOR_ATTR}><thead><tr>${header}</tr></thead><tbody>${rows.join("")}</tbody></table>`
+        `<table data-ark-id="${id}" ${AUTHOR_ATTR}><thead><tr data-ark-id="${headerId}" ${AUTHOR_ATTR}>${header}</tr></thead><tbody>${rows.join("")}</tbody></table>`
       );
       return;
     }
