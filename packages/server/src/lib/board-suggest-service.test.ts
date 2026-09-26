@@ -7,6 +7,7 @@ import {
   type BoardSuggestDeps,
   BoardSuggestService,
   ensureContainedDir,
+  writeFileConfined,
 } from "./board-suggest-service.js";
 import type { BoardDecision } from "./jev-client.js";
 
@@ -86,6 +87,38 @@ describe("ensureContainedDir", () => {
     // 途中の要素がファイルなら拒否する
     fs.writeFileSync(path.join(worktree, "file"), "");
     expect(await ensureContainedDir(worktree, "file/x")).toBeNull();
+  });
+});
+
+describe("writeFileConfined", () => {
+  it("親が検証後に外向きの symlink へ差し替えられていたら、中身を書かずに消す", async () => {
+    const worktree = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "ark-confine-"))
+    );
+    const outside = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "ark-confine-out-"))
+    );
+    tempDirs.push(worktree, outside);
+    const dir = await ensureContainedDir(worktree, "a/b");
+    expect(dir).not.toBeNull();
+    // ensureContainedDir の後で b を外向きの symlink に差し替える (TOCTOU)
+    fs.rmdirSync(path.join(worktree, "a", "b"));
+    fs.symlinkSync(outside, path.join(worktree, "a", "b"));
+
+    const ok = await writeFileConfined(
+      path.join(worktree, "a", "b", "x.html"),
+      "secret"
+    );
+    expect(ok).toBe(false);
+    expect(fs.readdirSync(outside)).toEqual([]);
+
+    // 差し替えが無ければ書ける。同じ名前は二度作らない
+    fs.unlinkSync(path.join(worktree, "a", "b"));
+    fs.mkdirSync(path.join(worktree, "a", "b"));
+    const target = path.join(worktree, "a", "b", "y.html");
+    expect(await writeFileConfined(target, "body")).toBe(true);
+    expect(fs.readFileSync(target, "utf-8")).toBe("body");
+    await expect(writeFileConfined(target, "again")).rejects.toThrow(/EEXIST/);
   });
 });
 

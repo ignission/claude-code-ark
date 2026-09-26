@@ -205,21 +205,13 @@ export class BoardSuggestService {
       return;
     }
     if (stale()) return;
-    // 既存ファイルは決して上書きしない (コメント sidecar が relPath に紐づくため)。
-    // O_NOFOLLOW で最後の要素の symlink も追わない
     const absPath = path.join(dirReal, path.posix.basename(relPath));
-    const fd = await fs.promises.open(
-      absPath,
-      fs.constants.O_WRONLY |
-        fs.constants.O_CREAT |
-        fs.constants.O_EXCL |
-        fs.constants.O_NOFOLLOW,
-      0o644
-    );
-    try {
-      await fd.writeFile(doc.html, "utf-8");
-    } finally {
-      await fd.close();
+    const written = await writeFileConfined(absPath, doc.html);
+    if (!written) {
+      this.log(
+        `${session.id}: ${relPath} の実体が worktree の外に作られたので書かない`
+      );
+      return;
     }
     // 書いている間に会話が進んでいたら、開かず知らせない (ファイルは残るが害はない)。
     // open の中でも読み込み後に同じ判定を評価させる
@@ -269,4 +261,49 @@ export async function ensureContainedDir(
   await fs.promises.mkdir(expected, { recursive: true });
   const real = await fs.promises.realpath(expected);
   return real === expected ? real : null;
+}
+
+/**
+ * 新規ファイルを作って書く。既存は上書きしない (O_EXCL)。
+ *
+ * 親ディレクトリは `ensureContainedDir` で確かめてあるが、その後に `_auto/<sid>` が
+ * worktree の外を指す symlink へ差し替えられると、O_NOFOLLOW は最後の要素しか守らない
+ * ので外に作られうる。そこで作った直後 (中身を書く前) に、握っている fd の inode が
+ * 期待どおりの worktree 内パスに在ることを path 側の realpath + stat で照合する。
+ * 一致しなければ空のまま消して false を返す。inode を握っているので、その後に
+ * symlink を差し替えられても書き先は動かない。
+ */
+export async function writeFileConfined(
+  absPath: string,
+  content: string
+): Promise<boolean> {
+  const fd = await fs.promises.open(
+    absPath,
+    fs.constants.O_WRONLY |
+      fs.constants.O_CREAT |
+      fs.constants.O_EXCL |
+      fs.constants.O_NOFOLLOW,
+    0o644
+  );
+  try {
+    const created = await fd.stat();
+    const real = await fs.promises.realpath(absPath).catch(() => null);
+    const atPath =
+      real === absPath ? await fs.promises.stat(real).catch(() => null) : null;
+    const confined =
+      atPath !== null &&
+      atPath.ino === created.ino &&
+      atPath.dev === created.dev;
+    if (!confined) {
+      await fd.close();
+      await fs.promises.unlink(absPath).catch(() => {});
+      return false;
+    }
+    await fd.writeFile(content, "utf-8");
+    await fd.close();
+    return true;
+  } catch (err) {
+    await fd.close().catch(() => {});
+    throw err;
+  }
 }
