@@ -38,6 +38,15 @@ describe("injectDiagramDocEditor", () => {
     expect(out).not.toMatch(/<meta[^>]+Content-Security-Policy/i);
   });
 
+  it("pre の中の code から inline code 用の装飾を戻す", () => {
+    // inline の code に薄い背景を当てた文書が pre を濃色にすると、pre の中の
+    // code にもその背景が乗って明るい文字が読めなくなる。ハーネスの既定値で戻す。
+    const out = injectDiagramDocEditor(page);
+    expect(out).toContain(
+      "pre code{padding:0;border-radius:0;background:none;color:inherit;font-size:inherit}"
+    );
+  });
+
   it("注入後のサイズが 48KiB 未満に収まる", () => {
     expect(
       Buffer.byteLength(injectDiagramDocEditor(page), "utf8")

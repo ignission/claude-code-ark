@@ -417,7 +417,12 @@ export const DOC_EDITOR_LAYER = `<script id="${DIAGRAM_DOC_EDITOR_MARKER}" data-
   function buildBar(){
     var style=document.createElement("style");
     style.setAttribute("data-ark-harness-ui","1");
-    style.textContent='#ark-doc-bar{display:none}#ark-doc-bar[data-visible="true"]{display:block}[data-ark-id][contenteditable="true"]:focus{outline:2px solid #38bdf8;outline-offset:2px}[data-ark-id][contenteditable="true"]:empty{min-height:1.2em}';
+    // 末尾の pre code は本文の可読性を守るための既定値。inline の code に薄い背景を
+    // 当てた文書で pre を濃色にすると、pre の中の code にもその背景が乗り、明るい
+    // 文字が明るい背景に重なってコードが読めなくなる（実際に起きた）。inline code の
+    // 装飾は pre の中では意味を持たないので、ここで一律に戻す。意図して pre の中の
+    // code を飾りたい文書は、より詳細度の高いセレクタ（pre > code.foo 等）で上書きする。
+    style.textContent='#ark-doc-bar{display:none}#ark-doc-bar[data-visible="true"]{display:block}[data-ark-id][contenteditable="true"]:focus{outline:2px solid #38bdf8;outline-offset:2px}[data-ark-id][contenteditable="true"]:empty{min-height:1.2em}pre code{padding:0;border-radius:0;background:none;color:inherit;font-size:inherit}';
     document.head.appendChild(style);
 
     bar=document.createElement("div");
