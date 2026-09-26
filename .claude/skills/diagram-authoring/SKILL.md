@@ -21,6 +21,8 @@ Ark が配信時に生成し、生成物はファイルへ焼き付かない（�
 | `flow` | 業務フロー・シナリオ・処理の分岐 | `step`（既定）/ `command` / `decision` / `policy` / `event` / `outcome` / `error` / `actor` / `note` |
 | `state` | 状態遷移 | `state`（既定）/ `initial` / `terminal-ok` / `terminal-cancel` / `note` |
 | `context-map` | コンテキストマップ（戦略設計） | `supporting`（既定）/ `core` / `generic` / `developed` / `external` / `note` |
+| `sequence` | 時間順のやり取り（誰が誰を呼ぶ、何を渡す） | 参加者の kind: `actor`（既定）/ `new` |
+| `call-tree` | 呼び出し経路と、その変更量 | `frame`（既定）/ `added` / `removed` |
 
 語彙にない kind を書くとその図種の既定スタイルになる。`flow` の出口は成功を
 `outcome`、失敗を `error` に分けると、色に頼らず読めるようになる。区間の枠
@@ -46,6 +48,61 @@ Ark が配信時に生成し、生成物はファイルへ焼き付かない（�
 </script>
 </body>
 </html>
+```
+
+### sequence と call-tree の語彙
+
+この 2 つは座標を持たない。**sequence は時間順、call-tree は入れ子**が意味そのもの
+なので、node を動かせる canvas には載せず、モデルの順序と親子から投影を組む
+（`ext.x` / `ext.y` と自動レイアウトは効かない）。
+
+**`sequence`**: node が参加者、**edge がメッセージで、配列の順序が時間順**。
+
+- `edge.label` にメッセージ（`postMessage(href)` のような呼び出しと渡す値）
+- `edge.ext.style` は `call`（既定・実線）/ `async`（破線）/ `return`（点線）
+- `edge.ext.source` にコードの在処（`packages/foo.ts#L33-L48`）。押すとその行が開く
+- 自分自身への edge（`from` と `to` が同じ）は自己メッセージとして描かれる
+
+```json
+{
+  "version": 1, "type": "sequence", "title": "リンクを押してから行が光るまで",
+  "nodes": [
+    { "id": "iframe", "label": "board iframe" },
+    { "id": "layer", "label": "link layer", "kind": "new" },
+    { "id": "parent", "label": "parent window" }
+  ],
+  "edges": [
+    { "id": "s1", "from": "iframe", "to": "layer", "label": "click a[href]" },
+    { "id": "s2", "from": "layer", "to": "layer", "label": "preventDefault()",
+      "ext": { "source": "packages/server/src/lib/diagram-link-layer.ts#L33-L48" } },
+    { "id": "s3", "from": "layer", "to": "parent", "label": "postMessage(href)",
+      "ext": { "style": "async" } }
+  ],
+  "groups": []
+}
+```
+
+**`call-tree`**: node がフレーム、**edge が親（`from`）から子（`to`）**。
+
+- `node.kind` は `frame`（既定）/ `added`（この変更で足した）/ `removed`（消えた）
+- `node.ext.source` にコードの在処、`node.ext.added` / `node.ext.removed` に差分量
+  （`git show --numstat` 等で**実際に数えた値**を書く。推測で書かない）
+- `node.ext.via` は `call` / `queue` / `callback` / `rpc`。直接の呼び出しでない
+  つながりだけ書く。`node.ext.note` は 1 行の補足
+- 差分量を 1 つでも書けば見出しに合計が出る。1 つも無ければフレーム数が出る
+
+```json
+{
+  "version": 1, "type": "call-tree", "title": "リンクを押す経路",
+  "nodes": [
+    { "id": "doc", "label": "board doc", "ext": { "note": "リンクを押す" } },
+    { "id": "layer", "label": "diagram-link-layer.ts", "kind": "added",
+      "ext": { "source": "packages/server/src/lib/diagram-link-layer.ts#L33-L48",
+               "added": 96, "removed": 0 } }
+  ],
+  "edges": [{ "id": "e1", "from": "doc", "to": "layer" }],
+  "groups": []
+}
 ```
 
 これで足りる図に手書きの投影を足さないこと。同じ意味を二度書くことになり、
@@ -136,19 +193,26 @@ model ではなく HTML の属性に置く（model に書き手を複製しな�
 1. **what / why** — 何を変えたか、なぜ変えたか (分かる範囲で)。3〜5 行
 2. **要件** — 利用者が言った言葉のまま、短い箇条書き。無ければ節ごと省く
 3. **設計** — 部品・データ・制御の流れの水準で、どう動くか。**図は 1 枚**だけ選ぶ:
-   - 時間軸で参加者がやり取りする (誰が誰を呼ぶ、非同期の受け渡し) なら `flow`
+   - 時間軸で参加者がやり取りする (誰が誰を呼ぶ、何を渡す) なら `sequence`
    - 分岐・再試行・状態遷移が肝なら `state`
    - データの形と、誰が読み書きするかの変更なら `er`
    - 境界や責務の移動なら `context-map`
-   図は `kind: "figure"` で置き、本文にキャプションを書く。主な判断とトレードオフ、
-   根拠のある代替案もここに書く。小さな変更で設計が自明なら節ごと省く
+   - どれでもない流れなら `flow`
+   図は別ファイルの図として作り、doc からは `kind: "figure"` のキャプションで参照
+   する。主な判断とトレードオフ、根拠のある代替案もここに書く。小さな変更で設計が
+   自明なら節ごと省く
 4. **実装** — 関数とファイルの水準で、コードがどう設計を実現しているか。
-   **エントリポイント** (ボタン、CLI コマンド、イベント) から読む順に並べ、
-   関数名・ファイル名はすべてリンクにする。仕組みや不変条件を担う数か所だけ
-   `kind: "code"` で抜粋し、残りはリンクで済ませる
+   **`call-tree` を 1 枚**作り、エントリポイント (ボタン、CLI コマンド、イベント)
+   を根にして呼び出し順に並べる。フレームごとに `source` と、`git show --numstat`
+   等で実際に数えた `added` / `removed` を書く。文章で経路をなぞり直さない。
+   仕組みや不変条件を担う数か所だけ `kind: "code"` で抜粋し、残りはリンクで済ませる
 5. 書き終えたら通読し、矛盾と裏の取れていない主張を消す
 
 小さな変更ほど短くする。節を省くことをためらわない。
+
+**文章で図をなぞり直さない。** 図に出ていることを本文で繰り返すと、読み手は同じ話を
+2 回読まされ、更新のたびに両方が食い違う。本文に書くのは、図に出ない判断・理由・
+トレードオフだけにする。
 
 ## ファイルの構造（手書き投影・`type` が無いとき）
 
