@@ -35,8 +35,9 @@ iframe（別ブラウジングコンテキスト）なので、アンマウン�
 
 **情報源分離の原則 (チャット UI v3 の核心)**: 会話内容は 100% JSONL transcript
 から取得する。tmux capture-pane は busy/AWAITING の existence チェック
-(`session:previews` の bridgeStatus) と、AUQ カードの「直前の画面」の
-**verbatim 表示** (`auq-screen-context.ts`。無解釈のスクリーンショット的添付)
+(`session:previews` の bridgeStatus) と、AUQ カードの「直前の画面」および
+作業中 (THINK / TOOL) の会話ビューに出す画面末尾 (`session:previews` の `liveTail`)
+の **verbatim 表示** (`auq-screen-context.ts`。無解釈のスクリーンショット的添付)
 のみに使い、**画面テキストから内容をパースすることは全面禁止**
 (過去 2 回の挑戦の断念原因)。
 
