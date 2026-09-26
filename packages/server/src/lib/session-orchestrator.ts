@@ -18,11 +18,11 @@ import type {
   SpecialKey,
 } from "@ark/shared";
 import { stripAnsi } from "./ansi.js";
+import { buildAuqScreenContext } from "./auq-screen-context.js";
 import type {
   BoardMcpServer,
   BoardSessionRegistry,
 } from "./board-mcp-server.js";
-import { buildAuqScreenContext } from "./auq-screen-context.js";
 import { analyzeBridgeStatus } from "./bridge-collector.js";
 import { cliSessionStatusReader } from "./cli-session-status.js";
 import { db } from "./database.js";

@@ -129,6 +129,8 @@ export interface MobileSessionViewProps extends MobileDiagramPaneProps {
   bridgeStatus?: BridgeSessionStatus;
   /** AWAITING 時の確認 UI 生テキスト（バナー表示用） */
   awaitingText?: string;
+  /** 作業中の画面末尾（会話ビューで動きを見せる） */
+  liveTail?: string;
   session: ManagedSession;
   worktree: Worktree | undefined;
   /** 主ラベルに使うリポジトリ名 (basename)。所属が分からなければ undefined */
@@ -176,6 +178,7 @@ export function MobileSessionView({
   isActive,
   bridgeStatus,
   awaitingText,
+  liveTail,
   session,
   worktree,
   repoName,
@@ -691,6 +694,7 @@ export function MobileSessionView({
           isActive={isActive}
           bridgeStatus={bridgeStatus}
           awaitingText={awaitingText}
+          liveTail={liveTail}
           onSendMessage={onSendMessage}
           onSendKey={onSendKey}
           onUploadFile={onUploadFile}

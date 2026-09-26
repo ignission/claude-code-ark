@@ -245,6 +245,7 @@ function socketState(session: ManagedSession): Record<string, unknown> {
     sessionAwaitingTexts: new Map([
       [session.id, "Dashboard から届く AWAITING テキスト"],
     ]),
+    sessionLiveTails: new Map([[session.id, "Dashboard から届く画面末尾"]]),
     gridSnapshots: new Map(),
     subscribeGrid: fn,
     unsubscribeGrid: fn,
@@ -337,6 +338,7 @@ describe("Dashboard の会話ビュー配線", () => {
       isActive: true,
       bridgeStatus: "AWAITING",
       awaitingText: "Dashboard から届く AWAITING テキスト",
+      liveTail: "Dashboard から届く画面末尾",
     });
   });
 });
