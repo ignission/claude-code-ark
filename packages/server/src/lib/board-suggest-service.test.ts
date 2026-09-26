@@ -139,7 +139,7 @@ describe("BoardSuggestService", () => {
     expect(typeof shouldAbort).toBe("function");
     expect(shouldAbort()).toBe(false);
     expect(relPath).toMatch(
-      /^\.claude\/diagrams\/_auto\/s1\/\d{8}-\d{6}\.diagram\.html$/
+      /^\.claude\/diagrams\/_auto\/s1\/\d{8}-\d{6}-\d{3}\.diagram\.html$/
     );
     expect(fs.existsSync(path.join(worktree, relPath))).toBe(true);
     expect(events).toEqual([
@@ -294,6 +294,25 @@ describe("BoardSuggestService", () => {
     fail = false;
     await push(endTurnLine("c"), () => logs.some(l => l.includes("回復")));
     expect(logs.some(l => l.includes("回復"))).toBe(true);
+  });
+
+  it("doc の書き出し失敗は Jev の失敗として数えず、毎回ログに残す", async () => {
+    const { logs, push } = setup(
+      { board: 0.9, form: "doc", figure: 0, cost: 0 },
+      {
+        openDiagram: async () => {
+          throw new Error("disk");
+        },
+      }
+    );
+    await push(endTurnLine("a"), () => logs.some(l => l.includes("disk")));
+    await push(
+      endTurnLine("b"),
+      () => logs.filter(l => l.includes("disk")).length >= 2
+    );
+    expect(logs.filter(l => l.includes("書き出しに失敗"))).toHaveLength(2);
+    expect(logs.some(l => l.includes("判定に失敗"))).toBe(false);
+    expect(logs.some(l => l.includes("回復"))).toBe(false);
   });
 
   it("detach で購読を解除し、以後の行を無視する", async () => {

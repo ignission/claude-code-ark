@@ -74,7 +74,8 @@ interface SessionState {
 function formatStamp(at: number): string {
   const d = new Date(at);
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  // 同じ秒に 2 ターン確定しても衝突しないようミリ秒まで入れる
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}-${String(d.getMilliseconds()).padStart(3, "0")}`;
 }
 
 export class BoardSuggestService {
@@ -142,8 +143,21 @@ export class BoardSuggestService {
     const stale = () =>
       this.sessions.get(session.id) !== state ||
       state.assembler.generation !== generation;
+    let decision: BoardDecision;
     try {
-      const decision = await this.deps.decide(text);
+      decision = await this.deps.decide(text);
+    } catch (err) {
+      // Jev の同じ失敗を毎ターン出さない (ファイル操作の失敗はここに混ぜない)
+      if (!state.failureReported) {
+        this.log(
+          `${session.id}: 判定に失敗 (以後同じ失敗は出さない): ${String(err)}`
+        );
+        state.failureReported = true;
+      }
+      state.inflight = false;
+      return;
+    }
+    try {
       if (state.failureReported) {
         this.log(`${session.id}: Jev が回復した`);
         state.failureReported = false;
@@ -163,13 +177,8 @@ export class BoardSuggestService {
         await this.openAsDoc(session, decision, text, stale);
       }
     } catch (err) {
-      // 同じ失敗を毎ターン出さない
-      if (!state.failureReported) {
-        this.log(
-          `${session.id}: 判定に失敗 (以後同じ失敗は出さない): ${String(err)}`
-        );
-        state.failureReported = true;
-      }
+      // doc の書き出し・open の失敗は毎回そのまま残す (判定の失敗とは別の事象)
+      this.log(`${session.id}: doc の書き出しに失敗: ${String(err)}`);
     } finally {
       state.inflight = false;
     }
