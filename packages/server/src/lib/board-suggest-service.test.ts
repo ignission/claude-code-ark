@@ -383,6 +383,40 @@ describe("BoardSuggestService", () => {
     expect(deps.decide).not.toHaveBeenCalled();
   });
 
+  it("確定を待っている間に会話が進んだら、次のターンの途中経過を判定しない", async () => {
+    const { deps, listener } = setup(
+      { board: 0.9, form: "doc", figure: 0, cost: 0 },
+      { turnSettleMs: 10 }
+    );
+    listener()?.onLine({ raw: endTurnLine("前の返答") });
+    // 確定前に次の発言と、次の返答の途中の本文が届く
+    listener()?.onLine({
+      raw: JSON.stringify({ type: "user", message: { content: "次" } }),
+    });
+    listener()?.onLine({
+      raw: JSON.stringify({
+        type: "assistant",
+        message: {
+          stop_reason: "tool_use",
+          content: [{ type: "text", text: "途中経過" }],
+        },
+      }),
+    });
+    await new Promise(r => setTimeout(r, 30));
+    expect(deps.decide).not.toHaveBeenCalled();
+    // 次の返答が終われば、途中経過も含めて 1 回判定する
+    listener()?.onLine({ raw: endTurnLine("次の結論") });
+    const deadline = Date.now() + 2000;
+    while (
+      (deps.decide as ReturnType<typeof vi.fn>).mock.calls.length === 0 &&
+      Date.now() < deadline
+    ) {
+      await new Promise(r => setTimeout(r, 5));
+    }
+    expect(deps.decide).toHaveBeenCalledTimes(1);
+    expect(deps.decide).toHaveBeenCalledWith("途中経過\n\n次の結論", "sk-test");
+  });
+
   it("確定を待っている間に detach されたら判定しない", async () => {
     const { deps, service, listener } = setup(
       { board: 0.9, form: "doc", figure: 0, cost: 0 },

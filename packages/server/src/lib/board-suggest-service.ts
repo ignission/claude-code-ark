@@ -128,9 +128,13 @@ export class BoardSuggestService {
             if (!assembler.push(line.raw)) return;
             // 返答の終わりの候補。続きの行が来なくなってから確定する
             if (state.settleTimer) clearTimeout(state.settleTimer);
+            const generation = assembler.generation;
             state.settleTimer = setTimeout(() => {
               state.settleTimer = null;
               if (this.sessions.get(session.id) !== state) return;
+              // 待つ間に会話が進んでいたら (新しい発話・/clear)、溜まっているのは
+              // 次のターンの途中経過なので取り出さない
+              if (assembler.generation !== generation) return;
               const turn = assembler.take();
               if (turn) void this.handleTurn(session, state, turn.text);
             }, this.turnSettleMs);
