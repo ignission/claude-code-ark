@@ -75,6 +75,54 @@ describe("parseJsonlEvents", () => {
     });
   });
 
+  it("origin.kind が human なら、本文が <task-notification> で始まっても発言のまま出す", () => {
+    // 人が通知の原文を貼り付けた場合
+    const events = parseJsonlEvents(
+      jsonl({
+        type: "user",
+        uuid: "h1",
+        origin: { kind: "human" },
+        message: {
+          role: "user",
+          content:
+            "<task-notification>\n<summary>貼った</summary>\n</task-notification>",
+        },
+      })
+    );
+    expect(events[0].kind).toBe("user-input");
+  });
+
+  it("通知の行の本文が複数の text block に分かれていても、1つの通知にまとめる", () => {
+    const events = parseJsonlEvents(
+      jsonl({
+        type: "user",
+        uuid: "n3",
+        origin: { kind: "task-notification" },
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "<task-notification>\n<status>failed</status>",
+            },
+            {
+              type: "text",
+              text: "<summary>ビルド失敗</summary>\n</task-notification>",
+            },
+          ],
+        },
+      })
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      id: "n3:note",
+      kind: "system-note",
+      source: "task-notification",
+      status: "failed",
+      summary: "ビルド失敗",
+    });
+  });
+
   it("isMeta の行 (スキルの読み込み文・自動再開など) もシステムの通知にし、先頭行を要約にする", () => {
     const events = parseJsonlEvents(
       jsonl(
@@ -110,7 +158,7 @@ describe("parseJsonlEvents", () => {
       summary: "Your usage limit has reset.",
     });
     expect(events[1]).toMatchObject({
-      id: "m2:note:0",
+      id: "m2:note",
       source: "meta",
       summary: "Base directory for this skill: /x",
     });
