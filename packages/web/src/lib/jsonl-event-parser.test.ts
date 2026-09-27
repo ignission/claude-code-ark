@@ -26,6 +26,96 @@ describe("parseJsonlEvents", () => {
     }
   });
 
+  it("バックグラウンド作業の完了通知は発言ではなくシステムの通知にし、状態と要約を取り出す", () => {
+    const text = [
+      "<task-notification>",
+      "<task-id>btzvgo5mk</task-id>",
+      "<status>completed</status>",
+      '<summary>Background command "VMでビルドする" completed (exit code 0)</summary>',
+      "</task-notification>",
+    ].join("\n");
+    const events = parseJsonlEvents(
+      jsonl({
+        type: "user",
+        uuid: "n1",
+        origin: { kind: "task-notification" },
+        message: { role: "user", content: text },
+      })
+    );
+    expect(events).toEqual([
+      {
+        id: "n1:note",
+        kind: "system-note",
+        source: "task-notification",
+        status: "completed",
+        summary: 'Background command "VMでビルドする" completed (exit code 0)',
+        text,
+        timestamp: undefined,
+        isSidechain: undefined,
+      },
+    ]);
+  });
+
+  it("origin が無くても本文が <task-notification> で始まれば完了通知として扱う", () => {
+    const events = parseJsonlEvents(
+      jsonl({
+        type: "user",
+        uuid: "n2",
+        message: {
+          role: "user",
+          content:
+            "<task-notification>\n<summary>終わった</summary>\n</task-notification>",
+        },
+      })
+    );
+    expect(events[0]).toMatchObject({
+      kind: "system-note",
+      source: "task-notification",
+      summary: "終わった",
+    });
+  });
+
+  it("isMeta の行 (スキルの読み込み文・自動再開など) もシステムの通知にし、先頭行を要約にする", () => {
+    const events = parseJsonlEvents(
+      jsonl(
+        {
+          type: "user",
+          uuid: "m1",
+          isMeta: true,
+          origin: { kind: "auto-continuation" },
+          message: {
+            role: "user",
+            content: "Your usage limit has reset.\nContinue the task.",
+          },
+        },
+        {
+          type: "user",
+          uuid: "m2",
+          isMeta: true,
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Base directory for this skill: /x\n\n# Skill",
+              },
+            ],
+          },
+        }
+      )
+    );
+    expect(events.map(e => e.kind)).toEqual(["system-note", "system-note"]);
+    expect(events[0]).toMatchObject({
+      source: "meta",
+      summary: "Your usage limit has reset.",
+    });
+    expect(events[1]).toMatchObject({
+      id: "m2:note:0",
+      source: "meta",
+      summary: "Base directory for this skill: /x",
+    });
+  });
+
   it("local-command-caveat は除外する", () => {
     const events = parseJsonlEvents(
       jsonl({

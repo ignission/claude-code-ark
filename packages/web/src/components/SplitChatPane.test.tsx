@@ -164,6 +164,39 @@ afterEach(() => {
   Reflect.deleteProperty(navigator, "clipboard");
 });
 
+describe("SplitChatPane: システムからの通知", () => {
+  it("バックグラウンド作業の完了通知は発言の吹き出しではなく、要約1行の折りたたみで出す", () => {
+    const { container, emitServer } = renderChat();
+    emitServer("session:jsonl-snapshot", {
+      sessionId: "s1",
+      lines: [
+        line({
+          type: "user",
+          uuid: "n1",
+          origin: { kind: "task-notification" },
+          message: {
+            role: "user",
+            content:
+              "<task-notification>\n<task-id>btz</task-id>\n<output-file>/tmp/x.output</output-file>\n<status>completed</status>\n<summary>VMでビルドする completed</summary>\n</task-notification>",
+          },
+        }),
+      ],
+    });
+
+    const row = findButtonByText(container, "VMでビルドする completed");
+    expect(row.getAttribute("aria-expanded")).toBe("false");
+    expect(row.textContent).toContain("完了");
+    // 閉じている間は原文 (出力ファイルのパスなど) を出さない
+    expect(container.textContent).not.toContain("/tmp/x.output");
+
+    act(() => {
+      row.click();
+    });
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    expect(container.textContent).toContain("/tmp/x.output");
+  });
+});
+
 describe("SplitChatPane: ツール行の折りたたみ", () => {
   it("連続するツール呼び出しを「作業N件」の1行に畳み、実行中の最新の1件だけを下に出す", () => {
     const { container, emitServer } = renderChat();

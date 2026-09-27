@@ -33,6 +33,22 @@ export type JsonlParsedEvent =
   | ({ id: string; kind: "user-input"; text: string } & CommonEventFields)
   | ({
       id: string;
+      /**
+       * 人が書いたのではない user 行。発言の吹き出しではなく、折りたたみの行で出す。
+       *  - `task-notification`: バックグラウンド作業の完了通知 (`<task-notification>`)
+       *  - `meta`: `isMeta` の行 (スキルの読み込み文、利用上限の解除後の自動再開など)
+       */
+      kind: "system-note";
+      source: "task-notification" | "meta";
+      /** 閉じた行に出す 1 行。完了通知は `<summary>`、meta は先頭行 */
+      summary: string;
+      /** 完了通知の `<status>` (completed / failed など)。無ければ undefined */
+      status?: string;
+      /** 原文。開いたときにそのまま出す */
+      text: string;
+    } & CommonEventFields)
+  | ({
+      id: string;
       kind: "slash-command";
       name: string;
       args?: string;
@@ -84,6 +100,10 @@ interface RawJsonlMessage {
   isSidechain?: boolean;
   /** /compact が同一ファイルに挿入する要約レコードのフラグ */
   isCompactSummary?: boolean;
+  /** Claude CLI が差し込んだ、人が書いていない user 行 */
+  isMeta?: boolean;
+  /** user 行の出どころ (human / task-notification / auto-continuation / peer など) */
+  origin?: { kind?: string };
   /** tool_result レコードに併記される構造化結果 (レコードレベル) */
   toolUseResult?: unknown;
   message?: {
@@ -104,6 +124,57 @@ interface RawJsonlMessage {
           is_error?: boolean;
         }>;
   };
+}
+
+const TASK_NOTIFICATION_PREFIX = "<task-notification>";
+const TASK_SUMMARY_RE = /<summary>([\s\S]*?)<\/summary>/;
+const TASK_STATUS_RE = /<status>([^<]*)<\/status>/;
+
+/** 先頭の空でない行。閉じた行の要約に使う */
+function firstLine(text: string): string {
+  return (
+    text
+      .split("\n")
+      .map(line => line.trim())
+      .find(line => line !== "") ?? ""
+  );
+}
+
+/**
+ * 人が書いていない user 行を system-note にする。発言でなければ null。
+ * 完了通知は origin が無い古い記録でも本文の先頭で見分ける
+ */
+function toSystemNote(
+  obj: RawJsonlMessage,
+  text: string,
+  id: string,
+  common: CommonEventFields
+): JsonlParsedEvent | null {
+  if (
+    obj.origin?.kind === "task-notification" ||
+    text.trimStart().startsWith(TASK_NOTIFICATION_PREFIX)
+  ) {
+    return {
+      id,
+      kind: "system-note",
+      source: "task-notification",
+      status: text.match(TASK_STATUS_RE)?.[1]?.trim() || undefined,
+      summary: text.match(TASK_SUMMARY_RE)?.[1]?.trim() || firstLine(text),
+      text,
+      ...common,
+    };
+  }
+  if (obj.isMeta === true) {
+    return {
+      id,
+      kind: "system-note",
+      source: "meta",
+      summary: firstLine(text),
+      text,
+      ...common,
+    };
+  }
+  return null;
 }
 
 const SLASH_CMD_RE = /^<command-name>([^<]+)<\/command-name>/;
@@ -179,6 +250,14 @@ export function mergeJsonlLine(
         content.startsWith("<local-command-stdout>")
       )
         return events;
+      const note = toSystemNote(obj, content, `${uuid}:note`, {
+        timestamp: ts,
+        isSidechain: sc,
+      });
+      if (note) {
+        pushIfNew(note);
+        return next;
+      }
       const cmdMatch = content.match(SLASH_CMD_RE);
       if (cmdMatch) {
         const argsMatch = content.match(SLASH_ARGS_RE);
@@ -211,6 +290,15 @@ export function mergeJsonlLine(
       let idx = 0;
       for (const block of content) {
         if (block.type === "text" && typeof block.text === "string") {
+          const note = toSystemNote(obj, block.text, `${uuid}:note:${idx}`, {
+            timestamp: ts,
+            isSidechain: sc,
+          });
+          if (note) {
+            pushIfNew(note);
+            idx++;
+            continue;
+          }
           pushIfNew({
             id: `${uuid}:u:${idx}`,
             kind: "user-input",
