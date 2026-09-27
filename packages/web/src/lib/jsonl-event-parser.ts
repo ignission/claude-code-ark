@@ -33,6 +33,22 @@ export type JsonlParsedEvent =
   | ({ id: string; kind: "user-input"; text: string } & CommonEventFields)
   | ({
       id: string;
+      /**
+       * 人が書いたのではない user 行。発言の吹き出しではなく、折りたたみの行で出す。
+       *  - `task-notification`: バックグラウンド作業の完了通知 (`<task-notification>`)
+       *  - `meta`: `isMeta` の行 (スキルの読み込み文、利用上限の解除後の自動再開など)
+       */
+      kind: "system-note";
+      source: "task-notification" | "meta";
+      /** 閉じた行に出す 1 行。完了通知は `<summary>`、meta は先頭行 */
+      summary: string;
+      /** 完了通知の `<status>` (completed / failed など)。無ければ undefined */
+      status?: string;
+      /** 原文。開いたときにそのまま出す */
+      text: string;
+    } & CommonEventFields)
+  | ({
+      id: string;
       kind: "slash-command";
       name: string;
       args?: string;
@@ -84,6 +100,10 @@ interface RawJsonlMessage {
   isSidechain?: boolean;
   /** /compact が同一ファイルに挿入する要約レコードのフラグ */
   isCompactSummary?: boolean;
+  /** Claude CLI が差し込んだ、人が書いていない user 行 */
+  isMeta?: boolean;
+  /** user 行の出どころ (human / task-notification / auto-continuation / peer など) */
+  origin?: { kind?: string };
   /** tool_result レコードに併記される構造化結果 (レコードレベル) */
   toolUseResult?: unknown;
   message?: {
@@ -103,6 +123,70 @@ interface RawJsonlMessage {
           content?: unknown;
           is_error?: boolean;
         }>;
+  };
+}
+
+const TASK_NOTIFICATION_PREFIX = "<task-notification>";
+const TASK_SUMMARY_RE = /<summary>([\s\S]*?)<\/summary>/;
+const TASK_STATUS_RE = /<status>([^<]*)<\/status>/;
+
+/** 先頭の空でない行。閉じた行の要約に使う */
+function firstLine(text: string): string {
+  return (
+    text
+      .split("\n")
+      .map(line => line.trim())
+      .find(line => line !== "") ?? ""
+  );
+}
+
+/**
+ * user 行が人の書いたものでなければ、その種類を返す。発言なら null。
+ * 行の出どころ (origin.kind) があればそれに従い、human は本文にかかわらず発言とする
+ * (人が通知の原文を貼り付けても畳まない)。origin の無い古い記録だけ、本文の先頭で
+ * 完了通知を見分ける
+ */
+function systemNoteSource(
+  obj: RawJsonlMessage,
+  firstText: string
+): "task-notification" | "meta" | null {
+  const origin = obj.origin?.kind;
+  if (origin === "task-notification") return "task-notification";
+  if (origin === "human") return null;
+  if (
+    origin === undefined &&
+    firstText.trimStart().startsWith(TASK_NOTIFICATION_PREFIX)
+  ) {
+    return "task-notification";
+  }
+  if (obj.isMeta === true) return "meta";
+  return null;
+}
+
+function buildSystemNote(
+  source: "task-notification" | "meta",
+  text: string,
+  id: string,
+  common: CommonEventFields
+): JsonlParsedEvent {
+  if (source === "task-notification") {
+    return {
+      id,
+      kind: "system-note",
+      source,
+      status: text.match(TASK_STATUS_RE)?.[1]?.trim() || undefined,
+      summary: text.match(TASK_SUMMARY_RE)?.[1]?.trim() || firstLine(text),
+      text,
+      ...common,
+    };
+  }
+  return {
+    id,
+    kind: "system-note",
+    source,
+    summary: firstLine(text),
+    text,
+    ...common,
   };
 }
 
@@ -179,6 +263,16 @@ export function mergeJsonlLine(
         content.startsWith("<local-command-stdout>")
       )
         return events;
+      const noteSource = systemNoteSource(obj, content);
+      if (noteSource) {
+        pushIfNew(
+          buildSystemNote(noteSource, content, `${uuid}:note`, {
+            timestamp: ts,
+            isSidechain: sc,
+          })
+        );
+        return next;
+      }
       const cmdMatch = content.match(SLASH_CMD_RE);
       if (cmdMatch) {
         const argsMatch = content.match(SLASH_ARGS_RE);
@@ -208,9 +302,28 @@ export function mergeJsonlLine(
       );
       const structuredResult =
         toolResultBlocks.length === 1 ? obj.toolUseResult : undefined;
+      // 人が書いていない行は、本文の text block をつないで 1 つの通知にする
+      // (block ごとに分けると要約や状態を取り出せない)
+      const texts = content.flatMap(b =>
+        b.type === "text" && typeof b.text === "string" ? [b.text] : []
+      );
+      const noteSource =
+        texts.length > 0 ? systemNoteSource(obj, texts[0]) : null;
+      if (noteSource) {
+        pushIfNew(
+          buildSystemNote(noteSource, texts.join("\n"), `${uuid}:note`, {
+            timestamp: ts,
+            isSidechain: sc,
+          })
+        );
+      }
       let idx = 0;
       for (const block of content) {
         if (block.type === "text" && typeof block.text === "string") {
+          if (noteSource) {
+            idx++;
+            continue;
+          }
           pushIfNew({
             id: `${uuid}:u:${idx}`,
             kind: "user-input",

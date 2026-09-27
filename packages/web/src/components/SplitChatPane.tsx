@@ -23,6 +23,7 @@ import { isImagePath, splitTextWithFilePaths } from "@ark/shared/file-paths";
 import {
   ArrowDown,
   ArrowUp,
+  Bell,
   Bot,
   ChevronDown,
   ChevronRight,
@@ -773,6 +774,64 @@ function ToolCallCard({
   );
 }
 
+/** 完了通知の `<status>` を短い日本語にする。知らない値はそのまま出す */
+function systemNoteStatusLabel(status: string | undefined): string | null {
+  if (!status) return null;
+  if (status === "completed") return "完了";
+  if (status === "failed") return "失敗";
+  if (status === "killed") return "停止";
+  return status;
+}
+
+/**
+ * 人が書いていない user 行 (バックグラウンド作業の完了通知・isMeta の行)。
+ * 発言の吹き出しにすると会話の流れを乱すので、「作業N件」と同じ見た目の
+ * 折りたたみにして、閉じている間は要約 1 行だけを出す
+ */
+function SystemNoteCard({
+  source,
+  summary,
+  status,
+  text,
+}: {
+  source: "task-notification" | "meta";
+  summary: string;
+  status?: string;
+  text: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+  const statusLabel = systemNoteStatusLabel(status);
+  const label = source === "task-notification" ? "作業の通知" : "システム";
+  return (
+    <div className="px-4 py-1.5">
+      <button
+        type="button"
+        onClick={() => setExpanded(v => !v)}
+        aria-expanded={expanded}
+        className="inline-flex h-9 max-w-full items-center gap-2 rounded-sm border border-border bg-transparent pr-3 pl-2.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <Chevron aria-hidden="true" className="size-4 shrink-0" />
+        <Bell aria-hidden="true" className="size-3.5 shrink-0 opacity-60" />
+        <span className="shrink-0 font-semibold text-foreground">{label}</span>
+        {statusLabel && (
+          <span
+            className={`shrink-0 ${status === "failed" ? "text-destructive" : ""}`}
+          >
+            {statusLabel}
+          </span>
+        )}
+        <span className="min-w-0 truncate">{summary}</span>
+      </button>
+      {expanded && (
+        <pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap break-words border-l-2 border-border pl-3 font-mono text-xs text-muted-foreground">
+          {text}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 /**
  * sidechainの外で連続するツール呼び出しの折りたたみ表示 (「作業N件」)。
  * 閉じているときは、実行中のまとまりに限りrunningのうち最新の1件を下に出す
@@ -977,6 +1036,15 @@ function EventCard({
   switch (event.kind) {
     case "user-input":
       return <UserInputCard text={event.text} />;
+    case "system-note":
+      return (
+        <SystemNoteCard
+          source={event.source}
+          summary={event.summary}
+          status={event.status}
+          text={event.text}
+        />
+      );
     case "slash-command":
       return <SlashCommandCard name={event.name} args={event.args} />;
     case "assistant-text":

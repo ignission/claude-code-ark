@@ -55,6 +55,7 @@ function isTurnBoundary(event: JsonlParsedEvent): boolean {
   if (event.kind === "assistant-text") return event.endTurn !== true;
   return (
     event.kind === "user-input" ||
+    event.kind === "system-note" ||
     event.kind === "slash-command" ||
     event.kind === "tool-call" ||
     event.kind === "compact-marker"
