@@ -1411,7 +1411,7 @@ export function SplitChatPane({
 
   // 「会話を図解」: 現在の Claude セッションに会話の図解を依頼する。
   // 入力欄は触らず、図解プロンプトを送信して pending を楽観表示する
-  // (返答の ```mermaid は MermaidBlock がインライン描画する)。
+  // (図はボードに開く。ボードの無いセッションの ```mermaid は MermaidBlock がインライン描画する)。
   const handleVisualizeConversation = () => {
     const prompt = buildVisualizeConversationPrompt();
     lastSubmittedRef.current = prompt;
@@ -1695,7 +1695,7 @@ export function SplitChatPane({
         onClick={handleVisualizeConversation}
         className={`${ROUND_ICON_BUTTON} ${composerSize.button}`}
         aria-label="会話を図解"
-        title="会話を図解 (Claudeにmermaid図で要約させる)"
+        title="会話を図解 (Claudeに説明図をボードへ描かせる)"
       >
         <Workflow className="size-5" />
       </button>
