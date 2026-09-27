@@ -191,7 +191,10 @@ describe("diagram-authoring skill の書き出し先 contract", () => {
       expect(skill).toContain(recipe);
     }
     // 説明図でもモデルの JSON ブロックは必須
-    expect(skill).toContain('`id="ark-diagram-model"` の JSON ブロックは必須');
+    expect(skill).toContain(
+      '`<script type="application/json" id="ark-diagram-model">`'
+    );
+    expect(skill).toContain("モデルの `type` 欄（図種）を書かず");
   });
 
   it("sequence と call-tree の語彙を定義する", () => {

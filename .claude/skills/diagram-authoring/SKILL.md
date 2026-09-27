@@ -31,9 +31,10 @@ parent directory が存在しない場合だけ作成し、書いた後に `boar
   打ち消し線で残す
 - 描いたら、撮影できる環境なら撮影して、崩れや重なりが無いことを確かめてから見せる
 
-ファイルの約束は他の図と同じで、`id="ark-diagram-model"` の JSON ブロックは必須
-（無いとサーバーが 422 を返す）。説明図では `type` を書かず、`title` と、絵の主な部品を
-`nodes` に最小限だけ置く（`edges` / `groups` は空でよい）。主な部品の要素にはその id を
+ファイルの約束は他の図と同じで、`<script type="application/json" id="ark-diagram-model">`
+の JSON ブロックは必須（`id` と `type="application/json"` の両方が無いとモデルを読めず、
+サーバーが 422 を返す）。説明図ではモデルの `type` 欄（図種）を書かず、`title` と、
+絵の主な部品を `nodes` に最小限だけ置く（`edges` / `groups` は空でよい）。主な部品の要素にはその id を
 `data-model-id` で付ける。外部リソースを参照しないことも他の図と同じ。
 
 ## まず図種を確かめる（内蔵レンダラ）
