@@ -179,9 +179,10 @@ Jev に判定させる (`board-suggest-service.ts` / `board-suggest-turns.ts` / 
 - **通知は出さない**。ボードが開いたこと自体が合図になり、作図は「会話を図解」で頼めるため。
   以前は入力欄の上に 1 行の通知と「図にする」ボタンを出していたが、会話ビューを開いていた
   画面にしか届かず、ボタンも「会話を図解」と重複していた
-- 1 つの返答は content block ごとに別の行で書かれ、thinking の行にも end_turn が付く。
-  本文 (text block) を含む end_turn の行でだけターンを終える (thinking の行で終えると、
-  最後の本文が判定から漏れる)
+- 1 つの返答は content block ごとに別の行で書かれ、どの行 (thinking・本文) にも end_turn が
+  付く。本文が複数の行に分かれることもあり、行だけでは返答の最後か分からない。そこで本文を
+  含む end_turn の行を「終わりの候補」とし、続きの行が 1.5 秒来なければターンを確定する
+  (tail は 1 秒おきに読むので、それより長く待つ)。thinking の行は候補にしない
 - 判定中に会話が進んだ (新しい発話・/clear) か detach されたら、その判定の結果は捨てる
   (`TurnAssembler.generation`)。生成先は途中の symlink を lstat で拒否し、mkdir 後の
   realpath が worktree の中であることを確かめてから `O_EXCL | O_NOFOLLOW` で書く

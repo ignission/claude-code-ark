@@ -54,6 +54,7 @@ function setup(
       return { ok: true };
     }),
     now: () => 1_700_000_000_000,
+    turnSettleMs: 0,
     log: m => logs.push(m),
     ...overrides,
   };
@@ -168,6 +169,25 @@ describe("BoardSuggestService", () => {
     await new Promise(r => setTimeout(r, 30));
     expect(noKey.deps.decide).not.toHaveBeenCalled();
     expect(noKey.logs).toEqual([]);
+  });
+
+  it("1 つの返答の本文が複数の行に分かれても、判定は 1 回で本文をすべて含む", async () => {
+    const { deps, opened, push, listener } = setup({
+      board: 0.9,
+      form: "doc",
+      figure: 0,
+      cost: 0,
+    });
+    // 同じ返答の 2 つの本文の行が続けて届く (どちらも end_turn を持つ)
+    listener()?.onLine({ raw: endTurnLine("前半です。") });
+    await push(endTurnLine("後半です。"), () => opened.length > 0);
+    await new Promise(r => setTimeout(r, 20));
+    expect(deps.decide).toHaveBeenCalledTimes(1);
+    expect(deps.decide).toHaveBeenCalledWith(
+      "前半です。\n\n後半です。",
+      "sk-test"
+    );
+    expect(opened).toHaveLength(1);
   });
 
   it("同じ時刻で 2 ターン続いてもファイル名が衝突しない", async () => {
@@ -346,7 +366,7 @@ describe("BoardSuggestService", () => {
   });
 
   it("detach で購読を解除し、以後の行を無視する", async () => {
-    const { deps, service, push, unsubscribe } = setup({
+    const { deps, service, unsubscribe, listener } = setup({
       board: 0.9,
       form: "doc",
       figure: 0,
@@ -356,12 +376,21 @@ describe("BoardSuggestService", () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     service.detach("s1");
     expect(unsubscribe).toHaveBeenCalledTimes(1);
-    await push(
-      endTurnLine("x"),
-      () => (deps.decide as ReturnType<typeof vi.fn>).mock.calls.length > 0
+    // 購読解除後も listener 自体は残っている (実運用では tail が呼ばなくなる)。
+    // 行が届いても、確定の時点で detach 済みなので判定しない
+    listener()?.onLine({ raw: endTurnLine("x") });
+    await new Promise(r => setTimeout(r, 20));
+    expect(deps.decide).not.toHaveBeenCalled();
+  });
+
+  it("確定を待っている間に detach されたら判定しない", async () => {
+    const { deps, service, listener } = setup(
+      { board: 0.9, form: "doc", figure: 0, cost: 0 },
+      { turnSettleMs: 10 }
     );
-    // 購読解除後も listener 自体は残っているが、実運用では tail が呼ばなくなる。
-    // ここでは二重 detach が安全なことだけを確認する
-    expect(deps.decide).toHaveBeenCalledTimes(1);
+    listener()?.onLine({ raw: endTurnLine("説明") });
+    service.detach("s1");
+    await new Promise(r => setTimeout(r, 30));
+    expect(deps.decide).not.toHaveBeenCalled();
   });
 });

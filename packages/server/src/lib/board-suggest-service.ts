@@ -65,13 +65,23 @@ export interface BoardSuggestDeps {
   ): Promise<{ ok: boolean; error?: string }>;
   now?(): number;
   log?(message: string): void;
+  /**
+   * 本文付きの end_turn の行が来てから、ターンを確定するまで待つ時間 (ms)。
+   * 同じ返答の本文が複数の行に分かれて届くことがあり、tail は 1 秒おきに読むので、
+   * 続きの行が次の読み取りに回っても拾えるよう 1 秒より長くする
+   */
+  turnSettleMs?: number;
 }
+
+const DEFAULT_TURN_SETTLE_MS = 1500;
 
 interface SessionState {
   unsubscribe: () => void;
   assembler: TurnAssembler;
   inflight: boolean;
   failureReported: boolean;
+  /** ターンの確定待ち。同じ返答の続きの行が来るたびに待ち直す */
+  settleTimer: ReturnType<typeof setTimeout> | null;
 }
 
 /** プロセス内の連番。時刻が同じでもファイル名が衝突しないようにする (循環させない) */
@@ -88,9 +98,11 @@ export class BoardSuggestService {
   private sessions = new Map<string, SessionState>();
   private readonly now: () => number;
   private readonly log: (message: string) => void;
+  private readonly turnSettleMs: number;
 
   constructor(private readonly deps: BoardSuggestDeps) {
     this.now = deps.now ?? (() => Date.now());
+    this.turnSettleMs = deps.turnSettleMs ?? DEFAULT_TURN_SETTLE_MS;
     this.log =
       deps.log ?? (message => console.log(`[BoardSuggest] ${message}`));
   }
@@ -104,6 +116,7 @@ export class BoardSuggestService {
       assembler,
       inflight: false,
       failureReported: false,
+      settleTimer: null,
     };
     state.unsubscribe = this.deps.subscribeJsonl(
       session.worktreePath,
@@ -112,8 +125,15 @@ export class BoardSuggestService {
         onLine: line => {
           // tail の drain を止めないよう、ここから外へは何も投げない
           try {
-            const turn = assembler.push(line.raw);
-            if (turn) void this.handleTurn(session, state, turn.text);
+            if (!assembler.push(line.raw)) return;
+            // 返答の終わりの候補。続きの行が来なくなってから確定する
+            if (state.settleTimer) clearTimeout(state.settleTimer);
+            state.settleTimer = setTimeout(() => {
+              state.settleTimer = null;
+              if (this.sessions.get(session.id) !== state) return;
+              const turn = assembler.take();
+              if (turn) void this.handleTurn(session, state, turn.text);
+            }, this.turnSettleMs);
           } catch (err) {
             this.log(`${session.id}: 行の処理に失敗: ${String(err)}`);
           }
@@ -127,6 +147,7 @@ export class BoardSuggestService {
   detach(sessionId: string): void {
     const state = this.sessions.get(sessionId);
     if (!state) return;
+    if (state.settleTimer) clearTimeout(state.settleTimer);
     state.unsubscribe();
     this.sessions.delete(sessionId);
   }
