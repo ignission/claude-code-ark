@@ -173,6 +173,27 @@ describe("diagram-authoring skill の書き出し先 contract", () => {
     expect(skill).not.toMatch(/(?:docs|\.claude)\/diagrams/);
   });
 
+  it("込み入った説明は、決まった図種より自由な説明図を先に案内する", () => {
+    const skill = fs.readFileSync(SKILL_PATH, "utf-8");
+
+    expect(skill).toContain("## 説明図（自由形）");
+    // 内蔵図種の案内より前に置く (込み入った説明ではこちらを優先するため)
+    expect(skill.indexOf("## 説明図（自由形）")).toBeLessThan(
+      skill.indexOf("## まず図種を確かめる")
+    );
+    for (const recipe of [
+      "見出しを結論の一文にする",
+      "画面や物の見た目を描く",
+      "矢印は 2 種類程度に絞る",
+      "✓ / ✕ のチップ",
+      "番号付きのカード",
+    ]) {
+      expect(skill).toContain(recipe);
+    }
+    // 説明図でもモデルの JSON ブロックは必須
+    expect(skill).toContain('`id="ark-diagram-model"` の JSON ブロックは必須');
+  });
+
   it("sequence と call-tree の語彙を定義する", () => {
     const skill = fs.readFileSync(SKILL_PATH, "utf-8");
 

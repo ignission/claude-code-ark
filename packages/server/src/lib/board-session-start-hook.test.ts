@@ -24,3 +24,11 @@ describe("BOARD_SESSION_CONTEXT の data-ark-author=human 規約", () => {
     expect(BOARD_SESSION_CONTEXT).toContain("付かない");
   });
 });
+
+describe("BOARD_SESSION_CONTEXT の説明図", () => {
+  it("頼まれていなくても、込み入った説明は自由な説明図で出すよう伝える", () => {
+    expect(BOARD_SESSION_CONTEXT).toContain("込み入った説明");
+    expect(BOARD_SESSION_CONTEXT).toContain("説明図（自由形）");
+    expect(BOARD_SESSION_CONTEXT).toContain("短い答えで済むならチャットで返す");
+  });
+});

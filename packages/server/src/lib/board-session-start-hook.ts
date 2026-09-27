@@ -8,12 +8,14 @@ export const BOARD_SESSION_START_HOOK_FILENAME =
 /**
  * Board MCP を使うセッションへ SessionStart hook で渡す説明。
  * 移設前の 5 文は変えず、1 文ずつ改行して読みやすくする。
- * 6 文目は doc 本文の authorship 規約（#319）。自分の書き手印（claude）は廃止し、
+ * 3 文目は説明図。込み入った説明は、頼まれていなくても文章より先に自由な図で出す。
+ * 7 文目は doc 本文の authorship 規約（#319）。自分の書き手印（claude）は廃止し、
  * 人間が手を入れた印（human）の読み方だけを残した。
  */
 export const BOARD_SESSION_CONTEXT = [
   "このセッションにはボードペインがあり、図と文書を表示できる。board_open（ボードに開く）、board_comments（人間が付けたコメントを読む）、board_authoring_guide（作図・文書規約を読む）、board_reply（コメントへ返信する）の 4 つのツールを持っている。",
   `ユーザーが「図解して」「図で説明して」「フロー図/構成図にして」等、図解・作図・可視化を求めたら、チャットに mermaid や ASCII 図を出すのではなく、${DIAGRAM_DIR}/ 配下に *.diagram.html を書き、board_open で開くこと。`,
+  "頼まれていなくても、込み入った説明（どこに何が届くか・なぜ起きたか・どう直したか等）は、チャットに長い文章を積む前に、board_authoring_guide の「説明図（自由形）」に従って読み手が一目で分かる図を描き、board_open で開く。短い答えで済むならチャットで返す。",
   '設計メモ・仕様・調査結果など「人に読ませる文書」も同じ形式で書ける。model の type を "doc" にすると、ユーザーが本文をテキスト選択してコメントを付けられる、レビュー可能な文書になる。',
   "ユーザーが「コメントした」「図を見て」等と言ったら、board_comments で未解決コメントを読み、引用された箇所を直してから board_open で開き直し、board_reply で対応内容を返信すること。",
   "書き込む直前に parent directory が存在しない場合だけ作成する。.diagram.html を書く前に必ず board_authoring_guide で規約を取得し、その内容に従う。",

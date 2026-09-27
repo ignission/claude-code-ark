@@ -1,10 +1,12 @@
 /** 「会話を図解」ボタンが現在の Claude セッションへ送るプロンプトを組み立てる。
- *  返答に ```mermaid ブロックが含まれれば Phase 1 の MermaidBlock が描画する。
+ *  決まった図種に当てはめず、読み手が一目で分かる説明図をボードに開いてもらう
+ *  (描き方は作図規約の「説明図（自由形）」の節)。
+ *  ボードの無いセッション (board MCP 注入前に起動したもの) では mermaid に落とす。
  *  プロンプト自体がチャットに user メッセージとして表示されるため簡潔にする。 */
 export function buildVisualizeConversationPrompt(): string {
   return (
-    "ここまでの会話の要点を図解してください。" +
-    "内容に最も合う mermaid の図種（flowchart / sequenceDiagram / classDiagram / stateDiagram など）を選び、" +
-    "```mermaid コードブロックで返してください。ノードのラベルは簡潔に。"
+    "ここまでの会話の要点を、読み手が一目で分かる図にしてください。" +
+    "board_authoring_guide の「説明図（自由形）」に従って描き、board_open でボードに開いてください。" +
+    "ボードが使えなければ ```mermaid コードブロックで返してください。"
   );
 }
