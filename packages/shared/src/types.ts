@@ -4,13 +4,6 @@
 export const DIAGRAM_DIR = ".claude/diagrams";
 
 /**
- * ボード提案が figure と判定したとき、人間が「図にする」を押すと Claude へ送る 1 行。
- * サーバーは自動で送らない (tmux への送信は端末で入力中の下書きを消しうるため)
- */
-export const BOARD_FIGURE_REQUEST_MESSAGE =
-  "直前の説明を図解して board_open で開いて (board_authoring_guide の規約に従う)";
-
-/**
  * Slash command 候補。チャットビュー入力欄の補完で使う。
  *  - `name`: `/foo` 形式 (先頭の `/` 含む)
  *  - `description`: 1 行説明 (frontmatter `description:` または組み込み定義)
@@ -436,13 +429,6 @@ export interface ServerToClientEvents {
 
   /** 監視中の図ファイルが更新された。クライアントは再読込する */
   "diagram:updated": (data: { worktreePath: string; relPath: string }) => void;
-
-  /**
-   * ボード提案 (Jev 判定) が動いた。doc なら Ark が返答を doc 型ボードへ変換して
-   * 既に `diagram:open` を出している。figure なら「図にする」ボタンを出す。
-   * セッションの room にだけ送る。
-   */
-  "session:board-suggest": (data: BoardSuggestEvent) => void;
 
   /** 監視中のコメント sidecar が更新された。iframe はコメントだけを再取得する */
   "diagram:comments-updated": (data: {
@@ -1007,24 +993,6 @@ export interface BoardSuggestConfigPatch {
 export type BoardSuggestConfigResult =
   | { ok: true; config: BoardSuggestConfig }
   | { ok: false; error: string };
-
-export interface BoardSuggestEvent {
-  sessionId: string;
-  /** 判定した epoch ms */
-  at: number;
-  /** Jev の「ボードのほうが読みやすい」確率 (0〜1) */
-  probability: number;
-  /**
-   * doc: 返答を機械変換して開いた
-   * figure: 作図が要ると判定した。クライアントが「図にする」ボタンを出し、
-   *   人間が押したときだけ BOARD_FIGURE_REQUEST_MESSAGE を送る
-   */
-  form: "doc" | "figure";
-  /** doc のとき、開いたファイルの worktree 相対パス。figure は null */
-  relPath: string | null;
-  /** doc のとき、推定した題名。figure は null */
-  title: string | null;
-}
 
 export type BridgeSessionStatus =
   | "TOOL" // ツール実行中 (⏺ Tool(...) 直近、⎿ 結果未到着)

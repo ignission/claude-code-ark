@@ -173,12 +173,16 @@ Jev に判定させる (`board-suggest-service.ts` / `board-suggest-turns.ts` / 
   `diagram:open` で開く。`_` 始まりなので図スイッチャーには出ないが、`lastDiagramPath` で
   復元できる。既存ファイルは上書きしない (コメント sidecar が relPath に紐づくため)。
   **Claude には何も送らない**ので、これはコンテキスト機構ではない
-- **figure**: 通知に「図にする」ボタンを出すだけ。人間が押したときだけクライアントが
-  `BOARD_FIGURE_REQUEST_MESSAGE` を通常の `session:send` で送る。サーバーが tmux へ
-  自動送信すると端末で入力中の下書きを C-u で消しうる (bridgeStatus は入力中を IDLE と
-  報告する) ので自動では送らない。検証した 197 ターンで figure が勝った例は 0
-- どちらも `session:board-suggest` をセッションの room に出し、チャットの入力欄の上に
-  1 行の通知を出す (次の送信・閉じるで消える)
+- **figure**: 何もしない。機械変換では図にならず、Claude へ作図を自動で頼むと端末で
+  入力中の下書きを C-u で消しうる (bridgeStatus は入力中を IDLE と報告する)。
+  作図が欲しければ人間が入力欄の「会話を図解」を押す。検証した 197 ターンで figure が勝った例は 0
+- **通知は出さない**。ボードが開いたこと自体が合図になり、作図は「会話を図解」で頼めるため。
+  以前は入力欄の上に 1 行の通知と「図にする」ボタンを出していたが、会話ビューを開いていた
+  画面にしか届かず、ボタンも「会話を図解」と重複していた
+- 1 つの返答は content block ごとに別の行で書かれ、どの行 (thinking・本文) にも end_turn が
+  付く。本文が複数の行に分かれることもあり、行だけでは返答の最後か分からない。そこで本文を
+  含む end_turn の行を「終わりの候補」とし、続きの行が 1.5 秒来なければターンを確定する
+  (tail は 1 秒おきに読むので、それより長く待つ)。thinking の行は候補にしない
 - 判定中に会話が進んだ (新しい発話・/clear) か detach されたら、その判定の結果は捨てる
   (`TurnAssembler.generation`)。生成先は途中の symlink を lstat で拒否し、mkdir 後の
   realpath が worktree の中であることを確かめてから `O_EXCL | O_NOFOLLOW` で書く
@@ -242,7 +246,7 @@ task.md 規約・復唱・失敗の自動収集・セッション lifecycle を�
 | チャットビュー           | JSONL tail ベースの会話描画 + pending reconcile + AskUserQuestion カード + slash 補完 + busy/AWAITING 表示（PC は `SplitViewPane` の左ペイン、モバイルは `MobileSessionView`。どちらも🖥/💬トグルで ttyd 表示と切替） |
 | 音声モード（iPhone）   | 会話モードの1タップ操作から全画面の音声モードに入る。話した指示を2秒の取り消し猶予つきで送り、Claude がターンを終えた返答（JSONL の `stop_reason: "end_turn"`）を読み上げる。質問・権限確認は読み上げて画面での操作に回す。ブラウザ内蔵の音声認識・読み上げだけを使い、画面を点けて前面に出している間だけ動く |
 | セッションボード       | worktree の `.claude/diagrams/*.diagram.html`（意味モデル + HTML 投影）を表示する図解ペイン（右ペインタブ・PC のみ）。Claude が MCP ツール `board_open` で開き、ファイル更新を検知して自動再読込する。doc 型は本文を人間がその場で直接編集でき、変更をブロック単位で会話へ還流する。本文の `<a href="src/foo.ts#L10">` はファイルビューアで該当行を開く。変更レビュー向けに `sequence`（時間順のやり取り）と `call-tree`（呼び出し経路と差分量）の内蔵図種があり、モデルだけ書けば投影が出る（`diagram-static-builtin.ts`） |
-| ボード提案 (Jev)       | Claude の返答が終わるたびに Jev (TypeSafe の決定モデル、OpenRouter 経由) へ「チャットよりボードのほうが読みやすいか」を問い、閾値以上なら Ark が動く。doc 判定なら返答の markdown を doc 型ボードへ機械変換して開く (Claude のトークン 0)、figure 判定なら「図にする」ボタンを出す (押したときだけ Claude に頼む)。鍵は「ボード提案の設定」ダイアログから入れる (環境変数 / `~/.config/openrouter/api-key` でも可)。無ければ待機 |
+| ボード提案 (Jev)       | Claude の返答が終わるたびに Jev (TypeSafe の決定モデル、OpenRouter 経由) へ「チャットよりボードのほうが読みやすいか」を問い、閾値以上なら Ark が動く。doc 判定なら返答の markdown を doc 型ボードへ機械変換して開く (Claude のトークン 0)。figure 判定では何もしない (作図は入力欄の「会話を図解」で頼む)。鍵は「ボード提案の設定」ダイアログから入れる (環境変数 / `~/.config/openrouter/api-key` でも可)。無ければ待機 |
 | Webターミナル          | ttyd iframeによるフルターミナル体験（PC は左ペインの既定、モバイルは🖥/💬トグルでチャットビューと切替） |
 | マルチペインビュー     | 複数セッションの同時表示（1列 / 2x2グリッド切り替え）                       |
 | モバイル対応           | セッション一覧/詳細の画面遷移、Quick Keys、スクロールモード、キーボード対応 |
@@ -528,7 +532,6 @@ claude-code-ark/
 | `session:auq`            | `{ sessionId, at, questions }` | 回答待ち AskUserQuestion（PreToolUse hook 由来）|
 | `diagram:open`           | `{ sessionId, relPath }`       | Claude が `board_open` を呼んだ。クライアントは図タブを開く |
 | `diagram:updated`        | `{ worktreePath, relPath }`    | 監視中の図ファイルが更新された。クライアントは再読込する |
-| `session:board-suggest`  | `BoardSuggestEvent`            | ボード提案が動いた (doc: 変換して `diagram:open` 済み / figure: 「図にする」ボタンを出す)。セッションの room にだけ送る |
 | `session:error`          | `{ sessionId, error }`         | セッションエラー                 |
 | `tunnel:started`         | `{ url, token }`               | トンネル開始                     |
 | `tunnel:stopped`         | -                              | トンネル停止                     |

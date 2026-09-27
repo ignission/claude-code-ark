@@ -1452,8 +1452,8 @@ export async function startServer(
   // ===== ボード提案 (Jev 判定) =====
   // Claude の返答が終わるたびに Jev (TypeSafe の決定モデル) へ「チャットより
   // ボードのほうが読みやすいか」を問い、閾値を超えたら Ark が動く。doc なら
-  // 返答を機械変換して開く (Claude のトークン 0)、figure なら「図にする」ボタンを
-  // 出すだけ (Claude への送信は人間が押したときだけ)。
+  // 返答を機械変換して開く (Claude のトークン 0)。figure なら何もしない
+  // (作図は人間が入力欄の「会話を図解」で頼む)。
   // 有効/閾値/鍵は設定画面 (board-suggest:get/set) で変えられ、次のターンから効く。
   // 鍵が無い間は静かに何もしない。
   const boardSuggestFeatureOn =
@@ -1481,8 +1481,6 @@ export async function startServer(
         shouldAbort
       );
     },
-    notify: event =>
-      io.to(sessionRoom(event.sessionId)).emit("session:board-suggest", event),
   });
   if (boardSuggestFeatureOn) {
     // 起動時の自動復元は orchestrator のコンストラクタで済んでいるので、

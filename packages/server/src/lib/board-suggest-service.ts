@@ -3,12 +3,12 @@
  * 問い、閾値を超えたら Ark が動く。
  *
  * - form=doc: 返答の markdown を doc 型ボードへ機械変換して開く (Claude のトークン 0)
- * - form=figure: 通知だけ出す。クライアントが「図にする」ボタンを出し、人間が押した
- *   ときだけ Claude へ作図依頼が送られる。サーバーが tmux へ自動送信すると、端末で
- *   入力中の下書きを C-u で消しうる (bridgeStatus は入力中を IDLE と報告する)
+ * - form=figure: 何もしない。機械変換では図にならず、Claude へ作図を自動で頼むと
+ *   端末で入力中の下書きを C-u で消しうる (bridgeStatus は入力中を IDLE と報告する)。
+ *   作図が欲しければ、人間が入力欄の「会話を図解」を押す
  *
- * doc は人間に尋ねず動く。人間が見るのは「ボードが開いた」ことと、
- * チャットに出る 1 行の通知 (`session:board-suggest`) だけ。
+ * doc は人間に尋ねず動く。人間が見るのは「ボードが開いた」ことだけで、通知は出さない
+ * (ボードが開いたこと自体が合図になり、作図は「会話を図解」で頼めるため)。
  *
  * 有効/閾値/鍵は毎ターン deps から読む (設定画面で変えたら次のターンから効く)。
  * 鍵が無いターンは静かに何もしない。
@@ -19,7 +19,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { type BoardSuggestEvent, DIAGRAM_DIR } from "@ark/shared";
+import { DIAGRAM_DIR } from "@ark/shared";
 import { TurnAssembler } from "./board-suggest-turns.js";
 import type { BoardDecision } from "./jev-client.js";
 import { markdownToBoardDoc } from "./markdown-to-board-doc.js";
@@ -63,16 +63,25 @@ export interface BoardSuggestDeps {
     relPath: string,
     shouldAbort: () => boolean
   ): Promise<{ ok: boolean; error?: string }>;
-  notify(event: BoardSuggestEvent): void;
   now?(): number;
   log?(message: string): void;
+  /**
+   * 本文付きの end_turn の行が来てから、ターンを確定するまで待つ時間 (ms)。
+   * 同じ返答の本文が複数の行に分かれて届くことがあり、tail は 1 秒おきに読むので、
+   * 続きの行が次の読み取りに回っても拾えるよう 1 秒より長くする
+   */
+  turnSettleMs?: number;
 }
+
+const DEFAULT_TURN_SETTLE_MS = 1500;
 
 interface SessionState {
   unsubscribe: () => void;
   assembler: TurnAssembler;
   inflight: boolean;
   failureReported: boolean;
+  /** ターンの確定待ち。同じ返答の続きの行が来るたびに待ち直す */
+  settleTimer: ReturnType<typeof setTimeout> | null;
 }
 
 /** プロセス内の連番。時刻が同じでもファイル名が衝突しないようにする (循環させない) */
@@ -89,9 +98,11 @@ export class BoardSuggestService {
   private sessions = new Map<string, SessionState>();
   private readonly now: () => number;
   private readonly log: (message: string) => void;
+  private readonly turnSettleMs: number;
 
   constructor(private readonly deps: BoardSuggestDeps) {
     this.now = deps.now ?? (() => Date.now());
+    this.turnSettleMs = deps.turnSettleMs ?? DEFAULT_TURN_SETTLE_MS;
     this.log =
       deps.log ?? (message => console.log(`[BoardSuggest] ${message}`));
   }
@@ -105,6 +116,7 @@ export class BoardSuggestService {
       assembler,
       inflight: false,
       failureReported: false,
+      settleTimer: null,
     };
     state.unsubscribe = this.deps.subscribeJsonl(
       session.worktreePath,
@@ -113,8 +125,19 @@ export class BoardSuggestService {
         onLine: line => {
           // tail の drain を止めないよう、ここから外へは何も投げない
           try {
-            const turn = assembler.push(line.raw);
-            if (turn) void this.handleTurn(session, state, turn.text);
+            if (!assembler.push(line.raw)) return;
+            // 返答の終わりの候補。続きの行が来なくなってから確定する
+            if (state.settleTimer) clearTimeout(state.settleTimer);
+            const generation = assembler.generation;
+            state.settleTimer = setTimeout(() => {
+              state.settleTimer = null;
+              if (this.sessions.get(session.id) !== state) return;
+              // 待つ間に会話が進んでいたら (新しい発話・/clear)、溜まっているのは
+              // 次のターンの途中経過なので取り出さない
+              if (assembler.generation !== generation) return;
+              const turn = assembler.take();
+              if (turn) void this.handleTurn(session, state, turn.text);
+            }, this.turnSettleMs);
           } catch (err) {
             this.log(`${session.id}: 行の処理に失敗: ${String(err)}`);
           }
@@ -128,6 +151,7 @@ export class BoardSuggestService {
   detach(sessionId: string): void {
     const state = this.sessions.get(sessionId);
     if (!state) return;
+    if (state.settleTimer) clearTimeout(state.settleTimer);
     state.unsubscribe();
     this.sessions.delete(sessionId);
   }
@@ -174,18 +198,8 @@ export class BoardSuggestService {
       }
       if (stale()) return;
       if (decision.board < this.deps.threshold()) return;
-      if (decision.form === "figure") {
-        this.deps.notify({
-          sessionId: session.id,
-          at: this.now(),
-          probability: decision.board,
-          form: "figure",
-          relPath: null,
-          title: null,
-        });
-      } else {
-        await this.openAsDoc(session, decision, text, stale);
-      }
+      if (decision.form === "figure") return;
+      await this.openAsDoc(session, text, stale);
     } catch (err) {
       // doc の書き出し・open の失敗は毎回そのまま残す (判定の失敗とは別の事象)
       this.log(`${session.id}: doc の書き出しに失敗: ${String(err)}`);
@@ -196,7 +210,6 @@ export class BoardSuggestService {
 
   private async openAsDoc(
     session: BoardSuggestSession,
-    decision: BoardDecision,
     text: string,
     stale: () => boolean
   ): Promise<void> {
@@ -232,26 +245,15 @@ export class BoardSuggestService {
       );
       return;
     }
-    // 書いている間に会話が進んでいたら、開かず知らせない (ファイルは残るが害はない)。
+    // 書いている間に会話が進んでいたら開かない (ファイルは残るが害はない)。
     // open の中でも読み込み後に同じ判定を評価させる
     if (stale()) return;
     const opened = await this.deps.openDiagram(session.id, relPath, stale);
-    if (!opened.ok) {
-      if (stale()) return;
+    if (!opened.ok && !stale()) {
       this.log(
         `${session.id}: 書いた doc を開けない: ${opened.error ?? "unknown"}`
       );
-      return;
     }
-    if (stale()) return;
-    this.deps.notify({
-      sessionId: session.id,
-      at,
-      probability: decision.board,
-      form: "doc",
-      relPath,
-      title: doc.title,
-    });
   }
 }
 

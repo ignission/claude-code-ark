@@ -66,6 +66,11 @@ export type JsonlParsedEvent =
       structuredResult?: unknown;
       /** tool_result の is_error (AskUserQuestion の Esc 拒否などで true) */
       isError?: boolean;
+      /**
+       * tool_result レコードの時刻 (epoch ms)。`timestamp` は tool_use を出力した時刻で、
+       * 結果が出た時刻とは限らない (AskUserQuestion では回答まで数十秒ずれる)
+       */
+      resultTimestamp?: number;
       status: "running" | "done";
       toolUseId: string;
     } & CommonEventFields);
@@ -226,6 +231,7 @@ export function mergeJsonlLine(
               result: safeJsonStringify(block.content),
               structuredResult,
               isError: block.is_error === true ? true : undefined,
+              resultTimestamp: ts,
               status: "done" as const,
             };
             toolCallByUseId.set(block.tool_use_id, updated);
