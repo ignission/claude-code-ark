@@ -4,6 +4,7 @@ import path from "node:path";
 import { DIAGRAM_DIR } from "@ark/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DIAGRAM_COMMENT_LAYER_MARKER } from "./diagram-comment-layer.js";
+import { DIAGRAM_DECK_MARKER } from "./diagram-deck.js";
 import { DIAGRAM_DOC_EDITOR_MARKER } from "./diagram-doc-editor.js";
 import { DIAGRAM_CSP } from "./diagram-file.js";
 import { DIAGRAM_HARNESS_MARKER } from "./diagram-harness.js";
@@ -517,5 +518,64 @@ describe("静的な内蔵図種（sequence / call-tree）の配信", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.raw).not.toContain("ark-static-panel");
+  });
+});
+
+describe("デッキ（type: deck）の配信", () => {
+  const DECK_MODEL = JSON.stringify({
+    version: 1,
+    type: "deck",
+    title: "リンクを押してから行が光るまで",
+    nodes: [],
+    edges: [],
+    groups: [],
+    ext: {
+      pages: [
+        {
+          id: "p-seq",
+          type: "sequence",
+          title: "クリックから postMessage まで",
+          nodes: [
+            { id: "iframe", label: "board iframe" },
+            { id: "parent", label: "parent window" },
+          ],
+          edges: [
+            { id: "s1", from: "iframe", to: "parent", label: "postMessage" },
+          ],
+        },
+        { id: "p-why", type: "html", title: "なぜ親で解釈するか" },
+      ],
+    },
+  });
+
+  it("ページを生成し、コメント層は載せるが graph ハーネスと編集層は載せない", async () => {
+    write(
+      "deck.diagram.html",
+      '<section data-ark-page="p-why"><h2>親で解釈する</h2></section>',
+      DECK_MODEL
+    );
+    const result = await readDiagram(wt, `${DIAGRAM_DIR}/deck.diagram.html`);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.html).not.toContain(DIAGRAM_HARNESS_MARKER);
+    expect(result.html).not.toContain(DIAGRAM_DOC_EDITOR_MARKER);
+    expect(result.html).toContain(DIAGRAM_COMMENT_LAYER_MARKER);
+    expect(result.html).toContain(DIAGRAM_DECK_MARKER);
+    expect(result.html).toContain(DIAGRAM_CSP);
+    expect(result.html).toContain('data-ark-static="sequence"');
+    expect(result.html).toContain('data-ark-deck-slot="p-why"');
+    expect(result.raw).not.toContain("ark-static-panel");
+  });
+
+  it("html ページの本文が無いデッキは 422 を返す", async () => {
+    write("deck.diagram.html", "", DECK_MODEL);
+    const result = await readDiagram(wt, `${DIAGRAM_DIR}/deck.diagram.html`);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(422);
+      expect(result.error).toContain("p-why");
+    }
   });
 });

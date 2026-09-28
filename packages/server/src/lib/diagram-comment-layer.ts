@@ -1,3 +1,7 @@
+import {
+  DIAGRAM_DECK_HIDDEN_ATTR,
+  DIAGRAM_PAGE_CHANGE_EVENT,
+} from "./diagram-deck.js";
 import { createCachedMinifier } from "./injected-minify.js";
 
 export const DIAGRAM_COMMENT_LAYER_MARKER = "ark-diagram-comment-layer";
@@ -100,6 +104,10 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
   }
   function anchorEntry(anchorId){
     return anchors.filter(function(entry){return entry.anchorId===anchorId;})[0]||null;
+  }
+  // デッキが隠しているページの中の anchor。カードを出すと別のページの上に重なる
+  function isOnHiddenDeckPage(entry){
+    return Boolean(entry&&entry.anchor.closest("[${DIAGRAM_DECK_HIDDEN_ATTR}]"));
   }
   function isThreadOpen(threadId){
     var explicitState=threadOpenStates.get(threadId);
@@ -373,6 +381,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
   }
   function renderThread(thread){
     var entry=anchorEntry(thread.anchorId);
+    if(isOnHiddenDeckPage(entry))return;
     var unresolved=!entry||Boolean(thread.anchorQuote&&!threadHighlightResolved[thread.id]);
     var card=element("section",undefined,"ark-comment-card");
     card.setAttribute("data-anchor-id",thread.anchorId);
@@ -496,7 +505,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
   }
   function renderComposer(){
     var entry=anchorEntry(composerAnchorId);
-    if(!composerAnchorId||!entry)return;
+    if(!composerAnchorId||!entry||isOnHiddenDeckPage(entry))return;
     var anchorId=composerAnchorId;
     var composer=element("section",undefined,"ark-comment-composer");
     composer.setAttribute("data-anchor-id",anchorId);
@@ -1062,6 +1071,7 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     window.addEventListener("touchcancel",resetTouchPinch,{passive:false});
   }
   window.addEventListener("resize",refreshLayout);
+  window.addEventListener("${DIAGRAM_PAGE_CHANGE_EVENT}",function(){render();});
   var observer=new ResizeObserver(refreshLayout);
   observer.observe(document.documentElement);
   window.addEventListener("message",function(event){

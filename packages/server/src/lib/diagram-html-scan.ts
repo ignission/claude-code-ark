@@ -125,13 +125,29 @@ export function rawTextClose(
  * kebab-case の識別子なので、巨大な完全実体表は持たない。未対応の実体は
  * 入力のまま残す。
  */
+/**
+ * ASCII の大文字だけを小文字にする。`toLowerCase()` は `İ` のように 1 文字を
+ * 2 文字へ広げる文字があり、元の文字列と位置がずれる。タグ名の照合には ASCII で足りる。
+ */
+export function asciiLowerCase(value: string): string {
+  return value.replace(/[A-Z]+/gu, part => part.toLowerCase());
+}
+
 export function scanDiagramHtmlStartTags(html: string): DiagramHtmlStartTag[] {
   const tags: DiagramHtmlStartTag[] = [];
-  const lower = html.toLowerCase();
+  const lower = asciiLowerCase(html);
+  // svg / math の内側（外来要素）では title が RCDATA にならず、中身もタグになる
+  let foreignDepth = 0;
   let index = 0;
   while (index < html.length) {
     const open = html.indexOf("<", index);
     if (open < 0) break;
+    const closing = lower.slice(open).match(/^<\/(svg|math)[\s/>]/u);
+    if (closing) {
+      foreignDepth = Math.max(0, foreignDepth - 1);
+      index = open + 2;
+      continue;
+    }
     if (html.startsWith("<!--", open)) {
       const end = html.indexOf("-->", open + 4);
       index = end < 0 ? html.length : end + 3;
@@ -158,6 +174,28 @@ export function scanDiagramHtmlStartTags(html: string): DiagramHtmlStartTag[] {
       end,
     });
     index = end + 1;
+    // textarea と title の中身は文字として扱われる（RCDATA）。タグに見える例文を
+    // 数えないよう、要素そのものは数えたうえで閉じタグまで飛ばす。
+    // svg / math の内側の title は中身がタグになるので飛ばさない。閉じタグを持たない
+    // ものも飛ばさない（閉じタグを探しに行くと、文書の残りを読まずに終わってしまう）
+    const selfClosing = html[end - 1] === "/";
+    if (
+      (normalizedName === "svg" || normalizedName === "math") &&
+      !selfClosing
+    ) {
+      foreignDepth += 1;
+    }
+    if (
+      (normalizedName === "textarea" || normalizedName === "title") &&
+      !selfClosing &&
+      foreignDepth === 0
+    ) {
+      const close = rawTextClose(html, lower, end + 1, normalizedName);
+      if (close >= 0) {
+        const closeEnd = html.indexOf(">", close + normalizedName.length + 2);
+        index = closeEnd < 0 ? html.length : closeEnd + 1;
+      }
+    }
   }
   return tags;
 }

@@ -1688,3 +1688,20 @@ describe("comment layer の operationId (#306)", () => {
     expect(helpers.operationIdFor("a")).not.toBe(first);
   });
 });
+
+describe("デッキの隠れたページ", () => {
+  it("隠れたページの anchor にはカードと入力欄を出さず、ページが変わったら描き直す", () => {
+    const layer = injectDiagramCommentLayer(minimalDoc);
+
+    expect(layer).toContain('entry.anchor.closest("[data-ark-deck-hidden]")');
+    expect(layer).toContain(
+      "var entry=anchorEntry(thread.anchorId);\n    if(isOnHiddenDeckPage(entry))return;"
+    );
+    expect(layer).toContain(
+      "if(!composerAnchorId||!entry||isOnHiddenDeckPage(entry))return;"
+    );
+    expect(layer).toContain(
+      'window.addEventListener("ark:diagram-page-change",function(){render();});'
+    );
+  });
+});

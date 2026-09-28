@@ -13,6 +13,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { injectBuiltinProjection } from "./diagram-builtin.js";
 import { injectDiagramCommentLayer } from "./diagram-comment-layer.js";
+import {
+  DECK_TYPE,
+  injectDeckProjection,
+  validateDiagramDeck,
+} from "./diagram-deck.js";
 import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
 import { validateDiagramDocAuthorship } from "./diagram-doc-authorship.js";
 import { injectDiagramDocEditor } from "./diagram-doc-editor.js";
@@ -139,6 +144,8 @@ export async function readDiagram(
   if (!graphKinds.ok) {
     return { ok: false, status: 422, error: graphKinds.error };
   }
+  const deck = validateDiagramDeck(read.raw, model.model);
+  if (!deck.ok) return { ok: false, status: 422, error: deck.error };
   // 内蔵図種の投影生成 → CSP → 専用層の順。doc 本文は自前 HTML が正なので
   // 編集層（本文の contenteditable 化）とコメント層、graph は編集ハーネスと
   // コメント層の両方を載せる。リンク層は投影の後・編集層とコメント層の前。
@@ -146,10 +153,14 @@ export async function readDiagram(
   // sequence / call-tree は時間順・入れ子が意味を持ち、座標を動かせる canvas に
   // 載せると壊れるので graph ハーネスは載せない。投影が生成する行の data-ark-id
   // に doc と同じ要領でコメントが付く（本文の編集は無い。正は常にモデル）。
+  // デッキも同じ扱いにする（ページは sequence / call-tree と自由形の HTML だけ）。
   const projected = injectDiagramLinkLayer(
     injectCsp(
-      injectStaticBuiltinProjection(
-        injectBuiltinProjection(read.raw, model.model),
+      injectDeckProjection(
+        injectStaticBuiltinProjection(
+          injectBuiltinProjection(read.raw, model.model),
+          model.model
+        ),
         model.model
       )
     )
@@ -160,7 +171,8 @@ export async function readDiagram(
     html:
       model.model.type === "doc"
         ? injectDiagramCommentLayer(injectDiagramDocEditor(projected), "doc")
-        : isStaticBuiltinType(model.model.type)
+        : isStaticBuiltinType(model.model.type) ||
+            model.model.type === DECK_TYPE
           ? injectDiagramCommentLayer(projected, "doc")
           : injectDiagramCommentLayer(injectHarness(projected), "graph"),
     raw: read.raw,

@@ -26,9 +26,13 @@ describe("BOARD_SESSION_CONTEXT の data-ark-author=human 規約", () => {
 });
 
 describe("BOARD_SESSION_CONTEXT の説明図", () => {
-  it("頼まれていなくても、込み入った説明は自由な説明図で出すよう伝える", () => {
+  it("頼まれていなくても、込み入った説明は 1 ページに 1 つのデッキで出すよう伝える", () => {
     expect(BOARD_SESSION_CONTEXT).toContain("込み入った説明");
-    expect(BOARD_SESSION_CONTEXT).toContain("説明図（自由形）");
+    expect(BOARD_SESSION_CONTEXT).toContain("説明図（デッキ）");
+    expect(BOARD_SESSION_CONTEXT).toContain("1 ページに 1 つのこと");
+    expect(BOARD_SESSION_CONTEXT).toContain(
+      "理由や経緯はページではなくチャットに書く"
+    );
     expect(BOARD_SESSION_CONTEXT).toContain("短い答えで済むならチャットで返す");
   });
 });

@@ -88,7 +88,7 @@ function renderSource(source: string, text: string): string {
   return `<a href="${escapeHtml(source)}">${safeText}</a>`;
 }
 
-const STATIC_BASE_CSS = `
+export const STATIC_BASE_CSS = `
 body{margin:0;padding:1.1rem;background:#0b1018;color:#dbe4f0;
 font-family:"Hiragino Sans","Noto Sans JP",system-ui,sans-serif;font-size:14px}
 .ark-static-title{margin:0 0 .8rem;font-size:1.02rem;font-weight:700}
@@ -105,7 +105,7 @@ font:700 .6rem/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing
 a{color:#7dd3fc}
 `;
 
-const SEQUENCE_CSS = `${STATIC_BASE_CSS}
+const SEQUENCE_ONLY_CSS = `
 .ark-seq{position:relative}
 .ark-seq-actors{display:grid;gap:.3rem;margin:0 0 .35rem}
 .ark-seq-actor{padding:.25rem .3rem;border:1px solid #33445f;border-radius:5px;
@@ -138,7 +138,7 @@ border-right:7px solid #5d789c}
 text-align:right;font:.6rem/1 ui-monospace,SFMono-Regular,Consolas,monospace}
 `;
 
-const CALL_TREE_CSS = `${STATIC_BASE_CSS}
+const CALL_TREE_ONLY_CSS = `
 .ark-tree{margin:0;padding:0;list-style:none;
 font:.69rem/1.75 ui-monospace,SFMono-Regular,Consolas,monospace}
 .ark-tree-row{display:flex;align-items:baseline;gap:.35rem;padding:.12rem 0}
@@ -157,9 +157,17 @@ color:#8fa6c4;font-size:.6rem}
 text-decoration-color:#f8514980}
 `;
 
+/** 図種ごとの CSS から共通部分を除いたもの（デッキは共通部分を 1 度だけ載せる） */
+export const STATIC_BUILTIN_OWN_CSS: Readonly<
+  Record<StaticBuiltinType, string>
+> = {
+  sequence: SEQUENCE_ONLY_CSS,
+  "call-tree": CALL_TREE_ONLY_CSS,
+};
+
 export const STATIC_BUILTIN_CSS: Readonly<Record<StaticBuiltinType, string>> = {
-  sequence: SEQUENCE_CSS,
-  "call-tree": CALL_TREE_CSS,
+  sequence: `${STATIC_BASE_CSS}${SEQUENCE_ONLY_CSS}`,
+  "call-tree": `${STATIC_BASE_CSS}${CALL_TREE_ONLY_CSS}`,
 };
 
 function panel(
@@ -370,6 +378,14 @@ function renderCallTree(model: DiagramModel): string {
   );
 }
 
+/** 静的な内蔵図種 1 枚分のパネルを描く（デッキのページからも使う） */
+export function renderStaticBuiltin(
+  type: StaticBuiltinType,
+  model: DiagramModel
+): string {
+  return type === "sequence" ? renderSequence(model) : renderCallTree(model);
+}
+
 /**
  * 静的な内蔵図種の投影を html へ差し込む。
  * 対象外の図種、または自前の投影を持つ図（`data-ark-static` が既にある）はそのまま返す。
@@ -394,7 +410,7 @@ export function injectStaticBuiltinProjection(
   const projection =
     `<style data-ark-harness-ui="1">${css}</style>` +
     title +
-    (model.type === "sequence" ? renderSequence(model) : renderCallTree(model));
+    renderStaticBuiltin(model.type, model);
 
   const closing = html.toLowerCase().lastIndexOf("</body>");
   if (closing === -1) return html + projection;
