@@ -25,4 +25,19 @@ describe("scanDiagramHtmlStartTags", () => {
     expect(p).toBeDefined();
     expect(html.slice(p!.start, p!.end + 1)).toBe(`<p data-ark-id="s1-p1">`);
   });
+
+  it("textarea と title の中身はタグとして数えず、要素そのものは数える", () => {
+    const html =
+      '<title data-x="t">&lt;<section data-ark-page="fake-1"></title>' +
+      '<textarea data-ark-id="note"><section data-ark-page="fake-2"></TEXTAREA>' +
+      '<section data-ark-page="real"></section>';
+    const tags = scanDiagramHtmlStartTags(html);
+
+    expect(tags.map(tag => tag.name)).toEqual(["title", "textarea", "section"]);
+    expect(
+      tags.flatMap(tag =>
+        tag.attributes.filter(a => a.name === "data-ark-page").map(a => a.value)
+      )
+    ).toEqual(["real"]);
+  });
 });

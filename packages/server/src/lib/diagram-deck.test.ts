@@ -157,6 +157,18 @@ describe("validateDiagramDeck", () => {
     ).toEqual({ ok: true });
   });
 
+  it("textarea や title の中に書かれた例文はページとして数えない", () => {
+    const result = validateDiagramDeck(
+      page(
+        '<textarea><section data-ark-page="p-why">例</section></textarea>' +
+          '<section data-ark-page="p-why">理由</section>'
+      ),
+      deckModel([SEQUENCE_PAGE, HTML_PAGE])
+    );
+
+    expect(result).toEqual({ ok: true });
+  });
+
   it("html ページでない id を指す data-ark-page は拒否する", () => {
     const result = validateDiagramDeck(
       page('<section data-ark-page="p-seq">手書き</section>'),

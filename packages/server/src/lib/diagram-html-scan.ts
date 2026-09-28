@@ -158,6 +158,14 @@ export function scanDiagramHtmlStartTags(html: string): DiagramHtmlStartTag[] {
       end,
     });
     index = end + 1;
+    // textarea と title の中身は文字として扱われる（RCDATA）。タグに見える例文を
+    // 数えないよう、要素そのものは数えたうえで閉じタグまで飛ばす
+    if (normalizedName === "textarea" || normalizedName === "title") {
+      const close = rawTextClose(html, lower, end + 1, normalizedName);
+      if (close < 0) break;
+      const closeEnd = html.indexOf(">", close + normalizedName.length + 2);
+      index = closeEnd < 0 ? html.length : closeEnd + 1;
+    }
   }
   return tags;
 }
