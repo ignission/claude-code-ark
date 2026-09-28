@@ -44,6 +44,10 @@ import {
 
 export const DECK_TYPE = "deck";
 export const DIAGRAM_DECK_MARKER = "ark-diagram-deck";
+/** デッキの表示が変わったことをコメント層へ知らせる window イベント */
+export const DIAGRAM_PAGE_CHANGE_EVENT = "ark:diagram-page-change";
+/** デッキが隠しているページ（の包む要素）に付く属性 */
+export const DIAGRAM_DECK_HIDDEN_ATTR = "data-ark-deck-hidden";
 
 const PAGE_ATTRIBUTE = "data-ark-page";
 
@@ -207,9 +211,8 @@ export function commentAnchorNodes(model: DiagramModel): DiagramNode[] {
 
 const DECK_CSS = `
 .ark-deck-title{margin:0 0 .8rem;font-size:1.02rem;font-weight:700}
-.ark-deck-page{display:none}
-.ark-deck[data-ark-deck-mode="page"] .ark-deck-page.ark-deck-on{display:block}
-.ark-deck[data-ark-deck-mode="stack"] .ark-deck-page{display:block;margin:0 0 1.2rem}
+.ark-deck-page[data-ark-deck-hidden]{display:none}
+.ark-deck[data-ark-deck-mode="stack"] .ark-deck-page{margin:0 0 1.2rem}
 .ark-deck-nav{position:sticky;bottom:0;display:flex;align-items:center;justify-content:center;
 gap:.6rem;padding:.55rem 0;background:#0b1018;
 font:.72rem/1 ui-monospace,SFMono-Regular,Consolas,monospace;color:#6b7b93}
@@ -224,7 +227,7 @@ background:#101827;color:#dbe4f0;font:inherit;cursor:pointer}
 `;
 
 /**
- * 自由形ページを差し込み口へ移し、めくる操作を付ける。
+ * 自由形ページを包む要素へ移し、めくる操作を付ける。
  * srcdoc の iframe では `href="#…"` が親ページの URL に解決されて遷移するので、
  * リンクは使わずボタンで動かす。
  */
@@ -232,17 +235,15 @@ const DECK_SCRIPT = `(function(){
   "use strict";
   var deck=document.querySelector("[data-ark-deck-mode]");
   if(!deck)return;
+  // 自由形の section は包む要素の中へ移すだけにする。表示・非表示は包む要素で切り替え、
+  // section に書かれた display（grid / flex など）には触らない
   deck.querySelectorAll("[data-ark-deck-slot]").forEach(function(slot){
     var id=slot.getAttribute("data-ark-deck-slot");
-    var authored=null;
     document.querySelectorAll("[data-ark-page]").forEach(function(el){
-      if(el.getAttribute("data-ark-page")===id&&!deck.contains(el))authored=el;
+      if(el.getAttribute("data-ark-page")===id&&!deck.contains(el))slot.appendChild(el);
     });
-    if(!authored)return;
-    authored.classList.add("ark-deck-page");
-    slot.replaceWith(authored);
   });
-  var pages=Array.prototype.slice.call(deck.querySelectorAll(":scope > .ark-deck-pages > [data-ark-page]"));
+  var pages=Array.prototype.slice.call(deck.querySelectorAll(".ark-deck-pages > .ark-deck-page"));
   var dots=deck.querySelector(".ark-deck-dots");
   var pos=deck.querySelector(".ark-deck-pos");
   var prev=deck.querySelector('[data-ark-deck-go="-1"]');
@@ -257,13 +258,22 @@ const DECK_SCRIPT = `(function(){
     dot.addEventListener("click",function(){show(i);});
     dots.appendChild(dot);
   });
-  function show(i){
-    cur=Math.max(0,Math.min(pages.length-1,i));
-    pages.forEach(function(page,k){page.classList.toggle("ark-deck-on",k===cur);});
+  function apply(){
+    var stack=deck.getAttribute("data-ark-deck-mode")==="stack";
+    pages.forEach(function(page,k){
+      if(stack||k===cur)page.removeAttribute("data-ark-deck-hidden");
+      else page.setAttribute("data-ark-deck-hidden","");
+    });
     Array.prototype.forEach.call(dots.children,function(dot,k){dot.setAttribute("aria-current",k===cur?"true":"false");});
     pos.textContent=(cur+1)+" / "+pages.length;
     prev.disabled=cur===0;
     next.disabled=cur===pages.length-1;
+    // コメント層は隠れたページのカードを出さないので、表示が変わるたびに描き直させる
+    window.dispatchEvent(new Event("${DIAGRAM_PAGE_CHANGE_EVENT}"));
+  }
+  function show(i){
+    cur=Math.max(0,Math.min(pages.length-1,i));
+    apply();
   }
   prev.addEventListener("click",function(){show(cur-1);});
   next.addEventListener("click",function(){show(cur+1);});
@@ -271,6 +281,7 @@ const DECK_SCRIPT = `(function(){
     var stack=deck.getAttribute("data-ark-deck-mode")!=="stack";
     deck.setAttribute("data-ark-deck-mode",stack?"stack":"page");
     toggle.textContent=stack?"1 枚ずつ":"すべて表示";
+    apply();
     if(!stack)window.scrollTo(0,0);
   });
   document.addEventListener("keydown",function(e){
@@ -290,7 +301,7 @@ const INJECTED_SCRIPT_RE = new RegExp(
 
 function renderPage(page: DeckPage): string {
   if (page.type === "html") {
-    return `<div data-ark-deck-slot="${escapeHtml(page.id)}"></div>`;
+    return `<div class="ark-deck-page" data-ark-deck-slot="${escapeHtml(page.id)}"></div>`;
   }
   return (
     `<div class="ark-deck-page" ${PAGE_ATTRIBUTE}="${escapeHtml(page.id)}">` +

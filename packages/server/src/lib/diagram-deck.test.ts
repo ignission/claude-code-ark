@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   commentAnchorNodes,
+  DIAGRAM_DECK_HIDDEN_ATTR,
   DIAGRAM_DECK_MARKER,
+  DIAGRAM_PAGE_CHANGE_EVENT,
   injectDeckProjection,
   parseDeckPages,
   validateDiagramDeck,
@@ -202,6 +204,22 @@ describe("injectDeckProjection", () => {
     expect(out).toContain("data-ark-deck-mode");
     // srcdoc の iframe では href="#…" が親の URL へ遷移するので使わない
     expect(out).not.toMatch(/href="#/);
+  });
+
+  it("表示の切り替えは包む要素で行い、自由形 section の display に触らない", () => {
+    const out = injectDeckProjection(html, model);
+
+    // html ページの差し込み口そのものがページの包む要素になる
+    expect(out).toContain(
+      '<div class="ark-deck-page" data-ark-deck-slot="p-why">'
+    );
+    expect(out).toContain(
+      `.ark-deck-page[${DIAGRAM_DECK_HIDDEN_ATTR}]{display:none}`
+    );
+    expect(out).not.toMatch(/\.ark-deck-page[^{]*\{display:block/);
+    expect(out).toContain("slot.appendChild(el)");
+    // 表示が変わるたびにコメント層へ知らせる
+    expect(out).toContain(`new Event("${DIAGRAM_PAGE_CHANGE_EVENT}")`);
   });
 
   it("生成物は保存時に落ちるよう data-ark-harness-ui を付ける", () => {
