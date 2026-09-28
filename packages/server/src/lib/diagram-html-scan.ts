@@ -136,10 +136,18 @@ export function asciiLowerCase(value: string): string {
 export function scanDiagramHtmlStartTags(html: string): DiagramHtmlStartTag[] {
   const tags: DiagramHtmlStartTag[] = [];
   const lower = asciiLowerCase(html);
+  // svg / math の内側（外来要素）では title が RCDATA にならず、中身もタグになる
+  let foreignDepth = 0;
   let index = 0;
   while (index < html.length) {
     const open = html.indexOf("<", index);
     if (open < 0) break;
+    const closing = lower.slice(open).match(/^<\/(svg|math)[\s/>]/u);
+    if (closing) {
+      foreignDepth = Math.max(0, foreignDepth - 1);
+      index = open + 2;
+      continue;
+    }
     if (html.startsWith("<!--", open)) {
       const end = html.indexOf("-->", open + 4);
       index = end < 0 ? html.length : end + 3;
@@ -168,12 +176,19 @@ export function scanDiagramHtmlStartTags(html: string): DiagramHtmlStartTag[] {
     index = end + 1;
     // textarea と title の中身は文字として扱われる（RCDATA）。タグに見える例文を
     // 数えないよう、要素そのものは数えたうえで閉じタグまで飛ばす。
-    // inline SVG の `<title/>` のように閉じタグを持たないものは飛ばさない
-    // （閉じタグを探しに行くと、文書の残りを読まずに終わってしまう）
+    // svg / math の内側の title は中身がタグになるので飛ばさない。閉じタグを持たない
+    // ものも飛ばさない（閉じタグを探しに行くと、文書の残りを読まずに終わってしまう）
     const selfClosing = html[end - 1] === "/";
     if (
-      (normalizedName === "textarea" || normalizedName === "title") &&
+      (normalizedName === "svg" || normalizedName === "math") &&
       !selfClosing
+    ) {
+      foreignDepth += 1;
+    }
+    if (
+      (normalizedName === "textarea" || normalizedName === "title") &&
+      !selfClosing &&
+      foreignDepth === 0
     ) {
       const close = rawTextClose(html, lower, end + 1, normalizedName);
       if (close >= 0) {

@@ -60,4 +60,17 @@ describe("scanDiagramHtmlStartTags", () => {
 
     expect(tags.map(tag => tag.name)).toEqual(["title", "section"]);
   });
+
+  it("svg の内側の title は中身もタグとして数え、svg を出たら html の title に戻る", () => {
+    const tags = scanDiagramHtmlStartTags(
+      '<svg><title><span data-ark-id="caption">図</span></title></svg>' +
+        '<title><span data-ark-id="fake">例</span></title>'
+    );
+
+    expect(
+      tags.flatMap(tag =>
+        tag.attributes.filter(a => a.name === "data-ark-id").map(a => a.value)
+      )
+    ).toEqual(["caption"]);
+  });
 });
