@@ -217,7 +217,12 @@ describe("injectDeckProjection", () => {
       `.ark-deck-page[${DIAGRAM_DECK_HIDDEN_ATTR}]{display:none}`
     );
     expect(out).not.toMatch(/\.ark-deck-page[^{]*\{display:block/);
-    expect(out).toContain("slot.appendChild(el)");
+    // 入れ子に書かれたページも自分の包む要素へ移し直す
+    expect(out).toContain(
+      'el.getAttribute("data-ark-page")===id&&el.parentElement!==slot'
+    );
+    // ページを移ったら先頭から読ませる
+    expect(out).toContain("if(moved)window.scrollTo(0,0);");
     // 表示が変わるたびにコメント層へ知らせる
     expect(out).toContain(`new Event("${DIAGRAM_PAGE_CHANGE_EVENT}")`);
   });
@@ -258,7 +263,7 @@ describe("injectDeckProjection", () => {
 });
 
 describe("commentAnchorNodes", () => {
-  it("デッキはページ内の node もコメントの付け先にする", () => {
+  it("デッキはページ内の node と sequence の行もコメントの付け先にする", () => {
     const nodes = commentAnchorNodes(
       deckModel([SEQUENCE_PAGE, HTML_PAGE, CALL_TREE_PAGE])
     );
@@ -268,15 +273,37 @@ describe("commentAnchorNodes", () => {
       "iframe",
       "layer",
       "link",
+      "s1",
+    ]);
+    // 行のコメントは anchorText にメッセージを使う
+    expect(nodes.find(node => node.id === "s1")?.label).toBe("click a[href]");
+  });
+
+  it("単独の sequence も行をコメントの付け先にする", () => {
+    const nodes = commentAnchorNodes({
+      version: 1,
+      type: "sequence",
+      nodes: [
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+      ],
+      edges: [{ id: "s1", from: "a", to: "b" }],
+      groups: [],
+    });
+
+    expect(nodes.map(node => [node.id, node.label])).toEqual([
+      ["a", "A"],
+      ["b", "B"],
+      ["s1", "s1"],
     ]);
   });
 
-  it("デッキ以外は一番上の node だけ", () => {
+  it("それ以外の図は一番上の node だけ", () => {
     const nodes = commentAnchorNodes({
       version: 1,
       type: "flow",
       nodes: [{ id: "a", label: "A" }],
-      edges: [],
+      edges: [{ id: "e1", from: "a", to: "a" }],
       groups: [],
     });
 

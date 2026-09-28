@@ -654,6 +654,43 @@ describe("comment mutations", () => {
     }
   });
 
+  it("create はデッキの sequence の行（edge）にもコメントを付けられる", async () => {
+    const model = {
+      version: 1,
+      type: "deck",
+      nodes: [],
+      edges: [],
+      groups: [],
+      ext: {
+        pages: [
+          {
+            id: "p-seq",
+            type: "sequence",
+            nodes: [
+              { id: "a", label: "A" },
+              { id: "b", label: "B" },
+            ],
+            edges: [{ id: "s1", from: "a", to: "b", label: "postMessage" }],
+          },
+        ],
+      },
+    };
+    fs.writeFileSync(
+      path.join(worktree, relPath),
+      `<!doctype html><html><body><script type="application/json" id="ark-diagram-model">${JSON.stringify(model)}</script></body></html>`
+    );
+
+    const result = await createDiagramComment(worktree, relPath, "s1", "ここ");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.comments.threads[0]).toMatchObject({
+        anchorId: "s1",
+        anchorText: "postMessage",
+      });
+    }
+  });
+
   it("create は author を書かず server ID/時刻と最新 node label で open thread を追加する", async () => {
     writeDoc();
 

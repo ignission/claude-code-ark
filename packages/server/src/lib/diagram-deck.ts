@@ -196,15 +196,27 @@ export function validateDiagramDeck(
   return { ok: true };
 }
 
+/**
+ * sequence は参加者に加えて、メッセージの行（edge）もコメントの付け先になる。
+ * 投影が行へ edge の id を `data-ark-id` として出すため。
+ */
+function anchorNodesOf(model: DiagramModel): DiagramNode[] {
+  if (model.type !== "sequence") return model.nodes;
+  return [
+    ...model.nodes,
+    ...model.edges.map(edge => ({ id: edge.id, label: edge.label ?? edge.id })),
+  ];
+}
+
 /** コメントの付け先になれる node。デッキはページ内の node も含める */
 export function commentAnchorNodes(model: DiagramModel): DiagramNode[] {
-  if (model.type !== DECK_TYPE) return model.nodes;
+  if (model.type !== DECK_TYPE) return anchorNodesOf(model);
   const parsed = parseDeckPages(model);
   if (!parsed.ok) return model.nodes;
   return [
     ...model.nodes,
     ...parsed.pages.flatMap(page =>
-      page.type === "html" ? [] : page.model.nodes
+      page.type === "html" ? [] : anchorNodesOf(page.model)
     ),
   ];
 }
@@ -236,11 +248,12 @@ const DECK_SCRIPT = `(function(){
   var deck=document.querySelector("[data-ark-deck-mode]");
   if(!deck)return;
   // 自由形の section は包む要素の中へ移すだけにする。表示・非表示は包む要素で切り替え、
-  // section に書かれた display（grid / flex など）には触らない
+  // section に書かれた display（grid / flex など）には触らない。
+  // 別のページの中に書かれたページも、先に親ごと移された後で自分の包む要素へ移し直す
   deck.querySelectorAll("[data-ark-deck-slot]").forEach(function(slot){
     var id=slot.getAttribute("data-ark-deck-slot");
     document.querySelectorAll("[data-ark-page]").forEach(function(el){
-      if(el.getAttribute("data-ark-page")===id&&!deck.contains(el))slot.appendChild(el);
+      if(el.getAttribute("data-ark-page")===id&&el.parentElement!==slot)slot.appendChild(el);
     });
   });
   var pages=Array.prototype.slice.call(deck.querySelectorAll(".ark-deck-pages > .ark-deck-page"));
@@ -272,8 +285,12 @@ const DECK_SCRIPT = `(function(){
     window.dispatchEvent(new Event("${DIAGRAM_PAGE_CHANGE_EVENT}"));
   }
   function show(i){
-    cur=Math.max(0,Math.min(pages.length-1,i));
+    var target=Math.max(0,Math.min(pages.length-1,i));
+    var moved=target!==cur;
+    cur=target;
     apply();
+    // 前のページで下までスクロールしていても、次のページは見出しから読ませる
+    if(moved)window.scrollTo(0,0);
   }
   prev.addEventListener("click",function(){show(cur-1);});
   next.addEventListener("click",function(){show(cur+1);});
