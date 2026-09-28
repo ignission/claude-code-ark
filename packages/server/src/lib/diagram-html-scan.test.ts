@@ -40,4 +40,24 @@ describe("scanDiagramHtmlStartTags", () => {
       )
     ).toEqual(["real"]);
   });
+
+  it("SVG の自己終了 <title/> と閉じタグの無い title では走査を止めない", () => {
+    const tags = scanDiagramHtmlStartTags(
+      '<svg><title/></svg><section data-ark-page="a"></section>' +
+        '<title>閉じない<section data-ark-page="b"></section>'
+    );
+
+    expect(
+      tags.flatMap(tag =>
+        tag.attributes.filter(a => a.name === "data-ark-page").map(a => a.value)
+      )
+    ).toEqual(["a", "b"]);
+  });
+
+  it("小文字にすると長さが変わる文字があっても閉じタグの位置がずれない", () => {
+    const html = '<title>İstanbul</title><section data-ark-page="p"></section>';
+    const tags = scanDiagramHtmlStartTags(html);
+
+    expect(tags.map(tag => tag.name)).toEqual(["title", "section"]);
+  });
 });

@@ -28,7 +28,10 @@
  */
 
 import { GENERATED_ATTR } from "./diagram-builtin.js";
-import { scanDiagramHtmlStartTags } from "./diagram-html-scan.js";
+import {
+  asciiLowerCase,
+  scanDiagramHtmlStartTags,
+} from "./diagram-html-scan.js";
 import {
   type DiagramModel,
   type DiagramNode,
@@ -364,7 +367,7 @@ export function injectDeckProjection(
     `</nav></div>` +
     `<script id="${DIAGRAM_DECK_MARKER}" data-ark-harness-ui="1">${DECK_SCRIPT}</script>`;
 
-  const closing = html.toLowerCase().lastIndexOf("</body>");
+  const closing = asciiLowerCase(html).lastIndexOf("</body>");
   if (closing === -1) return html + projection;
   return html.slice(0, closing) + projection + html.slice(closing);
 }

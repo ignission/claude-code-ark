@@ -125,9 +125,17 @@ export function rawTextClose(
  * kebab-case の識別子なので、巨大な完全実体表は持たない。未対応の実体は
  * 入力のまま残す。
  */
+/**
+ * ASCII の大文字だけを小文字にする。`toLowerCase()` は `İ` のように 1 文字を
+ * 2 文字へ広げる文字があり、元の文字列と位置がずれる。タグ名の照合には ASCII で足りる。
+ */
+export function asciiLowerCase(value: string): string {
+  return value.replace(/[A-Z]+/gu, part => part.toLowerCase());
+}
+
 export function scanDiagramHtmlStartTags(html: string): DiagramHtmlStartTag[] {
   const tags: DiagramHtmlStartTag[] = [];
-  const lower = html.toLowerCase();
+  const lower = asciiLowerCase(html);
   let index = 0;
   while (index < html.length) {
     const open = html.indexOf("<", index);
@@ -159,12 +167,19 @@ export function scanDiagramHtmlStartTags(html: string): DiagramHtmlStartTag[] {
     });
     index = end + 1;
     // textarea と title の中身は文字として扱われる（RCDATA）。タグに見える例文を
-    // 数えないよう、要素そのものは数えたうえで閉じタグまで飛ばす
-    if (normalizedName === "textarea" || normalizedName === "title") {
+    // 数えないよう、要素そのものは数えたうえで閉じタグまで飛ばす。
+    // inline SVG の `<title/>` のように閉じタグを持たないものは飛ばさない
+    // （閉じタグを探しに行くと、文書の残りを読まずに終わってしまう）
+    const selfClosing = html[end - 1] === "/";
+    if (
+      (normalizedName === "textarea" || normalizedName === "title") &&
+      !selfClosing
+    ) {
       const close = rawTextClose(html, lower, end + 1, normalizedName);
-      if (close < 0) break;
-      const closeEnd = html.indexOf(">", close + normalizedName.length + 2);
-      index = closeEnd < 0 ? html.length : closeEnd + 1;
+      if (close >= 0) {
+        const closeEnd = html.indexOf(">", close + normalizedName.length + 2);
+        index = closeEnd < 0 ? html.length : closeEnd + 1;
+      }
     }
   }
   return tags;
