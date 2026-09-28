@@ -615,6 +615,45 @@ describe("readDiagramCommentsFile", () => {
 describe("comment mutations", () => {
   const relPath = ".claude/diagrams/order-flow.diagram.html";
 
+  it("create はデッキのページ内の node にもコメントを付けられる", async () => {
+    const model = {
+      version: 1,
+      type: "deck",
+      nodes: [],
+      edges: [],
+      groups: [],
+      ext: {
+        pages: [
+          {
+            id: "p-tree",
+            type: "call-tree",
+            nodes: [{ id: "link", label: "diagram-link-layer.ts" }],
+            edges: [],
+          },
+        ],
+      },
+    };
+    fs.writeFileSync(
+      path.join(worktree, relPath),
+      `<!doctype html><html><body><script type="application/json" id="ark-diagram-model">${JSON.stringify(model)}</script></body></html>`
+    );
+
+    const result = await createDiagramComment(
+      worktree,
+      relPath,
+      "link",
+      "ここを見て"
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.comments.threads[0]).toMatchObject({
+        anchorId: "link",
+        anchorText: "diagram-link-layer.ts",
+      });
+    }
+  });
+
   it("create は author を書かず server ID/時刻と最新 node label で open thread を追加する", async () => {
     writeDoc();
 

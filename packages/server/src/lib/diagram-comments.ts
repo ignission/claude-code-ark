@@ -11,6 +11,7 @@ import {
   diagramCommentOperationKey,
   diagramCommentOperationLog,
 } from "./diagram-comment-operation-log.js";
+import { commentAnchorNodes } from "./diagram-deck.js";
 import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
 import { readDiagramModel } from "./diagram-reader.js";
@@ -620,7 +621,9 @@ export async function createDiagramComment(
   return withIdempotentMutation(gate, async () => {
     const diagram = await readCurrentDiagram(worktreeReal, relPath);
     if (!diagram.ok) return diagram;
-    const anchor = diagram.model.nodes.find(node => node.id === anchorId);
+    const anchor = commentAnchorNodes(diagram.model).find(
+      node => node.id === anchorId
+    );
     if (anchor === undefined) {
       return {
         ok: false,
@@ -748,7 +751,11 @@ export async function appendDiagramCommentMessage(
         error: `コメント thread が見つかりません: ${threadId}`,
       };
     }
-    if (!diagram.model.nodes.some(node => node.id === thread.anchorId)) {
+    if (
+      !commentAnchorNodes(diagram.model).some(
+        node => node.id === thread.anchorId
+      )
+    ) {
       return {
         ok: false,
         code: "ANCHOR_NOT_FOUND",
@@ -840,7 +847,11 @@ export async function resolveDiagramComment(
         error: `コメント thread が見つかりません: ${threadId}`,
       };
     }
-    if (!diagram.model.nodes.some(node => node.id === thread.anchorId)) {
+    if (
+      !commentAnchorNodes(diagram.model).some(
+        node => node.id === thread.anchorId
+      )
+    ) {
       return {
         ok: false,
         code: "ANCHOR_NOT_FOUND",

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { validateDiagramDeck } from "./diagram-deck.js";
 import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
 import { validateDiagramDocAuthorship } from "./diagram-doc-authorship.js";
 import { extractModel } from "./diagram-file.js";
@@ -21,6 +22,10 @@ const DOC_SAMPLE_PATH = path.resolve(
 const DOC_SAMPLE_COMMENTS_PATH = DOC_SAMPLE_PATH.replace(
   /\.diagram\.html$/u,
   ".comments.json"
+);
+const DECK_SAMPLE_PATH = path.resolve(
+  REPOSITORY_ROOT,
+  ".claude/diagrams/_examples/deck.diagram.html"
 );
 const REVIEW_SAMPLE_PATH = path.resolve(
   REPOSITORY_ROOT,
@@ -173,14 +178,22 @@ describe("diagram-authoring skill の書き出し先 contract", () => {
     expect(skill).not.toMatch(/(?:docs|\.claude)\/diagrams/);
   });
 
-  it("込み入った説明は、決まった図種より自由な説明図を先に案内する", () => {
+  it("込み入った説明は、決まった図種よりデッキを先に案内する", () => {
     const skill = fs.readFileSync(SKILL_PATH, "utf-8");
 
-    expect(skill).toContain("## 説明図（自由形）");
+    expect(skill).toContain("## 説明図（デッキ）");
     // 内蔵図種の案内より前に置く (込み入った説明ではこちらを優先するため)
-    expect(skill.indexOf("## 説明図（自由形）")).toBeLessThan(
+    expect(skill.indexOf("## 説明図（デッキ）")).toBeLessThan(
       skill.indexOf("## まず図種を確かめる")
     );
+    for (const rule of [
+      "1 ページに 1 つのことだけ",
+      "1 ページ目は結論にする",
+      "ページに文章を積まない",
+      "作業の手順を `sequence` にしない",
+    ]) {
+      expect(skill).toContain(rule);
+    }
     for (const recipe of [
       "見出しを結論の一文にする",
       "画面や物の見た目を描く",
@@ -195,6 +208,31 @@ describe("diagram-authoring skill の書き出し先 contract", () => {
       '`<script type="application/json" id="ark-diagram-model">`'
     );
     expect(skill).toContain("モデルの `type` 欄（図種）を書かず");
+  });
+
+  it("デッキの語彙と制約を定義する", () => {
+    const skill = fs.readFileSync(SKILL_PATH, "utf-8");
+
+    expect(skill).toContain("### デッキの書き方");
+    expect(skill).toContain('"type": "deck"');
+    expect(skill).toContain("`ext.pages`");
+    expect(skill).toContain('<section data-ark-page="<ページの id>">');
+    expect(skill).toContain("ファイル全体で一意");
+    // graph と doc はページにできない理由まで書く
+    expect(skill).toContain("ページにできない");
+    expect(skill).toContain("_examples/deck.diagram.html");
+  });
+
+  it("デッキの完成例はサーバーの検証を通る", () => {
+    const html = fs.readFileSync(DECK_SAMPLE_PATH, "utf-8");
+    const model = extractModel(html);
+
+    expect(model.ok).toBe(true);
+    if (!model.ok) return;
+    expect(model.model.type).toBe("deck");
+    expect(validateDiagramDeck(html, model.model)).toEqual({ ok: true });
+    // めくる操作はボタンで作られるので、完成例に文書内リンクを書かない
+    expect(html).not.toMatch(/href="#/);
   });
 
   it("sequence と call-tree の語彙を定義する", () => {
