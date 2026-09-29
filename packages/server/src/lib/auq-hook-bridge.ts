@@ -29,6 +29,7 @@ import {
   boardSessionStartHookCommand,
   writeBoardSessionStartHookFile,
 } from "./board-session-start-hook.js";
+import { BOARD_SUGGEST_STOP_PATH } from "./board-suggest-stop-hook.js";
 import { db } from "./database.js";
 import { getDataDir } from "./paths.js";
 
@@ -100,6 +101,10 @@ export class AuqHookBridge {
     // curl: -m 3 で TUI をブロックしない / 失敗は無視 (hook が claude の
     // 進行を止めないことを最優先)。stdin の JSON をそのまま転送する。
     const command = `curl -s -m 3 -X POST 'http://127.0.0.1:${port}${AUQ_EVENT_PATH}' -H 'Content-Type: application/json' -H '${AUQ_TOKEN_HEADER}: ${this.token}' --data-binary @- >/dev/null 2>&1 || true`;
+    // ボード提案: 応答 body (block するときだけ JSON) をそのまま hook の出力にする。
+    // -f で HTTP エラーの body を捨て、失敗・timeout は何も出さずに止まらせる。
+    // Jev は 1 回 200〜400ms (jev-client の timeout は 5 秒) なので 10 秒で打ち切る
+    const stopCommand = `curl -sf -m 10 -X POST 'http://127.0.0.1:${port}${BOARD_SUGGEST_STOP_PATH}' -H 'Content-Type: application/json' -H '${AUQ_TOKEN_HEADER}: ${this.token}' --data-binary @- 2>/dev/null || true`;
     const settings = {
       hooks: {
         SessionStart: [
@@ -118,6 +123,11 @@ export class AuqHookBridge {
           {
             matcher: "AskUserQuestion",
             hooks: [{ type: "command", command }],
+          },
+        ],
+        Stop: [
+          {
+            hooks: [{ type: "command", command: stopCommand }],
           },
         ],
       },

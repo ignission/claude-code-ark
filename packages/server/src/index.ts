@@ -56,7 +56,12 @@ import {
   resolveBoardSuggestApiKey,
   validateBoardSuggestPatch,
 } from "./lib/board-suggest-config.js";
-import { BoardSuggestService } from "./lib/board-suggest-service.js";
+import {
+  BOARD_SUGGEST_STOP_PATH,
+  BoardSuggestStopHandler,
+  parseStopHookInput,
+  readTranscriptTail,
+} from "./lib/board-suggest-stop-hook.js";
 import { rememberFifoEntry } from "./lib/bounded-fifo-map.js";
 import {
   buildTunnelEntries,
@@ -543,6 +548,60 @@ export async function startServer(
     res.status(204).end();
   });
 
+  // ===== ボード提案 (Jev 判定) の Stop hook 受け口 =====
+  // Claude が返答を終えるたびに Stop hook (auq-hook-bridge が注入) から POST される。
+  // Jev が「ボードのほうが読みやすい」と判定したら block を返し、Claude 自身に
+  // デッキを描かせる (tmux には何も送らない)。有効/閾値/鍵は設定画面
+  // (board-suggest:get/set) で変えられ、次のターンから効く。鍵が無い間は何もしない。
+  const boardSuggestFeatureOn =
+    process.env.ARK_FEATURE_BOARD_SUGGEST !== "false";
+  const boardSuggestStop = new BoardSuggestStopHandler({
+    enabled: () => boardSuggestFeatureOn && readBoardSuggestEnabled(db),
+    apiKey: () => resolveBoardSuggestApiKey(db)?.key ?? null,
+    threshold: () => readBoardSuggestThreshold(db),
+    decide: (text, apiKey) => decideBoardSuggestion(text, apiKey),
+    readTranscript: transcriptPath => readTranscriptTail(transcriptPath),
+  });
+  app.post(BOARD_SUGGEST_STOP_PATH, async (req, res) => {
+    if (!auqHookBridge.verifyToken(req.headers[AUQ_TOKEN_HEADER])) {
+      console.warn("[BoardSuggest] 403: token 不一致の hook を拒否しました");
+      res.status(403).json({ error: "forbidden" });
+      return;
+    }
+    const input = parseStopHookInput(req.body);
+    if (!input) {
+      res.status(400).json({ error: "bad request" });
+      return;
+    }
+    // Ark 管理外の claude (ユーザーが手動起動した等) には何もしない
+    const session = sessionOrchestrator.getSessionByWorktree(input.cwd);
+    if (!session) {
+      res.status(204).end();
+      return;
+    }
+    try {
+      const output = await boardSuggestStop.handle(session.id, input);
+      if (output) res.json(output);
+      else res.status(204).end();
+    } catch (e) {
+      console.error(
+        "[BoardSuggest] Stop hook の処理に失敗:",
+        getErrorMessage(e)
+      );
+      res.status(204).end();
+    }
+  });
+  if (boardSuggestFeatureOn) {
+    const startupConfig = readBoardSuggestConfig(db);
+    console.log(
+      startupConfig.keyConfigured
+        ? `[BoardSuggest] 鍵あり (${startupConfig.keySource}) / ${startupConfig.enabled ? "有効" : "設定で無効"} / 閾値 ${startupConfig.threshold}`
+        : "[BoardSuggest] 鍵が無いので待機中 (設定画面「ボード提案の設定」か OPENROUTER_API_KEY / ~/.config/openrouter/api-key で有効になる)"
+    );
+  } else {
+    console.log("[BoardSuggest] 無効 (ARK_FEATURE_BOARD_SUGGEST=false)");
+  }
+
   // セキュリティヘッダー
   app.use((_req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -608,7 +667,7 @@ export async function startServer(
   const boardRegistry = new BoardSessionRegistry();
   const boardMcp = new BoardMcpServer();
   /**
-   * 図をセッションのボードで開く (board_open とボード提案の共通経路)。
+   * 図をセッションのボードで開く (board_open の経路)。
    * 「開いた」と嘘をつかないよう、diagram:open を emit する前に実際に
    * readDiagram で読めることを確認する (/api/diagram と同じ検証 = 403 パス不正・
    * worktree外・symlink脱出 / 404 不在 / 422 モデルブロック無し・壊れている)。
@@ -617,16 +676,11 @@ export async function startServer(
   const openDiagramForSession = async (
     sessionId: string,
     worktreeReal: string,
-    relPath: string,
-    /** readDiagram の後・emit の直前に評価し、true なら開かない (ボード提案の古い判定用) */
-    shouldAbort?: () => boolean
+    relPath: string
   ): Promise<{ ok: true } | { ok: false; error: string }> => {
     const result = await readDiagram(worktreeReal, relPath);
     if (!result.ok) {
       return { ok: false, error: result.error };
-    }
-    if (shouldAbort?.()) {
-      return { ok: false, error: "会話が進んだので開かない" };
     }
     io.emit("diagram:open", { sessionId, relPath });
     // 「セッションで最後に開いた図」を永続化する。リロード後も
@@ -1448,64 +1502,6 @@ export async function startServer(
    * 端末画面のような機微を含む配信を全 socket へ broadcast しないため。
    */
   const sessionRoom = (sessionId: string) => `session:${sessionId}`;
-
-  // ===== ボード提案 (Jev 判定) =====
-  // Claude の返答が終わるたびに Jev (TypeSafe の決定モデル) へ「チャットより
-  // ボードのほうが読みやすいか」を問い、閾値を超えたら Ark が動く。doc なら
-  // 返答を機械変換して開く (Claude のトークン 0)。figure なら何もしない
-  // (作図は人間が入力欄の「会話を図解」で頼む)。
-  // 有効/閾値/鍵は設定画面 (board-suggest:get/set) で変えられ、次のターンから効く。
-  // 鍵が無い間は静かに何もしない。
-  const boardSuggestFeatureOn =
-    process.env.ARK_FEATURE_BOARD_SUGGEST !== "false";
-  const boardSuggest = new BoardSuggestService({
-    subscribeJsonl: (worktreePath, configDir, listener) =>
-      jsonlTailManager.subscribe(worktreePath, configDir, listener),
-    decide: (text, apiKey) => decideBoardSuggestion(text, apiKey),
-    enabled: () => boardSuggestFeatureOn && readBoardSuggestEnabled(db),
-    apiKey: () => resolveBoardSuggestApiKey(db)?.key ?? null,
-    threshold: () => readBoardSuggestThreshold(db),
-    resolveWorktreeReal: worktreePath => {
-      const resolved = resolveManagedWorktreeDetailed(worktreePath);
-      return resolved.ok ? resolved.path : null;
-    },
-    openDiagram: async (sessionId, relPath, shouldAbort) => {
-      const session = sessionOrchestrator.getSession(sessionId);
-      if (!session) return { ok: false, error: "セッションが無い" };
-      const resolved = resolveManagedWorktreeDetailed(session.worktreePath);
-      if (!resolved.ok) return { ok: false, error: resolved.reason };
-      return openDiagramForSession(
-        sessionId,
-        resolved.path,
-        relPath,
-        shouldAbort
-      );
-    },
-  });
-  if (boardSuggestFeatureOn) {
-    // 起動時の自動復元は orchestrator のコンストラクタで済んでいるので、
-    // 既存分は明示的に attach し、以後はイベントで追従する
-    for (const session of sessionOrchestrator.getAllSessions()) {
-      boardSuggest.attach(session);
-    }
-    sessionOrchestrator.on("session:created", (session: ManagedSession) =>
-      boardSuggest.attach(session)
-    );
-    sessionOrchestrator.on("session:restored", (session: ManagedSession) =>
-      boardSuggest.attach(session)
-    );
-    sessionOrchestrator.on("session:stopped", (sessionId: string) =>
-      boardSuggest.detach(sessionId)
-    );
-    const startupConfig = readBoardSuggestConfig(db);
-    console.log(
-      startupConfig.keyConfigured
-        ? `[BoardSuggest] 鍵あり (${startupConfig.keySource}) / ${startupConfig.enabled ? "有効" : "設定で無効"} / 閾値 ${startupConfig.threshold}`
-        : "[BoardSuggest] 鍵が無いので待機中 (設定画面「ボード提案の設定」か OPENROUTER_API_KEY / ~/.config/openrouter/api-key で有効になる)"
-    );
-  } else {
-    console.log("[BoardSuggest] 無効 (ARK_FEATURE_BOARD_SUGGEST=false)");
-  }
 
   // 直近のブロードキャスト結果。新規 subscribe 時に即時応答として送る
   // (subscribe ハンドラ内で hostMetrics.sample() を再実行すると、内部の prev*
@@ -3798,7 +3794,6 @@ export async function startServer(
     clearInterval(bridgeBroadcastInterval);
     clearInterval(gridBroadcastInterval);
     sessionOrchestrator.cleanup();
-    boardSuggest.detachAll();
     browserManager.cleanup();
     screenBridge.closeAll();
     boardMcp.stop();

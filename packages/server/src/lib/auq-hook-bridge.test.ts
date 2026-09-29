@@ -59,12 +59,16 @@ afterEach(() => {
 });
 
 describe("AuqHookBridge - hooks settings", () => {
-  it("SessionStart と PreToolUse を同じ妥当な settings JSON に 0600 で書く", () => {
+  it("SessionStart と PreToolUse と Stop を同じ妥当な settings JSON に 0600 で書く", () => {
     const dataDir = createDataDir();
     const settingsPath = new AuqHookBridge().writeSettingsFile(4012);
     const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
 
-    expect(Object.keys(settings.hooks)).toEqual(["SessionStart", "PreToolUse"]);
+    expect(Object.keys(settings.hooks)).toEqual([
+      "SessionStart",
+      "PreToolUse",
+      "Stop",
+    ]);
     expect(settings.hooks.SessionStart).toEqual([
       {
         hooks: [
@@ -80,6 +84,11 @@ describe("AuqHookBridge - hooks settings", () => {
     expect(settings.hooks.PreToolUse[0].hooks[0].command).toContain(
       "/api/internal/auq-event"
     );
+    // Stop hook は応答 body を hook の出力にするので、stdout を捨てない
+    const stopCommand: string = settings.hooks.Stop[0].hooks[0].command;
+    expect(stopCommand).toContain("/api/internal/board-suggest-stop");
+    expect(stopCommand).not.toContain("@- >/dev/null");
+    expect(stopCommand).toContain("|| true");
     expect(settings.hooks.SessionStart[0].hooks[0].command).not.toContain(
       "このセッションにはボードペイン"
     );
