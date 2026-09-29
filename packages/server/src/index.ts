@@ -476,8 +476,13 @@ export async function startServer(
     );
   }
 
-  // JSON body parser（Settings API用）
-  app.use(express.json({ limit: "10kb" }));
+  // JSON body parser（Settings API用）。ボード提案の Stop hook は返答の本文
+  // (last_assistant_message) を載せてくるので、10kb では長い返答ほど 413 で落ちる。
+  // その 1 経路だけ上限を広げた parser を route 側で当てる
+  const smallJson = express.json({ limit: "10kb" });
+  app.use((req, res, next) =>
+    req.path === BOARD_SUGGEST_STOP_PATH ? next() : smallJson(req, res, next)
+  );
 
   // ===== AskUserQuestion hook 受け口 =====
   // セッション内 claude の PreToolUse hook (auq-hook-bridge が --settings で
@@ -562,35 +567,43 @@ export async function startServer(
     decide: (text, apiKey) => decideBoardSuggestion(text, apiKey),
     readTranscript: transcriptPath => readTranscriptTail(transcriptPath),
   });
-  app.post(BOARD_SUGGEST_STOP_PATH, async (req, res) => {
-    if (!auqHookBridge.verifyToken(req.headers[AUQ_TOKEN_HEADER])) {
-      console.warn("[BoardSuggest] 403: token 不一致の hook を拒否しました");
-      res.status(403).json({ error: "forbidden" });
-      return;
+  app.post(
+    BOARD_SUGGEST_STOP_PATH,
+    // 大きい body を読む前に token を確かめる (tunnel 経由の偽装 POST に 4mb を読ませない)
+    (req, res, next) => {
+      if (!auqHookBridge.verifyToken(req.headers[AUQ_TOKEN_HEADER])) {
+        console.warn("[BoardSuggest] 403: token 不一致の hook を拒否しました");
+        res.status(403).json({ error: "forbidden" });
+        return;
+      }
+      next();
+    },
+    express.json({ limit: "4mb" }),
+    async (req, res) => {
+      const input = parseStopHookInput(req.body);
+      if (!input) {
+        res.status(400).json({ error: "bad request" });
+        return;
+      }
+      // Ark 管理外の claude (ユーザーが手動起動した等) には何もしない
+      const session = sessionOrchestrator.getSessionByWorktree(input.cwd);
+      if (!session) {
+        res.status(204).end();
+        return;
+      }
+      try {
+        const output = await boardSuggestStop.handle(session.id, input);
+        if (output) res.json(output);
+        else res.status(204).end();
+      } catch (e) {
+        console.error(
+          "[BoardSuggest] Stop hook の処理に失敗:",
+          getErrorMessage(e)
+        );
+        res.status(204).end();
+      }
     }
-    const input = parseStopHookInput(req.body);
-    if (!input) {
-      res.status(400).json({ error: "bad request" });
-      return;
-    }
-    // Ark 管理外の claude (ユーザーが手動起動した等) には何もしない
-    const session = sessionOrchestrator.getSessionByWorktree(input.cwd);
-    if (!session) {
-      res.status(204).end();
-      return;
-    }
-    try {
-      const output = await boardSuggestStop.handle(session.id, input);
-      if (output) res.json(output);
-      else res.status(204).end();
-    } catch (e) {
-      console.error(
-        "[BoardSuggest] Stop hook の処理に失敗:",
-        getErrorMessage(e)
-      );
-      res.status(204).end();
-    }
-  });
+  );
   if (boardSuggestFeatureOn) {
     const startupConfig = readBoardSuggestConfig(db);
     console.log(

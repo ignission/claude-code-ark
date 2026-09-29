@@ -180,6 +180,11 @@ Jev に判定させる。図解すべきなら hook が `{ decision: "block", re
 - ターンの本文は hook の `transcript_path` の末尾 4MB から組み立てる (最後の人の発話より後の
   text block を連結。tool_result と isMeta の user 行では区切らない)。読めなければ
   `last_assistant_message` で判定する
+- **Stop hook が効くのは、Ark がこの版になってから claude を起動したセッションだけ**。
+  claude は `--settings` のファイルを起動時に読むだけで、書き換えても読み直さない (実機で確認)。
+  それより前から動いているセッションでは、claude を起動し直すまでボード提案が動かない
+- hook の受け口は長い返答を載せてくるので、全体の `express.json({ limit: "10kb" })` から外し、
+  token を確かめてから 4mb の parser を当てる
 - block しない条件: `stop_hook_active` (block で続けたターンの終わり。無限ループ防止)・
   そのターンで既に `board_open` した・無効・鍵なし・Jev の失敗・閾値未満。hook の curl は
   `-f -m 10` で、失敗や timeout は何も出さずに止まらせる
