@@ -122,9 +122,10 @@ export function BoardSuggestSettingsDialog({
           <DialogTitle>ボード提案の設定</DialogTitle>
           <DialogDescription>
             Claude の返答が終わるたびに Jev (TypeSafe の決定モデル) が
-            「チャットよりボードのほうが読みやすいか」を判定し、そうなら Ark が
-            返答を文書にしてボードに出します。判定には OpenRouter の API
-            キーが要ります (1 回 0.002 円ほど)。
+            「チャットよりボードのほうが読みやすいか」を判定し、そうなら Claude
+            に続けてその返答を図解させ、ボードに開きます。判定には OpenRouter の
+            API キーが要ります (1 回 0.002 円ほど)。作図は Claude
+            のプラン枠を使います。
           </DialogDescription>
         </DialogHeader>
 
@@ -169,7 +170,7 @@ export function BoardSuggestSettingsDialog({
 
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="board-suggest-threshold">
-              閾値 (この確率以上でボードに出す)
+              閾値 (この確率以上で図解させる)
             </Label>
             <Input
               id="board-suggest-threshold"

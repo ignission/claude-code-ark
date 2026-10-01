@@ -160,32 +160,34 @@ iframe を貼り直す (判定と抑止は `@/lib/ttyd-reconnect`)。
 
 ### ボード提案 (Jev 判定)
 
-長い説明をチャットで読む負担を減らすため、Claude の返答が終わるたび (JSONL の
-`stop_reason: "end_turn"`) に、直前のユーザー発話以降の text block を束ねて
-Jev に判定させる (`board-suggest-service.ts` / `board-suggest-turns.ts` / `jev-client.ts`)。
+長い説明をチャットで読む負担を減らすため、Claude が返答を終えるたびに Stop hook
+(`auq-hook-bridge.ts` が `--settings` で注入) から Ark へ問い合わせ、直前のターンの本文を
+Jev に判定させる。図解すべきなら hook が `{ decision: "block", reason }` を返し、Claude は
+止まらずにその返答をデッキにして `board_open` で開く (`board-suggest-stop-hook.ts` / `jev-client.ts`)。
 
-- **Jev は生成しない分類器**。noul「ボードのほうが読みやすいか」と choice「doc / figure」の
-  2 問を 1 リクエストで問い、確率だけが返る (1 回 200〜400ms、入力 100 万トークン $0.042)。
-  本文は末尾 6,000 文字だけ送り、`provider.data_collection: "deny"` を付ける
-- **doc**: `markdown-to-board-doc.ts` が返答を doc 型 `.diagram.html` へ決定的に変換し
-  (`marked` の lexer → 全ブロックに `data-ark-id`。書き手印は付けない (#484)。本文は
-  すべてエスケープ)、`.claude/diagrams/_auto/<sessionId>/<時刻>.diagram.html` に書いて
-  `diagram:open` で開く。`_` 始まりなので図スイッチャーには出ないが、`lastDiagramPath` で
-  復元できる。既存ファイルは上書きしない (コメント sidecar が relPath に紐づくため)。
-  **Claude には何も送らない**ので、これはコンテキスト機構ではない
-- **figure**: 何もしない。機械変換では図にならず、Claude へ作図を自動で頼むと端末で
-  入力中の下書きを C-u で消しうる (bridgeStatus は入力中を IDLE と報告する)。
-  作図が欲しければ人間が入力欄の「会話を図解」を押す。検証した 197 ターンで figure が勝った例は 0
-- **通知は出さない**。ボードが開いたこと自体が合図になり、作図は「会話を図解」で頼めるため。
-  以前は入力欄の上に 1 行の通知と「図にする」ボタンを出していたが、会話ビューを開いていた
-  画面にしか届かず、ボタンも「会話を図解」と重複していた
-- 1 つの返答は content block ごとに別の行で書かれ、どの行 (thinking・本文) にも end_turn が
-  付く。本文が複数の行に分かれることもあり、行だけでは返答の最後か分からない。そこで本文を
-  含む end_turn の行を「終わりの候補」とし、続きの行が 1.5 秒来なければターンを確定する
-  (tail は 1 秒おきに読むので、それより長く待つ)。thinking の行は候補にしない
-- 判定中に会話が進んだ (新しい発話・/clear) か detach されたら、その判定の結果は捨てる
-  (`TurnAssembler.generation`)。生成先は途中の symlink を lstat で拒否し、mkdir 後の
-  realpath が worktree の中であることを確かめてから `O_EXCL | O_NOFOLLOW` で書く
+- **図を描くのは Claude だけ**。以前は返答の markdown を doc 型ボードへ機械変換していたが、
+  チャットと同じ文章が別のペインに出るだけで読み手には何も足さなかったので撤去した
+- **tmux には何も送らない**。send-keys で作図を頼むと端末で入力中の下書きを C-u で消しうる
+  (bridgeStatus は入力中を IDLE と報告する)。Stop hook の block なら入力欄に触れない。
+  block の指示は transcript に isMeta の user 行として残り、会話ビューでは折りたたんだ
+  システムの行になる
+- Claude への入力に足すのは「外部の分類器がこの返答を図にすべきと判定した」ことだけで、
+  SessionStart hook の作図規約を読み上げ直すものではない。実測では規約だけだと、1,500 文字を
+  超える返答で Claude が自分で `board_open` したのは直近 14 日の 192 件中 17 件だった
+- **Jev は生成しない分類器**。noul「ボードのほうが読みやすいか」を 1 問だけ問い、確率だけが
+  返る (1 回 200〜400ms、入力 100 万トークン $0.042)。本文は末尾 6,000 文字だけ送り、
+  `provider.data_collection: "deny"` を付ける
+- ターンの本文は hook の `transcript_path` の末尾 4MB から組み立てる (最後の人の発話より後の
+  text block を連結。tool_result と isMeta の user 行では区切らない)。読めなければ
+  `last_assistant_message` で判定する
+- **Stop hook が効くのは、Ark がこの版になってから claude を起動したセッションだけ**。
+  claude は `--settings` のファイルを起動時に読むだけで、書き換えても読み直さない (実機で確認)。
+  それより前から動いているセッションでは、claude を起動し直すまでボード提案が動かない
+- hook の受け口は長い返答を載せてくるので、全体の `express.json({ limit: "10kb" })` から外し、
+  token を確かめてから 4mb の parser を当てる
+- block しない条件: `stop_hook_active` (block で続けたターンの終わり。無限ループ防止)・
+  そのターンで既に `board_open` した・無効・鍵なし・Jev の失敗・閾値未満。hook の curl は
+  `-f -m 10` で、失敗や timeout は何も出さずに止まらせる
 - 設定は Ark メニュー (PC) / セッション一覧のスライダーアイコン (モバイル) の
   「ボード提案の設定」ダイアログで変える (`board-suggest-config.ts`)。有効
   `board_suggest_enabled`・閾値 `board_suggest_threshold` (既定 0.7。0.5 付近は
@@ -246,7 +248,7 @@ task.md 規約・復唱・失敗の自動収集・セッション lifecycle を�
 | チャットビュー           | JSONL tail ベースの会話描画 + pending reconcile + AskUserQuestion カード + slash 補完 + busy/AWAITING 表示（PC は `SplitViewPane` の左ペイン、モバイルは `MobileSessionView`。どちらも🖥/💬トグルで ttyd 表示と切替） |
 | 音声モード（iPhone）   | 会話モードの1タップ操作から全画面の音声モードに入る。話した指示を2秒の取り消し猶予つきで送り、Claude がターンを終えた返答（JSONL の `stop_reason: "end_turn"`）を読み上げる。質問・権限確認は読み上げて画面での操作に回す。ブラウザ内蔵の音声認識・読み上げだけを使い、画面を点けて前面に出している間だけ動く |
 | セッションボード       | worktree の `.claude/diagrams/*.diagram.html`（意味モデル + HTML 投影）を表示する図解ペイン（右ペインタブ・PC のみ）。Claude が MCP ツール `board_open` で開き、ファイル更新を検知して自動再読込する。doc 型は本文を人間がその場で直接編集でき、変更をブロック単位で会話へ還流する。本文の `<a href="src/foo.ts#L10">` はファイルビューアで該当行を開く。変更レビュー向けに `sequence`（時間順のやり取り）と `call-tree`（呼び出し経路と差分量）の内蔵図種があり、モデルだけ書けば投影が出る（`diagram-static-builtin.ts`）。デッキ（`type: "deck"`）は 1 ファイルに `sequence` / `call-tree` / 自由形 `html` のページを並べ、1 枚ずつめくるか全ページを積んで見せる（`diagram-deck.ts`。graph の図種と doc はページにできない）。込み入った説明は、頼まれなくても作図規約の「説明図（デッキ）」で 1 ページに 1 つのことを置くデッキを描いて開く（SessionStart hook で伝え、「会話を図解」ボタンも同じ依頼を送る） |
-| ボード提案 (Jev)       | Claude の返答が終わるたびに Jev (TypeSafe の決定モデル、OpenRouter 経由) へ「チャットよりボードのほうが読みやすいか」を問い、閾値以上なら Ark が動く。doc 判定なら返答の markdown を doc 型ボードへ機械変換して開く (Claude のトークン 0)。figure 判定では何もしない (作図は入力欄の「会話を図解」で頼む)。鍵は「ボード提案の設定」ダイアログから入れる (環境変数 / `~/.config/openrouter/api-key` でも可)。無ければ待機 |
+| ボード提案 (Jev)       | Claude が返答を終えるたびに (Stop hook) Jev (TypeSafe の決定モデル、OpenRouter 経由) へ「チャットよりボードのほうが読みやすいか」を問い、閾値以上なら hook の block で Claude にその返答をデッキへ図解させてボードに開かせる。tmux には何も送らない。鍵は「ボード提案の設定」ダイアログから入れる (環境変数 / `~/.config/openrouter/api-key` でも可)。無ければ待機 |
 | Webターミナル          | ttyd iframeによるフルターミナル体験（PC は左ペインの既定、モバイルは🖥/💬トグルでチャットビューと切替） |
 | マルチペインビュー     | 複数セッションの同時表示（1列 / 2x2グリッド切り替え）                       |
 | モバイル対応           | セッション一覧/詳細の画面遷移、Quick Keys、スクロールモード、キーボード対応 |

@@ -3,8 +3,8 @@
  *
  * Jev は文章を生成しない。テキストと型付きの質問を渡すと、選択肢の中から
  * 1 つを確率付きで返すだけの分類器で、1 回 200〜400ms・入力 100 万トークンで
- * $0.042 (出力は無料)。Ark はこれを「Claude の返答をボードへ出すべきか」の
- * 判定にだけ使い、本文の生成には使わない (Claude のトークンを消費しない)。
+ * $0.042 (出力は無料)。Ark はこれを「Claude の返答を図解させるべきか」の
+ * 判定にだけ使う。図を描くのは Claude 自身 (board-suggest-stop-hook.ts)。
  *
  * Decisions API は alpha (`/api/alpha/decisions`) で、パスやスキーマが変わりうる。
  * 変更点をここ 1 ファイルに閉じ込めるため、endpoint と model は定数にする。
@@ -23,15 +23,9 @@ export const JEV_MAX_STATE_CHARS = 6000;
 
 const REQUEST_TIMEOUT_MS = 5000;
 
-/** ボードに出すとき、本文をそのまま文書にするか、作図が要るか */
-export type BoardForm = "doc" | "figure";
-
 export interface BoardDecision {
   /** 「チャットよりボードのほうが読みやすい」の確率 (0〜1) */
   board: number;
-  form: BoardForm;
-  /** form=figure の確率 (0〜1) */
-  figure: number;
   /** この呼び出しの費用 (USD)。usage が無ければ 0 */
   cost: number;
 }
@@ -71,26 +65,11 @@ export const BOARD_QUESTIONS = {
         "A short answer, a status update, a single conclusion, a question, or a code snippet that is fine as chat text",
     },
   },
-  form: {
-    type: "choice",
-    instructions:
-      "If this reply were moved to a board, which form fits it best?",
-    criteria: {
-      doc: "The text itself, kept as a readable document with headings, lists and tables; no drawing needed",
-      figure:
-        "A drawn figure is needed: a flow with branches, a state machine, relations among components, an architecture, a timeline",
-    },
-  },
 } as const;
 
 interface DecisionsResponse {
   answers?: {
     board?: { type?: string; noul?: unknown };
-    form?: {
-      type?: string;
-      choice?: unknown;
-      probabilities?: Record<string, unknown>;
-    };
   };
   usage?: { cost?: unknown };
 }
@@ -147,17 +126,11 @@ export async function decideBoardSuggestion(
     }
     const json = JSON.parse(body) as DecisionsResponse;
     const board = asProbability(json.answers?.board?.noul);
-    const figure = asProbability(json.answers?.form?.probabilities?.figure);
-    const choice = json.answers?.form?.choice;
-    if (
-      board === null ||
-      figure === null ||
-      (choice !== "doc" && choice !== "figure")
-    ) {
+    if (board === null) {
       throw new Error(`Jev の応答が想定外です: ${body.slice(0, 200)}`);
     }
     const cost = typeof json.usage?.cost === "number" ? json.usage.cost : 0;
-    return { board, form: choice, figure, cost };
+    return { board, cost };
   } finally {
     clearTimeout(timer);
   }

@@ -52,39 +52,24 @@ describe("loadOpenRouterApiKey", () => {
 });
 
 describe("decideBoardSuggestion", () => {
-  it("Decisions API に noul と choice を送り、確率を取り出す", async () => {
+  it("Decisions API に noul を送り、確率を取り出す", async () => {
     const fetchImpl = fakeFetch({
-      answers: {
-        board: { type: "noul", noul: 0.88 },
-        form: {
-          type: "choice",
-          choice: "doc",
-          probabilities: { doc: 0.91, figure: 0.09 },
-        },
-      },
+      answers: { board: { type: "noul", noul: 0.88 } },
       usage: { cost: 0.00002 },
     });
     const decision = await decideBoardSuggestion("本文", "sk-test", fetchImpl);
-    expect(decision).toEqual({
-      board: 0.88,
-      form: "doc",
-      figure: 0.09,
-      cost: 0.00002,
-    });
+    expect(decision).toEqual({ board: 0.88, cost: 0.00002 });
     const request = fetchImpl.calls[0] as Record<string, unknown>;
     expect(request.model).toBe(JEV_MODEL);
     expect(request.state).toBe("本文");
     expect(request.provider).toEqual({ data_collection: "deny" });
-    expect(Object.keys(request.questions as object)).toEqual(["board", "form"]);
+    expect(Object.keys(request.questions as object)).toEqual(["board"]);
     expect(JEV_DECISIONS_ENDPOINT).toContain("/api/alpha/decisions");
   });
 
   it("本文は末尾の JEV_MAX_STATE_CHARS 文字だけ送る", async () => {
     const fetchImpl = fakeFetch({
-      answers: {
-        board: { noul: 0.1 },
-        form: { choice: "doc", probabilities: { doc: 1, figure: 0 } },
-      },
+      answers: { board: { noul: 0.1 } },
     });
     const text = "a".repeat(JEV_MAX_STATE_CHARS + 100);
     await decideBoardSuggestion(text, "sk-test", fetchImpl);
