@@ -1,6 +1,6 @@
 /**
- * デッキ（`type: "deck"`）。1 ファイルに複数のページを持ち、1 枚ずつめくるか、
- * 全ページを上下に積んで見せる。
+ * デッキ（`type: "deck"`）。1 ファイルに複数のページを持ち、全ページを上下に積むか、
+ * 1 枚ずつめくって見せる。既定は全ページを積む（めくる手間を読み手に掛けない）。
  *
  * ## なぜ要るか
  *
@@ -355,7 +355,7 @@ export function injectDeckProjection(
 
   const projection =
     `<style data-ark-harness-ui="1">${css}</style>` +
-    `<div class="ark-deck" data-ark-deck-mode="page" ${GENERATED_ATTR}="1">` +
+    `<div class="ark-deck" data-ark-deck-mode="stack" ${GENERATED_ATTR}="1">` +
     title +
     `<div class="ark-deck-pages">${parsed.pages.map(renderPage).join("")}</div>` +
     `<nav class="ark-deck-nav">` +
@@ -363,7 +363,7 @@ export function injectDeckProjection(
     `<span class="ark-deck-dots ark-deck-step"></span>` +
     `<span class="ark-deck-pos ark-deck-step"></span>` +
     `<button type="button" class="ark-deck-step" data-ark-deck-go="1" aria-label="次のページ">→</button>` +
-    `<button type="button" data-ark-deck-toggle>すべて表示</button>` +
+    `<button type="button" data-ark-deck-toggle>1 枚ずつ</button>` +
     `</nav></div>` +
     `<script id="${DIAGRAM_DECK_MARKER}" data-ark-harness-ui="1">${DECK_SCRIPT}</script>`;
 
