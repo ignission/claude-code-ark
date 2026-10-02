@@ -213,7 +213,8 @@ describe("injectDeckProjection", () => {
     expect(out).toContain(DIAGRAM_DECK_MARKER);
     expect(out).toContain('data-ark-deck-go="-1"');
     expect(out).toContain('data-ark-deck-go="1"');
-    expect(out).toContain("data-ark-deck-mode");
+    // めくる手間を掛けないよう、既定は全ページを積んで見せる
+    expect(out).toContain('data-ark-deck-mode="stack"');
     // srcdoc の iframe では href="#…" が親の URL へ遷移するので使わない
     expect(out).not.toMatch(/href="#/);
   });
