@@ -578,6 +578,7 @@ export interface ServerToClientEvents {
   "usage:error": (data: { message: string }) => void;
 
   // ファイルビューワー
+  "file:updated": (data: { sessionId: string; filePath: string }) => void;
   "file:content": (data: {
     filePath: string;
     content: string;
@@ -829,6 +830,26 @@ export interface ClientToServerEvents {
 
   // ファイルビューワー
   "file:read": (data: { sessionId: string; filePath: string }) => void;
+  "file:open": (
+    data: { sessionId: string; filePath: string },
+    cb: (r: FileOpenResponse) => void
+  ) => void;
+  "file:list": (
+    data: { sessionId: string; dirPath: string },
+    cb: (r: FileListResponse) => void
+  ) => void;
+  "file:write": (
+    data: {
+      sessionId: string;
+      filePath: string;
+      content: string;
+      expectedMtimeMs: number;
+      force?: boolean;
+    },
+    cb: (r: FileWriteResponse) => void
+  ) => void;
+  "file:subscribe": (data: { sessionId: string; filePath: string }) => void;
+  "file:unsubscribe": (data: { sessionId: string; filePath: string }) => void;
 
   // ブラウザセッション（noVNC）
   "browser:start": () => void;
@@ -1150,3 +1171,29 @@ export interface SessionGridSnapshot {
  */
 export const TERMINAL_BG = "#1c1a17";
 export const TERMINAL_FG = "#e6e1da";
+
+// ファイルペイン
+export type FileOpenResponse =
+  | {
+      ok: true;
+      content: string;
+      mimeType: string;
+      size: number;
+      mtimeMs: number;
+      editable: boolean;
+    }
+  | { ok: false; error: string };
+
+export interface FileTreeEntry {
+  name: string;
+  type: "dir" | "file";
+  gitStatus?: "M" | "A" | "?" | "D";
+}
+
+export type FileListResponse =
+  | { ok: true; entries: FileTreeEntry[]; truncated: boolean }
+  | { ok: false; error: string };
+
+export type FileWriteResponse =
+  | { ok: true; mtimeMs: number }
+  | { ok: false; code: "conflict" | "error"; error: string; mtimeMs?: number };
