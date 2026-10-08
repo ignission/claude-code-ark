@@ -233,7 +233,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
     () => readSavedWidth(STORAGE_KEY_BOARD_WIDTH) ?? 420
   );
   const [fileWidth, setFileWidth] = useState<number>(
-    () => readSavedWidth(STORAGE_KEY_FILE_WIDTH) ?? 520
+    () => readSavedWidth(STORAGE_KEY_FILE_WIDTH) ?? 720
   );
   // ドラッグ中のリサイザ。どちらでも 3 ペインとも pointer-events-none にする
   const [isDragging, setIsDragging] = useState<"file" | "board" | null>(null);

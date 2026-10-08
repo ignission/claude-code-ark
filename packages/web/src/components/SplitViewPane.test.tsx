@@ -886,7 +886,7 @@ describe("PC 3 ペイン (ファイル)", () => {
     act(() =>
       resizers[1].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }))
     );
-    // 図を 600px まで広げる。隠れた中ペイン (既定 520px) を数えると、
+    // 図を 600px まで広げる。隠れた中ペイン (既定 720px) を数えると、
     // 図に回せる幅が足りず最小幅 (320px) に丸められる
     act(() =>
       window.dispatchEvent(new MouseEvent("mousemove", { clientX: 400 }))
