@@ -18,7 +18,7 @@ interface GitDiffViewProps {
 
 /**
  * 差分の地色。@codemirror/merge の既定は下線だけで、行の増減がひと目で分からない。
- * 色は index.css の変数 (light-dark()) を指し、エディタと同じく OS の明暗に追従する
+ * 色は index.css の変数 (明暗それぞれに定義) を指し、エディタと同じく OS の明暗に追従する
  */
 const diffTheme = EditorView.theme({
   ".cm-changedLine, .cm-inlineChangedLine": {
