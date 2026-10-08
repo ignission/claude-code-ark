@@ -211,12 +211,12 @@ describe("subscribe", () => {
     expect(unsubs[0]).toHaveBeenCalledTimes(1);
   });
 
-  it("dispose 後に解決した subscribe は直ちに解除する", async () => {
+  it("dispose 後に解決した subscribe は監視を張らない", async () => {
     const h = make();
     const pending = h.subscribe(p("a.txt"));
     h.dispose();
     await pending;
-    expect(unsubs[0]).toHaveBeenCalledTimes(1);
+    expect(subscribe).not.toHaveBeenCalled();
   });
 
   it("未知のセッションや拒否されたパスでは張らず throw しない", async () => {
@@ -236,8 +236,8 @@ describe("subscribe", () => {
   it("/tmp の symlink で外のファイルを指すものは購読しない", async () => {
     const tmpDir = fs.mkdtempSync("/tmp/ark-fh-");
     try {
-      // /tmp の外 (ホーム配下) に実体を作る
-      const outside = fs.mkdtempSync(path.join(os.homedir(), ".ark-fh-"));
+      // /tmp の外 (/var/tmp) に実体を作る
+      const outside = fs.mkdtempSync("/var/tmp/ark-fh-");
       try {
         const target = path.join(outside, "secret.txt");
         fs.writeFileSync(target, "x");
@@ -272,6 +272,17 @@ describe("subscribe", () => {
     h.unsubscribe(p("a.txt"));
     await first;
     await h.subscribe(p("a.txt"));
+    const live = unsubs.filter(un => un.mock.calls.length === 0);
+    expect(live).toHaveLength(1);
+  });
+
+  it("購読・解除・再購読を待たずに続けても、最後の購読が残る", async () => {
+    const h = make();
+    const first = h.subscribe(p("a.txt"));
+    h.unsubscribe(p("a.txt"));
+    const second = h.subscribe(p("a.txt"));
+    await Promise.all([first, second]);
+    expect(subscribe).toHaveBeenCalledTimes(1);
     const live = unsubs.filter(un => un.mock.calls.length === 0);
     expect(live).toHaveLength(1);
   });

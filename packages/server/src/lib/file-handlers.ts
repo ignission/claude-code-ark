@@ -157,49 +157,40 @@ export function createFileHandlers(deps: FileHandlersDeps) {
   }
 
   async function subscribe(data: unknown): Promise<void> {
-    let entry: { cancelled: boolean } | null = null;
-    let pendingKey: string | null = null;
+    const p = parseWith(data, "filePath");
+    if (!p || disposed) return;
+    const { sessionId, value: filePath } = p;
+    const worktreePath = deps.getWorktreePath(sessionId);
+    if (worktreePath === undefined) return;
+    const key = subscriptionKey(sessionId, filePath);
+    if (subs.has(key) || pending.has(key)) return;
+    if (subs.size + pending.size >= MAX_FILE_SUBSCRIPTIONS) return;
+    const tmpPath = filePath.startsWith("/tmp/")
+      ? normalizeTmpPath(filePath)
+      : undefined;
+    if (tmpPath === null) return;
+
+    const entry = { cancelled: false };
+    pending.set(key, entry);
     try {
-      const p = parseWith(data, "filePath");
-      if (!p || disposed) return;
-      const { sessionId, value: filePath } = p;
-      const worktreePath = deps.getWorktreePath(sessionId);
-      if (worktreePath === undefined) return;
-      const key = subscriptionKey(sessionId, filePath);
-      if (subs.has(key) || pending.has(key)) return;
-      if (subs.size + pending.size >= MAX_FILE_SUBSCRIPTIONS) return;
-      let absPath: string;
-      if (filePath.startsWith("/tmp/")) {
-        const tmpPath = normalizeTmpPath(filePath);
-        if (tmpPath === null) return;
-        entry = { cancelled: false };
-        pending.set(key, entry);
-        pendingKey = key;
-        // realpath で /tmp 配下の実体であることを確かめる (symlink 対策)
-        absPath = await resolveReadablePath("", tmpPath);
-      } else {
-        entry = { cancelled: false };
-        pending.set(key, entry);
-        pendingKey = key;
-        absPath = await resolveReadablePath(worktreePath, filePath);
-      }
-      pending.delete(key);
-      pendingKey = null;
-      const off = deps.watcher.subscribe(absPath, () =>
-        deps.emitUpdated({ sessionId, filePath })
+      // /tmp 配下は realpath で実体が /tmp にあることを確かめる (symlink 対策)
+      const absPath =
+        tmpPath !== undefined
+          ? await resolveReadablePath("", tmpPath)
+          : await resolveReadablePath(worktreePath, filePath);
+      // await の間に解除・切断されていたら張らない。unsubscribe は pending から
+      // 外すので、その後に来た同じ鍵の再購読は別の entry として進んでいる
+      if (disposed || entry.cancelled) return;
+      subs.set(
+        key,
+        deps.watcher.subscribe(absPath, () =>
+          deps.emitUpdated({ sessionId, filePath })
+        )
       );
-      // await の間に解除・切断されていたら、張った購読を直ちに解除する
-      if (disposed || entry.cancelled) {
-        off();
-        return;
-      }
-      subs.set(key, off);
     } catch {
       // 拒否されたパスや存在しないファイルは購読しない
     } finally {
-      if (pendingKey !== null && pending.get(pendingKey) === entry) {
-        pending.delete(pendingKey);
-      }
+      if (pending.get(key) === entry) pending.delete(key);
     }
   }
 
@@ -209,7 +200,10 @@ export function createFileHandlers(deps: FileHandlersDeps) {
       if (!p) return;
       const key = subscriptionKey(p.sessionId, p.value);
       const entry = pending.get(key);
-      if (entry) entry.cancelled = true;
+      if (entry) {
+        entry.cancelled = true;
+        pending.delete(key);
+      }
       subs.get(key)?.();
       subs.delete(key);
     } catch {

@@ -343,8 +343,9 @@ export async function writeFileToWorktree(
       path.dirname(safePath),
       `.${path.basename(safePath)}.ark-tmp-${process.pid}-${Date.now()}`
     );
-    tmpPath = tmp;
     await writeFile(tmp, content, { mode: st.mode, flag: "wx" });
+    // wx が EEXIST で落ちたときに他の書き手の一時ファイルを消さないよう、作れてから覚える
+    tmpPath = tmp;
     // 作成時の mode は umask で削られるので明示的に戻す
     await chmod(tmp, st.mode & 0o7777);
     // rename は mtime を変えないので、成功後の stat 失敗で誤報しないよう先に取る
