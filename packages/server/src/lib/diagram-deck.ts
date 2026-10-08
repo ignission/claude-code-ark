@@ -245,7 +245,7 @@ background:transparent;color:#dbe4f0;font:inherit;cursor:pointer}
 /* 積んで見せるとき (既定) は、点の地のキャンバスにページをカードとして置く。
    カードは左右へ互い違いにずらすだけで、位置は持たない (ドラッグも保存も無い) */
 body:has(.ark-deck[data-ark-deck-mode="stack"]){
-background-image:radial-gradient(color-mix(in srgb,currentColor 30%,transparent) 1.1px,transparent 1.6px);
+background-image:radial-gradient(color-mix(in srgb,currentColor 38%,transparent) 1.2px,transparent 1.8px);
 background-size:18px 18px}
 .ark-deck[data-ark-deck-mode="stack"] .ark-deck-pages{display:flex;flex-direction:column;gap:1.3rem;padding:0 0 1.4rem}
 .ark-deck[data-ark-deck-mode="stack"] .ark-deck-page{margin:0;width:calc(100% - 1.5rem);min-width:0}
