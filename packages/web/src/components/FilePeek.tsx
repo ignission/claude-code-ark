@@ -67,14 +67,19 @@ export function FilePeek({
   /** 差し替えを断った seq。同じ依頼で 2 度は聞かない */
   const declinedSeqRef = useRef<number | null>(null);
   useEffect(() => {
-    if (peek.filePath === shown.filePath) return;
+    if (peek.filePath === shown.filePath) {
+      // 同じパスの開き直しも覚えておく。後で別のパスへの差し替えを断ったときに、
+      // 古い行へ戻さないため
+      if (peek !== shown) setShown(peek);
+      return;
+    }
     if (declinedSeqRef.current === peek.seq) return;
     if (dirtyRef.current && !window.confirm(CONFIRM_DISCARD)) {
       declinedSeqRef.current = peek.seq;
       return;
     }
     setShown(peek);
-  }, [peek, shown.filePath]);
+  }, [peek, shown]);
   // 同じパスの開き直しは、確認なしで行だけ追従する
   const displayed = peek.filePath === shown.filePath ? peek : shown;
 

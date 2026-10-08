@@ -238,6 +238,23 @@ describe("FilePeek", () => {
     expect(editorMounts.count).toBe(2);
   });
 
+  it("同じパスを開き直した後に差し替えを断ると、最後に開いた行を残す", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const { container, props, rerender } = setup();
+    const latest = peekOf("src/a.ts", 2, 40);
+    rerender({ peek: latest });
+    click(container, "dirty");
+    rerender({ peek: peekOf("src/b.ts", 3, 70) });
+    expect(shownTab(container)).toMatchObject({
+      filePath: "src/a.ts",
+      targetLine: 40,
+      revealSeq: 2,
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    click(container, "ファイルで開く");
+    expect(props.onPromote).toHaveBeenCalledWith(latest);
+  });
+
   it("未保存の間だけ beforeunload を止める", () => {
     const { container } = setup();
     const fire = () => {
