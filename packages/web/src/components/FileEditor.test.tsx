@@ -204,6 +204,45 @@ afterEach(() => {
 });
 
 describe("FileEditor", () => {
+  it("chrome を渡すと、見出しの行にそれを載せ、ファイル名とパスは自分では出さない", async () => {
+    const f = makeApi();
+    const t = await setup(f.api, {
+      chrome: {
+        start: <span data-testid="chrome-start">PEEK</span>,
+        end: (
+          <button type="button" aria-label="閉じる">
+            x
+          </button>
+        ),
+      },
+    });
+    const start = t.container.querySelector('[data-testid="chrome-start"]');
+    const row = start?.parentElement;
+    expect(row).toBeTruthy();
+    // 同じ行にサイズと保存ボタンと end が並ぶ (見出しは 1 段)
+    expect(row?.textContent).toContain("6 B");
+    expect(row?.querySelector('button[aria-label="保存"]')).not.toBeNull();
+    expect(row?.querySelector('button[aria-label="閉じる"]')).not.toBeNull();
+    expect(t.container.textContent).not.toContain("src/a.ts");
+  });
+
+  it("開けなかったときも chrome を出す (閉じるボタンを押せる)", async () => {
+    const f = makeApi();
+    f.setDisk({ ok: false, error: "見つかりません" });
+    const t = await setup(f.api, {
+      chrome: {
+        start: <span>PEEK</span>,
+        end: (
+          <button type="button" aria-label="閉じる">
+            x
+          </button>
+        ),
+      },
+    });
+    expect(t.container.textContent).toContain("ファイルを開けません");
+    expect(button(t.container, "閉じる")).toBeTruthy();
+  });
+
   it("開くと内容が出て、更新を購読する", async () => {
     const f = makeApi();
     const t = await setup(f.api);

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import type React from "react";
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,7 +14,8 @@ vi.mock("@/lib/file-api", () => ({ createFileApi }));
 
 const editorMounts = vi.hoisted(() => ({ count: 0 }));
 
-// FileEditor の振る舞いは FileEditor.test.tsx で見る。ここでは渡したタブと dirty の合図だけ見る
+// FileEditor の振る舞いは FileEditor.test.tsx で見る。ここでは渡したタブと dirty の合図、
+// 見出しへ載せる部品 (chrome) だけ見る
 vi.mock("./FileEditor", async () => {
   const { useEffect } = await import("react");
   return {
@@ -21,6 +23,7 @@ vi.mock("./FileEditor", async () => {
       tab: FileTab;
       isVisible: boolean;
       onDirtyChange: (tabId: string, dirty: boolean) => void;
+      chrome?: { start: React.ReactNode; end: React.ReactNode };
     }) => {
       const { onDirtyChange, tab } = props;
       useEffect(() => {
@@ -34,6 +37,8 @@ vi.mock("./FileEditor", async () => {
           data-tab={JSON.stringify(props.tab)}
           data-visible={String(props.isVisible)}
         >
+          {props.chrome?.start}
+          {props.chrome?.end}
           <button type="button" onClick={() => onDirtyChange(tab.id, true)}>
             dirty
           </button>
