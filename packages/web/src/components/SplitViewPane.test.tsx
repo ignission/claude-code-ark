@@ -825,7 +825,9 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
   const workArea = (scope: ParentNode) =>
     resizers(scope)[0]?.nextElementSibling as HTMLElement;
   const stubContainerRect = (scope: ParentNode, width: number) => {
-    const body = scope.querySelector("header + div") as HTMLElement;
+    const body = scope.querySelector(
+      '[data-testid="split-view-body"]'
+    ) as HTMLElement;
     vi.spyOn(body, "getBoundingClientRect").mockReturnValue({
       left: 0,
       right: width,
@@ -1392,7 +1394,9 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
     const container = mount(
       paneSection(makeSession("wa-drag"), true, { filePane })
     );
-    const body = container.querySelector("header + div") as HTMLElement;
+    const body = container.querySelector(
+      '[data-testid="split-view-body"]'
+    ) as HTMLElement;
     const panes = () =>
       Array.from(body.children).filter(el => el.tagName === "DIV");
     expect(panes().length).toBe(2);

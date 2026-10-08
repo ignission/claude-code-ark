@@ -1954,7 +1954,7 @@ export function SplitChatPane({
               </div>
             </div>
           )}
-          <div className="shrink-0 border-t border-border px-4 pt-3 pb-3.5">
+          <div className="shrink-0 px-4 pt-2 pb-3.5">
             <div className="relative mx-auto w-full max-w-[792px]">
               {slashMenu}
               {composerForm}

@@ -155,11 +155,11 @@ export function FilePane({
       : null;
 
   return (
-    <div className="flex h-full min-h-0 bg-background">
+    <div className="flex h-full min-h-0 gap-2 px-2 pb-2">
       {api && (
         <div
           className={cn(
-            "h-full w-[220px] shrink-0 border-border border-r",
+            "h-full w-[220px] shrink-0 overflow-hidden rounded-xl bg-well",
             treeCollapsed && "hidden"
           )}
         >
@@ -172,8 +172,8 @@ export function FilePane({
           />
         </div>
       )}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-[31px] shrink-0 items-stretch border-border border-b bg-muted/30">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-well">
+        <div className="flex h-9 shrink-0 items-center gap-0.5 px-1">
           <button
             type="button"
             aria-label={
@@ -188,7 +188,7 @@ export function FilePane({
             }
             aria-expanded={!treeCollapsed}
             onClick={toggleTree}
-            className="inline-flex w-8 shrink-0 items-center justify-center border-border border-r text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             {treeCollapsed ? (
               <PanelLeftOpen className="size-3.5" />
@@ -199,7 +199,7 @@ export function FilePane({
           <div
             role="tablist"
             aria-label="開いているファイル"
-            className="flex min-w-0 flex-1 items-stretch overflow-x-auto"
+            className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
           >
             {state.tabs.map((tab, index) => {
               const isActive = tab.id === state.activeId;
@@ -212,9 +212,9 @@ export function FilePane({
                   key={tab.id}
                   role="presentation"
                   className={cn(
-                    "flex shrink-0 items-center whitespace-nowrap border-border border-r text-xs",
+                    "flex h-7 shrink-0 items-center whitespace-nowrap rounded-lg text-xs",
                     isActive
-                      ? "bg-background text-foreground"
+                      ? "bg-card text-foreground shadow-card"
                       : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
                   )}
                 >

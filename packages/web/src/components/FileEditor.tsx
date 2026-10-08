@@ -46,7 +46,7 @@ export interface FileEditorChrome {
 }
 
 const HEADER_ROW =
-  "flex shrink-0 items-center gap-2 border-border border-b px-3 py-1 text-muted-foreground text-xs";
+  "flex shrink-0 items-center gap-2 px-3 py-1 text-muted-foreground text-xs";
 
 /** 見出しの中身が無い状態 (読み込み中・失敗・html) に、呼び出し側の見出しだけを載せる */
 function WithChrome({
@@ -509,7 +509,7 @@ function TextFileEditor({
       {banner && (
         <div
           role="status"
-          className="flex shrink-0 flex-wrap items-center gap-2 border-border border-b bg-status-awaiting/15 px-3 py-1.5 text-xs"
+          className="flex shrink-0 flex-wrap items-center gap-2 bg-status-awaiting/15 px-3 py-1.5 text-xs"
         >
           <span className="mr-auto font-medium">
             ディスク上で変更されました
@@ -544,7 +544,7 @@ function TextFileEditor({
       {saveError && (
         <div
           role="alert"
-          className="shrink-0 border-border border-b bg-destructive/10 px-3 py-1.5 text-destructive text-xs"
+          className="shrink-0 bg-destructive/10 px-3 py-1.5 text-destructive text-xs"
         >
           保存できません: {saveError}
         </div>

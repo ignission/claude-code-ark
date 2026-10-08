@@ -54,8 +54,6 @@ const diffTheme = EditorView.theme({
     fontSize: "12px",
     color: "var(--muted-foreground) !important",
     background: "var(--muted) !important",
-    borderTop: "1px solid var(--border)",
-    borderBottom: "1px solid var(--border)",
   },
 });
 

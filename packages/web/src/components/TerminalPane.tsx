@@ -670,9 +670,9 @@ export function TerminalPane({
 
       {/* Mobile-friendly Input Bar */}
       {showInput && (
-        <div className="border-t border-border bg-sidebar shrink-0">
+        <div className="m-2 mt-0 overflow-hidden rounded-xl bg-well shrink-0">
           {/* Quick commands toggle */}
-          <div className="flex items-center justify-between px-3 py-1 border-b border-border/50">
+          <div className="flex items-center justify-between px-3 py-1">
             <button
               type="button"
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
@@ -744,7 +744,7 @@ export function TerminalPane({
 
           {/* Quick commands panel */}
           {showQuickCommands && (
-            <div className="flex gap-2 px-3 py-2 border-b border-border/50 overflow-x-auto">
+            <div className="flex gap-2 px-3 py-2 overflow-x-auto">
               {quickCommands.map(({ label, cmd }) => (
                 <Button
                   key={cmd}

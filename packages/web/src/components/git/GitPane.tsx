@@ -425,10 +425,10 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
     : "サイドバーを折りたたむ";
 
   return (
-    <div data-testid="git-pane" className="flex h-full min-h-0 bg-background">
+    <div data-testid="git-pane" className="flex h-full min-h-0 gap-2 px-2 pb-2">
       <div
         className={cn(
-          "h-full w-[180px] shrink-0 border-border border-r",
+          "h-full w-[180px] shrink-0 overflow-hidden rounded-xl bg-well",
           sidebarCollapsed && "hidden"
         )}
       >
@@ -467,7 +467,7 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
                 title={sidebarLabel}
                 aria-expanded={!sidebarCollapsed}
                 onClick={toggleSidebar}
-                className="inline-flex h-full w-8 shrink-0 items-center justify-center border-border border-r text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
               >
                 {sidebarCollapsed ? (
                   <PanelLeftOpen className="size-3.5" aria-hidden="true" />
@@ -486,14 +486,18 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
             setDragging(true);
           }}
           className={cn(
-            "relative h-1 shrink-0 cursor-row-resize bg-border transition-colors hover:bg-primary/50",
-            dragging && "bg-primary/70"
+            "group relative h-2 shrink-0 cursor-row-resize bg-transparent"
           )}
         >
-          <span className="absolute inset-x-0 -top-1 -bottom-1" />
+          <span
+            className={cn(
+              "absolute inset-x-4 top-0.5 bottom-0.5 rounded-full transition-colors group-hover:bg-primary/40",
+              dragging && "bg-primary/60"
+            )}
+          />
         </button>
         <div
-          className="min-h-0"
+          className="min-h-0 overflow-hidden rounded-xl bg-well"
           style={{ flex: `${detailRatio} 1 0%` }}
           data-testid="git-detail-area"
         >

@@ -235,8 +235,8 @@ export function GitCommitList({
   const selectedRendered = selectedIndex >= first && selectedIndex < last;
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="flex h-[31px] shrink-0 items-center gap-1 border-border border-b bg-muted/30 pr-1.5">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-9 shrink-0 items-center gap-1 pr-1.5">
         {leading}
         <label className="flex h-full min-w-0 flex-1 items-center gap-1.5 pl-2 text-muted-foreground">
           <Search className="size-3.5 shrink-0" aria-hidden="true" />

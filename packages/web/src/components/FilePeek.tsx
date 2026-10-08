@@ -154,7 +154,7 @@ export function FilePeek({
   if (!api) {
     return (
       <div className="flex h-full min-h-0 flex-col bg-background">
-        <div className="flex shrink-0 items-center gap-2 border-border border-b px-3 py-1 text-muted-foreground text-xs">
+        <div className="flex shrink-0 items-center gap-2 px-3 py-1 text-muted-foreground text-xs">
           {chrome.start}
           <span className="ml-auto" />
           {chrome.end}

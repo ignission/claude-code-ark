@@ -150,7 +150,7 @@ export function GitSidebar({
   return (
     <nav
       aria-label="Git の参照"
-      className="flex h-full flex-col overflow-y-auto overflow-x-hidden bg-background py-1"
+      className="flex h-full flex-col overflow-y-auto overflow-x-hidden py-1"
     >
       <button
         type="button"
@@ -174,7 +174,7 @@ export function GitSidebar({
         <span className="min-w-0 flex-1 truncate">すべてのコミット</span>
       </button>
 
-      <div className="my-1 border-border border-t" />
+      <div className="h-2 shrink-0" />
 
       {group("branches", "ブランチ", refs?.branches.length ?? 0, () =>
         (refs?.branches ?? []).map(branch =>

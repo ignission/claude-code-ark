@@ -77,7 +77,7 @@ export function DiagramSwitcher({
   };
 
   return (
-    <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-sidebar px-2">
+    <div className="flex h-10 shrink-0 items-center gap-2 px-2">
       <select
         aria-label="表示する図"
         className="h-7 min-w-0 flex-1 truncate rounded border border-border bg-background px-2 text-xs text-foreground"

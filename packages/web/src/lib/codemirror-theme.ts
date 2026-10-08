@@ -31,9 +31,9 @@ export const arkTheme = EditorView.theme({
   ".cm-content": { caretColor: "var(--foreground)" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--foreground)" },
   ".cm-gutters": {
-    backgroundColor: "var(--background)",
+    backgroundColor: "transparent",
     color: "var(--muted-foreground)",
-    borderRight: "1px solid var(--border)",
+    border: "none",
   },
   ".cm-activeLine": {
     backgroundColor: "color-mix(in oklch, var(--muted) 55%, transparent)",
