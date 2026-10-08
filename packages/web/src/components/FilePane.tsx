@@ -13,6 +13,7 @@ import { createFileApi } from "@/lib/file-api";
 import type { FileTabsState } from "@/lib/file-tabs";
 import { cn } from "@/lib/utils";
 import { FileEditor } from "./FileEditor";
+import { FileIcon } from "./FileIcon";
 import { FileTree } from "./FileTree";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -229,6 +230,7 @@ export function FilePane({
                     onKeyDown={e => handleTabKeyDown(e, index)}
                     className="flex h-full items-center gap-1.5 pr-1 pl-3"
                   >
+                    <FileIcon name={name} kind="file" />
                     <span>{name}</span>
                     {isDirty && (
                       <>

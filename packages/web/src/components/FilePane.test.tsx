@@ -61,6 +61,12 @@ vi.mock("./FileTree", () => ({
   ),
 }));
 
+vi.mock("./FileIcon", () => ({
+  FileIcon: ({ name, kind }: { name: string; kind: string }) => (
+    <i data-testid="file-icon" data-kind={kind} data-name={name} />
+  ),
+}));
+
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
 
 const tab = (id: string, filePath: string): FileTab => ({

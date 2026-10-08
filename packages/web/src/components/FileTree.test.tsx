@@ -6,6 +6,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FileTree } from "./FileTree";
 
+vi.mock("./FileIcon", () => ({
+  FileIcon: ({ name, kind }: { name: string; kind: string }) => (
+    <i data-testid="file-icon" data-kind={kind} data-name={name} />
+  ),
+}));
+
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
 
 const listing: Record<string, FileListResponse> = {
@@ -285,5 +291,18 @@ describe("FileTree", () => {
       r => r.getAttribute("aria-selected") === "true"
     );
     expect(selected.map(r => r.dataset.path)).toEqual(["src/a.ts"]);
+  });
+});
+
+describe("FileTree のアイコン", () => {
+  it("ファイルとディレクトリの行にアイコンを出し、開いたフォルダを伝える", async () => {
+    const t = setup();
+    await t.render();
+    const dirIcon = () =>
+      t.container.querySelector('[data-kind="dir"]') as HTMLElement;
+    expect(dirIcon().dataset.name).toBe("src");
+    expect(
+      t.container.querySelector<HTMLElement>('[data-kind="file"]')?.dataset.name
+    ).toBe("README.md");
   });
 });

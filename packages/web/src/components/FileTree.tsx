@@ -1,13 +1,8 @@
 import type { FileTreeEntry } from "@ark/shared";
-import {
-  ChevronDown,
-  ChevronRight,
-  File,
-  Folder,
-  RefreshCw,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FileApi } from "@/lib/file-api";
+import { FileIcon } from "./FileIcon";
 
 interface Props {
   api: Pick<FileApi, "list">;
@@ -329,11 +324,11 @@ export function FileTree({
               ) : (
                 <span className="size-3.5 shrink-0" />
               )}
-              {isDir ? (
-                <Folder className="size-3.5 shrink-0 text-muted-foreground" />
-              ) : (
-                <File className="size-3.5 shrink-0 text-muted-foreground" />
-              )}
+              <FileIcon
+                name={row.name}
+                kind={isDir ? "dir" : "file"}
+                open={isOpen}
+              />
               <span className="min-w-0 flex-1 truncate">{row.name}</span>
               {row.gitStatus && (
                 <span

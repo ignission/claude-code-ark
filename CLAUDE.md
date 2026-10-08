@@ -184,6 +184,10 @@ PC の作業エリアの「ファイル」のタブ（`FilePane`）は worktree 
 - 作業エリアを閉じると `DiagramPane` は外すが、1 度見せた `FilePane` とピークは
   外さずに `hidden` で残す（外すと未保存の編集が消える）。タブを替えるだけなら
   `DiagramPane` も外さない（iframe を作り直さない）
+- **ファイルの種類アイコンは material-icon-theme の一部だけを同梱する**。ファイル名・
+  拡張子・フォルダ名との対応表は `lib/file-icons.ts`、SVG の束ねは遅延読み込みの
+  `lib/file-icon-assets.ts`（glob のブレース内の一覧を手で持ち、対応表との一致をテストで見る）。
+  表示は `FileIcon`（ツリーとタブ）。足すときは両方に同じ名前を足す
 
 - **書けるのは worktree 内の既存ファイルだけ**。読み取りは `/tmp` 配下も通すが、
   書き込みは `/tmp` 配下と worktree の `.git/` 配下を拒否する。新規作成・削除・
