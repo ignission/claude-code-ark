@@ -110,6 +110,8 @@ function StatusBadge({ status }: { status: GitFileChange["status"] }) {
 
 /** `+n −m`。バイナリ (null) は出さない。0 の側は出さない */
 function Counts({ file }: { file: GitFileChange }) {
+  // 未追跡はサーバーが行数を数えない (null)。バイナリとは限らないので何も出さない
+  if (file.status === "?") return null;
   if (file.added === null || file.removed === null) {
     return (
       <span className="shrink-0 text-[11px] text-muted-foreground">

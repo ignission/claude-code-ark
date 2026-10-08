@@ -549,4 +549,42 @@ describe("GitCommitDetail", () => {
       expect(container.textContent).toContain("未コミットの変更はありません");
     });
   });
+  it("未追跡のファイルには「バイナリ」と出さない", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const { createRoot } = await import("react-dom/client");
+    const { act } = await import("react");
+    const root = createRoot(container);
+    const api = {
+      fileDiff: vi.fn(async () => ({
+        ok: true,
+        oldContent: "",
+        newContent: "x\n",
+        binary: false,
+        tooLarge: false,
+      })),
+      commit: vi.fn(),
+    };
+    await act(async () => {
+      root.render(
+        <GitCommitDetail
+          api={api as never}
+          selection={{ kind: "working" }}
+          status={{
+            staged: [],
+            unstaged: [],
+            untracked: [
+              { path: "new.txt", status: "?", added: null, removed: null },
+            ],
+          }}
+          refreshKey={0}
+          onSelectCommit={() => {}}
+        />
+      );
+    });
+    expect(container.textContent).toContain("new.txt");
+    expect(container.textContent).not.toContain("バイナリ");
+    act(() => root.unmount());
+    container.remove();
+  });
 });
