@@ -304,6 +304,29 @@ describe("GitPane", () => {
     expect(detail(container)?.dataset.selection).toBe("eeeeeee");
   });
 
+  it("3,000 件より先まで読み足して選んだコミットは、読み直しで範囲の外へ出ても保つ", async () => {
+    const commits = linearCommits(4000);
+    commits[3100] = makeCommit("far0000", {
+      parents: commits[3100].parents,
+    });
+    commits[3099] = { ...commits[3099], parents: ["far0000"] };
+    const server = makeServer(commits);
+    const { container } = render(server);
+    await settle();
+    // 親のハッシュから飛ぶ (3,000 件まで読み足しても見つからない)
+    click(buttonByText(container, "parent"));
+    await settle();
+    // 手で続きを読み、選んだコミットを一覧に入れる
+    click(buttonByText(container, "さらに読み込む"));
+    await settle();
+    expect(server.api.log.mock.calls.at(-1)).toEqual([3000, 300]);
+
+    server.state.fingerprint = "fp-2";
+    await advance(3000);
+    expect(server.api.log.mock.calls.at(-1)).toEqual([2700, 300]);
+    expect(detail(container)?.dataset.selection).toBe("far0000");
+  });
+
   it("未コミットの変更を選んでいて変更が無くなったら、HEAD へ戻す", async () => {
     const commits = linearCommits(2);
     const server = makeServer(commits);

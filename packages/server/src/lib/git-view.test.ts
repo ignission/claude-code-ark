@@ -493,6 +493,13 @@ describe("getFileDiff", () => {
     ).toMatchObject({ oldContent: "same\n", newContent: "same\n" });
   });
 
+  it("commit: 存在しない sha は投げる (空同士の差を返さない)", async () => {
+    commit("c1", { "a.txt": "a\n" });
+    await expect(
+      getFileDiff(dir, { kind: "commit", sha: "deadbeef" }, "a.txt")
+    ).rejects.toThrow("コミットが見つかりません");
+  });
+
   it("commit: ルートコミットは old が空", async () => {
     const c1 = commit("c1", { "a.txt": "a\n" });
     expect(

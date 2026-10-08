@@ -130,8 +130,8 @@ function defaultSelection(data: GitData): GitSelection | null {
 
 /**
  * 読み直したあとの選択。選んでいたコミットが一覧から消えたら (amend・reset 等) HEAD へ戻す。
- * 読み込み済みの範囲に元から無かったコミット (親のハッシュから飛んだ先) は、消えたとは
- * 言えないので保つ
+ * 読み込み済みの範囲に元から無かったコミット (親のハッシュから飛んだ先) と、読み直しの
+ * 範囲の外へ出ただけのコミットは、消えたとは言えないので保つ
  */
 function reconcileSelection(
   prev: GitSelection | null,
@@ -142,9 +142,13 @@ function reconcileSelection(
   if (prev.kind === "working") {
     return countChanges(next.status) > 0 ? prev : defaultSelection(next);
   }
-  const has = (data: GitData | null) =>
-    data?.commits.some(c => c.sha === prev.sha) ?? false;
-  if (has(next) || !has(before)) return prev;
+  const indexIn = (data: GitData | null) =>
+    data?.commits.findIndex(c => c.sha === prev.sha) ?? -1;
+  const beforeIndex = indexIn(before);
+  if (indexIn(next) !== -1 || beforeIndex === -1) return prev;
+  // 読み直すのは上限 (3,000 件) までなので、それより先まで読み足していた分は一覧から
+  // 落ちる。落ちただけのコミットは消えたとは言えない
+  if (next.hasMore && beforeIndex >= next.commits.length) return prev;
   return defaultSelection(next);
 }
 

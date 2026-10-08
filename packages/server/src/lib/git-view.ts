@@ -439,25 +439,29 @@ export async function getStatus(cwd: string): Promise<GitStatus> {
 
 // ---- コミット詳細 ----
 
+/** コミットの完全な sha を返す。存在しなければ投げる */
+async function resolveCommit(cwd: string, sha: string): Promise<string> {
+  const out = await git(cwd, [
+    "rev-parse",
+    "--verify",
+    "-q",
+    `${sha}^{commit}`,
+  ]).catch(err => {
+    if (err instanceof GitRunError && err.message.includes("失敗しました")) {
+      throw new Error("コミットが見つかりません");
+    }
+    throw err;
+  });
+  return out.trim();
+}
+
 export async function getCommit(
   cwd: string,
   sha: string
 ): Promise<{ commit: GitCommitDetail; files: GitFileChange[] }> {
   await assertRepository(cwd);
   if (!isValidSha(sha)) throw new Error("コミットの指定が不正です");
-  const resolved = (
-    await git(cwd, ["rev-parse", "--verify", "-q", `${sha}^{commit}`]).catch(
-      err => {
-        if (
-          err instanceof GitRunError &&
-          err.message.includes("失敗しました")
-        ) {
-          throw new Error("コミットが見つかりません");
-        }
-        throw err;
-      }
-    )
-  ).trim();
+  const resolved = await resolveCommit(cwd, sha);
 
   const [out, refMap] = await Promise.all([
     git(cwd, [
@@ -607,9 +611,12 @@ export async function getFileDiff(
   switch (target.kind) {
     case "commit": {
       if (!isValidSha(target.sha)) throw new Error("コミットの指定が不正です");
+      // readBlob は「無い」をすべて片側が無いものとして空にする。コミット自体が
+      // 無いときに空同士の差を返さないよう、先に確かめる
+      const sha = await resolveCommit(cwd, target.sha);
       [oldSide, newSide] = await Promise.all([
-        readBlob(cwd, pathSpec(`${target.sha}^1`, from)),
-        readBlob(cwd, pathSpec(target.sha, path)),
+        readBlob(cwd, pathSpec(`${sha}^1`, from)),
+        readBlob(cwd, pathSpec(sha, path)),
       ]);
       break;
     }
