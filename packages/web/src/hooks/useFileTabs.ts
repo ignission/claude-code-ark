@@ -23,6 +23,8 @@ export function useFileTabs(sessions: Map<string, { worktreePath: string }>) {
     Record<string, number>
   >({});
   const restoredRef = useRef<Set<string>>(new Set());
+  // 復元を反映した後のセッション。これより前に保存すると未復元のタブを上書きで失う
+  const [restoredIds, setRestoredIds] = useState<Record<string, true>>({});
   const idSeqRef = useRef(0);
   const makeId = useCallback(() => {
     idSeqRef.current += 1;
@@ -32,9 +34,11 @@ export function useFileTabs(sessions: Map<string, { worktreePath: string }>) {
   // 初めて認識したセッションだけ、1 度だけ復元する
   useEffect(() => {
     const restored: Record<string, FileTabsState> = {};
+    const seen: Record<string, true> = {};
     for (const [sessionId, { worktreePath }] of sessions) {
       if (restoredRef.current.has(sessionId)) continue;
       restoredRef.current.add(sessionId);
+      seen[sessionId] = true;
       let raw: string | null = null;
       try {
         raw = localStorage.getItem(fileTabsStorageKey(worktreePath));
@@ -44,9 +48,30 @@ export function useFileTabs(sessions: Map<string, { worktreePath: string }>) {
       const state = deserializeFileTabs(raw, makeId);
       if (state.tabs.length > 0) restored[sessionId] = state;
     }
-    if (Object.keys(restored).length === 0) return;
-    // 復元前に開かれたタブがあればそちらを優先する
-    setTabsBySession(prev => ({ ...restored, ...prev }));
+    if (Object.keys(seen).length === 0) return;
+    setTabsBySession(prev => {
+      const next = { ...prev };
+      for (const [sessionId, saved] of Object.entries(restored)) {
+        const live = prev[sessionId];
+        if (!live || live.tabs.length === 0) {
+          next[sessionId] = saved;
+          continue;
+        }
+        // 復元前に開かれたタブとは統合する: 保存分が先、続けて未収載の現タブ。アクティブは現状維持
+        const savedPaths = new Set(saved.tabs.map(t => t.filePath));
+        next[sessionId] = {
+          tabs: [
+            ...saved.tabs.map(
+              t => live.tabs.find(l => l.filePath === t.filePath) ?? t
+            ),
+            ...live.tabs.filter(t => !savedPaths.has(t.filePath)),
+          ],
+          activeId: live.activeId,
+        };
+      }
+      return next;
+    });
+    setRestoredIds(prev => ({ ...prev, ...seen }));
   }, [sessions, makeId]);
 
   // 状態が変わった worktree のキーへ保存する
@@ -54,9 +79,10 @@ export function useFileTabs(sessions: Map<string, { worktreePath: string }>) {
   useEffect(() => {
     for (const [sessionId, state] of Object.entries(tabsBySession)) {
       if (savedRef.current[sessionId] === state) continue;
-      savedRef.current[sessionId] = state;
       const session = sessions.get(sessionId);
-      if (!session) continue;
+      // セッション未認識・復元前は保存せず、揃った時に書く
+      if (!session || !restoredIds[sessionId]) continue;
+      savedRef.current[sessionId] = state;
       try {
         localStorage.setItem(
           fileTabsStorageKey(session.worktreePath),
@@ -66,7 +92,7 @@ export function useFileTabs(sessions: Map<string, { worktreePath: string }>) {
         // 保存できなくても表示は続ける
       }
     }
-  }, [tabsBySession, sessions]);
+  }, [tabsBySession, sessions, restoredIds]);
 
   const update = useCallback(
     (sessionId: string, fn: (s: FileTabsState) => FileTabsState) => {

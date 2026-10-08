@@ -106,12 +106,53 @@ describe("直列化", () => {
       ["n1", "file", "a.ts"],
       ["n2", "html", "/x.html"],
     ]);
-    expect(restored.tabs[0]).toMatchObject({
-      targetLine: 3,
-      targetEndLine: 4,
-      revealSeq: 0,
-    });
+    // 行指定は保存も復元もしない
+    for (const t of restored.tabs) {
+      expect(t.targetLine).toBeUndefined();
+      expect(t.targetEndLine).toBeUndefined();
+      expect(t.revealSeq).toBe(0);
+    }
     expect(restored.activeId).toBe("n1");
+  });
+
+  it("保存の形は { tabs: [{ kind, filePath }], activeFilePath }", () => {
+    let s = openFileInTabs(EMPTY_FILE_TABS, "a.ts", "a", 3, 4);
+    s = openFileInTabs(s, "/x.html", "b");
+    expect(JSON.parse(serializeFileTabs(s))).toEqual({
+      tabs: [
+        { kind: "file", filePath: "a.ts" },
+        { kind: "html", filePath: "/x.html" },
+      ],
+      activeFilePath: "/x.html",
+    });
+  });
+
+  it("アクティブより前の不正要素があってもアクティブがずれない", () => {
+    const raw = JSON.stringify({
+      tabs: [
+        { filePath: 1 },
+        { kind: "file", filePath: "a.ts" },
+        null,
+        { kind: "file", filePath: "b.ts" },
+      ],
+      activeFilePath: "b.ts",
+    });
+    let n = 0;
+    const s = deserializeFileTabs(raw, () => `n${++n}`);
+    expect(s.tabs.map(t => t.filePath)).toEqual(["a.ts", "b.ts"]);
+    expect(s.activeId).toBe(s.tabs[1].id);
+  });
+
+  it("activeFilePath が未知なら先頭をアクティブにする", () => {
+    const raw = JSON.stringify({
+      tabs: [
+        { kind: "file", filePath: "a.ts" },
+        { kind: "file", filePath: "b.ts" },
+      ],
+      activeFilePath: "zzz.ts",
+    });
+    const s = deserializeFileTabs(raw, () => "i");
+    expect(s.activeId).toBe(s.tabs[0].id);
   });
 
   it("null / 壊れた JSON / 形違いは EMPTY", () => {
@@ -125,7 +166,7 @@ describe("直列化", () => {
   it("不正なタブ要素は捨てる", () => {
     const raw = JSON.stringify({
       tabs: [{ filePath: 1 }, { filePath: "ok.ts" }],
-      activeIndex: 0,
+      activeFilePath: "ok.ts",
     });
     const s = deserializeFileTabs(raw, () => "i");
     expect(s.tabs).toHaveLength(1);

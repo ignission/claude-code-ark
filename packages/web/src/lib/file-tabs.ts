@@ -73,19 +73,22 @@ export function selectFileTab(state: FileTabsState, id: string): FileTabsState {
   return { ...state, activeId: id };
 }
 
+/**
+ * 保存する形は { tabs: [{ kind, filePath }], activeFilePath }。
+ * 行指定 (targetLine など) は保存も復元もしない
+ */
 export function serializeFileTabs(state: FileTabsState): string {
-  const activeIndex = state.tabs.findIndex(t => t.id === state.activeId);
+  const active = state.tabs.find(t => t.id === state.activeId);
   return JSON.stringify({
-    tabs: state.tabs.map(t => ({
-      filePath: t.filePath,
-      targetLine: t.targetLine ?? null,
-      targetEndLine: t.targetEndLine ?? null,
-    })),
-    activeIndex,
+    tabs: state.tabs.map(t => ({ kind: t.kind, filePath: t.filePath })),
+    activeFilePath: active?.filePath ?? null,
   });
 }
 
-/** 壊れた入力は例外にせず EMPTY を返す。id は保存せず makeId で振り直す */
+/**
+ * 壊れた入力は例外にせず EMPTY を返す。id は保存せず makeId で振り直す。
+ * アクティブは activeFilePath で選び、一致しなければ先頭のタブにする
+ */
 export function deserializeFileTabs(
   raw: string | null,
   makeId: () => string
@@ -94,38 +97,32 @@ export function deserializeFileTabs(
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return EMPTY_FILE_TABS;
-    const { tabs: rawTabs, activeIndex } = parsed as {
+    const { tabs: rawTabs, activeFilePath } = parsed as {
       tabs?: unknown;
-      activeIndex?: unknown;
+      activeFilePath?: unknown;
     };
     if (!Array.isArray(rawTabs)) return EMPTY_FILE_TABS;
     const tabs: FileTab[] = [];
-    let activeId: string | null = null;
-    rawTabs.forEach((item, i) => {
-      if (!item || typeof item !== "object") return;
-      const { filePath, targetLine, targetEndLine } = item as Record<
-        string,
-        unknown
-      >;
-      if (typeof filePath !== "string" || !filePath) return;
-      const id = makeId();
+    for (const item of rawTabs) {
+      if (!item || typeof item !== "object") continue;
+      const { filePath } = item as Record<string, unknown>;
+      if (typeof filePath !== "string" || !filePath) continue;
       tabs.push({
-        id,
+        id: makeId(),
         kind: fileTabKind(filePath),
         filePath,
-        targetLine: typeof targetLine === "number" ? targetLine : null,
-        targetEndLine: typeof targetEndLine === "number" ? targetEndLine : null,
         revealSeq: 0,
       });
-      if (i === activeIndex) activeId = id;
-    });
+    }
     if (tabs.length === 0) return EMPTY_FILE_TABS;
-    return { tabs, activeId: activeId ?? tabs[tabs.length - 1].id };
+    const active = tabs.find(t => t.filePath === activeFilePath) ?? tabs[0];
+    return { tabs, activeId: active.id };
   } catch {
     return EMPTY_FILE_TABS;
   }
 }
 
+/** 同じ worktree の複数セッションは 1 つのキーを共有する (最後に書いた方が勝つ) */
 export function fileTabsStorageKey(worktreePath: string): string {
   return `ark-file-tabs:${worktreePath}`;
 }
