@@ -1179,6 +1179,214 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
     expect(workArea(container).style.width).toBe("500px");
   });
 
+  describe("「Git」のタブ", () => {
+    const gitPane = (visible: boolean) => (
+      <div data-testid="git-pane" data-visible={String(visible)} />
+    );
+    const gitPaneEl = (scope: ParentNode) =>
+      scope.querySelector<HTMLElement>('[data-testid="git-pane"]');
+    const tabLabels = (scope: ParentNode) =>
+      Array.from(scope.querySelectorAll('[role="tab"]')).map(
+        el => el.textContent
+      );
+
+    it("gitPane を渡したときだけタブを出す", () => {
+      localStorage.setItem("ark-split-show-board", "1");
+      const session = makeSession("git-tab");
+      const container = mount(paneSection(session, true, { filePane }));
+      expect(tabLabels(container)).toEqual(["図", "ファイル"]);
+
+      const root = mountedRoots.at(-1)?.root;
+      act(() =>
+        root?.render(paneSection(session, true, { filePane, gitPane }))
+      );
+      expect(tabLabels(container)).toEqual(["図", "ファイル", "Git"]);
+    });
+
+    it("gitPane が無ければ、保存値が git でも図を見せる", () => {
+      localStorage.setItem("ark-split-show-board", "1");
+      localStorage.setItem("ark-split-right-tab", "git");
+      const container = mount(
+        paneSection(makeSession("git-none"), true, { filePane })
+      );
+      expect(selectedTab(container)).toBe("図");
+      expect(isHidden(diagramEl(container))).toBe(false);
+      expect(filePaneEl(container)).toBeNull();
+    });
+
+    it("初めて見せるまでマウントせず、見せたあとはタブを替えても閉じても外さない", () => {
+      const container = mount(
+        paneSection(makeSession("git-keep"), true, { filePane, gitPane })
+      );
+      clickButton(header(container), "パネル");
+      // 開いただけ (図のタブ) ではマウントしない
+      expect(gitPaneEl(container)).toBeNull();
+
+      clickTab(container, "Git");
+      expect(selectedTab(container)).toBe("Git");
+      expect(localStorage.getItem("ark-split-right-tab")).toBe("git");
+      const opened = gitPaneEl(container);
+      expect(opened?.dataset.visible).toBe("true");
+      expect(isHidden(opened)).toBe(false);
+      // ファイルは見せていないのでマウントしない
+      expect(filePaneEl(container)).toBeNull();
+
+      // タブを替えても同じ要素が残り、見えていないことだけ伝える
+      clickTab(container, "ファイル");
+      expect(gitPaneEl(container)).toBe(opened);
+      expect(isHidden(gitPaneEl(container))).toBe(true);
+      expect(gitPaneEl(container)?.dataset.visible).toBe("false");
+
+      // 閉じても外さない
+      clickTab(container, "Git");
+      clickButton(header(container), "パネル");
+      expect(gitPaneEl(container)).toBe(opened);
+      expect(isHidden(gitPaneEl(container))).toBe(true);
+      expect(gitPaneEl(container)?.dataset.visible).toBe("false");
+      expect(resizers(container)[0].className).toContain("hidden");
+
+      clickButton(header(container), "パネル");
+      expect(gitPaneEl(container)).toBe(opened);
+      expect(gitPaneEl(container)?.dataset.visible).toBe("true");
+    });
+
+    it("保存したタブ (git) で開く。選択中でないセッションでは見せるまでマウントしない", () => {
+      localStorage.setItem("ark-split-show-board", "1");
+      localStorage.setItem("ark-split-right-tab", "git");
+      const session = makeSession("git-saved");
+      const container = mount(
+        paneSection(session, false, { filePane, gitPane })
+      );
+      const root = mountedRoots.at(-1)?.root;
+      expect(selectedTab(container)).toBe("Git");
+      expect(gitPaneEl(container)).toBeNull();
+
+      act(() =>
+        root?.render(paneSection(session, true, { filePane, gitPane }))
+      );
+      expect(gitPaneEl(container)?.dataset.visible).toBe("true");
+      // 図とファイルは見せるまでマウントしない
+      expect(diagramEl(container)).toBeNull();
+      expect(filePaneEl(container)).toBeNull();
+
+      act(() =>
+        root?.render(paneSection(session, false, { filePane, gitPane }))
+      );
+      expect(gitPaneEl(container)?.dataset.visible).toBe("false");
+    });
+
+    it("←/→ は 3 つのタブを巡る", () => {
+      localStorage.setItem("ark-split-show-board", "1");
+      const container = mount(
+        paneSection(makeSession("git-keys"), true, { filePane, gitPane })
+      );
+      const press = (label: string, key: string) =>
+        act(() =>
+          tab(container, label).dispatchEvent(
+            new KeyboardEvent("keydown", { key, bubbles: true })
+          )
+        );
+      press("図", "ArrowLeft");
+      expect(selectedTab(container)).toBe("Git");
+      expect(document.activeElement).toBe(tab(container, "Git"));
+      press("Git", "ArrowRight");
+      expect(selectedTab(container)).toBe("図");
+    });
+
+    it("Git のタブからでも、fileOpenSeq が増えたら「ファイル」へ替える (「ファイルで開く」)", () => {
+      localStorage.setItem("ark-split-show-board", "1");
+      localStorage.setItem("ark-split-right-tab", "git");
+      const session = makeSession("git-open-file");
+      const container = mount(
+        paneSection(session, true, { filePane, gitPane, fileOpenSeq: 1 })
+      );
+      const root = mountedRoots.at(-1)?.root;
+      expect(selectedTab(container)).toBe("Git");
+
+      act(() =>
+        root?.render(
+          paneSection(session, true, { filePane, gitPane, fileOpenSeq: 2 })
+        )
+      );
+      expect(selectedTab(container)).toBe("ファイル");
+      expect(localStorage.getItem("ark-split-right-tab")).toBe("files");
+      expect(filePaneEl(container)?.dataset.visible).toBe("true");
+      // Git は外さずに隠す
+      expect(isHidden(gitPaneEl(container))).toBe(true);
+      expect(gitPaneEl(container)?.dataset.visible).toBe("false");
+    });
+
+    it("図の activation やピークでは「図」へ替わり、自動で Git へ替わることは無い", () => {
+      localStorage.setItem("ark-split-show-board", "1");
+      localStorage.setItem("ark-split-right-tab", "git");
+      const session = makeSession("git-auto");
+      const container = mount(
+        paneSection(session, true, { filePane, gitPane, peekSeq: 1 })
+      );
+      const root = mountedRoots.at(-1)?.root;
+      act(() =>
+        root?.render(
+          paneSection(session, true, { filePane, gitPane, peek, peekSeq: 2 })
+        )
+      );
+      expect(selectedTab(container)).toBe("図");
+      expect(isHidden(gitPaneEl(container))).toBe(true);
+    });
+
+    it("Git のタブの間は 760px まで広げ、保存している幅は変えない", () => {
+      localStorage.setItem("ark-split-show-board", "1");
+      localStorage.setItem("ark-split-board-width", "500");
+      const container = mount(
+        paneSection(makeSession("git-width"), true, { filePane, gitPane })
+      );
+      expect(workArea(container).style.width).toBe("500px");
+
+      clickTab(container, "Git");
+      expect(workArea(container).style.width).toBe("760px");
+      expect(localStorage.getItem("ark-split-board-width")).toBe("500");
+
+      // ほかのタブでは元の幅
+      clickTab(container, "ファイル");
+      expect(workArea(container).style.width).toBe("500px");
+      clickTab(container, "図");
+      expect(workArea(container).style.width).toBe("500px");
+    });
+
+    it("保存している幅が 760px より広ければ、そのまま使う", () => {
+      localStorage.setItem("ark-split-show-board", "1");
+      localStorage.setItem("ark-split-right-tab", "git");
+      localStorage.setItem("ark-split-board-width", "1000");
+      const container = mount(
+        paneSection(makeSession("git-wide"), true, { filePane, gitPane })
+      );
+      expect(workArea(container).style.width).toBe("1000px");
+    });
+
+    it("Git のタブの間は、ドラッグでも 760px までの下限より狭くしない", () => {
+      localStorage.setItem("ark-split-show-board", "1");
+      localStorage.setItem("ark-split-right-tab", "git");
+      localStorage.setItem("ark-split-board-width", "900");
+      const container = mount(
+        paneSection(makeSession("git-drag"), true, { filePane, gitPane })
+      );
+      stubContainerRect(container, 2000);
+      act(() => {
+        resizers(container)[0].dispatchEvent(
+          new MouseEvent("mousedown", { bubbles: true, cancelable: true })
+        );
+      });
+      // 右端から 400px の位置まで引いても 760px で止まる
+      act(() => {
+        window.dispatchEvent(new MouseEvent("mousemove", { clientX: 1600 }));
+      });
+      expect(workArea(container).style.width).toBe("760px");
+      act(() => {
+        window.dispatchEvent(new MouseEvent("mouseup"));
+      });
+      expect(localStorage.getItem("ark-split-board-width")).toBe("760");
+    });
+  });
+
   it("ドラッグ中は左ペインも作業エリアも pointer-events-none になる", () => {
     localStorage.setItem("ark-split-show-board", "1");
     const container = mount(

@@ -828,6 +828,37 @@ export interface ClientToServerEvents {
     requestId: string;
   }) => void;
 
+  // Git タブ (読み取りだけ。すべて ack で返す)
+  "git:log": (
+    data: { sessionId: string; skip: number; limit: number },
+    cb: (r: GitLogResponse) => void
+  ) => void;
+  "git:refs": (
+    data: { sessionId: string },
+    cb: (r: GitRefsResponse) => void
+  ) => void;
+  "git:status": (
+    data: { sessionId: string },
+    cb: (r: GitStatusResponse) => void
+  ) => void;
+  "git:commit": (
+    data: { sessionId: string; sha: string },
+    cb: (r: GitCommitResponse) => void
+  ) => void;
+  "git:file-diff": (
+    data: {
+      sessionId: string;
+      target: GitDiffTarget;
+      path: string;
+      oldPath?: string;
+    },
+    cb: (r: GitFileDiffResponse) => void
+  ) => void;
+  "git:fingerprint": (
+    data: { sessionId: string },
+    cb: (r: GitFingerprintResponse) => void
+  ) => void;
+
   // ファイルビューワー
   "file:read": (data: { sessionId: string; filePath: string }) => void;
   "file:open": (
@@ -1171,6 +1202,86 @@ export interface SessionGridSnapshot {
  */
 export const TERMINAL_BG = "#1c1a17";
 export const TERMINAL_FG = "#e6e1da";
+
+// Git タブ
+export interface GitRef {
+  kind: "head" | "branch" | "remote" | "tag" | "stash";
+  /** 表示名 (`main` / `origin/main` / `v1.0`) */
+  name: string;
+}
+export interface GitCommit {
+  sha: string;
+  parents: string[];
+  subject: string;
+  authorName: string;
+  authorEmail: string;
+  /** 作者日時 (UNIX 秒) */
+  authorTime: number;
+  refs: GitRef[];
+}
+export interface GitCommitDetail extends GitCommit {
+  body: string;
+  committerName: string;
+  /** コミット日時 (UNIX 秒) */
+  committerTime: number;
+}
+export interface GitFileChange {
+  path: string;
+  /** リネーム・コピーの元 */
+  oldPath?: string;
+  status: "A" | "M" | "D" | "R" | "C" | "T" | "U" | "?";
+  /** バイナリは null */
+  added: number | null;
+  removed: number | null;
+}
+export interface GitBranch {
+  name: string;
+  sha: string;
+  current: boolean;
+  upstream?: string;
+  ahead?: number;
+  behind?: number;
+}
+export interface GitRefs {
+  head: { sha: string | null; branch: string | null };
+  branches: GitBranch[];
+  remotes: { name: string; sha: string }[];
+  tags: { name: string; sha: string }[];
+  stashes: { name: string; sha: string; subject: string }[];
+}
+export type GitDiffTarget =
+  | { kind: "commit"; sha: string }
+  | { kind: "staged" }
+  | { kind: "unstaged" }
+  | { kind: "untracked" };
+export interface GitStatus {
+  staged: GitFileChange[];
+  unstaged: GitFileChange[];
+  untracked: GitFileChange[];
+}
+export interface GitFileDiff {
+  /** 変更前の内容。追加されたファイルは空文字 */
+  oldContent: string;
+  /** 変更後の内容。削除されたファイルは空文字 */
+  newContent: string;
+  /** どちらかが NUL を含む (内容は返さない) */
+  binary: boolean;
+  /** どちらかが上限を超えた (内容は返さない) */
+  tooLarge: boolean;
+}
+type GitFailure = { ok: false; error: string };
+export type GitLogResponse =
+  | { ok: true; commits: GitCommit[]; hasMore: boolean }
+  | GitFailure;
+export type GitRefsResponse = ({ ok: true } & GitRefs) | GitFailure;
+export type GitStatusResponse = ({ ok: true } & GitStatus) | GitFailure;
+export type GitCommitResponse =
+  | { ok: true; commit: GitCommitDetail; files: GitFileChange[] }
+  | GitFailure;
+export type GitFileDiffResponse = ({ ok: true } & GitFileDiff) | GitFailure;
+export type GitFingerprintResponse =
+  | { ok: true; fingerprint: string }
+  | GitFailure;
 
 // ファイルペイン
 export type FileOpenResponse =

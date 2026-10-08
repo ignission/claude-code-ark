@@ -116,6 +116,7 @@ import {
   listWorktrees,
   scanRepositories,
 } from "./lib/git.js";
+import { createGitViewHandlers } from "./lib/git-view-handlers.js";
 import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
 import { htmlScreenshotter } from "./lib/html-screenshotter.js";
@@ -2594,6 +2595,17 @@ export async function startServer(
     socket.on("file:write", fileHandlers.write);
     socket.on("file:subscribe", fileHandlers.subscribe);
     socket.on("file:unsubscribe", fileHandlers.unsubscribe);
+    // Git タブ (読み取りだけ。購読は無いので dispose 不要)
+    const gitHandlers = createGitViewHandlers({
+      getWorktreePath: sessionId =>
+        sessionOrchestrator.getSession(sessionId)?.worktreePath,
+    });
+    socket.on("git:log", gitHandlers.log);
+    socket.on("git:refs", gitHandlers.refs);
+    socket.on("git:status", gitHandlers.status);
+    socket.on("git:commit", gitHandlers.commit);
+    socket.on("git:file-diff", gitHandlers.fileDiff);
+    socket.on("git:fingerprint", gitHandlers.fingerprint);
     // レート制限: ソケットごとに最後のリクエスト時間を記録
     let lastFileReadTime = 0;
 

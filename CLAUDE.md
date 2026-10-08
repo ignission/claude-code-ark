@@ -15,9 +15,9 @@ PC・モバイルとも、ttyd の生ターミナル（`TerminalPane`）と、�
 
 - **PC**: `SplitViewPane` は 左 = 端末 / 会話、右 = 作業エリア の 2 ペイン。
   左ペインは上部バーの🖥/💬トグルで切り替える（既定は端末）。作業エリアは
-  上部バー右端の「パネル」トグルで開閉し、上端のタブ「図 / ファイル」で中身を
-  切り替える（中身は `DiagramPane` と `FilePane`。詳細は下記「ファイルペイン」
-  「セッションボード」）。端末・会話のリンクからファイルを開くと作業エリアが
+  上部バー右端の「パネル」トグルで開閉し、上端のタブ「図 / ファイル / Git」で中身を
+  切り替える（中身は `DiagramPane`・`FilePane`・`GitPane`。詳細は下記「ファイルペイン」
+  「Git タブ」「セッションボード」）。端末・会話のリンクからファイルを開くと作業エリアが
   「ファイル」のタブで開き、左ペインのモードは変わらない。図の中のコードリンクは
   タブを替えず、図の横の「ピーク」（`FilePeek`）で開く。
   左ペインの選択・作業エリアの幅と開閉とタブ・開いているファイルタブ・
@@ -223,6 +223,62 @@ PC の作業エリアの「ファイル」のタブ（`FilePane`）は worktree 
 - 行指定つきのリンク（`README.md#L10`）で開いた Markdown は、プレビューではなく
   編集で出す（プレビューでは行を示せない）
 
+### Git タブ
+
+PC の作業エリアの「Git」のタブ（`GitPane`）は、セッションの worktree のコミットグラフ・
+ref・差分・未コミットの変更を見せる。手本は Fork のメイン画面で、ファーストビューは
+コミット一覧（`components/git/` / `git-view.ts` / `git-view-handlers.ts`）。
+
+- **いまは見るだけ**。ステージ・コミット・破棄・チェックアウト・fetch / pull / push は
+  持たない。破棄やチェックアウトは取り消せず、確認の設計が要るので、見た目と閲覧を
+  先に実機で固める
+- **対象の worktree は `sessionId` からサーバーが引く**（クライアントのパスは信用しない）。
+  `sha` は 16 進 7〜40 桁だけ、`path` は `..` を含まない相対パスだけを通し、パスは必ず
+  `--` の後ろに置く
+- **git は必ず `--no-optional-locks` で呼ぶ**。付けないと `git status` が index を
+  更新しようとして `index.lock` を取り、同じ worktree で動いている Claude の git 操作と
+  取り合う
+- **追従は指紋のポーリングで、見えている間だけ**。`GitPane` は 3 秒ごとに
+  `git:fingerprint` を問い合わせ、変わったときだけ
+  refs・status・コミットを読み直す（読み込み済みの件数ぶん。上限 3,000 件）。
+  指紋はHEAD・いまのブランチ（`symbolic-ref`）・ref・statusに、indexのblob
+  （`diff --cached --raw` / `diff --raw`）と、作業ツリー側が変わっているパス・未追跡の
+  パスの `lstat`（mtimeと大きさ。2,000パスまで）を混ぜたハッシュ。statusの出力だけだと、
+  変更済みのファイルの再編集・ステージし直し・同じコミットを指す別ブランチへの切り替えで
+  変わらず、画面が古いままになる。
+  `SplitViewPane` は全セッションぶんが常時マウントされ、`GitPane` も 1 度見せたら
+  外さないので、隠れている間も問い合わせると全セッションぶんの git が回り続ける。
+  見えた瞬間には 1 回問い合わせる
+- 読み込みには通し番号を振り、あとから始めた読み込みだけが state を書ける
+  （遅れて届いた古い応答で新しい一覧を上書きしない）。指紋の問い合わせは重ねない。
+  読み直しに失敗したら覚えている指紋を捨て、次の問い合わせで必ず読み直す
+- **続きの読み込みが失敗したら、自動では頼み直さない**。末尾が見えたままだと失敗のたびに
+  頼み直し続けるので、一覧の末尾に「再試行」の行を出して止める
+- **競合中（unmerged）のパスは未ステージに1回だけ `U` で出す**。indexにステージ0が
+  無いので、差分はours（ステージ2。無ければbaseのステージ1）と作業ツリーの差にする
+- **作業ツリーのシンボリックリンクはたどらず、行き先の文字列を内容にする**
+  （indexのblobと同じ形。境界は親ディレクトリの実体で確かめる）
+- **詳細のrefの札は、読み直した一覧から渡す**。コミットの応答はshaごとに持ち続けるので、
+  応答のrefは新しいコミットが積まれると古くなる。一覧に無いコミットだけ応答のrefを出す
+- **マージコミットの差分は第 1 親との差**（`<sha>^1`。ルートコミットは空との差）。
+  combined diff は「そのブランチを取り込んで何が入ったか」を示さないため
+- **グラフの割り当ては「第 1 親は必ず自分の列で受ける」**（`lib/git-graph.ts`）。
+  別の列が同じ親を待っていても寄せない（寄せると本線が枝の列へ飛ぶ）。同じ親を待つ列は
+  親の行で合流する。読み込みが途中で切れていても、親が未読の列は下へ伸ばしたままにする
+- **未コミットの変更は「HEAD を親に持つ仮のコミット」として割り当てる**
+  （`lib/git-graph-rows.ts`）。HEAD が一覧の先頭に無くても線がつながる。変更が無いときも
+  仮の行を足して割り当て、その線だけを外す（足したり足さなかったりすると、作業ツリーが
+  汚れる / 片付くたびに全レーンの列と色がずれ、Claude の作業中にグラフがちらつく）
+- 一覧の行は固定高（28px）で、見えている範囲だけを描く。グラフは行ごとの SVG を
+  上端から下端まで描いて継ぐ。レーンの色（8 色）と差分の地色は `index.css` の
+  `--git-*` に明暗それぞれの値で持つ
+- 差分は `@codemirror/merge` の `unifiedMergeView`（`GitDiffView`。読み取り専用）で、
+  テーマと構文の色は `lib/codemirror-theme.ts` を `CodeEditor` と共有する。
+  `GitDiffView` は `React.lazy` で読み、`@codemirror/merge` を初期バンドルに入れない
+- 「Git」のタブを見ている間は作業エリアを 760px まで広げる（保存している幅は変えない。
+  ピークの 900px と同じ仕組み）。自動で「Git」へ替えることは無い。差分の
+  「ファイルで開く」は `ark:open-file` を投げるので、「ファイル」のタブへ替わる
+
 ### ボード提案 (Jev 判定)
 
 長い説明をチャットで読む負担を減らすため、Claude が返答を終えるたびに Stop hook
@@ -320,6 +376,7 @@ task.md 規約・復唱・失敗の自動収集・セッション lifecycle を�
 | 特殊キー送信           | Enter, Ctrl+C, Ctrl+D, y, n, S-Tab, Escape, スクロール等                    |
 | ファイルアップロード   | D&D・ファイル選択・クリップボード貼り付けで画像/PDF/テキスト/Excelを送信（`@パス` 形式） |
 | ファイルペイン         | worktree のファイルを見て直すペイン（PC のみ。右の作業エリアの「ファイル」のタブで、「図」と切り替える）。ツリー（gitignore 対象は隠し、git の変更の印を出す）とタブで開き、CodeMirror で編集して Ctrl+S / Cmd+S で保存する。Claude がファイルを書き換えたら自動で読み直し、編集中に書き換えられたらバナーで「再読込」「上書き保存」を選ばせる。会話・端末のリンクからも開く。ボードの中のコードリンクは、図を見たまま横の「ピーク」で開き、そこから「ファイル」のタブへ移せる。モバイルは従来の読み取り専用のタブのまま |
+| Git タブ               | worktree のコミットグラフと差分を見るペイン（PC のみ。右の作業エリアの「Git」のタブ。読み取りだけ）。左にサイドバー（変更 / ブランチ / リモート / タグ / スタッシュ）、右上に色分けしたグラフと ref の札つきのコミット一覧、右下に選んだコミットの詳細（コミットの情報 / 変更されたファイル / unified の差分）。先頭の行で未コミットの変更（ステージ済み / 変更 / 未追跡）も見られる。見えている間は 3 秒ごとに追従し、Claude がコミットすると一覧が更新される |
 | tmuxバッファコピー     | tmuxのペーストバッファをクリップボードにコピー                              |
 | ポートスキャン         | リッスン中のポートを一覧表示（ttydポートは除外）                            |
 | リモートアクセス       | Cloudflare Tunnel（Quick / Named）+ QRコード + トークン認証                 |
@@ -569,6 +626,12 @@ claude-code-ark/
 | `file:write`      | `{ sessionId, filePath, content, expectedMtimeMs, force? }, callback` | worktree 内の既存ファイルを書き換える（コールバック。`{ ok: true, mtimeMs }` / `{ ok: false, code: "conflict" \| "error", error, mtimeMs? }`）|
 | `file:subscribe`  | `{ sessionId, filePath }`               | ファイルの更新監視を開始（見えているタブ 1 枚だけ。1 socket あたり 50 件まで）|
 | `file:unsubscribe` | `{ sessionId, filePath }`              | ファイルの更新監視を解除         |
+| `git:log`         | `{ sessionId, skip, limit }, callback`  | コミット一覧（全ブランチ・新しい順。`limit` は最大 500。コールバック。`{ ok: true, commits, hasMore }` / `{ ok: false, error }`）|
+| `git:refs`        | `{ sessionId }, callback`               | HEAD・ブランチ（ahead / behind つき）・リモート・タグ・スタッシュ（コールバック）|
+| `git:status`      | `{ sessionId }, callback`               | 未コミットの変更（コールバック。`{ ok: true, staged, unstaged, untracked }`）|
+| `git:commit`      | `{ sessionId, sha }, callback`          | コミットの詳細と変更されたファイル（コールバック。`{ ok: true, commit, files }`）|
+| `git:file-diff`   | `{ sessionId, target, path, oldPath? }, callback` | 1 ファイルの変更前後の内容（`target` は `commit` / `staged` / `unstaged` / `untracked`。コールバック。`{ ok: true, oldContent, newContent, binary, tooLarge }`）|
+| `git:fingerprint` | `{ sessionId }, callback`               | HEAD・ブランチ・ref・status・indexのblob・変更中のファイルのmtimeと大きさのハッシュ（コールバック。変わったら読み直す）|
 | `profile:list`    | -                                       | プロファイル一覧取得（Linux限定） |
 | `profile:create`  | `{ name, configDir }`                   | プロファイル作成 |
 | `profile:update`  | `{ id, name?, configDir? }`             | プロファイル更新 |
