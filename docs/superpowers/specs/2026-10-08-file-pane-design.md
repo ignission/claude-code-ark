@@ -64,13 +64,15 @@ Claude が書き換えたら追従する。端末・会話とボードを見た�
   - `FileTab = { id, kind: "file" | "html", filePath, targetLine?, targetEndLine? }`
   - アクティブは index ではなく id で持つ (閉じたときの補正が要らない)
   - 内容 (content / mtime / dirty) はタブではなく、タブを描くコンポーネントが持つ
-- `useViewerTabs` からファイル・HTML タブの追加処理を外し、`ark:open-file` の受け口は
-  `useFileTabs.openFile` を呼ぶだけにする。`sessionTabs` に残るのは `terminal` と `diagram`
-- PC: `TerminalPane` はタブバーを描かなくなる (常に端末だけ)。中ペインの `FilePane` が
+- `useViewerTabs` に `onOpenFile` を足す。渡されていれば、`ark:open-file` を受けたときに
+  自分のタブ列へは足さず `onOpenFile` を呼ぶ。`Dashboard` は PC のときだけ
+  `useFileTabs.openFile` を渡す
+- PC: `sessionTabs` に載るのは `terminal` と `diagram` だけになり、`TerminalPane` のタブバーは
+  出なくなる (タブが 1 枚以下なら描かない既存の挙動)。中ペインの `FilePane` が
   `useFileTabs` のリストを描く
-- モバイル: `MobileLayout` が `[terminal, ...fileTabs]` を従来の `ViewerTab[]` の形に合成して
-  `MobileSessionView` へ渡す。`MobileSessionView` の描画 (`ViewerTabBar` / `FileViewerPane` /
-  `HtmlViewerPane`) は変えない。内容の取得は従来の `file:read` → `file:content` のまま
+- モバイル: `onOpenFile` を渡さないので、従来の経路 (`sessionTabs` のファイルタブ +
+  `file:read` → `file:content` + `FileViewerPane`) がそのまま動く。モバイルの部品は編集しない。
+  PC とモバイルでタブの状態を共有しないが、同じ画面幅で両方を行き来する使い方は無い
 
 ### 採らない形: `sessionTabs` に残して隠す
 
