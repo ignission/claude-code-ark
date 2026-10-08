@@ -227,18 +227,38 @@ export function commentAnchorNodes(model: DiagramModel): DiagramNode[] {
 const DECK_CSS = `
 .ark-deck-title{margin:0 0 .8rem;font-size:1.02rem;font-weight:700}
 .ark-deck-page[data-ark-deck-hidden]{display:none}
-.ark-deck[data-ark-deck-mode="stack"] .ark-deck-page{margin:0 0 1.2rem}
-.ark-deck-nav{position:sticky;bottom:0;display:flex;align-items:center;justify-content:center;
-gap:.6rem;padding:.55rem 0;background:#0b1018;
-font:.72rem/1 ui-monospace,SFMono-Regular,Consolas,monospace;color:#6b7b93}
-.ark-deck-nav button{padding:.35rem .75rem;border:1px solid #22304a;border-radius:6px;
-background:#101827;color:#dbe4f0;font:inherit;cursor:pointer}
+.ark-deck-tag{display:none}
+.ark-deck-nav{position:sticky;bottom:.8rem;display:flex;align-items:center;justify-content:center;
+width:fit-content;margin:0 auto;gap:.5rem;padding:.3rem .4rem;border-radius:999px;background:#18212f;
+box-shadow:inset 0 0 0 1px #2a3850,0 8px 22px rgb(0 0 0/.45);
+font:.72rem/1 ui-monospace,SFMono-Regular,Consolas,monospace;color:#8fa6c4}
+.ark-deck-nav button{padding:.4rem .8rem;border:0;border-radius:999px;
+background:transparent;color:#dbe4f0;font:inherit;cursor:pointer}
+.ark-deck-nav button:hover:not(:disabled){background:#243049}
+.ark-deck-nav .ark-deck-dots button:hover{background:#dbe4f0}
 .ark-deck-nav button:disabled{opacity:.35;cursor:default}
 .ark-deck-dots{display:flex;gap:.35rem}
 .ark-deck-dots button{width:.55rem;height:.55rem;padding:0;border-radius:50%;background:#22304a;border:0}
 .ark-deck-dots button[aria-current="true"]{background:#dbe4f0}
 .ark-deck[data-ark-deck-mode="stack"] .ark-deck-step{display:none}
 .ark-deck[data-ark-deck-single] .ark-deck-nav{display:none}
+/* 積んで見せるとき (既定) は、点の地のキャンバスにページをカードとして置く。
+   カードは左右へ互い違いにずらすだけで、位置は持たない (ドラッグも保存も無い) */
+body:has(.ark-deck[data-ark-deck-mode="stack"]){
+background-image:radial-gradient(color-mix(in srgb,currentColor 30%,transparent) 1.1px,transparent 1.6px);
+background-size:18px 18px}
+.ark-deck[data-ark-deck-mode="stack"] .ark-deck-pages{display:flex;flex-direction:column;gap:1.3rem;padding:0 0 1.4rem}
+.ark-deck[data-ark-deck-mode="stack"] .ark-deck-page{margin:0;width:calc(100% - 1.5rem);min-width:0}
+.ark-deck[data-ark-deck-mode="stack"] .ark-deck-page:nth-child(even){align-self:flex-end}
+.ark-deck[data-ark-deck-mode="stack"] .ark-deck-page[data-ark-deck-slot],
+.ark-deck[data-ark-deck-mode="stack"] .ark-static-panel{border:0;border-radius:14px;overflow:hidden;
+box-shadow:inset 0 0 0 1px color-mix(in srgb,currentColor 9%,transparent),0 1px 2px rgb(0 0 0/.2),0 12px 30px rgb(0 0 0/.28)}
+.ark-deck[data-ark-deck-mode="stack"] .ark-deck-page[data-ark-deck-slot]{
+background:linear-gradient(color-mix(in srgb,currentColor 4%,transparent),color-mix(in srgb,currentColor 4%,transparent)),var(--ark-deck-surface,Canvas)}
+.ark-deck[data-ark-deck-mode="stack"] .ark-static-panel{margin:0}
+.ark-deck[data-ark-deck-mode="stack"] .ark-static-head{border-bottom:0}
+.ark-deck[data-ark-deck-mode="stack"] .ark-deck-tag{display:block;padding:.6rem .9rem 0;opacity:.6;
+font:700 .62rem/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.06em}
 `;
 
 /**
@@ -250,6 +270,9 @@ const DECK_SCRIPT = `(function(){
   "use strict";
   var deck=document.querySelector("[data-ark-deck-mode]");
   if(!deck)return;
+  // カードの面は、作者が body に塗った地の色に合わせる (CSS だけでは body の色を引けない)
+  var surface=getComputedStyle(document.body).backgroundColor;
+  if(surface&&surface!=="transparent"&&surface!=="rgba(0, 0, 0, 0)")deck.style.setProperty("--ark-deck-surface",surface);
   // 自由形の section は包む要素の中へ移すだけにする。表示・非表示は包む要素で切り替え、
   // section に書かれた display（grid / flex など）には触らない。
   // 別のページの中に書かれたページも、先に親ごと移された後で自分の包む要素へ移し直す
@@ -321,7 +344,10 @@ const INJECTED_SCRIPT_RE = new RegExp(
 
 function renderPage(page: DeckPage): string {
   if (page.type === "html") {
-    return `<div class="ark-deck-page" data-ark-deck-slot="${escapeHtml(page.id)}"></div>`;
+    return (
+      `<div class="ark-deck-page" data-ark-deck-slot="${escapeHtml(page.id)}">` +
+      `<div class="ark-deck-tag" ${GENERATED_ATTR}="1">PAGE${page.title ? ` · ${escapeHtml(page.title)}` : ""}</div></div>`
+    );
   }
   return (
     `<div class="ark-deck-page" ${PAGE_ATTRIBUTE}="${escapeHtml(page.id)}">` +
