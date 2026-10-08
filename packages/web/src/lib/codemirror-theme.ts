@@ -31,7 +31,8 @@ export const arkTheme = EditorView.theme({
   ".cm-content": { caretColor: "var(--foreground)" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--foreground)" },
   ".cm-gutters": {
-    backgroundColor: "transparent",
+    // 横スクロール中も行番号は貼り付いたままなので、下を流れるコードが透けないよう塗っておく
+    backgroundColor: "var(--background)",
     color: "var(--muted-foreground)",
     border: "none",
   },

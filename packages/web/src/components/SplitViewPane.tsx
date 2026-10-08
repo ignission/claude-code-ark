@@ -700,7 +700,10 @@ export function SplitViewPane(props: SplitViewPaneProps) {
              文字だけでなく flex の gap も消える
           2. それでも足りない分は左の箱が引き受ける。主ラベルが縮み、
              最後は `overflow-hidden` で箱の中に収める (上部バーは横に溢れない) */}
-          <header className="@container h-13 shrink-0 flex items-center gap-3 pl-5 pr-3">
+          {/* 上部バーは左のパネルの中にあるので、作業エリアを広げると幅が足りなくなる。
+              そのときは右側の操作を2段目へ折り返す (切れて押せなくなるのを防ぐ)。
+              左の箱は basis-0 なので、折り返すのはセグメントと操作が収まらないときだけ */}
+          <header className="@container min-h-13 shrink-0 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 py-2 pl-5 pr-3">
             <div className="flex flex-1 basis-0 min-w-0 items-center gap-2.5 overflow-hidden">
               {/* 主ラベルを先に守り、ブランチから省略する。縮み率をブランチ側に
               大きく振ることで、ブランチが尽きるまで主ラベルは縮まない。
