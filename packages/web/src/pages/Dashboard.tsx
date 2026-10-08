@@ -8,6 +8,7 @@ import { BoardSuggestSettingsDialog } from "@/components/BoardSuggestSettingsDia
 import { BrowserPane } from "@/components/BrowserPane";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { FilePane } from "@/components/FilePane";
+import { FilePeek, type FilePeekTarget } from "@/components/FilePeek";
 import {
   MobileLayout,
   type MobileTab,
@@ -327,7 +328,7 @@ export default function Dashboard() {
     [isRemote, isMobile, handleSelectBrowser, navigateBrowser]
   );
 
-  // PC の中ペイン (ファイル) のタブ。端末のタブ列 (useViewerTabs) とは別に持つ
+  // PC の作業エリアの「ファイル」のタブ列。端末のタブ列 (useViewerTabs) とは別に持つ
   const {
     getFileTabs,
     openFile: openFileInPane,
@@ -335,6 +336,67 @@ export default function Dashboard() {
     selectFile: selectFileInPane,
     getOpenSeq: getFileOpenSeq,
   } = useFileTabs(sessions);
+
+  // ピーク: 図のコードリンクを踏んだとき、図の横に出すコード (セッションごとに 1 件)。
+  // リロードでは復元しない。通し番号は閉じても戻さない (SplitViewPane が増加を見て開く)
+  const [peekBySession, setPeekBySession] = useState<
+    Record<string, FilePeekTarget>
+  >({});
+  const [peekSeqBySession, setPeekSeqBySession] = useState<
+    Record<string, number>
+  >({});
+  const peekSeqRef = useRef(0);
+  const closePeek = useCallback((sessionId: string) => {
+    setPeekBySession(prev => {
+      if (!(sessionId in prev)) return prev;
+      const { [sessionId]: _closed, ...rest } = prev;
+      return rest;
+    });
+  }, []);
+  // リンクで開くファイルの行き先。図のリンクは、図を見たまま横のピークで開く
+  // (「ファイル」のタブへ替えると図が隠れる)。端末・会話のリンクは「ファイル」のタブへ送る
+  const handleOpenFileLink = useCallback(
+    (
+      sessionId: string,
+      filePath: string,
+      line?: number | null,
+      endLine?: number | null,
+      source?: "board"
+    ) => {
+      if (source !== "board") {
+        openFileInPane(sessionId, filePath, line, endLine);
+        return;
+      }
+      // 同じパスの開き直しでも増やす (エディタが行へスクロールし直す合図)
+      peekSeqRef.current += 1;
+      const seq = peekSeqRef.current;
+      setPeekBySession(prev => ({
+        ...prev,
+        [sessionId]: {
+          filePath,
+          targetLine: line,
+          targetEndLine: endLine,
+          seq,
+        },
+      }));
+      setPeekSeqBySession(prev => ({ ...prev, [sessionId]: seq }));
+    },
+    [openFileInPane]
+  );
+  // ピークを「ファイル」のタブへ移す。openFile が fileOpenSeq を進めるので、
+  // SplitViewPane が「ファイル」のタブへ替える
+  const promotePeek = useCallback(
+    (sessionId: string, target: FilePeekTarget) => {
+      openFileInPane(
+        sessionId,
+        target.filePath,
+        target.targetLine,
+        target.targetEndLine
+      );
+      closePeek(sessionId);
+    },
+    [openFileInPane, closePeek]
+  );
 
   // PC / モバイル共通の単一インスタンス。MobileLayout で再度呼ぶとリンクタップの
   // ハンドラが二重登録され、URL オープンが 2 回走るため、ここだけで管理する。
@@ -352,8 +414,8 @@ export default function Dashboard() {
     fileContent,
     handleOpenUrl,
     true,
-    // PC はリンクで開くファイルを中ペインへ送る。モバイルは従来の閲覧タブのまま
-    isMobile ? undefined : openFileInPane
+    // PC はリンクで開くファイルを作業エリアへ送る。モバイルは従来の閲覧タブのまま
+    isMobile ? undefined : handleOpenFileLink
   );
 
   // diagram:open を受けて図タブを開く。worktreePath はサーバーから送られない
@@ -955,6 +1017,7 @@ export default function Dashboard() {
                     worktreeDisplayNames.get(
                       wt?.path ?? session.worktreePath
                     ) ?? null;
+                  const peek = peekBySession[session.id];
                   const paneProps = {
                     session,
                     worktree: wt,
@@ -1020,7 +1083,24 @@ export default function Dashboard() {
                         deleteDiagramComment={deleteDiagramComment}
                         sendDiagramComment={sendDiagramComment}
                         fileOpenSeq={getFileOpenSeq(session.id)}
-                        // 中ペインは 1 度見せたら閉じてもマウントされたまま。
+                        peekSeq={peekSeqBySession[session.id] ?? 0}
+                        peek={
+                          peek
+                            ? visible => (
+                                <FilePeek
+                                  socket={socket}
+                                  sessionId={session.id}
+                                  peek={peek}
+                                  isVisible={visible}
+                                  onClose={() => closePeek(session.id)}
+                                  onPromote={target =>
+                                    promotePeek(session.id, target)
+                                  }
+                                />
+                              )
+                            : null
+                        }
+                        // 「ファイル」は 1 度見せたらタブを替えても閉じてもマウントされたまま。
                         // 見えているか (visible) を渡して、監視を 1 枚に絞らせる
                         filePane={visible => (
                           <FilePane

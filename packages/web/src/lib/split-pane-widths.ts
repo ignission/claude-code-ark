@@ -1,41 +1,29 @@
 /**
- * split-pane-widths - SplitViewPane の 3 ペイン (左 | ファイル | 図) の幅の制約
+ * split-pane-widths - SplitViewPane の 2 ペイン (左 | 作業エリア) の幅の制約
  *
- * 左ペインは残りを埋めるので、ファイルと図の希望幅をコンテナ幅に収める。
- * 収まらないときはファイル、図の順に最小幅まで縮め、それでも足りなければ
- * 最小幅のまま返す (そのぶん左ペインが LEFT_MIN_WIDTH より縮む)。
+ * 左ペインは残りを埋めるので、作業エリアの希望幅をコンテナ幅に収める。
+ * 収まらないときは最小幅まで縮め、それでも足りなければ最小幅のまま返す
+ * (そのぶん左ペインが LEFT_MIN_WIDTH より縮む)。
  */
 
 export const LEFT_MIN_WIDTH = 360;
-export const FILE_MIN_WIDTH = 360;
-export const BOARD_MIN_WIDTH = 320;
+export const WORK_AREA_MIN_WIDTH = 360;
 /** リサイザの幅 (w-1 = 4px) */
 export const RESIZER_WIDTH = 4;
+/** ピークを出している間、作業エリアをここまで広げる (図とコードを並べて読める幅) */
+export const PEEK_WORK_AREA_WIDTH = 900;
 
-/** 希望幅を、コンテナ幅と最小幅の制約に収める。ファイル、図の順に縮める。閉じているペインは 0 として扱う */
-export function fitPaneWidths(input: {
-  total: number;
-  /** null = 閉じている */
-  file: number | null;
-  board: number | null;
-}): { file: number; board: number } {
-  const file = input.file ?? 0;
-  const board = input.board ?? 0;
-  const resizers =
-    (input.file === null ? 0 : RESIZER_WIDTH) +
-    (input.board === null ? 0 : RESIZER_WIDTH);
-  const room = input.total - LEFT_MIN_WIDTH - resizers;
-  let excess = file + board - room;
-  if (excess <= 0) return { file, board };
+/** 希望幅を、左ペインの最小幅を残せる範囲に収める。作業エリアの最小幅は割らない */
+export function fitWorkAreaWidth(total: number, desired: number): number {
+  const max = total - LEFT_MIN_WIDTH - RESIZER_WIDTH;
+  return Math.max(WORK_AREA_MIN_WIDTH, Math.min(desired, max));
+}
 
-  const fileShrink =
-    input.file === null
-      ? 0
-      : Math.min(excess, Math.max(0, file - FILE_MIN_WIDTH));
-  excess -= fileShrink;
-  const boardShrink =
-    input.board === null
-      ? 0
-      : Math.min(excess, Math.max(0, board - BOARD_MIN_WIDTH));
-  return { file: file - fileShrink, board: board - boardShrink };
+/**
+ * ピークを出している間の作業エリアの下限。コンテナ幅が分からない (0 以下) ときは
+ * PEEK_WORK_AREA_WIDTH をそのまま返す
+ */
+export function peekWorkAreaFloor(total: number): number {
+  if (total <= 0) return PEEK_WORK_AREA_WIDTH;
+  return fitWorkAreaWidth(total, PEEK_WORK_AREA_WIDTH);
 }

@@ -1,61 +1,40 @@
 import { describe, expect, it } from "vitest";
 import {
-  BOARD_MIN_WIDTH,
-  FILE_MIN_WIDTH,
-  fitPaneWidths,
+  fitWorkAreaWidth,
   LEFT_MIN_WIDTH,
+  PEEK_WORK_AREA_WIDTH,
+  peekWorkAreaFloor,
+  RESIZER_WIDTH,
+  WORK_AREA_MIN_WIDTH,
 } from "./split-pane-widths";
 
-const RESIZER = 4;
-
-describe("fitPaneWidths", () => {
+describe("fitWorkAreaWidth", () => {
   it("収まるなら希望幅のまま返す", () => {
-    expect(fitPaneWidths({ total: 1800, file: 520, board: 420 })).toEqual({
-      file: 520,
-      board: 420,
-    });
+    expect(fitWorkAreaWidth(1800, 520)).toBe(520);
   });
 
-  it("超えた分はまず file だけを縮める", () => {
-    // 余地 = 1400 - 360 - 8 = 1032。file 700 + board 420 = 1120 → 88 超過
-    expect(fitPaneWidths({ total: 1400, file: 700, board: 420 })).toEqual({
-      file: 612,
-      board: 420,
-    });
-  });
-
-  it("file が最小幅に達したら board も縮める", () => {
-    // 余地 = 1200 - 360 - 8 = 832。file 500 + board 600 = 1100 → 268 超過
-    // file は 140 縮んで最小の 360、残り 128 を board から (600→472)
-    expect(fitPaneWidths({ total: 1200, file: 500, board: 600 })).toEqual({
-      file: FILE_MIN_WIDTH,
-      board: 472,
-    });
+  it("左ペインの最小幅を残せるところまで縮める", () => {
+    expect(fitWorkAreaWidth(1000, 900)).toBe(
+      1000 - LEFT_MIN_WIDTH - RESIZER_WIDTH
+    );
   });
 
   it("どれだけ狭くても最小幅より小さくはしない (左が縮む)", () => {
-    expect(fitPaneWidths({ total: 800, file: 500, board: 500 })).toEqual({
-      file: FILE_MIN_WIDTH,
-      board: BOARD_MIN_WIDTH,
-    });
+    expect(fitWorkAreaWidth(600, 500)).toBe(WORK_AREA_MIN_WIDTH);
+    expect(fitWorkAreaWidth(1800, 100)).toBe(WORK_AREA_MIN_WIDTH);
+  });
+});
+
+describe("peekWorkAreaFloor", () => {
+  it("広いコンテナでは 900px", () => {
+    expect(peekWorkAreaFloor(1600)).toBe(PEEK_WORK_AREA_WIDTH);
   });
 
-  it("片方が閉じていれば、閉じている側は 0 でリサイザも数えない", () => {
-    // 余地 = 1000 - 360 - 4 = 636
-    expect(fitPaneWidths({ total: 1000, file: 900, board: null })).toEqual({
-      file: 1000 - LEFT_MIN_WIDTH - RESIZER,
-      board: 0,
-    });
-    expect(fitPaneWidths({ total: 1000, file: null, board: 900 })).toEqual({
-      file: 0,
-      board: 1000 - LEFT_MIN_WIDTH - RESIZER,
-    });
+  it("狭いコンテナでは左ペインの最小幅を残せる幅まで", () => {
+    expect(peekWorkAreaFloor(1000)).toBe(636);
   });
 
-  it("両方閉じていれば両方 0", () => {
-    expect(fitPaneWidths({ total: 1000, file: null, board: null })).toEqual({
-      file: 0,
-      board: 0,
-    });
+  it("コンテナ幅が分からないときは 900px", () => {
+    expect(peekWorkAreaFloor(0)).toBe(PEEK_WORK_AREA_WIDTH);
   });
 });

@@ -30,13 +30,15 @@ export function useViewerTabs(
   enabled = true,
   /**
    * 渡されると `ark:open-file` を端末のタブ列に積まず、こちらへ委譲する
-   * (PC の中ペイン用)。渡さなければ従来どおり (モバイル)
+   * (PC の作業エリア用)。渡さなければ従来どおり (モバイル)。
+   * source は図のリンクから開いたときだけ "board" (PC は図の横のピークで開く)
    */
   onOpenFile?: (
     sessionId: string,
     filePath: string,
     line?: number | null,
-    endLine?: number | null
+    endLine?: number | null,
+    source?: "board"
   ) => void
 ) {
   const [sessionTabs, setSessionTabs] = useState<Record<string, ViewerTab[]>>(
@@ -284,12 +286,18 @@ export function useViewerTabs(
       if (!session) return;
 
       if (type === "ark:open-file") {
-        const { path: filePath, line, endLine } = event.data;
+        const { path: filePath, line, endLine, source } = event.data;
         if (typeof filePath !== "string" || !filePath) return;
         const targetLine = typeof line === "number" ? line : undefined;
         const targetEndLine = typeof endLine === "number" ? endLine : undefined;
         if (onOpenFile) {
-          onOpenFile(selectedSessionId, filePath, targetLine, targetEndLine);
+          onOpenFile(
+            selectedSessionId,
+            filePath,
+            targetLine,
+            targetEndLine,
+            source === "board" ? "board" : undefined
+          );
           return;
         }
         openFileTab(selectedSessionId, filePath, targetLine, targetEndLine);

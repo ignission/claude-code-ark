@@ -22,7 +22,8 @@ function mountHook(
     sessionId: string,
     filePath: string,
     line?: number | null,
-    endLine?: number | null
+    endLine?: number | null,
+    source?: "board"
   ) => void,
   readFile: (sessionId: string, filePath: string) => void = vi.fn()
 ) {
@@ -107,9 +108,30 @@ describe("useViewerTabs の onOpenFile", () => {
     const readFile = vi.fn();
     const api = mountHook(onOpenFile, readFile);
     postOpenFile({ path: "src/a.ts", line: 3, endLine: 5 });
-    expect(onOpenFile).toHaveBeenCalledWith("s1", "src/a.ts", 3, 5);
+    expect(onOpenFile).toHaveBeenCalledWith("s1", "src/a.ts", 3, 5, undefined);
     expect(readFile).not.toHaveBeenCalled();
     expect(api().getTabsForSession("s1")).toHaveLength(1);
+  });
+
+  it("図のリンクから開いた印 (source) をそのまま渡す。知らない値は落とす", () => {
+    const onOpenFile = vi.fn();
+    mountHook(onOpenFile);
+    postOpenFile({ path: "src/a.ts", line: 3, endLine: 5, source: "board" });
+    expect(onOpenFile).toHaveBeenLastCalledWith(
+      "s1",
+      "src/a.ts",
+      3,
+      5,
+      "board"
+    );
+    postOpenFile({ path: "src/b.ts", source: "terminal" });
+    expect(onOpenFile).toHaveBeenLastCalledWith(
+      "s1",
+      "src/b.ts",
+      undefined,
+      undefined,
+      undefined
+    );
   });
 
   it("渡されていなければ従来どおりタブを足して readFile を呼ぶ", () => {

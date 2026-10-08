@@ -278,6 +278,8 @@ export type DiagramOpenMessage =
       path: string;
       line: number | null;
       endLine: number | null;
+      /** 図のリンクから開いた印。PC はこれを見て、図の横のピークで開く */
+      source: "board";
     }
   | { type: "ark:open-url"; url: string };
 
@@ -351,6 +353,7 @@ export function handleDiagramOpenLinkMessage(
       path: target.path,
       line: target.line,
       endLine: target.endLine,
+      source: "board",
     });
   }
   return true;

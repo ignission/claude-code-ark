@@ -447,8 +447,8 @@ describe("PC上部バー", () => {
     );
   });
 
-  it("端末 / 会話の切り替え・図の開閉・その他の操作を上部バーに置く", () => {
-    // 図を開くとSplitViewPaneが幅の追従にResizeObserverを使う (jsdomに無い)
+  it("端末 / 会話の切り替え・パネルの開閉・その他の操作を上部バーに置く", () => {
+    // パネルを開くとSplitViewPaneが幅の追従にResizeObserverを使う (jsdomに無い)
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -467,15 +467,18 @@ describe("PC上部バー", () => {
     ).not.toBeNull();
     expect(
       scope
-        .querySelector('button[aria-label="図"]')
+        .querySelector('button[aria-label="パネル"]')
         ?.getAttribute("aria-pressed")
     ).toBe("false");
+    // 図とファイルの開閉は 1 つにまとめた (上部バーに個別のトグルは置かない)
+    expect(scope.querySelector('button[aria-label="図"]')).toBeNull();
+    expect(scope.querySelector('button[aria-label="ファイル"]')).toBeNull();
 
-    clickButton(scope, "図");
+    clickButton(scope, "パネル");
 
     expect(
       scope
-        .querySelector('button[aria-label="図"]')
+        .querySelector('button[aria-label="パネル"]')
         ?.getAttribute("aria-pressed")
     ).toBe("true");
     expect(
@@ -499,7 +502,13 @@ describe("PC上部バーの狭い幅の畳み方", () => {
     );
     const header = container.querySelector("header") as HTMLElement;
 
-    for (const label of ["feature/login", "確認待ち", "端末", "会話", "図"]) {
+    for (const label of [
+      "feature/login",
+      "確認待ち",
+      "端末",
+      "会話",
+      "パネル",
+    ]) {
       // 文言そのものを持つ一番内側の span を見る
       // (状態チップは外側の span も同じ textContent を持つ)
       const span = Array.from(header.querySelectorAll("span")).find(
@@ -512,13 +521,13 @@ describe("PC上部バーの狭い幅の畳み方", () => {
     expect(header.textContent).toContain("確認待ち");
   });
 
-  it("図のボタンは文言を隠しても aria-label と title を保つ", () => {
+  it("パネルのボタンは文言を隠しても aria-label と title を保つ", () => {
     const container = mount(paneSection(makeSession("narrow-board"), true));
     const button = container
       .querySelector("header")
-      ?.querySelector('button[aria-label="図"]');
+      ?.querySelector('button[aria-label="パネル"]');
 
-    expect(button?.getAttribute("title")).toBe("図を開く");
+    expect(button?.getAttribute("title")).toBe("パネルを開く");
   });
 
   it("左のまとまりは、縮みきったぶんを箱の中で抱える (上部バーを横に溢れさせない)", () => {
@@ -543,7 +552,7 @@ describe("PC上部バーの1タップ操作", () => {
     "入力バーを表示",
   ];
 
-  it("端末モードでは添付・画像・ショートカットと端末の操作を図の手前に並べる", () => {
+  it("端末モードでは添付・画像・ショートカットと端末の操作をパネルの手前に並べる", () => {
     writeSavedSplitViewLeftMode("terminal");
     const container = mount(
       paneSection(makeSession("quick-terminal"), true, {
@@ -555,7 +564,7 @@ describe("PC上部バーの1タップ操作", () => {
     const labels = headerButtonLabels(scope);
     for (const label of QUICK_LABELS) {
       expect(labels).toContain(label);
-      expect(labels.indexOf(label)).toBeLessThan(labels.indexOf("図"));
+      expect(labels.indexOf(label)).toBeLessThan(labels.indexOf("パネル"));
     }
     // 並び順も固定する (送る操作が先、端末の操作があと)
     expect(labels.filter(label => QUICK_LABELS.includes(label))).toEqual(
@@ -776,14 +785,71 @@ describe("PC上部バーの1タップ操作", () => {
   });
 });
 
-describe("PC 3 ペイン (ファイル)", () => {
+describe("PC 右の作業エリア (図 / ファイル)", () => {
   const filePane = (visible: boolean) => (
     <div data-testid="file-pane" data-visible={String(visible)} />
   );
+  const peek = (visible: boolean) => (
+    <div data-testid="peek" data-visible={String(visible)} />
+  );
   const filePaneEl = (scope: ParentNode) =>
     scope.querySelector<HTMLElement>('[data-testid="file-pane"]');
-  /** 閉じた中ペインは外さず、hidden の付いた祖先の下に残す */
+  const diagramEl = (scope: ParentNode) =>
+    scope.querySelector<HTMLElement>('[data-testid="diagram-pane"]');
+  const peekEl = (scope: ParentNode) =>
+    scope.querySelector<HTMLElement>('[data-testid="peek"]');
+  /** 見せていない中身は外さず、hidden の付いた祖先の下に残す */
   const isHidden = (el: Element | null) => el?.closest(".hidden") != null;
+  const header = (scope: ParentNode) =>
+    scope.querySelector("header") as HTMLElement;
+  const toggle = (scope: ParentNode) =>
+    header(scope).querySelector('button[aria-label="パネル"]');
+  const tab = (scope: ParentNode, label: string) => {
+    const found = Array.from(
+      scope.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+    ).find(el => el.textContent === label);
+    expect(found).toBeDefined();
+    return found as HTMLButtonElement;
+  };
+  const clickTab = (scope: ParentNode, label: string) =>
+    act(() =>
+      tab(scope, label).dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      )
+    );
+  const selectedTab = (scope: ParentNode) =>
+    scope.querySelector('[role="tab"][aria-selected="true"]')?.textContent;
+  const resizers = (scope: ParentNode) =>
+    scope.querySelectorAll<HTMLElement>('button[aria-label="左右の幅を調整"]');
+  /** 作業エリアの箱 (リサイザの次の要素) */
+  const workArea = (scope: ParentNode) =>
+    resizers(scope)[0]?.nextElementSibling as HTMLElement;
+  const stubContainerRect = (scope: ParentNode, width: number) => {
+    const body = scope.querySelector("header + div") as HTMLElement;
+    vi.spyOn(body, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      right: width,
+      width,
+      top: 0,
+      bottom: 0,
+      height: 0,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+  };
+  const withDiagram = (id: string, restoredOnLoad?: boolean) => ({
+    tabs: [
+      { type: "terminal" as const, id: "terminal" },
+      {
+        type: "diagram" as const,
+        id,
+        worktreePath: "/worktrees/x",
+        relPath: "a.diagram.html",
+        restoredOnLoad,
+      },
+    ],
+  });
 
   beforeEach(() => {
     vi.stubGlobal(
@@ -795,59 +861,149 @@ describe("PC 3 ペイン (ファイル)", () => {
     );
   });
 
-  it("filePane が無ければトグルを出さない", () => {
-    const container = mount(paneSection(makeSession("fp-none"), true));
-    expect(
-      container.querySelector('header button[aria-label="ファイル"]')
-    ).toBeNull();
+  it("「パネル」のトグル 1 つで開閉し、開閉を localStorage に残す", () => {
+    const container = mount(
+      paneSection(makeSession("wa-toggle"), true, { filePane })
+    );
+    expect(toggle(container)?.getAttribute("title")).toBe("パネルを開く");
+    expect(container.querySelector('[role="tablist"]')).toBeNull();
+    expect(diagramEl(container)).toBeNull();
+
+    clickButton(header(container), "パネル");
+    expect(toggle(container)?.getAttribute("aria-pressed")).toBe("true");
+    expect(toggle(container)?.getAttribute("title")).toBe("パネルを閉じる");
+    expect(localStorage.getItem("ark-split-show-board")).toBe("1");
+    // 既定のタブは図
+    expect(selectedTab(container)).toBe("図");
+    expect(diagramEl(container)).not.toBeNull();
+    expect(isHidden(diagramEl(container))).toBe(false);
+    expect(resizers(container).length).toBe(1);
+
+    clickButton(header(container), "パネル");
+    expect(toggle(container)?.getAttribute("aria-pressed")).toBe("false");
+    expect(localStorage.getItem("ark-split-show-board")).toBe("0");
+    // 図は従来どおり、閉じたら外す
+    expect(diagramEl(container)).toBeNull();
   });
 
-  it("トグルで filePane が出て、閉じても外さず hidden で残す。localStorage に残る", () => {
+  it("タブ列の × で閉じる", () => {
+    localStorage.setItem("ark-split-show-board", "1");
     const container = mount(
-      paneSection(makeSession("fp-toggle"), true, { filePane })
+      paneSection(makeSession("wa-close"), true, { filePane })
     );
-    const header = container.querySelector("header") as HTMLElement;
-    expect(container.querySelector('[data-testid="file-pane"]')).toBeNull();
-    expect(
-      header
-        .querySelector('button[aria-label="ファイル"]')
-        ?.getAttribute("title")
-    ).toBe("ファイルを開く");
+    expect(diagramEl(container)).not.toBeNull();
 
-    clickButton(header, "ファイル");
-    expect(container.querySelector('[data-testid="file-pane"]')).not.toBeNull();
-    expect(localStorage.getItem("ark-split-show-files")).toBe("1");
-    expect(
-      header
-        .querySelector('button[aria-label="ファイル"]')
-        ?.getAttribute("aria-pressed")
-    ).toBe("true");
+    clickButton(workArea(container), "パネルを閉じる");
+    expect(toggle(container)?.getAttribute("aria-pressed")).toBe("false");
+    expect(localStorage.getItem("ark-split-show-board")).toBe("0");
+    expect(diagramEl(container)).toBeNull();
+  });
 
-    expect(isHidden(filePaneEl(container))).toBe(false);
+  it("タブで図 / ファイルを替え、選んだタブを localStorage に残す", () => {
+    localStorage.setItem("ark-split-show-board", "1");
+    const container = mount(
+      paneSection(makeSession("wa-tabs"), true, { filePane })
+    );
+    expect(filePaneEl(container)).toBeNull();
+    const diagram = diagramEl(container);
+
+    clickTab(container, "ファイル");
+    expect(selectedTab(container)).toBe("ファイル");
+    expect(localStorage.getItem("ark-split-right-tab")).toBe("files");
     expect(filePaneEl(container)?.dataset.visible).toBe("true");
+    expect(isHidden(filePaneEl(container))).toBe(false);
+    // 図は外さずに隠す (iframe を作り直さない)
+    expect(diagramEl(container)).toBe(diagram);
+    expect(isHidden(diagramEl(container))).toBe(true);
+
+    clickTab(container, "図");
+    expect(localStorage.getItem("ark-split-right-tab")).toBe("board");
+    expect(diagramEl(container)).toBe(diagram);
+    expect(isHidden(diagramEl(container))).toBe(false);
+    expect(isHidden(filePaneEl(container))).toBe(true);
+    expect(filePaneEl(container)?.dataset.visible).toBe("false");
+  });
+
+  it("タブは選択中だけ Tab キーで入れ、←/→ で隣へ移る", () => {
+    localStorage.setItem("ark-split-show-board", "1");
+    const container = mount(
+      paneSection(makeSession("wa-keys"), true, { filePane })
+    );
+    expect(tab(container, "図").tabIndex).toBe(0);
+    expect(tab(container, "ファイル").tabIndex).toBe(-1);
+    const press = (label: string, key: string) =>
+      act(() =>
+        tab(container, label).dispatchEvent(
+          new KeyboardEvent("keydown", { key, bubbles: true })
+        )
+      );
+
+    press("図", "ArrowRight");
+    expect(selectedTab(container)).toBe("ファイル");
+    expect(document.activeElement).toBe(tab(container, "ファイル"));
+    expect(tab(container, "ファイル").tabIndex).toBe(0);
+    expect(tab(container, "図").tabIndex).toBe(-1);
+
+    press("ファイル", "ArrowLeft");
+    expect(selectedTab(container)).toBe("図");
+    expect(document.activeElement).toBe(tab(container, "図"));
+  });
+
+  it("保存済みの開閉とタブで開く", () => {
+    localStorage.setItem("ark-split-show-board", "1");
+    localStorage.setItem("ark-split-right-tab", "files");
+    const container = mount(
+      paneSection(makeSession("wa-saved"), true, { filePane })
+    );
+    expect(selectedTab(container)).toBe("ファイル");
+    expect(filePaneEl(container)?.dataset.visible).toBe("true");
+    // 図は「図」のタブを見せるまでマウントしない
+    expect(diagramEl(container)).toBeNull();
+  });
+
+  it("filePane が無ければ「ファイル」のタブを出さず、保存値が files でも図を見せる", () => {
+    localStorage.setItem("ark-split-show-board", "1");
+    localStorage.setItem("ark-split-right-tab", "files");
+    const container = mount(paneSection(makeSession("wa-none"), true));
+    expect(
+      Array.from(container.querySelectorAll('[role="tab"]')).map(
+        el => el.textContent
+      )
+    ).toEqual(["図"]);
+    expect(isHidden(diagramEl(container))).toBe(false);
+  });
+
+  it("ファイルは初めて見せるまでマウントせず、見せたあとは閉じても外さない", () => {
+    const container = mount(
+      paneSection(makeSession("wa-keep"), true, { filePane })
+    );
+    clickButton(header(container), "パネル");
+    // 開いただけ (図のタブ) ではマウントしない
+    expect(filePaneEl(container)).toBeNull();
+
+    clickTab(container, "ファイル");
     const opened = filePaneEl(container);
+    expect(opened).not.toBeNull();
 
     // 閉じても同じ要素が残る (未保存の編集を持つエディタを外さない)。リサイザも隠す
-    clickButton(header, "ファイル");
+    clickButton(header(container), "パネル");
     expect(filePaneEl(container)).toBe(opened);
     expect(isHidden(filePaneEl(container))).toBe(true);
     expect(filePaneEl(container)?.dataset.visible).toBe("false");
-    const resizers = container.querySelectorAll(
-      'button[aria-label="左右の幅を調整"]'
-    );
-    expect(resizers.length).toBe(1);
-    expect(resizers[0].className).toContain("hidden");
-    expect(localStorage.getItem("ark-split-show-files")).toBe("0");
+    expect(resizers(container).length).toBe(1);
+    expect(resizers(container)[0].className).toContain("hidden");
 
-    clickButton(header, "ファイル");
+    clickButton(header(container), "パネル");
     expect(filePaneEl(container)).toBe(opened);
     expect(isHidden(filePaneEl(container))).toBe(false);
-    expect(resizers[0].className).not.toContain("hidden");
+    expect(filePaneEl(container)?.dataset.visible).toBe("true");
+    expect(resizers(container)[0].className).not.toContain("hidden");
   });
 
-  it("選択中でないセッションでは、開いていても見せるまでマウントしない", () => {
-    localStorage.setItem("ark-split-show-files", "1");
-    const session = makeSession("fp-inactive");
+  it("選択中でないセッションでは、ファイルのタブでも見せるまでマウントしない", () => {
+    localStorage.setItem("ark-split-show-board", "1");
+    localStorage.setItem("ark-split-right-tab", "files");
+    const session = makeSession("wa-inactive");
     const container = mount(paneSection(session, false, { filePane }));
     const root = mountedRoots.at(-1)?.root;
     expect(filePaneEl(container)).toBeNull();
@@ -860,134 +1016,186 @@ describe("PC 3 ペイン (ファイル)", () => {
     expect(filePaneEl(container)?.dataset.visible).toBe("false");
   });
 
-  it("閉じた中ペインは幅の計算に入れない", () => {
-    localStorage.setItem("ark-split-show-files", "1");
-    localStorage.setItem("ark-split-show-board", "1");
-    localStorage.setItem("ark-split-board-width", "400");
-    const container = mount(
-      paneSection(makeSession("fp-width"), true, { filePane })
-    );
-    clickButton(container.querySelector("header") as ParentNode, "ファイル");
-    const body = container.querySelector("header + div") as HTMLElement;
-    vi.spyOn(body, "getBoundingClientRect").mockReturnValue({
-      left: 0,
-      right: 1000,
-      width: 1000,
-      top: 0,
-      bottom: 0,
-      height: 0,
-      x: 0,
-      y: 0,
-      toJSON: () => ({}),
-    });
-    const resizers = container.querySelectorAll(
-      'button[aria-label="左右の幅を調整"]'
-    );
-    act(() =>
-      resizers[1].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }))
-    );
-    // 図を 600px まで広げる。隠れた中ペイン (既定 720px) を数えると、
-    // 図に回せる幅が足りず最小幅 (320px) に丸められる
-    act(() =>
-      window.dispatchEvent(new MouseEvent("mousemove", { clientX: 400 }))
-    );
-    act(() => window.dispatchEvent(new MouseEvent("mouseup")));
-    expect(localStorage.getItem("ark-split-board-width")).toBe("600");
-  });
-
-  it("保存済みの開閉状態で開く。図と独立している", () => {
-    localStorage.setItem("ark-split-show-files", "1");
-    const container = mount(
-      paneSection(makeSession("fp-saved"), true, { filePane })
-    );
-    expect(container.querySelector('[data-testid="file-pane"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="diagram-pane"]')).toBeNull();
-  });
-
-  it("ファイルのトグルは図のトグルの手前にあり、文言は狭い幅で畳む", () => {
-    const container = mount(
-      paneSection(makeSession("fp-order"), true, { filePane })
-    );
-    const labels = headerButtonLabels(
-      container.querySelector("header") as ParentNode
-    );
-    expect(labels.indexOf("ファイル")).toBe(labels.indexOf("図") - 1);
-    const span = Array.from(container.querySelectorAll("header span")).find(
-      el => el.textContent === "ファイル" && el.childElementCount === 0
-    );
-    expect(span?.className).toContain("@max-2xl:sr-only");
-  });
-
-  it("fileOpenSeq は初回の値では開かず、増えたときだけ開く", () => {
-    const session = makeSession("fp-seq");
+  it("fileOpenSeq は初回の値では開かず、増えたら開いて「ファイル」へ替える", () => {
+    const session = makeSession("wa-seq");
     const container = mount(
       paneSection(session, true, { filePane, fileOpenSeq: 3 })
     );
     const root = mountedRoots.at(-1)?.root;
-    expect(container.querySelector('[data-testid="file-pane"]')).toBeNull();
+    expect(filePaneEl(container)).toBeNull();
+    expect(toggle(container)?.getAttribute("aria-pressed")).toBe("false");
 
     act(() =>
       root?.render(paneSection(session, true, { filePane, fileOpenSeq: 4 }))
     );
+    expect(selectedTab(container)).toBe("ファイル");
     expect(isHidden(filePaneEl(container))).toBe(false);
     expect(filePaneEl(container)?.dataset.visible).toBe("true");
-    expect(localStorage.getItem("ark-split-show-files")).toBe("1");
+    expect(localStorage.getItem("ark-split-show-board")).toBe("1");
+    expect(localStorage.getItem("ark-split-right-tab")).toBe("files");
 
-    // 閉じたあと、同じ値の再描画では開き直さない
-    clickButton(container.querySelector("header") as ParentNode, "ファイル");
+    // 図へ替えて閉じたあと、同じ値の再描画では開き直さない
+    clickTab(container, "図");
+    clickButton(header(container), "パネル");
     act(() =>
       root?.render(paneSection(session, true, { filePane, fileOpenSeq: 4 }))
     );
     expect(isHidden(filePaneEl(container))).toBe(true);
+    expect(toggle(container)?.getAttribute("aria-pressed")).toBe("false");
 
-    // 閉じて残している間に増えたら、同じ要素のまま開き直す
+    // 閉じて残している間に増えたら、同じ要素のまま開いて「ファイル」へ戻す
     act(() =>
       root?.render(paneSection(session, true, { filePane, fileOpenSeq: 5 }))
     );
+    expect(selectedTab(container)).toBe("ファイル");
     expect(isHidden(filePaneEl(container))).toBe(false);
     expect(filePaneEl(container)?.dataset.visible).toBe("true");
   });
 
-  it("DOM の順は 左 → ファイル → 図。2 つ目のリサイザは図の手前", () => {
-    localStorage.setItem("ark-split-show-files", "1");
-    localStorage.setItem("ark-split-show-board", "1");
-    const container = mount(
-      paneSection(makeSession("fp-order-dom"), true, { filePane })
+  it("図の activation id が変わったら開いて「図」へ替える。復元 (restoredOnLoad) では開かない", () => {
+    localStorage.setItem("ark-split-right-tab", "files");
+    const session = makeSession("wa-diagram");
+    const container = mount(paneSection(session, true, { filePane }));
+    const root = mountedRoots.at(-1)?.root;
+
+    act(() =>
+      root?.render(
+        paneSection(session, true, {
+          filePane,
+          ...withDiagram("diagram-restored", true),
+        })
+      )
     );
-    const resizers = container.querySelectorAll(
-      'button[aria-label="左右の幅を調整"]'
+    expect(toggle(container)?.getAttribute("aria-pressed")).toBe("false");
+    expect(diagramEl(container)).toBeNull();
+
+    act(() =>
+      root?.render(
+        paneSection(session, true, { filePane, ...withDiagram("diagram-1") })
+      )
     );
-    expect(resizers.length).toBe(2);
-    const file = container.querySelector('[data-testid="file-pane"]') as Node;
-    const board = container.querySelector(
-      '[data-testid="diagram-pane"]'
-    ) as Node;
-    const pos = (a: Node, b: Node) =>
-      a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING;
-    expect(pos(resizers[0], file)).toBeTruthy();
-    expect(pos(file, resizers[1])).toBeTruthy();
-    expect(pos(resizers[1], board)).toBeTruthy();
+    expect(toggle(container)?.getAttribute("aria-pressed")).toBe("true");
+    expect(selectedTab(container)).toBe("図");
+    expect(isHidden(diagramEl(container))).toBe(false);
+
+    // 「ファイル」を見ている間に同じ図を開き直しても (id が変わる)、図へ戻す
+    clickTab(container, "ファイル");
+    act(() =>
+      root?.render(
+        paneSection(session, true, { filePane, ...withDiagram("diagram-2") })
+      )
+    );
+    expect(selectedTab(container)).toBe("図");
+    expect(isHidden(diagramEl(container))).toBe(false);
   });
 
-  it("ドラッグ中は全ペインが pointer-events-none になる", () => {
-    localStorage.setItem("ark-split-show-files", "1");
+  it("ピークは渡されたときだけ、図のタブの中に図と並べて出す", () => {
+    localStorage.setItem("ark-split-show-board", "1");
+    const session = makeSession("wa-peek");
+    const container = mount(paneSection(session, true, { filePane }));
+    const root = mountedRoots.at(-1)?.root;
+    expect(peekEl(container)).toBeNull();
+
+    act(() => root?.render(paneSection(session, true, { filePane, peek })));
+    expect(peekEl(container)?.dataset.visible).toBe("true");
+    // 図と同じタブパネルの中で、図のあとに並ぶ
+    const panel = diagramEl(container)?.closest('[role="tabpanel"]');
+    expect(panel).not.toBeNull();
+    expect(peekEl(container)?.closest('[role="tabpanel"]')).toBe(panel);
+    expect(
+      (diagramEl(container) as Node).compareDocumentPosition(
+        peekEl(container) as Node
+      ) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    // リサイザは増やさない
+    expect(resizers(container).length).toBe(1);
+
+    // 「ファイル」のタブでは隠れる
+    clickTab(container, "ファイル");
+    expect(isHidden(peekEl(container))).toBe(true);
+    expect(peekEl(container)?.dataset.visible).toBe("false");
+
+    act(() =>
+      root?.render(paneSection(session, true, { filePane, peek: null }))
+    );
+    expect(peekEl(container)).toBeNull();
+  });
+
+  it("peekSeq は初回の値では開かず、増えたら開いて「図」へ替える", () => {
+    localStorage.setItem("ark-split-right-tab", "files");
+    const session = makeSession("wa-peek-seq");
+    const container = mount(
+      paneSection(session, true, { filePane, peek, peekSeq: 2 })
+    );
+    const root = mountedRoots.at(-1)?.root;
+    expect(toggle(container)?.getAttribute("aria-pressed")).toBe("false");
+    expect(peekEl(container)?.dataset.visible).toBe("false");
+
+    act(() =>
+      root?.render(paneSection(session, true, { filePane, peek, peekSeq: 3 }))
+    );
+    expect(toggle(container)?.getAttribute("aria-pressed")).toBe("true");
+    expect(selectedTab(container)).toBe("図");
+    expect(isHidden(peekEl(container))).toBe(false);
+    expect(peekEl(container)?.dataset.visible).toBe("true");
+    expect(isHidden(diagramEl(container))).toBe(false);
+  });
+
+  it("ピークは作業エリアを閉じても外さない (未保存の編集を保つ)", () => {
     localStorage.setItem("ark-split-show-board", "1");
     const container = mount(
-      paneSection(makeSession("fp-drag"), true, { filePane })
+      paneSection(makeSession("wa-peek-keep"), true, { peek })
+    );
+    const opened = peekEl(container);
+    expect(opened).not.toBeNull();
+
+    clickButton(header(container), "パネル");
+    expect(peekEl(container)).toBe(opened);
+    expect(isHidden(peekEl(container))).toBe(true);
+    expect(peekEl(container)?.dataset.visible).toBe("false");
+    expect(diagramEl(container)).toBeNull();
+  });
+
+  it("ピークを出している間は 900px まで広げ、保存している幅は変えない", () => {
+    localStorage.setItem("ark-split-show-board", "1");
+    localStorage.setItem("ark-split-board-width", "500");
+    const session = makeSession("wa-peek-width");
+    const container = mount(paneSection(session, true, { filePane }));
+    const root = mountedRoots.at(-1)?.root;
+    expect(workArea(container).style.width).toBe("500px");
+
+    act(() => root?.render(paneSection(session, true, { filePane, peek })));
+    expect(workArea(container).style.width).toBe("900px");
+    expect(localStorage.getItem("ark-split-board-width")).toBe("500");
+
+    // 「ファイル」のタブではピークが見えないので、元の幅
+    clickTab(container, "ファイル");
+    expect(workArea(container).style.width).toBe("500px");
+    clickTab(container, "図");
+
+    act(() =>
+      root?.render(paneSection(session, true, { filePane, peek: null }))
+    );
+    expect(workArea(container).style.width).toBe("500px");
+  });
+
+  it("ドラッグ中は左ペインも作業エリアも pointer-events-none になる", () => {
+    localStorage.setItem("ark-split-show-board", "1");
+    const container = mount(
+      paneSection(makeSession("wa-drag"), true, { filePane })
     );
     const body = container.querySelector("header + div") as HTMLElement;
     const panes = () =>
       Array.from(body.children).filter(el => el.tagName === "DIV");
-    expect(panes().length).toBe(3);
+    expect(panes().length).toBe(2);
     expect(panes().some(p => p.className.includes("pointer-events-none"))).toBe(
       false
     );
 
-    const resizers = container.querySelectorAll(
-      'button[aria-label="左右の幅を調整"]'
-    );
     act(() =>
-      resizers[0].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }))
+      resizers(container)[0].dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true })
+      )
     );
     expect(
       panes().every(p => p.className.includes("pointer-events-none"))
@@ -996,5 +1204,68 @@ describe("PC 3 ペイン (ファイル)", () => {
     expect(panes().some(p => p.className.includes("pointer-events-none"))).toBe(
       false
     );
+  });
+
+  it("ドラッグした幅は左ペインの最小幅 (360px) を残すところで止め、離したときに保存する", () => {
+    localStorage.setItem("ark-split-show-board", "1");
+    localStorage.setItem("ark-split-board-width", "400");
+    const container = mount(
+      paneSection(makeSession("wa-drag-width"), true, { filePane })
+    );
+    stubContainerRect(container, 1000);
+    act(() =>
+      resizers(container)[0].dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true })
+      )
+    );
+
+    // 収まる範囲ならカーソルの位置どおり
+    act(() =>
+      window.dispatchEvent(new MouseEvent("mousemove", { clientX: 500 }))
+    );
+    expect(workArea(container).style.width).toBe("500px");
+    // 離すまでは保存しない
+    expect(localStorage.getItem("ark-split-board-width")).toBe("400");
+
+    // 左端近くまで引いても、左 360px + リサイザ 4px を残す (1000 - 360 - 4)
+    act(() =>
+      window.dispatchEvent(new MouseEvent("mousemove", { clientX: 100 }))
+    );
+    expect(workArea(container).style.width).toBe("636px");
+
+    act(() => window.dispatchEvent(new MouseEvent("mouseup")));
+    expect(localStorage.getItem("ark-split-board-width")).toBe("636");
+
+    // 右端まで寄せても作業エリアの最小幅 (360px) は割らない
+    act(() =>
+      resizers(container)[0].dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true })
+      )
+    );
+    act(() =>
+      window.dispatchEvent(new MouseEvent("mousemove", { clientX: 950 }))
+    );
+    act(() => window.dispatchEvent(new MouseEvent("mouseup")));
+    expect(localStorage.getItem("ark-split-board-width")).toBe("360");
+  });
+
+  it("ピークの間は、ドラッグでも 900px までの下限より狭くしない", () => {
+    localStorage.setItem("ark-split-show-board", "1");
+    localStorage.setItem("ark-split-board-width", "500");
+    const container = mount(
+      paneSection(makeSession("wa-drag-peek"), true, { filePane, peek })
+    );
+    stubContainerRect(container, 1600);
+    act(() =>
+      resizers(container)[0].dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true })
+      )
+    );
+    act(() =>
+      window.dispatchEvent(new MouseEvent("mousemove", { clientX: 1200 }))
+    );
+    act(() => window.dispatchEvent(new MouseEvent("mouseup")));
+    expect(workArea(container).style.width).toBe("900px");
+    expect(localStorage.getItem("ark-split-board-width")).toBe("900");
   });
 });

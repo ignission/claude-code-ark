@@ -18,6 +18,7 @@ const testDoubles = vi.hoisted(() => ({
   viewerTabsArgs: vi.fn(),
   openFile: vi.fn(),
   filePane: vi.fn(),
+  filePeek: vi.fn(),
   socketState: {} as Record<string, unknown>,
   screenPaneMount: vi.fn(),
   screenPaneUnmount: vi.fn(),
@@ -86,6 +87,14 @@ vi.mock("@/components/FilePane", () => ({
   FilePane: (props: Record<string, unknown>) => {
     testDoubles.filePane(props);
     return null;
+  },
+}));
+
+// FilePeek の中身は FilePeek.test.tsx で見る。ここでは渡した props だけを見る
+vi.mock("@/components/FilePeek", () => ({
+  FilePeek: (props: Record<string, unknown>) => {
+    testDoubles.filePeek(props);
+    return <div data-testid="dashboard-peek" />;
   },
 }));
 
@@ -329,6 +338,8 @@ beforeEach(() => {
   testDoubles.viewerTabsArgs.mockClear();
   testDoubles.openFile.mockClear();
   testDoubles.filePane.mockClear();
+  testDoubles.filePeek.mockClear();
+  testDoubles.openFile.mockClear();
   localStorage.clear();
   localStorage.setItem("ark-split-left-mode", "chat");
   testDoubles.splitChatPane.mockClear();
@@ -379,8 +390,8 @@ describe("Dashboardのファイルペイン配線", () => {
     vi.unstubAllGlobals();
   });
 
-  it("PC はリンクで開くファイルを中ペインへ送り、開いた中ペインへセッションの FilePane を渡す", () => {
-    // 中ペインを開くと SplitViewPane が幅を監視する (jsdom には無い)
+  const stubResizeObserver = () =>
+    // 作業エリアを開くと SplitViewPane が幅を監視する (jsdom には無い)
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -388,10 +399,23 @@ describe("Dashboardのファイルペイン配線", () => {
         disconnect = vi.fn();
       }
     );
-    localStorage.setItem("ark-split-show-files", "1");
+
+  it("PC はリンクで開くファイルを「ファイル」のタブへ送り、見せたタブへセッションの FilePane を渡す", () => {
+    stubResizeObserver();
+    localStorage.setItem("ark-split-show-board", "1");
+    localStorage.setItem("ark-split-right-tab", "files");
     mount(<Dashboard />);
 
-    expect(onOpenFileArg()).toBe(testDoubles.openFile);
+    // 端末・会話のリンク (source なし) は、そのセッションのタブへ足す
+    act(() => onOpenFileArg()("dashboard-session", "src/link.ts", 3, 5));
+    expect(testDoubles.openFile).toHaveBeenCalledWith(
+      "dashboard-session",
+      "src/link.ts",
+      3,
+      5
+    );
+    expect(testDoubles.filePeek).not.toHaveBeenCalled();
+
     const pane = latestProps(testDoubles.filePane);
     expect(pane).toMatchObject({
       sessionId: "dashboard-session",
@@ -400,7 +424,7 @@ describe("Dashboardのファイルペイン配線", () => {
     });
     expect(pane.worktreePath).toBeTypeOf("string");
 
-    // ツリーから開くときは、そのセッションのタブへ足す
+    // ツリーから開くときも、そのセッションのタブへ足す
     (pane.onOpenFile as (filePath: string) => void)("src/a.ts");
     expect(testDoubles.openFile).toHaveBeenCalledWith(
       "dashboard-session",
@@ -408,9 +432,63 @@ describe("Dashboardのファイルペイン配線", () => {
     );
   });
 
-  it("中ペインを開いていなければ FilePane をマウントしない", () => {
+  it("「ファイル」のタブを見せていなければ FilePane をマウントしない", () => {
     mount(<Dashboard />);
     expect(testDoubles.filePane).not.toHaveBeenCalled();
+  });
+
+  it("図のリンク (source: board) はタブへ足さず、図の横のピークで開く", () => {
+    stubResizeObserver();
+    mount(<Dashboard />);
+    expect(testDoubles.filePeek).not.toHaveBeenCalled();
+
+    act(() =>
+      onOpenFileArg()("dashboard-session", "src/a.ts", 10, 24, "board")
+    );
+    expect(testDoubles.openFile).not.toHaveBeenCalled();
+    const first = latestProps(testDoubles.filePeek);
+    expect(first).toMatchObject({
+      sessionId: "dashboard-session",
+      peek: { filePath: "src/a.ts", targetLine: 10, targetEndLine: 24 },
+      // 作業エリアが閉じていても、ピークを開けば「図」のタブごと見せる
+      isVisible: true,
+    });
+
+    // 同じパスの開き直しでも seq が進む (エディタが行へスクロールし直す合図)
+    act(() =>
+      onOpenFileArg()("dashboard-session", "src/a.ts", 40, 40, "board")
+    );
+    const second = latestProps(testDoubles.filePeek);
+    expect((second.peek as { seq: number }).seq).toBeGreaterThan(
+      (first.peek as { seq: number }).seq
+    );
+    expect(second.peek).toMatchObject({ targetLine: 40 });
+  });
+
+  it("ピークは閉じると外れ、「ファイルで開く」とタブへ移して外れる", () => {
+    stubResizeObserver();
+    mount(<Dashboard />);
+    const peekEl = () =>
+      document.body.querySelector('[data-testid="dashboard-peek"]');
+
+    act(() =>
+      onOpenFileArg()("dashboard-session", "src/a.ts", 10, 24, "board")
+    );
+    expect(peekEl()).not.toBeNull();
+    act(() => (latestProps(testDoubles.filePeek).onClose as () => void)());
+    expect(peekEl()).toBeNull();
+    expect(testDoubles.openFile).not.toHaveBeenCalled();
+
+    act(() => onOpenFileArg()("dashboard-session", "src/b.ts", 7, 9, "board"));
+    const props = latestProps(testDoubles.filePeek);
+    act(() => (props.onPromote as (peek: unknown) => void)(props.peek));
+    expect(testDoubles.openFile).toHaveBeenCalledWith(
+      "dashboard-session",
+      "src/b.ts",
+      7,
+      9
+    );
+    expect(peekEl()).toBeNull();
   });
 
   it("モバイルは onOpenFile を渡さず、従来の閲覧タブの経路のままにする", () => {
@@ -420,6 +498,7 @@ describe("Dashboardのファイルペイン配線", () => {
     expect(testDoubles.viewerTabsArgs).toHaveBeenCalled();
     expect(onOpenFileArg()).toBeUndefined();
     expect(testDoubles.filePane).not.toHaveBeenCalled();
+    expect(testDoubles.filePeek).not.toHaveBeenCalled();
     expect(latestProps(testDoubles.mobileLayout).getTabsForSession).toBeTypeOf(
       "function"
     );

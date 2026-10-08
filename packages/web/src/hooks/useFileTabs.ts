@@ -11,7 +11,7 @@ import {
 } from "../lib/file-tabs";
 
 /**
- * セッションごとのファイルタブ (PC の中ペイン) の状態。
+ * セッションごとのファイルタブ (PC の作業エリアの「ファイル」) の状態。
  * 端末ペインのタブ列 (useViewerTabs) とは別に持つ。タブの中身は持たない。
  * worktree 単位で localStorage に永続化する。
  */
