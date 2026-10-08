@@ -1,5 +1,5 @@
 /**
- * SplitViewPane - PC用セッションビュー (上部バー + 左ペイン + 右ペインの左右2ペイン)
+ * SplitViewPane - PC用セッションビュー (上部バー + 左ペイン + ファイルペイン + 図ペインの最大3ペイン)
  *
  * 上部バーは1本にまとめる。左にセッションの主ラベル・ブランチ・状態チップ、
  * 中央に「端末 / 会話」の切り替え、右に1タップの操作 (ファイルの添付 / 画像の
@@ -8,13 +8,19 @@
  * 端末に関する操作はすべて1タップで届かせ、`…` にはセッション全体の操作
  * (通知・削除) だけを残す。端末専用の操作はTerminalPaneHandle経由で
  * TerminalPaneに頼む。
- * 右ペインは図が未選択でも上部バーのトグルで開閉できる。
- * 中身は DiagramPane（B-0a の図ペイン）。
+ * 中ペイン (ファイル) と右ペイン (図) は、それぞれ上部バーのトグルで独立に開閉できる。
+ * 並びは 左 | ファイル | 図 で、リサイザは各ペインの手前に 1 本ずつ。
+ * - 中ペインの中身は呼び出し側が `filePane` で渡す (SplitViewPane は中身を知らない)。
+ *   `fileOpenSeq` が増えたら自動で開く
+ * - 右ペインは図が未選択でも開閉できる。中身は DiagramPane（B-0a の図ペイン）
+ * - 幅の制約は lib/split-pane-widths.ts (左 360 / ファイル 360 / 図 320 の最小幅。
+ *   足りないときはファイル、図の順に縮める)
+ * - ドラッグ中は 3 ペインとも pointer-events-none にする (端末と図は iframe)
  *
  * - diagram は TerminalPane のタブ機構から外れ、右ペイン専属になった
  *   （タブ自体は sessionTabs 上には残るが、非表示のまま「開いている印」として使う）
  * - 図（openDiagramTab）の activation id が変わると showBoard を自動 true にする
- * - 左ペインのモード / 右ペイン幅 / 右ペイン開閉状態は localStorage に永続化
+ * - 左ペインのモード / 各ペインの幅 / 各ペインの開閉状態は localStorage に永続化
  * - 左ペインは端末・会話の両方をマウントしたまま display 切替する。ttyd は
  *   iframe（別ブラウジングコンテキスト）なので、アンマウントすると再接続に
  *   なってしまう（.claude/rules/frontend-codegen.md）
@@ -50,6 +56,13 @@ import {
   resolveSessionHeaderLabels,
 } from "../lib/session-header";
 import {
+  BOARD_MIN_WIDTH,
+  FILE_MIN_WIDTH,
+  fitPaneWidths,
+  LEFT_MIN_WIDTH,
+  RESIZER_WIDTH,
+} from "../lib/split-pane-widths";
+import {
   normalizeSplitViewLeftMode,
   readSavedSplitViewLeftMode,
   SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT,
@@ -77,8 +90,8 @@ import {
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
-const BOARD_MIN_WIDTH = 320;
-const BOARD_MAX_RATIO = 0.6;
+const STORAGE_KEY_FILE_WIDTH = "ark-split-file-width";
+const STORAGE_KEY_SHOW_FILES = "ark-split-show-files";
 const STORAGE_KEY_BOARD_WIDTH = "ark-split-board-width";
 const STORAGE_KEY_SHOW_BOARD = "ark-split-show-board";
 
@@ -184,15 +197,15 @@ interface SplitViewPaneProps {
   /** このセッションの通知が有効か (未設定は有効) */
   notificationsEnabled?: boolean;
   onNotificationsEnabledChange?: (enabled: boolean) => void;
+  /** 中ペインの中身。Dashboard が FilePane を渡す (SplitViewPane は中身を知らない) */
+  filePane?: ReactNode;
+  /** live なファイルオープンのたびに増える数。増えたら中ペインを開く */
+  fileOpenSeq?: number;
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function readSavedBoardWidth(): number | null {
+function readSavedWidth(key: string): number | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_BOARD_WIDTH);
+    const raw = localStorage.getItem(key);
     if (!raw) return null;
     const n = Number.parseInt(raw, 10);
     return Number.isFinite(n) && n > 0 ? n : null;
@@ -201,9 +214,9 @@ function readSavedBoardWidth(): number | null {
   }
 }
 
-function readSavedShowBoard(): boolean {
+function readSavedFlag(key: string): boolean {
   try {
-    return localStorage.getItem(STORAGE_KEY_SHOW_BOARD) === "1";
+    return localStorage.getItem(key) === "1";
   } catch {
     return false;
   }
@@ -212,12 +225,24 @@ function readSavedShowBoard(): boolean {
 export function SplitViewPane(props: SplitViewPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [boardWidth, setBoardWidth] = useState<number>(
-    () => readSavedBoardWidth() ?? 420
+    () => readSavedWidth(STORAGE_KEY_BOARD_WIDTH) ?? 420
   );
-  const [isDragging, setIsDragging] = useState(false);
+  const [fileWidth, setFileWidth] = useState<number>(
+    () => readSavedWidth(STORAGE_KEY_FILE_WIDTH) ?? 520
+  );
+  // ドラッグ中のリサイザ。どちらでも 3 ペインとも pointer-events-none にする
+  const [isDragging, setIsDragging] = useState<"file" | "board" | null>(null);
   const [showBoard, setShowBoard] = useState<boolean>(() =>
-    readSavedShowBoard()
+    readSavedFlag(STORAGE_KEY_SHOW_BOARD)
   );
+  const [showFiles, setShowFiles] = useState<boolean>(() =>
+    readSavedFlag(STORAGE_KEY_SHOW_FILES)
+  );
+  // ResizeObserver から最新の幅を読むため（購読を張り直さずに済ませる）
+  const widthsRef = useRef({ file: fileWidth, board: boardWidth });
+  widthsRef.current = { file: fileWidth, board: boardWidth };
+  const hasFilePane = props.filePane !== undefined && props.filePane !== null;
+  const filesVisible = showFiles && hasFilePane;
   // 左ペインのモード。選択は PC 全体で共有し、常時マウント済みの別セッション
   // および別ブラウザタブからの変更にも追随する。
   const [leftMode, setLeftMode] = useState<SplitViewLeftMode>(
@@ -389,23 +414,49 @@ export function SplitViewPane(props: SplitViewPaneProps) {
     prevDiagramIdRef.current = currentId;
   }, [diagramTab]);
 
-  // コンテナ幅変化時に board 幅を最大比率内に丸める（表示中のみ意味あり）
+  // fileOpenSeq が前回より増えたら（live なファイルオープン）中ペインを開く。
+  // 初回マウントの値では開かない（保存された開閉状態に従う）
+  const prevFileOpenSeqRef = useRef(props.fileOpenSeq);
+  useEffect(() => {
+    const seq = props.fileOpenSeq;
+    const prev = prevFileOpenSeqRef.current;
+    if (seq !== undefined && prev !== undefined && seq > prev) {
+      setShowFiles(true);
+      try {
+        localStorage.setItem(STORAGE_KEY_SHOW_FILES, "1");
+      } catch {
+        // ignore
+      }
+    }
+    prevFileOpenSeqRef.current = seq;
+  }, [props.fileOpenSeq]);
+
+  // コンテナ幅変化時に、ファイル・図の幅を最小幅の制約内に収める（表示中のみ意味あり）
   useEffect(() => {
     const el = containerRef.current;
-    if (!el || !showBoard) return;
+    if (!el || (!filesVisible && !showBoard)) return;
     const observer = new ResizeObserver(() => {
       const total = el.clientWidth;
       if (total <= 0) return;
-      const max = Math.floor(total * BOARD_MAX_RATIO);
-      setBoardWidth(prev => clamp(prev, BOARD_MIN_WIDTH, max));
+      const fit = fitPaneWidths({
+        total,
+        file: filesVisible ? widthsRef.current.file : null,
+        board: showBoard ? widthsRef.current.board : null,
+      });
+      if (filesVisible) setFileWidth(fit.file);
+      if (showBoard) setBoardWidth(fit.board);
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [showBoard]);
+  }, [filesVisible, showBoard]);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+  const handleMouseDownFile = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    setIsDragging(true);
+    setIsDragging("file");
+  }, []);
+  const handleMouseDownBoard = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging("board");
   }, []);
 
   useEffect(() => {
@@ -414,17 +465,46 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       const el = containerRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      const total = rect.width;
-      // 右ペイン（board）の幅 = コンテナ右端からカーソルまでの距離
-      const next = rect.right - e.clientX;
-      const max = Math.floor(total * BOARD_MAX_RATIO);
-      const clamped = clamp(next, BOARD_MIN_WIDTH, max);
-      setBoardWidth(clamped);
+      const { file, board } = widthsRef.current;
+      if (isDragging === "file") {
+        // ファイルの幅 = (図が開いていれば図の左端、無ければコンテナ右端) - カーソル
+        const rightEdge = showBoard
+          ? rect.right - board - RESIZER_WIDTH
+          : rect.right;
+        const next = Math.max(FILE_MIN_WIDTH, rightEdge - e.clientX);
+        setFileWidth(
+          fitPaneWidths({
+            total: rect.width,
+            file: next,
+            board: showBoard ? board : null,
+          }).file
+        );
+      } else {
+        // 図の幅 = コンテナ右端からカーソルまでの距離。ファイルの幅は侵さない
+        const room =
+          rect.width -
+          LEFT_MIN_WIDTH -
+          RESIZER_WIDTH -
+          (filesVisible ? file + RESIZER_WIDTH : 0);
+        const next = rect.right - e.clientX;
+        setBoardWidth(Math.max(BOARD_MIN_WIDTH, Math.min(next, room)));
+      }
     };
     const onUp = () => {
-      setIsDragging(false);
+      const kind = isDragging;
+      setIsDragging(null);
       try {
-        localStorage.setItem(STORAGE_KEY_BOARD_WIDTH, String(boardWidth));
+        if (kind === "file") {
+          localStorage.setItem(
+            STORAGE_KEY_FILE_WIDTH,
+            String(widthsRef.current.file)
+          );
+        } else {
+          localStorage.setItem(
+            STORAGE_KEY_BOARD_WIDTH,
+            String(widthsRef.current.board)
+          );
+        }
       } catch {
         // ignore
       }
@@ -439,7 +519,19 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-  }, [isDragging, boardWidth]);
+  }, [isDragging, showBoard, filesVisible]);
+
+  const handleToggleFiles = useCallback(() => {
+    setShowFiles(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem(STORAGE_KEY_SHOW_FILES, next ? "1" : "0");
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
 
   const handleToggleBoard = useCallback(() => {
     setShowBoard(prev => {
@@ -500,6 +592,23 @@ export function SplitViewPane(props: SplitViewPaneProps) {
         />
         <div className="flex flex-none @4xl:flex-1 @4xl:basis-0 min-w-0 items-center justify-end gap-1">
           {quickActions.map(action => quickActionItems[action])}
+          {hasFilePane && (
+            <button
+              type="button"
+              onClick={handleToggleFiles}
+              aria-label="ファイル"
+              aria-pressed={showFiles}
+              title={showFiles ? "ファイルを閉じる" : "ファイルを開く"}
+              className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sm px-2.5 text-[13px] font-semibold transition-colors ${
+                showFiles
+                  ? "bg-muted text-foreground"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`}
+            >
+              <VIEW_MODE_ICONS.files className="size-4.5" aria-hidden="true" />
+              <span className="@max-2xl:sr-only">ファイル</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={handleToggleBoard}
@@ -574,15 +683,39 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           </div>
         </div>
 
-        {/* リサイザ・右ペイン */}
+        {/* リサイザ・中ペイン (ファイル) */}
+        {filesVisible && (
+          <>
+            <button
+              type="button"
+              aria-label="左右の幅を調整"
+              onMouseDown={handleMouseDownFile}
+              className={`relative w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/50 transition-colors ${
+                isDragging === "file" ? "bg-primary/70" : ""
+              }`}
+            >
+              <span className="absolute inset-y-0 -left-1 -right-1" />
+            </button>
+            <div
+              style={{ width: fileWidth, flexShrink: 0 }}
+              className={`h-full overflow-hidden ${
+                isDragging ? "pointer-events-none" : ""
+              }`}
+            >
+              {props.filePane}
+            </div>
+          </>
+        )}
+
+        {/* リサイザ・右ペイン (図) */}
         {showBoard && (
           <>
             <button
               type="button"
               aria-label="左右の幅を調整"
-              onMouseDown={handleMouseDown}
+              onMouseDown={handleMouseDownBoard}
               className={`relative w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/50 transition-colors ${
-                isDragging ? "bg-primary/70" : ""
+                isDragging === "board" ? "bg-primary/70" : ""
               }`}
             >
               <span className="absolute inset-y-0 -left-1 -right-1" />
