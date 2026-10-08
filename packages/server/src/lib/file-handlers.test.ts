@@ -57,20 +57,25 @@ describe("open", () => {
   });
 
   it("/tmp のファイルはセッションの存在だけ確かめて読む", async () => {
-    const f = path.join(dir, "x");
-    fs.writeFileSync(f, "t");
-    const tmpFile = path.join(os.tmpdir(), `ark-fh-tmp-${process.pid}.txt`);
-    fs.writeFileSync(tmpFile, "tmp!");
+    const tmpDir = fs.mkdtempSync("/tmp/ark-fh-");
     try {
+      fs.writeFileSync(path.join(tmpDir, "t.txt"), "tmp!");
       const cb = vi.fn();
-      await make().open({ sessionId: "s1", filePath: tmpFile }, cb);
-      if (tmpFile.startsWith("/tmp/")) {
-        expect(cb.mock.calls[0][0].ok).toBe(true);
-        expect(cb.mock.calls[0][0].content).toBe("tmp!");
-      }
+      await make().open(
+        { sessionId: "s1", filePath: path.join(tmpDir, "t.txt") },
+        cb
+      );
+      expect(cb.mock.calls[0][0].ok).toBe(true);
+      expect(cb.mock.calls[0][0].content).toBe("tmp!");
     } finally {
-      fs.rmSync(tmpFile, { force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("/tmp/.. を含むパスは拒否する", async () => {
+    const cb = vi.fn();
+    await make().open({ sessionId: "s1", filePath: "/tmp/../etc/passwd" }, cb);
+    expect(cb.mock.calls[0][0].ok).toBe(false);
   });
 });
 
@@ -221,5 +226,53 @@ describe("subscribe", () => {
     ).resolves.toBeUndefined();
     await expect(h.subscribe(p("../../etc/passwd"))).resolves.toBeUndefined();
     expect(subscribe).not.toHaveBeenCalled();
+  });
+
+  it("/tmp/.. を含むパスは購読しない", async () => {
+    await make().subscribe(p("/tmp/../etc/passwd"));
+    expect(subscribe).not.toHaveBeenCalled();
+  });
+
+  it("/tmp の symlink で外のファイルを指すものは購読しない", async () => {
+    const tmpDir = fs.mkdtempSync("/tmp/ark-fh-");
+    try {
+      // /tmp の外 (ホーム配下) に実体を作る
+      const outside = fs.mkdtempSync(path.join(os.homedir(), ".ark-fh-"));
+      try {
+        const target = path.join(outside, "secret.txt");
+        fs.writeFileSync(target, "x");
+        const link2 = path.join(tmpDir, "link2");
+        fs.symlinkSync(target, link2);
+        await make().subscribe(p(link2));
+        expect(subscribe).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("解決待ちの間に来た unsubscribe で購読が残らない", async () => {
+    const h = make();
+    const pending = h.subscribe(p("a.txt"));
+    h.unsubscribe(p("a.txt"));
+    await pending;
+    // 張られても直ちに解除される
+    for (const un of unsubs) expect(un).toHaveBeenCalledTimes(1);
+    expect(subscribe.mock.calls.length).toBe(unsubs.length);
+    // 以後の unsubscribe/dispose で二重解除されない
+    h.dispose();
+    for (const un of unsubs) expect(un).toHaveBeenCalledTimes(1);
+  });
+
+  it("unsubscribe の後に同じ鍵を再購読できる", async () => {
+    const h = make();
+    const first = h.subscribe(p("a.txt"));
+    h.unsubscribe(p("a.txt"));
+    await first;
+    await h.subscribe(p("a.txt"));
+    const live = unsubs.filter(un => un.mock.calls.length === 0);
+    expect(live).toHaveLength(1);
   });
 });

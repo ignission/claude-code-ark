@@ -41,6 +41,17 @@ function subscriptionKey(sessionId: string, filePath: string): string {
   return JSON.stringify([sessionId, filePath]);
 }
 
+/**
+ * /tmp 配下の絶対パスとして正規化する。`..` を含む、または /tmp の外へ出るなら null。
+ * (symlink の検証は resolveReadablePath 側で行う)
+ */
+function normalizeTmpPath(filePath: string): string | null {
+  if (!filePath.startsWith("/tmp/")) return null;
+  if (filePath.split("/").includes("..")) return null;
+  const resolved = path.resolve(filePath);
+  return resolved.startsWith("/tmp/") ? resolved : null;
+}
+
 /** { sessionId: string, <field>: string } の形か */
 function parseWith(data: unknown, field: string) {
   if (!isRecord(data)) return null;
@@ -52,8 +63,8 @@ function parseWith(data: unknown, field: string) {
 
 export function createFileHandlers(deps: FileHandlersDeps) {
   const subs = new Map<string, () => void>();
-  /** await 中の購読鍵 (上限と二重購読の判定に数える) */
-  const pending = new Set<string>();
+  /** await 中の購読 (上限と二重購読の判定に数える)。cancelled は unsubscribe が立てる */
+  const pending = new Map<string, { cancelled: boolean }>();
   let disposed = false;
 
   async function open(data: unknown, cb: unknown): Promise<void> {
@@ -67,9 +78,19 @@ export function createFileHandlers(deps: FileHandlersDeps) {
         return reply({ ok: false, error: "セッションが見つかりません" });
       }
       // /tmp 配下はセッションの存在だけ確かめて直接読む (file:read と同じ)
-      const result = p.value.startsWith("/tmp/")
-        ? await readFileFromWorktree("", path.resolve(p.value))
-        : await readFileFromWorktree(worktreePath, p.value);
+      let result: Awaited<ReturnType<typeof readFileFromWorktree>>;
+      if (p.value.startsWith("/tmp/")) {
+        const tmpPath = normalizeTmpPath(p.value);
+        if (tmpPath === null) {
+          return reply({
+            ok: false,
+            error: "ファイルへのアクセスが拒否されました",
+          });
+        }
+        result = await readFileFromWorktree("", tmpPath);
+      } else {
+        result = await readFileFromWorktree(worktreePath, p.value);
+      }
       reply({
         ok: true,
         content: result.content,
@@ -136,41 +157,49 @@ export function createFileHandlers(deps: FileHandlersDeps) {
   }
 
   async function subscribe(data: unknown): Promise<void> {
-    let key: string | null = null;
+    let entry: { cancelled: boolean } | null = null;
+    let pendingKey: string | null = null;
     try {
       const p = parseWith(data, "filePath");
       if (!p || disposed) return;
       const { sessionId, value: filePath } = p;
       const worktreePath = deps.getWorktreePath(sessionId);
       if (worktreePath === undefined) return;
-      key = subscriptionKey(sessionId, filePath);
-      if (subs.has(key) || pending.has(key)) {
-        key = null;
-        return;
+      const key = subscriptionKey(sessionId, filePath);
+      if (subs.has(key) || pending.has(key)) return;
+      if (subs.size + pending.size >= MAX_FILE_SUBSCRIPTIONS) return;
+      let absPath: string;
+      if (filePath.startsWith("/tmp/")) {
+        const tmpPath = normalizeTmpPath(filePath);
+        if (tmpPath === null) return;
+        entry = { cancelled: false };
+        pending.set(key, entry);
+        pendingKey = key;
+        // realpath で /tmp 配下の実体であることを確かめる (symlink 対策)
+        absPath = await resolveReadablePath("", tmpPath);
+      } else {
+        entry = { cancelled: false };
+        pending.set(key, entry);
+        pendingKey = key;
+        absPath = await resolveReadablePath(worktreePath, filePath);
       }
-      if (subs.size + pending.size >= MAX_FILE_SUBSCRIPTIONS) {
-        key = null;
-        return;
-      }
-      pending.add(key);
-      const absPath = filePath.startsWith("/tmp/")
-        ? path.resolve(filePath)
-        : await resolveReadablePath(worktreePath, filePath);
       pending.delete(key);
-      key = null;
+      pendingKey = null;
       const off = deps.watcher.subscribe(absPath, () =>
         deps.emitUpdated({ sessionId, filePath })
       );
-      // await の間に切断されていたら、張った購読を直ちに解除する
-      if (disposed) {
+      // await の間に解除・切断されていたら、張った購読を直ちに解除する
+      if (disposed || entry.cancelled) {
         off();
         return;
       }
-      subs.set(subscriptionKey(sessionId, filePath), off);
+      subs.set(key, off);
     } catch {
       // 拒否されたパスや存在しないファイルは購読しない
     } finally {
-      if (key !== null) pending.delete(key);
+      if (pendingKey !== null && pending.get(pendingKey) === entry) {
+        pending.delete(pendingKey);
+      }
     }
   }
 
@@ -179,6 +208,8 @@ export function createFileHandlers(deps: FileHandlersDeps) {
       const p = parseWith(data, "filePath");
       if (!p) return;
       const key = subscriptionKey(p.sessionId, p.value);
+      const entry = pending.get(key);
+      if (entry) entry.cancelled = true;
       subs.get(key)?.();
       subs.delete(key);
     } catch {
