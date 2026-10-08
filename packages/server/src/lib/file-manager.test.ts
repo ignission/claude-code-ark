@@ -57,9 +57,20 @@ describe("readFileFromWorktree", () => {
   });
 
   it("絶対パス (/tmp 配下) は editable: false", async () => {
-    const abs = path.join(wt, "a.txt");
-    await writeFile(abs, "hi");
-    const r = await readFileFromWorktree(wt, abs);
+    const dir = await mkdtemp("/tmp/ark-fm-abs-");
+    try {
+      const abs = path.join(dir, "a.txt");
+      await writeFile(abs, "hi");
+      const r = await readFileFromWorktree(wt, abs);
+      expect(r.content).toBe("hi");
+      expect(r.editable).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it(".git 配下は editable: false", async () => {
+    const r = await readFileFromWorktree(wt, ".git/config");
     expect(r.editable).toBe(false);
   });
 
@@ -109,6 +120,27 @@ describe("writeFileToWorktree", () => {
     );
     expect(r.ok).toBe(true);
     expect((await stat(f)).mode & 0o777).toBe(0o755);
+  });
+
+  it.each([0o664, 0o600])("mode %o を umask に関わらず保つ", async mode => {
+    const f = path.join(wt, "m.txt");
+    await writeFile(f, "old");
+    await chmod(f, mode);
+    const st = await stat(f);
+    const r = await writeFileToWorktree(wt, "m.txt", "new", st.mtimeMs);
+    expect(r.ok).toBe(true);
+    expect((await stat(f)).mode & 0o7777).toBe(mode);
+  });
+
+  it("バイナリ (.png) への書き込みは拒否しファイルは変わらない", async () => {
+    const f = path.join(wt, "i.png");
+    const bin = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2]);
+    await writeFile(f, bin);
+    const st = await stat(f);
+    const r = await writeFileToWorktree(wt, "i.png", "text", st.mtimeMs);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe("error");
+    expect((await readFile(f)).equals(bin)).toBe(true);
   });
 
   it("mtime が違うと conflict でファイルは変わらない。force なら書ける", async () => {
@@ -220,6 +252,32 @@ describe("listDirectory", () => {
     expect(sub.entries[0]).toMatchObject({ name: "in.txt", gitStatus: "M" });
   });
 
+  it("未追跡 dir 配下は ?", async () => {
+    await mkdir(path.join(wt, "newdir"));
+    await writeFile(path.join(wt, "newdir", "x.txt"), "x");
+    const top = await listDirectory(wt, "");
+    expect(top.entries.find(e => e.name === "newdir")?.gitStatus).toBe("?");
+    const inner = await listDirectory(wt, "newdir");
+    expect(inner.entries[0]).toMatchObject({ name: "x.txt", gitStatus: "?" });
+  });
+
+  it("staged の新規ファイルは A", async () => {
+    await writeFile(path.join(wt, "staged.txt"), "s");
+    git("add", "staged.txt");
+    const { entries } = await listDirectory(wt, "");
+    expect(entries.find(e => e.name === "staged.txt")?.gitStatus).toBe("A");
+  });
+
+  it("削除された追跡ファイルは親 dir が M になる", async () => {
+    await mkdir(path.join(wt, "sub"));
+    await writeFile(path.join(wt, "sub", "gone.txt"), "1");
+    git("add", ".");
+    git("commit", "-q", "-m", "init");
+    await rm(path.join(wt, "sub", "gone.txt"));
+    const { entries } = await listDirectory(wt, "");
+    expect(entries.find(e => e.name === "sub")?.gitStatus).toBe("M");
+  });
+
   it("2000 件で打ち切る", async () => {
     for (let i = 0; i < 2005; i++) {
       await writeFile(path.join(wt, `f${String(i).padStart(4, "0")}`), "");
@@ -227,6 +285,10 @@ describe("listDirectory", () => {
     const { entries, truncated } = await listDirectory(wt, "");
     expect(entries).toHaveLength(2000);
     expect(truncated).toBe(true);
+  });
+
+  it("絶対パスの dirPath は throw", async () => {
+    await expect(listDirectory(wt, "/tmp")).rejects.toThrow();
   });
 
   it(".. を含む dirPath は throw", async () => {

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import {
+  chmod,
   open,
   readdir,
   readFile,
@@ -200,6 +201,30 @@ async function looksLikeText(safePath: string): Promise<boolean> {
   }
 }
 
+/** 拡張子表 + 中身の NUL 判定でテキストとして扱える MIME を返す (読み書き共通) */
+async function detectTextAwareMime(
+  safePath: string,
+  filePath: string
+): Promise<string> {
+  const mimeType = detectMimeType(filePath);
+  // 拡張子表に無いファイル (.gitattributes 等) は中身を見てテキストなら開く
+  if (
+    mimeType === "application/octet-stream" &&
+    (await looksLikeText(safePath))
+  )
+    return "text/plain";
+  return mimeType;
+}
+
+/** safePath が worktree の .git 自体か配下か */
+async function isInsideGitDir(
+  worktreePath: string,
+  safePath: string
+): Promise<boolean> {
+  const gitDir = path.join(await realpath(worktreePath), ".git");
+  return safePath === gitDir || safePath.startsWith(gitDir + path.sep);
+}
+
 export async function readFileFromWorktree(
   worktreePath: string,
   filePath: string
@@ -217,15 +242,7 @@ export async function readFileFromWorktree(
     );
   }
 
-  let mimeType = detectMimeType(filePath);
-
-  // 拡張子表に無いファイル (.gitattributes 等) は中身を見てテキストなら開く
-  if (
-    mimeType === "application/octet-stream" &&
-    (await looksLikeText(safePath))
-  ) {
-    mimeType = "text/plain";
-  }
+  const mimeType = await detectTextAwareMime(safePath, filePath);
 
   const base = {
     filePath,
@@ -252,7 +269,10 @@ export async function readFileFromWorktree(
   return {
     ...base,
     content,
-    editable: !path.isAbsolute(filePath) && fileStat.size <= MAX_EDITABLE_SIZE,
+    editable:
+      !path.isAbsolute(filePath) &&
+      fileStat.size <= MAX_EDITABLE_SIZE &&
+      !(await isInsideGitDir(worktreePath, safePath)),
   };
 }
 
@@ -282,8 +302,7 @@ export async function writeFileToWorktree(
       };
     }
     const safePath = await resolveSafePath(worktreePath, filePath);
-    const gitDir = path.join(await realpath(worktreePath), ".git");
-    if (safePath === gitDir || safePath.startsWith(gitDir + path.sep)) {
+    if (await isInsideGitDir(worktreePath, safePath)) {
       return { ok: false, code: "error", error: ".git 配下には書き込めません" };
     }
 
@@ -303,6 +322,14 @@ export async function writeFileToWorktree(
         mtimeMs: st.mtimeMs,
       };
     }
+    // 読み取り側の editable と同じ判定で、テキスト以外には書かない
+    if (!isTextMimeType(await detectTextAwareMime(safePath, filePath))) {
+      return {
+        ok: false,
+        code: "error",
+        error: "テキストファイル以外には書き込めません",
+      };
+    }
     if (Buffer.byteLength(content) > MAX_EDITABLE_SIZE) {
       return {
         ok: false,
@@ -317,11 +344,15 @@ export async function writeFileToWorktree(
       `.${path.basename(safePath)}.ark-tmp-${process.pid}-${Date.now()}`
     );
     tmpPath = tmp;
-    await writeFile(tmp, content, { mode: st.mode });
+    await writeFile(tmp, content, { mode: st.mode, flag: "wx" });
+    // 作成時の mode は umask で削られるので明示的に戻す
+    await chmod(tmp, st.mode & 0o7777);
+    // rename は mtime を変えないので、成功後の stat 失敗で誤報しないよう先に取る
+    const { mtimeMs } = await stat(tmp);
     await rename(tmp, safePath);
     tmpPath = null;
 
-    return { ok: true, mtimeMs: (await stat(safePath)).mtimeMs };
+    return { ok: true, mtimeMs };
   } catch (err) {
     if (tmpPath) await rm(tmpPath, { force: true }).catch(() => {});
     return {
@@ -343,6 +374,10 @@ type GitStatusCode = NonNullable<DirEntry["gitStatus"]>;
 interface GitStatusSnapshot {
   /** worktree 相対パス (ディレクトリは末尾 "/") → 状態 */
   map: Map<string, GitStatusCode>;
+  /** 未追跡ディレクトリ ("dir/" 形式、末尾 "/" 付き) の集合 */
+  untrackedDirs: Set<string>;
+  /** 変更のあるパスの祖先ディレクトリ (末尾 "/" なし) の集合 */
+  changedAncestors: Set<string>;
 }
 
 const gitStatusCache = new Map<
@@ -389,7 +424,17 @@ async function loadGitStatus(cwd: string): Promise<GitStatusSnapshot> {
   } catch {
     // git が使えないときは状態を付けない
   }
-  return { map };
+  const untrackedDirs = new Set<string>();
+  const changedAncestors = new Set<string>();
+  for (const [key, code] of map) {
+    if (code === "?" && key.endsWith("/")) untrackedDirs.add(key);
+    let i = key.indexOf("/");
+    while (i !== -1 && i < key.length - 1) {
+      changedAncestors.add(key.slice(0, i));
+      i = key.indexOf("/", i + 1);
+    }
+  }
+  return { map, untrackedDirs, changedAncestors };
 }
 
 function getGitStatus(cwd: string): Promise<GitStatusSnapshot> {
@@ -406,7 +451,7 @@ function statusFor(
   relPath: string,
   isDir: boolean
 ): GitStatusCode | undefined {
-  const { map } = snapshot;
+  const { map, untrackedDirs, changedAncestors } = snapshot;
   if (!isDir) {
     const direct = map.get(relPath);
     if (direct) return direct;
@@ -414,17 +459,13 @@ function statusFor(
     const untracked = map.get(`${relPath}/`);
     if (untracked) return untracked;
   }
-  // 未追跡ディレクトリの配下は "dir/" 1 件にまとまって出る
-  for (const [key, code] of map) {
-    if (code === "?" && key.endsWith("/") && relPath.startsWith(key))
-      return "?";
+  // 未追跡ディレクトリの配下は "dir/" 1 件にまとまって出る。祖先を深さ分だけ調べる
+  let i = relPath.indexOf("/");
+  while (i !== -1) {
+    if (untrackedDirs.has(relPath.slice(0, i + 1))) return "?";
+    i = relPath.indexOf("/", i + 1);
   }
-  if (isDir) {
-    const prefix = `${relPath}/`;
-    for (const key of map.keys()) {
-      if (key.startsWith(prefix)) return "M";
-    }
-  }
+  if (isDir && changedAncestors.has(relPath)) return "M";
   return undefined;
 }
 
@@ -451,6 +492,9 @@ export async function listDirectory(
   worktreePath: string,
   dirPath: string
 ): Promise<{ entries: DirEntry[]; truncated: boolean }> {
+  if (path.isAbsolute(dirPath)) {
+    throw new Error("ファイルへのアクセスが拒否されました");
+  }
   const safeDir = await resolveSafePath(worktreePath, dirPath);
   const realWorktree = await realpath(worktreePath);
   if (!(await stat(safeDir)).isDirectory()) {
