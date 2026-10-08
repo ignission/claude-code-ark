@@ -232,6 +232,10 @@ describe("injectDeckProjection", () => {
     expect(out).not.toMatch(
       /\.ark-deck-page\[data-ark-deck-slot\]\{[^}]*box-shadow/
     );
+    // 幅の広い中身は切らずに、カードの中で横へ送れる
+    expect(out).toContain(
+      ".ark-deck-page[data-ark-deck-slot]{overflow-x:auto}"
+    );
     // カードの面は作者が body に塗った色から取る
     expect(out).toContain('setProperty("--ark-deck-surface",surface)');
   });

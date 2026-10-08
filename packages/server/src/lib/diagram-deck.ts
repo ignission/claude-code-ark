@@ -255,6 +255,8 @@ background-size:18px 18px}
 box-shadow:inset 0 0 0 1px color-mix(in srgb,currentColor 9%,transparent),0 1px 2px rgb(0 0 0/.2),0 12px 30px rgb(0 0 0/.28)}
 .ark-deck[data-ark-deck-mode="stack"] .ark-deck-page[data-ark-deck-slot]{
 background:linear-gradient(color-mix(in srgb,currentColor 4%,transparent),color-mix(in srgb,currentColor 4%,transparent)),var(--ark-deck-surface,Canvas)}
+/* 幅の広い図や表はカードの端で切らず、カードの中で横に送れるようにする */
+.ark-deck[data-ark-deck-mode="stack"] .ark-deck-page[data-ark-deck-slot]{overflow-x:auto}
 .ark-deck[data-ark-deck-mode="stack"] .ark-static-panel{margin:0}
 .ark-deck[data-ark-deck-mode="stack"] .ark-static-head{border-bottom:0}
 .ark-deck[data-ark-deck-mode="stack"] .ark-deck-tag{display:block;padding:.6rem .9rem 0;opacity:.6;
