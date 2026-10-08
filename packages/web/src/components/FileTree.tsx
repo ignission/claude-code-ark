@@ -24,6 +24,10 @@ type Listing =
   | { ok: true; entries: FileTreeEntry[]; truncated: boolean }
   | { ok: false; error: string };
 
+type Item =
+  | { kind: "row"; row: Row }
+  | { kind: "note"; key: string; depth: number; text: string; alert: boolean };
+
 interface Row {
   path: string;
   name: string;
@@ -36,7 +40,7 @@ const STATUS_CLASS: Record<NonNullable<FileTreeEntry["gitStatus"]>, string> = {
   M: "text-amber-500",
   A: "text-green-500",
   "?": "text-green-500",
-  D: "text-red-500",
+  D: "text-destructive",
 };
 
 const storageKey = (worktreePath: string) =>
@@ -78,35 +82,65 @@ export function FileTree({
     () => new Set(loadExpanded(worktreePath))
   );
   const [listings, setListings] = useState<Map<string, Listing>>(new Map());
+  const [epoch, setEpoch] = useState(0);
+  const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const requested = useRef(new Set<string>());
+  const failed = useRef(new Set<string>());
+  // worktree / apiが変わるたびに増やし、古い世代の応答を捨てる
+  const generation = useRef(0);
+  // ディレクトリごとの要求番号。最新の要求だけがstateに書ける
+  const requestSeq = useRef(new Map<string, number>());
   const apiRef = useRef(api);
   apiRef.current = api;
 
-  // worktree が変わったら展開状態を読み直し、キャッシュを捨てる
+  // worktree / apiが変わったら世代を進め、キャッシュを捨てて読み直す。
+  // worktreeが変わったときは展開状態も読み直す
   const lastWorktree = useRef(worktreePath);
+  const lastApi = useRef(api);
+  const resetPending = useRef(false);
+  const lastEpoch = useRef(0);
   useEffect(() => {
-    if (lastWorktree.current === worktreePath) return;
+    const worktreeChanged = lastWorktree.current !== worktreePath;
+    if (!worktreeChanged && lastApi.current === api) return;
     lastWorktree.current = worktreePath;
+    lastApi.current = api;
+    generation.current += 1;
+    requestSeq.current = new Map();
     requested.current = new Set();
+    failed.current = new Set();
+    resetPending.current = true;
     setListings(new Map());
-    setExpanded(new Set(loadExpanded(worktreePath)));
-  }, [worktreePath]);
+    if (worktreeChanged) setExpanded(new Set(loadExpanded(worktreePath)));
+    setEpoch(e => e + 1);
+  }, [worktreePath, api]);
 
   const load = useCallback(async (dir: string) => {
+    const gen = generation.current;
+    const seq = (requestSeq.current.get(dir) ?? 0) + 1;
+    requestSeq.current.set(dir, seq);
     requested.current.add(dir);
     const res = await apiRef.current.list(dir);
+    if (gen !== generation.current || requestSeq.current.get(dir) !== seq) {
+      return;
+    }
+    if (res.ok) failed.current.delete(dir);
+    else failed.current.add(dir);
     setListings(prev => new Map(prev).set(dir, res));
   }, []);
 
-  // ルートと、展開されていてまだ読んでいないディレクトリを読む
+  // ルートと、展開されていてまだ読んでいないディレクトリを読む。
+  // リセット直後の1回目は、古い展開状態を新しい世代で読まないよう見送る
   useEffect(() => {
+    if (resetPending.current && lastEpoch.current === epoch) return;
+    resetPending.current = false;
+    lastEpoch.current = epoch;
     for (const dir of ["", ...expanded]) {
       if (!requested.current.has(dir)) void load(dir);
     }
-  }, [expanded, load]);
+  }, [expanded, epoch, load]);
 
-  // refreshSeq が増えたら展開中のものを読み直す (初回は上の effect が読む)
+  // refreshSeqが増えたら展開中のものを読み直す (初回は上のeffectが読む)
   const lastSeq = useRef(refreshSeq);
   useEffect(() => {
     if (lastSeq.current === refreshSeq) return;
@@ -114,26 +148,42 @@ export function FileTree({
     for (const dir of ["", ...expanded]) void load(dir);
   }, [refreshSeq, expanded, load]);
 
-  const toggle = useCallback(
-    (dir: string) => {
-      setExpanded(prev => {
-        const next = new Set(prev);
-        if (!next.delete(dir)) next.add(dir);
-        saveExpanded(worktreePath, next);
-        return next;
-      });
-    },
-    [worktreePath]
-  );
+  // 展開状態の保存。worktreeが変わった直後の描画では、まだ旧worktreeの
+  // 展開状態なので、新しいキーへ保存しないよう見送る
+  const savedWorktree = useRef(worktreePath);
+  useEffect(() => {
+    if (savedWorktree.current !== worktreePath) {
+      savedWorktree.current = worktreePath;
+      return;
+    }
+    saveExpanded(worktreePath, expanded);
+  }, [expanded, worktreePath]);
 
-  const { rows, notes } = useMemo(() => {
-    const out: Row[] = [];
-    const messages: Array<{ key: string; depth: number; text: string }> = [];
+  const toggle = useCallback((dir: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (!next.delete(dir)) {
+        next.add(dir);
+        // 前回の読み込みが失敗していたら、開き直しで再試行する
+        if (failed.current.has(dir)) requested.current.delete(dir);
+      }
+      return next;
+    });
+  }, []);
+
+  const items = useMemo(() => {
+    const out: Item[] = [];
     const walk = (dir: string, depth: number) => {
       const listing = listings.get(dir);
       if (!listing) return;
       if (!listing.ok) {
-        messages.push({ key: dir, depth, text: listing.error });
+        out.push({
+          kind: "note",
+          key: `${dir}#error`,
+          depth,
+          text: listing.error,
+          alert: dir === "",
+        });
         return;
       }
       const sorted = [...listing.entries].sort((a, b) =>
@@ -146,29 +196,43 @@ export function FileTree({
       for (const e of sorted) {
         const path = join(dir, e.name);
         out.push({
-          path,
-          name: e.name,
-          type: e.type,
-          depth,
-          gitStatus: e.gitStatus,
+          kind: "row",
+          row: {
+            path,
+            name: e.name,
+            type: e.type,
+            depth,
+            gitStatus: e.gitStatus,
+          },
         });
         if (e.type === "dir" && expanded.has(path)) walk(path, depth + 1);
       }
       if (listing.truncated) {
-        messages.push({
+        out.push({
+          kind: "note",
           key: `${dir}#truncated`,
           depth,
           text: "…件数が多いため一部だけ表示しています",
+          alert: false,
         });
       }
     };
     walk("", 0);
-    return { rows: out, notes: messages };
+    return out;
   }, [listings, expanded]);
 
-  const rootError = listings.get("");
+  const rows = useMemo(
+    () => items.flatMap(i => (i.kind === "row" ? [i.row] : [])),
+    [items]
+  );
+  // roving tabindex: タブ停止は1行だけ。フォーカス行が消えたら先頭に戻す
+  const tabStop = rows.some(r => r.path === focusedPath)
+    ? focusedPath
+    : (rows[0]?.path ?? null);
+
   const focusRow = (path: string | undefined) => {
     if (!path) return;
+    setFocusedPath(path);
     for (const el of containerRef.current?.querySelectorAll<HTMLElement>(
       "[data-path]"
     ) ?? []) {
@@ -177,6 +241,7 @@ export function FileTree({
   };
 
   const onKeyDown = (e: React.KeyboardEvent, row: Row, index: number) => {
+    const isOpen = row.type === "dir" && expanded.has(row.path);
     if (e.key === "ArrowDown") {
       e.preventDefault();
       focusRow(rows[index + 1]?.path);
@@ -187,6 +252,12 @@ export function FileTree({
       e.preventDefault();
       if (row.type === "dir") toggle(row.path);
       else onOpenFile(row.path);
+    } else if (e.key === "ArrowRight" && row.type === "dir" && !isOpen) {
+      e.preventDefault();
+      toggle(row.path);
+    } else if (e.key === "ArrowLeft" && row.type === "dir" && isOpen) {
+      e.preventDefault();
+      toggle(row.path);
     }
   };
 
@@ -214,14 +285,29 @@ export function FileTree({
         aria-label="ファイルツリー"
         className="min-h-0 flex-1 overflow-auto py-1"
       >
-        {rows.map((row, i) => {
+        {items.map(item => {
+          if (item.kind === "note") {
+            return (
+              <p
+                key={item.key}
+                role={item.alert ? "alert" : undefined}
+                style={{ paddingLeft: 8 + item.depth * 12 }}
+                className="py-1 pr-2 text-muted-foreground text-xs"
+              >
+                {item.text}
+              </p>
+            );
+          }
+          const row = item.row;
+          const i = rows.indexOf(row);
           const isDir = row.type === "dir";
           const isOpen = isDir && expanded.has(row.path);
           return (
             <div
               key={row.path}
               role="treeitem"
-              tabIndex={0}
+              tabIndex={row.path === tabStop ? 0 : -1}
+              onFocus={() => setFocusedPath(row.path)}
               data-path={row.path}
               aria-level={row.depth + 1}
               aria-selected={!isDir && row.path === activeFilePath}
@@ -259,18 +345,6 @@ export function FileTree({
             </div>
           );
         })}
-        {notes.map(n => (
-          <p
-            key={n.key}
-            role={
-              rootError && !rootError.ok && n.key === "" ? "alert" : undefined
-            }
-            style={{ paddingLeft: 8 + n.depth * 12 }}
-            className="py-1 pr-2 text-muted-foreground text-xs"
-          >
-            {n.text}
-          </p>
-        ))}
       </div>
     </div>
   );

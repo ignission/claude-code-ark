@@ -33,11 +33,11 @@ function createFakeSocket(ackMode: "silent" | "reply" = "reply") {
   return { socket, emitted, fire, count };
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: 偽 socket を渡すため
+// biome-ignore lint/suspicious/noExplicitAny: 偽socketを渡すため
 const asSocket = (s: unknown) => s as any;
 
 describe("createFileApi", () => {
-  it("ack が返らないとき list は ok: false に畳む", async () => {
+  it("ackが返らないときlistはok: falseに畳む", async () => {
     const f = createFakeSocket("silent");
     const api = createFileApi(asSocket(f.socket), "s1");
     const r = await api.list("");
@@ -45,14 +45,14 @@ describe("createFileApi", () => {
     expect(f.socket.timeout).toHaveBeenCalledWith(5000);
   });
 
-  it("write の timeout は code: error に畳む", async () => {
+  it("writeのtimeoutはcode: errorに畳む", async () => {
     const f = createFakeSocket("silent");
     const api = createFileApi(asSocket(f.socket), "s1");
     const r = await api.write("a.ts", "x", 1);
     expect(r).toMatchObject({ ok: false, code: "error" });
   });
 
-  it("ack が返れば応答をそのまま返す", async () => {
+  it("ackが返れば応答をそのまま返す", async () => {
     const f = createFakeSocket();
     const api = createFileApi(asSocket(f.socket), "s1");
     expect(await api.list("src")).toEqual({
@@ -66,7 +66,7 @@ describe("createFileApi", () => {
     });
   });
 
-  it("subscribe は sessionId と filePath で file:updated を絞る", () => {
+  it("subscribeはsessionIdとfilePathでfile:updatedを絞る", () => {
     const f = createFakeSocket();
     const api = createFileApi(asSocket(f.socket), "s1");
     const cb = vi.fn();
@@ -78,7 +78,7 @@ describe("createFileApi", () => {
     expect(cb).toHaveBeenCalledTimes(1);
   });
 
-  it("connect のたびに file:subscribe を張り直す", () => {
+  it("connectのたびにfile:subscribeを張り直す", () => {
     const f = createFakeSocket();
     const api = createFileApi(asSocket(f.socket), "s1");
     api.subscribe("a.ts", vi.fn());
@@ -87,7 +87,7 @@ describe("createFileApi", () => {
     expect(subs).toHaveLength(2);
   });
 
-  it("解除すると listener を外し file:unsubscribe を送る", () => {
+  it("解除するとlistenerを外しfile:unsubscribeを送る", () => {
     const f = createFakeSocket();
     const api = createFileApi(asSocket(f.socket), "s1");
     const dispose = api.subscribe("a.ts", vi.fn());
@@ -100,5 +100,49 @@ describe("createFileApi", () => {
       sessionId: "s1",
       filePath: "a.ts",
     });
+  });
+
+  it("同じfilePathの購読は束ね、最後の解除でだけfile:unsubscribeを送る", () => {
+    const f = createFakeSocket();
+    const api = createFileApi(asSocket(f.socket), "s1");
+    const cb1 = vi.fn();
+    const cb2 = vi.fn();
+    const dispose1 = api.subscribe("a.ts", cb1);
+    const dispose2 = api.subscribe("a.ts", cb2);
+    const emits = (event: string) =>
+      f.socket.emit.mock.calls.filter(c => c[0] === event).length;
+    expect(emits("file:subscribe")).toBe(1);
+    expect(f.count("file:updated")).toBe(1);
+    expect(f.count("connect")).toBe(1);
+
+    dispose1();
+    expect(emits("file:unsubscribe")).toBe(0);
+    f.fire("file:updated", { sessionId: "s1", filePath: "a.ts" });
+    expect(cb1).not.toHaveBeenCalled();
+    expect(cb2).toHaveBeenCalledTimes(1);
+
+    dispose1(); // 二重解除は数えない
+    expect(emits("file:unsubscribe")).toBe(0);
+
+    dispose2();
+    expect(emits("file:unsubscribe")).toBe(1);
+    expect(f.count("file:updated")).toBe(0);
+    expect(f.count("connect")).toBe(0);
+  });
+
+  it("再接続では購読中のfilePathごとに1回だけ張り直す", () => {
+    const f = createFakeSocket();
+    const api = createFileApi(asSocket(f.socket), "s1");
+    api.subscribe("a.ts", vi.fn());
+    api.subscribe("a.ts", vi.fn());
+    api.subscribe("b.ts", vi.fn());
+    f.socket.emit.mockClear();
+    f.fire("connect");
+    const subs = f.socket.emit.mock.calls.filter(
+      c => c[0] === "file:subscribe"
+    );
+    expect(
+      subs.map(c => (c[1] as { filePath: string }).filePath).sort()
+    ).toEqual(["a.ts", "b.ts"]);
   });
 });

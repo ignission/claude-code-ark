@@ -28,14 +28,14 @@ export interface FileApi {
 
 /** ack を Promise にする薄い層。5 秒で timeout し、失敗応答に畳む */
 export function createFileApi(socket: TypedSocket, sessionId: string): FileApi {
-  // 型付き emit の overload を経由せず、イベント名ごとの呼び出しをここに閉じ込める
+  // 型付きemitのoverloadを経由せず、イベント名ごとの呼び出しをここに閉じ込める
   const request = <R>(
     event: "file:open" | "file:list" | "file:write",
     payload: Record<string, unknown>,
     fallback: (error: string) => R
   ): Promise<R> =>
     new Promise(resolve => {
-      // biome-ignore lint/suspicious/noExplicitAny: イベント名で payload 型が変わるため
+      // biome-ignore lint/suspicious/noExplicitAny: イベント名でpayload型が変わるため
       (socket.timeout(ACK_TIMEOUT_MS) as any).emit(
         event,
         payload,
@@ -43,6 +43,17 @@ export function createFileApi(socket: TypedSocket, sessionId: string): FileApi {
           resolve(err || !res ? fallback(NO_RESPONSE) : res)
       );
     });
+
+  // サーバーの購読はsessionId + filePathに1つで、解除は無条件に消える。
+  // そのため同じfilePathの購読者は数えて束ね、0 -> 1 / 1 -> 0のときだけ送る
+  const subscriptions = new Map<
+    string,
+    {
+      callbacks: Set<() => void>;
+      onFileUpdated: (data: { sessionId: string; filePath: string }) => void;
+      emitSubscribe: () => void;
+    }
+  >();
 
   return {
     open: filePath =>
@@ -63,20 +74,39 @@ export function createFileApi(socket: TypedSocket, sessionId: string): FileApi {
         error => ({ ok: false, code: "error", error })
       ),
     subscribe: (filePath, onUpdated) => {
-      const subscribe = () =>
-        socket.emit("file:subscribe", { sessionId, filePath });
-      const onFileUpdated = (data: { sessionId: string; filePath: string }) => {
-        if (data.sessionId === sessionId && data.filePath === filePath) {
-          onUpdated();
-        }
-      };
-      socket.on("file:updated", onFileUpdated);
-      // サーバー側の購読は切断で消えるので、接続のたびに張り直す
-      socket.on("connect", subscribe);
-      subscribe();
+      let entry = subscriptions.get(filePath);
+      if (!entry) {
+        const callbacks = new Set<() => void>();
+        const emitSubscribe = () =>
+          socket.emit("file:subscribe", { sessionId, filePath });
+        const onFileUpdated = (data: {
+          sessionId: string;
+          filePath: string;
+        }) => {
+          if (data.sessionId === sessionId && data.filePath === filePath) {
+            for (const cb of [...callbacks]) cb();
+          }
+        };
+        socket.on("file:updated", onFileUpdated);
+        // サーバー側の購読は切断で消えるので、接続のたびに張り直す
+        socket.on("connect", emitSubscribe);
+        emitSubscribe();
+        entry = { callbacks, onFileUpdated, emitSubscribe };
+        subscriptions.set(filePath, entry);
+      }
+      // 同じlistenerを2回登録しても1回の解除で外れないよう、呼び出しごとに包む
+      const callback = () => onUpdated();
+      entry.callbacks.add(callback);
+      const current = entry;
+      let disposed = false;
       return () => {
-        socket.off("file:updated", onFileUpdated);
-        socket.off("connect", subscribe);
+        if (disposed) return;
+        disposed = true;
+        current.callbacks.delete(callback);
+        if (current.callbacks.size > 0) return;
+        socket.off("file:updated", current.onFileUpdated);
+        socket.off("connect", current.emitSubscribe);
+        subscriptions.delete(filePath);
         socket.emit("file:unsubscribe", { sessionId, filePath });
       };
     },
