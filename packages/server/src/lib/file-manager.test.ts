@@ -295,3 +295,58 @@ describe("listDirectory", () => {
     await expect(listDirectory(wt, "../")).rejects.toThrow();
   });
 });
+
+describe("文字コードと保存の直列化", () => {
+  it("UTF-8 として読めないファイルは editable: false で、書き込みも拒否する", async () => {
+    const f = path.join(wt, "sjis.txt");
+    // 「日本語」の Shift_JIS
+    const bytes = Buffer.from([0x93, 0xfa, 0x96, 0x7b, 0x8c, 0xea, 0x0a]);
+    await writeFile(f, bytes);
+    const r = await readFileFromWorktree(wt, "sjis.txt");
+    expect(r.editable).toBe(false);
+    const w = await writeFileToWorktree(wt, "sjis.txt", "x", r.mtimeMs);
+    expect(w.ok).toBe(false);
+    expect(Buffer.compare(await readFile(f), bytes)).toBe(0);
+  });
+
+  it("BOM 付きの UTF-8 は editable: false", async () => {
+    await writeFile(
+      path.join(wt, "bom.txt"),
+      Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("a\n")])
+    );
+    expect((await readFileFromWorktree(wt, "bom.txt")).editable).toBe(false);
+  });
+
+  it("同じ mtime を添えた同時の保存は、後の 1 件が conflict になる", async () => {
+    const f = path.join(wt, "a.txt");
+    await writeFile(f, "old");
+    const old = new Date(Date.now() - 60_000);
+    await utimes(f, old, old);
+    const before = (await stat(f)).mtimeMs;
+    const [a, b] = await Promise.all([
+      writeFileToWorktree(wt, "a.txt", "first", before),
+      writeFileToWorktree(wt, "a.txt", "second", before),
+    ]);
+    expect(a.ok).toBe(true);
+    expect(b).toMatchObject({ ok: false, code: "conflict" });
+    expect(await readFile(f, "utf-8")).toBe("first");
+  });
+
+  it("保存直後の一覧に、保存後の git 状態が出る", async () => {
+    const f = path.join(wt, "tracked.txt");
+    await writeFile(f, "1");
+    git("add", ".");
+    git("commit", "-q", "-m", "init");
+    const first = await listDirectory(wt, "");
+    expect(first.entries.find(e => e.name === "tracked.txt")?.gitStatus).toBe(
+      undefined
+    );
+    const { mtimeMs } = await stat(f);
+    const w = await writeFileToWorktree(wt, "tracked.txt", "22", mtimeMs);
+    expect(w.ok).toBe(true);
+    const second = await listDirectory(wt, "");
+    expect(second.entries.find(e => e.name === "tracked.txt")?.gitStatus).toBe(
+      "M"
+    );
+  });
+});

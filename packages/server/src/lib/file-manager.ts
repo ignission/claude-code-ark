@@ -265,15 +265,53 @@ export async function readFileFromWorktree(
     return { ...base, content: "", editable: false };
   }
 
-  const content = await readFile(safePath, "utf-8");
+  const buffer = await readFile(safePath);
   return {
     ...base,
-    content,
+    content: buffer.toString("utf-8"),
     editable:
       !path.isAbsolute(filePath) &&
       fileStat.size <= MAX_EDITABLE_SIZE &&
+      isLosslessUtf8(buffer) &&
       !(await isInsideGitDir(worktreePath, safePath)),
   };
+}
+
+/**
+ * UTF-8 として読んで書き戻しても元のバイト列に戻るか。
+ * UTF-16 や Shift_JIS のファイルは読めた時点で文字が置換文字に化けており、
+ * そのまま保存すると元の内容を壊す。BOM 付きも、書き戻すと BOM が落ちるので除く。
+ */
+function isLosslessUtf8(buffer: Buffer): boolean {
+  if (
+    buffer.length >= 3 &&
+    buffer[0] === 0xef &&
+    buffer[1] === 0xbb &&
+    buffer[2] === 0xbf
+  ) {
+    return false;
+  }
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 同じファイルへの保存を直列にする (照合と rename の間に別の保存を挟ませない) */
+const writeQueues = new Map<string, Promise<unknown>>();
+
+function serializeWrite<T>(key: string, task: () => Promise<T>): Promise<T> {
+  const prev = writeQueues.get(key) ?? Promise.resolve();
+  const next = prev.then(task, task);
+  writeQueues.set(key, next);
+  void next
+    .catch(() => {})
+    .finally(() => {
+      if (writeQueues.get(key) === next) writeQueues.delete(key);
+    });
+  return next;
 }
 
 export type FileWriteResult =
@@ -285,12 +323,30 @@ export type FileWriteResult =
  * worktree 内の既存ファイルを書き換える。
  * 絶対パス・.git 配下・ディレクトリ・2MB 超は拒否し、例外は投げない。
  */
-export async function writeFileToWorktree(
+export function writeFileToWorktree(
   worktreePath: string,
   filePath: string,
   content: string,
   expectedMtimeMs: number,
   force = false
+): Promise<FileWriteResult> {
+  return serializeWrite(path.resolve(worktreePath, filePath), () =>
+    writeFileUnserialized(
+      worktreePath,
+      filePath,
+      content,
+      expectedMtimeMs,
+      force
+    )
+  );
+}
+
+async function writeFileUnserialized(
+  worktreePath: string,
+  filePath: string,
+  content: string,
+  expectedMtimeMs: number,
+  force: boolean
 ): Promise<FileWriteResult> {
   let tmpPath: string | null = null;
   try {
@@ -330,6 +386,14 @@ export async function writeFileToWorktree(
         error: "テキストファイル以外には書き込めません",
       };
     }
+    // UTF-8 以外のファイルは、読めた時点で化けた内容を書き戻すことになるので拒否する
+    if (!isLosslessUtf8(await readFile(safePath))) {
+      return {
+        ok: false,
+        code: "error",
+        error: "UTF-8 (BOM なし) 以外のファイルには書き込めません",
+      };
+    }
     if (Buffer.byteLength(content) > MAX_EDITABLE_SIZE) {
       return {
         ok: false,
@@ -350,8 +414,25 @@ export async function writeFileToWorktree(
     await chmod(tmp, st.mode & 0o7777);
     // rename は mtime を変えないので、成功後の stat 失敗で誤報しないよう先に取る
     const { mtimeMs } = await stat(tmp);
+    // 一時ファイルを書いている間に Claude 等が書き換えていたら上書きしない。
+    // 置き換えの直前に照合し直す (stat と rename の間のごく短い隙間は残る)
+    if (!force) {
+      const latest = await stat(safePath);
+      if (latest.mtimeMs !== st.mtimeMs || latest.size !== st.size) {
+        await rm(tmp, { force: true }).catch(() => {});
+        tmpPath = null;
+        return {
+          ok: false,
+          code: "conflict",
+          error: "ファイルが読み込み後に変更されています",
+          mtimeMs: latest.mtimeMs,
+        };
+      }
+    }
     await rename(tmp, safePath);
     tmpPath = null;
+    // 保存直後の一覧に、保存前の git 状態を返さない
+    gitStatusCache.clear();
 
     return { ok: true, mtimeMs };
   } catch (err) {

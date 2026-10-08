@@ -77,8 +77,6 @@ export function createFileApi(socket: TypedSocket, sessionId: string): FileApi {
       let entry = subscriptions.get(filePath);
       if (!entry) {
         const callbacks = new Set<() => void>();
-        const emitSubscribe = () =>
-          socket.emit("file:subscribe", { sessionId, filePath });
         const onFileUpdated = (data: {
           sessionId: string;
           filePath: string;
@@ -88,9 +86,16 @@ export function createFileApi(socket: TypedSocket, sessionId: string): FileApi {
           }
         };
         socket.on("file:updated", onFileUpdated);
-        // サーバー側の購読は切断で消えるので、接続のたびに張り直す
+        const subscribeOnly = () =>
+          socket.emit("file:subscribe", { sessionId, filePath });
+        // サーバー側の購読は切断で消えるので、接続のたびに張り直す。切れている間の
+        // 変更は通知されないので、張り直したら購読側に読み直させる
+        const emitSubscribe = () => {
+          subscribeOnly();
+          for (const cb of [...callbacks]) cb();
+        };
         socket.on("connect", emitSubscribe);
-        emitSubscribe();
+        subscribeOnly();
         entry = { callbacks, onFileUpdated, emitSubscribe };
         subscriptions.set(filePath, entry);
       }

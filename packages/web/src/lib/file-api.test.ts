@@ -87,6 +87,16 @@ describe("createFileApi", () => {
     expect(subs).toHaveLength(2);
   });
 
+  it("再接続したら、切れている間の変更を拾うよう購読側を呼ぶ", () => {
+    const f = createFakeSocket();
+    const api = createFileApi(asSocket(f.socket), "s1");
+    const cb = vi.fn();
+    api.subscribe("a.ts", cb);
+    expect(cb).not.toHaveBeenCalled();
+    f.fire("connect");
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
   it("解除するとlistenerを外しfile:unsubscribeを送る", () => {
     const f = createFakeSocket();
     const api = createFileApi(asSocket(f.socket), "s1");
