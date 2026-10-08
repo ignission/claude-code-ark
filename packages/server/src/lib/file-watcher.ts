@@ -1,5 +1,5 @@
 /**
- * 図ファイルの更新監視。
+ * ファイルの更新監視 (図・ファイルペイン共用)。
  *
  * jsonl-tail-manager.ts と同じ方針で、fs.watch だけに頼らず 1 秒 polling を
  * 併用する。fs.watch はプラットフォームによって取りこぼし、エディタの
@@ -27,7 +27,7 @@ function signatureOf(absPath: string): string {
   }
 }
 
-export class DiagramWatcher {
+export class FileWatcher {
   private watched = new Map<string, Watched>();
 
   /** 更新通知を購読する。戻り値を呼ぶと解除する。 */
@@ -114,4 +114,4 @@ export class DiagramWatcher {
   }
 }
 
-export const diagramWatcher = new DiagramWatcher();
+export const fileWatcher = new FileWatcher();

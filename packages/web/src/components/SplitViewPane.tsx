@@ -1,20 +1,36 @@
 /**
- * SplitViewPane - PC用セッションビュー (上部バー + 左ペイン + 右ペインの左右2ペイン)
+ * SplitViewPane - PC用セッションビュー (上部バー + 左ペイン + 右の作業エリア)
  *
  * 上部バーは1本にまとめる。左にセッションの主ラベル・ブランチ・状態チップ、
  * 中央に「端末 / 会話」の切り替え、右に1タップの操作 (ファイルの添付 / 画像の
  * 貼り付け / メッセージのショートカット / 端末のバッファのコピー / 端末の再読み込み /
- * 入力バーの表示)・図の開閉と `…` メニュー (SessionHeaderMenu)。
+ * 入力バーの表示)・作業エリアの開閉 (「パネル」) と `…` メニュー (SessionHeaderMenu)。
  * 端末に関する操作はすべて1タップで届かせ、`…` にはセッション全体の操作
  * (通知・削除) だけを残す。端末専用の操作はTerminalPaneHandle経由で
  * TerminalPaneに頼む。
- * 右ペインは図が未選択でも上部バーのトグルで開閉できる。
- * 中身は DiagramPane（B-0a の図ペイン）。
  *
- * - diagram は TerminalPane のタブ機構から外れ、右ペイン専属になった
+ * 右側は作業エリア 1 つで、上端のタブ「図 / ファイル」で中身を切り替える。
+ * 並びは 左 | 作業エリア で、リサイザは 1 本。
+ * (以前は 左 | ファイル | 図 の 3 ペインだった。1680px の画面で 3 つ開くと左ペインが
+ * 最小幅の 360px まで縮み、図とコードを並べたいのは図のリンクを踏んだ直後だけだった)
+ * - 「図」の中身は DiagramPane。作業エリアを閉じると外す (従来どおり)。
+ *   「ファイル」のタブを見ている間は外さずに hidden で残す (iframe を作り直さない)
+ * - 「ファイル」の中身は呼び出し側が `filePane` で渡す (SplitViewPane は中身を知らない)。
+ *   初めて実際に見せるまでマウントせず、1 度見せたら、タブを替えても作業エリアを
+ *   閉じても外さずに hidden で残す (外すと未保存の編集が消える)。
+ *   見えているかは `filePane(visible)` で伝える
+ * - ピーク: 図のコードリンクを踏むと、タブは替えずに「図」の本体を左右に割り、
+ *   図の横へコードを出す。中身は呼び出し側が `peek` で渡す。出している間は
+ *   作業エリアを 900px まで広げる (保存している幅は変えない)。作業エリアを閉じても
+ *   外さない (未保存の編集を保つ)
+ * - 自動で開く: 図の activation id が変わる / `peekSeq` が増える → 開いて「図」へ。
+ *   `fileOpenSeq` が増える → 開いて「ファイル」へ。どれもマウント時の値では開かない
+ * - 幅の制約は lib/split-pane-widths.ts (左 360 / 作業エリア 360 の最小幅)
+ * - ドラッグ中は左ペインも作業エリアも pointer-events-none にする (端末と図は iframe)
+ *
+ * - diagram は TerminalPane のタブ機構から外れ、作業エリア専属になった
  *   （タブ自体は sessionTabs 上には残るが、非表示のまま「開いている印」として使う）
- * - 図（openDiagramTab）の activation id が変わると showBoard を自動 true にする
- * - 左ペインのモード / 右ペイン幅 / 右ペイン開閉状態は localStorage に永続化
+ * - 左ペインのモード / 作業エリアの幅・開閉・タブは localStorage に永続化
  * - 左ペインは端末・会話の両方をマウントしたまま display 切替する。ttyd は
  *   iframe（別ブラウジングコンテキスト）なので、アンマウントすると再接続に
  *   なってしまう（.claude/rules/frontend-codegen.md）
@@ -33,11 +49,20 @@ import type {
   SpecialKey,
   Worktree,
 } from "@ark/shared";
-import { Copy, ImagePlus, Keyboard, Paperclip, RefreshCw } from "lucide-react";
 import {
+  Copy,
+  ImagePlus,
+  Keyboard,
+  Paperclip,
+  RefreshCw,
+  X,
+} from "lucide-react";
+import {
+  type KeyboardEvent,
   type ReactNode,
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
 } from "react";
@@ -49,6 +74,7 @@ import {
   inputBarToggleLabel,
   resolveSessionHeaderLabels,
 } from "../lib/session-header";
+import { fitWorkAreaWidth, peekWorkAreaFloor } from "../lib/split-pane-widths";
 import {
   normalizeSplitViewLeftMode,
   readSavedSplitViewLeftMode,
@@ -77,10 +103,23 @@ import {
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
-const BOARD_MIN_WIDTH = 320;
-const BOARD_MAX_RATIO = 0.6;
-const STORAGE_KEY_BOARD_WIDTH = "ark-split-board-width";
-const STORAGE_KEY_SHOW_BOARD = "ark-split-show-board";
+// 作業エリアの幅と開閉。キーの名前は、右ペインが図だけだった頃のものを引き継ぐ
+const STORAGE_KEY_WORK_AREA_WIDTH = "ark-split-board-width";
+const STORAGE_KEY_SHOW_WORK_AREA = "ark-split-show-board";
+const STORAGE_KEY_RIGHT_TAB = "ark-split-right-tab";
+/** 保存した幅が無いときの作業エリアの幅 (ツリー 220px とエディタが並ぶ幅) */
+const DEFAULT_WORK_AREA_WIDTH = 560;
+
+type RightTab = "board" | "files";
+
+const RIGHT_TABS: readonly {
+  value: RightTab;
+  label: string;
+  icon: (typeof VIEW_MODE_ICONS)[keyof typeof VIEW_MODE_ICONS];
+}[] = [
+  { value: "board", label: "図", icon: VIEW_MODE_ICONS.board },
+  { value: "files", label: "ファイル", icon: VIEW_MODE_ICONS.files },
+];
 
 /** 上部バーの1タップ操作と `…` に共通の見た目 (32px・角丸・押すと紙色) */
 const HEADER_ICON_BUTTON =
@@ -184,15 +223,27 @@ interface SplitViewPaneProps {
   /** このセッションの通知が有効か (未設定は有効) */
   notificationsEnabled?: boolean;
   onNotificationsEnabledChange?: (enabled: boolean) => void;
+  /**
+   * 「ファイル」のタブの中身。Dashboard が FilePane を渡す (SplitViewPane は中身を知らない)。
+   * 渡さなければ「ファイル」のタブを出さない。
+   * visible は「作業エリアが開いていて、ファイルのタブで、このセッションが選択中」。
+   * 見えていない間もマウントしたままなので、中身はこれを見て購読などを絞る
+   */
+  filePane?: (visible: boolean) => ReactNode;
+  /** live なファイルオープンのたびに増える数。増えたら作業エリアを開いて「ファイル」へ替える */
+  fileOpenSeq?: number;
+  /**
+   * ピーク (図の横に出すコード) の中身。null / 未指定なら出さない。
+   * visible は「作業エリアが開いていて、図のタブで、このセッションが選択中」
+   */
+  peek?: ((visible: boolean) => ReactNode) | null;
+  /** ピークを開くたびに増える数。増えたら作業エリアを開いて「図」へ替える */
+  peekSeq?: number;
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function readSavedBoardWidth(): number | null {
+function readSavedWidth(key: string): number | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_BOARD_WIDTH);
+    const raw = localStorage.getItem(key);
     if (!raw) return null;
     const n = Number.parseInt(raw, 10);
     return Number.isFinite(n) && n > 0 ? n : null;
@@ -201,23 +252,110 @@ function readSavedBoardWidth(): number | null {
   }
 }
 
-function readSavedShowBoard(): boolean {
+function readSavedFlag(key: string): boolean {
   try {
-    return localStorage.getItem(STORAGE_KEY_SHOW_BOARD) === "1";
+    return localStorage.getItem(key) === "1";
   } catch {
     return false;
   }
 }
 
+function readSavedRightTab(): RightTab {
+  try {
+    return localStorage.getItem(STORAGE_KEY_RIGHT_TAB) === "files"
+      ? "files"
+      : "board";
+  } catch {
+    return "board";
+  }
+}
+
+function writeSaved(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // 保存できなくても動作には影響しない
+  }
+}
+
+/**
+ * 親が渡す通し番号が前回より増えたときだけ onIncrease を呼ぶ。初回マウントの値では
+ * 呼ばない (保存された開閉状態に従う)。
+ * effect ではなく描画中に呼ぶ: 作業エリアの中身は hidden で残っているので、effect で
+ * 開くと 1 コミットだけ display:none のままエディタが行へスクロールしようとし、
+ * 行指定のスクロールが効かない。onIncrease には setState だけを書くこと
+ */
+function useSeqIncrease(seq: number | undefined, onIncrease: () => void): void {
+  const [seen, setSeen] = useState(seq);
+  if (seq !== seen) {
+    setSeen(seq);
+    if (seq !== undefined && seen !== undefined && seq > seen) onIncrease();
+  }
+}
+
+/** useSeqIncrease と同じ条件で、描画のあとに副作用 (localStorage への保存) を流す */
+function useSeqIncreaseEffect(
+  seq: number | undefined,
+  onIncrease: () => void
+): void {
+  const prevRef = useRef(seq);
+  const onIncreaseRef = useRef(onIncrease);
+  onIncreaseRef.current = onIncrease;
+  useEffect(() => {
+    const prev = prevRef.current;
+    prevRef.current = seq;
+    if (seq !== undefined && prev !== undefined && seq > prev) {
+      onIncreaseRef.current();
+    }
+  }, [seq]);
+}
+
 export function SplitViewPane(props: SplitViewPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [boardWidth, setBoardWidth] = useState<number>(
-    () => readSavedBoardWidth() ?? 420
+  const [workWidth, setWorkWidth] = useState<number>(
+    () => readSavedWidth(STORAGE_KEY_WORK_AREA_WIDTH) ?? DEFAULT_WORK_AREA_WIDTH
   );
+  // ドラッグ中は左ペインも作業エリアも pointer-events-none にする
   const [isDragging, setIsDragging] = useState(false);
-  const [showBoard, setShowBoard] = useState<boolean>(() =>
-    readSavedShowBoard()
+  const [showWorkArea, setShowWorkArea] = useState<boolean>(() =>
+    readSavedFlag(STORAGE_KEY_SHOW_WORK_AREA)
   );
+  const [savedRightTab, setRightTab] = useState<RightTab>(readSavedRightTab);
+  // ピークの間の下限 (900px まで) を描画時に決めるために持つ。0 は未計測
+  const [containerWidth, setContainerWidth] = useState(0);
+  // mouseup と ResizeObserver から最新の幅を読むため（購読を張り直さずに済ませる）
+  const workWidthRef = useRef(workWidth);
+  workWidthRef.current = workWidth;
+
+  const hasFilePane = props.filePane !== undefined;
+  const rightTabs = hasFilePane ? RIGHT_TABS : RIGHT_TABS.slice(0, 1);
+  // 中身を渡されていないタブは選べない
+  const rightTab: RightTab = hasFilePane ? savedRightTab : "board";
+  const boardTabActive = rightTab === "board";
+  // 「ファイル」の中身が実際に見えているか (非選択のセッションは Dashboard が hidden にする)
+  const filePaneVisible =
+    showWorkArea && rightTab === "files" && props.isActive;
+  // 1 度見せた「ファイル」は、タブを替えても閉じても外さない (未保存の編集と undo 履歴を保つ)。
+  // 見せたことの無いセッションではマウントしない (開いてもいないファイルを読まない)
+  const [fileEverShown, setFileEverShown] = useState(filePaneVisible);
+  if (filePaneVisible && !fileEverShown) setFileEverShown(true);
+  // 図は、作業エリアを開いてから「図」のタブを 1 度見せるまでマウントしない
+  // (隠れたまま iframe を読み込ませない)。見せたあとはタブを替えても hidden で残し、
+  // 作業エリアを閉じたら外す (右ペインが図だけだった頃と同じ)
+  const [boardShown, setBoardShown] = useState(showWorkArea && boardTabActive);
+  if (!showWorkArea && boardShown) setBoardShown(false);
+  else if (showWorkArea && boardTabActive && !boardShown) setBoardShown(true);
+
+  const peek = props.peek ?? null;
+  const peekVisible = showWorkArea && boardTabActive && props.isActive;
+  // ピークを出している間は、図とコードを並べて読める幅 (900px) まで広げる。
+  // 保存している幅は変えず、ピークを閉じれば元の幅に戻る
+  const peekWidens = peek !== null && boardTabActive;
+  const renderedWorkWidth = peekWidens
+    ? Math.max(workWidth, peekWorkAreaFloor(containerWidth))
+    : workWidth;
+  const peekWidensRef = useRef(peekWidens);
+  peekWidensRef.current = peekWidens;
   // 左ペインのモード。選択は PC 全体で共有し、常時マウント済みの別セッション
   // および別ブラウザタブからの変更にも追随する。
   const [leftMode, setLeftMode] = useState<SplitViewLeftMode>(
@@ -360,7 +498,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   // ここでのみ参照する。
   const diagramTab = props.tabs.find(t => t.type === "diagram");
 
-  // current diagram の activation id が変わったら右ペインを自動表示する。
+  // current diagram の activation id が変わったら作業エリアを開いて「図」のタブへ替える。
   // tabs は session 単位でスコープされているため、他セッションの変化には反応しない。
   // 同じ relPath の board_open でも id は新しくなるため再表示できる。
   //
@@ -384,26 +522,46 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       currentId !== prevDiagramIdRef.current &&
       diagramTab?.restoredOnLoad !== true
     ) {
-      setShowBoard(true);
+      setShowWorkArea(true);
+      setRightTab("board");
     }
     prevDiagramIdRef.current = currentId;
   }, [diagramTab]);
 
-  // コンテナ幅変化時に board 幅を最大比率内に丸める（表示中のみ意味あり）
+  // fileOpenSeq が増えたら（live なファイルオープン・ピークの昇格）「ファイル」を、
+  // peekSeq が増えたら（図のコードリンク）「図」を、作業エリアごと開いて見せる
+  useSeqIncrease(props.fileOpenSeq, () => {
+    setShowWorkArea(true);
+    setRightTab("files");
+  });
+  useSeqIncreaseEffect(props.fileOpenSeq, () => {
+    writeSaved(STORAGE_KEY_SHOW_WORK_AREA, "1");
+    writeSaved(STORAGE_KEY_RIGHT_TAB, "files");
+  });
+  useSeqIncrease(props.peekSeq, () => {
+    setShowWorkArea(true);
+    setRightTab("board");
+  });
+  useSeqIncreaseEffect(props.peekSeq, () => {
+    writeSaved(STORAGE_KEY_SHOW_WORK_AREA, "1");
+    writeSaved(STORAGE_KEY_RIGHT_TAB, "board");
+  });
+
+  // コンテナ幅の変化に合わせて、作業エリアの幅を最小幅の制約内に収める（表示中のみ意味あり）
   useEffect(() => {
     const el = containerRef.current;
-    if (!el || !showBoard) return;
+    if (!el || !showWorkArea) return;
     const observer = new ResizeObserver(() => {
       const total = el.clientWidth;
       if (total <= 0) return;
-      const max = Math.floor(total * BOARD_MAX_RATIO);
-      setBoardWidth(prev => clamp(prev, BOARD_MIN_WIDTH, max));
+      setContainerWidth(total);
+      setWorkWidth(fitWorkAreaWidth(total, workWidthRef.current));
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [showBoard]);
+  }, [showWorkArea]);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+  const handleResizerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     setIsDragging(true);
   }, []);
@@ -414,20 +572,19 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       const el = containerRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      const total = rect.width;
-      // 右ペイン（board）の幅 = コンテナ右端からカーソルまでの距離
-      const next = rect.right - e.clientX;
-      const max = Math.floor(total * BOARD_MAX_RATIO);
-      const clamped = clamp(next, BOARD_MIN_WIDTH, max);
-      setBoardWidth(clamped);
+      // 作業エリアの幅 = コンテナ右端からカーソルまでの距離
+      const next = fitWorkAreaWidth(rect.width, rect.right - e.clientX);
+      // ピークの間は下限 (900px まで) より狭くできない。狭くしても描画は下限のままで、
+      // 見えない幅だけが保存されてしまう
+      setWorkWidth(
+        peekWidensRef.current
+          ? Math.max(next, peekWorkAreaFloor(rect.width))
+          : next
+      );
     };
     const onUp = () => {
       setIsDragging(false);
-      try {
-        localStorage.setItem(STORAGE_KEY_BOARD_WIDTH, String(boardWidth));
-      } catch {
-        // ignore
-      }
+      writeSaved(STORAGE_KEY_WORK_AREA_WIDTH, String(workWidthRef.current));
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -439,31 +596,63 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-  }, [isDragging, boardWidth]);
+  }, [isDragging]);
 
-  const handleToggleBoard = useCallback(() => {
-    setShowBoard(prev => {
+  const handleToggleWorkArea = useCallback(() => {
+    setShowWorkArea(prev => {
       const next = !prev;
-      try {
-        localStorage.setItem(STORAGE_KEY_SHOW_BOARD, next ? "1" : "0");
-      } catch {
-        // ignore
-      }
+      writeSaved(STORAGE_KEY_SHOW_WORK_AREA, next ? "1" : "0");
       return next;
     });
   }, []);
 
+  const handleCloseWorkArea = useCallback(() => {
+    setShowWorkArea(false);
+    writeSaved(STORAGE_KEY_SHOW_WORK_AREA, "0");
+  }, []);
+
+  const selectRightTab = useCallback((tab: RightTab) => {
+    setRightTab(tab);
+    writeSaved(STORAGE_KEY_RIGHT_TAB, tab);
+  }, []);
+
+  // タブとパネルを結ぶ id。SplitViewPane はセッションごとに並んでマウントされるので、
+  // useId で分ける
+  const domId = useId();
+  const rightTabDomId = (tab: RightTab) => `${domId}-tab-${tab}`;
+  const rightPanelDomId = (tab: RightTab) => `${domId}-panel-${tab}`;
+
+  /** ←/→ で隣のタブへ移る (選択とフォーカスを一緒に動かす) */
+  const handleRightTabKeyDown = (
+    e: KeyboardEvent<HTMLButtonElement>,
+    index: number
+  ) => {
+    const count = rightTabs.length;
+    const nextIndex =
+      e.key === "ArrowRight"
+        ? (index + 1) % count
+        : e.key === "ArrowLeft"
+          ? (index - 1 + count) % count
+          : null;
+    if (nextIndex === null) return;
+    e.preventDefault();
+    if (nextIndex === index) return;
+    const next = rightTabs[nextIndex].value;
+    selectRightTab(next);
+    document.getElementById(rightTabDomId(next))?.focus();
+  };
+
   return (
     <div className="h-full flex flex-col overflow-hidden rounded-xl border border-border bg-card shadow-card">
       {/* 上部バー: 左 = 主ラベル・ブランチ・状態チップ、中央 = 端末 / 会話、
-          右 = 1タップの操作・図の開閉と `…` メニュー */}
+          右 = 1タップの操作・作業エリアの開閉と `…` メニュー */}
       {/* 狭い幅 (1024px前後) では右側を中身の幅に縮め、主ラベルに幅を回す。
           広い幅だけ左右を同じ幅にしてセグメントを中央に置く。
 
           さらに狭いとき (コンテナ42rem未満) は「装飾から削る」順で畳む。
           1タップの操作は最後まで消さない:
           1. 文言を読み上げだけに残してアイコンにする (ブランチ・状態チップ・
-             セグメント・図)。`sr-only` は position:absolute なので、
+             セグメント・パネル)。`sr-only` は position:absolute なので、
              文字だけでなく flex の gap も消える
           2. それでも足りない分は左の箱が引き受ける。主ラベルが縮み、
              最後は `overflow-hidden` で箱の中に収める (上部バーは横に溢れない) */}
@@ -502,18 +691,18 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           {quickActions.map(action => quickActionItems[action])}
           <button
             type="button"
-            onClick={handleToggleBoard}
-            aria-label="図"
-            aria-pressed={showBoard}
-            title={showBoard ? "図を閉じる" : "図を開く"}
+            onClick={handleToggleWorkArea}
+            aria-label="パネル"
+            aria-pressed={showWorkArea}
+            title={showWorkArea ? "パネルを閉じる" : "パネルを開く"}
             className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sm px-2.5 text-[13px] font-semibold transition-colors ${
-              showBoard
+              showWorkArea
                 ? "bg-muted text-foreground"
                 : "text-muted-foreground hover:bg-muted hover:text-foreground"
             }`}
           >
-            <VIEW_MODE_ICONS.board className="size-4.5" aria-hidden="true" />
-            <span className="@max-2xl:sr-only">図</span>
+            <VIEW_MODE_ICONS.panel className="size-4.5" aria-hidden="true" />
+            <span className="@max-2xl:sr-only">パネル</span>
           </button>
           <SessionHeaderMenu
             worktree={props.worktree}
@@ -532,7 +721,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
             この上に乗ると mousemove / mouseup を iframe が飲み込み、window の
             リスナーへ届かなくなる。結果、幅が更新されず（ターミナルが狭くならない）、
             mouseup も発火せずドラッグが解除されない（カーソル追従が止まらない）。
-            右ペイン（ボード）と同様に透過させて window リスナーへ届かせる。 */}
+            作業エリア（図も iframe）と同様に透過させて window リスナーへ届かせる。 */}
         <div
           className={`h-full flex-1 min-w-0 overflow-hidden ${
             isDragging ? "pointer-events-none" : ""
@@ -574,44 +763,135 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           </div>
         </div>
 
-        {/* リサイザ・右ペイン */}
-        {showBoard && (
+        {/* リサイザ・作業エリア。閉じている間も、外せない中身 (1 度見せた「ファイル」と
+            ピーク) があればリサイザごと hidden で残す */}
+        {(showWorkArea || fileEverShown || peek !== null) && (
           <>
             <button
               type="button"
               aria-label="左右の幅を調整"
-              onMouseDown={handleMouseDown}
-              className={`relative w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/50 transition-colors ${
-                isDragging ? "bg-primary/70" : ""
-              }`}
+              onMouseDown={handleResizerMouseDown}
+              className={cn(
+                "relative w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/50 transition-colors",
+                isDragging && "bg-primary/70",
+                !showWorkArea && "hidden"
+              )}
             >
               <span className="absolute inset-y-0 -left-1 -right-1" />
             </button>
             <div
-              style={{ width: boardWidth, flexShrink: 0 }}
-              className={`h-full overflow-hidden border-l border-border ${
-                isDragging ? "pointer-events-none" : ""
-              }`}
+              style={{ width: renderedWorkWidth, flexShrink: 0 }}
+              className={cn(
+                "flex h-full flex-col overflow-hidden",
+                isDragging && "pointer-events-none",
+                !showWorkArea && "hidden"
+              )}
             >
-              <DiagramPane
-                socket={props.socket}
-                isConnected={props.isConnected}
-                diagramCommentsUpdate={props.diagramCommentsUpdate}
-                listDiagrams={props.listDiagrams}
-                deleteDiagram={props.deleteDiagram}
-                getDiagramComments={props.getDiagramComments}
-                createDiagramComment={props.createDiagramComment}
-                replyDiagramComment={props.replyDiagramComment}
-                resolveDiagramComment={props.resolveDiagramComment}
-                deleteDiagramComment={props.deleteDiagramComment}
-                sendDiagramComment={props.sendDiagramComment}
-                sessionId={props.session.id}
-                worktreePath={
-                  diagramTab?.worktreePath ?? props.session.worktreePath
-                }
-                relPath={diagramTab?.relPath}
-                onSelectDiagram={props.onSelectDiagram}
-              />
+              {/* タブ列: 図 / ファイル と、作業エリアを閉じる × */}
+              <div className="flex h-9 shrink-0 items-stretch border-border border-b bg-muted/30 pr-1.5 pl-2 text-[13px]">
+                <div
+                  role="tablist"
+                  aria-label="パネルの表示"
+                  className="flex min-w-0 flex-1 items-stretch gap-1"
+                >
+                  {rightTabs.map((tab, index) => {
+                    const selected = tab.value === rightTab;
+                    return (
+                      <button
+                        key={tab.value}
+                        type="button"
+                        role="tab"
+                        id={rightTabDomId(tab.value)}
+                        aria-selected={selected}
+                        aria-controls={rightPanelDomId(tab.value)}
+                        tabIndex={selected ? 0 : -1}
+                        onClick={() => selectRightTab(tab.value)}
+                        onKeyDown={e => handleRightTabKeyDown(e, index)}
+                        // 選択中は下線で示す (塗りのピルにしない)。-mb-px でタブ列の罫線に重ねる
+                        className={cn(
+                          "-mb-px inline-flex shrink-0 items-center gap-1.5 border-b-2 px-2.5 font-semibold transition-colors",
+                          selected
+                            ? "border-foreground text-foreground"
+                            : "border-transparent text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        <tab.icon className="size-4" aria-hidden="true" />
+                        <span>{tab.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  aria-label="パネルを閉じる"
+                  title="パネルを閉じる"
+                  onClick={handleCloseWorkArea}
+                  className="inline-flex size-6 shrink-0 items-center justify-center self-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </button>
+              </div>
+
+              {/* 図。ピークがあれば左右に割って、図の横へコードを出す (3 本目のリサイザは無い) */}
+              <div
+                role="tabpanel"
+                id={rightPanelDomId("board")}
+                aria-labelledby={rightTabDomId("board")}
+                className={cn(
+                  "flex min-h-0 flex-1",
+                  !boardTabActive && "hidden"
+                )}
+              >
+                <div className="h-full min-w-0 flex-1 overflow-hidden">
+                  {boardShown && (
+                    <DiagramPane
+                      socket={props.socket}
+                      isConnected={props.isConnected}
+                      diagramCommentsUpdate={props.diagramCommentsUpdate}
+                      listDiagrams={props.listDiagrams}
+                      deleteDiagram={props.deleteDiagram}
+                      getDiagramComments={props.getDiagramComments}
+                      createDiagramComment={props.createDiagramComment}
+                      replyDiagramComment={props.replyDiagramComment}
+                      resolveDiagramComment={props.resolveDiagramComment}
+                      deleteDiagramComment={props.deleteDiagramComment}
+                      sendDiagramComment={props.sendDiagramComment}
+                      sessionId={props.session.id}
+                      worktreePath={
+                        diagramTab?.worktreePath ?? props.session.worktreePath
+                      }
+                      relPath={diagramTab?.relPath}
+                      onSelectDiagram={props.onSelectDiagram}
+                    />
+                  )}
+                </div>
+                {peek !== null && (
+                  <>
+                    <div className="w-px shrink-0 bg-border" />
+                    <div
+                      data-testid="split-view-peek"
+                      className="h-full w-1/2 min-w-[320px] shrink-0 overflow-hidden"
+                    >
+                      {peek(peekVisible)}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* ファイル。初めて見せるまでマウントしない */}
+              {props.filePane && (fileEverShown || filePaneVisible) && (
+                <div
+                  role="tabpanel"
+                  id={rightPanelDomId("files")}
+                  aria-labelledby={rightTabDomId("files")}
+                  className={cn(
+                    "min-h-0 flex-1 overflow-hidden",
+                    rightTab !== "files" && "hidden"
+                  )}
+                >
+                  {props.filePane(filePaneVisible)}
+                </div>
+              )}
             </div>
           </>
         )}

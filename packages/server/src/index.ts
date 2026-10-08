@@ -100,13 +100,14 @@ import { resolveDiagramPath } from "./lib/diagram-path.js";
 import { readDiagram } from "./lib/diagram-reader.js";
 import { saveDiagramEdit } from "./lib/diagram-save.js";
 import { buildSubmitNotice } from "./lib/diagram-submit-notice.js";
-import { diagramWatcher } from "./lib/diagram-watcher.js";
 import { getErrorMessage } from "./lib/errors.js";
+import { createFileHandlers } from "./lib/file-handlers.js";
 import { readFileFromWorktree } from "./lib/file-manager.js";
 import {
   FileUploadManagerError,
   fileUploadManager,
 } from "./lib/file-upload-manager.js";
+import { fileWatcher } from "./lib/file-watcher.js";
 import { listDirectory } from "./lib/fs-browser.js";
 import {
   createWorktree,
@@ -2086,7 +2087,7 @@ export async function startServer(
       // watcher を張る条件は「パスが worktree の DIAGRAM_DIR 配下に収まって
       // いるか」だけにする（resolveDiagramPath は文字列上の解決のみで FS I/O
       // を行わないため同期）。ファイルが読めるか（403/404/422）を条件にすると、
-      // DiagramWatcher は「ファイルが未作成でも polling が後から拾う」設計
+      // FileWatcher は「ファイルが未作成でも polling が後から拾う」設計
       // なのに、Claude が Edit で図を書き換えている最中（モデルブロック未
       // 書き込み等で readDiagram が一時的に失敗する）にタブを開き直すと
       // watcher が張られないまま終わり、書き込み完了後も diagram:updated が
@@ -2096,7 +2097,7 @@ export async function startServer(
       const pathResolved = resolveDiagramPath(resolved, relPath);
       if (!pathResolved.ok) return; // パス自体が不正 (403 相当) なら購読しない
 
-      const offDiagram = diagramWatcher.subscribe(pathResolved.absPath, () => {
+      const offDiagram = fileWatcher.subscribe(pathResolved.absPath, () => {
         if (suppressedDiagramUpdates.has(pathResolved.absPath)) return;
         // クライアントへは購読要求で送られてきた worktreePath（生パス）を
         // そのままエコーバックする。サーバー内部の購読キー・ファイル解決は
@@ -2109,7 +2110,7 @@ export async function startServer(
       });
       const commentsResolved = resolveDiagramCommentsPath(resolved, relPath);
       const offComments = commentsResolved.ok
-        ? diagramWatcher.subscribe(commentsResolved.commentsAbsPath, () => {
+        ? fileWatcher.subscribe(commentsResolved.commentsAbsPath, () => {
             socket.emit("diagram:comments-updated", {
               worktreePath,
               relPath,
@@ -2581,6 +2582,18 @@ export async function startServer(
     );
 
     // ===== File Viewer =====
+    // ファイルペイン (open / list / write / subscribe)
+    const fileHandlers = createFileHandlers({
+      getWorktreePath: sessionId =>
+        sessionOrchestrator.getSession(sessionId)?.worktreePath,
+      watcher: fileWatcher,
+      emitUpdated: data => socket.emit("file:updated", data),
+    });
+    socket.on("file:open", fileHandlers.open);
+    socket.on("file:list", fileHandlers.list);
+    socket.on("file:write", fileHandlers.write);
+    socket.on("file:subscribe", fileHandlers.subscribe);
+    socket.on("file:unsubscribe", fileHandlers.unsubscribe);
     // レート制限: ソケットごとに最後のリクエスト時間を記録
     let lastFileReadTime = 0;
 
@@ -3649,6 +3662,7 @@ export async function startServer(
         }
       }
       diagramUnsubs.clear();
+      fileHandlers.dispose();
       for (const timeout of suppressedDiagramUpdates.values()) {
         clearTimeout(timeout);
       }

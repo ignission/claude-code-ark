@@ -1,7 +1,26 @@
-import { readFile, realpath, stat } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import {
+  chmod,
+  open,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+/** 編集 (書き込み) できる上限サイズ */
+export const MAX_EDITABLE_SIZE = 2 * 1024 * 1024;
+/** 一覧で返す最大件数 */
+const MAX_DIR_ENTRIES = 2000;
+/** テキスト判定のために先頭から見るバイト数 */
+const TEXT_SNIFF_BYTES = 8 * 1024;
+/** git status の結果をキャッシュする時間 */
+const GIT_STATUS_TTL_MS = 2000;
 
 // 拡張子→MIMEタイプのマッピング
 const EXTENSION_MIME_MAP: Record<string, string> = {
@@ -152,11 +171,59 @@ async function resolveSafePath(
   return realResolved;
 }
 
+/** 検証済みの絶対パスを返す (読み取りと同じ規則。監視用) */
+export async function resolveReadablePath(
+  worktreePath: string,
+  filePath: string
+): Promise<string> {
+  return resolveSafePath(worktreePath, filePath);
+}
+
 export interface FileReadResult {
   filePath: string;
   content: string;
   mimeType: string;
   size: number;
+  mtimeMs: number;
+  /** worktree 内・テキスト・2MB 以下のときだけ true */
+  editable: boolean;
+}
+
+/** 先頭 8KB に NUL が無ければテキストとみなす */
+async function looksLikeText(safePath: string): Promise<boolean> {
+  const handle = await open(safePath, "r");
+  try {
+    const buf = Buffer.alloc(TEXT_SNIFF_BYTES);
+    const { bytesRead } = await handle.read(buf, 0, TEXT_SNIFF_BYTES, 0);
+    return !buf.subarray(0, bytesRead).includes(0);
+  } finally {
+    await handle.close();
+  }
+}
+
+/** 拡張子表 + 中身の NUL 判定でテキストとして扱える MIME を返す (読み書き共通) */
+async function detectTextAwareMime(
+  safePath: string,
+  filePath: string
+): Promise<string> {
+  const mimeType = detectMimeType(filePath);
+  // 拡張子表に無いファイル (.gitattributes 等) は中身を見てテキストなら開く
+  if (
+    mimeType === "application/octet-stream" &&
+    (await looksLikeText(safePath))
+  )
+    return "text/plain";
+  return mimeType;
+}
+
+/** safePath が worktree の .git 自体か配下か */
+async function isInsideGitDir(
+  worktreePath: string,
+  safePath: string
+): Promise<boolean> {
+  // 入れ子のリポジトリ (vendor/x/.git など) も含め、どの階層の .git も拒否する
+  const rel = path.relative(await realpath(worktreePath), safePath);
+  return rel.split(path.sep).includes(".git");
 }
 
 export async function readFileFromWorktree(
@@ -176,7 +243,14 @@ export async function readFileFromWorktree(
     );
   }
 
-  const mimeType = detectMimeType(filePath);
+  const mimeType = await detectTextAwareMime(safePath, filePath);
+
+  const base = {
+    filePath,
+    mimeType,
+    size: fileStat.size,
+    mtimeMs: fileStat.mtimeMs,
+  };
 
   if (!isTextMimeType(mimeType)) {
     // 画像ファイルはBase64エンコードしてdata URLで返す
@@ -184,25 +258,370 @@ export async function readFileFromWorktree(
       const buffer = await readFile(safePath);
       const base64 = buffer.toString("base64");
       return {
-        filePath,
+        ...base,
         content: `data:${mimeType};base64,${base64}`,
-        mimeType,
-        size: fileStat.size,
+        editable: false,
       };
     }
-    return {
-      filePath,
-      content: "",
-      mimeType,
-      size: fileStat.size,
-    };
+    return { ...base, content: "", editable: false };
   }
 
-  const content = await readFile(safePath, "utf-8");
+  const buffer = await readFile(safePath);
   return {
-    filePath,
-    content,
-    mimeType,
-    size: fileStat.size,
+    ...base,
+    content: buffer.toString("utf-8"),
+    editable:
+      !path.isAbsolute(filePath) &&
+      fileStat.size <= MAX_EDITABLE_SIZE &&
+      isLosslessUtf8(buffer) &&
+      !(await isInsideGitDir(worktreePath, safePath)),
   };
+}
+
+/**
+ * UTF-8 として読んで書き戻しても元のバイト列に戻るか。
+ * UTF-16 や Shift_JIS のファイルは読めた時点で文字が置換文字に化けており、
+ * そのまま保存すると元の内容を壊す。BOM 付きも、書き戻すと BOM が落ちるので除く。
+ */
+function isLosslessUtf8(buffer: Buffer): boolean {
+  if (
+    buffer.length >= 3 &&
+    buffer[0] === 0xef &&
+    buffer[1] === 0xbb &&
+    buffer[2] === 0xbf
+  ) {
+    return false;
+  }
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 同じファイルへの保存を直列にする (照合と rename の間に別の保存を挟ませない) */
+const writeQueues = new Map<string, Promise<unknown>>();
+
+function serializeWrite<T>(key: string, task: () => Promise<T>): Promise<T> {
+  const prev = writeQueues.get(key) ?? Promise.resolve();
+  const next = prev.then(task, task);
+  writeQueues.set(key, next);
+  void next
+    .catch(() => {})
+    .finally(() => {
+      if (writeQueues.get(key) === next) writeQueues.delete(key);
+    });
+  return next;
+}
+
+export type FileWriteResult =
+  | { ok: true; mtimeMs: number }
+  | { ok: false; code: "conflict"; error: string; mtimeMs: number }
+  | { ok: false; code: "error"; error: string };
+
+/**
+ * worktree 内の既存ファイルを書き換える。
+ * 絶対パス・.git 配下・ディレクトリ・2MB 超は拒否し、例外は投げない。
+ */
+export function writeFileToWorktree(
+  worktreePath: string,
+  filePath: string,
+  content: string,
+  expectedMtimeMs: number,
+  force = false
+): Promise<FileWriteResult> {
+  return serializeWrite(path.resolve(worktreePath, filePath), () =>
+    writeFileUnserialized(
+      worktreePath,
+      filePath,
+      content,
+      expectedMtimeMs,
+      force
+    )
+  );
+}
+
+async function writeFileUnserialized(
+  worktreePath: string,
+  filePath: string,
+  content: string,
+  expectedMtimeMs: number,
+  force: boolean
+): Promise<FileWriteResult> {
+  let tmpPath: string | null = null;
+  try {
+    if (path.isAbsolute(filePath)) {
+      return {
+        ok: false,
+        code: "error",
+        error: "書き込めるのは worktree 内のファイルだけです",
+      };
+    }
+    const safePath = await resolveSafePath(worktreePath, filePath);
+    if (await isInsideGitDir(worktreePath, safePath)) {
+      return { ok: false, code: "error", error: ".git 配下には書き込めません" };
+    }
+
+    const st = await stat(safePath);
+    if (!st.isFile()) {
+      return {
+        ok: false,
+        code: "error",
+        error: `ファイルではありません: ${filePath}`,
+      };
+    }
+    if (!force && Math.abs(st.mtimeMs - expectedMtimeMs) > 1) {
+      return {
+        ok: false,
+        code: "conflict",
+        error: "ファイルが読み込み後に変更されています",
+        mtimeMs: st.mtimeMs,
+      };
+    }
+    // 読み取り側の editable と同じ判定で、テキスト以外には書かない
+    if (!isTextMimeType(await detectTextAwareMime(safePath, filePath))) {
+      return {
+        ok: false,
+        code: "error",
+        error: "テキストファイル以外には書き込めません",
+      };
+    }
+    // UTF-8 以外のファイルは、読めた時点で化けた内容を書き戻すことになるので拒否する
+    if (!isLosslessUtf8(await readFile(safePath))) {
+      return {
+        ok: false,
+        code: "error",
+        error: "UTF-8 (BOM なし) 以外のファイルには書き込めません",
+      };
+    }
+    if (Buffer.byteLength(content) > MAX_EDITABLE_SIZE) {
+      return {
+        ok: false,
+        code: "error",
+        error: `サイズが上限（${MAX_EDITABLE_SIZE / 1024 / 1024}MB）を超えています`,
+      };
+    }
+
+    // 同じディレクトリの一時ファイルへ書いて rename し、書きかけを見せない
+    const tmp = path.join(
+      path.dirname(safePath),
+      `.${path.basename(safePath)}.ark-tmp-${process.pid}-${Date.now()}`
+    );
+    await writeFile(tmp, content, { mode: st.mode, flag: "wx" });
+    // wx が EEXIST で落ちたときに他の書き手の一時ファイルを消さないよう、作れてから覚える
+    tmpPath = tmp;
+    // 作成時の mode は umask で削られるので明示的に戻す
+    await chmod(tmp, st.mode & 0o7777);
+    // rename は mtime を変えないので、成功後の stat 失敗で誤報しないよう先に取る
+    const { mtimeMs } = await stat(tmp);
+    // 一時ファイルを書いている間に Claude 等が書き換えていたら上書きしない。
+    // 置き換えの直前に照合し直す (stat と rename の間のごく短い隙間は残る)
+    if (!force) {
+      const latest = await stat(safePath);
+      if (latest.mtimeMs !== st.mtimeMs || latest.size !== st.size) {
+        await rm(tmp, { force: true }).catch(() => {});
+        tmpPath = null;
+        return {
+          ok: false,
+          code: "conflict",
+          error: "ファイルが読み込み後に変更されています",
+          mtimeMs: latest.mtimeMs,
+        };
+      }
+    }
+    await rename(tmp, safePath);
+    tmpPath = null;
+    // 保存直後の一覧に、保存前の git 状態を返さない
+    gitStatusCache.clear();
+
+    return { ok: true, mtimeMs };
+  } catch (err) {
+    if (tmpPath) await rm(tmpPath, { force: true }).catch(() => {});
+    return {
+      ok: false,
+      code: "error",
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export interface DirEntry {
+  name: string;
+  type: "dir" | "file";
+  gitStatus?: "M" | "A" | "?" | "D";
+}
+
+type GitStatusCode = NonNullable<DirEntry["gitStatus"]>;
+
+interface GitStatusSnapshot {
+  /** worktree 相対パス (ディレクトリは末尾 "/") → 状態 */
+  map: Map<string, GitStatusCode>;
+  /** 未追跡ディレクトリ ("dir/" 形式、末尾 "/" 付き) の集合 */
+  untrackedDirs: Set<string>;
+  /** 変更のあるパスの祖先ディレクトリ (末尾 "/" なし) の集合 */
+  changedAncestors: Set<string>;
+}
+
+const gitStatusCache = new Map<
+  string,
+  { at: number; promise: Promise<GitStatusSnapshot> }
+>();
+
+function runGit(cwd: string, args: string[], input?: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      "git",
+      args,
+      { cwd, maxBuffer: 64 * 1024 * 1024, encoding: "utf8" },
+      (err, stdout) => (err ? reject(err) : resolve(stdout))
+    );
+    if (input !== undefined) {
+      // git が先に終了して EPIPE になっても execFile 側のエラーで扱う
+      child.stdin?.on("error", () => {});
+      child.stdin?.end(input);
+    }
+  });
+}
+
+function toStatusCode(xy: string): GitStatusCode {
+  if (xy.includes("?")) return "?";
+  if (xy.includes("A")) return "A";
+  if (xy.includes("D")) return "D";
+  return "M";
+}
+
+async function loadGitStatus(cwd: string): Promise<GitStatusSnapshot> {
+  const map = new Map<string, GitStatusCode>();
+  try {
+    const out = await runGit(cwd, ["status", "--porcelain=v1", "-z"]);
+    const fields = out.split("\0");
+    for (let i = 0; i < fields.length; i++) {
+      const rec = fields[i];
+      if (rec.length < 4) continue;
+      const xy = rec.slice(0, 2);
+      map.set(rec.slice(3), toStatusCode(xy));
+      // rename / copy は元のパスがもう 1 フィールド続く
+      if (xy.includes("R") || xy.includes("C")) i++;
+    }
+  } catch {
+    // git が使えないときは状態を付けない
+  }
+  const untrackedDirs = new Set<string>();
+  const changedAncestors = new Set<string>();
+  for (const [key, code] of map) {
+    if (code === "?" && key.endsWith("/")) untrackedDirs.add(key);
+    let i = key.indexOf("/");
+    while (i !== -1 && i < key.length - 1) {
+      changedAncestors.add(key.slice(0, i));
+      i = key.indexOf("/", i + 1);
+    }
+  }
+  return { map, untrackedDirs, changedAncestors };
+}
+
+function getGitStatus(cwd: string): Promise<GitStatusSnapshot> {
+  const cached = gitStatusCache.get(cwd);
+  const now = Date.now();
+  if (cached && now - cached.at < GIT_STATUS_TTL_MS) return cached.promise;
+  const promise = loadGitStatus(cwd);
+  gitStatusCache.set(cwd, { at: now, promise });
+  return promise;
+}
+
+function statusFor(
+  snapshot: GitStatusSnapshot,
+  relPath: string,
+  isDir: boolean
+): GitStatusCode | undefined {
+  const { map, untrackedDirs, changedAncestors } = snapshot;
+  if (!isDir) {
+    const direct = map.get(relPath);
+    if (direct) return direct;
+  } else {
+    const untracked = map.get(`${relPath}/`);
+    if (untracked) return untracked;
+  }
+  // 未追跡ディレクトリの配下は "dir/" 1 件にまとまって出る。祖先を深さ分だけ調べる
+  let i = relPath.indexOf("/");
+  while (i !== -1) {
+    if (untrackedDirs.has(relPath.slice(0, i + 1))) return "?";
+    i = relPath.indexOf("/", i + 1);
+  }
+  if (isDir && changedAncestors.has(relPath)) return "M";
+  return undefined;
+}
+
+/** git check-ignore で ignore 対象になる名前の集合を返す。失敗したら空 */
+async function findIgnored(
+  cwd: string,
+  relPaths: string[]
+): Promise<Set<string>> {
+  if (relPaths.length === 0) return new Set();
+  try {
+    const out = await runGit(
+      cwd,
+      ["check-ignore", "--stdin", "-z"],
+      `${relPaths.join("\0")}\0`
+    );
+    return new Set(out.split("\0").filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
+
+/** worktree 内のディレクトリを一覧する (.git と gitignore 対象は除く) */
+export async function listDirectory(
+  worktreePath: string,
+  dirPath: string
+): Promise<{ entries: DirEntry[]; truncated: boolean }> {
+  if (path.isAbsolute(dirPath)) {
+    throw new Error("ファイルへのアクセスが拒否されました");
+  }
+  const safeDir = await resolveSafePath(worktreePath, dirPath);
+  const realWorktree = await realpath(worktreePath);
+  if (!(await stat(safeDir)).isDirectory()) {
+    throw new Error(`ディレクトリではありません: ${dirPath}`);
+  }
+  const relDir = path.relative(realWorktree, safeDir).split(path.sep).join("/");
+
+  const dirents = (await readdir(safeDir, { withFileTypes: true })).filter(
+    d => d.name !== ".git"
+  );
+
+  const typed = await Promise.all(
+    dirents.map(async (d): Promise<DirEntry> => {
+      if (d.isDirectory()) return { name: d.name, type: "dir" };
+      if (d.isSymbolicLink()) {
+        try {
+          const st = await stat(path.join(safeDir, d.name));
+          return { name: d.name, type: st.isDirectory() ? "dir" : "file" };
+        } catch {
+          return { name: d.name, type: "file" }; // 壊れたリンク
+        }
+      }
+      return { name: d.name, type: "file" };
+    })
+  );
+
+  const relOf = (name: string) => (relDir ? `${relDir}/${name}` : name);
+  const ignored = await findIgnored(
+    realWorktree,
+    typed.map(e => relOf(e.name))
+  );
+  const visible = typed.filter(e => !ignored.has(relOf(e.name)));
+
+  visible.sort((a, b) =>
+    a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1
+  );
+  const truncated = visible.length > MAX_DIR_ENTRIES;
+  const entries = visible.slice(0, MAX_DIR_ENTRIES);
+
+  const snapshot = await getGitStatus(realWorktree);
+  for (const e of entries) {
+    const status = statusFor(snapshot, relOf(e.name), e.type === "dir");
+    if (status) e.gitStatus = status;
+  }
+
+  return { entries, truncated };
 }

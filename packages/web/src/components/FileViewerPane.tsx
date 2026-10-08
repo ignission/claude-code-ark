@@ -73,7 +73,7 @@ export function FileViewerPane({
   );
 }
 
-function MarkdownRenderer({ content }: { content: string }) {
+export function MarkdownRenderer({ content }: { content: string }) {
   return (
     <div className="p-6 prose dark:prose-invert max-w-none prose-headings:text-foreground prose-p:text-foreground prose-li:text-foreground prose-strong:text-foreground prose-code:text-primary prose-a:text-primary">
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
@@ -81,7 +81,7 @@ function MarkdownRenderer({ content }: { content: string }) {
   );
 }
 
-function ImageRenderer({
+export function ImageRenderer({
   content,
   mimeType,
   filePath,

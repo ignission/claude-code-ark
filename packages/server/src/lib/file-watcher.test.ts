@@ -6,16 +6,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DiagramWatcher } from "./diagram-watcher.js";
+import { FileWatcher } from "./file-watcher.js";
 
 let dir: string;
-let watcher: DiagramWatcher;
+let watcher: FileWatcher;
 
 beforeEach(() => {
   dir = fs.realpathSync(
-    fs.mkdtempSync(path.join(os.tmpdir(), "ark-diagram-watch-"))
+    fs.mkdtempSync(path.join(os.tmpdir(), "ark-file-watch-"))
   );
-  watcher = new DiagramWatcher();
+  watcher = new FileWatcher();
 });
 
 afterEach(() => {
@@ -25,7 +25,7 @@ afterEach(() => {
 
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-describe("DiagramWatcher", () => {
+describe("FileWatcher", () => {
   it("ファイルが更新されたら listener を呼ぶ", async () => {
     const file = path.join(dir, "a.diagram.html");
     fs.writeFileSync(file, "<html>1</html>");

@@ -13,10 +13,15 @@
 PC・モバイルとも、ttyd の生ターミナル（`TerminalPane`）と、チャット形式で会話を
 描画する `SplitChatPane`（JSONL transcript を tail）を切り替えて使う。
 
-- **PC**: `SplitViewPane` の左ペインを上部バーの🖥/💬トグルで切り替える（既定は端末）。
-  右ペインは図解で、上部バー右端のトグルで開閉する（中身は `DiagramPane`。
-  詳細は下記「セッションボード」）。左ペインの選択・右ペインの幅と開閉は localStorage
-  に永続化する
+- **PC**: `SplitViewPane` は 左 = 端末 / 会話、右 = 作業エリア の 2 ペイン。
+  左ペインは上部バーの🖥/💬トグルで切り替える（既定は端末）。作業エリアは
+  上部バー右端の「パネル」トグルで開閉し、上端のタブ「図 / ファイル」で中身を
+  切り替える（中身は `DiagramPane` と `FilePane`。詳細は下記「ファイルペイン」
+  「セッションボード」）。端末・会話のリンクからファイルを開くと作業エリアが
+  「ファイル」のタブで開き、左ペインのモードは変わらない。図の中のコードリンクは
+  タブを替えず、図の横の「ピーク」（`FilePeek`）で開く。
+  左ペインの選択・作業エリアの幅と開閉とタブ・開いているファイルタブ・
+  ファイルツリーの展開と折りたたみは localStorage に永続化する
 - **モバイル**: `MobileSessionView` の🖥/💬/📐トグルで 1 画面ずつ切り替える（既定は会話）
 
 左ペインは端末・会話の両方をマウントしたまま `display` で切り替える。ttyd は
@@ -158,6 +163,66 @@ iframe を貼り直す (判定と抑止は `@/lib/ttyd-reconnect`)。
   前に `list-buffers` で有無を見る（同じ理由）
 - 書き込み系（`sendKeys` 等）は従来どおり throw
 
+### ファイルペインの書き込み
+
+PC の作業エリアの「ファイル」のタブ（`FilePane`）は worktree のファイルをツリーから
+開き、CodeMirror で編集して保存できる。Claude も同じファイルを書き換えるので、
+書き込みと監視には見ただけでは分からない決まりがある（`file-manager.ts` /
+`file-handlers.ts` / `FileEditor.tsx`）。
+
+- **右側は作業エリア 1 つで、「図 / ファイル」のタブで切り替える**（当初は
+  左 | ファイル | 図 の 3 ペインだった）。1680px の画面で 3 つ開くと会話のペインが
+  最小幅の 360px まで縮み、図とコードを並べたいのは図のリンクを踏んだ直後だけだった
+- **図の中のコードリンクは「ピーク」で開く**（`FilePeek`）。`DiagramPane` が
+  `ark:open-file` に `source: "board"` を付け、`Dashboard` がそれを見て、
+  ファイルタブへ足さずにセッションごとの peek へ入れる。`SplitViewPane` は「図」の
+  タブの本体を左右に割って図の横へ出し、その間だけ作業エリアを 900px まで広げる
+  （保存している幅は変えない。この間はドラッグでもそれより狭くできない）。
+  中身はタブと同じ `FileEditor` で、編集も保存もできる。「ファイルで開く」で
+  ファイルタブへ移す（未保存の編集は確認のうえ捨てる）。開けるのは 1 件だけで、
+  リロードでは復元しない
+- 作業エリアを閉じると `DiagramPane` は外すが、1 度見せた `FilePane` とピークは
+  外さずに `hidden` で残す（外すと未保存の編集が消える）。タブを替えるだけなら
+  `DiagramPane` も外さない（iframe を作り直さない）
+- **ファイルの種類アイコンは material-icon-theme の一部だけを同梱する**。ファイル名・
+  拡張子・フォルダ名との対応表は `lib/file-icons.ts`、SVG の束ねは遅延読み込みの
+  `lib/file-icon-assets.ts`（glob のブレース内の一覧を手で持ち、対応表との一致をテストで見る）。
+  表示は `FileIcon`（ツリーとタブ）。足すときは両方に同じ名前を足す
+
+- **書けるのは worktree 内の既存ファイルだけ**。読み取りは `/tmp` 配下も通すが、
+  書き込みは `/tmp` 配下と worktree の `.git/` 配下を拒否する。新規作成・削除・
+  リネームは持たない。realpath を取ってから worktree 内かを確かめるので、
+  worktree の外を指す symlink 経由では書けない
+- **同じディレクトリの一時ファイルへ書いてから `rename` する**。直接書くと、Claude の
+  Read やファイルの監視が書きかけを読みうる。mode は元のファイルのものを引き継ぐ
+- **読み取り時の mtime（`expectedMtimeMs`）を保存に添え、食い違えば `conflict` で
+  拒否する**。マージはしない。利用者が「上書き保存」を選んだときだけ `force: true` で
+  照合を飛ばす。照合は一時ファイルを書いた後、`rename` の直前にもう一度行う
+  （書いている間に Claude が書き換えた分を潰さないため）。同じファイルへの保存は
+  サーバー内で直列にする
+- 編集できるのは 2MB 以下の、BOM なし UTF-8 のテキストだけ（`file:open` の `editable` を
+  サーバーが判定する）。それ以外は読み取り専用で開く。UTF-16 や Shift_JIS は読めた時点で
+  文字が化けており、書き戻すと元の内容を壊すため
+- **監視（`file:subscribe`）は、見えているタブ 1 枚にだけ張る**。全セッションの
+  `SplitViewPane` は常時マウントされ、`FilePane` も 1 度見せたら閉じても外さない
+  （外すと未保存の編集が消える）ので、開いているタブすべてに張るとサーバーの上限
+  （1 socket あたり 50 件）を超える。隠れていたタブは、見えたときに `file:open` し直して
+  ディスクと突き合わせる（未編集なら黙って読み直し、編集中ならバナー）。隠れたままの
+  タブは読み込みもしない
+- 自分の保存による `file:updated` もサーバーは抑止しない。クライアントが、開き直した
+  結果の mtime が手元と同じなら捨てる（`decideOnDiskChange`）
+- **ファイルタブは `useFileTabs` が持ち、端末のタブ列（`useViewerTabs` の `sessionTabs`）
+  には載せない**。`sessionTabs` は 1 本の配列を index 1 つで指すので、隠れたタブを
+  足すたびに「閉じたあとの index 補正」と「隠れタブに着地したときの空白」の特例が増える
+  （図を右ペインへ移したときに 1 件増えた）。ファイルタブは id で指す別のリストにして、
+  その補正を要らなくした。PC では `useViewerTabs` の `onOpenFile` へ
+  `ark:open-file` の行き先を決める関数を渡し、端末・会話のリンクは
+  `useFileTabs.openFile`（「ファイル」のタブ）へ、図のリンクはピークへ送る
+- モバイルは `onOpenFile` を渡さないので、従来の読み取り専用のタブ
+  （`file:read` → `file:content` + `FileViewerPane`）のまま動く
+- 行指定つきのリンク（`README.md#L10`）で開いた Markdown は、プレビューではなく
+  編集で出す（プレビューでは行を示せない）
+
 ### ボード提案 (Jev 判定)
 
 長い説明をチャットで読む負担を減らすため、Claude が返答を終えるたびに Stop hook
@@ -254,6 +319,7 @@ task.md 規約・復唱・失敗の自動収集・セッション lifecycle を�
 | モバイル対応           | セッション一覧/詳細の画面遷移、Quick Keys、スクロールモード、キーボード対応 |
 | 特殊キー送信           | Enter, Ctrl+C, Ctrl+D, y, n, S-Tab, Escape, スクロール等                    |
 | ファイルアップロード   | D&D・ファイル選択・クリップボード貼り付けで画像/PDF/テキスト/Excelを送信（`@パス` 形式） |
+| ファイルペイン         | worktree のファイルを見て直すペイン（PC のみ。右の作業エリアの「ファイル」のタブで、「図」と切り替える）。ツリー（gitignore 対象は隠し、git の変更の印を出す）とタブで開き、CodeMirror で編集して Ctrl+S / Cmd+S で保存する。Claude がファイルを書き換えたら自動で読み直し、編集中に書き換えられたらバナーで「再読込」「上書き保存」を選ばせる。会話・端末のリンクからも開く。ボードの中のコードリンクは、図を見たまま横の「ピーク」で開き、そこから「ファイル」のタブへ移せる。モバイルは従来の読み取り専用のタブのまま |
 | tmuxバッファコピー     | tmuxのペーストバッファをクリップボードにコピー                              |
 | ポートスキャン         | リッスン中のポートを一覧表示（ttydポートは除外）                            |
 | リモートアクセス       | Cloudflare Tunnel（Quick / Named）+ QRコード + トークン認証                 |
@@ -498,6 +564,11 @@ claude-code-ark/
 | `tunnel:stop`     | -                                       | トンネル停止                     |
 | `ports:scan`      | -                                       | ポートスキャン                   |
 | `file-upload:upload` | `{ sessionId, base64Data, mimeType, originalFilename?, requestId }` | ファイルアップロード |
+| `file:open`       | `{ sessionId, filePath }, callback`     | ファイルを開く（コールバック。`{ ok: true, content, mimeType, size, mtimeMs, editable }` / `{ ok: false, error }`）|
+| `file:list`       | `{ sessionId, dirPath }, callback`      | ディレクトリを 1 階層一覧する（コールバック。`{ ok: true, entries, truncated }` / `{ ok: false, error }`）|
+| `file:write`      | `{ sessionId, filePath, content, expectedMtimeMs, force? }, callback` | worktree 内の既存ファイルを書き換える（コールバック。`{ ok: true, mtimeMs }` / `{ ok: false, code: "conflict" \| "error", error, mtimeMs? }`）|
+| `file:subscribe`  | `{ sessionId, filePath }`               | ファイルの更新監視を開始（見えているタブ 1 枚だけ。1 socket あたり 50 件まで）|
+| `file:unsubscribe` | `{ sessionId, filePath }`              | ファイルの更新監視を解除         |
 | `profile:list`    | -                                       | プロファイル一覧取得（Linux限定） |
 | `profile:create`  | `{ name, configDir }`                   | プロファイル作成 |
 | `profile:update`  | `{ id, name?, configDir? }`             | プロファイル更新 |
@@ -542,6 +613,7 @@ claude-code-ark/
 | `ports:list`             | `{ ports }`                    | ポート一覧                       |
 | `file-upload:uploaded`   | `{ requestId, path, filename, originalFilename? }` | ファイルアップロード完了 |
 | `file-upload:error`      | `{ requestId, message, code? }`           | ファイルアップロードエラー       |
+| `file:updated`           | `{ sessionId, filePath }`      | 監視中のファイルが更新された。クライアントは開き直して突き合わせる |
 | `system:capabilities`    | `{ multiProfileSupported }`               | 機能フラグ（接続時に1回emit） |
 | `profile:list`           | `Profile[]`                        | プロファイル一覧 |
 | `profile:created`        | `Profile`                          | プロファイル作成完了 |
