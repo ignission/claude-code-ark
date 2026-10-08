@@ -94,6 +94,25 @@
   --elevation-card:
     0 1px 2px oklch(0 0 0 / 0.06), 0 4px 12px oklch(0 0 0 / 0.05);
   --glass: oklch(1 0 0 / 0.72);
+
+  /* Git タブ: グラフのレーンの色 (8 色を循環) と差分の地色。
+     light-dark() は :root の color-scheme に従うので、他のトークンと同じく OS に追従する */
+  --git-lane-0: light-dark(#2563eb, #6ea8ff);
+  --git-lane-1: light-dark(#16a34a, #5bd68a);
+  --git-lane-2: light-dark(#ea580c, #ff9d5c);
+  --git-lane-3: light-dark(#9333ea, #c58bff);
+  --git-lane-4: light-dark(#db2777, #ff7ab8);
+  --git-lane-5: light-dark(#0d9488, #4fd1c5);
+  --git-lane-6: light-dark(#b7791f, #f2c94c);
+  --git-lane-7: light-dark(#dc2626, #ff7b72);
+  --git-added: light-dark(#1a7f37, #56d364);
+  --git-removed: light-dark(#cf222e, #ff7b72);
+  --git-modified: light-dark(#9a6700, #e3b341);
+  --git-renamed: light-dark(#0969da, #79c0ff);
+  --git-diff-added-line: light-dark(#dafbe1, rgb(46 160 67 / 0.2));
+  --git-diff-added-text: light-dark(#aceebb, rgb(46 160 67 / 0.45));
+  --git-diff-removed-line: light-dark(#ffebe9, rgb(248 81 73 / 0.18));
+  --git-diff-removed-text: light-dark(#ffc1ba, rgb(248 81 73 / 0.45));
 }
 
 @media (prefers-color-scheme: dark) {

@@ -1,9 +1,4 @@
-import {
-  defaultHighlightStyle,
-  HighlightStyle,
-  LanguageDescription,
-  syntaxHighlighting,
-} from "@codemirror/language";
+import { LanguageDescription } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import {
   Compartment,
@@ -22,6 +17,7 @@ import {
 } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { useEffect, useRef } from "react";
+import { arkEditorLook } from "@/lib/codemirror-theme";
 
 interface CodeEditorProps {
   /** 言語の判定に使う */
@@ -38,105 +34,6 @@ interface CodeEditorProps {
   /** Mod-s */
   onSave: () => void;
 }
-
-/** index.css の --font-mono と同じ並び (@theme inline の変数は実行時に参照できない) */
-const FONT_MONO =
-  'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace';
-
-/**
- * アプリは prefers-color-scheme で同じ名前の変数を明暗に切り替える。
- * 色を変数で指しておけば、エディタも OS の設定に追従する
- */
-const arkTheme = EditorView.theme({
-  "&": {
-    height: "100%",
-    fontSize: "13px",
-    color: "var(--foreground)",
-    backgroundColor: "var(--background)",
-  },
-  "&.cm-focused": { outline: "none" },
-  ".cm-scroller": { fontFamily: FONT_MONO, lineHeight: "1.5" },
-  ".cm-content": { caretColor: "var(--foreground)" },
-  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--foreground)" },
-  ".cm-gutters": {
-    backgroundColor: "var(--background)",
-    color: "var(--muted-foreground)",
-    borderRight: "1px solid var(--border)",
-  },
-  ".cm-activeLine": {
-    backgroundColor: "color-mix(in oklch, var(--muted) 55%, transparent)",
-  },
-  ".cm-activeLineGutter": {
-    backgroundColor: "var(--muted)",
-    color: "var(--foreground)",
-  },
-  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
-    {
-      backgroundColor: "color-mix(in oklch, var(--primary) 26%, transparent)",
-    },
-  ".cm-selectionMatch": {
-    backgroundColor: "color-mix(in oklch, var(--primary) 14%, transparent)",
-  },
-  ".cm-foldPlaceholder": {
-    backgroundColor: "var(--muted)",
-    border: "1px solid var(--border)",
-    color: "var(--muted-foreground)",
-  },
-  ".cm-panels": {
-    backgroundColor: "var(--muted)",
-    color: "var(--foreground)",
-  },
-  ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--border)" },
-  ".cm-panels.cm-panels-bottom": { borderTop: "1px solid var(--border)" },
-  ".cm-textfield": {
-    backgroundColor: "var(--background)",
-    color: "var(--foreground)",
-    border: "1px solid var(--border)",
-  },
-  ".cm-button": {
-    backgroundImage: "none",
-    backgroundColor: "var(--background)",
-    color: "var(--foreground)",
-    border: "1px solid var(--border)",
-  },
-  ".cm-tooltip": {
-    backgroundColor: "var(--popover)",
-    color: "var(--popover-foreground)",
-    border: "1px solid var(--border)",
-  },
-  // FileViewerPane (shiki) の行ハイライトと同じ色
-  ".cm-ark-target-line": { backgroundColor: "rgba(56, 139, 253, 0.28)" },
-});
-
-/**
- * 既定のハイライト (明るい背景向け) の色に、暗い背景での対を付ける。
- * light-dark() は :root の color-scheme に従うので、テーマと同じく OS に追従する。
- * タグの割り当ては既定のものをそのまま使い、色だけを差し替える
- */
-const DARK_COLORS: Record<string, string> = {
-  "#404740": "#9aa5a0",
-  "#708": "#c792ea",
-  "#219": "#79c0ff",
-  "#164": "#7ee787",
-  "#a11": "#f29a8e",
-  "#e40": "#ffa657",
-  "#00f": "#79b8ff",
-  "#30a": "#b3a1ff",
-  "#085": "#56d4bc",
-  "#167": "#6cc6d9",
-  "#256": "#8fb3d9",
-  "#00c": "#8ab4ff",
-  "#940": "#c9a26b",
-  "#f00": "#ff6b6b",
-};
-
-const arkHighlightStyle = HighlightStyle.define(
-  defaultHighlightStyle.specs.map(spec => {
-    const color = typeof spec.color === "string" ? spec.color : null;
-    const dark = color ? DARK_COLORS[color] : undefined;
-    return dark ? { ...spec, color: `light-dark(${color}, ${dark})` } : spec;
-  })
-);
 
 interface LineRange {
   from: number;
@@ -241,8 +138,7 @@ export default function CodeEditor({
           // Tab はインデントに割り当てない (basicSetup も入れていない)。
           // 割り当てると、キーボードでエディタの外へ出られなくなる
           basicSetup,
-          arkTheme,
-          syntaxHighlighting(arkHighlightStyle),
+          arkEditorLook,
           targetLinesField.init(s => buildTargetLines(s.doc, rangeRef.current)),
           readOnlyComp.current.of(EditorState.readOnly.of(readOnlyRef.current)),
           languageComp.current.of(languageRef.current),
