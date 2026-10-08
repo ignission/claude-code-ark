@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   fitWorkAreaWidth,
+  GIT_WORK_AREA_WIDTH,
+  gitWorkAreaFloor,
   LEFT_MIN_WIDTH,
   PEEK_WORK_AREA_WIDTH,
   peekWorkAreaFloor,
@@ -36,5 +38,19 @@ describe("peekWorkAreaFloor", () => {
 
   it("コンテナ幅が分からないときは 900px", () => {
     expect(peekWorkAreaFloor(0)).toBe(PEEK_WORK_AREA_WIDTH);
+  });
+});
+
+describe("gitWorkAreaFloor", () => {
+  it("広いコンテナでは 760px", () => {
+    expect(gitWorkAreaFloor(1600)).toBe(GIT_WORK_AREA_WIDTH);
+  });
+
+  it("狭いコンテナでは左ペインの最小幅を残せる幅まで", () => {
+    expect(gitWorkAreaFloor(1000)).toBe(636);
+  });
+
+  it("コンテナ幅が分からないときは 760px", () => {
+    expect(gitWorkAreaFloor(0)).toBe(GIT_WORK_AREA_WIDTH);
   });
 });

@@ -99,11 +99,9 @@ function StatusBadge({ status }: { status: GitFileChange["status"] }) {
     <span
       data-testid="git-file-status"
       title={STATUS_LABEL[status]}
-      className="inline-flex size-4 shrink-0 items-center justify-center rounded-[3px] font-bold font-mono text-[10px] leading-none"
-      style={{
-        color,
-        backgroundColor: `color-mix(in oklch, ${color} 16%, transparent)`,
-      }}
+      className="inline-flex size-4 shrink-0 items-center justify-center rounded-[3px] font-bold font-mono text-[11px] leading-none"
+      // 塗りに状態の色、字に地の色。明暗どちらでも字が抜けて読める
+      style={{ backgroundColor: color, color: "var(--background)" }}
     >
       {status}
     </span>

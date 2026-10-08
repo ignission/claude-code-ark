@@ -45,6 +45,38 @@ describe("layoutGraphWithWorking", () => {
     expect(clean.rows[2].segments).toEqual(dirty.rows[2].segments);
   });
 
+  it("HEAD を第 2 親に持つマージが上にあれば、合流した線は変更が無くても残す", () => {
+    // m は別のブランチが HEAD (h) を取り込んだマージ
+    const merged = [c("m", "x", "h"), c("x", "b"), c("h", "b"), c("b")];
+    const { working, rows } = layoutGraphWithWorking(merged, "h", false);
+    expect(working).toBeNull();
+    const [m, x, h] = rows;
+    // m から HEAD の列 (0) へ線が出る。合流点より上の素通りは無い
+    expect(m.segments).toContainEqual(
+      expect.objectContaining({
+        kind: "out",
+        fromColumn: m.column,
+        toColumn: 0,
+      })
+    );
+    expect(m.segments.some(s => s.kind === "pass" && s.fromColumn === 0)).toBe(
+      false
+    );
+    // その線は x の行を素通りして、HEAD へ入る
+    expect(x.segments).toContainEqual(
+      expect.objectContaining({ kind: "pass", fromColumn: 0 })
+    );
+    expect(h.column).toBe(0);
+    expect(h.segments).toContainEqual(
+      expect.objectContaining({ kind: "in", fromColumn: 0, toColumn: 0 })
+    );
+    // 変更があるときと同じ列・色
+    const dirty = layoutGraphWithWorking(merged, "h", true);
+    expect(rows.map(r => [r.sha, r.column, r.color])).toEqual(
+      dirty.rows.map(r => [r.sha, r.column, r.color])
+    );
+  });
+
   it("HEAD が読み込み済みに無ければ、線は末尾まで素通りする", () => {
     const { rows } = layoutGraphWithWorking([c("x", "y")], "far", true);
     expect(rows[0].segments.some(s => s.kind === "pass")).toBe(true);

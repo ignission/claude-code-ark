@@ -9,6 +9,7 @@ import { BrowserPane } from "@/components/BrowserPane";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { FilePane } from "@/components/FilePane";
 import { FilePeek, type FilePeekTarget } from "@/components/FilePeek";
+import { GitPane } from "@/components/git/GitPane";
 import {
   MobileLayout,
   type MobileTab,
@@ -1117,6 +1118,15 @@ export default function Dashboard() {
                             onClose={tabId =>
                               closeFileInPane(session.id, tabId)
                             }
+                            isActive={visible}
+                          />
+                        )}
+                        // 「Git」も 1 度見せたらマウントされたまま。指紋の問い合わせは
+                        // 見えている間 (visible) だけにさせる
+                        gitPane={visible => (
+                          <GitPane
+                            socket={socket}
+                            sessionId={session.id}
                             isActive={visible}
                           />
                         )}

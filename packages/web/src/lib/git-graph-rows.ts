@@ -51,20 +51,27 @@ export function layoutGraphWithWorking(
   const rows = all.slice(1);
   if (showWorking) return { working, rows };
 
-  // 仮の行の列は HEAD の行まで他のコミットに使われない。その列の素通りと、
-  // HEAD へ入る線だけを外す
+  // 仮の行の列に HEAD より上のコミットは置かれないので、その列の素通りと HEAD へ入る線を
+  // 外す。ただし HEAD を第 2 親に持つマージが上にあると、その線は同じ列へ合流してくる。
+  // 合流した行より下は本物の線なので残す
   const lane = working.column;
+  let joined = false;
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const isHead = row.sha === headSha;
-    rows[i] = {
-      ...row,
-      segments: row.segments.filter(s =>
-        isHead
-          ? !(s.kind === "in" && s.fromColumn === lane)
-          : !(s.kind === "pass" && s.fromColumn === lane)
-      ),
-    };
+    if (!joined) {
+      rows[i] = {
+        ...row,
+        segments: row.segments.filter(s =>
+          isHead
+            ? !(s.kind === "in" && s.fromColumn === lane)
+            : !(s.kind === "pass" && s.fromColumn === lane)
+        ),
+      };
+      joined = row.segments.some(
+        s => s.kind === "out" && s.toColumn === lane && s.fromColumn !== lane
+      );
+    }
     if (isHead) break;
   }
   return { working: null, rows };

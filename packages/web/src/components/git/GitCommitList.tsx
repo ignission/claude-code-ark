@@ -393,8 +393,16 @@ function CommitCells({ commit, color, detachedHead, nowMs }: CommitCellsProps) {
       : commit.refs;
   return (
     <>
-      <GitRefLabels refs={refs} color={color} max={MAX_REFS} />
-      <span className="min-w-0 flex-1 truncate" title={commit.subject}>
+      {refs.length > 0 && (
+        // 狭いときは札のほうを縮め、件名に幅を残す (札が件名と作者を押し出さない)
+        <span className="flex max-w-[60%] shrink-[2] items-center gap-1 overflow-hidden">
+          <GitRefLabels refs={refs} color={color} max={MAX_REFS} />
+        </span>
+      )}
+      <span
+        className="min-w-[4.5rem] flex-1 basis-[4.5rem] truncate"
+        title={commit.subject}
+      >
         {commit.subject}
       </span>
       <GitAvatar name={commit.authorName} email={commit.authorEmail} />

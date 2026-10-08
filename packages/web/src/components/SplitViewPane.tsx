@@ -9,7 +9,7 @@
  * (通知・削除) だけを残す。端末専用の操作はTerminalPaneHandle経由で
  * TerminalPaneに頼む。
  *
- * 右側は作業エリア 1 つで、上端のタブ「図 / ファイル」で中身を切り替える。
+ * 右側は作業エリア 1 つで、上端のタブ「図 / ファイル / Git」で中身を切り替える。
  * 並びは 左 | 作業エリア で、リサイザは 1 本。
  * (以前は 左 | ファイル | 図 の 3 ペインだった。1680px の画面で 3 つ開くと左ペインが
  * 最小幅の 360px まで縮み、図とコードを並べたいのは図のリンクを踏んだ直後だけだった)
@@ -19,6 +19,10 @@
  *   初めて実際に見せるまでマウントせず、1 度見せたら、タブを替えても作業エリアを
  *   閉じても外さずに hidden で残す (外すと未保存の編集が消える)。
  *   見えているかは `filePane(visible)` で伝える
+ * - 「Git」の中身も呼び出し側が `gitPane` で渡す。マウントの扱いは「ファイル」と同じ
+ *   (初めて見せるまでマウントせず、見せたあとは hidden で残す)。見ている間は作業エリアを
+ *   760px まで広げる (保存している幅は変えない。420px ではグラフが読めない)。
+ *   自動で「Git」へ替えることは無い
  * - ピーク: 図のコードリンクを踏むと、タブは替えずに「図」の本体を左右に割り、
  *   図の横へコードを出す。中身は呼び出し側が `peek` で渡す。出している間は
  *   作業エリアを 900px まで広げる (保存している幅は変えない)。作業エリアを閉じても
@@ -74,7 +78,11 @@ import {
   inputBarToggleLabel,
   resolveSessionHeaderLabels,
 } from "../lib/session-header";
-import { fitWorkAreaWidth, peekWorkAreaFloor } from "../lib/split-pane-widths";
+import {
+  fitWorkAreaWidth,
+  gitWorkAreaFloor,
+  peekWorkAreaFloor,
+} from "../lib/split-pane-widths";
 import {
   normalizeSplitViewLeftMode,
   readSavedSplitViewLeftMode,
@@ -110,7 +118,7 @@ const STORAGE_KEY_RIGHT_TAB = "ark-split-right-tab";
 /** 保存した幅が無いときの作業エリアの幅 (ツリー 220px とエディタが並ぶ幅) */
 const DEFAULT_WORK_AREA_WIDTH = 560;
 
-type RightTab = "board" | "files";
+type RightTab = "board" | "files" | "git";
 
 const RIGHT_TABS: readonly {
   value: RightTab;
@@ -119,6 +127,7 @@ const RIGHT_TABS: readonly {
 }[] = [
   { value: "board", label: "図", icon: VIEW_MODE_ICONS.board },
   { value: "files", label: "ファイル", icon: VIEW_MODE_ICONS.files },
+  { value: "git", label: "Git", icon: VIEW_MODE_ICONS.git },
 ];
 
 /** 上部バーの1タップ操作と `…` に共通の見た目 (32px・角丸・押すと紙色) */
@@ -230,6 +239,12 @@ interface SplitViewPaneProps {
    * 見えていない間もマウントしたままなので、中身はこれを見て購読などを絞る
    */
   filePane?: (visible: boolean) => ReactNode;
+  /**
+   * 「Git」のタブの中身。Dashboard が GitPane を渡す。渡さなければ「Git」のタブを出さない。
+   * visible は「作業エリアが開いていて、Git のタブで、このセッションが選択中」。
+   * 「ファイル」と同じく、1 度見せたら見えていない間もマウントしたまま
+   */
+  gitPane?: (visible: boolean) => ReactNode;
   /** live なファイルオープンのたびに増える数。増えたら作業エリアを開いて「ファイル」へ替える */
   fileOpenSeq?: number;
   /**
@@ -262,9 +277,8 @@ function readSavedFlag(key: string): boolean {
 
 function readSavedRightTab(): RightTab {
   try {
-    return localStorage.getItem(STORAGE_KEY_RIGHT_TAB) === "files"
-      ? "files"
-      : "board";
+    const saved = localStorage.getItem(STORAGE_KEY_RIGHT_TAB);
+    return saved === "files" || saved === "git" ? saved : "board";
   } catch {
     return "board";
   }
@@ -328,9 +342,17 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   workWidthRef.current = workWidth;
 
   const hasFilePane = props.filePane !== undefined;
-  const rightTabs = hasFilePane ? RIGHT_TABS : RIGHT_TABS.slice(0, 1);
-  // 中身を渡されていないタブは選べない
-  const rightTab: RightTab = hasFilePane ? savedRightTab : "board";
+  const hasGitPane = props.gitPane !== undefined;
+  // 中身を渡されていないタブは出さず、選べない
+  const rightTabs = RIGHT_TABS.filter(
+    tab =>
+      tab.value === "board" ||
+      (tab.value === "files" && hasFilePane) ||
+      (tab.value === "git" && hasGitPane)
+  );
+  const rightTab: RightTab = rightTabs.some(t => t.value === savedRightTab)
+    ? savedRightTab
+    : "board";
   const boardTabActive = rightTab === "board";
   // 「ファイル」の中身が実際に見えているか (非選択のセッションは Dashboard が hidden にする)
   const filePaneVisible =
@@ -339,6 +361,11 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   // 見せたことの無いセッションではマウントしない (開いてもいないファイルを読まない)
   const [fileEverShown, setFileEverShown] = useState(filePaneVisible);
   if (filePaneVisible && !fileEverShown) setFileEverShown(true);
+  // 「Git」も同じ扱い。見せたことの無いセッションでは git を呼ばず、1 度見せたら
+  // 読み込んだ一覧と選択を保つ
+  const gitPaneVisible = showWorkArea && rightTab === "git" && props.isActive;
+  const [gitEverShown, setGitEverShown] = useState(gitPaneVisible);
+  if (gitPaneVisible && !gitEverShown) setGitEverShown(true);
   // 図は、作業エリアを開いてから「図」のタブを 1 度見せるまでマウントしない
   // (隠れたまま iframe を読み込ませない)。見せたあとはタブを替えても hidden で残し、
   // 作業エリアを閉じたら外す (右ペインが図だけだった頃と同じ)
@@ -351,11 +378,19 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   // ピークを出している間は、図とコードを並べて読める幅 (900px) まで広げる。
   // 保存している幅は変えず、ピークを閉じれば元の幅に戻る
   const peekWidens = peek !== null && boardTabActive;
-  const renderedWorkWidth = peekWidens
-    ? Math.max(workWidth, peekWorkAreaFloor(containerWidth))
+  // 「Git」のタブの間は、グラフと件名が並ぶ幅 (760px) まで広げる。同じく保存しない
+  const gitWidens = rightTab === "git";
+  /** 今のタブで作業エリアに要る下限。広げる理由が無ければ null */
+  const workAreaFloor: ((total: number) => number) | null = peekWidens
+    ? peekWorkAreaFloor
+    : gitWidens
+      ? gitWorkAreaFloor
+      : null;
+  const renderedWorkWidth = workAreaFloor
+    ? Math.max(workWidth, workAreaFloor(containerWidth))
     : workWidth;
-  const peekWidensRef = useRef(peekWidens);
-  peekWidensRef.current = peekWidens;
+  const workAreaFloorRef = useRef(workAreaFloor);
+  workAreaFloorRef.current = workAreaFloor;
   // 左ペインのモード。選択は PC 全体で共有し、常時マウント済みの別セッション
   // および別ブラウザタブからの変更にも追随する。
   const [leftMode, setLeftMode] = useState<SplitViewLeftMode>(
@@ -574,13 +609,10 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       const rect = el.getBoundingClientRect();
       // 作業エリアの幅 = コンテナ右端からカーソルまでの距離
       const next = fitWorkAreaWidth(rect.width, rect.right - e.clientX);
-      // ピークの間は下限 (900px まで) より狭くできない。狭くしても描画は下限のままで、
-      // 見えない幅だけが保存されてしまう
-      setWorkWidth(
-        peekWidensRef.current
-          ? Math.max(next, peekWorkAreaFloor(rect.width))
-          : next
-      );
+      // ピークの間 (900px まで) と「Git」のタブの間 (760px まで) は下限より狭くできない。
+      // 狭くしても描画は下限のままで、見えない幅だけが保存されてしまう
+      const floor = workAreaFloorRef.current;
+      setWorkWidth(floor ? Math.max(next, floor(rect.width)) : next);
     };
     const onUp = () => {
       setIsDragging(false);
@@ -763,9 +795,9 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           </div>
         </div>
 
-        {/* リサイザ・作業エリア。閉じている間も、外せない中身 (1 度見せた「ファイル」と
-            ピーク) があればリサイザごと hidden で残す */}
-        {(showWorkArea || fileEverShown || peek !== null) && (
+        {/* リサイザ・作業エリア。閉じている間も、外せない中身 (1 度見せた「ファイル」・
+            「Git」とピーク) があればリサイザごと hidden で残す */}
+        {(showWorkArea || fileEverShown || gitEverShown || peek !== null) && (
           <>
             <button
               type="button"
@@ -787,7 +819,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                 !showWorkArea && "hidden"
               )}
             >
-              {/* タブ列: 図 / ファイル と、作業エリアを閉じる × */}
+              {/* タブ列: 図 / ファイル / Git と、作業エリアを閉じる × */}
               <div className="flex h-9 shrink-0 items-stretch border-border border-b bg-muted/30 pr-1.5 pl-2 text-[13px]">
                 <div
                   role="tablist"
@@ -890,6 +922,21 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                   )}
                 >
                   {props.filePane(filePaneVisible)}
+                </div>
+              )}
+
+              {/* Git。初めて見せるまでマウントしない */}
+              {props.gitPane && (gitEverShown || gitPaneVisible) && (
+                <div
+                  role="tabpanel"
+                  id={rightPanelDomId("git")}
+                  aria-labelledby={rightTabDomId("git")}
+                  className={cn(
+                    "min-h-0 flex-1 overflow-hidden",
+                    rightTab !== "git" && "hidden"
+                  )}
+                >
+                  {props.gitPane(gitPaneVisible)}
                 </div>
               )}
             </div>

@@ -16,7 +16,7 @@ export function sortRefs(refs: readonly GitRef[]): GitRef[] {
 }
 
 const BASE =
-  "inline-flex h-[18px] max-w-[160px] shrink-0 items-center gap-1 rounded-[4px] border px-1.5 text-[11px] leading-none";
+  "inline-flex h-[18px] min-w-0 max-w-[160px] shrink items-center gap-1 rounded-[4px] border px-1.5 text-[11px] leading-none";
 
 interface GitRefLabelProps {
   gitRef: GitRef;
