@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { undo } from "@codemirror/commands";
 import { language } from "@codemirror/language";
 import { EditorView } from "@codemirror/view";
 import { act } from "react";
@@ -92,6 +93,83 @@ describe("CodeEditor", () => {
     // 短くなったら選択を文書の中へ収める
     await t.render({ value: "x", loadSeq: 3 });
     expect(view.state.selection.main.anchor).toBe(1);
+  });
+
+  it("読み直すと undo 履歴を捨てる (古い編集を新しい内容へ継ぎ足さない)", async () => {
+    const t = await setup();
+    const view = t.view();
+    // 削除の取り消しは「消した文字の挿入」なので、履歴が残ると新しい内容へ混ざる
+    act(() =>
+      view.dispatch({
+        changes: { from: 0, to: 4 },
+        userEvent: "delete.backward",
+      })
+    );
+    act(() =>
+      view.dispatch({
+        changes: { from: 0, insert: "typed " },
+        userEvent: "input.type",
+      })
+    );
+    await t.render({ value: "rewritten on disk\n", loadSeq: 2 });
+    act(() => {
+      undo(view);
+      undo(view);
+    });
+    expect(view.state.doc.toString()).toBe("rewritten on disk\n");
+    expect(t.onChange).toHaveBeenCalledTimes(2);
+
+    // 読み直したあとの編集は、これまでどおり取り消せる
+    act(() =>
+      view.dispatch({
+        changes: { from: 0, insert: "again " },
+        userEvent: "input.type",
+      })
+    );
+    act(() => {
+      undo(view);
+    });
+    expect(view.state.doc.toString()).toBe("rewritten on disk\n");
+  });
+
+  it("読み直しても言語・読み取り専用・行ハイライトを保つ", async () => {
+    const t = await setup({
+      filePath: "src/data.json",
+      value: '{\n"a": 1\n}\n',
+      readOnly: true,
+      targetLine: 2,
+    });
+    const view = t.view();
+    await vi.waitFor(() => {
+      expect(view.state.facet(language)?.name).toBe("json");
+    });
+    await t.render({ value: '{\n"b": 2\n}\n', loadSeq: 2 });
+    expect(view.state.facet(language)?.name).toBe("json");
+    expect(view.state.readOnly).toBe(true);
+    expect(targetLines(view)).toEqual(['"b": 2']);
+    // 差し替えのあとも Compartment で切り替えられる
+    await t.render({ value: '{\n"b": 2\n}\n', loadSeq: 2, readOnly: false });
+    expect(view.state.readOnly).toBe(false);
+  });
+
+  it("Tab キーを奪わない (キーボードでエディタの外へ出られる)", async () => {
+    const t = await setup();
+    const event = new KeyboardEvent("keydown", {
+      key: "Tab",
+      keyCode: 9,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      t.view().contentDOM.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(false);
+    expect(t.view().state.doc.toString()).toBe("one\ntwo\nthree\n");
+  });
+
+  it("CR と CRLF は改行として持ち、LF で返す", async () => {
+    const t = await setup({ value: "a\r\nb\rc\n" });
+    expect(t.view().state.doc.toString()).toBe("a\nb\nc\n");
   });
 
   it("readOnly を切り替えられる", async () => {

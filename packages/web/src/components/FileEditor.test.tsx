@@ -292,9 +292,30 @@ describe("FileEditor", () => {
     const f = makeApi(opened({ content: "a\r\nb\r\n" }));
     const t = await setup(f.api);
     expect(editor(t.container)?.value).toBe("a\nb\n");
+    // 打ってから元へ戻すと、未保存の印が解ける
+    await type(t.container, "a\nb\nc\n");
+    expect(t.onDirtyChange).toHaveBeenLastCalledWith("t1", true);
+    await type(t.container, "a\nb\n");
+    expect(t.onDirtyChange).toHaveBeenLastCalledWith("t1", false);
+
     await type(t.container, "a\nb\nc\n");
     await click(t.container, "保存");
     expect(f.write.mock.calls[0][1]).toBe("a\r\nb\r\nc\r\n");
+  });
+
+  it("単独の CR も改行として比べ、元へ戻すと dirty が解ける。保存は LF", async () => {
+    // 最初の改行が CRLF でないので LF のファイルとして扱う
+    const f = makeApi(opened({ content: "a\rb\nc\r\n" }));
+    const t = await setup(f.api);
+    // エディタ (CodeMirror) は CR を改行にして返す
+    await type(t.container, "a\nb\nc\nd\n");
+    expect(t.onDirtyChange).toHaveBeenLastCalledWith("t1", true);
+    await type(t.container, "a\nb\nc\n");
+    expect(t.onDirtyChange).toHaveBeenLastCalledWith("t1", false);
+
+    await type(t.container, "a\nb\nc\nd\n");
+    await click(t.container, "保存");
+    expect(f.write.mock.calls[0][1]).toBe("a\nb\nc\nd\n");
   });
 
   it("未編集で更新が届くと黙って読み直す", async () => {
@@ -390,6 +411,136 @@ describe("FileEditor", () => {
     await flush();
     expect(t.container.textContent).not.toContain("ディスク上で変更されました");
     expect(editor(t.container)?.value).toBe("mine\n");
+  });
+
+  it("保存の応答を待つ間に打った文字は、応答のあとも未保存のまま残る", async () => {
+    const f = makeApi();
+    const t = await setup(f.api);
+    await type(t.container, "mine\n");
+    let finish: (r: FileWriteResponse) => void = () => {};
+    f.write.mockImplementationOnce(
+      () => new Promise<FileWriteResponse>(resolve => (finish = resolve))
+    );
+    await click(t.container, "保存");
+    await type(t.container, "mine\nmore\n");
+    await act(async () => finish({ ok: true, mtimeMs: 200 }));
+    await flush();
+    expect(f.write.mock.calls[0][1]).toBe("mine\n");
+    expect(editor(t.container)?.value).toBe("mine\nmore\n");
+    expect(t.onDirtyChange).toHaveBeenLastCalledWith("t1", true);
+    expect(button(t.container, "保存")?.disabled).toBe(false);
+
+    // 続きの保存は、進んだ mtime を添える
+    await click(t.container, "保存");
+    expect(f.write.mock.calls[1]).toEqual(["src/a.ts", "mine\nmore\n", 200]);
+    expect(t.onDirtyChange).toHaveBeenLastCalledWith("t1", false);
+  });
+
+  it("保存の応答を待つ間は「再読込」が効かない", async () => {
+    const f = makeApi();
+    const t = await setup(f.api);
+    await type(t.container, "mine\n");
+    f.setDisk(opened({ content: "theirs\n", mtimeMs: 300 }));
+    await f.notify();
+    let finish: (r: FileWriteResponse) => void = () => {};
+    f.write.mockImplementationOnce(
+      () => new Promise<FileWriteResponse>(resolve => (finish = resolve))
+    );
+    await click(t.container, "保存");
+    const opens = f.open.mock.calls.length;
+    const reloadButton = button(t.container, "再読込 (編集を捨てる)");
+    expect(reloadButton?.disabled).toBe(true);
+    await click(t.container, "再読込 (編集を捨てる)");
+    expect(f.open).toHaveBeenCalledTimes(opens);
+    expect(editor(t.container)?.value).toBe("mine\n");
+
+    await act(async () =>
+      finish({ ok: false, code: "conflict", error: "競合", mtimeMs: 300 })
+    );
+    await flush();
+    expect(button(t.container, "再読込 (編集を捨てる)")?.disabled).toBe(false);
+    expect(editor(t.container)?.value).toBe("mine\n");
+  });
+
+  it("保存より前に出した open が遅れて届いても、保存した内容を巻き戻さない", async () => {
+    const f = makeApi();
+    const t = await setup(f.api);
+    await type(t.container, "mine\n");
+    // file:updated を受けて open したが、応答が遅れている
+    let answer: (r: FileOpenResponse) => void = () => {};
+    f.open.mockImplementationOnce(
+      () => new Promise<FileOpenResponse>(resolve => (answer = resolve))
+    );
+    await f.notify();
+    f.setDisk(opened({ content: "mine\n", mtimeMs: 200 }));
+    await click(t.container, "保存");
+    const opens = f.open.mock.calls.length;
+    expect(t.onDirtyChange).toHaveBeenLastCalledWith("t1", false);
+
+    // 書き込み前の内容が、いまごろ届く
+    await act(async () => answer(opened()));
+    await flush();
+    expect(editor(t.container)?.value).toBe("mine\n");
+    expect(t.container.textContent).not.toContain("ディスク上で変更されました");
+    expect(t.onDirtyChange).toHaveBeenLastCalledWith("t1", false);
+    // 捨てた open の代わりに、保存のあとで確かめ直している
+    expect(opens).toBe(3);
+  });
+
+  it("保存の応答が無くても、書き込みが届いていれば保存済みにする", async () => {
+    const f = makeApi(opened({ content: "a\r\nb\r\n" }));
+    const t = await setup(f.api);
+    await type(t.container, "a\nmine\n");
+    f.write.mockImplementationOnce(async () => {
+      // サーバーは書いたが、ack が届かなかった
+      f.setDisk(opened({ content: "a\r\nmine\r\n", size: 11, mtimeMs: 250 }));
+      return {
+        ok: false,
+        code: "error",
+        error: "サーバーから応答がありません",
+      };
+    });
+    await click(t.container, "保存");
+    expect(t.container.querySelector('[role="alert"]')).toBeNull();
+    expect(t.onDirtyChange).toHaveBeenLastCalledWith("t1", false);
+    expect(t.onSaved).toHaveBeenCalledTimes(1);
+    expect(t.container.textContent).toContain("11 B");
+    expect(editor(t.container)?.value).toBe("a\nmine\n");
+
+    // 自分の書き込みの file:updated を競合にしない
+    await type(t.container, "a\nmine\nmore\n");
+    await f.notify();
+    expect(t.container.textContent).not.toContain("ディスク上で変更されました");
+    await click(t.container, "保存");
+    expect(f.write.mock.calls[1]).toEqual([
+      "src/a.ts",
+      "a\r\nmine\r\nmore\r\n",
+      250,
+    ]);
+  });
+
+  it("失敗した保存があとから届いたら、ディスク上の変更として扱わない", async () => {
+    const f = makeApi();
+    const t = await setup(f.api);
+    await type(t.container, "mine\n");
+    f.write.mockResolvedValueOnce({
+      ok: false,
+      code: "error",
+      error: "サーバーから応答がありません",
+    });
+    await click(t.container, "保存");
+    // 確かめた時点では、まだ書かれていない
+    expect(t.container.querySelector('[role="alert"]')).not.toBeNull();
+    expect(t.onDirtyChange).toHaveBeenLastCalledWith("t1", true);
+
+    await type(t.container, "mine\nmore\n");
+    f.setDisk(opened({ content: "mine\n", size: 5, mtimeMs: 250 }));
+    await f.notify();
+    expect(t.container.textContent).not.toContain("ディスク上で変更されました");
+    expect(t.container.querySelector('[role="alert"]')).toBeNull();
+    // そのあとに打った分は未保存のまま
+    expect(editor(t.container)?.value).toBe("mine\nmore\n");
+    expect(t.onDirtyChange).toHaveBeenLastCalledWith("t1", true);
   });
 
   it("editable: false は読み取り専用で、保存できない", async () => {
@@ -572,6 +723,30 @@ describe("FileEditor", () => {
     const t = await setup(f.api, { tab: tabOf({ filePath: "a.png" }) });
     expect(t.container.querySelector('[data-testid="image"]')).not.toBeNull();
     expect(editor(t.container)).toBeNull();
+  });
+
+  it("画像でないバイナリは、空のエディタではなく表示できない旨を出す", async () => {
+    const f = makeApi(
+      opened({
+        content: "",
+        mimeType: "application/octet-stream",
+        size: 2048,
+        editable: false,
+      })
+    );
+    const t = await setup(f.api, { tab: tabOf({ filePath: "bin/tool" }) });
+    expect(t.container.textContent).toContain("このファイルは表示できません");
+    expect(t.container.textContent).toContain("2.0 KB");
+    expect(editor(t.container)).toBeNull();
+  });
+
+  it("空のテキストファイルはエディタで開く", async () => {
+    const f = makeApi(opened({ content: "", size: 0 }));
+    const t = await setup(f.api);
+    expect(editor(t.container)?.value).toBe("");
+    expect(t.container.textContent).not.toContain(
+      "このファイルは表示できません"
+    );
   });
 
   it("html タブは HtmlViewerPane に任せ、file:open は呼ばない", async () => {

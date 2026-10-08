@@ -1,6 +1,13 @@
 import type { ClientToServerEvents, ServerToClientEvents } from "@ark/shared";
 import { PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+} from "react";
 import type { Socket } from "socket.io-client";
 import { createFileApi } from "@/lib/file-api";
 import type { FileTabsState } from "@/lib/file-tabs";
@@ -108,7 +115,38 @@ export function FilePane({
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [hasDirty]);
 
+  // タブとパネルを結ぶ id。FilePane はセッションごとに並んでマウントされるので、
+  // useId で分ける
+  const domId = useId();
+  const tabDomId = (index: number) => `${domId}-tab-${index}`;
+  const panelDomId = (index: number) => `${domId}-panel-${index}`;
+
+  /** ←/→ と Home/End で隣のタブへ移る (選択とフォーカスを一緒に動かす) */
+  const handleTabKeyDown = (
+    e: KeyboardEvent<HTMLButtonElement>,
+    index: number
+  ) => {
+    const count = state.tabs.length;
+    const nextIndex =
+      e.key === "ArrowRight"
+        ? (index + 1) % count
+        : e.key === "ArrowLeft"
+          ? (index - 1 + count) % count
+          : e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? count - 1
+              : null;
+    if (nextIndex === null) return;
+    e.preventDefault();
+    if (nextIndex === index) return;
+    onSelect(state.tabs[nextIndex].id);
+    document.getElementById(tabDomId(nextIndex))?.focus();
+  };
+
   const activeTab = state.tabs.find(t => t.id === state.activeId) ?? null;
+  // Tab キーで入れるタブは 1 つだけ。アクティブが無ければ先頭にする
+  const focusableTabId = activeTab?.id ?? state.tabs[0]?.id ?? null;
   // ツリーが指せるのは worktree 内の相対パスだけ (/tmp や html タブは対象外)
   const activeFilePath =
     activeTab && !activeTab.filePath.startsWith("/")
@@ -162,17 +200,16 @@ export function FilePane({
             aria-label="開いているファイル"
             className="flex min-w-0 flex-1 items-stretch overflow-x-auto"
           >
-            {state.tabs.map(tab => {
+            {state.tabs.map((tab, index) => {
               const isActive = tab.id === state.activeId;
               const name = tab.filePath.split("/").pop() || tab.filePath;
               const isDirty = dirtyIds.has(tab.id);
               return (
-                // 閉じるボタンを選択のボタンの中に入れないよう、兄弟として並べる
+                // role="tab" は選択のボタンそのものに付ける。閉じるボタンはタブの
+                // 中に入れず、見た目だけをまとめる包みの中に兄弟として並べる
                 <div
                   key={tab.id}
-                  role="tab"
-                  aria-selected={isActive}
-                  title={tab.filePath}
+                  role="presentation"
                   className={cn(
                     "flex shrink-0 items-center whitespace-nowrap border-border border-r text-xs",
                     isActive
@@ -182,18 +219,27 @@ export function FilePane({
                 >
                   <button
                     type="button"
+                    role="tab"
+                    id={tabDomId(index)}
+                    aria-selected={isActive}
+                    aria-controls={api ? panelDomId(index) : undefined}
+                    tabIndex={tab.id === focusableTabId ? 0 : -1}
+                    title={tab.filePath}
                     onClick={() => onSelect(tab.id)}
+                    onKeyDown={e => handleTabKeyDown(e, index)}
                     className="flex h-full items-center gap-1.5 pr-1 pl-3"
                   >
                     <span>{name}</span>
                     {isDirty && (
-                      <span
-                        role="img"
-                        aria-label="未保存"
-                        className="text-status-awaiting"
-                      >
-                        ●
-                      </span>
+                      <>
+                        <span
+                          aria-hidden="true"
+                          className="text-status-awaiting"
+                        >
+                          ●
+                        </span>
+                        <span className="sr-only">未保存</span>
+                      </>
                     )}
                   </button>
                   <button
@@ -220,12 +266,14 @@ export function FilePane({
             </div>
           ) : (
             // 全タブをマウントしたまま切り替える (未保存の編集を保つ)
-            state.tabs.map(tab => {
+            state.tabs.map((tab, index) => {
               const isActive = tab.id === state.activeId;
               return (
                 <div
                   key={tab.id}
                   role="tabpanel"
+                  id={panelDomId(index)}
+                  aria-labelledby={tabDomId(index)}
                   className={cn("h-full", !isActive && "hidden")}
                 >
                   <FileEditor

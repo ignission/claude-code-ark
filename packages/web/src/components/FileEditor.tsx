@@ -64,6 +64,23 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * 改行の扱い: エディタ (CodeMirror) は CRLF も単独の CR も 1 つの改行にして LF で返す。
+ * 未保存の判定に使う基準も同じ形に揃える (揃えないと、CR を含むファイルは
+ * 元へ戻しても未保存のままになる)。書き戻すときは読み取り時に決めた改行に揃える:
+ * 最初の改行が CRLF なら全部 CRLF、それ以外は全部 LF。単独の CR は残らない
+ */
+function toEditorText(content: string): string {
+  return content.replace(/\r\n?/g, "\n");
+}
+
+/** サーバーが内容を文字列で返す MIME (サーバーの isTextMimeType と同じ範囲) */
+function isTextMime(mimeType: string): boolean {
+  return mimeType.startsWith("text/") || mimeType === "application/json";
+}
+
+type OpenedFile = Extract<Awaited<ReturnType<FileApi["open"]>>, { ok: true }>;
+
 function TextFileEditor({
   api,
   tab,
@@ -110,8 +127,15 @@ function TextFileEditor({
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
   const loadSeqRef = useRef(0);
-  /** 保存中に届いた更新の印 */
+  /** 保存中に届いた更新の印。保存の応答のあとにディスクと突き合わせる */
   const pendingUpdateRef = useRef(false);
+  /** 応答を待っている open の数 */
+  const openInFlightRef = useRef(0);
+  /**
+   * 失敗に終わった保存で書こうとした内容 (ディスクへ書く形)。ack が届かなかった
+   * だけで、書き込みは済んでいる・あとから済むことがある
+   */
+  const failedWriteRef = useRef<string | null>(null);
   /** 手元に読めた内容があるか。無ければ、開き直した結果をそのまま採る */
   const loadedOkRef = useRef(false);
   /** open の要求番号。最新の応答だけを採る */
@@ -148,9 +172,10 @@ function TextFileEditor({
 
   /** 読み取った内容を手元の正にする。編集は捨てる */
   const applyLoaded = useCallback(
-    (res: Extract<Awaited<ReturnType<FileApi["open"]>>, { ok: true }>) => {
+    (res: OpenedFile) => {
       lineEndingRef.current = detectLineEnding(res.content);
-      const content = res.content.replace(/\r\n/g, "\n");
+      const content = toEditorText(res.content);
+      failedWriteRef.current = null;
       baseRef.current = content;
       valueRef.current = content;
       mtimeRef.current = res.mtimeMs;
@@ -171,6 +196,27 @@ function TextFileEditor({
     [markDirty]
   );
 
+  /**
+   * ディスクの内容が、失敗に終わった保存で書こうとしたものと同じだった。
+   * 保存できていたものとして扱う (そのあとに打った分は未保存のまま残す)
+   */
+  const adoptOwnWrite = useCallback(
+    (res: OpenedFile) => {
+      const saved = toEditorText(res.content);
+      failedWriteRef.current = null;
+      baseRef.current = saved;
+      mtimeRef.current = res.mtimeMs;
+      markDirty(valueRef.current !== saved);
+      setBanner(null);
+      setSaveError(null);
+      setLoaded(current =>
+        current.status === "ok" ? { ...current, size: res.size } : current
+      );
+      onSavedRef.current();
+    },
+    [markDirty]
+  );
+
   const failLoad = useCallback((error: string) => {
     loadedOkRef.current = false;
     setLoaded({ status: "error", error });
@@ -178,6 +224,8 @@ function TextFileEditor({
 
   /** 開き直して、手元を置き換える (再試行・「再読込」) */
   const reload = useCallback(async () => {
+    // 保存の応答を待つ間に読み直すと、応答が古い内容の上へ mtime と基準を被せる
+    if (savingRef.current) return;
     const request = ++requestRef.current;
     const res = await apiRef.current.open(filePath);
     if (!aliveRef.current || request !== requestRef.current) return;
@@ -198,12 +246,16 @@ function TextFileEditor({
     }
     pendingUpdateRef.current = false;
     const request = ++requestRef.current;
+    openInFlightRef.current += 1;
     const res = await apiRef.current.open(filePath);
-    if (!aliveRef.current || request !== requestRef.current) return;
+    openInFlightRef.current -= 1;
+    if (!aliveRef.current) return;
+    // この応答は保存より前のディスクかもしれない。保存のあとに確かめ直す
     if (savingRef.current) {
       pendingUpdateRef.current = true;
       return;
     }
+    if (request !== requestRef.current) return;
     if (!res.ok) {
       // 消されたなど。編集中なら手元を残し、保存のときに分かるようにする
       if (!dirtyRef.current) failLoad(res.error);
@@ -214,6 +266,11 @@ function TextFileEditor({
       applyLoaded(res);
       return;
     }
+    if (res.content === failedWriteRef.current) {
+      adoptOwnWrite(res);
+      return;
+    }
+    // 未保存かどうかは、open を待つ間に打たれた分も含めて、ここで読む
     const decision = decideOnDiskChange({
       loadedMtimeMs: mtimeRef.current,
       diskMtimeMs: res.mtimeMs,
@@ -225,7 +282,7 @@ function TextFileEditor({
     } else if (decision === "show-conflict") {
       setBanner(current => current ?? "disk-changed");
     }
-  }, [filePath, applyLoaded, failLoad]);
+  }, [filePath, applyLoaded, adoptOwnWrite, failLoad]);
 
   // 見えている間だけ購読する。サーバーの購読は 1 socket あたり 50 件までで、
   // 全セッションの全タブに張ると届かない。隠れている間の変更は、見えたときに
@@ -246,19 +303,31 @@ function TextFileEditor({
       if (!editable || savingRef.current) return;
       if (!dirtyRef.current && !force) return;
       const value = valueRef.current;
-      // エディタは LF で持つ。読み取り時の改行へ戻して書く
+      // エディタは LF で持つ。読み取り時に決めた改行へ揃えて書く (toEditorText を参照)
       const content =
         lineEndingRef.current === "\r\n" ? value.replace(/\n/g, "\r\n") : value;
       savingRef.current = true;
       setSaving(true);
       setSaveError(null);
+      // 書き込みより前に出した open は、遅れて届くと書き込み前の内容で手元を
+      // 巻き戻すか、偽の競合を出す。応答を捨て、保存のあとに確かめ直す
+      requestRef.current += 1;
+      if (openInFlightRef.current > 0) pendingUpdateRef.current = true;
       const res = force
         ? await apiRef.current.write(filePath, content, mtimeRef.current, true)
         : await apiRef.current.write(filePath, content, mtimeRef.current);
+      // ack が届かなかっただけで、書き込みは済んでいることがある。開き直して確かめる。
+      // そのあいだも保存中のままにして、ほかの open や保存と交ざらないようにする
+      let onDisk: Awaited<ReturnType<FileApi["open"]>> | null = null;
+      if (!res.ok && res.code !== "conflict") {
+        failedWriteRef.current = content;
+        onDisk = await apiRef.current.open(filePath);
+      }
       savingRef.current = false;
       if (!aliveRef.current) return;
       setSaving(false);
       if (res.ok) {
+        failedWriteRef.current = null;
         // 反響の file:updated を無視できるよう、先に mtime を進める
         mtimeRef.current = res.mtimeMs;
         baseRef.current = value;
@@ -272,12 +341,15 @@ function TextFileEditor({
         onSavedRef.current();
       } else if (res.code === "conflict") {
         setBanner("conflict");
+      } else if (onDisk?.ok && onDisk.content === content) {
+        adoptOwnWrite(onDisk);
       } else {
+        // まだ書かれていない。あとから届いたら handleDiskUpdate が拾う
         setSaveError(res.error);
       }
       if (pendingUpdateRef.current) void handleDiskUpdate();
     },
-    [editable, filePath, markDirty, handleDiskUpdate]
+    [editable, filePath, markDirty, adoptOwnWrite, handleDiskUpdate]
   );
 
   const handleChange = useCallback(
@@ -323,7 +395,10 @@ function TextFileEditor({
   const isImage = loaded.mimeType.startsWith("image/");
   const isMarkdown = loaded.mimeType === "text/markdown";
   const showPreview = isMarkdown && markdownMode === "preview";
-  const showEditor = !isImage && (!isMarkdown || editorMounted);
+  // 画像でないバイナリは、サーバーが内容を空で返す。空のエディタを出さない
+  const isBinary =
+    !isImage && loaded.content === "" && !isTextMime(loaded.mimeType);
+  const showEditor = !isImage && !isBinary && (!isMarkdown || editorMounted);
   const fileName = filePath.split("/").pop() ?? filePath;
 
   return (
@@ -387,16 +462,18 @@ function TextFileEditor({
           </span>
           <button
             type="button"
+            disabled={saving}
             onClick={() => void reload()}
-            className="rounded border border-border bg-background px-2 py-0.5 hover:bg-muted"
+            className="rounded border border-border bg-background px-2 py-0.5 hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
           >
             再読込 (編集を捨てる)
           </button>
           {banner === "conflict" && (
             <button
               type="button"
+              disabled={saving}
               onClick={() => void save(true)}
-              className="rounded border border-border bg-background px-2 py-0.5 hover:bg-muted"
+              className="rounded border border-border bg-background px-2 py-0.5 hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
             >
               上書き保存
             </button>
@@ -425,6 +502,18 @@ function TextFileEditor({
             mimeType={loaded.mimeType}
             filePath={filePath}
           />
+        )}
+        {isBinary && (
+          <div className="flex h-full items-center justify-center p-4 text-center">
+            <div>
+              <p className="font-medium text-sm">
+                このファイルは表示できません
+              </p>
+              <p className="mt-1 text-muted-foreground text-xs">
+                {loaded.mimeType} ・ {formatSize(loaded.size)}
+              </p>
+            </div>
+          </div>
         )}
         {showPreview && (
           <div className="h-full overflow-auto">

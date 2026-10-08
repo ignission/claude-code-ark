@@ -1,4 +1,3 @@
-import { indentWithTab } from "@codemirror/commands";
 import {
   defaultHighlightStyle,
   HighlightStyle,
@@ -7,14 +6,13 @@ import {
 } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import {
-  Annotation,
   Compartment,
   EditorState,
+  type Extension,
   type Range,
   StateEffect,
   StateField,
   type Text,
-  Transaction,
 } from "@codemirror/state";
 import {
   Decoration,
@@ -140,9 +138,6 @@ const arkHighlightStyle = HighlightStyle.define(
   })
 );
 
-/** 読み直しによる文書の差し替え。onChange には流さない */
-const externalLoad = Annotation.define<boolean>();
-
 interface LineRange {
   from: number;
   to: number;
@@ -193,7 +188,8 @@ function revealEffect(doc: Text, range: LineRange | null) {
 
 /**
  * CodeMirror 6 の薄い包み。EditorView は 1 度だけ作り、以後は transaction と
- * Compartment で追従する (作り直すとスクロール位置・選択・undo 履歴が消える)
+ * Compartment で追従する (作り直すとスクロール位置と選択が消える)。
+ * 読み直しのときだけ state を作り直し、undo 履歴を捨てる
  */
 export default function CodeEditor({
   filePath,
@@ -218,43 +214,51 @@ export default function CodeEditor({
   onSaveRef.current = onSave;
   const rangeRef = useRef<LineRange | null>(null);
   rangeRef.current = toLineRange(targetLine, targetEndLine);
-  const initial = useRef({ value, readOnly });
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
+  /** 読み込み済みの言語定義。state を作り直すときに引き継ぐ */
+  const languageRef = useRef<Extension>([]);
+  const initialValue = useRef(value);
+
+  /** 今の props と読み込み済みの言語で state を組む。Compartment は使い回す */
+  const createState = useRef(
+    (doc: string, selection?: { anchor: number; head: number }) =>
+      EditorState.create({
+        doc,
+        selection,
+        extensions: [
+          // basicSetup より前に置き、Mod-s を必ずここで受ける
+          keymap.of([
+            {
+              key: "Mod-s",
+              preventDefault: true,
+              run: () => {
+                onSaveRef.current();
+                return true;
+              },
+            },
+          ]),
+          // Tab はインデントに割り当てない (basicSetup も入れていない)。
+          // 割り当てると、キーボードでエディタの外へ出られなくなる
+          basicSetup,
+          arkTheme,
+          syntaxHighlighting(arkHighlightStyle),
+          targetLinesField.init(s => buildTargetLines(s.doc, rangeRef.current)),
+          readOnlyComp.current.of(EditorState.readOnly.of(readOnlyRef.current)),
+          languageComp.current.of(languageRef.current),
+          EditorView.updateListener.of(update => {
+            if (update.docChanged) {
+              onChangeRef.current(update.state.doc.toString());
+            }
+          }),
+        ],
+      })
+  ).current;
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const state = EditorState.create({
-      doc: initial.current.value,
-      extensions: [
-        // basicSetup より前に置き、Mod-s を必ずここで受ける
-        keymap.of([
-          {
-            key: "Mod-s",
-            preventDefault: true,
-            run: () => {
-              onSaveRef.current();
-              return true;
-            },
-          },
-        ]),
-        basicSetup,
-        keymap.of([indentWithTab]),
-        arkTheme,
-        syntaxHighlighting(arkHighlightStyle),
-        targetLinesField.init(s => buildTargetLines(s.doc, rangeRef.current)),
-        readOnlyComp.current.of(
-          EditorState.readOnly.of(initial.current.readOnly)
-        ),
-        languageComp.current.of([]),
-        EditorView.updateListener.of(update => {
-          if (!update.docChanged) return;
-          if (update.transactions.some(tr => tr.annotation(externalLoad))) {
-            return;
-          }
-          onChangeRef.current(update.state.doc.toString());
-        }),
-      ],
-    });
+    const state = createState(initialValue.current);
     const view = new EditorView({
       state,
       parent: host,
@@ -265,9 +269,11 @@ export default function CodeEditor({
       view.destroy();
       viewRef.current = null;
     };
-  }, []);
+  }, [createState]);
 
-  // 読み直し: スクロール位置と選択を保って文書全体を差し替える
+  // 読み直し: state ごと作り直す。transaction で文書を差し替えると undo 履歴が
+  // 残り、古い編集の取り消しが新しい内容へ継ぎ足される。setState は transaction を
+  // 流さないので onChange は呼ばれない。スクロール位置と選択は引き継ぐ
   const appliedLoadSeq = useRef(loadSeq);
   useEffect(() => {
     const view = viewRef.current;
@@ -276,19 +282,22 @@ export default function CodeEditor({
     const { anchor, head } = view.state.selection.main;
     const scrollTop = view.scrollDOM.scrollTop;
     const scrollLeft = view.scrollDOM.scrollLeft;
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: value },
-      selection: {
-        anchor: Math.min(anchor, value.length),
-        head: Math.min(head, value.length),
-      },
-      // 文書が入れ替わると行の位置が変わるので、ハイライトを張り直す
-      effects: setTargetLines.of(rangeRef.current),
-      annotations: [externalLoad.of(true), Transaction.addToHistory.of(false)],
-    });
-    view.scrollDOM.scrollTop = scrollTop;
-    view.scrollDOM.scrollLeft = scrollLeft;
-  }, [loadSeq, value]);
+    const restoreScroll = () => {
+      view.scrollDOM.scrollTop = scrollTop;
+      view.scrollDOM.scrollLeft = scrollLeft;
+    };
+    // CodeMirror は CR と CRLF を 1 文字の改行にするので、揃えたあとの長さで収める
+    const length = value.replace(/\r\n?/g, "\n").length;
+    view.setState(
+      createState(value, {
+        anchor: Math.min(anchor, length),
+        head: Math.min(head, length),
+      })
+    );
+    restoreScroll();
+    // 行の高さを測り直したあとにも戻す (測る前は見積もりの高さで切り詰められうる)
+    view.requestMeasure({ read: () => null, write: restoreScroll });
+  }, [loadSeq, value, createState]);
 
   useEffect(() => {
     viewRef.current?.dispatch({
@@ -303,8 +312,9 @@ export default function CodeEditor({
     let cancelled = false;
     const name = filePath.split("/").pop() ?? filePath;
     const description = LanguageDescription.matchFilename(languages, name);
-    const apply = (extension: Parameters<Compartment["reconfigure"]>[0]) => {
+    const apply = (extension: Extension) => {
       if (cancelled) return;
+      languageRef.current = extension;
       viewRef.current?.dispatch({
         effects: languageComp.current.reconfigure(extension),
       });

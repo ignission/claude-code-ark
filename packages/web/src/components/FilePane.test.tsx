@@ -189,12 +189,96 @@ describe("FilePane", () => {
     expect(t.container.querySelector("button button")).toBeNull();
   });
 
+  it("タブは選択のボタン自身で、パネルと結び、閉じるボタンを含まない", async () => {
+    const t = await setup();
+    const [a, b] = tabs(t.container);
+    expect([a.tagName, b.tagName]).toEqual(["BUTTON", "BUTTON"]);
+    expect([a, b].map(el => el.getAttribute("aria-selected"))).toEqual([
+      "true",
+      "false",
+    ]);
+    // Tab キーで入れるのはアクティブなタブだけ
+    expect([a.tabIndex, b.tabIndex]).toEqual([0, -1]);
+
+    const panels = [
+      ...t.container.querySelectorAll<HTMLElement>('[role="tabpanel"]'),
+    ];
+    expect(panels).toHaveLength(2);
+    expect(a.id).not.toBe(b.id);
+    expect([a, b].map(el => el.getAttribute("aria-controls"))).toEqual(
+      panels.map(p => p.id)
+    );
+    expect(panels.map(p => p.getAttribute("aria-labelledby"))).toEqual([
+      a.id,
+      b.id,
+    ]);
+
+    // 閉じるボタンはタブの外。tablist の直下は見た目だけの包み
+    expect(a.querySelector("button")).toBeNull();
+    expect(a.parentElement?.getAttribute("role")).toBe("presentation");
+    expect(a.parentElement?.parentElement?.getAttribute("role")).toBe(
+      "tablist"
+    );
+    expect(byLabel(t.container, "a.ts を閉じる")?.parentElement).toBe(
+      a.parentElement
+    );
+  });
+
+  it("socket が無くパネルが無い間は、aria-controls を付けない", async () => {
+    const t = await setup({ socket: null });
+    expect(tabs(t.container)[0].hasAttribute("aria-controls")).toBe(false);
+  });
+
+  it("←/→ と Home/End で隣のタブへ移り、端では回り込む", async () => {
+    const t = await setup();
+    const press = (el: HTMLElement, key: string) => {
+      const event = new KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+      });
+      act(() => {
+        el.dispatchEvent(event);
+      });
+      return event;
+    };
+    const [a, b] = tabs(t.container);
+    a.focus();
+    expect(press(a, "ArrowRight").defaultPrevented).toBe(true);
+    expect(t.onSelect).toHaveBeenLastCalledWith("b");
+    expect(document.activeElement).toBe(b);
+
+    press(b, "ArrowRight");
+    expect(t.onSelect).toHaveBeenLastCalledWith("a");
+    expect(document.activeElement).toBe(a);
+
+    press(a, "ArrowLeft");
+    expect(t.onSelect).toHaveBeenLastCalledWith("b");
+    press(b, "Home");
+    expect(t.onSelect).toHaveBeenLastCalledWith("a");
+    press(a, "End");
+    expect(t.onSelect).toHaveBeenLastCalledWith("b");
+
+    // ほかのキーは奪わない
+    t.onSelect.mockClear();
+    expect(press(a, "Tab").defaultPrevented).toBe(false);
+    expect(t.onSelect).not.toHaveBeenCalled();
+  });
+
   it("dirty のタブに ● を出し、閉じるときに確認する", async () => {
     const t = await setup();
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     await click(t.container, "dirty:a");
     expect(tabs(t.container)[0].textContent).toContain("●");
     expect(tabs(t.container)[1].textContent).not.toContain("●");
+    // ● は読み上げず、代わりの文言を持つ
+    const mark = [...tabs(t.container)[0].querySelectorAll("span")].find(
+      el => el.textContent === "●"
+    );
+    expect(mark?.getAttribute("aria-hidden")).toBe("true");
+    expect(tabs(t.container)[0].querySelector(".sr-only")?.textContent).toBe(
+      "未保存"
+    );
 
     await click(t.container, "a.ts を閉じる");
     expect(confirm).toHaveBeenCalledWith(
