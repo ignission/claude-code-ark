@@ -7,6 +7,7 @@ import { AboutDialog } from "@/components/AboutDialog";
 import { BoardSuggestSettingsDialog } from "@/components/BoardSuggestSettingsDialog";
 import { BrowserPane } from "@/components/BrowserPane";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
+import { FilePane } from "@/components/FilePane";
 import {
   MobileLayout,
   type MobileTab,
@@ -44,6 +45,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useBridgeSnapshot } from "@/hooks/useBridgeSnapshot";
+import { useFileTabs } from "@/hooks/useFileTabs";
 import { useIsMobile } from "@/hooks/useMobile";
 import { useSessionNotifications } from "@/hooks/useSessionNotifications";
 import { useSettings } from "@/hooks/useSettings";
@@ -325,6 +327,15 @@ export default function Dashboard() {
     [isRemote, isMobile, handleSelectBrowser, navigateBrowser]
   );
 
+  // PC の中ペイン (ファイル) のタブ。端末のタブ列 (useViewerTabs) とは別に持つ
+  const {
+    getFileTabs,
+    openFile: openFileInPane,
+    closeFile: closeFileInPane,
+    selectFile: selectFileInPane,
+    getOpenSeq: getFileOpenSeq,
+  } = useFileTabs(sessions);
+
   // PC / モバイル共通の単一インスタンス。MobileLayout で再度呼ぶとリンクタップの
   // ハンドラが二重登録され、URL オープンが 2 回走るため、ここだけで管理する。
   const {
@@ -340,7 +351,9 @@ export default function Dashboard() {
     readFile,
     fileContent,
     handleOpenUrl,
-    true
+    true,
+    // PC はリンクで開くファイルを中ペインへ送る。モバイルは従来の閲覧タブのまま
+    isMobile ? undefined : openFileInPane
   );
 
   // diagram:open を受けて図タブを開く。worktreePath はサーバーから送られない
@@ -1006,6 +1019,27 @@ export default function Dashboard() {
                         resolveDiagramComment={resolveDiagramComment}
                         deleteDiagramComment={deleteDiagramComment}
                         sendDiagramComment={sendDiagramComment}
+                        fileOpenSeq={getFileOpenSeq(session.id)}
+                        // 中ペインは 1 度見せたら閉じてもマウントされたまま。
+                        // 見えているか (visible) を渡して、監視を 1 枚に絞らせる
+                        filePane={visible => (
+                          <FilePane
+                            socket={socket}
+                            sessionId={session.id}
+                            worktreePath={session.worktreePath}
+                            state={getFileTabs(session.id)}
+                            onOpenFile={filePath =>
+                              openFileInPane(session.id, filePath)
+                            }
+                            onSelect={tabId =>
+                              selectFileInPane(session.id, tabId)
+                            }
+                            onClose={tabId =>
+                              closeFileInPane(session.id, tabId)
+                            }
+                            isActive={visible}
+                          />
+                        )}
                         {...paneProps}
                       />
                     </div>

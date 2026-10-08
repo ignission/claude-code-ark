@@ -777,7 +777,13 @@ describe("PC上部バーの1タップ操作", () => {
 });
 
 describe("PC 3 ペイン (ファイル)", () => {
-  const filePane = <div data-testid="file-pane" />;
+  const filePane = (visible: boolean) => (
+    <div data-testid="file-pane" data-visible={String(visible)} />
+  );
+  const filePaneEl = (scope: ParentNode) =>
+    scope.querySelector<HTMLElement>('[data-testid="file-pane"]');
+  /** 閉じた中ペインは外さず、hidden の付いた祖先の下に残す */
+  const isHidden = (el: Element | null) => el?.closest(".hidden") != null;
 
   beforeEach(() => {
     vi.stubGlobal(
@@ -796,7 +802,7 @@ describe("PC 3 ペイン (ファイル)", () => {
     ).toBeNull();
   });
 
-  it("トグルで filePane が出入りし、localStorage に残る", () => {
+  it("トグルで filePane が出て、閉じても外さず hidden で残す。localStorage に残る", () => {
     const container = mount(
       paneSection(makeSession("fp-toggle"), true, { filePane })
     );
@@ -817,9 +823,76 @@ describe("PC 3 ペイン (ファイル)", () => {
         ?.getAttribute("aria-pressed")
     ).toBe("true");
 
+    expect(isHidden(filePaneEl(container))).toBe(false);
+    expect(filePaneEl(container)?.dataset.visible).toBe("true");
+    const opened = filePaneEl(container);
+
+    // 閉じても同じ要素が残る (未保存の編集を持つエディタを外さない)。リサイザも隠す
     clickButton(header, "ファイル");
-    expect(container.querySelector('[data-testid="file-pane"]')).toBeNull();
+    expect(filePaneEl(container)).toBe(opened);
+    expect(isHidden(filePaneEl(container))).toBe(true);
+    expect(filePaneEl(container)?.dataset.visible).toBe("false");
+    const resizers = container.querySelectorAll(
+      'button[aria-label="左右の幅を調整"]'
+    );
+    expect(resizers.length).toBe(1);
+    expect(resizers[0].className).toContain("hidden");
     expect(localStorage.getItem("ark-split-show-files")).toBe("0");
+
+    clickButton(header, "ファイル");
+    expect(filePaneEl(container)).toBe(opened);
+    expect(isHidden(filePaneEl(container))).toBe(false);
+    expect(resizers[0].className).not.toContain("hidden");
+  });
+
+  it("選択中でないセッションでは、開いていても見せるまでマウントしない", () => {
+    localStorage.setItem("ark-split-show-files", "1");
+    const session = makeSession("fp-inactive");
+    const container = mount(paneSection(session, false, { filePane }));
+    const root = mountedRoots.at(-1)?.root;
+    expect(filePaneEl(container)).toBeNull();
+
+    act(() => root?.render(paneSection(session, true, { filePane })));
+    expect(filePaneEl(container)?.dataset.visible).toBe("true");
+
+    // 選択が外れてもマウントは保ち、見えていないことだけ伝える
+    act(() => root?.render(paneSection(session, false, { filePane })));
+    expect(filePaneEl(container)?.dataset.visible).toBe("false");
+  });
+
+  it("閉じた中ペインは幅の計算に入れない", () => {
+    localStorage.setItem("ark-split-show-files", "1");
+    localStorage.setItem("ark-split-show-board", "1");
+    localStorage.setItem("ark-split-board-width", "400");
+    const container = mount(
+      paneSection(makeSession("fp-width"), true, { filePane })
+    );
+    clickButton(container.querySelector("header") as ParentNode, "ファイル");
+    const body = container.querySelector("header + div") as HTMLElement;
+    vi.spyOn(body, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      right: 1000,
+      width: 1000,
+      top: 0,
+      bottom: 0,
+      height: 0,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    const resizers = container.querySelectorAll(
+      'button[aria-label="左右の幅を調整"]'
+    );
+    act(() =>
+      resizers[1].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }))
+    );
+    // 図を 600px まで広げる。隠れた中ペイン (既定 520px) を数えると、
+    // 図に回せる幅が足りず最小幅 (320px) に丸められる
+    act(() =>
+      window.dispatchEvent(new MouseEvent("mousemove", { clientX: 400 }))
+    );
+    act(() => window.dispatchEvent(new MouseEvent("mouseup")));
+    expect(localStorage.getItem("ark-split-board-width")).toBe("600");
   });
 
   it("保存済みの開閉状態で開く。図と独立している", () => {
@@ -856,7 +929,8 @@ describe("PC 3 ペイン (ファイル)", () => {
     act(() =>
       root?.render(paneSection(session, true, { filePane, fileOpenSeq: 4 }))
     );
-    expect(container.querySelector('[data-testid="file-pane"]')).not.toBeNull();
+    expect(isHidden(filePaneEl(container))).toBe(false);
+    expect(filePaneEl(container)?.dataset.visible).toBe("true");
     expect(localStorage.getItem("ark-split-show-files")).toBe("1");
 
     // 閉じたあと、同じ値の再描画では開き直さない
@@ -864,7 +938,14 @@ describe("PC 3 ペイン (ファイル)", () => {
     act(() =>
       root?.render(paneSection(session, true, { filePane, fileOpenSeq: 4 }))
     );
-    expect(container.querySelector('[data-testid="file-pane"]')).toBeNull();
+    expect(isHidden(filePaneEl(container))).toBe(true);
+
+    // 閉じて残している間に増えたら、同じ要素のまま開き直す
+    act(() =>
+      root?.render(paneSection(session, true, { filePane, fileOpenSeq: 5 }))
+    );
+    expect(isHidden(filePaneEl(container))).toBe(false);
+    expect(filePaneEl(container)?.dataset.visible).toBe("true");
   });
 
   it("DOM の順は 左 → ファイル → 図。2 つ目のリサイザは図の手前", () => {

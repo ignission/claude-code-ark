@@ -97,6 +97,7 @@ async function setup(props: Partial<Parameters<typeof FilePane>[0]> = {}) {
           onOpenFile={onOpenFile}
           onSelect={onSelect}
           onClose={onClose}
+          isActive
           {...props}
           {...extra}
         />
@@ -160,6 +161,22 @@ describe("FilePane", () => {
     expect(isHidden(a)).toBe(false);
     expect(b.dataset.visible).toBe("false");
     expect(isHidden(b)).toBe(true);
+  });
+
+  it("ペインが見えていない間は、どのタブも見えていないと伝える (マウントは保つ)", async () => {
+    const t = await setup({ isActive: false });
+    expect(editors(t.container).map(el => el.dataset.visible)).toEqual([
+      "false",
+      "false",
+    ]);
+    // タブの選択 (hidden の付け方) は変えない
+    expect(editors(t.container).map(isHidden)).toEqual([false, true]);
+
+    await t.render({ isActive: true });
+    expect(editors(t.container).map(el => el.dataset.visible)).toEqual([
+      "true",
+      "false",
+    ]);
   });
 
   it("タブを押すと onSelect、× で onClose を呼ぶ", async () => {

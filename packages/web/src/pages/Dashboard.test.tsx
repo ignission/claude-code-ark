@@ -15,6 +15,9 @@ const testDoubles = vi.hoisted(() => ({
   bridgeSnapshotEnabled: vi.fn(),
   mobileLayout: vi.fn(),
   isMobile: false,
+  viewerTabsArgs: vi.fn(),
+  openFile: vi.fn(),
+  filePane: vi.fn(),
   socketState: {} as Record<string, unknown>,
   screenPaneMount: vi.fn(),
   screenPaneUnmount: vi.fn(),
@@ -53,16 +56,37 @@ vi.mock("@/hooks/useSessionNotifications", () => ({
 }));
 
 vi.mock("@/hooks/useViewerTabs", () => ({
-  useViewerTabs: () => ({
-    getTabsForSession: (sessionId: string) => [
-      { type: "terminal", id: `terminal-${sessionId}` },
-    ],
-    getActiveTabForSession: () => 0,
-    handleTabSelect: vi.fn(),
-    handleTabClose: vi.fn(),
-    openDiagramTab: vi.fn(),
-    clearDiagramTab: vi.fn(),
+  useViewerTabs: (...args: unknown[]) => {
+    testDoubles.viewerTabsArgs(args);
+    return {
+      getTabsForSession: (sessionId: string) => [
+        { type: "terminal", id: `terminal-${sessionId}` },
+      ],
+      getActiveTabForSession: () => 0,
+      handleTabSelect: vi.fn(),
+      handleTabClose: vi.fn(),
+      openDiagramTab: vi.fn(),
+      clearDiagramTab: vi.fn(),
+    };
+  },
+}));
+
+vi.mock("@/hooks/useFileTabs", () => ({
+  useFileTabs: () => ({
+    getFileTabs: () => ({ tabs: [], activeId: null }),
+    openFile: testDoubles.openFile,
+    closeFile: vi.fn(),
+    selectFile: vi.fn(),
+    getOpenSeq: () => 0,
   }),
+}));
+
+// FilePane の中身は FilePane.test.tsx で見る。ここでは渡した props だけを見る
+vi.mock("@/components/FilePane", () => ({
+  FilePane: (props: Record<string, unknown>) => {
+    testDoubles.filePane(props);
+    return null;
+  },
 }));
 
 vi.mock("@/components/SplitChatPane", () => ({
@@ -302,6 +326,9 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   testDoubles.isMobile = false;
   testDoubles.mobileLayout.mockClear();
+  testDoubles.viewerTabsArgs.mockClear();
+  testDoubles.openFile.mockClear();
+  testDoubles.filePane.mockClear();
   localStorage.clear();
   localStorage.setItem("ark-split-left-mode", "chat");
   testDoubles.splitChatPane.mockClear();
@@ -340,6 +367,62 @@ describe("Dashboard の会話ビュー配線", () => {
       awaitingText: "Dashboard から届く AWAITING テキスト",
       liveTail: "Dashboard から届く画面末尾",
     });
+  });
+});
+
+describe("Dashboardのファイルペイン配線", () => {
+  /** useViewerTabs の第 7 引数 (onOpenFile) */
+  const onOpenFileArg = () =>
+    testDoubles.viewerTabsArgs.mock.calls.at(-1)?.[0][6];
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("PC はリンクで開くファイルを中ペインへ送り、開いた中ペインへセッションの FilePane を渡す", () => {
+    // 中ペインを開くと SplitViewPane が幅を監視する (jsdom には無い)
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe = vi.fn();
+        disconnect = vi.fn();
+      }
+    );
+    localStorage.setItem("ark-split-show-files", "1");
+    mount(<Dashboard />);
+
+    expect(onOpenFileArg()).toBe(testDoubles.openFile);
+    const pane = latestProps(testDoubles.filePane);
+    expect(pane).toMatchObject({
+      sessionId: "dashboard-session",
+      state: { tabs: [], activeId: null },
+      isActive: true,
+    });
+    expect(pane.worktreePath).toBeTypeOf("string");
+
+    // ツリーから開くときは、そのセッションのタブへ足す
+    (pane.onOpenFile as (filePath: string) => void)("src/a.ts");
+    expect(testDoubles.openFile).toHaveBeenCalledWith(
+      "dashboard-session",
+      "src/a.ts"
+    );
+  });
+
+  it("中ペインを開いていなければ FilePane をマウントしない", () => {
+    mount(<Dashboard />);
+    expect(testDoubles.filePane).not.toHaveBeenCalled();
+  });
+
+  it("モバイルは onOpenFile を渡さず、従来の閲覧タブの経路のままにする", () => {
+    testDoubles.isMobile = true;
+    mount(<Dashboard />);
+
+    expect(testDoubles.viewerTabsArgs).toHaveBeenCalled();
+    expect(onOpenFileArg()).toBeUndefined();
+    expect(testDoubles.filePane).not.toHaveBeenCalled();
+    expect(latestProps(testDoubles.mobileLayout).getTabsForSession).toBeTypeOf(
+      "function"
+    );
   });
 });
 

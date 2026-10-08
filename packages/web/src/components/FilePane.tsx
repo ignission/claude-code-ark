@@ -18,6 +18,12 @@ interface FilePaneProps {
   onOpenFile: (filePath: string) => void;
   onSelect: (tabId: string) => void;
   onClose: (tabId: string) => void;
+  /**
+   * このペインが実際に見えているか (中ペインが開いていて、セッションが選択中)。
+   * 閉じている間も、非選択のセッションでもマウントされたままなので、
+   * ファイルの監視は見えているタブ 1 枚だけに絞る
+   */
+  isActive: boolean;
 }
 
 const TREE_COLLAPSED_KEY = "ark-file-tree-collapsed";
@@ -42,6 +48,7 @@ export function FilePane({
   onOpenFile,
   onSelect,
   onClose,
+  isActive: paneActive,
 }: FilePaneProps) {
   // FileTree と FileEditor は api の同一性で読み直すので、作り直しを最小にする
   const api = useMemo(
@@ -87,7 +94,8 @@ export function FilePane({
     onClose(tabId);
   };
 
-  // 未保存があるままページを離れるときに確認する
+  // 未保存があるままページを離れるときに確認する。FilePane は 1 度見せたら
+  // 閉じても非選択でもマウントされたままなので、全セッションの未保存を拾える
   const hasDirty = dirtyIds.size > 0;
   useEffect(() => {
     if (!hasDirty) return;
@@ -223,7 +231,7 @@ export function FilePane({
                   <FileEditor
                     api={api}
                     tab={tab}
-                    isVisible={isActive}
+                    isVisible={paneActive && isActive}
                     onDirtyChange={handleDirtyChange}
                     onSaved={handleSaved}
                   />

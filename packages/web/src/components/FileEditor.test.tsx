@@ -402,18 +402,85 @@ describe("FileEditor", () => {
     expect(f.write).not.toHaveBeenCalled();
   });
 
-  it("非表示の間に届いた更新は、表示されたときに読み直す", async () => {
+  it("非表示のタブは読まず、購読もしない。表示されたときに初めて開く", async () => {
     const f = makeApi();
     const t = await setup(f.api, { isVisible: false });
+    expect(f.open).not.toHaveBeenCalled();
+    expect(f.subscribe).not.toHaveBeenCalled();
+    expect(editor(t.container)).toBeNull();
+
+    await t.render({ isVisible: true });
     expect(f.open).toHaveBeenCalledTimes(1);
-    f.setDisk(opened({ content: "later\n", mtimeMs: 300 }));
-    await f.notify();
-    expect(f.open).toHaveBeenCalledTimes(1);
+    expect(f.subscribe).toHaveBeenCalledTimes(1);
     expect(editor(t.container)?.value).toBe("hello\n");
+    // 初回の読み込みはツリーを読み直させない
+    expect(t.onSaved).not.toHaveBeenCalled();
+  });
+
+  it("非表示になると購読を解除し、表示されると張り直す", async () => {
+    const f = makeApi();
+    const t = await setup(f.api);
+    expect(f.subscribe).toHaveBeenCalledTimes(1);
+
+    await t.render({ isVisible: false });
+    expect(f.unsubscribe).toHaveBeenCalledTimes(1);
+    // 内容は保つ
+    expect(editor(t.container)?.value).toBe("hello\n");
+
+    await t.render({ isVisible: true });
+    expect(f.subscribe).toHaveBeenCalledTimes(2);
+  });
+
+  it("非表示の間にディスクが変わっていたら、表示されたときに黙って読み直す", async () => {
+    const f = makeApi();
+    const t = await setup(f.api);
+    await t.render({ isVisible: false });
+    f.setDisk(opened({ content: "later\n", size: 6, mtimeMs: 300 }));
+    expect(f.open).toHaveBeenCalledTimes(1);
 
     await t.render({ isVisible: true });
     expect(f.open).toHaveBeenCalledTimes(2);
     expect(editor(t.container)?.value).toBe("later\n");
+    expect(t.container.textContent).not.toContain("ディスク上で変更されました");
+    expect(t.onSaved).toHaveBeenCalledTimes(1);
+  });
+
+  it("非表示の間もディスクが変わっていなければ、表示されても何も変えない", async () => {
+    const f = makeApi();
+    const t = await setup(f.api);
+    await type(t.container, "mine\n");
+    await t.render({ isVisible: false });
+
+    await t.render({ isVisible: true });
+    expect(f.open).toHaveBeenCalledTimes(2);
+    expect(editor(t.container)?.value).toBe("mine\n");
+    expect(t.container.textContent).not.toContain("ディスク上で変更されました");
+    expect(t.onSaved).not.toHaveBeenCalled();
+  });
+
+  it("未保存のまま非表示の間にディスクが変わっていたら、表示されたときにバナーを出し、編集は保つ", async () => {
+    const f = makeApi();
+    const t = await setup(f.api);
+    await type(t.container, "mine\n");
+    await t.render({ isVisible: false });
+    expect(editor(t.container)?.value).toBe("mine\n");
+    f.setDisk(opened({ content: "theirs\n", mtimeMs: 300 }));
+
+    await t.render({ isVisible: true });
+    expect(t.container.textContent).toContain("ディスク上で変更されました");
+    expect(editor(t.container)?.value).toBe("mine\n");
+    expect(t.onDirtyChange).toHaveBeenLastCalledWith("t1", true);
+  });
+
+  it("開けなかったタブは、表示し直すと読み直す", async () => {
+    const f = makeApi({ ok: false, error: "ファイルが見つかりません" });
+    const t = await setup(f.api);
+    expect(t.container.textContent).toContain("ファイルを開けません");
+
+    await t.render({ isVisible: false });
+    f.setDisk(opened());
+    await t.render({ isVisible: true });
+    expect(editor(t.container)?.value).toBe("hello\n");
   });
 
   it("開けないときは理由を出し、「再試行」で読み直す", async () => {
@@ -449,6 +516,49 @@ describe("FileEditor", () => {
     ).toBe("# 直した\n");
     await click(t.container, "編集");
     expect(editor(t.container)?.value).toBe("# 直した\n");
+  });
+
+  it("行指定つきの Markdown は編集で開き、行をエディタへ渡す", async () => {
+    const f = makeApi(
+      opened({ content: "# 見出し\n", mimeType: "text/markdown" })
+    );
+    const t = await setup(f.api, {
+      tab: tabOf({ filePath: "README.md", targetLine: 10 }),
+    });
+    expect(t.container.querySelector('[data-testid="markdown"]')).toBeNull();
+    expect(editor(t.container)?.dataset.targetLine).toBe("10");
+    expect(button(t.container, "編集")?.getAttribute("aria-pressed")).toBe(
+      "true"
+    );
+  });
+
+  it("プレビュー中の Markdown も、行指定で開き直されるたびに編集へ戻す", async () => {
+    const f = makeApi(
+      opened({ content: "# 見出し\n", mimeType: "text/markdown" })
+    );
+    const t = await setup(f.api, {
+      tab: tabOf({ filePath: "README.md", targetLine: 10 }),
+    });
+    await click(t.container, "プレビュー");
+    expect(
+      t.container.querySelector('[data-testid="markdown"]')
+    ).not.toBeNull();
+
+    await t.render({
+      tab: tabOf({ filePath: "README.md", targetLine: 24, revealSeq: 1 }),
+    });
+    expect(t.container.querySelector('[data-testid="markdown"]')).toBeNull();
+    expect(editor(t.container)?.dataset.targetLine).toBe("24");
+    expect(editor(t.container)?.closest(".hidden")).toBeNull();
+
+    // 行指定の無い開き直し (ツリーから選ぶなど) では、表示を変えない
+    await click(t.container, "プレビュー");
+    await t.render({
+      tab: tabOf({ filePath: "README.md", revealSeq: 2 }),
+    });
+    expect(
+      t.container.querySelector('[data-testid="markdown"]')
+    ).not.toBeNull();
   });
 
   it("画像は ImageRenderer で出す", async () => {

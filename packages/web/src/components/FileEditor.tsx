@@ -20,7 +20,10 @@ const CodeEditor = lazy(() => import("./CodeEditor"));
 interface FileEditorProps {
   api: FileApi;
   tab: FileTab;
-  /** 非表示の間は読み直しを遅らせる */
+  /**
+   * 実際に見えているか (ペインが見えていて、このタブがアクティブ)。
+   * 見えている間だけ読み込み・購読し、見えるたびにディスクと突き合わせる
+   */
   isVisible: boolean;
   onDirtyChange: (tabId: string, dirty: boolean) => void;
   /**
@@ -74,19 +77,30 @@ function TextFileEditor({
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState<Banner>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // 行指定つきで開かれた Markdown は編集で出す (プレビューでは行を示せない)
+  const hasTargetLine = tab.targetLine != null;
   const [markdownMode, setMarkdownMode] = useState<"preview" | "edit">(
-    "preview"
+    hasTargetLine ? "edit" : "preview"
   );
   // エディタは 1 度出したら外さない (外すと未保存の編集と undo 履歴が消える)
-  const [editorMounted, setEditorMounted] = useState(false);
+  const [editorMounted, setEditorMounted] = useState(hasTargetLine);
+  // 行指定で開き直されたら (revealSeq が増えたら) 編集へ戻す。effect ではなく
+  // 描画中に切り替える: effect だと 1 コミットだけ display:none のまま
+  // エディタが行へスクロールしようとして効かない
+  const [seenRevealSeq, setSeenRevealSeq] = useState(tab.revealSeq);
+  if (tab.revealSeq !== seenRevealSeq) {
+    setSeenRevealSeq(tab.revealSeq);
+    if (tab.revealSeq > seenRevealSeq && hasTargetLine) {
+      setEditorMounted(true);
+      setMarkdownMode("edit");
+    }
+  }
 
   // 非同期の処理から最新を読むための ref
   const apiRef = useRef(api);
   apiRef.current = api;
   const onSavedRef = useRef(onSaved);
   onSavedRef.current = onSaved;
-  const visibleRef = useRef(isVisible);
-  visibleRef.current = isVisible;
   /** ディスクと一致している内容 (LF) */
   const baseRef = useRef("");
   /** エディタの今の内容 (LF) */
@@ -96,8 +110,10 @@ function TextFileEditor({
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
   const loadSeqRef = useRef(0);
-  /** 非表示・保存中に届いた更新の印 */
+  /** 保存中に届いた更新の印 */
   const pendingUpdateRef = useRef(false);
+  /** 手元に読めた内容があるか。無ければ、開き直した結果をそのまま採る */
+  const loadedOkRef = useRef(false);
   /** open の要求番号。最新の応答だけを採る */
   const requestRef = useRef(0);
   const aliveRef = useRef(true);
@@ -139,6 +155,7 @@ function TextFileEditor({
       valueRef.current = content;
       mtimeRef.current = res.mtimeMs;
       loadSeqRef.current += 1;
+      loadedOkRef.current = true;
       setLoaded({
         status: "ok",
         content,
@@ -154,20 +171,28 @@ function TextFileEditor({
     [markDirty]
   );
 
-  /** 開き直して、手元を置き換える (初回・再試行・「再読込」) */
+  const failLoad = useCallback((error: string) => {
+    loadedOkRef.current = false;
+    setLoaded({ status: "error", error });
+  }, []);
+
+  /** 開き直して、手元を置き換える (再試行・「再読込」) */
   const reload = useCallback(async () => {
     const request = ++requestRef.current;
     const res = await apiRef.current.open(filePath);
     if (!aliveRef.current || request !== requestRef.current) return;
     if (res.ok) applyLoaded(res);
-    else setLoaded({ status: "error", error: res.error });
-  }, [filePath, applyLoaded]);
+    else failLoad(res.error);
+  }, [filePath, applyLoaded, failLoad]);
 
-  /** file:updated を受けたとき。手元の状態と突き合わせて決める */
+  /**
+   * ディスクと突き合わせる。file:updated を受けたときと、タブが見えたときに呼ぶ。
+   * 開き直した結果を手元の状態と比べて、読み直す・バナーを出す・何もしないを決める
+   */
   const handleDiskUpdate = useCallback(async () => {
-    // 非表示の間は読み直さない。保存の応答を待つ間は mtime が古く、
-    // 自分の書き込みを競合と見誤るので、応答のあとに回す
-    if (!visibleRef.current || savingRef.current) {
+    // 保存の応答を待つ間は mtime が古く、自分の書き込みを競合と見誤るので、
+    // 応答のあとに回す
+    if (savingRef.current) {
       pendingUpdateRef.current = true;
       return;
     }
@@ -181,7 +206,12 @@ function TextFileEditor({
     }
     if (!res.ok) {
       // 消されたなど。編集中なら手元を残し、保存のときに分かるようにする
-      if (!dirtyRef.current) setLoaded({ status: "error", error: res.error });
+      if (!dirtyRef.current) failLoad(res.error);
+      return;
+    }
+    // 初回と、開けなかったあと。比べる相手が無いのでそのまま採る
+    if (!loadedOkRef.current) {
+      applyLoaded(res);
       return;
     }
     const decision = decideOnDiskChange({
@@ -195,25 +225,19 @@ function TextFileEditor({
     } else if (decision === "show-conflict") {
       setBanner(current => current ?? "disk-changed");
     }
-  }, [filePath, applyLoaded]);
+  }, [filePath, applyLoaded, failLoad]);
 
-  // 初回の読み込み。api が作り直されても、編集中の内容は捨てない
-  // biome-ignore lint/correctness/useExhaustiveDependencies: api の作り直しで読み直す
+  // 見えている間だけ購読する。サーバーの購読は 1 socket あたり 50 件までで、
+  // 全セッションの全タブに張ると届かない。隠れている間の変更は、見えたときに
+  // 開き直して拾う (初回の読み込みもここ。隠れたままのタブは読まない)。
+  // 未保存の編集は捨てない: 突き合わせの結果がバナーになるだけ
   useEffect(() => {
-    if (dirtyRef.current) return;
-    void reload();
-  }, [api, reload]);
-
-  // 購読は表示・非表示に関わらず張る (読み直しだけを遅らせる)
-  useEffect(
-    () => api.subscribe(filePath, () => void handleDiskUpdate()),
-    [api, filePath, handleDiskUpdate]
-  );
-
-  // 表示されたとき、溜めていた更新を処理する
-  useEffect(() => {
-    if (isVisible && pendingUpdateRef.current) void handleDiskUpdate();
-  }, [isVisible, handleDiskUpdate]);
+    if (!isVisible) return;
+    // 先に購読してから開く (開いている間の変更を取りこぼさない)
+    const unsubscribe = api.subscribe(filePath, () => void handleDiskUpdate());
+    void handleDiskUpdate();
+    return unsubscribe;
+  }, [api, filePath, isVisible, handleDiskUpdate]);
 
   const editable = loaded.status === "ok" && loaded.editable;
 

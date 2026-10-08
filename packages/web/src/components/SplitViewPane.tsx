@@ -11,7 +11,8 @@
  * 中ペイン (ファイル) と右ペイン (図) は、それぞれ上部バーのトグルで独立に開閉できる。
  * 並びは 左 | ファイル | 図 で、リサイザは各ペインの手前に 1 本ずつ。
  * - 中ペインの中身は呼び出し側が `filePane` で渡す (SplitViewPane は中身を知らない)。
- *   `fileOpenSeq` が増えたら自動で開く
+ *   `fileOpenSeq` が増えたら自動で開く。1 度見せたら、閉じても外さずに hidden で残す
+ *   (外すと未保存の編集が消える)。見えているかは `filePane(visible)` で伝える
  * - 右ペインは図が未選択でも開閉できる。中身は DiagramPane（B-0a の図ペイン）
  * - 幅の制約は lib/split-pane-widths.ts (左 360 / ファイル 360 / 図 320 の最小幅。
  *   足りないときはファイル、図の順に縮める)
@@ -197,8 +198,12 @@ interface SplitViewPaneProps {
   /** このセッションの通知が有効か (未設定は有効) */
   notificationsEnabled?: boolean;
   onNotificationsEnabledChange?: (enabled: boolean) => void;
-  /** 中ペインの中身。Dashboard が FilePane を渡す (SplitViewPane は中身を知らない) */
-  filePane?: ReactNode;
+  /**
+   * 中ペインの中身。Dashboard が FilePane を渡す (SplitViewPane は中身を知らない)。
+   * visible は「中ペインが開いていて、このセッションが選択中」。閉じている間も
+   * マウントしたままなので、中身はこれを見て購読などを絞る
+   */
+  filePane?: (visible: boolean) => ReactNode;
   /** live なファイルオープンのたびに増える数。増えたら中ペインを開く */
   fileOpenSeq?: number;
 }
@@ -241,8 +246,15 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   // ResizeObserver から最新の幅を読むため（購読を張り直さずに済ませる）
   const widthsRef = useRef({ file: fileWidth, board: boardWidth });
   widthsRef.current = { file: fileWidth, board: boardWidth };
-  const hasFilePane = props.filePane !== undefined && props.filePane !== null;
+  const hasFilePane = props.filePane !== undefined;
+  // 幅の計算では、hidden で残しているだけの中ペインを閉じているものとして扱う
   const filesVisible = showFiles && hasFilePane;
+  // 中ペインが実際に見えているか (非選択のセッションは Dashboard が hidden にする)
+  const filePaneVisible = filesVisible && props.isActive;
+  // 1 度見せた中ペインは、閉じても外さない (未保存の編集と undo 履歴を保つ)。
+  // 見せたことの無いセッションではマウントしない (開いてもいないファイルを読まない)
+  const [fileEverShown, setFileEverShown] = useState(filePaneVisible);
+  if (filePaneVisible && !fileEverShown) setFileEverShown(true);
   // 左ペインのモード。選択は PC 全体で共有し、常時マウント済みの別セッション
   // および別ブラウザタブからの変更にも追随する。
   const [leftMode, setLeftMode] = useState<SplitViewLeftMode>(
@@ -415,13 +427,26 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   }, [diagramTab]);
 
   // fileOpenSeq が前回より増えたら（live なファイルオープン）中ペインを開く。
-  // 初回マウントの値では開かない（保存された開閉状態に従う）
+  // 初回マウントの値では開かない（保存された開閉状態に従う）。
+  // effect ではなく描画中に開く: 中ペインは hidden で残っているので、effect で
+  // 開くと 1 コミットだけ display:none のままエディタが行へスクロールしようとし、
+  // 行指定のスクロールが効かない
+  const [seenFileOpenSeq, setSeenFileOpenSeq] = useState(props.fileOpenSeq);
+  if (props.fileOpenSeq !== seenFileOpenSeq) {
+    setSeenFileOpenSeq(props.fileOpenSeq);
+    if (
+      props.fileOpenSeq !== undefined &&
+      seenFileOpenSeq !== undefined &&
+      props.fileOpenSeq > seenFileOpenSeq
+    ) {
+      setShowFiles(true);
+    }
+  }
   const prevFileOpenSeqRef = useRef(props.fileOpenSeq);
   useEffect(() => {
     const seq = props.fileOpenSeq;
     const prev = prevFileOpenSeqRef.current;
     if (seq !== undefined && prev !== undefined && seq > prev) {
-      setShowFiles(true);
       try {
         localStorage.setItem(STORAGE_KEY_SHOW_FILES, "1");
       } catch {
@@ -683,26 +708,30 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           </div>
         </div>
 
-        {/* リサイザ・中ペイン (ファイル) */}
-        {filesVisible && (
+        {/* リサイザ・中ペイン (ファイル)。閉じている間はリサイザごと hidden で残す */}
+        {props.filePane && (fileEverShown || filePaneVisible) && (
           <>
             <button
               type="button"
               aria-label="左右の幅を調整"
               onMouseDown={handleMouseDownFile}
-              className={`relative w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/50 transition-colors ${
-                isDragging === "file" ? "bg-primary/70" : ""
-              }`}
+              className={cn(
+                "relative w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/50 transition-colors",
+                isDragging === "file" && "bg-primary/70",
+                !filesVisible && "hidden"
+              )}
             >
               <span className="absolute inset-y-0 -left-1 -right-1" />
             </button>
             <div
               style={{ width: fileWidth, flexShrink: 0 }}
-              className={`h-full overflow-hidden ${
-                isDragging ? "pointer-events-none" : ""
-              }`}
+              className={cn(
+                "h-full overflow-hidden",
+                isDragging && "pointer-events-none",
+                !filesVisible && "hidden"
+              )}
             >
-              {props.filePane}
+              {props.filePane(filePaneVisible)}
             </div>
           </>
         )}
