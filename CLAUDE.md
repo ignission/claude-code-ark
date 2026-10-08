@@ -239,13 +239,27 @@ ref・差分・未コミットの変更を見せる。手本は Fork のメイ�
   更新しようとして `index.lock` を取り、同じ worktree で動いている Claude の git 操作と
   取り合う
 - **追従は指紋のポーリングで、見えている間だけ**。`GitPane` は 3 秒ごとに
-  `git:fingerprint`（HEAD + ref + status のハッシュ）を問い合わせ、変わったときだけ
+  `git:fingerprint` を問い合わせ、変わったときだけ
   refs・status・コミットを読み直す（読み込み済みの件数ぶん。上限 3,000 件）。
+  指紋はHEAD・いまのブランチ（`symbolic-ref`）・ref・statusに、indexのblob
+  （`diff --cached --raw` / `diff --raw`）と、作業ツリー側が変わっているパス・未追跡の
+  パスの `lstat`（mtimeと大きさ。2,000パスまで）を混ぜたハッシュ。statusの出力だけだと、
+  変更済みのファイルの再編集・ステージし直し・同じコミットを指す別ブランチへの切り替えで
+  変わらず、画面が古いままになる。
   `SplitViewPane` は全セッションぶんが常時マウントされ、`GitPane` も 1 度見せたら
   外さないので、隠れている間も問い合わせると全セッションぶんの git が回り続ける。
   見えた瞬間には 1 回問い合わせる
 - 読み込みには通し番号を振り、あとから始めた読み込みだけが state を書ける
-  （遅れて届いた古い応答で新しい一覧を上書きしない）。指紋の問い合わせは重ねない
+  （遅れて届いた古い応答で新しい一覧を上書きしない）。指紋の問い合わせは重ねない。
+  読み直しに失敗したら覚えている指紋を捨て、次の問い合わせで必ず読み直す
+- **続きの読み込みが失敗したら、自動では頼み直さない**。末尾が見えたままだと失敗のたびに
+  頼み直し続けるので、一覧の末尾に「再試行」の行を出して止める
+- **競合中（unmerged）のパスは未ステージに1回だけ `U` で出す**。indexにステージ0が
+  無いので、差分はours（ステージ2。無ければbaseのステージ1）と作業ツリーの差にする
+- **作業ツリーのシンボリックリンクはたどらず、行き先の文字列を内容にする**
+  （indexのblobと同じ形。境界は親ディレクトリの実体で確かめる）
+- **詳細のrefの札は、読み直した一覧から渡す**。コミットの応答はshaごとに持ち続けるので、
+  応答のrefは新しいコミットが積まれると古くなる。一覧に無いコミットだけ応答のrefを出す
 - **マージコミットの差分は第 1 親との差**（`<sha>^1`。ルートコミットは空との差）。
   combined diff は「そのブランチを取り込んで何が入ったか」を示さないため
 - **グラフの割り当ては「第 1 親は必ず自分の列で受ける」**（`lib/git-graph.ts`）。
@@ -617,7 +631,7 @@ claude-code-ark/
 | `git:status`      | `{ sessionId }, callback`               | 未コミットの変更（コールバック。`{ ok: true, staged, unstaged, untracked }`）|
 | `git:commit`      | `{ sessionId, sha }, callback`          | コミットの詳細と変更されたファイル（コールバック。`{ ok: true, commit, files }`）|
 | `git:file-diff`   | `{ sessionId, target, path, oldPath? }, callback` | 1 ファイルの変更前後の内容（`target` は `commit` / `staged` / `unstaged` / `untracked`。コールバック。`{ ok: true, oldContent, newContent, binary, tooLarge }`）|
-| `git:fingerprint` | `{ sessionId }, callback`               | HEAD + ref + status のハッシュ（コールバック。変わったら読み直す）|
+| `git:fingerprint` | `{ sessionId }, callback`               | HEAD・ブランチ・ref・status・indexのblob・変更中のファイルのmtimeと大きさのハッシュ（コールバック。変わったら読み直す）|
 | `profile:list`    | -                                       | プロファイル一覧取得（Linux限定） |
 | `profile:create`  | `{ name, configDir }`                   | プロファイル作成 |
 | `profile:update`  | `{ id, name?, configDir? }`             | プロファイル更新 |

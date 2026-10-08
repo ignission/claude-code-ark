@@ -18,7 +18,7 @@ PC の作業エリアのタブを「図 / ファイル / Git」にする。Claud
 | 範囲 (この PR) | 見る機能だけ: グラフ、ref の札、サイドバー (ブランチ / リモート / タグ / スタッシュ)、コミットの詳細、ファイルごとの差分、未コミットの変更 (ステージ済み / 未ステージ) |
 | 範囲外 (次の PR) | ステージ、コミット、破棄、チェックアウト、ブランチ作成、fetch / pull / push、スタッシュ操作 |
 | 差分の表示 | `@codemirror/merge` の `unifiedMergeView` (読み取り専用)。ファイルタブのエディタと同じ見た目と配色 |
-| 追従 | Git タブが見えている間だけ 3 秒ごとに指紋 (HEAD + ref + status) を問い合わせ、変わったら読み直す |
+| 追従 | Gitタブが見えている間だけ3秒ごとに指紋 (HEAD・いまのブランチ・ref・status・indexのblob・変更中のファイルのmtimeと大きさ) を問い合わせ、変わったら読み直す |
 | 対象 | セッションの worktree。`sessionId` からサーバー側で引く (クライアントのパスは信用しない) |
 
 操作を後に回すのは、破棄やチェックアウトが取り消せず確認の設計が要るため。見た目と閲覧を先に実機で固める。
@@ -90,8 +90,16 @@ PC の作業エリアのタブを「図 / ファイル / Git」にする。Claud
 - `sha` は `/^[0-9a-f]{7,40}$/` だけ通す。`path` / `oldPath` は `..` を含まない相対パスだけ通し、
   必ず `--` の後ろに置く (オプションとして解釈させない)
 - 内容は 2MB を超えたら `tooLarge`、NUL を含めば `binary` として本文を返さない
-- `git:fingerprint`: `git rev-parse HEAD`、`git for-each-ref` の出力、`git status --porcelain=v1 -z` を
-  つないだもののハッシュ
+- `git:fingerprint`: 次をつないだもののハッシュ
+  - `git rev-parse HEAD`、`git symbolic-ref -q HEAD` (detachedでは空)、`git for-each-ref` の出力
+  - `git status --porcelain=v1 -z --untracked-files=all`
+  - `git diff --cached --raw -z --no-abbrev` と `git diff --raw -z --no-abbrev` (indexのblobのid。
+    ステージし直しを拾う)
+  - statusが「作業ツリー側が変わっている」または「未追跡」と報告したパスの `lstat` のmtimeと大きさ
+    (2,000パスまで。消えたファイルは決まった印)。変更済みのファイルの再編集はstatusの出力を変えない
+- 競合中 (unmerged) のパスは `git:status` の `unstaged` に1回だけ `U` で出す。`staged` / `unstaged` の
+  差分はours (ステージ2。無ければステージ1、どちらも無ければ空) と作業ツリーの差
+- 作業ツリーのシンボリックリンクはたどらず、行き先の文字列を内容にする
 - 失敗は `{ ok: false, error }`。git リポジトリでない worktree も同じ形で返す
 
 型は `packages/shared/src/types.ts` に置く (下記)。

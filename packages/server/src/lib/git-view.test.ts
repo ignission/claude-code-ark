@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -41,6 +41,21 @@ function commit(msg: string, files: Record<string, string | Buffer> = {}) {
   git("add", "-A");
   git("commit", "-q", "-m", msg);
   return git("rev-parse", "HEAD");
+}
+
+/** 失敗してよいgit (競合するマージ等)。出力は捨てる */
+function gitQuiet(...args: string[]) {
+  spawnSync("git", args, { cwd: dir, stdio: "pipe" });
+}
+
+/** mainとsideが同じ行を別々に書き換え、マージが競合した状態にする */
+function makeConflict() {
+  commit("base", { "c.txt": "base\n", "keep.txt": "k\n" });
+  git("checkout", "-q", "-b", "side");
+  commit("theirs", { "c.txt": "theirs\n" });
+  git("checkout", "-q", "main");
+  commit("ours", { "c.txt": "ours\n" });
+  gitQuiet("merge", "side");
 }
 
 beforeEach(() => {
@@ -285,6 +300,113 @@ describe("getStatus", () => {
   });
 });
 
+describe("競合 (unmerged)", () => {
+  it("getStatusは競合したパスを未ステージに1回だけUで出す", async () => {
+    makeConflict();
+    const s = await getStatus(dir);
+    expect(s.staged).toEqual([]);
+    expect(s.unstaged).toEqual([
+      { path: "c.txt", status: "U", added: null, removed: null },
+    ]);
+    expect(s.untracked).toEqual([]);
+  });
+
+  it("getFileDiffはours (ステージ2) と作業ツリーの差を返す", async () => {
+    makeConflict();
+    for (const kind of ["staged", "unstaged"] as const) {
+      const d = await getFileDiff(dir, { kind }, "c.txt");
+      expect(d.oldContent).toBe("ours\n");
+      expect(d.newContent).toContain("<<<<<<<");
+      expect(d.newContent).toContain("theirs\n");
+      expect(d.binary).toBe(false);
+    }
+  });
+
+  it("oursが無い競合 (こちらで削除) はbase (ステージ1) をoldにする", async () => {
+    commit("base", { "c.txt": "base\n" });
+    git("checkout", "-q", "-b", "side");
+    commit("theirs", { "c.txt": "theirs\n" });
+    git("checkout", "-q", "main");
+    git("rm", "-q", "c.txt");
+    git("commit", "-q", "-m", "ours deletes");
+    gitQuiet("merge", "side");
+
+    const s = await getStatus(dir);
+    expect(s.staged).toEqual([]);
+    expect(s.unstaged.map(f => [f.path, f.status])).toEqual([["c.txt", "U"]]);
+    expect(await getFileDiff(dir, { kind: "unstaged" }, "c.txt")).toMatchObject(
+      { oldContent: "base\n", newContent: "theirs\n" }
+    );
+  });
+
+  it("両方で追加した競合 (baseが無い) でも投げない", async () => {
+    commit("base", { "keep.txt": "k\n" });
+    git("checkout", "-q", "-b", "side");
+    commit("theirs", { "n.txt": "theirs\n" });
+    git("checkout", "-q", "main");
+    commit("ours", { "n.txt": "ours\n" });
+    gitQuiet("merge", "side");
+    expect(await getFileDiff(dir, { kind: "staged" }, "n.txt")).toMatchObject({
+      oldContent: "ours\n",
+    });
+  });
+});
+
+describe("シンボリックリンク", () => {
+  const relink = (rel: string, target: string) => {
+    fs.rmSync(path.join(dir, rel), { force: true });
+    fs.symlinkSync(target, path.join(dir, rel));
+  };
+
+  it("追跡中のリンクの行き先を変えると、差分は古い行き先と新しい行き先", async () => {
+    write("one.txt", "ONE CONTENT\n");
+    write("two.txt", "TWO CONTENT\n");
+    fs.symlinkSync("one.txt", path.join(dir, "link"));
+    commit("c1");
+    relink("link", "two.txt");
+
+    expect(await getFileDiff(dir, { kind: "unstaged" }, "link")).toMatchObject({
+      oldContent: "one.txt",
+      newContent: "two.txt",
+      binary: false,
+      tooLarge: false,
+    });
+  });
+
+  it("未追跡の切れたリンクは、行き先の文字列をnewにする", async () => {
+    commit("c1", { "a.txt": "a\n" });
+    fs.symlinkSync("no/such/target", path.join(dir, "dangling"));
+    expect(
+      await getFileDiff(dir, { kind: "untracked" }, "dangling")
+    ).toMatchObject({ oldContent: "", newContent: "no/such/target" });
+  });
+
+  it("worktreeの外を指すリンクも、たどらずに行き先だけを返す", async () => {
+    commit("c1", { "a.txt": "a\n" });
+    fs.symlinkSync("/etc/hostname", path.join(dir, "out"));
+    expect(await getFileDiff(dir, { kind: "untracked" }, "out")).toMatchObject({
+      oldContent: "",
+      newContent: "/etc/hostname",
+    });
+  });
+
+  it("worktreeの外へ出るディレクトリのリンク越しには読まない", async () => {
+    commit("c1", { "a.txt": "a\n" });
+    const outside = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "ark-gv-out-"))
+    );
+    try {
+      fs.writeFileSync(path.join(outside, "secret.txt"), "secret\n");
+      fs.symlinkSync(outside, path.join(dir, "esc"));
+      await expect(
+        getFileDiff(dir, { kind: "untracked" }, "esc/secret.txt")
+      ).rejects.toThrow();
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("getCommit", () => {
   it("ルートコミット", async () => {
     const c1 = commit("root subject\n\nbody line", {
@@ -483,6 +605,58 @@ describe("getFingerprint", () => {
     expect(f3).not.toBe(f2);
     git("tag", "t");
     expect(await getFingerprint(dir)).not.toBe(f3);
+  });
+
+  it("既に変更済みのファイルをもう一度編集すると変わる", async () => {
+    commit("c1", { "a.txt": "a\n" });
+    write("a.txt", "edited\n");
+    const f1 = await getFingerprint(dir);
+    expect(await getFingerprint(dir)).toBe(f1);
+    // 長さを変える (mtimeの粒度に頼らない)
+    write("a.txt", "edited once more\n");
+    expect(await getFingerprint(dir)).not.toBe(f1);
+  });
+
+  it("未追跡のファイルを編集すると変わる。未追跡のディレクトリに足しても変わる", async () => {
+    commit("c1", { "a.txt": "a\n" });
+    write("new/u.txt", "u\n");
+    const f1 = await getFingerprint(dir);
+    write("new/u.txt", "u longer\n");
+    const f2 = await getFingerprint(dir);
+    expect(f2).not.toBe(f1);
+    write("new/v.txt", "v\n");
+    expect(await getFingerprint(dir)).not.toBe(f2);
+  });
+
+  it("別の内容をステージし直すと変わる", async () => {
+    commit("c1", { "a.txt": "a\n" });
+    write("a.txt", "staged one\n");
+    git("add", "a.txt");
+    const f1 = await getFingerprint(dir);
+    expect(await getFingerprint(dir)).toBe(f1);
+    write("a.txt", "staged two\n");
+    git("add", "a.txt");
+    expect(await getFingerprint(dir)).not.toBe(f1);
+  });
+
+  it("同じコミットを指す別のブランチへ切り替えると変わる", async () => {
+    commit("c1", { "a.txt": "a\n" });
+    git("branch", "other");
+    const f1 = await getFingerprint(dir);
+    git("checkout", "-q", "other");
+    const f2 = await getFingerprint(dir);
+    expect(f2).not.toBe(f1);
+    // detachedにしても変わる
+    git("checkout", "-q", "--detach");
+    expect(await getFingerprint(dir)).not.toBe(f2);
+  });
+
+  it("作業ツリーから消したファイルがあっても返り、安定している", async () => {
+    commit("c1", { "a.txt": "a\n", "b.txt": "b\n" });
+    fs.rmSync(path.join(dir, "a.txt"));
+    const f1 = await getFingerprint(dir);
+    expect(f1).toMatch(/^[0-9a-f]{64}$/);
+    expect(await getFingerprint(dir)).toBe(f1);
   });
 
   it("unborn でも返る", async () => {

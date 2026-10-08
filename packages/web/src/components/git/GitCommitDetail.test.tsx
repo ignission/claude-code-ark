@@ -363,6 +363,48 @@ describe("GitCommitDetail", () => {
     expect(onSelectCommit).toHaveBeenCalledWith("2222222bbbbbbb");
   });
 
+  it("refは渡されたいまの値を出し、変わってもコミットを取り直さない", async () => {
+    const { container, commit, rerender } = setup({
+      refs: [ref("head", "main"), ref("tag", "v1")],
+    });
+    await flush();
+    click(tabByLabel(container, "コミット"));
+    const labels = () =>
+      [...container.querySelectorAll<HTMLElement>("[data-ref-kind]")].map(
+        el => `${el.dataset.refKind}:${el.textContent}`
+      );
+    expect(labels()).toEqual(["head:main", "tag:v1"]);
+
+    // 新しいコミットが積まれてHEADでなくなった (応答のrefはhead:mainのまま)
+    rerender({ refs: [ref("tag", "v1")] });
+    await flush();
+    expect(labels()).toEqual(["tag:v1"]);
+
+    rerender({ refs: [] });
+    await flush();
+    expect(labels()).toEqual([]);
+    expect(commit).toHaveBeenCalledTimes(1);
+
+    // 一覧に無いコミット (refs未指定) は応答のrefを出す
+    rerender({ refs: undefined });
+    await flush();
+    expect(labels()).toEqual(["head:main"]);
+  });
+
+  it("競合したファイルには「バイナリ」と出さない", async () => {
+    const { container } = setup({
+      selection: { kind: "working" },
+      status: {
+        staged: [],
+        unstaged: [change("c.txt", "U", null, null)],
+        untracked: [],
+      },
+    });
+    await flush();
+    expect(fileRows(container)).toHaveLength(1);
+    expect(container.textContent).not.toContain("バイナリ");
+  });
+
   it("コミッターが作者と違うときだけ、コミッターの行を出す", async () => {
     const commit = vi.fn(
       async (sha: string): Promise<GitCommitResponse> => ({

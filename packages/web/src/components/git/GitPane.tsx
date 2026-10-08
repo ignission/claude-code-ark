@@ -152,8 +152,9 @@ function reconcileSelection(
  * Git タブの器 (作業エリアの「Git」のタブの中身)。データの取得・選択・追従を持つ。
  * 左にサイドバー、右の上にコミット一覧、下に選んだコミットの詳細。
  *
- * 追従: 見えている間だけ 3 秒ごとに指紋 (HEAD + ref + status) を問い合わせ、変わったら
- * 読み直す。読み込みには通し番号を振り、あとから始めた読み込みだけが state を書ける
+ * 追従: 見えている間だけ3秒ごとに指紋 (HEAD・いまのブランチ・ref・status・indexのblob・
+ * 変更中のファイルのmtimeと大きさ) を問い合わせ、変わったら読み直す。
+ * 読み込みには通し番号を振り、あとから始めた読み込みだけがstateを書ける
  */
 export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
   const api = useMemo(
@@ -165,6 +166,8 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  /** 続きの読み込みが失敗した理由。出ている間、一覧は自動では読み足さない */
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [selection, setSelection] = useState<GitSelection | null>(null);
   const [reveal, setReveal] = useState<{
     selection: GitSelection;
@@ -203,12 +206,16 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
     if (!result.ok) {
       // 既に出しているものがあれば、それを残す (一時的な失敗で画面を消さない)
       setError(result.error);
+      // 覚えている指紋を捨てる。残すと、次の問い合わせが「変わっていない」と見て
+      // 読み直さず、失敗の画面が消えない (最初の読み込み・再試行のボタンも同じ)
+      lastFingerprint.current = null;
       return false;
     }
     const before = dataRef.current;
     dataRef.current = result.data;
     setData(result.data);
     setError(null);
+    setLoadMoreError(null);
     setDataVersion(v => v + 1);
     setSelection(prev => reconcileSelection(prev, before, result.data));
     return true;
@@ -231,7 +238,7 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
         return;
       }
       lastFingerprint.current = fingerprint;
-      // 読み直しに失敗したら、次の問い合わせでもう一度試す
+      // 読み直しに失敗したら (別の読み込みに追い越された場合も)、次の問い合わせでもう一度試す
       if (!(await reload())) lastFingerprint.current = null;
     } finally {
       polling.current = false;
@@ -259,7 +266,8 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
 
   /**
    * 続きの 1 ページを読み足す。読み直しと重なったら結果を捨てる。
-   * 読み足しの最中に呼ばれたら、同じ読み足しの結果を返す (二重に読まない)
+   * 読み足しの最中に呼ばれたら、同じ読み足しの結果を返す (二重に読まない)。
+   * 失敗したら理由を残す (残っている間、一覧は自動では頼み直さない。呼ばれたら消して試す)
    */
   const loadMoreInFlight = useRef<Promise<boolean> | null>(null);
   const loadMore = useCallback((): Promise<boolean> => {
@@ -268,12 +276,16 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
     if (!api || !current?.hasMore) return Promise.resolve(false);
     const run = async () => {
       setLoadingMore(true);
+      setLoadMoreError(null);
       const seq = loadSeq.current;
       const res = await api.log(current.commits.length, PAGE_SIZE);
       loadMoreInFlight.current = null;
       setLoadingMore(false);
       if (seq !== loadSeq.current || dataRef.current !== current) return false;
-      if (!res.ok) return false;
+      if (!res.ok) {
+        setLoadMoreError(res.error);
+        return false;
+      }
       const known = new Set(current.commits.map(c => c.sha));
       const next: GitData = {
         ...current,
@@ -330,6 +342,17 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
   }, [jumpTo]);
 
   const handleRetry = useCallback(() => void reload(), [reload]);
+
+  // 選んだコミットのいまのref。詳細はshaごとに応答を持ち続けるので、refだけは
+  // 読み直した一覧から渡す (一覧に無いコミットはundefinedで、詳細が応答のrefを出す)
+  const selectedSha = selection?.kind === "commit" ? selection.sha : null;
+  const selectedRefs = useMemo(
+    () =>
+      selectedSha === null
+        ? undefined
+        : data?.commits.find(c => c.sha === selectedSha)?.refs,
+    [data, selectedSha]
+  );
 
   // ---- レイアウト ----
   const [sidebarCollapsed, setSidebarCollapsed] =
@@ -428,6 +451,7 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
             onSelect={setSelection}
             hasMore={data.hasMore}
             loadingMore={loadingMore}
+            loadMoreError={loadMoreError}
             onLoadMore={loadMore}
             onReload={handleRetry}
             reloading={reloading}
@@ -474,6 +498,7 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
             selection={selection}
             status={data.status}
             refreshKey={dataVersion}
+            refs={selectedRefs}
             onSelectCommit={jumpTo}
           />
         </div>

@@ -7,7 +7,8 @@
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile, readlink } from "node:fs/promises";
+import path from "node:path";
 import type {
   GitBranch,
   GitCommit,
@@ -396,11 +397,27 @@ async function diffChanges(cwd: string, baseArgs: string[]) {
 }
 
 export async function getStatus(cwd: string): Promise<GitStatus> {
-  const [staged, unstaged, untrackedOut] = await Promise.all([
+  const [stagedAll, unstagedAll, untrackedOut] = await Promise.all([
     diffChanges(cwd, ["diff", "--no-ext-diff", "--cached"]),
     diffChanges(cwd, ["diff", "--no-ext-diff"]),
     git(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]),
   ]);
+  // 競合中 (unmerged) のパスはindexにステージ0が無く、どちらのdiffにもUで出る
+  // (作業ツリー側にはoursとの差のMも重ねて出る)。未ステージに1回だけUとして出す
+  const unmerged = new Set<string>();
+  for (const f of [...stagedAll, ...unstagedAll]) {
+    if (f.status === "U") unmerged.add(f.path);
+  }
+  const staged = stagedAll.filter(f => !unmerged.has(f.path));
+  const unstaged: GitFileChange[] = [
+    ...[...unmerged].sort().map(p => ({
+      path: p,
+      status: "U" as const,
+      added: null,
+      removed: null,
+    })),
+    ...unstagedAll.filter(f => !unmerged.has(f.path)),
+  ];
   const untracked: GitFileChange[] = untrackedOut
     .split("\0")
     .filter(Boolean)
@@ -487,21 +504,63 @@ async function readBlob(cwd: string, spec: string): Promise<Side> {
   }
 }
 
+const isGone = (err: unknown) => {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+};
+
+/**
+ * 作業ツリーのファイルを読む。シンボリックリンクはたどらず、行き先の文字列を内容にする
+ * (indexのblobが持つのも行き先の文字列。たどるとworktreeの外も読めてしまう)。
+ * 境界は親ディレクトリで確かめる: 親の実体がworktreeの中にあることを見てから、
+ * 最後の要素だけをlstatする
+ */
 async function readWorkingFile(cwd: string, relPath: string): Promise<Side> {
-  let abs: string;
+  let parent: string;
   try {
-    abs = await resolveReadablePath(cwd, relPath);
+    parent = await resolveReadablePath(cwd, path.dirname(relPath));
   } catch (err) {
-    // 作業ツリーから消えたファイル
+    // 作業ツリーから消えたディレクトリ
     if (err instanceof Error && err.message.includes("見つかりません")) {
       return { data: Buffer.alloc(0) };
     }
     throw err;
   }
-  const st = await stat(abs);
-  if (!st.isFile()) return { data: Buffer.alloc(0) };
-  if (st.size > MAX_DIFF_BYTES) return { tooLarge: true };
-  return { data: await readFile(abs) };
+  const abs = path.join(parent, path.basename(relPath));
+  try {
+    const st = await lstat(abs);
+    if (st.isSymbolicLink()) return { data: Buffer.from(await readlink(abs)) };
+    if (!st.isFile()) return { data: Buffer.alloc(0) };
+    if (st.size > MAX_DIFF_BYTES) return { tooLarge: true };
+    return { data: await readFile(abs) };
+  } catch (err) {
+    // 作業ツリーから消えたファイル
+    if (isGone(err)) return { data: Buffer.alloc(0) };
+    throw err;
+  }
+}
+
+/**
+ * 競合中 (unmerged) のパスの「元」のblob。ours (ステージ2)、無ければbase (ステージ1)。
+ * 競合していなければnull、競合していてどちらも無ければ (相手だけが足した等) 空文字
+ */
+async function unmergedBase(cwd: string, p: string): Promise<string | null> {
+  const out = await git(cwd, [
+    "--literal-pathspecs",
+    "ls-files",
+    "-u",
+    "-z",
+    "--",
+    p,
+  ]);
+  const stages = new Map<string, string>();
+  for (const entry of out.split("\0")) {
+    // <mode> <sha> <stage>\t<path>
+    const m = /^\d+ ([0-9a-f]+) ([123])\t(.*)$/s.exec(entry);
+    if (m && m[3] === p) stages.set(m[2], m[1]);
+  }
+  if (stages.size === 0) return null;
+  return stages.get("2") ?? stages.get("1") ?? "";
 }
 
 function pathSpec(rev: string, p: string): string {
@@ -541,17 +600,28 @@ export async function getFileDiff(
       break;
     }
     case "staged":
-      [oldSide, newSide] = await Promise.all([
-        readBlob(cwd, pathSpec("HEAD", from)),
-        readBlob(cwd, indexSpec(path)),
-      ]);
+    case "unstaged": {
+      // 競合中はindexにステージ0が無い (":0:path" は失敗する)。oursと作業ツリー
+      // (競合の印が入ったファイル) の差を見せる
+      const base = await unmergedBase(cwd, path);
+      if (base !== null) {
+        [oldSide, newSide] = await Promise.all([
+          base === "" ? empty() : readBlob(cwd, base),
+          readWorkingFile(cwd, path),
+        ]);
+      } else if (target.kind === "staged") {
+        [oldSide, newSide] = await Promise.all([
+          readBlob(cwd, pathSpec("HEAD", from)),
+          readBlob(cwd, indexSpec(path)),
+        ]);
+      } else {
+        [oldSide, newSide] = await Promise.all([
+          readBlob(cwd, indexSpec(path)),
+          readWorkingFile(cwd, path),
+        ]);
+      }
       break;
-    case "unstaged":
-      [oldSide, newSide] = await Promise.all([
-        readBlob(cwd, indexSpec(path)),
-        readWorkingFile(cwd, path),
-      ]);
-      break;
+    }
     case "untracked":
       oldSide = empty();
       newSide = await readWorkingFile(cwd, path);
@@ -577,17 +647,79 @@ export async function getFileDiff(
 
 // ---- 指紋 ----
 
+/** 指紋のためにlstatするパスの上限 */
+const MAX_FINGERPRINT_STATS = 2000;
+const STAT_CHUNK = 200;
+
+/** `status --porcelain=v1 -z` から、作業ツリー側が変わっているパスと未追跡のパスを拾う */
+function worktreeDirtyPaths(status: string): string[] {
+  const tokens = status.split("\0");
+  const paths: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.length < 4) continue;
+    const x = token[0];
+    const y = token[1];
+    // リネーム・コピーは元のパスが次のトークンに続く
+    if (x === "R" || x === "C" || y === "R" || y === "C") i++;
+    if (y !== " ") paths.push(token.slice(3));
+  }
+  return paths;
+}
+
+/** パスのmtimeと大きさ。消えていれば決まった印 */
+async function statMark(cwd: string, rel: string): Promise<string> {
+  const abs = path.resolve(cwd, rel);
+  if (!isSafeRelPath(rel) || !abs.startsWith(cwd + path.sep)) return "invalid";
+  try {
+    const st = await lstat(abs);
+    return `${st.mtimeMs}:${st.size}`;
+  } catch (err) {
+    return isGone(err) ? "missing" : "error";
+  }
+}
+
+/**
+ * 「読み直すべきか」を決める指紋。HEAD・いまのブランチ・ref・statusに加えて、
+ * - indexのblob (ステージし直すとstatusの出力は同じまま中身が変わる)
+ * - 作業ツリー側が変わっているパスと未追跡のパスのmtimeと大きさ
+ *   (変更済みのファイルをさらに編集してもstatusの出力は変わらない)
+ * を混ぜる。lstatは2,000パスまで
+ */
 export async function getFingerprint(cwd: string): Promise<string> {
-  const [head, refs, status] = await Promise.all([
-    headSha(cwd),
-    git(cwd, ["for-each-ref"]),
-    git(cwd, ["status", "--porcelain=v1", "-z"]),
-  ]);
-  return createHash("sha256")
-    .update(head ?? "")
-    .update("\0")
-    .update(refs)
-    .update("\0")
-    .update(status)
-    .digest("hex");
+  const [head, branch, refs, status, stagedRaw, worktreeRaw] =
+    await Promise.all([
+      headSha(cwd),
+      // detachedでは失敗する (空として扱う)。同じコミットを指す別のブランチへ
+      // 切り替えてもHEADのshaは変わらない
+      gitOrNull(cwd, ["symbolic-ref", "-q", "HEAD"]),
+      git(cwd, ["for-each-ref"]),
+      // 未追跡のディレクトリを1行に畳ませない (中にファイルが増えても変わるように)
+      git(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
+      git(cwd, ["diff", "--cached", "--raw", "-z", "--no-abbrev"]),
+      git(cwd, ["diff", "--raw", "-z", "--no-abbrev"]),
+    ]);
+
+  const hash = createHash("sha256");
+  for (const part of [
+    head ?? "",
+    branch?.trim() ?? "",
+    refs,
+    status,
+    stagedRaw,
+    worktreeRaw,
+  ]) {
+    hash.update(part).update("\0");
+  }
+
+  const root = path.resolve(cwd);
+  const paths = worktreeDirtyPaths(status).slice(0, MAX_FINGERPRINT_STATS);
+  for (let i = 0; i < paths.length; i += STAT_CHUNK) {
+    const chunk = paths.slice(i, i + STAT_CHUNK);
+    const marks = await Promise.all(chunk.map(p => statMark(root, p)));
+    chunk.forEach((p, j) => {
+      hash.update(p).update("\0").update(marks[j]).update("\0");
+    });
+  }
+  return hash.digest("hex");
 }

@@ -3,6 +3,7 @@ import type {
   GitDiffTarget,
   GitFileChange,
   GitFileDiff,
+  GitRef,
   GitStatus,
 } from "@ark/shared";
 import { Check, Copy, ExternalLink } from "lucide-react";
@@ -42,6 +43,12 @@ interface GitCommitDetailProps {
    * これが変わったら差分を取り直す (コミットの差分は変わらないので取り直さない)
    */
   refreshKey: number;
+  /**
+   * 選んだコミットのいまのref (読み直した一覧から渡す)。コミットの応答はshaごとに
+   * 持ち続けるので、応答のrefは古くなる (新しいコミットが積まれてもHEADの札が残る)。
+   * 一覧に無いコミットは未指定で、そのときだけ応答のrefを出す
+   */
+  refs?: readonly GitRef[];
   /** 親のハッシュを押した */
   onSelectCommit: (sha: string) => void;
   /** 相対時刻の基準 (テスト用) */
@@ -110,8 +117,8 @@ function StatusBadge({ status }: { status: GitFileChange["status"] }) {
 
 /** `+n −m`。バイナリ (null) は出さない。0 の側は出さない */
 function Counts({ file }: { file: GitFileChange }) {
-  // 未追跡はサーバーが行数を数えない (null)。バイナリとは限らないので何も出さない
-  if (file.status === "?") return null;
+  // 未追跡と競合はサーバーが行数を数えない (null)。バイナリとは限らないので何も出さない
+  if (file.status === "?" || file.status === "U") return null;
   if (file.added === null || file.removed === null) {
     return (
       <span className="shrink-0 text-[11px] text-muted-foreground">
@@ -166,6 +173,7 @@ export function GitCommitDetail({
   selection,
   status,
   refreshKey,
+  refs,
   onSelectCommit,
   now,
 }: GitCommitDetailProps) {
@@ -444,6 +452,7 @@ export function GitCommitDetail({
         ) : commit ? (
           <CommitInfo
             commit={commit}
+            refs={refs ?? commit.refs}
             nowMs={nowMs}
             onSelectCommit={onSelectCommit}
           />
@@ -615,10 +624,13 @@ const Field = ({ label, children }: { label: string; children: ReactNode }) => (
 
 function CommitInfo({
   commit,
+  refs,
   nowMs,
   onSelectCommit,
 }: {
   commit: CommitDetail;
+  /** いまのref (一覧から)。一覧に無いコミットは応答のref */
+  refs: readonly GitRef[];
   nowMs: number;
   onSelectCommit: (sha: string) => void;
 }) {
@@ -691,9 +703,9 @@ function CommitInfo({
             ))
           )}
         </Field>
-        {commit.refs.length > 0 && (
+        {refs.length > 0 && (
           <Field label="ref">
-            <GitRefLabels refs={commit.refs} />
+            <GitRefLabels refs={refs} />
           </Field>
         )}
       </dl>

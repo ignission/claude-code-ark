@@ -327,6 +327,34 @@ describe("GitCommitList", () => {
     expect(onLoadMore).toHaveBeenCalledTimes(1);
   });
 
+  it("続きの読み込みに失敗したら自動では頼まず、再試行の行を出す", () => {
+    const { container, onLoadMore, rerender } = setup({
+      commits: linearCommits(300),
+      hasMore: true,
+    });
+    scrollTo(container, 300 * 28 - 280);
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+
+    rerender({ loadingMore: true });
+    rerender({ loadingMore: false, loadMoreError: "timeout" });
+    scrollTo(container, 300 * 28 - 290);
+    scrollTo(container, 300 * 28 - 280);
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("続きを読み込めませんでした");
+    expect(container.textContent).not.toContain("さらに読み込む");
+
+    click(
+      [...container.querySelectorAll("button")].find(
+        b => b.textContent === "再試行"
+      )
+    );
+    expect(onLoadMore).toHaveBeenCalledTimes(2);
+
+    // 失敗が消えたら行も消える
+    rerender({ loadingMore: false, loadMoreError: null, hasMore: false });
+    expect(container.textContent).not.toContain("続きを読み込めませんでした");
+  });
+
   it("絞り込み中は自動では読まず、ボタンで続きを頼める", () => {
     const { container, onLoadMore } = setup({
       commits: linearCommits(20),

@@ -36,6 +36,11 @@ interface GitCommitListProps {
   /** まだ続きがある */
   hasMore: boolean;
   loadingMore: boolean;
+  /**
+   * 続きの読み込みが失敗した理由。出ている間は自動では頼まない (末尾が見えたままだと
+   * 失敗するたびに頼み直し続けてしまう)。「再試行」でonLoadMoreを呼ぶ
+   */
+  loadMoreError?: string | null;
   onLoadMore: () => void;
   onReload: () => void;
   reloading?: boolean;
@@ -79,6 +84,7 @@ export function GitCommitList({
   onSelect,
   hasMore,
   loadingMore,
+  loadMoreError = null,
   onLoadMore,
   onReload,
   reloading = false,
@@ -151,10 +157,10 @@ export function GitCommitList({
   const onLoadMoreRef = useRef(onLoadMore);
   onLoadMoreRef.current = onLoadMore;
   useEffect(() => {
-    if (nearEnd && hasMore && !loadingMore && !filtering) {
+    if (nearEnd && hasMore && !loadingMore && !loadMoreError && !filtering) {
       onLoadMoreRef.current();
     }
-  }, [nearEnd, hasMore, loadingMore, filtering]);
+  }, [nearEnd, hasMore, loadingMore, loadMoreError, filtering]);
 
   /** index の行が見える位置へスクロールする。center は中央へ寄せる */
   const scrollToIndex = useCallback((index: number, center = false) => {
@@ -361,6 +367,21 @@ export function GitCommitList({
           <div className="flex h-8 items-center justify-center text-[12px] text-muted-foreground">
             {loadingMore ? (
               "読み込み中…"
+            ) : loadMoreError ? (
+              <span
+                role="alert"
+                title={loadMoreError}
+                className="flex items-center gap-2"
+              >
+                続きを読み込めませんでした
+                <button
+                  type="button"
+                  onClick={onLoadMore}
+                  className="rounded-sm border border-border px-2 py-0.5 text-foreground hover:bg-muted"
+                >
+                  再試行
+                </button>
+              </span>
             ) : (
               <button
                 type="button"

@@ -16,6 +16,7 @@ import {
   linearCommits,
   makeCommit,
   mount,
+  ref,
   unmountAll,
 } from "./test-helpers";
 import type { GitSelection } from "./types";
@@ -34,6 +35,7 @@ vi.mock("./GitCommitDetail", () => ({
   GitCommitDetail: (props: {
     selection: GitSelection | null;
     refreshKey: number;
+    refs?: { kind: string; name: string }[];
     onSelectCommit: (sha: string) => void;
   }) => (
     <div
@@ -46,6 +48,11 @@ vi.mock("./GitCommitDetail", () => ({
             : props.selection.sha
       }
       data-refresh={String(props.refreshKey)}
+      data-refs={
+        props.refs
+          ? props.refs.map(r => `${r.kind}:${r.name}`).join(",")
+          : "none"
+      }
     >
       <button type="button" onClick={() => props.onSelectCommit("far0000")}>
         parent
@@ -432,6 +439,119 @@ describe("GitPane", () => {
     server.state.error = null;
     await advance(3000);
     expect(rows(container)).toHaveLength(2);
+  });
+
+  it("最初の読み込みで指紋だけ取れて残りが失敗しても、同じ指紋の次の周期で読み直す", async () => {
+    const server = makeServer(linearCommits(2));
+    server.api.refs.mockResolvedValueOnce({ ok: false, error: "timeout" });
+    const { container } = render(server);
+    await settle();
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      "timeout"
+    );
+
+    // 指紋はfp-1のまま
+    await advance(3000);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(rows(container)).toHaveLength(2);
+    expect(server.api.refs).toHaveBeenCalledTimes(2);
+
+    // 立ち直ったあとは、指紋が変わらなければ読み直さない
+    await advance(3000);
+    expect(server.api.refs).toHaveBeenCalledTimes(2);
+  });
+
+  it("再試行のボタンでの読み直しが失敗しても、次の周期で読み直す", async () => {
+    const server = makeServer(linearCommits(2));
+    server.api.refs.mockResolvedValueOnce({ ok: false, error: "timeout" });
+    const { container } = render(server);
+    await settle();
+    server.api.refs.mockResolvedValueOnce({ ok: false, error: "timeout" });
+    click(buttonByText(container, "再試行"));
+    await settle();
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+
+    await advance(3000);
+    expect(rows(container)).toHaveLength(2);
+  });
+
+  it("続きの読み込みに失敗したら自動では頼み直さず、再試行の行から読み直せる", async () => {
+    const server = makeServer(linearCommits(800));
+    const { container } = render(server);
+    await settle();
+    expect(server.api.log).toHaveBeenCalledTimes(1);
+
+    const scrollToEnd = () => {
+      const el = container.querySelector('[role="listbox"]') as HTMLDivElement;
+      Object.defineProperty(el, "clientHeight", {
+        configurable: true,
+        value: 280,
+      });
+      act(() => {
+        el.scrollTop = 300 * 28 - 280;
+        el.dispatchEvent(new Event("scroll"));
+      });
+    };
+    server.api.log.mockResolvedValueOnce({ ok: false, error: "timeout" });
+    scrollToEnd();
+    await settle();
+    // 失敗した1回だけ。末尾が見えたままでも繰り返さない
+    expect(server.api.log).toHaveBeenCalledTimes(2);
+    await advance(3000);
+    scrollToEnd();
+    await settle();
+    expect(server.api.log).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("続きを読み込めませんでした");
+
+    click(buttonByText(container, "再試行"));
+    await settle();
+    expect(server.api.log).toHaveBeenCalledTimes(3);
+    expect(server.api.log.mock.calls.at(-1)).toEqual([300, 300]);
+    expect(container.textContent).not.toContain("続きを読み込めませんでした");
+  });
+
+  it("続きの読み込みの失敗は、読み直しが成功したら消える", async () => {
+    const server = makeServer(linearCommits(800));
+    const { container } = render(server);
+    await settle();
+    server.api.log.mockResolvedValueOnce({ ok: false, error: "timeout" });
+    click(buttonByText(container, "old"));
+    await settle();
+    expect(container.textContent).toContain("続きを読み込めませんでした");
+
+    server.state.fingerprint = "fp-2";
+    await advance(3000);
+    expect(container.textContent).not.toContain("続きを読み込めませんでした");
+  });
+
+  it("選んだコミットのいまのrefを、読み込み済みの一覧から詳細へ渡す", async () => {
+    const [top, ...rest] = linearCommits(3);
+    const server = makeServer([
+      { ...top, refs: [ref("head", "main")] },
+      ...rest,
+    ]);
+    const { container } = render(server);
+    await settle();
+    expect(detail(container)?.dataset.refs).toBe("head:main");
+
+    // 新しいコミットが積まれ、選んでいたコミットはHEADでなくなる
+    server.state.commits = [
+      makeCommit("fffffff", {
+        parents: [top.sha],
+        refs: [ref("head", "main")],
+      }),
+      { ...top, refs: [] },
+      ...rest,
+    ];
+    server.state.fingerprint = "fp-2";
+    await advance(3000);
+    expect(detail(container)?.dataset.selection).toBe(top.sha);
+    expect(detail(container)?.dataset.refs).toBe("");
+
+    // 一覧に無いコミットは渡さない (詳細が自分の応答のrefを出す)
+    click(buttonByText(container, "parent"));
+    await settle();
+    expect(detail(container)?.dataset.refs).toBe("none");
   });
 
   it("一度出したあとの読み直しが失敗しても、出しているものを残して次の周期で試し直す", async () => {
