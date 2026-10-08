@@ -116,6 +116,15 @@ async function git(cwd: string, args: string[]): Promise<string> {
   return (await runGit(cwd, args)).toString("utf8");
 }
 
+/**
+ * git リポジトリかを先に確かめる。確かめずに複数の git を並行で走らせると、
+ * リポジトリでない場所ではコマンドごとに失敗の文面が違い (`git diff` は
+ * `--no-index` の使い方の誤りとして落ちる)、どれが先に落ちるかで返すエラーが変わる
+ */
+async function assertRepository(cwd: string): Promise<void> {
+  await git(cwd, ["rev-parse", "--git-dir"]);
+}
+
 /** 失敗を null に畳む (HEAD が無い等、想定内の失敗用)。git 不在・非リポジトリは投げる */
 async function gitOrNull(cwd: string, args: string[]): Promise<string | null> {
   try {
@@ -209,6 +218,7 @@ export async function getLog(
   skip: number,
   limit: number
 ): Promise<{ commits: GitCommit[]; hasMore: boolean }> {
+  await assertRepository(cwd);
   const lim = Math.min(Math.max(Math.trunc(limit) || 1, 1), MAX_LOG_LIMIT);
   const sk = Math.max(Math.trunc(skip) || 0, 0);
   const refMap = await buildRefMap(cwd);
@@ -255,6 +265,7 @@ function parseTrack(track: string): { ahead: number; behind: number } | null {
 }
 
 export async function getRefs(cwd: string): Promise<GitRefs> {
+  await assertRepository(cwd);
   const [branchName, head, rows, branchOut, stashOut] = await Promise.all([
     currentBranch(cwd),
     headSha(cwd),
@@ -397,6 +408,7 @@ async function diffChanges(cwd: string, baseArgs: string[]) {
 }
 
 export async function getStatus(cwd: string): Promise<GitStatus> {
+  await assertRepository(cwd);
   const [stagedAll, unstagedAll, untrackedOut] = await Promise.all([
     diffChanges(cwd, ["diff", "--no-ext-diff", "--cached"]),
     diffChanges(cwd, ["diff", "--no-ext-diff"]),
@@ -431,6 +443,7 @@ export async function getCommit(
   cwd: string,
   sha: string
 ): Promise<{ commit: GitCommitDetail; files: GitFileChange[] }> {
+  await assertRepository(cwd);
   if (!isValidSha(sha)) throw new Error("コミットの指定が不正です");
   const resolved = (
     await git(cwd, ["rev-parse", "--verify", "-q", `${sha}^{commit}`]).catch(
@@ -579,6 +592,7 @@ export async function getFileDiff(
   path: string,
   oldPath?: string
 ): Promise<GitFileDiff> {
+  await assertRepository(cwd);
   if (
     !isSafeRelPath(path) ||
     (oldPath !== undefined && !isSafeRelPath(oldPath))
@@ -687,6 +701,7 @@ async function statMark(cwd: string, rel: string): Promise<string> {
  * を混ぜる。lstatは2,000パスまで
  */
 export async function getFingerprint(cwd: string): Promise<string> {
+  await assertRepository(cwd);
   const [head, branch, refs, status, stagedRaw, worktreeRaw] =
     await Promise.all([
       headSha(cwd),
