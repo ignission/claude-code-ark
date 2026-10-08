@@ -28,7 +28,7 @@ const diffTheme = EditorView.theme({
     background: "var(--git-diff-added-text) !important",
   },
   ".cm-insertedLine": {
-    backgroundColor: "var(--git-diff-added-text)",
+    backgroundColor: "var(--git-diff-added-line)",
     textDecoration: "none",
   },
   ".cm-deletedChunk": {

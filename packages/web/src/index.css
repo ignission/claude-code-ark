@@ -109,9 +109,9 @@
   --git-modified: #9a6700;
   --git-renamed: #0969da;
   --git-diff-added-line: #dafbe1;
-  --git-diff-added-text: #aceebb;
+  --git-diff-added-text: #c4efcd;
   --git-diff-removed-line: #ffebe9;
-  --git-diff-removed-text: #ffc1ba;
+  --git-diff-removed-text: #ffd2cc;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -169,9 +169,9 @@
     --git-modified: #e3b341;
     --git-renamed: #79c0ff;
     --git-diff-added-line: rgb(46 160 67 / 0.2);
-    --git-diff-added-text: rgb(46 160 67 / 0.45);
+    --git-diff-added-text: rgb(46 160 67 / 0.22);
     --git-diff-removed-line: rgb(248 81 73 / 0.18);
-    --git-diff-removed-text: rgb(248 81 73 / 0.45);
+    --git-diff-removed-text: rgb(248 81 73 / 0.25);
   }
 }
 
