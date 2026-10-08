@@ -27,7 +27,17 @@ export function useViewerTabs(
     error?: string;
   } | null,
   onOpenUrl?: (url: string) => void,
-  enabled = true
+  enabled = true,
+  /**
+   * 渡されると `ark:open-file` を端末のタブ列に積まず、こちらへ委譲する
+   * (PC の中ペイン用)。渡さなければ従来どおり (モバイル)
+   */
+  onOpenFile?: (
+    sessionId: string,
+    filePath: string,
+    line?: number | null,
+    endLine?: number | null
+  ) => void
 ) {
   const [sessionTabs, setSessionTabs] = useState<Record<string, ViewerTab[]>>(
     {}
@@ -276,12 +286,13 @@ export function useViewerTabs(
       if (type === "ark:open-file") {
         const { path: filePath, line, endLine } = event.data;
         if (typeof filePath !== "string" || !filePath) return;
-        openFileTab(
-          selectedSessionId,
-          filePath,
-          typeof line === "number" ? line : undefined,
-          typeof endLine === "number" ? endLine : undefined
-        );
+        const targetLine = typeof line === "number" ? line : undefined;
+        const targetEndLine = typeof endLine === "number" ? endLine : undefined;
+        if (onOpenFile) {
+          onOpenFile(selectedSessionId, filePath, targetLine, targetEndLine);
+          return;
+        }
+        openFileTab(selectedSessionId, filePath, targetLine, targetEndLine);
         // 絶対パスのHTMLファイルはiframeで直接表示するのでreadFile不要
         if (!/\.html?$/i.test(filePath) || !filePath.startsWith("/")) {
           readFile(selectedSessionId, filePath);
@@ -291,7 +302,15 @@ export function useViewerTabs(
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [selectedSessionId, sessions, openFileTab, readFile, onOpenUrl, enabled]);
+  }, [
+    selectedSessionId,
+    sessions,
+    openFileTab,
+    readFile,
+    onOpenUrl,
+    onOpenFile,
+    enabled,
+  ]);
 
   // fileContent受信時にタブを更新（全セッションを検索してレースコンディション対策）
   useEffect(() => {

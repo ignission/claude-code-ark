@@ -17,12 +17,28 @@ const sessions = new Map([["s1", { worktreePath: "/repo" }]]);
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
 
 /** 再レンダーごとに差し替わるので、毎回最新の戻り値を読む */
-function mountHook() {
+function mountHook(
+  onOpenFile?: (
+    sessionId: string,
+    filePath: string,
+    line?: number | null,
+    endLine?: number | null
+  ) => void,
+  readFile: (sessionId: string, filePath: string) => void = vi.fn()
+) {
   const latest: { api: ReturnType<typeof useViewerTabs> | null } = {
     api: null,
   };
   function Probe() {
-    latest.api = useViewerTabs("s1", sessions, vi.fn(), null);
+    latest.api = useViewerTabs(
+      "s1",
+      sessions,
+      readFile,
+      null,
+      undefined,
+      true,
+      onOpenFile
+    );
     return null;
   }
   const container = document.createElement("div");
@@ -71,5 +87,36 @@ describe("useViewerTabs のファイルタブ", () => {
     expect(fileTab.type === "file" && fileTab.targetLine).toBe(40);
     // 範囲で指定されたときは終了行も持つ (ハイライトを 1 行で切らない)
     expect(fileTab.type === "file" && fileTab.targetEndLine).toBe(58);
+  });
+});
+
+describe("useViewerTabs の onOpenFile", () => {
+  function postOpenFile(data: Record<string, unknown>) {
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { type: "ark:open-file", ...data },
+          origin: window.location.origin,
+        })
+      );
+    });
+  }
+
+  it("渡されていれば委譲し、タブも readFile も触らない", () => {
+    const onOpenFile = vi.fn();
+    const readFile = vi.fn();
+    const api = mountHook(onOpenFile, readFile);
+    postOpenFile({ path: "src/a.ts", line: 3, endLine: 5 });
+    expect(onOpenFile).toHaveBeenCalledWith("s1", "src/a.ts", 3, 5);
+    expect(readFile).not.toHaveBeenCalled();
+    expect(api().getTabsForSession("s1")).toHaveLength(1);
+  });
+
+  it("渡されていなければ従来どおりタブを足して readFile を呼ぶ", () => {
+    const readFile = vi.fn();
+    const api = mountHook(undefined, readFile);
+    postOpenFile({ path: "src/a.ts" });
+    expect(readFile).toHaveBeenCalledWith("s1", "src/a.ts");
+    expect(api().getTabsForSession("s1")).toHaveLength(2);
   });
 });
