@@ -221,8 +221,9 @@ async function isInsideGitDir(
   worktreePath: string,
   safePath: string
 ): Promise<boolean> {
-  const gitDir = path.join(await realpath(worktreePath), ".git");
-  return safePath === gitDir || safePath.startsWith(gitDir + path.sep);
+  // 入れ子のリポジトリ (vendor/x/.git など) も含め、どの階層の .git も拒否する
+  const rel = path.relative(await realpath(worktreePath), safePath);
+  return rel.split(path.sep).includes(".git");
 }
 
 export async function readFileFromWorktree(

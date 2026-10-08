@@ -350,3 +350,22 @@ describe("文字コードと保存の直列化", () => {
     );
   });
 });
+
+describe("入れ子の .git", () => {
+  it("入れ子のリポジトリの .git 配下は editable: false で、書き込みも拒否する", async () => {
+    const dir = path.join(wt, "vendor", "foo", ".git");
+    await mkdir(dir, { recursive: true });
+    const f = path.join(dir, "config");
+    await writeFile(f, "[core]\n");
+    const r = await readFileFromWorktree(wt, "vendor/foo/.git/config");
+    expect(r.editable).toBe(false);
+    const w = await writeFileToWorktree(
+      wt,
+      "vendor/foo/.git/config",
+      "x",
+      r.mtimeMs
+    );
+    expect(w.ok).toBe(false);
+    expect(await readFile(f, "utf-8")).toBe("[core]\n");
+  });
+});
