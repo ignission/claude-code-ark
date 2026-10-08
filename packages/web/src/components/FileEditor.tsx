@@ -1,6 +1,7 @@
 import { Save } from "lucide-react";
 import {
   lazy,
+  type ReactNode,
   Suspense,
   useCallback,
   useEffect,
@@ -31,12 +32,51 @@ interface FileEditorProps {
    * 読み直したときに呼ぶ (どちらも git の状態が変わりうる)
    */
   onSaved: () => void;
+  /**
+   * 見出しの行を呼び出し側の部品で組む (ピーク用)。start はファイル名とパスの代わりに
+   * 左へ、end は保存ボタンの右へ置く。読み込み中・失敗・html でも同じ行を出す
+   * (閉じるボタンを常に押せるようにするため)
+   */
+  chrome?: FileEditorChrome;
+}
+
+export interface FileEditorChrome {
+  start: ReactNode;
+  end: ReactNode;
+}
+
+const HEADER_ROW =
+  "flex shrink-0 items-center gap-2 border-border border-b px-3 py-1 text-muted-foreground text-xs";
+
+/** 見出しの中身が無い状態 (読み込み中・失敗・html) に、呼び出し側の見出しだけを載せる */
+function WithChrome({
+  chrome,
+  children,
+}: {
+  chrome: FileEditorChrome | undefined;
+  children: ReactNode;
+}) {
+  if (!chrome) return <>{children}</>;
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-background">
+      <div className={HEADER_ROW}>
+        {chrome.start}
+        <span className="ml-auto" />
+        {chrome.end}
+      </div>
+      <div className="min-h-0 flex-1">{children}</div>
+    </div>
+  );
 }
 
 export function FileEditor(props: FileEditorProps) {
   // html は iframe で見せるだけ。file:open も購読も要らない
   if (props.tab.kind === "html") {
-    return <HtmlViewerPane filePath={props.tab.filePath} />;
+    return (
+      <WithChrome chrome={props.chrome}>
+        <HtmlViewerPane filePath={props.tab.filePath} />
+      </WithChrome>
+    );
   }
   return <TextFileEditor {...props} />;
 }
@@ -87,6 +127,7 @@ function TextFileEditor({
   isVisible,
   onDirtyChange,
   onSaved,
+  chrome,
 }: FileEditorProps) {
   const filePath = tab.filePath;
   const [loaded, setLoaded] = useState<Loaded>({ status: "loading" });
@@ -363,32 +404,36 @@ function TextFileEditor({
 
   if (loaded.status === "loading") {
     return (
-      <div className="flex h-full items-center justify-center bg-background text-muted-foreground text-xs">
-        読み込み中…
-      </div>
+      <WithChrome chrome={chrome}>
+        <div className="flex h-full items-center justify-center bg-background text-muted-foreground text-xs">
+          読み込み中…
+        </div>
+      </WithChrome>
     );
   }
 
   if (loaded.status === "error") {
     return (
-      <div className="flex h-full items-center justify-center bg-background p-4">
-        <div className="text-center">
-          <p className="font-medium text-destructive text-sm">
-            ファイルを開けません
-          </p>
-          <p className="mt-1 break-all text-muted-foreground text-xs">
-            {loaded.error}
-          </p>
-          <button
-            type="button"
-            aria-label="再試行"
-            onClick={() => void reload()}
-            className="mt-3 rounded border border-border px-2.5 py-1 text-xs hover:bg-muted"
-          >
-            再試行
-          </button>
+      <WithChrome chrome={chrome}>
+        <div className="flex h-full items-center justify-center bg-background p-4">
+          <div className="text-center">
+            <p className="font-medium text-destructive text-sm">
+              ファイルを開けません
+            </p>
+            <p className="mt-1 break-all text-muted-foreground text-xs">
+              {loaded.error}
+            </p>
+            <button
+              type="button"
+              aria-label="再試行"
+              onClick={() => void reload()}
+              className="mt-3 rounded border border-border px-2.5 py-1 text-xs hover:bg-muted"
+            >
+              再試行
+            </button>
+          </div>
         </div>
-      </div>
+      </WithChrome>
     );
   }
 
@@ -403,11 +448,19 @@ function TextFileEditor({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="flex shrink-0 items-center gap-2 border-border border-b px-3 py-1 text-muted-foreground text-xs">
-        <span className="shrink-0 font-medium text-foreground">{fileName}</span>
-        <span className="min-w-0 truncate" title={filePath}>
-          {filePath}
-        </span>
+      <div className={HEADER_ROW}>
+        {chrome ? (
+          chrome.start
+        ) : (
+          <>
+            <span className="shrink-0 font-medium text-foreground">
+              {fileName}
+            </span>
+            <span className="min-w-0 truncate" title={filePath}>
+              {filePath}
+            </span>
+          </>
+        )}
         <span className="ml-auto shrink-0">{formatSize(loaded.size)}</span>
         {!loaded.editable && (
           <span className="shrink-0 rounded bg-muted px-1.5 py-0.5">
@@ -451,6 +504,7 @@ function TextFileEditor({
             <Save className="size-3.5" />
           </button>
         )}
+        {chrome?.end}
       </div>
       {banner && (
         <div

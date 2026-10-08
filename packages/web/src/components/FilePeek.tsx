@@ -111,18 +111,20 @@ export function FilePeek({
   const confirmDiscard = () =>
     !dirtyRef.current || window.confirm(CONFIRM_DISCARD);
 
-  return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="flex h-8 shrink-0 items-center gap-2 border-border border-b bg-muted/30 pr-1.5 pl-3">
-        <span className="shrink-0 font-semibold text-[11px] text-muted-foreground tracking-[0.08em]">
+  // 見出しはエディタの見出しの行へ載せる (ピーク用の行を別に持つとパスが 2 回出る)
+  const chrome = {
+    start: (
+      <>
+        <span className="shrink-0 font-semibold text-[11px] tracking-[0.08em]">
           PEEK
         </span>
-        <span
-          className="min-w-0 flex-1 truncate text-foreground text-xs"
-          title={filePath}
-        >
+        <span className="min-w-0 truncate text-foreground" title={filePath}>
           {filePath}
         </span>
+      </>
+    ),
+    end: (
+      <>
         <button
           type="button"
           aria-label="ファイルで開く"
@@ -145,24 +147,35 @@ export function FilePeek({
         >
           <X className="size-3.5" aria-hidden="true" />
         </button>
+      </>
+    ),
+  };
+
+  if (!api) {
+    return (
+      <div className="flex h-full min-h-0 flex-col bg-background">
+        <div className="flex shrink-0 items-center gap-2 border-border border-b px-3 py-1 text-muted-foreground text-xs">
+          {chrome.start}
+          <span className="ml-auto" />
+          {chrome.end}
+        </div>
+        <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground text-xs">
+          接続中…
+        </div>
       </div>
-      <div className="min-h-0 flex-1">
-        {api ? (
-          // パスが変わったら作り直す (前のファイルの編集と undo 履歴を持ち越さない)
-          <FileEditor
-            key={filePath}
-            api={api}
-            tab={tab}
-            isVisible={isVisible}
-            onDirtyChange={handleDirtyChange}
-            onSaved={handleSaved}
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center text-muted-foreground text-xs">
-            接続中…
-          </div>
-        )}
-      </div>
-    </div>
+    );
+  }
+
+  return (
+    // パスが変わったら作り直す (前のファイルの編集と undo 履歴を持ち越さない)
+    <FileEditor
+      key={filePath}
+      api={api}
+      tab={tab}
+      isVisible={isVisible}
+      onDirtyChange={handleDirtyChange}
+      onSaved={handleSaved}
+      chrome={chrome}
+    />
   );
 }
