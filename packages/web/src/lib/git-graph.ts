@@ -88,24 +88,26 @@ export function layoutGraph(
     // 同じ親が重なっても線を二重に引かない
     const uniqueParents = [...new Set(parents)];
     uniqueParents.forEach((parent, index) => {
-      const existing = findLane(parent);
-      if (existing !== -1) {
-        // すでに誰かが待っている親には、その列へ合流する
-        segments.push({
-          kind: "out",
-          fromColumn: column,
-          toColumn: existing,
-          color: (lanes[existing] as Lane).color,
-        });
-        return;
-      }
       if (index === 0) {
+        // 第 1 親は必ず自分の列で受ける。別の列が同じ親を待っていても寄らない
+        // (寄ると本線が枝の列へ飛ぶ)。同じ親を待つ列は、親の行で in として合流する
         lanes[column] = { sha: parent, color };
         segments.push({
           kind: "out",
           fromColumn: column,
           toColumn: column,
           color,
+        });
+        return;
+      }
+      const existing = findLane(parent);
+      if (existing !== -1) {
+        // 第 2 親以降は、すでに待っている列があればそこへ合流する
+        segments.push({
+          kind: "out",
+          fromColumn: column,
+          toColumn: existing,
+          color: (lanes[existing] as Lane).color,
         });
         return;
       }

@@ -22,25 +22,24 @@ describe("layoutGraph", () => {
     expect(rows.every(r => r.columns === 1 && !r.isMerge)).toBe(true);
   });
 
-  it("枝とマージ: 側枝が列 1 を使い、基点で合流する", () => {
+  it("枝とマージ: 側枝が列 1 を使い、基点の行で 2 本が in として合流する", () => {
     const rows = layoutGraph([
       c("M", "a", "b"),
       c("b", "base"),
       c("a", "base"),
       c("base"),
     ]);
-    expect(rows.map(r => r.column)).toEqual([0, 1, 0, 1]);
+    // 本線 (M → a → base) は列 0 のまま動かない
+    expect(rows.map(r => r.column)).toEqual([0, 1, 0, 0]);
     expect(rows[0].isMerge).toBe(true);
     expect(segs(rows[0])).toEqual(["out:0>0", "out:0>1"]);
     expect(segs(rows[1])).toEqual(["in:1>1", "out:1>1", "pass:0>0"]);
-    // a は基点を待つ既存の列 1 へ out し、自分の列 0 を空ける
-    expect(segs(rows[2])).toEqual(["in:0>0", "out:0>1", "pass:1>1"]);
-    expect(segs(rows[3])).toEqual(["in:1>1"]);
+    expect(segs(rows[2])).toEqual(["in:0>0", "out:0>0", "pass:1>1"]);
+    expect(segs(rows[3])).toEqual(["in:0>0", "in:1>0"]);
+    expect(rows[3].columns).toBe(2);
   });
 
-  it("同じ基点を待つ 2 本の列が基点の行で in として合流する", () => {
-    // 列 0 と列 1 が別々に基点を待つ状態は、先頭の親が既存の列へ寄せる規則では
-    // 起きないので、合流は後続の行の out が既存の列へ向かう形で現れる
+  it("本線が先に来る並びでも、基点で合流する", () => {
     const rows = layoutGraph([
       c("M", "a", "b"),
       c("a", "base"),
@@ -48,8 +47,8 @@ describe("layoutGraph", () => {
       c("base"),
     ]);
     expect(rows.map(r => r.column)).toEqual([0, 0, 1, 0]);
-    expect(segs(rows[2])).toEqual(["in:1>1", "out:1>0", "pass:0>0"]);
-    expect(segs(rows[3])).toEqual(["in:0>0"]);
+    expect(segs(rows[2])).toEqual(["in:1>1", "out:1>1", "pass:0>0"]);
+    expect(segs(rows[3])).toEqual(["in:0>0", "in:1>0"]);
   });
 
   it("3 本の並行枝は列 0 / 1 / 2 を使う", () => {
@@ -101,12 +100,13 @@ describe("layoutGraph", () => {
   it("空いた列は左から再利用する", () => {
     const rows = layoutGraph([
       c("A", "r"),
-      c("B", "r"), // 列 1 で先端になり、r を待つ列 0 へ寄せて列 1 を空ける
-      c("C", "r"), // 再び列 1
-      c("r"),
+      c("B", "r"), // 列 1
+      c("r"), // 列 0 と列 1 が合流して両方空く
+      c("X", "y"), // 列 0 を再利用
+      c("Z", "y"), // 列 1 を再利用
     ]);
-    expect(rows.map(r => r.column)).toEqual([0, 1, 1, 0]);
-    expect(segs(rows[1])).toEqual(["out:1>0", "pass:0>0"]);
+    expect(rows.map(r => r.column)).toEqual([0, 1, 0, 0, 1]);
+    expect(segs(rows[2])).toEqual(["in:0>0", "in:1>0"]);
   });
 
   it("色は範囲内で、列は先端からマージまで同じ色を保つ", () => {
@@ -131,7 +131,8 @@ describe("layoutGraph", () => {
         s => s.color === rows[1].color || s.kind === "pass"
       )
     ).toBe(true);
-    const merged = rows[2].segments.find(s => seg(s) === "out:0>1");
+    // 側枝の色は、基点へ合流する in まで変わらない
+    const merged = rows[3].segments.find(s => seg(s) === "in:1>0");
     expect(merged?.color).toBe(rows[1].color);
   });
 
