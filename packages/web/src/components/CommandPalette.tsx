@@ -2,8 +2,8 @@
  * CommandPalette - 名前で探して実行するパレット (PC のみ。ノーマルモードの `:`)
  *
  * セッション・図・ファイル・コマンドを 1 つの入力欄で絞り込み、Enter で実行する。
- * `onAsk` が渡されていれば、打った文を Claude に聞く「聞く」の行を最後に置く
- * (Tab で直接聞く)。候補の形と並べ方は lib/palette.ts。
+ * `onAsk` が渡されていれば、打った文を裏の Claude に聞く「聞く」の行を最後に置く
+ * (Tab で直接聞く。答えは AskWindow に出る)。候補の形と並べ方は lib/palette.ts。
  *
  * - 開くのは KeyNavLayer (`ark:palette-open`)。閉じたら `ark:palette-closed` で知らせ、
  *   KeyNavLayer がノーマルモードのフォーカスを置き直す。場所やタブを替える操作は、
@@ -60,8 +60,10 @@ export interface CommandPaletteProps {
   ) => void;
   /** そのセッションの「ファイル」のタブで開く (端末・会話のリンクと同じ開き方) */
   onOpenFile: (sessionId: string, filePath: string) => void;
-  /** 打った文を Claude に聞く。渡さなければ「聞く」の行を出さない */
+  /** 打った文を、裏の Claude に聞く。渡さなければ「聞く」の行を出さない */
   onAsk?: (text: string) => void;
+  /** 聞くウィンドウを (何も送らずに) 開く */
+  onOpenAskWindow?: () => void;
   onOpenBoardSuggestSettings: () => void;
 }
 
@@ -96,6 +98,7 @@ function PaletteBody({
   onOpenDiagram,
   onOpenFile,
   onAsk,
+  onOpenAskWindow,
   onOpenBoardSuggestSettings,
   onClose,
 }: CommandPaletteProps & { onClose: (detail?: PaletteClosedDetail) => void }) {
@@ -185,16 +188,24 @@ function PaletteBody({
     [diagrams]
   );
 
+  const commands = useMemo(
+    () =>
+      onOpenAskWindow
+        ? PALETTE_COMMANDS
+        : PALETTE_COMMANDS.filter(item => item.action.type !== "ask-window"),
+    [onOpenAskWindow]
+  );
+
   const items = useMemo(() => {
     const ranked = rankPalette(query, {
       sessions: sessionItems,
       diagrams: diagramItems,
-      commands: PALETTE_COMMANDS,
+      commands,
       filePaths,
     });
     const ask = onAsk ? askItem(query) : null;
     return ask ? [...ranked, ask] : ranked;
-  }, [query, sessionItems, diagramItems, filePaths, onAsk]);
+  }, [query, sessionItems, diagramItems, commands, filePaths, onAsk]);
 
   const at = Math.min(cursor, Math.max(0, items.length - 1));
 
@@ -230,6 +241,9 @@ function PaletteBody({
         case "board-suggest-settings":
           onOpenBoardSuggestSettings();
           break;
+        case "ask-window":
+          onOpenAskWindow?.();
+          break;
         case "ask":
           onAsk?.(action.text);
           break;
@@ -239,12 +253,15 @@ function PaletteBody({
         region,
         // 設定のダイアログと「聞く」のウィンドウは、自分でフォーカスを持つ
         handoff:
-          action.type === "board-suggest-settings" || action.type === "ask",
+          action.type === "board-suggest-settings" ||
+          action.type === "ask" ||
+          action.type === "ask-window",
       });
     },
     [
       onAsk,
       onClose,
+      onOpenAskWindow,
       onOpenBoardSuggestSettings,
       onOpenDiagram,
       onOpenFile,

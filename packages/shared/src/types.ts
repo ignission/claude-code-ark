@@ -579,6 +579,8 @@ export interface ServerToClientEvents {
 
   // ファイルビューワー
   "file:updated": (data: { sessionId: string; filePath: string }) => void;
+  /** 裏の Claude との会話が変わった (発話が増えた / 答え終えた / 失敗した) */
+  "ask:state": (state: AskState) => void;
   "file:content": (data: {
     filePath: string;
     content: string;
@@ -869,6 +871,15 @@ export interface ClientToServerEvents {
     data: { sessionId: string; dirPath: string },
     cb: (r: FileListResponse) => void
   ) => void;
+  /** 裏の Claude との会話のいまの状態 */
+  "ask:get": (callback: (state: AskState) => void) => void;
+  /** 裏の Claude に聞く (答えは ask:state で届く) */
+  "ask:send": (
+    data: { text: string },
+    callback: (result: AskResult) => void
+  ) => void;
+  /** 裏の Claude との会話をまっさらにする */
+  "ask:reset": (callback: (result: AskResult) => void) => void;
   "file:index": (
     data: { sessionId: string },
     cb: (r: FileIndexResponse) => void
@@ -1308,6 +1319,22 @@ export interface FileTreeEntry {
 export type FileListResponse =
   | { ok: true; entries: FileTreeEntry[]; truncated: boolean }
   | { ok: false; error: string };
+
+/** 裏の Claude (コマンドパレットの「聞く」) との会話の 1 発話 */
+export interface AskMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+}
+
+export interface AskState {
+  messages: AskMessage[];
+  /** 答えを待っている */
+  busy: boolean;
+  error: string | null;
+}
+
+export type AskResult = { ok: true } | { ok: false; error: string };
 
 /** worktree 内の全ファイルのパス (worktree からの相対。gitignore 対象は含まない) */
 export type FileIndexResponse =

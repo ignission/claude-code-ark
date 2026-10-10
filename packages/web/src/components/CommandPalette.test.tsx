@@ -55,6 +55,7 @@ function setup(overrides: Partial<CommandPaletteProps> = {}) {
     onOpenDiagram: vi.fn(),
     onOpenFile: vi.fn(),
     onAsk: vi.fn(),
+    onOpenAskWindow: vi.fn(),
     onOpenBoardSuggestSettings: vi.fn(),
     ...overrides,
   };
@@ -241,6 +242,24 @@ describe("CommandPalette", () => {
     expect(input()).toBeNull();
     expect(props.onSelectSession).not.toHaveBeenCalled();
     expect(closed).toEqual([{}]);
+  });
+
+  it("聞くウィンドウは、何も送らずに開くこともできる", async () => {
+    const props = setup();
+    await open();
+    await type("聞くウィンドウ");
+    expect(selected()).toBe("Claude に聞くウィンドウを開く");
+    await press("Enter");
+    expect(props.onOpenAskWindow).toHaveBeenCalled();
+    expect(props.onAsk).not.toHaveBeenCalled();
+    expect(closed[0].handoff).toBe(true);
+  });
+
+  it("onOpenAskWindow が無ければ、開くコマンドを出さない", async () => {
+    setup({ onOpenAskWindow: undefined, onAsk: undefined });
+    await open();
+    await type("聞くウィンドウ");
+    expect(options()).toEqual([]);
   });
 
   it("onAsk が無ければ「聞く」の行を出さず、Tab でも何も起きない", async () => {
