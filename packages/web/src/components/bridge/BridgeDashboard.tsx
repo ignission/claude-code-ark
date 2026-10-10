@@ -1,7 +1,7 @@
 /**
  * Bridge Dashboard — 1280x720 1bit Mac OS 風モニタリングUI
  *
- * モック (docs/superpowers の HTML) をそのまま React コンポーネント化したもの。
+ * モックの HTML をそのまま React コンポーネント化したもの。
  * すべてのセクションで `bridge-` prefix の CSS を使う。
  */
 

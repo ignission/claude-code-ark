@@ -11,8 +11,6 @@
  *   (過去履歴の追加読み込みで先頭に足された分は新規にならない)
  * - 既読idが1つも無いとき (/clear の空snapshotの後) は未読idをすべて新規とする
  * - 新規の中にターンの終わりが複数あれば、最後のターンだけを返す (長い切断からの復帰など)
- *
- * 仕様: docs/superpowers/specs/2026-09-19-voice-mode-design.md の5章
  */
 
 import type { JsonlParsedEvent } from "./jsonl-event-parser";

@@ -5,8 +5,6 @@
  * 次の状態と「実行してほしい副作用」の列を返す。副作用 (認識の開始、読み上げ、送信) は
  * useVoiceMode が同期的に実行する。iOS はユーザー操作の中でしか認識と読み上げを
  * 始めさせないため、タップ → reducer → 副作用 が同じ呼び出しの中で終わる必要がある。
- *
- * 仕様: docs/superpowers/specs/2026-09-19-voice-mode-design.md の4章
  */
 
 import { CONFIRM_ON_SCREEN, REPLY_ON_SCREEN } from "./speech-text";

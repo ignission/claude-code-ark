@@ -8,8 +8,6 @@
  *
  * 副作用は dispatch の中で同期的に実行する。iOS は認識と読み上げの開始を
  * ユーザー操作の中でしか許さないので、タップ → reducer → 開始 を1つの呼び出しで終える。
- *
- * 仕様: docs/superpowers/specs/2026-09-19-voice-mode-design.md
  */
 
 import type { BridgeSessionStatus } from "@ark/shared";

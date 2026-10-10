@@ -4,8 +4,6 @@
  * 全画面で「いま何をしているか」と、そのときに押せるボタンだけを大きく出す。
  * 画面での操作が要るとき (質問・権限確認) は画面上部の帯に縮め、下の会話ビューを見せる。
  * 状態の持ち主は useVoiceMode。ここは描くだけ。
- *
- * 仕様: docs/superpowers/specs/2026-09-19-voice-mode-design.md の4章
  */
 
 import type { BridgeSessionStatus } from "@ark/shared";
