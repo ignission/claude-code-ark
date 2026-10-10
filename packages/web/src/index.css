@@ -464,6 +464,8 @@
 html[data-keynav-active="sidebar"] [data-keynav-region="sidebar"],
 html[data-keynav-active="left"] [data-keynav-region="left"],
 html[data-keynav-active="work"] [data-keynav-region="work"] {
+  /* 枠はパネルの外側 (パネルの間のすき間) に描く。内側に描くと、図の iframe や
+     くぼみの地など、背景を持つ中身に上から塗られて、見出しのあたりでしか見えない */
   outline: 2px solid color-mix(in oklab, var(--primary) 65%, transparent);
-  outline-offset: -2px;
+  outline-offset: 0;
 }

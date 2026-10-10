@@ -186,6 +186,15 @@ describe("DiagramSwitcher", () => {
     expect(browser()).not.toBeNull();
   });
 
+  it("同じ図を開き直したときも、一覧の画面から図の画面へ移る", () => {
+    const props = render({ openKey: "tab-1" });
+    openList();
+    expect(browser()).not.toBeNull();
+    // Claude の board_open やパレットが、いま開いている図をもう一度開いた
+    render({ ...props, openKey: "tab-2" });
+    expect(browser()).toBeNull();
+  });
+
   it("図が無ければ、その旨を出す", () => {
     render({ diagrams: [], currentRelPath: undefined });
     expect(bar()?.textContent).toContain("0件");
@@ -464,10 +473,16 @@ describe("DiagramSwitcher", () => {
 
     it("確認に名前と内訳を出し、1 件ずつ順に消す", async () => {
       const order: string[] = [];
-      const onDelete = vi.fn(async (relPath: string) => {
-        order.push(relPath);
-        return true;
-      });
+      const onDelete = vi.fn(
+        async (
+          relPath: string,
+          _tracked: boolean,
+          _options?: { keepMessage?: boolean }
+        ) => {
+          order.push(relPath);
+          return true;
+        }
+      );
       render({ onDelete });
       openList();
       act(() => allBox()?.click());
@@ -482,6 +497,12 @@ describe("DiagramSwitcher", () => {
       expect(onDelete).not.toHaveBeenCalled();
       await act(async () => confirm()?.click());
       expect(order).toEqual(diagrams.map(item => item.relPath));
+      // 2 件目以降は、前の図の知らせ (残ったファイルの警告など) を消さないよう頼む
+      expect(onDelete.mock.calls.map(call => call[2])).toEqual([
+        undefined,
+        { keepMessage: true },
+        { keepMessage: true },
+      ]);
       expect(onDelete).toHaveBeenCalledWith(diagrams[0].relPath, true);
       expect(dialog()).toBeNull();
       expect(selectionBar()).toBeNull();

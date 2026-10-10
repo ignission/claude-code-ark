@@ -59,14 +59,13 @@ import {
 interface DiagramSwitcherProps {
   diagrams: DiagramListItem[];
   currentRelPath?: string;
+  /** 図を開く操作のたびに変わる値。同じ図を開き直したときも、図の画面へ移る */
+  openKey?: string;
   onSelect: (relPath: string) => void;
   listLoading?: boolean;
   listError?: string | null;
   onRetry?: () => void;
-  onDelete?: (
-    relPath: string,
-    expectedTracked: boolean
-  ) => boolean | Promise<boolean>;
+  onDelete?: DiagramDeleteHandler;
   isConnected?: boolean;
   isDeleting?: boolean;
   /** 削除の結果の知らせ (失敗の理由や、残ったファイルの警告)。一覧の中にも出す */
@@ -125,16 +124,25 @@ export function getBulkDeleteWarning(
   return getDiagramDeleteWarning(sample);
 }
 
+export type DiagramDeleteHandler = (
+  relPath: string,
+  expectedTracked: boolean,
+  /** まとめて消すときの 2 件目以降は、前の図の知らせを消さずに重ねる */
+  options?: { keepMessage?: boolean }
+) => boolean | Promise<boolean>;
+
 export function handleDiagramDeleteConfirmation(
   confirmed: boolean,
   item: DiagramListItem,
-  onDelete: (
-    relPath: string,
-    expectedTracked: boolean
-  ) => boolean | Promise<boolean>
+  onDelete: DiagramDeleteHandler,
+  options?: { keepMessage?: boolean }
 ): Promise<boolean> {
   if (!confirmed) return Promise.resolve(false);
-  return Promise.resolve(onDelete(item.relPath, item.tracked));
+  return Promise.resolve(
+    options
+      ? onDelete(item.relPath, item.tracked, options)
+      : onDelete(item.relPath, item.tracked)
+  );
 }
 
 export function DiagramSwitcher({
@@ -148,6 +156,7 @@ export function DiagramSwitcher({
   isConnected = true,
   isDeleting = false,
   notice = null,
+  openKey,
 }: DiagramSwitcherProps) {
   // 図をまだ選んでいないときは、一覧を開いた状態から始める
   const [open, setOpen] = useState(currentRelPath === undefined);
@@ -254,7 +263,8 @@ export function DiagramSwitcher({
         const succeeded = await handleDiagramDeleteConfirmation(
           true,
           target,
-          onDelete
+          onDelete,
+          index > 0 ? { keepMessage: true } : undefined
         );
         if (succeeded) {
           setChecked(previous => {
@@ -285,9 +295,10 @@ export function DiagramSwitcher({
 
   // 見せる図が替わったら一覧を閉じる (復元や Claude の board_open で図が開いたのに、
   // 一覧が上に重なったままにしない)。図が無くなったら、選べるように開く
+  // biome-ignore lint/correctness/useExhaustiveDependencies: openKey は「図を開く操作があった」ことの合図として依存に置く (同じ図の開き直しでも図の画面へ移る)
   useEffect(() => {
     setOpen(currentRelPath === undefined);
-  }, [currentRelPath]);
+  }, [currentRelPath, openKey]);
 
   // 開いたら、いまの図の行を選び、絞り込みの欄へフォーカスを置く
   // biome-ignore lint/correctness/useExhaustiveDependencies: 開いた瞬間だけ合わせる (開いている間の選択は利用者が動かす)
@@ -438,12 +449,12 @@ export function DiagramSwitcher({
           className="absolute inset-x-0 top-10 bottom-0 z-20 flex animate-in flex-col bg-card duration-150 fade-in slide-in-from-left-3 motion-reduce:animate-none"
         >
           {/* 一覧は図の上を覆うので、DiagramPane がバーの下に出す知らせが隠れる */}
-          {(bulkNotice ?? notice) && (
+          {(bulkNotice || notice) && (
             <div
               role="status"
-              className="mx-2 mb-1.5 shrink-0 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
+              className="mx-2 mb-1.5 shrink-0 whitespace-pre-line rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
             >
-              {bulkNotice ?? notice}
+              {[bulkNotice, notice].filter(Boolean).join("\n")}
             </div>
           )}
           <div className="shrink-0 px-2 pb-1.5">
@@ -661,7 +672,14 @@ export function DiagramSwitcher({
         }}
       >
         {deleteTargets.length > 0 && (
-          <AlertDialogContent>
+          <AlertDialogContent
+            // 開くボタンを Trigger にしていないので、閉じたあとのフォーカスは自分で戻す
+            // (戻さないと body に落ち、矢印や Space が一覧に届かない)
+            onCloseAutoFocus={event => {
+              event.preventDefault();
+              listRef.current?.focus();
+            }}
+          >
             <AlertDialogHeader>
               <AlertDialogTitle>
                 {deleteTargets.length === 1
