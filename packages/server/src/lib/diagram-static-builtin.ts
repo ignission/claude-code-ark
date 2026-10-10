@@ -72,19 +72,24 @@ function extCount(
     : null;
 }
 
+/** worktree の中を指す href か（スキーム付き・絶対パス・`#` 始まり・`..` は外） */
+export function isWorktreeSourceHref(source: string): boolean {
+  if (!source) return false;
+  return !(
+    /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(source) ||
+    source.startsWith("/") ||
+    source.startsWith("#") ||
+    source.split("/").includes("..")
+  );
+}
+
 /**
  * コードの在処（`packages/foo.ts#L10-L20`）をリンクにする。
  * 外へ出る href（スキーム付き・絶対パス・`..`）は素のテキストに落とす。
  */
 function renderSource(source: string, text: string): string {
   const safeText = escapeHtml(text);
-  if (!source) return safeText;
-  const outside =
-    /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(source) ||
-    source.startsWith("/") ||
-    source.startsWith("#") ||
-    source.split("/").includes("..");
-  if (outside) return safeText;
+  if (!isWorktreeSourceHref(source)) return safeText;
   return `<a href="${escapeHtml(source)}">${safeText}</a>`;
 }
 

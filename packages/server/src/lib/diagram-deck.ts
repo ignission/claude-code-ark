@@ -14,8 +14,21 @@
  *
  * - `{ id, type: "sequence" | "call-tree", title?, nodes, edges }`: 内蔵図種のページ。
  *   モデルの検証も投影も単独の図と同じものを使う
+ * - `{ id, type: "blocks", title?, blocks }`: 部品のページ。見出しと、決まった部品の並びで
+ *   書く（diagram-deck-blocks.ts）。見た目は Ark が決める
  * - `{ id, type: "html", title? }`: 自由形のページ。本文に
- *   `<section data-ark-page="<id>">` を 1 つだけ書く
+ *   `<section data-ark-page="<id>">` を 1 つだけ書く。**古い形**で、新しくは開けない
+ *
+ * ## 自由形のページは、新しくは開けない
+ *
+ * 自由形は書く側のモデルごとに見た目がぶれる。規約で部品を勧めるだけでは使われない
+ * （`sequence` / `call-tree` は勧めていても 442 ページ中 5 ページだった）ので、弾く。
+ *
+ * - `board_open` は、自由形のページを持つデッキと、本文に HTML や `<style>` を書いた
+ *   デッキを拒否する（`validateDeckForOpen`）。Claude が図を開く入口はここだけ
+ * - 配信（`validateDiagramDeck`）は古いデッキを通す。図の切り替えからは今までどおり開ける。
+ *   ただし部品のページと自由形・本文の HTML を混ぜたデッキは拒否する
+ * - 絵（画面の見た目など）が要るときは、デッキではなく `type` を書かない 1 枚の図にする
  *
  * id はページの id も含めてファイル全体で一意にする。生成した行の `data-ark-id` が
  * コメントの付け先になり、コメントの sidecar はファイル単位で持つため。
@@ -28,6 +41,12 @@
  */
 
 import { GENERATED_ATTR } from "./diagram-builtin.js";
+import {
+  DECK_BLOCKS_CSS,
+  type DeckBlock,
+  parseDeckBlocks,
+  renderDeckBlocks,
+} from "./diagram-deck-blocks.js";
 import {
   asciiLowerCase,
   scanDiagramHtmlStartTags,
@@ -56,6 +75,7 @@ const PAGE_ATTRIBUTE = "data-ark-page";
 
 export type DeckPage =
   | { id: string; type: StaticBuiltinType; title?: string; model: DiagramModel }
+  | { id: string; type: "blocks"; title?: string; blocks: DeckBlock[] }
   | { id: string; type: "html"; title?: string };
 
 export type DeckPagesResult =
@@ -125,10 +145,23 @@ export function parseDeckPages(model: DiagramModel): DeckPagesResult {
       pages.push({ id: entry.id, type: "html", title });
       continue;
     }
+    if (entry.type === "blocks") {
+      const blocks = parseDeckBlocks(entry.blocks);
+      if (!blocks.ok) {
+        return { ok: false, error: `ページ ${entry.id}: ${blocks.error}` };
+      }
+      pages.push({
+        id: entry.id,
+        type: "blocks",
+        title,
+        blocks: blocks.blocks,
+      });
+      continue;
+    }
     if (!isStaticBuiltinType(entry.type)) {
       return {
         ok: false,
-        error: `ページ ${entry.id} の type "${entry.type}" はデッキに置けません（sequence / call-tree / html）`,
+        error: `ページ ${entry.id} の type "${entry.type}" はデッキに置けません（blocks / sequence / call-tree）`,
       };
     }
 
@@ -196,7 +229,83 @@ export function validateDiagramDeck(
       };
     }
   }
+  // 部品のページは見た目を Ark が決める。自由形や本文の HTML と混ぜると、
+  // 作者の CSS が部品に掛かって統一が崩れる
+  if (parsed.pages.some(page => page.type === "blocks")) {
+    return validateAuthoredFree(html, parsed.pages);
+  }
   return { ok: true };
+}
+
+const FREE_PAGE_ERROR =
+  '自由形のページ（type: "html"）は使えません。' +
+  'ページは type: "blocks" で書きます（部品: text / chips / cards / flow / table / list / code / bars）。' +
+  "画面の見た目などの絵が要るときは、デッキではなく type を書かない 1 枚の図を別のファイルに描きます";
+
+const MODEL_SCRIPT_RE =
+  /<script\b[^>]*\bid\s*=\s*["']ark-diagram-model["'][^>]*>[\s\S]*?<\/script\s*>/i;
+
+/** 骨組みとモデルのほかに書いてよいタグと、その属性 */
+const SKELETON_TAGS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["html", ["lang"]],
+  ["head", []],
+  ["meta", ["charset", "name", "content"]],
+  ["title", []],
+  ["body", []],
+]);
+
+/** 自由形のページも、本文の HTML や `<style>` も無いこと */
+function validateAuthoredFree(
+  html: string,
+  pages: DeckPage[]
+): { ok: true } | { ok: false; error: string } {
+  if (pages.some(page => page.type === "html")) {
+    return { ok: false, error: FREE_PAGE_ERROR };
+  }
+  const refuse = (name: string) => ({
+    ok: false as const,
+    error:
+      `本文に <${name}> は書けません。デッキに書くのはモデルの JSON だけで、` +
+      "見た目（HTML と CSS）は Ark が描きます",
+  });
+  // script と style は中身が文字として扱われ、タグの走査に出てこないので別に見る。
+  // モデルの JSON の中の文字（コードの例に書いた "<style>" など）は数えない
+  const outsideModel = html
+    .replace(MODEL_SCRIPT_RE, "")
+    .replace(/<!--[\s\S]*?-->/g, "");
+  const rawText = outsideModel.match(/<(style|script)[\s/>]/i);
+  if (rawText) return refuse(asciiLowerCase(rawText[1]));
+  for (const tag of scanDiagramHtmlStartTags(html)) {
+    const allowed = SKELETON_TAGS.get(tag.name);
+    if (!allowed) return refuse(tag.name);
+    // 骨組みの要素でも、style 属性を書けば見た目を変えられる (body を隠すこともできる)
+    const extra = tag.attributes.find(
+      attribute => !allowed.includes(attribute.name)
+    );
+    if (extra) {
+      return {
+        ok: false,
+        error:
+          `<${tag.name}> に ${extra.name} 属性は書けません。` +
+          "デッキの見た目は Ark が描きます",
+      };
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * `board_open` で開いてよいデッキか。配信の検証に加えて、自由形のページと
+ * 本文の HTML を拒否する（古いデッキも、ここからは開けない）。
+ */
+export function validateDeckForOpen(
+  html: string,
+  model: DiagramModel
+): { ok: true } | { ok: false; error: string } {
+  if (model.type !== DECK_TYPE) return { ok: true };
+  const parsed = parseDeckPages(model);
+  if (!parsed.ok) return parsed;
+  return validateAuthoredFree(html, parsed.pages);
 }
 
 /**
@@ -219,7 +328,7 @@ export function commentAnchorNodes(model: DiagramModel): DiagramNode[] {
   return [
     ...model.nodes,
     ...parsed.pages.flatMap(page =>
-      page.type === "html" ? [] : anchorNodesOf(page.model)
+      "model" in page ? anchorNodesOf(page.model) : []
     ),
   ];
 }
@@ -351,6 +460,13 @@ function renderPage(page: DeckPage): string {
       `<div class="ark-deck-tag" ${GENERATED_ATTR}="1">PAGE${page.title ? ` · ${escapeHtml(page.title)}` : ""}</div></div>`
     );
   }
+  if (page.type === "blocks") {
+    return (
+      `<div class="ark-deck-page ark-bk-page" ${PAGE_ATTRIBUTE}="${escapeHtml(page.id)}">` +
+      renderDeckBlocks(page.title, page.blocks) +
+      `</div>`
+    );
+  }
   return (
     `<div class="ark-deck-page" ${PAGE_ATTRIBUTE}="${escapeHtml(page.id)}">` +
     renderStaticBuiltin(page.type, page.model) +
@@ -369,21 +485,22 @@ export function injectDeckProjection(
   if (!parsed.ok) return html;
 
   const types = new Set(
-    parsed.pages
-      .filter(page => page.type !== "html")
-      .map(page => page.type as StaticBuiltinType)
+    parsed.pages.flatMap(page => ("model" in page ? [page.type] : []))
   );
+  // 部品のページを持つデッキは、地の色から Ark が決める（作者の CSS が無いので）
+  const themed = parsed.pages.some(page => page.type === "blocks");
   const css =
     STATIC_BASE_CSS +
     [...types].map(type => STATIC_BUILTIN_OWN_CSS[type]).join("") +
-    DECK_CSS;
+    DECK_CSS +
+    (themed ? DECK_BLOCKS_CSS : "");
   const title = model.title
     ? `<h1 class="ark-deck-title">${escapeHtml(model.title)}</h1>`
     : "";
 
   const projection =
     `<style data-ark-harness-ui="1">${css}</style>` +
-    `<div class="ark-deck" data-ark-deck-mode="stack" ${GENERATED_ATTR}="1">` +
+    `<div class="ark-deck" data-ark-deck-mode="stack"${themed ? " data-ark-deck-blocks" : ""} ${GENERATED_ATTR}="1">` +
     title +
     `<div class="ark-deck-pages">${parsed.pages.map(renderPage).join("")}</div>` +
     `<nav class="ark-deck-nav">` +
