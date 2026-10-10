@@ -1038,7 +1038,8 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
   if(!graphMode)window.addEventListener("wheel",function(event){
     if(!event.ctrlKey||!port)return;
     event.preventDefault();
-    port.postMessage({type:"ark:diagram-pinch",deltaY:event.deltaY});
+    // 位置も送る (親が、つまんだ点を中心に拡大縮小する)
+    port.postMessage({type:"ark:diagram-pinch",deltaY:event.deltaY,clientX:event.clientX,clientY:event.clientY});
   },{passive:false});
   function touchDistance(event){
     var first=event.touches[0];
@@ -1061,7 +1062,9 @@ export const COMMENT_LAYER = `<script id="${DIAGRAM_COMMENT_LAYER_MARKER}" data-
     var deltaY=-400*Math.log(nextDistance/pinchDistance);
     pinchDistance=nextDistance;
     if(port&&Number.isFinite(deltaY)&&deltaY!==0){
-      port.postMessage({type:"ark:diagram-pinch",deltaY:deltaY});
+      var first=event.touches[0];
+      var second=event.touches[1];
+      port.postMessage({type:"ark:diagram-pinch",deltaY:deltaY,clientX:(first.clientX+second.clientX)/2,clientY:(first.clientY+second.clientY)/2});
     }
   }
   if(!graphMode){

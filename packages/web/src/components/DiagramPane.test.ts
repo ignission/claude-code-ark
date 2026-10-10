@@ -7,6 +7,7 @@ import type {
 } from "../lib/diagram-comment-bridge";
 import { parseDiagramCommentPortRequest } from "../lib/diagram-comment-bridge";
 import {
+  anchorDiagramScroll,
   applyDiagramPinchZoom,
   DIAGRAM_ZOOM_MAX,
   DIAGRAM_ZOOM_MIN,
@@ -15,6 +16,7 @@ import {
   forwardDiagramCommentPortRequest,
   forwardDiagramCommentsUpdate,
   getDiagramZoomPercent,
+  getDiagramZoomSizerStyle,
   handleDiagramOpenLinkMessage,
   handleDiagramPinchMessage,
   parseDiagramLinkHref,
@@ -336,7 +338,7 @@ describe("forwardDiagramCommentsUpdate", () => {
 });
 
 describe("DiagramPane zoom", () => {
-  it("pinch メッセージで連続ズームし 200% / 25% で clamp する", () => {
+  it("pinch メッセージで連続ズームし 400% / 25% で clamp する", () => {
     let zoom = 1;
     const setZoom = (update: (current: number) => number) => {
       zoom = update(zoom);
@@ -357,6 +359,88 @@ describe("DiagramPane zoom", () => {
     expect(zoom).toBeCloseTo(Math.exp(-0.1));
     expect(applyDiagramPinchZoom(1, -10_000)).toBe(DIAGRAM_ZOOM_MAX);
     expect(applyDiagramPinchZoom(1, 10_000)).toBe(DIAGRAM_ZOOM_MIN);
+  });
+
+  it("pinch の位置を覚える (その点を中心に拡大縮小する)。位置が無ければ null", () => {
+    const setAnchor = vi.fn();
+    handleDiagramPinchMessage(
+      { type: "ark:diagram-pinch", deltaY: -40, clientX: 120, clientY: 80 },
+      vi.fn(),
+      setAnchor
+    );
+    handleDiagramPinchMessage(
+      { type: "ark:diagram-pinch", deltaY: -40 },
+      vi.fn(),
+      setAnchor
+    );
+    handleDiagramPinchMessage(
+      { type: "ark:diagram-pinch", deltaY: -40, clientX: "1", clientY: 2 },
+      vi.fn(),
+      setAnchor
+    );
+    expect(setAnchor.mock.calls).toEqual([[{ x: 120, y: 80 }], [null], [null]]);
+  });
+
+  it("拡大は入れ物を広げて見た目だけを大きくし、縮小は入れ物を枠のままにする", () => {
+    // 拡大: iframe は枠と同じ大きさ (入れ物の 1/2) のまま、2 倍に広げる
+    expect(getDiagramZoomSizerStyle(2)).toEqual({
+      width: "200%",
+      height: "200%",
+    });
+    const zoomedIn = renderViewport(2);
+    expect(zoomedIn).toContain("width:200%;height:200%");
+    expect(zoomedIn).toContain("overflow-auto");
+    // 縮小: iframe を枠より大きくしてから縮める (広いレイアウトを見渡す)
+    expect(getDiagramZoomSizerStyle(0.5)).toEqual({
+      width: "100%",
+      height: "100%",
+    });
+    expect(renderViewport(0.5)).toContain("overflow-hidden");
+    expect(renderViewport(1)).toContain("overflow-hidden");
+  });
+
+  it("拡大率を変えても、つまんだ点は画面の同じ場所に残る", () => {
+    const viewport = { width: 800, height: 600 };
+    // 100% で (200, 100) をつまんで 200% へ: 点は (400, 200) へ動くので、そのぶん送る
+    expect(
+      anchorDiagramScroll(1, 2, { left: 0, top: 0 }, viewport, {
+        x: 200,
+        y: 100,
+      })
+    ).toEqual({ left: 200, top: 100 });
+    // 200% で送ってある状態から 400% へ: 画面上の位置 (400-200, 200-100) を保つ
+    expect(
+      anchorDiagramScroll(2, 4, { left: 200, top: 100 }, viewport, {
+        x: 200,
+        y: 100,
+      })
+    ).toEqual({ left: 600, top: 300 });
+    // 左上の隅をつまんだら、送らない
+    expect(
+      anchorDiagramScroll(1, 3, { left: 0, top: 0 }, viewport, { x: 0, y: 0 })
+    ).toEqual({ left: 0, top: 0 });
+  });
+
+  it("点が無ければ (ボタン)、見えている範囲の中心を保つ", () => {
+    const viewport = { width: 800, height: 600 };
+    expect(
+      anchorDiagramScroll(1, 2, { left: 0, top: 0 }, viewport, null)
+    ).toEqual({ left: 400, top: 300 });
+    expect(
+      anchorDiagramScroll(2, 4, { left: 400, top: 300 }, viewport, null)
+    ).toEqual({ left: 1200, top: 900 });
+  });
+
+  it("100% 以下へ戻したら、スクロールを左上へ戻す", () => {
+    expect(
+      anchorDiagramScroll(
+        2,
+        1,
+        { left: 300, top: 200 },
+        { width: 800, height: 600 },
+        { x: 200, y: 100 }
+      )
+    ).toEqual({ left: 0, top: 0 });
   });
 
   it("不正な pinch メッセージは zoom を変更しない", () => {
@@ -391,7 +475,7 @@ describe("DiagramPane zoom", () => {
     );
   });
 
-  it("200% / 25% で clamp し、対応するボタンを disabled にする", () => {
+  it("400% / 25% で clamp し、対応するボタンを disabled にする", () => {
     let upper = 1;
     let lower = 1;
     for (let i = 0; i < 10; i += 1) {

@@ -3450,7 +3450,7 @@ const RAW_HARNESS_JS = `(function () {
 
   init();
 
-  window.addEventListener("wheel",function(e){if(!e.ctrlKey||!submitPort)return;e.preventDefault();submitPort.postMessage({type:"ark:diagram-pinch",deltaY:e.deltaY})},{passive:false});
+  window.addEventListener("wheel",function(e){if(!e.ctrlKey||!submitPort)return;e.preventDefault();submitPort.postMessage({type:"ark:diagram-pinch",deltaY:e.deltaY,clientX:e.clientX,clientY:e.clientY})},{passive:false});
   var pinchDistance=null;
   function touchDistance(event){
     var first=event.touches[0];
