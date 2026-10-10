@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { DIAGRAM_DIR } from "@ark/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { handleDiagramListRequest, listDiagrams } from "./diagram-list.js";
+import {
+  diagramKindOf,
+  handleDiagramListRequest,
+  listDiagrams,
+} from "./diagram-list.js";
 
 const tempDirs: string[] = [];
 
@@ -37,6 +41,13 @@ function diagramHtml(title?: string): string {
   );
 }
 
+/** 種類と更新日時を除いた、図の同定に使う 3 項目 (並びと追跡の判定を見るテスト用) */
+async function listBasics(worktree: string) {
+  return (await listDiagrams(worktree)).map(
+    ({ relPath, displayName, tracked }) => ({ relPath, displayName, tracked })
+  );
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   for (const dir of tempDirs.splice(0)) {
@@ -65,7 +76,7 @@ describe("listDiagrams", () => {
       diagramHtml("深い規約サンプル")
     );
 
-    await expect(listDiagrams(worktree)).resolves.toEqual([
+    await expect(listBasics(worktree)).resolves.toEqual([
       {
         relPath: ".claude/diagrams/visible.diagram.html",
         displayName: "可視の図",
@@ -104,7 +115,7 @@ describe("listDiagrams", () => {
       ".claude/diagrams/nested/b.diagram.html",
     ]);
 
-    await expect(listDiagrams(worktree)).resolves.toEqual([
+    await expect(listBasics(worktree)).resolves.toEqual([
       {
         relPath: ".claude/diagrams/a.diagram.html",
         displayName: "a.diagram.html",
@@ -169,7 +180,7 @@ describe("listDiagrams", () => {
       ".claude/diagrams/nested/tracked.diagram.html",
     ]);
 
-    await expect(listDiagrams(worktree)).resolves.toEqual([
+    await expect(listBasics(worktree)).resolves.toEqual([
       {
         relPath: ".claude/diagrams/ignored.diagram.html",
         displayName: "ignored",
@@ -248,7 +259,7 @@ describe("listDiagrams", () => {
       "dir"
     );
 
-    await expect(listDiagrams(worktree)).resolves.toEqual([
+    await expect(listBasics(worktree)).resolves.toEqual([
       {
         relPath: ".claude/diagrams/valid.diagram.html",
         displayName: "正常",
@@ -272,13 +283,50 @@ describe("listDiagrams", () => {
       `<!doctype html><html><body><script type="application/json" id="ark-diagram-model">${JSON.stringify(docModel)}</script><section>anchor なし</section></body></html>`
     );
 
-    await expect(listDiagrams(worktree)).resolves.toEqual([
+    await expect(listBasics(worktree)).resolves.toEqual([
       {
         relPath: ".claude/diagrams/review.diagram.html",
         displayName: "レビュー文書",
         tracked: false,
       },
     ]);
+  });
+
+  it("種類と更新日時を返す (graph の図種と type なしは graph にまとめる)", async () => {
+    const { worktree, diagramDir } = makeWorktree();
+    const write = (name: string, type: string | undefined, mtime: number) => {
+      const model = {
+        version: 1,
+        ...(type === undefined ? {} : { type }),
+        title: name,
+        nodes: [],
+        edges: [],
+        groups: [],
+        ...(type === "deck" ? { ext: { pages: [] } } : {}),
+      };
+      const file = path.join(diagramDir, `${name}.diagram.html`);
+      fs.writeFileSync(
+        file,
+        `<!doctype html><html><body><script type="application/json" id="ark-diagram-model">${JSON.stringify(model)}</script></body></html>`
+      );
+      fs.utimesSync(file, mtime, mtime);
+    };
+    write("a-plain", undefined, 1_700_000_000);
+    write("b-doc", "doc", 1_700_000_100);
+    write("c-seq", "sequence", 1_700_000_200);
+
+    const items = await listDiagrams(worktree);
+    expect(items.map(item => [item.displayName, item.kind])).toEqual([
+      ["a-plain", "graph"],
+      ["b-doc", "doc"],
+      ["c-seq", "sequence"],
+    ]);
+    expect(items.map(item => item.mtimeMs)).toEqual([
+      1_700_000_000_000, 1_700_000_100_000, 1_700_000_200_000,
+    ]);
+    expect(diagramKindOf("deck")).toBe("deck");
+    expect(diagramKindOf("call-tree")).toBe("call-tree");
+    expect(diagramKindOf("er")).toBe("graph");
   });
 
   it("comments sidecar を単独でも図の隣接時でも候補にしない", async () => {
@@ -308,7 +356,7 @@ describe("listDiagrams", () => {
       ".claude/diagrams/review.diagram.html",
     ]);
 
-    await expect(listDiagrams(worktree)).resolves.toEqual([
+    await expect(listBasics(worktree)).resolves.toEqual([
       {
         relPath: ".claude/diagrams/review.diagram.html",
         displayName: "レビュー図",

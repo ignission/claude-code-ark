@@ -1108,7 +1108,7 @@ export function DiagramPane({
   );
 
   return (
-    <div ref={rootRef} className="flex h-full flex-col">
+    <div ref={rootRef} className="relative flex h-full flex-col">
       <DiagramSwitcher
         diagrams={diagrams}
         currentRelPath={relPath}
