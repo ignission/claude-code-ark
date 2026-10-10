@@ -186,6 +186,36 @@ export function getDiagramZoomStyle(zoom: number): CSSProperties | undefined {
   };
 }
 
+/**
+ * ノーマルモードの j / k などで図を送るとき、拡大中の外側の入れ物をどう動かすか。
+ *
+ * 拡大中は iframe の下のほうが入れ物の外に切れているので、中の文書を送るだけでは
+ * そこが見えない。Chrome のピンチと同じく、まず外側 (見えている範囲) を動かし、端まで
+ * 来たら中の文書を送る。端への移動 (gg / G) は両方を端へ寄せる。
+ *
+ * 戻り値の `top` は外側の新しいスクロール位置 (動かさないなら undefined)、`forward` は
+ * 中の文書へも指示を渡すか。
+ */
+export function planDiagramKeynavScroll(
+  scroller: { scrollTop: number; scrollHeight: number; clientHeight: number },
+  scroll: KeyNavDiagramScroll
+): { top?: number; forward: boolean } {
+  const max = scroller.scrollHeight - scroller.clientHeight;
+  // 拡大していない (外側が動かない)
+  if (max <= 1) return { forward: true };
+  if (scroll.unit === "edge") {
+    return { top: scroll.dir === 1 ? max : 0, forward: true };
+  }
+  const canMove =
+    scroll.dir === 1 ? scroller.scrollTop < max - 1 : scroller.scrollTop > 0;
+  if (!canMove) return { forward: true };
+  const amount = scroll.unit === "page" ? scroller.clientHeight / 2 : 80;
+  return {
+    top: Math.min(max, Math.max(0, scroller.scrollTop + scroll.dir * amount)),
+    forward: false,
+  };
+}
+
 /** iframe を入れる入れ物の大きさ。拡大のときだけ枠より大きくし、スクロールで動かせるようにする */
 export function getDiagramZoomSizerStyle(zoom: number): CSSProperties {
   const scale = Math.max(1, zoom);
@@ -245,6 +275,9 @@ export function DiagramViewport({
 }: DiagramViewportProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const appliedZoomRef = useRef(zoom);
+  // 拡大率を変える前のスクロール位置。入れ物が縮むとブラウザが位置を切り詰めるので、
+  // 描いたあとに DOM から読むと、縮小のときに元の位置が分からなくなる
+  const scrollPositionRef = useRef({ left: 0, top: 0 });
 
   // 拡大率が変わったら、つまんだ点 (無ければ中心) が動かないようにスクロールを合わせる。
   // 描く前に合わせないと、1 フレームだけ左上へ飛んで見える
@@ -256,12 +289,17 @@ export function DiagramViewport({
     const next = anchorDiagramScroll(
       previous,
       zoom,
-      { left: scroller.scrollLeft, top: scroller.scrollTop },
+      scrollPositionRef.current,
       { width: scroller.clientWidth, height: scroller.clientHeight },
       zoomAnchor?.current ?? null
     );
     scroller.scrollLeft = next.left;
     scroller.scrollTop = next.top;
+    // 端で切り詰められたあとの、実際の位置を覚える
+    scrollPositionRef.current = {
+      left: scroller.scrollLeft,
+      top: scroller.scrollTop,
+    };
   }, [zoom, zoomAnchor]);
 
   return (
@@ -298,6 +336,14 @@ export function DiagramViewport({
       <div
         ref={scrollRef}
         data-diagram-zoom-scroller=""
+        onScroll={event => {
+          // 入れ物が縮んだときの切り詰めも scroll として届くが、その前にレイアウト effect が
+          // 正しい位置を入れているので、ここで読むのはその位置になる
+          scrollPositionRef.current = {
+            left: event.currentTarget.scrollLeft,
+            top: event.currentTarget.scrollTop,
+          };
+        }}
         className={cn(
           "h-full w-full",
           zoom > 1 ? "overflow-auto" : "overflow-hidden"
@@ -824,6 +870,14 @@ export function DiagramPane({
     if (!root) return;
     const onScroll = (event: Event) => {
       const detail = (event as CustomEvent<KeyNavDiagramScroll>).detail;
+      const scroller = root.querySelector<HTMLElement>(
+        "[data-diagram-zoom-scroller]"
+      );
+      if (scroller) {
+        const plan = planDiagramKeynavScroll(scroller, detail);
+        if (plan.top !== undefined) scroller.scrollTop = plan.top;
+        if (!plan.forward) return;
+      }
       portRef.current?.postMessage({
         type: "ark:diagram-keynav-scroll",
         unit: detail.unit,

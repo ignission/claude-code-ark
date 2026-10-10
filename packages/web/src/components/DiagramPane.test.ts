@@ -20,6 +20,7 @@ import {
   handleDiagramOpenLinkMessage,
   handleDiagramPinchMessage,
   parseDiagramLinkHref,
+  planDiagramKeynavScroll,
   readDiagramCommentConnectionState,
   replyToInvalidDiagramCommentPortRequest,
   resetDiagramZoom,
@@ -441,6 +442,49 @@ describe("DiagramPane zoom", () => {
         { x: 200, y: 100 }
       )
     ).toEqual({ left: 0, top: 0 });
+  });
+
+  it("拡大中の j / k は、まず外側を動かし、端まで来たら中の文書へ渡す", () => {
+    const scroller = { scrollTop: 100, scrollHeight: 1600, clientHeight: 800 };
+    expect(planDiagramKeynavScroll(scroller, { unit: "line", dir: 1 })).toEqual(
+      { top: 180, forward: false }
+    );
+    expect(
+      planDiagramKeynavScroll(scroller, { unit: "page", dir: -1 })
+    ).toEqual({ top: 0, forward: false });
+    // 下の端にいるときの j は、中の文書を送る
+    expect(
+      planDiagramKeynavScroll(
+        { ...scroller, scrollTop: 800 },
+        { unit: "line", dir: 1 }
+      )
+    ).toEqual({ forward: true });
+    // 上の端にいるときの k も同じ
+    expect(
+      planDiagramKeynavScroll(
+        { ...scroller, scrollTop: 0 },
+        { unit: "line", dir: -1 }
+      )
+    ).toEqual({ forward: true });
+  });
+
+  it("拡大中の gg / G は、外側と中の文書の両方を端へ寄せる", () => {
+    const scroller = { scrollTop: 100, scrollHeight: 1600, clientHeight: 800 };
+    expect(planDiagramKeynavScroll(scroller, { unit: "edge", dir: 1 })).toEqual(
+      { top: 800, forward: true }
+    );
+    expect(
+      planDiagramKeynavScroll(scroller, { unit: "edge", dir: -1 })
+    ).toEqual({ top: 0, forward: true });
+  });
+
+  it("拡大していなければ、j / k はそのまま中の文書へ渡す", () => {
+    expect(
+      planDiagramKeynavScroll(
+        { scrollTop: 0, scrollHeight: 800, clientHeight: 800 },
+        { unit: "line", dir: 1 }
+      )
+    ).toEqual({ forward: true });
   });
 
   it("不正な pinch メッセージは zoom を変更しない", () => {
