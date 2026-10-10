@@ -7,6 +7,7 @@ import type {
 } from "../lib/diagram-comment-bridge";
 import { parseDiagramCommentPortRequest } from "../lib/diagram-comment-bridge";
 import {
+  anchorDiagramScroll,
   applyDiagramPinchZoom,
   DIAGRAM_ZOOM_MAX,
   DIAGRAM_ZOOM_MIN,
@@ -14,14 +15,14 @@ import {
   emitDiagramAutosave,
   forwardDiagramCommentPortRequest,
   forwardDiagramCommentsUpdate,
-  getDiagramZoomPercent,
+  getDiagramZoomSizerStyle,
   handleDiagramOpenLinkMessage,
   handleDiagramPinchMessage,
   parseDiagramLinkHref,
+  planDiagramKeynavScroll,
   readDiagramCommentConnectionState,
   replyToInvalidDiagramCommentPortRequest,
   resetDiagramZoom,
-  stepDiagramZoom,
 } from "./DiagramPane";
 
 const REL_PATH = ".claude/diagrams/sample.diagram.html";
@@ -33,9 +34,6 @@ function renderViewport(zoom: number, relPath = REL_PATH): string {
       relPath,
       html: HTML,
       zoom,
-      onZoomOut: vi.fn(),
-      onZoomReset: vi.fn(),
-      onZoomIn: vi.fn(),
       onIframeLoad: vi.fn(),
     })
   );
@@ -336,7 +334,7 @@ describe("forwardDiagramCommentsUpdate", () => {
 });
 
 describe("DiagramPane zoom", () => {
-  it("pinch メッセージで連続ズームし 200% / 25% で clamp する", () => {
+  it("pinch メッセージで連続ズームし 400% / 25% で clamp する", () => {
     let zoom = 1;
     const setZoom = (update: (current: number) => number) => {
       zoom = update(zoom);
@@ -350,13 +348,149 @@ describe("DiagramPane zoom", () => {
     ).toBe(true);
     expect(zoom).toBeCloseTo(Math.exp(0.1));
 
+    // 100% をまたぐときは、いったん 100% で止まる (つまみ戻すだけで元へ戻せる)
     handleDiagramPinchMessage(
       { type: "ark:diagram-pinch", deltaY: 80 },
       setZoom
     );
+    expect(zoom).toBe(1);
+    handleDiagramPinchMessage(
+      { type: "ark:diagram-pinch", deltaY: 40 },
+      setZoom
+    );
     expect(zoom).toBeCloseTo(Math.exp(-0.1));
+    handleDiagramPinchMessage(
+      { type: "ark:diagram-pinch", deltaY: -400 },
+      setZoom
+    );
+    expect(zoom).toBe(1);
     expect(applyDiagramPinchZoom(1, -10_000)).toBe(DIAGRAM_ZOOM_MAX);
     expect(applyDiagramPinchZoom(1, 10_000)).toBe(DIAGRAM_ZOOM_MIN);
+  });
+
+  it("pinch の位置を覚える (その点を中心に拡大縮小する)。位置が無ければ null", () => {
+    const setAnchor = vi.fn();
+    handleDiagramPinchMessage(
+      { type: "ark:diagram-pinch", deltaY: -40, clientX: 120, clientY: 80 },
+      vi.fn(),
+      setAnchor
+    );
+    handleDiagramPinchMessage(
+      { type: "ark:diagram-pinch", deltaY: -40 },
+      vi.fn(),
+      setAnchor
+    );
+    handleDiagramPinchMessage(
+      { type: "ark:diagram-pinch", deltaY: -40, clientX: "1", clientY: 2 },
+      vi.fn(),
+      setAnchor
+    );
+    expect(setAnchor.mock.calls).toEqual([[{ x: 120, y: 80 }], [null], [null]]);
+  });
+
+  it("拡大は入れ物を広げて見た目だけを大きくし、縮小は入れ物を枠のままにする", () => {
+    // 拡大: iframe は枠と同じ大きさ (入れ物の 1/2) のまま、2 倍に広げる
+    expect(getDiagramZoomSizerStyle(2)).toEqual({
+      width: "200%",
+      height: "200%",
+    });
+    const zoomedIn = renderViewport(2);
+    expect(zoomedIn).toContain("width:200%;height:200%");
+    expect(zoomedIn).toContain("overflow-auto");
+    // 縮小: iframe を枠より大きくしてから縮める (広いレイアウトを見渡す)
+    expect(getDiagramZoomSizerStyle(0.5)).toEqual({
+      width: "100%",
+      height: "100%",
+    });
+    expect(renderViewport(0.5)).toContain("overflow-hidden");
+    expect(renderViewport(1)).toContain("overflow-hidden");
+  });
+
+  it("拡大率を変えても、つまんだ点は画面の同じ場所に残る", () => {
+    const viewport = { width: 800, height: 600 };
+    // 100% で (200, 100) をつまんで 200% へ: 点は (400, 200) へ動くので、そのぶん送る
+    expect(
+      anchorDiagramScroll(1, 2, { left: 0, top: 0 }, viewport, {
+        x: 200,
+        y: 100,
+      })
+    ).toEqual({ left: 200, top: 100 });
+    // 200% で送ってある状態から 400% へ: 画面上の位置 (400-200, 200-100) を保つ
+    expect(
+      anchorDiagramScroll(2, 4, { left: 200, top: 100 }, viewport, {
+        x: 200,
+        y: 100,
+      })
+    ).toEqual({ left: 600, top: 300 });
+    // 左上の隅をつまんだら、送らない
+    expect(
+      anchorDiagramScroll(1, 3, { left: 0, top: 0 }, viewport, { x: 0, y: 0 })
+    ).toEqual({ left: 0, top: 0 });
+  });
+
+  it("点が無ければ、見えている範囲の中心を保つ", () => {
+    const viewport = { width: 800, height: 600 };
+    expect(
+      anchorDiagramScroll(1, 2, { left: 0, top: 0 }, viewport, null)
+    ).toEqual({ left: 400, top: 300 });
+    expect(
+      anchorDiagramScroll(2, 4, { left: 400, top: 300 }, viewport, null)
+    ).toEqual({ left: 1200, top: 900 });
+  });
+
+  it("100% 以下へ戻したら、スクロールを左上へ戻す", () => {
+    expect(
+      anchorDiagramScroll(
+        2,
+        1,
+        { left: 300, top: 200 },
+        { width: 800, height: 600 },
+        { x: 200, y: 100 }
+      )
+    ).toEqual({ left: 0, top: 0 });
+  });
+
+  it("拡大中の j / k は、まず外側を動かし、端まで来たら中の文書へ渡す", () => {
+    const scroller = { scrollTop: 100, scrollHeight: 1600, clientHeight: 800 };
+    expect(planDiagramKeynavScroll(scroller, { unit: "line", dir: 1 })).toEqual(
+      { top: 180, forward: false }
+    );
+    expect(
+      planDiagramKeynavScroll(scroller, { unit: "page", dir: -1 })
+    ).toEqual({ top: 0, forward: false });
+    // 下の端にいるときの j は、中の文書を送る
+    expect(
+      planDiagramKeynavScroll(
+        { ...scroller, scrollTop: 800 },
+        { unit: "line", dir: 1 }
+      )
+    ).toEqual({ forward: true });
+    // 上の端にいるときの k も同じ
+    expect(
+      planDiagramKeynavScroll(
+        { ...scroller, scrollTop: 0 },
+        { unit: "line", dir: -1 }
+      )
+    ).toEqual({ forward: true });
+  });
+
+  it("拡大中の gg / G は、外側と中の文書の両方を端へ寄せる", () => {
+    const scroller = { scrollTop: 100, scrollHeight: 1600, clientHeight: 800 };
+    expect(planDiagramKeynavScroll(scroller, { unit: "edge", dir: 1 })).toEqual(
+      { top: 800, forward: true }
+    );
+    expect(
+      planDiagramKeynavScroll(scroller, { unit: "edge", dir: -1 })
+    ).toEqual({ top: 0, forward: true });
+  });
+
+  it("拡大していなければ、j / k はそのまま中の文書へ渡す", () => {
+    expect(
+      planDiagramKeynavScroll(
+        { scrollTop: 0, scrollHeight: 800, clientHeight: 800 },
+        { unit: "line", dir: 1 }
+      )
+    ).toEqual({ forward: true });
   });
 
   it("不正な pinch メッセージは zoom を変更しない", () => {
@@ -377,61 +511,27 @@ describe("DiagramPane zoom", () => {
     expect(setZoom).not.toHaveBeenCalled();
   });
 
-  it("＋/−で percent 表示と iframe の width/transform が変わる", () => {
-    const zoomedIn = stepDiagramZoom(1, "in");
-    expect(getDiagramZoomPercent(zoomedIn)).toBe(125);
-    expect(renderViewport(zoomedIn)).toContain(
+  it("拡大率に応じて iframe の width / transform が変わり、100% では付かない", () => {
+    expect(renderViewport(1.25)).toContain(
       "width:calc(100% / 1.25);height:calc(100% / 1.25);transform:scale(1.25);transform-origin:0 0"
     );
-
-    const zoomedOut = stepDiagramZoom(1, "out");
-    expect(getDiagramZoomPercent(zoomedOut)).toBe(80);
-    expect(renderViewport(zoomedOut)).toContain(
+    expect(renderViewport(0.8)).toContain(
       "width:calc(100% / 0.8);height:calc(100% / 0.8);transform:scale(0.8);transform-origin:0 0"
     );
+    const reset = renderViewport(resetDiagramZoom());
+    expect(reset).not.toContain("transform:");
+    expect(reset).not.toContain("<iframe style=");
   });
 
-  it("200% / 25% で clamp し、対応するボタンを disabled にする", () => {
-    let upper = 1;
-    let lower = 1;
-    for (let i = 0; i < 10; i += 1) {
-      upper = stepDiagramZoom(upper, "in");
-      lower = stepDiagramZoom(lower, "out");
-    }
-
-    expect(upper).toBe(DIAGRAM_ZOOM_MAX);
-    expect(lower).toBe(DIAGRAM_ZOOM_MIN);
-    expect(stepDiagramZoom(upper, "in")).toBe(DIAGRAM_ZOOM_MAX);
-    expect(stepDiagramZoom(lower, "out")).toBe(DIAGRAM_ZOOM_MIN);
-    expect(renderViewport(upper)).toContain('title="ズームイン" disabled=""');
-    expect(renderViewport(lower)).toContain('title="ズームアウト" disabled=""');
-  });
-
-  it("percent リセットで 100% に戻り、iframe の transform が外れる", () => {
-    const zoom = resetDiagramZoom();
-    const markup = renderViewport(zoom);
-
-    expect(getDiagramZoomPercent(zoom)).toBe(100);
-    expect(markup).toContain(">100%</button>");
-    expect(markup).not.toContain("transform:");
-    expect(markup).not.toContain("<iframe style=");
-  });
-
-  it("relPath 変更時は 100% にリセットした表示になる", () => {
-    const before = renderViewport(stepDiagramZoom(1, "in"), REL_PATH);
-    const after = renderViewport(
-      resetDiagramZoom(),
-      ".claude/diagrams/other.diagram.html"
-    );
-
-    expect(before).toContain(">125%</button>");
-    expect(after).toContain(">100%</button>");
-    expect(after).not.toContain("transform:");
+  it("拡大縮小のボタンと倍率の表示は出さない (ピンチだけで動かす)", () => {
+    const markup = renderViewport(2);
+    expect(markup).not.toContain("<button");
+    expect(markup).not.toContain("200%</");
   });
 
   it("zoom 変更では iframe の srcDoc が変わらない", () => {
     const before = renderViewport(1);
-    const after = renderViewport(stepDiagramZoom(1, "in"));
+    const after = renderViewport(1.25);
 
     expect(getRenderedSrcDoc(before)).toBeDefined();
     expect(getRenderedSrcDoc(after)).toBe(getRenderedSrcDoc(before));

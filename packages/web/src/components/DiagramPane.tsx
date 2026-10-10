@@ -13,14 +13,21 @@ import type {
   DiagramListItem,
   ServerToClientEvents,
 } from "@ark/shared";
-import type { CSSProperties } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import type { CSSProperties, RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { Socket } from "socket.io-client";
 import { KEYNAV_LEADER_EVENT } from "@/hooks/useTerminalLeaderKey";
 import {
   KEYNAV_DIAGRAM_SCROLL_EVENT,
   type KeyNavDiagramScroll,
 } from "@/lib/keynav-dom";
+import { cn } from "@/lib/utils";
 import {
   type DiagramCommentPortParse,
   type DiagramCommentPortRequest,
@@ -112,6 +119,15 @@ interface DiagramAutosaveMessage {
 interface DiagramPinchMessage {
   type: "ark:diagram-pinch";
   deltaY: number;
+  /** つまんだ位置 (図の iframe の中の座標)。古い層は送ってこない */
+  clientX?: number;
+  clientY?: number;
+}
+
+/** 拡大縮小の中心にする点 (図の iframe の中の座標) */
+export interface DiagramZoomPoint {
+  x: number;
+  y: number;
 }
 
 interface DiagramAutosaveRequest {
@@ -128,25 +144,30 @@ interface DiagramAutosaveResponse {
 }
 
 export const DIAGRAM_ZOOM_MIN = 0.25;
-export const DIAGRAM_ZOOM_MAX = 2;
-export const DIAGRAM_ZOOM_STEP = 1.25;
+export const DIAGRAM_ZOOM_MAX = 4;
 export const DIAGRAM_ZOOM_DEFAULT = 1;
-
-export function stepDiagramZoom(zoom: number, direction: "in" | "out"): number {
-  const next =
-    direction === "in" ? zoom * DIAGRAM_ZOOM_STEP : zoom / DIAGRAM_ZOOM_STEP;
-  return Math.min(DIAGRAM_ZOOM_MAX, Math.max(DIAGRAM_ZOOM_MIN, next));
-}
 
 export function applyDiagramPinchZoom(zoom: number, deltaY: number): number {
   const next = zoom * Math.exp(-deltaY / 400);
+  // 100% をまたぐときは、いったん 100% で止める。倍率の表示もリセットのボタンも無いので、
+  // つまみ戻すだけで元の大きさにぴったり戻せるようにする
+  if ((zoom - 1) * (next - 1) < 0) return DIAGRAM_ZOOM_DEFAULT;
   return Math.min(DIAGRAM_ZOOM_MAX, Math.max(DIAGRAM_ZOOM_MIN, next));
 }
 
-export function getDiagramZoomPercent(zoom: number): number {
-  return Math.round(zoom * 100);
-}
-
+/**
+ * 図の iframe の大きさと拡大率。
+ *
+ * - **拡大 (100% より上) は、レイアウトを変えずに見た目だけを大きくする** (Mac の Chrome の
+ *   ピンチと同じ)。iframe は枠と同じ大きさのまま `scale` で広げ、はみ出したぶんは
+ *   外側の入れ物 (`getDiagramZoomSizerStyle`) をスクロールして見る。以前は iframe の幅を
+ *   縮めてから広げていたので、中身が折り返し直され、文字は大きくなるのに幅いっぱいの
+ *   画像は大きくならなかった
+ * - **縮小 (100% より下) は、広いレイアウトを縮めて見せる** (全体を見渡すため)。iframe を
+ *   枠より大きくしてから `scale` で枠に収める
+ *
+ * どちらも式は同じで、入れ物の大きさだけが違う。
+ */
 export function getDiagramZoomStyle(zoom: number): CSSProperties | undefined {
   if (zoom === DIAGRAM_ZOOM_DEFAULT) return undefined;
   return {
@@ -154,6 +175,67 @@ export function getDiagramZoomStyle(zoom: number): CSSProperties | undefined {
     height: `calc(100% / ${zoom})`,
     transform: `scale(${zoom})`,
     transformOrigin: "0 0",
+  };
+}
+
+/**
+ * ノーマルモードの j / k などで図を送るとき、拡大中の外側の入れ物をどう動かすか。
+ *
+ * 拡大中は iframe の下のほうが入れ物の外に切れているので、中の文書を送るだけでは
+ * そこが見えない。Chrome のピンチと同じく、まず外側 (見えている範囲) を動かし、端まで
+ * 来たら中の文書を送る。端への移動 (gg / G) は両方を端へ寄せる。
+ *
+ * 戻り値の `top` は外側の新しいスクロール位置 (動かさないなら undefined)、`forward` は
+ * 中の文書へも指示を渡すか。
+ */
+export function planDiagramKeynavScroll(
+  scroller: { scrollTop: number; scrollHeight: number; clientHeight: number },
+  scroll: KeyNavDiagramScroll
+): { top?: number; forward: boolean } {
+  const max = scroller.scrollHeight - scroller.clientHeight;
+  // 拡大していない (外側が動かない)
+  if (max <= 1) return { forward: true };
+  if (scroll.unit === "edge") {
+    return { top: scroll.dir === 1 ? max : 0, forward: true };
+  }
+  const canMove =
+    scroll.dir === 1 ? scroller.scrollTop < max - 1 : scroller.scrollTop > 0;
+  if (!canMove) return { forward: true };
+  const amount = scroll.unit === "page" ? scroller.clientHeight / 2 : 80;
+  return {
+    top: Math.min(max, Math.max(0, scroller.scrollTop + scroll.dir * amount)),
+    forward: false,
+  };
+}
+
+/** iframe を入れる入れ物の大きさ。拡大のときだけ枠より大きくし、スクロールで動かせるようにする */
+export function getDiagramZoomSizerStyle(zoom: number): CSSProperties {
+  const scale = Math.max(1, zoom);
+  return { width: `${scale * 100}%`, height: `${scale * 100}%` };
+}
+
+/**
+ * 拡大率を変えたあとのスクロール位置。`point` (iframe の中の座標) が、画面の同じ場所に
+ * 残るようにする。`point` が無ければ、見えている範囲の中心を保つ。
+ */
+export function anchorDiagramScroll(
+  previousZoom: number,
+  nextZoom: number,
+  scroll: { left: number; top: number },
+  viewport: { width: number; height: number },
+  point: DiagramZoomPoint | null
+): { left: number; top: number } {
+  if (nextZoom <= 1) return { left: 0, top: 0 };
+  const anchor = point ?? {
+    x: (scroll.left + viewport.width / 2) / previousZoom,
+    y: (scroll.top + viewport.height / 2) / previousZoom,
+  };
+  // 点が、いま画面のどこに見えているか
+  const screenX = anchor.x * previousZoom - scroll.left;
+  const screenY = anchor.y * previousZoom - scroll.top;
+  return {
+    left: Math.max(0, anchor.x * nextZoom - screenX),
+    top: Math.max(0, anchor.y * nextZoom - screenY),
   };
 }
 
@@ -165,9 +247,8 @@ interface DiagramViewportProps {
   relPath: string;
   html: string;
   zoom: number;
-  onZoomOut: () => void;
-  onZoomReset: () => void;
-  onZoomIn: () => void;
+  /** 直近の拡大縮小の中心 (ピンチの位置)。位置が分からないときは null で、見えている範囲の中心を保つ */
+  zoomAnchor?: RefObject<DiagramZoomPoint | null>;
   onIframeLoad: (event: React.SyntheticEvent<HTMLIFrameElement>) => void;
 }
 
@@ -175,50 +256,69 @@ export function DiagramViewport({
   relPath,
   html,
   zoom,
-  onZoomOut,
-  onZoomReset,
-  onZoomIn,
+  zoomAnchor,
   onIframeLoad,
 }: DiagramViewportProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const appliedZoomRef = useRef(zoom);
+  // 拡大率を変える前のスクロール位置。入れ物が縮むとブラウザが位置を切り詰めるので、
+  // 描いたあとに DOM から読むと、縮小のときに元の位置が分からなくなる
+  const scrollPositionRef = useRef({ left: 0, top: 0 });
+
+  // 拡大率が変わったら、つまんだ点 (無ければ中心) が動かないようにスクロールを合わせる。
+  // 描く前に合わせないと、1 フレームだけ左上へ飛んで見える
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current;
+    const previous = appliedZoomRef.current;
+    appliedZoomRef.current = zoom;
+    if (!scroller || previous === zoom) return;
+    const next = anchorDiagramScroll(
+      previous,
+      zoom,
+      scrollPositionRef.current,
+      { width: scroller.clientWidth, height: scroller.clientHeight },
+      zoomAnchor?.current ?? null
+    );
+    scroller.scrollLeft = next.left;
+    scroller.scrollTop = next.top;
+    // 端で切り詰められたあとの、実際の位置を覚える
+    scrollPositionRef.current = {
+      left: scroller.scrollLeft,
+      top: scroller.scrollTop,
+    };
+  }, [zoom, zoomAnchor]);
+
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden">
-      <div className="absolute top-2 right-2 z-10 flex items-center rounded-md border border-border bg-background/90 p-0.5 shadow-sm">
-        <button
-          type="button"
-          title="ズームアウト"
-          disabled={zoom <= DIAGRAM_ZOOM_MIN}
-          className="inline-flex size-7 items-center justify-center rounded text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-          onClick={onZoomOut}
-        >
-          −
-        </button>
-        <button
-          type="button"
-          title="ズームをリセット"
-          className="h-7 min-w-12 rounded px-1 text-xs tabular-nums text-foreground transition-colors hover:bg-accent"
-          onClick={onZoomReset}
-        >
-          {getDiagramZoomPercent(zoom)}%
-        </button>
-        <button
-          type="button"
-          title="ズームイン"
-          disabled={zoom >= DIAGRAM_ZOOM_MAX}
-          className="inline-flex size-7 items-center justify-center rounded text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-          onClick={onZoomIn}
-        >
-          ＋
-        </button>
+      {/* 入れ物の形は拡大率で変えない (変えると iframe が作り直される) */}
+      <div
+        ref={scrollRef}
+        data-diagram-zoom-scroller=""
+        onScroll={event => {
+          // 入れ物が縮んだときの切り詰めも scroll として届くが、その前にレイアウト effect が
+          // 正しい位置を入れているので、ここで読むのはその位置になる
+          scrollPositionRef.current = {
+            left: event.currentTarget.scrollLeft,
+            top: event.currentTarget.scrollTop,
+          };
+        }}
+        className={cn(
+          "h-full w-full",
+          zoom > 1 ? "overflow-auto" : "overflow-hidden"
+        )}
+      >
+        <div style={getDiagramZoomSizerStyle(zoom)}>
+          <iframe
+            title={relPath}
+            data-keynav="diagram"
+            srcDoc={html}
+            sandbox="allow-scripts"
+            className="block h-full w-full border-0 bg-white"
+            style={getDiagramZoomStyle(zoom)}
+            onLoad={onIframeLoad}
+          />
+        </div>
       </div>
-      <iframe
-        title={relPath}
-        data-keynav="diagram"
-        srcDoc={html}
-        sandbox="allow-scripts"
-        className="block h-full w-full border-0 bg-white"
-        style={getDiagramZoomStyle(zoom)}
-        onLoad={onIframeLoad}
-      />
     </div>
   );
 }
@@ -276,9 +376,19 @@ export function isDiagramKeynavLeaderMessage(data: unknown): boolean {
 
 export function handleDiagramPinchMessage(
   data: unknown,
-  setZoom: (update: (zoom: number) => number) => void
+  setZoom: (update: (zoom: number) => number) => void,
+  /** つまんだ位置を覚える (その点を中心に拡大縮小する)。位置が無ければ null */
+  setAnchor?: (point: DiagramZoomPoint | null) => void
 ): boolean {
   if (!isDiagramPinchMessage(data)) return false;
+  setAnchor?.(
+    typeof data.clientX === "number" &&
+      typeof data.clientY === "number" &&
+      Number.isFinite(data.clientX) &&
+      Number.isFinite(data.clientY)
+      ? { x: data.clientX, y: data.clientY }
+      : null
+  );
   setZoom(zoom => applyDiagramPinchZoom(zoom, data.deltaY));
   return true;
 }
@@ -571,6 +681,7 @@ export function DiagramPane({
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
   const [zoom, setZoom] = useState(DIAGRAM_ZOOM_DEFAULT);
+  const zoomAnchorRef = useRef<DiagramZoomPoint | null>(null);
   const activeListRequestRef = useRef<object | null>(null);
   const deleteInFlightRef = useRef(false);
   // 進行中の fetch を追跡し、古いタブの結果が新しいタブを上書きしないようにする
@@ -712,6 +823,14 @@ export function DiagramPane({
     if (!root) return;
     const onScroll = (event: Event) => {
       const detail = (event as CustomEvent<KeyNavDiagramScroll>).detail;
+      const scroller = root.querySelector<HTMLElement>(
+        "[data-diagram-zoom-scroller]"
+      );
+      if (scroller) {
+        const plan = planDiagramKeynavScroll(scroller, detail);
+        if (plan.top !== undefined) scroller.scrollTop = plan.top;
+        if (!plan.forward) return;
+      }
       portRef.current?.postMessage({
         type: "ark:diagram-keynav-scroll",
         unit: detail.unit,
@@ -884,7 +1003,13 @@ export function DiagramPane({
       portRef.current = channel.port1;
       const generation = ++portGenerationRef.current;
       channel.port1.onmessage = (event: MessageEvent) => {
-        if (handleDiagramPinchMessage(event.data, setZoom)) return;
+        if (
+          handleDiagramPinchMessage(event.data, setZoom, point => {
+            zoomAnchorRef.current = point;
+          })
+        ) {
+          return;
+        }
         if (isDiagramKeynavLeaderMessage(event.data)) {
           // 図の中にいたのだから、ノーマルモードは作業エリアから始める
           window.dispatchEvent(
@@ -1060,13 +1185,7 @@ export function DiagramPane({
               relPath={relPath}
               html={html}
               zoom={zoom}
-              onZoomOut={() =>
-                setZoom(current => stepDiagramZoom(current, "out"))
-              }
-              onZoomReset={() => setZoom(resetDiagramZoom())}
-              onZoomIn={() =>
-                setZoom(current => stepDiagramZoom(current, "in"))
-              }
+              zoomAnchor={zoomAnchorRef}
               onIframeLoad={handleIframeLoad}
             />
           </div>
