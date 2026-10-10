@@ -30,7 +30,8 @@ function fakeSocket(connected = true) {
     },
     reply(event: string, value: unknown) {
       const call = emitted.findLast(e => e.event === event);
-      (call?.args.at(-1) as (value: unknown) => void)(value);
+      if (!call) throw new Error(`${event} は送られていない`);
+      (call.args.at(-1) as (value: unknown) => void)(value);
     },
   };
 }
