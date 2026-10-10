@@ -1,7 +1,7 @@
 /**
  * palette - コマンドパレット (`:`) の候補と絞り込み
  *
- * 候補は「セッション・図・ファイル・コマンド」と、打った文を Claude へ送る「聞く」の行。
+ * 候補は「セッション・図・ファイル・コマンド」と、打った文を Claude に聞く「聞く」の行。
  * ここは候補の形と並べ方だけを持ち、実行は CommandPalette が行う。
  *
  * 絞り込みは空白で区切った語をすべて含むものを残す。語は連続して含まれるものを高く、
@@ -58,7 +58,6 @@ export const PALETTE_KIND_LABEL: Readonly<Record<PaletteKind, string>> = {
 /** パレットを閉じたあと、ノーマルモードのいる場所をどこにするか */
 export function regionAfter(action: PaletteAction): KeyNavRegion | undefined {
   if (action.type === "diagram" || action.type === "file") return "work";
-  if (action.type === "ask") return "left";
   return undefined;
 }
 
@@ -264,18 +263,14 @@ function scoreFilePath(path: string, words: string[]): number | null {
   return total - name.length * 0.2;
 }
 
-/** 打った文を Claude へ送る行。空なら出さない */
-export function askItem(
-  query: string,
-  sessionLabel: string
-): PaletteItem | null {
+/** 打った文を Claude に聞く行。空なら出さない */
+export function askItem(query: string): PaletteItem | null {
   const text = query.trim();
   if (text === "") return null;
   return {
     id: "ask",
     kind: "ask",
     title: `Claude に聞く: ${text}`,
-    detail: sessionLabel,
     action: { type: "ask", text },
   };
 }

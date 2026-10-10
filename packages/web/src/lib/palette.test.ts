@@ -140,10 +140,9 @@ describe("候補の形", () => {
   });
 
   it("「聞く」の行は、打った文があるときだけ出す", () => {
-    expect(askItem("   ", "haus")).toBeNull();
-    expect(askItem(" なぜ落ちる? ", "haus")).toMatchObject({
+    expect(askItem("   ")).toBeNull();
+    expect(askItem(" なぜ落ちる? ")).toMatchObject({
       kind: "ask",
-      detail: "haus",
       action: { type: "ask", text: "なぜ落ちる?" },
     });
   });
@@ -153,10 +152,9 @@ describe("候補の形", () => {
     expect(text).not.toMatch(/停止|削除|再起動/);
   });
 
-  it("図とファイルを開いたあとは作業エリアに、聞いたあとは左のパネルにいる", () => {
+  it("図とファイルを開いたあとは作業エリアにいる", () => {
     expect(regionAfter({ type: "file", path: "a" })).toBe("work");
     expect(regionAfter({ type: "diagram", relPath: "a" })).toBe("work");
-    expect(regionAfter({ type: "ask", text: "a" })).toBe("left");
     expect(regionAfter({ type: "session", sessionId: "a" })).toBeUndefined();
   });
 });

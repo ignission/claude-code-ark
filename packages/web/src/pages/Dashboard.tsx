@@ -923,7 +923,6 @@ export default function Dashboard() {
               onSelectSession={handleSelectSession}
               onOpenDiagram={handleOpenDiagramFromPalette}
               onOpenFile={handleOpenFileLink}
-              onAsk={sendMessage}
               onOpenBoardSuggestSettings={() =>
                 setShowBoardSuggestSettings(true)
               }

@@ -2,8 +2,8 @@
  * CommandPalette - 名前で探して実行するパレット (PC のみ。ノーマルモードの `:`)
  *
  * セッション・図・ファイル・コマンドを 1 つの入力欄で絞り込み、Enter で実行する。
- * 打った文をそのまま今のセッションの Claude へ送る「聞く」の行を、いつも最後に置く
- * (Tab で直接送る)。候補の形と並べ方は lib/palette.ts。
+ * `onAsk` が渡されていれば、打った文を Claude に聞く「聞く」の行を最後に置く
+ * (Tab で直接聞く)。候補の形と並べ方は lib/palette.ts。
  *
  * - 開くのは KeyNavLayer (`ark:palette-open`)。閉じたら `ark:palette-closed` で知らせ、
  *   KeyNavLayer がノーマルモードのフォーカスを置き直す。場所やタブを替える操作は、
@@ -60,8 +60,8 @@ export interface CommandPaletteProps {
   ) => void;
   /** そのセッションの「ファイル」のタブで開く (端末・会話のリンクと同じ開き方) */
   onOpenFile: (sessionId: string, filePath: string) => void;
-  /** 打った文を、そのセッションの Claude へ送る */
-  onAsk: (sessionId: string, text: string) => void;
+  /** 打った文を Claude に聞く。渡さなければ「聞く」の行を出さない */
+  onAsk?: (text: string) => void;
   onOpenBoardSuggestSettings: () => void;
 }
 
@@ -144,8 +144,6 @@ function PaletteBody({
         }),
     [groupedItems, sessionStatuses, worktreeDisplayNames, sessionId]
   );
-  const sessionLabel =
-    sessionItems.find(item => item.id === `session:${sessionId}`)?.title ?? "";
 
   useEffect(() => {
     if (!sessionId || !worktreePath) return;
@@ -194,9 +192,9 @@ function PaletteBody({
       commands: PALETTE_COMMANDS,
       filePaths,
     });
-    const ask = session ? askItem(query, sessionLabel) : null;
+    const ask = onAsk ? askItem(query) : null;
     return ask ? [...ranked, ask] : ranked;
-  }, [query, sessionItems, diagramItems, filePaths, session, sessionLabel]);
+  }, [query, sessionItems, diagramItems, filePaths, onAsk]);
 
   const at = Math.min(cursor, Math.max(0, items.length - 1));
 
@@ -233,13 +231,15 @@ function PaletteBody({
           onOpenBoardSuggestSettings();
           break;
         case "ask":
-          if (sessionId) onAsk(sessionId, action.text);
+          onAsk?.(action.text);
           break;
       }
       onClose({
         command,
         region,
-        handoff: action.type === "board-suggest-settings",
+        // 設定のダイアログと「聞く」のウィンドウは、自分でフォーカスを持つ
+        handoff:
+          action.type === "board-suggest-settings" || action.type === "ask",
       });
     },
     [
@@ -308,8 +308,12 @@ function PaletteBody({
           aria-activedescendant={
             items[at] ? `command-palette-option-${at}` : undefined
           }
-          aria-label="探す、または Claude に聞く"
-          placeholder="セッション・ファイル・図・コマンドを探す。Tab で Claude に聞く"
+          aria-label={onAsk ? "探す、または Claude に聞く" : "探す"}
+          placeholder={
+            onAsk
+              ? "セッション・ファイル・図・コマンドを探す。Tab で Claude に聞く"
+              : "セッション・ファイル・図・コマンドを探す"
+          }
           value={query}
           onChange={event => {
             setQuery(event.target.value);
@@ -365,7 +369,7 @@ function PaletteBody({
         <div className="flex shrink-0 items-center gap-4 bg-well px-5 py-2 text-[11px] text-muted-foreground">
           <span>↑↓ 選ぶ</span>
           <span>Enter 実行</span>
-          <span>Tab Claude に聞く</span>
+          {onAsk && <span>Tab Claude に聞く</span>}
           <span>Esc 閉じる</span>
           {filesNote && <span className="ml-auto truncate">{filesNote}</span>}
         </div>

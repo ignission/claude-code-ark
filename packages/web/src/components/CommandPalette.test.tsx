@@ -195,13 +195,13 @@ describe("CommandPalette", () => {
     expect(closed[0].handoff).toBe(true);
   });
 
-  it("Tab は打った文を、開いた時点のセッションの Claude へ送る", async () => {
+  it("Tab は打った文を Claude に聞き、フォーカスは聞いた先に任せる", async () => {
     const props = setup();
     await open();
     await type("  このテストはなぜ落ちる?  ");
     await press("Tab");
-    expect(props.onAsk).toHaveBeenCalledWith("s1", "このテストはなぜ落ちる?");
-    expect(closed[0]).toMatchObject({ region: "left" });
+    expect(props.onAsk).toHaveBeenCalledWith("このテストはなぜ落ちる?");
+    expect(closed[0]).toMatchObject({ handoff: true });
   });
 
   it("何も一致しなければ、Enter は「Claude に聞く」になる", async () => {
@@ -210,7 +210,7 @@ describe("CommandPalette", () => {
     await type("zzzz qqqq");
     expect(options()).toEqual(["Claude に聞く: zzzz qqqq"]);
     await press("Enter");
-    expect(props.onAsk).toHaveBeenCalledWith("s1", "zzzz qqqq");
+    expect(props.onAsk).toHaveBeenCalledWith("zzzz qqqq");
   });
 
   it("何も打っていなければ、Tab では何も送らない", async () => {
@@ -243,11 +243,14 @@ describe("CommandPalette", () => {
     expect(closed).toEqual([{}]);
   });
 
-  it("セッションを選んでいなければ、「聞く」の行を出さない", async () => {
-    setup({ selectedSessionId: null });
+  it("onAsk が無ければ「聞く」の行を出さず、Tab でも何も起きない", async () => {
+    setup({ onAsk: undefined });
     await open();
-    await type("なにか");
+    await type("zzzz qqqq");
     expect(options()).toEqual([]);
+    await press("Tab");
+    expect(input()).not.toBeNull();
+    expect(document.body.textContent).not.toContain("Claude に聞く");
   });
 
   it("ファイルの一覧を取れなければ、その旨を出してほかの候補は使える", async () => {
