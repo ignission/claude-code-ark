@@ -702,7 +702,9 @@ export function SplitViewPane(props: SplitViewPaneProps) {
              最後は `overflow-hidden` で箱の中に収める (上部バーは横に溢れない) */}
           {/* 上部バーは左のパネルの中にあるので、作業エリアを広げると幅が足りなくなる。
               そのときは右側の操作を2段目へ折り返す (切れて押せなくなるのを防ぐ)。
-              左の箱は basis-0 なので、折り返すのはセグメントと操作が収まらないときだけ */}
+              左の箱は basis-0 なので、折り返すのはセグメントと操作が収まらないときだけ。
+              操作の並びだけでパネルの幅を超えるとき (860px のウィンドウで左が 168px に
+              なる) は、並びの中でも折り返す */}
           <header className="@container min-h-13 shrink-0 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 py-2 pl-5 pr-3">
             <div className="flex flex-1 basis-0 min-w-0 items-center gap-2.5 overflow-hidden">
               {/* 主ラベルを先に守り、ブランチから省略する。縮み率をブランチ側に
@@ -734,7 +736,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
               onChange={handleLeftModeChange}
               labelClassName="@max-2xl:sr-only"
             />
-            <div className="flex flex-none @4xl:flex-1 @4xl:basis-0 min-w-0 items-center justify-end gap-1">
+            <div className="flex max-w-full flex-none flex-wrap @4xl:flex-1 @4xl:basis-0 min-w-0 items-center justify-end gap-1">
               {quickActions.map(action => quickActionItems[action])}
               <button
                 type="button"
