@@ -464,8 +464,20 @@
 html[data-keynav-active="sidebar"] [data-keynav-region="sidebar"],
 html[data-keynav-active="left"] [data-keynav-region="left"],
 html[data-keynav-active="work"] [data-keynav-region="work"] {
-  /* 枠はパネルの外側 (パネルの間のすき間) に描く。内側に描くと、図の iframe や
-     くぼみの地など、背景を持つ中身に上から塗られて、見出しのあたりでしか見えない */
-  outline: 2px solid color-mix(in oklab, var(--primary) 65%, transparent);
-  outline-offset: 0;
+  position: relative;
+}
+/* 枠は、パネルの中身より上に重ねた層に描く。パネル自身の outline にすると、内側なら
+   図の iframe やくぼみの地 (背景を持つ中身) に塗られて見出しのあたりでしか見えず、
+   外側なら親の overflow に切られて左の辺しか見えない */
+html[data-keynav-active="sidebar"] [data-keynav-region="sidebar"]::after,
+html[data-keynav-active="left"] [data-keynav-region="left"]::after,
+html[data-keynav-active="work"] [data-keynav-region="work"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 2px
+    color-mix(in oklab, var(--primary) 65%, transparent);
+  pointer-events: none;
 }
