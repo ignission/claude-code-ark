@@ -142,14 +142,43 @@ function moveIn(
   }
   const list = workList(root);
   if (!list) return;
-  // フォーカスは一覧の中を動く (ツリーは行ごとにフォーカスが移る) ので、毎回取り直す
-  for (let i = 0; i < count; i += 1) {
-    const target = doc.activeElement;
-    const inside =
-      target instanceof HTMLElement &&
-      regionElement(root, "work")?.contains(target);
-    sendKey(inside ? target : list, dir === 1 ? "ArrowDown" : "ArrowUp");
+  if (list.getAttribute("role") === "listbox") {
+    // 矢印を続けて送っても、一覧は描き直すまで同じ選択から次を計算する (1 行しか進まない)。
+    // まとめて動かすときは、一覧が持つ PageDown / PageUp に任せる
+    const key =
+      count === 1
+        ? dir === 1
+          ? "ArrowDown"
+          : "ArrowUp"
+        : dir === 1
+          ? "PageDown"
+          : "PageUp";
+    sendKey(list, key);
+    return;
   }
+  focusTreeRow(root, doc, at => at + dir * count);
+}
+
+/** ツリーは行ごとにフォーカスを持つので、行へ直接フォーカスを移す (行が自分で選択を追う) */
+function focusTreeRow(
+  root: ParentNode,
+  doc: Document,
+  pick: (at: number, length: number) => number
+): void {
+  const rows = visibleAll(
+    regionElement(root, "work") ?? root,
+    '[role="tree"] [role="treeitem"]'
+  );
+  if (rows.length === 0) return;
+  const focused = rows.indexOf(doc.activeElement as HTMLElement);
+  const at =
+    focused >= 0
+      ? focused
+      : Math.max(
+          0,
+          rows.findIndex(row => row.tabIndex === 0)
+        );
+  rows[Math.min(rows.length - 1, Math.max(0, pick(at, rows.length)))].focus();
 }
 
 function edgeIn(
@@ -175,12 +204,7 @@ function edgeIn(
     sendKey(list, to === "start" ? "Home" : "End");
     return;
   }
-  // ツリーは Home / End を持たないので、行の数だけ矢印を送る
-  const rows = visibleAll(
-    regionElement(root, "work") ?? root,
-    '[role="treeitem"]'
-  );
-  moveIn(root, region, to === "start" ? -1 : 1, rows.length, doc);
+  focusTreeRow(root, doc, (_, length) => (to === "start" ? 0 : length - 1));
 }
 
 function clickSession(

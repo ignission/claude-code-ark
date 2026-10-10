@@ -72,20 +72,30 @@ export function KeyNavLayer() {
   stateRef.current = { mode, region, pending, helpOpen };
   const timersRef = useRef<number[]>([]);
 
-  const focusRegion = useCallback((target: KeyNavRegion) => {
+  const cancelRefocus = useCallback(() => {
     for (const timer of timersRef.current) window.clearTimeout(timer);
-    timersRef.current = REFOCUS_DELAYS_MS.map(delay =>
-      window.setTimeout(() => {
-        if (stateRef.current.mode !== "normal") return;
-        if (stateRef.current.region !== target) return;
-        const element = regionFocusTarget(document, target);
-        // 置き先が無い場所 (会話・図) では受け皿に置き、キーが親の window に届くようにする
-        (element ?? sinkRef.current)?.focus({
-          preventScroll: element === null,
-        });
-      }, delay)
-    );
+    timersRef.current = [];
   }, []);
+
+  const focusRegion = useCallback(
+    (target: KeyNavRegion) => {
+      cancelRefocus();
+      timersRef.current = REFOCUS_DELAYS_MS.map(delay =>
+        window.setTimeout(() => {
+          if (stateRef.current.mode !== "normal") return;
+          if (stateRef.current.region !== target) return;
+          const element = regionFocusTarget(document, target);
+          // 置き先が無い場所 (会話・図) では受け皿に置き、キーが親の window に届くようにする
+          (element ?? sinkRef.current)?.focus({
+            preventScroll: element === null,
+          });
+          // 置けたら探し直しをやめる (置いたあとに j / k で動かした先から、引き戻さない)
+          if (element) cancelRefocus();
+        }, delay)
+      );
+    },
+    [cancelRefocus]
+  );
 
   const enterNormal = useCallback(() => {
     // 作業エリアを閉じたあとなど、覚えている場所がもう無ければ左のパネルに戻す
@@ -119,6 +129,8 @@ export function KeyNavLayer() {
         setHelpOpen(false);
         return;
       }
+      // 次の指示が来たら、前の指示のフォーカスの置き直しは捨てる
+      cancelRefocus();
       const result = executeKeyNavCommand(
         command,
         stateRef.current.region,
@@ -138,13 +150,16 @@ export function KeyNavLayer() {
       }
       if (result.refocus) focusRegion(result.region);
     },
-    [focusRegion]
+    [cancelRefocus, focusRegion]
   );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       // 変換の確定に使うキーは横取りしない
       if (event.isComposing) return;
+      // ダイアログやメニューが開いている間は、前置キーも含めて何もしない
+      // (フォーカスを外へ移すと、そちらのキー操作を壊す)
+      if (overlayOpen()) return;
       if (isLeaderKey(event)) {
         event.preventDefault();
         event.stopPropagation();
@@ -153,7 +168,6 @@ export function KeyNavLayer() {
         return;
       }
       if (stateRef.current.mode !== "normal") return;
-      if (overlayOpen()) return;
       const resolved = resolveKey(stateRef.current.pending, event);
       if (!resolved.handled) return;
       event.preventDefault();
@@ -163,6 +177,7 @@ export function KeyNavLayer() {
       if (resolved.command) run(resolved.command);
     };
     const onLeader = () => {
+      if (overlayOpen()) return;
       if (stateRef.current.mode === "normal") exitToInsert();
       else enterNormal();
     };
@@ -196,9 +211,9 @@ export function KeyNavLayer() {
       window.removeEventListener(KEYNAV_LEADER_EVENT, onLeader);
       window.removeEventListener("focusin", onFocusIn);
       window.removeEventListener("blur", onBlur);
-      for (const timer of timersRef.current) window.clearTimeout(timer);
+      cancelRefocus();
     };
-  }, [enterNormal, exitToInsert, run]);
+  }, [cancelRefocus, enterNormal, exitToInsert, run]);
 
   // モードといる場所を <html> に出す (枠は index.css が描く)
   useEffect(() => {

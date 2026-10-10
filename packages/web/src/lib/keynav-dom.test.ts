@@ -159,17 +159,32 @@ describe("場所の中の移動", () => {
     );
   });
 
-  it("ツリーとコミット一覧には矢印キーを送る", () => {
+  it("ツリーは行へ直接フォーカスを移す", () => {
     mountApp();
     document.getElementById("dir")?.focus();
     run({ type: "move", dir: 1 }, "work");
-    expect(keys).toEqual(["dir:ArrowDown"]);
+    expect(document.activeElement?.id).toBe("file");
+    // 端では止まる
+    run({ type: "page", dir: 1 }, "work");
+    expect(document.activeElement?.id).toBe("file");
+    run({ type: "edge", to: "start" }, "work");
+    expect(document.activeElement?.id).toBe("dir");
+    expect(keys).toEqual([]);
+  });
 
+  it("コミット一覧には矢印を送り、半ページは一覧の PageDown / PageUp に任せる", () => {
     mountApp({ tab: "Git" });
-    keys.length = 0;
     run({ type: "move", dir: -1 }, "work");
     run({ type: "edge", to: "end" }, "work");
-    expect(keys).toEqual(["commits:ArrowUp", "commits:End"]);
+    // 矢印を 10 回送っても、一覧は描き直すまで同じ選択から計算するので 1 行しか進まない
+    run({ type: "page", dir: 1 }, "work");
+    run({ type: "page", dir: -1 }, "work");
+    expect(keys).toEqual([
+      "commits:ArrowUp",
+      "commits:End",
+      "commits:PageDown",
+      "commits:PageUp",
+    ]);
   });
 
   it("ツリーの中では、h は開いたフォルダを畳み、l は開く", () => {
