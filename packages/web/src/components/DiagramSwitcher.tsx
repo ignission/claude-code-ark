@@ -11,7 +11,9 @@
  *   一覧の画面から始める
  * - 一覧は `role="listbox"` で、矢印・Home / End・PageUp / PageDown・Enter で動く。
  *   ノーマルモードの j / k / gg / G もここへ届く (keynav-dom が作業エリアの listbox へ送る)
- * - 削除は行ごとのボタンから。確認のダイアログは 1 つを使い回す
+ * - 削除は行ごとのボタンから。行のチェックで複数を選べば、まとめて消せる (Space で
+ *   切り替え、Shift で範囲、Ctrl / Cmd + A ですべて、Delete で削除)。確認のダイアログは
+ *   1 つを使い回し、サーバーへは 1 件ずつ頼む
  * - 並べ方と絞り込みは lib/diagram-browser.ts
  */
 
@@ -101,6 +103,28 @@ export function getDiagramDeleteWarning(item: DiagramListItem): string {
     : "図と隣接するコメント sidecar も削除します。Git 未追跡のファイルは復元できません。この操作は取り消せません。";
 }
 
+/** まとめて消すときの確認に、名前を並べる数 */
+const DELETE_LIST_LIMIT = 8;
+
+/** まとめて消す図の、Git 管理と未追跡の内訳 */
+export function describeDeleteTracking(
+  items: readonly DiagramListItem[]
+): string {
+  const tracked = items.filter(item => item.tracked).length;
+  const untracked = items.length - tracked;
+  if (tracked === 0) return `未追跡 ${untracked}件`;
+  if (untracked === 0) return `Git管理 ${tracked}件`;
+  return `Git管理 ${tracked}件 / 未追跡 ${untracked}件`;
+}
+
+/** まとめて消すときの警告。Git 管理の図が 1 つでもあれば、差分が残ることも伝える */
+export function getBulkDeleteWarning(
+  items: readonly DiagramListItem[]
+): string {
+  const sample = items.find(item => item.tracked) ?? items[0];
+  return getDiagramDeleteWarning(sample);
+}
+
 export function handleDiagramDeleteConfirmation(
   confirmed: boolean,
   item: DiagramListItem,
@@ -132,9 +156,26 @@ export function DiagramSwitcher({
   const [active, setActive] = useState<string | undefined>(currentRelPath);
   // 消す図はパスで持つ。確認を開いている間に一覧が読み直されたら (Git の追跡が
   // 変わって断られた、など)、新しい行の内容で確認と次の試行をやり直せるようにする
-  const [deleteTargetPath, setDeleteTargetPath] = useState<string | null>(null);
-  const deleteTarget =
-    diagrams.find(diagram => diagram.relPath === deleteTargetPath) ?? null;
+  const [deleteTargetPaths, setDeleteTargetPaths] = useState<string[] | null>(
+    null
+  );
+  const deleteTargets = useMemo(
+    () =>
+      deleteTargetPaths
+        ? diagrams.filter(diagram =>
+            deleteTargetPaths.includes(diagram.relPath)
+          )
+        : [],
+    [diagrams, deleteTargetPaths]
+  );
+  // チェックを付けた図 (まとめて消す対象)。絞り込みを変えても残す
+  const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
+  const lastCheckedRef = useRef<string | null>(null);
+  const [progress, setProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
+  const [bulkNotice, setBulkNotice] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -154,6 +195,93 @@ export function DiagramSwitcher({
   const deletePending = isDeleting || confirmingDelete;
   const canDelete = !!onDelete && isConnected && !listLoading && !deletePending;
   const now = new Date();
+  // 一覧から消えた図のチェックは数えない
+  const checkedItems = diagrams.filter(diagram => checked.has(diagram.relPath));
+  const allRowsChecked =
+    rows.length > 0 && rows.every(row => checked.has(row.relPath));
+
+  /** 行のチェックを切り替える。Shift を押していれば、前に切り替えた行までをまとめて付ける */
+  const toggleChecked = (relPath: string, range: boolean) => {
+    // 範囲の両端は、更新の関数の外で決める (関数は後で走るので、その時点では
+    // 「前に切り替えた行」がもう書き換わっている)
+    const from = rows.findIndex(row => row.relPath === lastCheckedRef.current);
+    const to = rows.findIndex(row => row.relPath === relPath);
+    const span =
+      range && from >= 0 && to >= 0
+        ? rows.slice(Math.min(from, to), Math.max(from, to) + 1)
+        : null;
+    setChecked(previous => {
+      const next = new Set(previous);
+      if (span) {
+        for (const row of span) next.add(row.relPath);
+      } else if (next.has(relPath)) {
+        next.delete(relPath);
+      } else {
+        next.add(relPath);
+      }
+      return next;
+    });
+    lastCheckedRef.current = relPath;
+  };
+
+  /** 見えている行をすべて選ぶ。すべて選んであれば外す */
+  const toggleAllRows = () => {
+    setChecked(previous => {
+      const next = new Set(previous);
+      for (const row of rows) {
+        if (allRowsChecked) next.delete(row.relPath);
+        else next.add(row.relPath);
+      }
+      return next;
+    });
+  };
+
+  const requestDelete = (items: readonly DiagramListItem[]) => {
+    if (items.length === 0 || !canDelete) return;
+    setBulkNotice(null);
+    setDeleteTargetPaths(items.map(item => item.relPath));
+  };
+
+  /** 確認のあと、対象を 1 件ずつ消す (サーバーの削除は 1 件ずつで、追跡の状態を照合する) */
+  const runDelete = async () => {
+    if (!onDelete || deletePending) return;
+    const targets = deleteTargets;
+    setConfirmingDelete(true);
+    let failed = 0;
+    try {
+      for (const [index, target] of targets.entries()) {
+        setProgress({ done: index, total: targets.length });
+        const succeeded = await handleDiagramDeleteConfirmation(
+          true,
+          target,
+          onDelete
+        );
+        if (succeeded) {
+          setChecked(previous => {
+            const next = new Set(previous);
+            next.delete(target.relPath);
+            return next;
+          });
+        } else {
+          failed += 1;
+        }
+      }
+    } finally {
+      setProgress(null);
+      setConfirmingDelete(false);
+    }
+    if (targets.length === 1) {
+      // 1 件のときは、失敗したら確認を開いたままにして、理由を見てやり直せるようにする
+      if (failed === 0) setDeleteTargetPaths(null);
+      return;
+    }
+    setDeleteTargetPaths(null);
+    if (failed > 0) {
+      setBulkNotice(
+        `${targets.length}件のうち${failed}件を削除できませんでした`
+      );
+    }
+  };
 
   // 見せる図が替わったら一覧を閉じる (復元や Claude の board_open で図が開いたのに、
   // 一覧が上に重なったままにしない)。図が無くなったら、選べるように開く
@@ -310,12 +438,12 @@ export function DiagramSwitcher({
           className="absolute inset-x-0 top-10 bottom-0 z-20 flex animate-in flex-col bg-card duration-150 fade-in slide-in-from-left-3 motion-reduce:animate-none"
         >
           {/* 一覧は図の上を覆うので、DiagramPane がバーの下に出す知らせが隠れる */}
-          {notice && (
+          {(bulkNotice ?? notice) && (
             <div
               role="status"
               className="mx-2 mb-1.5 shrink-0 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
             >
-              {notice}
+              {bulkNotice ?? notice}
             </div>
           )}
           <div className="shrink-0 px-2 pb-1.5">
@@ -337,7 +465,48 @@ export function DiagramSwitcher({
               }}
             />
           </div>
+          {checkedItems.length > 0 && (
+            <div
+              data-diagram-selection=""
+              className="mx-2 mb-1.5 flex shrink-0 items-center gap-2 rounded-md bg-well px-3 py-1.5 text-xs"
+            >
+              <span className="flex-1 font-medium">
+                {checkedItems.length}件を選択中
+              </span>
+              <button
+                type="button"
+                className="rounded px-2 py-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={() => setChecked(new Set())}
+              >
+                選択を解除
+              </button>
+              <button
+                type="button"
+                disabled={!canDelete}
+                className="inline-flex items-center gap-1 rounded bg-destructive px-2 py-1 font-medium text-destructive-foreground hover:bg-destructive/90 disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={() => requestDelete(checkedItems)}
+              >
+                <Trash2 className="size-3.5" aria-hidden="true" />
+                選んだ図を削除
+              </button>
+            </div>
+          )}
           <div className="flex shrink-0 items-center gap-2 px-4 pb-1 text-[11px] text-muted-foreground">
+            <input
+              type="checkbox"
+              aria-label="見えている図をすべて選択"
+              className="size-3.5 shrink-0 accent-primary"
+              disabled={rows.length === 0}
+              checked={allRowsChecked}
+              ref={element => {
+                if (element) {
+                  element.indeterminate =
+                    !allRowsChecked &&
+                    rows.some(row => checked.has(row.relPath));
+                }
+              }}
+              onChange={toggleAllRows}
+            />
             {COLUMNS.map(column => (
               <button
                 key={column.key}
@@ -375,7 +544,22 @@ export function DiagramSwitcher({
             onKeyDown={event => {
               // 行の中のボタン (削除) にフォーカスがあるときは、そのボタンに任せる
               if (event.target !== event.currentTarget) return;
-              if (event.key === "Home") {
+              if (event.key === " " && activeRow) {
+                toggleChecked(activeRow.relPath, event.shiftKey);
+                event.preventDefault();
+              } else if (
+                (event.metaKey || event.ctrlKey) &&
+                event.key.toLowerCase() === "a"
+              ) {
+                toggleAllRows();
+                event.preventDefault();
+              } else if (
+                (event.key === "Delete" || event.key === "Backspace") &&
+                checkedItems.length > 0
+              ) {
+                requestDelete(checkedItems);
+                event.preventDefault();
+              } else if (event.key === "Home") {
                 moveTo(0);
                 event.preventDefault();
               } else if (event.key === "End") {
@@ -414,6 +598,19 @@ export function DiagramSwitcher({
                   onMouseMove={() => setActive(item.relPath)}
                   onClick={() => choose(item)}
                 >
+                  <input
+                    type="checkbox"
+                    aria-label={`「${item.displayName}」を選択`}
+                    className="size-3.5 shrink-0 accent-primary"
+                    checked={checked.has(item.relPath)}
+                    onClick={event => {
+                      // 行を開く操作にしない。Shift を押していれば範囲で選ぶ
+                      event.stopPropagation();
+                      toggleChecked(item.relPath, event.shiftKey);
+                    }}
+                    // 切り替えは onClick でまとめて扱う (Shift を見るため)
+                    onChange={() => {}}
+                  />
                   <span className="flex min-w-0 flex-1 items-center gap-2">
                     <Icon
                       className="size-4 shrink-0 text-muted-foreground"
@@ -446,7 +643,7 @@ export function DiagramSwitcher({
                     )}
                     onClick={event => {
                       event.stopPropagation();
-                      setDeleteTargetPath(item.relPath);
+                      requestDelete([item]);
                     }}
                   >
                     <Trash2 className="size-3.5" aria-hidden="true" />
@@ -458,23 +655,44 @@ export function DiagramSwitcher({
         </div>
       )}
       <AlertDialog
-        open={deleteTarget !== null}
+        open={deleteTargets.length > 0}
         onOpenChange={next => {
-          if (!next && !deletePending) setDeleteTargetPath(null);
+          if (!next && !deletePending) setDeleteTargetPaths(null);
         }}
       >
-        {deleteTarget && (
+        {deleteTargets.length > 0 && (
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>
-                「{deleteTarget.displayName}」を削除しますか？
+                {deleteTargets.length === 1
+                  ? `「${deleteTargets[0].displayName}」を削除しますか？`
+                  : `${deleteTargets.length}件の図を削除しますか？`}
               </AlertDialogTitle>
               <AlertDialogDescription asChild>
-                <div className="space-y-2">
-                  <p className="break-all">{deleteTarget.relPath}</p>
-                  <p>{deleteTarget.tracked ? "Git管理" : "未追跡"}</p>
-                  <p>{getDiagramDeleteWarning(deleteTarget)}</p>
-                </div>
+                {deleteTargets.length === 1 ? (
+                  <div className="space-y-2">
+                    <p className="break-all">{deleteTargets[0].relPath}</p>
+                    <p>{deleteTargets[0].tracked ? "Git管理" : "未追跡"}</p>
+                    <p>{getDiagramDeleteWarning(deleteTargets[0])}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <ul className="max-h-40 list-disc space-y-0.5 overflow-y-auto pl-5">
+                      {deleteTargets.slice(0, DELETE_LIST_LIMIT).map(target => (
+                        <li key={target.relPath} className="break-all">
+                          {target.displayName}
+                        </li>
+                      ))}
+                      {deleteTargets.length > DELETE_LIST_LIMIT && (
+                        <li>
+                          ほか{deleteTargets.length - DELETE_LIST_LIMIT}件
+                        </li>
+                      )}
+                    </ul>
+                    <p>{describeDeleteTracking(deleteTargets)}</p>
+                    <p>{getBulkDeleteWarning(deleteTargets)}</p>
+                  </div>
+                )}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -484,23 +702,18 @@ export function DiagramSwitcher({
               <AlertDialogAction
                 disabled={deletePending}
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                onClick={async event => {
+                onClick={event => {
                   event.preventDefault();
-                  if (!onDelete || deletePending) return;
-                  setConfirmingDelete(true);
-                  try {
-                    const succeeded = await handleDiagramDeleteConfirmation(
-                      true,
-                      deleteTarget,
-                      onDelete
-                    );
-                    if (succeeded) setDeleteTargetPath(null);
-                  } finally {
-                    setConfirmingDelete(false);
-                  }
+                  void runDelete();
                 }}
               >
-                {deletePending ? "削除中…" : "削除する"}
+                {progress
+                  ? `削除中… ${progress.done + 1}/${progress.total}`
+                  : deletePending
+                    ? "削除中…"
+                    : deleteTargets.length === 1
+                      ? "削除する"
+                      : `${deleteTargets.length}件を削除する`}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

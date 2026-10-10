@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DiagramSwitcher,
+  describeDeleteTracking,
   getDiagramDeleteWarning,
   handleDiagramDeleteConfirmation,
 } from "./DiagramSwitcher";
@@ -378,6 +379,143 @@ describe("DiagramSwitcher", () => {
     expect(browser()?.querySelector('[role="status"]')?.textContent).toBe(
       "コメントのファイルを消せませんでした"
     );
+  });
+
+  describe("まとめて選んで消す", () => {
+    const box = (name: string) =>
+      document.querySelector<HTMLInputElement>(
+        `input[aria-label="「${name}」を選択"]`
+      );
+    const allBox = () =>
+      document.querySelector<HTMLInputElement>(
+        'input[aria-label="見えている図をすべて選択"]'
+      );
+    const selectionBar = () =>
+      document.querySelector("[data-diagram-selection]");
+    const bulkDelete = () =>
+      [...(selectionBar()?.querySelectorAll("button") ?? [])].find(button =>
+        button.textContent?.includes("選んだ図を削除")
+      );
+    const confirm = () =>
+      document.querySelector<HTMLButtonElement>(
+        '[data-testid="confirm-delete"]'
+      );
+    const dialog = () => document.querySelector('[role="alertdialog"]');
+
+    it("行のチェックで選び、選んだ数を出す。行は開かない", () => {
+      const props = render();
+      openList();
+      expect(selectionBar()).toBeNull();
+      act(() => box("コマンドパレット")?.click());
+      act(() => box("b.diagram.html")?.click());
+      expect(selectionBar()?.textContent).toContain("2件を選択中");
+      expect(props.onSelect).not.toHaveBeenCalled();
+      expect(allBox()?.indeterminate).toBe(true);
+      act(() =>
+        [...(selectionBar()?.querySelectorAll("button") ?? [])]
+          .find(button => button.textContent === "選択を解除")
+          ?.click()
+      );
+      expect(selectionBar()).toBeNull();
+    });
+
+    it("見出しのチェックは、見えている行だけをすべて選ぶ / 外す", () => {
+      render();
+      openList();
+      type("diagram.html nested");
+      act(() => allBox()?.click());
+      expect(selectionBar()?.textContent).toContain("1件を選択中");
+      type("");
+      expect(allBox()?.checked).toBe(false);
+      act(() => allBox()?.click());
+      expect(selectionBar()?.textContent).toContain("3件を選択中");
+      expect(allBox()?.checked).toBe(true);
+      act(() => allBox()?.click());
+      expect(selectionBar()).toBeNull();
+    });
+
+    it("Shift を押しながら選ぶと、前に選んだ行までをまとめて選ぶ", () => {
+      render();
+      openList();
+      act(() => box("コマンドパレット")?.click());
+      act(() => {
+        box("b.diagram.html")?.dispatchEvent(
+          new MouseEvent("click", {
+            bubbles: true,
+            cancelable: true,
+            shiftKey: true,
+          })
+        );
+      });
+      expect(selectionBar()?.textContent).toContain("3件を選択中");
+    });
+
+    it("一覧のキーでも選べる (Space / Ctrl+A / Delete)", () => {
+      render();
+      openList();
+      key(listbox(), "Home");
+      key(listbox(), " ");
+      expect(box("コマンドパレット")?.checked).toBe(true);
+      key(listbox(), "a", { ctrlKey: true });
+      expect(selectionBar()?.textContent).toContain("3件を選択中");
+      key(listbox(), "Delete");
+      expect(dialog()?.textContent).toContain("3件の図を削除しますか？");
+    });
+
+    it("確認に名前と内訳を出し、1 件ずつ順に消す", async () => {
+      const order: string[] = [];
+      const onDelete = vi.fn(async (relPath: string) => {
+        order.push(relPath);
+        return true;
+      });
+      render({ onDelete });
+      openList();
+      act(() => allBox()?.click());
+      act(() => bulkDelete()?.click());
+      const text = dialog()?.textContent ?? "";
+      expect(text).toContain("3件の図を削除しますか？");
+      expect(text).toContain("コマンドパレット");
+      expect(text).toContain("Git管理 1件 / 未追跡 2件");
+      // Git 管理の図が混ざっていれば、差分が残ることも伝える
+      expect(text).toContain("worktree に削除差分が残ります");
+      expect(confirm()?.textContent).toBe("3件を削除する");
+      expect(onDelete).not.toHaveBeenCalled();
+      await act(async () => confirm()?.click());
+      expect(order).toEqual(diagrams.map(item => item.relPath));
+      expect(onDelete).toHaveBeenCalledWith(diagrams[0].relPath, true);
+      expect(dialog()).toBeNull();
+      expect(selectionBar()).toBeNull();
+    });
+
+    it("消せなかった図は選んだまま残し、件数を知らせる", async () => {
+      const onDelete = vi.fn(
+        async (relPath: string) => relPath !== diagrams[0].relPath
+      );
+      render({ onDelete });
+      openList();
+      act(() => allBox()?.click());
+      act(() => bulkDelete()?.click());
+      await act(async () => confirm()?.click());
+      expect(dialog()).toBeNull();
+      expect(browser()?.querySelector('[role="status"]')?.textContent).toBe(
+        "3件のうち1件を削除できませんでした"
+      );
+      expect(selectionBar()?.textContent).toContain("1件を選択中");
+      expect(box("注文フロー")?.checked).toBe(true);
+    });
+
+    it("一覧から消えた図は、選んだ数に数えない", () => {
+      const props = render();
+      openList();
+      act(() => allBox()?.click());
+      render({ ...props, diagrams: diagrams.slice(0, 1) });
+      expect(selectionBar()?.textContent).toContain("1件を選択中");
+    });
+
+    it("内訳の言葉", () => {
+      expect(describeDeleteTracking(diagrams.slice(1))).toBe("未追跡 2件");
+      expect(describeDeleteTracking(diagrams.slice(0, 1))).toBe("Git管理 1件");
+    });
   });
 
   it("未接続・更新中・削除中は、削除ボタンを押せない", () => {
