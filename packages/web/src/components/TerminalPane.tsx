@@ -39,6 +39,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { readClipboardImages } from "@/lib/clipboard-images";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useIsMobile } from "../hooks/useMobile";
+import { useTerminalLeaderKey } from "../hooks/useTerminalLeaderKey";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { useTtydReconnect } from "../hooks/useTtydReconnect";
 import { FileViewerPane } from "./FileViewerPane";
@@ -173,6 +174,7 @@ export function TerminalPane({
 
   // ttyd iframe内のxterm.jsにリンク検出をインジェクト（共通フック）
   useTerminalLinkInjection(iframeRef, iframeKey);
+  useTerminalLeaderKey(iframeRef, iframeKey);
 
   // 全ての添付ファイル（画像/非画像）を共通でプレビューダイアログに集約する
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
@@ -521,6 +523,7 @@ export function TerminalPane({
             <iframe
               key={iframeKey}
               ref={iframeRef}
+              data-keynav="terminal"
               src={ttydIframeSrc}
               className="block w-full h-full border-0"
               title={`Terminal - ${worktree?.branch || session.id}`}

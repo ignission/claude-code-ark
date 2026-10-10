@@ -25,6 +25,7 @@ import { injectDiagramDocEditor } from "./diagram-doc-editor.js";
 import { extractModel, injectCsp } from "./diagram-file.js";
 import { validateDiagramGraphKinds } from "./diagram-graph-kinds.js";
 import { injectHarness } from "./diagram-harness.js";
+import { injectDiagramKeynavLayer } from "./diagram-keynav-layer.js";
 import { injectDiagramLinkLayer } from "./diagram-link-layer.js";
 import type { DiagramModel } from "./diagram-model.js";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
@@ -165,14 +166,17 @@ export async function readDiagram(
   // 載せると壊れるので graph ハーネスは載せない。投影が生成する行の data-ark-id
   // に doc と同じ要領でコメントが付く（本文の編集は無い。正は常にモデル）。
   // デッキも同じ扱いにする（ページは sequence / call-tree と自由形の HTML だけ）。
-  const projected = injectDiagramLinkLayer(
-    injectCsp(
-      injectDeckProjection(
-        injectStaticBuiltinProjection(
-          injectBuiltinProjection(read.raw, model.model),
+  // キーの層 (前置キーを親へ渡し、親の指示で図を送る) はどの図種にも載せる。
+  const projected = injectDiagramKeynavLayer(
+    injectDiagramLinkLayer(
+      injectCsp(
+        injectDeckProjection(
+          injectStaticBuiltinProjection(
+            injectBuiltinProjection(read.raw, model.model),
+            model.model
+          ),
           model.model
-        ),
-        model.model
+        )
       )
     )
   );

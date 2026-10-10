@@ -662,6 +662,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
             閉じている間は左ペインが全幅を使う */}
         <div
           data-testid="split-view-left"
+          data-keynav-region="left"
           style={
             showWorkArea
               ? { width: renderedLeftWidth, flexShrink: 0 }
@@ -822,6 +823,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
               />
             </button>
             <div
+              data-keynav-region="work"
               className={cn(
                 "panel flex h-full min-w-0 flex-1 flex-col overflow-hidden",
                 isDragging && "pointer-events-none",

@@ -1773,6 +1773,7 @@ export function SplitChatPane({
         onChange={e => setInputValue(e.target.value)}
         onKeyDown={handleKeyDown}
         onPaste={onUploadFile ? handlePaste : undefined}
+        data-keynav="chat-input"
         aria-label="メッセージ"
         placeholder={
           isMobile
@@ -1835,6 +1836,7 @@ export function SplitChatPane({
         {/* biome-ignore lint/a11y/useKeyWithClickEvents: キーボード利用者は Tab で入力欄 (textarea) に直接到達できるため、キーハンドラは不要 */}
         <div
           ref={jsonlScrollRef}
+          data-keynav="chat-scroll"
           onClick={handleConversationClick}
           className="absolute inset-0 overflow-y-auto"
         >
