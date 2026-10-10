@@ -134,6 +134,37 @@ describe("list", () => {
   });
 });
 
+describe("index", () => {
+  it("追跡中と未追跡のファイルを返し、gitignore 対象と .git は返さない", async () => {
+    fs.mkdirSync(path.join(dir, "src/deep"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "src/deep/b.ts"), "");
+    fs.writeFileSync(path.join(dir, ".gitignore"), "ignored.log\n");
+    fs.writeFileSync(path.join(dir, "ignored.log"), "");
+    execFileSync("git", ["add", "a.txt"], { cwd: dir });
+    const cb = vi.fn();
+    await make().index({ sessionId: "s1" }, cb);
+    const r = cb.mock.calls[0][0];
+    expect(r.ok).toBe(true);
+    expect([...r.paths].sort()).toEqual([
+      ".gitignore",
+      "a.txt",
+      "src/deep/b.ts",
+    ]);
+    expect(r.truncated).toBe(false);
+  });
+
+  it("未知のセッションは ok:false、形の違う payload には応えない", async () => {
+    const h = make();
+    const cb = vi.fn();
+    await h.index({ sessionId: "nope" }, cb);
+    expect(cb.mock.calls[0][0].ok).toBe(false);
+    cb.mockClear();
+    await h.index({ sessionId: 1 }, cb);
+    await h.index(null, cb);
+    expect(cb).not.toHaveBeenCalled();
+  });
+});
+
 describe("不正な payload", () => {
   it("throw せず、cb が無ければ何も起きない", async () => {
     const h = make();

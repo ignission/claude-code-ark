@@ -4,6 +4,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KEYNAV_LEADER_EVENT } from "@/hooks/useTerminalLeaderKey";
+import {
+  PALETTE_CLOSED_EVENT,
+  PALETTE_OPEN_EVENT,
+  type PaletteClosedDetail,
+} from "@/lib/palette";
 import { KeyNavLayer } from "./KeyNavLayer";
 
 /** 作業エリアを開閉でき、タブを替えると中身が替わる、最小の画面 */
@@ -118,6 +123,63 @@ describe("KeyNavLayer", () => {
     wait(600);
     expect(screen.selectedTab()).toBe("Git");
     expect(document.activeElement?.id).toBe("commits");
+  });
+
+  it(": でパレットを開く合図を投げ、パレットの入力欄では入力モードに戻らない", () => {
+    mountScreen({ workOpen: true });
+    const opened = vi.fn();
+    window.addEventListener(PALETTE_OPEN_EVENT, opened);
+    press(";", { ctrlKey: true });
+    press(":");
+    window.removeEventListener(PALETTE_OPEN_EVENT, opened);
+    expect(opened).toHaveBeenCalledTimes(1);
+
+    const palette = document.createElement("div");
+    palette.setAttribute("role", "dialog");
+    palette.setAttribute("data-keynav-ignore", "");
+    palette.innerHTML = "<input />";
+    document.body.append(palette);
+    act(() => palette.querySelector("input")?.focus());
+    expect(document.documentElement.dataset.keynavMode).toBe("normal");
+    // パレットが開いている間は、打った文字を指示として横取りしない
+    const typed = new KeyboardEvent("keydown", { key: "j", cancelable: true });
+    act(() => {
+      window.dispatchEvent(typed);
+    });
+    expect(typed.defaultPrevented).toBe(false);
+  });
+
+  it("パレットが閉じたら、返ってきた指示を実行し、いる場所を合わせる", () => {
+    const screen = mountScreen({ workOpen: true });
+    press(";", { ctrlKey: true });
+    const closed = (detail: PaletteClosedDetail) =>
+      act(() => {
+        window.dispatchEvent(new CustomEvent(PALETTE_CLOSED_EVENT, { detail }));
+      });
+    closed({ command: { type: "work-tab", tab: "git" } });
+    expect(screen.selectedTab()).toBe("Git");
+    expect(activeRegion()).toBe("work");
+    press("h");
+    expect(activeRegion()).toBe("left");
+    closed({ region: "work" });
+    wait(10);
+    expect(activeRegion()).toBe("work");
+    expect(document.activeElement?.id).toBe("commits");
+  });
+
+  it("別のダイアログへ渡したときは、フォーカスを置き直さない", () => {
+    mountScreen({ workOpen: true });
+    press(";", { ctrlKey: true });
+    const other = document.createElement("button");
+    document.body.append(other);
+    other.focus();
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(PALETTE_CLOSED_EVENT, { detail: { handoff: true } })
+      );
+    });
+    wait(600);
+    expect(document.activeElement).toBe(other);
   });
 
   it("後回しにしたタブの選択は、次の指示が来たら捨てる", () => {

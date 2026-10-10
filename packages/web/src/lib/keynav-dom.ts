@@ -305,7 +305,7 @@ export interface KeyNavExecution {
 }
 
 /**
- * 指示を実行する。`help` と `cancel` は表示だけの指示なので、呼び出し側が扱う。
+ * 指示を実行する。`help`・`palette`・`cancel` は表示だけの指示なので、呼び出し側が扱う。
  * 作業エリアを開いてからタブを選ぶ操作は描画を 1 回挟むので、`defer` で後回しにする。
  */
 export function executeKeyNavCommand(
@@ -409,6 +409,7 @@ export function executeKeyNavCommand(
       return region === "work" ? { region: "left", refocus: true } : { region };
     }
     case "help":
+    case "palette":
     case "cancel":
       return { region };
   }

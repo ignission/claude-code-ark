@@ -869,6 +869,10 @@ export interface ClientToServerEvents {
     data: { sessionId: string; dirPath: string },
     cb: (r: FileListResponse) => void
   ) => void;
+  "file:index": (
+    data: { sessionId: string },
+    cb: (r: FileIndexResponse) => void
+  ) => void;
   "file:write": (
     data: {
       sessionId: string;
@@ -1303,6 +1307,11 @@ export interface FileTreeEntry {
 
 export type FileListResponse =
   | { ok: true; entries: FileTreeEntry[]; truncated: boolean }
+  | { ok: false; error: string };
+
+/** worktree 内の全ファイルのパス (worktree からの相対。gitignore 対象は含まない) */
+export type FileIndexResponse =
+  | { ok: true; paths: string[]; truncated: boolean }
   | { ok: false; error: string };
 
 export type FileWriteResponse =
