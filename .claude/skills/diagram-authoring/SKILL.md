@@ -20,59 +20,59 @@ parent directory が存在しない場合だけ作成し、書いた後に `boar
 読み手は「1 枚ずつ」でめくる表示に切り替えられる。
 
 - **1 ページ目は結論にする。** 見出しを結論の一文にし、残りのページはその根拠を 1 つずつ置く
-- **ページに文章を積まない。** 理由・経緯・注意はチャットに書き、ページには図・コード・数字・
-  ✓ / ✕ のチップだけを置く。段落を置きたくなったら、そのページは要らないか、分け方が違う
-- **ページの図種は中身で選ぶ。** コードの中で誰が誰を呼ぶかは `sequence`、呼び出し経路と
-  差分量は `call-tree`、それ以外（結論、向き、before / after、画面）は自由形の `html` ページ
+- **ページに文章を積まない。** 理由・経緯・注意はチャットに書き、ページには数字・表・
+  コード・✓ / ✕ のチップだけを置く。`text` を 2 つ置きたくなったら、分け方が違う
+- **ページの種類は中身で選ぶ。** コードの中で誰が誰を呼ぶかは `sequence`、呼び出し経路と
+  差分量は `call-tree`、それ以外（結論、向き、before / after、数字）は `blocks`
 - **作業の手順を `sequence` にしない。** 自分が打ったコマンドを時間順に並べても、読み手は
-  結果にたどり着けない。結果を向きや行き先で振り分けた `html` ページにする
+  結果にたどり着けない。結果を向きや行き先で振り分けた `blocks` のページにする
 - ページ数は 3〜6 枚を目安にする
 
-`html` ページの効く作り:
-
-- **見出しを結論の一文にする。** 見出しの語に色を付け、図の中の同じものを同じ色で描く
-- **抽象的な箱ではなく、読み手が実際に見る画面や物の見た目を描く。** 会話ビュー、端末、
-  ボード、通知の帯など。どれに何が起きたかを、その絵の上で示す
-- **矢印は 2 種類程度に絞る。** 届かないもの・起きないものは、線を途中で止めて ✕ を置く
-- **結果は ✓ / ✕ のチップで 1 行にまとめる。** 読み手の状況（「あなたの画面はこっち」）を指す
-- **経緯は番号付きのカード 3 枚程度にする。** 最終状態のカードを強調し、取りやめたものは
-  打ち消し線で残す
-- 描いたら、撮影できる環境なら撮影して、崩れや重なりが無いことを確かめてから見せる
-
-ページが 1 枚で足りるなら、デッキにせず自由形の図を 1 枚描いてもよい。その場合は
-モデルの `type` 欄（図種）を書かず、`title` と、絵の主な部品を `nodes` に最小限だけ置く
-（`edges` / `groups` は空でよい）。主な部品の要素にはその id を `data-model-id` で付ける。
-
-ファイルの約束は他の図と同じで、`<script type="application/json" id="ark-diagram-model">`
-の JSON ブロックは必須（`id` と `type="application/json"` の両方が無いとモデルを読めず、
-サーバーが 422 を返す）。外部リソースを参照しないことも他の図と同じ。
+**デッキに書くのはモデルの JSON だけ。** `<script type="application/json" id="ark-diagram-model">`
+の JSON ブロックのほかには、HTML も `<style>` も書かない（書くと `board_open` が
+拒否する）。見た目は Ark が描き、明暗にも追従する。画面の見た目のような絵が要るときだけ、
+デッキではなく 1 枚の図を別のファイルに描く。その場合はモデルの `type` 欄（図種）を書かず、
+`title` と、絵の主な部品を `nodes` に最小限だけ置く（`edges` / `groups` は空でよい）。
+主な部品の要素にはその id を `data-model-id` で付ける（下の「ファイルの構造」）。
 
 ### デッキの書き方
 
 ページは `ext.pages` に並び順で置く。一番上の `nodes` / `edges` / `groups` は空でよい。
 
-- `sequence` / `call-tree` のページは、単独の図と同じ `nodes` / `edges` をページの中に書く。
-  投影は Ark が生成する（書かない）
-- `html` のページは、本文に `<section data-ark-page="<ページの id>">` を**ちょうど 1 つ**書く。
-  見た目はその中に HTML と inline SVG で自由に描く
-- id はページの id も含めて**ファイル全体で一意**にする。生成した行がコメントの付け先になるため
+- `blocks` のページは `title`（見出し。結論の一文）と `blocks`（部品の並び）を書く
+- `sequence` / `call-tree` のページは、単独の図と同じ `nodes` / `edges` をページの中に書く
+- id はページの id も含めて**ファイル全体で一意**にする
 - `er` / `flow` / `state` / `event-storming` / `context-map` / `doc` はページにできない
   （graph はドラッグした座標を、doc は編集した本文を、ファイル 1 つに 1 種類の前提で保存する）。
   これらが要るときは別のファイルに描く
-- `html` ページにはコメントを付けられない。コメントを受けたい図は `sequence` / `call-tree` にする
-- めくる操作はボタンで作られる。本文に `href="#…"` を書かない（ボードの iframe では
-  親のページへ遷移してしまう）
+- `blocks` のページにはコメントを付けられない。コメントを受けたい図は `sequence` / `call-tree` にする
 
-定義が壊れている（ページが無い、語彙外の `type`、`html` ページの section が無い・2 つある、
-id の重複）とサーバーが 422 を返す。完成例は `_examples/deck.diagram.html` を
-`board_open.path` の説明に示された正準 directory と組み合わせて参照する。
+`blocks` の部品（`kind`）。ここに無いキーや `kind` はサーバーが 422 で拒否する。
+
+| `kind` | 書くもの | 使う場面 |
+| --- | --- | --- |
+| `cards` | `items: [{ title?, value?, text?, items?, tone? }]` | 並べて比べる。`value` は大きな数字、`items` は箇条書き |
+| `chips` | `items: [{ text, tone? }]` | 結果を 1 行で。`tone` が `ok` なら ✓、`ng` なら ✕ |
+| `flow` | `items: ["…", "…"]` | 矢印でつなぐ流れ |
+| `table` | `head?: […]`, `rows: [[…], […]]` | 対応や一覧 |
+| `bars` | `items: [{ label, value, text?, tone? }]` | 量の比較。`value` は数、`text` は表示する文字 |
+| `code` | `text`, `diff?` | コード。`diff: true` で `+` / `-` 始まりの行に色が付く |
+| `list` | `items: […]`, `ordered?` | 箇条書き・手順 |
+| `text` | `text` | 短い補足 1 行 |
+
+`tone` は `a`（強調）/ `ok` / `ng` / `warn`。文字の中では次の 3 つだけが効き、ほかは文字として出る。
+
+- `{a:語}` `{ok:語}` `{ng:語}` `{warn:語}` — 色を付ける。見出しの語と、図の中の同じものを同じ色にする
+- `` `語` `` — コード
+- `[語](packages/foo.ts#L10-L24)` — リンク。コードを指す語はこれで書く
+
+完成例は `_examples/deck.diagram.html` を `board_open.path` の説明に示された正準 directory と
+組み合わせて参照する。
 
 ```html
 <!doctype html>
 <html lang="ja">
-<head><meta charset="utf-8"><title>リンクを押すと行が光るまで</title>
-<style>/* html ページの見た目 */</style>
-</head>
+<head><meta charset="utf-8"><title>リンクを押すと行が光るまで</title></head>
 <body>
 <script type="application/json" id="ark-diagram-model">
 {
@@ -81,7 +81,13 @@ id の重複）とサーバーが 422 を返す。完成例は `_examples/deck.d
   "title": "リンクを押すと行が光るまで",
   "nodes": [], "edges": [], "groups": [],
   "ext": { "pages": [
-    { "id": "p-result", "type": "html", "title": "結論" },
+    { "id": "p-result", "type": "blocks", "title": "リンクは {a:親の window} で解釈する",
+      "blocks": [
+        { "kind": "flow", "items": ["board iframe", "{a:parent window}", "file viewer"] },
+        { "kind": "chips", "items": [
+          { "tone": "ok", "text": "iframe から直接ファイルを開かない" },
+          { "tone": "ng", "text": "`../secret.txt` は開かない" } ] }
+      ] },
     { "id": "p-seq", "type": "sequence", "title": "クリックから行のハイライトまで",
       "nodes": [ { "id": "iframe", "label": "board iframe" },
                  { "id": "parent", "label": "parent window" } ],
@@ -94,10 +100,6 @@ id の重複）とサーバーが 422 を返す。完成例は `_examples/deck.d
   ] }
 }
 </script>
-<section data-ark-page="p-result">
-  <h2>リンクは親の window で解釈する</h2>
-  …
-</section>
 </body>
 </html>
 ```

@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { validateDiagramDeck } from "./diagram-deck.js";
+import { validateDeckForOpen, validateDiagramDeck } from "./diagram-deck.js";
+import { BLOCK_KINDS } from "./diagram-deck-blocks.js";
 import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
 import { validateDiagramDocAuthorship } from "./diagram-doc-authorship.js";
 import { extractModel } from "./diagram-file.js";
@@ -194,15 +195,9 @@ describe("diagram-authoring skill の書き出し先 contract", () => {
     ]) {
       expect(skill).toContain(rule);
     }
-    for (const recipe of [
-      "見出しを結論の一文にする",
-      "画面や物の見た目を描く",
-      "矢印は 2 種類程度に絞る",
-      "✓ / ✕ のチップ",
-      "番号付きのカード",
-    ]) {
-      expect(skill).toContain(recipe);
-    }
+    // デッキに書けるのはモデルだけで、絵が要るときの行き先まで書く
+    expect(skill).toContain("デッキに書くのはモデルの JSON だけ");
+    expect(skill).toContain("✓ / ✕ のチップ");
     // 説明図でもモデルの JSON ブロックは必須
     expect(skill).toContain(
       '`<script type="application/json" id="ark-diagram-model">`'
@@ -216,7 +211,14 @@ describe("diagram-authoring skill の書き出し先 contract", () => {
     expect(skill).toContain("### デッキの書き方");
     expect(skill).toContain('"type": "deck"');
     expect(skill).toContain("`ext.pages`");
-    expect(skill).toContain('<section data-ark-page="<ページの id>">');
+    // 部品の語彙は、サーバーが受け付けるものと同じ
+    for (const kind of BLOCK_KINDS) {
+      expect(skill).toContain(`| \`${kind}\` |`);
+    }
+    expect(skill).toContain('"type": "blocks"');
+    // 自由形のページは新しくは開けないので、書き方を案内しない
+    expect(skill).not.toContain("data-ark-page");
+    expect(skill).not.toContain('"type": "html"');
     expect(skill).toContain("ファイル全体で一意");
     // graph と doc はページにできない理由まで書く
     expect(skill).toContain("ページにできない");
@@ -231,6 +233,8 @@ describe("diagram-authoring skill の書き出し先 contract", () => {
     if (!model.ok) return;
     expect(model.model.type).toBe("deck");
     expect(validateDiagramDeck(html, model.model)).toEqual({ ok: true });
+    // 完成例は board_open で開ける形（自由形のページも本文の HTML も無い）
+    expect(validateDeckForOpen(html, model.model)).toEqual({ ok: true });
     // めくる操作はボタンで作られるので、完成例に文書内リンクを書かない
     expect(html).not.toMatch(/href="#/);
   });

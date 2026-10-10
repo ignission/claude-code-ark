@@ -16,6 +16,7 @@ import { injectDiagramCommentLayer } from "./diagram-comment-layer.js";
 import {
   DECK_TYPE,
   injectDeckProjection,
+  validateDeckForOpen,
   validateDiagramDeck,
 } from "./diagram-deck.js";
 import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
@@ -125,10 +126,16 @@ async function readRawVerified(
   }
 }
 
-/** 配信用に読む。meta CSP と編集ハーネスを注入した HTML を返す。 */
+/**
+ * 配信用に読む。meta CSP と編集ハーネスを注入した HTML を返す。
+ *
+ * `forOpen` は `board_open` の経路で立てる。デッキの自由形のページと本文の HTML を
+ * 拒否する（配信では古いデッキを通すが、新しく開かせはしない）。
+ */
 export async function readDiagram(
   worktreeReal: string,
-  relPath: string
+  relPath: string,
+  options: { forOpen?: boolean } = {}
 ): Promise<ReadDiagramResult> {
   const read = await readRawVerified(worktreeReal, relPath);
   if (!read.ok) return read;
@@ -146,6 +153,10 @@ export async function readDiagram(
   }
   const deck = validateDiagramDeck(read.raw, model.model);
   if (!deck.ok) return { ok: false, status: 422, error: deck.error };
+  if (options.forOpen) {
+    const open = validateDeckForOpen(read.raw, model.model);
+    if (!open.ok) return { ok: false, status: 422, error: open.error };
+  }
   // 内蔵図種の投影生成 → CSP → 専用層の順。doc 本文は自前 HTML が正なので
   // 編集層（本文の contenteditable 化）とコメント層、graph は編集ハーネスと
   // コメント層の両方を載せる。リンク層は投影の後・編集層とコメント層の前。

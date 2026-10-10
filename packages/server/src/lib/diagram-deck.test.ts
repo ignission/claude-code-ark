@@ -6,6 +6,7 @@ import {
   DIAGRAM_PAGE_CHANGE_EVENT,
   injectDeckProjection,
   parseDeckPages,
+  validateDeckForOpen,
   validateDiagramDeck,
 } from "./diagram-deck.js";
 import type { DiagramModel } from "./diagram-model.js";
@@ -182,6 +183,118 @@ describe("validateDiagramDeck", () => {
     const result = validateDiagramDeck(page(), deckModel([]));
 
     expect(result.ok).toBe(false);
+  });
+});
+
+const BLOCKS_PAGE = {
+  id: "p-sum",
+  type: "blocks",
+  title: "リンクは {a:親} で解釈する",
+  blocks: [{ kind: "chips", items: [{ tone: "ok", text: "外へは出ない" }] }],
+};
+
+const MODEL_SCRIPT =
+  '<script type="application/json" id="ark-diagram-model">{}</script>';
+
+describe("部品のページと自由形の禁止", () => {
+  it("部品のページは語彙を検証して受け付ける", () => {
+    expect(parseDeckPages(deckModel([BLOCKS_PAGE])).ok).toBe(true);
+
+    const broken = parseDeckPages(
+      deckModel([{ ...BLOCKS_PAGE, blocks: [{ kind: "svg" }] }])
+    );
+    expect(broken.ok).toBe(false);
+    if (!broken.ok) expect(broken.error).toContain("ページ p-sum: blocks[0]");
+  });
+
+  it("部品のページを持つデッキに、自由形のページは混ぜられない", () => {
+    const html = page(
+      `${MODEL_SCRIPT}<section data-ark-page="p-why"></section>`
+    );
+    const result = validateDiagramDeck(
+      html,
+      deckModel([BLOCKS_PAGE, HTML_PAGE])
+    );
+
+    expect(result.ok).toBe(false);
+    // 何で書けばよいか、絵が要るときの行き先まで返す (Claude に届くのはこの文だけ)
+    if (!result.ok) {
+      expect(result.error).toContain('type: "blocks"');
+      expect(result.error).toContain("1 枚の図");
+    }
+  });
+
+  it("部品のページを持つデッキの本文に、HTML や style は書けない", () => {
+    const model = deckModel([BLOCKS_PAGE]);
+
+    expect(validateDiagramDeck(page(MODEL_SCRIPT), model)).toEqual({
+      ok: true,
+    });
+    for (const extra of ["<style>.x{}</style>", "<div>絵</div>"]) {
+      const result = validateDiagramDeck(page(MODEL_SCRIPT + extra), model);
+      expect(result.ok).toBe(false);
+    }
+    const styled = validateDiagramDeck(
+      `<!doctype html><html><head><meta charset="utf-8"><title>t</title><style>body{}</style></head><body>${MODEL_SCRIPT}</body></html>`,
+      model
+    );
+    expect(styled.ok).toBe(false);
+    if (!styled.ok) expect(styled.error).toContain("<style>");
+  });
+
+  it("配信は古いデッキ (自由形だけ) を通すが、board_open は拒否する", () => {
+    const html = page(
+      `${MODEL_SCRIPT}<section data-ark-page="p-why"></section>`
+    );
+    const model = deckModel([SEQUENCE_PAGE, HTML_PAGE]);
+
+    expect(validateDiagramDeck(html, model)).toEqual({ ok: true });
+    expect(validateDeckForOpen(html, model).ok).toBe(false);
+  });
+
+  it("board_open は、内蔵図種だけのデッキでも本文の HTML を拒否する", () => {
+    const model = deckModel([SEQUENCE_PAGE]);
+
+    expect(validateDeckForOpen(page(MODEL_SCRIPT), model)).toEqual({
+      ok: true,
+    });
+    expect(
+      validateDeckForOpen(page(`${MODEL_SCRIPT}<style>a{}</style>`), model).ok
+    ).toBe(false);
+  });
+
+  it("デッキ以外の図は board_open で止めない (絵は 1 枚の図で描く)", () => {
+    const freeform = { ...deckModel([]), type: undefined } as DiagramModel;
+
+    expect(validateDeckForOpen(page("<div>絵</div>"), freeform)).toEqual({
+      ok: true,
+    });
+  });
+
+  it("部品のページはカードとして描き、明暗に追従する CSS を載せる", () => {
+    const html = injectDeckProjection(
+      page(MODEL_SCRIPT),
+      deckModel([BLOCKS_PAGE, SEQUENCE_PAGE])
+    );
+
+    expect(html).toContain(
+      'class="ark-deck-page ark-bk-page" data-ark-page="p-sum"'
+    );
+    expect(html).toContain("data-ark-deck-blocks");
+    expect(html).toContain("prefers-color-scheme:dark");
+    expect(html).toContain('<span class="ark-bk-tone" data-tone="a">親</span>');
+    // 内蔵図種のページも一緒に並ぶ
+    expect(html).toContain("ark-seq");
+  });
+
+  it("部品のページが無いデッキには、部品の CSS も地の色も載せない", () => {
+    const html = injectDeckProjection(
+      page(`<section data-ark-page="p-why"></section>`),
+      deckModel([SEQUENCE_PAGE, HTML_PAGE])
+    );
+
+    expect(html).not.toContain("data-ark-deck-blocks");
+    expect(html).not.toContain("ark-bk-");
   });
 });
 

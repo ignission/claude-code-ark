@@ -693,7 +693,7 @@ export async function startServer(
     worktreeReal: string,
     relPath: string
   ): Promise<{ ok: true } | { ok: false; error: string }> => {
-    const result = await readDiagram(worktreeReal, relPath);
+    const result = await readDiagram(worktreeReal, relPath, { forOpen: true });
     if (!result.ok) {
       return { ok: false, error: result.error };
     }

@@ -1,24 +1,6 @@
 <!doctype html>
 <html lang="ja">
 <head><meta charset="utf-8"><title>リンクを押すと行が光るまで</title>
-<style>
-  .pg { border: 1px solid #22304a; border-radius: 10px; background: #101827; padding: 1rem 1.1rem 1.2rem; }
-  .pg h2 { margin: 0 0 .9rem; font-size: 1.05rem; line-height: 1.45; }
-  .pg h2 .key { color: #7dd3fc; }
-  .lane { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; gap: .5rem; align-items: center; }
-  .box { border: 1px solid #33445f; border-radius: 8px; background: #141d2e; padding: .6rem .55rem; text-align: center;
-         font: 700 .72rem/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; }
-  .box small { display: block; margin-top: .25rem; font: .62rem/1.4 system-ui, sans-serif; color: #8391a7; }
-  .box.key { border-color: #7dd3fc; color: #7dd3fc; }
-  .to { color: #8391a7; font-size: .95rem; }
-  .chips { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: 1rem; }
-  .chip { padding: .18rem .6rem; border-radius: 999px; font-size: .7rem; font-weight: 700; }
-  .ok { background: rgba(74, 222, 128, .14); color: #4ade80; }
-  .ng { background: rgba(248, 113, 113, .14); color: #f87171; }
-  .hrefs { margin: 0; padding: 0; list-style: none; font: .74rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
-  .hrefs li { display: flex; justify-content: space-between; gap: .8rem; padding: .4rem .2rem; border-top: 1px solid #1c2740; }
-  .hrefs li:first-child { border-top: 0; }
-</style>
 </head>
 <body>
 <script type="application/json" id="ark-diagram-model">
@@ -31,7 +13,23 @@
   "groups": [],
   "ext": {
     "pages": [
-      { "id": "p-result", "type": "html", "title": "結論" },
+      {
+        "id": "p-result",
+        "type": "blocks",
+        "title": "リンクは {a:親の window} で解釈する",
+        "blocks": [
+          { "kind": "flow", "items": ["board iframe", "{a:parent window}", "file viewer"] },
+          { "kind": "cards", "items": [
+            { "title": "board iframe", "text": "遷移を止めて href を渡すだけ" },
+            { "title": "parent window", "tone": "a", "text": "パスを検査して開く" },
+            { "title": "file viewer", "text": "該当行を光らせる" }
+          ] },
+          { "kind": "chips", "items": [
+            { "tone": "ok", "text": "iframe から直接ファイルを開かない" },
+            { "tone": "ok", "text": "worktree の外へは出ない" }
+          ] }
+        ]
+      },
       {
         "id": "p-seq",
         "type": "sequence",
@@ -75,35 +73,25 @@
           { "id": "e3", "from": "t-pane", "to": "t-tabs" }
         ]
       },
-      { "id": "p-guard", "type": "html", "title": "弾く href" }
+      {
+        "id": "p-guard",
+        "type": "blocks",
+        "title": "worktree 相対パスだけを {a:開く}",
+        "blocks": [
+          { "kind": "table", "head": ["href", "結果"], "rows": [
+            ["`src/foo.ts#L10-L24`", "{ok:✓ ファイルビューア}"],
+            ["`https://example.com`", "{ok:✓ 新しいタブ}"],
+            ["`../secret.txt`", "{ng:✕ 開かない}"],
+            ["`/etc/passwd`", "{ng:✕ 開かない}"]
+          ] },
+          { "kind": "code", "diff": true, "text": " a.addEventListener(\"click\", event => {\n+  event.preventDefault();\n+  parent.postMessage({ href }, \"*\");\n });" },
+          { "kind": "text", "text": "入口は [diagram-link-layer.ts](packages/server/src/lib/diagram-link-layer.ts#L33-L48)。" }
+        ]
+      }
     ]
   }
 }
 </script>
 
-<section class="pg" data-ark-page="p-result">
-  <h2>リンクは <span class="key">親の window</span> で解釈する</h2>
-  <div class="lane">
-    <div class="box">board iframe<small>遷移を止めて href を渡すだけ</small></div>
-    <div class="to">→</div>
-    <div class="box key">parent window<small>パスを検査して開く</small></div>
-    <div class="to">→</div>
-    <div class="box">file viewer<small>該当行を光らせる</small></div>
-  </div>
-  <div class="chips">
-    <span class="chip ok">✓ iframe から直接ファイルを開かない</span>
-    <span class="chip ok">✓ worktree の外へは出ない</span>
-  </div>
-</section>
-
-<section class="pg" data-ark-page="p-guard">
-  <h2>worktree 相対パスだけを <span class="key">開く</span></h2>
-  <ul class="hrefs">
-    <li><span>src/foo.ts#L10-L24</span><span class="chip ok">✓ ファイルビューア</span></li>
-    <li><span>https://example.com</span><span class="chip ok">✓ 新しいタブ</span></li>
-    <li><span>../secret.txt</span><span class="chip ng">✕ 開かない</span></li>
-    <li><span>/etc/passwd</span><span class="chip ng">✕ 開かない</span></li>
-  </ul>
-</section>
 </body>
 </html>
