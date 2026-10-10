@@ -1,98 +1,161 @@
-# Ark
+<div align="center">
+  <h1>Ark</h1>
+  <p><strong>a cockpit for the Claude Code sessions running on your machine</strong></p>
+  <p>
+    <a href="https://github.com/ignission/claude-code-ark/releases">Releases</a> ·
+    <a href="https://github.com/ignission/claude-code-ark/issues">Issues</a> ·
+    <a href="README.ja.md">日本語</a>
+  </p>
+</div>
 
-**複数のClaude Codeセッションを、ひとつのWebUIから。**
+Ark is a self-hosted web UI that runs one Claude Code session per git worktree and shows all of them in one place, on your desk and on your phone.
 
-<!-- スクリーンショットやGIFをここに追加 -->
+It drives the real interactive `claude` CLI inside tmux, so your plan, your settings and your `CLAUDE.md` work exactly as they do in a terminal. No Agent SDK, no API key.
+
+<p align="center">
+  <img
+    src=".github/assets/ark-board.png"
+    width="880"
+    alt="Ark on a desktop: a session list on the left, a conversation in the middle, and a sequence diagram Claude drew on the board on the right"
+  />
+</p>
 
 > [!WARNING]
-> このプロジェクトは実験的なものです。Cloudflare Tunnelなどを利用してリモートからアクセスする場合は、セキュリティに十分注意してください。信頼できないネットワーク上での公開は推奨しません。
->
-> Ark は**単一ユーザー向け**です。認証を通過したクライアントは全セッションに到達できるため、複数人で共有する構成は想定していません。また、localhost / プライベート IP からのアクセスは認証をスキップします。
+> Ark is experimental and built for **one user**. Anyone who gets past authentication can reach every session, and requests from localhost or a private IP skip authentication altogether. Do not share an Ark instance with other people, and be careful when you expose it through a tunnel.
 
-## なぜ必要か
+## Quickstart
 
-Claude Codeで本格的に開発を始めると、すぐにターミナルのタブが爆発する。
+1. Install Ark. On macOS (Apple Silicon) run `brew install --cask ignission/tap/ark`; on Linux, [run it from source](#run-from-source).
+2. Open Ark (http://localhost:4001 when run from source), pick a repository, and start a session on a worktree.
+3. Ask Claude something. Switch between the chat view and the raw terminal with the toggle at the top.
 
-worktreeごとにClaude Codeを起動して、featureブランチ用、bugfix用、実験用...と増えていく。どのタブでどのセッションが動いているか見失い、外出先からは進捗すら確認できない。サーバーを再起動すればセッションは消え、コンテキストも失われる。
+You need the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) installed and logged in (`claude --version`; run `claude` and `/login` if you are not).
 
-Arkは、そういった問題をまとめて解決する。ブラウザを開けば、すべてのセッションが一覧でき、どこからでも操作できる。
+## Things to try first
 
-## Features
+**Have Claude explain a change on the board.** Arrows and rows in the diagram can link to the code behind them.
 
-- **セッション管理** -- worktreeごとにClaude Codeセッションを起動・停止。サーバー再起動後も自動復元
-- **ブラウザ操作** -- Webターミナルから直接Claude Codeを操作。ローカルにターミナルを開く必要なし
-- **マルチペイン** -- 最大4つのセッションを同時に表示・監視（PC）
-- **モバイル対応** -- スマホからフル操作可能。IME / 日本語入力にも対応
-- **リモートアクセス** -- Cloudflare Tunnelで外出先からセッションにアクセス。QRコードですぐ接続
-- **Git Worktree統合** -- WebUIからworktreeの作成・削除・一覧表示
-- **画像送信** -- クリップボードから画像をペーストしてClaude Codeに送信（`@パス` 形式）
-- **セッションボード** -- Claude が書いた図や文書を右ペインに表示。本文を選んでコメントを付け、会話に戻せる
-- **ボード提案 (Jev)** -- 長い返答をチャットで読ませない。返答が終わるたびに Jev (TypeSafe の決定モデル) が「ボードのほうが読みやすいか」を判定し、そうなら Ark が返答を文書にしてボードに出す。Claude のトークンは使わない
+> Walk me through what happens when I start a session, from the socket event to the terminal showing up in the browser. Draw it on the board as a sequence diagram.
 
-## アーキテクチャ
+**Drive Ark from the keyboard.** Press `Ctrl+;` to enter normal mode, then `?` for the key list. `J` / `K` move between sessions, `n` jumps to the next session waiting for you, and `:` opens the command palette.
 
-Arkは、Agent SDKではなく **tmux + ttyd によるターミナル転送方式** を採用している。これにより、Claude CLIのフルターミナル体験をブラウザ上でそのまま再現できる。
+**Answer from your phone.** Start Ark with `pnpm start:quick`, scan the QR code, and answer Claude's questions from the card that appears in the chat.
+
+## Why Ark
+
+### You can tell where every session stands without opening it
+
+The sidebar sorts sessions into "your turn", "working" and "idle". When Claude asks a question, Ark shows it as a card with the options as buttons, together with the terminal screen from just before the question.
+
+### It is the real Claude Code
+
+Ark does not reimplement the agent. Each session is the interactive `claude` CLI in a detached tmux session, shown through [ttyd](https://github.com/tsl0922/ttyd), and the chat view is drawn from Claude's own transcript files. Sessions keep running when the Ark server restarts, and Ark reattaches to them when it comes back.
+
+### Long explanations go on a board, not in the chat
+
+Claude draws sequence diagrams, call trees with diff sizes, and multi-page decks on a board next to the conversation. Links in a diagram open the code beside it. Documents on the board can be edited in place, and you can select any passage, comment on it, and send the comment back to the conversation.
+
+With an [OpenRouter](https://openrouter.ai/) key, Ark can also decide for you when a reply belongs on the board. See [Board suggestions](#board-suggestions).
+
+### You can review without leaving
+
+<p align="center">
+  <img
+    src=".github/assets/ark-git.png"
+    width="880"
+    alt="The Git tab: a commit graph with branch labels on top and the diff of the selected commit below"
+  />
+</p>
+
+- **Git tab**: a commit graph with branch labels, the diff of any commit, and uncommitted changes. It follows along while Claude commits.
+- **Files tab**: browse the worktree and edit files in CodeMirror. If Claude rewrites a file while you are editing it, Ark asks whether to reload or overwrite instead of merging silently.
+
+### It works from a phone
+
+<p align="center">
+  <img
+    src=".github/assets/ark-mobile-sessions.png"
+    width="260"
+    alt="The session list on a phone, grouped into your turn and idle"
+  />
+  &nbsp;&nbsp;
+  <img
+    src=".github/assets/ark-mobile-question.png"
+    width="260"
+    alt="A question from Claude shown on a phone as a card with numbered options"
+  />
+</p>
+
+The mobile UI has its own session list, chat view, terminal with quick keys, and Japanese IME support. On iPhone, voice mode sends what you say and reads Claude's reply aloud. Remote access goes through a Cloudflare Tunnel that Ark starts for you.
+
+### More
+
+- Paste, drop or attach images, PDFs, text files and spreadsheets to send them to Claude.
+- Ask a side question from the command palette (`Tab`). A separate Claude with no tools answers in a floating window, and your session's conversation is left alone.
+- Open the VNC screen of a host you can reach over SSH, such as a Mac's Screen Sharing, in the browser. Ark connects with `ssh -o BatchMode=yes` as the user running the server, so that user needs a key without a passphrase (or one loaded in ssh-agent) and the host already in `known_hosts`.
+- Use a different Claude account per repository (Linux only).
+
+## How it works
 
 ```text
-ブラウザ(iframe) ←→ ttyd(WebSocket) ←→ tmux(セッション) ←→ claude CLI
+view:     <config dir>/projects/<cwd>/*.jsonl → tail → Socket.IO → chat view
+input:    chat box → Socket.IO → tmux send-keys → claude CLI
+terminal: tmux session ←→ ttyd (WebSocket) ←→ iframe
 ```
 
-- **tmux** がClaude CLIプロセスをdetachedセッションで管理し、サーバー再起動後もセッションが永続化される
-- **ttyd** がtmuxセッションにWebターミナルアクセスを提供し、各セッションに独立したttydプロセスが起動する
+- **tmux** keeps each `claude` process in a detached session, so it outlives the Ark server.
+- **ttyd** serves that tmux session as a web terminal, one process per session.
+- The chat view reads everything from Claude's transcript files. Ark never parses the terminal screen to recover what was said.
+- Session metadata lives in SQLite (`data/sessions.db`).
 
-## Quick Start
+## Install
 
-### macOS (.app, Apple Silicon)
-
-Homebrew Cask:
+### macOS app (Apple Silicon)
 
 ```bash
 brew install --cask ignission/tap/ark
 ```
 
-または GitHub Releases から直接ダウンロード: <https://github.com/ignission/claude-code-ark/releases>
+Or download it from [GitHub Releases](https://github.com/ignission/claude-code-ark/releases). Requires macOS 12 (Monterey) or later on arm64; earlier versions are untested.
 
-要件: macOS 12 (Monterey) 以降、arm64 (Apple Silicon)。Cask の `depends_on macos: ">= :monterey"` に合わせており、これ未満は未検証です。
+<details>
+<summary>If macOS says "Ark is damaged and can't be opened"</summary>
 
-#### 初回起動で「Ark は壊れているため開けません」と表示された場合
-
-現在の `.app` は **Developer ID 署名・Apple notarization が未対応** (追跡 issue: [#193](https://github.com/ignission/claude-code-ark/issues/193))。
-このため macOS は Homebrew 経由でダウンロードした `.app` を quarantine 対象として "damaged" 判定します。
+The `.app` is **not yet signed with a Developer ID or notarized by Apple** (tracked in [#193](https://github.com/ignission/claude-code-ark/issues/193)), so macOS quarantines the downloaded app and reports it as damaged.
 
 > [!CAUTION]
-> 以下の手順は Gatekeeper の検証を意図的に迂回します。実行前に **入手元が正規であること** を必ず確認してください:
+> The steps below deliberately bypass Gatekeeper. Before running them, **confirm that your copy is genuine**:
 >
-> - 配布元が `https://github.com/ignission/claude-code-ark/releases` であること
-> - Homebrew Cask 経由でインストールした場合、`brew` が `.zip` の sha256 を Cask 定義 ([`Casks/ark.rb`](https://github.com/ignission/homebrew-tap/blob/main/Casks/ark.rb)) と自動照合しているため、改ざんは検知されています
-> - 直接ダウンロードした場合は GitHub Releases ページ掲載の sha256 と `shasum -a 256 Ark-*.zip` 出力を手元で比較してください
+> - It came from `https://github.com/ignission/claude-code-ark/releases`.
+> - If you installed through Homebrew Cask, `brew` has already checked the `.zip` against the sha256 in the Cask definition ([`Casks/ark.rb`](https://github.com/ignission/homebrew-tap/blob/main/Casks/ark.rb)), so tampering would have been detected.
+> - If you downloaded it directly, compare the sha256 on the GitHub Releases page with the output of `shasum -a 256 Ark-*.zip`.
 
-署名対応完了までは、**上記 CAUTION の真正性確認 (Cask 経由なら自動 sha256 照合済み、それ以外なら手動照合) を済ませた上で**、インストール後に quarantine 属性を手動で削除してください:
+Once you have confirmed that, remove the quarantine attribute by hand:
 
 ```bash
-# Cask の install 先 (/Applications/Ark.app) 前提。別パスにある場合は読み替え。
+# Assumes the Cask install location (/Applications/Ark.app). Adjust if yours differs.
 APP="/Applications/Ark.app"
 if [ ! -d "$APP" ]; then
-  echo "ERROR: $APP が見つかりません。インストール先を確認してください。" >&2
+  echo "ERROR: $APP not found. Check where Ark was installed." >&2
   exit 1
 fi
 xattr -dr com.apple.quarantine "$APP"
 ```
 
-> [!NOTE]
-> Homebrew 4.5 で `--no-quarantine` switch および `HOMEBREW_CASK_OPTS=--no-quarantine` 環境変数が **代替なしで廃止** されたため、現状 install 時点での回避はできません。`xattr -dr` で事後削除する手順のみが残された対処です。
-> 参考: <https://github.com/Homebrew/brew/pull/19046>
+Homebrew 4.5 removed the `--no-quarantine` switch and the `HOMEBREW_CASK_OPTS=--no-quarantine` environment variable without a replacement ([Homebrew/brew#19046](https://github.com/Homebrew/brew/pull/19046)), so the attribute can only be removed after installation.
 
-### Linux / 開発環境 (ソースから起動)
+</details>
 
-#### 前提条件
+### Run from source
 
-- Node.js >= 20.6.0
+Prerequisites:
+
+- Node.js >= 22.12.0
 - [pnpm](https://pnpm.io/)
 - [tmux](https://github.com/tmux/tmux)
 - [ttyd](https://github.com/tsl0922/ttyd)
-- [Claude Code CLI（`claude`）](https://docs.claude.com/en/docs/claude-code) -- **インストール済みかつログイン済み**であること（確認: `claude --version` / 未ログインなら `claude` を起動して `/login`）
-
-#### インストールと起動
+- [jq](https://jqlang.org/)
+- [Claude Code CLI](https://docs.claude.com/en/docs/claude-code), installed and logged in
 
 ```bash
 git clone https://github.com/ignission/claude-code-ark.git
@@ -102,69 +165,78 @@ pnpm build
 pnpm start
 ```
 
-ブラウザで http://localhost:4001 を開く。
+Then open http://localhost:4001.
 
-### 起動オプション
+## Remote access
 
-| オプション              | 説明                                              |
-| ----------------------- | ------------------------------------------------- |
-| `--skip-permissions`    | Claude CLIの権限確認をスキップ                    |
-| `--repos /path1,/path2` | 許可するリポジトリパスを制限                      |
-| `--quick` / `-q`        | Quick Tunnel（一時URL + トークン認証）を起動      |
-| `--remote` / `-r`       | Named Tunnel（固定URL + Cloudflare Access）を起動 |
-
-### 環境変数
-
-| 環境変数            | 説明                                            |
-| ------------------- | ----------------------------------------------- |
-| `PORT`              | サーバーポート（デフォルト: 4001）              |
-| `SKIP_PERMISSIONS`  | `true` で権限確認スキップ                       |
-| `ARK_PUBLIC_DOMAIN` | Named Tunnel用の固定ドメイン                    |
-| `ARK_TUNNEL_NAME`   | Named Tunnel名（デフォルト: `claude-code-ark`） |
-| `OPENROUTER_API_KEY` | ボード提案 (Jev) の API キー。設定画面のキーが優先 |
-| `ARK_FEATURE_BOARD_SUGGEST` | `false` でボード提案を止める |
-
-## ボード提案 (Jev)
-
-Claude の長い説明をチャットで読むのはしんどい。ボード提案は、返答が終わるたびに
-[Jev](https://openrouter.ai/docs/guides/community/jev) (TypeSafe の決定モデル。文章を生成せず、テキストと型付きの質問に確率だけ返す分類器) へ「この返答はチャットよりボードのほうが読みやすいか」を問い、閾値以上なら Ark が動く。
-
-- **文書と判定したら**: 返答の markdown を Ark が doc 型のボードへ機械変換して開く。Claude には何も送らないので、Claude のトークンは 0。生成物は worktree の `.claude/diagrams/_auto/<sessionId>/` に残り、ボードでコメントを付けて会話に戻せる
-- **図が要ると判定したら**: 何もしない。図にしたいときは入力欄の左の「会話を図解」を押すと Claude に作図を頼める (トークンを使うのは人が押したときだけ)
-- 判定は 1 回 200〜400ms、費用は 100 万トークンあたり $0.042 (1 ターン 0.002 円ほど)。会話本文は末尾 6,000 文字だけを送り、学習利用は拒否 (`data_collection: deny`) を指定する
-
-### 使い方
-
-1. [OpenRouter](https://openrouter.ai/settings/keys) で API キーを発行する
-2. Ark の左上「Ark ▾」メニュー (スマホはセッション一覧のスライダーアイコン) から **ボード提案の設定** を開き、キーを貼って保存する
-3. 以後、長い返答が終わるとボードが開く。うるさければ同じ画面で閾値 (既定 0.7) を上げるか、チェックを外して止める
-
-キーは Ark のデータベースに保存され、画面には末尾 4 文字しか戻さない。環境変数 `OPENROUTER_API_KEY` か `~/.config/openrouter/api-key` でも渡せる (設定画面のキーが優先)。キーが無い間は何もしない。
-
-## リモートアクセス
-
-[cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) をインストールした上で、Quick Tunnelを使う場合:
+Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), then:
 
 ```bash
 pnpm start:quick
 ```
 
-起動後、ターミナルにQRコードと一時URL（`*.trycloudflare.com`）が表示される。トークン認証付き。
+Ark prints a QR code and a temporary `*.trycloudflare.com` URL protected by a random token. For a fixed domain behind Cloudflare Access, set `ARK_PUBLIC_DOMAIN` and run `pnpm start:remote`.
 
-固定ドメインを使いたい場合は、環境変数 `ARK_PUBLIC_DOMAIN` を設定して `pnpm start:remote` で起動する。
+## Board suggestions
 
-## 開発
+Reading a long explanation in a chat is tiring. When this is on, every time Claude finishes a reply Ark asks [Jev](https://openrouter.ai/docs/guides/community/jev) one question: would this reply be easier to read on the board than in the chat? Jev is a classifier that returns only a probability and generates no text. If the probability reaches the threshold, Claude continues instead of stopping, turns the reply into a deck, and opens it on the board.
 
-| コマンド          | 説明                       |
-| ----------------- | -------------------------- |
-| `pnpm dev`        | フロントエンド開発サーバー |
-| `pnpm dev:server` | バックエンド開発サーバー   |
-| `pnpm dev:full`   | フルスタック開発           |
-| `pnpm dev:quick`  | Quick Tunnel付き開発       |
-| `pnpm build`      | 本番ビルド                 |
-| `pnpm start`      | 本番起動                   |
-| `pnpm check`      | 型チェック                 |
+- One call takes 200–400 ms and costs $0.042 per million input tokens.
+- Ark sends only the last 6,000 characters of the reply, with `data_collection: "deny"`.
+- Drawing the deck is done by Claude, so it uses your Claude plan like any other turn.
 
-## ライセンス
+To turn it on:
+
+1. Create an API key at [OpenRouter](https://openrouter.ai/settings/keys).
+2. Open the board suggestion settings from the Ark menu at the top left (on a phone, the slider icon in the session list), paste the key, and save.
+3. If it fires too often, raise the threshold (default 0.7) or switch it off on the same screen.
+
+The key is stored in Ark's database, and the UI only ever shows its last four characters. You can also supply it through `OPENROUTER_API_KEY` or `~/.config/openrouter/api-key`; the key from the settings screen takes precedence. Without a key, nothing happens.
+
+Changes to these settings apply from the next turn. The one exception is a session whose `claude` was started by an Ark version from before this feature: restart `claude` in that session to get suggestions.
+
+## Configuration
+
+| Option                  | Description                                                    |
+| ----------------------- | -------------------------------------------------------------- |
+| `--skip-permissions`    | Start Claude with `--dangerously-skip-permissions`             |
+| `--repos /path1,/path2` | Restrict Ark to these repositories                             |
+| `--quick` / `-q`        | Start a Quick Tunnel (temporary URL + token authentication)    |
+| `--remote` / `-r`       | Start a Named Tunnel (fixed URL + Cloudflare Access)           |
+
+| Environment variable        | Description                                                       |
+| --------------------------- | ----------------------------------------------------------------- |
+| `PORT`                      | Server port (default: 4001)                                       |
+| `SKIP_PERMISSIONS`          | `true` to skip permission prompts                                 |
+| `ARK_PUBLIC_DOMAIN`         | Fixed domain for the Named Tunnel                                 |
+| `ARK_TUNNEL_NAME`           | Named Tunnel name (default: `claude-code-ark`)                    |
+| `OPENROUTER_API_KEY`        | API key for board suggestions; the settings screen takes precedence |
+| `ARK_FEATURE_BOARD_SUGGEST` | `false` turns board suggestions off                               |
+
+## Known limitations
+
+- **One user only.** There are no per-session permissions, and there is no plan to add them.
+- **The macOS app is unsigned** ([#193](https://github.com/ignission/claude-code-ark/issues/193)), and there is no packaged app for Linux or Windows. On Linux, run from source.
+- **The Git tab is read-only.** You cannot stage, commit, discard or check out from it.
+- **The Files tab edits existing files only.** It cannot create, delete or rename them.
+- **The Git tab, file editing and keyboard navigation are desktop only.** On a phone, files open read-only.
+- **Per-repository accounts work on Linux only**, because macOS keeps Claude's credentials in the Keychain.
+- **Voice mode is for iPhone** and runs only while the screen is on and Ark is in the foreground.
+- **The UI is in Japanese.**
+
+## Development
+
+| Command           | Description                     |
+| ----------------- | ------------------------------- |
+| `pnpm dev`        | Frontend dev server             |
+| `pnpm dev:server` | Backend dev server              |
+| `pnpm dev:full`   | Both                            |
+| `pnpm dev:quick`  | Backend with a Quick Tunnel     |
+| `pnpm build`      | Production build                |
+| `pnpm start`      | Run the production build        |
+| `pnpm check`      | Lint and type check             |
+| `pnpm test`       | Unit tests                      |
+
+## License
 
 MIT
