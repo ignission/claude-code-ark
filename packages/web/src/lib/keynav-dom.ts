@@ -100,8 +100,8 @@ function workList(root: ParentNode): HTMLElement | null {
       visibleOne(work, '[role="tree"] [role="treeitem"]')
     );
   }
-  if (tab === "git") return visibleOne(work, '[role="listbox"][tabindex="0"]');
-  return null;
+  // Git のコミット一覧と、図のタブで開いている図の一覧
+  return visibleOne(work, '[role="listbox"][tabindex="0"]');
 }
 
 /** 場所に入ったときにフォーカスを置く先。無ければ null (呼び出し側が受け皿へ置く) */
@@ -128,6 +128,8 @@ function chatScroller(root: ParentNode): HTMLElement | null {
 function scrollDiagram(root: ParentNode, scroll: KeyNavDiagramScroll): boolean {
   const work = regionElement(root, "work");
   if (!work || activeWorkTab(root) !== "board") return false;
+  // 図の一覧を開いている間は、図ではなく一覧を動かす
+  if (visibleOne(work, '[role="listbox"][tabindex="0"]')) return false;
   const frame = visibleOne(work, 'iframe[data-keynav="diagram"]');
   if (!frame) return false;
   frame.dispatchEvent(

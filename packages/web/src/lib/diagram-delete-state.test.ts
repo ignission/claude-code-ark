@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyDiagramDeleteResponse,
   getDiagramEmptyState,
+  joinDeleteMessages,
   shouldRefreshDiagramList,
 } from "./diagram-delete-state";
 
@@ -59,5 +60,19 @@ describe("diagram delete client state", () => {
   it("current 削除後は次図を選ばず残件数に応じた空状態を返す", () => {
     expect(getDiagramEmptyState(2)).toBe("上の一覧から図を選択");
     expect(getDiagramEmptyState(0)).toBe("図がありません");
+  });
+});
+
+describe("joinDeleteMessages", () => {
+  it("図ごとの知らせを重ね、同じ文は 1 度だけにする", () => {
+    expect(joinDeleteMessages(null, null)).toBeNull();
+    expect(joinDeleteMessages(null, "A を消せません")).toBe("A を消せません");
+    expect(joinDeleteMessages("A を消せません", null)).toBe("A を消せません");
+    expect(joinDeleteMessages("A を消せません", "B が残りました")).toBe(
+      "A を消せません\nB が残りました"
+    );
+    expect(
+      joinDeleteMessages("A を消せません\nB が残りました", "A を消せません")
+    ).toBe("A を消せません\nB が残りました");
   });
 });

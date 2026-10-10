@@ -2,7 +2,11 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { DiagramListItem, DiagramListResponse } from "@ark/shared";
+import type {
+  DiagramKind,
+  DiagramListItem,
+  DiagramListResponse,
+} from "@ark/shared";
 import { DIAGRAM_DIR } from "./diagram-path.js";
 import { readDiagramModel } from "./diagram-reader.js";
 import { errnoCode, errnoMessage } from "./errors.js";
@@ -58,6 +62,13 @@ async function collectDiagramCandidates(
   return candidates;
 }
 
+/** モデルの type を、一覧に出す種類に直す (graph の図種と type なしは「図」にまとめる) */
+export function diagramKindOf(type: unknown): DiagramKind {
+  if (type === "deck" || type === "doc") return type;
+  if (type === "sequence" || type === "call-tree") return type;
+  return "graph";
+}
+
 async function readDiagramListItem(
   worktreeReal: string,
   relPath: string,
@@ -66,10 +77,19 @@ async function readDiagramListItem(
   const result = await readDiagramModel(worktreeReal, relPath);
   if (!result.ok) return null;
   const title = result.model.title?.trim();
+  // 一覧は更新の新しい順に並べるので、更新日時も返す。読めなくても図は載せる
+  let mtimeMs: number | undefined;
+  try {
+    mtimeMs = (await fs.promises.stat(result.absPath)).mtimeMs;
+  } catch {
+    mtimeMs = undefined;
+  }
   return {
     relPath,
     displayName: title || path.posix.basename(relPath),
     tracked: trackedPaths.has(relPath),
+    kind: diagramKindOf(result.model.type),
+    mtimeMs,
   };
 }
 

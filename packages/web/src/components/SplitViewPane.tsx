@@ -911,6 +911,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                       worktreePath={
                         diagramTab?.worktreePath ?? props.session.worktreePath
                       }
+                      openKey={diagramTab?.id}
                       relPath={diagramTab?.relPath}
                       onSelectDiagram={props.onSelectDiagram}
                     />

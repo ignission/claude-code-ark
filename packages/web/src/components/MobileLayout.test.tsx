@@ -90,7 +90,7 @@ describe("MobileLayout diagram wiring", () => {
       createElement(MobileLayout, createProps())
     );
 
-    expect(markup).toContain('aria-label="表示する図"');
+    expect(markup).toContain('aria-label="図の一覧"');
     expect(markup).toContain("mobile.diagram.html");
   });
 });
@@ -148,7 +148,7 @@ describe("MobileLayoutの下部タブ", () => {
       createElement(MobileLayout, { ...createProps(), isRemote: true })
     );
 
-    expect(markup).toContain('aria-label="表示する図"');
+    expect(markup).toContain('aria-label="図の一覧"');
     expect(markup).not.toContain("<nav");
     expect(markup).not.toContain("pb-14");
   });

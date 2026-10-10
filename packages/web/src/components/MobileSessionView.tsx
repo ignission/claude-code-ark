@@ -980,6 +980,7 @@ export function MobileSessionView({
             sendDiagramComment={sendDiagramComment}
             sessionId={session.id}
             worktreePath={session.worktreePath}
+            openKey={tabs.find(tab => tab.type === "diagram")?.id}
             relPath={tabs.find(tab => tab.type === "diagram")?.relPath}
             onSelectDiagram={onSelectDiagram}
           />

@@ -279,10 +279,16 @@ export type SpecialKey =
   | "9";
 
 // WebSocket event types
+/** 図の一覧に出す種類 (graph の図種と type なしは "graph") */
+export type DiagramKind = "deck" | "doc" | "sequence" | "call-tree" | "graph";
+
 export interface DiagramListItem {
   relPath: string;
   displayName: string;
   tracked: boolean;
+  kind?: DiagramKind;
+  /** ファイルの更新日時 (epoch ミリ秒)。読めなかったら無い */
+  mtimeMs?: number;
 }
 
 export type DiagramListResponse =

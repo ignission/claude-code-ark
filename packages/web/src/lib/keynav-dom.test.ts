@@ -53,7 +53,7 @@ function mountApp({ workOpen = true, tab = "ファイル", chat = true } = {}) {
           <div role="treeitem" tabindex="0" aria-expanded="true" id="dir"></div>
           <div role="treeitem" tabindex="-1" id="file"></div>
         </div>
-        <div role="listbox" tabindex="0" id="commits"></div>
+        <div class="${tab === "Git" ? "" : "hidden"}"><div role="listbox" tabindex="0" id="commits"></div></div>
       </div>
     </div>`;
 }
@@ -245,6 +245,24 @@ describe("場所の中の移動", () => {
     ]);
     // ツリーやコミット一覧には何も送らない
     expect(keys).toEqual([]);
+  });
+
+  it("図の一覧を開いている間は、図ではなく一覧を動かす", () => {
+    mountApp({ tab: "図" });
+    const work = document.querySelector("#active [data-keynav-region=work]");
+    work?.insertAdjacentHTML(
+      "beforeend",
+      '<div id="pane"><div role="listbox" tabindex="0" id="diagrams"></div><iframe data-keynav="diagram"></iframe></div>'
+    );
+    const got: Event[] = [];
+    document.addEventListener(KEYNAV_DIAGRAM_SCROLL_EVENT, event =>
+      got.push(event)
+    );
+    run({ type: "move", dir: 1 }, "work");
+    run({ type: "edge", to: "end" }, "work");
+    expect(got).toEqual([]);
+    expect(keys).toEqual(["diagrams:ArrowDown", "diagrams:End"]);
+    expect(regionFocusTarget(document, "work")?.id).toBe("diagrams");
   });
 
   it("図のタブを見ていなければ、図には合図を投げない", () => {

@@ -38,6 +38,7 @@ import {
 import {
   applyDiagramDeleteResponse,
   getDiagramEmptyState,
+  joinDeleteMessages,
   shouldRefreshDiagramList,
 } from "../lib/diagram-delete-state";
 import { DiagramSwitcher } from "./DiagramSwitcher";
@@ -48,6 +49,11 @@ export interface DiagramPaneProps {
   sessionId: string;
   worktreePath: string;
   relPath?: string;
+  /**
+   * 図を開く操作のたびに変わる値 (図タブの id)。同じ図を開き直したときも変わるので、
+   * 一覧の画面にいても図の画面へ移れる
+   */
+  openKey?: string;
   onSelectDiagram: (relPath: string, worktreePath: string) => void;
   isConnected: boolean;
   diagramCommentsUpdate?: {
@@ -656,6 +662,7 @@ export function DiagramPane({
   sessionId,
   worktreePath,
   relPath,
+  openKey,
   socket,
   isConnected,
   diagramCommentsUpdate,
@@ -868,12 +875,19 @@ export function DiagramPane({
   const handleDelete = useCallback(
     async (
       targetRelPath: string,
-      expectedTracked: boolean
+      expectedTracked: boolean,
+      // まとめて消すときの 2 件目以降。前の図の知らせ (残ったファイルの警告など) を消さない
+      options?: { keepMessage?: boolean }
     ): Promise<boolean> => {
       if (deleteInFlightRef.current) return false;
       deleteInFlightRef.current = true;
       setIsDeleting(true);
-      setDeleteMessage(null);
+      const keep = options?.keepMessage === true;
+      const report = (message: string | null) =>
+        setDeleteMessage(previous =>
+          keep ? joinDeleteMessages(previous, message) : message
+        );
+      if (!keep) setDeleteMessage(null);
       try {
         const response = await deleteDiagram(
           sessionId,
@@ -881,11 +895,11 @@ export function DiagramPane({
           expectedTracked
         );
         const next = applyDiagramDeleteResponse(response);
-        setDeleteMessage(next.message);
+        report(next.message);
         if (next.refreshList) setListRefreshKey(key => key + 1);
         return response.ok;
       } catch (reason) {
-        setDeleteMessage(
+        report(
           reason instanceof Error ? reason.message : "図の削除に失敗しました"
         );
         return false;
@@ -1108,10 +1122,11 @@ export function DiagramPane({
   );
 
   return (
-    <div ref={rootRef} className="flex h-full flex-col">
+    <div ref={rootRef} className="relative flex h-full flex-col">
       <DiagramSwitcher
         diagrams={diagrams}
         currentRelPath={relPath}
+        openKey={openKey}
         onSelect={selectedRelPath =>
           onSelectDiagram(selectedRelPath, worktreePath)
         }
@@ -1121,10 +1136,11 @@ export function DiagramPane({
         onDelete={handleDelete}
         isConnected={isConnected}
         isDeleting={isDeleting}
+        notice={deleteMessage}
       />
       {deleteMessage && (
         <div
-          className="shrink-0 border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          className="shrink-0 whitespace-pre-line border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive"
           role="status"
         >
           {deleteMessage}
