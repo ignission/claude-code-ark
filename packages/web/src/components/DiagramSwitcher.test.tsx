@@ -158,6 +158,18 @@ describe("DiagramSwitcher", () => {
     expect(document.activeElement).toBe(search());
   });
 
+  it("図が開いたら一覧を閉じ、図が無くなったら開く (復元や board_open で図が替わる)", () => {
+    const props = render({ currentRelPath: undefined });
+    expect(browser()).not.toBeNull();
+    render({ ...props, currentRelPath: diagrams[0].relPath });
+    expect(browser()).toBeNull();
+    openList();
+    render({ ...props, currentRelPath: diagrams[2].relPath });
+    expect(browser()).toBeNull();
+    render({ ...props, currentRelPath: undefined });
+    expect(browser()).not.toBeNull();
+  });
+
   it("図が無ければ、その旨を出す", () => {
     render({ diagrams: [], currentRelPath: undefined });
     expect(bar()?.textContent).toContain("図がありません");

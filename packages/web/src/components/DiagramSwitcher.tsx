@@ -143,6 +143,12 @@ export function DiagramSwitcher({
   const canDelete = !!onDelete && isConnected && !listLoading && !deletePending;
   const now = new Date();
 
+  // 見せる図が替わったら一覧を閉じる (復元や Claude の board_open で図が開いたのに、
+  // 一覧が上に重なったままにしない)。図が無くなったら、選べるように開く
+  useEffect(() => {
+    setOpen(currentRelPath === undefined);
+  }, [currentRelPath]);
+
   // 開いたら、いまの図の行を選び、絞り込みの欄へフォーカスを置く
   // biome-ignore lint/correctness/useExhaustiveDependencies: 開いた瞬間だけ合わせる (開いている間の選択は利用者が動かす)
   useEffect(() => {
