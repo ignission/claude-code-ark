@@ -63,7 +63,7 @@ export function SessionSidebar({
   ...listProps
 }: SessionSidebarProps) {
   return (
-    <div className="h-full flex flex-col bg-sidebar">
+    <div className="h-full flex flex-col">
       <div className="flex h-14 shrink-0 items-center gap-1 pl-3 pr-2">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

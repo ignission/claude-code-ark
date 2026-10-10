@@ -45,6 +45,10 @@
   --color-status-neutral: var(--status-neutral);
 
   --shadow-card: var(--elevation-card);
+  --shadow-panel: var(--elevation-panel);
+  --color-panel: var(--panel);
+  --color-well: var(--well);
+  --radius-panel: 1.125rem;
 
   --font-sans:
     -apple-system, BlinkMacSystemFont, "Inter", "Hiragino Sans",
@@ -94,6 +98,23 @@
   --elevation-card:
     0 1px 2px oklch(0 0 0 / 0.06), 0 4px 12px oklch(0 0 0 / 0.05);
   --glass: oklch(1 0 0 / 0.72);
+
+  /* 浮かぶパネル: PC の画面は、色のついた壁紙の上にパネルをすき間で離して置く。
+     区切りは線ではなく、すき間と影と面の濃淡で作る */
+  --wallpaper:
+    radial-gradient(60rem 40rem at 8% 0%, oklch(0.9 0.04 300), transparent 60%),
+    radial-gradient(
+      52rem 40rem at 100% 100%,
+      oklch(0.92 0.035 60),
+      transparent 60%
+    ),
+    oklch(0.925 0.02 250);
+  --panel: oklch(1 0 0);
+  --panel-glass: oklch(1 0 0 / 0.55);
+  --panel-edge: oklch(1 0 0 / 0.8);
+  --elevation-panel:
+    0 1px 2px oklch(0.3 0.05 280 / 0.05), 0 8px 24px oklch(0.3 0.05 280 / 0.09);
+  --well: oklch(0.965 0.004 270);
 
   /* Git タブ: グラフのレーンの色 (8 色を循環)、ファイルの状態の色、差分の地色 */
   --git-lane-0: #2563eb;
@@ -156,6 +177,26 @@
     --elevation-card: 0 1px 2px oklch(0 0 0 / 0.3);
     --glass: oklch(0.23 0.01 60 / 0.72);
 
+    /* 暗い配色では影が見えないので、パネルを壁紙より明るい面にして浮かせる */
+    --wallpaper:
+      radial-gradient(
+        60rem 40rem at 8% 0%,
+        oklch(0.2 0.04 300),
+        transparent 60%
+      ),
+      radial-gradient(
+        52rem 40rem at 100% 100%,
+        oklch(0.19 0.03 60),
+        transparent 60%
+      ),
+      oklch(0.13 0.012 260);
+    --panel: oklch(0.225 0.008 270);
+    --panel-glass: oklch(0.225 0.008 270 / 0.6);
+    --panel-edge: oklch(1 0 0 / 0.07);
+    --elevation-panel:
+      0 1px 2px oklch(0 0 0 / 0.4), 0 10px 28px oklch(0 0 0 / 0.35);
+    --well: oklch(0.185 0.008 270);
+
     --git-lane-0: #6ea8ff;
     --git-lane-1: #5bd68a;
     --git-lane-2: #ff9d5c;
@@ -214,6 +255,32 @@
   .flex {
     min-height: 0;
     min-width: 0;
+  }
+
+  /* 壁紙。PC の画面の一番下の面 */
+  .app-wallpaper {
+    background: var(--wallpaper);
+  }
+  /* 浮かぶパネル。大きな面には backdrop-filter を使わない
+     (ttyd の iframe と CodeMirror が描き直すたびにぼかしが走るため) */
+  .panel {
+    background: var(--panel);
+    border-radius: var(--radius-panel);
+    box-shadow:
+      inset 0 0 0 1px var(--panel-edge),
+      var(--elevation-panel);
+  }
+  .panel-glass {
+    background: var(--panel-glass);
+    border-radius: var(--radius-panel);
+    box-shadow:
+      inset 0 0 0 1px var(--panel-edge),
+      var(--elevation-panel);
+  }
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    .panel-glass {
+      background: var(--panel);
+    }
   }
 
   /* 浮かぶガラスバー。操作とナビゲーションの層だけに使う (設計書 6 節) */

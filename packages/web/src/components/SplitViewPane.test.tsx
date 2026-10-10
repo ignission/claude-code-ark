@@ -825,7 +825,9 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
   const workArea = (scope: ParentNode) =>
     resizers(scope)[0]?.nextElementSibling as HTMLElement;
   const stubContainerRect = (scope: ParentNode, width: number) => {
-    const body = scope.querySelector("header + div") as HTMLElement;
+    const body = scope.querySelector(
+      '[data-testid="split-view-body"]'
+    ) as HTMLElement;
     vi.spyOn(body, "getBoundingClientRect").mockReturnValue({
       left: 0,
       right: width,
@@ -1392,7 +1394,9 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
     const container = mount(
       paneSection(makeSession("wa-drag"), true, { filePane })
     );
-    const body = container.querySelector("header + div") as HTMLElement;
+    const body = container.querySelector(
+      '[data-testid="split-view-body"]'
+    ) as HTMLElement;
     const panes = () =>
       Array.from(body.children).filter(el => el.tagName === "DIV");
     expect(panes().length).toBe(2);
@@ -1435,14 +1439,14 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
     // 離すまでは保存しない
     expect(localStorage.getItem("ark-split-board-width")).toBe("400");
 
-    // 左端近くまで引いても、左 360px + リサイザ 4px を残す (1000 - 360 - 4)
+    // 左端近くまで引いても、左 360px + リサイザ 8px を残す (1000 - 360 - 8)
     act(() =>
       window.dispatchEvent(new MouseEvent("mousemove", { clientX: 100 }))
     );
-    expect(workArea(container).style.width).toBe("636px");
+    expect(workArea(container).style.width).toBe("632px");
 
     act(() => window.dispatchEvent(new MouseEvent("mouseup")));
-    expect(localStorage.getItem("ark-split-board-width")).toBe("636");
+    expect(localStorage.getItem("ark-split-board-width")).toBe("632");
 
     // 右端まで寄せても作業エリアの最小幅 (360px) は割らない
     act(() =>

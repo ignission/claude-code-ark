@@ -132,7 +132,7 @@ const RIGHT_TABS: readonly {
 
 /** 上部バーの1タップ操作と `…` に共通の見た目 (32px・角丸・押すと紙色) */
 const HEADER_ICON_BUTTON =
-  "inline-flex size-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground";
+  "inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground";
 
 const LEFT_MODE_OPTIONS: readonly SegmentOption<SplitViewLeftMode>[] = [
   { value: "terminal", label: "端末", icon: VIEW_MODE_ICONS.terminal },
@@ -675,10 +675,22 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   };
 
   return (
-    <div className="h-full flex flex-col overflow-hidden rounded-xl border border-border bg-card shadow-card">
-      {/* 上部バー: 左 = 主ラベル・ブランチ・状態チップ、中央 = 端末 / 会話、
+    <div className="h-full flex flex-col">
+      {/* 左のパネル (上部バー + 端末 / 会話) と作業エリアのパネルを、すき間で離して
+          並べる。区切りの線は引かない。すき間がそのままリサイザになる */}
+      <div
+        ref={containerRef}
+        data-testid="split-view-body"
+        className="flex-1 min-h-0 flex relative"
+      >
+        <div
+          className={`panel h-full flex-1 min-w-0 flex flex-col overflow-hidden ${
+            isDragging ? "pointer-events-none" : ""
+          }`}
+        >
+          {/* 上部バー: 左 = 主ラベル・ブランチ・状態チップ、中央 = 端末 / 会話、
           右 = 1タップの操作・作業エリアの開閉と `…` メニュー */}
-      {/* 狭い幅 (1024px前後) では右側を中身の幅に縮め、主ラベルに幅を回す。
+          {/* 狭い幅 (1024px前後) では右側を中身の幅に縮め、主ラベルに幅を回す。
           広い幅だけ左右を同じ幅にしてセグメントを中央に置く。
 
           さらに狭いとき (コンテナ42rem未満) は「装飾から削る」順で畳む。
@@ -688,110 +700,119 @@ export function SplitViewPane(props: SplitViewPaneProps) {
              文字だけでなく flex の gap も消える
           2. それでも足りない分は左の箱が引き受ける。主ラベルが縮み、
              最後は `overflow-hidden` で箱の中に収める (上部バーは横に溢れない) */}
-      <header className="@container h-13 shrink-0 border-b border-border flex items-center gap-3 pl-5 pr-3">
-        <div className="flex flex-1 basis-0 min-w-0 items-center gap-2.5 overflow-hidden">
-          {/* 主ラベルを先に守り、ブランチから省略する。縮み率をブランチ側に
+          {/* 上部バーは左のパネルの中にあるので、作業エリアを広げると幅が足りなくなる。
+              そのときは右側の操作を2段目へ折り返す (切れて押せなくなるのを防ぐ)。
+              左の箱は basis-0 なので、折り返すのはセグメントと操作が収まらないときだけ。
+              操作の並びだけでパネルの幅を超えるとき (860px のウィンドウで左が 168px に
+              なる) は、並びの中でも折り返す */}
+          <header className="@container min-h-13 shrink-0 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 py-2 pl-5 pr-3">
+            <div className="flex flex-1 basis-0 min-w-0 items-center gap-2.5 overflow-hidden">
+              {/* 主ラベルを先に守り、ブランチから省略する。縮み率をブランチ側に
               大きく振ることで、ブランチが尽きるまで主ラベルは縮まない。
               主ラベルも縮めるのは、右側 (1タップの操作) が増えて左が
               狭まったとき、状態チップを押し出して上部バーからはみ出さないため */}
-          <span
-            className="min-w-0 max-w-[60%] truncate text-[17px] font-semibold tracking-[-0.01em]"
-            title={labels.primary}
-          >
-            {labels.primary}
-          </span>
-          <span
-            className="min-w-0 shrink-[999] truncate text-[13px] text-muted-foreground @max-2xl:sr-only"
-            title={labels.branch}
-          >
-            {labels.branch}
-          </span>
-          <StatusChip
-            statusKey={resolveStatusKey(true, props.bridgeStatus)}
-            className="shrink-0"
-            labelClassName="@max-2xl:sr-only"
-          />
-        </div>
-        <SegmentedControl
-          label="左ペインの表示"
-          options={LEFT_MODE_OPTIONS}
-          value={leftMode}
-          onChange={handleLeftModeChange}
-          labelClassName="@max-2xl:sr-only"
-        />
-        <div className="flex flex-none @4xl:flex-1 @4xl:basis-0 min-w-0 items-center justify-end gap-1">
-          {quickActions.map(action => quickActionItems[action])}
-          <button
-            type="button"
-            onClick={handleToggleWorkArea}
-            aria-label="パネル"
-            aria-pressed={showWorkArea}
-            title={showWorkArea ? "パネルを閉じる" : "パネルを開く"}
-            className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sm px-2.5 text-[13px] font-semibold transition-colors ${
-              showWorkArea
-                ? "bg-muted text-foreground"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground"
-            }`}
-          >
-            <VIEW_MODE_ICONS.panel className="size-4.5" aria-hidden="true" />
-            <span className="@max-2xl:sr-only">パネル</span>
-          </button>
-          <SessionHeaderMenu
-            worktree={props.worktree}
-            notificationsSupported={props.notificationsSupported ?? false}
-            notificationsEnabled={props.notificationsEnabled ?? true}
-            onNotificationsEnabledChange={props.onNotificationsEnabledChange}
-            onDeleteSession={props.onDeleteSession}
-          />
-        </div>
-      </header>
+              <span
+                className="min-w-0 max-w-[60%] truncate text-[17px] font-semibold tracking-[-0.01em]"
+                title={labels.primary}
+              >
+                {labels.primary}
+              </span>
+              <span
+                className="min-w-0 shrink-[999] truncate text-[13px] text-muted-foreground @max-2xl:sr-only"
+                title={labels.branch}
+              >
+                {labels.branch}
+              </span>
+              <StatusChip
+                statusKey={resolveStatusKey(true, props.bridgeStatus)}
+                className="shrink-0"
+                labelClassName="@max-2xl:sr-only"
+              />
+            </div>
+            <SegmentedControl
+              label="左ペインの表示"
+              options={LEFT_MODE_OPTIONS}
+              value={leftMode}
+              onChange={handleLeftModeChange}
+              labelClassName="@max-2xl:sr-only"
+            />
+            <div className="flex max-w-full flex-none flex-wrap @4xl:flex-1 @4xl:basis-0 min-w-0 items-center justify-end gap-1">
+              {quickActions.map(action => quickActionItems[action])}
+              <button
+                type="button"
+                onClick={handleToggleWorkArea}
+                aria-label="パネル"
+                aria-pressed={showWorkArea}
+                title={showWorkArea ? "パネルを閉じる" : "パネルを開く"}
+                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] font-semibold transition-colors ${
+                  showWorkArea
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+              >
+                <VIEW_MODE_ICONS.panel
+                  className="size-4.5"
+                  aria-hidden="true"
+                />
+                <span className="@max-2xl:sr-only">パネル</span>
+              </button>
+              <SessionHeaderMenu
+                worktree={props.worktree}
+                notificationsSupported={props.notificationsSupported ?? false}
+                notificationsEnabled={props.notificationsEnabled ?? true}
+                onNotificationsEnabledChange={
+                  props.onNotificationsEnabledChange
+                }
+                onDeleteSession={props.onDeleteSession}
+              />
+            </div>
+          </header>
 
-      <div ref={containerRef} className="flex-1 min-h-0 flex relative">
-        {/* 左ペイン: 端末 / 会話（上部バーで切替。両方マウントしたまま display 切替）
+          {/* 左ペイン: 端末 / 会話（上部バーで切替。両方マウントしたまま display 切替）
             リサイズ中は pointer-events-none にする。ターミナルは ttyd の iframe
             （別ブラウジングコンテキスト）で、分割線を左へドラッグしてカーソルが
             この上に乗ると mousemove / mouseup を iframe が飲み込み、window の
             リスナーへ届かなくなる。結果、幅が更新されず（ターミナルが狭くならない）、
             mouseup も発火せずドラッグが解除されない（カーソル追従が止まらない）。
             作業エリア（図も iframe）と同様に透過させて window リスナーへ届かせる。 */}
-        <div
-          className={`h-full flex-1 min-w-0 overflow-hidden ${
-            isDragging ? "pointer-events-none" : ""
-          }`}
-        >
-          {/* 端末: ttyd の再接続を避けるため hidden で残置する */}
-          <div className={leftMode === "terminal" ? "h-full" : "hidden"}>
-            <TerminalPane
-              ref={terminalRef}
-              session={props.session}
-              worktree={props.worktree}
-              isVisible={shouldAcceptTerminalFileDrop(props.isActive, leftMode)}
-              tabs={props.tabs}
-              activeTabIndex={props.activeTabIndex}
-              onTabSelect={props.onTabSelect}
-              onTabClose={props.onTabClose}
-              onSendMessage={props.onSendMessage}
-              onSendKey={props.onSendKey}
-              onUploadFile={props.onUploadFile}
-              onCopyBuffer={props.onCopyBuffer}
-              onInputBarVisibleChange={setTerminalInputBarVisible}
-            />
-          </div>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            {/* 端末: ttyd の再接続を避けるため hidden で残置する */}
+            <div className={leftMode === "terminal" ? "h-full" : "hidden"}>
+              <TerminalPane
+                ref={terminalRef}
+                session={props.session}
+                worktree={props.worktree}
+                isVisible={shouldAcceptTerminalFileDrop(
+                  props.isActive,
+                  leftMode
+                )}
+                tabs={props.tabs}
+                activeTabIndex={props.activeTabIndex}
+                onTabSelect={props.onTabSelect}
+                onTabClose={props.onTabClose}
+                onSendMessage={props.onSendMessage}
+                onSendKey={props.onSendKey}
+                onUploadFile={props.onUploadFile}
+                onCopyBuffer={props.onCopyBuffer}
+                onInputBarVisibleChange={setTerminalInputBarVisible}
+              />
+            </div>
 
-          {/* 会話: JSONL tail のチャットビュー。入力欄 / AUQ カード / slash 補完 /
+            {/* 会話: JSONL tail のチャットビュー。入力欄 / AUQ カード / slash 補完 /
               ファイルアップロード / busy・AWAITING 表示を内包する */}
-          <div className={leftMode === "chat" ? "h-full" : "hidden"}>
-            <SplitChatPane
-              socket={props.socket}
-              session={props.session}
-              isActive={shouldSubscribeChat(props.isActive, leftMode)}
-              bridgeStatus={props.bridgeStatus}
-              awaitingText={props.awaitingText}
-              liveTail={props.liveTail}
-              onSendMessage={props.onSendMessage}
-              onSendKey={props.onSendKey}
-              onUploadFile={props.onUploadFile}
-            />
+            <div className={leftMode === "chat" ? "h-full" : "hidden"}>
+              <SplitChatPane
+                socket={props.socket}
+                session={props.session}
+                isActive={shouldSubscribeChat(props.isActive, leftMode)}
+                bridgeStatus={props.bridgeStatus}
+                awaitingText={props.awaitingText}
+                liveTail={props.liveTail}
+                onSendMessage={props.onSendMessage}
+                onSendKey={props.onSendKey}
+                onUploadFile={props.onUploadFile}
+              />
+            </div>
           </div>
         </div>
 
@@ -804,27 +825,31 @@ export function SplitViewPane(props: SplitViewPaneProps) {
               aria-label="左右の幅を調整"
               onMouseDown={handleResizerMouseDown}
               className={cn(
-                "relative w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/50 transition-colors",
-                isDragging && "bg-primary/70",
+                "group relative w-2 shrink-0 cursor-col-resize bg-transparent",
                 !showWorkArea && "hidden"
               )}
             >
-              <span className="absolute inset-y-0 -left-1 -right-1" />
+              <span
+                className={cn(
+                  "absolute inset-y-4 left-0.5 right-0.5 rounded-full transition-colors group-hover:bg-primary/40",
+                  isDragging && "bg-primary/60"
+                )}
+              />
             </button>
             <div
               style={{ width: renderedWorkWidth, flexShrink: 0 }}
               className={cn(
-                "flex h-full flex-col overflow-hidden",
+                "panel flex h-full flex-col overflow-hidden",
                 isDragging && "pointer-events-none",
                 !showWorkArea && "hidden"
               )}
             >
               {/* タブ列: 図 / ファイル / Git と、作業エリアを閉じる × */}
-              <div className="flex h-9 shrink-0 items-stretch border-border border-b bg-muted/30 pr-1.5 pl-2 text-[13px]">
+              <div className="flex h-13 shrink-0 items-center gap-2 pr-3 pl-3 text-[13px]">
                 <div
                   role="tablist"
                   aria-label="パネルの表示"
-                  className="flex min-w-0 flex-1 items-stretch gap-1"
+                  className="inline-flex min-w-0 items-center gap-0.5 rounded-full bg-muted p-0.5 dark:bg-background"
                 >
                   {rightTabs.map((tab, index) => {
                     const selected = tab.value === rightTab;
@@ -839,12 +864,12 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                         tabIndex={selected ? 0 : -1}
                         onClick={() => selectRightTab(tab.value)}
                         onKeyDown={e => handleRightTabKeyDown(e, index)}
-                        // 選択中は下線で示す (塗りのピルにしない)。-mb-px でタブ列の罫線に重ねる
+                        // 選択中は丸いカプセルで持ち上げる (上部バーの「端末 / 会話」と同じ見た目)
                         className={cn(
-                          "-mb-px inline-flex shrink-0 items-center gap-1.5 border-b-2 px-2.5 font-semibold transition-colors",
+                          "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-3.5 font-semibold transition-colors",
                           selected
-                            ? "border-foreground text-foreground"
-                            : "border-transparent text-muted-foreground hover:text-foreground"
+                            ? "bg-card text-foreground shadow-card"
+                            : "text-muted-foreground hover:text-foreground"
                         )}
                       >
                         <tab.icon className="size-4" aria-hidden="true" />
@@ -853,12 +878,13 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                     );
                   })}
                 </div>
+                <div className="flex-1" />
                 <button
                   type="button"
                   aria-label="パネルを閉じる"
                   title="パネルを閉じる"
                   onClick={handleCloseWorkArea}
-                  className="inline-flex size-6 shrink-0 items-center justify-center self-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 >
                   <X className="size-4" aria-hidden="true" />
                 </button>
@@ -898,15 +924,12 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                   )}
                 </div>
                 {peek !== null && (
-                  <>
-                    <div className="w-px shrink-0 bg-border" />
-                    <div
-                      data-testid="split-view-peek"
-                      className="h-full w-1/2 min-w-[320px] shrink-0 overflow-hidden"
-                    >
-                      {peek(peekVisible)}
-                    </div>
-                  </>
+                  <div
+                    data-testid="split-view-peek"
+                    className="mr-2 mb-2 ml-2 w-1/2 min-w-[320px] shrink-0 overflow-hidden rounded-xl bg-well"
+                  >
+                    {peek(peekVisible)}
+                  </div>
                 )}
               </div>
 

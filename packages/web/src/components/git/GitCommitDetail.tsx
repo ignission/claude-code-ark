@@ -336,8 +336,8 @@ export function GitCommitDetail({
           role="listbox"
           aria-label="変更されたファイル"
           className={cn(
-            "shrink-0 overflow-y-auto overflow-x-hidden border-border py-0.5",
-            stacked ? "max-h-[30%] border-b" : "w-[220px] border-r"
+            "shrink-0 overflow-y-auto overflow-x-hidden py-0.5",
+            stacked ? "max-h-[30%]" : "w-[220px]"
           )}
         >
           {groups.map(group => (
@@ -396,11 +396,11 @@ export function GitCommitDetail({
     );
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <div className="flex h-full min-h-0 flex-col">
       <div
         role="tablist"
         aria-label="詳細の表示"
-        className="flex h-[31px] shrink-0 items-stretch gap-1 border-border border-b bg-muted/30 px-2 text-[13px]"
+        className="flex h-9 shrink-0 items-center gap-0.5 px-1.5 text-[13px]"
       >
         {tabs.map(t => {
           const active = t.value === activeTab;
@@ -414,10 +414,10 @@ export function GitCommitDetail({
               aria-controls={`${domId}-panel`}
               onClick={() => setTab(t.value)}
               className={cn(
-                "-mb-px inline-flex shrink-0 items-center border-b-2 px-2 font-semibold transition-colors",
+                "inline-flex h-7 shrink-0 items-center rounded-lg px-2.5 font-semibold transition-colors",
                 active
-                  ? "border-foreground text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
+                  ? "bg-card text-foreground shadow-card"
+                  : "text-muted-foreground hover:text-foreground"
               )}
             >
               {t.label}
@@ -550,7 +550,7 @@ function DiffHeader({ file }: { file: GitFileChange }) {
     );
   };
   return (
-    <div className="flex h-[28px] shrink-0 items-center gap-2 border-border border-b bg-muted/20 pr-1.5 pl-2.5 text-[12px]">
+    <div className="flex h-[28px] shrink-0 items-center gap-2 pr-1.5 pl-2.5 text-[12px]">
       <span
         data-testid="git-diff-path"
         className="min-w-0 flex-1 truncate font-mono"

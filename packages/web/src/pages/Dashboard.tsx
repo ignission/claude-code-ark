@@ -922,7 +922,7 @@ export default function Dashboard() {
               {!isConnected && (
                 <div
                   role="status"
-                  className="border-b border-status-error/30 bg-status-error/15 px-4 py-2 flex items-center gap-2 text-status-error text-sm font-medium shrink-0"
+                  className="mb-2 rounded-panel bg-status-error/15 px-4 py-2 flex items-center gap-2 text-status-error text-sm font-medium shrink-0"
                 >
                   <WifiOff className="w-4 h-4" aria-hidden="true" />
                   <span>サーバーとつながっていません</span>
@@ -1061,9 +1061,7 @@ export default function Dashboard() {
                   return (
                     <div
                       key={session.id}
-                      className={
-                        isActive ? "h-full flex flex-col p-3 pl-1" : "hidden"
-                      }
+                      className={isActive ? "h-full flex flex-col" : "hidden"}
                     >
                       <SplitViewPane
                         socket={socket}

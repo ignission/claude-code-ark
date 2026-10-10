@@ -262,7 +262,7 @@ export function FileTree({
 
   return (
     <div className="flex h-full min-h-0 flex-col text-[13px]">
-      <div className="flex shrink-0 items-center justify-between border-b px-2 py-1">
+      <div className="flex shrink-0 items-center justify-between px-2 py-1">
         <span className="text-muted-foreground text-xs">ファイル</span>
         <button
           type="button"

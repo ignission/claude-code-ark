@@ -20,7 +20,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { clampSidebarWidth, SIDEBAR_DEFAULT_WIDTH } from "@/lib/sidebar-width";
+import {
+  clampSidebarWidth,
+  LAYOUT_PADDING_WIDTH,
+  SIDEBAR_DEFAULT_WIDTH,
+} from "@/lib/sidebar-width";
 
 interface SidebarMainLayoutProps {
   sidebar: ReactNode;
@@ -77,7 +81,11 @@ export function SidebarMainLayout({
       setResizing(true);
 
       const handleMouseMove = (ev: MouseEvent) => {
-        const newWidth = clampSidebarWidth(ev.clientX, viewportWidth());
+        // 壁紙の余白 (p-2) のぶんだけ、ポインタの位置から引く
+        const newWidth = clampSidebarWidth(
+          ev.clientX - LAYOUT_PADDING_WIDTH,
+          viewportWidth()
+        );
         preferredWidthRef.current = newWidth;
         sidebarWidthRef.current = newWidth;
         setSidebarWidth(newWidth);
@@ -113,17 +121,19 @@ export function SidebarMainLayout({
   }, []);
 
   return (
-    <div className="h-[100dvh] flex relative">
+    <div className="app-wallpaper h-[100dvh] flex relative gap-2 p-2">
       {resizing && <div className="fixed inset-0 z-50 cursor-col-resize" />}
       <div
         className="shrink-0 relative flex flex-col"
         style={{ width: `${sidebarWidth}px` }}
       >
-        <div className="flex-1 min-h-0 overflow-hidden">{sidebar}</div>
+        <div className="panel-glass flex-1 min-h-0 overflow-hidden">
+          {sidebar}
+        </div>
         {/* biome-ignore lint/a11y/noStaticElementInteractions: リサイズハンドルはマウス操作専用 */}
         <div
-          className={`absolute top-0 -right-1 w-3 h-full cursor-col-resize hover:bg-primary/50 transition-colors ${
-            resizing ? "bg-primary/50" : "bg-transparent"
+          className={`absolute inset-y-4 -right-2 w-2 rounded-full cursor-col-resize hover:bg-primary/40 transition-colors ${
+            resizing ? "bg-primary/40" : "bg-transparent"
           }`}
           onMouseDown={handleSidebarResizeStart}
         />
