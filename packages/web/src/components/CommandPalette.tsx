@@ -58,6 +58,8 @@ export interface CommandPaletteProps {
     worktreePath: string,
     relPath: string
   ) => void;
+  /** そのセッションの「ファイル」のタブで開く (端末・会話のリンクと同じ開き方) */
+  onOpenFile: (sessionId: string, filePath: string) => void;
   /** 打った文を、そのセッションの Claude へ送る */
   onAsk: (sessionId: string, text: string) => void;
   onOpenBoardSuggestSettings: () => void;
@@ -92,6 +94,7 @@ function PaletteBody({
   fetchFileIndex,
   onSelectSession,
   onOpenDiagram,
+  onOpenFile,
   onAsk,
   onOpenBoardSuggestSettings,
   onClose,
@@ -219,11 +222,8 @@ function PaletteBody({
           }
           break;
         case "file":
-          // 端末・会話のリンクと同じ入口 (「ファイル」のタブで開く)
-          window.postMessage(
-            { type: "ark:open-file", path: action.path },
-            window.location.origin
-          );
+          // 一覧はこのセッションの worktree のものなので、開く先もこのセッションにする
+          if (sessionId) onOpenFile(sessionId, action.path);
           break;
         case "keynav":
           command = action.command;
@@ -247,6 +247,7 @@ function PaletteBody({
       onClose,
       onOpenBoardSuggestSettings,
       onOpenDiagram,
+      onOpenFile,
       onSelectSession,
       sessionId,
       worktreePath,

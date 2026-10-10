@@ -170,6 +170,22 @@ describe("KeyNavLayer", () => {
     expect(document.activeElement?.id).toBe("commits");
   });
 
+  it("閉じた作業エリアにファイルを開いたあとは、開くのを待って作業エリアにいる", () => {
+    const screen = mountScreen({ workOpen: false });
+    press(";", { ctrlKey: true });
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(PALETTE_CLOSED_EVENT, { detail: { region: "work" } })
+      );
+    });
+    // ファイルを開く処理が、少し遅れて作業エリアを開く
+    wait(50);
+    screen.work?.classList.remove("hidden");
+    wait(600);
+    expect(activeRegion()).toBe("work");
+    expect(document.activeElement?.id).toBe("row");
+  });
+
   it("別のダイアログへ渡したときは、フォーカスを置き直さない", () => {
     mountScreen({ workOpen: true });
     press(";", { ctrlKey: true });

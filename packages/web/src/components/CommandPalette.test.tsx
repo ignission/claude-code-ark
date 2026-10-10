@@ -53,6 +53,7 @@ function setup(overrides: Partial<CommandPaletteProps> = {}) {
     ),
     onSelectSession: vi.fn(),
     onOpenDiagram: vi.fn(),
+    onOpenFile: vi.fn(),
     onAsk: vi.fn(),
     onOpenBoardSuggestSettings: vi.fn(),
     ...overrides,
@@ -150,25 +151,24 @@ describe("CommandPalette", () => {
     expect(closed).toHaveLength(1);
   });
 
-  it("ファイルは端末のリンクと同じ入口で開き、閉じたあとは作業エリアにいる", async () => {
-    setup();
+  it("ファイルは開いた時点のセッションで開き、閉じたあとは作業エリアにいる", async () => {
+    const props = setup();
     await open();
-    const posted = vi.spyOn(window, "postMessage");
     await type("keynav");
     expect(options().slice(0, 2)).toEqual(["keynav.ts", "keynav.test.ts"]);
     await press("ArrowDown");
     await press("Enter");
-    expect(posted).toHaveBeenCalledWith(
-      { type: "ark:open-file", path: "src/keynav.test.ts" },
-      window.location.origin
-    );
+    expect(props.onOpenFile).toHaveBeenCalledWith("s1", "src/keynav.test.ts");
     expect(closed[0]).toMatchObject({ region: "work" });
-    posted.mockRestore();
   });
 
   it("図は開いた時点のセッションの worktree で開く", async () => {
     const props = setup();
     await open();
+    // 開いている間に選択が替わっても (通知から別のセッションを開いた、など)
+    act(() =>
+      root.render(<CommandPalette {...props} selectedSessionId="s2" />)
+    );
     await type("ログイン");
     await press("Enter");
     expect(props.onOpenDiagram).toHaveBeenCalledWith(

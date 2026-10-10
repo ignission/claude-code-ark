@@ -922,6 +922,7 @@ export default function Dashboard() {
               fetchFileIndex={fetchFileIndex}
               onSelectSession={handleSelectSession}
               onOpenDiagram={handleOpenDiagramFromPalette}
+              onOpenFile={handleOpenFileLink}
               onAsk={sendMessage}
               onOpenBoardSuggestSettings={() =>
                 setShowBoardSuggestSettings(true)

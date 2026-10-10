@@ -231,10 +231,10 @@ export function KeyNavLayer() {
         run(detail.command);
         return;
       }
-      const wanted = detail?.region ?? stateRef.current.region;
-      const next = availableRegions(document).includes(wanted)
-        ? wanted
-        : stateRef.current.region;
+      // 行き先がまだ描かれていなくても、言われた場所にする (閉じた作業エリアは、
+      // ファイルや図を開いた直後に開く)。最後まで現れなければ、次の指示のときに
+      // 左のパネルへ戻す
+      const next = detail?.region ?? stateRef.current.region;
       stateRef.current = { ...stateRef.current, region: next };
       setRegion(next);
       focusRegion(next);
