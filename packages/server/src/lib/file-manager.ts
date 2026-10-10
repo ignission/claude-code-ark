@@ -570,6 +570,50 @@ async function findIgnored(
   }
 }
 
+/** file:index が返すパスの上限 (超えたら truncated) */
+export const MAX_INDEX_PATHS = 50_000;
+
+/**
+ * worktree 内のファイルのパスをすべて返す (追跡中 + 未追跡。gitignore 対象は除く)。
+ * 名前で探す (コマンドパレット) ための一覧で、絞り込みはクライアントが行う。
+ * `ls-files` は index を書き換えないが、Claude の git 操作と取り合わないよう
+ * `--no-optional-locks` を付ける。
+ */
+export async function listAllFiles(
+  worktreePath: string
+): Promise<{ paths: string[]; truncated: boolean }> {
+  const realWorktree = await realpath(worktreePath);
+  const out = await runGit(realWorktree, [
+    "--no-optional-locks",
+    "ls-files",
+    "-z",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+  ]);
+  // index に残っているが作業ツリーから消したファイルは、開けないので載せない
+  const deleted = new Set(
+    (
+      await runGit(realWorktree, [
+        "--no-optional-locks",
+        "ls-files",
+        "-z",
+        "--deleted",
+      ])
+    )
+      .split("\0")
+      .filter(Boolean)
+  );
+  // マージの競合中は同じパスがステージごとに複数回出る
+  const paths = [...new Set(out.split("\0").filter(Boolean))].filter(
+    file => !deleted.has(file)
+  );
+  return {
+    paths: paths.slice(0, MAX_INDEX_PATHS),
+    truncated: paths.length > MAX_INDEX_PATHS,
+  };
+}
+
 /** worktree 内のディレクトリを一覧する (.git と gitignore 対象は除く) */
 export async function listDirectory(
   worktreePath: string,

@@ -1,4 +1,9 @@
-import type { ManagedSession, SpecialKey, Worktree } from "@ark/shared";
+import type {
+  FileIndexResponse,
+  ManagedSession,
+  SpecialKey,
+  Worktree,
+} from "@ark/shared";
 import { Copy, Loader2, Terminal, WifiOff } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -6,6 +11,7 @@ import { toast } from "sonner";
 import { AboutDialog } from "@/components/AboutDialog";
 import { BoardSuggestSettingsDialog } from "@/components/BoardSuggestSettingsDialog";
 import { BrowserPane } from "@/components/BrowserPane";
+import { CommandPalette } from "@/components/CommandPalette";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { FilePane } from "@/components/FilePane";
 import { FilePeek, type FilePeekTarget } from "@/components/FilePeek";
@@ -437,6 +443,38 @@ export default function Dashboard() {
       socket.off("diagram:open", onDiagramOpen);
     };
   }, [socket, sessions, openDiagramTab]);
+
+  // コマンドパレットから図を開く (Claude の board_open と同じ開き方)
+  const handleOpenDiagramFromPalette = useCallback(
+    (sessionId: string, worktreePath: string, relPath: string) => {
+      openDiagramTab(sessionId, worktreePath, relPath);
+      setDiagramOpenRequest(previous =>
+        createDiagramOpenRequest(previous, sessionId, relPath)
+      );
+    },
+    [openDiagramTab]
+  );
+
+  // コマンドパレットがファイルを名前で探すための一覧 (worktree 内の全ファイルのパス)
+  const fetchFileIndex = useCallback(
+    (sessionId: string): Promise<FileIndexResponse> =>
+      new Promise(resolve => {
+        if (!socket) {
+          resolve({ ok: false, error: "サーバーに未接続です" });
+          return;
+        }
+        socket
+          .timeout(10_000)
+          .emit("file:index", { sessionId }, (err, response) =>
+            resolve(
+              err || !response
+                ? { ok: false, error: "サーバーから応答がありません" }
+                : response
+            )
+          );
+      }),
+    [socket]
+  );
 
   useEffect(() => {
     if (!socket) return;
@@ -872,6 +910,24 @@ export default function Dashboard() {
         />
       ) : (
         <SidebarMainLayout
+          overlay={
+            <CommandPalette
+              sessions={sessions}
+              worktrees={worktrees}
+              repoList={repoList}
+              sessionStatuses={sessionStatuses}
+              worktreeDisplayNames={worktreeDisplayNames}
+              selectedSessionId={selectedSessionId}
+              listDiagrams={listDiagrams}
+              fetchFileIndex={fetchFileIndex}
+              onSelectSession={handleSelectSession}
+              onOpenDiagram={handleOpenDiagramFromPalette}
+              onOpenFile={handleOpenFileLink}
+              onOpenBoardSuggestSettings={() =>
+                setShowBoardSuggestSettings(true)
+              }
+            />
+          }
           sidebar={
             <SessionSidebar
               sessions={sessions}

@@ -1,16 +1,18 @@
 /**
- * ファイルペイン用の socket ハンドラ (open / list / write / subscribe)。
+ * ファイルペイン用の socket ハンドラ (open / list / index / write / subscribe)。
  * socket のペイロードは信頼できないので、形を確かめてから使う。
  * 同期ハンドラ内の throw はプロセスを落とすため、全体を try/catch で包む。
  */
 
 import path from "node:path";
 import type {
+  FileIndexResponse,
   FileListResponse,
   FileOpenResponse,
   FileWriteResponse,
 } from "@ark/shared";
 import {
+  listAllFiles,
   listDirectory,
   readFileFromWorktree,
   resolveReadablePath,
@@ -121,6 +123,23 @@ export function createFileHandlers(deps: FileHandlersDeps) {
     }
   }
 
+  /** worktree 内の全ファイルのパス (名前で探すための一覧) */
+  async function index(data: unknown, cb: unknown): Promise<void> {
+    if (typeof cb !== "function") return;
+    const reply = cb as Callback<FileIndexResponse>;
+    try {
+      if (!isRecord(data) || typeof data.sessionId !== "string") return;
+      const worktreePath = deps.getWorktreePath(data.sessionId);
+      if (worktreePath === undefined) {
+        return reply({ ok: false, error: "セッションが見つかりません" });
+      }
+      const { paths, truncated } = await listAllFiles(worktreePath);
+      reply({ ok: true, paths, truncated });
+    } catch (err) {
+      reply({ ok: false, error: errorMessage(err) });
+    }
+  }
+
   async function write(data: unknown, cb: unknown): Promise<void> {
     if (typeof cb !== "function") return;
     const reply = cb as Callback<FileWriteResponse>;
@@ -224,5 +243,5 @@ export function createFileHandlers(deps: FileHandlersDeps) {
     pending.clear();
   }
 
-  return { open, list, write, subscribe, unsubscribe, dispose };
+  return { open, list, index, write, subscribe, unsubscribe, dispose };
 }

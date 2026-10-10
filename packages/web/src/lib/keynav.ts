@@ -42,6 +42,8 @@ export type KeyNavCommand =
   | { type: "close" }
   /** キーの一覧を出す / 隠す */
   | { type: "help" }
+  /** 名前で探して実行するパレットを開く */
+  | { type: "palette" }
   /** 打ちかけのキーや一覧を取り消す */
   | { type: "cancel" };
 
@@ -87,6 +89,7 @@ const SINGLE_KEYS: Readonly<Record<string, KeyNavCommand>> = {
   p: { type: "toggle-work-area" },
   q: { type: "close" },
   "?": { type: "help" },
+  ":": { type: "palette" },
 };
 
 const G_KEYS: Readonly<Record<string, KeyNavCommand>> = {
@@ -141,6 +144,7 @@ export const KEYNAV_HELP: ReadonlyArray<{
     rows: [
       ["Ctrl+;", "ノーマルモードに入る / 出る"],
       ["i", "入力へ (端末 / 会話の入力欄)"],
+      [":", "名前で探して実行する (セッション・ファイル・図・コマンド)"],
       ["?", "この一覧"],
     ],
   },

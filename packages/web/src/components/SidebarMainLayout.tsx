@@ -30,6 +30,8 @@ import {
 interface SidebarMainLayoutProps {
   sidebar: ReactNode;
   main: ReactNode;
+  /** 画面全体に重ねるもの (コマンドパレット) */
+  overlay?: ReactNode;
   initialSidebarWidth?: number;
   onSidebarWidthChange?: (width: number) => void;
 }
@@ -42,6 +44,7 @@ function viewportWidth(): number {
 export function SidebarMainLayout({
   sidebar,
   main,
+  overlay,
   initialSidebarWidth = SIDEBAR_DEFAULT_WIDTH,
   onSidebarWidthChange,
 }: SidebarMainLayoutProps) {
@@ -125,6 +128,7 @@ export function SidebarMainLayout({
     <div className="app-wallpaper h-[100dvh] flex relative gap-2 p-2">
       {resizing && <div className="fixed inset-0 z-50 cursor-col-resize" />}
       <KeyNavLayer />
+      {overlay}
       <div
         className="shrink-0 relative flex flex-col"
         style={{ width: `${sidebarWidth}px` }}

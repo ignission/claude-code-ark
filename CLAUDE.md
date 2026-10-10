@@ -261,6 +261,26 @@ PC では、vim のように「入力モード」と「ノーマルモード」�
   文字のキーは割り当てが無くても受け取る（入力もページ内検索もさせない）。ダイアログや
   メニューが開いている間は何もしない
 
+### コマンドパレット
+
+ノーマルモードの `:` で、名前で探して実行するパレットが開く（`CommandPalette` /
+`lib/palette.ts`）。候補はセッション・図・ファイル・コマンド。
+
+- **入口は `:` だけ**。入力モードから直接開くキーは足さない（端末の Claude に届かない
+  キーを増やさない）。端末からは `Ctrl+;` → `:` の 2 打
+- **ファイルは一覧を 1 回取って、手元で絞り込む**。パレットを開くたびに `file:index` で
+  その worktree の全パスを取る（`git ls-files --cached --others --exclude-standard`。
+  gitignore 対象は含まない。5 万件まで）。打つたびにサーバーへ問い合わせない
+- **場所やタブを替えるコマンドは、パレットが実行せず KeyNavLayer へ返す**
+  （`ark:palette-closed` の `command`）。パレットが自分で DOM を押すと、KeyNavLayer が
+  覚えている「いる場所」と食い違う。閉じたあとのフォーカスも KeyNavLayer が置き直す
+- パレットの入力欄は `data-keynav-ignore` を持つ。持たないと、入力欄へのフォーカスを
+  KeyNavLayer が「入力モードへ戻る合図」と読む
+- **開く先のセッションは、パレットを開いた時点のものに固定する**（ファイルと図の一覧は
+  その worktree のもの。開いている間に選択が替わっても、別の worktree で開かない）
+- **取り消せない操作（停止・削除・再起動）は載せない**。打ち間違いの `Enter` で消えるため。
+  起動していない worktree も載せない（選ぶと起動が走る）
+
 ### Git タブ
 
 PC の作業エリアの「Git」のタブ（`GitPane`）は、セッションの worktree のコミットグラフ・
@@ -415,6 +435,7 @@ task.md 規約・復唱・失敗の自動収集・セッション lifecycle を�
 | ファイルペイン         | worktree のファイルを見て直すペイン（PC のみ。右の作業エリアの「ファイル」のタブで、「図」と切り替える）。ツリー（gitignore 対象は隠し、git の変更の印を出す）とタブで開き、CodeMirror で編集して Ctrl+S / Cmd+S で保存する。Claude がファイルを書き換えたら自動で読み直し、編集中に書き換えられたらバナーで「再読込」「上書き保存」を選ばせる。会話・端末のリンクからも開く。ボードの中のコードリンクは、図を見たまま横の「ピーク」で開き、そこから「ファイル」のタブへ移せる。モバイルは従来の読み取り専用のタブのまま |
 | Git タブ               | worktree のコミットグラフと差分を見るペイン（PC のみ。右の作業エリアの「Git」のタブ。読み取りだけ）。左にサイドバー（変更 / ブランチ / リモート / タグ / スタッシュ）、右上に色分けしたグラフと ref の札つきのコミット一覧、右下に選んだコミットの詳細（コミットの情報 / 変更されたファイル / unified の差分）。先頭の行で未コミットの変更（ステージ済み / 変更 / 未追跡）も見られる。見えている間は 3 秒ごとに追従し、Claude がコミットすると一覧が更新される |
 | キーボード操作         | PC で、前置キー `Ctrl+;` からノーマルモードに入り、1 文字のキーで動かす（`i` で入力へ戻る）。`h` / `l` でサイドバー・左のパネル・作業エリアを移り、`j` / `k` でセッション・ツリー・コミット・会話・図を動く。`J` / `K` でセッションの前後、`n` で次の「あなたの番」、`t` で端末と会話、`p` で作業エリア、`gd` / `gf` / `gs` でタブ、`?` で一覧。端末と図の中からも前置キーが効く |
+| コマンドパレット       | PC で、ノーマルモードの `:` から開く。セッション・図・ファイル（worktree 内を名前で）・コマンドを1つの入力欄で絞り込み、`Enter` で開く / 実行する。取り消せない操作は載せない |
 | tmuxバッファコピー     | tmuxのペーストバッファをクリップボードにコピー                              |
 | ポートスキャン         | リッスン中のポートを一覧表示（ttydポートは除外）                            |
 | リモートアクセス       | Cloudflare Tunnel（Quick / Named）+ QRコード + トークン認証                 |
@@ -661,6 +682,7 @@ claude-code-ark/
 | `file-upload:upload` | `{ sessionId, base64Data, mimeType, originalFilename?, requestId }` | ファイルアップロード |
 | `file:open`       | `{ sessionId, filePath }, callback`     | ファイルを開く（コールバック。`{ ok: true, content, mimeType, size, mtimeMs, editable }` / `{ ok: false, error }`）|
 | `file:list`       | `{ sessionId, dirPath }, callback`      | ディレクトリを 1 階層一覧する（コールバック。`{ ok: true, entries, truncated }` / `{ ok: false, error }`）|
+| `file:index`      | `{ sessionId }, callback`               | worktree 内の全ファイルのパス（gitignore 対象は除く。5 万件まで。コマンドパレットが名前で探すための一覧。コールバック。`{ ok: true, paths, truncated }` / `{ ok: false, error }`）|
 | `file:write`      | `{ sessionId, filePath, content, expectedMtimeMs, force? }, callback` | worktree 内の既存ファイルを書き換える（コールバック。`{ ok: true, mtimeMs }` / `{ ok: false, code: "conflict" \| "error", error, mtimeMs? }`）|
 | `file:subscribe`  | `{ sessionId, filePath }`               | ファイルの更新監視を開始（見えているタブ 1 枚だけ。1 socket あたり 50 件まで）|
 | `file:unsubscribe` | `{ sessionId, filePath }`              | ファイルの更新監視を解除         |

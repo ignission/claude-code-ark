@@ -2592,6 +2592,7 @@ export async function startServer(
     });
     socket.on("file:open", fileHandlers.open);
     socket.on("file:list", fileHandlers.list);
+    socket.on("file:index", fileHandlers.index);
     socket.on("file:write", fileHandlers.write);
     socket.on("file:subscribe", fileHandlers.subscribe);
     socket.on("file:unsubscribe", fileHandlers.unsubscribe);

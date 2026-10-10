@@ -27,6 +27,11 @@ import {
   focusInput,
   regionFocusTarget,
 } from "@/lib/keynav-dom";
+import {
+  PALETTE_CLOSED_EVENT,
+  PALETTE_OPEN_EVENT,
+  type PaletteClosedDetail,
+} from "@/lib/palette";
 
 type Mode = "insert" | "normal";
 
@@ -41,6 +46,8 @@ const REFOCUS_DELAYS_MS = [0, 120, 400];
 
 function isTextEntry(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
+  // パレットの入力欄はノーマルモードの中で開くものなので、入力モードへ戻す合図にしない
+  if (target.closest("[data-keynav-ignore]")) return false;
   if (target.isContentEditable || target.closest(".cm-editor")) return true;
   if (target instanceof HTMLTextAreaElement) return true;
   if (target instanceof HTMLSelectElement) return true;
@@ -85,6 +92,8 @@ export function KeyNavLayer() {
         window.setTimeout(() => {
           if (stateRef.current.mode !== "normal") return;
           if (stateRef.current.region !== target) return;
+          // 置き直しを待つ間に開いたパレットやダイアログから、フォーカスを奪わない
+          if (overlayOpen()) return;
           const element = regionFocusTarget(document, target);
           // 置き先が無い場所 (会話・図) では受け皿に置き、キーが親の window に届くようにする
           (element ?? sinkRef.current)?.focus({
@@ -130,6 +139,11 @@ export function KeyNavLayer() {
       }
       if (command.type === "cancel") {
         setHelpOpen(false);
+        return;
+      }
+      if (command.type === "palette") {
+        setHelpOpen(false);
+        window.dispatchEvent(new Event(PALETTE_OPEN_EVENT));
         return;
       }
       // 次の指示が来たら、前の指示のフォーカスの置き直しと、後回しにした操作は捨てる
@@ -203,6 +217,28 @@ export function KeyNavLayer() {
       if (stateRef.current.mode === "normal") exitToInsert();
       else enterNormal(from);
     };
+    // パレットが閉じたら、フォーカスをノーマルモードの置き場へ戻す
+    const onPaletteClosed = (event: Event) => {
+      if (stateRef.current.mode !== "normal") return;
+      const detail = (event as CustomEvent<PaletteClosedDetail | null>).detail;
+      if (detail?.handoff) {
+        // 残っている置き直しが、開いたダイアログからフォーカスを奪わないようにする
+        cancelRefocus();
+        return;
+      }
+      sinkRef.current?.focus({ preventScroll: true });
+      if (detail?.command) {
+        run(detail.command);
+        return;
+      }
+      // 行き先がまだ描かれていなくても、言われた場所にする (閉じた作業エリアは、
+      // ファイルや図を開いた直後に開く)。最後まで現れなければ、次の指示のときに
+      // 左のパネルへ戻す
+      const next = detail?.region ?? stateRef.current.region;
+      stateRef.current = { ...stateRef.current, region: next };
+      setRegion(next);
+      focusRegion(next);
+    };
     // 入力欄をクリックしたら入力モードに戻す
     const onFocusIn = (event: FocusEvent) => {
       if (stateRef.current.mode === "normal" && isTextEntry(event.target)) {
@@ -226,17 +262,19 @@ export function KeyNavLayer() {
     };
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener(KEYNAV_LEADER_EVENT, onLeader);
+    window.addEventListener(PALETTE_CLOSED_EVENT, onPaletteClosed);
     window.addEventListener("focusin", onFocusIn);
     window.addEventListener("blur", onBlur);
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener(KEYNAV_LEADER_EVENT, onLeader);
+      window.removeEventListener(PALETTE_CLOSED_EVENT, onPaletteClosed);
       window.removeEventListener("focusin", onFocusIn);
       window.removeEventListener("blur", onBlur);
       cancelRefocus();
       window.clearTimeout(deferredRef.current);
     };
-  }, [cancelRefocus, enterNormal, exitToInsert, run]);
+  }, [cancelRefocus, enterNormal, exitToInsert, focusRegion, run]);
 
   // モードといる場所を <html> に出す (枠は index.css が描く)
   useEffect(() => {
