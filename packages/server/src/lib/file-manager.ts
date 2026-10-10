@@ -591,8 +591,23 @@ export async function listAllFiles(
     "--others",
     "--exclude-standard",
   ]);
+  // index に残っているが作業ツリーから消したファイルは、開けないので載せない
+  const deleted = new Set(
+    (
+      await runGit(realWorktree, [
+        "--no-optional-locks",
+        "ls-files",
+        "-z",
+        "--deleted",
+      ])
+    )
+      .split("\0")
+      .filter(Boolean)
+  );
   // マージの競合中は同じパスがステージごとに複数回出る
-  const paths = [...new Set(out.split("\0").filter(Boolean))];
+  const paths = [...new Set(out.split("\0").filter(Boolean))].filter(
+    file => !deleted.has(file)
+  );
   return {
     paths: paths.slice(0, MAX_INDEX_PATHS),
     truncated: paths.length > MAX_INDEX_PATHS,
