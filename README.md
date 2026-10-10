@@ -92,7 +92,7 @@ The mobile UI has its own session list, chat view, terminal with quick keys, and
 
 - Paste, drop or attach images, PDFs, text files and spreadsheets to send them to Claude.
 - Ask a side question from the command palette (`Tab`). A separate Claude with no tools answers in a floating window, and your session's conversation is left alone.
-- Open the VNC screen of a host you can reach over SSH, such as a Mac's Screen Sharing, in the browser.
+- Open the VNC screen of a host you can reach over SSH, such as a Mac's Screen Sharing, in the browser. Ark connects with `ssh -o BatchMode=yes` as the user running the server, so that user needs a key without a passphrase (or one loaded in ssh-agent) and the host already in `known_hosts`.
 - Use a different Claude account per repository (Linux only).
 
 ## How it works
@@ -193,7 +193,7 @@ To turn it on:
 
 The key is stored in Ark's database, and the UI only ever shows its last four characters. You can also supply it through `OPENROUTER_API_KEY` or `~/.config/openrouter/api-key`; the key from the settings screen takes precedence. Without a key, nothing happens.
 
-Sessions pick this up when their `claude` process starts, so a session that was already running needs a restart before suggestions work in it.
+Changes to these settings apply from the next turn. The one exception is a session whose `claude` was started by an Ark version from before this feature: restart `claude` in that session to get suggestions.
 
 ## Configuration
 
