@@ -20,16 +20,15 @@
  *   閉じても外さずに hidden で残す (外すと未保存の編集が消える)。
  *   見えているかは `filePane(visible)` で伝える
  * - 「Git」の中身も呼び出し側が `gitPane` で渡す。マウントの扱いは「ファイル」と同じ
- *   (初めて見せるまでマウントせず、見せたあとは hidden で残す)。見ている間は作業エリアを
- *   760px まで広げる (保存している幅は変えない。420px ではグラフが読めない)。
+ *   (初めて見せるまでマウントせず、見せたあとは hidden で残す)。
  *   自動で「Git」へ替えることは無い
  * - ピーク: 図のコードリンクを踏むと、タブは替えずに「図」の本体を左右に割り、
- *   図の横へコードを出す。中身は呼び出し側が `peek` で渡す。出している間は
- *   作業エリアを 900px まで広げる (保存している幅は変えない)。作業エリアを閉じても
+ *   図の横へコードを出す。中身は呼び出し側が `peek` で渡す。作業エリアを閉じても
  *   外さない (未保存の編集を保つ)
  * - 自動で開く: 図の activation id が変わる / `peekSeq` が増える → 開いて「図」へ。
  *   `fileOpenSeq` が増える → 開いて「ファイル」へ。どれもマウント時の値では開かない
- * - 幅の制約は lib/split-pane-widths.ts (左 360 / 作業エリア 360 の最小幅)
+ * - 幅を持つのは左ペインで、作業エリアは残りを埋める (ピークやタブの切り替えで
+ *   会話の幅を動かさない)。制約は lib/split-pane-widths.ts (左 360 / 作業エリア 360 の最小幅)
  * - ドラッグ中は左ペインも作業エリアも pointer-events-none にする (端末と図は iframe)
  *
  * - diagram は TerminalPane のタブ機構から外れ、作業エリア専属になった
@@ -78,11 +77,7 @@ import {
   inputBarToggleLabel,
   resolveSessionHeaderLabels,
 } from "../lib/session-header";
-import {
-  fitWorkAreaWidth,
-  gitWorkAreaFloor,
-  peekWorkAreaFloor,
-} from "../lib/split-pane-widths";
+import { fitLeftWidth, LEFT_DEFAULT_WIDTH } from "../lib/split-pane-widths";
 import {
   normalizeSplitViewLeftMode,
   readSavedSplitViewLeftMode,
@@ -111,12 +106,11 @@ import {
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
-// 作業エリアの幅と開閉。キーの名前は、右ペインが図だけだった頃のものを引き継ぐ
-const STORAGE_KEY_WORK_AREA_WIDTH = "ark-split-board-width";
+// 左ペイン (端末 / 会話) の幅。作業エリアは残りを埋める
+const STORAGE_KEY_LEFT_WIDTH = "ark-split-left-width";
+// 作業エリアの開閉。キーの名前は、右ペインが図だけだった頃のものを引き継ぐ
 const STORAGE_KEY_SHOW_WORK_AREA = "ark-split-show-board";
 const STORAGE_KEY_RIGHT_TAB = "ark-split-right-tab";
-/** 保存した幅が無いときの作業エリアの幅 (ツリー 220px とエディタが並ぶ幅) */
-const DEFAULT_WORK_AREA_WIDTH = 560;
 
 type RightTab = "board" | "files" | "git";
 
@@ -326,8 +320,10 @@ function useSeqIncreaseEffect(
 
 export function SplitViewPane(props: SplitViewPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [workWidth, setWorkWidth] = useState<number>(
-    () => readSavedWidth(STORAGE_KEY_WORK_AREA_WIDTH) ?? DEFAULT_WORK_AREA_WIDTH
+  // 利用者が選んだ左ペインの幅。コンテナが狭くて収まらない間も、この値は変えない
+  // (ウィンドウを広げ直したら元の幅に戻す)
+  const [leftWidth, setLeftWidth] = useState<number>(
+    () => readSavedWidth(STORAGE_KEY_LEFT_WIDTH) ?? LEFT_DEFAULT_WIDTH
   );
   // ドラッグ中は左ペインも作業エリアも pointer-events-none にする
   const [isDragging, setIsDragging] = useState(false);
@@ -335,11 +331,12 @@ export function SplitViewPane(props: SplitViewPaneProps) {
     readSavedFlag(STORAGE_KEY_SHOW_WORK_AREA)
   );
   const [savedRightTab, setRightTab] = useState<RightTab>(readSavedRightTab);
-  // ピークの間の下限 (900px まで) を描画時に決めるために持つ。0 は未計測
+  // 左ペインの幅をコンテナに収めるために持つ。0 は未計測
   const [containerWidth, setContainerWidth] = useState(0);
-  // mouseup と ResizeObserver から最新の幅を読むため（購読を張り直さずに済ませる）
-  const workWidthRef = useRef(workWidth);
-  workWidthRef.current = workWidth;
+  const renderedLeftWidth = fitLeftWidth(containerWidth, leftWidth);
+  // mouseup から最新の幅を読むため（購読を張り直さずに済ませる）
+  const leftWidthRef = useRef(leftWidth);
+  leftWidthRef.current = leftWidth;
 
   const hasFilePane = props.filePane !== undefined;
   const hasGitPane = props.gitPane !== undefined;
@@ -375,22 +372,6 @@ export function SplitViewPane(props: SplitViewPaneProps) {
 
   const peek = props.peek ?? null;
   const peekVisible = showWorkArea && boardTabActive && props.isActive;
-  // ピークを出している間は、図とコードを並べて読める幅 (900px) まで広げる。
-  // 保存している幅は変えず、ピークを閉じれば元の幅に戻る
-  const peekWidens = peek !== null && boardTabActive;
-  // 「Git」のタブの間は、グラフと件名が並ぶ幅 (760px) まで広げる。同じく保存しない
-  const gitWidens = rightTab === "git";
-  /** 今のタブで作業エリアに要る下限。広げる理由が無ければ null */
-  const workAreaFloor: ((total: number) => number) | null = peekWidens
-    ? peekWorkAreaFloor
-    : gitWidens
-      ? gitWorkAreaFloor
-      : null;
-  const renderedWorkWidth = workAreaFloor
-    ? Math.max(workWidth, workAreaFloor(containerWidth))
-    : workWidth;
-  const workAreaFloorRef = useRef(workAreaFloor);
-  workAreaFloorRef.current = workAreaFloor;
   // 左ペインのモード。選択は PC 全体で共有し、常時マウント済みの別セッション
   // および別ブラウザタブからの変更にも追随する。
   const [leftMode, setLeftMode] = useState<SplitViewLeftMode>(
@@ -582,15 +563,13 @@ export function SplitViewPane(props: SplitViewPaneProps) {
     writeSaved(STORAGE_KEY_RIGHT_TAB, "board");
   });
 
-  // コンテナ幅の変化に合わせて、作業エリアの幅を最小幅の制約内に収める（表示中のみ意味あり）
+  // コンテナ幅を追い、左ペインの幅を最小幅の制約内に収める（作業エリアの表示中のみ意味あり）
   useEffect(() => {
     const el = containerRef.current;
     if (!el || !showWorkArea) return;
     const observer = new ResizeObserver(() => {
       const total = el.clientWidth;
-      if (total <= 0) return;
-      setContainerWidth(total);
-      setWorkWidth(fitWorkAreaWidth(total, workWidthRef.current));
+      if (total > 0) setContainerWidth(total);
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -607,16 +586,12 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       const el = containerRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      // 作業エリアの幅 = コンテナ右端からカーソルまでの距離
-      const next = fitWorkAreaWidth(rect.width, rect.right - e.clientX);
-      // ピークの間 (900px まで) と「Git」のタブの間 (760px まで) は下限より狭くできない。
-      // 狭くしても描画は下限のままで、見えない幅だけが保存されてしまう
-      const floor = workAreaFloorRef.current;
-      setWorkWidth(floor ? Math.max(next, floor(rect.width)) : next);
+      // 左ペインの幅 = コンテナ左端からカーソルまでの距離
+      setLeftWidth(fitLeftWidth(rect.width, e.clientX - rect.left));
     };
     const onUp = () => {
       setIsDragging(false);
-      writeSaved(STORAGE_KEY_WORK_AREA_WIDTH, String(workWidthRef.current));
+      writeSaved(STORAGE_KEY_LEFT_WIDTH, String(leftWidthRef.current));
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -683,10 +658,20 @@ export function SplitViewPane(props: SplitViewPaneProps) {
         data-testid="split-view-body"
         className="flex-1 min-h-0 flex relative"
       >
+        {/* 作業エリアを開いている間は左ペインが幅を持ち、作業エリアが残りを埋める。
+            閉じている間は左ペインが全幅を使う */}
         <div
-          className={`panel h-full flex-1 min-w-0 flex flex-col overflow-hidden ${
-            isDragging ? "pointer-events-none" : ""
-          }`}
+          data-testid="split-view-left"
+          style={
+            showWorkArea
+              ? { width: renderedLeftWidth, flexShrink: 0 }
+              : undefined
+          }
+          className={cn(
+            "panel h-full min-w-0 flex flex-col overflow-hidden",
+            !showWorkArea && "flex-1",
+            isDragging && "pointer-events-none"
+          )}
         >
           {/* 上部バー: 左 = 主ラベル・ブランチ・状態チップ、中央 = 端末 / 会話、
           右 = 1タップの操作・作業エリアの開閉と `…` メニュー */}
@@ -837,9 +822,8 @@ export function SplitViewPane(props: SplitViewPaneProps) {
               />
             </button>
             <div
-              style={{ width: renderedWorkWidth, flexShrink: 0 }}
               className={cn(
-                "panel flex h-full flex-col overflow-hidden",
+                "panel flex h-full min-w-0 flex-1 flex-col overflow-hidden",
                 isDragging && "pointer-events-none",
                 !showWorkArea && "hidden"
               )}
@@ -890,17 +874,24 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                 </button>
               </div>
 
-              {/* 図。ピークがあれば左右に割って、図の横へコードを出す (3 本目のリサイザは無い) */}
+              {/* 図。ピークがあれば左右に割って、図の横へコードを出す (3 本目のリサイザは無い)。
+                  作業エリアが 700px より狭いと並べても両方読めないので、ピークだけを出す
+                  (図は隠すだけで外さない。ピークを閉じれば戻る) */}
               <div
                 role="tabpanel"
                 id={rightPanelDomId("board")}
                 aria-labelledby={rightTabDomId("board")}
                 className={cn(
-                  "flex min-h-0 flex-1",
+                  "@container flex min-h-0 flex-1",
                   !boardTabActive && "hidden"
                 )}
               >
-                <div className="h-full min-w-0 flex-1 overflow-hidden">
+                <div
+                  className={cn(
+                    "h-full min-w-0 flex-1 overflow-hidden",
+                    peek !== null && "@max-[700px]:hidden"
+                  )}
+                >
                   {boardShown && (
                     <DiagramPane
                       socket={props.socket}
@@ -926,7 +917,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                 {peek !== null && (
                   <div
                     data-testid="split-view-peek"
-                    className="mr-2 mb-2 ml-2 w-1/2 min-w-[320px] shrink-0 overflow-hidden rounded-xl bg-well"
+                    className="mr-2 mb-2 ml-2 w-1/2 min-w-[320px] shrink-0 overflow-hidden rounded-xl bg-well @max-[700px]:w-auto @max-[700px]:min-w-0 @max-[700px]:flex-1"
                   >
                     {peek(peekVisible)}
                   </div>

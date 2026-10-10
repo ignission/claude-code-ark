@@ -822,6 +822,8 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
   const resizers = (scope: ParentNode) =>
     scope.querySelectorAll<HTMLElement>('button[aria-label="左右の幅を調整"]');
   /** 作業エリアの箱 (リサイザの次の要素) */
+  const leftPane = (scope: ParentNode) =>
+    scope.querySelector('[data-testid="split-view-left"]') as HTMLElement;
   const workArea = (scope: ParentNode) =>
     resizers(scope)[0]?.nextElementSibling as HTMLElement;
   const stubContainerRect = (scope: ParentNode, width: number) => {
@@ -1158,27 +1160,33 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
     expect(diagramEl(container)).toBeNull();
   });
 
-  it("ピークを出している間は 900px まで広げ、保存している幅は変えない", () => {
+  it("ピークを出しても、左ペインの幅は変わらない (作業エリアが残りを埋める)", () => {
     localStorage.setItem("ark-split-show-board", "1");
-    localStorage.setItem("ark-split-board-width", "500");
+    localStorage.setItem("ark-split-left-width", "500");
     const session = makeSession("wa-peek-width");
     const container = mount(paneSection(session, true, { filePane }));
     const root = mountedRoots.at(-1)?.root;
-    expect(workArea(container).style.width).toBe("500px");
+    expect(leftPane(container).style.width).toBe("500px");
+    // 作業エリアは幅を持たず、残りを埋める
+    expect(workArea(container).style.width).toBe("");
+    expect(workArea(container).className).toContain("flex-1");
 
     act(() => root?.render(paneSection(session, true, { filePane, peek })));
-    expect(workArea(container).style.width).toBe("900px");
-    expect(localStorage.getItem("ark-split-board-width")).toBe("500");
+    expect(leftPane(container).style.width).toBe("500px");
 
-    // 「ファイル」のタブではピークが見えないので、元の幅
     clickTab(container, "ファイル");
-    expect(workArea(container).style.width).toBe("500px");
-    clickTab(container, "図");
+    expect(leftPane(container).style.width).toBe("500px");
+    expect(localStorage.getItem("ark-split-left-width")).toBe("500");
+  });
 
-    act(() =>
-      root?.render(paneSection(session, true, { filePane, peek: null }))
+  it("作業エリアを閉じている間は、左ペインが全幅を使う", () => {
+    localStorage.setItem("ark-split-left-width", "500");
+    const container = mount(
+      paneSection(makeSession("wa-closed-width"), true, { filePane })
     );
-    expect(workArea(container).style.width).toBe("500px");
+
+    expect(leftPane(container).style.width).toBe("");
+    expect(leftPane(container).className).toContain("flex-1");
   });
 
   describe("「Git」のタブ", () => {
@@ -1335,57 +1343,18 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
       expect(isHidden(gitPaneEl(container))).toBe(true);
     });
 
-    it("Git のタブの間は 760px まで広げ、保存している幅は変えない", () => {
+    it("Git のタブに替えても、左ペインの幅は変わらない", () => {
       localStorage.setItem("ark-split-show-board", "1");
-      localStorage.setItem("ark-split-board-width", "500");
+      localStorage.setItem("ark-split-left-width", "500");
       const container = mount(
         paneSection(makeSession("git-width"), true, { filePane, gitPane })
       );
-      expect(workArea(container).style.width).toBe("500px");
+      expect(leftPane(container).style.width).toBe("500px");
 
       clickTab(container, "Git");
-      expect(workArea(container).style.width).toBe("760px");
-      expect(localStorage.getItem("ark-split-board-width")).toBe("500");
-
-      // ほかのタブでは元の幅
-      clickTab(container, "ファイル");
-      expect(workArea(container).style.width).toBe("500px");
+      expect(leftPane(container).style.width).toBe("500px");
       clickTab(container, "図");
-      expect(workArea(container).style.width).toBe("500px");
-    });
-
-    it("保存している幅が 760px より広ければ、そのまま使う", () => {
-      localStorage.setItem("ark-split-show-board", "1");
-      localStorage.setItem("ark-split-right-tab", "git");
-      localStorage.setItem("ark-split-board-width", "1000");
-      const container = mount(
-        paneSection(makeSession("git-wide"), true, { filePane, gitPane })
-      );
-      expect(workArea(container).style.width).toBe("1000px");
-    });
-
-    it("Git のタブの間は、ドラッグでも 760px までの下限より狭くしない", () => {
-      localStorage.setItem("ark-split-show-board", "1");
-      localStorage.setItem("ark-split-right-tab", "git");
-      localStorage.setItem("ark-split-board-width", "900");
-      const container = mount(
-        paneSection(makeSession("git-drag"), true, { filePane, gitPane })
-      );
-      stubContainerRect(container, 2000);
-      act(() => {
-        resizers(container)[0].dispatchEvent(
-          new MouseEvent("mousedown", { bubbles: true, cancelable: true })
-        );
-      });
-      // 右端から 400px の位置まで引いても 760px で止まる
-      act(() => {
-        window.dispatchEvent(new MouseEvent("mousemove", { clientX: 1600 }));
-      });
-      expect(workArea(container).style.width).toBe("760px");
-      act(() => {
-        window.dispatchEvent(new MouseEvent("mouseup"));
-      });
-      expect(localStorage.getItem("ark-split-board-width")).toBe("760");
+      expect(leftPane(container).style.width).toBe("500px");
     });
   });
 
@@ -1418,9 +1387,9 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
     );
   });
 
-  it("ドラッグした幅は左ペインの最小幅 (360px) を残すところで止め、離したときに保存する", () => {
+  it("ドラッグした幅は両方の最小幅 (360px) を残すところで止め、離したときに保存する", () => {
     localStorage.setItem("ark-split-show-board", "1");
-    localStorage.setItem("ark-split-board-width", "400");
+    localStorage.setItem("ark-split-left-width", "400");
     const container = mount(
       paneSection(makeSession("wa-drag-width"), true, { filePane })
     );
@@ -1431,24 +1400,24 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
       )
     );
 
-    // 収まる範囲ならカーソルの位置どおり
+    // 収まる範囲ならカーソルの位置どおり (左ペインの幅 = 左端からカーソルまで)
     act(() =>
       window.dispatchEvent(new MouseEvent("mousemove", { clientX: 500 }))
     );
-    expect(workArea(container).style.width).toBe("500px");
+    expect(leftPane(container).style.width).toBe("500px");
     // 離すまでは保存しない
-    expect(localStorage.getItem("ark-split-board-width")).toBe("400");
+    expect(localStorage.getItem("ark-split-left-width")).toBe("400");
 
-    // 左端近くまで引いても、左 360px + リサイザ 8px を残す (1000 - 360 - 8)
+    // 左端近くまで引いても、左ペインの最小幅 (360px) は割らない
     act(() =>
       window.dispatchEvent(new MouseEvent("mousemove", { clientX: 100 }))
     );
-    expect(workArea(container).style.width).toBe("632px");
+    expect(leftPane(container).style.width).toBe("360px");
 
     act(() => window.dispatchEvent(new MouseEvent("mouseup")));
-    expect(localStorage.getItem("ark-split-board-width")).toBe("632");
+    expect(localStorage.getItem("ark-split-left-width")).toBe("360");
 
-    // 右端まで寄せても作業エリアの最小幅 (360px) は割らない
+    // 右端まで寄せても、作業エリア 360px + リサイザ 8px を残す (1000 - 360 - 8)
     act(() =>
       resizers(container)[0].dispatchEvent(
         new MouseEvent("mousedown", { bubbles: true })
@@ -1458,26 +1427,6 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
       window.dispatchEvent(new MouseEvent("mousemove", { clientX: 950 }))
     );
     act(() => window.dispatchEvent(new MouseEvent("mouseup")));
-    expect(localStorage.getItem("ark-split-board-width")).toBe("360");
-  });
-
-  it("ピークの間は、ドラッグでも 900px までの下限より狭くしない", () => {
-    localStorage.setItem("ark-split-show-board", "1");
-    localStorage.setItem("ark-split-board-width", "500");
-    const container = mount(
-      paneSection(makeSession("wa-drag-peek"), true, { filePane, peek })
-    );
-    stubContainerRect(container, 1600);
-    act(() =>
-      resizers(container)[0].dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true })
-      )
-    );
-    act(() =>
-      window.dispatchEvent(new MouseEvent("mousemove", { clientX: 1200 }))
-    );
-    act(() => window.dispatchEvent(new MouseEvent("mouseup")));
-    expect(workArea(container).style.width).toBe("900px");
-    expect(localStorage.getItem("ark-split-board-width")).toBe("900");
+    expect(localStorage.getItem("ark-split-left-width")).toBe("632");
   });
 });
