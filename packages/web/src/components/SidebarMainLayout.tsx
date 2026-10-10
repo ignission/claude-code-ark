@@ -32,6 +32,8 @@ interface SidebarMainLayoutProps {
   main: ReactNode;
   /** 画面全体に重ねるもの (コマンドパレット) */
   overlay?: ReactNode;
+  /** 画面の上に浮かべるもの (聞くウィンドウ)。後ろの操作は妨げない */
+  floating?: ReactNode;
   initialSidebarWidth?: number;
   onSidebarWidthChange?: (width: number) => void;
 }
@@ -45,6 +47,7 @@ export function SidebarMainLayout({
   sidebar,
   main,
   overlay,
+  floating,
   initialSidebarWidth = SIDEBAR_DEFAULT_WIDTH,
   onSidebarWidthChange,
 }: SidebarMainLayoutProps) {
@@ -129,6 +132,7 @@ export function SidebarMainLayout({
       {resizing && <div className="fixed inset-0 z-50 cursor-col-resize" />}
       <KeyNavLayer />
       {overlay}
+      {floating}
       <div
         className="shrink-0 relative flex flex-col"
         style={{ width: `${sidebarWidth}px` }}

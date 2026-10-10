@@ -9,6 +9,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AboutDialog } from "@/components/AboutDialog";
+import { AskWindow } from "@/components/AskWindow";
 import { BoardSuggestSettingsDialog } from "@/components/BoardSuggestSettingsDialog";
 import { BrowserPane } from "@/components/BrowserPane";
 import { CommandPalette } from "@/components/CommandPalette";
@@ -52,6 +53,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useAsk } from "@/hooks/useAsk";
 import { useBridgeSnapshot } from "@/hooks/useBridgeSnapshot";
 import { useFileTabs } from "@/hooks/useFileTabs";
 import { useIsMobile } from "@/hooks/useMobile";
@@ -59,6 +61,7 @@ import { useSessionNotifications } from "@/hooks/useSessionNotifications";
 import { useSettings } from "@/hooks/useSettings";
 import { useSocket } from "@/hooks/useSocket";
 import { useViewerTabs } from "@/hooks/useViewerTabs";
+import { focusInput } from "@/lib/keynav-dom";
 import {
   createDiagramOpenRequest,
   type DiagramOpenRequest,
@@ -453,6 +456,27 @@ export default function Dashboard() {
       );
     },
     [openDiagramTab]
+  );
+
+  // 裏の Claude に聞く (コマンドパレットの「聞く」)。答えは浮かぶウィンドウに出す
+  const ask = useAsk(socket);
+  const [askWindow, setAskWindow] = useState({ open: false, seq: 0 });
+  const openAskWindow = useCallback(
+    () => setAskWindow(current => ({ open: true, seq: current.seq + 1 })),
+    []
+  );
+  const closeAskWindow = useCallback(() => {
+    setAskWindow(current => ({ ...current, open: false }));
+    // フォーカスの行き場が無くなるので、端末 / 会話の入力欄へ戻す
+    focusInput(document);
+  }, []);
+  const askSend = ask.send;
+  const handleAsk = useCallback(
+    (text: string) => {
+      openAskWindow();
+      askSend(text);
+    },
+    [askSend, openAskWindow]
   );
 
   // コマンドパレットがファイルを名前で探すための一覧 (worktree 内の全ファイルのパス)
@@ -923,10 +947,24 @@ export default function Dashboard() {
               onSelectSession={handleSelectSession}
               onOpenDiagram={handleOpenDiagramFromPalette}
               onOpenFile={handleOpenFileLink}
+              onAsk={handleAsk}
+              onOpenAskWindow={openAskWindow}
               onOpenBoardSuggestSettings={() =>
                 setShowBoardSuggestSettings(true)
               }
             />
+          }
+          floating={
+            askWindow.open && (
+              <AskWindow
+                state={ask.state}
+                sendError={ask.sendError}
+                focusSeq={askWindow.seq}
+                onSend={ask.send}
+                onReset={ask.reset}
+                onClose={closeAskWindow}
+              />
+            )
           }
           sidebar={
             <SessionSidebar

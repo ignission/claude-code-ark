@@ -31,6 +31,7 @@ import {
 import httpProxy from "http-proxy";
 import { Server } from "socket.io";
 import { WebSocketServer } from "ws";
+import { AskManager, defaultAskDeps } from "./lib/ask-manager.js";
 import {
   AUQ_EVENT_PATH,
   AUQ_TOKEN_HEADER,
@@ -147,7 +148,11 @@ import { sessionOrchestrator } from "./lib/session-orchestrator.js";
 import { listSlashCommands } from "./lib/slash-command-scanner.js";
 import { SPA_FALLBACK_ROUTE_PATTERN } from "./lib/spa-fallback.js";
 import { detectMultiProfileSupported } from "./lib/system.js";
-import { tmuxManager } from "./lib/tmux-manager.js";
+import {
+  claudeShellCommand,
+  TMUX_BINARY_PATH,
+  tmuxManager,
+} from "./lib/tmux-manager.js";
 import { describeTmuxReadFailure } from "./lib/tmux-read-result.js";
 import { TunnelManager } from "./lib/tunnel.js";
 import { UsageCollector } from "./lib/usage-collector.js";
@@ -668,6 +673,13 @@ export async function startServer(
       methods: ["GET", "POST"],
     },
   });
+
+  // 裏の Claude (コマンドパレットの「聞く」)。利用者は 1 人なので、状態は全クライアントへ配る
+  const askManager = new AskManager(
+    defaultAskDeps(TMUX_BINARY_PATH, claudeShellCommand())
+  );
+  askManager.on("state", state => io.emit("ask:state", state));
+  askManager.init();
 
   // Apply Socket.IO authentication middleware
   io.use(authManager.socketMiddleware());
@@ -3056,6 +3068,31 @@ export async function startServer(
       }
     });
 
+    // ===== 裏の Claude に聞く (コマンドパレットの「聞く」) =====
+    socket.on("ask:get", callback => {
+      if (typeof callback !== "function") return;
+      callback(askManager.getState());
+    });
+    socket.on("ask:send", (data, callback) => {
+      if (typeof callback !== "function") return;
+      const text = (data as { text?: unknown } | null)?.text;
+      if (typeof text !== "string") {
+        callback({ ok: false, error: "聞く文がありません" });
+        return;
+      }
+      askManager.ask(text).then(
+        () => callback({ ok: true }),
+        e => callback({ ok: false, error: getErrorMessage(e) })
+      );
+    });
+    socket.on("ask:reset", callback => {
+      if (typeof callback !== "function") return;
+      askManager.reset().then(
+        () => callback({ ok: true }),
+        e => callback({ ok: false, error: getErrorMessage(e) })
+      );
+    });
+
     // ===== ボード提案の設定 (鍵は末尾 4 文字だけ返す) =====
     socket.on("board-suggest:get", callback => {
       if (typeof callback !== "function") return;
@@ -3834,6 +3871,7 @@ export async function startServer(
     clearInterval(bridgeBroadcastInterval);
     clearInterval(gridBroadcastInterval);
     sessionOrchestrator.cleanup();
+    askManager.dispose();
     browserManager.cleanup();
     screenBridge.closeAll();
     boardMcp.stop();

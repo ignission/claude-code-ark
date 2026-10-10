@@ -31,6 +31,7 @@ export type PaletteAction =
   | { type: "file"; path: string }
   | { type: "keynav"; command: KeyNavCommand }
   | { type: "board-suggest-settings" }
+  | { type: "ask-window" }
   | { type: "ask"; text: string };
 
 export type PaletteKind = "session" | "diagram" | "file" | "command" | "ask";
@@ -93,6 +94,9 @@ export const PALETTE_COMMANDS: readonly PaletteItem[] = [
   }),
   command("board-suggest", "ボード提案の設定", "jev board suggest settings", {
     type: "board-suggest-settings",
+  }),
+  command("ask-window", "Claude に聞くウィンドウを開く", "ask ai 質問", {
+    type: "ask-window",
   }),
 ];
 

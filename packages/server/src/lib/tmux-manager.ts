@@ -21,7 +21,7 @@ import {
 
 // tmux 絶対パス (pm2/systemd で PATH に tmux が無くても動作させるため)。
 // 解決不能なら "tmux" にフォールバック (PATH依存)。
-const TMUX_BINARY_PATH = resolveTmuxPath() ?? "tmux";
+export const TMUX_BINARY_PATH = resolveTmuxPath() ?? "tmux";
 
 /**
  * セッション作成/破棄系および読み取り系の tmux コマンドの打ち切り時間 (ms)。
@@ -149,6 +149,12 @@ function posixShellQuote(s: string): string {
  *     脱出される余地があるため、全 control char を一律拒否する。
  *
  */
+/** シェルへ渡せる形の claude の起動コマンド (引数なし)。裏の Claude (AskManager) が使う */
+export function claudeShellCommand(): string {
+  const binary = resolveValidatedClaudePath();
+  return binary === "claude" ? "claude" : posixShellQuote(binary);
+}
+
 function resolveValidatedClaudePath(): string {
   const resolved = resolveClaudePath();
   if (resolved === null) return "claude";
