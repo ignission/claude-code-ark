@@ -71,6 +71,7 @@ export function KeyNavLayer() {
   const stateRef = useRef({ mode, region, pending, helpOpen });
   stateRef.current = { mode, region, pending, helpOpen };
   const timersRef = useRef<number[]>([]);
+  const deferredRef = useRef<number | undefined>(undefined);
 
   const cancelRefocus = useCallback(() => {
     for (const timer of timersRef.current) window.clearTimeout(timer);
@@ -131,14 +132,30 @@ export function KeyNavLayer() {
         setHelpOpen(false);
         return;
       }
-      // 次の指示が来たら、前の指示のフォーカスの置き直しは捨てる
+      // 次の指示が来たら、前の指示のフォーカスの置き直しと、後回しにした操作は捨てる
+      // (閉じた作業エリアで gd の直後に gf を打ったとき、遅れた gd が gf を上書きしない)
       cancelRefocus();
+      window.clearTimeout(deferredRef.current);
+      // セッションを替えた先で作業エリアが閉じているなど、いた場所がもう無ければ
+      // 左のパネルにいることにする (無い場所のままだと h でも出られない)
+      const from = availableRegions(document).includes(stateRef.current.region)
+        ? stateRef.current.region
+        : "left";
       const result = executeKeyNavCommand(
         command,
-        stateRef.current.region,
+        from,
         document,
         document,
-        fn => window.setTimeout(fn, 60)
+        fn => {
+          deferredRef.current = window.setTimeout(() => {
+            fn();
+            // 後回しにした操作で中身が替わるので、フォーカスを置き直す
+            // (先に置いた、替わる前のタブの中身に残さない)
+            if (stateRef.current.mode === "normal") {
+              focusRegion(stateRef.current.region);
+            }
+          }, 60);
+        }
       );
       if (result.insert) {
         stateRef.current = { ...stateRef.current, mode: "insert" };
@@ -217,6 +234,7 @@ export function KeyNavLayer() {
       window.removeEventListener("focusin", onFocusIn);
       window.removeEventListener("blur", onBlur);
       cancelRefocus();
+      window.clearTimeout(deferredRef.current);
     };
   }, [cancelRefocus, enterNormal, exitToInsert, run]);
 
