@@ -458,3 +458,12 @@
   border: 1px solid var(--border);
   padding: 4px 8px;
 }
+
+/* ノーマルモード (KeyNavLayer) の間、いる場所のパネルに枠を出す。
+   場所は <html> の data-keynav-active、パネルは data-keynav-region が持つ */
+html[data-keynav-active="sidebar"] [data-keynav-region="sidebar"],
+html[data-keynav-active="left"] [data-keynav-region="left"],
+html[data-keynav-active="work"] [data-keynav-region="work"] {
+  outline: 2px solid color-mix(in oklab, var(--primary) 65%, transparent);
+  outline-offset: -2px;
+}
