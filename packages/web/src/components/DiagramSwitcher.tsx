@@ -1,11 +1,14 @@
 /**
- * DiagramSwitcher - 図の切り替え。いまの図の名前を出すバーと、押すと開く図の一覧
+ * DiagramSwitcher - 図の切り替え。「図の一覧」と「図」の 2 つの画面を行き来する
  *
- * 一覧は Finder のリスト表示に寄せる (名前・種類・更新日時の列。既定は更新の新しい順)。
- * 以前はプルダウン 1 本で、名前しか見えず、どれが新しい図かも分からなかった。
+ * Finder のように、一覧の画面で図を開くと図の画面へ替わり、上のバーの「戻る」で一覧へ
+ * 戻る (「進む」で開いていた図へ)。一覧はリスト表示 (名前・種類・更新日時の列。既定は
+ * 更新の新しい順)。以前はプルダウン 1 本で、名前しか見えず、どれが新しい図かも
+ * 分からなかった。
  *
- * - 一覧は図の上に重ねて開く (DiagramPane の根が `relative`)。図を選ぶ / Esc / バーを
- *   もう一度押すと閉じる。図をまだ選んでいないときは、開いた状態から始める
+ * - 一覧の画面は、図の上に重ねて描く (DiagramPane の根が `relative`)。図の iframe を
+ *   外さないので、戻ってきたときに作り直しにならない。図をまだ選んでいないときは、
+ *   一覧の画面から始める
  * - 一覧は `role="listbox"` で、矢印・Home / End・PageUp / PageDown・Enter で動く。
  *   ノーマルモードの j / k / gg / G もここへ届く (keynav-dom が作業エリアの listbox へ送る)
  * - 削除は行ごとのボタンから。確認のダイアログは 1 つを使い回す
@@ -17,7 +20,8 @@ import {
   ArrowDown,
   ArrowLeftRight,
   ArrowUp,
-  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   FileText,
   Layers,
   ListTree,
@@ -84,6 +88,9 @@ const COLUMNS: ReadonlyArray<{
   { key: "kind", label: "種類", className: "w-24 shrink-0" },
   { key: "mtime", label: "更新", className: "w-24 shrink-0" },
 ];
+
+const NAV_BUTTON =
+  "inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent";
 
 /** PageUp / PageDown で動かす行数 */
 const PAGE_ROWS = 10;
@@ -228,33 +235,52 @@ export function DiagramSwitcher({
 
   return (
     <>
-      <div className="flex h-10 shrink-0 items-center gap-2 px-2">
+      <div
+        data-diagram-toolbar=""
+        className="flex h-10 shrink-0 items-center gap-1.5 px-2"
+      >
+        {/* Finder の戻る / 進む。一覧と図を、画面を切り替えるように行き来する */}
         <button
           type="button"
           aria-label="図の一覧"
-          aria-expanded={open}
-          title={currentRelPath}
-          className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md bg-well px-2 text-left text-xs text-foreground transition-colors hover:bg-accent"
-          onClick={() => setOpen(value => !value)}
+          title="図の一覧へ戻る"
+          disabled={open}
+          className={NAV_BUTTON}
+          onClick={() => setOpen(true)}
         >
-          <CurrentIcon
-            className="size-3.5 shrink-0 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <span className="min-w-0 flex-1 truncate font-medium">
-            {currentLabel}
-          </span>
-          <span className="shrink-0 tabular-nums text-muted-foreground">
-            {diagrams.length}件
-          </span>
-          <ChevronDown
-            className={cn(
-              "size-3.5 shrink-0 text-muted-foreground transition-transform",
-              open && "rotate-180"
-            )}
-            aria-hidden="true"
-          />
+          <ChevronLeft className="size-4" aria-hidden="true" />
         </button>
+        <button
+          type="button"
+          aria-label="図へ進む"
+          title="開いていた図へ進む"
+          disabled={!open || currentRelPath === undefined}
+          className={NAV_BUTTON}
+          onClick={() => setOpen(false)}
+        >
+          <ChevronRight className="size-4" aria-hidden="true" />
+        </button>
+        {open ? (
+          <>
+            <span className="ml-1 text-[13px] font-semibold">図</span>
+            <span className="min-w-0 flex-1 text-xs tabular-nums text-muted-foreground">
+              {diagrams.length}件
+            </span>
+          </>
+        ) : (
+          <>
+            <CurrentIcon
+              className="ml-1 size-3.5 shrink-0 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <span
+              className="min-w-0 flex-1 truncate text-[13px] font-semibold"
+              title={currentRelPath}
+            >
+              {currentLabel}
+            </span>
+          </>
+        )}
         {listLoading && (
           <span className="shrink-0 text-[10px] text-muted-foreground">
             更新中…
@@ -281,7 +307,7 @@ export function DiagramSwitcher({
       {open && (
         <div
           data-diagram-browser=""
-          className="absolute inset-x-0 top-10 bottom-0 z-20 flex flex-col bg-card"
+          className="absolute inset-x-0 top-10 bottom-0 z-20 flex animate-in flex-col bg-card duration-150 fade-in slide-in-from-left-3 motion-reduce:animate-none"
         >
           {/* 一覧は図の上を覆うので、DiagramPane がバーの下に出す知らせが隠れる */}
           {notice && (

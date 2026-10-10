@@ -85,8 +85,11 @@ function render(overrides: Partial<Props> = {}) {
   act(() => root.render(<DiagramSwitcher {...props} />));
   return props;
 }
-const bar = () =>
+const bar = () => document.querySelector<HTMLElement>("[data-diagram-toolbar]");
+const back = () =>
   document.querySelector<HTMLButtonElement>('button[aria-label="図の一覧"]');
+const forward = () =>
+  document.querySelector<HTMLButtonElement>('button[aria-label="図へ進む"]');
 const browser = () => document.querySelector("[data-diagram-browser]");
 const listbox = () => document.querySelector<HTMLElement>('[role="listbox"]');
 const search = () =>
@@ -99,7 +102,7 @@ const selected = () =>
   document
     .querySelector('[role="option"][aria-selected="true"]')
     ?.querySelector("span > span")?.textContent;
-const openList = () => act(() => bar()?.click());
+const openList = () => act(() => back()?.click());
 function key(
   target: Element | null,
   name: string,
@@ -143,19 +146,31 @@ afterEach(() => {
 });
 
 describe("DiagramSwitcher", () => {
-  it("バーにいまの図の名前と件数を出し、一覧は閉じたままにする", () => {
+  it("図の画面では、バーにいまの図の名前を出し、「戻る」で一覧へ行ける", () => {
     render();
     expect(bar()?.textContent).toContain("注文フロー");
-    expect(bar()?.textContent).toContain("3件");
-    expect(bar()?.getAttribute("aria-expanded")).toBe("false");
+    expect(browser()).toBeNull();
+    expect(back()?.disabled).toBe(false);
+    expect(forward()?.disabled).toBe(true);
+  });
+
+  it("一覧の画面では、バーに件数を出し、「進む」で開いていた図へ戻れる", () => {
+    render();
+    openList();
+    expect(bar()?.textContent).toContain("図3件");
+    expect(bar()?.textContent).not.toContain("注文フロー");
+    expect(back()?.disabled).toBe(true);
+    expect(forward()?.disabled).toBe(false);
+    act(() => forward()?.click());
     expect(browser()).toBeNull();
   });
 
   it("図を選んでいないときは、一覧を開いた状態から始める", () => {
     render({ currentRelPath: undefined });
-    expect(bar()?.textContent).toContain("図を選択");
     expect(browser()).not.toBeNull();
     expect(document.activeElement).toBe(search());
+    // 進む先の図が無い
+    expect(forward()?.disabled).toBe(true);
   });
 
   it("図が開いたら一覧を閉じ、図が無くなったら開く (復元や board_open で図が替わる)", () => {
@@ -172,7 +187,7 @@ describe("DiagramSwitcher", () => {
 
   it("図が無ければ、その旨を出す", () => {
     render({ diagrams: [], currentRelPath: undefined });
-    expect(bar()?.textContent).toContain("図がありません");
+    expect(bar()?.textContent).toContain("0件");
     expect(browser()?.textContent).toContain("図がありません");
   });
 
@@ -263,7 +278,7 @@ describe("DiagramSwitcher", () => {
     expect(browser()).not.toBeNull();
   });
 
-  it("行を押すと開く。Esc とバーでも閉じる", () => {
+  it("行を押すと開く。Esc でも図の画面へ戻る", () => {
     const props = render();
     openList();
     act(() =>
@@ -273,9 +288,6 @@ describe("DiagramSwitcher", () => {
     expect(browser()).toBeNull();
     openList();
     key(listbox(), "Escape");
-    expect(browser()).toBeNull();
-    openList();
-    openList();
     expect(browser()).toBeNull();
   });
 
