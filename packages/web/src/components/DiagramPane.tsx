@@ -145,22 +145,14 @@ interface DiagramAutosaveResponse {
 
 export const DIAGRAM_ZOOM_MIN = 0.25;
 export const DIAGRAM_ZOOM_MAX = 4;
-export const DIAGRAM_ZOOM_STEP = 1.25;
 export const DIAGRAM_ZOOM_DEFAULT = 1;
-
-export function stepDiagramZoom(zoom: number, direction: "in" | "out"): number {
-  const next =
-    direction === "in" ? zoom * DIAGRAM_ZOOM_STEP : zoom / DIAGRAM_ZOOM_STEP;
-  return Math.min(DIAGRAM_ZOOM_MAX, Math.max(DIAGRAM_ZOOM_MIN, next));
-}
 
 export function applyDiagramPinchZoom(zoom: number, deltaY: number): number {
   const next = zoom * Math.exp(-deltaY / 400);
+  // 100% をまたぐときは、いったん 100% で止める。倍率の表示もリセットのボタンも無いので、
+  // つまみ戻すだけで元の大きさにぴったり戻せるようにする
+  if ((zoom - 1) * (next - 1) < 0) return DIAGRAM_ZOOM_DEFAULT;
   return Math.min(DIAGRAM_ZOOM_MAX, Math.max(DIAGRAM_ZOOM_MIN, next));
-}
-
-export function getDiagramZoomPercent(zoom: number): number {
-  return Math.round(zoom * 100);
 }
 
 /**
@@ -255,10 +247,7 @@ interface DiagramViewportProps {
   relPath: string;
   html: string;
   zoom: number;
-  onZoomOut: () => void;
-  onZoomReset: () => void;
-  onZoomIn: () => void;
-  /** 直近の拡大縮小の中心 (ピンチの位置)。ボタンのときは null で、見えている範囲の中心を保つ */
+  /** 直近の拡大縮小の中心 (ピンチの位置)。位置が分からないときは null で、見えている範囲の中心を保つ */
   zoomAnchor?: RefObject<DiagramZoomPoint | null>;
   onIframeLoad: (event: React.SyntheticEvent<HTMLIFrameElement>) => void;
 }
@@ -267,9 +256,6 @@ export function DiagramViewport({
   relPath,
   html,
   zoom,
-  onZoomOut,
-  onZoomReset,
-  onZoomIn,
   zoomAnchor,
   onIframeLoad,
 }: DiagramViewportProps) {
@@ -304,34 +290,6 @@ export function DiagramViewport({
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden">
-      <div className="absolute top-2 right-2 z-10 flex items-center rounded-md border border-border bg-background/90 p-0.5 shadow-sm">
-        <button
-          type="button"
-          title="ズームアウト"
-          disabled={zoom <= DIAGRAM_ZOOM_MIN}
-          className="inline-flex size-7 items-center justify-center rounded text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-          onClick={onZoomOut}
-        >
-          −
-        </button>
-        <button
-          type="button"
-          title="ズームをリセット"
-          className="h-7 min-w-12 rounded px-1 text-xs tabular-nums text-foreground transition-colors hover:bg-accent"
-          onClick={onZoomReset}
-        >
-          {getDiagramZoomPercent(zoom)}%
-        </button>
-        <button
-          type="button"
-          title="ズームイン"
-          disabled={zoom >= DIAGRAM_ZOOM_MAX}
-          className="inline-flex size-7 items-center justify-center rounded text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-          onClick={onZoomIn}
-        >
-          ＋
-        </button>
-      </div>
       {/* 入れ物の形は拡大率で変えない (変えると iframe が作り直される) */}
       <div
         ref={scrollRef}
@@ -724,11 +682,6 @@ export function DiagramPane({
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
   const [zoom, setZoom] = useState(DIAGRAM_ZOOM_DEFAULT);
   const zoomAnchorRef = useRef<DiagramZoomPoint | null>(null);
-  // ボタンでの拡大縮小は、つまんだ点ではなく見えている範囲の中心を保つ
-  const zoomByButton = useCallback((update: (zoom: number) => number) => {
-    zoomAnchorRef.current = null;
-    setZoom(update);
-  }, []);
   const activeListRequestRef = useRef<object | null>(null);
   const deleteInFlightRef = useRef(false);
   // 進行中の fetch を追跡し、古いタブの結果が新しいタブを上書きしないようにする
@@ -1233,13 +1186,6 @@ export function DiagramPane({
               html={html}
               zoom={zoom}
               zoomAnchor={zoomAnchorRef}
-              onZoomOut={() =>
-                zoomByButton(current => stepDiagramZoom(current, "out"))
-              }
-              onZoomReset={() => zoomByButton(resetDiagramZoom)}
-              onZoomIn={() =>
-                zoomByButton(current => stepDiagramZoom(current, "in"))
-              }
               onIframeLoad={handleIframeLoad}
             />
           </div>
