@@ -240,6 +240,13 @@ describe("部品のページと自由形の禁止", () => {
     );
     expect(styled.ok).toBe(false);
     if (!styled.ok) expect(styled.error).toContain("<style>");
+    // 骨組みの要素の style 属性でも見た目を変えられるので、属性も見る
+    const inline = validateDiagramDeck(
+      `<!doctype html><html lang="ja"><head><meta charset="utf-8"></head><body style="display:none">${MODEL_SCRIPT}</body></html>`,
+      model
+    );
+    expect(inline.ok).toBe(false);
+    if (!inline.ok) expect(inline.error).toContain("style 属性");
   });
 
   it("配信は古いデッキ (自由形だけ) を通すが、board_open は拒否する", () => {

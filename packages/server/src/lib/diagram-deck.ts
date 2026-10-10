@@ -245,8 +245,14 @@ const FREE_PAGE_ERROR =
 const MODEL_SCRIPT_RE =
   /<script\b[^>]*\bid\s*=\s*["']ark-diagram-model["'][^>]*>[\s\S]*?<\/script\s*>/i;
 
-/** 骨組みとモデルのほかに書いてよいタグ（中身を持たないもの） */
-const SKELETON_TAGS = new Set(["html", "head", "meta", "title", "body"]);
+/** 骨組みとモデルのほかに書いてよいタグと、その属性 */
+const SKELETON_TAGS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["html", ["lang"]],
+  ["head", []],
+  ["meta", ["charset", "name", "content"]],
+  ["title", []],
+  ["body", []],
+]);
 
 /** 自由形のページも、本文の HTML や `<style>` も無いこと */
 function validateAuthoredFree(
@@ -270,7 +276,20 @@ function validateAuthoredFree(
   const rawText = outsideModel.match(/<(style|script)[\s/>]/i);
   if (rawText) return refuse(asciiLowerCase(rawText[1]));
   for (const tag of scanDiagramHtmlStartTags(html)) {
-    if (!SKELETON_TAGS.has(tag.name)) return refuse(tag.name);
+    const allowed = SKELETON_TAGS.get(tag.name);
+    if (!allowed) return refuse(tag.name);
+    // 骨組みの要素でも、style 属性を書けば見た目を変えられる (body を隠すこともできる)
+    const extra = tag.attributes.find(
+      attribute => !allowed.includes(attribute.name)
+    );
+    if (extra) {
+      return {
+        ok: false,
+        error:
+          `<${tag.name}> に ${extra.name} 属性は書けません。` +
+          "デッキの見た目は Ark が描きます",
+      };
+    }
   }
   return { ok: true };
 }

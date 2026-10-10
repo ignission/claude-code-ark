@@ -361,7 +361,9 @@ function renderBlock(block: DeckBlock): string {
       const max = Math.max(...block.items.map(bar => bar.value), 0);
       return `<div class="ark-bk-bars">${block.items
         .map(bar => {
-          const width = max > 0 ? Math.max(1, (100 * bar.value) / max) : 0;
+          // 小さい値が見えなくならないよう 1% は出すが、0 は 0 のまま (量があるように見せない)
+          const width =
+            max > 0 && bar.value > 0 ? Math.max(1, (100 * bar.value) / max) : 0;
           return (
             `<span class="ark-bk-bar-label">${renderInline(bar.label)}</span>` +
             `<span class="ark-bk-bar-track"><i${toneAttr(bar.tone)} style="width:${width.toFixed(1)}%"></i></span>` +

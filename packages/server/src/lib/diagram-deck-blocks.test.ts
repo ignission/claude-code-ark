@@ -115,6 +115,18 @@ describe("renderDeckBlocks", () => {
 
     expect(html).toContain('style="width:100.0%"');
     expect(html).toContain('<i data-tone="ng" style="width:25.0%"></i>');
+    // 0 は 0 のまま描く (最小幅を当てて量があるように見せない)
+    expect(
+      render([
+        {
+          kind: "bars",
+          items: [
+            { label: "a", value: 0 },
+            { label: "b", value: 9 },
+          ],
+        },
+      ])
+    ).toContain('<i style="width:0.0%"></i>');
     // text が無ければ値をそのまま出す
     expect(html).toContain("<b>200</b>");
   });
