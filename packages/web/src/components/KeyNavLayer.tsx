@@ -92,6 +92,8 @@ export function KeyNavLayer() {
         window.setTimeout(() => {
           if (stateRef.current.mode !== "normal") return;
           if (stateRef.current.region !== target) return;
+          // 置き直しを待つ間に開いたパレットやダイアログから、フォーカスを奪わない
+          if (overlayOpen()) return;
           const element = regionFocusTarget(document, target);
           // 置き先が無い場所 (会話・図) では受け皿に置き、キーが親の window に届くようにする
           (element ?? sinkRef.current)?.focus({

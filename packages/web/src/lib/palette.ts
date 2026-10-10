@@ -199,6 +199,8 @@ export interface PaletteSources {
 
 /** 1 度に出す候補の上限 (「聞く」の行は別) */
 export const PALETTE_LIMIT = 40;
+/** ファイル以外の候補に足す点 */
+const NAMED_BONUS = 15;
 /** そのうちファイルが占めてよい数 */
 const FILE_LIMIT = 25;
 
@@ -222,7 +224,9 @@ export function rankPalette(
     ...sources.diagrams,
   ]) {
     const score = scoreItem(item, words);
-    if (score !== null) scored.push({ item, score });
+    // 数の少ないセッション・コマンド・図を、同じくらい合うファイルより上に置く
+    // (`git` で `git.ts` より「Git のタブを開く」を先に)
+    if (score !== null) scored.push({ item, score: score + NAMED_BONUS });
   }
   const files: Array<{ path: string; score: number }> = [];
   for (const path of sources.filePaths) {

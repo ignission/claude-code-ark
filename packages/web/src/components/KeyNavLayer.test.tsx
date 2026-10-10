@@ -141,6 +141,9 @@ describe("KeyNavLayer", () => {
     document.body.append(palette);
     act(() => palette.querySelector("input")?.focus());
     expect(document.documentElement.dataset.keynavMode).toBe("normal");
+    // ノーマルモードに入った直後の置き直しが残っていても、入力欄からフォーカスを奪わない
+    wait(600);
+    expect(document.activeElement).toBe(palette.querySelector("input"));
     // パレットが開いている間は、打った文字を指示として横取りしない
     const typed = new KeyboardEvent("keydown", { key: "j", cancelable: true });
     act(() => {

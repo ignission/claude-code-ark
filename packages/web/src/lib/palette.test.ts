@@ -111,6 +111,18 @@ describe("rankPalette", () => {
     expect(got[0].title).toBe("haus");
   });
 
+  it("同じくらい合うなら、コマンドをファイルより上に置く", () => {
+    const got = rankPalette("git", {
+      ...sources,
+      filePaths: ["src/git.ts", "src/git-api.ts"],
+    });
+    expect(got.map(i => i.title).slice(0, 3)).toEqual([
+      "Git のタブを開く",
+      "git.ts",
+      "git-api.ts",
+    ]);
+  });
+
   it("候補の数に上限がある", () => {
     const many = Array.from({ length: 500 }, (_, i) => `src/file-${i}.ts`);
     const got = rankPalette("file", { ...sources, filePaths: many });
