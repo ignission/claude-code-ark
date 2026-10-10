@@ -133,6 +133,12 @@ describe("parseAskLine", () => {
     ).toBeNull();
     expect(
       parseAskLine(
+        JSON.stringify(user("u", "<command-name>/clear</command-name>")),
+        1
+      )
+    ).toBeNull();
+    expect(
+      parseAskLine(
         JSON.stringify({
           type: "assistant",
           uuid: "a",
@@ -155,7 +161,7 @@ describe("AskManager", () => {
     expect(created?.[created.indexOf("-c") + 1]).toBe(path.join(root, "ask"));
     expect(fs.existsSync(path.join(root, "ask"))).toBe(true);
     expect(sent()).toEqual([
-      "unset CLAUDE_CONFIG_DIR; '/opt/claude' --tools '' --session-id id-1 Enter",
+      "unset CLAUDE_CONFIG_DIR; exec '/opt/claude' --tools '' --strict-mcp-config --session-id id-1 Enter",
       "-l 1+1は?",
       "Enter",
     ]);
@@ -210,6 +216,20 @@ describe("AskManager", () => {
     append("id-1", user("u2", "2つ目"), assistant("a2", "答え2"));
     tick();
     expect(states.at(-1)?.busy).toBe(false);
+  });
+
+  it("`<` で始まる質問も発話として扱い、答えたら待つのをやめる", async () => {
+    const { manager, states } = make();
+    await manager.ask("<div>これは何?</div>");
+    append("id-1", user("u1", "<div>これは何?</div>"), assistant("a1", "HTML"));
+    tick();
+    expect(states.at(-1)).toMatchObject({
+      messages: [
+        { role: "user", text: "<div>これは何?</div>" },
+        { role: "assistant", text: "HTML" },
+      ],
+      busy: false,
+    });
   });
 
   it("改行は空白にして送る (改行は入力の確定になる)", async () => {

@@ -22,7 +22,7 @@ const NO_RESPONSE = "サーバーから応答がありません";
 
 export interface UseAsk {
   state: AskState;
-  /** 送る前に弾かれた理由 (未接続・応答なし)。サーバー側の失敗は state.error */
+  /** 送れなかった理由 (未接続・応答なし・サーバーに断られた) */
   sendError: string | null;
   send: (text: string) => void;
   reset: () => void;
@@ -54,8 +54,9 @@ export function useAsk(socket: TypedSocket | null): UseAsk {
       }
       setSendError(null);
       emit(socket, result => {
-        // サーバー側の失敗は ask:state の error にも載るので、ここでは重ねて出さない
+        // 長すぎる文などは、会話の状態を変える前に断られる (ask:state には載らない)
         if (!result) setSendError(NO_RESPONSE);
+        else if (!result.ok) setSendError(result.error);
       });
     },
     [socket]

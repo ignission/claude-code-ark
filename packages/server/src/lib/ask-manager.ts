@@ -2,7 +2,7 @@
  * AskManager - コマンドパレットの「Claude に聞く」に答える、裏の Claude
  *
  * 表のセッションとは別に、サイドバーに出ない tmux セッションを 1 つだけ持ち、対話版の
- * claude を道具なし (`--tools ""`) で動かす。聞かれた文を send-keys で入れ、答えは
+ * claude を道具なし (`--tools ""` と `--strict-mcp-config`) で動かす。聞かれた文を send-keys で入れ、答えは
  * transcript (JSONL) から読む。表のセッションの会話には触れない。
  *
  * - **動かす場所は Ark 専用の空のフォルダ** (`~/.local/share/ark/ask`)。表のセッションと
@@ -130,8 +130,15 @@ export function parseAskLine(
   if (row.type === "user") {
     if (row.isMeta === true) return null;
     const text = textOf(row.message?.content).trim();
-    // hook やローカルコマンドの出力は `<...>` で包まれて user の行として残る
-    if (text === "" || text.startsWith("<")) return null;
+    // slash command とその出力は user の行として残る (transcript-conversation.ts と同じ
+    // 見分け方)。`<` で始まるだけの文は人の質問でありうるので落とさない
+    if (
+      text === "" ||
+      text.startsWith("<command-name>") ||
+      text.startsWith("<local-command-")
+    ) {
+      return null;
+    }
     return { message: { id, role: "user", text }, done: false };
   }
   if (row.type === "assistant") {
@@ -316,7 +323,11 @@ export class AskManager extends EventEmitter {
       this.sessionId = null;
       throw new Error("裏の Claude のセッションを作れませんでした");
     }
-    const command = `unset CLAUDE_CONFIG_DIR; ${this.deps.claudeCommand} --tools '' --session-id ${this.sessionId}`;
+    // - exec: claude が終わったら tmux セッションごと終わらせる。シェルが残ると、次に
+    //   聞いた文がシェルのコマンドとして実行される
+    // - --tools '' は内蔵の道具だけを外す。--strict-mcp-config (--mcp-config なし) で、
+    //   利用者が設定している MCP サーバーの道具も持たせない
+    const command = `unset CLAUDE_CONFIG_DIR; exec ${this.deps.claudeCommand} --tools '' --strict-mcp-config --session-id ${this.sessionId}`;
     this.deps.tmux(["send-keys", "-t", name, command, "Enter"]);
     try {
       await this.waitReady(name);
