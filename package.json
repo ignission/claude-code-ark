@@ -19,7 +19,6 @@
     "start:remote": "NODE_ENV=production node packages/server/dist/cli.js --remote",
     "start:quick": "NODE_ENV=production node packages/server/dist/cli.js --quick",
     "preview": "pnpm --filter @ark/web preview",
-    "test:e2e": "playwright test",
     "check": "biome check . && tsc -b",
     "test": "vitest run && pnpm test:harness",
     "test:harness": "/bin/bash .claude/hooks/tests/test-bash-guard.sh",
@@ -28,7 +27,6 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.11",
-    "@playwright/test": "^1.62.1",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^26.4.0",
     "concurrently": "^10.0.5",
