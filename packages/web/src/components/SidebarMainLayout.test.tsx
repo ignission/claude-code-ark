@@ -72,7 +72,7 @@ afterEach(() => {
 describe("SidebarMainLayout のサイドバー幅", () => {
   it("保存済みの幅が広すぎるときは、読み込み時に丸める", () => {
     setViewportWidth(860);
-    expect(sidebarWidth(mount(layout(450)))).toBe(380);
+    expect(sidebarWidth(mount(layout(450)))).toBe(356);
   });
 
   it("ユーザーの実設定 (253px) は、狭いウィンドウでも丸めない", () => {
@@ -86,7 +86,7 @@ describe("SidebarMainLayout のサイドバー幅", () => {
 
     dragTo(container, 1000);
 
-    expect(sidebarWidth(container)).toBe(380);
+    expect(sidebarWidth(container)).toBe(356);
   });
 
   it("広いまま保存したあとウィンドウを縮めても、メインペインを潰さない", () => {
@@ -97,7 +97,7 @@ describe("SidebarMainLayout のサイドバー幅", () => {
     setViewportWidth(860);
     act(() => window.dispatchEvent(new Event("resize")));
 
-    expect(sidebarWidth(container)).toBe(380);
+    expect(sidebarWidth(container)).toBe(356);
   });
 
   it("ウィンドウを広げ直したら、丸める前に選んでいた幅に戻す", () => {
@@ -106,7 +106,7 @@ describe("SidebarMainLayout のサイドバー幅", () => {
 
     setViewportWidth(768);
     act(() => window.dispatchEvent(new Event("resize")));
-    expect(sidebarWidth(container)).toBe(288);
+    expect(sidebarWidth(container)).toBe(264);
 
     setViewportWidth(1280);
     act(() => window.dispatchEvent(new Event("resize")));
@@ -121,7 +121,7 @@ describe("SidebarMainLayout のサイドバー幅", () => {
     setViewportWidth(860);
     act(() => window.dispatchEvent(new Event("resize")));
 
-    expect(sidebarWidth(container)).toBe(380);
+    expect(sidebarWidth(container)).toBe(356);
     expect(onChange).not.toHaveBeenCalled();
   });
 
@@ -132,6 +132,6 @@ describe("SidebarMainLayout のサイドバー幅", () => {
 
     dragTo(container, 1000);
 
-    expect(onChange).toHaveBeenCalledWith(380);
+    expect(onChange).toHaveBeenCalledWith(356);
   });
 });

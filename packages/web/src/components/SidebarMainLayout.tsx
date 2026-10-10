@@ -20,7 +20,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { clampSidebarWidth, SIDEBAR_DEFAULT_WIDTH } from "@/lib/sidebar-width";
+import {
+  clampSidebarWidth,
+  LAYOUT_PADDING_WIDTH,
+  SIDEBAR_DEFAULT_WIDTH,
+} from "@/lib/sidebar-width";
 
 interface SidebarMainLayoutProps {
   sidebar: ReactNode;
@@ -28,9 +32,6 @@ interface SidebarMainLayoutProps {
   initialSidebarWidth?: number;
   onSidebarWidthChange?: (width: number) => void;
 }
-
-/** 壁紙の余白 (p-2) */
-const LAYOUT_PADDING_PX = 8;
 
 /** ウィンドウ幅。取れない環境では上限の判断から外す（NaN で「制限なし」） */
 function viewportWidth(): number {
@@ -82,7 +83,7 @@ export function SidebarMainLayout({
       const handleMouseMove = (ev: MouseEvent) => {
         // 壁紙の余白 (p-2) のぶんだけ、ポインタの位置から引く
         const newWidth = clampSidebarWidth(
-          ev.clientX - LAYOUT_PADDING_PX,
+          ev.clientX - LAYOUT_PADDING_WIDTH,
           viewportWidth()
         );
         preferredWidthRef.current = newWidth;

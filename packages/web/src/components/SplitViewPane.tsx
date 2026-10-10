@@ -922,14 +922,12 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                   )}
                 </div>
                 {peek !== null && (
-                  <>
-                    <div
-                      data-testid="split-view-peek"
-                      className="mr-2 mb-2 ml-2 w-1/2 min-w-[320px] shrink-0 overflow-hidden rounded-xl bg-well"
-                    >
-                      {peek(peekVisible)}
-                    </div>
-                  </>
+                  <div
+                    data-testid="split-view-peek"
+                    className="mr-2 mb-2 ml-2 w-1/2 min-w-[320px] shrink-0 overflow-hidden rounded-xl bg-well"
+                  >
+                    {peek(peekVisible)}
+                  </div>
                 )}
               </div>
 

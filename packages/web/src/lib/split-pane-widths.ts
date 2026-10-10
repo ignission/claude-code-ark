@@ -8,8 +8,8 @@
 
 export const LEFT_MIN_WIDTH = 360;
 export const WORK_AREA_MIN_WIDTH = 360;
-/** リサイザの幅 (w-1 = 4px) */
-export const RESIZER_WIDTH = 4;
+/** リサイザの幅 (w-2 = 8px。パネルの間のすき間を兼ねる) */
+export const RESIZER_WIDTH = 8;
 /** ピークを出している間、作業エリアをここまで広げる (図とコードを並べて読める幅) */
 export const PEEK_WORK_AREA_WIDTH = 900;
 /** 「Git」のタブを見ている間、作業エリアをここまで広げる (グラフと件名が並ぶ幅) */

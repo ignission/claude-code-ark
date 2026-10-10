@@ -33,7 +33,7 @@ describe("peekWorkAreaFloor", () => {
   });
 
   it("狭いコンテナでは左ペインの最小幅を残せる幅まで", () => {
-    expect(peekWorkAreaFloor(1000)).toBe(636);
+    expect(peekWorkAreaFloor(1000)).toBe(632);
   });
 
   it("コンテナ幅が分からないときは 900px", () => {
@@ -47,7 +47,7 @@ describe("gitWorkAreaFloor", () => {
   });
 
   it("狭いコンテナでは左ペインの最小幅を残せる幅まで", () => {
-    expect(gitWorkAreaFloor(1000)).toBe(636);
+    expect(gitWorkAreaFloor(1000)).toBe(632);
   });
 
   it("コンテナ幅が分からないときは 760px", () => {

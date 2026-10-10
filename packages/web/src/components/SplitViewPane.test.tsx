@@ -1439,14 +1439,14 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
     // 離すまでは保存しない
     expect(localStorage.getItem("ark-split-board-width")).toBe("400");
 
-    // 左端近くまで引いても、左 360px + リサイザ 4px を残す (1000 - 360 - 4)
+    // 左端近くまで引いても、左 360px + リサイザ 8px を残す (1000 - 360 - 8)
     act(() =>
       window.dispatchEvent(new MouseEvent("mousemove", { clientX: 100 }))
     );
-    expect(workArea(container).style.width).toBe("636px");
+    expect(workArea(container).style.width).toBe("632px");
 
     act(() => window.dispatchEvent(new MouseEvent("mouseup")));
-    expect(localStorage.getItem("ark-split-board-width")).toBe("636");
+    expect(localStorage.getItem("ark-split-board-width")).toBe("632");
 
     // 右端まで寄せても作業エリアの最小幅 (360px) は割らない
     act(() =>
