@@ -264,7 +264,9 @@ PC では、vim のように「入力モード」と「ノーマルモード」�
 ### コマンドパレット
 
 ノーマルモードの `:` で、名前で探して実行するパレットが開く（`CommandPalette` /
-`lib/palette.ts`）。候補はセッション・図・ファイル・コマンド。
+`lib/palette.ts`）。候補はセッション・図・ファイル・コマンドで、最後に、打った文を
+裏の Claude に聞く行を置く（`Tab` で直接聞く。何も一致しなければ `Enter` がこれになる。
+下記「Claude に聞く」）。
 
 - **入口は `:` だけ**。入力モードから直接開くキーは足さない（端末の Claude に届かない
   キーを増やさない）。端末からは `Ctrl+;` → `:` の 2 打
@@ -280,6 +282,35 @@ PC では、vim のように「入力モード」と「ノーマルモード」�
   その worktree のもの。開いている間に選択が替わっても、別の worktree で開かない）
 - **取り消せない操作（停止・削除・再起動）は載せない**。打ち間違いの `Enter` で消えるため。
   起動していない worktree も載せない（選ぶと起動が走る）
+
+### Claude に聞く（裏の Claude）
+
+コマンドパレットで打った文を `Tab` で「聞く」と、表のセッションとは別の、裏で動く専用の
+Claude が答え、浮かぶウィンドウ（`AskWindow`）に出る（`ask-manager.ts` / `useAsk`）。
+表のセッションへは何も送らない（進行中の会話に割り込まない）。
+
+- **裏の Claude も tmux 上の対話版 claude**（プラン枠のまま。Agent SDK / `claude -p` は
+  使わない）。サイドバーに出ないセッションを 1 つだけ持つ。tmux のセッション名は
+  `arkask-<session-id>` で、`ark-` で始めないのでサーバー起動時の復元の対象にならない
+- **動かす場所は Ark 専用の空のフォルダ**（`~/.local/share/ark/ask`。`ARK_ASK_DIR` で
+  替えられる）。表のセッションと同じフォルダで動かすと、会話ビューが「そのフォルダで
+  一番新しい JSONL」として裏の会話を拾う。`data/` の下でも動かさない（リポジトリの中
+  なので、その CLAUDE.md と設定を読み込む）
+- **道具は持たせない**（`--tools ""`）。ファイルを読まず、何も書き換えず、コマンドも
+  実行しない。許可の確認が出ないので、答える人がいなくても止まらない
+- **答えは `--session-id` で決めた JSONL から読む**（「一番新しいファイル」を探さない）。
+  人の発話と Claude の text だけを取り出し、`stop_reason: "end_turn"` でターンの終わりを知る。
+  対話版は答えを書き終えてから JSONL に出すので、書かれるそばからは出せない
+- **フォルダの信頼の確認には、裏で「はい」と答える**。新しいフォルダでは claude が
+  起動時に確認を出し、既定は「いいえ」。Ark が作った空のフォルダで道具も無いので、
+  その画面が出ている間だけ `Down` → `Enter` を送る。画面は「確認が出ているか」
+  「入力欄が出たか」の有無だけを見る（内容は読まない）
+- **`--settings` は付けない**。Ark の hook（AUQ・ボード提案の Stop hook）を裏の会話に
+  効かせない。利用者自身の `~/.claude` の設定は効く
+- 会話はサーバーが持ち、変わるたびに `ask:state` で丸ごと配る。サーバーを再起動しても、
+  残っている tmux セッションの名前から session-id を取り、同じ JSONL を読み直す。
+  「新しく聞く」はセッションを終わらせる（次に聞いたときに作り直す）
+- ウィンドウはダイアログにしない（後ろの画面もノーマルモードのキーも止めない）
 
 ### Git タブ
 
@@ -436,6 +467,7 @@ task.md 規約・復唱・失敗の自動収集・セッション lifecycle を�
 | Git タブ               | worktree のコミットグラフと差分を見るペイン（PC のみ。右の作業エリアの「Git」のタブ。読み取りだけ）。左にサイドバー（変更 / ブランチ / リモート / タグ / スタッシュ）、右上に色分けしたグラフと ref の札つきのコミット一覧、右下に選んだコミットの詳細（コミットの情報 / 変更されたファイル / unified の差分）。先頭の行で未コミットの変更（ステージ済み / 変更 / 未追跡）も見られる。見えている間は 3 秒ごとに追従し、Claude がコミットすると一覧が更新される |
 | キーボード操作         | PC で、前置キー `Ctrl+;` からノーマルモードに入り、1 文字のキーで動かす（`i` で入力へ戻る）。`h` / `l` でサイドバー・左のパネル・作業エリアを移り、`j` / `k` でセッション・ツリー・コミット・会話・図を動く。`J` / `K` でセッションの前後、`n` で次の「あなたの番」、`t` で端末と会話、`p` で作業エリア、`gd` / `gf` / `gs` でタブ、`?` で一覧。端末と図の中からも前置キーが効く |
 | コマンドパレット       | PC で、ノーマルモードの `:` から開く。セッション・図・ファイル（worktree 内を名前で）・コマンドを1つの入力欄で絞り込み、`Enter` で開く / 実行する。取り消せない操作は載せない |
+| Claude に聞く          | PC で、コマンドパレットに打った文を `Tab` で聞くと、表のセッションとは別の裏の Claude（道具なし。ファイルは読まない）が答え、浮かぶウィンドウに出る。ウィンドウの中で続けて聞ける。表のセッションの会話には入らない |
 | tmuxバッファコピー     | tmuxのペーストバッファをクリップボードにコピー                              |
 | ポートスキャン         | リッスン中のポートを一覧表示（ttydポートは除外）                            |
 | リモートアクセス       | Cloudflare Tunnel（Quick / Named）+ QRコード + トークン認証                 |
@@ -682,6 +714,9 @@ claude-code-ark/
 | `file-upload:upload` | `{ sessionId, base64Data, mimeType, originalFilename?, requestId }` | ファイルアップロード |
 | `file:open`       | `{ sessionId, filePath }, callback`     | ファイルを開く（コールバック。`{ ok: true, content, mimeType, size, mtimeMs, editable }` / `{ ok: false, error }`）|
 | `file:list`       | `{ sessionId, dirPath }, callback`      | ディレクトリを 1 階層一覧する（コールバック。`{ ok: true, entries, truncated }` / `{ ok: false, error }`）|
+| `ask:get`         | `callback`                              | 裏の Claude との会話のいまの状態（コールバック。`{ messages, busy, error }`）|
+| `ask:send`        | `{ text }, callback`                    | 裏の Claude に聞く（8,000 文字まで。答えは `ask:state` で届く。コールバック。`{ ok: true }` / `{ ok: false, error }`）|
+| `ask:reset`       | `callback`                              | 裏の Claude との会話をまっさらにする（コールバック）|
 | `file:index`      | `{ sessionId }, callback`               | worktree 内の全ファイルのパス（gitignore 対象は除く。5 万件まで。コマンドパレットが名前で探すための一覧。コールバック。`{ ok: true, paths, truncated }` / `{ ok: false, error }`）|
 | `file:write`      | `{ sessionId, filePath, content, expectedMtimeMs, force? }, callback` | worktree 内の既存ファイルを書き換える（コールバック。`{ ok: true, mtimeMs }` / `{ ok: false, code: "conflict" \| "error", error, mtimeMs? }`）|
 | `file:subscribe`  | `{ sessionId, filePath }`               | ファイルの更新監視を開始（見えているタブ 1 枚だけ。1 socket あたり 50 件まで）|
@@ -736,6 +771,7 @@ claude-code-ark/
 | `ports:list`             | `{ ports }`                    | ポート一覧                       |
 | `file-upload:uploaded`   | `{ requestId, path, filename, originalFilename? }` | ファイルアップロード完了 |
 | `file-upload:error`      | `{ requestId, message, code? }`           | ファイルアップロードエラー       |
+| `ask:state`              | `{ messages, busy, error }`    | 裏の Claude との会話が変わった（全クライアントへ配る）|
 | `file:updated`           | `{ sessionId, filePath }`      | 監視中のファイルが更新された。クライアントは開き直して突き合わせる |
 | `system:capabilities`    | `{ multiProfileSupported }`               | 機能フラグ（接続時に1回emit） |
 | `profile:list`           | `Profile[]`                        | プロファイル一覧 |

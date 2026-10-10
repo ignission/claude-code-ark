@@ -467,8 +467,11 @@ export default function Dashboard() {
   );
   const closeAskWindow = useCallback(() => {
     setAskWindow(current => ({ ...current, open: false }));
-    // フォーカスの行き場が無くなるので、端末 / 会話の入力欄へ戻す
-    focusInput(document);
+    // 入力モードではフォーカスの行き場が無くなるので、端末 / 会話の入力欄へ戻す
+    // (ノーマルモードのときは、そのままノーマルモードにいる)
+    if (document.documentElement.dataset.keynavMode !== "normal") {
+      focusInput(document);
+    }
   }, []);
   const askSend = ask.send;
   const handleAsk = useCallback(
