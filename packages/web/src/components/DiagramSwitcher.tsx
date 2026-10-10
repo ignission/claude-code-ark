@@ -63,6 +63,8 @@ interface DiagramSwitcherProps {
   ) => boolean | Promise<boolean>;
   isConnected?: boolean;
   isDeleting?: boolean;
+  /** 削除の結果の知らせ (失敗の理由や、残ったファイルの警告)。一覧の中にも出す */
+  notice?: string | null;
 }
 
 const KIND_ICON: Readonly<Record<DiagramKind, LucideIcon>> = {
@@ -114,15 +116,18 @@ export function DiagramSwitcher({
   onDelete,
   isConnected = true,
   isDeleting = false,
+  notice = null,
 }: DiagramSwitcherProps) {
   // 図をまだ選んでいないときは、一覧を開いた状態から始める
   const [open, setOpen] = useState(currentRelPath === undefined);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<DiagramSort>(loadDiagramSort);
   const [active, setActive] = useState<string | undefined>(currentRelPath);
-  const [deleteTarget, setDeleteTarget] = useState<DiagramListItem | null>(
-    null
-  );
+  // 消す図はパスで持つ。確認を開いている間に一覧が読み直されたら (Git の追跡が
+  // 変わって断られた、など)、新しい行の内容で確認と次の試行をやり直せるようにする
+  const [deleteTargetPath, setDeleteTargetPath] = useState<string | null>(null);
+  const deleteTarget =
+    diagrams.find(diagram => diagram.relPath === deleteTargetPath) ?? null;
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -278,6 +283,15 @@ export function DiagramSwitcher({
           data-diagram-browser=""
           className="absolute inset-x-0 top-10 bottom-0 z-20 flex flex-col bg-card"
         >
+          {/* 一覧は図の上を覆うので、DiagramPane がバーの下に出す知らせが隠れる */}
+          {notice && (
+            <div
+              role="status"
+              className="mx-2 mb-1.5 shrink-0 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            >
+              {notice}
+            </div>
+          )}
           <div className="shrink-0 px-2 pb-1.5">
             <input
               ref={searchRef}
@@ -333,6 +347,8 @@ export function DiagramSwitcher({
             }
             className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 outline-none"
             onKeyDown={event => {
+              // 行の中のボタン (削除) にフォーカスがあるときは、そのボタンに任せる
+              if (event.target !== event.currentTarget) return;
               if (event.key === "Home") {
                 moveTo(0);
                 event.preventDefault();
@@ -404,7 +420,7 @@ export function DiagramSwitcher({
                     )}
                     onClick={event => {
                       event.stopPropagation();
-                      setDeleteTarget(item);
+                      setDeleteTargetPath(item.relPath);
                     }}
                   >
                     <Trash2 className="size-3.5" aria-hidden="true" />
@@ -418,7 +434,7 @@ export function DiagramSwitcher({
       <AlertDialog
         open={deleteTarget !== null}
         onOpenChange={next => {
-          if (!next && !deletePending) setDeleteTarget(null);
+          if (!next && !deletePending) setDeleteTargetPath(null);
         }}
       >
         {deleteTarget && (
@@ -452,7 +468,7 @@ export function DiagramSwitcher({
                       deleteTarget,
                       onDelete
                     );
-                    if (succeeded) setDeleteTarget(null);
+                    if (succeeded) setDeleteTargetPath(null);
                   } finally {
                     setConfirmingDelete(false);
                   }

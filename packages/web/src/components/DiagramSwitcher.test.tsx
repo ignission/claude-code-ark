@@ -307,6 +307,67 @@ describe("DiagramSwitcher", () => {
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   });
 
+  it("確認を開いている間に一覧が読み直されたら、新しい内容で確認し直す", async () => {
+    const onDelete = vi.fn(async () => false);
+    const props = render({ onDelete });
+    openList();
+    act(() =>
+      document
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="「コマンドパレット」を削除"]'
+        )
+        ?.click()
+    );
+    const confirm = () =>
+      document.querySelector<HTMLButtonElement>(
+        '[data-testid="confirm-delete"]'
+      );
+    await act(async () => confirm()?.click());
+    expect(onDelete).toHaveBeenLastCalledWith(diagrams[2].relPath, false);
+    // 断られて一覧が読み直され、その図が Git 管理になっていた
+    render({
+      ...props,
+      diagrams: diagrams.map(item =>
+        item === diagrams[2] ? { ...item, tracked: true } : item
+      ),
+    });
+    expect(
+      document.querySelector('[role="alertdialog"]')?.textContent
+    ).toContain("Git管理");
+    await act(async () => confirm()?.click());
+    expect(onDelete).toHaveBeenLastCalledWith(diagrams[2].relPath, true);
+    // 一覧から消えたら、確認も閉じる
+    render({ ...props, diagrams: diagrams.slice(0, 2) });
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  it("削除ボタンにフォーカスがあるときの Enter は、行を開かずボタンに任せる", () => {
+    const props = render();
+    openList();
+    const del = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="「コマンドパレット」を削除"]'
+    );
+    const event = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      del?.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(false);
+    expect(props.onSelect).not.toHaveBeenCalled();
+    expect(browser()).not.toBeNull();
+  });
+
+  it("削除の結果の知らせを、一覧の中にも出す (一覧がバーの下を覆うため)", () => {
+    render({ notice: "コメントのファイルを消せませんでした" });
+    openList();
+    expect(browser()?.querySelector('[role="status"]')?.textContent).toBe(
+      "コメントのファイルを消せませんでした"
+    );
+  });
+
   it("未接続・更新中・削除中は、削除ボタンを押せない", () => {
     for (const props of [
       { isConnected: false },

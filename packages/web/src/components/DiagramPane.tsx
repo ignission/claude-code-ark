@@ -1121,6 +1121,7 @@ export function DiagramPane({
         onDelete={handleDelete}
         isConnected={isConnected}
         isDeleting={isDeleting}
+        notice={deleteMessage}
       />
       {deleteMessage && (
         <div
