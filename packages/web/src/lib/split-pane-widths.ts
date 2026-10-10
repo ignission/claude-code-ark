@@ -1,40 +1,26 @@
 /**
  * split-pane-widths - SplitViewPane の 2 ペイン (左 | 作業エリア) の幅の制約
  *
- * 左ペインは残りを埋めるので、作業エリアの希望幅をコンテナ幅に収める。
- * 収まらないときは最小幅まで縮め、それでも足りなければ最小幅のまま返す
- * (そのぶん左ペインが LEFT_MIN_WIDTH より縮む)。
+ * 幅を持つのは左ペイン (端末 / 会話) で、作業エリアは残りを埋める。作業エリアに幅を
+ * 持たせると、ピークを開く・タブを替えるたびに会話の幅が変わり、文章の折り返しが動く。
+ *
+ * 左ペインの希望幅をコンテナ幅に収める。作業エリアの最小幅を残せないときは左を縮め、
+ * 左の最小幅も割る (作業エリアの最小幅を優先する)。
  */
 
 export const LEFT_MIN_WIDTH = 360;
 export const WORK_AREA_MIN_WIDTH = 360;
 /** リサイザの幅 (w-2 = 8px。パネルの間のすき間を兼ねる) */
 export const RESIZER_WIDTH = 8;
-/** ピークを出している間、作業エリアをここまで広げる (図とコードを並べて読める幅) */
-export const PEEK_WORK_AREA_WIDTH = 900;
-/** 「Git」のタブを見ている間、作業エリアをここまで広げる (グラフと件名が並ぶ幅) */
-export const GIT_WORK_AREA_WIDTH = 760;
-
-/** 希望幅を、左ペインの最小幅を残せる範囲に収める。作業エリアの最小幅は割らない */
-export function fitWorkAreaWidth(total: number, desired: number): number {
-  const max = total - LEFT_MIN_WIDTH - RESIZER_WIDTH;
-  return Math.max(WORK_AREA_MIN_WIDTH, Math.min(desired, max));
-}
+/** 保存した幅が無いときの左ペインの幅 (会話の 1 行が読みやすく、端末で 60 桁強が入る幅) */
+export const LEFT_DEFAULT_WIDTH = 520;
 
 /**
- * ピークを出している間の作業エリアの下限。コンテナ幅が分からない (0 以下) ときは
- * PEEK_WORK_AREA_WIDTH をそのまま返す
+ * 左ペインの希望幅を、作業エリアの最小幅を残せる範囲に収める。
+ * コンテナ幅が分からない (0 以下) ときは希望幅をそのまま返す
  */
-export function peekWorkAreaFloor(total: number): number {
-  if (total <= 0) return PEEK_WORK_AREA_WIDTH;
-  return fitWorkAreaWidth(total, PEEK_WORK_AREA_WIDTH);
-}
-
-/**
- * 「Git」のタブを見ている間の作業エリアの下限。コンテナ幅が分からない (0 以下) ときは
- * GIT_WORK_AREA_WIDTH をそのまま返す
- */
-export function gitWorkAreaFloor(total: number): number {
-  if (total <= 0) return GIT_WORK_AREA_WIDTH;
-  return fitWorkAreaWidth(total, GIT_WORK_AREA_WIDTH);
+export function fitLeftWidth(total: number, desired: number): number {
+  if (total <= 0) return desired;
+  const max = Math.max(0, total - WORK_AREA_MIN_WIDTH - RESIZER_WIDTH);
+  return Math.max(Math.min(LEFT_MIN_WIDTH, max), Math.min(desired, max));
 }
