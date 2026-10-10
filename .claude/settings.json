@@ -1,6 +1,8 @@
 {
   "permissions": {
     "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
       "Read(./pnpm-lock.yaml)",
       "Read(./data/sessions.db)",
       "Read(./dist/**)",
