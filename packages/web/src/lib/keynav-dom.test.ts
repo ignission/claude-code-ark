@@ -6,6 +6,8 @@ import {
   availableRegions,
   executeKeyNavCommand,
   focusInput,
+  KEYNAV_DIAGRAM_SCROLL_EVENT,
+  type KeyNavDiagramScroll,
   regionFocusTarget,
 } from "./keynav-dom";
 
@@ -216,6 +218,49 @@ describe("場所の中の移動", () => {
     Object.defineProperty(scroller, "scrollHeight", { value: 900 });
     run({ type: "edge", to: "end" }, "left");
     expect(scroller.scrollTop).toBe(900);
+  });
+
+  it("図は中に触れないので、見えている図の iframe へ送る量の合図を投げる", () => {
+    mountApp({ tab: "図" });
+    const work = document.querySelector("#active [data-keynav-region=work]");
+    work?.insertAdjacentHTML(
+      "beforeend",
+      '<div id="pane"><iframe data-keynav="diagram"></iframe></div>'
+    );
+    const got: KeyNavDiagramScroll[] = [];
+    document
+      .querySelector("#pane")
+      ?.addEventListener(KEYNAV_DIAGRAM_SCROLL_EVENT, event =>
+        got.push((event as CustomEvent<KeyNavDiagramScroll>).detail)
+      );
+    run({ type: "move", dir: 1 }, "work");
+    run({ type: "page", dir: -1 }, "work");
+    run({ type: "edge", to: "end" }, "work");
+    run({ type: "edge", to: "start" }, "work");
+    expect(got).toEqual([
+      { unit: "line", dir: 1 },
+      { unit: "page", dir: -1 },
+      { unit: "edge", dir: 1 },
+      { unit: "edge", dir: -1 },
+    ]);
+    // ツリーやコミット一覧には何も送らない
+    expect(keys).toEqual([]);
+  });
+
+  it("図のタブを見ていなければ、図には合図を投げない", () => {
+    mountApp({ tab: "Git" });
+    const work = document.querySelector("#active [data-keynav-region=work]");
+    work?.insertAdjacentHTML(
+      "beforeend",
+      '<div class="hidden"><iframe data-keynav="diagram"></iframe></div>'
+    );
+    const got: Event[] = [];
+    document.addEventListener(KEYNAV_DIAGRAM_SCROLL_EVENT, event =>
+      got.push(event)
+    );
+    run({ type: "move", dir: 1 }, "work");
+    expect(got).toEqual([]);
+    expect(keys).toEqual(["commits:ArrowDown"]);
   });
 });
 

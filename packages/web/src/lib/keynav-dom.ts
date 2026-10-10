@@ -24,6 +24,14 @@ const LINE_SCROLL = 80;
 /** 半ページ送りで、一覧の行をいくつ動かすか */
 const PAGE_ROWS = 10;
 
+/** 見えている図の iframe へ投げる「図を送れ」の合図 (DiagramPane が受けて中へ渡す) */
+export const KEYNAV_DIAGRAM_SCROLL_EVENT = "ark:keynav-diagram-scroll";
+
+export interface KeyNavDiagramScroll {
+  unit: "line" | "page" | "edge";
+  dir: -1 | 1;
+}
+
 export function isVisible(element: Element): boolean {
   return element.closest(".hidden, [hidden]") === null;
 }
@@ -113,6 +121,24 @@ function chatScroller(root: ParentNode): HTMLElement | null {
   return visibleOne(root, '[data-keynav="chat-scroll"]');
 }
 
+/**
+ * 図を送る。図の iframe は出どころが別で中に触れないので、合図だけを投げる。
+ * 図のタブを見ていなければ何もせず false を返す。
+ */
+function scrollDiagram(root: ParentNode, scroll: KeyNavDiagramScroll): boolean {
+  const work = regionElement(root, "work");
+  if (!work || activeWorkTab(root) !== "board") return false;
+  const frame = visibleOne(work, 'iframe[data-keynav="diagram"]');
+  if (!frame) return false;
+  frame.dispatchEvent(
+    new CustomEvent(KEYNAV_DIAGRAM_SCROLL_EVENT, {
+      detail: scroll,
+      bubbles: true,
+    })
+  );
+  return true;
+}
+
 function moveSidebar(root: ParentNode, by: number, doc: Document): void {
   const rows = sessionRows(root);
   if (rows.length === 0) return;
@@ -140,6 +166,7 @@ function moveIn(
     scroller.scrollBy({ top: dir * amount });
     return;
   }
+  if (scrollDiagram(root, { unit: count === 1 ? "line" : "page", dir })) return;
   const list = workList(root);
   if (!list) return;
   if (list.getAttribute("role") === "listbox") {
@@ -196,6 +223,9 @@ function edgeIn(
     const scroller = chatScroller(root);
     if (scroller)
       scroller.scrollTop = to === "start" ? 0 : scroller.scrollHeight;
+    return;
+  }
+  if (scrollDiagram(root, { unit: "edge", dir: to === "start" ? -1 : 1 })) {
     return;
   }
   const list = workList(root);

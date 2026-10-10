@@ -97,19 +97,21 @@ export function KeyNavLayer() {
     [cancelRefocus]
   );
 
-  const enterNormal = useCallback(() => {
-    // 作業エリアを閉じたあとなど、覚えている場所がもう無ければ左のパネルに戻す
-    const regions = availableRegions(document);
-    const next = regions.includes(stateRef.current.region)
-      ? stateRef.current.region
-      : "left";
-    stateRef.current = { ...stateRef.current, mode: "normal", region: next };
-    setMode("normal");
-    setRegion(next);
-    setPending("");
-    sinkRef.current?.focus({ preventScroll: true });
-    focusRegion(next);
-  }, [focusRegion]);
+  const enterNormal = useCallback(
+    (from?: KeyNavRegion) => {
+      // 作業エリアを閉じたあとなど、覚えている場所がもう無ければ左のパネルに戻す
+      const regions = availableRegions(document);
+      const wanted = from ?? stateRef.current.region;
+      const next = regions.includes(wanted) ? wanted : "left";
+      stateRef.current = { ...stateRef.current, mode: "normal", region: next };
+      setMode("normal");
+      setRegion(next);
+      setPending("");
+      sinkRef.current?.focus({ preventScroll: true });
+      focusRegion(next);
+    },
+    [focusRegion]
+  );
 
   const exitToInsert = useCallback(() => {
     stateRef.current = { ...stateRef.current, mode: "insert" };
@@ -176,10 +178,13 @@ export function KeyNavLayer() {
       setPending(resolved.pending);
       if (resolved.command) run(resolved.command);
     };
-    const onLeader = () => {
+    // 図の中から来た合図は、いた場所 (作業エリア) を載せてくる
+    const onLeader = (event: Event) => {
       if (overlayOpen()) return;
+      const from = (event as CustomEvent<{ region?: KeyNavRegion } | null>)
+        .detail?.region;
       if (stateRef.current.mode === "normal") exitToInsert();
-      else enterNormal();
+      else enterNormal(from);
     };
     // 入力欄をクリックしたら入力モードに戻す
     const onFocusIn = (event: FocusEvent) => {

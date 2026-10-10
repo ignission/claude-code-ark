@@ -16,6 +16,11 @@ import type {
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
+import { KEYNAV_LEADER_EVENT } from "@/hooks/useTerminalLeaderKey";
+import {
+  KEYNAV_DIAGRAM_SCROLL_EVENT,
+  type KeyNavDiagramScroll,
+} from "@/lib/keynav-dom";
 import {
   type DiagramCommentPortParse,
   type DiagramCommentPortRequest,
@@ -207,6 +212,7 @@ export function DiagramViewport({
       </div>
       <iframe
         title={relPath}
+        data-keynav="diagram"
         srcDoc={html}
         sandbox="allow-scripts"
         className="block h-full w-full border-0 bg-white"
@@ -256,6 +262,15 @@ function isDiagramPinchMessage(data: unknown): data is DiagramPinchMessage {
     (data as { type?: unknown }).type === "ark:diagram-pinch" &&
     typeof (data as { deltaY?: unknown }).deltaY === "number" &&
     Number.isFinite((data as { deltaY: number }).deltaY)
+  );
+}
+
+/** 図の中で前置キーが押された (diagram-keynav-layer が送る) */
+export function isDiagramKeynavLeaderMessage(data: unknown): boolean {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as { type?: unknown }).type === "ark:diagram-keynav-leader"
   );
 }
 
@@ -565,6 +580,7 @@ export function DiagramPane({
   const portRef = useRef<MessagePort | null>(null);
   const portGrantedForRef = useRef<string | null>(null);
   const portGenerationRef = useRef(0);
+  const rootRef = useRef<HTMLDivElement>(null);
   const isConnectedRef = useRef(isConnected);
   isConnectedRef.current = isConnected;
 
@@ -689,6 +705,23 @@ export function DiagramPane({
       socket.emit("diagram:unsubscribe", { worktreePath, relPath });
     };
   }, [socket, isConnected, worktreePath, relPath, load]);
+
+  // ノーマルモードの j / k など (keynav-dom が、見えている図の iframe へ投げる)
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const onScroll = (event: Event) => {
+      const detail = (event as CustomEvent<KeyNavDiagramScroll>).detail;
+      portRef.current?.postMessage({
+        type: "ark:diagram-keynav-scroll",
+        unit: detail.unit,
+        dir: detail.dir,
+      });
+    };
+    root.addEventListener(KEYNAV_DIAGRAM_SCROLL_EVENT, onScroll);
+    return () =>
+      root.removeEventListener(KEYNAV_DIAGRAM_SCROLL_EVENT, onScroll);
+  }, []);
 
   useEffect(() => {
     if (!portRef.current) return;
@@ -852,6 +885,13 @@ export function DiagramPane({
       const generation = ++portGenerationRef.current;
       channel.port1.onmessage = (event: MessageEvent) => {
         if (handleDiagramPinchMessage(event.data, setZoom)) return;
+        if (isDiagramKeynavLeaderMessage(event.data)) {
+          // 図の中にいたのだから、ノーマルモードは作業エリアから始める
+          window.dispatchEvent(
+            new CustomEvent(KEYNAV_LEADER_EVENT, { detail: { region: "work" } })
+          );
+          return;
+        }
         if (
           handleDiagramOpenLinkMessage(event.data, message => {
             // ボード iframe は opaque origin なので、親 (同一オリジン) が代わりに
@@ -943,7 +983,7 @@ export function DiagramPane({
   );
 
   return (
-    <div className="flex h-full flex-col">
+    <div ref={rootRef} className="flex h-full flex-col">
       <DiagramSwitcher
         diagrams={diagrams}
         currentRelPath={relPath}
