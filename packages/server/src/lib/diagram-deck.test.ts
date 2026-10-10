@@ -219,6 +219,27 @@ describe("injectDeckProjection", () => {
     expect(out).not.toMatch(/href="#/);
   });
 
+  it("積んで見せるときだけ、ページを点の地のキャンバスに置いたカードにする", () => {
+    const out = injectDeckProjection(html, model);
+
+    // 自由形ページのカードには、ページの題を札として付ける (1 枚ずつのときは出さない)
+    expect(out).toMatch(
+      /<div class="ark-deck-page" data-ark-deck-slot="p-why"><div class="ark-deck-tag"[^>]*>PAGE[^<]*<\/div><\/div>/
+    );
+    expect(out).toContain(".ark-deck-tag{display:none}");
+    // キャンバスとカードの見た目は stack のときにしか当てない
+    expect(out).toContain('body:has(.ark-deck[data-ark-deck-mode="stack"]){');
+    expect(out).not.toMatch(
+      /\.ark-deck-page\[data-ark-deck-slot\]\{[^}]*box-shadow/
+    );
+    // 幅の広い中身は切らずに、カードの中で横へ送れる
+    expect(out).toContain(
+      ".ark-deck-page[data-ark-deck-slot]{overflow-x:auto}"
+    );
+    // カードの面は作者が body に塗った色から取る
+    expect(out).toContain('setProperty("--ark-deck-surface",surface)');
+  });
+
   it("表示の切り替えは包む要素で行い、自由形 section の display に触らない", () => {
     const out = injectDeckProjection(html, model);
 
