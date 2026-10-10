@@ -3170,8 +3170,6 @@ export async function startServer(
     //   プロセス分離 / 認証情報分離が目的で、UI 状態の共有とは独立。
     // - 将来複数ユーザー運用に切り替える場合は、ここに加えて auth.ts のトークン
     //   モデル自体を再設計する必要がある (per-user token / session scope)。
-    //
-    // 設計書: docs/superpowers/specs/2026-05-03-message-shortcuts-design.md
     socket.on("shortcut:create", payload => {
       if (typeof payload !== "object" || payload === null) {
         socket.emit("shortcut:error", {
