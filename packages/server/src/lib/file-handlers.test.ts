@@ -153,6 +153,15 @@ describe("index", () => {
     expect(r.truncated).toBe(false);
   });
 
+  it("追跡中でも、作業ツリーから消したファイルは返さない", async () => {
+    fs.writeFileSync(path.join(dir, "gone.txt"), "");
+    execFileSync("git", ["add", "a.txt", "gone.txt"], { cwd: dir });
+    fs.unlinkSync(path.join(dir, "gone.txt"));
+    const cb = vi.fn();
+    await make().index({ sessionId: "s1" }, cb);
+    expect(cb.mock.calls[0][0].paths).toEqual(["a.txt"]);
+  });
+
   it("未知のセッションは ok:false、形の違う payload には応えない", async () => {
     const h = make();
     const cb = vi.fn();
