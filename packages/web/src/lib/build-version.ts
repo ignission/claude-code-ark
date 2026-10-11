@@ -73,8 +73,8 @@ export async function fetchServedBuildId(): Promise<string | null> {
 }
 
 /**
- * 書きかけの入力があるか。入力欄に文字があるか、ファイルの編集画面が開いていれば
- * あるとみなす (編集画面は未保存かどうかを外から見られないので、開いていれば守る)
+ * 書きかけの入力があるか。入力欄に文字があるか、ファイルの編集画面に
+ * 未保存の変更があれば、あるとみなす (編集画面は `data-ark-unsaved` で知らせる)
  */
 export function hasUnsavedInput(): boolean {
   const fields = document.querySelectorAll<
@@ -83,7 +83,7 @@ export function hasUnsavedInput(): boolean {
   for (const field of Array.from(fields)) {
     if (field.value.trim() !== "") return true;
   }
-  return document.querySelector(".cm-content") !== null;
+  return document.querySelector('[data-ark-unsaved="true"]') !== null;
 }
 
 export function readReloadTarget(): string | null {

@@ -576,7 +576,11 @@ function TextFileEditor({
           </div>
         )}
         {showEditor && (
-          <div className={cn("h-full", showPreview && "hidden")}>
+          <div
+            // 版の更新で読み込み直してよいかを build-version.ts がここから読む
+            data-ark-unsaved={dirty ? "true" : undefined}
+            className={cn("h-full", showPreview && "hidden")}
+          >
             <Suspense
               fallback={
                 <div className="flex h-full items-center justify-center text-muted-foreground text-xs">
