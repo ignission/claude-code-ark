@@ -1,67 +1,58 @@
 #!/bin/bash
 
 # PostToolUse (Write|Edit) フック
-# ファイル編集後に自動リント・フォーマットを実行し、残った違反をadditionalContextとしてClaudeに返す
-# 自動修正を先に行い、残った違反だけを報告する方針
-# リントエラーでスクリプト自体が終了しないよう set -eo pipefail は使わない
+# 編集したファイルを biome で整形し、残った違反を additionalContext として Claude に返す。
+# 違反があっても編集は止めない（常に exit 0）ので set -eo pipefail は使わない。
+#
+# stdout に出す JSON は 1 つだけにする。2 つ並べると Claude Code は JSON として
+# 読めず、どちらのメッセージも捨てる。
 
-# プロジェクトルート
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 
-# stdinからJSON読み取り
 STDIN_INPUT=$(cat)
-
-# tool_input.file_path または tool_input.path を抽出（どちらもない場合はスキップ）
 FILE_PATH=$(echo "$STDIN_INPUT" | jq -r '.tool_input.file_path // .tool_input.path // ""' 2>/dev/null) || exit 0
 
-# ファイルパスが空の場合はスキップ
-if [ -z "$FILE_PATH" ]; then
-  exit 0
-fi
+# 削除された、またはパスが取れなかった場合は何もしない
+[ -f "$FILE_PATH" ] || exit 0
 
-# ファイルが存在しない場合はスキップ（削除操作等）
-if [ ! -f "$FILE_PATH" ]; then
-  exit 0
-fi
-
-# 拡張子を取得
-EXT="${FILE_PATH##*.}"
-
-case "$EXT" in
-  ts|tsx|js|jsx)
-    # --- TypeScript/JavaScriptファイル ---
-
-    # biome formatで自動フォーマット（出力は捨てる）
-    (cd "$PROJECT_ROOT" && npx biome format --write "$FILE_PATH" >/dev/null 2>&1) || true
-
-    # フォーマットが変更されたか確認（git diffで検出）
-    if [ -n "$(git diff --name-only "$FILE_PATH" 2>/dev/null)" ]; then
-      jq -n '{
-        "hookSpecificOutput": {
-          "hookEventName": "PostToolUse",
-          "additionalContext": "biomeによりフォーマットが自動修正されました。変更内容を確認してください。"
-        }
-      }'
-    fi
-
-    # biome checkで残りの違反を取得
-    LINT_OUTPUT=$(cd "$PROJECT_ROOT" && npx biome check "$FILE_PATH" 2>&1 | head -20) || true
-
-    # biomeの出力にエラーや警告が含まれている場合のみ報告
-    if echo "$LINT_OUTPUT" | grep -qE '(diagnostics|FIXABLE|error|×)'; then
-      jq -n --arg violations "$LINT_OUTPUT" '{
-        "hookSpecificOutput": {
-          "hookEventName": "PostToolUse",
-          "additionalContext": ("リント違反が検出されました。修正してください:\n" + $violations)
-        }
-      }'
-    fi
-    ;;
-
-  *)
-    # その他のファイルは何もしない
-    ;;
+case "${FILE_PATH##*.}" in
+  ts | tsx | js | jsx) ;;
+  *) exit 0 ;;
 esac
 
-# 常にexit 0（フックがClaudeの操作をブロックしない）
+# プロジェクトの外（スクラッチなど）は biome の設定が当たらないので対象にしない
+case "$FILE_PATH" in
+  "$PROJECT_ROOT"/*) ;;
+  *) exit 0 ;;
+esac
+
+cd "$PROJECT_ROOT" || exit 0
+
+# 整形で中身が変わったかは、ファイルそのものの前後で比べる。
+# git diff で比べると、編集しただけで「整形された」と誤報する。
+BEFORE=$(cksum <"$FILE_PATH")
+npx biome format --write --no-errors-on-unmatched "$FILE_PATH" >/dev/null 2>&1
+AFTER=$(cksum <"$FILE_PATH")
+
+MESSAGE=""
+if [ "$BEFORE" != "$AFTER" ]; then
+  MESSAGE="biome がこのファイルを整形しました。続けて編集するなら読み直してください。"
+fi
+
+# 違反の有無は終了コードで決める（CI の biome check と同じ基準）。
+# 出力の文字列で判定すると、コード中の error という語に反応する。
+if ! LINT_OUTPUT=$(npx biome check --no-errors-on-unmatched "$FILE_PATH" 2>&1); then
+  [ -n "$MESSAGE" ] && MESSAGE="${MESSAGE}"$'\n\n'
+  MESSAGE="${MESSAGE}リント違反が残っています。修正してください:"$'\n'"$(echo "$LINT_OUTPUT" | head -40)"
+fi
+
+if [ -n "$MESSAGE" ]; then
+  jq -n --arg ctx "$MESSAGE" '{
+    "hookSpecificOutput": {
+      "hookEventName": "PostToolUse",
+      "additionalContext": $ctx
+    }
+  }'
+fi
+
 exit 0
