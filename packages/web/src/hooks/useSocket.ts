@@ -50,6 +50,10 @@ import type {
   SessionStatusSignal,
 } from "../lib/session-notifications";
 import {
+  decideSocketWakeAction,
+  SOCKET_PROBE_TIMEOUT_MS,
+} from "../lib/socket-wake";
+import {
   addWorktree,
   clearRepo,
   flattenWorktrees,
@@ -545,6 +549,38 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     });
 
     socketRef.current = socket;
+
+    // 前面に戻ったら、切断の検知やバックオフを待たずに接続を確かめる
+    // (判定の理由は `@/lib/socket-wake`)
+    let lastConnectAttemptAt = Date.now();
+    let probing = false;
+    const forceReconnect = () => {
+      lastConnectAttemptAt = Date.now();
+      socket.disconnect().connect();
+    };
+    const handleWake = () => {
+      const action = decideSocketWakeAction({
+        visible: document.visibilityState === "visible",
+        online: navigator.onLine,
+        connected: socket.connected,
+        lastConnectAttemptAt,
+        now: Date.now(),
+      });
+      if (action === "reconnect") {
+        forceReconnect();
+        return;
+      }
+      if (action !== "probe" || probing) return;
+      probing = true;
+      socket.timeout(SOCKET_PROBE_TIMEOUT_MS).emit("health:ping", err => {
+        probing = false;
+        // 待っている間に自力で切断を検知していたら、Socket.IO の再接続に任せる
+        if (err && socket.connected) forceReconnect();
+      });
+    };
+    document.addEventListener("visibilitychange", handleWake);
+    window.addEventListener("pageshow", handleWake);
+    window.addEventListener("online", handleWake);
 
     // Connection events
     socket.on("connect", () => {
@@ -1149,6 +1185,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       socket.off("usage:progress");
       socket.off("usage:complete");
       socket.off("usage:error");
+      document.removeEventListener("visibilitychange", handleWake);
+      window.removeEventListener("pageshow", handleWake);
+      window.removeEventListener("online", handleWake);
       socket.disconnect();
     };
   }, [enabled]);

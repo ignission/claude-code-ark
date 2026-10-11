@@ -226,7 +226,8 @@ export class AuthManager {
       path.endsWith(".ico") ||
       path.endsWith(".svg") ||
       path.endsWith(".png") ||
-      path.endsWith(".jpg")
+      path.endsWith(".jpg") ||
+      path.endsWith(".webmanifest")
     );
   }
 

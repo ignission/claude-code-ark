@@ -139,6 +139,14 @@ describe("AuthManager.httpMiddleware", () => {
       runHttp(auth, { host: TUNNEL_HOST }, { path: "/assets/index.js" }).passed
     ).toBe(true);
   });
+
+  it("manifestはトークンなしで通す (ブラウザがクエリなしで取りに来る)", () => {
+    const auth = new AuthManager(true);
+    expect(
+      runHttp(auth, { host: TUNNEL_HOST }, { path: "/manifest.webmanifest" })
+        .passed
+    ).toBe(true);
+  });
 });
 
 describe("AuthManager.socketMiddleware", () => {
