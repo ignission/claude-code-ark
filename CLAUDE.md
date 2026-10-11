@@ -6,24 +6,16 @@ Arkは、ローカルで動く複数のClaude Codeセッションを管理する
 
 ## このファイルと `.claude/rules/`
 
-ここに置くのは、どの作業でも要る原則と規約だけ。機能ごとの設計の決まりは `.claude/rules/` にあり、`paths:` に書いたコードを読むと読み込まれる。**機能の決まりを足すときは、ここではなく該当するrulesへ書く** (無ければ `paths:` 付きで作る)。
+ここに置くのは、どの作業でも要る原則と規約だけ。機能ごとの設計の決まりは、該当するコードの冒頭コメントか `.claude/rules/` にある。rulesは `paths:` に書いたコードを読むと読み込まれ、コードを読んでも分からないもの (持たない理由、設計方針、横断の前提) を置く。**同じ決まりをコードとrulesの2か所に持たない** (片方だけ直されて食い違う)。
 
 | ファイル | 中身 |
 |---|---|
-| `session-views.md` | 端末と会話の切り替え、PCのパネル構成、ttydの切断復帰、メッセージ送信 |
-| `ask-user-question.md` | AskUserQuestionの検出、カード、回答のキー送出 |
-| `diagram-board.md` | セッションボード、コメントの操作ID、docの書き手の印、図の一覧 |
-| `board-suggest.md` | ボード提案 (Jev判定とStop hook) |
-| `file-pane.md` | ファイルペインの書き込み、監視、タブ、ピーク |
-| `git-tab.md` | Gitタブの読み取り、追従、グラフ |
-| `keynav.md` | ノーマルモードとコマンドパレット |
-| `ask.md` | Claudeに聞く (裏のClaude) |
-| `tmux-read-result.md` | tmux読み取りの結果型 |
-| `remote-access.md` | Cloudflare Tunnel、認証、単一ユーザーの前提 |
-| `remote-screen.md` | リモート画面 (noVNC + `ssh -W`) |
-| `voice-mode.md` | 音声モード |
+| `git-tab.md` | Gitタブの範囲 (いまは見るだけ) |
+| `remote-access.md` | 単一ユーザーの前提 (セッション単位の権限は持たない) |
 | `context-engineering.md` | コンテキスト機構を足す前に通る条件 (常に読み込まれる) |
 | `backend-*.md` / `frontend-codegen.md` | サーバーとフロントの実装パターン |
+
+次の機能の決まりは、該当コードのコメント (多くは冒頭) にある: 端末と会話の画面 (`SplitViewPane.tsx` / `split-view-left-mode.ts` / `ttyd-reconnect.ts`)、AskUserQuestion (`auq-hook-bridge.ts` / `ask-user-question-state.ts`)、セッションボード (`diagram-deck.ts` / `diagram-doc-authorship.ts` / `diagram-comment-operation-log.ts` / `DiagramSwitcher.tsx`)、ボード提案 (`board-suggest-stop-hook.ts` / `jev-client.ts` / `board-suggest-config.ts`)、ファイルペイン (`file-manager.ts` の `writeFile` / `FileEditor.tsx` / `file-editor-state.ts` / `useFileTabs.ts`)、キーボード操作とコマンドパレット (`keynav.ts` / `keynav-dom.ts` / `CommandPalette.tsx`)、Claudeに聞く (`ask-manager.ts` / `AskWindow.tsx`)、tmux読み取りの結果型 (`tmux-read-result.ts`)、リモート画面 (`screen-bridge.ts` / `ScreenPane.tsx`)、音声モード (`voice-turn-signals.ts` / `voice-mode-machine.ts` / `browser-speech.ts`)。
 
 ## アーキテクチャ
 

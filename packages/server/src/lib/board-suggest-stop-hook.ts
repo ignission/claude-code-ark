@@ -12,9 +12,12 @@
  *   C-u で消しうる (bridgeStatus は入力中を IDLE と報告する) ため
  * - Ark 自身は図を描けない。返答の文章をボードへ機械変換しても、チャットと同じ
  *   文章が別のペインに出るだけで読み手には何も足さない。描けるのは Claude だけ
+ *   (以前は返答の markdown を doc 型ボードへ機械変換していたが、この理由で撤去した)
  * - Claude への入力に足すのは「外部の分類器がこの返答を図にすべきと判定した」
  *   という、Claude 自身が持っていない情報だけ。SessionStart hook の作図規約を
- *   読み上げ直すものではない (`.claude/rules/context-engineering.md` の §4)
+ *   読み上げ直すものではない (`.claude/rules/context-engineering.md` の §4)。
+ *   実測では規約だけだと、1,500 文字を超える返答で Claude が自分で board_open
+ *   したのは直近 14 日の 192 件中 17 件だった
  *
  * 止める条件 (block しない):
  *   - `stop_hook_active` (block で続けたターンの終わり。ここで止めないと無限に続く)

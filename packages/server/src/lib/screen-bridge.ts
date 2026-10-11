@@ -38,6 +38,19 @@ const STDERR_CAP = 4096;
 const CLOSE_REASON_MAX_BYTES = 123;
 const WS_OPEN = 1;
 
+/**
+ * `ssh -o BatchMode=yes -W` の引数。Ark サーバーを動かしているユーザーの権限で起動する。
+ * BatchMode=yes はプロンプトを一切出せないので、次を満たしていないと接続できない。
+ *
+ * - 鍵は実行ユーザーのもので、パスフレーズ無し (または ssh-agent に登録済み)。
+ *   パスフレーズを聞けずに落ちる
+ * - 接続先が known_hosts に登録済み。初回の接続は "Host key verification failed" で
+ *   失敗するので、先に一度、実行ユーザーで `ssh -p <sshPort> <user>@<host>` を手で
+ *   通しておく (22 番以外のポートのホスト鍵は `[host]:port` として別に登録される)
+ * - pm2 で動かすなら、ssh が pm2 の PATH にある。無いと "spawn ssh ENOENT" になる
+ *
+ * どの失敗も「画面が切断され、理由の 1 行が出る」形でしか見えない。
+ */
 export function buildSshArgs(target: ScreenSshTarget): string[] {
   return [
     "-o",

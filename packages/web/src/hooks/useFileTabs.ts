@@ -12,7 +12,10 @@ import {
 
 /**
  * セッションごとのファイルタブ (PC の作業エリアの「ファイル」) の状態。
- * 端末ペインのタブ列 (useViewerTabs) とは別に持つ。タブの中身は持たない。
+ * 端末ペインのタブ列 (useViewerTabs の sessionTabs) とは別に持つ。sessionTabs は
+ * 1 本の配列を index 1 つで指すので、隠れたタブを足すたびに「閉じたあとの index の
+ * 補正」と「隠れタブに着地したときの空白」の特例が増える。ファイルタブは id で指す
+ * 別のリストにして、その補正を要らなくした。タブの中身は持たない。
  * worktree 単位で localStorage に永続化する。
  */
 export function useFileTabs(sessions: Map<string, { worktreePath: string }>) {

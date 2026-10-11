@@ -15,7 +15,8 @@
  * - 新しいフォルダでは claude が「このフォルダを信頼するか」を聞く。答える人がいないので、
  *   その画面が出ている間だけ「はい」を選ぶ (Ark が作った空のフォルダで、道具も無い)。
  *   画面は「その確認が出ているか」「入力欄が出たか」の有無だけを見て、内容は読まない
- * - `--settings` (Ark の hook) は付けない。ボード提案の Stop hook を裏の会話に効かせない
+ * - `--settings` (Ark の hook) は付けない。AUQ とボード提案の Stop hook を裏の会話に
+ *   効かせない。利用者自身の `~/.claude` の設定は効く
  */
 
 import { spawnSync } from "node:child_process";
@@ -326,7 +327,8 @@ export class AskManager extends EventEmitter {
     // - exec: claude が終わったら tmux セッションごと終わらせる。シェルが残ると、次に
     //   聞いた文がシェルのコマンドとして実行される
     // - --tools '' は内蔵の道具だけを外す。--strict-mcp-config (--mcp-config なし) で、
-    //   利用者が設定している MCP サーバーの道具も持たせない
+    //   利用者が設定している MCP サーバーの道具も持たせない。道具が無ければ許可の確認も
+    //   出ないので、答える人がいなくても止まらない
     const command = `unset CLAUDE_CONFIG_DIR; exec ${this.deps.claudeCommand} --tools '' --strict-mcp-config --session-id ${this.sessionId}`;
     this.deps.tmux(["send-keys", "-t", name, command, "Enter"]);
     try {
