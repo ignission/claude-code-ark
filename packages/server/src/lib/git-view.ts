@@ -489,7 +489,8 @@ export async function getCommit(
     refs: refMap.get(h) ?? [],
   };
 
-  // マージは第 1 親との差、ルートは空との差
+  // マージは第 1 親との差、ルートは空との差。combined diff は「そのブランチを
+  // 取り込んで何が入ったか」を示さないので使わない
   const base =
     parentList.length === 0
       ? ["diff-tree", "--root", "--no-commit-id", "-r"]

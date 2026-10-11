@@ -89,5 +89,5 @@ packages/server/src/
 ## コード修正時の注意事項
 
 - プラットフォーム差異（macOS / Linux）がある処理は `process.platform` で分岐する（例: `port-scanner.ts`, `ttyd-manager.ts` のループバックインターフェース名）
-- `pkill -f ttyd` を忘れるとポート競合（`EADDRINUSE`）が発生する。デプロイ手順を遵守すること
+- `pkill -x ttyd` を忘れるとポート競合（`EADDRINUSE`）が発生する。デプロイ手順を遵守すること
 - `execSync` / `exec` に外部入力を渡す場合は必ず `validatePath()` / `validateBranchName()` を通す
