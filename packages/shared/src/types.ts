@@ -228,6 +228,54 @@ export interface BrowserSession {
   createdAt: Date;
 }
 
+/** 修飾キーのビット (CDPの Input.* と同じ値): Alt=1, Ctrl=2, Meta=4, Shift=8 */
+export type BrowserModifiers = number;
+
+/**
+ * ブラウザ機能のWebSocket (`/browser/:id/ws`) でクライアントが送るメッセージ。
+ * 座標はビューポートのCSSピクセル。
+ */
+export type BrowserClientMessage =
+  | { t: "resize"; width: number; height: number; dpr: number; mobile: boolean }
+  | {
+      t: "mouse";
+      type: "down" | "up" | "move" | "wheel";
+      x: number;
+      y: number;
+      /** DOMの MouseEvent.button (0=左, 1=中, 2=右) */
+      button: number;
+      /** DOMの MouseEvent.buttons */
+      buttons: number;
+      clickCount: number;
+      deltaX: number;
+      deltaY: number;
+      modifiers: BrowserModifiers;
+    }
+  | {
+      t: "key";
+      type: "down" | "up";
+      key: string;
+      code: string;
+      keyCode: number;
+      /** 文字を生むキーだけに付く */
+      text?: string;
+      repeat: boolean;
+      modifiers: BrowserModifiers;
+    }
+  | {
+      t: "ime";
+      type: "update";
+      text: string;
+      selectionStart: number;
+      selectionEnd: number;
+    }
+  | { t: "ime"; type: "commit"; text: string }
+  | { t: "ime"; type: "cancel" }
+  | { t: "paste"; text: string };
+
+/** サーバーが送るJSONのメッセージ。フレームは別にバイナリ (JPEG) で送る */
+export type BrowserServerMessage = { t: "error"; message: string };
+
 export interface Message {
   id: string;
   sessionId: string;
