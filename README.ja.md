@@ -239,4 +239,4 @@ pnpm start:quick
 
 ## ライセンス
 
-MIT
+[MIT](LICENSE)
