@@ -42,8 +42,9 @@ const WS_OPEN = 1;
  * `ssh -o BatchMode=yes -W` の引数。Ark サーバーを動かしているユーザーの権限で起動する。
  * BatchMode=yes はプロンプトを一切出せないので、次を満たしていないと接続できない。
  *
- * - 鍵は実行ユーザーのもので、パスフレーズ無し (または ssh-agent に登録済み)。
- *   パスフレーズを聞けずに落ちる
+ * - 鍵は実行ユーザーのもので、パスフレーズ無し。パスフレーズを聞けずに落ちる。
+ *   ssh-agent に登録した鍵を使うなら、サーバーのプロセス (pm2 なら pm2 が保存した env) に
+ *   その agent を指す SSH_AUTH_SOCK が要る。ssh は起動したプロセスの env で agent を探す
  * - 接続先が known_hosts に登録済み。初回の接続は "Host key verification failed" で
  *   失敗するので、先に一度、実行ユーザーで `ssh -p <sshPort> <user>@<host>` を手で
  *   通しておく (22 番以外のポートのホスト鍵は `[host]:port` として別に登録される)
