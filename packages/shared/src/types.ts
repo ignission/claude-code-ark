@@ -219,12 +219,7 @@ export type SessionStatus = "active" | "idle" | "error" | "stopped";
 
 export interface BrowserSession {
   id: string;
-  targetPort: number;
   targetUrl: string;
-  wsPort: number;
-  vncPort: number;
-  displayNum: number;
-  devtools: boolean;
   createdAt: Date;
 }
 

@@ -69,16 +69,9 @@ import {
   collectBridgeSessions,
   collectGridSnapshots,
 } from "./lib/bridge-collector.js";
-import { browserManager } from "./lib/browser-manager.js";
-import {
-  CDP_PORT,
-  TTYD_PORT_END,
-  TTYD_PORT_START,
-  VNC_PORT_END,
-  VNC_PORT_START,
-  WS_PORT_END,
-  WS_PORT_START,
-} from "./lib/constants.js";
+import { browserBridge } from "./lib/browser-cdp-bridge.js";
+import { browserManager, validateBrowserUrl } from "./lib/browser-manager.js";
+import { CDP_PORT, TTYD_PORT_END, TTYD_PORT_START } from "./lib/constants.js";
 import { db } from "./lib/database.js";
 import {
   appendDiagramCommentMessage,
@@ -462,7 +455,7 @@ export async function startServer(
   });
 
   // プロキシ経由のレスポンスに強制的にクリックジャッキング対策ヘッダを付与する。
-  // ttyd/noVNCはiframe埋め込みで使うため、SAMEORIGINまで許可する。
+  // ttydはiframe埋め込みで使うため、SAMEORIGINまで許可する。
   ttydProxy.on("proxyRes", proxyRes => {
     proxyRes.headers["x-frame-options"] = "SAMEORIGIN";
     proxyRes.headers["content-security-policy"] = "frame-ancestors 'self'";
@@ -470,6 +463,8 @@ export async function startServer(
 
   // リモート画面: noVNC の WebSocket を ssh -W へ直結する (screen-bridge.ts)
   const screenWss = new WebSocketServer({ noServer: true });
+  // ブラウザ機能: 視聴者のWebSocketをCDPのブリッジへ渡す (browser-cdp-bridge.ts)
+  const browserWss = new WebSocketServer({ noServer: true });
 
   if (enableRemote) {
     console.log(
@@ -1265,21 +1260,6 @@ export async function startServer(
     });
   });
 
-  // ===== noVNC Browser Proxy Routes =====
-
-  app.use("/browser/:browserId", (req, res) => {
-    const { browserId } = req.params;
-    const session = browserManager.getSession(browserId);
-    if (!session) {
-      res.status(404).json({ error: "Browser session not found" });
-      return;
-    }
-    // http-proxyインスタンスはttydProxyを共用する
-    const subPath = req.url || "/";
-    req.url = subPath;
-    ttydProxy.web(req, res, { target: `http://127.0.0.1:${session.wsPort}` });
-  });
-
   // ===== ローカルポートプロキシ（リモートアクセス時にlocalhost URLを表示するため） =====
 
   app.all("/proxy/:port/{*splat}", (req, res) => {
@@ -1302,15 +1282,6 @@ export async function startServer(
     }
     // ttydポート範囲(TTYD_PORT_START〜TTYD_PORT_END)もブロック
     if (port >= TTYD_PORT_START && port <= TTYD_PORT_END) {
-      res.status(403).json({ error: "This port is not accessible via proxy" });
-      return;
-    }
-    // VNC/WSポート範囲もブロック（noVNCブラウザセッション用）
-    if (port >= VNC_PORT_START && port <= VNC_PORT_END) {
-      res.status(403).json({ error: "This port is not accessible via proxy" });
-      return;
-    }
-    if (port >= WS_PORT_START && port <= WS_PORT_END) {
       res.status(403).json({ error: "This port is not accessible via proxy" });
       return;
     }
@@ -1408,26 +1379,21 @@ export async function startServer(
       return;
     }
 
-    // Handle browser (noVNC) WebSocket connections
-    const browserMatch = pathname.match(/^\/browser\/([^/]+)(\/.*)?$/);
+    // ブラウザ機能 (CDPブリッジ) の WebSocket
+    const browserMatch = pathname.match(/^\/browser\/([^/]+)\/ws$/);
     if (browserMatch) {
       // 認証検証（Quick Tunnel時のみ）
       if (!authorizeWebSocketUpgrade(req, url)) {
         socket.destroy();
         return;
       }
-
-      const browserId = browserMatch[1];
-      const session = browserManager.getSession(browserId);
-      if (session) {
-        const targetPath = browserMatch[2] || "/";
-        req.url = targetPath;
-        ttydProxy.ws(req, socket, head, {
-          target: `ws://127.0.0.1:${session.wsPort}`,
-        });
+      if (!browserManager.getSession(browserMatch[1])) {
+        socket.destroy();
         return;
       }
-      socket.destroy();
+      browserWss.handleUpgrade(req, socket, head, ws => {
+        browserBridge.attach(ws);
+      });
       return;
     }
 
@@ -1442,14 +1408,12 @@ export async function startServer(
 
       const proxyPort = parseInt(proxyMatch[1], 10);
       if (proxyPort >= 1 && proxyPort <= 65535) {
-        // SSRF対策: Ark自体のポート、CDPポート、ttydポート範囲、VNC/WSポート範囲をブロック
+        // SSRF対策: Ark自体のポート、CDPポート、ttydポート範囲をブロック
         const serverPort = parseInt(process.env.PORT || "4001", 10);
         if (
           proxyPort === serverPort ||
           proxyPort === CDP_PORT ||
-          (proxyPort >= TTYD_PORT_START && proxyPort <= TTYD_PORT_END) ||
-          (proxyPort >= VNC_PORT_START && proxyPort <= VNC_PORT_END) ||
-          (proxyPort >= WS_PORT_START && proxyPort <= WS_PORT_END)
+          (proxyPort >= TTYD_PORT_START && proxyPort <= TTYD_PORT_END)
         ) {
           socket.destroy();
           return;
@@ -1563,6 +1527,13 @@ export async function startServer(
   const gridBroadcastInterval = setInterval(() => {
     broadcastGridSnapshot();
   }, 1500);
+
+  // Chromiumが止まったら (明示的な停止でも、自分で落ちたときでも) ブリッジを閉じ、
+  // 全クライアントのペインを閉じさせる
+  browserManager.on("session:stopped", (browserId: string) => {
+    browserBridge.reset();
+    io.emit("browser:stopped", { browserId });
+  });
 
   io.on("connection", socket => {
     console.log(`Client connected: ${socket.id}`);
@@ -2685,9 +2656,9 @@ export async function startServer(
       }
     });
 
-    // ===== Browser Session Commands (noVNC) =====
+    // ===== Browser Session Commands =====
     //
-    // 設計: ブラウザセッションはシングルトンのため、
+    // 設計: ブラウザセッション (headlessのChromium) はシングルトンのため、
     // 特定のクライアントの切断で停止させると他クライアントの画面が消える。
     // そのため明示的な`browser:stop`のみで停止する方針を取り、
     // disconnect時の自動停止は行わない。
@@ -2697,8 +2668,7 @@ export async function startServer(
       try {
         if (!browserManager.isAvailable()) {
           socket.emit("browser:error", {
-            message:
-              "ブラウザタブ機能は無効です。依存パッケージをインストールしてください。",
+            message: "Chromiumが見つからないため、ブラウザ機能は使えません",
           });
           return;
         }
@@ -2714,9 +2684,8 @@ export async function startServer(
 
     socket.on("browser:stop", async data => {
       try {
+        // 全クライアントへの `browser:stopped` は、`session:stopped` の購読が出す
         await browserManager.stop(data.browserId);
-        // 全クライアントにブラウザ停止を通知
-        io.emit("browser:stopped", { browserId: data.browserId });
       } catch (error) {
         socket.emit("browser:error", { message: getErrorMessage(error) });
       }
@@ -2724,10 +2693,10 @@ export async function startServer(
 
     socket.on("browser:navigate", async data => {
       try {
-        const session = await browserManager.navigate(data.url);
-        // 全クライアントに通知
-        // （セッションを知らないクライアントの初期同期、および
-        //  他クライアントにもナビゲーション結果を共有する）
+        validateBrowserUrl(data.url);
+        const session = await browserManager.start();
+        await browserBridge.navigate(data.url);
+        // セッションを知らないクライアントは、これでペインを開く
         io.emit("browser:started", session);
       } catch (error) {
         socket.emit("browser:error", { message: getErrorMessage(error) });
@@ -3865,6 +3834,7 @@ export async function startServer(
     clearInterval(gridBroadcastInterval);
     sessionOrchestrator.cleanup();
     askManager.dispose();
+    browserBridge.reset();
     browserManager.cleanup();
     screenBridge.closeAll();
     boardMcp.stop();
