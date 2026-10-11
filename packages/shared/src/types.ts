@@ -268,8 +268,14 @@ export type BrowserClientMessage =
   | { t: "ime"; type: "cancel" }
   | { t: "paste"; text: string };
 
-/** サーバーが送るJSONのメッセージ。フレームは別にバイナリ (JPEG) で送る */
-export type BrowserServerMessage = { t: "error"; message: string };
+/**
+ * サーバーが送るJSONのメッセージ。フレームは別にバイナリ (JPEG) で送る。
+ * `viewport` は、このあとに届くフレームが描かれたビューポートの寸法 (CSSピクセル)。
+ * 視聴者はこれで座標を換算する
+ */
+export type BrowserServerMessage =
+  | { t: "error"; message: string }
+  | { t: "viewport"; width: number; height: number };
 
 export interface Message {
   id: string;

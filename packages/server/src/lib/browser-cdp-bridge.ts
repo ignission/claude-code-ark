@@ -19,6 +19,10 @@
  *   サーバーが使う1つは、Chromiumを起動する側 (browser-manager.ts の `browserBridge`) が作る
  * - ビューポートは1つで、最後に寸法を送った視聴者に合わせる。タブが1つなので、
  *   視聴者ごとに別の寸法は持てない
+ * - フレームが描かれたビューポートの寸法 (CSSピクセル) を、そのフレームより先に視聴者へ
+ *   知らせる。ビューポートは共有なので、視聴者は自分のペインの寸法や倍率からは座標を
+ *   決められない。寸法はフレームのメタデータから取り、無ければ最後に当てた寸法を使う。
+ *   視聴者ごとに知らせた寸法を覚え、変わったときだけ送る
  */
 
 import type { BrowserClientMessage, BrowserServerMessage } from "@ark/shared";
@@ -56,6 +60,12 @@ interface Viewport {
   height: number;
   dpr: number;
   mobile: boolean;
+}
+
+/** フレームが描かれたビューポートの寸法 (CSSピクセル) */
+interface FrameViewport {
+  width: number;
+  height: number;
 }
 
 /** 視聴者の送信バッファがこれ以上なら、その視聴者へはフレームを送らない (バイト) */
@@ -327,6 +337,14 @@ function sameViewport(a: Viewport, b: Viewport): boolean {
   );
 }
 
+/** フレームのメタデータからビューポートの寸法を読む。読めなければ `null` */
+function frameViewportOf(metadata: unknown): FrameViewport | null {
+  if (typeof metadata !== "object" || metadata === null) return null;
+  const { deviceWidth, deviceHeight } = metadata as Record<string, unknown>;
+  if (!isNumber(deviceWidth) || !isNumber(deviceHeight)) return null;
+  return { width: deviceWidth, height: deviceHeight };
+}
+
 function metricsParams(viewport: Viewport): object {
   return {
     width: viewport.width,
@@ -378,6 +396,10 @@ export class BrowserCdpBridge {
   private appliedViewport: Viewport | null = null;
   /** 最後の1枚 (JPEG)。あとから入った視聴者と遅れた視聴者へ見せるために持つ */
   private lastFrame: Buffer | null = null;
+  /** 最後の1枚のメタデータにあったビューポートの寸法。メタデータに無ければ `null` */
+  private frameViewport: FrameViewport | null = null;
+  /** 視聴者ごとの、最後に知らせたビューポートの寸法。同じ寸法を二度送らないために持つ */
+  private readonly notifiedViewport = new Map<ViewerSocket, FrameViewport>();
   /** まだackしていないフレームのid。詰まっている間に複数たまりうる */
   private pendingAcks: number[] = [];
   private ackTimer: NodeJS.Timeout | null = null;
@@ -439,6 +461,17 @@ export class BrowserCdpBridge {
     }
     // つないでいる間に視聴者が去った、または接続が切れて閉じられた
     if (!this.viewers.has(ws)) return;
+    // フレームがまだ無くても寸法は知らせる。視聴者は寸法を知るまでマウスの入力を送れない
+    if (ws.readyState === WS_OPEN) {
+      try {
+        this.notifyViewport(ws);
+      } catch (error) {
+        warn("視聴者への送信に失敗", error);
+        this.detach(ws);
+        terminate(ws);
+        return;
+      }
+    }
     // screencastは画面が変わったときしかフレームを出さない。持っている1枚を送らないと、
     // 何かが動くまで視聴者のcanvasが空になる
     this.deliverFrame();
@@ -448,6 +481,7 @@ export class BrowserCdpBridge {
   private detach(ws: ViewerSocket): void {
     if (!this.viewers.delete(ws)) return;
     this.upToDate.delete(ws);
+    this.notifiedViewport.delete(ws);
     if (this.viewers.size === 0) this.stopCast();
   }
 
@@ -633,12 +667,15 @@ export class BrowserCdpBridge {
    */
   private handleFrame(
     cdp: CdpLike,
-    params: { data?: unknown; sessionId?: unknown } | undefined
+    params:
+      | { data?: unknown; sessionId?: unknown; metadata?: unknown }
+      | undefined
   ): void {
     // 止めたあとに届いた分は配らない。ackも要らない
     if (this.page?.cdp !== cdp || !this.casting) return;
     if (typeof params?.data !== "string" || !isNumber(params.sessionId)) return;
     this.lastFrame = Buffer.from(params.data, "base64");
+    this.frameViewport = frameViewportOf(params.metadata);
     this.upToDate.clear();
     this.pendingAcks.push(params.sessionId);
     this.deliverFrame();
@@ -669,6 +706,8 @@ export class BrowserCdpBridge {
         continue;
       }
       try {
+        // 寸法が先。フレームが先に届くと、視聴者は古い寸法で座標を換算する
+        this.notifyViewport(ws);
         ws.send(frame);
       } catch (error) {
         // 1人の送信の失敗で、残りの視聴者への配信とackを止めない
@@ -698,6 +737,21 @@ export class BrowserCdpBridge {
   }
 
   /**
+   * いまのフレームが描かれたビューポートの寸法を、まだ知らせていない視聴者へ送る。
+   * 送信が投げたら、そのまま呼び出し側へ投げる。
+   */
+  private notifyViewport(ws: ViewerSocket): void {
+    const viewport = this.frameViewport ?? this.appliedViewport;
+    if (!viewport) return;
+    const { width, height } = viewport;
+    const notified = this.notifiedViewport.get(ws);
+    if (notified?.width === width && notified.height === height) return;
+    const body: BrowserServerMessage = { t: "viewport", width, height };
+    ws.send(JSON.stringify(body));
+    this.notifiedViewport.set(ws, { width, height });
+  }
+
+  /**
    * 接続が切れたとき。視聴者へerrorを送って閉じ、状態を捨てる。
    * resetや失敗で捨てた接続のcloseは、いまの接続に響かせない。
    */
@@ -724,6 +778,7 @@ export class BrowserCdpBridge {
     const viewers = [...this.viewers];
     this.viewers.clear();
     this.upToDate.clear();
+    this.notifiedViewport.clear();
     return viewers;
   }
 
@@ -744,6 +799,7 @@ export class BrowserCdpBridge {
 
   private dropFrames(): void {
     this.lastFrame = null;
+    this.frameViewport = null;
     this.upToDate.clear();
     this.pendingAcks = [];
     if (this.ackTimer) {

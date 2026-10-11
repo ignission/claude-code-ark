@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  chunkPasteText,
   isPasteShortcut,
   keyMessage,
   modifiersOf,
@@ -184,5 +185,48 @@ describe("mouseMessage / wheelMessage", () => {
     expect(wheelMessage(w, { left: 0, top: 0 })).toMatchObject({
       deltaY: 800,
     });
+  });
+});
+
+describe("isPasteShortcut (Shift+Insert)", () => {
+  const insert = { ...key, key: "Insert", code: "Insert", keyCode: 45 };
+
+  it("Shift+Insertは貼り付け", () => {
+    expect(isPasteShortcut({ ...insert, shiftKey: true })).toBe(true);
+  });
+  it("Insertだけ、Ctrl+Insert (コピー)、Altつきは貼り付けではない", () => {
+    expect(isPasteShortcut(insert)).toBe(false);
+    expect(isPasteShortcut({ ...insert, ctrlKey: true })).toBe(false);
+    expect(isPasteShortcut({ ...insert, shiftKey: true, altKey: true })).toBe(
+      false
+    );
+  });
+});
+
+describe("chunkPasteText", () => {
+  it("上限までの文字列は1つのまま返す", () => {
+    expect(chunkPasteText("")).toEqual([]);
+    expect(chunkPasteText("abc")).toEqual(["abc"]);
+    const text = "a".repeat(50_000);
+    expect(chunkPasteText(text)).toEqual([text]);
+  });
+  it("上限を超えたら、上限ごとに順に分ける", () => {
+    const text = `${"a".repeat(50_000)}${"b".repeat(50_000)}c`;
+    const chunks = chunkPasteText(text);
+    expect(chunks.map(chunk => chunk.length)).toEqual([50_000, 50_000, 1]);
+    expect(chunks.join("")).toBe(text);
+  });
+  it("境界をまたぐサロゲートペアは分けず、次の塊へ送る", () => {
+    expect(chunkPasteText("ab😀cd", 3)).toEqual(["ab", "😀c", "d"]);
+    expect(chunkPasteText("a😀😀", 2)).toEqual(["a", "😀", "😀"]);
+    const text = `${"a".repeat(49_999)}😀b`;
+    const chunks = chunkPasteText(text);
+    expect(chunks.map(chunk => chunk.length)).toEqual([49_999, 3]);
+    expect(chunks.join("")).toBe(text);
+  });
+  it("対にならないサロゲートがあっても、すべての文字を返す", () => {
+    const text = "\ud83d\ud83d\ud83d";
+    expect(chunkPasteText(text, 1).join("")).toBe(text);
+    expect(chunkPasteText(text, 2).join("")).toBe(text);
   });
 });

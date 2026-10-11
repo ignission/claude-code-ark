@@ -9,6 +9,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { buildBrowserWsUrl } from "@/lib/auth-token";
 import {
+  type BrowserMouseMessage,
+  chunkPasteText,
   isPasteShortcut,
   keyMessage,
   mouseMessage,
@@ -25,9 +27,26 @@ type Status =
   | { kind: "disconnected"; reason: string };
 
 const DISCONNECTED_REASON = "切断されました";
-/** サーバーがビューポートに使う倍率の範囲。フレームの寸法をCSSピクセルへ直すのに使う */
-const MIN_DPR = 1;
-const MAX_DPR = 2;
+/**
+ * compositionendからこの時間 (ミリ秒) までに届いたEnterのkeydownは、変換を確定した
+ * Enterとして送らない。ブラウザによっては、確定のEnterがcompositionendの直後に
+ * keyCode 13、isComposing: falseで届き、変換中のキーと見分けられない。送ると、
+ * 確定した文字列のあとにリモートで改行や送信が起きる。
+ */
+const COMPOSITION_ENTER_MS = 30;
+/** DOMの `MouseEvent.button` の順に並べた、`MouseEvent.buttons` のビット */
+const BUTTON_BITS = [1, 4, 2, 8, 16];
+
+interface Size {
+  width: number;
+  height: number;
+}
+
+interface HeldKey {
+  key: string;
+  code: string;
+  keyCode: number;
+}
 
 function isCoarsePointer(): boolean {
   return (
@@ -36,24 +55,24 @@ function isCoarsePointer(): boolean {
   );
 }
 
-interface FrameSize {
-  width: number;
-  height: number;
+function isSize(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
-/** canvas上の位置を、最後に描いたフレームの座標 (ビューポートのCSSピクセル) へ直す */
+/**
+ * canvas上の位置を、サーバーのビューポートの座標 (CSSピクセル) へ直す。
+ * ビューポートの寸法をまだ知らないか、canvasが見えていなければ `null`。
+ */
 function toViewport(
-  msg: BrowserClientMessage,
+  msg: BrowserMouseMessage,
   rect: DOMRect,
-  frame: FrameSize | null
-): BrowserClientMessage {
-  if (msg.t !== "mouse" || !frame || rect.width <= 0 || rect.height <= 0) {
-    return msg;
-  }
+  viewport: Size | null
+): BrowserMouseMessage | null {
+  if (!viewport || rect.width <= 0 || rect.height <= 0) return null;
   return {
     ...msg,
-    x: msg.x * (frame.width / rect.width),
-    y: msg.y * (frame.height / rect.height),
+    x: (msg.x * viewport.width) / rect.width,
+    y: (msg.y * viewport.height) / rect.height,
   };
 }
 
@@ -64,12 +83,13 @@ function toViewport(
  * 手元のIMEで行うには入力欄が要る。未確定の文字列はcompositionイベントで送り、
  * サーバーがリモートのページの入力欄に表示する。
  *
- * canvasの表示寸法とChromiumのビューポートを一致させる (寸法を送り、サーバーが
- * 合わせる) ので、座標の変換は持たない。
+ * 座標は、サーバーが知らせるビューポートの寸法で換算する (canvas上の位置に、
+ * ビューポートの寸法とcanvasの表示寸法の比を掛ける)。ビューポートは視聴者の全員が
+ * 共有する1つで、最後に寸法を送った視聴者に合うので、このペインの寸法や手元の倍率とは
+ * 一致するとは限らない。寸法が届くまでは、マウスとwheelを送らない。
  *
- * ただし、寸法が反映される前のフレームと、ペインがサーバーの下限 (200px) より
- * 小さい間のフレームは、表示寸法と一致しない。その間も押した位置がずれないよう、
- * 座標には最後に描いたフレームの寸法と表示寸法の比を掛ける (一致していれば1)。
+ * ビューポートは、最後に操作した視聴者に合わせる。押したときに、知らされた寸法が
+ * このペインの寸法と違えば、先に自分の寸法を送る。
  */
 export function BrowserPane({ browserSession }: BrowserPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -79,16 +99,23 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
   const [status, setStatus] = useState<Status>({ kind: "connecting" });
   const [attempt, setAttempt] = useState(0);
 
-  // 最後に描いたフレームの寸法 (CSSピクセル)。座標の補正に使う
-  const frameSizeRef = useRef<FrameSize | null>(null);
+  // サーバーが最後に知らせたビューポートの寸法 (CSSピクセル)
+  const viewportRef = useRef<Size | null>(null);
+  // デコードを待っているフレームがあれば、デコードを始める。接続のeffectが入れる
+  const decodeNextRef = useRef<(() => void) | null>(null);
   // 間引きで送らずに持っている最新のmove
-  const pendingMoveRef = useRef<BrowserClientMessage | null>(null);
+  const pendingMoveRef = useRef<BrowserMouseMessage | null>(null);
   const moveFrameRef = useRef<number | null>(null);
-  // ボタンを押している間だけ window に付けるリスナーを外す関数
+  // ボタンを押している間だけwindowに付けるリスナーを外す関数
   const stopDragRef = useRef<(() => void) | null>(null);
   const composingRef = useRef(false);
-  // 貼り付けのショートカットとして送らなかったキー。upも送らない
-  const pasteKeyCodesRef = useRef(new Set<string>());
+  const compositionEndAtRef = useRef(Number.NEGATIVE_INFINITY);
+  // downを送ってupをまだ送っていないキーとボタン。フォーカスが外れるとupは届かないので、
+  // 外れたときにこちらから離す。upを送るのも、ここにあるキーだけ
+  const heldKeysRef = useRef(new Map<string, HeldKey>());
+  const heldButtonsRef = useRef(new Set<number>());
+  // 最後に送ろうとしたマウスの位置 (ビューポートの座標)
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
 
   const send = useCallback((msg: BrowserClientMessage) => {
     const ws = wsRef.current;
@@ -97,7 +124,7 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
 
   const sendSize = useCallback(() => {
     const rect = containerRef.current?.getBoundingClientRect();
-    // display: hiddenで隠れている間は0になる。送るとサーバーが下限の寸法に縮めてしまう
+    // display: none (Tailwindのhidden) で隠れている間は0になる。送ると、サーバーが見えていないペインにビューポートを合わせてしまう
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
     send({
       t: "resize",
@@ -118,40 +145,112 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     if (pending) send(pending);
   }, [send]);
 
+  /** 送り先が無くなったとき。持っていた入力の状態を、何も送らずに捨てる */
+  const dropInputState = useCallback(() => {
+    stopDragRef.current?.();
+    if (moveFrameRef.current !== null) {
+      cancelAnimationFrame(moveFrameRef.current);
+      moveFrameRef.current = null;
+    }
+    pendingMoveRef.current = null;
+    heldKeysRef.current.clear();
+    heldButtonsRef.current.clear();
+  }, []);
+
+  /** フォーカスが外れたとき。押したままのキーとボタンを、リモートで離す */
+  const releaseHeld = useCallback(() => {
+    for (const held of heldKeysRef.current.values()) {
+      send({ t: "key", type: "up", ...held, repeat: false, modifiers: 0 });
+    }
+    heldKeysRef.current.clear();
+
+    const buttons = heldButtonsRef.current;
+    if (buttons.size > 0) {
+      // 持っているmoveを先に送り、その位置で離す
+      flushMove();
+      const position = lastPointerRef.current;
+      for (const button of [...buttons]) {
+        buttons.delete(button);
+        if (!position) continue;
+        let remaining = 0;
+        for (const other of buttons) remaining |= BUTTON_BITS[other] ?? 0;
+        send({
+          t: "mouse",
+          type: "up",
+          x: position.x,
+          y: position.y,
+          button,
+          buttons: remaining,
+          clickCount: 1,
+          deltaX: 0,
+          deltaY: 0,
+          modifiers: 0,
+        });
+      }
+    }
+    stopDragRef.current?.();
+  }, [send, flushMove]);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: attemptは本文中では読まないが、再接続ボタンを押すたびに接続をやり直すためのtriggerとして依存に入れている
   useEffect(() => {
     let cancelled = false;
     let serverError = "";
-    // フレームの連番。デコードは届いた順に終わるとは限らない
-    let received = 0;
-    let drawn = 0;
+    // デコードは1枚ずつ。待っている間に届いたフレームは、最新の1枚だけを持つ
+    let pendingFrame: ArrayBuffer | null = null;
+    let decoding = false;
+    let decodeWarned = false;
 
     setStatus({ kind: "connecting" });
-    frameSizeRef.current = null;
+    viewportRef.current = null;
 
     const ws = new WebSocket(buildBrowserWsUrl(browserSession.id));
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
 
-    const draw = (bitmap: ImageBitmap, seq: number) => {
+    const draw = (bitmap: ImageBitmap) => {
       const canvas = canvasRef.current;
-      // 自分より新しいフレームが既に描かれていたら捨てる
-      if (cancelled || seq < drawn || !canvas) return;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      drawn = seq;
+      const ctx = canvas?.getContext("2d");
+      if (!canvas || !ctx) return;
       if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
       if (canvas.height !== bitmap.height) canvas.height = bitmap.height;
       ctx.drawImage(bitmap, 0, 0);
-      const dpr = Math.min(
-        MAX_DPR,
-        Math.max(MIN_DPR, window.devicePixelRatio || 1)
-      );
-      frameSizeRef.current = {
-        width: bitmap.width / dpr,
-        height: bitmap.height / dpr,
-      };
     };
+
+    const decodeNext = () => {
+      if (cancelled || decoding || !pendingFrame) return;
+      // 隠れている間はデコードしない。最新の1枚を持ったまま、見えるのを待つ
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+      const data = pendingFrame;
+      pendingFrame = null;
+      decoding = true;
+      let decoded: Promise<ImageBitmap>;
+      try {
+        decoded = createImageBitmap(new Blob([data], { type: "image/jpeg" }));
+      } catch (error) {
+        decoded = Promise.reject(error);
+      }
+      decoded
+        .then(bitmap => {
+          try {
+            // 接続をやり直したあとに終わった分は描かない
+            if (!cancelled) draw(bitmap);
+          } finally {
+            bitmap.close();
+          }
+        })
+        .catch((error: unknown) => {
+          // 壊れたフレームは捨てる。次のフレームで描き直される
+          if (decodeWarned) return;
+          decodeWarned = true;
+          console.warn("[BrowserPane] フレームを描けません:", error);
+        })
+        .then(() => {
+          decoding = false;
+          decodeNext();
+        });
+    };
+    decodeNextRef.current = decodeNext;
 
     ws.onopen = () => {
       if (cancelled) return;
@@ -164,67 +263,98 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
           const msg = JSON.parse(event.data) as BrowserServerMessage;
           // サーバーは閉じる直前に理由を送る。表示するのはcloseが来てから
           if (msg.t === "error") serverError = msg.message;
+          if (msg.t === "viewport" && isSize(msg.width) && isSize(msg.height)) {
+            viewportRef.current = { width: msg.width, height: msg.height };
+          }
         } catch {
           // 読めないメッセージは捨てる
         }
         return;
       }
-      const seq = ++received;
-      createImageBitmap(new Blob([event.data], { type: "image/jpeg" }))
-        .then(bitmap => {
-          try {
-            draw(bitmap, seq);
-          } finally {
-            bitmap.close();
-          }
-        })
-        .catch(() => {
-          // 壊れたフレームは捨てる。次のフレームで描き直される
-        });
+      pendingFrame = event.data as ArrayBuffer;
+      decodeNext();
     };
-    ws.onclose = () => {
+    ws.onclose = event => {
       if (cancelled) return;
+      dropInputState();
       setStatus({
         kind: "disconnected",
-        reason: serverError || DISCONNECTED_REASON,
+        reason: serverError || event.reason || DISCONNECTED_REASON,
       });
     };
 
     return () => {
       cancelled = true;
+      pendingFrame = null;
+      if (decodeNextRef.current === decodeNext) decodeNextRef.current = null;
       // 自分で閉じたときに「切断されました」を出さないよう、先にハンドラを外す
       ws.onopen = null;
       ws.onmessage = null;
       ws.onclose = null;
       ws.close();
       if (wsRef.current === ws) wsRef.current = null;
-      // 送り先が無くなるので、持っていた入力の状態も捨てる
-      stopDragRef.current?.();
-      if (moveFrameRef.current !== null) {
-        cancelAnimationFrame(moveFrameRef.current);
-        moveFrameRef.current = null;
-      }
-      pendingMoveRef.current = null;
-      pasteKeyCodesRef.current.clear();
+      dropInputState();
     };
-  }, [browserSession.id, attempt, sendSize]);
+  }, [browserSession.id, attempt, sendSize, dropInputState]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => sendSize());
+    const observer = new ResizeObserver(() => {
+      sendSize();
+      // 隠れている間に届いたフレームを、見えたところで描く
+      decodeNextRef.current?.();
+    });
     observer.observe(container);
     return () => observer.disconnect();
   }, [sendSize]);
 
+  // 手元の倍率が変わったら (倍率の違う画面へウィンドウを動かした、拡大率を変えた)、
+  // ペインの寸法が同じでも送り直す。メディアクエリはいまの倍率に一致するものなので、
+  // 変わるたびに新しい倍率で聞き直す
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    let query: MediaQueryList | null = null;
+    const onChange = () => {
+      sendSize();
+      listen();
+    };
+    const listen = () => {
+      query?.removeEventListener?.("change", onChange);
+      query = window.matchMedia(
+        `(resolution: ${window.devicePixelRatio || 1}dppx)`
+      );
+      query.addEventListener?.("change", onChange);
+    };
+    listen();
+    return () => query?.removeEventListener?.("change", onChange);
+  }, [sendSize]);
+
+  // つながっていない間は、入力欄にフォーカスを残さない。残すと、再接続ボタンへ
+  // キーボードで移る前に、入力欄へ文字が入る
+  useEffect(() => {
+    if (status.kind !== "connected") inputRef.current?.blur();
+  }, [status.kind]);
+
+  // ウィンドウのフォーカスが外れると、キーとボタンのupは届かない
+  useEffect(() => {
+    window.addEventListener("blur", releaseHeld);
+    return () => window.removeEventListener("blur", releaseHeld);
+  }, [releaseHeld]);
+
   const pointerMessage = (
     type: "down" | "up" | "move",
     e: MouseEvent
-  ): BrowserClientMessage | null => {
+  ): BrowserMouseMessage | null => {
     const rect = canvasRef.current?.getBoundingClientRect();
-    return rect
-      ? toViewport(mouseMessage(type, e, rect), rect, frameSizeRef.current)
-      : null;
+    if (!rect) return null;
+    const msg = toViewport(
+      mouseMessage(type, e, rect),
+      rect,
+      viewportRef.current
+    );
+    if (msg) lastPointerRef.current = { x: msg.x, y: msg.y };
+    return msg;
   };
 
   // moveは1フレームに1回へ間引き、最新の位置だけを送る
@@ -239,14 +369,19 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     });
   };
 
-  // downとupの前に、持っているmoveを先に送る (順序が入れ替わるとドラッグの終点がずれる)
-  const sendButton = (type: "down" | "up", e: MouseEvent) => {
+  // downとupの前に、持っているmoveを先に送る (順序が入れ替わるとドラッグの終点がずれる)。
+  // 送れなかったら (ビューポートの寸法をまだ知らない) falseを返す
+  const sendButton = (type: "down" | "up", e: MouseEvent): boolean => {
     flushMove();
     const msg = pointerMessage(type, e);
-    if (msg) send(msg);
+    if (!msg) return false;
+    send(msg);
+    if (type === "down") heldButtonsRef.current.add(e.button);
+    else heldButtonsRef.current.delete(e.button);
+    return true;
   };
 
-  // ボタンを押したままペインの外へ出ても追えるよう、押している間は window で聞く
+  // ボタンを押したままペインの外へ出ても追えるよう、押している間はwindowで聞く
   const startDrag = () => {
     if (stopDragRef.current) return;
     const onMove = (e: MouseEvent) => queueMove(e);
@@ -264,65 +399,96 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     };
   };
 
+  // ビューポートがこのペインの寸法と違えば (ほかの視聴者が寸法を送った)、自分の寸法を送る
+  const claimViewport = (container: DOMRect) => {
+    const viewport = viewportRef.current;
+    const width = Math.round(container.width);
+    const height = Math.round(container.height);
+    if (!viewport || width < 1 || height < 1) return;
+    if (viewport.width !== width || viewport.height !== height) sendSize();
+  };
+
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     // 接続中と切断の表示が上に載っている間は、再接続ボタンの操作を邪魔しない
     if (status.kind !== "connected") return;
     // 既定の動作 (フォーカスの移動と文字の選択) を止め、フォーカスを入力欄に固定する
     e.preventDefault();
-    const canvas = canvasRef.current;
+    const container = containerRef.current?.getBoundingClientRect();
     const input = inputRef.current;
-    if (canvas && input) {
+    if (container && input) {
       // 入力欄を押した位置へ動かす。IMEの候補ウィンドウがその近くに出る
-      const rect = canvas.getBoundingClientRect();
-      input.style.left = `${e.clientX - rect.left}px`;
-      input.style.top = `${e.clientY - rect.top}px`;
+      input.style.left = `${e.clientX - container.left}px`;
+      input.style.top = `${e.clientY - container.top}px`;
       input.focus({ preventScroll: true });
     }
-    sendButton("down", e.nativeEvent);
-    startDrag();
+    // 寸法が先。downの座標は、いま映っているフレームのビューポートで換算したまま送る
+    if (container) claimViewport(container);
+    if (sendButton("down", e.nativeEvent)) startDrag();
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    // 押している間は window のリスナーが送る。ここでも送ると二重になる
+    // 押している間はwindowのリスナーが送る。ここでも送ると二重になる
     if (stopDragRef.current) return;
     queueMove(e.nativeEvent);
   };
 
-  // Reactの onWheel はpassiveで preventDefault できないので、自分で付ける
+  // ReactのonWheelはpassiveでpreventDefaultできないので、自分で付ける
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const rect = canvasRef.current?.getBoundingClientRect();
-      if (rect) {
-        send(toViewport(wheelMessage(e, rect), rect, frameSizeRef.current));
-      }
+      if (!rect) return;
+      const msg = toViewport(wheelMessage(e, rect), rect, viewportRef.current);
+      if (msg) send(msg);
     };
     container.addEventListener("wheel", onWheel, { passive: false });
     return () => container.removeEventListener("wheel", onWheel);
   }, [send]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // 貼り付けはキーとして送らず、ブラウザの paste イベントに任せる
-    if (isPasteShortcut(e.nativeEvent)) {
-      pasteKeyCodesRef.current.add(e.code);
-      return;
-    }
+    // つながっていない間は何もしない。TabやEnterで再接続ボタンを操作できるようにする
+    if (status.kind !== "connected") return;
+    // 貼り付けはキーとして送らず、ブラウザのpasteイベントに任せる
+    if (isPasteShortcut(e.nativeEvent)) return;
     const msg = keyMessage(e.nativeEvent, "down");
     if (!msg) return;
-    // 手元の入力欄には文字を入れない (入れると onInput が同じ文字をもう一度送る)。
+    // 手元の入力欄には文字を入れない (入れるとonInputが同じ文字をもう一度送る)。
     // コピーや切り取りのショートカットも、ここでは普通のキーとして送るだけ
     e.preventDefault();
+    if (
+      e.key === "Enter" &&
+      performance.now() - compositionEndAtRef.current <= COMPOSITION_ENTER_MS
+    ) {
+      return;
+    }
     send(msg);
+    heldKeysRef.current.set(e.code || e.key, {
+      key: e.key,
+      code: e.code,
+      keyCode: e.nativeEvent.keyCode,
+    });
   };
 
+  // upを送るのは、downを送ったキーだけ。貼り付けのショートカットや変換を確定したEnterの
+  // ように、downを送らなかったキーのupは送らない
   const handleKeyUp = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // 修飾キーを先に離すと、upは貼り付けのショートカットに見えない。downで覚えた方を見る
-    if (pasteKeyCodesRef.current.delete(e.code)) return;
-    if (isPasteShortcut(e.nativeEvent)) return;
-    const msg = keyMessage(e.nativeEvent, "up");
-    if (msg) send(msg);
+    if (status.kind !== "connected") return;
+    const id = e.code || e.key;
+    const held = heldKeysRef.current.get(id);
+    if (!held) return;
+    heldKeysRef.current.delete(id);
+    // 押している間に変換が始まると、upは変換中のキーに見える。それでもリモートでは離す
+    send(
+      keyMessage(e.nativeEvent, "up") ?? {
+        t: "key",
+        type: "up",
+        ...held,
+        repeat: false,
+        modifiers: 0,
+      }
+    );
   };
 
   const handleCompositionStart = () => {
@@ -341,12 +507,13 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     });
   };
 
-  // 確定の文字列を送るのは compositionend と onInput のどちらか一方だけ。
+  // 確定の文字列を送るのはcompositionendとonInputのどちらか一方だけ。
   // 変換の確定はここで送り、入力欄を空にする。Chromeはこのあとに
-  // isComposing: false の input を出すが、値が空なので onInput は送らない
+  // isComposing: falseのinputを出すが、値が空なのでonInputは送らない
   const handleCompositionEnd = (
     e: React.CompositionEvent<HTMLTextAreaElement>
   ) => {
+    compositionEndAtRef.current = performance.now();
     e.currentTarget.value = "";
     // blurで取り消しを送ったあとに届いた分は、もう送らない
     if (!composingRef.current) return;
@@ -359,8 +526,8 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
   };
 
   // 変換を経ない入力 (ソフトキーボードやOSの文字ビューア) をここで送る。
-  // 変換中の input は送らない。Firefoxは compositionend より先に
-  // isComposing: true の input を出すので、確定は compositionend に任せる
+  // 変換中のinputは送らない。Firefoxはcompositionendより先に
+  // isComposing: trueのinputを出すので、確定はcompositionendに任せる
   const handleInput = (e: React.FormEvent<HTMLTextAreaElement>) => {
     const native = e.nativeEvent as InputEvent;
     if (native.isComposing || composingRef.current) return;
@@ -373,15 +540,18 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     e.preventDefault();
     const text = e.clipboardData.getData("text/plain");
-    if (text) send({ t: "paste", text });
+    // サーバーは長すぎるメッセージを捨てるので、分けて順に送る
+    for (const chunk of chunkPasteText(text)) send({ t: "paste", text: chunk });
   };
 
-  // 変換の途中でフォーカスが外れたら、リモートに残る未確定の文字列を消す
   const handleBlur = (e: React.FocusEvent<HTMLTextAreaElement>) => {
-    if (!composingRef.current) return;
-    composingRef.current = false;
-    e.currentTarget.value = "";
-    send({ t: "ime", type: "cancel" });
+    // 変換の途中でフォーカスが外れたら、リモートに残る未確定の文字列を消す
+    if (composingRef.current) {
+      composingRef.current = false;
+      e.currentTarget.value = "";
+      send({ t: "ime", type: "cancel" });
+    }
+    releaseHeld();
   };
 
   return (
@@ -398,13 +568,16 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
         className="block h-full w-full"
         style={{ touchAction: "none" }}
       />
+      {/* ポインタの操作は受けない (受けると、入力欄の上を押したときにペインへ届かない)。
+          置く場所を決めておくのは、フォーカスしたときにペインがスクロールしないようにするため */}
       <textarea
         ref={inputRef}
         aria-label="ブラウザへの入力"
         autoCapitalize="off"
+        autoComplete="off"
         autoCorrect="off"
         spellCheck={false}
-        className="absolute h-px w-px opacity-0 resize-none border-0 p-0 outline-none"
+        className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0 resize-none border-0 p-0 outline-none"
         style={{ caretColor: "transparent" }}
         onKeyDown={handleKeyDown}
         onKeyUp={handleKeyUp}

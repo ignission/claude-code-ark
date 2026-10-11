@@ -173,6 +173,8 @@ function fakeViewer() {
       close: ReturnType<typeof vi.fn>;
       terminate: ReturnType<typeof vi.fn>;
       receive(message: unknown): void;
+      frames(): Buffer[];
+      texts(): unknown[];
     };
   viewer.readyState = 1;
   viewer.bufferedAmount = 0;
@@ -182,7 +184,23 @@ function fakeViewer() {
   viewer.receive = message => {
     viewer.emit("message", Buffer.from(JSON.stringify(message)), false);
   };
+  /** 受け取ったフレーム (バイナリ) を、届いた順に返す */
+  viewer.frames = () =>
+    viewer.send.mock.calls.map(([data]) => data).filter(Buffer.isBuffer);
+  /** 受け取ったJSONのメッセージを、届いた順に返す */
+  viewer.texts = () =>
+    viewer.send.mock.calls
+      .map(([data]) => data)
+      .filter(data => typeof data === "string")
+      .map(data => JSON.parse(data));
   return viewer;
+}
+
+/** 視聴者が受け取ったerrorの数 */
+function errorCount(viewer: ReturnType<typeof fakeViewer>): number {
+  return viewer
+    .texts()
+    .filter(message => (message as { t?: unknown }).t === "error").length;
 }
 
 describe("BrowserCdpBridge", () => {
@@ -271,7 +289,7 @@ describe("BrowserCdpBridge", () => {
     viewer.bufferedAmount = 2_000_000;
     cdp.emit("Page.screencastFrame", { data: "", sessionId: 8 });
     await vi.advanceTimersByTimeAsync(200);
-    expect(viewer.send).not.toHaveBeenCalled();
+    expect(viewer.frames()).toEqual([]);
     expect(cdp.count("Page.screencastFrameAck")).toBe(0);
     viewer.bufferedAmount = 0;
     await vi.advanceTimersByTimeAsync(50);
@@ -296,7 +314,7 @@ describe("BrowserCdpBridge", () => {
     viewer.bufferedAmount = 0;
     await vi.advanceTimersByTimeAsync(50);
     // 配るのは最後の1枚だけ。ackは受け取った分をすべて返す
-    expect(viewer.send).toHaveBeenCalledTimes(1);
+    expect(viewer.frames()).toHaveLength(1);
     expect(viewer.send).toHaveBeenCalledWith(Buffer.from("new"));
     expect(cdp.count("Page.screencastFrameAck")).toBe(2);
   });
@@ -332,7 +350,7 @@ describe("BrowserCdpBridge", () => {
     const late = fakeViewer();
     bridge.attach(late);
     await vi.runAllTimersAsync();
-    expect(late.send).not.toHaveBeenCalled();
+    expect(late.frames()).toEqual([]);
   });
 
   it("resizeを丸めてデバウンスし、screencastを同じ寸法で始め直す", async () => {
@@ -549,7 +567,7 @@ describe("BrowserCdpBridge", () => {
       await flush();
       first.disconnect();
       await flush();
-      expect(viewer.send).not.toHaveBeenCalled();
+      expect(errorCount(viewer)).toBe(0);
       expect(viewer.close).not.toHaveBeenCalled();
       expect(bridge.viewerCount).toBe(1);
       second.emit("Page.screencastFrame", frame("jpeg", 1));
@@ -737,7 +755,7 @@ describe("BrowserCdpBridge", () => {
       expect(first.close).toHaveBeenCalled();
       // 閉じた接続のcloseがあとから届いても、もう何も起きない
       first.disconnect();
-      expect(viewer.send).toHaveBeenCalledTimes(1);
+      expect(errorCount(viewer)).toBe(1);
       bridge.attach(fakeViewer());
       await flush();
       expect(connect).toHaveBeenCalledTimes(2);
@@ -827,7 +845,7 @@ describe("BrowserCdpBridge", () => {
       bridge.attach(b);
       await flush();
       for (const viewer of [a, b]) {
-        expect(viewer.send).toHaveBeenCalledTimes(1);
+        expect(errorCount(viewer)).toBe(1);
         expect(viewer.send).toHaveBeenCalledWith(
           expect.stringContaining('"t":"error"')
         );
@@ -930,24 +948,24 @@ describe("BrowserCdpBridge", () => {
       slow.bufferedAmount = 2_000_000;
       cdp.emit("Page.screencastFrame", frame("one", 1));
       cdp.emit("Page.screencastFrame", frame("two", 2));
-      expect(fast.send).toHaveBeenCalledTimes(2);
-      expect(slow.send).not.toHaveBeenCalled();
+      expect(fast.frames()).toHaveLength(2);
+      expect(slow.frames()).toEqual([]);
       expect(cdp.count("Page.screencastFrameAck")).toBe(2);
       await vi.advanceTimersByTimeAsync(200);
-      expect(slow.send).not.toHaveBeenCalled();
+      expect(slow.frames()).toEqual([]);
       slow.bufferedAmount = 0;
       await vi.advanceTimersByTimeAsync(50);
-      expect(slow.send).toHaveBeenCalledTimes(1);
+      expect(slow.frames()).toHaveLength(1);
       expect(slow.send).toHaveBeenCalledWith(Buffer.from("two"));
       // 全員が受け取ったら見直しをやめる。同じ1枚を二度送らず、ackも重ねない
       expect(vi.getTimerCount()).toBe(0);
       await vi.advanceTimersByTimeAsync(500);
-      expect(fast.send).toHaveBeenCalledTimes(2);
-      expect(slow.send).toHaveBeenCalledTimes(1);
+      expect(fast.frames()).toHaveLength(2);
+      expect(slow.frames()).toHaveLength(1);
       expect(cdp.count("Page.screencastFrameAck")).toBe(2);
       cdp.emit("Page.screencastFrame", frame("three", 3));
-      expect(fast.send).toHaveBeenCalledTimes(3);
-      expect(slow.send).toHaveBeenCalledTimes(2);
+      expect(fast.frames()).toHaveLength(3);
+      expect(slow.frames()).toHaveLength(2);
       expect(slow.send).toHaveBeenLastCalledWith(Buffer.from("three"));
     });
 
@@ -962,12 +980,12 @@ describe("BrowserCdpBridge", () => {
       late.bufferedAmount = 2_000_000;
       bridge.attach(late);
       await vi.advanceTimersByTimeAsync(200);
-      expect(late.send).not.toHaveBeenCalled();
+      expect(late.frames()).toEqual([]);
       late.bufferedAmount = 0;
       await vi.advanceTimersByTimeAsync(50);
-      expect(late.send).toHaveBeenCalledTimes(1);
+      expect(late.frames()).toHaveLength(1);
       expect(late.send).toHaveBeenCalledWith(Buffer.from("jpeg"));
-      expect(first.send).toHaveBeenCalledTimes(1);
+      expect(first.frames()).toHaveLength(1);
       expect(cdp.count("Page.screencastFrameAck")).toBe(1);
       expect(vi.getTimerCount()).toBe(0);
     });
@@ -985,7 +1003,7 @@ describe("BrowserCdpBridge", () => {
       slow.emit("close");
       await vi.advanceTimersByTimeAsync(50);
       expect(vi.getTimerCount()).toBe(0);
-      expect(fast.send).toHaveBeenCalledTimes(1);
+      expect(fast.frames()).toHaveLength(1);
     });
   });
 
@@ -1043,7 +1061,7 @@ describe("BrowserCdpBridge", () => {
       cdp.emit("Page.screencastFrame", frame("jpeg", 1));
       await flush();
       expect(cdp.count("Input.insertText")).toBe(1);
-      expect(viewer.send).toHaveBeenCalledTimes(1);
+      expect(viewer.frames()).toHaveLength(1);
     });
 
     it("いまと同じ寸法のresizeでは、screencastを始め直さない", async () => {
@@ -1078,6 +1096,157 @@ describe("BrowserCdpBridge", () => {
       await vi.advanceTimersByTimeAsync(150);
       expect(cdp.count("Emulation.setDeviceMetricsOverride")).toBe(2);
       expect(cdp.count("Page.startScreencast")).toBe(2);
+    });
+  });
+
+  describe("ビューポートの通知", () => {
+    const viewportFrame = (
+      text: string,
+      id: number,
+      deviceWidth: unknown,
+      deviceHeight: unknown
+    ) => ({ ...frame(text, id), metadata: { deviceWidth, deviceHeight } });
+
+    it("入った視聴者へ、フレームが無くても当てた寸法を知らせる", async () => {
+      const cdp = fakeCdp();
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      expect(viewer.send.mock.calls).toEqual([
+        [JSON.stringify({ t: "viewport", width: 1280, height: 900 })],
+      ]);
+    });
+
+    it("フレームのメタデータの寸法を、そのフレームより先に知らせる", async () => {
+      const cdp = fakeCdp();
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      viewer.send.mockClear();
+      cdp.emit("Page.screencastFrame", viewportFrame("one", 1, 390, 700));
+      expect(viewer.send.mock.calls).toEqual([
+        [JSON.stringify({ t: "viewport", width: 390, height: 700 })],
+        [Buffer.from("one")],
+      ]);
+    });
+
+    it("寸法が変わらない間は知らせ直さず、変わったら次のフレームの前に知らせる", async () => {
+      const cdp = fakeCdp();
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      cdp.emit("Page.screencastFrame", viewportFrame("one", 1, 1280, 900));
+      cdp.emit("Page.screencastFrame", viewportFrame("two", 2, 1280, 900));
+      // 入ったときの1回だけ。当てた寸法とフレームの寸法が同じなら送らない
+      expect(viewer.texts()).toHaveLength(1);
+      viewer.send.mockClear();
+      cdp.emit("Page.screencastFrame", viewportFrame("three", 3, 640, 480));
+      cdp.emit("Page.screencastFrame", viewportFrame("four", 4, 640, 480));
+      expect(viewer.send.mock.calls).toEqual([
+        [JSON.stringify({ t: "viewport", width: 640, height: 480 })],
+        [Buffer.from("three")],
+        [Buffer.from("four")],
+      ]);
+    });
+
+    it("メタデータの寸法が読めなければ、最後に当てた寸法を知らせる", async () => {
+      const cdp = fakeCdp();
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      cdp.emit("Page.screencastFrame", viewportFrame("one", 1, 390, 700));
+      viewer.send.mockClear();
+      cdp.emit(
+        "Page.screencastFrame",
+        viewportFrame("two", 2, Number.NaN, "700")
+      );
+      expect(viewer.send.mock.calls).toEqual([
+        [JSON.stringify({ t: "viewport", width: 1280, height: 900 })],
+        [Buffer.from("two")],
+      ]);
+    });
+
+    it("resizeで当てた寸法は、始め直したscreencastの最初のフレームの前に知らせる", async () => {
+      const cdp = fakeCdp();
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      viewer.send.mockClear();
+      viewer.receive({
+        t: "resize",
+        width: 390,
+        height: 700,
+        dpr: 2,
+        mobile: true,
+      });
+      await vi.advanceTimersByTimeAsync(150);
+      // メタデータの無いフレーム。当てた寸法を使う
+      cdp.emit("Page.screencastFrame", frame("one", 1));
+      expect(viewer.send.mock.calls).toEqual([
+        [JSON.stringify({ t: "viewport", width: 390, height: 700 })],
+        [Buffer.from("one")],
+      ]);
+    });
+
+    it("あとから入った視聴者へ、最後のフレームより先に知らせる", async () => {
+      const cdp = fakeCdp();
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      bridge.attach(fakeViewer());
+      await flush();
+      cdp.emit("Page.screencastFrame", viewportFrame("one", 1, 390, 700));
+      const late = fakeViewer();
+      bridge.attach(late);
+      await flush();
+      expect(late.send.mock.calls).toEqual([
+        [JSON.stringify({ t: "viewport", width: 390, height: 700 })],
+        [Buffer.from("one")],
+      ]);
+    });
+
+    it("詰まっていた視聴者は、空いたときにフレームより先に寸法を受け取る", async () => {
+      const cdp = fakeCdp();
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const fast = fakeViewer();
+      const slow = fakeViewer();
+      bridge.attach(fast);
+      bridge.attach(slow);
+      await flush();
+      slow.send.mockClear();
+      slow.bufferedAmount = 2_000_000;
+      cdp.emit("Page.screencastFrame", viewportFrame("one", 1, 390, 700));
+      cdp.emit("Page.screencastFrame", viewportFrame("two", 2, 640, 480));
+      expect(slow.send).not.toHaveBeenCalled();
+      slow.bufferedAmount = 0;
+      await vi.advanceTimersByTimeAsync(50);
+      // 途中の寸法は飛ばす。受け取るフレームの寸法だけを知らせる
+      expect(slow.send.mock.calls).toEqual([
+        [JSON.stringify({ t: "viewport", width: 640, height: 480 })],
+        [Buffer.from("two")],
+      ]);
+      expect(fast.texts()).toEqual([
+        { t: "viewport", width: 1280, height: 900 },
+        { t: "viewport", width: 390, height: 700 },
+        { t: "viewport", width: 640, height: 480 },
+      ]);
+    });
+
+    it("入ったときの通知が投げた視聴者は外し、screencastを始めない", async () => {
+      const cdp = fakeCdp();
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const broken = fakeViewer();
+      broken.send.mockImplementation(() => {
+        throw new Error("send failed");
+      });
+      bridge.attach(broken);
+      await flush();
+      expect(broken.terminate).toHaveBeenCalled();
+      expect(bridge.viewerCount).toBe(0);
+      expect(cdp.count("Page.startScreencast")).toBe(0);
     });
   });
 
