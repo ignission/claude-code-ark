@@ -3803,18 +3803,23 @@ export async function startServer(
       },
     });
 
+    // 起動中に error が emit されてもリスナー無しで落ちないよう、start より前に登録する
+    tunnel.on("error", error => {
+      console.error("Tunnel error:", error.message);
+    });
+
+    tunnel.on("close", code => {
+      console.log(`Tunnel closed with code ${code}`);
+    });
+
+    // 接続 0 本が続くと TunnelManager が cloudflared を張り直す (#452)
+    tunnel.on("restart", url => {
+      console.log(`[Tunnel] Named Tunnel を自動で張り直しました: ${url}`);
+    });
+
     try {
       const publicUrl = await tunnel.start();
       await printRemoteAccessInfo(publicUrl, "");
-
-      tunnel.on("error", error => {
-        console.error("Tunnel error:", error.message);
-      });
-
-      tunnel.on("close", code => {
-        console.log(`Tunnel closed with code ${code}`);
-      });
-
       namedTunnel = tunnel;
     } catch (error) {
       console.error("Failed to start tunnel:", getErrorMessage(error));
