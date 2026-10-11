@@ -117,6 +117,10 @@ function chromiumFlags(profileDir: string): string[] {
     "--no-first-run",
     "--disable-default-apps",
     "--window-size=1280,900",
+    // screencastのフレームは、ページへ伝える倍率 (setDeviceMetricsOverride) では大きくならず、
+    // 起動時の倍率までしか出ない。ブリッジが受け付ける倍率の上限に合わせて2倍で起動する。
+    // 等倍の視聴者には、ブリッジがフレームの上限を等倍に絞る
+    "--force-device-scale-factor=2",
     `--user-data-dir=${profileDir}`,
     `--remote-debugging-port=${CDP_PORT}`,
     "--remote-debugging-address=127.0.0.1",
