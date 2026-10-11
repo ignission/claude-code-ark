@@ -18,7 +18,7 @@ pnpm install --frozen-lockfile
 install で初めて node_modules に反映される。省略すると稼働中の Ark が旧バージョンの
 claude を配り続ける。失敗した場合はエラー内容を報告して停止する。
 
-pnpm 11 が要る (`.mise.toml` / `packageManager` が 11 系を指す)。mise が古いと
+`.mise.toml` と `packageManager` が指す版の pnpm が要る。mise が古いと
 `no asset found: pnpm-linux-arm64` で pnpm 自体が入らず、この手順が失敗する。
 その場合は `mise self-update` するか、corepack 経由に切り替える:
 
