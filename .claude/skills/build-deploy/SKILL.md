@@ -61,7 +61,7 @@ packages/server/node_modules/.bin/claude --version
 
 - `pkill -x ttyd` を省略するとttydのポート(7680〜)が競合し、ターミナルが表示されなくなる。kill は pm2 restart の直前に行う（`-f` はコマンドライン文字列に "ttyd" を含む無関係なプロセスへ誤マッチしうるため `-x` を使う）
 - コマンドは必ず上記の順番で実行すること
-- `@anthropic-ai/claude-code` の postinstall（native binary の配置）は`pnpm-workspace.yaml` の `allowBuilds` で許可している。install 後に `claude native binary not installed` が出る場合はこの許可が外れていないか確認する
+- `@anthropic-ai/claude-code` の postinstall（native binary の配置）は `pnpm-workspace.yaml` の `allowBuilds` で許可している。install 後に `claude native binary not installed` が出る場合はこの許可が外れていないか確認する
 
 ## pm2 の env 汚染に注意 (pm2 start / --update-env 時)
 
