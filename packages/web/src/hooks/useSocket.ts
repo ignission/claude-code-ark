@@ -37,6 +37,14 @@ import { io, type Socket } from "socket.io-client";
 import { toast } from "sonner";
 import { getAuthToken } from "../lib/auth-token";
 import {
+  currentBuildId,
+  decideBuildUpdate,
+  fetchServedBuildId,
+  hasUnsavedInput,
+  readReloadTarget,
+  reloadForBuild,
+} from "../lib/build-version";
+import {
   requestDiagramCommentCreate,
   requestDiagramCommentDelete,
   requestDiagramCommentReply,
@@ -600,11 +608,42 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     window.addEventListener("pageshow", handleWake);
     window.addEventListener("online", handleWake);
 
+    // 再接続のたびに、配信中の版が新しくなっていないかを確かめる
+    // (理由と、読み込み直さない場面は `@/lib/build-version`)
+    let connectedOnce = false;
+    let promptedBuildId: string | null = null;
+    const checkBuildUpdate = async () => {
+      const served = await fetchServedBuildId();
+      const action = decideBuildUpdate({
+        current: currentBuildId(),
+        served,
+        lastReloadTarget: readReloadTarget(),
+        hasUnsavedInput: hasUnsavedInput(),
+      });
+      if (!served || action === "none") return;
+      if (action === "reload") {
+        reloadForBuild(served);
+        return;
+      }
+      if (promptedBuildId === served) return;
+      promptedBuildId = served;
+      toast("新しい版があります", {
+        description: "書きかけの入力があるため、自動では読み込み直していません",
+        duration: Number.POSITIVE_INFINITY,
+        action: {
+          label: "読み込み直す",
+          onClick: () => reloadForBuild(served),
+        },
+      });
+    };
+
     // Connection events
     socket.on("connect", () => {
       console.log("Socket connected");
       setIsConnected(true);
       setError(null);
+      if (connectedOnce) void checkBuildUpdate();
+      connectedOnce = true;
 
       // 保存されたリポジトリを自動復元（再接続時は最新のrepoPathRefを使用）
       if (repoPathRef.current) {
