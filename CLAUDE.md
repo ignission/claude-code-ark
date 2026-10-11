@@ -12,7 +12,6 @@ Arkは、ローカルで動く複数のClaude Codeセッションを管理する
 |---|---|
 | `git-tab.md` | Gitタブの範囲 (いまは見るだけ) |
 | `remote-access.md` | 単一ユーザーの前提 (セッション単位の権限は持たない) |
-| `context-engineering.md` | コンテキスト機構を足す前に通る条件 (常に読み込まれる) |
 | `backend-*.md` / `frontend-codegen.md` | サーバーとフロントの実装パターン |
 
 次の機能の決まりは、該当コードのコメント (多くは冒頭) にある: 端末と会話の画面 (`SplitViewPane.tsx` / `split-view-left-mode.ts` / `ttyd-reconnect.ts`)、AskUserQuestion (`auq-hook-bridge.ts` / `ask-user-question-state.ts`)、セッションボード (`diagram-deck.ts` / `diagram-doc-authorship.ts` / `diagram-comment-operation-log.ts` / `DiagramSwitcher.tsx`)、ボード提案 (`board-suggest-stop-hook.ts` / `jev-client.ts` / `board-suggest-config.ts`)、ファイルペイン (`file-manager.ts` の `writeFile` / `FileEditor.tsx` / `file-editor-state.ts` / `useFileTabs.ts`)、キーボード操作とコマンドパレット (`keynav.ts` / `keynav-dom.ts` / `CommandPalette.tsx`)、Claudeに聞く (`ask-manager.ts` / `AskWindow.tsx`)、tmux読み取りの結果型 (`tmux-read-result.ts`)、リモート画面 (`screen-bridge.ts` / `ScreenPane.tsx`)、音声モード (`voice-turn-signals.ts` / `voice-mode-machine.ts` / `browser-speech.ts`)。
@@ -51,7 +50,7 @@ Arkは、ローカルで動く複数のClaude Codeセッションを管理する
 
 Arkはセッションに、task.mdの規約、復唱、失敗の記録、知識の配布のどれも注入しない。セッションが受け取るのは、Claude Codeが標準で与えるものと、リポジトリ自身の `CLAUDE.md` と `.claude/` だけ。作業の記憶や横断知識は、利用者自身の設定 (`~/.claude/CLAUDE.md`、native auto memoryなど) で持つ。
 
-同種の機構を4代目まで作り、4代目とも撤去した (Frontline 8,108行 / Beacon 10,016行 / flow 8,845行 / ark/context 10,350行)。足していたのは既にある機構のこだまだった (#367の対照実験6回、#401で撤去)。機構そのものも「実装済みなのに発火しない / 無音で止まる」不具合を10件生み (#350 #352 #357 #365 #369 #372 #373 #383 #397)、うち9件は配達装置の中にあった。**5代目を作る前に `.claude/rules/context-engineering.md` を読む。**
+同種の機構を4代目まで作り、4代目とも撤去した (Frontline 8,108行 / Beacon 10,016行 / flow 8,845行 / ark/context 10,350行)。足していたのは既にある機構のこだまだった (#367の対照実験6回、#401で撤去)。機構そのものも「実装済みなのに発火しない / 無音で止まる」不具合を10件生み (#350 #352 #357 #365 #369 #372 #373 #383 #397)、うち9件は配達装置の中にあった。**5代目を作る前に、#367と#401の経緯を読む。**
 
 ## Git・PRワークフロー
 
