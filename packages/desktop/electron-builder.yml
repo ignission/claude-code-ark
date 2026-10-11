@@ -45,6 +45,12 @@ extraResources:
   # board_authoring_guide が packaged 環境で参照する作図規約。
   - from: ../server/dist/diagram-authoring-guide.md
     to: app/diagram-authoring-guide.md
+  # Ark 自身のライセンスと著作権表示 (Apache-2.0 は配布物への同梱を求める)。
+  # 依存ライブラリのぶんは下の licenses/ に入る。
+  - from: ../../LICENSE
+    to: LICENSE
+  - from: ../../NOTICE
+    to: NOTICE
   # tray.ts:resolveTrayIconPath() は packaged 時に
   # `process.resourcesPath/build-assets/tray-icon.png` を参照する。
   # ここで配置していないと nativeImage.createEmpty() fallback で

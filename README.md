@@ -239,4 +239,4 @@ Changes to these settings apply from the next turn. The one exception is a sessi
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE)
