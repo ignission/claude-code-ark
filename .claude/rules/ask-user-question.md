@@ -3,6 +3,8 @@ paths:
   - "packages/server/src/lib/auq-*.ts"
   - "packages/web/src/components/AskUserQuestionCard.tsx"
   - "packages/web/src/lib/ask-user-question-state.ts"
+  - "packages/web/src/components/SplitChatPane.tsx"
+  - "packages/server/src/lib/tmux-manager.ts"
 ---
 
 # AskUserQuestion (AUQ)

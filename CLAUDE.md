@@ -2,7 +2,7 @@
 
 Arkは、ローカルで動く複数のClaude Codeセッションを管理するWeb UI。gitのworktreeごとにセッション (tmux + ttyd) を起動し、PCとモバイルから見て動かす。
 
-機能の一覧、起動オプション、環境変数、前提のツールは `README.ja.md` にある。Socket.IOのイベントの正本は `packages/shared/src/types.ts`。
+機能の一覧、起動オプション、環境変数、前提のツールは `README.ja.md` にある (Node.js >= 22.12.0は、同梱のClaude CodeとVite 8の要件)。Socket.IOのイベントの正本は `packages/shared/src/types.ts`。
 
 ## このファイルと `.claude/rules/`
 
@@ -69,7 +69,8 @@ Arkはセッションに、task.mdの規約、復唱、失敗の記録、知識�
 - **`git push` はフォアグラウンドで実行する。** バックグラウンドだと、pushが終わる前にCodeRabbitへの返信が送られる
 - **セルフレビュー禁止。成果物は作った側と別のAIがレビューする。** Claudeが実装したら `/codex review` (Codex CLI) へ委ね、Codexが実装したらClaudeがレビューする
 - **push後のCIの結果とCodeRabbitの指摘は自分で確かめる** (`gh pr view <PR#> --json statusCheckRollup` など。自動で取るhookは撤去済み)
-- **CIの失敗は自分で直す。** エラーログを読み、根本の原因を直す。`--no-verify` でhookを飛ばす提案はしない
+- **CIの失敗は自分で直す。** エラーログを読み、根本の原因を直す
+- **テストが失敗したときに、`--no-verify` でhookを飛ばす提案をしない。** エラーログを確かめ、根本の原因を直す
 - **CodeRabbitのstatusが `error` (処理中) の間は、CIが通っていても監視をやめない。** `completed` かつ未解決スレッド0件を確かめてからやめる
 
 CodeRabbitの指摘への対応:
@@ -89,15 +90,17 @@ mainをpullしたあとは、`build-deploy` スキル (`.claude/skills/build-dep
 ```bash
 pnpm install --frozen-lockfile   # 同梱claudeの更新はinstallで初めて反映される
 pnpm build
-pkill -x ttyd                    # 再起動の直前に。省くとttydのポート (7680〜) が競合する
+pkill -x ttyd                    # 再起動の直前に
 pm2 restart claude-code-ark
 ```
+
+ttydはセッションごとの独立したプロセスで、残したままサーバーを再起動すると、同じポート (7680〜) を取れずに `EADDRINUSE` になり、ターミナルが表示されなくなる。そのため再起動の直前に必ずkillする。
 
 各手順の理由、pnpm 11が入らないときの対処、pm2のenv汚染の確かめ方はスキルに書いてある。
 
 ## 一般規約
 
-- **コマンドの実行を頼まれたら、すぐ実行する。** 説明や注意点だけ述べて実行しない、という振る舞いは禁止。「実行しますか?」の確認も要らない (このファイルが確認を求めている場合を除く)
+- **コマンドの実行を頼まれたら、すぐ実行する。** 説明や注意点だけ述べて実行しない、という振る舞いは禁止。「実行しますか?」の確認も要らない (`CLAUDE.md` や `.claude/rules/` が明示的に確認を求めている場合を除く)
 - **曖昧な指示 (「リファクタリングして」「修正して」「改善して」など) を受けたら、実装の前にやることを2文で要約し、ユーザーの確認を得る。** 修正の内容が具体的に書かれた指示なら確認は要らない
 
 ## 開発原則: レイヤーをまたぐ変更の検証

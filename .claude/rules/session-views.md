@@ -16,6 +16,10 @@ paths:
   - "packages/server/src/lib/session-orchestrator.ts"
   - "packages/server/src/lib/jsonl-tail-manager.ts"
   - "packages/server/src/lib/ttyd-*.ts"
+  - "packages/web/src/components/MobileLayout.tsx"
+  - "packages/web/src/lib/jsonl-event-parser.ts"
+  - "packages/web/src/lib/chat-render-items.ts"
+  - "packages/server/src/lib/tmux-manager.ts"
 ---
 
 # セッションの画面 (端末、会話、作業エリア)

@@ -3,6 +3,8 @@ paths:
   - "packages/server/src/lib/git-view*.ts"
   - "packages/web/src/components/git/**"
   - "packages/web/src/lib/git-*.ts"
+  - "packages/web/src/lib/codemirror-theme.ts"
+  - "packages/web/src/index.css"
 ---
 
 # Gitタブ

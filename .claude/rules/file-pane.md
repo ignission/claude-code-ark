@@ -8,6 +8,10 @@ paths:
   - "packages/web/src/hooks/useFileTabs.ts"
   - "packages/web/src/hooks/useViewerTabs.ts"
   - "packages/web/src/lib/file-*.ts"
+  - "packages/web/src/lib/codemirror-theme.ts"
+  - "packages/web/src/hooks/useTerminalLinkInjection.ts"
+  - "packages/web/src/components/SplitViewPane.tsx"
+  - "packages/web/src/pages/Dashboard.tsx"
 ---
 
 # ファイルペイン

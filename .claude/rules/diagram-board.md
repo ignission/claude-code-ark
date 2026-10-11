@@ -6,6 +6,7 @@ paths:
   - "packages/web/src/components/Diagram*.tsx"
   - "packages/web/src/lib/diagram-*.ts"
   - ".claude/skills/diagram-authoring/**"
+  - "packages/web/src/lib/visualize-conversation.ts"
 ---
 
 # セッションボード

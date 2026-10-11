@@ -6,6 +6,7 @@ paths:
   - "packages/web/src/lib/palette*.ts"
   - "packages/web/src/hooks/useTerminalLeaderKey.ts"
   - "packages/server/src/lib/diagram-keynav-layer.ts"
+  - "packages/web/src/components/DiagramPane.tsx"
 ---
 
 # キーボード操作 (ノーマルモード) とコマンドパレット

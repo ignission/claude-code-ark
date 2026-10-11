@@ -6,6 +6,7 @@ paths:
   - "packages/web/src/lib/browser-speech.ts"
   - "packages/web/src/lib/speech-text.ts"
   - "packages/server/src/lib/voice-diagnostic.ts"
+  - "packages/web/src/components/MobileSessionView.tsx"
 ---
 
 # 音声モード (iPhone)

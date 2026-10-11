@@ -3,6 +3,7 @@ paths:
   - "packages/server/src/lib/tmux-*.ts"
   - "packages/server/src/lib/bridge-collector.ts"
   - "packages/server/src/lib/session-orchestrator.ts"
+  - "packages/server/src/lib/usage-collector.ts"
 ---
 
 # tmux読み取りの結果型 (`TmuxReadResult`)
