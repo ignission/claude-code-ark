@@ -9,6 +9,13 @@
  * 動かしたときに、Chromiumがプロファイルのロックを見て先に動いている側へ合流し、
  * 起動直後に終了するのを避けるため。この場所は、前のサーバーが残したChromiumを
  * 見分ける目印にも使う (findStaleChromiumPids)。
+ *
+ * 起動できたとみなすのは、自分が起動した子プロセスがstderrに
+ * `DevTools listening on ws://127.0.0.1:<CDP_PORT>/...` を出したときだけ。
+ * ポートが応答するかどうかでは決めない。応答するのが自分のChromiumとは限らず、
+ * 同じポートで別のChromium (別のArk、Playwright、利用者のChrome) が待ち受けていると、
+ * 自分の子はポートを取れないのに起動できたように見え、他人のタブを視聴者へ配ってしまう。
+ * その行にあるURLを持っておき、ブリッジはポートではなくそのURLへつなぐ (getCdpEndpoint)。
  */
 
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
@@ -18,13 +25,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { BrowserSession } from "@ark/shared";
+import { BrowserCdpBridge } from "./browser-cdp-bridge.js";
+import { connectCdpUrl } from "./browser-cdp-client.js";
 import { CDP_PORT } from "./constants.js";
 import { getDataDir } from "./paths.js";
 
-/** CDPのエンドポイントが応答するまで待つ上限 (ミリ秒) */
+/** ChromiumがCDPのエンドポイントをstderrに出すまで待つ上限 (ミリ秒) */
 const CHROMIUM_START_TIMEOUT = 10000;
-/** CDPのエンドポイントを確かめる間隔 (ミリ秒) */
-const READY_POLL_INTERVAL = 200;
 /** 停止時にSIGTERMからSIGKILLまで待つ時間 (ミリ秒) */
 const KILL_GRACE_PERIOD = 3000;
 /** 前のサーバーが残したChromiumを止めるときに、SIGTERMからSIGKILLまで待つ時間 (ミリ秒) */
@@ -35,9 +42,9 @@ const STDERR_TAIL_LENGTH = 2000;
 /**
  * Chromiumバイナリを検索する
  * snap版はpm2/systemd環境でX11にアクセスできないため、
- * Playwright版のバイナリパス（chromium-* および chromium_headless_shell-*）を優先的に探す。
+ * Playwright版のバイナリパス (chromium-* および chromium_headless_shell-*) を優先的に探す。
  *
- * BrowserManager（ブラウザ機能）と HtmlScreenshotter（headless shell）の両方から呼ばれる。
+ * BrowserManager (ブラウザ機能) と HtmlScreenshotter (headless shell) の両方から呼ばれる。
  */
 export function findChromiumExecutable(
   options: { headlessShell?: boolean } = {}
@@ -48,7 +55,7 @@ export function findChromiumExecutable(
     try {
       const allDirs = fs.readdirSync(playwrightDir);
       // headlessShell=true の場合は chromium_headless_shell-* を優先
-      // false の場合は通常の chromium-* を優先（ブラウザ機能の用途）
+      // false の場合は通常の chromium-* を優先 (ブラウザ機能の用途)
       const prefix = options.headlessShell
         ? "chromium_headless_shell-"
         : "chromium-";
@@ -81,7 +88,7 @@ export function findChromiumExecutable(
     }
   }
 
-  // システムの Chromium（snap版でないもの）
+  // システムの Chromium (snap版でないもの)
   for (const cmd of ["chromium-browser", "chromium", "google-chrome"]) {
     try {
       execFileSync("which", [cmd], { stdio: "pipe" });
@@ -93,8 +100,6 @@ export function findChromiumExecutable(
 
   return null;
 }
-
-/** stop時のSIGTERM→SIGKILL待機時間（ミリ秒） */
 
 function getProfileDir(): string {
   return path.join(getDataDir(), "browser-profile");
@@ -122,8 +127,10 @@ function chromiumFlags(profileDir: string): string[] {
  * `ps -eo pid=,args=` の出力から、同じプロファイルを使うChromiumの親プロセスを拾う。
  * 子 (`--type=renderer` など) は親を止めれば消えるので拾わない。
  *
- * 引数の完全一致で見分ける。前方一致にすると、別のArkのプロファイル
- * (`<profileDir>-backup` のような場所) を使うChromiumまで止めてしまう。
+ * 引数の並びを空白で割らずに、文字列のまま探す。プロファイルの場所が空白を含むと
+ * (macOSの `~/Library/Application Support/...`)、割った時点で一致しなくなる。
+ * 目印の前は空白、後ろは空白か行末であることを確かめる。前方一致だけにすると、
+ * 別のArkのプロファイル (`<profileDir>-backup` のような場所) を使うChromiumまで止めてしまう。
  */
 export function findStaleChromiumPids(
   psOutput: string,
@@ -136,13 +143,107 @@ export function findStaleChromiumPids(
     const m = line.trim().match(/^(\d+)\s+(.*)$/);
     if (!m) continue;
     const pid = Number.parseInt(m[1], 10);
-    const args = m[2].split(/\s+/);
-    if (!args.includes(marker)) continue;
-    if (args.some(a => a.startsWith("--type="))) continue;
+    const args = m[2];
+    if (!hasArgument(args, marker)) continue;
+    if (args.includes(" --type=")) continue;
     if (pid === ownChildPid) continue;
     pids.push(pid);
   }
   return pids;
+}
+
+/** `args` (空白でつないだ引数の並び) に、`argument` が1つの引数として入っているか */
+function hasArgument(args: string, argument: string): boolean {
+  let from = 0;
+  for (;;) {
+    const at = args.indexOf(argument, from);
+    if (at < 0) return false;
+    const end = at + argument.length;
+    if (args[at - 1] === " " && (end === args.length || args[end] === " ")) {
+      return true;
+    }
+    from = at + 1;
+  }
+}
+
+/**
+ * Chromiumのstderrから、CDPのエンドポイント (`DevTools listening on <URL>` の行) を取り出す。
+ * 受け付けるのは `ws://127.0.0.1:<port>/` で始まるURLだけで、無ければ `null`。
+ * 行末まで届いていない行は読まない。チャンクの切れ目で、途中までのURLを使わないため。
+ */
+export function parseDevToolsEndpoint(
+  stderrText: string,
+  port: number
+): string | null {
+  const prefix = `ws://127.0.0.1:${port}/`;
+  for (const m of stderrText.matchAll(
+    /DevTools listening on (ws:\/\/\S+)\r?\n/g
+  )) {
+    if (m[1].startsWith(prefix)) return m[1];
+  }
+  return null;
+}
+
+/** `waitForDevToolsEndpoint` が使う、子プロセスの部分。テストで差し替えられるようにする */
+interface ChromiumLike {
+  stderr: Pick<EventEmitter, "on" | "off"> | null;
+  once(event: "exit", listener: (code: number | null) => void): unknown;
+  once(event: "error", listener: (error: Error) => void): unknown;
+  off(event: "exit", listener: (code: number | null) => void): unknown;
+  off(event: "error", listener: (error: Error) => void): unknown;
+}
+
+/**
+ * 子プロセスがCDPのエンドポイントをstderrに出すまで待ち、そのURLを返す。
+ * 待つ間に終了したとき、起動できなかったとき、時間切れのときはrejectする。
+ * エラーにはstderrの末尾を付ける (ポートを取れなかった理由や、足りないライブラリはそこに出る)。
+ */
+export function waitForDevToolsEndpoint(
+  chromium: ChromiumLike,
+  port: number,
+  timeoutMs: number
+): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    // 行がチャンクをまたいで届くので、ためた文字列から探す
+    let received = "";
+
+    const finish = () => {
+      clearTimeout(timeout);
+      chromium.stderr?.off("data", onData);
+      chromium.off("exit", onEarlyExit);
+      chromium.off("error", onEarlyError);
+    };
+    const fail = (message: string) => {
+      finish();
+      const tail = received.trim();
+      reject(new Error(tail ? `${message}\n${tail}` : message));
+    };
+
+    const onData = (chunk: Buffer) => {
+      received += chunk.toString();
+      const endpoint = parseDevToolsEndpoint(received, port);
+      if (endpoint) {
+        finish();
+        resolve(endpoint);
+        return;
+      }
+      received = received.slice(-STDERR_TAIL_LENGTH);
+    };
+    const onEarlyExit = (code: number | null) => {
+      fail(`Chromiumが起動の途中で終了しました (code: ${code})`);
+    };
+    const onEarlyError = (error: Error) => {
+      fail(`Chromiumを起動できません: ${error.message}`);
+    };
+    const timeout = setTimeout(
+      () => fail("Chromiumの起動がタイムアウトしました"),
+      timeoutMs
+    );
+
+    chromium.stderr?.on("data", onData);
+    chromium.once("exit", onEarlyExit);
+    chromium.once("error", onEarlyError);
+  });
 }
 
 /**
@@ -173,6 +274,8 @@ function sleep(ms: number): Promise<void> {
 export class BrowserManager extends EventEmitter {
   private chromium: ChildProcess | null = null;
   private session: BrowserSession | null = null;
+  /** 動いているChromiumが自分でstderrに出したCDPのエンドポイント。セッションと同じ間だけ持つ */
+  private cdpEndpoint: string | null = null;
   /** 起動の途中のPromise。同時に呼ばれた `start` が2つ起動しないように共有する */
   private pendingStart: Promise<BrowserSession> | null = null;
   private available = true;
@@ -200,6 +303,14 @@ export class BrowserManager extends EventEmitter {
     return [CDP_PORT];
   }
 
+  /**
+   * CDPのエンドポイント (`ws://127.0.0.1:<CDP_PORT>/devtools/browser/<id>`)。
+   * Chromiumが動いていなければ `null`。
+   */
+  getCdpEndpoint(): string | null {
+    return this.cdpEndpoint;
+  }
+
   /** Chromiumを起動する。動いていればそのセッションを返し、起動の途中ならそれを待つ */
   async start(initialUrl = "about:blank"): Promise<BrowserSession> {
     validateBrowserUrl(initialUrl);
@@ -222,7 +333,8 @@ export class BrowserManager extends EventEmitter {
     await this.reapStale();
 
     const profileDir = getProfileDir();
-    fs.mkdirSync(profileDir, { recursive: true });
+    // ほかの利用者に読ませない。localhostのアプリのcookieとlocalStorageが入る
+    fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 });
 
     // `--` で区切り、URLがフラグとして読まれないようにする
     const chromium = spawn(
@@ -232,21 +344,26 @@ export class BrowserManager extends EventEmitter {
     );
     this.chromium = chromium;
 
-    // stderrは読み捨てる。読まないとパイプが詰まり、Chromiumが書き込みで止まる。
-    // 末尾だけ持ち、起動に失敗したときのエラーに付ける
-    let stderrTail = "";
-    chromium.stderr?.on("data", (chunk: Buffer) => {
-      stderrTail = (stderrTail + chunk.toString()).slice(-STDERR_TAIL_LENGTH);
+    // 子プロセスが生きている間ずっと付けておく。`error` (シグナルの送信の失敗など) を
+    // 受けるリスナーが無い瞬間があると、そこで出た `error` がサーバーを落とす
+    chromium.on("error", error => {
+      console.warn(`[BrowserManager] Chromiumのエラー: ${error.message}`);
     });
+    // stderrは起動のあとも読み捨て続ける。読まないとパイプが詰まり、Chromiumが書き込みで止まる
+    chromium.stderr?.on("data", () => {});
 
+    let endpoint: string;
     try {
-      await this.waitUntilReady(chromium);
+      endpoint = await waitForDevToolsEndpoint(
+        chromium,
+        CDP_PORT,
+        CHROMIUM_START_TIMEOUT
+      );
     } catch (error) {
+      // ポートを取れなかったChromiumは、CDPを開かないまま動き続ける。残さず止める
       await this.killProcess(chromium);
       if (this.chromium === chromium) this.chromium = null;
-      const message = error instanceof Error ? error.message : String(error);
-      const tail = stderrTail.trim();
-      throw new Error(tail ? `${message}\n${tail}` : message);
+      throw error;
     }
 
     const id = randomUUID();
@@ -254,13 +371,12 @@ export class BrowserManager extends EventEmitter {
     // Chromiumが自分で落ちたときも、ここを通る
     chromium.once("exit", () => {
       if (this.chromium === chromium) this.chromium = null;
-      if (this.session?.id === id) this.session = null;
+      if (this.session?.id === id) {
+        this.session = null;
+        this.cdpEndpoint = null;
+      }
       console.log(`[BrowserManager] Chromiumが終了しました: ${id}`);
       this.emit("session:stopped", id);
-    });
-    // 起動後の `error` (シグナルの送信の失敗など) でサーバーを落とさない
-    chromium.on("error", error => {
-      console.warn(`[BrowserManager] Chromiumのエラー: ${error.message}`);
     });
 
     const session: BrowserSession = {
@@ -269,62 +385,10 @@ export class BrowserManager extends EventEmitter {
       createdAt: new Date(),
     };
     this.session = session;
+    this.cdpEndpoint = endpoint;
     console.log(`[BrowserManager] Chromiumを起動しました: ${id}`);
     this.emit("session:started", session);
     return session;
-  }
-
-  /**
-   * CDPのエンドポイントが応答するまで待つ。
-   * 待つ間にChromiumが終了したとき、起動できなかったとき、時間切れのときはrejectする。
-   */
-  private waitUntilReady(chromium: ChildProcess): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      let settled = false;
-      let pollTimer: NodeJS.Timeout | null = null;
-
-      const settle = (error?: Error) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(overallTimeout);
-        if (pollTimer) clearTimeout(pollTimer);
-        chromium.off("exit", onEarlyExit);
-        chromium.off("error", onEarlyError);
-        if (error) reject(error);
-        else resolve();
-      };
-
-      const overallTimeout = setTimeout(
-        () => settle(new Error("Chromiumの起動がタイムアウトしました")),
-        CHROMIUM_START_TIMEOUT
-      );
-      const onEarlyExit = (code: number | null) => {
-        settle(new Error(`Chromiumが起動の途中で終了しました (code: ${code})`));
-      };
-      const onEarlyError = (error: Error) => {
-        settle(new Error(`Chromiumを起動できません: ${error.message}`));
-      };
-      chromium.once("exit", onEarlyExit);
-      chromium.once("error", onEarlyError);
-
-      const checkReady = async () => {
-        try {
-          const res = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`, {
-            signal: AbortSignal.timeout(500),
-          });
-          if (res.ok) {
-            settle();
-            return;
-          }
-        } catch {
-          // まだ待ち受けていない
-        }
-        if (!settled) {
-          pollTimer = setTimeout(checkReady, READY_POLL_INTERVAL);
-        }
-      };
-      void checkReady();
-    });
   }
 
   /**
@@ -450,3 +514,15 @@ function hasExited(proc: ChildProcess): boolean {
 }
 
 export const browserManager = new BrowserManager();
+
+/**
+ * ブラウザ機能のブリッジ。`browserManager` が起動したChromiumのエンドポイントへつなぐ。
+ * ポート番号ではつながない。同じポートで待ち受けている別のChromiumへつながないため。
+ */
+export const browserBridge = new BrowserCdpBridge(async () => {
+  const endpoint = browserManager.getCdpEndpoint();
+  if (!endpoint) {
+    throw new Error("Chromiumが動いていないため、ブラウザへ接続できません");
+  }
+  return connectCdpUrl(endpoint);
+});

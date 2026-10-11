@@ -1,8 +1,136 @@
-import { describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   findStaleChromiumPids,
+  parseDevToolsEndpoint,
   validateBrowserUrl,
+  waitForDevToolsEndpoint,
 } from "./browser-manager.js";
+
+const ENDPOINT = "ws://127.0.0.1:9222/devtools/browser/0a1b-2c3d";
+
+describe("parseDevToolsEndpoint", () => {
+  it("自分のポートのエンドポイントを取り出す", () => {
+    const text = `[warn] something\n\nDevTools listening on ${ENDPOINT}\n`;
+    expect(parseDevToolsEndpoint(text, 9222)).toBe(ENDPOINT);
+  });
+  it("CRLFの行末でも取り出す", () => {
+    expect(
+      parseDevToolsEndpoint(`DevTools listening on ${ENDPOINT}\r\n`, 9222)
+    ).toBe(ENDPOINT);
+  });
+  it("行が終わるまでは取り出さない (途中で切れたidを使わない)", () => {
+    expect(
+      parseDevToolsEndpoint(`DevTools listening on ${ENDPOINT}`, 9222)
+    ).toBeNull();
+  });
+  it("別のポートは受け付けない", () => {
+    expect(
+      parseDevToolsEndpoint(`DevTools listening on ${ENDPOINT}\n`, 9223)
+    ).toBeNull();
+    // 前方一致で92220を9222と読まない
+    expect(
+      parseDevToolsEndpoint(
+        "DevTools listening on ws://127.0.0.1:92220/devtools/browser/x\n",
+        9222
+      )
+    ).toBeNull();
+  });
+  it("127.0.0.1以外のホストは受け付けない", () => {
+    expect(
+      parseDevToolsEndpoint(
+        "DevTools listening on ws://0.0.0.0:9222/devtools/browser/x\n",
+        9222
+      )
+    ).toBeNull();
+    expect(
+      parseDevToolsEndpoint(
+        "DevTools listening on ws://127.0.0.1.example.com:9222/devtools/browser/x\n",
+        9222
+      )
+    ).toBeNull();
+  });
+  it("行が無ければnull", () => {
+    expect(
+      parseDevToolsEndpoint("Cannot start http server for devtools.\n", 9222)
+    ).toBeNull();
+  });
+});
+
+describe("waitForDevToolsEndpoint", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function fakeChild() {
+    const child = new EventEmitter() as EventEmitter & {
+      stderr: EventEmitter;
+    };
+    child.stderr = new EventEmitter();
+    return child;
+  }
+
+  it("stderrの行が2つのチャンクに分かれて届いても、エンドポイントを返す", async () => {
+    const child = fakeChild();
+    const result = waitForDevToolsEndpoint(child, 9222, 10000);
+    child.stderr.emit("data", Buffer.from("\nDevTools listening on ws://127."));
+    child.stderr.emit(
+      "data",
+      Buffer.from("0.0.1:9222/devtools/browser/0a1b-2c3d\n")
+    );
+    await expect(result).resolves.toBe(ENDPOINT);
+    // 終わったら、待つ間のリスナーを残さない
+    expect(child.stderr.listenerCount("data")).toBe(0);
+    expect(child.listenerCount("exit")).toBe(0);
+    expect(child.listenerCount("error")).toBe(0);
+  });
+
+  it("時間切れのエラーにstderrの末尾を付ける", async () => {
+    const child = fakeChild();
+    const result = waitForDevToolsEndpoint(child, 9222, 10000);
+    const assertion = expect(result).rejects.toThrow(
+      /タイムアウト[\s\S]*Cannot start http server for devtools/
+    );
+    child.stderr.emit(
+      "data",
+      Buffer.from("Cannot start http server for devtools.\n")
+    );
+    await vi.advanceTimersByTimeAsync(10000);
+    await assertion;
+  });
+
+  it("別のポートの行では起動したとみなさず、時間切れになる", async () => {
+    const child = fakeChild();
+    const result = waitForDevToolsEndpoint(child, 9223, 10000);
+    const assertion = expect(result).rejects.toThrow("タイムアウト");
+    child.stderr.emit(
+      "data",
+      Buffer.from(`DevTools listening on ${ENDPOINT}\n`)
+    );
+    await vi.advanceTimersByTimeAsync(10000);
+    await assertion;
+  });
+
+  it("待つ間に終了したらrejectする", async () => {
+    const child = fakeChild();
+    const result = waitForDevToolsEndpoint(child, 9222, 10000);
+    child.stderr.emit("data", Buffer.from("error while loading libnss3.so\n"));
+    child.emit("exit", 127);
+    await expect(result).rejects.toThrow(
+      /起動の途中で終了しました \(code: 127\)[\s\S]*libnss3/
+    );
+  });
+
+  it("起動できなければrejectする", async () => {
+    const child = fakeChild();
+    const result = waitForDevToolsEndpoint(child, 9222, 10000);
+    child.emit("error", new Error("spawn ENOENT"));
+    await expect(result).rejects.toThrow("spawn ENOENT");
+  });
+});
 
 describe("findStaleChromiumPids", () => {
   const dir = "/data/browser-profile";
@@ -19,6 +147,20 @@ describe("findStaleChromiumPids", () => {
   });
   it("自分の子は拾わない", () => {
     expect(findStaleChromiumPids(ps, dir, 101)).toEqual([]);
+  });
+  it("空白を含むプロファイルの場所でも拾う", () => {
+    const spaced = "/Users/x/Library/Application Support/Ark/browser-profile";
+    const output = [
+      `  201 /Applications/Chromium.app/Contents/MacOS/Chromium --headless=new --user-data-dir=${spaced} --remote-debugging-port=9222 -- about:blank`,
+      `  202 /Applications/Chromium.app/Contents/MacOS/Chromium Helper --type=renderer --user-data-dir=${spaced}`,
+      `  203 /Applications/Chromium.app/Contents/MacOS/Chromium --user-data-dir=${spaced}-backup`,
+      `  204 /Applications/Chromium.app/Contents/MacOS/Chromium --user-data-dir=${spaced}`,
+    ].join("\n");
+    expect(findStaleChromiumPids(output, spaced)).toEqual([201, 204]);
+  });
+  it("引数の途中に同じ文字列があっても、引数の先頭でなければ拾わない", () => {
+    const output = `  301 /opt/tool --note=x--user-data-dir=${dir}`;
+    expect(findStaleChromiumPids(output, dir)).toEqual([]);
   });
 });
 

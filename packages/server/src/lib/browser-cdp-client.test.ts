@@ -1,6 +1,11 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { CdpClient, type CdpSocket } from "./browser-cdp-client.js";
+import { WebSocketServer } from "ws";
+import {
+  CdpClient,
+  type CdpSocket,
+  connectCdpUrl,
+} from "./browser-cdp-client.js";
 
 function fakeSocket() {
   const emitter = new EventEmitter();
@@ -145,5 +150,41 @@ describe("CDP_PORT", () => {
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
     vi.unstubAllEnvs();
+  });
+});
+
+describe("connectCdpUrl", () => {
+  it("渡されたURLへつなぎ、コマンドをやり取りできる", async () => {
+    // 空いているポートをOSに選ばせる
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await new Promise<void>(resolve => server.once("listening", resolve));
+    server.on("connection", (ws, req) => {
+      ws.on("message", data => {
+        const { id } = JSON.parse(String(data));
+        ws.send(JSON.stringify({ id, result: { path: req.url } }));
+      });
+    });
+    const { port } = server.address() as { port: number };
+    try {
+      const client = await connectCdpUrl(
+        `ws://127.0.0.1:${port}/devtools/browser/abc`
+      );
+      await expect(client.send("Browser.getVersion")).resolves.toEqual({
+        path: "/devtools/browser/abc",
+      });
+      client.close();
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  it("つなげなければrejectする", async () => {
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await new Promise<void>(resolve => server.once("listening", resolve));
+    const { port } = server.address() as { port: number };
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await expect(
+      connectCdpUrl(`ws://127.0.0.1:${port}/devtools/browser/abc`)
+    ).rejects.toThrow();
   });
 });

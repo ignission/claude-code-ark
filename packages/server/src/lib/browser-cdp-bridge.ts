@@ -15,13 +15,14 @@
  * - タブが使えなくなったら (sessionのdetach、クラッシュ、screencastの開始の失敗)、
  *   CDPが切れたときと同じに扱う。視聴者をerrorで閉じて接続ごと捨て、次の `attach` で
  *   タブを探すところからやり直す
+ * - どのChromiumへつなぐかは、このモジュールでは決めない。つなぎ方は `connect` で受け取る。
+ *   サーバーが使う1つは、Chromiumを起動する側 (browser-manager.ts の `browserBridge`) が作る
  * - ビューポートは1つで、最後に寸法を送った視聴者に合わせる。タブが1つなので、
  *   視聴者ごとに別の寸法は持てない
  */
 
 import type { BrowserClientMessage, BrowserServerMessage } from "@ark/shared";
-import { type CdpClient, connectCdp } from "./browser-cdp-client.js";
-import { CDP_PORT } from "./constants.js";
+import type { CdpClient } from "./browser-cdp-client.js";
 
 /** CdpClientのうちブリッジが使う部分。テストで差し替えられるようにする */
 export type CdpLike = Pick<
@@ -519,6 +520,9 @@ export class BrowserCdpBridge {
       const page = { cdp, sessionId };
       this.page = page;
       this.appliedViewport = viewport;
+      // 準備の途中に届いたresizeは、デバウンスが明けた時点でタブが無く、当たっていない。
+      // screencastはまだ始めていないので、ここでは寸法だけが変わる
+      if (!sameViewport(this.viewport, viewport)) this.applyViewport();
       return page;
     } catch (error) {
       // 準備の途中で失敗した接続は使わない。残すと、つなぎ直すたびに接続が増える
@@ -776,5 +780,3 @@ function closeWithError(ws: ViewerSocket, message: string): void {
     terminate(ws);
   }
 }
-
-export const browserBridge = new BrowserCdpBridge(() => connectCdp(CDP_PORT));

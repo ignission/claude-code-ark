@@ -638,7 +638,7 @@ export interface ServerToClientEvents {
     error?: string;
   }) => void;
 
-  // ブラウザセッション（noVNC）
+  // ブラウザセッション
   "browser:started": (session: BrowserSession) => void;
   "browser:stopped": (data: { browserId: string }) => void;
   "browser:error": (data: { message: string }) => void;
@@ -946,7 +946,7 @@ export interface ClientToServerEvents {
   "file:subscribe": (data: { sessionId: string; filePath: string }) => void;
   "file:unsubscribe": (data: { sessionId: string; filePath: string }) => void;
 
-  // ブラウザセッション（noVNC）
+  // ブラウザセッション
   "browser:start": () => void;
   "browser:stop": (data: { browserId: string }) => void;
   "browser:navigate": (data: { url: string }) => void;

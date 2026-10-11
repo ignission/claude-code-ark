@@ -641,6 +641,43 @@ describe("BrowserCdpBridge", () => {
       expect(vi.getTimerCount()).toBe(0);
     });
 
+    it("準備の途中に受けたresizeは、タブが使えるようになったときに当てる", async () => {
+      const cdp = fakeCdp();
+      cdp.holdOn("Emulation.setDeviceMetricsOverride");
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      expect(cdp.count("Emulation.setDeviceMetricsOverride")).toBe(1);
+      viewer.receive({
+        t: "resize",
+        width: 500,
+        height: 600,
+        dpr: 1,
+        mobile: false,
+      });
+      // デバウンスが先に明ける。タブはまだ使えない
+      await vi.advanceTimersByTimeAsync(200);
+      expect(cdp.count("Emulation.setDeviceMetricsOverride")).toBe(1);
+      cdp.stopHolding("Emulation.setDeviceMetricsOverride");
+      cdp.release("Emulation.setDeviceMetricsOverride");
+      await vi.runAllTimersAsync();
+      expect(cdp.count("Emulation.setDeviceMetricsOverride")).toBe(2);
+      expect(cdp.last("Emulation.setDeviceMetricsOverride")?.params).toEqual({
+        width: 500,
+        height: 600,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      // screencastは新しい寸法で1回だけ始める。始め直しはしない
+      expect(cdp.count("Page.startScreencast")).toBe(1);
+      expect(cdp.count("Page.stopScreencast")).toBe(0);
+      expect(cdp.last("Page.startScreencast")?.params).toMatchObject({
+        maxWidth: 500,
+        maxHeight: 600,
+      });
+    });
+
     it("切れる前に受けたresizeは、つなぎ直した接続でscreencastを始め直さない", async () => {
       const first = fakeCdp();
       const second = fakeCdp();

@@ -147,21 +147,12 @@ export class CdpClient {
   }
 }
 
-/** `http://127.0.0.1:<port>/json/version` からブラウザのエンドポイントを得てつなぐ */
-export async function connectCdp(port: number): Promise<CdpClient> {
-  const res = await fetch(`http://127.0.0.1:${port}/json/version`, {
-    signal: AbortSignal.timeout(3000),
-  });
-  if (!res.ok)
-    throw new Error(`CDPのエンドポイントを取得できません (HTTP ${res.status})`);
-  const { webSocketDebuggerUrl } = (await res.json()) as {
-    webSocketDebuggerUrl?: string;
-  };
-  // 応答のURLをそのまま信じず、想定したポートの127.0.0.1であることを確かめる
-  if (!webSocketDebuggerUrl?.startsWith(`ws://127.0.0.1:${port}/`)) {
-    throw new Error("CDPのエンドポイントが想定と違います");
-  }
-  const ws = new WebSocket(webSocketDebuggerUrl, {
+/**
+ * ブラウザのエンドポイント (`ws://127.0.0.1:<port>/devtools/browser/<id>`) へつなぐ。
+ * URLは、起動した側がChromiumの出力から得たものを渡す (browser-manager.ts)。
+ */
+export async function connectCdpUrl(wsUrl: string): Promise<CdpClient> {
+  const ws = new WebSocket(wsUrl, {
     perMessageDeflate: false,
     handshakeTimeout: 3000,
   });
