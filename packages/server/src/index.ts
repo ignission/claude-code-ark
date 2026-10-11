@@ -1363,25 +1363,15 @@ export async function startServer(
 
   /**
    * WebSocket upgradeリクエストの認証を検証する
-   * authManagerが有効な場合、Quick Tunnel経由のアクセスのみトークン認証を要求する。
-   * ローカル/プライベートIPは認証スキップ。
+   * authManagerが有効な場合、Quick Tunnel経由のアクセスのみトークン認証を要求する
+   * (判定は authManager.requiresToken)。それ以外の経路は認証スキップ。
    * @returns 認証OKならtrue、失敗時はfalse（呼び出し側でsocket.destroy()する）
    */
   function authorizeWebSocketUpgrade(
     req: import("node:http").IncomingMessage,
     url: URL
   ): boolean {
-    if (!authManager.isEnabled()) {
-      return true;
-    }
-
-    // Quick Tunnel以外（ローカル等）はスキップ
-    const host =
-      (req.headers["x-forwarded-host"] as string | undefined) ||
-      req.headers.host;
-    const hostname = host?.split(":")[0] ?? "";
-    const isQuickTunnel = hostname.endsWith(".trycloudflare.com");
-    if (!isQuickTunnel) {
+    if (!authManager.requiresToken(req.headers)) {
       return true;
     }
 

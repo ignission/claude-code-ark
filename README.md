@@ -21,7 +21,7 @@ It drives the real interactive `claude` CLI inside tmux, so your plan, your sett
 </p>
 
 > [!WARNING]
-> Ark is experimental and built for **one user**. Anyone who gets past authentication can reach every session, and requests from localhost or a private IP skip authentication altogether. Do not share an Ark instance with other people, and be careful when you expose it through a tunnel.
+> Ark is experimental and built for **one user**. Anyone who gets past authentication can reach every session, and Ark only asks for its token on requests that come through a Quick Tunnel. Requests that reach the server directly (localhost, your LAN) are not authenticated by Ark, and a Named Tunnel relies on Cloudflare Access. Do not share an Ark instance with other people, and be careful when you expose it through a tunnel.
 
 ## Quickstart
 

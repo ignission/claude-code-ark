@@ -6,6 +6,7 @@
  */
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import type { IncomingHttpHeaders } from "node:http";
 import type { NextFunction, Request, Response } from "express";
 import type { Socket } from "socket.io";
 
@@ -88,6 +89,28 @@ export class AuthManager {
     // ポート番号を除去してホスト名を取得
     const hostname = host.split(":")[0];
     return hostname.endsWith(".trycloudflare.com");
+  }
+
+  /**
+   * トークンを求めるリクエストかどうかを判定する。
+   *
+   * `Host` と `X-Forwarded-Host` のどれか 1 つでも Quick Tunnel のドメインなら求める。
+   * `X-Forwarded-Host` はクライアントが自由に付けられ、Cloudflare もそのまま通すので、
+   * これで `Host` の判定を上書きさせない (上書きできると、ヘッダーを 1 つ足すだけで
+   * トークンなしで通れる)。`X-Forwarded-Host` も見るのは、手前のプロキシが `Host` を
+   * 書き換える構成のため。
+   */
+  requiresToken(headers: IncomingHttpHeaders): boolean {
+    if (!this.enabled) {
+      return false;
+    }
+    const forwarded = headers["x-forwarded-host"];
+    const forwardedHosts = (Array.isArray(forwarded) ? forwarded : [forwarded])
+      .flatMap(value => value?.split(",") ?? [])
+      .map(value => value.trim());
+    return [headers.host, ...forwardedHosts].some(host =>
+      this.isQuickTunnelRequest(host)
+    );
   }
 
   /**
@@ -213,16 +236,9 @@ export class AuthManager {
    */
   httpMiddleware() {
     return (req: Request, res: Response, next: NextFunction) => {
-      if (!this.enabled) {
-        return next();
-      }
-
       // Quick Tunnel経由のアクセスのみ認証を要求
-      // X-Forwarded-Host があればプロキシ経由なのでそちらを優先
-      const host =
-        (req.headers["x-forwarded-host"] as string) || req.headers.host;
-      if (!this.isQuickTunnelRequest(host)) {
-        return next(); // Quick Tunnel以外は認証スキップ
+      if (!this.requiresToken(req.headers)) {
+        return next();
       }
 
       // 静的アセットは認証スキップ
@@ -247,15 +263,9 @@ export class AuthManager {
    */
   socketMiddleware() {
     return (socket: Socket, next: (err?: Error) => void) => {
-      if (!this.enabled) {
-        return next();
-      }
-
       // Quick Tunnel経由のアクセスのみ認証を要求
-      const headers = socket.handshake.headers;
-      const host = (headers["x-forwarded-host"] as string) || headers.host;
-      if (!this.isQuickTunnelRequest(host)) {
-        return next(); // Quick Tunnel以外は認証スキップ
+      if (!this.requiresToken(socket.handshake.headers)) {
+        return next();
       }
 
       // handshakeのauthまたはqueryからトークンを取得
