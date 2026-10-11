@@ -1,9 +1,6 @@
 {
   "name": "Ark",
   "short_name": "Ark",
-  "id": "/",
-  "start_url": "/",
-  "scope": "/",
   "display": "standalone",
   "background_color": "#17130f",
   "theme_color": "#17130f",

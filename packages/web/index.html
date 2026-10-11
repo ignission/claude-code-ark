@@ -21,6 +21,8 @@
       ホーム画面に追加したとき、Safariの枠なしで単体のアプリとして開くための指定。
       manifestの取得は既定でcookieを送らず、Cloudflare Accessの内側では
       ログイン画面へ飛ばされて失敗するので use-credentials を付ける。
+      manifestに start_url は書かない。書くと、Quick TunnelのURL (?token=... つき) から
+      追加したアプリがトークンを落として起動し、401になる。省くと追加した時点のURLで開く。
     -->
     <link
       rel="manifest"
