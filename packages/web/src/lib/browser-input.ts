@@ -41,6 +41,8 @@ export interface WheelLike extends MouseLike {
 const IME_KEYCODE = 229;
 /** 行単位のwheel (Firefoxなど) を直すときの1行の高さ */
 const WHEEL_LINE_PX = 40;
+/** ページ単位のwheelを直すときの1ページの高さ */
+const WHEEL_PAGE_PX = 800;
 
 export function modifiersOf(e: ModifierKeys): number {
   return (
@@ -53,14 +55,19 @@ export function modifiersOf(e: ModifierKeys): number {
 
 /** 貼り付けはキーとして送らず、pasteイベントの文字列を送る */
 export function isPasteShortcut(e: KeyLike): boolean {
-  return (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "v";
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return false;
+  if (e.key.toLowerCase() === "v") return true;
+  // キリル配列などは key が v にならない。ASCIIの英字ならDvorakなどの配列なので key に従う
+  return e.code === "KeyV" && !/^[a-zA-Z]$/.test(e.key);
 }
 
 function textOf(e: KeyLike): string | undefined {
-  if (e.ctrlKey || e.metaKey) return undefined;
+  if (e.metaKey) return undefined;
+  const isSingleChar = [...e.key].length === 1; // サロゲートペアは1文字に数える
+  // WindowsとLinuxのAltGrは ctrlKey と altKey の両方を報告する。文字キーとして扱う
+  if (e.ctrlKey && !(e.altKey && isSingleChar)) return undefined;
   if (e.key === "Enter") return "\r";
-  // key が1文字なら、そのキーが生む文字 (サロゲートペアは1文字に数える)
-  return [...e.key].length === 1 ? e.key : undefined;
+  return isSingleChar ? e.key : undefined;
 }
 
 export function keyMessage(
@@ -104,7 +111,8 @@ export function wheelMessage(
   e: WheelLike,
   origin: { left: number; top: number }
 ): BrowserClientMessage {
-  const scale = e.deltaMode === 1 ? WHEEL_LINE_PX : 1;
+  const scale =
+    e.deltaMode === 2 ? WHEEL_PAGE_PX : e.deltaMode === 1 ? WHEEL_LINE_PX : 1;
   return {
     t: "mouse",
     type: "wheel",

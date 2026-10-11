@@ -50,6 +50,12 @@ export const DISPLAY_START = 99;
  * ポートを分けるためのもの。
  */
 export const CDP_PORT = (() => {
-  const n = Number(process.env.ARK_CDP_PORT);
-  return Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : 9222;
+  const raw = process.env.ARK_CDP_PORT;
+  if (raw === undefined || raw === "") return 9222;
+  const n = Number(raw);
+  if (Number.isInteger(n) && n >= 1024 && n <= 65535) return n;
+  console.warn(
+    `[constants] ARK_CDP_PORT=${raw} は1024〜65535の整数ではないため、9222を使います`
+  );
+  return 9222;
 })();

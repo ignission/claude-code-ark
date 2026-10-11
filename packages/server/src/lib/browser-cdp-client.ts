@@ -61,7 +61,13 @@ export class CdpClient {
         resolve: resolve as (v: unknown) => void,
         reject,
       });
-      this.socket.send(JSON.stringify({ id, method, params, sessionId }));
+      try {
+        this.socket.send(JSON.stringify({ id, method, params, sessionId }));
+      } catch (e) {
+        // CLOSING/CONNECTING のwsは同期的に投げる。待ちを残さない
+        this.pending.delete(id);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      }
     });
   }
 
@@ -89,7 +95,10 @@ export class CdpClient {
       sessionId?: string;
     };
     try {
-      msg = JSON.parse(String(data));
+      const parsed: unknown = JSON.parse(String(data));
+      // null や数値などオブジェクトでないJSONは扱わない
+      if (typeof parsed !== "object" || parsed === null) return;
+      msg = parsed;
     } catch {
       return;
     }
@@ -108,7 +117,15 @@ export class CdpClient {
     }
     if (typeof msg.method === "string") {
       for (const listener of this.listeners.get(msg.method) ?? []) {
-        listener(msg.params, msg.sessionId);
+        try {
+          listener(msg.params, msg.sessionId);
+        } catch (e) {
+          // 1つのリスナーの例外で、後ろのリスナーとプロセスを巻き込まない
+          console.warn(
+            `[CdpClient] ${msg.method} のリスナーが失敗しました:`,
+            e
+          );
+        }
       }
     }
   }
@@ -120,7 +137,13 @@ export class CdpClient {
       entry.reject(new Error(CLOSED_MESSAGE));
     }
     this.pending.clear();
-    for (const listener of this.closeListeners) listener();
+    for (const listener of this.closeListeners) {
+      try {
+        listener();
+      } catch (e) {
+        console.warn("[CdpClient] closeのリスナーが失敗しました:", e);
+      }
+    }
   }
 }
 
@@ -138,7 +161,10 @@ export async function connectCdp(port: number): Promise<CdpClient> {
   if (!webSocketDebuggerUrl?.startsWith(`ws://127.0.0.1:${port}/`)) {
     throw new Error("CDPのエンドポイントが想定と違います");
   }
-  const ws = new WebSocket(webSocketDebuggerUrl, { perMessageDeflate: false });
+  const ws = new WebSocket(webSocketDebuggerUrl, {
+    perMessageDeflate: false,
+    handshakeTimeout: 3000,
+  });
   await new Promise<void>((resolve, reject) => {
     ws.once("open", () => resolve());
     ws.once("error", reject);

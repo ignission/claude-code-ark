@@ -99,6 +99,24 @@ describe("keyMessage", () => {
   it("upにはtextを付けない", () => {
     expect(keyMessage(key, "up")).not.toHaveProperty("text");
   });
+  it("AltGr (Ctrl+Alt) で打つ1文字にはtextを付ける", () => {
+    const m = keyMessage(
+      { ...key, key: "@", code: "KeyQ", ctrlKey: true, altKey: true },
+      "down"
+    );
+    expect(m).toMatchObject({ text: "@" });
+  });
+  it("Ctrl単独とMetaではtextを付けない", () => {
+    expect(keyMessage({ ...key, ctrlKey: true }, "down")).not.toHaveProperty(
+      "text"
+    );
+    expect(keyMessage({ ...key, metaKey: true }, "down")).not.toHaveProperty(
+      "text"
+    );
+    expect(
+      keyMessage({ ...key, key: "Enter", ctrlKey: true, altKey: true }, "down")
+    ).not.toHaveProperty("text", "\r");
+  });
 });
 
 describe("isPasteShortcut", () => {
@@ -107,6 +125,16 @@ describe("isPasteShortcut", () => {
     expect(isPasteShortcut({ ...key, key: "V", metaKey: true })).toBe(true);
     expect(isPasteShortcut({ ...key, key: "v" })).toBe(false);
     expect(isPasteShortcut({ ...key, key: "c", ctrlKey: true })).toBe(false);
+  });
+  it("キリル配列のCtrl+V (key が м) も貼り付けとみなす", () => {
+    expect(
+      isPasteShortcut({ ...key, key: "м", code: "KeyV", ctrlKey: true })
+    ).toBe(true);
+  });
+  it("Dvorakで物理Vキーが別のラテン文字なら貼り付けではない", () => {
+    expect(
+      isPasteShortcut({ ...key, key: "k", code: "KeyV", ctrlKey: true })
+    ).toBe(false);
   });
 });
 
@@ -150,5 +178,11 @@ describe("mouseMessage / wheelMessage", () => {
     expect(
       wheelMessage({ ...w, deltaMode: 0, deltaY: 53 }, { left: 0, top: 0 })
     ).toMatchObject({ deltaY: 53 });
+  });
+  it("ページ単位のwheelは800倍する", () => {
+    const w = { ...e, buttons: 0, deltaX: 0, deltaY: 1, deltaMode: 2 };
+    expect(wheelMessage(w, { left: 0, top: 0 })).toMatchObject({
+      deltaY: 800,
+    });
   });
 });
