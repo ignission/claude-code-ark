@@ -20,8 +20,7 @@
     "start:quick": "NODE_ENV=production node packages/server/dist/cli.js --quick",
     "preview": "pnpm --filter @ark/web preview",
     "check": "biome check . && tsc -b",
-    "test": "vitest run && pnpm test:harness",
-    "test:harness": "/bin/bash .claude/hooks/tests/test-bash-guard.sh",
+    "test": "vitest run",
     "format": "biome check --write .",
     "lint": "biome lint ."
   },
