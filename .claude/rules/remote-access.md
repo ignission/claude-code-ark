@@ -6,11 +6,7 @@ paths:
 
 # リモートアクセス (Cloudflare Tunnel)
 
-スマートフォンや外のデバイスからArkへ届くための機能。2つのモード (Quick / Named) と死活監視は `tunnel.ts` の冒頭にある。起動のしかたは `README.ja.md` にある。
-
-## 認証の条件
-
-**アプリのトークン認証を求めるのは、Quick Tunnel経由のリクエストだけ。** `auth.ts` は、リクエストの宛先がQuick Tunnelのドメイン (`*.trycloudflare.com`) のときだけトークンを確かめ、それ以外 (localhost、LAN内の直接アクセス、Named Tunnel) はアプリの認証を通さない。接続元のIPは見ていない。
+スマートフォンや外のデバイスからArkへ届くための機能。2つのモード (Quick / Named) と死活監視は `tunnel.ts` の冒頭にある。アプリのトークン認証を求める条件は `auth.ts` の `requiresToken` にある。起動のしかたは `README.ja.md` にある。
 
 ## 単一ユーザーの前提
 
