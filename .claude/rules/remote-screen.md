@@ -18,7 +18,7 @@ SSHで届くホストのVNC画面 (macOSの画面共有など) を、noVNCで全
 ブリッジは、Arkのサーバーを動かしているユーザーの権限で `ssh -o BatchMode=yes -W` を起動する。`BatchMode=yes` はプロンプトを一切出せないので、次を満たしていないと接続できない。
 
 - **鍵はArkのサーバーの実行ユーザーのもので、パスフレーズ無し** (またはssh-agentに登録済み)。パスフレーズを聞けずに落ちる
-- **接続先が `known_hosts` に登録済み。** 初回の接続は `Host key verification failed` で失敗する。先に一度 `ssh <user>@<host>` を手で通しておく
+- **接続先が `known_hosts` に登録済み。** 初回の接続は `Host key verification failed` で失敗する。先に一度、Arkのサーバーの実行ユーザーで `ssh -p <sshPort> <user>@<host>` を手で通しておく (22番以外のポートのホスト鍵は `[host]:port` として別に登録される)
 - **pm2で動かすなら、`ssh` がpm2のPATHにある。** 無いと `spawn ssh ENOENT` になる
 
 どの失敗も「画面が切断され、理由の1行が出る」形でしか見えない。繋がらないときは、まずこの3つを疑う。

@@ -18,4 +18,4 @@ paths:
   - multiSelect: 数字でトグル → Right → Reviewで数字の1
   - 自由入力: 数字 → literal → Enter
 - **カードを閉じる**: JSONLに解決のイベントが出たとき (`hasResolvedAuqSince`)
-- permission promptなど、AUQ以外の待ちはAWAITINGのバナーで扱う ([1][2] のクイックキーと、ターミナルへの誘導)
+- permission promptなど、AUQ以外の待ちはAWAITINGのバナーで扱う (`[1]` `[2]` のクイックキーと、ターミナルへの誘導)

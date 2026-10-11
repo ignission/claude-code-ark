@@ -15,7 +15,7 @@ paths:
 - **Quick Tunnel** (`--quick`): トークン認証を有効にして、Quick Tunnelを起動する。URLは一時的な `*.trycloudflare.com` で、ランダムに生成したトークンをURLに含める。ターミナルにQRコードとURLを出す
 - **Named Tunnel** (`--remote` + `ARK_PUBLIC_DOMAIN`): 固定のドメインを使い、認証はCloudflare Accessに任せる。死活監視と張り直しの仕様は `tunnel.ts` の冒頭にある
 - HTTPSはCloudflare Tunnelが提供する
-- **localhostとプライベートIPからのアクセスは、認証を飛ばす**
+- **アプリのトークン認証を求めるのは、Quick Tunnel経由のリクエストだけ。** `auth.ts` は `x-forwarded-host` (無ければ `host`) が `*.trycloudflare.com` のときだけトークンを確かめ、それ以外 (localhost、LAN内の直接アクセス、Named Tunnel) はアプリの認証を通さない。接続元のIPは見ていない
 
 ## 単一ユーザーの前提
 
