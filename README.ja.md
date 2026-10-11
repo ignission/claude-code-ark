@@ -239,4 +239,4 @@ pnpm start:quick
 
 ## ライセンス
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE)
