@@ -51,6 +51,7 @@ import type {
 } from "../lib/session-notifications";
 import {
   decideSocketWakeAction,
+  SOCKET_PROBE_ATTEMPTS,
   SOCKET_PROBE_TIMEOUT_MS,
 } from "../lib/socket-wake";
 import {
@@ -558,6 +559,27 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       lastConnectAttemptAt = Date.now();
       socket.disconnect().connect();
     };
+    // Socket.IO が自分で再接続を試みている最中に、その接続を捨てない
+    const handleReconnectAttempt = () => {
+      lastConnectAttemptAt = Date.now();
+    };
+    socket.io.on("reconnect_attempt", handleReconnectAttempt);
+    const probe = (attemptsLeft: number) => {
+      socket.timeout(SOCKET_PROBE_TIMEOUT_MS).emit("health:ping", err => {
+        // 応答があった。または待っている間に自力で切断を検知した
+        // (後者は Socket.IO の再接続に任せる)
+        if (!err || !socket.connected) {
+          probing = false;
+          return;
+        }
+        if (attemptsLeft > 1) {
+          probe(attemptsLeft - 1);
+          return;
+        }
+        probing = false;
+        forceReconnect();
+      });
+    };
     const handleWake = () => {
       const action = decideSocketWakeAction({
         visible: document.visibilityState === "visible",
@@ -572,11 +594,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       }
       if (action !== "probe" || probing) return;
       probing = true;
-      socket.timeout(SOCKET_PROBE_TIMEOUT_MS).emit("health:ping", err => {
-        probing = false;
-        // 待っている間に自力で切断を検知していたら、Socket.IO の再接続に任せる
-        if (err && socket.connected) forceReconnect();
-      });
+      probe(SOCKET_PROBE_ATTEMPTS);
     };
     document.addEventListener("visibilitychange", handleWake);
     window.addEventListener("pageshow", handleWake);
@@ -1188,6 +1206,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       document.removeEventListener("visibilitychange", handleWake);
       window.removeEventListener("pageshow", handleWake);
       window.removeEventListener("online", handleWake);
+      socket.io.off("reconnect_attempt", handleReconnectAttempt);
       socket.disconnect();
     };
   }, [enabled]);

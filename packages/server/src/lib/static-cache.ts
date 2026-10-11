@@ -9,6 +9,9 @@
  * index.html と `public/` 由来のファイル (manifest、アイコン) は名前が変わらないので、
  * 毎回確かめさせる。index.html を使い回すと、デプロイ後も古いハッシュを指し続ける。
  *
+ * `assets/` にあっても、名前にハッシュが無いファイルは使い回させない。vite の既定では
+ * 生まれないが、設定や手置きで混ざったときに1年間古いまま残るのを防ぐ。
+ *
  * 長期キャッシュが付くのは実在するファイルを返したときだけ。`assets/` の未ヒットは
  * `spa-fallback.ts` が 404 に落とすので、偽のアセットが居座ることはない。
  */
@@ -18,12 +21,17 @@ import path from "node:path";
 export const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 export const REVALIDATE_CACHE_CONTROL = "no-cache";
 
+/** vite が付ける内容ハッシュ (`name-XXXXXXXX.ext`、base64url の8文字) */
+const HASHED_NAME_PATTERN = /-[A-Za-z0-9_-]{8}\.[a-z0-9]+$/;
+
 /** `staticDir` から配信する `filePath` (絶対パス) の Cache-Control を返す */
 export function staticCacheControl(
   staticDir: string,
   filePath: string
 ): string {
   const relative = path.relative(staticDir, filePath);
-  const hashed = relative.split(path.sep)[0] === "assets";
+  const hashed =
+    relative.split(path.sep)[0] === "assets" &&
+    HASHED_NAME_PATTERN.test(path.basename(filePath));
   return hashed ? IMMUTABLE_CACHE_CONTROL : REVALIDATE_CACHE_CONTROL;
 }

@@ -25,14 +25,21 @@ describe("staticCacheControl", () => {
   });
 
   it("配信ルートの外にある assets は長期キャッシュにしない", () => {
-    expect(staticCacheControl(root, "/srv/other/assets/a.js")).toBe(
-      REVALIDATE_CACHE_CONTROL
-    );
+    expect(
+      staticCacheControl(root, "/srv/other/assets/index-DMiUuS0u.js")
+    ).toBe(REVALIDATE_CACHE_CONTROL);
   });
 
   it("ルートの末尾に区切りが付いていても同じ結果になる", () => {
-    expect(staticCacheControl(`${root}/`, `${root}/assets/a.js`)).toBe(
-      IMMUTABLE_CACHE_CONTROL
-    );
+    expect(
+      staticCacheControl(`${root}/`, `${root}/assets/index-DMiUuS0u.js`)
+    ).toBe(IMMUTABLE_CACHE_CONTROL);
+  });
+
+  it.each([
+    "/srv/ark/web/dist/assets/a.js",
+    "/srv/ark/web/dist/assets/logo.svg",
+  ])("assets にあってもハッシュの無い %s は毎回確かめる", file => {
+    expect(staticCacheControl(root, file)).toBe(REVALIDATE_CACHE_CONTROL);
   });
 });
