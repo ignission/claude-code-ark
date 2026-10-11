@@ -20,7 +20,12 @@ case "${FILE_PATH##*.}" in
   *) exit 0 ;;
 esac
 
-# プロジェクトの外（スクラッチなど）は biome の設定が当たらないので対象にしない
+# プロジェクトの外（スクラッチなど）は biome の設定が当たらないので対象にしない。
+# `..` やシンボリックリンクで外へ出るパスを通さないよう、実体のパスで比べる。
+PROJECT_ROOT=$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P) || exit 0
+FILE_DIR=$(cd "$(dirname "$FILE_PATH")" 2>/dev/null && pwd -P) || exit 0
+[ -L "$FILE_PATH" ] && exit 0
+FILE_PATH="$FILE_DIR/$(basename "$FILE_PATH")"
 case "$FILE_PATH" in
   "$PROJECT_ROOT"/*) ;;
   *) exit 0 ;;
