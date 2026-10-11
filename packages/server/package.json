@@ -19,27 +19,27 @@
   "dependencies": {
     "@anthropic-ai/claude-code": "^2.1.296",
     "@ark/shared": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "better-sqlite3": "^13.0.3",
     "esbuild": "^0.28.2",
-    "express": "^5.2.1",
+    "express": "^5.3.0",
     "http-proxy": "^1.18.1",
-    "nanoid": "^6.0.1",
-    "playwright-core": "^1.62.1",
+    "nanoid": "^6.0.2",
+    "playwright-core": "^1.64.0",
     "qrcode": "^1.5.4",
-    "socket.io": "^4.8.3",
-    "ws": "^8.21.3",
-    "zod": "^4.5.0"
+    "socket.io": "^4.8.4",
+    "ws": "^8.22.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
     "@types/express": "5.0.6",
     "@types/http-proxy": "^1.17.17",
-    "@types/node": "^26.4.0",
+    "@types/node": "^26.6.5",
     "@types/qrcode": "^1.5.6",
-    "@types/ws": "^8.18.1",
-    "tsx": "^4.23.12",
+    "@types/ws": "^8.18.2",
+    "tsx": "^4.23.15",
     "typescript": "7.0.2",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.3"
   }
 }
