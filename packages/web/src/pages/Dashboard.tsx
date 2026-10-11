@@ -201,7 +201,7 @@ export default function Dashboard() {
   const [diagramOpenRequest, setDiagramOpenRequest] =
     useState<DiagramOpenRequest | null>(null);
   // ブラウザビューを一度でも開いたかどうかのフラグ
-  // 一度開いたら常に描画してdisplay:hiddenで切り替え、BrowserPaneの再マウント（VNC再接続）を防ぐ
+  // 一度開いたら常に描画してdisplay:hiddenで切り替え、BrowserPaneの再マウント (WebSocketの再接続) を防ぐ
   const [hasBrowserOpened, setHasBrowserOpened] = useState(false);
 
   // 一度開いた画面の id。開いた ScreenPane はマウントしたまま display で切り替える。
@@ -1052,7 +1052,7 @@ export default function Dashboard() {
                   />
                 ) : null}
                 {/* ブラウザビュー: 一度開いたら常に描画してdisplay:hiddenで切り替え。
-                    BrowserPaneの再マウント（VNC再接続）を防ぐ */}
+                    BrowserPaneの再マウント (WebSocketの再接続) を防ぐ */}
                 {hasBrowserOpened && (
                   <div
                     className={
