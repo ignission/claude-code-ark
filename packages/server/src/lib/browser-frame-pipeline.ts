@@ -80,8 +80,6 @@ export const COARSE_SCALE = 0.5;
 export const COARSE_QUALITY = 50;
 /** 鮮明な全画面と矩形の画質 */
 export const SHARP_QUALITY = 80;
-/** CSSピクセルの面積がこれ以下の矩形はWebP (小さく、この大きさなら遅くない)。超えたらJPEG */
-export const WEBP_MAX_AREA = 120_000;
 /** 取り直しが返らないときに諦める時間 (ミリ秒) */
 export const CAPTURE_TIMEOUT_MS = 3000;
 /** 送れる視聴者がいないときに見直す間隔と、取り直しに失敗したあとの最初の待ち (ミリ秒) */
@@ -215,14 +213,13 @@ export function monitorParams(viewport: Size): object {
 
 /** `rect` はビューポートの座標。`clip` は文書の座標なので、スクロールした位置を足す */
 function captureParams(
-  format: "jpeg" | "webp",
   quality: number,
   rect: CssRect,
   scale: number,
   scroll: ScrollOffset
 ): object {
   return {
-    format,
+    format: "jpeg",
     quality,
     clip: {
       x: rect.x + scroll.x,
@@ -660,14 +657,8 @@ export class BrowserFramePipeline<V extends object> {
     const dpr = this.applied?.dpr ?? 1;
     const image = await this.capture(
       coarse
-        ? captureParams(
-            "jpeg",
-            COARSE_QUALITY,
-            rect,
-            COARSE_SCALE / dpr,
-            scroll
-          )
-        : captureParams("jpeg", SHARP_QUALITY, rect, 1, scroll)
+        ? captureParams(COARSE_QUALITY, rect, COARSE_SCALE / dpr, scroll)
+        : captureParams(SHARP_QUALITY, rect, 1, scroll)
     );
     if (this.job !== job) return true;
     if (!image) return false;
@@ -712,13 +703,7 @@ export class BrowserFramePipeline<V extends object> {
       // 途中でダイアログが開いたら、残りは取らない。閉じたときに全面を取り直す
       if (this.dialogOpen) return true;
       const image = await this.capture(
-        captureParams(
-          rect.width * rect.height <= WEBP_MAX_AREA ? "webp" : "jpeg",
-          SHARP_QUALITY,
-          rect,
-          1,
-          this.scroll
-        )
+        captureParams(SHARP_QUALITY, rect, 1, this.scroll)
       );
       if (this.job !== job) return true;
       if (!image) return false;

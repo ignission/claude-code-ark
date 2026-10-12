@@ -999,16 +999,9 @@ describe("BrowserFramePipeline", () => {
       return s.captures.map(c => c.params);
     }
 
-    it("面積が上限ちょうどならWebP", async () => {
+    it("小さい矩形もJPEGで取り直す", async () => {
       expect(await exact(600, 200)).toMatchObject([
-        { format: "webp", clip: { x: 9, y: 9, width: 600, height: 200 } },
-      ]);
-    });
-
-    it("上限を1画素でも超えたらJPEG", async () => {
-      // 553 * 217 = 120001
-      expect(await exact(553, 217)).toMatchObject([
-        { format: "jpeg", clip: { x: 9, y: 9, width: 553, height: 217 } },
+        { format: "jpeg", clip: { x: 9, y: 9, width: 600, height: 200 } },
       ]);
     });
   });

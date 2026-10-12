@@ -1505,14 +1505,14 @@ describe("BrowserCdpBridge", () => {
         cdp.emit("Page.screencastFrame", monitorFrame(id, { rgb })),
     });
 
-    it("小さな変化は、広げた矩形だけをWebPで取り直して送る", async () => {
+    it("小さな変化は、広げた矩形だけを取り直して送る", async () => {
       const { cdp, viewer } = await started();
       frames(cdp).dots(2, [[80, 56]]);
       await flush();
       const rect = { x: 632, y: 438, width: 24, height: 24 };
       expect(cdp.captures()).toEqual([
         {
-          format: "webp",
+          format: "jpeg",
           quality: 80,
           clip: { ...rect, scale: 1 },
           captureBeyondViewport: false,
@@ -1525,7 +1525,7 @@ describe("BrowserCdpBridge", () => {
       ]);
     });
 
-    it("面積の大きい矩形はJPEGで取り直す", async () => {
+    it("面積の大きい矩形も矩形のまま取り直す", async () => {
       const { cdp, viewer } = await started();
       frames(cdp).dots(2, block(20, 20, 60, 40));
       await flush();
