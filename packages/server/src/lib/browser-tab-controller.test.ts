@@ -408,6 +408,28 @@ describe("BrowserTabController", () => {
   });
 
   describe("クラッシュ", () => {
+    it("移り始めるときに、全員へ1度だけ知らせる", async () => {
+      const ctx = await start();
+      ctx.controller.crashed("T1");
+      ctx.controller.crashed("T1");
+      await flush();
+      expect(ctx.sent.filter(({ message }) => message.t === "notice")).toEqual([
+        {
+          to: "all",
+          message: { t: "notice", message: "タブがクラッシュしました" },
+        },
+      ]);
+    });
+
+    it("ふつうに閉じたときは知らせない", async () => {
+      const ctx = await start();
+      ctx.controller.handle("v1", { t: "tab", type: "close", id: "T1" });
+      await flush();
+      expect(ctx.sent.filter(({ message }) => message.t === "notice")).toEqual(
+        []
+      );
+    });
+
     it("sessionを離してから閉じ、隣のタブへ移る", async () => {
       const ctx = await start();
       ctx.controller.crashed("T1");

@@ -97,6 +97,7 @@ const MAX_PENDING = 32;
 const BLANK_URL = "about:blank";
 const TOO_MANY_MESSAGE = "タブが多すぎます";
 const DIALOG_OPEN_MESSAGE = "ダイアログに応答してから切り替えてください";
+const CRASH_MESSAGE = "タブがクラッシュしました";
 
 /** このモジュールが扱う視聴者のメッセージ */
 export type TabCommand = Extract<BrowserClientMessage, { t: "tab" }>;
@@ -320,6 +321,10 @@ export class BrowserTabController<V> {
   crashed(id: string): void {
     if (this.disposed) return;
     if (id === this.link.current()) this.fallback = this.tabs.fallbacks(id);
+    // 同じタブのクラッシュは1度しか知らせない。移った先が突然替わった理由を伝える
+    if (!this.lostIds.has(id)) {
+      this.link.toAll({ t: "notice", message: CRASH_MESSAGE });
+    }
     this.lostIds.add(id);
     // sessionは残っている。離しておかないと、閉じられなかったときに残る
     this.link.leave(false);

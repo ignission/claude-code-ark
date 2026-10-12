@@ -1029,6 +1029,27 @@ describe("BrowserCdpBridge", () => {
       });
     });
 
+    it("タブがクラッシュしたら、視聴者へ知らせる。ふつうのdetachでは知らせない", async () => {
+      const crashed = await connected();
+      crashed.cdp.emit("Inspector.targetCrashed", undefined);
+      await expectMoved(crashed);
+      expect(crashed.viewer.texts()).toContainEqual({
+        t: "notice",
+        message: "タブがクラッシュしました",
+      });
+
+      const detached = await connected();
+      detached.cdp.emitBrowser("Target.detachedFromTarget", {
+        sessionId: "S1",
+        targetId: "T1",
+      });
+      await expectMoved(detached);
+      expect(detached.viewer.texts()).not.toContainEqual({
+        t: "notice",
+        message: "タブがクラッシュしました",
+      });
+    });
+
     it("クラッシュしたタブを閉じられなくても、移る", async () => {
       const ctx = await connected();
       ctx.cdp.failOn("Target.closeTarget");
