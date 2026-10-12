@@ -906,6 +906,36 @@ describe("MobileSessionView の端末の窓", () => {
     expect(document.activeElement).toBe(opener);
   });
 
+  it("開いている間にもう一度開く合図が来ても、閉じたときの戻り先は最初の要素のまま", () => {
+    const props = makeProps();
+    const container = mount(<MobileSessionView {...props} />);
+    const { root } = mountedRoots.at(-1) as { root: Root };
+    const header = container.querySelector("header") as HTMLElement;
+    const opener = document.createElement("button");
+    (header.parentElement as HTMLElement).append(opener);
+    opener.focus();
+
+    openTerminalWindow();
+    // 窓の中の閉じるボタンにフォーカスがある状態で、ファイルが開かれる
+    container
+      .querySelector<HTMLElement>('button[aria-label="端末を閉じる"]')
+      ?.focus();
+    act(() =>
+      root.render(
+        <MobileSessionView
+          {...props}
+          tabs={[terminalTab(), fileTab()]}
+          activeTabIndex={1}
+          viewerOpenSeq={1}
+        />
+      )
+    );
+    expect(isTerminalWindowOpen(container)).toBe(true);
+
+    click(container.querySelector('button[aria-label="端末を閉じる"]'));
+    expect(document.activeElement).toBe(opener);
+  });
+
   it("図モードで添付を選ぶと、確認ダイアログを持つ端末の窓を開く", async () => {
     localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "board");
     const container = mount(

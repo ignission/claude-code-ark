@@ -276,7 +276,12 @@ export function MobileSessionView({
   // 開く前にフォーカスのあった要素。開くと `inert` で外れるので、開く時点で覚える
   const rootRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  // 覚えるのは閉じた状態から開くときだけ。開いている間の開く合図 (窓の中のリンクで
+  // ファイルを開く、添付が溜まる) で、窓の中の要素に書き換えない
+  const terminalOpenRef = useRef(terminalOpen);
+  terminalOpenRef.current = terminalOpen;
   const openTerminal = useCallback(() => {
+    if (terminalOpenRef.current) return;
     const focused = document.activeElement;
     returnFocusRef.current = focused instanceof HTMLElement ? focused : null;
     setTerminalOpen(true);
