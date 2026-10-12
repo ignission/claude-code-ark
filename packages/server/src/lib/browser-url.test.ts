@@ -11,12 +11,14 @@ describe("validateBrowserUrl", () => {
     "about:blank",
     "http://localhost:3000/a",
     "https://127.0.0.1:8443/",
+    "https://example.com/a?b#c",
+    "http://192.168.1.10:8080/",
   ])("%s を通す", url => {
     expect(() => validateBrowserUrl(url)).not.toThrow();
   });
   it.each([
     "file:///etc/passwd",
-    "http://example.com/",
+    "ftp://example.com/",
     "javascript:alert(1)",
     "not a url",
   ])("%s を拒否する", url => {
@@ -36,6 +38,14 @@ describe("validateBrowserUrl", () => {
     ["https://localhost/", "https://localhost/"],
     ["https://localhost", "https://localhost/"],
     [normalizeUserUrl(" http://localhost/ "), "http://localhost/"],
+    ["https://example.com/a?b#c", "https://example.com/a?b#c"],
+    [normalizeUserUrl("example.com"), "http://example.com/"],
+    ["http://192.168.1.10:8080/", "http://192.168.1.10:8080/"],
+    ["http://localhost.evil.com/", "http://localhost.evil.com/"],
+    ["http://127.0.0.1.evil.com/", "http://127.0.0.1.evil.com/"],
+    ["http://[::1]/", "http://[::1]/"],
+    ["http:\\\\evil.com", "http://evil.com/"],
+    [normalizeUserUrl("//evil.com"), "http://evil.com/"],
   ])("%j は、読んだあとの形 %s にして返す", (url, canonical) => {
     expect(validateBrowserUrl(url)).toBe(canonical);
   });
@@ -46,15 +56,13 @@ describe("validateBrowserUrl", () => {
     "file:///etc/passwd",
     "view-source:http://localhost/",
     "chrome://settings",
-    "http://localhost.evil.com/",
+    "devtools://devtools/bundled/inspector.html",
+    "blob:http://localhost/x",
+    "ftp://example.com/",
     "http://localhost@evil.com/",
     "http://evil.com@localhost/",
     "http://user:pass@localhost/",
-    "http://127.0.0.1.evil.com/",
-    "http://[::1]/",
     "//evil.com",
-    normalizeUserUrl("//evil.com"),
-    "http:\\\\evil.com",
     "about:blank#x",
     `http://localhost/${"a".repeat(5000)}`,
   ])("%j を拒否する", url => {
@@ -68,17 +76,18 @@ describe("validateBrowserUrl", () => {
     expect(() => validateBrowserUrl(`${fits}a`)).toThrow();
   });
 
-  it("通したものは、localhostか127.0.0.1のhttp(s)のURLになっている", () => {
+  it("通したものは、ユーザー名の無いhttp(s)のURLになっている", () => {
     for (const url of [
       "http://localhost\\@evil.com",
       "http:localhost",
       "http://127.1/",
       "http://0x7f.1:8080/x",
-      "HTTPS://LocalHost:8443/",
+      "HTTPS://Example.COM:8443/",
     ]) {
-      expect(validateBrowserUrl(url)).toMatch(
-        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//
-      );
+      const parsed = new URL(validateBrowserUrl(url));
+      expect(["http:", "https:"]).toContain(parsed.protocol);
+      expect(parsed.username).toBe("");
+      expect(parsed.password).toBe("");
     }
   });
 });
@@ -87,7 +96,8 @@ describe("isBrowserUrlAllowed", () => {
   it("開いてよいかを、投げずに返す", () => {
     expect(isBrowserUrlAllowed("http://localhost:3000/")).toBe(true);
     expect(isBrowserUrlAllowed("about:blank")).toBe(true);
-    expect(isBrowserUrlAllowed("https://example.com/")).toBe(false);
+    expect(isBrowserUrlAllowed("https://example.com/")).toBe(true);
+    expect(isBrowserUrlAllowed("file:///etc/passwd")).toBe(false);
     expect(isBrowserUrlAllowed("")).toBe(false);
   });
 });

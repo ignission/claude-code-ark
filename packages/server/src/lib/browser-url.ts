@@ -1,8 +1,11 @@
 /**
  * ブラウザ機能で開くURLの決まり。
  *
- * Arkが遷移させてよいのは、Chromiumが動いている機械の `localhost` / `127.0.0.1` と
- * `about:blank` だけ。
+ * Arkが遷移させてよいのは、`about:blank` と、ホストを問わない `http:` / `https:` のURL。
+ *
+ * ホストは絞らない。Arkは1人で使うもので、使う人はこの機械のシェルをすでに持っているので、
+ * ホストを絞っても守るものが無い。スキームは絞る。`file:` はサーバーのファイルをページに
+ * 読み込ませ、`javascript:` や `data:` はスクリプトを走らせるURLになる。
  *
  * ブリッジとChromiumを起動する側の両方が使うので、どちらにも依らないモジュールに置く。
  */
@@ -31,7 +34,7 @@ export function normalizeUserUrl(input: string): string {
 /**
  * ブラウザ機能で開いてよいURLかを確かめ、遷移に使う文字列を返す。だめなら例外を投げる。
  * - `about:blank` は通す
- * - それ以外は `http:` / `https:` で、ホストが `localhost` / `127.0.0.1` のものだけ
+ * - それ以外は `http:` / `https:` のURLだけ。ホストは問わない
  * - ユーザー名やパスワードの付いたURLは通さない (`http://localhost@evil.com/` のように、
  *   ホストを見誤らせる書き方に使われる)
  * - `MAX_BROWSER_URL_LENGTH` を超えるものは通さない
@@ -57,9 +60,6 @@ export function validateBrowserUrl(url: string): string {
   }
   if (parsed.username !== "" || parsed.password !== "") {
     throw new Error("ユーザー名やパスワードの付いたURLは許可されていません");
-  }
-  if (parsed.hostname !== "localhost" && parsed.hostname !== "127.0.0.1") {
-    throw new Error("localhost/127.0.0.1のみ許可されています");
   }
   return parsed.href;
 }

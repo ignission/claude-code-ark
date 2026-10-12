@@ -184,9 +184,9 @@ describe("BrowserPageState", () => {
     const { state } = setup();
     state.applyHistory(
       history(1, [
-        "https://example.com/",
+        "chrome-error://chromewebdata/",
         "http://localhost/b",
-        "https://example.com/x",
+        "about:srcdoc",
       ])
     );
     expect(state.snapshot()).toMatchObject({
@@ -194,10 +194,25 @@ describe("BrowserPageState", () => {
       canGoForward: false,
     });
     state.applyHistory(
-      history(1, ["http://localhost/a", "https://example.com/", "about:blank"])
+      history(1, ["http://localhost/a", "chrome-error://x/", "about:blank"])
     );
     expect(state.snapshot()).toMatchObject({
-      url: "https://example.com/",
+      url: "chrome-error://x/",
+      canGoBack: true,
+      canGoForward: true,
+    });
+  });
+
+  it("ホストがlocalhostでないhttp(s)のエントリへも、戻れる、進めるとする", () => {
+    const { state } = setup();
+    state.applyHistory(
+      history(1, [
+        "https://example.com/",
+        "http://localhost/b",
+        "http://192.168.1.10:8080/x",
+      ])
+    );
+    expect(state.snapshot()).toMatchObject({
       canGoBack: true,
       canGoForward: true,
     });

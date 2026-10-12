@@ -2346,8 +2346,10 @@ const NAVIGATED = "Page.frameNavigated";
 const A_URL = "http://localhost:3000/a";
 const B_URL = "http://localhost:3000/b";
 const C_URL = "http://localhost:3000/c";
-/** Arkが遷移させない、外のURL */
-const OUTSIDE_URL = "https://example.com/";
+/** Arkが遷移させない、履歴のエントリのURL */
+const REFUSED_URL = "chrome-error://chromewebdata/";
+/** ホストがlocalhostでない、遷移させてよいURL */
+const EXTERNAL_URL = "https://example.com/";
 
 /** `urls` を順にたどり、いま `currentIndex` 番目にいる履歴。エントリのidは10、11、... */
 function historyOf(currentIndex: number, urls: string[]) {
@@ -2769,7 +2771,10 @@ describe("BrowserCdpBridge: ページの操作", () => {
 
   describe("遷移", () => {
     const NAVIGATE = "Page.navigate";
-    const NOTICE = { t: "notice", message: "localhostのURLだけを開けます" };
+    const NOTICE = {
+      t: "notice",
+      message: "http://またはhttps://のURLだけを開けます",
+    };
 
     it.each([
       ["127.0.0.1:3000/a", "http://127.0.0.1:3000/a"],
@@ -2781,6 +2786,9 @@ describe("BrowserCdpBridge: ページの操作", () => {
       ["http://127.1/", "http://127.0.0.1/"],
       ["http://localhost\\@evil.com", "http://localhost/@evil.com"],
       ["http:localhost", "http://localhost/"],
+      ["example.com", "http://example.com/"],
+      ["https://example.com/a?b#c", "https://example.com/a?b#c"],
+      ["192.168.1.10:8080", "http://192.168.1.10:8080/"],
     ])(
       "gotoの %s は、確かめたあとの形の %s へ遷移する",
       async (url, expected) => {
@@ -2795,11 +2803,10 @@ describe("BrowserCdpBridge: ページの操作", () => {
     );
 
     it.each([
-      "example.com",
-      "http://example.com/",
       "file:///etc/passwd",
       "javascript:alert(1)",
-      "http://localhost.example.com/",
+      "data:text/html,x",
+      "ftp://example.com/",
       "http://example.com@localhost/",
       "http://localhost@example.com/",
       "",
@@ -2842,7 +2849,7 @@ describe("BrowserCdpBridge: ページの操作", () => {
     it("backとforwardの先が開いてよいURLでなければ移らず、送った視聴者にだけ理由を返す", async () => {
       const { cdp, viewers } = await startedOn(
         1,
-        [OUTSIDE_URL, B_URL, OUTSIDE_URL],
+        [REFUSED_URL, B_URL, REFUSED_URL],
         2
       );
       viewers[0].receive({ t: "nav", type: "back" });
@@ -2855,8 +2862,27 @@ describe("BrowserCdpBridge: ページの操作", () => {
       expect(cdp.methods()).toEqual([HISTORY, HISTORY]);
     });
 
-    it("外のページに居ても、開いてよいURLへは戻れる", async () => {
-      const { cdp, viewer } = await startedOn(1, [A_URL, OUTSIDE_URL]);
+    it("backとforwardは、ホストがlocalhostでないエントリへも移る", async () => {
+      const { cdp, viewer } = await startedOn(1, [
+        EXTERNAL_URL,
+        B_URL,
+        EXTERNAL_URL,
+      ]);
+      viewer.receive({ t: "nav", type: "back" });
+      await flush();
+      expect(cdp.last("Page.navigateToHistoryEntry")?.params).toEqual({
+        entryId: 10,
+      });
+      viewer.receive({ t: "nav", type: "forward" });
+      await flush();
+      expect(cdp.last("Page.navigateToHistoryEntry")?.params).toEqual({
+        entryId: 12,
+      });
+      expect(viewer.texts()).toEqual([]);
+    });
+
+    it("遷移させないページに居ても、開いてよいURLへは戻れる", async () => {
+      const { cdp, viewer } = await startedOn(1, [A_URL, REFUSED_URL]);
       viewer.receive({ t: "nav", type: "back" });
       await flush();
       expect(cdp.last("Page.navigateToHistoryEntry")?.params).toEqual({
@@ -3191,10 +3217,10 @@ describe("BrowserCdpBridge: ページの操作", () => {
       viewer.bufferedAmount = 1_000_000;
       viewer.receive({ t: "copy" });
       await flush();
-      viewer.receive({ t: "nav", type: "goto", url: "http://example.com/" });
+      viewer.receive({ t: "nav", type: "goto", url: "file:///etc/passwd" });
       await flush();
       expect(viewer.texts()).toEqual([
-        { t: "notice", message: "localhostのURLだけを開けます" },
+        { t: "notice", message: "http://またはhttps://のURLだけを開けます" },
       ]);
       viewer.bufferedAmount = 999_999;
       viewer.receive({ t: "copy" });

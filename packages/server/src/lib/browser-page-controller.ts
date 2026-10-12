@@ -29,8 +29,9 @@
  * - 遷移させる先は `validateBrowserUrl` を通ったURLだけ。通らなければ、送った視聴者にだけ
  *   理由を返す。遷移に使うのは、視聴者の文字列ではなく `validateBrowserUrl` が返した文字列。
  *   ページ自身が行う遷移 (リンク、リダイレクト) は、ここでは止めない
- * - 戻ると進むも、移る先のエントリのURLを同じように確かめる。ページ自身が外のサイトへ
- *   遷移したあとに、Arkがそこへ戻したり進めたりしないため
+ * - 戻ると進むも、移る先のエントリのURLを同じように確かめる。通るのは `http:` / `https:` の
+ *   エントリと `about:blank` で、`chrome-error://` や `about:blank` 以外の `about:` のような
+ *   エントリへは、Arkが戻したり進めたりしない。通らない隣では、戻れる、進めるを偽にする
  * - 読み込み直しと中止は確かめない。遷移の先を変えないので、いま居るページより外へは出ない
  * - ダイアログは全員へ見せ、だれが答えてもよい。開いていると分かっているときの応答だけを
  *   CDPへ渡す。2人が続けて答えると、あとの応答はChromiumに断られるが、それは捨てる
@@ -79,7 +80,7 @@ const MAX_DIALOG_TEXT_LENGTH = 10_000;
 /** コピーする文字列の上限 (文字数)。下の式の中の数と揃える */
 const MAX_COPY_LENGTH = 1_000_000;
 
-const URL_REFUSED_MESSAGE = "localhostのURLだけを開けます";
+const URL_REFUSED_MESSAGE = "http://またはhttps://のURLだけを開けます";
 
 /** メインフレームのURLを変えるイベント */
 const URL_EVENTS: ReadonlySet<string> = new Set([
