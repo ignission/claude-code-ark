@@ -12,7 +12,7 @@
  * 関連:
  *   - `database.ts` の DATA_DIR / DB_PATH
  *   - `file-upload-manager.ts` の BASE_DIR (旧 `/tmp/ark-files`)
- *   - `browser-manager.ts` の BROWSER_PIDFILE_DIR
+ *   - `browser-manager.ts` の `getProfileDir` (Chromiumのプロファイル)
  *   - `packages/desktop/src/main.ts`（環境変数注入元）
  */
 

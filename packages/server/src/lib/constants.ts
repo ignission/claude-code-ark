@@ -20,32 +20,20 @@ export const TTYD_PORT_END = 7780;
 export const TTYD_MAX_CONNECTIONS_PER_INSTANCE = 5;
 
 /**
- * VNCポート範囲の開始ポート（x11vnc用）
+ * CDP (Chrome DevTools Protocol) のポート。
  *
- * 注: x11vncには `-rfbport <port>` で明示的にポートを指定して起動しているため、
- * 標準のVNC `port = 5900 + display` マッピングには依存しない。
- * VNCポートとディスプレイ番号は独立して動的に割り当てられる。
+ * browser-manager.ts が起動するChromiumの `--remote-debugging-port` に使う。
+ * 127.0.0.1だけで待ち受けるが、`/proxy/:port/*` とポートスキャンから見えないよう
+ * ブロックリストにも入れる。`ARK_CDP_PORT` は、同じ機械で2つ目のArkを動かすときに
+ * ポートを分けるためのもの。
  */
-export const VNC_PORT_START = 5900;
-/** VNCポート範囲の終了ポート */
-export const VNC_PORT_END = 5999;
-/** WebSocketポート範囲の開始ポート（websockify用） */
-export const WS_PORT_START = 6080;
-/** WebSocketポート範囲の終了ポート */
-export const WS_PORT_END = 6179;
-/**
- * Xvfb仮想ディスプレイ番号の開始値
- *
- * 注: 標準VNCの `port = 5900 + display` マッピングには依存しない
- * （上記VNC_PORT_STARTのコメント参照）。
- */
-export const DISPLAY_START = 99;
-
-/**
- * CDP（Chrome DevTools Protocol）リモートデバッグポート
- *
- * browser-manager.tsが起動するChromiumの `--remote-debugging-port` として使用する。
- * このポートはローカル127.0.0.1のみでリッスンされるが、`/proxy/:port/*` や
- * ポートスキャンから露出しないようブロックリストに含める必要がある。
- */
-export const CDP_PORT = 9222;
+export const CDP_PORT = (() => {
+  const raw = process.env.ARK_CDP_PORT;
+  if (raw === undefined || raw === "") return 9222;
+  const n = Number(raw);
+  if (Number.isInteger(n) && n >= 1024 && n <= 65535) return n;
+  console.warn(
+    `[constants] ARK_CDP_PORT=${raw} は1024〜65535の整数ではないため、9222を使います`
+  );
+  return 9222;
+})();

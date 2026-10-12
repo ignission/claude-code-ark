@@ -159,7 +159,7 @@ interface MobileLayoutProps {
     relPath: string;
     sequence: number;
   } | null;
-  // ブラウザ（noVNC）
+  // ブラウザ
   activeBrowserSession: BrowserSession | null;
   onSelectBrowser: () => void;
   isRemote: boolean;
@@ -568,8 +568,8 @@ export function MobileLayout({
           );
         })}
 
-      {/* ブラウザビュー（noVNC）- 一度開いたら常に描画し、display:hiddenで切り替え。
-          BrowserPaneの再マウントによるVNC再接続を防ぐ。 */}
+      {/* ブラウザビュー - 一度開いたら常に描画し、display:hiddenで切り替え。
+          BrowserPaneの再マウントによるWebSocketの再接続を防ぐ。 */}
       {hasBrowserOpened && (
         <div className={activeTab === "browser" ? paneClassName : "hidden"}>
           <div className="h-12 border-b border-border flex items-center px-4 shrink-0">
