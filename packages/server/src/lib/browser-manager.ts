@@ -42,56 +42,101 @@ const STALE_KILL_WAIT = 500;
 /** 起動に失敗したときのエラーに付ける、stderrの末尾の長さ (文字数) */
 const STDERR_TAIL_LENGTH = 2000;
 
+/** Playwrightがブラウザを置く場所。環境変数、Linux、macOSの順に見る */
+function playwrightCacheDirs(homeDir: string): string[] {
+  const dirs: string[] = [];
+  const custom = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  if (custom && custom !== "0") dirs.push(custom);
+  dirs.push(path.join(homeDir, ".cache", "ms-playwright"));
+  dirs.push(path.join(homeDir, "Library", "Caches", "ms-playwright"));
+  return dirs;
+}
+
+/** 版のディレクトリ (`chrome-linux` など) から見た、実行ファイルの候補 */
+const CHROME_BINARIES = [
+  "chrome",
+  "Chromium.app/Contents/MacOS/Chromium",
+  "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+];
+const HEADLESS_SHELL_BINARIES = ["headless_shell", "chrome-headless-shell"];
+
+/** PATHに無いことが多い、macOSのアプリの置き場所 */
+const MAC_APP_BINARIES = [
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "/Applications/Chromium.app/Contents/MacOS/Chromium",
+];
+
 /**
- * Chromiumバイナリを検索する
- * snap版はpm2/systemd環境でX11にアクセスできないため、
- * Playwright版のバイナリパス (chromium-* および chromium_headless_shell-*) を優先的に探す。
+ * Playwrightのキャッシュから、いちばん新しい版の実行ファイルを探す。
  *
- * BrowserManager (ブラウザ機能) と HtmlScreenshotter (headless shell) の両方から呼ばれる。
+ * 版のディレクトリ (`chromium-1248`) の下の名前は、OSとCPUと版で変わる
+ * (`chrome-linux`、`chrome-linux-arm64`、`chrome-mac`、`chrome-headless-shell-linux-arm64` など)。
+ * 名前を決め打ちにせず、`chrome-` で始まるディレクトリをすべて見る。
+ */
+export function findInPlaywrightCache(
+  cacheDir: string,
+  prefix: "chromium-" | "chromium_headless_shell-",
+  binaries: readonly string[]
+): string | null {
+  let versions: string[];
+  try {
+    versions = fs.readdirSync(cacheDir).filter(d => d.startsWith(prefix));
+  } catch {
+    return null;
+  }
+  // 版の番号は桁数が変わるので、文字列ではなく数として比べる
+  const revision = (dir: string) =>
+    Number.parseInt(dir.slice(prefix.length), 10) || 0;
+  versions.sort((a, b) => revision(b) - revision(a));
+  for (const version of versions) {
+    let platforms: string[];
+    try {
+      platforms = fs
+        .readdirSync(path.join(cacheDir, version))
+        .filter(d => d.startsWith("chrome-"));
+    } catch {
+      continue;
+    }
+    for (const platform of platforms) {
+      for (const binary of binaries) {
+        const candidate = path.join(cacheDir, version, platform, binary);
+        if (fs.existsSync(candidate)) return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Chromiumの実行ファイルを探す。
+ *
+ * snap版はpm2 / systemdの下で動かないことがあるので、Playwrightが入れたものを先に探す。
+ * ブラウザ機能 (`headlessShell` なし) は `--headless=new` で動かすので、古いheadlessだけを持つ
+ * headless shellは使わない。HtmlScreenshotter (`headlessShell: true`) は、headless shellが無ければ
+ * 通常のChromiumを使う。
  */
 export function findChromiumExecutable(
   options: { headlessShell?: boolean } = {}
 ): string | null {
   const homeDir = process.env.HOME || os.homedir();
-  const playwrightDir = `${homeDir}/.cache/ms-playwright`;
-  if (fs.existsSync(playwrightDir)) {
-    try {
-      const allDirs = fs.readdirSync(playwrightDir);
-      // headlessShell=true の場合は chromium_headless_shell-* を優先
-      // false の場合は通常の chromium-* を優先 (ブラウザ機能の用途)
-      const prefix = options.headlessShell
-        ? "chromium_headless_shell-"
-        : "chromium-";
-      const fallbackPrefix = options.headlessShell
-        ? "chromium-"
-        : "chromium_headless_shell-";
-      const tryFind = (p: string): string | null => {
-        const dirs = allDirs
-          .filter(d => d.startsWith(p))
-          .sort()
-          .reverse(); // 最新版を優先
-        for (const dir of dirs) {
-          const binName = options.headlessShell ? "headless_shell" : "chrome";
-          const binPath = `${playwrightDir}/${dir}/chrome-linux/${binName}`;
-          if (fs.existsSync(binPath)) {
-            return binPath;
-          }
-          // headless_shell ディレクトリの中に chrome がある場合や逆ケースに対応
-          const altPath = `${playwrightDir}/${dir}/chrome-linux/chrome`;
-          if (fs.existsSync(altPath)) {
-            return altPath;
-          }
-        }
-        return null;
-      };
-      const found = tryFind(prefix) ?? tryFind(fallbackPrefix);
-      if (found) return found;
-    } catch {
-      // ディレクトリ読み取り失敗は無視
+  for (const cacheDir of playwrightCacheDirs(homeDir)) {
+    if (options.headlessShell) {
+      const shell = findInPlaywrightCache(
+        cacheDir,
+        "chromium_headless_shell-",
+        HEADLESS_SHELL_BINARIES
+      );
+      if (shell) return shell;
     }
+    const chrome = findInPlaywrightCache(
+      cacheDir,
+      "chromium-",
+      CHROME_BINARIES
+    );
+    if (chrome) return chrome;
   }
 
-  // システムの Chromium (snap版でないもの)
+  // システムのChromium (snap版でないもの)
   for (const cmd of ["chromium-browser", "chromium", "google-chrome"]) {
     try {
       execFileSync("which", [cmd], { stdio: "pipe" });
@@ -99,6 +144,9 @@ export function findChromiumExecutable(
     } catch {
       // 見つからない
     }
+  }
+  for (const app of MAC_APP_BINARIES) {
+    if (fs.existsSync(app)) return app;
   }
 
   return null;
