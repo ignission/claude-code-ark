@@ -5,7 +5,10 @@ import type {
 } from "@ark/shared";
 import { Loader2, RefreshCw } from "lucide-react";
 import type React from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { BrowserDialog } from "@/components/BrowserDialog";
+import { BrowserSelectList } from "@/components/BrowserSelectList";
+import { BrowserToolbar } from "@/components/BrowserToolbar";
 import { Button } from "@/components/ui/button";
 import { buildBrowserWsUrl } from "@/lib/auth-token";
 import {
@@ -20,13 +23,28 @@ import {
   refreshIntervalMs,
 } from "@/lib/browser-frame";
 import {
+  containsPoint,
+  type LetterboxRect,
+  letterboxRect,
+  type Size,
+  screenToViewport,
+  viewportToScreen,
+} from "@/lib/browser-geometry";
+import {
   type BrowserMouseMessage,
   chunkPasteText,
+  copyShortcut,
   isPasteShortcut,
   keyMessage,
+  modifiersOf,
   mouseMessage,
   wheelMessage,
 } from "@/lib/browser-input";
+import {
+  browserSessionReducer,
+  initialBrowserSessionState,
+} from "@/lib/browser-session-state";
+import { TouchIdMap, type TouchLike, touchPoints } from "@/lib/browser-touch";
 
 interface BrowserPaneProps {
   browserSession: BrowserSession;
@@ -48,11 +66,18 @@ const COMPOSITION_ENTER_MS = 30;
 /** DOMの `MouseEvent.button` の順に並べた、`MouseEvent.buttons` のビット */
 const BUTTON_BITS = [1, 4, 2, 8, 16];
 const GEN_MAX = 0xffff;
+/** 知らせ (断られた操作の理由など) を出しておく時間 (ミリ秒) */
+const NOTICE_DISMISS_MS = 4000;
+const COPY_FAILED_NOTICE = "コピーできませんでした";
+/**
+ * タッチのあと、この時間 (ミリ秒) までに届いたマウスのイベントは送らない。ブラウザが
+ * タッチから合成したもので、送ると1回の押下がリモートに2回届く。
+ */
+const TOUCH_MOUSE_GUARD_MS = 800;
+/** canvasの上に重ねて出す部品 (ダイアログ、選択リスト) に付ける目印 */
+const OVERLAY_SELECTOR = "[data-browser-overlay]";
 
-interface Size {
-  width: number;
-  height: number;
-}
+type BrowserTouchMessage = Extract<BrowserClientMessage, { t: "touch" }>;
 
 /** canvasの画素数と、ビューポートのCSSピクセル1つに持つ画素の数 */
 interface CanvasSize extends Size {
@@ -82,6 +107,20 @@ function isSize(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+function isOverlayTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(OVERLAY_SELECTOR) !== null;
+}
+
+/** ダイアログの見出しに出す、ページのホスト。読めないURLなら空 */
+function hostOf(url: string | undefined): string {
+  if (!url) return "";
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
+}
+
 function isGen(value: unknown): value is number {
   return (
     Number.isInteger(value) && Number(value) >= 0 && Number(value) <= GEN_MAX
@@ -97,12 +136,8 @@ function toViewport(
   rect: DOMRect,
   viewport: Size | null
 ): BrowserMouseMessage | null {
-  if (!viewport || rect.width <= 0 || rect.height <= 0) return null;
-  return {
-    ...msg,
-    x: (msg.x * viewport.width) / rect.width,
-    y: (msg.y * viewport.height) / rect.height,
-  };
+  const point = screenToViewport(msg, rect, viewport);
+  return point ? { ...msg, ...point } : null;
 }
 
 /**
@@ -148,6 +183,40 @@ function toViewport(
  * (復号の失敗、描画先が無い) が続く間は、頼む間隔を失敗のたびに倍にして8秒まで延ばし、
  * 1枚描けたら元へ戻す。手元で描けない画像を送られ続けても、頼むのは8秒に1回で止まる。
  * ほかの理由で頼むときは、間隔を延ばさない。
+ *
+ * ペインは縦に3段。ツールバー、タブの並び (`BrowserToolbar`)、canvasを置く領域。
+ * サーバーへ送る寸法は、canvasを置く領域だけを測る (ツールバーを含めると、ビューポートが
+ * 見えている範囲より縦に長くなる)。マウス、wheel、タッチも、この領域で受ける。
+ *
+ * ビューポートがこの領域の寸法と違うとき (ほかの視聴者が寸法を持っている) は、canvasを
+ * 引き伸ばさず、縦横比を保って中央に収める (`letterboxRect`)。canvasの寸法は、描き直しを
+ * 待たずにCSSへ直接当てる。座標の換算はcanvasの表示上の矩形を読むので、そのまま合う。
+ * 余白で始まった操作 (押下、移動、wheel、タッチ) は送らない。押したまま余白や外へ出た
+ * ドラッグは、これまでどおり追う。
+ *
+ * ページ、タブ、ダイアログ、選択リスト、知らせの状態は、サーバーのメッセージから
+ * `browser-session-state.ts` のreducerが作る。接続のたびに初期値へ戻す。
+ *
+ * ダイアログか選択リストが出ている間は、マウス、wheel、キー、貼り付け、変換、タッチを
+ * リモートへ送らない (ダイアログの間、ページのスクリプトは止まっている。選択リストの間、
+ * キーはリストが使う)。どちらも領域の中に重ねて出すので、その上で起きた操作には、
+ * 既定の動作も止めない (ボタンを押せて、中をスクロールできるようにする)。閉じたときに
+ * フォーカスの行き場が無ければ、透明のtextareaへ戻す。
+ *
+ * コピーと切り取りのショートカットは、キーをリモートへ送るのに加えて、選択している
+ * 文字列を読みに行く (`copy`)。切り取りではリモートの選択が消えるので、`copy` を先に送る。
+ * 返ってきた文字列 (`clipboard`) は、手元のクリップボードへ書く。書けなければ (権限が無い、
+ * 安全でないコンテキスト)、知らせを出すだけにする。
+ *
+ * タッチは、領域に自分で付けたリスナー (passiveでない) で受け、既定の動作を止める
+ * (ペインのスクロールと、ブラウザが合成するマウスのイベントを止める)。それでも合成された
+ * マウスのイベントが届くブラウザがあるので、タッチの直後のマウスは送らない。点の番号は
+ * `browser-touch.ts` で小さい整数に付け直す。`touchstart` は、マウスの押下と同じく、
+ * 寸法を主張し、透明のtextareaにフォーカスする (ソフトキーボードを出す)。`touchmove` は
+ * 1フレームに1回へ間引き、`touchend` と `touchcancel` の前に送り切る。
+ *
+ * 知らせは、領域の上端に重ねて出す。段として挟むと、出るたびに領域の高さが変わり、
+ * ビューポートの寸法を送り直すことになる。
  */
 export function BrowserPane({ browserSession }: BrowserPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -156,6 +225,17 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
   const wsRef = useRef<WebSocket | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "connecting" });
   const [attempt, setAttempt] = useState(0);
+  const [ui, dispatch] = useReducer(
+    browserSessionReducer,
+    initialBrowserSessionState
+  );
+  // 選択リストが出ている間にcanvasの置き場所が変わったら、リストを置き直すために描き直す
+  const [, setLayoutVersion] = useState(0);
+  // Reactの外のリスナー (wheel、タッチ) から、いまの状態を読む
+  const uiRef = useRef(ui);
+  uiRef.current = ui;
+  const statusRef = useRef(status);
+  statusRef.current = status;
 
   // サーバーが最後に知らせたビューポートの寸法 (CSSピクセル)
   const viewportRef = useRef<Size | null>(null);
@@ -178,6 +258,19 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
   const heldButtonsRef = useRef(new Set<number>());
   // 最後に送ろうとしたマウスの位置 (ビューポートの座標)
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+  // canvasを置く領域の寸法と、その中でcanvasを置く矩形。寸法の監視が更新する
+  const areaRef = useRef<Size>({ width: 0, height: 0 });
+  const letterboxRef = useRef<LetterboxRect>(
+    letterboxRect(areaRef.current, null)
+  );
+  // 触れている指に割り当てた番号と、間引きで送らずに持っている最新のmove
+  const touchIdsRef = useRef(new TouchIdMap());
+  const pendingTouchRef = useRef<BrowserTouchMessage | null>(null);
+  const touchFrameRef = useRef<number | null>(null);
+  const lastTouchAtRef = useRef(Number.NEGATIVE_INFINITY);
+  // 選択リストを閉じた押下。同じ押下をリモートへ送らないために覚える
+  const swallowedEventRef = useRef<Event | null>(null);
+  const hadOverlayRef = useRef(false);
 
   const send = useCallback((msg: BrowserClientMessage) => {
     const ws = wsRef.current;
@@ -197,6 +290,42 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     });
   }, [send]);
 
+  /** いまのビューポートと領域の寸法から、canvasを置く矩形を決めてCSSへ当てる */
+  const applyLayout = useCallback(() => {
+    const box = letterboxRect(areaRef.current, viewportRef.current);
+    letterboxRef.current = box;
+    const style = canvasRef.current?.style;
+    if (style) {
+      // 全体を使うときは、クラス (h-full w-full) に任せる
+      style.position = box.fill ? "" : "absolute";
+      style.left = box.fill ? "" : `${box.left}px`;
+      style.top = box.fill ? "" : `${box.top}px`;
+      style.width = box.fill ? "" : `${box.width}px`;
+      style.height = box.fill ? "" : `${box.height}px`;
+    }
+    if (uiRef.current.select) setLayoutVersion(n => n + 1);
+  }, []);
+
+  /** ダイアログか選択リストが出ている間は、リモートへ入力を送らない */
+  const inputBlocked = useCallback(
+    () => uiRef.current.dialog !== null || uiRef.current.select !== null,
+    []
+  );
+
+  const writeClipboard = useCallback((text: unknown) => {
+    if (typeof text !== "string") return;
+    const fail = () =>
+      dispatch({ type: "notice", message: COPY_FAILED_NOTICE });
+    try {
+      // 安全でないコンテキストでは `navigator.clipboard` が無い
+      const written = navigator.clipboard?.writeText(text);
+      if (written) written.catch(fail);
+      else fail();
+    } catch {
+      fail();
+    }
+  }, []);
+
   const flushMove = useCallback(() => {
     if (moveFrameRef.current !== null) {
       cancelAnimationFrame(moveFrameRef.current);
@@ -206,6 +335,17 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     pendingMoveRef.current = null;
     if (pending) send(pending);
   }, [send]);
+
+  /** 持っているタッチのmoveを取り出す。送るかどうかは呼ぶ側が決める */
+  const takeTouchMove = useCallback((): BrowserTouchMessage | null => {
+    if (touchFrameRef.current !== null) {
+      cancelAnimationFrame(touchFrameRef.current);
+      touchFrameRef.current = null;
+    }
+    const pending = pendingTouchRef.current;
+    pendingTouchRef.current = null;
+    return pending;
+  }, []);
 
   /** 送り先が無くなったとき。持っていた入力の状態を、何も送らずに捨てる */
   const dropInputState = useCallback(() => {
@@ -217,7 +357,9 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     pendingMoveRef.current = null;
     heldKeysRef.current.clear();
     heldButtonsRef.current.clear();
-  }, []);
+    takeTouchMove();
+    touchIdsRef.current.clear();
+  }, [takeTouchMove]);
 
   /** フォーカスが外れたとき。押したままのキーとボタンを、リモートで離す */
   const releaseHeld = useCallback(() => {
@@ -251,7 +393,14 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
       }
     }
     stopDragRef.current?.();
-  }, [send, flushMove]);
+
+    // 触れたままの指も離す。このあとに届くmoveとendは、番号が無いので送られない
+    if (touchIdsRef.current.size > 0) {
+      takeTouchMove();
+      touchIdsRef.current.clear();
+      send({ t: "touch", type: "cancel", points: [], modifiers: 0 });
+    }
+  }, [send, flushMove, takeTouchMove]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: attemptは本文中では読まないが、再接続ボタンを押すたびに接続をやり直すためのtriggerとして依存に入れている
   useEffect(() => {
@@ -279,7 +428,9 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
     setStatus({ kind: "connecting" });
+    dispatch({ type: "reset" });
     viewportRef.current = null;
+    applyLayout();
 
     const ws = new WebSocket(buildBrowserWsUrl(browserSession.id));
     ws.binaryType = "arraybuffer";
@@ -469,6 +620,7 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     const applyViewport = (width: number, height: number, nextGen: number) => {
       // 座標の換算は、ここから新しい寸法を使う
       viewportRef.current = { width, height };
+      applyLayout();
       const genChanged = nextGen !== gen;
       if (genChanged) {
         // 前の世代のフレームは、寸法の違う画面のもの。新しい世代は全画面から始まり、
@@ -498,6 +650,9 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
           const msg = JSON.parse(event.data) as BrowserServerMessage;
           // サーバーは閉じる直前に理由を送る。表示するのはcloseが来てから
           if (msg.t === "error") serverError = msg.message;
+          else if (msg.t === "clipboard") writeClipboard(msg.text);
+          else if (msg.t !== "viewport")
+            dispatch({ type: "server", message: msg });
           if (msg.t === "viewport") {
             if (isSize(msg.width) && isSize(msg.height) && isGen(msg.gen)) {
               applyViewport(msg.width, msg.height, msg.gen);
@@ -542,7 +697,14 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
       if (wsRef.current === ws) wsRef.current = null;
       dropInputState();
     };
-  }, [browserSession.id, attempt, sendSize, dropInputState]);
+  }, [
+    browserSession.id,
+    attempt,
+    sendSize,
+    dropInputState,
+    applyLayout,
+    writeClipboard,
+  ]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -551,6 +713,8 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     const measure = () => {
       const rect = container.getBoundingClientRect();
       visibleRef.current = rect.width > 0 && rect.height > 0;
+      areaRef.current = { width: rect.width, height: rect.height };
+      applyLayout();
     };
     measure();
     const observer = new ResizeObserver(() => {
@@ -561,7 +725,7 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     });
     observer.observe(container);
     return () => observer.disconnect();
-  }, [sendSize]);
+  }, [sendSize, applyLayout]);
 
   // 手元の倍率が変わったら (倍率の違う画面へウィンドウを動かした、拡大率を変えた)、
   // ペインの寸法が同じでも送り直し、canvasの倍率を決め直す。メディアクエリはいまの倍率に
@@ -590,6 +754,34 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
   useEffect(() => {
     if (status.kind !== "connected") inputRef.current?.blur();
   }, [status.kind]);
+
+  const notice = ui.notice;
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(
+      () => dispatch({ type: "noticeExpired", seq: notice.seq }),
+      NOTICE_DISMISS_MS
+    );
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  // ダイアログと選択リストは、出ている間フォーカスを持つ。閉じて要素が消えると、
+  // フォーカスは文書の本体へ落ちるので、続けてキーを打てるように入力欄へ戻す。
+  // 利用者がほかの欄 (URLなど) へ移っていたら、動かさない
+  const overlayOpen = ui.dialog !== null || ui.select !== null;
+  useEffect(() => {
+    if (overlayOpen) {
+      hadOverlayRef.current = true;
+      return;
+    }
+    if (!hadOverlayRef.current) return;
+    hadOverlayRef.current = false;
+    if (statusRef.current.kind !== "connected") return;
+    const focused = document.activeElement;
+    if (!focused || focused === document.body) {
+      inputRef.current?.focus({ preventScroll: true });
+    }
+  }, [overlayOpen]);
 
   // ウィンドウのフォーカスが外れると、キーとボタンのupは届かない
   useEffect(() => {
@@ -655,19 +847,40 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
   };
 
   // ビューポートがこのペインの寸法と違えば (ほかの視聴者が寸法を送った)、自分の寸法を送る
-  const claimViewport = (container: DOMRect) => {
-    const viewport = viewportRef.current;
-    const width = Math.round(container.width);
-    const height = Math.round(container.height);
-    if (!viewport || width < 1 || height < 1) return;
-    if (viewport.width !== width || viewport.height !== height) sendSize();
+  const claimViewport = useCallback(
+    (container: DOMRect) => {
+      const viewport = viewportRef.current;
+      const width = Math.round(container.width);
+      const height = Math.round(container.height);
+      if (!viewport || width < 1 || height < 1) return;
+      if (viewport.width !== width || viewport.height !== height) sendSize();
+    },
+    [sendSize]
+  );
+
+  const afterTouch = () =>
+    performance.now() - lastTouchAtRef.current < TOUCH_MOUSE_GUARD_MS;
+
+  /** canvasの上なら `true`。余白 (縦横比を保つために空けた部分) なら `false` */
+  const onCanvas = (e: { clientX: number; clientY: number }): boolean => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    return rect !== undefined && containsPoint(rect, e.clientX, e.clientY);
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     // 接続中と切断の表示が上に載っている間は、再接続ボタンの操作を邪魔しない
     if (status.kind !== "connected") return;
+    // ダイアログと選択リストの上の操作は、その部品に任せる。選択リストを閉じた押下も送らない
+    if (
+      isOverlayTarget(e.target) ||
+      inputBlocked() ||
+      swallowedEventRef.current === e.nativeEvent
+    ) {
+      return;
+    }
     // 既定の動作 (フォーカスの移動と文字の選択) を止め、フォーカスを入力欄に固定する
     e.preventDefault();
+    if (afterTouch() || !onCanvas(e)) return;
     const container = containerRef.current?.getBoundingClientRect();
     const input = inputRef.current;
     if (container && input) {
@@ -684,6 +897,7 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     // 押している間はwindowのリスナーが送る。ここでも送ると二重になる
     if (stopDragRef.current) return;
+    if (inputBlocked() || afterTouch() || !onCanvas(e)) return;
     queueMove(e.nativeEvent);
   };
 
@@ -692,25 +906,134 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     const container = containerRef.current;
     if (!container) return;
     const onWheel = (e: WheelEvent) => {
+      // ダイアログと選択リストは、中をスクロールできるようにする
+      if (isOverlayTarget(e.target)) return;
       e.preventDefault();
       const rect = canvasRef.current?.getBoundingClientRect();
-      if (!rect) return;
+      if (!rect || inputBlocked()) return;
+      if (!containsPoint(rect, e.clientX, e.clientY)) return;
       const msg = toViewport(wheelMessage(e, rect), rect, viewportRef.current);
       if (msg) send(msg);
     };
     container.addEventListener("wheel", onWheel, { passive: false });
     return () => container.removeEventListener("wheel", onWheel);
-  }, [send]);
+  }, [send, inputBlocked]);
+
+  // Reactのタッチのハンドラはpassiveで、既定の動作を止められないので、自分で付ける
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const ids = touchIdsRef.current;
+
+    const message = (
+      type: BrowserTouchMessage["type"],
+      e: TouchEvent
+    ): BrowserTouchMessage => {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      const toPoint = (touch: TouchLike) =>
+        rect
+          ? screenToViewport(
+              { x: touch.clientX - rect.left, y: touch.clientY - rect.top },
+              rect,
+              viewportRef.current
+            )
+          : null;
+      return {
+        t: "touch",
+        type,
+        points: touchPoints(e.touches, ids, toPoint),
+        modifiers: modifiersOf(e),
+      };
+    };
+
+    const flushTouchMove = () => {
+      const pending = takeTouchMove();
+      if (pending) send(pending);
+    };
+
+    /** 重ねて出す部品と、接続中や切断の表示の上のタッチには、手を出さない */
+    const isOurs = (e: TouchEvent) =>
+      !isOverlayTarget(e.target) && statusRef.current.kind === "connected";
+
+    const onStart = (e: TouchEvent) => {
+      if (!isOurs(e)) return;
+      e.preventDefault();
+      lastTouchAtRef.current = performance.now();
+      if (inputBlocked() || swallowedEventRef.current === e) return;
+      const canvas = canvasRef.current?.getBoundingClientRect();
+      if (!canvas || !viewportRef.current) return;
+      // 余白で始まった指と、上限を超えた指には、番号を割り当てない
+      let first: TouchLike | null = null;
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const touch = e.changedTouches[i];
+        if (!containsPoint(canvas, touch.clientX, touch.clientY)) continue;
+        if (ids.assign(touch.identifier) !== null) first ??= touch;
+      }
+      if (!first) return;
+      const area = container.getBoundingClientRect();
+      const input = inputRef.current;
+      if (input) {
+        input.style.left = `${first.clientX - area.left}px`;
+        input.style.top = `${first.clientY - area.top}px`;
+        input.focus({ preventScroll: true });
+      }
+      // 寸法が先。マウスの押下と同じ
+      claimViewport(area);
+      flushTouchMove();
+      send(message("start", e));
+    };
+
+    const onMove = (e: TouchEvent) => {
+      if (!isOurs(e)) return;
+      e.preventDefault();
+      if (ids.size === 0) return;
+      pendingTouchRef.current = message("move", e);
+      if (touchFrameRef.current !== null) return;
+      touchFrameRef.current = requestAnimationFrame(() => {
+        touchFrameRef.current = null;
+        flushTouchMove();
+      });
+    };
+
+    const onEnd = (type: "end" | "cancel") => (e: TouchEvent) => {
+      if (!isOurs(e)) return;
+      if (e.cancelable) e.preventDefault();
+      lastTouchAtRef.current = performance.now();
+      let released = false;
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        if (ids.release(e.changedTouches[i].identifier)) released = true;
+      }
+      if (!released) return;
+      // 持っているmoveを先に送る (順序が入れ替わると、離した位置がずれる)
+      flushTouchMove();
+      send(message(type, e));
+    };
+    const onTouchEnd = onEnd("end");
+    const onTouchCancel = onEnd("cancel");
+
+    const options = { passive: false };
+    container.addEventListener("touchstart", onStart, options);
+    container.addEventListener("touchmove", onMove, options);
+    container.addEventListener("touchend", onTouchEnd, options);
+    container.addEventListener("touchcancel", onTouchCancel, options);
+    return () => {
+      container.removeEventListener("touchstart", onStart);
+      container.removeEventListener("touchmove", onMove);
+      container.removeEventListener("touchend", onTouchEnd);
+      container.removeEventListener("touchcancel", onTouchCancel);
+    };
+  }, [send, inputBlocked, claimViewport, takeTouchMove]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // つながっていない間は何もしない。TabやEnterで再接続ボタンを操作できるようにする
-    if (status.kind !== "connected") return;
+    // つながっていない間は何もしない。TabやEnterで再接続ボタンを操作できるようにする。
+    // ダイアログと選択リストの間も同じで、Tabでそちらへ戻れるようにする
+    if (status.kind !== "connected" || inputBlocked()) return;
     // 貼り付けはキーとして送らず、ブラウザのpasteイベントに任せる
     if (isPasteShortcut(e.nativeEvent)) return;
     const msg = keyMessage(e.nativeEvent, "down");
     if (!msg) return;
     // 手元の入力欄には文字を入れない (入れるとonInputが同じ文字をもう一度送る)。
-    // コピーや切り取りのショートカットも、ここでは普通のキーとして送るだけ
+    // コピーや切り取りのショートカットも、普通のキーとして送る
     e.preventDefault();
     if (
       e.key === "Enter" &&
@@ -718,6 +1041,8 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     ) {
       return;
     }
+    // リモートが切り取る前に読めるよう、キーより先に送る。押したままの繰り返しでは読まない
+    if (!e.repeat && copyShortcut(e.nativeEvent)) send({ t: "copy" });
     send(msg);
     heldKeysRef.current.set(e.code || e.key, {
       key: e.key,
@@ -753,6 +1078,7 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
   const handleCompositionUpdate = (
     e: React.CompositionEvent<HTMLTextAreaElement>
   ) => {
+    if (inputBlocked()) return;
     send({
       t: "ime",
       type: "update",
@@ -773,6 +1099,7 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     // blurで取り消しを送ったあとに届いた分は、もう送らない
     if (!composingRef.current) return;
     composingRef.current = false;
+    if (inputBlocked()) return;
     send(
       e.data
         ? { t: "ime", type: "commit", text: e.data }
@@ -789,11 +1116,13 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     const text = e.currentTarget.value;
     if (!text) return;
     e.currentTarget.value = "";
+    if (inputBlocked()) return;
     send({ t: "ime", type: "commit", text });
   };
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     e.preventDefault();
+    if (inputBlocked()) return;
     const text = e.clipboardData.getData("text/plain");
     // サーバーは長すぎるメッセージを捨てるので、分けて順に送る
     for (const chunk of chunkPasteText(text)) send({ t: "paste", text: chunk });
@@ -809,65 +1138,126 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     releaseHeld();
   };
 
+  const respondDialog = (accept: boolean, promptText?: string) => {
+    send(
+      promptText === undefined
+        ? { t: "dialog", accept }
+        : { t: "dialog", accept, promptText }
+    );
+  };
+
+  const chooseOption = (id: number, index: number) => {
+    send({ t: "selectChoose", id, index });
+    dispatch({ type: "selectDismissed", id });
+  };
+
+  const cancelSelect = (id: number, event?: Event) => {
+    if (event) swallowedEventRef.current = event;
+    send({ t: "selectCancel", id });
+    dispatch({ type: "selectDismissed", id });
+  };
+
+  const connected = status.kind === "connected";
+  const { dialog, select } = ui;
+
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: リモートの画面への操作をそのまま送る面で、対応する役割が無い。キー入力は中のtextareaが受ける
-    <div
-      ref={containerRef}
-      className="relative h-full w-full overflow-hidden bg-background"
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onContextMenu={e => e.preventDefault()}
-    >
-      <canvas
-        ref={canvasRef}
-        className="block h-full w-full"
-        style={{ touchAction: "none" }}
+    <div className="flex h-full w-full flex-col bg-background">
+      <BrowserToolbar
+        page={ui.page}
+        tabs={ui.tabs}
+        activeId={ui.activeId}
+        disabled={!connected}
+        onSend={send}
       />
-      {/* ポインタの操作は受けない (受けると、入力欄の上を押したときにペインへ届かない)。
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: リモートの画面への操作をそのまま送る面で、対応する役割が無い。キー入力は中のtextareaが受ける */}
+      <div
+        ref={containerRef}
+        className="relative min-h-0 flex-1 overflow-hidden bg-background"
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onContextMenu={e => e.preventDefault()}
+      >
+        <canvas
+          ref={canvasRef}
+          className="block h-full w-full"
+          style={{ touchAction: "none" }}
+        />
+        {/* ポインタの操作は受けない (受けると、入力欄の上を押したときにペインへ届かない)。
           置く場所を決めておくのは、フォーカスしたときにペインがスクロールしないようにするため */}
-      <textarea
-        ref={inputRef}
-        aria-label="ブラウザへの入力"
-        autoCapitalize="off"
-        autoComplete="off"
-        autoCorrect="off"
-        spellCheck={false}
-        className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0 resize-none border-0 p-0 outline-none"
-        style={{ caretColor: "transparent" }}
-        onKeyDown={handleKeyDown}
-        onKeyUp={handleKeyUp}
-        onCompositionStart={handleCompositionStart}
-        onCompositionUpdate={handleCompositionUpdate}
-        onCompositionEnd={handleCompositionEnd}
-        onInput={handleInput}
-        onPaste={handlePaste}
-        onBlur={handleBlur}
-      />
-      {status.kind === "connecting" && (
-        <div
-          role="status"
-          className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground bg-background/80"
-        >
-          <Loader2 className="h-5 w-5 animate-spin mr-2" />
-          ブラウザに接続中...
-        </div>
-      )}
-      {status.kind === "disconnected" && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm bg-background/90 px-6 text-center">
-          <p role="status" className="text-muted-foreground break-all">
-            {status.reason}
-          </p>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => setAttempt(n => n + 1)}
+        <textarea
+          ref={inputRef}
+          aria-label="ブラウザへの入力"
+          autoCapitalize="off"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+          className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0 resize-none border-0 p-0 outline-none"
+          style={{ caretColor: "transparent" }}
+          onKeyDown={handleKeyDown}
+          onKeyUp={handleKeyUp}
+          onCompositionStart={handleCompositionStart}
+          onCompositionUpdate={handleCompositionUpdate}
+          onCompositionEnd={handleCompositionEnd}
+          onInput={handleInput}
+          onPaste={handlePaste}
+          onBlur={handleBlur}
+        />
+        {connected && notice && (
+          <div
+            key={notice.seq}
+            data-browser-notice
+            role="status"
+            className="pointer-events-none absolute inset-x-0 top-0 z-10 truncate border-b border-border bg-background/95 px-3 py-1 text-xs text-muted-foreground"
           >
-            <RefreshCw className="h-3.5 w-3.5 mr-1" />
-            再接続
-          </Button>
-        </div>
-      )}
+            {notice.message}
+          </div>
+        )}
+        {connected && select && (
+          <BrowserSelectList
+            select={select}
+            anchor={viewportToScreen(
+              select.rect,
+              letterboxRef.current,
+              viewportRef.current
+            )}
+            area={areaRef.current}
+            onChoose={index => chooseOption(select.id, index)}
+            onCancel={event => cancelSelect(select.id, event)}
+          />
+        )}
+        {connected && dialog && (
+          <BrowserDialog
+            dialog={dialog}
+            origin={hostOf(ui.page?.url)}
+            onRespond={respondDialog}
+          />
+        )}
+        {status.kind === "connecting" && (
+          <div
+            role="status"
+            className="absolute inset-0 z-40 flex items-center justify-center text-sm text-muted-foreground bg-background/80"
+          >
+            <Loader2 className="h-5 w-5 animate-spin mr-2" />
+            ブラウザに接続中...
+          </div>
+        )}
+        {status.kind === "disconnected" && (
+          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 text-sm bg-background/90 px-6 text-center">
+            <p role="status" className="text-muted-foreground break-all">
+              {status.reason}
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setAttempt(n => n + 1)}
+            >
+              <RefreshCw className="h-3.5 w-3.5 mr-1" />
+              再接続
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

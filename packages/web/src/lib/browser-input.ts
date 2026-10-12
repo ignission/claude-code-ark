@@ -71,6 +71,22 @@ export function isPasteShortcut(e: KeyLike): boolean {
   return e.code === "KeyV" && !/^[a-zA-Z]$/.test(e.key);
 }
 
+/**
+ * コピーか切り取りのショートカットなら、その種類。キーはふつうのキーとして送り、
+ * それとは別に、リモートで選択している文字列を読んで手元のクリップボードへ入れる
+ */
+export function copyShortcut(e: KeyLike): "copy" | "cut" | null {
+  if (e.altKey || !(e.ctrlKey || e.metaKey)) return null;
+  const key = e.key.toLowerCase();
+  if (key === "c") return "copy";
+  if (key === "x") return "cut";
+  // キリル配列などは key が c や x にならない。ASCIIの英字ならDvorakなどの配列なので key に従う
+  if (/^[a-zA-Z]$/.test(e.key)) return null;
+  if (e.code === "KeyC") return "copy";
+  if (e.code === "KeyX") return "cut";
+  return null;
+}
+
 function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff;
 }

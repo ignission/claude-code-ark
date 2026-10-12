@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   chunkPasteText,
+  copyShortcut,
   isPasteShortcut,
   keyMessage,
   modifiersOf,
@@ -136,6 +137,35 @@ describe("isPasteShortcut", () => {
     expect(
       isPasteShortcut({ ...key, key: "k", code: "KeyV", ctrlKey: true })
     ).toBe(false);
+  });
+});
+
+describe("copyShortcut", () => {
+  it("Ctrl+CとCmd+Cはコピー、Ctrl+XとCmd+Xは切り取り", () => {
+    expect(copyShortcut({ ...key, key: "c", ctrlKey: true })).toBe("copy");
+    expect(copyShortcut({ ...key, key: "C", metaKey: true })).toBe("copy");
+    expect(copyShortcut({ ...key, key: "x", ctrlKey: true })).toBe("cut");
+    expect(copyShortcut({ ...key, key: "X", metaKey: true })).toBe("cut");
+  });
+  it("修飾キーが無い、Altが付いている、ほかのキーなら、どちらでもない", () => {
+    expect(copyShortcut({ ...key, key: "c" })).toBeNull();
+    expect(
+      copyShortcut({ ...key, key: "c", ctrlKey: true, altKey: true })
+    ).toBeNull();
+    expect(copyShortcut({ ...key, key: "v", ctrlKey: true })).toBeNull();
+  });
+  it("キリル配列 (key が с や ч) も、物理キーで見分ける", () => {
+    expect(
+      copyShortcut({ ...key, key: "с", code: "KeyC", ctrlKey: true })
+    ).toBe("copy");
+    expect(
+      copyShortcut({ ...key, key: "ч", code: "KeyX", ctrlKey: true })
+    ).toBe("cut");
+  });
+  it("Dvorakで物理Cキーが別のラテン文字なら、コピーではない", () => {
+    expect(
+      copyShortcut({ ...key, key: "j", code: "KeyC", ctrlKey: true })
+    ).toBeNull();
   });
 });
 
