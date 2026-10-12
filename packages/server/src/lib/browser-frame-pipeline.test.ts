@@ -495,6 +495,178 @@ describe("BrowserFramePipeline", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  describe("監視フレームの寸法", () => {
+    /** メタデータの寸法が当てた寸法と同じフレーム */
+    const MATCH = { size: { width: 800, height: 600 }, scroll: { x: 0, y: 0 } };
+    /** 矩形の取り直しの最中に出る、取り直した範囲の寸法のフレーム */
+    const ARTIFACT = {
+      size: { width: 33, height: 41 },
+      scroll: { x: 0, y: 0 },
+    };
+    const artifact = () => buildSolidPng(5, 6, BLACK);
+    const mismatchWarnings = () =>
+      vi
+        .mocked(console.warn)
+        .mock.calls.filter(([message]) => String(message).includes("33x41"));
+
+    /** 寸法を当て、視聴者が1人入っただけの状態。監視フレームはまだ無い */
+    function fresh() {
+      const h = harness();
+      h.pipeline.setApplied(VIEWPORT);
+      const viewer = h.join();
+      return { ...h, viewer };
+    }
+
+    function feed(
+      h: { pipeline: BrowserFramePipeline<Viewer> },
+      count: number
+    ): void {
+      for (let i = 0; i < count; i++) {
+        h.pipeline.monitorFrame(artifact(), ARTIFACT);
+      }
+    }
+
+    it("当てた寸法と違うフレームは使わず、世代もビューポートも変えない", async () => {
+      const h = await settled();
+      const before = h.pipeline.viewport;
+      h.pipeline.monitorFrame(artifact(), ARTIFACT);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(h.captures).toHaveLength(0);
+      expect(h.viewer.frames).toEqual([]);
+      expect(h.pipeline.viewport).toEqual(before);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("当てた寸法と違うフレームは、次の差分の基準にしない", async () => {
+      const h = await settled();
+      h.pipeline.monitorFrame(monitor([dot(10, 10)]), MATCH);
+      await flush();
+      expect(h.captures.map(c => c.params.clip)).toEqual([
+        { ...SPOT, scale: 1 },
+      ]);
+      h.pipeline.monitorFrame(artifact(), ARTIFACT);
+      // 前の合っているフレームと同じ画。変化は無い
+      h.pipeline.monitorFrame(monitor([dot(10, 10)]), MATCH);
+      await flush();
+      expect(h.captures).toHaveLength(1);
+      h.pipeline.monitorFrame(artifact(), ARTIFACT);
+      // 前の合っているフレームから変わったところだけを取り直す
+      h.pipeline.monitorFrame(monitor([dot(10, 10), dot(50, 50)]), MATCH);
+      await flush();
+      expect(h.captures.slice(1).map(c => c.params.clip)).toEqual([
+        { x: 392, y: 392, width: 24, height: 24, scale: 1 },
+      ]);
+      expect(h.viewer.frames.map(f => parse(f).kind)).toEqual([3, 3]);
+    });
+
+    it("当てた寸法と違うフレームの、スクロールした位置は使わない", async () => {
+      const h = await settled();
+      h.pipeline.monitorFrame(monitor(), {
+        ...MATCH,
+        scroll: { x: 0, y: 120 },
+      });
+      h.pipeline.monitorFrame(artifact(), {
+        ...ARTIFACT,
+        scroll: { x: 0, y: 300 },
+      });
+      h.pipeline.requestFull(h.viewer);
+      await flush();
+      expect(h.captures.map(c => c.params.clip)).toEqual([
+        { ...FULL, y: 120, scale: 1 },
+      ]);
+    });
+
+    it("寸法の読めないフレームは使う", async () => {
+      const h = await settled();
+      h.pipeline.monitorFrame(monitor([dot(10, 10)]), {
+        size: null,
+        scroll: { x: 0, y: 0 },
+      });
+      await flush();
+      expect(h.captures.map(c => c.params.clip)).toEqual([
+        { ...SPOT, scale: 1 },
+      ]);
+    });
+
+    it("当てた寸法のフレームが一度も来ず、違う寸法が30枚続いたら、1回だけ記録して使い始める", async () => {
+      const h = fresh();
+      feed(h, 29);
+      await flush();
+      expect(h.captures).toHaveLength(0);
+      expect(mismatchWarnings()).toHaveLength(0);
+      feed(h, 1);
+      await flush();
+      expect(mismatchWarnings()).toHaveLength(1);
+      expect(String(mismatchWarnings()[0][0])).toContain("800x600");
+      // ビューポートは当てた寸法のまま
+      expect(h.captures.map(c => c.params.clip)).toEqual([
+        { ...FULL, scale: 1 },
+      ]);
+      expect(h.viewer.frames.map(parse)).toMatchObject([
+        { kind: 1, gen: h.pipeline.viewport?.gen, rect: FULL },
+      ]);
+      expect(h.pipeline.viewport).toMatchObject({ width: 800, height: 600 });
+      // そのあとは寸法を見ずに使う。記録は増えない
+      await vi.advanceTimersByTimeAsync(1000);
+      h.pipeline.monitorFrame(monitor(), ARTIFACT);
+      await flush();
+      expect(h.captures).toHaveLength(2);
+      expect(mismatchWarnings()).toHaveLength(1);
+    });
+
+    it("当てた寸法のフレームを1枚でも見たら、違う寸法が続いても使わない", async () => {
+      const h = fresh();
+      feed(h, 29);
+      h.pipeline.monitorFrame(monitor(), MATCH);
+      await flush();
+      expect(h.captures).toHaveLength(1);
+      feed(h, 60);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(h.captures).toHaveLength(1);
+      expect(mismatchWarnings()).toHaveLength(0);
+    });
+
+    it("screencastを始め直したら、数え直す", async () => {
+      const h = fresh();
+      feed(h, 29);
+      h.pipeline.stop();
+      feed(h, 29);
+      await flush();
+      expect(h.captures).toHaveLength(0);
+      expect(mismatchWarnings()).toHaveLength(0);
+      feed(h, 1);
+      await flush();
+      expect(h.captures).toHaveLength(1);
+      expect(mismatchWarnings()).toHaveLength(1);
+      // 寸法を見ずに使うのは、そのscreencastの間だけ
+      h.pipeline.setApplied(VIEWPORT);
+      h.captures.length = 0;
+      feed(h, 29);
+      await flush();
+      expect(h.captures).toHaveLength(0);
+      expect(mismatchWarnings()).toHaveLength(1);
+    });
+
+    it("取り直しの最中に届いた違う寸法のフレームは数えず、そこから数え直す", async () => {
+      const h = fresh();
+      h.setHold(true);
+      feed(h, 20);
+      // 寸法の読めないフレームで全画面の取り直しが始まり、返らないままにする
+      h.pipeline.monitorFrame(monitor(), null);
+      await flush();
+      expect(h.captures).toHaveLength(1);
+      feed(h, 40);
+      expect(mismatchWarnings()).toHaveLength(0);
+      h.setHold(false);
+      h.captures[0].resolve();
+      await flush();
+      feed(h, 29);
+      expect(mismatchWarnings()).toHaveLength(0);
+      feed(h, 1);
+      expect(mismatchWarnings()).toHaveLength(1);
+    });
+  });
+
   describe("取り直しの位置", () => {
     it("矩形は文書の座標で取り直し、ヘッダはビューポートの座標のままにする", async () => {
       const h = await settled();

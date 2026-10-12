@@ -10,7 +10,7 @@
  *   並べても速くならず、古い結果が新しい結果のあとに届く順序の逆転だけが増える。
  *   取り直しの間に来た変化は「汚れ」として溜め、終わってから続けて取る
  * - 取り直しの `clip` は文書の座標で渡す。監視フレームの矩形もヘッダもビューポートの
- *   座標なので、取り直すときにだけ、ページがスクロールした位置を足す。位置は最後の
+ *   座標なので、取り直すときにだけ、ページがスクロールした位置を足す。位置は最後に使った
  *   監視フレームのメタデータから取り、読めなければ0とする。視聴者へ送るヘッダには足さない
  * - 汚れは矩形の集まりか「全面」。矩形が増えすぎるか、面積が大きくなったら全面にする
  *   (細かく取り直すより、1枚で取るほうが速い)
@@ -37,8 +37,22 @@
  * - 「動いている」の判定と仕上げは、揃っている視聴者の全員へ送った全画面で数える。
  *   1人のための送り直しで、ほかの視聴者の画が粗くなったり、粗いまま残ったりしない
  * - ビューポートの寸法が変わるたびに世代を進め、フレームのヘッダに載せる。視聴者は
- *   世代の違うフレームを捨てる。寸法は監視フレームのメタデータから取り、無ければ
- *   最後にページへ当てた寸法を使う
+ *   世代の違うフレームを捨てる。ビューポートの寸法は、ページへ当てた寸法 (`setApplied`)
+ *   だけで決める。世代、視聴者への通知、全画面の範囲、ヘッダのどれにも、監視フレームの
+ *   メタデータの寸法は使わない
+ * - メタデータの寸法が当てた寸法と違う監視フレームは使わない。復号も比較もせず、次の
+ *   差分の基準にもせず、スクロールした位置も取らず、タイマーにも触らない。Chromiumは
+ *   `clip` を付けた `Page.captureScreenshot` の間、画面を取り直す範囲の寸法に変える。
+ *   その間に出た監視フレームは、メタデータの寸法が `clip` の寸法に縮尺を掛けた値になり、
+ *   画もページではなく取り直した範囲のものになる。この寸法を信じると、取り直すたびに
+ *   ビューポートが変わったことになり、その寸法の全画面を取り直して、また同じことが起きる。
+ *   寸法を変えて始め直す前のscreencastから遅れて届いたフレームも、前の寸法なので同じ
+ *   決まりで外れる。寸法の読めないフレームは見分けられないので使う
+ * - ただし、Chromiumが当てた寸法とは別の値を載せ続ける場合に、画面が止まったままに
+ *   ならないようにする。いまのscreencastで当てた寸法のフレームを1枚も見ないまま、
+ *   取り直しの走っていないときに違う寸法のフレームが `SIZE_MISMATCH_LIMIT` 枚続いたら、
+ *   取り直しのせいではないとみなし、1回だけ記録して、そのscreencastの間は寸法を見ずに使う
+ *   (ビューポートは当てた寸法のまま)。screencastを止めるか始め直したら、見るところへ戻す
  * - 取り直しの失敗 (ページの遷移中に起きる) と時間切れは、汚れを全面に戻して続ける。
  *   1人のための取り直しだった場合は汚れを変えない (その視聴者が揃っていないままなだけ)。
  *   すぐには試し直さない。次に取り直してよい時刻を持ち、監視フレームや送り直しの依頼が
@@ -90,6 +104,8 @@ export const RETRY_MAX_MS = 2000;
 export const FAILURE_LOG_INTERVAL_MS = 1000;
 /** 1人の視聴者のために鮮明な全画面を送る最短の間隔 (ミリ秒) */
 export const VIEWER_FULL_MIN_INTERVAL_MS = 500;
+/** 当てた寸法と違う監視フレームがこの枚数続いたら、寸法を見ずに使う */
+export const SIZE_MISMATCH_LIMIT = 30;
 
 /** フレームのヘッダの長さ (バイト) */
 export const FRAME_HEADER_BYTES = 11;
@@ -182,8 +198,8 @@ function finiteOrZero(value: unknown): number {
 
 /**
  * `Page.screencastFrame` のメタデータを読む。寸法 (`deviceWidth` / `deviceHeight`) は、
- * 両方が1以上の有限の数のときだけ使い、整数に丸める。`clip` とヘッダが同じ値になるよう、
- * 丸めるのはここだけにする。スクロールした位置は、有限の数でなければ0。
+ * 両方が1以上の有限の数のときだけ読み、整数に丸める。当てた寸法と比べるためのもので、
+ * ビューポートの寸法としては使わない。スクロールした位置は、有限の数でなければ0。
  */
 export function readFrameMetadata(metadata: unknown): FrameMetadata {
   if (typeof metadata !== "object" || metadata === null) {
@@ -302,7 +318,7 @@ function settleDirty(rects: CssRect[], size: Size): Dirty {
 
 export class BrowserFramePipeline<V extends object> {
   private applied: AppliedViewport | null = null;
-  /** フレームが描かれるビューポートの寸法。寸法が当たっていない間は `null` */
+  /** フレームが描かれるビューポートの寸法 (ページへ当てた寸法)。当たっていない間は `null` */
   private size: Size | null = null;
   private gen = 0;
   /**
@@ -313,7 +329,13 @@ export class BrowserFramePipeline<V extends object> {
   /** いまのscreencastの監視フレームを1枚でも受け取ったか */
   private watching = false;
   private previous: MonitorImage | null = null;
-  /** 最後の監視フレームの時点で、ページがスクロールしていた位置 */
+  /** いまのscreencastで、メタデータの寸法が当てた寸法と同じ監視フレームを見たか */
+  private sizeMatched = false;
+  /** 取り直しの走っていないときに、当てた寸法と違う監視フレームが続いた枚数 */
+  private sizeMismatches = 0;
+  /** いまのscreencastの監視フレームを、メタデータの寸法を見ずに使うか */
+  private sizeIgnored = false;
+  /** 最後に使った監視フレームの時点で、ページがスクロールしていた位置 */
   private scroll: ScrollOffset = NO_SCROLL;
   /** JavaScriptのダイアログが開いているか。開いている間は取り直しを始めない */
   private dialogOpen = false;
@@ -394,6 +416,9 @@ export class BrowserFramePipeline<V extends object> {
     this.scene++;
     this.watching = false;
     this.previous = null;
+    this.sizeMatched = false;
+    this.sizeMismatches = 0;
+    this.sizeIgnored = false;
     this.scroll = NO_SCROLL;
     this.dirty = [];
     this.job = null;
@@ -404,7 +429,6 @@ export class BrowserFramePipeline<V extends object> {
     this.clearWake();
     this.clearSettle();
     this.cancelCapture?.();
-    // メタデータから取った寸法は、止めたscreencastのもの
     this.resize(this.applied);
   }
 
@@ -417,17 +441,12 @@ export class BrowserFramePipeline<V extends object> {
   /**
    * 監視フレームを1枚受け取る。`metadata` はフレームのメタデータを `readFrameMetadata` で
    * 読んだもの。`null` は、寸法が読めず、スクロールもしていないのと同じ。
+   * メタデータの寸法が当てた寸法と違うフレームは、何もせずに捨てる。
    */
   monitorFrame(png: Buffer, metadata: FrameMetadata | null): void {
-    const size = metadata?.size ?? this.applied;
+    const size = this.size;
     if (!size) return;
-    if (this.resize(size)) {
-      // 寸法の違う画面どうしは比べられない。取り直しの途中の結果も古い寸法のもの
-      this.scene++;
-      this.previous = null;
-      this.dirty = [];
-      this.forgetViewers();
-    }
+    if (metadata?.size && !this.acceptsSize(metadata.size, size)) return;
     this.scroll = metadata?.scroll ?? NO_SCROLL;
     const image = decodePng(png);
     const previous = this.previous;
@@ -442,6 +461,34 @@ export class BrowserFramePipeline<V extends object> {
       this.addDirty(change);
     }
     this.pump();
+  }
+
+  /**
+   * メタデータの寸法が `frame` の監視フレームを使うか。当てた寸法 (`applied`) と同じなら使う。
+   * 違っても、取り直しのせいではないと分かったあとは使う (冒頭のコメント)。
+   */
+  private acceptsSize(frame: Size, applied: Size): boolean {
+    if (this.sizeIgnored) return true;
+    if (frame.width === applied.width && frame.height === applied.height) {
+      this.sizeMatched = true;
+      this.sizeMismatches = 0;
+      return true;
+    }
+    // 当てた寸法のフレームが来るscreencastでは、違う寸法は取り直しの跡か遅れたフレーム
+    if (this.sizeMatched) return false;
+    if (this.job) {
+      this.sizeMismatches = 0;
+      return false;
+    }
+    this.sizeMismatches++;
+    if (this.sizeMismatches < SIZE_MISMATCH_LIMIT) return false;
+    this.sizeIgnored = true;
+    warn(
+      `監視フレームの寸法 (${frame.width}x${frame.height}) が、当てた寸法 ` +
+        `(${applied.width}x${applied.height}) と合わないままです。` +
+        "このscreencastでは寸法を見ずに使います"
+    );
+    return true;
   }
 
   /** この監視フレーム1枚ぶんの変化 */
@@ -477,19 +524,18 @@ export class BrowserFramePipeline<V extends object> {
     this.notBefore = 0;
   }
 
-  /** 寸法が変わったら世代を進める。変わったかを返す */
-  private resize(size: Size | null): boolean {
+  /** ページへ当てた寸法をビューポートの寸法にする。変わったら世代を進める */
+  private resize(size: Size | null): void {
     const current = this.size;
     if (size === null) {
       this.size = null;
-      return current !== null;
+      return;
     }
     if (current?.width === size.width && current.height === size.height) {
-      return false;
+      return;
     }
     this.size = { width: size.width, height: size.height };
     this.gen = (this.gen + 1) & U16_MAX;
-    return true;
   }
 
   private addDirty(rects: CssRect[]): void {

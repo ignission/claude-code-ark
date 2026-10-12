@@ -25,11 +25,9 @@
  * - フレームが描かれたビューポートの寸法 (CSSピクセル) と世代を、そのフレームより先に
  *   視聴者へ知らせる。ビューポートは共有なので、視聴者は自分のペインの寸法や倍率からは
  *   座標を決められない。視聴者ごとに知らせた世代を覚え、変わったときだけ送る
- * - resizeでscreencastを始め直した直後は、止めたscreencastのフレームが遅れて届くことがある。
- *   イベントには、どのscreencastのものかが載っていない。そこで、始め直してからしばらくは、
- *   メタデータの寸法が当てた寸法と違うフレームを使わない (ackは返す)。当てた寸法のフレームを
- *   1枚見たら、そこからは寸法によらず使う。寸法が読めないフレームは見分けられないので使う。
- *   当てた寸法のフレームが来ないまま画面が止まらないよう、使わない期間には上限を置く
+ * - ビューポートの寸法は、このモジュールがページへ当てたものだけをパイプラインへ伝える。
+ *   監視フレームのメタデータの寸法からは決めない。届いた監視フレームは、ackを返してから
+ *   そのままパイプラインへ渡す。どのフレームを使わないかの決まりはパイプラインにある
  * - JavaScriptのダイアログが開いた、閉じたことは、パイプラインへ伝えるだけにする
  *   (開いている間は取り直しが返らない)。ダイアログを視聴者へ見せて答えさせることはしない
  */
@@ -82,8 +80,6 @@ interface Viewport {
 const BACKPRESSURE_BYTES = 1_000_000;
 /** ペインのドラッグ中に寸法を変え続けないための待ち (ミリ秒) */
 const RESIZE_DEBOUNCE_MS = 150;
-/** screencastを始め直してから、寸法の違うフレームを古いものとして使わない期間 (ミリ秒) */
-const STALE_FRAME_WINDOW_MS = 1000;
 const WS_OPEN = 1;
 /** 1メッセージの文字列の上限 (文字数)。貼り付けの本文もこれに収める */
 const MAX_TEXT_LENGTH = 100_000;
@@ -389,12 +385,6 @@ export class BrowserCdpBridge {
   private appliedViewport: Viewport | null = null;
   /** 視聴者ごとの、最後に知らせたビューポートの世代。同じ世代を二度送らないために持つ */
   private readonly notifiedGen = new Map<ViewerSocket, number>();
-  /**
-   * screencastを始め直した直後だけ持つ。当てた寸法と、寸法の違うフレームを使わない期限。
-   * 当てた寸法のフレームを見たら `null` に戻す
-   */
-  private restart: { width: number; height: number; until: number } | null =
-    null;
   private resizeTimer: NodeJS.Timeout | null = null;
   /** 監視フレームから、何を取り直してどの視聴者へ送るかを決める */
   private readonly pipeline = new BrowserFramePipeline<ViewerSocket>({
@@ -607,7 +597,6 @@ export class BrowserCdpBridge {
     if (!this.casting) return;
     this.casting = false;
     this.castGeneration++;
-    this.restart = null;
     this.pipeline.stop();
     const page = this.page;
     if (!page || page.cdp.closed) return;
@@ -661,22 +650,16 @@ export class BrowserCdpBridge {
       )
       .catch(error => {
         warn("寸法の変更に失敗", error);
-        // 当たっていないので、同じ寸法がもう一度来たら当て直す
+        // 当たっていないので、同じ寸法がもう一度来たら当て直す。ページは前の寸法のままで、
+        // その監視フレームは、パイプラインが寸法を見るのをやめるまで使われない
         if (this.page === page && this.appliedViewport === viewport) {
           this.appliedViewport = null;
-          // その寸法のフレームは来ない。待たずに、届いたフレームを使う
-          this.restart = null;
         }
       });
     if (!this.casting) return;
     // 監視フレームの寸法は始めたときに決まるので、始め直す。応答を待たずに続けて送るのは、
     // 間に視聴者が0人になって止めたscreencastを、ここで始め直してしまわないため
     const generation = ++this.castGeneration;
-    this.restart = {
-      width: viewport.width,
-      height: viewport.height,
-      until: Date.now() + STALE_FRAME_WINDOW_MS,
-    };
     cdp
       .send("Page.stopScreencast", undefined, sessionId)
       .catch(error => warn("screencastの停止に失敗", error));
@@ -707,27 +690,10 @@ export class BrowserCdpBridge {
         page.sessionId
       )
       .catch(error => warn("ackに失敗", error));
-    const metadata = readFrameMetadata(params.metadata);
-    if (this.isStaleFrame(metadata.size)) return;
-    this.pipeline.monitorFrame(Buffer.from(params.data, "base64"), metadata);
-  }
-
-  /**
-   * screencastを始め直す前のフレームが、遅れて届いたものか。寸法の読めないフレームは
-   * 見分けられないので、いまのものとして扱う。
-   */
-  private isStaleFrame(
-    size: { width: number; height: number } | null
-  ): boolean {
-    const restart = this.restart;
-    if (!restart || !size) return false;
-    if (size.width === restart.width && size.height === restart.height) {
-      this.restart = null;
-      return false;
-    }
-    if (Date.now() < restart.until) return true;
-    this.restart = null;
-    return false;
+    this.pipeline.monitorFrame(
+      Buffer.from(params.data, "base64"),
+      readFrameMetadata(params.metadata)
+    );
   }
 
   /** いまのタブの画面を取り直す。タブが無ければrejectする */
@@ -802,7 +768,6 @@ export class BrowserCdpBridge {
     this.connecting = null;
     this.casting = false;
     this.castGeneration++;
-    this.restart = null;
     this.appliedViewport = null;
     this.pipeline.setApplied(null);
     if (this.resizeTimer) {
