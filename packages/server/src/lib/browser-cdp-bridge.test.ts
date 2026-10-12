@@ -1770,6 +1770,300 @@ describe("BrowserCdpBridge", () => {
       expect(viewer.kinds()).toEqual([1]);
     });
   });
+
+  describe("メタデータ", () => {
+    const framed = (
+      id: number,
+      metadata: unknown,
+      dots: Array<[number, number]> = []
+    ) => monitorFrame(id, { metadata, dots });
+
+    it("スクロールした位置を取り直しの位置に足し、ヘッダには足さない", async () => {
+      const { cdp, viewer } = await started();
+      const metadata = {
+        offsetTop: 0,
+        pageScaleFactor: 1,
+        deviceWidth: 1280,
+        deviceHeight: 900,
+        scrollOffsetX: 0,
+        scrollOffsetY: 300,
+      };
+      cdp.emit("Page.screencastFrame", framed(2, metadata, [[80, 56]]));
+      await flush();
+      const rect = { x: 632, y: 438, width: 24, height: 24 };
+      expect(cdp.captures().map(c => c.clip)).toEqual([
+        { ...rect, y: rect.y + 300, scale: 1 },
+      ]);
+      expect(viewer.shots()).toMatchObject([{ kind: 3, rect }]);
+    });
+
+    it("つなぎ直したら、前の接続でスクロールした位置を使わない", async () => {
+      const first = fakeCdp();
+      const second = fakeCdp();
+      const connect = vi
+        .fn()
+        .mockResolvedValueOnce(first)
+        .mockResolvedValueOnce(second);
+      const bridge = new BrowserCdpBridge(connect);
+      bridge.attach(fakeViewer());
+      await flush();
+      first.emit(
+        "Page.screencastFrame",
+        framed(1, { scrollOffsetX: 0, scrollOffsetY: 300 })
+      );
+      await flush();
+      expect(first.captures()[0].clip).toEqual({
+        ...FULL_RECT,
+        y: 300,
+        scale: 1,
+      });
+      first.disconnect();
+      bridge.attach(fakeViewer());
+      await flush();
+      second.emit("Page.screencastFrame", monitorFrame(1));
+      await flush();
+      expect(second.captures().map(c => c.clip)).toEqual([
+        { ...FULL_RECT, scale: 1 },
+      ]);
+    });
+
+    it("寸法は整数に丸め、取り直しの位置とヘッダと通知で同じ値を使う", async () => {
+      const { cdp, viewer } = await started();
+      cdp.emit(
+        "Page.screencastFrame",
+        monitorFrame(2, {
+          size: { width: 49, height: 88 },
+          metadata: { deviceWidth: 390.6, deviceHeight: 699.5 },
+        })
+      );
+      await flush();
+      expect(viewer.texts()).toEqual([
+        { t: "viewport", width: 391, height: 700, gen: 2 },
+      ]);
+      expect(cdp.captures().map(c => c.clip)).toEqual([
+        { x: 0, y: 0, width: 391, height: 700, scale: 1 },
+      ]);
+      expect(viewer.shots()).toMatchObject([
+        { kind: 1, gen: 2, rect: { x: 0, y: 0, width: 391, height: 700 } },
+      ]);
+    });
+
+    it("1に満たない寸法は使わず、最後に当てた寸法を使う", async () => {
+      const { cdp, viewer } = await started();
+      cdp.emit(
+        "Page.screencastFrame",
+        framed(2, { deviceWidth: 0.6, deviceHeight: 900 }, [[80, 56]])
+      );
+      cdp.emit(
+        "Page.screencastFrame",
+        framed(3, { deviceWidth: 1280, deviceHeight: -900 })
+      );
+      await flush();
+      // 寸法は変わっていない扱い。世代は進まず、矩形だけが届く (点が出たときと消えたとき)
+      expect(viewer.texts()).toEqual([]);
+      expect(viewer.shots()).toMatchObject([
+        { kind: 3, gen: 1 },
+        { kind: 3, gen: 1 },
+      ]);
+    });
+  });
+
+  describe("resizeの直後", () => {
+    const sized = (id: number, width: number, height: number) =>
+      monitorFrame(id, {
+        size: { width: Math.ceil(width / 8), height: Math.ceil(height / 8) },
+        metadata: { deviceWidth: width, deviceHeight: height },
+      });
+
+    async function resized() {
+      const s = await started();
+      // 始め直しの応答が返る前に、止めたscreencastのフレームが届く
+      s.cdp.holdOn("Page.stopScreencast");
+      s.cdp.holdOn("Page.startScreencast");
+      s.viewer.receive({
+        t: "resize",
+        width: 390,
+        height: 700,
+        dpr: 1,
+        mobile: false,
+      });
+      await vi.advanceTimersByTimeAsync(150);
+      return s;
+    }
+
+    it("止めたscreencastの遅れたフレームは使わず、ackだけ返す", async () => {
+      const { cdp, viewer } = await resized();
+      cdp.emit("Page.screencastFrame", sized(7, 1280, 900));
+      await flush();
+      expect(cdp.last("Page.screencastFrameAck")?.params).toEqual({
+        sessionId: 7,
+      });
+      expect(cdp.count(CAPTURE)).toBe(0);
+      expect(viewer.send).not.toHaveBeenCalled();
+      // 当てた寸法のフレームが来たら、そこから使う。世代は1つだけ進む
+      cdp.emit("Page.screencastFrame", sized(8, 390, 700));
+      cdp.release("Page.stopScreencast");
+      cdp.release("Page.startScreencast");
+      await flush();
+      expect(viewer.send.mock.calls).toEqual([
+        [viewportBody(390, 700, 2)],
+        [expect.any(Buffer)],
+      ]);
+      expect(cdp.captures().map(c => c.clip)).toEqual([
+        { x: 0, y: 0, width: 390, height: 700, scale: 1 },
+      ]);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("当てた寸法のフレームを見たあとは、メタデータの寸法が違っても使う", async () => {
+      const { cdp, viewer } = await resized();
+      cdp.emit("Page.screencastFrame", sized(7, 390, 700));
+      await flush();
+      cdp.emit("Page.screencastFrame", sized(8, 400, 700));
+      await flush();
+      expect(viewer.texts()).toEqual([
+        { t: "viewport", width: 390, height: 700, gen: 2 },
+        { t: "viewport", width: 400, height: 700, gen: 3 },
+      ]);
+    });
+
+    it("メタデータの寸法が読めないフレームは、当てた寸法のものとして使う", async () => {
+      const { cdp, viewer } = await resized();
+      cdp.emit(
+        "Page.screencastFrame",
+        monitorFrame(7, { size: { width: 49, height: 88 } })
+      );
+      await flush();
+      expect(viewer.shots()).toMatchObject([
+        { kind: 1, gen: 2, rect: { x: 0, y: 0, width: 390, height: 700 } },
+      ]);
+    });
+
+    it("当てた寸法のフレームが来ないままでも、しばらくしたら届いたフレームを使う", async () => {
+      const { cdp, viewer } = await resized();
+      cdp.emit("Page.screencastFrame", sized(7, 1280, 900));
+      await vi.advanceTimersByTimeAsync(999);
+      cdp.emit("Page.screencastFrame", sized(8, 1280, 900));
+      await flush();
+      expect(viewer.send).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      cdp.emit("Page.screencastFrame", sized(9, 1280, 900));
+      await flush();
+      expect(viewer.shots()).toMatchObject([{ kind: 1, rect: FULL_RECT }]);
+    });
+
+    it("寸法を当てられなかったら、届いたフレームをそのまま使う", async () => {
+      const s = await started();
+      s.cdp.failOn("Emulation.setDeviceMetricsOverride");
+      s.viewer.receive({
+        t: "resize",
+        width: 390,
+        height: 700,
+        dpr: 1,
+        mobile: false,
+      });
+      await vi.advanceTimersByTimeAsync(150);
+      s.cdp.emit("Page.screencastFrame", sized(7, 1280, 900));
+      await flush();
+      expect(s.viewer.shots()).toMatchObject([{ kind: 1, rect: FULL_RECT }]);
+    });
+  });
+
+  describe("ダイアログ", () => {
+    const OPENING = "Page.javascriptDialogOpening";
+    const CLOSED = "Page.javascriptDialogClosed";
+    const opening = { type: "alert", message: "hi", url: "about:blank" };
+
+    it("開いているあいだは取り直さず、閉じたら全画面を取り直す", async () => {
+      const { cdp, bridge, viewer } = await started();
+      cdp.emit(OPENING, opening);
+      cdp.emit("Page.screencastFrame", monitorFrame(2, { dots: [[10, 10]] }));
+      viewer.receive({ t: "refresh" });
+      const late = fakeViewer();
+      bridge.attach(late);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(cdp.count(CAPTURE)).toBe(0);
+      // 監視フレームのackは止めない
+      expect(cdp.count("Page.screencastFrameAck")).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
+      cdp.emit(CLOSED, { result: true, userInput: "" });
+      await flush();
+      expect(cdp.captures().map(c => c.clip)).toEqual([
+        { ...FULL_RECT, scale: 1 },
+      ]);
+      expect(viewer.kinds()).toEqual([1]);
+      expect(late.kinds()).toEqual([1]);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("別のsessionのダイアログは無視する", async () => {
+      const { cdp, viewer } = await started();
+      cdp.emit(OPENING, opening, "S-other");
+      cdp.emitBrowser(OPENING, opening);
+      cdp.emit("Page.screencastFrame", monitorFrame(2, { dots: [[10, 10]] }));
+      await flush();
+      expect(viewer.kinds()).toEqual([3]);
+    });
+
+    it("開いたときに走っていた取り直しは時間切れに任せ、試し直さない", async () => {
+      const { cdp, viewer } = await started();
+      cdp.holdOn(CAPTURE);
+      cdp.emit("Page.screencastFrame", monitorFrame(2, { dots: [[10, 10]] }));
+      await flush();
+      cdp.emit(OPENING, opening);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(cdp.count(CAPTURE)).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
+      cdp.stopHolding(CAPTURE);
+      cdp.emit(CLOSED, { result: true, userInput: "" });
+      await flush();
+      expect(cdp.count(CAPTURE)).toBe(2);
+      expect(viewer.kinds()).toEqual([1]);
+    });
+
+    it("視聴者が居なくなって戻っても、開いているあいだは取り直さない", async () => {
+      const { cdp, bridge, viewer } = await started();
+      cdp.emit(OPENING, opening);
+      viewer.emit("close");
+      const back = fakeViewer();
+      bridge.attach(back);
+      await flush();
+      cdp.emit("Page.screencastFrame", monitorFrame(2));
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(cdp.count(CAPTURE)).toBe(0);
+      cdp.emit(CLOSED, { result: true, userInput: "" });
+      await flush();
+      expect(back.kinds()).toEqual([1]);
+    });
+
+    it("接続が切れたら、開いていたことを忘れる", async () => {
+      const first = fakeCdp();
+      const second = fakeCdp();
+      const connect = vi
+        .fn()
+        .mockResolvedValueOnce(first)
+        .mockResolvedValueOnce(second);
+      const bridge = new BrowserCdpBridge(connect);
+      bridge.attach(fakeViewer());
+      await flush();
+      first.emit(OPENING, opening);
+      first.disconnect();
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      second.emit("Page.screencastFrame", monitorFrame(1));
+      await flush();
+      expect(viewer.kinds()).toEqual([1]);
+      // 捨てた接続から遅れて届いたダイアログは、いまの接続に響かない
+      first.emit(OPENING, opening);
+      second.emit(
+        "Page.screencastFrame",
+        monitorFrame(2, { dots: [[10, 10]] })
+      );
+      await flush();
+      expect(viewer.kinds()).toEqual([1, 3]);
+    });
+  });
 });
 
 describe("toCdpCommand", () => {
