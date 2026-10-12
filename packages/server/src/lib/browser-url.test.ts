@@ -32,8 +32,34 @@ describe("normalizeUserUrl", () => {
     expect(normalizeUserUrl(input)).toBe(expected);
   });
 
-  it("ポートつきのlocalhostは、スキームつきとして読まれて補われない", () => {
-    expect(normalizeUserUrl("localhost:3000")).toBe("localhost:3000");
-    expect(() => validateBrowserUrl("localhost:3000")).toThrow();
+  it.each([
+    ["localhost:3000", "http://localhost:3000"],
+    ["127.0.0.1:8080/x", "http://127.0.0.1:8080/x"],
+    ["localhost:3000?q=1", "http://localhost:3000?q=1"],
+    ["localhost:3000#top", "http://localhost:3000#top"],
+    ["  localhost:3000  ", "http://localhost:3000"],
+  ])(
+    "コロンのあとがポートの %s は、スキームなしとして %s になる",
+    (input, expected) => {
+      expect(normalizeUserUrl(input)).toBe(expected);
+      expect(() => validateBrowserUrl(expected)).not.toThrow();
+    }
+  );
+
+  it.each([
+    "http://localhost:3000/",
+    "https://127.0.0.1:8443/a",
+    "about:blank",
+    "javascript:alert(1)",
+    "localhost:abc",
+    "mailto:123@example.com",
+  ])("コロンのあとがポートでない %s は、そのままにする", input => {
+    expect(normalizeUserUrl(input)).toBe(input);
+  });
+
+  it("そのままにしたjavascript: は、開いてよいかの検査で断られる", () => {
+    expect(() =>
+      validateBrowserUrl(normalizeUserUrl("javascript:alert(1)"))
+    ).toThrow();
   });
 });

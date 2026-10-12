@@ -9,15 +9,19 @@
 
 /** スキームで始まっているか (`http:`、`about:` など) */
 const SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+/** 最初のコロンのあとがポートか (`localhost:3000`、`127.0.0.1:8080/x`) */
+const HOST_PORT_PATTERN = /^[^/?#\s]+:\d+(?:[/?#]|$)/;
 
 /**
  * アドレスバーに打たれた文字列をURLにする。前後の空白を落とし、スキームが無ければ
  * `http://` を補う。開いてよいかは見ない (`validateBrowserUrl` が見る)。
  *
- * `localhost:3000` はスキーム `localhost:` を持つURLとして読まれ、補われない。
+ * 最初のコロンのあとがポートなら、コロンの前はスキームではなくホストとして読む。
+ * そう読まないと、`localhost:3000` がスキーム `localhost:` のURLになり、開けない。
  */
 export function normalizeUserUrl(input: string): string {
   const trimmed = input.trim();
+  if (HOST_PORT_PATTERN.test(trimmed)) return `http://${trimmed}`;
   return SCHEME_PATTERN.test(trimmed) ? trimmed : `http://${trimmed}`;
 }
 
