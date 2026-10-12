@@ -266,16 +266,19 @@ export type BrowserClientMessage =
     }
   | { t: "ime"; type: "commit"; text: string }
   | { t: "ime"; type: "cancel" }
-  | { t: "paste"; text: string };
+  | { t: "paste"; text: string }
+  /** フレームを取りこぼしたとき。全画面を送り直してもらう */
+  | { t: "refresh" };
 
 /**
- * サーバーが送るJSONのメッセージ。フレームは別にバイナリ (JPEG) で送る。
- * `viewport` は、このあとに届くフレームが描かれたビューポートの寸法 (CSSピクセル)。
- * 視聴者はこれで座標を換算する
+ * サーバーが送るJSONのメッセージ。フレームは別にバイナリで送る
+ * (ヘッダと画像。形は browser-frame-pipeline.ts の `encodeFrameHeader`)。
+ * `viewport` は、このあとに届くフレームが描かれたビューポートの寸法 (CSSピクセル) と世代。
+ * 視聴者は寸法で座標を換算し、世代の違うフレームを捨てる
  */
 export type BrowserServerMessage =
   | { t: "error"; message: string }
-  | { t: "viewport"; width: number; height: number };
+  | { t: "viewport"; width: number; height: number; gen: number };
 
 export interface Message {
   id: string;

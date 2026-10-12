@@ -12,6 +12,7 @@ import {
   toCdpCommand,
   type ViewerSocket,
 } from "./browser-cdp-bridge.js";
+import { buildSolidPng } from "./browser-frame-diff.testkit.js";
 
 interface CdpCall {
   method: string;
@@ -50,7 +51,12 @@ function fakeCdp(
   const closeListeners: Array<() => void> = [];
   const failing = new Set<string>();
   const holding = new Set<string>();
-  const held: Array<{ method: string; answer: Deferred<unknown> }> = [];
+  const held: Array<{
+    method: string;
+    answer: Deferred<unknown>;
+    result: unknown;
+  }> = [];
+  let shots = 0;
   let closing = false;
   let closed = false;
 
@@ -62,13 +68,17 @@ function fakeCdp(
     }
     if (method === "Target.createTarget") return { targetId: "T-new" };
     if (method === "Target.attachToTarget") return { sessionId: "S1" };
+    // 何回目の取り直しかが分かる、小さな画像の代わり
+    if (method === "Page.captureScreenshot") {
+      return { data: Buffer.from(`shot-${++shots}`).toString("base64") };
+    }
     return {};
   };
 
   const takeHeld = (method: string) => {
     const index = held.findIndex(entry => entry.method === method);
     if (index < 0) throw new Error(`${method} は待たせていません`);
-    return held.splice(index, 1)[0].answer;
+    return held.splice(index, 1)[0];
   };
 
   const dispatch = (method: string, params: unknown, sessionId?: string) => {
@@ -88,12 +98,14 @@ function fakeCdp(
       if (failing.has(method)) {
         return Promise.reject(new Error(`${method}: failed`));
       }
+      // 応答の中身は、呼ばれた順に決める
+      const result = resultOf(method);
       if (holding.has(method)) {
         const answer = deferred<unknown>();
-        held.push({ method, answer });
+        held.push({ method, answer, result });
         return answer.promise;
       }
-      return Promise.resolve(resultOf(method));
+      return Promise.resolve(result);
     },
     on(method: string, listener: (params: unknown, sid?: string) => void) {
       const list = listeners.get(method) ?? [];
@@ -113,6 +125,15 @@ function fakeCdp(
       return call && { params: call.params, sessionId: call.sessionId };
     },
     count: (method: string) => calls.filter(c => c.method === method).length,
+    /** 取り直し (`Page.captureScreenshot`) の引数を、呼ばれた順に返す */
+    captures: () =>
+      calls
+        .filter(c => c.method === "Page.captureScreenshot")
+        .map(c => c.params as CaptureParams),
+    /** ここまでの呼び出しの記録を捨てる */
+    forget() {
+      calls.length = 0;
+    },
     /** タブのsessionから来たイベントとして流す */
     emit(method: string, params: unknown, sessionId = "S1") {
       dispatch(method, params, sessionId);
@@ -124,6 +145,9 @@ function fakeCdp(
     failOn(method: string) {
       failing.add(method);
     },
+    stopFailing(method: string) {
+      failing.delete(method);
+    },
     /** これ以降の `method` の応答を、`release` / `fail` まで待たせる */
     holdOn(method: string) {
       holding.add(method);
@@ -133,11 +157,12 @@ function fakeCdp(
     },
     /** 待たせている `method` のうち、いちばん古い1つを成功させる */
     release(method: string) {
-      takeHeld(method).resolve(resultOf(method));
+      const entry = takeHeld(method);
+      entry.answer.resolve(entry.result);
     },
     /** 待たせている `method` のうち、いちばん古い1つを失敗させる */
     fail(method: string) {
-      takeHeld(method).reject(new Error(`${method}: failed`));
+      takeHeld(method).answer.reject(new Error(`${method}: failed`));
     },
     /**
      * closeのイベントを届ける (Chromiumが落ちた、接続が切れた、`close()` が終わった)。
@@ -162,8 +187,79 @@ const ERROR_BODY = JSON.stringify({
   message: "ブラウザとの接続が切れました",
 });
 
-function frame(text: string, id: number) {
-  return { data: Buffer.from(text).toString("base64"), sessionId: id };
+type Rgb = [number, number, number];
+
+interface CaptureParams {
+  format: string;
+  quality: number;
+  clip: { x: number; y: number; width: number; height: number; scale: number };
+}
+
+const WHITE: Rgb = [255, 255, 255];
+const BLACK: Rgb = [0, 0, 0];
+/** 既定のビューポート (1280x900) の監視フレームの寸法 */
+const MONITOR = { width: 160, height: 113 };
+const FULL_RECT = { x: 0, y: 0, width: 1280, height: 900 };
+const CAPTURE = "Page.captureScreenshot";
+
+/**
+ * 監視フレーム。`rgb` (既定は白) で塗り、`dots` の画素だけ黒くする。
+ * `id` はackに使うフレームの番号。
+ */
+function monitorFrame(
+  id: number,
+  options: {
+    dots?: Array<[number, number]>;
+    rgb?: Rgb;
+    size?: { width: number; height: number };
+    metadata?: unknown;
+  } = {}
+) {
+  const size = options.size ?? MONITOR;
+  const png = buildSolidPng(
+    size.width,
+    size.height,
+    options.rgb ?? WHITE,
+    (options.dots ?? []).map(([x, y]) => ({ x, y, rgb: BLACK }))
+  );
+  return {
+    data: png.toString("base64"),
+    sessionId: id,
+    ...(options.metadata === undefined ? {} : { metadata: options.metadata }),
+  };
+}
+
+/** 左上が (x, y) で幅w、高さhの範囲の画素 */
+function block(
+  x: number,
+  y: number,
+  w: number,
+  h: number
+): Array<[number, number]> {
+  const dots: Array<[number, number]> = [];
+  for (let dy = 0; dy < h; dy++) {
+    for (let dx = 0; dx < w; dx++) dots.push([x + dx, y + dy]);
+  }
+  return dots;
+}
+
+/** 視聴者が受け取ったバイナリのフレームを、ヘッダと画像に分ける */
+function parseFrame(frame: Buffer) {
+  return {
+    kind: frame[0],
+    gen: frame.readUInt16BE(1),
+    rect: {
+      x: frame.readUInt16BE(3),
+      y: frame.readUInt16BE(5),
+      width: frame.readUInt16BE(7),
+      height: frame.readUInt16BE(9),
+    },
+    image: frame.subarray(11).toString(),
+  };
+}
+
+function viewportBody(width: number, height: number, gen: number): string {
+  return JSON.stringify({ t: "viewport", width, height, gen });
 }
 
 function fakeViewer() {
@@ -174,6 +270,8 @@ function fakeViewer() {
       terminate: ReturnType<typeof vi.fn>;
       receive(message: unknown): void;
       frames(): Buffer[];
+      shots(): Array<ReturnType<typeof parseFrame>>;
+      kinds(): number[];
       texts(): unknown[];
     };
   viewer.readyState = 1;
@@ -193,6 +291,10 @@ function fakeViewer() {
       .map(([data]) => data)
       .filter(data => typeof data === "string")
       .map(data => JSON.parse(data));
+  /** 受け取ったフレームを、ヘッダを読んだ形で返す */
+  viewer.shots = () => viewer.frames().map(parseFrame);
+  /** 受け取ったフレームの種類 (1 = 鮮明な全画面、2 = 粗い全画面、3 = 矩形) */
+  viewer.kinds = () => viewer.shots().map(shot => shot.kind);
   return viewer;
 }
 
@@ -201,6 +303,23 @@ function errorCount(viewer: ReturnType<typeof fakeViewer>): number {
   return viewer
     .texts()
     .filter(message => (message as { t?: unknown }).t === "error").length;
+}
+/**
+ * 視聴者が `count` 人つながり、最初の全画面を受け取り終えた状態にする。
+ * 続く全面の変化が「動いている」とみなされないよう、時間を空けてから返す。
+ * ここまでの送信とCDPの呼び出しの記録は捨てる。
+ */
+async function started(count = 1) {
+  const cdp = fakeCdp();
+  const bridge = new BrowserCdpBridge(async () => cdp);
+  const viewers = Array.from({ length: count }, () => fakeViewer());
+  for (const viewer of viewers) bridge.attach(viewer);
+  await flush();
+  cdp.emit("Page.screencastFrame", monitorFrame(1));
+  await vi.advanceTimersByTimeAsync(1000);
+  for (const viewer of viewers) viewer.send.mockClear();
+  cdp.forget();
+  return { cdp, bridge, viewers, viewer: viewers[0] };
 }
 
 describe("BrowserCdpBridge", () => {
@@ -237,86 +356,94 @@ describe("BrowserCdpBridge", () => {
     });
     expect(cdp.last("Page.startScreencast")).toEqual({
       params: {
-        format: "jpeg",
-        quality: 80,
-        maxWidth: 1280,
-        maxHeight: 900,
+        format: "png",
+        maxWidth: 160,
+        maxHeight: 113,
         everyNthFrame: 1,
       },
       sessionId: "S1",
     });
   });
 
-  it("フレームをバイナリで配り、ackを返す", async () => {
+  it("監視フレームは視聴者へ送らず、取り直しを待たずにackを返す", async () => {
     const cdp = fakeCdp();
+    cdp.holdOn(CAPTURE);
     const bridge = new BrowserCdpBridge(async () => cdp);
     const viewer = fakeViewer();
     bridge.attach(viewer);
     await vi.runAllTimersAsync();
-    cdp.emit("Page.screencastFrame", {
-      data: Buffer.from("jpeg").toString("base64"),
-      sessionId: 7,
-    });
-    expect(viewer.send).toHaveBeenCalledWith(Buffer.from("jpeg"));
+    cdp.emit("Page.screencastFrame", monitorFrame(7));
     expect(cdp.last("Page.screencastFrameAck")).toEqual({
       params: { sessionId: 7 },
       sessionId: "S1",
     });
+    await flush();
+    expect(viewer.frames()).toEqual([]);
+    cdp.release(CAPTURE);
+    await flush();
+    // 届くのは取り直した画だけ
+    expect(viewer.shots().map(shot => shot.image)).toEqual(["shot-1"]);
   });
 
-  it("あとから入った視聴者へ、最後のフレームをすぐ送る", async () => {
+  it("あとから入った視聴者にだけ、鮮明な全画面を取り直して送る", async () => {
     const cdp = fakeCdp();
     const bridge = new BrowserCdpBridge(async () => cdp);
-    bridge.attach(fakeViewer());
+    const first = fakeViewer();
+    bridge.attach(first);
     await vi.runAllTimersAsync();
-    cdp.emit("Page.screencastFrame", {
-      data: Buffer.from("jpeg").toString("base64"),
-      sessionId: 1,
-    });
+    cdp.emit("Page.screencastFrame", monitorFrame(1));
+    await flush();
     const late = fakeViewer();
     bridge.attach(late);
     await vi.runAllTimersAsync();
-    expect(late.send).toHaveBeenCalledWith(Buffer.from("jpeg"));
+    expect(late.shots()).toEqual([
+      { kind: 1, gen: 1, rect: FULL_RECT, image: "shot-2" },
+    ]);
+    expect(first.frames()).toHaveLength(1);
     expect(cdp.count("Page.startScreencast")).toBe(1);
   });
 
-  it("視聴者が詰まっている間はackを返さず、空いたら返す", async () => {
+  it("視聴者が詰まっていてもackは返し、取り直しは空くまで待つ", async () => {
     const cdp = fakeCdp();
     const bridge = new BrowserCdpBridge(async () => cdp);
     const viewer = fakeViewer();
     bridge.attach(viewer);
     await vi.runAllTimersAsync();
     viewer.bufferedAmount = 2_000_000;
-    cdp.emit("Page.screencastFrame", { data: "", sessionId: 8 });
+    cdp.emit("Page.screencastFrame", monitorFrame(8));
+    expect(cdp.count("Page.screencastFrameAck")).toBe(1);
     await vi.advanceTimersByTimeAsync(200);
     expect(viewer.frames()).toEqual([]);
-    expect(cdp.count("Page.screencastFrameAck")).toBe(0);
+    expect(cdp.count(CAPTURE)).toBe(0);
     viewer.bufferedAmount = 0;
     await vi.advanceTimersByTimeAsync(50);
-    expect(cdp.count("Page.screencastFrameAck")).toBe(1);
+    expect(viewer.kinds()).toEqual([1]);
+    expect(cdp.count(CAPTURE)).toBe(1);
   });
 
-  it("詰まっている間に届いたフレームは、空いたときにすべてackする", async () => {
-    const cdp = fakeCdp();
-    const bridge = new BrowserCdpBridge(async () => cdp);
-    const viewer = fakeViewer();
-    bridge.attach(viewer);
-    await vi.runAllTimersAsync();
+  it("詰まっている間の変化は溜めておき、空いたときに1回で取り直す", async () => {
+    const { cdp, viewer } = await started();
     viewer.bufferedAmount = 2_000_000;
-    cdp.emit("Page.screencastFrame", {
-      data: Buffer.from("old").toString("base64"),
-      sessionId: 1,
-    });
-    cdp.emit("Page.screencastFrame", {
-      data: Buffer.from("new").toString("base64"),
-      sessionId: 2,
-    });
+    cdp.emit("Page.screencastFrame", monitorFrame(2, { dots: [[10, 10]] }));
+    cdp.emit(
+      "Page.screencastFrame",
+      monitorFrame(3, {
+        dots: [
+          [10, 10],
+          [12, 10],
+        ],
+      })
+    );
+    await vi.advanceTimersByTimeAsync(200);
+    expect(cdp.count("Page.screencastFrameAck")).toBe(2);
+    expect(cdp.count(CAPTURE)).toBe(0);
     viewer.bufferedAmount = 0;
     await vi.advanceTimersByTimeAsync(50);
-    // 配るのは最後の1枚だけ。ackは受け取った分をすべて返す
-    expect(viewer.frames()).toHaveLength(1);
-    expect(viewer.send).toHaveBeenCalledWith(Buffer.from("new"));
-    expect(cdp.count("Page.screencastFrameAck")).toBe(2);
+    // 2つの変化を囲む1つの矩形。何も飛ばされていないので、全画面にはならない
+    expect(cdp.captures().map(c => c.clip)).toEqual([
+      { x: 72, y: 71, width: 40, height: 25, scale: 1 },
+    ]);
+    expect(viewer.kinds()).toEqual([3]);
   });
 
   it("視聴者が0人になったらscreencastを止め、戻ったら始める", async () => {
@@ -335,22 +462,25 @@ describe("BrowserCdpBridge", () => {
     expect(cdp.count("Target.attachToTarget")).toBe(1);
   });
 
-  it("screencastを止めたら最後のフレームを捨てる", async () => {
+  it("screencastを止めたら監視の状態を捨て、始め直した最初の監視フレームで全画面を送る", async () => {
     const cdp = fakeCdp();
     const bridge = new BrowserCdpBridge(async () => cdp);
     const viewer = fakeViewer();
     bridge.attach(viewer);
     await vi.runAllTimersAsync();
-    cdp.emit("Page.screencastFrame", {
-      data: Buffer.from("jpeg").toString("base64"),
-      sessionId: 1,
-    });
+    cdp.emit("Page.screencastFrame", monitorFrame(1));
+    await flush();
     viewer.emit("close");
     await vi.runAllTimersAsync();
     const late = fakeViewer();
     bridge.attach(late);
     await vi.runAllTimersAsync();
+    // 止める前の監視フレームをもとに取り直さない
     expect(late.frames()).toEqual([]);
+    expect(cdp.count(CAPTURE)).toBe(1);
+    cdp.emit("Page.screencastFrame", monitorFrame(2));
+    await flush();
+    expect(late.kinds()).toEqual([1]);
   });
 
   it("resizeを丸めてデバウンスし、screencastを同じ寸法で始め直す", async () => {
@@ -389,8 +519,8 @@ describe("BrowserCdpBridge", () => {
       "Page.startScreencast",
     ]);
     expect(cdp.last("Page.startScreencast")?.params).toMatchObject({
-      maxWidth: 780,
-      maxHeight: 1400,
+      maxWidth: 49,
+      maxHeight: 88,
     });
   });
 
@@ -570,8 +700,9 @@ describe("BrowserCdpBridge", () => {
       expect(errorCount(viewer)).toBe(0);
       expect(viewer.close).not.toHaveBeenCalled();
       expect(bridge.viewerCount).toBe(1);
-      second.emit("Page.screencastFrame", frame("jpeg", 1));
-      expect(viewer.send).toHaveBeenCalledWith(Buffer.from("jpeg"));
+      second.emit("Page.screencastFrame", monitorFrame(1));
+      await flush();
+      expect(viewer.kinds()).toEqual([1]);
       expect(second.count("Page.screencastFrameAck")).toBe(1);
     });
 
@@ -620,7 +751,7 @@ describe("BrowserCdpBridge", () => {
       expect(cdp.count("Page.startScreencast")).toBe(1);
     });
 
-    it("CDPが切れたら、resizeとackの見直しのタイマーを消す", async () => {
+    it("CDPが切れたら、resizeと視聴者の空き待ちのタイマーを消す", async () => {
       const cdp = fakeCdp();
       const bridge = new BrowserCdpBridge(async () => cdp);
       const viewer = fakeViewer();
@@ -634,13 +765,13 @@ describe("BrowserCdpBridge", () => {
         mobile: false,
       });
       viewer.bufferedAmount = 2_000_000;
-      cdp.emit("Page.screencastFrame", frame("jpeg", 1));
+      cdp.emit("Page.screencastFrame", monitorFrame(1));
       expect(vi.getTimerCount()).toBe(2);
       cdp.disconnect();
       expect(vi.getTimerCount()).toBe(0);
     });
 
-    it("resetしたら、resizeとackの見直しのタイマーを消す", async () => {
+    it("resetしたら、resizeと視聴者の空き待ちのタイマーを消す", async () => {
       const cdp = fakeCdp();
       const bridge = new BrowserCdpBridge(async () => cdp);
       const viewer = fakeViewer();
@@ -654,7 +785,7 @@ describe("BrowserCdpBridge", () => {
         mobile: false,
       });
       viewer.bufferedAmount = 2_000_000;
-      cdp.emit("Page.screencastFrame", frame("jpeg", 1));
+      cdp.emit("Page.screencastFrame", monitorFrame(1));
       bridge.reset();
       expect(vi.getTimerCount()).toBe(0);
     });
@@ -691,8 +822,8 @@ describe("BrowserCdpBridge", () => {
       expect(cdp.count("Page.startScreencast")).toBe(1);
       expect(cdp.count("Page.stopScreencast")).toBe(0);
       expect(cdp.last("Page.startScreencast")?.params).toMatchObject({
-        maxWidth: 500,
-        maxHeight: 600,
+        maxWidth: 63,
+        maxHeight: 75,
       });
     });
 
@@ -930,80 +1061,83 @@ describe("BrowserCdpBridge", () => {
       expect(b.close).not.toHaveBeenCalled();
       expect(cdp.close).not.toHaveBeenCalled();
       expect(bridge.viewerCount).toBe(1);
-      cdp.emit("Page.screencastFrame", frame("jpeg", 3));
-      expect(b.send).toHaveBeenCalledWith(Buffer.from("jpeg"));
+      cdp.emit("Page.screencastFrame", monitorFrame(3));
+      await flush();
+      expect(b.kinds()).toEqual([1]);
       expect(cdp.count("Page.screencastFrameAck")).toBe(1);
     });
   });
 
   describe("遅れた視聴者", () => {
-    it("飛ばされた視聴者は、空いたときに最後の1枚を1回だけ受け取る", async () => {
-      const cdp = fakeCdp();
-      const bridge = new BrowserCdpBridge(async () => cdp);
-      const fast = fakeViewer();
-      const slow = fakeViewer();
-      bridge.attach(fast);
-      bridge.attach(slow);
-      await flush();
+    it("詰まった視聴者は矩形を飛ばされ、空いたら鮮明な全画面を受け取る", async () => {
+      const { cdp, viewers } = await started(2);
+      const [fast, slow] = viewers;
       slow.bufferedAmount = 2_000_000;
-      cdp.emit("Page.screencastFrame", frame("one", 1));
-      cdp.emit("Page.screencastFrame", frame("two", 2));
-      expect(fast.frames()).toHaveLength(2);
+      cdp.emit("Page.screencastFrame", monitorFrame(2, { dots: [[10, 10]] }));
+      await flush();
+      expect(fast.kinds()).toEqual([3]);
       expect(slow.frames()).toEqual([]);
-      expect(cdp.count("Page.screencastFrameAck")).toBe(2);
+      // 詰まっている間も、詰まっていない視聴者には矩形が届き続け、全画面は届かない
+      cdp.emit(
+        "Page.screencastFrame",
+        monitorFrame(3, {
+          dots: [
+            [10, 10],
+            [100, 80],
+          ],
+        })
+      );
       await vi.advanceTimersByTimeAsync(200);
+      expect(fast.kinds()).toEqual([3, 3]);
       expect(slow.frames()).toEqual([]);
       slow.bufferedAmount = 0;
       await vi.advanceTimersByTimeAsync(50);
-      expect(slow.frames()).toHaveLength(1);
-      expect(slow.send).toHaveBeenCalledWith(Buffer.from("two"));
-      // 全員が受け取ったら見直しをやめる。同じ1枚を二度送らず、ackも重ねない
+      expect(slow.shots()).toMatchObject([{ kind: 1, rect: FULL_RECT }]);
+      expect(fast.kinds()).toEqual([3, 3]);
+      // 全員が揃ったら見直しをやめる
       expect(vi.getTimerCount()).toBe(0);
-      await vi.advanceTimersByTimeAsync(500);
-      expect(fast.frames()).toHaveLength(2);
-      expect(slow.frames()).toHaveLength(1);
-      expect(cdp.count("Page.screencastFrameAck")).toBe(2);
-      cdp.emit("Page.screencastFrame", frame("three", 3));
-      expect(fast.frames()).toHaveLength(3);
-      expect(slow.frames()).toHaveLength(2);
-      expect(slow.send).toHaveBeenLastCalledWith(Buffer.from("three"));
+      cdp.emit(
+        "Page.screencastFrame",
+        monitorFrame(4, {
+          dots: [
+            [10, 10],
+            [100, 80],
+            [50, 50],
+          ],
+        })
+      );
+      await flush();
+      expect(fast.kinds()).toEqual([3, 3, 3]);
+      expect(slow.kinds()).toEqual([1, 3]);
     });
 
-    it("入ったときに詰まっていた視聴者も、空いたときに最後の1枚を受け取る", async () => {
-      const cdp = fakeCdp();
-      const bridge = new BrowserCdpBridge(async () => cdp);
-      const first = fakeViewer();
-      bridge.attach(first);
-      await flush();
-      cdp.emit("Page.screencastFrame", frame("jpeg", 1));
+    it("入ったときに詰まっていた視聴者も、空いたときに全画面を受け取る", async () => {
+      const { cdp, bridge, viewer: first } = await started();
       const late = fakeViewer();
       late.bufferedAmount = 2_000_000;
       bridge.attach(late);
       await vi.advanceTimersByTimeAsync(200);
       expect(late.frames()).toEqual([]);
+      expect(cdp.count(CAPTURE)).toBe(0);
       late.bufferedAmount = 0;
       await vi.advanceTimersByTimeAsync(50);
-      expect(late.frames()).toHaveLength(1);
-      expect(late.send).toHaveBeenCalledWith(Buffer.from("jpeg"));
-      expect(first.frames()).toHaveLength(1);
-      expect(cdp.count("Page.screencastFrameAck")).toBe(1);
+      expect(late.kinds()).toEqual([1]);
+      expect(first.frames()).toEqual([]);
+      expect(cdp.count(CAPTURE)).toBe(1);
       expect(vi.getTimerCount()).toBe(0);
     });
 
     it("遅れた視聴者が去ったら、見直しをやめる", async () => {
-      const cdp = fakeCdp();
-      const bridge = new BrowserCdpBridge(async () => cdp);
-      const fast = fakeViewer();
-      const slow = fakeViewer();
-      bridge.attach(fast);
-      bridge.attach(slow);
-      await flush();
+      const { cdp, viewers } = await started(2);
+      const [fast, slow] = viewers;
       slow.bufferedAmount = 2_000_000;
-      cdp.emit("Page.screencastFrame", frame("jpeg", 1));
+      cdp.emit("Page.screencastFrame", monitorFrame(2, { dots: [[10, 10]] }));
+      await flush();
+      expect(vi.getTimerCount()).toBe(1);
       slow.emit("close");
       await vi.advanceTimersByTimeAsync(50);
       expect(vi.getTimerCount()).toBe(0);
-      expect(fast.frames()).toHaveLength(1);
+      expect(fast.kinds()).toEqual([3]);
     });
   });
 
@@ -1058,7 +1192,7 @@ describe("BrowserCdpBridge", () => {
       expect(bridge.viewerCount).toBe(1);
       expect(viewer.listenerCount("message")).toBe(1);
       viewer.receive({ t: "paste", text: "x" });
-      cdp.emit("Page.screencastFrame", frame("jpeg", 1));
+      cdp.emit("Page.screencastFrame", monitorFrame(1));
       await flush();
       expect(cdp.count("Input.insertText")).toBe(1);
       expect(viewer.frames()).toHaveLength(1);
@@ -1100,83 +1234,113 @@ describe("BrowserCdpBridge", () => {
   });
 
   describe("ビューポートの通知", () => {
-    const viewportFrame = (
-      text: string,
+    const sized = (
       id: number,
-      deviceWidth: unknown,
-      deviceHeight: unknown
-    ) => ({ ...frame(text, id), metadata: { deviceWidth, deviceHeight } });
+      width: number,
+      height: number,
+      metadata: unknown = { deviceWidth: width, deviceHeight: height }
+    ) =>
+      monitorFrame(id, {
+        size: { width: Math.ceil(width / 8), height: Math.ceil(height / 8) },
+        metadata,
+      });
 
-    it("入った視聴者へ、フレームが無くても当てた寸法を知らせる", async () => {
+    it("入った視聴者へ、フレームが無くても当てた寸法を世代つきで知らせる", async () => {
       const cdp = fakeCdp();
       const bridge = new BrowserCdpBridge(async () => cdp);
       const viewer = fakeViewer();
       bridge.attach(viewer);
       await flush();
+      expect(viewer.send.mock.calls).toEqual([[viewportBody(1280, 900, 1)]]);
+    });
+
+    it("最初の監視フレームで、寸法、鮮明な全画面の順に届く", async () => {
+      const cdp = fakeCdp();
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      cdp.emit("Page.screencastFrame", monitorFrame(1));
+      await flush();
+      expect(cdp.captures()).toEqual([
+        {
+          format: "jpeg",
+          quality: 80,
+          clip: { ...FULL_RECT, scale: 1 },
+          captureBeyondViewport: false,
+          optimizeForSpeed: true,
+        },
+      ]);
+      expect(cdp.last(CAPTURE)?.sessionId).toBe("S1");
       expect(viewer.send.mock.calls).toEqual([
-        [JSON.stringify({ t: "viewport", width: 1280, height: 900 })],
+        [viewportBody(1280, 900, 1)],
+        [expect.any(Buffer)],
+      ]);
+      expect(viewer.shots()).toEqual([
+        { kind: 1, gen: 1, rect: FULL_RECT, image: "shot-1" },
       ]);
     });
 
-    it("フレームのメタデータの寸法を、そのフレームより先に知らせる", async () => {
-      const cdp = fakeCdp();
-      const bridge = new BrowserCdpBridge(async () => cdp);
-      const viewer = fakeViewer();
-      bridge.attach(viewer);
+    it("メタデータの寸法が変わると世代が進み、その寸法をフレームより先に知らせる", async () => {
+      const { cdp, viewer } = await started();
+      cdp.emit("Page.screencastFrame", sized(2, 390, 700));
       await flush();
-      viewer.send.mockClear();
-      cdp.emit("Page.screencastFrame", viewportFrame("one", 1, 390, 700));
       expect(viewer.send.mock.calls).toEqual([
-        [JSON.stringify({ t: "viewport", width: 390, height: 700 })],
-        [Buffer.from("one")],
+        [viewportBody(390, 700, 2)],
+        [expect.any(Buffer)],
       ]);
+      expect(viewer.shots()).toMatchObject([
+        { kind: 1, gen: 2, rect: { x: 0, y: 0, width: 390, height: 700 } },
+      ]);
+      expect(cdp.captures()[0].clip).toEqual({
+        x: 0,
+        y: 0,
+        width: 390,
+        height: 700,
+        scale: 1,
+      });
     });
 
-    it("寸法が変わらない間は知らせ直さず、変わったら次のフレームの前に知らせる", async () => {
+    it("寸法が変わらない間は知らせ直さない", async () => {
       const cdp = fakeCdp();
       const bridge = new BrowserCdpBridge(async () => cdp);
       const viewer = fakeViewer();
       bridge.attach(viewer);
       await flush();
-      cdp.emit("Page.screencastFrame", viewportFrame("one", 1, 1280, 900));
-      cdp.emit("Page.screencastFrame", viewportFrame("two", 2, 1280, 900));
-      // 入ったときの1回だけ。当てた寸法とフレームの寸法が同じなら送らない
-      expect(viewer.texts()).toHaveLength(1);
-      viewer.send.mockClear();
-      cdp.emit("Page.screencastFrame", viewportFrame("three", 3, 640, 480));
-      cdp.emit("Page.screencastFrame", viewportFrame("four", 4, 640, 480));
-      expect(viewer.send.mock.calls).toEqual([
-        [JSON.stringify({ t: "viewport", width: 640, height: 480 })],
-        [Buffer.from("three")],
-        [Buffer.from("four")],
+      cdp.emit("Page.screencastFrame", sized(1, 1280, 900));
+      await flush();
+      cdp.emit("Page.screencastFrame", sized(2, 1280, 900));
+      await flush();
+      // 入ったときの1回だけ。当てた寸法とフレームの寸法が同じなら、世代も進まない
+      expect(viewer.texts()).toEqual([
+        { t: "viewport", width: 1280, height: 900, gen: 1 },
       ]);
+      expect(viewer.shots().map(shot => shot.gen)).toEqual([1]);
     });
 
-    it("メタデータの寸法が読めなければ、最後に当てた寸法を知らせる", async () => {
-      const cdp = fakeCdp();
-      const bridge = new BrowserCdpBridge(async () => cdp);
-      const viewer = fakeViewer();
-      bridge.attach(viewer);
+    it("メタデータの寸法が読めなければ、最後に当てた寸法を使う", async () => {
+      const { cdp, viewer } = await started();
+      cdp.emit("Page.screencastFrame", sized(2, 390, 700));
       await flush();
-      cdp.emit("Page.screencastFrame", viewportFrame("one", 1, 390, 700));
       viewer.send.mockClear();
       cdp.emit(
         "Page.screencastFrame",
-        viewportFrame("two", 2, Number.NaN, "700")
+        monitorFrame(3, {
+          metadata: { deviceWidth: Number.NaN, deviceHeight: "700" },
+        })
       );
+      await flush();
       expect(viewer.send.mock.calls).toEqual([
-        [JSON.stringify({ t: "viewport", width: 1280, height: 900 })],
-        [Buffer.from("two")],
+        [viewportBody(1280, 900, 3)],
+        [expect.any(Buffer)],
+      ]);
+      expect(viewer.shots()).toMatchObject([
+        { kind: 1, gen: 3, rect: FULL_RECT },
       ]);
     });
 
-    it("resizeで当てた寸法は、始め直したscreencastの最初のフレームの前に知らせる", async () => {
-      const cdp = fakeCdp();
-      const bridge = new BrowserCdpBridge(async () => cdp);
-      const viewer = fakeViewer();
-      bridge.attach(viewer);
-      await flush();
-      viewer.send.mockClear();
+    it("resizeで世代が増え、新しい寸法を新しい世代のフレームより先に知らせる", async () => {
+      const { cdp, viewer } = await started();
       viewer.receive({
         t: "resize",
         width: 390,
@@ -1185,30 +1349,55 @@ describe("BrowserCdpBridge", () => {
         mobile: true,
       });
       await vi.advanceTimersByTimeAsync(150);
-      // メタデータの無いフレーム。当てた寸法を使う
-      cdp.emit("Page.screencastFrame", frame("one", 1));
+      expect(viewer.send).not.toHaveBeenCalled();
+      // メタデータの無い監視フレーム。当てた寸法を使う
+      cdp.emit(
+        "Page.screencastFrame",
+        monitorFrame(2, { size: { width: 49, height: 88 } })
+      );
+      await flush();
       expect(viewer.send.mock.calls).toEqual([
-        [JSON.stringify({ t: "viewport", width: 390, height: 700 })],
-        [Buffer.from("one")],
+        [viewportBody(390, 700, 2)],
+        [expect.any(Buffer)],
+      ]);
+      expect(viewer.shots()).toMatchObject([
+        { kind: 1, gen: 2, rect: { x: 0, y: 0, width: 390, height: 700 } },
       ]);
     });
 
-    it("あとから入った視聴者へ、最後のフレームより先に知らせる", async () => {
-      const cdp = fakeCdp();
-      const bridge = new BrowserCdpBridge(async () => cdp);
-      bridge.attach(fakeViewer());
+    it("resizeの前に始めた取り直しの結果は、古い世代のまま送らない", async () => {
+      const { cdp, viewer } = await started();
+      cdp.holdOn(CAPTURE);
+      cdp.emit("Page.screencastFrame", monitorFrame(2, { dots: [[10, 10]] }));
       await flush();
-      cdp.emit("Page.screencastFrame", viewportFrame("one", 1, 390, 700));
+      viewer.receive({
+        t: "resize",
+        width: 390,
+        height: 700,
+        dpr: 1,
+        mobile: false,
+      });
+      await vi.advanceTimersByTimeAsync(150);
+      cdp.release(CAPTURE);
+      await flush();
+      expect(viewer.send).not.toHaveBeenCalled();
+    });
+
+    it("あとから入った視聴者へ、全画面より先に知らせる", async () => {
+      const { cdp, bridge } = await started();
+      cdp.emit("Page.screencastFrame", sized(2, 390, 700));
+      await flush();
       const late = fakeViewer();
       bridge.attach(late);
       await flush();
       expect(late.send.mock.calls).toEqual([
-        [JSON.stringify({ t: "viewport", width: 390, height: 700 })],
-        [Buffer.from("one")],
+        [viewportBody(390, 700, 2)],
+        [expect.any(Buffer)],
       ]);
+      expect(late.shots()).toMatchObject([{ kind: 1, gen: 2 }]);
     });
 
-    it("詰まっていた視聴者は、空いたときにフレームより先に寸法を受け取る", async () => {
+    it("詰まっていた視聴者は、空いたときに全画面より先に寸法を受け取る", async () => {
       const cdp = fakeCdp();
       const bridge = new BrowserCdpBridge(async () => cdp);
       const fast = fakeViewer();
@@ -1218,21 +1407,25 @@ describe("BrowserCdpBridge", () => {
       await flush();
       slow.send.mockClear();
       slow.bufferedAmount = 2_000_000;
-      cdp.emit("Page.screencastFrame", viewportFrame("one", 1, 390, 700));
-      cdp.emit("Page.screencastFrame", viewportFrame("two", 2, 640, 480));
+      cdp.emit("Page.screencastFrame", sized(1, 390, 700));
+      await flush();
+      cdp.emit("Page.screencastFrame", sized(2, 640, 480));
+      await flush();
       expect(slow.send).not.toHaveBeenCalled();
       slow.bufferedAmount = 0;
       await vi.advanceTimersByTimeAsync(50);
       // 途中の寸法は飛ばす。受け取るフレームの寸法だけを知らせる
       expect(slow.send.mock.calls).toEqual([
-        [JSON.stringify({ t: "viewport", width: 640, height: 480 })],
-        [Buffer.from("two")],
+        [viewportBody(640, 480, 3)],
+        [expect.any(Buffer)],
       ]);
+      expect(slow.shots()).toMatchObject([{ kind: 1, gen: 3 }]);
       expect(fast.texts()).toEqual([
-        { t: "viewport", width: 1280, height: 900 },
-        { t: "viewport", width: 390, height: 700 },
-        { t: "viewport", width: 640, height: 480 },
+        { t: "viewport", width: 1280, height: 900, gen: 1 },
+        { t: "viewport", width: 390, height: 700, gen: 2 },
+        { t: "viewport", width: 640, height: 480, gen: 3 },
       ]);
+      expect(fast.shots().map(shot => shot.gen)).toEqual([2, 3]);
     });
 
     it("入ったときの通知が投げた視聴者は外し、screencastを始めない", async () => {
@@ -1255,7 +1448,7 @@ describe("BrowserCdpBridge", () => {
       throw new Error("send failed");
     };
 
-    it("フレームは残りの視聴者へ配ってackし、投げた視聴者だけを外す", async () => {
+    it("フレームは残りの視聴者へ送り、投げた視聴者だけを外す", async () => {
       const cdp = fakeCdp();
       const bridge = new BrowserCdpBridge(async () => cdp);
       const broken = fakeViewer();
@@ -1264,10 +1457,9 @@ describe("BrowserCdpBridge", () => {
       bridge.attach(healthy);
       await flush();
       broken.send.mockImplementation(boom);
-      expect(() =>
-        cdp.emit("Page.screencastFrame", frame("jpeg", 1))
-      ).not.toThrow();
-      expect(healthy.send).toHaveBeenCalledWith(Buffer.from("jpeg"));
+      cdp.emit("Page.screencastFrame", monitorFrame(1));
+      await flush();
+      expect(healthy.kinds()).toEqual([1]);
       expect(cdp.count("Page.screencastFrameAck")).toBe(1);
       expect(broken.terminate).toHaveBeenCalled();
       expect(bridge.viewerCount).toBe(1);
@@ -1281,9 +1473,7 @@ describe("BrowserCdpBridge", () => {
       bridge.attach(broken);
       await flush();
       broken.send.mockImplementation(boom);
-      expect(() =>
-        cdp.emit("Page.screencastFrame", frame("jpeg", 1))
-      ).not.toThrow();
+      cdp.emit("Page.screencastFrame", monitorFrame(1));
       await flush();
       expect(broken.terminate).toHaveBeenCalled();
       expect(bridge.viewerCount).toBe(0);
@@ -1305,6 +1495,279 @@ describe("BrowserCdpBridge", () => {
       expect(healthy.send).toHaveBeenCalledWith(ERROR_BODY);
       expect(healthy.close).toHaveBeenCalledWith(1011, expect.any(String));
       expect(bridge.viewerCount).toBe(0);
+    });
+  });
+  describe("差分転送", () => {
+    const frames = (cdp: ReturnType<typeof fakeCdp>) => ({
+      dots: (id: number, dots: Array<[number, number]>) =>
+        cdp.emit("Page.screencastFrame", monitorFrame(id, { dots })),
+      fill: (id: number, rgb: Rgb) =>
+        cdp.emit("Page.screencastFrame", monitorFrame(id, { rgb })),
+    });
+
+    it("小さな変化は、広げた矩形だけをWebPで取り直して送る", async () => {
+      const { cdp, viewer } = await started();
+      frames(cdp).dots(2, [[80, 56]]);
+      await flush();
+      const rect = { x: 632, y: 438, width: 24, height: 24 };
+      expect(cdp.captures()).toEqual([
+        {
+          format: "webp",
+          quality: 80,
+          clip: { ...rect, scale: 1 },
+          captureBeyondViewport: false,
+          optimizeForSpeed: true,
+        },
+      ]);
+      expect(viewer.send.mock.calls).toHaveLength(1);
+      expect(viewer.shots()).toEqual([
+        { kind: 3, gen: 1, rect, image: "shot-2" },
+      ]);
+    });
+
+    it("面積の大きい矩形はJPEGで取り直す", async () => {
+      const { cdp, viewer } = await started();
+      frames(cdp).dots(2, block(20, 20, 60, 40));
+      await flush();
+      const rect = { x: 152, y: 151, width: 496, height: 335 };
+      expect(cdp.captures()).toMatchObject([
+        { format: "jpeg", quality: 80, clip: { ...rect, scale: 1 } },
+      ]);
+      expect(viewer.shots()).toMatchObject([{ kind: 3, rect }]);
+    });
+
+    it("離れた2か所の変化は、2回取り直して順に送る", async () => {
+      const { cdp, viewer } = await started();
+      frames(cdp).dots(2, [
+        [10, 10],
+        [150, 100],
+      ]);
+      await flush();
+      const rects = [
+        { x: 72, y: 71, width: 24, height: 25 },
+        { x: 1192, y: 788, width: 24, height: 25 },
+      ];
+      expect(cdp.captures().map(c => c.clip)).toEqual(
+        rects.map(rect => ({ ...rect, scale: 1 }))
+      );
+      expect(viewer.shots()).toEqual([
+        { kind: 3, gen: 1, rect: rects[0], image: "shot-2" },
+        { kind: 3, gen: 1, rect: rects[1], image: "shot-3" },
+      ]);
+    });
+
+    it("取り直しの最中に来た変化は、終わってから1回にまとめて取り直す", async () => {
+      const { cdp, viewer } = await started();
+      cdp.holdOn(CAPTURE);
+      frames(cdp).dots(2, [[10, 10]]);
+      await flush();
+      expect(cdp.count(CAPTURE)).toBe(1);
+      frames(cdp).dots(3, [
+        [10, 10],
+        [100, 80],
+      ]);
+      frames(cdp).dots(4, [
+        [10, 10],
+        [100, 80],
+        [102, 80],
+      ]);
+      await vi.advanceTimersByTimeAsync(200);
+      // 同時に2本は走らせない
+      expect(cdp.count(CAPTURE)).toBe(1);
+      cdp.release(CAPTURE);
+      await flush();
+      expect(cdp.captures().map(c => c.clip)).toEqual([
+        { x: 72, y: 71, width: 24, height: 25, scale: 1 },
+        { x: 792, y: 629, width: 40, height: 25, scale: 1 },
+      ]);
+      cdp.release(CAPTURE);
+      await flush();
+      expect(viewer.kinds()).toEqual([3, 3]);
+      expect(cdp.count(CAPTURE)).toBe(2);
+    });
+
+    it("変化が広いと鮮明な全画面になり、すぐまた全面が変わると粗い全画面になる", async () => {
+      const { cdp, viewer } = await started();
+      frames(cdp).dots(2, block(0, 0, 160, 60));
+      await flush();
+      expect(cdp.captures()).toMatchObject([
+        { format: "jpeg", quality: 80, clip: { ...FULL_RECT, scale: 1 } },
+      ]);
+      frames(cdp).fill(3, BLACK);
+      await flush();
+      expect(cdp.captures()[1]).toMatchObject({
+        format: "jpeg",
+        quality: 50,
+        clip: { ...FULL_RECT, scale: 0.5 },
+      });
+      expect(viewer.shots()).toMatchObject([
+        { kind: 1, rect: FULL_RECT },
+        { kind: 2, rect: FULL_RECT },
+      ]);
+    });
+
+    it("粗い全画面の縮尺は、ページへ伝えている倍率で割る", async () => {
+      const { cdp, viewer } = await started();
+      viewer.receive({
+        t: "resize",
+        width: 1280,
+        height: 900,
+        dpr: 2,
+        mobile: false,
+      });
+      await vi.advanceTimersByTimeAsync(150);
+      frames(cdp).fill(2, WHITE);
+      await flush();
+      frames(cdp).fill(3, BLACK);
+      await flush();
+      expect(cdp.captures().map(c => c.clip.scale)).toEqual([1, 0.25]);
+      expect(viewer.kinds()).toEqual([1, 2]);
+    });
+
+    it("粗い全画面は、最短の間隔より詰めて送らない", async () => {
+      const { cdp, viewer } = await started();
+      frames(cdp).fill(2, BLACK);
+      await flush();
+      frames(cdp).fill(3, WHITE);
+      await flush();
+      expect(viewer.kinds()).toEqual([1, 2]);
+      frames(cdp).fill(4, BLACK);
+      await vi.advanceTimersByTimeAsync(99);
+      expect(cdp.count(CAPTURE)).toBe(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(cdp.count(CAPTURE)).toBe(3);
+      expect(viewer.kinds()).toEqual([1, 2, 2]);
+    });
+
+    it("粗い全画面のあと静かになったら、鮮明な全画面を1枚送る", async () => {
+      const { cdp, viewer } = await started();
+      frames(cdp).fill(2, BLACK);
+      await flush();
+      frames(cdp).fill(3, WHITE);
+      await vi.advanceTimersByTimeAsync(249);
+      expect(viewer.kinds()).toEqual([1, 2]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(viewer.kinds()).toEqual([1, 2, 1]);
+      expect(cdp.captures()[2]).toMatchObject({
+        quality: 80,
+        clip: { ...FULL_RECT, scale: 1 },
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(viewer.frames()).toHaveLength(3);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("refreshを送った視聴者にだけ、全画面を送り直す", async () => {
+      const { cdp, viewers } = await started(2);
+      const [asking, other] = viewers;
+      asking.receive({ t: "refresh" });
+      await flush();
+      expect(asking.shots()).toMatchObject([{ kind: 1, rect: FULL_RECT }]);
+      expect(other.frames()).toEqual([]);
+      // 送り直しの依頼は入力ではない。CDPへ送るのは取り直しだけ
+      expect(cdp.methods()).toEqual([CAPTURE]);
+    });
+
+    it("取り直しがrejectしても視聴者を切らず、次の機会に全画面を取り直す", async () => {
+      const { cdp, bridge, viewer } = await started();
+      cdp.failOn(CAPTURE);
+      frames(cdp).dots(2, [[10, 10]]);
+      await flush();
+      expect(viewer.send).not.toHaveBeenCalled();
+      expect(viewer.close).not.toHaveBeenCalled();
+      expect(viewer.terminate).not.toHaveBeenCalled();
+      expect(bridge.viewerCount).toBe(1);
+      cdp.stopFailing(CAPTURE);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(viewer.shots()).toMatchObject([{ kind: 1, rect: FULL_RECT }]);
+      expect(cdp.captures().at(-1)?.clip).toEqual({ ...FULL_RECT, scale: 1 });
+    });
+
+    it("取り直しが返らなければ時間で諦め、全画面を取り直す。遅れた結果は送らない", async () => {
+      const { cdp, bridge, viewer } = await started();
+      cdp.holdOn(CAPTURE);
+      frames(cdp).dots(2, [[10, 10]]);
+      await vi.advanceTimersByTimeAsync(2999);
+      expect(cdp.count(CAPTURE)).toBe(1);
+      await vi.advanceTimersByTimeAsync(1 + 50);
+      expect(cdp.count(CAPTURE)).toBe(2);
+      expect(cdp.captures()[1].clip).toEqual({ ...FULL_RECT, scale: 1 });
+      expect(bridge.viewerCount).toBe(1);
+      // 諦めた1回目が返っても送らない
+      cdp.release(CAPTURE);
+      await flush();
+      expect(viewer.frames()).toEqual([]);
+      cdp.release(CAPTURE);
+      await flush();
+      expect(viewer.shots()).toMatchObject([{ kind: 1, image: "shot-3" }]);
+    });
+
+    it("視聴者が0人になったら、進行中の取り直しの結果を送らず、タイマーも残さない", async () => {
+      const { cdp, viewer } = await started();
+      cdp.holdOn(CAPTURE);
+      frames(cdp).fill(2, BLACK);
+      await flush();
+      expect(cdp.count(CAPTURE)).toBe(1);
+      viewer.emit("close");
+      expect(vi.getTimerCount()).toBe(0);
+      cdp.release(CAPTURE);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(viewer.send).not.toHaveBeenCalled();
+      expect(cdp.count(CAPTURE)).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("古い接続の取り直しが遅れて返っても、つなぎ直した接続の視聴者へ送らない", async () => {
+      const first = fakeCdp();
+      const second = fakeCdp();
+      const connect = vi
+        .fn()
+        .mockResolvedValueOnce(first)
+        .mockResolvedValueOnce(second);
+      const bridge = new BrowserCdpBridge(connect);
+      first.holdOn(CAPTURE);
+      bridge.attach(fakeViewer());
+      await flush();
+      first.emit("Page.screencastFrame", monitorFrame(1));
+      await flush();
+      expect(first.count(CAPTURE)).toBe(1);
+      bridge.reset();
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      second.emit("Page.screencastFrame", monitorFrame(1));
+      await flush();
+      expect(viewer.frames()).toHaveLength(1);
+      first.release(CAPTURE);
+      await flush();
+      expect(viewer.frames()).toHaveLength(1);
+      expect(second.count(CAPTURE)).toBe(1);
+    });
+
+    it("CDPが切れて取り直しが失敗しても、タイマーを残さない", async () => {
+      const { cdp, viewer } = await started();
+      cdp.holdOn(CAPTURE);
+      frames(cdp).dots(2, [[10, 10]]);
+      await flush();
+      cdp.disconnect();
+      await flush();
+      expect(viewer.send).toHaveBeenCalledWith(ERROR_BODY);
+      expect(viewer.frames()).toEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("復号できない監視フレームは、全面の変化として扱う", async () => {
+      const { cdp, viewer } = await started();
+      cdp.emit("Page.screencastFrame", {
+        data: Buffer.from("not a png").toString("base64"),
+        sessionId: 2,
+      });
+      expect(cdp.count("Page.screencastFrameAck")).toBe(1);
+      await flush();
+      expect(cdp.captures().map(c => c.clip)).toEqual([
+        { ...FULL_RECT, scale: 1 },
+      ]);
+      expect(viewer.kinds()).toEqual([1]);
     });
   });
 });
@@ -1442,6 +1905,9 @@ describe("toCdpCommand", () => {
       toCdpCommand({ t: "resize", width: 1, height: 1, dpr: 1, mobile: false })
     ).toBeNull();
   });
+  it("refreshはnull", () => {
+    expect(toCdpCommand({ t: "refresh" })).toBeNull();
+  });
 });
 
 describe("parseClientMessage", () => {
@@ -1456,6 +1922,13 @@ describe("parseClientMessage", () => {
     expect(
       parseClientMessage('{"t":"ime","type":"cancel","method":"Browser.close"}')
     ).toEqual({ t: "ime", type: "cancel" });
+  });
+
+  it("refreshは、ほかの列を落として通す", () => {
+    expect(parseClientMessage('{"t":"refresh"}')).toEqual({ t: "refresh" });
+    expect(
+      parseClientMessage('{"t":"refresh","method":"Browser.close"}')
+    ).toEqual({ t: "refresh" });
   });
 
   it.each([

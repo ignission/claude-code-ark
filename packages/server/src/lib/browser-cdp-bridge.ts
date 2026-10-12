@@ -2,31 +2,39 @@
  * ブラウザ機能のブリッジ
  *
  * サーバー側のChromiumにCDPで1本だけつなぎ、視聴者 (ブラウザ機能を開いている
- * クライアント) のWebSocketへscreencastのフレームを配り、入力をCDPへ渡す。
+ * クライアント) のWebSocketへ画面を送り、入力をCDPへ渡す。
  *
  * - 生のCDPを視聴者へ渡さない。視聴者のWebSocketに来たものをそのままCDPへ流すと、
  *   ページの外 (`Browser.*` / `Target.*`、任意のURLへの遷移) まで操作できてしまう。
  *   受け付けるのは `BrowserClientMessage` だけで、`parseClientMessage` で形を確かめ、
  *   `toCdpCommand` が決めたメソッドにだけ変換する
- * - 流量はackで決める。視聴者の全員の送信バッファが詰まっている間は
- *   `Page.screencastFrameAck` を返さない。ackが返らなければChromiumはフレームを出す量を
- *   絞るので、遅い回線でもフレームがサーバーに溜まり続けない。持つのは最後の1枚だけで、
- *   遅れた視聴者は途中を飛ばし、空いたときにその1枚を受け取る
+ * - 画面は差分で送る。screencastは「どこが変わったか」を知るための縮小した監視フレームで、
+ *   視聴者へは送らない。送るのは、変わった矩形か全画面を取り直した画像。何をいつ取り直し、
+ *   どの視聴者へ送るかの決まりは browser-frame-pipeline.ts にあり、このモジュールは
+ *   接続、視聴者、入力を持つ
+ * - 監視フレームのackは、届いたらすぐ返す。視聴者へ送らないフレームなので、視聴者の
+ *   送信バッファの詰まりとは関係がない。詰まった視聴者には、取り直した画像を送らないことで応じる
  * - タブが使えなくなったら (sessionのdetach、クラッシュ、screencastの開始の失敗)、
  *   CDPが切れたときと同じに扱う。視聴者をerrorで閉じて接続ごと捨て、次の `attach` で
- *   タブを探すところからやり直す
+ *   タブを探すところからやり直す。取り直しの失敗だけは別で、ページの遷移中にも起きるので
+ *   接続を捨てない
  * - どのChromiumへつなぐかは、このモジュールでは決めない。つなぎ方は `connect` で受け取る。
  *   サーバーが使う1つは、Chromiumを起動する側 (browser-manager.ts の `browserBridge`) が作る
  * - ビューポートは1つで、最後に寸法を送った視聴者に合わせる。タブが1つなので、
  *   視聴者ごとに別の寸法は持てない
- * - フレームが描かれたビューポートの寸法 (CSSピクセル) を、そのフレームより先に視聴者へ
- *   知らせる。ビューポートは共有なので、視聴者は自分のペインの寸法や倍率からは座標を
- *   決められない。寸法はフレームのメタデータから取り、無ければ最後に当てた寸法を使う。
- *   視聴者ごとに知らせた寸法を覚え、変わったときだけ送る
+ * - フレームが描かれたビューポートの寸法 (CSSピクセル) と世代を、そのフレームより先に
+ *   視聴者へ知らせる。ビューポートは共有なので、視聴者は自分のペインの寸法や倍率からは
+ *   座標を決められない。視聴者ごとに知らせた世代を覚え、変わったときだけ送る
  */
 
 import type { BrowserClientMessage, BrowserServerMessage } from "@ark/shared";
 import type { CdpClient } from "./browser-cdp-client.js";
+import {
+  BrowserFramePipeline,
+  monitorParams,
+} from "./browser-frame-pipeline.js";
+
+export { encodeFrameHeader } from "./browser-frame-pipeline.js";
 
 /** CdpClientのうちブリッジが使う部分。テストで差し替えられるようにする */
 export type CdpLike = Pick<
@@ -62,16 +70,8 @@ interface Viewport {
   mobile: boolean;
 }
 
-/** フレームが描かれたビューポートの寸法 (CSSピクセル) */
-interface FrameViewport {
-  width: number;
-  height: number;
-}
-
 /** 視聴者の送信バッファがこれ以上なら、その視聴者へはフレームを送らない (バイト) */
 const BACKPRESSURE_BYTES = 1_000_000;
-/** 最後の1枚をまだ受け取っていない視聴者がいる間、見直す間隔 (ミリ秒) */
-const ACK_RETRY_MS = 50;
 /** ペインのドラッグ中に寸法を変え続けないための待ち (ミリ秒) */
 const RESIZE_DEBOUNCE_MS = 150;
 const WS_OPEN = 1;
@@ -215,6 +215,8 @@ export function parseClientMessage(raw: string): BrowserClientMessage | null {
       return null;
     case "paste":
       return isText(m.text) ? { t: "paste", text: m.text } : null;
+    case "refresh":
+      return { t: "refresh" };
     default:
       return null;
   }
@@ -229,14 +231,15 @@ function buttonFromButtons(buttons: number): string {
 }
 
 /**
- * 入力のメッセージをCDPのコマンドへ変換する。resizeは入力ではないので `null`
- * (寸法の変更はブリッジがデバウンスして扱う)。
+ * 入力のメッセージをCDPのコマンドへ変換する。resizeとrefreshは入力ではないので `null`
+ * (ブリッジが自分で扱う)。
  */
 export function toCdpCommand(
   msg: BrowserClientMessage
 ): { method: string; params: object } | null {
   switch (msg.t) {
     case "resize":
+    case "refresh":
       return null;
     case "mouse": {
       const base = {
@@ -337,8 +340,10 @@ function sameViewport(a: Viewport, b: Viewport): boolean {
   );
 }
 
-/** フレームのメタデータからビューポートの寸法を読む。読めなければ `null` */
-function frameViewportOf(metadata: unknown): FrameViewport | null {
+/** 監視フレームのメタデータからビューポートの寸法を読む。読めなければ `null` */
+function frameViewportOf(
+  metadata: unknown
+): { width: number; height: number } | null {
   if (typeof metadata !== "object" || metadata === null) return null;
   const { deviceWidth, deviceHeight } = metadata as Record<string, unknown>;
   if (!isNumber(deviceWidth) || !isNumber(deviceHeight)) return null;
@@ -354,16 +359,6 @@ function metricsParams(viewport: Viewport): object {
   };
 }
 
-function screencastParams(viewport: Viewport): object {
-  return {
-    format: "jpeg",
-    quality: 80,
-    maxWidth: Math.round(viewport.width * viewport.dpr),
-    maxHeight: Math.round(viewport.height * viewport.dpr),
-    everyNthFrame: 1,
-  };
-}
-
 function canReceive(ws: ViewerSocket): boolean {
   return ws.readyState === WS_OPEN && ws.bufferedAmount < BACKPRESSURE_BYTES;
 }
@@ -375,8 +370,6 @@ function warn(what: string, error: unknown): void {
 
 export class BrowserCdpBridge {
   private readonly viewers = new Set<ViewerSocket>();
-  /** 最後の1枚を送り終えた視聴者。同じ1枚を二度送らないために持つ */
-  private readonly upToDate = new Set<ViewerSocket>();
   /** 接続は1本にまとめる。同時の `attach` と `navigate` が2本つながないように、途中のPromiseを共有する */
   private connecting: Promise<Page> | null = null;
   /** いま使っている接続。古い接続のcloseやイベントを見分けるのに使う */
@@ -394,16 +387,16 @@ export class BrowserCdpBridge {
   private viewport: Viewport = DEFAULT_VIEWPORT;
   /** いまの接続のタブに当てた寸法。同じ寸法を当て直さないために持つ */
   private appliedViewport: Viewport | null = null;
-  /** 最後の1枚 (JPEG)。あとから入った視聴者と遅れた視聴者へ見せるために持つ */
-  private lastFrame: Buffer | null = null;
-  /** 最後の1枚のメタデータにあったビューポートの寸法。メタデータに無ければ `null` */
-  private frameViewport: FrameViewport | null = null;
-  /** 視聴者ごとの、最後に知らせたビューポートの寸法。同じ寸法を二度送らないために持つ */
-  private readonly notifiedViewport = new Map<ViewerSocket, FrameViewport>();
-  /** まだackしていないフレームのid。詰まっている間に複数たまりうる */
-  private pendingAcks: number[] = [];
-  private ackTimer: NodeJS.Timeout | null = null;
+  /** 視聴者ごとの、最後に知らせたビューポートの世代。同じ世代を二度送らないために持つ */
+  private readonly notifiedGen = new Map<ViewerSocket, number>();
   private resizeTimer: NodeJS.Timeout | null = null;
+  /** 監視フレームから、何を取り直してどの視聴者へ送るかを決める */
+  private readonly pipeline = new BrowserFramePipeline<ViewerSocket>({
+    viewers: () => this.viewers,
+    canReceive,
+    deliver: (ws, frame) => this.deliver(ws, frame),
+    capture: params => this.capture(params),
+  });
 
   constructor(private readonly connect: () => Promise<CdpLike>) {}
 
@@ -421,7 +414,7 @@ export class BrowserCdpBridge {
       // 視聴者が送るのはJSONだけ。バイナリは受け付けない
       if (isBinary) return;
       const msg = parseClientMessage(toText(data));
-      if (msg) this.handleMessage(msg);
+      if (msg) this.handleMessage(ws, msg);
     });
     ws.on("close", () => this.detach(ws));
     ws.on("error", () => this.detach(ws));
@@ -472,16 +465,15 @@ export class BrowserCdpBridge {
         return;
       }
     }
-    // screencastは画面が変わったときしかフレームを出さない。持っている1枚を送らないと、
-    // 何かが動くまで視聴者のcanvasが空になる
-    this.deliverFrame();
+    // screencastは画面が変わったときしか監視フレームを出さない。もう始まっているなら、
+    // 何かが動くのを待たずに全画面を取り直して送る
+    this.pipeline.requestFull(ws);
     this.startCast(page);
   }
 
   private detach(ws: ViewerSocket): void {
     if (!this.viewers.delete(ws)) return;
-    this.upToDate.delete(ws);
-    this.notifiedViewport.delete(ws);
+    this.notifiedGen.delete(ws);
     if (this.viewers.size === 0) this.stopCast();
   }
 
@@ -554,6 +546,7 @@ export class BrowserCdpBridge {
       const page = { cdp, sessionId };
       this.page = page;
       this.appliedViewport = viewport;
+      this.pipeline.setApplied(viewport);
       // 準備の途中に届いたresizeは、デバウンスが明けた時点でタブが無く、当たっていない。
       // screencastはまだ始めていないので、ここでは寸法だけが変わる
       if (!sameViewport(this.viewport, viewport)) this.applyViewport();
@@ -575,7 +568,7 @@ export class BrowserCdpBridge {
     page.cdp
       .send(
         "Page.startScreencast",
-        screencastParams(this.viewport),
+        monitorParams(this.viewport),
         page.sessionId
       )
       .catch(error => this.failCast(page, generation, error));
@@ -596,7 +589,7 @@ export class BrowserCdpBridge {
     if (!this.casting) return;
     this.casting = false;
     this.castGeneration++;
-    this.dropFrames();
+    this.pipeline.stop();
     const page = this.page;
     if (!page || page.cdp.closed) return;
     page.cdp
@@ -604,7 +597,11 @@ export class BrowserCdpBridge {
       .catch(error => warn("screencastの停止に失敗", error));
   }
 
-  private handleMessage(msg: BrowserClientMessage): void {
+  private handleMessage(ws: ViewerSocket, msg: BrowserClientMessage): void {
+    if (msg.t === "refresh") {
+      this.pipeline.requestFull(ws);
+      return;
+    }
     if (msg.t === "resize") {
       // 最後に寸法を送った視聴者に合わせる
       this.viewport = clampViewport(msg);
@@ -629,11 +626,13 @@ export class BrowserCdpBridge {
     const page = this.page;
     if (!page) return;
     const viewport = this.viewport;
-    // 同じ寸法なら何もしない。始め直すと、全員がフレームを1枚落とす
+    // 同じ寸法なら何もしない。始め直すと、全員へ全画面を送り直すことになる
     if (this.appliedViewport && sameViewport(this.appliedViewport, viewport)) {
       return;
     }
     this.appliedViewport = viewport;
+    // 画面が切り替わる。監視をやり直し、全員へ全画面を送り直す
+    this.pipeline.setApplied(viewport);
     const { cdp, sessionId } = page;
     cdp
       .send(
@@ -649,20 +648,19 @@ export class BrowserCdpBridge {
         }
       });
     if (!this.casting) return;
-    // screencastの寸法は始めたときに決まるので、始め直す。応答を待たずに続けて送るのは、
+    // 監視フレームの寸法は始めたときに決まるので、始め直す。応答を待たずに続けて送るのは、
     // 間に視聴者が0人になって止めたscreencastを、ここで始め直してしまわないため
-    this.dropFrames();
     const generation = ++this.castGeneration;
     cdp
       .send("Page.stopScreencast", undefined, sessionId)
       .catch(error => warn("screencastの停止に失敗", error));
     cdp
-      .send("Page.startScreencast", screencastParams(viewport), sessionId)
+      .send("Page.startScreencast", monitorParams(viewport), sessionId)
       .catch(error => this.failCast(page, generation, error));
   }
 
   /**
-   * `params.sessionId` はフレームの番号で、ackに使う。
+   * 監視フレームを受け取る。`params.sessionId` はフレームの番号で、ackに使う。
    * 名前は同じだが、CDPのsession (`Page.sessionId`) とは別のもの。
    */
   private handleFrame(
@@ -671,84 +669,57 @@ export class BrowserCdpBridge {
       | { data?: unknown; sessionId?: unknown; metadata?: unknown }
       | undefined
   ): void {
-    // 止めたあとに届いた分は配らない。ackも要らない
-    if (this.page?.cdp !== cdp || !this.casting) return;
-    if (typeof params?.data !== "string" || !isNumber(params.sessionId)) return;
-    this.lastFrame = Buffer.from(params.data, "base64");
-    this.frameViewport = frameViewportOf(params.metadata);
-    this.upToDate.clear();
-    this.pendingAcks.push(params.sessionId);
-    this.deliverFrame();
-  }
-
-  /**
-   * 最後の1枚を、まだ受け取っていなくて、いま受け取れる視聴者へ配る。
-   * 1人でも受け取ればackする。全員が詰まっていればackを遅らせ、Chromiumに次を出させない。
-   * 受け取っていない視聴者が残る間は、`ACK_RETRY_MS` ごとに見直す。ほかの視聴者が
-   * 受け取ってackしたあとに画面が止まっても、遅れた視聴者に古い画が残らないようにする。
-   */
-  private deliverFrame(): void {
-    if (this.ackTimer) {
-      clearTimeout(this.ackTimer);
-      this.ackTimer = null;
-    }
     const page = this.page;
-    const frame = this.lastFrame;
-    if (!page || !frame) return;
+    // 止めたあとに届いた分は使わない。ackも要らない
+    if (!page || page.cdp !== cdp || !this.casting) return;
+    if (typeof params?.data !== "string" || !isNumber(params.sessionId)) return;
+    // 1つでも返し忘れると、Chromiumが出せるフレームの枠が減ったままになる
+    cdp
+      .send(
+        "Page.screencastFrameAck",
+        { sessionId: params.sessionId },
+        page.sessionId
+      )
+      .catch(error => warn("ackに失敗", error));
+    this.pipeline.monitorFrame(
+      Buffer.from(params.data, "base64"),
+      frameViewportOf(params.metadata)
+    );
+  }
 
-    let delivered = false;
-    let behind = false;
-    // 送信に失敗した視聴者を途中で外すので、写しを回す
-    for (const ws of [...this.viewers]) {
-      if (this.upToDate.has(ws)) continue;
-      if (!canReceive(ws)) {
-        behind = true;
-        continue;
-      }
-      try {
-        // 寸法が先。フレームが先に届くと、視聴者は古い寸法で座標を換算する
-        this.notifyViewport(ws);
-        ws.send(frame);
-      } catch (error) {
-        // 1人の送信の失敗で、残りの視聴者への配信とackを止めない
-        warn("視聴者への送信に失敗", error);
-        this.detach(ws);
-        terminate(ws);
-        continue;
-      }
-      this.upToDate.add(ws);
-      delivered = true;
-    }
-    // 最後の視聴者を外してscreencastを止めたなら、フレームはもう捨ててある
-    if (this.lastFrame !== frame) return;
-    if (behind) {
-      this.ackTimer = setTimeout(() => this.deliverFrame(), ACK_RETRY_MS);
-    }
-    if (!delivered) return;
-    // 詰まっている間に届いた分もまとめて返す。1つでも返し忘れると、
-    // Chromiumが出せるフレームの枠が減ったままになる
-    const ids = this.pendingAcks;
-    this.pendingAcks = [];
-    for (const id of ids) {
-      page.cdp
-        .send("Page.screencastFrameAck", { sessionId: id }, page.sessionId)
-        .catch(error => warn("ackに失敗", error));
+  /** いまのタブの画面を取り直す。タブが無ければrejectする */
+  private capture(params: object): Promise<unknown> {
+    const page = this.page;
+    if (!page) return Promise.reject(new Error(DISCONNECTED_MESSAGE));
+    return page.cdp.send("Page.captureScreenshot", params, page.sessionId);
+  }
+
+  /**
+   * 取り直したフレームを1つ送る。寸法が先。フレームが先に届くと、視聴者は世代の違う
+   * フレームとして捨てる。1人の送信の失敗で、残りの視聴者への送信を止めない。
+   */
+  private deliver(ws: ViewerSocket, frame: Buffer): void {
+    if (!this.viewers.has(ws)) return;
+    try {
+      this.notifyViewport(ws);
+      ws.send(frame);
+    } catch (error) {
+      warn("視聴者への送信に失敗", error);
+      this.detach(ws);
+      terminate(ws);
     }
   }
 
   /**
-   * いまのフレームが描かれたビューポートの寸法を、まだ知らせていない視聴者へ送る。
+   * いまのフレームが描かれるビューポートの寸法と世代を、まだ知らせていない視聴者へ送る。
    * 送信が投げたら、そのまま呼び出し側へ投げる。
    */
   private notifyViewport(ws: ViewerSocket): void {
-    const viewport = this.frameViewport ?? this.appliedViewport;
-    if (!viewport) return;
-    const { width, height } = viewport;
-    const notified = this.notifiedViewport.get(ws);
-    if (notified?.width === width && notified.height === height) return;
-    const body: BrowserServerMessage = { t: "viewport", width, height };
+    const viewport = this.pipeline.viewport;
+    if (!viewport || this.notifiedGen.get(ws) === viewport.gen) return;
+    const body: BrowserServerMessage = { t: "viewport", ...viewport };
     ws.send(JSON.stringify(body));
-    this.notifiedViewport.set(ws, { width, height });
+    this.notifiedGen.set(ws, viewport.gen);
   }
 
   /**
@@ -777,8 +748,7 @@ export class BrowserCdpBridge {
   private takeViewers(): ViewerSocket[] {
     const viewers = [...this.viewers];
     this.viewers.clear();
-    this.upToDate.clear();
-    this.notifiedViewport.clear();
+    this.notifiedGen.clear();
     return viewers;
   }
 
@@ -790,21 +760,10 @@ export class BrowserCdpBridge {
     this.casting = false;
     this.castGeneration++;
     this.appliedViewport = null;
-    this.dropFrames();
+    this.pipeline.setApplied(null);
     if (this.resizeTimer) {
       clearTimeout(this.resizeTimer);
       this.resizeTimer = null;
-    }
-  }
-
-  private dropFrames(): void {
-    this.lastFrame = null;
-    this.frameViewport = null;
-    this.upToDate.clear();
-    this.pendingAcks = [];
-    if (this.ackTimer) {
-      clearTimeout(this.ackTimer);
-      this.ackTimer = null;
     }
   }
 }
