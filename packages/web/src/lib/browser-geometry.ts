@@ -36,6 +36,15 @@ export interface LetterboxRect extends Box {
 export const SELECT_LIST_MAX_HEIGHT = 320;
 /** `<select>` と選択リストの間隔 (px) */
 export const SELECT_LIST_GAP = 2;
+/** 選択リストの行、見出し、上下の余白の高さ (px)。CSSの高さと合わせる */
+export const SELECT_OPTION_HEIGHT = 28;
+export const SELECT_GROUP_HEIGHT = 22;
+export const SELECT_LIST_PADDING = 8;
+/** 選択リストに最低限見せる行の数 */
+export const SELECT_LIST_MIN_ROWS = 3;
+/** 選択リストの高さの下限 (px)。中身か領域がこれより低ければ、そちらに合わせる */
+export const SELECT_LIST_MIN_HEIGHT =
+  SELECT_LIST_MIN_ROWS * SELECT_OPTION_HEIGHT + SELECT_LIST_PADDING;
 /**
  * 余白とみなさない寸法の差 (px)。ビューポートの寸法は整数に丸めてあるので、領域の端数の
  * 分だけ縦横比がずれる。1px未満の隙間は作らない
@@ -137,12 +146,24 @@ export interface SelectListPlacement {
   maxHeight: number;
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), Math.max(min, max));
+}
+
 /**
  * 選択リストを置く場所。`anchor` は `<select>` の表示上の矩形で、領域の左上から測る。
  * `contentHeight` はリストの中身の高さ。
  *
  * ふつうは `<select>` のすぐ下に出す。下に収まらず、上のほうが広ければ上に出す。
  * どちらにも収まらなければ、広いほうに出して高さを空きに合わせる。
+ *
+ * 広いほうにも最小の高さ (`SELECT_LIST_MIN_HEIGHT`) が無ければ、`<select>` に重ねてでも、
+ * 領域の中に最小の高さで出す。高さが0のリストは、見えないのに入力を止めてしまう。
+ * `<select>` が領域の外にあるとき (スクロールで外れた、寸法が変わった) も、領域の端に
+ * 寄せて同じ決まりで置く。
+ *
+ * 幅の上限は、置いた位置から領域の右端まで。領域の幅のままにすると、右端の近くで
+ * 開いたリストが領域の外へはみ出して切れる。
  */
 export function placeSelectList(
   anchor: Box,
@@ -150,23 +171,42 @@ export function placeSelectList(
   contentHeight: number
 ): SelectListPlacement {
   const minWidth = Math.max(0, Math.min(anchor.width, area.width));
-  const left = Math.min(Math.max(anchor.left, 0), area.width - minWidth);
-  const horizontal = { left, minWidth, maxWidth: area.width };
+  const left = clamp(anchor.left, 0, area.width - minWidth);
+  const horizontal = {
+    left,
+    minWidth,
+    maxWidth: Math.max(0, area.width - left),
+  };
 
-  const top = anchor.top + anchor.height + SELECT_LIST_GAP;
-  const below = area.height - top;
-  const above = anchor.top - SELECT_LIST_GAP;
   const wanted = Math.min(contentHeight, SELECT_LIST_MAX_HEIGHT);
-  if (wanted <= below || below >= above) {
+  const minHeight = Math.min(wanted, SELECT_LIST_MIN_HEIGHT, area.height);
+  const anchorTop = clamp(anchor.top, 0, area.height);
+  const anchorBottom = clamp(anchor.top + anchor.height, 0, area.height);
+  const top = anchorBottom + SELECT_LIST_GAP;
+  const below = area.height - top;
+  const above = anchorTop - SELECT_LIST_GAP;
+  const placeBelow = wanted <= below || below >= above;
+  if (placeBelow && below >= minHeight) {
     return {
       ...horizontal,
       top,
-      maxHeight: Math.max(0, Math.min(SELECT_LIST_MAX_HEIGHT, below)),
+      maxHeight: Math.min(SELECT_LIST_MAX_HEIGHT, below),
     };
   }
+  if (!placeBelow && above >= minHeight) {
+    return {
+      ...horizontal,
+      bottom: area.height - anchorTop + SELECT_LIST_GAP,
+      maxHeight: Math.min(SELECT_LIST_MAX_HEIGHT, above),
+    };
+  }
+  const overlapTop = clamp(top, 0, area.height - minHeight);
   return {
     ...horizontal,
-    bottom: area.height - anchor.top + SELECT_LIST_GAP,
-    maxHeight: Math.max(0, Math.min(SELECT_LIST_MAX_HEIGHT, above)),
+    top: overlapTop,
+    maxHeight: Math.max(
+      0,
+      Math.min(SELECT_LIST_MAX_HEIGHT, area.height - overlapTop)
+    ),
   };
 }

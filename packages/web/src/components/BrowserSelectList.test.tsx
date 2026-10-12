@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, Profiler, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserSelectInfo } from "@/lib/browser-session-state";
@@ -128,6 +128,10 @@ describe("BrowserSelectList", () => {
     );
 
     expect(headings).toEqual(["暖色", "寒色"]);
+    // listboxの子として数えさせない (選択肢ではない)
+    for (const el of container.querySelectorAll("[data-select-group]")) {
+      expect(el.getAttribute("role")).toBe("presentation");
+    }
     expect(container.querySelectorAll('[role="option"]')).toHaveLength(5);
   });
 
@@ -256,5 +260,127 @@ describe("BrowserSelectList", () => {
     fire(document.body, "mousedown");
 
     expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("`aria-selected` はEnterで選ばれる選択肢に付け、ページのいまの選択はチェックで示す", () => {
+    render();
+    press("ArrowDown");
+
+    expect(options().map(el => el.getAttribute("aria-selected"))).toEqual([
+      "false",
+      "false",
+      "false",
+      "true",
+      "false",
+    ]);
+    expect(options().map(el => el.querySelector("svg") !== null)).toEqual([
+      false,
+      true,
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it("マウスを動かしても、指している選択肢を変えず、描き直さない", () => {
+    const onRender = vi.fn();
+    const many = {
+      ...SELECT,
+      options: Array.from({ length: 1000 }, (_, i) => ({
+        label: `選択肢${i}`,
+        disabled: false,
+        group: null,
+      })),
+      selectedIndex: 0,
+    };
+    act(() =>
+      root.render(
+        <Profiler id="list" onRender={onRender}>
+          <BrowserSelectList
+            select={many}
+            anchor={ANCHOR}
+            area={AREA}
+            onChoose={onChoose}
+            onCancel={onCancel}
+          />
+        </Profiler>
+      )
+    );
+    onRender.mockClear();
+    for (const index of [5, 6, 7, 500]) fire(options()[index], "mousemove");
+
+    expect(onRender).not.toHaveBeenCalled();
+    expect(active()).toBe("選択肢0");
+    // 押せば、指している選択肢ではなく、押した選択肢を選ぶ
+    fire(options()[500], "click");
+    expect(onChoose.mock.calls).toEqual([[500]]);
+  });
+
+  it("`shouldTakeFocus` が `false` を返したら、フォーカスを取らない。押せば選べる", () => {
+    const outside = document.createElement("input");
+    document.body.append(outside);
+    outside.focus();
+    const shouldTakeFocus = vi.fn(() => false);
+    act(() =>
+      root.render(
+        <BrowserSelectList
+          select={SELECT}
+          anchor={ANCHOR}
+          area={AREA}
+          shouldTakeFocus={shouldTakeFocus}
+          onChoose={onChoose}
+          onCancel={onCancel}
+        />
+      )
+    );
+
+    expect(shouldTakeFocus).toHaveBeenCalled();
+    expect(document.activeElement).toBe(outside);
+    fire(options()[3], "click");
+    expect(onChoose.mock.calls).toEqual([[3]]);
+    outside.remove();
+  });
+
+  it("右端の近くでは、領域の中へ寄せて、幅を右端までに限る", () => {
+    render(SELECT, { left: 750, top: 50, width: 120, height: 24 });
+    const style = listbox().style;
+
+    expect(style.left).toBe("680px");
+    expect(style.maxWidth).toBe("120px");
+  });
+
+  it("上にも下にも置けなければ、領域の中に高さを持たせて出す", () => {
+    render(
+      SELECT,
+      { left: 100, top: 20, width: 120, height: 24 },
+      { width: 800, height: 60 }
+    );
+    const style = listbox().style;
+
+    expect(style.top).toBe("0px");
+    expect(style.maxHeight).toBe("60px");
+  });
+
+  it("`StrictMode` でも、フォーカスを取り、外を1回押したら1回だけ取り消す", () => {
+    act(() =>
+      root.render(
+        <StrictMode>
+          <BrowserSelectList
+            select={SELECT}
+            anchor={ANCHOR}
+            area={AREA}
+            onChoose={onChoose}
+            onCancel={onCancel}
+          />
+        </StrictMode>
+      )
+    );
+
+    expect(document.activeElement).toBe(listbox());
+    fire(document.body, "mousedown");
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    press("ArrowDown");
+    press("Enter");
+    expect(onChoose.mock.calls).toEqual([[3]]);
   });
 });

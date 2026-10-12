@@ -11,8 +11,14 @@
  * `prompt` の欄が初期値に戻る。
  *
  * 選択リストは、サーバーが `selectClosed` で閉じるほか、遷移したとき (`page` のURLが
- * 変わった) と、映すタブが替わったとき (`tabs` の `activeId` が変わった) にも閉じる。
- * そのあとの `id` はサーバーで意味を持たない。
+ * 変わった)、映すタブが替わったとき (`tabs` の `activeId` が変わった)、ダイアログが
+ * 開いたとき (`dialog`) にも閉じる。そのあとの `id` はサーバーで意味を持たない。
+ * ダイアログの間、ページは止まっていて、選んでも届かない。サーバーも同じときに閉じる。
+ *
+ * 利用者が応答したダイアログは、応答済みとして覚える (`dialogAnswered`)。別のダイアログに
+ * 替わるか、閉じるまで、もう一度は応答させない。押したままのEnterや二度押しが、まだ
+ * 表示していない次のダイアログへの応答になるのを防ぐ。サーバーは、ダイアログの間に必ず
+ * `dialogClosed` を送るので、中身の同じダイアログが続いても、応答済みは引き継がれない。
  *
  * 知らせには通し番号を付ける。同じ文言が続けて届いても別の知らせとして扱い、消すまでの
  * 時間を計り直せる。
@@ -44,6 +50,8 @@ export interface BrowserSessionState {
   tabs: BrowserTabInfo[];
   activeId: string | null;
   dialog: BrowserDialogInfo | null;
+  /** いまの `dialog` に、利用者がもう応答したか */
+  dialogAnswered: boolean;
   select: BrowserSelectInfo | null;
   notice: BrowserNotice | null;
   /** 最後に出した知らせの通し番号 */
@@ -58,6 +66,8 @@ export type BrowserSessionAction =
   | { type: "notice"; message: string }
   /** 知らせを消す時刻が来た */
   | { type: "noticeExpired"; seq: number }
+  /** 利用者がいまのダイアログに応答した */
+  | { type: "dialogAnswered" }
   /** 利用者が選択リストを閉じた (選んだ、取り消した) */
   | { type: "selectDismissed"; id: number };
 
@@ -66,6 +76,7 @@ export const initialBrowserSessionState: BrowserSessionState = {
   tabs: [],
   activeId: null,
   dialog: null,
+  dialogAnswered: false,
   select: null,
   notice: null,
   noticeSeq: 0,
@@ -211,12 +222,14 @@ function receive(
         current.message === dialog.message &&
         current.defaultPrompt === dialog.defaultPrompt
       ) {
-        return state;
+        return state.select ? { ...state, select: null } : state;
       }
-      return { ...state, dialog };
+      return { ...state, dialog, dialogAnswered: false, select: null };
     }
     case "dialogClosed":
-      return state.dialog ? { ...state, dialog: null } : state;
+      return state.dialog
+        ? { ...state, dialog: null, dialogAnswered: false }
+        : state;
     case "select": {
       const select = readSelect(msg);
       return select ? { ...state, select } : state;
@@ -248,6 +261,10 @@ export function browserSessionReducer(
     case "noticeExpired":
       return state.notice && state.notice.seq === action.seq
         ? { ...state, notice: null }
+        : state;
+    case "dialogAnswered":
+      return state.dialog && !state.dialogAnswered
+        ? { ...state, dialogAnswered: true }
         : state;
     case "selectDismissed":
       return state.select && state.select.id === action.id

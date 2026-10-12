@@ -1,7 +1,22 @@
 import { Check } from "lucide-react";
 import type React from "react";
-import { Fragment, useEffect, useId, useRef, useState } from "react";
-import { type Box, placeSelectList, type Size } from "@/lib/browser-geometry";
+import {
+  Fragment,
+  memo,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import {
+  type Box,
+  placeSelectList,
+  SELECT_GROUP_HEIGHT,
+  SELECT_LIST_PADDING,
+  SELECT_OPTION_HEIGHT,
+  type Size,
+} from "@/lib/browser-geometry";
 import type { BrowserSelectInfo } from "@/lib/browser-session-state";
 import { cn } from "@/lib/utils";
 
@@ -11,16 +26,15 @@ interface BrowserSelectListProps {
   anchor: Box;
   /** canvasを置く領域の寸法 */
   area: Size;
+  /**
+   * 出たときにフォーカスを取ってよいか。フォーカスを動かす直前に呼ぶ。渡さなければ取る
+   */
+  shouldTakeFocus?: () => boolean;
   /** `index` は `select.options` の添字 */
   onChoose: (index: number) => void;
   /** 外を押して取り消したときは、その押下のイベントを渡す */
   onCancel: (event?: Event) => void;
 }
-
-/** 置く場所を決めるための、中身の高さの見積もり (px)。CSSの行の高さと合わせる */
-const OPTION_HEIGHT = 28;
-const GROUP_HEIGHT = 22;
-const LIST_PADDING = 8;
 
 function firstEnabled(select: BrowserSelectInfo): number {
   return select.options.findIndex(option => !option.disabled);
@@ -46,14 +60,69 @@ function nextEnabled(
   return from;
 }
 
+interface OptionRowProps {
+  id: string;
+  index: number;
+  label: string;
+  disabled: boolean;
+  grouped: boolean;
+  /** キーで指している選択肢か (Enterで選ばれる) */
+  active: boolean;
+  /** ページのいまの選択か */
+  current: boolean;
+}
+
+/**
+ * 選択肢の1行。渡す値はどれも文字列か真偽値なので、指す選択肢が動いても、描き直すのは
+ * 前に指していた行と、新しく指した行だけ。
+ */
+const OptionRow = memo(function OptionRow({
+  id,
+  index,
+  label,
+  disabled,
+  grouped,
+  active,
+  current,
+}: OptionRowProps) {
+  return (
+    <div
+      id={id}
+      role="option"
+      tabIndex={-1}
+      data-index={index}
+      aria-selected={active}
+      aria-disabled={disabled}
+      className={cn(
+        "flex h-7 cursor-default items-center gap-1.5 pr-3 whitespace-nowrap",
+        grouped ? "pl-4" : "pl-2.5",
+        disabled ? "text-muted-foreground/60" : "hover:bg-accent/60",
+        active && "bg-accent text-accent-foreground hover:bg-accent"
+      )}
+    >
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {current && <Check className="size-3.5 shrink-0" aria-hidden="true" />}
+    </div>
+  );
+});
+
 /**
  * リモートのページの `<select>` の選択肢。ヘッドレスのChromiumは `<select>` の
  * ポップアップを画面に描かないので、Arkが `<select>` の位置に重ねて描く。
  *
- * 開いている間は、このリストがフォーカスを持ち、キーはリモートへ送らずここで使う
- * (上下の矢印、Home、End、Enter、Escape)。指している選択肢は
- * `aria-activedescendant` で示し、フォーカスはリストから動かさない。無効の選択肢は
- * 飛ばす。`group` は、前の選択肢と違うところに、選べない見出しとして挟む。
+ * フォーカスを取るかどうかは親が決める (`shouldTakeFocus`)。この視聴者の操作で開いた
+ * リストはフォーカスを取り、キーはリモートへ送らずここで使う (上下の矢印、Home、End、
+ * Enter、Escape)。ほかの視聴者の操作で開いたリストは、フォーカスを取らない (打っている
+ * 途中のキーを奪わない)。その間も、押せば選べる。
+ *
+ * キーで指している選択肢 (Enterで選ばれるもの) は、`aria-activedescendant` と
+ * `aria-selected` で示し、フォーカスはリストから動かさない。ページのいまの選択は、
+ * チェックの印で示す。無効の選択肢は飛ばす。`group` は、前の選択肢と違うところに、
+ * 選べない見出しとして挟む。
+ *
+ * マウスを載せた行の色はCSSで付け、指している選択肢は動かさない。選択肢が千を超える
+ * リストでも、マウスを動かすたびに全部の行を描き直さないようにする。押下は、行ごとでは
+ * なくリストで受け、押された行を `data-index` で見分ける。
  *
  * リストの外を押す、Escape、Tabは取り消し。外を押したかどうかは、文書の全体で聞く
  * (ツールバーを押したときも閉じる)。
@@ -62,6 +131,7 @@ export function BrowserSelectList({
   select,
   anchor,
   area,
+  shouldTakeFocus,
   onChoose,
   onCancel,
 }: BrowserSelectListProps) {
@@ -73,8 +143,11 @@ export function BrowserSelectList({
     setShown(select);
     setActive(initialActive(select));
   }
+  // 文書に付けたリスナーから、いまの `onCancel` を呼ぶ
   const onCancelRef = useRef(onCancel);
-  onCancelRef.current = onCancel;
+  useLayoutEffect(() => {
+    onCancelRef.current = onCancel;
+  }, [onCancel]);
 
   const optionId = (index: number) => `${baseId}-${index}`;
   const groupCount = select.options.filter(
@@ -84,13 +157,14 @@ export function BrowserSelectList({
   const placement = placeSelectList(
     anchor,
     area,
-    select.options.length * OPTION_HEIGHT +
-      groupCount * GROUP_HEIGHT +
-      LIST_PADDING
+    select.options.length * SELECT_OPTION_HEIGHT +
+      groupCount * SELECT_GROUP_HEIGHT +
+      SELECT_LIST_PADDING
   );
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: selectは本文中では読まないが、別の選択リストに替わるたびにフォーカスを入れ直すためのtriggerとして依存に入れている
+  // biome-ignore lint/correctness/useExhaustiveDependencies: selectは本文中では読まないが、別の選択リストに替わるたびにフォーカスを入れ直すためのtriggerとして依存に入れている。shouldTakeFocusは、その時点の1回だけ呼ぶ
   useEffect(() => {
+    if (shouldTakeFocus && !shouldTakeFocus()) return;
     listRef.current?.focus({ preventScroll: true });
   }, [select]);
 
@@ -151,6 +225,13 @@ export function BrowserSelectList({
     if (next !== active) setActive(next);
   };
 
+  const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const row = (e.target as Element).closest<HTMLElement>("[data-index]");
+    const index = Number(row?.dataset.index ?? -1);
+    const option = select.options[index];
+    if (option && !option.disabled) onChoose(index);
+  };
+
   return (
     <div
       ref={listRef}
@@ -160,9 +241,10 @@ export function BrowserSelectList({
       aria-activedescendant={active >= 0 ? optionId(active) : undefined}
       tabIndex={0}
       onKeyDown={handleKeyDown}
-      // 押してもフォーカスをリストから動かさない
+      onClick={handleClick}
+      // 押してもフォーカスを動かさない
       onMouseDown={e => e.preventDefault()}
-      className="absolute z-30 overflow-y-auto rounded-lg border border-border bg-popover py-1 text-sm text-popover-foreground shadow-panel outline-none"
+      className="absolute z-20 overflow-y-auto rounded-lg border border-border bg-popover py-1 text-sm text-popover-foreground shadow-panel outline-none"
       style={{
         left: placement.left,
         top: placement.top,
@@ -184,36 +266,21 @@ export function BrowserSelectList({
             {heading !== null && (
               <div
                 data-select-group
+                role="presentation"
                 className="flex h-[22px] items-end truncate px-2.5 text-[11px] text-muted-foreground"
               >
                 {heading}
               </div>
             )}
-            {/* biome-ignore lint/a11y/useKeyWithClickEvents: キーはフォーカスを持つlistboxが受け、指している選択肢をaria-activedescendantで示す */}
-            <div
+            <OptionRow
               id={optionId(index)}
-              role="option"
-              tabIndex={-1}
-              aria-selected={index === select.selectedIndex}
-              aria-disabled={option.disabled}
-              onClick={() => {
-                if (!option.disabled) onChoose(index);
-              }}
-              onMouseMove={() => {
-                if (!option.disabled && active !== index) setActive(index);
-              }}
-              className={cn(
-                "flex h-7 cursor-default items-center gap-1.5 pr-3 whitespace-nowrap",
-                option.group !== null ? "pl-4" : "pl-2.5",
-                option.disabled && "text-muted-foreground/60",
-                index === active && "bg-accent text-accent-foreground"
-              )}
-            >
-              <span className="min-w-0 flex-1 truncate">{option.label}</span>
-              {index === select.selectedIndex && (
-                <Check className="size-3.5 shrink-0" aria-hidden="true" />
-              )}
-            </div>
+              index={index}
+              label={option.label}
+              disabled={option.disabled}
+              grouped={option.group !== null}
+              active={index === active}
+              current={index === select.selectedIndex}
+            />
           </Fragment>
         );
       })}

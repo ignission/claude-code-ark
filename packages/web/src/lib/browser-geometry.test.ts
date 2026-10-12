@@ -4,6 +4,7 @@ import {
   letterboxRect,
   placeSelectList,
   SELECT_LIST_MAX_HEIGHT,
+  SELECT_LIST_MIN_HEIGHT,
   screenToViewport,
   viewportToScreen,
 } from "./browser-geometry";
@@ -162,7 +163,73 @@ describe("placeSelectList", () => {
       100
     );
     expect(placed.left).toBe(680);
-    expect(placed.maxWidth).toBe(800);
+    // 右端までの幅に収める (領域の幅のままだと、右へはみ出して切れる)
+    expect(placed.maxWidth).toBe(120);
+  });
+
+  it("幅の上限は、置いた位置から領域の右端まで", () => {
+    const placed = placeSelectList(
+      { left: 300, top: 50, width: 120, height: 24 },
+      area,
+      100
+    );
+    expect(placed).toMatchObject({ left: 300, minWidth: 120, maxWidth: 500 });
+  });
+
+  it("上にも下にも最小の高さが無ければ、`<select>` に重ねて、領域の中に最小の高さで出す", () => {
+    const placed = placeSelectList(
+      { left: 0, top: 40, width: 120, height: 24 },
+      { width: 800, height: 120 },
+      1000
+    );
+    // 下は54、上は38で、どちらも最小の高さに足りない
+    expect(placed.bottom).toBeUndefined();
+    expect(placed.top).toBe(120 - SELECT_LIST_MIN_HEIGHT);
+    expect(placed.maxHeight).toBe(SELECT_LIST_MIN_HEIGHT);
+  });
+
+  it("領域が最小の高さより低ければ、領域の高さに収める", () => {
+    const placed = placeSelectList(
+      { left: 0, top: 20, width: 120, height: 24 },
+      { width: 800, height: 60 },
+      1000
+    );
+    expect(placed).toMatchObject({ top: 0, maxHeight: 60 });
+  });
+
+  it("中身が最小の高さより低ければ、中身の高さが入れば足りる", () => {
+    const placed = placeSelectList(
+      { left: 0, top: 500, width: 120, height: 24 },
+      area,
+      36
+    );
+    expect(placed).toMatchObject({ top: 526, maxHeight: 74 });
+  });
+
+  it("`<select>` が領域の外にあっても、リストは領域の中に出す", () => {
+    const below = placeSelectList(
+      { left: 100, top: 900, width: 120, height: 24 },
+      area,
+      200
+    );
+    expect(below.top).toBeUndefined();
+    expect(below.bottom).toBe(2);
+    expect(below.maxHeight).toBe(SELECT_LIST_MAX_HEIGHT);
+
+    const above = placeSelectList(
+      { left: 100, top: -300, width: 120, height: 24 },
+      area,
+      200
+    );
+    expect(above.top).toBe(2);
+    expect(above.maxHeight).toBe(SELECT_LIST_MAX_HEIGHT);
+
+    const right = placeSelectList(
+      { left: 2000, top: 50, width: 120, height: 24 },
+      area,
+      200
+    );
+    expect(right).toMatchObject({ left: 680, maxWidth: 120 });
   });
 
   it("領域より広い `<select>` は、領域の幅に収める", () => {

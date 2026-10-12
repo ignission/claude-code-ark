@@ -69,11 +69,16 @@ function type(field: HTMLInputElement, value: string) {
   });
 }
 
-function press(target: Element, key: string): KeyboardEvent {
+function press(
+  target: Element,
+  key: string,
+  init: KeyboardEventInit = {}
+): KeyboardEvent {
   const event = new KeyboardEvent("keydown", {
     key,
     bubbles: true,
     cancelable: true,
+    ...init,
   });
   act(() => {
     target.dispatchEvent(event);
@@ -266,7 +271,120 @@ describe("BrowserToolbar", () => {
     expect(
       container.querySelectorAll('button[aria-label="新しいタブ"]')
     ).toHaveLength(1);
-    expect(list.parentElement?.contains(button("新しいタブ"))).toBe(true);
+    expect(list.contains(button("新しいタブ"))).toBe(false);
+    expect(
+      list.parentElement?.parentElement?.contains(button("新しいタブ"))
+    ).toBe(true);
+  });
+
+  it("`tablist` の直接の子はタブだけで、閉じるボタンはタブの外に置く", () => {
+    render(toolbar({ tabs: [TAB_A, TAB_B, TAB_C] }));
+    const list = container.querySelector('[role="tablist"]') as HTMLElement;
+
+    expect([...list.children].map(el => el.getAttribute("role"))).toEqual([
+      "tab",
+      "tab",
+      "tab",
+    ]);
+    expect(list.querySelectorAll('[role="tab"] button')).toHaveLength(0);
+    const closers = [
+      ...container.querySelectorAll<HTMLButtonElement>(
+        'button[aria-label^="タブを閉じる: "]'
+      ),
+    ];
+    expect(closers.map(el => el.getAttribute("aria-label"))).toEqual([
+      "タブを閉じる: アプリ",
+      "タブを閉じる: about:blank",
+      "タブを閉じる: 新しいタブ",
+    ]);
+    for (const closer of closers) {
+      expect(list.contains(closer)).toBe(false);
+      // キーボードでは、タブの上のDeleteで閉じる。Tabでは止まらない
+      expect(closer.tabIndex).toBe(-1);
+    }
+    // 見た目の順は、タブ、そのタブを閉じるボタン、次のタブ
+    const tabs = [...list.children] as HTMLElement[];
+    expect(tabs.map(el => el.style.order)).toEqual(["0", "2", "4"]);
+    expect(closers.map(el => el.style.order)).toEqual(["1", "3", "5"]);
+  });
+
+  it("Tabで止まるのは映しているタブだけで、左右の矢印でタブの間を移る", () => {
+    render(toolbar({ tabs: [TAB_A, TAB_B, TAB_C], activeId: "B" }));
+    const tabs = [...container.querySelectorAll<HTMLElement>('[role="tab"]')];
+    expect(tabs.map(el => el.tabIndex)).toEqual([-1, 0, -1]);
+
+    act(() => tabs[1].focus());
+    const right = press(tabs[1], "ArrowRight");
+    expect(right.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(tabs[2]);
+    // 端からは、反対の端へ回る
+    press(tabs[2], "ArrowRight");
+    expect(document.activeElement).toBe(tabs[0]);
+    press(tabs[0], "ArrowLeft");
+    expect(document.activeElement).toBe(tabs[2]);
+    // 移るだけでは、タブを切り替えない
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("映しているタブが一覧に無ければ、最初のタブでTabを止める", () => {
+    render(toolbar({ tabs: [TAB_A, TAB_B], activeId: null }));
+    const tabs = [...container.querySelectorAll<HTMLElement>('[role="tab"]')];
+    expect(tabs.map(el => el.tabIndex)).toEqual([0, -1]);
+  });
+
+  it("タブの上のDeleteで閉じ、フォーカスを隣のタブへ移す", () => {
+    render(toolbar({ tabs: [TAB_A, TAB_B, TAB_C] }));
+    const tabs = [...container.querySelectorAll<HTMLElement>('[role="tab"]')];
+    act(() => tabs[1].focus());
+    const pressed = press(tabs[1], "Delete");
+
+    expect(pressed.defaultPrevented).toBe(true);
+    expect(onSend.mock.calls.map(([msg]) => msg)).toEqual([
+      { t: "tab", type: "close", id: "B" },
+    ]);
+    expect(document.activeElement).toBe(tabs[2]);
+
+    act(() => tabs[2].focus());
+    press(tabs[2], "Delete");
+    expect(document.activeElement).toBe(tabs[1]);
+  });
+
+  it("EnterとEscapeのあと、`onUrlDone` を呼ぶ (フォーカスの行き先は親が決める)", () => {
+    const onUrlDone = vi.fn(() => {
+      // 呼ぶのは、入力欄のフォーカスを外したあと
+      expect(document.activeElement).not.toBe(urlField());
+    });
+    render(toolbar({ onUrlDone }));
+    const field = urlField();
+    act(() => field.focus());
+    type(field, "localhost:3000/a");
+    press(field, "Enter");
+    expect(onUrlDone).toHaveBeenCalledTimes(1);
+
+    act(() => field.focus());
+    press(field, "Escape");
+    expect(onUrlDone).toHaveBeenCalledTimes(2);
+    press(field, "a");
+    expect(onUrlDone).toHaveBeenCalledTimes(2);
+  });
+
+  it("変換を確定するEnterでは、遷移しない", () => {
+    const onUrlDone = vi.fn();
+    render(toolbar({ onUrlDone }));
+    const field = urlField();
+    act(() => field.focus());
+    type(field, "ろーかる");
+    act(() => {
+      field.dispatchEvent(
+        new CompositionEvent("compositionstart", { bubbles: true })
+      );
+    });
+    press(field, "Enter", { isComposing: true, keyCode: 229 });
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(onUrlDone).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(field);
+    expect(field.value).toBe("ろーかる");
   });
 
   it("長いタイトルは省略して1行に収め、全体をツールチップで読める", () => {

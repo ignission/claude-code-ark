@@ -335,7 +335,7 @@ afterEach(() => {
 });
 
 describe("BrowserPane", () => {
-  it("buildBrowserWsUrl のURLへWebSocketを開き、接続中の表示を出す", () => {
+  it("buildBrowserWsUrlのURLへWebSocketを開き、接続中の表示を出す", () => {
     const container = mount(<BrowserPane browserSession={sessionFixture} />);
 
     expect(FakeWebSocket.instances).toHaveLength(1);
@@ -371,7 +371,7 @@ describe("BrowserPane", () => {
     });
   });
 
-  it("隠れていて寸法が0の間は resize を送らない", () => {
+  it("隠れていて寸法が0の間はresizeを送らない", () => {
     paneSize = { width: 0, height: 0 };
     mount(<BrowserPane browserSession={sessionFixture} />);
     const ws = FakeWebSocket.instances[0];
@@ -1270,7 +1270,7 @@ describe("BrowserPane", () => {
     expect(decodes[0].close).toHaveBeenCalledTimes(1);
   });
 
-  it("文字のキーは key として送り、手元の入力欄には入れない", () => {
+  it("文字のキーはkeyとして送り、手元の入力欄には入れない", () => {
     const { ws, textarea } = mountConnected();
     const down = key("keydown", { key: "a", code: "KeyA", keyCode: 65 });
     act(() => {
@@ -1361,7 +1361,7 @@ describe("BrowserPane", () => {
     expect(ws.send).not.toHaveBeenCalled();
   });
 
-  it("Ctrl+V はキーとして送らず、paste イベントの文字列を送る", () => {
+  it("Ctrl+Vはキーとして送らず、pasteイベントの文字列を送る", () => {
     const { ws, textarea } = mountConnected();
     const down = key("keydown", {
       key: "v",
@@ -1371,7 +1371,7 @@ describe("BrowserPane", () => {
     });
     act(() => {
       textarea.dispatchEvent(down);
-      // 修飾キーを先に離したときの up も送らない
+      // 修飾キーを先に離したときのupも送らない
       textarea.dispatchEvent(
         key("keyup", { key: "v", code: "KeyV", keyCode: 86 })
       );
@@ -1386,7 +1386,7 @@ describe("BrowserPane", () => {
     expect(ws.sent()).toEqual([{ t: "paste", text: "貼る" }]);
   });
 
-  it("Chromeの順 (compositionend のあとに input) で確定を1回だけ送る", () => {
+  it("Chromeの順 (compositionendのあとにinput) で確定を1回だけ送る", () => {
     const { ws, textarea } = mountConnected();
     act(() => {
       textarea.dispatchEvent(composition("compositionstart", ""));
@@ -1411,7 +1411,7 @@ describe("BrowserPane", () => {
     expect(textarea.value).toBe("");
   });
 
-  it("Firefoxの順 (input が compositionend より先) でも確定を1回だけ送る", () => {
+  it("Firefoxの順 (inputがcompositionendより先) でも確定を1回だけ送る", () => {
     const { ws, textarea } = mountConnected();
     act(() => {
       textarea.dispatchEvent(composition("compositionstart", ""));
@@ -1427,7 +1427,7 @@ describe("BrowserPane", () => {
     expect(textarea.value).toBe("");
   });
 
-  it("変換を取り消したら cancel を送る", () => {
+  it("変換を取り消したらcancelを送る", () => {
     const { ws, textarea } = mountConnected();
     act(() => {
       textarea.dispatchEvent(composition("compositionstart", ""));
@@ -1437,7 +1437,7 @@ describe("BrowserPane", () => {
     expect(ws.sent()).toEqual([{ t: "ime", type: "cancel" }]);
   });
 
-  it("変換の途中でフォーカスが外れたら cancel を送り、遅れて来た確定は送らない", () => {
+  it("変換の途中でフォーカスが外れたらcancelを送り、遅れて来た確定は送らない", () => {
     const { ws, textarea } = mountConnected();
     act(() => {
       textarea.focus();
@@ -1451,7 +1451,7 @@ describe("BrowserPane", () => {
     expect(textarea.value).toBe("");
   });
 
-  it("変換を経ない入力は input から確定として送る", () => {
+  it("変換を経ない入力はinputから確定として送る", () => {
     const { ws, textarea } = mountConnected();
     act(() => {
       textarea.value = "😀";
@@ -1737,7 +1737,7 @@ describe("BrowserPane", () => {
     expect(stale.send).not.toHaveBeenCalled();
   });
 
-  it("move は1フレームに最新の1回だけ送り、up の前に送り切る", () => {
+  it("moveは1フレームに最新の1回だけ送り、upの前に送り切る", () => {
     const { ws, surface } = mountConnected();
     act(() => {
       surface.dispatchEvent(mouse("mousemove", { clientX: 20, clientY: 30 }));
@@ -1748,7 +1748,7 @@ describe("BrowserPane", () => {
     expect(ws.sent()).toMatchObject([{ type: "move", x: 20, y: 20 }]);
     ws.send.mockClear();
 
-    // 押している間は window で追う。ペインの上で動かしても二重に送らない
+    // 押している間はwindowで追う。ペインの上で動かしても二重に送らない
     act(() => {
       surface.dispatchEvent(
         mouse("mousedown", { clientX: 30, clientY: 40, buttons: 1 })
@@ -1770,7 +1770,7 @@ describe("BrowserPane", () => {
     ]);
     ws.send.mockClear();
 
-    // 離したあとは window では追わない
+    // 離したあとはwindowでは追わない
     act(() => {
       window.dispatchEvent(mouse("mousemove", { clientX: 5, clientY: 5 }));
       runFrame();
@@ -1778,7 +1778,7 @@ describe("BrowserPane", () => {
     expect(ws.send).not.toHaveBeenCalled();
   });
 
-  it("wheel は既定のスクロールを止めて送る", () => {
+  it("wheelは既定のスクロールを止めて送る", () => {
     const { ws, surface } = mountConnected();
     const wheel = new WheelEvent("wheel", {
       bubbles: true,
@@ -1795,7 +1795,7 @@ describe("BrowserPane", () => {
     ]);
   });
 
-  it("サーバーの error のあとに切れたら理由を出し、再接続ボタンで繋ぎ直す", () => {
+  it("サーバーのerrorのあとに切れたら理由を出し、再接続ボタンで繋ぎ直す", () => {
     const { container, ws } = mountConnected();
     act(() => {
       ws.onmessage?.({
@@ -2116,7 +2116,7 @@ describe("BrowserPane", () => {
     expect(ws.onmessage).toBeNull();
     expect(ws.close).toHaveBeenCalledTimes(1);
     expect(FakeResizeObserver.instances[0].disconnect).toHaveBeenCalled();
-    // 押したままアンマウントしても、window のリスナーを残さない
+    // 押したままアンマウントしても、windowのリスナーを残さない
     const removed = removeListener.mock.calls.map(([type]) => type);
     expect(removed).toContain("mousemove");
     expect(removed).toContain("mouseup");
@@ -2202,6 +2202,40 @@ function setValue(field: HTMLInputElement, value: string) {
   });
 }
 
+/** `performance.now` を、テストから進められる時計に差し替える */
+function fakeClock(start = 1000) {
+  let now = start;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  return {
+    advance(ms: number) {
+      now += ms;
+    },
+  };
+}
+
+/** canvasを押して離す (この視聴者がリモートのページを操作した) */
+function clickSurface(surface: HTMLElement, clientX = 110, clientY = 70) {
+  act(() => {
+    surface.dispatchEvent(mouse("mousedown", { clientX, clientY, buttons: 1 }));
+    window.dispatchEvent(mouse("mouseup", { clientX, clientY, buttons: 0 }));
+  });
+}
+
+function alertdialog(container: HTMLElement): HTMLElement | null {
+  return container.querySelector('[role="alertdialog"]');
+}
+
+const COPY_KEY = { key: "c", code: "KeyC", keyCode: 67, ctrlKey: true };
+
+/** 透明のtextareaでCtrl+Cを押して離す (`copy` を送る) */
+function pressCopy(textarea: HTMLTextAreaElement) {
+  act(() => {
+    textarea.focus();
+    textarea.dispatchEvent(key("keydown", COPY_KEY));
+    textarea.dispatchEvent(key("keyup", COPY_KEY));
+  });
+}
+
 interface TouchInit {
   identifier: number;
   clientX: number;
@@ -2222,7 +2256,7 @@ function touch(
   return event;
 }
 
-describe("BrowserPane のツールバー", () => {
+describe("BrowserPaneのツールバー", () => {
   it("ツールバーは、寸法を測る領域の外に置く", () => {
     const { container, surface, textarea } = mountConnected();
     const field = urlField(container);
@@ -2282,6 +2316,51 @@ describe("BrowserPane のツールバー", () => {
     ]);
   });
 
+  it("URLの入力欄でEnterかEscapeを押したら、フォーカスを透明の入力欄へ移す", () => {
+    const { container, ws, textarea } = mountConnected();
+    receive(ws, PAGE);
+    const field = urlField(container);
+    act(() => field.focus());
+    setValue(field, "localhost:3000");
+    act(() => {
+      field.dispatchEvent(
+        key("keydown", { key: "Enter", code: "Enter", keyCode: 13 })
+      );
+    });
+    // 続けて打ったキーが、ページに届く
+    expect(document.activeElement).toBe(textarea);
+
+    act(() => field.focus());
+    act(() => {
+      field.dispatchEvent(
+        key("keydown", { key: "Escape", code: "Escape", keyCode: 27 })
+      );
+    });
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it("URLの入力欄で変換を確定するEnterでは、遷移せず、フォーカスも動かさない", () => {
+    const { container, ws } = mountConnected();
+    receive(ws, PAGE);
+    const field = urlField(container);
+    act(() => field.focus());
+    setValue(field, "ろーかる");
+    act(() => {
+      field.dispatchEvent(composition("compositionstart", ""));
+      field.dispatchEvent(
+        key("keydown", {
+          key: "Enter",
+          code: "Enter",
+          keyCode: 229,
+          isComposing: true,
+        })
+      );
+    });
+
+    expect(ws.send).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(field);
+  });
+
   it("タブの並びは2つ以上のときだけ出し、押すと `tab` を送る", () => {
     const { container, ws } = mountConnected();
     receive(ws, { ...TABS, tabs: [TABS.tabs[0]] });
@@ -2334,6 +2413,9 @@ describe("BrowserPane のツールバー", () => {
     const line = container.querySelector("[data-browser-notice]");
     expect(line?.getAttribute("role")).toBe("status");
     expect(notice(container)).toBe("このURLは開けません");
+    // 1行に省略するので、全体をツールチップで読める
+    expect(line?.className.split(" ")).toContain("truncate");
+    expect(line?.getAttribute("title")).toBe("このURLは開けません");
 
     act(() => vi.advanceTimersByTime(3000));
     receive(ws, { t: "notice", message: "タブを閉じられません" });
@@ -2348,7 +2430,7 @@ describe("BrowserPane のツールバー", () => {
   });
 });
 
-describe("BrowserPane のダイアログ", () => {
+describe("BrowserPaneのダイアログ", () => {
   it.each([
     ["alert", "OK", { t: "dialog", accept: true }],
     ["confirm", "OK", { t: "dialog", accept: true }],
@@ -2356,7 +2438,7 @@ describe("BrowserPane のダイアログ", () => {
     ["beforeunload", "このページを離れる", { t: "dialog", accept: true }],
     ["beforeunload", "とどまる", { t: "dialog", accept: false }],
     ["prompt", "キャンセル", { t: "dialog", accept: false }],
-  ] as const)("`%s` の %s で応答を送る", (kind, name, expected) => {
+  ] as const)("`%s` の「%s」で応答を送る", (kind, name, expected) => {
     const { container, ws, surface } = mountConnected();
     act(() => ws.onmessage?.(dialogMessage(kind)));
     const dialog = container.querySelector('[role="alertdialog"]');
@@ -2368,6 +2450,7 @@ describe("BrowserPane のダイアログ", () => {
   });
 
   it("`prompt` は、入力した文字列を付けて応答する", () => {
+    const clock = fakeClock();
     const { container, ws } = mountConnected();
     receive(ws, PAGE);
     act(() => ws.onmessage?.(dialogMessage("prompt", "名前は?", "太郎")));
@@ -2375,7 +2458,9 @@ describe("BrowserPane のダイアログ", () => {
       '[role="alertdialog"] input'
     ) as HTMLInputElement;
     expect(field.value).toBe("太郎");
-    expect(container.textContent).toContain("localhost:5173 の内容");
+    expect(container.textContent).toContain("localhost:5173の内容");
+    // 出た直後のキーは応答にしないので、時間を置く
+    clock.advance(300);
 
     setValue(field, "花子");
     // 同じダイアログがもう一度届いても、入力を保つ
@@ -2406,11 +2491,15 @@ describe("BrowserPane のダイアログ", () => {
   it("表示中は、マウス、wheel、キー、貼り付け、変換、タッチをリモートへ送らない", () => {
     const { container, ws, surface, textarea } = mountConnected();
     act(() => ws.onmessage?.(dialogMessage("confirm")));
-    const backdrop = container.querySelector(
-      "[data-browser-overlay]"
-    ) as HTMLElement;
+    const backdrop = alertdialog(container)?.parentElement as HTMLElement;
     const start = touch("touchstart", [
       { identifier: 1, clientX: 110, clientY: 70 },
+    ]);
+    const move = touch("touchmove", [
+      { identifier: 1, clientX: 110, clientY: 90 },
+    ]);
+    const onButton = touch("touchstart", [
+      { identifier: 2, clientX: 400, clientY: 300 },
     ]);
     act(() => {
       backdrop.dispatchEvent(
@@ -2433,6 +2522,8 @@ describe("BrowserPane のダイアログ", () => {
         })
       );
       backdrop.dispatchEvent(start);
+      backdrop.dispatchEvent(move);
+      named(container, "OK").dispatchEvent(onButton);
       // Tabで透明の入力欄へ移っても、送らない
       textarea.focus();
       textarea.dispatchEvent(
@@ -2450,9 +2541,190 @@ describe("BrowserPane のダイアログ", () => {
     });
 
     expect(ws.send).not.toHaveBeenCalled();
-    // ダイアログのボタンを指で押せるよう、既定の動作は止めない
-    expect(start.defaultPrevented).toBe(false);
+    // まわりの暗い部分に触れても、Arkの画面をスクロールさせない
+    expect(start.defaultPrevented).toBe(true);
+    expect(move.defaultPrevented).toBe(true);
+    // ダイアログのボタンを指で押せるよう、中では既定の動作を止めない
+    expect(onButton.defaultPrevented).toBe(false);
     expect(textarea.value).toBe("");
+  });
+
+  it("応答したら、別のダイアログに替わるか閉じるまで、ボタンを無効にする", () => {
+    const { container, ws } = mountConnected();
+    act(() => ws.onmessage?.(dialogMessage("confirm", "1つめ")));
+    act(() => named(container, "OK").click());
+    expect(named(container, "OK").disabled).toBe(true);
+    expect(named(container, "キャンセル").disabled).toBe(true);
+    act(() => named(container, "OK").click());
+    expect(ws.sent()).toEqual([{ t: "dialog", accept: true }]);
+    ws.send.mockClear();
+
+    // 同じ中身がもう一度届いても、応答済みのまま
+    act(() => ws.onmessage?.(dialogMessage("confirm", "1つめ")));
+    expect(named(container, "OK").disabled).toBe(true);
+    act(() => ws.onmessage?.(dialogMessage("confirm", "2つめ")));
+    expect(named(container, "OK").disabled).toBe(false);
+    act(() => named(container, "キャンセル").click());
+    receive(ws, { t: "dialogClosed" });
+    act(() => ws.onmessage?.(dialogMessage("confirm", "2つめ")));
+    expect(named(container, "OK").disabled).toBe(false);
+    expect(ws.sent()).toEqual([{ t: "dialog", accept: false }]);
+  });
+
+  it("ペインが隠れている間は、ダイアログも選択リストも描かず、見えたときに描いてフォーカスを取る", () => {
+    const { container, ws } = mountConnected();
+    act(() => hidePane());
+    act(() => ws.onmessage?.(dialogMessage("alert")));
+    // 見えない `alertdialog` があると、アプリのキーボード操作が全部止まる
+    expect(alertdialog(container)).toBeNull();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+
+    act(() => showPane());
+    const dialog = alertdialog(container) as HTMLElement;
+    expect(dialog).not.toBeNull();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    // 出したまま隠れたら、消す。閉じてから見えたときは、何も出さない
+    act(() => hidePane());
+    expect(alertdialog(container)).toBeNull();
+    receive(ws, { t: "dialogClosed" }, SELECT);
+    expect(container.querySelector('[role="listbox"]')).toBeNull();
+    act(() => showPane());
+    expect(alertdialog(container)).toBeNull();
+    expect(container.querySelector('[role="listbox"]')).not.toBeNull();
+  });
+
+  it("隠れている間にダイアログが閉じても、フォーカスを動かさない", () => {
+    const { container, ws } = mountConnected();
+    act(() => ws.onmessage?.(dialogMessage("alert")));
+    const outside = document.createElement("input");
+    document.body.append(outside);
+    act(() => hidePane());
+    act(() => outside.focus());
+    receive(ws, { t: "dialogClosed" });
+
+    expect(document.activeElement).toBe(outside);
+    expect(alertdialog(container)).toBeNull();
+    outside.remove();
+  });
+
+  it("透明の入力欄にフォーカスがあるときに出たら、主ボタンにフォーカスし、閉じたら入力欄へ戻す", () => {
+    const { container, ws, textarea } = mountConnected();
+    act(() => textarea.focus());
+    act(() => ws.onmessage?.(dialogMessage("confirm")));
+    expect(document.activeElement).toBe(named(container, "OK"));
+
+    receive(ws, { t: "dialogClosed" });
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it("URLの入力欄で打っているときに出たら、ボタンではなく枠にフォーカスし、閉じたらURLの入力欄へ戻す", () => {
+    const clock = fakeClock();
+    const { container, ws } = mountConnected();
+    receive(ws, PAGE);
+    const field = urlField(container);
+    act(() => field.focus());
+    act(() => ws.onmessage?.(dialogMessage("confirm")));
+    const dialog = alertdialog(container) as HTMLElement;
+    expect(document.activeElement).toBe(dialog);
+
+    // 打ちかけのEnterは、どのボタンも押さない
+    clock.advance(300);
+    act(() => {
+      dialog.dispatchEvent(
+        key("keydown", { key: "Enter", code: "Enter", keyCode: 13 })
+      );
+    });
+    expect(ws.send).not.toHaveBeenCalled();
+
+    receive(ws, { t: "dialogClosed" });
+    expect(document.activeElement).toBe(field);
+  });
+
+  it("利用者がほかの欄へ移ったあとに閉じたら、フォーカスを動かさない", () => {
+    const { container, ws, textarea } = mountConnected();
+    receive(ws, PAGE);
+    act(() => textarea.focus());
+    act(() => ws.onmessage?.(dialogMessage("confirm")));
+    const field = urlField(container);
+    act(() => field.focus());
+    receive(ws, { t: "dialogClosed" });
+
+    expect(document.activeElement).toBe(field);
+  });
+
+  it("選択リストが開いているときにダイアログが届いたら、リストを閉じて、ダイアログにフォーカスする", () => {
+    const { container, ws, surface, textarea } = mountConnected();
+    clickSurface(surface);
+    receive(ws, SELECT);
+    ws.send.mockClear();
+    act(() => ws.onmessage?.(dialogMessage("confirm")));
+
+    expect(container.querySelector('[role="listbox"]')).toBeNull();
+    // サーバーも同じときに閉じるので、取り消しは送らない
+    expect(ws.send).not.toHaveBeenCalled();
+    // リストが取る前のフォーカス (透明の入力欄) で決めるので、主ボタンに置く
+    expect(document.activeElement).toBe(named(container, "OK"));
+    receive(ws, { t: "dialogClosed" });
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it("右クリックのメニューは、canvasでは止め、`prompt` の入力欄では止めない (貼り付けられる)", () => {
+    const { container, ws, surface } = mountConnected();
+    act(() => ws.onmessage?.(dialogMessage("prompt", "名前は?")));
+    const onCanvas = mouse("contextmenu", { clientX: 110, clientY: 70 });
+    const onField = mouse("contextmenu", { clientX: 400, clientY: 300 });
+    act(() => {
+      surface.dispatchEvent(onCanvas);
+      container
+        .querySelector('[role="alertdialog"] input')
+        ?.dispatchEvent(onField);
+    });
+
+    expect(onCanvas.defaultPrevented).toBe(true);
+    expect(onField.defaultPrevented).toBe(false);
+  });
+
+  it("`StrictMode` でも、ダイアログと選択リストは1つずつ出て、1回の操作で1回だけ送る", () => {
+    const container = mount(
+      <StrictMode>
+        <BrowserPane browserSession={sessionFixture} />
+      </StrictMode>
+    );
+    const ws = FakeWebSocket.instances.find(
+      socket => !socket.close.mock.calls.length
+    ) as FakeWebSocket;
+    ws.readyState = FakeWebSocket.OPEN;
+    act(() => {
+      ws.onopen?.();
+      ws.onmessage?.(viewportMessage(800, 600));
+    });
+    const surface = container.querySelector("canvas")
+      ?.parentElement as HTMLDivElement;
+    const textarea = container.querySelector("textarea");
+    ws.send.mockClear();
+
+    clickSurface(surface);
+    ws.send.mockClear();
+    receive(ws, SELECT);
+    expect(container.querySelectorAll('[role="listbox"]')).toHaveLength(1);
+    expect(document.activeElement).toBe(
+      container.querySelector('[role="listbox"]')
+    );
+    act(() =>
+      container.querySelectorAll<HTMLElement>('[role="option"]')[1].click()
+    );
+    expect(ws.sent()).toEqual([{ t: "selectChoose", id: 7, index: 1 }]);
+    expect(document.activeElement).toBe(textarea);
+    ws.send.mockClear();
+
+    act(() => ws.onmessage?.(dialogMessage("confirm")));
+    expect(container.querySelectorAll('[role="alertdialog"]')).toHaveLength(1);
+    expect(document.activeElement).toBe(named(container, "OK"));
+    act(() => named(container, "OK").click());
+    expect(ws.sent()).toEqual([{ t: "dialog", accept: true }]);
+    receive(ws, { t: "dialogClosed" });
+    expect(document.activeElement).toBe(textarea);
   });
 
   it("ダイアログが開いたら、押したままのキーを離す", () => {
@@ -2470,13 +2742,14 @@ describe("BrowserPane のダイアログ", () => {
   });
 });
 
-describe("BrowserPane の選択リスト", () => {
+describe("BrowserPaneの選択リスト", () => {
   function listbox(container: HTMLElement): HTMLElement | null {
     return container.querySelector('[role="listbox"]');
   }
 
   it("`<select>` の位置を表示上の座標へ直して、その下に出す", () => {
     const { container, ws, surface } = mountConnected();
+    clickSurface(surface);
     receive(ws, SELECT);
     const list = listbox(container) as HTMLElement;
 
@@ -2512,8 +2785,11 @@ describe("BrowserPane の選択リスト", () => {
   });
 
   it("選択肢を押すと `selectChoose` を送って閉じ、入力欄へフォーカスを戻す", () => {
-    const { container, ws, textarea } = mountConnected();
+    const { container, ws, surface, textarea } = mountConnected();
+    clickSurface(surface);
+    ws.send.mockClear();
     receive(ws, SELECT);
+    expect(document.activeElement).not.toBe(textarea);
     const options = container.querySelectorAll<HTMLElement>('[role="option"]');
     act(() => options[2].click());
     expect(ws.send).not.toHaveBeenCalled();
@@ -2557,12 +2833,13 @@ describe("BrowserPane の選択リスト", () => {
   });
 
   it("外を押すと `selectCancel` を送って閉じ、その押下はリモートへ送らない", () => {
-    const { container, ws, surface } = mountConnected();
+    const { container, ws, surface, textarea } = mountConnected();
+    clickSurface(surface);
+    ws.send.mockClear();
     receive(ws, SELECT);
+    const down = mouse("mousedown", { clientX: 500, clientY: 400, buttons: 1 });
     act(() => {
-      surface.dispatchEvent(
-        mouse("mousedown", { clientX: 500, clientY: 400, buttons: 1 })
-      );
+      surface.dispatchEvent(down);
       window.dispatchEvent(
         mouse("mouseup", { clientX: 500, clientY: 400, buttons: 0 })
       );
@@ -2570,6 +2847,117 @@ describe("BrowserPane の選択リスト", () => {
 
     expect(ws.sent()).toEqual([{ t: "selectCancel", id: 7 }]);
     expect(listbox(container)).toBeNull();
+    // 既定の動作を止めないと、フォーカスが文書の本体へ移り、キーがページに届かなくなる
+    expect(down.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it("ツールバーを押して閉じたときは、その押下の既定の動作を止めない", () => {
+    const { container, ws, surface } = mountConnected();
+    receive(ws, PAGE);
+    clickSurface(surface);
+    ws.send.mockClear();
+    receive(ws, SELECT);
+    const down = mouse("mousedown", { clientX: 200, clientY: 10, buttons: 1 });
+    act(() => {
+      urlField(container).dispatchEvent(down);
+    });
+
+    expect(ws.sent()).toEqual([{ t: "selectCancel", id: 7 }]);
+    expect(down.defaultPrevented).toBe(false);
+  });
+
+  it("この視聴者がページを操作した直後 (1秒以内) に開いたリストだけが、フォーカスを取る", () => {
+    const clock = fakeClock();
+    const { container, ws, surface, textarea } = mountConnected();
+    clickSurface(surface);
+    clock.advance(1000);
+    receive(ws, SELECT);
+    expect(document.activeElement).toBe(listbox(container));
+    receive(ws, { t: "selectClosed", id: 7 });
+    expect(document.activeElement).toBe(textarea);
+
+    // 操作から間が空いていれば、ほかの視聴者が開いたもの。フォーカスは取らないが、押せば選べる
+    clock.advance(1);
+    receive(ws, { ...SELECT, id: 8 });
+    expect(listbox(container)).not.toBeNull();
+    expect(document.activeElement).toBe(textarea);
+    ws.send.mockClear();
+    act(() =>
+      container.querySelectorAll<HTMLElement>('[role="option"]')[1].click()
+    );
+    expect(ws.sent()).toEqual([{ t: "selectChoose", id: 8, index: 1 }]);
+    expect(document.activeElement).toBe(textarea);
+
+    // 透明の入力欄で打ったキーも、ページの操作に数える
+    act(() => {
+      textarea.dispatchEvent(
+        key("keydown", { key: " ", code: "Space", keyCode: 32 })
+      );
+    });
+    receive(ws, { ...SELECT, id: 9 });
+    expect(document.activeElement).toBe(listbox(container));
+  });
+
+  it("URLの入力欄で打っている間に開いたリストは、フォーカスを取らない", () => {
+    const { container, ws } = mountConnected();
+    receive(ws, PAGE);
+    const field = urlField(container);
+    act(() => field.focus());
+    act(() => {
+      field.dispatchEvent(
+        key("keydown", { key: "a", code: "KeyA", keyCode: 65 })
+      );
+    });
+    receive(ws, SELECT);
+
+    expect(listbox(container)).not.toBeNull();
+    expect(document.activeElement).toBe(field);
+  });
+
+  it("開いている間にビューポートの寸法か世代が変わったら、`selectCancel` を送って閉じる", () => {
+    const { container, ws } = mountConnected();
+    receive(ws, SELECT);
+    // 同じ寸法、同じ世代なら、そのまま
+    act(() => ws.onmessage?.(viewportMessage(800, 600, 1)));
+    expect(listbox(container)).not.toBeNull();
+    expect(ws.send).not.toHaveBeenCalled();
+
+    act(() => ws.onmessage?.(viewportMessage(1024, 600, 1)));
+    expect(listbox(container)).toBeNull();
+    expect(ws.sent()).toContainEqual({ t: "selectCancel", id: 7 });
+    ws.send.mockClear();
+
+    receive(ws, { ...SELECT, id: 8 });
+    act(() => ws.onmessage?.(viewportMessage(1024, 600, 2)));
+    expect(listbox(container)).toBeNull();
+    expect(ws.sent()).toContainEqual({ t: "selectCancel", id: 8 });
+  });
+
+  it("`select` の直後に、描き直しを待たずにビューポートが変わっても、閉じる", () => {
+    const { container, ws } = mountConnected();
+    act(() => {
+      ws.onmessage?.(json(SELECT));
+      ws.onmessage?.(viewportMessage(1024, 600, 2));
+    });
+
+    expect(listbox(container)).toBeNull();
+    expect(ws.sent()).toContainEqual({ t: "selectCancel", id: 7 });
+  });
+
+  it("領域の寸法が変わっただけなら、閉じずに置き直す", () => {
+    const { container, ws } = mountConnected();
+    receive(ws, SELECT);
+    expect(listbox(container)?.style.top).toBe("76px");
+    act(() => {
+      paneSize = { width: 400, height: 300 };
+      FakeResizeObserver.instances[0].callback();
+    });
+
+    // 800x600のビューポートを400x300に映すので、位置も半分になる
+    expect(listbox(container)?.style.left).toBe("50px");
+    expect(listbox(container)?.style.top).toBe("39px");
+    expect(ws.sent().some(m => m.t === "selectCancel")).toBe(false);
   });
 
   it("`selectClosed`、遷移、タブの切り替えでは、何も送らずに閉じる", () => {
@@ -2591,16 +2979,77 @@ describe("BrowserPane の選択リスト", () => {
   });
 });
 
-describe("BrowserPane のコピー", () => {
-  it("`clipboard` が届いたら、手元のクリップボードへ書く", async () => {
+describe("BrowserPaneのコピー", () => {
+  it("`copy` を送ったあとに届いた `clipboard` を、手元のクリップボードへ書く", async () => {
     const writeText = vi.fn(async () => {});
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
-    const { container, ws } = mountConnected();
+    const { container, ws, textarea } = mountConnected();
+    pressCopy(textarea);
     receive(ws, { t: "clipboard", text: "選んだ文字列" });
     await flush();
 
-    expect(writeText).toHaveBeenCalledWith("選んだ文字列");
+    expect(writeText.mock.calls).toEqual([["選んだ文字列"]]);
     expect(notice(container)).toBeNull();
+  });
+
+  it("頼んでいない `clipboard` は、書かずに捨てる", async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const { container, ws } = mountConnected();
+    receive(ws, { t: "clipboard", text: "ほかの視聴者が選んだ文字列" });
+    await flush();
+
+    expect(writeText).not.toHaveBeenCalled();
+    expect(notice(container)).toBeNull();
+  });
+
+  it("1回の `copy` で書くのは、最初に届いた1通だけ", async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const { ws, textarea } = mountConnected();
+    pressCopy(textarea);
+    receive(
+      ws,
+      { t: "clipboard", text: "1通目" },
+      { t: "clipboard", text: "2通目" }
+    );
+    await flush();
+
+    expect(writeText.mock.calls).toEqual([["1通目"]]);
+  });
+
+  it("`copy` から3秒を過ぎて届いた `clipboard` は、書かずに捨てる", async () => {
+    const clock = fakeClock();
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const { ws, textarea } = mountConnected();
+    pressCopy(textarea);
+    clock.advance(3001);
+    receive(ws, { t: "clipboard", text: "遅れた返事" });
+    await flush();
+    expect(writeText).not.toHaveBeenCalled();
+
+    pressCopy(textarea);
+    clock.advance(3000);
+    receive(ws, { t: "clipboard", text: "間に合った返事" });
+    await flush();
+    expect(writeText.mock.calls).toEqual([["間に合った返事"]]);
+  });
+
+  it("再接続したら、前の接続で頼んだ `copy` を忘れる", async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const { container, ws, textarea } = mountConnected();
+    pressCopy(textarea);
+    act(() => ws.onclose?.({ reason: "" }));
+    act(() => named(container, "再接続").click());
+    const next = FakeWebSocket.instances[1];
+    next.readyState = FakeWebSocket.OPEN;
+    act(() => next.onopen?.());
+    receive(next, { t: "clipboard", text: "前の接続の返事" });
+    await flush();
+
+    expect(writeText).not.toHaveBeenCalled();
   });
 
   it("書けなかったら「コピーできませんでした」を出す", async () => {
@@ -2608,7 +3057,8 @@ describe("BrowserPane のコピー", () => {
       throw new Error("NotAllowedError");
     });
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
-    const { container, ws } = mountConnected();
+    const { container, ws, textarea } = mountConnected();
+    pressCopy(textarea);
     receive(ws, { t: "clipboard", text: "選んだ文字列" });
     await flush();
 
@@ -2617,7 +3067,8 @@ describe("BrowserPane のコピー", () => {
 
   it("クリップボードが使えない (安全でないコンテキスト) ときも、同じ知らせを出す", async () => {
     vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
-    const { container, ws } = mountConnected();
+    const { container, ws, textarea } = mountConnected();
+    pressCopy(textarea);
     receive(ws, { t: "clipboard", text: "選んだ文字列" });
     await flush();
 
@@ -2625,7 +3076,7 @@ describe("BrowserPane のコピー", () => {
   });
 });
 
-describe("BrowserPane のタッチ", () => {
+describe("BrowserPaneのタッチ", () => {
   it("`touchstart` は既定の動作を止め、ビューポートの座標と小さい番号で送り、入力欄にフォーカスする", () => {
     const { ws, surface, textarea } = mountConnected();
     const start = touch("touchstart", [
@@ -2664,111 +3115,6 @@ describe("BrowserPane のタッチ", () => {
     ]);
   });
 
-  it("`touchmove` は1フレームに最新の1回だけ送り、`touchend` の前に送り切る", () => {
-    const { ws, surface } = mountConnected();
-    act(() => {
-      surface.dispatchEvent(
-        touch("touchstart", [{ identifier: 9, clientX: 110, clientY: 70 }])
-      );
-    });
-    ws.send.mockClear();
-
-    const move = touch("touchmove", [
-      { identifier: 9, clientX: 120, clientY: 80 },
-    ]);
-    act(() => {
-      surface.dispatchEvent(move);
-      surface.dispatchEvent(
-        touch("touchmove", [{ identifier: 9, clientX: 130, clientY: 90 }])
-      );
-    });
-    expect(move.defaultPrevented).toBe(true);
-    expect(ws.send).not.toHaveBeenCalled();
-    act(() => runFrame());
-    expect(ws.sent()).toMatchObject([
-      { type: "move", points: [{ id: 0, x: 120, y: 70 }] },
-    ]);
-    ws.send.mockClear();
-
-    const end = touch(
-      "touchend",
-      [],
-      [{ identifier: 9, clientX: 140, clientY: 100 }]
-    );
-    act(() => {
-      surface.dispatchEvent(
-        touch("touchmove", [{ identifier: 9, clientX: 140, clientY: 100 }])
-      );
-      surface.dispatchEvent(end);
-      runFrame();
-    });
-
-    expect(end.defaultPrevented).toBe(true);
-    expect(ws.sent()).toEqual([
-      {
-        t: "touch",
-        type: "move",
-        points: [{ id: 0, x: 130, y: 80 }],
-        modifiers: 0,
-      },
-      { t: "touch", type: "end", points: [], modifiers: 0 },
-    ]);
-  });
-
-  it("指ごとに同じ番号を使い続け、`end` と `cancel` には残っている指を載せる", () => {
-    const { ws, surface } = mountConnected();
-    const a = { identifier: 1001, clientX: 110, clientY: 70 };
-    const b = { identifier: 1002, clientX: 210, clientY: 170 };
-    const c = { identifier: 1003, clientX: 310, clientY: 270 };
-    act(() => {
-      surface.dispatchEvent(touch("touchstart", [a]));
-      surface.dispatchEvent(touch("touchstart", [a, b], [b]));
-      surface.dispatchEvent(touch("touchend", [b], [a]));
-      // 空いた番号は、次の指が使う
-      surface.dispatchEvent(touch("touchstart", [b, c], [c]));
-      surface.dispatchEvent(touch("touchcancel", [c], [b]));
-    });
-
-    expect(
-      ws.sent().map(m => (m.t === "touch" ? [m.type, m.points] : m))
-    ).toEqual([
-      ["start", [{ id: 0, x: 100, y: 50 }]],
-      [
-        "start",
-        [
-          { id: 0, x: 100, y: 50 },
-          { id: 1, x: 200, y: 150 },
-        ],
-      ],
-      ["end", [{ id: 1, x: 200, y: 150 }]],
-      [
-        "start",
-        [
-          { id: 1, x: 200, y: 150 },
-          { id: 0, x: 300, y: 250 },
-        ],
-      ],
-      ["cancel", [{ id: 0, x: 300, y: 250 }]],
-    ]);
-  });
-
-  it("11本目からの指は送らない", () => {
-    const { ws, surface } = mountConnected();
-    const fingers = Array.from({ length: 11 }, (_, i) => ({
-      identifier: 500 + i,
-      clientX: 20 + i * 10,
-      clientY: 30,
-    }));
-    act(() => {
-      surface.dispatchEvent(touch("touchstart", fingers));
-    });
-    const [start] = ws.sent();
-
-    expect(start.t === "touch" && start.points.map(p => p.id)).toEqual([
-      0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-    ]);
-  });
-
   it("1回の押下で、タッチとマウスの両方を送らない", () => {
     const { ws, surface } = mountConnected();
     const finger = { identifier: 3, clientX: 110, clientY: 70 };
@@ -2790,6 +3136,73 @@ describe("BrowserPane のタッチ", () => {
     expect(ws.sent().map(m => m.t)).toEqual(["touch", "touch"]);
     // フォーカスは入力欄に残す
     expect(down.defaultPrevented).toBe(true);
+  });
+
+  it("タッチの直後でも、離した位置から離れたところの本物のマウスは送る", () => {
+    const { ws, surface } = mountConnected();
+    const finger = { identifier: 3, clientX: 110, clientY: 70 };
+    act(() => {
+      surface.dispatchEvent(touch("touchstart", [finger]));
+      surface.dispatchEvent(touch("touchend", [], [finger]));
+      surface.dispatchEvent(
+        mouse("mousedown", { clientX: 310, clientY: 270, buttons: 1 })
+      );
+      window.dispatchEvent(
+        mouse("mouseup", { clientX: 310, clientY: 270, buttons: 0 })
+      );
+    });
+
+    expect(
+      ws.sent().map(m => (m.t === "mouse" ? `${m.type}:${m.x},${m.y}` : m.t))
+    ).toEqual(["touch", "touch", "down:300,250", "up:300,250"]);
+  });
+
+  it("指を離してから400msを過ぎたマウスは、同じ位置でも送る", () => {
+    const clock = fakeClock();
+    const { ws, surface } = mountConnected();
+    const finger = { identifier: 3, clientX: 110, clientY: 70 };
+    act(() => {
+      surface.dispatchEvent(touch("touchstart", [finger]));
+      surface.dispatchEvent(touch("touchend", [], [finger]));
+    });
+    ws.send.mockClear();
+    clock.advance(401);
+    clickSurface(surface);
+
+    expect(ws.sent().map(m => m.t)).toEqual(["mouse", "mouse"]);
+  });
+
+  it("ブラウザがイベントの出どころを教えるなら、時間や位置ではなく、それで決める", () => {
+    const { ws, surface } = mountConnected();
+    const finger = { identifier: 3, clientX: 110, clientY: 70 };
+    const from = (firesTouchEvents: boolean, init: MouseEventInit) => {
+      const event = mouse("mousedown", init);
+      Object.defineProperty(event, "sourceCapabilities", {
+        value: { firesTouchEvents },
+      });
+      return event;
+    };
+    act(() => {
+      surface.dispatchEvent(touch("touchstart", [finger]));
+      surface.dispatchEvent(touch("touchend", [], [finger]));
+    });
+    ws.send.mockClear();
+
+    // タッチから合成されたものは、離れた位置でも送らない
+    const synthesized = from(true, { clientX: 310, clientY: 270, buttons: 1 });
+    act(() => {
+      surface.dispatchEvent(synthesized);
+    });
+    expect(ws.send).not.toHaveBeenCalled();
+    expect(synthesized.defaultPrevented).toBe(true);
+
+    // 本物のマウスは、指を離した直後の同じ位置でも送る
+    act(() => {
+      surface.dispatchEvent(
+        from(false, { clientX: 110, clientY: 70, buttons: 1 })
+      );
+    });
+    expect(ws.sent()).toMatchObject([{ t: "mouse", type: "down" }]);
   });
 
   it("ビューポートの寸法が届くまでと、つながっていない間は、送らない", () => {
@@ -2833,7 +3246,7 @@ describe("BrowserPane のタッチ", () => {
   });
 });
 
-describe("BrowserPane の縦横比", () => {
+describe("BrowserPaneの縦横比", () => {
   it("ビューポートが領域の寸法と同じなら、canvasは領域の全体を使う", () => {
     const { container } = mountConnected();
     const canvas = container.querySelector("canvas") as HTMLCanvasElement;

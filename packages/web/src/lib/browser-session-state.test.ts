@@ -60,6 +60,7 @@ describe("browserSessionReducer", () => {
       tabs: [],
       activeId: null,
       dialog: null,
+      dialogAnswered: false,
       select: null,
       notice: null,
       noticeSeq: 0,
@@ -108,6 +109,39 @@ describe("browserSessionReducer", () => {
     expect(receive(open, { ...DIALOG, message: "年齢は?" }).dialog).not.toBe(
       open.dialog
     );
+  });
+
+  it("`dialog` が届いたら、開いていた選択リストを閉じる", () => {
+    const open = receive(initialBrowserSessionState, SELECT);
+    const state = receive(open, DIALOG);
+    expect(state.select).toBeNull();
+    expect(state.dialog).not.toBeNull();
+
+    // 同じダイアログがもう一度届いたときも閉じる
+    const again = receive(state, SELECT, { ...DIALOG });
+    expect(again.select).toBeNull();
+    expect(again.dialog).toBe(state.dialog);
+  });
+
+  it("応答したダイアログは、別のダイアログに替わるか、閉じるまで、応答済みとして覚える", () => {
+    const open = receive(initialBrowserSessionState, DIALOG);
+    expect(open.dialogAnswered).toBe(false);
+    const answered = browserSessionReducer(open, { type: "dialogAnswered" });
+    expect(answered.dialogAnswered).toBe(true);
+    expect(answered.dialog).toBe(open.dialog);
+    // 同じダイアログがもう一度届いても、応答済みのまま
+    expect(receive(answered, { ...DIALOG }).dialogAnswered).toBe(true);
+
+    expect(
+      receive(answered, { ...DIALOG, message: "年齢は?" }).dialogAnswered
+    ).toBe(false);
+    expect(receive(answered, { t: "dialogClosed" }).dialogAnswered).toBe(false);
+    // 開いていなければ、何も変えない
+    expect(
+      browserSessionReducer(initialBrowserSessionState, {
+        type: "dialogAnswered",
+      })
+    ).toBe(initialBrowserSessionState);
   });
 
   it("`select` で開き、同じ `id` の `selectClosed` で閉じる", () => {
