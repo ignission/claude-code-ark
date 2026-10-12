@@ -1,10 +1,10 @@
 /**
- * TerminalPane Component - PC左ペインの端末表示
+ * TerminalPane Component - PCの端末表示 (端末の窓の中身)
  *
- * 操作は上部バー (SplitViewPane) が持ち、端末専用の操作は
+ * 操作のボタンは端末の窓の上端のバー (SplitViewPane) が持ち、端末専用の操作は
  * TerminalPaneHandleとして公開する。
  * - ttyd iframeを暗い額縁 (TERMINAL_BG) で囲む
- * - 入力バー (Quick Keysと入力欄) は上部バーの1タップのボタンから出し入れする
+ * - 入力バー (Quick Keysと入力欄) は窓の上端のボタンから出し入れする
  * - ファイルのD&D・貼り付け・添付は、このペインの中の確認画面を経て送る
  */
 
@@ -88,7 +88,7 @@ export type ViewerTab =
       restoredOnLoad?: boolean;
     };
 
-/** PC上部バーの `…` メニューから呼ぶ、端末専用の操作 */
+/** 外のバー (端末の窓の上端) から呼ぶ、端末専用の操作 */
 export interface TerminalPaneHandle {
   /** tmuxバッファをクリップボードへ */
   copyBuffer: () => void;
@@ -111,7 +111,7 @@ interface TerminalPaneProps {
    *
    * ファイル D&D は ttyd iframe がドラッグイベントを親に届けないため
    * window レベルで受けている。TerminalPane は全セッションぶんが常時
-   * マウントされ、さらに左ペインが会話モードのときも `display:none` で
+   * マウントされ、さらに端末の窓を閉じている間も `display:none` で
    * 残置されるので、無条件に window で受けると「見えていないペイン」にも
    * ドロップが入り、あとで開いたときに身に覚えのない送信プレビューが出る。
    * 表示中の 1 枚だけが受け取るようにこれで絞る。
@@ -133,7 +133,7 @@ interface TerminalPaneProps {
   activeTabIndex: number;
   onTabSelect: (index: number) => void;
   onTabClose: (index: number) => void;
-  /** 入力バーの表示が変わったとき。`…` メニューのチェック表示に使う */
+  /** 入力バーの表示が変わったとき。外のバーのボタンの文言と押下状態に使う */
   onInputBarVisibleChange?: (visible: boolean) => void;
 }
 
@@ -361,7 +361,7 @@ export function TerminalPane({
   // ttyd iframe はクロスフレーム分離でドラッグイベントを親に届けないため、
   // window レベルのリスナーで検知して全画面オーバーレイを表示する
   // onUploadFile が未定義（アップロード非対応）の場合はリスナーを登録しない
-  // 非表示のペイン（他セッション / 左ペインが会話モード）でも登録しない。
+  // 非表示のペイン（他セッション / 端末の窓を閉じている間）でも登録しない。
   // window リスナーは表示状態と無関係に発火するため（isVisible の項参照）
   useEffect(() => {
     if (!onUploadFile || !isVisible) return;
@@ -463,8 +463,7 @@ export function TerminalPane({
     onReload: handleReloadIframe,
   });
 
-  // 上部バー (SplitViewPane) から端末専用の操作を呼べるようにする。
-  // どれも上部バーの1タップのボタンから呼ぶ (`…` には残していない)
+  // 外のバー (SplitViewPane が描く、端末の窓の上端) から端末専用の操作を呼べるようにする
   useImperativeHandle(ref, () => ({
     copyBuffer: () => {
       handleCopyBuffer();

@@ -1,19 +1,31 @@
 /**
- * SplitViewPane - PC用セッションビュー (上部バー + 左ペイン + 右の作業エリア)
+ * SplitViewPane - PC用セッションビュー (上部バー + 会話 + 右の作業エリア + 端末の窓)
  *
- * 上部バーは1本にまとめる。左にセッションの主ラベル・ブランチ・状態チップ、
- * 中央に「端末 / 会話」の切り替え、右に1タップの操作 (ファイルの添付 / 画像の
- * 貼り付け / メッセージのショートカット / 端末のバッファのコピー / 端末の再読み込み /
- * 入力バーの表示)・作業エリアの開閉 (「パネル」) と `…` メニュー (SessionHeaderMenu)。
- * 端末に関する操作はすべて1タップで届かせ、`…` にはセッション全体の操作
- * (通知・削除) だけを残す。端末専用の操作はTerminalPaneHandle経由で
- * TerminalPaneに頼む。
+ * 左のパネルは会話 (SplitChatPane) だけを出す。端末 (ttyd) は左のパネルの中には置かず、
+ * セッションの画面全体に重ねる窓 (FloatingTerminal) の中に置く。
+ * - 端末への入口は、会話の入力欄の上の帯 (画面末尾を覗く帯。SplitChatPane が描く)。
+ *   帯を押すと窓が開く。窓の枠と閉じ方の決まりは FloatingTerminal.tsx にある
+ * - 窓を左のパネルではなくセッションの画面全体に重ねるのは、左のパネルが360pxまで
+ *   縮むため (その中では端末が狭い)
+ * - 端末 (TerminalPane) は1つだけを常にマウントし、窓を閉じている間は hidden で残す。
+ *   ttydはiframe (別のブラウジングコンテキスト) なので、アンマウントするとつなぎ直しになる
+ * - 窓の開閉はこの部品の中だけで持ち、保存しない。このセッションが選ばれなくなったら
+ *   閉じ、選び直しても閉じたまま
+ * - 開いたら端末へ、閉じたら会話の入力欄へフォーカスを移す
+ * - 会話は、窓の開閉に関係なく、選択中のセッションの1枚だけがJSONLを購読する。
+ *   端末がwindowで受けるファイルのD&Dとttydの自動の貼り直しは、窓が開いている
+ *   選択中の1枚だけに絞る (見えていない端末に効かせない)
+ *
+ * 上部バーは1本で、左にセッションの主ラベル・ブランチ・状態チップ、右に1タップの操作
+ * (メッセージのショートカット)・作業エリアの開閉 (「パネル」) と `…` メニュー
+ * (SessionHeaderMenu)。`…` にはセッション全体の操作 (通知・削除) だけを残す。
+ * 端末専用の操作 (バッファのコピー / 端末の再読み込み / 入力バーの表示) は、端末の窓の
+ * 上端のバーに置き、TerminalPaneHandle経由でTerminalPaneに頼む。
+ * ファイルの添付と画像の貼り付けは、会話の入力欄が担う。
  *
  * 右側は作業エリア 1 つで、上端のタブ「図 / ファイル / Git」で中身を切り替える。
  * 並びは 左 | 作業エリア で、リサイザは 1 本。
- * (以前は 左 | ファイル | 図 の 3 ペインだった。1680px の画面で 3 つ開くと左ペインが
- * 最小幅の 360px まで縮み、図とコードを並べたいのは図のリンクを踏んだ直後だけだった)
- * - 「図」の中身は DiagramPane。作業エリアを閉じると外す (従来どおり)。
+ * - 「図」の中身は DiagramPane。作業エリアを閉じると外す。
  *   「ファイル」のタブを見ている間は外さずに hidden で残す (iframe を作り直さない)
  * - 「ファイル」の中身は呼び出し側が `filePane` で渡す (SplitViewPane は中身を知らない)。
  *   初めて実際に見せるまでマウントせず、1 度見せたら、タブを替えても作業エリアを
@@ -29,15 +41,11 @@
  *   `fileOpenSeq` が増える → 開いて「ファイル」へ。どれもマウント時の値では開かない
  * - 幅を持つのは左ペインで、作業エリアは残りを埋める (ピークやタブの切り替えで
  *   会話の幅を動かさない)。制約は lib/split-pane-widths.ts (左 360 / 作業エリア 360 の最小幅)
- * - ドラッグ中は左ペインも作業エリアも pointer-events-none にする (端末と図は iframe)
+ * - ドラッグ中は左ペインも作業エリアも pointer-events-none にする (図は iframe)
  *
- * - diagram は TerminalPane のタブ機構から外れ、作業エリア専属になった
+ * - diagram は TerminalPane のタブ機構から外れ、作業エリア専属
  *   （タブ自体は sessionTabs 上には残るが、非表示のまま「開いている印」として使う）
- * - 左ペインのモード / 作業エリアの幅・開閉・タブは localStorage に永続化
- * - 左ペインは端末・会話の両方をマウントしたまま display 切替する。ttyd は
- *   iframe（別ブラウジングコンテキスト）なので、アンマウントすると再接続に
- *   なってしまう
- * - 会話ビューには端末への切り替えを持たせない。切り替えは上部バーだけが担う
+ * - 作業エリアの幅・開閉・タブは localStorage に永続化
  */
 
 import type {
@@ -52,14 +60,7 @@ import type {
   SpecialKey,
   Worktree,
 } from "@ark/shared";
-import {
-  Copy,
-  ImagePlus,
-  Keyboard,
-  Paperclip,
-  RefreshCw,
-  X,
-} from "lucide-react";
+import { Copy, Keyboard, RefreshCw, X } from "lucide-react";
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -71,30 +72,20 @@ import {
 } from "react";
 import type { Socket } from "socket.io-client";
 import { cn } from "@/lib/utils";
+import { focusInput } from "../lib/keynav-dom";
 import {
-  type HeaderQuickAction,
-  headerQuickActions,
   inputBarToggleLabel,
   resolveSessionHeaderLabels,
+  type TerminalWindowAction,
+  terminalWindowActions,
 } from "../lib/session-header";
 import { fitLeftWidth, LEFT_DEFAULT_WIDTH } from "../lib/split-pane-widths";
-import {
-  normalizeSplitViewLeftMode,
-  readSavedSplitViewLeftMode,
-  SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT,
-  type SplitViewLeftMode,
-  type SplitViewLeftModeChangeDetail,
-  STORAGE_KEY_SPLIT_LEFT_MODE,
-  shouldAcceptTerminalFileDrop,
-  shouldSubscribeChat,
-  writeSavedSplitViewLeftMode,
-} from "../lib/split-view-left-mode";
 import { resolveStatusKey } from "../lib/status-tone";
 import { VIEW_MODE_ICONS } from "../lib/view-mode-icons";
 import { DiagramPane } from "./DiagramPane";
+import { FloatingTerminal } from "./FloatingTerminal";
 import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
 import { MessageShortcutQuickButton } from "./MessageShortcutQuickButton";
-import { SegmentedControl, type SegmentOption } from "./SegmentedControl";
 import { SessionHeaderMenu } from "./SessionHeaderMenu";
 import { SplitChatPane } from "./SplitChatPane";
 import { StatusChip } from "./StatusChip";
@@ -106,7 +97,7 @@ import {
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
-// 左ペイン (端末 / 会話) の幅。作業エリアは残りを埋める
+// 左ペイン (会話) の幅。作業エリアは残りを埋める
 const STORAGE_KEY_LEFT_WIDTH = "ark-split-left-width";
 // 作業エリアの開閉。キーの名前は、右ペインが図だけだった頃のものを引き継ぐ
 const STORAGE_KEY_SHOW_WORK_AREA = "ark-split-show-board";
@@ -124,14 +115,9 @@ const RIGHT_TABS: readonly {
   { value: "git", label: "Git", icon: VIEW_MODE_ICONS.git },
 ];
 
-/** 上部バーの1タップ操作と `…` に共通の見た目 (32px・角丸・押すと紙色) */
+/** 上部バーの1タップ操作と `…`、端末の窓の操作に共通の見た目 (32px・角丸・押すと紙色) */
 const HEADER_ICON_BUTTON =
   "inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground";
-
-const LEFT_MODE_OPTIONS: readonly SegmentOption<SplitViewLeftMode>[] = [
-  { value: "terminal", label: "端末", icon: VIEW_MODE_ICONS.terminal },
-  { value: "chat", label: "会話", icon: VIEW_MODE_ICONS.chat },
-];
 
 interface SplitViewPaneProps {
   socket: TypedSocket | null;
@@ -189,14 +175,14 @@ interface SplitViewPaneProps {
   /**
    * このセッションが現在選択中か。SplitViewPane は Dashboard で全セッション
    * ぶんが常時マウントされる（非選択は `hidden`）ため、会話ビューの JSONL
-   * 購読はこれと左ペインのモードの両方で絞る（shouldSubscribeChat）
+   * 購読と、端末の窓まわりの処理をこれで絞る。偽になったら端末の窓を閉じる
    */
   isActive: boolean;
   /** session:previews 由来のセッション状態（会話ビューの busy / AWAITING 表示） */
   bridgeStatus?: BridgeSessionStatus;
   /** AWAITING 時の確認 UI 生テキスト（会話ビューのバナー表示） */
   awaitingText?: string;
-  /** 作業中の画面末尾（会話ビューで動きを見せる） */
+  /** 端末の画面末尾（会話の入力欄の上の帯に出す） */
   liveTail?: string;
   worktree: Worktree | undefined;
   /** 所属リポジトリの名前。表示名が無いときの主ラベル */
@@ -319,6 +305,8 @@ function useSeqIncreaseEffect(
 }
 
 export function SplitViewPane(props: SplitViewPaneProps) {
+  // セッションの画面全体。端末の窓を重ねる基準で、フォーカスの移し先もこの中から探す
+  const rootRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   // 利用者が選んだ左ペインの幅。コンテナが狭くて収まらない間も、この値は変えない
   // (ウィンドウを広げ直したら元の幅に戻す)
@@ -372,44 +360,24 @@ export function SplitViewPane(props: SplitViewPaneProps) {
 
   const peek = props.peek ?? null;
   const peekVisible = showWorkArea && boardTabActive && props.isActive;
-  // 左ペインのモード。選択は PC 全体で共有し、常時マウント済みの別セッション
-  // および別ブラウザタブからの変更にも追随する。
-  const [leftMode, setLeftMode] = useState<SplitViewLeftMode>(
-    readSavedSplitViewLeftMode
-  );
+  // 端末の窓の開閉。保存せず、このセッションが選ばれなくなったら閉じる
+  // (選び直したときに、開いたままの窓が残っていないように描画中に戻す)
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  if (!props.isActive && terminalOpen) setTerminalOpen(false);
+  const openTerminal = useCallback(() => setTerminalOpen(true), []);
+  const closeTerminal = useCallback(() => setTerminalOpen(false), []);
 
-  useEffect(() => {
-    const handleLeftModeChange = (event: Event) => {
-      const { mode } = (event as CustomEvent<SplitViewLeftModeChangeDetail>)
-        .detail;
-      setLeftMode(mode);
-    };
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === STORAGE_KEY_SPLIT_LEFT_MODE) {
-        setLeftMode(normalizeSplitViewLeftMode(event.newValue));
-      }
-    };
-
-    window.addEventListener(
-      SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT,
-      handleLeftModeChange
-    );
-    window.addEventListener("storage", handleStorage);
-    return () => {
-      window.removeEventListener(
-        SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT,
-        handleLeftModeChange
-      );
-      window.removeEventListener("storage", handleStorage);
-    };
+  // 開いたら端末へ、閉じたら会話の入力欄へフォーカスを移す。focusInput は、見えている
+  // 端末があれば端末を、無ければ会話の入力欄を選ぶ (キーボード操作の `i` と同じ決め方)。
+  // 選択が外れて閉じたときは、見えていないペインなのでフォーカスに触らない
+  const isActiveRef = useRef(props.isActive);
+  isActiveRef.current = props.isActive;
+  const moveFocusAfterToggle = useCallback(() => {
+    if (!isActiveRef.current || !rootRef.current) return;
+    focusInput(rootRef.current);
   }, []);
 
-  const handleLeftModeChange = useCallback((next: SplitViewLeftMode) => {
-    writeSavedSplitViewLeftMode(next);
-    setLeftMode(next);
-  }, []);
-
-  // 端末専用の操作は1タップのボタンからTerminalPaneに頼む。入力バーの表示は、
+  // 端末専用の操作は、窓の上端のボタンからTerminalPaneに頼む。入力バーの表示は、
   // ボタンの文言と押下状態 (aria-pressed) のためにTerminalPaneから知らせてもらう
   const terminalRef = useRef<TerminalPaneHandle>(null);
   const [terminalInputBarVisible, setTerminalInputBarVisible] = useState(false);
@@ -417,48 +385,13 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   // メニューが閉じた時点でダイアログごと消えるので、ここ (バーの外) に置く
   const [showShortcutManager, setShowShortcutManager] = useState(false);
 
-  // 1タップで届かせる操作。どれを出すかの判断はlib/session-header.tsに寄せる
-  const quickActions = headerQuickActions({
-    leftMode,
-    canUploadFile: props.onUploadFile !== undefined,
+  // 端末の窓の上端に並べる操作。どれを出すかの判断はlib/session-header.tsに寄せる
+  const windowActions = terminalWindowActions({
     canCopyBuffer: props.onCopyBuffer !== undefined,
   });
   const inputBarLabel = inputBarToggleLabel(terminalInputBarVisible);
-  // Recordにして、HeaderQuickActionを足したときの描き忘れを型で拾う
-  const quickActionItems: Record<HeaderQuickAction, ReactNode> = {
-    "attach-file": (
-      <button
-        key="attach-file"
-        type="button"
-        aria-label="ファイルを添付"
-        title="ファイルを添付"
-        onClick={() => terminalRef.current?.openFilePicker()}
-        className={HEADER_ICON_BUTTON}
-      >
-        <Paperclip className="size-5" aria-hidden="true" />
-      </button>
-    ),
-    "paste-image": (
-      <button
-        key="paste-image"
-        type="button"
-        aria-label="画像を貼り付け"
-        title="画像を貼り付け"
-        onClick={() => terminalRef.current?.pasteImage()}
-        className={HEADER_ICON_BUTTON}
-      >
-        <ImagePlus className="size-5" aria-hidden="true" />
-      </button>
-    ),
-    "message-shortcuts": (
-      <MessageShortcutQuickButton
-        key="message-shortcuts"
-        shortcuts={props.messageShortcuts}
-        onSendMessage={props.onSendMessage}
-        onManage={() => setShowShortcutManager(true)}
-        className={HEADER_ICON_BUTTON}
-      />
-    ),
+  // Recordにして、TerminalWindowActionを足したときの描き忘れを型で拾う
+  const windowActionItems: Record<TerminalWindowAction, ReactNode> = {
     "copy-buffer": (
       <button
         key="copy-buffer"
@@ -650,8 +583,8 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   };
 
   return (
-    <div className="h-full flex flex-col">
-      {/* 左のパネル (上部バー + 端末 / 会話) と作業エリアのパネルを、すき間で離して
+    <div ref={rootRef} className="relative h-full flex flex-col">
+      {/* 左のパネル (上部バー + 会話) と作業エリアのパネルを、すき間で離して
           並べる。区切りの線は引かない。すき間がそのままリサイザになる */}
       <div
         ref={containerRef}
@@ -674,21 +607,20 @@ export function SplitViewPane(props: SplitViewPaneProps) {
             isDragging && "pointer-events-none"
           )}
         >
-          {/* 上部バー: 左 = 主ラベル・ブランチ・状態チップ、中央 = 端末 / 会話、
+          {/* 上部バー: 左 = 主ラベル・ブランチ・状態チップ、
           右 = 1タップの操作・作業エリアの開閉と `…` メニュー */}
-          {/* 狭い幅 (1024px前後) では右側を中身の幅に縮め、主ラベルに幅を回す。
-          広い幅だけ左右を同じ幅にしてセグメントを中央に置く。
+          {/* 右側は中身の幅に縮め、残りを主ラベルに回す。
 
-          さらに狭いとき (コンテナ42rem未満) は「装飾から削る」順で畳む。
+          狭いとき (コンテナ42rem未満) は「装飾から削る」順で畳む。
           1タップの操作は最後まで消さない:
           1. 文言を読み上げだけに残してアイコンにする (ブランチ・状態チップ・
-             セグメント・パネル)。`sr-only` は position:absolute なので、
+             パネル)。`sr-only` は position:absolute なので、
              文字だけでなく flex の gap も消える
           2. それでも足りない分は左の箱が引き受ける。主ラベルが縮み、
              最後は `overflow-hidden` で箱の中に収める (上部バーは横に溢れない) */}
           {/* 上部バーは左のパネルの中にあるので、作業エリアを広げると幅が足りなくなる。
               そのときは右側の操作を2段目へ折り返す (切れて押せなくなるのを防ぐ)。
-              左の箱は basis-0 なので、折り返すのはセグメントと操作が収まらないときだけ。
+              左の箱は basis-0 なので、折り返すのは操作が収まらないときだけ。
               操作の並びだけでパネルの幅を超えるとき (860px のウィンドウで左が 168px に
               なる) は、並びの中でも折り返す */}
           <header className="@container min-h-13 shrink-0 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 py-2 pl-5 pr-3">
@@ -715,15 +647,13 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                 labelClassName="@max-2xl:sr-only"
               />
             </div>
-            <SegmentedControl
-              label="左ペインの表示"
-              options={LEFT_MODE_OPTIONS}
-              value={leftMode}
-              onChange={handleLeftModeChange}
-              labelClassName="@max-2xl:sr-only"
-            />
-            <div className="flex max-w-full flex-none flex-wrap @4xl:flex-1 @4xl:basis-0 min-w-0 items-center justify-end gap-1">
-              {quickActions.map(action => quickActionItems[action])}
+            <div className="flex max-w-full flex-none flex-wrap min-w-0 items-center justify-end gap-1">
+              <MessageShortcutQuickButton
+                shortcuts={props.messageShortcuts}
+                onSendMessage={props.onSendMessage}
+                onManage={() => setShowShortcutManager(true)}
+                className={HEADER_ICON_BUTTON}
+              />
               <button
                 type="button"
                 onClick={handleToggleWorkArea}
@@ -754,51 +684,21 @@ export function SplitViewPane(props: SplitViewPaneProps) {
             </div>
           </header>
 
-          {/* 左ペイン: 端末 / 会話（上部バーで切替。両方マウントしたまま display 切替）
-            リサイズ中は pointer-events-none にする。ターミナルは ttyd の iframe
-            （別ブラウジングコンテキスト）で、分割線を左へドラッグしてカーソルが
-            この上に乗ると mousemove / mouseup を iframe が飲み込み、window の
-            リスナーへ届かなくなる。結果、幅が更新されず（ターミナルが狭くならない）、
-            mouseup も発火せずドラッグが解除されない（カーソル追従が止まらない）。
-            作業エリア（図も iframe）と同様に透過させて window リスナーへ届かせる。 */}
+          {/* 会話: JSONL tail のチャットビュー。入力欄 / 端末の帯 / AUQ カード /
+              slash 補完 / ファイルアップロード / busy・AWAITING 表示を内包する */}
           <div className="min-h-0 flex-1 overflow-hidden">
-            {/* 端末: ttyd の再接続を避けるため hidden で残置する */}
-            <div className={leftMode === "terminal" ? "h-full" : "hidden"}>
-              <TerminalPane
-                ref={terminalRef}
-                session={props.session}
-                worktree={props.worktree}
-                isVisible={shouldAcceptTerminalFileDrop(
-                  props.isActive,
-                  leftMode
-                )}
-                tabs={props.tabs}
-                activeTabIndex={props.activeTabIndex}
-                onTabSelect={props.onTabSelect}
-                onTabClose={props.onTabClose}
-                onSendMessage={props.onSendMessage}
-                onSendKey={props.onSendKey}
-                onUploadFile={props.onUploadFile}
-                onCopyBuffer={props.onCopyBuffer}
-                onInputBarVisibleChange={setTerminalInputBarVisible}
-              />
-            </div>
-
-            {/* 会話: JSONL tail のチャットビュー。入力欄 / AUQ カード / slash 補完 /
-              ファイルアップロード / busy・AWAITING 表示を内包する */}
-            <div className={leftMode === "chat" ? "h-full" : "hidden"}>
-              <SplitChatPane
-                socket={props.socket}
-                session={props.session}
-                isActive={shouldSubscribeChat(props.isActive, leftMode)}
-                bridgeStatus={props.bridgeStatus}
-                awaitingText={props.awaitingText}
-                liveTail={props.liveTail}
-                onSendMessage={props.onSendMessage}
-                onSendKey={props.onSendKey}
-                onUploadFile={props.onUploadFile}
-              />
-            </div>
+            <SplitChatPane
+              socket={props.socket}
+              session={props.session}
+              isActive={props.isActive}
+              bridgeStatus={props.bridgeStatus}
+              awaitingText={props.awaitingText}
+              liveTail={props.liveTail}
+              onOpenTerminal={openTerminal}
+              onSendMessage={props.onSendMessage}
+              onSendKey={props.onSendKey}
+              onUploadFile={props.onUploadFile}
+            />
           </div>
         </div>
 
@@ -850,7 +750,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                         tabIndex={selected ? 0 : -1}
                         onClick={() => selectRightTab(tab.value)}
                         onKeyDown={e => handleRightTabKeyDown(e, index)}
-                        // 選択中は丸いカプセルで持ち上げる (上部バーの「端末 / 会話」と同じ見た目)
+                        // 選択中は丸いカプセルで持ち上げる
                         className={cn(
                           "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-3.5 font-semibold transition-colors",
                           selected
@@ -960,6 +860,32 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           </>
         )}
       </div>
+
+      {/* 端末の窓。セッションの画面全体 (このルート) を基準に重ねる。
+          TerminalPane は常にここへマウントしたままで、閉じている間は窓ごと隠れる */}
+      <FloatingTerminal
+        open={terminalOpen}
+        onClose={closeTerminal}
+        onOpened={moveFocusAfterToggle}
+        onClosed={moveFocusAfterToggle}
+        actions={windowActions.map(action => windowActionItems[action])}
+      >
+        <TerminalPane
+          ref={terminalRef}
+          session={props.session}
+          worktree={props.worktree}
+          isVisible={props.isActive && terminalOpen}
+          tabs={props.tabs}
+          activeTabIndex={props.activeTabIndex}
+          onTabSelect={props.onTabSelect}
+          onTabClose={props.onTabClose}
+          onSendMessage={props.onSendMessage}
+          onSendKey={props.onSendKey}
+          onUploadFile={props.onUploadFile}
+          onCopyBuffer={props.onCopyBuffer}
+          onInputBarVisibleChange={setTerminalInputBarVisible}
+        />
+      </FloatingTerminal>
 
       <MessageShortcutManagerDialog
         open={showShortcutManager}

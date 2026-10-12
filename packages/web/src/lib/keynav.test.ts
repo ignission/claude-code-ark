@@ -29,6 +29,16 @@ describe("resolveKey", () => {
     expect(resolveKey("", { key: "?" }).command).toEqual({ type: "help" });
   });
 
+  it("t は端末の窓を開閉する指示になり、キーの一覧にも載る", () => {
+    expect(resolveKey("", { key: "t" }).command).toEqual({
+      type: "toggle-terminal",
+    });
+    const rows = KEYNAV_HELP.flatMap(group => group.rows);
+    expect(rows.find(([keys]) => keys === "t")?.[1]).toBe("端末の窓を開閉");
+    // 端末と会話を入れ替える表示は、もう無い
+    expect(rows.some(([, what]) => what.includes("⇄ 会話"))).toBe(false);
+  });
+
   it("g は次のキーを待ち、2 打で指示になる", () => {
     const first = resolveKey("", { key: "g" });
     expect(first).toEqual({ pending: "g", handled: true });

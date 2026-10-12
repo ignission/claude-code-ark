@@ -8,6 +8,18 @@
  *
  * 入力欄は最下部に固定 (layout="mobile" では本文の上に浮かぶガラスバー)。
  * 送信は tmux send-keys 経由 (onSendMessage)。
+ *
+ * 入力欄のすぐ上には、端末の画面末尾を覗く帯 (TerminalStrip) を固定で置く。
+ * - 出すのは `onOpenTerminal` を渡されたときだけ (端末を持たない場面では出さない)
+ * - 会話の流れ (スクロール領域) の外に置く。画面末尾は1秒ごとに差し替わるので、
+ *   流れの中に置くと会話の高さが揺れる
+ * - 状態に関係なく常に出す。画面末尾 (`liveTail`) は解釈も加工もせず、等幅でそのまま出す
+ * - 帯は覗き窓で、読むのは端末の窓を開いてから。5行ぶんの高さに下端 (最新の行) を
+ *   寄せ、はみ出す分は切る (折り返しもスクロールもしない)。行が少なくても高さは
+ *   変えない (出力が増えるたびに入力欄が動かないように)
+ * - 画面末尾が届いていないときも、1行の高さで端末への入口を残す
+ * - 帯の全体が1つのボタンで、押すと端末の窓を開く。作業中の表示 (「考えています」) は
+ *   帯とは別に、会話の最後に出す
  * ファイルアップロード (D&D / ペースト / 選択) に対応。
  */
 
@@ -31,6 +43,7 @@ import {
   Download,
   ImageOff,
   Loader2,
+  Maximize2,
   Paperclip,
   Scissors,
   Workflow,
@@ -83,6 +96,7 @@ import {
   reconcileLocalSlash,
 } from "@/lib/reconcile-local-slash";
 import { reconcilePending } from "@/lib/reconcile-pending";
+import { cn } from "@/lib/utils";
 import { buildVisualizeConversationPrompt } from "@/lib/visualize-conversation";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -108,10 +122,14 @@ interface SplitChatPaneProps {
    */
   awaitingText?: string;
   /**
-   * THINK / TOOL 中の画面末尾の生テキスト。返事が JSONL に届くまでの間、
-   * 「考えています」の上にそのまま出して動きを見せる。内容は解釈しない
+   * 端末の画面末尾の生テキスト。入力欄の上の帯にそのまま出す。内容は解釈しない。
+   * 届いていない (画面を取れない、セッションが止まっている) ときは undefined
    */
   liveTail?: string;
+  /**
+   * 帯を押したとき (端末の窓を開く)。渡さなければ帯を出さず、`liveTail` も使わない
+   */
+  onOpenTerminal?: () => void;
   onSendMessage: (message: string) => void;
   /** AskUserQuestion のキャンセル (Esc) 等で使用 */
   onSendKey: (key: SpecialKey) => void;
@@ -189,16 +207,10 @@ function UserInputCard({ text }: { text: string }) {
 function WorkingIndicator({
   label,
   announce,
-  visuallyHidden,
 }: {
   label: string;
   /** false (モバイル) のときは状態の帯が読み上げるので、読み上げ領域にしない */
   announce: boolean;
-  /**
-   * 端末の末尾を出している間は、枠が動きを見せるので目に見える表示は出さない。
-   * 読み上げ領域は同じ要素のまま残す (枠の出入りのたびに作り直すと読み上げが繰り返される)
-   */
-  visuallyHidden: boolean;
 }) {
   const dots = (
     <span className="status-dots text-status-busy" aria-hidden="true">
@@ -207,13 +219,14 @@ function WorkingIndicator({
       <span />
     </span>
   );
+  const className =
+    "flex items-center gap-2 px-4 py-3 text-[13px] text-muted-foreground";
   if (!announce) {
-    if (visuallyHidden) return null;
     return (
       <div
         data-testid="chat-working-indicator"
         aria-hidden="true"
-        className="flex items-center gap-2 px-4 py-3 text-[13px] text-muted-foreground"
+        className={className}
       >
         {dots}
         <span>{label}</span>
@@ -227,32 +240,71 @@ function WorkingIndicator({
       data-testid="chat-working-indicator"
       role="status"
       aria-live="polite"
-      className={
-        visuallyHidden
-          ? "sr-only"
-          : "flex items-center gap-2 px-4 py-3 text-[13px] text-muted-foreground"
-      }
+      className={className}
     >
-      {!visuallyHidden && dots}
-      {!visuallyHidden && <span aria-hidden="true">{label}</span>}
+      {dots}
+      <span aria-hidden="true">{label}</span>
       <span className="sr-only">Claudeが作業しています</span>
     </div>
   );
 }
 
+/** 帯に見せる行数 */
+const TERMINAL_STRIP_LINES = 5;
+/** 帯の1行の高さ (px)。帯の高さはこれに行数を掛けて決める */
+const TERMINAL_STRIP_LINE_HEIGHT_PX = 16;
+
 /**
- * 作業中の端末末尾を、加工せずに等幅で出す。1 秒ごとに差し替わるので読み上げない。
- * 端末の幅は会話欄より広いことがあるため、折り返さずに横スクロールにする (枠線の文字を崩さない)
+ * 入力欄の上に置く、端末の画面末尾の帯。決まりは冒頭のコメントを参照。
+ * 中身は1秒ごとに差し替わるので読み上げず、ボタンの名前 (「端末を開く」) だけを読ませる
  */
-function LiveTerminalTail({ text }: { text: string }) {
+function TerminalStrip({
+  liveTail,
+  onOpen,
+  className,
+}: {
+  liveTail?: string;
+  onOpen: () => void;
+  className?: string;
+}) {
+  const lines = liveTail ? TERMINAL_STRIP_LINES : 1;
   return (
-    <pre
-      data-testid="chat-live-tail"
-      aria-hidden="true"
-      className="mx-4 mt-2 overflow-x-auto whitespace-pre rounded-md border border-border/60 bg-muted/40 px-3 py-2 font-mono text-[11px] leading-[1.45] text-muted-foreground"
+    <button
+      type="button"
+      data-testid="chat-terminal-strip"
+      aria-label="端末を開く"
+      title="端末を開く"
+      onClick={onOpen}
+      className={cn(
+        "group flex w-full select-none items-start gap-2 rounded-xl border border-border/60 bg-muted/40 py-1.5 pr-2 pl-3 text-left font-mono text-[11px] text-muted-foreground transition-colors hover:border-border hover:bg-muted/70 hover:text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        className
+      )}
+      style={{ lineHeight: `${TERMINAL_STRIP_LINE_HEIGHT_PX}px` }}
     >
-      {text}
-    </pre>
+      <span
+        data-testid="chat-terminal-strip-body"
+        aria-hidden="true"
+        className="flex min-w-0 flex-1 flex-col justify-end overflow-hidden"
+        style={{ height: lines * TERMINAL_STRIP_LINE_HEIGHT_PX }}
+      >
+        {liveTail ? (
+          // ボタンの中なので pre ではなく span で、改行と空白をそのまま出す
+          <span
+            data-testid="chat-live-tail"
+            className="shrink-0 whitespace-pre"
+          >
+            {liveTail}
+          </span>
+        ) : (
+          <span className="font-sans text-[12px]">端末を開く</span>
+        )}
+      </span>
+      <Maximize2
+        aria-hidden="true"
+        className="size-3.5 shrink-0 opacity-60 transition-opacity group-hover:opacity-100"
+        style={{ marginTop: (TERMINAL_STRIP_LINE_HEIGHT_PX - 14) / 2 }}
+      />
+    </button>
   );
 }
 
@@ -1112,6 +1164,7 @@ export function SplitChatPane({
   bridgeStatus,
   awaitingText,
   liveTail,
+  onOpenTerminal,
   onSendMessage,
   onSendKey,
   onUploadFile,
@@ -1317,7 +1370,7 @@ export function SplitChatPane({
 
   // 「作業N件」の展開状態 (まとまりのidの集合)。カード内のstateにしないのは、
   // 非表示 (isActive=false) の間はuseSessionJsonlがeventsを空にしてカードが
-  // アンマウントされるため。本体に持てば端末と会話を切り替えても開いたまま残る
+  // アンマウントされるため。本体に持てばセッションを切り替えて戻っても開いたまま残る
   const [expandedToolGroups, setExpandedToolGroups] = useState<
     ReadonlySet<string>
   >(() => new Set());
@@ -1351,6 +1404,14 @@ export function SplitChatPane({
     ? floatingBarReserve(floatingStackHeight)
     : undefined;
   const [isNearBottom, setIsNearBottom] = useState(true);
+  // 帯はスクロール領域の外にあるので、画面末尾の中身が替わっても会話の高さは変わらない。
+  // スクロール領域の高さが変わるのは、帯そのものの高さが変わるとき
+  // (画面末尾が届いた / 届かなくなった) だけ
+  const terminalStripLines = !onOpenTerminal
+    ? 0
+    : liveTail
+      ? TERMINAL_STRIP_LINES
+      : 1;
   // 「過去読み込み中」を ref で持つ。同じスクロールイベントで多重発火させないため
   const loadingMoreRef = useRef(false);
   // 過去読み込み発火時の scrollHeight / scrollTop。受信後に新しい高さとの差を
@@ -1363,7 +1424,7 @@ export function SplitChatPane({
   // biome-ignore lint/correctness/useExhaustiveDependencies(expandedToolGroups): 「作業N件」の開閉 (高さ変化) のたびに末尾追従スクロールを再実行するための意図的な依存
   // biome-ignore lint/correctness/useExhaustiveDependencies(floatingStackHeight): モバイルで入力欄が伸びて本文の下端の余白が増えるたびに末尾追従スクロールを再実行するための意図的な依存
   // biome-ignore lint/correctness/useExhaustiveDependencies(workingLabel): 作業中の表示が出入りする (高さ変化) たびに末尾追従スクロールを再実行するための意図的な依存
-  // biome-ignore lint/correctness/useExhaustiveDependencies(liveTail): 作業中の画面末尾が差し替わる (高さ変化) たびに末尾追従スクロールを再実行するための意図的な依存
+  // biome-ignore lint/correctness/useExhaustiveDependencies(terminalStripLines): 帯の高さが変わる (スクロール領域の高さが変わる) たびに末尾追従スクロールを再実行するための意図的な依存
   useEffect(() => {
     const el = jsonlScrollRef.current;
     if (!el) return;
@@ -1385,7 +1446,7 @@ export function SplitChatPane({
     expandedToolGroups,
     floatingStackHeight,
     workingLabel,
-    liveTail,
+    terminalStripLines,
   ]);
 
   // 「下までジャンプ」ボタン用。一気に末尾へ飛ばす副作用ハンドラ。
@@ -1898,13 +1959,8 @@ export function SplitChatPane({
                 ))}
               </>
             )}
-            {workingLabel && liveTail && <LiveTerminalTail text={liveTail} />}
             {workingLabel && (
-              <WorkingIndicator
-                label={workingLabel}
-                announce={!isMobile}
-                visuallyHidden={Boolean(liveTail)}
-              />
+              <WorkingIndicator label={workingLabel} announce={!isMobile} />
             )}
           </div>
         </div>
@@ -1937,6 +1993,13 @@ export function SplitChatPane({
               {dockedCard}
             </div>
           )}
+          {onOpenTerminal && (
+            <TerminalStrip
+              liveTail={liveTail}
+              onOpen={onOpenTerminal}
+              className="shrink-0 bg-card hover:bg-card"
+            />
+          )}
           {/* data-mobile-bottom-bar: Task 12の検証スクリプトが下部バーの位置を測る目印
               (端末・図モードのバーにはTask 10が付ける) */}
           <div
@@ -1957,8 +2020,11 @@ export function SplitChatPane({
             </div>
           )}
           <div className="shrink-0 px-4 pt-2 pb-3.5">
-            <div className="relative mx-auto w-full max-w-[792px]">
+            <div className="relative mx-auto flex w-full max-w-[792px] flex-col gap-2">
               {slashMenu}
+              {onOpenTerminal && (
+                <TerminalStrip liveTail={liveTail} onOpen={onOpenTerminal} />
+              )}
               {composerForm}
             </div>
           </div>

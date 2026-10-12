@@ -277,7 +277,7 @@ function toggleWorkArea(root: ParentNode): void {
   visibleOne(root, 'button[aria-label="パネル"]')?.click();
 }
 
-/** 入力モードへ: 見えているほう (端末 / 会話の入力欄) にフォーカスを置く */
+/** 入力モードへ: 端末の窓が開いていれば端末、閉じていれば会話の入力欄にフォーカスを置く */
 export function focusInput(root: ParentNode): void {
   const terminal = visibleOne<HTMLIFrameElement>(
     root,
@@ -366,12 +366,17 @@ export function executeKeyNavCommand(
       (rows[at + 1] ?? rows.find((_, index) => index !== at))?.click();
       return { region, refocus: region === "sidebar" };
     }
-    case "toggle-left-mode":
-      visibleOne(
-        regionElement(root, "left") ?? root,
-        'fieldset button[aria-pressed="false"]'
-      )?.click();
-      return { region };
+    case "toggle-terminal": {
+      // 開いていれば窓の閉じるボタンを、閉じていれば会話の入力欄の上の帯を押す
+      const button =
+        visibleOne(root, 'button[aria-label="端末を閉じる"]') ??
+        visibleOne(root, 'button[aria-label="端末を開く"]');
+      if (!button) return { region };
+      button.click();
+      // 開けば端末が、閉じれば会話の入力欄がフォーカスを受け取る (SplitViewPane が移す)。
+      // どちらもキーを文字として受ける場所なので、入力モードへ出る
+      return { region, insert: true };
+    }
     case "toggle-work-area": {
       const wasOpen = regionElement(root, "work") !== null;
       toggleWorkArea(root);

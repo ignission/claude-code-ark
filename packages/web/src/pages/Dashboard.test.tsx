@@ -341,7 +341,6 @@ beforeEach(() => {
   testDoubles.filePeek.mockClear();
   testDoubles.openFile.mockClear();
   localStorage.clear();
-  localStorage.setItem("ark-split-left-mode", "chat");
   testDoubles.splitChatPane.mockClear();
   testDoubles.setSetting.mockClear();
   testDoubles.sessionSidebar.mockClear();

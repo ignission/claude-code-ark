@@ -8,7 +8,10 @@
  * - ノーマルモードに入るとき、フォーカスを端末の iframe や入力欄から受け皿 (見えない
  *   要素) へ移す。iframe にフォーカスが残ると、キーが親の window に届かない
  * - 入力欄や端末をクリックしたら、入力モードに戻す (表示と実際の食い違いを残さない)
- * - ダイアログやメニューが開いている間は何もしない (そちらのキー操作を邪魔しない)
+ * - ダイアログやメニューが開いている間は何もしない (そちらのキー操作を邪魔しない)。
+ *   端末の窓 (FloatingTerminal) はモーダルではないので、開いていても通常どおり動く。
+ *   フォーカスが端末の中にある間のキーは親の window に届かないので、指示になるのは
+ *   前置キーでノーマルモードに入ったあとだけ
  * - いる場所とモードは <html> の属性に出し、枠は index.css が描く
  */
 
@@ -59,13 +62,20 @@ function isTextEntry(target: EventTarget | null): boolean {
   return false;
 }
 
-/** ダイアログやメニューが開いているか (キーの一覧は数えない) */
+/**
+ * ダイアログやメニューが開いているか。キーの一覧と、端末の窓 (data-keynav-nonmodal) は
+ * 数えない。端末の窓を数えると、開いている間は前置キーが効かず、窓を閉じる指示を出せない
+ */
 function overlayOpen(): boolean {
   return [
     ...document.querySelectorAll(
       '[role="dialog"], [role="alertdialog"], [role="menu"]'
     ),
-  ].some(el => !el.hasAttribute("data-keynav-help"));
+  ].some(
+    el =>
+      !el.hasAttribute("data-keynav-help") &&
+      !el.hasAttribute("data-keynav-nonmodal")
+  );
 }
 
 export function KeyNavLayer() {

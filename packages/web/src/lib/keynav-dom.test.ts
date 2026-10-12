@@ -12,7 +12,11 @@ import {
 } from "./keynav-dom";
 
 /** 画面の骨組み。選択中のセッション (s2) と、隠れている別セッションのペインを持つ */
-function mountApp({ workOpen = true, tab = "ファイル", chat = true } = {}) {
+function mountApp({
+  workOpen = true,
+  tab = "ファイル",
+  terminalOpen = false,
+} = {}) {
   document.body.innerHTML = `
     <div data-keynav-region="sidebar">
       <div data-session-list>
@@ -29,16 +33,14 @@ function mountApp({ workOpen = true, tab = "ファイル", chat = true } = {}) {
     </div>
     <div id="active">
       <div data-keynav-region="left">
-        <fieldset>
-          <button aria-label="端末" aria-pressed="${!chat}"></button>
-          <button aria-label="会話" aria-pressed="${chat}"></button>
-        </fieldset>
         <button aria-label="パネル"></button>
-        <div class="${chat ? "hidden" : ""}"><iframe data-keynav="terminal"></iframe></div>
-        <div class="${chat ? "" : "hidden"}">
-          <div data-keynav="chat-scroll"></div>
-          <textarea data-keynav="chat-input" id="input"></textarea>
-        </div>
+        <div data-keynav="chat-scroll"></div>
+        <button aria-label="端末を開く"></button>
+        <textarea data-keynav="chat-input" id="input"></textarea>
+      </div>
+      <div class="${terminalOpen ? "" : "hidden"}">
+        <button aria-label="端末を閉じる"></button>
+        <iframe data-keynav="terminal"></iframe>
       </div>
       <div data-keynav-region="work" class="${workOpen ? "" : "hidden"}">
         <div role="tablist" aria-label="パネルの表示">
@@ -296,16 +298,39 @@ describe("どこでも効く指示", () => {
     expect(clicks).toEqual(["s1"]);
   });
 
-  it("t は端末と会話を入れ替え、p は作業エリアを開閉する", () => {
+  it("t は端末の窓を帯から開き、開いていれば閉じるボタンで閉じる", () => {
     mountApp();
-    run({ type: "toggle-left-mode" });
-    expect(clicks).toEqual(["端末"]);
+    // 開いた先の端末 (閉じた先の入力欄) がキーを受けるので、入力モードへ出る
+    expect(run({ type: "toggle-terminal" }).result).toEqual({
+      region: "left",
+      insert: true,
+    });
+    expect(clicks).toEqual(["端末を開く"]);
+
+    mountApp({ terminalOpen: true });
+    clicks.length = 0;
+    expect(run({ type: "toggle-terminal" }, "work").result).toEqual({
+      region: "work",
+      insert: true,
+    });
+    expect(clicks).toEqual(["端末を閉じる"]);
+  });
+
+  it("t は、端末の入口が見えていなければ何もしない", () => {
+    mountApp();
+    document.querySelector('#active button[aria-label="端末を開く"]')?.remove();
+    expect(run({ type: "toggle-terminal" }).result).toEqual({ region: "left" });
+    expect(clicks).toEqual([]);
+  });
+
+  it("p は作業エリアを開閉する", () => {
+    mountApp();
     // 作業エリアにいるときに閉じたら、左のパネルへ戻る
     expect(run({ type: "toggle-work-area" }, "work").result).toEqual({
       region: "left",
       refocus: true,
     });
-    expect(clicks).toEqual(["端末", "パネル"]);
+    expect(clicks).toEqual(["パネル"]);
   });
 
   it("gs は Git のタブへ移る。閉じていれば開いてから選ぶ", () => {
@@ -346,7 +371,7 @@ describe("どこでも効く指示", () => {
     expect(clicks).toEqual(["ピークを閉じる"]);
   });
 
-  it("i は見えているほうの入力 (会話の入力欄 / 端末) にフォーカスを置く", () => {
+  it("i は、端末の窓が開いていれば端末、閉じていれば会話の入力欄にフォーカスを置く", () => {
     mountApp();
     expect(run({ type: "insert" }).result).toEqual({
       region: "left",
@@ -354,7 +379,7 @@ describe("どこでも効く指示", () => {
     });
     expect(document.activeElement?.id).toBe("input");
 
-    mountApp({ chat: false });
+    mountApp({ terminalOpen: true });
     focusInput(document);
     expect(document.activeElement?.tagName).toBe("IFRAME");
   });

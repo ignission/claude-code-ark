@@ -1,12 +1,11 @@
 /**
- * PC上部バー (SplitViewPane) の表示と、`…` メニュー (SessionHeaderMenu) の中身を決める。
+ * PC上部バー (SplitViewPane) の表示、端末の窓の操作、`…` メニュー (SessionHeaderMenu) の中身を決める。
  *
  * メニューはRadixのPortalに描かれ、jsdomでは開いた状態を検証しにくい。
  * どの項目をどの順に出すかと文言をここに寄せ、テストで固定する。
  */
 
 import { getBaseName } from "@/utils/pathUtils";
-import type { SplitViewLeftMode } from "./split-view-left-mode";
 
 export interface SessionHeaderLabels {
   /** 主ラベル。表示名 → リポジトリ名 → worktreeのフォルダ名の順に決める */
@@ -29,37 +28,23 @@ export function resolveSessionHeaderLabels(input: {
 }
 
 /**
- * 上部バーに 1 タップのボタンとして並べる操作。配列の順が左からの並び順。
- * `…` を開かずに届かせたい操作をここに出し、`…` からは外す。
- * `…` に残すのはセッション全体の操作 (通知・削除) だけ
+ * 端末の窓の上端のバーに並べる操作。配列の順が左からの並び順。
+ * どれも端末ペインの中のもの (バッファ・iframe・入力バー) を動かすので、端末が
+ * 見えている窓の中に置く。上部バーに置くのは会話へ送る操作 (メッセージの
+ * ショートカット) と、作業エリアの開閉、`…` (通知・削除) だけ。
+ * 添付と画像の貼り付けは、会話の入力欄が担う
  */
-export type HeaderQuickAction =
-  | "attach-file"
-  | "paste-image"
-  | "message-shortcuts"
+export type TerminalWindowAction =
   | "copy-buffer"
   | "reload-terminal"
   | "toggle-input-bar";
 
-export function headerQuickActions(input: {
-  leftMode: SplitViewLeftMode;
-  canUploadFile: boolean;
+export function terminalWindowActions(input: {
   canCopyBuffer: boolean;
-}): HeaderQuickAction[] {
-  const actions: HeaderQuickAction[] = [];
-  // 会話モードの添付と貼り付けは会話の入力欄が担う。端末側の添付確認画面は
-  // 端末ペインの中にあり、会話モードでは親ごと隠れているので呼ばない
-  const isTerminal = input.leftMode === "terminal";
-  if (isTerminal && input.canUploadFile) {
-    actions.push("attach-file", "paste-image");
-  }
-  actions.push("message-shortcuts");
-  // 端末の操作も端末ペインの中の UI (バッファ・iframe・入力バー) を動かすので、
-  // 会話モードでは出さない。送る操作のあと、`図` と `…` の手前にまとめる
-  if (isTerminal) {
-    if (input.canCopyBuffer) actions.push("copy-buffer");
-    actions.push("reload-terminal", "toggle-input-bar");
-  }
+}): TerminalWindowAction[] {
+  const actions: TerminalWindowAction[] = [];
+  if (input.canCopyBuffer) actions.push("copy-buffer");
+  actions.push("reload-terminal", "toggle-input-bar");
   return actions;
 }
 
