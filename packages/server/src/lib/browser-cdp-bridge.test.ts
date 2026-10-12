@@ -2266,6 +2266,8 @@ const NAVIGATED = "Page.frameNavigated";
 const A_URL = "http://localhost:3000/a";
 const B_URL = "http://localhost:3000/b";
 const C_URL = "http://localhost:3000/c";
+/** Arkが遷移させない、外のURL */
+const OUTSIDE_URL = "https://example.com/";
 
 /** `urls` を順にたどり、いま `currentIndex` 番目にいる履歴。エントリのidは10、11、... */
 function historyOf(currentIndex: number, urls: string[]) {
@@ -2460,6 +2462,151 @@ describe("BrowserCdpBridge: ページの操作", () => {
       );
     });
 
+    it("読み直しを始めたあとに遷移したら、その結果は使わず、読み直す", async () => {
+      const { cdp, viewer } = await startedOn(0, [A_URL]);
+      cdp.holdOn(HISTORY);
+      cdp.emit("Page.loadEventFired", { timestamp: 1 });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(cdp.count(HISTORY)).toBe(1);
+      cdp.answer(HISTORY, historyOf(1, [A_URL, B_URL]));
+      cdp.emit(NAVIGATED, navigatedTo(B_URL));
+      // 遷移より前に始めた読み直しが、いまごろ返る (いまのエントリは前のページ)
+      cdp.release(HISTORY);
+      await flush();
+      expect(viewer.texts()).toEqual([pageBody(B_URL, "T0")]);
+      cdp.stopHolding(HISTORY);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(cdp.count(HISTORY)).toBe(2);
+      expect(viewer.texts()).toEqual([
+        pageBody(B_URL, "T0"),
+        pageBody(B_URL, "T1", { canGoBack: true }),
+      ]);
+    });
+
+    it("読み直しを始めたあとに文書の中で遷移しても、その結果は使わない", async () => {
+      const { cdp, viewer } = await startedOn(0, [A_URL]);
+      cdp.holdOn(HISTORY);
+      cdp.emit("Page.loadEventFired", { timestamp: 1 });
+      await vi.advanceTimersByTimeAsync(100);
+      cdp.emit("Page.navigatedWithinDocument", {
+        frameId: "T1",
+        url: `${A_URL}#x`,
+      });
+      cdp.release(HISTORY);
+      await flush();
+      expect(viewer.texts()).toEqual([pageBody(`${A_URL}#x`, "T0")]);
+    });
+
+    it("読み直しを始めたあとの、URLを変えないイベントでは、その結果を使う", async () => {
+      const { cdp, viewer } = await startedOn(0, [A_URL]);
+      cdp.holdOn(HISTORY);
+      cdp.answer(HISTORY, historyOf(1, [A_URL, B_URL]));
+      cdp.emit(NAVIGATED, navigatedTo(B_URL));
+      await vi.advanceTimersByTimeAsync(100);
+      cdp.emit("Page.loadEventFired", { timestamp: 1 });
+      cdp.release(HISTORY);
+      await flush();
+      expect(viewer.texts().at(-1)).toEqual(
+        pageBody(B_URL, "T1", { canGoBack: true })
+      );
+    });
+
+    it("つないで最初の読み直しが失敗したら、200ms、400ms、800ms後に読み直し、そこでやめる", async () => {
+      const cdp = fakeCdp();
+      cdp.failOn(HISTORY);
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      expect(cdp.count(HISTORY)).toBe(1);
+      for (const [wait, count] of [
+        [199, 1],
+        [1, 2],
+        [399, 2],
+        [1, 3],
+        [799, 3],
+        [1, 4],
+        [10_000, 4],
+      ]) {
+        await vi.advanceTimersByTimeAsync(wait);
+        expect(cdp.count(HISTORY)).toBe(count);
+      }
+      // やめたあとも、次のイベントでは読み直す
+      cdp.stopFailing(HISTORY);
+      cdp.answer(HISTORY, historyOf(0, [A_URL]));
+      cdp.emit("Page.loadEventFired", { timestamp: 1 });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(textsOf(viewer, "page")).toEqual([pageBody(A_URL, "T0")]);
+    });
+
+    it("失敗した最初の読み直しは、イベントが無くても、読めたところで知らせる", async () => {
+      const cdp = fakeCdp();
+      cdp.failOn(HISTORY);
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      await vi.advanceTimersByTimeAsync(200);
+      cdp.stopFailing(HISTORY);
+      cdp.answer(HISTORY, historyOf(0, [A_URL]));
+      await vi.advanceTimersByTimeAsync(400);
+      expect(textsOf(viewer, "page")).toEqual([pageBody(A_URL, "T0")]);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(cdp.count(HISTORY)).toBe(3);
+    });
+
+    it("失敗した読み直しをやり直す前にイベントが来たら、そちらの読み直しに任せる", async () => {
+      const cdp = fakeCdp();
+      cdp.failOn(HISTORY);
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      bridge.attach(fakeViewer());
+      await flush();
+      cdp.emit("Page.loadEventFired", { timestamp: 1 });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(cdp.count(HISTORY)).toBe(2);
+      // イベントのあとの失敗から、また200msで始める
+      await vi.advanceTimersByTimeAsync(199);
+      expect(cdp.count(HISTORY)).toBe(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(cdp.count(HISTORY)).toBe(3);
+    });
+
+    it("一度読めたあとの失敗では、やり直さない", async () => {
+      const { cdp } = await startedOn(0, [A_URL]);
+      cdp.failOn(HISTORY);
+      cdp.emit(NAVIGATED, navigatedTo(B_URL));
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(cdp.count(HISTORY)).toBe(1);
+    });
+
+    it("resetしたら、失敗した読み直しのやり直しを消す", async () => {
+      const cdp = fakeCdp();
+      cdp.failOn(HISTORY);
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      bridge.attach(fakeViewer());
+      await flush();
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      bridge.reset();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("タブから離れたら、失敗した読み直しのやり直しを消す", async () => {
+      const cdp = fakeCdp();
+      cdp.failOn(HISTORY);
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      bridge.attach(fakeViewer());
+      await flush();
+      // 移った先のタブでは読める
+      cdp.stopFailing(HISTORY);
+      cdp.emitBrowser("Target.detachedFromTarget", { sessionId: "S1" });
+      cdp.emitBrowser("Target.targetDestroyed", { targetId: "T1" });
+      await flush();
+      expect(cdp.last(HISTORY)?.sessionId).toBe("S2");
+      cdp.forget();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(cdp.count(HISTORY)).toBe(0);
+    });
+
     it("視聴者が居ない間の遷移も追い、戻った視聴者へいまの状態を知らせる", async () => {
       const { cdp, bridge, viewer } = await startedOn(0, [A_URL]);
       viewer.emit("close");
@@ -2547,15 +2694,23 @@ describe("BrowserCdpBridge: ページの操作", () => {
       ["  localhost/a  ", "http://localhost/a"],
       ["https://localhost:8443/", "https://localhost:8443/"],
       ["about:blank", "about:blank"],
-    ])("gotoの %s は %s へ遷移する", async (url, expected) => {
-      const { cdp, viewer } = await started();
-      viewer.receive({ t: "nav", type: "goto", url });
-      expect(cdp.last(NAVIGATE)).toEqual({
-        params: { url: expected },
-        sessionId: "S1",
-      });
-      expect(viewer.texts()).toEqual([]);
-    });
+      ["https://localhost", "https://localhost/"],
+      ["LOCALHOST:3000", "http://localhost:3000/"],
+      ["http://127.1/", "http://127.0.0.1/"],
+      ["http://localhost\\@evil.com", "http://localhost/@evil.com"],
+      ["http:localhost", "http://localhost/"],
+    ])(
+      "gotoの %s は、確かめたあとの形の %s へ遷移する",
+      async (url, expected) => {
+        const { cdp, viewer } = await started();
+        viewer.receive({ t: "nav", type: "goto", url });
+        expect(cdp.last(NAVIGATE)).toEqual({
+          params: { url: expected },
+          sessionId: "S1",
+        });
+        expect(viewer.texts()).toEqual([]);
+      }
+    );
 
     it.each([
       "example.com",
@@ -2563,6 +2718,8 @@ describe("BrowserCdpBridge: ページの操作", () => {
       "file:///etc/passwd",
       "javascript:alert(1)",
       "http://localhost.example.com/",
+      "http://example.com@localhost/",
+      "http://localhost@example.com/",
       "",
     ])("gotoの %s は遷移せず、送った視聴者にだけ理由を返す", async url => {
       const { cdp, viewers } = await started(2);
@@ -2597,6 +2754,32 @@ describe("BrowserCdpBridge: ページの操作", () => {
       viewer.receive({ t: "nav", type: "forward" });
       await flush();
       expect(cdp.methods()).toEqual([HISTORY, HISTORY]);
+      expect(viewer.texts()).toEqual([]);
+    });
+
+    it("backとforwardの先が開いてよいURLでなければ移らず、送った視聴者にだけ理由を返す", async () => {
+      const { cdp, viewers } = await startedOn(
+        1,
+        [OUTSIDE_URL, B_URL, OUTSIDE_URL],
+        2
+      );
+      viewers[0].receive({ t: "nav", type: "back" });
+      await flush();
+      expect(viewers[0].texts()).toEqual([NOTICE]);
+      viewers[0].receive({ t: "nav", type: "forward" });
+      await flush();
+      expect(viewers[0].texts()).toEqual([NOTICE, NOTICE]);
+      expect(viewers[1].texts()).toEqual([]);
+      expect(cdp.methods()).toEqual([HISTORY, HISTORY]);
+    });
+
+    it("外のページに居ても、開いてよいURLへは戻れる", async () => {
+      const { cdp, viewer } = await startedOn(1, [A_URL, OUTSIDE_URL]);
+      viewer.receive({ t: "nav", type: "back" });
+      await flush();
+      expect(cdp.last("Page.navigateToHistoryEntry")?.params).toEqual({
+        entryId: 10,
+      });
       expect(viewer.texts()).toEqual([]);
     });
 
@@ -2839,7 +3022,11 @@ describe("BrowserCdpBridge: ページの操作", () => {
       viewers[0].receive({ t: "copy", expression: "document.cookie" });
       await flush();
       expect(cdp.last(EVALUATE)).toEqual({
-        params: { expression: COPY_EXPRESSION, returnByValue: true },
+        params: {
+          expression: COPY_EXPRESSION,
+          returnByValue: true,
+          timeout: 1000,
+        },
         sessionId: "S1",
       });
       expect(viewers[0].texts()).toEqual([
@@ -2886,6 +3073,52 @@ describe("BrowserCdpBridge: ページの操作", () => {
       viewer.receive({ t: "copy" });
       await flush();
       expect(cdp.count(EVALUATE)).toBe(0);
+    });
+
+    it("前のコピーを読んでいる間は、だれのコピーも評価しない。返ったら、また受け付ける", async () => {
+      const { cdp, viewers } = await started(2);
+      cdp.answer(EVALUATE, selected("x"));
+      cdp.holdOn(EVALUATE);
+      viewers[0].receive({ t: "copy" });
+      viewers[0].receive({ t: "copy" });
+      viewers[1].receive({ t: "copy" });
+      await flush();
+      expect(cdp.count(EVALUATE)).toBe(1);
+      cdp.release(EVALUATE);
+      await flush();
+      expect(viewers[0].texts()).toEqual([{ t: "clipboard", text: "x" }]);
+      expect(viewers[1].texts()).toEqual([]);
+      viewers[1].receive({ t: "copy" });
+      await flush();
+      expect(cdp.count(EVALUATE)).toBe(2);
+    });
+
+    it("評価がrejectされたあとは、また受け付ける", async () => {
+      const { cdp, viewer } = await started();
+      cdp.holdOn(EVALUATE);
+      viewer.receive({ t: "copy" });
+      cdp.fail(EVALUATE);
+      await flush();
+      viewer.receive({ t: "copy" });
+      await flush();
+      expect(cdp.count(EVALUATE)).toBe(2);
+    });
+
+    it("送信が詰まっている視聴者へは、コピーの結果を送らない。小さな知らせは送る", async () => {
+      const { cdp, viewer } = await started();
+      cdp.answer(EVALUATE, selected("x".repeat(1000)));
+      viewer.bufferedAmount = 1_000_000;
+      viewer.receive({ t: "copy" });
+      await flush();
+      viewer.receive({ t: "nav", type: "goto", url: "http://example.com/" });
+      await flush();
+      expect(viewer.texts()).toEqual([
+        { t: "notice", message: "localhostのURLだけを開けます" },
+      ]);
+      viewer.bufferedAmount = 999_999;
+      viewer.receive({ t: "copy" });
+      await flush();
+      expect(textsOf(viewer, "clipboard")).toHaveLength(1);
     });
 
     it("読んでいる間に去った視聴者へは返さない", async () => {

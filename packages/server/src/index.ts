@@ -2702,12 +2702,13 @@ export async function startServer(
 
     socket.on("browser:navigate", async data => {
       try {
-        validateBrowserUrl(data.url);
+        // 遷移に使うのは、渡された文字列ではなく、確かめたあとの形
+        const url = validateBrowserUrl(data.url);
         const session = await browserManager.start();
         // 遷移より先に知らせる。遷移に失敗してもChromiumは動いているので、
         // セッションを知らないクライアントにはペインを開かせる
         io.emit("browser:started", session);
-        await browserBridge.navigate(data.url);
+        await browserBridge.navigate(url);
       } catch (error) {
         socket.emit("browser:error", { message: getErrorMessage(error) });
       }

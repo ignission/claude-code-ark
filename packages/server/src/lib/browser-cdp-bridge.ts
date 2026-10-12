@@ -702,9 +702,14 @@ export class BrowserCdpBridge {
   /**
    * 参加している視聴者1人へJSONを送る。去った視聴者と閉じかけの視聴者へは送らない。
    * 送信が投げたら、その視聴者だけを外す。
+   *
+   * コピーの結果 (`clipboard`) だけは、送信が詰まっている視聴者へは送らずに捨てる。
+   * 1通が1MB近くになるので、詰まったままコピーを繰り返す視聴者のぶんが積もる。
+   * ほかのJSONは小さいので、詰まっていても送る。
    */
   private sendJson(ws: ViewerSocket, message: BrowserServerMessage): void {
     if (!this.joined.has(ws) || ws.readyState !== WS_OPEN) return;
+    if (message.t === "clipboard" && !canReceive(ws)) return;
     try {
       ws.send(JSON.stringify(message));
     } catch (error) {

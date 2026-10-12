@@ -16,9 +16,12 @@
  *   履歴から来る。`seed` だけでは知らせない。いつ知らせるかは使う側が決める (`announce`)
  * - 前と同じ状態は知らせない。読み込み中はイベントが続き、その多くは何も変えない
  * - 読めない履歴 (遷移の途中の失敗、形の違う応答) は使わず、前の状態を保つ
+ * - 戻れる、進めるとするのは、隣のエントリがあり、そのURLが `validateBrowserUrl` を通るときだけ。
+ *   通らない先へは、使う側が移らないので、ボタンも押せないようにする
  */
 
 import type { BrowserPageInfo } from "@ark/shared";
+import { isBrowserUrlAllowed } from "./browser-url.js";
 
 /** URLの上限 (文字数)。`data:` のURLは際限なく長くなる */
 export const MAX_URL_LENGTH = 8192;
@@ -65,6 +68,11 @@ export function readHistory(result: unknown): NavigationHistory | null {
     entries.push({ id: entry.id, url: entry.url, title: entry.title });
   }
   return { currentIndex, entries };
+}
+
+/** 履歴の隣のエントリへ移ってよいか。隣が無いか、Arkが遷移させないURLなら移らない */
+export function canStepTo(entry: HistoryEntry | undefined): boolean {
+  return entry !== undefined && isBrowserUrlAllowed(entry.url);
 }
 
 function sameInfo(a: BrowserPageInfo, b: BrowserPageInfo): boolean {
@@ -165,8 +173,8 @@ export class BrowserPageState {
     const current = entries[currentIndex];
     this.setUrl(current.url);
     this.info.title = current.title.slice(0, MAX_TITLE_LENGTH);
-    this.info.canGoBack = currentIndex > 0;
-    this.info.canGoForward = currentIndex < entries.length - 1;
+    this.info.canGoBack = canStepTo(entries[currentIndex - 1]);
+    this.info.canGoForward = canStepTo(entries[currentIndex + 1]);
     this.notify();
   }
 

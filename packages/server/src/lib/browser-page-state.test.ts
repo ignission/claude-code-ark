@@ -180,6 +180,29 @@ describe("BrowserPageState", () => {
     });
   });
 
+  it("隣のエントリが開いてよいURLでなければ、戻れる、進めるとはしない", () => {
+    const { state } = setup();
+    state.applyHistory(
+      history(1, [
+        "https://example.com/",
+        "http://localhost/b",
+        "https://example.com/x",
+      ])
+    );
+    expect(state.snapshot()).toMatchObject({
+      canGoBack: false,
+      canGoForward: false,
+    });
+    state.applyHistory(
+      history(1, ["http://localhost/a", "https://example.com/", "about:blank"])
+    );
+    expect(state.snapshot()).toMatchObject({
+      url: "https://example.com/",
+      canGoBack: true,
+      canGoForward: true,
+    });
+  });
+
   it.each([
     ["空の応答", {}],
     ["null", null],

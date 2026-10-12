@@ -314,14 +314,15 @@ export class BrowserManager extends EventEmitter {
 
   /** Chromiumを起動する。動いていればそのセッションを返し、起動の途中ならそれを待つ */
   async start(initialUrl = "about:blank"): Promise<BrowserSession> {
-    validateBrowserUrl(initialUrl);
+    // 起動に使うのは、渡された文字列ではなく、確かめたあとの形
+    const url = validateBrowserUrl(initialUrl);
     if (!this.available) {
       throw new Error("Chromiumが見つからないため、ブラウザ機能は使えません");
     }
     if (this.session) return this.session;
     if (this.pendingStart) return this.pendingStart;
 
-    const promise = this.startInternal(initialUrl);
+    const promise = this.startInternal(url);
     this.pendingStart = promise;
     try {
       return await promise;
