@@ -42,8 +42,15 @@ export interface CssRect {
 /** 矩形がこれを超えたら、細かく撮り直すより全体を1枚で撮るほうが速い */
 export const MAX_RECTS = 4;
 
-/** 受け付ける幅・高さの上限。これを超える値は壊れたデータとみなし、確保をしない */
-const MAX_DIMENSION = 4096;
+/**
+ * 受け付ける幅・高さの上限。これを超える値は壊れたデータとみなし、確保をしない。
+ * 監視フレームは134x104ほどで、最大でも480x270 (ビューポートの最大3840x2160を8で割った値)
+ * なので、1024あれば足りる。
+ */
+const MAX_DIMENSION = 1024;
+
+/** 変化の成分がこれを超えたら、数えるのをやめて全体を囲む1つにする。MAX_RECTSを超える分は結局全体の箱になる */
+const MAX_COMPONENTS = 64;
 
 const SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -165,8 +172,10 @@ function paeth(a: number, b: number, c: number): number {
 /**
  * 2枚を比べ、変わった画素をつながりごとの矩形にまとめる。
  * 寸法が違えば "full"。変化が無ければ空の配列。
- * 8近傍でつながる画素を1つの矩形にし、矩形どうしが重なるか接していれば1つにまとめる。
+ * つながった画素を1つの矩形にし、矩形どうしが重なるか接していれば1つにまとめる。
  * 矩形が MAX_RECTS (4) を超えたら、全体を囲む1つにする。
+ * 成分が MAX_COMPONENTS を超えたら、まとめる前に全体を囲む1つを返す
+ * (まとめ直しは成分数の2乗に近くかかるため)。
  */
 export function diffImages(
   prev: MonitorImage,
@@ -180,15 +189,34 @@ export function diffImages(
   // 0: 変わっていない、1: 変わった未訪問、2: 訪問済み
   const mark = new Uint8Array(width * height);
   let changed = 0;
+  // 変わった画素すべてを囲む箱。成分が多すぎるときの答えになる
+  let allX0 = width;
+  let allY0 = height;
+  let allX1 = 0;
+  let allY1 = 0;
   for (let i = 0; i < mark.length; i++) {
     const o = i * 3;
     if (a[o] !== b[o] || a[o + 1] !== b[o + 1] || a[o + 2] !== b[o + 2]) {
       mark[i] = 1;
       changed++;
+      const px = i % width;
+      const py = (i - px) / width;
+      if (px < allX0) allX0 = px;
+      if (py < allY0) allY0 = py;
+      if (px + 1 > allX1) allX1 = px + 1;
+      if (py + 1 > allY1) allY1 = py + 1;
     }
   }
   if (changed === 0) return [];
+  const everything: CellRect = {
+    x0: allX0,
+    y0: allY0,
+    x1: allX1,
+    y1: allY1,
+  };
 
+  // 結果は「重なるか接している箱は1つ」という箱の結合の規則で決まる。斜めに接する
+  // 画素どうしの箱は角で接するので、近傍を4にしても8にしても出力は変わらない
   let boxes: CellRect[] = [];
   const stack = new Int32Array(changed);
   for (let start = 0; start < mark.length; start++) {
@@ -223,6 +251,7 @@ export function diffImages(
       }
     }
     boxes.push({ x0, y0, x1, y1 });
+    if (boxes.length > MAX_COMPONENTS) return [everything];
   }
 
   boxes = mergeTouching(boxes);
@@ -276,34 +305,39 @@ export function toCssRect(
   image: { width: number; height: number },
   viewport: { width: number; height: number }
 ): CssRect {
-  const sx = viewport.width / image.width;
-  const sy = viewport.height / image.height;
-  const x0 = clamp(Math.floor((rect.x0 - 1) * sx), 0, viewport.width - 1);
-  const y0 = clamp(Math.floor((rect.y0 - 1) * sy), 0, viewport.height - 1);
-  const x1 = clamp(
-    Math.ceil((rect.x1 + 1) * sx),
-    x0 + 1,
-    Math.max(viewport.width, x0 + 1)
-  );
-  const y1 = clamp(
-    Math.ceil((rect.y1 + 1) * sy),
-    y0 + 1,
-    Math.max(viewport.height, y0 + 1)
-  );
+  // 0以下や小数のビューポートでも、結果が整数でビューポートの中に収まるようにする
+  const vw = wholeSize(viewport.width);
+  const vh = wholeSize(viewport.height);
+  const sx = vw / image.width;
+  const sy = vh / image.height;
+  const x0 = clamp(Math.floor((rect.x0 - 1) * sx), 0, vw - 1);
+  const y0 = clamp(Math.floor((rect.y0 - 1) * sy), 0, vh - 1);
+  const x1 = clamp(Math.ceil((rect.x1 + 1) * sx), x0 + 1, Math.max(vw, x0 + 1));
+  const y1 = clamp(Math.ceil((rect.y1 + 1) * sy), y0 + 1, Math.max(vh, y0 + 1));
   return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+}
+
+/** ビューポートの大きさを、1以上の整数に直す */
+function wholeSize(size: number): number {
+  return Number.isFinite(size) ? Math.max(1, Math.floor(size)) : 1;
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-/** 矩形の面積の合計が、ビューポートの面積に占める割合 (0〜1。重なりは数え直さない) */
+/**
+ * 矩形の面積の合計が、ビューポートの面積に占める割合 (0〜1)。
+ * 重なる部分は二重に数え、1で頭打ちにする。大きめに出る側へ倒れるだけで、
+ * 全面の撮り直しに切り替える判定には都合がよい。
+ */
 export function coverage(
   rects: CssRect[],
   viewport: { width: number; height: number }
 ): number {
+  if (rects.length === 0 || viewport.width <= 0 || viewport.height <= 0)
+    return 0;
   const total = viewport.width * viewport.height;
-  if (rects.length === 0 || total <= 0) return 0;
   let area = 0;
   for (const r of rects) area += r.width * r.height;
   return Math.min(1, area / total);
