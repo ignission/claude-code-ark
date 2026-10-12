@@ -52,8 +52,8 @@ function isExpectedAbsence(result: TmuxReadResult<unknown>): boolean {
 }
 
 /**
- * 作業中にチャットビューへそのまま出す画面末尾の上限。
- * スピナー行 (経過秒・トークン数) と直前のツール出力が入り、入力欄と下部の帯 (約 5 行) も含む
+ * チャットビューへそのまま出す画面末尾の上限。
+ * 作業中はスピナー行 (経過秒・トークン数) と直前のツール出力が入り、入力欄と下部の帯 (約 5 行) も含む
  */
 const LIVE_TAIL_LINES = 12;
 const LIVE_TAIL_MAX_CHARS = 2000;
@@ -1349,14 +1349,12 @@ export class SessionOrchestrator extends EventEmitter {
         this.sessionProfiles.get(session.id)?.configDir ?? null
       );
 
-      // 作業中だけ、画面末尾を加工せずに添える (AUQ の「直前の画面」と同じ整形。解釈はしない)
+      // 画面を取れたセッションでは状態に関係なく、画面末尾を加工せずに添える (AUQ の「直前の画面」と同じ整形。解釈はしない)
       const liveTail =
-        bridgeStatus === "THINK" || bridgeStatus === "TOOL"
-          ? (buildAuqScreenContext(stripAnsi(raw), {
-              maxLines: LIVE_TAIL_LINES,
-              maxChars: LIVE_TAIL_MAX_CHARS,
-            }) ?? undefined)
-          : undefined;
+        buildAuqScreenContext(stripAnsi(raw), {
+          maxLines: LIVE_TAIL_LINES,
+          maxChars: LIVE_TAIL_MAX_CHARS,
+        }) ?? undefined;
 
       previews.push({
         sessionId: session.id,

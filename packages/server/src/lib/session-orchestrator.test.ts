@@ -1102,7 +1102,7 @@ describe("SessionOrchestrator - tmux 読み取り失敗の区別 (#393)", () => 
       fs.rmSync(worktreePath, { recursive: true, force: true });
     });
 
-    it("作業中は画面の末尾をそのまま liveTail に載せ、入力待ちでは載せない", () => {
+    it("作業中でも入力待ちでも、画面の末尾をそのまま liveTail に載せる", () => {
       const orchestrator = new SessionOrchestrator();
       const worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), "ark-wt-"));
       mockedTmux.getAllSessions.mockReturnValue([
@@ -1125,7 +1125,13 @@ describe("SessionOrchestrator - tmux 読み取り失敗の区別 (#393)", () => 
         okValue("直前の出力です\n> ")
       );
       const [idle] = orchestrator.getAllPreviews();
-      expect(idle.liveTail).toBeUndefined();
+      expect(["THINK", "TOOL"]).not.toContain(idle.bridgeStatus);
+      expect(idle.liveTail).toBe("直前の出力です\n> ");
+
+      // 画面が空白だけのときは載せない
+      mockedTmux.capturePaneVisible.mockReturnValue(okValue("\n  \n"));
+      const [blank] = orchestrator.getAllPreviews();
+      expect(blank.liveTail).toBeUndefined();
 
       fs.rmSync(worktreePath, { recursive: true, force: true });
     });

@@ -37,7 +37,7 @@ Arkは、ローカルで動く複数のClaude Codeセッションを管理する
 `tmux capture-pane` を使ってよいのは次の2つだけ。
 
 - busy / AWAITINGの有無の判定 (`session:previews` の `bridgeStatus`)
-- 画面のverbatim表示。AUQカードの「直前の画面」と、作業中 (THINK / TOOL) の会話ビューに出す画面末尾 (`session:previews` の `liveTail`)。解釈しないスクリーンショットのような添付で、`auq-screen-context.ts` が扱う
+- 画面のverbatim表示。AUQカードの「直前の画面」と、会話ビューに常に出す画面末尾 (`session:previews` の `liveTail`)。解釈しないスクリーンショットのような添付で、`auq-screen-context.ts` が扱う
 
 ### セッションの永続化
 
