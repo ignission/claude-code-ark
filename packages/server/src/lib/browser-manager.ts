@@ -128,6 +128,21 @@ function chromiumFlags(profileDir: string): string[] {
 }
 
 /**
+ * 前回のタブを復元させないよう、プロファイルに残ったセッションの記録を消す。
+ *
+ * Chromiumをシグナルで止めると、プロファイルは「異常終了」として残り、次の起動で前回の
+ * タブが復元される。タブが増えると、ブリッジがつないだタブが前面でなくなり、
+ * そのタブの `Page.captureScreenshot` が返らなくなる。cookieとlocalStorageは別の場所に
+ * あるので、ここを消しても残る。
+ */
+export function clearSessionRestore(profileDir: string): void {
+  fs.rmSync(path.join(profileDir, "Default", "Sessions"), {
+    recursive: true,
+    force: true,
+  });
+}
+
+/**
  * `ps -eo pid=,args=` の出力から、同じプロファイルを使うChromiumの親プロセスを拾う。
  * 子 (`--type=renderer` など) は親を止めれば消えるので拾わない。
  *
@@ -339,6 +354,7 @@ export class BrowserManager extends EventEmitter {
     const profileDir = getProfileDir();
     // ほかの利用者に読ませない。localhostのアプリのcookieとlocalStorageが入る
     fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 });
+    clearSessionRestore(profileDir);
 
     // `--` で区切り、URLがフラグとして読まれないようにする
     const chromium = spawn(

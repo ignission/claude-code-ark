@@ -538,6 +538,9 @@ export class BrowserCdpBridge {
         (await cdp.send<{ targetId: string }>("Target.createTarget", {
           url: "about:blank",
         }));
+      // 前面でないタブは描画されず、screencastのフレームも取り直しも返らない。
+      // タブがほかにもあるとき (ページが開いた別タブなど) に備えて、つなぐタブを前面にする
+      await cdp.send("Target.activateTarget", { targetId: target.targetId });
       const { sessionId } = await cdp.send<{ sessionId: string }>(
         "Target.attachToTarget",
         { targetId: target.targetId, flatten: true }

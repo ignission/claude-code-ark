@@ -1,6 +1,10 @@
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  clearSessionRestore,
   findStaleChromiumPids,
   parseDevToolsEndpoint,
   validateBrowserUrl,
@@ -179,5 +183,28 @@ describe("validateBrowserUrl", () => {
     "not a url",
   ])("%s を拒否する", url => {
     expect(() => validateBrowserUrl(url)).toThrow();
+  });
+});
+
+describe("clearSessionRestore", () => {
+  it("セッションの記録だけを消し、ほかのプロファイルのデータは残す", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ark-profile-"));
+    try {
+      const sessions = path.join(dir, "Default", "Sessions");
+      fs.mkdirSync(sessions, { recursive: true });
+      fs.writeFileSync(path.join(sessions, "Session_1"), "x");
+      fs.writeFileSync(path.join(dir, "Default", "Cookies"), "c");
+      clearSessionRestore(dir);
+      expect(fs.existsSync(sessions)).toBe(false);
+      expect(fs.existsSync(path.join(dir, "Default", "Cookies"))).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("プロファイルがまだ無くても投げない", () => {
+    expect(() =>
+      clearSessionRestore(path.join(os.tmpdir(), "ark-profile-none"))
+    ).not.toThrow();
   });
 });

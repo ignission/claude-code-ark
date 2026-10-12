@@ -340,12 +340,17 @@ describe("BrowserCdpBridge", () => {
     await vi.runAllTimersAsync();
     expect(cdp.methods()).toEqual([
       "Target.getTargets",
+      "Target.activateTarget",
       "Target.attachToTarget",
       "Page.enable",
       "Emulation.setFocusEmulationEnabled",
       "Emulation.setDeviceMetricsOverride",
       "Page.startScreencast",
     ]);
+    // つなぐタブを前面にする (前面でないタブは描画されない)
+    expect(cdp.last("Target.activateTarget")?.params).toEqual({
+      targetId: "T1",
+    });
     expect(cdp.last("Target.attachToTarget")?.params).toEqual({
       targetId: "T1",
       flatten: true,
@@ -943,9 +948,10 @@ describe("BrowserCdpBridge", () => {
       const viewer = fakeViewer();
       bridge.attach(viewer);
       await flush();
-      expect(cdp.methods().slice(0, 3)).toEqual([
+      expect(cdp.methods().slice(0, 4)).toEqual([
         "Target.getTargets",
         "Target.createTarget",
+        "Target.activateTarget",
         "Target.attachToTarget",
       ]);
       expect(cdp.last("Target.createTarget")?.params).toEqual({
