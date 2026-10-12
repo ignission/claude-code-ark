@@ -19,7 +19,7 @@
  * - タブから離れても、視聴者とCDPの接続には触らない。捨てるのはタブ1つぶんの状態
  *   (監視、取り直しの途中の結果、ページの状態、開いているダイアログ、スクロールした位置、
  *   当てた寸法、寸法の変更の待ち) だけ。離れてから次のタブの準備が終わるまでは映すタブが
- *   無く、その間に届いた入力、遷移、ダイアログへの応答、コピーは捨てる (溜めない。
+ *   無く、その間に届いた入力、遷移、ダイアログへの応答、コピー、`<select>` の選択は捨てる (溜めない。
  *   別のタブへ届けると、利用者が見ていないページを操作することになる)
  * - 前のタブから遅れて届くものを、いまのタブに響かせない。sessionのイベントはsessionの
  *   idで、取り直しの結果はパイプラインの画面の番号で、screencastの開始の失敗は
@@ -47,10 +47,21 @@
  *   コピーは browser-page-controller.ts が受け持ち、このモジュールは、タブのsessionの
  *   イベントと視聴者のメッセージを渡すだけにする。タブへattachするたびに1つ作り、
  *   そのタブから離れるときに捨てる
+ * - `<select>` のポップアップは画面に映らない。選択肢を視聴者へ知らせて選ばせるのは
+ *   browser-select-controller.ts が受け持ち、このモジュールは、タブの準備の中でその準備を
+ *   呼び、タブのsessionの `Runtime.bindingCalled` と遷移、ダイアログが開いたこと、視聴者の
+ *   メッセージを渡すだけにする。ページのUIと同じく、タブへattachするたびに1つ作り、
+ *   離れるときに捨てる。離れるときに開いていた選択は、閉じたと全員へ知らせる
+ *   (視聴者をこのあと閉じるときも)。視聴者へ渡す選択の番号は、このモジュールが振る
+ *   (タブを替えても重ならないように)
+ * - タッチは、マウスやキーと同じ入力として扱う (映すタブが無い間は捨てる)。ビューポートが
+ *   `mobile` のときは、タブの準備と寸法の適用で、タッチのエミュレーションを有効にする。
+ *   無いと、ページがタッチの端末として振る舞わない。送るのは、`mobile` が変わったときだけ
  * - `Target.targetInfoChanged` で映しているタブの題が変わったと分かったら、履歴を読み直す。
  *   ページの状態の題は履歴から読むので、遷移を伴わない題の変更はこれでしか分からない
  * - 視聴者へJSONを配るのは、参加の手続き (寸法の通知) が済んだ視聴者だけ。参加した
- *   視聴者には、寸法、ページの状態、開いているダイアログ、タブの一覧の順に知らせる。
+ *   視聴者には、寸法、ページの状態、開いているダイアログ、タブの一覧、開いている
+ *   `<select>` の順に知らせる。
  *   映すタブが無い間に参加した視聴者には、次のタブの準備が終わったときに、全員と一緒に知らせる
  */
 
@@ -74,6 +85,7 @@ import {
   parseClientMessage,
   toCdpCommand,
 } from "./browser-protocol.js";
+import { BrowserSelectController } from "./browser-select-controller.js";
 import { BrowserTabController } from "./browser-tab-controller.js";
 
 export { encodeFrameHeader } from "./browser-frame-pipeline.js";
@@ -106,6 +118,8 @@ interface Page {
   targetId: string;
   /** このタブの、ページのUIにあたる部分 */
   ui: BrowserPageController<ViewerSocket>;
+  /** このタブの `<select>` */
+  select: BrowserSelectController<ViewerSocket>;
 }
 
 interface Viewport {
@@ -127,6 +141,9 @@ const DEFAULT_VIEWPORT: Viewport = {
   dpr: 1,
   mobile: false,
 };
+
+/** タッチのエミュレーションで、同時に触れられる点の数 */
+const MAX_TOUCH_POINTS = 5;
 
 const DISCONNECTED_MESSAGE = "ブラウザとの接続が切れました";
 const CONNECT_FAILED_MESSAGE = "ブラウザへ接続できません";
@@ -164,6 +181,10 @@ function metricsParams(viewport: Viewport): object {
   };
 }
 
+function touchEmulationParams(enabled: boolean): object {
+  return enabled ? { enabled, maxTouchPoints: MAX_TOUCH_POINTS } : { enabled };
+}
+
 function canReceive(ws: ViewerSocket): boolean {
   return ws.readyState === WS_OPEN && ws.bufferedAmount < BACKPRESSURE_BYTES;
 }
@@ -196,6 +217,10 @@ export class BrowserCdpBridge {
   private viewport: Viewport = DEFAULT_VIEWPORT;
   /** いまのタブに当てた寸法。同じ寸法を当て直さないために持つ */
   private appliedViewport: Viewport | null = null;
+  /** いまのタブで、タッチのエミュレーションを有効にしたか。同じ指示を送り直さないために持つ */
+  private touchEmulated = false;
+  /** 視聴者へ渡す `<select>` の番号。接続やタブを替えても戻さない */
+  private selectIds = 0;
   /** 視聴者ごとの、最後に知らせたビューポートの世代。同じ世代を二度送らないために持つ */
   private readonly notifiedGen = new Map<ViewerSocket, number>();
   /** 参加の手続きが済んだ視聴者。ページの状態とダイアログは、この視聴者にだけ配る */
@@ -283,6 +308,7 @@ export class BrowserCdpBridge {
     const page = this.page;
     page?.ui.greet(ws);
     this.tabUi?.greet(ws);
+    page?.select.greet(ws);
     // 知らせる途中で送信が投げた視聴者は、もう外れている
     if (!this.viewers.has(ws)) return;
     // screencastは画面が変わったときしか監視フレームを出さない。もう始まっているなら、
@@ -369,16 +395,27 @@ export class BrowserCdpBridge {
       const tab = tabOf(sessionId);
       if (!tab) return;
       this.pipeline.setDialogOpen(open);
-      if (open) tab.ui.dialogOpening(params);
-      else tab.ui.dialogClosed();
+      if (open) {
+        // ダイアログの間はページのスクリプトが止まり、選んでも入らない
+        tab.select.close();
+        tab.ui.dialogOpening(params);
+      } else tab.ui.dialogClosed();
     };
     cdp.on("Page.javascriptDialogOpening", dialog(true));
     cdp.on("Page.javascriptDialogClosed", dialog(false));
     for (const method of PAGE_STATE_EVENTS) {
       cdp.on(method, (params, sessionId) => {
-        tabOf(sessionId)?.ui.handleEvent(method, params);
+        const tab = tabOf(sessionId);
+        if (!tab) return;
+        // 文書が替わると、開いていた `<select>` はもう無い
+        if (method === "Page.frameNavigated") tab.select.frameNavigated(params);
+        tab.ui.handleEvent(method, params);
       });
     }
+    // `Runtime.*` のイベントのうち、聞くのはこれだけ
+    cdp.on("Runtime.bindingCalled", (params, sessionId) => {
+      tabOf(sessionId)?.select.bindingCalled(params);
+    });
     try {
       // いまあるターゲットの `Target.targetCreated` が、応答より先に届く
       await cdp.send("Target.setDiscoverTargets", { discover: true });
@@ -428,7 +465,15 @@ export class BrowserCdpBridge {
       targetId,
       target.url === "" ? undefined : target
     );
-    const tab: Page = { cdp, sessionId, targetId, ui };
+    const select = new BrowserSelectController<ViewerSocket>({
+      send: (method, params) => cdp.send(method, params, sessionId),
+      toViewer: (ws, message) => this.sendJson(ws, message),
+      toAll: message => this.broadcast(message),
+      viewport: () =>
+        this.page?.sessionId === sessionId ? this.pipeline.viewport : null,
+      nextId: () => ++this.selectIds,
+    });
+    const tab: Page = { cdp, sessionId, targetId, ui, select };
     this.attached = tab;
     let viewport: Viewport;
     try {
@@ -443,12 +488,22 @@ export class BrowserCdpBridge {
       await step("Emulation.setFocusEmulationEnabled", { enabled: true });
       viewport = this.viewport;
       await step("Emulation.setDeviceMetricsOverride", metricsParams(viewport));
+      // attachしたばかりのsessionでは無効。有効にするときだけ送る
+      if (viewport.mobile) {
+        await step(
+          "Emulation.setTouchEmulationEnabled",
+          touchEmulationParams(true)
+        );
+      }
+      await select.prepare();
+      if (this.attached !== tab) throw new Error(LEFT_MESSAGE);
     } catch (error) {
       if (this.attached === tab) this.leavePage(false);
       throw error;
     }
     this.page = tab;
     this.appliedViewport = viewport;
+    this.touchEmulated = viewport.mobile;
     // 前のタブから離れたときに寸法を外してあるので、同じ寸法でも世代が進む
     this.pipeline.setApplied(viewport);
     // 準備の途中に届いたresizeは、デバウンスが明けた時点でタブが無く、当たっていない。
@@ -475,6 +530,7 @@ export class BrowserCdpBridge {
     this.casting = false;
     this.castGeneration++;
     this.appliedViewport = null;
+    this.touchEmulated = false;
     // 監視の状態、取り直しの途中の結果、スクロールした位置、ダイアログが開いていたことを捨てる
     this.pipeline.setApplied(null);
     // 待っていた寸法は覚えてあり、次のタブの準備で当てる
@@ -483,6 +539,10 @@ export class BrowserCdpBridge {
       this.resizeTimer = null;
     }
     if (!tab) return;
+    const selectId = tab.select.openId;
+    tab.select.dispose();
+    // 視聴者をこのあと閉じるときも知らせる。閉じ終わるまでの間に選ばせない
+    if (selectId !== null) this.broadcast({ t: "selectClosed", id: selectId });
     const dialogOpen = tab.ui.dialogOpen;
     tab.ui.dispose();
     // 次のタブでダイアログが開いているかは分からない。前のタブのものは閉じたと知らせる
@@ -564,10 +624,7 @@ export class BrowserCdpBridge {
         return;
       case "selectChoose":
       case "selectCancel":
-        // `<select>` の選択肢を受け持つモジュールが扱う。まだ無いので何もしない
-        return;
-      case "touch":
-        // タッチの入力への変換が扱う。まだ無いので何もしない
+        page?.select.handle(ws, msg);
         return;
     }
     const command = toCdpCommand(msg);
@@ -605,6 +662,23 @@ export class BrowserCdpBridge {
           this.appliedViewport = null;
         }
       });
+    if (viewport.mobile !== this.touchEmulated) {
+      const enabled = viewport.mobile;
+      this.touchEmulated = enabled;
+      cdp
+        .send(
+          "Emulation.setTouchEmulationEnabled",
+          touchEmulationParams(enabled),
+          sessionId
+        )
+        .catch(error => {
+          warn("タッチのエミュレーションの切り替えに失敗", error);
+          // 当たっていないので、次に寸法を当てるときに送り直す
+          if (this.page === page && this.touchEmulated === enabled) {
+            this.touchEmulated = !enabled;
+          }
+        });
+    }
     if (!this.casting) return;
     // 監視フレームの寸法は始めたときに決まるので、始め直す。応答を待たずに続けて送るのは、
     // 間に視聴者が0人になって止めたscreencastを、ここで始め直してしまわないため

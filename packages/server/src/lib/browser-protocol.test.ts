@@ -149,17 +149,72 @@ describe("toCdpCommand", () => {
     ["copy", { t: "copy" }],
     ["selectChoose", { t: "selectChoose", id: 1, index: 0 }],
     ["selectCancel", { t: "selectCancel", id: 1 }],
-    [
-      "touch",
-      {
-        t: "touch",
-        type: "start",
-        points: [{ id: 0, x: 1, y: 2 }],
-        modifiers: 0,
-      },
-    ],
   ])("%s はnull", (_name, msg) => {
     expect(toCdpCommand(msg)).toBeNull();
+  });
+
+  describe("タッチ", () => {
+    it.each([
+      ["start", "touchStart"],
+      ["move", "touchMove"],
+      ["end", "touchEnd"],
+      ["cancel", "touchCancel"],
+    ] as const)("%s を %s へ変換する", (type, cdpType) => {
+      expect(
+        toCdpCommand({
+          t: "touch",
+          type,
+          points: [
+            { id: 3, x: 10, y: 20 },
+            { id: 0, x: 30, y: 40 },
+          ],
+          modifiers: 8,
+        })
+      ).toEqual({
+        method: "Input.dispatchTouchEvent",
+        params: {
+          type: cdpType,
+          touchPoints: [
+            { x: 10, y: 20, id: 3 },
+            { x: 30, y: 40, id: 0 },
+          ],
+          modifiers: 8,
+        },
+      });
+    });
+
+    it("指がすべて離れたendとcancelは、空の点の並びになる", () => {
+      for (const type of ["end", "cancel"] as const) {
+        expect(
+          toCdpCommand({ t: "touch", type, points: [], modifiers: 0 })
+        ).toEqual({
+          method: "Input.dispatchTouchEvent",
+          params: {
+            type: type === "end" ? "touchEnd" : "touchCancel",
+            touchPoints: [],
+            modifiers: 0,
+          },
+        });
+      }
+    });
+
+    it("座標を整数へ丸め、0から10000の間へ収める", () => {
+      const command = toCdpCommand({
+        t: "touch",
+        type: "move",
+        points: [
+          { id: 0, x: 10.4, y: 20.5 },
+          { id: 1, x: -5, y: 1e9 },
+        ],
+        modifiers: 0,
+      });
+      expect(command?.params).toMatchObject({
+        touchPoints: [
+          { x: 10, y: 21, id: 0 },
+          { x: 0, y: 10000, id: 1 },
+        ],
+      });
+    });
   });
 });
 
@@ -312,6 +367,20 @@ describe("parseClientMessage", () => {
       [{ ...touch, points: [{ id: -1, x: 1, y: 2 }] }],
       [{ ...touch, points: [{ id: 0.5, x: 1, y: 2 }] }],
       [{ ...touch, modifiers: "0" }],
+      [{ ...touch, modifiers: 16 }],
+      [{ ...touch, modifiers: -1 }],
+      [{ ...touch, modifiers: 0.5 }],
+      [
+        {
+          ...touch,
+          points: [
+            { id: 1, x: 1, y: 2 },
+            { id: 1, x: 3, y: 4 },
+          ],
+        },
+      ],
+      [{ ...touch, type: "start", points: [] }],
+      [{ ...touch, type: "move", points: [] }],
     ])("%j を拒否する", value => {
       expect(parse(value)).toBeNull();
     });

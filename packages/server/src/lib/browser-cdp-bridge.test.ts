@@ -11,7 +11,8 @@ import {
   type ViewerSocket,
 } from "./browser-cdp-bridge.js";
 import { buildSolidPng } from "./browser-frame-diff.testkit.js";
-import { COPY_EXPRESSION } from "./browser-page-controller.js";
+import { COPY_EXPRESSION, COPY_TIMEOUT_MS } from "./browser-page-controller.js";
+import { SELECT_SHIM_SOURCE } from "./browser-select-shim.js";
 
 interface CdpCall {
   method: string;
@@ -389,6 +390,10 @@ describe("BrowserCdpBridge", () => {
       "Page.enable",
       "Emulation.setFocusEmulationEnabled",
       "Emulation.setDeviceMetricsOverride",
+      "Runtime.enable",
+      "Runtime.addBinding",
+      "Page.addScriptToEvaluateOnNewDocument",
+      "Runtime.evaluate",
       "Page.getNavigationHistory",
       "Page.startScreencast",
     ]);
@@ -563,8 +568,10 @@ describe("BrowserCdpBridge", () => {
       deviceScaleFactor: 2,
       mobile: true,
     });
-    expect(cdp.methods().slice(-3)).toEqual([
+    // mobileになったので、タッチのエミュレーションも有効にする
+    expect(cdp.methods().slice(-4)).toEqual([
       "Emulation.setDeviceMetricsOverride",
+      "Emulation.setTouchEmulationEnabled",
       "Page.stopScreencast",
       "Page.startScreencast",
     ]);
@@ -3133,21 +3140,6 @@ describe("BrowserCdpBridge: ページの操作", () => {
       expect(viewers[1].texts()).toEqual([]);
     });
   });
-
-  it("select、タッチのメッセージは、まだ何もしない", async () => {
-    const { cdp, viewer } = await started();
-    viewer.receive({ t: "selectChoose", id: 1, index: 0 });
-    viewer.receive({ t: "selectCancel", id: 1 });
-    viewer.receive({
-      t: "touch",
-      type: "start",
-      points: [{ id: 0, x: 1, y: 2 }],
-      modifiers: 0,
-    });
-    await flush();
-    expect(cdp.methods()).toEqual([]);
-    expect(viewer.texts()).toEqual([]);
-  });
 });
 
 describe("COPY_EXPRESSION", () => {
@@ -3284,6 +3276,10 @@ const ENTER_CALLS = [
   "Page.enable",
   "Emulation.setFocusEmulationEnabled",
   "Emulation.setDeviceMetricsOverride",
+  "Runtime.enable",
+  "Runtime.addBinding",
+  "Page.addScriptToEvaluateOnNewDocument",
+  "Runtime.evaluate",
   HISTORY,
   START_CAST,
 ];
@@ -4157,5 +4153,514 @@ describe("BrowserCdpBridge: タブ", () => {
       expect(connect).toHaveBeenCalledTimes(2);
       expect(second.count(START_CAST)).toBe(1);
     });
+  });
+});
+
+const EVALUATE = "Runtime.evaluate";
+const BINDING_CALLED = "Runtime.bindingCalled";
+const TOUCH_EMULATION = "Emulation.setTouchEmulationEnabled";
+const TOUCH_EVENT = "Input.dispatchTouchEvent";
+const SELECT_OPTIONS = [
+  { label: "りんご", disabled: false, group: null },
+  { label: "みかん", disabled: false, group: null },
+  { label: "ぶどう", disabled: true, group: "果物" },
+];
+const SELECT_RECT = { x: 10, y: 20, width: 120, height: 24 };
+
+/** ページのスクリプトがbindingを呼んだときのイベント。`pageId` はページの中のid */
+function selectCalled(pageId: number, extra: Record<string, unknown> = {}) {
+  return {
+    name: "__arkSelect",
+    payload: JSON.stringify({
+      id: pageId,
+      options: SELECT_OPTIONS,
+      selectedIndex: 1,
+      rect: SELECT_RECT,
+      ...extra,
+    }),
+    executionContextId: 1,
+  };
+}
+
+function selectBody(id: number) {
+  return {
+    t: "select",
+    id,
+    options: SELECT_OPTIONS,
+    selectedIndex: 1,
+    rect: SELECT_RECT,
+  };
+}
+
+describe("BrowserCdpBridge: <select>", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("タブの準備で、Runtimeを有効にしてからbindingを足し、スクリプトを入れる", async () => {
+    const cdp = fakeCdp();
+    const bridge = new BrowserCdpBridge(async () => cdp);
+    bridge.attach(fakeViewer());
+    await flush();
+    const methods = cdp.methods();
+    const order = [
+      "Emulation.setDeviceMetricsOverride",
+      "Runtime.enable",
+      "Runtime.addBinding",
+      "Page.addScriptToEvaluateOnNewDocument",
+      EVALUATE,
+      "Page.startScreencast",
+    ].map(method => methods.indexOf(method));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(order).not.toContain(-1);
+    expect(cdp.last("Runtime.enable")).toEqual({
+      params: undefined,
+      sessionId: "S1",
+    });
+    expect(cdp.last("Runtime.addBinding")).toEqual({
+      params: { name: "__arkSelect" },
+      sessionId: "S1",
+    });
+    expect(cdp.last("Page.addScriptToEvaluateOnNewDocument")).toEqual({
+      params: { source: SELECT_SHIM_SOURCE },
+      sessionId: "S1",
+    });
+    expect(cdp.last(EVALUATE)).toEqual({
+      params: {
+        expression: SELECT_SHIM_SOURCE,
+        awaitPromise: false,
+        returnByValue: true,
+        timeout: COPY_TIMEOUT_MS,
+      },
+      sessionId: "S1",
+    });
+  });
+
+  it("いまの文書へスクリプトを入れる評価が返らなくても、準備は終わる", async () => {
+    const cdp = fakeCdp();
+    cdp.holdOn(EVALUATE);
+    const bridge = new BrowserCdpBridge(async () => cdp);
+    const viewer = fakeViewer();
+    bridge.attach(viewer);
+    await flush();
+    expect(cdp.count("Page.startScreencast")).toBe(1);
+    expect(textsOf(viewer, "tabs")).toHaveLength(1);
+  });
+
+  it("bindingを足せなければ、そのタブの準備は失敗する", async () => {
+    const cdp = fakeCdp();
+    cdp.failOn("Runtime.addBinding");
+    const bridge = new BrowserCdpBridge(async () => cdp);
+    const viewer = fakeViewer();
+    bridge.attach(viewer);
+    await flush();
+    expect(cdp.count("Page.startScreencast")).toBe(0);
+    expect(errorCount(viewer)).toBe(1);
+  });
+
+  it("ページの知らせを、ブリッジが振った番号で全員へ送る", async () => {
+    const { cdp, viewers } = await started(2);
+    cdp.emit(BINDING_CALLED, selectCalled(7));
+    for (const viewer of viewers) {
+      expect(viewer.texts()).toEqual([selectBody(1)]);
+    }
+    expect(cdp.methods()).toEqual([]);
+  });
+
+  it("別のsessionの知らせと、別の名前のbindingは無視する", async () => {
+    const { cdp, viewer } = await started();
+    cdp.emit(BINDING_CALLED, selectCalled(7), "S9");
+    cdp.emitBrowser(BINDING_CALLED, selectCalled(7));
+    cdp.emit(BINDING_CALLED, { ...selectCalled(7), name: "__other" });
+    expect(viewer.texts()).toEqual([]);
+  });
+
+  it.each([
+    ["JSONでないペイロード", { name: "__arkSelect", payload: "{" }],
+    ["文字列でないペイロード", { name: "__arkSelect", payload: { id: 1 } }],
+    [
+      "多すぎる選択肢",
+      selectCalled(7, {
+        options: Array.from({ length: 1001 }, () => SELECT_OPTIONS[0]),
+      }),
+    ],
+    ["選択肢の無い知らせ", selectCalled(7, { options: [], selectedIndex: -1 })],
+    [
+      "有限でない位置",
+      selectCalled(7, { rect: { x: null, y: 0, width: 1, height: 1 } }),
+    ],
+  ])("%s を捨てる", async (_name, params) => {
+    const { cdp, viewer } = await started();
+    cdp.emit(BINDING_CALLED, params);
+    expect(viewer.texts()).toEqual([]);
+    expect(cdp.methods()).toEqual([]);
+  });
+
+  it("長いラベルを切り、位置をビューポートの中へ収める", async () => {
+    const { cdp, viewer } = await started();
+    cdp.emit(
+      BINDING_CALLED,
+      selectCalled(7, {
+        options: [{ label: "x".repeat(600), disabled: false, group: null }],
+        selectedIndex: 0,
+        rect: { x: 1200, y: -10, width: 200, height: 30 },
+      })
+    );
+    const [message] = viewer.texts() as Array<{
+      options: Array<{ label: string }>;
+      rect: unknown;
+    }>;
+    expect(message.options[0].label).toHaveLength(500);
+    expect(message.rect).toEqual({ x: 1200, y: 0, width: 80, height: 20 });
+  });
+
+  it("選ぶと、数だけを埋めた式を評価し、全員へ閉じたと知らせる", async () => {
+    const { cdp, viewers } = await started(2);
+    cdp.emit(BINDING_CALLED, selectCalled(7));
+    viewers[1].receive({ t: "selectChoose", id: 1, index: 0 });
+    expect(cdp.methods()).toEqual([EVALUATE]);
+    expect(cdp.last(EVALUATE)).toEqual({
+      params: {
+        expression: "window.__arkSelectChoose(7, 0)",
+        awaitPromise: false,
+        returnByValue: true,
+        timeout: COPY_TIMEOUT_MS,
+      },
+      sessionId: "S1",
+    });
+    for (const viewer of viewers) {
+      expect(viewer.texts()).toEqual([
+        selectBody(1),
+        { t: "selectClosed", id: 1 },
+      ]);
+    }
+  });
+
+  it("評価が失敗しても、返らなくても、閉じる", async () => {
+    const { cdp, viewer } = await started();
+    cdp.failOn(EVALUATE);
+    cdp.emit(BINDING_CALLED, selectCalled(7));
+    viewer.receive({ t: "selectChoose", id: 1, index: 0 });
+    await flush();
+    cdp.stopFailing(EVALUATE);
+    cdp.holdOn(EVALUATE);
+    cdp.emit(BINDING_CALLED, selectCalled(8));
+    viewer.receive({ t: "selectChoose", id: 2, index: 0 });
+    await flush();
+    expect(textsOf(viewer, "selectClosed")).toEqual([
+      { t: "selectClosed", id: 1 },
+      { t: "selectClosed", id: 2 },
+    ]);
+    expect(errorCount(viewer)).toBe(0);
+  });
+
+  it.each([
+    ["古い番号", { id: 1, index: 0 }],
+    ["ページの中のid", { id: 8, index: 0 }],
+    ["範囲外の添字", { id: 2, index: 3 }],
+    ["無効な選択肢", { id: 2, index: 2 }],
+  ])("%s での選択は無視する", async (_name, choice) => {
+    const { cdp, viewer } = await started();
+    cdp.emit(BINDING_CALLED, selectCalled(7));
+    cdp.emit(BINDING_CALLED, selectCalled(8));
+    viewer.send.mockClear();
+    viewer.receive({ t: "selectChoose", ...choice });
+    expect(cdp.methods()).toEqual([]);
+    expect(viewer.texts()).toEqual([]);
+  });
+
+  it("開いている間の新しい知らせは、前のものを閉じてから置き換える", async () => {
+    const { cdp, viewer } = await started();
+    cdp.emit(BINDING_CALLED, selectCalled(7));
+    cdp.emit(BINDING_CALLED, selectCalled(8));
+    expect(viewer.texts()).toEqual([
+      selectBody(1),
+      { t: "selectClosed", id: 1 },
+      selectBody(2),
+    ]);
+  });
+
+  it("取り消すと、ページの中の要素を捨てさせ、全員へ閉じたと知らせる", async () => {
+    const { cdp, viewers } = await started(2);
+    cdp.emit(BINDING_CALLED, selectCalled(7));
+    viewers[0].receive({ t: "selectCancel", id: 1 });
+    expect(cdp.last(EVALUATE)?.params).toMatchObject({
+      expression: "window.__arkSelectCancel(7)",
+    });
+    expect(viewers[1].texts().at(-1)).toEqual({ t: "selectClosed", id: 1 });
+    // 閉じたあとの選択は無視する
+    cdp.forget();
+    viewers[1].receive({ t: "selectChoose", id: 1, index: 0 });
+    expect(cdp.methods()).toEqual([]);
+  });
+
+  it("メインフレームが遷移したら閉じる。iframeの遷移では閉じない", async () => {
+    const { cdp, viewer } = await started();
+    cdp.emit(BINDING_CALLED, selectCalled(7));
+    cdp.emit(NAVIGATED, { frame: { id: "F2", parentId: "T1", url: A_URL } });
+    expect(textsOf(viewer, "selectClosed")).toEqual([]);
+    cdp.emit(NAVIGATED, navigatedTo(A_URL));
+    expect(viewer.texts().slice(0, 2)).toEqual([
+      selectBody(1),
+      { t: "selectClosed", id: 1 },
+    ]);
+    cdp.forget();
+    viewer.receive({ t: "selectChoose", id: 1, index: 0 });
+    expect(cdp.count(EVALUATE)).toBe(0);
+  });
+
+  it("ダイアログが開いたら閉じる", async () => {
+    const { cdp, viewer } = await started();
+    cdp.emit(BINDING_CALLED, selectCalled(7));
+    cdp.emit("Page.javascriptDialogOpening", { type: "alert", message: "m" });
+    expect(viewer.texts().map(m => (m as { t: string }).t)).toEqual([
+      "select",
+      "selectClosed",
+      "dialog",
+    ]);
+  });
+
+  it("タブを切り替えたら閉じ、次のタブでは続きの番号を振る", async () => {
+    const { cdp, viewer } = await startedWithTabs();
+    cdp.emit(BINDING_CALLED, selectCalled(7));
+    viewer.receive({ t: "tab", type: "activate", id: "T2" });
+    expect(viewer.texts()).toEqual([
+      selectBody(1),
+      { t: "selectClosed", id: 1 },
+    ]);
+    await flush();
+    viewer.send.mockClear();
+    cdp.forget();
+    // 前のタブのsessionから遅れて届いた知らせは使わない
+    cdp.emit(BINDING_CALLED, selectCalled(9), "S1");
+    // 前のタブの番号では選べない
+    viewer.receive({ t: "selectChoose", id: 1, index: 0 });
+    expect(viewer.texts()).toEqual([]);
+    cdp.emit(BINDING_CALLED, selectCalled(0), "S2");
+    expect(viewer.texts()).toEqual([selectBody(2)]);
+    viewer.receive({ t: "selectChoose", id: 2, index: 0 });
+    expect(cdp.last(EVALUATE)).toMatchObject({
+      params: { expression: "window.__arkSelectChoose(0, 0)" },
+      sessionId: "S2",
+    });
+  });
+
+  it("切り替えの途中の選択と、準備の途中の知らせは捨てる", async () => {
+    const { cdp, viewer } = await startedWithTabs();
+    cdp.holdOn("Emulation.setDeviceMetricsOverride");
+    viewer.receive({ t: "tab", type: "activate", id: "T2" });
+    await flush();
+    viewer.send.mockClear();
+    cdp.emit(BINDING_CALLED, selectCalled(3), "S2");
+    viewer.receive({ t: "selectChoose", id: 1, index: 0 });
+    viewer.receive({ t: "selectCancel", id: 1 });
+    cdp.release("Emulation.setDeviceMetricsOverride");
+    await flush();
+    expect(textsOf(viewer, "select")).toEqual([]);
+    // 評価したのは、新しいタブへスクリプトを入れる1回だけ
+    expect(cdp.count(EVALUATE)).toBe(1);
+    expect(cdp.last(EVALUATE)?.params).toMatchObject({
+      expression: SELECT_SHIM_SOURCE,
+    });
+  });
+
+  it("接続が切れたら、閉じたと知らせてからerrorを送る", async () => {
+    const { cdp, viewer } = await started();
+    cdp.emit(BINDING_CALLED, selectCalled(7));
+    cdp.disconnect();
+    expect(viewer.texts()).toEqual([
+      selectBody(1),
+      { t: "selectClosed", id: 1 },
+      JSON.parse(ERROR_BODY),
+    ]);
+  });
+
+  it("開いている間に入った視聴者へ、寸法、ページの状態、タブの一覧、選択の順に知らせる", async () => {
+    const { cdp, bridge, viewer } = await startedOn(0, [A_URL]);
+    cdp.emit(BINDING_CALLED, selectCalled(7));
+    const late = fakeViewer();
+    bridge.attach(late);
+    await flush();
+    expect(late.texts()).toEqual([
+      { t: "viewport", width: 1280, height: 900, gen: 1 },
+      pageBody(A_URL, "T0"),
+      ONE_TAB,
+      selectBody(1),
+    ]);
+    expect(viewer.texts()).toEqual([selectBody(1)]);
+  });
+
+  it("閉じたあとに入った視聴者へは知らせない", async () => {
+    const { cdp, bridge, viewer } = await started();
+    cdp.emit(BINDING_CALLED, selectCalled(7));
+    viewer.receive({ t: "selectCancel", id: 1 });
+    const late = fakeViewer();
+    bridge.attach(late);
+    await flush();
+    expect(textsOf(late, "select")).toEqual([]);
+  });
+});
+
+describe("BrowserCdpBridge: タッチ", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const touch = {
+    t: "touch",
+    type: "start",
+    points: [{ id: 0, x: 10.4, y: 20.6 }],
+    modifiers: 0,
+  };
+  const resize = (mobile: boolean, width = 400) => ({
+    t: "resize",
+    width,
+    height: 800,
+    dpr: 2,
+    mobile,
+  });
+  const TOUCH_ON = { enabled: true, maxTouchPoints: 5 };
+
+  it("タッチを、映しているタブのタッチのイベントへ変換する", async () => {
+    const { cdp, viewer } = await started();
+    viewer.receive(touch);
+    viewer.receive({ ...touch, type: "end", points: [] });
+    expect(cdp.methods()).toEqual([TOUCH_EVENT, TOUCH_EVENT]);
+    expect(cdp.last(TOUCH_EVENT)).toEqual({
+      params: { type: "touchEnd", touchPoints: [], modifiers: 0 },
+      sessionId: "S1",
+    });
+    viewer.receive(touch);
+    expect(cdp.last(TOUCH_EVENT)?.params).toEqual({
+      type: "touchStart",
+      touchPoints: [{ x: 10, y: 21, id: 0 }],
+      modifiers: 0,
+    });
+  });
+
+  it("タッチの失敗で視聴者を切らない", async () => {
+    const { cdp, viewer, bridge } = await started();
+    cdp.failOn(TOUCH_EVENT);
+    viewer.receive(touch);
+    await flush();
+    expect(bridge.viewerCount).toBe(1);
+    expect(errorCount(viewer)).toBe(0);
+  });
+
+  it("切り替えの途中のタッチは捨てる", async () => {
+    const { cdp, viewer } = await startedWithTabs();
+    cdp.holdOn("Target.attachToTarget");
+    viewer.receive({ t: "tab", type: "activate", id: "T2" });
+    await flush();
+    viewer.receive(touch);
+    cdp.release("Target.attachToTarget");
+    await flush();
+    expect(cdp.count(TOUCH_EVENT)).toBe(0);
+  });
+
+  it("mobileでなければ、タブの準備でタッチのエミュレーションに触らない", async () => {
+    const cdp = fakeCdp();
+    const bridge = new BrowserCdpBridge(async () => cdp);
+    bridge.attach(fakeViewer());
+    await vi.runAllTimersAsync();
+    expect(cdp.count(TOUCH_EMULATION)).toBe(0);
+  });
+
+  it("mobileなら、タブの準備で、寸法のあとにタッチのエミュレーションを有効にする", async () => {
+    const cdp = fakeCdp();
+    const bridge = new BrowserCdpBridge(async () => cdp);
+    const viewer = fakeViewer();
+    bridge.attach(viewer);
+    viewer.receive(resize(true));
+    await vi.runAllTimersAsync();
+    const methods = cdp.methods();
+    expect(methods.indexOf(TOUCH_EMULATION)).toBe(
+      methods.indexOf("Emulation.setDeviceMetricsOverride") + 1
+    );
+    expect(cdp.count(TOUCH_EMULATION)).toBe(1);
+    expect(cdp.last(TOUCH_EMULATION)).toEqual({
+      params: TOUCH_ON,
+      sessionId: "S1",
+    });
+  });
+
+  it("寸法の適用でmobileが変わったときだけ、有効、無効を切り替える", async () => {
+    const { cdp, viewer } = await started();
+    viewer.receive(resize(true));
+    await vi.advanceTimersByTimeAsync(150);
+    expect(cdp.count(TOUCH_EMULATION)).toBe(1);
+    expect(cdp.last(TOUCH_EMULATION)).toEqual({
+      params: TOUCH_ON,
+      sessionId: "S1",
+    });
+    // mobileのまま寸法だけが変わった
+    viewer.receive(resize(true, 500));
+    await vi.advanceTimersByTimeAsync(150);
+    expect(cdp.count("Emulation.setDeviceMetricsOverride")).toBe(2);
+    expect(cdp.count(TOUCH_EMULATION)).toBe(1);
+    viewer.receive(resize(false, 500));
+    await vi.advanceTimersByTimeAsync(150);
+    expect(cdp.count(TOUCH_EMULATION)).toBe(2);
+    expect(cdp.last(TOUCH_EMULATION)?.params).toEqual({ enabled: false });
+    // mobileでないまま寸法だけが変わった
+    viewer.receive(resize(false, 600));
+    await vi.advanceTimersByTimeAsync(150);
+    expect(cdp.count(TOUCH_EMULATION)).toBe(2);
+  });
+
+  it("mobileのままタブを替えたら、新しいタブでも有効にする", async () => {
+    const { cdp, viewer } = await startedWithTabs();
+    viewer.receive(resize(true));
+    await vi.advanceTimersByTimeAsync(150);
+    cdp.forget();
+    viewer.receive({ t: "tab", type: "activate", id: "T2" });
+    await flush();
+    expect(cdp.count(TOUCH_EMULATION)).toBe(1);
+    expect(cdp.last(TOUCH_EMULATION)).toEqual({
+      params: TOUCH_ON,
+      sessionId: "S2",
+    });
+  });
+
+  it("準備の途中でmobileになったら、準備が終わったときに有効にする", async () => {
+    const cdp = fakeCdp();
+    cdp.holdOn("Runtime.addBinding");
+    const bridge = new BrowserCdpBridge(async () => cdp);
+    const viewer = fakeViewer();
+    bridge.attach(viewer);
+    await flush();
+    viewer.receive(resize(true));
+    await vi.advanceTimersByTimeAsync(150);
+    expect(cdp.count(TOUCH_EMULATION)).toBe(0);
+    cdp.release("Runtime.addBinding");
+    await flush();
+    expect(cdp.count(TOUCH_EMULATION)).toBe(1);
+    expect(cdp.last(TOUCH_EMULATION)?.params).toEqual(TOUCH_ON);
+  });
+
+  it("有効にできなくても視聴者を切らず、次に寸法を当てるときに送り直す", async () => {
+    const { cdp, viewer, bridge } = await started();
+    cdp.failOn(TOUCH_EMULATION);
+    viewer.receive(resize(true));
+    await vi.advanceTimersByTimeAsync(150);
+    expect(bridge.viewerCount).toBe(1);
+    expect(errorCount(viewer)).toBe(0);
+    cdp.stopFailing(TOUCH_EMULATION);
+    viewer.receive(resize(true, 500));
+    await vi.advanceTimersByTimeAsync(150);
+    expect(cdp.count(TOUCH_EMULATION)).toBe(2);
+    expect(cdp.last(TOUCH_EMULATION)?.params).toEqual(TOUCH_ON);
   });
 });

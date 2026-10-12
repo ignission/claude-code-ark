@@ -10,6 +10,9 @@
  * - 入力でないメッセージ (寸法、送り直し、ページとタブの操作、ダイアログ、コピー、
  *   `<select>`) は、ここではCDPへ変換しない。ブリッジ (browser-cdp-bridge.ts) と、
  *   その協力モジュールが、それぞれの決まりで扱う
+ * - タッチは、本物のタッチのイベントとしてページへ届ける (`Input.dispatchTouchEvent`)。
+ *   マウスへ読み替えると、スクロールやタップをページが受け取れない。1つのメッセージの中で
+ *   点のidは重ならず、始まりと移動には点が1つ以上要る。座標は整数へ丸め、範囲に収める
  *
  * CDPにも視聴者にも触らない。
  */
@@ -26,6 +29,10 @@ const MAX_URL_LENGTH = 2048;
 const MAX_PROMPT_LENGTH = 10_000;
 /** 1つのメッセージに入るタッチの点の上限 */
 const MAX_TOUCH_POINTS = 10;
+/** タッチの座標の上限 (CSSピクセル)。ビューポートの寸法の上限より十分に大きい */
+const MAX_TOUCH_COORDINATE = 10_000;
+/** 修飾キーのビットをすべて立てた値 (Alt、Ctrl、Meta、Shift) */
+const MAX_MODIFIERS = 15;
 /** タブのid (CDPのターゲットのid) の形 */
 const TAB_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 
@@ -37,6 +44,12 @@ const MOUSE_TYPES = {
 } as const;
 /** DOMの `MouseEvent.button` の順 */
 const MOUSE_BUTTONS = ["left", "middle", "right"];
+const TOUCH_TYPES = {
+  start: "touchStart",
+  move: "touchMove",
+  end: "touchEnd",
+  cancel: "touchCancel",
+} as const;
 
 /** 有限の数 */
 export function isNumber(value: unknown): value is number {
@@ -56,17 +69,24 @@ function isTabId(value: unknown): value is string {
   return typeof value === "string" && TAB_ID_PATTERN.test(value);
 }
 
-/** タッチの点の並びを読む。形が違えば `null` */
+/** タッチの点の並びを読む。形が違うか、同じidの点が2つあれば `null` */
 function readTouchPoints(value: unknown): BrowserTouchPoint[] | null {
   if (!Array.isArray(value) || value.length > MAX_TOUCH_POINTS) return null;
   const points: BrowserTouchPoint[] = [];
+  const ids = new Set<number>();
   for (const item of value) {
     if (typeof item !== "object" || item === null) return null;
     const { id, x, y } = item as Record<string, unknown>;
     if (!isIndex(id) || !isNumber(x) || !isNumber(y)) return null;
+    if (ids.has(id)) return null;
+    ids.add(id);
     points.push({ id, x, y });
   }
   return points;
+}
+
+function touchCoordinate(value: number): number {
+  return Math.min(MAX_TOUCH_COORDINATE, Math.max(0, Math.round(value)));
 }
 
 /**
@@ -226,19 +246,18 @@ export function parseClientMessage(raw: string): BrowserClientMessage | null {
           m.type !== "move" &&
           m.type !== "end" &&
           m.type !== "cancel") ||
-        !isNumber(m.modifiers)
+        !isIndex(m.modifiers) ||
+        m.modifiers > MAX_MODIFIERS
       ) {
         return null;
       }
       const points = readTouchPoints(m.points);
-      return (
-        points && {
-          t: "touch",
-          type: m.type,
-          points,
-          modifiers: m.modifiers,
-        }
-      );
+      if (!points) return null;
+      // 触れている点の無い始まりと移動は無い。終わりと取り消しは、残った指が無ければ空になる
+      if (points.length === 0 && (m.type === "start" || m.type === "move")) {
+        return null;
+      }
+      return { t: "touch", type: m.type, points, modifiers: m.modifiers };
     }
     default:
       return null;
@@ -256,7 +275,6 @@ function buttonFromButtons(buttons: number): string {
 /**
  * 入力のメッセージをCDPのコマンドへ変換する。入力でないもの (寸法、送り直し、ページと
  * タブの操作、ダイアログ、コピー、`<select>`) は `null` (ブリッジが自分で扱う)。
- * タッチも、ここでは変換しない。
  */
 export function toCdpCommand(
   msg: BrowserClientMessage
@@ -270,8 +288,20 @@ export function toCdpCommand(
     case "copy":
     case "selectChoose":
     case "selectCancel":
-    case "touch":
       return null;
+    case "touch":
+      return {
+        method: "Input.dispatchTouchEvent",
+        params: {
+          type: TOUCH_TYPES[msg.type],
+          touchPoints: msg.points.map(point => ({
+            x: touchCoordinate(point.x),
+            y: touchCoordinate(point.y),
+            id: point.id,
+          })),
+          modifiers: msg.modifiers,
+        },
+      };
     case "mouse": {
       const base = {
         type: MOUSE_TYPES[msg.type],
