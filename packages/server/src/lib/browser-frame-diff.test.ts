@@ -342,7 +342,9 @@ describe("diffImages", () => {
     const rects = diffImages(prev, next);
     const elapsed = performance.now() - start;
     expect(rects).toEqual([{ x0: 0, y0: 0, x1: size - 1, y1: size - 1 }]);
-    expect(elapsed).toBeLessThan(200);
+    // 早めの打ち切りが無いと、この入力は矩形をまとめる処理に約3秒かかる (結果は同じになる)。
+    // 打ち切りがあれば数msで済むので、負荷の高いCIでも揺れない幅を取って1秒で見る
+    expect(elapsed).toBeLessThan(1000);
   });
 
   it("成分が65個の孤立した点なら、全体を囲む1つになる", () => {
