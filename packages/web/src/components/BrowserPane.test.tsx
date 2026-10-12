@@ -2160,9 +2160,10 @@ function json(msg: unknown) {
 function dialogMessage(
   kind: "alert" | "confirm" | "prompt" | "beforeunload",
   message = "よろしいですか?",
-  defaultPrompt = ""
+  defaultPrompt = "",
+  id = 1
 ) {
-  return json({ t: "dialog", kind, message, defaultPrompt });
+  return json({ t: "dialog", id, kind, message, defaultPrompt });
 }
 
 function receive(ws: FakeWebSocket, ...messages: unknown[]) {
@@ -2432,12 +2433,16 @@ describe("BrowserPaneのツールバー", () => {
 
 describe("BrowserPaneのダイアログ", () => {
   it.each([
-    ["alert", "OK", { t: "dialog", accept: true }],
-    ["confirm", "OK", { t: "dialog", accept: true }],
-    ["confirm", "キャンセル", { t: "dialog", accept: false }],
-    ["beforeunload", "このページを離れる", { t: "dialog", accept: true }],
-    ["beforeunload", "とどまる", { t: "dialog", accept: false }],
-    ["prompt", "キャンセル", { t: "dialog", accept: false }],
+    ["alert", "OK", { t: "dialog", id: 1, accept: true }],
+    ["confirm", "OK", { t: "dialog", id: 1, accept: true }],
+    ["confirm", "キャンセル", { t: "dialog", id: 1, accept: false }],
+    [
+      "beforeunload",
+      "このページを離れる",
+      { t: "dialog", id: 1, accept: true },
+    ],
+    ["beforeunload", "とどまる", { t: "dialog", id: 1, accept: false }],
+    ["prompt", "キャンセル", { t: "dialog", id: 1, accept: false }],
   ] as const)("`%s` の「%s」で応答を送る", (kind, name, expected) => {
     const { container, ws, surface } = mountConnected();
     act(() => ws.onmessage?.(dialogMessage(kind)));
@@ -2473,7 +2478,7 @@ describe("BrowserPaneのダイアログ", () => {
     });
 
     expect(ws.sent()).toEqual([
-      { t: "dialog", accept: true, promptText: "花子" },
+      { t: "dialog", id: 1, accept: true, promptText: "花子" },
     ]);
   });
 
@@ -2567,19 +2572,53 @@ describe("BrowserPaneのダイアログ", () => {
     expect(named(container, "OK").disabled).toBe(true);
     expect(named(container, "キャンセル").disabled).toBe(true);
     act(() => named(container, "OK").click());
-    expect(ws.sent()).toEqual([{ t: "dialog", accept: true }]);
+    expect(ws.sent()).toEqual([{ t: "dialog", id: 1, accept: true }]);
     ws.send.mockClear();
 
-    // 同じ中身がもう一度届いても、応答済みのまま
+    // 同じ番号がもう一度届いても、応答済みのまま
     act(() => ws.onmessage?.(dialogMessage("confirm", "1つめ")));
     expect(named(container, "OK").disabled).toBe(true);
-    act(() => ws.onmessage?.(dialogMessage("confirm", "2つめ")));
+    act(() => ws.onmessage?.(dialogMessage("confirm", "2つめ", "", 2)));
     expect(named(container, "OK").disabled).toBe(false);
     act(() => named(container, "キャンセル").click());
     receive(ws, { t: "dialogClosed" });
-    act(() => ws.onmessage?.(dialogMessage("confirm", "2つめ")));
+    act(() => ws.onmessage?.(dialogMessage("confirm", "2つめ", "", 3)));
     expect(named(container, "OK").disabled).toBe(false);
-    expect(ws.sent()).toEqual([{ t: "dialog", accept: false }]);
+    expect(ws.sent()).toEqual([{ t: "dialog", id: 2, accept: false }]);
+  });
+
+  it("中身が同じでも、番号の違うダイアログは別のダイアログとして、入力と応答済みを初期値に戻す", () => {
+    const clock = fakeClock();
+    const { container, ws } = mountConnected();
+    act(() => ws.onmessage?.(dialogMessage("prompt", "名前は?", "太郎", 4)));
+    const field = () =>
+      container.querySelector('[role="alertdialog"] input') as HTMLInputElement;
+    clock.advance(300);
+    setValue(field(), "花子");
+    act(() => named(container, "OK").click());
+    expect(named(container, "OK").disabled).toBe(true);
+    expect(ws.sent()).toEqual([
+      { t: "dialog", id: 4, accept: true, promptText: "花子" },
+    ]);
+    ws.send.mockClear();
+
+    // 閉じた知らせより先に、次のダイアログが届いた
+    act(() => ws.onmessage?.(dialogMessage("prompt", "名前は?", "太郎", 5)));
+    expect(field().value).toBe("太郎");
+    expect(named(container, "OK").disabled).toBe(false);
+    act(() => named(container, "キャンセル").click());
+    expect(ws.sent()).toEqual([{ t: "dialog", id: 5, accept: false }]);
+  });
+
+  it("番号の無いダイアログは描かない", () => {
+    const { container, ws } = mountConnected();
+    receive(ws, {
+      t: "dialog",
+      kind: "confirm",
+      message: "消しますか?",
+      defaultPrompt: "",
+    });
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
   });
 
   it("ペインが隠れている間は、ダイアログも選択リストも描かず、見えたときに描いてフォーカスを取る", () => {
@@ -2733,7 +2772,7 @@ describe("BrowserPaneのダイアログ", () => {
     expect(container.querySelectorAll('[role="alertdialog"]')).toHaveLength(1);
     expect(document.activeElement).toBe(named(container, "OK"));
     act(() => named(container, "OK").click());
-    expect(ws.sent()).toEqual([{ t: "dialog", accept: true }]);
+    expect(ws.sent()).toEqual([{ t: "dialog", id: 1, accept: true }]);
     receive(ws, { t: "dialogClosed" });
     expect(document.activeElement).toBe(textarea);
   });

@@ -1,10 +1,11 @@
 import { EventEmitter } from "node:events";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import {
   CdpClient,
   type CdpSocket,
   connectCdpUrl,
+  isCommandTimeout,
   isSessionDetached,
 } from "./browser-cdp-client.js";
 
@@ -182,6 +183,125 @@ describe("CdpClient", () => {
     expect(
       (client as unknown as { pending: Map<number, unknown> }).pending.size
     ).toBe(0);
+  });
+});
+
+describe("CdpClientの応答の期限", () => {
+  const CAPTURE = "Page.captureScreenshot";
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it("期限までに応答が無ければ、待ちを消して、見分けられる失敗にする", async () => {
+    const { socket } = fakeSocket();
+    const client = new CdpClient(socket);
+    const p = client.send(CAPTURE, {}, "S1", { timeoutMs: 3000 });
+    const settled = p.catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(client.pendingCount).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    const error = await settled;
+    expect(isCommandTimeout(error)).toBe(true);
+    expect(isSessionDetached(error)).toBe(false);
+    expect((error as Error).message).toBe(
+      `${CAPTURE}: CDPのコマンドが時間切れになりました`
+    );
+    expect(client.pendingCount).toBe(0);
+  });
+
+  it("応答の返らない取り直しを20回重ねても、期限が過ぎれば待ちは残らない", async () => {
+    const { socket } = fakeSocket();
+    const client = new CdpClient(socket);
+    const failures: unknown[] = [];
+    for (let i = 0; i < 20; i++) {
+      client
+        .send(CAPTURE, {}, "S1", { timeoutMs: 3000 })
+        .catch((error: unknown) => failures.push(error));
+      await vi.advanceTimersByTimeAsync(100);
+    }
+    expect(client.pendingCount).toBe(20);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(client.pendingCount).toBe(0);
+    expect(failures).toHaveLength(20);
+    expect(failures.every(isCommandTimeout)).toBe(true);
+  });
+
+  it("期限を渡さなければ、応答が返るまで待つ", async () => {
+    const { socket, receive } = fakeSocket();
+    const client = new CdpClient(socket);
+    const p = client.send(CAPTURE);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(client.pendingCount).toBe(1);
+    receive({ id: 1, result: { data: "x" } });
+    await expect(p).resolves.toEqual({ data: "x" });
+    expect(client.pendingCount).toBe(0);
+  });
+
+  it("期限のあとに届いた応答は無視する", async () => {
+    const { socket, receive } = fakeSocket();
+    const client = new CdpClient(socket);
+    const p = client.send(CAPTURE, {}, "S1", { timeoutMs: 3000 });
+    const settled = p.catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(() => receive({ id: 1, result: { data: "late" } })).not.toThrow();
+    expect(isCommandTimeout(await settled)).toBe(true);
+    // 次のコマンドの応答と取り違えない
+    const next = client.send("Page.enable");
+    receive({ id: 2, result: { ok: true } });
+    await expect(next).resolves.toEqual({ ok: true });
+  });
+
+  it("応答が返ったら、期限のタイマーを残さない", async () => {
+    const { socket, receive } = fakeSocket();
+    const client = new CdpClient(socket);
+    const ok = client.send(CAPTURE, {}, "S1", { timeoutMs: 3000 });
+    const failed = client.send(CAPTURE, {}, "S1", { timeoutMs: 3000 });
+    receive({ id: 1, result: { data: "x" } });
+    receive({ id: 2, error: { message: "no" } });
+    await expect(ok).resolves.toEqual({ data: "x" });
+    await expect(failed).rejects.toThrow(`${CAPTURE}: no`);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("sessionを失敗にしたら、期限のタイマーを残さない", async () => {
+    const { socket } = fakeSocket();
+    const client = new CdpClient(socket);
+    const p = client.send(CAPTURE, {}, "S1", { timeoutMs: 3000 });
+    const settled = p.catch((error: unknown) => error);
+    client.rejectSession("S1");
+    expect(isSessionDetached(await settled)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(client.pendingCount).toBe(0);
+  });
+
+  it("切断したら、期限のタイマーを残さない", async () => {
+    const { socket, emitter } = fakeSocket();
+    const client = new CdpClient(socket);
+    const p = client.send(CAPTURE, {}, "S1", { timeoutMs: 3000 });
+    const settled = p.catch((error: unknown) => error);
+    emitter.emit("close");
+    expect(((await settled) as Error).message).toBe("CDPの接続が切れました");
+    expect(vi.getTimerCount()).toBe(0);
+    expect(client.pendingCount).toBe(0);
+  });
+
+  it("socket.sendが投げたら、期限のタイマーを残さない", async () => {
+    const { socket } = fakeSocket();
+    socket.send = () => {
+      throw new Error("not open");
+    };
+    const client = new CdpClient(socket);
+    await expect(
+      client.send(CAPTURE, {}, "S1", { timeoutMs: 3000 })
+    ).rejects.toThrow("not open");
+    expect(vi.getTimerCount()).toBe(0);
+    expect(client.pendingCount).toBe(0);
   });
 });
 

@@ -26,6 +26,8 @@ interface BrowserToolbarProps {
 
 /** サーバーが受け取るURLの長さの上限 */
 const URL_MAX_LENGTH = 2048;
+/** IMEが受け取ったキーの `keyCode` */
+const IME_KEYCODE = 229;
 const NEW_TAB_TITLE = "新しいタブ";
 const TAB_SELECTOR = '[role="tab"]';
 const ICON_BUTTON_CLASS =
@@ -68,6 +70,8 @@ function IconButton({ label, disabled, onClick, children }: IconButtonProps) {
  * 検査は、サーバーが行う。Escapeは入力を捨てる。どちらもフォーカスを外すので、表示は
  * サーバーが知らせたURLに戻る。外したあとのフォーカスの行き先は、親に任せる
  * (`onUrlDone`)。親は、続けて打ったキーがページに届くよう、canvasの入力欄へ移す。
+ * 変換中のEnterとEscape (`isComposing` か `keyCode === 229`) は、変換の確定と取り消しの
+ * キーなので、送りもフォーカスを外しもしない。
  *
  * この入力欄は、リモートへキーを送る透明のtextareaとは別の要素なので、ここで打った
  * キーはリモートのページに届かない。
@@ -108,6 +112,7 @@ export function BrowserToolbar({
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== "Enter" && e.key !== "Escape") return;
+    if (e.nativeEvent.isComposing || e.keyCode === IME_KEYCODE) return;
     e.preventDefault();
     if (e.key === "Enter" && draft.trim()) {
       onSend({ t: "nav", type: "goto", url: draft });

@@ -1091,13 +1091,14 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     releaseHeld();
   };
 
-  const respondDialog = (accept: boolean, promptText?: string) => {
+  /** `id` は、利用者が見て応答したダイアログの番号。サーバーは、ほかの番号への応答を捨てる */
+  const respondDialog = (id: number, accept: boolean, promptText?: string) => {
     send(
       promptText === undefined
-        ? { t: "dialog", accept }
-        : { t: "dialog", accept, promptText }
+        ? { t: "dialog", id, accept }
+        : { t: "dialog", id, accept, promptText }
     );
-    dispatch({ type: "dialogAnswered" });
+    dispatch({ type: "dialogAnswered", id });
   };
 
   const chooseOption = (id: number, index: number) => {
@@ -1188,7 +1189,9 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
             origin={hostOf(ui.page?.url)}
             answered={ui.dialogAnswered}
             focusMode={overlayFocus.dialogFocusMode}
-            onRespond={respondDialog}
+            onRespond={(accept, promptText) =>
+              respondDialog(shownDialog.id, accept, promptText)
+            }
           />
         )}
         {status.kind === "connecting" && (

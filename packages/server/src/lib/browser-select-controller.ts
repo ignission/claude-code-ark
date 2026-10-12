@@ -20,6 +20,10 @@
  *   タブでは評価が返らない。次に読み込む文書には、新しい文書へのスクリプトで入る
  * - bindingはページのどのスクリプトからも呼べるので、知らせは信用しない。検査を通らない
  *   ものは捨てる。捨てたことの警告は、ページが送り続けても1秒に1回まで
+ * - 受け付ける知らせは、タブごとに `SELECT_NOTIFY_INTERVAL_MS` に1つまで。それより早く
+ *   届いたものは、形が正しくても捨てる (前に開いた選択は、開いたままにする)。知らせ1つが
+ *   全員への大きなメッセージになるので、ページが続けて呼べば、その数だけ送ることになる。
+ *   利用者が `<select>` を押す速さでは、この間隔に掛からない
  * - 映していないタブ (準備の途中) の知らせは捨てる。入力が届かない間に利用者が
  *   `<select>` を押すことは無い
  * - 開いている選択は、タブに1つだけ。新しい知らせが来たら、前のものを閉じたと知らせてから
@@ -47,6 +51,8 @@ import {
   selectChooseExpression,
 } from "./browser-select-shim.js";
 
+/** 知らせを受け付ける最短の間隔 (ミリ秒)。前に受け付けてからこれより早く届いた知らせは捨てる */
+export const SELECT_NOTIFY_INTERVAL_MS = 250;
 /** 捨てた知らせの警告を、これより短い間隔では出さない (ミリ秒) */
 export const SELECT_WARN_INTERVAL_MS = 1000;
 
@@ -82,6 +88,8 @@ function warn(what: string, error: unknown): void {
 export class BrowserSelectController<V> {
   /** 開いている選択。`pageId` はページの中のid、`message` は視聴者へ送ったもの */
   private open: { pageId: number; message: SelectMessage } | null = null;
+  /** 最後に知らせを受け付けた時刻 */
+  private lastNotifiedAt = Number.NEGATIVE_INFINITY;
   private lastWarnAt = Number.NEGATIVE_INFINITY;
   private disposed = false;
 
@@ -140,6 +148,9 @@ export class BrowserSelectController<V> {
     }
     const viewport = this.link.viewport();
     if (!viewport) return;
+    const now = Date.now();
+    if (now - this.lastNotifiedAt < SELECT_NOTIFY_INTERVAL_MS) return;
+    this.lastNotifiedAt = now;
     this.close();
     const message: SelectMessage = {
       t: "select",

@@ -156,7 +156,10 @@ export interface FrameSink<V> {
   canReceive(viewer: V): boolean;
   /** フレームを1つ送る。投げない (送れなかった視聴者は、受け取った側が外す) */
   deliver(viewer: V, frame: Buffer): void;
-  /** `Page.captureScreenshot` を呼ぶ。応答は `{ data: base64 }` */
+  /**
+   * `Page.captureScreenshot` を呼ぶ。応答は `{ data: base64 }`。`CAPTURE_TIMEOUT_MS` で
+   * 待つのをやめるので、呼ばれる側も、それより長くは応答を待たせたままにしない
+   */
   capture(params: object): Promise<unknown>;
 }
 

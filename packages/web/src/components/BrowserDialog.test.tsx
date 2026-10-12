@@ -50,7 +50,7 @@ function dialogOf(
   message = "よろしいですか?",
   defaultPrompt = ""
 ): BrowserDialogInfo {
-  return { kind, message, defaultPrompt };
+  return { id: 1, kind, message, defaultPrompt };
 }
 
 function buttons(): HTMLButtonElement[] {
@@ -390,6 +390,24 @@ describe("BrowserDialog", () => {
 
     expect(onRespond).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["Enter", { isComposing: true }],
+    ["Enter", { keyCode: 229 }],
+    ["Escape", { isComposing: true }],
+    ["Escape", { keyCode: 229 }],
+  ] as const)(
+    "変換の始まりを受け取っていなくても、変換中の%s (%o) では `prompt` に応答しない",
+    (key, init) => {
+      render(dialogOf("prompt", "名前は?", "太郎"));
+      const field = container.querySelector("input") as HTMLInputElement;
+
+      press(field, key, init);
+
+      expect(onRespond).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(field);
+    }
+  );
 
   it("`StrictMode` でも、フォーカスを取り、1回の操作で1回だけ応答する", () => {
     act(() =>

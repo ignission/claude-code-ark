@@ -6,15 +6,28 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ATTACH_ANSWER_TIMEOUT_MS,
+  BACKPRESSURE_BYTES,
   BrowserCdpBridge,
   type CdpLike,
   ENTER_STEP_TIMEOUT_MS,
+  OUTPUT_LIMIT_BYTES,
   POLL_INTERVAL_MS,
   type ViewerSocket,
 } from "./browser-cdp-bridge.js";
-import { SessionDetachedError } from "./browser-cdp-client.js";
+import {
+  CdpClient,
+  type CdpSocket,
+  SessionDetachedError,
+} from "./browser-cdp-client.js";
 import { buildSolidPng } from "./browser-frame-diff.testkit.js";
-import { COPY_EXPRESSION, COPY_TIMEOUT_MS } from "./browser-page-controller.js";
+import { CAPTURE_TIMEOUT_MS } from "./browser-frame-pipeline.js";
+import {
+  COPY_EXPRESSION,
+  COPY_TIMEOUT_MS,
+  HISTORY_TIMEOUT_MS,
+} from "./browser-page-controller.js";
+import { SELECT_NOTIFY_INTERVAL_MS } from "./browser-select-controller.js";
 import { SELECT_SHIM_SOURCE } from "./browser-select-shim.js";
 
 interface CdpCall {
@@ -76,6 +89,7 @@ function fakeCdp(options: { targets?: FakeTarget[] } = {}) {
     result: unknown;
   }> = [];
   const rejected: string[] = [];
+  const deadlines = new Map<string, number | undefined>();
   let shots = 0;
   let sessions = 0;
   let created = 0;
@@ -128,9 +142,15 @@ function fakeCdp(options: { targets?: FakeTarget[] } = {}) {
       return closed;
     },
     // 失敗させる呼び出しも記録する (何を送ろうとしたかを確かめるため)
-    send(method: string, params?: object, sessionId?: string) {
+    send(
+      method: string,
+      params?: object,
+      sessionId?: string,
+      options?: { timeoutMs?: number }
+    ) {
       if (closed || closing) return Promise.reject(new Error("closed"));
       calls.push({ method, params, sessionId });
+      deadlines.set(method, options?.timeoutMs);
       if (failing.has(method)) {
         return Promise.reject(new Error(`${method}: failed`));
       }
@@ -163,6 +183,12 @@ function fakeCdp(options: { targets?: FakeTarget[] } = {}) {
       rejected.push(sessionId);
       rejectHeld(sessionId);
     },
+
+    /**
+     * `method` を最後に送ったときに渡された、応答の期限 (ミリ秒)。渡されなかったか、
+     * 送っていなければ `undefined`。`forget` では消えない
+     */
+    deadlineOf: (method: string) => deadlines.get(method),
 
     /** `rejectSession` で名指しされたsessionを、呼ばれた順に返す */
     rejected: () => [...rejected],
@@ -2963,6 +2989,7 @@ describe("BrowserCdpBridge: ページの操作", () => {
     };
     const PROMPT_BODY = {
       t: "dialog",
+      id: 1,
       kind: "prompt",
       message: "名前は?",
       defaultPrompt: "ark",
@@ -3026,30 +3053,90 @@ describe("BrowserCdpBridge: ページの操作", () => {
     it("応答をPage.handleJavaScriptDialogにする", async () => {
       const { cdp, viewer } = await started();
       cdp.emit(OPENING, prompt);
-      viewer.receive({ t: "dialog", accept: true, promptText: "x" });
+      viewer.receive({ t: "dialog", id: 1, accept: true, promptText: "x" });
       expect(cdp.last(HANDLE)).toEqual({
         params: { accept: true, promptText: "x" },
         sessionId: "S1",
       });
-      viewer.receive({ t: "dialog", accept: false });
+      viewer.receive({ t: "dialog", id: 1, accept: false });
       expect(cdp.last(HANDLE)?.params).toEqual({ accept: false });
     });
 
     it("開いていないときの応答は無視する", async () => {
       const { cdp, viewer } = await started();
-      viewer.receive({ t: "dialog", accept: true });
+      viewer.receive({ t: "dialog", id: 1, accept: true });
       cdp.emit(OPENING, prompt);
       cdp.emit(CLOSED, { result: true, userInput: "" });
-      viewer.receive({ t: "dialog", accept: true });
+      viewer.receive({ t: "dialog", id: 1, accept: true });
       expect(cdp.count(HANDLE)).toBe(0);
+    });
+
+    it("前のダイアログへの遅れた応答を、次のダイアログへ渡さない", async () => {
+      const { cdp, viewers } = await started(2);
+      cdp.emit(OPENING, { type: "confirm", message: "消しますか?" });
+      viewers[0].receive({ t: "dialog", id: 1, accept: true });
+      cdp.emit(CLOSED, { result: true, userInput: "" });
+      cdp.emit(OPENING, { type: "confirm", message: "本当に消しますか?" });
+      // 2人目の応答は、1つ目のダイアログを見て押したもの
+      viewers[1].receive({ t: "dialog", id: 1, accept: true });
+      expect(cdp.count(HANDLE)).toBe(1);
+      expect(
+        textsOf(viewers[1], "dialog").map(m => (m as { id: number }).id)
+      ).toEqual([1, 2]);
+
+      viewers[1].receive({ t: "dialog", id: 2, accept: false });
+      expect(cdp.count(HANDLE)).toBe(2);
+      expect(cdp.last(HANDLE)?.params).toEqual({ accept: false });
+    });
+
+    it("番号の無い応答と、まだ振っていない番号の応答は捨てる", async () => {
+      const { cdp, viewer } = await started();
+      cdp.emit(OPENING, prompt);
+      viewer.receive({ t: "dialog", accept: true });
+      viewer.receive({ t: "dialog", id: 2, accept: true });
+      viewer.receive({ t: "dialog", id: 0, accept: true });
+      expect(cdp.count(HANDLE)).toBe(0);
+    });
+
+    it("入り直した視聴者へは、開いているダイアログを同じ番号で知らせる", async () => {
+      const { cdp, bridge, viewer } = await started();
+      cdp.emit(OPENING, prompt);
+      const late = fakeViewer();
+      bridge.attach(late);
+      await flush();
+      expect(textsOf(late, "dialog")).toEqual([PROMPT_BODY]);
+      expect(textsOf(viewer, "dialog")).toEqual([PROMPT_BODY]);
+    });
+
+    it("接続をつなぎ直しても、番号は重ならない", async () => {
+      const first = fakeCdp();
+      const second = fakeCdp();
+      const connect = vi
+        .fn()
+        .mockResolvedValueOnce(first)
+        .mockResolvedValueOnce(second);
+      const bridge = new BrowserCdpBridge(connect);
+      bridge.attach(fakeViewer());
+      await flush();
+      first.emit(OPENING, prompt);
+      first.disconnect();
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      second.emit(OPENING, prompt);
+      expect(textsOf(viewer, "dialog")).toEqual([{ ...PROMPT_BODY, id: 2 }]);
+      viewer.receive({ t: "dialog", id: 1, accept: true });
+      expect(second.count(HANDLE)).toBe(0);
+      viewer.receive({ t: "dialog", id: 2, accept: true });
+      expect(second.count(HANDLE)).toBe(1);
     });
 
     it("ほかの視聴者が先に答えていて応答がrejectされても、視聴者を切らない", async () => {
       const { cdp, viewers } = await started(2);
       cdp.emit(OPENING, prompt);
-      viewers[0].receive({ t: "dialog", accept: true });
+      viewers[0].receive({ t: "dialog", id: 1, accept: true });
       cdp.failOn(HANDLE);
-      viewers[1].receive({ t: "dialog", accept: false });
+      viewers[1].receive({ t: "dialog", id: 1, accept: false });
       await flush();
       expect(cdp.count(HANDLE)).toBe(2);
       expect(viewers[1].close).not.toHaveBeenCalled();
@@ -3066,6 +3153,7 @@ describe("BrowserCdpBridge: ページの操作", () => {
       expect(viewer.texts()).toEqual([
         {
           t: "dialog",
+          id: 1,
           kind: "alert",
           message: "m".repeat(10_000),
           defaultPrompt: "d".repeat(10_000),
@@ -3077,7 +3165,7 @@ describe("BrowserCdpBridge: ページの操作", () => {
       const { cdp, viewer } = await started();
       cdp.emit(OPENING, undefined);
       expect(viewer.texts()).toEqual([
-        { t: "dialog", kind: "alert", message: "", defaultPrompt: "" },
+        { t: "dialog", id: 1, kind: "alert", message: "", defaultPrompt: "" },
       ]);
     });
 
@@ -3091,7 +3179,7 @@ describe("BrowserCdpBridge: ページの操作", () => {
       const { cdp, viewer } = await started();
       cdp.emit(OPENING, prompt, "S-other");
       cdp.emitBrowser(OPENING, prompt);
-      viewer.receive({ t: "dialog", accept: true });
+      viewer.receive({ t: "dialog", id: 1, accept: true });
       expect(viewer.texts()).toEqual([]);
       expect(cdp.count(HANDLE)).toBe(0);
     });
@@ -3112,7 +3200,7 @@ describe("BrowserCdpBridge: ページの操作", () => {
       bridge.attach(viewer);
       await flush();
       expect(textsOf(viewer, "dialog")).toEqual([]);
-      viewer.receive({ t: "dialog", accept: true });
+      viewer.receive({ t: "dialog", id: 1, accept: true });
       expect(second.count(HANDLE)).toBe(0);
     });
   });
@@ -3661,7 +3749,7 @@ describe("BrowserCdpBridge: タブ", () => {
       viewer.receive({ t: "paste", text: "捨てる" });
       viewer.receive({ t: "nav", type: "reload" });
       viewer.receive({ t: "nav", type: "goto", url: "localhost:3000" });
-      viewer.receive({ t: "dialog", accept: true });
+      viewer.receive({ t: "dialog", id: 1, accept: true });
       viewer.receive({ t: "copy" });
       await flush();
       expect(cdp.methods()).toEqual([]);
@@ -3730,7 +3818,7 @@ describe("BrowserCdpBridge: タブ", () => {
       await flush();
       expect(viewer.shots()).toMatchObject([{ kind: 1, gen: 2 }]);
       // 新しいタブでは、ダイアログへの応答を送らない
-      viewer.receive({ t: "dialog", accept: true });
+      viewer.receive({ t: "dialog", id: 1, accept: true });
       expect(cdp.count("Page.handleJavaScriptDialog")).toBe(0);
     });
 
@@ -4303,6 +4391,11 @@ function selectBody(id: number) {
   };
 }
 
+/** 次の `<select>` の知らせが受け付けられるところまで、時刻だけを進める (タイマーは動かさない) */
+function nextSelectNotice(): void {
+  vi.setSystemTime(Date.now() + SELECT_NOTIFY_INTERVAL_MS);
+}
+
 describe("BrowserCdpBridge: <select>", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -4372,6 +4465,72 @@ describe("BrowserCdpBridge: <select>", () => {
       expect(viewer.texts()).toEqual([selectBody(1)]);
     }
     expect(cdp.methods()).toEqual([]);
+  });
+
+  it("送信が詰まっている視聴者へは、選択肢も、その選択が閉じたことも送らない", async () => {
+    const { cdp, viewers } = await started(2);
+    const [open, stuck] = viewers;
+    stuck.bufferedAmount = BACKPRESSURE_BYTES;
+    cdp.emit(BINDING_CALLED, selectCalled(7));
+    expect(open.texts()).toEqual([selectBody(1)]);
+    expect(stuck.texts()).toEqual([]);
+
+    // 空いても、知らせていない選択の閉じたことは送らない
+    stuck.bufferedAmount = 0;
+    open.receive({ t: "selectCancel", id: 1 });
+    expect(open.texts().at(-1)).toEqual({ t: "selectClosed", id: 1 });
+    expect(stuck.texts()).toEqual([]);
+
+    // 次の選択は届き、その閉じたことも届く
+    nextSelectNotice();
+    cdp.emit(BINDING_CALLED, selectCalled(8));
+    open.receive({ t: "selectCancel", id: 2 });
+    expect(stuck.texts()).toEqual([
+      selectBody(2),
+      { t: "selectClosed", id: 2 },
+    ]);
+    expect(stuck.close).not.toHaveBeenCalled();
+    expect(stuck.terminate).not.toHaveBeenCalled();
+  });
+
+  it("詰まっている視聴者が入ったときも、開いている選択は送らない", async () => {
+    const { cdp, bridge } = await started();
+    cdp.emit(BINDING_CALLED, selectCalled(7));
+    const late = fakeViewer();
+    late.bufferedAmount = BACKPRESSURE_BYTES;
+    bridge.attach(late);
+    await flush();
+    expect(textsOf(late, "select")).toEqual([]);
+    expect(textsOf(late, "tabs")).toHaveLength(1);
+  });
+
+  it("ページが大きな知らせを続けて呼んでも、詰まった視聴者には積もらず、ほかの視聴者へも間隔を空ける", async () => {
+    const { cdp, viewers } = await started(2);
+    const [open, stuck] = viewers;
+    stuck.bufferedAmount = BACKPRESSURE_BYTES;
+    const large = {
+      options: Array.from({ length: 1000 }, () => ({
+        label: "x".repeat(500),
+        disabled: false,
+        group: null,
+      })),
+      selectedIndex: 0,
+    };
+    for (let i = 0; i < 20; i++) {
+      cdp.emit(BINDING_CALLED, selectCalled(i, large));
+    }
+    expect(textsOf(open, "select")).toHaveLength(1);
+    for (let i = 0; i < 20; i++) {
+      nextSelectNotice();
+      cdp.emit(BINDING_CALLED, selectCalled(100 + i, large));
+    }
+    expect(textsOf(open, "select")).toHaveLength(21);
+    const queued = stuck.send.mock.calls.reduce(
+      (sum, [data]) => sum + Buffer.byteLength(data as string | Buffer),
+      0
+    );
+    expect(queued).toBe(0);
+    expect(stuck.close).not.toHaveBeenCalled();
   });
 
   it("別のsessionの知らせと、別の名前のbindingは無視する", async () => {
@@ -4451,6 +4610,7 @@ describe("BrowserCdpBridge: <select>", () => {
     await flush();
     cdp.stopFailing(EVALUATE);
     cdp.holdOn(EVALUATE);
+    nextSelectNotice();
     cdp.emit(BINDING_CALLED, selectCalled(8));
     viewer.receive({ t: "selectChoose", id: 2, index: 0 });
     await flush();
@@ -4469,6 +4629,7 @@ describe("BrowserCdpBridge: <select>", () => {
   ])("%s での選択は無視する", async (_name, choice) => {
     const { cdp, viewer } = await started();
     cdp.emit(BINDING_CALLED, selectCalled(7));
+    nextSelectNotice();
     cdp.emit(BINDING_CALLED, selectCalled(8));
     viewer.send.mockClear();
     viewer.receive({ t: "selectChoose", ...choice });
@@ -4479,6 +4640,7 @@ describe("BrowserCdpBridge: <select>", () => {
   it("開いている間の新しい知らせは、前のものを閉じてから置き換える", async () => {
     const { cdp, viewer } = await started();
     cdp.emit(BINDING_CALLED, selectCalled(7));
+    nextSelectNotice();
     cdp.emit(BINDING_CALLED, selectCalled(8));
     expect(viewer.texts()).toEqual([
       selectBody(1),
@@ -5338,6 +5500,206 @@ describe("BrowserCdpBridge: 応答が返らないタブ", () => {
         },
       ]);
     });
+  });
+});
+
+describe("BrowserCdpBridge: 視聴者へのJSONの上限", () => {
+  const OPENING = "Page.javascriptDialogOpening";
+  const OVERFLOW_BODY = {
+    t: "error",
+    message: "回線が詰まったため切断しました",
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    withoutPoll();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("送信バッファが上限を超えた視聴者は、状態のJSONを送らずに、errorで閉じる", async () => {
+    const { cdp, bridge, viewers } = await started(2);
+    const [open, stuck] = viewers;
+    stuck.bufferedAmount = OUTPUT_LIMIT_BYTES + 1;
+    cdp.emit(OPENING, { type: "alert", message: "m" });
+
+    expect(textsOf(open, "dialog")).toHaveLength(1);
+    expect(stuck.texts()).toEqual([OVERFLOW_BODY]);
+    expect(stuck.close).toHaveBeenCalledWith(1011, OVERFLOW_BODY.message);
+    expect(bridge.viewerCount).toBe(1);
+    expect(open.close).not.toHaveBeenCalled();
+
+    // 外した視聴者へは、もう何も送らない
+    stuck.send.mockClear();
+    cdp.emit("Page.javascriptDialogClosed", { result: true, userInput: "" });
+    expect(stuck.send).not.toHaveBeenCalled();
+    expect(open.texts().at(-1)).toEqual({ t: "dialogClosed" });
+  });
+
+  it("上限ちょうどまでは、詰まっていても状態のJSONを送る", async () => {
+    const { cdp, bridge, viewer } = await started();
+    viewer.bufferedAmount = OUTPUT_LIMIT_BYTES;
+    cdp.emit(OPENING, { type: "alert", message: "m" });
+    expect(textsOf(viewer, "dialog")).toHaveLength(1);
+    expect(viewer.close).not.toHaveBeenCalled();
+    expect(bridge.viewerCount).toBe(1);
+  });
+
+  it("読まない視聴者へタブの一覧を送り続けても、上限で閉じて、そこで止まる", async () => {
+    const { cdp, bridge, viewers } = await startedWithTabs(["T1", "T2"], 2);
+    const [open, stuck] = viewers;
+    // 送ったぶんだけ、送信バッファに積もる視聴者
+    stuck.send.mockImplementation((data: Buffer | string) => {
+      stuck.bufferedAmount += Buffer.byteLength(data);
+    });
+    stuck.bufferedAmount = OUTPUT_LIMIT_BYTES - 50_000;
+    let sent = 0;
+    for (; sent < 100 && bridge.viewerCount === 2; sent++) {
+      const i = sent;
+      cdp.emitBrowser("Target.targetInfoChanged", {
+        targetInfo: target("T2", {
+          title: `${i}`.padEnd(2000, "t"),
+          url: `http://localhost/${i}`.padEnd(10_000, "u"),
+        }),
+      });
+      // 一覧の知らせは100msにまとめられる
+      await vi.advanceTimersByTimeAsync(100);
+    }
+    expect(bridge.viewerCount).toBe(1);
+    // 1通は、切り詰めた題とURLのぶん (10KBほど) しか積もらない
+    expect(sent).toBeGreaterThan(4);
+    expect(stuck.close).toHaveBeenCalledWith(1011, OVERFLOW_BODY.message);
+    // 上限と、最後の1通ぶん (題とURLは切り詰めてある) より先へは積もらない
+    expect(stuck.bufferedAmount).toBeLessThan(OUTPUT_LIMIT_BYTES + 20_000);
+    expect(open.close).not.toHaveBeenCalled();
+  });
+
+  it("タブを替えたときの寸法の知らせも、上限を超えた視聴者へは送らずに閉じる", async () => {
+    const { bridge, viewers } = await startedWithTabs(["T1", "T2"], 2);
+    const [open, stuck] = viewers;
+    stuck.bufferedAmount = OUTPUT_LIMIT_BYTES + 1;
+    open.receive({ t: "tab", type: "activate", id: "T2" });
+    await flush();
+    expect(stuck.texts()).toEqual([OVERFLOW_BODY]);
+    expect(bridge.viewerCount).toBe(1);
+    expect(textsOf(open, "viewport")).toHaveLength(1);
+  });
+});
+
+describe("BrowserCdpBridge: CDPの応答の期限", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    withoutPoll();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("タブの準備のコマンドに、待つ時間と同じ期限を付ける", async () => {
+    const cdp = fakeCdp();
+    const bridge = new BrowserCdpBridge(async () => cdp);
+    bridge.attach(fakeViewer());
+    await flush();
+    for (const method of [
+      "Target.getTargets",
+      ACTIVATE,
+      "Page.enable",
+      "Emulation.setFocusEmulationEnabled",
+      "Emulation.setDeviceMetricsOverride",
+      "Emulation.setTouchEmulationEnabled",
+      "Runtime.enable",
+      "Runtime.addBinding",
+      "Page.addScriptToEvaluateOnNewDocument",
+    ]) {
+      expect([method, cdp.deadlineOf(method)]).toEqual([
+        method,
+        ENTER_STEP_TIMEOUT_MS,
+      ]);
+    }
+  });
+
+  it("attachの応答は、待つのをやめたあとに付いたsessionを離せるよう、長く待つ", async () => {
+    const cdp = fakeCdp();
+    const bridge = new BrowserCdpBridge(async () => cdp);
+    bridge.attach(fakeViewer());
+    await flush();
+    expect(cdp.deadlineOf(ATTACH)).toBe(ATTACH_ANSWER_TIMEOUT_MS);
+    expect(ATTACH_ANSWER_TIMEOUT_MS).toBeGreaterThan(ENTER_STEP_TIMEOUT_MS);
+  });
+
+  it("取り直し、履歴の読み直し、タブの操作にも期限を付ける", async () => {
+    const { cdp, viewer } = await startedWithTabs();
+    expect(cdp.deadlineOf(CAPTURE)).toBe(CAPTURE_TIMEOUT_MS);
+    expect(cdp.deadlineOf(HISTORY)).toBe(HISTORY_TIMEOUT_MS);
+    viewer.receive({ t: "tab", type: "new" });
+    await flush();
+    expect(cdp.deadlineOf(CREATE_TARGET)).toBe(ENTER_STEP_TIMEOUT_MS);
+  });
+
+  /**
+   * 取り直し (`Page.captureScreenshot`) にだけ応答しないChromium。ほかのコマンドには
+   * すぐ応答する。本物のCdpClientをつないで、待ちの数を見る
+   */
+  function chromiumWithoutCaptures() {
+    const emitter = new EventEmitter();
+    let captures = 0;
+    const receive = (message: object) =>
+      emitter.emit("message", JSON.stringify(message));
+    const resultOf = (method: string): object => {
+      if (method === "Target.getTargets") {
+        return { targetInfos: [{ targetId: "T1", type: "page" }] };
+      }
+      if (method === ATTACH) return { sessionId: "S1" };
+      return {};
+    };
+    const socket = {
+      send(data: string) {
+        const { id, method } = JSON.parse(data) as {
+          id: number;
+          method: string;
+        };
+        if (method === CAPTURE) {
+          captures++;
+          return;
+        }
+        queueMicrotask(() => receive({ id, result: resultOf(method) }));
+      },
+      close: () => emitter.emit("close"),
+      on: (event: string, listener: (...args: never[]) => void) =>
+        emitter.on(event, listener),
+    } as unknown as CdpSocket;
+    return { socket, receive, captures: () => captures };
+  }
+
+  it("取り直しが返らないままやり直しを重ねても、CDPの接続に待ちが積もらない", async () => {
+    const chromium = chromiumWithoutCaptures();
+    const client = new CdpClient(chromium.socket);
+    const bridge = new BrowserCdpBridge(async () => client);
+    const viewer = fakeViewer();
+    bridge.attach(viewer);
+    await flush();
+    chromium.receive({
+      method: "Page.screencastFrame",
+      params: monitorFrame(1),
+      sessionId: "S1",
+    });
+    await vi.advanceTimersByTimeAsync(150_000);
+
+    expect(chromium.captures()).toBeGreaterThanOrEqual(20);
+    // 残るのは、いま応答を待っている取り直しの1つまで
+    expect(client.pendingCount).toBeLessThanOrEqual(1);
+    expect(errorCount(viewer)).toBe(0);
+
+    bridge.reset();
+    expect(client.pendingCount).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

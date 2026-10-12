@@ -37,6 +37,7 @@ const TABS: Extract<BrowserServerMessage, { t: "tabs" }> = {
 
 const DIALOG: Extract<BrowserServerMessage, { t: "dialog" }> = {
   t: "dialog",
+  id: 1,
   kind: "prompt",
   message: "名前は?",
   defaultPrompt: "太郎",
@@ -93,6 +94,7 @@ describe("browserSessionReducer", () => {
   it("`dialog` で開き、`dialogClosed` で閉じる", () => {
     const open = receive(initialBrowserSessionState, DIALOG);
     expect(open.dialog).toEqual({
+      id: 1,
       kind: "prompt",
       message: "名前は?",
       defaultPrompt: "太郎",
@@ -100,15 +102,15 @@ describe("browserSessionReducer", () => {
     expect(receive(open, { t: "dialogClosed" }).dialog).toBeNull();
   });
 
-  it("同じ `dialog` がもう一度届いても、同じダイアログとして扱う", () => {
+  it("同じ番号の `dialog` がもう一度届いても、同じダイアログとして扱う", () => {
     const open = receive(initialBrowserSessionState, DIALOG);
     const again = receive(open, { ...DIALOG });
     expect(again).toBe(open);
     expect(again.dialog).toBe(open.dialog);
-    // 中身が違えば別のダイアログ
-    expect(receive(open, { ...DIALOG, message: "年齢は?" }).dialog).not.toBe(
-      open.dialog
-    );
+    // 番号が違えば、中身が同じでも別のダイアログ
+    const next = receive(open, { ...DIALOG, id: 2 });
+    expect(next.dialog).not.toBe(open.dialog);
+    expect(next.dialog).toEqual({ ...open.dialog, id: 2 });
   });
 
   it("`dialog` が届いたら、開いていた選択リストを閉じる", () => {
@@ -126,15 +128,20 @@ describe("browserSessionReducer", () => {
   it("応答したダイアログは、別のダイアログに替わるか、閉じるまで、応答済みとして覚える", () => {
     const open = receive(initialBrowserSessionState, DIALOG);
     expect(open.dialogAnswered).toBe(false);
-    const answered = browserSessionReducer(open, { type: "dialogAnswered" });
+    const answered = browserSessionReducer(open, {
+      type: "dialogAnswered",
+      id: 1,
+    });
     expect(answered.dialogAnswered).toBe(true);
     expect(answered.dialog).toBe(open.dialog);
     // 同じダイアログがもう一度届いても、応答済みのまま
     expect(receive(answered, { ...DIALOG }).dialogAnswered).toBe(true);
 
-    expect(
-      receive(answered, { ...DIALOG, message: "年齢は?" }).dialogAnswered
-    ).toBe(false);
+    expect(receive(answered, { ...DIALOG, id: 2 }).dialogAnswered).toBe(false);
+    // 別の番号への応答は、いまのダイアログを応答済みにしない
+    expect(browserSessionReducer(open, { type: "dialogAnswered", id: 2 })).toBe(
+      open
+    );
     expect(receive(answered, { t: "dialogClosed" }).dialogAnswered).toBe(false);
     // 開いていなければ、何も変えない
     expect(
@@ -242,7 +249,11 @@ describe("browserSessionReducer", () => {
       { t: "page", url: 1 },
       { t: "tabs", tabs: "x", activeId: "A" },
       { t: "tabs", tabs: [{ id: 1 }], activeId: "A" },
-      { t: "dialog", kind: "other", message: "", defaultPrompt: "" },
+      { t: "dialog", id: 1, kind: "other", message: "", defaultPrompt: "" },
+      { t: "dialog", kind: "alert", message: "", defaultPrompt: "" },
+      { t: "dialog", id: -1, kind: "alert", message: "", defaultPrompt: "" },
+      { t: "dialog", id: 1.5, kind: "alert", message: "", defaultPrompt: "" },
+      { t: "dialog", id: "1", kind: "alert", message: "", defaultPrompt: "" },
       { t: "select", id: 1, options: null, selectedIndex: 0, rect: {} },
       { t: "notice", message: 5 },
     ] as unknown as BrowserServerMessage[];

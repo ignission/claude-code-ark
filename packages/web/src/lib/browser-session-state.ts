@@ -6,9 +6,14 @@
  * このreducerが扱わない種類 (`viewport` / `clipboard` / `error`)、未知の種類、形の崩れた
  * メッセージは無視する。
  *
- * 中身の同じ `page` と `dialog` が続けて届いたら、前の状態をそのまま返す。サーバーは、
- * 参加の直後に `page` を2回、`dialog` を2回送ることがあり、作り直すと、利用者が入力中の
- * `prompt` の欄が初期値に戻る。
+ * 中身の同じ `page` が続けて届いたら、前の状態をそのまま返す。
+ *
+ * ダイアログは、サーバーが振った番号 (`id`) で見分ける。同じ番号の `dialog` がもう一度
+ * 届いたら、同じダイアログなので、前の状態をそのまま返す (サーバーは、参加の直後に
+ * `dialog` を2回送ることがあり、作り直すと、利用者が入力中の `prompt` の欄が初期値に戻る)。
+ * 番号が違えば、中身が同じでも別のダイアログで、入力と応答済みを初期値に戻す。応答には
+ * 表示しているダイアログの番号を付けるので、その応答が、まだ表示していない次の
+ * ダイアログに当たることは無い。番号の読めない `dialog` は無視する。
  *
  * 選択リストは、サーバーが `selectClosed` で閉じるほか、遷移したとき (`page` のURLが
  * 変わった)、映すタブが替わったとき (`tabs` の `activeId` が変わった)、ダイアログが
@@ -17,8 +22,8 @@
  *
  * 利用者が応答したダイアログは、応答済みとして覚える (`dialogAnswered`)。別のダイアログに
  * 替わるか、閉じるまで、もう一度は応答させない。押したままのEnterや二度押しが、まだ
- * 表示していない次のダイアログへの応答になるのを防ぐ。サーバーは、ダイアログの間に必ず
- * `dialogClosed` を送るので、中身の同じダイアログが続いても、応答済みは引き継がれない。
+ * 表示していない次のダイアログへの応答になるのを防ぐ。応答済みにするのは、応答した
+ * ダイアログの番号が、いま開いているものと同じときだけ。
  *
  * 知らせには通し番号を付ける。同じ文言が続けて届いても別の知らせとして扱い、消すまでの
  * 時間を計り直せる。
@@ -66,8 +71,8 @@ export type BrowserSessionAction =
   | { type: "notice"; message: string }
   /** 知らせを消す時刻が来た */
   | { type: "noticeExpired"; seq: number }
-  /** 利用者がいまのダイアログに応答した */
-  | { type: "dialogAnswered" }
+  /** 利用者が、番号 `id` のダイアログに応答した */
+  | { type: "dialogAnswered"; id: number }
   /** 利用者が選択リストを閉じた (選んだ、取り消した) */
   | { type: "selectDismissed"; id: number };
 
@@ -142,10 +147,16 @@ function readTabs(
 function readDialog(
   msg: Extract<BrowserServerMessage, { t: "dialog" }>
 ): BrowserDialogInfo | null {
-  if (!DIALOG_KINDS.has(msg.kind) || typeof msg.message !== "string") {
+  if (
+    !Number.isSafeInteger(msg.id) ||
+    msg.id < 0 ||
+    !DIALOG_KINDS.has(msg.kind) ||
+    typeof msg.message !== "string"
+  ) {
     return null;
   }
   return {
+    id: msg.id,
     kind: msg.kind,
     message: msg.message,
     defaultPrompt:
@@ -215,13 +226,7 @@ function receive(
     case "dialog": {
       const dialog = readDialog(msg);
       if (!dialog) return state;
-      const current = state.dialog;
-      if (
-        current &&
-        current.kind === dialog.kind &&
-        current.message === dialog.message &&
-        current.defaultPrompt === dialog.defaultPrompt
-      ) {
+      if (state.dialog && state.dialog.id === dialog.id) {
         return state.select ? { ...state, select: null } : state;
       }
       return { ...state, dialog, dialogAnswered: false, select: null };
@@ -263,7 +268,9 @@ export function browserSessionReducer(
         ? { ...state, notice: null }
         : state;
     case "dialogAnswered":
-      return state.dialog && !state.dialogAnswered
+      return state.dialog &&
+        state.dialog.id === action.id &&
+        !state.dialogAnswered
         ? { ...state, dialogAnswered: true }
         : state;
     case "selectDismissed":

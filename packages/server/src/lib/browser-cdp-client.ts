@@ -15,6 +15,14 @@
  * - 使う側が自分でsessionを離すときは、`rejectSession` で同じことをさせる
  * - 切り離されたsessionへ新しく送ったコマンドは、Chromiumがすぐ断る
  *   (`Session with given id not found.`)。ここでは何もしない
+ * - 接続もsessionも生きたまま、応答だけが返らないコマンドがある (ダイアログが開いている
+ *   間の取り直し、固まったレンダラー)。待ちは、応答が返るか、sessionが切り離されるか、
+ *   接続が切れるまで残るので、使う側が自分の時間切れで待つのをやめて送り直すたびに、
+ *   待ちが1つずつ増える。そこで、送るときに応答の期限 (`timeoutMs`) を渡せるようにする。
+ *   期限が来たら、待ちを消して、`isCommandTimeout` で見分けられる失敗にする。期限の
+ *   あとに届いた応答は、待ちがもう無いので捨てる
+ * - 期限のタイマーは、待ちと一緒に消す (応答が返った、sessionを失敗にした、接続が切れた、
+ *   送信が投げた)。期限を渡さないコマンドには、タイマーを持たない
  */
 
 import WebSocket from "ws";
@@ -33,6 +41,13 @@ type CdpListener = (params: any, sessionId?: string) => void;
 
 const CLOSED_MESSAGE = "CDPの接続が切れました";
 const DETACHED_MESSAGE = "CDPのsessionが切り離されました";
+const TIMEOUT_MESSAGE = "CDPのコマンドが時間切れになりました";
+
+/** コマンドを送るときの指定 */
+export interface CdpSendOptions {
+  /** 応答を待つ時間の上限 (ミリ秒)。渡さなければ、いつまでも待つ */
+  timeoutMs?: number;
+}
 
 /** sessionが切り離されたために、応答を待つのをやめたコマンドの失敗 */
 export class SessionDetachedError extends Error {
@@ -47,6 +62,19 @@ export function isSessionDetached(error: unknown): boolean {
   return error instanceof SessionDetachedError;
 }
 
+/** 期限までに応答が返らなかったコマンドの失敗 */
+export class CommandTimeoutError extends Error {
+  constructor(method: string) {
+    super(`${method}: ${TIMEOUT_MESSAGE}`);
+    this.name = "CommandTimeoutError";
+  }
+}
+
+/** `error` が、期限までに応答が返らなかったための失敗か */
+export function isCommandTimeout(error: unknown): boolean {
+  return error instanceof CommandTimeoutError;
+}
+
 export class CdpClient {
   private nextId = 1;
   private readonly pending = new Map<
@@ -57,6 +85,8 @@ export class CdpClient {
       sessionId: string | undefined;
       resolve: (v: unknown) => void;
       reject: (e: Error) => void;
+      /** 応答の期限のタイマー。期限が無ければ `null` */
+      timer: NodeJS.Timeout | null;
     }
   >();
   private readonly listeners = new Map<string, CdpListener[]>();
@@ -74,28 +104,53 @@ export class CdpClient {
     return this.isClosed;
   }
 
+  /** 応答を待っているコマンドの数 */
+  get pendingCount(): number {
+    return this.pending.size;
+  }
+
   send<T = unknown>(
     method: string,
     params?: object,
-    sessionId?: string
+    sessionId?: string,
+    options?: CdpSendOptions
   ): Promise<T> {
     if (this.isClosed) return Promise.reject(new Error(CLOSED_MESSAGE));
     const id = this.nextId++;
+    const timeoutMs = options?.timeoutMs;
     return new Promise<T>((resolve, reject) => {
+      const timer =
+        timeoutMs === undefined
+          ? null
+          : setTimeout(() => {
+              // 待ちを消す。このあとに届いた応答は、待ちが無いので捨てられる
+              if (!this.pending.delete(id)) return;
+              reject(new CommandTimeoutError(method));
+            }, timeoutMs);
       this.pending.set(id, {
         method,
         sessionId,
         resolve: resolve as (v: unknown) => void,
         reject,
+        timer,
       });
       try {
         this.socket.send(JSON.stringify({ id, method, params, sessionId }));
       } catch (e) {
         // CLOSING/CONNECTING のwsは同期的に投げる。待ちを残さない
-        this.pending.delete(id);
+        this.take(id);
         reject(e instanceof Error ? e : new Error(String(e)));
       }
     });
+  }
+
+  /** 待ちを1つ取り出し、期限のタイマーを消す。無ければ `undefined` */
+  private take(id: number) {
+    const entry = this.pending.get(id);
+    if (!entry) return undefined;
+    this.pending.delete(id);
+    if (entry.timer) clearTimeout(entry.timer);
+    return entry;
   }
 
   on(method: string, listener: CdpListener): void {
@@ -116,7 +171,7 @@ export class CdpClient {
   rejectSession(sessionId: string): void {
     for (const [id, entry] of this.pending) {
       if (entry.sessionId !== sessionId) continue;
-      this.pending.delete(id);
+      this.take(id);
       entry.reject(new SessionDetachedError());
     }
   }
@@ -139,9 +194,8 @@ export class CdpClient {
       return;
     }
     if (typeof msg.id === "number") {
-      const entry = this.pending.get(msg.id);
+      const entry = this.take(msg.id);
       if (!entry) return;
-      this.pending.delete(msg.id);
       if (msg.error) {
         entry.reject(
           new Error(`${entry.method}: ${msg.error.message ?? "unknown error"}`)
@@ -174,10 +228,9 @@ export class CdpClient {
   private handleClose(): void {
     if (this.isClosed) return;
     this.isClosed = true;
-    for (const entry of this.pending.values()) {
-      entry.reject(new Error(CLOSED_MESSAGE));
+    for (const id of [...this.pending.keys()]) {
+      this.take(id)?.reject(new Error(CLOSED_MESSAGE));
     }
-    this.pending.clear();
     for (const listener of this.closeListeners) {
       try {
         listener();

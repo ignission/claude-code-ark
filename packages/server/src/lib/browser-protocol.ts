@@ -7,6 +7,9 @@
  *   入力は `toCdpCommand` が決めたメソッドにだけ変換する
  * - `parseClientMessage` は知っている列だけを写す。余分な列がCDPまで届くことはない
  * - 文字列と配列には上限を置く。上限を超えたメッセージは、切り詰めずに捨てる
+ * - ダイアログへの応答には、どのダイアログへの応答かの番号が要る (0以上の整数)。
+ *   番号の無い応答は捨てる。番号がいま開いているダイアログのものかは、
+ *   browser-page-controller.ts が確かめる
  * - 入力でないメッセージ (寸法、送り直し、ページとタブの操作、ダイアログ、コピー、
  *   `<select>`) は、ここではCDPへ変換しない。ブリッジ (browser-cdp-bridge.ts) と、
  *   その協力モジュールが、それぞれの決まりで扱う
@@ -222,6 +225,7 @@ export function parseClientMessage(raw: string): BrowserClientMessage | null {
       return null;
     case "dialog":
       if (
+        !isIndex(m.id) ||
         typeof m.accept !== "boolean" ||
         (m.promptText !== undefined && !isText(m.promptText, MAX_PROMPT_LENGTH))
       ) {
@@ -229,6 +233,7 @@ export function parseClientMessage(raw: string): BrowserClientMessage | null {
       }
       return {
         t: "dialog",
+        id: m.id,
         accept: m.accept,
         ...(m.promptText === undefined ? {} : { promptText: m.promptText }),
       };

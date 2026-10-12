@@ -32,6 +32,13 @@ export const DIALOG_KEY_GUARD_MS = 300;
 const BEFOREUNLOAD_TITLE = "このページを離れますか?";
 const BEFOREUNLOAD_MESSAGE = "行った変更が保存されない可能性があります。";
 const ENABLED_CONTROLS = "input:not(:disabled), button:not(:disabled)";
+/** IMEが受け取ったキーの `keyCode` */
+const IME_KEYCODE = 229;
+
+/** 変換中のキーか。変換の始まりを受け取っていなくても、キーそのものから見分ける */
+function isImeKey(e: React.KeyboardEvent): boolean {
+  return e.nativeEvent.isComposing || e.keyCode === IME_KEYCODE;
+}
 
 /**
  * リモートのページが出したJavaScriptのダイアログ。canvasを置く領域の上に重ねる。
@@ -59,10 +66,15 @@ const ENABLED_CONTROLS = "input:not(:disabled), button:not(:disabled)";
  * 応答ではないので止めない。
  *
  * 入力中の文字列は、`dialog` が同じオブジェクトである間は保つ。別のオブジェクトに
- * 替わったら、新しいダイアログとして初期値に戻す。初期値は、サーバーが受け取る長さに
+ * 替わったら、新しいダイアログとして初期値に戻す。同じダイアログかどうかは、親が
+ * サーバーの振った番号で決め、同じ番号の間は同じオブジェクトを渡す。初期値は、サーバーが受け取る長さに
  * 切り詰める。
  *
  * Tabのフォーカスは中を回る。Escapeは取り消しで、取り消しの無い `alert` では閉じる。
+ *
+ * 変換中のEnterとEscape (`isComposing` か `keyCode === 229`) は、応答にも取り消しにも
+ * しない。変換の確定と取り消しのキーで、IMEに任せる。入力欄の部品 (`ui/input`) の
+ * 見分けには頼らず、ここのハンドラーで見る。
  */
 export function BrowserDialog({
   dialog,
@@ -124,7 +136,7 @@ export function BrowserDialog({
   const isGuarded = (e: React.KeyboardEvent<HTMLDivElement>): boolean => {
     if (e.key !== "Enter" && e.key !== " " && e.key !== "Escape") return false;
     // 変換中のキーは、IMEに任せる
-    if (e.nativeEvent.isComposing) return false;
+    if (isImeKey(e)) return false;
     if (e.key === " " && e.target instanceof HTMLInputElement) return false;
     return (
       e.repeat || performance.now() - shownAtRef.current < DIALOG_KEY_GUARD_MS
@@ -146,6 +158,7 @@ export function BrowserDialog({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (isImeKey(e)) return;
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
@@ -218,7 +231,7 @@ export function BrowserDialog({
             value={value}
             onChange={e => setValue(e.target.value)}
             onKeyDown={e => {
-              if (e.key !== "Enter") return;
+              if (e.key !== "Enter" || isImeKey(e)) return;
               e.preventDefault();
               respond(true);
             }}

@@ -28,6 +28,12 @@
  *   映すタブが無いまま、入力を捨て続け、視聴者の画面が止まる。時間切れは、ほかの失敗と
  *   同じにそのタブの準備の失敗にする (タブの切り替えが、次の候補へ進む)。ダイアログが
  *   開いたままのタブは、ここで時間切れになり、映せない
+ * - 上限つきで待つコマンド (タブの準備、ブラウザへのコマンド、取り直し、定期の読み直し) は、
+ *   CDPの接続にも応答の期限を渡して送る (browser-cdp-client.ts の `timeoutMs`)。このモジュールが
+ *   待つのをやめても、接続の側の待ちは応答が返るまで残り、返らないコマンドをやり直すたびに
+ *   増えるので、期限で消させる。期限は、このモジュールが待つ時間と同じにする。
+ *   `Target.attachToTarget` だけは長くする (`ATTACH_ANSWER_TIMEOUT_MS`)。待つのをやめたあとに
+ *   付いたsessionを離すには、遅れた応答からsessionのidを読む必要がある
  * - タブから離れたら、準備の途中のコマンドを待つのをその場でやめ (`cancelStep`)、離れる
  *   sessionで応答を待っているコマンドをCDPの接続に片づけさせる (`rejectSession`)。
  *   応答は、もう返らないか、返っても使わない。sessionが切り離されたための失敗は、記録しない
@@ -63,8 +69,8 @@
  *   呼び (できなくても、タブは映す)、タブのsessionの `Runtime.bindingCalled` と遷移、
  *   ダイアログが開いたこと、視聴者のメッセージを渡すだけにする。ページのUIと同じく、タブへattachするたびに1つ作り、
  *   離れるときに捨てる。離れるときに開いていた選択は、閉じたと全員へ知らせる
- *   (視聴者をこのあと閉じるときも)。視聴者へ渡す選択の番号は、このモジュールが振る
- *   (タブを替えても重ならないように)
+ *   (視聴者をこのあと閉じるときも)。視聴者へ渡す選択の番号と、開いたダイアログの番号は、
+ *   このモジュールが振る (タブや接続を替えても重ならないように)
  * - タッチは、マウスやキーと同じ入力として扱う (映すタブが無い間は捨てる)。ビューポートが
  *   `mobile` のときは、タッチのエミュレーションを有効にする。無いと、ページがタッチの端末
  *   として振る舞わない。タブの準備では、有効か無効かを必ず送る (`mobile` のときに準備した
@@ -94,6 +100,17 @@
  *   視聴者には、寸法、ページの状態、開いているダイアログ、タブの一覧、開いている
  *   `<select>` の順に知らせる。
  *   映すタブが無い間に参加した視聴者には、次のタブの準備が終わったときに、全員と一緒に知らせる
+ * - 視聴者へ送るJSONが、読まない視聴者の送信バッファに積もらないようにする。JSONを2つに分ける。
+ *   大きくなるもの (`select`、`clipboard`) は、送信バッファが `BACKPRESSURE_BYTES` 以上の
+ *   視聴者へは送らずに捨てる (フレームと同じ)。`select` を捨てた視聴者へは、その選択が
+ *   閉じたことも知らせない (その視聴者は、選択リストを見ないだけになる)。状態を伝える小さな
+ *   もの (`viewport`、`page`、`tabs`、`dialog`、`dialogClosed`、`selectClosed`、`notice`) は、
+ *   抜けると視聴者の表示が食い違うので、詰まっていても送る。ただし、送信バッファが
+ *   `OUTPUT_LIMIT_BYTES` を超えた視聴者は、errorを送って閉じる。そこまで遅れた視聴者は、
+ *   つなぎ直して、いまの状態を受け取り直すほうが早い
+ * - 状態のJSONの大きさには上限がある。`tabs` は、覚えるタブが50個まで (browser-tabs.ts の
+ *   `MAX_TRACKED_TABS`) で、題とURLを切り詰めてあるので、1通が500KBに届かない。`page` と
+ *   `dialog` も、文字列を切り詰めてある
  */
 
 import type {
@@ -104,6 +121,7 @@ import type {
 import { type CdpClient, isSessionDetached } from "./browser-cdp-client.js";
 import {
   BrowserFramePipeline,
+  CAPTURE_TIMEOUT_MS,
   monitorParams,
   readFrameMetadata,
 } from "./browser-frame-pipeline.js";
@@ -160,8 +178,18 @@ interface Viewport {
   mobile: boolean;
 }
 
-/** 視聴者の送信バッファがこれ以上なら、その視聴者へはフレームを送らない (バイト) */
-const BACKPRESSURE_BYTES = 1_000_000;
+/**
+ * 視聴者の送信バッファがこれ以上なら、その視聴者へは、フレームと大きくなるJSON
+ * (`BULK_MESSAGES`) を送らない (バイト)
+ */
+export const BACKPRESSURE_BYTES = 1_000_000;
+/** 視聴者の送信バッファがこれを超えたら、その視聴者を閉じる (バイト) */
+export const OUTPUT_LIMIT_BYTES = 8_000_000;
+/** 大きくなるJSON。送信が詰まっている視聴者へは、送らずに捨てる */
+const BULK_MESSAGES: ReadonlySet<BrowserServerMessage["t"]> = new Set([
+  "select",
+  "clipboard",
+]);
 /** ペインのドラッグ中に寸法を変え続けないための待ち (ミリ秒) */
 const RESIZE_DEBOUNCE_MS = 150;
 /**
@@ -169,6 +197,13 @@ const RESIZE_DEBOUNCE_MS = 150;
  * 定期の読み直しで使う
  */
 export const ENTER_STEP_TIMEOUT_MS = 3000;
+/**
+ * `Target.attachToTarget` の応答を、CDPの接続が待つ時間の上限 (ミリ秒)。タブの準備が待つのは
+ * `ENTER_STEP_TIMEOUT_MS` までで、そのあとこの時間までに付いたsessionは、応答を読んで離す
+ */
+export const ATTACH_ANSWER_TIMEOUT_MS = 30_000;
+/** 上限つきで待つコマンドに付ける、CDPの接続の側の応答の期限 */
+const STEP_DEADLINE = { timeoutMs: ENTER_STEP_TIMEOUT_MS };
 /** 定期の読み直しの間隔 (ミリ秒) */
 export const POLL_INTERVAL_MS = 1000;
 /** 定期の読み直しの失敗を記録する間隔の下限 (ミリ秒) */
@@ -188,6 +223,7 @@ const MAX_TOUCH_POINTS = 5;
 const DISCONNECTED_MESSAGE = "ブラウザとの接続が切れました";
 const CONNECT_FAILED_MESSAGE = "ブラウザへ接続できません";
 const LEFT_MESSAGE = "準備の途中でタブから離れました";
+const OVERFLOW_MESSAGE = "回線が詰まったため切断しました";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -263,6 +299,10 @@ export class BrowserCdpBridge {
   private touchEmulated = false;
   /** 視聴者へ渡す `<select>` の番号。接続やタブを替えても戻さない */
   private selectIds = 0;
+  /** 開いたダイアログの番号。接続やタブを替えても戻さない */
+  private dialogIds = 0;
+  /** 送信が詰まっていて `select` を送らなかった視聴者と、その選択の番号 */
+  private readonly skippedSelect = new WeakMap<ViewerSocket, number>();
   /** 視聴者ごとの、最後に知らせたビューポートの世代。同じ世代を二度送らないために持つ */
   private readonly notifiedGen = new Map<ViewerSocket, number>();
   /** 参加の手続きが済んだ視聴者。ページの状態とダイアログは、この視聴者にだけ配る */
@@ -405,7 +445,8 @@ export class BrowserCdpBridge {
     /** 捨てた接続から遅れて届いたものを、いまの接続に響かせない */
     const mine = () => this.cdp === cdp;
     const tabUi = new BrowserTabController<ViewerSocket>({
-      send: (method, params) => this.timed(method, cdp.send(method, params)),
+      send: (method, params) =>
+        this.timed(method, cdp.send(method, params, undefined, STEP_DEADLINE)),
       current: () => (mine() ? (this.page?.targetId ?? null) : null),
       leave: gone => {
         if (mine()) this.leavePage(gone);
@@ -484,7 +525,12 @@ export class BrowserCdpBridge {
       // 届かなかったぶんを補う。もう一覧にあるタブは、並びを変えない
       const { targetInfos } = await this.timed(
         "Target.getTargets",
-        cdp.send<{ targetInfos?: unknown }>("Target.getTargets")
+        cdp.send<{ targetInfos?: unknown }>(
+          "Target.getTargets",
+          undefined,
+          undefined,
+          STEP_DEADLINE
+        )
       );
       if (mine() && Array.isArray(targetInfos)) {
         for (const targetInfo of targetInfos) {
@@ -511,11 +557,13 @@ export class BrowserCdpBridge {
     // 前面でないタブは描画されず、screencastのフレームも取り直しも返らない
     await this.bounded(
       "Target.activateTarget",
-      cdp.send("Target.activateTarget", { targetId })
+      cdp.send("Target.activateTarget", { targetId }, undefined, STEP_DEADLINE)
     );
     const attaching = cdp.send<{ sessionId?: unknown }>(
       "Target.attachToTarget",
-      { targetId, flatten: true }
+      { targetId, flatten: true },
+      undefined,
+      { timeoutMs: ATTACH_ANSWER_TIMEOUT_MS }
     );
     let sessionId: unknown;
     try {
@@ -540,9 +588,11 @@ export class BrowserCdpBridge {
     // `Page.enable` より先に作る。準備の途中に届く遷移とダイアログも覚える
     const ui = new BrowserPageController<ViewerSocket>(
       {
-        send: (method, params) => cdp.send(method, params, sessionId),
+        send: (method, params, options) =>
+          cdp.send(method, params, sessionId, options),
         toViewer: (ws, message) => this.sendJson(ws, message),
         toAll: message => this.broadcast(message),
+        nextDialogId: () => ++this.dialogIds,
       },
       targetId,
       target.url === "" ? undefined : target
@@ -561,7 +611,10 @@ export class BrowserCdpBridge {
     try {
       /** 応答を待つ間にタブから離れていたら (消えた、接続が切れた)、準備を続けない */
       const step = async (method: string, params?: object) => {
-        await this.bounded(method, cdp.send(method, params, sessionId));
+        await this.bounded(
+          method,
+          cdp.send(method, params, sessionId, STEP_DEADLINE)
+        );
         if (this.attached !== tab) throw new Error(LEFT_MESSAGE);
       };
       await step("Page.enable");
@@ -921,7 +974,10 @@ export class BrowserCdpBridge {
   private capture(params: object): Promise<unknown> {
     const page = this.page;
     if (!page) return Promise.reject(new Error(DISCONNECTED_MESSAGE));
-    return page.cdp.send("Page.captureScreenshot", params, page.sessionId);
+    // パイプラインが待つのをやめる時間に、接続の側の待ちも消させる
+    return page.cdp.send("Page.captureScreenshot", params, page.sessionId, {
+      timeoutMs: CAPTURE_TIMEOUT_MS,
+    });
   }
 
   /**
@@ -955,6 +1011,7 @@ export class BrowserCdpBridge {
   /** 入ったあとにタブが替わった視聴者へ、新しい世代の寸法を知らせる。投げたら、その視聴者だけを外す */
   private announceViewport(ws: ViewerSocket): void {
     if (!this.viewers.has(ws) || ws.readyState !== WS_OPEN) return;
+    if (this.dropOverflowed(ws)) return;
     try {
       this.notifyViewport(ws);
     } catch (error) {
@@ -973,13 +1030,30 @@ export class BrowserCdpBridge {
    * 参加している視聴者1人へJSONを送る。去った視聴者と閉じかけの視聴者へは送らない。
    * 送信が投げたら、その視聴者だけを外す。
    *
-   * コピーの結果 (`clipboard`) だけは、送信が詰まっている視聴者へは送らずに捨てる。
-   * 1通が1MB近くになるので、詰まったままコピーを繰り返す視聴者のぶんが積もる。
-   * ほかのJSONは小さいので、詰まっていても送る。
+   * 大きくなるJSON (`BULK_MESSAGES`) は、送信が詰まっている視聴者へは送らずに捨てる。
+   * ほかのJSONは、詰まっていても送る。送信バッファが `OUTPUT_LIMIT_BYTES` を超えた視聴者は、
+   * 何も送らずに閉じる (冒頭のコメント)。
    */
   private sendJson(ws: ViewerSocket, message: BrowserServerMessage): void {
     if (!this.joined.has(ws) || ws.readyState !== WS_OPEN) return;
-    if (message.t === "clipboard" && !canReceive(ws)) return;
+    if (BULK_MESSAGES.has(message.t)) {
+      if (!canReceive(ws)) {
+        if (message.t === "select") this.skippedSelect.set(ws, message.id);
+        return;
+      }
+    } else if (this.dropOverflowed(ws)) {
+      return;
+    }
+    if (message.t === "select") {
+      this.skippedSelect.delete(ws);
+    } else if (
+      message.t === "selectClosed" &&
+      this.skippedSelect.get(ws) === message.id
+    ) {
+      // 開いたことを知らせていない選択
+      this.skippedSelect.delete(ws);
+      return;
+    }
     try {
       ws.send(JSON.stringify(message));
     } catch (error) {
@@ -987,6 +1061,18 @@ export class BrowserCdpBridge {
       this.detach(ws);
       terminate(ws);
     }
+  }
+
+  /**
+   * 送信バッファが `OUTPUT_LIMIT_BYTES` を超えた視聴者を外し、errorを送って閉じる。
+   * 閉じたら `true`。
+   */
+  private dropOverflowed(ws: ViewerSocket): boolean {
+    if (ws.bufferedAmount <= OUTPUT_LIMIT_BYTES) return false;
+    console.warn(`[BrowserBridge] ${OVERFLOW_MESSAGE}`);
+    this.detach(ws);
+    closeWithError(ws, OVERFLOW_MESSAGE);
+    return true;
   }
 
   /**

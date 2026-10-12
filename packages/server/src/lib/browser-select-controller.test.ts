@@ -8,6 +8,7 @@ import { SessionDetachedError } from "./browser-cdp-client.js";
 import { COPY_TIMEOUT_MS } from "./browser-page-controller.js";
 import {
   BrowserSelectController,
+  SELECT_NOTIFY_INTERVAL_MS,
   SELECT_WARN_INTERVAL_MS,
 } from "./browser-select-controller.js";
 import {
@@ -78,6 +79,11 @@ function selectBody(id: number) {
 }
 
 const flush = () => vi.advanceTimersByTimeAsync(0);
+
+/** 次の知らせが受け付けられるところまで、時刻だけを進める (タイマーは動かさない) */
+function nextNotice(): void {
+  vi.setSystemTime(Date.now() + SELECT_NOTIFY_INTERVAL_MS);
+}
 
 describe("BrowserSelectController", () => {
   beforeEach(() => {
@@ -223,6 +229,7 @@ describe("BrowserSelectController", () => {
     it("開いている間の新しい知らせは、前のものを閉じてから置き換える", () => {
       const { controller, sent } = setup();
       controller.bindingCalled(called(7));
+      nextNotice();
       controller.bindingCalled(called(8));
       expect(sent.map(entry => entry.message)).toEqual([
         selectBody(1),
@@ -230,6 +237,37 @@ describe("BrowserSelectController", () => {
         selectBody(2),
       ]);
       expect(controller.openId).toBe(2);
+    });
+
+    it("前に受け付けてから間隔が明けるまでに届いた知らせは、形が正しくても捨てる", () => {
+      const { controller, sent } = setup();
+      controller.bindingCalled(called(7));
+      for (let i = 0; i < 19; i++) controller.bindingCalled(called(8 + i));
+      vi.setSystemTime(Date.now() + SELECT_NOTIFY_INTERVAL_MS - 1);
+      controller.bindingCalled(called(40));
+      // 捨てた知らせは、前に開いた選択を閉じない
+      expect(sent.map(entry => entry.message)).toEqual([selectBody(1)]);
+      expect(controller.openId).toBe(1);
+      expect(console.warn).not.toHaveBeenCalled();
+
+      vi.setSystemTime(Date.now() + 1);
+      controller.bindingCalled(called(41));
+      expect(sent.map(entry => entry.message)).toEqual([
+        selectBody(1),
+        { t: "selectClosed", id: 1 },
+        selectBody(2),
+      ]);
+    });
+
+    it("捨てた知らせは、間隔を数え直さない。形の違う知らせも数えない", () => {
+      const { controller, sent } = setup();
+      controller.bindingCalled(called(7));
+      vi.setSystemTime(Date.now() + SELECT_NOTIFY_INTERVAL_MS - 1);
+      controller.bindingCalled(called(8));
+      controller.bindingCalled({ name: SELECT_BINDING_NAME, payload: "{" });
+      vi.setSystemTime(Date.now() + 1);
+      controller.bindingCalled(called(9));
+      expect(sent.map(entry => entry.message).at(-1)).toEqual(selectBody(2));
     });
 
     it("入った視聴者へ、開いている選択を知らせる", () => {
@@ -292,6 +330,7 @@ describe("BrowserSelectController", () => {
     it("選んだあとの同じ番号と、置き換えられた番号は無視する", () => {
       const { controller, calls } = setup();
       controller.bindingCalled(called(7));
+      nextNotice();
       controller.bindingCalled(called(8));
       controller.handle("v", { t: "selectChoose", id: 1, index: 0 });
       expect(calls).toEqual([]);

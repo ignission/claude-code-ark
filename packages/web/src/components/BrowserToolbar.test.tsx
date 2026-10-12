@@ -387,6 +387,29 @@ describe("BrowserToolbar", () => {
     expect(field.value).toBe("ろーかる");
   });
 
+  it.each([
+    ["Enter", { isComposing: true }],
+    ["Enter", { keyCode: 229 }],
+    ["Escape", { isComposing: true }],
+    ["Escape", { keyCode: 229 }],
+  ] as const)(
+    "変換の始まりを受け取っていなくても、変換中の%s (%o) では、遷移もフォーカスの移動もしない",
+    (key, init) => {
+      const onUrlDone = vi.fn();
+      render(toolbar({ onUrlDone }));
+      const field = urlField();
+      act(() => field.focus());
+      type(field, "ろーかる");
+
+      press(field, key, init);
+
+      expect(onSend).not.toHaveBeenCalled();
+      expect(onUrlDone).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(field);
+      expect(field.value).toBe("ろーかる");
+    }
+  );
+
   it("長いタイトルは省略して1行に収め、全体をツールチップで読める", () => {
     const title = "とても長いタイトル".repeat(20);
     render(toolbar({ tabs: [{ ...TAB_A, title }, TAB_B] }));

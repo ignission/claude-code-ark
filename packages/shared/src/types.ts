@@ -275,8 +275,11 @@ export type BrowserClientMessage =
   | { t: "tab"; type: "activate" | "close"; id: string }
   /** 新しいタブ (`about:blank`) */
   | { t: "tab"; type: "new" }
-  /** JavaScriptのダイアログへの応答。`promptText` は `prompt` に入れる文字列 */
-  | { t: "dialog"; accept: boolean; promptText?: string }
+  /**
+   * JavaScriptのダイアログへの応答。`id` は `dialog` で知らされた番号で、いま開いている
+   * ダイアログの番号でなければ捨てられる。`promptText` は `prompt` に入れる文字列
+   */
+  | { t: "dialog"; id: number; accept: boolean; promptText?: string }
   /** 選択している文字列を読む。選択があれば `clipboard` が返る */
   | { t: "copy" }
   /** `select` で知らされた `<select>` の選択。`index` は `options` の添字 */
@@ -314,6 +317,8 @@ export interface BrowserTabInfo {
 export type BrowserDialogKind = "alert" | "confirm" | "prompt" | "beforeunload";
 
 export interface BrowserDialogInfo {
+  /** サーバーが開いたダイアログごとに振る番号。応答は、この番号で名指しする */
+  id: number;
   kind: BrowserDialogKind;
   message: string;
   /** `prompt` の入力欄の初期値。ほかの種類では空 */
@@ -340,13 +345,19 @@ export type BrowserServerMessage =
   | ({ t: "page" } & BrowserPageInfo)
   /** タブの一覧。変わるたびに送る。参加した視聴者にも送る */
   | { t: "tabs"; tabs: BrowserTabInfo[]; activeId: string }
-  /** JavaScriptのダイアログが開いた。開いている間に参加した視聴者にも送る */
+  /**
+   * JavaScriptのダイアログが開いた。開いている間に参加した視聴者にも送る。
+   * 同じ `id` がもう一度届いたら、同じダイアログ
+   */
   | ({ t: "dialog" } & BrowserDialogInfo)
   /** ダイアログが閉じた (だれかが応答した、またはページが閉じた) */
   | { t: "dialogClosed" }
-  /** `copy` への応答。選択が無ければ送らない */
+  /** `copy` への応答。選択が無ければ送らない。送信が詰まっている視聴者へも送らない */
   | { t: "clipboard"; text: string }
-  /** `<select>` が押された。`rect` はビューポートのCSSピクセルでの `<select>` の位置 */
+  /**
+   * `<select>` が押された。`rect` はビューポートのCSSピクセルでの `<select>` の位置。
+   * 送信が詰まっている視聴者へは送らない
+   */
   | {
       t: "select";
       id: number;

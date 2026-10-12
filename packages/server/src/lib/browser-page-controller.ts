@@ -21,6 +21,8 @@
  *   視聴者は、開いたときの知らせを受け取っていない)
  * - 履歴の読み直しは、遷移の途中だと失敗する。失敗しても前の状態を保ち、次のイベントで
  *   読み直す。あとから始めた読み直しが先に返ったら、遅れて返った古い結果は使わない
+ * - 履歴の読み直しには、応答の期限を付ける (`HISTORY_TIMEOUT_MS`)。定期に繰り返すので、
+ *   返らない読み直しの待ちを、CDPの接続に積もらせない。時間切れは、ほかの失敗と同じに扱う
  * - 読み直しを始めたあとに遷移のイベントでURLが変わったら、その読み直しの結果は、URLも題も
  *   戻れるか進めるかも使わず、読み直す。使うと、遷移の前のURLへ表示が戻る
  * - つないでから一度も履歴の応答が返っていない間は、失敗した読み直しを200ms、400ms、800ms後に
@@ -33,8 +35,12 @@
  *   エントリと `about:blank` で、`chrome-error://` や `about:blank` 以外の `about:` のような
  *   エントリへは、Arkが戻したり進めたりしない。通らない隣では、戻れる、進めるを偽にする
  * - 読み込み直しと中止は確かめない。遷移の先を変えないので、いま居るページより外へは出ない
- * - ダイアログは全員へ見せ、だれが答えてもよい。開いていると分かっているときの応答だけを
- *   CDPへ渡す。2人が続けて答えると、あとの応答はChromiumに断られるが、それは捨てる
+ * - ダイアログは全員へ見せ、だれが答えてもよい。開いたダイアログには、1つずつ番号を
+ *   振って視聴者へ知らせ (番号はブリッジが振る。タブや接続を替えても重ならない)、応答には
+ *   その番号を付けさせる。CDPへ渡すのは、いま開いているダイアログの番号の応答だけ。
+ *   CDPの応答は「いま開いているダイアログ」に当たるので、番号を見ないと、遅れて届いた
+ *   前のダイアログへの応答が、その視聴者がまだ見ていない次のダイアログに当たる
+ * - 同じダイアログに2人が続けて答えると、あとの応答はChromiumに断られるが、それは捨てる
  * - コピーは、固定の式をページで評価して選択を読む。式に視聴者から来た値を埋め込まない
  *   (埋め込むと、視聴者がページで任意のスクリプトを動かせる)。結果は送った視聴者にだけ返す。
  *   パスワードの欄からは読まない。別オリジンのiframeの中の選択は読めない
@@ -73,6 +79,8 @@ export const PAGE_STATE_EVENTS = [
 export const HISTORY_DEBOUNCE_MS = 100;
 /** つないで最初の履歴の読み直しが失敗したときに、やり直すまでの待ち (ミリ秒)。使い切ったらやめる */
 export const HISTORY_RETRY_DELAYS_MS: readonly number[] = [200, 400, 800];
+/** 履歴の読み直しの応答を待つ時間の上限 (ミリ秒) */
+export const HISTORY_TIMEOUT_MS = 3000;
 /** コピーの式の評価を打ち切るまでの時間 (ミリ秒)。`Runtime.evaluate` の `timeout` に渡す */
 export const COPY_TIMEOUT_MS = 1000;
 /** ダイアログのメッセージと初期値の上限 (文字数) */
@@ -142,12 +150,18 @@ export type PageCommand = Extract<
 
 /** タブと視聴者への出口。`V` は視聴者 */
 export interface PageLink<V> {
-  /** タブのsessionへCDPのコマンドを送る */
-  send(method: string, params?: object): Promise<unknown>;
+  /** タブのsessionへCDPのコマンドを送る。`timeoutMs` は応答を待つ時間の上限 */
+  send(
+    method: string,
+    params?: object,
+    options?: { timeoutMs?: number }
+  ): Promise<unknown>;
   /** 視聴者1人へ送る。去った視聴者へは何もしない */
   toViewer(viewer: V, message: BrowserServerMessage): void;
   /** 参加している視聴者の全員へ送る */
   toAll(message: BrowserServerMessage): void;
+  /** 開いたダイアログの番号を振る。タブを替えても重ならない */
+  nextDialogId(): number;
 }
 
 function warn(what: string, error: unknown): void {
@@ -161,14 +175,19 @@ function cut(value: unknown): string {
     : "";
 }
 
-function readDialog(params: unknown): BrowserDialogInfo {
+function readDialog(params: unknown, id: number): BrowserDialogInfo {
   const p = (typeof params === "object" && params !== null ? params : {}) as {
     type?: unknown;
     message?: unknown;
     defaultPrompt?: unknown;
   };
   const kind = DIALOG_KINDS.find(known => known === p.type) ?? "alert";
-  return { kind, message: cut(p.message), defaultPrompt: cut(p.defaultPrompt) };
+  return {
+    id,
+    kind,
+    message: cut(p.message),
+    defaultPrompt: cut(p.defaultPrompt),
+  };
 }
 
 export class BrowserPageController<V> {
@@ -248,7 +267,9 @@ export class BrowserPageController<V> {
     const read = ++this.historyRead;
     const urlChanges = this.urlChanges;
     return this.link
-      .send("Page.getNavigationHistory")
+      .send("Page.getNavigationHistory", undefined, {
+        timeoutMs: HISTORY_TIMEOUT_MS,
+      })
       .then(result => {
         if (this.disposed || read < this.historyApplied) return;
         this.historyApplied = read;
@@ -280,7 +301,7 @@ export class BrowserPageController<V> {
 
   dialogOpening(params: unknown): void {
     if (this.disposed) return;
-    this.dialog = readDialog(params);
+    this.dialog = readDialog(params, this.link.nextDialogId());
     this.link.toAll({ t: "dialog", ...this.dialog });
   }
 
@@ -418,7 +439,8 @@ export class BrowserPageController<V> {
   private answerDialog(
     msg: Extract<BrowserClientMessage, { t: "dialog" }>
   ): void {
-    if (!this.dialog) return;
+    // 開いていないとき、いま開いているのとは別のダイアログへの応答は捨てる
+    if (!this.dialog || msg.id !== this.dialog.id) return;
     // 閉じたことは `Page.javascriptDialogClosed` で知る。ここでは閉じたことにしない
     this.link
       .send("Page.handleJavaScriptDialog", {
