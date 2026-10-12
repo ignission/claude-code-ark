@@ -27,8 +27,11 @@ import path from "node:path";
 import type { BrowserSession } from "@ark/shared";
 import { BrowserCdpBridge } from "./browser-cdp-bridge.js";
 import { connectCdpUrl } from "./browser-cdp-client.js";
+import { validateBrowserUrl } from "./browser-url.js";
 import { CDP_PORT } from "./constants.js";
 import { getDataDir } from "./paths.js";
+
+export { validateBrowserUrl };
 
 /** ChromiumがCDPのエンドポイントをstderrに出すまで待つ上限 (ミリ秒) */
 const CHROMIUM_START_TIMEOUT = 10000;
@@ -263,27 +266,6 @@ export function waitForDevToolsEndpoint(
     chromium.once("exit", onEarlyExit);
     chromium.once("error", onEarlyError);
   });
-}
-
-/**
- * ブラウザ機能で開いてよいURLかを確かめる。だめなら例外を投げる。
- * - `about:blank` は通す
- * - それ以外は `http:` / `https:` で、ホストが `localhost` / `127.0.0.1` のものだけ
- */
-export function validateBrowserUrl(url: string): void {
-  if (url === "about:blank") return;
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error("無効なURL形式です");
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("http://またはhttps://のみ許可されています");
-  }
-  if (parsed.hostname !== "localhost" && parsed.hostname !== "127.0.0.1") {
-    throw new Error("localhost/127.0.0.1のみ許可されています");
-  }
 }
 
 function sleep(ms: number): Promise<void> {

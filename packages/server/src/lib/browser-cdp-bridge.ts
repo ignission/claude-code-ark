@@ -28,17 +28,31 @@
  * - ビューポートの寸法は、このモジュールがページへ当てたものだけをパイプラインへ伝える。
  *   監視フレームのメタデータの寸法からは決めない。届いた監視フレームは、ackを返してから
  *   そのままパイプラインへ渡す。どのフレームを使わないかの決まりはパイプラインにある
- * - JavaScriptのダイアログが開いた、閉じたことは、パイプラインへ伝えるだけにする
- *   (開いている間は取り直しが返らない)。ダイアログを視聴者へ見せて答えさせることはしない
+ * - JavaScriptのダイアログが開いた、閉じたことは、パイプライン (開いている間は取り直しが
+ *   返らない) と、ページのUIを受け持つ browser-page-controller.ts の両方へ伝える
+ * - headlessのChromiumにはブラウザのUIが無い。アドレスバー、戻ると進む、ダイアログ、
+ *   コピーは browser-page-controller.ts が受け持ち、このモジュールは、タブのsessionの
+ *   イベントと視聴者のメッセージを渡すだけにする。attachするたびに1つ作り、接続を捨てる
+ *   ときに捨てる
+ * - 視聴者へJSONを配るのは、参加の手続き (寸法の通知) が済んだ視聴者だけ。参加した
+ *   視聴者には、寸法、ページの状態、開いているダイアログの順に知らせる
  */
 
-import type { BrowserClientMessage, BrowserServerMessage } from "@ark/shared";
+import type {
+  BrowserClientMessage,
+  BrowserServerMessage,
+  BrowserTouchPoint,
+} from "@ark/shared";
 import type { CdpClient } from "./browser-cdp-client.js";
 import {
   BrowserFramePipeline,
   monitorParams,
   readFrameMetadata,
 } from "./browser-frame-pipeline.js";
+import {
+  BrowserPageController,
+  PAGE_STATE_EVENTS,
+} from "./browser-page-controller.js";
 
 export { encodeFrameHeader } from "./browser-frame-pipeline.js";
 
@@ -85,6 +99,14 @@ const WS_OPEN = 1;
 const MAX_TEXT_LENGTH = 100_000;
 /** `key` と `code` の上限 (文字数)。DOMのキー名はどれも短い */
 const MAX_KEY_LENGTH = 64;
+/** アドレスバーに打たれたURLの上限 (文字数) */
+const MAX_URL_LENGTH = 2048;
+/** `prompt` へ入れる文字列の上限 (文字数) */
+const MAX_PROMPT_LENGTH = 10_000;
+/** 1つのメッセージに入るタッチの点の上限 */
+const MAX_TOUCH_POINTS = 10;
+/** タブのid (CDPのターゲットのid) の形 */
+const TAB_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 
 const DEFAULT_VIEWPORT: Viewport = {
   width: 1280,
@@ -111,6 +133,28 @@ function isNumber(value: unknown): value is number {
 
 function isText(value: unknown, max = MAX_TEXT_LENGTH): value is string {
   return typeof value === "string" && value.length <= max;
+}
+
+/** 0以上の整数 (番号、添字) */
+function isIndex(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isTabId(value: unknown): value is string {
+  return typeof value === "string" && TAB_ID_PATTERN.test(value);
+}
+
+/** タッチの点の並びを読む。形が違えば `null` */
+function readTouchPoints(value: unknown): BrowserTouchPoint[] | null {
+  if (!Array.isArray(value) || value.length > MAX_TOUCH_POINTS) return null;
+  const points: BrowserTouchPoint[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) return null;
+    const { id, x, y } = item as Record<string, unknown>;
+    if (!isIndex(id) || !isNumber(x) || !isNumber(y)) return null;
+    points.push({ id, x, y });
+  }
+  return points;
 }
 
 /**
@@ -223,6 +267,67 @@ export function parseClientMessage(raw: string): BrowserClientMessage | null {
       return isText(m.text) ? { t: "paste", text: m.text } : null;
     case "refresh":
       return { t: "refresh" };
+    case "nav":
+      if (m.type === "goto") {
+        return isText(m.url, MAX_URL_LENGTH)
+          ? { t: "nav", type: "goto", url: m.url }
+          : null;
+      }
+      if (
+        m.type === "back" ||
+        m.type === "forward" ||
+        m.type === "reload" ||
+        m.type === "stop"
+      ) {
+        return { t: "nav", type: m.type };
+      }
+      return null;
+    case "tab":
+      if (m.type === "new") return { t: "tab", type: "new" };
+      if (m.type === "activate" || m.type === "close") {
+        return isTabId(m.id) ? { t: "tab", type: m.type, id: m.id } : null;
+      }
+      return null;
+    case "dialog":
+      if (
+        typeof m.accept !== "boolean" ||
+        (m.promptText !== undefined && !isText(m.promptText, MAX_PROMPT_LENGTH))
+      ) {
+        return null;
+      }
+      return {
+        t: "dialog",
+        accept: m.accept,
+        ...(m.promptText === undefined ? {} : { promptText: m.promptText }),
+      };
+    case "copy":
+      return { t: "copy" };
+    case "selectChoose":
+      return isIndex(m.id) && isIndex(m.index)
+        ? { t: "selectChoose", id: m.id, index: m.index }
+        : null;
+    case "selectCancel":
+      return isIndex(m.id) ? { t: "selectCancel", id: m.id } : null;
+    case "touch": {
+      if (
+        (m.type !== "start" &&
+          m.type !== "move" &&
+          m.type !== "end" &&
+          m.type !== "cancel") ||
+        !isNumber(m.modifiers)
+      ) {
+        return null;
+      }
+      const points = readTouchPoints(m.points);
+      return (
+        points && {
+          t: "touch",
+          type: m.type,
+          points,
+          modifiers: m.modifiers,
+        }
+      );
+    }
     default:
       return null;
   }
@@ -237,8 +342,9 @@ function buttonFromButtons(buttons: number): string {
 }
 
 /**
- * 入力のメッセージをCDPのコマンドへ変換する。resizeとrefreshは入力ではないので `null`
- * (ブリッジが自分で扱う)。
+ * 入力のメッセージをCDPのコマンドへ変換する。入力でないもの (寸法、送り直し、ページと
+ * タブの操作、ダイアログ、コピー、`<select>`) は `null` (ブリッジが自分で扱う)。
+ * タッチも、ここでは変換しない。
  */
 export function toCdpCommand(
   msg: BrowserClientMessage
@@ -246,6 +352,13 @@ export function toCdpCommand(
   switch (msg.t) {
     case "resize":
     case "refresh":
+    case "nav":
+    case "tab":
+    case "dialog":
+    case "copy":
+    case "selectChoose":
+    case "selectCancel":
+    case "touch":
       return null;
     case "mouse": {
       const base = {
@@ -385,6 +498,10 @@ export class BrowserCdpBridge {
   private appliedViewport: Viewport | null = null;
   /** 視聴者ごとの、最後に知らせたビューポートの世代。同じ世代を二度送らないために持つ */
   private readonly notifiedGen = new Map<ViewerSocket, number>();
+  /** 参加の手続きが済んだ視聴者。ページの状態とダイアログは、この視聴者にだけ配る */
+  private readonly joined = new Set<ViewerSocket>();
+  /** いまの接続のタブの、ページのUIにあたる部分。attachしてから接続を捨てるまで持つ */
+  private pageUi: BrowserPageController<ViewerSocket> | null = null;
   private resizeTimer: NodeJS.Timeout | null = null;
   /** 監視フレームから、何を取り直してどの視聴者へ送るかを決める */
   private readonly pipeline = new BrowserFramePipeline<ViewerSocket>({
@@ -461,6 +578,10 @@ export class BrowserCdpBridge {
         return;
       }
     }
+    this.joined.add(ws);
+    this.pageUi?.greet(ws);
+    // 知らせる途中で送信が投げた視聴者は、もう外れている
+    if (!this.viewers.has(ws)) return;
     // screencastは画面が変わったときしか監視フレームを出さない。もう始まっているなら、
     // 何かが動くのを待たずに全画面を取り直して送る
     this.pipeline.requestFull(ws);
@@ -470,6 +591,7 @@ export class BrowserCdpBridge {
   private detach(ws: ViewerSocket): void {
     if (!this.viewers.delete(ws)) return;
     this.notifiedGen.delete(ws);
+    this.joined.delete(ws);
     if (this.viewers.size === 0) this.stopCast();
   }
 
@@ -495,6 +617,8 @@ export class BrowserCdpBridge {
     this.cdp = cdp;
     /** attachしたタブのsession。準備の途中に届くdetachも見分けられるように、ここで持つ */
     let attached: string | null = null;
+    /** attachしたタブのページのUI。`attached` と同時に決まる */
+    let pageUi: BrowserPageController<ViewerSocket> | null = null;
     // リスナーは接続ごとに1回だけ登録する
     cdp.onClose(() => this.teardown(cdp));
     cdp.on("Page.screencastFrame", params => this.handleFrame(cdp, params));
@@ -511,14 +635,22 @@ export class BrowserCdpBridge {
       }
     });
     // 準備の途中に開いたダイアログも覚える。捨てた接続のものは、いまの接続に響かせない
-    const dialog =
-      (open: boolean) => (_params: unknown, sessionId?: string) => {
-        if (this.cdp === cdp && attached !== null && sessionId === attached) {
-          this.pipeline.setDialogOpen(open);
-        }
-      };
+    const dialog = (open: boolean) => (params: unknown, sessionId?: string) => {
+      if (this.cdp === cdp && attached !== null && sessionId === attached) {
+        this.pipeline.setDialogOpen(open);
+        if (open) pageUi?.dialogOpening(params);
+        else pageUi?.dialogClosed();
+      }
+    };
     cdp.on("Page.javascriptDialogOpening", dialog(true));
     cdp.on("Page.javascriptDialogClosed", dialog(false));
+    for (const method of PAGE_STATE_EVENTS) {
+      cdp.on(method, (params, sessionId) => {
+        if (this.cdp === cdp && attached !== null && sessionId === attached) {
+          pageUi?.handleEvent(method, params);
+        }
+      });
+    }
     try {
       const { targetInfos } = await cdp.send<{
         targetInfos: Array<{ targetId: string; type: string }>;
@@ -536,6 +668,18 @@ export class BrowserCdpBridge {
         { targetId: target.targetId, flatten: true }
       );
       attached = sessionId;
+      // `Page.enable` より先に作る。準備の途中に届く遷移とダイアログも覚える
+      pageUi = new BrowserPageController<ViewerSocket>(
+        {
+          send: (method, params) => cdp.send(method, params, sessionId),
+          toViewer: (ws, message) => this.sendJson(ws, message),
+          toAll: message => {
+            for (const ws of [...this.joined]) this.sendJson(ws, message);
+          },
+        },
+        target.targetId
+      );
+      if (this.cdp === cdp) this.pageUi = pageUi;
       await cdp.send("Page.enable", undefined, sessionId);
       // headlessのタブはフォーカスを持たない。これが無いと、キャレットが出ず、
       // focusに頼るページが動かない
@@ -558,8 +702,12 @@ export class BrowserCdpBridge {
       // 準備の途中に届いたresizeは、デバウンスが明けた時点でタブが無く、当たっていない。
       // screencastはまだ始めていないので、ここでは寸法だけが変わる
       if (!sameViewport(this.viewport, viewport)) this.applyViewport();
+      // `Page.enable` は過去の遷移を送り直さない。いまのURLとタイトルは履歴から読む
+      pageUi.refresh();
       return page;
     } catch (error) {
+      pageUi?.dispose();
+      if (this.pageUi === pageUi) this.pageUi = null;
       // 準備の途中で失敗した接続は使わない。残すと、つなぎ直すたびに接続が増える
       if (this.cdp === cdp) this.cdp = null;
       cdp.close();
@@ -620,8 +768,26 @@ export class BrowserCdpBridge {
       }, RESIZE_DEBOUNCE_MS);
       return;
     }
-    const command = toCdpCommand(msg);
     const page = this.page;
+    switch (msg.t) {
+      case "nav":
+      case "dialog":
+      case "copy":
+        // タブの準備が終わるまでは、入力と同じく捨てる
+        if (page) this.pageUi?.handle(ws, msg);
+        return;
+      case "tab":
+        // タブの一覧と切り替えを受け持つモジュールが扱う。まだ無いので何もしない
+        return;
+      case "selectChoose":
+      case "selectCancel":
+        // `<select>` の選択肢を受け持つモジュールが扱う。まだ無いので何もしない
+        return;
+      case "touch":
+        // タッチの入力への変換が扱う。まだ無いので何もしない
+        return;
+    }
+    const command = toCdpCommand(msg);
     if (!command || !page) return;
     // 入力の失敗 (遷移中のタブなど) で視聴者を切らない
     page.cdp
@@ -732,6 +898,21 @@ export class BrowserCdpBridge {
   }
 
   /**
+   * 参加している視聴者1人へJSONを送る。去った視聴者と閉じかけの視聴者へは送らない。
+   * 送信が投げたら、その視聴者だけを外す。
+   */
+  private sendJson(ws: ViewerSocket, message: BrowserServerMessage): void {
+    if (!this.joined.has(ws) || ws.readyState !== WS_OPEN) return;
+    try {
+      ws.send(JSON.stringify(message));
+    } catch (error) {
+      warn("視聴者への送信に失敗", error);
+      this.detach(ws);
+      terminate(ws);
+    }
+  }
+
+  /**
    * 接続が切れたとき。視聴者へerrorを送って閉じ、状態を捨てる。
    * resetや失敗で捨てた接続のcloseは、いまの接続に響かせない。
    */
@@ -758,6 +939,7 @@ export class BrowserCdpBridge {
     const viewers = [...this.viewers];
     this.viewers.clear();
     this.notifiedGen.clear();
+    this.joined.clear();
     return viewers;
   }
 
@@ -770,6 +952,8 @@ export class BrowserCdpBridge {
     this.castGeneration++;
     this.appliedViewport = null;
     this.pipeline.setApplied(null);
+    this.pageUi?.dispose();
+    this.pageUi = null;
     if (this.resizeTimer) {
       clearTimeout(this.resizeTimer);
       this.resizeTimer = null;

@@ -268,7 +268,64 @@ export type BrowserClientMessage =
   | { t: "ime"; type: "cancel" }
   | { t: "paste"; text: string }
   /** フレームを取りこぼしたとき。全画面を送り直してもらう */
-  | { t: "refresh" };
+  | { t: "refresh" }
+  /** URLへ遷移する。スキームが無ければ `http://` を補う。開けないURLには `notice` が返る */
+  | { t: "nav"; type: "goto"; url: string }
+  | { t: "nav"; type: "back" | "forward" | "reload" | "stop" }
+  | { t: "tab"; type: "activate" | "close"; id: string }
+  /** 新しいタブ (`about:blank`) */
+  | { t: "tab"; type: "new" }
+  /** JavaScriptのダイアログへの応答。`promptText` は `prompt` に入れる文字列 */
+  | { t: "dialog"; accept: boolean; promptText?: string }
+  /** 選択している文字列を読む。選択があれば `clipboard` が返る */
+  | { t: "copy" }
+  /** `select` で知らされた `<select>` の選択。`index` は `options` の添字 */
+  | { t: "selectChoose"; id: number; index: number }
+  | { t: "selectCancel"; id: number }
+  | {
+      t: "touch";
+      type: "start" | "move" | "end" | "cancel";
+      /** 触れている点。最大10個 */
+      points: BrowserTouchPoint[];
+      modifiers: BrowserModifiers;
+    };
+
+export interface BrowserTouchPoint {
+  id: number;
+  x: number;
+  y: number;
+}
+
+/** いま映しているタブの状態 */
+export interface BrowserPageInfo {
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+}
+
+export interface BrowserTabInfo {
+  id: string;
+  title: string;
+  url: string;
+}
+
+export type BrowserDialogKind = "alert" | "confirm" | "prompt" | "beforeunload";
+
+export interface BrowserDialogInfo {
+  kind: BrowserDialogKind;
+  message: string;
+  /** `prompt` の入力欄の初期値。ほかの種類では空 */
+  defaultPrompt: string;
+}
+
+export interface BrowserSelectOption {
+  label: string;
+  disabled: boolean;
+  /** `<optgroup>` の見出し。属していなければ `null` */
+  group: string | null;
+}
 
 /**
  * サーバーが送るJSONのメッセージ。フレームは別にバイナリで送る
@@ -278,7 +335,29 @@ export type BrowserClientMessage =
  */
 export type BrowserServerMessage =
   | { t: "error"; message: string }
-  | { t: "viewport"; width: number; height: number; gen: number };
+  | { t: "viewport"; width: number; height: number; gen: number }
+  /** 変わるたびに送る。参加した視聴者にも送る */
+  | ({ t: "page" } & BrowserPageInfo)
+  /** タブの一覧。変わるたびに送る。参加した視聴者にも送る */
+  | { t: "tabs"; tabs: BrowserTabInfo[]; activeId: string }
+  /** JavaScriptのダイアログが開いた。開いている間に参加した視聴者にも送る */
+  | ({ t: "dialog" } & BrowserDialogInfo)
+  /** ダイアログが閉じた (だれかが応答した、またはページが閉じた) */
+  | { t: "dialogClosed" }
+  /** `copy` への応答。選択が無ければ送らない */
+  | { t: "clipboard"; text: string }
+  /** `<select>` が押された。`rect` はビューポートのCSSピクセルでの `<select>` の位置 */
+  | {
+      t: "select";
+      id: number;
+      options: BrowserSelectOption[];
+      selectedIndex: number;
+      rect: { x: number; y: number; width: number; height: number };
+    }
+  /** その選択は無効になった (遷移した、ほかの視聴者が選んだ) */
+  | { t: "selectClosed"; id: number }
+  /** 操作を断ったときの理由。切断はしない */
+  | { t: "notice"; message: string };
 
 export interface Message {
   id: string;

@@ -7,7 +7,6 @@ import {
   clearSessionRestore,
   findStaleChromiumPids,
   parseDevToolsEndpoint,
-  validateBrowserUrl,
   waitForDevToolsEndpoint,
 } from "./browser-manager.js";
 
@@ -165,24 +164,6 @@ describe("findStaleChromiumPids", () => {
   it("引数の途中に同じ文字列があっても、引数の先頭でなければ拾わない", () => {
     const output = `  301 /opt/tool --note=x--user-data-dir=${dir}`;
     expect(findStaleChromiumPids(output, dir)).toEqual([]);
-  });
-});
-
-describe("validateBrowserUrl", () => {
-  it.each([
-    "about:blank",
-    "http://localhost:3000/a",
-    "https://127.0.0.1:8443/",
-  ])("%s を通す", url => {
-    expect(() => validateBrowserUrl(url)).not.toThrow();
-  });
-  it.each([
-    "file:///etc/passwd",
-    "http://example.com/",
-    "javascript:alert(1)",
-    "not a url",
-  ])("%s を拒否する", url => {
-    expect(() => validateBrowserUrl(url)).toThrow();
   });
 });
 

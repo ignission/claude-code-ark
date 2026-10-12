@@ -13,6 +13,7 @@ import {
   type ViewerSocket,
 } from "./browser-cdp-bridge.js";
 import { buildSolidPng } from "./browser-frame-diff.testkit.js";
+import { COPY_EXPRESSION } from "./browser-page-controller.js";
 
 interface CdpCall {
   method: string;
@@ -60,7 +61,10 @@ function fakeCdp(
   let closing = false;
   let closed = false;
 
+  const answers = new Map<string, unknown>();
+
   const resultOf = (method: string): unknown => {
+    if (answers.has(method)) return answers.get(method);
     if (method === "Target.getTargets") {
       return {
         targetInfos: options.targets ?? [{ targetId: "T1", type: "page" }],
@@ -142,6 +146,10 @@ function fakeCdp(
     emitBrowser(method: string, params: unknown) {
       dispatch(method, params, undefined);
     },
+    /** これ以降の `method` の応答を `result` にする */
+    answer(method: string, result: unknown) {
+      answers.set(method, result);
+    },
     failOn(method: string) {
       failing.add(method);
     },
@@ -158,6 +166,13 @@ function fakeCdp(
     /** 待たせている `method` のうち、いちばん古い1つを成功させる */
     release(method: string) {
       const entry = takeHeld(method);
+      entry.answer.resolve(entry.result);
+    },
+    /** 待たせている `method` のうち、いちばん新しい1つを成功させる */
+    releaseNewest(method: string) {
+      const index = held.findLastIndex(entry => entry.method === method);
+      if (index < 0) throw new Error(`${method} は待たせていません`);
+      const [entry] = held.splice(index, 1);
       entry.answer.resolve(entry.result);
     },
     /** 待たせている `method` のうち、いちばん古い1つを失敗させる */
@@ -345,6 +360,7 @@ describe("BrowserCdpBridge", () => {
       "Page.enable",
       "Emulation.setFocusEmulationEnabled",
       "Emulation.setDeviceMetricsOverride",
+      "Page.getNavigationHistory",
       "Page.startScreencast",
     ]);
     // つなぐタブを前面にする (前面でないタブは描画されない)
@@ -2157,6 +2173,748 @@ describe("BrowserCdpBridge", () => {
   });
 });
 
+const HISTORY = "Page.getNavigationHistory";
+const NAVIGATED = "Page.frameNavigated";
+const A_URL = "http://localhost:3000/a";
+const B_URL = "http://localhost:3000/b";
+const C_URL = "http://localhost:3000/c";
+
+/** `urls` を順にたどり、いま `currentIndex` 番目にいる履歴。エントリのidは10、11、... */
+function historyOf(currentIndex: number, urls: string[]) {
+  return {
+    currentIndex,
+    entries: urls.map((url, i) => ({ id: 10 + i, url, title: `T${i}` })),
+  };
+}
+
+function pageBody(
+  url: string,
+  title: string,
+  extra: { loading?: boolean; canGoBack?: boolean; canGoForward?: boolean } = {}
+) {
+  return {
+    t: "page",
+    url,
+    title,
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    ...extra,
+  };
+}
+
+/** 視聴者が受け取ったJSONのうち、種類が `t` のもの */
+function textsOf(viewer: ReturnType<typeof fakeViewer>, t: string) {
+  return viewer.texts().filter(m => (m as { t?: unknown }).t === t);
+}
+
+/** メインフレーム (ターゲットと同じid) の遷移のイベント */
+function navigatedTo(url: string) {
+  return { frame: { id: "T1", url } };
+}
+
+/**
+ * `started` と同じだが、ページの状態 (`urls` の `currentIndex` 番目) が分かっている。
+ */
+async function startedOn(currentIndex: number, urls: string[], count = 1) {
+  const cdp = fakeCdp();
+  cdp.answer(HISTORY, historyOf(currentIndex, urls));
+  const bridge = new BrowserCdpBridge(async () => cdp);
+  const viewers = Array.from({ length: count }, () => fakeViewer());
+  for (const viewer of viewers) bridge.attach(viewer);
+  await flush();
+  cdp.emit("Page.screencastFrame", monitorFrame(1));
+  await vi.advanceTimersByTimeAsync(1000);
+  for (const viewer of viewers) viewer.send.mockClear();
+  cdp.forget();
+  return { cdp, bridge, viewers, viewer: viewers[0] };
+}
+
+describe("BrowserCdpBridge: ページの操作", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  describe("ページの状態", () => {
+    it("入った視聴者へ、寸法のあとにページの状態を知らせる", async () => {
+      const cdp = fakeCdp();
+      cdp.answer(HISTORY, historyOf(1, [A_URL, B_URL, C_URL]));
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      expect(cdp.last(HISTORY)).toEqual({ params: undefined, sessionId: "S1" });
+      expect(viewer.texts()).toEqual([
+        { t: "viewport", width: 1280, height: 900, gen: 1 },
+        pageBody(B_URL, "T1", { canGoBack: true, canGoForward: true }),
+      ]);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("あとから入った視聴者にも、寸法のあとに知らせる。先にいた視聴者へは送り直さない", async () => {
+      const { bridge, viewer } = await startedOn(0, [A_URL]);
+      const late = fakeViewer();
+      bridge.attach(late);
+      await flush();
+      expect(late.texts().map(m => (m as { t: string }).t)).toEqual([
+        "viewport",
+        "page",
+      ]);
+      expect(late.texts()[1]).toEqual(pageBody(A_URL, "T0"));
+      expect(viewer.texts()).toEqual([]);
+    });
+
+    it("履歴を読めなければ、ページの状態は知らせない", async () => {
+      const cdp = fakeCdp();
+      cdp.failOn(HISTORY);
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      expect(textsOf(viewer, "page")).toEqual([]);
+      expect(viewer.close).not.toHaveBeenCalled();
+    });
+
+    it("遷移したらURLをすぐ知らせ、100ms後に履歴を1回読んでタイトルを知らせる", async () => {
+      const { cdp, viewers } = await startedOn(0, [A_URL], 2);
+      cdp.answer(HISTORY, historyOf(1, [A_URL, B_URL]));
+      cdp.emit("Page.frameStartedLoading", { frameId: "T1" });
+      cdp.emit(NAVIGATED, navigatedTo(B_URL));
+      cdp.emit("Page.loadEventFired", { timestamp: 1 });
+      cdp.emit("Page.frameStoppedLoading", { frameId: "T1" });
+      for (const viewer of viewers) {
+        expect(viewer.texts()).toEqual([
+          pageBody(A_URL, "T0", { loading: true }),
+          pageBody(B_URL, "T0", { loading: true }),
+          pageBody(B_URL, "T0"),
+        ]);
+      }
+      await vi.advanceTimersByTimeAsync(99);
+      expect(cdp.count(HISTORY)).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(cdp.count(HISTORY)).toBe(1);
+      for (const viewer of viewers) {
+        expect(viewer.texts().at(-1)).toEqual(
+          pageBody(B_URL, "T1", { canGoBack: true })
+        );
+      }
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("文書の中の遷移でも読み直す。読み込みの開始だけでは読み直さない", async () => {
+      const { cdp, viewer } = await startedOn(0, [A_URL]);
+      cdp.emit("Page.frameStartedLoading", { frameId: "T1" });
+      await vi.advanceTimersByTimeAsync(200);
+      expect(cdp.count(HISTORY)).toBe(0);
+      cdp.emit("Page.navigatedWithinDocument", {
+        frameId: "T1",
+        url: `${A_URL}#x`,
+      });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(cdp.count(HISTORY)).toBe(1);
+      expect(textsOf(viewer, "page").at(-2)).toMatchObject({
+        url: `${A_URL}#x`,
+      });
+    });
+
+    it("サブフレームと別のsessionのイベントでは、何も知らせず、読み直さない", async () => {
+      const { cdp, viewer } = await startedOn(0, [A_URL]);
+      cdp.emit(NAVIGATED, {
+        frame: { id: "F-sub", parentId: "T1", url: B_URL },
+      });
+      cdp.emit("Page.frameStoppedLoading", { frameId: "F-sub" });
+      cdp.emit(NAVIGATED, navigatedTo(B_URL), "S-other");
+      cdp.emitBrowser(NAVIGATED, navigatedTo(B_URL));
+      await vi.advanceTimersByTimeAsync(200);
+      expect(viewer.texts()).toEqual([]);
+      expect(cdp.count(HISTORY)).toBe(0);
+    });
+
+    it("履歴の読み直しが失敗したら前のタイトルを保ち、次のイベントで読み直す", async () => {
+      const { cdp, viewer } = await startedOn(0, [A_URL]);
+      cdp.failOn(HISTORY);
+      cdp.emit(NAVIGATED, navigatedTo(B_URL));
+      await vi.advanceTimersByTimeAsync(100);
+      expect(viewer.texts()).toEqual([pageBody(B_URL, "T0")]);
+      expect(vi.getTimerCount()).toBe(0);
+      cdp.stopFailing(HISTORY);
+      cdp.answer(HISTORY, historyOf(1, [A_URL, B_URL]));
+      cdp.emit("Page.loadEventFired", { timestamp: 1 });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(viewer.texts().at(-1)).toEqual(
+        pageBody(B_URL, "T1", { canGoBack: true })
+      );
+    });
+
+    it("遅れて返った古い読み直しは、新しい読み直しの結果を上書きしない", async () => {
+      const { cdp, viewer } = await startedOn(0, [A_URL]);
+      cdp.holdOn(HISTORY);
+      cdp.answer(HISTORY, historyOf(1, [A_URL, B_URL]));
+      cdp.emit(NAVIGATED, navigatedTo(B_URL));
+      await vi.advanceTimersByTimeAsync(100);
+      cdp.answer(HISTORY, historyOf(2, [A_URL, B_URL, C_URL]));
+      cdp.emit(NAVIGATED, navigatedTo(C_URL));
+      await vi.advanceTimersByTimeAsync(100);
+      cdp.releaseNewest(HISTORY);
+      await flush();
+      cdp.release(HISTORY);
+      await flush();
+      expect(viewer.texts().at(-1)).toEqual(
+        pageBody(C_URL, "T2", { canGoBack: true })
+      );
+    });
+
+    it("視聴者が居ない間の遷移も追い、戻った視聴者へいまの状態を知らせる", async () => {
+      const { cdp, bridge, viewer } = await startedOn(0, [A_URL]);
+      viewer.emit("close");
+      cdp.answer(HISTORY, historyOf(1, [A_URL, B_URL]));
+      cdp.emit(NAVIGATED, navigatedTo(B_URL));
+      await vi.advanceTimersByTimeAsync(100);
+      const back = fakeViewer();
+      bridge.attach(back);
+      await flush();
+      expect(textsOf(back, "page")).toEqual([
+        pageBody(B_URL, "T1", { canGoBack: true }),
+      ]);
+    });
+
+    it("接続が切れたら、読み直しの待ちを消し、前のページの状態を忘れる", async () => {
+      const first = fakeCdp();
+      first.answer(HISTORY, historyOf(0, [A_URL]));
+      const second = fakeCdp();
+      const connect = vi
+        .fn()
+        .mockResolvedValueOnce(first)
+        .mockResolvedValueOnce(second);
+      const bridge = new BrowserCdpBridge(connect);
+      bridge.attach(fakeViewer());
+      await flush();
+      first.emit(NAVIGATED, navigatedTo(B_URL));
+      expect(vi.getTimerCount()).toBe(1);
+      first.disconnect();
+      expect(vi.getTimerCount()).toBe(0);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      // 捨てた接続から遅れて届いた遷移は、いまの接続に響かない
+      first.emit(NAVIGATED, navigatedTo(C_URL));
+      await vi.advanceTimersByTimeAsync(200);
+      expect(textsOf(viewer, "page")).toEqual([]);
+      expect(second.count(HISTORY)).toBe(1);
+    });
+
+    it("resetしたら、読み直しの待ちを消す", async () => {
+      const { cdp, bridge } = await startedOn(0, [A_URL]);
+      cdp.emit(NAVIGATED, navigatedTo(B_URL));
+      bridge.reset();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("接続が切れたあとに返った読み直しは使わない", async () => {
+      const { cdp, viewer } = await startedOn(0, [A_URL]);
+      cdp.holdOn(HISTORY);
+      cdp.emit(NAVIGATED, navigatedTo(B_URL));
+      await vi.advanceTimersByTimeAsync(100);
+      viewer.send.mockClear();
+      cdp.emitBrowser("Target.detachedFromTarget", { sessionId: "S1" });
+      cdp.release(HISTORY);
+      await flush();
+      expect(textsOf(viewer, "page")).toEqual([]);
+    });
+
+    it("状態の通知が投げた視聴者だけを外し、残りへは届ける", async () => {
+      const { cdp, viewers } = await startedOn(0, [A_URL], 2);
+      viewers[0].send.mockImplementation(() => {
+        throw new Error("send failed");
+      });
+      cdp.emit(NAVIGATED, navigatedTo(B_URL));
+      expect(viewers[0].terminate).toHaveBeenCalled();
+      expect(viewers[1].texts()).toEqual([pageBody(B_URL, "T0")]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(viewers[0].send).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("遷移", () => {
+    const NAVIGATE = "Page.navigate";
+    const NOTICE = { t: "notice", message: "localhostのURLだけを開けます" };
+
+    it.each([
+      ["127.0.0.1:3000/a", "http://127.0.0.1:3000/a"],
+      ["  localhost/a  ", "http://localhost/a"],
+      ["https://localhost:8443/", "https://localhost:8443/"],
+      ["about:blank", "about:blank"],
+    ])("gotoの %s は %s へ遷移する", async (url, expected) => {
+      const { cdp, viewer } = await started();
+      viewer.receive({ t: "nav", type: "goto", url });
+      expect(cdp.last(NAVIGATE)).toEqual({
+        params: { url: expected },
+        sessionId: "S1",
+      });
+      expect(viewer.texts()).toEqual([]);
+    });
+
+    it.each([
+      "example.com",
+      "http://example.com/",
+      "file:///etc/passwd",
+      "javascript:alert(1)",
+      "http://localhost.example.com/",
+      "",
+    ])("gotoの %s は遷移せず、送った視聴者にだけ理由を返す", async url => {
+      const { cdp, viewers } = await started(2);
+      viewers[0].receive({ t: "nav", type: "goto", url });
+      await flush();
+      expect(cdp.methods()).toEqual([]);
+      expect(viewers[0].texts()).toEqual([NOTICE]);
+      expect(viewers[1].texts()).toEqual([]);
+      expect(viewers[0].close).not.toHaveBeenCalled();
+    });
+
+    it("backとforwardは、履歴の隣のエントリへ移る", async () => {
+      const { cdp, viewer } = await startedOn(1, [A_URL, B_URL, C_URL]);
+      viewer.receive({ t: "nav", type: "back" });
+      await flush();
+      expect(cdp.last("Page.navigateToHistoryEntry")).toEqual({
+        params: { entryId: 10 },
+        sessionId: "S1",
+      });
+      viewer.receive({ t: "nav", type: "forward" });
+      await flush();
+      expect(cdp.last("Page.navigateToHistoryEntry")).toEqual({
+        params: { entryId: 12 },
+        sessionId: "S1",
+      });
+      expect(cdp.count(HISTORY)).toBe(2);
+    });
+
+    it("履歴の端では、backもforwardも何もしない", async () => {
+      const { cdp, viewer } = await startedOn(0, [A_URL]);
+      viewer.receive({ t: "nav", type: "back" });
+      viewer.receive({ t: "nav", type: "forward" });
+      await flush();
+      expect(cdp.methods()).toEqual([HISTORY, HISTORY]);
+      expect(viewer.texts()).toEqual([]);
+    });
+
+    it("履歴を読めなければ、backは何もしない", async () => {
+      const { cdp, viewer } = await startedOn(1, [A_URL, B_URL]);
+      cdp.failOn(HISTORY);
+      viewer.receive({ t: "nav", type: "back" });
+      await flush();
+      cdp.stopFailing(HISTORY);
+      cdp.answer(HISTORY, {});
+      viewer.receive({ t: "nav", type: "back" });
+      await flush();
+      expect(cdp.count("Page.navigateToHistoryEntry")).toBe(0);
+      expect(viewer.close).not.toHaveBeenCalled();
+    });
+
+    it("履歴を読んでいる間に接続が切れたら、backは移らない", async () => {
+      const { cdp, viewer } = await startedOn(1, [A_URL, B_URL]);
+      cdp.holdOn(HISTORY);
+      viewer.receive({ t: "nav", type: "back" });
+      cdp.emitBrowser("Target.detachedFromTarget", { sessionId: "S1" });
+      cdp.release(HISTORY);
+      await flush();
+      expect(cdp.count("Page.navigateToHistoryEntry")).toBe(0);
+    });
+
+    it("reloadとstop", async () => {
+      const { cdp, viewer } = await started();
+      viewer.receive({ t: "nav", type: "reload" });
+      viewer.receive({ t: "nav", type: "stop" });
+      expect(cdp.methods()).toEqual(["Page.reload", "Page.stopLoading"]);
+      expect(cdp.last("Page.reload")?.sessionId).toBe("S1");
+      expect(cdp.last("Page.stopLoading")?.sessionId).toBe("S1");
+    });
+
+    it("遷移がrejectされても視聴者を切らない", async () => {
+      const { cdp, viewer } = await started();
+      for (const method of [NAVIGATE, "Page.reload", "Page.stopLoading"]) {
+        cdp.failOn(method);
+      }
+      viewer.receive({ t: "nav", type: "goto", url: A_URL });
+      viewer.receive({ t: "nav", type: "reload" });
+      viewer.receive({ t: "nav", type: "stop" });
+      await flush();
+      expect(viewer.close).not.toHaveBeenCalled();
+      expect(viewer.terminate).not.toHaveBeenCalled();
+    });
+
+    it("タブの準備が終わる前の遷移は捨てる", async () => {
+      const cdp = fakeCdp();
+      cdp.holdOn("Emulation.setDeviceMetricsOverride");
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      viewer.receive({ t: "nav", type: "goto", url: A_URL });
+      viewer.receive({ t: "nav", type: "reload" });
+      cdp.release("Emulation.setDeviceMetricsOverride");
+      await flush();
+      expect(cdp.count(NAVIGATE)).toBe(0);
+      expect(cdp.count("Page.reload")).toBe(0);
+    });
+  });
+
+  describe("ダイアログの表示と応答", () => {
+    const OPENING = "Page.javascriptDialogOpening";
+    const CLOSED = "Page.javascriptDialogClosed";
+    const HANDLE = "Page.handleJavaScriptDialog";
+    const prompt = {
+      type: "prompt",
+      message: "名前は?",
+      defaultPrompt: "ark",
+      url: A_URL,
+    };
+    const PROMPT_BODY = {
+      t: "dialog",
+      kind: "prompt",
+      message: "名前は?",
+      defaultPrompt: "ark",
+    };
+
+    it("開いたら全員へ知らせ、閉じたら全員へ知らせる", async () => {
+      const { cdp, viewers } = await started(2);
+      cdp.emit(OPENING, prompt);
+      for (const viewer of viewers) {
+        expect(viewer.texts()).toEqual([PROMPT_BODY]);
+      }
+      cdp.emit(CLOSED, { result: true, userInput: "x" });
+      for (const viewer of viewers) {
+        expect(viewer.texts().at(-1)).toEqual({ t: "dialogClosed" });
+      }
+    });
+
+    it("開いている間に入った視聴者へ、寸法、ページの状態、ダイアログの順に知らせる", async () => {
+      const { cdp, bridge, viewer } = await startedOn(0, [A_URL]);
+      cdp.emit(OPENING, prompt);
+      const late = fakeViewer();
+      bridge.attach(late);
+      await flush();
+      expect(late.texts()).toEqual([
+        { t: "viewport", width: 1280, height: 900, gen: 1 },
+        pageBody(A_URL, "T0"),
+        PROMPT_BODY,
+      ]);
+      expect(viewer.texts()).toEqual([PROMPT_BODY]);
+    });
+
+    it("閉じたあとに入った視聴者へは知らせない", async () => {
+      const { cdp, bridge } = await started();
+      cdp.emit(OPENING, prompt);
+      cdp.emit(CLOSED, { result: false, userInput: "" });
+      const late = fakeViewer();
+      bridge.attach(late);
+      await flush();
+      expect(textsOf(late, "dialog")).toEqual([]);
+    });
+
+    it("準備の途中に開いたダイアログも、入った視聴者へ知らせる", async () => {
+      const cdp = fakeCdp();
+      cdp.holdOn("Emulation.setDeviceMetricsOverride");
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      cdp.emit(OPENING, prompt);
+      expect(viewer.texts()).toEqual([]);
+      cdp.release("Emulation.setDeviceMetricsOverride");
+      await flush();
+      expect(viewer.texts()).toEqual([
+        { t: "viewport", width: 1280, height: 900, gen: 1 },
+        PROMPT_BODY,
+      ]);
+    });
+
+    it("応答をPage.handleJavaScriptDialogにする", async () => {
+      const { cdp, viewer } = await started();
+      cdp.emit(OPENING, prompt);
+      viewer.receive({ t: "dialog", accept: true, promptText: "x" });
+      expect(cdp.last(HANDLE)).toEqual({
+        params: { accept: true, promptText: "x" },
+        sessionId: "S1",
+      });
+      viewer.receive({ t: "dialog", accept: false });
+      expect(cdp.last(HANDLE)?.params).toEqual({ accept: false });
+    });
+
+    it("開いていないときの応答は無視する", async () => {
+      const { cdp, viewer } = await started();
+      viewer.receive({ t: "dialog", accept: true });
+      cdp.emit(OPENING, prompt);
+      cdp.emit(CLOSED, { result: true, userInput: "" });
+      viewer.receive({ t: "dialog", accept: true });
+      expect(cdp.count(HANDLE)).toBe(0);
+    });
+
+    it("ほかの視聴者が先に答えていて応答がrejectされても、視聴者を切らない", async () => {
+      const { cdp, viewers } = await started(2);
+      cdp.emit(OPENING, prompt);
+      viewers[0].receive({ t: "dialog", accept: true });
+      cdp.failOn(HANDLE);
+      viewers[1].receive({ t: "dialog", accept: false });
+      await flush();
+      expect(cdp.count(HANDLE)).toBe(2);
+      expect(viewers[1].close).not.toHaveBeenCalled();
+      expect(viewers[1].terminate).not.toHaveBeenCalled();
+    });
+
+    it("長いメッセージは10,000文字で切り、知らない種類はalertにする", async () => {
+      const { cdp, viewer } = await started();
+      cdp.emit(OPENING, {
+        type: "future",
+        message: "m".repeat(10_001),
+        defaultPrompt: "d".repeat(10_001),
+      });
+      expect(viewer.texts()).toEqual([
+        {
+          t: "dialog",
+          kind: "alert",
+          message: "m".repeat(10_000),
+          defaultPrompt: "d".repeat(10_000),
+        },
+      ]);
+    });
+
+    it("形の違うイベントでも、空のalertとして知らせる", async () => {
+      const { cdp, viewer } = await started();
+      cdp.emit(OPENING, undefined);
+      expect(viewer.texts()).toEqual([
+        { t: "dialog", kind: "alert", message: "", defaultPrompt: "" },
+      ]);
+    });
+
+    it("開いていないのに閉じたと届いても、知らせない", async () => {
+      const { cdp, viewer } = await started();
+      cdp.emit(CLOSED, { result: true, userInput: "" });
+      expect(viewer.texts()).toEqual([]);
+    });
+
+    it("別のsessionのダイアログは知らせない", async () => {
+      const { cdp, viewer } = await started();
+      cdp.emit(OPENING, prompt, "S-other");
+      cdp.emitBrowser(OPENING, prompt);
+      viewer.receive({ t: "dialog", accept: true });
+      expect(viewer.texts()).toEqual([]);
+      expect(cdp.count(HANDLE)).toBe(0);
+    });
+
+    it("接続が切れたら、開いていたダイアログを忘れる", async () => {
+      const first = fakeCdp();
+      const second = fakeCdp();
+      const connect = vi
+        .fn()
+        .mockResolvedValueOnce(first)
+        .mockResolvedValueOnce(second);
+      const bridge = new BrowserCdpBridge(connect);
+      bridge.attach(fakeViewer());
+      await flush();
+      first.emit(OPENING, prompt);
+      first.disconnect();
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      expect(textsOf(viewer, "dialog")).toEqual([]);
+      viewer.receive({ t: "dialog", accept: true });
+      expect(second.count(HANDLE)).toBe(0);
+    });
+  });
+
+  describe("コピー", () => {
+    const EVALUATE = "Runtime.evaluate";
+    const selected = (value: unknown) => ({
+      result: { type: "string", value },
+    });
+
+    it("固定の式で選択を読み、送った視聴者にだけ返す", async () => {
+      const { cdp, viewers } = await started(2);
+      cdp.answer(EVALUATE, selected("選んだ文字"));
+      viewers[0].receive({ t: "copy", expression: "document.cookie" });
+      await flush();
+      expect(cdp.last(EVALUATE)).toEqual({
+        params: { expression: COPY_EXPRESSION, returnByValue: true },
+        sessionId: "S1",
+      });
+      expect(viewers[0].texts()).toEqual([
+        { t: "clipboard", text: "選んだ文字" },
+      ]);
+      expect(viewers[1].texts()).toEqual([]);
+    });
+
+    it.each([
+      ["空の選択", selected("")],
+      ["文字列でない値", selected(1)],
+      ["例外", { result: { type: "object" }, exceptionDetails: {} }],
+      ["空の応答", {}],
+    ])("%s では返さない", async (_name, result) => {
+      const { cdp, viewer } = await started();
+      cdp.answer(EVALUATE, result);
+      viewer.receive({ t: "copy" });
+      await flush();
+      expect(cdp.count(EVALUATE)).toBe(1);
+      expect(viewer.texts()).toEqual([]);
+    });
+
+    it("評価がrejectされても視聴者を切らない", async () => {
+      const { cdp, viewer } = await started();
+      cdp.failOn(EVALUATE);
+      viewer.receive({ t: "copy" });
+      await flush();
+      expect(viewer.texts()).toEqual([]);
+      expect(viewer.close).not.toHaveBeenCalled();
+    });
+
+    it("100万文字で切る", async () => {
+      const { cdp, viewer } = await started();
+      cdp.answer(EVALUATE, selected("a".repeat(1_000_001)));
+      viewer.receive({ t: "copy" });
+      await flush();
+      const [message] = viewer.texts() as Array<{ text: string }>;
+      expect(message.text).toHaveLength(1_000_000);
+    });
+
+    it("ダイアログが開いている間は評価しない", async () => {
+      const { cdp, viewer } = await started();
+      cdp.emit("Page.javascriptDialogOpening", { type: "alert", message: "" });
+      viewer.receive({ t: "copy" });
+      await flush();
+      expect(cdp.count(EVALUATE)).toBe(0);
+    });
+
+    it("読んでいる間に去った視聴者へは返さない", async () => {
+      const { cdp, viewers } = await started(2);
+      cdp.answer(EVALUATE, selected("x"));
+      cdp.holdOn(EVALUATE);
+      viewers[0].receive({ t: "copy" });
+      viewers[0].emit("close");
+      cdp.release(EVALUATE);
+      await flush();
+      expect(viewers[0].texts()).toEqual([]);
+      expect(viewers[1].texts()).toEqual([]);
+    });
+  });
+
+  it("タブ、select、タッチのメッセージは、まだ何もしない", async () => {
+    const { cdp, viewer } = await started();
+    viewer.receive({ t: "tab", type: "new" });
+    viewer.receive({ t: "tab", type: "close", id: "T1" });
+    viewer.receive({ t: "selectChoose", id: 1, index: 0 });
+    viewer.receive({ t: "selectCancel", id: 1 });
+    viewer.receive({
+      t: "touch",
+      type: "start",
+      points: [{ id: 0, x: 1, y: 2 }],
+      modifiers: 0,
+    });
+    await flush();
+    expect(cdp.methods()).toEqual([]);
+    expect(viewer.texts()).toEqual([]);
+  });
+});
+
+describe("COPY_EXPRESSION", () => {
+  /** ページの `document` と `getSelection` を差し替えて、式を評価する */
+  function evaluate(document: unknown, getSelection: () => unknown): unknown {
+    return new Function(
+      "document",
+      "getSelection",
+      `return ${COPY_EXPRESSION};`
+    )(document, getSelection);
+  }
+  const noSelection = () => "";
+
+  it("フォーカスが無ければ、文書の選択を返す", () => {
+    expect(evaluate({ activeElement: null }, () => "文書の選択")).toBe(
+      "文書の選択"
+    );
+  });
+
+  it.each(["INPUT", "TEXTAREA"])(
+    "フォーカスが %s にあれば、valueの選択範囲を返す",
+    tagName => {
+      const el = {
+        tagName,
+        type: "text",
+        value: "0123456789",
+        selectionStart: 2,
+        selectionEnd: 5,
+      };
+      expect(evaluate({ activeElement: el }, noSelection)).toBe("234");
+    }
+  );
+
+  it("パスワードの欄からは読まない", () => {
+    const el = {
+      tagName: "INPUT",
+      type: "password",
+      value: "secret",
+      selectionStart: 0,
+      selectionEnd: 6,
+    };
+    expect(evaluate({ activeElement: el }, () => "secret")).toBe("");
+  });
+
+  it("選択範囲を持たない欄 (numberなど) では、文書の選択を返す", () => {
+    const el = {
+      tagName: "INPUT",
+      type: "number",
+      value: "42",
+      selectionStart: null,
+      selectionEnd: null,
+    };
+    expect(evaluate({ activeElement: el }, () => "外の選択")).toBe("外の選択");
+  });
+
+  it("shadow DOMと同じオリジンのiframeの中のフォーカスをたどる", () => {
+    const input = {
+      tagName: "INPUT",
+      type: "text",
+      value: "abcdef",
+      selectionStart: 1,
+      selectionEnd: 3,
+    };
+    const host = { tagName: "X-HOST", shadowRoot: { activeElement: input } };
+    const frame = {
+      tagName: "IFRAME",
+      contentDocument: { activeElement: host },
+    };
+    expect(evaluate({ activeElement: frame }, noSelection)).toBe("bc");
+  });
+
+  it("選択が無ければ空の文字列を返す", () => {
+    expect(evaluate({ activeElement: null }, () => null)).toBe("");
+  });
+
+  it("途中で例外が出ても、投げずに空の文字列を返す", () => {
+    const frame = {
+      tagName: "IFRAME",
+      get contentDocument(): never {
+        throw new Error("cross-origin");
+      },
+    };
+    expect(evaluate({ activeElement: frame }, noSelection)).toBe("");
+    expect(
+      evaluate({ activeElement: null }, () => {
+        throw new Error("no selection");
+      })
+    ).toBe("");
+  });
+
+  it("100万文字で切る", () => {
+    expect(
+      evaluate({ activeElement: null }, () => "a".repeat(1_000_001))
+    ).toHaveLength(1_000_000);
+  });
+});
+
 describe("toCdpCommand", () => {
   const mouse = {
     t: "mouse",
@@ -2293,6 +3051,26 @@ describe("toCdpCommand", () => {
   it("refreshはnull", () => {
     expect(toCdpCommand({ t: "refresh" })).toBeNull();
   });
+
+  it.each<[string, Parameters<typeof toCdpCommand>[0]]>([
+    ["nav", { t: "nav", type: "goto", url: "http://localhost/" }],
+    ["tab", { t: "tab", type: "new" }],
+    ["dialog", { t: "dialog", accept: true }],
+    ["copy", { t: "copy" }],
+    ["selectChoose", { t: "selectChoose", id: 1, index: 0 }],
+    ["selectCancel", { t: "selectCancel", id: 1 }],
+    [
+      "touch",
+      {
+        t: "touch",
+        type: "start",
+        points: [{ id: 0, x: 1, y: 2 }],
+        modifiers: 0,
+      },
+    ],
+  ])("%s はnull", (_name, msg) => {
+    expect(toCdpCommand(msg)).toBeNull();
+  });
 });
 
 describe("parseClientMessage", () => {
@@ -2359,5 +3137,101 @@ describe("parseClientMessage", () => {
     expect(parse({ code: "c".repeat(65) })).toBeNull();
     expect(parse({ text: "t".repeat(100_000) })).not.toBeNull();
     expect(parse({ text: "t".repeat(100_001) })).toBeNull();
+  });
+
+  describe("ページの操作のメッセージ", () => {
+    const parse = (value: unknown) => parseClientMessage(JSON.stringify(value));
+    const touch = {
+      t: "touch",
+      type: "move",
+      points: [{ id: 0, x: 1.5, y: 2 }],
+      modifiers: 8,
+    };
+    const points = (count: number) =>
+      Array.from({ length: count }, (_, id) => ({ id, x: id, y: id }));
+
+    it.each([
+      [{ t: "nav", type: "goto", url: "localhost:3000" }],
+      [{ t: "nav", type: "goto", url: "a".repeat(2048) }],
+      [{ t: "nav", type: "back" }],
+      [{ t: "nav", type: "forward" }],
+      [{ t: "nav", type: "reload" }],
+      [{ t: "nav", type: "stop" }],
+      [{ t: "tab", type: "activate", id: "A1B2-c3" }],
+      [{ t: "tab", type: "close", id: "a".repeat(64) }],
+      [{ t: "tab", type: "new" }],
+      [{ t: "dialog", accept: true }],
+      [{ t: "dialog", accept: false, promptText: "p".repeat(10_000) }],
+      [{ t: "copy" }],
+      [{ t: "selectChoose", id: 0, index: 0 }],
+      [{ t: "selectCancel", id: 3 }],
+      [touch],
+      [{ ...touch, type: "end", points: [] }],
+      [{ ...touch, type: "start", points: points(10) }],
+      [{ ...touch, type: "cancel" }],
+    ])("%j を通す", value => {
+      expect(parse(value)).toEqual(value);
+    });
+
+    it("知らない列は落とす", () => {
+      expect(parse({ t: "nav", type: "back", url: "x", method: "m" })).toEqual({
+        t: "nav",
+        type: "back",
+      });
+      expect(parse({ t: "tab", type: "new", id: "T1" })).toEqual({
+        t: "tab",
+        type: "new",
+      });
+      expect(parse({ t: "copy", expression: "document.cookie" })).toEqual({
+        t: "copy",
+      });
+      expect(
+        parse({ ...touch, points: [{ id: 0, x: 1, y: 2, force: 9 }], extra: 1 })
+      ).toEqual({ ...touch, points: [{ id: 0, x: 1, y: 2 }] });
+    });
+
+    it.each([
+      [{ t: "nav", type: "goto" }],
+      [{ t: "nav", type: "goto", url: 1 }],
+      [{ t: "nav", type: "goto", url: "a".repeat(2049) }],
+      [{ t: "nav", type: "home" }],
+      [{ t: "nav" }],
+      [{ t: "tab", type: "activate" }],
+      [{ t: "tab", type: "activate", id: "" }],
+      [{ t: "tab", type: "close", id: "a".repeat(65) }],
+      [{ t: "tab", type: "close", id: "T1;x" }],
+      [{ t: "tab", type: "close", id: 1 }],
+      [{ t: "tab", type: "pin", id: "T1" }],
+      [{ t: "dialog" }],
+      [{ t: "dialog", accept: "yes" }],
+      [{ t: "dialog", accept: true, promptText: 1 }],
+      [{ t: "dialog", accept: true, promptText: "p".repeat(10_001) }],
+      [{ t: "selectChoose", id: 1 }],
+      [{ t: "selectChoose", id: -1, index: 0 }],
+      [{ t: "selectChoose", id: 1, index: 0.5 }],
+      [{ t: "selectChoose", id: 1, index: -1 }],
+      [{ t: "selectChoose", id: "1", index: 0 }],
+      [{ t: "selectCancel" }],
+      [{ t: "selectCancel", id: 1.5 }],
+      [{ ...touch, type: "tap" }],
+      [{ ...touch, points: "x" }],
+      [{ ...touch, points: points(11) }],
+      [{ ...touch, points: [null] }],
+      [{ ...touch, points: [{ id: 0, x: "1", y: 2 }] }],
+      [{ ...touch, points: [{ id: 0, x: 1 }] }],
+      [{ ...touch, points: [{ id: -1, x: 1, y: 2 }] }],
+      [{ ...touch, points: [{ id: 0.5, x: 1, y: 2 }] }],
+      [{ ...touch, modifiers: "0" }],
+    ])("%j を拒否する", value => {
+      expect(parse(value)).toBeNull();
+    });
+
+    it("有限でない座標を拒否する", () => {
+      expect(
+        parseClientMessage(
+          '{"t":"touch","type":"move","points":[{"id":0,"x":1e999,"y":2}],"modifiers":0}'
+        )
+      ).toBeNull();
+    });
   });
 });
