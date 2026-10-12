@@ -24,6 +24,8 @@ const LEGACY_LEFT_MODE_KEY = "ark-split-left-mode";
 
 const testDoubles = vi.hoisted(() => ({
   splitChatPane: vi.fn(),
+  /** TerminalPane が描画のたびに呼ぶフック。描画の回数を数えるのに使う */
+  terminalPaneRender: vi.fn(),
 }));
 
 vi.mock("./SplitChatPane", () => ({
@@ -52,7 +54,9 @@ vi.mock("../hooks/useMobile", () => ({
 }));
 
 vi.mock("../hooks/useTerminalLinkInjection", () => ({
-  useTerminalLinkInjection: () => undefined,
+  useTerminalLinkInjection: () => {
+    testDoubles.terminalPaneRender();
+  },
 }));
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
@@ -196,6 +200,9 @@ const floatingOf = (scope: ParentNode) =>
 /** 開いている端末の窓 (閉じている間は null) */
 const dialogOf = (scope: ParentNode) =>
   scope.querySelector<HTMLElement>('[role="dialog"][aria-label="端末"]');
+/** 窓の枠 (開閉に関係なく常にある) */
+const windowOf = (scope: ParentNode) =>
+  scope.querySelector<HTMLElement>('[data-testid="floating-terminal-window"]');
 const terminalIframe = (scope: ParentNode) =>
   scope.querySelector<HTMLIFrameElement>('iframe[data-keynav="terminal"]');
 const isTerminalHidden = (scope: ParentNode) =>
@@ -243,6 +250,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear();
   testDoubles.splitChatPane.mockClear();
+  testDoubles.terminalPaneRender.mockClear();
 });
 
 afterEach(() => {
@@ -345,7 +353,7 @@ describe("PC 会話と端末の窓", () => {
     expect(localStorage.length).toBe(0);
   });
 
-  it("窓の外 (暗くした部分) を押すと閉じる", () => {
+  it("窓の外 (暗くした部分) を押して離すと閉じる", () => {
     const container = mount(paneSection(makeSession("backdrop"), true));
     clickButton(container, "端末を開く");
     expect(dialogOf(container)).not.toBeNull();
@@ -353,6 +361,13 @@ describe("PC 会話と端末の窓", () => {
     act(() => {
       floatingOf(container)?.dispatchEvent(
         new MouseEvent("pointerdown", { bubbles: true })
+      );
+    });
+    // 押しただけでは閉じない (閉じたあとに届く click が、下の帯や送信ボタンを押さないように)
+    expect(dialogOf(container)).not.toBeNull();
+    act(() => {
+      floatingOf(container)?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
       );
     });
 
@@ -388,6 +403,61 @@ describe("PC 会話と端末の窓", () => {
     expect(document.activeElement).toBe(
       container.querySelector('textarea[data-keynav="chat-input"]')
     );
+  });
+
+  it("端末がまだ無いセッションで開くと、フォーカスを窓に置く (打ったキーを会話の入力欄へ流さない)", () => {
+    const starting: ManagedSession = {
+      ...makeSession("starting"),
+      ttydPort: undefined,
+      ttydUrl: undefined,
+    };
+    const container = mount(paneSection(starting, true));
+    const chatInput = container.querySelector<HTMLTextAreaElement>(
+      'textarea[data-keynav="chat-input"]'
+    );
+    chatInput?.focus();
+    expect(terminalIframe(container)).toBeNull();
+
+    clickButton(container, "端末を開く");
+
+    expect(document.activeElement).toBe(windowOf(container));
+    expect(document.activeElement).not.toBe(chatInput);
+  });
+
+  it("窓を開いている間に端末が現れたら、そこでフォーカスを端末へ移す", () => {
+    const starting: ManagedSession = {
+      ...makeSession("late-frame"),
+      ttydPort: undefined,
+      ttydUrl: undefined,
+    };
+    const container = mount(paneSection(starting, true));
+    const root = mountedRoots.at(-1)?.root;
+    clickButton(container, "端末を開く");
+    expect(document.activeElement).toBe(windowOf(container));
+
+    act(() => root?.render(paneSection(makeSession("late-frame"), true)));
+
+    expect(terminalIframe(container)).not.toBeNull();
+    expect(document.activeElement).toBe(terminalIframe(container));
+  });
+
+  it("端末が現れても、窓を閉じていればフォーカスを動かさない", () => {
+    const starting: ManagedSession = {
+      ...makeSession("late-closed"),
+      ttydPort: undefined,
+      ttydUrl: undefined,
+    };
+    const container = mount(paneSection(starting, true));
+    const root = mountedRoots.at(-1)?.root;
+    const chatInput = container.querySelector<HTMLTextAreaElement>(
+      'textarea[data-keynav="chat-input"]'
+    );
+    chatInput?.focus();
+
+    act(() => root?.render(paneSection(makeSession("late-closed"), true)));
+
+    expect(terminalIframe(container)).not.toBeNull();
+    expect(document.activeElement).toBe(chatInput);
   });
 
   it("選択が外れて閉じたときは、フォーカスを動かさない", () => {
@@ -690,6 +760,75 @@ describe("PC上部バーの1タップ操作と、端末の窓の操作", () => {
     // key が変わって作り直される = ttyd へ繋ぎ直す (要素の同一性で確認する)
     expect(terminalIframe(container)).not.toBeNull();
     expect(terminalIframe(container)).not.toBe(before);
+  });
+
+  /** 実際に押したときと同じく、ボタンにフォーカスを置いてから押す */
+  function focusAndClick(scope: ParentNode, label: string): HTMLButtonElement {
+    const button = scope.querySelector<HTMLButtonElement>(
+      `button[aria-label="${label}"]`
+    );
+    expect(button).not.toBeNull();
+    button?.focus();
+    expect(document.activeElement).toBe(button);
+    act(() =>
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true }))
+    );
+    return button as HTMLButtonElement;
+  }
+
+  it("コピーのあとは、フォーカスを端末へ戻す (続くEnterでもう一度押さない)", () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn(async () => undefined) },
+      configurable: true,
+    });
+    const container = mount(
+      paneSection(makeSession("focus-copy"), true, {
+        onCopyBuffer: vi.fn(async () => "端末の中身"),
+      })
+    );
+
+    focusAndClick(openTerminal(container), "端末のバッファをコピー");
+
+    expect(document.activeElement).toBe(terminalIframe(container));
+  });
+
+  it("再読み込みのあとは、貼り直した端末へフォーカスを移す", () => {
+    const container = mount(paneSection(makeSession("focus-reload"), true));
+    const dialog = openTerminal(container);
+    const before = terminalIframe(container);
+
+    focusAndClick(dialog, "端末を再読み込み");
+
+    expect(terminalIframe(container)).not.toBe(before);
+    expect(document.activeElement).toBe(terminalIframe(container));
+  });
+
+  it("端末がまだ無いセッションでは、再読み込みのあとフォーカスを窓に置く", () => {
+    const starting: ManagedSession = {
+      ...makeSession("focus-reload-starting"),
+      ttydPort: undefined,
+      ttydUrl: undefined,
+    };
+    const container = mount(paneSection(starting, true));
+
+    focusAndClick(openTerminal(container), "端末を再読み込み");
+
+    expect(document.activeElement).toBe(windowOf(container));
+  });
+
+  it("入力バーを出したら入力バーへ、隠したら端末へフォーカスを移す", () => {
+    const container = mount(paneSection(makeSession("focus-input-bar"), true));
+    const dialog = openTerminal(container);
+
+    const showButton = focusAndClick(dialog, "入力バーを表示");
+
+    expect(document.activeElement).not.toBe(showButton);
+    expect(document.activeElement?.tagName).toBe("TEXTAREA");
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    focusAndClick(dialog, "入力バーを隠す");
+
+    expect(document.activeElement).toBe(terminalIframe(container));
   });
 
   it("入力バーのボタンは押すたびに文言と aria-pressed が入れ替わる", () => {
@@ -1427,5 +1566,61 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
     );
     act(() => window.dispatchEvent(new MouseEvent("mouseup")));
     expect(localStorage.getItem("ark-split-left-width")).toBe("632");
+  });
+});
+
+describe("PC 画面末尾の更新と再描画", () => {
+  it("liveTail だけが変わっても、TerminalPane は描画し直さない (親が毎回新しい関数を渡しても)", () => {
+    const session = makeSession("render-count");
+    const tabs: ComponentProps<typeof SplitViewPane>["tabs"] = [
+      { type: "terminal", id: "terminal-render-count" },
+    ];
+    // makePaneProps は呼ぶたびに新しい関数を作る (Dashboard のインラインの関数と同じ)
+    const container = mount(
+      paneSection(session, true, { tabs, liveTail: "$ pnpm test" })
+    );
+    const root = mountedRoots.at(-1)?.root;
+    const rendersBefore = testDoubles.terminalPaneRender.mock.calls.length;
+    expect(rendersBefore).toBeGreaterThan(0);
+
+    act(() =>
+      root?.render(
+        paneSection(session, true, { tabs, liveTail: "$ pnpm test\nPASS" })
+      )
+    );
+
+    // 画面末尾は会話 (帯) まで届いている
+    expect(latestChatProps(session.id).liveTail).toBe("$ pnpm test\nPASS");
+    expect(testDoubles.terminalPaneRender.mock.calls.length).toBe(
+      rendersBefore
+    );
+    expect(terminalIframe(container)).not.toBeNull();
+  });
+
+  it("関数を差し替えられても、TerminalPane は最新の関数を呼ぶ", () => {
+    const session = makeSession("latest-callback");
+    const tabs: ComponentProps<typeof SplitViewPane>["tabs"] = [
+      { type: "terminal", id: "terminal-latest-callback" },
+    ];
+    const first = vi.fn();
+    const second = vi.fn();
+    const container = mount(
+      paneSection(session, true, { tabs, onSendKey: first })
+    );
+    const root = mountedRoots.at(-1)?.root;
+    act(() =>
+      root?.render(paneSection(session, true, { tabs, onSendKey: second }))
+    );
+    clickButton(container, "端末を開く");
+    clickButton(dialogOf(container) as ParentNode, "入力バーを表示");
+
+    const yes = dialogOf(container)?.querySelector<HTMLButtonElement>(
+      "button[title=\"Send 'y' (yes)\"]"
+    );
+    expect(yes).not.toBeNull();
+    act(() => yes?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledWith("y");
   });
 });

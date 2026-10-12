@@ -117,16 +117,15 @@ describe("TerminalPane (PC上部バーから呼ぶ操作)", () => {
     expect(frame?.querySelector("iframe")).not.toBeNull();
   });
 
-  it("openFilePickerはTerminalPaneに残したfile inputを開く", () => {
-    const clickSpy = vi
-      .spyOn(HTMLInputElement.prototype, "click")
-      .mockImplementation(() => undefined);
+  it("取っ手に出すのは端末の窓の上端から呼ぶ操作だけで、ファイル選択のinputは持たない", () => {
     const { ref, container } = mountTerminal();
-    expect(container.querySelector('input[type="file"]')).not.toBeNull();
 
-    act(() => handleOf(ref).openFilePicker());
-
-    expect(clickSpy).toHaveBeenCalledTimes(1);
+    expect(Object.keys(handleOf(ref)).sort()).toEqual([
+      "copyBuffer",
+      "reload",
+      "toggleInputBar",
+    ]);
+    expect(container.querySelector('input[type="file"]')).toBeNull();
   });
 
   it("toggleInputBarで入力バーを出し入れし、表示の変化を知らせる", () => {
@@ -170,43 +169,5 @@ describe("TerminalPane (PC上部バーから呼ぶ操作)", () => {
       );
     });
     expect(writeText).toHaveBeenCalledWith("tmux buffer");
-  });
-
-  it("pasteImageはクリップボードに画像が無いとトーストで知らせる", async () => {
-    const read = vi.fn(async () => [
-      { types: ["text/plain"], getType: vi.fn() },
-    ]);
-    Object.defineProperty(navigator, "clipboard", {
-      value: { read },
-      configurable: true,
-    });
-    const { ref } = mountTerminal();
-
-    act(() => handleOf(ref).pasteImage());
-
-    await vi.waitFor(() => {
-      expect(toastDoubles.info).toHaveBeenCalledWith(
-        "クリップボードに画像がありません"
-      );
-    });
-  });
-
-  it("pasteImageはクリップボード読み取りに失敗するとトーストで知らせる", async () => {
-    const read = vi.fn(async () => {
-      throw new Error("denied");
-    });
-    Object.defineProperty(navigator, "clipboard", {
-      value: { read },
-      configurable: true,
-    });
-    const { ref } = mountTerminal();
-
-    act(() => handleOf(ref).pasteImage());
-
-    await vi.waitFor(() => {
-      expect(toastDoubles.error).toHaveBeenCalledWith(
-        "クリップボードを読み取れませんでした"
-      );
-    });
   });
 });

@@ -11,7 +11,15 @@
  *   ttydはiframe (別のブラウジングコンテキスト) なので、アンマウントするとつなぎ直しになる
  * - 窓の開閉はこの部品の中だけで持ち、保存しない。このセッションが選ばれなくなったら
  *   閉じ、選び直しても閉じたまま
- * - 開いたら端末へ、閉じたら会話の入力欄へフォーカスを移す
+ * - 開いたら端末へ、閉じたら会話の入力欄へフォーカスを移す。窓を開いている間は、
+ *   会話の入力欄にフォーカスを残さない (打ったキーが会話に入り、Enterで送られるため)。
+ *   端末のiframeがまだ無い (セッションの起動中) ときは窓の枠に置き、iframeが現れたら
+ *   端末へ移す。窓の上端の操作を押したあとも端末へ戻す (続くEnterやSpaceで、
+ *   同じボタンをもう一度押さないように)
+ * - 端末の画面末尾 (`liveTail`) は1秒ごとに届き、そのたびにこの部品は描画し直す。
+ *   画面末尾を使うのは会話の帯だけなので、端末 (メモ化したTerminalPane) には
+ *   同一性の変わらないpropsだけを渡し、描画し直させない。親が毎回作り直して渡す関数は
+ *   useStableCallback で包んでから渡す
  * - 会話は、窓の開閉に関係なく、選択中のセッションの1枚だけがJSONLを購読する。
  *   端末がwindowで受けるファイルのD&Dとttydの自動の貼り直しは、窓が開いている
  *   選択中の1枚だけに絞る (見えていない端末に効かせない)
@@ -72,6 +80,7 @@ import {
 } from "react";
 import type { Socket } from "socket.io-client";
 import { cn } from "@/lib/utils";
+import { useStableCallback } from "../hooks/useStableCallback";
 import { focusInput } from "../lib/keynav-dom";
 import {
   inputBarToggleLabel,
@@ -367,8 +376,9 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   const openTerminal = useCallback(() => setTerminalOpen(true), []);
   const closeTerminal = useCallback(() => setTerminalOpen(false), []);
 
-  // 開いたら端末へ、閉じたら会話の入力欄へフォーカスを移す。focusInput は、見えている
-  // 端末があれば端末を、無ければ会話の入力欄を選ぶ (キーボード操作の `i` と同じ決め方)。
+  // 開いたら端末へ、閉じたら会話の入力欄へフォーカスを移す。focusInput は、窓が開いて
+  // いれば端末 (フォーカスを受けられなければ窓の枠) を、閉じていれば会話の入力欄を選ぶ
+  // (キーボード操作の `i` と同じ決め方)。
   // 選択が外れて閉じたときは、見えていないペインなのでフォーカスに触らない
   const isActiveRef = useRef(props.isActive);
   isActiveRef.current = props.isActive;
@@ -376,6 +386,46 @@ export function SplitViewPane(props: SplitViewPaneProps) {
     if (!isActiveRef.current || !rootRef.current) return;
     focusInput(rootRef.current);
   }, []);
+
+  // 窓を開いている間に端末のiframeが現れたら (セッションの起動が済んだら)、窓の枠に
+  // 置いてあったフォーカスを端末へ移す。利用者がほかへ移したフォーカスは奪わない
+  const hasTerminalFrame = Boolean(
+    props.session.ttydUrl || props.session.ttydPort
+  );
+  useEffect(() => {
+    if (!terminalOpen || !hasTerminalFrame) return;
+    const root = rootRef.current;
+    const focused = document.activeElement;
+    if (
+      root &&
+      isActiveRef.current &&
+      focused instanceof HTMLElement &&
+      root.contains(focused) &&
+      focused.getAttribute("data-keynav") === "terminal-window"
+    ) {
+      focusInput(root);
+    }
+  }, [terminalOpen, hasTerminalFrame]);
+
+  // 窓の上端の操作を押したあと、フォーカスを端末へ戻す。描画のあとに移すのは、
+  // 再読み込みではiframeが作り直されるため (作り直したあとのiframeへ移す)
+  const [terminalFocusSeq, setTerminalFocusSeq] = useState(0);
+  const refocusTerminal = useCallback(
+    () => setTerminalFocusSeq(seq => seq + 1),
+    []
+  );
+  useEffect(() => {
+    if (terminalFocusSeq > 0) moveFocusAfterToggle();
+  }, [terminalFocusSeq, moveFocusAfterToggle]);
+
+  // 端末 (TerminalPane) へ渡す関数。親は描画のたびに作り直して渡してくるので、
+  // 同一性の変わらない関数で包む (冒頭のコメントを参照)
+  const terminalOnTabSelect = useStableCallback(props.onTabSelect);
+  const terminalOnTabClose = useStableCallback(props.onTabClose);
+  const terminalOnSendMessage = useStableCallback(props.onSendMessage);
+  const terminalOnSendKey = useStableCallback(props.onSendKey);
+  const terminalOnUploadFile = useStableCallback(props.onUploadFile);
+  const terminalOnCopyBuffer = useStableCallback(props.onCopyBuffer);
 
   // 端末専用の操作は、窓の上端のボタンからTerminalPaneに頼む。入力バーの表示は、
   // ボタンの文言と押下状態 (aria-pressed) のためにTerminalPaneから知らせてもらう
@@ -398,7 +448,10 @@ export function SplitViewPane(props: SplitViewPaneProps) {
         type="button"
         aria-label="端末のバッファをコピー"
         title="端末のバッファをコピー"
-        onClick={() => terminalRef.current?.copyBuffer()}
+        onClick={() => {
+          terminalRef.current?.copyBuffer();
+          refocusTerminal();
+        }}
         className={HEADER_ICON_BUTTON}
       >
         <Copy className="size-5" aria-hidden="true" />
@@ -410,7 +463,10 @@ export function SplitViewPane(props: SplitViewPaneProps) {
         type="button"
         aria-label="端末を再読み込み"
         title="端末を再読み込み"
-        onClick={() => terminalRef.current?.reload()}
+        onClick={() => {
+          terminalRef.current?.reload();
+          refocusTerminal();
+        }}
         className={HEADER_ICON_BUTTON}
       >
         <RefreshCw className="size-5" aria-hidden="true" />
@@ -424,7 +480,12 @@ export function SplitViewPane(props: SplitViewPaneProps) {
         aria-label={inputBarLabel}
         aria-pressed={terminalInputBarVisible}
         title={inputBarLabel}
-        onClick={() => terminalRef.current?.toggleInputBar()}
+        onClick={() => {
+          terminalRef.current?.toggleInputBar();
+          // 出すときは、入力バーが自分の入力欄へフォーカスを移す (TerminalPane)。
+          // 隠すときは行き場が無くなるので、端末へ戻す
+          if (terminalInputBarVisible) refocusTerminal();
+        }}
         // text-muted-foreground と競合するので、cn (tailwind-merge) で解決させる
         className={cn(
           HEADER_ICON_BUTTON,
@@ -862,7 +923,8 @@ export function SplitViewPane(props: SplitViewPaneProps) {
       </div>
 
       {/* 端末の窓。セッションの画面全体 (このルート) を基準に重ねる。
-          TerminalPane は常にここへマウントしたままで、閉じている間は窓ごと隠れる */}
+          TerminalPane は常にここへマウントしたままで、閉じている間は窓ごと隠れる。
+          TerminalPane へ渡すpropsは、画面末尾が届いても同一性が変わらないものだけにする */}
       <FloatingTerminal
         open={terminalOpen}
         onClose={closeTerminal}
@@ -877,12 +939,12 @@ export function SplitViewPane(props: SplitViewPaneProps) {
           isVisible={props.isActive && terminalOpen}
           tabs={props.tabs}
           activeTabIndex={props.activeTabIndex}
-          onTabSelect={props.onTabSelect}
-          onTabClose={props.onTabClose}
-          onSendMessage={props.onSendMessage}
-          onSendKey={props.onSendKey}
-          onUploadFile={props.onUploadFile}
-          onCopyBuffer={props.onCopyBuffer}
+          onTabSelect={terminalOnTabSelect}
+          onTabClose={terminalOnTabClose}
+          onSendMessage={terminalOnSendMessage}
+          onSendKey={terminalOnSendKey}
+          onUploadFile={terminalOnUploadFile}
+          onCopyBuffer={terminalOnCopyBuffer}
           onInputBarVisibleChange={setTerminalInputBarVisible}
         />
       </FloatingTerminal>

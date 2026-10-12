@@ -14,12 +14,19 @@
  *   (モバイル用)。画面の端まで届くので、上端のバーをノッチの下へずらし (safe area)、
  *   閉じるボタンを指で押せる大きさ (44px) にする。窓は動かせない
  * - 閉じ方は、閉じるボタンと、窓の外 (暗くした部分) を押すこと。外を押したかどうかは
- *   背景の要素への pointerdown で見る。端末はiframeで、中で起きたポインターの
+ *   背景の要素への click で見る。端末はiframeで、中で起きたポインターの
  *   イベントは親の文書に届かないので、documentに張る「外側のクリック」の検出は使わない
+ * - 閉じるのは押したときではなく離したとき (click)。押したとき (pointerdown) に閉じると、
+ *   タッチでは続く click が、窓が消えたあとの指の下 (帯や送信ボタン) に届いて押してしまう。
+ *   主ボタンだけで閉じ、押し始めも背景だったときに限る (窓の中で押し始めて外で離した
+ *   ときの click は、共通の祖先である背景に届く)
  * - Escでは閉じない。EscはClaudeの中断に使うキーで、端末へそのまま届ける。
  *   この部品はキーのハンドラを1つも持たない (端末へのキーを横取りしない)
  * - モーダルではない。フォーカスを閉じ込めず、`aria-modal` も付けない。
  *   開いたあと・閉じたあとのフォーカスの移し先は、呼び出し側が `onOpened` / `onClosed` で決める
+ * - 窓の枠はフォーカスを受けられる (`tabIndex={-1}`)。端末のiframeがまだ無いときに、
+ *   後ろの入力欄へキーが流れないよう、フォーカスの置き場にする (探す目印は
+ *   `data-keynav="terminal-window"`。使うのは keynav-dom.ts の `focusInput`)
  * - キーボード操作の層 (KeyNavLayer) には、アプリのダイアログとして数えさせない
  *   (`data-keynav-nonmodal`)。数えさせると、開いている間は前置キーが効かなくなり、
  *   端末の中からノーマルモードへ出て窓を閉じることができない。
@@ -75,16 +82,28 @@ export function FloatingTerminal({
     else callbacksRef.current.onClosed?.();
   }, [open]);
 
+  // 押し始めが背景 (主ボタン) だったか。click のときに確かめる
+  const pressedBackdropRef = useRef(false);
   const handleBackdropPointerDown = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
-      // 窓の中から上がってきたイベントでは閉じない
-      if (event.target === event.currentTarget) onClose();
+      pressedBackdropRef.current =
+        event.target === event.currentTarget && event.button === 0;
+    },
+    []
+  );
+  const handleBackdropClick = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      const pressedBackdrop = pressedBackdropRef.current;
+      pressedBackdropRef.current = false;
+      // 窓の中から上がってきたイベントと、主ボタン以外では閉じない
+      if (event.target !== event.currentTarget || event.button !== 0) return;
+      if (pressedBackdrop) onClose();
     },
     [onClose]
   );
 
-  // pointerdown で閉じた直後に、続く mousedown の既定の動き (押した場所へフォーカスを移す)
-  // が走ると、onClosed で移したフォーカスが外れる。背景を押したときだけ止める
+  // 背景を押したときの mousedown の既定の動き (押した場所へフォーカスを移す) を止める。
+  // 止めないと端末からフォーカスが外れ、閉じなかったとき (主ボタン以外) も端末へ打てなくなる
   const handleBackdropMouseDown = useCallback(
     (event: MouseEvent<HTMLDivElement>) => {
       if (event.target === event.currentTarget) event.preventDefault();
@@ -95,10 +114,12 @@ export function FloatingTerminal({
   const isWindow = variant === "window";
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: 窓の外を押して閉じるのはポインターの近道。キーボードでは閉じるボタンで閉じられる
+    // biome-ignore lint/a11y/noStaticElementInteractions: 窓の外を押して閉じるのはマウスとタッチの近道。キーボードでは閉じるボタンで閉じられる
+    // biome-ignore lint/a11y/useKeyWithClickEvents: 同上。この部品はキーのハンドラを持たない (端末へのキーを横取りしない)
     <div
       data-testid="floating-terminal"
       onPointerDown={handleBackdropPointerDown}
+      onClick={handleBackdropClick}
       onMouseDown={handleBackdropMouseDown}
       className={
         open
@@ -113,10 +134,12 @@ export function FloatingTerminal({
       <div
         data-testid="floating-terminal-window"
         data-keynav-nonmodal=""
+        data-keynav="terminal-window"
+        tabIndex={-1}
         role={open ? "dialog" : undefined}
         aria-label={open ? title : undefined}
         className={cn(
-          "flex flex-col overflow-hidden bg-card",
+          "flex flex-col overflow-hidden bg-card outline-none",
           isWindow
             ? "h-[min(100%,max(80%,320px))] w-[min(100%,max(90%,480px))] rounded-xl border border-border shadow-panel"
             : "h-full w-full safe-area-top safe-area-x"

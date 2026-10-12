@@ -16,8 +16,10 @@
  *   開く) 閉じ、戻ってきても閉じたままにする
  * - 閉じるのは、窓の閉じるボタンと、図を開く操作 (図を開く通知・窓の中のタブで図を選ぶ)。
  *   図を開く操作は、窓を閉じてから図モードを見せる
- * - 窓の中にしか無いものを見せる必要があるときは、自動で開く: ファイル / HTMLのタブが
- *   選ばれたとき (ビューア) と、端末の流儀の添付が溜まったとき (確認ダイアログ)
+ * - 窓は、マウントしただけでは開かない。開くのは、この画面での操作の結果だけ:
+ *   帯を押す、ファイル / HTMLのタブへ切り替わる (ビューアは窓の中にある)、
+ *   端末の流儀の添付が溜まる (確認ダイアログは窓の中にある)。
+ *   ファイルのタブが選ばれたままのセッションをマウントしても、閉じた状態で始める
  * - 開閉でフォーカスは動かさない (ソフトキーボードを勝手に出さない)
  * - 窓は全面なので、開いている間はヘッダーと状態の帯とセグメントが隠れる。
  *   窓のバーにセグメントは置かない (モードを替えるには窓を閉じる)
@@ -25,9 +27,15 @@
  * 下部バーはセグメントの下に1タップの操作 (MobileQuickActionRow) を置く。
  * 添付と画像の実体は場所で違い、会話モードは会話の入力欄 (SplitChatPaneHandle。
  * `@path` を入力欄に足す)、端末の窓と図モードは端末側の確認ダイアログへ渡す。
- * 端末に関する操作 (バッファのコピー・再読み込み) も1タップの行に出し (端末の窓の
- * バーだけ。窓を開いている間だけ出す)、`…` にはセッション全体の操作 (通知・再起動・
+ * 端末そのものへの操作 (バッファのコピー・再読み込み) は、PCと同じく端末の窓の上端の
+ * バーに置く (指で押せる44px)。窓の下部バーに残すのは、端末へ打ち込むための操作
+ * (1タップの行・Quick Keys・入力欄) だけ。`…` にはセッション全体の操作 (通知・再起動・
  * 削除) だけを残す。
+ *
+ * 端末の画面末尾 (`liveTail`) は1秒ごとに届き、そのたびにこの部品は描画し直す。
+ * 画面末尾を使うのは会話の帯だけなので、端末の窓の中身は要素ごとメモ化し、
+ * 画面末尾では変わらない値だけに依存させる。親が毎回作り直して渡す関数は
+ * useStableCallback で包んでから使う。
  *
  * 音声モード (iPhone) は会話モードの1タップ操作から入る。状態は useVoiceMode、画面は
  * VoiceModeOverlay。JSONL の購読は増やさず、会話ビューのイベント列を onEventsChange で受け取る。
@@ -50,14 +58,16 @@ import {
   ChevronRight,
   CircleAlert,
   CircleHelp,
+  Copy,
   Ellipsis,
   File as FileIcon,
+  RefreshCw,
   RotateCw,
   Send,
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
 import {
@@ -96,6 +106,7 @@ import {
 } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
+import { useStableCallback } from "../hooks/useStableCallback";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { useTtydReconnect } from "../hooks/useTtydReconnect";
 import { useVisualViewport } from "../hooks/useVisualViewport";
@@ -123,6 +134,10 @@ import { ViewerTabBar } from "./ViewerTabBar";
 import { VoiceModeOverlay } from "./VoiceModeOverlay";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
+
+/** 端末の窓の上端のバーに置く操作。指で押せる44pxの丸いボタン */
+const WINDOW_ACTION_BUTTON =
+  "inline-flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground";
 
 type MobileDiagramPaneProps = Omit<
   DiagramPaneProps,
@@ -206,17 +221,17 @@ export function MobileSessionView({
   notificationsEnabled = true,
   onNotificationsEnabledChange,
   onBack,
-  onSendMessage,
-  onSendKey,
+  onSendMessage: onSendMessageProp,
+  onSendKey: onSendKeyProp,
   onDeleteSession,
   onRestartSession,
-  onUploadFile,
-  onCopyBuffer,
+  onUploadFile: onUploadFileProp,
+  onCopyBuffer: onCopyBufferProp,
   tabs,
   activeTabIndex,
   diagramOpenRequest,
-  onTabSelect,
-  onTabClose,
+  onTabSelect: onTabSelectProp,
+  onTabClose: onTabCloseProp,
   messageShortcuts,
   onCreateShortcut,
   onUpdateShortcut,
@@ -233,6 +248,14 @@ export function MobileSessionView({
   sendDiagramComment,
   onSelectDiagram,
 }: MobileSessionViewProps) {
+  // 親は描画のたびに関数を作り直して渡してくる。端末の窓の中身 (メモ化した要素) が
+  // そのたびに作り直されないよう、同一性の変わらない関数で包んでから使う
+  const onSendMessage = useStableCallback(onSendMessageProp);
+  const onSendKey = useStableCallback(onSendKeyProp);
+  const onUploadFile = useStableCallback(onUploadFileProp);
+  const onCopyBuffer = useStableCallback(onCopyBufferProp);
+  const onTabSelect = useStableCallback(onTabSelectProp);
+  const onTabClose = useStableCallback(onTabCloseProp);
   const { height: viewportHeight, isKeyboardVisible } = useVisualViewport();
   const [inputValue, setInputValue] = useState("");
   const [iframeKey, setIframeKey] = useState(0);
@@ -269,9 +292,13 @@ export function MobileSessionView({
   }, [diagramOpenRequest, session.id]);
 
   // ファイル / HTMLのビューアは端末と同じタブの並びにあり、窓の中に出る。
-  // そのタブが選ばれたら、窓を開いて見せる。
+  // そのタブへ切り替わったら、窓を開いて見せる。マウントした時点で選ばれていた
+  // タブでは開かない (窓が開くのは、この画面での操作の結果だけ)
   const activeTabType = tabs[activeTabIndex]?.type;
+  const seenActiveTabTypeRef = useRef(activeTabType);
   useEffect(() => {
+    if (seenActiveTabTypeRef.current === activeTabType) return;
+    seenActiveTabTypeRef.current = activeTabType;
     if (shouldOpenTerminalForViewerTab(activeTabType)) setTerminalOpen(true);
   }, [activeTabType]);
 
@@ -361,24 +388,30 @@ export function MobileSessionView({
     : ttydBasePath;
 
   // メッセージ送信（空文字でもEnterとして送信 = ターミナルへの空行送信）
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSendMessage(inputValue);
-    setInputValue("");
-  };
+  const handleSubmit = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      onSendMessage(inputValue);
+      setInputValue("");
+    },
+    [inputValue, onSendMessage]
+  );
 
   // Enter送信（inputなのでShift+Enterチェック不要）
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleSubmit(e);
-    }
-  };
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleSubmit(e);
+      }
+    },
+    [handleSubmit]
+  );
 
   // iframeリロード
-  const handleReloadIframe = () => {
+  const handleReloadIframe = useCallback(() => {
     setIframeKey(prev => prev + 1);
-  };
+  }, []);
 
   // 受け取ったFileをpendingFilesへ追加（画像/非画像共通）
   // 部分失敗の場合でもエラーを握りつぶさず、まとめて表示する
@@ -536,14 +569,19 @@ export function MobileSessionView({
   // に寄せる (会話モードは会話の入力欄が自前の添付ボタンを持つので、行には出さない)。
   // 添付と画像は、会話モードの行だけ会話の入力欄の流儀にする。図モードと端末の窓は
   // 端末側の確認ダイアログ (窓の中) へ渡す
-  const openShortcutManager = () => setShowShortcutManager(true);
-  const attachForTerminal = () => fileInputRef.current?.click();
+  const openShortcutManager = useCallback(
+    () => setShowShortcutManager(true),
+    []
+  );
+  const attachForTerminal = useCallback(
+    () => fileInputRef.current?.click(),
+    []
+  );
   const modeQuickActionRow = (
     <MobileQuickActionRow
       actions={mobileQuickActions({
         surface: viewMode,
         canUploadFile: onUploadFile !== undefined,
-        canCopyBuffer: onCopyBuffer !== undefined,
         canUseVoice: voice.supported,
       })}
       messageShortcuts={messageShortcuts}
@@ -561,22 +599,328 @@ export function MobileSessionView({
       }
     />
   );
-  // 端末用の操作 (バッファのコピー・再読み込み) を持つ行。窓を開いている間だけ出す
-  const terminalQuickActionRow = terminalOpen && (
-    <MobileQuickActionRow
-      actions={mobileQuickActions({
-        surface: "terminal",
-        canUploadFile: onUploadFile !== undefined,
-        canCopyBuffer: onCopyBuffer !== undefined,
-      })}
-      messageShortcuts={messageShortcuts}
-      onSendMessage={onSendMessage}
-      onManageShortcuts={openShortcutManager}
-      onAttachFile={onUploadFile ? attachForTerminal : undefined}
-      onPasteImage={onUploadFile ? handlePasteButtonClick : undefined}
-      onCopyBuffer={onCopyBuffer ? handleCopyBuffer : undefined}
-      onReloadTerminal={handleReloadIframe}
-    />
+  // 端末そのものへの操作。窓の上端のバーに、閉じるボタンの手前に並べる。
+  // 窓を開いている間だけ出す (閉じている間は、同じ名前のボタンを画面に残さない)
+  const terminalWindowActions = terminalOpen && (
+    <>
+      {onCopyBuffer && (
+        <button
+          type="button"
+          aria-label="端末のバッファをコピー"
+          title="端末のバッファをコピー"
+          onClick={handleCopyBuffer}
+          className={WINDOW_ACTION_BUTTON}
+        >
+          <Copy className="size-5" aria-hidden="true" />
+        </button>
+      )}
+      <button
+        type="button"
+        aria-label="端末を再読み込み"
+        title="端末を再読み込み"
+        onClick={handleReloadIframe}
+        className={WINDOW_ACTION_BUTTON}
+      >
+        <RefreshCw className="size-5" aria-hidden="true" />
+      </button>
+    </>
+  );
+
+  // 端末の窓の中身。画面末尾が届くたびの描画で作り直さないよう、要素ごとメモ化する
+  // (依存に入れるのは、画面末尾では変わらない値だけ)
+  const terminalBody = useMemo(
+    () => (
+      <div
+        data-testid="mobile-view-terminal"
+        className="flex h-full min-h-0 flex-col"
+      >
+        {/* タブバー（共通コンポーネント） */}
+        <ViewerTabBar
+          tabs={tabs}
+          activeTabIndex={activeTabIndex}
+          onTabSelect={handleViewerTabSelect}
+          onTabClose={onTabClose}
+        />
+
+        {/* ttyd iframe */}
+        <div
+          className="flex-1 min-h-0 overflow-hidden relative"
+          style={{
+            display:
+              tabs[activeTabIndex]?.type === "terminal" ? undefined : "none",
+            backgroundColor: TERMINAL_BG,
+          }}
+        >
+          {session.ttydUrl || session.ttydPort ? (
+            <iframe
+              key={iframeKey}
+              ref={iframeRef}
+              src={ttydIframeSrc}
+              className="w-full h-full border-0"
+              title={`Terminal - ${worktree?.branch || session.id}`}
+              allow="clipboard-read; clipboard-write; keyboard-map"
+            />
+          ) : (
+            <div className="flex items-center justify-center h-full text-muted-foreground">
+              <div className="text-center">
+                <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4" />
+                <p>ターミナルを起動中...</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ファイルビューワー / ブラウザ */}
+        {tabs[activeTabIndex]?.type === "file" &&
+          (() => {
+            const tab = tabs[activeTabIndex] as ViewerTab & { type: "file" };
+            return (
+              <div className="flex-1 min-h-0">
+                <FileViewerPane
+                  filePath={tab.filePath}
+                  content={tab.content}
+                  mimeType={tab.mimeType}
+                  size={tab.size}
+                  targetLine={tab.targetLine}
+                  targetEndLine={tab.targetEndLine}
+                  error={tab.error}
+                />
+              </div>
+            );
+          })()}
+        {tabs[activeTabIndex]?.type === "html" &&
+          (() => {
+            const tab = tabs[activeTabIndex] as ViewerTab & { type: "html" };
+            return (
+              <div className="flex-1 min-h-0">
+                <HtmlViewerPane filePath={tab.filePath} />
+              </div>
+            );
+          })()}
+        {/* 添付ファイル プレビューダイアログ（画像/非画像共通） */}
+        {pendingFiles.length > 0 && (
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-card border border-border rounded-lg p-4 max-w-md w-full">
+              <h3 className="text-sm font-semibold mb-3">
+                ファイルを送信（{pendingFiles.length}件）
+              </h3>
+              <div className="space-y-2 max-h-60 overflow-y-auto mb-3">
+                {pendingFiles.map((pf, idx) => (
+                  <div
+                    key={`${pf.filename}-${idx}`}
+                    className="flex items-center gap-2 text-sm border border-border rounded p-2"
+                  >
+                    {pf.preview ? (
+                      <img
+                        src={pf.preview}
+                        alt={pf.filename}
+                        className="w-12 h-12 object-cover rounded shrink-0"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 flex items-center justify-center bg-muted rounded shrink-0">
+                        <FileIcon className="w-6 h-6 text-muted-foreground" />
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate" title={pf.filename}>
+                        {pf.filename}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {(pf.size / 1024).toFixed(1)} KB
+                      </div>
+                    </div>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 shrink-0"
+                      onClick={() =>
+                        setPendingFiles(prev =>
+                          prev.filter((_, i) => i !== idx)
+                        )
+                      }
+                      disabled={isSending}
+                      title="このファイルを取り除く"
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <Textarea
+                value={uploadMessage}
+                onChange={e => setUploadMessage(e.target.value)}
+                placeholder="メッセージを追加（任意）"
+                className="min-h-[60px] resize-none text-sm mb-3"
+                rows={2}
+                disabled={isSending}
+              />
+              {uploadError && (
+                <p className="text-destructive text-xs mb-3">{uploadError}</p>
+              )}
+              <div className="flex gap-2 justify-end">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCancelPending}
+                  disabled={isSending}
+                >
+                  キャンセル
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleSendWithFiles}
+                  disabled={isSending}
+                >
+                  {isSending ? "送信中..." : "送信"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 添付ファイル エラートースト（モーダル未表示時の全件失敗や検証失敗を表示） */}
+        {uploadError && pendingFiles.length === 0 && (
+          <div className="px-3 py-2 bg-destructive/10 text-destructive text-sm border-t border-destructive/20 whitespace-pre-line flex items-start justify-between gap-2">
+            <span className="flex-1">{uploadError}</span>
+            <button
+              type="button"
+              className="text-xs underline shrink-0"
+              onClick={() => setUploadError(null)}
+            >
+              閉じる
+            </button>
+          </div>
+        )}
+
+        {/* 端末の窓の下部バー。ガラスをやめて不透明にし、端末に重ねない
+                (ttyd は iframe の大きさに合わせて描くので、端末の領域はバーの上端までにする)。
+                上段に1タップの操作、下段にQuick Keysと入力欄。どれも端末へ打ち込むための
+                操作で、セグメントは置かない */}
+        <div
+          data-testid="mobile-terminal-bar"
+          data-mobile-bottom-bar=""
+          className="shrink-0 border-t border-border bg-card px-3 pt-2"
+          style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
+        >
+          {/* 端末へ打ち込むための1タップの操作。窓を開いている間だけ出す */}
+          {terminalOpen && (
+            <MobileQuickActionRow
+              actions={mobileQuickActions({
+                surface: "terminal",
+                canUploadFile: onUploadFile !== undefined,
+              })}
+              messageShortcuts={messageShortcuts}
+              onSendMessage={onSendMessage}
+              onManageShortcuts={openShortcutManager}
+              onAttachFile={onUploadFile ? attachForTerminal : undefined}
+              onPasteImage={onUploadFile ? handlePasteButtonClick : undefined}
+            />
+          )}
+
+          {/* Quick Keys: ↑/↓/Esc/Ctrl+C/S-Tab 常時表示 */}
+          <div className="mt-1 flex items-center gap-1 overflow-x-auto select-none">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs shrink-0"
+              onClick={() => onSendKey("Up")}
+            >
+              ↑
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs shrink-0"
+              onClick={() => onSendKey("Down")}
+            >
+              ↓
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs shrink-0"
+              onClick={() => onSendKey("Escape")}
+            >
+              Esc
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs text-destructive hover:text-destructive shrink-0"
+              onClick={() => onSendKey("C-c")}
+            >
+              Ctrl+C
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs shrink-0"
+              onClick={() => onSendKey("S-Tab")}
+            >
+              S-Tab
+            </Button>
+          </div>
+
+          {/* 入力欄: 空のまま送るとEnterを送る (handleSubmit) */}
+          <form
+            onSubmit={handleSubmit}
+            className="mt-1 flex items-center gap-2"
+          >
+            <Input
+              ref={inputRef}
+              value={inputValue}
+              onChange={e => setInputValue(e.target.value)}
+              onKeyDown={handleKeyDown}
+              enterKeyHint="send"
+              placeholder="メッセージを入力... (Enter送信)"
+              className="h-11 flex-1 rounded-full bg-background px-4 text-sm"
+            />
+            <Button
+              type="submit"
+              size="icon"
+              aria-label="送信"
+              className="size-11 shrink-0 rounded-full"
+            >
+              <Send className="size-5" />
+            </Button>
+          </form>
+        </div>
+      </div>
+    ),
+    [
+      tabs,
+      activeTabIndex,
+      handleViewerTabSelect,
+      onTabClose,
+      session.id,
+      session.ttydUrl,
+      session.ttydPort,
+      iframeKey,
+      ttydIframeSrc,
+      worktree?.branch,
+      pendingFiles,
+      isSending,
+      uploadMessage,
+      uploadError,
+      handleCancelPending,
+      handleSendWithFiles,
+      terminalOpen,
+      onUploadFile,
+      messageShortcuts,
+      onSendMessage,
+      openShortcutManager,
+      attachForTerminal,
+      handlePasteButtonClick,
+      onSendKey,
+      handleSubmit,
+      handleKeyDown,
+      inputValue,
+    ]
   );
 
   // `…` に残すのはセッション全体の操作だけ。通知を出せない環境 (Notification API の
@@ -792,259 +1136,15 @@ export function MobileSessionView({
 
       {/* 端末の窓: タブ + ttyd + ファイル / HTMLのビューア + 添付の確認ダイアログ +
           Quick Keys + 入力バー。この画面のルートを基準に全面へ重ねる。中身は常にここへ
-          マウントしたままで、閉じている間は窓ごと隠れる (ttydの接続を保つ) */}
+          マウントしたままで、閉じている間は窓ごと隠れる (ttydの接続を保つ)。
+          端末そのものへの操作は上端のバー (actions) に置く */}
       <FloatingTerminal
         open={terminalOpen}
         onClose={closeTerminal}
         variant="fullscreen"
+        actions={terminalWindowActions}
       >
-        <div
-          data-testid="mobile-view-terminal"
-          className="flex h-full min-h-0 flex-col"
-        >
-          {/* タブバー（共通コンポーネント） */}
-          <ViewerTabBar
-            tabs={tabs}
-            activeTabIndex={activeTabIndex}
-            onTabSelect={handleViewerTabSelect}
-            onTabClose={onTabClose}
-          />
-
-          {/* ttyd iframe */}
-          <div
-            className="flex-1 min-h-0 overflow-hidden relative"
-            style={{
-              display:
-                tabs[activeTabIndex]?.type === "terminal" ? undefined : "none",
-              backgroundColor: TERMINAL_BG,
-            }}
-          >
-            {session.ttydUrl || session.ttydPort ? (
-              <iframe
-                key={iframeKey}
-                ref={iframeRef}
-                src={ttydIframeSrc}
-                className="w-full h-full border-0"
-                title={`Terminal - ${worktree?.branch || session.id}`}
-                allow="clipboard-read; clipboard-write; keyboard-map"
-              />
-            ) : (
-              <div className="flex items-center justify-center h-full text-muted-foreground">
-                <div className="text-center">
-                  <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto mb-4" />
-                  <p>ターミナルを起動中...</p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* ファイルビューワー / ブラウザ */}
-          {tabs[activeTabIndex]?.type === "file" &&
-            (() => {
-              const tab = tabs[activeTabIndex] as ViewerTab & { type: "file" };
-              return (
-                <div className="flex-1 min-h-0">
-                  <FileViewerPane
-                    filePath={tab.filePath}
-                    content={tab.content}
-                    mimeType={tab.mimeType}
-                    size={tab.size}
-                    targetLine={tab.targetLine}
-                    targetEndLine={tab.targetEndLine}
-                    error={tab.error}
-                  />
-                </div>
-              );
-            })()}
-          {tabs[activeTabIndex]?.type === "html" &&
-            (() => {
-              const tab = tabs[activeTabIndex] as ViewerTab & { type: "html" };
-              return (
-                <div className="flex-1 min-h-0">
-                  <HtmlViewerPane filePath={tab.filePath} />
-                </div>
-              );
-            })()}
-          {/* 添付ファイル プレビューダイアログ（画像/非画像共通） */}
-          {pendingFiles.length > 0 && (
-            <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-card border border-border rounded-lg p-4 max-w-md w-full">
-                <h3 className="text-sm font-semibold mb-3">
-                  ファイルを送信（{pendingFiles.length}件）
-                </h3>
-                <div className="space-y-2 max-h-60 overflow-y-auto mb-3">
-                  {pendingFiles.map((pf, idx) => (
-                    <div
-                      key={`${pf.filename}-${idx}`}
-                      className="flex items-center gap-2 text-sm border border-border rounded p-2"
-                    >
-                      {pf.preview ? (
-                        <img
-                          src={pf.preview}
-                          alt={pf.filename}
-                          className="w-12 h-12 object-cover rounded shrink-0"
-                        />
-                      ) : (
-                        <div className="w-12 h-12 flex items-center justify-center bg-muted rounded shrink-0">
-                          <FileIcon className="w-6 h-6 text-muted-foreground" />
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="truncate" title={pf.filename}>
-                          {pf.filename}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {(pf.size / 1024).toFixed(1)} KB
-                        </div>
-                      </div>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7 shrink-0"
-                        onClick={() =>
-                          setPendingFiles(prev =>
-                            prev.filter((_, i) => i !== idx)
-                          )
-                        }
-                        disabled={isSending}
-                        title="このファイルを取り除く"
-                      >
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-                <Textarea
-                  value={uploadMessage}
-                  onChange={e => setUploadMessage(e.target.value)}
-                  placeholder="メッセージを追加（任意）"
-                  className="min-h-[60px] resize-none text-sm mb-3"
-                  rows={2}
-                  disabled={isSending}
-                />
-                {uploadError && (
-                  <p className="text-destructive text-xs mb-3">{uploadError}</p>
-                )}
-                <div className="flex gap-2 justify-end">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleCancelPending}
-                    disabled={isSending}
-                  >
-                    キャンセル
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={handleSendWithFiles}
-                    disabled={isSending}
-                  >
-                    {isSending ? "送信中..." : "送信"}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 添付ファイル エラートースト（モーダル未表示時の全件失敗や検証失敗を表示） */}
-          {uploadError && pendingFiles.length === 0 && (
-            <div className="px-3 py-2 bg-destructive/10 text-destructive text-sm border-t border-destructive/20 whitespace-pre-line flex items-start justify-between gap-2">
-              <span className="flex-1">{uploadError}</span>
-              <button
-                type="button"
-                className="text-xs underline shrink-0"
-                onClick={() => setUploadError(null)}
-              >
-                閉じる
-              </button>
-            </div>
-          )}
-
-          {/* 端末の窓の下部バー。ガラスをやめて不透明にし、端末に重ねない
-                (ttyd は iframe の大きさに合わせて描くので、端末の領域はバーの上端までにする)。
-                上段に1タップの操作、下段にQuick Keysと入力欄。セグメントは置かない */}
-          <div
-            data-testid="mobile-terminal-bar"
-            data-mobile-bottom-bar=""
-            className="shrink-0 border-t border-border bg-card px-3 pt-2"
-            style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
-          >
-            {terminalQuickActionRow}
-
-            {/* Quick Keys: ↑/↓/Esc/Ctrl+C/S-Tab 常時表示 */}
-            <div className="mt-1 flex items-center gap-1 overflow-x-auto select-none">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 px-3 text-xs shrink-0"
-                onClick={() => onSendKey("Up")}
-              >
-                ↑
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 px-3 text-xs shrink-0"
-                onClick={() => onSendKey("Down")}
-              >
-                ↓
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 px-3 text-xs shrink-0"
-                onClick={() => onSendKey("Escape")}
-              >
-                Esc
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 px-3 text-xs text-destructive hover:text-destructive shrink-0"
-                onClick={() => onSendKey("C-c")}
-              >
-                Ctrl+C
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 px-3 text-xs shrink-0"
-                onClick={() => onSendKey("S-Tab")}
-              >
-                S-Tab
-              </Button>
-            </div>
-
-            {/* 入力欄: 空のまま送るとEnterを送る (handleSubmit) */}
-            <form
-              onSubmit={handleSubmit}
-              className="mt-1 flex items-center gap-2"
-            >
-              <Input
-                ref={inputRef}
-                value={inputValue}
-                onChange={e => setInputValue(e.target.value)}
-                onKeyDown={handleKeyDown}
-                enterKeyHint="send"
-                placeholder="メッセージを入力... (Enter送信)"
-                className="h-11 flex-1 rounded-full bg-background px-4 text-sm"
-              />
-              <Button
-                type="submit"
-                size="icon"
-                aria-label="送信"
-                className="size-11 shrink-0 rounded-full"
-              >
-                <Send className="size-5" />
-              </Button>
-            </form>
-          </div>
-        </div>
+        {terminalBody}
       </FloatingTerminal>
 
       {/* 添付ファイル選択用の隠しinput

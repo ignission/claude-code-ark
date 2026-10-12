@@ -20,6 +20,13 @@
  * - 画面末尾が届いていないときも、1行の高さで端末への入口を残す
  * - 帯の全体が1つのボタンで、押すと端末の窓を開く。作業中の表示 (「考えています」) は
  *   帯とは別に、会話の最後に出す
+ * - 画面末尾が差し替わるたびに描画し直すのは帯だけにする。帯 (TerminalStrip) と
+ *   会話の列 (ChatEventList) はメモ化してあり、会話の列には画面末尾で変わらない
+ *   propsだけを渡す (markdownの描画を1秒ごとにやり直さない)
+ *
+ * スラッシュコマンドの補完の候補は、入力欄 (フォーム) を基準にそのすぐ上へ出す。
+ * 帯やモバイルの上段に重なってよい (帯の上へ離すと、打っている場所から遠い)。
+ *
  * ファイルアップロード (D&D / ペースト / 選択) に対応。
  */
 
@@ -51,6 +58,7 @@ import {
 } from "lucide-react";
 import {
   type FormEvent,
+  memo,
   type ReactNode,
   type Ref,
   type RefObject,
@@ -258,7 +266,7 @@ const TERMINAL_STRIP_LINE_HEIGHT_PX = 16;
  * 入力欄の上に置く、端末の画面末尾の帯。決まりは冒頭のコメントを参照。
  * 中身は1秒ごとに差し替わるので読み上げず、ボタンの名前 (「端末を開く」) だけを読ませる
  */
-function TerminalStrip({
+const TerminalStrip = memo(function TerminalStrip({
   liveTail,
   onOpen,
   className,
@@ -306,7 +314,7 @@ function TerminalStrip({
       />
     </button>
   );
-}
+});
 
 /**
  * 作業中の表示の文言。状態は BridgeSessionStatus だけから決め、画面テキストは解釈しない。
@@ -1130,6 +1138,94 @@ function EventCard({
   }
 }
 
+/** 送信してからJSONLに現れるまでのあいだ出す吹き出し */
+interface PendingMessage {
+  id: string;
+  text: string;
+  sentAt: number;
+}
+
+/**
+ * 会話の列 (履歴のカード・ローカルのスラッシュコマンド・送信中の吹き出し)。
+ * 本体は端末の画面末尾が届くたびに描画し直すので、メモ化して切り離す。
+ * propsは、会話の中身が変わったときだけ同一性が変わるものに限ること
+ */
+const ChatEventList = memo(function ChatEventList({
+  hasEvents,
+  renderItems,
+  localSlashCommands,
+  pending,
+  hasMore,
+  sessionId,
+  expandedToolGroups,
+  onToggleToolGroup,
+  toolGroupSurfaceClassName,
+}: {
+  /** JSONLのイベントが1件でもあるか (まとまりにならないイベントだけのときも true) */
+  hasEvents: boolean;
+  renderItems: ReturnType<typeof groupToolCalls>;
+  localSlashCommands: LocalSlashCommand[];
+  pending: PendingMessage[];
+  hasMore: boolean;
+  sessionId: string;
+  expandedToolGroups: ReadonlySet<string>;
+  onToggleToolGroup: (id: string) => void;
+  toolGroupSurfaceClassName: string;
+}) {
+  if (!hasEvents && pending.length === 0 && localSlashCommands.length === 0) {
+    return (
+      <div className="pt-8 text-center text-sm text-muted-foreground">
+        このセッションの履歴はまだありません
+      </div>
+    );
+  }
+  return (
+    <>
+      {hasMore && (
+        <div className="flex justify-center py-2 text-sm text-muted-foreground">
+          読み込み中...
+        </div>
+      )}
+      {renderItems.map(item => {
+        if (item.kind === "sidechain") {
+          return (
+            <SidechainGroupCard
+              key={item.id}
+              events={item.events}
+              sessionId={sessionId}
+            />
+          );
+        }
+        if (item.kind === "tool-group") {
+          return (
+            <ToolGroupCard
+              key={item.id}
+              calls={item.calls}
+              latestRunning={item.latestRunning}
+              expanded={expandedToolGroups.has(item.id)}
+              onToggle={() => onToggleToolGroup(item.id)}
+              surfaceClassName={toolGroupSurfaceClassName}
+            />
+          );
+        }
+        return (
+          <EventCard
+            key={item.event.id}
+            event={item.event}
+            sessionId={sessionId}
+          />
+        );
+      })}
+      {localSlashCommands.map(c => (
+        <SlashCommandCard key={c.id} name={c.name} args={c.args} />
+      ))}
+      {pending.map(p => (
+        <PendingMessageCard key={p.id} text={p.text} />
+      ))}
+    </>
+  );
+});
+
 /**
  * 要素の高さ (px) をResizeObserverで追う。enabledがfalseの間は0。
  * ResizeObserverの無い環境 (jsdom等) では最初の1回だけ測る
@@ -1184,9 +1280,7 @@ export function SplitChatPane({
 
   // Claude 処理中に送ったメッセージを即時表示するための pending state。
   // JSONL に同じテキストの user-input が現れたら自動で消える。
-  const [pending, setPending] = useState<
-    { id: string; text: string; sentAt: number }[]
-  >([]);
+  const [pending, setPending] = useState<PendingMessage[]>([]);
 
   // events 更新のたびに pending を整理: マッチしたものを除去。ロジックは
   // テスト容易性のため reconcilePending に純粋関数として切り出してある。
@@ -1731,9 +1825,12 @@ export function SplitChatPane({
     }
   };
 
-  // 補完候補。PCは入力欄の枠、モバイルは下部のスタックの上端に合わせて出す
+  // 補完候補。入力欄 (フォーム) を基準に、そのすぐ上へ出す
   const slashMenu = slashOpen && filteredSlashCommands.length > 0 && (
-    <div className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-lg border border-border bg-popover shadow-card">
+    <div
+      data-testid="chat-slash-menu"
+      className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-lg border border-border bg-popover shadow-card"
+    >
       {filteredSlashCommands.map((cmd, i) => (
         <button
           type="button"
@@ -1768,6 +1865,7 @@ export function SplitChatPane({
 
   const composerSize = COMPOSER_SIZE[layout];
 
+  // フォームの relative は補完候補の位置の基準。入力欄だけを包み、帯は含めない
   const composerForm = (
     <form
       onSubmit={handleSubmit}
@@ -1789,6 +1887,7 @@ export function SplitChatPane({
         isDragging ? "ring-2 ring-primary/50" : ""
       }`}
     >
+      {slashMenu}
       {onUploadFile && (
         <>
           <input
@@ -1906,59 +2005,17 @@ export function SplitChatPane({
             className="mx-auto w-full max-w-[760px] py-2"
             style={bottomReserve ? { paddingBottom: bottomReserve } : undefined}
           >
-            {events.length === 0 &&
-            pending.length === 0 &&
-            localSlashCommands.length === 0 ? (
-              <div className="pt-8 text-center text-sm text-muted-foreground">
-                このセッションの履歴はまだありません
-              </div>
-            ) : (
-              <>
-                {hasMore && (
-                  <div className="flex justify-center py-2 text-sm text-muted-foreground">
-                    読み込み中...
-                  </div>
-                )}
-                {renderItems.map(item => {
-                  if (item.kind === "sidechain") {
-                    return (
-                      <SidechainGroupCard
-                        key={item.id}
-                        events={item.events}
-                        sessionId={session.id}
-                      />
-                    );
-                  }
-                  if (item.kind === "tool-group") {
-                    return (
-                      <ToolGroupCard
-                        key={item.id}
-                        calls={item.calls}
-                        latestRunning={item.latestRunning}
-                        expanded={expandedToolGroups.has(item.id)}
-                        onToggle={() => toggleToolGroup(item.id)}
-                        surfaceClassName={
-                          isMobile ? "bg-card" : "bg-background"
-                        }
-                      />
-                    );
-                  }
-                  return (
-                    <EventCard
-                      key={item.event.id}
-                      event={item.event}
-                      sessionId={session.id}
-                    />
-                  );
-                })}
-                {localSlashCommands.map(c => (
-                  <SlashCommandCard key={c.id} name={c.name} args={c.args} />
-                ))}
-                {pending.map(p => (
-                  <PendingMessageCard key={p.id} text={p.text} />
-                ))}
-              </>
-            )}
+            <ChatEventList
+              hasEvents={events.length > 0}
+              renderItems={renderItems}
+              localSlashCommands={localSlashCommands}
+              pending={pending}
+              hasMore={hasMore}
+              sessionId={session.id}
+              expandedToolGroups={expandedToolGroups}
+              onToggleToolGroup={toggleToolGroup}
+              toolGroupSurfaceClassName={isMobile ? "bg-card" : "bg-background"}
+            />
             {workingLabel && (
               <WorkingIndicator label={workingLabel} announce={!isMobile} />
             )}
@@ -1987,7 +2044,6 @@ export function SplitChatPane({
           className="absolute inset-x-3 z-10 flex max-h-[70%] flex-col gap-2"
           style={{ bottom: FLOATING_BAR_BOTTOM }}
         >
-          {slashMenu}
           {dockedCard && (
             <div className="-mx-1 flex min-h-0 flex-col px-1 pb-2">
               {dockedCard}
@@ -2020,8 +2076,7 @@ export function SplitChatPane({
             </div>
           )}
           <div className="shrink-0 px-4 pt-2 pb-3.5">
-            <div className="relative mx-auto flex w-full max-w-[792px] flex-col gap-2">
-              {slashMenu}
+            <div className="mx-auto flex w-full max-w-[792px] flex-col gap-2">
               {onOpenTerminal && (
                 <TerminalStrip liveTail={liveTail} onOpen={onOpenTerminal} />
               )}

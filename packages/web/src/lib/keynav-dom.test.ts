@@ -39,8 +39,10 @@ function mountApp({
         <textarea data-keynav="chat-input" id="input"></textarea>
       </div>
       <div class="${terminalOpen ? "" : "hidden"}">
-        <button aria-label="端末を閉じる"></button>
-        <iframe data-keynav="terminal"></iframe>
+        <div data-keynav="terminal-window" tabindex="-1">
+          <button aria-label="端末を閉じる"></button>
+          <iframe data-keynav="terminal"></iframe>
+        </div>
       </div>
       <div data-keynav-region="work" class="${workOpen ? "" : "hidden"}">
         <div role="tablist" aria-label="パネルの表示">
@@ -382,5 +384,39 @@ describe("どこでも効く指示", () => {
     mountApp({ terminalOpen: true });
     focusInput(document);
     expect(document.activeElement?.tagName).toBe("IFRAME");
+  });
+
+  it("i は、端末の窓が開いているのに端末がまだ無ければ、窓そのものにフォーカスを置く (会話の入力欄へは置かない)", () => {
+    mountApp({ terminalOpen: true });
+    document.querySelector('iframe[data-keynav="terminal"]')?.remove();
+    document.getElementById("input")?.focus();
+
+    focusInput(document);
+
+    expect(document.activeElement?.getAttribute("data-keynav")).toBe(
+      "terminal-window"
+    );
+  });
+
+  it("i は、端末が見えていない (ファイルのタブを見ている) ときも、会話の入力欄ではなく窓にフォーカスを置く", () => {
+    mountApp({ terminalOpen: true });
+    const iframe = document.querySelector<HTMLElement>(
+      'iframe[data-keynav="terminal"]'
+    );
+    // フォーカスを受けられない端末 (display:none の中) を、focus が効かないことで表す
+    if (iframe) iframe.focus = () => undefined;
+    document.getElementById("input")?.focus();
+
+    focusInput(document);
+
+    expect(document.activeElement?.getAttribute("data-keynav")).toBe(
+      "terminal-window"
+    );
+  });
+
+  it("i は、閉じている端末の窓にはフォーカスを置かない", () => {
+    mountApp();
+    focusInput(document);
+    expect(document.activeElement?.id).toBe("input");
   });
 });

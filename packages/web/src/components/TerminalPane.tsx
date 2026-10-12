@@ -5,7 +5,10 @@
  * TerminalPaneHandleとして公開する。
  * - ttyd iframeを暗い額縁 (TERMINAL_BG) で囲む
  * - 入力バー (Quick Keysと入力欄) は窓の上端のボタンから出し入れする
- * - ファイルのD&D・貼り付け・添付は、このペインの中の確認画面を経て送る
+ * - ファイルのD&Dと、入力バーへの貼り付けは、このペインの中の確認画面を経て送る
+ * - メモ化してある。親 (SplitViewPane) は端末の画面末尾が届くたび (1秒ごと) に描画し直すが、
+ *   このペインのpropsはそれでは変わらないので、描画し直さない。
+ *   呼び出し側は、同一性の変わらないpropsを渡すこと
  */
 
 import {
@@ -26,6 +29,7 @@ import {
   XCircle,
 } from "lucide-react";
 import {
+  memo,
   type Ref,
   useCallback,
   useEffect,
@@ -36,7 +40,6 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { readClipboardImages } from "@/lib/clipboard-images";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
 import { useIsMobile } from "../hooks/useMobile";
 import { useTerminalLeaderKey } from "../hooks/useTerminalLeaderKey";
@@ -92,10 +95,6 @@ export type ViewerTab =
 export interface TerminalPaneHandle {
   /** tmuxバッファをクリップボードへ */
   copyBuffer: () => void;
-  /** クリップボードの画像を添付プレビューへ */
-  pasteImage: () => void;
-  /** TerminalPane内に残した <input type="file"> をclick() */
-  openFilePicker: () => void;
   /** ttyd iframeを作り直す */
   reload: () => void;
   /** 入力バーの表示切替 */
@@ -137,7 +136,7 @@ interface TerminalPaneProps {
   onInputBarVisibleChange?: (visible: boolean) => void;
 }
 
-export function TerminalPane({
+export const TerminalPane = memo(function TerminalPane({
   ref,
   session,
   worktree,
@@ -166,10 +165,6 @@ export function TerminalPane({
   }, [isMobile]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  // ファイル選択のinput。上部バーのメニュー (Radix Portal) の中に置くと、
-  // メニューが閉じた瞬間に消えて、OSのファイル選択画面から戻ってもonChangeが
-  // 届かない。このペインに残し、openFilePicker()でclick()だけを呼ばせる
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [iframeKey, setIframeKey] = useState(0);
 
   // ttyd iframe内のxterm.jsにリンク検出をインジェクト（共通フック）
@@ -182,8 +177,7 @@ export function TerminalPane({
   const [isSending, setIsSending] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // tmuxバッファの内容をクリップボードにコピーする。`…` メニューは選んだ
-  // 時点で閉じるので、結果はトーストで知らせる
+  // tmuxバッファの内容をクリップボードにコピーする。結果はトーストで知らせる
   const handleCopyBuffer = async () => {
     if (!onCopyBuffer) return;
     try {
@@ -293,24 +287,7 @@ export function TerminalPane({
     return () => document.removeEventListener("paste", handleDocumentPaste);
   }, [handlePaste]);
 
-  // クリップボードから画像を読み取るボタン用。押した時点で上部バーの
-  // メニューは閉じているので、結果はcopyBufferと同様にトーストで知らせる
-  const handlePasteButtonClick = useCallback(async () => {
-    if (!onUploadFile) return;
-    try {
-      const files = await readClipboardImages();
-      if (files.length > 0) {
-        await addPendingFiles(files);
-      } else {
-        toast.info("クリップボードに画像がありません");
-      }
-    } catch (err) {
-      console.error("Failed to read clipboard:", err);
-      toast.error("クリップボードを読み取れませんでした");
-    }
-  }, [onUploadFile, addPendingFiles]);
-
-  // ファイル選択/D&D用のハンドラ
+  // D&D用のハンドラ
   const handleFilesSelected = useCallback(
     async (files: File[]) => {
       if (!onUploadFile) return;
@@ -467,12 +444,6 @@ export function TerminalPane({
   useImperativeHandle(ref, () => ({
     copyBuffer: () => {
       handleCopyBuffer();
-    },
-    pasteImage: () => {
-      handlePasteButtonClick();
-    },
-    openFilePicker: () => {
-      fileInputRef.current?.click();
     },
     reload: handleReloadIframe,
     toggleInputBar: () => setShowInput(prev => !prev),
@@ -788,23 +759,8 @@ export function TerminalPane({
           </form>
         </div>
       )}
-
-      {/* 添付ファイル選択用の隠しinput (fileInputRefの説明を参照) */}
-      {onUploadFile && (
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={e => {
-            const files = Array.from(e.target.files ?? []);
-            if (files.length > 0) handleFilesSelected(files);
-            e.target.value = "";
-          }}
-        />
-      )}
     </div>
   );
-}
+});
 
 export default TerminalPane;

@@ -79,6 +79,18 @@ describe("useViewerTabs のファイルタブ", () => {
   });
 });
 
+describe("useViewerTabs のタブの同一性", () => {
+  it("タブを開いていないセッションには、呼ぶたびに同じ配列を返す (受け取る側のメモ化を壊さない)", () => {
+    const api = mountHook();
+
+    const first = api().getTabsForSession("s9");
+    const second = api().getTabsForSession("s9");
+
+    expect(first.map(t => t.type)).toEqual(["terminal"]);
+    expect(second).toBe(first);
+  });
+});
+
 describe("useViewerTabs の onOpenFile", () => {
   function postOpenFile(data: Record<string, unknown>) {
     act(() => {

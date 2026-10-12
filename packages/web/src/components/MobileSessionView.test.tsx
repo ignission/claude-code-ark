@@ -31,6 +31,7 @@ import type { SplitChatPaneHandle } from "./SplitChatPane";
 
 interface ObservedChatProps {
   isActive: boolean;
+  liveTail?: string;
   layout?: "pane" | "mobile";
   composerAccessory?: ReactNode;
   onOpenTerminal?: () => void;
@@ -41,6 +42,8 @@ interface ObservedChatProps {
 
 const testDoubles = vi.hoisted(() => ({
   splitChatPane: vi.fn(),
+  /** 端末の窓の中身 (タブバー) が描画された回数を数える */
+  viewerTabBarRender: vi.fn(),
   chatOpenFilePicker: vi.fn(),
   chatPasteImage: vi.fn(),
 }));
@@ -73,6 +76,19 @@ vi.mock("./SplitChatPane", async () => {
 vi.mock("./DiagramPane", () => ({
   DiagramPane: () => <div data-testid="diagram-pane" />,
 }));
+
+// タブバーは本物を使い、描画された回数だけを数える
+vi.mock("./ViewerTabBar", async importOriginal => {
+  const actual = await importOriginal<typeof import("./ViewerTabBar")>();
+  const { createElement: h } = await import("react");
+  return {
+    ...actual,
+    ViewerTabBar: (props: ComponentProps<typeof actual.ViewerTabBar>) => {
+      testDoubles.viewerTabBarRender();
+      return h(actual.ViewerTabBar, props);
+    },
+  };
+});
 
 vi.mock("../hooks/useTerminalLinkInjection", () => ({
   useTerminalLinkInjection: () => undefined,
@@ -286,6 +302,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear();
   testDoubles.splitChatPane.mockClear();
+  testDoubles.viewerTabBarRender.mockClear();
   voiceDoubles.supported = false;
   voiceDoubles.enter.mockClear();
   voiceDoubles.pushEvents.mockClear();
@@ -793,6 +810,53 @@ describe("MobileSessionView の端末の窓", () => {
     expect(terminalWindowOf(container).textContent).toContain("hello");
   });
 
+  it.each([
+    ["ファイル", fileTab()],
+    ["HTML", { type: "html" as const, id: "html-1", filePath: "/tmp/a.html" }],
+  ])(
+    "%sのタブが選ばれたままマウントしても、窓は開かない。帯から開けばそのタブが出る",
+    (_label, tab) => {
+      const props = makeProps({
+        tabs: [terminalTab(), tab],
+        activeTabIndex: 1,
+      });
+      const container = mount(<MobileSessionView {...props} />);
+      const { root } = mountedRoots.at(-1) as { root: Root };
+
+      expect(isTerminalWindowOpen(container)).toBe(false);
+
+      // 画面末尾の更新などで描画し直しても、勝手には開かない
+      act(() => root.render(<MobileSessionView {...props} liveTail="$ ls" />));
+      expect(isTerminalWindowOpen(container)).toBe(false);
+
+      openTerminalWindow();
+      expect(isTerminalWindowOpen(container)).toBe(true);
+      // 端末ではなく、選ばれているタブのビューアが出ている
+      expect(
+        terminalWindowOf(container).querySelector<HTMLElement>(
+          'iframe[title^="Terminal"]'
+        )?.parentElement?.style.display
+      ).toBe("none");
+    }
+  );
+
+  it("ファイルのタブが選ばれたままマウントしたあと、別の種類のタブを経てファイルを開けば窓を開く", () => {
+    const props = makeProps({
+      tabs: [terminalTab(), fileTab()],
+      activeTabIndex: 1,
+    });
+    const container = mount(<MobileSessionView {...props} />);
+    const { root } = mountedRoots.at(-1) as { root: Root };
+    expect(isTerminalWindowOpen(container)).toBe(false);
+
+    act(() => root.render(<MobileSessionView {...props} activeTabIndex={0} />));
+    expect(isTerminalWindowOpen(container)).toBe(false);
+
+    act(() => root.render(<MobileSessionView {...props} activeTabIndex={1} />));
+    expect(isTerminalWindowOpen(container)).toBe(true);
+    expect(terminalWindowOf(container).textContent).toContain("hello");
+  });
+
   it("図モードで添付を選ぶと、確認ダイアログを持つ端末の窓を開く", async () => {
     localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "board");
     const container = mount(
@@ -909,7 +973,15 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     return labelsOf(row as ParentNode);
   }
 
-  it("端末の窓は、添付・画像・ショートカット・スラッシュのあとに端末の操作を並べる。窓の外には端末の操作を出さない", () => {
+  /** 端末の窓の上端のバー (見出しと操作と閉じるボタン) */
+  function titleBarOf(container: HTMLDivElement): HTMLElement {
+    const bar = terminalWindowOf(container).querySelector("h2")?.parentElement;
+    expect(bar).not.toBeNull();
+    expect(bar).toBeDefined();
+    return bar as HTMLElement;
+  }
+
+  it("端末の操作 (コピー・再読み込み) は窓の上端のバーに、閉じるボタンの手前に、指で押せる大きさで並べる", () => {
     const container = mount(
       <MobileSessionView
         {...makeProps({
@@ -928,20 +1000,38 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
 
     openTerminalWindow();
 
+    expect(labelsOf(titleBarOf(container))).toEqual([
+      "端末のバッファをコピー",
+      "端末を再読み込み",
+      "端末を閉じる",
+    ]);
     for (const label of ["端末のバッファをコピー", "端末を再読み込み"]) {
       const buttons = container.querySelectorAll(
         `button[aria-label="${label}"]`
       );
+      // 下部バーの行には残さない (同じ操作を2か所に置かない)
       expect(buttons).toHaveLength(1);
-      expect(terminalWindowOf(container).contains(buttons[0])).toBe(true);
+      // 44px
+      expect(buttons[0].className).toContain("size-11");
     }
+  });
+
+  it("端末の窓の下部バーの行は、端末へ打ち込むための操作だけを並べる", () => {
+    const container = mount(
+      <MobileSessionView
+        {...makeProps({
+          onUploadFile: uploadFile,
+          onCopyBuffer: async () => "buffer",
+        })}
+      />
+    );
+    openTerminalWindow();
+
     expect(quickLabelsOf(barOf(container, "terminal"))).toEqual([
       "ファイルを添付",
       "画像を貼り付け",
       "メッセージのショートカット",
       "スラッシュコマンド",
-      "端末のバッファをコピー",
-      "端末を再読み込み",
     ]);
   });
 
@@ -970,9 +1060,10 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     );
     openTerminalWindow();
 
-    const labels = labelsOf(barOf(container, "terminal"));
-    expect(labels).not.toContain("端末のバッファをコピー");
-    expect(labels).toContain("端末を再読み込み");
+    expect(labelsOf(titleBarOf(container))).toEqual([
+      "端末を再読み込み",
+      "端末を閉じる",
+    ]);
   });
 
   it("コピーのボタンは tmux バッファをクリップボードへ書く", async () => {
@@ -988,7 +1079,7 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     openTerminalWindow();
 
     click(
-      barOf(container, "terminal").querySelector(
+      titleBarOf(container).querySelector(
         'button[aria-label="端末のバッファをコピー"]'
       )
     );
@@ -1006,7 +1097,7 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     expect(before).not.toBeNull();
 
     click(
-      barOf(container, "terminal").querySelector(
+      titleBarOf(container).querySelector(
         'button[aria-label="端末を再読み込み"]'
       )
     );
@@ -1278,5 +1369,64 @@ describe("MobileSessionView の音声モード", () => {
   it("会話ビューのイベント列を音声モードへ渡す", () => {
     mount(<MobileSessionView {...makeProps()} />);
     expect(latestChatProps().onEventsChange).toBe(voiceDoubles.pushEvents);
+  });
+});
+
+describe("MobileSessionView の画面末尾の更新と再描画", () => {
+  it("liveTail だけが変わっても、端末の窓の中身は描画し直さない (親が毎回新しい関数を渡しても)", () => {
+    const base = makeProps({
+      onUploadFile: async () => ({ path: "/uploads/a.txt", filename: "a.txt" }),
+      onCopyBuffer: async () => "buffer",
+      liveTail: "$ pnpm test",
+    });
+    // MobileLayout と同じく、描画のたびに新しい関数を渡す
+    const element = (liveTail: string) => (
+      <MobileSessionView
+        {...base}
+        liveTail={liveTail}
+        onSendMessage={() => undefined}
+        onSendKey={() => undefined}
+        onTabSelect={() => undefined}
+        onTabClose={() => undefined}
+        onDeleteSession={() => undefined}
+        onUploadFile={async () => ({
+          path: "/uploads/a.txt",
+          filename: "a.txt",
+        })}
+        onCopyBuffer={async () => "buffer"}
+      />
+    );
+    const container = mount(element("$ pnpm test"));
+    const { root } = mountedRoots.at(-1) as { root: Root };
+    openTerminalWindow();
+    const tabBarRenders = testDoubles.viewerTabBarRender.mock.calls.length;
+    expect(tabBarRenders).toBeGreaterThan(0);
+
+    act(() => root.render(element("$ pnpm test\nPASS")));
+
+    // 画面末尾は会話 (帯) まで届いている
+    expect(latestChatProps().liveTail).toBe("$ pnpm test\nPASS");
+    expect(testDoubles.viewerTabBarRender.mock.calls.length).toBe(
+      tabBarRenders
+    );
+    expect(isTerminalWindowOpen(container)).toBe(true);
+  });
+
+  it("関数を差し替えられても、端末の窓の中身は最新の関数を呼ぶ", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const props = makeProps({ onSendKey: first });
+    const container = mount(<MobileSessionView {...props} />);
+    const { root } = mountedRoots.at(-1) as { root: Root };
+    act(() => root.render(<MobileSessionView {...props} onSendKey={second} />));
+    openTerminalWindow();
+
+    const esc = Array.from(
+      terminalWindowOf(container).querySelectorAll("button")
+    ).find(button => button.textContent === "Esc");
+    click(esc);
+
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledWith("Escape");
   });
 });

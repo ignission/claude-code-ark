@@ -41,6 +41,19 @@ const pointerDown = (target: Element | null) =>
   act(() => {
     target?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
   });
+/** 押して離す (pointerdown → click)。button は押したボタン (0 = 主ボタン) */
+const press = (target: Element | null, button = 0) =>
+  act(() => {
+    target?.dispatchEvent(
+      new MouseEvent("pointerdown", { bubbles: true, button })
+    );
+    target?.dispatchEvent(
+      new MouseEvent(button === 0 ? "click" : "auxclick", {
+        bubbles: true,
+        button,
+      })
+    );
+  });
 
 beforeEach(() => {
   (
@@ -126,17 +139,67 @@ describe("FloatingTerminal", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("窓の外 (暗くした部分) を押すと閉じ、窓の中を押しても閉じない", () => {
+  it("窓の外 (暗くした部分) を押して離すと閉じ、窓の中を押しても閉じない", () => {
     const onClose = vi.fn();
     const { container } = mount({ open: true, onClose });
 
-    pointerDown(content(container));
-    pointerDown(windowEl(container));
-    pointerDown(windowEl(container)?.querySelector("h2") ?? null);
+    press(content(container));
+    press(windowEl(container));
+    press(windowEl(container)?.querySelector("h2") ?? null);
     expect(onClose).not.toHaveBeenCalled();
 
-    pointerDown(backdrop(container));
+    press(backdrop(container));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("窓の外を押しただけ (離す前) では閉じない。閉じたあとに click が残らないようにする", () => {
+    const onClose = vi.fn();
+    const { container } = mount({ open: true, onClose });
+
+    pointerDown(backdrop(container));
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("窓の外を右ボタン・中ボタンで押しても閉じない", () => {
+    const onClose = vi.fn();
+    const { container } = mount({ open: true, onClose });
+
+    press(backdrop(container), 2);
+    press(backdrop(container), 1);
+    // 主ボタン以外の click が届く環境でも閉じない
+    act(() => {
+      backdrop(container)?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, button: 2 })
+      );
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("窓の中で押し始めて外で離しても閉じない", () => {
+    const onClose = vi.fn();
+    const { container } = mount({ open: true, onClose });
+
+    // 押し始めと離した場所が違うと、click は共通の祖先 (背景) に届く
+    pointerDown(windowEl(container)?.querySelector("h2") ?? null);
+    act(() => {
+      backdrop(container)?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("窓そのものがフォーカスを受けられる (端末がまだ無いときのフォーカスの置き場)", () => {
+    const { container } = mount({ open: true });
+    const win = windowEl(container);
+
+    expect(win?.getAttribute("tabindex")).toBe("-1");
+    expect(win?.getAttribute("data-keynav")).toBe("terminal-window");
+    win?.focus();
+    expect(document.activeElement).toBe(win);
   });
 
   it("背景を押したときだけ、mousedown の既定の動き (フォーカスの移動) を止める", () => {

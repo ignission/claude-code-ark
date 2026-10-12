@@ -277,7 +277,12 @@ function toggleWorkArea(root: ParentNode): void {
   visibleOne(root, 'button[aria-label="パネル"]')?.click();
 }
 
-/** 入力モードへ: 端末の窓が開いていれば端末、閉じていれば会話の入力欄にフォーカスを置く */
+/**
+ * 入力モードへ: 端末の窓が開いていれば端末、閉じていれば会話の入力欄にフォーカスを置く。
+ * 窓が開いているのに端末がフォーカスを受けられないとき (iframeがまだ無い、ファイルの
+ * タブを見ていて隠れている) は、窓の枠に置く。会話の入力欄には置かない
+ * (窓の後ろの入力欄に打ったキーが入り、Enterで送られてしまうため)
+ */
 export function focusInput(root: ParentNode): void {
   const terminal = visibleOne<HTMLIFrameElement>(
     root,
@@ -292,6 +297,11 @@ export function focusInput(root: ParentNode): void {
     )?.term;
     terminal.focus();
     term?.focus?.();
+    if (terminal.ownerDocument.activeElement === terminal) return;
+  }
+  const terminalWindow = visibleOne(root, '[data-keynav="terminal-window"]');
+  if (terminalWindow) {
+    terminalWindow.focus();
     return;
   }
   visibleOne(root, 'textarea[data-keynav="chat-input"]')?.focus();

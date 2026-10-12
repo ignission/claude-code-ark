@@ -7,16 +7,14 @@ describe("mobileQuickActions", () => {
       mobileQuickActions({
         surface: "chat",
         canUploadFile: false,
-        canCopyBuffer: false,
       })
     ).toEqual(["message-shortcuts", "slash-commands"]);
     expect(
       mobileQuickActions({
         surface: "terminal",
         canUploadFile: false,
-        canCopyBuffer: false,
       })
-    ).toEqual(["message-shortcuts", "slash-commands", "reload-terminal"]);
+    ).toEqual(["message-shortcuts", "slash-commands"]);
   });
 
   it("会話モードでは添付を出さない (会話の入力欄が自前のボタンを持つため)。画像の貼り付けは出す", () => {
@@ -24,50 +22,29 @@ describe("mobileQuickActions", () => {
       mobileQuickActions({
         surface: "chat",
         canUploadFile: true,
-        canCopyBuffer: true,
       })
     ).toEqual(["paste-image", "message-shortcuts", "slash-commands"]);
   });
 
-  it("端末の窓では、添付・画像・ショートカット・スラッシュのあとに端末の操作を並べる", () => {
-    expect(
-      mobileQuickActions({
-        surface: "terminal",
-        canUploadFile: true,
-        canCopyBuffer: true,
-      })
-    ).toEqual([
+  it("端末の窓の行は、端末へ打ち込むための操作だけを並べる (コピーと再読み込みは窓の上端のバーにある)", () => {
+    const actions = mobileQuickActions({
+      surface: "terminal",
+      canUploadFile: true,
+    });
+
+    expect(actions).toEqual([
       "attach-file",
       "paste-image",
       "message-shortcuts",
       "slash-commands",
-      "copy-buffer",
-      "reload-terminal",
     ]);
   });
 
-  it("端末の窓でコピーができないときは、その1つだけを外す", () => {
-    expect(
-      mobileQuickActions({
-        surface: "terminal",
-        canUploadFile: true,
-        canCopyBuffer: false,
-      })
-    ).toEqual([
-      "attach-file",
-      "paste-image",
-      "message-shortcuts",
-      "slash-commands",
-      "reload-terminal",
-    ]);
-  });
-
-  it("図モードの添付は端末の窓と同じ流儀だが、端末の操作は出さない (端末が見えていない)", () => {
+  it("図モードの行は、端末の窓の行と同じ並びにする (添付は端末の流儀で受ける)", () => {
     expect(
       mobileQuickActions({
         surface: "board",
         canUploadFile: true,
-        canCopyBuffer: true,
       })
     ).toEqual([
       "attach-file",
@@ -81,7 +58,6 @@ describe("mobileQuickActions", () => {
       mobileQuickActions({
         surface: "chat",
         canUploadFile: true,
-        canCopyBuffer: true,
         canUseVoice: true,
       })
     ).toEqual([
@@ -98,7 +74,6 @@ describe("mobileQuickActions", () => {
         mobileQuickActions({
           surface,
           canUploadFile: false,
-          canCopyBuffer: false,
           canUseVoice: true,
         })
       ).not.toContain("voice-mode");

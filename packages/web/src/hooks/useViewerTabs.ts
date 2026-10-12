@@ -7,6 +7,13 @@ import {
 import { correctActiveIndexAfterClose } from "../lib/tab-close";
 
 /**
+ * タブを開いていないセッションのタブの並び (端末だけ)。
+ * 呼ぶたびに配列を作ると、受け取る側 (メモ化した端末のペイン) が毎回描画し直すので、
+ * 同じ配列を返す。書き換えないこと
+ */
+const DEFAULT_TABS: ViewerTab[] = [{ type: "terminal", id: "terminal" }];
+
+/**
  * セッションごとのタブ状態管理を提供するカスタムフック。
  * Dashboard.tsx と MobileLayout.tsx で共通利用する。
  *
@@ -53,7 +60,7 @@ export function useViewerTabs(
 
   const getTabsForSession = useCallback(
     (sessionId: string): ViewerTab[] => {
-      return sessionTabs[sessionId] ?? [{ type: "terminal", id: "terminal" }];
+      return sessionTabs[sessionId] ?? DEFAULT_TABS;
     },
     [sessionTabs]
   );

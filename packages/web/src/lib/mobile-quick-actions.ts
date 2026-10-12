@@ -7,9 +7,9 @@
  * 自前のボタンを持っており、行にも出すと同じ「ファイルを添付」ボタンが2つ並んでしまう。
  * 画像の貼り付けは、会話の入力欄に貼り付けボタンが無いため、3か所とも行に出す。
  *
- * 端末に関する操作 (バッファのコピー・再読み込み) は端末の窓だけに出す。
- * 図モードの添付は端末側の流儀で受けるが、端末そのものは見えていないので出さない。
- * `…` に残すのはセッション全体の操作 (通知・再起動・削除) だけ。
+ * 行に並べるのは、打ち込むための操作 (添付・画像・ショートカット・スラッシュコマンド) だけ。
+ * 端末そのものへの操作 (バッファのコピー・再読み込み) は、PCと同じく端末の窓の上端の
+ * バーに置く (MobileSessionView)。`…` に残すのはセッション全体の操作 (通知・再起動・削除) だけ。
  *
  * 音声モードは会話モードの先頭に出す。音声モードは会話ビューのイベント列を読み上げるので、
  * 会話を見ているときの操作にする。音声APIの無いブラウザ (canUseVoice=false) では出さない。
@@ -25,14 +25,11 @@ export type MobileQuickAction =
   | "attach-file"
   | "paste-image"
   | "message-shortcuts"
-  | "slash-commands"
-  | "copy-buffer"
-  | "reload-terminal";
+  | "slash-commands";
 
 export function mobileQuickActions(input: {
   surface: MobileQuickActionSurface;
   canUploadFile: boolean;
-  canCopyBuffer: boolean;
   /** 音声の認識と読み上げの両方が使えるブラウザか */
   canUseVoice?: boolean;
 }): MobileQuickAction[] {
@@ -45,9 +42,5 @@ export function mobileQuickActions(input: {
     actions.push("paste-image");
   }
   actions.push("message-shortcuts", "slash-commands");
-  if (input.surface === "terminal") {
-    if (input.canCopyBuffer) actions.push("copy-buffer");
-    actions.push("reload-terminal");
-  }
   return actions;
 }

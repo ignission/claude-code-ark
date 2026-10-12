@@ -619,6 +619,49 @@ describe("SplitChatPane: 端末の帯", () => {
   });
 });
 
+describe("SplitChatPane: スラッシュコマンドの補完", () => {
+  const COMMANDS: SlashCommandInfo[] = [
+    { name: "/clear", source: "built-in" },
+    { name: "/compact", source: "built-in" },
+  ];
+  const menu = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>('[data-testid="chat-slash-menu"]');
+
+  it.each(["pane", "mobile"] as const)(
+    "候補は入力欄を基準に出す (帯の上へ離さない): layout=%s",
+    layout => {
+      const { container } = renderChat(
+        {
+          layout,
+          liveTail: "$ pnpm test\nPASS",
+          onOpenTerminal: vi.fn(),
+        },
+        COMMANDS
+      );
+      const textarea = container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="メッセージ"]'
+      );
+      const strip = container.querySelector(
+        '[data-testid="chat-terminal-strip"]'
+      );
+      expect(strip).not.toBeNull();
+      expect(menu(container)).toBeNull();
+
+      typeInto(textarea as HTMLTextAreaElement, "/c");
+
+      const list = menu(container);
+      expect(list?.textContent).toContain("/clear");
+      // 位置の基準 (いちばん近い relative の祖先) は入力欄だけを持ち、帯は持たない
+      expect(list?.className).toContain("absolute");
+      expect(list?.className).toContain("bottom-full");
+      const anchor = list?.parentElement?.closest(".relative");
+      expect(anchor).toBe(list?.parentElement);
+      expect(anchor?.contains(textarea)).toBe(true);
+      expect(anchor?.contains(strip)).toBe(false);
+    }
+  );
+});
+
 describe("SplitChatPane: 作業中の表示", () => {
   const indicator = (container: HTMLElement) =>
     container.querySelector('[data-testid="chat-working-indicator"]');
