@@ -159,7 +159,7 @@ interface MobileLayoutProps {
     relPath: string;
     sequence: number;
   } | null;
-  // ブラウザ（noVNC）
+  // ブラウザ
   activeBrowserSession: BrowserSession | null;
   onSelectBrowser: () => void;
   isRemote: boolean;

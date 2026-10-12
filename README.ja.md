@@ -92,6 +92,7 @@ Claudeは、シーケンス図、差分量つきの呼び出しツリー、複�
 
 - 画像、PDF、テキスト、Excelのファイルを、貼り付け・ドラッグ&ドロップ・ファイル選択でClaudeに送れます。
 - コマンドパレットから横道の質問ができます (`Tab`)。道具を持たない別のClaudeが浮かぶウィンドウで答え、セッションの会話には何も入りません。
+- サーバーのマシンでheadlessのChromiumを1つ動かし、画面と入力をChrome DevTools Protocolで中継して、Arkの画面に出せます。必要なのはChromiumの実行ファイルだけです。`~/.cache/ms-playwright` にPlaywrightで入れたものを先に探し、なければPATHの `chromium-browser` / `chromium` / `google-chrome` を使います。見つからないときは、この機能だけが無効になります。
 - SSHで届くホストのVNC画面 (macOSの画面共有など) を、ブラウザで開けます。Arkはサーバーの実行ユーザーで `ssh -o BatchMode=yes` を起動するので、そのユーザーにパスフレーズ無しの鍵 (またはssh-agentに登録済みの鍵) があり、接続先が `known_hosts` に登録済みである必要があります。
 - リポジトリごとに別のClaudeアカウントを使えます (Linuxのみ)。
 
@@ -156,6 +157,7 @@ Homebrew 4.5で `--no-quarantine` スイッチと環境変数 `HOMEBREW_CASK_OPT
 - [ttyd](https://github.com/tsl0922/ttyd)
 - [jq](https://jqlang.org/)
 - [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) (インストール済みかつログイン済み)
+- Chromium (任意。ブラウザ機能だけが使います)
 
 ```bash
 git clone https://github.com/ignission/claude-code-ark.git
