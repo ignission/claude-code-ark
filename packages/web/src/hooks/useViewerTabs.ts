@@ -53,6 +53,11 @@ export function useViewerTabs(
   const [sessionActiveTab, setSessionActiveTab] = useState<
     Record<string, number>
   >({});
+  // ファイル / HTMLのタブを開く操作の通し番号 (セッションごと)。開いているファイルの
+  // 開き直しでも進む。モバイルは増加を見て、ビューアのある端末の窓を開く
+  const [sessionOpenSeq, setSessionOpenSeq] = useState<Record<string, number>>(
+    {}
+  );
   const sessionTabsRef = useRef(sessionTabs);
   const sessionActiveTabRef = useRef(sessionActiveTab);
   sessionTabsRef.current = sessionTabs;
@@ -70,6 +75,11 @@ export function useViewerTabs(
       return sessionActiveTab[sessionId] ?? 0;
     },
     [sessionActiveTab]
+  );
+
+  const getOpenSeqForSession = useCallback(
+    (sessionId: string): number => sessionOpenSeq[sessionId] ?? 0,
+    [sessionOpenSeq]
   );
 
   const handleTabSelect = useCallback((sessionId: string, index: number) => {
@@ -121,6 +131,11 @@ export function useViewerTabs(
       // closure timing 依存を排除する。strict mode の二重実行でも同じ idx を
       // 書き込むだけで idempotent。
       const isHtml = /\.html?$/i.test(filePath) && filePath.startsWith("/");
+      // updater の外で進める (strict mode の二重実行で2つ進めない)
+      setSessionOpenSeq(prev => ({
+        ...prev,
+        [sessionId]: (prev[sessionId] ?? 0) + 1,
+      }));
       setSessionTabs(prev => {
         const tabs = [
           ...(prev[sessionId] ?? [
@@ -363,6 +378,7 @@ export function useViewerTabs(
   return {
     getTabsForSession,
     getActiveTabForSession,
+    getOpenSeqForSession,
     handleTabSelect,
     handleTabClose,
     openFileTab,

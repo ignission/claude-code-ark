@@ -413,6 +413,7 @@ export default function Dashboard() {
   const {
     getTabsForSession,
     getActiveTabForSession,
+    getOpenSeqForSession: getViewerOpenSeqForSession,
     handleTabSelect,
     handleTabClose,
     openDiagramTab,
@@ -881,6 +882,7 @@ export default function Dashboard() {
           onNewSession={handleNewSession}
           getTabsForSession={getTabsForSession}
           getActiveTabForSession={getActiveTabForSession}
+          getViewerOpenSeqForSession={getViewerOpenSeqForSession}
           handleTabSelect={handleTabSelect}
           handleTabClose={handleTabClose}
           openDiagramTab={openDiagramTab}

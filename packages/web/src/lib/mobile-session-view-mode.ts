@@ -10,8 +10,6 @@ export const MOBILE_SESSION_VIEW_MODE_VALUES = ["chat", "board"] as const;
 export type MobileSessionViewMode =
   (typeof MOBILE_SESSION_VIEW_MODE_VALUES)[number];
 
-type MobileActiveTabType = "terminal" | "file" | "html" | "diagram";
-
 export interface DiagramOpenRequest {
   sessionId: string;
   relPath: string;
@@ -56,13 +54,15 @@ export function getViewModeForDiagramOpenRequest(
 }
 
 /**
- * 選ばれたビューワータブを見せるために、端末の窓を開く必要があるか。
- * ファイルとHTMLのビューアは端末と同じタブの並びに属し、窓の中に出る
+ * ファイル / HTMLを開く操作があったので、端末の窓を開く必要があるか。
+ * ビューアは端末と同じタブの並びに属し、窓の中に出る。開く操作の通し番号が、
+ * 前に見た値より増えたときだけ開く (同じファイルの開き直しでも番号は進む)
  */
-export function shouldOpenTerminalForViewerTab(
-  activeTabType: MobileActiveTabType | undefined
+export function shouldOpenTerminalForViewerOpen(
+  seenOpenSeq: number,
+  openSeq: number
 ): boolean {
-  return activeTabType === "file" || activeTabType === "html";
+  return openSeq > seenOpenSeq;
 }
 
 export function normalizeMobileSessionViewMode(

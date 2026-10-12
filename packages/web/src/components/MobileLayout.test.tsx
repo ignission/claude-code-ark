@@ -68,6 +68,7 @@ function createProps(): ComponentProps<typeof MobileLayout> {
     worktreeDisplayNames: new Map(),
     getTabsForSession: vi.fn(() => tabs),
     getActiveTabForSession: vi.fn(() => 0),
+    getViewerOpenSeqForSession: vi.fn(() => 0),
     handleTabSelect: vi.fn(),
     handleTabClose: vi.fn(),
     openDiagramTab: vi.fn(),

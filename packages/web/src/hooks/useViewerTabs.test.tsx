@@ -77,6 +77,20 @@ describe("useViewerTabs のファイルタブ", () => {
     // 範囲で指定されたときは終了行も持つ (ハイライトを 1 行で切らない)
     expect(fileTab.type === "file" && fileTab.targetEndLine).toBe(58);
   });
+
+  it("ファイルを開くたびに、そのセッションの通し番号を進める (同じファイルの開き直しでも)", () => {
+    const api = mountHook();
+    expect(api().getOpenSeqForSession("s1")).toBe(0);
+
+    act(() => api().openFileTab("s1", "packages/web/src/x.ts"));
+    expect(api().getOpenSeqForSession("s1")).toBe(1);
+
+    act(() => api().openFileTab("s1", "packages/web/src/x.ts"));
+    expect(api().getOpenSeqForSession("s1")).toBe(2);
+    expect(api().getTabsForSession("s1")).toHaveLength(2);
+    // ほかのセッションの番号は進めない
+    expect(api().getOpenSeqForSession("s2")).toBe(0);
+  });
 });
 
 describe("useViewerTabs のタブの同一性", () => {
