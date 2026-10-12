@@ -137,7 +137,7 @@ vi.mock("@/components/AboutDialog", () => ({
 vi.mock("@/components/BrowserPane", () => ({ BrowserPane: () => null }));
 vi.mock("@/components/ScreenPane", () => ({
   ScreenPane: () => {
-    // mount/unmount 回数を testDoubles 経由で記録し、再マウント（VNC再接続）の
+    // mount/unmount 回数を testDoubles 経由で記録し、再マウント（リモート画面の再接続）の
     // 有無をテストから検証できるようにする
     useEffect(() => {
       testDoubles.screenPaneMount();

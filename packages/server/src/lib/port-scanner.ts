@@ -43,9 +43,7 @@ function collectPorts(
     const ports: ListeningPort[] = [];
     const seen = new Set<number>();
 
-    // 実際にBrowserManagerが使用中のポート（VNC/WS/CDP）のみ除外。
-    // VNC/WS範囲を一括除外するとユーザーアプリのポートも隠れてしまうため、
-    // 動的に使用中のポートだけをフィルタリングする。
+    // ブラウザ機能が使うポート (CDP) は、ユーザーのアプリではないので除外する
     const browserUsedPorts = new Set(browserManager.getUsedPorts());
 
     for (const line of output.trim().split("\n")) {
@@ -54,7 +52,7 @@ function collectPorts(
 
       const { port, processName, pid } = parsed;
 
-      // ttydポート範囲（固定）とBrowserManager使用中ポート（動的）を除外
+      // ttydのポート範囲とブラウザ機能のポートを除外
       if (port >= TTYD_PORT_START && port <= TTYD_PORT_END) continue;
       if (browserUsedPorts.has(port)) continue;
 

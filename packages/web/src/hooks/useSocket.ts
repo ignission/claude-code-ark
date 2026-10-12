@@ -940,7 +940,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       });
     });
 
-    // Browser session events (noVNC)
+    // Browser session events
     socket.on("browser:started", (session: BrowserSession) => {
       setBrowserSessions(prev => {
         const next = new Map(prev);

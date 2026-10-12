@@ -219,14 +219,156 @@ export type SessionStatus = "active" | "idle" | "error" | "stopped";
 
 export interface BrowserSession {
   id: string;
-  targetPort: number;
   targetUrl: string;
-  wsPort: number;
-  vncPort: number;
-  displayNum: number;
-  devtools: boolean;
   createdAt: Date;
 }
+
+/** 修飾キーのビット (CDPの Input.* と同じ値): Alt=1, Ctrl=2, Meta=4, Shift=8 */
+export type BrowserModifiers = number;
+
+/**
+ * ブラウザ機能のWebSocket (`/browser/:id/ws`) でクライアントが送るメッセージ。
+ * 座標はビューポートのCSSピクセル。
+ */
+export type BrowserClientMessage =
+  | { t: "resize"; width: number; height: number; dpr: number; mobile: boolean }
+  | {
+      t: "mouse";
+      type: "down" | "up" | "move" | "wheel";
+      x: number;
+      y: number;
+      /** DOMの MouseEvent.button (0=左, 1=中, 2=右) */
+      button: number;
+      /** DOMの MouseEvent.buttons */
+      buttons: number;
+      clickCount: number;
+      deltaX: number;
+      deltaY: number;
+      modifiers: BrowserModifiers;
+    }
+  | {
+      t: "key";
+      type: "down" | "up";
+      key: string;
+      code: string;
+      keyCode: number;
+      /** 文字を生むキーだけに付く */
+      text?: string;
+      repeat: boolean;
+      modifiers: BrowserModifiers;
+    }
+  | {
+      t: "ime";
+      type: "update";
+      text: string;
+      selectionStart: number;
+      selectionEnd: number;
+    }
+  | { t: "ime"; type: "commit"; text: string }
+  | { t: "ime"; type: "cancel" }
+  | { t: "paste"; text: string }
+  /** フレームを取りこぼしたとき。全画面を送り直してもらう */
+  | { t: "refresh" }
+  /** URLへ遷移する。スキームが無ければ `http://` を補う。開けないURLには `notice` が返る */
+  | { t: "nav"; type: "goto"; url: string }
+  | { t: "nav"; type: "back" | "forward" | "reload" | "stop" }
+  | { t: "tab"; type: "activate" | "close"; id: string }
+  /** 新しいタブ (`about:blank`) */
+  | { t: "tab"; type: "new" }
+  /**
+   * JavaScriptのダイアログへの応答。`id` は `dialog` で知らされた番号で、いま開いている
+   * ダイアログの番号でなければ捨てられる。`promptText` は `prompt` に入れる文字列
+   */
+  | { t: "dialog"; id: number; accept: boolean; promptText?: string }
+  /** 選択している文字列を読む。選択があれば `clipboard` が返る */
+  | { t: "copy" }
+  /** `select` で知らされた `<select>` の選択。`index` は `options` の添字 */
+  | { t: "selectChoose"; id: number; index: number }
+  | { t: "selectCancel"; id: number }
+  | {
+      t: "touch";
+      type: "start" | "move" | "end" | "cancel";
+      /** 触れている点。最大10個 */
+      points: BrowserTouchPoint[];
+      modifiers: BrowserModifiers;
+    };
+
+export interface BrowserTouchPoint {
+  id: number;
+  x: number;
+  y: number;
+}
+
+/** いま映しているタブの状態 */
+export interface BrowserPageInfo {
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+}
+
+export interface BrowserTabInfo {
+  id: string;
+  title: string;
+  url: string;
+}
+
+export type BrowserDialogKind = "alert" | "confirm" | "prompt" | "beforeunload";
+
+export interface BrowserDialogInfo {
+  /** サーバーが開いたダイアログごとに振る番号。応答は、この番号で名指しする */
+  id: number;
+  kind: BrowserDialogKind;
+  message: string;
+  /** `prompt` の入力欄の初期値。ほかの種類では空 */
+  defaultPrompt: string;
+}
+
+export interface BrowserSelectOption {
+  label: string;
+  disabled: boolean;
+  /** `<optgroup>` の見出し。属していなければ `null` */
+  group: string | null;
+}
+
+/**
+ * サーバーが送るJSONのメッセージ。フレームは別にバイナリで送る
+ * (ヘッダと画像。形は browser-frame-pipeline.ts の `encodeFrameHeader`)。
+ * `viewport` は、このあとに届くフレームが描かれたビューポートの寸法 (CSSピクセル) と世代。
+ * 視聴者は寸法で座標を換算し、世代の違うフレームを捨てる
+ */
+export type BrowserServerMessage =
+  | { t: "error"; message: string }
+  | { t: "viewport"; width: number; height: number; gen: number }
+  /** 変わるたびに送る。参加した視聴者にも送る */
+  | ({ t: "page" } & BrowserPageInfo)
+  /** タブの一覧。変わるたびに送る。参加した視聴者にも送る */
+  | { t: "tabs"; tabs: BrowserTabInfo[]; activeId: string }
+  /**
+   * JavaScriptのダイアログが開いた。開いている間に参加した視聴者にも送る。
+   * 同じ `id` がもう一度届いたら、同じダイアログ
+   */
+  | ({ t: "dialog" } & BrowserDialogInfo)
+  /** ダイアログが閉じた (だれかが応答した、またはページが閉じた) */
+  | { t: "dialogClosed" }
+  /** `copy` への応答。選択が無ければ送らない。送信が詰まっている視聴者へも送らない */
+  | { t: "clipboard"; text: string }
+  /**
+   * `<select>` が押された。`rect` はビューポートのCSSピクセルでの `<select>` の位置。
+   * 送信が詰まっている視聴者へは送らない
+   */
+  | {
+      t: "select";
+      id: number;
+      options: BrowserSelectOption[];
+      selectedIndex: number;
+      rect: { x: number; y: number; width: number; height: number };
+    }
+  /** その選択は無効になった (遷移した、ほかの視聴者が選んだ) */
+  | { t: "selectClosed"; id: number }
+  /** 操作を断ったときの理由。切断はしない */
+  | { t: "notice"; message: string };
 
 export interface Message {
   id: string;
@@ -595,7 +737,7 @@ export interface ServerToClientEvents {
     error?: string;
   }) => void;
 
-  // ブラウザセッション（noVNC）
+  // ブラウザセッション
   "browser:started": (session: BrowserSession) => void;
   "browser:stopped": (data: { browserId: string }) => void;
   "browser:error": (data: { message: string }) => void;
@@ -903,7 +1045,7 @@ export interface ClientToServerEvents {
   "file:subscribe": (data: { sessionId: string; filePath: string }) => void;
   "file:unsubscribe": (data: { sessionId: string; filePath: string }) => void;
 
-  // ブラウザセッション（noVNC）
+  // ブラウザセッション
   "browser:start": () => void;
   "browser:stop": (data: { browserId: string }) => void;
   "browser:navigate": (data: { url: string }) => void;
