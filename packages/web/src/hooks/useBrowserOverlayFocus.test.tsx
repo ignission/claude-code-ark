@@ -30,7 +30,7 @@ function Overlay({ kind }: { kind: "dialog" | "select" }) {
     const answer =
       kind === "dialog" ? api.dialogFocusMode() : api.selectTakesFocus();
     asked.push(answer);
-    if (answer !== false) ref.current?.focus();
+    if (answer !== false && answer !== "none") ref.current?.focus();
   }, [kind]);
   return (
     <div data-overlay>
@@ -47,14 +47,16 @@ function Harness({
   withField = true,
 }: HarnessProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const paneRef = useRef<HTMLDivElement>(null);
   api = useBrowserOverlayFocus({
+    paneRef,
     inputRef,
     shown: overlay !== undefined,
     canRestore,
     overlaySelector: "[data-overlay]",
   });
   return (
-    <div>
+    <div ref={paneRef}>
       {withField && <input aria-label="URL" />}
       <textarea ref={inputRef} />
       {overlay && <Overlay key={overlay} kind={overlay} />}
@@ -123,14 +125,26 @@ describe("useBrowserOverlayFocus", () => {
     expect(document.activeElement).toBe(textarea());
   });
 
-  it("ペインの外の要素から取ったフォーカスも、閉じたらそこへ戻す", () => {
+  it("ペインの外にフォーカスがあるとき、ダイアログはフォーカスを取らず、閉じても動かさない", () => {
     const outside = document.createElement("input");
     document.body.append(outside);
     outside.focus();
     render({ overlay: "dialog" });
-    expect(asked).toEqual(["panel"]);
+    expect(asked).toEqual(["none"]);
+    expect(document.activeElement).toBe(outside);
 
     render();
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
+  });
+
+  it("ペインの外にフォーカスがあるとき、操作した直後でも選択リストはフォーカスを取らない", () => {
+    const outside = document.createElement("input");
+    document.body.append(outside);
+    outside.focus();
+    api.noteLocalInput();
+    render({ overlay: "select" });
+    expect(asked).toEqual([false]);
     expect(document.activeElement).toBe(outside);
     outside.remove();
   });

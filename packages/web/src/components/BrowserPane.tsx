@@ -259,6 +259,7 @@ function toViewport(
  * 状態は、同じreducerを同じ順に当てて作るので、描き直しを待たずに最新になる。
  */
 export function BrowserPane({ browserSession }: BrowserPaneProps) {
+  const paneRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -367,6 +368,7 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
   const shownDialog = connected && visible ? dialog : null;
   const shownSelect = connected && visible ? select : null;
   const overlayFocus = useBrowserOverlayFocus({
+    paneRef,
     inputRef,
     shown: shownDialog !== null || shownSelect !== null,
     canRestore: connected && visible,
@@ -1110,7 +1112,7 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
   };
 
   return (
-    <div className="flex h-full w-full flex-col bg-background">
+    <div ref={paneRef} className="flex h-full w-full flex-col bg-background">
       <BrowserToolbar
         page={ui.page}
         tabs={ui.tabs}

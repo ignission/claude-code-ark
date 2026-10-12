@@ -4,6 +4,10 @@
  * 重ねて出す部品は、リモートのページやほかの視聴者の都合で、利用者の操作と関係なく
  * 現れる。現れたときに、打っている途中の操作を奪わないようにする。
  *
+ * - ペインの外 (ほかのパネルのチャット入力欄など) にフォーカスがあるときは、部品が
+ *   ダイアログでも選択リストでも、フォーカスを動かさない。部品は描くので、ペインの中を
+ *   押せば、そのあとは普通にフォーカスを取る。フォーカスがどこにも無い (文書の本体)
+ *   ときは、奪う操作が無いので、外とは数えない
  * - ダイアログは、出たときにフォーカスを取る。置く先は、出る前のフォーカスで決める。
  *   透明のtextarea (リモートのページを操作していた) なら、入力欄か主ボタン。ほかの場所
  *   (URLの入力欄など) なら、ダイアログの枠。枠にあれば、打ちかけのEnterやSpaceは
@@ -30,6 +34,8 @@ import { type RefObject, useCallback, useEffect, useRef } from "react";
 export const LOCAL_INPUT_WINDOW_MS = 1000;
 
 export interface UseBrowserOverlayFocusOptions {
+  /** ペインの根の要素。この外にあるフォーカスは奪わない */
+  paneRef: RefObject<HTMLElement | null>;
   /** リモートへキーを送る、透明のtextarea */
   inputRef: RefObject<HTMLElement | null>;
   /** 重ねて出す部品を、いま1つでも描いているか */
@@ -44,12 +50,13 @@ export interface BrowserOverlayFocus {
   /** この視聴者がリモートのページを操作した */
   noteLocalInput: () => void;
   /** ダイアログがフォーカスを置く先。ダイアログが、フォーカスを動かす直前に呼ぶ */
-  dialogFocusMode: () => "control" | "panel";
+  dialogFocusMode: () => "control" | "panel" | "none";
   /** 選択リストがフォーカスを取ってよいか。リストが、フォーカスを動かす直前に呼ぶ */
   selectTakesFocus: () => boolean;
 }
 
 export function useBrowserOverlayFocus({
+  paneRef,
   inputRef,
   shown,
   canRestore,
@@ -79,20 +86,30 @@ export function useBrowserOverlayFocus({
     }
   }, [overlaySelector]);
 
-  const dialogFocusMode = useCallback(() => {
+  /** 打っている途中の要素が、ペインの外にあるか */
+  const focusIsOutsidePane = useCallback(() => {
+    const focused = document.activeElement;
+    if (!focused || focused === document.body) return false;
+    const pane = paneRef.current;
+    return pane !== null && !pane.contains(focused);
+  }, [paneRef]);
+
+  const dialogFocusMode = useCallback((): "control" | "panel" | "none" => {
+    if (focusIsOutsidePane()) return "none";
     // 選択リストに続いて出たときは、リストが取る前の場所で決める
     const before = returnToRef.current ?? document.activeElement;
     remember();
     return before !== null && before === inputRef.current ? "control" : "panel";
-  }, [inputRef, remember]);
+  }, [inputRef, remember, focusIsOutsidePane]);
 
   const selectTakesFocus = useCallback(() => {
+    if (focusIsOutsidePane()) return false;
     if (performance.now() - lastLocalInputRef.current > LOCAL_INPUT_WINDOW_MS) {
       return false;
     }
     remember();
     return true;
-  }, [remember]);
+  }, [remember, focusIsOutsidePane]);
 
   useEffect(() => {
     if (shown) {

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 /** 出たときにフォーカスを置く先。`control` は入力欄か主ボタン、`panel` はダイアログの枠 */
-export type BrowserDialogFocusMode = "control" | "panel";
+export type BrowserDialogFocusMode = "control" | "panel" | "none";
 
 interface BrowserDialogProps {
   dialog: BrowserDialogInfo;
@@ -51,7 +51,8 @@ const ENABLED_CONTROLS = "input:not(:disabled), button:not(:disabled)";
  * Enterが、まだ表示していない次のダイアログへの応答になるのを防ぐ。
  *
  * フォーカスは、出たときと、別のダイアログに替わったときに取る。置く先は親が決める
- * (`focusMode`)。利用者がページを操作していたなら入力欄か主ボタンに置き、ほかの場所
+ * (`focusMode`)。ペインの外で打っていたなら、フォーカスは動かさない (`none`)。
+ * 利用者がページを操作していたなら入力欄か主ボタンに置き、ほかの場所
  * (URLの入力欄など) で打っていたなら、ダイアログの枠に置く。枠にあれば、打ちかけの
  * EnterやSpaceはどのボタンも押さない。同じ理由で、出た直後 (`DIALOG_KEY_GUARD_MS`) の
  * Enter、Space、Escapeと、押したままの繰り返しは、応答にしない。入力欄で打つ空白は、
@@ -101,7 +102,9 @@ export function BrowserDialog({
     shownAtRef.current = performance.now();
     suppressedSpaceRef.current = false;
     const control = inputRef.current ?? primaryRef.current;
-    if (focusMode?.() === "panel" || !control || control.disabled) {
+    const mode = focusMode?.();
+    if (mode === "none") return;
+    if (mode === "panel" || !control || control.disabled) {
       panelRef.current?.focus({ preventScroll: true });
       return;
     }

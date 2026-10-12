@@ -2477,6 +2477,17 @@ describe("BrowserPaneのダイアログ", () => {
     ]);
   });
 
+  it("ペインの外で入力中なら、ダイアログが出てもフォーカスを奪わない", () => {
+    const { container, ws } = mountConnected();
+    const outside = document.createElement("input");
+    document.body.append(outside);
+    outside.focus();
+    act(() => ws.onmessage?.(dialogMessage("alert")));
+    expect(alertdialog(container)).not.toBeNull();
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
+  });
+
   it("応答しても閉じず、`dialogClosed` で閉じて、入力欄へフォーカスを戻す", () => {
     const { container, ws, textarea } = mountConnected();
     act(() => ws.onmessage?.(dialogMessage("confirm")));
