@@ -11,6 +11,11 @@
  *   ページに置かれない (実物のChromiumで確かめた)。有効にすると `Runtime.*` のイベント
  *   (実行コンテキスト、コンソール、例外) が届くようになるが、使うのは `Runtime.bindingCalled`
  *   だけで、ほかは聞かない
+ * - 準備ができるかどうかで、タブを映せるかどうかを決めない。準備のコマンドが失敗するか
+ *   返らなければ、警告を1回出して、残りを送らずに終わる。そのタブは映り、`<select>` は
+ *   横取りされないだけになる。準備のコマンドをどう送って、いつまで待つかは、ブリッジが
+ *   `prepare` へ渡す。タブから離れた、sessionが切り離された、というときだけは、準備の
+ *   失敗にする (タブそのものを映せない)
  * - いまの文書へ入れる評価は、待たず、失敗しても準備を止めない。ダイアログが開いている
  *   タブでは評価が返らない。次に読み込む文書には、新しい文書へのスクリプトで入る
  * - bindingはページのどのスクリプトからも呼べるので、知らせは信用しない。検査を通らない
@@ -31,6 +36,7 @@
  */
 
 import type { BrowserClientMessage, BrowserServerMessage } from "@ark/shared";
+import { isSessionDetached } from "./browser-cdp-client.js";
 import { COPY_TIMEOUT_MS } from "./browser-page-controller.js";
 import {
   clampSelectRect,
@@ -87,16 +93,34 @@ export class BrowserSelectController<V> {
   }
 
   /**
-   * ページから知らせを受け取れるようにし、スクリプトを入れる。途中で失敗するか、
-   * `dispose` されたらrejectする。
+   * ページから知らせを受け取れるようにし、スクリプトを入れる。`send` は、準備のコマンドを
+   * タブのsessionへ送って応答を待つもの (渡さなければ `SelectLink.send`)。
+   * できなければ、警告を出して何も入れずに終わる。rejectするのは、`dispose` されたときと、
+   * sessionが切り離されたときだけ。
    */
-  async prepare(): Promise<void> {
-    // bindingより先に要る。これが無いと、bindingがページに置かれない
-    await this.step("Runtime.enable");
-    await this.step("Runtime.addBinding", { name: SELECT_BINDING_NAME });
-    await this.step("Page.addScriptToEvaluateOnNewDocument", {
-      source: SELECT_SHIM_SOURCE,
-    });
+  async prepare(
+    send: (method: string, params?: object) => Promise<unknown> = (
+      method,
+      params
+    ) => this.link.send(method, params)
+  ): Promise<void> {
+    const step = async (method: string, params?: object) => {
+      if (this.disposed) throw new Error(DISPOSED_MESSAGE);
+      await send(method, params);
+      if (this.disposed) throw new Error(DISPOSED_MESSAGE);
+    };
+    try {
+      // bindingより先に要る。これが無いと、bindingがページに置かれない
+      await step("Runtime.enable");
+      await step("Runtime.addBinding", { name: SELECT_BINDING_NAME });
+      await step("Page.addScriptToEvaluateOnNewDocument", {
+        source: SELECT_SHIM_SOURCE,
+      });
+    } catch (error) {
+      if (this.disposed || isSessionDetached(error)) throw error;
+      warn("<select>の準備に失敗 (選択リストを出さずに続けます)", error);
+      return;
+    }
     this.evaluate(SELECT_SHIM_SOURCE, "スクリプトを入れるのに失敗");
   }
 
@@ -172,12 +196,6 @@ export class BrowserSelectController<V> {
   dispose(): void {
     this.disposed = true;
     this.open = null;
-  }
-
-  private async step(method: string, params?: object): Promise<void> {
-    if (this.disposed) throw new Error(DISPOSED_MESSAGE);
-    await this.link.send(method, params);
-    if (this.disposed) throw new Error(DISPOSED_MESSAGE);
   }
 
   /** ページで式を評価する。待たない。長く走る式は `COPY_TIMEOUT_MS` でChromiumが打ち切る */

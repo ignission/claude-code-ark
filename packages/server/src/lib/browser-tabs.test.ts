@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BrowserTabs,
+  MAX_TRACKED_TABS,
   readTargetInfo,
   type TargetInfo,
 } from "./browser-tabs.js";
@@ -159,5 +160,64 @@ describe("BrowserTabs", () => {
   it("1つだけなら候補は無い。一覧に無いidの候補は、一覧の順の全部", () => {
     expect(tabsOf("T1").fallbacks("T1")).toEqual([]);
     expect(tabsOf("T1", "T2").fallbacks("T9")).toEqual(["T1", "T2"]);
+  });
+
+  it("追っているタブがDevToolsの画面や拡張機能のページへ移ったら、一覧から外す", () => {
+    const tabs = tabsOf("T1", "T2", "T3");
+    expect(tabs.update(page("T2", { url: "devtools://devtools/x.html" }))).toBe(
+      "removed"
+    );
+    expect(tabs.update(page("T3", { url: "chrome-extension://abc/p" }))).toBe(
+      "removed"
+    );
+    expect(ids(tabs)).toEqual(["T1"]);
+    // 外したタブの、そのあとの更新は当てない
+    expect(tabs.update(page("T2"))).toBeNull();
+  });
+
+  it("残すと決めたタブは、DevToolsの画面へ移っても外さない", () => {
+    const tabs = tabsOf("T1", "T2");
+    expect(
+      tabs.update(page("T1", { url: "devtools://devtools/x.html" }), true)
+    ).toEqual({ title: false });
+    expect(ids(tabs)).toEqual(["T1", "T2"]);
+  });
+
+  it("開いたタブを覚えているタブの候補は、開いたタブが先、あとは近い順", () => {
+    const tabs = tabsOf("T1", "T2", "T3", "T4");
+    tabs.follow("T4", "T1");
+    expect(tabs.openerOf("T4")).toBe("T1");
+    expect(tabs.openerOf("T3")).toBeNull();
+    expect(tabs.fallbacks("T4")).toEqual(["T1", "T3", "T2"]);
+  });
+
+  it("開いたタブがもう無ければ、近い順だけにする。消したタブのことは忘れる", () => {
+    const tabs = tabsOf("T1", "T2", "T3");
+    tabs.follow("T3", "T1");
+    tabs.remove("T1");
+    expect(tabs.openerOf("T3")).toBeNull();
+    expect(tabs.fallbacks("T3")).toEqual(["T2"]);
+    tabs.follow("T3", "T2");
+    tabs.remove("T3");
+    tabs.add(page("T3"));
+    expect(tabs.openerOf("T3")).toBeNull();
+  });
+
+  it("一覧に無いタブは、開いたタブとして覚えない", () => {
+    const tabs = tabsOf("T1");
+    tabs.follow("T1", "T9");
+    tabs.follow("T8", "T1");
+    expect(tabs.openerOf("T1")).toBeNull();
+    expect(tabs.openerOf("T8")).toBeNull();
+  });
+
+  it("上限を超えたぶんを、古い順に、守るタブを除いて選ぶ", () => {
+    const all = Array.from({ length: MAX_TRACKED_TABS + 3 }, (_, i) => `T${i}`);
+    const tabs = tabsOf(...all);
+    expect(tabs.overflow(new Set())).toEqual(["T0", "T1", "T2"]);
+    expect(tabs.overflow(new Set(["T0", "T2"]))).toEqual(["T1", "T3", "T4"]);
+    expect(
+      tabsOf(...all.slice(0, MAX_TRACKED_TABS)).overflow(new Set())
+    ).toEqual([]);
   });
 });

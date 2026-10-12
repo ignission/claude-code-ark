@@ -5,6 +5,16 @@
  * flattenしたsession (`sessionId` を各メッセージに載せる方式) で話す。
  * ライブラリを使わないのは、要るのが「idで応答を突き合わせる」「イベントを配る」の
  * 2つだけだから。
+ *
+ * - タブが閉じると、そのsessionで応答を待っていたコマンドには、応答が返らないままになる
+ *   (実物のChromiumで確かめた。3秒待っても返らない。`Target.detachedFromTarget` と
+ *   `Target.targetDestroyed` はすぐ届く)。待たせたままにすると、呼び出し側が先へ進めない。
+ *   そこで、送ったコマンドごとにsessionを覚え、`Target.detachedFromTarget` が届いたら、
+ *   そのsessionで待っているものを `isSessionDetached` で見分けられる失敗にする。
+ *   sessionの付かないコマンド (ブラウザ宛て) は巻き込まない
+ * - 使う側が自分でsessionを離すときは、`rejectSession` で同じことをさせる
+ * - 切り離されたsessionへ新しく送ったコマンドは、Chromiumがすぐ断る
+ *   (`Session with given id not found.`)。ここでは何もしない
  */
 
 import WebSocket from "ws";
@@ -22,6 +32,20 @@ export interface CdpSocket {
 type CdpListener = (params: any, sessionId?: string) => void;
 
 const CLOSED_MESSAGE = "CDPの接続が切れました";
+const DETACHED_MESSAGE = "CDPのsessionが切り離されました";
+
+/** sessionが切り離されたために、応答を待つのをやめたコマンドの失敗 */
+export class SessionDetachedError extends Error {
+  constructor() {
+    super(DETACHED_MESSAGE);
+    this.name = "SessionDetachedError";
+  }
+}
+
+/** `error` が、sessionが切り離されたための失敗か */
+export function isSessionDetached(error: unknown): boolean {
+  return error instanceof SessionDetachedError;
+}
 
 export class CdpClient {
   private nextId = 1;
@@ -29,6 +53,8 @@ export class CdpClient {
     number,
     {
       method: string;
+      /** 送り先のsession。ブラウザ宛てなら `undefined` */
+      sessionId: string | undefined;
       resolve: (v: unknown) => void;
       reject: (e: Error) => void;
     }
@@ -58,6 +84,7 @@ export class CdpClient {
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, {
         method,
+        sessionId,
         resolve: resolve as (v: unknown) => void,
         reject,
       });
@@ -83,6 +110,15 @@ export class CdpClient {
 
   close(): void {
     if (!this.isClosed) this.socket.close();
+  }
+
+  /** `sessionId` のsessionで応答を待っているコマンドを、すべて失敗にする */
+  rejectSession(sessionId: string): void {
+    for (const [id, entry] of this.pending) {
+      if (entry.sessionId !== sessionId) continue;
+      this.pending.delete(id);
+      entry.reject(new SessionDetachedError());
+    }
   }
 
   private handleMessage(data: unknown): void {
@@ -116,6 +152,11 @@ export class CdpClient {
       return;
     }
     if (typeof msg.method === "string") {
+      if (msg.method === "Target.detachedFromTarget") {
+        const detached = (msg.params as { sessionId?: unknown } | null)
+          ?.sessionId;
+        if (typeof detached === "string") this.rejectSession(detached);
+      }
       for (const listener of this.listeners.get(msg.method) ?? []) {
         try {
           listener(msg.params, msg.sessionId);

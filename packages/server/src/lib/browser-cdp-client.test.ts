@@ -5,6 +5,7 @@ import {
   CdpClient,
   type CdpSocket,
   connectCdpUrl,
+  isSessionDetached,
 } from "./browser-cdp-client.js";
 
 function fakeSocket() {
@@ -70,6 +71,62 @@ describe("CdpClient", () => {
     await expect(client.send("Page.enable")).rejects.toThrow(
       "CDPの接続が切れました"
     );
+  });
+
+  it("sessionが切り離されたら、そのsessionで待っている送信だけをrejectする", async () => {
+    const { socket, receive } = fakeSocket();
+    const client = new CdpClient(socket);
+    const listener = vi.fn();
+    client.on("Target.detachedFromTarget", listener);
+    const gone = client.send("Page.enable", undefined, "S1");
+    const other = client.send("Page.enable", undefined, "S2");
+    const browser = client.send("Target.getTargets");
+    receive({
+      method: "Target.detachedFromTarget",
+      params: { sessionId: "S1", targetId: "T1" },
+    });
+    await expect(gone).rejects.toThrow("CDPのsessionが切り離されました");
+    await expect(gone).rejects.toSatisfy(isSessionDetached);
+    // イベントは、これまでどおり配る
+    expect(listener).toHaveBeenCalledWith(
+      { sessionId: "S1", targetId: "T1" },
+      undefined
+    );
+    receive({ id: 2, result: { ok: 2 } });
+    receive({ id: 3, result: { ok: 3 } });
+    await expect(other).resolves.toEqual({ ok: 2 });
+    await expect(browser).resolves.toEqual({ ok: 3 });
+    // 切り離されたあとに届いた応答は、もう待っていない
+    expect(() => receive({ id: 1, result: {} })).not.toThrow();
+    expect(
+      (client as unknown as { pending: Map<number, unknown> }).pending.size
+    ).toBe(0);
+  });
+
+  it("sessionの無い切り離しの知らせでは、何もrejectしない", async () => {
+    const { socket, receive } = fakeSocket();
+    const client = new CdpClient(socket);
+    const p = client.send("Target.getTargets");
+    receive({ method: "Target.detachedFromTarget", params: {} });
+    receive({ method: "Target.detachedFromTarget" });
+    receive({ id: 1, result: { ok: true } });
+    await expect(p).resolves.toEqual({ ok: true });
+  });
+
+  it("rejectSessionで、名指ししたsessionで待っている送信をrejectする", async () => {
+    const { socket, receive } = fakeSocket();
+    const client = new CdpClient(socket);
+    const gone = client.send("Page.enable", undefined, "S1");
+    const other = client.send("Page.enable", undefined, "S2");
+    const browser = client.send("Target.getTargets");
+    client.rejectSession("S1");
+    await expect(gone).rejects.toThrow("CDPのsessionが切り離されました");
+    receive({ id: 2, result: {} });
+    receive({ id: 3, result: {} });
+    await expect(other).resolves.toEqual({});
+    await expect(browser).resolves.toEqual({});
+    expect(isSessionDetached(new Error("Page.enable: failed"))).toBe(false);
+    expect(isSessionDetached("CDPのsessionが切り離されました")).toBe(false);
   });
 
   it("壊れたJSONを無視する", () => {

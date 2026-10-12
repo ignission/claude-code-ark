@@ -38,7 +38,8 @@
  * - 前のコピーの評価が返るまで、次のコピーを受け付けない (だれのものでも)。ページの
  *   メインスレッドが塞がっていると評価が返らず、受け付けると返らない評価が積もる。
  *   式そのものが長く走ったときは、`COPY_TIMEOUT_MS` でChromiumが打ち切る
- * - `dispose` のあとは、遅れて返ったCDPの応答を使わず、何も送らない
+ * - `dispose` のあとは、遅れて返ったCDPの応答を使わず、何も送らない。失敗も記録しない
+ *   (離れたタブで待っていたコマンドは、ブリッジがまとめて失敗にする)
  */
 
 import type {
@@ -230,6 +231,7 @@ export class BrowserPageController<V> {
         this.state.applyHistory(result);
       })
       .catch(error => {
+        if (this.disposed) return;
         // 遷移の途中では失敗する。次のイベントで読み直す
         warn("履歴の読み直しに失敗", error);
         this.retryHistory(read);
@@ -381,7 +383,9 @@ export class BrowserPageController<V> {
           entryId: entry.id,
         });
       })
-      .catch(error => warn("履歴の移動に失敗", error));
+      .catch(error => {
+        if (!this.disposed) warn("履歴の移動に失敗", error);
+      });
   }
 
   private answerDialog(
@@ -395,6 +399,7 @@ export class BrowserPageController<V> {
         ...(msg.promptText === undefined ? {} : { promptText: msg.promptText }),
       })
       .catch(error => {
+        if (this.disposed) return;
         // ほかの視聴者が先に答えた
         if (String(error).includes("No dialog is showing")) return;
         warn("ダイアログへの応答に失敗", error);
@@ -423,13 +428,15 @@ export class BrowserPageController<V> {
           text: value.slice(0, MAX_COPY_LENGTH),
         });
       })
-      .catch(error => warn("選択の読み取りに失敗", error));
+      .catch(error => {
+        if (!this.disposed) warn("選択の読み取りに失敗", error);
+      });
   }
 
   /** 失敗 (遷移中のタブなど) で視聴者を切らない */
   private command(method: string, params?: object): void {
-    this.link
-      .send(method, params)
-      .catch(error => warn(`${method}に失敗`, error));
+    this.link.send(method, params).catch(error => {
+      if (!this.disposed) warn(`${method}に失敗`, error);
+    });
   }
 }

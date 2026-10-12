@@ -11,22 +11,56 @@
  *   タブが無い間 (切り替えの途中) は知らせず、つなぎ終えたときに必ず1回知らせる
  * - タブを動かす操作 (切り替え、閉じる、新しいタブ、消えたタブからの移動) は、1本の列に
  *   並べて1つずつ行う。互いに割り込むと、離れたタブへ準備を続けたり、閉じたタブへつないだり
- *   する。待っている切り替えは最後の1つだけを残す。列の長さには上限を置く
+ *   する。待っている切り替えは最後の1つだけを残す。視聴者の操作が並ぶ数には上限を置き、
+ *   超えたぶんは捨てる。切り替えだけは捨てず、待っている古い操作を1つ捨てて並べる
+ *   (利用者がいちばん最後に選んだタブを映す)
  * - 操作を受けるのは、一覧にあるidだけ。列に並べるときと、実際に行うときの両方で確かめる
  *   (待っている間にタブが消える)
  * - 映しているタブが無くなったら、列が空いたところで必ずどこかへつなぎ直す。選ぶ順は、
- *   操作が望んだタブ、消えたタブの直前、直後、あとは近い順、残りの全部。つなげなかった
- *   タブと、sessionが切れたばかりのタブは飛ばす。どれにもつなげなければ `about:blank` を作ってつなぐ。それもできなければ
- *   CDPが切れたときと同じに扱う (`TabLink.fail`)。視聴者を切るのは、このときだけ
+ *   操作が望んだタブ、消えたタブを開いたタブ (下)、消えたタブの直前、直後、あとは近い順、
+ *   残りの全部。つなげなかったタブ、sessionが切れたばかりのタブ、screencastを始められ
+ *   なかったタブは飛ばす。どれにもつなげなければ `about:blank` を作ってつなぐ。それも
+ *   できなければCDPが切れたときと同じに扱う (`TabLink.fail`)。視聴者を切るのは、このときだけ
+ * - 映しているタブでscreencastを始められなかったときも、タブが消えたときと同じに、離れて
+ *   つなぎ直す (タブが閉じる途中だと、消えたという知らせより先に、開始の失敗が届く)。
+ *   始められなかったタブは、どこかのタブで始められるまで、つなぎ直す先に選ばない
+ *   (2つのタブを行き来し続けない)。最後の手として作った `about:blank` でも始められなければ、
+ *   つなげなくなったものとして扱う (タブを作り続けない)
  * - 映しているタブを閉じるときは、先に離れてから閉じ、そのまま次のタブへつなぐ。
  *   そのあとに届く、閉じたタブのイベントでは何もしない
  * - 映しているタブが勝手に消えた (ページが `window.close()` した、sessionがdetachされた)
- *   ときは、離れて、同じ決まりでつなぎ直す。クラッシュしたタブは、閉じてからつなぎ直す
- *   (閉じられなくても続ける)
+ *   ときは、離れて、同じ決まりでつなぎ直す。クラッシュしたタブは、sessionを離し、閉じてから
+ *   つなぎ直す (閉じられなくても続ける。離しておかないと、閉じられなかったときにsessionが残る)
  * - 映しているタブが開いたタブ (`openerId` が映しているタブ) へは、自動で切り替える。
- *   利用者がリンクを押した結果だから。ほかのタブが開いたタブは、一覧に出すだけにする
- * - 視聴者が開けるタブの数には上限を置く。ページが開くタブは止められないので、数えるだけで
+ *   利用者がリンクを押した結果だから。`target="_blank"` のリンクで開いたタブにも
+ *   `openerId` は付く (実物のChromiumで確かめた)。ほかのタブが開いたタブは、一覧に出すだけにする
+ * - 自動で切り替えた先のタブが消えたら、それを開いたタブへ戻る (ログインのポップアップが
+ *   閉じたら、もとのページへ戻る)。開いたタブがもう無ければ、上の並びの決まりで選ぶ
+ * - タブが新しくできると、それまで映していたタブは描画されなくなる。ページが開いたタブでも、
+ *   `Target.createTarget` で作ったタブでも同じで、取り直し (`Page.captureScreenshot`) が
+ *   返らなくなる。そのタブの `document.visibilityState` は `visible` のままなので、ページの側
+ *   からは分からない (実物のChromiumで確かめた)。そこで、タブができたのに切り替えない
+ *   とき (開いたのが映しているタブでない、切り替えの途中、ダイアログが開いている、Arkの外で
+ *   作られた) は、映しているタブを `Target.activateTarget` で前面へ戻し、全画面を送り直させる
+ *   (`TabLink.repaint`)。これも操作の列に並べ、切り替えと入れ違いにならないようにする
+ * - JavaScriptのダイアログが開いている間は、切り替えと新しいタブを断り、送った視聴者に理由を
+ *   返す。ダイアログが開いているタブへ、あとからつないだsessionでは、`Page.enable` も、寸法の
+ *   設定も、screencastの開始も、取り直しも返らず、開いたことの知らせも届き直さず、
+ *   `Page.handleJavaScriptDialog` は「ダイアログは無い」と断られる (実物のChromiumで確かめた)。
+ *   つまり、ダイアログを見たsessionを離すと、そのタブは二度と操作できない。離れさせないのが
+ *   いちばん安い。閉じることは、映しているタブでも、ほかのタブでも受ける (壊れたページから
+ *   出る手段を残す)
+ * - ダイアログが開いている間は、ページのスクリプトが止まっているので、ページがタブを開く
+ *   ことは無いはず。それでも映しているタブが開いたタブが届いたら、切り替えず、前面へ戻す
+ * - タブを動かすコマンド (前面にする、つなぐ、閉じる) が失敗したら、一覧がChromiumとずれて
+ *   いるかもしれないので、`Target.getTargets` で取り直す (もう無いタブを外し、足りないタブを
+ *   足す)。失敗が続いても1回にまとめ、これも操作の列に並べる (作ったばかりのタブを、
+ *   作る前の一覧で外してしまわないように)
+ * - 視聴者が開けるタブの数には上限を置く。ページが開くタブは止められないので、追う数の上限
+ *   (browser-tabs.ts) を超えたら、古いものから閉じる。映しているタブと、それを開いたタブは
  *   閉じない
+ * - 追っているタブが一覧に出さないページ (DevToolsの画面など) へ移ったら、一覧から外す。
+ *   映しているタブと、準備の途中のタブは外さない (`activeId` が一覧に無い状態を見せない)
  * - `tab new` で作ったタブと、閉じたタブは、Chromiumのイベントを待たずに一覧へ反映する。
  *   イベントが遅れても、`activeId` が一覧に無い状態を視聴者へ見せない
  * - `dispose` のあとは、遅れて返ったCDPの応答を使わず、何も送らない
@@ -37,15 +71,23 @@ import type {
   BrowserServerMessage,
   BrowserTabInfo,
 } from "@ark/shared";
-import { BrowserTabs, MAX_TABS, readTargetInfo } from "./browser-tabs.js";
+import {
+  BrowserTabs,
+  MAX_TABS,
+  MAX_TRACKED_TABS,
+  readTargetInfo,
+} from "./browser-tabs.js";
 
 /** 一覧の変化をまとめる待ち (ミリ秒) */
 export const TABS_DEBOUNCE_MS = 100;
-/** 待たせておく操作の数の上限。超えたぶんは捨てる */
+/** タブを動かすコマンドが失敗してから、一覧を取り直すまでの待ち (ミリ秒)。続いた失敗をまとめる */
+export const SYNC_DEBOUNCE_MS = 200;
+/** 待たせておく視聴者の操作の数の上限 */
 const MAX_PENDING = 32;
 
 const BLANK_URL = "about:blank";
 const TOO_MANY_MESSAGE = "タブが多すぎます";
+const DIALOG_OPEN_MESSAGE = "ダイアログに応答してから切り替えてください";
 
 /** このモジュールが扱う視聴者のメッセージ */
 export type TabCommand = Extract<BrowserClientMessage, { t: "tab" }>;
@@ -63,6 +105,10 @@ export interface TabLink<V> {
   leave(gone: boolean): void;
   /** タブへつなぎ、映せるところまで準備する。できなければrejectし、離れた状態に戻す */
   enter(tab: BrowserTabInfo): Promise<void>;
+  /** 映しているタブで、JavaScriptのダイアログが開いているか */
+  dialogOpen(): boolean;
+  /** 映しているタブの全画面を、全員へ送り直させる */
+  repaint(): void;
   /** 視聴者1人へ送る。去った視聴者へは何もしない */
   toViewer(viewer: V, message: BrowserServerMessage): void;
   /** 参加している視聴者の全員へ送る */
@@ -72,11 +118,30 @@ export interface TabLink<V> {
 }
 
 type Operation<V> =
-  | { kind: "activate"; id: string }
+  /** `by` は、頼んだ視聴者か、このタブを開いたタブ (自動の切り替え) */
+  | { kind: "activate"; id: string; by: { viewer: V } | { opener: string } }
   | { kind: "close"; id: string }
   | { kind: "new"; viewer: V }
   /** クラッシュしたタブを閉じて、一覧から消す */
-  | { kind: "discard"; id: string };
+  | { kind: "discard"; id: string }
+  /** 映しているタブを前面へ戻す。`created` は、きっかけになった新しいタブ */
+  | { kind: "reassert"; created: string }
+  /** 一覧をChromiumから取り直す */
+  | { kind: "sync" }
+  /** 追う数の上限を超えたぶんを閉じる */
+  | { kind: "trim" };
+
+type Kind = Operation<unknown>["kind"];
+
+/** 視聴者が頼んだ操作。並ぶ数に上限がある */
+const VIEWER_KINDS: ReadonlySet<Kind> = new Set(["activate", "close", "new"]);
+/** 待っているものが1つあれば足りる操作。あとから来たものへ置き換える */
+const SINGLE_KINDS: ReadonlySet<Kind> = new Set([
+  "activate",
+  "reassert",
+  "sync",
+  "trim",
+]);
 
 function warn(what: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
@@ -103,7 +168,17 @@ export class BrowserTabController<V> {
    * (消える途中のタブへつないでしまう)。視聴者が名指しで切り替えたときは試す
    */
   private readonly lostIds = new Set<string>();
+  /**
+   * screencastを始められなかったタブ。どこかのタブで始められるまで、つなぎ直す先に選ばない。
+   * つなげただけでは消さない (始められるかは、つないだあとに分かる)
+   */
+  private readonly castFailedIds = new Set<string>();
+  /** ほかにつなげるタブが無くて作った `about:blank`。ここでも始められなければ、あきらめる */
+  private lastResort: string | null = null;
+  /** `kick` が失敗を見張っている `draining`。同じものを二重に見張らないために持つ */
+  private watched: Promise<void> | null = null;
   private timer: NodeJS.Timeout | null = null;
+  private syncTimer: NodeJS.Timeout | null = null;
   /** 最初のタブへつなぎ終えたか。それまでは視聴者の操作を受けず、一覧も知らせない */
   private opened = false;
   private disposed = false;
@@ -134,10 +209,26 @@ export class BrowserTabController<V> {
     const known = this.tabs.has(info.id);
     if (!this.tabs.add(info)) return;
     this.schedulePublish();
-    const current = this.link.current();
-    if (!known && current !== null && info.openerId === current) {
-      this.enqueue({ kind: "activate", id: info.id });
+    if (known) return;
+    // 最初のタブへつなぐ前は、どのタブも映していない
+    if (this.opened) {
+      const current = this.link.current();
+      if (
+        current !== null &&
+        info.openerId === current &&
+        !this.link.dialogOpen()
+      ) {
+        this.enqueue({
+          kind: "activate",
+          id: info.id,
+          by: { opener: current },
+        });
+      } else {
+        this.enqueue({ kind: "reassert", created: info.id });
+      }
     }
+    // 切り替えのあとに並べる。映しているタブと、それを開いたタブを残すため
+    if (this.tabs.size > MAX_TRACKED_TABS) this.enqueue({ kind: "trim" });
   }
 
   /**
@@ -149,10 +240,15 @@ export class BrowserTabController<V> {
     const info = readTargetInfo(
       (params as { targetInfo?: unknown } | null | undefined)?.targetInfo
     );
-    const change = info && this.tabs.update(info);
-    if (!info || !change) return false;
+    if (!info) return false;
+    const current = this.link.current();
+    const change = this.tabs.update(
+      info,
+      info.id === current || info.id === this.entering
+    );
+    if (!change) return false;
     this.schedulePublish();
-    return change.title && info.id === this.link.current();
+    return change !== "removed" && change.title && info.id === current;
   }
 
   /** `Target.targetDestroyed` を受け取る */
@@ -187,10 +283,31 @@ export class BrowserTabController<V> {
     if (this.disposed) return;
     if (id === this.link.current()) this.fallback = this.tabs.fallbacks(id);
     this.lostIds.add(id);
-    this.link.leave(true);
+    // sessionは残っている。離しておかないと、閉じられなかったときに残る
+    this.link.leave(false);
     // ほかの操作より先に片づける。クラッシュしたタブへ戻る操作をさせない
     this.queue.unshift({ kind: "discard", id });
     this.kick();
+  }
+
+  /** 映しているタブ `id` で、screencastを始められなかった */
+  castFailed(id: string, error: unknown): void {
+    if (this.disposed || id !== this.link.current()) return;
+    if (id === this.lastResort) {
+      this.link.fail(error);
+      return;
+    }
+    this.fallback = this.tabs.fallbacks(id);
+    this.castFailedIds.add(id);
+    this.link.leave(false);
+    this.kick();
+  }
+
+  /** 映しているタブ `id` で、screencastを始められた */
+  castStarted(id: string): void {
+    if (this.disposed || id !== this.link.current()) return;
+    this.castFailedIds.clear();
+    this.lastResort = null;
   }
 
   /** 参加した視聴者へ、一覧を知らせる。映しているタブが無い間は、つなぎ終えたときに届く */
@@ -204,10 +321,14 @@ export class BrowserTabController<V> {
     if (this.disposed || !this.opened) return;
     switch (msg.type) {
       case "activate":
+        if (!this.tabs.has(msg.id) || this.refusedForDialog(viewer)) return;
+        this.enqueue({ kind: "activate", id: msg.id, by: { viewer } });
+        return;
       case "close":
-        if (this.tabs.has(msg.id)) this.enqueue({ kind: msg.type, id: msg.id });
+        if (this.tabs.has(msg.id)) this.enqueue({ kind: "close", id: msg.id });
         return;
       case "new":
+        if (this.refusedForDialog(viewer)) return;
         this.enqueue({ kind: "new", viewer });
         return;
     }
@@ -221,18 +342,42 @@ export class BrowserTabController<V> {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    if (this.syncTimer) {
+      clearTimeout(this.syncTimer);
+      this.syncTimer = null;
+    }
+  }
+
+  /** ダイアログが開いていれば、`viewer` へ理由を返して `true` */
+  private refusedForDialog(viewer: V): boolean {
+    if (!this.link.dialogOpen()) return false;
+    this.link.toViewer(viewer, { t: "notice", message: DIALOG_OPEN_MESSAGE });
+    return true;
   }
 
   private enqueue(operation: Operation<V>): void {
-    if (operation.kind === "activate") {
-      // 待っている切り替えは、最後の1つだけを残す
+    const { kind } = operation;
+    if (SINGLE_KINDS.has(kind)) {
       for (let i = this.queue.length - 1; i >= 0; i--) {
-        if (this.queue[i].kind === "activate") this.queue.splice(i, 1);
+        if (this.queue[i].kind === kind) this.queue.splice(i, 1);
       }
     }
-    if (this.queue.length >= MAX_PENDING) return;
+    if (VIEWER_KINDS.has(kind)) {
+      const waiting = this.queue.filter(queued =>
+        VIEWER_KINDS.has(queued.kind)
+      ).length;
+      if (waiting >= MAX_PENDING) {
+        if (kind !== "activate") return;
+        // 切り替えは捨てない。待っている切り替えはもう無いので、古い操作を1つ捨てる
+        const oldest = this.queue.findIndex(queued =>
+          VIEWER_KINDS.has(queued.kind)
+        );
+        this.queue.splice(oldest, 1);
+      }
+    }
     this.queue.push(operation);
-    this.kick();
+    // 最初のタブへつなぐ前に並んだものは、`open` が行う
+    if (this.opened) this.kick();
   }
 
   /** 操作を順に行う。走っていれば、その続きで行われる */
@@ -247,7 +392,11 @@ export class BrowserTabController<V> {
   }
 
   private kick(): void {
-    this.pump().catch(error => {
+    const draining = this.pump();
+    // 走っている間に何度呼ばれても、失敗を扱うのは1回
+    if (this.watched === draining) return;
+    this.watched = draining;
+    draining.catch(error => {
       // 最初のタブへつなぐ間の失敗は、`open` の呼び出し側が扱う
       if (!this.disposed && this.opened) this.link.fail(error);
     });
@@ -267,12 +416,22 @@ export class BrowserTabController<V> {
   private async run(operation: Operation<V>): Promise<void> {
     switch (operation.kind) {
       case "activate": {
-        const { id } = operation;
+        const { id, by } = operation;
         const from = this.link.current();
-        if (!this.tabs.has(id) || id === from) return;
+        if (id === from) return;
+        // 並んでいる間にタブが消えた、ダイアログが開いた
+        const refused = this.link.dialogOpen();
+        if (!this.tabs.has(id) || refused) {
+          if ("opener" in by) await this.reassert();
+          else if (refused) this.refusedForDialog(by.viewer);
+          return;
+        }
         this.link.leave(false);
         // つなげなければ、もとのタブへ戻る
         await this.moveTo(from === null ? [id] : [id, from]);
+        if ("opener" in by && this.link.current() === id) {
+          this.tabs.follow(id, by.opener);
+        }
         return;
       }
       case "close": {
@@ -289,7 +448,31 @@ export class BrowserTabController<V> {
         await this.closeTarget(operation.id);
         this.forget(operation.id);
         return;
+      case "reassert":
+        // 切り替えた先のタブなら、つなぐときに前面にしてある
+        if (operation.created !== this.link.current()) await this.reassert();
+        return;
+      case "sync":
+        await this.sync();
+        return;
+      case "trim": {
+        const keep = new Set<string>();
+        const current = this.link.current();
+        if (current !== null) {
+          keep.add(current);
+          const opener = this.tabs.openerOf(current);
+          if (opener !== null) keep.add(opener);
+        }
+        for (const id of this.tabs.overflow(keep)) {
+          if (this.disposed) return;
+          if (this.tabs.has(id) && (await this.closeTarget(id))) {
+            this.forget(id);
+          }
+        }
+        return;
+      }
       case "new": {
+        if (this.refusedForDialog(operation.viewer)) return;
         if (this.tabs.size >= MAX_TABS) {
           this.link.toViewer(operation.viewer, {
             t: "notice",
@@ -325,7 +508,10 @@ export class BrowserTabController<V> {
       const others = [
         ...this.fallback,
         ...this.tabs.list().map(tab => tab.id),
-      ].filter(candidate => !this.lostIds.has(candidate));
+      ].filter(
+        candidate =>
+          !this.lostIds.has(candidate) && !this.castFailedIds.has(candidate)
+      );
       const id = [...preferred, ...others].find(
         candidate => !tried.has(candidate) && this.tabs.has(candidate)
       );
@@ -335,11 +521,14 @@ export class BrowserTabController<V> {
         await this.enter(id);
         return;
       } catch (error) {
-        if (!this.disposed) warn("タブへの接続に失敗", error);
+        if (this.disposed) return;
+        warn("タブへの接続に失敗", error);
+        this.scheduleSync();
       }
     }
     const id = await this.createBlank();
     if (this.disposed) return;
+    this.lastResort = id;
     await this.enter(id);
   }
 
@@ -354,6 +543,7 @@ export class BrowserTabController<V> {
     }
     this.fallback = [];
     this.lostIds.clear();
+    if (id !== this.lastResort) this.lastResort = null;
     // 一覧が変わっていなくても、映しているタブが変わったので知らせる
     this.publishNow();
   }
@@ -383,9 +573,68 @@ export class BrowserTabController<V> {
       await this.link.send("Target.closeTarget", { targetId: id });
       return true;
     } catch (error) {
-      if (!this.disposed) warn("タブを閉じるのに失敗", error);
+      if (!this.disposed) {
+        warn("タブを閉じるのに失敗", error);
+        this.scheduleSync();
+      }
       return false;
     }
+  }
+
+  /** 映しているタブを前面へ戻し、全画面を送り直させる。映しているタブが無ければ何もしない */
+  private async reassert(): Promise<void> {
+    const current = this.link.current();
+    if (current === null) return;
+    try {
+      await this.link.send("Target.activateTarget", { targetId: current });
+    } catch (error) {
+      if (this.disposed) return;
+      warn("タブを前面へ戻すのに失敗", error);
+      this.scheduleSync();
+      return;
+    }
+    // 待つ間にタブから離れていたら、つなぎ直すときに前面になる
+    if (this.disposed || this.link.current() !== current) return;
+    this.link.repaint();
+  }
+
+  /** 一覧をChromiumから取り直す。もう無いタブを外し、足りないタブを足す */
+  private async sync(): Promise<void> {
+    let result: unknown;
+    try {
+      result = await this.link.send("Target.getTargets");
+    } catch (error) {
+      if (!this.disposed) warn("タブの一覧の取り直しに失敗", error);
+      return;
+    }
+    const infos = (result as { targetInfos?: unknown } | null)?.targetInfos;
+    if (this.disposed || !Array.isArray(infos)) return;
+    const alive = new Set<string>();
+    let added = false;
+    for (const raw of infos) {
+      const info = readTargetInfo(raw);
+      if (!info) continue;
+      alive.add(info.id);
+      const known = this.tabs.has(info.id);
+      if (!this.tabs.add(info)) continue;
+      this.schedulePublish();
+      if (!known) added = true;
+    }
+    for (const tab of this.tabs.list()) {
+      // 映しているタブ、準備の途中のタブなら、消えたときと同じに離れる
+      if (!alive.has(tab.id)) this.targetDestroyed({ targetId: tab.id });
+    }
+    if (added && this.tabs.size > MAX_TRACKED_TABS) {
+      this.enqueue({ kind: "trim" });
+    }
+  }
+
+  private scheduleSync(): void {
+    if (this.syncTimer || this.disposed) return;
+    this.syncTimer = setTimeout(() => {
+      this.syncTimer = null;
+      this.enqueue({ kind: "sync" });
+    }, SYNC_DEBOUNCE_MS);
   }
 
   /** Chromiumの知らせを待たずに、一覧から消す */

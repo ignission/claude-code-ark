@@ -4,6 +4,7 @@
 
 import type { BrowserServerMessage } from "@ark/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SessionDetachedError } from "./browser-cdp-client.js";
 import { COPY_TIMEOUT_MS } from "./browser-page-controller.js";
 import {
   BrowserSelectController,
@@ -117,11 +118,44 @@ describe("BrowserSelectController", () => {
       "Runtime.enable",
       "Runtime.addBinding",
       "Page.addScriptToEvaluateOnNewDocument",
-    ])("%s に失敗したらrejectし、続きを送らない", async method => {
-      const { controller, failing, methods } = setup();
-      failing.add(method);
-      await expect(controller.prepare()).rejects.toThrow(method);
-      expect(methods().at(-1)).toBe(method);
+    ])(
+      "%s に失敗しても準備は成功し、警告を1回だけ出して、続きを送らない",
+      async method => {
+        const { controller, failing, methods } = setup();
+        failing.add(method);
+        await expect(controller.prepare()).resolves.toBeUndefined();
+        await flush();
+        expect(methods().at(-1)).toBe(method);
+        expect(console.warn).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it("渡された送り方で準備のコマンドを送り、その失敗 (時間切れなど) でも準備は成功する", async () => {
+      const { controller, methods } = setup();
+      const stepped: string[] = [];
+      await expect(
+        controller.prepare(async method => {
+          stepped.push(method);
+          if (method === "Runtime.addBinding") {
+            throw new Error("Runtime.addBinding: 応答がありません");
+          }
+        })
+      ).resolves.toBeUndefined();
+      await flush();
+      expect(stepped).toEqual(["Runtime.enable", "Runtime.addBinding"]);
+      // いまの文書への評価も送らない
+      expect(methods()).toEqual([]);
+      expect(console.warn).toHaveBeenCalledTimes(1);
+    });
+
+    it("sessionが切り離された失敗は、準備の失敗にする", async () => {
+      const { controller } = setup();
+      await expect(
+        controller.prepare(async () => {
+          throw new SessionDetachedError();
+        })
+      ).rejects.toThrow("CDPのsessionが切り離されました");
+      expect(console.warn).not.toHaveBeenCalled();
     });
 
     it("いまの文書へ入れるのに失敗しても、準備は成功する", async () => {
