@@ -663,4 +663,104 @@ describe("BrowserTabController", () => {
       expect(ctx.events).toEqual([]);
     });
   });
+
+  describe("定期の読み直し", () => {
+    it("映していないタブの題が変わっていたら、一覧を1回知らせ、変わらなければ知らせない", async () => {
+      const ctx = await start();
+      ctx.setTargets([info("T1"), info("T2", { title: "裏の題" }), info("T3")]);
+      await ctx.controller.poll();
+      await vi.advanceTimersByTimeAsync(TABS_DEBOUNCE_MS);
+      const tabs = ctx.sent.filter(entry => entry.message.t === "tabs");
+      expect(tabs).toHaveLength(1);
+      expect(tabs[0].message).toMatchObject({
+        tabs: [{ id: "T1" }, { id: "T2", title: "裏の題" }, { id: "T3" }],
+        activeId: "T1",
+      });
+      await ctx.controller.poll();
+      await vi.advanceTimersByTimeAsync(TABS_DEBOUNCE_MS);
+      expect(ctx.sent.filter(entry => entry.message.t === "tabs")).toHaveLength(
+        1
+      );
+      expect(ctx.count(GET_TARGETS)).toBe(2);
+      expect(ctx.events).toEqual([]);
+    });
+
+    it("足りないタブを足し、もう無いタブと、一覧に出さないページへ移ったタブを外す", async () => {
+      const ctx = await start(["T1", "T2", "T3", "T4"]);
+      ctx.setTargets([
+        info("T1"),
+        info("T3", { url: "devtools://devtools/bundled/x.html" }),
+        info("T4"),
+        info("T7"),
+        info("W1", { type: "worker" }),
+      ]);
+      await ctx.controller.poll();
+      await vi.advanceTimersByTimeAsync(TABS_DEBOUNCE_MS);
+      expect(ctx.listed()).toEqual(["T1", "T4", "T7"]);
+      expect(ctx.events).toEqual([]);
+      expect(ctx.count(ACTIVATE)).toBe(0);
+    });
+
+    it("映しているタブは、一覧に出さないページへ移っていても外さない", async () => {
+      const ctx = await start();
+      ctx.setTargets([
+        info("T1", { url: "devtools://devtools/bundled/x.html" }),
+        info("T2"),
+        info("T3"),
+      ]);
+      await ctx.controller.poll();
+      await vi.advanceTimersByTimeAsync(TABS_DEBOUNCE_MS);
+      expect(ctx.listed()).toEqual(["T1", "T2", "T3"]);
+      expect(ctx.events).toEqual([]);
+    });
+
+    it("操作が走っている間は、読まない", async () => {
+      const ctx = await start();
+      ctx.holding.add(CLOSE);
+      ctx.controller.handle("v1", { t: "tab", type: "close", id: "T3" });
+      await flush();
+      await ctx.controller.poll();
+      expect(ctx.count(GET_TARGETS)).toBe(0);
+      ctx.releaseAll(CLOSE);
+      await flush();
+      await ctx.controller.poll();
+      expect(ctx.count(GET_TARGETS)).toBe(1);
+    });
+
+    it("読んでいる間に頼まれた操作は、読み終えてから行う", async () => {
+      const ctx = await start();
+      ctx.holding.add(GET_TARGETS);
+      const polled = ctx.controller.poll();
+      await flush();
+      ctx.controller.handle("v1", { t: "tab", type: "new" });
+      await flush();
+      expect(ctx.count(CREATE)).toBe(0);
+      ctx.releaseAll(GET_TARGETS);
+      await polled;
+      await flush();
+      // 作る前に読んだ一覧で、作ったタブを外さない
+      expect(ctx.current()).toBe("N1");
+      expect(ctx.events).toEqual(["leave:false", "enter:N1"]);
+    });
+
+    it("読めなければ、記録もやり直しもせずにrejectする", async () => {
+      const ctx = await start();
+      ctx.failing.add(GET_TARGETS);
+      await expect(ctx.controller.poll()).rejects.toThrow("failed");
+      await vi.advanceTimersByTimeAsync(SYNC_DEBOUNCE_MS * 5);
+      expect(ctx.count(GET_TARGETS)).toBe(1);
+      expect(console.warn).not.toHaveBeenCalled();
+      expect(ctx.events).toEqual([]);
+    });
+
+    it("最初のタブへつなぐ前と、捨てたあとは、読まない", async () => {
+      const before = setup();
+      await before.controller.poll();
+      expect(before.count(GET_TARGETS)).toBe(0);
+      const ctx = await start();
+      ctx.controller.dispose();
+      await ctx.controller.poll();
+      expect(ctx.count(GET_TARGETS)).toBe(0);
+    });
+  });
 });

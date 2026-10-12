@@ -9,6 +9,12 @@
  * - 一覧 (browser-tabs.ts) は `Target.*` のイベントから作る。変わったら、100ms待って
  *   1回にまとめて全員へ知らせる。`activeId` は、準備が終わって映しているタブ。映している
  *   タブが無い間 (切り替えの途中) は知らせず、つなぎ終えたときに必ず1回知らせる
+ * - イベントだけでは、一覧は古くなる。ページのスクリプトが題を変えても
+ *   `Target.targetInfoChanged` は届かない (実物のChromiumで確かめた。届くのは、URLが
+ *   変わったときなど)。そこで、使う側が定期に `poll` を呼び、`Target.getTargets` の結果を
+ *   一覧へ当てる (題とURLを変え、足りないタブを足し、もう無いタブを外す)。これも操作の列に
+ *   並べるが、操作が走っているか待っている間は読まない (次の回に任せる)。読めなくても、
+ *   記録もやり直しもしない (どう記録するかは使う側が決める)
  * - タブを動かす操作 (切り替え、閉じる、新しいタブ、消えたタブからの移動) は、1本の列に
  *   並べて1つずつ行う。互いに割り込むと、離れたタブへ準備を続けたり、閉じたタブへつないだり
  *   する。待っている切り替えは最後の1つだけを残す。視聴者の操作が並ぶ数には上限を置き、
@@ -56,6 +62,8 @@
  *   いるかもしれないので、`Target.getTargets` で取り直す (もう無いタブを外し、足りないタブを
  *   足す)。失敗が続いても1回にまとめ、これも操作の列に並べる (作ったばかりのタブを、
  *   作る前の一覧で外してしまわないように)
+ * - ブラウザへのコマンド (`TabLink.send`) は、応答を待つ時間に上限があるものとして使う
+ *   (上限を置くのは使う側)。時間切れは、ほかの失敗と同じに扱い、操作の列を先へ進める
  * - 視聴者が開けるタブの数には上限を置く。ページが開くタブは止められないので、追う数の上限
  *   (browser-tabs.ts) を超えたら、古いものから閉じる。映しているタブと、それを開いたタブは
  *   閉じない
@@ -76,6 +84,7 @@ import {
   MAX_TABS,
   MAX_TRACKED_TABS,
   readTargetInfo,
+  type TargetInfo,
 } from "./browser-tabs.js";
 
 /** 一覧の変化をまとめる待ち (ミリ秒) */
@@ -94,7 +103,10 @@ export type TabCommand = Extract<BrowserClientMessage, { t: "tab" }>;
 
 /** ブラウザ、タブ1つぶんの準備、視聴者への出口。`V` は視聴者 */
 export interface TabLink<V> {
-  /** ブラウザへ (どのタブのsessionでもなく) CDPのコマンドを送る */
+  /**
+   * ブラウザへ (どのタブのsessionでもなく) CDPのコマンドを送る。応答が返らないコマンドは、
+   * 時間を切ってrejectする (返らないままだと、操作の列が止まる)
+   */
   send(method: string, params?: object): Promise<unknown>;
   /** 準備が終わって映しているタブのid。無ければ `null` */
   current(): string | null;
@@ -128,6 +140,8 @@ type Operation<V> =
   | { kind: "reassert"; created: string }
   /** 一覧をChromiumから取り直す */
   | { kind: "sync" }
+  /** 定期の読み直し。読んで当て終えたら `resolve`、読めなければ `reject` を呼ぶ */
+  | { kind: "poll"; resolve: () => void; reject: (error: unknown) => void }
   /** 追う数の上限を超えたぶんを閉じる */
   | { kind: "trim" };
 
@@ -233,14 +247,38 @@ export class BrowserTabController<V> {
 
   /**
    * `Target.targetInfoChanged` を受け取る。映しているタブの題が変わったら `true`
-   * (ページの状態の題は履歴から読むので、使う側が読み直す)。
+   * (ページの状態の題は履歴から読むので、使う側が読み直す)。スクリプトが題だけを変えた
+   * ときには届かないので、それは定期の読み直し (`poll`) で拾う。
    */
   targetInfoChanged(params: unknown): boolean {
     if (this.disposed) return false;
     const info = readTargetInfo(
       (params as { targetInfo?: unknown } | null | undefined)?.targetInfo
     );
-    if (!info) return false;
+    return info !== null && this.change(info);
+  }
+
+  /**
+   * 定期の読み直し。一覧をChromiumから読んで当てる。操作が走っているか待っている間と、
+   * 最初のタブへつなぐ前は、何もせずに終わる。読めなければrejectする (記録しない)。
+   */
+  poll(): Promise<void> {
+    if (
+      this.disposed ||
+      !this.opened ||
+      this.draining ||
+      this.queue.length > 0
+    ) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve, reject) => {
+      this.queue.push({ kind: "poll", resolve, reject });
+      this.kick();
+    });
+  }
+
+  /** 追っているタブの題とURLを変える。映しているタブの題が変わったら `true` */
+  private change(info: TargetInfo): boolean {
     const current = this.link.current();
     const change = this.tabs.update(
       info,
@@ -455,6 +493,14 @@ export class BrowserTabController<V> {
       case "sync":
         await this.sync();
         return;
+      case "poll":
+        try {
+          this.applyTargets(await this.link.send("Target.getTargets"));
+          operation.resolve();
+        } catch (error) {
+          operation.reject(error);
+        }
+        return;
       case "trim": {
         const keep = new Set<string>();
         const current = this.link.current();
@@ -598,7 +644,7 @@ export class BrowserTabController<V> {
     this.link.repaint();
   }
 
-  /** 一覧をChromiumから取り直す。もう無いタブを外し、足りないタブを足す */
+  /** 一覧をChromiumから取り直す。失敗しても投げない */
   private async sync(): Promise<void> {
     let result: unknown;
     try {
@@ -607,6 +653,14 @@ export class BrowserTabController<V> {
       if (!this.disposed) warn("タブの一覧の取り直しに失敗", error);
       return;
     }
+    this.applyTargets(result);
+  }
+
+  /**
+   * `Target.getTargets` の結果を一覧へ当てる。追っているタブの題とURLを変え、足りない
+   * タブを足し、もう無いタブを外す。
+   */
+  private applyTargets(result: unknown): void {
     const infos = (result as { targetInfos?: unknown } | null)?.targetInfos;
     if (this.disposed || !Array.isArray(infos)) return;
     const alive = new Set<string>();
@@ -615,10 +669,12 @@ export class BrowserTabController<V> {
       const info = readTargetInfo(raw);
       if (!info) continue;
       alive.add(info.id);
-      const known = this.tabs.has(info.id);
-      if (!this.tabs.add(info)) continue;
-      this.schedulePublish();
-      if (!known) added = true;
+      if (this.tabs.has(info.id)) {
+        this.change(info);
+      } else if (this.tabs.add(info)) {
+        this.schedulePublish();
+        added = true;
+      }
     }
     for (const tab of this.tabs.list()) {
       // 映しているタブ、準備の途中のタブなら、消えたときと同じに離れる

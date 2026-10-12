@@ -70,8 +70,26 @@
  *   として振る舞わない。タブの準備では、有効か無効かを必ず送る (`mobile` のときに準備した
  *   タブへ、`mobile` でなくなってから戻ったときに、前の指示を残さない)。寸法の適用では、
  *   `mobile` が変わったときだけ送る
- * - `Target.targetInfoChanged` で映しているタブの題が変わったと分かったら、履歴を読み直す。
- *   ページの状態の題は履歴から読むので、遷移を伴わない題の変更はこれでしか分からない
+ * - ページのスクリプトが題を変えても (`document.title = ...`)、headlessのChromiumは、
+ *   このモジュールが聞いているイベントを1つも出さない。`Target.setDiscoverTargets` で
+ *   発見を頼んであっても `Target.targetInfoChanged` は届かず、`Page.*` のイベントも無い。
+ *   `Page.getNavigationHistory` を読めば、新しい題が返る (どれも実物のChromiumで確かめた)。
+ *   知らせを待つだけだと、アドレスバーとタブの題は、次の遷移かタブの切り替えまで古いままになる
+ * - そこで、視聴者が居て、タブを映している間は、`POLL_INTERVAL_MS` ごとに読み直す
+ *   (定期の読み直し)。映しているタブの履歴 (browser-page-controller.ts の `poll`) と、
+ *   `Target.getTargets` で読むタブの一覧 (browser-tab-controller.ts の `poll`。映していない
+ *   タブの題とURLも、ここで追いつく)。当て方は、イベントのときと同じ決まりに任せる
+ * - 定期の読み直しのタイマーは、タブを映していて視聴者が居る間だけ持つ。タブから離れたら
+ *   消し (切り替えの途中、接続を捨てるとき)、次のタブの準備が終わったら持ち直す。最後の
+ *   視聴者が去ったら消す。ダイアログが開いている間は読まない (ページへのコマンドが返らない)。
+ *   前の回の応答を待っている間は、次の回を飛ばす。応答を待つ時間には上限を置く。読めなくても、
+ *   視聴者を切らず、タブも替えない。記録は `POLL_WARN_INTERVAL_MS` に1回まで
+ * - `Target.targetInfoChanged` は、URLが変わったときなどには届く。映しているタブの題が
+ *   変わったと分かったら、定期の読み直しを待たずに履歴を読み直す
+ * - ブラウザへ (タブのsessionでなく) 送るコマンド (タブを閉じる、作る、前面にする、一覧を
+ *   読む) も、応答を待つ時間に上限を置く (`timed`)。返らないと、タブの操作の列が止まる。
+ *   時間切れは、ほかの失敗と同じにそのコマンドの失敗にする。待っている間に接続を捨てたら、
+ *   待つのをその場でやめる (タイマーを残さない)
  * - 視聴者へJSONを配るのは、参加の手続き (寸法の通知) が済んだ視聴者だけ。参加した
  *   視聴者には、寸法、ページの状態、開いているダイアログ、タブの一覧、開いている
  *   `<select>` の順に知らせる。
@@ -146,8 +164,15 @@ interface Viewport {
 const BACKPRESSURE_BYTES = 1_000_000;
 /** ペインのドラッグ中に寸法を変え続けないための待ち (ミリ秒) */
 const RESIZE_DEBOUNCE_MS = 150;
-/** タブの準備のコマンド1つの応答を待つ時間の上限 (ミリ秒) */
+/**
+ * コマンド1つの応答を待つ時間の上限 (ミリ秒)。タブの準備、ブラウザへのコマンド、
+ * 定期の読み直しで使う
+ */
 export const ENTER_STEP_TIMEOUT_MS = 3000;
+/** 定期の読み直しの間隔 (ミリ秒) */
+export const POLL_INTERVAL_MS = 1000;
+/** 定期の読み直しの失敗を記録する間隔の下限 (ミリ秒) */
+const POLL_WARN_INTERVAL_MS = 30_000;
 const WS_OPEN = 1;
 
 const DEFAULT_VIEWPORT: Viewport = {
@@ -245,6 +270,13 @@ export class BrowserCdpBridge {
   private resizeTimer: NodeJS.Timeout | null = null;
   /** タブの準備で応答を待っているコマンドを、待つのをやめさせる。待っていなければ `null` */
   private cancelStep: ((error: Error) => void) | null = null;
+  /** `timed` で応答を待っているものを、待つのをやめさせる関数 */
+  private readonly waits = new Set<(error: Error) => void>();
+  private pollTimer: NodeJS.Timeout | null = null;
+  /** 応答を待っている定期の読み直し。待っていなければ `null` */
+  private polling: object | null = null;
+  /** 定期の読み直しの失敗を、最後に記録した時刻 */
+  private pollWarnedAt: number | null = null;
   /** 監視フレームから、何を取り直してどの視聴者へ送るかを決める */
   private readonly pipeline = new BrowserFramePipeline<ViewerSocket>({
     viewers: () => this.viewers,
@@ -333,14 +365,20 @@ export class BrowserCdpBridge {
     // screencastは画面が変わったときしか監視フレームを出さない。もう始まっているなら、
     // 何かが動くのを待たずに全画面を取り直して送る
     this.pipeline.requestFull(ws);
-    if (page) this.startCast(page);
+    if (page) {
+      this.startCast(page);
+      this.startPoll();
+    }
   }
 
   private detach(ws: ViewerSocket): void {
     if (!this.viewers.delete(ws)) return;
     this.notifiedGen.delete(ws);
     this.joined.delete(ws);
-    if (this.viewers.size === 0) this.stopCast();
+    if (this.viewers.size === 0) {
+      this.stopCast();
+      this.stopPoll();
+    }
   }
 
   /** つないでいなければつなぐ。最初のタブの準備が終わったら解決する */
@@ -367,7 +405,7 @@ export class BrowserCdpBridge {
     /** 捨てた接続から遅れて届いたものを、いまの接続に響かせない */
     const mine = () => this.cdp === cdp;
     const tabUi = new BrowserTabController<ViewerSocket>({
-      send: (method, params) => cdp.send(method, params),
+      send: (method, params) => this.timed(method, cdp.send(method, params)),
       current: () => (mine() ? (this.page?.targetId ?? null) : null),
       leave: gone => {
         if (mine()) this.leavePage(gone);
@@ -444,8 +482,9 @@ export class BrowserCdpBridge {
       // いまあるターゲットの `Target.targetCreated` が、応答より先に届く
       await cdp.send("Target.setDiscoverTargets", { discover: true });
       // 届かなかったぶんを補う。もう一覧にあるタブは、並びを変えない
-      const { targetInfos } = await cdp.send<{ targetInfos?: unknown }>(
-        "Target.getTargets"
+      const { targetInfos } = await this.timed(
+        "Target.getTargets",
+        cdp.send<{ targetInfos?: unknown }>("Target.getTargets")
       );
       if (mine() && Array.isArray(targetInfos)) {
         for (const targetInfo of targetInfos) {
@@ -556,7 +595,10 @@ export class BrowserCdpBridge {
     // 先にいる視聴者へ、新しいタブのことを知らせる。寸法が先 (世代が進んでいる)
     for (const ws of [...this.joined]) this.announceViewport(ws);
     ui.announce();
-    if (this.joined.size > 0) this.startCast(tab);
+    if (this.joined.size > 0) {
+      this.startCast(tab);
+      this.startPoll();
+    }
   }
 
   /**
@@ -587,6 +629,81 @@ export class BrowserCdpBridge {
   }
 
   /**
+   * ブラウザへのコマンドと、定期の読み直しの応答を待つ。`ENTER_STEP_TIMEOUT_MS` 待っても
+   * 返らないか、待つ間に接続を捨てたら、待つのをやめてrejectする。そのあとに返った応答は
+   * 使わない。`bounded` と違って、タブから離れてもやめず、同時にいくつでも待てる。
+   */
+  private timed<T>(method: string, pending: Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const settle = (finish: () => void) => {
+        // もう終わっている (時間切れ、やめさせられた、応答が返った)
+        if (!this.waits.delete(cancel)) return;
+        clearTimeout(timer);
+        finish();
+      };
+      const cancel = (error: Error) => settle(() => reject(error));
+      const timer = setTimeout(
+        () => cancel(new Error(`${method}: 応答が返りません`)),
+        ENTER_STEP_TIMEOUT_MS
+      );
+      this.waits.add(cancel);
+      pending.then(
+        value => settle(() => resolve(value)),
+        error => settle(() => reject(error))
+      );
+    });
+  }
+
+  /** 定期の読み直しを始める。始まっていれば何もしない */
+  private startPoll(): void {
+    if (this.pollTimer) return;
+    this.pollTimer = setInterval(() => this.poll(), POLL_INTERVAL_MS);
+  }
+
+  private stopPoll(): void {
+    if (!this.pollTimer) return;
+    clearInterval(this.pollTimer);
+    this.pollTimer = null;
+  }
+
+  /**
+   * 映しているタブの履歴と、タブの一覧を読み直す。前の回の応答を待っている間は飛ばす
+   * (タブを替えても、視聴者が入り直しても、待っている応答が片づくまでは重ねない)。
+   */
+  private poll(): void {
+    const page = this.page;
+    const tabUi = this.tabUi;
+    if (this.polling || !page || !tabUi || this.joined.size === 0) return;
+    // 開いている間は、ページへのコマンドが返らない
+    if (page.ui.dialogOpen) return;
+    const polling = {};
+    this.polling = polling;
+    void Promise.allSettled([
+      this.timed("Page.getNavigationHistory", page.ui.poll()),
+      tabUi.poll(),
+    ]).then(results => {
+      if (this.polling === polling) this.polling = null;
+      // 離れたタブ、捨てた接続のぶんは、失敗して当たり前なので記録しない
+      if (this.page !== page) return;
+      const failed = results.find(result => result.status === "rejected");
+      if (failed) this.warnPoll(failed.reason);
+    });
+  }
+
+  /** 読めない間は毎秒失敗するので、記録は間を空ける */
+  private warnPoll(error: unknown): void {
+    const now = Date.now();
+    if (
+      this.pollWarnedAt !== null &&
+      now - this.pollWarnedAt < POLL_WARN_INTERVAL_MS
+    ) {
+      return;
+    }
+    this.pollWarnedAt = now;
+    warn("定期の読み直しに失敗", error);
+  }
+
+  /**
    * いまのタブ (準備の途中のものも含む) から離れる。タブ1つぶんの状態を捨てるだけで、
    * 視聴者とCDPの接続には触らない。`gone` は、タブのsessionがもう無いとき
    * (止める、離れるためのコマンドを送らない)。`silent` は、視聴者をこのあと閉じるとき。
@@ -602,6 +719,7 @@ export class BrowserCdpBridge {
     this.touchEmulated = false;
     // 監視の状態、取り直しの途中の結果、スクロールした位置、ダイアログが開いていたことを捨てる
     this.pipeline.setApplied(null);
+    this.stopPoll();
     // 待っていた寸法は覚えてあり、次のタブの準備で当てる
     if (this.resizeTimer) {
       clearTimeout(this.resizeTimer);
@@ -909,6 +1027,9 @@ export class BrowserCdpBridge {
     this.tabUi?.dispose();
     this.tabUi = null;
     this.leavePage(true, true);
+    for (const cancel of [...this.waits]) {
+      cancel(new Error(DISCONNECTED_MESSAGE));
+    }
   }
 }
 

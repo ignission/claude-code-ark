@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BrowserCdpBridge,
   type CdpLike,
+  ENTER_STEP_TIMEOUT_MS,
+  POLL_INTERVAL_MS,
   type ViewerSocket,
 } from "./browser-cdp-bridge.js";
 import { SessionDetachedError } from "./browser-cdp-client.js";
@@ -248,6 +250,17 @@ function fakeCdp(options: { targets?: FakeTarget[] } = {}) {
 
 const flush = () => vi.advanceTimersByTimeAsync(0);
 
+/**
+ * 定期の読み直しを始めさせない。定期の読み直しのほかを確かめるテストで、タイマーの数と
+ * CDPの呼び出しの並びに、定期の読み直しのぶんを混ぜないため。`vi.restoreAllMocks` で戻る。
+ */
+function withoutPoll(): void {
+  vi.spyOn(
+    BrowserCdpBridge.prototype as unknown as { startPoll(): void },
+    "startPoll"
+  ).mockImplementation(() => {});
+}
+
 const ERROR_BODY = JSON.stringify({
   t: "error",
   message: "ブラウザとの接続が切れました",
@@ -400,6 +413,7 @@ describe("BrowserCdpBridge", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => {});
+    withoutPoll();
   });
 
   afterEach(() => {
@@ -2369,6 +2383,7 @@ describe("BrowserCdpBridge: ページの操作", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => {});
+    withoutPoll();
   });
 
   afterEach(() => {
@@ -3344,6 +3359,7 @@ describe("BrowserCdpBridge: タブ", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => {});
+    withoutPoll();
   });
 
   afterEach(() => {
@@ -3474,6 +3490,8 @@ describe("BrowserCdpBridge: タブ", () => {
     it("接続が切れたら、知らせる待ちを消す", async () => {
       const { cdp } = await startedWithTabs();
       cdp.emitBrowser("Target.targetCreated", { targetInfo: target("T4") });
+      // 前面へ戻すコマンドの応答を待つ間のタイマーは、応答が返れば消える
+      await flush();
       expect(vi.getTimerCount()).toBe(1);
       cdp.disconnect();
       expect(vi.getTimerCount()).toBe(0);
@@ -4242,6 +4260,7 @@ describe("BrowserCdpBridge: <select>", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => {});
+    withoutPoll();
   });
 
   afterEach(() => {
@@ -4546,6 +4565,7 @@ describe("BrowserCdpBridge: タッチ", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => {});
+    withoutPoll();
   });
 
   afterEach(() => {
@@ -4713,6 +4733,7 @@ describe("BrowserCdpBridge: 応答が返らないタブ", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => {});
+    withoutPoll();
   });
 
   afterEach(() => {
@@ -4912,6 +4933,104 @@ describe("BrowserCdpBridge: 応答が返らないタブ", () => {
       expect(vi.getTimerCount()).toBe(0);
       cdp.disconnect();
       await flush();
+    });
+  });
+
+  describe("応答が返らない、ブラウザへのコマンド", () => {
+    it("閉じるコマンドが返らなくても、時間切れのあとに、続く操作を行う", async () => {
+      const ctx = await startedWithTabs();
+      const { cdp, viewer } = ctx;
+      cdp.holdOn(CLOSE_TARGET);
+      viewer.receive({ t: "tab", type: "close", id: "T3" });
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      await vi.advanceTimersByTimeAsync(ENTER_STEP_TIMEOUT_MS - 1);
+      expect(cdp.count(CLOSE_TARGET)).toBe(1);
+      expect(cdp.count(ATTACH)).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expectShowing(ctx, "T2", "S2");
+      // 閉じられたか分からないので、一覧をChromiumから取り直す
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(cdp.count("Target.getTargets")).toBe(1);
+      expect(textsOf(viewer, "tabs").at(-1)).toEqual(
+        tabsBody(["T1", "T2", "T3"], "T2")
+      );
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("新しいタブを作るコマンドが返らなければ、いまのタブを映したまま、続く操作を行う", async () => {
+      const ctx = await startedWithTabs();
+      const { cdp, viewer } = ctx;
+      cdp.holdOn(CREATE_TARGET);
+      viewer.receive({ t: "tab", type: "new" });
+      viewer.receive({ t: "tab", type: "close", id: "T3" });
+      await vi.advanceTimersByTimeAsync(ENTER_STEP_TIMEOUT_MS - 1);
+      expect(cdp.count(CLOSE_TARGET)).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(cdp.last(CLOSE_TARGET)?.params).toEqual({ targetId: "T3" });
+      expect(cdp.count(ATTACH)).toBe(0);
+      expect(errorCount(viewer)).toBe(0);
+      expect(ctx.bridge.viewerCount).toBe(1);
+    });
+
+    it("前面へ戻すコマンドが返らなくても、続く操作を行う", async () => {
+      const ctx = await startedWithTabs();
+      const { cdp, viewer } = ctx;
+      cdp.holdOn(ACTIVATE);
+      // ほかのタブが開いたタブ。切り替えず、映しているタブを前面へ戻す
+      cdp.emitBrowser("Target.targetCreated", {
+        targetInfo: target("T4", { openerId: "T2" }),
+      });
+      await flush();
+      expect(cdp.last(ACTIVATE)?.params).toEqual({ targetId: "T1" });
+      viewer.receive({ t: "tab", type: "close", id: "T3" });
+      await vi.advanceTimersByTimeAsync(ENTER_STEP_TIMEOUT_MS - 1);
+      expect(cdp.count(CLOSE_TARGET)).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(cdp.count(CLOSE_TARGET)).toBe(1);
+      expect(errorCount(viewer)).toBe(0);
+    });
+
+    it("一覧の取り直しが返らなくても、続く操作を行う", async () => {
+      const ctx = await startedWithTabs();
+      const { cdp, viewer } = ctx;
+      cdp.failOn(CLOSE_TARGET);
+      cdp.holdOn("Target.getTargets");
+      viewer.receive({ t: "tab", type: "close", id: "T3" });
+      await vi.advanceTimersByTimeAsync(200);
+      expect(cdp.count("Target.getTargets")).toBe(1);
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      await vi.advanceTimersByTimeAsync(ENTER_STEP_TIMEOUT_MS - 1);
+      expect(cdp.count(ATTACH)).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expectShowing(ctx, "T2", "S2");
+    });
+
+    it("最初の一覧が返らなければ、視聴者へerrorを1回送り、タイマーを残さない", async () => {
+      const cdp = fakeCdp();
+      cdp.holdOn("Target.getTargets");
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await vi.advanceTimersByTimeAsync(ENTER_STEP_TIMEOUT_MS);
+      expect(errorCount(viewer)).toBe(1);
+      expect(bridge.viewerCount).toBe(0);
+      expect(cdp.close).toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("待っている間に接続が切れても、resetしても、タイマーを残さない", async () => {
+      for (const drop of ["disconnect", "reset"] as const) {
+        const { cdp, bridge, viewer } = await startedWithTabs();
+        cdp.holdOn(CLOSE_TARGET);
+        viewer.receive({ t: "tab", type: "close", id: "T3" });
+        await flush();
+        expect(vi.getTimerCount()).toBe(1);
+        if (drop === "reset") bridge.reset();
+        cdp.disconnect();
+        expect(vi.getTimerCount()).toBe(0);
+        await vi.advanceTimersByTimeAsync(ENTER_STEP_TIMEOUT_MS * 2);
+        expect(vi.getTimerCount()).toBe(0);
+      }
     });
   });
 
@@ -5172,5 +5291,281 @@ describe("BrowserCdpBridge: 応答が返らないタブ", () => {
         },
       ]);
     });
+  });
+});
+
+describe("BrowserCdpBridge: 定期の読み直し", () => {
+  const GET_TARGETS = "Target.getTargets";
+  const OPENING = "Page.javascriptDialogOpening";
+  const CLOSED = "Page.javascriptDialogClosed";
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** `title` を題にした、`id` のタブの履歴 */
+  function titled(id: string, title: string) {
+    return {
+      currentIndex: 0,
+      entries: [{ id: 1, url: tabUrl(id), title }],
+    };
+  }
+
+  function pollWarnings(): unknown[][] {
+    return vi
+      .mocked(console.warn)
+      .mock.calls.filter(([text]) => String(text).includes("定期の読み直し"));
+  }
+
+  it("1000msごとに、映しているタブの履歴と、タブの一覧を読む", async () => {
+    const { cdp } = await startedWithTabs();
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS - 1);
+    expect(cdp.methods()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(cdp.calls(HISTORY)).toMatchObject([{ sessionId: "S1" }]);
+    expect(cdp.calls(GET_TARGETS)).toMatchObject([{ sessionId: undefined }]);
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 3);
+    expect(cdp.count(HISTORY)).toBe(4);
+    expect(cdp.count(GET_TARGETS)).toBe(4);
+    expect(
+      cdp.methods().filter(m => m !== HISTORY && m !== GET_TARGETS)
+    ).toEqual([]);
+  });
+
+  it("スクリプトが変えた題を、次の読み直しで1回だけ知らせる", async () => {
+    const { cdp, viewers } = await startedWithTabs(["T1", "T2"], 2);
+    cdp.answer(HISTORY, titled("T1", "スクリプトの題"));
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    for (const viewer of viewers) {
+      expect(viewer.texts()).toEqual([
+        pageBody(tabUrl("T1"), "スクリプトの題"),
+      ]);
+    }
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 5);
+    for (const viewer of viewers) expect(viewer.texts()).toHaveLength(1);
+  });
+
+  it("映していないタブの題が変わったら、一覧を1回だけ知らせる", async () => {
+    const { cdp, viewer } = await startedWithTabs();
+    cdp.answer(GET_TARGETS, {
+      targetInfos: [
+        target("T1"),
+        target("T2", { title: "裏の題" }),
+        target("T3"),
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS + 100);
+    expect(viewer.texts()).toEqual([
+      {
+        t: "tabs",
+        tabs: [tabOf("T1"), { ...tabOf("T2"), title: "裏の題" }, tabOf("T3")],
+        activeId: "T1",
+      },
+    ]);
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 5);
+    expect(viewer.texts()).toHaveLength(1);
+  });
+
+  it("一覧に足りないタブを足し、もう無いタブを外す", async () => {
+    const { cdp, viewer } = await startedWithTabs();
+    cdp.answer(GET_TARGETS, {
+      targetInfos: [target("T1"), target("T3"), target("T4")],
+    });
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS + 100);
+    expect(viewer.texts()).toEqual([tabsBody(["T1", "T3", "T4"], "T1")]);
+    expect(cdp.count(ATTACH)).toBe(0);
+  });
+
+  it("視聴者が居なくなったら読まず、タイマーも残さない。入り直したら、また読む", async () => {
+    const { cdp, bridge, viewer } = await startedWithTabs();
+    expect(vi.getTimerCount()).toBe(1);
+    viewer.emit("close");
+    expect(vi.getTimerCount()).toBe(0);
+    cdp.forget();
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 5);
+    expect(cdp.methods()).toEqual([]);
+    bridge.attach(fakeViewer());
+    await flush();
+    cdp.forget();
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    expect(cdp.count(HISTORY)).toBe(1);
+    expect(cdp.count(GET_TARGETS)).toBe(1);
+  });
+
+  it("視聴者が1人でも残っていれば、読み続ける", async () => {
+    const { cdp, viewers } = await startedWithTabs(["T1"], 2);
+    viewers[0].emit("close");
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    expect(cdp.count(HISTORY)).toBe(1);
+  });
+
+  it("ダイアログが開いている間は読まず、閉じたら、また読む", async () => {
+    const { cdp } = await startedWithTabs();
+    cdp.emit(OPENING, { type: "alert", message: "x" });
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 5);
+    expect(cdp.count(HISTORY)).toBe(0);
+    expect(cdp.count(GET_TARGETS)).toBe(0);
+    cdp.emit(CLOSED, {});
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    expect(cdp.count(HISTORY)).toBe(1);
+    expect(cdp.count(GET_TARGETS)).toBe(1);
+  });
+
+  it("切り替えの途中は読まず、つなぎ終えたら、新しいタブを読む", async () => {
+    const { cdp, viewer } = await startedWithTabs();
+    cdp.holdOn("Page.enable");
+    viewer.receive({ t: "tab", type: "activate", id: "T2" });
+    await flush();
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 2);
+    expect(cdp.count(HISTORY)).toBe(0);
+    expect(cdp.count(GET_TARGETS)).toBe(0);
+    cdp.stopHolding("Page.enable");
+    cdp.release("Page.enable");
+    await flush();
+    cdp.forget();
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    expect(cdp.calls(HISTORY)).toMatchObject([{ sessionId: "S2" }]);
+    expect(cdp.count(GET_TARGETS)).toBe(1);
+  });
+
+  it("タブを動かす操作が走っている間は、一覧を読まない", async () => {
+    const { cdp, viewer } = await startedWithTabs();
+    cdp.holdOn(CLOSE_TARGET);
+    viewer.receive({ t: "tab", type: "close", id: "T3" });
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 2);
+    expect(cdp.count(GET_TARGETS)).toBe(0);
+    cdp.stopHolding(CLOSE_TARGET);
+    cdp.release(CLOSE_TARGET);
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    expect(cdp.count(GET_TARGETS)).toBe(1);
+  });
+
+  it("履歴の応答が返らない間は、次の読み直しを重ねない。時間切れのあとは、また読む", async () => {
+    const { cdp, viewer } = await startedWithTabs();
+    cdp.holdOn(HISTORY);
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    expect(cdp.count(HISTORY)).toBe(1);
+    expect(cdp.count(GET_TARGETS)).toBe(1);
+    await vi.advanceTimersByTimeAsync(ENTER_STEP_TIMEOUT_MS - 1);
+    expect(cdp.count(HISTORY)).toBe(1);
+    expect(cdp.count(GET_TARGETS)).toBe(1);
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    expect(cdp.count(HISTORY)).toBe(2);
+    expect(cdp.count(GET_TARGETS)).toBe(2);
+    expect(errorCount(viewer)).toBe(0);
+    expect(cdp.count(ATTACH)).toBe(0);
+  });
+
+  it("一覧の応答が返らない間も、次の読み直しを重ねない", async () => {
+    const { cdp } = await startedWithTabs();
+    cdp.holdOn(GET_TARGETS);
+    await vi.advanceTimersByTimeAsync(
+      POLL_INTERVAL_MS + ENTER_STEP_TIMEOUT_MS - 1
+    );
+    expect(cdp.count(HISTORY)).toBe(1);
+    expect(cdp.count(GET_TARGETS)).toBe(1);
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    expect(cdp.count(GET_TARGETS)).toBe(2);
+  });
+
+  it("読めなくても、視聴者を切らず、タブも替えず、記録は30秒に1回まで", async () => {
+    const { cdp, bridge, viewer, connect } = await startedWithTabs();
+    cdp.failOn(HISTORY);
+    cdp.failOn(GET_TARGETS);
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 29);
+    expect(cdp.count(HISTORY)).toBe(29);
+    expect(pollWarnings()).toHaveLength(1);
+    expect(vi.mocked(console.warn)).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 3);
+    expect(pollWarnings()).toHaveLength(2);
+    expect(errorCount(viewer)).toBe(0);
+    expect(viewer.texts()).toEqual([]);
+    expect(bridge.viewerCount).toBe(1);
+    expect(cdp.close).not.toHaveBeenCalled();
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(
+      cdp.methods().filter(m => m !== HISTORY && m !== GET_TARGETS)
+    ).toEqual([]);
+    // 読めるようになったら、また当てる
+    cdp.stopFailing(HISTORY);
+    cdp.answer(HISTORY, titled("T1", "あとの題"));
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    expect(textsOf(viewer, "page")).toEqual([
+      pageBody(tabUrl("T1"), "あとの題"),
+    ]);
+  });
+
+  it("接続が切れたら、タイマーを残さない (応答を待っている間でも)", async () => {
+    const { cdp } = await startedWithTabs();
+    cdp.holdOn(HISTORY);
+    cdp.holdOn(GET_TARGETS);
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    expect(vi.getTimerCount()).toBeGreaterThan(1);
+    cdp.disconnect();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 40);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(pollWarnings()).toEqual([]);
+  });
+
+  it("応答を待つ間に接続が切れても、つなぎ直したあとは、また読む", async () => {
+    const first = fakeCdp();
+    const second = fakeCdp();
+    const connect = vi
+      .fn()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second);
+    const bridge = new BrowserCdpBridge(connect);
+    bridge.attach(fakeViewer());
+    await flush();
+    first.holdOn(HISTORY);
+    first.holdOn(GET_TARGETS);
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    expect(first.count(GET_TARGETS)).toBe(2);
+    first.disconnect();
+    bridge.attach(fakeViewer());
+    await flush();
+    second.forget();
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    expect(second.calls(HISTORY)).toMatchObject([{ sessionId: "S1" }]);
+    expect(second.count(GET_TARGETS)).toBe(1);
+  });
+
+  it("resetしたら、タイマーを残さない", async () => {
+    const { cdp, bridge } = await startedWithTabs();
+    cdp.holdOn(HISTORY);
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    bridge.reset();
+    expect(vi.getTimerCount()).toBe(0);
+    cdp.disconnect();
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 5);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("どのタブにもつなげなくなって接続を捨てたときも、タイマーを残さない", async () => {
+    const { cdp, viewer } = await startedWithTabs(["T1"]);
+    cdp.failOn(ATTACH);
+    cdp.emitBrowser("Target.targetDestroyed", { targetId: "T1" });
+    await flush();
+    expect(errorCount(viewer)).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("応答を待つ間に視聴者が居なくなって入り直しても、読み直しを重ねない", async () => {
+    const { cdp, bridge, viewer } = await startedWithTabs();
+    cdp.holdOn(HISTORY);
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    viewer.emit("close");
+    bridge.attach(fakeViewer());
+    await flush();
+    cdp.forget();
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    expect(cdp.count(HISTORY)).toBe(0);
   });
 });

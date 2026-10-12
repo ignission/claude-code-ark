@@ -10,6 +10,10 @@
  *   題が変わったという知らせ (`rereadSoon`) のあとに読み直す。読み込み中はイベントが
  *   続くので、最初のイベントから100ms待って1回にまとめる。タブの準備が終わった直後の
  *   1回だけは、まとめる相手が無いので待たない
+ * - ページのスクリプトが題を変えても、Chromiumは何も知らせない。履歴を読めば新しい題が
+ *   返るので、使う側が定期に `poll` を呼ぶ。ほかの読み直しと同じ決まりで当てる (変わって
+ *   いなければ知らせない、古い結果は使わない)。読めなくても、記録もやり直しもせず、
+ *   rejectで使う側へ伝える (毎回記録すると、遷移の途中のたびに記録が続く)
  * - つないだ時点でタブの一覧から分かるURLと題は、履歴を読む前の状態として置く。
  *   履歴を読めないままでも、前のタブのURLが視聴者に残らないようにするため
  * - タブの準備が終わったら、ブリッジが `announce` を呼ぶ。ページの状態を、まだ全員へ
@@ -214,10 +218,35 @@ export class BrowserPageController<V> {
   /** いますぐ履歴を読み直す。タブの準備が終わったときに呼ぶ */
   refresh(): void {
     if (this.disposed) return;
+    void this.read((error, read) => {
+      // 遷移の途中では失敗する。次のイベントで読み直す
+      warn("履歴の読み直しに失敗", error);
+      this.retryHistory(read);
+    });
+  }
+
+  /**
+   * 定期の読み直し。履歴を読んで当て終えたらresolveし、読めなければrejectする。
+   * 読み直しを待っているところなら、それに任せて、何もせずにresolveする。
+   */
+  poll(): Promise<void> {
+    if (this.disposed || this.historyTimer || this.retryTimer) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve, reject) => {
+      void this.read(reject).then(resolve);
+    });
+  }
+
+  /**
+   * 履歴を読んで当てる。rejectしない。読めなければ、`dispose` のあとでない限り、
+   * `failed` を呼ぶ (`read` は、その読み直しの番号)。
+   */
+  private read(failed: (error: unknown, read: number) => void): Promise<void> {
     this.cancelRetry();
     const read = ++this.historyRead;
     const urlChanges = this.urlChanges;
-    this.link
+    return this.link
       .send("Page.getNavigationHistory")
       .then(result => {
         if (this.disposed || read < this.historyApplied) return;
@@ -231,10 +260,7 @@ export class BrowserPageController<V> {
         this.state.applyHistory(result);
       })
       .catch(error => {
-        if (this.disposed) return;
-        // 遷移の途中では失敗する。次のイベントで読み直す
-        warn("履歴の読み直しに失敗", error);
-        this.retryHistory(read);
+        if (!this.disposed) failed(error, read);
       });
   }
 
