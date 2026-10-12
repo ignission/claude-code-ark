@@ -5,69 +5,46 @@ describe("mobileQuickActions", () => {
   it("アップロードできない環境では、ファイルの操作を出さない", () => {
     expect(
       mobileQuickActions({
-        viewMode: "chat",
+        surface: "chat",
         canUploadFile: false,
-        canCopyBuffer: false,
       })
     ).toEqual(["message-shortcuts", "slash-commands"]);
     expect(
       mobileQuickActions({
-        viewMode: "terminal",
+        surface: "terminal",
         canUploadFile: false,
-        canCopyBuffer: false,
       })
-    ).toEqual(["message-shortcuts", "slash-commands", "reload-terminal"]);
+    ).toEqual(["message-shortcuts", "slash-commands"]);
   });
 
   it("会話モードでは添付を出さない (会話の入力欄が自前のボタンを持つため)。画像の貼り付けは出す", () => {
     expect(
       mobileQuickActions({
-        viewMode: "chat",
+        surface: "chat",
         canUploadFile: true,
-        canCopyBuffer: true,
       })
     ).toEqual(["paste-image", "message-shortcuts", "slash-commands"]);
   });
 
-  it("端末モードでは、添付・画像・ショートカット・スラッシュのあとに端末の操作を並べる", () => {
-    expect(
-      mobileQuickActions({
-        viewMode: "terminal",
-        canUploadFile: true,
-        canCopyBuffer: true,
-      })
-    ).toEqual([
+  it("端末の窓の行は、端末へ打ち込むための操作だけを並べる (コピーと再読み込みは窓の上端のバーにある)", () => {
+    const actions = mobileQuickActions({
+      surface: "terminal",
+      canUploadFile: true,
+    });
+
+    expect(actions).toEqual([
       "attach-file",
       "paste-image",
       "message-shortcuts",
       "slash-commands",
-      "copy-buffer",
-      "reload-terminal",
     ]);
   });
 
-  it("端末モードでコピーができないときは、その1つだけを外す", () => {
+  it("図モードの行は、端末の窓の行と同じ並びにする (添付は端末の流儀で受ける)", () => {
     expect(
       mobileQuickActions({
-        viewMode: "terminal",
+        surface: "board",
         canUploadFile: true,
-        canCopyBuffer: false,
-      })
-    ).toEqual([
-      "attach-file",
-      "paste-image",
-      "message-shortcuts",
-      "slash-commands",
-      "reload-terminal",
-    ]);
-  });
-
-  it("図モードの添付は端末モードと同じ流儀だが、端末の操作は出さない (端末が見えていない)", () => {
-    expect(
-      mobileQuickActions({
-        viewMode: "board",
-        canUploadFile: true,
-        canCopyBuffer: true,
       })
     ).toEqual([
       "attach-file",
@@ -79,9 +56,8 @@ describe("mobileQuickActions", () => {
   it("会話モードで音声が使えるときは、音声モードを先頭に出す", () => {
     expect(
       mobileQuickActions({
-        viewMode: "chat",
+        surface: "chat",
         canUploadFile: true,
-        canCopyBuffer: true,
         canUseVoice: true,
       })
     ).toEqual([
@@ -92,13 +68,12 @@ describe("mobileQuickActions", () => {
     ]);
   });
 
-  it("端末モードと図モードでは、音声が使えても音声モードを出さない", () => {
-    for (const viewMode of ["terminal", "board"] as const) {
+  it("端末の窓と図モードでは、音声が使えても音声モードを出さない", () => {
+    for (const surface of ["terminal", "board"] as const) {
       expect(
         mobileQuickActions({
-          viewMode,
+          surface,
           canUploadFile: false,
-          canCopyBuffer: false,
           canUseVoice: true,
         })
       ).not.toContain("voice-mode");

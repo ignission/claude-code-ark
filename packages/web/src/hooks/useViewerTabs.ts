@@ -4,8 +4,14 @@ import {
   clearCurrentDiagramTab,
   setCurrentDiagramTab,
 } from "../lib/diagram-tabs";
-import { writeSavedSplitViewLeftMode } from "../lib/split-view-left-mode";
 import { correctActiveIndexAfterClose } from "../lib/tab-close";
+
+/**
+ * タブを開いていないセッションのタブの並び (端末だけ)。
+ * 呼ぶたびに配列を作ると、受け取る側 (メモ化した端末のペイン) が毎回描画し直すので、
+ * 同じ配列を返す。書き換えないこと
+ */
+const DEFAULT_TABS: ViewerTab[] = [{ type: "terminal", id: "terminal" }];
 
 /**
  * セッションごとのタブ状態管理を提供するカスタムフック。
@@ -54,7 +60,7 @@ export function useViewerTabs(
 
   const getTabsForSession = useCallback(
     (sessionId: string): ViewerTab[] => {
-      return sessionTabs[sessionId] ?? [{ type: "terminal", id: "terminal" }];
+      return sessionTabs[sessionId] ?? DEFAULT_TABS;
     },
     [sessionTabs]
   );
@@ -106,11 +112,6 @@ export function useViewerTabs(
       targetLine?: number | null,
       targetEndLine?: number | null
     ) => {
-      // ファイルタブは左ペインの端末側にぶら下がる。会話モードのまま開くと
-      // タブは増えるのに画面は何も変わらない (図のリンクから開くと必ずこれになる)
-      // ので、ビューアを載せている側へ切り替える。端末から開いたときは既に
-      // terminal なので no-op
-      writeSavedSplitViewLeftMode("terminal");
       // 注意: 以前は setSessionTabs の updater 内で closure 変数 newActiveIndex を
       // 代入し、updater 外で setSessionActiveTab を呼んでいた。React の useState
       // updater は eager bailout 最適化が効くときだけ同期実行され、保留 update が

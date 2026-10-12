@@ -277,7 +277,12 @@ function toggleWorkArea(root: ParentNode): void {
   visibleOne(root, 'button[aria-label="パネル"]')?.click();
 }
 
-/** 入力モードへ: 見えているほう (端末 / 会話の入力欄) にフォーカスを置く */
+/**
+ * 入力モードへ: 端末の窓が開いていれば端末、閉じていれば会話の入力欄にフォーカスを置く。
+ * 窓が開いているのに端末がフォーカスを受けられないとき (iframeがまだ無い、ファイルの
+ * タブを見ていて隠れている) は、窓の枠に置く。会話の入力欄には置かない
+ * (窓の後ろの入力欄に打ったキーが入り、Enterで送られてしまうため)
+ */
 export function focusInput(root: ParentNode): void {
   const terminal = visibleOne<HTMLIFrameElement>(
     root,
@@ -292,6 +297,11 @@ export function focusInput(root: ParentNode): void {
     )?.term;
     terminal.focus();
     term?.focus?.();
+    if (terminal.ownerDocument.activeElement === terminal) return;
+  }
+  const terminalWindow = visibleOne(root, '[data-keynav="terminal-window"]');
+  if (terminalWindow) {
+    terminalWindow.focus();
     return;
   }
   visibleOne(root, 'textarea[data-keynav="chat-input"]')?.focus();
@@ -366,12 +376,17 @@ export function executeKeyNavCommand(
       (rows[at + 1] ?? rows.find((_, index) => index !== at))?.click();
       return { region, refocus: region === "sidebar" };
     }
-    case "toggle-left-mode":
-      visibleOne(
-        regionElement(root, "left") ?? root,
-        'fieldset button[aria-pressed="false"]'
-      )?.click();
-      return { region };
+    case "toggle-terminal": {
+      // 開いていれば窓の閉じるボタンを、閉じていれば会話の入力欄の上の帯を押す
+      const button =
+        visibleOne(root, 'button[aria-label="端末を閉じる"]') ??
+        visibleOne(root, 'button[aria-label="端末を開く"]');
+      if (!button) return { region };
+      button.click();
+      // 開けば端末が、閉じれば会話の入力欄がフォーカスを受け取る (SplitViewPane が移す)。
+      // どちらもキーを文字として受ける場所なので、入力モードへ出る
+      return { region, insert: true };
+    }
     case "toggle-work-area": {
       const wasOpen = regionElement(root, "work") !== null;
       toggleWorkArea(root);

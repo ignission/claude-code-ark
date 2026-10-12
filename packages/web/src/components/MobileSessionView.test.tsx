@@ -16,9 +16,10 @@ import type { ActiveAuq } from "../lib/ask-user-question-state";
 import {
   createDiagramOpenRequest,
   getViewModeForDiagramOpenRequest,
-  getViewModeForViewerTab,
   normalizeMobileSessionViewMode,
+  readSavedViewMode,
   STORAGE_KEY_MOBILE_VIEW,
+  shouldOpenTerminalForViewerTab,
   writeSavedViewMode,
 } from "../lib/mobile-session-view-mode";
 import { MobileSessionView } from "./MobileSessionView";
@@ -30,8 +31,10 @@ import type { SplitChatPaneHandle } from "./SplitChatPane";
 
 interface ObservedChatProps {
   isActive: boolean;
+  liveTail?: string;
   layout?: "pane" | "mobile";
   composerAccessory?: ReactNode;
+  onOpenTerminal?: () => void;
   onActiveAuqChange?: (auq: ActiveAuq | null) => void;
   onEventsChange?: (events: unknown[], hasSnapshot: boolean) => void;
   ref?: Ref<SplitChatPaneHandle>;
@@ -39,6 +42,8 @@ interface ObservedChatProps {
 
 const testDoubles = vi.hoisted(() => ({
   splitChatPane: vi.fn(),
+  /** 端末の窓の中身 (タブバー) が描画された回数を数える */
+  viewerTabBarRender: vi.fn(),
   chatOpenFilePicker: vi.fn(),
   chatPasteImage: vi.fn(),
 }));
@@ -71,6 +76,19 @@ vi.mock("./SplitChatPane", async () => {
 vi.mock("./DiagramPane", () => ({
   DiagramPane: () => <div data-testid="diagram-pane" />,
 }));
+
+// タブバーは本物を使い、描画された回数だけを数える
+vi.mock("./ViewerTabBar", async importOriginal => {
+  const actual = await importOriginal<typeof import("./ViewerTabBar")>();
+  const { createElement: h } = await import("react");
+  return {
+    ...actual,
+    ViewerTabBar: (props: ComponentProps<typeof actual.ViewerTabBar>) => {
+      testDoubles.viewerTabBarRender();
+      return h(actual.ViewerTabBar, props);
+    },
+  };
+});
 
 vi.mock("../hooks/useTerminalLinkInjection", () => ({
   useTerminalLinkInjection: () => undefined,
@@ -208,6 +226,61 @@ function click(element: Element | null | undefined): void {
   act(() => (element as HTMLElement).click());
 }
 
+/** 会話の帯を押して端末の窓を開く (帯は `SplitChatPane` の中なので、渡した関数を直接呼ぶ) */
+function openTerminalWindow(): void {
+  const open = latestChatProps().onOpenTerminal;
+  expect(open).toBeDefined();
+  act(() => open?.());
+}
+
+function terminalWindowOf(container: HTMLDivElement): HTMLElement {
+  const backdrop = container.querySelector<HTMLElement>(
+    '[data-testid="floating-terminal"]'
+  );
+  expect(backdrop).not.toBeNull();
+  return backdrop as HTMLElement;
+}
+
+function isTerminalWindowOpen(container: HTMLDivElement): boolean {
+  return terminalWindowOf(container).className !== "hidden";
+}
+
+/** 自分か祖先が `hidden` で隠れていないか (jsdomはレイアウトを持たないのでclassで見る) */
+function isHiddenByClass(element: Element, root: Element): boolean {
+  for (
+    let node: Element | null = element;
+    node && node !== root.parentElement;
+    node = node.parentElement
+  ) {
+    if (node.classList.contains("hidden")) return true;
+  }
+  return false;
+}
+
+function terminalTab() {
+  return { type: "terminal" as const, id: "terminal-s1" };
+}
+
+function fileTab() {
+  return {
+    type: "file" as const,
+    id: "file-1",
+    filePath: "/tmp/a.txt",
+    content: "hello",
+    mimeType: "text/plain",
+    size: 5,
+  };
+}
+
+function diagramTab() {
+  return {
+    type: "diagram" as const,
+    id: "diagram-1",
+    worktreePath: "/repos/recipe-app-login",
+    relPath: ".claude/diagrams/a.diagram.html",
+  };
+}
+
 /**
  * Radix の DropdownMenuTrigger は pointerdown で開くため、素の click() だけでは
  * 開かない (jsdom で確認済み)。開いた内容は Portal で document.body 直下に出る。
@@ -229,6 +302,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear();
   testDoubles.splitChatPane.mockClear();
+  testDoubles.viewerTabBarRender.mockClear();
   voiceDoubles.supported = false;
   voiceDoubles.enter.mockClear();
   voiceDoubles.pushEvents.mockClear();
@@ -248,17 +322,17 @@ afterEach(() => {
 });
 
 describe("mobile session view mode", () => {
-  it("chat / terminal / board を正規化し、不正値は chat へ戻す", () => {
+  it("chat / board を正規化し、保存済みの terminal と不正値は chat として読む", () => {
     expect(MOBILE_SESSION_VIEW_MODES.map(option => option.value)).toEqual([
       "chat",
-      "terminal",
       "board",
     ]);
     expect(normalizeMobileSessionViewMode("chat")).toBe("chat");
-    expect(normalizeMobileSessionViewMode("terminal")).toBe("terminal");
+    expect(normalizeMobileSessionViewMode("terminal")).toBe("chat");
     expect(normalizeMobileSessionViewMode("board")).toBe("board");
     expect(normalizeMobileSessionViewMode("unknown")).toBe("chat");
     expect(normalizeMobileSessionViewMode(null)).toBe("chat");
+    expect(readSavedViewMode({ getItem: () => "terminal" })).toBe("chat");
   });
 
   it("board を永続化する", () => {
@@ -313,17 +387,19 @@ describe("mobile session view mode", () => {
   });
 
   it.each(["file", "html"] as const)(
-    "active な %s ビューワータブでは従来どおり terminal へ切り替える",
+    "active な %s ビューワータブは、端末の窓を開いて見せる",
     activeTabType => {
-      expect(getViewModeForViewerTab(activeTabType)).toBe("terminal");
+      expect(shouldOpenTerminalForViewerTab(activeTabType)).toBe(true);
     }
   );
 
-  it("terminal タブでは表示モードを変えない", () => {
-    expect(getViewModeForViewerTab("terminal")).toBeNull();
+  it("terminal / diagram タブと、タブなしでは端末の窓を開かない", () => {
+    expect(shouldOpenTerminalForViewerTab("terminal")).toBe(false);
+    expect(shouldOpenTerminalForViewerTab("diagram")).toBe(false);
+    expect(shouldOpenTerminalForViewerTab(undefined)).toBe(false);
   });
 
-  it("現在モードが分かる3択のセグメントを、絵文字を使わずに表示する", () => {
+  it("現在モードが分かる2択のセグメントを、絵文字を使わずに表示する。「端末」は無い", () => {
     const markup = renderToStaticMarkup(
       createElement(MobileSessionViewModeToggle, {
         value: "board",
@@ -331,17 +407,18 @@ describe("mobile session view mode", () => {
       })
     );
 
-    expect(markup.match(/<button/g)).toHaveLength(3);
-    for (const label of ["会話", "端末", "図"]) {
+    expect(markup.match(/<button/g)).toHaveLength(2);
+    for (const label of ["会話", "図"]) {
       expect(markup).toContain(`aria-label="${label}"`);
     }
+    expect(markup).not.toContain('aria-label="端末"');
     expect(markup).toMatch(
       /aria-label="図"[^>]*aria-pressed="true"|aria-pressed="true"[^>]*aria-label="図"/
     );
     expect(markup).not.toMatch(/💬|🖥|📐/);
   });
 
-  it("PCの上部バー (SplitViewPane) と同じ lucide アイコンを使う", () => {
+  it("PCの作業エリアのタブと同じ lucide アイコンを使い、端末のアイコンは置かない", () => {
     const markup = renderToStaticMarkup(
       createElement(MobileSessionViewModeToggle, {
         value: "chat",
@@ -349,10 +426,10 @@ describe("mobile session view mode", () => {
       })
     );
 
-    // PC: 会話=MessagesSquare / 端末=SquareTerminal / 図=Workflow (SplitViewPane.tsx)
+    // 会話=MessagesSquare / 図=Workflow (lib/view-mode-icons.ts)
     expect(markup).toContain("lucide-messages-square");
-    expect(markup).toContain("lucide-square-terminal");
     expect(markup).toContain("lucide-workflow");
+    expect(markup).not.toContain("lucide-square-terminal");
     expect(markup).not.toMatch(/lucide-message-circle|lucide-shapes\b/);
   });
 });
@@ -448,12 +525,12 @@ describe("MobileSessionView の状態の帯", () => {
     ).toBeNull();
   });
 
-  it("端末モードでも会話の購読を続け、質問カードが閉じたことを帯に反映する", () => {
-    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+  it("端末の窓を開いている間も会話の購読を続け、質問カードが閉じたことを帯に反映する", () => {
     const container = mount(
       <MobileSessionView {...makeProps({ bridgeStatus: "AWAITING" })} />
     );
-    // 購読を止めると、端末モードで答えた質問の解決が届かず「質問があります」が残る
+    openTerminalWindow();
+    // 購読を止めると、端末の窓で答えた質問の解決が届かず「質問があります」が残る
     expect(latestChatProps().isActive).toBe(true);
 
     act(() => latestChatProps().onActiveAuqChange?.(SAMPLE_AUQ));
@@ -463,8 +540,8 @@ describe("MobileSessionView の状態の帯", () => {
     expect(stripText(container)).toBe("確認を求めています");
   });
 
-  it("端末モードで確認を求められたら「会話で答える」で会話モードへ切り替える", () => {
-    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+  it("図モードで確認を求められたら「会話で答える」で会話モードへ切り替える", () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "board");
     const container = mount(
       <MobileSessionView {...makeProps({ bridgeStatus: "AWAITING" })} />
     );
@@ -503,36 +580,45 @@ describe("MobileSessionView の下部バー", () => {
     ).toBe("true");
   });
 
-  it("セグメントでモードを切り替えると保存し、端末の本文を出す", () => {
+  it("セグメントに「端末」は無く、モードを切り替えると保存して図の本文を出す", () => {
     const container = mount(<MobileSessionView {...makeProps()} />);
     const chat = container.querySelector('[data-testid="mobile-view-chat"]');
 
-    click(chat?.querySelector('button[aria-label="端末"]'));
+    expect(container.querySelector('button[aria-label="端末"]')).toBeNull();
+    click(chat?.querySelector('button[aria-label="図"]'));
 
-    expect(localStorage.getItem(STORAGE_KEY_MOBILE_VIEW)).toBe("terminal");
+    expect(localStorage.getItem(STORAGE_KEY_MOBILE_VIEW)).toBe("board");
     expect(
-      container.querySelector('[data-testid="mobile-view-terminal"]')?.className
+      container.querySelector('[data-testid="mobile-view-board"]')?.className
     ).not.toContain("hidden");
     expect(
       container.querySelector('[data-testid="mobile-view-chat"]')?.className
     ).toBe("hidden");
   });
 
-  it("端末モードは不透明なバーにセグメント・Quick Keys・入力欄を置き、空のまま送るとEnterを送る", () => {
+  it("保存済みの「端末」モードは会話として開き、端末の窓は閉じたままにする", () => {
     localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+    const container = mount(<MobileSessionView {...makeProps()} />);
+
+    expect(
+      container.querySelector('[data-testid="mobile-view-chat"]')?.className
+    ).not.toBe("hidden");
+    expect(isTerminalWindowOpen(container)).toBe(false);
+  });
+
+  it("端末の窓は不透明なバーにQuick Keys・入力欄を置き、セグメントは置かない。空のまま送るとEnterを送る", () => {
     const onSendMessage = vi.fn();
     const container = mount(
       <MobileSessionView {...makeProps({ onSendMessage })} />
     );
+    openTerminalWindow();
     const bar = container.querySelector('[data-testid="mobile-terminal-bar"]');
 
+    expect(terminalWindowOf(container).contains(bar)).toBe(true);
     expect(bar?.hasAttribute("data-mobile-bottom-bar")).toBe(true);
     expect(bar?.className).not.toContain("glass-bar");
-    expect(
-      bar
-        ?.querySelector('button[aria-label="端末"]')
-        ?.getAttribute("aria-pressed")
-    ).toBe("true");
+    expect(bar?.querySelector('button[aria-label="会話"]')).toBeNull();
+    expect(bar?.querySelector('button[aria-label="図"]')).toBeNull();
     expect(bar?.textContent).toContain("Ctrl+C");
     expect(bar?.querySelector("input")?.className).not.toContain("font-mono");
 
@@ -542,8 +628,8 @@ describe("MobileSessionView の下部バー", () => {
   });
 
   it("端末の背景は ttyd と同じ暖色の暗色にする", () => {
-    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
     const container = mount(<MobileSessionView {...makeProps()} />);
+    openTerminalWindow();
 
     expect(
       container.querySelector("iframe")?.parentElement?.style.backgroundColor
@@ -557,8 +643,8 @@ describe("MobileSessionView の下部バー", () => {
     const bar = board?.querySelector('[data-testid="mobile-board-bar"]');
 
     expect(bar?.hasAttribute("data-mobile-bottom-bar")).toBe(true);
-    // セグメント3つ + 1タップ操作 (アップロードできないので添付と画像は出ない)
-    expect(bar?.querySelectorAll("button")).toHaveLength(5);
+    // セグメント2つ + 1タップ操作 (アップロードできないので添付と画像は出ない)
+    expect(bar?.querySelectorAll("button")).toHaveLength(4);
     expect(
       bar
         ?.querySelector('button[aria-label="図"]')
@@ -568,9 +654,254 @@ describe("MobileSessionView の下部バー", () => {
   });
 });
 
+describe("MobileSessionView の端末の窓", () => {
+  it("会話の帯から全面の窓で開き、閉じるボタンで閉じる。開閉の状態は保存しない", () => {
+    const container = mount(<MobileSessionView {...makeProps()} />);
+    expect(isTerminalWindowOpen(container)).toBe(false);
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+
+    openTerminalWindow();
+
+    expect(isTerminalWindowOpen(container)).toBe(true);
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog?.getAttribute("aria-label")).toBe("端末");
+    // 全面の窓: 親の領域いっぱいで、背後を暗くする背景は持たない
+    expect(dialog?.className).toContain("h-full");
+    expect(dialog?.className).toContain("w-full");
+    expect(terminalWindowOf(container).className).not.toContain(
+      "bg-foreground"
+    );
+    // 会話モードのまま、上に重ねる
+    expect(
+      container.querySelector('[data-testid="mobile-view-chat"]')?.className
+    ).not.toBe("hidden");
+
+    click(dialog?.querySelector('button[aria-label="端末を閉じる"]'));
+
+    expect(isTerminalWindowOpen(container)).toBe(false);
+    expect(localStorage.getItem(STORAGE_KEY_MOBILE_VIEW)).toBeNull();
+  });
+
+  it("窓はセッションの画面の直下に重なり、どのモードでも隠れた要素の中に入らない (閉じるボタンに届く)", () => {
+    const container = mount(<MobileSessionView {...makeProps()} />);
+    const root = container.firstElementChild as HTMLElement;
+    const backdrop = terminalWindowOf(container);
+    // 位置の基準はセッションの画面のルート。モードごとの本文 (`hidden` で切り替わる) の中には置かない
+    expect(backdrop.parentElement).toBe(root);
+    expect(root.className).toContain("relative");
+
+    openTerminalWindow();
+    const closeInChat = backdrop.querySelector(
+      'button[aria-label="端末を閉じる"]'
+    );
+    expect(closeInChat).not.toBeNull();
+    expect(isHiddenByClass(closeInChat as Element, root)).toBe(false);
+    click(closeInChat);
+
+    // 図モードから開いても同じ
+    click(
+      container.querySelector(
+        '[data-testid="chat-pane"] button[aria-label="図"]'
+      )
+    );
+    openTerminalWindow();
+    expect(isTerminalWindowOpen(container)).toBe(true);
+    const closeInBoard = backdrop.querySelector(
+      'button[aria-label="端末を閉じる"]'
+    );
+    expect(isHiddenByClass(closeInBoard as Element, root)).toBe(false);
+    click(closeInBoard);
+    expect(isTerminalWindowOpen(container)).toBe(false);
+  });
+
+  it("開閉で端末のiframeをアンマウントも付け替えもしない", () => {
+    const container = mount(<MobileSessionView {...makeProps()} />);
+    const iframe = container.querySelector("iframe");
+    const parent = iframe?.parentElement;
+    expect(iframe).not.toBeNull();
+    expect(terminalWindowOf(container).contains(iframe)).toBe(true);
+
+    openTerminalWindow();
+    expect(container.querySelector("iframe")).toBe(iframe);
+    expect(iframe?.parentElement).toBe(parent);
+
+    click(container.querySelector('button[aria-label="端末を閉じる"]'));
+    expect(container.querySelector("iframe")).toBe(iframe);
+    expect(iframe?.parentElement).toBe(parent);
+    expect(container.querySelectorAll("iframe")).toHaveLength(1);
+  });
+
+  it("このセッションが表示中でなくなったら閉じ、戻ってきても閉じたまま", () => {
+    const props = makeProps();
+    const container = mount(<MobileSessionView {...props} />);
+    const { root } = mountedRoots.at(-1) as { root: Root };
+    openTerminalWindow();
+    expect(isTerminalWindowOpen(container)).toBe(true);
+
+    // 一覧へ戻る・別のセッションを開くと、`MobileLayout` が `isActive` をfalseにする
+    act(() => root.render(<MobileSessionView {...props} isActive={false} />));
+    expect(isTerminalWindowOpen(container)).toBe(false);
+
+    act(() => root.render(<MobileSessionView {...props} isActive={true} />));
+    expect(isTerminalWindowOpen(container)).toBe(false);
+  });
+
+  it("窓を開いている間に図を開く通知が来たら、窓を閉じて図モードを見せる", () => {
+    const props = makeProps();
+    const container = mount(<MobileSessionView {...props} />);
+    const { root } = mountedRoots.at(-1) as { root: Root };
+    openTerminalWindow();
+
+    const request = createDiagramOpenRequest(
+      null,
+      "s1",
+      ".claude/diagrams/a.diagram.html"
+    );
+    act(() =>
+      root.render(<MobileSessionView {...props} diagramOpenRequest={request} />)
+    );
+
+    expect(isTerminalWindowOpen(container)).toBe(false);
+    expect(
+      container.querySelector('[data-testid="mobile-view-board"]')?.className
+    ).not.toBe("hidden");
+  });
+
+  it("窓の中のタブで図を選んだら、窓を閉じて図モードを見せる", () => {
+    const onTabSelect = vi.fn();
+    const container = mount(
+      <MobileSessionView
+        {...makeProps({ tabs: [terminalTab(), diagramTab()], onTabSelect })}
+      />
+    );
+    openTerminalWindow();
+
+    const tab = Array.from(
+      terminalWindowOf(container).querySelectorAll<HTMLElement>(
+        "button, [role='tab']"
+      )
+    ).find(el => el.textContent?.includes("a.diagram.html"));
+    click(tab);
+
+    expect(onTabSelect).toHaveBeenCalledWith(1);
+    expect(isTerminalWindowOpen(container)).toBe(false);
+    expect(
+      container.querySelector('[data-testid="mobile-view-board"]')?.className
+    ).not.toBe("hidden");
+  });
+
+  it("ファイルのタブが選ばれたら、ビューアを持つ端末の窓を開いて見せる", () => {
+    const props = makeProps();
+    const container = mount(<MobileSessionView {...props} />);
+    const { root } = mountedRoots.at(-1) as { root: Root };
+    expect(isTerminalWindowOpen(container)).toBe(false);
+
+    act(() =>
+      root.render(
+        <MobileSessionView
+          {...props}
+          tabs={[terminalTab(), fileTab()]}
+          activeTabIndex={1}
+        />
+      )
+    );
+
+    expect(isTerminalWindowOpen(container)).toBe(true);
+    expect(terminalWindowOf(container).textContent).toContain("hello");
+  });
+
+  it.each([
+    ["ファイル", fileTab()],
+    ["HTML", { type: "html" as const, id: "html-1", filePath: "/tmp/a.html" }],
+  ])(
+    "%sのタブが選ばれたままマウントしても、窓は開かない。帯から開けばそのタブが出る",
+    (_label, tab) => {
+      const props = makeProps({
+        tabs: [terminalTab(), tab],
+        activeTabIndex: 1,
+      });
+      const container = mount(<MobileSessionView {...props} />);
+      const { root } = mountedRoots.at(-1) as { root: Root };
+
+      expect(isTerminalWindowOpen(container)).toBe(false);
+
+      // 画面末尾の更新などで描画し直しても、勝手には開かない
+      act(() => root.render(<MobileSessionView {...props} liveTail="$ ls" />));
+      expect(isTerminalWindowOpen(container)).toBe(false);
+
+      openTerminalWindow();
+      expect(isTerminalWindowOpen(container)).toBe(true);
+      // 端末ではなく、選ばれているタブのビューアが出ている
+      expect(
+        terminalWindowOf(container).querySelector<HTMLElement>(
+          'iframe[title^="Terminal"]'
+        )?.parentElement?.style.display
+      ).toBe("none");
+    }
+  );
+
+  it("ファイルのタブが選ばれたままマウントしたあと、別の種類のタブを経てファイルを開けば窓を開く", () => {
+    const props = makeProps({
+      tabs: [terminalTab(), fileTab()],
+      activeTabIndex: 1,
+    });
+    const container = mount(<MobileSessionView {...props} />);
+    const { root } = mountedRoots.at(-1) as { root: Root };
+    expect(isTerminalWindowOpen(container)).toBe(false);
+
+    act(() => root.render(<MobileSessionView {...props} activeTabIndex={0} />));
+    expect(isTerminalWindowOpen(container)).toBe(false);
+
+    act(() => root.render(<MobileSessionView {...props} activeTabIndex={1} />));
+    expect(isTerminalWindowOpen(container)).toBe(true);
+    expect(terminalWindowOf(container).textContent).toContain("hello");
+  });
+
+  it("図モードで添付を選ぶと、確認ダイアログを持つ端末の窓を開く", async () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "board");
+    const container = mount(
+      <MobileSessionView
+        {...makeProps({
+          onUploadFile: async () => ({
+            path: "/uploads/a.txt",
+            filename: "a.txt",
+          }),
+        })}
+      />
+    );
+    const input =
+      container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+    Object.defineProperty(input, "files", {
+      value: [new File(["x"], "a.txt", { type: "text/plain" })],
+      configurable: true,
+    });
+
+    await act(async () => {
+      input?.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    await vi.waitFor(() => {
+      expect(isTerminalWindowOpen(container)).toBe(true);
+    });
+    expect(terminalWindowOf(container).textContent).toContain("a.txt");
+  });
+
+  it("窓を開いても閉じても、フォーカスを動かさない (ソフトキーボードを勝手に出さない)", () => {
+    const container = mount(<MobileSessionView {...makeProps()} />);
+    const before = document.activeElement;
+
+    openTerminalWindow();
+    expect(document.activeElement).toBe(before);
+
+    click(container.querySelector('button[aria-label="端末を閉じる"]'));
+    expect(document.activeElement).toBe(before);
+  });
+});
+
 describe("MobileSessionView のショートカット", () => {
   function openShortcuts(container: HTMLDivElement): Element | null {
-    const bar = container.querySelector('[data-testid="mobile-terminal-bar"]');
+    const bar = container.querySelector('[data-testid="chat-pane"]');
     openDropdown(
       bar?.querySelector('button[aria-label="メッセージのショートカット"]')
     );
@@ -642,10 +973,15 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     return labelsOf(row as ParentNode);
   }
 
-  it("端末モードは、添付・画像・ショートカット・スラッシュのあとに端末の操作を並べる", () => {
-    // bottomBarTop は3モードのバーで共有する1つの要素で、内容は現在の viewMode で決まる
-    // (見えているのは1枚だけなので、行の中身を確かめるには対象のモードを開いておく)
-    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+  /** 端末の窓の上端のバー (見出しと操作と閉じるボタン) */
+  function titleBarOf(container: HTMLDivElement): HTMLElement {
+    const bar = terminalWindowOf(container).querySelector("h2")?.parentElement;
+    expect(bar).not.toBeNull();
+    expect(bar).toBeDefined();
+    return bar as HTMLElement;
+  }
+
+  it("端末の操作 (コピー・再読み込み) は窓の上端のバーに、閉じるボタンの手前に、指で押せる大きさで並べる", () => {
     const container = mount(
       <MobileSessionView
         {...makeProps({
@@ -654,18 +990,52 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
         })}
       />
     );
+    // 閉じている間は、端末用の操作をどこにも出さない
+    expect(
+      container.querySelector('button[aria-label="端末のバッファをコピー"]')
+    ).toBeNull();
+    expect(
+      container.querySelector('button[aria-label="端末を再読み込み"]')
+    ).toBeNull();
+
+    openTerminalWindow();
+
+    expect(labelsOf(titleBarOf(container))).toEqual([
+      "端末のバッファをコピー",
+      "端末を再読み込み",
+      "端末を閉じる",
+    ]);
+    for (const label of ["端末のバッファをコピー", "端末を再読み込み"]) {
+      const buttons = container.querySelectorAll(
+        `button[aria-label="${label}"]`
+      );
+      // 下部バーの行には残さない (同じ操作を2か所に置かない)
+      expect(buttons).toHaveLength(1);
+      // 44px
+      expect(buttons[0].className).toContain("size-11");
+    }
+  });
+
+  it("端末の窓の下部バーの行は、端末へ打ち込むための操作だけを並べる", () => {
+    const container = mount(
+      <MobileSessionView
+        {...makeProps({
+          onUploadFile: uploadFile,
+          onCopyBuffer: async () => "buffer",
+        })}
+      />
+    );
+    openTerminalWindow();
 
     expect(quickLabelsOf(barOf(container, "terminal"))).toEqual([
       "ファイルを添付",
       "画像を貼り付け",
       "メッセージのショートカット",
       "スラッシュコマンド",
-      "端末のバッファをコピー",
-      "端末を再読み込み",
     ]);
   });
 
-  it("図モードの添付は端末モードと同じ流儀だが、端末の操作は出さない", () => {
+  it("図モードの添付は端末の窓と同じ流儀だが、端末の操作は出さない", () => {
     localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "board");
     const container = mount(
       <MobileSessionView
@@ -684,19 +1054,19 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     ]);
   });
 
-  it("バッファを取れない環境では、端末モードでもコピーだけを出さない", () => {
-    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+  it("バッファを取れない環境では、端末の窓でもコピーだけを出さない", () => {
     const container = mount(
       <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
     );
+    openTerminalWindow();
 
-    const labels = labelsOf(barOf(container, "terminal"));
-    expect(labels).not.toContain("端末のバッファをコピー");
-    expect(labels).toContain("端末を再読み込み");
+    expect(labelsOf(titleBarOf(container))).toEqual([
+      "端末を再読み込み",
+      "端末を閉じる",
+    ]);
   });
 
-  it("コピーのボタンは `…` と同じく tmux バッファをクリップボードへ書く", async () => {
-    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+  it("コピーのボタンは tmux バッファをクリップボードへ書く", async () => {
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText },
@@ -706,9 +1076,10 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     const container = mount(
       <MobileSessionView {...makeProps({ onCopyBuffer })} />
     );
+    openTerminalWindow();
 
     click(
-      barOf(container, "terminal").querySelector(
+      titleBarOf(container).querySelector(
         'button[aria-label="端末のバッファをコピー"]'
       )
     );
@@ -720,13 +1091,13 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
   });
 
   it("再読み込みのボタンは ttyd の iframe を貼り直す", () => {
-    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
     const container = mount(<MobileSessionView {...makeProps()} />);
+    openTerminalWindow();
     const before = container.querySelector("iframe");
     expect(before).not.toBeNull();
 
     click(
-      barOf(container, "terminal").querySelector(
+      titleBarOf(container).querySelector(
         'button[aria-label="端末を再読み込み"]'
       )
     );
@@ -749,6 +1120,7 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
 
   it("アップロードできない環境では、ファイルの操作を出さない", () => {
     const container = mount(<MobileSessionView {...makeProps()} />);
+    openTerminalWindow();
     const labels = labelsOf(barOf(container, "terminal"));
 
     expect(labels).not.toContain("ファイルを添付");
@@ -769,11 +1141,11 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     expect(testDoubles.chatPasteImage).toHaveBeenCalledTimes(1);
   });
 
-  it("端末モードの添付は、端末側の確認ダイアログへ渡すファイル選択を開く", () => {
-    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+  it("端末の窓の添付は、端末側の確認ダイアログへ渡すファイル選択を開く", () => {
     const container = mount(
       <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
     );
+    openTerminalWindow();
     const input =
       container.querySelector<HTMLInputElement>('input[type="file"]');
     expect(input).not.toBeNull();
@@ -789,7 +1161,7 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     expect(testDoubles.chatOpenFilePicker).not.toHaveBeenCalled();
   });
 
-  it("図モードの添付も、端末モードと同じファイル選択 (端末側の確認ダイアログの流儀) を開く", () => {
+  it("図モードの添付も、端末の窓と同じファイル選択 (端末側の確認ダイアログの流儀) を開く", () => {
     localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "board");
     const container = mount(
       <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
@@ -809,8 +1181,7 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     expect(testDoubles.chatOpenFilePicker).not.toHaveBeenCalled();
   });
 
-  it("端末モードの画像の貼り付けは、クリップボードに画像が無いとトーストで知らせる", async () => {
-    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+  it("端末の窓の画像の貼り付けは、クリップボードに画像が無いとトーストで知らせる", async () => {
     Object.defineProperty(navigator, "clipboard", {
       value: {
         read: vi.fn(async () => [{ types: ["text/plain"], getType: vi.fn() }]),
@@ -820,6 +1191,7 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     const container = mount(
       <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
     );
+    openTerminalWindow();
 
     click(
       barOf(container, "terminal").querySelector(
@@ -834,8 +1206,7 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     });
   });
 
-  it("端末モードの画像の貼り付けは、クリップボード読み取りに失敗するとトーストで知らせる", async () => {
-    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "terminal");
+  it("端末の窓の画像の貼り付けは、クリップボード読み取りに失敗するとトーストで知らせる", async () => {
     Object.defineProperty(navigator, "clipboard", {
       value: {
         read: vi.fn(async () => {
@@ -847,6 +1218,7 @@ describe("MobileSessionView の下部バーの1タップ操作", () => {
     const container = mount(
       <MobileSessionView {...makeProps({ onUploadFile: uploadFile })} />
     );
+    openTerminalWindow();
 
     click(
       barOf(container, "terminal").querySelector(
@@ -997,5 +1369,64 @@ describe("MobileSessionView の音声モード", () => {
   it("会話ビューのイベント列を音声モードへ渡す", () => {
     mount(<MobileSessionView {...makeProps()} />);
     expect(latestChatProps().onEventsChange).toBe(voiceDoubles.pushEvents);
+  });
+});
+
+describe("MobileSessionView の画面末尾の更新と再描画", () => {
+  it("liveTail だけが変わっても、端末の窓の中身は描画し直さない (親が毎回新しい関数を渡しても)", () => {
+    const base = makeProps({
+      onUploadFile: async () => ({ path: "/uploads/a.txt", filename: "a.txt" }),
+      onCopyBuffer: async () => "buffer",
+      liveTail: "$ pnpm test",
+    });
+    // MobileLayout と同じく、描画のたびに新しい関数を渡す
+    const element = (liveTail: string) => (
+      <MobileSessionView
+        {...base}
+        liveTail={liveTail}
+        onSendMessage={() => undefined}
+        onSendKey={() => undefined}
+        onTabSelect={() => undefined}
+        onTabClose={() => undefined}
+        onDeleteSession={() => undefined}
+        onUploadFile={async () => ({
+          path: "/uploads/a.txt",
+          filename: "a.txt",
+        })}
+        onCopyBuffer={async () => "buffer"}
+      />
+    );
+    const container = mount(element("$ pnpm test"));
+    const { root } = mountedRoots.at(-1) as { root: Root };
+    openTerminalWindow();
+    const tabBarRenders = testDoubles.viewerTabBarRender.mock.calls.length;
+    expect(tabBarRenders).toBeGreaterThan(0);
+
+    act(() => root.render(element("$ pnpm test\nPASS")));
+
+    // 画面末尾は会話 (帯) まで届いている
+    expect(latestChatProps().liveTail).toBe("$ pnpm test\nPASS");
+    expect(testDoubles.viewerTabBarRender.mock.calls.length).toBe(
+      tabBarRenders
+    );
+    expect(isTerminalWindowOpen(container)).toBe(true);
+  });
+
+  it("関数を差し替えられても、端末の窓の中身は最新の関数を呼ぶ", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const props = makeProps({ onSendKey: first });
+    const container = mount(<MobileSessionView {...props} />);
+    const { root } = mountedRoots.at(-1) as { root: Root };
+    act(() => root.render(<MobileSessionView {...props} onSendKey={second} />));
+    openTerminalWindow();
+
+    const esc = Array.from(
+      terminalWindowOf(container).querySelectorAll("button")
+    ).find(button => button.textContent === "Esc");
+    click(esc);
+
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledWith("Escape");
   });
 });

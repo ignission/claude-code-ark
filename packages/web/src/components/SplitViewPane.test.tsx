@@ -8,12 +8,6 @@ import type {
 import { act, type ComponentProps, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  normalizeSplitViewLeftMode,
-  readSavedSplitViewLeftMode,
-  STORAGE_KEY_SPLIT_LEFT_MODE,
-  writeSavedSplitViewLeftMode,
-} from "../lib/split-view-left-mode";
 import { SplitViewPane } from "./SplitViewPane";
 
 interface ObservedChatProps {
@@ -21,16 +15,33 @@ interface ObservedChatProps {
   isActive: boolean;
   bridgeStatus?: BridgeSessionStatus;
   awaitingText?: string;
+  liveTail?: string;
+  onOpenTerminal?: () => void;
 }
+
+/** SplitViewPane が読みも書きもしない保存キー (値が残っていても無視する) */
+const LEGACY_LEFT_MODE_KEY = "ark-split-left-mode";
 
 const testDoubles = vi.hoisted(() => ({
   splitChatPane: vi.fn(),
+  /** TerminalPane が描画のたびに呼ぶフック。描画の回数を数えるのに使う */
+  terminalPaneRender: vi.fn(),
 }));
 
 vi.mock("./SplitChatPane", () => ({
   SplitChatPane: (props: ObservedChatProps) => {
     testDoubles.splitChatPane(props);
-    return <div data-testid={`chat-${props.session.id}`} />;
+    // 帯 (端末を開くボタン) と入力欄だけを持つ代役
+    return (
+      <div data-testid={`chat-${props.session.id}`}>
+        <button
+          type="button"
+          aria-label="端末を開く"
+          onClick={props.onOpenTerminal}
+        />
+        <textarea data-keynav="chat-input" aria-label="メッセージ" />
+      </div>
+    );
   },
 }));
 
@@ -43,7 +54,9 @@ vi.mock("../hooks/useMobile", () => ({
 }));
 
 vi.mock("../hooks/useTerminalLinkInjection", () => ({
-  useTerminalLinkInjection: () => undefined,
+  useTerminalLinkInjection: () => {
+    testDoubles.terminalPaneRender();
+  },
 }));
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
@@ -182,6 +195,19 @@ function dispatchFileDrop(filename: string): void {
   window.dispatchEvent(event);
 }
 
+const floatingOf = (scope: ParentNode) =>
+  scope.querySelector<HTMLElement>('[data-testid="floating-terminal"]');
+/** 開いている端末の窓 (閉じている間は null) */
+const dialogOf = (scope: ParentNode) =>
+  scope.querySelector<HTMLElement>('[role="dialog"][aria-label="端末"]');
+/** 窓の枠 (開閉に関係なく常にある) */
+const windowOf = (scope: ParentNode) =>
+  scope.querySelector<HTMLElement>('[data-testid="floating-terminal-window"]');
+const terminalIframe = (scope: ParentNode) =>
+  scope.querySelector<HTMLIFrameElement>('iframe[data-keynav="terminal"]');
+const isTerminalHidden = (scope: ParentNode) =>
+  terminalIframe(scope)?.closest(".hidden") != null;
+
 function latestChatProps(sessionId: string): ObservedChatProps {
   const calls = testDoubles.splitChatPane.mock.calls
     .map(([props]) => props as ObservedChatProps)
@@ -224,6 +250,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   localStorage.clear();
   testDoubles.splitChatPane.mockClear();
+  testDoubles.terminalPaneRender.mockClear();
 });
 
 afterEach(() => {
@@ -238,40 +265,15 @@ afterEach(() => {
   Reflect.deleteProperty(navigator, "clipboard");
 });
 
-describe("PC 左ペインの表示モード", () => {
-  it("保存値を正規化し、保存なし・不正値・localStorage の例外では会話を既定にする", () => {
-    expect(normalizeSplitViewLeftMode("terminal")).toBe("terminal");
-    expect(normalizeSplitViewLeftMode("chat")).toBe("chat");
-    expect(normalizeSplitViewLeftMode("board")).toBe("chat");
-    expect(normalizeSplitViewLeftMode(null)).toBe("chat");
-    expect(readSavedSplitViewLeftMode({ getItem: () => null })).toBe("chat");
-    expect(readSavedSplitViewLeftMode({ getItem: () => "terminal" })).toBe(
-      "terminal"
-    );
-    expect(
-      readSavedSplitViewLeftMode({
-        getItem: () => {
-          throw new Error("storage disabled");
-        },
-      })
-    ).toBe("chat");
-    expect(() =>
-      writeSavedSplitViewLeftMode("chat", {
-        setItem: () => {
-          throw new Error("storage disabled");
-        },
-      })
-    ).not.toThrow();
-  });
-
-  it("SplitViewPane から会話ビューへ bridgeStatus / awaitingText を渡す", () => {
-    localStorage.setItem(STORAGE_KEY_SPLIT_LEFT_MODE, "chat");
+describe("PC 会話と端末の窓", () => {
+  it("SplitViewPane から会話ビューへ bridgeStatus / awaitingText / liveTail と、端末を開く口を渡す", () => {
     const session = makeSession("wiring");
 
     mount(
       paneSection(session, true, {
         bridgeStatus: "AWAITING",
         awaitingText: "レビューを続けますか？",
+        liveTail: "❯ pnpm test",
       })
     );
 
@@ -279,111 +281,228 @@ describe("PC 左ペインの表示モード", () => {
       isActive: true,
       bridgeStatus: "AWAITING",
       awaitingText: "レビューを続けますか？",
+      liveTail: "❯ pnpm test",
     });
+    expect(latestChatProps(session.id).onOpenTerminal).toBeTypeOf("function");
   });
 
-  it("トグル操作で状態と localStorage が変わり、全セッションで共有される", () => {
-    localStorage.setItem(STORAGE_KEY_SPLIT_LEFT_MODE, "terminal");
+  it("上部バーに端末 / 会話の切り替えは無く、保存済みの「端末」の選択は無視して会話を出す", () => {
+    localStorage.setItem(LEGACY_LEFT_MODE_KEY, "terminal");
+    const container = mount(paneSection(makeSession("legacy"), true));
+    const left = container.querySelector('[data-testid="split-view-left"]');
+
+    expect(container.querySelector("fieldset")).toBeNull();
+    expect(left?.querySelector('button[aria-label="端末"]')).toBeNull();
+    expect(left?.querySelector('button[aria-label="会話"]')).toBeNull();
+    // 左ペインは会話だけ。端末は隠したままマウントしておく
+    expect(
+      left?.querySelector('[data-testid="chat-legacy"]')?.closest(".hidden")
+    ).toBeNull();
+    expect(left?.querySelector("iframe")).toBeNull();
+    expect(terminalIframe(container)).not.toBeNull();
+    expect(isTerminalHidden(container)).toBe(true);
+    expect(dialogOf(container)).toBeNull();
+    // 古い値は読まず、書き換えもしない
+    expect(localStorage.getItem(LEGACY_LEFT_MODE_KEY)).toBe("terminal");
+  });
+
+  it("帯から端末の窓を開き、閉じるボタンで閉じる。端末のiframeは同じ要素のまま", () => {
     const sessions = [makeSession("a"), makeSession("b")];
     const container = mount(renderSessions("a", sessions));
-    const paneA = container.querySelector('[data-testid="pane-a"]');
-    const paneB = container.querySelector('[data-testid="pane-b"]');
-    expect(paneA).not.toBeNull();
-    expect(paneB).not.toBeNull();
-    const iframeBeforeA = paneA?.querySelector("iframe");
-    const iframeBeforeB = paneB?.querySelector("iframe");
+    const paneA = container.querySelector('[data-testid="pane-a"]') as Element;
+    const paneB = container.querySelector('[data-testid="pane-b"]') as Element;
+    const iframeBeforeA = terminalIframe(paneA);
+    const iframeBeforeB = terminalIframe(paneB);
     expect(iframeBeforeA).not.toBeNull();
     expect(iframeBeforeB).not.toBeNull();
+    const parentBeforeA = iframeBeforeA?.parentElement;
 
-    clickButton(paneA as ParentNode, "会話");
+    clickButton(paneA, "端末を開く");
 
-    expect(localStorage.getItem(STORAGE_KEY_SPLIT_LEFT_MODE)).toBe("chat");
-    for (const [pane, id] of [
-      [paneA, "a"],
-      [paneB, "b"],
-    ] as const) {
-      expect(
-        pane
-          ?.querySelector('button[aria-label="会話"]')
-          ?.getAttribute("aria-pressed")
-      ).toBe("true");
-      // 会話を表示し、端末は隠したまま残す (ttydのiframeを作り直さない)
-      expect(
-        pane?.querySelector(`[data-testid="chat-${id}"]`)?.closest(".hidden")
-      ).toBeNull();
-      expect(pane?.querySelector("iframe")?.closest(".hidden")).not.toBeNull();
-    }
+    expect(dialogOf(paneA)).not.toBeNull();
+    expect(isTerminalHidden(paneA)).toBe(false);
+    // 会話は窓の後ろに出したまま
+    expect(
+      paneA.querySelector('[data-testid="chat-a"]')?.closest(".hidden")
+    ).toBeNull();
+    // 窓は左ペインの中ではなく、セッションの画面全体に重ねる
+    expect(
+      paneA
+        .querySelector('[data-testid="split-view-left"]')
+        ?.contains(dialogOf(paneA))
+    ).toBe(false);
+    expect(
+      paneA
+        .querySelector('[data-testid="split-view-body"]')
+        ?.contains(dialogOf(paneA))
+    ).toBe(false);
+    // 開閉はセッションごと。別のセッションの窓は開かない
+    expect(dialogOf(paneB)).toBeNull();
+    expect(isTerminalHidden(paneB)).toBe(true);
 
-    clickButton(paneA as ParentNode, "端末");
+    clickButton(dialogOf(paneA) as ParentNode, "端末を閉じる");
 
-    // 会話へ切り替えて端末へ戻っても、同じiframe要素が残っている
+    expect(dialogOf(paneA)).toBeNull();
+    expect(isTerminalHidden(paneA)).toBe(true);
+    // 同じiframe要素が同じ親の下に残っている
     // (作り直されていない = ttydが再接続していない証拠。要素の同一性で確認する)
-    expect(localStorage.getItem(STORAGE_KEY_SPLIT_LEFT_MODE)).toBe("terminal");
-    expect(paneA?.querySelector("iframe")).toBe(iframeBeforeA);
-    expect(paneB?.querySelector("iframe")).toBe(iframeBeforeB);
+    expect(terminalIframe(paneA)).toBe(iframeBeforeA);
+    expect(terminalIframe(paneA)?.parentElement).toBe(parentBeforeA);
+    expect(terminalIframe(paneB)).toBe(iframeBeforeB);
+    // 開閉の状態は保存しない
+    expect(localStorage.length).toBe(0);
   });
 
-  it("localStorage 書き込み失敗時も全セッションへ選択モードを通知する", () => {
-    localStorage.setItem(STORAGE_KEY_SPLIT_LEFT_MODE, "terminal");
-    const sessions = [makeSession("storage-a"), makeSession("storage-b")];
-    const container = mount(renderSessions("storage-a", sessions));
-    const paneA = container.querySelector('[data-testid="pane-storage-a"]');
-    const paneB = container.querySelector('[data-testid="pane-storage-b"]');
-    expect(paneA).not.toBeNull();
-    expect(paneB).not.toBeNull();
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new Error("storage disabled");
+  it("窓の外 (暗くした部分) を押して離すと閉じる", () => {
+    const container = mount(paneSection(makeSession("backdrop"), true));
+    clickButton(container, "端末を開く");
+    expect(dialogOf(container)).not.toBeNull();
+
+    act(() => {
+      floatingOf(container)?.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true })
+      );
+    });
+    // 押しただけでは閉じない (閉じたあとに届く click が、下の帯や送信ボタンを押さないように)
+    expect(dialogOf(container)).not.toBeNull();
+    act(() => {
+      floatingOf(container)?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
     });
 
-    clickButton(paneA as ParentNode, "会話");
-
-    // 書き込みは失敗し、保存値は切り替え前のまま
-    expect(localStorage.getItem(STORAGE_KEY_SPLIT_LEFT_MODE)).toBe("terminal");
-    for (const pane of [paneA, paneB]) {
-      expect(
-        pane
-          ?.querySelector('button[aria-label="会話"]')
-          ?.getAttribute("aria-pressed")
-      ).toBe("true");
-    }
+    expect(dialogOf(container)).toBeNull();
+    expect(isTerminalHidden(container)).toBe(true);
   });
 
-  it("active session と left mode に応じて会話購読と端末 D&D を一枚だけ有効にする", async () => {
-    localStorage.setItem(STORAGE_KEY_SPLIT_LEFT_MODE, "terminal");
+  it("このセッションが選ばれなくなったら閉じ、選び直しても閉じたまま", () => {
+    const session = makeSession("deselect");
+    const container = mount(paneSection(session, true));
+    const root = mountedRoots.at(-1)?.root;
+    const iframe = terminalIframe(container);
+    clickButton(container, "端末を開く");
+    expect(dialogOf(container)).not.toBeNull();
+
+    act(() => root?.render(paneSection(session, false)));
+    expect(dialogOf(container)).toBeNull();
+    expect(isTerminalHidden(container)).toBe(true);
+
+    act(() => root?.render(paneSection(session, true)));
+    expect(dialogOf(container)).toBeNull();
+    expect(isTerminalHidden(container)).toBe(true);
+    expect(terminalIframe(container)).toBe(iframe);
+  });
+
+  it("開いたら端末へ、閉じたら会話の入力欄へフォーカスを移す", () => {
+    const container = mount(paneSection(makeSession("focus"), true));
+
+    clickButton(container, "端末を開く");
+    expect(document.activeElement).toBe(terminalIframe(container));
+
+    clickButton(dialogOf(container) as ParentNode, "端末を閉じる");
+    expect(document.activeElement).toBe(
+      container.querySelector('textarea[data-keynav="chat-input"]')
+    );
+  });
+
+  it("端末がまだ無いセッションで開くと、フォーカスを窓に置く (打ったキーを会話の入力欄へ流さない)", () => {
+    const starting: ManagedSession = {
+      ...makeSession("starting"),
+      ttydPort: undefined,
+      ttydUrl: undefined,
+    };
+    const container = mount(paneSection(starting, true));
+    const chatInput = container.querySelector<HTMLTextAreaElement>(
+      'textarea[data-keynav="chat-input"]'
+    );
+    chatInput?.focus();
+    expect(terminalIframe(container)).toBeNull();
+
+    clickButton(container, "端末を開く");
+
+    expect(document.activeElement).toBe(windowOf(container));
+    expect(document.activeElement).not.toBe(chatInput);
+  });
+
+  it("窓を開いている間に端末が現れたら、そこでフォーカスを端末へ移す", () => {
+    const starting: ManagedSession = {
+      ...makeSession("late-frame"),
+      ttydPort: undefined,
+      ttydUrl: undefined,
+    };
+    const container = mount(paneSection(starting, true));
+    const root = mountedRoots.at(-1)?.root;
+    clickButton(container, "端末を開く");
+    expect(document.activeElement).toBe(windowOf(container));
+
+    act(() => root?.render(paneSection(makeSession("late-frame"), true)));
+
+    expect(terminalIframe(container)).not.toBeNull();
+    expect(document.activeElement).toBe(terminalIframe(container));
+  });
+
+  it("端末が現れても、窓を閉じていればフォーカスを動かさない", () => {
+    const starting: ManagedSession = {
+      ...makeSession("late-closed"),
+      ttydPort: undefined,
+      ttydUrl: undefined,
+    };
+    const container = mount(paneSection(starting, true));
+    const root = mountedRoots.at(-1)?.root;
+    const chatInput = container.querySelector<HTMLTextAreaElement>(
+      'textarea[data-keynav="chat-input"]'
+    );
+    chatInput?.focus();
+
+    act(() => root?.render(paneSection(makeSession("late-closed"), true)));
+
+    expect(terminalIframe(container)).not.toBeNull();
+    expect(document.activeElement).toBe(chatInput);
+  });
+
+  it("選択が外れて閉じたときは、フォーカスを動かさない", () => {
+    const session = makeSession("focus-deselect");
+    const container = mount(paneSection(session, true));
+    const root = mountedRoots.at(-1)?.root;
+    clickButton(container, "端末を開く");
+    const elsewhere = document.createElement("button");
+    document.body.append(elsewhere);
+    elsewhere.focus();
+
+    act(() => root?.render(paneSection(session, false)));
+
+    expect(dialogOf(container)).toBeNull();
+    expect(document.activeElement).toBe(elsewhere);
+    elsewhere.remove();
+  });
+
+  it("会話は選択中のセッションだけが購読し、端末のD&Dは窓を開いた選択中の1枚だけが受ける", async () => {
     const sessions = [makeSession("a"), makeSession("b")];
     const container = mount(renderSessions("a", sessions));
     const root = mountedRoots.at(-1)?.root;
     expect(root).toBeDefined();
+    const paneA = container.querySelector('[data-testid="pane-a"]') as Element;
+    const paneB = container.querySelector('[data-testid="pane-b"]') as Element;
 
-    expect(latestChatProps("a").isActive).toBe(false);
+    expect(latestChatProps("a").isActive).toBe(true);
+    expect(latestChatProps("b").isActive).toBe(false);
+
+    // 窓を開いても、後ろの会話は購読を続ける
+    clickButton(paneA, "端末を開く");
+    expect(latestChatProps("a").isActive).toBe(true);
     expect(latestChatProps("b").isActive).toBe(false);
 
     act(() => dispatchFileDrop("active-a.txt"));
-    await waitForTerminalUploadPreview(
-      container.querySelector('[data-testid="pane-a"]') as ParentNode
-    );
-    expect(
-      hasTerminalUploadPreview(
-        container.querySelector('[data-testid="pane-a"]') as ParentNode
-      )
-    ).toBe(true);
-    expect(
-      hasTerminalUploadPreview(
-        container.querySelector('[data-testid="pane-b"]') as ParentNode
-      )
-    ).toBe(false);
+    await waitForTerminalUploadPreview(paneA);
+    expect(hasTerminalUploadPreview(paneA)).toBe(true);
+    expect(hasTerminalUploadPreview(paneB)).toBe(false);
 
     act(() => root?.render(renderSessions("b", sessions)));
-    expect(latestChatProps("a").isActive).toBe(false);
-    expect(latestChatProps("b").isActive).toBe(false);
-
-    clickButton(container, "会話");
     expect(latestChatProps("a").isActive).toBe(false);
     expect(latestChatProps("b").isActive).toBe(true);
   });
 
-  it("display:none の TerminalPane は window drop を処理しない", async () => {
-    localStorage.setItem(STORAGE_KEY_SPLIT_LEFT_MODE, "chat");
+  it("窓を閉じている間の TerminalPane は window drop を処理しない", async () => {
     const session = makeSession("hidden-terminal");
     const container = mount(paneSection(session, true));
     const readSpy = vi.spyOn(FileReader.prototype, "readAsDataURL");
@@ -393,8 +512,8 @@ describe("PC 左ペインの表示モード", () => {
     expect(readSpy).not.toHaveBeenCalled();
     expect(hasTerminalUploadPreview(container)).toBe(false);
 
-    // 陽性対照: 同じペインを端末表示に戻せば、同じ window drop が処理される。
-    clickButton(container, "端末");
+    // 陽性対照: 同じペインで窓を開けば、同じ window drop が処理される。
+    clickButton(container, "端末を開く");
     act(() => dispatchFileDrop("visible-terminal.txt"));
     expect(readSpy).toHaveBeenCalledTimes(1);
     await waitForTerminalUploadPreview(container);
@@ -447,7 +566,7 @@ describe("PC上部バー", () => {
     );
   });
 
-  it("端末 / 会話の切り替え・パネルの開閉・その他の操作を上部バーに置く", () => {
+  it("パネルの開閉・その他の操作を上部バーに置き、端末 / 会話の切り替えは置かない", () => {
     // パネルを開くとSplitViewPaneが幅の追従にResizeObserverを使う (jsdomに無い)
     vi.stubGlobal(
       "ResizeObserver",
@@ -460,8 +579,8 @@ describe("PC上部バー", () => {
     const header = container.querySelector("header");
     expect(header).not.toBeNull();
     const scope = header as ParentNode;
-    expect(scope.querySelector('button[aria-label="端末"]')).not.toBeNull();
-    expect(scope.querySelector('button[aria-label="会話"]')).not.toBeNull();
+    expect(scope.querySelector('button[aria-label="端末"]')).toBeNull();
+    expect(scope.querySelector('button[aria-label="会話"]')).toBeNull();
     expect(
       scope.querySelector('button[aria-label="その他の操作"]')
     ).not.toBeNull();
@@ -492,7 +611,6 @@ describe("PC上部バーの狭い幅の畳み方", () => {
   // 「どこに何のclassを付けたか」と「読み上げから消えていないこと」。
   // 実際に畳まれる幅はブラウザでの実測で決める
   it("狭いときアイコンだけにする文言は、読み上げには残す", () => {
-    writeSavedSplitViewLeftMode("terminal");
     const container = mount(
       paneSection(makeSession("narrow"), true, {
         displayName: "ログイン画面",
@@ -502,13 +620,7 @@ describe("PC上部バーの狭い幅の畳み方", () => {
     );
     const header = container.querySelector("header") as HTMLElement;
 
-    for (const label of [
-      "feature/login",
-      "確認待ち",
-      "端末",
-      "会話",
-      "パネル",
-    ]) {
+    for (const label of ["feature/login", "確認待ち", "パネル"]) {
       // 文言そのものを持つ一番内側の span を見る
       // (状態チップは外側の span も同じ textContent を持つ)
       const span = Array.from(header.querySelectorAll("span")).find(
@@ -541,118 +653,84 @@ describe("PC上部バーの狭い幅の畳み方", () => {
   });
 });
 
-describe("PC上部バーの1タップ操作", () => {
-  /** 端末モードで並ぶ6つ。入力バーはPCの初期状態 (非表示) の文言で引く */
-  const QUICK_LABELS = [
-    "ファイルを添付",
-    "画像を貼り付け",
-    "メッセージのショートカット",
+describe("PC上部バーの1タップ操作と、端末の窓の操作", () => {
+  /** 端末の窓の上端に並ぶ3つ。入力バーはPCの初期状態 (非表示) の文言で引く */
+  const TERMINAL_LABELS = [
     "端末のバッファをコピー",
     "端末を再読み込み",
     "入力バーを表示",
   ];
 
-  it("端末モードでは添付・画像・ショートカットと端末の操作をパネルの手前に並べる", () => {
-    writeSavedSplitViewLeftMode("terminal");
+  /** 窓を開いて、その中 (ダイアログ) を返す */
+  function openTerminal(container: ParentNode): HTMLElement {
+    clickButton(container, "端末を開く");
+    const dialog = dialogOf(container);
+    expect(dialog).not.toBeNull();
+    return dialog as HTMLElement;
+  }
+
+  it("上部バーの1タップ操作はショートカットだけで、パネルの手前に置く", () => {
+    const container = mount(
+      paneSection(makeSession("quick-header"), true, {
+        onCopyBuffer: vi.fn(async () => "buffer"),
+      })
+    );
+    const scope = container.querySelector("header") as ParentNode;
+
+    const labels = headerButtonLabels(scope);
+    expect(labels).toEqual([
+      "メッセージのショートカット",
+      "パネル",
+      "その他の操作",
+    ]);
+  });
+
+  it("端末の操作 (コピー・再読み込み・入力バー) は窓の上端に、閉じるボタンの手前に並べる", () => {
     const container = mount(
       paneSection(makeSession("quick-terminal"), true, {
         onCopyBuffer: vi.fn(async () => "buffer"),
       })
     );
-    const scope = container.querySelector("header") as ParentNode;
+    const dialog = openTerminal(container);
+    const bar = dialog.querySelector("h2")?.parentElement as ParentNode;
 
-    const labels = headerButtonLabels(scope);
-    for (const label of QUICK_LABELS) {
-      expect(labels).toContain(label);
-      expect(labels.indexOf(label)).toBeLessThan(labels.indexOf("パネル"));
+    // 並び順も固定する (端末の操作が先、閉じるボタンが最後)
+    expect(headerButtonLabels(bar)).toEqual([
+      ...TERMINAL_LABELS,
+      "端末を閉じる",
+    ]);
+  });
+
+  it("添付と画像の貼り付けは、上部バーにも窓の上端にも置かない (会話の入力欄が担う)", () => {
+    const container = mount(
+      paneSection(makeSession("quick-no-attach"), true, {
+        onCopyBuffer: vi.fn(async () => "buffer"),
+      })
+    );
+    const dialog = openTerminal(container);
+    const bar = dialog.querySelector("h2")?.parentElement as ParentNode;
+
+    for (const scope of [
+      container.querySelector("header") as ParentNode,
+      bar,
+    ]) {
+      const labels = headerButtonLabels(scope);
+      expect(labels).not.toContain("ファイルを添付");
+      expect(labels).not.toContain("画像を貼り付け");
     }
-    // 並び順も固定する (送る操作が先、端末の操作があと)
-    expect(labels.filter(label => QUICK_LABELS.includes(label))).toEqual(
-      QUICK_LABELS
-    );
-  });
-
-  it("会話モードでは端末の操作も出さない (端末ペインごと隠れているため)", () => {
-    writeSavedSplitViewLeftMode("chat");
-    const container = mount(
-      paneSection(makeSession("quick-chat"), true, {
-        onCopyBuffer: vi.fn(async () => "buffer"),
-      })
-    );
-    const scope = container.querySelector("header") as ParentNode;
-
-    const labels = headerButtonLabels(scope);
-    expect(labels).not.toContain("ファイルを添付");
-    expect(labels).not.toContain("画像を貼り付け");
-    expect(labels).not.toContain("端末のバッファをコピー");
-    expect(labels).not.toContain("端末を再読み込み");
-    expect(labels).not.toContain("入力バーを表示");
-    expect(labels).toContain("メッセージのショートカット");
-  });
-
-  it("アップロードできない環境では、端末モードでも添付と画像を出さない", () => {
-    writeSavedSplitViewLeftMode("terminal");
-    const container = mount(
-      paneSection(makeSession("quick-no-upload"), true, {
-        onUploadFile: undefined,
-        onCopyBuffer: vi.fn(async () => "buffer"),
-      })
-    );
-    const scope = container.querySelector("header") as ParentNode;
-
-    const labels = headerButtonLabels(scope);
-    expect(labels).not.toContain("ファイルを添付");
-    expect(labels).not.toContain("画像を貼り付け");
-    expect(labels).toContain("メッセージのショートカット");
-    expect(labels).toContain("端末のバッファをコピー");
   });
 
   it("バッファを取れない環境では、コピーだけを出さない", () => {
-    writeSavedSplitViewLeftMode("terminal");
     const container = mount(paneSection(makeSession("quick-no-copy"), true));
-    const scope = container.querySelector("header") as ParentNode;
+    const dialog = openTerminal(container);
 
-    const labels = headerButtonLabels(scope);
+    const labels = headerButtonLabels(dialog);
     expect(labels).not.toContain("端末のバッファをコピー");
     expect(labels).toContain("端末を再読み込み");
     expect(labels).toContain("入力バーを表示");
   });
 
-  it("添付のボタンは端末ペインのファイル選択を開く", () => {
-    writeSavedSplitViewLeftMode("terminal");
-    const container = mount(paneSection(makeSession("quick-attach"), true));
-    const input =
-      container.querySelector<HTMLInputElement>('input[type="file"]');
-    expect(input).not.toBeNull();
-    const click = vi.spyOn(input as HTMLInputElement, "click");
-
-    clickButton(
-      container.querySelector("header") as ParentNode,
-      "ファイルを添付"
-    );
-
-    expect(click).toHaveBeenCalledTimes(1);
-  });
-
-  it("画像のボタンはクリップボードを読みに行く", () => {
-    writeSavedSplitViewLeftMode("terminal");
-    const read = vi.fn(async () => []);
-    Object.defineProperty(navigator, "clipboard", {
-      value: { read },
-      configurable: true,
-    });
-    const container = mount(paneSection(makeSession("quick-paste"), true));
-
-    clickButton(
-      container.querySelector("header") as ParentNode,
-      "画像を貼り付け"
-    );
-
-    expect(read).toHaveBeenCalledTimes(1);
-  });
-
-  it("コピーのボタンは `…` と同じく tmux バッファをクリップボードへ書く", async () => {
-    writeSavedSplitViewLeftMode("terminal");
+  it("コピーのボタンは tmux バッファをクリップボードへ書く", async () => {
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText },
@@ -663,10 +741,7 @@ describe("PC上部バーの1タップ操作", () => {
       paneSection(makeSession("quick-copy"), true, { onCopyBuffer })
     );
 
-    clickButton(
-      container.querySelector("header") as ParentNode,
-      "端末のバッファをコピー"
-    );
+    clickButton(openTerminal(container), "端末のバッファをコピー");
 
     expect(onCopyBuffer).toHaveBeenCalledTimes(1);
     await vi.waitFor(() => {
@@ -675,24 +750,90 @@ describe("PC上部バーの1タップ操作", () => {
   });
 
   it("再読み込みのボタンは ttyd の iframe を貼り直す", () => {
-    writeSavedSplitViewLeftMode("terminal");
     const container = mount(paneSection(makeSession("quick-reload"), true));
-    const before = container.querySelector("iframe");
+    const dialog = openTerminal(container);
+    const before = terminalIframe(container);
     expect(before).not.toBeNull();
 
-    clickButton(
-      container.querySelector("header") as ParentNode,
-      "端末を再読み込み"
-    );
+    clickButton(dialog, "端末を再読み込み");
 
     // key が変わって作り直される = ttyd へ繋ぎ直す (要素の同一性で確認する)
-    expect(container.querySelector("iframe")).not.toBe(before);
+    expect(terminalIframe(container)).not.toBeNull();
+    expect(terminalIframe(container)).not.toBe(before);
+  });
+
+  /** 実際に押したときと同じく、ボタンにフォーカスを置いてから押す */
+  function focusAndClick(scope: ParentNode, label: string): HTMLButtonElement {
+    const button = scope.querySelector<HTMLButtonElement>(
+      `button[aria-label="${label}"]`
+    );
+    expect(button).not.toBeNull();
+    button?.focus();
+    expect(document.activeElement).toBe(button);
+    act(() =>
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true }))
+    );
+    return button as HTMLButtonElement;
+  }
+
+  it("コピーのあとは、フォーカスを端末へ戻す (続くEnterでもう一度押さない)", () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn(async () => undefined) },
+      configurable: true,
+    });
+    const container = mount(
+      paneSection(makeSession("focus-copy"), true, {
+        onCopyBuffer: vi.fn(async () => "端末の中身"),
+      })
+    );
+
+    focusAndClick(openTerminal(container), "端末のバッファをコピー");
+
+    expect(document.activeElement).toBe(terminalIframe(container));
+  });
+
+  it("再読み込みのあとは、貼り直した端末へフォーカスを移す", () => {
+    const container = mount(paneSection(makeSession("focus-reload"), true));
+    const dialog = openTerminal(container);
+    const before = terminalIframe(container);
+
+    focusAndClick(dialog, "端末を再読み込み");
+
+    expect(terminalIframe(container)).not.toBe(before);
+    expect(document.activeElement).toBe(terminalIframe(container));
+  });
+
+  it("端末がまだ無いセッションでは、再読み込みのあとフォーカスを窓に置く", () => {
+    const starting: ManagedSession = {
+      ...makeSession("focus-reload-starting"),
+      ttydPort: undefined,
+      ttydUrl: undefined,
+    };
+    const container = mount(paneSection(starting, true));
+
+    focusAndClick(openTerminal(container), "端末を再読み込み");
+
+    expect(document.activeElement).toBe(windowOf(container));
+  });
+
+  it("入力バーを出したら入力バーへ、隠したら端末へフォーカスを移す", () => {
+    const container = mount(paneSection(makeSession("focus-input-bar"), true));
+    const dialog = openTerminal(container);
+
+    const showButton = focusAndClick(dialog, "入力バーを表示");
+
+    expect(document.activeElement).not.toBe(showButton);
+    expect(document.activeElement?.tagName).toBe("TEXTAREA");
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    focusAndClick(dialog, "入力バーを隠す");
+
+    expect(document.activeElement).toBe(terminalIframe(container));
   });
 
   it("入力バーのボタンは押すたびに文言と aria-pressed が入れ替わる", () => {
-    writeSavedSplitViewLeftMode("terminal");
     const container = mount(paneSection(makeSession("quick-input-bar"), true));
-    const scope = container.querySelector("header") as ParentNode;
+    const scope = openTerminal(container);
     // PCの入力バーは既定で隠れている (TerminalPane)
     expect(
       scope
@@ -713,7 +854,6 @@ describe("PC上部バーの1タップ操作", () => {
   });
 
   it("ショートカットのボタンは1タップで一覧を出す", () => {
-    writeSavedSplitViewLeftMode("chat");
     const container = mount(
       paneSection(makeSession("quick-shortcuts"), true, {
         messageShortcuts: [
@@ -740,7 +880,6 @@ describe("PC上部バーの1タップ操作", () => {
   });
 
   it("ショートカットの管理ダイアログは上部バーの外で開く (メニューが閉じても残る)", () => {
-    writeSavedSplitViewLeftMode("chat");
     const container = mount(paneSection(makeSession("quick-manage"), true));
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
 
@@ -758,7 +897,6 @@ describe("PC上部バーの1タップ操作", () => {
   });
 
   it("`…` には端末の操作を残さず、セッション全体の操作だけを置く", () => {
-    writeSavedSplitViewLeftMode("terminal");
     const container = mount(
       paneSection(makeSession("quick-rest"), true, {
         onCopyBuffer: vi.fn(async () => "buffer"),
@@ -1428,5 +1566,61 @@ describe("PC 右の作業エリア (図 / ファイル)", () => {
     );
     act(() => window.dispatchEvent(new MouseEvent("mouseup")));
     expect(localStorage.getItem("ark-split-left-width")).toBe("632");
+  });
+});
+
+describe("PC 画面末尾の更新と再描画", () => {
+  it("liveTail だけが変わっても、TerminalPane は描画し直さない (親が毎回新しい関数を渡しても)", () => {
+    const session = makeSession("render-count");
+    const tabs: ComponentProps<typeof SplitViewPane>["tabs"] = [
+      { type: "terminal", id: "terminal-render-count" },
+    ];
+    // makePaneProps は呼ぶたびに新しい関数を作る (Dashboard のインラインの関数と同じ)
+    const container = mount(
+      paneSection(session, true, { tabs, liveTail: "$ pnpm test" })
+    );
+    const root = mountedRoots.at(-1)?.root;
+    const rendersBefore = testDoubles.terminalPaneRender.mock.calls.length;
+    expect(rendersBefore).toBeGreaterThan(0);
+
+    act(() =>
+      root?.render(
+        paneSection(session, true, { tabs, liveTail: "$ pnpm test\nPASS" })
+      )
+    );
+
+    // 画面末尾は会話 (帯) まで届いている
+    expect(latestChatProps(session.id).liveTail).toBe("$ pnpm test\nPASS");
+    expect(testDoubles.terminalPaneRender.mock.calls.length).toBe(
+      rendersBefore
+    );
+    expect(terminalIframe(container)).not.toBeNull();
+  });
+
+  it("関数を差し替えられても、TerminalPane は最新の関数を呼ぶ", () => {
+    const session = makeSession("latest-callback");
+    const tabs: ComponentProps<typeof SplitViewPane>["tabs"] = [
+      { type: "terminal", id: "terminal-latest-callback" },
+    ];
+    const first = vi.fn();
+    const second = vi.fn();
+    const container = mount(
+      paneSection(session, true, { tabs, onSendKey: first })
+    );
+    const root = mountedRoots.at(-1)?.root;
+    act(() =>
+      root?.render(paneSection(session, true, { tabs, onSendKey: second }))
+    );
+    clickButton(container, "端末を開く");
+    clickButton(dialogOf(container) as ParentNode, "入力バーを表示");
+
+    const yes = dialogOf(container)?.querySelector<HTMLButtonElement>(
+      "button[title=\"Send 'y' (yes)\"]"
+    );
+    expect(yes).not.toBeNull();
+    act(() => yes?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledWith("y");
   });
 });

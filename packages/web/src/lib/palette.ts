@@ -64,9 +64,9 @@ export function regionAfter(action: PaletteAction): KeyNavRegion | undefined {
 
 /** 名前で実行できる操作。取り消せない操作 (停止・削除・再起動) は載せない */
 export const PALETTE_COMMANDS: readonly PaletteItem[] = [
-  command("toggle-left", "端末と会話を切り替える", "terminal chat t", {
+  command("toggle-terminal", "端末の窓を開閉する", "terminal 端末 t", {
     type: "keynav",
-    command: { type: "toggle-left-mode" },
+    command: { type: "toggle-terminal" },
   }),
   command("toggle-work", "作業エリアを開閉する", "panel パネル p", {
     type: "keynav",

@@ -3,10 +3,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT,
-  writeSavedSplitViewLeftMode,
-} from "../lib/split-view-left-mode";
 import { useViewerTabs } from "./useViewerTabs";
 
 (
@@ -54,7 +50,7 @@ function mountHook(
 }
 
 beforeEach(() => {
-  writeSavedSplitViewLeftMode("chat");
+  window.localStorage.clear();
 });
 
 afterEach(() => {
@@ -65,22 +61,14 @@ afterEach(() => {
 });
 
 describe("useViewerTabs のファイルタブ", () => {
-  it("ファイルを開くと左ペインをビューア側へ切り替える", () => {
+  it("ファイルを開くと、端末のタブ列へファイルのタブを足す (PCの左ペインの表示は保存しない)", () => {
     const api = mountHook();
-    const modes: string[] = [];
-    const listener = (event: Event) => {
-      modes.push((event as CustomEvent<{ mode: string }>).detail.mode);
-    };
-    window.addEventListener(SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT, listener);
 
     act(() => {
       api().openFileTab("s1", "packages/web/src/x.ts", 40, 58);
     });
 
-    window.removeEventListener(SPLIT_VIEW_LEFT_MODE_CHANGE_EVENT, listener);
-    // 会話モードのままだとタブは増えるのに画面が変わらないので、必ず切り替える
-    expect(modes).toContain("terminal");
-    expect(window.localStorage.getItem("ark-split-left-mode")).toBe("terminal");
+    expect(window.localStorage.getItem("ark-split-left-mode")).toBeNull();
 
     const tabs = api().getTabsForSession("s1");
     expect(tabs.map(t => t.type)).toEqual(["terminal", "file"]);
@@ -88,6 +76,18 @@ describe("useViewerTabs のファイルタブ", () => {
     expect(fileTab.type === "file" && fileTab.targetLine).toBe(40);
     // 範囲で指定されたときは終了行も持つ (ハイライトを 1 行で切らない)
     expect(fileTab.type === "file" && fileTab.targetEndLine).toBe(58);
+  });
+});
+
+describe("useViewerTabs のタブの同一性", () => {
+  it("タブを開いていないセッションには、呼ぶたびに同じ配列を返す (受け取る側のメモ化を壊さない)", () => {
+    const api = mountHook();
+
+    const first = api().getTabsForSession("s9");
+    const second = api().getTabsForSession("s9");
+
+    expect(first.map(t => t.type)).toEqual(["terminal"]);
+    expect(second).toBe(first);
   });
 });
 

@@ -491,42 +491,206 @@ describe("SplitChatPane: 入力欄", () => {
   });
 });
 
+describe("SplitChatPane: 端末の帯", () => {
+  const strip = (container: HTMLElement) =>
+    container.querySelector<HTMLButtonElement>(
+      'button[data-testid="chat-terminal-strip"]'
+    );
+  const tail = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>('[data-testid="chat-live-tail"]');
+  const clip = (container: HTMLElement) => tail(container)?.parentElement;
+  const text = "⏺ Bash(pnpm test)\n✻ Cogitating… (32s · ↓ 1.2k tokens)";
+
+  it("画面の末尾を、状態に関係なく加工せずに出す", () => {
+    for (const bridgeStatus of [
+      "THINK",
+      "TOOL",
+      "IDLE",
+      "READY",
+      "AWAITING",
+      "STOP",
+      undefined,
+    ] as const) {
+      const { container } = renderChat({
+        bridgeStatus,
+        liveTail: text,
+        onOpenTerminal: vi.fn(),
+      });
+      expect(tail(container)?.textContent).toBe(text);
+    }
+  });
+
+  it("帯は会話の流れの外、入力欄のすぐ上に置く", () => {
+    const { container } = renderChat({
+      bridgeStatus: "THINK",
+      liveTail: text,
+      onOpenTerminal: vi.fn(),
+    });
+    const scroller = container.querySelector('[data-keynav="chat-scroll"]');
+    const textarea = container.querySelector(
+      'textarea[aria-label="メッセージ"]'
+    );
+
+    expect(scroller?.contains(strip(container))).toBe(false);
+    const following = (a: Node | null | undefined, b: Node | null) =>
+      Boolean(
+        a &&
+          b &&
+          a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING
+      );
+    expect(following(scroller, strip(container))).toBe(true);
+    expect(following(strip(container), textarea)).toBe(true);
+  });
+
+  it("高さは行数に関係なく5行ぶんで、下端に寄せて切り、折り返さない", () => {
+    const short = renderChat({ liveTail: "1行だけ", onOpenTerminal: vi.fn() });
+    const long = renderChat({
+      liveTail: Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n"),
+      onOpenTerminal: vi.fn(),
+    });
+
+    for (const { container } of [short, long]) {
+      // 行の高さ16px x 5行
+      expect(clip(container)?.style.height).toBe("80px");
+      expect(clip(container)?.className).toContain("overflow-hidden");
+      expect(clip(container)?.className).toContain("justify-end");
+      expect(tail(container)?.className).toContain("whitespace-pre");
+      expect(tail(container)?.className).not.toContain("overflow-x-auto");
+    }
+    // 中身は切り詰めず、そのまま持つ (見せる範囲は枠で切る)
+    expect(tail(long.container)?.textContent).toContain("line 0");
+    expect(tail(long.container)?.textContent).toContain("line 19");
+  });
+
+  it("帯の全体が1つのボタンで、押すと onOpenTerminal を呼ぶ。中身は読み上げない", () => {
+    const onOpenTerminal = vi.fn();
+    const { container } = renderChat({ liveTail: text, onOpenTerminal });
+    const button = strip(container);
+
+    expect(button?.getAttribute("aria-label")).toBe("端末を開く");
+    expect(button?.getAttribute("type")).toBe("button");
+    expect(button?.contains(tail(container) ?? null)).toBe(true);
+    expect(tail(container)?.closest('[aria-hidden="true"]')).not.toBeNull();
+    // 開くことが分かるアイコンを持つ
+    expect(button?.querySelector("svg")).not.toBeNull();
+
+    act(() => button?.click());
+    expect(onOpenTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it("画面の末尾が無いときは、1行の高さで「端末を開く」とだけ出す", () => {
+    for (const liveTail of [undefined, ""]) {
+      const onOpenTerminal = vi.fn();
+      const { container } = renderChat({ liveTail, onOpenTerminal });
+      const button = strip(container);
+
+      expect(button).not.toBeNull();
+      expect(tail(container)).toBeNull();
+      expect(button?.textContent).toBe("端末を開く");
+      expect(
+        button?.querySelector<HTMLElement>(
+          '[data-testid="chat-terminal-strip-body"]'
+        )?.style.height
+      ).toBe("16px");
+
+      act(() => button?.click());
+      expect(onOpenTerminal).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("onOpenTerminal が無ければ、画面の末尾があっても帯を出さない", () => {
+    const { container } = renderChat({ bridgeStatus: "THINK", liveTail: text });
+
+    expect(strip(container)).toBeNull();
+    expect(tail(container)).toBeNull();
+  });
+
+  it("モバイルの配置でも、入力欄の上に帯を出す", () => {
+    const onOpenTerminal = vi.fn();
+    const { container } = renderChat({
+      liveTail: text,
+      layout: "mobile",
+      onOpenTerminal,
+    });
+    const stack = container.querySelector('[data-testid="floating-composer"]');
+
+    expect(stack?.contains(strip(container))).toBe(true);
+    expect(tail(container)?.textContent).toBe(text);
+  });
+});
+
+describe("SplitChatPane: スラッシュコマンドの補完", () => {
+  const COMMANDS: SlashCommandInfo[] = [
+    { name: "/clear", source: "built-in" },
+    { name: "/compact", source: "built-in" },
+  ];
+  const menu = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>('[data-testid="chat-slash-menu"]');
+
+  it.each(["pane", "mobile"] as const)(
+    "候補は入力欄を基準に出す (帯の上へ離さない): layout=%s",
+    layout => {
+      const { container } = renderChat(
+        {
+          layout,
+          liveTail: "$ pnpm test\nPASS",
+          onOpenTerminal: vi.fn(),
+        },
+        COMMANDS
+      );
+      const textarea = container.querySelector<HTMLTextAreaElement>(
+        'textarea[aria-label="メッセージ"]'
+      );
+      const strip = container.querySelector(
+        '[data-testid="chat-terminal-strip"]'
+      );
+      expect(strip).not.toBeNull();
+      expect(menu(container)).toBeNull();
+
+      typeInto(textarea as HTMLTextAreaElement, "/c");
+
+      const list = menu(container);
+      expect(list?.textContent).toContain("/clear");
+      // 位置の基準 (いちばん近い relative の祖先) は入力欄だけを持ち、帯は持たない
+      expect(list?.className).toContain("absolute");
+      expect(list?.className).toContain("bottom-full");
+      const anchor = list?.parentElement?.closest(".relative");
+      expect(anchor).toBe(list?.parentElement);
+      expect(anchor?.contains(textarea)).toBe(true);
+      expect(anchor?.contains(strip)).toBe(false);
+    }
+  );
+});
+
 describe("SplitChatPane: 作業中の表示", () => {
   const indicator = (container: HTMLElement) =>
     container.querySelector('[data-testid="chat-working-indicator"]');
 
-  it("作業中は画面の末尾をそのまま出し、作業中でなければ出さない", () => {
-    const tail = (container: HTMLElement) =>
-      container.querySelector('[data-testid="chat-live-tail"]');
-    const text = "⏺ Bash(pnpm test)\n✻ Cogitating… (32s · ↓ 1.2k tokens)";
-
-    const busy = renderChat({ bridgeStatus: "THINK", liveTail: text });
-    expect(tail(busy.container)?.textContent).toBe(text);
-    expect(tail(busy.container)?.getAttribute("aria-hidden")).toBe("true");
-
-    const idle = renderChat({ bridgeStatus: "IDLE", liveTail: text });
-    expect(tail(idle.container)).toBeNull();
-
-    const empty = renderChat({ bridgeStatus: "TOOL" });
-    expect(tail(empty.container)).toBeNull();
-  });
-
-  it("画面の末尾を出している間は「考えています」を見せず、読み上げだけ残す", () => {
+  it("画面の末尾を帯に出していても、「考えています」は隠さずに出す", () => {
     const text = "✻ Cogitating… (32s · ↓ 1.2k tokens)";
 
-    const pc = renderChat({ bridgeStatus: "THINK", liveTail: text });
+    const pc = renderChat({
+      bridgeStatus: "THINK",
+      liveTail: text,
+      onOpenTerminal: vi.fn(),
+    });
     const status = indicator(pc.container);
     expect(status?.getAttribute("role")).toBe("status");
-    expect(status?.className).toContain("sr-only");
-    expect(status?.querySelector(".status-dots")).toBeNull();
+    expect(status?.className).not.toContain("sr-only");
+    expect(status?.querySelectorAll(".status-dots > span")).toHaveLength(3);
+    expect(status?.textContent).toContain("考えています");
 
-    // 読み上げ領域にしないモバイルでは、要素ごと出さない
+    // 読み上げ領域にしないモバイルでも、目に見える表示は出す
     const mobile = renderChat({
       bridgeStatus: "THINK",
       liveTail: text,
       layout: "mobile",
+      onOpenTerminal: vi.fn(),
     });
-    expect(indicator(mobile.container)).toBeNull();
+    expect(indicator(mobile.container)?.textContent).toContain("考えています");
+    expect(indicator(mobile.container)?.getAttribute("aria-hidden")).toBe(
+      "true"
+    );
   });
 
   it("考えている間と作業している間は、会話の最後に呼吸する3点と文言を出す", () => {

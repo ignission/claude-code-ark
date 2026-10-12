@@ -660,9 +660,8 @@ export interface ServerToClientEvents {
        */
       awaitingText?: string;
       /**
-       * THINK / TOOL のときのみ: 画面末尾の生テキスト (ANSI 除去・末尾空行除去済み)。
-       * 返事が JSONL に届くまでの間、チャットビューで動きを見せるためにそのまま表示する。
-       * 内容は解釈しない
+       * 画面を取れたときは常に: 画面末尾の生テキスト (ANSI 除去・末尾空行除去済み)。
+       * チャットビューの固定の帯にそのまま表示する。内容は解釈しない
        */
       liveTail?: string;
       /**

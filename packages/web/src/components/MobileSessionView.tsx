@@ -2,14 +2,40 @@
  * MobileSessionView - モバイル用セッション詳細画面
  *
  * ヘッダー (戻る・主ラベル・ブランチ・状態チップ・操作メニュー) と、その直下の状態の帯、
- * 「会話 / 端末 / 図」の本文と下部バーで組む。
- * 3モードの本文はマウントしたまま display で切り替える (ttyd と図の iframe を張り直さない)。
+ * 「会話 / 図」の本文と下部バー、それらに重ねる端末の窓で組む。
+ * 2つのモードの本文はマウントしたまま `display` で切り替える (図のiframeを張り直さない)。
+ *
+ * 端末はモードではない。会話の入力欄の上の帯 (画面末尾) を押すと、この画面の全面に
+ * 窓 (`FloatingTerminal` のfullscreen) で開き、閉じるまでそのまま操作できる。
+ * - 窓の中身 (タブ・ttyd・ファイルとHTMLのビューア・添付の確認ダイアログ・Quick Keys・
+ *   入力欄) は常にマウントしたままで、閉じている間は窓ごと隠れる。ttydのiframeは
+ *   開閉でアンマウントも付け替えもしない (枠の決まりは `FloatingTerminal.tsx` にある)
+ * - 窓はこの画面のルートの直下に置く。モードごとの本文 (`hidden` で切り替わる) の中に
+ *   置くと、モードが替わったときに「開いているのに見えない」窓が残る
+ * - 開閉の状態は保存しない。この詳細が表示中でなくなったら (一覧へ戻る・別のセッションを
+ *   開く) 閉じ、戻ってきても閉じたままにする
+ * - 閉じるのは、窓の閉じるボタンと、図を開く操作 (図を開く通知・窓の中のタブで図を選ぶ)。
+ *   図を開く操作は、窓を閉じてから図モードを見せる
+ * - 窓は、マウントしただけでは開かない。開くのは、この画面での操作の結果だけ:
+ *   帯を押す、ファイル / HTMLのタブへ切り替わる (ビューアは窓の中にある)、
+ *   端末の流儀の添付が溜まる (確認ダイアログは窓の中にある)。
+ *   ファイルのタブが選ばれたままのセッションをマウントしても、閉じた状態で始める
+ * - 開閉でフォーカスは動かさない (ソフトキーボードを勝手に出さない)
+ * - 窓は全面なので、開いている間はヘッダーと状態の帯とセグメントが隠れる。
+ *   窓のバーにセグメントは置かない (モードを替えるには窓を閉じる)
  *
  * 下部バーはセグメントの下に1タップの操作 (MobileQuickActionRow) を置く。
- * 添付と画像の実体はモードで違い、会話モードは会話の入力欄 (SplitChatPaneHandle。
- * `@path` を入力欄に足す)、端末・図モードは端末側の確認ダイアログへ渡す。
- * 端末に関する操作 (バッファのコピー・再読み込み) も1タップの行に出し (端末モード
- * だけ)、`…` にはセッション全体の操作 (通知・再起動・削除) だけを残す。
+ * 添付と画像の実体は場所で違い、会話モードは会話の入力欄 (SplitChatPaneHandle。
+ * `@path` を入力欄に足す)、端末の窓と図モードは端末側の確認ダイアログへ渡す。
+ * 端末そのものへの操作 (バッファのコピー・再読み込み) は、PCと同じく端末の窓の上端の
+ * バーに置く (指で押せる44px)。窓の下部バーに残すのは、端末へ打ち込むための操作
+ * (1タップの行・Quick Keys・入力欄) だけ。`…` にはセッション全体の操作 (通知・再起動・
+ * 削除) だけを残す。
+ *
+ * 端末の画面末尾 (`liveTail`) は1秒ごとに届き、そのたびにこの部品は描画し直す。
+ * 画面末尾を使うのは会話の帯だけなので、端末の窓の中身は要素ごとメモ化し、
+ * 画面末尾では変わらない値だけに依存させる。親が毎回作り直して渡す関数は
+ * useStableCallback で包んでから使う。
  *
  * 音声モード (iPhone) は会話モードの1タップ操作から入る。状態は useVoiceMode、画面は
  * VoiceModeOverlay。JSONL の購読は増やさず、会話ビューのイベント列を onEventsChange で受け取る。
@@ -32,14 +58,16 @@ import {
   ChevronRight,
   CircleAlert,
   CircleHelp,
+  Copy,
   Ellipsis,
   File as FileIcon,
+  RefreshCw,
   RotateCw,
   Send,
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
 import {
@@ -78,6 +106,7 @@ import {
 } from "@/lib/status-tone";
 import { cn } from "@/lib/utils";
 import { fileToBase64, validateFile } from "../hooks/useFileUpload";
+import { useStableCallback } from "../hooks/useStableCallback";
 import { useTerminalLinkInjection } from "../hooks/useTerminalLinkInjection";
 import { useTtydReconnect } from "../hooks/useTtydReconnect";
 import { useVisualViewport } from "../hooks/useVisualViewport";
@@ -86,13 +115,14 @@ import { mobileQuickActions } from "../lib/mobile-quick-actions";
 import {
   type DiagramOpenRequest,
   getViewModeForDiagramOpenRequest,
-  getViewModeForViewerTab,
   type MobileSessionViewMode,
   readSavedViewMode,
+  shouldOpenTerminalForViewerTab,
   writeSavedViewMode,
 } from "../lib/mobile-session-view-mode";
 import { DiagramPane, type DiagramPaneProps } from "./DiagramPane";
 import { FileViewerPane } from "./FileViewerPane";
+import { FloatingTerminal } from "./FloatingTerminal";
 import { HtmlViewerPane } from "./HtmlViewerPane";
 import { MessageShortcutManagerDialog } from "./MessageShortcutManagerDialog";
 import { MobileQuickActionRow } from "./MobileQuickActionRow";
@@ -104,6 +134,10 @@ import { ViewerTabBar } from "./ViewerTabBar";
 import { VoiceModeOverlay } from "./VoiceModeOverlay";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
+
+/** 端末の窓の上端のバーに置く操作。指で押せる44pxの丸いボタン */
+const WINDOW_ACTION_BUTTON =
+  "inline-flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground";
 
 type MobileDiagramPaneProps = Omit<
   DiagramPaneProps,
@@ -129,7 +163,7 @@ export interface MobileSessionViewProps extends MobileDiagramPaneProps {
   bridgeStatus?: BridgeSessionStatus;
   /** AWAITING 時の確認 UI 生テキスト（バナー表示用） */
   awaitingText?: string;
-  /** 作業中の画面末尾（会話ビューで動きを見せる） */
+  /** 端末の画面末尾 (会話の入力欄の上の帯にそのまま出す) */
   liveTail?: string;
   session: ManagedSession;
   worktree: Worktree | undefined;
@@ -187,17 +221,17 @@ export function MobileSessionView({
   notificationsEnabled = true,
   onNotificationsEnabledChange,
   onBack,
-  onSendMessage,
-  onSendKey,
+  onSendMessage: onSendMessageProp,
+  onSendKey: onSendKeyProp,
   onDeleteSession,
   onRestartSession,
-  onUploadFile,
-  onCopyBuffer,
+  onUploadFile: onUploadFileProp,
+  onCopyBuffer: onCopyBufferProp,
   tabs,
   activeTabIndex,
   diagramOpenRequest,
-  onTabSelect,
-  onTabClose,
+  onTabSelect: onTabSelectProp,
+  onTabClose: onTabCloseProp,
   messageShortcuts,
   onCreateShortcut,
   onUpdateShortcut,
@@ -214,12 +248,26 @@ export function MobileSessionView({
   sendDiagramComment,
   onSelectDiagram,
 }: MobileSessionViewProps) {
+  // 親は描画のたびに関数を作り直して渡してくる。端末の窓の中身 (メモ化した要素) が
+  // そのたびに作り直されないよう、同一性の変わらない関数で包んでから使う
+  const onSendMessage = useStableCallback(onSendMessageProp);
+  const onSendKey = useStableCallback(onSendKeyProp);
+  const onUploadFile = useStableCallback(onUploadFileProp);
+  const onCopyBuffer = useStableCallback(onCopyBufferProp);
+  const onTabSelect = useStableCallback(onTabSelectProp);
+  const onTabClose = useStableCallback(onTabCloseProp);
   const { height: viewportHeight, isKeyboardVisible } = useVisualViewport();
   const [inputValue, setInputValue] = useState("");
   const [iframeKey, setIframeKey] = useState(0);
-  // 表示モード（会話 / ターミナル / 図）。既定は会話。最後の選択を永続化。
+  // 表示モード (会話 / 図)。既定は会話。最後の選択を永続化。
   const [viewMode, setViewMode] =
     useState<MobileSessionViewMode>(readSavedViewMode);
+  // 端末の窓の開閉。保存せず、この詳細が表示中でなくなったら閉じる
+  // (戻ってきたときに、開いたままの窓が残っていないように描画中に戻す)
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  if (!isActive && terminalOpen) setTerminalOpen(false);
+  const openTerminal = useCallback(() => setTerminalOpen(true), []);
+  const closeTerminal = useCallback(() => setTerminalOpen(false), []);
 
   const handleViewModeChange = useCallback((next: MobileSessionViewMode) => {
     writeSavedViewMode(next);
@@ -227,6 +275,7 @@ export function MobileSessionView({
   }, []);
 
   // diagram:open の明示通知がこのセッション向けに変化したときだけ board を開く。
+  // 端末の窓が開いていれば、閉じてから見せる。
   const handledDiagramOpenSequenceRef = useRef<number | null>(null);
   useEffect(() => {
     const nextViewMode = getViewModeForDiagramOpenRequest(
@@ -236,21 +285,31 @@ export function MobileSessionView({
     );
     handledDiagramOpenSequenceRef.current =
       diagramOpenRequest?.sequence ?? null;
-    if (nextViewMode) setViewMode(nextViewMode);
+    if (nextViewMode) {
+      setTerminalOpen(false);
+      setViewMode(nextViewMode);
+    }
   }, [diagramOpenRequest, session.id]);
 
-  // ファイル/HTML のビューワータブは従来どおり terminal モードで可視化する。
+  // ファイル / HTMLのビューアは端末と同じタブの並びにあり、窓の中に出る。
+  // そのタブへ切り替わったら、窓を開いて見せる。マウントした時点で選ばれていた
+  // タブでは開かない (窓が開くのは、この画面での操作の結果だけ)
   const activeTabType = tabs[activeTabIndex]?.type;
+  const seenActiveTabTypeRef = useRef(activeTabType);
   useEffect(() => {
-    const nextViewMode = getViewModeForViewerTab(activeTabType);
-    if (nextViewMode) setViewMode(nextViewMode);
+    if (seenActiveTabTypeRef.current === activeTabType) return;
+    seenActiveTabTypeRef.current = activeTabType;
+    if (shouldOpenTerminalForViewerTab(activeTabType)) setTerminalOpen(true);
   }, [activeTabType]);
 
-  // モバイルのタブバーでユーザー自身が図を選んだ場合も board を開く。
+  // 窓の中のタブバーでユーザー自身が図を選んだ場合も、窓を閉じて図モードを開く。
   const handleViewerTabSelect = useCallback(
     (index: number) => {
       onTabSelect(index);
-      if (tabs[index]?.type === "diagram") setViewMode("board");
+      if (tabs[index]?.type === "diagram") {
+        setTerminalOpen(false);
+        setViewMode("board");
+      }
     },
     [onTabSelect, tabs]
   );
@@ -290,8 +349,8 @@ export function MobileSessionView({
     isConnected,
     viewMode,
   });
-  // 下部バーの上段に置く「会話 / 端末 / 図」。3モードの本文はマウントしたまま
-  // display で切り替えるので、同じ要素を各モードのバーに置く (表示されるのは1つだけ)。
+  // 下部バーの上段に置く「会話 / 図」。2つのモードの本文はマウントしたまま
+  // `display` で切り替えるので、同じ要素を各モードのバーに置く (表示されるのは1つだけ)。
   // 角丸は会話モードのガラスバー (28px角丸・内側の余白8px) と同心になるよう丸くする
   const viewModeSegment = (
     <MobileSessionViewModeToggle
@@ -301,16 +360,16 @@ export function MobileSessionView({
     />
   );
 
-  // 端末の流儀の添付（pendingFiles）はターミナルペイン内のダイアログで
-  // 表示するため、他のモードのときはターミナルへ切り替えてダイアログを可視化する。
+  // 端末の流儀の添付 (`pendingFiles`) の確認ダイアログは端末の窓の中にあるので、
+  // 添付が溜まったら窓を開いてダイアログを見せる (図モードの添付もここを通る)。
   const pendingCount = pendingFiles.length;
   useEffect(() => {
-    if (pendingCount > 0) setViewMode("terminal");
+    if (pendingCount > 0) setTerminalOpen(true);
   }, [pendingCount]);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  // 会話モードの添付を会話の入力欄の流儀 (`@path` を入力欄に足す) で行うための取っ手
+  // 会話モードの画像の貼り付けを会話の入力欄の流儀 (`@path` を入力欄に足す) で行うための取っ手
   const chatRef = useRef<SplitChatPaneHandle>(null);
   // ファイル選択input は下部バーの1タップの操作から click() だけを呼ばせる。
   // Radix の Portal (メニュー) の中に置くと、閉じた瞬間に Portal が unmount され、
@@ -329,24 +388,30 @@ export function MobileSessionView({
     : ttydBasePath;
 
   // メッセージ送信（空文字でもEnterとして送信 = ターミナルへの空行送信）
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSendMessage(inputValue);
-    setInputValue("");
-  };
+  const handleSubmit = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      onSendMessage(inputValue);
+      setInputValue("");
+    },
+    [inputValue, onSendMessage]
+  );
 
   // Enter送信（inputなのでShift+Enterチェック不要）
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleSubmit(e);
-    }
-  };
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleSubmit(e);
+      }
+    },
+    [handleSubmit]
+  );
 
   // iframeリロード
-  const handleReloadIframe = () => {
+  const handleReloadIframe = useCallback(() => {
     setIframeKey(prev => prev + 1);
-  };
+  }, []);
 
   // 受け取ったFileをpendingFilesへ追加（画像/非画像共通）
   // 部分失敗の場合でもエラーを握りつぶさず、まとめて表示する
@@ -492,44 +557,38 @@ export function MobileSessionView({
   useTerminalLinkInjection(iframeRef, iframeKey);
 
   // バックグラウンド復帰で ttyd の WebSocket が落ちると端末は
-  // "Press ⏎ to Reconnect" のまま固まる。表示中のターミナルに限って検出し、
+  // "Press ⏎ to Reconnect" のまま固まる。窓を開いて見えているターミナルに限って検出し、
   // iframe を貼り直して復帰させる（共通フック）。
   useTtydReconnect(iframeRef, iframeKey, {
-    isVisible:
-      isActive && viewMode === "terminal" && activeTabType === "terminal",
+    isVisible: isActive && terminalOpen && activeTabType === "terminal",
     onReload: handleReloadIframe,
   });
 
-  // 1タップの操作。セグメントと同じく3つのモードのバーすべてに置く (見えるのは1枚)。
-  // 添付と画像は、会話モードだけ会話の入力欄の流儀にする。端末側の確認ダイアログは
-  // ターミナルペインの中にあり、会話モードでは親ごと隠れているため。
-  // どのボタンを出すかは lib/mobile-quick-actions.ts に寄せる (会話モードは
-  // 会話の入力欄が自前の添付ボタンを持つので、行には出さない)
-  const quickActions = mobileQuickActions({
-    viewMode,
-    canUploadFile: onUploadFile !== undefined,
-    canCopyBuffer: onCopyBuffer !== undefined,
-    canUseVoice: voice.supported,
-  });
-  // `…` に残すのはセッション全体の操作だけ。通知を出せない環境 (Notification API の
-  // 無いブラウザ) もあるので、区切り線は直前のまとまりが実際に出たときだけ引く
-  const canChangeNotifications =
-    notificationsSupported && onNotificationsEnabledChange !== undefined;
-  const quickActionRow = (
+  // 1タップの操作。表示モードのバー (会話・図で同じ要素を置く。見えるのは1枚) と、
+  // 端末の窓のバーに、それぞれ行を置く。どのボタンを出すかは lib/mobile-quick-actions.ts
+  // に寄せる (会話モードは会話の入力欄が自前の添付ボタンを持つので、行には出さない)。
+  // 添付と画像は、会話モードの行だけ会話の入力欄の流儀にする。図モードと端末の窓は
+  // 端末側の確認ダイアログ (窓の中) へ渡す
+  const openShortcutManager = useCallback(
+    () => setShowShortcutManager(true),
+    []
+  );
+  const attachForTerminal = useCallback(
+    () => fileInputRef.current?.click(),
+    []
+  );
+  const modeQuickActionRow = (
     <MobileQuickActionRow
-      actions={quickActions}
+      actions={mobileQuickActions({
+        surface: viewMode,
+        canUploadFile: onUploadFile !== undefined,
+        canUseVoice: voice.supported,
+      })}
       messageShortcuts={messageShortcuts}
       onSendMessage={onSendMessage}
-      onManageShortcuts={() => setShowShortcutManager(true)}
+      onManageShortcuts={openShortcutManager}
       onStartVoice={voice.enter}
-      onAttachFile={
-        onUploadFile
-          ? () => {
-              if (viewMode === "chat") chatRef.current?.openFilePicker();
-              else fileInputRef.current?.click();
-            }
-          : undefined
-      }
+      onAttachFile={onUploadFile ? attachForTerminal : undefined}
       onPasteImage={
         onUploadFile
           ? () => {
@@ -538,180 +597,42 @@ export function MobileSessionView({
             }
           : undefined
       }
-      onCopyBuffer={onCopyBuffer ? handleCopyBuffer : undefined}
-      onReloadTerminal={handleReloadIframe}
     />
   );
-
-  // 下部バーの上段。3つのモードのバーで同じ間隔 (4px) になるよう、
-  // セグメントと1タップの操作をここでひとまとまりにする
-  const bottomBarTop = (
-    <div className="flex flex-col gap-1">
-      {viewModeSegment}
-      {quickActionRow}
-    </div>
+  // 端末そのものへの操作。窓の上端のバーに、閉じるボタンの手前に並べる。
+  // 窓を開いている間だけ出す (閉じている間は、同じ名前のボタンを画面に残さない)
+  const terminalWindowActions = terminalOpen && (
+    <>
+      {onCopyBuffer && (
+        <button
+          type="button"
+          aria-label="端末のバッファをコピー"
+          title="端末のバッファをコピー"
+          onClick={handleCopyBuffer}
+          className={WINDOW_ACTION_BUTTON}
+        >
+          <Copy className="size-5" aria-hidden="true" />
+        </button>
+      )}
+      <button
+        type="button"
+        aria-label="端末を再読み込み"
+        title="端末を再読み込み"
+        onClick={handleReloadIframe}
+        className={WINDOW_ACTION_BUTTON}
+      >
+        <RefreshCw className="size-5" aria-hidden="true" />
+      </button>
+    </>
   );
 
-  // ヘッダーの主ラベル (表示名 → リポジトリ名 → worktree のフォルダ名) とブランチ。PC の上部バーと同じ決め方
-  const headerLabels = resolveSessionHeaderLabels({
-    displayName,
-    repoName,
-    branch: worktree?.branch,
-    worktreePath: session.worktreePath,
-  });
-
-  return (
-    <div
-      className="flex-1 flex flex-col min-h-0 safe-area-x"
-      style={
-        isKeyboardVisible
-          ? { height: `${viewportHeight}px`, maxHeight: `${viewportHeight}px` }
-          : undefined
-      }
-    >
-      {/* ヘッダー: 戻る・主ラベル・ブランチ・状態チップ・操作メニュー。
-          safe area の余白は外側の header に付け、行の高さ (56px) と分ける */}
-      <header className="shrink-0 bg-background safe-area-top">
-        <div className="flex h-14 items-center gap-1 pl-1.5 pr-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-10 shrink-0 rounded-sm"
-            onClick={onBack}
-            aria-label="一覧へ戻る"
-          >
-            <ChevronLeft className="size-[22px]" />
-          </Button>
-          <div className="flex min-w-0 flex-1 items-baseline gap-2">
-            <span className="min-w-0 truncate text-[17px] font-semibold tracking-[-0.01em]">
-              {headerLabels.primary}
-            </span>
-            <span className="min-w-0 max-w-[40%] shrink-0 truncate text-[13px] text-muted-foreground">
-              {headerLabels.branch}
-            </span>
-          </div>
-          <StatusChip statusKey={resolveStatusKey(true, bridgeStatus)} />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-10 shrink-0 rounded-sm"
-                aria-label="その他の操作"
-              >
-                <Ellipsis className="size-[22px]" />
-              </Button>
-            </DropdownMenuTrigger>
-            {/* 添付・画像・ショートカット・スラッシュコマンドと、端末に関する操作
-                (バッファのコピー・再読み込み) は下部バーの1タップの操作へ移した。
-                ここに残すのはセッション全体の操作だけ。
-                区切り線は、直前のまとまりが実際に出たときだけ引く */}
-            <DropdownMenuContent align="end" className="w-64">
-              {canChangeNotifications && (
-                <>
-                  <DropdownMenuItem
-                    onSelect={() =>
-                      onNotificationsEnabledChange(!notificationsEnabled)
-                    }
-                  >
-                    {notificationsEnabled ? <BellOff /> : <Bell />}
-                    {notificationMenuLabel(notificationsEnabled)}
-                  </DropdownMenuItem>
-                  {onRestartSession && <DropdownMenuSeparator />}
-                </>
-              )}
-              {onRestartSession && (
-                <DropdownMenuItem onSelect={() => setShowRestartDialog(true)}>
-                  <RotateCw />
-                  セッションを再起動
-                </DropdownMenuItem>
-              )}
-              {(canChangeNotifications || onRestartSession) && (
-                <DropdownMenuSeparator />
-              )}
-              <DropdownMenuItem
-                variant="destructive"
-                onSelect={() => setShowDeleteDialog(true)}
-              >
-                <Trash2 />
-                セッションを削除
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </header>
-
-      {/* 状態の帯 (32px)。文言は状態と質問カードの有無だけから作り、端末の画面は解釈しない。
-          会話モードでは質問カードと AwaitingPad が入力欄の上に出ているので、ボタンを付けない */}
-      {statusStrip && (
-        <div className="shrink-0 px-3 pb-2">
-          <div
-            data-testid="mobile-status-strip"
-            className={cn(
-              "flex h-8 items-center gap-2 rounded-sm px-3 text-[13px] font-semibold text-foreground",
-              TONE_CLASSES[statusStrip.tone].softBg
-            )}
-          >
-            <StatusStripIcon tone={statusStrip.tone} />
-            <span role="status" className="min-w-0 flex-1 truncate">
-              {statusStrip.text}
-            </span>
-            {statusStrip.offerChat && (
-              <button
-                type="button"
-                onClick={() => handleViewModeChange("chat")}
-                className="flex h-8 shrink-0 items-center gap-0.5 text-[13px] font-semibold text-foreground"
-              >
-                会話で答える
-                <ChevronRight
-                  className={cn(
-                    "size-3.5",
-                    TONE_CLASSES[statusStrip.tone].text
-                  )}
-                  aria-hidden="true"
-                />
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 会話モード (既定): JSONL チャットビュー。入力欄はセグメントと一体の浮かぶガラスバーで、
-          本文はバーの下を通る (位置と本文の余白は SplitChatPane の layout="mobile" が持つ)。
-          ttyd を持たないため display:none で残置しても再接続コストはない。 */}
-      <div
-        data-testid="mobile-view-chat"
-        className={
-          viewMode === "chat" ? "flex-1 flex flex-col min-h-0" : "hidden"
-        }
-      >
-        <SplitChatPane
-          ref={chatRef}
-          socket={socket}
-          session={session}
-          // 端末・図モードの間も購読を続ける。止めると、そのあいだに答えた質問の解決が
-          // JSONL から届かず、状態の帯が「質問があります」のまま残る
-          isActive={isActive}
-          bridgeStatus={bridgeStatus}
-          awaitingText={awaitingText}
-          liveTail={liveTail}
-          onSendMessage={onSendMessage}
-          onSendKey={onSendKey}
-          onUploadFile={onUploadFile}
-          onActiveAuqChange={setActiveAuq}
-          onEventsChange={voice.pushEvents}
-          layout="mobile"
-          composerAccessory={bottomBarTop}
-        />
-      </div>
-
-      {/* ターミナルモード: タブ + ttyd + ファイル/HTML/キャンバスビューワー +
-          Quick Keys + 入力バー。display:none 切替で ttyd 接続を維持する。 */}
+  // 端末の窓の中身。画面末尾が届くたびの描画で作り直さないよう、要素ごとメモ化する
+  // (依存に入れるのは、画面末尾では変わらない値だけ)
+  const terminalBody = useMemo(
+    () => (
       <div
         data-testid="mobile-view-terminal"
-        className={
-          viewMode === "terminal" ? "flex-1 flex flex-col min-h-0" : "hidden"
-        }
+        className="flex h-full min-h-0 flex-col"
       >
         {/* タブバー（共通コンポーネント） */}
         <ViewerTabBar
@@ -871,16 +792,30 @@ export function MobileSessionView({
           </div>
         )}
 
-        {/* 端末モードの下部バー。ガラスをやめて不透明にし、端末に重ねない
-            (ttyd は iframe の大きさに合わせて描くので、端末の領域はバーの上端までにする)。
-            上段にセグメント、下段に Quick Keys と入力欄 */}
+        {/* 端末の窓の下部バー。ガラスをやめて不透明にし、端末に重ねない
+                (ttyd は iframe の大きさに合わせて描くので、端末の領域はバーの上端までにする)。
+                上段に1タップの操作、下段にQuick Keysと入力欄。どれも端末へ打ち込むための
+                操作で、セグメントは置かない */}
         <div
           data-testid="mobile-terminal-bar"
           data-mobile-bottom-bar=""
           className="shrink-0 border-t border-border bg-card px-3 pt-2"
           style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
         >
-          {bottomBarTop}
+          {/* 端末へ打ち込むための1タップの操作。窓を開いている間だけ出す */}
+          {terminalOpen && (
+            <MobileQuickActionRow
+              actions={mobileQuickActions({
+                surface: "terminal",
+                canUploadFile: onUploadFile !== undefined,
+              })}
+              messageShortcuts={messageShortcuts}
+              onSendMessage={onSendMessage}
+              onManageShortcuts={openShortcutManager}
+              onAttachFile={onUploadFile ? attachForTerminal : undefined}
+              onPasteImage={onUploadFile ? handlePasteButtonClick : undefined}
+            />
+          )}
 
           {/* Quick Keys: ↑/↓/Esc/Ctrl+C/S-Tab 常時表示 */}
           <div className="mt-1 flex items-center gap-1 overflow-x-auto select-none">
@@ -956,6 +891,206 @@ export function MobileSessionView({
           </form>
         </div>
       </div>
+    ),
+    [
+      tabs,
+      activeTabIndex,
+      handleViewerTabSelect,
+      onTabClose,
+      session.id,
+      session.ttydUrl,
+      session.ttydPort,
+      iframeKey,
+      ttydIframeSrc,
+      worktree?.branch,
+      pendingFiles,
+      isSending,
+      uploadMessage,
+      uploadError,
+      handleCancelPending,
+      handleSendWithFiles,
+      terminalOpen,
+      onUploadFile,
+      messageShortcuts,
+      onSendMessage,
+      openShortcutManager,
+      attachForTerminal,
+      handlePasteButtonClick,
+      onSendKey,
+      handleSubmit,
+      handleKeyDown,
+      inputValue,
+    ]
+  );
+
+  // `…` に残すのはセッション全体の操作だけ。通知を出せない環境 (Notification API の
+  // 無いブラウザ) もあるので、区切り線は直前のまとまりが実際に出たときだけ引く
+  const canChangeNotifications =
+    notificationsSupported && onNotificationsEnabledChange !== undefined;
+
+  // 表示モードのバーの上段。会話と図のバーで同じ間隔 (4px) になるよう、
+  // セグメントと1タップの操作をここでひとまとまりにする
+  const bottomBarTop = (
+    <div className="flex flex-col gap-1">
+      {viewModeSegment}
+      {modeQuickActionRow}
+    </div>
+  );
+
+  // ヘッダーの主ラベル (表示名 → リポジトリ名 → worktree のフォルダ名) とブランチ。PC の上部バーと同じ決め方
+  const headerLabels = resolveSessionHeaderLabels({
+    displayName,
+    repoName,
+    branch: worktree?.branch,
+    worktreePath: session.worktreePath,
+  });
+
+  return (
+    <div
+      // `relative` は端末の窓 (`absolute inset-0`) の基準に使う
+      className="relative flex-1 flex flex-col min-h-0 safe-area-x"
+      style={
+        isKeyboardVisible
+          ? { height: `${viewportHeight}px`, maxHeight: `${viewportHeight}px` }
+          : undefined
+      }
+    >
+      {/* ヘッダー: 戻る・主ラベル・ブランチ・状態チップ・操作メニュー。
+          safe area の余白は外側の header に付け、行の高さ (56px) と分ける */}
+      <header className="shrink-0 bg-background safe-area-top">
+        <div className="flex h-14 items-center gap-1 pl-1.5 pr-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-10 shrink-0 rounded-sm"
+            onClick={onBack}
+            aria-label="一覧へ戻る"
+          >
+            <ChevronLeft className="size-[22px]" />
+          </Button>
+          <div className="flex min-w-0 flex-1 items-baseline gap-2">
+            <span className="min-w-0 truncate text-[17px] font-semibold tracking-[-0.01em]">
+              {headerLabels.primary}
+            </span>
+            <span className="min-w-0 max-w-[40%] shrink-0 truncate text-[13px] text-muted-foreground">
+              {headerLabels.branch}
+            </span>
+          </div>
+          <StatusChip statusKey={resolveStatusKey(true, bridgeStatus)} />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-10 shrink-0 rounded-sm"
+                aria-label="その他の操作"
+              >
+                <Ellipsis className="size-[22px]" />
+              </Button>
+            </DropdownMenuTrigger>
+            {/* 添付・画像・ショートカット・スラッシュコマンドは下部バーの1タップの操作に、
+                端末に関する操作 (バッファのコピー・再読み込み) は端末の窓のバーにある。
+                ここに置くのはセッション全体の操作だけ。
+                区切り線は、直前のまとまりが実際に出たときだけ引く */}
+            <DropdownMenuContent align="end" className="w-64">
+              {canChangeNotifications && (
+                <>
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      onNotificationsEnabledChange(!notificationsEnabled)
+                    }
+                  >
+                    {notificationsEnabled ? <BellOff /> : <Bell />}
+                    {notificationMenuLabel(notificationsEnabled)}
+                  </DropdownMenuItem>
+                  {onRestartSession && <DropdownMenuSeparator />}
+                </>
+              )}
+              {onRestartSession && (
+                <DropdownMenuItem onSelect={() => setShowRestartDialog(true)}>
+                  <RotateCw />
+                  セッションを再起動
+                </DropdownMenuItem>
+              )}
+              {(canChangeNotifications || onRestartSession) && (
+                <DropdownMenuSeparator />
+              )}
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => setShowDeleteDialog(true)}
+              >
+                <Trash2 />
+                セッションを削除
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </header>
+
+      {/* 状態の帯 (32px)。文言は状態と質問カードの有無だけから作り、端末の画面は解釈しない。
+          会話モードでは質問カードと AwaitingPad が入力欄の上に出ているので、ボタンを付けない */}
+      {statusStrip && (
+        <div className="shrink-0 px-3 pb-2">
+          <div
+            data-testid="mobile-status-strip"
+            className={cn(
+              "flex h-8 items-center gap-2 rounded-sm px-3 text-[13px] font-semibold text-foreground",
+              TONE_CLASSES[statusStrip.tone].softBg
+            )}
+          >
+            <StatusStripIcon tone={statusStrip.tone} />
+            <span role="status" className="min-w-0 flex-1 truncate">
+              {statusStrip.text}
+            </span>
+            {statusStrip.offerChat && (
+              <button
+                type="button"
+                onClick={() => handleViewModeChange("chat")}
+                className="flex h-8 shrink-0 items-center gap-0.5 text-[13px] font-semibold text-foreground"
+              >
+                会話で答える
+                <ChevronRight
+                  className={cn(
+                    "size-3.5",
+                    TONE_CLASSES[statusStrip.tone].text
+                  )}
+                  aria-hidden="true"
+                />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 会話モード (既定): JSONL チャットビュー。入力欄はセグメントと一体の浮かぶガラスバーで、
+          本文はバーの下を通る (位置と本文の余白は SplitChatPane の layout="mobile" が持つ)。
+          ttyd を持たないため display:none で残置しても再接続コストはない。 */}
+      <div
+        data-testid="mobile-view-chat"
+        className={
+          viewMode === "chat" ? "flex-1 flex flex-col min-h-0" : "hidden"
+        }
+      >
+        <SplitChatPane
+          ref={chatRef}
+          socket={socket}
+          session={session}
+          // 図モードの間も、端末の窓を開いている間も購読を続ける。止めると、そのあいだに答えた質問の解決が
+          // JSONL から届かず、状態の帯が「質問があります」のまま残る
+          isActive={isActive}
+          bridgeStatus={bridgeStatus}
+          awaitingText={awaitingText}
+          liveTail={liveTail}
+          onSendMessage={onSendMessage}
+          onSendKey={onSendKey}
+          onUploadFile={onUploadFile}
+          onOpenTerminal={openTerminal}
+          onActiveAuqChange={setActiveAuq}
+          onEventsChange={voice.pushEvents}
+          layout="mobile"
+          composerAccessory={bottomBarTop}
+        />
+      </div>
 
       {/* 図モード: DiagramPane は他モードでもマウントしたまま hidden で切り替える。
           MessageChannel port と iframe の接続をモード切替で張り直さない。 */}
@@ -988,7 +1123,7 @@ export function MobileSessionView({
         {/* 図モードの下部バーはセグメントと1タップの操作だけ。図の iframe は中に下端固定の UI
             (diagram-harness.ts の .ark-harness-toolbar、コメント層の解決済みトグル) を持つので、
             ガラスを重ねずに図の領域をバーの上端までにする。
-            端末モードのバーと同じく罫線と紙の色で、図の下端 UI と分ける */}
+            端末の窓のバーと同じく罫線と紙の色で、図の下端 UI と分ける */}
         <div
           data-testid="mobile-board-bar"
           data-mobile-bottom-bar=""
@@ -998,6 +1133,19 @@ export function MobileSessionView({
           {bottomBarTop}
         </div>
       </div>
+
+      {/* 端末の窓: タブ + ttyd + ファイル / HTMLのビューア + 添付の確認ダイアログ +
+          Quick Keys + 入力バー。この画面のルートを基準に全面へ重ねる。中身は常にここへ
+          マウントしたままで、閉じている間は窓ごと隠れる (ttydの接続を保つ)。
+          端末そのものへの操作は上端のバー (actions) に置く */}
+      <FloatingTerminal
+        open={terminalOpen}
+        onClose={closeTerminal}
+        variant="fullscreen"
+        actions={terminalWindowActions}
+      >
+        {terminalBody}
+      </FloatingTerminal>
 
       {/* 添付ファイル選択用の隠しinput
           DropdownMenuContent の外に置くことで、メニューが閉じても DOM に残り続け、

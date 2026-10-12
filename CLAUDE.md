@@ -13,7 +13,7 @@ Arkは、ローカルで動く複数のClaude Codeセッションを管理する
 | `git-tab.md` | Gitタブの範囲 (いまは見るだけ) |
 | `remote-access.md` | 単一ユーザーの前提 (セッション単位の権限は持たない) |
 
-次の機能の決まりは、該当コードのコメント (多くは冒頭) にある: 端末と会話の画面 (`SplitViewPane.tsx` / `split-view-left-mode.ts` / `ttyd-reconnect.ts`)、AskUserQuestion (`auq-hook-bridge.ts` / `ask-user-question-state.ts`)、セッションボード (`diagram-deck.ts` / `diagram-doc-authorship.ts` / `diagram-comment-operation-log.ts` / `DiagramSwitcher.tsx`)、ボード提案 (`board-suggest-stop-hook.ts` / `jev-client.ts` / `board-suggest-config.ts`)、ファイルペイン (`file-manager.ts` の `writeFile` / `FileEditor.tsx` / `file-editor-state.ts` / `useFileTabs.ts`)、キーボード操作とコマンドパレット (`keynav.ts` / `keynav-dom.ts` / `CommandPalette.tsx`)、Claudeに聞く (`ask-manager.ts` / `AskWindow.tsx`)、tmux読み取りの結果型 (`tmux-read-result.ts`)、ブラウザ (`browser-manager.ts` / `browser-cdp-bridge.ts` / `browser-frame-pipeline.ts` / `BrowserPane.tsx`)、リモート画面 (`screen-bridge.ts` / `ScreenPane.tsx`)、音声モード (`voice-turn-signals.ts` / `voice-mode-machine.ts` / `browser-speech.ts`)。
+次の機能の決まりは、該当コードのコメント (多くは冒頭) にある: 端末と会話の画面 (`SplitViewPane.tsx` / `FloatingTerminal.tsx` / `ttyd-reconnect.ts`)、AskUserQuestion (`auq-hook-bridge.ts` / `ask-user-question-state.ts`)、セッションボード (`diagram-deck.ts` / `diagram-doc-authorship.ts` / `diagram-comment-operation-log.ts` / `DiagramSwitcher.tsx`)、ボード提案 (`board-suggest-stop-hook.ts` / `jev-client.ts` / `board-suggest-config.ts`)、ファイルペイン (`file-manager.ts` の `writeFile` / `FileEditor.tsx` / `file-editor-state.ts` / `useFileTabs.ts`)、キーボード操作とコマンドパレット (`keynav.ts` / `keynav-dom.ts` / `CommandPalette.tsx`)、Claudeに聞く (`ask-manager.ts` / `AskWindow.tsx`)、tmux読み取りの結果型 (`tmux-read-result.ts`)、ブラウザ (`browser-manager.ts` / `browser-cdp-bridge.ts` / `browser-frame-pipeline.ts` / `BrowserPane.tsx`)、リモート画面 (`screen-bridge.ts` / `ScreenPane.tsx`)、音声モード (`voice-turn-signals.ts` / `voice-mode-machine.ts` / `browser-speech.ts`)。
 
 ## アーキテクチャ
 
@@ -37,7 +37,7 @@ Arkは、ローカルで動く複数のClaude Codeセッションを管理する
 `tmux capture-pane` を使ってよいのは次の2つだけ。
 
 - busy / AWAITINGの有無の判定 (`session:previews` の `bridgeStatus`)
-- 画面のverbatim表示。AUQカードの「直前の画面」と、作業中 (THINK / TOOL) の会話ビューに出す画面末尾 (`session:previews` の `liveTail`)。解釈しないスクリーンショットのような添付で、`auq-screen-context.ts` が扱う
+- 画面のverbatim表示。AUQカードの「直前の画面」と、会話ビューに常に出す画面末尾 (`session:previews` の `liveTail`)。解釈しないスクリーンショットのような添付で、`auq-screen-context.ts` が扱う
 
 ### セッションの永続化
 

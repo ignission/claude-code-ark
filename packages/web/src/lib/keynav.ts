@@ -8,6 +8,11 @@
  * vim の Esc を入口にしないのは、会話の入力欄の Esc を Claude 本体と同じ動き
  * (中断など) に割り当て済みで、端末でも Esc は Claude に届ける必要があるため。
  *
+ * 端末は会話の上に重ねる窓で開く。`t` はその窓を開閉する。窓が開いている間、キーは
+ * 端末が受け取るので、`t` で閉じられるのはノーマルモードに入ったあとだけ
+ * (端末からはCtrl+; → `t` の2打)。EscはClaudeに届けるので、閉じるキーにしない。
+ * `i` は、窓が開いていれば端末へ、閉じていれば会話の入力欄へフォーカスを置く。
+ *
  * コマンドパレットの入口はノーマルモードの `:` だけで、入力モードから直接開くキーは
  * 足さない (端末の Claude に届かないキーを増やさない)。端末からは Ctrl+; → `:` の 2 打。
  */
@@ -33,8 +38,8 @@ export type KeyNavCommand =
   | { type: "session"; dir: -1 | 1 }
   /** 次の「あなたの番」のセッションへ */
   | { type: "next-your-turn" }
-  /** 端末 ↔ 会話 */
-  | { type: "toggle-left-mode" }
+  /** 端末の窓を開閉 */
+  | { type: "toggle-terminal" }
   /** 作業エリアを開閉 */
   | { type: "toggle-work-area" }
   /** 作業エリアのタブへ */
@@ -88,7 +93,7 @@ const SINGLE_KEYS: Readonly<Record<string, KeyNavCommand>> = {
   J: { type: "session", dir: 1 },
   K: { type: "session", dir: -1 },
   n: { type: "next-your-turn" },
-  t: { type: "toggle-left-mode" },
+  t: { type: "toggle-terminal" },
   p: { type: "toggle-work-area" },
   q: { type: "close" },
   "?": { type: "help" },
@@ -169,7 +174,7 @@ export const KEYNAV_HELP: ReadonlyArray<{
     rows: [
       ["J / K", "次 / 前のセッション"],
       ["n", "次の「あなたの番」のセッション"],
-      ["t", "端末 ⇄ 会話"],
+      ["t", "端末の窓を開閉"],
       ["p", "作業エリアを開閉"],
       ["gd / gf / gs", "図 / ファイル / Git のタブ"],
       ["gt / gT", "次 / 前のファイルタブ"],

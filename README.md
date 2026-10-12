@@ -27,7 +27,7 @@ It drives the real interactive `claude` CLI inside tmux, so your plan, your sett
 
 1. Install Ark. On macOS (Apple Silicon) run `brew install --cask ignission/tap/ark`; on Linux, [run it from source](#run-from-source).
 2. Open Ark (http://localhost:4001 when run from source), pick a repository, and start a session on a worktree.
-3. Ask Claude something. Switch between the chat view and the raw terminal with the toggle at the top.
+3. Ask Claude something. The strip above the input shows the terminal's last lines; tap it to open the raw terminal in a window.
 
 You need the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) installed and logged in (`claude --version`; run `claude` and `/login` if you are not).
 

@@ -186,6 +186,31 @@ describe("KeyNavLayer", () => {
     expect(document.activeElement?.id).toBe("row");
   });
 
+  it("開いている端末の窓は、ダイアログとして数えない (前置キーも指示も効く)", () => {
+    mountScreen({ workOpen: true });
+    const floating = document.createElement("div");
+    floating.setAttribute("role", "dialog");
+    floating.setAttribute("data-keynav-nonmodal", "");
+    floating.innerHTML = '<button aria-label="端末を閉じる"></button>';
+    document.body.append(floating);
+    const closed = vi.fn();
+    floating.querySelector("button")?.addEventListener("click", closed);
+
+    // 端末の中で押された前置キー
+    act(() => {
+      window.dispatchEvent(new Event(KEYNAV_LEADER_EVENT));
+    });
+    expect(document.documentElement.dataset.keynavMode).toBe("normal");
+
+    press("t");
+    expect(closed).toHaveBeenCalledTimes(1);
+    // 閉じた先の入力欄がキーを受けるので、入力モードへ出る
+    expect(document.documentElement.dataset.keynavMode).toBeUndefined();
+
+    press(";", { ctrlKey: true });
+    expect(document.documentElement.dataset.keynavMode).toBe("normal");
+  });
+
   it("別のダイアログへ渡したときは、フォーカスを置き直さない", () => {
     mountScreen({ workOpen: true });
     press(";", { ctrlKey: true });

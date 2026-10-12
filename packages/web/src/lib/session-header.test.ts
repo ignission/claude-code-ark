@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   deleteSessionDescription,
-  headerQuickActions,
   inputBarToggleLabel,
   notificationMenuLabel,
   resolveSessionHeaderLabels,
+  terminalWindowActions,
 } from "./session-header";
 
 describe("resolveSessionHeaderLabels", () => {
@@ -40,43 +40,9 @@ describe("resolveSessionHeaderLabels", () => {
   });
 });
 
-describe("headerQuickActions", () => {
-  it("端末モードでは、添付・画像・ショートカットのあとに端末の操作を並べる", () => {
-    expect(
-      headerQuickActions({
-        leftMode: "terminal",
-        canUploadFile: true,
-        canCopyBuffer: true,
-      })
-    ).toEqual([
-      "attach-file",
-      "paste-image",
-      "message-shortcuts",
-      "copy-buffer",
-      "reload-terminal",
-      "toggle-input-bar",
-    ]);
-  });
-
-  it("会話モードは添付・画像を会話の入力欄が担い、端末の操作も呼べないので、ショートカットだけ出す", () => {
-    expect(
-      headerQuickActions({
-        leftMode: "chat",
-        canUploadFile: true,
-        canCopyBuffer: true,
-      })
-    ).toEqual(["message-shortcuts"]);
-  });
-
-  it("アップロードできない環境では、端末モードでも添付と画像を外す", () => {
-    expect(
-      headerQuickActions({
-        leftMode: "terminal",
-        canUploadFile: false,
-        canCopyBuffer: true,
-      })
-    ).toEqual([
-      "message-shortcuts",
+describe("terminalWindowActions", () => {
+  it("端末の窓には、端末そのものを動かす操作を並べる", () => {
+    expect(terminalWindowActions({ canCopyBuffer: true })).toEqual([
       "copy-buffer",
       "reload-terminal",
       "toggle-input-bar",
@@ -84,16 +50,7 @@ describe("headerQuickActions", () => {
   });
 
   it("コピーができないときは、その1つだけを外す", () => {
-    expect(
-      headerQuickActions({
-        leftMode: "terminal",
-        canUploadFile: true,
-        canCopyBuffer: false,
-      })
-    ).toEqual([
-      "attach-file",
-      "paste-image",
-      "message-shortcuts",
+    expect(terminalWindowActions({ canCopyBuffer: false })).toEqual([
       "reload-terminal",
       "toggle-input-bar",
     ]);
