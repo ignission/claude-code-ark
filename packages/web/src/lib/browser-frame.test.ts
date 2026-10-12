@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  canvasScale,
   FRAME_HEADER_BYTES,
   type FrameHeader,
   frameImageType,
+  MAX_CANVAS_PIXELS,
   parseFrameHeader,
   pruneQueue,
+  REFRESH_INTERVAL_MAX_MS,
+  REFRESH_INTERVAL_MS,
+  refreshIntervalMs,
 } from "./browser-frame";
 
 function encode(
@@ -147,5 +152,49 @@ describe("pruneQueue", () => {
 
   it("空の列はそのまま返す", () => {
     expect(pruneQueue([], 5)).toEqual([]);
+  });
+});
+
+describe("canvasScale", () => {
+  const viewport = { width: 1001, height: 601 };
+
+  it("手元の倍率が1.5以上なら2、それより低ければ1", () => {
+    expect(canvasScale(viewport, 1)).toBe(1);
+    expect(canvasScale(viewport, 1.25)).toBe(1);
+    expect(canvasScale(viewport, 1.5)).toBe(2);
+    expect(canvasScale(viewport, 2)).toBe(2);
+    expect(canvasScale(viewport, 3)).toBe(2);
+  });
+
+  it("1より低い倍率や、数でない倍率は1", () => {
+    expect(canvasScale(viewport, 0.5)).toBe(1);
+    expect(canvasScale(viewport, 0)).toBe(1);
+    expect(canvasScale(viewport, Number.NaN)).toBe(1);
+  });
+
+  it("2倍にすると画素数の上限を超えるビューポートは1", () => {
+    expect(canvasScale({ width: 3840, height: 2160 }, 2)).toBe(1);
+    // ちょうど上限なら2倍にする
+    expect(MAX_CANVAS_PIXELS).toBe(16_000_000);
+    expect(canvasScale({ width: 2000, height: 2000 }, 2)).toBe(2);
+    expect(canvasScale({ width: 2001, height: 2000 }, 2)).toBe(1);
+  });
+});
+
+describe("refreshIntervalMs", () => {
+  it("描けない失敗が続いた回数で、間隔を倍にしていく", () => {
+    expect(REFRESH_INTERVAL_MS).toBe(500);
+    expect(refreshIntervalMs(0)).toBe(500);
+    expect(refreshIntervalMs(1)).toBe(500);
+    expect(refreshIntervalMs(2)).toBe(1000);
+    expect(refreshIntervalMs(3)).toBe(2000);
+    expect(refreshIntervalMs(4)).toBe(4000);
+  });
+
+  it("上限より長くしない", () => {
+    expect(REFRESH_INTERVAL_MAX_MS).toBe(8000);
+    expect(refreshIntervalMs(5)).toBe(8000);
+    expect(refreshIntervalMs(6)).toBe(8000);
+    expect(refreshIntervalMs(5000)).toBe(8000);
   });
 });

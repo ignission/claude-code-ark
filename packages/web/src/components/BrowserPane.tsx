@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { buildBrowserWsUrl } from "@/lib/auth-token";
 import {
+  canvasScale,
   FRAME_HEADER_BYTES,
   FRAME_QUEUE_LIMIT,
   type FrameHeader,
@@ -16,6 +17,7 @@ import {
   parseFrameHeader,
   pruneQueue,
   REFRESH_INTERVAL_MS,
+  refreshIntervalMs,
 } from "@/lib/browser-frame";
 import {
   type BrowserMouseMessage,
@@ -45,13 +47,16 @@ const DISCONNECTED_REASON = "切断されました";
 const COMPOSITION_ENTER_MS = 30;
 /** DOMの `MouseEvent.button` の順に並べた、`MouseEvent.buttons` のビット */
 const BUTTON_BITS = [1, 4, 2, 8, 16];
-/** canvasの画素数をビューポートの何倍まで持つか。手元の倍率がこれより高くても増やさない */
-const MAX_CANVAS_SCALE = 2;
 const GEN_MAX = 0xffff;
 
 interface Size {
   width: number;
   height: number;
+}
+
+/** canvasの画素数と、ビューポートのCSSピクセル1つに持つ画素の数 */
+interface CanvasSize extends Size {
+  scale: 1 | 2;
 }
 
 /** 復号を待つフレーム。`data` はヘッダを含む、届いたままのバイト列 */
@@ -81,11 +86,6 @@ function isGen(value: unknown): value is number {
   return (
     Number.isInteger(value) && Number(value) >= 0 && Number(value) <= GEN_MAX
   );
-}
-
-/** ビューポートのCSSピクセル1つに、canvasの画素をいくつ持つか */
-function canvasScale(): number {
-  return Math.min(MAX_CANVAS_SCALE, Math.max(1, window.devicePixelRatio || 1));
 }
 
 /**
@@ -121,18 +121,33 @@ function toViewport(
  * このペインの寸法と違えば、先に自分の寸法を送る。
  *
  * canvasの画素数は、届いた画像ではなく、サーバーが知らせるビューポートの寸法で決める
- * (ビューポートの寸法に、手元の倍率を1から2の範囲へ収めた値を掛ける)。届く画像は、
- * 画面の一部の矩形や粗い全画面のこともあり、画像の寸法は画面の寸法を表さない。
- * この倍率は描く細かさを決めるだけで、座標の換算には使わない。画素数を変えると
- * canvasは消えるが、サーバーはビューポートの世代を変えるたびに全画面を送る。
+ * (ビューポートの寸法に、1か2の倍率を掛ける。倍率の決まりは `canvasScale`)。届く画像は、
+ * 画面の一部の矩形や粗い全画面のこともあり、画像の寸法は画面の寸法を表さない。倍率を
+ * 整数にするのは、矩形をcanvasの画素の境目へちょうど描くため。整数でないと、丸めた分だけ
+ * 矩形が隣の絵へはみ出し、次の全画面まで直らない。この倍率は描く細かさを決めるだけで、
+ * 座標の換算には使わない。
+ *
+ * 画素数を変えるとcanvasは消える。そこで、変えるのは次の全画面を描く直前にし、同じ処理の
+ * 中で続けて描く。それまでは前の絵を残す。ビューポートの世代が変わったときは、サーバーが
+ * 全画面を送る。手元の倍率が変わってcanvasの倍率が変わったときは、サーバーは世代を
+ * 変えないので、こちらから全画面を頼む。座標の換算に使うビューポートの寸法は、絵が
+ * 替わるのを待たず、知らされた時点で替える。
  *
  * フレームは、届いた順に1枚ずつ復号して描く。矩形は前の絵に重ねる差分なので、
  * 間を飛ばさない。全画面が届いたら、その前で待っていた分は上書きされるので捨てる。
  * ビューポートの世代が違うフレームは描かない。1枚でも取りこぼしたら (復号の失敗、
- * 待ち行列の溢れ、隠れている間に届いた)、待っている分を捨てて全画面の送り直しを頼み、
- * 次の全画面が届くまで矩形を描かない。穴の空いた絵に矩形を重ねても、正しい絵に
- * ならない。隠れている間は復号せず、見えるようになったときに1回だけ頼む。頼むのは
- * 間隔を空けて行い、復号の失敗が続いてもサーバーへ送り続けない。
+ * 描画先が無い、待ち行列の溢れ、隠れている間に届いた、読めないヘッダ)、待っている分を
+ * 捨てて全画面の送り直しを頼み、次の全画面が届くまで矩形を描かない。穴の空いた絵に
+ * 矩形を重ねても、正しい絵にならない。ただし、描けなかったフレームのあとに全画面が
+ * 待っていれば、その全画面が絵を直すので、頼まずに続きを描く。隠れている間は復号せず、
+ * 見えるようになったときに1回だけ頼む。隠れているかどうかは、寸法の監視が知らせた値を
+ * 覚えておき、フレームのたびにレイアウトを読まない。
+ *
+ * 送り直しを頼むのは、前に頼んでから500ms以上空けて、1回ずつ。頼んだ全画面が届けば、
+ * 待っている分は取り消す (世代が変わったときも、全画面が届くので取り消す)。描けない失敗
+ * (復号の失敗、描画先が無い) が続く間は、頼む間隔を失敗のたびに倍にして8秒まで延ばし、
+ * 1枚描けたら元へ戻す。手元で描けない画像を送られ続けても、頼むのは8秒に1回で止まる。
+ * ほかの理由で頼むときは、間隔を延ばさない。
  */
 export function BrowserPane({ browserSession }: BrowserPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -144,8 +159,12 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
 
   // サーバーが最後に知らせたビューポートの寸法 (CSSピクセル)
   const viewportRef = useRef<Size | null>(null);
+  // ペインが見えているか (寸法が0でないか)。寸法の監視が更新する
+  const visibleRef = useRef(true);
   // ペインが見えるようになったときに、頼みそびれた全画面の送り直しを頼む。接続のeffectが入れる
   const resumeRef = useRef<(() => void) | null>(null);
+  // 手元の倍率が変わったときに、canvasの倍率を決め直す。接続のeffectが入れる
+  const rescaleRef = useRef<(() => void) | null>(null);
   // 間引きで送らずに持っている最新のmove
   const pendingMoveRef = useRef<BrowserMouseMessage | null>(null);
   const moveFrameRef = useRef<number | null>(null);
@@ -241,12 +260,21 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     // 復号を待つフレーム。届いた順に並べ、先頭から1枚ずつ復号する
     let queue: QueuedFrame[] = [];
     let decoding = false;
-    let decodeWarned = false;
+    let paintWarned = false;
+    let viewportWarned = false;
     // サーバーが最後に知らせたビューポートの世代。知らされるまではフレームを描かない
     let gen: number | null = null;
     // 全画面を待っている間は、矩形を描かない。重ねる先の絵が無いか、穴が空いている
     let awaitingFull = true;
+    // いまのcanvasの倍率。フレームの位置と寸法に掛けて描く
+    let scale: 1 | 2 = 1;
+    // 次の全画面を描く直前に、canvasへ当てる画素数と倍率
+    let pendingCanvas: CanvasSize | null = null;
+    // 描けない失敗が続いた回数。1枚描けたら0へ戻す
+    let failures = 0;
     let refreshWanted = false;
+    // 待っている送り直しが、前に頼んでから空ける間隔
+    let refreshGap = REFRESH_INTERVAL_MS;
     let lastRefreshAt = Number.NEGATIVE_INFINITY;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -257,23 +285,22 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
 
-    const isHidden = () => {
-      const rect = containerRef.current?.getBoundingClientRect();
-      return !rect || rect.width <= 0 || rect.height <= 0;
+    const clearRefreshTimer = () => {
+      if (refreshTimer !== null) clearTimeout(refreshTimer);
+      refreshTimer = null;
     };
 
     const cancelRefresh = () => {
       refreshWanted = false;
-      if (refreshTimer !== null) clearTimeout(refreshTimer);
-      refreshTimer = null;
+      clearRefreshTimer();
     };
 
     // 頼むのは、見えていて、つながっていて、前に頼んでから間隔が空いているときだけ。
     // 間隔が空いていなければ、空くのを待って頼む
     const flushRefresh = () => {
       if (cancelled || !refreshWanted || refreshTimer !== null) return;
-      if (ws.readyState !== WebSocket.OPEN || isHidden()) return;
-      const wait = lastRefreshAt + REFRESH_INTERVAL_MS - performance.now();
+      if (ws.readyState !== WebSocket.OPEN || !visibleRef.current) return;
+      const wait = lastRefreshAt + refreshGap - performance.now();
       if (wait > 0) {
         refreshTimer = setTimeout(() => {
           refreshTimer = null;
@@ -288,33 +315,62 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     };
     resumeRef.current = flushRefresh;
 
-    /** フレームを取りこぼしたとき。待っている分を捨て、全画面の送り直しを頼む */
-    const requestRefresh = () => {
+    /**
+     * フレームを取りこぼしたとき。待っている分を捨て、全画面の送り直しを頼む。
+     * `interval` は前に頼んでから空ける間隔。待っている分があれば、短いほうに合わせる
+     */
+    const requestRefresh = (interval = REFRESH_INTERVAL_MS) => {
       queue = [];
       awaitingFull = true;
+      refreshGap = refreshWanted ? Math.min(refreshGap, interval) : interval;
       refreshWanted = true;
+      // 間隔が変わったかもしれないので、待つ時間を計り直す
+      clearRefreshTimer();
       flushRefresh();
     };
 
-    const draw = (header: FrameHeader, bitmap: ImageBitmap) => {
+    /** 復号したフレームを描けなかったとき */
+    const failPaint = (error: unknown) => {
+      failures += 1;
+      if (!paintWarned) {
+        paintWarned = true;
+        console.warn("[BrowserPane] フレームを描けません:", error);
+      }
+      // 全画面が待っていれば、それが絵を直す。頼まずに続きを描く
+      if (queue.some(queued => queued.header.kind !== 3)) return;
+      requestRefresh(refreshIntervalMs(failures));
+    };
+
+    /** 描けたら `true`。描画先が無ければ、canvasに触れずに `false` */
+    const paint = (header: FrameHeader, bitmap: ImageBitmap): boolean => {
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext("2d");
-      const viewport = viewportRef.current;
-      if (!canvas || !ctx || !viewport) return;
-      const sx = canvas.width / viewport.width;
-      const sy = canvas.height / viewport.height;
-      // 端は外側の画素へ丸める。内側へ丸めると、隣の矩形との間に古い絵の線が残る
-      const left = Math.floor(header.x * sx);
-      const top = Math.floor(header.y * sy);
-      const right = Math.ceil((header.x + header.width) * sx);
-      const bottom = Math.ceil((header.y + header.height) * sy);
-      ctx.drawImage(bitmap, left, top, right - left, bottom - top);
+      if (!canvas || !ctx) return false;
+      if (header.kind !== 3 && pendingCanvas) {
+        // 同じ値でも代入するとcanvasが消えるので、違うときだけ変える
+        if (canvas.width !== pendingCanvas.width) {
+          canvas.width = pendingCanvas.width;
+        }
+        if (canvas.height !== pendingCanvas.height) {
+          canvas.height = pendingCanvas.height;
+        }
+        scale = pendingCanvas.scale;
+        pendingCanvas = null;
+      }
+      ctx.drawImage(
+        bitmap,
+        header.x * scale,
+        header.y * scale,
+        header.width * scale,
+        header.height * scale
+      );
+      return true;
     };
 
     const decodeNext = () => {
       if (cancelled || decoding || queue.length === 0) return;
       // 隠れている間は復号しない。待っている分は捨て、見えたときに全画面を頼む
-      if (isHidden()) {
+      if (!visibleRef.current) {
         requestRefresh();
         return;
       }
@@ -335,18 +391,18 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
         .then(bitmap => {
           try {
             // 接続をやり直したあとや、世代が変わったあとに終わった分は描かない
-            if (!cancelled && item.header.gen === gen)
-              draw(item.header, bitmap);
+            if (cancelled || item.header.gen !== gen) return;
+            if (!paint(item.header, bitmap)) {
+              throw new Error("canvasの描画先がありません");
+            }
+            failures = 0;
           } finally {
             bitmap.close();
           }
         })
         .catch((error: unknown) => {
           if (cancelled || item.header.gen !== gen) return;
-          requestRefresh();
-          if (decodeWarned) return;
-          decodeWarned = true;
-          console.warn("[BrowserPane] フレームを描けません:", error);
+          failPaint(error);
         })
         .then(() => {
           decoding = false;
@@ -362,7 +418,7 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
         return;
       }
       if (header.gen !== gen) return;
-      if (isHidden()) {
+      if (!visibleRef.current) {
         requestRefresh();
         return;
       }
@@ -381,23 +437,55 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
       decodeNext();
     };
 
+    /**
+     * いまのビューポートと手元の倍率から、canvasの画素数を決め直す。変わるなら、次の全画面で
+     * 当てるように覚えて `true` を返す
+     */
+    const retargetCanvas = (): boolean => {
+      const viewport = viewportRef.current;
+      if (!viewport) return false;
+      const nextScale = canvasScale(viewport, window.devicePixelRatio || 1);
+      const next: CanvasSize = {
+        width: viewport.width * nextScale,
+        height: viewport.height * nextScale,
+        scale: nextScale,
+      };
+      const canvas = canvasRef.current;
+      const current =
+        pendingCanvas ??
+        (canvas ? { width: canvas.width, height: canvas.height, scale } : null);
+      if (
+        current &&
+        current.width === next.width &&
+        current.height === next.height &&
+        current.scale === next.scale
+      ) {
+        return false;
+      }
+      pendingCanvas = next;
+      return true;
+    };
+
     const applyViewport = (width: number, height: number, nextGen: number) => {
+      // 座標の換算は、ここから新しい寸法を使う
       viewportRef.current = { width, height };
-      if (nextGen !== gen) {
-        // 前の世代のフレームは、寸法の違う画面のもの。新しい世代は全画面から始まる
+      const genChanged = nextGen !== gen;
+      if (genChanged) {
+        // 前の世代のフレームは、寸法の違う画面のもの。新しい世代は全画面から始まり、
+        // サーバーが頼まれなくても送る
         gen = nextGen;
         queue = [];
         awaitingFull = true;
+        cancelRefresh();
       }
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const scale = canvasScale();
-      const canvasWidth = Math.round(width * scale);
-      const canvasHeight = Math.round(height * scale);
-      // 同じ値でも代入するとcanvasが消えるので、違うときだけ変える
-      if (canvas.width !== canvasWidth) canvas.width = canvasWidth;
-      if (canvas.height !== canvasHeight) canvas.height = canvasHeight;
+      // 世代が同じまま画素数が変わるなら、全画面は届かないので頼む
+      if (retargetCanvas() && !genChanged) requestRefresh();
     };
+
+    rescaleRef.current = () => {
+      if (gen !== null && retargetCanvas()) requestRefresh();
+    };
+    const rescale = rescaleRef.current;
 
     ws.onopen = () => {
       if (cancelled) return;
@@ -410,13 +498,17 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
           const msg = JSON.parse(event.data) as BrowserServerMessage;
           // サーバーは閉じる直前に理由を送る。表示するのはcloseが来てから
           if (msg.t === "error") serverError = msg.message;
-          if (
-            msg.t === "viewport" &&
-            isSize(msg.width) &&
-            isSize(msg.height) &&
-            isGen(msg.gen)
-          ) {
-            applyViewport(msg.width, msg.height, msg.gen);
+          if (msg.t === "viewport") {
+            if (isSize(msg.width) && isSize(msg.height) && isGen(msg.gen)) {
+              applyViewport(msg.width, msg.height, msg.gen);
+            } else {
+              // 世代が分からないと、このあとのフレームを全部捨てることになる
+              if (!viewportWarned) {
+                viewportWarned = true;
+                console.warn("[BrowserPane] viewportを読めません:", msg);
+              }
+              requestRefresh();
+            }
           }
         } catch {
           // 読めないメッセージは捨てる
@@ -441,6 +533,7 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
       queue = [];
       cancelRefresh();
       if (resumeRef.current === flushRefresh) resumeRef.current = null;
+      if (rescaleRef.current === rescale) rescaleRef.current = null;
       // 自分で閉じたときに「切断されました」を出さないよう、先にハンドラを外す
       ws.onopen = null;
       ws.onmessage = null;
@@ -454,7 +547,14 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
   useEffect(() => {
     const container = containerRef.current;
     if (!container || typeof ResizeObserver === "undefined") return;
+    // display: none (Tailwindのhidden) で隠れている間は0になる
+    const measure = () => {
+      const rect = container.getBoundingClientRect();
+      visibleRef.current = rect.width > 0 && rect.height > 0;
+    };
+    measure();
     const observer = new ResizeObserver(() => {
+      measure();
       sendSize();
       // 隠れている間にフレームを取りこぼしていたら、見えたところで全画面を頼む
       resumeRef.current?.();
@@ -464,13 +564,14 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
   }, [sendSize]);
 
   // 手元の倍率が変わったら (倍率の違う画面へウィンドウを動かした、拡大率を変えた)、
-  // ペインの寸法が同じでも送り直す。メディアクエリはいまの倍率に一致するものなので、
-  // 変わるたびに新しい倍率で聞き直す
+  // ペインの寸法が同じでも送り直し、canvasの倍率を決め直す。メディアクエリはいまの倍率に
+  // 一致するものなので、変わるたびに新しい倍率で聞き直す
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
     let query: MediaQueryList | null = null;
     const onChange = () => {
       sendSize();
+      rescaleRef.current?.();
       listen();
     };
     const listen = () => {
