@@ -542,7 +542,7 @@ describe("SplitChatPane: 端末の帯", () => {
     expect(following(strip(container), textarea)).toBe(true);
   });
 
-  it("高さは行数に関係なく5行ぶんで、下端に寄せて切り、折り返さない", () => {
+  it("高さは行数に関係なく8行ぶんで、下端に寄せて切り、折り返さない", () => {
     const short = renderChat({ liveTail: "1行だけ", onOpenTerminal: vi.fn() });
     const long = renderChat({
       liveTail: Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n"),
@@ -550,8 +550,8 @@ describe("SplitChatPane: 端末の帯", () => {
     });
 
     for (const { container } of [short, long]) {
-      // 行の高さ16px x 5行
-      expect(clip(container)?.style.height).toBe("80px");
+      // 行の高さ16px x 8行
+      expect(clip(container)?.style.height).toBe("128px");
       expect(clip(container)?.className).toContain("overflow-hidden");
       expect(clip(container)?.className).toContain("justify-end");
       expect(tail(container)?.className).toContain("whitespace-pre");
