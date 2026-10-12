@@ -12,14 +12,29 @@
  *   接続、視聴者、入力を持つ
  * - 監視フレームのackは、届いたらすぐ返す。視聴者へ送らないフレームなので、視聴者の
  *   送信バッファの詰まりとは関係がない。詰まった視聴者には、取り直した画像を送らないことで応じる
- * - タブが使えなくなったら (sessionのdetach、クラッシュ、screencastの開始の失敗)、
- *   CDPが切れたときと同じに扱う。視聴者をerrorで閉じて接続ごと捨て、次の `attach` で
- *   タブを探すところからやり直す。取り直しの失敗だけは別で、ページの遷移中にも起きるので
- *   接続を捨てない
+ * - 映すタブは1つ。どのタブを映すか (切り替え、閉じる、新しいタブ、消えたタブからの移動) は
+ *   browser-tab-controller.ts が決め、このモジュールは「タブへつないで準備する」
+ *   (`enterTab`) と「いまのタブから離れる」(`leavePage`) だけを受け持つ。最初の接続、
+ *   切り替え、消えたタブからのつなぎ直しのどれも、同じ2つを通る
+ * - タブから離れても、視聴者とCDPの接続には触らない。捨てるのはタブ1つぶんの状態
+ *   (監視、取り直しの途中の結果、ページの状態、開いているダイアログ、スクロールした位置、
+ *   当てた寸法、寸法の変更の待ち) だけ。離れてから次のタブの準備が終わるまでは映すタブが
+ *   無く、その間に届いた入力、遷移、ダイアログへの応答、コピーは捨てる (溜めない。
+ *   別のタブへ届けると、利用者が見ていないページを操作することになる)
+ * - 前のタブから遅れて届くものを、いまのタブに響かせない。sessionのイベントはsessionの
+ *   idで、取り直しの結果はパイプラインの画面の番号で、screencastの開始の失敗は
+ *   `castGeneration` で、準備の途中のコマンドの応答は `attached` が替わっていないかで見分ける
+ * - タブが替わったら、寸法が同じでも世代を進める。視聴者は世代の違うフレームを捨てるので、
+ *   前のタブの画が新しいタブの上に重ならない。準備が終わったら、全員へ、寸法、ページの状態、
+ *   タブの一覧の順に知らせ、監視を始める。最初の監視フレームで鮮明な全画面が届く
+ * - 映しているタブが消えても、クラッシュしても、視聴者は切らない (ほかのタブへ移る)。
+ *   視聴者をerrorで閉じて接続ごと捨てるのは、CDPが切れたとき、どのタブにもつなげなく
+ *   なったとき、screencastを始められなかったときだけ。次の `attach` でつなぎ直す。
+ *   取り直しの失敗は、ページの遷移中にも起きるので、接続を捨てない
  * - どのChromiumへつなぐかは、このモジュールでは決めない。つなぎ方は `connect` で受け取る。
  *   サーバーが使う1つは、Chromiumを起動する側 (browser-manager.ts の `browserBridge`) が作る
- * - ビューポートは1つで、最後に寸法を送った視聴者に合わせる。タブが1つなので、
- *   視聴者ごとに別の寸法は持てない
+ * - ビューポートは1つで、最後に寸法を送った視聴者に合わせる。映すタブが1つなので、
+ *   視聴者ごとに別の寸法は持てない。タブを替えても同じ寸法を当てる
  * - フレームが描かれたビューポートの寸法 (CSSピクセル) と世代を、そのフレームより先に
  *   視聴者へ知らせる。ビューポートは共有なので、視聴者は自分のペインの寸法や倍率からは
  *   座標を決められない。視聴者ごとに知らせた世代を覚え、変わったときだけ送る
@@ -30,13 +45,20 @@
  *   返らない) と、ページのUIを受け持つ browser-page-controller.ts の両方へ伝える
  * - headlessのChromiumにはブラウザのUIが無い。アドレスバー、戻ると進む、ダイアログ、
  *   コピーは browser-page-controller.ts が受け持ち、このモジュールは、タブのsessionの
- *   イベントと視聴者のメッセージを渡すだけにする。attachするたびに1つ作り、接続を捨てる
- *   ときに捨てる
+ *   イベントと視聴者のメッセージを渡すだけにする。タブへattachするたびに1つ作り、
+ *   そのタブから離れるときに捨てる
+ * - `Target.targetInfoChanged` で映しているタブの題が変わったと分かったら、履歴を読み直す。
+ *   ページの状態の題は履歴から読むので、遷移を伴わない題の変更はこれでしか分からない
  * - 視聴者へJSONを配るのは、参加の手続き (寸法の通知) が済んだ視聴者だけ。参加した
- *   視聴者には、寸法、ページの状態、開いているダイアログの順に知らせる
+ *   視聴者には、寸法、ページの状態、開いているダイアログ、タブの一覧の順に知らせる。
+ *   映すタブが無い間に参加した視聴者には、次のタブの準備が終わったときに、全員と一緒に知らせる
  */
 
-import type { BrowserClientMessage, BrowserServerMessage } from "@ark/shared";
+import type {
+  BrowserClientMessage,
+  BrowserServerMessage,
+  BrowserTabInfo,
+} from "@ark/shared";
 import type { CdpClient } from "./browser-cdp-client.js";
 import {
   BrowserFramePipeline,
@@ -52,6 +74,7 @@ import {
   parseClientMessage,
   toCdpCommand,
 } from "./browser-protocol.js";
+import { BrowserTabController } from "./browser-tab-controller.js";
 
 export { encodeFrameHeader } from "./browser-frame-pipeline.js";
 
@@ -80,6 +103,9 @@ export interface ViewerSocket {
 interface Page {
   cdp: CdpLike;
   sessionId: string;
+  targetId: string;
+  /** このタブの、ページのUIにあたる部分 */
+  ui: BrowserPageController<ViewerSocket>;
 }
 
 interface Viewport {
@@ -104,6 +130,7 @@ const DEFAULT_VIEWPORT: Viewport = {
 
 const DISCONNECTED_MESSAGE = "ブラウザとの接続が切れました";
 const CONNECT_FAILED_MESSAGE = "ブラウザへ接続できません";
+const LEFT_MESSAGE = "準備の途中でタブから離れました";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -149,11 +176,15 @@ function warn(what: string, error: unknown): void {
 export class BrowserCdpBridge {
   private readonly viewers = new Set<ViewerSocket>();
   /** 接続は1本にまとめる。同時の `attach` と `navigate` が2本つながないように、途中のPromiseを共有する */
-  private connecting: Promise<Page> | null = null;
+  private connecting: Promise<void> | null = null;
   /** いま使っている接続。古い接続のcloseやイベントを見分けるのに使う */
   private cdp: CdpLike | null = null;
-  /** 準備が終わったタブ。イベントのリスナーから同期で使う */
+  /** attachしたタブ。準備の途中のものも入る。sessionのイベントは、これと突き合わせる */
+  private attached: Page | null = null;
+  /** 準備が終わって映しているタブ。切り替えの途中は `null` で、その間の入力は捨てる */
   private page: Page | null = null;
+  /** いまの接続の、タブの一覧と切り替え。接続してから接続を捨てるまで持つ */
+  private tabUi: BrowserTabController<ViewerSocket> | null = null;
   /** `reset` のたびに進める。進んだあとに終わった `connect()` は捨てる */
   private epoch = 0;
   private casting = false;
@@ -163,14 +194,12 @@ export class BrowserCdpBridge {
    */
   private castGeneration = 0;
   private viewport: Viewport = DEFAULT_VIEWPORT;
-  /** いまの接続のタブに当てた寸法。同じ寸法を当て直さないために持つ */
+  /** いまのタブに当てた寸法。同じ寸法を当て直さないために持つ */
   private appliedViewport: Viewport | null = null;
   /** 視聴者ごとの、最後に知らせたビューポートの世代。同じ世代を二度送らないために持つ */
   private readonly notifiedGen = new Map<ViewerSocket, number>();
   /** 参加の手続きが済んだ視聴者。ページの状態とダイアログは、この視聴者にだけ配る */
   private readonly joined = new Set<ViewerSocket>();
-  /** いまの接続のタブの、ページのUIにあたる部分。attachしてから接続を捨てるまで持つ */
-  private pageUi: BrowserPageController<ViewerSocket> | null = null;
   private resizeTimer: NodeJS.Timeout | null = null;
   /** 監視フレームから、何を取り直してどの視聴者へ送るかを決める */
   private readonly pipeline = new BrowserFramePipeline<ViewerSocket>({
@@ -203,9 +232,12 @@ export class BrowserCdpBridge {
     void this.join(ws);
   }
 
-  /** つないでいなければつなぎ、タブを `url` へ遷移させる */
+  /** つないでいなければつなぎ、映しているタブを `url` へ遷移させる。切り替えの途中なら終わるのを待つ */
   async navigate(url: string): Promise<void> {
-    const page = await this.ensurePage();
+    await this.ensurePage();
+    await this.tabUi?.idle();
+    const page = this.page;
+    if (!page) throw new Error(DISCONNECTED_MESSAGE);
     await page.cdp.send("Page.navigate", { url }, page.sessionId);
   }
 
@@ -222,9 +254,8 @@ export class BrowserCdpBridge {
   }
 
   private async join(ws: ViewerSocket): Promise<void> {
-    let page: Page;
     try {
-      page = await this.ensurePage();
+      await this.ensurePage();
     } catch (error) {
       warn("接続に失敗", error);
       // 接続が切れて閉じられた視聴者は、もう外れている
@@ -248,13 +279,16 @@ export class BrowserCdpBridge {
       }
     }
     this.joined.add(ws);
-    this.pageUi?.greet(ws);
+    // 映すタブが無い間 (切り替えの途中) は、準備が終わったときに全員と一緒に知らせる
+    const page = this.page;
+    page?.ui.greet(ws);
+    this.tabUi?.greet(ws);
     // 知らせる途中で送信が投げた視聴者は、もう外れている
     if (!this.viewers.has(ws)) return;
     // screencastは画面が変わったときしか監視フレームを出さない。もう始まっているなら、
     // 何かが動くのを待たずに全画面を取り直して送る
     this.pipeline.requestFull(ws);
-    this.startCast(page);
+    if (page) this.startCast(page);
   }
 
   private detach(ws: ViewerSocket): void {
@@ -264,9 +298,10 @@ export class BrowserCdpBridge {
     if (this.viewers.size === 0) this.stopCast();
   }
 
-  private ensurePage(): Promise<Page> {
+  /** つないでいなければつなぐ。最初のタブの準備が終わったら解決する */
+  private ensurePage(): Promise<void> {
     if (!this.connecting) {
-      const attempt = this.openPage();
+      const attempt = this.openConnection();
       this.connecting = attempt;
       // 失敗した接続を持ち続けない。次の `attach` でつなぎ直す
       attempt.catch(() => {
@@ -276,7 +311,7 @@ export class BrowserCdpBridge {
     return this.connecting;
   }
 
-  private async openPage(): Promise<Page> {
+  private async openConnection(): Promise<void> {
     const epoch = this.epoch;
     const cdp = await this.connect();
     if (epoch !== this.epoch) {
@@ -284,104 +319,183 @@ export class BrowserCdpBridge {
       throw new Error("接続を待つ間にリセットされました");
     }
     this.cdp = cdp;
-    /** attachしたタブのsession。準備の途中に届くdetachも見分けられるように、ここで持つ */
-    let attached: string | null = null;
-    /** attachしたタブのページのUI。`attached` と同時に決まる */
-    let pageUi: BrowserPageController<ViewerSocket> | null = null;
+    /** 捨てた接続から遅れて届いたものを、いまの接続に響かせない */
+    const mine = () => this.cdp === cdp;
+    const tabUi = new BrowserTabController<ViewerSocket>({
+      send: (method, params) => cdp.send(method, params),
+      current: () => (mine() ? (this.page?.targetId ?? null) : null),
+      leave: gone => {
+        if (mine()) this.leavePage(gone);
+      },
+      enter: tab => this.enterTab(cdp, tab),
+      toViewer: (ws, message) => this.sendJson(ws, message),
+      toAll: message => this.broadcast(message),
+      fail: error => {
+        warn("どのタブにもつなげません", error);
+        this.failConnection(cdp, "映せるタブがありません");
+      },
+    });
+    this.tabUi = tabUi;
+    /** `sessionId` が、いまattachしているタブ (準備の途中のものも含む) のsessionなら、そのタブ */
+    const tabOf = (sessionId: unknown): Page | null => {
+      const tab = this.attached;
+      return mine() && tab !== null && tab.sessionId === sessionId ? tab : null;
+    };
     // リスナーは接続ごとに1回だけ登録する
     cdp.onClose(() => this.teardown(cdp));
-    cdp.on("Page.screencastFrame", params => this.handleFrame(cdp, params));
+    cdp.on("Page.screencastFrame", (params, sessionId) =>
+      this.handleFrame(cdp, params, sessionId)
+    );
+    cdp.on("Target.targetCreated", params => {
+      if (mine()) tabUi.targetCreated(params);
+    });
+    cdp.on("Target.targetInfoChanged", params => {
+      if (mine() && tabUi.targetInfoChanged(params)) this.page?.ui.rereadSoon();
+    });
+    cdp.on("Target.targetDestroyed", params => {
+      if (mine()) tabUi.targetDestroyed(params);
+    });
     // タブが閉じられたときもここへ来る (タブが消えると、そのsessionはdetachされる)。
     // ブラウザから届くイベントで、どのsessionかは `params` に入っている
     cdp.on("Target.detachedFromTarget", params => {
-      if (attached !== null && params?.sessionId === attached) {
-        this.failConnection(cdp, "タブのsessionがdetachされました");
-      }
+      if (tabOf(params?.sessionId)) tabUi.lost();
     });
     cdp.on("Inspector.targetCrashed", (_params, sessionId) => {
-      if (attached !== null && sessionId === attached) {
-        this.failConnection(cdp, "タブがクラッシュしました");
-      }
+      const tab = tabOf(sessionId);
+      if (tab) tabUi.crashed(tab.targetId);
     });
-    // 準備の途中に開いたダイアログも覚える。捨てた接続のものは、いまの接続に響かせない
+    // 準備の途中に開いたダイアログも覚える
     const dialog = (open: boolean) => (params: unknown, sessionId?: string) => {
-      if (this.cdp === cdp && attached !== null && sessionId === attached) {
-        this.pipeline.setDialogOpen(open);
-        if (open) pageUi?.dialogOpening(params);
-        else pageUi?.dialogClosed();
-      }
+      const tab = tabOf(sessionId);
+      if (!tab) return;
+      this.pipeline.setDialogOpen(open);
+      if (open) tab.ui.dialogOpening(params);
+      else tab.ui.dialogClosed();
     };
     cdp.on("Page.javascriptDialogOpening", dialog(true));
     cdp.on("Page.javascriptDialogClosed", dialog(false));
     for (const method of PAGE_STATE_EVENTS) {
       cdp.on(method, (params, sessionId) => {
-        if (this.cdp === cdp && attached !== null && sessionId === attached) {
-          pageUi?.handleEvent(method, params);
-        }
+        tabOf(sessionId)?.ui.handleEvent(method, params);
       });
     }
     try {
-      const { targetInfos } = await cdp.send<{
-        targetInfos: Array<{ targetId: string; type: string }>;
-      }>("Target.getTargets");
-      const target =
-        targetInfos.find(info => info.type === "page") ??
-        (await cdp.send<{ targetId: string }>("Target.createTarget", {
-          url: "about:blank",
-        }));
-      // 前面でないタブは描画されず、screencastのフレームも取り直しも返らない。
-      // タブがほかにもあるとき (ページが開いた別タブなど) に備えて、つなぐタブを前面にする
-      await cdp.send("Target.activateTarget", { targetId: target.targetId });
-      const { sessionId } = await cdp.send<{ sessionId: string }>(
-        "Target.attachToTarget",
-        { targetId: target.targetId, flatten: true }
+      // いまあるターゲットの `Target.targetCreated` が、応答より先に届く
+      await cdp.send("Target.setDiscoverTargets", { discover: true });
+      // 届かなかったぶんを補う。もう一覧にあるタブは、並びを変えない
+      const { targetInfos } = await cdp.send<{ targetInfos?: unknown }>(
+        "Target.getTargets"
       );
-      attached = sessionId;
-      // `Page.enable` より先に作る。準備の途中に届く遷移とダイアログも覚える
-      pageUi = new BrowserPageController<ViewerSocket>(
-        {
-          send: (method, params) => cdp.send(method, params, sessionId),
-          toViewer: (ws, message) => this.sendJson(ws, message),
-          toAll: message => {
-            for (const ws of [...this.joined]) this.sendJson(ws, message);
-          },
-        },
-        target.targetId
-      );
-      if (this.cdp === cdp) this.pageUi = pageUi;
-      await cdp.send("Page.enable", undefined, sessionId);
-      // headlessのタブはフォーカスを持たない。これが無いと、キャレットが出ず、
-      // focusに頼るページが動かない
-      await cdp.send(
-        "Emulation.setFocusEmulationEnabled",
-        { enabled: true },
-        sessionId
-      );
-      const viewport = this.viewport;
-      await cdp.send(
-        "Emulation.setDeviceMetricsOverride",
-        metricsParams(viewport),
-        sessionId
-      );
-      if (this.cdp !== cdp) throw new Error(DISCONNECTED_MESSAGE);
-      const page = { cdp, sessionId };
-      this.page = page;
-      this.appliedViewport = viewport;
-      this.pipeline.setApplied(viewport);
-      // 準備の途中に届いたresizeは、デバウンスが明けた時点でタブが無く、当たっていない。
-      // screencastはまだ始めていないので、ここでは寸法だけが変わる
-      if (!sameViewport(this.viewport, viewport)) this.applyViewport();
-      // `Page.enable` は過去の遷移を送り直さない。いまのURLとタイトルは履歴から読む
-      pageUi.refresh();
-      return page;
+      if (mine() && Array.isArray(targetInfos)) {
+        for (const targetInfo of targetInfos) {
+          tabUi.targetCreated({ targetInfo });
+        }
+      }
+      await tabUi.open();
+      if (!mine()) throw new Error(DISCONNECTED_MESSAGE);
     } catch (error) {
-      pageUi?.dispose();
-      if (this.pageUi === pageUi) this.pageUi = null;
       // 準備の途中で失敗した接続は使わない。残すと、つなぎ直すたびに接続が増える
-      if (this.cdp === cdp) this.cdp = null;
+      if (mine()) this.dropConnection();
       cdp.close();
       throw error;
     }
+  }
+
+  /**
+   * タブへつなぎ、映せるところまで準備する。最初の接続でも、切り替えでも、消えたタブからの
+   * つなぎ直しでも、これを通る。途中で失敗するか、タブから離れたら、rejectする
+   * (attachしていれば離れてから)。
+   */
+  private async enterTab(cdp: CdpLike, target: BrowserTabInfo): Promise<void> {
+    const targetId = target.id;
+    // 前面でないタブは描画されず、screencastのフレームも取り直しも返らない
+    await cdp.send("Target.activateTarget", { targetId });
+    const { sessionId } = await cdp.send<{ sessionId?: unknown }>(
+      "Target.attachToTarget",
+      { targetId, flatten: true }
+    );
+    if (this.cdp !== cdp) throw new Error(DISCONNECTED_MESSAGE);
+    if (typeof sessionId !== "string") {
+      throw new Error("attachしたsessionのidを読めません");
+    }
+    // `Page.enable` より先に作る。準備の途中に届く遷移とダイアログも覚える
+    const ui = new BrowserPageController<ViewerSocket>(
+      {
+        send: (method, params) => cdp.send(method, params, sessionId),
+        toViewer: (ws, message) => this.sendJson(ws, message),
+        toAll: message => this.broadcast(message),
+      },
+      targetId,
+      target.url === "" ? undefined : target
+    );
+    const tab: Page = { cdp, sessionId, targetId, ui };
+    this.attached = tab;
+    let viewport: Viewport;
+    try {
+      /** 応答を待つ間にタブから離れていたら (消えた、接続が切れた)、準備を続けない */
+      const step = async (method: string, params?: object) => {
+        await cdp.send(method, params, sessionId);
+        if (this.attached !== tab) throw new Error(LEFT_MESSAGE);
+      };
+      await step("Page.enable");
+      // headlessのタブはフォーカスを持たない。これが無いと、キャレットが出ず、
+      // focusに頼るページが動かない
+      await step("Emulation.setFocusEmulationEnabled", { enabled: true });
+      viewport = this.viewport;
+      await step("Emulation.setDeviceMetricsOverride", metricsParams(viewport));
+    } catch (error) {
+      if (this.attached === tab) this.leavePage(false);
+      throw error;
+    }
+    this.page = tab;
+    this.appliedViewport = viewport;
+    // 前のタブから離れたときに寸法を外してあるので、同じ寸法でも世代が進む
+    this.pipeline.setApplied(viewport);
+    // 準備の途中に届いたresizeは、デバウンスが明けた時点でタブが無く、当たっていない。
+    // screencastはまだ始めていないので、ここでは寸法だけが変わる
+    if (!sameViewport(this.viewport, viewport)) this.applyViewport();
+    // `Page.enable` は過去の遷移を送り直さない。いまのタイトルと履歴は読みにいく
+    ui.refresh();
+    // 先にいる視聴者へ、新しいタブのことを知らせる。寸法が先 (世代が進んでいる)
+    for (const ws of [...this.joined]) this.announceViewport(ws);
+    ui.announce();
+    if (this.joined.size > 0) this.startCast(tab);
+  }
+
+  /**
+   * いまのタブ (準備の途中のものも含む) から離れる。タブ1つぶんの状態を捨てるだけで、
+   * 視聴者とCDPの接続には触らない。`gone` は、タブのsessionがもう無いとき
+   * (止める、離れるためのコマンドを送らない)。`silent` は、視聴者をこのあと閉じるとき。
+   */
+  private leavePage(gone: boolean, silent = false): void {
+    const tab = this.attached;
+    const wasCasting = this.casting;
+    this.attached = null;
+    this.page = null;
+    this.casting = false;
+    this.castGeneration++;
+    this.appliedViewport = null;
+    // 監視の状態、取り直しの途中の結果、スクロールした位置、ダイアログが開いていたことを捨てる
+    this.pipeline.setApplied(null);
+    // 待っていた寸法は覚えてあり、次のタブの準備で当てる
+    if (this.resizeTimer) {
+      clearTimeout(this.resizeTimer);
+      this.resizeTimer = null;
+    }
+    if (!tab) return;
+    const dialogOpen = tab.ui.dialogOpen;
+    tab.ui.dispose();
+    // 次のタブでダイアログが開いているかは分からない。前のタブのものは閉じたと知らせる
+    if (dialogOpen && !silent) this.broadcast({ t: "dialogClosed" });
+    if (gone || tab.cdp.closed) return;
+    if (wasCasting) {
+      tab.cdp
+        .send("Page.stopScreencast", undefined, tab.sessionId)
+        .catch(error => warn("screencastの停止に失敗", error));
+    }
+    tab.cdp
+      .send("Target.detachFromTarget", { sessionId: tab.sessionId })
+      .catch(error => warn("タブからのdetachに失敗", error));
   }
 
   /** 失敗は `failCast` が接続ごと捨てるので、呼び出し側は待たない */
@@ -443,10 +557,10 @@ export class BrowserCdpBridge {
       case "dialog":
       case "copy":
         // タブの準備が終わるまでは、入力と同じく捨てる
-        if (page) this.pageUi?.handle(ws, msg);
+        page?.ui.handle(ws, msg);
         return;
       case "tab":
-        // タブの一覧と切り替えを受け持つモジュールが扱う。まだ無いので何もしない
+        this.tabUi?.handle(ws, msg);
         return;
       case "selectChoose":
       case "selectCancel":
@@ -511,11 +625,13 @@ export class BrowserCdpBridge {
     cdp: CdpLike,
     params:
       | { data?: unknown; sessionId?: unknown; metadata?: unknown }
-      | undefined
+      | undefined,
+    sessionId: string | undefined
   ): void {
     const page = this.page;
-    // 止めたあとに届いた分は使わない。ackも要らない
+    // 止めたあとに届いた分と、離れたタブのsessionから届いた分は使わない。ackも要らない
     if (!page || page.cdp !== cdp || !this.casting) return;
+    if (page.sessionId !== sessionId) return;
     if (typeof params?.data !== "string" || !isNumber(params.sessionId)) return;
     // 1つでも返し忘れると、Chromiumが出せるフレームの枠が減ったままになる
     cdp
@@ -566,6 +682,23 @@ export class BrowserCdpBridge {
     this.notifiedGen.set(ws, viewport.gen);
   }
 
+  /** 入ったあとにタブが替わった視聴者へ、新しい世代の寸法を知らせる。投げたら、その視聴者だけを外す */
+  private announceViewport(ws: ViewerSocket): void {
+    if (!this.viewers.has(ws) || ws.readyState !== WS_OPEN) return;
+    try {
+      this.notifyViewport(ws);
+    } catch (error) {
+      warn("視聴者への送信に失敗", error);
+      this.detach(ws);
+      terminate(ws);
+    }
+  }
+
+  /** 参加している視聴者の全員へJSONを送る */
+  private broadcast(message: BrowserServerMessage): void {
+    for (const ws of [...this.joined]) this.sendJson(ws, message);
+  }
+
   /**
    * 参加している視聴者1人へJSONを送る。去った視聴者と閉じかけの視聴者へは送らない。
    * 送信が投げたら、その視聴者だけを外す。
@@ -594,7 +727,7 @@ export class BrowserCdpBridge {
   }
 
   /**
-   * CDPはつながっているが、タブが使えなくなったとき。切れたときと同じに片づけてから、
+   * CDPはつながっているが、映せるタブが無くなったとき。切れたときと同じに片づけてから、
    * 接続を閉じる。先に状態を捨てるので、あとから届くcloseのイベントは何もしない。
    */
   private failConnection(cdp: CdpLike, reason: string): void {
@@ -615,18 +748,10 @@ export class BrowserCdpBridge {
   /** 接続にひもづく状態を捨てる。ビューポートは次の接続でも使うので残す */
   private dropConnection(): void {
     this.cdp = null;
-    this.page = null;
     this.connecting = null;
-    this.casting = false;
-    this.castGeneration++;
-    this.appliedViewport = null;
-    this.pipeline.setApplied(null);
-    this.pageUi?.dispose();
-    this.pageUi = null;
-    if (this.resizeTimer) {
-      clearTimeout(this.resizeTimer);
-      this.resizeTimer = null;
-    }
+    this.tabUi?.dispose();
+    this.tabUi = null;
+    this.leavePage(true, true);
   }
 }
 

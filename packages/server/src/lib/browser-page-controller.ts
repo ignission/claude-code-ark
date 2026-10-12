@@ -2,12 +2,19 @@
  * 映しているタブ1つぶんの、ブラウザのUIにあたる部分 (アドレスバー、戻ると進む、
  * JavaScriptのダイアログ、コピー)。headlessのChromiumにはUIが無いので、Arkが持つ。
  *
- * ブリッジ (browser-cdp-bridge.ts) がタブへattachするたびに1つ作り、接続を捨てるときに
- * `dispose` する。CDPと視聴者へは、受け取った `PageLink` を通してだけ触る。
+ * ブリッジ (browser-cdp-bridge.ts) がタブへattachするたびに1つ作り、そのタブから離れる
+ * とき (ほかのタブへの切り替え、タブが消えた、接続を捨てる) に `dispose` する。
+ * CDPと視聴者へは、受け取った `PageLink` を通してだけ触る。
  *
- * - 履歴 (`Page.getNavigationHistory`) は、メインフレームの遷移、読み込みの終わりの
- *   あとに読み直す。読み込み中はイベントが続くので、最初のイベントから100ms待って1回に
- *   まとめる。タブの準備が終わった直後の1回だけは、まとめる相手が無いので待たない
+ * - 履歴 (`Page.getNavigationHistory`) は、メインフレームの遷移、読み込みの終わり、
+ *   題が変わったという知らせ (`rereadSoon`) のあとに読み直す。読み込み中はイベントが
+ *   続くので、最初のイベントから100ms待って1回にまとめる。タブの準備が終わった直後の
+ *   1回だけは、まとめる相手が無いので待たない
+ * - つないだ時点でタブの一覧から分かるURLと題は、履歴を読む前の状態として置く。
+ *   履歴を読めないままでも、前のタブのURLが視聴者に残らないようにするため
+ * - タブの準備が終わったら、ブリッジが `announce` を呼ぶ。ページの状態を、まだ全員へ
+ *   知らせていなければ知らせ、開いているダイアログを知らせ直す (準備の途中で入った
+ *   視聴者は、開いたときの知らせを受け取っていない)
  * - 履歴の読み直しは、遷移の途中だと失敗する。失敗しても前の状態を保ち、次のイベントで
  *   読み直す。あとから始めた読み直しが先に返ったら、遅れて返った古い結果は使わない
  * - 遷移させる先は `validateBrowserUrl` を通ったURLだけ。通らなければ、送った視聴者にだけ
@@ -141,15 +148,25 @@ export class BrowserPageController<V> {
   private historyApplied = 0;
   private disposed = false;
 
-  /** `mainFrameId` はメインフレームのid (ページのターゲットでは、ターゲットのidと同じ) */
+  /**
+   * `mainFrameId` はメインフレームのid (ページのターゲットでは、ターゲットのidと同じ)。
+   * `seed` は、つないだ時点で分かっているURLと題。
+   */
   constructor(
     private readonly link: PageLink<V>,
-    mainFrameId: string
+    mainFrameId: string,
+    seed?: { url: string; title: string }
   ) {
     this.state = new BrowserPageState(
       info => this.link.toAll({ t: "page", ...info }),
       mainFrameId
     );
+    if (seed) this.state.seed(seed.url, seed.title);
+  }
+
+  /** ダイアログが開いているか */
+  get dialogOpen(): boolean {
+    return this.dialog !== null;
   }
 
   /** タブのsessionから届いた `PAGE_STATE_EVENTS` のイベントを受け取る */
@@ -173,6 +190,19 @@ export class BrowserPageController<V> {
       })
       // 遷移の途中では失敗する。次のイベントで読み直す
       .catch(error => warn("履歴の読み直しに失敗", error));
+  }
+
+  /** 少し待ってから履歴を読み直す。題が変わったと分かったときに呼ぶ */
+  rereadSoon(): void {
+    if (this.disposed) return;
+    this.scheduleHistory();
+  }
+
+  /** タブの準備が終わったときに、いまの状態を全員へ知らせる */
+  announce(): void {
+    if (this.disposed) return;
+    this.state.announce();
+    if (this.dialog) this.link.toAll({ t: "dialog", ...this.dialog });
   }
 
   dialogOpening(params: unknown): void {

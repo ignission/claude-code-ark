@@ -35,13 +35,24 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+interface FakeTarget {
+  targetId: string;
+  type: string;
+  url?: string;
+  title?: string;
+  openerId?: string;
+}
+
 /**
  * 本物のCdpClientと同じく、`close()` はcloseのイベントをその場では出さない
  * (`disconnect()` で届ける)。`holdOn` したメソッドの応答は、`release` / `fail` で返すまで待たせる。
+ *
+ * 本物のChromiumと同じく、`Target.setDiscoverTargets` には、応答より先に、いまある
+ * ターゲットの `Target.targetCreated` を返す。attachするたびに新しいsession (`S1`、`S2`、...) を返し、
+ * 作ったターゲットのidは `T-new`、`T-new-2`、... とする。作った、閉じたことのイベントは
+ * 自分では出さない (テストが `emitBrowser` で流す)。
  */
-function fakeCdp(
-  options: { targets?: Array<{ targetId: string; type: string }> } = {}
-) {
+function fakeCdp(options: { targets?: FakeTarget[] } = {}) {
   const calls: CdpCall[] = [];
   const listeners = new Map<
     string,
@@ -56,6 +67,9 @@ function fakeCdp(
     result: unknown;
   }> = [];
   let shots = 0;
+  let sessions = 0;
+  let created = 0;
+  const targets = options.targets ?? [{ targetId: "T1", type: "page" }];
   let closing = false;
   let closed = false;
 
@@ -64,12 +78,15 @@ function fakeCdp(
   const resultOf = (method: string): unknown => {
     if (answers.has(method)) return answers.get(method);
     if (method === "Target.getTargets") {
-      return {
-        targetInfos: options.targets ?? [{ targetId: "T1", type: "page" }],
-      };
+      return { targetInfos: targets };
     }
-    if (method === "Target.createTarget") return { targetId: "T-new" };
-    if (method === "Target.attachToTarget") return { sessionId: "S1" };
+    if (method === "Target.createTarget") {
+      created++;
+      return { targetId: created === 1 ? "T-new" : `T-new-${created}` };
+    }
+    if (method === "Target.attachToTarget") {
+      return { sessionId: `S${++sessions}` };
+    }
     // 何回目の取り直しかが分かる、小さな画像の代わり
     if (method === "Page.captureScreenshot") {
       return { data: Buffer.from(`shot-${++shots}`).toString("base64") };
@@ -99,6 +116,11 @@ function fakeCdp(
       calls.push({ method, params, sessionId });
       if (failing.has(method)) {
         return Promise.reject(new Error(`${method}: failed`));
+      }
+      if (method === "Target.setDiscoverTargets") {
+        for (const targetInfo of targets) {
+          dispatch("Target.targetCreated", { targetInfo }, undefined);
+        }
       }
       // 応答の中身は、呼ばれた順に決める
       const result = resultOf(method);
@@ -275,6 +297,14 @@ function viewportBody(width: number, height: number, gen: number): string {
   return JSON.stringify({ t: "viewport", width, height, gen });
 }
 
+/** タブが既定の1つ (`T1`。URLも題も分からない) だけのときの、一覧の通知 */
+const ONE_TAB = {
+  t: "tabs",
+  tabs: [{ id: "T1", title: "", url: "" }],
+  activeId: "T1",
+};
+const ONE_TAB_BODY = JSON.stringify(ONE_TAB);
+
 function fakeViewer() {
   const viewer = new EventEmitter() as EventEmitter &
     ViewerSocket & {
@@ -352,6 +382,7 @@ describe("BrowserCdpBridge", () => {
     bridge.attach(fakeViewer());
     await vi.runAllTimersAsync();
     expect(cdp.methods()).toEqual([
+      "Target.setDiscoverTargets",
       "Target.getTargets",
       "Target.activateTarget",
       "Target.attachToTarget",
@@ -879,67 +910,91 @@ describe("BrowserCdpBridge", () => {
 
   describe("タブが使えなくなったとき", () => {
     async function connected() {
-      const first = fakeCdp();
-      const second = fakeCdp();
-      const connect = vi
-        .fn()
-        .mockResolvedValueOnce(first)
-        .mockResolvedValueOnce(second);
+      const cdp = fakeCdp();
+      const connect = vi.fn().mockResolvedValue(cdp);
       const bridge = new BrowserCdpBridge(connect);
       const viewer = fakeViewer();
       bridge.attach(viewer);
       await flush();
-      return { first, second, connect, bridge, viewer };
+      cdp.forget();
+      return { cdp, connect, bridge, viewer };
     }
 
-    async function expectTornDown({
-      first,
-      second,
+    /** 視聴者を切らず、接続も捨てずに、作り直したタブへ移っている */
+    async function expectMoved({
+      cdp,
       connect,
       bridge,
       viewer,
     }: Awaited<ReturnType<typeof connected>>) {
-      expect(viewer.send).toHaveBeenCalledWith(ERROR_BODY);
-      expect(viewer.close).toHaveBeenCalledWith(1011, expect.any(String));
-      expect(bridge.viewerCount).toBe(0);
-      expect(first.close).toHaveBeenCalled();
-      // 閉じた接続のcloseがあとから届いても、もう何も起きない
-      first.disconnect();
-      expect(errorCount(viewer)).toBe(1);
-      bridge.attach(fakeViewer());
       await flush();
-      expect(connect).toHaveBeenCalledTimes(2);
-      expect(second.count("Target.attachToTarget")).toBe(1);
-      expect(second.count("Page.startScreencast")).toBe(1);
+      expect(errorCount(viewer)).toBe(0);
+      expect(viewer.close).not.toHaveBeenCalled();
+      expect(viewer.terminate).not.toHaveBeenCalled();
+      expect(bridge.viewerCount).toBe(1);
+      expect(cdp.close).not.toHaveBeenCalled();
+      expect(connect).toHaveBeenCalledTimes(1);
+      expect(cdp.last("Target.createTarget")?.params).toEqual({
+        url: "about:blank",
+      });
+      expect(cdp.last("Target.attachToTarget")?.params).toEqual({
+        targetId: "T-new",
+        flatten: true,
+      });
+      expect(cdp.last("Page.startScreencast")?.sessionId).toBe("S2");
+      // 新しいタブの画面が届く
+      cdp.emit("Page.screencastFrame", monitorFrame(1), "S2");
+      await flush();
+      expect(viewer.shots()).toMatchObject([{ kind: 1, gen: 2 }]);
     }
 
-    it("タブのsessionがdetachされたら、CDPが切れたときと同じに扱う", async () => {
+    it("タブのsessionがdetachされても視聴者を切らず、残りが無ければabout:blankを作って移る", async () => {
       const ctx = await connected();
-      ctx.first.emitBrowser("Target.detachedFromTarget", {
+      ctx.cdp.emitBrowser("Target.detachedFromTarget", {
         sessionId: "S1",
         targetId: "T1",
       });
-      await expectTornDown(ctx);
+      ctx.cdp.emitBrowser("Target.targetDestroyed", { targetId: "T1" });
+      await expectMoved(ctx);
+      // 消えたsessionへは、止める、離れるを送らない。閉じ直しもしない
+      expect(ctx.cdp.count("Page.stopScreencast")).toBe(0);
+      expect(ctx.cdp.count("Target.detachFromTarget")).toBe(0);
+      expect(ctx.cdp.count("Target.closeTarget")).toBe(0);
     });
 
-    it("タブがクラッシュしたら、CDPが切れたときと同じに扱う", async () => {
+    it("タブがクラッシュしたら、そのタブを閉じてから、視聴者を切らずに移る", async () => {
       const ctx = await connected();
-      ctx.first.emit("Inspector.targetCrashed", undefined);
-      await expectTornDown(ctx);
+      ctx.cdp.emit("Inspector.targetCrashed", undefined);
+      await expectMoved(ctx);
+      expect(ctx.cdp.methods().slice(0, 2)).toEqual([
+        "Target.closeTarget",
+        "Target.createTarget",
+      ]);
+      expect(ctx.cdp.last("Target.closeTarget")?.params).toEqual({
+        targetId: "T1",
+      });
+    });
+
+    it("クラッシュしたタブを閉じられなくても、移る", async () => {
+      const ctx = await connected();
+      ctx.cdp.failOn("Target.closeTarget");
+      ctx.cdp.emit("Inspector.targetCrashed", undefined);
+      await expectMoved(ctx);
     });
 
     it("別のsessionのdetachとクラッシュは無視する", async () => {
-      const { first, bridge, viewer } = await connected();
-      first.emitBrowser("Target.detachedFromTarget", { sessionId: "S9" });
-      first.emit("Inspector.targetCrashed", undefined, "S9");
-      first.emitBrowser("Inspector.targetCrashed", undefined);
+      const { cdp, bridge, viewer } = await connected();
+      cdp.emitBrowser("Target.detachedFromTarget", { sessionId: "S9" });
+      cdp.emit("Inspector.targetCrashed", undefined, "S9");
+      cdp.emitBrowser("Inspector.targetCrashed", undefined);
       await flush();
       expect(viewer.close).not.toHaveBeenCalled();
-      expect(first.close).not.toHaveBeenCalled();
+      expect(cdp.close).not.toHaveBeenCalled();
+      expect(cdp.methods()).toEqual([]);
       expect(bridge.viewerCount).toBe(1);
     });
 
-    it("準備の途中でタブがdetachされたら、視聴者へerrorを1回だけ送って接続を閉じる", async () => {
+    it("準備の途中でタブがdetachされたら、視聴者を切らずに、ほかのタブで準備をやり直す", async () => {
       const cdp = fakeCdp();
       cdp.holdOn("Page.enable");
       const bridge = new BrowserCdpBridge(async () => cdp);
@@ -947,13 +1002,42 @@ describe("BrowserCdpBridge", () => {
       bridge.attach(viewer);
       await flush();
       cdp.emitBrowser("Target.detachedFromTarget", { sessionId: "S1" });
+      cdp.emitBrowser("Target.targetDestroyed", { targetId: "T1" });
+      cdp.stopHolding("Page.enable");
       cdp.release("Page.enable");
       await flush();
-      expect(viewer.send).toHaveBeenCalledTimes(1);
+      expect(errorCount(viewer)).toBe(0);
+      expect(viewer.close).not.toHaveBeenCalled();
+      expect(cdp.close).not.toHaveBeenCalled();
+      expect(bridge.viewerCount).toBe(1);
+      // 消えたタブでは準備を続けない
+      expect(cdp.count("Emulation.setFocusEmulationEnabled")).toBe(1);
+      expect(cdp.last("Emulation.setFocusEmulationEnabled")?.sessionId).toBe(
+        "S2"
+      );
+      expect(cdp.last("Target.attachToTarget")?.params).toMatchObject({
+        targetId: "T-new",
+      });
+      expect(cdp.count("Page.startScreencast")).toBe(1);
+      expect(cdp.last("Page.startScreencast")?.sessionId).toBe("S2");
+    });
+
+    it("どのタブでも準備できなければ、視聴者へerrorを1回だけ送って接続を閉じる", async () => {
+      const cdp = fakeCdp();
+      cdp.failOn("Page.enable");
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      // いまあるタブ、作ったabout:blankの順に試す
+      expect(cdp.count("Target.attachToTarget")).toBe(2);
+      expect(cdp.count("Target.createTarget")).toBe(1);
+      expect(errorCount(viewer)).toBe(1);
       expect(viewer.close).toHaveBeenCalledTimes(1);
       expect(cdp.close).toHaveBeenCalled();
       expect(cdp.count("Page.startScreencast")).toBe(0);
       expect(bridge.viewerCount).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
     });
 
     it("タブが1つも無ければ、about:blankで作ってattachする", async () => {
@@ -962,7 +1046,8 @@ describe("BrowserCdpBridge", () => {
       const viewer = fakeViewer();
       bridge.attach(viewer);
       await flush();
-      expect(cdp.methods().slice(0, 4)).toEqual([
+      expect(cdp.methods().slice(0, 5)).toEqual([
+        "Target.setDiscoverTargets",
         "Target.getTargets",
         "Target.createTarget",
         "Target.activateTarget",
@@ -1279,7 +1364,10 @@ describe("BrowserCdpBridge", () => {
       const viewer = fakeViewer();
       bridge.attach(viewer);
       await flush();
-      expect(viewer.send.mock.calls).toEqual([[viewportBody(1280, 900, 1)]]);
+      expect(viewer.send.mock.calls).toEqual([
+        [viewportBody(1280, 900, 1)],
+        [ONE_TAB_BODY],
+      ]);
     });
 
     it("最初の監視フレームで、寸法、鮮明な全画面の順に届く", async () => {
@@ -1302,6 +1390,7 @@ describe("BrowserCdpBridge", () => {
       expect(cdp.last(CAPTURE)?.sessionId).toBe("S1");
       expect(viewer.send.mock.calls).toEqual([
         [viewportBody(1280, 900, 1)],
+        [ONE_TAB_BODY],
         [expect.any(Buffer)],
       ]);
       expect(viewer.shots()).toEqual([
@@ -1363,7 +1452,7 @@ describe("BrowserCdpBridge", () => {
       cdp.emit("Page.screencastFrame", sized(2, 1280, 900));
       await flush();
       // 入ったときの1回だけ。当てた寸法とフレームの寸法が同じなら、世代も進まない
-      expect(viewer.texts()).toEqual([
+      expect(textsOf(viewer, "viewport")).toEqual([
         { t: "viewport", width: 1280, height: 900, gen: 1 },
       ]);
       expect(viewer.shots().map(shot => shot.gen)).toEqual([1]);
@@ -1440,6 +1529,7 @@ describe("BrowserCdpBridge", () => {
       await flush();
       expect(late.send.mock.calls).toEqual([
         [viewportBody(390, 700, 2)],
+        [ONE_TAB_BODY],
         [expect.any(Buffer)],
       ]);
       expect(late.shots()).toMatchObject([{ kind: 1, gen: 2 }]);
@@ -1472,7 +1562,7 @@ describe("BrowserCdpBridge", () => {
         [expect.any(Buffer)],
       ]);
       expect(slow.shots()).toMatchObject([{ kind: 1, gen: 3 }]);
-      expect(fast.texts()).toEqual([
+      expect(textsOf(fast, "viewport")).toEqual([
         { t: "viewport", width: 1280, height: 900, gen: 1 },
         { t: "viewport", width: 390, height: 700, gen: 2 },
         { t: "viewport", width: 640, height: 480, gen: 3 },
@@ -2251,6 +2341,7 @@ describe("BrowserCdpBridge: ページの操作", () => {
       expect(viewer.texts()).toEqual([
         { t: "viewport", width: 1280, height: 900, gen: 1 },
         pageBody(B_URL, "T1", { canGoBack: true, canGoForward: true }),
+        ONE_TAB,
       ]);
       expect(vi.getTimerCount()).toBe(0);
     });
@@ -2263,6 +2354,7 @@ describe("BrowserCdpBridge: ページの操作", () => {
       expect(late.texts().map(m => (m as { t: string }).t)).toEqual([
         "viewport",
         "page",
+        "tabs",
       ]);
       expect(late.texts()[1]).toEqual(pageBody(A_URL, "T0"));
       expect(viewer.texts()).toEqual([]);
@@ -2414,16 +2506,23 @@ describe("BrowserCdpBridge: ページの操作", () => {
       expect(vi.getTimerCount()).toBe(0);
     });
 
-    it("接続が切れたあとに返った読み直しは使わない", async () => {
+    it("タブから離れたあとに返った読み直しは使わない", async () => {
       const { cdp, viewer } = await startedOn(0, [A_URL]);
       cdp.holdOn(HISTORY);
       cdp.emit(NAVIGATED, navigatedTo(B_URL));
       await vi.advanceTimersByTimeAsync(100);
       viewer.send.mockClear();
       cdp.emitBrowser("Target.detachedFromTarget", { sessionId: "S1" });
+      cdp.emitBrowser("Target.targetDestroyed", { targetId: "T1" });
+      await flush();
+      // 前のタブの読み直しが、移った先のタブの状態として届かない
       cdp.release(HISTORY);
       await flush();
-      expect(textsOf(viewer, "page")).toEqual([]);
+      expect(
+        textsOf(viewer, "page").filter(
+          m => (m as { url: string }).url !== "about:blank"
+        )
+      ).toEqual([]);
     });
 
     it("状態の通知が投げた視聴者だけを外し、残りへは届ける", async () => {
@@ -2591,7 +2690,7 @@ describe("BrowserCdpBridge: ページの操作", () => {
       }
     });
 
-    it("開いている間に入った視聴者へ、寸法、ページの状態、ダイアログの順に知らせる", async () => {
+    it("開いている間に入った視聴者へ、寸法、ページの状態、ダイアログ、タブの一覧の順に知らせる", async () => {
       const { cdp, bridge, viewer } = await startedOn(0, [A_URL]);
       cdp.emit(OPENING, prompt);
       const late = fakeViewer();
@@ -2601,6 +2700,7 @@ describe("BrowserCdpBridge: ページの操作", () => {
         { t: "viewport", width: 1280, height: 900, gen: 1 },
         pageBody(A_URL, "T0"),
         PROMPT_BODY,
+        ONE_TAB,
       ]);
       expect(viewer.texts()).toEqual([PROMPT_BODY]);
     });
@@ -2629,6 +2729,7 @@ describe("BrowserCdpBridge: ページの操作", () => {
       expect(viewer.texts()).toEqual([
         { t: "viewport", width: 1280, height: 900, gen: 1 },
         PROMPT_BODY,
+        ONE_TAB,
       ]);
     });
 
@@ -2800,10 +2901,8 @@ describe("BrowserCdpBridge: ページの操作", () => {
     });
   });
 
-  it("タブ、select、タッチのメッセージは、まだ何もしない", async () => {
+  it("select、タッチのメッセージは、まだ何もしない", async () => {
     const { cdp, viewer } = await started();
-    viewer.receive({ t: "tab", type: "new" });
-    viewer.receive({ t: "tab", type: "close", id: "T1" });
     viewer.receive({ t: "selectChoose", id: 1, index: 0 });
     viewer.receive({ t: "selectCancel", id: 1 });
     viewer.receive({
@@ -2910,5 +3009,920 @@ describe("COPY_EXPRESSION", () => {
     expect(
       evaluate({ activeElement: null }, () => "a".repeat(1_000_001))
     ).toHaveLength(1_000_000);
+  });
+});
+
+const ACTIVATE = "Target.activateTarget";
+const ATTACH = "Target.attachToTarget";
+const CLOSE_TARGET = "Target.closeTarget";
+const CREATE_TARGET = "Target.createTarget";
+const DETACH = "Target.detachFromTarget";
+const START_CAST = "Page.startScreencast";
+const STOP_CAST = "Page.stopScreencast";
+
+function tabUrl(id: string): string {
+  return `http://localhost:3000/${id}`;
+}
+
+function target(id: string, extra: Partial<FakeTarget> = {}): FakeTarget {
+  return {
+    targetId: id,
+    type: "page",
+    url: tabUrl(id),
+    title: `${id}の題`,
+    ...extra,
+  };
+}
+
+function tabOf(id: string) {
+  return { id, title: `${id}の題`, url: tabUrl(id) };
+}
+
+function tabsBody(ids: string[], activeId: string) {
+  return { t: "tabs", tabs: ids.map(tabOf), activeId };
+}
+
+const BLANK_TAB = { id: "T-new", title: "", url: "about:blank" };
+
+/** タブへつなぐときの、CDPの呼び出しの並び */
+const ENTER_CALLS = [
+  ACTIVATE,
+  ATTACH,
+  "Page.enable",
+  "Emulation.setFocusEmulationEnabled",
+  "Emulation.setDeviceMetricsOverride",
+  HISTORY,
+  START_CAST,
+];
+
+/**
+ * `started` と同じだが、タブが `ids` のぶんだけあり、最初の1つ (session `S1`) を映している。
+ */
+async function startedWithTabs(ids = ["T1", "T2", "T3"], count = 1) {
+  const cdp = fakeCdp({ targets: ids.map(id => target(id)) });
+  const connect = vi.fn().mockResolvedValue(cdp);
+  const bridge = new BrowserCdpBridge(connect);
+  const viewers = Array.from({ length: count }, () => fakeViewer());
+  for (const viewer of viewers) bridge.attach(viewer);
+  await flush();
+  cdp.emit("Page.screencastFrame", monitorFrame(1));
+  await vi.advanceTimersByTimeAsync(1000);
+  for (const viewer of viewers) viewer.send.mockClear();
+  cdp.forget();
+  return { cdp, connect, bridge, viewers, viewer: viewers[0] };
+}
+
+describe("BrowserCdpBridge: タブ", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** 視聴者を切らず、接続も捨てていない */
+  function expectKept(ctx: Awaited<ReturnType<typeof startedWithTabs>>) {
+    for (const viewer of ctx.viewers) {
+      expect(errorCount(viewer)).toBe(0);
+      expect(viewer.close).not.toHaveBeenCalled();
+      expect(viewer.terminate).not.toHaveBeenCalled();
+    }
+    expect(ctx.bridge.viewerCount).toBe(ctx.viewers.length);
+    expect(ctx.cdp.close).not.toHaveBeenCalled();
+    expect(ctx.connect).toHaveBeenCalledTimes(1);
+  }
+
+  describe("一覧", () => {
+    it("つなぐときにターゲットの発見を頼み、入った視聴者へ、寸法、ページの状態、一覧の順に知らせる", async () => {
+      const cdp = fakeCdp({ targets: [target("T1"), target("T2")] });
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      expect(cdp.last("Target.setDiscoverTargets")).toEqual({
+        params: { discover: true },
+        sessionId: undefined,
+      });
+      expect(viewer.texts()).toEqual([
+        { t: "viewport", width: 1280, height: 900, gen: 1 },
+        pageBody(tabUrl("T1"), "T1の題"),
+        tabsBody(["T1", "T2"], "T1"),
+      ]);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("あとから入った視聴者にも知らせる。先にいた視聴者へは送り直さない", async () => {
+      const { bridge, viewer } = await startedWithTabs();
+      const late = fakeViewer();
+      bridge.attach(late);
+      await flush();
+      expect(textsOf(late, "tabs")).toEqual([
+        tabsBody(["T1", "T2", "T3"], "T1"),
+      ]);
+      expect(viewer.texts()).toEqual([]);
+    });
+
+    it("pageでないターゲットと、DevToolsと拡張機能のページは一覧に出さない", async () => {
+      const cdp = fakeCdp({
+        targets: [
+          target("W1", { type: "service_worker" }),
+          target("D1", { url: "devtools://devtools/bundled/x.html" }),
+          target("E1", { url: "chrome-extension://abc/page.html" }),
+          target("T1"),
+        ],
+      });
+      const bridge = new BrowserCdpBridge(async () => cdp);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      expect(cdp.last(ATTACH)?.params).toMatchObject({ targetId: "T1" });
+      expect(textsOf(viewer, "tabs")).toEqual([tabsBody(["T1"], "T1")]);
+    });
+
+    it("タブが増えた、変わった、消えたことを、100msにまとめて全員へ知らせる", async () => {
+      const { cdp, viewers } = await startedWithTabs(["T1", "T2"], 2);
+      cdp.emitBrowser("Target.targetCreated", { targetInfo: target("T3") });
+      cdp.emitBrowser("Target.targetInfoChanged", {
+        targetInfo: target("T2", { title: "変えた題" }),
+      });
+      await vi.advanceTimersByTimeAsync(99);
+      for (const viewer of viewers) expect(viewer.texts()).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      const expected = {
+        t: "tabs",
+        tabs: [tabOf("T1"), { ...tabOf("T2"), title: "変えた題" }, tabOf("T3")],
+        activeId: "T1",
+      };
+      for (const viewer of viewers) expect(viewer.texts()).toEqual([expected]);
+      cdp.emitBrowser("Target.targetDestroyed", { targetId: "T2" });
+      await vi.advanceTimersByTimeAsync(100);
+      for (const viewer of viewers) {
+        expect(viewer.texts().at(-1)).toEqual(tabsBody(["T1", "T3"], "T1"));
+      }
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("見える列が変わらない更新と、追っていないターゲットのイベントでは知らせない", async () => {
+      const { cdp, viewer } = await startedWithTabs(["T1", "T2"]);
+      cdp.emitBrowser("Target.targetInfoChanged", {
+        targetInfo: { ...target("T1"), attached: true },
+      });
+      cdp.emitBrowser("Target.targetCreated", {
+        targetInfo: target("W1", { type: "worker" }),
+      });
+      cdp.emitBrowser("Target.targetInfoChanged", { targetInfo: target("T9") });
+      cdp.emitBrowser("Target.targetDestroyed", { targetId: "W1" });
+      cdp.emitBrowser("Target.targetCreated", undefined);
+      cdp.emitBrowser("Target.targetDestroyed", {});
+      await vi.advanceTimersByTimeAsync(200);
+      expect(viewer.texts()).toEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("映しているタブの題が変わったら、履歴を読み直してページの状態を知らせる", async () => {
+      const { cdp, viewer } = await startedWithTabs(["T1", "T2"]);
+      cdp.answer(HISTORY, {
+        currentIndex: 0,
+        entries: [{ id: 1, url: tabUrl("T1"), title: "新しい題" }],
+      });
+      cdp.emitBrowser("Target.targetInfoChanged", {
+        targetInfo: target("T1", { title: "新しい題" }),
+      });
+      // ほかのタブの題では読み直さない
+      cdp.emitBrowser("Target.targetInfoChanged", {
+        targetInfo: target("T2", { title: "よその題" }),
+      });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(cdp.count(HISTORY)).toBe(1);
+      expect(cdp.last(HISTORY)?.sessionId).toBe("S1");
+      expect(textsOf(viewer, "page")).toEqual([
+        pageBody(tabUrl("T1"), "新しい題"),
+      ]);
+    });
+
+    it("接続が切れたら、知らせる待ちを消す", async () => {
+      const { cdp } = await startedWithTabs();
+      cdp.emitBrowser("Target.targetCreated", { targetInfo: target("T4") });
+      expect(vi.getTimerCount()).toBe(1);
+      cdp.disconnect();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("resetしたら、知らせる待ちを消す", async () => {
+      const { cdp, bridge } = await startedWithTabs();
+      cdp.emitBrowser("Target.targetCreated", { targetInfo: target("T4") });
+      bridge.reset();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+  });
+
+  describe("切り替え", () => {
+    it("前のタブの監視を止めて離れ、新しいタブで同じ準備をして監視を始める", async () => {
+      const ctx = await startedWithTabs();
+      const { cdp, viewer } = ctx;
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      await flush();
+      expect(cdp.methods()).toEqual([STOP_CAST, DETACH, ...ENTER_CALLS]);
+      expect(cdp.last(STOP_CAST)?.sessionId).toBe("S1");
+      expect(cdp.last(DETACH)).toEqual({
+        params: { sessionId: "S1" },
+        sessionId: undefined,
+      });
+      expect(cdp.last(ACTIVATE)?.params).toEqual({ targetId: "T2" });
+      expect(cdp.last(ATTACH)?.params).toEqual({
+        targetId: "T2",
+        flatten: true,
+      });
+      for (const method of ENTER_CALLS.slice(2)) {
+        expect(cdp.last(method)?.sessionId).toBe("S2");
+      }
+      expect(cdp.last("Emulation.setDeviceMetricsOverride")?.params).toEqual({
+        width: 1280,
+        height: 900,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      expectKept(ctx);
+    });
+
+    it("全員へ、進めた世代の寸法、新しいタブのページの状態、一覧、鮮明な全画面の順に届く", async () => {
+      const ctx = await startedWithTabs(["T1", "T2", "T3"], 2);
+      const { cdp, viewers } = ctx;
+      viewers[1].receive({ t: "tab", type: "activate", id: "T2" });
+      await flush();
+      for (const viewer of viewers) {
+        expect(viewer.send.mock.calls.map(([data]) => data)).toEqual([
+          JSON.stringify({ t: "viewport", width: 1280, height: 900, gen: 2 }),
+          JSON.stringify(pageBody(tabUrl("T2"), "T2の題")),
+          JSON.stringify(tabsBody(["T1", "T2", "T3"], "T2")),
+        ]);
+      }
+      cdp.emit("Page.screencastFrame", monitorFrame(1), "S2");
+      await flush();
+      for (const viewer of viewers) {
+        expect(viewer.shots()).toMatchObject([
+          { kind: 1, gen: 2, rect: FULL_RECT },
+        ]);
+        expect(viewer.send.mock.calls.at(-1)?.[0]).toBeInstanceOf(Buffer);
+      }
+      expect(cdp.last(CAPTURE)?.sessionId).toBe("S2");
+      expectKept(ctx);
+    });
+
+    it("前のタブのsessionから遅れて届いた監視フレームは、ackも返さず使わない", async () => {
+      const { cdp, viewer } = await startedWithTabs();
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      await flush();
+      cdp.forget();
+      cdp.emit("Page.screencastFrame", monitorFrame(9), "S1");
+      await flush();
+      expect(cdp.methods()).toEqual([]);
+      expect(viewer.frames()).toEqual([]);
+    });
+
+    it("前のタブで始めた取り直しが遅れて返っても、送らない", async () => {
+      const { cdp, viewer } = await startedWithTabs();
+      cdp.holdOn(CAPTURE);
+      cdp.emit("Page.screencastFrame", monitorFrame(2, { dots: [[10, 10]] }));
+      await flush();
+      expect(cdp.count(CAPTURE)).toBe(1);
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      await flush();
+      cdp.release(CAPTURE);
+      await flush();
+      expect(viewer.frames()).toEqual([]);
+      cdp.stopHolding(CAPTURE);
+      cdp.emit("Page.screencastFrame", monitorFrame(1), "S2");
+      await flush();
+      expect(viewer.shots()).toMatchObject([{ kind: 1, gen: 2 }]);
+    });
+
+    it("前のタブのsessionのイベントは、切り替えたあとのタブに響かない", async () => {
+      const { cdp, viewer } = await startedWithTabs();
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      await flush();
+      viewer.send.mockClear();
+      cdp.forget();
+      cdp.emit(NAVIGATED, { frame: { id: "T1", url: B_URL } }, "S1");
+      cdp.emit(
+        "Page.javascriptDialogOpening",
+        { type: "alert", message: "前のタブ" },
+        "S1"
+      );
+      cdp.emit("Inspector.targetCrashed", undefined, "S1");
+      cdp.emitBrowser("Target.detachedFromTarget", { sessionId: "S1" });
+      await vi.advanceTimersByTimeAsync(200);
+      expect(viewer.texts()).toEqual([]);
+      expect(cdp.methods()).toEqual([]);
+    });
+
+    it("切り替えのあいだに届いた入力、遷移、コピーは捨てる。終わったら新しいタブへ送る", async () => {
+      const { cdp, viewer } = await startedWithTabs();
+      cdp.holdOn("Page.enable");
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      await flush();
+      cdp.forget();
+      viewer.receive({ t: "paste", text: "捨てる" });
+      viewer.receive({ t: "nav", type: "reload" });
+      viewer.receive({ t: "nav", type: "goto", url: "localhost:3000" });
+      viewer.receive({ t: "dialog", accept: true });
+      viewer.receive({ t: "copy" });
+      await flush();
+      expect(cdp.methods()).toEqual([]);
+      cdp.stopHolding("Page.enable");
+      cdp.release("Page.enable");
+      await flush();
+      // 溜めておいて、あとから送ることもしない
+      expect(cdp.count("Input.insertText")).toBe(0);
+      expect(cdp.count("Page.reload")).toBe(0);
+      expect(cdp.count("Page.navigate")).toBe(0);
+      viewer.receive({ t: "paste", text: "届く" });
+      expect(cdp.last("Input.insertText")).toEqual({
+        params: { text: "届く" },
+        sessionId: "S2",
+      });
+    });
+
+    it("切り替えのあいだに続けて来た切り替えは、終わってから最後の1つだけ行う", async () => {
+      const ctx = await startedWithTabs(["T1", "T2", "T3", "T4"]);
+      const { cdp, viewer } = ctx;
+      cdp.holdOn("Page.enable");
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      await flush();
+      viewer.receive({ t: "tab", type: "activate", id: "T3" });
+      viewer.receive({ t: "tab", type: "activate", id: "T1" });
+      viewer.receive({ t: "tab", type: "activate", id: "T4" });
+      await flush();
+      expect(cdp.count(ATTACH)).toBe(1);
+      cdp.stopHolding("Page.enable");
+      cdp.release("Page.enable");
+      await flush();
+      expect(
+        cdp
+          .methods()
+          .map((method, i) => (method === ATTACH ? i : -1))
+          .filter(i => i >= 0)
+      ).toHaveLength(2);
+      expect(cdp.last(ATTACH)?.params).toMatchObject({ targetId: "T4" });
+      expect(textsOf(viewer, "tabs").at(-1)).toEqual(
+        tabsBody(["T1", "T2", "T3", "T4"], "T4")
+      );
+      // 切り替えのたびに世代が進む
+      expect(textsOf(viewer, "viewport").at(-1)).toMatchObject({ gen: 3 });
+      expectKept(ctx);
+    });
+
+    it("一覧に無いid、いま映しているタブへの切り替えは何もしない", async () => {
+      const { cdp, viewer } = await startedWithTabs();
+      viewer.receive({ t: "tab", type: "activate", id: "T9" });
+      viewer.receive({ t: "tab", type: "activate", id: "T1" });
+      viewer.receive({ t: "tab", type: "close", id: "T9" });
+      await flush();
+      expect(cdp.methods()).toEqual([]);
+      expect(viewer.texts()).toEqual([]);
+    });
+
+    it("前のタブでダイアログが開いていたら、閉じたと知らせ、新しいタブでは取り直す", async () => {
+      const { cdp, viewer } = await startedWithTabs();
+      cdp.emit("Page.javascriptDialogOpening", { type: "alert", message: "m" });
+      viewer.send.mockClear();
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      await flush();
+      expect(textsOf(viewer, "dialogClosed")).toHaveLength(1);
+      expect(textsOf(viewer, "dialog")).toEqual([]);
+      cdp.emit("Page.screencastFrame", monitorFrame(1), "S2");
+      await flush();
+      expect(viewer.shots()).toMatchObject([{ kind: 1, gen: 2 }]);
+      // 新しいタブでは、ダイアログへの応答を送らない
+      viewer.receive({ t: "dialog", accept: true });
+      expect(cdp.count("Page.handleJavaScriptDialog")).toBe(0);
+    });
+
+    it("切り替えのあいだに受けたresizeは、新しいタブの準備が終わったときに当てる", async () => {
+      const { cdp, viewer } = await startedWithTabs();
+      cdp.holdOn("Emulation.setDeviceMetricsOverride");
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      await flush();
+      viewer.receive({
+        t: "resize",
+        width: 500,
+        height: 600,
+        dpr: 1,
+        mobile: false,
+      });
+      await vi.advanceTimersByTimeAsync(200);
+      cdp.stopHolding("Emulation.setDeviceMetricsOverride");
+      cdp.release("Emulation.setDeviceMetricsOverride");
+      await flush();
+      expect(cdp.last("Emulation.setDeviceMetricsOverride")).toEqual({
+        params: {
+          width: 500,
+          height: 600,
+          deviceScaleFactor: 1,
+          mobile: false,
+        },
+        sessionId: "S2",
+      });
+      expect(cdp.last(START_CAST)?.params).toMatchObject({
+        maxWidth: 63,
+        maxHeight: 75,
+      });
+      expect(textsOf(viewer, "viewport").at(-1)).toMatchObject({
+        width: 500,
+        height: 600,
+      });
+    });
+
+    it("切り替える前に受けて待っていたresizeも、新しいタブに当たる", async () => {
+      const { cdp, viewer } = await startedWithTabs();
+      viewer.receive({
+        t: "resize",
+        width: 500,
+        height: 600,
+        dpr: 1,
+        mobile: false,
+      });
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      await vi.advanceTimersByTimeAsync(200);
+      expect(cdp.last("Emulation.setDeviceMetricsOverride")).toEqual({
+        params: {
+          width: 500,
+          height: 600,
+          deviceScaleFactor: 1,
+          mobile: false,
+        },
+        sessionId: "S2",
+      });
+      expect(cdp.count(START_CAST)).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("切り替えのあいだに入った視聴者も、終わったら寸法、ページの状態、一覧、全画面を受け取る", async () => {
+      const { cdp, bridge } = await startedWithTabs();
+      cdp.holdOn("Page.enable");
+      bridge.attach(fakeViewer());
+      await flush();
+      cdp.forget();
+      const first = fakeViewer();
+      bridge.attach(first);
+      await flush();
+      first.receive({ t: "tab", type: "activate", id: "T2" });
+      await flush();
+      const late = fakeViewer();
+      bridge.attach(late);
+      await flush();
+      expect(late.close).not.toHaveBeenCalled();
+      cdp.stopHolding("Page.enable");
+      cdp.release("Page.enable");
+      await flush();
+      expect(late.texts().map(m => (m as { t: string }).t)).toEqual([
+        "viewport",
+        "page",
+        "tabs",
+      ]);
+      expect(late.texts().at(-1)).toEqual(tabsBody(["T1", "T2", "T3"], "T2"));
+      cdp.emit("Page.screencastFrame", monitorFrame(1), "S2");
+      await flush();
+      expect(late.kinds()).toEqual([1]);
+    });
+
+    it("視聴者が居ない間に終わった切り替えでは、監視を始めない。戻った視聴者で始める", async () => {
+      const { cdp, bridge, viewer } = await startedWithTabs();
+      cdp.holdOn("Page.enable");
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      await flush();
+      viewer.emit("close");
+      cdp.stopHolding("Page.enable");
+      cdp.release("Page.enable");
+      await flush();
+      expect(cdp.count(START_CAST)).toBe(0);
+      const back = fakeViewer();
+      bridge.attach(back);
+      await flush();
+      expect(cdp.last(START_CAST)?.sessionId).toBe("S2");
+      expect(textsOf(back, "tabs")).toEqual([
+        tabsBody(["T1", "T2", "T3"], "T2"),
+      ]);
+    });
+
+    it("navigateは、切り替えが終わるのを待って、新しいタブを遷移させる", async () => {
+      const { cdp, bridge, viewer } = await startedWithTabs();
+      cdp.holdOn("Page.enable");
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      await flush();
+      const done = bridge.navigate("http://localhost:3000/");
+      await flush();
+      expect(cdp.count("Page.navigate")).toBe(0);
+      cdp.stopHolding("Page.enable");
+      cdp.release("Page.enable");
+      await done;
+      expect(cdp.last("Page.navigate")).toEqual({
+        params: { url: "http://localhost:3000/" },
+        sessionId: "S2",
+      });
+    });
+
+    it("準備の途中に新しいタブで開いたダイアログは、準備が終わったときに、途中で入った視聴者にも届く", async () => {
+      const { cdp, bridge, viewer } = await startedWithTabs();
+      cdp.holdOn("Emulation.setDeviceMetricsOverride");
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      await flush();
+      cdp.emit(
+        "Page.javascriptDialogOpening",
+        { type: "alert", message: "新しいタブ" },
+        "S2"
+      );
+      const late = fakeViewer();
+      bridge.attach(late);
+      await flush();
+      expect(textsOf(late, "dialog")).toEqual([]);
+      cdp.stopHolding("Emulation.setDeviceMetricsOverride");
+      cdp.release("Emulation.setDeviceMetricsOverride");
+      await flush();
+      expect(late.texts().map(m => (m as { t: string }).t)).toEqual([
+        "viewport",
+        "page",
+        "dialog",
+        "tabs",
+      ]);
+      // 開いている間は取り直さない
+      cdp.emit("Page.screencastFrame", monitorFrame(1), "S2");
+      await flush();
+      expect(cdp.count(CAPTURE)).toBe(0);
+    });
+
+    it("待たせておく操作には上限があり、超えたぶんは捨てる", async () => {
+      const { cdp, viewer } = await startedWithTabs(["T1"]);
+      cdp.holdOn(CREATE_TARGET);
+      for (let i = 0; i < 100; i++) viewer.receive({ t: "tab", type: "new" });
+      await flush();
+      cdp.stopHolding(CREATE_TARGET);
+      cdp.release(CREATE_TARGET);
+      await vi.advanceTimersByTimeAsync(1000);
+      // 走っていた1つと、待っていたぶん。タブの数の上限 (20) にも届く
+      expect(cdp.count(CREATE_TARGET)).toBe(19);
+      expect(textsOf(viewer, "notice")).toHaveLength(14);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("切り替えのあいだにCDPが切れたら、視聴者へerrorを1回だけ送り、タイマーを残さない", async () => {
+      const { cdp, bridge, viewer } = await startedWithTabs();
+      cdp.holdOn("Page.enable");
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      viewer.receive({ t: "tab", type: "activate", id: "T3" });
+      await flush();
+      cdp.disconnect();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(errorCount(viewer)).toBe(1);
+      expect(viewer.close).toHaveBeenCalledTimes(1);
+      expect(bridge.viewerCount).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("切り替えのあいだにresetしても、遅れた応答で何も起きない", async () => {
+      const { cdp, bridge, viewer } = await startedWithTabs();
+      cdp.holdOn("Page.enable");
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      await flush();
+      bridge.reset();
+      cdp.forget();
+      viewer.send.mockClear();
+      cdp.disconnect();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(cdp.methods()).toEqual([]);
+      expect(viewer.send).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+  });
+
+  describe("ページが開いたタブ", () => {
+    it("いま映しているタブが開いたタブへ、自動で切り替える", async () => {
+      const ctx = await startedWithTabs(["T1", "T2"]);
+      const { cdp, viewer } = ctx;
+      cdp.emitBrowser("Target.targetCreated", {
+        targetInfo: target("T9", { openerId: "T1" }),
+      });
+      await flush();
+      expect(cdp.methods()).toEqual([STOP_CAST, DETACH, ...ENTER_CALLS]);
+      expect(cdp.last(ATTACH)?.params).toMatchObject({ targetId: "T9" });
+      expect(textsOf(viewer, "tabs")).toEqual([
+        tabsBody(["T1", "T2", "T9"], "T9"),
+      ]);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(textsOf(viewer, "tabs")).toHaveLength(1);
+      expectKept(ctx);
+    });
+
+    it("ほかのタブが開いたタブへは切り替えず、一覧にだけ出す", async () => {
+      const { cdp, viewer } = await startedWithTabs(["T1", "T2"]);
+      cdp.emitBrowser("Target.targetCreated", {
+        targetInfo: target("T9", { openerId: "T2" }),
+      });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(cdp.methods()).toEqual([]);
+      expect(viewer.texts()).toEqual([tabsBody(["T1", "T2", "T9"], "T1")]);
+    });
+
+    it("上限を超えていても、ページが開いたタブは一覧に出して切り替える", async () => {
+      const ids = Array.from({ length: 20 }, (_, i) => `T${i + 1}`);
+      const { cdp, viewer } = await startedWithTabs(ids);
+      cdp.emitBrowser("Target.targetCreated", {
+        targetInfo: target("T99", { openerId: "T1" }),
+      });
+      await flush();
+      expect(textsOf(viewer, "tabs")).toEqual([
+        tabsBody([...ids, "T99"], "T99"),
+      ]);
+    });
+  });
+
+  describe("閉じる", () => {
+    it("映していないタブを閉じても、切り替えない", async () => {
+      const ctx = await startedWithTabs();
+      const { cdp, viewer } = ctx;
+      viewer.receive({ t: "tab", type: "close", id: "T3" });
+      await flush();
+      expect(cdp.methods()).toEqual([CLOSE_TARGET]);
+      expect(cdp.last(CLOSE_TARGET)).toEqual({
+        params: { targetId: "T3" },
+        sessionId: undefined,
+      });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(viewer.texts()).toEqual([tabsBody(["T1", "T2"], "T1")]);
+      // Chromiumが消えたと知らせてきても、知らせ直さない
+      cdp.emitBrowser("Target.targetDestroyed", { targetId: "T3" });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(viewer.texts()).toHaveLength(1);
+      expectKept(ctx);
+    });
+
+    it("閉じられなかったタブは、一覧に残す", async () => {
+      const { cdp, viewer } = await startedWithTabs();
+      cdp.failOn(CLOSE_TARGET);
+      viewer.receive({ t: "tab", type: "close", id: "T3" });
+      await vi.advanceTimersByTimeAsync(200);
+      expect(viewer.texts()).toEqual([]);
+      expect(viewer.close).not.toHaveBeenCalled();
+    });
+
+    it("いま映しているタブを閉じたら、直前のタブへ移る", async () => {
+      const ctx = await startedWithTabs();
+      const { cdp, viewer } = ctx;
+      viewer.receive({ t: "tab", type: "activate", id: "T2" });
+      await flush();
+      cdp.forget();
+      viewer.send.mockClear();
+      viewer.receive({ t: "tab", type: "close", id: "T2" });
+      await flush();
+      expect(cdp.methods()).toEqual([
+        STOP_CAST,
+        DETACH,
+        CLOSE_TARGET,
+        ...ENTER_CALLS,
+      ]);
+      expect(cdp.last(CLOSE_TARGET)?.params).toEqual({ targetId: "T2" });
+      expect(cdp.last(ATTACH)?.params).toMatchObject({ targetId: "T1" });
+      expect(textsOf(viewer, "tabs")).toEqual([tabsBody(["T1", "T3"], "T1")]);
+      expect(textsOf(viewer, "viewport")).toMatchObject([{ gen: 3 }]);
+      // 閉じたタブについて遅れて届くイベントでは、もう何も起きない
+      cdp.forget();
+      cdp.emitBrowser("Target.detachedFromTarget", { sessionId: "S2" });
+      cdp.emitBrowser("Target.targetDestroyed", { targetId: "T2" });
+      await vi.advanceTimersByTimeAsync(200);
+      expect(cdp.methods()).toEqual([]);
+      expect(textsOf(viewer, "tabs")).toHaveLength(1);
+      expectKept(ctx);
+    });
+
+    it("先頭のタブを閉じたら、直後のタブへ移る", async () => {
+      const ctx = await startedWithTabs();
+      const { cdp, viewer } = ctx;
+      viewer.receive({ t: "tab", type: "close", id: "T1" });
+      await flush();
+      expect(cdp.last(ATTACH)?.params).toMatchObject({ targetId: "T2" });
+      expect(textsOf(viewer, "tabs")).toEqual([tabsBody(["T2", "T3"], "T2")]);
+      expectKept(ctx);
+    });
+
+    it("最後の1つを閉じたら、about:blankを作って移る", async () => {
+      const ctx = await startedWithTabs(["T1"]);
+      const { cdp, viewer } = ctx;
+      viewer.receive({ t: "tab", type: "close", id: "T1" });
+      await flush();
+      expect(cdp.methods()).toEqual([
+        STOP_CAST,
+        DETACH,
+        CLOSE_TARGET,
+        CREATE_TARGET,
+        ...ENTER_CALLS,
+      ]);
+      expect(cdp.last(CREATE_TARGET)?.params).toEqual({ url: "about:blank" });
+      expect(cdp.last(ATTACH)?.params).toMatchObject({ targetId: "T-new" });
+      expect(textsOf(viewer, "tabs")).toEqual([
+        { t: "tabs", tabs: [BLANK_TAB], activeId: "T-new" },
+      ]);
+      expect(textsOf(viewer, "page")).toEqual([pageBody("about:blank", "")]);
+      expectKept(ctx);
+    });
+  });
+
+  describe("新しいタブ", () => {
+    it("about:blankを作って切り替える", async () => {
+      const ctx = await startedWithTabs(["T1", "T2"]);
+      const { cdp, viewer } = ctx;
+      viewer.receive({ t: "tab", type: "new" });
+      await flush();
+      expect(cdp.methods()).toEqual([
+        CREATE_TARGET,
+        STOP_CAST,
+        DETACH,
+        ...ENTER_CALLS,
+      ]);
+      expect(cdp.last(CREATE_TARGET)).toEqual({
+        params: { url: "about:blank" },
+        sessionId: undefined,
+      });
+      expect(cdp.last(ATTACH)?.params).toMatchObject({ targetId: "T-new" });
+      expect(textsOf(viewer, "tabs")).toEqual([
+        {
+          t: "tabs",
+          tabs: [tabOf("T1"), tabOf("T2"), BLANK_TAB],
+          activeId: "T-new",
+        },
+      ]);
+      // Chromiumが作ったと知らせてきても、二重には並べない
+      cdp.emitBrowser("Target.targetCreated", {
+        targetInfo: {
+          targetId: "T-new",
+          type: "page",
+          url: "about:blank",
+          title: "",
+        },
+      });
+      await vi.advanceTimersByTimeAsync(200);
+      expect(textsOf(viewer, "tabs")).toHaveLength(1);
+      expectKept(ctx);
+    });
+
+    it("作れなければ、いまのタブのままにする", async () => {
+      const ctx = await startedWithTabs(["T1", "T2"]);
+      const { cdp, viewer } = ctx;
+      cdp.failOn(CREATE_TARGET);
+      viewer.receive({ t: "tab", type: "new" });
+      await flush();
+      expect(cdp.methods()).toEqual([CREATE_TARGET]);
+      viewer.receive({ t: "paste", text: "x" });
+      expect(cdp.last("Input.insertText")?.sessionId).toBe("S1");
+      expectKept(ctx);
+    });
+
+    it("タブが20個あれば作らず、頼んだ視聴者にだけ理由を返す", async () => {
+      const ids = Array.from({ length: 20 }, (_, i) => `T${i + 1}`);
+      const { cdp, viewers } = await startedWithTabs(ids, 2);
+      viewers[0].receive({ t: "tab", type: "new" });
+      await flush();
+      expect(cdp.methods()).toEqual([]);
+      expect(viewers[0].texts()).toEqual([
+        { t: "notice", message: "タブが多すぎます" },
+      ]);
+      expect(viewers[1].texts()).toEqual([]);
+    });
+
+    it("19個なら作れる。続けて頼まれたぶんは、20個になったあとは断る", async () => {
+      const ids = Array.from({ length: 19 }, (_, i) => `T${i + 1}`);
+      const { cdp, viewer } = await startedWithTabs(ids);
+      viewer.receive({ t: "tab", type: "new" });
+      viewer.receive({ t: "tab", type: "new" });
+      await flush();
+      await flush();
+      expect(cdp.count(CREATE_TARGET)).toBe(1);
+      expect(textsOf(viewer, "notice")).toHaveLength(1);
+    });
+  });
+
+  describe("いまのタブが消えたとき", () => {
+    it("ページが自分で閉じたら、視聴者を切らずに直前のタブへ移る", async () => {
+      const ctx = await startedWithTabs();
+      const { cdp, viewer } = ctx;
+      viewer.receive({ t: "tab", type: "activate", id: "T3" });
+      await flush();
+      cdp.forget();
+      viewer.send.mockClear();
+      cdp.emitBrowser("Target.detachedFromTarget", {
+        sessionId: "S2",
+        targetId: "T3",
+      });
+      cdp.emitBrowser("Target.targetDestroyed", { targetId: "T3" });
+      await flush();
+      // 消えたsessionへは何も送らない
+      expect(cdp.methods()).toEqual(ENTER_CALLS);
+      expect(cdp.last(ATTACH)?.params).toMatchObject({ targetId: "T2" });
+      expect(textsOf(viewer, "tabs")).toEqual([tabsBody(["T1", "T2"], "T2")]);
+      expect(textsOf(viewer, "viewport")).toMatchObject([{ gen: 3 }]);
+      cdp.emit("Page.screencastFrame", monitorFrame(1), "S3");
+      await flush();
+      expect(viewer.kinds()).toEqual([1]);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(textsOf(viewer, "tabs")).toHaveLength(1);
+      expectKept(ctx);
+    });
+
+    it("消えたことだけが先に届いても (detachの知らせが無くても) 移る", async () => {
+      const ctx = await startedWithTabs();
+      const { cdp } = ctx;
+      cdp.emitBrowser("Target.targetDestroyed", { targetId: "T1" });
+      await flush();
+      expect(cdp.methods()).toEqual(ENTER_CALLS);
+      expect(cdp.last(ATTACH)?.params).toMatchObject({ targetId: "T2" });
+      expectKept(ctx);
+    });
+
+    it("消えたあいだの入力は捨て、ダイアログが開いていたら閉じたと知らせる", async () => {
+      const { cdp, viewer } = await startedWithTabs();
+      cdp.emit("Page.javascriptDialogOpening", { type: "alert", message: "m" });
+      cdp.holdOn(ATTACH);
+      viewer.send.mockClear();
+      cdp.emitBrowser("Target.detachedFromTarget", { sessionId: "S1" });
+      expect(textsOf(viewer, "dialogClosed")).toHaveLength(1);
+      cdp.forget();
+      viewer.receive({ t: "paste", text: "x" });
+      await flush();
+      expect(cdp.count("Input.insertText")).toBe(0);
+    });
+
+    it("クラッシュしたら、そのタブを閉じてから隣のタブへ移る", async () => {
+      const ctx = await startedWithTabs();
+      const { cdp, viewer } = ctx;
+      cdp.emit("Inspector.targetCrashed", undefined);
+      await flush();
+      expect(cdp.methods()).toEqual([CLOSE_TARGET, ...ENTER_CALLS]);
+      expect(cdp.last(CLOSE_TARGET)?.params).toEqual({ targetId: "T1" });
+      expect(cdp.last(ATTACH)?.params).toMatchObject({ targetId: "T2" });
+      expect(textsOf(viewer, "tabs")).toEqual([tabsBody(["T2", "T3"], "T2")]);
+      expectKept(ctx);
+    });
+
+    it("選んだタブへつなげなければ次の候補へ、どれもだめならabout:blankを作る", async () => {
+      const ctx = await startedWithTabs();
+      const { cdp, viewer } = ctx;
+      cdp.failOn(ACTIVATE);
+      cdp.emitBrowser("Target.detachedFromTarget", { sessionId: "S1" });
+      cdp.emitBrowser("Target.targetDestroyed", { targetId: "T1" });
+      await flush();
+      expect(cdp.count(ACTIVATE)).toBe(3);
+      expect(cdp.count(CREATE_TARGET)).toBe(1);
+      // 作ったタブへもつなげないので、接続が切れたときと同じに扱う
+      expect(errorCount(viewer)).toBe(1);
+      expect(viewer.close).toHaveBeenCalledTimes(1);
+      expect(cdp.close).toHaveBeenCalled();
+      expect(ctx.bridge.viewerCount).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("つなぐ途中で消えた候補は飛ばして、次の候補へ移る", async () => {
+      const ctx = await startedWithTabs();
+      const { cdp, viewer } = ctx;
+      cdp.holdOn(ATTACH);
+      viewer.receive({ t: "tab", type: "close", id: "T1" });
+      await flush();
+      expect(cdp.last(ATTACH)?.params).toMatchObject({ targetId: "T2" });
+      cdp.emitBrowser("Target.targetDestroyed", { targetId: "T2" });
+      cdp.stopHolding(ATTACH);
+      cdp.fail(ATTACH);
+      await flush();
+      expect(cdp.last(ATTACH)?.params).toMatchObject({ targetId: "T3" });
+      expect(textsOf(viewer, "tabs").at(-1)).toEqual(tabsBody(["T3"], "T3"));
+      expectKept(ctx);
+    });
+
+    it("about:blankも作れなければ、視聴者へerrorを送って接続を閉じ、次のattachでつなぎ直す", async () => {
+      const first = fakeCdp();
+      const second = fakeCdp();
+      const connect = vi
+        .fn()
+        .mockResolvedValueOnce(first)
+        .mockResolvedValueOnce(second);
+      const bridge = new BrowserCdpBridge(connect);
+      const viewer = fakeViewer();
+      bridge.attach(viewer);
+      await flush();
+      first.failOn(CREATE_TARGET);
+      first.emitBrowser("Target.detachedFromTarget", { sessionId: "S1" });
+      first.emitBrowser("Target.targetDestroyed", { targetId: "T1" });
+      await flush();
+      expect(viewer.send).toHaveBeenCalledWith(ERROR_BODY);
+      expect(viewer.close).toHaveBeenCalledWith(1011, expect.any(String));
+      expect(first.close).toHaveBeenCalled();
+      expect(bridge.viewerCount).toBe(0);
+      first.disconnect();
+      expect(errorCount(viewer)).toBe(1);
+      bridge.attach(fakeViewer());
+      await flush();
+      expect(connect).toHaveBeenCalledTimes(2);
+      expect(second.count(START_CAST)).toBe(1);
+    });
   });
 });

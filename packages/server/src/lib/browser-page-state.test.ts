@@ -221,6 +221,44 @@ describe("BrowserPageState", () => {
     expect(state.snapshot()?.url).toHaveLength(8192);
     expect(state.snapshot()?.title).toHaveLength(1024);
   });
+
+  it("つないだ時点のURLと題を置いても知らせず、頼まれたときに1回だけ知らせる", () => {
+    const { state, seen } = setup();
+    state.seed("http://localhost/a", "題");
+    const seeded = {
+      url: "http://localhost/a",
+      title: "題",
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+    };
+    expect(state.snapshot()).toEqual(seeded);
+    expect(seen).toEqual([]);
+    state.announce();
+    state.announce();
+    expect(seen).toEqual([seeded]);
+  });
+
+  it("置いたURLと題は切り、あとから読んだ履歴で置き換わる", () => {
+    const { state, seen } = setup();
+    state.seed("u".repeat(9000), "t".repeat(2000));
+    expect(state.snapshot()?.url).toHaveLength(8192);
+    expect(state.snapshot()?.title).toHaveLength(1024);
+    state.applyHistory(
+      history(1, ["http://localhost/a", "http://localhost/b"])
+    );
+    expect(seen.at(-1)).toMatchObject({
+      url: "http://localhost/b",
+      title: "title of http://localhost/b",
+      canGoBack: true,
+    });
+  });
+
+  it("何も分かっていなければ、頼まれても知らせない", () => {
+    const { state, seen } = setup();
+    state.announce();
+    expect(seen).toEqual([]);
+  });
 });
 
 describe("readHistory", () => {

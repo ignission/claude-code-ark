@@ -12,7 +12,8 @@
  * - URLは遷移のイベントですぐに変える。タイトルと、戻れるか進めるかは履歴からしか
  *   分からないので、履歴を読むまで前の値のままにする
  * - URLが分かるまでは、状態を持たない (`snapshot()` は `null`)。`Page.enable` は
- *   過去の遷移を送り直さないので、最初の状態は履歴から来る
+ *   過去の遷移を送り直さないので、最初の状態は、タブの一覧から分かるURLと題 (`seed`) か、
+ *   履歴から来る。`seed` だけでは知らせない。いつ知らせるかは使う側が決める (`announce`)
  * - 前と同じ状態は知らせない。読み込み中はイベントが続き、その多くは何も変えない
  * - 読めない履歴 (遷移の途中の失敗、形の違う応答) は使わず、前の状態を保つ
  */
@@ -20,9 +21,9 @@
 import type { BrowserPageInfo } from "@ark/shared";
 
 /** URLの上限 (文字数)。`data:` のURLは際限なく長くなる */
-const MAX_URL_LENGTH = 8192;
+export const MAX_URL_LENGTH = 8192;
 /** タイトルの上限 (文字数) */
-const MAX_TITLE_LENGTH = 1024;
+export const MAX_TITLE_LENGTH = 1024;
 
 export interface HistoryEntry {
   id: number;
@@ -140,6 +141,20 @@ export class BrowserPageState {
     }
     this.notify();
     return true;
+  }
+
+  /**
+   * タブへつないだ時点で分かっているURLと題を置く。戻れるか、進めるかは、履歴を読むまで
+   * 分からないので変えない。知らせはしない。
+   */
+  seed(url: string, title: string): void {
+    this.setUrl(url);
+    this.info.title = title.slice(0, MAX_TITLE_LENGTH);
+  }
+
+  /** いまの状態を、まだ知らせていなければ知らせる */
+  announce(): void {
+    this.notify();
   }
 
   /** `Page.getNavigationHistory` の応答を受け取る。読めなければ何も変えない */
