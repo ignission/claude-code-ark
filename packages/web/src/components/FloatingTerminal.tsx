@@ -10,8 +10,9 @@
  *   こともしない。iframeはアンマウントでも付け替えでも読み込み直し、ttydがつなぎ直しに
  *   なるため
  * - `variant="window"` は、親の中央に幅90%・高さ80%で重ね、背後を薄く暗くする。
- *   最小は480 x 320で、親より大きくはしない。`variant="fullscreen"` は親の全面を埋める。
- *   窓は動かせない
+ *   最小は480 x 320で、親より大きくはしない。`variant="fullscreen"` は親の全面を埋める
+ *   (モバイル用)。画面の端まで届くので、上端のバーをノッチの下へずらし (safe area)、
+ *   閉じるボタンを指で押せる大きさ (44px) にする。窓は動かせない
  * - 閉じ方は、閉じるボタンと、窓の外 (暗くした部分) を押すこと。外を押したかどうかは
  *   背景の要素への pointerdown で見る。端末はiframeで、中で起きたポインターの
  *   イベントは親の文書に届かないので、documentに張る「外側のクリック」の検出は使わない
@@ -118,7 +119,7 @@ export function FloatingTerminal({
           "flex flex-col overflow-hidden bg-card",
           isWindow
             ? "h-[min(100%,max(80%,320px))] w-[min(100%,max(90%,480px))] rounded-xl border border-border shadow-panel"
-            : "h-full w-full"
+            : "h-full w-full safe-area-top safe-area-x"
         )}
       >
         <div className="flex h-11 shrink-0 items-center gap-1 pr-2 pl-4">
@@ -131,9 +132,12 @@ export function FloatingTerminal({
             aria-label="端末を閉じる"
             title="端末を閉じる"
             onClick={onClose}
-            className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className={cn(
+              "inline-flex shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+              isWindow ? "size-8" : "size-11"
+            )}
           >
-            <X className="size-4" aria-hidden="true" />
+            <X className={isWindow ? "size-4" : "size-5"} aria-hidden="true" />
           </button>
         </div>
         <div className="min-h-0 flex-1">{children}</div>

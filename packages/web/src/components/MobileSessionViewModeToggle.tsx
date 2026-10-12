@@ -5,7 +5,6 @@ import { SegmentedControl, type SegmentOption } from "./SegmentedControl";
 export const MOBILE_SESSION_VIEW_MODES: readonly SegmentOption<MobileSessionViewMode>[] =
   [
     { value: "chat", label: "会話", icon: VIEW_MODE_ICONS.chat },
-    { value: "terminal", label: "端末", icon: VIEW_MODE_ICONS.terminal },
     { value: "board", label: "図", icon: VIEW_MODE_ICONS.board },
   ];
 
@@ -15,7 +14,7 @@ interface MobileSessionViewModeToggleProps {
   className?: string;
 }
 
-/** モバイルの下部バーの上段に置く「会話 / 端末 / 図」 */
+/** モバイルの下部バーの上段に置く「会話 / 図」。端末はモードではなく、会話の帯から窓で開く */
 export function MobileSessionViewModeToggle({
   value,
   onChange,

@@ -228,4 +228,21 @@ describe("FloatingTerminal", () => {
     expect(windowEl(container)?.className).toContain("w-full");
     expect(windowEl(container)?.className).not.toContain("90%");
   });
+
+  it("fullscreen は上端のバーをノッチの下へずらし、閉じるボタンを指で押せる大きさにする", () => {
+    const full = mount({ open: true, variant: "fullscreen" });
+    expect(windowEl(full.container)?.className).toContain("safe-area-top");
+    expect(windowEl(full.container)?.className).toContain("safe-area-x");
+    expect(
+      full.container.querySelector('button[aria-label="端末を閉じる"]')
+        ?.className
+    ).toContain("size-11");
+
+    const win = mount({ open: true });
+    expect(windowEl(win.container)?.className).not.toContain("safe-area");
+    expect(
+      win.container.querySelector('button[aria-label="端末を閉じる"]')
+        ?.className
+    ).toContain("size-8");
+  });
 });

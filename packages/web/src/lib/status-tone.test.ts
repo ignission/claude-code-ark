@@ -99,14 +99,7 @@ describe("resolveStatusStrip", () => {
       offerChat: false,
     });
   });
-  it("会話以外のモードでは会話へ戻るボタンを出す", () => {
-    expect(
-      resolveStatusStrip({
-        ...base,
-        bridgeStatus: "AWAITING",
-        viewMode: "terminal",
-      })?.offerChat
-    ).toBe(true);
+  it("会話以外のモード (図) では会話へ戻るボタンを出す", () => {
     expect(
       resolveStatusStrip({
         ...base,

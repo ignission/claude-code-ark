@@ -27,7 +27,7 @@ Arkは、git worktreeごとにClaude Codeのセッションを1つ動かし、�
 
 1. Arkを入れます。macOS (Apple Silicon) では `brew install --cask ignission/tap/ark`、Linuxでは[ソースから起動](#ソースから起動)します。
 2. Arkを開き (ソースから起動した場合は http://localhost:4001)、リポジトリを選んで、worktreeでセッションを始めます。
-3. Claudeに話しかけます。会話の表示と生のターミナルは、上部のトグルで切り替えられます。
+3. Claudeに話しかけます。入力欄の上の帯にターミナルの末尾が出ていて、押すと生のターミナルが窓で開きます。
 
 [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) がインストール済みで、ログイン済みである必要があります (`claude --version` で確認し、未ログインなら `claude` を起動して `/login`)。
 
