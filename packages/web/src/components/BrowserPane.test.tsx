@@ -99,8 +99,38 @@ async function flush() {
   });
 }
 
-function viewportMessage(width: number, height: number) {
-  return { data: JSON.stringify({ t: "viewport", width, height }) };
+function viewportMessage(width: number, height: number, gen = 1) {
+  return { data: JSON.stringify({ t: "viewport", width, height, gen }) };
+}
+
+interface FrameRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+const FULL: FrameRect = { x: 0, y: 0, width: 800, height: 600 };
+const SMALL: FrameRect = { x: 10, y: 20, width: 30, height: 40 };
+const JPEG = [0xff, 0xd8, 0xff, 0xe0];
+const WEBP = [0x52, 0x49, 0x46, 0x46];
+
+/** サーバーが送るフレーム。11バイトのヘッダ (big-endian) のあとに画像が続く */
+function frame(
+  kind: 1 | 2 | 3,
+  rect: FrameRect = FULL,
+  { gen = 1, image = JPEG }: { gen?: number; image?: number[] } = {}
+) {
+  const data = new ArrayBuffer(11 + image.length);
+  const view = new DataView(data);
+  view.setUint8(0, kind);
+  view.setUint16(1, gen);
+  view.setUint16(3, rect.x);
+  view.setUint16(5, rect.y);
+  view.setUint16(7, rect.width);
+  view.setUint16(9, rect.height);
+  new Uint8Array(data, 11).set(image);
+  return { data };
 }
 
 /**
@@ -145,6 +175,7 @@ function pasteEvent(text: string): Event {
 /** デコードの終わりをテストから決められる `createImageBitmap` に差し替える */
 function holdDecodes() {
   const decodes: Array<{
+    type: string;
     size: number;
     close: ReturnType<typeof vi.fn>;
     resolve(): void;
@@ -155,6 +186,7 @@ function holdDecodes() {
       new Promise((resolve, reject) => {
         const close = vi.fn();
         decodes.push({
+          type: blob.type,
           size: blob.size,
           close,
           resolve: () => resolve({ width: 800, height: 600, close }),
@@ -238,6 +270,7 @@ beforeEach(() => {
 
 afterEach(() => {
   unmountAll();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -290,65 +323,255 @@ describe("BrowserPane", () => {
     expect(ws.send).not.toHaveBeenCalled();
   });
 
-  it("届いたフレームをcanvasに描く", async () => {
+  it("`viewport` でcanvasの寸法が決まる", () => {
     const { container, ws } = mountConnected();
-    act(() => ws.onmessage?.({ data: new ArrayBuffer(8) }));
+    const canvas = container.querySelector("canvas") as HTMLCanvasElement;
+    expect([canvas.width, canvas.height]).toEqual([800, 600]);
+
+    // 手元の倍率を掛ける。上限は2、下限は1
+    for (const [dpr, width, height] of [
+      [2, 2002, 1400],
+      [3, 2002, 1400],
+      [1.5, 1502, 1050],
+      [0.5, 1001, 700],
+    ]) {
+      vi.stubGlobal("devicePixelRatio", dpr);
+      act(() => ws.onmessage?.(viewportMessage(1001, 700, dpr * 10)));
+      expect([canvas.width, canvas.height]).toEqual([width, height]);
+    }
+  });
+
+  it("世代が読めない `viewport` は使わない", () => {
+    const { container, ws } = mountConnected(null);
+    const canvas = container.querySelector("canvas") as HTMLCanvasElement;
+    const before = [canvas.width, canvas.height];
+    for (const gen of [undefined, -1, 65536, 1.5, "1"]) {
+      act(() =>
+        ws.onmessage?.({
+          data: JSON.stringify({ t: "viewport", width: 640, height: 480, gen }),
+        })
+      );
+    }
+
+    expect([canvas.width, canvas.height]).toEqual(before);
+  });
+
+  it("届いた全画面をcanvasの全体に描く", async () => {
+    const { container, ws } = mountConnected();
+    act(() => ws.onmessage?.(frame(1)));
     await flush();
 
     const canvas = container.querySelector("canvas") as HTMLCanvasElement;
     expect(drawImage).toHaveBeenCalledTimes(1);
-    expect(canvas.width).toBe(800);
-    expect(canvas.height).toBe(600);
+    expect(drawImage.mock.calls[0].slice(1)).toEqual([0, 0, 800, 600]);
+    // canvasの寸法は、画像の寸法ではなくビューポートで決まる
+    expect([canvas.width, canvas.height]).toEqual([800, 600]);
   });
 
-  it("デコードは1枚ずつ行い、待っている間に届いたフレームは最新の1枚だけを残す", async () => {
+  it("粗い全画面は、canvasの全体へ引き伸ばして描く", async () => {
+    vi.stubGlobal("devicePixelRatio", 2);
+    const { ws } = mountConnected();
+    act(() => ws.onmessage?.(frame(2)));
+    await flush();
+
+    expect(drawImage.mock.calls[0].slice(1)).toEqual([0, 0, 1600, 1200]);
+  });
+
+  it("矩形は、ヘッダの位置と寸法で描く", async () => {
+    const { ws } = mountConnected();
+    act(() => {
+      ws.onmessage?.(frame(1));
+      ws.onmessage?.(frame(3, { x: 100, y: 50, width: 304, height: 34 }));
+    });
+    await flush();
+    await flush();
+
+    expect(drawImage.mock.calls[1].slice(1)).toEqual([100, 50, 304, 34]);
+  });
+
+  it("canvasが2倍なら、矩形の位置と寸法も2倍にする", async () => {
+    vi.stubGlobal("devicePixelRatio", 2);
+    const { ws } = mountConnected();
+    act(() => {
+      ws.onmessage?.(frame(1));
+      ws.onmessage?.(frame(3, { x: 100, y: 50, width: 304, height: 34 }));
+    });
+    await flush();
+    await flush();
+
+    expect(drawImage.mock.calls[1].slice(1)).toEqual([200, 100, 608, 68]);
+  });
+
+  it("倍率が整数でなければ、矩形の端を外側の画素へ丸める", async () => {
+    vi.stubGlobal("devicePixelRatio", 1.5);
+    const { ws } = mountConnected();
+    act(() => {
+      ws.onmessage?.(frame(1));
+      ws.onmessage?.(frame(3, { x: 1, y: 3, width: 2, height: 4 }));
+      // 隣の矩形との間に隙間を残さない
+      ws.onmessage?.(frame(3, { x: 3, y: 3, width: 2, height: 4 }));
+    });
+    await flush();
+    await flush();
+    await flush();
+
+    // 1.5から4.5までは1から5まで、4.5から10.5までは4から11まで
+    expect(drawImage.mock.calls[1].slice(1)).toEqual([1, 4, 4, 7]);
+    expect(drawImage.mock.calls[2].slice(1)).toEqual([4, 4, 4, 7]);
+  });
+
+  it("世代の違うフレームと、`viewport` より前のフレームは描かない", async () => {
+    const { decode } = holdDecodes();
+    const { ws } = mountConnected(null);
+    act(() => ws.onmessage?.(frame(1)));
+    expect(decode).not.toHaveBeenCalled();
+
+    act(() => {
+      ws.onmessage?.(viewportMessage(800, 600, 7));
+      ws.onmessage?.(frame(1, FULL, { gen: 6 }));
+      ws.onmessage?.(frame(1, FULL, { gen: 8 }));
+    });
+    await flush();
+    expect(decode).not.toHaveBeenCalled();
+    expect(ws.send).not.toHaveBeenCalled();
+
+    act(() => ws.onmessage?.(frame(1, FULL, { gen: 7 })));
+    expect(decode).toHaveBeenCalledTimes(1);
+  });
+
+  it("全画面が届くまで、矩形は描かない", async () => {
+    const { decode } = holdDecodes();
+    const { ws } = mountConnected();
+    act(() => ws.onmessage?.(frame(3, SMALL)));
+    expect(decode).not.toHaveBeenCalled();
+
+    // 世代が変わったあとも、その世代の全画面を待つ
+    act(() => {
+      ws.onmessage?.(frame(1));
+      ws.onmessage?.(viewportMessage(800, 600, 2));
+      ws.onmessage?.(frame(3, SMALL, { gen: 2 }));
+    });
+    expect(decode).toHaveBeenCalledTimes(1);
+    expect(ws.send).not.toHaveBeenCalled();
+  });
+
+  it("復号は1枚ずつ行い、待っている矩形を届いた順に全部描く", async () => {
     const { decode, decodes } = holdDecodes();
     const { ws } = mountConnected();
     act(() => {
-      ws.onmessage?.({ data: new ArrayBuffer(8) });
-      ws.onmessage?.({ data: new ArrayBuffer(16) });
-      ws.onmessage?.({ data: new ArrayBuffer(24) });
+      ws.onmessage?.(frame(1));
+      ws.onmessage?.(frame(3, { x: 10, y: 0, width: 1, height: 1 }));
+      ws.onmessage?.(frame(3, { x: 20, y: 0, width: 1, height: 1 }));
+      ws.onmessage?.(frame(3, { x: 30, y: 0, width: 1, height: 1 }));
     });
     expect(decode).toHaveBeenCalledTimes(1);
 
-    decodes[0].resolve();
-    await flush();
-    expect(drawImage).toHaveBeenCalledTimes(1);
-    // 間の1枚は飛ばす
-    expect(decodes.map(d => d.size)).toEqual([8, 24]);
-
-    decodes[1].resolve();
-    await flush();
-    expect(drawImage).toHaveBeenCalledTimes(2);
-    expect(decode).toHaveBeenCalledTimes(2);
+    for (let i = 0; i < 4; i++) {
+      // 前の1枚を描き終えるまで、次の復号を始めない
+      expect(decodes).toHaveLength(i + 1);
+      decodes[i].resolve();
+      await flush();
+      expect(drawImage).toHaveBeenCalledTimes(i + 1);
+    }
+    expect(drawImage.mock.calls.map(call => call[1])).toEqual([0, 10, 20, 30]);
     expect(decodes.every(d => d.close.mock.calls.length === 1)).toBe(true);
   });
 
-  it("隠れている間はデコードせず、見えたときに最新の1枚だけをデコードする", async () => {
-    const { decode, decodes } = holdDecodes();
+  it("全画面が届いたら、その前で待っていたフレームは復号せずに捨てる", async () => {
+    const { decodes } = holdDecodes();
     const { ws } = mountConnected();
-    paneSize = { width: 0, height: 0 };
     act(() => {
-      ws.onmessage?.({ data: new ArrayBuffer(8) });
-      ws.onmessage?.({ data: new ArrayBuffer(16) });
+      ws.onmessage?.(frame(1));
+      ws.onmessage?.(frame(3, { x: 10, y: 0, width: 1, height: 1 }));
+      ws.onmessage?.(frame(3, { x: 20, y: 0, width: 1, height: 1 }));
+      ws.onmessage?.(frame(2));
+      ws.onmessage?.(frame(3, { x: 30, y: 0, width: 1, height: 1 }));
     });
-    expect(decode).not.toHaveBeenCalled();
+    for (let i = 0; i < 3; i++) {
+      decodes[i].resolve();
+      await flush();
+    }
 
-    paneSize = { width: 800, height: 600 };
-    act(() => FakeResizeObserver.instances[0].callback());
-    expect(decodes.map(d => d.size)).toEqual([16]);
-    decodes[0].resolve();
-    await flush();
-    expect(drawImage).toHaveBeenCalledTimes(1);
-    expect(decode).toHaveBeenCalledTimes(1);
+    // 復号の途中だった最初の全画面は描く。そのあとに粗い全画面が上書きする
+    expect(decodes).toHaveLength(3);
+    expect(drawImage.mock.calls.map(call => call.slice(1))).toEqual([
+      [0, 0, 800, 600],
+      [0, 0, 800, 600],
+      [30, 0, 1, 1],
+    ]);
+    expect(ws.send).not.toHaveBeenCalled();
   });
 
-  it("デコードに失敗したフレームは捨てて続け、警告は接続ごとに1回だけ出す", async () => {
+  it("復号の途中で世代が変わったフレームは、描かずに解放する", async () => {
+    const { decodes } = holdDecodes();
+    const { ws } = mountConnected();
+    act(() => {
+      ws.onmessage?.(frame(1));
+      ws.onmessage?.(frame(3, SMALL));
+      ws.onmessage?.(viewportMessage(1024, 768, 2));
+    });
+    decodes[0].resolve();
+    await flush();
+
+    expect(drawImage).not.toHaveBeenCalled();
+    expect(decodes).toHaveLength(1);
+    expect(decodes[0].close).toHaveBeenCalledTimes(1);
+    expect(ws.send).not.toHaveBeenCalled();
+  });
+
+  it("画像の先頭バイトで `Blob` の `type` を決め、ヘッダは渡さない", async () => {
+    const { decodes } = holdDecodes();
+    const { ws } = mountConnected();
+    act(() => ws.onmessage?.(frame(1, FULL, { image: [...JPEG, 1, 2] })));
+    decodes[0].resolve();
+    await flush();
+    act(() => ws.onmessage?.(frame(3, SMALL, { image: [...WEBP, 1, 2, 3] })));
+
+    expect(decodes.map(d => [d.type, d.size])).toEqual([
+      ["image/jpeg", 6],
+      ["image/webp", 7],
+    ]);
+  });
+
+  it("復号に失敗したら `refresh` を送り、次の全画面まで矩形を描かない", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { decodes } = holdDecodes();
+    const { ws } = mountConnected();
+    act(() => {
+      ws.onmessage?.(frame(1));
+      ws.onmessage?.(frame(3, SMALL));
+      ws.onmessage?.(frame(3, SMALL));
+    });
+    decodes[0].resolve();
+    await flush();
+    decodes[1].reject();
+    await flush();
+
+    expect(ws.sent()).toEqual([{ t: "refresh" }]);
+    // 待っていた矩形も、あとから届く矩形も、穴の空いた絵には重ねない
+    act(() => ws.onmessage?.(frame(3, SMALL)));
+    await flush();
+    expect(decodes).toHaveLength(2);
+
+    act(() => {
+      ws.onmessage?.(frame(1));
+      ws.onmessage?.(frame(3, SMALL));
+    });
+    decodes[2].resolve();
+    await flush();
+    decodes[3].resolve();
+    await flush();
+    expect(drawImage).toHaveBeenCalledTimes(3);
+    expect(ws.sent()).toEqual([{ t: "refresh" }]);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("復号の失敗が続いても、警告は接続ごとに1回だけ出す", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { decodes } = holdDecodes();
     const { ws } = mountConnected();
     for (const decoded of [false, false, true]) {
-      act(() => ws.onmessage?.({ data: new ArrayBuffer(8) }));
+      act(() => ws.onmessage?.(frame(1)));
       const last = decodes[decodes.length - 1];
       if (decoded) last.resolve();
       else last.reject();
@@ -360,33 +583,219 @@ describe("BrowserPane", () => {
     expect(drawImage).toHaveBeenCalledTimes(1);
   });
 
-  it("`createImageBitmap` が同期で投げても、次のフレームを描ける", async () => {
+  it("`createImageBitmap` が同期で投げても `refresh` を送り、次の全画面を描ける", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const decode = vi.fn<() => Promise<unknown>>(() => {
       throw new Error("unsupported");
     });
     vi.stubGlobal("createImageBitmap", decode);
     const { ws } = mountConnected();
-    act(() => ws.onmessage?.({ data: new ArrayBuffer(8) }));
+    act(() => ws.onmessage?.(frame(1)));
     await flush();
+    expect(ws.sent()).toEqual([{ t: "refresh" }]);
 
     decode.mockImplementation(async () => ({
       width: 800,
       height: 600,
       close: vi.fn(),
     }));
-    act(() => ws.onmessage?.({ data: new ArrayBuffer(8) }));
+    act(() => ws.onmessage?.(frame(1)));
     await flush();
     expect(drawImage).toHaveBeenCalledTimes(1);
   });
 
-  it("再接続のあとにデコードが終わった前の接続のフレームは、描かずに解放する", async () => {
+  it("JPEGでもWebPでもない画像は復号せず、`refresh` を送る", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { decode } = holdDecodes();
+    const { ws } = mountConnected();
+    act(() =>
+      ws.onmessage?.(frame(1, FULL, { image: [0x89, 0x50, 0x4e, 0x47] }))
+    );
+    await flush();
+
+    expect(decode).not.toHaveBeenCalled();
+    expect(ws.sent()).toEqual([{ t: "refresh" }]);
+  });
+
+  it("ヘッダを読めないフレームは取りこぼしとして `refresh` を送る", async () => {
+    const { decode } = holdDecodes();
+    const { ws } = mountConnected();
+    act(() => ws.onmessage?.({ data: new ArrayBuffer(8) }));
+
+    expect(decode).not.toHaveBeenCalled();
+    expect(ws.sent()).toEqual([{ t: "refresh" }]);
+  });
+
+  it("待ち行列が上限を超えたら、行列を空にして `refresh` を送る", async () => {
+    const { decodes } = holdDecodes();
+    const { ws } = mountConnected();
+    // 最初の全画面は復号の途中。そのあとの矩形が行列に溜まる
+    act(() => {
+      ws.onmessage?.(frame(1));
+      for (let i = 0; i < 64; i++) ws.onmessage?.(frame(3, SMALL));
+    });
+    expect(ws.send).not.toHaveBeenCalled();
+
+    act(() => ws.onmessage?.(frame(3, SMALL)));
+    expect(ws.sent()).toEqual([{ t: "refresh" }]);
+
+    decodes[0].resolve();
+    await flush();
+    expect(drawImage).toHaveBeenCalledTimes(1);
+    expect(decodes).toHaveLength(1);
+  });
+
+  it("`refresh` は間隔を空けて送り、失敗が続いてもサーバーへ送り続けない", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { decodes } = holdDecodes();
+    const { ws } = mountConnected();
+    const fail = async () => {
+      act(() => ws.onmessage?.(frame(1)));
+      decodes[decodes.length - 1].reject();
+      await flush();
+    };
+
+    await fail();
+    expect(ws.sent()).toEqual([{ t: "refresh" }]);
+    await fail();
+    await fail();
+    act(() => vi.advanceTimersByTime(499));
+    expect(ws.sent()).toEqual([{ t: "refresh" }]);
+
+    act(() => vi.advanceTimersByTime(1));
+    expect(ws.sent()).toEqual([{ t: "refresh" }, { t: "refresh" }]);
+    act(() => vi.advanceTimersByTime(5000));
+    expect(ws.sent()).toHaveLength(2);
+  });
+
+  it("送るのを待っている間に全画面を描けたら、`refresh` は送らない", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { decodes } = holdDecodes();
+    const { ws } = mountConnected();
+    for (let i = 0; i < 2; i++) {
+      act(() => ws.onmessage?.(frame(1)));
+      decodes[i].reject();
+      await flush();
+    }
+    act(() => ws.onmessage?.(frame(1)));
+    decodes[2].resolve();
+    await flush();
+    act(() => vi.advanceTimersByTime(5000));
+
+    expect(drawImage).toHaveBeenCalledTimes(1);
+    expect(ws.sent()).toEqual([{ t: "refresh" }]);
+  });
+
+  it("WebSocketが開いていなければ `refresh` を送らない", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { decodes } = holdDecodes();
+    const { ws } = mountConnected();
+    act(() => ws.onmessage?.(frame(1)));
+    ws.readyState = FakeWebSocket.CLOSING;
+    decodes[0].reject();
+    await flush();
+
+    expect(ws.send).not.toHaveBeenCalled();
+  });
+
+  it("隠れている間のフレームは復号せず、見えるようになったら `refresh` を1回送る", async () => {
+    const { decode, decodes } = holdDecodes();
+    const { ws } = mountConnected();
+    act(() => ws.onmessage?.(frame(1)));
+    decodes[0].resolve();
+    await flush();
+
+    paneSize = { width: 0, height: 0 };
+    act(() => {
+      FakeResizeObserver.instances[0].callback();
+      ws.onmessage?.(frame(3, SMALL));
+      ws.onmessage?.(frame(1));
+      ws.onmessage?.(frame(3, SMALL));
+    });
+    await flush();
+    expect(decode).toHaveBeenCalledTimes(1);
+    expect(ws.send).not.toHaveBeenCalled();
+
+    paneSize = { width: 800, height: 600 };
+    act(() => {
+      FakeResizeObserver.instances[0].callback();
+      FakeResizeObserver.instances[0].callback();
+    });
+    expect(ws.sent().filter(m => m.t === "refresh")).toHaveLength(1);
+
+    // 隠れている間に全画面を逃したので、次の全画面まで矩形は描かない
+    act(() => ws.onmessage?.(frame(3, SMALL)));
+    expect(decode).toHaveBeenCalledTimes(1);
+    act(() => ws.onmessage?.(frame(1)));
+    decodes[1].resolve();
+    await flush();
+    expect(drawImage).toHaveBeenCalledTimes(2);
+    expect(ws.sent().filter(m => m.t === "refresh")).toHaveLength(1);
+  });
+
+  it("復号を待つフレームがあるまま隠れたら、復号せずに捨てて、見えたときに `refresh` を送る", async () => {
+    const { decodes } = holdDecodes();
+    const { ws } = mountConnected();
+    act(() => {
+      ws.onmessage?.(frame(1));
+      ws.onmessage?.(frame(3, SMALL));
+    });
+    paneSize = { width: 0, height: 0 };
+    decodes[0].resolve();
+    await flush();
+    expect(decodes).toHaveLength(1);
+    expect(ws.send).not.toHaveBeenCalled();
+
+    paneSize = { width: 800, height: 600 };
+    act(() => FakeResizeObserver.instances[0].callback());
+    expect(ws.sent().filter(m => m.t === "refresh")).toHaveLength(1);
+  });
+
+  it("見えるようになったときの `refresh` も、間隔を空けて送る", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { decodes } = holdDecodes();
+    const { ws } = mountConnected();
+    act(() => ws.onmessage?.(frame(1)));
+    decodes[0].reject();
+    await flush();
+    ws.send.mockClear();
+
+    paneSize = { width: 0, height: 0 };
+    act(() => ws.onmessage?.(frame(1)));
+    paneSize = { width: 800, height: 600 };
+    act(() => FakeResizeObserver.instances[0].callback());
+    expect(ws.sent().filter(m => m.t === "refresh")).toHaveLength(0);
+
+    act(() => vi.advanceTimersByTime(500));
+    expect(ws.sent().filter(m => m.t === "refresh")).toHaveLength(1);
+  });
+
+  it("送るのを待っている `refresh` は、アンマウントで取り消す", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { decodes } = holdDecodes();
+    const { ws } = mountConnected();
+    for (let i = 0; i < 2; i++) {
+      act(() => ws.onmessage?.(frame(1)));
+      decodes[i].reject();
+      await flush();
+    }
+    unmountAll();
+    act(() => vi.advanceTimersByTime(5000));
+
+    expect(ws.sent()).toEqual([{ t: "refresh" }]);
+  });
+
+  it("再接続のあとに復号が終わった前の接続のフレームは、描かずに解放する", async () => {
     const { decodes } = holdDecodes();
     const { container, ws } = mountConnected();
     act(() => {
-      ws.onmessage?.({ data: new ArrayBuffer(8) });
-      // デコードを待つ間に届いた分は、つなぎ直したら捨てる
-      ws.onmessage?.({ data: new ArrayBuffer(16) });
+      ws.onmessage?.(frame(1));
+      // 復号を待つ間に届いた分は、つなぎ直したら捨てる
+      ws.onmessage?.(frame(3, SMALL));
       ws.onclose?.({ reason: "" });
     });
     const retry = Array.from(container.querySelectorAll("button")).find(
@@ -400,12 +809,38 @@ describe("BrowserPane", () => {
     expect(drawImage).not.toHaveBeenCalled();
     expect(decodes).toHaveLength(1);
     expect(decodes[0].close).toHaveBeenCalledTimes(1);
+    expect(FakeWebSocket.instances[1].send).not.toHaveBeenCalled();
   });
 
-  it("アンマウントのあとにデコードが終わったフレームは、描かずに解放する", async () => {
+  it("再接続したら、前の接続のビューポートと世代を忘れる", async () => {
+    const { decode } = holdDecodes();
+    const { container, ws } = mountConnected();
+    act(() => ws.onclose?.({ reason: "" }));
+    const retry = Array.from(container.querySelectorAll("button")).find(
+      b => b.textContent?.trim() === "再接続"
+    );
+    act(() => retry?.click());
+    const next = FakeWebSocket.instances[1];
+    next.readyState = FakeWebSocket.OPEN;
+    act(() => {
+      next.onopen?.();
+      // 新しい接続の `viewport` が届くまでは、同じ世代の番号でも描かない
+      next.onmessage?.(frame(1));
+    });
+    expect(decode).not.toHaveBeenCalled();
+
+    act(() => {
+      next.onmessage?.(viewportMessage(800, 600, 1));
+      next.onmessage?.(frame(3, SMALL));
+      next.onmessage?.(frame(1));
+    });
+    expect(decode).toHaveBeenCalledTimes(1);
+  });
+
+  it("アンマウントのあとに復号が終わったフレームは、描かずに解放する", async () => {
     const { decodes } = holdDecodes();
     const { ws } = mountConnected();
-    act(() => ws.onmessage?.({ data: new ArrayBuffer(8) }));
+    act(() => ws.onmessage?.(frame(1)));
     unmountAll();
 
     decodes[0].resolve();

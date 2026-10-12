@@ -9,6 +9,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { buildBrowserWsUrl } from "@/lib/auth-token";
 import {
+  FRAME_HEADER_BYTES,
+  FRAME_QUEUE_LIMIT,
+  type FrameHeader,
+  frameImageType,
+  parseFrameHeader,
+  pruneQueue,
+  REFRESH_INTERVAL_MS,
+} from "@/lib/browser-frame";
+import {
   type BrowserMouseMessage,
   chunkPasteText,
   isPasteShortcut,
@@ -36,10 +45,19 @@ const DISCONNECTED_REASON = "切断されました";
 const COMPOSITION_ENTER_MS = 30;
 /** DOMの `MouseEvent.button` の順に並べた、`MouseEvent.buttons` のビット */
 const BUTTON_BITS = [1, 4, 2, 8, 16];
+/** canvasの画素数をビューポートの何倍まで持つか。手元の倍率がこれより高くても増やさない */
+const MAX_CANVAS_SCALE = 2;
+const GEN_MAX = 0xffff;
 
 interface Size {
   width: number;
   height: number;
+}
+
+/** 復号を待つフレーム。`data` はヘッダを含む、届いたままのバイト列 */
+interface QueuedFrame {
+  header: FrameHeader;
+  data: ArrayBuffer;
 }
 
 interface HeldKey {
@@ -57,6 +75,17 @@ function isCoarsePointer(): boolean {
 
 function isSize(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function isGen(value: unknown): value is number {
+  return (
+    Number.isInteger(value) && Number(value) >= 0 && Number(value) <= GEN_MAX
+  );
+}
+
+/** ビューポートのCSSピクセル1つに、canvasの画素をいくつ持つか */
+function canvasScale(): number {
+  return Math.min(MAX_CANVAS_SCALE, Math.max(1, window.devicePixelRatio || 1));
 }
 
 /**
@@ -90,6 +119,20 @@ function toViewport(
  *
  * ビューポートは、最後に操作した視聴者に合わせる。押したときに、知らされた寸法が
  * このペインの寸法と違えば、先に自分の寸法を送る。
+ *
+ * canvasの画素数は、届いた画像ではなく、サーバーが知らせるビューポートの寸法で決める
+ * (ビューポートの寸法に、手元の倍率を1から2の範囲へ収めた値を掛ける)。届く画像は、
+ * 画面の一部の矩形や粗い全画面のこともあり、画像の寸法は画面の寸法を表さない。
+ * この倍率は描く細かさを決めるだけで、座標の換算には使わない。画素数を変えると
+ * canvasは消えるが、サーバーはビューポートの世代を変えるたびに全画面を送る。
+ *
+ * フレームは、届いた順に1枚ずつ復号して描く。矩形は前の絵に重ねる差分なので、
+ * 間を飛ばさない。全画面が届いたら、その前で待っていた分は上書きされるので捨てる。
+ * ビューポートの世代が違うフレームは描かない。1枚でも取りこぼしたら (復号の失敗、
+ * 待ち行列の溢れ、隠れている間に届いた)、待っている分を捨てて全画面の送り直しを頼み、
+ * 次の全画面が届くまで矩形を描かない。穴の空いた絵に矩形を重ねても、正しい絵に
+ * ならない。隠れている間は復号せず、見えるようになったときに1回だけ頼む。頼むのは
+ * 間隔を空けて行い、復号の失敗が続いてもサーバーへ送り続けない。
  */
 export function BrowserPane({ browserSession }: BrowserPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -101,8 +144,8 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
 
   // サーバーが最後に知らせたビューポートの寸法 (CSSピクセル)
   const viewportRef = useRef<Size | null>(null);
-  // デコードを待っているフレームがあれば、デコードを始める。接続のeffectが入れる
-  const decodeNextRef = useRef<(() => void) | null>(null);
+  // ペインが見えるようになったときに、頼みそびれた全画面の送り直しを頼む。接続のeffectが入れる
+  const resumeRef = useRef<(() => void) | null>(null);
   // 間引きで送らずに持っている最新のmove
   const pendingMoveRef = useRef<BrowserMouseMessage | null>(null);
   const moveFrameRef = useRef<number | null>(null);
@@ -195,10 +238,17 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
   useEffect(() => {
     let cancelled = false;
     let serverError = "";
-    // デコードは1枚ずつ。待っている間に届いたフレームは、最新の1枚だけを持つ
-    let pendingFrame: ArrayBuffer | null = null;
+    // 復号を待つフレーム。届いた順に並べ、先頭から1枚ずつ復号する
+    let queue: QueuedFrame[] = [];
     let decoding = false;
     let decodeWarned = false;
+    // サーバーが最後に知らせたビューポートの世代。知らされるまではフレームを描かない
+    let gen: number | null = null;
+    // 全画面を待っている間は、矩形を描かない。重ねる先の絵が無いか、穴が空いている
+    let awaitingFull = true;
+    let refreshWanted = false;
+    let lastRefreshAt = Number.NEGATIVE_INFINITY;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
     setStatus({ kind: "connecting" });
     viewportRef.current = null;
@@ -207,40 +257,93 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
 
-    const draw = (bitmap: ImageBitmap) => {
+    const isHidden = () => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      return !rect || rect.width <= 0 || rect.height <= 0;
+    };
+
+    const cancelRefresh = () => {
+      refreshWanted = false;
+      if (refreshTimer !== null) clearTimeout(refreshTimer);
+      refreshTimer = null;
+    };
+
+    // 頼むのは、見えていて、つながっていて、前に頼んでから間隔が空いているときだけ。
+    // 間隔が空いていなければ、空くのを待って頼む
+    const flushRefresh = () => {
+      if (cancelled || !refreshWanted || refreshTimer !== null) return;
+      if (ws.readyState !== WebSocket.OPEN || isHidden()) return;
+      const wait = lastRefreshAt + REFRESH_INTERVAL_MS - performance.now();
+      if (wait > 0) {
+        refreshTimer = setTimeout(() => {
+          refreshTimer = null;
+          flushRefresh();
+        }, wait);
+        return;
+      }
+      refreshWanted = false;
+      lastRefreshAt = performance.now();
+      const msg: BrowserClientMessage = { t: "refresh" };
+      ws.send(JSON.stringify(msg));
+    };
+    resumeRef.current = flushRefresh;
+
+    /** フレームを取りこぼしたとき。待っている分を捨て、全画面の送り直しを頼む */
+    const requestRefresh = () => {
+      queue = [];
+      awaitingFull = true;
+      refreshWanted = true;
+      flushRefresh();
+    };
+
+    const draw = (header: FrameHeader, bitmap: ImageBitmap) => {
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext("2d");
-      if (!canvas || !ctx) return;
-      if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
-      if (canvas.height !== bitmap.height) canvas.height = bitmap.height;
-      ctx.drawImage(bitmap, 0, 0);
+      const viewport = viewportRef.current;
+      if (!canvas || !ctx || !viewport) return;
+      const sx = canvas.width / viewport.width;
+      const sy = canvas.height / viewport.height;
+      // 端は外側の画素へ丸める。内側へ丸めると、隣の矩形との間に古い絵の線が残る
+      const left = Math.floor(header.x * sx);
+      const top = Math.floor(header.y * sy);
+      const right = Math.ceil((header.x + header.width) * sx);
+      const bottom = Math.ceil((header.y + header.height) * sy);
+      ctx.drawImage(bitmap, left, top, right - left, bottom - top);
     };
 
     const decodeNext = () => {
-      if (cancelled || decoding || !pendingFrame) return;
-      // 隠れている間はデコードしない。最新の1枚を持ったまま、見えるのを待つ
-      const rect = containerRef.current?.getBoundingClientRect();
-      if (!rect || rect.width <= 0 || rect.height <= 0) return;
-      const data = pendingFrame;
-      pendingFrame = null;
+      if (cancelled || decoding || queue.length === 0) return;
+      // 隠れている間は復号しない。待っている分は捨て、見えたときに全画面を頼む
+      if (isHidden()) {
+        requestRefresh();
+        return;
+      }
+      const item = queue.shift();
+      if (!item) return;
       decoding = true;
       let decoded: Promise<ImageBitmap>;
       try {
-        decoded = createImageBitmap(new Blob([data], { type: "image/jpeg" }));
+        const type = frameImageType(item.data);
+        if (!type) throw new Error("JPEGでもWebPでもない画像です");
+        decoded = createImageBitmap(
+          new Blob([new Uint8Array(item.data, FRAME_HEADER_BYTES)], { type })
+        );
       } catch (error) {
         decoded = Promise.reject(error);
       }
       decoded
         .then(bitmap => {
           try {
-            // 接続をやり直したあとに終わった分は描かない
-            if (!cancelled) draw(bitmap);
+            // 接続をやり直したあとや、世代が変わったあとに終わった分は描かない
+            if (!cancelled && item.header.gen === gen)
+              draw(item.header, bitmap);
           } finally {
             bitmap.close();
           }
         })
         .catch((error: unknown) => {
-          // 壊れたフレームは捨てる。次のフレームで描き直される
+          if (cancelled || item.header.gen !== gen) return;
+          requestRefresh();
           if (decodeWarned) return;
           decodeWarned = true;
           console.warn("[BrowserPane] フレームを描けません:", error);
@@ -250,7 +353,51 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
           decodeNext();
         });
     };
-    decodeNextRef.current = decodeNext;
+
+    const receiveFrame = (data: ArrayBuffer) => {
+      if (gen === null) return;
+      const header = parseFrameHeader(data);
+      if (!header) {
+        requestRefresh();
+        return;
+      }
+      if (header.gen !== gen) return;
+      if (isHidden()) {
+        requestRefresh();
+        return;
+      }
+      if (header.kind === 3) {
+        if (awaitingFull) return;
+      } else {
+        // 全画面が届いたので、頼まなくても絵は揃う
+        awaitingFull = false;
+        cancelRefresh();
+      }
+      queue = pruneQueue([...queue, { header, data }], gen);
+      if (queue.length > FRAME_QUEUE_LIMIT) {
+        requestRefresh();
+        return;
+      }
+      decodeNext();
+    };
+
+    const applyViewport = (width: number, height: number, nextGen: number) => {
+      viewportRef.current = { width, height };
+      if (nextGen !== gen) {
+        // 前の世代のフレームは、寸法の違う画面のもの。新しい世代は全画面から始まる
+        gen = nextGen;
+        queue = [];
+        awaitingFull = true;
+      }
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const scale = canvasScale();
+      const canvasWidth = Math.round(width * scale);
+      const canvasHeight = Math.round(height * scale);
+      // 同じ値でも代入するとcanvasが消えるので、違うときだけ変える
+      if (canvas.width !== canvasWidth) canvas.width = canvasWidth;
+      if (canvas.height !== canvasHeight) canvas.height = canvasHeight;
+    };
 
     ws.onopen = () => {
       if (cancelled) return;
@@ -263,19 +410,25 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
           const msg = JSON.parse(event.data) as BrowserServerMessage;
           // サーバーは閉じる直前に理由を送る。表示するのはcloseが来てから
           if (msg.t === "error") serverError = msg.message;
-          if (msg.t === "viewport" && isSize(msg.width) && isSize(msg.height)) {
-            viewportRef.current = { width: msg.width, height: msg.height };
+          if (
+            msg.t === "viewport" &&
+            isSize(msg.width) &&
+            isSize(msg.height) &&
+            isGen(msg.gen)
+          ) {
+            applyViewport(msg.width, msg.height, msg.gen);
           }
         } catch {
           // 読めないメッセージは捨てる
         }
         return;
       }
-      pendingFrame = event.data as ArrayBuffer;
-      decodeNext();
+      receiveFrame(event.data as ArrayBuffer);
     };
     ws.onclose = event => {
       if (cancelled) return;
+      queue = [];
+      cancelRefresh();
       dropInputState();
       setStatus({
         kind: "disconnected",
@@ -285,8 +438,9 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
 
     return () => {
       cancelled = true;
-      pendingFrame = null;
-      if (decodeNextRef.current === decodeNext) decodeNextRef.current = null;
+      queue = [];
+      cancelRefresh();
+      if (resumeRef.current === flushRefresh) resumeRef.current = null;
       // 自分で閉じたときに「切断されました」を出さないよう、先にハンドラを外す
       ws.onopen = null;
       ws.onmessage = null;
@@ -302,8 +456,8 @@ export function BrowserPane({ browserSession }: BrowserPaneProps) {
     if (!container || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
       sendSize();
-      // 隠れている間に届いたフレームを、見えたところで描く
-      decodeNextRef.current?.();
+      // 隠れている間にフレームを取りこぼしていたら、見えたところで全画面を頼む
+      resumeRef.current?.();
     });
     observer.observe(container);
     return () => observer.disconnect();
