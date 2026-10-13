@@ -75,8 +75,8 @@ export interface PreflightDeps {
   platform: string;
   arch: string;
   dataDir: string;
-  /** 利用者が明示した ttyd (`ARK_TTYD_PATH`)。あれば検査も取得もしない */
-  ttydOverride: string | undefined;
+  /** 利用者が渡した ttyd (`ARK_TTYD_PATH` か同梱の置き場)。あれば検査も取得もしない */
+  suppliedTtyd: string | undefined;
   resolveTmux: () => string | null;
   resolveClaude: () => string | null;
   findOnPath: (name: string) => string | null;
@@ -99,7 +99,7 @@ function missing(tool: string, hint: string): string {
 async function ensureTtyd(
   deps: PreflightDeps
 ): Promise<{ ttydPath: string | null; problem: string | null }> {
-  if (deps.ttydOverride || deps.findOnPath("ttyd")) {
+  if (deps.suppliedTtyd || deps.findOnPath("ttyd")) {
     return { ttydPath: null, problem: null };
   }
   const binDir = path.join(deps.dataDir, "bin");

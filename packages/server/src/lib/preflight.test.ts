@@ -11,7 +11,7 @@ function makeDeps(overrides: Partial<PreflightDeps> = {}): PreflightDeps {
     platform: "linux",
     arch: "x64",
     dataDir: "/data",
-    ttydOverride: undefined,
+    suppliedTtyd: undefined,
     resolveTmux: () => "/usr/bin/tmux",
     resolveClaude: () => "/pkg/claude",
     findOnPath: name => (name === "ttyd" ? "/usr/bin/ttyd" : null),
@@ -86,10 +86,10 @@ describe("runPreflight", () => {
     expect(deps.downloadTtyd).not.toHaveBeenCalled();
   });
 
-  it("ARK_TTYD_PATH の指定があれば取得しない", async () => {
+  it("利用者が渡した ttyd があれば取得しない", async () => {
     const deps = makeDeps({
       findOnPath: () => null,
-      ttydOverride: "/opt/ttyd",
+      suppliedTtyd: "/opt/ttyd",
     });
     expect(await runPreflight(deps)).toEqual({ ttydPath: null, problems: [] });
     expect(deps.downloadTtyd).not.toHaveBeenCalled();

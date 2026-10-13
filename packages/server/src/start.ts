@@ -15,7 +15,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getDataDir } from "./lib/paths.js";
+import { getBundledBinDir, getDataDir } from "./lib/paths.js";
 import {
   findOnPath,
   nodeVersionProblem,
@@ -67,11 +67,19 @@ async function main(): Promise<void> {
   const nodeProblem = nodeVersionProblem(process.versions.node);
   if (nodeProblem) fail(nodeProblem);
 
+  // ttyd-manager.ts が ttyd を探す順 (ARK_TTYD_PATH → 同梱の置き場 → PATH) と揃える。
+  // ここで見落とすと、使える ttyd があるのに取得し直したり、無いと言って止まったりする
+  const bundledBinDir = getBundledBinDir();
+  const bundledTtyd = bundledBinDir ? path.join(bundledBinDir, "ttyd") : null;
+  const suppliedTtyd =
+    process.env.ARK_TTYD_PATH ||
+    (bundledTtyd && existsSync(bundledTtyd) ? bundledTtyd : undefined);
+
   const { ttydPath, problems } = await runPreflight({
     platform: process.platform,
     arch: process.arch,
     dataDir: getDataDir(),
-    ttydOverride: process.env.ARK_TTYD_PATH,
+    suppliedTtyd,
     resolveTmux: resolveTmuxPath,
     resolveClaude: resolveClaudePath,
     findOnPath: name => findOnPath(name, process.env.PATH),
