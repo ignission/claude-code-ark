@@ -25,8 +25,8 @@ It drives the real interactive `claude` CLI inside tmux, so your plan, your sett
 
 ## Quickstart
 
-1. Run `npx claude-code-ark` (macOS and Linux). On macOS (Apple Silicon) there is also an [app](#macos-app-apple-silicon).
-2. Open Ark (http://localhost:4001 when started with npx), pick a repository, and start a session on a worktree.
+1. Install Ark. On macOS (Apple Silicon) run `brew install --cask ignission/tap/ark`; elsewhere, [run it from source](#run-from-source-macos--linux) (clone and one command).
+2. Open Ark (http://localhost:4001 when run from source), pick a repository, and start a session on a worktree.
 3. Ask Claude something. The strip above the input shows the terminal's last lines; tap it to open the raw terminal in a window.
 
 You need to be logged in to Claude Code. If you are not, run `/login` inside your first session.
@@ -39,7 +39,7 @@ You need to be logged in to Claude Code. If you are not, run `/login` inside you
 
 **Drive Ark from the keyboard.** Press `Ctrl+;` to enter normal mode, then `?` for the key list. `J` / `K` move between sessions, `n` jumps to the next session waiting for you, and `:` opens the command palette.
 
-**Answer from your phone.** Start Ark with `pnpm start:quick`, scan the QR code, and answer Claude's questions from the card that appears in the chat.
+**Answer from your phone.** Start Ark with `./scripts/start.sh --quick`, scan the QR code, and answer Claude's questions from the card that appears in the chat.
 
 ## Why Ark
 
@@ -111,20 +111,6 @@ terminal: tmux session ←→ ttyd (WebSocket) ←→ iframe
 
 ## Install
 
-### npx (macOS / Linux)
-
-```bash
-npx claude-code-ark
-```
-
-All you provide is Node.js >= 22.12.0 and [tmux](https://github.com/tmux/tmux). Ark checks its prerequisites every time it starts; if something is missing, it prints how to install it on your machine and stops.
-
-- **ttyd**: on Linux, Ark downloads the [official binary](https://github.com/tsl0922/ttyd/releases) when it cannot find one, and verifies its sha256. On macOS it tells you to run `brew install ttyd`.
-- **Claude Code**: bundled, so there is nothing else to install. The first run downloads about 250 MB because of it.
-- **Data**: kept in `~/.local/share/claude-code-ark`. Set `ARK_DATA_DIR` to move it.
-
-Set `PORT` to change the port (default 4001). Run `npx claude-code-ark --help` for the options.
-
 ### macOS app (Apple Silicon)
 
 ```bash
@@ -161,33 +147,31 @@ Homebrew 4.5 removed the `--no-quarantine` switch and the `HOMEBREW_CASK_OPTS=--
 
 </details>
 
-### Run from source
-
-Prerequisites:
-
-- Node.js >= 22.12.0
-- [pnpm](https://pnpm.io/)
-- [tmux](https://github.com/tmux/tmux)
-- [ttyd](https://github.com/tsl0922/ttyd)
-- [Claude Code CLI](https://docs.claude.com/en/docs/claude-code), installed and logged in
-- Chromium (optional, used only by the browser feature)
+### Run from source (macOS / Linux)
 
 ```bash
 git clone https://github.com/ignission/claude-code-ark.git
 cd claude-code-ark
-pnpm install
-pnpm build
-pnpm start
+./scripts/start.sh
 ```
 
 Then open http://localhost:4001.
+
+All you provide is Node.js >= 22.12.0 and [tmux](https://github.com/tmux/tmux). `start.sh` installs the dependencies and builds Ark (the first run takes a few minutes), and checks the prerequisites every time it starts. If something is missing, it prints how to install it on your machine and stops.
+
+- **pnpm**: `start.sh` fetches it when it is not installed.
+- **ttyd**: on Linux, Ark downloads the [official binary](https://github.com/tsl0922/ttyd/releases) into `data/bin/` when it cannot find one, and verifies its sha256. On macOS it tells you to run `brew install ttyd`.
+- **Claude Code**: installed as a dependency, so there is nothing else to install.
+- **Chromium**: optional, used only by the browser feature.
+
+To update, run `git pull` and then `./scripts/start.sh` again; it reinstalls and rebuilds when the commit has changed. Set `PORT` to change the port (default 4001). Run `./scripts/start.sh --help` for the options.
 
 ## Remote access
 
 Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), then:
 
 ```bash
-pnpm start:quick
+./scripts/start.sh --quick
 ```
 
 Ark prints a QR code and a temporary `*.trycloudflare.com` URL protected by a random token. For a fixed domain behind Cloudflare Access, set `ARK_PUBLIC_DOMAIN` and run `pnpm start:remote`.

@@ -1,8 +1,8 @@
 /**
  * Ark Server CLI エントリーポイント
  *
- * `pnpm dev:server` / `pnpm start` から呼ばれる。Node のバージョンを確かめて
- * `cli-main.ts` の `runCli()` を呼ぶ。npm パッケージからの起動は `bin.ts` が入口。
+ * pm2 と `pnpm dev:server` から呼ばれる。Node のバージョンを確かめて
+ * `cli-main.ts` の `runCli()` を呼ぶ。前提の道具を調べてから起動する入口は `start.ts`。
  *
  * Electron など埋め込み起動からは `startServer()` を直接 import するため、
  * このファイルは経由しない。

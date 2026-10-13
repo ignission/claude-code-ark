@@ -1,5 +1,5 @@
 /**
- * npm パッケージから起動したときの前提の検査 (`bin.ts` が起動の最初に呼ぶ)。
+ * 起動の前に行う前提の検査 (`start.ts` が最初に呼ぶ)。
  *
  * 欠けている道具は、サーバーを立てる前にまとめて1回で伝える。検査が無いと、
  * 画面は出るのにセッションを作った時点で分かりにくく失敗する。
@@ -26,16 +26,6 @@ export function nodeVersionProblem(version: string): string | null {
     return null;
   }
   return `Ark requires Node.js >= ${MIN_NODE.major}.${MIN_NODE.minor} but got ${version}.`;
-}
-
-/**
- * npm パッケージから起動したときのデータの置き場。
- * リポジトリから起動するときの `<cwd>/data` (`paths.ts`) をそのまま使うと、
- * npx を打ったディレクトリごとに `data/` ができる。
- */
-export function defaultDataDir(env: NodeJS.ProcessEnv, home: string): string {
-  const base = env.XDG_DATA_HOME || path.join(home, ".local", "share");
-  return path.join(base, "claude-code-ark");
 }
 
 /** PATH から実行ファイルを探す。無ければ null */

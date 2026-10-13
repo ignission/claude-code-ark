@@ -3,20 +3,11 @@
  * シグナル (SIGTERM / SIGINT) で戻り値の `stop()` を呼んで終了する。
  *
  * 入口は2つある。どちらも Node のバージョンを確かめてからここを呼ぶ。
- *   - `cli.ts`: リポジトリから起動する (`pnpm start` / pm2)
- *   - `bin.ts`: npm パッケージから起動する (`npx claude-code-ark`)
+ *   - `start.ts`: 前提の道具を調べてから起動する (`scripts/start.sh` / `pnpm start`)
+ *   - `cli.ts`: 調べずに起動する (pm2 / `pnpm dev:server`)
  */
 
 import { startServer } from "./index.js";
-
-export interface RunCliOverrides {
-  /**
-   * Web の静的ファイルの場所。npm パッケージは配置がリポジトリと違うので
-   * `bin.ts` が明示する。未指定なら `index.ts` が NODE_ENV=production のときだけ
-   * リポジトリの配置 (`../../web/dist`) で解決する。
-   */
-  webStaticDir?: string;
-}
 
 function parseArgs(): {
   enableRemote: boolean;
@@ -43,7 +34,7 @@ function parseArgs(): {
   return { enableRemote, enableQuick, skipPermissions, allowedRepos };
 }
 
-export async function runCli(overrides: RunCliOverrides = {}): Promise<void> {
+export async function runCli(): Promise<void> {
   const { enableRemote, enableQuick, skipPermissions, allowedRepos } =
     parseArgs();
   const publicDomain = process.env.ARK_PUBLIC_DOMAIN;
@@ -54,7 +45,8 @@ export async function runCli(overrides: RunCliOverrides = {}): Promise<void> {
     skipPermissions,
     publicDomain,
     allowedRepos,
-    webStaticDir: overrides.webStaticDir,
+    // webStaticDir 未指定: NODE_ENV=production 時のみ index.ts 側で既定のパスを
+    // 自動解決する (`packages/server/dist/index.js` → `../../web/dist`)
   });
 
   const shutdown = async (signal: string) => {

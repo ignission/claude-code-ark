@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  defaultDataDir,
   installHint,
   nodeVersionProblem,
   type PreflightDeps,
@@ -32,20 +31,6 @@ describe("nodeVersionProblem", () => {
   it("22.12 未満は、いまの版を添えて伝える", () => {
     expect(nodeVersionProblem("22.11.0")).toContain("22.11.0");
     expect(nodeVersionProblem("20.19.0")).toContain("22.12");
-  });
-});
-
-describe("defaultDataDir", () => {
-  it("XDG_DATA_HOME があればその下に置く", () => {
-    expect(defaultDataDir({ XDG_DATA_HOME: "/xdg" }, "/home/u")).toBe(
-      "/xdg/claude-code-ark"
-    );
-  });
-
-  it("無ければ ~/.local/share の下に置く", () => {
-    expect(defaultDataDir({}, "/home/u")).toBe(
-      "/home/u/.local/share/claude-code-ark"
-    );
   });
 });
 

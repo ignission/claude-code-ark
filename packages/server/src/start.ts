@@ -1,24 +1,22 @@
 #!/usr/bin/env node
 /**
- * npm パッケージの入口 (`npx claude-code-ark`)。
+ * 前提を調べてから起動する入口 (`scripts/start.sh` / `pnpm start`)。
  *
- * リポジトリから起動する `cli.ts` との違いは、利用者の機械が何も整っていない前提で動くこと。
- * サーバーを立てる前に次を済ませる。
- *   - Node のバージョンと前提の道具を調べ、足りなければ入れ方を伝えて止まる (`lib/preflight.ts`)
- *   - データの置き場を cwd ではなくホームの下に決める
- *   - Web の静的ファイルを、パッケージの中の配置 (`<pkg>/web`) で指す
+ * `cli.ts` との違いは、利用者の機械が整っていない前提で動くこと。サーバーを立てる前に
+ * Node のバージョンと前提の道具を調べ、足りなければ入れ方を伝えて止まる (`lib/preflight.ts`)。
+ * pm2 で常駐させる本番は `cli.ts` を直接起動する。道具が欠けたときに止まると、
+ * pm2 が再起動を繰り返すだけになるため、こちらは通さない。
  *
  * このファイルが静的に import するのは Node の組み込みに依存するものだけにする。
  * サーバー本体は依存が古い Node で読み込めないことがあり、先に読むと
  * バージョンの案内より前に分かりにくいエラーで落ちる。
  */
 
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import os from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getDataDir } from "./lib/paths.js";
 import {
-  defaultDataDir,
   findOnPath,
   nodeVersionProblem,
   runPreflight,
@@ -31,7 +29,7 @@ const packageDir = path.resolve(
   ".."
 );
 
-const USAGE = `Usage: claude-code-ark [options]
+const USAGE = `Usage: ./scripts/start.sh [options]
 
 Options:
   -r, --remote          Expose Ark through a Cloudflare Named Tunnel
@@ -44,7 +42,7 @@ Options:
 
 Environment:
   PORT                  Port to listen on (default: 4001)
-  ARK_DATA_DIR          Where Ark keeps its data
+  ARK_DATA_DIR          Where Ark keeps its data (default: ./data)
 `;
 
 function fail(message: string): never {
@@ -69,16 +67,10 @@ async function main(): Promise<void> {
   const nodeProblem = nodeVersionProblem(process.versions.node);
   if (nodeProblem) fail(nodeProblem);
 
-  process.env.NODE_ENV ??= "production";
-  const dataDir =
-    process.env.ARK_DATA_DIR || defaultDataDir(process.env, os.homedir());
-  process.env.ARK_DATA_DIR = dataDir;
-  mkdirSync(dataDir, { recursive: true });
-
   const { ttydPath, problems } = await runPreflight({
     platform: process.platform,
     arch: process.arch,
-    dataDir,
+    dataDir: getDataDir(),
     ttydOverride: process.env.ARK_TTYD_PATH,
     resolveTmux: resolveTmuxPath,
     resolveClaude: resolveClaudePath,
@@ -98,7 +90,7 @@ async function main(): Promise<void> {
   // import が先頭に上がって、上の Node の検査より前に読み込まれる。
   const cliMain = "./cli-main.js";
   const { runCli } = (await import(cliMain)) as typeof import("./cli-main.js");
-  await runCli({ webStaticDir: path.join(packageDir, "web") });
+  await runCli();
 }
 
 main().catch(error => {
