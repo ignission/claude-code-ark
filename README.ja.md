@@ -25,11 +25,11 @@ Arkは、git worktreeごとにClaude Codeのセッションを1つ動かし、�
 
 ## Quickstart
 
-1. Arkを入れます。macOS (Apple Silicon) では `brew install --cask ignission/tap/ark`、Linuxでは[ソースから起動](#ソースから起動)します。
+1. Arkを入れます。macOS (Apple Silicon) では `brew install --cask ignission/tap/ark`、それ以外では[ソースから起動](#ソースから起動-macos--linux)します (cloneして1コマンド)。
 2. Arkを開き (ソースから起動した場合は http://localhost:4001)、リポジトリを選んで、worktreeでセッションを始めます。
 3. Claudeに話しかけます。入力欄の上の帯にターミナルの末尾が出ていて、押すと生のターミナルが窓で開きます。
 
-[Claude Code CLI](https://docs.claude.com/en/docs/claude-code) がインストール済みで、ログイン済みである必要があります (`claude --version` で確認し、未ログインなら `claude` を起動して `/login`)。
+Claude Codeにログイン済みである必要があります。未ログインなら、最初のセッションの中で `/login` を実行します。
 
 ## 最初に試すこと
 
@@ -39,7 +39,7 @@ Arkは、git worktreeごとにClaude Codeのセッションを1つ動かし、�
 
 **キーボードで動かす。** `Ctrl+;` でノーマルモードに入り、`?` でキーの一覧を出します。`J` / `K` でセッションを前後に移り、`n` で次の「あなたの番」へ飛び、`:` でコマンドパレットを開きます。
 
-**スマホから答える。** `pnpm start:quick` で起動してQRコードを読み取り、会話に出てくるカードからClaudeの質問に答えます。
+**スマホから答える。** `./scripts/start.sh --quick` で起動してQRコードを読み取り、会話に出てくるカードからClaudeの質問に答えます。
 
 ## Arkを使う理由
 
@@ -147,34 +147,31 @@ Homebrew 4.5で `--no-quarantine` スイッチと環境変数 `HOMEBREW_CASK_OPT
 
 </details>
 
-### ソースから起動
-
-前提条件:
-
-- Node.js >= 22.12.0
-- [pnpm](https://pnpm.io/)
-- [tmux](https://github.com/tmux/tmux)
-- [ttyd](https://github.com/tsl0922/ttyd)
-- [jq](https://jqlang.org/)
-- [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) (インストール済みかつログイン済み)
-- Chromium (任意。ブラウザ機能だけが使います)
+### ソースから起動 (macOS / Linux)
 
 ```bash
 git clone https://github.com/ignission/claude-code-ark.git
 cd claude-code-ark
-pnpm install
-pnpm build
-pnpm start
+./scripts/start.sh
 ```
 
 ブラウザで http://localhost:4001 を開きます。
+
+自分で用意するのは、Node.js 22.12.0以上と [tmux](https://github.com/tmux/tmux) だけです。`start.sh` が依存の導入とビルドを済ませ (初回は数分かかります)、起動のたびに前提を調べます。足りないものがあれば、その機械での入れ方を表示して止まります。
+
+- **pnpm**: 無ければ `start.sh` が調達します。
+- **ttyd**: Linuxでは、見つからなければ[公式のバイナリ](https://github.com/tsl0922/ttyd/releases)を取得して `data/bin/` に置きます (sha256を照合します)。macOSでは `brew install ttyd` を案内します。
+- **Claude Code**: 依存として入るので、別に入れる必要はありません。
+- **Chromium**: 任意です。ブラウザ機能だけが使います。
+
+更新するときは `git pull` して、もう一度 `./scripts/start.sh` を実行します。コミットが変わっていれば、依存の導入とビルドをやり直します。ポートは `PORT` で変えられます (既定は4001)。オプションの一覧は `./scripts/start.sh --help` で見られます。
 
 ## リモートアクセス
 
 [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) をインストールしたうえで、次のように起動します。
 
 ```bash
-pnpm start:quick
+./scripts/start.sh --quick
 ```
 
 ターミナルにQRコードと一時URL (`*.trycloudflare.com`) が表示されます。URLはランダムなトークンで保護されます。Cloudflare Accessつきの固定ドメインを使う場合は、`ARK_PUBLIC_DOMAIN` を設定して `pnpm start:remote` で起動します。

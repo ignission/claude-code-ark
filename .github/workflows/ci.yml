@@ -30,3 +30,32 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  # clone した直後に scripts/start.sh の1コマンドで起動するかを見る。
+  # pnpm を入れずに始め、スクリプトが自分で調達する経路を通す。Node は記載の下限の系列で動かす。
+  # ubuntu は ttyd を入れず、Ark が自分で取得する経路を通す。macOS には公式バイナリが無いので brew で入れる。
+  start-script:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Install tmux (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: Install tmux and ttyd (macOS)
+        if: runner.os == 'macOS'
+        run: brew install tmux ttyd
+
+      - name: Start Ark with scripts/start.sh
+        run: bash scripts/smoke-start.sh
