@@ -29,7 +29,7 @@ It drives the real interactive `claude` CLI inside tmux, so your plan, your sett
 2. Open Ark (http://localhost:4001 when run from source), pick a repository, and start a session on a worktree.
 3. Ask Claude something. The strip above the input shows the terminal's last lines; tap it to open the raw terminal in a window.
 
-You need to be logged in to Claude Code. If you are not, run `/login` inside your first session.
+You need to be logged in to Claude Code. If Claude Code has never run on the machine, open the terminal in your first session (tap the strip above the input) and finish its first-run setup there: pick a theme, then log in.
 
 ## Things to try first
 
