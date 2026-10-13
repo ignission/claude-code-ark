@@ -25,11 +25,11 @@ It drives the real interactive `claude` CLI inside tmux, so your plan, your sett
 
 ## Quickstart
 
-1. Install Ark. On macOS (Apple Silicon) run `brew install --cask ignission/tap/ark`; on Linux, [run it from source](#run-from-source).
-2. Open Ark (http://localhost:4001 when run from source), pick a repository, and start a session on a worktree.
+1. Run `npx claude-code-ark` (macOS and Linux). On macOS (Apple Silicon) there is also an [app](#macos-app-apple-silicon).
+2. Open Ark (http://localhost:4001 when started with npx), pick a repository, and start a session on a worktree.
 3. Ask Claude something. The strip above the input shows the terminal's last lines; tap it to open the raw terminal in a window.
 
-You need the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) installed and logged in (`claude --version`; run `claude` and `/login` if you are not).
+You need to be logged in to Claude Code. If you are not, run `/login` inside your first session.
 
 ## Things to try first
 
@@ -111,6 +111,20 @@ terminal: tmux session ←→ ttyd (WebSocket) ←→ iframe
 
 ## Install
 
+### npx (macOS / Linux)
+
+```bash
+npx claude-code-ark
+```
+
+All you provide is Node.js >= 22.12.0 and [tmux](https://github.com/tmux/tmux). Ark checks its prerequisites every time it starts; if something is missing, it prints how to install it on your machine and stops.
+
+- **ttyd**: on Linux, Ark downloads the [official binary](https://github.com/tsl0922/ttyd/releases) when it cannot find one, and verifies its sha256. On macOS it tells you to run `brew install ttyd`.
+- **Claude Code**: bundled, so there is nothing else to install. The first run downloads about 250 MB because of it.
+- **Data**: kept in `~/.local/share/claude-code-ark`. Set `ARK_DATA_DIR` to move it.
+
+Set `PORT` to change the port (default 4001). Run `npx claude-code-ark --help` for the options.
+
 ### macOS app (Apple Silicon)
 
 ```bash
@@ -155,7 +169,6 @@ Prerequisites:
 - [pnpm](https://pnpm.io/)
 - [tmux](https://github.com/tmux/tmux)
 - [ttyd](https://github.com/tsl0922/ttyd)
-- [jq](https://jqlang.org/)
 - [Claude Code CLI](https://docs.claude.com/en/docs/claude-code), installed and logged in
 - Chromium (optional, used only by the browser feature)
 

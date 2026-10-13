@@ -25,11 +25,11 @@ Arkは、git worktreeごとにClaude Codeのセッションを1つ動かし、�
 
 ## Quickstart
 
-1. Arkを入れます。macOS (Apple Silicon) では `brew install --cask ignission/tap/ark`、Linuxでは[ソースから起動](#ソースから起動)します。
-2. Arkを開き (ソースから起動した場合は http://localhost:4001)、リポジトリを選んで、worktreeでセッションを始めます。
+1. `npx claude-code-ark` でArkを起動します (macOSとLinux)。macOS (Apple Silicon) には[アプリ版](#macosアプリ-apple-silicon)もあります。
+2. Arkを開き (npxで起動した場合は http://localhost:4001)、リポジトリを選んで、worktreeでセッションを始めます。
 3. Claudeに話しかけます。入力欄の上の帯にターミナルの末尾が出ていて、押すと生のターミナルが窓で開きます。
 
-[Claude Code CLI](https://docs.claude.com/en/docs/claude-code) がインストール済みで、ログイン済みである必要があります (`claude --version` で確認し、未ログインなら `claude` を起動して `/login`)。
+Claude Codeにログイン済みである必要があります。未ログインなら、最初のセッションの中で `/login` を実行します。
 
 ## 最初に試すこと
 
@@ -111,6 +111,20 @@ Claudeは、シーケンス図、差分量つきの呼び出しツリー、複�
 
 ## インストール
 
+### npx (macOS / Linux)
+
+```bash
+npx claude-code-ark
+```
+
+自分で用意するのは、Node.js 22.12.0以上と [tmux](https://github.com/tmux/tmux) だけです。Arkは起動のたびに前提を調べ、足りないものがあれば、その機械での入れ方を表示して止まります。
+
+- **ttyd**: Linuxでは、見つからなければ[公式のバイナリ](https://github.com/tsl0922/ttyd/releases)を取得します (sha256を照合します)。macOSでは `brew install ttyd` を案内します。
+- **Claude Code**: 同梱しているので、別に入れる必要はありません。その分、初回は約250MBの取得を待ちます。
+- **データ**: `~/.local/share/claude-code-ark` に置きます。`ARK_DATA_DIR` で変えられます。
+
+ポートは `PORT` で変えられます (既定は4001)。オプションの一覧は `npx claude-code-ark --help` で見られます。
+
 ### macOSアプリ (Apple Silicon)
 
 ```bash
@@ -155,7 +169,6 @@ Homebrew 4.5で `--no-quarantine` スイッチと環境変数 `HOMEBREW_CASK_OPT
 - [pnpm](https://pnpm.io/)
 - [tmux](https://github.com/tmux/tmux)
 - [ttyd](https://github.com/tsl0922/ttyd)
-- [jq](https://jqlang.org/)
 - [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) (インストール済みかつログイン済み)
 - Chromium (任意。ブラウザ機能だけが使います)
 

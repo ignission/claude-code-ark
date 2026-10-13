@@ -17,6 +17,8 @@ await build({
   entryPoints: [
     "src/index.ts",
     "src/cli.ts",
+    "src/cli-main.ts",
+    "src/bin.ts",
     "src/lib/*.ts",
   ],
   outdir: "dist",

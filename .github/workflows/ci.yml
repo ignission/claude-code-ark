@@ -30,3 +30,29 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  # npm パッケージ (`npx claude-code-ark`) を利用者と同じ入れ方で入れ、起動するかを見る。
+  # 公開物に入れ忘れたファイルや依存は、型検査とユニットテストでは見つからない。
+  npm-package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup mise
+        uses: jdx/mise-action@v4
+
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Pack npm package
+        run: node scripts/pack-npm.mjs
+
+      - name: Smoke test
+        run: bash scripts/smoke-npm.sh
