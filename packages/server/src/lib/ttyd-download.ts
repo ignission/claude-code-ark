@@ -22,6 +22,9 @@ export interface TtydAsset {
 const TTYD_VERSION = "1.7.7";
 const TTYD_RELEASE_BASE = `https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}`;
 
+/** 取得の上限。本体は1.4MBなので、遅い回線でも収まる長さにする */
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+
 const TTYD_ASSETS: Record<string, TtydAsset> = {
   x64: {
     url: `${TTYD_RELEASE_BASE}/ttyd.x86_64`,
@@ -48,7 +51,10 @@ export async function downloadTtyd(
   asset: TtydAsset,
   fetchImpl: typeof fetch = fetch
 ): Promise<string> {
-  const response = await fetchImpl(asset.url);
+  // 応答が止まると、何も表示しないまま起動が進まなくなる。時間切れは呼び出し側が入れ方の案内に変える
+  const response = await fetchImpl(asset.url, {
+    signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+  });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} from ${asset.url}`);
   }

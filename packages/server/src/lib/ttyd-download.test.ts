@@ -59,6 +59,21 @@ describe("downloadTtyd", () => {
     expect(await readdir(dir)).toEqual([]);
   });
 
+  it("応答が止まっても待ち続けないよう、時間切れを付けて取得する", async () => {
+    let signal: AbortSignal | null | undefined;
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      signal = init?.signal;
+      return new Response(BODY);
+    }) as typeof fetch;
+
+    await downloadTtyd(
+      dir,
+      { url: "https://example.invalid/ttyd", sha256: SHA256 },
+      fetchImpl
+    );
+    expect(signal).toBeInstanceOf(AbortSignal);
+  });
+
   it("取得に失敗したら HTTP の状態を伝える", async () => {
     await expect(
       downloadTtyd(
