@@ -14,6 +14,13 @@
  *   verbatim のまま表示用に渡す (行う加工は末尾空行の除去とサイズ上限
  *   のみ)。existence チェック (bridgeStatus) と同じ側の許容範囲であり、
  *   ここに正規表現での内容抽出等を足してはならない。
+ *
+ * 例外 (1つだけ):
+ *   会話ビューの帯 (`liveTail`) は、末尾にある入力欄の枠から下を出さない
+ *   (`dropTrailingPromptBox`)。帯は数行しかなく、枠と状態の行で半分が埋まるため。
+ *   見るのは行の形 (罫線だけの行が2本あるか) だけで、行の中身は読まず、
+ *   残す行は書き換えない。形が合わなければ何も落とさない。
+ *   AUQ カードの「直前の画面」には使わない。
  */
 
 /** hook 受信時に capture-pane へ要求する行数 (scrollback 込み) */
@@ -67,4 +74,48 @@ function sliceTailByCodePoint(text: string, maxChars: number): string {
   const code = text.charCodeAt(start);
   if (code >= 0xdc00 && code <= 0xdfff) start += 1;
   return text.slice(start);
+}
+
+/** 入力欄の枠の罫線。この文字だけが並ぶ行を罫線とみなす */
+const PROMPT_BOX_RULE = /^─{10,}$/;
+/** 下の罫線を探す範囲 (末尾からの行数)。枠の下には状態の行が数行ある */
+const PROMPT_BOX_FOOTER_LINES = 6;
+/** 上の罫線を探す範囲 (下の罫線からの行数)。入力欄は複数行になりうる */
+const PROMPT_BOX_BODY_LINES = 15;
+
+/**
+ * 末尾にある入力欄の枠 (罫線2本と、その間と下の行) を落とす。
+ * 罫線だけの行が、末尾の近くに2本並んでいるときだけ、上の罫線から下を捨てる。
+ * 形が合わないとき (確認の選択肢が出ている画面など) と、落とすと何も残らないときは、
+ * 渡された文字列をそのまま返す。
+ */
+export function dropTrailingPromptBox(raw: string): string {
+  const lines = raw.split("\n");
+  let end = lines.length;
+  while (end > 0 && lines[end - 1].trim() === "") end--;
+  const isRule = (index: number) => PROMPT_BOX_RULE.test(lines[index].trim());
+
+  let lower = -1;
+  for (let i = end - 1; i >= Math.max(0, end - PROMPT_BOX_FOOTER_LINES); i--) {
+    if (isRule(i)) {
+      lower = i;
+      break;
+    }
+  }
+  if (lower < 0) return raw;
+  let upper = -1;
+  for (
+    let i = lower - 1;
+    i >= Math.max(0, lower - PROMPT_BOX_BODY_LINES);
+    i--
+  ) {
+    if (isRule(i)) {
+      upper = i;
+      break;
+    }
+  }
+  if (upper < 0) return raw;
+  const kept = lines.slice(0, upper);
+  if (kept.every(line => line.trim() === "")) return raw;
+  return kept.join("\n");
 }
