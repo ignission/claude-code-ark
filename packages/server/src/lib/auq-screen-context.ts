@@ -76,8 +76,10 @@ function sliceTailByCodePoint(text: string, maxChars: number): string {
   return text.slice(start);
 }
 
-/** 入力欄の枠の罫線。この文字だけが並ぶ行を罫線とみなす */
-const PROMPT_BOX_RULE = /^─{10,}$/;
+/** 罫線の文字だけが並ぶ行。折り返した罫線の端切れ (数文字) もこれに当たる */
+const PROMPT_BOX_RULE_FRAGMENT = /^─+$/;
+/** 罫線とみなす最小の長さ (続けて並ぶ行の合計) */
+const PROMPT_BOX_RULE_MIN_LENGTH = 10;
 /** 下の罫線を探す範囲 (末尾からの、空でない行の数)。枠の下には状態の行が数行ある */
 const PROMPT_BOX_FOOTER_LINES = 6;
 /** 上の罫線を探す範囲 (下の罫線からの行数)。入力欄は複数行になりうる */
@@ -88,47 +90,60 @@ const PROMPT_BOX_BODY_LINES = 15;
  * 罫線だけの行が、末尾の近くに2本並んでいるときだけ、上の罫線から下を捨てる。
  * - 2本は同じ形 (同じ字下げ、同じ長さ) でなければならない。出力の中の区切り線と
  *   枠の罫線を組にして、出力や確認の選択肢を落とさないため
- * - 続けて並ぶ罫線の行は1本として数える (幅を狭めた端末では罫線が折り返す)
+ * - 続けて並ぶ罫線の行は1本として数え、長さは合計で比べる (幅を狭めた端末では
+ *   罫線が折り返し、端切れは数文字になる)
  * 形が合わないとき (確認の選択肢が出ている画面など) と、落とすと何も残らないときは、
  * 渡された文字列をそのまま返す。
  */
 export function dropTrailingPromptBox(raw: string): string {
   const lines = raw.split("\n");
-  const isRule = (index: number) => PROMPT_BOX_RULE.test(lines[index].trim());
-  // index で終わる、続けて並ぶ罫線の行のまとまり。形は字下げと長さの合計で比べる
+  const isFragment = (index: number) =>
+    PROMPT_BOX_RULE_FRAGMENT.test(lines[index].trim());
+  // index で終わる、続けて並ぶ罫線の行のまとまり。合計が短ければ罫線ではない (null)
   const ruleRunEndingAt = (index: number) => {
     let start = index;
-    while (start > 0 && isRule(start - 1)) start--;
+    while (start > 0 && isFragment(start - 1)) start--;
     let length = 0;
     for (let i = start; i <= index; i++) length += lines[i].trim().length;
     const indent = lines[start].length - lines[start].trimStart().length;
-    return { start, shape: `${indent}:${length}` };
+    return {
+      start,
+      shape:
+        length >= PROMPT_BOX_RULE_MIN_LENGTH ? `${indent}:${length}` : null,
+    };
   };
 
-  let lower: ReturnType<typeof ruleRunEndingAt> | null = null;
+  let lower: { start: number; shape: string } | null = null;
   let footer = 0;
   for (let i = lines.length - 1; i >= 0; i--) {
     if (lines[i].trim() === "") continue;
-    if (isRule(i)) {
-      lower = ruleRunEndingAt(i);
-      break;
+    if (isFragment(i)) {
+      const run = ruleRunEndingAt(i);
+      if (run.shape !== null) {
+        lower = { start: run.start, shape: run.shape };
+        break;
+      }
     }
     footer++;
     if (footer >= PROMPT_BOX_FOOTER_LINES) break;
   }
   if (!lower) return raw;
 
-  let upper: ReturnType<typeof ruleRunEndingAt> | null = null;
+  let upperStart = -1;
   const bodyTop = Math.max(0, lower.start - PROMPT_BOX_BODY_LINES);
   for (let i = lower.start - 1; i >= bodyTop; i--) {
-    if (isRule(i)) {
-      upper = ruleRunEndingAt(i);
-      break;
+    if (!isFragment(i)) continue;
+    const run = ruleRunEndingAt(i);
+    if (run.shape === null) {
+      i = run.start;
+      continue;
     }
+    if (run.shape === lower.shape) upperStart = run.start;
+    break;
   }
-  if (!upper || upper.shape !== lower.shape) return raw;
+  if (upperStart < 0) return raw;
 
-  const kept = lines.slice(0, upper.start);
+  const kept = lines.slice(0, upperStart);
   if (kept.every(line => line.trim() === "")) return raw;
   return kept.join("\n");
 }

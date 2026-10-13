@@ -169,6 +169,32 @@ describe("dropTrailingPromptBox", () => {
     expect(dropTrailingPromptBox(indented)).toBe(indented);
   });
 
+  it("折り返した罫線の端切れが数文字でも、合計の長さで形を比べる", () => {
+    const part = "─".repeat(40);
+    const tip = "─".repeat(5);
+    const box = ["出力", part, tip, "❯ 入力", part, tip, status].join("\n");
+    expect(dropTrailingPromptBox(box)).toBe("出力");
+    // 合計が違えば組にしない (40 と 45)
+    const mismatch = [
+      "前の出力",
+      part,
+      "大事な結果",
+      part,
+      tip,
+      "Yes",
+      "No",
+    ].join("\n");
+    expect(dropTrailingPromptBox(mismatch)).toBe(mismatch);
+  });
+
+  it("端切れは状態の行に数えない (下の罫線の下に、空でない行が5行あっても落とす)", () => {
+    const part = "─".repeat(40);
+    const tip = "─".repeat(5);
+    const footer = Array.from({ length: 5 }, (_, i) => `状態${i}`);
+    const raw = ["出力", part, tip, "❯ ", part, tip, ...footer].join("\n");
+    expect(dropTrailingPromptBox(raw)).toBe("出力");
+  });
+
   it("幅を狭めて罫線が折り返していても、続く罫線の行を1本として落とす", () => {
     const part = "─".repeat(40);
     const last = "─".repeat(12);
