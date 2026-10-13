@@ -64,6 +64,7 @@ vi.mock("@/hooks/useViewerTabs", () => ({
         { type: "terminal", id: `terminal-${sessionId}` },
       ],
       getActiveTabForSession: () => 0,
+      getOpenSeqForSession: () => 0,
       handleTabSelect: vi.fn(),
       handleTabClose: vi.fn(),
       openDiagramTab: vi.fn(),

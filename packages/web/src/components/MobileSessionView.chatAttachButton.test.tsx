@@ -96,6 +96,7 @@ function makeProps(
     })),
     tabs: [{ type: "terminal", id: "terminal-s1" }],
     activeTabIndex: 0,
+    viewerOpenSeq: 0,
     diagramOpenRequest: null,
     onTabSelect: vi.fn(),
     onTabClose: vi.fn(),

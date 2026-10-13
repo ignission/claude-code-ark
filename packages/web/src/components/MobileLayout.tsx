@@ -98,6 +98,7 @@ interface MobileLayoutProps {
   // ビューアタブ状態は Dashboard から props で受け取り、ここでは useViewerTabs を呼ばない
   getTabsForSession: (sessionId: string) => ViewerTab[];
   getActiveTabForSession: (sessionId: string) => number;
+  getViewerOpenSeqForSession: (sessionId: string) => number;
   handleTabSelect: (sessionId: string, index: number) => void;
   handleTabClose: (sessionId: string, index: number) => void;
   openDiagramTab: (
@@ -238,6 +239,7 @@ export function MobileLayout({
   onNewSession,
   getTabsForSession,
   getActiveTabForSession,
+  getViewerOpenSeqForSession,
   handleTabSelect,
   handleTabClose,
   openDiagramTab,
@@ -543,6 +545,7 @@ export function MobileLayout({
                 }
                 tabs={getTabsForSession(sessionId)}
                 activeTabIndex={getActiveTabForSession(sessionId)}
+                viewerOpenSeq={getViewerOpenSeqForSession(sessionId)}
                 diagramOpenRequest={diagramOpenRequest}
                 onTabSelect={idx => handleTabSelect(sessionId, idx)}
                 onTabClose={idx => handleTabClose(sessionId, idx)}

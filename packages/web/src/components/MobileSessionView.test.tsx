@@ -19,7 +19,7 @@ import {
   normalizeMobileSessionViewMode,
   readSavedViewMode,
   STORAGE_KEY_MOBILE_VIEW,
-  shouldOpenTerminalForViewerTab,
+  shouldOpenTerminalForViewerOpen,
   writeSavedViewMode,
 } from "../lib/mobile-session-view-mode";
 import { MobileSessionView } from "./MobileSessionView";
@@ -181,6 +181,7 @@ function makeProps(
     onDeleteSession: vi.fn(),
     tabs: [{ type: "terminal", id: "terminal-s1" }],
     activeTabIndex: 0,
+    viewerOpenSeq: 0,
     diagramOpenRequest: null,
     onTabSelect: vi.fn(),
     onTabClose: vi.fn(),
@@ -386,17 +387,15 @@ describe("mobile session view mode", () => {
     ).toBeNull();
   });
 
-  it.each(["file", "html"] as const)(
-    "active な %s ビューワータブは、端末の窓を開いて見せる",
-    activeTabType => {
-      expect(shouldOpenTerminalForViewerTab(activeTabType)).toBe(true);
-    }
-  );
+  it("ファイルを開く操作の通し番号が増えたら、端末の窓を開いて見せる", () => {
+    expect(shouldOpenTerminalForViewerOpen(0, 1)).toBe(true);
+    // 種類が同じ別のファイルでも、同じファイルの開き直しでも番号は進む
+    expect(shouldOpenTerminalForViewerOpen(1, 2)).toBe(true);
+  });
 
-  it("terminal / diagram タブと、タブなしでは端末の窓を開かない", () => {
-    expect(shouldOpenTerminalForViewerTab("terminal")).toBe(false);
-    expect(shouldOpenTerminalForViewerTab("diagram")).toBe(false);
-    expect(shouldOpenTerminalForViewerTab(undefined)).toBe(false);
+  it("通し番号が増えていなければ端末の窓を開かない (マウント時と再描画)", () => {
+    expect(shouldOpenTerminalForViewerOpen(0, 0)).toBe(false);
+    expect(shouldOpenTerminalForViewerOpen(3, 3)).toBe(false);
   });
 
   it("現在モードが分かる2択のセグメントを、絵文字を使わずに表示する。「端末」は無い", () => {
@@ -790,7 +789,7 @@ describe("MobileSessionView の端末の窓", () => {
     ).not.toBe("hidden");
   });
 
-  it("ファイルのタブが選ばれたら、ビューアを持つ端末の窓を開いて見せる", () => {
+  it("ファイルが開かれたら、ビューアを持つ端末の窓を開いて見せる", () => {
     const props = makeProps();
     const container = mount(<MobileSessionView {...props} />);
     const { root } = mountedRoots.at(-1) as { root: Root };
@@ -802,6 +801,7 @@ describe("MobileSessionView の端末の窓", () => {
           {...props}
           tabs={[terminalTab(), fileTab()]}
           activeTabIndex={1}
+          viewerOpenSeq={1}
         />
       )
     );
@@ -840,21 +840,100 @@ describe("MobileSessionView の端末の窓", () => {
     }
   );
 
-  it("ファイルのタブが選ばれたままマウントしたあと、別の種類のタブを経てファイルを開けば窓を開く", () => {
+  it("ファイルを見て窓を閉じたあと、別のファイルや同じファイルを開けば、また窓を開く", () => {
     const props = makeProps({
       tabs: [terminalTab(), fileTab()],
       activeTabIndex: 1,
+      viewerOpenSeq: 4,
     });
     const container = mount(<MobileSessionView {...props} />);
     const { root } = mountedRoots.at(-1) as { root: Root };
+    // マウントした時点の通し番号では開かない
     expect(isTerminalWindowOpen(container)).toBe(false);
 
-    act(() => root.render(<MobileSessionView {...props} activeTabIndex={0} />));
-    expect(isTerminalWindowOpen(container)).toBe(false);
-
-    act(() => root.render(<MobileSessionView {...props} activeTabIndex={1} />));
+    // 別のファイル: 選ばれているタブの種類は「ファイル」のまま変わらない
+    const other = { ...fileTab(), id: "file-2", filePath: "src/other.ts" };
+    act(() =>
+      root.render(
+        <MobileSessionView
+          {...props}
+          tabs={[terminalTab(), fileTab(), other]}
+          activeTabIndex={2}
+          viewerOpenSeq={5}
+        />
+      )
+    );
     expect(isTerminalWindowOpen(container)).toBe(true);
-    expect(terminalWindowOf(container).textContent).toContain("hello");
+
+    click(container.querySelector('button[aria-label="端末を閉じる"]'));
+    expect(isTerminalWindowOpen(container)).toBe(false);
+
+    // 同じファイルの開き直し: タブも選択も変わらず、通し番号だけが進む
+    act(() =>
+      root.render(
+        <MobileSessionView
+          {...props}
+          tabs={[terminalTab(), fileTab(), other]}
+          activeTabIndex={2}
+          viewerOpenSeq={6}
+        />
+      )
+    );
+    expect(isTerminalWindowOpen(container)).toBe(true);
+  });
+
+  it("窓を開くと、隠れる部分は操作を受けず、フォーカスは窓の枠へ移る。閉じると帯へ戻る", () => {
+    const container = mount(<MobileSessionView {...makeProps()} />);
+    const header = container.querySelector("header") as HTMLElement;
+    const covered = header.parentElement as HTMLElement;
+    expect(covered.hasAttribute("inert")).toBe(false);
+
+    const opener = document.createElement("button");
+    covered.append(opener);
+    opener.focus();
+    expect(document.activeElement).toBe(opener);
+
+    openTerminalWindow();
+    expect(covered.hasAttribute("inert")).toBe(true);
+    // 窓そのものは隠れる部分の外にある
+    expect(covered.contains(terminalWindowOf(container))).toBe(false);
+    expect(document.activeElement).toBe(
+      container.querySelector('[data-keynav="terminal-window"]')
+    );
+
+    click(container.querySelector('button[aria-label="端末を閉じる"]'));
+    expect(covered.hasAttribute("inert")).toBe(false);
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("開いている間にもう一度開く合図が来ても、閉じたときの戻り先は最初の要素のまま", () => {
+    const props = makeProps();
+    const container = mount(<MobileSessionView {...props} />);
+    const { root } = mountedRoots.at(-1) as { root: Root };
+    const header = container.querySelector("header") as HTMLElement;
+    const opener = document.createElement("button");
+    (header.parentElement as HTMLElement).append(opener);
+    opener.focus();
+
+    openTerminalWindow();
+    // 窓の中の閉じるボタンにフォーカスがある状態で、ファイルが開かれる
+    container
+      .querySelector<HTMLElement>('button[aria-label="端末を閉じる"]')
+      ?.focus();
+    act(() =>
+      root.render(
+        <MobileSessionView
+          {...props}
+          tabs={[terminalTab(), fileTab()]}
+          activeTabIndex={1}
+          viewerOpenSeq={1}
+        />
+      )
+    );
+    expect(isTerminalWindowOpen(container)).toBe(true);
+
+    click(container.querySelector('button[aria-label="端末を閉じる"]'));
+    expect(document.activeElement).toBe(opener);
   });
 
   it("図モードで添付を選ぶと、確認ダイアログを持つ端末の窓を開く", async () => {
@@ -887,15 +966,16 @@ describe("MobileSessionView の端末の窓", () => {
     expect(terminalWindowOf(container).textContent).toContain("a.txt");
   });
 
-  it("窓を開いても閉じても、フォーカスを動かさない (ソフトキーボードを勝手に出さない)", () => {
+  it("窓を開いても、フォーカスを端末や入力欄へは移さない (ソフトキーボードを勝手に出さない)", () => {
     const container = mount(<MobileSessionView {...makeProps()} />);
-    const before = document.activeElement;
 
     openTerminalWindow();
-    expect(document.activeElement).toBe(before);
+    expect(document.activeElement?.tagName).toBe("DIV");
 
     click(container.querySelector('button[aria-label="端末を閉じる"]'));
-    expect(document.activeElement).toBe(before);
+    expect(document.activeElement?.tagName).not.toMatch(
+      /^(INPUT|TEXTAREA|IFRAME)$/
+    );
   });
 });
 
