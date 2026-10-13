@@ -137,14 +137,43 @@ describe("dropTrailingPromptBox", () => {
     expect(dropTrailingPromptBox(raw)).toBe(raw);
   });
 
-  it("末尾から離れた場所の罫線の組 (出力の中の区切り線) では落とさない", () => {
-    const raw = [
+  it("下の罫線は、末尾から数えて空でない行が5行までの範囲で探す (空行は数えない)", () => {
+    const footer = (count: number) =>
+      Array.from({ length: count }, (_, i) => [`状態${i}`, ""]).flat();
+    const within = ["出力", rule, "❯ ", rule, ...footer(5)].join("\n");
+    expect(dropTrailingPromptBox(within)).toBe("出力");
+    const beyond = ["出力", rule, "❯ ", rule, ...footer(6)].join("\n");
+    expect(dropTrailingPromptBox(beyond)).toBe(beyond);
+  });
+
+  it("上の罫線は、下の罫線から15行までの範囲で探す", () => {
+    const body = (count: number) =>
+      Array.from({ length: count }, (_, i) => `入力${i}`);
+    const within = ["出力", rule, ...body(14), rule, status].join("\n");
+    expect(dropTrailingPromptBox(within)).toBe("出力");
+    const beyond = ["出力", rule, ...body(15), rule, status].join("\n");
+    expect(dropTrailingPromptBox(beyond)).toBe(beyond);
+  });
+
+  it("形の違う罫線 (出力の中の区切り線と枠の罫線) は組にしない", () => {
+    const shorter = [
+      "前の出力",
+      "─".repeat(10),
+      "大事な結果",
       rule,
-      "表",
-      rule,
-      ...Array.from({ length: 8 }, (_, i) => `行${i}`),
+      "❯ 1. Yes",
+      "  2. No",
     ].join("\n");
-    expect(dropTrailingPromptBox(raw)).toBe(raw);
+    expect(dropTrailingPromptBox(shorter)).toBe(shorter);
+    const indented = ["前の出力", `  ${rule}`, "結果", rule, status].join("\n");
+    expect(dropTrailingPromptBox(indented)).toBe(indented);
+  });
+
+  it("幅を狭めて罫線が折り返していても、続く罫線の行を1本として落とす", () => {
+    const part = "─".repeat(40);
+    const last = "─".repeat(12);
+    const raw = ["出力", part, last, "❯ 入力", part, last, status].join("\n");
+    expect(dropTrailingPromptBox(raw)).toBe("出力");
   });
 
   it("文字の混じった行や短い線は罫線とみなさない", () => {
