@@ -14,6 +14,13 @@
  *   verbatim のまま表示用に渡す (行う加工は末尾空行の除去とサイズ上限
  *   のみ)。existence チェック (bridgeStatus) と同じ側の許容範囲であり、
  *   ここに正規表現での内容抽出等を足してはならない。
+ *
+ * 例外 (1つだけ):
+ *   会話ビューの帯 (`liveTail`) は、末尾にある入力欄の枠から下を出さない
+ *   (`dropTrailingPromptBox`)。帯は数行しかなく、枠と状態の行で半分が埋まるため。
+ *   見るのは行の形 (罫線だけの行が2本あるか) だけで、行の中身は読まず、
+ *   残す行は書き換えない。形が合わなければ何も落とさない。
+ *   AUQ カードの「直前の画面」には使わない。
  */
 
 /** hook 受信時に capture-pane へ要求する行数 (scrollback 込み) */
@@ -67,4 +74,76 @@ function sliceTailByCodePoint(text: string, maxChars: number): string {
   const code = text.charCodeAt(start);
   if (code >= 0xdc00 && code <= 0xdfff) start += 1;
   return text.slice(start);
+}
+
+/** 罫線の文字だけが並ぶ行。折り返した罫線の端切れ (数文字) もこれに当たる */
+const PROMPT_BOX_RULE_FRAGMENT = /^─+$/;
+/** 罫線とみなす最小の長さ (続けて並ぶ行の合計) */
+const PROMPT_BOX_RULE_MIN_LENGTH = 10;
+/** 下の罫線を探す範囲 (末尾からの、空でない行の数)。枠の下には状態の行が数行ある */
+const PROMPT_BOX_FOOTER_LINES = 6;
+/** 上の罫線を探す範囲 (下の罫線からの行数)。入力欄は複数行になりうる */
+const PROMPT_BOX_BODY_LINES = 15;
+
+/**
+ * 末尾にある入力欄の枠 (罫線2本と、その間と下の行) を落とす。
+ * 罫線だけの行が、末尾の近くに2本並んでいるときだけ、上の罫線から下を捨てる。
+ * - 2本は同じ形 (同じ字下げ、同じ長さ) でなければならない。出力の中の区切り線と
+ *   枠の罫線を組にして、出力や確認の選択肢を落とさないため
+ * - 続けて並ぶ罫線の行は1本として数え、長さは合計で比べる (幅を狭めた端末では
+ *   罫線が折り返し、端切れは数文字になる)
+ * 形が合わないとき (確認の選択肢が出ている画面など) と、落とすと何も残らないときは、
+ * 渡された文字列をそのまま返す。
+ */
+export function dropTrailingPromptBox(raw: string): string {
+  const lines = raw.split("\n");
+  const isFragment = (index: number) =>
+    PROMPT_BOX_RULE_FRAGMENT.test(lines[index].trim());
+  // index で終わる、続けて並ぶ罫線の行のまとまり。合計が短ければ罫線ではない (null)
+  const ruleRunEndingAt = (index: number) => {
+    let start = index;
+    while (start > 0 && isFragment(start - 1)) start--;
+    let length = 0;
+    for (let i = start; i <= index; i++) length += lines[i].trim().length;
+    const indent = lines[start].length - lines[start].trimStart().length;
+    return {
+      start,
+      shape:
+        length >= PROMPT_BOX_RULE_MIN_LENGTH ? `${indent}:${length}` : null,
+    };
+  };
+
+  let lower: { start: number; shape: string } | null = null;
+  let footer = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].trim() === "") continue;
+    if (isFragment(i)) {
+      const run = ruleRunEndingAt(i);
+      if (run.shape !== null) {
+        lower = { start: run.start, shape: run.shape };
+        break;
+      }
+    }
+    footer++;
+    if (footer >= PROMPT_BOX_FOOTER_LINES) break;
+  }
+  if (!lower) return raw;
+
+  let upperStart = -1;
+  const bodyTop = Math.max(0, lower.start - PROMPT_BOX_BODY_LINES);
+  for (let i = lower.start - 1; i >= bodyTop; i--) {
+    if (!isFragment(i)) continue;
+    const run = ruleRunEndingAt(i);
+    if (run.shape === null) {
+      i = run.start;
+      continue;
+    }
+    if (run.shape === lower.shape) upperStart = run.start;
+    break;
+  }
+  if (upperStart < 0) return raw;
+
+  const kept = lines.slice(0, upperStart);
+  if (kept.every(line => line.trim() === "")) return raw;
+  return kept.join("\n");
 }

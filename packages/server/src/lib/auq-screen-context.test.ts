@@ -7,7 +7,10 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildAuqScreenContext } from "./auq-screen-context.js";
+import {
+  buildAuqScreenContext,
+  dropTrailingPromptBox,
+} from "./auq-screen-context.js";
 
 describe("buildAuqScreenContext", () => {
   it("null 入力は null を返す (capture-pane 失敗時)", () => {
@@ -82,5 +85,144 @@ describe("buildAuqScreenContext", () => {
     const raw = `head-${"x".repeat(200)}`;
     const result = buildAuqScreenContext(raw, { maxChars: 50 });
     expect(result).toBe(raw.slice(-50));
+  });
+});
+
+describe("dropTrailingPromptBox", () => {
+  const rule = "─".repeat(80);
+  const status =
+    "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt";
+
+  it("末尾の入力欄の枠 (罫線2本と状態の行) から下を落とし、上の行は書き換えない", () => {
+    const raw = [
+      "● 作業中",
+      "  ⎿ 出力  ",
+      "",
+      rule,
+      "❯ ",
+      rule,
+      status,
+      "",
+      "",
+    ].join("\n");
+    expect(dropTrailingPromptBox(raw)).toBe("● 作業中\n  ⎿ 出力  \n");
+  });
+
+  it("入力欄が複数行でも、状態の行が複数あっても落とす", () => {
+    const raw = [
+      "出力",
+      rule,
+      "❯ 1行目",
+      "  2行目",
+      "  3行目",
+      rule,
+      status,
+      "  もう1行",
+    ].join("\n");
+    expect(dropTrailingPromptBox(raw)).toBe("出力");
+  });
+
+  it("罫線が端末の幅より短い空白で終わっていても罫線とみなす", () => {
+    const raw = ["出力", `${rule}  `, "❯ ", `${rule} `, status].join("\n");
+    expect(dropTrailingPromptBox(raw)).toBe("出力");
+  });
+
+  it("罫線が無い画面 (確認の選択肢など) はそのまま返す", () => {
+    const raw = ["Do you want to proceed?", "❯ 1. Yes", "  2. No"].join("\n");
+    expect(dropTrailingPromptBox(raw)).toBe(raw);
+  });
+
+  it("罫線が1本だけなら落とさない", () => {
+    const raw = ["出力", rule, "続きの出力"].join("\n");
+    expect(dropTrailingPromptBox(raw)).toBe(raw);
+  });
+
+  it("下の罫線は、末尾から数えて空でない行が5行までの範囲で探す (空行は数えない)", () => {
+    const footer = (count: number) =>
+      Array.from({ length: count }, (_, i) => [`状態${i}`, ""]).flat();
+    const within = ["出力", rule, "❯ ", rule, ...footer(5)].join("\n");
+    expect(dropTrailingPromptBox(within)).toBe("出力");
+    const beyond = ["出力", rule, "❯ ", rule, ...footer(6)].join("\n");
+    expect(dropTrailingPromptBox(beyond)).toBe(beyond);
+  });
+
+  it("上の罫線は、下の罫線から15行までの範囲で探す", () => {
+    const body = (count: number) =>
+      Array.from({ length: count }, (_, i) => `入力${i}`);
+    const within = ["出力", rule, ...body(14), rule, status].join("\n");
+    expect(dropTrailingPromptBox(within)).toBe("出力");
+    const beyond = ["出力", rule, ...body(15), rule, status].join("\n");
+    expect(dropTrailingPromptBox(beyond)).toBe(beyond);
+  });
+
+  it("形の違う罫線 (出力の中の区切り線と枠の罫線) は組にしない", () => {
+    const shorter = [
+      "前の出力",
+      "─".repeat(10),
+      "大事な結果",
+      rule,
+      "❯ 1. Yes",
+      "  2. No",
+    ].join("\n");
+    expect(dropTrailingPromptBox(shorter)).toBe(shorter);
+    const indented = ["前の出力", `  ${rule}`, "結果", rule, status].join("\n");
+    expect(dropTrailingPromptBox(indented)).toBe(indented);
+  });
+
+  it("折り返した罫線の端切れが数文字でも、合計の長さで形を比べる", () => {
+    const part = "─".repeat(40);
+    const tip = "─".repeat(5);
+    const box = ["出力", part, tip, "❯ 入力", part, tip, status].join("\n");
+    expect(dropTrailingPromptBox(box)).toBe("出力");
+    // 合計が違えば組にしない (40 と 45)
+    const mismatch = [
+      "前の出力",
+      part,
+      "大事な結果",
+      part,
+      tip,
+      "Yes",
+      "No",
+    ].join("\n");
+    expect(dropTrailingPromptBox(mismatch)).toBe(mismatch);
+  });
+
+  it("端切れは状態の行に数えない (下の罫線の下に、空でない行が5行あっても落とす)", () => {
+    const part = "─".repeat(40);
+    const tip = "─".repeat(5);
+    const footer = Array.from({ length: 5 }, (_, i) => `状態${i}`);
+    const raw = ["出力", part, tip, "❯ ", part, tip, ...footer].join("\n");
+    expect(dropTrailingPromptBox(raw)).toBe("出力");
+  });
+
+  it("幅を狭めて罫線が折り返していても、続く罫線の行を1本として落とす", () => {
+    const part = "─".repeat(40);
+    const last = "─".repeat(12);
+    const raw = ["出力", part, last, "❯ 入力", part, last, status].join("\n");
+    expect(dropTrailingPromptBox(raw)).toBe("出力");
+  });
+
+  it("文字の混じった行や短い線は罫線とみなさない", () => {
+    const raw = ["出力", `── 見出し ${rule}`, "❯ ", "─────", status].join("\n");
+    expect(dropTrailingPromptBox(raw)).toBe(raw);
+  });
+
+  it("落とすと何も残らないとき (起動直後の画面) はそのまま返す", () => {
+    const raw = ["", rule, "❯ ", rule, status].join("\n");
+    expect(dropTrailingPromptBox(raw)).toBe(raw);
+  });
+
+  it("落としたあとの末尾を画面末尾として整形できる", () => {
+    const raw = [
+      ...Array.from({ length: 20 }, (_, i) => `行${i}`),
+      "",
+      rule,
+      "❯ ",
+      rule,
+      status,
+    ].join("\n");
+    expect(
+      buildAuqScreenContext(dropTrailingPromptBox(raw), { maxLines: 3 })
+    ).toBe("行17\n行18\n行19");
   });
 });

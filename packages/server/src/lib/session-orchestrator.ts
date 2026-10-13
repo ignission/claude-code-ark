@@ -18,7 +18,10 @@ import type {
   SpecialKey,
 } from "@ark/shared";
 import { stripAnsi } from "./ansi.js";
-import { buildAuqScreenContext } from "./auq-screen-context.js";
+import {
+  buildAuqScreenContext,
+  dropTrailingPromptBox,
+} from "./auq-screen-context.js";
 import type {
   BoardMcpServer,
   BoardSessionRegistry,
@@ -1349,9 +1352,10 @@ export class SessionOrchestrator extends EventEmitter {
         this.sessionProfiles.get(session.id)?.configDir ?? null
       );
 
-      // 画面を取れたセッションでは状態に関係なく、画面末尾を加工せずに添える (AUQ の「直前の画面」と同じ整形。解釈はしない)
+      // 画面を取れたセッションでは状態に関係なく、画面末尾を添える (AUQ の「直前の画面」と同じ整形。解釈はしない)。
+      // 末尾の入力欄の枠から下だけは出さない (理由と決まりは auq-screen-context.ts の「例外」)
       const liveTail =
-        buildAuqScreenContext(stripAnsi(raw), {
+        buildAuqScreenContext(dropTrailingPromptBox(stripAnsi(raw)), {
           maxLines: LIVE_TAIL_LINES,
           maxChars: LIVE_TAIL_MAX_CHARS,
         }) ?? undefined;
