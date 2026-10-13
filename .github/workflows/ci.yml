@@ -33,8 +33,13 @@ jobs:
 
   # npm パッケージ (`npx claude-code-ark`) を利用者と同じ入れ方で入れ、起動するかを見る。
   # 公開物に入れ忘れたファイルや依存は、型検査とユニットテストでは見つからない。
+  # ubuntu は ttyd を入れず、Ark が自分で取得する経路を通す。macOS には公式バイナリが無いので brew で入れる。
   npm-package:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v7
@@ -42,8 +47,13 @@ jobs:
       - name: Setup mise
         uses: jdx/mise-action@v4
 
-      - name: Install tmux
+      - name: Install tmux (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: Install tmux and ttyd (macOS)
+        if: runner.os == 'macOS'
+        run: brew install tmux ttyd
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
