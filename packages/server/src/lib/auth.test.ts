@@ -128,6 +128,17 @@ describe("AuthManager.httpMiddleware", () => {
     ).toBe(true);
   });
 
+  it("manifest以外の .webmanifest はトークンを求める", () => {
+    const auth = new AuthManager(true);
+    expect(
+      runHttp(
+        auth,
+        { host: TUNNEL_HOST },
+        { path: "/proxy/8080/private.webmanifest" }
+      ).passed
+    ).toBe(false);
+  });
+
   it("ローカルからの直接アクセスはトークンなしで通す", () => {
     const auth = new AuthManager(true);
     expect(runHttp(auth, { host: "localhost:4001" }).passed).toBe(true);
@@ -137,6 +148,14 @@ describe("AuthManager.httpMiddleware", () => {
     const auth = new AuthManager(true);
     expect(
       runHttp(auth, { host: TUNNEL_HOST }, { path: "/assets/index.js" }).passed
+    ).toBe(true);
+  });
+
+  it("manifestはトークンなしで通す (ブラウザがクエリなしで取りに来る)", () => {
+    const auth = new AuthManager(true);
+    expect(
+      runHttp(auth, { host: TUNNEL_HOST }, { path: "/manifest.webmanifest" })
+        .passed
     ).toBe(true);
   });
 });

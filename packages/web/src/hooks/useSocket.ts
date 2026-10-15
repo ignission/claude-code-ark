@@ -37,6 +37,14 @@ import { io, type Socket } from "socket.io-client";
 import { toast } from "sonner";
 import { getAuthToken } from "../lib/auth-token";
 import {
+  currentBuildId,
+  decideBuildUpdate,
+  fetchServedBuildId,
+  hasUnsavedInput,
+  readReloadTarget,
+  reloadForBuild,
+} from "../lib/build-version";
+import {
   requestDiagramCommentCreate,
   requestDiagramCommentDelete,
   requestDiagramCommentReply,
@@ -49,6 +57,11 @@ import type {
   SessionAuqSignal,
   SessionStatusSignal,
 } from "../lib/session-notifications";
+import {
+  decideSocketWakeAction,
+  SOCKET_PROBE_ATTEMPTS,
+  SOCKET_PROBE_TIMEOUT_MS,
+} from "../lib/socket-wake";
 import {
   addWorktree,
   clearRepo,
@@ -546,11 +559,91 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
     socketRef.current = socket;
 
+    // 前面に戻ったら、切断の検知やバックオフを待たずに接続を確かめる
+    // (判定の理由は `@/lib/socket-wake`)
+    let lastConnectAttemptAt = Date.now();
+    let probing = false;
+    const forceReconnect = () => {
+      lastConnectAttemptAt = Date.now();
+      socket.disconnect().connect();
+    };
+    // Socket.IO が自分で再接続を試みている最中に、その接続を捨てない
+    const handleReconnectAttempt = () => {
+      lastConnectAttemptAt = Date.now();
+    };
+    socket.io.on("reconnect_attempt", handleReconnectAttempt);
+    const probe = (attemptsLeft: number) => {
+      socket.timeout(SOCKET_PROBE_TIMEOUT_MS).emit("health:ping", err => {
+        // 応答があった。または待っている間に自力で切断を検知した
+        // (後者は Socket.IO の再接続に任せる)
+        if (!err || !socket.connected) {
+          probing = false;
+          return;
+        }
+        if (attemptsLeft > 1) {
+          probe(attemptsLeft - 1);
+          return;
+        }
+        probing = false;
+        forceReconnect();
+      });
+    };
+    const handleWake = () => {
+      const action = decideSocketWakeAction({
+        visible: document.visibilityState === "visible",
+        online: navigator.onLine,
+        connected: socket.connected,
+        lastConnectAttemptAt,
+        now: Date.now(),
+      });
+      if (action === "reconnect") {
+        forceReconnect();
+        return;
+      }
+      if (action !== "probe" || probing) return;
+      probing = true;
+      probe(SOCKET_PROBE_ATTEMPTS);
+    };
+    document.addEventListener("visibilitychange", handleWake);
+    window.addEventListener("pageshow", handleWake);
+    window.addEventListener("online", handleWake);
+
+    // 再接続のたびに、配信中の版が新しくなっていないかを確かめる
+    // (理由と、読み込み直さない場面は `@/lib/build-version`)
+    let connectedOnce = false;
+    let promptedBuildId: string | null = null;
+    const checkBuildUpdate = async () => {
+      const served = await fetchServedBuildId();
+      const action = decideBuildUpdate({
+        current: currentBuildId(),
+        served,
+        lastReloadTarget: readReloadTarget(),
+        hasUnsavedInput: hasUnsavedInput(),
+      });
+      if (!served || action === "none") return;
+      if (action === "reload") {
+        reloadForBuild(served);
+        return;
+      }
+      if (promptedBuildId === served) return;
+      promptedBuildId = served;
+      toast("新しい版があります", {
+        description: "書きかけの入力があるため、自動では読み込み直していません",
+        duration: Number.POSITIVE_INFINITY,
+        action: {
+          label: "読み込み直す",
+          onClick: () => reloadForBuild(served),
+        },
+      });
+    };
+
     // Connection events
     socket.on("connect", () => {
       console.log("Socket connected");
       setIsConnected(true);
       setError(null);
+      if (connectedOnce) void checkBuildUpdate();
+      connectedOnce = true;
 
       // 保存されたリポジトリを自動復元（再接続時は最新のrepoPathRefを使用）
       if (repoPathRef.current) {
@@ -1149,6 +1242,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       socket.off("usage:progress");
       socket.off("usage:complete");
       socket.off("usage:error");
+      document.removeEventListener("visibilitychange", handleWake);
+      window.removeEventListener("pageshow", handleWake);
+      window.removeEventListener("online", handleWake);
+      socket.io.off("reconnect_attempt", handleReconnectAttempt);
       socket.disconnect();
     };
   }, [enabled]);

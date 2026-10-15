@@ -790,6 +790,11 @@ export interface ServerToClientEvents {
 }
 
 export interface ClientToServerEvents {
+  /**
+   * 接続が生きているかの確認。サーバーは何もせず callback を呼ぶ。
+   * 前面に戻ったクライアントが、切れたことに気づいていない接続を見つけるのに使う
+   */
+  "health:ping": (callback: () => void) => void;
   // Worktree commands
   "worktree:list": (repoPath: string) => void;
   "worktree:create": (data: {

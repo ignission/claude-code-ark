@@ -17,6 +17,26 @@
       content="#17130f"
       media="(prefers-color-scheme: dark)"
     />
+    <!--
+      ホーム画面に追加したとき、Safariの枠なしで単体のアプリとして開くための指定。
+      manifestの取得は既定でcookieを送らず、Cloudflare Accessの内側では
+      ログイン画面へ飛ばされて失敗するので use-credentials を付ける。
+      manifestに start_url は書かない。書くと、Quick TunnelのURL (?token=... つき) から
+      追加したアプリがトークンを落として起動し、401になる。省くと追加した時点のURLで開く。
+      scope は / に固定する。省くと起動したURLの親パスが範囲になり、/session/x から
+      追加したアプリが / へ移動したときにブラウザ表示へ切り替わる。
+    -->
+    <link
+      rel="manifest"
+      href="/manifest.webmanifest"
+      crossorigin="use-credentials"
+    />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Ark" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <title>Ark</title>
   </head>
 

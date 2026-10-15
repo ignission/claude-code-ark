@@ -226,7 +226,10 @@ export class AuthManager {
       path.endsWith(".ico") ||
       path.endsWith(".svg") ||
       path.endsWith(".png") ||
-      path.endsWith(".jpg")
+      path.endsWith(".jpg") ||
+      // ブラウザがクエリなしで取りに来る。拡張子ではなくパス全体で照合する
+      // (末尾一致だと /proxy/<port>/x.webmanifest まで素通しになる)
+      path === "/manifest.webmanifest"
     );
   }
 

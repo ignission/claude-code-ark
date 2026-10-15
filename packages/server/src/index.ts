@@ -143,6 +143,10 @@ import {
 import { sessionOrchestrator } from "./lib/session-orchestrator.js";
 import { listSlashCommands } from "./lib/slash-command-scanner.js";
 import { SPA_FALLBACK_ROUTE_PATTERN } from "./lib/spa-fallback.js";
+import {
+  REVALIDATE_CACHE_CONTROL,
+  staticCacheControl,
+} from "./lib/static-cache.js";
 import { detectMultiProfileSupported } from "./lib/system.js";
 import {
   claudeShellCommand,
@@ -1324,7 +1328,16 @@ export async function startServer(
       ? path.resolve(__dirname, "../../web/dist")
       : null);
   if (resolvedStaticDir) {
-    app.use(express.static(resolvedStaticDir));
+    app.use(
+      express.static(resolvedStaticDir, {
+        setHeaders: (res, filePath) => {
+          res.setHeader(
+            "Cache-Control",
+            staticCacheControl(resolvedStaticDir, filePath)
+          );
+        },
+      })
+    );
 
     // Handle client-side routing - serve index.html for all routes
     // 除外: ttyd/proxy/browser (プロキシ領域) と /assets/ (実ファイル要求)。
@@ -1333,6 +1346,7 @@ export async function startServer(
     // リロードしても白画面のままになるため、除外して Express 既定の 404 に
     // 落とす (lib/spa-fallback.ts 参照)
     app.get(SPA_FALLBACK_ROUTE_PATTERN, (_req, res) => {
+      res.setHeader("Cache-Control", REVALIDATE_CACHE_CONTROL);
       res.sendFile(path.join(resolvedStaticDir, "index.html"));
     });
   }
@@ -1697,6 +1711,10 @@ export async function startServer(
       } catch (error) {
         callback({ error: getErrorMessage(error) });
       }
+    });
+
+    socket.on("health:ping", callback => {
+      if (typeof callback === "function") callback();
     });
 
     socket.on("repo:select", async repoPath => {
