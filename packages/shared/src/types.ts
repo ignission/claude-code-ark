@@ -1454,7 +1454,9 @@ export interface GitRefs {
    * name は追跡ブランチの名前 (`origin/feat/x`)。remote はそのリモート (名前は `/` を
    * 含みうるので、name を最初の `/` で切って求めてはいけない)。branch は表示用の残りの
    * 部分で、fetch の設定によってはリモートでのブランチ名と違う (消すときは name で指す)。
-   * isDefault はリモートの既定のブランチ (`origin/HEAD` の指す先)
+   * isDefault はリモートの既定のブランチ (`origin/HEAD` の指す先)。
+   * unknownRemote は、設定に無いリモートの追跡ブランチ (消したリモートや手で作った
+   * `refs/remotes/pr/*` の残り)。どこへ消しに行くか分からないので、リモートからは消せない
    */
   remotes: {
     name: string;
@@ -1462,6 +1464,7 @@ export interface GitRefs {
     remote: string;
     branch: string;
     isDefault?: boolean;
+    unknownRemote?: boolean;
   }[];
   tags: { name: string; sha: string }[];
   stashes: { name: string; sha: string; subject: string }[];

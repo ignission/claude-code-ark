@@ -328,11 +328,13 @@ export async function getRefs(cwd: string): Promise<GitRefs> {
     if (r.refname.startsWith("refs/remotes/")) {
       if (r.refname.endsWith("/HEAD")) continue;
       const name = r.refname.slice("refs/remotes/".length);
+      const known = remoteNames.some(n => name.startsWith(`${n}/`));
       remotes.push({
         name,
         sha: r.peeled || r.sha,
         ...splitRemoteRef(name, remoteNames),
         ...(remoteDefaults.has(r.refname) && { isDefault: true }),
+        ...(!known && { unknownRemote: true }),
       });
     } else if (r.refname.startsWith("refs/tags/")) {
       tags.push({

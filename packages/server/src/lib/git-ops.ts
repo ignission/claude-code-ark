@@ -323,7 +323,8 @@ export async function renameBranch(
 /**
  * 消しても失われるコミットが無いか。HEAD かいずれかのリモートのブランチから
  * 届くなら、消しても辿り直せる (`git branch -d` の成否は upstream の有無で
- * 変わるので頼らない。git.ts の cleanupLocalBranch と同じ考え)
+ * 変わるので頼らない。git.ts の cleanupLocalBranch と同じ考え)。
+ * 届かなくても、squash でマージ済みなら消して失う変更は無い (squashedInto)
  */
 async function isMerged(
   cwd: string,
@@ -347,7 +348,47 @@ async function isMerged(
     "--format=%(refname)",
     "refs/remotes",
   ]);
-  return stdout.trim() !== "";
+  if (stdout.trim() !== "") return true;
+  return squashedInto(cwd, sha);
+}
+
+/**
+ * squash でマージ済みか。分岐点からブランチの先端までの変更を 1 つのコミットにまとめ、
+ * 同じ変更のコミットが HEAD かリモートの既定のブランチにあるかを `git cherry` で見る
+ * (squash のコミットはブランチのコミットと別物なので、辿れるかでは分からない。
+ * あとで既定のブランチが同じ行を変えていても、squash のコミット自体は残っている)。
+ * まとめたコミットはどの ref も指さないので、gc で消える。
+ * 確かめられないとき (共通の祖先が無い等) は取り込まれていない扱い
+ */
+async function squashedInto(cwd: string, sha: string): Promise<boolean> {
+  const { stdout: symrefs } = await runGit(cwd, [
+    "for-each-ref",
+    "--format=%(symref)",
+    "refs/remotes",
+  ]);
+  const bases = ["HEAD", ...symrefs.split("\n").filter(Boolean)];
+  for (const base of bases) {
+    try {
+      const { stdout: mb } = await runGit(cwd, ["merge-base", base, sha]);
+      const { stdout: squashed } = await runGit(cwd, [
+        "-c",
+        "user.name=Ark",
+        "-c",
+        "user.email=ark@localhost",
+        "commit-tree",
+        `${sha}^{tree}`,
+        "-p",
+        mb.trim(),
+        "-m",
+        "squash check",
+      ]);
+      const { stdout } = await runGit(cwd, ["cherry", base, squashed.trim()]);
+      if (stdout.trim().startsWith("-")) return true;
+    } catch {
+      // 共通の祖先が無い、HEAD が無い等。次の候補を見る
+    }
+  }
+  return false;
 }
 
 /**

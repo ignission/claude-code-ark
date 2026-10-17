@@ -403,7 +403,10 @@ function BranchMenu({
   );
 }
 
-/** リモートのブランチのメニュー。既定のブランチ (`origin/HEAD` の指す先) は消せない */
+/**
+ * リモートのブランチのメニュー。既定のブランチ (`origin/HEAD` の指す先) と、
+ * 設定に無いリモートの追跡ブランチは消せない
+ */
 function RemoteBranchMenu({
   remote,
   ops,
@@ -425,7 +428,7 @@ function RemoteBranchMenu({
       <ContextMenuSeparator />
       <ContextMenuItem
         variant="destructive"
-        disabled={remote.isDefault || remoteBusy}
+        disabled={remote.isDefault || remote.unknownRemote || remoteBusy}
         onSelect={() => ops.deleteRemoteBranch(remote.remote, remote.name)}
       >
         <Trash2 className="size-4" aria-hidden="true" />
@@ -434,6 +437,11 @@ function RemoteBranchMenu({
       {remote.isDefault && (
         <div className="px-2 pb-1.5 text-[11px] text-muted-foreground">
           リモートの既定のブランチは削除できません
+        </div>
+      )}
+      {remote.unknownRemote && (
+        <div className="px-2 pb-1.5 text-[11px] text-muted-foreground">
+          リモート {remote.remote} は設定にありません
         </div>
       )}
     </>

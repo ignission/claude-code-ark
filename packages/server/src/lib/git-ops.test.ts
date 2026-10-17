@@ -185,6 +185,42 @@ describe("deleteBranch", () => {
     expect(hasRef("refs/heads/wip")).toBe(false);
   });
 
+  it("squash でマージ済みなら、未マージと扱わずに消す", async () => {
+    commit("c1");
+    git("checkout", "-q", "-b", "squashed");
+    fs.writeFileSync(path.join(dir, "b.txt"), "feature\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "f1");
+    const tip = commit("f2");
+    git("checkout", "-q", "main");
+    git("merge", "-q", "--squash", "squashed");
+    git("commit", "-q", "-m", "squash");
+    // squash のあとに main が進んでいても、取り込み済みと分かる
+    commit("after");
+    await expect(deleteBranch(dir, "squashed", false)).resolves.toEqual({
+      sha: tip,
+    });
+  });
+
+  it("squash でマージしたあとに足したコミットがあれば、未マージと扱う", async () => {
+    commit("c1");
+    git("checkout", "-q", "-b", "more");
+    fs.writeFileSync(path.join(dir, "b.txt"), "feature\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "f1");
+    git("checkout", "-q", "main");
+    git("merge", "-q", "--squash", "more");
+    git("commit", "-q", "-m", "squash");
+    git("checkout", "-q", "more");
+    fs.writeFileSync(path.join(dir, "c.txt"), "later\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "f2");
+    git("checkout", "-q", "main");
+    const err = await deleteBranch(dir, "more", false).catch(e => e);
+    expect(err.notMerged).toBe(true);
+    expect(hasRef("refs/heads/more")).toBe(true);
+  });
+
   it("消す前の追跡先を返し、それを渡して作り直すと追跡先も戻る", async () => {
     commit("c1");
     git("checkout", "-q", "-b", "topic");

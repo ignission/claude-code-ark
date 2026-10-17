@@ -77,6 +77,13 @@ const refs: GitRefs = {
       remote: "team/origin",
       branch: "topic",
     },
+    {
+      name: "pr/587",
+      sha: "fff6666",
+      remote: "pr",
+      branch: "587",
+      unknownRemote: true,
+    },
   ],
   tags: [],
   stashes: [],
@@ -172,6 +179,14 @@ describe("GitSidebar の右クリック", () => {
     expect(item(menuOf("origin/main"), "リモートから削除")?.disabled).toBe(
       true
     );
+  });
+
+  it("設定に無いリモートの追跡ブランチは、リモートから消せない", () => {
+    const { menuOf, item } = setup();
+    const pr = menuOf("pr/587");
+    expect(item(pr, "リモートから削除")?.disabled).toBe(true);
+    expect(pr.textContent).toContain("リモート pr は設定にありません");
+    expect(item(pr, "ここから新しいブランチ")?.disabled).toBe(false);
   });
 
   it("リモートの操作の最中はどの操作も押せない", () => {

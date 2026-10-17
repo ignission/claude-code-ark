@@ -241,8 +241,10 @@ describe("getRefs", () => {
     expect(r.branches[0]).toMatchObject({ ahead: 0, behind: 1 });
   });
 
-  it("リモートの既定のブランチに isDefault を付ける", async () => {
+  it("リモートの既定のブランチに isDefault、設定に無いリモートに unknownRemote を付ける", async () => {
     const c1 = commit("c1", { "a.txt": "1\n" });
+    git("config", "remote.origin.url", "/nonexistent");
+    git("update-ref", "refs/remotes/pr/587", c1);
     git("update-ref", "refs/remotes/origin/main", c1);
     git("update-ref", "refs/remotes/origin/topic", c1);
     git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
@@ -256,6 +258,13 @@ describe("getRefs", () => {
         isDefault: true,
       },
       { name: "origin/topic", sha: c1, remote: "origin", branch: "topic" },
+      {
+        name: "pr/587",
+        sha: c1,
+        remote: "pr",
+        branch: "587",
+        unknownRemote: true,
+      },
     ]);
   });
 
