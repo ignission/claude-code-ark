@@ -12,6 +12,7 @@ import {
   getStatus,
   isSafeRelPath,
   isValidSha,
+  splitRemoteRef,
 } from "./git-view.js";
 
 let dir: string;
@@ -214,9 +215,12 @@ describe("getRefs", () => {
         upstream: "origin/main",
         ahead: 2,
         behind: 0,
+        worktreePath: dir,
       },
     ]);
-    expect(r.remotes).toEqual([{ name: "origin/main", sha: c1 }]);
+    expect(r.remotes).toEqual([
+      { name: "origin/main", sha: c1, remote: "origin", branch: "main" },
+    ]);
     expect(r.tags).toContainEqual({ name: "ann", sha: c1 });
     expect(r.tags).toContainEqual({ name: "light", sha: head });
     expect(r.stashes).toHaveLength(1);
@@ -235,6 +239,65 @@ describe("getRefs", () => {
     git("reset", "-q", "--hard", c1);
     const r = await getRefs(dir);
     expect(r.branches[0]).toMatchObject({ ahead: 0, behind: 1 });
+  });
+
+  it("リモートの既定のブランチに isDefault、設定に無いリモートに unknownRemote を付ける", async () => {
+    const c1 = commit("c1", { "a.txt": "1\n" });
+    git("config", "remote.origin.url", "/nonexistent");
+    git("update-ref", "refs/remotes/pr/587", c1);
+    git("update-ref", "refs/remotes/origin/main", c1);
+    git("update-ref", "refs/remotes/origin/topic", c1);
+    git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+    const r = await getRefs(dir);
+    expect(r.remotes).toEqual([
+      {
+        name: "origin/main",
+        sha: c1,
+        remote: "origin",
+        branch: "main",
+        isDefault: true,
+      },
+      { name: "origin/topic", sha: c1, remote: "origin", branch: "topic" },
+      {
+        name: "pr/587",
+        sha: c1,
+        remote: "pr",
+        branch: "587",
+        unknownRemote: true,
+      },
+    ]);
+  });
+
+  it("splitRemoteRef は設定にあるリモートの名前で分ける (名前に / を含んでも)", () => {
+    const remotes = ["team", "team/origin"];
+    expect(splitRemoteRef("team/origin/topic", remotes)).toEqual({
+      remote: "team/origin",
+      branch: "topic",
+    });
+    expect(splitRemoteRef("team/feat/x", remotes)).toEqual({
+      remote: "team",
+      branch: "feat/x",
+    });
+    expect(splitRemoteRef("gone/main", remotes)).toEqual({
+      remote: "gone",
+      branch: "main",
+    });
+  });
+
+  it("ほかの worktree で使っているブランチは worktreePath を持つ", async () => {
+    commit("c1", { "a.txt": "1\n" });
+    const other = `${dir}-wt`;
+    git("worktree", "add", "-q", "-b", "side", other);
+    try {
+      const r = await getRefs(dir);
+      expect(r.branches.find(b => b.name === "side")?.worktreePath).toBe(other);
+      git("branch", "loose");
+      expect(
+        (await getRefs(dir)).branches.find(b => b.name === "loose")
+      ).not.toHaveProperty("worktreePath");
+    } finally {
+      fs.rmSync(other, { recursive: true, force: true });
+    }
   });
 
   it("detached は branch が null", async () => {
@@ -600,6 +663,21 @@ describe("getFileDiff", () => {
 });
 
 describe("getFingerprint", () => {
+  it("別の worktree がブランチを切り替えると変わる", async () => {
+    commit("c1", { "a.txt": "a\n" });
+    git("branch", "b1");
+    git("branch", "b2");
+    const other = `${dir}-wt`;
+    git("worktree", "add", "-q", other, "b1");
+    try {
+      const f1 = await getFingerprint(dir);
+      execFileSync("git", ["checkout", "-q", "b2"], { cwd: other });
+      expect(await getFingerprint(dir)).not.toBe(f1);
+    } finally {
+      fs.rmSync(other, { recursive: true, force: true });
+    }
+  });
+
   it("コミット・追跡ファイルの編集で変わり、何も無ければ安定", async () => {
     commit("c1", { "a.txt": "a\n" });
     const f1 = await getFingerprint(dir);

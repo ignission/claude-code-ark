@@ -60,6 +60,42 @@ describe("createGitApi", () => {
     ]);
   });
 
+  it("書き込みの操作は正しいイベントで emit し、サーバーの git の timeout より長く待つ", async () => {
+    const f = createFakeSocket();
+    const api = createGitApi(asSocket(f.socket), "s1");
+    await api.createBranch("x", "abc1234");
+    await api.renameBranch("x", "y");
+    await api.deleteBranch("y", true);
+    expect(f.socket.timeout).toHaveBeenLastCalledWith(15_000);
+    await api.deleteRemoteBranch("origin", "y");
+    await api.fetch();
+    await api.pull();
+    await api.push("main");
+    expect(f.socket.timeout).toHaveBeenLastCalledWith(130_000);
+    expect(f.socket.timeout).toHaveBeenCalledTimes(7);
+    expect(f.emitted).toEqual([
+      {
+        event: "git:branch-create",
+        payload: { sessionId: "s1", name: "x", startPoint: "abc1234" },
+      },
+      {
+        event: "git:branch-rename",
+        payload: { sessionId: "s1", from: "x", to: "y" },
+      },
+      {
+        event: "git:branch-delete",
+        payload: { sessionId: "s1", name: "y", force: true },
+      },
+      {
+        event: "git:remote-branch-delete",
+        payload: { sessionId: "s1", remote: "origin", name: "y" },
+      },
+      { event: "git:fetch", payload: { sessionId: "s1" } },
+      { event: "git:pull", payload: { sessionId: "s1" } },
+      { event: "git:push", payload: { sessionId: "s1", name: "main" } },
+    ]);
+  });
+
   it("ack の応答をそのまま返す", async () => {
     const f = createFakeSocket();
     const api = createGitApi(asSocket(f.socket), "s1");

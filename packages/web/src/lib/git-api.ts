@@ -1,10 +1,14 @@
 import type {
   ClientToServerEvents,
+  GitBranchDeleteResponse,
+  GitBranchUpstream,
   GitCommitResponse,
   GitDiffTarget,
   GitFileDiffResponse,
   GitFingerprintResponse,
   GitLogResponse,
+  GitOpResponse,
+  GitPushResponse,
   GitRefsResponse,
   GitStatusResponse,
   ServerToClientEvents,
@@ -15,6 +19,13 @@ type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 /** サーバーは不正な payload に ack を返さないので、必ずここで打ち切る */
 const ACK_TIMEOUT_MS = 5000;
+/**
+ * リモートの操作の待ち。サーバー側の git の timeout (2 分) より長くし、
+ * サーバーが push をやり終えたのに画面だけ「応答がない」と出す食い違いを防ぐ
+ */
+const REMOTE_ACK_TIMEOUT_MS = 130_000;
+/** ブランチの操作の待ち。サーバー側の git の timeout (10 秒) より長くする (理由は同上) */
+const LOCAL_OP_ACK_TIMEOUT_MS = 15_000;
 const NO_RESPONSE = "サーバーから応答がありません";
 
 type GitEvent =
@@ -23,7 +34,14 @@ type GitEvent =
   | "git:status"
   | "git:commit"
   | "git:file-diff"
-  | "git:fingerprint";
+  | "git:fingerprint"
+  | "git:branch-create"
+  | "git:branch-rename"
+  | "git:branch-delete"
+  | "git:remote-branch-delete"
+  | "git:fetch"
+  | "git:pull"
+  | "git:push";
 
 export interface GitApi {
   log: (skip: number, limit: number) => Promise<GitLogResponse>;
@@ -36,18 +54,33 @@ export interface GitApi {
     oldPath?: string
   ) => Promise<GitFileDiffResponse>;
   fingerprint: () => Promise<GitFingerprintResponse>;
+  createBranch: (
+    name: string,
+    startPoint: string,
+    upstream?: GitBranchUpstream
+  ) => Promise<GitOpResponse>;
+  renameBranch: (from: string, to: string) => Promise<GitOpResponse>;
+  deleteBranch: (
+    name: string,
+    force: boolean
+  ) => Promise<GitBranchDeleteResponse>;
+  deleteRemoteBranch: (remote: string, name: string) => Promise<GitOpResponse>;
+  fetch: () => Promise<GitOpResponse>;
+  pull: () => Promise<GitOpResponse>;
+  push: (name: string) => Promise<GitPushResponse>;
 }
 
-/** ack を Promise にする薄い層。5 秒で timeout し、失敗応答に畳む */
+/** ack を Promise にする薄い層。5 秒 (リモートの操作は 130 秒) で timeout し、失敗応答に畳む */
 export function createGitApi(socket: TypedSocket, sessionId: string): GitApi {
   // 型付き emit の overload を経由せず、イベント名ごとの呼び出しをここに閉じ込める
   const request = <R extends { ok: boolean }>(
     event: GitEvent,
-    payload: Record<string, unknown>
+    payload: Record<string, unknown>,
+    timeoutMs = ACK_TIMEOUT_MS
   ): Promise<R> =>
     new Promise(resolve => {
       // biome-ignore lint/suspicious/noExplicitAny: イベント名でpayload型が変わるため
-      (socket.timeout(ACK_TIMEOUT_MS) as any).emit(
+      (socket.timeout(timeoutMs) as any).emit(
         event,
         { sessionId, ...payload },
         (err: Error | null, res: R) =>
@@ -67,5 +100,33 @@ export function createGitApi(socket: TypedSocket, sessionId: string): GitApi {
     fileDiff: (target, path, oldPath) =>
       request<GitFileDiffResponse>("git:file-diff", { target, path, oldPath }),
     fingerprint: () => request<GitFingerprintResponse>("git:fingerprint", {}),
+    createBranch: (name, startPoint, upstream) =>
+      request<GitOpResponse>(
+        "git:branch-create",
+        upstream ? { name, startPoint, upstream } : { name, startPoint },
+        LOCAL_OP_ACK_TIMEOUT_MS
+      ),
+    renameBranch: (from, to) =>
+      request<GitOpResponse>(
+        "git:branch-rename",
+        { from, to },
+        LOCAL_OP_ACK_TIMEOUT_MS
+      ),
+    deleteBranch: (name, force) =>
+      request<GitBranchDeleteResponse>(
+        "git:branch-delete",
+        { name, force },
+        LOCAL_OP_ACK_TIMEOUT_MS
+      ),
+    deleteRemoteBranch: (remote, name) =>
+      request<GitOpResponse>(
+        "git:remote-branch-delete",
+        { remote, name },
+        REMOTE_ACK_TIMEOUT_MS
+      ),
+    fetch: () => request<GitOpResponse>("git:fetch", {}, REMOTE_ACK_TIMEOUT_MS),
+    pull: () => request<GitOpResponse>("git:pull", {}, REMOTE_ACK_TIMEOUT_MS),
+    push: name =>
+      request<GitPushResponse>("git:push", { name }, REMOTE_ACK_TIMEOUT_MS),
   };
 }

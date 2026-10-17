@@ -264,26 +264,53 @@ function parseTrack(track: string): { ahead: number; behind: number } | null {
   return { ahead: a ? Number(a[1]) : 0, behind: b ? Number(b[1]) : 0 };
 }
 
+/**
+ * `team/origin/topic` をリモートの名前とブランチに分ける。リモートの名前は `/` を
+ * 含みうるので、設定にあるリモートのうち最も長く前方が一致するものを採る。
+ * どれとも合わなければ (消したリモートの残り)、最初の `/` で切る
+ */
+export function splitRemoteRef(
+  name: string,
+  remotes: readonly string[]
+): { remote: string; branch: string } {
+  let best = "";
+  for (const r of remotes) {
+    if (name.startsWith(`${r}/`) && r.length > best.length) best = r;
+  }
+  if (best) return { remote: best, branch: name.slice(best.length + 1) };
+  const slash = name.indexOf("/");
+  return slash === -1
+    ? { remote: name, branch: "" }
+    : { remote: name.slice(0, slash), branch: name.slice(slash + 1) };
+}
+
 export async function getRefs(cwd: string): Promise<GitRefs> {
   await assertRepository(cwd);
-  const [branchName, head, rows, branchOut, stashOut] = await Promise.all([
-    currentBranch(cwd),
-    headSha(cwd),
-    listRefRows(cwd),
-    git(cwd, [
-      "for-each-ref",
-      "--format=%(refname)%00%(objectname)%00%(upstream:short)%00%(upstream:track,nobracket)",
-      "refs/heads",
-    ]),
-    gitOrNull(cwd, ["stash", "list", `--format=%H${FS}%gd${FS}%gs`]),
-  ]);
+  const [branchName, head, rows, branchOut, stashOut, symrefOut, remoteOut] =
+    await Promise.all([
+      currentBranch(cwd),
+      headSha(cwd),
+      listRefRows(cwd),
+      git(cwd, [
+        "for-each-ref",
+        "--format=%(refname)%00%(objectname)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(worktreepath)",
+        "refs/heads",
+      ]),
+      gitOrNull(cwd, ["stash", "list", `--format=%H${FS}%gd${FS}%gs`]),
+      // リモートの既定のブランチ (`origin/HEAD` → `refs/remotes/origin/main`)
+      git(cwd, ["for-each-ref", "--format=%(symref)", "refs/remotes"]),
+      gitOrNull(cwd, ["remote"]),
+    ]);
+  const remoteNames = (remoteOut ?? "").split("\n").filter(Boolean);
+  const remoteDefaults = new Set(symrefOut.split("\n").filter(Boolean));
 
   const branches: GitBranch[] = [];
   for (const line of branchOut.split("\n")) {
     if (!line) continue;
-    const [refname, sha, upstream, track] = line.split("\0");
+    const [refname, sha, upstream, track, worktreePath] = line.split("\0");
     const name = refname.slice("refs/heads/".length);
     const b: GitBranch = { name, sha, current: name === branchName };
+    if (worktreePath) b.worktreePath = worktreePath;
     if (upstream) {
       b.upstream = upstream;
       const t = parseTrack(track ?? "");
@@ -300,9 +327,14 @@ export async function getRefs(cwd: string): Promise<GitRefs> {
   for (const r of rows) {
     if (r.refname.startsWith("refs/remotes/")) {
       if (r.refname.endsWith("/HEAD")) continue;
+      const name = r.refname.slice("refs/remotes/".length);
+      const known = remoteNames.some(n => name.startsWith(`${n}/`));
       remotes.push({
-        name: r.refname.slice("refs/remotes/".length),
+        name,
         sha: r.peeled || r.sha,
+        ...splitRemoteRef(name, remoteNames),
+        ...(remoteDefaults.has(r.refname) && { isDefault: true }),
+        ...(!known && { unknownRemote: true }),
       });
     } else if (r.refname.startsWith("refs/tags/")) {
       tags.push({
@@ -716,7 +748,11 @@ export async function getFingerprint(cwd: string): Promise<string> {
       // detachedでは失敗する (空として扱う)。同じコミットを指す別のブランチへ
       // 切り替えてもHEADのshaは変わらない
       gitOrNull(cwd, ["symbolic-ref", "-q", "HEAD"]),
-      git(cwd, ["for-each-ref"]),
+      // worktreepath: 別の worktree がブランチを切り替えたら、削除できるブランチが変わる
+      git(cwd, [
+        "for-each-ref",
+        "--format=%(objectname) %(refname) %(symref) %(worktreepath)",
+      ]),
       // 未追跡のディレクトリを1行に畳ませない (中にファイルが増えても変わるように)
       git(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
       git(cwd, ["diff", "--cached", "--raw", "-z", "--no-abbrev"]),

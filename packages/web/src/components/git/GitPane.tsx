@@ -5,7 +5,14 @@ import type {
   GitStatus,
   ServerToClientEvents,
 } from "@ark/shared";
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import {
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  CloudDownload,
+  Loader2,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
 import { createGitApi, type GitApi } from "@/lib/git-api";
@@ -15,6 +22,7 @@ import { GitCommitDetail } from "./GitCommitDetail";
 import { GitCommitList } from "./GitCommitList";
 import { GitSidebar } from "./GitSidebar";
 import type { GitSelection } from "./types";
+import { type GitRemoteBusy, useGitOps } from "./useGitOps";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -348,6 +356,9 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
 
   const handleRetry = useCallback(() => void reload(), [reload]);
 
+  const currentBranch = data?.refs.head.branch ?? null;
+  const ops = useGitOps(api, currentBranch, handleRetry);
+
   // 選んだコミットのいまのref。詳細はshaごとに応答を持ち続けるので、refだけは
   // 読み直した一覧から渡す (一覧に無いコミットはundefinedで、詳細が応答のrefを出す)
   const selectedSha = selection?.kind === "commit" ? selection.sha : null;
@@ -440,6 +451,8 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
           onSelectWorking={selectWorking}
           onShowAll={showAll}
           onSelectSha={jumpTo}
+          ops={ops.actions}
+          remoteBusy={ops.busy !== null}
         />
       </div>
       <div ref={columnRef} className="flex min-w-0 flex-1 flex-col">
@@ -461,6 +474,18 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
             onReload={handleRetry}
             reloading={reloading}
             reveal={reveal}
+            onCreateBranchAt={
+              ops.busy === null ? ops.actions.createBranchAt : undefined
+            }
+            actions={
+              <RemoteButtons
+                busy={ops.busy}
+                branch={data.refs.branches.find(b => b.current) ?? null}
+                onFetch={ops.actions.fetch}
+                onPull={ops.actions.pull}
+                onPush={ops.actions.pushBranch}
+              />
+            }
             leading={
               <button
                 type="button"
@@ -512,7 +537,82 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
           />
         </div>
       </div>
+      {ops.dialogs}
     </div>
+  );
+}
+
+const TOOL_BUTTON =
+  "inline-flex h-6 shrink-0 items-center gap-1 rounded-sm px-1.5 text-[11px] text-muted-foreground tabular-nums hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40";
+
+/**
+ * fetch / pull / push のボタン。pull と push はいまのブランチが対象で、
+ * ブランチにいない (detached) ときは押せない。数字は upstream との差
+ */
+function RemoteButtons({
+  busy,
+  branch,
+  onFetch,
+  onPull,
+  onPush,
+}: {
+  busy: GitRemoteBusy;
+  branch: GitRefs["branches"][number] | null;
+  onFetch: () => void;
+  onPull: () => void;
+  onPush: (name: string) => void;
+}) {
+  const icon = (kind: GitRemoteBusy, Icon: typeof CloudDownload) =>
+    busy === kind ? (
+      <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+    ) : (
+      <Icon className="size-3.5" aria-hidden="true" />
+    );
+  const behind = branch?.behind ?? 0;
+  const ahead = branch?.ahead ?? 0;
+  return (
+    <>
+      <button
+        type="button"
+        title="fetch (すべてのリモート)"
+        aria-label="fetch"
+        disabled={busy !== null}
+        onClick={onFetch}
+        className={TOOL_BUTTON}
+      >
+        {icon("fetch", CloudDownload)}
+      </button>
+      <button
+        type="button"
+        title={
+          branch
+            ? `pull: ${branch.name} を fast-forward で進める`
+            : "ブランチにいないので pull できません"
+        }
+        aria-label="pull"
+        disabled={busy !== null || !branch}
+        onClick={onPull}
+        className={TOOL_BUTTON}
+      >
+        {icon("pull", ArrowDownToLine)}
+        {behind > 0 && <span>{behind}</span>}
+      </button>
+      <button
+        type="button"
+        title={
+          branch
+            ? `push: ${branch.name}${branch.upstream ? ` → ${branch.upstream}` : " (新しく upstream を作る)"}`
+            : "ブランチにいないので push できません"
+        }
+        aria-label="push"
+        disabled={busy !== null || !branch}
+        onClick={() => branch && onPush(branch.name)}
+        className={TOOL_BUTTON}
+      >
+        {icon("push", ArrowUpFromLine)}
+        {ahead > 0 && <span>{ahead}</span>}
+      </button>
+    </>
   );
 }
 
