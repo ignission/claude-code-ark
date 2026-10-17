@@ -107,6 +107,23 @@ export interface SessionPrStatus {
   headRefOid: string;
 }
 
+/**
+ * プランの使用量の1つの枠 (5時間枠か週枠)。
+ * サーバーが Claude Code の使用量APIを定期的に読んで作る (`plan-limits-collector.ts`)
+ */
+export interface PlanLimitWindow {
+  /** 使った割合 (0-100) */
+  percent: number;
+  /** 枠がリセットされる時刻 (ISO 8601)。分からなければ null */
+  resetsAt: string | null;
+}
+
+/** セッションのプロファイルのプランの使用量。枠が無い、読めない、はその枠が null */
+export interface PlanLimits {
+  fiveHour: PlanLimitWindow | null;
+  sevenDay: PlanLimitWindow | null;
+}
+
 export interface ManagedSession extends Session {
   /** tmuxセッション名 */
   tmuxSessionName: string;
@@ -686,6 +703,10 @@ export interface ServerToClientEvents {
        * ブランチのPRとチェックの集計。PRが無い、ghが無い、まだ読んでいない、のどれも null
        */
       prStatus: SessionPrStatus | null;
+      /**
+       * セッションのプロファイルのプランの使用量。読めない、まだ読んでいない、は null
+       */
+      planLimits: PlanLimits | null;
       timestamp: number;
     }>
   ) => void;

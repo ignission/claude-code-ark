@@ -66,6 +66,7 @@ import type {
   DiagramListItem,
   ManagedSession,
   MessageShortcut,
+  PlanLimits,
   ServerToClientEvents,
   SpecialKey,
   Worktree,
@@ -196,6 +197,8 @@ interface SplitViewPaneProps {
   awaitingText?: string;
   /** 端末の画面末尾（会話の入力欄の上の帯に出す） */
   liveTail?: string;
+  /** プランの使用量（入力欄の横に出す） */
+  planLimits?: PlanLimits;
   worktree: Worktree | undefined;
   /** 所属リポジトリの名前。表示名が無いときの主ラベル */
   repoName?: string;
@@ -759,6 +762,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
               bridgeStatus={props.bridgeStatus}
               awaitingText={props.awaitingText}
               liveTail={props.liveTail}
+              planLimits={props.planLimits}
               onOpenTerminal={openTerminal}
               onActiveAuqChange={openTerminalOnAuq}
               onSendMessage={props.onSendMessage}

@@ -18,6 +18,7 @@ import type {
   DiagramListItem,
   ManagedSession,
   MessageShortcut,
+  PlanLimits,
   Profile,
   Screen,
   ScreenCredentialsResult,
@@ -191,6 +192,8 @@ interface MobileLayoutProps {
   sessionAwaitingTexts: Map<string, string>;
   /** 作業中の画面末尾マップ（会話ビューで動きを見せる） */
   sessionLiveTails: Map<string, string>;
+  /** プランの使用量マップ（入力欄の横に出す） */
+  sessionPlanLimits: Map<string, PlanLimits>;
   /** session:previews由来の端末の最後の内容行 (一覧の2行目) */
   sessionPreviews: Map<string, string>;
   sessionPrStatuses: Map<string, SessionPrStatus>;
@@ -277,6 +280,7 @@ export function MobileLayout({
   sessionLastUpdatedAt,
   sessionAwaitingTexts,
   sessionLiveTails,
+  sessionPlanLimits,
   sessionPreviews,
   sessionPrStatuses,
   worktreeDisplayNames,
@@ -510,6 +514,7 @@ export function MobileLayout({
                 bridgeStatus={sessionStatuses.get(sessionId)}
                 awaitingText={sessionAwaitingTexts.get(sessionId)}
                 liveTail={sessionLiveTails.get(sessionId)}
+                planLimits={sessionPlanLimits.get(sessionId)}
                 session={session}
                 worktree={worktree}
                 repoName={
