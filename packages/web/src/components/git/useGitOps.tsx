@@ -36,8 +36,8 @@ export interface GitOpsActions {
   renameBranch: (name: string) => void;
   /** 取り込み済みならそのまま消す。未マージなら確かめてから強制で消す */
   deleteBranch: (name: string) => void;
-  /** リモート remote のブランチ name を、確かめてから消す */
-  deleteRemoteBranch: (remote: string, name: string) => void;
+  /** 追跡ブランチ trackingName (`origin/feat/x`) の元をリモート remote から、確かめてから消す */
+  deleteRemoteBranch: (remote: string, trackingName: string) => void;
   pushBranch: (name: string) => void;
   fetch: () => void;
   pull: () => void;
@@ -52,7 +52,7 @@ type NameDialog =
 
 type Confirm =
   | { kind: "force-delete"; name: string; reason: string }
-  | { kind: "remote-delete"; remote: string; name: string };
+  | { kind: "remote-delete"; remote: string; trackingName: string };
 
 /**
  * Git タブの書き込み操作。名前の入力と確認のダイアログを持ち、終わったら
@@ -139,8 +139,8 @@ export function useGitOps(
       setNameError(null);
     },
     deleteBranch: name => void runDelete(name, false),
-    deleteRemoteBranch: (remote, name) =>
-      setConfirm({ kind: "remote-delete", remote, name }),
+    deleteRemoteBranch: (remote, trackingName) =>
+      setConfirm({ kind: "remote-delete", remote, trackingName }),
     pushBranch: name => {
       if (!api) return;
       void remoteOp("push", () => api.push(name), `${name} を push しました`);
@@ -195,11 +195,11 @@ export function useGitOps(
     if (confirm.kind === "force-delete") {
       void runDelete(confirm.name, true);
     } else {
-      const { remote, name } = confirm;
+      const { remote, trackingName } = confirm;
       void remoteOp(
         "remote-delete",
-        () => api.deleteRemoteBranch(remote, name),
-        `${remote}/${name} を削除しました`
+        () => api.deleteRemoteBranch(remote, trackingName),
+        `${trackingName} をリモートから削除しました`
       );
     }
     setConfirm(null);
@@ -274,7 +274,7 @@ export function useGitOps(
           <AlertDialogHeader>
             <AlertDialogTitle>
               {confirm?.kind === "remote-delete"
-                ? `${confirm.remote}/${confirm.name} を削除しますか?`
+                ? `${confirm.trackingName} をリモートから削除しますか?`
                 : `${confirm?.name ?? ""} を強制削除しますか?`}
             </AlertDialogTitle>
             <AlertDialogDescription>

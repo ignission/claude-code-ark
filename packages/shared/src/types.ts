@@ -1032,6 +1032,7 @@ export interface ClientToServerEvents {
     cb: (r: GitBranchDeleteResponse) => void
   ) => void;
   "git:remote-branch-delete": (
+    /** name は追跡ブランチの名前 (`origin/feat/x`)。元のブランチはサーバーが fetch の設定でたどる */
     data: { sessionId: string; remote: string; name: string },
     cb: (r: GitOpResponse) => void
   ) => void;
@@ -1450,8 +1451,9 @@ export interface GitRefs {
   head: { sha: string | null; branch: string | null };
   branches: GitBranch[];
   /**
-   * name は `origin/feat/x`。remote と branch はそれを分けたもの (リモートの名前は
-   * `/` を含みうるので、name を最初の `/` で切って求めてはいけない)。
+   * name は追跡ブランチの名前 (`origin/feat/x`)。remote はそのリモート (名前は `/` を
+   * 含みうるので、name を最初の `/` で切って求めてはいけない)。branch は表示用の残りの
+   * 部分で、fetch の設定によってはリモートでのブランチ名と違う (消すときは name で指す)。
    * isDefault はリモートの既定のブランチ (`origin/HEAD` の指す先)
    */
   remotes: {

@@ -426,7 +426,7 @@ function RemoteBranchMenu({
       <ContextMenuItem
         variant="destructive"
         disabled={remote.isDefault || remoteBusy}
-        onSelect={() => ops.deleteRemoteBranch(remote.remote, remote.branch)}
+        onSelect={() => ops.deleteRemoteBranch(remote.remote, remote.name)}
       >
         <Trash2 className="size-4" aria-hidden="true" />
         リモートから削除

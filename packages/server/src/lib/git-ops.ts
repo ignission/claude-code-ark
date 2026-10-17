@@ -312,12 +312,15 @@ export async function renameBranch(
  * 届くなら、消しても辿り直せる (`git branch -d` の成否は upstream の有無で
  * 変わるので頼らない。git.ts の cleanupLocalBranch と同じ考え)
  */
-async function isMerged(cwd: string, name: string): Promise<boolean> {
-  const ref = `refs/heads/${name}`;
+async function isMerged(
+  cwd: string,
+  name: string,
+  sha: string
+): Promise<boolean> {
   const code = await exitCode(cwd, [
     "merge-base",
     "--is-ancestor",
-    ref,
+    sha,
     "HEAD",
   ]);
   if (code === 0) return true;
@@ -327,7 +330,7 @@ async function isMerged(cwd: string, name: string): Promise<boolean> {
     "for-each-ref",
     "--count=1",
     "--contains",
-    ref,
+    sha,
     "--format=%(refname)",
     "refs/remotes",
   ]);
@@ -351,14 +354,26 @@ export async function deleteBranch(
   if (at) {
     throw new GitOpError(`ブランチ ${branch} は作業ツリーで使用中です (${at})`);
   }
-  if (!force && !(await isMerged(cwd, branch))) {
+  if (!force && !(await isMerged(cwd, branch, sha))) {
     throw new GitOpError(
       `ブランチ ${branch} には、どこにも取り込まれていないコミットがあります`,
       true
     );
   }
   const upstream = await readUpstream(cwd, branch);
-  await runGit(cwd, ["branch", "-D", "--", branch]);
+  // 確かめた sha のままのときだけ消す。確かめている間に別の worktree や CLI が
+  // ブランチを進めたら、確かめていない先端を消さずに断る (元に戻す sha とも食い違う)
+  await runGit(cwd, ["update-ref", "-d", `refs/heads/${branch}`, sha]).catch(
+    () => {
+      throw new GitOpError(
+        `ブランチ ${branch} が確かめている間に動いたので、削除をやめました`
+      );
+    }
+  );
+  // branch -D と同じく、ブランチの設定 (追跡先など) も消す
+  await runGit(cwd, ["config", "--remove-section", `branch.${branch}`]).catch(
+    () => undefined
+  );
   return upstream ? { sha, upstream } : { sha };
 }
 
@@ -445,35 +460,89 @@ export async function pushBranch(
   return { remote, remoteBranch: branch };
 }
 
-/** リモートの既定のブランチ (`<remote>/HEAD` の指す先)。取っていなければ null */
-async function remoteDefaultBranch(
-  cwd: string,
-  remote: string
-): Promise<string | null> {
-  const { stdout } = await runGit(cwd, [
-    "for-each-ref",
-    "--format=%(symref)",
-    `refs/remotes/${remote}/HEAD`,
-  ]);
-  const target = stdout.trim();
-  const prefix = `refs/remotes/${remote}/`;
-  return target.startsWith(prefix) ? target.slice(prefix.length) : null;
+/**
+ * fetch の refspec を逆にたどり、追跡ブランチ (`refs/remotes/...`) の元の ref を求める。
+ * 追跡ブランチの名前から元のブランチ名は決まらない (`+refs/heads/*:refs/remotes/origin/review/*`
+ * なら `origin/review/topic` の元は `topic`)。たどれなければ null
+ */
+export function sourceOfTrackingRef(
+  trackingRef: string,
+  refspecs: readonly string[]
+): string | null {
+  for (const raw of refspecs) {
+    const spec = raw.startsWith("+") ? raw.slice(1) : raw;
+    const colon = spec.indexOf(":");
+    if (spec.startsWith("^") || colon === -1) continue;
+    const src = spec.slice(0, colon);
+    const dst = spec.slice(colon + 1);
+    const star = dst.indexOf("*");
+    if (star === -1) {
+      if (dst === trackingRef) return src;
+      continue;
+    }
+    if (src.split("*").length !== 2) continue;
+    const pre = dst.slice(0, star);
+    const post = dst.slice(star + 1);
+    if (
+      trackingRef.length > pre.length + post.length &&
+      trackingRef.startsWith(pre) &&
+      trackingRef.endsWith(post)
+    ) {
+      return src.replace(
+        "*",
+        trackingRef.slice(pre.length, trackingRef.length - post.length)
+      );
+    }
+  }
+  return null;
 }
 
-/** リモートのブランチを消す。リモートの既定のブランチは消さない */
+/**
+ * 追跡ブランチ trackingName (`origin/feat/x`) の元のブランチをリモート remote から消す。
+ * 元のブランチは fetch の refspec でたどり、たどれなければ消さない。
+ * リモートの既定のブランチ (`<remote>/HEAD` の指す先) も消さない
+ */
 export async function deleteRemoteBranch(
   cwd: string,
   remote: unknown,
-  name: unknown
+  trackingName: unknown
 ): Promise<void> {
   const remoteName = await assertRemote(cwd, remote);
-  const branch = await assertBranchName(cwd, name);
-  if ((await remoteDefaultBranch(cwd, remoteName)) === branch) {
+  if (
+    typeof trackingName !== "string" ||
+    !trackingName.startsWith(`${remoteName}/`) ||
+    /[\0\n]/.test(trackingName)
+  ) {
+    throw new GitOpError("リモートのブランチの指定が不正です");
+  }
+  const trackingRef = `refs/remotes/${trackingName}`;
+  if (!(await refSha(cwd, trackingRef))) {
+    throw new GitOpError(`${trackingName} が見つかりません`);
+  }
+  const refspecs = (
+    await runGit(cwd, ["config", "--get-all", `remote.${remoteName}.fetch`])
+      .then(r => r.stdout)
+      .catch(() => "")
+  )
+    .split("\n")
+    .filter(Boolean);
+  const source = sourceOfTrackingRef(trackingRef, refspecs);
+  if (!source?.startsWith("refs/heads/")) {
     throw new GitOpError(
-      `${remoteName}/${branch} はリモートの既定のブランチなので消せません`
+      `${trackingName} がリモートのどのブランチか、fetch の設定から特定できません`
     );
   }
-  await runGit(cwd, ["push", "--", remoteName, `:refs/heads/${branch}`], {
+  const { stdout } = await runGit(cwd, [
+    "for-each-ref",
+    "--format=%(symref)",
+    `refs/remotes/${remoteName}/HEAD`,
+  ]);
+  if (stdout.trim() === trackingRef) {
+    throw new GitOpError(
+      `${trackingName} はリモートの既定のブランチなので消せません`
+    );
+  }
+  await runGit(cwd, ["push", "--", remoteName, `:${source}`], {
     remote: true,
   });
 }

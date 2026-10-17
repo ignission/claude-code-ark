@@ -15,6 +15,7 @@ import {
   pullFastForward,
   pushBranch,
   renameBranch,
+  sourceOfTrackingRef,
 } from "./git-ops.js";
 
 let root: string;
@@ -85,6 +86,31 @@ describe("describeStderr", () => {
       "something went wrong"
     );
     expect(describeStderr("")).toBe("");
+  });
+});
+
+describe("sourceOfTrackingRef", () => {
+  it("refspec を逆にたどる", () => {
+    const std = ["+refs/heads/*:refs/remotes/origin/*"];
+    expect(sourceOfTrackingRef("refs/remotes/origin/feat/x", std)).toBe(
+      "refs/heads/feat/x"
+    );
+    expect(
+      sourceOfTrackingRef("refs/remotes/origin/review/topic", [
+        "+refs/heads/*:refs/remotes/origin/review/*",
+      ])
+    ).toBe("refs/heads/topic");
+    expect(
+      sourceOfTrackingRef("refs/remotes/origin/main", [
+        "+refs/heads/main:refs/remotes/origin/main",
+      ])
+    ).toBe("refs/heads/main");
+    expect(
+      sourceOfTrackingRef("refs/remotes/origin/x", [
+        "^refs/heads/x",
+        "+refs/heads/main:refs/remotes/origin/main",
+      ])
+    ).toBeNull();
   });
 });
 
@@ -399,16 +425,20 @@ describe("リモート", () => {
     await fetchAll(dir);
     git("remote", "set-head", "origin", "main");
 
-    await deleteRemoteBranch(dir, "origin", "topic");
+    await deleteRemoteBranch(dir, "origin", "origin/topic");
     expect(hasRef("refs/heads/topic", bare)).toBe(false);
     expect(hasRef("refs/remotes/origin/topic")).toBe(false);
 
-    await expect(deleteRemoteBranch(dir, "origin", "main")).rejects.toThrow(
-      "既定のブランチ"
-    );
     await expect(
-      deleteRemoteBranch(dir, "--upload-pack=x", "topic")
+      deleteRemoteBranch(dir, "origin", "origin/main")
+    ).rejects.toThrow("既定のブランチ");
+    await expect(
+      deleteRemoteBranch(dir, "--upload-pack=x", "--upload-pack=x/topic")
     ).rejects.toThrow("リモートが見つかりません");
+    // 別のリモートの追跡ブランチは指せない
+    await expect(
+      deleteRemoteBranch(dir, "origin", "other/main")
+    ).rejects.toThrow("不正です");
     expect(hasRef("refs/heads/main", bare)).toBe(true);
   });
 
@@ -421,8 +451,38 @@ describe("リモート", () => {
       remoteBranch: "main",
     });
     git("push", "-q", "--", "-dash", "main:topic");
-    await deleteRemoteBranch(dir, "-dash", "topic");
+    await fetchAll(dir);
+    await deleteRemoteBranch(dir, "-dash", "-dash/topic");
     expect(hasRef("refs/heads/topic", bare)).toBe(false);
+  });
+
+  it("fetch の refspec をたどって、追跡ブランチの元のブランチを消す", async () => {
+    commit("c1");
+    git("push", "-q", "origin", "main", "main:topic", "main:review/topic");
+    git(
+      "config",
+      "remote.origin.fetch",
+      "+refs/heads/*:refs/remotes/origin/review/*"
+    );
+    await fetchAll(dir);
+    // origin/review/topic の元は topic (review/topic ではない)
+    await deleteRemoteBranch(dir, "origin", "origin/review/topic");
+    expect(hasRef("refs/heads/topic", bare)).toBe(false);
+    expect(hasRef("refs/heads/review/topic", bare)).toBe(true);
+  });
+
+  it("fetch の設定でたどれない追跡ブランチは消さない", async () => {
+    commit("c1");
+    git("push", "-q", "origin", "main", "main:topic");
+    git("update-ref", "refs/remotes/origin/stray", git("rev-parse", "HEAD"));
+    git(
+      "config",
+      "remote.origin.fetch",
+      "+refs/heads/main:refs/remotes/origin/main"
+    );
+    await expect(
+      deleteRemoteBranch(dir, "origin", "origin/stray")
+    ).rejects.toThrow("特定できません");
   });
 
   it("リモートの無いリポジトリで push すると理由を返す", async () => {

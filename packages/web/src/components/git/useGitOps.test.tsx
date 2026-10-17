@@ -156,11 +156,14 @@ describe("useGitOps", () => {
 
   it("リモートのブランチの削除は確かめてから行う", async () => {
     const { api } = setup();
-    actions.deleteRemoteBranch("origin", "feat/x");
+    actions.deleteRemoteBranch("origin", "origin/feat/x");
     await flush();
     expect(api.deleteRemoteBranch).not.toHaveBeenCalled();
     click(byText("削除"));
     await flush();
-    expect(api.deleteRemoteBranch).toHaveBeenCalledWith("origin", "feat/x");
+    expect(api.deleteRemoteBranch).toHaveBeenCalledWith(
+      "origin",
+      "origin/feat/x"
+    );
   });
 });
