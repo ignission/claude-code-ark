@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyGhError,
+  type GhResult,
   PrStatusCollector,
   parsePrView,
   summarizeChecks,
@@ -86,7 +87,8 @@ describe("PrStatusCollector", () => {
     ];
     const calls: string[] = [];
     const collector = new PrStatusCollector(
-      async cwd => {
+      async (cwd, args) => {
+        if (args[0] === "auth") return { kind: "error", message: "old gh" };
         calls.push(cwd);
         if (cwd === "/wt/b") return { kind: "none" };
         return {
@@ -133,7 +135,10 @@ describe("PrStatusCollector の読み取りの失敗", () => {
     ];
     let call = 0;
     const collector = new PrStatusCollector(
-      async () => results[call++],
+      async (_cwd, args) =>
+        args[0] === "auth"
+          ? { kind: "error", message: "old gh" }
+          : results[call++],
       () => [{ sessionId: "a", worktreePath: "/wt/a" }]
     );
     await collector.collect();
@@ -156,9 +161,100 @@ describe("classifyGhError", () => {
         ""
       )
     ).toEqual({ kind: "none" });
+    expect(
+      classifyGhError(
+        "GraphQL: Could not resolve to a Repository with the name 'o/r'. (repository)",
+        ""
+      )
+    ).toEqual({ kind: "noaccess" });
     expect(classifyGhError("", "Command failed: timed out")).toEqual({
       kind: "error",
       message: "Command failed: timed out",
     });
+  });
+});
+
+describe("PrStatusCollector の複数アカウント", () => {
+  const prJson = JSON.stringify({
+    number: 7,
+    url: "u",
+    state: "OPEN",
+    isDraft: false,
+    headRefOid: "h",
+    statusCheckRollup: [],
+  });
+  /** login と見えるworktreeの組で、ghの応答を作る */
+  function fakeGh(
+    logins: () => Array<{ login: string; active: boolean }>,
+    visible: Record<string, string[]>,
+    calls: string[]
+  ) {
+    return async (
+      cwd: string,
+      args: string[],
+      token?: string
+    ): Promise<GhResult> => {
+      if (args[1] === "status") {
+        return {
+          kind: "ok",
+          stdout: JSON.stringify({
+            hosts: {
+              "github.com": logins().map(l => ({ ...l, state: "success" })),
+            },
+          }),
+        };
+      }
+      if (args[1] === "token") {
+        return { kind: "ok", stdout: `tok-${args.at(-1)}\n` };
+      }
+      calls.push(`${cwd}:${token}`);
+      const login = token?.replace("tok-", "") ?? "";
+      return visible[login]?.includes(cwd)
+        ? { kind: "ok", stdout: prJson }
+        : { kind: "noaccess" };
+    };
+  }
+
+  it("有効なアカウントから試し、見えたアカウントを覚える", async () => {
+    const calls: string[] = [];
+    const collector = new PrStatusCollector(
+      fakeGh(
+        () => [
+          { login: "b", active: false },
+          { login: "a", active: true },
+        ],
+        { a: ["/wt/x"], b: ["/wt/y"] },
+        calls
+      ),
+      () => [
+        { sessionId: "x", worktreePath: "/wt/x" },
+        { sessionId: "y", worktreePath: "/wt/y" },
+      ]
+    );
+    await collector.collect();
+    expect(calls).toEqual(["/wt/x:tok-a", "/wt/y:tok-a", "/wt/y:tok-b"]);
+    expect(collector.get("x")?.number).toBe(7);
+    expect(collector.get("y")?.number).toBe(7);
+
+    calls.length = 0;
+    await collector.collect();
+    expect(calls).toEqual(["/wt/x:tok-a", "/wt/y:tok-b"]);
+  });
+
+  it("どのアカウントからも見えなければ null にして、顔ぶれが変わるまで読まない", async () => {
+    const calls: string[] = [];
+    let logins = [{ login: "a", active: true }];
+    const collector = new PrStatusCollector(
+      fakeGh(() => logins, { c: ["/wt/z"] }, calls),
+      () => [{ sessionId: "z", worktreePath: "/wt/z" }]
+    );
+    await collector.collect();
+    await collector.collect();
+    expect(calls).toEqual(["/wt/z:tok-a"]);
+    expect(collector.get("z")).toBeNull();
+
+    logins = [...logins, { login: "c", active: false }];
+    await collector.collect();
+    expect(collector.get("z")?.number).toBe(7);
   });
 });
