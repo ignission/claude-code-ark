@@ -94,6 +94,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { useOpenTerminalOnAuq } from "@/hooks/useOpenTerminalOnAuq";
 import type { ActiveAuq } from "@/lib/ask-user-question-state";
 import { readClipboardImages } from "@/lib/clipboard-images";
 import { FLOATING_BAR_BOTTOM } from "@/lib/floating-composer";
@@ -365,13 +366,22 @@ export function MobileSessionView({
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showRestartDialog, setShowRestartDialog] = useState(false);
   const [showShortcutManager, setShowShortcutManager] = useState(false);
-  // 質問カード (AskUserQuestion)。SplitChatPane から受け取り、状態の帯の文言と音声モードに使う。
-  // 会話モード以外では JSONL の購読が止まり、カードを閉じる判定が遅れて true が残ることがある。
+  // 回答待ちの質問 (AskUserQuestion)。SplitChatPane から受け取り、端末の窓を開くのと、
+  // 状態の帯の文言と音声モードに使う。
+  // 会話モード以外では JSONL の購読が止まり、回答済みの判定が遅れて true が残ることがある。
   // 帯は AWAITING のときだけこの値を見る (resolveStatusStrip) ので、確認が済めば帯は消える。
   // この値だけで帯を出す形に書き換えないこと
   const [activeAuq, setActiveAuq] = useState<ActiveAuq | null>(null);
   const hasActiveAuq = activeAuq !== null;
-  // 音声モード (iPhone)。会話ビューのイベント列と質問カードを受け取り、話して送り、返答を読む。
+  const openTerminalOnAuq = useOpenTerminalOnAuq(isActive, openTerminal);
+  const handleActiveAuqChange = useCallback(
+    (auq: ActiveAuq | null) => {
+      setActiveAuq(auq);
+      openTerminalOnAuq(auq);
+    },
+    [openTerminalOnAuq]
+  );
+  // 音声モード (iPhone)。会話ビューのイベント列と回答待ちの質問を受け取り、話して送り、返答を読む。
   // 診断はサーバーのログに1行残す (本文は送らない)
   const emitVoiceDiagnostic = useCallback(
     (kind: string, detail: string) => {
@@ -1075,8 +1085,8 @@ export function MobileSessionView({
           </div>
         </header>
 
-        {/* 状態の帯 (32px)。文言は状態と質問カードの有無だけから作り、端末の画面は解釈しない。
-          会話モードでは質問カードと AwaitingPad が入力欄の上に出ているので、ボタンを付けない */}
+        {/* 状態の帯 (32px)。文言は状態と回答待ちの質問の有無だけから作り、端末の画面は解釈しない。
+          会話モードでは AwaitingPad が入力欄の上に出て、質問なら端末の窓が開くので、ボタンを付けない */}
         {statusStrip && (
           <div className="shrink-0 px-3 pb-2">
             <div
@@ -1133,7 +1143,7 @@ export function MobileSessionView({
             onSendKey={onSendKey}
             onUploadFile={onUploadFile}
             onOpenTerminal={openTerminal}
-            onActiveAuqChange={setActiveAuq}
+            onActiveAuqChange={handleActiveAuqChange}
             onEventsChange={voice.pushEvents}
             layout="mobile"
             composerAccessory={bottomBarTop}

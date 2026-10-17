@@ -81,7 +81,7 @@ export interface UseVoiceModeOptions {
   /** サーバーとの接続。切れていたら送らない */
   isConnected: boolean;
   bridgeStatus: BridgeSessionStatus | undefined;
-  /** 回答待ちの質問カード (会話ビューから受け取る)。無ければ null */
+  /** 回答待ちの質問 (会話ビューから受け取る)。無ければ null */
   activeAuq: ActiveAuq | null;
   onSendMessage: (message: string) => void;
   /** 実機の挙動をサーバーのログに残す。本文は渡さない (文字数だけ) */
@@ -406,7 +406,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
     });
   }, [isOff, isPaused, activeAuq, dispatch, diagnose]);
 
-  // 権限確認など (質問カードの無い AWAITING) と、画面での操作が済んだこと。
+  // 権限確認など (質問の無い AWAITING) と、画面での操作が済んだこと。
   // 1回の確認につき1度だけ案内する。確認が残ったまま帯から戻った直後にまた畳むと、
   // 全画面の「終了」に手が届かなくなるため。聞き取り中に出た確認は、聞き取りを抜けてから案内する
   useEffect(() => {
@@ -518,7 +518,7 @@ export function useVoiceMode(options: UseVoiceModeOptions): VoiceModeControls {
     [dispatch]
   );
   const expand = useCallback(() => dispatch({ type: "expand" }), [dispatch]);
-  // 再開した時点で質問カードか権限確認が残っていれば、聞き取らずに画面での操作へ戻す
+  // 再開した時点で質問か権限確認が残っていれば、聞き取らずに画面での操作へ戻す
   // (聞き取りの全画面が回答カードを覆わないように)
   const resume = useCallback(() => {
     const current = optionsRef.current;

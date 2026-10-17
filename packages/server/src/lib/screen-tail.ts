@@ -1,39 +1,28 @@
 /**
- * auq-screen-context - AUQ カード「直前の画面」スナップショットの整形
- *
- * 背景:
- *   対話版 claude は AUQ を含むターン全体 (直前のテキスト + tool_use +
- *   tool_result) を回答確定時にまとめて JSONL へ書くため、質問表示中は
- *   直前の会話文脈が transcript に存在しない。カードに文脈を出すには
- *   hook 受信時点の tmux 画面 (= ストリーム済みの直前テキストが表示
- *   されている) を capture するしかない。
+ * screen-tail - 会話ビューの帯 (`session:previews` の `liveTail`) に出す、端末の画面末尾の整形
  *
  * 原則との境界 (重要):
  *   「画面テキストのパース全面禁止」の原則が禁じるのは画面を構造に
- *   *解釈* すること。このモジュールは capture-pane 出力を一切解釈せず
+ *   *解釈* すること。このモジュールは capture-pane 出力を解釈せず
  *   verbatim のまま表示用に渡す (行う加工は末尾空行の除去とサイズ上限
  *   のみ)。existence チェック (bridgeStatus) と同じ側の許容範囲であり、
  *   ここに正規表現での内容抽出等を足してはならない。
  *
  * 例外 (1つだけ):
- *   会話ビューの帯 (`liveTail`) は、末尾にある入力欄の枠から下を出さない
- *   (`dropTrailingPromptBox`)。帯は数行しかなく、枠と状態の行で半分が埋まるため。
+ *   帯は、末尾にある入力欄の枠から下を出さない (`dropTrailingPromptBox`)。
+ *   帯は数行しかなく、枠と状態の行で半分が埋まるため。
  *   見るのは行の形 (罫線だけの行が2本あるか) だけで、行の中身は読まず、
  *   残す行は書き換えない。形が合わなければ何も落とさない。
- *   AUQ カードの「直前の画面」には使わない。
  */
-
-/** hook 受信時に capture-pane へ要求する行数 (scrollback 込み) */
-export const AUQ_SCREEN_CAPTURE_LINES = 60;
 
 const DEFAULT_MAX_LINES = 40;
 const DEFAULT_MAX_CHARS = 4000;
 
 /**
- * capture-pane の生出力を「直前の画面」表示用に整形する。
- * 内容の解釈はしない。null / 空白のみは null (カード側は非表示)。
+ * capture-pane の生出力を表示用に整形する。
+ * 内容の解釈はしない。null / 空白のみは null (帯は出さない)。
  */
-export function buildAuqScreenContext(
+export function buildScreenTail(
   raw: string | null,
   opts: { maxLines?: number; maxChars?: number } = {}
 ): string | null {

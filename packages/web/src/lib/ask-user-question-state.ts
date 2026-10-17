@@ -1,20 +1,9 @@
 /**
- * ask-user-question-state - AskUserQuestion の JSONL ベース状態抽出と
- * tmux キー送出列の構築 (純粋関数)。
+ * ask-user-question-state - AskUserQuestion の回答待ちの状態 (純粋関数)。
  *
- * 設計原則 (チャット UI v3): 質問・選択肢・回答状態はすべて JSONL の
+ * 質問の中身は PreToolUse hook (session:auq) から、回答済みかどうかは JSONL の
  * tool_use / tool_result から得る。tmux 画面のパースは行わない。
- * 「回答待ち」= tool_use に対応する tool_result が未出現 (status: "running")。
- *
- * キー操作列は 2026-06-10 の実機スパイクで確定した挙動に基づく:
- *  - 単問 single-select: digit 一発で即 submit (Enter 不要・Review 無し)
- *  - multiSelect: digit = トグル。submit は Right → Review 画面 → digit 1
- *  - 複数質問: single 回答 (digit) で自動的に次タブへ。全問回答後は必ず
- *    Review 画面が出るので digit 1 (Submit answers) が必要
- *  - Review 画面が出る条件 = 質問が複数 or multiSelect を含む
- *  - 自由入力 "Type something." = options.length+1 にフォーカス (digit) →
- *    literal 一括送信 → Enter で確定
- *  - Escape は一発で全体 decline
+ * 回答は端末で行う (Ark は質問が来たら端末を開くだけで、キーは送らない)。
  */
 
 import type { JsonlParsedEvent, ToolCallEvent } from "./jsonl-event-parser";
@@ -31,23 +20,11 @@ export interface AuqQuestion {
   options: AuqOption[];
 }
 
-/** 回答待ちの AskUserQuestion (アクティブカードの描画対象) */
+/** 回答待ちの AskUserQuestion */
 export interface ActiveAuq {
   toolUseId: string;
   questions: AuqQuestion[];
 }
-
-/** ユーザーが UI 上で選んだ回答 (キー送出列の入力) */
-export type AuqAnswer =
-  | { kind: "options"; indexes: number[] } // 0-based。single なら 1 要素
-  | { kind: "free"; text: string };
-
-/** キー送出ステップ。UI 層が順番に dispatch する */
-export type AuqKeyStep =
-  | { kind: "digit"; value: string } // session:key (1-9)
-  | { kind: "key"; value: "Right" | "Enter" } // session:key
-  | { kind: "literal"; value: string } // session:send-literal
-  | { kind: "wait"; ms: number };
 
 /** input.questions を型ガードしつつ正規化する。形が想定外なら null */
 export function parseAuqInput(
@@ -88,12 +65,12 @@ export function parseAuqInput(
  *
  * 対話版 claude は AUQ の tool_use を「回答/拒否が確定した瞬間」に
  * tool_result とまとめて JSONL へ書く (= 質問表示中は JSONL に何も出ない)。
- * そのため回答待ちカードの表示開始は PreToolUse hook (session:auq) が担い、
- * この関数は「カードを閉じてよいか」(解決イベントが書かれたか) の判定に使う。
+ * そのため回答待ちの始まりは PreToolUse hook (session:auq) が知らせ、
+ * この関数は「回答待ちが終わったか」(解決イベントが書かれたか) の判定に使う。
  *
- * 比べるのは tool_result の時刻 (回答確定時刻)。回答はカードが出てから (= hook 受信の
+ * 比べるのは tool_result の時刻 (回答確定時刻)。回答は質問が出てから (= hook 受信の
  * 後) にしかできないので、at より後であれば足りる (同一ホストなのでクロックずれは数 ms)。
- * 余裕を持たせると、直前の質問に答えた数秒後に出た次の質問のカードを前の回答で閉じてしまう。
+ * 余裕を持たせると、直前の質問に答えた数秒後に出た次の質問を、前の回答で終わったとみなしてしまう。
  * tool_use の timestamp はモデルが出力した時刻で、PreToolUse hook が遅いと at より
  * 数十秒前になる (実測 30 秒) ので、tool_result の時刻が無いときだけ従来の 5 秒幅で使う。
  */
@@ -117,75 +94,4 @@ export function hasResolvedAuqSince(
     return false;
   }
   return false;
-}
-
-/** Review 画面 (Submit answers 確認) が出るか。実機検証に基づく条件 */
-export function needsReview(questions: AuqQuestion[]): boolean {
-  return questions.length > 1 || questions.some(q => q.multiSelect);
-}
-
-/** 自由入力 "Type something." の TUI 上の番号 (1-based) */
-export function freeTextDigit(q: AuqQuestion): number {
-  return q.options.length + 1;
-}
-
-/**
- * 回答列からキー送出ステップ列を構築する。
- * answers は questions と同じ長さ・同じ順序であること。
- *
- * 制約: TUI の digit ジャンプは 1〜9 のみ。選択肢が 9 個を超えるケースや
- * freeTextDigit が 10 以上になるケースは null を返す (UI 側でターミナル
- * 誘導にフォールバックする)。
- */
-export function buildKeySequence(
-  questions: AuqQuestion[],
-  answers: AuqAnswer[]
-): AuqKeyStep[] | null {
-  if (questions.length !== answers.length) return null;
-  const steps: AuqKeyStep[] = [];
-  for (let i = 0; i < questions.length; i++) {
-    const q = questions[i];
-    const a = answers[i];
-    if (a.kind === "free") {
-      const digit = freeTextDigit(q);
-      if (digit > 9) return null;
-      // digit でフォーカス → テキスト一括 literal → Enter で確定
-      // (確定は single 回答と同じセマンティクスで自動的に次タブへ進む)
-      steps.push({ kind: "digit", value: String(digit) });
-      steps.push({ kind: "wait", ms: 300 });
-      steps.push({ kind: "literal", value: a.text });
-      steps.push({ kind: "wait", ms: 200 });
-      steps.push({ kind: "key", value: "Enter" });
-      steps.push({ kind: "wait", ms: 300 });
-    } else if (q.multiSelect) {
-      if (a.indexes.length === 0) return null;
-      for (const idx of a.indexes) {
-        // 範囲外 index (負数含む) は SpecialKey 型外の digit ("0" 等) を
-        // 生成し得るため明示的に拒否する
-        if (idx < 0 || idx >= q.options.length) return null;
-        if (idx + 1 > 9) return null;
-        steps.push({ kind: "digit", value: String(idx + 1) });
-        steps.push({ kind: "wait", ms: 150 });
-      }
-      // multiSelect はトグルだけでは次に進まないので Right でタブ送り
-      // (最後の質問なら Review 画面へ進む)
-      steps.push({ kind: "key", value: "Right" });
-      steps.push({ kind: "wait", ms: 300 });
-    } else {
-      if (a.indexes.length !== 1) return null;
-      const idx = a.indexes[0];
-      if (idx < 0 || idx >= q.options.length) return null;
-      if (idx + 1 > 9) return null;
-      // single-select は digit 一発で回答確定 + 自動タブ送り
-      // (単問の場合はこれだけで即 submit される)
-      steps.push({ kind: "digit", value: String(idx + 1) });
-      steps.push({ kind: "wait", ms: 300 });
-    }
-  }
-  if (needsReview(questions)) {
-    // Review 画面 (1. Submit answers / 2. Cancel) を digit 1 で確定
-    steps.push({ kind: "wait", ms: 200 });
-    steps.push({ kind: "digit", value: "1" });
-  }
-  return steps;
 }

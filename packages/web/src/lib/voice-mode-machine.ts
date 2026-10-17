@@ -82,7 +82,7 @@ export type VoiceAction =
   | { type: "stopSpeaking" }
   | { type: "screenResolved" }
   | { type: "expand" }
-  /** needsScreen: 再開した時点で質問カードか権限確認が残っている (画面での操作へ戻す) */
+  /** needsScreen: 再開した時点で質問か権限確認が残っている (画面での操作へ戻す) */
   | { type: "resume"; needsScreen: boolean }
   | { type: "retryUnsent"; now: number }
   | { type: "dismissUnsent" };

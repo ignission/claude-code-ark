@@ -281,7 +281,7 @@ describe("SplitChatPane: ツール行の折りたたみ", () => {
   });
 });
 
-describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
+describe("SplitChatPane: ヘッダー行と回答待ちの質問の通知", () => {
   it("自前のヘッダー行 (busy表示・購読ドット) を出さない", () => {
     const { container } = renderChat({ bridgeStatus: "TOOL" });
 
@@ -290,7 +290,7 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
     expect(container.querySelector('[title="JSONL 購読中"]')).toBeNull();
   });
 
-  it("質問カードが変わるたびに、そのカードの中身 (無ければ null) でonActiveAuqChangeを呼ぶ", () => {
+  it("回答待ちの質問が変わるたびに、その中身 (無ければ null) でonActiveAuqChangeを呼ぶ", () => {
     const at = Date.parse("2026-09-17T00:00:00Z");
     const questions = [
       {
@@ -306,7 +306,6 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
       sessionId: "s1",
       at,
       questions,
-      screen: null,
     });
     expect(onActiveAuqChange).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -316,7 +315,7 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
       })
     );
 
-    // 回答がJSONLに書かれるとカードが閉じる
+    // 回答がJSONLに書かれると回答待ちが終わる
     emitServer("session:jsonl-snapshot", {
       sessionId: "s1",
       lines: [
@@ -353,6 +352,64 @@ describe("SplitChatPane: ヘッダー行と質問カードの通知", () => {
       ],
     });
     expect(onActiveAuqChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("回答済みの質問が再購読で送り直されても、回答待ちとは伝えない (端末を開かない)", () => {
+    const at = Date.parse("2026-09-17T00:00:00Z");
+    const questions = [
+      { question: "どちらにしますか？", options: [{ label: "A" }] },
+    ];
+    const onActiveAuqChange = vi.fn();
+    const { emitServer } = renderChat({ onActiveAuqChange });
+    emitServer("session:jsonl-snapshot", {
+      sessionId: "s1",
+      lines: [
+        line({
+          type: "assistant",
+          uuid: "q1",
+          timestamp: new Date(at + 1000).toISOString(),
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "auq1",
+                name: "AskUserQuestion",
+                input: { questions },
+              },
+            ],
+          },
+        }),
+        line({
+          type: "user",
+          uuid: "q1r",
+          timestamp: new Date(at + 2000).toISOString(),
+          message: {
+            role: "user",
+            content: [
+              { type: "tool_result", tool_use_id: "auq1", content: "A" },
+            ],
+          },
+        }),
+      ],
+    });
+    emitServer("session:auq", { sessionId: "s1", at, questions });
+    expect(onActiveAuqChange).not.toHaveBeenCalledWith(
+      expect.objectContaining({ toolUseId: `hook:${at}` })
+    );
+  });
+
+  it("回答待ちの質問があっても、選択肢のカードは出さない", () => {
+    const { container, emitServer } = renderChat({ bridgeStatus: "AWAITING" });
+    emitServer("session:auq", {
+      sessionId: "s1",
+      at: Date.parse("2026-09-17T00:00:00Z"),
+      questions: [
+        { question: "どちらにしますか？", options: [{ label: "A" }] },
+      ],
+    });
+    expect(container.textContent).not.toContain("どちらにしますか？");
+    expect(container.textContent).not.toContain("確認待ち");
   });
 
   it("JSONLのイベント列が変わるたびに、最初の履歴が届いたかと一緒にonEventsChangeで渡す", () => {
@@ -779,7 +836,7 @@ describe("SplitChatPane: 作業中の表示", () => {
     expect(indicator(container)?.textContent).toContain("考えています");
   });
 
-  it("質問カードが出ている間は出さない", () => {
+  it("回答待ちの質問がある間は出さない", () => {
     const { container, emitServer } = renderChat({ bridgeStatus: "THINK" });
     emitServer("session:auq", {
       sessionId: "s1",
@@ -790,14 +847,13 @@ describe("SplitChatPane: 作業中の表示", () => {
           options: [{ label: "A" }, { label: "B" }],
         },
       ],
-      screen: null,
     });
     expect(indicator(container)).toBeNull();
   });
 });
 
 describe("SplitChatPane: 確認待ちのカード", () => {
-  it("質問カードが無い確認待ちは「確認待ち」のチップ付きのカードで出し、キーを送れる", () => {
+  it("質問の無い確認待ちは「確認待ち」のチップ付きのカードで出し、キーを送れる", () => {
     const { container, onSendKey } = renderChat({
       bridgeStatus: "AWAITING",
       awaitingText: "Do you want to proceed?\n  1. Yes\n  2. No",

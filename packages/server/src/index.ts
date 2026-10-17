@@ -37,10 +37,6 @@ import {
   AUQ_TOKEN_HEADER,
   auqHookBridge,
 } from "./lib/auq-hook-bridge.js";
-import {
-  AUQ_SCREEN_CAPTURE_LINES,
-  buildAuqScreenContext,
-} from "./lib/auq-screen-context.js";
 import { authManager } from "./lib/auth.js";
 import {
   type BoardMcpDeps,
@@ -560,33 +556,15 @@ export async function startServer(
       res.status(204).end();
       return;
     }
-    // 直前の会話文脈は AUQ 解決まで JSONL に書かれないため、hook 受信の
-    // この瞬間 (質問ボックス描画前後) の tmux 画面を verbatim で添付する。
-    // 解釈はしない (auq-screen-context.ts の原則境界コメント参照)
-    // capture に失敗しても AUQ カード自体は出す (画面添付だけ欠ける)。
-    // 「値が無い」のではなく tmux が失敗したことを、理由付きで残す (#393)
-    const captured = tmuxManager.capturePane(
-      session.id,
-      AUQ_SCREEN_CAPTURE_LINES
-    );
-    if (!captured.ok) {
-      console.warn(
-        `[AuqHook] ${session.id}: 直前の画面を取得できません (${describeTmuxReadFailure(captured.failure)})`
-      );
-    }
-    const screen = buildAuqScreenContext(captured.ok ? captured.value : null);
     const entry = auqHookBridge.setPending(
       session.id,
-      body.tool_input.questions,
-      screen
+      body.tool_input.questions
     );
-    // screen は端末の生画面なので、コマンド出力・パス・token 等を含みうる。
-    // 全 socket への broadcast はやめ、当該セッションの購読者だけへ送る
+    // 当該セッションの会話ビューを開いている socket だけへ送る (端末を開く合図)
     io.to(sessionRoom(session.id)).emit("session:auq", {
       sessionId: session.id,
       at: entry.at,
       questions: entry.questions,
-      screen: entry.screen,
     });
     console.log(`[AuqHook] session:auq 配信: ${session.id} (${body.cwd})`);
     res.status(204).end();
@@ -2380,7 +2358,7 @@ export async function startServer(
         });
         jsonlUnsubscribers.set(sessionId, unsubscribe);
         // このセッションの会話ビューを開いている socket として登録する
-        // （session:auq の配信先。broadcast による端末画面の漏洩を防ぐ）
+        // （session:auq の配信先）
         socket.join(sessionRoom(sessionId));
       } catch (err) {
         console.error("[JsonlTail] Subscribe error:", getErrorMessage(err));
@@ -2396,7 +2374,6 @@ export async function startServer(
           sessionId,
           at: pendingAuq.at,
           questions: pendingAuq.questions,
-          screen: pendingAuq.screen,
         });
       }
     });

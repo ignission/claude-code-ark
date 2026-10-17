@@ -5,6 +5,8 @@
  * セッションの画面全体に重ねる窓 (FloatingTerminal) の中に置く。
  * - 端末への入口は、会話の入力欄の上の帯 (画面末尾を覗く帯。SplitChatPane が描く)。
  *   帯を押すと窓が開く。窓の枠と閉じ方の決まりは FloatingTerminal.tsx にある
+ * - Claudeが質問 (AskUserQuestion) を出したら、窓を自動で開く。質問には端末で答える
+ *   (決まりは useOpenTerminalOnAuq.ts)
  * - 窓を左のパネルではなくセッションの画面全体に重ねるのは、左のパネルが360pxまで
  *   縮むため (その中では端末が狭い)
  * - 端末 (TerminalPane) は1つだけを常にマウントし、窓を閉じている間は hidden で残す。
@@ -79,6 +81,7 @@ import {
   useState,
 } from "react";
 import type { Socket } from "socket.io-client";
+import { useOpenTerminalOnAuq } from "@/hooks/useOpenTerminalOnAuq";
 import { cn } from "@/lib/utils";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { focusInput } from "../lib/keynav-dom";
@@ -375,6 +378,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
   if (!props.isActive && terminalOpen) setTerminalOpen(false);
   const openTerminal = useCallback(() => setTerminalOpen(true), []);
   const closeTerminal = useCallback(() => setTerminalOpen(false), []);
+  const openTerminalOnAuq = useOpenTerminalOnAuq(props.isActive, openTerminal);
 
   // 開いたら端末へ、閉じたら会話の入力欄へフォーカスを移す。focusInput は、窓が開いて
   // いれば端末 (フォーカスを受けられなければ窓の枠) を、閉じていれば会話の入力欄を選ぶ
@@ -756,6 +760,7 @@ export function SplitViewPane(props: SplitViewPaneProps) {
               awaitingText={props.awaitingText}
               liveTail={props.liveTail}
               onOpenTerminal={openTerminal}
+              onActiveAuqChange={openTerminalOnAuq}
               onSendMessage={props.onSendMessage}
               onSendKey={props.onSendKey}
               onUploadFile={props.onUploadFile}

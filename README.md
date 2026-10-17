@@ -39,13 +39,13 @@ You need to be logged in to Claude Code. If Claude Code has never run on the mac
 
 **Drive Ark from the keyboard.** Press `Ctrl+;` to enter normal mode, then `?` for the key list. `J` / `K` move between sessions, `n` jumps to the next session waiting for you, and `:` opens the command palette.
 
-**Answer from your phone.** Start Ark with `./scripts/start.sh --quick`, scan the QR code, and answer Claude's questions from the card that appears in the chat.
+**Answer from your phone.** Start Ark with `./scripts/start.sh --quick`, scan the QR code, and answer Claude's questions in the terminal that opens for them.
 
 ## Why Ark
 
 ### You can tell where every session stands without opening it
 
-The sidebar sorts sessions into "your turn", "working" and "idle". When Claude asks a question, Ark shows it as a card with the options as buttons, together with the terminal screen from just before the question.
+The sidebar sorts sessions into "your turn", "working" and "idle". When Claude asks a question, Ark opens the terminal so you can answer Claude Code's own prompt there.
 
 If a session's branch has a GitHub pull request, its row shows the PR number and the check result (✓ / ✕ / pending, merged, closed); clicking it opens the PR. When checks fail, Ark sends a notification. Ark reads this with the [GitHub CLI](https://cli.github.com/) (`gh`) once a minute.
 
@@ -79,12 +79,6 @@ With an [OpenRouter](https://openrouter.ai/) key, Ark can also decide for you wh
     src=".github/assets/ark-mobile-sessions.png"
     width="260"
     alt="The session list on a phone, grouped into your turn and idle"
-  />
-  &nbsp;&nbsp;
-  <img
-    src=".github/assets/ark-mobile-question.png"
-    width="260"
-    alt="A question from Claude shown on a phone as a card with numbered options"
   />
 </p>
 

@@ -4,8 +4,8 @@
  * 背景 (チャット UI v3):
  *   対話版 claude は AskUserQuestion の tool_use を「ユーザーが回答/拒否した
  *   瞬間」に tool_result とまとめて transcript (JSONL) へ書く。質問が画面に
- *   表示されている間、JSONL には何も出ない。そのため回答待ちの質問を
- *   リアルタイムにチャット UI へ出すには JSONL 以外の情報源が必要になる。
+ *   表示されている間、JSONL には何も出ない。そのため質問が出た瞬間を知って
+ *   端末を開く (回答は端末で行う) には JSONL 以外の情報源が必要になる。
  *
  * 方式:
  *   セッション起動時の claude コマンドに `--settings <このモジュールが生成
@@ -42,12 +42,6 @@ export interface PendingAuq {
   at: number;
   /** tool_input.questions の生データ */
   questions: unknown;
-  /**
-   * hook 受信時の tmux 画面スナップショット (verbatim・無解釈)。
-   * AUQ 表示中は直前の会話が JSONL に存在しないため、カードの
-   * 「直前の画面」表示にはこれが唯一の情報源。capture 失敗時は null
-   */
-  screen: string | null;
 }
 
 const PENDING_TTL_MS = 10 * 60 * 1000;
@@ -151,12 +145,8 @@ export class AuqHookBridge {
   }
 
   /** hook 受信を記録する (同一セッションの古い質問は上書き) */
-  setPending(
-    sessionId: string,
-    questions: unknown,
-    screen: string | null
-  ): PendingAuq {
-    const entry: PendingAuq = { at: Date.now(), questions, screen };
+  setPending(sessionId: string, questions: unknown): PendingAuq {
+    const entry: PendingAuq = { at: Date.now(), questions };
     this.pending.set(sessionId, entry);
     return entry;
   }
