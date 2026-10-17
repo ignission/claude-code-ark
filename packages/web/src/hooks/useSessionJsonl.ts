@@ -9,11 +9,18 @@
  *   - events: パース済みイベント配列 (描画用、安定参照を保つ)
  *   - toolMapRef: tool_use → tool_result マージ用の Map (state ではなく ref に置く。
  *     setState を経由させると差分マージが不必要に再描画を起こす)
+ *   - contextUsage: 最後の返答時点のコンテキストの使用量 (`lib/context-usage.ts`)。
+ *     usage は会話のイベントに出ないので、events とは別に生の行から読む
  */
 
 import type { ClientToServerEvents, ServerToClientEvents } from "@ark/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Socket } from "socket.io-client";
+import {
+  type ContextUsage,
+  latestContextUsage,
+  readContextUsage,
+} from "@/lib/context-usage";
 import {
   type JsonlParsedEvent,
   mergeJsonlLine,
@@ -36,6 +43,8 @@ export interface UseSessionJsonlResult {
   loadedLimit: number;
   /** 取得した snapshot の行数が limit と等しい (まだ読める可能性が高い) か */
   hasMore: boolean;
+  /** 最後の返答時点のコンテキストの使用量。まだ返答が無ければ null */
+  contextUsage: ContextUsage | null;
 }
 
 export function useSessionJsonl(
@@ -47,6 +56,7 @@ export function useSessionJsonl(
   const [hasSnapshot, setHasSnapshot] = useState(false);
   const [loadedLimit, setLoadedLimit] = useState(INITIAL_LIMIT);
   const [hasMore, setHasMore] = useState(true);
+  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   // tool_use → tool_result のマッピング。再描画を発生させたくないので ref で保持
   const toolMapRef = useRef(
     new Map<string, Extract<JsonlParsedEvent, { kind: "tool-call" }>>()
@@ -57,6 +67,7 @@ export function useSessionJsonl(
   useEffect(() => {
     if (!socket || !sessionId) {
       setEvents([]);
+      setContextUsage(null);
       setIsSubscribed(false);
       setHasSnapshot(false);
       setLoadedLimit(INITIAL_LIMIT);
@@ -67,6 +78,7 @@ export function useSessionJsonl(
     }
     setHasSnapshot(false);
     setEvents([]);
+    setContextUsage(null);
     setLoadedLimit(INITIAL_LIMIT);
     setHasMore(true);
     limitRef.current = INITIAL_LIMIT;
@@ -84,6 +96,8 @@ export function useSessionJsonl(
       }
       toolMapRef.current = map;
       setEvents(fresh);
+      // /clear でファイルが替わると空の snapshot が届き、ここで null に戻る
+      setContextUsage(latestContextUsage(data.lines));
       setHasSnapshot(true);
       // 受信行数 < 要求 limit ならファイル先頭まで到達したと判断
       setHasMore(data.lines.length >= limitRef.current);
@@ -92,6 +106,9 @@ export function useSessionJsonl(
     const handleLine = (data: { sessionId: string; line: string }) => {
       if (data.sessionId !== sessionId) return;
       setEvents(prev => mergeJsonlLine(prev, toolMapRef.current, data.line));
+      const usage = readContextUsage(data.line);
+      if (usage === "reset") setContextUsage(null);
+      else if (usage) setContextUsage(usage);
     };
 
     // サーバーは切断時にこの socket の JSONL 購読をすべて破棄する。socket のインスタンスは
@@ -129,5 +146,13 @@ export function useSessionJsonl(
     socket.emit("session:jsonl-load-more", { sessionId, limit: next });
   }, [socket, sessionId]);
 
-  return { events, isSubscribed, hasSnapshot, loadMore, loadedLimit, hasMore };
+  return {
+    events,
+    isSubscribed,
+    hasSnapshot,
+    loadMore,
+    loadedLimit,
+    hasMore,
+    contextUsage,
+  };
 }

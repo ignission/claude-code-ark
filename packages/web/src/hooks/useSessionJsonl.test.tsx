@@ -120,3 +120,35 @@ describe("useSessionJsonl の再接続", () => {
     root = createRoot(container);
   });
 });
+
+function usageLine(cacheRead: number): string {
+  return JSON.stringify({
+    type: "assistant",
+    message: {
+      role: "assistant",
+      model: "claude-opus-5-5",
+      usage: { input_tokens: 0, cache_read_input_tokens: cacheRead },
+      content: [],
+    },
+  });
+}
+
+describe("useSessionJsonl のコンテキストの使用量", () => {
+  it("snapshotの最後の値を出し、追記された行で更新し、空のsnapshot (/clear) で消す", () => {
+    expect(result.contextUsage).toBeNull();
+    socket.fire("session:jsonl-snapshot", {
+      sessionId: "s1",
+      lines: [usageLine(10_000), usageLine(30_000)],
+    });
+    expect(result.contextUsage).toEqual({ tokens: 30_000, window: 200_000 });
+
+    socket.fire("session:jsonl-line", {
+      sessionId: "s1",
+      line: usageLine(45_000),
+    });
+    expect(result.contextUsage).toEqual({ tokens: 45_000, window: 200_000 });
+
+    socket.fire("session:jsonl-snapshot", { sessionId: "s1", lines: [] });
+    expect(result.contextUsage).toBeNull();
+  });
+});

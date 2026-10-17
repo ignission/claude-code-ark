@@ -75,6 +75,7 @@ import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
 import { AskUserQuestionCard } from "@/components/AskUserQuestionCard";
 import { CodeBlock } from "@/components/CodeBlock";
+import { ContextUsageRing } from "@/components/ContextUsageRing";
 import { MermaidBlock } from "@/components/MermaidBlock";
 import { StatusChip } from "@/components/StatusChip";
 import { fileToBase64, validateFile } from "@/hooks/useFileUpload";
@@ -1273,10 +1274,8 @@ export function SplitChatPane({
   const [inputValue, setInputValue] = useState("");
 
   // JSONL: 会話の構造化履歴 (markdown レンダリング用)。アクティブ時のみ購読
-  const { events, loadMore, hasMore, hasSnapshot } = useSessionJsonl(
-    socket,
-    isActive ? session.id : null
-  );
+  const { events, loadMore, hasMore, hasSnapshot, contextUsage } =
+    useSessionJsonl(socket, isActive ? session.id : null);
 
   // Claude 処理中に送ったメッセージを即時表示するための pending state。
   // JSONL に同じテキストの user-input が現れたら自動で消える。
@@ -1945,6 +1944,7 @@ export function SplitChatPane({
         rows={1}
         className={`field-sizing-content max-h-32 min-w-0 flex-1 resize-none rounded-[20px] border border-border px-3.5 text-[15px] leading-[1.4] placeholder:text-muted-foreground focus:border-primary focus:outline-none ${composerSize.input}`}
       />
+      {contextUsage && <ContextUsageRing usage={contextUsage} />}
       <button
         type="submit"
         disabled={!inputValue.trim()}
