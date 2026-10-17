@@ -1795,41 +1795,50 @@ export async function startServer(
       }
     );
 
+    /**
+     * worktree を消す。そこで動いているセッションを止め、削除を全クライアントに配る。
+     * サイドバーの削除と、Git タブでブランチを作業ツリーごと消すときの共通の後始末
+     */
+    const removeWorktreeWithSession = async (
+      repoPath: string,
+      worktreePath: string
+    ): Promise<void> => {
+      // Find and stop any session using this worktree
+      const session = sessionOrchestrator.getSessionByWorktree(worktreePath);
+      if (session) {
+        sessionOrchestrator.stopSession(session.id);
+      }
+
+      // worktree IDをパスから決定的に導出（listWorktreesと同じロジック）
+      const deletedWorktreeId = Buffer.from(worktreePath)
+        .toString("base64")
+        .replace(/[/+=]/g, "");
+
+      // キャッシュキーは realpath 正規化済みパス。生パスで delete しても
+      // ヒットしないため、worktree が消える前に realpath を解決してその
+      // キーを消す（消し損ねると同じ realpath に新 worktree が作られた際、
+      // TTL 切れまで stale な検証結果を返し得る）。
+      const cachedReal = resolveManagedWorktreePath(worktreePath);
+      const result = await deleteWorktree(repoPath, worktreePath);
+      if (cachedReal) managedWorktreeCache.delete(cachedReal);
+      managedWorktreeCache.delete(worktreePath);
+      if (result.branchKeptReason) {
+        // ブランチが残った場合は調査の起点になるようハンドラー側でも記録する
+        console.log(`[Worktree] ${result.branchKeptReason} (repo=${repoPath})`);
+      }
+      // 削除成功を通知
+      io.emit("worktree:deleted", {
+        repoPath,
+        worktreeId: deletedWorktreeId,
+      });
+
+      const worktrees = await listWorktrees(repoPath);
+      io.emit("worktree:list", { repoPath, worktrees });
+    };
+
     socket.on("worktree:delete", async ({ repoPath, worktreePath }) => {
       try {
-        // Find and stop any session using this worktree
-        const session = sessionOrchestrator.getSessionByWorktree(worktreePath);
-        if (session) {
-          sessionOrchestrator.stopSession(session.id);
-        }
-
-        // worktree IDをパスから決定的に導出（listWorktreesと同じロジック）
-        const deletedWorktreeId = Buffer.from(worktreePath)
-          .toString("base64")
-          .replace(/[/+=]/g, "");
-
-        // キャッシュキーは realpath 正規化済みパス。生パスで delete しても
-        // ヒットしないため、worktree が消える前に realpath を解決してその
-        // キーを消す（消し損ねると同じ realpath に新 worktree が作られた際、
-        // TTL 切れまで stale な検証結果を返し得る）。
-        const cachedReal = resolveManagedWorktreePath(worktreePath);
-        const result = await deleteWorktree(repoPath, worktreePath);
-        if (cachedReal) managedWorktreeCache.delete(cachedReal);
-        managedWorktreeCache.delete(worktreePath);
-        if (result.branchKeptReason) {
-          // ブランチが残った場合は調査の起点になるようハンドラー側でも記録する
-          console.log(
-            `[Worktree] ${result.branchKeptReason} (repo=${repoPath})`
-          );
-        }
-        // 削除成功を通知
-        io.emit("worktree:deleted", {
-          repoPath,
-          worktreeId: deletedWorktreeId,
-        });
-
-        const worktrees = await listWorktrees(repoPath);
-        io.emit("worktree:list", { repoPath, worktrees });
+        await removeWorktreeWithSession(repoPath, worktreePath);
       } catch (error) {
         // UI 通知だけでなくサーバーログにも残して調査可能にする (Issue #213 ③)
         console.error(
@@ -2619,6 +2628,11 @@ export async function startServer(
           .catch(() => {
             // 一覧の配り直しに失敗しても名前の変更は済んでいる
           });
+      },
+      removeWorktree: async (sessionId, worktreePath) => {
+        const repoPath = sessionOrchestrator.getSession(sessionId)?.repoPath;
+        if (!repoPath) throw new Error("セッションが見つかりません");
+        await removeWorktreeWithSession(repoPath, worktreePath);
       },
     });
     socket.on("git:branch-create", gitOps.branchCreate);

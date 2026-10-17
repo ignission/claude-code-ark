@@ -1028,7 +1028,16 @@ export interface ClientToServerEvents {
     cb: (r: GitOpResponse) => void
   ) => void;
   "git:branch-delete": (
-    data: { sessionId: string; name: string; force: boolean },
+    /**
+     * removeWorktree はブランチを使っている作業ツリーごと消す (セッションも止める)。
+     * 無ければ、使用中のブランチは inWorktree の失敗で断られる
+     */
+    data: {
+      sessionId: string;
+      name: string;
+      force: boolean;
+      removeWorktree?: boolean;
+    },
     cb: (r: GitBranchDeleteResponse) => void
   ) => void;
   "git:remote-branch-delete": (
@@ -1446,6 +1455,8 @@ export interface GitBranch {
   behind?: number;
   /** このブランチを使っている作業ツリー (このworktreeを含む) のパス */
   worktreePath?: string;
+  /** worktreePath がリポジトリ本体の作業ツリー (消せないので、ブランチも消せない) */
+  mainWorktree?: boolean;
 }
 export interface GitRefs {
   head: { sha: string | null; branch: string | null };
@@ -1512,9 +1523,19 @@ export interface GitBranchUpstream {
   merge: string;
 }
 /** sha と upstream は、削除を元に戻すときに git:branch-create へ渡す */
+/**
+ * 失敗の notMerged は取り込まれていないコミットがある (強制なら消せる)。
+ * inWorktree はブランチを使っている作業ツリー (removeWorktree なら消せる)。
+ * 成功の removedWorktree は、ブランチと一緒に消した作業ツリー (元に戻すでは戻らない)
+ */
 export type GitBranchDeleteResponse =
-  | { ok: true; sha: string; upstream?: GitBranchUpstream }
-  | { ok: false; error: string; notMerged?: boolean };
+  | {
+      ok: true;
+      sha: string;
+      upstream?: GitBranchUpstream;
+      removedWorktree?: string;
+    }
+  | { ok: false; error: string; notMerged?: boolean; inWorktree?: string };
 export type GitPushResponse =
   | { ok: true; remote: string; remoteBranch: string }
   | GitFailure;

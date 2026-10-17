@@ -58,11 +58,7 @@ describe("worktree ライフサイクルイベントの配信範囲", () => {
   // worktree を作成／削除したハンドラが返す worktree:list も全タブへ届ける。
   // repo:select / worktree:list のリクエスト応答は「要求元へのスナップショット」
   // なので socket.emit のままで正しく、ここでは対象にしない。
-  for (const event of [
-    "worktree:create",
-    "worktree:delete",
-    "session:stop",
-  ] as const) {
+  for (const event of ["worktree:create", "session:stop"] as const) {
     it(`${event} ハンドラの worktree:list は io.emit で broadcast する`, () => {
       const handler = handlerSource(event);
 
@@ -70,4 +66,16 @@ describe("worktree ライフサイクルイベントの配信範囲", () => {
       expect(handler).not.toContain('socket.emit("worktree:list"');
     });
   }
+
+  // worktree:delete と Git タブの「作業ツリーごと削除」は、同じ後始末の関数を通る
+  it("worktree の削除の後始末は worktree:list を io.emit で broadcast する", () => {
+    const start = source.indexOf("const removeWorktreeWithSession = ");
+    expect(start).toBeGreaterThan(-1);
+    const fn = source.slice(start, source.indexOf("\n    };", start));
+    expect(fn).toContain('io.emit("worktree:list"');
+    expect(fn).not.toContain('socket.emit("worktree:list"');
+    expect(handlerSource("worktree:delete")).toContain(
+      "removeWorktreeWithSession("
+    );
+  });
 });

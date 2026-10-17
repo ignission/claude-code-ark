@@ -286,21 +286,32 @@ export function splitRemoteRef(
 
 export async function getRefs(cwd: string): Promise<GitRefs> {
   await assertRepository(cwd);
-  const [branchName, head, rows, branchOut, stashOut, symrefOut, remoteOut] =
-    await Promise.all([
-      currentBranch(cwd),
-      headSha(cwd),
-      listRefRows(cwd),
-      git(cwd, [
-        "for-each-ref",
-        "--format=%(refname)%00%(objectname)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(worktreepath)",
-        "refs/heads",
-      ]),
-      gitOrNull(cwd, ["stash", "list", `--format=%H${FS}%gd${FS}%gs`]),
-      // リモートの既定のブランチ (`origin/HEAD` → `refs/remotes/origin/main`)
-      git(cwd, ["for-each-ref", "--format=%(symref)", "refs/remotes"]),
-      gitOrNull(cwd, ["remote"]),
-    ]);
+  const [
+    branchName,
+    head,
+    rows,
+    branchOut,
+    stashOut,
+    symrefOut,
+    remoteOut,
+    worktreeOut,
+  ] = await Promise.all([
+    currentBranch(cwd),
+    headSha(cwd),
+    listRefRows(cwd),
+    git(cwd, [
+      "for-each-ref",
+      "--format=%(refname)%00%(objectname)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(worktreepath)",
+      "refs/heads",
+    ]),
+    gitOrNull(cwd, ["stash", "list", `--format=%H${FS}%gd${FS}%gs`]),
+    // リモートの既定のブランチ (`origin/HEAD` → `refs/remotes/origin/main`)
+    git(cwd, ["for-each-ref", "--format=%(symref)", "refs/remotes"]),
+    gitOrNull(cwd, ["remote"]),
+    // 先頭がリポジトリ本体の作業ツリー
+    gitOrNull(cwd, ["worktree", "list", "--porcelain"]),
+  ]);
+  const mainWorktree = worktreeOut?.split("\n")[0]?.replace(/^worktree /, "");
   const remoteNames = (remoteOut ?? "").split("\n").filter(Boolean);
   const remoteDefaults = new Set(symrefOut.split("\n").filter(Boolean));
 
@@ -310,7 +321,10 @@ export async function getRefs(cwd: string): Promise<GitRefs> {
     const [refname, sha, upstream, track, worktreePath] = line.split("\0");
     const name = refname.slice("refs/heads/".length);
     const b: GitBranch = { name, sha, current: name === branchName };
-    if (worktreePath) b.worktreePath = worktreePath;
+    if (worktreePath) {
+      b.worktreePath = worktreePath;
+      if (worktreePath === mainWorktree) b.mainWorktree = true;
+    }
     if (upstream) {
       b.upstream = upstream;
       const t = parseTrack(track ?? "");
