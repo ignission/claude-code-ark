@@ -7,7 +7,9 @@
  *
  * - 読むだけで、PRやブランチには何も書かない。Auto-fixやAuto-mergeは持たない
  * - worktreeを cwd にして `gh pr view` を実行する。リポジトリとブランチはghが決める。
- *   PRが無い、detached HEAD、GitHubでないリモート、ghが認証されていない、はどれも null
+ *   PRが無い、detached HEAD、GitHubのリモートが無い、は null
+ * - それ以外の失敗 (タイムアウト、認証やネットワークの一時的な失敗) では前の値を残す。
+ *   null にすると、次に読めた「落ちた」が初めて見た値になり、通知を取りこぼす
  * - ghが見つからなければ、この機能だけを無効にする (起動時に1行だけ知らせる)
  * - セッションは直列に読む。間隔は60秒。10セッションでも1時間に600回で、
  *   GitHub APIの上限 (5,000回/時) に収まる
@@ -95,8 +97,32 @@ export interface PrStatusTarget {
   worktreePath: string;
 }
 
-/** ghを1回実行し、標準出力を返す。失敗 (PRが無い場合を含む) は null */
-export type GhRunner = (cwd: string, args: string[]) => Promise<string | null>;
+/** ghを1回実行した結果。PRが無いと分かった (`none`) のと、読めなかった (`error`) を分ける */
+export type GhResult =
+  | { kind: "ok"; stdout: string }
+  | { kind: "none" }
+  | { kind: "error"; message: string };
+
+export type GhRunner = (cwd: string, args: string[]) => Promise<GhResult>;
+
+/** PRが無いことを表すghのエラー。これ以外の失敗は一時的なものとみなす */
+const NO_PR_PATTERNS = [
+  "no pull requests found",
+  "could not determine current branch",
+  "none of the git remotes",
+  "not a git repository",
+];
+
+export function classifyGhError(stderr: string, message: string): GhResult {
+  const text = `${stderr}\n${message}`.toLowerCase();
+  if (NO_PR_PATTERNS.some(pattern => text.includes(pattern))) {
+    return { kind: "none" };
+  }
+  return {
+    kind: "error",
+    message: (stderr.trim() || message).split("\n")[0] ?? "",
+  };
+}
 
 export function createGhRunner(ghPath: string): GhRunner {
   return (cwd, args) =>
@@ -115,13 +141,20 @@ export function createGhRunner(ghPath: string): GhRunner {
             NO_COLOR: "1",
           },
         },
-        (error, stdout) => resolve(error ? null : stdout)
+        (error, stdout, stderr) =>
+          resolve(
+            error
+              ? classifyGhError(String(stderr ?? ""), error.message)
+              : { kind: "ok", stdout }
+          )
       );
     });
 }
 
 export class PrStatusCollector {
   private readonly cache = new Map<string, SessionPrStatus | null>();
+  /** セッションごとの最後の読み取りの失敗。同じ失敗を毎回ログに出さない */
+  private readonly lastError = new Map<string, string>();
   private timer: NodeJS.Timeout | null = null;
   private running = false;
 
@@ -157,16 +190,29 @@ export class PrStatusCollector {
       for (const id of this.cache.keys()) {
         if (!alive.has(id)) this.cache.delete(id);
       }
+      for (const id of this.lastError.keys()) {
+        if (!alive.has(id)) this.lastError.delete(id);
+      }
       for (const target of targets) {
-        const stdout = await this.run(target.worktreePath, [
+        const result = await this.run(target.worktreePath, [
           "pr",
           "view",
           "--json",
           GH_FIELDS,
         ]);
+        if (result.kind === "error") {
+          if (this.lastError.get(target.sessionId) !== result.message) {
+            console.warn(
+              `[PrStatus] ${target.worktreePath} を読めない (前の値を残す): ${result.message}`
+            );
+          }
+          this.lastError.set(target.sessionId, result.message);
+          continue;
+        }
+        this.lastError.delete(target.sessionId);
         this.cache.set(
           target.sessionId,
-          stdout === null ? null : parsePrView(stdout)
+          result.kind === "none" ? null : parsePrView(result.stdout)
         );
       }
     } finally {

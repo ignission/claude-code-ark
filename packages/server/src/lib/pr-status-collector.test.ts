@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyGhError,
   PrStatusCollector,
   parsePrView,
   summarizeChecks,
@@ -87,15 +88,18 @@ describe("PrStatusCollector", () => {
     const collector = new PrStatusCollector(
       async cwd => {
         calls.push(cwd);
-        if (cwd === "/wt/b") return null;
-        return JSON.stringify({
-          number: 1,
-          url: "u",
-          state: "OPEN",
-          isDraft: false,
-          headRefOid: "h",
-          statusCheckRollup: [context("FAILURE")],
-        });
+        if (cwd === "/wt/b") return { kind: "none" };
+        return {
+          kind: "ok",
+          stdout: JSON.stringify({
+            number: 1,
+            url: "u",
+            state: "OPEN",
+            isDraft: false,
+            headRefOid: "h",
+            statusCheckRollup: [context("FAILURE")],
+          }),
+        };
       },
       () => targets
     );
@@ -107,5 +111,54 @@ describe("PrStatusCollector", () => {
     targets = [{ sessionId: "b", worktreePath: "/wt/b" }];
     await collector.collect();
     expect(collector.get("a")).toBeNull();
+  });
+});
+
+describe("PrStatusCollector の読み取りの失敗", () => {
+  it("一時的な失敗では前の値を残し、PRが無いと分かったら null にする", async () => {
+    const results = [
+      {
+        kind: "ok" as const,
+        stdout: JSON.stringify({
+          number: 3,
+          url: "u",
+          state: "OPEN",
+          isDraft: false,
+          headRefOid: "h",
+          statusCheckRollup: [context("PENDING")],
+        }),
+      },
+      { kind: "error" as const, message: "timeout" },
+      { kind: "none" as const },
+    ];
+    let call = 0;
+    const collector = new PrStatusCollector(
+      async () => results[call++],
+      () => [{ sessionId: "a", worktreePath: "/wt/a" }]
+    );
+    await collector.collect();
+    expect(collector.get("a")?.checks).toBe("pending");
+    await collector.collect();
+    expect(collector.get("a")?.checks).toBe("pending");
+    await collector.collect();
+    expect(collector.get("a")).toBeNull();
+  });
+});
+
+describe("classifyGhError", () => {
+  it("PRが無い・ブランチが無いは none、それ以外は error", () => {
+    expect(
+      classifyGhError('no pull requests found for branch "x"', "")
+    ).toEqual({ kind: "none" });
+    expect(
+      classifyGhError(
+        "could not determine current branch: not on any branch",
+        ""
+      )
+    ).toEqual({ kind: "none" });
+    expect(classifyGhError("", "Command failed: timed out")).toEqual({
+      kind: "error",
+      message: "Command failed: timed out",
+    });
   });
 });
