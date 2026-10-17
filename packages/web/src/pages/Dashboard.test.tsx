@@ -277,6 +277,7 @@ function socketState(session: ManagedSession): Record<string, unknown> {
     clearDeletedWorktreeId: fn,
     sessionPreviews: new Map(),
     sessionPrStatuses: new Map(),
+    sessionPlanLimits: new Map(),
     sessionAwaitingTexts: new Map([
       [session.id, "Dashboard から届く AWAITING テキスト"],
     ]),

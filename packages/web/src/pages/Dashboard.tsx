@@ -140,6 +140,7 @@ export default function Dashboard() {
     sessionAwaitingTexts,
     sessionLiveTails,
     sessionPrStatuses,
+    sessionPlanLimits,
     gridSnapshots,
     subscribeGrid,
     unsubscribeGrid,
@@ -920,6 +921,7 @@ export default function Dashboard() {
           sessionLastUpdatedAt={sessionLastUpdatedAt}
           sessionAwaitingTexts={sessionAwaitingTexts}
           sessionLiveTails={sessionLiveTails}
+          sessionPlanLimits={sessionPlanLimits}
           sessionPreviews={sessionPreviews}
           sessionPrStatuses={sessionPrStatuses}
           worktreeDisplayNames={worktreeDisplayNames}
@@ -1175,6 +1177,7 @@ export default function Dashboard() {
                         bridgeStatus={sessionStatuses.get(session.id)}
                         awaitingText={sessionAwaitingTexts.get(session.id)}
                         liveTail={sessionLiveTails.get(session.id)}
+                        planLimits={sessionPlanLimits.get(session.id)}
                         diagramCommentsUpdate={diagramCommentsUpdate}
                         listDiagrams={listDiagrams}
                         deleteDiagram={deleteDiagram}

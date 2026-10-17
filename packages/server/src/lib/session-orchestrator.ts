@@ -1017,6 +1017,14 @@ export class SessionOrchestrator extends EventEmitter {
   /**
    * IDでセッションを取得
    */
+  /**
+   * セッションが起動時に使ったプロファイルの configDir。未紐付けは null。
+   * 毎秒の previews で引くので、tmux と DB を読まずメモリだけで答える
+   */
+  getSessionConfigDir(sessionId: string): string | null {
+    return this.sessionProfiles.get(sessionId)?.configDir ?? null;
+  }
+
   getSession(sessionId: string): ManagedSession | undefined {
     const tmuxSession = tmuxManager.getSession(sessionId);
     if (!tmuxSession) return undefined;
