@@ -400,3 +400,59 @@ describe("normalizeSessionNotificationSettings", () => {
     });
   });
 });
+
+describe("SessionNotificationDetector のCIの失敗", () => {
+  const pr = (
+    checks: "pending" | "passed" | "failed",
+    headRefOid = "h1",
+    state: "OPEN" | "MERGED" = "OPEN"
+  ) => ({
+    number: 12,
+    url: "u",
+    state,
+    isDraft: false,
+    checks,
+    headRefOid,
+  });
+
+  it("読めていた状態から落ちたら1度だけ通知し、push し直してまた落ちたら再通知する", () => {
+    const detector = new SessionNotificationDetector();
+    expect(detector.consumePrStatuses(new Map([["s", pr("pending")]]))).toEqual(
+      []
+    );
+    expect(detector.consumePrStatuses(new Map([["s", pr("failed")]]))).toEqual([
+      { sessionId: "s", kind: "ci-failed", prNumber: 12 },
+    ]);
+    expect(detector.consumePrStatuses(new Map([["s", pr("failed")]]))).toEqual(
+      []
+    );
+    expect(
+      detector.consumePrStatuses(new Map([["s", pr("failed", "h2")]]))
+    ).toHaveLength(1);
+  });
+
+  it("初めて見た失敗 (リロード・再起動) と、マージ済みのPRは通知しない", () => {
+    const detector = new SessionNotificationDetector();
+    expect(detector.consumePrStatuses(new Map([["s", pr("failed")]]))).toEqual(
+      []
+    );
+    const merged = new SessionNotificationDetector();
+    merged.consumePrStatuses(new Map([["s", pr("pending")]]));
+    expect(
+      merged.consumePrStatuses(new Map([["s", pr("failed", "h1", "MERGED")]]))
+    ).toEqual([]);
+  });
+
+  it("通知の文面にPR番号を入れる", () => {
+    expect(
+      buildSessionNotificationPayload(
+        { sessionId: "s", kind: "ci-failed", prNumber: 12 },
+        "app"
+      )
+    ).toEqual({
+      title: "Ark: CIが落ちました",
+      body: "app のPR #12 のチェックが失敗しました",
+      tag: "ark-session-s-ci-failed",
+    });
+  });
+});

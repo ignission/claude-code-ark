@@ -129,6 +129,7 @@ function listProps(
     repoList: [repoPath],
     sessionStatuses: statusesOf("IDLE", "TOOL", "READY"),
     sessionPreviews: new Map([["session-a", "どちらにしますか"]]),
+    sessionPrStatuses: new Map(),
     selectedSessionId: null,
     onOpenSession: vi.fn(),
     onStartSession: vi.fn(),

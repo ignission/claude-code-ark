@@ -65,6 +65,7 @@ function createProps(): ComponentProps<typeof MobileLayout> {
     sessionAwaitingTexts: new Map(),
     sessionLiveTails: new Map(),
     sessionPreviews: new Map(),
+    sessionPrStatuses: new Map(),
     worktreeDisplayNames: new Map(),
     getTabsForSession: vi.fn(() => tabs),
     getActiveTabForSession: vi.fn(() => 0),

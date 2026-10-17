@@ -89,6 +89,24 @@ export interface Session {
  * Session を拡張し、tmuxセッション名とttyd接続情報を含む。
  * サーバー側のSessionOrchestratorとクライアント側の両方で共通して使用する。
  */
+/**
+ * セッションのブランチに紐づくGitHubのPRと、そのチェックの集計。
+ * サーバーが `gh pr view` を定期的に読んで作る (`pr-status-collector.ts`)
+ */
+export interface SessionPrStatus {
+  number: number;
+  url: string;
+  state: "OPEN" | "MERGED" | "CLOSED";
+  isDraft: boolean;
+  /**
+   * チェックの集計。1つでも落ちていれば failed、終わっていないものがあれば pending、
+   * すべて通れば passed、チェックが1つも無ければ none
+   */
+  checks: "none" | "pending" | "passed" | "failed";
+  /** PRの先頭のコミット。同じ失敗を二度通知しないために使う */
+  headRefOid: string;
+}
+
 export interface ManagedSession extends Session {
   /** tmuxセッション名 */
   tmuxSessionName: string;
@@ -670,6 +688,10 @@ export interface ServerToClientEvents {
        * tmux の session_activity は端末の再描画でも動くので使わない
        */
       lastUpdatedAt: number | null;
+      /**
+       * ブランチのPRとチェックの集計。PRが無い、ghが無い、まだ読んでいない、のどれも null
+       */
+      prStatus: SessionPrStatus | null;
       timestamp: number;
     }>
   ) => void;

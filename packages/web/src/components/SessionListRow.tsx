@@ -1,12 +1,14 @@
 /**
  * SessionListRow - セッション一覧の1行 (PCサイドバーの行 / モバイル一覧のカード)
  *
- * 1行目は「状態チップ + 主ラベル」、2行目は「プロファイル + ブランチ · プレビュー文」。
+ * 1行目は「状態チップ + 主ラベル」、2行目は「プロファイル + PRの札 + ブランチ · プレビュー文」。
+ * PRの札はチェックの結果 (✓ / ✕ / 待ち) かマージ済み・クローズを出し、押すとPRを開く。
+ * 色を付けるのは落ちたときだけ (セッションの状態の色は使わない)。
  * 主ラベルは表示名があれば表示名、無ければリポジトリ名。行のtitleはリポジトリの絶対パス。
  * 行メニューはsidebarでは右クリックと `…`、cardでは `⋮` で開き、中身は同じ。
  */
 
-import type { Profile } from "@ark/shared";
+import type { Profile, SessionPrStatus } from "@ark/shared";
 import { Ellipsis, MoreVertical, RotateCw, TriangleAlert } from "lucide-react";
 import {
   Fragment,
@@ -26,11 +28,19 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { type PrBadgeTone, prBadge } from "@/lib/pr-status";
 import type { SessionListEntry } from "@/lib/session-sections";
 import { cn } from "@/lib/utils";
 import { getBaseName } from "@/utils/pathUtils";
 import { SessionRowMenu, type SessionRowMenuProps } from "./SessionRowMenu";
 import { StatusChip } from "./StatusChip";
+
+const PR_BADGE_TONE: Readonly<Record<PrBadgeTone, string>> = {
+  ng: "bg-destructive/10 text-destructive",
+  ok: "bg-muted text-foreground/80",
+  wait: "bg-muted text-muted-foreground",
+  muted: "bg-muted text-muted-foreground",
+};
 
 export interface SessionRowProfile {
   name: string;
@@ -66,6 +76,8 @@ export interface SessionListRowProps {
   displayName: string | null;
   /** 端末の最後の内容行。空なら2行目に出さない */
   previewText: string;
+  /** ブランチのPRとチェックの集計。PRが無ければnull */
+  prStatus: SessionPrStatus | null;
   /** プロファイルのチップ。未割り当てならnull */
   profile: SessionRowProfile | null;
   /** 起動後にプロファイルの割り当てが変わった (再起動が要る) */
@@ -86,6 +98,7 @@ export function SessionListRow({
   entry,
   displayName,
   previewText,
+  prStatus,
   profile,
   staleProfile,
   selected,
@@ -99,6 +112,7 @@ export function SessionListRow({
   const branch =
     entry.worktree?.branch ?? getBaseName(entry.session?.worktreePath ?? "");
   const quiet = entry.statusKey === "NOT_STARTED" || entry.statusKey === "STOP";
+  const badge = prStatus ? prBadge(prStatus) : null;
 
   // 入力途中の表示名。編集の開始と終了に合わせて、レンダー中に用意・破棄する
   const [draft, setDraft] = useState<string | null>(null);
@@ -293,7 +307,7 @@ export function SessionListRow({
               </span>
             )}
           </div>
-          {(profile || detailSegments.length > 0) && (
+          {(profile || badge || detailSegments.length > 0) && (
             <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[13px] text-muted-foreground">
               {profile && (
                 <span
@@ -303,6 +317,26 @@ export function SessionListRow({
                   <span className="truncate">{profile.name}</span>
                   {profile.individual && <span className="shrink-0">個別</span>}
                 </span>
+              )}
+              {badge && prStatus && (
+                <a
+                  href={prStatus.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  data-testid="session-row-pr"
+                  title={badge.label}
+                  aria-label={badge.label}
+                  // 行を押したときの動き (メニューを開く・フォーカスを外す) を起こさない
+                  onClick={event => event.stopPropagation()}
+                  onMouseDown={event => event.stopPropagation()}
+                  onKeyDown={event => event.stopPropagation()}
+                  className={cn(
+                    "inline-flex h-5 shrink-0 items-center rounded-full px-2 text-xs font-medium tabular-nums hover:underline",
+                    PR_BADGE_TONE[badge.tone]
+                  )}
+                >
+                  {badge.text}
+                </a>
               )}
               <span
                 data-testid="session-row-detail"

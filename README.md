@@ -47,6 +47,8 @@ You need to be logged in to Claude Code. If Claude Code has never run on the mac
 
 The sidebar sorts sessions into "your turn", "working" and "idle". When Claude asks a question, Ark shows it as a card with the options as buttons, together with the terminal screen from just before the question.
 
+If a session's branch has a GitHub pull request, its row shows the PR number and the check result (✓ / ✕ / pending, merged, closed); clicking it opens the PR. When checks fail, Ark sends a notification. Ark reads this with the [GitHub CLI](https://cli.github.com/) (`gh`) once a minute.
+
 ### It is the real Claude Code
 
 Ark does not reimplement the agent. Each session is the interactive `claude` CLI in a detached tmux session, shown through [ttyd](https://github.com/tsl0922/ttyd), and the chat view is drawn from Claude's own transcript files. Sessions keep running when the Ark server restarts, and Ark reattaches to them when it comes back.
@@ -163,6 +165,7 @@ All you provide is Node.js >= 22.12.0 and [tmux](https://github.com/tmux/tmux). 
 - **ttyd**: on Linux, Ark downloads the [official binary](https://github.com/tsl0922/ttyd/releases) into `data/bin/` when it cannot find one, and verifies its sha256. On macOS it tells you to run `brew install ttyd`.
 - **Claude Code**: installed as a dependency, so there is nothing else to install.
 - **Chromium**: optional, used only by the browser feature.
+- **GitHub CLI (`gh`)**: optional, used only to show pull requests and checks on session rows. Run `gh auth login` as the user that runs the server.
 
 To update, run `git pull` and then `./scripts/start.sh` again; it reinstalls and rebuilds when the commit has changed. Set `PORT` to change the port (default 4001). Run `./scripts/start.sh --help` for the options.
 

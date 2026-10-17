@@ -1,3 +1,4 @@
+import type { SessionPrStatus } from "@ark/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BrowserNotificationTransport,
@@ -6,6 +7,7 @@ import {
   readBrowserNotificationApi,
   type SessionAuqSignal,
   SessionNotificationDetector,
+  type SessionNotificationEvent,
   SessionNotificationLeader,
   type SessionStatusSignal,
 } from "@/lib/session-notifications";
@@ -13,6 +15,8 @@ import {
 interface UseSessionNotificationsOptions {
   statusSignals: Map<string, SessionStatusSignal>;
   auqSignals: Map<string, SessionAuqSignal>;
+  /** sessionId → PRとチェックの集計。PRが無い (読めていない) セッションはエントリが無い */
+  prStatuses: Map<string, SessionPrStatus>;
   sessionLabels: Map<string, string>;
   enabledBySession: Record<string, boolean>;
   onOpenSession: (sessionId: string) => void;
@@ -36,6 +40,7 @@ function createTabId(): string {
 export function useSessionNotifications({
   statusSignals,
   auqSignals,
+  prStatuses,
   sessionLabels,
   enabledBySession,
   onOpenSession,
@@ -60,10 +65,7 @@ export function useSessionNotifications({
   }, []);
 
   const dispatch = useCallback(
-    (event: {
-      sessionId: string;
-      kind: "awaiting" | "question" | "completed";
-    }) =>
+    (event: SessionNotificationEvent) =>
       deliverSessionNotification({
         event,
         sessionLabel: sessionLabels.get(event.sessionId) ?? event.sessionId,
@@ -94,6 +96,12 @@ export function useSessionNotifications({
       if (event) dispatch(event);
     }
   }, [auqSignals, dispatch]);
+
+  useEffect(() => {
+    for (const event of detectorRef.current.consumePrStatuses(prStatuses)) {
+      dispatch(event);
+    }
+  }, [dispatch, prStatuses]);
 
   const requestPermission = useCallback(async () => {
     const next = await transportRef.current.requestPermission();

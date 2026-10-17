@@ -1,6 +1,10 @@
-import type { BridgeSessionStatus } from "@ark/shared";
+import type { BridgeSessionStatus, SessionPrStatus } from "@ark/shared";
 
-export type SessionNotificationKind = "awaiting" | "question" | "completed";
+export type SessionNotificationKind =
+  | "awaiting"
+  | "question"
+  | "completed"
+  | "ci-failed";
 
 export interface SessionStatusSignal {
   sessionId: string;
@@ -16,6 +20,8 @@ export interface SessionAuqSignal {
 export interface SessionNotificationEvent {
   sessionId: string;
   kind: SessionNotificationKind;
+  /** ci-failed のときの PR 番号 */
+  prNumber?: number;
 }
 
 export interface SessionNotificationPayload {
@@ -72,6 +78,8 @@ export class SessionNotificationDetector {
   private readonly statusBySession = new Map<string, BridgeSessionStatus>();
   private readonly lastAuqAtBySession = new Map<string, number>();
   private readonly activeAuqSessions = new Set<string>();
+  /** セッションごとの、最後に見たPRの状態 */
+  private readonly prStatusBySession = new Map<string, SessionPrStatus>();
 
   consumeStatus(signal: SessionStatusSignal): SessionNotificationEvent | null {
     const previous = this.statusBySession.get(signal.sessionId);
@@ -96,6 +104,43 @@ export class SessionNotificationDetector {
       return { sessionId: signal.sessionId, kind: "completed" };
     }
     return null;
+  }
+
+  /**
+   * PRのチェックが落ちたら通知する。読めていた状態 (待ち・通過など) から落ちたときだけで、
+   * 初めて見た値は初期化にする (リロードやサーバーの再起動で既存の失敗を通知しない)。
+   * 同じコミットの失敗は1度だけで、push し直してまた落ちたら通知する
+   */
+  consumePrStatus(
+    sessionId: string,
+    status: SessionPrStatus | null
+  ): SessionNotificationEvent | null {
+    const previous = this.prStatusBySession.get(sessionId);
+    if (status) this.prStatusBySession.set(sessionId, status);
+    else this.prStatusBySession.delete(sessionId);
+    if (!previous || !status) return null;
+    if (status.state !== "OPEN" || status.checks !== "failed") return null;
+    if (
+      previous.checks === "failed" &&
+      previous.number === status.number &&
+      previous.headRefOid === status.headRefOid
+    ) {
+      return null;
+    }
+    return { sessionId, kind: "ci-failed", prNumber: status.number };
+  }
+
+  /** 全セッションのPRの状態を受け取る。前回あって今回無いセッションは、PRが消えたとみなす */
+  consumePrStatuses(
+    statuses: ReadonlyMap<string, SessionPrStatus>
+  ): SessionNotificationEvent[] {
+    const ids = new Set([...this.prStatusBySession.keys(), ...statuses.keys()]);
+    const events: SessionNotificationEvent[] = [];
+    for (const id of ids) {
+      const event = this.consumePrStatus(id, statuses.get(id) ?? null);
+      if (event) events.push(event);
+    }
+    return events;
   }
 
   consumeAuq(signal: SessionAuqSignal): SessionNotificationEvent | null {
@@ -184,6 +229,12 @@ export function buildSessionNotificationPayload(
         title: "Ark: 作業が完了しました",
         body: `${sessionLabel} の実行が停止しました`,
         tag: `ark-session-${event.sessionId}-completed`,
+      };
+    case "ci-failed":
+      return {
+        title: "Ark: CIが落ちました",
+        body: `${sessionLabel} のPR #${event.prNumber ?? "?"} のチェックが失敗しました`,
+        tag: `ark-session-${event.sessionId}-ci-failed`,
       };
   }
 }

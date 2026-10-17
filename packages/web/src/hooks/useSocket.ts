@@ -26,6 +26,7 @@ import type {
   ScreenPatch,
   ServerToClientEvents,
   SessionGridSnapshot,
+  SessionPrStatus,
   SpecialKey,
   SystemCapabilities,
   UsageProgress,
@@ -53,6 +54,7 @@ import {
   requestDiagramCommentsGet,
 } from "../lib/diagram-comment-transport";
 import { requestDiagramDelete } from "../lib/diagram-delete-transport";
+import { mergePrStatuses } from "../lib/pr-status";
 import type {
   SessionAuqSignal,
   SessionStatusSignal,
@@ -258,6 +260,12 @@ interface UseSocketReturn {
    */
   sessionLiveTails: Map<string, string>;
 
+  /**
+   * sessionId → ブランチのPRとチェックの集計。session:previews ペイロードから派生。
+   * PRが無いセッションはエントリ自体が無い
+   */
+  sessionPrStatuses: Map<string, SessionPrStatus>;
+
   // Browser sessions
   browserSessions: Map<string, BrowserSession>;
   browserError: string | null;
@@ -457,6 +465,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const [sessionLiveTails, setSessionLiveTails] = useState<Map<string, string>>(
     new Map()
   );
+  // ブランチのPRとチェックの集計 (一覧の札と、CIが落ちたときの通知に使う)
+  const [sessionPrStatuses, setSessionPrStatuses] = useState<
+    Map<string, SessionPrStatus>
+  >(new Map());
 
   // Browser session state
   const [browserSessions, setBrowserSessions] = useState<
@@ -1018,6 +1030,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         }
         return next;
       });
+      setSessionPrStatuses(prev => mergePrStatuses(prev, previews));
     });
 
     // Repo Grid View
@@ -1877,6 +1890,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     sessionPreviews,
     sessionAwaitingTexts,
     sessionLiveTails,
+    sessionPrStatuses,
     sessionStatusSignals,
     sessionAuqSignals,
     gridSnapshots,
