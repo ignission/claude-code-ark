@@ -353,11 +353,13 @@ async function isMerged(
 }
 
 /**
- * squash でマージ済みか。分岐点からブランチの先端までの変更を 1 つのコミットにまとめ、
- * 同じ変更のコミットが HEAD かリモートの既定のブランチにあるかを `git cherry` で見る
- * (squash のコミットはブランチのコミットと別物なので、辿れるかでは分からない。
- * あとで既定のブランチが同じ行を変えていても、squash のコミット自体は残っている)。
- * まとめたコミットはどの ref も指さないので、gc で消える。
+ * squash でマージ済みか。HEAD かリモートの既定のブランチについて、次のどちらかで見る
+ * (squash のコミットはブランチのコミットと別物なので、辿れるかでは分からない)。
+ * - ブランチが変えたファイルが、すべて既定のブランチと同じ中身 (別のブランチと
+ *   まとめて squash された場合も分かる)
+ * - 分岐点からの変更を 1 つのコミットにまとめ、同じ変更のコミットがあるかを
+ *   `git cherry` で見る (あとで既定のブランチが同じ行を変えていても分かる)。
+ *   まとめたコミットはどの ref も指さないので、gc で消える。
  * 確かめられないとき (共通の祖先が無い等) は取り込まれていない扱い
  */
 async function squashedInto(cwd: string, sha: string): Promise<boolean> {
@@ -370,6 +372,26 @@ async function squashedInto(cwd: string, sha: string): Promise<boolean> {
   for (const base of bases) {
     try {
       const { stdout: mb } = await runGit(cwd, ["merge-base", base, sha]);
+      const { stdout: files } = await runGit(cwd, [
+        "diff",
+        "--name-only",
+        "-z",
+        mb.trim(),
+        sha,
+      ]);
+      const paths = files.split("\0").filter(Boolean);
+      if (
+        paths.length > 0 &&
+        (await exitCode(cwd, [
+          "diff",
+          "--quiet",
+          sha,
+          base,
+          "--",
+          ...paths.map(f => `:(literal)${f}`),
+        ])) === 0
+      )
+        return true;
       const { stdout: squashed } = await runGit(cwd, [
         "-c",
         "user.name=Ark",

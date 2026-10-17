@@ -202,6 +202,26 @@ describe("deleteBranch", () => {
     });
   });
 
+  it("別の変更とまとめて squash されても、取り込み済みと分かる", async () => {
+    commit("c1");
+    git("checkout", "-q", "-b", "part");
+    fs.writeFileSync(path.join(dir, "b.txt"), "feature\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "f1");
+    const tip = git("rev-parse", "HEAD");
+    git("checkout", "-q", "-b", "whole");
+    fs.writeFileSync(path.join(dir, "c.txt"), "more\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "f2");
+    git("checkout", "-q", "main");
+    git("merge", "-q", "--squash", "whole");
+    git("commit", "-q", "-m", "squash");
+    git("branch", "-D", "whole");
+    await expect(deleteBranch(dir, "part", false)).resolves.toEqual({
+      sha: tip,
+    });
+  });
+
   it("squash でマージしたあとに足したコミットがあれば、未マージと扱う", async () => {
     commit("c1");
     git("checkout", "-q", "-b", "more");
