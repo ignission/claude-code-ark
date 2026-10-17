@@ -19,7 +19,11 @@ function makeApi(overrides: Partial<GitApi> = {}): GitApi {
     fingerprint: vi.fn(),
     createBranch: vi.fn(ok),
     renameBranch: vi.fn(ok),
-    deleteBranch: vi.fn(async () => ({ ok: true as const, sha: "abc1234def" })),
+    deleteBranch: vi.fn(async () => ({
+      ok: true as const,
+      sha: "abc1234def",
+      upstream: { remote: "origin", merge: "refs/heads/release" },
+    })),
     deleteRemoteBranch: vi.fn(ok),
     fetch: vi.fn(ok),
     pull: vi.fn(ok),
@@ -61,7 +65,7 @@ beforeEach(() => {
 afterEach(unmountAll);
 
 describe("useGitOps", () => {
-  it("取り込み済みのブランチはそのまま消し、元に戻すを出す", async () => {
+  it("取り込み済みのブランチはそのまま消し、元に戻すで追跡先ごと戻す", async () => {
     const { api, onChanged } = setup();
     actions.deleteBranch("done");
     await flush();
@@ -70,7 +74,10 @@ describe("useGitOps", () => {
     const [, opts] = toast.success.mock.calls[0];
     opts.action.onClick();
     await flush();
-    expect(api.createBranch).toHaveBeenCalledWith("done", "abc1234def");
+    expect(api.createBranch).toHaveBeenCalledWith("done", "abc1234def", {
+      remote: "origin",
+      merge: "refs/heads/release",
+    });
   });
 
   it("未マージなら確かめてから強制で消す", async () => {

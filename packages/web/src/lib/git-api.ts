@@ -1,6 +1,7 @@
 import type {
   ClientToServerEvents,
   GitBranchDeleteResponse,
+  GitBranchUpstream,
   GitCommitResponse,
   GitDiffTarget,
   GitFileDiffResponse,
@@ -53,7 +54,11 @@ export interface GitApi {
     oldPath?: string
   ) => Promise<GitFileDiffResponse>;
   fingerprint: () => Promise<GitFingerprintResponse>;
-  createBranch: (name: string, startPoint: string) => Promise<GitOpResponse>;
+  createBranch: (
+    name: string,
+    startPoint: string,
+    upstream?: GitBranchUpstream
+  ) => Promise<GitOpResponse>;
   renameBranch: (from: string, to: string) => Promise<GitOpResponse>;
   deleteBranch: (
     name: string,
@@ -95,10 +100,10 @@ export function createGitApi(socket: TypedSocket, sessionId: string): GitApi {
     fileDiff: (target, path, oldPath) =>
       request<GitFileDiffResponse>("git:file-diff", { target, path, oldPath }),
     fingerprint: () => request<GitFingerprintResponse>("git:fingerprint", {}),
-    createBranch: (name, startPoint) =>
+    createBranch: (name, startPoint, upstream) =>
       request<GitOpResponse>(
         "git:branch-create",
-        { name, startPoint },
+        upstream ? { name, startPoint, upstream } : { name, startPoint },
         LOCAL_OP_ACK_TIMEOUT_MS
       ),
     renameBranch: (from, to) =>

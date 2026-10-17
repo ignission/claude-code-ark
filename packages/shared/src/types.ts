@@ -1014,7 +1014,13 @@ export interface ClientToServerEvents {
   ) => void;
   // Git タブの書き込み操作 (すべて ack で返す)
   "git:branch-create": (
-    data: { sessionId: string; name: string; startPoint: string },
+    data: {
+      sessionId: string;
+      name: string;
+      startPoint: string;
+      /** 削除を元に戻すときだけ。消す前の追跡先 */
+      upstream?: GitBranchUpstream;
+    },
     cb: (r: GitOpResponse) => void
   ) => void;
   "git:branch-rename": (
@@ -1495,8 +1501,14 @@ export type GitFingerprintResponse =
 export type GitOpResponse =
   | { ok: true }
   | { ok: false; error: string; notMerged?: boolean };
+/** ブランチの追跡先 (`branch.<name>.remote` と `branch.<name>.merge`) */
+export interface GitBranchUpstream {
+  remote: string;
+  merge: string;
+}
+/** sha と upstream は、削除を元に戻すときに git:branch-create へ渡す */
 export type GitBranchDeleteResponse =
-  | { ok: true; sha: string }
+  | { ok: true; sha: string; upstream?: GitBranchUpstream }
   | { ok: false; error: string; notMerged?: boolean };
 export type GitPushResponse =
   | { ok: true; remote: string; remoteBranch: string }

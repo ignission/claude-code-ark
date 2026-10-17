@@ -90,7 +90,7 @@ export function createGitOpsHandlers(deps: GitOpsHandlersDeps) {
 
   return {
     branchCreate: handler<Ok>((cwd, d) =>
-      createBranch(cwd, d.name, d.startPoint).then(done)
+      createBranch(cwd, d.name, d.startPoint, d.upstream).then(done)
     ),
     branchRename: handler<Ok>((cwd, d) =>
       renameBranch(cwd, d.from, d.to).then(done)

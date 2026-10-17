@@ -1,3 +1,4 @@
+import type { GitBranchUpstream } from "@ark/shared";
 import {
   type FormEvent,
   type ReactNode,
@@ -94,9 +95,9 @@ export function useGitOps(
   );
 
   const restoreBranch = useCallback(
-    async (name: string, sha: string) => {
+    async (name: string, sha: string, upstream?: GitBranchUpstream) => {
       if (!api) return;
-      const res = await api.createBranch(name, sha);
+      const res = await api.createBranch(name, sha, upstream);
       if (res.ok) toast.success(`ブランチ ${name} を戻しました`);
       else toast.error(res.error);
       onChanged();
@@ -113,7 +114,7 @@ export function useGitOps(
           description: res.sha.slice(0, 7),
           action: {
             label: "元に戻す",
-            onClick: () => void restoreBranch(name, res.sha),
+            onClick: () => void restoreBranch(name, res.sha, res.upstream),
           },
         });
         onChanged();

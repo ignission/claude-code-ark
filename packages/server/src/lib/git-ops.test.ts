@@ -159,6 +159,36 @@ describe("deleteBranch", () => {
     expect(hasRef("refs/heads/wip")).toBe(false);
   });
 
+  it("消す前の追跡先を返し、それを渡して作り直すと追跡先も戻る", async () => {
+    commit("c1");
+    git("checkout", "-q", "-b", "topic");
+    commit("t");
+    git("push", "-q", "origin", "topic:release");
+    git("branch", "--set-upstream-to=origin/release");
+    git("checkout", "-q", "main");
+    const res = await deleteBranch(dir, "topic", false);
+    expect(res.upstream).toEqual({
+      remote: "origin",
+      merge: "refs/heads/release",
+    });
+    expect(() => git("config", "--get", "branch.topic.remote")).toThrow();
+    await createBranch(dir, "topic", res.sha, res.upstream);
+    expect(git("rev-parse", "--abbrev-ref", "topic@{upstream}")).toBe(
+      "origin/release"
+    );
+  });
+
+  it("作り直すときの追跡先は、設定にあるリモートと refs/ の名前だけ受け付ける", async () => {
+    const c1 = commit("c1");
+    await expect(
+      createBranch(dir, "x", c1, { remote: "nope", merge: "refs/heads/x" })
+    ).rejects.toThrow("追跡先が不正です");
+    await expect(
+      createBranch(dir, "x", c1, { remote: "origin", merge: "x" })
+    ).rejects.toThrow("追跡先が不正です");
+    expect(hasRef("refs/heads/x")).toBe(false);
+  });
+
   it("リモートのブランチに取り込まれていれば消せる", async () => {
     commit("c1");
     git("checkout", "-q", "-b", "pushed");
@@ -348,6 +378,19 @@ describe("リモート", () => {
       deleteRemoteBranch(dir, "--upload-pack=x", "topic")
     ).rejects.toThrow("リモートが見つかりません");
     expect(hasRef("refs/heads/main", bare)).toBe(true);
+  });
+
+  it("- で始まるリモートの名前でも push とリモートの削除ができる", async () => {
+    commit("c1");
+    git("remote", "remove", "origin");
+    git("remote", "add", "--", "-dash", bare);
+    await expect(pushBranch(dir, "main")).resolves.toEqual({
+      remote: "-dash",
+      remoteBranch: "main",
+    });
+    git("push", "-q", "--", "-dash", "main:topic");
+    await deleteRemoteBranch(dir, "-dash", "topic");
+    expect(hasRef("refs/heads/topic", bare)).toBe(false);
   });
 
   it("リモートの無いリポジトリで push すると理由を返す", async () => {
