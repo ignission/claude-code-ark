@@ -39,7 +39,10 @@ interface RunResult {
 function remoteEnv(): NodeJS.ProcessEnv {
   return {
     GIT_TERMINAL_PROMPT: "0",
-    // ssh のパスフレーズやホスト鍵の確認を GUI の askpass でも聞かない
+    // 認証の情報を GUI の askpass でも聞かない。GIT_ASKPASS は core.askPass より
+    // 優先される。credential helper は askpass より先に引かれるので、保存済みの
+    // 認証はそのまま使える
+    GIT_ASKPASS: "false",
     SSH_ASKPASS_REQUIRE: "never",
   };
 }
@@ -110,20 +113,29 @@ function runGit(
       if (code === 0) return resolve({ stdout, stderr });
       reject(
         new GitOpError(
-          `git の実行に失敗しました: ${firstLine(stderr) || `終了コード ${code}`}`
+          `git の実行に失敗しました: ${describeStderr(stderr) || `終了コード ${code}`}`
         )
       );
     });
   });
 }
 
-/** stderr の意味のある最初の行 (hint: や空行は飛ばす) */
-function firstLine(stderr: string): string {
-  for (const raw of stderr.split("\n")) {
-    const line = raw.trim();
-    if (line && !line.startsWith("hint:")) return line;
-  }
-  return "";
+/**
+ * stderr から理由の行を取り出す。push の拒否は `To <remote>` の行から始まり、
+ * pull は fetch の進み具合から始まるので、先頭の行では理由が分からない。
+ * fatal: / error: / 拒否の行を優先し (2 行まで)、無ければ hint: 以外の最初の行
+ */
+export function describeStderr(stderr: string): string {
+  const lines = stderr
+    .split("\n")
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith("hint:"));
+  const reasons = lines.filter(
+    line => /^(fatal|error):/.test(line) || /\[(remote )?rejected\]/.test(line)
+  );
+  return (reasons.length > 0 ? reasons.slice(0, 2) : lines.slice(0, 1)).join(
+    " / "
+  );
 }
 
 /** 終了コードだけを見たいとき (merge-base --is-ancestor など)。git が無い等は投げる */

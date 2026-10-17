@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,6 +9,7 @@ import {
   createBranch,
   deleteBranch,
   deleteRemoteBranch,
+  describeStderr,
   fetchAll,
   GitOpError,
   pullFastForward,
@@ -64,6 +66,26 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+describe("describeStderr", () => {
+  it("push の拒否の行を、To の行より先に取る", () => {
+    const stderr = [
+      "To /tmp/remote.git",
+      " ! [rejected]        main -> main (fetch first)",
+      "error: failed to push some refs to '/tmp/remote.git'",
+      "hint: Updates were rejected because the remote contains work",
+    ].join("\n");
+    expect(describeStderr(stderr)).toBe(
+      "! [rejected]        main -> main (fetch first) / error: failed to push some refs to '/tmp/remote.git'"
+    );
+  });
+  it("理由の行が無ければ hint 以外の最初の行", () => {
+    expect(describeStderr("hint: x\nsomething went wrong\n")).toBe(
+      "something went wrong"
+    );
+    expect(describeStderr("")).toBe("");
+  });
 });
 
 describe("assertBranchName", () => {
@@ -194,9 +216,7 @@ describe("リモート", () => {
     const theirs = commitIn(other, "theirs", "b.txt");
     gitIn(other, "push", "-q", "origin", "main");
     commit("ours");
-    await expect(pushBranch(dir, "main")).rejects.toThrow(
-      "git の実行に失敗しました"
-    );
+    await expect(pushBranch(dir, "main")).rejects.toThrow("[rejected]");
     expect(gitIn(bare, "rev-parse", "main")).toBe(theirs);
   });
 
@@ -254,6 +274,31 @@ describe("リモート", () => {
     await pullFastForward(dir);
     expect(git("rev-parse", "HEAD")).toBe(theirs);
     expect(git("status", "--porcelain")).toBe("");
+  });
+
+  it("認証を求められても askpass を呼ばずに失敗する (core.askPass があっても)", async () => {
+    commit("c1");
+    // 常に 401 を返す HTTP のリモート
+    const server = http.createServer((_req, res) => {
+      res.writeHead(401, { "WWW-Authenticate": 'Basic realm="x"' });
+      res.end();
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as { port: number };
+    try {
+      const marker = path.join(root, "askpass-called");
+      const askpass = path.join(root, "askpass.sh");
+      fs.writeFileSync(askpass, `#!/bin/sh\ntouch "${marker}"\necho x\n`, {
+        mode: 0o755,
+      });
+      git("config", "core.askPass", askpass);
+      git("config", "credential.helper", "");
+      git("remote", "set-url", "origin", `http://127.0.0.1:${port}/x.git`);
+      await expect(fetchAll(dir)).rejects.toThrow(GitOpError);
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally {
+      server.close();
+    }
   });
 
   it("利用者の core.sshCommand を使い、端末から切り離して動かす", async () => {
