@@ -372,7 +372,7 @@ export async function deleteBranch(
     "--",
     branch,
   ]);
-  const deleted = /\(was ([0-9a-f]{40,64})\)/.exec(stdout)?.[1];
+  const deleted = /\(was ([0-9a-f]{40})\)/.exec(stdout)?.[1];
   if (deleted && deleted !== sha) {
     await createBranch(cwd, branch, deleted, upstream);
     throw new GitOpError(

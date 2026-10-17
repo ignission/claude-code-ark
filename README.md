@@ -67,7 +67,7 @@ With an [OpenRouter](https://openrouter.ai/) key, Ark can also decide for you wh
   />
 </p>
 
-- **Git tab**: a commit graph with branch labels, the diff of any commit, and uncommitted changes. It follows along while Claude commits.
+- **Git tab**: a commit graph with branch labels, the diff of any commit, and uncommitted changes. It follows along while Claude commits. Right-click to create, rename or delete branches, and run fetch, pull (fast-forward only) and push from the toolbar.
 - **Files tab**: browse the worktree and edit files in CodeMirror. If Claude rewrites a file while you are editing it, Ark asks whether to reload or overwrite instead of merging silently.
 
 ### It works from a phone
@@ -216,7 +216,7 @@ Changes to these settings apply from the next turn. The one exception is a sessi
 
 - **One user only.** There are no per-session permissions, and there is no plan to add them.
 - **The macOS app is unsigned** ([#193](https://github.com/ignission/claude-code-ark/issues/193)), and there is no packaged app for Linux or Windows. On Linux, run from source.
-- **The Git tab is read-only.** You cannot stage, commit, discard or check out from it.
+- **The Git tab does not touch the working tree.** It manages branches and runs fetch, pull (fast-forward only) and push, but you cannot stage, commit, discard or check out from it.
 - **The Files tab edits existing files only.** It cannot create, delete or rename them.
 - **The Git tab, file editing and keyboard navigation are desktop only.** On a phone, files open read-only.
 - **Per-repository accounts work on Linux only**, because macOS keeps Claude's credentials in the Keychain.
