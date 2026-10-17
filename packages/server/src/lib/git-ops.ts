@@ -266,7 +266,11 @@ export async function fetchAll(cwd: string): Promise<void> {
   await runGit(cwd, ["fetch", "--all", "--prune"], { remote: true });
 }
 
-/** いまのブランチを fast-forward だけで進める。作業ツリーを書くのはこの操作だけ */
+/**
+ * いまのブランチを fast-forward だけで進める。作業ツリーを書くのはこの操作だけ。
+ * merge.autostash が有効だと、ローカルの変更を退避して戻すときに競合の印を残したまま
+ * 成功で終わるので、--no-autostash で切る (ぶつかるなら git に断らせる)
+ */
 export async function pullFastForward(cwd: string): Promise<void> {
   const { stdout } = await runGit(cwd, [
     "symbolic-ref",
@@ -276,7 +280,9 @@ export async function pullFastForward(cwd: string): Promise<void> {
   ]).catch(() => ({ stdout: "" }));
   if (!stdout.trim())
     throw new GitOpError("ブランチにいないので pull できません");
-  await runGit(cwd, ["pull", "--ff-only", "--no-rebase"], { remote: true });
+  await runGit(cwd, ["pull", "--ff-only", "--no-rebase", "--no-autostash"], {
+    remote: true,
+  });
 }
 
 /** upstream の無いブランチを push する先。origin、無ければ最初のリモート */

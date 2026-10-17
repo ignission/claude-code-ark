@@ -39,7 +39,7 @@ interface GitSidebarProps {
   onSelectSha: (sha: string) => void;
   /** ブランチの右クリックの操作。渡さなければメニューを出さない */
   ops?: GitOpsActions;
-  /** リモートの操作の最中 (push / pull / 削除を重ねない) */
+  /** リモートの操作の最中。サーバーは同じ worktree の操作を重ねず断るので、どの操作も押せなくする */
   remoteBusy?: boolean;
 }
 
@@ -368,11 +368,17 @@ function BranchMenu({
       : null;
   return (
     <>
-      <ContextMenuItem onSelect={() => ops.createBranchAt(branch.sha)}>
+      <ContextMenuItem
+        disabled={remoteBusy}
+        onSelect={() => ops.createBranchAt(branch.sha)}
+      >
         <GitBranchPlus className={ITEM_ICON} aria-hidden="true" />
         ここから新しいブランチ
       </ContextMenuItem>
-      <ContextMenuItem onSelect={() => ops.renameBranch(branch.name)}>
+      <ContextMenuItem
+        disabled={remoteBusy}
+        onSelect={() => ops.renameBranch(branch.name)}
+      >
         <Pencil className={ITEM_ICON} aria-hidden="true" />
         名前を変更
       </ContextMenuItem>
@@ -396,7 +402,7 @@ function BranchMenu({
       <ContextMenuSeparator />
       <ContextMenuItem
         variant="destructive"
-        disabled={inUse !== null}
+        disabled={inUse !== null || remoteBusy}
         title={inUse ?? undefined}
         onSelect={() => ops.deleteBranch(branch.name)}
       >
@@ -424,7 +430,10 @@ function RemoteBranchMenu({
 }) {
   return (
     <>
-      <ContextMenuItem onSelect={() => ops.createBranchAt(remote.sha)}>
+      <ContextMenuItem
+        disabled={remoteBusy}
+        onSelect={() => ops.createBranchAt(remote.sha)}
+      >
         <GitBranchPlus className={ITEM_ICON} aria-hidden="true" />
         ここから新しいブランチ
       </ContextMenuItem>

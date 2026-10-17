@@ -2,7 +2,9 @@
  * Git タブの書き込み操作の socket ハンドラ (すべて ack)。
  * 読み取り (git-view-handlers.ts) と違い、入力の誤りは黙って捨てず理由を返す
  * (利用者が打ったブランチ名が通らない理由を画面に出すため)。
- * 同じ worktree への操作は 1 つずつ順に流す (push を 2 回押した等で git を重ねない)。
+ * 同じ worktree への操作は重ねない。実行中に届いた操作は待たせず断る (待たせると
+ * クライアントの ack の待ちが先に切れ、失敗と出たあとで実行されてしまう)。
+ * 実行中の印は socket をまたいで共有する (別のタブ・再接続からの操作も重ねない)
  */
 
 import type {
@@ -41,18 +43,20 @@ function toFailure(err: unknown): Failure {
   return { ok: false, error: err instanceof Error ? err.message : String(err) };
 }
 
+/** 操作の実行中の worktree。socket ごとではなくプロセスで 1 つ持つ */
+const runningWorktrees = new Set<string>();
+
 export function createGitOpsHandlers(deps: GitOpsHandlersDeps) {
-  /** worktree ごとの直列化。前の操作の成否によらず次へ進む */
-  const queues = new Map<string, Promise<unknown>>();
-  function serialize<T>(cwd: string, run: () => Promise<T>): Promise<T> {
-    const prev = queues.get(cwd) ?? Promise.resolve();
-    const next = prev.then(run, run);
-    const settled = next.catch(() => undefined);
-    queues.set(cwd, settled);
-    void settled.then(() => {
-      if (queues.get(cwd) === settled) queues.delete(cwd);
-    });
-    return next;
+  async function exclusive<T>(cwd: string, run: () => Promise<T>): Promise<T> {
+    if (runningWorktrees.has(cwd)) {
+      throw new GitOpError("別の Git の操作が実行中です");
+    }
+    runningWorktrees.add(cwd);
+    try {
+      return await run();
+    } finally {
+      runningWorktrees.delete(cwd);
+    }
   }
 
   function handler<T extends { ok: true }>(
@@ -69,7 +73,7 @@ export function createGitOpsHandlers(deps: GitOpsHandlersDeps) {
         if (cwd === undefined) {
           return reply({ ok: false, error: "セッションが見つかりません" });
         }
-        const result = await serialize(cwd, () => run(cwd, data));
+        const result = await exclusive(cwd, () => run(cwd, data));
         reply({ ok: true, ...result } as T);
       } catch (err) {
         try {

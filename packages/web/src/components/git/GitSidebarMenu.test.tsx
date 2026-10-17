@@ -148,12 +148,13 @@ describe("GitSidebar の右クリック", () => {
     );
   });
 
-  it("リモートの操作の最中は push とリモートの削除を押せない", () => {
+  it("リモートの操作の最中はどの操作も押せない", () => {
     const { menuOf, item } = setup(true);
     expect(item(menuOf("free"), "push")?.disabled).toBe(true);
     expect(item(menuOf("origin/feat/x"), "リモートから削除")?.disabled).toBe(
       true
     );
-    expect(item(menuOf("free"), "名前を変更")?.disabled).toBeFalsy();
+    expect(item(menuOf("free"), "名前を変更")?.disabled).toBe(true);
+    expect(item(menuOf("free"), "削除")?.disabled).toBe(true);
   });
 });

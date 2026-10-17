@@ -23,6 +23,8 @@ const ACK_TIMEOUT_MS = 5000;
  * サーバーが push をやり終えたのに画面だけ「応答がない」と出す食い違いを防ぐ
  */
 const REMOTE_ACK_TIMEOUT_MS = 130_000;
+/** ブランチの操作の待ち。サーバー側の git の timeout (10 秒) より長くする (理由は同上) */
+const LOCAL_OP_ACK_TIMEOUT_MS = 15_000;
 const NO_RESPONSE = "サーバーから応答がありません";
 
 type GitEvent =
@@ -94,11 +96,23 @@ export function createGitApi(socket: TypedSocket, sessionId: string): GitApi {
       request<GitFileDiffResponse>("git:file-diff", { target, path, oldPath }),
     fingerprint: () => request<GitFingerprintResponse>("git:fingerprint", {}),
     createBranch: (name, startPoint) =>
-      request<GitOpResponse>("git:branch-create", { name, startPoint }),
+      request<GitOpResponse>(
+        "git:branch-create",
+        { name, startPoint },
+        LOCAL_OP_ACK_TIMEOUT_MS
+      ),
     renameBranch: (from, to) =>
-      request<GitOpResponse>("git:branch-rename", { from, to }),
+      request<GitOpResponse>(
+        "git:branch-rename",
+        { from, to },
+        LOCAL_OP_ACK_TIMEOUT_MS
+      ),
     deleteBranch: (name, force) =>
-      request<GitBranchDeleteResponse>("git:branch-delete", { name, force }),
+      request<GitBranchDeleteResponse>(
+        "git:branch-delete",
+        { name, force },
+        LOCAL_OP_ACK_TIMEOUT_MS
+      ),
     deleteRemoteBranch: (remote, name) =>
       request<GitOpResponse>(
         "git:remote-branch-delete",

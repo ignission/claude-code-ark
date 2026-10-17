@@ -223,6 +223,25 @@ describe("リモート", () => {
     expect(more).not.toBe(ours);
   });
 
+  it("merge.autostash が有効でも、ローカルの変更とぶつかる pull は断る", async () => {
+    commit("c1");
+    await pushBranch(dir, "main");
+    const other = path.join(root, "clone");
+    gitIn(root, "clone", "-q", bare, other);
+    gitIn(other, "config", "commit.gpgsign", "false");
+    commitIn(other, "theirs");
+    gitIn(other, "push", "-q", "origin", "main");
+    git("config", "merge.autostash", "true");
+    fs.writeFileSync(path.join(dir, "a.txt"), "local edit\n");
+    const before = git("rev-parse", "HEAD");
+    await expect(pullFastForward(dir)).rejects.toThrow(GitOpError);
+    expect(git("rev-parse", "HEAD")).toBe(before);
+    expect(fs.readFileSync(path.join(dir, "a.txt"), "utf8")).toBe(
+      "local edit\n"
+    );
+    expect(git("diff", "--name-only", "--diff-filter=U")).toBe("");
+  });
+
   it("detached では pull しない", async () => {
     const c1 = commit("c1");
     git("checkout", "-q", "--detach", c1);

@@ -474,7 +474,9 @@ export function GitPane({ socket, sessionId, isActive }: GitPaneProps) {
             onReload={handleRetry}
             reloading={reloading}
             reveal={reveal}
-            onCreateBranchAt={ops.actions.createBranchAt}
+            onCreateBranchAt={
+              ops.busy === null ? ops.actions.createBranchAt : undefined
+            }
             actions={
               <RemoteButtons
                 busy={ops.busy}

@@ -60,13 +60,13 @@ describe("createGitApi", () => {
     ]);
   });
 
-  it("書き込みの操作は正しいイベントで emit し、リモートの操作だけ長く待つ", async () => {
+  it("書き込みの操作は正しいイベントで emit し、サーバーの git の timeout より長く待つ", async () => {
     const f = createFakeSocket();
     const api = createGitApi(asSocket(f.socket), "s1");
     await api.createBranch("x", "abc1234");
     await api.renameBranch("x", "y");
     await api.deleteBranch("y", true);
-    expect(f.socket.timeout).toHaveBeenLastCalledWith(5000);
+    expect(f.socket.timeout).toHaveBeenLastCalledWith(15_000);
     await api.deleteRemoteBranch("origin", "y");
     await api.fetch();
     await api.pull();

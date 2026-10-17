@@ -105,18 +105,33 @@ describe("git ops handlers", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("同じ worktree への操作は順に流す", async () => {
-    const h = make();
+  it("同じ worktree への操作は重ねず、実行中に届いた操作は断る (socket をまたいでも)", async () => {
     const head = git("rev-parse", "HEAD");
-    // 同じ名前を同時に作る。直列なら片方だけが通り、もう片方は「既にあります」になる
+    // 別の接続の handler (タブが 2 つ) から同時に作る
     const results = await Promise.all([
-      call(h, "branchCreate", { sessionId: "s1", name: "x", startPoint: head }),
-      call(h, "branchCreate", { sessionId: "s1", name: "x", startPoint: head }),
+      call(make(), "branchCreate", {
+        sessionId: "s1",
+        name: "x",
+        startPoint: head,
+      }),
+      call(make(), "branchCreate", {
+        sessionId: "s1",
+        name: "y",
+        startPoint: head,
+      }),
     ]);
     expect(results).toContainEqual({ ok: true });
     expect(results).toContainEqual({
       ok: false,
-      error: expect.stringContaining("既にあります"),
+      error: "別の Git の操作が実行中です",
     });
+    // 終わったあとは通る
+    expect(
+      await call(make(), "branchCreate", {
+        sessionId: "s1",
+        name: "z",
+        startPoint: head,
+      })
+    ).toEqual({ ok: true });
   });
 });
