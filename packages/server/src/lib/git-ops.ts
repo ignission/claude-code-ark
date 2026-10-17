@@ -244,19 +244,15 @@ async function readUpstream(
   return remote && merge ? { remote, merge } : undefined;
 }
 
-/** 戻すときに受け取った追跡先を確かめる。リモートは設定にあるもの (`.` はローカル) だけ */
-async function parseUpstream(
-  cwd: string,
-  v: unknown
-): Promise<BranchUpstream | undefined> {
+/** 戻すときに受け取った追跡先の形を確かめる (merge は refs/ で始まる 1 行) */
+function parseUpstream(v: unknown): BranchUpstream | undefined {
   if (v === undefined || v === null) return undefined;
   const u = v as Partial<BranchUpstream>;
   if (
     typeof u.remote !== "string" ||
     typeof u.merge !== "string" ||
     !u.merge.startsWith("refs/") ||
-    /[\0\n]/.test(u.merge) ||
-    (u.remote !== "." && !(await listRemotes(cwd)).includes(u.remote))
+    /[\0\n]/.test(u.remote + u.merge)
   ) {
     throw new GitOpError("追跡先が不正です");
   }
@@ -264,8 +260,33 @@ async function parseUpstream(
 }
 
 /**
+ * 追跡先を設定し直す。リモートがもう無ければ戻さない (無いリモートを追跡させると、
+ * pushBranch が存在しないリモートへ push しに行く)。戻せたかを返す
+ */
+async function restoreUpstream(
+  cwd: string,
+  branch: string,
+  upstream: BranchUpstream
+): Promise<boolean> {
+  if (
+    upstream.remote !== "." &&
+    !(await listRemotes(cwd)).includes(upstream.remote)
+  ) {
+    return false;
+  }
+  await runGit(cwd, [
+    "config",
+    "--",
+    `branch.${branch}.remote`,
+    upstream.remote,
+  ]);
+  await runGit(cwd, ["config", "--", `branch.${branch}.merge`, upstream.merge]);
+  return true;
+}
+
+/**
  * startPoint (sha) から name を作る。チェックアウトはしない。
- * upstream は削除を元に戻すときに渡す (消す前の追跡先を戻す)
+ * upstream は削除を元に戻すときに渡す (消す前の追跡先。リモートが残っていれば戻す)
  */
 export async function createBranch(
   cwd: string,
@@ -275,20 +296,12 @@ export async function createBranch(
 ): Promise<void> {
   const branch = await assertBranchName(cwd, name);
   if (!isValidSha(startPoint)) throw new GitOpError("起点のコミットが不正です");
-  const track = await parseUpstream(cwd, upstream);
+  const track = parseUpstream(upstream);
   if (await localBranchExists(cwd, branch)) {
     throw new GitOpError(`ブランチ ${branch} は既にあります`);
   }
   await runGit(cwd, ["branch", "--no-track", "--", branch, startPoint]);
-  if (track) {
-    await runGit(cwd, [
-      "config",
-      "--",
-      `branch.${branch}.remote`,
-      track.remote,
-    ]);
-    await runGit(cwd, ["config", "--", `branch.${branch}.merge`, track.merge]);
-  }
+  if (track) await restoreUpstream(cwd, branch, track);
 }
 
 export async function renameBranch(
@@ -374,9 +387,12 @@ export async function deleteBranch(
   ]);
   const deleted = /\(was ([0-9a-f]{40})\)/.exec(stdout)?.[1];
   if (deleted && deleted !== sha) {
-    await createBranch(cwd, branch, deleted, upstream);
+    // 追跡先の確認で作り直しが止まらないよう、ブランチを先に作り、追跡先はあとから戻す
+    await runGit(cwd, ["branch", "--no-track", "--", branch, deleted]);
+    if (upstream)
+      await restoreUpstream(cwd, branch, upstream).catch(() => false);
     throw new GitOpError(
-      `ブランチ ${branch} が確かめている間に動いたので、削除をやめました`
+      `ブランチ ${branch} が確かめている間に ${deleted.slice(0, 7)} へ動いたので、削除をやめました`
     );
   }
   return upstream ? { sha, upstream } : { sha };
@@ -542,7 +558,19 @@ export async function deleteRemoteBranch(
     "--format=%(symref)",
     `refs/remotes/${remoteName}/HEAD`,
   ]);
-  if (stdout.trim() === trackingRef) {
+  // 手元の <remote>/HEAD が無い (または古い) こともあるので、リモートの HEAD も聞く。
+  // 聞けなければ消さない (既定のブランチかどうか分からないまま消さない)
+  const remoteHead = await runGit(
+    cwd,
+    ["ls-remote", "--symref", "--", remoteName, "HEAD"],
+    { remote: true }
+  ).catch(() => {
+    throw new GitOpError(
+      `リモート ${remoteName} の既定のブランチを確かめられないので、削除をやめました`
+    );
+  });
+  const headTarget = /^ref: (\S+)\tHEAD$/m.exec(remoteHead.stdout)?.[1];
+  if (stdout.trim() === trackingRef || headTarget === source) {
     throw new GitOpError(
       `${trackingName} はリモートの既定のブランチなので消せません`
     );

@@ -204,15 +204,15 @@ describe("deleteBranch", () => {
     );
   });
 
-  it("作り直すときの追跡先は、設定にあるリモートと refs/ の名前だけ受け付ける", async () => {
+  it("作り直すときの追跡先: 形が不正なら断り、リモートが無ければ追跡先なしで作る", async () => {
     const c1 = commit("c1");
-    await expect(
-      createBranch(dir, "x", c1, { remote: "nope", merge: "refs/heads/x" })
-    ).rejects.toThrow("追跡先が不正です");
     await expect(
       createBranch(dir, "x", c1, { remote: "origin", merge: "x" })
     ).rejects.toThrow("追跡先が不正です");
     expect(hasRef("refs/heads/x")).toBe(false);
+    await createBranch(dir, "y", c1, { remote: "gone", merge: "refs/heads/y" });
+    expect(hasRef("refs/heads/y")).toBe(true);
+    expect(() => git("config", "--get", "branch.y.remote")).toThrow();
   });
 
   it("リモートのブランチに取り込まれていれば消せる", async () => {
@@ -483,6 +483,17 @@ describe("リモート", () => {
     await deleteRemoteBranch(dir, "origin", "origin/review/topic");
     expect(hasRef("refs/heads/topic", bare)).toBe(false);
     expect(hasRef("refs/heads/review/topic", bare)).toBe(true);
+  });
+
+  it("手元に origin/HEAD が無くても、リモートの HEAD が指すブランチは消さない", async () => {
+    commit("c1");
+    git("push", "-q", "origin", "main");
+    await fetchAll(dir);
+    expect(hasRef("refs/remotes/origin/HEAD")).toBe(false);
+    await expect(
+      deleteRemoteBranch(dir, "origin", "origin/main")
+    ).rejects.toThrow("既定のブランチ");
+    expect(hasRef("refs/heads/main", bare)).toBe(true);
   });
 
   it("fetch の設定でたどれない追跡ブランチは消さない", async () => {
