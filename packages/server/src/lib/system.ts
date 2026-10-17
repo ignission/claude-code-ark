@@ -575,6 +575,33 @@ export function resolvePm2Path(): string | null {
 }
 
 /**
+ * GitHub CLI (gh) のパスを解決する。PRとCIの状態を読む機能だけが使い、
+ * 見つからなければその機能を無効にする。macOSの .app は PATH が細いので、
+ * Homebrew の置き場も探す
+ */
+export function resolveGhPath(): string | null {
+  const envPath = process.env.PATH ?? "";
+  const candidates = [
+    ...envPath
+      .split(path.delimiter)
+      .filter(Boolean)
+      .map(dir => path.join(dir, "gh")),
+    "/opt/homebrew/bin/gh",
+    "/usr/local/bin/gh",
+    "/usr/bin/gh",
+    "/home/linuxbrew/.linuxbrew/bin/gh",
+  ];
+  for (const p of candidates) {
+    try {
+      if (existsSync(p)) return p;
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
+/**
  * プロファイル切替機能のサポート判定。
  * Linux + claude CLI + tmux が3つ揃った時のみ true。
  * (UsageCollector も tmux を必要とするため tmux チェックも含める)

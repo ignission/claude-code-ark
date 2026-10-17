@@ -139,6 +139,7 @@ export default function Dashboard() {
     sessionPreviews,
     sessionAwaitingTexts,
     sessionLiveTails,
+    sessionPrStatuses,
     gridSnapshots,
     subscribeGrid,
     unsubscribeGrid,
@@ -270,6 +271,7 @@ export default function Dashboard() {
   const sessionNotifications = useSessionNotifications({
     statusSignals: sessionStatusSignals,
     auqSignals: sessionAuqSignals,
+    prStatuses: sessionPrStatuses,
     sessionLabels: sessionNotificationLabels,
     enabledBySession: sessionNotificationSettings,
     onOpenSession: handleOpenSessionFromNotification,
@@ -919,6 +921,7 @@ export default function Dashboard() {
           sessionAwaitingTexts={sessionAwaitingTexts}
           sessionLiveTails={sessionLiveTails}
           sessionPreviews={sessionPreviews}
+          sessionPrStatuses={sessionPrStatuses}
           worktreeDisplayNames={worktreeDisplayNames}
           onSetWorktreeDisplayName={setWorktreeDisplayName}
           capabilities={capabilities}
@@ -979,6 +982,7 @@ export default function Dashboard() {
               sessionStatuses={sessionStatuses}
               sessionLastUpdatedAt={sessionLastUpdatedAt}
               sessionPreviews={sessionPreviews}
+              sessionPrStatuses={sessionPrStatuses}
               selectedSessionId={selectedSessionId}
               worktreeDisplayNames={worktreeDisplayNames}
               capabilities={capabilities}

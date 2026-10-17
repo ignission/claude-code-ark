@@ -126,6 +126,10 @@ import {
   resolveWorktreeRealPath,
 } from "./lib/managed-worktree.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
+import {
+  createGhRunner,
+  PrStatusCollector,
+} from "./lib/pr-status-collector.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import { screenBridge } from "./lib/screen-bridge.js";
 import {
@@ -148,7 +152,7 @@ import {
   REVALIDATE_CACHE_CONTROL,
   staticCacheControl,
 } from "./lib/static-cache.js";
-import { detectMultiProfileSupported } from "./lib/system.js";
+import { detectMultiProfileSupported, resolveGhPath } from "./lib/system.js";
 import {
   claudeShellCommand,
   TMUX_BINARY_PATH,
@@ -441,6 +445,27 @@ export async function startServer(
   console.log(
     `[Capabilities] multiProfileSupported = ${capabilities.multiProfileSupported}`
   );
+
+  // ===== PRとCIの状態 =====
+  // ghが無ければ機能ごと無効にする。previews の prStatus は null のまま
+  const ghPath = resolveGhPath();
+  const prStatusCollector = ghPath
+    ? new PrStatusCollector(createGhRunner(ghPath), () =>
+        sessionOrchestrator.getAllSessions().map(session => ({
+          sessionId: session.id,
+          worktreePath: session.worktreePath,
+        }))
+      )
+    : null;
+  if (prStatusCollector) prStatusCollector.start();
+  else console.log("[PrStatus] gh が見つからないので、PRとCIの状態は出さない");
+  const withPrStatus = (
+    previews: ReturnType<typeof sessionOrchestrator.getAllPreviews>
+  ) =>
+    previews.map(preview => ({
+      ...preview,
+      prStatus: prStatusCollector?.get(preview.sessionId) ?? null,
+    }));
 
   // ===== Usage取得 =====
   const usageCollector = new UsageCollector();
@@ -3663,7 +3688,7 @@ export async function startServer(
     // セッションプレビューのポーリング（1秒間隔）
     const previewInterval = setInterval(() => {
       try {
-        const previews = sessionOrchestrator.getAllPreviews();
+        const previews = withPrStatus(sessionOrchestrator.getAllPreviews());
         if (previews.length > 0) {
           socket.emit("session:previews", previews);
         }
@@ -3674,7 +3699,9 @@ export async function startServer(
 
     // 接続時に初回プレビューを送信
     try {
-      const initialPreviews = sessionOrchestrator.getAllPreviews();
+      const initialPreviews = withPrStatus(
+        sessionOrchestrator.getAllPreviews()
+      );
       if (initialPreviews.length > 0) {
         socket.emit("session:previews", initialPreviews);
       }
@@ -3897,6 +3924,7 @@ export async function startServer(
     clearInterval(fileUploadCleanupInterval);
     clearInterval(bridgeBroadcastInterval);
     clearInterval(gridBroadcastInterval);
+    prStatusCollector?.stop();
     sessionOrchestrator.cleanup();
     askManager.dispose();
     browserBridge.reset();

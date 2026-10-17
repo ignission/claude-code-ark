@@ -22,6 +22,7 @@ import type {
   Screen,
   ScreenCredentialsResult,
   ServerToClientEvents,
+  SessionPrStatus,
   SpecialKey,
   SystemCapabilities,
   Worktree,
@@ -192,6 +193,7 @@ interface MobileLayoutProps {
   sessionLiveTails: Map<string, string>;
   /** session:previews由来の端末の最後の内容行 (一覧の2行目) */
   sessionPreviews: Map<string, string>;
+  sessionPrStatuses: Map<string, SessionPrStatus>;
   /** worktreePath → 表示名 (一覧の行とTask 10のヘッダーの主ラベル) */
   worktreeDisplayNames: Map<string, string>;
   onSetWorktreeDisplayName?: (
@@ -276,6 +278,7 @@ export function MobileLayout({
   sessionAwaitingTexts,
   sessionLiveTails,
   sessionPreviews,
+  sessionPrStatuses,
   worktreeDisplayNames,
   onSetWorktreeDisplayName,
   capabilities,
@@ -448,6 +451,7 @@ export function MobileLayout({
           sessionStatuses={sessionStatuses}
           sessionLastUpdatedAt={sessionLastUpdatedAt}
           sessionPreviews={sessionPreviews}
+          sessionPrStatuses={sessionPrStatuses}
           worktreeDisplayNames={worktreeDisplayNames}
           capabilities={capabilities}
           profiles={profiles}

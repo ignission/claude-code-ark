@@ -13,6 +13,7 @@ import type {
   BridgeSessionStatus,
   ManagedSession,
   Profile,
+  SessionPrStatus,
   SystemCapabilities,
   Worktree,
 } from "@ark/shared";
@@ -59,6 +60,8 @@ export interface SessionSectionListProps {
   sessionLastUpdatedAt?: Map<string, number>;
   /** sessionId → 端末の最後の内容行。2行目にそのまま出す */
   sessionPreviews: Map<string, string>;
+  /** sessionId → ブランチのPRとチェックの集計。PRが無ければエントリが無い */
+  sessionPrStatuses: Map<string, SessionPrStatus>;
   selectedSessionId: string | null;
   /** worktreePath → 表示名 */
   worktreeDisplayNames?: Map<string, string>;
@@ -123,6 +126,7 @@ export function SessionSectionList({
   sessionStatuses,
   sessionLastUpdatedAt,
   sessionPreviews,
+  sessionPrStatuses,
   selectedSessionId,
   worktreeDisplayNames,
   capabilities,
@@ -312,6 +316,11 @@ export function SessionSectionList({
         variant={variant}
         entry={entry}
         displayName={displayName}
+        prStatus={
+          entry.session
+            ? (sessionPrStatuses.get(entry.session.id) ?? null)
+            : null
+        }
         previewText={
           entry.session ? (sessionPreviews.get(entry.session.id) ?? "") : ""
         }

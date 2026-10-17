@@ -65,6 +65,7 @@ function sidebarProps(): ComponentProps<typeof SessionSidebar> {
     repoList: ["/work/app"],
     sessionStatuses: new Map([["session-1", "IDLE"]]),
     sessionPreviews: new Map([["session-1", "どちらにしますか"]]),
+    sessionPrStatuses: new Map(),
     selectedSessionId: "session-1",
     onOpenSession: vi.fn(),
     onStartSession: vi.fn(),

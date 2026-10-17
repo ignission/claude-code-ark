@@ -123,6 +123,7 @@ function rowProps(
     entry: entryOf(),
     displayName: null,
     previewText: "テストを実行しています",
+    prStatus: null,
     profile: null,
     staleProfile: false,
     selected: false,
@@ -350,6 +351,46 @@ describe("SessionListRowの中身", () => {
         testDoubles.rowMenuVariants.mock.calls.map(([variant]) => variant)
       )
     ).toEqual(new Set(["dropdown"]));
+  });
+});
+
+describe("SessionListRowのPRの札", () => {
+  it("PRがあれば札を出し、押してもメニューを開かずにPRを開く", () => {
+    const onOpen = vi.fn();
+    const container = mount(
+      <SessionListRow
+        {...rowProps({
+          menu: { onOpen },
+          prStatus: {
+            number: 550,
+            url: "https://github.com/o/r/pull/550",
+            state: "OPEN",
+            isDraft: false,
+            checks: "failed",
+            headRefOid: "h",
+          },
+        })}
+      />
+    );
+    const badge = container.querySelector<HTMLAnchorElement>(
+      '[data-testid="session-row-pr"]'
+    );
+    expect(badge?.textContent).toBe("#550 ✕");
+    expect(badge?.getAttribute("href")).toBe("https://github.com/o/r/pull/550");
+    expect(badge?.getAttribute("target")).toBe("_blank");
+    act(() => {
+      badge?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true })
+      );
+    });
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("PRが無ければ札を出さない", () => {
+    const container = mount(<SessionListRow {...rowProps()} />);
+    expect(
+      container.querySelector('[data-testid="session-row-pr"]')
+    ).toBeNull();
   });
 });
 
