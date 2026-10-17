@@ -1,18 +1,31 @@
 import type { GitRefs } from "@ark/shared";
 import {
   Archive,
+  ArrowDownToLine,
+  ArrowUpFromLine,
   Check,
   ChevronDown,
   ChevronRight,
   Cloud,
   FilePenLine,
   GitBranch,
+  GitBranchPlus,
   GitCommitHorizontal,
+  Pencil,
   Tag,
+  Trash2,
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 import type { GitSelection } from "./types";
+import type { GitOpsActions } from "./useGitOps";
 
 interface GitSidebarProps {
   refs: GitRefs | null;
@@ -24,9 +37,24 @@ interface GitSidebarProps {
   onShowAll: () => void;
   /** ref を押した。そのコミットを一覧で選んでスクロールする */
   onSelectSha: (sha: string) => void;
+  /** ブランチの右クリックの操作。渡さなければメニューを出さない */
+  ops?: GitOpsActions;
+  /** リモートの操作の最中 (push / pull / 削除を重ねない) */
+  remoteBusy?: boolean;
 }
 
 type GroupId = "branches" | "remotes" | "tags" | "stashes";
+
+type LocalBranch = GitRefs["branches"][number];
+
+interface RemoteBranch {
+  /** `origin/feat/x` */
+  name: string;
+  /** `feat/x` */
+  short: string;
+  sha: string;
+  isDefault: boolean;
+}
 
 const GROUPS_KEY = "ark-git-sidebar-groups";
 
@@ -68,6 +96,8 @@ export function GitSidebar({
   onSelectWorking,
   onShowAll,
   onSelectSha,
+  ops,
+  remoteBusy = false,
 }: GitSidebarProps) {
   const [collapsed, setCollapsed] = useState(loadCollapsedGroups);
   const toggleGroup = (id: GroupId) => {
@@ -82,42 +112,55 @@ export function GitSidebar({
 
   // リモートのブランチを、リモートの名前ごとにまとめる (origin/HEAD は出さない)
   const remoteGroups = useMemo(() => {
-    const groups = new Map<
-      string,
-      { name: string; short: string; sha: string }[]
-    >();
+    const groups = new Map<string, RemoteBranch[]>();
     for (const remote of refs?.remotes ?? []) {
       const slash = remote.name.indexOf("/");
       const host = slash === -1 ? remote.name : remote.name.slice(0, slash);
       const short = slash === -1 ? remote.name : remote.name.slice(slash + 1);
       if (short === "HEAD") continue;
       const list = groups.get(host) ?? [];
-      list.push({ name: remote.name, short, sha: remote.sha });
+      list.push({
+        name: remote.name,
+        short,
+        sha: remote.sha,
+        isDefault: remote.isDefault === true,
+      });
       groups.set(host, list);
     }
     return [...groups.entries()];
   }, [refs]);
 
   const selectedSha = selection?.kind === "commit" ? selection.sha : null;
+  /** ref の行。menu を渡すと右クリックでそのメニューを出す */
   const refRow = (
     key: string,
     sha: string,
     depth: number,
     content: ReactNode,
-    title: string
-  ) => (
-    <button
-      key={key}
-      type="button"
-      title={title}
-      data-sha={sha}
-      onClick={() => onSelectSha(sha)}
-      className={cn(ROW, sha === selectedSha && "bg-muted")}
-      style={{ paddingLeft: 8 + depth * 14 }}
-    >
-      {content}
-    </button>
-  );
+    title: string,
+    menu?: ReactNode
+  ) => {
+    const row = (
+      <button
+        key={key}
+        type="button"
+        title={title}
+        data-sha={sha}
+        onClick={() => onSelectSha(sha)}
+        className={cn(ROW, sha === selectedSha && "bg-muted")}
+        style={{ paddingLeft: 8 + depth * 14 }}
+      >
+        {content}
+      </button>
+    );
+    if (!menu) return row;
+    return (
+      <ContextMenu key={key}>
+        <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+        <ContextMenuContent className="min-w-48">{menu}</ContextMenuContent>
+      </ContextMenu>
+    );
+  };
 
   const group = (
     id: GroupId,
@@ -219,7 +262,10 @@ export function GitSidebar({
             </>,
             branch.upstream
               ? `${branch.name} → ${branch.upstream}`
-              : branch.name
+              : branch.name,
+            ops && (
+              <BranchMenu branch={branch} ops={ops} remoteBusy={remoteBusy} />
+            )
           )
         )
       )}
@@ -245,7 +291,14 @@ export function GitSidebar({
                     {remote.short}
                   </span>
                 </>,
-                remote.name
+                remote.name,
+                ops && (
+                  <RemoteBranchMenu
+                    remote={remote}
+                    ops={ops}
+                    remoteBusy={remoteBusy}
+                  />
+                )
               )
             )}
           </div>
@@ -290,5 +343,105 @@ export function GitSidebar({
         )
       )}
     </nav>
+  );
+}
+
+const ITEM_ICON = "size-4 text-muted-foreground";
+
+/**
+ * ローカルのブランチのメニュー。いまのブランチと、別の作業ツリー (別のセッション) で
+ * 使っているブランチは消せない (git が断る) ので、項目を無効にして理由を出す
+ */
+function BranchMenu({
+  branch,
+  ops,
+  remoteBusy,
+}: {
+  branch: LocalBranch;
+  ops: GitOpsActions;
+  remoteBusy: boolean;
+}) {
+  const inUse = branch.current
+    ? "いまのブランチは削除できません"
+    : branch.worktreePath
+      ? `ほかの作業ツリーで使用中 (${branch.worktreePath})`
+      : null;
+  return (
+    <>
+      <ContextMenuItem onSelect={() => ops.createBranchAt(branch.sha)}>
+        <GitBranchPlus className={ITEM_ICON} aria-hidden="true" />
+        ここから新しいブランチ
+      </ContextMenuItem>
+      <ContextMenuItem onSelect={() => ops.renameBranch(branch.name)}>
+        <Pencil className={ITEM_ICON} aria-hidden="true" />
+        名前を変更
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem
+        disabled={remoteBusy}
+        onSelect={() => ops.pushBranch(branch.name)}
+      >
+        <ArrowUpFromLine className={ITEM_ICON} aria-hidden="true" />
+        push
+        {!branch.upstream && (
+          <span className="ml-auto text-muted-foreground text-xs">新規</span>
+        )}
+      </ContextMenuItem>
+      {branch.current && (
+        <ContextMenuItem disabled={remoteBusy} onSelect={() => ops.pull()}>
+          <ArrowDownToLine className={ITEM_ICON} aria-hidden="true" />
+          pull (fast-forward)
+        </ContextMenuItem>
+      )}
+      <ContextMenuSeparator />
+      <ContextMenuItem
+        variant="destructive"
+        disabled={inUse !== null}
+        title={inUse ?? undefined}
+        onSelect={() => ops.deleteBranch(branch.name)}
+      >
+        <Trash2 className="size-4" aria-hidden="true" />
+        削除
+      </ContextMenuItem>
+      {inUse && (
+        <div className="px-2 pb-1.5 text-[11px] text-muted-foreground">
+          {inUse}
+        </div>
+      )}
+    </>
+  );
+}
+
+/** リモートのブランチのメニュー。既定のブランチ (`origin/HEAD` の指す先) は消せない */
+function RemoteBranchMenu({
+  remote,
+  ops,
+  remoteBusy,
+}: {
+  remote: RemoteBranch;
+  ops: GitOpsActions;
+  remoteBusy: boolean;
+}) {
+  return (
+    <>
+      <ContextMenuItem onSelect={() => ops.createBranchAt(remote.sha)}>
+        <GitBranchPlus className={ITEM_ICON} aria-hidden="true" />
+        ここから新しいブランチ
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem
+        variant="destructive"
+        disabled={remote.isDefault || remoteBusy}
+        onSelect={() => ops.deleteRemoteBranch(remote.name)}
+      >
+        <Trash2 className="size-4" aria-hidden="true" />
+        リモートから削除
+      </ContextMenuItem>
+      {remote.isDefault && (
+        <div className="px-2 pb-1.5 text-[11px] text-muted-foreground">
+          リモートの既定のブランチは削除できません
+        </div>
+      )}
+    </>
   );
 }

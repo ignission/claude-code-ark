@@ -214,6 +214,7 @@ describe("getRefs", () => {
         upstream: "origin/main",
         ahead: 2,
         behind: 0,
+        worktreePath: dir,
       },
     ]);
     expect(r.remotes).toEqual([{ name: "origin/main", sha: c1 }]);
@@ -235,6 +236,34 @@ describe("getRefs", () => {
     git("reset", "-q", "--hard", c1);
     const r = await getRefs(dir);
     expect(r.branches[0]).toMatchObject({ ahead: 0, behind: 1 });
+  });
+
+  it("リモートの既定のブランチに isDefault を付ける", async () => {
+    const c1 = commit("c1", { "a.txt": "1\n" });
+    git("update-ref", "refs/remotes/origin/main", c1);
+    git("update-ref", "refs/remotes/origin/topic", c1);
+    git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+    const r = await getRefs(dir);
+    expect(r.remotes).toEqual([
+      { name: "origin/main", sha: c1, isDefault: true },
+      { name: "origin/topic", sha: c1 },
+    ]);
+  });
+
+  it("ほかの worktree で使っているブランチは worktreePath を持つ", async () => {
+    commit("c1", { "a.txt": "1\n" });
+    const other = `${dir}-wt`;
+    git("worktree", "add", "-q", "-b", "side", other);
+    try {
+      const r = await getRefs(dir);
+      expect(r.branches.find(b => b.name === "side")?.worktreePath).toBe(other);
+      git("branch", "loose");
+      expect(
+        (await getRefs(dir)).branches.find(b => b.name === "loose")
+      ).not.toHaveProperty("worktreePath");
+    } finally {
+      fs.rmSync(other, { recursive: true, force: true });
+    }
   });
 
   it("detached は branch が null", async () => {

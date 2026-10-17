@@ -266,24 +266,29 @@ function parseTrack(track: string): { ahead: number; behind: number } | null {
 
 export async function getRefs(cwd: string): Promise<GitRefs> {
   await assertRepository(cwd);
-  const [branchName, head, rows, branchOut, stashOut] = await Promise.all([
-    currentBranch(cwd),
-    headSha(cwd),
-    listRefRows(cwd),
-    git(cwd, [
-      "for-each-ref",
-      "--format=%(refname)%00%(objectname)%00%(upstream:short)%00%(upstream:track,nobracket)",
-      "refs/heads",
-    ]),
-    gitOrNull(cwd, ["stash", "list", `--format=%H${FS}%gd${FS}%gs`]),
-  ]);
+  const [branchName, head, rows, branchOut, stashOut, symrefOut] =
+    await Promise.all([
+      currentBranch(cwd),
+      headSha(cwd),
+      listRefRows(cwd),
+      git(cwd, [
+        "for-each-ref",
+        "--format=%(refname)%00%(objectname)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(worktreepath)",
+        "refs/heads",
+      ]),
+      gitOrNull(cwd, ["stash", "list", `--format=%H${FS}%gd${FS}%gs`]),
+      // リモートの既定のブランチ (`origin/HEAD` → `refs/remotes/origin/main`)
+      git(cwd, ["for-each-ref", "--format=%(symref)", "refs/remotes"]),
+    ]);
+  const remoteDefaults = new Set(symrefOut.split("\n").filter(Boolean));
 
   const branches: GitBranch[] = [];
   for (const line of branchOut.split("\n")) {
     if (!line) continue;
-    const [refname, sha, upstream, track] = line.split("\0");
+    const [refname, sha, upstream, track, worktreePath] = line.split("\0");
     const name = refname.slice("refs/heads/".length);
     const b: GitBranch = { name, sha, current: name === branchName };
+    if (worktreePath) b.worktreePath = worktreePath;
     if (upstream) {
       b.upstream = upstream;
       const t = parseTrack(track ?? "");
@@ -303,6 +308,7 @@ export async function getRefs(cwd: string): Promise<GitRefs> {
       remotes.push({
         name: r.refname.slice("refs/remotes/".length),
         sha: r.peeled || r.sha,
+        ...(remoteDefaults.has(r.refname) && { isDefault: true }),
       });
     } else if (r.refname.startsWith("refs/tags/")) {
       tags.push({

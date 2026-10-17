@@ -982,7 +982,7 @@ export interface ClientToServerEvents {
     requestId: string;
   }) => void;
 
-  // Git タブ (読み取りだけ。すべて ack で返す)
+  // Git タブの読み取り (すべて ack で返す)
   "git:log": (
     data: { sessionId: string; skip: number; limit: number },
     cb: (r: GitLogResponse) => void
@@ -1011,6 +1011,35 @@ export interface ClientToServerEvents {
   "git:fingerprint": (
     data: { sessionId: string },
     cb: (r: GitFingerprintResponse) => void
+  ) => void;
+  // Git タブの書き込み操作 (すべて ack で返す)
+  "git:branch-create": (
+    data: { sessionId: string; name: string; startPoint: string },
+    cb: (r: GitOpResponse) => void
+  ) => void;
+  "git:branch-rename": (
+    data: { sessionId: string; from: string; to: string },
+    cb: (r: GitOpResponse) => void
+  ) => void;
+  "git:branch-delete": (
+    data: { sessionId: string; name: string; force: boolean },
+    cb: (r: GitBranchDeleteResponse) => void
+  ) => void;
+  "git:remote-branch-delete": (
+    data: { sessionId: string; remote: string; name: string },
+    cb: (r: GitOpResponse) => void
+  ) => void;
+  "git:fetch": (
+    data: { sessionId: string },
+    cb: (r: GitOpResponse) => void
+  ) => void;
+  "git:pull": (
+    data: { sessionId: string },
+    cb: (r: GitOpResponse) => void
+  ) => void;
+  "git:push": (
+    data: { sessionId: string; name: string },
+    cb: (r: GitPushResponse) => void
   ) => void;
 
   // ファイルビューワー
@@ -1408,11 +1437,14 @@ export interface GitBranch {
   upstream?: string;
   ahead?: number;
   behind?: number;
+  /** このブランチを使っている作業ツリー (このworktreeを含む) のパス */
+  worktreePath?: string;
 }
 export interface GitRefs {
   head: { sha: string | null; branch: string | null };
   branches: GitBranch[];
-  remotes: { name: string; sha: string }[];
+  /** isDefault: リモートの既定のブランチ (`origin/HEAD` の指す先) */
+  remotes: { name: string; sha: string; isDefault?: boolean }[];
   tags: { name: string; sha: string }[];
   stashes: { name: string; sha: string; subject: string }[];
 }
@@ -1448,6 +1480,16 @@ export type GitCommitResponse =
 export type GitFileDiffResponse = ({ ok: true } & GitFileDiff) | GitFailure;
 export type GitFingerprintResponse =
   | { ok: true; fingerprint: string }
+  | GitFailure;
+/** Git タブの書き込み操作の応答。notMerged は強制すれば消せる削除の失敗 */
+export type GitOpResponse =
+  | { ok: true }
+  | { ok: false; error: string; notMerged?: boolean };
+export type GitBranchDeleteResponse =
+  | { ok: true; sha: string }
+  | { ok: false; error: string; notMerged?: boolean };
+export type GitPushResponse =
+  | { ok: true; remote: string; remoteBranch: string }
   | GitFailure;
 
 // ファイルペイン

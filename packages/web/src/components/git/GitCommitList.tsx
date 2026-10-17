@@ -1,5 +1,5 @@
 import type { GitCommit } from "@ark/shared";
-import { RefreshCw, Search, X } from "lucide-react";
+import { GitBranchPlus, RefreshCw, Search, X } from "lucide-react";
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -11,6 +11,12 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   filterCommits,
   formatAbsoluteTime,
@@ -48,6 +54,10 @@ interface GitCommitListProps {
   reveal?: { selection: GitSelection; seq: number } | null;
   /** 絞り込みの左に置くもの (サイドバーの開閉) */
   leading?: ReactNode;
+  /** 読み直しのボタンの左に置くもの (fetch / pull / push) */
+  actions?: ReactNode;
+  /** コミットの行の右クリック「ここからブランチを作成」。渡さなければメニューを出さない */
+  onCreateBranchAt?: (sha: string) => void;
   /** 相対時刻の基準 (テスト用)。未指定は描画時の現在時刻 */
   now?: number;
 }
@@ -90,6 +100,8 @@ export function GitCommitList({
   reloading = false,
   reveal = null,
   leading,
+  actions,
+  onCreateBranchAt,
   now,
 }: GitCommitListProps) {
   const [query, setQuery] = useState("");
@@ -270,6 +282,7 @@ export function GitCommitList({
             </button>
           </>
         )}
+        {actions}
         <button
           type="button"
           aria-label="読み直す"
@@ -311,11 +324,12 @@ export function GitCommitList({
             {items.slice(first, last).map((item, offset) => {
               const index = first + offset;
               const selected = index === selectedIndex;
-              return (
+              const key = item.kind === "working" ? "working" : item.commit.sha;
+              const row = (
                 // biome-ignore lint/a11y/useFocusableInteractive: フォーカスは listbox が持ち、aria-activedescendant で行を指す
                 // biome-ignore lint/a11y/useKeyWithClickEvents: キー操作は listbox 側で受ける
                 <div
-                  key={item.kind === "working" ? "working" : item.commit.sha}
+                  key={key}
                   id={optionId(index)}
                   role="option"
                   aria-selected={selected}
@@ -324,6 +338,8 @@ export function GitCommitList({
                   }
                   data-kind={item.kind}
                   onClick={() => onSelect(itemSelection(item))}
+                  // 右クリックした行を選ぶ (メニューの対象を見て分かるように)
+                  onContextMenu={() => onSelect(itemSelection(item))}
                   className={cn(
                     "absolute inset-x-0 flex cursor-default items-center gap-1.5 pr-2.5 text-[13px]",
                     selected
@@ -359,6 +375,22 @@ export function GitCommitList({
                     />
                   )}
                 </div>
+              );
+              if (item.kind === "working" || !onCreateBranchAt) return row;
+              const sha = item.commit.sha;
+              return (
+                <ContextMenu key={key}>
+                  <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+                  <ContextMenuContent className="min-w-48">
+                    <ContextMenuItem onSelect={() => onCreateBranchAt(sha)}>
+                      <GitBranchPlus
+                        className="size-4 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                      ここからブランチを作成
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>
               );
             })}
           </div>

@@ -113,6 +113,7 @@ import {
   listWorktrees,
   scanRepositories,
 } from "./lib/git.js";
+import { createGitOpsHandlers } from "./lib/git-ops-handlers.js";
 import { createGitViewHandlers } from "./lib/git-view-handlers.js";
 import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
@@ -2595,7 +2596,7 @@ export async function startServer(
     socket.on("file:write", fileHandlers.write);
     socket.on("file:subscribe", fileHandlers.subscribe);
     socket.on("file:unsubscribe", fileHandlers.unsubscribe);
-    // Git タブ (読み取りだけ。購読は無いので dispose 不要)
+    // Git タブの読み取り (購読は無いので dispose 不要)
     const gitHandlers = createGitViewHandlers({
       getWorktreePath: sessionId =>
         sessionOrchestrator.getSession(sessionId)?.worktreePath,
@@ -2606,6 +2607,18 @@ export async function startServer(
     socket.on("git:commit", gitHandlers.commit);
     socket.on("git:file-diff", gitHandlers.fileDiff);
     socket.on("git:fingerprint", gitHandlers.fingerprint);
+    // Git タブの書き込み操作 (ブランチと fetch / pull / push)
+    const gitOps = createGitOpsHandlers({
+      getWorktreePath: sessionId =>
+        sessionOrchestrator.getSession(sessionId)?.worktreePath,
+    });
+    socket.on("git:branch-create", gitOps.branchCreate);
+    socket.on("git:branch-rename", gitOps.branchRename);
+    socket.on("git:branch-delete", gitOps.branchDelete);
+    socket.on("git:remote-branch-delete", gitOps.remoteBranchDelete);
+    socket.on("git:fetch", gitOps.fetch);
+    socket.on("git:pull", gitOps.pull);
+    socket.on("git:push", gitOps.push);
     // レート制限: ソケットごとに最後のリクエスト時間を記録
     let lastFileReadTime = 0;
 
