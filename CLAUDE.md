@@ -89,7 +89,7 @@ ttydはセッションごとの独立したプロセスで、残したままサ�
 
 各手順の理由、pnpmが入らないときの対処、pm2のenv汚染の確かめ方はスキルに書いてある。
 
-PRのブランチを動作確認に出すときも同じ手順で行う。配信元のチェックアウト (`pm2 describe claude-code-ark` のscript path) をPRのコミットに切り替えてからinstallする。配信元が別のPRのコミットを指していたら、別のセッションが確認に出している最中なので、上書きする前にユーザーに確かめる。PRをマージしたら、mainに戻して出し直す。
+PRのブランチを動作確認に出すときも同じ手順で行う。配信元のチェックアウトをPRのコミットに切り替えてからinstallする。配信元は `pm2 describe claude-code-ark` のscript pathが属するチェックアウト (`git -C <script pathのディレクトリ> rev-parse --show-toplevel`) で、exec cwdではない (cwdは `.env.production` を読むためにmainのチェックアウトを指す)。切り替える前に、そのチェックアウトの `git rev-parse HEAD` を見る。別のPRのコミットを指していたら、別のセッションが確認に出している最中なので、上書きする前にユーザーに確かめる。PRをマージしたら、mainに戻して出し直す。
 
 ## 一般規約
 
