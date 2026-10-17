@@ -2611,6 +2611,15 @@ export async function startServer(
     const gitOps = createGitOpsHandlers({
       getWorktreePath: sessionId =>
         sessionOrchestrator.getSession(sessionId)?.worktreePath,
+      onBranchRenamed: sessionId => {
+        const repoPath = sessionOrchestrator.getSession(sessionId)?.repoPath;
+        if (!repoPath) return;
+        listWorktrees(repoPath)
+          .then(worktrees => io.emit("worktree:list", { repoPath, worktrees }))
+          .catch(() => {
+            // 一覧の配り直しに失敗しても名前の変更は済んでいる
+          });
+      },
     });
     socket.on("git:branch-create", gitOps.branchCreate);
     socket.on("git:branch-rename", gitOps.branchRename);

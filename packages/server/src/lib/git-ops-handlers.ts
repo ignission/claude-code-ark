@@ -25,6 +25,11 @@ import {
 
 export interface GitOpsHandlersDeps {
   getWorktreePath: (sessionId: string) => string | undefined;
+  /**
+   * ブランチの名前を変えたあと。セッション一覧やコマンドパレットは worktree の一覧から
+   * ブランチ名を出すので、一覧を配り直させる (別のセッションのブランチを変えた場合も)
+   */
+  onBranchRenamed?: (sessionId: string) => void;
 }
 
 type Data = Record<string, unknown>;
@@ -92,9 +97,11 @@ export function createGitOpsHandlers(deps: GitOpsHandlersDeps) {
     branchCreate: handler<Ok>((cwd, d) =>
       createBranch(cwd, d.name, d.startPoint, d.upstream).then(done)
     ),
-    branchRename: handler<Ok>((cwd, d) =>
-      renameBranch(cwd, d.from, d.to).then(done)
-    ),
+    branchRename: handler<Ok>(async (cwd, d) => {
+      await renameBranch(cwd, d.from, d.to);
+      deps.onBranchRenamed?.(d.sessionId as string);
+      return {};
+    }),
     branchDelete: handler<Extract<GitBranchDeleteResponse, { ok: true }>>(
       (cwd, d) => deleteBranch(cwd, d.name, d.force === true)
     ),

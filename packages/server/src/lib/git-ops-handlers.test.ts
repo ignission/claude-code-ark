@@ -11,9 +11,12 @@ function git(...args: string[]) {
   return execFileSync("git", args, { cwd: dir, encoding: "utf8" }).trim();
 }
 
+const onBranchRenamed = vi.fn();
+
 function make() {
   return createGitOpsHandlers({
     getWorktreePath: id => (id === "s1" ? dir : undefined),
+    onBranchRenamed,
   });
 }
 
@@ -56,6 +59,7 @@ describe("git ops handlers", () => {
     expect(
       await call(h, "branchRename", { sessionId: "s1", from: "a", to: "b" })
     ).toEqual({ ok: true });
+    expect(onBranchRenamed).toHaveBeenCalledWith("s1");
     expect(
       await call(h, "branchDelete", {
         sessionId: "s1",

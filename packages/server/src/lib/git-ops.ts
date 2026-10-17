@@ -361,19 +361,24 @@ export async function deleteBranch(
     );
   }
   const upstream = await readUpstream(cwd, branch);
-  // 確かめた sha のままのときだけ消す。確かめている間に別の worktree や CLI が
-  // ブランチを進めたら、確かめていない先端を消さずに断る (元に戻す sha とも食い違う)
-  await runGit(cwd, ["update-ref", "-d", `refs/heads/${branch}`, sha]).catch(
-    () => {
-      throw new GitOpError(
-        `ブランチ ${branch} が確かめている間に動いたので、削除をやめました`
-      );
-    }
-  );
-  // branch -D と同じく、ブランチの設定 (追跡先など) も消す
-  await runGit(cwd, ["config", "--remove-section", `branch.${branch}`]).catch(
-    () => undefined
-  );
+  // 消すのは git branch -D に任せる (rebase や bisect の途中のブランチ、別の worktree で
+  // 使っているブランチを git が断る)。確かめている間に別の worktree や CLI がブランチを
+  // 進めていたら、確かめていない先端を消したことになるので、作り直して断る
+  const { stdout } = await runGit(cwd, [
+    "-c",
+    "core.abbrev=no",
+    "branch",
+    "-D",
+    "--",
+    branch,
+  ]);
+  const deleted = /\(was ([0-9a-f]{40,64})\)/.exec(stdout)?.[1];
+  if (deleted && deleted !== sha) {
+    await createBranch(cwd, branch, deleted, upstream);
+    throw new GitOpError(
+      `ブランチ ${branch} が確かめている間に動いたので、削除をやめました`
+    );
+  }
   return upstream ? { sha, upstream } : { sha };
 }
 

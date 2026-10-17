@@ -224,6 +224,20 @@ describe("deleteBranch", () => {
     await expect(deleteBranch(dir, "pushed", false)).resolves.toBeDefined();
   });
 
+  it("rebase の途中のブランチは消さない (HEAD が detached でも)", async () => {
+    commit("c1");
+    git("checkout", "-q", "-b", "feat");
+    fs.writeFileSync(path.join(dir, "a.txt"), "feat\n");
+    git("commit", "-qam", "feat");
+    git("checkout", "-q", "main");
+    fs.writeFileSync(path.join(dir, "a.txt"), "main\n");
+    git("commit", "-qam", "main");
+    git("checkout", "-q", "feat");
+    expect(() => git("rebase", "main")).toThrow();
+    await expect(deleteBranch(dir, "feat", true)).rejects.toThrow(GitOpError);
+    expect(hasRef("refs/heads/feat")).toBe(true);
+  });
+
   it("いまのブランチと、別の worktree で使っているブランチは消さない", async () => {
     commit("c1");
     await expect(deleteBranch(dir, "main", true)).rejects.toThrow("使用中");
