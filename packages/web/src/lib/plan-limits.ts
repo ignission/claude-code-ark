@@ -5,7 +5,7 @@
 
 import type { PlanLimits, PlanLimitWindow } from "@ark/shared";
 
-/** これを超えたら色を変える (コンテキストのリングと同じ) */
+/** これを超えたら色を変える */
 export const PLAN_LIMIT_HIGH_PERCENT = 80;
 
 function sameWindow(a: PlanLimitWindow | null, b: PlanLimitWindow | null) {
@@ -62,18 +62,23 @@ export interface PlanLimitRow {
   high: boolean;
 }
 
-/** 出す枠の一覧。値の無い枠は出さない */
+/**
+ * 出す枠の一覧。値の無い枠と、リセット時刻を過ぎた枠は出さない
+ * (切断中は previews が届かず、サーバーが落とした古い値が残るため、表示側でも判定する)
+ */
 export function planLimitRows(limits: PlanLimits, now: Date): PlanLimitRow[] {
   const rows: PlanLimitRow[] = [];
   const add = (short: string, name: string, w: PlanLimitWindow | null) => {
     if (!w) return;
+    if (w.resetsAt && Date.parse(w.resetsAt) <= now.getTime()) return;
     const percent = Math.round(w.percent);
     rows.push({
       short,
       name,
       percent,
       resetAt: formatResetAt(w.resetsAt, now),
-      high: percent >= PLAN_LIMIT_HIGH_PERCENT,
+      // 丸める前の値で判定する (79.5%を80%と見なさない)
+      high: w.percent > PLAN_LIMIT_HIGH_PERCENT,
     });
   };
   add("5h", "5時間枠", limits.fiveHour);

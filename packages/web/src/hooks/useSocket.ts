@@ -692,6 +692,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       // (再接続後に再度 requestUsage を呼べる状態に戻す)
       setUsageRequesting(false);
       setUsageProgress(null);
+      // 切断中は previews が届かず、枠がリセットされても古い使用率が残る。
+      // 再接続して届くまで出さない
+      setSessionPlanLimits(new Map());
     });
 
     socket.on("connect_error", err => {

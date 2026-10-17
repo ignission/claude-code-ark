@@ -47,7 +47,7 @@ describe("formatResetAt", () => {
 describe("planLimitRows", () => {
   const now = new Date("2026-10-17T12:00:00");
 
-  it("値のある枠だけを並べ、80%以上を高いとする", () => {
+  it("値のある枠だけを並べ、80%を超えた枠を高いとする", () => {
     const rows = planLimitRows(
       { fiveHour: { percent: 80.2, resetsAt: null }, sevenDay: null },
       now
@@ -55,6 +55,27 @@ describe("planLimitRows", () => {
     expect(rows).toEqual([
       { short: "5h", name: "5時間枠", percent: 80, resetAt: null, high: true },
     ]);
+  });
+
+  it("丸める前の値で判定する (79.5%と80%ちょうどは高くない)", () => {
+    for (const percent of [79.5, 80]) {
+      const [row] = planLimitRows(
+        { fiveHour: { percent, resetsAt: null }, sevenDay: null },
+        now
+      );
+      expect(row?.high).toBe(false);
+    }
+  });
+
+  it("リセット時刻を過ぎた枠は出さない (切断中に古い値が残っても)", () => {
+    const rows = planLimitRows(
+      {
+        fiveHour: { percent: 90, resetsAt: "2026-10-17T11:00:00" },
+        sevenDay: { percent: 13, resetsAt: "2026-10-20T03:00:00" },
+      },
+      now
+    );
+    expect(rows.map(r => r.short)).toEqual(["週"]);
   });
 
   it("両方あれば5時間枠、週枠の順", () => {
