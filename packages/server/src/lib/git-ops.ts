@@ -21,7 +21,9 @@ export class GitOpError extends Error {
   constructor(
     message: string,
     /** 未マージのブランチを -d 相当で消そうとした (強制なら消せる) */
-    readonly notMerged = false
+    readonly notMerged = false,
+    /** ブランチを作業ツリーが使っている (その作業ツリーごとなら消せる) */
+    readonly inWorktree?: string
   ) {
     super(message);
   }
@@ -413,22 +415,60 @@ async function squashedInto(cwd: string, sha: string): Promise<boolean> {
   return false;
 }
 
+/** リポジトリ本体の作業ツリー (`git worktree list` の先頭) */
+export async function mainWorktreePath(cwd: string): Promise<string> {
+  const { stdout } = await runGit(cwd, ["worktree", "list", "--porcelain"]);
+  const first = stdout.split("\n")[0] ?? "";
+  if (!first.startsWith("worktree ")) {
+    throw new GitOpError("リポジトリ本体の作業ツリーが分かりません");
+  }
+  return first.slice("worktree ".length);
+}
+
+export interface DeleteBranchOptions {
+  /**
+   * ブランチを使っている作業ツリーを消す (セッションを止めて `git worktree remove`)。
+   * 渡されなければ、作業ツリーで使用中のブランチは inWorktree の失敗で断る
+   */
+  removeWorktree?: (worktreePath: string) => Promise<void>;
+}
+
 /**
  * ブランチを消し、消す前の sha と追跡先を返す (元に戻すときに使う)。
  * force でなければ、取り込まれていないブランチは notMerged の失敗で断る。
- * いまのブランチと、別の worktree で使われているブランチは消さない
+ * 作業ツリーで使用中のブランチは、removeWorktree があればその作業ツリーごと消す
+ * (いまのブランチなら、このセッションの作業ツリーごと)。
+ * リポジトリ本体の作業ツリーは消せないので、そこで使っているブランチは消さない
  */
 export async function deleteBranch(
   cwd: string,
   name: unknown,
-  force: boolean
-): Promise<{ sha: string; upstream?: BranchUpstream }> {
+  force: boolean,
+  options: DeleteBranchOptions = {}
+): Promise<{
+  sha: string;
+  upstream?: BranchUpstream;
+  removedWorktree?: string;
+}> {
   const branch = await assertBranchName(cwd, name);
   const sha = await refSha(cwd, `refs/heads/${branch}`);
   if (!sha) throw new GitOpError(`ブランチ ${branch} が見つかりません`);
   const at = await checkedOutAt(cwd, branch);
-  if (at) {
-    throw new GitOpError(`ブランチ ${branch} は作業ツリーで使用中です (${at})`);
+  // 作業ツリーを消したあとは cwd が無くなりうるので、以降はリポジトリ本体で動かす
+  const root = at ? await mainWorktreePath(cwd) : cwd;
+  if (at && at === root) {
+    throw new GitOpError(
+      `ブランチ ${branch} はリポジトリ本体の作業ツリーで使用中なので、削除できません`
+    );
+  }
+  if (at && !options.removeWorktree) {
+    // 作業ツリーごと消すかを 1 回の確認で聞けるよう、取り込みの有無も添えて断る
+    const merged = force || (await isMerged(cwd, branch, sha));
+    throw new GitOpError(
+      `ブランチ ${branch} は作業ツリー ${at} で使用中です`,
+      !merged,
+      at
+    );
   }
   if (!force && !(await isMerged(cwd, branch, sha))) {
     throw new GitOpError(
@@ -437,6 +477,29 @@ export async function deleteBranch(
     );
   }
   const upstream = await readUpstream(cwd, branch);
+  if (at && options.removeWorktree) {
+    await options.removeWorktree(at);
+    // 取り込み済みなら、作業ツリーの削除がブランチも消している
+    if (await refSha(root, `refs/heads/${branch}`)) {
+      await deleteCheckedRef(root, branch, sha, upstream);
+    }
+  } else {
+    await deleteCheckedRef(cwd, branch, sha, upstream);
+  }
+  return {
+    sha,
+    ...(upstream && { upstream }),
+    ...(at && { removedWorktree: at }),
+  };
+}
+
+/** 確かめた sha のブランチを消す。動いていたら作り直して断る */
+async function deleteCheckedRef(
+  cwd: string,
+  branch: string,
+  sha: string,
+  upstream: BranchUpstream | undefined
+): Promise<void> {
   // 消すのは git branch -D に任せる (rebase や bisect の途中のブランチ、別の worktree で
   // 使っているブランチを git が断る)。確かめている間に別の worktree や CLI がブランチを
   // 進めていたら、確かめていない先端を消したことになるので、作り直して断る
@@ -458,7 +521,6 @@ export async function deleteBranch(
       `ブランチ ${branch} が確かめている間に ${deleted.slice(0, 7)} へ動いたので、削除をやめました`
     );
   }
-  return upstream ? { sha, upstream } : { sha };
 }
 
 // ---- リモート ----

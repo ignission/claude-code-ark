@@ -346,11 +346,11 @@ function BranchMenu({
   ops: GitOpsActions;
   remoteBusy: boolean;
 }) {
-  const inUse = branch.current
-    ? "いまのブランチは削除できません"
-    : branch.worktreePath
-      ? `ほかの作業ツリーで使用中 (${branch.worktreePath})`
-      : null;
+  // 作業ツリーで使用中のブランチは作業ツリーごと消す。リポジトリ本体の作業ツリーは消せない
+  const blocked = branch.mainWorktree
+    ? "リポジトリ本体の作業ツリーで使用中なので削除できません"
+    : null;
+  const withWorktree = branch.worktreePath !== undefined && !blocked;
   return (
     <>
       <ContextMenuItem
@@ -387,16 +387,19 @@ function BranchMenu({
       <ContextMenuSeparator />
       <ContextMenuItem
         variant="destructive"
-        disabled={inUse !== null || remoteBusy}
-        title={inUse ?? undefined}
+        disabled={blocked !== null || remoteBusy}
+        title={blocked ?? undefined}
         onSelect={() => ops.deleteBranch(branch.name)}
       >
         <Trash2 className="size-4" aria-hidden="true" />
-        削除
+        {withWorktree ? "作業ツリーごと削除" : "削除"}
       </ContextMenuItem>
-      {inUse && (
+      {(blocked || withWorktree) && (
         <div className="px-2 pb-1.5 text-[11px] text-muted-foreground">
-          {inUse}
+          {blocked ??
+            (branch.current
+              ? "このセッションの作業ツリー"
+              : `使用中: ${branch.worktreePath}`)}
         </div>
       )}
     </>

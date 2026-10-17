@@ -48,6 +48,7 @@ const refs: GitRefs = {
       current: true,
       upstream: "origin/main",
       worktreePath: "/w/main",
+      mainWorktree: true,
     },
     {
       name: "used",
@@ -151,16 +152,17 @@ describe("GitSidebar の右クリック", () => {
     expect(ops.pull).toHaveBeenCalled();
   });
 
-  it("いまのブランチと、ほかの作業ツリーで使用中のブランチは削除できない", () => {
-    const { menuOf, item } = setup();
+  it("作業ツリーで使用中のブランチは作業ツリーごと消す。リポジトリ本体のものは消せない", () => {
+    const { ops, menuOf, item } = setup();
     expect(item(menuOf("main"), "削除")?.disabled).toBe(true);
-    expect(menuOf("main").textContent).toContain(
-      "いまのブランチは削除できません"
-    );
+    expect(menuOf("main").textContent).toContain("リポジトリ本体");
     const used = menuOf("used");
-    expect(item(used, "削除")?.disabled).toBe(true);
     expect(used.textContent).toContain("/w/other");
-    expect(item(menuOf("free"), "削除")?.disabled).toBe(false);
+    click(item(used, "作業ツリーごと削除"));
+    expect(ops.deleteBranch).toHaveBeenCalledWith("used");
+    expect(item(menuOf("free"), "削除")?.textContent).not.toContain(
+      "作業ツリー"
+    );
   });
 
   it("リモートのブランチを消す。既定のブランチは消せない", () => {

@@ -69,7 +69,7 @@ describe("useGitOps", () => {
     const { api, onChanged } = setup();
     actions.deleteBranch("done");
     await flush();
-    expect(api.deleteBranch).toHaveBeenCalledWith("done", false);
+    expect(api.deleteBranch).toHaveBeenCalledWith("done", false, false);
     expect(onChanged).toHaveBeenCalled();
     const [, opts] = toast.success.mock.calls[0];
     opts.action.onClick();
@@ -95,7 +95,37 @@ describe("useGitOps", () => {
     expect(document.body.textContent).toContain("wip を強制削除しますか?");
     click(byText("削除"));
     await flush();
-    expect(api.deleteBranch).toHaveBeenLastCalledWith("wip", true);
+    expect(api.deleteBranch).toHaveBeenLastCalledWith("wip", true, false);
+  });
+
+  it("作業ツリーで使用中なら、作業ツリーごと消すかを 1 回だけ確かめる", async () => {
+    const deleteBranch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: "使用中",
+        inWorktree: "/w/side",
+        notMerged: true,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        sha: "abc1234",
+        removedWorktree: "/w/side",
+      });
+    const { api } = setup({ deleteBranch });
+    actions.deleteBranch("side");
+    await flush();
+    expect(document.body.textContent).toContain(
+      "side を作業ツリーごと削除しますか?"
+    );
+    expect(document.body.textContent).toContain("/w/side");
+    expect(document.body.textContent).toContain("取り込まれていないコミット");
+    click(byText("削除"));
+    await flush();
+    expect(api.deleteBranch).toHaveBeenLastCalledWith("side", true, true);
+    expect(toast.success.mock.calls.at(-1)?.[0]).toBe(
+      "ブランチ side を作業ツリーごと削除しました"
+    );
   });
 
   it("名前の入力: 失敗の理由をダイアログに出し、通れば閉じる", async () => {

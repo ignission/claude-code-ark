@@ -216,6 +216,7 @@ describe("getRefs", () => {
         ahead: 2,
         behind: 0,
         worktreePath: dir,
+        mainWorktree: true,
       },
     ]);
     expect(r.remotes).toEqual([

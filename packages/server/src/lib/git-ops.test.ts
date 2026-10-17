@@ -294,13 +294,62 @@ describe("deleteBranch", () => {
     expect(hasRef("refs/heads/feat")).toBe(true);
   });
 
-  it("いまのブランチと、別の worktree で使っているブランチは消さない", async () => {
+  it("作業ツリーで使用中のブランチは、作業ツリーを消す手段が無ければ断る", async () => {
     commit("c1");
-    await expect(deleteBranch(dir, "main", true)).rejects.toThrow("使用中");
     const other = path.join(root, "other");
     git("worktree", "add", "-q", "-b", "side", other);
-    await expect(deleteBranch(dir, "side", true)).rejects.toThrow("使用中");
+    commitIn(other, "s1", "s.txt");
+    const err = await deleteBranch(dir, "side", false).catch(e => e);
+    expect(err).toBeInstanceOf(GitOpError);
+    expect(err.inWorktree).toBe(other);
+    // 1 回の確認で聞けるよう、取り込まれていないことも添える
+    expect(err.notMerged).toBe(true);
     expect(hasRef("refs/heads/side")).toBe(true);
+  });
+
+  it("作業ツリーを消してからブランチを消す (その作業ツリーの中から頼んでも)", async () => {
+    commit("c1");
+    const other = path.join(root, "other");
+    git("worktree", "add", "-q", "-b", "side", other);
+    const tip = commitIn(other, "s1", "s.txt");
+    const removed: string[] = [];
+    const res = await deleteBranch(other, "side", true, {
+      removeWorktree: async p => {
+        removed.push(p);
+        git("worktree", "remove", "--force", p);
+      },
+    });
+    expect(removed).toEqual([other]);
+    expect(res).toEqual({ sha: tip, removedWorktree: other });
+    expect(hasRef("refs/heads/side")).toBe(false);
+    expect(fs.existsSync(other)).toBe(false);
+  });
+
+  it("作業ツリーの削除がブランチも消していれば、そのまま済ませる", async () => {
+    const c1 = commit("c1");
+    const other = path.join(root, "other");
+    git("worktree", "add", "-q", "-b", "side", other);
+    const res = await deleteBranch(dir, "side", false, {
+      removeWorktree: async p => {
+        git("worktree", "remove", "--force", p);
+        git("branch", "-D", "side");
+      },
+    });
+    expect(res).toEqual({ sha: c1, removedWorktree: other });
+  });
+
+  it("リポジトリ本体の作業ツリーで使っているブランチは消さない", async () => {
+    commit("c1");
+    let called = false;
+    await expect(
+      deleteBranch(dir, "main", true, {
+        removeWorktree: async () => {
+          called = true;
+        },
+      })
+    ).rejects.toThrow("リポジトリ本体");
+    expect(called).toBe(false);
+    expect(hasRef("refs/heads/main")).toBe(true);
   });
 });
 

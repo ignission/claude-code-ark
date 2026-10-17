@@ -26,6 +26,8 @@ const ACK_TIMEOUT_MS = 5000;
 const REMOTE_ACK_TIMEOUT_MS = 130_000;
 /** ブランチの操作の待ち。サーバー側の git の timeout (10 秒) より長くする (理由は同上) */
 const LOCAL_OP_ACK_TIMEOUT_MS = 15_000;
+/** 作業ツリーごとの削除の待ち。ファイルの削除に時間がかかる (サーバー側に timeout は無い) */
+const WORKTREE_REMOVE_ACK_TIMEOUT_MS = 130_000;
 const NO_RESPONSE = "サーバーから応答がありません";
 
 type GitEvent =
@@ -60,9 +62,11 @@ export interface GitApi {
     upstream?: GitBranchUpstream
   ) => Promise<GitOpResponse>;
   renameBranch: (from: string, to: string) => Promise<GitOpResponse>;
+  /** removeWorktree はブランチを使っている作業ツリーごと消す */
   deleteBranch: (
     name: string,
-    force: boolean
+    force: boolean,
+    removeWorktree?: boolean
   ) => Promise<GitBranchDeleteResponse>;
   deleteRemoteBranch: (remote: string, name: string) => Promise<GitOpResponse>;
   fetch: () => Promise<GitOpResponse>;
@@ -112,11 +116,13 @@ export function createGitApi(socket: TypedSocket, sessionId: string): GitApi {
         { from, to },
         LOCAL_OP_ACK_TIMEOUT_MS
       ),
-    deleteBranch: (name, force) =>
+    deleteBranch: (name, force, removeWorktree = false) =>
       request<GitBranchDeleteResponse>(
         "git:branch-delete",
-        { name, force },
-        LOCAL_OP_ACK_TIMEOUT_MS
+        removeWorktree ? { name, force, removeWorktree } : { name, force },
+        removeWorktree
+          ? WORKTREE_REMOVE_ACK_TIMEOUT_MS
+          : LOCAL_OP_ACK_TIMEOUT_MS
       ),
     deleteRemoteBranch: (remote, name) =>
       request<GitOpResponse>(

@@ -30,10 +30,20 @@ export interface GitOpsHandlersDeps {
    * ブランチ名を出すので、一覧を配り直させる (別のセッションのブランチを変えた場合も)
    */
   onBranchRenamed?: (sessionId: string) => void;
+  /**
+   * 作業ツリーを消す。そこで動いているセッションを止め、worktree の一覧を配り直す
+   * (サイドバーの「削除」と同じ後始末)。ブランチを作業ツリーごと消すときに使う
+   */
+  removeWorktree?: (sessionId: string, worktreePath: string) => Promise<void>;
 }
 
 type Data = Record<string, unknown>;
-type Failure = { ok: false; error: string; notMerged?: boolean };
+type Failure = {
+  ok: false;
+  error: string;
+  notMerged?: boolean;
+  inWorktree?: string;
+};
 
 function isRecord(v: unknown): v is Data {
   return typeof v === "object" && v !== null;
@@ -41,9 +51,12 @@ function isRecord(v: unknown): v is Data {
 
 function toFailure(err: unknown): Failure {
   if (err instanceof GitOpError) {
-    return err.notMerged
-      ? { ok: false, error: err.message, notMerged: true }
-      : { ok: false, error: err.message };
+    return {
+      ok: false,
+      error: err.message,
+      ...(err.notMerged && { notMerged: true }),
+      ...(err.inWorktree && { inWorktree: err.inWorktree }),
+    };
   }
   return { ok: false, error: err instanceof Error ? err.message : String(err) };
 }
@@ -103,7 +116,15 @@ export function createGitOpsHandlers(deps: GitOpsHandlersDeps) {
       return {};
     }),
     branchDelete: handler<Extract<GitBranchDeleteResponse, { ok: true }>>(
-      (cwd, d) => deleteBranch(cwd, d.name, d.force === true)
+      (cwd, d) => {
+        const remove = deps.removeWorktree;
+        return deleteBranch(cwd, d.name, d.force === true, {
+          removeWorktree:
+            d.removeWorktree === true && remove
+              ? path => remove(d.sessionId as string, path)
+              : undefined,
+        });
+      }
     ),
     remoteBranchDelete: handler<Ok>((cwd, d) =>
       deleteRemoteBranch(cwd, d.remote, d.name).then(done)

@@ -34,7 +34,10 @@ export interface GitOpsActions {
   /** sha から新しいブランチを作る (名前を聞く) */
   createBranchAt: (sha: string) => void;
   renameBranch: (name: string) => void;
-  /** 取り込み済みならそのまま消す。未マージなら確かめてから強制で消す */
+  /**
+   * 取り込み済みならそのまま消す。未マージなら確かめてから強制で消す。
+   * 作業ツリーで使用中なら、作業ツリーごと消すかを確かめる
+   */
   deleteBranch: (name: string) => void;
   /** 追跡ブランチ trackingName (`origin/feat/x`) の元をリモート remote から、確かめてから消す */
   deleteRemoteBranch: (remote: string, trackingName: string) => void;
@@ -52,6 +55,12 @@ type NameDialog =
 
 type Confirm =
   | { kind: "force-delete"; name: string; reason: string }
+  | {
+      kind: "worktree-delete";
+      name: string;
+      worktreePath: string;
+      notMerged: boolean;
+    }
   | { kind: "remote-delete"; remote: string; trackingName: string };
 
 /**
@@ -106,18 +115,32 @@ export function useGitOps(
   );
 
   const runDelete = useCallback(
-    async (name: string, force: boolean) => {
+    async (name: string, force: boolean, removeWorktree = false) => {
       if (!api) return;
-      const res = await api.deleteBranch(name, force);
+      const res = await api.deleteBranch(name, force, removeWorktree);
       if (res.ok) {
-        toast.success(`ブランチ ${name} を削除しました`, {
-          description: res.sha.slice(0, 7),
-          action: {
-            label: "元に戻す",
-            onClick: () => void restoreBranch(name, res.sha, res.upstream),
-          },
-        });
+        toast.success(
+          res.removedWorktree
+            ? `ブランチ ${name} を作業ツリーごと削除しました`
+            : `ブランチ ${name} を削除しました`,
+          {
+            description: res.removedWorktree
+              ? `${res.sha.slice(0, 7)} (元に戻すで戻るのはブランチだけです)`
+              : res.sha.slice(0, 7),
+            action: {
+              label: "元に戻す",
+              onClick: () => void restoreBranch(name, res.sha, res.upstream),
+            },
+          }
+        );
         onChanged();
+      } else if (res.inWorktree && !removeWorktree) {
+        setConfirm({
+          kind: "worktree-delete",
+          name,
+          worktreePath: res.inWorktree,
+          notMerged: res.notMerged === true,
+        });
       } else if (res.notMerged && !force) {
         setConfirm({ kind: "force-delete", name, reason: res.error });
       } else {
@@ -194,6 +217,8 @@ export function useGitOps(
     if (!api || !confirm) return;
     if (confirm.kind === "force-delete") {
       void runDelete(confirm.name, true);
+    } else if (confirm.kind === "worktree-delete") {
+      void runDelete(confirm.name, true, true);
     } else {
       const { remote, trackingName } = confirm;
       void remoteOp(
@@ -273,14 +298,10 @@ export function useGitOps(
         <AlertDialogContent className="max-w-md">
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirm?.kind === "remote-delete"
-                ? `${confirm.trackingName} をリモートから削除しますか?`
-                : `${confirm?.name ?? ""} を強制削除しますか?`}
+              {confirm && confirmTitle(confirm)}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {confirm?.kind === "remote-delete"
-                ? `リモート ${confirm.remote} からブランチを消します。ほかの人もこのリモートを使っていれば、その人からも見えなくなります。`
-                : `${confirm?.reason ?? ""}。削除するとこれらのコミットはブランチから辿れなくなります (直後なら「元に戻す」で戻せます)。`}
+              {confirm && confirmDescription(confirm, currentBranch)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -298,4 +319,35 @@ export function useGitOps(
   );
 
   return { actions, busy, dialogs };
+}
+
+function confirmTitle(c: Confirm): string {
+  switch (c.kind) {
+    case "remote-delete":
+      return `${c.trackingName} をリモートから削除しますか?`;
+    case "worktree-delete":
+      return `${c.name} を作業ツリーごと削除しますか?`;
+    case "force-delete":
+      return `${c.name} を強制削除しますか?`;
+  }
+}
+
+function confirmDescription(c: Confirm, currentBranch: string | null): string {
+  switch (c.kind) {
+    case "remote-delete":
+      return `リモート ${c.remote} からブランチを消します。ほかの人もこのリモートを使っていれば、その人からも見えなくなります。`;
+    case "worktree-delete":
+      return [
+        `作業ツリー ${c.worktreePath} を消し、`,
+        c.name === currentBranch
+          ? "このセッションを止めます。"
+          : "そこで動いているセッションを止めます。",
+        "コミットしていない変更も消えます。",
+        c.notMerged
+          ? "どこにも取り込まれていないコミットがあります (直後なら「元に戻す」でブランチは戻せます)。"
+          : "",
+      ].join("");
+    case "force-delete":
+      return `${c.reason}。削除するとこれらのコミットはブランチから辿れなくなります (直後なら「元に戻す」で戻せます)。`;
+  }
 }
