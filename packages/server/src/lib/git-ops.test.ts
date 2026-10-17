@@ -236,6 +236,38 @@ describe("リモート", () => {
     expect(gitIn(bare, "rev-parse", "release")).toBe(c2);
   });
 
+  it("追跡先が fetch の refspec の外にあっても、設定の追跡先へ push する", async () => {
+    commit("c1");
+    git("push", "-q", "origin", "main", "main:release");
+    git(
+      "config",
+      "remote.origin.fetch",
+      "+refs/heads/main:refs/remotes/origin/main"
+    );
+    git("branch", "topic");
+    git("config", "branch.topic.remote", "origin");
+    git("config", "branch.topic.merge", "refs/heads/release");
+    git("checkout", "-q", "topic");
+    const t = commit("t");
+    await expect(pushBranch(dir, "topic")).resolves.toEqual({
+      remote: "origin",
+      remoteBranch: "release",
+    });
+    expect(gitIn(bare, "rev-parse", "release")).toBe(t);
+    expect(hasRef("refs/heads/topic", bare)).toBe(false);
+    expect(git("config", "--get", "branch.topic.merge")).toBe(
+      "refs/heads/release"
+    );
+  });
+
+  it("ローカルのブランチを追っているブランチは、追跡先を変えずに push する", async () => {
+    commit("c1");
+    git("branch", "--track", "child", "main");
+    await pushBranch(dir, "child");
+    expect(hasRef("refs/heads/child", bare)).toBe(true);
+    expect(git("config", "--get", "branch.child.remote")).toBe(".");
+  });
+
   it("fast-forward できない push は失敗を返す (force しない)", async () => {
     commit("c1");
     await pushBranch(dir, "main");

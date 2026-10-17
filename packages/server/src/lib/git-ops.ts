@@ -400,8 +400,10 @@ async function defaultRemote(cwd: string): Promise<string> {
 }
 
 /**
- * name を push する。upstream があればその先へ、無ければ既定のリモートの同名へ
- * push して upstream にする。force はしない
+ * name を push する。追跡先がリモートにあればその先へ、無ければ既定のリモートの同名へ
+ * push して追跡先にする。追跡先は設定 (branch.<name>.remote / merge) から直に読む
+ * (for-each-ref の upstream は fetch の refspec の外にあると空になり、追跡先があるのに
+ * 別の名前へ push して設定を上書きしてしまう)。ローカルの追跡先 (`.`) は変えない。force はしない
  */
 export async function pushBranch(
   cwd: string,
@@ -411,29 +413,33 @@ export async function pushBranch(
   if (!(await localBranchExists(cwd, branch))) {
     throw new GitOpError(`ブランチ ${branch} が見つかりません`);
   }
-  const { stdout } = await runGit(cwd, [
-    "for-each-ref",
-    "--format=%(upstream:remotename)%00%(upstream:remoteref)",
-    `refs/heads/${branch}`,
-  ]);
-  const [upRemote, upRef] = stdout.trim().split("\0");
-  if (upRemote && upRef?.startsWith("refs/heads/")) {
+  const upstream = await readUpstream(cwd, branch);
+  if (
+    upstream &&
+    upstream.remote !== "." &&
+    upstream.merge.startsWith("refs/heads/")
+  ) {
     await runGit(
       cwd,
-      ["push", "--", upRemote, `refs/heads/${branch}:${upRef}`],
-      {
-        remote: true,
-      }
+      ["push", "--", upstream.remote, `refs/heads/${branch}:${upstream.merge}`],
+      { remote: true }
     );
     return {
-      remote: upRemote,
-      remoteBranch: upRef.slice("refs/heads/".length),
+      remote: upstream.remote,
+      remoteBranch: upstream.merge.slice("refs/heads/".length),
     };
   }
   const remote = await defaultRemote(cwd);
   await runGit(
     cwd,
-    ["push", "-u", "--", remote, `refs/heads/${branch}:refs/heads/${branch}`],
+    [
+      "push",
+      // 追跡先があるとき (ローカルのブランチを追っている) は上書きしない
+      ...(upstream ? [] : ["-u"]),
+      "--",
+      remote,
+      `refs/heads/${branch}:refs/heads/${branch}`,
+    ],
     { remote: true }
   );
   return { remote, remoteBranch: branch };
