@@ -1443,8 +1443,18 @@ export interface GitBranch {
 export interface GitRefs {
   head: { sha: string | null; branch: string | null };
   branches: GitBranch[];
-  /** isDefault: リモートの既定のブランチ (`origin/HEAD` の指す先) */
-  remotes: { name: string; sha: string; isDefault?: boolean }[];
+  /**
+   * name は `origin/feat/x`。remote と branch はそれを分けたもの (リモートの名前は
+   * `/` を含みうるので、name を最初の `/` で切って求めてはいけない)。
+   * isDefault はリモートの既定のブランチ (`origin/HEAD` の指す先)
+   */
+  remotes: {
+    name: string;
+    sha: string;
+    remote: string;
+    branch: string;
+    isDefault?: boolean;
+  }[];
   tags: { name: string; sha: string }[];
   stashes: { name: string; sha: string; subject: string }[];
 }

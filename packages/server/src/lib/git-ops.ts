@@ -4,13 +4,13 @@
  *
  * - 作業ツリーを書き換えるのは pull だけで、それも --ff-only に限る (競合や
  *   マージコミットを作らない。ローカルの変更とぶつかるなら git が断る)
- * - リモートの操作は認証の入力を待って固まらないよう、端末のプロンプトと
- *   ssh の対話を切る。時間がかかるので、読み取りより長い timeout を取る
+ * - リモートの操作は認証の入力を待って固まらないよう、端末から切り離し、
+ *   git と ssh のプロンプトを切る。時間がかかるので、読み取りより長い timeout を取る
  * - 引数に入るユーザー入力は、ブランチ名を check-ref-format で、リモート名を
  *   `git remote` の一覧で確かめてから渡す。名前の前には `--` を置く
  */
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { isValidSha } from "./git-view.js";
 
 const LOCAL_TIMEOUT_MS = 10_000;
@@ -39,8 +39,8 @@ interface RunResult {
 function remoteEnv(): NodeJS.ProcessEnv {
   return {
     GIT_TERMINAL_PROMPT: "0",
-    // 利用者が自分で決めた ssh があればそれを使う
-    GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? "ssh -o BatchMode=yes",
+    // ssh のパスフレーズやホスト鍵の確認を GUI の askpass でも聞かない
+    SSH_ASKPASS_REQUIRE: "never",
   };
 }
 
@@ -49,37 +49,71 @@ function runGit(
   args: string[],
   opts: RunOptions = {}
 ): Promise<RunResult> {
+  const remote = opts.remote === true;
   return new Promise((resolve, reject) => {
-    execFile(
-      "git",
-      ["-c", "core.quotepath=off", ...args],
-      {
-        cwd,
-        encoding: "utf8",
-        maxBuffer: MAX_BUFFER,
-        timeout: opts.remote ? REMOTE_TIMEOUT_MS : LOCAL_TIMEOUT_MS,
-        env: {
-          ...process.env,
-          LC_ALL: "C",
-          ...(opts.remote ? remoteEnv() : {}),
-        },
-      },
-      (err, stdout, stderr) => {
-        if (!err) return resolve({ stdout, stderr });
-        const e = err as NodeJS.ErrnoException & { killed?: boolean };
-        if (e.code === "ENOENT") {
-          return reject(new GitOpError("git コマンドが見つかりません"));
-        }
-        if (e.killed) {
-          return reject(new GitOpError("git がタイムアウトしました"));
-        }
-        reject(
-          new GitOpError(
-            `git の実行に失敗しました: ${firstLine(stderr) || e.message}`
-          )
-        );
+    // execFile は detached を spawn へ渡さないので、spawn で起こす。
+    // リモートの操作は端末から切り離す (新しいセッションにする)。ssh は端末が無いと
+    // パスフレーズやホスト鍵の確認を聞けずに失敗する。GIT_SSH_COMMAND で BatchMode を
+    // 足す方法は、利用者の core.sshCommand を上書きしてしまう
+    const child = spawn("git", ["-c", "core.quotepath=off", ...args], {
+      cwd,
+      detached: remote,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, LC_ALL: "C", ...(remote ? remoteEnv() : {}) },
+    });
+    let stdout = "";
+    let stderr = "";
+    let size = 0;
+    let failure: GitOpError | null = null;
+    const kill = (err: GitOpError) => {
+      failure ??= err;
+      try {
+        // detached なら ssh などの子までまとめて止める (プロセスグループごと)
+        if (remote && child.pid) process.kill(-child.pid, "SIGKILL");
+        else child.kill("SIGKILL");
+      } catch {
+        // 既に終わっている
       }
+    };
+    const collect = (append: (text: string) => void) => (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BUFFER)
+        return kill(new GitOpError("git の出力が大きすぎます"));
+      append(chunk.toString("utf8"));
+    };
+    child.stdout.on(
+      "data",
+      collect(t => (stdout += t))
     );
+    child.stderr.on(
+      "data",
+      collect(t => (stderr += t))
+    );
+    const timer = setTimeout(
+      () => kill(new GitOpError("git がタイムアウトしました")),
+      remote ? REMOTE_TIMEOUT_MS : LOCAL_TIMEOUT_MS
+    );
+    child.on("error", err => {
+      clearTimeout(timer);
+      const code = (err as NodeJS.ErrnoException).code;
+      reject(
+        new GitOpError(
+          code === "ENOENT"
+            ? "git コマンドが見つかりません"
+            : `git の実行に失敗しました: ${err.message}`
+        )
+      );
+    });
+    child.on("close", code => {
+      clearTimeout(timer);
+      if (failure) return reject(failure);
+      if (code === 0) return resolve({ stdout, stderr });
+      reject(
+        new GitOpError(
+          `git の実行に失敗しました: ${firstLine(stderr) || `終了コード ${code}`}`
+        )
+      );
+    });
   });
 }
 
@@ -268,8 +302,9 @@ export async function fetchAll(cwd: string): Promise<void> {
 
 /**
  * いまのブランチを fast-forward だけで進める。作業ツリーを書くのはこの操作だけ。
- * merge.autostash が有効だと、ローカルの変更を退避して戻すときに競合の印を残したまま
- * 成功で終わるので、--no-autostash で切る (ぶつかるなら git に断らせる)
+ * 設定で変わる挙動を引数で打ち消す: merge.autostash はローカルの変更を退避して戻すときに
+ * 競合の印を残したまま成功で終わり、branch.<name>.mergeOptions の --squash は HEAD を
+ * 進めずに変更をステージする。どちらも fast-forward ではないので切る (ぶつかるなら git に断らせる)
  */
 export async function pullFastForward(cwd: string): Promise<void> {
   const { stdout } = await runGit(cwd, [
@@ -280,9 +315,13 @@ export async function pullFastForward(cwd: string): Promise<void> {
   ]).catch(() => ({ stdout: "" }));
   if (!stdout.trim())
     throw new GitOpError("ブランチにいないので pull できません");
-  await runGit(cwd, ["pull", "--ff-only", "--no-rebase", "--no-autostash"], {
-    remote: true,
-  });
+  await runGit(
+    cwd,
+    ["pull", "--ff-only", "--no-rebase", "--no-autostash", "--no-squash"],
+    {
+      remote: true,
+    }
+  );
 }
 
 /** upstream の無いブランチを push する先。origin、無ければ最初のリモート */

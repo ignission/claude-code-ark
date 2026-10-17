@@ -35,8 +35,8 @@ export interface GitOpsActions {
   renameBranch: (name: string) => void;
   /** 取り込み済みならそのまま消す。未マージなら確かめてから強制で消す */
   deleteBranch: (name: string) => void;
-  /** `origin/feat/x` の形の名前。確かめてから消す */
-  deleteRemoteBranch: (fullName: string) => void;
+  /** リモート remote のブランチ name を、確かめてから消す */
+  deleteRemoteBranch: (remote: string, name: string) => void;
   pushBranch: (name: string) => void;
   fetch: () => void;
   pull: () => void;
@@ -52,17 +52,6 @@ type NameDialog =
 type Confirm =
   | { kind: "force-delete"; name: string; reason: string }
   | { kind: "remote-delete"; remote: string; name: string };
-
-/** `origin/feat/x` → origin と feat/x。サイドバーの分け方と同じく最初の `/` で切る */
-export function splitRemoteName(fullName: string): {
-  remote: string;
-  name: string;
-} {
-  const slash = fullName.indexOf("/");
-  return slash === -1
-    ? { remote: fullName, name: "" }
-    : { remote: fullName.slice(0, slash), name: fullName.slice(slash + 1) };
-}
 
 /**
  * Git タブの書き込み操作。名前の入力と確認のダイアログを持ち、終わったら
@@ -149,10 +138,8 @@ export function useGitOps(
       setNameError(null);
     },
     deleteBranch: name => void runDelete(name, false),
-    deleteRemoteBranch: fullName => {
-      const { remote, name } = splitRemoteName(fullName);
-      if (name) setConfirm({ kind: "remote-delete", remote, name });
-    },
+    deleteRemoteBranch: (remote, name) =>
+      setConfirm({ kind: "remote-delete", remote, name }),
     pushBranch: name => {
       if (!api) return;
       void remoteOp("push", () => api.push(name), `${name} を push しました`);

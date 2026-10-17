@@ -58,8 +58,25 @@ const refs: GitRefs = {
     { name: "free", sha: "ccc3333", current: false },
   ],
   remotes: [
-    { name: "origin/main", sha: "aaa1111", isDefault: true },
-    { name: "origin/feat/x", sha: "ddd4444" },
+    {
+      name: "origin/main",
+      sha: "aaa1111",
+      remote: "origin",
+      branch: "main",
+      isDefault: true,
+    },
+    {
+      name: "origin/feat/x",
+      sha: "ddd4444",
+      remote: "origin",
+      branch: "feat/x",
+    },
+    {
+      name: "team/origin/topic",
+      sha: "eee5555",
+      remote: "team/origin",
+      branch: "topic",
+    },
   ],
   tags: [],
   stashes: [],
@@ -142,7 +159,13 @@ describe("GitSidebar の右クリック", () => {
   it("リモートのブランチを消す。既定のブランチは消せない", () => {
     const { ops, menuOf, item } = setup();
     click(item(menuOf("origin/feat/x"), "リモートから削除"));
-    expect(ops.deleteRemoteBranch).toHaveBeenCalledWith("origin/feat/x");
+    expect(ops.deleteRemoteBranch).toHaveBeenCalledWith("origin", "feat/x");
+    // リモートの名前が / を含んでも、サーバーが分けた名前で消す
+    click(item(menuOf("team/origin/topic"), "リモートから削除"));
+    expect(ops.deleteRemoteBranch).toHaveBeenLastCalledWith(
+      "team/origin",
+      "topic"
+    );
     expect(item(menuOf("origin/main"), "リモートから削除")?.disabled).toBe(
       true
     );

@@ -12,6 +12,7 @@ import {
   getStatus,
   isSafeRelPath,
   isValidSha,
+  splitRemoteRef,
 } from "./git-view.js";
 
 let dir: string;
@@ -217,7 +218,9 @@ describe("getRefs", () => {
         worktreePath: dir,
       },
     ]);
-    expect(r.remotes).toEqual([{ name: "origin/main", sha: c1 }]);
+    expect(r.remotes).toEqual([
+      { name: "origin/main", sha: c1, remote: "origin", branch: "main" },
+    ]);
     expect(r.tags).toContainEqual({ name: "ann", sha: c1 });
     expect(r.tags).toContainEqual({ name: "light", sha: head });
     expect(r.stashes).toHaveLength(1);
@@ -245,9 +248,31 @@ describe("getRefs", () => {
     git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
     const r = await getRefs(dir);
     expect(r.remotes).toEqual([
-      { name: "origin/main", sha: c1, isDefault: true },
-      { name: "origin/topic", sha: c1 },
+      {
+        name: "origin/main",
+        sha: c1,
+        remote: "origin",
+        branch: "main",
+        isDefault: true,
+      },
+      { name: "origin/topic", sha: c1, remote: "origin", branch: "topic" },
     ]);
+  });
+
+  it("splitRemoteRef は設定にあるリモートの名前で分ける (名前に / を含んでも)", () => {
+    const remotes = ["team", "team/origin"];
+    expect(splitRemoteRef("team/origin/topic", remotes)).toEqual({
+      remote: "team/origin",
+      branch: "topic",
+    });
+    expect(splitRemoteRef("team/feat/x", remotes)).toEqual({
+      remote: "team",
+      branch: "feat/x",
+    });
+    expect(splitRemoteRef("gone/main", remotes)).toEqual({
+      remote: "gone",
+      branch: "main",
+    });
   });
 
   it("ほかの worktree で使っているブランチは worktreePath を持つ", async () => {
@@ -629,6 +654,21 @@ describe("getFileDiff", () => {
 });
 
 describe("getFingerprint", () => {
+  it("別の worktree がブランチを切り替えると変わる", async () => {
+    commit("c1", { "a.txt": "a\n" });
+    git("branch", "b1");
+    git("branch", "b2");
+    const other = `${dir}-wt`;
+    git("worktree", "add", "-q", other, "b1");
+    try {
+      const f1 = await getFingerprint(dir);
+      execFileSync("git", ["checkout", "-q", "b2"], { cwd: other });
+      expect(await getFingerprint(dir)).not.toBe(f1);
+    } finally {
+      fs.rmSync(other, { recursive: true, force: true });
+    }
+  });
+
   it("コミット・追跡ファイルの編集で変わり、何も無ければ安定", async () => {
     commit("c1", { "a.txt": "a\n" });
     const f1 = await getFingerprint(dir);

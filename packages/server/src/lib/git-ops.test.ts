@@ -242,6 +242,35 @@ describe("リモート", () => {
     expect(git("diff", "--name-only", "--diff-filter=U")).toBe("");
   });
 
+  it("mergeOptions に --squash があっても、pull は HEAD を進める", async () => {
+    commit("c1");
+    await pushBranch(dir, "main");
+    const other = path.join(root, "clone");
+    gitIn(root, "clone", "-q", bare, other);
+    gitIn(other, "config", "commit.gpgsign", "false");
+    const theirs = commitIn(other, "theirs", "b.txt");
+    gitIn(other, "push", "-q", "origin", "main");
+    git("config", "branch.main.mergeOptions", "--squash");
+    await pullFastForward(dir);
+    expect(git("rev-parse", "HEAD")).toBe(theirs);
+    expect(git("status", "--porcelain")).toBe("");
+  });
+
+  it("利用者の core.sshCommand を使い、端末から切り離して動かす", async () => {
+    commit("c1");
+    git("remote", "set-url", "origin", "ssh://example.invalid/x.git");
+    const out = path.join(root, "ssh-result");
+    const fake = path.join(root, "fake-ssh.sh");
+    fs.writeFileSync(
+      fake,
+      `#!/bin/sh\n( exec 3</dev/tty ) 2>/dev/null && echo has-tty > "${out}" || echo no-tty > "${out}"\nexit 1\n`,
+      { mode: 0o755 }
+    );
+    git("config", "core.sshCommand", fake);
+    await expect(fetchAll(dir)).rejects.toThrow(GitOpError);
+    expect(fs.readFileSync(out, "utf8").trim()).toBe("no-tty");
+  });
+
   it("detached では pull しない", async () => {
     const c1 = commit("c1");
     git("checkout", "-q", "--detach", c1);

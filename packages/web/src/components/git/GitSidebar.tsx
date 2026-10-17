@@ -47,14 +47,7 @@ type GroupId = "branches" | "remotes" | "tags" | "stashes";
 
 type LocalBranch = GitRefs["branches"][number];
 
-interface RemoteBranch {
-  /** `origin/feat/x` */
-  name: string;
-  /** `feat/x` */
-  short: string;
-  sha: string;
-  isDefault: boolean;
-}
+type RemoteBranch = GitRefs["remotes"][number];
 
 const GROUPS_KEY = "ark-git-sidebar-groups";
 
@@ -114,18 +107,10 @@ export function GitSidebar({
   const remoteGroups = useMemo(() => {
     const groups = new Map<string, RemoteBranch[]>();
     for (const remote of refs?.remotes ?? []) {
-      const slash = remote.name.indexOf("/");
-      const host = slash === -1 ? remote.name : remote.name.slice(0, slash);
-      const short = slash === -1 ? remote.name : remote.name.slice(slash + 1);
-      if (short === "HEAD") continue;
-      const list = groups.get(host) ?? [];
-      list.push({
-        name: remote.name,
-        short,
-        sha: remote.sha,
-        isDefault: remote.isDefault === true,
-      });
-      groups.set(host, list);
+      if (remote.branch === "HEAD") continue;
+      const list = groups.get(remote.remote) ?? [];
+      list.push(remote);
+      groups.set(remote.remote, list);
     }
     return [...groups.entries()];
   }, [refs]);
@@ -288,7 +273,7 @@ export function GitSidebar({
                     aria-hidden="true"
                   />
                   <span className="min-w-0 flex-1 truncate">
-                    {remote.short}
+                    {remote.branch}
                   </span>
                 </>,
                 remote.name,
@@ -441,7 +426,7 @@ function RemoteBranchMenu({
       <ContextMenuItem
         variant="destructive"
         disabled={remote.isDefault || remoteBusy}
-        onSelect={() => ops.deleteRemoteBranch(remote.name)}
+        onSelect={() => ops.deleteRemoteBranch(remote.remote, remote.branch)}
       >
         <Trash2 className="size-4" aria-hidden="true" />
         リモートから削除
