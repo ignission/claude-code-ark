@@ -18,10 +18,6 @@ import type {
   SpecialKey,
 } from "@ark/shared";
 import { stripAnsi } from "./ansi.js";
-import {
-  buildAuqScreenContext,
-  dropTrailingPromptBox,
-} from "./auq-screen-context.js";
 import type {
   BoardMcpServer,
   BoardSessionRegistry,
@@ -31,6 +27,7 @@ import { cliSessionStatusReader } from "./cli-session-status.js";
 import { db } from "./database.js";
 import { getErrorMessage } from "./errors.js";
 import { cleanupLegacyContextSettings } from "./legacy-context-settings-cleanup.js";
+import { buildScreenTail, dropTrailingPromptBox } from "./screen-tail.js";
 import { type TmuxSession, tmuxManager } from "./tmux-manager.js";
 import {
   describeTmuxReadFailure,
@@ -1353,9 +1350,9 @@ export class SessionOrchestrator extends EventEmitter {
       );
 
       // 画面を取れたセッションでは状態に関係なく、画面末尾を添える (AUQ の「直前の画面」と同じ整形。解釈はしない)。
-      // 末尾の入力欄の枠から下だけは出さない (理由と決まりは auq-screen-context.ts の「例外」)
+      // 末尾の入力欄の枠から下だけは出さない (理由と決まりは screen-tail.ts の「例外」)
       const liveTail =
-        buildAuqScreenContext(dropTrailingPromptBox(stripAnsi(raw)), {
+        buildScreenTail(dropTrailingPromptBox(stripAnsi(raw)), {
           maxLines: LIVE_TAIL_LINES,
           maxChars: LIVE_TAIL_MAX_CHARS,
         }) ?? undefined;

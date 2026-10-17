@@ -73,7 +73,6 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
-import { AskUserQuestionCard } from "@/components/AskUserQuestionCard";
 import { CodeBlock } from "@/components/CodeBlock";
 import { ContextUsageRing } from "@/components/ContextUsageRing";
 import { MermaidBlock } from "@/components/MermaidBlock";
@@ -156,8 +155,8 @@ interface SplitChatPaneProps {
   /** layout="mobile" のとき、ガラスバーの上段 (入力欄の上) に置く要素 */
   composerAccessory?: ReactNode;
   /**
-   * 回答待ちの質問カード (AskUserQuestion) が変わったときに、その中身 (無ければ null) で呼ぶ。
-   * マウント時にも現在の値 (null) で1回呼ぶ。モバイルの状態の帯と音声モードが使う。
+   * 回答待ちの質問 (AskUserQuestion) が変わったときに、その中身 (無ければ null) で呼ぶ。
+   * マウント時にも現在の値 (null) で1回呼ぶ。端末を開くのと、モバイルの状態の帯と音声モードが使う。
    * アンマウント時には呼ばない。effectの依存に使うため、呼び出し側は安定した
    * 関数 (useCallback等) を渡すこと
    */
@@ -955,7 +954,7 @@ function ToolGroupCard({
 /**
  * AWAITING フォールバックのミニ操作パッド。
  *
- * hook 未注入セッション (AUQ カードが出ない) や permission prompt で、
+ * hook 未注入セッション (質問で端末が開かない) や permission prompt で、
  * ターミナルを開かずに確認 UI を操作する。確認 UI の生テキスト表示 +
  * キーパッド (数字ジャンプ/トグル・矢印・Space・Enter・Esc) +
  * 自由入力 (Type something 用 literal 送信)。
@@ -1113,8 +1112,7 @@ function EventCard({
     case "compact-marker":
       return <CompactMarkerCard />;
     case "tool-call":
-      // 回答待ちの AskUserQuestion は入力欄上のアクティブカード
-      // (AskUserQuestionCard) が担当するので履歴側には出さない。
+      // 回答待ちの AskUserQuestion は端末で答えるので、履歴側には出さない。
       // tool_result が来て done になったら回答済みカードとして表示する
       if (
         event.tool === "AskUserQuestion" &&
@@ -1392,14 +1390,13 @@ export function SplitChatPane({
   );
 
   // 回答待ちの AskUserQuestion。
-  // 表示開始 = PreToolUse hook 由来の session:auq イベント (対話版 claude は
+  // 回答待ちの始まり = PreToolUse hook 由来の session:auq イベント (対話版 claude は
   // AUQ の tool_use を回答確定まで JSONL に書かないため hook が唯一の情報源)。
-  // カードを閉じる = JSONL に解決イベント (tool_use + tool_result) が出現。
+  // 終わり = JSONL に解決イベント (tool_use + tool_result) が出現。
+  // 回答は端末で行う。このペインは回答待ちを親へ知らせるだけで、カードは出さない
   const [hookAuq, setHookAuq] = useState<{
     at: number;
     auq: ActiveAuq;
-    /** hook 受信時の tmux 画面 (verbatim)。直前の文脈は JSONL に無いため */
-    screen: string | null;
   } | null>(null);
 
   useEffect(() => {
@@ -1408,7 +1405,6 @@ export function SplitChatPane({
       sessionId: string;
       at: number;
       questions: unknown;
-      screen: string | null;
     }) => {
       if (data.sessionId !== session.id) return;
       const questions = parseAuqInput({ questions: data.questions });
@@ -1416,7 +1412,6 @@ export function SplitChatPane({
       setHookAuq({
         at: data.at,
         auq: { toolUseId: `hook:${data.at}`, questions },
-        screen: typeof data.screen === "string" ? data.screen : null,
       });
     };
     socket.on("session:auq", handler);
@@ -1425,20 +1420,20 @@ export function SplitChatPane({
     };
   }, [socket, session.id]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies(session.id): セッション切替を検知して回答待ちカードを破棄するための意図的な依存
+  // biome-ignore lint/correctness/useExhaustiveDependencies(session.id): セッション切替を検知して回答待ちを破棄するための意図的な依存
   useEffect(() => {
     setHookAuq(null);
   }, [session.id]);
 
-  // JSONL に解決イベント (回答/Esc 拒否) が書かれたらカードを閉じる
-  useEffect(() => {
-    if (!hookAuq) return;
-    if (hasResolvedAuqSince(events, hookAuq.at)) setHookAuq(null);
-  }, [events, hookAuq]);
+  // 解決済みかは描画の中で決める。サーバーは回答済みの質問も (再購読のたびに) 送り直すので、
+  // effect で後から消すと、消す前の1回の描画で親へ回答待ちと伝わり、端末が開いてしまう
+  const activeAuq = useMemo(
+    () =>
+      hookAuq && !hasResolvedAuqSince(events, hookAuq.at) ? hookAuq.auq : null,
+    [hookAuq, events]
+  );
 
-  const activeAuq = hookAuq?.auq ?? null;
-
-  // 質問カードを親へ知らせる (モバイルの状態の帯と音声モードが使う)
+  // 回答待ちを親へ知らせる (端末を開くのと、モバイルの状態の帯と音声モードが使う)
   const hasActiveAuq = activeAuq !== null;
   const workingLabel = workingIndicatorLabel(
     bridgeStatus,
@@ -1962,22 +1957,13 @@ export function SplitChatPane({
   );
 
   // permission prompt 等のユーザー判断待ちフォールバック。
-  // AskUserQuestion は専用カードが出る (hook 経由) ため、カード表示中
-  // は出さない。hook が取りこぼされた場合のセーフティネットも兼ねる
+  // AskUserQuestion の回答待ちは端末で答えるので出さない。hook が取りこぼされた場合の
+  // セーフティネットも兼ねる
   const showAwaitingPad = bridgeStatus === "AWAITING" && !activeAuq;
-  // 入力欄の上に固定で出すカード (質問カード / 確認待ちのキー操作)。
+  // 入力欄の上に固定で出すカード (確認待ちのキー操作)。
   // 高さが足りないときはカード自身の中をスクロールさせる。外側の枠でスクロールさせると
   // カードの下端 (罫線と角丸) が切れて、途中で途切れたように見えるため
-  const dockedCard = activeAuq ? (
-    <AskUserQuestionCard
-      key={activeAuq.toolUseId}
-      socket={socket}
-      sessionId={session.id}
-      auq={activeAuq}
-      screenContext={hookAuq?.screen ?? null}
-      onSendKey={onSendKey}
-    />
-  ) : showAwaitingPad ? (
+  const dockedCard = showAwaitingPad ? (
     <AwaitingPad
       socket={socket}
       sessionId={session.id}

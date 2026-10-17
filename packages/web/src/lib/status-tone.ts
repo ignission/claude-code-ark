@@ -31,7 +31,7 @@ export interface StatusPresentation {
 }
 
 const PRESENTATIONS: Readonly<Record<StatusKey, StatusPresentation>> = {
-  // AWAITING は質問カードと許可プロンプトの両方を含むので「質問」ではなく「確認待ち」
+  // AWAITING は質問と許可プロンプトの両方を含むので「質問」ではなく「確認待ち」
   AWAITING: {
     tone: "awaiting",
     label: "確認待ち",

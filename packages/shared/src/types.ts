@@ -639,7 +639,7 @@ export interface ServerToClientEvents {
    * AskUserQuestion が表示された通知 (PreToolUse hook 由来)。
    * 対話版 claude は AUQ の tool_use を「回答確定時」まで transcript に
    * 書かないため、回答待ちのリアルタイム検出は hook で行う。
-   * 回答確定 (カードを閉じる) は JSONL の tool_result 出現で判定する。
+   * 回答確定は JSONL の tool_result 出現で判定する。クライアントは受けたら端末を開く。
    */
   "session:auq": (data: {
     sessionId: string;
@@ -647,12 +647,6 @@ export interface ServerToClientEvents {
     at: number;
     /** tool_input.questions の生データ (クライアント側で構造検証する) */
     questions: unknown;
-    /**
-     * hook 受信時の tmux 画面スナップショット (verbatim・無解釈)。
-     * AUQ 表示中は直前の会話が JSONL に無いため、カードの「直前の画面」
-     * 表示に使う。capture 失敗時は null
-     */
-    screen: string | null;
   }) => void;
   "session:restored": (session: ManagedSession) => void;
   "session:restore_failed": (data: {
