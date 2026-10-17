@@ -489,6 +489,8 @@ describe("リモート", () => {
     commit("c1");
     git("push", "-q", "origin", "main");
     await fetchAll(dir);
+    // 新しい git は fetch で origin/HEAD を作る (remote.<name>.followRemoteHEAD)。消しておく
+    git("remote", "set-head", "origin", "--delete");
     expect(hasRef("refs/remotes/origin/HEAD")).toBe(false);
     await expect(
       deleteRemoteBranch(dir, "origin", "origin/main")
