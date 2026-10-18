@@ -50,6 +50,7 @@ import {
   type ClientToServerEvents,
   type ManagedSession,
   type MessageShortcut,
+  type PlanLimits,
   type ServerToClientEvents,
   type SpecialKey,
   TERMINAL_BG,
@@ -170,6 +171,8 @@ export interface MobileSessionViewProps extends MobileDiagramPaneProps {
   awaitingText?: string;
   /** 端末の画面末尾 (会話の入力欄の上の帯にそのまま出す) */
   liveTail?: string;
+  /** プランの使用量 (入力欄の横に出す) */
+  planLimits?: PlanLimits;
   session: ManagedSession;
   worktree: Worktree | undefined;
   /** 主ラベルに使うリポジトリ名 (basename)。所属が分からなければ undefined */
@@ -220,6 +223,7 @@ export function MobileSessionView({
   bridgeStatus,
   awaitingText,
   liveTail,
+  planLimits,
   session,
   worktree,
   repoName,
@@ -1139,6 +1143,7 @@ export function MobileSessionView({
             bridgeStatus={bridgeStatus}
             awaitingText={awaitingText}
             liveTail={liveTail}
+            planLimits={planLimits}
             onSendMessage={onSendMessage}
             onSendKey={onSendKey}
             onUploadFile={onUploadFile}

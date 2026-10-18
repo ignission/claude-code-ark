@@ -18,6 +18,7 @@ import type {
   FsListResult,
   ManagedSession,
   MessageShortcut,
+  PlanLimits,
   Profile,
   RepoInfo,
   Screen,
@@ -54,6 +55,7 @@ import {
   requestDiagramCommentsGet,
 } from "../lib/diagram-comment-transport";
 import { requestDiagramDelete } from "../lib/diagram-delete-transport";
+import { mergePlanLimits } from "../lib/plan-limits";
 import { mergePrStatuses } from "../lib/pr-status";
 import type {
   SessionAuqSignal,
@@ -266,6 +268,12 @@ interface UseSocketReturn {
    */
   sessionPrStatuses: Map<string, SessionPrStatus>;
 
+  /**
+   * sessionId → セッションのプロファイルのプランの使用量。session:previews ペイロードから派生。
+   * 読めていないセッションはエントリ自体が無い
+   */
+  sessionPlanLimits: Map<string, PlanLimits>;
+
   // Browser sessions
   browserSessions: Map<string, BrowserSession>;
   browserError: string | null;
@@ -468,6 +476,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   // ブランチのPRとチェックの集計 (一覧の札と、CIが落ちたときの通知に使う)
   const [sessionPrStatuses, setSessionPrStatuses] = useState<
     Map<string, SessionPrStatus>
+  >(new Map());
+  // プランの使用量 (入力欄の横に出す)
+  const [sessionPlanLimits, setSessionPlanLimits] = useState<
+    Map<string, PlanLimits>
   >(new Map());
 
   // Browser session state
@@ -680,6 +692,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       // (再接続後に再度 requestUsage を呼べる状態に戻す)
       setUsageRequesting(false);
       setUsageProgress(null);
+      // 切断中は previews が届かず、枠がリセットされても古い使用率が残る。
+      // 再接続して届くまで出さない
+      setSessionPlanLimits(new Map());
     });
 
     socket.on("connect_error", err => {
@@ -1031,6 +1046,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         return next;
       });
       setSessionPrStatuses(prev => mergePrStatuses(prev, previews));
+      setSessionPlanLimits(prev => mergePlanLimits(prev, previews));
     });
 
     // Repo Grid View
@@ -1891,6 +1907,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     sessionAwaitingTexts,
     sessionLiveTails,
     sessionPrStatuses,
+    sessionPlanLimits,
     sessionStatusSignals,
     sessionAuqSignals,
     gridSnapshots,

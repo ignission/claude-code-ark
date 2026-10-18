@@ -121,6 +121,11 @@ import {
   describeWorktreeFailure,
   resolveWorktreeRealPath,
 } from "./lib/managed-worktree.js";
+import {
+  defaultConfigDir,
+  fetchUsage,
+  PlanLimitsCollector,
+} from "./lib/plan-limits-collector.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
 import {
   createGhRunner,
@@ -455,12 +460,24 @@ export async function startServer(
     : null;
   if (prStatusCollector) prStatusCollector.start();
   else console.log("[PrStatus] gh が見つからないので、PRとCIの状態は出さない");
+
+  // ===== プランの使用量 =====
+  const configDirOf = (sessionId: string) =>
+    sessionOrchestrator.getSessionConfigDir(sessionId) ?? defaultConfigDir();
+  const planLimitsCollector = new PlanLimitsCollector(fetchUsage, () =>
+    sessionOrchestrator
+      .getAllSessions()
+      .map(session => session.profileConfigDir ?? defaultConfigDir())
+  );
+  planLimitsCollector.start();
+
   const withPrStatus = (
     previews: ReturnType<typeof sessionOrchestrator.getAllPreviews>
   ) =>
     previews.map(preview => ({
       ...preview,
       prStatus: prStatusCollector?.get(preview.sessionId) ?? null,
+      planLimits: planLimitsCollector.get(configDirOf(preview.sessionId)),
     }));
 
   // ===== Usage取得 =====
@@ -3902,6 +3919,7 @@ export async function startServer(
     clearInterval(bridgeBroadcastInterval);
     clearInterval(gridBroadcastInterval);
     prStatusCollector?.stop();
+    planLimitsCollector.stop();
     sessionOrchestrator.cleanup();
     askManager.dispose();
     browserBridge.reset();

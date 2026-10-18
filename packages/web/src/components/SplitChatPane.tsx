@@ -34,6 +34,7 @@ import type {
   BridgeSessionStatus,
   ClientToServerEvents,
   ManagedSession,
+  PlanLimits,
   ServerToClientEvents,
   SlashCommandInfo,
   SpecialKey,
@@ -76,6 +77,7 @@ import { toast } from "sonner";
 import { CodeBlock } from "@/components/CodeBlock";
 import { ContextUsageRing } from "@/components/ContextUsageRing";
 import { MermaidBlock } from "@/components/MermaidBlock";
+import { PlanLimitsBadge } from "@/components/PlanLimitsBadge";
 import { StatusChip } from "@/components/StatusChip";
 import { fileToBase64, validateFile } from "@/hooks/useFileUpload";
 import { useSessionJsonl } from "@/hooks/useSessionJsonl";
@@ -134,6 +136,8 @@ interface SplitChatPaneProps {
    * 届いていない (画面を取れない、セッションが止まっている) ときは undefined
    */
   liveTail?: string;
+  /** セッションのプロファイルのプランの使用量。入力欄の横に出す。読めていなければ undefined */
+  planLimits?: PlanLimits;
   /**
    * 帯を押したとき (端末の窓を開く)。渡さなければ帯を出さず、`liveTail` も使わない
    */
@@ -1259,6 +1263,7 @@ export function SplitChatPane({
   bridgeStatus,
   awaitingText,
   liveTail,
+  planLimits,
   onOpenTerminal,
   onSendMessage,
   onSendKey,
@@ -1940,6 +1945,7 @@ export function SplitChatPane({
         className={`field-sizing-content max-h-32 min-w-0 flex-1 resize-none rounded-[20px] border border-border px-3.5 text-[15px] leading-[1.4] placeholder:text-muted-foreground focus:border-primary focus:outline-none ${composerSize.input}`}
       />
       {contextUsage && <ContextUsageRing usage={contextUsage} />}
+      {planLimits && <PlanLimitsBadge limits={planLimits} />}
       <button
         type="submit"
         disabled={!inputValue.trim()}
