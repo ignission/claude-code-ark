@@ -54,7 +54,6 @@ import {
   Maximize2,
   Paperclip,
   Scissors,
-  Workflow,
   Wrench,
 } from "lucide-react";
 import {
@@ -107,7 +106,6 @@ import {
 } from "@/lib/reconcile-local-slash";
 import { reconcilePending } from "@/lib/reconcile-pending";
 import { cn } from "@/lib/utils";
-import { buildVisualizeConversationPrompt } from "@/lib/visualize-conversation";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -187,7 +185,7 @@ export interface SplitChatPaneHandle {
   pasteImage: () => void;
 }
 
-/** 入力欄の横の丸いアイコンボタン (添付・図解)。大きさはCOMPOSER_SIZEで足す */
+/** 入力欄の横の丸いアイコンボタン (添付)。大きさはCOMPOSER_SIZEで足す */
 const ROUND_ICON_BUTTON =
   "inline-flex shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50";
 
@@ -1631,23 +1629,6 @@ export function SplitChatPane({
     setInputValue("");
   };
 
-  // 「会話を図解」: 現在の Claude セッションに会話の図解を依頼する。
-  // 入力欄は触らず、図解プロンプトを送信して pending を楽観表示する
-  // (図はボードに開く。ボードの無いセッションの ```mermaid は MermaidBlock がインライン描画する)。
-  const handleVisualizeConversation = () => {
-    const prompt = buildVisualizeConversationPrompt();
-    lastSubmittedRef.current = prompt;
-    onSendMessage(prompt);
-    setPending(prev => [
-      ...prev,
-      {
-        id: `p:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
-        text: prompt,
-        sentAt: Date.now(),
-      },
-    ]);
-  };
-
   // ===== ファイルアップロード =====
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -1917,15 +1898,6 @@ export function SplitChatPane({
           </button>
         </>
       )}
-      <button
-        type="button"
-        onClick={handleVisualizeConversation}
-        className={`${ROUND_ICON_BUTTON} ${composerSize.button}`}
-        aria-label="会話を図解"
-        title="会話を図解 (Claudeに説明図をボードへ描かせる)"
-      >
-        <Workflow className="size-5" />
-      </button>
       <textarea
         ref={inputRef}
         value={inputValue}
