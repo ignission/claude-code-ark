@@ -4,6 +4,9 @@ const XK_CONTROL_L = 0xffe3;
 /** noVNC は Meta (Cmd) を Super として送る (core/input/domkeytable.js) */
 const XK_SUPER_L = 0xffeb;
 
+/** 押し直した修飾キーと V のあいだに置く間 (ミリ秒) */
+const MODIFIER_SETTLE_MS = 100;
+
 /** RFB の ClientCutText。拡張クリップボードでは長さが負になり、本文の前に操作のフラグが付く */
 const CLIENT_CUT_TEXT = 6;
 /** 拡張クリップボードの Provide 操作 (1 << 28) のフラグの先頭バイト */
@@ -65,21 +68,25 @@ export function forwardLocalPaste(
     container.addEventListener("keyup", onModifierChange, true);
     window.addEventListener("blur", onBlur);
 
-    const pressV = () => {
+    const pressV = async () => {
       container.removeEventListener("keyup", onModifierChange, true);
       window.removeEventListener("blur", onBlur);
       const current = getTarget();
       if (!current) return;
-      if (released) {
-        for (const [keysym, code] of modifiers) {
-          current.sendKey(keysym, code, true);
-        }
+      if (!released) {
+        current.sendKey(XK_V, "KeyV");
+        return;
       }
+      // macOS の画面共有は、修飾キーの押下と V を間を空けずに受けると、
+      // V を修飾キー無しで扱う (本番の Mac で確かめた)。押し直すときは間を置く
+      for (const [keysym, code] of modifiers) {
+        current.sendKey(keysym, code, true);
+      }
+      await sleep(MODIFIER_SETTLE_MS);
       current.sendKey(XK_V, "KeyV");
-      if (released) {
-        for (const [keysym, code] of modifiers) {
-          current.sendKey(keysym, code, false);
-        }
+      await sleep(MODIFIER_SETTLE_MS);
+      for (const [keysym, code] of modifiers) {
+        current.sendKey(keysym, code, false);
       }
     };
 
@@ -91,7 +98,7 @@ export function forwardLocalPaste(
           try {
             await getTarget()?.clipboardPasteFrom(text);
           } finally {
-            pressV();
+            await pressV();
           }
         },
         // 読めなかったら、相手側のクリップボードで貼る従来の動きに戻す
@@ -150,6 +157,10 @@ export function trackClipboardDelivery(ws: Pick<WebSocket, "send">): {
       pending = null;
     },
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function carriesClipboardText(data: unknown): boolean {

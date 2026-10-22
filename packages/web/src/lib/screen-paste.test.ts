@@ -130,7 +130,8 @@ describe("forwardLocalPaste", () => {
     // readText は次のマイクロタスクで呼ばれるので、resolve が差し替わるまで待つ
     await flush();
     resolve("x");
-    await flush();
+    // 押し直しでは修飾キーと V のあいだに 100ms ずつ置く
+    await new Promise(r => setTimeout(r, 300));
     expect(calls).toEqual([
       "clipboard:x",
       "key:65515:down",
@@ -149,7 +150,8 @@ describe("forwardLocalPaste", () => {
     // readText は次のマイクロタスクで呼ばれるので、resolve が差し替わるまで待つ
     await flush();
     resolve("x");
-    await flush();
+    // 押し直しでは修飾キーと V のあいだに 100ms ずつ置く
+    await new Promise(r => setTimeout(r, 300));
     expect(calls).toEqual([
       "clipboard:x",
       "key:65507:down",
