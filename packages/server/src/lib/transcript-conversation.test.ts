@@ -353,11 +353,26 @@ describe("readTranscriptConversationState - 起動直後 (CLI の sessionId)", (
     ).toBe("no-conversation");
   });
 
-  it("CLI の sessionId の JSONL があれば、これまでどおり中身で判定する", () => {
-    const io = ioReturning(PREVIOUS, { fileExists: () => true });
-    expect(
-      readTranscriptConversationState("/wt/app", "/cfg", "current", io)
-    ).toBe("has-conversation");
+  it("CLI の sessionId の JSONL があれば、pickLatestJsonl を通さずその中身で判定する", () => {
+    // 同じ worktree に別のセッションの新しい JSONL (会話あり) があっても取り違えない
+    const pickLatestJsonl = vi.fn(() => FILE);
+    const readHead = vi.fn((file: string) => ({
+      text: file === FILE ? PREVIOUS : toJsonl(AFTER_CLEAR_RECORDS),
+      truncated: false,
+    }));
+    const io = ioReturning(PREVIOUS, {
+      fileExists: () => true,
+      pickLatestJsonl,
+      readHead,
+    });
+    expect(readTranscriptConversationState("/wt/app", "/cfg", "mine", io)).toBe(
+      "no-conversation"
+    );
+    expect(readHead).toHaveBeenCalledWith(
+      "/cfg/projects/-wt-app/mine.jsonl",
+      32 * 1024
+    );
+    expect(pickLatestJsonl).not.toHaveBeenCalled();
   });
 
   it("sessionId を読めなければ (状態ファイルが無い等) 確かめない", () => {

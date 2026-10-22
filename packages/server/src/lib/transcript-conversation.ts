@@ -61,8 +61,11 @@
  * 拾う。そこには会話があるので、まだ誰の番でもないセッションが「あなたの番」に
  * 出ていた。
  *
- * 区別には CLI の状態ファイル (cli-session-status.ts) の `sessionId` を使う。
- * JSONL のファイル名はこの id なので、`<sessionId>.jsonl` が無ければ会話は無い。
+ * そこで CLI の状態ファイル (cli-session-status.ts) の `sessionId` が読めたら、
+ * pickLatestJsonl を通さず `<sessionId>.jsonl` を直接見る。JSONL のファイル名は
+ * この id で、無ければ会話は無い。同じ worktree に別のセッションの新しい JSONL が
+ * あっても取り違えない。`/clear` すると sessionId は新しい JSONL の id に変わる
+ * (実測 v2.1.306) ので、/clear 直後の判定もこのファイルで成り立つ。
  * 状態ファイルを読めないときは、これまでどおり pickLatestJsonl の判定に任せる。
  * 起動時刻とファイルの mtime を比べる方法は採らない。Ark はサーバーの再起動で
  * セッションの createdAt を作り直すので、再起動のたびに会話のあるセッションまで
@@ -184,12 +187,13 @@ export function readTranscriptConversationState(
       projectsDirFor(configDir),
       encodeProjectDir(worktreePath)
     );
-    // 起動してから最初のプロンプトまでは JSONL が無い。pickLatestJsonl に任せると
-    // 前のセッションの JSONL (と、そのメモの has-conversation) を拾うので先に見る
-    if (cliSessionId && !io.fileExists(path.join(dir, `${cliSessionId}.jsonl`)))
-      return "no-conversation";
-    const file = io.pickLatestJsonl(dir, worktreePath);
+    const file = cliSessionId
+      ? path.join(dir, `${cliSessionId}.jsonl`)
+      : io.pickLatestJsonl(dir, worktreePath);
     if (!file) return "unknown";
+    // 起動してから最初のプロンプトまでは JSONL が無い。ここで止めないと、
+    // 前のセッションの JSONL (と、そのメモの has-conversation) へ進んでしまう
+    if (cliSessionId && !io.fileExists(file)) return "no-conversation";
     const cached = memo.get(file);
     if (cached?.state === "has-conversation") return "has-conversation";
     const { size, mtimeMs } = io.statFile(file);
