@@ -14,6 +14,10 @@
  *
  * - `{ id, type: "sequence" | "call-tree", title?, nodes, edges }`: 内蔵図種のページ。
  *   モデルの検証も投影も単独の図と同じものを使う
+ * - `{ id, type: "git-graph" | "timeline" | "tree" | "compare", title?, nodes, edges }`:
+ *   見て分かる図種のページ（diagram-figures.ts）。単独の図と同じ検証と投影を使う
+ * - `{ id, type: "flow" | "state", title?, nodes, edges }`: 動かさない graph のページ
+ *   （diagram-static-graph.ts）。座標を持たず、自動レイアウトで描く
  * - `{ id, type: "blocks", title?, blocks }`: 部品のページ。見出しと、決まった部品の並びで
  *   書く（diagram-deck-blocks.ts）。見た目は Ark が決める
  * - `{ id, type: "html", title? }`: 自由形のページ。本文に
@@ -33,11 +37,20 @@
  * id はページの id も含めてファイル全体で一意にする。生成した行の `data-ark-id` が
  * コメントの付け先になり、コメントの sidecar はファイル単位で持つため。
  *
+ * ## 図の無いデッキは、新しくは開けない
+ *
+ * 部品のページは文字を枠に入れるだけなので、部品だけのデッキは文字の羅列に戻る。
+ * 実際、図種を勧めていても部品のページばかりが書かれた。そこで `board_open` は、
+ * 3 ページ以上あるのに図のページ（部品以外）が 1 枚も無いデッキを拒否し、合う図種を
+ * 返す。表と箇条書きだけのページには、拒否はせず注意（notices）を返す。表が正解の
+ * ページもあるので、拒否するのは図が 1 枚も無いときに限る。
+ *
  * ## 載せないもの
  *
- * er / flow など graph の図種と doc はページにできない。graph はドラッグした座標を
- * 一番上のモデルへ書き戻し、doc は本文を直接編集する。どちらも 1 ファイルに
- * 1 種類だけが載る前提で動いている。
+ * er / event-storming / context-map と doc はページにできない。単独の graph は
+ * ドラッグした座標を一番上のモデルへ書き戻し、doc は本文を直接編集する。どちらも
+ * 1 ファイルに 1 種類だけが載る前提で動いている。flow / state だけは、動かさない図
+ * としてページにできる（上の語彙）。
  */
 
 import { GENERATED_ATTR } from "./diagram-builtin.js";
@@ -47,6 +60,13 @@ import {
   parseDeckBlocks,
   renderDeckBlocks,
 } from "./diagram-deck-blocks.js";
+import {
+  FIGURE_CSS,
+  type FigureType,
+  isFigureType,
+  renderFigure,
+  validateFigureModel,
+} from "./diagram-figures.js";
 import {
   asciiLowerCase,
   scanDiagramHtmlStartTags,
@@ -63,6 +83,12 @@ import {
   STATIC_BUILTIN_OWN_CSS,
   type StaticBuiltinType,
 } from "./diagram-static-builtin.js";
+import {
+  isStaticGraphPageType,
+  renderStaticGraph,
+  STATIC_GRAPH_CSS,
+  type StaticGraphPageType,
+} from "./diagram-static-graph.js";
 
 export const DECK_TYPE = "deck";
 export const DIAGRAM_DECK_MARKER = "ark-diagram-deck";
@@ -75,6 +101,13 @@ const PAGE_ATTRIBUTE = "data-ark-page";
 
 export type DeckPage =
   | { id: string; type: StaticBuiltinType; title?: string; model: DiagramModel }
+  | { id: string; type: FigureType; title?: string; model: DiagramModel }
+  | {
+      id: string;
+      type: StaticGraphPageType;
+      title?: string;
+      model: DiagramModel;
+    }
   | { id: string; type: "blocks"; title?: string; blocks: DeckBlock[] }
   | { id: string; type: "html"; title?: string };
 
@@ -106,6 +139,9 @@ function modelIds(model: DiagramModel): string[] {
     ...model.groups.map(group => group.id),
   ];
 }
+
+const PAGE_TYPES_TEXT =
+  "blocks / git-graph / timeline / tree / compare / flow / state / sequence / call-tree";
 
 /** `ext.pages` を検証し、並び順どおりのページを返す */
 export function parseDeckPages(model: DiagramModel): DeckPagesResult {
@@ -158,10 +194,15 @@ export function parseDeckPages(model: DiagramModel): DeckPagesResult {
       });
       continue;
     }
-    if (!isStaticBuiltinType(entry.type)) {
+    const pageType = entry.type;
+    if (
+      !isStaticBuiltinType(pageType) &&
+      !isFigureType(pageType) &&
+      !isStaticGraphPageType(pageType)
+    ) {
       return {
         ok: false,
-        error: `ページ ${entry.id} の type "${entry.type}" はデッキに置けません（blocks / sequence / call-tree）`,
+        error: `ページ ${entry.id} の type "${entry.type}" はデッキに置けません（${PAGE_TYPES_TEXT}）`,
       };
     }
 
@@ -178,11 +219,17 @@ export function parseDeckPages(model: DiagramModel): DeckPagesResult {
     if (!parsed.ok) {
       return { ok: false, error: `ページ ${entry.id}: ${parsed.error}` };
     }
+    if (isFigureType(pageType)) {
+      const figure = validateFigureModel(pageType, parsed.model);
+      if (!figure.ok) {
+        return { ok: false, error: `ページ ${entry.id}: ${figure.error}` };
+      }
+    }
     for (const id of modelIds(parsed.model)) {
       const error = claim(id);
       if (error) return { ok: false, error: `ページ ${entry.id}: ${error}` };
     }
-    pages.push({ id: entry.id, type: entry.type, title, model: parsed.model });
+    pages.push({ id: entry.id, type: pageType, title, model: parsed.model });
   }
   return { ok: true, pages };
 }
@@ -239,7 +286,8 @@ export function validateDiagramDeck(
 
 const FREE_PAGE_ERROR =
   '自由形のページ（type: "html"）は使えません。' +
-  'ページは type: "blocks" で書きます（部品: text / chips / cards / flow / table / list / code / bars）。' +
+  "ページは図種（git-graph / timeline / tree / compare / flow / state / sequence / call-tree）か、" +
+  'type: "blocks"（部品: text / chips / cards / flow / table / list / code / bars）で書きます。' +
   "画面の見た目などの絵が要るときは、デッキではなく type を書かない 1 枚の図を別のファイルに描きます";
 
 const MODEL_SCRIPT_RE =
@@ -294,18 +342,60 @@ function validateAuthoredFree(
   return { ok: true };
 }
 
+/** 中身から図種を引く手がかり（拒否と注意の文面に使う） */
+const FIGURE_HINT =
+  "ブランチ・コミット・PR の位置なら git-graph、経緯や検証の回なら timeline、" +
+  "ディレクトリ・worktree・依存の階層なら tree、before / after や案の比較なら compare、" +
+  "処理の分岐なら flow、状態の移り変わりなら state";
+
+/** 図のページを置かなければならないページ数（結論・根拠・次の手の 3 枚から） */
+const FIGURE_REQUIRED_PAGES = 3;
+
+/** 表と箇条書きだけのページか（文字の短い補足は数えない） */
+function isTextOnlyPage(page: DeckPage): boolean {
+  if (page.type !== "blocks") return false;
+  const kinds = page.blocks.map(block => block.kind);
+  return (
+    kinds.some(kind => kind === "table" || kind === "list") &&
+    kinds.every(kind => kind === "table" || kind === "list" || kind === "text")
+  );
+}
+
 /**
  * `board_open` で開いてよいデッキか。配信の検証に加えて、自由形のページと
- * 本文の HTML を拒否する（古いデッキも、ここからは開けない）。
+ * 本文の HTML、図のページが 1 枚も無い 3 ページ以上のデッキを拒否する
+ * （古いデッキも、ここからは開けない）。開けるときも、表と箇条書きだけの
+ * ページには notices を返す。
  */
 export function validateDeckForOpen(
   html: string,
   model: DiagramModel
-): { ok: true } | { ok: false; error: string } {
-  if (model.type !== DECK_TYPE) return { ok: true };
+): { ok: true; notices: string[] } | { ok: false; error: string } {
+  if (model.type !== DECK_TYPE) return { ok: true, notices: [] };
   const parsed = parseDeckPages(model);
   if (!parsed.ok) return parsed;
-  return validateAuthoredFree(html, parsed.pages);
+  const authored = validateAuthoredFree(html, parsed.pages);
+  if (!authored.ok) return authored;
+
+  const figurePages = parsed.pages.filter(page => page.type !== "blocks");
+  if (
+    parsed.pages.length >= FIGURE_REQUIRED_PAGES &&
+    figurePages.length === 0
+  ) {
+    return {
+      ok: false,
+      error:
+        `${parsed.pages.length} ページのデッキに図のページがありません。部品（blocks）だけでは` +
+        `文字の羅列になるので、根拠のページの少なくとも 1 枚を図にします。${FIGURE_HINT}`,
+    };
+  }
+  const notices = parsed.pages
+    .filter(isTextOnlyPage)
+    .map(
+      page =>
+        `ページ ${page.id} は表と箇条書きだけです。図で描けないか確かめてください（${FIGURE_HINT}）`
+    );
+  return { ok: true, notices };
 }
 
 /**
@@ -467,6 +557,17 @@ function renderPage(page: DeckPage): string {
       `</div>`
     );
   }
+  if (isFigureType(page.type) || isStaticGraphPageType(page.type)) {
+    return (
+      `<div class="ark-deck-page ark-bk-page" ${PAGE_ATTRIBUTE}="${escapeHtml(page.id)}">` +
+      (isFigureType(page.type)
+        ? renderFigure(page.type, page.model)
+        : isStaticGraphPageType(page.type)
+          ? renderStaticGraph(page.type, page.model)
+          : "") +
+      `</div>`
+    );
+  }
   return (
     `<div class="ark-deck-page" ${PAGE_ATTRIBUTE}="${escapeHtml(page.id)}">` +
     renderStaticBuiltin(page.type, page.model) +
@@ -485,15 +586,22 @@ export function injectDeckProjection(
   if (!parsed.ok) return html;
 
   const types = new Set(
-    parsed.pages.flatMap(page => ("model" in page ? [page.type] : []))
+    parsed.pages.flatMap(page =>
+      isStaticBuiltinType(page.type) ? [page.type] : []
+    )
   );
-  // 部品のページを持つデッキは、地の色から Ark が決める（作者の CSS が無いので）
-  const themed = parsed.pages.some(page => page.type === "blocks");
+  const figures = parsed.pages.some(page => isFigureType(page.type));
+  const graphs = parsed.pages.some(page => isStaticGraphPageType(page.type));
+  // 部品と図種のページを持つデッキは、地の色から Ark が決める（作者の CSS が無いので）
+  const themed =
+    figures || graphs || parsed.pages.some(page => page.type === "blocks");
   const css =
     STATIC_BASE_CSS +
     [...types].map(type => STATIC_BUILTIN_OWN_CSS[type]).join("") +
     DECK_CSS +
-    (themed ? DECK_BLOCKS_CSS : "");
+    (themed ? DECK_BLOCKS_CSS : "") +
+    (figures || graphs ? FIGURE_CSS : "") +
+    (graphs ? STATIC_GRAPH_CSS : "");
   const title = model.title
     ? `<h1 class="ark-deck-title">${escapeHtml(model.title)}</h1>`
     : "";

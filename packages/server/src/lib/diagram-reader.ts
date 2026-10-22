@@ -22,6 +22,11 @@ import {
 import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
 import { validateDiagramDocAuthorship } from "./diagram-doc-authorship.js";
 import { injectDiagramDocEditor } from "./diagram-doc-editor.js";
+import {
+  injectFigureProjection,
+  isFigureType,
+  validateFigureModel,
+} from "./diagram-figures.js";
 import { extractModel, injectCsp } from "./diagram-file.js";
 import { validateDiagramGraphKinds } from "./diagram-graph-kinds.js";
 import { injectHarness } from "./diagram-harness.js";
@@ -44,6 +49,8 @@ export type ReadDiagramResult =
       /** 注入前のファイル本文。doc の通知 baseline を本文から作るのに使う */
       raw: string;
       model: DiagramModel;
+      /** `forOpen` のときだけ。開けたが書いた側に直してほしいこと */
+      notices?: string[];
     }
   | { ok: false; status: number; error: string };
 
@@ -130,8 +137,8 @@ async function readRawVerified(
 /**
  * 配信用に読む。meta CSP と編集ハーネスを注入した HTML を返す。
  *
- * `forOpen` は `board_open` の経路で立てる。デッキの自由形のページと本文の HTML を
- * 拒否する（配信では古いデッキを通すが、新しく開かせはしない）。
+ * `forOpen` は `board_open` の経路で立てる。デッキの自由形のページと本文の HTML、
+ * 図の無いデッキを拒否する（配信では古いデッキを通すが、新しく開かせはしない）。
  */
 export async function readDiagram(
   worktreeReal: string,
@@ -152,11 +159,17 @@ export async function readDiagram(
   if (!graphKinds.ok) {
     return { ok: false, status: 422, error: graphKinds.error };
   }
+  if (isFigureType(model.model.type)) {
+    const figure = validateFigureModel(model.model.type, model.model);
+    if (!figure.ok) return { ok: false, status: 422, error: figure.error };
+  }
   const deck = validateDiagramDeck(read.raw, model.model);
   if (!deck.ok) return { ok: false, status: 422, error: deck.error };
+  let notices: string[] | undefined;
   if (options.forOpen) {
     const open = validateDeckForOpen(read.raw, model.model);
     if (!open.ok) return { ok: false, status: 422, error: open.error };
+    notices = open.notices;
   }
   // 内蔵図種の投影生成 → CSP → 専用層の順。doc 本文は自前 HTML が正なので
   // 編集層（本文の contenteditable 化）とコメント層、graph は編集ハーネスと
@@ -165,14 +178,17 @@ export async function readDiagram(
   // sequence / call-tree は時間順・入れ子が意味を持ち、座標を動かせる canvas に
   // 載せると壊れるので graph ハーネスは載せない。投影が生成する行の data-ark-id
   // に doc と同じ要領でコメントが付く（本文の編集は無い。正は常にモデル）。
-  // デッキも同じ扱いにする（ページは sequence / call-tree と自由形の HTML だけ）。
+  // git-graph など見て分かる図種（diagram-figures.ts）とデッキも同じ扱いにする。
   // キーの層 (前置キーを親へ渡し、親の指示で図を送る) はどの図種にも載せる。
   const projected = injectDiagramKeynavLayer(
     injectDiagramLinkLayer(
       injectCsp(
         injectDeckProjection(
-          injectStaticBuiltinProjection(
-            injectBuiltinProjection(read.raw, model.model),
+          injectFigureProjection(
+            injectStaticBuiltinProjection(
+              injectBuiltinProjection(read.raw, model.model),
+              model.model
+            ),
             model.model
           ),
           model.model
@@ -187,11 +203,13 @@ export async function readDiagram(
       model.model.type === "doc"
         ? injectDiagramCommentLayer(injectDiagramDocEditor(projected), "doc")
         : isStaticBuiltinType(model.model.type) ||
+            isFigureType(model.model.type) ||
             model.model.type === DECK_TYPE
           ? injectDiagramCommentLayer(projected, "doc")
           : injectDiagramCommentLayer(injectHarness(projected), "graph"),
     raw: read.raw,
     model: model.model,
+    notices,
   };
 }
 

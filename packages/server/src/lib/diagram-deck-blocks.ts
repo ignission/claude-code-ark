@@ -394,21 +394,22 @@ export function renderDeckBlocks(
  * `prefers-color-scheme` が効く。
  *
  * 色の変数は `body` に置く。部品のデッキには作者の CSS が無いので、地の色も
- * ここで決める必要がある。
+ * ここで決める必要がある。図種のページ（diagram-figures.ts / diagram-static-graph.ts）も
+ * 同じ `ark-bk-page` で包み、この地と色の変数を使う。
  */
 export const DECK_BLOCKS_CSS = `
-body:has(.ark-deck[data-ark-deck-blocks]){
+body:has(.ark-bk-page){
 --ark-bk-canvas:oklch(0.955 0.006 270);--ark-bk-panel:oklch(1 0 0);--ark-bk-well:oklch(0.965 0.004 270);
 --ark-bk-ink:oklch(0.24 0.02 60);--ark-bk-mute:oklch(0.48 0.02 60);--ark-bk-edge:rgb(0 0 0/.07);
 --ark-bk-a:oklch(0.5 0.16 262);--ark-bk-ok:#1a7f37;--ark-bk-ng:oklch(0.55 0.2 25);--ark-bk-warn:#9a6700;
 background-color:var(--ark-bk-canvas);color:var(--ark-bk-ink);
 font-family:system-ui,"Hiragino Sans","Noto Sans JP",sans-serif}
-@media (prefers-color-scheme:dark){body:has(.ark-deck[data-ark-deck-blocks]){
+@media (prefers-color-scheme:dark){body:has(.ark-bk-page){
 --ark-bk-canvas:oklch(0.185 0.008 270);--ark-bk-panel:oklch(0.225 0.008 270);--ark-bk-well:oklch(0.27 0.01 270);
 --ark-bk-ink:oklch(0.93 0.01 80);--ark-bk-mute:oklch(0.72 0.015 80);--ark-bk-edge:rgb(255 255 255/.08);
 --ark-bk-a:oklch(0.74 0.13 262);--ark-bk-ok:#56d364;--ark-bk-ng:oklch(0.74 0.16 25);--ark-bk-warn:#d29922}}
 .ark-deck[data-ark-deck-blocks] .ark-deck-title{color:var(--ark-bk-mute);font-size:.82rem;font-weight:600}
-.ark-deck-page.ark-bk-page{border-radius:14px;background:var(--ark-bk-panel);
+.ark-bk-page{border-radius:14px;background:var(--ark-bk-panel);
 box-shadow:inset 0 0 0 1px var(--ark-bk-edge),0 1px 2px rgb(0 0 0/.06),0 10px 26px rgb(0 0 0/.08);overflow-x:auto}
 .ark-bk{display:grid;gap:.9rem;padding:1.25rem 1.4rem 1.4rem;font-size:14px;line-height:1.55}
 .ark-bk>*{min-width:0}

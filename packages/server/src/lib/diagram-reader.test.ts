@@ -579,3 +579,74 @@ describe("デッキ（type: deck）の配信", () => {
     }
   });
 });
+
+describe("見て分かる図種（git-graph など）の配信", () => {
+  const GIT_MODEL = JSON.stringify({
+    version: 1,
+    type: "git-graph",
+    title: "feat は main の 1 つ先",
+    nodes: [
+      { id: "c2", label: "図種を足す", ext: { branch: "feat" } },
+      { id: "c1", label: "起点", ext: { branch: "main" } },
+    ],
+    edges: [{ id: "g1", from: "c1", to: "c2" }],
+    groups: [],
+  });
+
+  it("単独の図として投影し、コメント層は載せるが graph ハーネスは載せない", async () => {
+    write("git.diagram.html", "", GIT_MODEL);
+    const result = await readDiagram(wt, `${DIAGRAM_DIR}/git.diagram.html`);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.html).not.toContain(DIAGRAM_HARNESS_MARKER);
+    expect(result.html).toContain(DIAGRAM_COMMENT_LAYER_MARKER);
+    expect(result.html).toContain('data-ark-fig="git-graph"');
+    expect(result.html).toContain('data-ark-id="c2"');
+    expect(result.raw).not.toContain("ark-git");
+  });
+
+  it("形の誤り（edge の向きが逆）は 422 で理由を返す", async () => {
+    write(
+      "git.diagram.html",
+      "",
+      GIT_MODEL.replace('"from":"c1","to":"c2"', '"from":"c2","to":"c1"')
+    );
+    const result = await readDiagram(wt, `${DIAGRAM_DIR}/git.diagram.html`);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(422);
+  });
+
+  it("board_open の経路では、表だけのページへの注意を返す", async () => {
+    const deck = JSON.stringify({
+      version: 1,
+      type: "deck",
+      title: "worktree の整理",
+      nodes: [],
+      edges: [],
+      groups: [],
+      ext: {
+        pages: [
+          { ...JSON.parse(GIT_MODEL), id: "p-git", version: undefined },
+          {
+            id: "p-table",
+            type: "blocks",
+            title: "消したもの",
+            blocks: [{ kind: "table", rows: [["orista-1200"]] }],
+          },
+        ],
+      },
+    });
+    write("deck.diagram.html", "", deck);
+    const result = await readDiagram(wt, `${DIAGRAM_DIR}/deck.diagram.html`, {
+      forOpen: true,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.notices).toHaveLength(1);
+      expect(result.notices?.[0]).toContain("p-table");
+    }
+  });
+});
