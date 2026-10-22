@@ -196,6 +196,12 @@ export type ScreenCredentialsResult =
   | { kind: "unregistered" }
   | { kind: "unavailable" };
 
+/**
+ * screen:paste の結果。失敗の reason は表示用ではなく、ログと切り分けに使う
+ * (unsupported: VNC の宛先が SSH ホスト自身でない、too_large: 本文が上限超え)
+ */
+export type ScreenPasteResult = { ok: true } | { ok: false; reason: string };
+
 /** メッセージショートカットの本文最大長（文字数） */
 export const MESSAGE_SHORTCUT_MAX_LENGTH = 4000;
 
@@ -1164,6 +1170,11 @@ export interface ClientToServerEvents {
   "screen:credentials": (
     id: string,
     callback: (creds: ScreenCredentials | null) => void
+  ) => void;
+  /** リモート画面のクリップボードを SSH 越しに書き換える (screen-clipboard.ts) */
+  "screen:paste": (
+    data: { id: string; text: string },
+    callback: (result: ScreenPasteResult) => void
   ) => void;
   "repo:set-profile": (data: {
     repoPath: string;

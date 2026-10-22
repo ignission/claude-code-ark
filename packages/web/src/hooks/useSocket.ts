@@ -24,6 +24,7 @@ import type {
   Screen,
   ScreenCredentialsResult,
   ScreenInput,
+  ScreenPasteResult,
   ScreenPatch,
   ServerToClientEvents,
   SessionGridSnapshot,
@@ -317,6 +318,8 @@ interface UseSocketReturn {
    * 「サーバーに届かない」(unavailable) は利用者の打ち手が違うので区別する
    */
   requestScreenCredentials: (id: string) => Promise<ScreenCredentialsResult>;
+  /** リモート画面のクリップボードを書き換える。届かなければ reason つきで失敗する */
+  setScreenClipboard: (id: string, text: string) => Promise<ScreenPasteResult>;
 
   // ボード提案 (Jev 判定) の設定。鍵は末尾 4 文字だけ返る
   getBoardSuggestConfig: () => Promise<BoardSuggestConfigResult>;
@@ -353,6 +356,8 @@ interface UseSocketReturn {
  * ScreenPane 側が「切断」表示と再接続ボタンを出せるようにする
  */
 const SCREEN_CREDENTIALS_ACK_TIMEOUT_MS = 5000;
+/** screen:paste の ack 待ち。サーバー側の ssh のタイムアウト (10 秒) より長くする */
+const SCREEN_PASTE_ACK_TIMEOUT_MS = 15_000;
 
 export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   const socketRef = useRef<TypedSocket | null>(null);
@@ -1718,6 +1723,23 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
+  const setScreenClipboard = useCallback(
+    (id: string, text: string) =>
+      new Promise<ScreenPasteResult>(resolve => {
+        const socket = socketRef.current;
+        if (!socket) {
+          resolve({ ok: false, reason: "unavailable" });
+          return;
+        }
+        socket
+          .timeout(SCREEN_PASTE_ACK_TIMEOUT_MS)
+          .emit("screen:paste", { id, text }, (err, result) => {
+            resolve(err ? { ok: false, reason: "unavailable" } : result);
+          });
+      }),
+    []
+  );
+
   // ボード提案の設定。socket が無い / ack が返らないときは理由つきで失敗させる
   const getBoardSuggestConfig = useCallback(
     () =>
@@ -1942,6 +1964,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     updateScreen,
     deleteScreen,
     requestScreenCredentials,
+    setScreenClipboard,
     // ボード提案の設定
     getBoardSuggestConfig,
     setBoardSuggestConfig,

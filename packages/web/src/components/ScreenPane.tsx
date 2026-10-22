@@ -1,4 +1,8 @@
-import type { Screen, ScreenCredentialsResult } from "@ark/shared";
+import type {
+  Screen,
+  ScreenCredentialsResult,
+  ScreenPasteResult,
+} from "@ark/shared";
 import RFB from "@novnc/novnc";
 import { Loader2, RefreshCw, Unplug } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -15,6 +19,8 @@ interface ScreenPaneProps {
   screen: Screen;
   /** 接続の直前に 1 回だけ呼ぶ。未登録とサーバー不達を区別して返す */
   requestCredentials: (id: string) => Promise<ScreenCredentialsResult>;
+  /** 相手のクリップボードを SSH 越しに書き換える (Cmd/Ctrl+V の直前に呼ぶ) */
+  setClipboard: (id: string, text: string) => Promise<ScreenPasteResult>;
 }
 
 type Status =
@@ -40,7 +46,11 @@ const CORNER_BUTTON_CLASS =
  * ARD 認証は WebCrypto を使うため、安全なコンテキスト
  * (localhost か HTTPS) でしか繋がらない。
  */
-export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
+export function ScreenPane({
+  screen,
+  requestCredentials,
+  setClipboard,
+}: ScreenPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<Status>({ kind: "connecting" });
   const [attempt, setAttempt] = useState(0);
@@ -53,6 +63,8 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
   // ref に持たせておき、effect からは ref 経由で読む（依存には入れない）
   const requestCredentialsRef = useRef(requestCredentials);
   requestCredentialsRef.current = requestCredentials;
+  const setClipboardRef = useRef(setClipboard);
+  setClipboardRef.current = setClipboard;
 
   // 接続先の変更 (画面の管理で編集) は id が変わらないので、接続に使う列を個別に
   // 依存へ入れて繋ぎ直す。screen オブジェクトそのものを依存にすると screen:list の
@@ -136,11 +148,17 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
           credentials: { username: creds.username, password: creds.password },
         });
         const connectedRfb = rfb;
+        // クリップボードは SSH 越しの pbcopy で書き換える。macOS の画面共有は
+        // RFB の ClientCutText を受けると貼れなくなるので、RFB へは送らない
+        // (screen-clipboard.ts)。SSH で書けない画面 (VNC が踏み台の先) だけ RFB で送る
         pasteTarget = {
-          clipboardPasteFrom: text =>
-            delivery.waitForDelivery(() =>
+          clipboardPasteFrom: async text => {
+            const result = await setClipboardRef.current(screen.id, text);
+            if (result.ok || result.reason !== "unsupported") return;
+            await delivery.waitForDelivery(() =>
               connectedRfb.clipboardPasteFrom(text)
-            ),
+            );
+          },
           sendKey: (keysym, code, down) =>
             connectedRfb.sendKey(keysym, code, down),
         };

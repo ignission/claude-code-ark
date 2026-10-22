@@ -159,6 +159,7 @@ export default function Dashboard() {
     updateScreen,
     deleteScreen,
     requestScreenCredentials,
+    setScreenClipboard,
     getBoardSuggestConfig,
     setBoardSuggestConfig,
     profiles,
@@ -905,6 +906,7 @@ export default function Dashboard() {
           isRemote={isRemote}
           screens={screens}
           requestScreenCredentials={requestScreenCredentials}
+          setScreenClipboard={setScreenClipboard}
           onOpenScreenManager={() => setShowScreenManager(true)}
           onOpenBoardSuggestSettings={() => setShowBoardSuggestSettings(true)}
           messageShortcuts={messageShortcuts}
@@ -1101,6 +1103,7 @@ export default function Dashboard() {
                       <ScreenPane
                         screen={screen}
                         requestCredentials={requestScreenCredentials}
+                        setClipboard={setScreenClipboard}
                       />
                     </div>
                   ))}

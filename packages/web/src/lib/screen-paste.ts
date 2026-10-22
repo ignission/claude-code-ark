@@ -13,7 +13,7 @@ const DELIVERY_TIMEOUT_MS = 1000;
 
 /** forwardLocalPaste が使う RFB の口。テストで差し替えられるようにする */
 export interface PasteTarget {
-  /** 本文が相手に送られたら解決する */
+  /** 相手のクリップボードを書き換え、終わったら解決する */
   clipboardPasteFrom(text: string): void | Promise<void>;
   sendKey(keysym: number, code: string | null, down?: boolean): void;
 }
@@ -24,7 +24,8 @@ export interface PasteTarget {
  * noVNC は手元のクリップボードを相手へ送らない。キーをそのまま流すと、
  * 相手側のクリップボードが貼られる。また noVNC は keydown の既定動作を止めるので、
  * ブラウザの paste イベントは発火しない。そこで V の keydown を noVNC (canvas) より
- * 先に捕捉フェーズで奪い、クリップボードを読んで送ってから V を押し直す。
+ * 先に捕捉フェーズで奪い、クリップボードを読んで相手のクリップボードを書き換えてから
+ * V を押し直す。書き換えの手段は PasteTarget に任せる (ScreenPane が決める)。
  * 修飾キーの keydown は奪わないので、相手側では押されたままになっている。
  * ただし読み取りを待つあいだに修飾キーを離したり、権限の確認でウィンドウの
  * フォーカスが外れたりすると、noVNC が相手側の修飾キーを離す。その場合は
@@ -32,9 +33,6 @@ export interface PasteTarget {
  *
  * クリップボードを読めない (権限の拒否など) ときは V だけを押し、従来どおり
  * 相手側のクリップボードで貼る。
- * 文字の範囲は noVNC の clipboardPasteFrom の制約を受ける。サーバーが拡張
- * クリップボードに対応していれば UTF-8 で、していなければ ISO 8859-1 で送られ、
- * その範囲の外の文字 (日本語など) は `?` になる。
  *
  * @returns 監視を止める関数
  */
@@ -90,8 +88,11 @@ export function forwardLocalPaste(
       .then(readText)
       .then(
         async text => {
-          await getTarget()?.clipboardPasteFrom(text);
-          pressV();
+          try {
+            await getTarget()?.clipboardPasteFrom(text);
+          } finally {
+            pressV();
+          }
         },
         // 読めなかったら、相手側のクリップボードで貼る従来の動きに戻す
         pressV
@@ -109,6 +110,8 @@ export function forwardLocalPaste(
  * 押すと、相手側の古いクリップボードが貼られる。noVNC はこの完了を知らせないので、
  * RFB に渡す WebSocket の send を包み、出ていく ClientCutText を見て判定する。
  * 拡張でない ClientCutText と Provide は本文を運ぶので、そこで解決する。
+ * 文字の範囲は noVNC の制約を受ける。拡張クリップボードなら UTF-8 で、そうでなければ
+ * ISO 8859-1 で送られ、その範囲の外の文字 (日本語など) は `?` になる。
  * noVNC はメッセージごとに flush するので、メッセージの先頭は send の先頭に来る。
  *
  * @returns 送られるまで待つ関数と、包みを外す関数

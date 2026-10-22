@@ -301,6 +301,7 @@ function socketState(session: ManagedSession): Record<string, unknown> {
     requestScreenCredentials: vi.fn().mockResolvedValue({
       kind: "unregistered",
     }),
+    setScreenClipboard: vi.fn().mockResolvedValue({ ok: true }),
     profiles: [],
     repoProfileLinks: new Map(),
     worktreeProfileLinks: new Map(),

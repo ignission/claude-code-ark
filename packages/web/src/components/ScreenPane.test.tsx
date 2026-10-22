@@ -10,6 +10,8 @@ interface FakeRFBInstance {
   options: unknown;
   listeners: Map<string, (event: { detail: unknown }) => void>;
   disconnect: ReturnType<typeof vi.fn>;
+  clipboardPasteFrom: ReturnType<typeof vi.fn>;
+  sendKey: ReturnType<typeof vi.fn>;
   scaleViewport: boolean;
   background: string;
 }
@@ -28,6 +30,13 @@ vi.mock("@novnc/novnc", () => ({
     background = "";
     scaleViewport = false;
     disconnect = vi.fn();
+    // 実物と同じく、拡張でない ClientCutText を WebSocket に書く
+    clipboardPasteFrom = vi.fn((text: string) => {
+      (this.channel as { send(data: Uint8Array): void }).send(
+        new Uint8Array([6, 0, 0, 0, 0, 0, 0, text.length])
+      );
+    });
+    sendKey = vi.fn();
     listeners = new Map<string, (event: { detail: unknown }) => void>();
     constructor(target: HTMLElement, channel: unknown, options: unknown) {
       if (doubles.throwNextConstruct) {
@@ -70,7 +79,7 @@ class FakeWebSocket extends EventTarget {
   send() {}
 }
 
-import type { ScreenCredentialsResult } from "@ark/shared";
+import type { ScreenCredentialsResult, ScreenPasteResult } from "@ark/shared";
 
 // jsdom はタッチ端末に見えるので、カーソルの保険を非タッチとして動かす
 vi.mock("@/lib/screen-cursor", async importOriginal => {
@@ -101,6 +110,10 @@ function okCredentials(): ScreenCredentialsResult {
   return { kind: "ok", credentials: { username: "user", password: "pw" } };
 }
 
+const setClipboard = vi.fn(
+  async (): Promise<ScreenPasteResult> => ({ ok: true })
+);
+
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
 function mount(element: ReactElement): {
@@ -128,6 +141,8 @@ async function flush() {
 
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  setClipboard.mockReset();
+  setClipboard.mockResolvedValue({ ok: true });
   doubles.instances.length = 0;
   doubles.throwNextConstruct = false;
   FakeWebSocket.instances.length = 0;
@@ -153,6 +168,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -179,6 +195,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -212,6 +229,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -224,6 +242,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={otherScreen}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -240,6 +259,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -264,6 +284,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -279,6 +300,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -299,6 +321,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -319,6 +342,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -335,6 +359,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials1}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -346,6 +371,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials2}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -360,6 +386,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -372,6 +399,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={{ ...screenFixture }}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -382,6 +410,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={{ ...screenFixture, vncPort: 5901 }}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -395,6 +424,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -434,6 +464,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -464,6 +495,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -491,6 +523,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -504,6 +537,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -517,6 +551,7 @@ describe("ScreenPane", () => {
       <ScreenPane
         screen={screenFixture}
         requestCredentials={requestCredentials}
+        setClipboard={setClipboard}
       />
     );
     await flush();
@@ -526,5 +561,61 @@ describe("ScreenPane", () => {
       container.remove();
     }
     expect(rfb.disconnect).toHaveBeenCalled();
+  });
+
+  describe("Cmd+V", () => {
+    async function connectAndPaste(text: string) {
+      vi.stubGlobal("navigator", {
+        ...navigator,
+        clipboard: { readText: vi.fn().mockResolvedValue(text) },
+      });
+      const { container } = mount(
+        <ScreenPane
+          screen={screenFixture}
+          requestCredentials={vi.fn().mockResolvedValue(okCredentials())}
+          setClipboard={setClipboard}
+        />
+      );
+      await flush();
+      const rfb = doubles.instances[0];
+      act(() => rfb.listeners.get("connect")?.({ detail: {} }));
+      const canvas = container.querySelector("canvas");
+      act(() => {
+        canvas?.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "v",
+            code: "KeyV",
+            metaKey: true,
+            bubbles: true,
+            cancelable: true,
+          })
+        );
+      });
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      });
+      return rfb;
+    }
+
+    it("SSH 越しにクリップボードを書き換えてから V を押し、RFB には送らない", async () => {
+      const rfb = await connectAndPaste("日本語");
+      expect(setClipboard).toHaveBeenCalledWith("s1", "日本語");
+      expect(rfb.clipboardPasteFrom).not.toHaveBeenCalled();
+      expect(rfb.sendKey).toHaveBeenCalledWith(0x76, "KeyV", undefined);
+    });
+
+    it("SSH で書けない画面だけ RFB のクリップボードで送る", async () => {
+      setClipboard.mockResolvedValue({ ok: false, reason: "unsupported" });
+      const rfb = await connectAndPaste("abc");
+      expect(rfb.clipboardPasteFrom).toHaveBeenCalledWith("abc");
+      expect(rfb.sendKey).toHaveBeenCalledWith(0x76, "KeyV", undefined);
+    });
+
+    it("SSH での書き換えに失敗したら、RFB には送らずに V だけを押す", async () => {
+      setClipboard.mockResolvedValue({ ok: false, reason: "timeout" });
+      const rfb = await connectAndPaste("abc");
+      expect(rfb.clipboardPasteFrom).not.toHaveBeenCalled();
+      expect(rfb.sendKey).toHaveBeenCalledWith(0x76, "KeyV", undefined);
+    });
   });
 });
