@@ -22,6 +22,7 @@ import type {
   Profile,
   Screen,
   ScreenCredentialsResult,
+  ScreenPasteResult,
   ServerToClientEvents,
   SessionPrStatus,
   SpecialKey,
@@ -169,6 +170,7 @@ interface MobileLayoutProps {
   // リモート画面
   screens: Screen[];
   requestScreenCredentials: (id: string) => Promise<ScreenCredentialsResult>;
+  setScreenClipboard: (id: string, text: string) => Promise<ScreenPasteResult>;
   onOpenScreenManager: () => void;
   onOpenBoardSuggestSettings: () => void;
   // メッセージショートカット
@@ -264,6 +266,7 @@ export function MobileLayout({
   isRemote,
   screens,
   requestScreenCredentials,
+  setScreenClipboard,
   onOpenScreenManager,
   onOpenBoardSuggestSettings,
   messageShortcuts,
@@ -668,6 +671,7 @@ export function MobileLayout({
                   <ScreenPane
                     screen={screen}
                     requestCredentials={requestScreenCredentials}
+                    setClipboard={setScreenClipboard}
                   />
                 </div>
               ))}

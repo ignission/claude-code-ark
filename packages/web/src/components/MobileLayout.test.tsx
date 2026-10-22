@@ -50,6 +50,7 @@ function createProps(): ComponentProps<typeof MobileLayout> {
     requestScreenCredentials: vi
       .fn()
       .mockResolvedValue({ kind: "unregistered" }),
+    setScreenClipboard: vi.fn().mockResolvedValue({ ok: true }),
     onOpenScreenManager: vi.fn(),
     messageShortcuts: [],
     onCreateShortcut: vi.fn(),

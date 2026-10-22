@@ -133,6 +133,7 @@ import {
 } from "./lib/pr-status-collector.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import { screenBridge } from "./lib/screen-bridge.js";
+import { setRemoteClipboard } from "./lib/screen-clipboard.js";
 import {
   describeScreenDbError,
   validateScreenInput,
@@ -3187,6 +3188,39 @@ export async function startServer(
         console.error("[Screen] credentials に失敗:", getErrorMessage(e));
         callback(null);
       }
+    });
+
+    socket.on("screen:paste", (data, callback) => {
+      if (typeof callback !== "function") return;
+      if (
+        typeof data?.id !== "string" ||
+        data.id.length === 0 ||
+        typeof data.text !== "string"
+      ) {
+        callback({ ok: false, reason: "invalid_input" });
+        return;
+      }
+      let record: ReturnType<typeof db.getScreenRecord>;
+      try {
+        record = db.getScreenRecord(data.id);
+      } catch (e) {
+        callback({ ok: false, reason: getErrorMessage(e) });
+        return;
+      }
+      if (!record) {
+        callback({ ok: false, reason: "unregistered" });
+        return;
+      }
+      const { sshHost, sshPort, sshUser, vncHost, vncPort } = record;
+      setRemoteClipboard(
+        { sshHost, sshPort, sshUser, vncHost, vncPort },
+        data.text
+      ).then(result => {
+        if (!result.ok && result.reason !== "unsupported") {
+          console.warn(`[Screen] paste に失敗: ${result.reason}`);
+        }
+        callback(result);
+      });
     });
 
     // ============================================================
