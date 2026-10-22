@@ -286,7 +286,8 @@ export function validateDiagramDeck(
 
 const FREE_PAGE_ERROR =
   '自由形のページ（type: "html"）は使えません。' +
-  'ページは type: "blocks" で書きます（部品: text / chips / cards / flow / table / list / code / bars）。' +
+  'ページは図種（git-graph / timeline / tree / compare / flow / state / sequence / call-tree）か、' +
+  'type: "blocks"（部品: text / chips / cards / flow / table / list / code / bars）で書きます。' +
   "画面の見た目などの絵が要るときは、デッキではなく type を書かない 1 枚の図を別のファイルに描きます";
 
 const MODEL_SCRIPT_RE =
