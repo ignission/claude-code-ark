@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { buildScreenWsUrl } from "@/lib/auth-token";
 import { keepLocalCursorUntilServerCursor } from "@/lib/screen-cursor";
+import { forwardLocalPaste } from "@/lib/screen-paste";
 
 interface ScreenPaneProps {
   screen: Screen;
@@ -65,6 +66,11 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
     let rfb: RFB | null = null;
     let sizeObserver: ResizeObserver | null = null;
     let stopCursorGuard: (() => void) | null = null;
+    let connected = false;
+    // 接続が済むまでは null を返し、Cmd/Ctrl+V を奪わない
+    const stopPaste = forwardLocalPaste(container, () =>
+      rfb && connected && !ended && !cancelled ? rfb : null
+    );
     // RFB が disconnect イベントを一度でも出したかどうか。既に切断済みの RFB へ
     // cleanup 側から重ねて disconnect() を呼ぶと noVNC がエラーログを出すため、
     // その二重切断を避ける目印に使う
@@ -124,6 +130,7 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
         rfb.scaleViewport = true;
         rfb.background = "transparent";
         rfb.addEventListener("connect", () => {
+          connected = true;
           if (!cancelled) setStatus({ kind: "connected" });
         });
         rfb.addEventListener("securityfailure", event => {
@@ -170,6 +177,7 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
       disconnectRef.current = null;
       sizeObserver?.disconnect();
       stopCursorGuard?.();
+      stopPaste();
       if (rfb && !ended) rfb.disconnect();
     };
   }, [
