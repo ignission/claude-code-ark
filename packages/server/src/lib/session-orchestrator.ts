@@ -1167,7 +1167,7 @@ export class SessionOrchestrator extends EventEmitter {
       // さらに Claude Code CLI が状態ファイルに busy を書いていれば「作業中」に格上げする。
       // 画面には subagent 実行中の行が出ないため、これが無いと IDLE
       // (=「あなたの番」) に落ちる。configDir は lastUpdatedAt と同じ出所を使う
-      const cliState = cliSessionStatusReader.stateFor({
+      const cliRecord = cliSessionStatusReader.recordFor({
         tmuxSessionName: session.tmuxSessionName,
         worktreePath: session.worktreePath,
         configDir: this.sessionProfiles.get(session.id)?.configDir ?? null,
@@ -1178,11 +1178,12 @@ export class SessionOrchestrator extends EventEmitter {
       const { status: bridgeStatus } = analyzeBridgeStatus(
         raw,
         session.status === "stopped",
-        cliState,
+        cliRecord?.state ?? null,
         () =>
           readTranscriptConversationState(
             session.worktreePath,
-            this.sessionProfiles.get(session.id)?.configDir ?? null
+            this.sessionProfiles.get(session.id)?.configDir ?? null,
+            cliRecord?.sessionId ?? null
           )
       );
       const allLines = stripAnsi(raw)

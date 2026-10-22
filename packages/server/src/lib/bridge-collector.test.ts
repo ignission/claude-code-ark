@@ -35,7 +35,7 @@ vi.mock("./cli-session-status.js", async importOriginal => {
     await importOriginal<typeof import("./cli-session-status.js")>();
   return {
     ...actual,
-    cliSessionStatusReader: { stateFor: vi.fn(() => null) },
+    cliSessionStatusReader: { recordFor: vi.fn(() => null) },
   };
 });
 
@@ -51,7 +51,11 @@ import {
   collectGridSnapshots,
   collectStreamLines,
 } from "./bridge-collector.js";
-import { cliSessionStatusReader } from "./cli-session-status.js";
+import {
+  type CliSessionRecord,
+  type CliSessionState,
+  cliSessionStatusReader,
+} from "./cli-session-status.js";
 import { sessionOrchestrator } from "./session-orchestrator.js";
 import { tmuxManager } from "./tmux-manager.js";
 import * as transcriptConversation from "./transcript-conversation.js";
@@ -59,6 +63,21 @@ import * as transcriptConversation from "./transcript-conversation.js";
 const mockedOrchestrator = vi.mocked(sessionOrchestrator);
 const mockedTmux = vi.mocked(tmuxManager);
 const mockedCliStatus = vi.mocked(cliSessionStatusReader);
+
+/** 状態ファイルから読めた 1 セッション分の記録 */
+function cliRecord(
+  state: CliSessionState,
+  sessionId: string | null = null
+): CliSessionRecord {
+  return {
+    pid: 1,
+    tmuxSessionName: "ark-sess-1",
+    cwd: "/repo/wt",
+    state,
+    sessionId,
+    updatedAt: 0,
+  };
+}
 const mockedTranscript = vi.mocked(transcriptConversation);
 
 const tmuxFailed = (stderr: string) => ({
@@ -96,7 +115,7 @@ describe("bridge-collector - tmux 読み取り失敗 (#393)", () => {
     mockedOrchestrator.getAllSessions.mockReturnValue([
       managedSession as never,
     ]);
-    mockedCliStatus.stateFor.mockReturnValue(null);
+    mockedCliStatus.recordFor.mockReturnValue(null);
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
   });
 
@@ -176,7 +195,7 @@ describe("bridge-collector - CLI の状態ファイルによる格上げ", () =>
     mockedOrchestrator.getAllSessions.mockReturnValue([
       { ...managedSession, id: "sess-cli" } as never,
     ]);
-    mockedCliStatus.stateFor.mockReturnValue(null);
+    mockedCliStatus.recordFor.mockReturnValue(null);
   });
 
   /** 画面には進行中の行が無い (subagent 実行中の本体の見え方) */
@@ -186,7 +205,7 @@ describe("bridge-collector - CLI の状態ファイルによる格上げ", () =>
     mockedTmux.capturePaneVisible.mockReturnValue(idleScreen);
     expect(collectBridgeSessions()[0]?.status).toBe("IDLE");
 
-    mockedCliStatus.stateFor.mockReturnValue("busy");
+    mockedCliStatus.recordFor.mockReturnValue(cliRecord("busy"));
     expect(collectBridgeSessions()[0]?.status).toBe("TOOL");
     expect(collectGridSnapshots()[0]?.status).toBe("TOOL");
   });
@@ -195,7 +214,7 @@ describe("bridge-collector - CLI の状態ファイルによる格上げ", () =>
     mockedTmux.capturePaneVisible.mockReturnValue({ ok: true, value: "❯ " });
     expect(collectBridgeSessions()[0]?.status).toBe("READY");
 
-    mockedCliStatus.stateFor.mockReturnValue("busy");
+    mockedCliStatus.recordFor.mockReturnValue(cliRecord("busy"));
     expect(collectBridgeSessions()[0]?.status).toBe("TOOL");
   });
 
@@ -204,20 +223,20 @@ describe("bridge-collector - CLI の状態ファイルによる格上げ", () =>
       ok: true,
       value: "Do you want to proceed?\n1. Yes\n2. No",
     });
-    mockedCliStatus.stateFor.mockReturnValue("busy");
+    mockedCliStatus.recordFor.mockReturnValue(cliRecord("busy"));
     expect(collectBridgeSessions()[0]?.status).toBe("AWAITING");
   });
 
   it("capture-pane 失敗の ERR は busy でも上書きしない", () => {
     mockedTmux.capturePaneVisible.mockReturnValue(tmuxFailed("no server"));
-    mockedCliStatus.stateFor.mockReturnValue("busy");
+    mockedCliStatus.recordFor.mockReturnValue(cliRecord("busy"));
     expect(collectBridgeSessions()[0]?.status).toBe("ERR");
   });
 
   it("waiting / idle では画面の判定のまま", () => {
     mockedTmux.capturePaneVisible.mockReturnValue(idleScreen);
     for (const state of ["waiting", "idle"] as const) {
-      mockedCliStatus.stateFor.mockReturnValue(state);
+      mockedCliStatus.recordFor.mockReturnValue(cliRecord(state));
       expect(collectBridgeSessions()[0]?.status).toBe("IDLE");
     }
   });
@@ -232,7 +251,7 @@ describe("bridge-collector - CLI の状態ファイルによる格上げ", () =>
       } as never,
     ]);
     collectBridgeSessions();
-    expect(mockedCliStatus.stateFor).toHaveBeenCalledWith({
+    expect(mockedCliStatus.recordFor).toHaveBeenCalledWith({
       tmuxSessionName: "ark-sess-1",
       worktreePath: "/repo/wt",
       configDir: "/home/tester/.claude-alt",
@@ -364,7 +383,7 @@ describe("bridge-collector - collector も transcript を見る", () => {
     mockedOrchestrator.getAllSessions.mockReturnValue([
       managedSession as never,
     ]);
-    mockedCliStatus.stateFor.mockReturnValue(null);
+    mockedCliStatus.recordFor.mockReturnValue(null);
     mockedTmux.capturePaneVisible.mockReturnValue({
       ok: true,
       value: AFTER_CLEAR_SCREEN,
@@ -395,6 +414,16 @@ describe("bridge-collector - collector も transcript を見る", () => {
     collectBridgeSessions();
     expect(
       mockedTranscript.readTranscriptConversationState
-    ).toHaveBeenCalledWith("/repo/wt", "/home/tester/.claude-alt");
+    ).toHaveBeenCalledWith("/repo/wt", "/home/tester/.claude-alt", null);
+  });
+
+  it("CLI の状態ファイルの sessionId を渡す (起動直後の JSONL 無しを見分ける)", () => {
+    mockedTranscript.readTranscriptConversationState.mockReturnValue("unknown");
+    mockedCliStatus.recordFor.mockReturnValue(cliRecord("idle", "fresh-id"));
+    collectBridgeSessions();
+    collectGridSnapshots();
+    const calls = mockedTranscript.readTranscriptConversationState.mock.calls;
+    expect(calls).toHaveLength(2);
+    for (const call of calls) expect(call[2]).toBe("fresh-id");
   });
 });

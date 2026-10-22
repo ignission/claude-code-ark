@@ -48,7 +48,7 @@ vi.mock("./cli-session-status.js", async importOriginal => {
     await importOriginal<typeof import("./cli-session-status.js")>();
   return {
     ...actual,
-    cliSessionStatusReader: { stateFor: vi.fn(() => null) },
+    cliSessionStatusReader: { recordFor: vi.fn(() => null) },
   };
 });
 

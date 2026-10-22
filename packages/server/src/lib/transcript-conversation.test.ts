@@ -54,6 +54,7 @@ function ioReturning(
 ): TranscriptConversationIo {
   return {
     pickLatestJsonl: () => FILE,
+    fileExists: () => true,
     statFile: () => ({ size: Buffer.byteLength(body), mtimeMs: 1_000 }),
     readHead: (_file, maxBytes) => {
       const buffer = Buffer.from(body, "utf-8");
@@ -80,7 +81,7 @@ afterEach(() => {
 describe("readTranscriptConversationState", () => {
   it("/clear 直後の形 (会話ゼロ) は no-conversation", () => {
     const io = ioReturning(toJsonl(AFTER_CLEAR_RECORDS));
-    expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
       "no-conversation"
     );
   });
@@ -92,7 +93,7 @@ describe("readTranscriptConversationState", () => {
         { type: "user", message: { role: "user", content: "テストを書いて" } },
       ])
     );
-    expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
       "has-conversation"
     );
   });
@@ -110,7 +111,7 @@ describe("readTranscriptConversationState", () => {
         },
       ])
     );
-    expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
       "has-conversation"
     );
   });
@@ -132,7 +133,7 @@ describe("readTranscriptConversationState", () => {
         },
       ])
     );
-    expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
       "has-conversation"
     );
   });
@@ -156,7 +157,7 @@ describe("readTranscriptConversationState", () => {
         },
       ])
     );
-    expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
       "no-conversation"
     );
   });
@@ -172,7 +173,7 @@ describe("readTranscriptConversationState", () => {
         "",
       ].join("\n")
     );
-    expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
       "has-conversation"
     );
   });
@@ -181,14 +182,14 @@ describe("readTranscriptConversationState", () => {
     // 読めた行がすべて壊れている = 会話の証拠が無いだけなので no-conversation。
     // (切り詰めていない以上、この先にレコードは無い)
     const io = ioReturning('{"type":"mode"\n{"broken"\n');
-    expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
       "no-conversation"
     );
   });
 
   it("JSONL が無ければ unknown (既存の画面判定のまま)", () => {
     const io = ioReturning("", { pickLatestJsonl: () => null });
-    expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
       "unknown"
     );
   });
@@ -199,7 +200,7 @@ describe("readTranscriptConversationState", () => {
         throw new Error("ENOENT: no such file or directory");
       },
     });
-    expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
       "unknown"
     );
   });
@@ -210,14 +211,16 @@ describe("readTranscriptConversationState", () => {
         throw new Error("EACCES: permission denied");
       },
     });
-    expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
       "unknown"
     );
   });
 
   it("worktreePath が空なら unknown (projects 直下を見に行かせない)", () => {
     const io = ioReturning(toJsonl(AFTER_CLEAR_RECORDS));
-    expect(readTranscriptConversationState("", "/cfg", io)).toBe("unknown");
+    expect(readTranscriptConversationState("", "/cfg", null, io)).toBe(
+      "unknown"
+    );
   });
 });
 
@@ -243,7 +246,7 @@ describe("readTranscriptConversationState - 上限 32KB", () => {
       truncated: Buffer.byteLength(body) > maxBytes,
     }));
     const io = ioReturning(body, { readHead });
-    expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
       "has-conversation"
     );
     // 全文ではなく上限までしか要求していない
@@ -254,7 +257,7 @@ describe("readTranscriptConversationState - 上限 32KB", () => {
     // 切り詰めた先に会話が続いているかもしれない。待機に落とすのは危ないので
     // 判定を放棄して既存の画面判定へ返す
     const io = ioReturning(toJsonl(padding(64 * 1024)));
-    expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
       "unknown"
     );
   });
@@ -266,7 +269,7 @@ describe("readTranscriptConversationState - メモ化", () => {
     const io = ioReturning(body);
     const readHead = vi.spyOn(io, "readHead");
     for (let i = 0; i < 5; i++) {
-      expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+      expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
         "no-conversation"
       );
     }
@@ -282,14 +285,15 @@ describe("readTranscriptConversationState - メモ化", () => {
     let body = empty;
     const io: TranscriptConversationIo = {
       pickLatestJsonl: () => FILE,
+      fileExists: () => true,
       statFile: () => ({ size: Buffer.byteLength(body), mtimeMs: 1_000 }),
       readHead: () => ({ text: body, truncated: false }),
     };
-    expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
       "no-conversation"
     );
     body = withMessage;
-    expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
       "has-conversation"
     );
   });
@@ -303,17 +307,81 @@ describe("readTranscriptConversationState - メモ化", () => {
     const readHead = vi.fn(() => ({ text: body, truncated: false }));
     const io: TranscriptConversationIo = {
       pickLatestJsonl: () => FILE,
+      fileExists: () => true,
       statFile: () => ({ size, mtimeMs: size }),
       readHead,
     };
-    expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
       "has-conversation"
     );
     size += 4_096;
-    expect(readTranscriptConversationState("/wt/app", "/cfg", io)).toBe(
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
       "has-conversation"
     );
     expect(readHead).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("readTranscriptConversationState - 起動直後 (CLI の sessionId)", () => {
+  /** 前のセッションの会話が残った JSONL (pickLatestJsonl はこれを拾う) */
+  const PREVIOUS = toJsonl([
+    {
+      type: "user",
+      message: { role: "user", content: "前のセッションの指示" },
+    },
+  ]);
+
+  it("CLI の sessionId の JSONL がまだ無ければ、前のセッションの会話があっても no-conversation", () => {
+    const fileExists = vi.fn(() => false);
+    const io = ioReturning(PREVIOUS, { fileExists });
+    expect(
+      readTranscriptConversationState("/wt/app", "/cfg", "new-session", io)
+    ).toBe("no-conversation");
+    expect(fileExists).toHaveBeenCalledWith(
+      "/cfg/projects/-wt-app/new-session.jsonl"
+    );
+  });
+
+  it("前のセッションが生きていたあいだのメモ (has-conversation) より優先する", () => {
+    const io = ioReturning(PREVIOUS);
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
+      "has-conversation"
+    );
+    const fresh = ioReturning(PREVIOUS, { fileExists: () => false });
+    expect(
+      readTranscriptConversationState("/wt/app", "/cfg", "new-session", fresh)
+    ).toBe("no-conversation");
+  });
+
+  it("CLI の sessionId の JSONL があれば、pickLatestJsonl を通さずその中身で判定する", () => {
+    // 同じ worktree に別のセッションの新しい JSONL (会話あり) があっても取り違えない
+    const pickLatestJsonl = vi.fn(() => FILE);
+    const readHead = vi.fn((file: string) => ({
+      text: file === FILE ? PREVIOUS : toJsonl(AFTER_CLEAR_RECORDS),
+      truncated: false,
+    }));
+    const io = ioReturning(PREVIOUS, {
+      fileExists: () => true,
+      pickLatestJsonl,
+      readHead,
+    });
+    expect(readTranscriptConversationState("/wt/app", "/cfg", "mine", io)).toBe(
+      "no-conversation"
+    );
+    expect(readHead).toHaveBeenCalledWith(
+      "/cfg/projects/-wt-app/mine.jsonl",
+      32 * 1024
+    );
+    expect(pickLatestJsonl).not.toHaveBeenCalled();
+  });
+
+  it("sessionId を読めなければ (状態ファイルが無い等) 確かめない", () => {
+    const fileExists = vi.fn(() => false);
+    const io = ioReturning(PREVIOUS, { fileExists });
+    expect(readTranscriptConversationState("/wt/app", "/cfg", null, io)).toBe(
+      "has-conversation"
+    );
+    expect(fileExists).not.toHaveBeenCalled();
   });
 });
 
@@ -354,6 +422,29 @@ describe("readTranscriptConversationState - 既定の io", () => {
     expect(readTranscriptConversationState(worktreePath, configDir)).toBe(
       "has-conversation"
     );
+  });
+
+  it("CLI の sessionId の JSONL が無ければ、残っている前の JSONL を見ない", () => {
+    const configDir = makeConfigDir();
+    const worktreePath = "/home/me/dev/app";
+    const dir = path.join(configDir, "projects", "-home-me-dev-app");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "previous.jsonl"),
+      toJsonl([
+        {
+          type: "user",
+          cwd: worktreePath,
+          message: { role: "user", content: "前のセッションの指示" },
+        },
+      ])
+    );
+    expect(
+      readTranscriptConversationState(worktreePath, configDir, "fresh")
+    ).toBe("no-conversation");
+    expect(
+      readTranscriptConversationState(worktreePath, configDir, "previous")
+    ).toBe("has-conversation");
   });
 
   it("projects ディレクトリが無ければ unknown", () => {

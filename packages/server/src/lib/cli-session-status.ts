@@ -63,6 +63,11 @@ export interface CliSessionRecord {
   tmuxSessionName: string;
   cwd: string;
   state: CliSessionState;
+  /**
+   * いま動いている会話の id。JSONL のファイル名になる。transcript-conversation.ts
+   * が「まだ JSONL が無い = 会話が無い」を見分けるのに使う。読めなければ null
+   */
+  sessionId: string | null;
   /** 同じ tmux 名の記録が複数あったときに新しい方を選ぶための時刻 */
   updatedAt: number;
 }
@@ -188,6 +193,11 @@ export class CliSessionStatusReader {
    * 確かめてから採用する (取り違え防止)。
    */
   stateFor(lookup: CliSessionLookup): CliSessionState | null {
+    return this.recordFor(lookup)?.state ?? null;
+  }
+
+  /** stateFor と同じ照合で、記録ごと返す */
+  recordFor(lookup: CliSessionLookup): CliSessionRecord | null {
     // /proc が無い環境では死んだプロセスの残骸を弾けないので機構ごと無効
     if (this.io.platform !== "linux") return null;
     try {
@@ -195,7 +205,7 @@ export class CliSessionStatusReader {
       const record = this.read(dir).get(lookup.tmuxSessionName);
       if (!record) return null;
       if (!samePath(record.cwd, lookup.worktreePath)) return null;
-      return record.state;
+      return record;
     } catch {
       // polling 経路なので、どんな失敗も「読めない」に倒す
       return null;
@@ -291,6 +301,7 @@ export class CliSessionStatusReader {
       tmuxSessionName,
       cwd,
       state: status as CliSessionState,
+      sessionId: readSessionId(json.sessionId),
       updatedAt: numberOr(json.statusUpdatedAt, numberOr(json.updatedAt, 0)),
     };
   }
@@ -320,6 +331,16 @@ export class CliSessionStatusReader {
       if (file.startsWith(`${dir}/`)) this.warned.delete(file);
     }
   }
+}
+
+/**
+ * sessionId はファイル名に使うので、パスを作れる形のものだけを受け取る。
+ * 形が違えば null (= 「まだ JSONL が無い」の判定を使わない) に倒す
+ */
+function readSessionId(value: unknown): string | null {
+  return typeof value === "string" && /^[0-9A-Za-z-]+$/.test(value)
+    ? value
+    : null;
 }
 
 function numberOr(value: unknown, fallback: number): number {

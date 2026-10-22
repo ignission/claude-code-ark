@@ -49,6 +49,27 @@
  *
  * 失敗 (ファイル無し・壊れた JSON・権限) もすべて unknown にする。polling を
  * 落とさず、ログ洪水も作らない (pickLatestJsonl と同じ作法)。
+ *
+ * ## 起動直後は、まだ JSONL が無い
+ *
+ * **新しく起動した claude は、最初のプロンプトを受けるまで JSONL を作らない。**
+ * 実測 (Claude Code v2.1.306、2026-10-22): 起動 08:22:58 の SessionStart hook の
+ * レコードも、ファイルの作成 (birth) は最初のプロンプトの 08:23:09 だった。
+ * 一度もプロンプトを受けていない別の 2 セッションにも JSONL は無かった。
+ *
+ * そのあいだ pickLatestJsonl は、同じ worktree で前に動いたセッションの JSONL を
+ * 拾う。そこには会話があるので、まだ誰の番でもないセッションが「あなたの番」に
+ * 出ていた。
+ *
+ * そこで CLI の状態ファイル (cli-session-status.ts) の `sessionId` が読めたら、
+ * pickLatestJsonl を通さず `<sessionId>.jsonl` を直接見る。JSONL のファイル名は
+ * この id で、無ければ会話は無い。同じ worktree に別のセッションの新しい JSONL が
+ * あっても取り違えない。`/clear` すると sessionId は新しい JSONL の id に変わる
+ * (実測 v2.1.306) ので、/clear 直後の判定もこのファイルで成り立つ。
+ * 状態ファイルを読めないときは、これまでどおり pickLatestJsonl の判定に任せる。
+ * 起動時刻とファイルの mtime を比べる方法は採らない。Ark はサーバーの再起動で
+ * セッションの createdAt を作り直すので、再起動のたびに会話のあるセッションまで
+ * 待機に落ちる。
  */
 
 import fs from "node:fs";
@@ -82,6 +103,8 @@ const MEMO_LIMIT = 128;
 export interface TranscriptConversationIo {
   /** ディレクトリ内の現行 .jsonl を選ぶ。無ければ null */
   pickLatestJsonl(dir: string, expectedCwd: string): string | null;
+  /** CLI の sessionId の JSONL がもう作られているか */
+  fileExists(file: string): boolean;
   /** ファイルの大きさと mtime (メモの鍵) */
   statFile(file: string): { size: number; mtimeMs: number };
   /** 先頭 maxBytes だけ読む。maxBytes に達したら truncated */
@@ -97,6 +120,7 @@ export interface TranscriptHead {
 
 const defaultIo: TranscriptConversationIo = {
   pickLatestJsonl,
+  fileExists: file => fs.existsSync(file),
   statFile: file => {
     const stat = fs.statSync(file);
     return { size: stat.size, mtimeMs: stat.mtimeMs };
@@ -145,10 +169,14 @@ export function clearTranscriptConversationMemo(): void {
  * 現行ファイルの選び方は JsonlTailManager / readTranscriptLastUpdatedAt と同じ
  * 経路 (projectsDirFor → encodeProjectDir → pickLatestJsonl) を通すので、
  * チャットビューが映している会話と同じファイルを見る。
+ *
+ * `cliSessionId` は CLI の状態ファイルにある、いま動いている claude の
+ * sessionId。読めなければ null。
  */
 export function readTranscriptConversationState(
   worktreePath: string,
   configDir: string | null | undefined,
+  cliSessionId: string | null,
   io: TranscriptConversationIo = defaultIo
 ): TranscriptConversationState {
   // 復元時に pane_current_path を取れなかったセッションは worktreePath が空になる。
@@ -159,8 +187,13 @@ export function readTranscriptConversationState(
       projectsDirFor(configDir),
       encodeProjectDir(worktreePath)
     );
-    const file = io.pickLatestJsonl(dir, worktreePath);
+    const file = cliSessionId
+      ? path.join(dir, `${cliSessionId}.jsonl`)
+      : io.pickLatestJsonl(dir, worktreePath);
     if (!file) return "unknown";
+    // 起動してから最初のプロンプトまでは JSONL が無い。ここで止めないと、
+    // 前のセッションの JSONL (と、そのメモの has-conversation) へ進んでしまう
+    if (cliSessionId && !io.fileExists(file)) return "no-conversation";
     const cached = memo.get(file);
     if (cached?.state === "has-conversation") return "has-conversation";
     const { size, mtimeMs } = io.statFile(file);
