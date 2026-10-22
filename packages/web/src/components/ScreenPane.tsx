@@ -5,7 +5,11 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { buildScreenWsUrl } from "@/lib/auth-token";
 import { keepLocalCursorUntilServerCursor } from "@/lib/screen-cursor";
-import { forwardLocalPaste } from "@/lib/screen-paste";
+import {
+  forwardLocalPaste,
+  type PasteTarget,
+  trackClipboardDelivery,
+} from "@/lib/screen-paste";
 
 interface ScreenPaneProps {
   screen: Screen;
@@ -67,9 +71,11 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
     let sizeObserver: ResizeObserver | null = null;
     let stopCursorGuard: (() => void) | null = null;
     let connected = false;
+    let pasteTarget: PasteTarget | null = null;
+    let stopDeliveryTracking: (() => void) | null = null;
     // 接続が済むまでは null を返し、Cmd/Ctrl+V を奪わない
     const stopPaste = forwardLocalPaste(container, () =>
-      rfb && connected && !ended && !cancelled ? rfb : null
+      connected && !ended && !cancelled ? pasteTarget : null
     );
     // RFB が disconnect イベントを一度でも出したかどうか。既に切断済みの RFB へ
     // cleanup 側から重ねて disconnect() を呼ぶと noVNC がエラーログを出すため、
@@ -120,6 +126,8 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
         let securityReason = "";
         ws = new WebSocket(buildScreenWsUrl(screen.id));
         ws.binaryType = "arraybuffer";
+        const delivery = trackClipboardDelivery(ws);
+        stopDeliveryTracking = delivery.stop;
         ws.addEventListener("close", event => {
           closeReason = event.reason;
         });
@@ -127,6 +135,15 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
         rfb = new RFB(container, ws, {
           credentials: { username: creds.username, password: creds.password },
         });
+        const connectedRfb = rfb;
+        pasteTarget = {
+          clipboardPasteFrom: text =>
+            delivery.waitForDelivery(() =>
+              connectedRfb.clipboardPasteFrom(text)
+            ),
+          sendKey: (keysym, code, down) =>
+            connectedRfb.sendKey(keysym, code, down),
+        };
         rfb.scaleViewport = true;
         rfb.background = "transparent";
         rfb.addEventListener("connect", () => {
@@ -178,6 +195,7 @@ export function ScreenPane({ screen, requestCredentials }: ScreenPaneProps) {
       sizeObserver?.disconnect();
       stopCursorGuard?.();
       stopPaste();
+      stopDeliveryTracking?.();
       if (rfb && !ended) rfb.disconnect();
     };
   }, [
