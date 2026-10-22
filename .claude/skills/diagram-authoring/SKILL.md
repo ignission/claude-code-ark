@@ -22,11 +22,28 @@ parent directory が存在しない場合だけ作成し、書いた後に `boar
 - **1 ページ目は結論にする。** 見出しを結論の一文にし、残りのページはその根拠を 1 つずつ置く
 - **ページに文章を積まない。** 理由・経緯・注意はチャットに書き、ページには数字・表・
   コード・✓ / ✕ のチップだけを置く。`text` を 2 つ置きたくなったら、分け方が違う
-- **ページの種類は中身で選ぶ。** コードの中で誰が誰を呼ぶかは `sequence`、呼び出し経路と
-  差分量は `call-tree`、それ以外（結論、向き、before / after、数字）は `blocks`
+- **根拠のページは、まず図で描けないかを考える。** 部品（`blocks`）は文字を枠に入れるだけで、
+  表と箇条書きを並べたデッキは文字の羅列に戻る。下の表で中身から図種を引き、どれにも
+  当たらないときだけ `blocks` にする。`blocks` は結論のページ（1 ページ目）と、数字を並べる
+  ページに向く
 - **作業の手順を `sequence` にしない。** 自分が打ったコマンドを時間順に並べても、読み手は
   結果にたどり着けない。結果を向きや行き先で振り分けた `blocks` のページにする
 - ページ数は 3〜6 枚を目安にする
+- **3 ページ以上のデッキに図のページ（`blocks` 以外）が 1 枚も無いと、`board_open` が拒否する。**
+  開けたときも、表と箇条書きだけのページがあれば結果の `notices` で知らせるので、図に
+  描き直せないか確かめる（表が正解のページはそのままでよい）
+
+| 中身 | ページの `type` |
+| --- | --- |
+| ブランチ、コミット、マージ、PR がどこにあるか | `git-graph` |
+| 経緯、検証の回、PR を出した・直した・マージした順 | `timeline` |
+| ディレクトリ、worktree、依存、設定の階層。消した・残した・足したもの | `tree` |
+| before / after、案 A / 案 B、直す前と後の対応 | `compare` |
+| 処理の分岐、判定の流れ | `flow` |
+| 状態の移り変わり | `state` |
+| コードの中で誰が誰を何の順で呼ぶか | `sequence` |
+| 呼び出し経路と、その変更量 | `call-tree` |
+| 結論の一文、数字の比較、どれにも当たらないもの | `blocks` |
 
 **デッキに書くのはモデルの JSON だけ。** `<script type="application/json" id="ark-diagram-model">`
 の JSON ブロックのほかには、HTML も `<style>` も書かない（書くと `board_open` が
@@ -40,9 +57,11 @@ parent directory が存在しない場合だけ作成し、書いた後に `boar
 ページは `ext.pages` に並び順で置く。一番上の `nodes` / `edges` / `groups` は空でよい。
 
 - `blocks` のページは `title`（見出し。結論の一文）と `blocks`（部品の並び）を書く
-- `sequence` / `call-tree` のページは、単独の図と同じ `nodes` / `edges` をページの中に書く
+- `blocks` 以外のページは、単独の図と同じ `nodes` / `edges` をページの中に書く
 - id はページの id も含めて**ファイル全体で一意**にする
-- `er` / `flow` / `state` / `event-storming` / `context-map` / `doc` はページにできない
+- `flow` / `state` のページは動かない図として描く（自動レイアウトで上から下へ並べる。
+  group は置けない）。node をドラッグして直したい図は、単独のファイルに描く
+- `er` / `event-storming` / `context-map` / `doc` はページにできない
   （graph はドラッグした座標を、doc は編集した本文を、ファイル 1 つに 1 種類の前提で保存する）。
   これらが要るときは別のファイルに描く
 - `blocks` のページにはコメントを付けられない。コメントを受けたい図は `sequence` / `call-tree` にする
@@ -66,8 +85,9 @@ parent directory が存在しない場合だけ作成し、書いた後に `boar
 - `` `語` `` — コード
 - `[語](packages/foo.ts#L10-L24)` — リンク。コードを指す語はこれで書く
 
-完成例は `_examples/deck.diagram.html` を `board_open.path` の説明に示された正準 directory と
-組み合わせて参照する。
+完成例は `_examples/deck.diagram.html`（部品と sequence / call-tree）と
+`_examples/visual-kinds.diagram.html`（git-graph / timeline / tree / compare / flow）を、
+`board_open.path` の説明に示された正準 directory と組み合わせて参照する。
 
 ```html
 <!doctype html>
@@ -118,6 +138,10 @@ Ark が配信時に生成し、生成物はファイルへ焼き付かない（�
 | `context-map` | コンテキストマップ（戦略設計） | `supporting`（既定）/ `core` / `generic` / `developed` / `external` / `note` |
 | `sequence` | 時間順のやり取り（誰が誰を呼ぶ、何を渡す） | 参加者の kind: `actor`（既定）/ `new` |
 | `call-tree` | 呼び出し経路と、その変更量 | `frame`（既定）/ `added` / `removed` |
+| `git-graph` | ブランチとコミットの位置関係 | `commit`（既定）/ `added` / `removed` |
+| `timeline` | 時間順の出来事 | `event`（既定）/ `ok` / `ng` / `warn` / `milestone` |
+| `tree` | 階層と、各項目の状態 | `node`（既定）/ `added` / `removed` / `changed` / `kept` |
+| `compare` | 2 列の対応（before / after、案の比較） | `same` / `changed` / `added` / `removed`（書かなければ自動） |
 
 語彙にない kind を書くとその図種の既定スタイルになる。`flow` の出口は成功を
 `outcome`、失敗を `error` に分けると、色に頼らず読めるようになる。区間の枠
@@ -204,6 +228,59 @@ Ark が配信時に生成し、生成物はファイルへ焼き付かない（�
 モデルと投影が食い違う余地を作ってしまう。多重度（`edge.ext` の
 `from_card` / `to_card` / `direction` / `type`）、group 境界、自動レイアウトは
 内蔵レンダラでもそのまま効く。
+
+### git-graph / timeline / tree / compare の語彙
+
+この 4 つも座標を持たず、デッキのページにも単独の図にも置ける。label と `ext.note` の中では
+部品と同じ飾り（`{a:語}` / `` `語` `` / リンク）が効く。node はコメントの付け先になる。
+
+**`git-graph`**: node がコミットで、**配列の先頭が新しい**（`git log` と同じ向き）。
+edge は**親（古い）→ 子（新しい）**。向きを逆に書くとサーバーが 422 で拒否する。
+
+- `ext.branch` で列を分ける。書かなければ最初の親の列を継ぐ。列は古い順の初出で左から並ぶ
+- `ext.sha`（短い sha）、`ext.refs`（`["main", "PR #565"]` のような札）、`ext.note`
+- 親を 2 つ持つ node がマージになる。`kind` の `added` はこの作業で足したコミット、
+  `removed` は rebase などで捨てたコミット
+- sha、ブランチ名、親子は `git log --graph --format='%h %p %d %s'` などで**実際に取った値**を書く。
+  推測で書かない。関係の無いコミットは省いてよい（親子は省いた後の並びで結ぶ）
+
+```json
+{ "id": "p-git", "type": "git-graph", "title": "feat は {a:main の 1 つ先}",
+  "nodes": [
+    { "id": "c3", "label": "Merge feat", "ext": { "branch": "main", "sha": "c3d4e5f", "refs": ["main"] } },
+    { "id": "c2", "label": "図種を足す", "kind": "added",
+      "ext": { "branch": "feat", "sha": "b2c3d4e", "refs": ["PR #565"] } },
+    { "id": "c1", "label": "起点", "ext": { "branch": "main", "sha": "a1b2c3d" } } ],
+  "edges": [ { "id": "g1", "from": "c1", "to": "c2" },
+             { "id": "g2", "from": "c1", "to": "c3" },
+             { "id": "g3", "from": "c2", "to": "c3" } ] }
+```
+
+**`timeline`**: node が出来事で、**配列の順序が時間順**。edge は使わない（書くと 422）。
+
+- `ext.at` に日時の表記（`10/19`、`10/19 14:00`）、`ext.note` に 1 行の補足
+- `ext.lane` を書くとレーン（列）に分ける（Web / iOS、PR ごとなど）
+- `kind` の `ok` / `ng` / `warn` は ✓ / ✕ / ! の印と色、`milestone` は区切りの出来事
+
+**`tree`**: node が項目で、edge は親 → 子。根は親を持たない node。
+
+- `kind` の `added` / `removed` / `changed` / `kept` は「追加 / 削除 / 変更 / 維持」の札になる
+- `ext.note` に 1 行の補足、`ext.source` に worktree 相対のパス（押すとファイルが開く）
+
+**`compare`**: node を `ext.side` で **2 列**に分ける（列の見出しは side の値）。
+
+- edge で左右の対応する項目を **1 対 1** で結ぶ。分かれる・まとまるときは `ext.note` に書く
+- `kind` を書かなければ、対応の無い左は `removed`、右は `added`、label が同じなら `same`、
+  違えば `changed` になる
+
+```json
+{ "id": "p-cmp", "type": "compare", "title": "数字だけ {a:等幅}にする",
+  "nodes": [
+    { "id": "b1", "label": "Inter", "ext": { "side": "before" } },
+    { "id": "a1", "label": "Geist", "ext": { "side": "after", "note": "本文も替える" } },
+    { "id": "a2", "label": "`font-numeric` を付ける", "ext": { "side": "after" } } ],
+  "edges": [ { "id": "m1", "from": "b1", "to": "a1" } ] }
+```
 
 ## 文書型（自前 HTML 投影）
 

@@ -69,7 +69,7 @@ export interface BoardMcpDeps {
   openDiagram(
     worktreePath: string,
     relPath: string
-  ): Promise<{ ok: boolean; error?: string }>;
+  ): Promise<{ ok: boolean; error?: string; notices?: string[] }>;
   /** コメントを走査する図候補を worktree 相対パスで返す。 */
   listDiagramPaths(worktreePath: string): Promise<string[]>;
   /** doc/anchor trust boundary を通して sidecar を読む。 */
@@ -95,6 +95,8 @@ export interface BoardOpenInput {
 export interface BoardOpenResult {
   ok: boolean;
   error?: string;
+  /** 開けたが、書いた側に直してほしいこと（表だけのデッキのページなど） */
+  notices?: string[];
 }
 
 export interface BoardCommentsInput {
@@ -322,7 +324,11 @@ export function createBoardMcpServer(
         });
         return textResult(
           res.ok
-            ? JSON.stringify({ opened: args.path })
+            ? JSON.stringify(
+                res.notices && res.notices.length > 0
+                  ? { opened: args.path, notices: res.notices }
+                  : { opened: args.path }
+              )
             : `board_open 失敗: ${res.error ?? "不明なエラー"}`
         );
       } catch (e) {

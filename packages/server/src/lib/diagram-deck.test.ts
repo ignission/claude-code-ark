@@ -264,6 +264,7 @@ describe("部品のページと自由形の禁止", () => {
 
     expect(validateDeckForOpen(page(MODEL_SCRIPT), model)).toEqual({
       ok: true,
+      notices: [],
     });
     expect(
       validateDeckForOpen(page(`${MODEL_SCRIPT}<style>a{}</style>`), model).ok
@@ -275,6 +276,7 @@ describe("部品のページと自由形の禁止", () => {
 
     expect(validateDeckForOpen(page("<div>絵</div>"), freeform)).toEqual({
       ok: true,
+      notices: [],
     });
   });
 
@@ -462,5 +464,142 @@ describe("commentAnchorNodes", () => {
     });
 
     expect(nodes.map(node => node.id)).toEqual(["a"]);
+  });
+});
+
+const TABLE_PAGE = {
+  id: "p-table",
+  type: "blocks",
+  title: "消したもの",
+  blocks: [{ kind: "table", head: ["名前"], rows: [["orista-1200"]] }],
+};
+
+const GIT_PAGE = {
+  id: "p-git",
+  type: "git-graph",
+  title: "feat は main の 1 つ先",
+  nodes: [
+    { id: "c2", label: "図種を足す", ext: { branch: "feat" } },
+    { id: "c1", label: "起点", ext: { branch: "main" } },
+  ],
+  edges: [{ id: "g1", from: "c1", to: "c2" }],
+};
+
+const FLOW_PAGE = {
+  id: "p-flow",
+  type: "flow",
+  title: "board_open の判定",
+  nodes: [
+    { id: "f-in", label: "board_open" },
+    { id: "f-dec", label: "図のページがあるか", kind: "decision" },
+    { id: "f-ok", label: "開く", kind: "outcome" },
+    { id: "f-ng", label: "拒否する", kind: "error" },
+  ],
+  edges: [
+    { id: "fe1", from: "f-in", to: "f-dec" },
+    { id: "fe2", from: "f-dec", to: "f-ok", label: "ある" },
+    { id: "fe3", from: "f-dec", to: "f-ng", label: "無い" },
+  ],
+};
+
+describe("図種のページ", () => {
+  it("git-graph / flow のページを受け付け、部品と同じ地で描く", () => {
+    const model = deckModel([BLOCKS_PAGE, GIT_PAGE, FLOW_PAGE]);
+    expect(parseDeckPages(model).ok).toBe(true);
+
+    const html = injectDeckProjection(page(MODEL_SCRIPT), model);
+    expect(html).toContain(
+      'class="ark-deck-page ark-bk-page" data-ark-page="p-git"'
+    );
+    expect(html).toContain('data-ark-fig="git-graph"');
+    expect(html).toContain('data-ark-fig="flow"');
+    // flow のページは動かさない図: node を絶対配置し、線は SVG で描く
+    expect(html).toMatch(
+      /class="ark-sg-node" data-ark-id="f-dec" data-kind="decision"/
+    );
+    expect(html).toContain("<polygon");
+    expect(html).toContain(">ある</text>");
+    expect(html).toContain("--ark-git-0");
+  });
+
+  it("図種のページだけのデッキにも地の色を載せる", () => {
+    const html = injectDeckProjection(
+      page(MODEL_SCRIPT),
+      deckModel([GIT_PAGE])
+    );
+
+    expect(html).toContain("data-ark-deck-blocks");
+    expect(html).toContain("--ark-bk-panel");
+    expect(html).not.toContain(".ark-sg-node{");
+  });
+
+  it("図種のページの node はコメントの付け先になる", () => {
+    const ids = commentAnchorNodes(deckModel([GIT_PAGE, FLOW_PAGE])).map(
+      node => node.id
+    );
+
+    expect(ids).toEqual(expect.arrayContaining(["c2", "f-dec"]));
+  });
+
+  it("図種の形の誤りはページの id 付きで返す", () => {
+    const result = parseDeckPages(
+      deckModel([
+        {
+          ...GIT_PAGE,
+          edges: [{ id: "g1", from: "c2", to: "c1" }],
+        },
+      ])
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("ページ p-git");
+  });
+
+  it("er はページに置けず、置ける図種を返す", () => {
+    const result = parseDeckPages(
+      deckModel([{ id: "p-er", type: "er", nodes: [], edges: [] }])
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("git-graph");
+  });
+});
+
+describe("board_open と図の無いデッキ", () => {
+  it("3 ページ以上で図のページが無いデッキは、合う図種を添えて拒否する", () => {
+    const result = validateDeckForOpen(
+      page(MODEL_SCRIPT),
+      deckModel([BLOCKS_PAGE, TABLE_PAGE, { ...BLOCKS_PAGE, id: "p-sum2" }])
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("図のページがありません");
+      expect(result.error).toContain("git-graph");
+      expect(result.error).toContain("timeline");
+    }
+  });
+
+  it("図のページが 1 枚あれば開き、表と箇条書きだけのページには注意を返す", () => {
+    const result = validateDeckForOpen(
+      page(MODEL_SCRIPT),
+      deckModel([BLOCKS_PAGE, GIT_PAGE, TABLE_PAGE])
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.notices).toHaveLength(1);
+      expect(result.notices[0]).toContain("ページ p-table");
+    }
+  });
+
+  it("2 ページまでなら図が無くても開く（注意は返す）", () => {
+    const result = validateDeckForOpen(
+      page(MODEL_SCRIPT),
+      deckModel([BLOCKS_PAGE, TABLE_PAGE])
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.notices).toHaveLength(1);
   });
 });

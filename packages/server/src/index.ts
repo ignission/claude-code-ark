@@ -732,7 +732,9 @@ export async function startServer(
     sessionId: string,
     worktreeReal: string,
     relPath: string
-  ): Promise<{ ok: true } | { ok: false; error: string }> => {
+  ): Promise<
+    { ok: true; notices?: string[] } | { ok: false; error: string }
+  > => {
     const result = await readDiagram(worktreeReal, relPath, { forOpen: true });
     if (!result.ok) {
       return { ok: false, error: result.error };
@@ -742,7 +744,7 @@ export async function startServer(
     // session:list 経由で lastDiagramPath を受け取り、クライアントが
     // 右ペインの図タブを復元できるようにするため。
     db.updateSessionLastDiagram(sessionId, relPath);
-    return { ok: true };
+    return { ok: true, notices: result.notices };
   };
   const boardDeps: BoardMcpDeps = {
     readAuthoringGuide: () =>

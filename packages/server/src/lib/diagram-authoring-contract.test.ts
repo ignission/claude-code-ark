@@ -2,10 +2,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { validateDeckForOpen, validateDiagramDeck } from "./diagram-deck.js";
+import {
+  parseDeckPages,
+  validateDeckForOpen,
+  validateDiagramDeck,
+} from "./diagram-deck.js";
 import { BLOCK_KINDS } from "./diagram-deck-blocks.js";
 import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
 import { validateDiagramDocAuthorship } from "./diagram-doc-authorship.js";
+import { FIGURE_TYPES } from "./diagram-figures.js";
 import { extractModel } from "./diagram-file.js";
 
 const REPOSITORY_ROOT = path.resolve(
@@ -27,6 +32,10 @@ const DOC_SAMPLE_COMMENTS_PATH = DOC_SAMPLE_PATH.replace(
 const DECK_SAMPLE_PATH = path.resolve(
   REPOSITORY_ROOT,
   ".claude/diagrams/_examples/deck.diagram.html"
+);
+const VISUAL_SAMPLE_PATH = path.resolve(
+  REPOSITORY_ROOT,
+  ".claude/diagrams/_examples/visual-kinds.diagram.html"
 );
 const REVIEW_SAMPLE_PATH = path.resolve(
   REPOSITORY_ROOT,
@@ -234,7 +243,10 @@ describe("diagram-authoring skill の書き出し先 contract", () => {
     expect(model.model.type).toBe("deck");
     expect(validateDiagramDeck(html, model.model)).toEqual({ ok: true });
     // 完成例は board_open で開ける形（自由形のページも本文の HTML も無い）
-    expect(validateDeckForOpen(html, model.model)).toEqual({ ok: true });
+    expect(validateDeckForOpen(html, model.model)).toEqual({
+      ok: true,
+      notices: [],
+    });
     // めくる操作はボタンで作られるので、完成例に文書内リンクを書かない
     expect(html).not.toMatch(/href="#/);
   });
@@ -272,5 +284,47 @@ describe("diagram-authoring skill の書き出し先 contract", () => {
     const kinds = new Set(result.model.nodes.map(node => node.kind));
     expect(kinds.has("section")).toBe(true);
     expect(kinds.has("figure")).toBe(true);
+  });
+
+  it("見て分かる図種の語彙を定義し、例はサーバーの検証を通る", () => {
+    const skill = fs.readFileSync(SKILL_PATH, "utf-8");
+
+    expect(skill).toContain("### git-graph / timeline / tree / compare の語彙");
+    for (const type of FIGURE_TYPES) {
+      expect(skill).toContain(`| \`${type}\` |`);
+    }
+    // 中身から図種を引く表と、図の無いデッキの拒否を案内する
+    expect(skill).toContain("| 中身 | ページの `type` |");
+    expect(skill).toContain("`board_open` が拒否する");
+    expect(skill).not.toContain(
+      "それ以外（結論、向き、before / after、数字）は `blocks`"
+    );
+
+    // 規約に載せたページの例 (JSON) は、そのままデッキのページとして通る
+    const pages = [
+      ...skill.matchAll(/```json\n(\{ "id": "p-[\s\S]*?)\n```/g),
+    ].map(match => JSON.parse(match[1]));
+    expect(pages.map(page => page.type)).toEqual(["git-graph", "compare"]);
+    const parsed = parseDeckPages({
+      version: 1,
+      type: "deck",
+      nodes: [],
+      edges: [],
+      groups: [],
+      ext: { pages },
+    });
+    expect(parsed).toMatchObject({ ok: true });
+  });
+
+  it("図種の完成例は board_open で開け、注意も出ない", () => {
+    const html = fs.readFileSync(VISUAL_SAMPLE_PATH, "utf-8");
+    const model = extractModel(html);
+
+    expect(model.ok).toBe(true);
+    if (!model.ok) return;
+    expect(validateDeckForOpen(html, model.model)).toEqual({
+      ok: true,
+      notices: [],
+    });
   });
 });
