@@ -266,3 +266,32 @@ describe("CliSessionStatusReader.stateFor", () => {
     expect(readDir).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("CliSessionStatusReader.recordFor", () => {
+  it("sessionId を記録に含める (JSONL のファイル名)", () => {
+    const reader = new CliSessionStatusReader(makeIo(worldWith(sessionFile())));
+    expect(reader.recordFor(target)).toMatchObject({
+      state: "busy",
+      sessionId: "24cbab82-54a8-45db-9396-4357159c0fd5",
+    });
+  });
+
+  it("sessionId が無い・パスを作れる形でなければ null にする (状態は使う)", () => {
+    for (const sessionId of [undefined, 42, "", "../other"]) {
+      const reader = new CliSessionStatusReader(
+        makeIo(worldWith(sessionFile({ sessionId })))
+      );
+      expect(reader.recordFor(target)).toMatchObject({
+        state: "busy",
+        sessionId: null,
+      });
+    }
+  });
+
+  it("stateFor と同じく、cwd が違えば記録を返さない", () => {
+    const reader = new CliSessionStatusReader(makeIo(worldWith(sessionFile())));
+    expect(
+      reader.recordFor({ ...target, worktreePath: "/repo/other" })
+    ).toBeNull();
+  });
+});

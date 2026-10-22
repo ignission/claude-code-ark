@@ -20,6 +20,7 @@ import type {
 } from "@ark/shared";
 import { stripAnsi } from "./ansi.js";
 import {
+  type CliSessionRecord,
   type CliSessionState,
   cliSessionStatusReader,
   mergeCliSessionState,
@@ -110,6 +111,7 @@ export function collectBridgeSessions(): BridgeSession[] {
     const analysis = raw ? analyzePane(raw) : EMPTY_ANALYSIS;
     const paneId = lookupPaneId(ms.tmuxSessionName);
     const previewText = raw ? extractPreviewText(raw, 12) : "";
+    const cliRecord = readCliSessionRecord(ms);
     let status: BridgeSessionStatus;
     if (ms.status === "stopped") {
       status = "STOP";
@@ -120,13 +122,14 @@ export function collectBridgeSessions(): BridgeSession[] {
       status = resolveIdleStatus(analysis.status, previewText, () =>
         readTranscriptConversationState(
           ms.worktreePath,
-          ms.profileConfigDir ?? null
+          ms.profileConfigDir ?? null,
+          cliRecord?.sessionId ?? null
         )
       );
     }
     // 画面に進行中の行が無くても、CLI が busy を書いていれば「作業中」に格上げする
     // (subagent だけが動いているあいだ、本体は入力待ちに戻って行が消える)
-    status = mergeCliSessionState(status, readCliSessionState(ms));
+    status = mergeCliSessionState(status, cliRecord?.state ?? null);
     result.push({
       id: ms.id,
       name: deriveDisplayName(ms.worktreePath, ms.repoPath),
@@ -228,6 +231,7 @@ export function collectGridSnapshots(maxLines = 12): SessionGridSnapshot[] {
     const raw = captured.ok ? captured.value : null;
     const analysis = raw ? analyzePane(raw) : EMPTY_ANALYSIS;
     const previewText = raw ? extractPreviewText(raw, maxLines) : "";
+    const cliRecord = readCliSessionRecord(ms);
     // collectBridgeSessions と同じ READY 判定を適用
     let status: BridgeSessionStatus;
     if (ms.status === "stopped") {
@@ -239,12 +243,13 @@ export function collectGridSnapshots(maxLines = 12): SessionGridSnapshot[] {
       status = resolveIdleStatus(analysis.status, previewText, () =>
         readTranscriptConversationState(
           ms.worktreePath,
-          ms.profileConfigDir ?? null
+          ms.profileConfigDir ?? null,
+          cliRecord?.sessionId ?? null
         )
       );
     }
     // collectBridgeSessions と同じ格上げ (subagent 実行中を「あなたの番」にしない)
-    status = mergeCliSessionState(status, readCliSessionState(ms));
+    status = mergeCliSessionState(status, cliRecord?.state ?? null);
     result.push({
       sessionId: ms.id,
       repoPath: ms.repoPath ?? ms.worktreePath,
@@ -317,12 +322,12 @@ export function buildTunnelEntries(input: {
  * 一致することを確かめてから採用する (取り違え防止)。プロファイル切替を使う
  * セッションはファイルの置き場所も <configDir>/sessions になる。
  */
-function readCliSessionState(ms: {
+function readCliSessionRecord(ms: {
   tmuxSessionName: string;
   worktreePath: string;
   profileConfigDir?: string | null;
-}): CliSessionState | null {
-  return cliSessionStatusReader.stateFor({
+}): CliSessionRecord | null {
+  return cliSessionStatusReader.recordFor({
     tmuxSessionName: ms.tmuxSessionName,
     worktreePath: ms.worktreePath,
     configDir: ms.profileConfigDir ?? null,
