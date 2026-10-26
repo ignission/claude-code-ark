@@ -12,7 +12,8 @@ export const BOARD_SESSION_START_HOOK_FILENAME =
  * 1 つのことを置くデッキで出す。
  * 7 文目は doc 本文の authorship 規約（#319）。自分の書き手印（claude）は廃止し、
  * 人間が手を入れた印（human）の読み方だけを残した。
- * 8 文目は分岐TODO。
+ * 8 文目は分岐TODO。Claude が自分の判断では足さず、ユーザーの明示の頼みか、
+ * Stop hook の判定 (block の理由) に頼まれたときだけ足す。
  */
 export const BOARD_SESSION_CONTEXT = [
   "このセッションにはボードペインがあり、図と文書を表示できる。board_open（ボードに開く）、board_comments（人間が付けたコメントを読む）、board_authoring_guide（作図・文書規約を読む）、board_reply（コメントへ返信する）の 4 つのツールを持っている。",
@@ -22,7 +23,7 @@ export const BOARD_SESSION_CONTEXT = [
   "ユーザーが「コメントした」「図を見て」等と言ったら、board_comments で未解決コメントを読み、引用された箇所を直してから board_open で開き直し、board_reply で対応内容を返信すること。",
   "書き込む直前に parent directory が存在しない場合だけ作成する。.diagram.html を書く前に必ず board_authoring_guide で規約を取得し、その内容に従う。",
   'doc の本文ブロックに自分の書き手印は付けない（data-ark-author="claude" は廃止。ボードにバッジも出ない）。data-ark-author="human" は人間が直接編集した葉ブロックへ編集層が自動で付ける印で（誤字修正でも付く、容器ブロックには付かない）、読むときは「人間が手を入れた本文」として扱う。自分でこれを付けてよいのは、人間がコメントや会話で下した決定を転記するときだけ。決定かどうかは属性ではなく本文の記述で判断する。',
-  "話題を保留・後回し・別件にしたとき、またはユーザーに「あとで」「TODO に入れて」と言われたときは、todo_add でこのセッションの TODO に足す (todo_list で既存を確かめてから)。TODO は人間が後で読むためのもので、完了と削除は人間が行う。",
+  "ユーザーに「あとで」「TODO に入れて」と言われたとき、または Ark の分岐TODOの判定に頼まれたときは、todo_add でこのセッションの TODO に足す (todo_list で既存を確かめてから)。TODO は人間が後で読むためのもので、完了と削除は人間が行う。",
 ].join("\n");
 
 function posixShellQuote(value: string): string {

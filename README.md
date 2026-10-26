@@ -90,6 +90,7 @@ The mobile UI has its own session list, chat view, terminal with quick keys, and
 - Ask a side question from the command palette (`Tab`). A separate Claude with no tools answers in a floating window, and your session's conversation is left alone.
 - Run one headless Chromium on the server machine and show it in Ark, with the screen and input relayed over the Chrome DevTools Protocol. All it needs is a Chromium executable: Ark looks first for one installed by Playwright under `~/.cache/ms-playwright`, then for `chromium-browser`, `chromium` or `google-chrome` on PATH. If none is found, only this feature is disabled.
 - Open the VNC screen of a host you can reach over SSH, such as a Mac's Screen Sharing, in the browser. Ark connects with `ssh -o BatchMode=yes` as the user running the server, so that user needs a key without a passphrase (or one loaded in ssh-agent) and the host already in `known_hosts`.
+- Use a different Claude account per repository (Linux only).
 - Keep topics set aside mid-conversation in the TODO tab. When Ark judges that Claude pushed a separate topic aside, Claude writes it down as a TODO. Only you can complete or delete one. See [Board suggestions and branch TODOs](#board-suggestions-and-branch-todos).
 
 ## How it works
