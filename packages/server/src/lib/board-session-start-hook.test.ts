@@ -36,3 +36,10 @@ describe("BOARD_SESSION_CONTEXT の説明図", () => {
     expect(BOARD_SESSION_CONTEXT).toContain("短い答えで済むならチャットで返す");
   });
 });
+
+describe("BOARD_SESSION_CONTEXT の分岐TODO", () => {
+  it("保留した話題は todo_add で足すよう伝える", () => {
+    expect(BOARD_SESSION_CONTEXT).toContain("todo_add");
+    expect(BOARD_SESSION_CONTEXT).toContain("todo_list");
+  });
+});

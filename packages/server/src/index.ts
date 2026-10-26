@@ -756,7 +756,18 @@ export async function startServer(
     db.updateSessionLastDiagram(sessionId, relPath);
     return { ok: true, notices: result.notices };
   };
+  // TODO が変わったら全クライアントに読み直させる (一覧は小さいので差分は配らない)
+  const emitTodoChanged = () => io.emit("todo:changed");
   const boardDeps: BoardMcpDeps = {
+    async addTodo(worktreePath, input) {
+      // TODO は registry 登録時の生パスで持つ (クライアントの session.worktreePath と同じ値)
+      const todo = db.addTodo({ worktreePath, ...input });
+      emitTodoChanged();
+      return todo;
+    },
+    async listTodos(worktreePath) {
+      return db.listTodos({ worktreePath, includeDone: false });
+    },
     readAuthoringGuide: () =>
       readDiagramAuthoringGuide(undefined, options.diagramAuthoringGuidePath),
     async listDiagramPaths(worktreePath) {

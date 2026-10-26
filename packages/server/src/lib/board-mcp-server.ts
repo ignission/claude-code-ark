@@ -3,6 +3,7 @@
  *
  * board_open ツール（生成した図ファイルをセッションのボードペインで開かせる）を
  * 公開する **Streamable HTTP MCP server** を 127.0.0.1 に公開する。
+ * 分岐TODOの todo_add / todo_list も同じサーバーで公開する（完了・削除のツールは持たない）。
  * 旧 board_write（Excalidraw scene への直接書き込み）は撤去済み（B-1）。
  *
  * ArkMcpServer（司令塔ツール群）との違い:
@@ -23,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import type {
   DiagramCommentsResponse,
   DiagramCommentThread,
+  Todo,
 } from "@ark/shared";
 import { DIAGRAM_DIR } from "@ark/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -61,6 +63,13 @@ export class BoardSessionRegistry {
 }
 
 export interface BoardMcpDeps {
+  /** 分岐TODOを足す。本文の正規化と空の拒否は DB 側で行う */
+  addTodo(
+    worktreePath: string,
+    input: { text: string; note?: string }
+  ): Promise<Todo>;
+  /** この worktree の未完了の TODO */
+  listTodos(worktreePath: string): Promise<Todo[]>;
   /**
    * 図ファイルをボードペインで開かせる（B-0a）。
    * 実際に readDiagram で読めることを確認してから開かせる（403/404/422 の
@@ -254,6 +263,33 @@ export async function handleBoardReply(
   });
 }
 
+/** todo_add の純ロジック。完了・削除は人間だけが行うので、ツールは足すことしかできない */
+export async function handleTodoAdd(
+  deps: Pick<BoardMcpDeps, "addTodo">,
+  worktreePath: string,
+  input: { text: string; note?: string }
+): Promise<{ added: { id: string; text: string } } | { error: string }> {
+  try {
+    const todo = await deps.addTodo(worktreePath, input);
+    return { added: { id: todo.id, text: todo.text } };
+  } catch (error) {
+    return { error: getErrorMessage(error) };
+  }
+}
+
+/** todo_list の純ロジック。重複を避けるため Claude が自分で呼ぶ（セッションへは配らない） */
+export async function handleTodoList(
+  deps: Pick<BoardMcpDeps, "listTodos">,
+  worktreePath: string
+): Promise<{
+  todos: Array<{ id: string; text: string; note: string | null }>;
+}> {
+  const todos = await deps.listTodos(worktreePath);
+  return {
+    todos: todos.map(t => ({ id: t.id, text: t.text, note: t.note })),
+  };
+}
+
 async function collectDiagramPaths(
   directory: string,
   relativeParts: string[]
@@ -420,6 +456,54 @@ export function createBoardMcpServer(
         );
       } catch (error) {
         return textResult(`board_reply 失敗: ${getErrorMessage(error)}`);
+      }
+    }
+  );
+
+  server.registerTool(
+    "todo_add",
+    {
+      description:
+        "会話で保留・後回し・別件にした話題を、このセッションの TODO に足す。TODO は人間が後で読んで思い出すためのもので、完了と削除は人間が行う。足す前に todo_list で同じものが無いか確かめること。",
+      inputSchema: {
+        text: z
+          .string()
+          .describe(
+            "1 行の本文 (200 文字まで)。あとで読んで何をするか分かる言葉で"
+          ),
+        note: z
+          .string()
+          .optional()
+          .describe("補足 (保留にした理由や、関係するファイルなど)"),
+      },
+    },
+    async args => {
+      const result = await handleTodoAdd(deps, worktreePath, {
+        text: args.text,
+        ...(args.note === undefined ? {} : { note: args.note }),
+      });
+      return textResult(
+        "error" in result
+          ? `todo_add 失敗: ${result.error}`
+          : JSON.stringify(result)
+      );
+    }
+  );
+
+  server.registerTool(
+    "todo_list",
+    {
+      description:
+        "このセッションの未完了の TODO を読む。todo_add で足す前に、同じものが無いかを確かめるために呼ぶ。",
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        return textResult(
+          JSON.stringify(await handleTodoList(deps, worktreePath))
+        );
+      } catch (error) {
+        return textResult(`todo_list 失敗: ${getErrorMessage(error)}`);
       }
     }
   );

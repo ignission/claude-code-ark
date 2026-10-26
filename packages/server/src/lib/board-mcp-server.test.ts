@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DIAGRAM_DIR } from "@ark/shared";
+import { DIAGRAM_DIR, type Todo } from "@ark/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -15,6 +15,8 @@ import {
   createBoardMcpServer,
   handleBoardComments,
   handleBoardOpen,
+  handleTodoAdd,
+  handleTodoList,
   readDiagramAuthoringGuide,
 } from "./board-mcp-server.js";
 
@@ -319,7 +321,7 @@ describe("readDiagramAuthoringGuide", () => {
 });
 
 describe("createBoardMcpServer", () => {
-  it("4 ツールを既存順序のまま登録し board_reply は claude 固定で返信する", async () => {
+  it("6 ツールを既存順序のまま登録し board_reply は claude 固定で返信する", async () => {
     const registerTool = vi.spyOn(McpServer.prototype, "registerTool");
     const readAuthoringGuide = vi.fn(async () => "authoring guide body");
     const deps = {
@@ -328,11 +330,15 @@ describe("createBoardMcpServer", () => {
       getDiagramComments: vi.fn(async () => comments),
       replyDiagramComment: vi.fn(async () => comments),
       readAuthoringGuide,
+      addTodo: vi.fn(),
+      listTodos: vi.fn(async () => []),
     };
 
     createBoardMcpServer(deps, "/wt");
 
-    expect(registerTool).toHaveBeenCalledTimes(4);
+    expect(registerTool).toHaveBeenCalledTimes(6);
+    expect(registerTool.mock.calls[4]?.[0]).toBe("todo_add");
+    expect(registerTool.mock.calls[5]?.[0]).toBe("todo_list");
     const [, config] = registerTool.mock.calls[0] ?? [];
     const metadata = config as
       | {
@@ -410,5 +416,42 @@ describe("createBoardMcpServer", () => {
     expect(result.content[0]?.text).toBe(
       "board_authoring_guide 失敗: ガイドが見つかりません"
     );
+  });
+});
+
+describe("handleTodoAdd / handleTodoList", () => {
+  const todo = (text: string): Todo => ({
+    id: `id-${text}`,
+    worktreePath: "/w",
+    text,
+    note: null,
+    createdAt: 0,
+    doneAt: null,
+  });
+
+  it("足した TODO の id と本文を返す", async () => {
+    const addTodo = vi.fn(async (_w: string, input: { text: string }) =>
+      todo(input.text)
+    );
+    expect(
+      await handleTodoAdd({ addTodo }, "/w", { text: "ログの形式" })
+    ).toEqual({ added: { id: "id-ログの形式", text: "ログの形式" } });
+    expect(addTodo).toHaveBeenCalledWith("/w", { text: "ログの形式" });
+  });
+
+  it("足せなければ error を返す", async () => {
+    const addTodo = vi.fn(async () => {
+      throw new Error("TODO の本文が空です");
+    });
+    expect(await handleTodoAdd({ addTodo }, "/w", { text: " " })).toEqual({
+      error: "TODO の本文が空です",
+    });
+  });
+
+  it("未完了の一覧を id・本文・メモだけにして返す", async () => {
+    const listTodos = vi.fn(async () => [todo("a")]);
+    expect(await handleTodoList({ listTodos }, "/w")).toEqual({
+      todos: [{ id: "id-a", text: "a", note: null }],
+    });
   });
 });
