@@ -44,6 +44,7 @@
  * - 「Git」の中身も呼び出し側が `gitPane` で渡す。マウントの扱いは「ファイル」と同じ
  *   (初めて見せるまでマウントせず、見せたあとは hidden で残す)。
  *   自動で「Git」へ替えることは無い
+ * - 「TODO」の中身も呼び出し側が `todoPane` で渡す。選んでいる間だけマウントする
  * - ピーク: 図のコードリンクを踏むと、タブは替えずに「図」の本体を左右に割り、
  *   図の横へコードを出す。中身は呼び出し側が `peek` で渡す。作業エリアを閉じても
  *   外さない (未保存の編集を保つ)
@@ -116,7 +117,7 @@ const STORAGE_KEY_LEFT_WIDTH = "ark-split-left-width";
 const STORAGE_KEY_SHOW_WORK_AREA = "ark-split-show-board";
 const STORAGE_KEY_RIGHT_TAB = "ark-split-right-tab";
 
-type RightTab = "board" | "files" | "git";
+type RightTab = "board" | "files" | "git" | "todo";
 
 const RIGHT_TABS: readonly {
   value: RightTab;
@@ -126,6 +127,7 @@ const RIGHT_TABS: readonly {
   { value: "board", label: "図", icon: VIEW_MODE_ICONS.board },
   { value: "files", label: "ファイル", icon: VIEW_MODE_ICONS.files },
   { value: "git", label: "Git", icon: VIEW_MODE_ICONS.git },
+  { value: "todo", label: "TODO", icon: VIEW_MODE_ICONS.todo },
 ];
 
 /** 上部バーの1タップ操作と `…`、端末の窓の操作に共通の見た目 (32px・角丸・押すと紙色) */
@@ -240,6 +242,10 @@ interface SplitViewPaneProps {
    * 「ファイル」と同じく、1 度見せたら見えていない間もマウントしたまま
    */
   gitPane?: (visible: boolean) => ReactNode;
+  /** 「TODO」の中身。選んでいる間だけマウントする */
+  todoPane?: (visible: boolean) => ReactNode;
+  /** 未完了の件数。タブの横に出す (0 なら出さない) */
+  todoOpenCount?: number;
   /** live なファイルオープンのたびに増える数。増えたら作業エリアを開いて「ファイル」へ替える */
   fileOpenSeq?: number;
   /**
@@ -273,7 +279,9 @@ function readSavedFlag(key: string): boolean {
 function readSavedRightTab(): RightTab {
   try {
     const saved = localStorage.getItem(STORAGE_KEY_RIGHT_TAB);
-    return saved === "files" || saved === "git" ? saved : "board";
+    return saved === "files" || saved === "git" || saved === "todo"
+      ? saved
+      : "board";
   } catch {
     return "board";
   }
@@ -348,7 +356,8 @@ export function SplitViewPane(props: SplitViewPaneProps) {
     tab =>
       tab.value === "board" ||
       (tab.value === "files" && hasFilePane) ||
-      (tab.value === "git" && hasGitPane)
+      (tab.value === "git" && hasGitPane) ||
+      (tab.value === "todo" && props.todoPane !== undefined)
   );
   const rightTab: RightTab = rightTabs.some(t => t.value === savedRightTab)
     ? savedRightTab
@@ -830,6 +839,12 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                       >
                         <tab.icon className="size-4" aria-hidden="true" />
                         <span>{tab.label}</span>
+                        {tab.value === "todo" &&
+                          (props.todoOpenCount ?? 0) > 0 && (
+                            <span className="rounded-full bg-primary px-1.5 text-[11px] leading-4 text-primary-foreground">
+                              {props.todoOpenCount}
+                            </span>
+                          )}
                       </button>
                     );
                   })}
@@ -924,6 +939,18 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                   )}
                 >
                   {props.gitPane(gitPaneVisible)}
+                </div>
+              )}
+
+              {/* TODO。軽いので選んでいる間だけマウントする */}
+              {props.todoPane && rightTab === "todo" && (
+                <div
+                  role="tabpanel"
+                  id={rightPanelDomId("todo")}
+                  aria-labelledby={rightTabDomId("todo")}
+                  className="min-h-0 flex-1 overflow-hidden"
+                >
+                  {props.todoPane(showWorkArea && props.isActive)}
                 </div>
               )}
             </div>

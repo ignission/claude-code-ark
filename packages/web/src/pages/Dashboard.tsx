@@ -34,6 +34,7 @@ import { ScreenPane } from "@/components/ScreenPane";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
 import { SplitViewPane } from "@/components/SplitViewPane";
+import { TodoPane } from "@/components/TodoPane";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { Button } from "@/components/ui/button";
 import {
@@ -60,6 +61,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useSessionNotifications } from "@/hooks/useSessionNotifications";
 import { useSettings } from "@/hooks/useSettings";
 import { useSocket } from "@/hooks/useSocket";
+import { useTodos } from "@/hooks/useTodos";
 import { useViewerTabs } from "@/hooks/useViewerTabs";
 import { focusInput } from "@/lib/keynav-dom";
 import {
@@ -257,6 +259,23 @@ export default function Dashboard() {
     }
     return labels;
   }, [sessions, worktreeDisplayNames, worktrees]);
+
+  // 分岐TODO。全セッションぶんを 1 回だけ購読し、各ペインへ配る
+  const todos = useTodos(socket);
+
+  // TODO の見出しの表示名。サイドバーと通知と同じ出所 (sessionNotificationLabels)。
+  // セッションが無い (worktree を消した) ときは null
+  const worktreeLabelOf = useCallback(
+    (worktreePath: string): string | null => {
+      for (const session of sessions.values()) {
+        if (session.worktreePath === worktreePath) {
+          return sessionNotificationLabels.get(session.id) ?? null;
+        }
+      }
+      return null;
+    },
+    [sessions, sessionNotificationLabels]
+  );
 
   const handleOpenSessionFromNotification = useCallback(
     (sessionId: string) => {
@@ -708,6 +727,19 @@ export default function Dashboard() {
   const handleSelectSession = useCallback((id: string | null) => {
     setSelectedSessionId(id);
   }, []);
+
+  // TODO の見出しから、その worktree のセッションをサイドバーで選んだときと同じ操作で開く
+  const openWorktreeSession = useCallback(
+    (worktreePath: string) => {
+      for (const session of sessions.values()) {
+        if (session.worktreePath === worktreePath) {
+          handleSelectSession(session.id);
+          return;
+        }
+      }
+    },
+    [sessions, handleSelectSession]
+  );
 
   // セッション自動選択
   useEffect(() => {
@@ -1237,6 +1269,21 @@ export default function Dashboard() {
                             isActive={visible}
                           />
                         )}
+                        todoPane={() => (
+                          <TodoPane
+                            todos={todos.todos}
+                            worktreePath={session.worktreePath}
+                            error={todos.error}
+                            onSetDone={todos.setDone}
+                            onRemove={todos.remove}
+                            worktreeLabel={worktreeLabelOf}
+                            onOpenWorktree={openWorktreeSession}
+                          />
+                        )}
+                        todoOpenCount={
+                          todos.openCountByWorktree.get(session.worktreePath) ??
+                          0
+                        }
                         {...paneProps}
                       />
                     </div>
