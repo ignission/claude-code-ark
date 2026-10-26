@@ -7,6 +7,8 @@ import {
   BOARD_SUGGEST_SETTING_KEYS,
   isSecretSettingKey,
   readBoardSuggestConfig,
+  readBranchTodoEnabled,
+  readBranchTodoThreshold,
   resolveBoardSuggestApiKey,
   validateBoardSuggestPatch,
 } from "./board-suggest-config.js";
@@ -71,6 +73,8 @@ describe("readBoardSuggestConfig", () => {
     expect(config).toEqual({
       enabled: true,
       threshold: BOARD_SUGGEST_DEFAULT_THRESHOLD,
+      todoEnabled: true,
+      todoThreshold: 0.7,
       keyConfigured: true,
       keyHint: "1234",
       keySource: "settings",
@@ -92,6 +96,8 @@ describe("readBoardSuggestConfig", () => {
     ).toEqual({
       enabled: false,
       threshold: 0.85,
+      todoEnabled: true,
+      todoThreshold: 0.7,
       keyConfigured: false,
       keyHint: null,
       keySource: null,
@@ -128,6 +134,24 @@ describe("validateBoardSuggestPatch", () => {
     });
   });
 
+  it("分岐TODOの有効と閾値を検証して保存キーに分ける", () => {
+    expect(
+      validateBoardSuggestPatch({ todoEnabled: false, todoThreshold: 0.8 })
+    ).toEqual({
+      ok: true,
+      set: { branch_todo_enabled: false, branch_todo_threshold: 0.8 },
+      remove: [],
+    });
+    expect(validateBoardSuggestPatch({ todoThreshold: 2 })).toEqual({
+      ok: false,
+      error: "閾値は 0〜1 の数値です",
+    });
+    expect(validateBoardSuggestPatch({ todoEnabled: "yes" })).toEqual({
+      ok: false,
+      error: "enabled は真偽値です",
+    });
+  });
+
   it("不正な値は理由つきで拒否する", () => {
     expect(validateBoardSuggestPatch(null).ok).toBe(false);
     expect(validateBoardSuggestPatch({ apiKey: "  " }).ok).toBe(false);
@@ -147,5 +171,13 @@ describe("isSecretSettingKey", () => {
       false
     );
     expect(isSecretSettingKey("scanBasePath")).toBe(false);
+  });
+});
+
+describe("分岐TODOの設定", () => {
+  it("分岐TODOは既定で有効、閾値は 0.7", () => {
+    const settings = { getSetting: () => undefined };
+    expect(readBranchTodoEnabled(settings)).toBe(true);
+    expect(readBranchTodoThreshold(settings)).toBe(0.7);
   });
 });

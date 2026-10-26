@@ -6,6 +6,8 @@
  * キー指定の取得には返さない (`isSecretSettingKey`)。クライアントへは
  * `board-suggest:get` で「設定済みか」と末尾 4 文字だけを返す。
  *
+ * 分岐TODOの検出 (有効 / 閾値) も同じ設定画面で持つ。鍵は共用。
+ *
  * 鍵の優先順: 設定画面 (settings) > 環境変数 OPENROUTER_API_KEY > ~/.config/openrouter/api-key
  */
 
@@ -16,10 +18,15 @@ export const BOARD_SUGGEST_SETTING_KEYS = {
   apiKey: "board_suggest_api_key",
   threshold: "board_suggest_threshold",
   enabled: "board_suggest_enabled",
+  todoEnabled: "branch_todo_enabled",
+  todoThreshold: "branch_todo_threshold",
 } as const;
 
 /** Jev の noul がこの値以上なら動く。0.5 付近は「分からない」なので高めに置く */
 export const BOARD_SUGGEST_DEFAULT_THRESHOLD = 0.7;
+
+/** 分岐TODOの既定の閾値。ボード提案と同じく 0.5 付近は「分からない」なので高めに置く */
+export const BRANCH_TODO_DEFAULT_THRESHOLD = 0.7;
 
 /**
  * `/api/settings` に載せない設定キー。鍵やトークンはブラウザへ配る必要が無い
@@ -59,11 +66,45 @@ export function resolveBoardSuggestApiKey(
   return fromFile ? { key: fromFile, source: "file" } : null;
 }
 
-export function readBoardSuggestThreshold(settings: SettingsReader): number {
-  const saved = settings.getSetting(BOARD_SUGGEST_SETTING_KEYS.threshold);
+function readProbability(
+  settings: SettingsReader,
+  key: string,
+  fallback: number
+): number {
+  const saved = settings.getSetting(key);
   return typeof saved === "number" && saved >= 0 && saved <= 1
     ? saved
-    : BOARD_SUGGEST_DEFAULT_THRESHOLD;
+    : fallback;
+}
+
+function isProbability(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 1
+  );
+}
+
+export function readBoardSuggestThreshold(settings: SettingsReader): number {
+  return readProbability(
+    settings,
+    BOARD_SUGGEST_SETTING_KEYS.threshold,
+    BOARD_SUGGEST_DEFAULT_THRESHOLD
+  );
+}
+
+export function readBranchTodoThreshold(settings: SettingsReader): number {
+  return readProbability(
+    settings,
+    BOARD_SUGGEST_SETTING_KEYS.todoThreshold,
+    BRANCH_TODO_DEFAULT_THRESHOLD
+  );
+}
+
+/** 既定は有効。明示的に false が保存されているときだけ止まる */
+export function readBranchTodoEnabled(settings: SettingsReader): boolean {
+  return settings.getSetting(BOARD_SUGGEST_SETTING_KEYS.todoEnabled) !== false;
 }
 
 /** 既定は有効。明示的に false が保存されているときだけ止まる */
@@ -84,6 +125,8 @@ export function readBoardSuggestConfig(
     keyConfigured: resolved !== null,
     keyHint: resolved ? resolved.key.slice(-4) : null,
     keySource: resolved?.source ?? null,
+    todoEnabled: readBranchTodoEnabled(settings),
+    todoThreshold: readBranchTodoThreshold(settings),
   };
 }
 
@@ -106,22 +149,27 @@ export function validateBoardSuggestPatch(
   const set: Record<string, unknown> = {};
   const remove: string[] = [];
 
-  if (p.enabled !== undefined) {
-    if (typeof p.enabled !== "boolean") {
+  for (const [field, key] of [
+    ["enabled", BOARD_SUGGEST_SETTING_KEYS.enabled],
+    ["todoEnabled", BOARD_SUGGEST_SETTING_KEYS.todoEnabled],
+  ] as const) {
+    const value = p[field];
+    if (value === undefined) continue;
+    if (typeof value !== "boolean") {
       return { ok: false, error: "enabled は真偽値です" };
     }
-    set[BOARD_SUGGEST_SETTING_KEYS.enabled] = p.enabled;
+    set[key] = value;
   }
-  if (p.threshold !== undefined) {
-    if (
-      typeof p.threshold !== "number" ||
-      !Number.isFinite(p.threshold) ||
-      p.threshold < 0 ||
-      p.threshold > 1
-    ) {
+  for (const [field, key] of [
+    ["threshold", BOARD_SUGGEST_SETTING_KEYS.threshold],
+    ["todoThreshold", BOARD_SUGGEST_SETTING_KEYS.todoThreshold],
+  ] as const) {
+    const value = p[field];
+    if (value === undefined) continue;
+    if (!isProbability(value)) {
       return { ok: false, error: "閾値は 0〜1 の数値です" };
     }
-    set[BOARD_SUGGEST_SETTING_KEYS.threshold] = p.threshold;
+    set[key] = value;
   }
   if (p.apiKey !== undefined) {
     if (p.apiKey === null) {

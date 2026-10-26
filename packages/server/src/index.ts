@@ -3163,7 +3163,7 @@ export async function startServer(
         for (const key of validated.remove) db.deleteSetting(key);
         const config = readBoardSuggestConfig(db);
         console.log(
-          `[BoardSuggest] 設定を更新: ${config.enabled ? "有効" : "無効"} / 閾値 ${config.threshold} / 鍵 ${config.keyConfigured ? `あり (${config.keySource})` : "なし"}`
+          `[BoardSuggest] 設定を更新: ${config.enabled ? "有効" : "無効"} / 閾値 ${config.threshold} / 分岐TODO ${config.todoEnabled ? "有効" : "無効"} (閾値 ${config.todoThreshold}) / 鍵 ${config.keyConfigured ? `あり (${config.keySource})` : "なし"}`
         );
         callback({ ok: true, config });
       } catch (e) {
