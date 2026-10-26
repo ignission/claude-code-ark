@@ -2,7 +2,7 @@
  * MobileSessionView - モバイル用セッション詳細画面
  *
  * ヘッダー (戻る・主ラベル・ブランチ・状態チップ・操作メニュー) と、その直下の状態の帯、
- * 「会話 / 図」の本文と下部バー、それらに重ねる端末の窓で組む。
+ * 「会話 / 図 / TODO」の本文と下部バー、それらに重ねる端末の窓で組む。
  * 2つのモードの本文はマウントしたまま `display` で切り替える (図のiframeを張り直さない)。
  *
  * 端末はモードではない。会話の入力欄の上の帯 (画面末尾) を押すと、この画面の全面に
@@ -281,7 +281,7 @@ export function MobileSessionView({
   const { height: viewportHeight, isKeyboardVisible } = useVisualViewport();
   const [inputValue, setInputValue] = useState("");
   const [iframeKey, setIframeKey] = useState(0);
-  // 表示モード (会話 / 図)。既定は会話。最後の選択を永続化。
+  // 表示モード (会話 / 図 / TODO)。既定は会話。最後の選択を永続化。
   const [viewMode, setViewMode] =
     useState<MobileSessionViewMode>(readSavedViewMode);
   // 端末の窓の開閉。保存せず、この詳細が表示中でなくなったら閉じる
@@ -417,7 +417,7 @@ export function MobileSessionView({
     isConnected,
     viewMode,
   });
-  // 下部バーの上段に置く「会話 / 図」。2つのモードの本文はマウントしたまま
+  // 下部バーの上段に置く「会話 / 図 / TODO」。2つのモードの本文はマウントしたまま
   // `display` で切り替えるので、同じ要素を各モードのバーに置く (表示されるのは1つだけ)。
   // 角丸は会話モードのガラスバー (28px角丸・内側の余白8px) と同心になるよう丸くする
   const viewModeSegment = (

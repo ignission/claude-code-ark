@@ -187,7 +187,7 @@ describe("CommandPalette", () => {
     expect(closed[0].command).toEqual({ type: "work-tab", tab: "git" });
   });
 
-  it("ボード提案の設定は、フォーカスをそのダイアログに任せる", async () => {
+  it("ボード提案と分岐TODOの設定は、フォーカスをそのダイアログに任せる", async () => {
     const props = setup();
     await open();
     await type("ボード提案");

@@ -323,7 +323,7 @@ afterEach(() => {
 });
 
 describe("mobile session view mode", () => {
-  it("chat / board を正規化し、保存済みの terminal と不正値は chat として読む", () => {
+  it("chat / board / todo を正規化し、保存済みの terminal と不正値は chat として読む", () => {
     expect(MOBILE_SESSION_VIEW_MODES.map(option => option.value)).toEqual([
       "chat",
       "board",

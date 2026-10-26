@@ -19,6 +19,8 @@ interface TodoPaneProps {
   worktreeLabel: (worktreePath: string) => string | null;
   /** 「すべて」で別の worktree の見出しを押したとき、そのセッションを開く */
   onOpenWorktree?: (worktreePath: string) => void;
+  /** その worktree にセッションがあって開けるか。省略時は開ける。false なら見出しはボタンにしない */
+  canOpenWorktree?: (worktreePath: string) => boolean;
 }
 
 type Scope = "session" | "all";
@@ -173,7 +175,9 @@ export function TodoPane(props: TodoPaneProps) {
             return (
               <section key={worktreePath} className="mb-3">
                 <h3 className="px-2 py-1 text-xs font-semibold text-muted-foreground">
-                  {label !== null && props.onOpenWorktree ? (
+                  {label !== null &&
+                  props.onOpenWorktree &&
+                  (props.canOpenWorktree?.(worktreePath) ?? true) ? (
                     <button
                       type="button"
                       onClick={() => props.onOpenWorktree?.(worktreePath)}

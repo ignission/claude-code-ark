@@ -113,6 +113,18 @@ describe("TodoPane", () => {
     expect(onOpenWorktree).toHaveBeenCalledWith("/w/a");
   });
 
+  it("canOpenWorktree が false の見出しはボタンにしない", () => {
+    const onOpenWorktree = vi.fn();
+    mount({
+      todos: [base({ id: "1" })],
+      onOpenWorktree,
+      canOpenWorktree: () => false,
+    });
+    click(byText("button", "すべて"));
+    expect(container.querySelector("h3 button")).toBeNull();
+    expect(container.querySelector("h3")?.textContent).toBe("a");
+  });
+
   it("未完了が無ければ空の案内を出す", () => {
     mount({ todos: [base({ id: "2", doneAt: 1 })] });
     expect(container.textContent).toContain("保留にした話題はありません");

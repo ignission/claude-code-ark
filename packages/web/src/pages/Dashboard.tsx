@@ -77,6 +77,7 @@ import {
   isNotificationEnabledForSession,
   normalizeSessionNotificationSettings,
 } from "@/lib/session-notifications";
+import { todoWorktreeLabel } from "@/lib/todo-worktree-label";
 import { getBaseName, isPathWithin } from "@/utils/pathUtils";
 import {
   findRepoForSession,
@@ -263,8 +264,9 @@ export default function Dashboard() {
   // 分岐TODO。全セッションぶんを 1 回だけ購読し、各ペインへ配る
   const todos = useTodos(socket);
 
-  // TODO の見出しの表示名。サイドバーと通知と同じ出所 (sessionNotificationLabels)。
-  // セッションが無い (worktree を消した) ときは null
+  // TODO の見出しの表示名。セッションがあればサイドバーと通知と同じ出所 (sessionNotificationLabels)、
+  // セッションを止めただけで worktree が残っていれば自分で付けた名前かブランチ名。
+  // worktree 自体が無い (消した) ときだけ null
   const worktreeLabelOf = useCallback(
     (worktreePath: string): string | null => {
       for (const session of sessions.values()) {
@@ -272,9 +274,9 @@ export default function Dashboard() {
           return sessionNotificationLabels.get(session.id) ?? null;
         }
       }
-      return null;
+      return todoWorktreeLabel(worktreePath, worktrees, worktreeDisplayNames);
     },
-    [sessions, sessionNotificationLabels]
+    [sessions, sessionNotificationLabels, worktrees, worktreeDisplayNames]
   );
 
   const handleOpenSessionFromNotification = useCallback(
@@ -751,6 +753,13 @@ export default function Dashboard() {
     [sessions, handleSelectSession]
   );
 
+  // セッションがある worktree だけ、TODO の見出しから開ける
+  const canOpenWorktreeSession = useCallback(
+    (worktreePath: string) =>
+      [...sessions.values()].some(s => s.worktreePath === worktreePath),
+    [sessions]
+  );
+
   // セッション自動選択
   useEffect(() => {
     // ブラウザ・画面の選択中はリセットしない
@@ -978,6 +987,7 @@ export default function Dashboard() {
               onRemove={todos.remove}
               worktreeLabel={worktreeLabelOf}
               onOpenWorktree={openWorktree}
+              canOpenWorktree={canOpenWorktreeSession}
             />
           )}
           worktreeDisplayNames={worktreeDisplayNames}
@@ -1301,6 +1311,7 @@ export default function Dashboard() {
                             onRemove={todos.remove}
                             worktreeLabel={worktreeLabelOf}
                             onOpenWorktree={openWorktreeSession}
+                            canOpenWorktree={canOpenWorktreeSession}
                           />
                         )}
                         todoOpenCount={

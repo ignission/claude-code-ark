@@ -95,7 +95,7 @@ export const PALETTE_COMMANDS: readonly PaletteItem[] = [
   command(
     "board-suggest",
     "ボード提案と分岐TODOの設定",
-    "jev board suggest settings",
+    "jev board suggest settings todo 分岐",
     {
       type: "board-suggest-settings",
     }
