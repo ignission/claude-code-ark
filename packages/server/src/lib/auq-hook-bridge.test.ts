@@ -40,6 +40,7 @@ const EXPECTED_BOARD_CONTEXT = [
   "ユーザーが「コメントした」「図を見て」等と言ったら、board_comments で未解決コメントを読み、引用された箇所を直してから board_open で開き直し、board_reply で対応内容を返信すること。",
   "書き込む直前に parent directory が存在しない場合だけ作成する。.diagram.html を書く前に必ず board_authoring_guide で規約を取得し、その内容に従う。",
   'doc の本文ブロックに自分の書き手印は付けない（data-ark-author="claude" は廃止。ボードにバッジも出ない）。data-ark-author="human" は人間が直接編集した葉ブロックへ編集層が自動で付ける印で（誤字修正でも付く、容器ブロックには付かない）、読むときは「人間が手を入れた本文」として扱う。自分でこれを付けてよいのは、人間がコメントや会話で下した決定を転記するときだけ。決定かどうかは属性ではなく本文の記述で判断する。',
+  "話題を保留・後回し・別件にしたとき、またはユーザーに「あとで」「TODO に入れて」と言われたときは、todo_add でこのセッションの TODO に足す (todo_list で既存を確かめてから)。TODO は人間が後で読むためのもので、完了と削除は人間が行う。",
 ].join("\n");
 
 function createDataDir(): string {
@@ -114,7 +115,7 @@ describe("AuqHookBridge - hooks settings", () => {
     expect(fs.statSync(hookPath).mode & 0o777).toBe(0o600);
   });
 
-  it("SessionStart hook は元の 5 文と説明図・authorship 規約の各 1 文を改行区切りの additionalContext として返す", () => {
+  it("SessionStart hook は元の 5 文と説明図・authorship 規約・分岐TODOの各 1 文を改行区切りの additionalContext として返す", () => {
     createDataDir();
     const settingsPath = new AuqHookBridge().writeSettingsFile(4012);
     const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
@@ -138,10 +139,11 @@ describe("AuqHookBridge - hooks settings", () => {
     expect(BOARD_SESSION_CONTEXT).toBe(EXPECTED_BOARD_CONTEXT);
     expect(
       output.hookSpecificOutput.additionalContext.split("\n")
-    ).toHaveLength(7);
+    ).toHaveLength(8);
     expect(output.hookSpecificOutput.additionalContext).toContain(
       'data-ark-author="human"'
     );
+    expect(output.hookSpecificOutput.additionalContext).toContain("todo_add");
   });
 });
 
