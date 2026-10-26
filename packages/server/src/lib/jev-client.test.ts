@@ -127,7 +127,7 @@ describe("decideDeferredTopic", () => {
     ).rejects.toThrow("想定外");
   });
 
-  it("人の発話は末尾2000文字に切り、全体は JEV_MAX_STATE_CHARS の末尾に切る", async () => {
+  it("人の発話は末尾2000文字に切り、返答は発話とラベルを残して JEV_MAX_STATE_CHARS に収まるよう末尾から切る", async () => {
     const fetchImpl = fakeFetch({ answers: { deferred: { noul: 0.1 } } });
     await decideDeferredTopic(
       `X${"p".repeat(2000)}`,
@@ -136,8 +136,10 @@ describe("decideDeferredTopic", () => {
       fetchImpl
     );
     const { state } = fetchImpl.calls[0] as { state: string };
+    const head = `User: ${"p".repeat(2000)}\n\nAssistant: `;
     expect(state.length).toBe(JEV_MAX_STATE_CHARS);
-    expect(state).toBe("r".repeat(JEV_MAX_STATE_CHARS));
+    expect(state.startsWith(head)).toBe(true);
+    expect(state).toBe(head + "r".repeat(JEV_MAX_STATE_CHARS - head.length));
     const short = fakeFetch({ answers: { deferred: { noul: 0.1 } } });
     await decideDeferredTopic(`X${"p".repeat(2000)}`, "r", "key", short);
     const { state: s2 } = short.calls[0] as { state: string };

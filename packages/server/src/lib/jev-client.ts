@@ -189,7 +189,10 @@ export async function decideDeferredTopic(
   apiKey: string,
   fetchImpl: FetchLike = fetch as unknown as FetchLike
 ): Promise<DeferredDecision> {
-  const state = `User: ${prompt.slice(-DEFERRED_PROMPT_MAX_CHARS)}\n\nAssistant: ${reply}`;
+  // 発話とラベルの長さを先に確保し、残りの文字数で返答を末尾から切る (callDecisions の末尾 slice でラベルが消えないように)
+  const head = `User: ${prompt.slice(-DEFERRED_PROMPT_MAX_CHARS)}\n\nAssistant: `;
+  const room = Math.max(0, JEV_MAX_STATE_CHARS - head.length);
+  const state = head + (room > 0 ? reply.slice(-room) : "");
   const { answers, cost, raw } = await callDecisions(
     state,
     DEFERRED_QUESTIONS,
