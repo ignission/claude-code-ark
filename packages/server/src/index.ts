@@ -50,6 +50,8 @@ import {
   readBoardSuggestConfig,
   readBoardSuggestEnabled,
   readBoardSuggestThreshold,
+  readBranchTodoEnabled,
+  readBranchTodoThreshold,
   resolveBoardSuggestApiKey,
   validateBoardSuggestPatch,
 } from "./lib/board-suggest-config.js";
@@ -114,7 +116,10 @@ import { createGitViewHandlers } from "./lib/git-view-handlers.js";
 import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
 import { htmlScreenshotter } from "./lib/html-screenshotter.js";
-import { decideBoardSuggestion } from "./lib/jev-client.js";
+import {
+  decideBoardSuggestion,
+  decideDeferredTopic,
+} from "./lib/jev-client.js";
 import { jsonlTailManager } from "./lib/jsonl-tail-manager.js";
 import {
   checkManagedWorktree,
@@ -593,6 +598,7 @@ export async function startServer(
   // Jev が「ボードのほうが読みやすい」と判定したら block を返し、Claude 自身に
   // デッキを描かせる (tmux には何も送らない)。有効/閾値/鍵は設定画面
   // (board-suggest:get/set) で変えられ、次のターンから効く。鍵が無い間は何もしない。
+  // 分岐TODOの判定も同じ受け口で行う。
   const boardSuggestFeatureOn =
     process.env.ARK_FEATURE_BOARD_SUGGEST !== "false";
   const boardSuggestStop = new BoardSuggestStopHandler({
@@ -600,6 +606,10 @@ export async function startServer(
     apiKey: () => resolveBoardSuggestApiKey(db)?.key ?? null,
     threshold: () => readBoardSuggestThreshold(db),
     decide: (text, apiKey) => decideBoardSuggestion(text, apiKey),
+    todoEnabled: () => boardSuggestFeatureOn && readBranchTodoEnabled(db),
+    todoThreshold: () => readBranchTodoThreshold(db),
+    decideDeferred: (prompt, reply, apiKey) =>
+      decideDeferredTopic(prompt, reply, apiKey),
     readTranscript: transcriptPath => readTranscriptTail(transcriptPath),
   });
   app.post(
