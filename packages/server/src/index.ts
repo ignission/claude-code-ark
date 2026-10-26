@@ -21,7 +21,6 @@ import {
   type BridgeSnapshot,
   type ClientToServerEvents,
   type DiagramListResponse,
-  type ManagedSession,
   MESSAGE_SHORTCUT_MAX_LENGTH,
   type ServerToClientEvents,
   type SessionGridSnapshot,
@@ -166,6 +165,7 @@ import {
   tmuxManager,
 } from "./lib/tmux-manager.js";
 import { describeTmuxReadFailure } from "./lib/tmux-read-result.js";
+import { createTodoHandlers } from "./lib/todo-handlers.js";
 import { TunnelManager } from "./lib/tunnel.js";
 import { UsageCollector } from "./lib/usage-collector.js";
 import { formatVoiceDiagnostic } from "./lib/voice-diagnostic.js";
@@ -758,6 +758,8 @@ export async function startServer(
   };
   // TODO が変わったら全クライアントに読み直させる (一覧は小さいので差分は配らない)
   const emitTodoChanged = () => io.emit("todo:changed");
+  // socket に依存しないので connection の外で 1 回だけ作る (足すのは Claude の todo_add だけ)
+  const todoHandlers = createTodoHandlers({ db, onChanged: emitTodoChanged });
   const boardDeps: BoardMcpDeps = {
     async addTodo(worktreePath, input) {
       // TODO は registry 登録時の生パスで持つ (クライアントの session.worktreePath と同じ値)
@@ -2659,6 +2661,10 @@ export async function startServer(
     socket.on("git:commit", gitHandlers.commit);
     socket.on("git:file-diff", gitHandlers.fileDiff);
     socket.on("git:fingerprint", gitHandlers.fingerprint);
+    // 分岐TODO (人間の操作。足すのは Claude の todo_add)
+    socket.on("todo:list", todoHandlers.list);
+    socket.on("todo:set-done", todoHandlers.setDone);
+    socket.on("todo:delete", todoHandlers.delete);
     // Git タブの書き込み操作 (ブランチと fetch / pull / push)
     const gitOps = createGitOpsHandlers({
       getWorktreePath: sessionId =>
