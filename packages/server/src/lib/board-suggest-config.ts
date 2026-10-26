@@ -156,7 +156,7 @@ export function validateBoardSuggestPatch(
     const value = p[field];
     if (value === undefined) continue;
     if (typeof value !== "boolean") {
-      return { ok: false, error: "enabled は真偽値です" };
+      return { ok: false, error: `${field} は真偽値です` };
     }
     set[key] = value;
   }

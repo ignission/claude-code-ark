@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   normalizeTodoText,
   SessionDatabase,
+  TODO_NOTE_MAX_LENGTH,
   TODO_TEXT_MAX_LENGTH,
 } from "./database.js";
 
@@ -24,6 +25,14 @@ describe("SessionDatabase: todos", () => {
 
   beforeEach(() => {
     db = new SessionDatabase(":memory:");
+  });
+
+  it("上限で切った結果の末尾に空白を残さない", () => {
+    const text = `${"あ".repeat(TODO_TEXT_MAX_LENGTH - 1)} い`;
+    expect(normalizeTodoText(text)).toBe("あ".repeat(TODO_TEXT_MAX_LENGTH - 1));
+    const note = `${"あ".repeat(TODO_NOTE_MAX_LENGTH - 1)} い`;
+    const todo = db.addTodo({ worktreePath: "/w", text: "a", note });
+    expect(todo.note).toBe("あ".repeat(TODO_NOTE_MAX_LENGTH - 1));
   });
 
   it("足した TODO を worktree ごとに返す", () => {

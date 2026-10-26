@@ -148,7 +148,7 @@ describe("validateBoardSuggestPatch", () => {
     });
     expect(validateBoardSuggestPatch({ todoEnabled: "yes" })).toEqual({
       ok: false,
-      error: "enabled は真偽値です",
+      error: "todoEnabled は真偽値です",
     });
   });
 

@@ -48,7 +48,7 @@ export const TODO_NOTE_MAX_LENGTH = 1000;
 
 /** TODO の本文は 1 行。改行とタブを空白に畳み、上限で切る */
 export function normalizeTodoText(text: string): string {
-  return text.replace(/\s+/g, " ").trim().slice(0, TODO_TEXT_MAX_LENGTH);
+  return text.replace(/\s+/g, " ").slice(0, TODO_TEXT_MAX_LENGTH).trim();
 }
 
 /** 分岐TODOの行データ */
@@ -1412,7 +1412,7 @@ export class SessionDatabase {
   }): Todo {
     const text = normalizeTodoText(input.text);
     if (!text) throw new Error("TODO の本文が空です");
-    const note = input.note?.trim().slice(0, TODO_NOTE_MAX_LENGTH) || null;
+    const note = input.note?.slice(0, TODO_NOTE_MAX_LENGTH).trim() || null;
     const row: TodoRow = {
       id: nanoid(),
       worktree_path: input.worktreePath,
