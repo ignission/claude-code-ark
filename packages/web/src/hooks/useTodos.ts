@@ -23,9 +23,12 @@ export function useTodos(socket: TypedSocket | null) {
   useEffect(() => {
     if (!socket || !api) return;
     let cancelled = false;
+    // 読み直しは重なりうる。最後に出した要求の返答だけを反映する
+    let latestSeq = 0;
     const reload = () => {
+      const seq = ++latestSeq;
       api.list().then(res => {
-        if (cancelled) return;
+        if (cancelled || seq !== latestSeq) return;
         if (res.ok) {
           setTodos(res.todos);
           setError(null);

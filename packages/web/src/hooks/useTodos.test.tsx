@@ -107,6 +107,43 @@ describe("useTodos", () => {
     expect(calls).toBe(2);
   });
 
+  it("読み直しが重なったとき、先に出した要求の返答が遅れて届いても新しい一覧が残る", async () => {
+    const pending: Handler[] = [];
+    const handlers = new Map<string, Set<Handler>>();
+    const socket = {
+      on(event: string, handler: Handler) {
+        if (!handlers.has(event)) handlers.set(event, new Set());
+        handlers.get(event)?.add(handler);
+      },
+      off(event: string, handler: Handler) {
+        handlers.get(event)?.delete(handler);
+      },
+      timeout: () => ({
+        emit(_event: string, _payload: unknown, cb: Handler) {
+          pending.push(cb);
+        },
+      }),
+    };
+    container = document.createElement("div");
+    root = createRoot(container);
+    await act(async () =>
+      // biome-ignore lint/suspicious/noExplicitAny: 偽socketを渡すため
+      root?.render(<Harness socket={socket as any} />)
+    );
+    // 初回の読み込み (pending[0]) が返らないうちに todo:changed で2回目を出す
+    act(() => {
+      for (const h of handlers.get("todo:changed") ?? []) h();
+    });
+    expect(pending).toHaveLength(2);
+
+    // 新しい要求の返答が先に届き、古い要求の返答が最後に届く
+    await act(async () =>
+      pending[1](null, { ok: true, todos: [todo("new", "/w/a")] })
+    );
+    await act(async () => pending[0](null, { ok: true, todos: [] }));
+    expect(latest.todos.map(t => t.id)).toEqual(["new"]);
+  });
+
   it("setDone の失敗を error に入れ、楽観更新はしない", async () => {
     const socket = fakeSocket(event =>
       event === "todo:list"
