@@ -21,6 +21,7 @@ import {
   type ScreenPatch,
   type Session,
   type SessionStatus,
+  type Todo,
   type WorktreeDisplayName,
   type WorktreeProfileLink,
 } from "@ark/shared";
@@ -40,6 +41,35 @@ const LEGACY_DIAGRAM_PREFIX = "docs/diagrams/";
 // const で固定せず `getDbPath()` 経由で都度評価する。これは F3 review 指摘事項。
 function getDbPath(): string {
   return join(getDataDir(), "sessions.db");
+}
+
+export const TODO_TEXT_MAX_LENGTH = 200;
+export const TODO_NOTE_MAX_LENGTH = 1000;
+
+/** TODO の本文は 1 行。改行とタブを空白に畳み、上限で切る */
+export function normalizeTodoText(text: string): string {
+  return text.replace(/\s+/g, " ").trim().slice(0, TODO_TEXT_MAX_LENGTH);
+}
+
+/** 分岐TODOの行データ */
+interface TodoRow {
+  id: string;
+  worktree_path: string;
+  text: string;
+  note: string | null;
+  created_at: number;
+  done_at: number | null;
+}
+
+function rowToTodo(row: TodoRow): Todo {
+  return {
+    id: row.id,
+    worktreePath: row.worktree_path,
+    text: row.text,
+    note: row.note,
+    createdAt: row.created_at,
+    doneAt: row.done_at,
+  };
 }
 
 /** データベースに保存されるセッションの行データ */
@@ -389,6 +419,20 @@ export class SessionDatabase {
       );
       CREATE INDEX IF NOT EXISTS idx_message_shortcuts_sort
         ON message_shortcuts (sort_order, created_at);
+    `);
+
+    // 分岐TODO。worktree を消しても行は残す (全体一覧で「削除済み」として出す)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS todos (
+        id TEXT PRIMARY KEY,
+        worktree_path TEXT NOT NULL,
+        text TEXT NOT NULL,
+        note TEXT,
+        created_at INTEGER NOT NULL,
+        done_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_todos_worktree
+        ON todos (worktree_path, created_at);
     `);
 
     // マイグレーション: 旧 label 列を削除する。
@@ -1355,6 +1399,68 @@ export class SessionDatabase {
   deleteMessageShortcut(id: string): void {
     const stmt = this.db.prepare("DELETE FROM message_shortcuts WHERE id = ?");
     stmt.run(id);
+  }
+
+  // ============================================================
+  // 分岐TODO
+  // ============================================================
+
+  addTodo(input: {
+    worktreePath: string;
+    text: string;
+    note?: string | null;
+  }): Todo {
+    const text = normalizeTodoText(input.text);
+    if (!text) throw new Error("TODO の本文が空です");
+    const note = input.note?.trim().slice(0, TODO_NOTE_MAX_LENGTH) || null;
+    const row: TodoRow = {
+      id: nanoid(),
+      worktree_path: input.worktreePath,
+      text,
+      note,
+      created_at: Date.now(),
+      done_at: null,
+    };
+    this.db
+      .prepare(
+        `INSERT INTO todos (id, worktree_path, text, note, created_at, done_at)
+         VALUES (@id, @worktree_path, @text, @note, @created_at, @done_at)`
+      )
+      .run(row);
+    return rowToTodo(row);
+  }
+
+  /** 未完了を先に、それぞれ足した順で返す */
+  listTodos(
+    filter: { worktreePath?: string; includeDone?: boolean } = {}
+  ): Todo[] {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter.worktreePath !== undefined) {
+      where.push("worktree_path = ?");
+      params.push(filter.worktreePath);
+    }
+    if (filter.includeDone === false) where.push("done_at IS NULL");
+    const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM todos ${whereSql}
+         ORDER BY (done_at IS NOT NULL) ASC, created_at ASC, rowid ASC`
+      )
+      .all(...params) as TodoRow[];
+    return rows.map(rowToTodo);
+  }
+
+  setTodoDone(id: string, done: boolean): boolean {
+    const result = this.db
+      .prepare("UPDATE todos SET done_at = ? WHERE id = ?")
+      .run(done ? Date.now() : null, id);
+    return result.changes > 0;
+  }
+
+  deleteTodo(id: string): boolean {
+    const result = this.db.prepare("DELETE FROM todos WHERE id = ?").run(id);
+    return result.changes > 0;
   }
 
   /**
