@@ -45,8 +45,8 @@ export function MobileSessionList({
             size="icon"
             className="h-12 w-12"
             onClick={onOpenBoardSuggestSettings}
-            aria-label="ボード提案の設定"
-            title="ボード提案の設定"
+            aria-label="ボード提案と分岐TODOの設定"
+            title="ボード提案と分岐TODOの設定"
           >
             <SlidersHorizontal className="size-6" />
           </Button>

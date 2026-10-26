@@ -55,6 +55,8 @@ function createBackend(initial: BoardSuggestConfig) {
         ...current,
         enabled: patch.enabled ?? current.enabled,
         threshold: patch.threshold ?? current.threshold,
+        todoEnabled: patch.todoEnabled ?? current.todoEnabled,
+        todoThreshold: patch.todoThreshold ?? current.todoThreshold,
         ...(patch.apiKey === null
           ? { keyConfigured: false, keyHint: null, keySource: null }
           : patch.apiKey
@@ -147,6 +149,8 @@ describe("BoardSuggestSettingsDialog", () => {
     const backend = await mountDialog({
       enabled: true,
       threshold: 0.7,
+      todoEnabled: true,
+      todoThreshold: 0.7,
       keyConfigured: true,
       keyHint: "1234",
       keySource: "file",
@@ -163,19 +167,28 @@ describe("BoardSuggestSettingsDialog", () => {
     const backend = await mountDialog({
       enabled: true,
       threshold: 0.7,
+      todoEnabled: true,
+      todoThreshold: 0.7,
       keyConfigured: false,
       keyHint: null,
       keySource: null,
     });
     setValue(input("board-suggest-threshold"), "0.85");
     await click("保存");
-    expect(backend.saved[0]).toEqual({ enabled: true, threshold: 0.85 });
+    expect(backend.saved[0]).toEqual({
+      enabled: true,
+      threshold: 0.85,
+      todoEnabled: true,
+      todoThreshold: 0.7,
+    });
 
     setValue(input("board-suggest-api-key"), "sk-or-v1-abcdef9876");
     await click("保存");
     expect(backend.saved[1]).toEqual({
       enabled: true,
       threshold: 0.85,
+      todoEnabled: true,
+      todoThreshold: 0.7,
       apiKey: "sk-or-v1-abcdef9876",
     });
     // 保存後は入力欄を空にし、末尾 4 文字だけ出す
@@ -189,6 +202,8 @@ describe("BoardSuggestSettingsDialog", () => {
     const backend = await mountDialog({
       enabled: true,
       threshold: 0.7,
+      todoEnabled: true,
+      todoThreshold: 0.7,
       keyConfigured: true,
       keyHint: "zzzz",
       keySource: "settings",
@@ -207,6 +222,8 @@ describe("BoardSuggestSettingsDialog", () => {
     const backend = await mountDialog({
       enabled: true,
       threshold: 0.7,
+      todoEnabled: true,
+      todoThreshold: 0.7,
       keyConfigured: false,
       keyHint: null,
       keySource: null,
@@ -215,5 +232,28 @@ describe("BoardSuggestSettingsDialog", () => {
     await click("保存");
     expect(backend.saved).toEqual([]);
     expect(document.body.textContent).toContain("閾値は 0〜1 の数値です");
+  });
+
+  it("分岐TODOのスイッチと閾値を保存で送る", async () => {
+    const backend = await mountDialog({
+      enabled: true,
+      threshold: 0.7,
+      todoEnabled: true,
+      todoThreshold: 0.7,
+      keyConfigured: false,
+      keyHint: null,
+      keySource: null,
+    });
+    const toggle = document.getElementById("board-suggest-todo-enabled");
+    await act(async () => {
+      toggle?.click();
+    });
+    setValue(input("board-suggest-todo-threshold"), "0.9");
+    await click("保存");
+    expect(backend.saved[0]).toMatchObject({
+      enabled: true,
+      todoEnabled: false,
+      todoThreshold: 0.9,
+    });
   });
 });

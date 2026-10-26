@@ -654,7 +654,7 @@ export async function startServer(
     console.log(
       startupConfig.keyConfigured
         ? `[BoardSuggest] 鍵あり (${startupConfig.keySource}) / ${startupConfig.enabled ? "有効" : "設定で無効"} / 閾値 ${startupConfig.threshold}`
-        : "[BoardSuggest] 鍵が無いので待機中 (設定画面「ボード提案の設定」か OPENROUTER_API_KEY / ~/.config/openrouter/api-key で有効になる)"
+        : "[BoardSuggest] 鍵が無いので待機中 (設定画面「ボード提案と分岐TODOの設定」か OPENROUTER_API_KEY / ~/.config/openrouter/api-key で有効になる)"
     );
   } else {
     console.log("[BoardSuggest] 無効 (ARK_FEATURE_BOARD_SUGGEST=false)");
