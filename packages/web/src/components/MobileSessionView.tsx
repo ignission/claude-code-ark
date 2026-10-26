@@ -1206,25 +1206,25 @@ export function MobileSessionView({
             {bottomBarTop}
           </div>
         </div>
-      </div>
 
-      {/* TODOモード: 本文は一覧だけ。下部バーは表示モードのセグメントだけ置く */}
-      <div
-        data-testid="mobile-view-todo"
-        className={
-          viewMode === "todo" ? "flex-1 flex flex-col min-h-0" : "hidden"
-        }
-      >
-        <div className="flex min-h-0 flex-1 flex-col">
-          {viewMode === "todo" && todoPane}
-        </div>
+        {/* TODOモード: 本文は一覧だけ。下部バーは表示モードのセグメントだけ置く */}
         <div
-          data-testid="mobile-todo-bar"
-          data-mobile-bottom-bar=""
-          className="shrink-0 border-t border-border bg-card px-3 pt-2"
-          style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
+          data-testid="mobile-view-todo"
+          className={
+            viewMode === "todo" ? "flex-1 flex flex-col min-h-0" : "hidden"
+          }
         >
-          {viewModeSegment}
+          <div className="flex min-h-0 flex-1 flex-col">
+            {viewMode === "todo" && todoPane}
+          </div>
+          <div
+            data-testid="mobile-todo-bar"
+            data-mobile-bottom-bar=""
+            className="shrink-0 border-t border-border bg-card px-3 pt-2"
+            style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
+          >
+            {viewModeSegment}
+          </div>
         </div>
       </div>
 

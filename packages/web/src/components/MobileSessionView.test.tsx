@@ -932,6 +932,24 @@ describe("MobileSessionView の端末の窓", () => {
     expect(document.activeElement).toBe(opener);
   });
 
+  it("窓を開くと、TODOモードの本文と下部バーも操作を受けない", () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "todo");
+    const container = mount(
+      <MobileSessionView
+        {...makeProps()}
+        todoPane={<div data-testid="todo-pane-stub" />}
+      />
+    );
+    const todo = container.querySelector(
+      '[data-testid="mobile-view-todo"]'
+    ) as HTMLElement;
+    expect(todo.closest("[inert]")).toBeNull();
+
+    openTerminalWindow();
+    expect(todo.closest("[inert]")).not.toBeNull();
+    expect(terminalWindowOf(container).closest("[inert]")).toBeNull();
+  });
+
   it("開いている間にもう一度開く合図が来ても、閉じたときの戻り先は最初の要素のまま", () => {
     const props = makeProps();
     const container = mount(<MobileSessionView {...props} />);
