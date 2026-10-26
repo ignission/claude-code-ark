@@ -327,8 +327,11 @@ describe("mobile session view mode", () => {
     expect(MOBILE_SESSION_VIEW_MODES.map(option => option.value)).toEqual([
       "chat",
       "board",
+      "todo",
     ]);
     expect(normalizeMobileSessionViewMode("chat")).toBe("chat");
+    expect(normalizeMobileSessionViewMode("todo")).toBe("todo");
+    expect(readSavedViewMode({ getItem: () => "todo" })).toBe("todo");
     expect(normalizeMobileSessionViewMode("terminal")).toBe("chat");
     expect(normalizeMobileSessionViewMode("board")).toBe("board");
     expect(normalizeMobileSessionViewMode("unknown")).toBe("chat");
@@ -398,7 +401,7 @@ describe("mobile session view mode", () => {
     expect(shouldOpenTerminalForViewerOpen(3, 3)).toBe(false);
   });
 
-  it("現在モードが分かる2択のセグメントを、絵文字を使わずに表示する。「端末」は無い", () => {
+  it("現在モードが分かる3択のセグメントを、絵文字を使わずに表示する。「端末」は無い", () => {
     const markup = renderToStaticMarkup(
       createElement(MobileSessionViewModeToggle, {
         value: "board",
@@ -406,8 +409,8 @@ describe("mobile session view mode", () => {
       })
     );
 
-    expect(markup.match(/<button/g)).toHaveLength(2);
-    for (const label of ["会話", "図"]) {
+    expect(markup.match(/<button/g)).toHaveLength(3);
+    for (const label of ["会話", "図", "TODO"]) {
       expect(markup).toContain(`aria-label="${label}"`);
     }
     expect(markup).not.toContain('aria-label="端末"');
@@ -642,14 +645,37 @@ describe("MobileSessionView の下部バー", () => {
     const bar = board?.querySelector('[data-testid="mobile-board-bar"]');
 
     expect(bar?.hasAttribute("data-mobile-bottom-bar")).toBe(true);
-    // セグメント2つ + 1タップ操作 (アップロードできないので添付と画像は出ない)
-    expect(bar?.querySelectorAll("button")).toHaveLength(4);
+    // セグメント3つ + 1タップ操作 (アップロードできないので添付と画像は出ない)
+    expect(bar?.querySelectorAll("button")).toHaveLength(5);
     expect(
       bar
         ?.querySelector('button[aria-label="図"]')
         ?.getAttribute("aria-pressed")
     ).toBe("true");
     expect(board?.lastElementChild).toBe(bar);
+  });
+
+  it("TODOモードは todoPane を本文に出し、セグメントだけのバーを下に置く", () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "todo");
+    const container = mount(
+      <MobileSessionView
+        {...makeProps()}
+        todoPane={<div data-testid="todo-pane-stub" />}
+      />
+    );
+    const todo = container.querySelector('[data-testid="mobile-view-todo"]');
+    const bar = todo?.querySelector('[data-testid="mobile-todo-bar"]');
+
+    expect(
+      todo?.querySelector('[data-testid="todo-pane-stub"]')
+    ).not.toBeNull();
+    expect(bar?.querySelectorAll("button")).toHaveLength(3);
+    expect(
+      bar
+        ?.querySelector('button[aria-label="TODO"]')
+        ?.getAttribute("aria-pressed")
+    ).toBe("true");
+    expect(todo?.lastElementChild).toBe(bar);
   });
 });
 

@@ -6,6 +6,7 @@ export const MOBILE_SESSION_VIEW_MODES: readonly SegmentOption<MobileSessionView
   [
     { value: "chat", label: "会話", icon: VIEW_MODE_ICONS.chat },
     { value: "board", label: "図", icon: VIEW_MODE_ICONS.board },
+    { value: "todo", label: "TODO", icon: VIEW_MODE_ICONS.todo },
   ];
 
 interface MobileSessionViewModeToggleProps {
@@ -14,7 +15,7 @@ interface MobileSessionViewModeToggleProps {
   className?: string;
 }
 
-/** モバイルの下部バーの上段に置く「会話 / 図」。端末はモードではなく、会話の帯から窓で開く */
+/** モバイルの下部バーの上段に置く「会話 / 図 / TODO」。端末はモードではなく、会話の帯から窓で開く */
 export function MobileSessionViewModeToggle({
   value,
   onChange,

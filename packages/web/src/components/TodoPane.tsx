@@ -65,7 +65,7 @@ function TodoRow({
         type="button"
         aria-label="TODO を消す"
         onClick={() => onRemove(todo.id)}
-        className="inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 hover:bg-background hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
+        className="inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 [@media(hover:none)]:opacity-100 hover:bg-background hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
       >
         <X className="size-3.5" aria-hidden="true" />
       </button>

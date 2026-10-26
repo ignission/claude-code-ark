@@ -72,7 +72,14 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
 import {
@@ -161,6 +168,8 @@ interface PendingFile {
 }
 
 export interface MobileSessionViewProps extends MobileDiagramPaneProps {
+  /** 「TODO」モードの本文 (TodoPane)。無ければ空の本文 */
+  todoPane?: ReactNode;
   /** 会話ビュー（SplitChatPane）の JSONL 購読・AUQ 受信に使う */
   socket: TypedSocket | null;
   /** この詳細が現在表示中か。会話ビューの購読を表示中に限定する */
@@ -259,6 +268,7 @@ export function MobileSessionView({
   deleteDiagramComment,
   sendDiagramComment,
   onSelectDiagram,
+  todoPane,
 }: MobileSessionViewProps) {
   // 親は描画のたびに関数を作り直して渡してくる。端末の窓の中身 (メモ化した要素) が
   // そのたびに作り直されないよう、同一性の変わらない関数で包んでから使う
@@ -1195,6 +1205,26 @@ export function MobileSessionView({
           >
             {bottomBarTop}
           </div>
+        </div>
+      </div>
+
+      {/* TODOモード: 本文は一覧だけ。下部バーは表示モードのセグメントだけ置く */}
+      <div
+        data-testid="mobile-view-todo"
+        className={
+          viewMode === "todo" ? "flex-1 flex flex-col min-h-0" : "hidden"
+        }
+      >
+        <div className="flex min-h-0 flex-1 flex-col">
+          {viewMode === "todo" && todoPane}
+        </div>
+        <div
+          data-testid="mobile-todo-bar"
+          data-mobile-bottom-bar=""
+          className="shrink-0 border-t border-border bg-card px-3 pt-2"
+          style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
+        >
+          {viewModeSegment}
         </div>
       </div>
 

@@ -62,6 +62,8 @@ export interface SessionSectionListProps {
   sessionPreviews: Map<string, string>;
   /** sessionId → ブランチのPRとチェックの集計。PRが無ければエントリが無い */
   sessionPrStatuses: Map<string, SessionPrStatus>;
+  /** sessionId → 未完了の分岐TODOの件数。無ければエントリが無い */
+  sessionTodoCounts?: Map<string, number>;
   selectedSessionId: string | null;
   /** worktreePath → 表示名 */
   worktreeDisplayNames?: Map<string, string>;
@@ -127,6 +129,7 @@ export function SessionSectionList({
   sessionLastUpdatedAt,
   sessionPreviews,
   sessionPrStatuses,
+  sessionTodoCounts,
   selectedSessionId,
   worktreeDisplayNames,
   capabilities,
@@ -320,6 +323,9 @@ export function SessionSectionList({
           entry.session
             ? (sessionPrStatuses.get(entry.session.id) ?? null)
             : null
+        }
+        todoCount={
+          entry.session ? (sessionTodoCounts?.get(entry.session.id) ?? 0) : 0
         }
         previewText={
           entry.session ? (sessionPreviews.get(entry.session.id) ?? "") : ""

@@ -78,6 +78,8 @@ export interface SessionListRowProps {
   previewText: string;
   /** ブランチのPRとチェックの集計。PRが無ければnull */
   prStatus: SessionPrStatus | null;
+  /** 未完了の分岐TODOの件数。0なら出さない */
+  todoCount?: number;
   /** プロファイルのチップ。未割り当てならnull */
   profile: SessionRowProfile | null;
   /** 起動後にプロファイルの割り当てが変わった (再起動が要る) */
@@ -99,6 +101,7 @@ export function SessionListRow({
   displayName,
   previewText,
   prStatus,
+  todoCount = 0,
   profile,
   staleProfile,
   selected,
@@ -307,7 +310,7 @@ export function SessionListRow({
               </span>
             )}
           </div>
-          {(profile || badge || detailSegments.length > 0) && (
+          {(profile || badge || todoCount > 0 || detailSegments.length > 0) && (
             <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[13px] text-muted-foreground">
               {profile && (
                 <span
@@ -337,6 +340,17 @@ export function SessionListRow({
                 >
                   {badge.text}
                 </a>
+              )}
+              {todoCount > 0 && (
+                <span
+                  role="img"
+                  data-testid="session-row-todo"
+                  aria-label={`未完了の TODO ${todoCount} 件`}
+                  title={`未完了の TODO ${todoCount} 件`}
+                  className="shrink-0 rounded-full bg-muted px-1.5 text-[11px] leading-4 text-muted-foreground"
+                >
+                  {todoCount}
+                </span>
               )}
               <span
                 data-testid="session-row-detail"

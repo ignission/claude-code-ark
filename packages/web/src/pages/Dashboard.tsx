@@ -728,6 +728,16 @@ export default function Dashboard() {
     setSelectedSessionId(id);
   }, []);
 
+  // サイドバーとモバイルの一覧の行に出す、未完了の TODO の件数 (キーは sessionId)
+  const sessionTodoCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const session of sessions.values()) {
+      const count = todos.openCountByWorktree.get(session.worktreePath);
+      if (count) counts.set(session.id, count);
+    }
+    return counts;
+  }, [sessions, todos.openCountByWorktree]);
+
   // TODO の見出しから、その worktree のセッションをサイドバーで選んだときと同じ操作で開く
   const openWorktreeSession = useCallback(
     (worktreePath: string) => {
@@ -958,6 +968,18 @@ export default function Dashboard() {
           sessionPlanLimits={sessionPlanLimits}
           sessionPreviews={sessionPreviews}
           sessionPrStatuses={sessionPrStatuses}
+          sessionTodoCounts={sessionTodoCounts}
+          renderTodoPane={(session, openWorktree) => (
+            <TodoPane
+              todos={todos.todos}
+              worktreePath={session.worktreePath}
+              error={todos.error}
+              onSetDone={todos.setDone}
+              onRemove={todos.remove}
+              worktreeLabel={worktreeLabelOf}
+              onOpenWorktree={openWorktree}
+            />
+          )}
           worktreeDisplayNames={worktreeDisplayNames}
           onSetWorktreeDisplayName={setWorktreeDisplayName}
           capabilities={capabilities}
@@ -1019,6 +1041,7 @@ export default function Dashboard() {
               sessionLastUpdatedAt={sessionLastUpdatedAt}
               sessionPreviews={sessionPreviews}
               sessionPrStatuses={sessionPrStatuses}
+              sessionTodoCounts={sessionTodoCounts}
               selectedSessionId={selectedSessionId}
               worktreeDisplayNames={worktreeDisplayNames}
               capabilities={capabilities}

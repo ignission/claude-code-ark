@@ -1,11 +1,15 @@
 /**
  * モバイルのセッション画面の表示モードと、その保存。
  *
- * モードは「会話 / 図」の2つ。端末はモードではなく、会話の帯から開く窓で見せる
+ * モードは「会話 / 図 / TODO」の3つ。端末はモードではなく、会話の帯から開く窓で見せる
  * (開閉は保存しない)。以前の「端末」モードの保存値は、不正値と同じく会話として読む。
  */
 
-export const MOBILE_SESSION_VIEW_MODE_VALUES = ["chat", "board"] as const;
+export const MOBILE_SESSION_VIEW_MODE_VALUES = [
+  "chat",
+  "board",
+  "todo",
+] as const;
 
 export type MobileSessionViewMode =
   (typeof MOBILE_SESSION_VIEW_MODE_VALUES)[number];

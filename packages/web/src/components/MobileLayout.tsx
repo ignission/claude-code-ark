@@ -199,6 +199,13 @@ interface MobileLayoutProps {
   /** session:previews由来の端末の最後の内容行 (一覧の2行目) */
   sessionPreviews: Map<string, string>;
   sessionPrStatuses: Map<string, SessionPrStatus>;
+  /** sessionId → 未完了の分岐TODOの件数 */
+  sessionTodoCounts?: Map<string, number>;
+  /** 「TODO」モードの本文。他の worktree の見出しからセッションを開く操作を受け取る */
+  renderTodoPane?: (
+    session: ManagedSession,
+    openWorktree: (worktreePath: string) => void
+  ) => ReactNode;
   /** worktreePath → 表示名 (一覧の行とTask 10のヘッダーの主ラベル) */
   worktreeDisplayNames: Map<string, string>;
   onSetWorktreeDisplayName?: (
@@ -286,6 +293,8 @@ export function MobileLayout({
   sessionPlanLimits,
   sessionPreviews,
   sessionPrStatuses,
+  sessionTodoCounts,
+  renderTodoPane,
   worktreeDisplayNames,
   onSetWorktreeDisplayName,
   capabilities,
@@ -329,6 +338,19 @@ export function MobileLayout({
       onSelectSession(sessionId);
     },
     [onSelectSession, onChangeActiveTab, onChangeSessionSubView]
+  );
+
+  // TODO の見出しから、その worktree のセッションを一覧で開いたときと同じ操作で開く
+  const openWorktreeSession = useCallback(
+    (worktreePath: string) => {
+      for (const [sessionId, session] of sessions) {
+        if (session.worktreePath === worktreePath) {
+          handleOpenSession(sessionId);
+          return;
+        }
+      }
+    },
+    [sessions, handleOpenSession]
   );
 
   // 一覧画面に戻る
@@ -459,6 +481,7 @@ export function MobileLayout({
           sessionLastUpdatedAt={sessionLastUpdatedAt}
           sessionPreviews={sessionPreviews}
           sessionPrStatuses={sessionPrStatuses}
+          sessionTodoCounts={sessionTodoCounts}
           worktreeDisplayNames={worktreeDisplayNames}
           capabilities={capabilities}
           profiles={profiles}
@@ -539,6 +562,7 @@ export function MobileLayout({
                     : undefined
                 }
                 onBack={handleBack}
+                todoPane={renderTodoPane?.(session, openWorktreeSession)}
                 onSendMessage={message => onSendMessage(sessionId, message)}
                 onSendKey={key => onSendKey(sessionId, key)}
                 onDeleteSession={() => onDeleteSession(sessionId, worktree)}
