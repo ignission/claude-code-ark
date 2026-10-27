@@ -86,12 +86,12 @@ import {
   hasResolvedAuqSince,
   parseAuqInput,
 } from "@/lib/ask-user-question-state";
+import { subscribeChatDraft, takeChatDraft } from "@/lib/chat-draft-store";
 import {
   groupSidechain,
   groupToolCalls,
   type ToolCallEvent,
 } from "@/lib/chat-render-items";
-import { subscribeChatDraft, takeChatDraft } from "@/lib/chat-draft-store";
 import { readClipboardImages } from "@/lib/clipboard-images";
 import {
   FLOATING_BAR_BOTTOM,
