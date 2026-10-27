@@ -12,12 +12,18 @@ type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 const ACK_TIMEOUT_MS = 5000;
 const NO_RESPONSE = "サーバーから応答がありません";
 
-type TodoEvent = "todo:list" | "todo:set-done" | "todo:delete";
+type TodoEvent =
+  | "todo:list"
+  | "todo:set-done"
+  | "todo:set-started"
+  | "todo:delete";
 
 export interface TodoApi {
   list: () => Promise<TodoListResponse>;
   setDone: (id: string, done: boolean) => Promise<TodoOpResponse>;
   remove: (id: string) => Promise<TodoOpResponse>;
+  /** 会話を始めた先の worktree を記録する */
+  setStarted: (id: string, worktreePath: string) => Promise<TodoOpResponse>;
 }
 
 /** ack を Promise にする薄い層。5 秒で timeout し、失敗応答に畳む */
@@ -41,5 +47,7 @@ export function createTodoApi(socket: TypedSocket): TodoApi {
     list: () => request("todo:list", {}),
     setDone: (id, done) => request("todo:set-done", { id, done }),
     remove: id => request("todo:delete", { id }),
+    setStarted: (id, worktreePath) =>
+      request("todo:set-started", { id, worktreePath }),
   };
 }

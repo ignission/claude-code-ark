@@ -64,6 +64,15 @@ export function useTodos(socket: TypedSocket | null) {
     [api]
   );
 
+  const setStarted = useCallback(
+    (id: string, worktreePath: string) => {
+      api?.setStarted(id, worktreePath).then(res => {
+        if (!res.ok) setError(res.error);
+      });
+    },
+    [api]
+  );
+
   const openCountByWorktree = useMemo(() => {
     const counts = new Map<string, number>();
     for (const todo of todos) {
@@ -73,5 +82,5 @@ export function useTodos(socket: TypedSocket | null) {
     return counts;
   }, [todos]);
 
-  return { todos, error, setDone, remove, openCountByWorktree };
+  return { todos, error, setDone, remove, setStarted, openCountByWorktree };
 }
