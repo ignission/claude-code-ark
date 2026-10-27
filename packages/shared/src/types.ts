@@ -1324,6 +1324,8 @@ export interface Todo {
   startedWorktreePath: string | null;
   /** 会話を始めた時刻 (ms)。始めていなければ null */
   startedAt: number | null;
+  /** Claude が付けた、新しい worktree のブランチ名の候補 (kebab-case)。無ければ null */
+  branchName: string | null;
 }
 
 export type TodoListResponse =

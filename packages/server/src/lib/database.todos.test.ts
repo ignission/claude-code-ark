@@ -4,8 +4,10 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  normalizeTodoBranch,
   normalizeTodoText,
   SessionDatabase,
+  TODO_BRANCH_MAX_LENGTH,
   TODO_NOTE_MAX_LENGTH,
   TODO_TEXT_MAX_LENGTH,
 } from "./database.js";
@@ -21,6 +23,46 @@ describe("normalizeTodoText", () => {
     expect(normalizeTodoText("あ".repeat(300))).toHaveLength(
       TODO_TEXT_MAX_LENGTH
     );
+  });
+});
+
+describe("normalizeTodoBranch", () => {
+  it("英語の kebab-case はそのまま通す", () => {
+    expect(normalizeTodoBranch("fix-log-format")).toBe("fix-log-format");
+  });
+
+  it("大文字を小文字にする", () => {
+    expect(normalizeTodoBranch("Fix-Log")).toBe("fix-log");
+  });
+
+  it("日本語だけなら null", () => {
+    expect(normalizeTodoBranch("ログの形式")).toBeNull();
+  });
+
+  it("日本語や記号が混ざったら、使えない文字の連なりをハイフン 1 つにする", () => {
+    expect(normalizeTodoBranch("Fix ログ format!!")).toBe("fix-format");
+  });
+
+  it("前後のハイフンを落とす", () => {
+    expect(normalizeTodoBranch("--fix--log--")).toBe("fix-log");
+  });
+
+  it("スラッシュは使わない", () => {
+    expect(normalizeTodoBranch("feat/add-x")).toBe("feat-add-x");
+  });
+
+  it("上限で切り、切り口のハイフンも落とす", () => {
+    const long = normalizeTodoBranch(`${"a".repeat(39)}-bbbb`);
+    expect(long).toBe("a".repeat(39));
+    expect(normalizeTodoBranch("a".repeat(100))).toHaveLength(
+      TODO_BRANCH_MAX_LENGTH
+    );
+  });
+
+  it("空と文字列以外は null", () => {
+    expect(normalizeTodoBranch("")).toBeNull();
+    expect(normalizeTodoBranch(undefined)).toBeNull();
+    expect(normalizeTodoBranch(42)).toBeNull();
   });
 });
 
@@ -75,6 +117,21 @@ describe("SessionDatabase: todos", () => {
   it("無い id の完了と削除は false を返す", () => {
     expect(db.setTodoDone("none", true)).toBe(false);
     expect(db.deleteTodo("none")).toBe(false);
+  });
+
+  it("addTodo はブランチ名を正規化して保存し、無ければ null", () => {
+    const a = db.addTodo({
+      worktreePath: "/w/a",
+      text: "1",
+      branch: "Fix Log Format",
+    });
+    const b = db.addTodo({ worktreePath: "/w/a", text: "2" });
+    expect(a.branchName).toBe("fix-log-format");
+    expect(b.branchName).toBeNull();
+    expect(db.listTodos().map(x => x.branchName)).toEqual([
+      "fix-log-format",
+      null,
+    ]);
   });
 
   it("削除する", () => {
@@ -150,7 +207,9 @@ describe("SessionDatabase: todos のマイグレーション", () => {
           startedAt: null,
         }),
       ]);
+      expect(first.listTodos()[0].branchName).toBeNull();
       first.setTodoStarted("old1", "/w/b", 5);
+      first.addTodo({ worktreePath: "/w/a", text: "新", branch: "new-one" });
       first.close();
 
       // 2 回目の起動で列の追加を繰り返さず、記録も消さない
@@ -159,6 +218,10 @@ describe("SessionDatabase: todos のマイグレーション", () => {
         startedWorktreePath: "/w/b",
         startedAt: 5,
       });
+      expect(second.listTodos().map(x => x.branchName)).toEqual([
+        null,
+        "new-one",
+      ]);
       second.close();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

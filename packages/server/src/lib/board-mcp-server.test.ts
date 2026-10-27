@@ -427,6 +427,23 @@ describe("handleTodoAdd / handleTodoList", () => {
     note: null,
     createdAt: 0,
     doneAt: null,
+    startedWorktreePath: null,
+    startedAt: null,
+    branchName: null,
+  });
+
+  it("ブランチ名の候補をそのまま addTodo へ渡す", async () => {
+    const addTodo = vi.fn(async (_w: string, input: { text: string }) =>
+      todo(input.text)
+    );
+    await handleTodoAdd({ addTodo }, "/w", {
+      text: "ログの形式",
+      branch: "fix-log-format",
+    });
+    expect(addTodo).toHaveBeenCalledWith("/w", {
+      text: "ログの形式",
+      branch: "fix-log-format",
+    });
   });
 
   it("足した TODO の id と本文を返す", async () => {

@@ -51,6 +51,23 @@ export function normalizeTodoText(text: string): string {
   return text.replace(/\s+/g, " ").slice(0, TODO_TEXT_MAX_LENGTH).trim();
 }
 
+export const TODO_BRANCH_MAX_LENGTH = 40;
+
+/**
+ * Claude が付けるブランチ名の候補を、git で安全な kebab-case に直す。
+ * 英数字とハイフンだけを残し ("/" も使わない)、残らなければ null
+ */
+export function normalizeTodoBranch(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const kebab = input
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-|-$/g, "");
+  const cut = kebab.slice(0, TODO_BRANCH_MAX_LENGTH).replace(/-$/, "");
+  return cut || null;
+}
+
 /** 分岐TODOの行データ */
 interface TodoRow {
   id: string;
@@ -61,6 +78,7 @@ interface TodoRow {
   done_at: number | null;
   started_worktree_path: string | null;
   started_at: number | null;
+  branch_name: string | null;
 }
 
 function rowToTodo(row: TodoRow): Todo {
@@ -73,6 +91,7 @@ function rowToTodo(row: TodoRow): Todo {
     doneAt: row.done_at,
     startedWorktreePath: row.started_worktree_path,
     startedAt: row.started_at,
+    branchName: row.branch_name,
   };
 }
 
@@ -449,6 +468,10 @@ export class SessionDatabase {
     }
     if (!todoColumns.includes("started_at")) {
       this.db.exec("ALTER TABLE todos ADD COLUMN started_at INTEGER");
+    }
+    // Claude が付けたブランチ名の候補 (新しいworktreeで話すときの既定値)
+    if (!todoColumns.includes("branch_name")) {
+      this.db.exec("ALTER TABLE todos ADD COLUMN branch_name TEXT");
     }
 
     // マイグレーション: 旧 label 列を削除する。
@@ -1425,6 +1448,7 @@ export class SessionDatabase {
     worktreePath: string;
     text: string;
     note?: string | null;
+    branch?: string | null;
   }): Todo {
     const text = normalizeTodoText(input.text);
     if (!text) throw new Error("TODO の本文が空です");
@@ -1438,11 +1462,12 @@ export class SessionDatabase {
       done_at: null,
       started_worktree_path: null,
       started_at: null,
+      branch_name: normalizeTodoBranch(input.branch),
     };
     this.db
       .prepare(
-        `INSERT INTO todos (id, worktree_path, text, note, created_at, done_at)
-         VALUES (@id, @worktree_path, @text, @note, @created_at, @done_at)`
+        `INSERT INTO todos (id, worktree_path, text, note, created_at, done_at, branch_name)
+         VALUES (@id, @worktree_path, @text, @note, @created_at, @done_at, @branch_name)`
       )
       .run(row);
     return rowToTodo(row);
