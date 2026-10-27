@@ -1495,6 +1495,9 @@ export function SplitChatPane({
       if (draft === null) return;
       setInputValue(prev => (prev === "" ? draft : `${prev}\n\n${draft}`));
       inputRef.current?.focus();
+      // 呼び出し側は下書きを置いてから、このセッションを選ぶ・会話モードへ切り替える。
+      // 見えていない間の focus は効かないので、切り替えを描画したあとにもう一度置く
+      requestAnimationFrame(() => inputRef.current?.focus());
     };
     receive();
     return subscribeChatDraft(receive);
