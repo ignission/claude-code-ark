@@ -2,6 +2,7 @@ import type {
   FileIndexResponse,
   ManagedSession,
   SpecialKey,
+  Todo,
   Worktree,
 } from "@ark/shared";
 import { Copy, Loader2, Terminal, WifiOff } from "lucide-react";
@@ -63,8 +64,11 @@ import { useSettings } from "@/hooks/useSettings";
 import { useSocket } from "@/hooks/useSocket";
 import { useTodos } from "@/hooks/useTodos";
 import { useViewerTabs } from "@/hooks/useViewerTabs";
+import { requestChatDraft } from "@/lib/chat-draft-store";
 import { focusInput } from "@/lib/keynav-dom";
 import {
+  type ChatViewRequest,
+  createChatViewRequest,
   createDiagramOpenRequest,
   type DiagramOpenRequest,
 } from "@/lib/mobile-session-view-mode";
@@ -77,6 +81,13 @@ import {
   isNotificationEnabledForSession,
   normalizeSessionNotificationSettings,
 } from "@/lib/session-notifications";
+import { buildTodoDraft, todoBranchCandidate } from "@/lib/todo-draft";
+import {
+  draftForCreatedWorktree,
+  findSessionIdByWorktreePath,
+  type PendingTodoWorktree,
+  resolveTodoOrigin,
+} from "@/lib/todo-start";
 import { todoWorktreeLabel } from "@/lib/todo-worktree-label";
 import { getBaseName, isPathWithin } from "@/utils/pathUtils";
 import {
@@ -95,6 +106,20 @@ export default function Dashboard() {
   const savedRepoList = getSetting<string[]>("repoList", []);
   const savedRepoPath = getSetting<string | null>("selectedRepoPath", null);
   const savedScanBasePath = getSetting<string>("scanBasePath", "");
+
+  // 分岐TODOから新しいworktreeで話し始めるとき。dialogTodo は作成ダイアログを開いている間の
+  // そのTODO、pendingTodoWorktree は作成を頼んだあと worktree:created を待つ1件
+  // (別のTODOで作成を頼んだら置き換える)
+  const [dialogTodo, setDialogTodo] = useState<PendingTodoWorktree | null>(
+    null
+  );
+  const [pendingTodoWorktree, setPendingTodoWorktree] =
+    useState<PendingTodoWorktree | null>(null);
+  // セッションが現れたら選ぶworktree (1件だけ)。今のDashboardは、作ったworktreeや
+  // 起動したセッションを自動では選ばないため、TODOから始めたときだけこれで選ぶ
+  const [pendingSelectWorktreePath, setPendingSelectWorktreePath] = useState<
+    string | null
+  >(null);
 
   const {
     socket,
@@ -187,6 +212,15 @@ export default function Dashboard() {
     initialRepoPath: savedRepoPath,
     onRepoListChange: list => setSetting("repoList", list),
     onRepoPathChange: path => setSetting("selectedRepoPath", path),
+    // 待っているTODOの作成が終わったら、新しいworktreeの会話に下書きを置き、
+    // そのセッションが現れたら選ぶ (セッションはサーバーが作成に続けて起動する)
+    onWorktreeCreatedForTodo: event => {
+      const target = draftForCreatedWorktree(pendingTodoWorktree, event);
+      if (!target) return;
+      requestChatDraft(target.worktreePath, target.draft);
+      setPendingTodoWorktree(null);
+      setPendingSelectWorktreePath(target.worktreePath);
+    },
   });
 
   const isMobile = useIsMobile();
@@ -204,6 +238,9 @@ export default function Dashboard() {
   const [mobileActiveTab, setMobileActiveTab] = useState<MobileTab>("session");
   const [mobileSessionSubView, setMobileSessionSubView] =
     useState<SessionSubView>("list");
+  // モバイルで会話モードへ切り替える要求 (分岐TODOから話し始めたとき)
+  const [chatViewRequest, setChatViewRequest] =
+    useState<ChatViewRequest | null>(null);
   const [diagramOpenRequest, setDiagramOpenRequest] =
     useState<DiagramOpenRequest | null>(null);
   // ブラウザビューを一度でも開いたかどうかのフラグ
@@ -760,6 +797,28 @@ export default function Dashboard() {
     [sessions]
   );
 
+  // TODO から話し始めたセッションを開いて会話を見せる。PC の会話は常に左のペインにあるので
+  // 選ぶだけでよく、モバイルは会話モードへ切り替える
+  const openSessionForTodo = useCallback(
+    (sessionId: string) => {
+      handleOpenSessionFromNotification(sessionId);
+      setChatViewRequest(prev => createChatViewRequest(prev, sessionId));
+    },
+    [handleOpenSessionFromNotification]
+  );
+
+  // 待っている worktree のセッションが現れたら選ぶ (既にあればすぐ選ぶ)
+  useEffect(() => {
+    if (!pendingSelectWorktreePath) return;
+    const sessionId = findSessionIdByWorktreePath(
+      sessions.values(),
+      pendingSelectWorktreePath
+    );
+    if (!sessionId) return;
+    setPendingSelectWorktreePath(null);
+    openSessionForTodo(sessionId);
+  }, [sessions, pendingSelectWorktreePath, openSessionForTodo]);
+
   // セッション自動選択
   useEffect(() => {
     // ブラウザ・画面の選択中はリセットしない
@@ -810,7 +869,11 @@ export default function Dashboard() {
   };
 
   const handleCreateWorktree = (branchName: string, baseBranch?: string) => {
-    createWorktree(branchName, baseBranch);
+    // TODO から開いたダイアログなら todoId を添え、作成の完了を待って下書きを置く
+    // (始めた先の記録はサーバーが todoId を見て行う)
+    createWorktree(branchName, baseBranch, dialogTodo?.todoId);
+    if (dialogTodo) setPendingTodoWorktree(dialogTodo);
+    setDialogTodo(null);
     setIsCreateWorktreeOpen(false);
     // 作成確定時は元repoへの復元をキャンセルし、作成先repoに留まる
     setPreviousRepoPath(null);
@@ -893,11 +956,60 @@ export default function Dashboard() {
   /** Worktree作成ダイアログの open/close ハンドラ。close時にrepo復元する */
   const handleCreateWorktreeOpenChange = (open: boolean) => {
     setIsCreateWorktreeOpen(open);
+    if (!open) setDialogTodo(null);
     if (!open && previousRepoPath !== null) {
       selectRepo(previousRepoPath);
       setPreviousRepoPath(null);
     }
   };
+
+  /**
+   * 分岐TODOを元のセッションで話し始める。下書きを先に置き (会話の部品はマウント時か
+   * 通知時に受け取る)、そのセッションを開く。止まっていれば起動し、現れたら選ぶ。
+   * 下書きは入力欄に入れるだけで送らない
+   */
+  const handleStartTodoHere = (todo: Todo) => {
+    const path = todo.worktreePath;
+    const sessionId = findSessionIdByWorktreePath(sessions.values(), path);
+    const worktree = sessionId
+      ? undefined
+      : worktrees.find(item => item.path === path);
+    if (!sessionId && !worktree) return;
+    requestChatDraft(path, buildTodoDraft(todo));
+    todos.setStarted(todo.id, path);
+    if (sessionId) {
+      openSessionForTodo(sessionId);
+    } else if (worktree) {
+      startSession(worktree.id, worktree.path);
+      setPendingSelectWorktreePath(path);
+    }
+  };
+
+  /**
+   * 分岐TODOを新しいworktreeで話し始める。元のworktreeのリポジトリへ切り替えて
+   * (handleCreateWorktreeForRepo と同じ流れ。キャンセルで元のリポジトリに戻る)、
+   * ブランチ名の候補と元のブランチを基点に入れた作成ダイアログを開く
+   */
+  const handleStartTodoInNewWorktree = (todo: Todo) => {
+    const origin = resolveTodoOrigin(
+      todo.worktreePath,
+      sessions.values(),
+      worktrees,
+      repoList
+    );
+    if (!origin) return;
+    setDialogTodo({ todoId: todo.id, todo, originBranch: origin.branch });
+    handleCreateWorktreeForRepo(origin.repoPath);
+  };
+
+  // 元のworktreeのリポジトリが分かるときだけ、新しいworktreeで始められる
+  const canStartTodoInNewWorktree = (todo: Todo) =>
+    resolveTodoOrigin(
+      todo.worktreePath,
+      sessions.values(),
+      worktrees,
+      repoList
+    ) !== null;
 
   /**
    * リポジトリをサイドバーから除外する。
@@ -942,6 +1054,7 @@ export default function Dashboard() {
           handleTabClose={handleTabClose}
           openDiagramTab={openDiagramTab}
           diagramOpenRequest={diagramOpenRequest}
+          chatViewRequest={chatViewRequest}
           listDiagrams={listDiagrams}
           deleteDiagram={deleteDiagram}
           getDiagramComments={getDiagramComments}
@@ -988,6 +1101,9 @@ export default function Dashboard() {
               worktreeLabel={worktreeLabelOf}
               onOpenWorktree={openWorktree}
               canOpenWorktree={canOpenWorktreeSession}
+              onStartHere={handleStartTodoHere}
+              onStartInNewWorktree={handleStartTodoInNewWorktree}
+              canStartInNewWorktree={canStartTodoInNewWorktree}
             />
           )}
           worktreeDisplayNames={worktreeDisplayNames}
@@ -1312,6 +1428,9 @@ export default function Dashboard() {
                             worktreeLabel={worktreeLabelOf}
                             onOpenWorktree={openWorktreeSession}
                             canOpenWorktree={canOpenWorktreeSession}
+                            onStartHere={handleStartTodoHere}
+                            onStartInNewWorktree={handleStartTodoInNewWorktree}
+                            canStartInNewWorktree={canStartTodoInNewWorktree}
                           />
                         )}
                         todoOpenCount={
@@ -1503,6 +1622,10 @@ export default function Dashboard() {
         onOpenChange={handleCreateWorktreeOpenChange}
         selectedRepoPath={repoPath}
         onCreateWorktree={handleCreateWorktree}
+        initialBranchName={
+          dialogTodo ? todoBranchCandidate(dialogTodo.todo) : undefined
+        }
+        initialBaseBranch={dialogTodo?.originBranch}
       />
 
       {/* プロファイル管理 (Linux限定) */}
