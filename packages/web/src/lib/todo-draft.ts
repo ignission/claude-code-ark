@@ -11,7 +11,8 @@ export function buildTodoDraft(todo: Todo, originBranch?: string): string {
   return parts.join("\n\n");
 }
 
-/** 新しいworktreeのブランチ名の候補。本文はほぼ日本語なので、idから作る */
+/** 新しいworktreeのブランチ名の候補。Claudeが付けた名前があればそれ、無ければidから作る */
 export function todoBranchCandidate(todo: Todo): string {
+  if (todo.branchName) return todo.branchName;
   return `todo-${todo.id.slice(0, 6)}`;
 }

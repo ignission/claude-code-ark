@@ -11,6 +11,7 @@ const todo = (over: Partial<Todo> = {}): Todo => ({
   doneAt: null,
   startedWorktreePath: null,
   startedAt: null,
+  branchName: null,
   ...over,
 });
 
@@ -36,7 +37,13 @@ describe("buildTodoDraft", () => {
 });
 
 describe("todoBranchCandidate", () => {
-  it("idの先頭6文字から作る", () => {
+  it("Claudeが付けた名前があればそれを使う", () => {
+    expect(todoBranchCandidate(todo({ branchName: "fix-auth" }))).toBe(
+      "fix-auth"
+    );
+  });
+
+  it("無ければidの先頭6文字から作る", () => {
     expect(todoBranchCandidate(todo())).toBe("todo-abcdef");
   });
 });

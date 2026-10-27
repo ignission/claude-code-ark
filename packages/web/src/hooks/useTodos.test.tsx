@@ -43,6 +43,7 @@ const todo = (id: string, worktreePath: string, done = false): Todo => ({
   doneAt: done ? 2 : null,
   startedWorktreePath: null,
   startedAt: null,
+  branchName: null,
 });
 
 let latest: ReturnType<typeof useTodos>;
