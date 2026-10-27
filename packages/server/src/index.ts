@@ -165,7 +165,10 @@ import {
   tmuxManager,
 } from "./lib/tmux-manager.js";
 import { describeTmuxReadFailure } from "./lib/tmux-read-result.js";
-import { createTodoHandlers } from "./lib/todo-handlers.js";
+import {
+  createTodoHandlers,
+  recordStartedForCreatedWorktree,
+} from "./lib/todo-handlers.js";
 import { TunnelManager } from "./lib/tunnel.js";
 import { UsageCollector } from "./lib/usage-collector.js";
 import { formatVoiceDiagnostic } from "./lib/voice-diagnostic.js";
@@ -1804,11 +1807,15 @@ export async function startServer(
 
     socket.on(
       "worktree:create",
-      async ({ repoPath, branchName, baseBranch }) => {
+      async ({ repoPath, branchName, baseBranch, todoId }) => {
         let worktree: Awaited<ReturnType<typeof createWorktree>>;
         try {
           worktree = await createWorktree(repoPath, branchName, baseBranch);
-          io.emit("worktree:created", { repoPath, worktree });
+          io.emit("worktree:created", {
+            repoPath,
+            worktree,
+            ...(typeof todoId === "string" ? { todoId } : {}),
+          });
         } catch (error) {
           // UI 通知だけでなくサーバーログにも残して調査可能にする (Issue #213 ③)
           console.error(
@@ -1817,6 +1824,13 @@ export async function startServer(
           socket.emit("worktree:error", getErrorMessage(error));
           return;
         }
+
+        // 分岐TODOから始めた作成なら、始めた先を記録する (失敗しても続ける)
+        recordStartedForCreatedWorktree(
+          { db, onChanged: emitTodoChanged },
+          todoId,
+          worktree.path
+        );
 
         try {
           const worktrees = await listWorktrees(repoPath);
@@ -2664,6 +2678,7 @@ export async function startServer(
     // 分岐TODO (人間の操作。足すのは Claude の todo_add)
     socket.on("todo:list", todoHandlers.list);
     socket.on("todo:set-done", todoHandlers.setDone);
+    socket.on("todo:set-started", todoHandlers.setStarted);
     socket.on("todo:delete", todoHandlers.delete);
     // Git タブの書き込み操作 (ブランチと fetch / pull / push)
     const gitOps = createGitOpsHandlers({
