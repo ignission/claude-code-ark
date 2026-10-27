@@ -17,6 +17,8 @@ const base = (over: Partial<Todo>): Todo => ({
   note: null,
   createdAt: 0,
   doneAt: null,
+  startedWorktreePath: null,
+  startedAt: null,
   ...over,
 });
 
@@ -123,6 +125,106 @@ describe("TodoPane", () => {
     click(byText("button", "すべて"));
     expect(container.querySelector("h3 button")).toBeNull();
     expect(container.querySelector("h3")?.textContent).toBe("a");
+  });
+
+  it("未完了の行に「元のセッションで話す」「新しいworktreeで話す」を出し、押すとTODOを渡す", () => {
+    const onStartHere = vi.fn();
+    const onStartInNewWorktree = vi.fn();
+    const todo = base({ id: "1" });
+    mount({ todos: [todo], onStartHere, onStartInNewWorktree });
+    click(container.querySelector('[aria-label="元のセッションで話す"]'));
+    expect(onStartHere).toHaveBeenCalledWith(todo);
+    click(container.querySelector('[aria-label="新しいworktreeで話す"]'));
+    expect(onStartInNewWorktree).toHaveBeenCalledWith(todo);
+  });
+
+  it("完了した行には始めるボタンを出さない", () => {
+    mount({
+      todos: [base({ id: "2", text: "済んだ", doneAt: 1 })],
+      onStartHere: vi.fn(),
+      onStartInNewWorktree: vi.fn(),
+    });
+    click(byText("button", "完了 (1)"));
+    expect(container.textContent).toContain("済んだ");
+    expect(
+      container.querySelector('[aria-label="元のセッションで話す"]')
+    ).toBeNull();
+    expect(
+      container.querySelector('[aria-label="新しいworktreeで話す"]')
+    ).toBeNull();
+  });
+
+  it("worktreeが消えたTODOには始めるボタンを出さない", () => {
+    mount({
+      todos: [base({ id: "3", worktreePath: "/w/b", text: "別" })],
+      onStartHere: vi.fn(),
+      onStartInNewWorktree: vi.fn(),
+    });
+    click(byText("button", "すべて"));
+    expect(container.textContent).toContain("別");
+    expect(
+      container.querySelector('[aria-label="元のセッションで話す"]')
+    ).toBeNull();
+    expect(
+      container.querySelector('[aria-label="新しいworktreeで話す"]')
+    ).toBeNull();
+  });
+
+  it("canStartInNewWorktree が false なら「新しいworktreeで話す」だけを出さない", () => {
+    mount({
+      todos: [base({ id: "1" })],
+      onStartHere: vi.fn(),
+      onStartInNewWorktree: vi.fn(),
+      canStartInNewWorktree: () => false,
+    });
+    expect(
+      container.querySelector('[aria-label="元のセッションで話す"]')
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[aria-label="新しいworktreeで話す"]')
+    ).toBeNull();
+  });
+
+  it("始めた先があれば「→ <名前> で始めた」を出し、押すとそのworktreeを開く", () => {
+    const onOpenWorktree = vi.fn();
+    mount({
+      todos: [base({ id: "1", startedWorktreePath: "/w/c", startedAt: 5 })],
+      worktreeLabel: (p: string) =>
+        p === "/w/a" ? "a" : p === "/w/c" ? "todo-abc" : null,
+      onOpenWorktree,
+    });
+    const link = byText("button", "→ todo-abc で始めた");
+    click(link);
+    expect(onOpenWorktree).toHaveBeenCalledWith("/w/c");
+  });
+
+  it("始めた先が元と同じなら「このセッションで始めた」と出す", () => {
+    mount({
+      todos: [base({ id: "1", startedWorktreePath: "/w/a", startedAt: 5 })],
+      onOpenWorktree: vi.fn(),
+    });
+    expect(byText("button", "このセッションで始めた")).toBeDefined();
+  });
+
+  it("始めた先を開けないときはボタンにしない", () => {
+    mount({
+      todos: [base({ id: "1", startedWorktreePath: "/w/c", startedAt: 5 })],
+      worktreeLabel: (p: string) =>
+        p === "/w/a" ? "a" : p === "/w/c" ? "todo-abc" : null,
+      onOpenWorktree: vi.fn(),
+      canOpenWorktree: (p: string) => p !== "/w/c",
+    });
+    expect(container.textContent).toContain("→ todo-abc で始めた");
+    expect(byText("button", "で始めた")).toBeUndefined();
+  });
+
+  it("始めた先のworktreeが消えていれば名前の代わりに削除済みと出し、ボタンにしない", () => {
+    mount({
+      todos: [base({ id: "1", startedWorktreePath: "/w/gone", startedAt: 5 })],
+      onOpenWorktree: vi.fn(),
+    });
+    expect(container.textContent).toContain("→ 削除済み worktree で始めた");
+    expect(byText("button", "で始めた")).toBeUndefined();
   });
 
   it("未完了が無ければ空の案内を出す", () => {

@@ -2,10 +2,14 @@
  * 分岐TODOのペイン。会話で保留にした話題を Claude が todo_add で足し、ここで人間が
  * 完了・削除する (Claude は消せない)。表示は「このセッション」と「すべて」を切り替える。
  * 一覧の正本はサーバーで、Dashboard の useTodos から受け取る
+ *
+ * 未完了の行からは、その話題の会話を「元のセッション」か「新しいworktree」で始められる。
+ * どちらもチャット入力欄に下書きを入れるだけで送らない (配線は Dashboard)。元のworktreeが
+ * 消えていれば始められない。始めた先 (最後の1件) は行の下に出し、押すとそのセッションを開く
  */
 
 import type { Todo } from "@ark/shared";
-import { Check, X } from "lucide-react";
+import { Check, GitBranchPlus, MessageSquareText, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 
@@ -21,20 +25,66 @@ interface TodoPaneProps {
   onOpenWorktree?: (worktreePath: string) => void;
   /** その worktree にセッションがあって開けるか。省略時は開ける。false なら見出しはボタンにしない */
   canOpenWorktree?: (worktreePath: string) => boolean;
+  /** 「元のセッションで話す」。省略時はボタンを出さない */
+  onStartHere?: (todo: Todo) => void;
+  /** 「新しいworktreeで話す」。省略時はボタンを出さない */
+  onStartInNewWorktree?: (todo: Todo) => void;
+  /** 新しいworktreeを作れるか (元のリポジトリが分かるか)。省略時は作れる */
+  canStartInNewWorktree?: (todo: Todo) => boolean;
 }
 
 type Scope = "session" | "all";
 
-function TodoRow({
-  todo,
-  onSetDone,
-  onRemove,
-}: {
-  todo: Todo;
-  onSetDone: (id: string, done: boolean) => void;
-  onRemove: (id: string) => void;
-}) {
+type RowProps = Pick<
+  TodoPaneProps,
+  | "onSetDone"
+  | "onRemove"
+  | "worktreeLabel"
+  | "onOpenWorktree"
+  | "canOpenWorktree"
+  | "onStartHere"
+  | "onStartInNewWorktree"
+  | "canStartInNewWorktree"
+>;
+
+const ROW_ICON_BUTTON =
+  "inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 [@media(hover:none)]:opacity-100 hover:bg-background hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100";
+
+/** 始めた先の行。始めた先が元と同じなら「このセッションで始めた」。開けないときはボタンにしない */
+function StartedLine({ todo, ...props }: { todo: Todo } & RowProps) {
+  const path = todo.startedWorktreePath;
+  if (path === null) return null;
+  const label = props.worktreeLabel(path);
+  const text =
+    path === todo.worktreePath
+      ? "このセッションで始めた"
+      : `→ ${label ?? "削除済み worktree"} で始めた`;
+  const canOpen =
+    label !== null &&
+    props.onOpenWorktree !== undefined &&
+    (props.canOpenWorktree?.(path) ?? true);
+  return (
+    <p className="mt-0.5 text-xs text-muted-foreground">
+      {canOpen ? (
+        <button
+          type="button"
+          onClick={() => props.onOpenWorktree?.(path)}
+          className="hover:text-foreground hover:underline"
+        >
+          {text}
+        </button>
+      ) : (
+        text
+      )}
+    </p>
+  );
+}
+
+function TodoRow({ todo, ...props }: { todo: Todo } & RowProps) {
+  const { onSetDone, onRemove } = props;
   const done = todo.doneAt !== null;
+  // 始められるのは未完了で、元のworktreeが残っている行だけ
+  const canStart = !done && props.worktreeLabel(todo.worktreePath) !== null;
   return (
     <li className="group flex items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-muted">
       <button
@@ -62,12 +112,37 @@ function TodoRow({
         {todo.note && (
           <p className="mt-0.5 text-xs text-muted-foreground">{todo.note}</p>
         )}
+        <StartedLine todo={todo} {...props} />
       </div>
+      {canStart && props.onStartHere && (
+        <button
+          type="button"
+          aria-label="元のセッションで話す"
+          title="元のセッションで話す"
+          onClick={() => props.onStartHere?.(todo)}
+          className={ROW_ICON_BUTTON}
+        >
+          <MessageSquareText className="size-3.5" aria-hidden="true" />
+        </button>
+      )}
+      {canStart &&
+        props.onStartInNewWorktree &&
+        (props.canStartInNewWorktree?.(todo) ?? true) && (
+          <button
+            type="button"
+            aria-label="新しいworktreeで話す"
+            title="新しいworktreeで話す"
+            onClick={() => props.onStartInNewWorktree?.(todo)}
+            className={ROW_ICON_BUTTON}
+          >
+            <GitBranchPlus className="size-3.5" aria-hidden="true" />
+          </button>
+        )}
       <button
         type="button"
         aria-label="TODO を消す"
         onClick={() => onRemove(todo.id)}
-        className="inline-flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 [@media(hover:none)]:opacity-100 hover:bg-background hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
+        className={ROW_ICON_BUTTON}
       >
         <X className="size-3.5" aria-hidden="true" />
       </button>
@@ -104,7 +179,16 @@ export function TodoPane(props: TodoPaneProps) {
     );
   }, [props.todos, props.worktreePath]);
 
-  const rowProps = { onSetDone: props.onSetDone, onRemove: props.onRemove };
+  const rowProps: RowProps = {
+    onSetDone: props.onSetDone,
+    onRemove: props.onRemove,
+    worktreeLabel: props.worktreeLabel,
+    onOpenWorktree: props.onOpenWorktree,
+    canOpenWorktree: props.canOpenWorktree,
+    onStartHere: props.onStartHere,
+    onStartInNewWorktree: props.onStartInNewWorktree,
+    canStartInNewWorktree: props.canStartInNewWorktree,
+  };
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
