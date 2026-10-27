@@ -1,4 +1,10 @@
-import { type KeyboardEvent, useCallback, useState } from "react";
+import {
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,6 +22,10 @@ interface CreateWorktreeDialogProps {
   onOpenChange: (open: boolean) => void;
   selectedRepoPath: string | null;
   onCreateWorktree: (branchName: string, baseBranch?: string) => void;
+  /** 開くたびに Branch Name へ入れる値 (分岐TODOから開くときの候補など) */
+  initialBranchName?: string;
+  /** 開くたびに Base Branch へ入れる値 */
+  initialBaseBranch?: string;
 }
 
 export function CreateWorktreeDialog({
@@ -23,9 +33,21 @@ export function CreateWorktreeDialog({
   onOpenChange,
   selectedRepoPath,
   onCreateWorktree,
+  initialBranchName = "",
+  initialBaseBranch = "",
 }: CreateWorktreeDialogProps) {
-  const [newBranchName, setNewBranchName] = useState("");
-  const [baseBranch, setBaseBranch] = useState("");
+  const [newBranchName, setNewBranchName] = useState(initialBranchName);
+  const [baseBranch, setBaseBranch] = useState(initialBaseBranch);
+
+  // open が true になるたびに、そのときの初期値で入れ直す。開いている間に
+  // props が変わっても入力中の値は消さないので、初期値は ref 越しに読む
+  const initialRef = useRef({ initialBranchName, initialBaseBranch });
+  initialRef.current = { initialBranchName, initialBaseBranch };
+  useEffect(() => {
+    if (!open) return;
+    setNewBranchName(initialRef.current.initialBranchName);
+    setBaseBranch(initialRef.current.initialBaseBranch);
+  }, [open]);
 
   // ダイアログを閉じるときに状態をリセット
   const handleOpenChange = useCallback(
