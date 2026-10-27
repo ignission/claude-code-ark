@@ -203,6 +203,24 @@ afterEach(() => {
   }
 });
 
+describe("SessionSectionListのTODO件数", () => {
+  it("未完了のTODOがあるセッションの行にだけ件数を出す", () => {
+    const { container } = mountList(
+      listProps({ sessionTodoCounts: new Map([["session-a", 2]]) })
+    );
+    const badges = container.querySelectorAll(
+      '[aria-label="未完了の TODO 2 件"]'
+    );
+    expect(badges).toHaveLength(1);
+    expect(badges[0].textContent).toBe("2");
+  });
+
+  it("件数が無ければ出さない", () => {
+    const { container } = mountList(listProps());
+    expect(container.querySelector('[aria-label^="未完了の TODO"]')).toBeNull();
+  });
+});
+
 describe("SessionSectionListの並べ方", () => {
   it("注意の順に3セクションで並べ、「あなたの番」に件数を出し、空のセクションは出さない", () => {
     const { container } = mountList(

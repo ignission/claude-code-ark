@@ -2,7 +2,7 @@
  * MobileSessionView - モバイル用セッション詳細画面
  *
  * ヘッダー (戻る・主ラベル・ブランチ・状態チップ・操作メニュー) と、その直下の状態の帯、
- * 「会話 / 図」の本文と下部バー、それらに重ねる端末の窓で組む。
+ * 「会話 / 図 / TODO」の本文と下部バー、それらに重ねる端末の窓で組む。
  * 2つのモードの本文はマウントしたまま `display` で切り替える (図のiframeを張り直さない)。
  *
  * 端末はモードではない。会話の入力欄の上の帯 (画面末尾) を押すと、この画面の全面に
@@ -72,7 +72,14 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
 import {
@@ -161,6 +168,8 @@ interface PendingFile {
 }
 
 export interface MobileSessionViewProps extends MobileDiagramPaneProps {
+  /** 「TODO」モードの本文 (TodoPane)。無ければ空の本文 */
+  todoPane?: ReactNode;
   /** 会話ビュー（SplitChatPane）の JSONL 購読・AUQ 受信に使う */
   socket: TypedSocket | null;
   /** この詳細が現在表示中か。会話ビューの購読を表示中に限定する */
@@ -259,6 +268,7 @@ export function MobileSessionView({
   deleteDiagramComment,
   sendDiagramComment,
   onSelectDiagram,
+  todoPane,
 }: MobileSessionViewProps) {
   // 親は描画のたびに関数を作り直して渡してくる。端末の窓の中身 (メモ化した要素) が
   // そのたびに作り直されないよう、同一性の変わらない関数で包んでから使う
@@ -271,7 +281,7 @@ export function MobileSessionView({
   const { height: viewportHeight, isKeyboardVisible } = useVisualViewport();
   const [inputValue, setInputValue] = useState("");
   const [iframeKey, setIframeKey] = useState(0);
-  // 表示モード (会話 / 図)。既定は会話。最後の選択を永続化。
+  // 表示モード (会話 / 図 / TODO)。既定は会話。最後の選択を永続化。
   const [viewMode, setViewMode] =
     useState<MobileSessionViewMode>(readSavedViewMode);
   // 端末の窓の開閉。保存せず、この詳細が表示中でなくなったら閉じる
@@ -407,7 +417,7 @@ export function MobileSessionView({
     isConnected,
     viewMode,
   });
-  // 下部バーの上段に置く「会話 / 図」。2つのモードの本文はマウントしたまま
+  // 下部バーの上段に置く「会話 / 図 / TODO」。2つのモードの本文はマウントしたまま
   // `display` で切り替えるので、同じ要素を各モードのバーに置く (表示されるのは1つだけ)。
   // 角丸は会話モードのガラスバー (28px角丸・内側の余白8px) と同心になるよう丸くする
   const viewModeSegment = (
@@ -1194,6 +1204,26 @@ export function MobileSessionView({
             style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
           >
             {bottomBarTop}
+          </div>
+        </div>
+
+        {/* TODOモード: 本文は一覧だけ。下部バーは表示モードのセグメントだけ置く */}
+        <div
+          data-testid="mobile-view-todo"
+          className={
+            viewMode === "todo" ? "flex-1 flex flex-col min-h-0" : "hidden"
+          }
+        >
+          <div className="flex min-h-0 flex-1 flex-col">
+            {viewMode === "todo" && todoPane}
+          </div>
+          <div
+            data-testid="mobile-todo-bar"
+            data-mobile-bottom-bar=""
+            className="shrink-0 border-t border-border bg-card px-3 pt-2"
+            style={{ paddingBottom: FLOATING_BAR_BOTTOM }}
+          >
+            {viewModeSegment}
           </div>
         </div>
       </div>

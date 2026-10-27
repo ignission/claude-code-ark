@@ -615,6 +615,8 @@ export interface ServerToClientEvents {
    * 限定するため。index.ts の openDiagram 実装の方針に揃える）。
    */
   "diagram:open": (data: { sessionId: string; relPath: string }) => void;
+  /** TODO が足された・完了した・消された。クライアントは todo:list で読み直す */
+  "todo:changed": () => void;
 
   /** 監視中の図ファイルが更新された。クライアントは再読込する */
   "diagram:updated": (data: { worktreePath: string; relPath: string }) => void;
@@ -1025,6 +1027,20 @@ export interface ClientToServerEvents {
     requestId: string;
   }) => void;
 
+  // 分岐TODO (すべて ack で返す)。一覧は全 worktree ぶんで、未完了と完了の両方を返す
+  "todo:list": (
+    data: Record<string, never>,
+    cb: (r: TodoListResponse) => void
+  ) => void;
+  "todo:set-done": (
+    data: { id: string; done: boolean },
+    cb: (r: TodoOpResponse) => void
+  ) => void;
+  "todo:delete": (
+    data: { id: string },
+    cb: (r: TodoOpResponse) => void
+  ) => void;
+
   // Git タブの読み取り (すべて ack で返す)
   "git:log": (
     data: { sessionId: string; skip: number; limit: number },
@@ -1283,6 +1299,27 @@ export interface UsageProgress {
  * ボード提案の通知。Claude の返答が終わるたびに Jev (TypeSafe の決定モデル) が
  * 「チャットよりボードのほうが読みやすいか」を判定し、閾値を超えたときだけ出る。
  */
+/**
+ * 分岐TODO。会話で保留にした話題を Claude が todo_add で足し、人間が完了・削除する。
+ * worktree_path ごとに持ち、worktree を消しても残す
+ */
+export interface Todo {
+  id: string;
+  worktreePath: string;
+  text: string;
+  note: string | null;
+  /** ms */
+  createdAt: number;
+  /** 完了した時刻 (ms)。未完了は null */
+  doneAt: number | null;
+}
+
+export type TodoListResponse =
+  | { ok: true; todos: Todo[] }
+  | { ok: false; error: string };
+
+export type TodoOpResponse = { ok: true } | { ok: false; error: string };
+
 /** ボード提案の設定。鍵そのものは含めない (末尾 4 文字と出どころだけ) */
 export interface BoardSuggestConfig {
   enabled: boolean;
@@ -1293,6 +1330,10 @@ export interface BoardSuggestConfig {
   keyHint: string | null;
   /** settings: 設定画面 / env: OPENROUTER_API_KEY / file: ~/.config/openrouter/api-key */
   keySource: "settings" | "env" | "file" | null;
+  /** 分岐TODOの検出 (保留にした話題を Claude に TODO へ足させる) */
+  todoEnabled: boolean;
+  /** Jev の「保留にした話題がある」確率がこの値以上なら動く (0〜1) */
+  todoThreshold: number;
 }
 
 /** 設定画面からの変更。apiKey は文字列で保存、null で設定側の鍵を削除、未指定で変更なし */
@@ -1300,6 +1341,8 @@ export interface BoardSuggestConfigPatch {
   enabled?: boolean;
   threshold?: number;
   apiKey?: string | null;
+  todoEnabled?: boolean;
+  todoThreshold?: number;
 }
 
 export type BoardSuggestConfigResult =

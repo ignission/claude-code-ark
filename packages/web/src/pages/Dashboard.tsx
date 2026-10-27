@@ -34,6 +34,7 @@ import { ScreenPane } from "@/components/ScreenPane";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SidebarMainLayout } from "@/components/SidebarMainLayout";
 import { SplitViewPane } from "@/components/SplitViewPane";
+import { TodoPane } from "@/components/TodoPane";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { Button } from "@/components/ui/button";
 import {
@@ -60,6 +61,7 @@ import { useIsMobile } from "@/hooks/useMobile";
 import { useSessionNotifications } from "@/hooks/useSessionNotifications";
 import { useSettings } from "@/hooks/useSettings";
 import { useSocket } from "@/hooks/useSocket";
+import { useTodos } from "@/hooks/useTodos";
 import { useViewerTabs } from "@/hooks/useViewerTabs";
 import { focusInput } from "@/lib/keynav-dom";
 import {
@@ -75,6 +77,7 @@ import {
   isNotificationEnabledForSession,
   normalizeSessionNotificationSettings,
 } from "@/lib/session-notifications";
+import { todoWorktreeLabel } from "@/lib/todo-worktree-label";
 import { getBaseName, isPathWithin } from "@/utils/pathUtils";
 import {
   findRepoForSession,
@@ -257,6 +260,24 @@ export default function Dashboard() {
     }
     return labels;
   }, [sessions, worktreeDisplayNames, worktrees]);
+
+  // 分岐TODO。全セッションぶんを 1 回だけ購読し、各ペインへ配る
+  const todos = useTodos(socket);
+
+  // TODO の見出しの表示名。セッションがあればサイドバーと通知と同じ出所 (sessionNotificationLabels)、
+  // セッションを止めただけで worktree が残っていれば自分で付けた名前かブランチ名。
+  // worktree 自体が無い (消した) ときだけ null
+  const worktreeLabelOf = useCallback(
+    (worktreePath: string): string | null => {
+      for (const session of sessions.values()) {
+        if (session.worktreePath === worktreePath) {
+          return sessionNotificationLabels.get(session.id) ?? null;
+        }
+      }
+      return todoWorktreeLabel(worktreePath, worktrees, worktreeDisplayNames);
+    },
+    [sessions, sessionNotificationLabels, worktrees, worktreeDisplayNames]
+  );
 
   const handleOpenSessionFromNotification = useCallback(
     (sessionId: string) => {
@@ -709,6 +730,36 @@ export default function Dashboard() {
     setSelectedSessionId(id);
   }, []);
 
+  // サイドバーとモバイルの一覧の行に出す、未完了の TODO の件数 (キーは sessionId)
+  const sessionTodoCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const session of sessions.values()) {
+      const count = todos.openCountByWorktree.get(session.worktreePath);
+      if (count) counts.set(session.id, count);
+    }
+    return counts;
+  }, [sessions, todos.openCountByWorktree]);
+
+  // TODO の見出しから、その worktree のセッションをサイドバーで選んだときと同じ操作で開く
+  const openWorktreeSession = useCallback(
+    (worktreePath: string) => {
+      for (const session of sessions.values()) {
+        if (session.worktreePath === worktreePath) {
+          handleSelectSession(session.id);
+          return;
+        }
+      }
+    },
+    [sessions, handleSelectSession]
+  );
+
+  // セッションがある worktree だけ、TODO の見出しから開ける
+  const canOpenWorktreeSession = useCallback(
+    (worktreePath: string) =>
+      [...sessions.values()].some(s => s.worktreePath === worktreePath),
+    [sessions]
+  );
+
   // セッション自動選択
   useEffect(() => {
     // ブラウザ・画面の選択中はリセットしない
@@ -926,6 +977,19 @@ export default function Dashboard() {
           sessionPlanLimits={sessionPlanLimits}
           sessionPreviews={sessionPreviews}
           sessionPrStatuses={sessionPrStatuses}
+          sessionTodoCounts={sessionTodoCounts}
+          renderTodoPane={(session, openWorktree) => (
+            <TodoPane
+              todos={todos.todos}
+              worktreePath={session.worktreePath}
+              error={todos.error}
+              onSetDone={todos.setDone}
+              onRemove={todos.remove}
+              worktreeLabel={worktreeLabelOf}
+              onOpenWorktree={openWorktree}
+              canOpenWorktree={canOpenWorktreeSession}
+            />
+          )}
           worktreeDisplayNames={worktreeDisplayNames}
           onSetWorktreeDisplayName={setWorktreeDisplayName}
           capabilities={capabilities}
@@ -987,6 +1051,7 @@ export default function Dashboard() {
               sessionLastUpdatedAt={sessionLastUpdatedAt}
               sessionPreviews={sessionPreviews}
               sessionPrStatuses={sessionPrStatuses}
+              sessionTodoCounts={sessionTodoCounts}
               selectedSessionId={selectedSessionId}
               worktreeDisplayNames={worktreeDisplayNames}
               capabilities={capabilities}
@@ -1237,6 +1302,22 @@ export default function Dashboard() {
                             isActive={visible}
                           />
                         )}
+                        todoPane={() => (
+                          <TodoPane
+                            todos={todos.todos}
+                            worktreePath={session.worktreePath}
+                            error={todos.error}
+                            onSetDone={todos.setDone}
+                            onRemove={todos.remove}
+                            worktreeLabel={worktreeLabelOf}
+                            onOpenWorktree={openWorktreeSession}
+                            canOpenWorktree={canOpenWorktreeSession}
+                          />
+                        )}
+                        todoOpenCount={
+                          todos.openCountByWorktree.get(session.worktreePath) ??
+                          0
+                        }
                         {...paneProps}
                       />
                     </div>

@@ -3,8 +3,9 @@
  *
  * Jev は文章を生成しない。テキストと型付きの質問を渡すと、選択肢の中から
  * 1 つを確率付きで返すだけの分類器で、1 回 200〜400ms・入力 100 万トークンで
- * $0.042 (出力は無料)。Ark はこれを「Claude の返答を図解させるべきか」の
- * 判定にだけ使う。図を描くのは Claude 自身 (board-suggest-stop-hook.ts)。
+ * $0.042 (出力は無料)。Ark はこれを「Claude の返答を図解させるべきか」と
+ * 「このターンに保留した話題があるか」の 2 つの判定に使う。図を描くのは Claude 自身
+ * (board-suggest-stop-hook.ts)。
  *
  * Decisions API は alpha (`/api/alpha/decisions`) で、パスやスキーマが変わりうる。
  * 変更点をここ 1 ファイルに閉じ込めるため、endpoint と model は定数にする。
@@ -67,13 +68,6 @@ export const BOARD_QUESTIONS = {
   },
 } as const;
 
-interface DecisionsResponse {
-  answers?: {
-    board?: { type?: string; noul?: unknown };
-  };
-  usage?: { cost?: unknown };
-}
-
 function asProbability(value: unknown): number | null {
   return typeof value === "number" &&
     Number.isFinite(value) &&
@@ -94,14 +88,42 @@ export type FetchLike = (
 ) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
 
 /**
- * 1 ターン分の返答本文を Jev に判定させる。
- * 失敗 (HTTP エラー・timeout・想定外のレスポンス) は throw する。呼び出し側で握る。
+ * Jev へ保留の判定を頼む質問。2026-10-26 に実際の会話 30 ターンと作った例 7 件で文言を決めた
+ * (0.7 以上は 30 ターン中 1 件で、別件を保留した本物だけ。保留ありの例 0.75〜0.99、なしの例 0.03)。
+ * 「同じ作業の次の手順」「CI 待ち」「ユーザーへの確認」を false に明記しないと、3 分の 1 のターンが立つ
  */
-export async function decideBoardSuggestion(
-  text: string,
+export const DEFERRED_QUESTIONS = {
+  deferred: {
+    type: "noul",
+    instructions:
+      "This is one turn of a chat between a user and an AI coding assistant. Did this turn push a separate topic aside — a different task, bug, question, or concern that came up but was explicitly postponed, declared out of scope, left for another change, or mentioned by the user and then not addressed — so that someone must remember to come back to it later?",
+    criteria: {
+      true: "A topic separate from the current work was raised and explicitly postponed, put off to another PR/change/session, declared out of scope, or ignored after the user mentioned it",
+      false:
+        "Everything raised was handled or is the current work in progress. Next steps of the same task, waiting for CI/review/deploy, asking the user to choose or confirm, and plans for the current feature do not count",
+    },
+  },
+} as const;
+
+export interface DeferredDecision {
+  /** 「このターンに保留した話題がある」の確率 (0〜1) */
+  deferred: number;
+  cost: number;
+}
+
+const DEFERRED_PROMPT_MAX_CHARS = 2000;
+
+/** Decisions API を 1 回呼び、answers と cost を返す。失敗は throw */
+async function callDecisions(
+  state: string,
+  questions: unknown,
   apiKey: string,
-  fetchImpl: FetchLike = fetch as unknown as FetchLike
-): Promise<BoardDecision> {
+  fetchImpl: FetchLike
+): Promise<{
+  answers: Record<string, { noul?: unknown }>;
+  cost: number;
+  raw: string;
+}> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -115,8 +137,8 @@ export async function decideBoardSuggestion(
         model: JEV_MODEL,
         // 会話本文を学習に使わせない
         provider: { data_collection: "deny" },
-        state: text.slice(-JEV_MAX_STATE_CHARS),
-        questions: BOARD_QUESTIONS,
+        state: state.slice(-JEV_MAX_STATE_CHARS),
+        questions,
       }),
       signal: controller.signal,
     });
@@ -124,14 +146,62 @@ export async function decideBoardSuggestion(
     if (!res.ok) {
       throw new Error(`Jev HTTP ${res.status}: ${body.slice(0, 200)}`);
     }
-    const json = JSON.parse(body) as DecisionsResponse;
-    const board = asProbability(json.answers?.board?.noul);
-    if (board === null) {
-      throw new Error(`Jev の応答が想定外です: ${body.slice(0, 200)}`);
-    }
+    const json = JSON.parse(body) as {
+      answers?: Record<string, { noul?: unknown }>;
+      usage?: { cost?: unknown };
+    };
     const cost = typeof json.usage?.cost === "number" ? json.usage.cost : 0;
-    return { board, cost };
+    return { answers: json.answers ?? {}, cost, raw: body };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * 1 ターン分の返答本文を Jev に判定させる。
+ * 失敗 (HTTP エラー・timeout・想定外のレスポンス) は throw する。呼び出し側で握る。
+ */
+export async function decideBoardSuggestion(
+  text: string,
+  apiKey: string,
+  fetchImpl: FetchLike = fetch as unknown as FetchLike
+): Promise<BoardDecision> {
+  const { answers, cost, raw } = await callDecisions(
+    text,
+    BOARD_QUESTIONS,
+    apiKey,
+    fetchImpl
+  );
+  const board = asProbability(answers.board?.noul);
+  if (board === null) {
+    throw new Error(`Jev の応答が想定外です: ${raw.slice(0, 200)}`);
+  }
+  return { board, cost };
+}
+
+/**
+ * 1 ターン (人の発話 + 返答) に保留した話題があるかを Jev に判定させる。
+ * ボードの判定とは別の呼び出しにする (ボードの質問は返答だけで検証したので、人の発話を混ぜない)
+ */
+export async function decideDeferredTopic(
+  prompt: string,
+  reply: string,
+  apiKey: string,
+  fetchImpl: FetchLike = fetch as unknown as FetchLike
+): Promise<DeferredDecision> {
+  // 発話とラベルの長さを先に確保し、残りの文字数で返答を末尾から切る (callDecisions の末尾 slice でラベルが消えないように)
+  const head = `User: ${prompt.slice(-DEFERRED_PROMPT_MAX_CHARS)}\n\nAssistant: `;
+  const room = Math.max(0, JEV_MAX_STATE_CHARS - head.length);
+  const state = head + (room > 0 ? reply.slice(-room) : "");
+  const { answers, cost, raw } = await callDecisions(
+    state,
+    DEFERRED_QUESTIONS,
+    apiKey,
+    fetchImpl
+  );
+  const deferred = asProbability(answers.deferred?.noul);
+  if (deferred === null) {
+    throw new Error(`Jev の応答が想定外です: ${raw.slice(0, 200)}`);
+  }
+  return { deferred, cost };
 }

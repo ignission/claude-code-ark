@@ -86,7 +86,7 @@ export function SessionSidebar({
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={onOpenBoardSuggestSettings}>
               <SlidersHorizontal />
-              ボード提案の設定
+              ボード提案と分岐TODOの設定
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

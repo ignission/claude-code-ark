@@ -92,9 +92,14 @@ export const PALETTE_COMMANDS: readonly PaletteItem[] = [
     type: "keynav",
     command: { type: "help" },
   }),
-  command("board-suggest", "ボード提案の設定", "jev board suggest settings", {
-    type: "board-suggest-settings",
-  }),
+  command(
+    "board-suggest",
+    "ボード提案と分岐TODOの設定",
+    "jev board suggest settings todo 分岐",
+    {
+      type: "board-suggest-settings",
+    }
+  ),
   command("ask-window", "Claude に聞くウィンドウを開く", "ask ai 質問", {
     type: "ask-window",
   }),

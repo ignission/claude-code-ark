@@ -21,7 +21,6 @@ import {
   type BridgeSnapshot,
   type ClientToServerEvents,
   type DiagramListResponse,
-  type ManagedSession,
   MESSAGE_SHORTCUT_MAX_LENGTH,
   type ServerToClientEvents,
   type SessionGridSnapshot,
@@ -50,6 +49,8 @@ import {
   readBoardSuggestConfig,
   readBoardSuggestEnabled,
   readBoardSuggestThreshold,
+  readBranchTodoEnabled,
+  readBranchTodoThreshold,
   resolveBoardSuggestApiKey,
   validateBoardSuggestPatch,
 } from "./lib/board-suggest-config.js";
@@ -114,7 +115,10 @@ import { createGitViewHandlers } from "./lib/git-view-handlers.js";
 import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
 import { htmlScreenshotter } from "./lib/html-screenshotter.js";
-import { decideBoardSuggestion } from "./lib/jev-client.js";
+import {
+  decideBoardSuggestion,
+  decideDeferredTopic,
+} from "./lib/jev-client.js";
 import { jsonlTailManager } from "./lib/jsonl-tail-manager.js";
 import {
   checkManagedWorktree,
@@ -161,6 +165,7 @@ import {
   tmuxManager,
 } from "./lib/tmux-manager.js";
 import { describeTmuxReadFailure } from "./lib/tmux-read-result.js";
+import { createTodoHandlers } from "./lib/todo-handlers.js";
 import { TunnelManager } from "./lib/tunnel.js";
 import { UsageCollector } from "./lib/usage-collector.js";
 import { formatVoiceDiagnostic } from "./lib/voice-diagnostic.js";
@@ -593,6 +598,7 @@ export async function startServer(
   // Jev が「ボードのほうが読みやすい」と判定したら block を返し、Claude 自身に
   // デッキを描かせる (tmux には何も送らない)。有効/閾値/鍵は設定画面
   // (board-suggest:get/set) で変えられ、次のターンから効く。鍵が無い間は何もしない。
+  // 分岐TODOの判定も同じ受け口で行う。
   const boardSuggestFeatureOn =
     process.env.ARK_FEATURE_BOARD_SUGGEST !== "false";
   const boardSuggestStop = new BoardSuggestStopHandler({
@@ -600,6 +606,10 @@ export async function startServer(
     apiKey: () => resolveBoardSuggestApiKey(db)?.key ?? null,
     threshold: () => readBoardSuggestThreshold(db),
     decide: (text, apiKey) => decideBoardSuggestion(text, apiKey),
+    todoEnabled: () => boardSuggestFeatureOn && readBranchTodoEnabled(db),
+    todoThreshold: () => readBranchTodoThreshold(db),
+    decideDeferred: (prompt, reply, apiKey) =>
+      decideDeferredTopic(prompt, reply, apiKey),
     readTranscript: transcriptPath => readTranscriptTail(transcriptPath),
   });
   app.post(
@@ -644,7 +654,7 @@ export async function startServer(
     console.log(
       startupConfig.keyConfigured
         ? `[BoardSuggest] 鍵あり (${startupConfig.keySource}) / ${startupConfig.enabled ? "有効" : "設定で無効"} / 閾値 ${startupConfig.threshold}`
-        : "[BoardSuggest] 鍵が無いので待機中 (設定画面「ボード提案の設定」か OPENROUTER_API_KEY / ~/.config/openrouter/api-key で有効になる)"
+        : "[BoardSuggest] 鍵が無いので待機中 (設定画面「ボード提案と分岐TODOの設定」か OPENROUTER_API_KEY / ~/.config/openrouter/api-key で有効になる)"
     );
   } else {
     console.log("[BoardSuggest] 無効 (ARK_FEATURE_BOARD_SUGGEST=false)");
@@ -746,7 +756,20 @@ export async function startServer(
     db.updateSessionLastDiagram(sessionId, relPath);
     return { ok: true, notices: result.notices };
   };
+  // TODO が変わったら全クライアントに読み直させる (一覧は小さいので差分は配らない)
+  const emitTodoChanged = () => io.emit("todo:changed");
+  // socket に依存しないので connection の外で 1 回だけ作る (足すのは Claude の todo_add だけ)
+  const todoHandlers = createTodoHandlers({ db, onChanged: emitTodoChanged });
   const boardDeps: BoardMcpDeps = {
+    async addTodo(worktreePath, input) {
+      // TODO は registry 登録時の生パスで持つ (クライアントの session.worktreePath と同じ値)
+      const todo = db.addTodo({ worktreePath, ...input });
+      emitTodoChanged();
+      return todo;
+    },
+    async listTodos(worktreePath) {
+      return db.listTodos({ worktreePath, includeDone: false });
+    },
     readAuthoringGuide: () =>
       readDiagramAuthoringGuide(undefined, options.diagramAuthoringGuidePath),
     async listDiagramPaths(worktreePath) {
@@ -2638,6 +2661,10 @@ export async function startServer(
     socket.on("git:commit", gitHandlers.commit);
     socket.on("git:file-diff", gitHandlers.fileDiff);
     socket.on("git:fingerprint", gitHandlers.fingerprint);
+    // 分岐TODO (人間の操作。足すのは Claude の todo_add)
+    socket.on("todo:list", todoHandlers.list);
+    socket.on("todo:set-done", todoHandlers.setDone);
+    socket.on("todo:delete", todoHandlers.delete);
     // Git タブの書き込み操作 (ブランチと fetch / pull / push)
     const gitOps = createGitOpsHandlers({
       getWorktreePath: sessionId =>
@@ -3163,7 +3190,7 @@ export async function startServer(
         for (const key of validated.remove) db.deleteSetting(key);
         const config = readBoardSuggestConfig(db);
         console.log(
-          `[BoardSuggest] 設定を更新: ${config.enabled ? "有効" : "無効"} / 閾値 ${config.threshold} / 鍵 ${config.keyConfigured ? `あり (${config.keySource})` : "なし"}`
+          `[BoardSuggest] 設定を更新: ${config.enabled ? "有効" : "無効"} / 閾値 ${config.threshold} / 分岐TODO ${config.todoEnabled ? "有効" : "無効"} (閾値 ${config.todoThreshold}) / 鍵 ${config.keyConfigured ? `あり (${config.keySource})` : "なし"}`
         );
         callback({ ok: true, config });
       } catch (e) {

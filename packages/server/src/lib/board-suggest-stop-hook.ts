@@ -19,9 +19,15 @@
  *   実測では規約だけだと、1,500 文字を超える返答で Claude が自分で board_open
  *   したのは直近 14 日の 192 件中 17 件だった
  *
+ * 分岐TODO: 同じ Stop hook で、Jev へ別の呼び出しで「このターンに保留した話題があるか」も
+ * 問う (ボードの質問は返答だけで検証したので、人の発話を混ぜない)。閾値を超えたら Claude に
+ * todo_add で足させる。TODO の一覧はセッションへ渡さない (Claude が todo_list で自分で読む)。
+ * block は 1 ターン 1 回しか効かないので、両方を超えたら reason を連結する
+ *
  * 止める条件 (block しない):
  *   - `stop_hook_active` (block で続けたターンの終わり。ここで止めないと無限に続く)
- *   - そのターンで Claude が既に board_open している
+ *   - そのターンで Claude が既に board_open している (ボードの判定だけ止める)
+ *   - そのターンで Claude が既に todo_add している (TODO の判定だけ止める)
  *   - 無効・鍵なし・本文なし・Jev の失敗・閾値未満
  *
  * transcript は種別 (type / isMeta / isSidechain / content block の種別) だけを見る。
@@ -29,7 +35,7 @@
  */
 
 import fs from "node:fs";
-import type { BoardDecision } from "./jev-client.js";
+import type { BoardDecision, DeferredDecision } from "./jev-client.js";
 
 export const BOARD_SUGGEST_STOP_PATH = "/api/internal/board-suggest-stop";
 
@@ -44,6 +50,14 @@ export const BOARD_SUGGEST_REASON = [
   "Ark のボード提案: この返答はチャットの文章よりボードの図のほうが読みやすいと判定された。",
   "board_authoring_guide の「説明図（デッキ）」に従い、直前の返答の内容を 1 ページに 1 つのことを置くデッキにして、board_open で開くこと。",
   "新しい調査やコードの変更はしない。チャットには同じ説明を繰り返さず、開いたことを 1 行で伝えるだけにする。",
+].join("\n");
+
+/** 保留した話題があると判定されたときに Claude が受け取る指示 */
+export const BRANCH_TODO_REASON = [
+  "Ark の分岐TODO: このターンで保留・後回し・別件にした話題があると判定された。",
+  "todo_list で既存の TODO を確かめ、まだ無いものだけ todo_add で足すこと (1 件 1 行。あとで人間が読んで思い出せる言葉で)。",
+  "保留した話題が無いと判断したら何も足さない。チャットには足したことを 1 行で伝えるだけにする。",
+  "todo_list / todo_add が使えない (ツール一覧に無い) ときは何もしない。",
 ].join("\n");
 
 /** Stop hook の入力のうち使うもの */
@@ -74,16 +88,31 @@ export function parseStopHookInput(body: unknown): StopHookInput | null {
   };
 }
 
-/** 直前のターン (最後の人の発話より後) の本文と、そのターンで board_open したか */
+/** 直前のターン (最後の人の発話より後) の本文と、そのターンで board_open / todo_add したか */
 export interface LastTurn {
   text: string;
   openedBoard: boolean;
+  /** 区切りになった人の発話。読めなければ空文字 */
+  prompt: string;
+  /** そのターンで todo_add を呼んだか */
+  addedTodo: boolean;
 }
 
 interface ContentBlock {
   type?: unknown;
   text?: unknown;
   name?: unknown;
+}
+
+/** user 行の本文。文字列か text block の配列のどちらでも読む */
+function userText(content: unknown): string {
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  return (content as ContentBlock[])
+    .filter(block => block?.type === "text" && typeof block.text === "string")
+    .map(block => block.text as string)
+    .join("\n")
+    .trim();
 }
 
 interface TranscriptRecord {
@@ -103,6 +132,8 @@ interface TranscriptRecord {
 export function extractLastTurn(lines: Iterable<string>): LastTurn {
   let texts: string[] = [];
   let openedBoard = false;
+  let prompt = "";
+  let addedTodo = false;
   for (const raw of lines) {
     let record: TranscriptRecord;
     try {
@@ -122,6 +153,8 @@ export function extractLastTurn(lines: Iterable<string>): LastTurn {
       if (!isToolResult) {
         texts = [];
         openedBoard = false;
+        prompt = userText(content);
+        addedTodo = false;
       }
       continue;
     }
@@ -139,10 +172,16 @@ export function extractLastTurn(lines: Iterable<string>): LastTurn {
         /(^|__)board_open$/.test(block.name)
       ) {
         openedBoard = true;
+      } else if (
+        block?.type === "tool_use" &&
+        typeof block.name === "string" &&
+        /(^|__)todo_add$/.test(block.name)
+      ) {
+        addedTodo = true;
       }
     }
   }
-  return { text: texts.join("\n\n").trim(), openedBoard };
+  return { text: texts.join("\n\n").trim(), openedBoard, prompt, addedTodo };
 }
 
 /** transcript の末尾を読み、行に分ける。途中から読んだ最初の欠けた行は捨てる */
@@ -169,6 +208,13 @@ export interface BoardSuggestStopDeps {
   apiKey(): string | null;
   threshold(): number;
   decide(text: string, apiKey: string): Promise<BoardDecision>;
+  todoEnabled(): boolean;
+  todoThreshold(): number;
+  decideDeferred(
+    prompt: string,
+    reply: string,
+    apiKey: string
+  ): Promise<DeferredDecision>;
   readTranscript(transcriptPath: string): Promise<string[]>;
   log?(message: string): void;
 }
@@ -197,12 +243,19 @@ export class BoardSuggestStopHandler {
     input: StopHookInput
   ): Promise<StopHookOutput | null> {
     if (input.stopHookActive) return null;
-    if (!this.deps.enabled()) return null;
+    const boardOn = this.deps.enabled();
+    const todoOn = this.deps.todoEnabled();
+    if (!boardOn && !todoOn) return null;
     const apiKey = this.deps.apiKey();
     if (!apiKey) return null;
 
     const lastMessage = input.lastAssistantMessage?.trim() ?? "";
-    let turn: LastTurn = { text: "", openedBoard: false };
+    let turn: LastTurn = {
+      text: "",
+      openedBoard: false,
+      prompt: "",
+      addedTodo: false,
+    };
     if (input.transcriptPath) {
       try {
         turn = extractLastTurn(
@@ -219,27 +272,53 @@ export class BoardSuggestStopHandler {
       lastMessage && !turn.text.endsWith(lastMessage)
         ? [turn.text, lastMessage].filter(Boolean).join("\n\n")
         : turn.text;
-    if (turn.openedBoard || !text) return null;
+    if (!text) return null;
 
-    let decision: BoardDecision;
+    const [board, deferred] = await Promise.all([
+      boardOn && !turn.openedBoard
+        ? this.judge(sessionId, "board", () => this.deps.decide(text, apiKey))
+        : null,
+      // 質問は人の発話と返答の対で問うので、発話が読めなければ判定しない
+      todoOn && !turn.addedTodo && turn.prompt
+        ? this.judge(sessionId, "todo", () =>
+            this.deps.decideDeferred(turn.prompt, text, apiKey)
+          )
+        : null,
+    ]);
+    const reasons: string[] = [];
+    if (board && board.board >= this.deps.threshold()) {
+      this.log(
+        `${sessionId}: 図解を依頼 (board=${board.board.toFixed(2)}, ${text.length} 文字)`
+      );
+      reasons.push(BOARD_SUGGEST_REASON);
+    }
+    if (deferred && deferred.deferred >= this.deps.todoThreshold()) {
+      this.log(
+        `${sessionId}: TODO を依頼 (deferred=${deferred.deferred.toFixed(2)})`
+      );
+      reasons.push(BRANCH_TODO_REASON);
+    }
+    if (reasons.length === 0) return null;
+    return { decision: "block", reason: reasons.join("\n\n") };
+  }
+
+  /** Jev を呼び、失敗は null に畳む。同じ失敗を毎ターン出さないよう、判定の種類ごとに覚える */
+  private async judge<T>(
+    sessionId: string,
+    kind: "board" | "todo",
+    run: () => Promise<T>
+  ): Promise<T | null> {
+    const key = `${sessionId}:${kind}`;
     try {
-      decision = await this.deps.decide(text, apiKey);
+      const result = await run();
+      if (this.failing.delete(key)) this.log(`${key}: Jev が回復した`);
+      return result;
     } catch (err) {
-      if (!this.failing.has(sessionId)) {
-        this.log(
-          `${sessionId}: 判定に失敗 (以後同じ失敗は出さない): ${String(err)}`
-        );
-        this.failing.add(sessionId);
+      if (!this.failing.has(key)) {
+        this.log(`${key}: 判定に失敗 (以後同じ失敗は出さない): ${String(err)}`);
+        this.failing.add(key);
       }
       return null;
     }
-    if (this.failing.delete(sessionId)) {
-      this.log(`${sessionId}: Jev が回復した`);
-    }
-    if (decision.board < this.deps.threshold()) return null;
-    this.log(
-      `${sessionId}: 図解を依頼 (board=${decision.board.toFixed(2)}, ${text.length} 文字)`
-    );
-    return { decision: "block", reason: BOARD_SUGGEST_REASON };
   }
 }
