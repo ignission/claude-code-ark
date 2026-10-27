@@ -58,7 +58,7 @@ function StartedLine({ todo, ...props }: { todo: Todo } & RowProps) {
   const text =
     path === todo.worktreePath
       ? "このセッションで始めた"
-      : `→ ${label ?? "削除済み worktree"} で始めた`;
+      : `→ ${label ?? "削除済みのworktree"}で始めた`;
   const canOpen =
     label !== null &&
     props.onOpenWorktree !== undefined &&

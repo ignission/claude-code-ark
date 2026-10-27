@@ -185,7 +185,7 @@ describe("TodoPane", () => {
     ).toBeNull();
   });
 
-  it("始めた先があれば「→ <名前> で始めた」を出し、押すとそのworktreeを開く", () => {
+  it("始めた先があれば「→ <名前>で始めた」を出し、押すとそのworktreeを開く", () => {
     const onOpenWorktree = vi.fn();
     mount({
       todos: [base({ id: "1", startedWorktreePath: "/w/c", startedAt: 5 })],
@@ -193,7 +193,7 @@ describe("TodoPane", () => {
         p === "/w/a" ? "a" : p === "/w/c" ? "todo-abc" : null,
       onOpenWorktree,
     });
-    const link = byText("button", "→ todo-abc で始めた");
+    const link = byText("button", "→ todo-abcで始めた");
     click(link);
     expect(onOpenWorktree).toHaveBeenCalledWith("/w/c");
   });
@@ -214,7 +214,7 @@ describe("TodoPane", () => {
       onOpenWorktree: vi.fn(),
       canOpenWorktree: (p: string) => p !== "/w/c",
     });
-    expect(container.textContent).toContain("→ todo-abc で始めた");
+    expect(container.textContent).toContain("→ todo-abcで始めた");
     expect(byText("button", "で始めた")).toBeUndefined();
   });
 
@@ -223,7 +223,7 @@ describe("TodoPane", () => {
       todos: [base({ id: "1", startedWorktreePath: "/w/gone", startedAt: 5 })],
       onOpenWorktree: vi.fn(),
     });
-    expect(container.textContent).toContain("→ 削除済み worktree で始めた");
+    expect(container.textContent).toContain("→ 削除済みのworktreeで始めた");
     expect(byText("button", "で始めた")).toBeUndefined();
   });
 
