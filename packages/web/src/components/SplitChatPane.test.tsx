@@ -4,6 +4,7 @@ import type { ManagedSession, SlashCommandInfo } from "@ark/shared";
 import { act, type ComponentProps, createRef, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { requestChatDraft, takeChatDraft } from "@/lib/chat-draft-store";
 import { SplitChatPane, type SplitChatPaneHandle } from "./SplitChatPane";
 
 type ChatSocket = NonNullable<ComponentProps<typeof SplitChatPane>["socket"]>;
@@ -1169,5 +1170,42 @@ describe("SplitChatPane: 組み込みスラッシュコマンドのカード", (
     });
 
     expect(countClearCards(container)).toBe(1);
+  });
+});
+
+describe("SplitChatPane: 下書きの受け取り", () => {
+  const textareaOf = (container: HTMLElement) =>
+    container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="メッセージ"]'
+    ) as HTMLTextAreaElement;
+
+  it("マウント時に自分のworktreeの下書きを入力欄へ入れ、フォーカスして、送信はしない", () => {
+    requestChatDraft("/worktrees/s1", "TODOの本文");
+    const { container, onSendMessage } = renderChat();
+    const textarea = textareaOf(container);
+    expect(textarea.value).toBe("TODOの本文");
+    expect(document.activeElement).toBe(textarea);
+    expect(onSendMessage).not.toHaveBeenCalled();
+    expect(takeChatDraft("/worktrees/s1")).toBeNull();
+  });
+
+  it("マウント後に届いた下書きも入れる (空なら置き換え)", () => {
+    const { container } = renderChat();
+    act(() => requestChatDraft("/worktrees/s1", "あとから"));
+    expect(textareaOf(container).value).toBe("あとから");
+  });
+
+  it("書きかけがあれば、空行を挟んで後ろに足す", () => {
+    const { container } = renderChat();
+    typeInto(textareaOf(container), "書きかけ");
+    act(() => requestChatDraft("/worktrees/s1", "TODOの本文"));
+    expect(textareaOf(container).value).toBe("書きかけ\n\nTODOの本文");
+  });
+
+  it("別のworktreeの下書きは受け取らず、置き場に残す", () => {
+    const { container } = renderChat();
+    act(() => requestChatDraft("/worktrees/other", "よそ向け"));
+    expect(textareaOf(container).value).toBe("");
+    expect(takeChatDraft("/worktrees/other")).toBe("よそ向け");
   });
 });
