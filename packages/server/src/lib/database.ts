@@ -51,6 +51,23 @@ export function normalizeTodoText(text: string): string {
   return text.replace(/\s+/g, " ").slice(0, TODO_TEXT_MAX_LENGTH).trim();
 }
 
+export const TODO_BRANCH_MAX_LENGTH = 40;
+
+/**
+ * Claude が付けるブランチ名の候補を、git で安全な kebab-case に直す。
+ * 英数字とハイフンだけを残し ("/" も使わない)、残らなければ null
+ */
+export function normalizeTodoBranch(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const kebab = input
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-|-$/g, "");
+  const cut = kebab.slice(0, TODO_BRANCH_MAX_LENGTH).replace(/-$/, "");
+  return cut || null;
+}
+
 /** 分岐TODOの行データ */
 interface TodoRow {
   id: string;
@@ -59,6 +76,9 @@ interface TodoRow {
   note: string | null;
   created_at: number;
   done_at: number | null;
+  started_worktree_path: string | null;
+  started_at: number | null;
+  branch_name: string | null;
 }
 
 function rowToTodo(row: TodoRow): Todo {
@@ -69,6 +89,9 @@ function rowToTodo(row: TodoRow): Todo {
     note: row.note,
     createdAt: row.created_at,
     doneAt: row.done_at,
+    startedWorktreePath: row.started_worktree_path,
+    startedAt: row.started_at,
+    branchName: row.branch_name,
   };
 }
 
@@ -434,6 +457,22 @@ export class SessionDatabase {
       CREATE INDEX IF NOT EXISTS idx_todos_worktree
         ON todos (worktree_path, created_at);
     `);
+
+    // マイグレーション: 会話を始めた先の 2 列。本番には todos が既にあるので、
+    // 列の有無を見てから足す (何度起動しても同じ結果)
+    const todoColumns = (
+      this.db.prepare("PRAGMA table_info(todos)").all() as { name: string }[]
+    ).map(c => c.name);
+    if (!todoColumns.includes("started_worktree_path")) {
+      this.db.exec("ALTER TABLE todos ADD COLUMN started_worktree_path TEXT");
+    }
+    if (!todoColumns.includes("started_at")) {
+      this.db.exec("ALTER TABLE todos ADD COLUMN started_at INTEGER");
+    }
+    // Claude が付けたブランチ名の候補 (新しいworktreeで話すときの既定値)
+    if (!todoColumns.includes("branch_name")) {
+      this.db.exec("ALTER TABLE todos ADD COLUMN branch_name TEXT");
+    }
 
     // マイグレーション: 旧 label 列を削除する。
     // 1) 列が無ければ何もしない (新規 DB / 既に削除済み)
@@ -1409,6 +1448,7 @@ export class SessionDatabase {
     worktreePath: string;
     text: string;
     note?: string | null;
+    branch?: string | null;
   }): Todo {
     const text = normalizeTodoText(input.text);
     if (!text) throw new Error("TODO の本文が空です");
@@ -1420,11 +1460,14 @@ export class SessionDatabase {
       note,
       created_at: Date.now(),
       done_at: null,
+      started_worktree_path: null,
+      started_at: null,
+      branch_name: normalizeTodoBranch(input.branch),
     };
     this.db
       .prepare(
-        `INSERT INTO todos (id, worktree_path, text, note, created_at, done_at)
-         VALUES (@id, @worktree_path, @text, @note, @created_at, @done_at)`
+        `INSERT INTO todos (id, worktree_path, text, note, created_at, done_at, branch_name)
+         VALUES (@id, @worktree_path, @text, @note, @created_at, @done_at, @branch_name)`
       )
       .run(row);
     return rowToTodo(row);
@@ -1456,6 +1499,24 @@ export class SessionDatabase {
       .prepare("UPDATE todos SET done_at = ? WHERE id = ?")
       .run(done ? Date.now() : null, id);
     return result.changes > 0;
+  }
+
+  /** 会話を始めた先を記録する (始め直したら上書き)。無い id は null */
+  setTodoStarted(
+    id: string,
+    worktreePath: string,
+    now: number = Date.now()
+  ): Todo | null {
+    const result = this.db
+      .prepare(
+        "UPDATE todos SET started_worktree_path = ?, started_at = ? WHERE id = ?"
+      )
+      .run(worktreePath, now, id);
+    if (result.changes === 0) return null;
+    const row = this.db
+      .prepare("SELECT * FROM todos WHERE id = ?")
+      .get(id) as TodoRow;
+    return rowToTodo(row);
   }
 
   deleteTodo(id: string): boolean {

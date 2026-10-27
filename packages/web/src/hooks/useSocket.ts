@@ -86,6 +86,15 @@ interface UseSocketOptions {
   initialRepoPath?: string | null;
   onRepoListChange?: (list: string[]) => void;
   onRepoPathChange?: (path: string | null) => void;
+  /**
+   * `worktree:created` が todoId を伴って届いたときに呼ぶ (自分が頼んだ「TODOから始める作成」の完了通知)。
+   * 検証済みのイベントだけ。ref 越しに読むので、毎レンダーで新しい関数を渡してよい
+   */
+  onWorktreeCreatedForTodo?: (event: {
+    todoId: string;
+    repoPath: string;
+    worktree: Worktree;
+  }) => void;
 }
 
 interface UseSocketReturn {
@@ -164,7 +173,12 @@ interface UseSocketReturn {
 
   // Worktrees
   worktrees: Worktree[];
-  createWorktree: (branchName: string, baseBranch?: string) => void;
+  /** todoId を渡すと、サーバーが作成後にそのTODOの始めた先を新しいworktreeにする */
+  createWorktree: (
+    branchName: string,
+    baseBranch?: string,
+    todoId?: string
+  ) => void;
   deleteWorktree: (worktreePath: string) => void;
   refreshWorktrees: () => void;
 
@@ -838,12 +852,25 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       setWorktreesByRepo(prev => setRepoWorktrees(prev, listRepoPath, wts));
     });
 
-    socket.on("worktree:created", ({ repoPath: eventRepoPath, worktree }) => {
-      if (!isAllowedWorktreeRepo(eventRepoPath) || !isValidWorktree(worktree)) {
-        return;
+    socket.on(
+      "worktree:created",
+      ({ repoPath: eventRepoPath, worktree, todoId }) => {
+        if (
+          !isAllowedWorktreeRepo(eventRepoPath) ||
+          !isValidWorktree(worktree)
+        ) {
+          return;
+        }
+        setWorktreesByRepo(prev => addWorktree(prev, eventRepoPath, worktree));
+        if (typeof todoId === "string" && todoId.length > 0) {
+          optionsRef.current.onWorktreeCreatedForTodo?.({
+            todoId,
+            repoPath: eventRepoPath,
+            worktree,
+          });
+        }
       }
-      setWorktreesByRepo(prev => addWorktree(prev, eventRepoPath, worktree));
-    });
+    );
 
     socket.on("worktree:deleted", ({ repoPath: eventRepoPath, worktreeId }) => {
       if (typeof worktreeId !== "string" || worktreeId.length === 0) return;
@@ -1484,12 +1511,13 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
 
   // Worktree actions
   const createWorktree = useCallback(
-    (branchName: string, baseBranch?: string) => {
+    (branchName: string, baseBranch?: string, todoId?: string) => {
       if (!repoPath) return;
       socketRef.current?.emit("worktree:create", {
         repoPath,
         branchName,
         baseBranch,
+        todoId,
       });
     },
     [repoPath]

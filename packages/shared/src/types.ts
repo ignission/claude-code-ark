@@ -601,6 +601,8 @@ export interface ServerToClientEvents {
   "worktree:created": (payload: {
     repoPath: string;
     worktree: Worktree;
+    /** worktree:create で受けた todoId をそのまま返す (自分が頼んだ作成かの判別用) */
+    todoId?: string;
   }) => void;
   "worktree:deleted": (payload: {
     repoPath: string;
@@ -846,6 +848,8 @@ export interface ClientToServerEvents {
     repoPath: string;
     branchName: string;
     baseBranch?: string;
+    /** 分岐TODOから始める作成。作成できたらそのTODOの始めた先を新しい worktree にする */
+    todoId?: string;
   }) => void;
   "worktree:delete": (data: { repoPath: string; worktreePath: string }) => void;
 
@@ -1034,6 +1038,10 @@ export interface ClientToServerEvents {
   ) => void;
   "todo:set-done": (
     data: { id: string; done: boolean },
+    cb: (r: TodoOpResponse) => void
+  ) => void;
+  "todo:set-started": (
+    data: { id: string; worktreePath: string },
     cb: (r: TodoOpResponse) => void
   ) => void;
   "todo:delete": (
@@ -1312,6 +1320,12 @@ export interface Todo {
   createdAt: number;
   /** 完了した時刻 (ms)。未完了は null */
   doneAt: number | null;
+  /** 会話を始めた先の worktree のパス (最後の1件)。始めていなければ null */
+  startedWorktreePath: string | null;
+  /** 会話を始めた時刻 (ms)。始めていなければ null */
+  startedAt: number | null;
+  /** Claude が付けた、新しい worktree のブランチ名の候補 (kebab-case)。無ければ null */
+  branchName: string | null;
 }
 
 export type TodoListResponse =

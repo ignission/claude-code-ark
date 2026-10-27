@@ -196,6 +196,8 @@ Changes to these settings apply from the next turn. The one exception is a sessi
 
 Turn them on in the same settings screen; they use the same key. Each time Claude finishes a reply, Ark sends the user's message and the reply to [Jev](https://openrouter.ai/docs/guides/community/jev) as a separate question. If the probability that a separate topic was put off, postponed or declared out of scope reaches the threshold, Claude is told to write it down with the MCP tool `todo_add`. TODOs show in the right pane's TODO tab, as counts in the sidebar, and in the mobile TODO view. Claude cannot complete or delete a TODO.
 
+From a TODO row you can start a conversation on that topic in the original session or in a new worktree (the branch name defaults to the short English name Claude gave when adding the TODO, or `todo-<first 6 chars of id>`). The TODO text goes into the chat input as a draft; you press send yourself. The TODO row shows where you started it.
+
 Existing sessions do not get branch TODOs until `claude` is restarted, because `claude` reads the MCP tool list at startup.
 
 ## Configuration

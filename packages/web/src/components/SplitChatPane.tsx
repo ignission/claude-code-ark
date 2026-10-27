@@ -86,6 +86,7 @@ import {
   hasResolvedAuqSince,
   parseAuqInput,
 } from "@/lib/ask-user-question-state";
+import { subscribeChatDraft, takeChatDraft } from "@/lib/chat-draft-store";
 import {
   groupSidechain,
   groupToolCalls,
@@ -1484,6 +1485,23 @@ export function SplitChatPane({
 
   // 入力欄。会話エリアのクリックでここにフォーカスを移す
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // 分岐TODOなどから置かれた下書きを、自分のworktreeの分だけ受け取る (マウント時と通知時)。
+  // 空なら置き換え、書きかけがあれば空行を挟んで後ろに足す。送信はしない
+  const draftWorktreePath = session.worktreePath;
+  useEffect(() => {
+    const receive = () => {
+      const draft = takeChatDraft(draftWorktreePath);
+      if (draft === null) return;
+      setInputValue(prev => (prev === "" ? draft : `${prev}\n\n${draft}`));
+      inputRef.current?.focus();
+      // 呼び出し側は下書きを置いてから、このセッションを選ぶ・会話モードへ切り替える。
+      // 見えていない間の focus は効かないので、切り替えを描画したあとにもう一度置く
+      requestAnimationFrame(() => inputRef.current?.focus());
+    };
+    receive();
+    return subscribeChatDraft(receive);
+  }, [draftWorktreePath]);
 
   // ===== スクロール追従 + 上端で過去読み込み =====
   const jsonlScrollRef = useRef<HTMLDivElement>(null);

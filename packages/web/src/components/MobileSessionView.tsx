@@ -126,11 +126,13 @@ import { useVisualViewport } from "../hooks/useVisualViewport";
 import { useVoiceMode } from "../hooks/useVoiceMode";
 import { mobileQuickActions } from "../lib/mobile-quick-actions";
 import {
+  type ChatViewRequest,
   type DiagramOpenRequest,
   getViewModeForDiagramOpenRequest,
   type MobileSessionViewMode,
   readSavedViewMode,
   shouldOpenTerminalForViewerOpen,
+  shouldShowChatForRequest,
   writeSavedViewMode,
 } from "../lib/mobile-session-view-mode";
 import { DiagramPane, type DiagramPaneProps } from "./DiagramPane";
@@ -218,6 +220,8 @@ export interface MobileSessionViewProps extends MobileDiagramPaneProps {
   /** ファイル / HTMLを開く操作の通し番号。増えたら端末の窓を開く */
   viewerOpenSeq: number;
   diagramOpenRequest: DiagramOpenRequest | null;
+  /** 会話モードへ切り替える要求 (分岐TODOから話し始めたとき)。sequence が進んだら効く */
+  chatViewRequest?: ChatViewRequest | null;
   onTabSelect: (index: number) => void;
   onTabClose: (index: number) => void;
   messageShortcuts: MessageShortcut[];
@@ -251,6 +255,7 @@ export function MobileSessionView({
   activeTabIndex,
   viewerOpenSeq,
   diagramOpenRequest,
+  chatViewRequest = null,
   onTabSelect: onTabSelectProp,
   onTabClose: onTabCloseProp,
   messageShortcuts,
@@ -340,6 +345,21 @@ export function MobileSessionView({
       setViewMode(nextViewMode);
     }
   }, [diagramOpenRequest, session.id]);
+
+  // 分岐TODOから話し始めたら、下書きを入れた会話を見せる。端末の窓が開いていれば閉じる
+  const handledChatViewSequenceRef = useRef<number | null>(null);
+  useEffect(() => {
+    const show = shouldShowChatForRequest(
+      session.id,
+      chatViewRequest,
+      handledChatViewSequenceRef.current
+    );
+    handledChatViewSequenceRef.current = chatViewRequest?.sequence ?? null;
+    if (show) {
+      setTerminalOpen(false);
+      handleViewModeChange("chat");
+    }
+  }, [chatViewRequest, session.id, handleViewModeChange]);
 
   // ファイル / HTMLのビューアは端末と同じタブの並びにあり、窓の中に出る。
   // 開く操作があったら (通し番号が増えたら)、窓を開いて見せる。タブの種類の変化では

@@ -5,7 +5,7 @@ import { getBaseName, getParentPath } from "./pathUtils";
  * セッションが指定されたリポジトリに属するかどうかを判定する
  */
 export function isSessionBelongsToRepo(
-  session: ManagedSession,
+  session: Pick<ManagedSession, "worktreePath">,
   repoPath: string
 ): boolean {
   const { worktreePath } = session;

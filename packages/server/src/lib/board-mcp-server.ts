@@ -66,7 +66,7 @@ export interface BoardMcpDeps {
   /** 分岐TODOを足す。本文の正規化と空の拒否は DB 側で行う */
   addTodo(
     worktreePath: string,
-    input: { text: string; note?: string }
+    input: { text: string; note?: string; branch?: string }
   ): Promise<Todo>;
   /** この worktree の未完了の TODO */
   listTodos(worktreePath: string): Promise<Todo[]>;
@@ -267,7 +267,7 @@ export async function handleBoardReply(
 export async function handleTodoAdd(
   deps: Pick<BoardMcpDeps, "addTodo">,
   worktreePath: string,
-  input: { text: string; note?: string }
+  input: { text: string; note?: string; branch?: string }
 ): Promise<{ added: { id: string; text: string } } | { error: string }> {
   try {
     const todo = await deps.addTodo(worktreePath, input);
@@ -475,12 +475,19 @@ export function createBoardMcpServer(
           .string()
           .optional()
           .describe("補足 (保留にした理由や、関係するファイルなど)"),
+        branch: z
+          .string()
+          .optional()
+          .describe(
+            "この TODO で新しい worktree を作るときのブランチ名の候補。話題を要約した英語の kebab-case (例: fix-log-format)、3〜5語程度"
+          ),
       },
     },
     async args => {
       const result = await handleTodoAdd(deps, worktreePath, {
         text: args.text,
         ...(args.note === undefined ? {} : { note: args.note }),
+        ...(args.branch === undefined ? {} : { branch: args.branch }),
       });
       return textResult(
         "error" in result

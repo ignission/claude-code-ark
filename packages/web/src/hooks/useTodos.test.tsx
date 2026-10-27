@@ -41,6 +41,9 @@ const todo = (id: string, worktreePath: string, done = false): Todo => ({
   note: null,
   createdAt: 1,
   doneAt: done ? 2 : null,
+  startedWorktreePath: null,
+  startedAt: null,
+  branchName: null,
 });
 
 let latest: ReturnType<typeof useTodos>;
@@ -175,6 +178,22 @@ describe("useTodos", () => {
       payload: { id: "1" },
     });
     expect(latest.error).toBe("削除できません");
+  });
+
+  it("setStarted は todo:set-started を送り、失敗を error に入れる", async () => {
+    const socket = fakeSocket(event =>
+      event === "todo:list"
+        ? { ok: true, todos: [todo("1", "/w/a")] }
+        : { ok: false, error: "TODO が見つかりません" }
+    );
+    await render(socket);
+    act(() => latest.setStarted("1", "/w/a"));
+    await flush();
+    expect(socket.emitted.at(-1)).toEqual({
+      event: "todo:set-started",
+      payload: { id: "1", worktreePath: "/w/a" },
+    });
+    expect(latest.error).toBe("TODO が見つかりません");
   });
 
   it("ack が来ないときは応答なしのエラーに畳む", async () => {
