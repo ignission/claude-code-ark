@@ -792,6 +792,45 @@ describe("MobileSessionView の端末の窓", () => {
     ).not.toBe("hidden");
   });
 
+  it("会話モードへの要求が来たら、TODOモードからでも窓を閉じて会話モードを見せる", () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "todo");
+    const props = makeProps({ todoPane: <div data-testid="todo-pane-stub" /> });
+    const container = mount(<MobileSessionView {...props} />);
+    const { root } = mountedRoots.at(-1) as { root: Root };
+    openTerminalWindow();
+
+    act(() =>
+      root.render(
+        <MobileSessionView
+          {...props}
+          chatViewRequest={{ sessionId: "s1", sequence: 1 }}
+        />
+      )
+    );
+
+    expect(isTerminalWindowOpen(container)).toBe(false);
+    expect(
+      container.querySelector('[data-testid="mobile-view-chat"]')?.className
+    ).not.toBe("hidden");
+    expect(
+      container.querySelector('[data-testid="mobile-view-todo"]')?.className
+    ).toBe("hidden");
+    expect(localStorage.getItem(STORAGE_KEY_MOBILE_VIEW)).toBe("chat");
+  });
+
+  it("別のセッション宛ての会話モードへの要求では切り替えない", () => {
+    localStorage.setItem(STORAGE_KEY_MOBILE_VIEW, "todo");
+    const container = mount(
+      <MobileSessionView
+        {...makeProps({ todoPane: <div data-testid="todo-pane-stub" /> })}
+        chatViewRequest={{ sessionId: "other", sequence: 1 }}
+      />
+    );
+    expect(
+      container.querySelector('[data-testid="mobile-view-chat"]')?.className
+    ).toBe("hidden");
+  });
+
   it("窓の中のタブで図を選んだら、窓を閉じて図モードを見せる", () => {
     const onTabSelect = vi.fn();
     const container = mount(

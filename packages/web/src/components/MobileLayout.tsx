@@ -37,7 +37,10 @@ import { MobileSessionList } from "@/components/MobileSessionList";
 import { MobileSessionView } from "@/components/MobileSessionView";
 import { ScreenPane } from "@/components/ScreenPane";
 import type { ViewerTab } from "@/components/TerminalPane";
-import type { DiagramOpenRequest } from "@/lib/mobile-session-view-mode";
+import type {
+  ChatViewRequest,
+  DiagramOpenRequest,
+} from "@/lib/mobile-session-view-mode";
 import { getBaseName, isPathWithin } from "@/utils/pathUtils";
 import { findRepoForSession } from "@/utils/sessionUtils";
 
@@ -111,6 +114,8 @@ interface MobileLayoutProps {
   ) => void;
   /** diagram:open のたびに sequence が増えるモバイル表示用の明示通知 */
   diagramOpenRequest: DiagramOpenRequest | null;
+  /** 会話モードへ切り替える要求 (分岐TODOから話し始めたとき) */
+  chatViewRequest?: ChatViewRequest | null;
   // 図ペイン transport（PC の SplitViewPane と同じ集合）
   listDiagrams: (worktreePath: string) => Promise<DiagramListItem[]>;
   deleteDiagram: (
@@ -258,6 +263,7 @@ export function MobileLayout({
   handleTabClose,
   openDiagramTab,
   diagramOpenRequest,
+  chatViewRequest,
   listDiagrams,
   deleteDiagram,
   getDiagramComments,
@@ -583,6 +589,7 @@ export function MobileLayout({
                 activeTabIndex={getActiveTabForSession(sessionId)}
                 viewerOpenSeq={getViewerOpenSeqForSession(sessionId)}
                 diagramOpenRequest={diagramOpenRequest}
+                chatViewRequest={chatViewRequest}
                 onTabSelect={idx => handleTabSelect(sessionId, idx)}
                 onTabClose={idx => handleTabClose(sessionId, idx)}
                 isConnected={isSocketConnected}

@@ -58,6 +58,34 @@ export function getViewModeForDiagramOpenRequest(
 }
 
 /**
+ * 会話モードへ切り替える要求 (分岐TODOから話し始めたとき、下書きを入れた会話を見せる)。
+ * diagram:open の通知と同じく、通し番号が進んだときだけ効く
+ */
+export interface ChatViewRequest {
+  sessionId: string;
+  sequence: number;
+}
+
+export function createChatViewRequest(
+  previous: ChatViewRequest | null,
+  sessionId: string
+): ChatViewRequest {
+  return { sessionId, sequence: (previous?.sequence ?? 0) + 1 };
+}
+
+export function shouldShowChatForRequest(
+  sessionId: string,
+  request: ChatViewRequest | null,
+  handledSequence: number | null
+): boolean {
+  return (
+    request !== null &&
+    request.sessionId === sessionId &&
+    request.sequence !== handledSequence
+  );
+}
+
+/**
  * ファイル / HTMLを開く操作があったので、端末の窓を開く必要があるか。
  * ビューアは端末と同じタブの並びに属し、窓の中に出る。開く操作の通し番号が、
  * 前に見た値より増えたときだけ開く (同じファイルの開き直しでも番号は進む)
