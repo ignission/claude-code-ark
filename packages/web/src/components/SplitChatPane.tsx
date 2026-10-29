@@ -1941,6 +1941,8 @@ export function SplitChatPane({
             onClick={() => sendQuickAction(action)}
             className={`${ROUND_ICON_BUTTON} ${composerSize.button}`}
             aria-label={label}
+            // 添付の途中で送ると、あとから入力欄に足される @path が届かない
+            disabled={uploadingCount > 0}
             title={`${label} (入力欄の文が対象。Ctrl+; → ${action === "diagram" ? "d" : "T"})`}
           >
             <Icon className="size-5" />

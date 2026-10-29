@@ -4,10 +4,6 @@
  */
 export const SECRET_SETTING_KEYS: readonly string[] = ["auq_hook_token"];
 
-export function isSecretSettingKey(key: string): boolean {
-  return SECRET_SETTING_KEYS.includes(key);
-}
-
 /**
  * 撤去した Jev 判定 (ボード提案と分岐TODOの自動検出) が使っていた設定キー。
  * OpenRouter の鍵を含むので、起動時に消して `/api/settings` に出さない
@@ -19,3 +15,13 @@ export const RETIRED_SETTING_KEYS: readonly string[] = [
   "branch_todo_enabled",
   "branch_todo_threshold",
 ];
+
+/**
+ * ブラウザから読み書きさせない設定キー。撤去した設定も含める
+ * (起動後に `/api/settings` の PUT で鍵を入れ直され、GET で返すことを防ぐ)
+ */
+export function isSecretSettingKey(key: string): boolean {
+  return (
+    SECRET_SETTING_KEYS.includes(key) || RETIRED_SETTING_KEYS.includes(key)
+  );
+}
