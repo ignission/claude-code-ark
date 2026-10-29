@@ -56,7 +56,6 @@ function setup(overrides: Partial<CommandPaletteProps> = {}) {
     onOpenFile: vi.fn(),
     onAsk: vi.fn(),
     onOpenAskWindow: vi.fn(),
-    onOpenBranchTodoSettings: vi.fn(),
     ...overrides,
   };
   act(() => root.render(<CommandPalette {...props} />));
@@ -187,13 +186,15 @@ describe("CommandPalette", () => {
     expect(closed[0].command).toEqual({ type: "work-tab", tab: "git" });
   });
 
-  it("分岐TODOの設定は、フォーカスをそのダイアログに任せる", async () => {
-    const props = setup();
+  it("図解とTODOのボタンをコマンドとして押せる", async () => {
+    setup();
     await open();
-    await type("分岐TODOの設定");
+    await type("ボードに図解させる");
     await press("Enter");
-    expect(props.onOpenBranchTodoSettings).toHaveBeenCalled();
-    expect(closed[0].handoff).toBe(true);
+    expect(closed[0].command).toEqual({
+      type: "chat-action",
+      action: "diagram",
+    });
   });
 
   it("Tab は打った文を Claude に聞き、フォーカスは聞いた先に任せる", async () => {

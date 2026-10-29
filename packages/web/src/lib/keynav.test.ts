@@ -39,6 +39,22 @@ describe("resolveKey", () => {
     expect(rows.some(([, what]) => what.includes("⇄ 会話"))).toBe(false);
   });
 
+  it("d / T は入力欄の図解 / TODO のボタンを押す指示になる", () => {
+    expect(resolveKey("", { key: "d" }).command).toEqual({
+      type: "chat-action",
+      action: "diagram",
+    });
+    expect(resolveKey("", { key: "T" }).command).toEqual({
+      type: "chat-action",
+      action: "todo",
+    });
+    // 2 打目の d は従来どおり図のタブ
+    expect(resolveKey("g", { key: "d" }).command).toEqual({
+      type: "work-tab",
+      tab: "board",
+    });
+  });
+
   it("g は次のキーを待ち、2 打で指示になる", () => {
     const first = resolveKey("", { key: "g" });
     expect(first).toEqual({ pending: "g", handled: true });

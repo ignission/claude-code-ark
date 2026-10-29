@@ -48,6 +48,8 @@ export type KeyNavCommand =
   | { type: "file-tab"; dir: -1 | 1 }
   /** ピークを閉じる。無ければ作業エリアを閉じる */
   | { type: "close" }
+  /** 会話の入力欄の左のボタン (ボードに図解させる / TODOに残させる) を押す */
+  | { type: "chat-action"; action: "diagram" | "todo" }
   /** キーの一覧を出す / 隠す */
   | { type: "help" }
   /** 名前で探して実行するパレットを開く */
@@ -96,6 +98,8 @@ const SINGLE_KEYS: Readonly<Record<string, KeyNavCommand>> = {
   t: { type: "toggle-terminal" },
   p: { type: "toggle-work-area" },
   q: { type: "close" },
+  d: { type: "chat-action", action: "diagram" },
+  T: { type: "chat-action", action: "todo" },
   "?": { type: "help" },
   ":": { type: "palette" },
 };
@@ -179,6 +183,7 @@ export const KEYNAV_HELP: ReadonlyArray<{
       ["gd / gf / gs", "図 / ファイル / Git のタブ"],
       ["gt / gT", "次 / 前のファイルタブ"],
       ["q", "ピークを閉じる (無ければ作業エリア)"],
+      ["d / T", "ボードに図解させる / TODOに残させる (入力欄の文が対象)"],
     ],
   },
 ];

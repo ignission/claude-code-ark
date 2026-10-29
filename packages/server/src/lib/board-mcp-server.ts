@@ -160,7 +160,7 @@ export function createBoardMcpServer(
     "todo_add",
     {
       description:
-        "ユーザーに頼まれたとき、または Ark の分岐TODOの判定に頼まれたときに、保留・後回し・別件にした話題をこのセッションの TODO に足す。TODO は人間が後で読んで思い出すためのもので、完了と削除は人間が行う。足す前に todo_list で同じものが無いか確かめること。",
+        "ユーザーに頼まれたときに、保留・後回し・別件にした話題をこのセッションの TODO に足す。TODO は人間が後で読んで思い出すためのもので、完了と削除は人間が行う。足す前に todo_list で同じものが無いか確かめること。",
       inputSchema: {
         text: z
           .string()

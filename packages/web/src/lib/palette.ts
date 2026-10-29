@@ -9,6 +9,7 @@
  * 最後の名前の中で一致したものを上げる。
  */
 
+import { CHAT_QUICK_ACTION_LABEL } from "./chat-quick-actions";
 import type { KeyNavCommand, KeyNavRegion } from "./keynav";
 
 /** パレットを開く合図 (KeyNavLayer が投げ、CommandPalette が受ける) */
@@ -30,7 +31,6 @@ export type PaletteAction =
   | { type: "diagram"; relPath: string }
   | { type: "file"; path: string }
   | { type: "keynav"; command: KeyNavCommand }
-  | { type: "branch-todo-settings" }
   | { type: "ask-window" }
   | { type: "ask"; text: string };
 
@@ -64,6 +64,16 @@ export function regionAfter(action: PaletteAction): KeyNavRegion | undefined {
 
 /** 名前で実行できる操作。取り消せない操作 (停止・削除・再起動) は載せない */
 export const PALETTE_COMMANDS: readonly PaletteItem[] = [
+  command(
+    "chat-diagram",
+    CHAT_QUICK_ACTION_LABEL.diagram,
+    "diagram board 図解 ボード d",
+    { type: "keynav", command: { type: "chat-action", action: "diagram" } }
+  ),
+  command("chat-todo", CHAT_QUICK_ACTION_LABEL.todo, "todo 保留 あとで T", {
+    type: "keynav",
+    command: { type: "chat-action", action: "todo" },
+  }),
   command("toggle-terminal", "端末の窓を開閉する", "terminal 端末 t", {
     type: "keynav",
     command: { type: "toggle-terminal" },
@@ -91,9 +101,6 @@ export const PALETTE_COMMANDS: readonly PaletteItem[] = [
   command("help", "キーの一覧を見る", "help keys ヘルプ ?", {
     type: "keynav",
     command: { type: "help" },
-  }),
-  command("branch-todo", "分岐TODOの設定", "jev settings todo 分岐", {
-    type: "branch-todo-settings",
   }),
   command("ask-window", "Claude に聞くウィンドウを開く", "ask ai 質問", {
     type: "ask-window",

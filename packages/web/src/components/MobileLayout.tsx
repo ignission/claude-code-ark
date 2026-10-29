@@ -133,7 +133,6 @@ interface MobileLayoutProps {
   requestScreenCredentials: (id: string) => Promise<ScreenCredentialsResult>;
   setScreenClipboard: (id: string, text: string) => Promise<ScreenPasteResult>;
   onOpenScreenManager: () => void;
-  onOpenBranchTodoSettings: () => void;
   // メッセージショートカット
   messageShortcuts: MessageShortcut[];
   onCreateShortcut: (message: string) => void;
@@ -230,7 +229,6 @@ export function MobileLayout({
   requestScreenCredentials,
   setScreenClipboard,
   onOpenScreenManager,
-  onOpenBranchTodoSettings,
   messageShortcuts,
   onCreateShortcut,
   onUpdateShortcut,
@@ -428,7 +426,6 @@ export function MobileLayout({
       >
         <MobileSessionList
           onOpenScreenManager={onOpenScreenManager}
-          onOpenBranchTodoSettings={onOpenBranchTodoSettings}
           sessions={sessions}
           worktrees={worktrees}
           repoList={repoList}

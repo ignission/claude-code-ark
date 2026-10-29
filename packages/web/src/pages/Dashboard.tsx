@@ -11,7 +11,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AboutDialog } from "@/components/AboutDialog";
 import { AskWindow } from "@/components/AskWindow";
-import { BranchTodoSettingsDialog } from "@/components/BranchTodoSettingsDialog";
 import { BrowserPane } from "@/components/BrowserPane";
 import { CommandPalette } from "@/components/CommandPalette";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
@@ -181,8 +180,6 @@ export default function Dashboard() {
     deleteScreen,
     requestScreenCredentials,
     setScreenClipboard,
-    getBranchTodoConfig,
-    setBranchTodoConfig,
     profiles,
     repoProfileLinks,
     worktreeProfileLinks,
@@ -699,7 +696,6 @@ export default function Dashboard() {
   const [showPortSelector, setShowPortSelector] = useState(false);
   const [showProfileManager, setShowProfileManager] = useState(false);
   const [showAboutDialog, setShowAboutDialog] = useState(false);
-  const [showBranchTodoSettings, setShowBranchTodoSettings] = useState(false);
   // AboutダイアログのCPU/MEM/DISK用。開いている間だけbridge:snapshotを購読する
   const bridgeSnapshot = useBridgeSnapshot(socket, showAboutDialog);
 
@@ -1057,7 +1053,6 @@ export default function Dashboard() {
           requestScreenCredentials={requestScreenCredentials}
           setScreenClipboard={setScreenClipboard}
           onOpenScreenManager={() => setShowScreenManager(true)}
-          onOpenBranchTodoSettings={() => setShowBranchTodoSettings(true)}
           messageShortcuts={messageShortcuts}
           onCreateShortcut={createShortcut}
           onUpdateShortcut={updateShortcut}
@@ -1126,7 +1121,6 @@ export default function Dashboard() {
               onOpenFile={handleOpenFileLink}
               onAsk={handleAsk}
               onOpenAskWindow={openAskWindow}
-              onOpenBranchTodoSettings={() => setShowBranchTodoSettings(true)}
             />
           }
           floating={
@@ -1183,7 +1177,6 @@ export default function Dashboard() {
               selectedScreenId={selectedScreenId}
               onSelectScreen={handleSelectScreen}
               onOpenScreenManager={() => setShowScreenManager(true)}
-              onOpenBranchTodoSettings={() => setShowBranchTodoSettings(true)}
             />
           }
           main={
@@ -1621,14 +1614,6 @@ export default function Dashboard() {
         onCreate={createScreen}
         onUpdate={updateScreen}
         onDelete={deleteScreen}
-      />
-
-      {/* 分岐TODO (Jev 判定) の設定 */}
-      <BranchTodoSettingsDialog
-        open={showBranchTodoSettings}
-        onOpenChange={setShowBranchTodoSettings}
-        onLoad={getBranchTodoConfig}
-        onSave={setBranchTodoConfig}
       />
 
       {/* About Ark (同梱バイナリ LICENSE 一覧) */}

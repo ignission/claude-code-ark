@@ -89,7 +89,7 @@ The mobile UI has its own session list, chat view, terminal with quick keys, and
 - Run one headless Chromium on the server machine and show it in Ark, with the screen and input relayed over the Chrome DevTools Protocol. All it needs is a Chromium executable: Ark looks first for one installed by Playwright under `~/.cache/ms-playwright`, then for `chromium-browser`, `chromium` or `google-chrome` on PATH. If none is found, only this feature is disabled.
 - Open the VNC screen of a host you can reach over SSH, such as a Mac's Screen Sharing, in the browser. Ark connects with `ssh -o BatchMode=yes` as the user running the server, so that user needs a key without a passphrase (or one loaded in ssh-agent) and the host already in `known_hosts`.
 - Use a different Claude account per repository (Linux only).
-- Keep topics set aside mid-conversation in the TODO tab. When Ark judges that Claude pushed a separate topic aside, Claude writes it down as a TODO. Only you can complete or delete one. See [Branch TODOs](#branch-todos).
+- Keep topics set aside mid-conversation in the TODO tab. Press the TODO button to the left of the chat input and Claude writes the topics it set aside down as TODOs. Only you can complete or delete one. See [Branch TODOs](#branch-todos).
 
 ## How it works
 
@@ -174,18 +174,11 @@ Ark prints a QR code and a temporary `*.trycloudflare.com` URL protected by a ra
 
 ## Branch TODOs
 
-Topics set aside mid-conversation are kept as TODOs. Each time Claude finishes a reply, Ark sends the user's message and the reply to [Jev](https://openrouter.ai/docs/guides/community/jev). Jev is a classifier that returns only a probability and generates no text. If the probability that a separate topic was put off, postponed or declared out of scope reaches the threshold, Claude is told to write it down with the MCP tool `todo_add`. TODOs show in the right pane's TODO tab, as counts in the sidebar, and in the mobile TODO view. Claude cannot complete or delete a TODO.
+Topics set aside mid-conversation are kept as TODOs. Press the TODO button to the left of the chat input, and Claude writes down the topics it put off in this conversation with the MCP tool `todo_add`. Type something first, and that text becomes the TODO. The diagram button next to it works the same way: it asks Claude to draw the last explanation (or the text you typed) on the board.
 
-- One call takes 200–400 ms and costs $0.042 per million input tokens.
-- Ark sends at most 6,000 characters (the end of the message and of the reply), with `data_collection: "deny"`.
+On a PC, `d` and `T` in normal mode (`Ctrl+;`) press the diagram and TODO buttons. Both are also in the command palette.
 
-To turn it on:
-
-1. Create an API key at [OpenRouter](https://openrouter.ai/settings/keys).
-2. Open the branch TODO settings from the Ark menu at the top left (on a phone, the slider icon in the session list), paste the key, and save.
-3. If it fires too often, raise the threshold (default 0.7) or switch it off on the same screen.
-
-The key is stored in Ark's database, and the UI only ever shows its last four characters. You can also supply it through `OPENROUTER_API_KEY` or `~/.config/openrouter/api-key`; the key from the settings screen takes precedence. Without a key, nothing happens.
+TODOs show in the right pane's TODO tab, as counts in the sidebar, and in the mobile TODO view. Claude cannot complete or delete a TODO.
 
 From a TODO row you can start a conversation on that topic in the original session or in a new worktree (the branch name defaults to the short English name Claude gave when adding the TODO, or `todo-<first 6 chars of id>`). The TODO text goes into the chat input as a draft; you press send yourself. The TODO row shows where you started it.
 
@@ -206,8 +199,6 @@ Existing sessions do not get branch TODOs until `claude` is restarted, because `
 | `SKIP_PERMISSIONS`          | `true` to skip permission prompts                                 |
 | `ARK_PUBLIC_DOMAIN`         | Fixed domain for the Named Tunnel                                 |
 | `ARK_TUNNEL_NAME`           | Named Tunnel name (default: `claude-code-ark`)                    |
-| `OPENROUTER_API_KEY`        | API key for branch TODOs; the settings screen takes precedence    |
-| `ARK_FEATURE_BRANCH_TODO`   | `false` turns branch TODOs off                                    |
 
 ## Known limitations
 

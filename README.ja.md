@@ -89,7 +89,7 @@ Claudeは、図、画面のイメージ、触れるモックなど、文章よ�
 - サーバーのマシンでheadlessのChromiumを1つ動かし、画面と入力をChrome DevTools Protocolで中継して、Arkの画面に出せます。必要なのはChromiumの実行ファイルだけです。`~/.cache/ms-playwright` にPlaywrightで入れたものを先に探し、なければPATHの `chromium-browser` / `chromium` / `google-chrome` を使います。見つからないときは、この機能だけが無効になります。
 - SSHで届くホストのVNC画面 (macOSの画面共有など) を、ブラウザで開けます。Arkはサーバーの実行ユーザーで `ssh -o BatchMode=yes` を起動するので、そのユーザーにパスフレーズ無しの鍵 (またはssh-agentに登録済みの鍵) があり、接続先が `known_hosts` に登録済みである必要があります。
 - リポジトリごとに別のClaudeアカウントを使えます (Linuxのみ)。
-- 会話の途中で保留にした話題を、TODOタブに残せます。Claudeが「あとで」「別件で」と脇へ置いたとArkが判定すると、ClaudeがTODOとして書き留めます。完了と削除は人間だけが行います。[分岐TODO](#分岐todo)を参照してください。
+- 会話の途中で保留にした話題を、TODOタブに残せます。入力欄の左のTODOボタンを押すと、ClaudeがTODOとして書き留めます。完了と削除は人間だけが行います。[分岐TODO](#分岐todo)を参照してください。
 
 ## 仕組み
 
@@ -174,18 +174,11 @@ cd claude-code-ark
 
 ## 分岐TODO
 
-会話の途中で保留にした話題を、TODOとして残します。Claudeが返答を終えるたびに、Arkは人の発話と返答を [Jev](https://openrouter.ai/docs/guides/community/jev) に問い合わせ、「別の話題を保留・後回し・対象外にした」確率が閾値以上なら、ClaudeにMCPツール `todo_add` で書き留めさせます。Jevは確率だけを返す分類器で、文章を生成しません。TODOは右ペインのTODOタブ、サイドバーの件数、モバイルのTODO表示に出ます。ClaudeはTODOを完了も削除もできません。
+会話の途中で保留にした話題を、TODOとして残します。会話の入力欄の左にあるTODOボタンを押すと、Claudeがその会話で保留にした話題をMCPツール `todo_add` で書き留めます。入力欄に文を書いてから押すと、その文をTODOにします。隣の図解ボタンも同じ使い方で、直前の説明 (入力欄に文があればその文) をボードに図解させます。
 
-- 判定は1回200〜400msで、費用は入力100万トークンあたり$0.042です。
-- Arkが送るのは発話と返答の末尾を合わせて6,000文字までで、`data_collection: "deny"` を付けます。
+PCでは、ノーマルモード (`Ctrl+;`) の `d` で図解、`T` でTODOのボタンを押せます。コマンドパレットにも「ボードに図解させる」「TODOに残させる」があります。
 
-有効にする手順は次のとおりです。
-
-1. [OpenRouter](https://openrouter.ai/settings/keys) でAPIキーを発行します。
-2. 左上のArkメニュー (スマホではセッション一覧のスライダーアイコン) から「分岐TODOの設定」を開き、キーを貼って保存します。
-3. TODOが多すぎる場合は、同じ画面で閾値 (既定0.7) を上げるか、無効にします。
-
-キーはArkのデータベースに保存され、画面には末尾4文字しか表示されません。環境変数 `OPENROUTER_API_KEY` か `~/.config/openrouter/api-key` でも渡せますが、設定画面のキーが優先されます。キーが無い間は何もしません。
+TODOは右ペインのTODOタブ、サイドバーの件数、モバイルのTODO表示に出ます。ClaudeはTODOを完了も削除もできません。
 
 TODOの行からは、その話題の会話を元のセッションか新しいworktreeで始められます。新しいworktreeのブランチ名は、ClaudeがTODOを足すときに付けた英語の名前が入ります (付いていなければ `todo-<id先頭6文字>`)。チャットの入力欄に下書きが入るだけで、送信は人間が押します。始めた先はTODOの行に残ります。
 
@@ -206,8 +199,6 @@ TODOの行からは、その話題の会話を元のセッションか新しいw
 | `SKIP_PERMISSIONS`          | `true` で権限確認をスキップ                       |
 | `ARK_PUBLIC_DOMAIN`         | Named Tunnel用の固定ドメイン                      |
 | `ARK_TUNNEL_NAME`           | Named Tunnelの名前 (既定: `claude-code-ark`)      |
-| `OPENROUTER_API_KEY`        | 分岐TODOのAPIキー。設定画面のキーが優先される     |
-| `ARK_FEATURE_BRANCH_TODO`   | `false` で分岐TODOを止める                        |
 
 ## 分かっている制限
 
