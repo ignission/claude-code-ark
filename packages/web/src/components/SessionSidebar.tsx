@@ -34,8 +34,8 @@ type SessionSidebarProps = Omit<SessionSectionListProps, "variant"> & {
   onNewSession: () => void;
   /** Aboutダイアログを開く */
   onOpenAbout: () => void;
-  /** ボード提案 (Jev 判定) の設定ダイアログを開く */
-  onOpenBoardSuggestSettings: () => void;
+  /** 分岐TODO (Jev 判定) の設定ダイアログを開く */
+  onOpenBranchTodoSettings: () => void;
   /** ブラウザ選択コールバック (リモートアクセス時のみ使用) */
   onSelectBrowser?: () => void;
   isBrowserSelected?: boolean;
@@ -51,7 +51,7 @@ type SessionSidebarProps = Omit<SessionSectionListProps, "variant"> & {
 export function SessionSidebar({
   onNewSession,
   onOpenAbout,
-  onOpenBoardSuggestSettings,
+  onOpenBranchTodoSettings,
   onSelectBrowser,
   isBrowserSelected = false,
   isRemote = false,
@@ -84,9 +84,9 @@ export function SessionSidebar({
               <Info />
               About Ark
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={onOpenBoardSuggestSettings}>
+            <DropdownMenuItem onSelect={onOpenBranchTodoSettings}>
               <SlidersHorizontal />
-              ボード提案と分岐TODOの設定
+              分岐TODOの設定
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

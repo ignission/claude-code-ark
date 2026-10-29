@@ -20,8 +20,8 @@ vi.mock("./injected-minify.js", () => ({
   },
 }));
 
-import { injectDiagramCommentLayer } from "./diagram-comment-layer.js";
-import { injectHarness } from "./diagram-harness.js";
+import { injectDiagramKeynavLayer } from "./diagram-keynav-layer.js";
+import { injectDiagramLinkLayer } from "./diagram-link-layer.js";
 
 describe("注入 payload の遅延生成", () => {
   it("import しただけでは圧縮せず、初回注入時に 1 度だけ走る", () => {
@@ -29,16 +29,14 @@ describe("注入 payload の遅延生成", () => {
     // server module の読み込み中に落ちる (v1.5.0 の release smoke test 失敗)。
     expect(minified).toEqual([]);
 
-    // ハーネスは style (css) と script (js) の 2 回。
-    injectHarness("");
-    expect(minified).toEqual(["css", "js"]);
-    injectHarness("");
-    expect(minified).toEqual(["css", "js"]);
+    injectDiagramLinkLayer("");
+    expect(minified).toEqual(["js"]);
+    injectDiagramLinkLayer("");
+    expect(minified).toEqual(["js"]);
 
-    // コメント層は script (js) の 1 回だけ。
-    injectDiagramCommentLayer("");
-    expect(minified).toEqual(["css", "js", "js"]);
-    injectDiagramCommentLayer("");
-    expect(minified).toEqual(["css", "js", "js"]);
+    injectDiagramKeynavLayer("");
+    expect(minified).toEqual(["js", "js"]);
+    injectDiagramKeynavLayer("");
+    expect(minified).toEqual(["js", "js"]);
   });
 });

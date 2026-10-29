@@ -2,7 +2,7 @@
  * DiagramSwitcher - 図の切り替え。「図の一覧」と「図」の 2 つの画面を行き来する
  *
  * Finder のように、一覧の画面で図を開くと図の画面へ替わり、上のバーの「戻る」で一覧へ
- * 戻る (「進む」で開いていた図へ)。一覧はリスト表示 (名前・種類・更新日時の列。既定は
+ * 戻る (「進む」で開いていた図へ)。一覧はリスト表示 (名前・更新日時の列。既定は
  * 更新の新しい順)。以前はプルダウン 1 本で、名前しか見えず、どれが新しい図かも
  * 分からなかった。
  *
@@ -17,27 +17,20 @@
  * - 並べ方と絞り込みは lib/diagram-browser.ts
  */
 
-import type { DiagramKind, DiagramListItem } from "@ark/shared";
+import type { DiagramListItem } from "@ark/shared";
 import {
   ArrowDown,
-  ArrowLeftRight,
   ArrowUp,
   ChevronLeft,
   ChevronRight,
-  FileText,
-  Layers,
-  ListTree,
-  type LucideIcon,
   Trash2,
   Workflow,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   browseDiagrams,
-  DIAGRAM_KIND_LABEL,
   type DiagramSort,
   type DiagramSortKey,
-  diagramKind,
   diagramShortPath,
   formatDiagramTime,
   loadDiagramSort,
@@ -72,21 +65,12 @@ interface DiagramSwitcherProps {
   notice?: string | null;
 }
 
-const KIND_ICON: Readonly<Record<DiagramKind, LucideIcon>> = {
-  deck: Layers,
-  doc: FileText,
-  sequence: ArrowLeftRight,
-  "call-tree": ListTree,
-  graph: Workflow,
-};
-
 const COLUMNS: ReadonlyArray<{
   key: DiagramSortKey;
   label: string;
   className: string;
 }> = [
   { key: "name", label: "名前", className: "min-w-0 flex-1" },
-  { key: "kind", label: "種類", className: "w-24 shrink-0" },
   { key: "mtime", label: "更新", className: "w-24 shrink-0" },
 ];
 
@@ -362,8 +346,6 @@ export function DiagramSwitcher({
     saveDiagramSort(next);
   };
 
-  const CurrentIcon =
-    KIND_ICON[currentItem ? diagramKind(currentItem) : "graph"];
   const currentLabel =
     currentItem?.displayName ??
     (currentRelPath
@@ -408,7 +390,7 @@ export function DiagramSwitcher({
           </>
         ) : (
           <>
-            <CurrentIcon
+            <Workflow
               className="ml-1 size-3.5 shrink-0 text-muted-foreground"
               aria-hidden="true"
             />
@@ -589,7 +571,6 @@ export function DiagramSwitcher({
               </p>
             )}
             {rows.map((item, index) => {
-              const Icon = KIND_ICON[diagramKind(item)];
               const selected = index === activeIndex;
               const current = item.relPath === currentRelPath;
               return (
@@ -623,7 +604,7 @@ export function DiagramSwitcher({
                     onChange={() => {}}
                   />
                   <span className="flex min-w-0 flex-1 items-center gap-2">
-                    <Icon
+                    <Workflow
                       className="size-4 shrink-0 text-muted-foreground"
                       aria-hidden="true"
                     />
@@ -637,9 +618,6 @@ export function DiagramSwitcher({
                         {diagramShortPath(item.relPath)}
                       </span>
                     )}
-                  </span>
-                  <span className="w-24 shrink-0 truncate text-muted-foreground">
-                    {DIAGRAM_KIND_LABEL[diagramKind(item)]}
                   </span>
                   <span className="w-24 shrink-0 truncate tabular-nums text-muted-foreground">
                     {formatDiagramTime(item.mtimeMs, now)}

@@ -462,14 +462,11 @@ export type SpecialKey =
   | "9";
 
 // WebSocket event types
-/** 図の一覧に出す種類 (graph の図種と type なしは "graph") */
-export type DiagramKind = "deck" | "doc" | "sequence" | "call-tree" | "graph";
-
 export interface DiagramListItem {
   relPath: string;
+  /** `<title>` の文字列。無ければファイル名 */
   displayName: string;
   tracked: boolean;
-  kind?: DiagramKind;
   /** ファイルの更新日時 (epoch ミリ秒)。読めなかったら無い */
   mtimeMs?: number;
 }
@@ -499,77 +496,6 @@ export type DiagramDeleteResponse =
         | "NOT_FOUND"
         | "FORBIDDEN"
         | "CONFLICT"
-        | "IO_ERROR";
-      error: string;
-    };
-
-export interface DiagramCommentMessage {
-  id: string;
-  author?: string;
-  at: string;
-  body: string;
-}
-
-export interface DiagramCommentThread {
-  id: string;
-  anchorId: string;
-  anchorText: string;
-  anchorQuote?: string;
-  anchorOccurrence?: number;
-  status: "open" | "resolved";
-  createdAt: string;
-  messages: DiagramCommentMessage[];
-}
-
-export interface DiagramCommentsFile {
-  version: 1;
-  target: string;
-  threads: DiagramCommentThread[];
-}
-
-/**
- * mutation の同一性を示す操作 ID。ACK タイムアウト後の再試行で同じ値を送ると、
- * サーバーは適用済みの操作を再適用せず現在の sidecar を返す（冪等）。
- * クライアントが生成する 1〜256 文字の任意文字列。
- */
-export interface DiagramCommentOperation {
-  operationId: string;
-}
-
-export interface DiagramCommentThreadRequest extends DiagramCommentOperation {
-  sessionId: string;
-  relPath: string;
-  threadId: string;
-}
-
-export interface DiagramCommentCreateRequest extends DiagramCommentOperation {
-  sessionId: string;
-  relPath: string;
-  anchorId: string;
-  anchorQuote?: string;
-  anchorOccurrence?: number;
-  body: string;
-}
-
-export type DiagramCommentDeleteRequest = DiagramCommentThreadRequest;
-
-export interface DiagramCommentReplyRequest
-  extends DiagramCommentThreadRequest {
-  body: string;
-}
-
-export type DiagramCommentsResponse =
-  | { ok: true; comments: DiagramCommentsFile }
-  | {
-      ok: false;
-      code:
-        | "BAD_REQUEST"
-        | "SESSION_NOT_FOUND"
-        | "FORBIDDEN"
-        | "NOT_DOC"
-        | "INVALID_SIDECAR"
-        | "ANCHOR_NOT_FOUND"
-        | "THREAD_NOT_FOUND"
         | "IO_ERROR";
       error: string;
     };
@@ -622,12 +548,6 @@ export interface ServerToClientEvents {
 
   /** 監視中の図ファイルが更新された。クライアントは再読込する */
   "diagram:updated": (data: { worktreePath: string; relPath: string }) => void;
-
-  /** 監視中のコメント sidecar が更新された。iframe はコメントだけを再取得する */
-  "diagram:comments-updated": (data: {
-    worktreePath: string;
-    relPath: string;
-  }) => void;
 
   /** 管理対象の図ファイルが削除された。絶対 path は通知しない */
   "diagram:deleted": (data: { sessionId: string; relPath: string }) => void;
@@ -892,45 +812,6 @@ export interface ClientToServerEvents {
     callback: (response: DiagramDeleteResponse) => void
   ) => void;
 
-  /** session に紐づく図のコメントを取得する */
-  "diagram:comments:get": (
-    data: { sessionId: string; relPath: string },
-    callback: (response: DiagramCommentsResponse) => void
-  ) => void;
-
-  /**
-   * 文書ブロックまたはそのテキスト選択範囲へ単発コメントを作成する。
-   * mutation 系は operationId を必須とし、同じ ID の再送は再適用しない
-   */
-  "diagram:comment:create": (
-    data: DiagramCommentCreateRequest,
-    callback: (response: DiagramCommentsResponse) => void
-  ) => void;
-
-  /** 既存の文書コメントへ人間の返信を追加する */
-  "diagram:comment:reply": (
-    data: DiagramCommentReplyRequest,
-    callback: (response: DiagramCommentsResponse) => void
-  ) => void;
-
-  /** 文書コメントを解決済みにする */
-  "diagram:comment:resolve": (
-    data: DiagramCommentThreadRequest,
-    callback: (response: DiagramCommentsResponse) => void
-  ) => void;
-
-  /** 文書コメントを削除する */
-  "diagram:comment:delete": (
-    data: DiagramCommentDeleteRequest,
-    callback: (response: DiagramCommentsResponse) => void
-  ) => void;
-
-  /** 文書コメントを会話セッションへ送る（同じ operationId の再送は二重送信しない） */
-  "diagram:comment:send": (
-    data: DiagramCommentThreadRequest,
-    callback: (response: DiagramCommentsResponse) => void
-  ) => void;
-
   /** 図の購読開始（更新通知を受け取る）。1 セッション 1 図を想定 */
   "diagram:subscribe": (data: {
     worktreePath: string;
@@ -942,38 +823,6 @@ export interface ClientToServerEvents {
     worktreePath: string;
     relPath: string;
   }) => void;
-
-  /** 図の編集結果を保存する。会話への還流は行わない。 */
-  "diagram:autosave": (
-    data: {
-      sessionId: string;
-      worktreePath: string;
-      relPath: string;
-      model: unknown;
-      html: string;
-    },
-    callback: (response: { ok: boolean; error?: string }) => void
-  ) => void;
-
-  /**
-   * 図の編集結果を保存し、意味差分を会話へ還流する。
-   * model は構造化モデル、html は投影（ハーネスと meta CSP を除いたもの）。
-   * 還流の文面はサーバーが model の差分から組む（iframe から散文は受け取らない）。
-   */
-  "diagram:submit": (
-    data: {
-      sessionId: string;
-      worktreePath: string;
-      relPath: string;
-      model: unknown;
-      html: string;
-    },
-    callback: (response: {
-      ok: boolean;
-      sent?: string[];
-      error?: string;
-    }) => void
-  ) => void;
 
   /**
    * Claude Code が永続化する JSONL 履歴 (~/.claude/projects/<encoded-cwd>/*.jsonl)
@@ -1182,14 +1031,14 @@ export interface ClientToServerEvents {
   "screen:update": (data: { id: string } & ScreenPatch) => void;
   "screen:delete": (data: { id: string }) => void;
   /** 接続直前に 1 回だけ呼ぶ。未登録なら null */
-  /** ボード提案の設定を取得 (鍵は末尾 4 文字だけ) */
-  "board-suggest:get": (
-    callback: (result: BoardSuggestConfigResult) => void
+  /** 分岐TODOの設定を取得 (鍵は末尾 4 文字だけ) */
+  "branch-todo:get": (
+    callback: (result: BranchTodoConfigResult) => void
   ) => void;
-  /** ボード提案の設定を変更。保存後の設定を返す */
-  "board-suggest:set": (
-    patch: BoardSuggestConfigPatch,
-    callback: (result: BoardSuggestConfigResult) => void
+  /** 分岐TODOの設定を変更。保存後の設定を返す */
+  "branch-todo:set": (
+    patch: BranchTodoConfigPatch,
+    callback: (result: BranchTodoConfigResult) => void
   ) => void;
   "screen:credentials": (
     id: string,
@@ -1304,10 +1153,6 @@ export interface UsageProgress {
  * 優先度 (高→低): ERR > AWAITING > TOOL > THINK > IDLE > READY
  */
 /**
- * ボード提案の通知。Claude の返答が終わるたびに Jev (TypeSafe の決定モデル) が
- * 「チャットよりボードのほうが読みやすいか」を判定し、閾値を超えたときだけ出る。
- */
-/**
  * 分岐TODO。会話で保留にした話題を Claude が todo_add で足し、人間が完了・削除する。
  * worktree_path ごとに持ち、worktree を消しても残す
  */
@@ -1334,11 +1179,8 @@ export type TodoListResponse =
 
 export type TodoOpResponse = { ok: true } | { ok: false; error: string };
 
-/** ボード提案の設定。鍵そのものは含めない (末尾 4 文字と出どころだけ) */
-export interface BoardSuggestConfig {
-  enabled: boolean;
-  /** Jev の「ボードのほうが読みやすい」確率がこの値以上なら動く (0〜1) */
-  threshold: number;
+/** 分岐TODOの設定。鍵そのものは含めない (末尾 4 文字と出どころだけ) */
+export interface BranchTodoConfig {
   keyConfigured: boolean;
   /** 設定済みの鍵の末尾 4 文字。未設定は null */
   keyHint: string | null;
@@ -1351,16 +1193,14 @@ export interface BoardSuggestConfig {
 }
 
 /** 設定画面からの変更。apiKey は文字列で保存、null で設定側の鍵を削除、未指定で変更なし */
-export interface BoardSuggestConfigPatch {
-  enabled?: boolean;
-  threshold?: number;
+export interface BranchTodoConfigPatch {
   apiKey?: string | null;
   todoEnabled?: boolean;
   todoThreshold?: number;
 }
 
-export type BoardSuggestConfigResult =
-  | { ok: true; config: BoardSuggestConfig }
+export type BranchTodoConfigResult =
+  | { ok: true; config: BranchTodoConfig }
   | { ok: false; error: string };
 
 export type BridgeSessionStatus =

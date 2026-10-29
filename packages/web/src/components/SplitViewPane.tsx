@@ -62,7 +62,6 @@
 import type {
   BridgeSessionStatus,
   ClientToServerEvents,
-  DiagramCommentsResponse,
   DiagramDeleteResponse,
   DiagramListItem,
   ManagedSession,
@@ -137,55 +136,12 @@ const HEADER_ICON_BUTTON =
 interface SplitViewPaneProps {
   socket: TypedSocket | null;
   isConnected: boolean;
-  diagramCommentsUpdate: {
-    worktreePath: string;
-    relPath: string;
-    sequence: number;
-  } | null;
   listDiagrams: (worktreePath: string) => Promise<DiagramListItem[]>;
   deleteDiagram: (
     sessionId: string,
     relPath: string,
     expectedTracked: boolean
   ) => Promise<DiagramDeleteResponse>;
-  getDiagramComments: (
-    sessionId: string,
-    relPath: string
-  ) => Promise<DiagramCommentsResponse>;
-  createDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    anchorId: string,
-    body: string,
-    anchorQuote?: string,
-    anchorOccurrence?: number
-  ) => Promise<DiagramCommentsResponse>;
-  resolveDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string
-  ) => Promise<DiagramCommentsResponse>;
-  replyDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string,
-    body: string
-  ) => Promise<DiagramCommentsResponse>;
-  deleteDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string
-  ) => Promise<DiagramCommentsResponse>;
-  sendDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string
-  ) => Promise<DiagramCommentsResponse>;
   session: ManagedSession;
   /**
    * このセッションが現在選択中か。SplitViewPane は Dashboard で全セッション
@@ -883,15 +839,8 @@ export function SplitViewPane(props: SplitViewPaneProps) {
                     <DiagramPane
                       socket={props.socket}
                       isConnected={props.isConnected}
-                      diagramCommentsUpdate={props.diagramCommentsUpdate}
                       listDiagrams={props.listDiagrams}
                       deleteDiagram={props.deleteDiagram}
-                      getDiagramComments={props.getDiagramComments}
-                      createDiagramComment={props.createDiagramComment}
-                      replyDiagramComment={props.replyDiagramComment}
-                      resolveDiagramComment={props.resolveDiagramComment}
-                      deleteDiagramComment={props.deleteDiagramComment}
-                      sendDiagramComment={props.sendDiagramComment}
                       sessionId={props.session.id}
                       worktreePath={
                         diagramTab?.worktreePath ?? props.session.worktreePath

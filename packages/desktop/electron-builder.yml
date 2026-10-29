@@ -42,9 +42,6 @@ extraResources:
     to: app/web
     filter:
       - "**/*"
-  # board_authoring_guide が packaged 環境で参照する作図規約。
-  - from: ../server/dist/diagram-authoring-guide.md
-    to: app/diagram-authoring-guide.md
   # Ark 自身のライセンスと著作権表示 (Apache-2.0 は配布物への同梱を求める)。
   # 依存ライブラリのぶんは下の licenses/ に入る。
   - from: ../../LICENSE

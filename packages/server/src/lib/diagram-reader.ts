@@ -1,5 +1,5 @@
 /**
- * 図ファイルを読み、モデルを取り出し、meta CSP を注入して返す。
+ * 図ファイルを読み、meta CSP を注入して返す。
  *
  * `resolveDiagramPath` は文字列上の封じ込め（`DIAGRAM_DIR` 配下かどうか）しか
  * 見ないため、`DIAGRAM_DIR/x.diagram.html` が worktree 外を指す
@@ -11,33 +11,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { injectBuiltinProjection } from "./diagram-builtin.js";
-import { injectDiagramCommentLayer } from "./diagram-comment-layer.js";
-import {
-  DECK_TYPE,
-  injectDeckProjection,
-  validateDeckForOpen,
-  validateDiagramDeck,
-} from "./diagram-deck.js";
-import { validateDiagramDocAnchors } from "./diagram-doc-anchors.js";
-import { validateDiagramDocAuthorship } from "./diagram-doc-authorship.js";
-import { injectDiagramDocEditor } from "./diagram-doc-editor.js";
-import {
-  injectFigureProjection,
-  isFigureType,
-  validateFigureModel,
-} from "./diagram-figures.js";
-import { extractModel, injectCsp } from "./diagram-file.js";
-import { validateDiagramGraphKinds } from "./diagram-graph-kinds.js";
-import { injectHarness } from "./diagram-harness.js";
+import { extractTitle, injectCsp } from "./diagram-file.js";
 import { injectDiagramKeynavLayer } from "./diagram-keynav-layer.js";
 import { injectDiagramLinkLayer } from "./diagram-link-layer.js";
-import type { DiagramModel } from "./diagram-model.js";
 import { DIAGRAM_DIR, resolveDiagramPath } from "./diagram-path.js";
-import {
-  injectStaticBuiltinProjection,
-  isStaticBuiltinType,
-} from "./diagram-static-builtin.js";
 import { errnoCode, errnoMessage } from "./errors.js";
 
 export type ReadDiagramResult =
@@ -46,16 +23,11 @@ export type ReadDiagramResult =
       absPath: string;
       /** 配信用に注入した HTML */
       html: string;
-      /** 注入前のファイル本文。doc の通知 baseline を本文から作るのに使う */
-      raw: string;
-      model: DiagramModel;
-      /** `forOpen` のときだけ。開けたが書いた側に直してほしいこと */
-      notices?: string[];
     }
   | { ok: false; status: number; error: string };
 
-export type ReadDiagramModelResult =
-  | { ok: true; absPath: string; raw: string; model: DiagramModel }
+export type ReadDiagramTitleResult =
+  | { ok: true; absPath: string; title: string | null }
   | { ok: false; status: number; error: string };
 
 type ReadRawResult =
@@ -135,96 +107,28 @@ async function readRawVerified(
 }
 
 /**
- * 配信用に読む。meta CSP と編集ハーネスを注入した HTML を返す。
- *
- * `forOpen` は `board_open` の経路で立てる。デッキの自由形のページと本文の HTML、
- * 図の無いデッキを拒否する（配信では古いデッキを通すが、新しく開かせはしない）。
+ * 配信用に読む。書かれた HTML はそのまま見せ、Ark が足すのは meta CSP と、
+ * リンクを親で開く層と前置キーを親へ渡す層だけ。
  */
 export async function readDiagram(
   worktreeReal: string,
-  relPath: string,
-  options: { forOpen?: boolean } = {}
+  relPath: string
 ): Promise<ReadDiagramResult> {
   const read = await readRawVerified(worktreeReal, relPath);
   if (!read.ok) return read;
-  const model = extractModel(read.raw);
-  if (!model.ok) return { ok: false, status: 422, error: model.error };
-  const anchors = validateDiagramDocAnchors(read.raw, model.model);
-  if (!anchors.ok) return { ok: false, status: 422, error: anchors.error };
-  const authorship = validateDiagramDocAuthorship(read.raw, model.model);
-  if (!authorship.ok) {
-    return { ok: false, status: 422, error: authorship.error };
-  }
-  const graphKinds = validateDiagramGraphKinds(read.raw, model.model);
-  if (!graphKinds.ok) {
-    return { ok: false, status: 422, error: graphKinds.error };
-  }
-  if (isFigureType(model.model.type)) {
-    const figure = validateFigureModel(model.model.type, model.model);
-    if (!figure.ok) return { ok: false, status: 422, error: figure.error };
-  }
-  const deck = validateDiagramDeck(read.raw, model.model);
-  if (!deck.ok) return { ok: false, status: 422, error: deck.error };
-  let notices: string[] | undefined;
-  if (options.forOpen) {
-    const open = validateDeckForOpen(read.raw, model.model);
-    if (!open.ok) return { ok: false, status: 422, error: open.error };
-    notices = open.notices;
-  }
-  // 内蔵図種の投影生成 → CSP → 専用層の順。doc 本文は自前 HTML が正なので
-  // 編集層（本文の contenteditable 化）とコメント層、graph は編集ハーネスと
-  // コメント層の両方を載せる。リンク層は投影の後・編集層とコメント層の前。
-  //
-  // sequence / call-tree は時間順・入れ子が意味を持ち、座標を動かせる canvas に
-  // 載せると壊れるので graph ハーネスは載せない。投影が生成する行の data-ark-id
-  // に doc と同じ要領でコメントが付く（本文の編集は無い。正は常にモデル）。
-  // git-graph など見て分かる図種（diagram-figures.ts）とデッキも同じ扱いにする。
-  // キーの層 (前置キーを親へ渡し、親の指示で図を送る) はどの図種にも載せる。
-  const projected = injectDiagramKeynavLayer(
-    injectDiagramLinkLayer(
-      injectCsp(
-        injectDeckProjection(
-          injectFigureProjection(
-            injectStaticBuiltinProjection(
-              injectBuiltinProjection(read.raw, model.model),
-              model.model
-            ),
-            model.model
-          ),
-          model.model
-        )
-      )
-    )
-  );
   return {
     ok: true,
     absPath: read.absPath,
-    html:
-      model.model.type === "doc"
-        ? injectDiagramCommentLayer(injectDiagramDocEditor(projected), "doc")
-        : isStaticBuiltinType(model.model.type) ||
-            isFigureType(model.model.type) ||
-            model.model.type === DECK_TYPE
-          ? injectDiagramCommentLayer(projected, "doc")
-          : injectDiagramCommentLayer(injectHarness(projected), "graph"),
-    raw: read.raw,
-    model: model.model,
-    notices,
+    html: injectDiagramKeynavLayer(injectDiagramLinkLayer(injectCsp(read.raw))),
   };
 }
 
-/**
- * モデルだけが欲しい経路（diagram:submit の差分基準など）向けの軽量版。
- * HTML への CSP/ハーネス注入を行わない（配信しない読み取りで無駄な文字列
- * 加工を避ける）。生テキストも返すので、呼び出し側が書き戻しに使える。
- */
-export async function readDiagramModel(
+/** 一覧向けに、検証込みで読んで `<title>` だけを返す (注入はしない) */
+export async function readDiagramTitle(
   worktreeReal: string,
   relPath: string
-): Promise<ReadDiagramModelResult> {
+): Promise<ReadDiagramTitleResult> {
   const read = await readRawVerified(worktreeReal, relPath);
   if (!read.ok) return read;
-  const model = extractModel(read.raw);
-  if (!model.ok) return { ok: false, status: 422, error: model.error };
-  return { ok: true, absPath: read.absPath, raw: read.raw, model: model.model };
+  return { ok: true, absPath: read.absPath, title: extractTitle(read.raw) };
 }

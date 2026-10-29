@@ -1,31 +1,14 @@
 /**
  * diagram-browser - 図の一覧 (DiagramSwitcher) の絞り込み・並べ替え・表示の言葉
  *
- * 一覧は Finder のリスト表示に寄せる: 名前・種類・更新日時の列を持ち、既定は更新の
+ * 一覧は Finder のリスト表示に寄せる: 名前・更新日時の列を持ち、既定は更新の
  * 新しい順。列の見出しで並べ替え、上の欄で名前とパスを絞り込む。
  */
 
-import type { DiagramKind, DiagramListItem } from "@ark/shared";
+import type { DiagramListItem } from "@ark/shared";
 import { DIAGRAM_DIR } from "@ark/shared";
 
-export const DIAGRAM_KIND_LABEL: Readonly<Record<DiagramKind, string>> = {
-  deck: "デッキ",
-  doc: "文書",
-  sequence: "シーケンス",
-  "call-tree": "呼び出し",
-  graph: "図",
-};
-
-/** 種類で並べるときの順 (文字の並びではなく、決まった順にする) */
-const KIND_ORDER: readonly DiagramKind[] = [
-  "deck",
-  "doc",
-  "sequence",
-  "call-tree",
-  "graph",
-];
-
-export type DiagramSortKey = "name" | "kind" | "mtime";
+export type DiagramSortKey = "name" | "mtime";
 
 export interface DiagramSort {
   key: DiagramSortKey;
@@ -39,7 +22,7 @@ const STORAGE_KEY = "ark-diagram-browser-sort";
 
 /**
  * 見出しを押したときの次の並び。同じ列なら向きを返し、別の列ならその列の自然な向き
- * (更新は新しい順、名前と種類は昇順) にする。
+ * (更新は新しい順、名前は昇順) にする。
  */
 export function toggleDiagramSort(
   current: DiagramSort,
@@ -49,10 +32,6 @@ export function toggleDiagramSort(
     return { key, dir: current.dir === "asc" ? "desc" : "asc" };
   }
   return { key, dir: key === "mtime" ? "desc" : "asc" };
-}
-
-export function diagramKind(item: DiagramListItem): DiagramKind {
-  return item.kind ?? "graph";
 }
 
 /** `.claude/diagrams/` を除いたパス (名前の下に薄く出す) */
@@ -65,11 +44,6 @@ function compare(a: DiagramListItem, b: DiagramListItem, key: DiagramSortKey) {
   if (key === "mtime") {
     // 更新日時が読めなかった図は、どちらの向きでも古いものとして扱う
     return (a.mtimeMs ?? 0) - (b.mtimeMs ?? 0);
-  }
-  if (key === "kind") {
-    return (
-      KIND_ORDER.indexOf(diagramKind(a)) - KIND_ORDER.indexOf(diagramKind(b))
-    );
   }
   return a.displayName.localeCompare(b.displayName, "ja");
 }
@@ -127,7 +101,7 @@ export function loadDiagramSort(): DiagramSort {
     ) as Partial<DiagramSort> | null;
     if (
       value &&
-      (value.key === "name" || value.key === "kind" || value.key === "mtime") &&
+      (value.key === "name" || value.key === "mtime") &&
       (value.dir === "asc" || value.dir === "desc")
     ) {
       return { key: value.key, dir: value.dir };

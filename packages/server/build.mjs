@@ -1,5 +1,5 @@
 import { build } from "esbuild";
-import { copyFile, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,11 +28,3 @@ await build({
   external: externals,
   outExtension: { ".js": ".js" },
 });
-
-await copyFile(
-  path.resolve(
-    packageDir,
-    "../../.claude/skills/diagram-authoring/SKILL.md",
-  ),
-  path.resolve(packageDir, "dist/diagram-authoring-guide.md"),
-);

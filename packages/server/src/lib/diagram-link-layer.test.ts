@@ -112,15 +112,6 @@ describe("injectDiagramLinkLayer", () => {
   });
 });
 
-describe("保存 HTML への焼き付き防止", () => {
-  it("script に data-ark-harness-ui を付ける (保存時に落とされる印)", () => {
-    expect(LINK_LAYER).toContain('data-ark-harness-ui="1"');
-    expect(injectDiagramLinkLayer(minimalDoc)).toContain(
-      'data-ark-harness-ui="1"'
-    );
-  });
-});
-
 describe("リンク層のクリック処理", () => {
   it("相対パスは遷移を止めて親へ href をそのまま送る", () => {
     const layer = loadLayer();

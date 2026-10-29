@@ -30,7 +30,7 @@ export type PaletteAction =
   | { type: "diagram"; relPath: string }
   | { type: "file"; path: string }
   | { type: "keynav"; command: KeyNavCommand }
-  | { type: "board-suggest-settings" }
+  | { type: "branch-todo-settings" }
   | { type: "ask-window" }
   | { type: "ask"; text: string };
 
@@ -92,14 +92,9 @@ export const PALETTE_COMMANDS: readonly PaletteItem[] = [
     type: "keynav",
     command: { type: "help" },
   }),
-  command(
-    "board-suggest",
-    "ボード提案と分岐TODOの設定",
-    "jev board suggest settings todo 分岐",
-    {
-      type: "board-suggest-settings",
-    }
-  ),
+  command("branch-todo", "分岐TODOの設定", "jev settings todo 分岐", {
+    type: "branch-todo-settings",
+  }),
   command("ask-window", "Claude に聞くウィンドウを開く", "ask ai 質問", {
     type: "ask-window",
   }),

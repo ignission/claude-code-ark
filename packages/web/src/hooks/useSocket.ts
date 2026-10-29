@@ -7,12 +7,11 @@
  */
 
 import type {
-  BoardSuggestConfigPatch,
-  BoardSuggestConfigResult,
+  BranchTodoConfigPatch,
+  BranchTodoConfigResult,
   BridgeSessionStatus,
   BrowserSession,
   ClientToServerEvents,
-  DiagramCommentsResponse,
   DiagramDeleteResponse,
   DiagramListItem,
   FsListResult,
@@ -47,14 +46,6 @@ import {
   readReloadTarget,
   reloadForBuild,
 } from "../lib/build-version";
-import {
-  requestDiagramCommentCreate,
-  requestDiagramCommentDelete,
-  requestDiagramCommentReply,
-  requestDiagramCommentResolve,
-  requestDiagramCommentSend,
-  requestDiagramCommentsGet,
-} from "../lib/diagram-comment-transport";
 import { requestDiagramDelete } from "../lib/diagram-delete-transport";
 import { mergePlanLimits } from "../lib/plan-limits";
 import { mergePrStatuses } from "../lib/pr-status";
@@ -102,11 +93,6 @@ interface UseSocketReturn {
   socket: TypedSocket | null;
   isConnected: boolean;
   error: string | null;
-  diagramCommentsUpdate: {
-    worktreePath: string;
-    relPath: string;
-    sequence: number;
-  } | null;
 
   // Allowed repositories (from --repos option)
   allowedRepos: string[];
@@ -126,44 +112,6 @@ interface UseSocketReturn {
     relPath: string,
     expectedTracked: boolean
   ) => Promise<DiagramDeleteResponse>;
-  getDiagramComments: (
-    sessionId: string,
-    relPath: string
-  ) => Promise<DiagramCommentsResponse>;
-  createDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    anchorId: string,
-    body: string,
-    anchorQuote?: string,
-    anchorOccurrence?: number
-  ) => Promise<DiagramCommentsResponse>;
-  resolveDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string
-  ) => Promise<DiagramCommentsResponse>;
-  replyDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string,
-    body: string
-  ) => Promise<DiagramCommentsResponse>;
-  deleteDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string
-  ) => Promise<DiagramCommentsResponse>;
-  sendDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string
-  ) => Promise<DiagramCommentsResponse>;
 
   // Repository
   repoList: string[];
@@ -335,11 +283,11 @@ interface UseSocketReturn {
   /** リモート画面のクリップボードを書き換える。届かなければ reason つきで失敗する */
   setScreenClipboard: (id: string, text: string) => Promise<ScreenPasteResult>;
 
-  // ボード提案 (Jev 判定) の設定。鍵は末尾 4 文字だけ返る
-  getBoardSuggestConfig: () => Promise<BoardSuggestConfigResult>;
-  setBoardSuggestConfig: (
-    patch: BoardSuggestConfigPatch
-  ) => Promise<BoardSuggestConfigResult>;
+  // 分岐TODO (Jev 判定) の設定。鍵は末尾 4 文字だけ返る
+  getBranchTodoConfig: () => Promise<BranchTodoConfigResult>;
+  setBranchTodoConfig: (
+    patch: BranchTodoConfigPatch
+  ) => Promise<BranchTodoConfigResult>;
 
   // メッセージショートカット
   messageShortcuts: MessageShortcut[];
@@ -430,11 +378,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
   // 空配列でも true になるため、リロード直後の savedId 復元処理で
   // 「サーバ側にセッションが存在しない」ことを判定できる。
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
-  const [diagramCommentsUpdate, setDiagramCommentsUpdate] = useState<{
-    worktreePath: string;
-    relPath: string;
-    sequence: number;
-  } | null>(null);
 
   // Tunnel state
   const [tunnelActive, setTunnelActive] = useState(false);
@@ -720,13 +663,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
       console.error("Socket connection error:", err);
       setError("Failed to connect to server");
       setIsConnected(false);
-    });
-
-    socket.on("diagram:comments-updated", data => {
-      setDiagramCommentsUpdate(previous => ({
-        ...data,
-        sequence: (previous?.sequence ?? 0) + 1,
-      }));
     });
 
     // Allowed repositories list
@@ -1408,107 +1344,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
-  const getDiagramComments = useCallback(
-    (sessionId: string, relPath: string) =>
-      requestDiagramCommentsGet(socketRef.current, sessionId, relPath),
-    []
-  );
-
-  // mutation の operationId は iframe（comment layer）が生成し、ここでは
-  // 透過的に transport へ渡す。再試行で同じ値が届けばサーバー側で冪等化される
-  const createDiagramComment = useCallback(
-    (
-      sessionId: string,
-      relPath: string,
-      operationId: string,
-      anchorId: string,
-      body: string,
-      anchorQuote?: string,
-      anchorOccurrence?: number
-    ) =>
-      requestDiagramCommentCreate(
-        socketRef.current,
-        sessionId,
-        relPath,
-        operationId,
-        anchorId,
-        body,
-        anchorQuote,
-        anchorOccurrence
-      ),
-    []
-  );
-
-  const resolveDiagramComment = useCallback(
-    (
-      sessionId: string,
-      relPath: string,
-      operationId: string,
-      threadId: string
-    ) =>
-      requestDiagramCommentResolve(
-        socketRef.current,
-        sessionId,
-        relPath,
-        operationId,
-        threadId
-      ),
-    []
-  );
-
-  const replyDiagramComment = useCallback(
-    (
-      sessionId: string,
-      relPath: string,
-      operationId: string,
-      threadId: string,
-      body: string
-    ) =>
-      requestDiagramCommentReply(
-        socketRef.current,
-        sessionId,
-        relPath,
-        operationId,
-        threadId,
-        body
-      ),
-    []
-  );
-
-  const deleteDiagramComment = useCallback(
-    (
-      sessionId: string,
-      relPath: string,
-      operationId: string,
-      threadId: string
-    ) =>
-      requestDiagramCommentDelete(
-        socketRef.current,
-        sessionId,
-        relPath,
-        operationId,
-        threadId
-      ),
-    []
-  );
-
-  const sendDiagramComment = useCallback(
-    (
-      sessionId: string,
-      relPath: string,
-      operationId: string,
-      threadId: string
-    ) =>
-      requestDiagramCommentSend(
-        socketRef.current,
-        sessionId,
-        relPath,
-        operationId,
-        threadId
-      ),
-    []
-  );
-
   // Worktree actions
   const createWorktree = useCallback(
     (branchName: string, baseBranch?: string, todoId?: string) => {
@@ -1768,10 +1603,10 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
-  // ボード提案の設定。socket が無い / ack が返らないときは理由つきで失敗させる
-  const getBoardSuggestConfig = useCallback(
+  // 分岐TODOの設定。socket が無い / ack が返らないときは理由つきで失敗させる
+  const getBranchTodoConfig = useCallback(
     () =>
-      new Promise<BoardSuggestConfigResult>(resolve => {
+      new Promise<BranchTodoConfigResult>(resolve => {
         const socket = socketRef.current;
         if (!socket) {
           resolve({ ok: false, error: "サーバーに接続していません" });
@@ -1779,7 +1614,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         }
         socket
           .timeout(SCREEN_CREDENTIALS_ACK_TIMEOUT_MS)
-          .emit("board-suggest:get", (err, result) => {
+          .emit("branch-todo:get", (err, result) => {
             resolve(
               err
                 ? { ok: false, error: "設定を読めませんでした (応答なし)" }
@@ -1790,9 +1625,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
-  const setBoardSuggestConfig = useCallback(
-    (patch: BoardSuggestConfigPatch) =>
-      new Promise<BoardSuggestConfigResult>(resolve => {
+  const setBranchTodoConfig = useCallback(
+    (patch: BranchTodoConfigPatch) =>
+      new Promise<BranchTodoConfigResult>(resolve => {
         const socket = socketRef.current;
         if (!socket) {
           resolve({ ok: false, error: "サーバーに接続していません" });
@@ -1800,7 +1635,7 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
         }
         socket
           .timeout(SCREEN_CREDENTIALS_ACK_TIMEOUT_MS)
-          .emit("board-suggest:set", patch, (err, result) => {
+          .emit("branch-todo:set", patch, (err, result) => {
             resolve(
               err
                 ? { ok: false, error: "保存できませんでした (応答なし)" }
@@ -1903,7 +1738,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     socket: socketRef.current,
     isConnected,
     error,
-    diagramCommentsUpdate,
     allowedRepos,
     scannedRepos,
     isScanning,
@@ -1911,12 +1745,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     listDirectory,
     listDiagrams,
     deleteDiagram,
-    getDiagramComments,
-    createDiagramComment,
-    replyDiagramComment,
-    resolveDiagramComment,
-    deleteDiagramComment,
-    sendDiagramComment,
     repoList,
     repoPath,
     selectRepo,
@@ -1993,9 +1821,9 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     deleteScreen,
     requestScreenCredentials,
     setScreenClipboard,
-    // ボード提案の設定
-    getBoardSuggestConfig,
-    setBoardSuggestConfig,
+    // 分岐TODOの設定
+    getBranchTodoConfig,
+    setBranchTodoConfig,
     // メッセージショートカット
     messageShortcuts,
     createShortcut,

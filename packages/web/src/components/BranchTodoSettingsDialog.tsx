@@ -1,17 +1,17 @@
 /**
- * ボード提案 (Jev 判定) の設定ダイアログ。
+ * 分岐TODO (Jev 判定) の設定ダイアログ。
  *
  * 有効/閾値/OpenRouter の API キーをサーバーの設定に保存する。鍵は保存後も
  * 画面には戻さず、「設定済み (末尾 4 文字)」だけを見せる。読み書きは
- * useSocket の `getBoardSuggestConfig` / `setBoardSuggestConfig`
- * (`board-suggest:get` / `board-suggest:set`、どちらも ack 付き) で行い、
+ * useSocket の `getBranchTodoConfig` / `setBranchTodoConfig`
+ * (`branch-todo:get` / `branch-todo:set`、どちらも ack 付き) で行い、
  * `/api/settings` は通らない (鍵を全件取得に載せないため)。
  */
 
 import type {
-  BoardSuggestConfig,
-  BoardSuggestConfigPatch,
-  BoardSuggestConfigResult,
+  BranchTodoConfig,
+  BranchTodoConfigPatch,
+  BranchTodoConfigResult,
 } from "@ark/shared";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -26,17 +26,17 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-interface BoardSuggestSettingsDialogProps {
+interface BranchTodoSettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** 現在の設定を取得する (鍵は末尾 4 文字だけ返る) */
-  onLoad: () => Promise<BoardSuggestConfigResult>;
+  onLoad: () => Promise<BranchTodoConfigResult>;
   /** 変更を保存し、保存後の設定を返す */
-  onSave: (patch: BoardSuggestConfigPatch) => Promise<BoardSuggestConfigResult>;
+  onSave: (patch: BranchTodoConfigPatch) => Promise<BranchTodoConfigResult>;
 }
 
 const SOURCE_LABEL: Record<
-  NonNullable<BoardSuggestConfig["keySource"]>,
+  NonNullable<BranchTodoConfig["keySource"]>,
   string
 > = {
   settings: "この画面で設定",
@@ -44,15 +44,13 @@ const SOURCE_LABEL: Record<
   file: "~/.config/openrouter/api-key",
 };
 
-export function BoardSuggestSettingsDialog({
+export function BranchTodoSettingsDialog({
   open,
   onOpenChange,
   onLoad,
   onSave,
-}: BoardSuggestSettingsDialogProps) {
-  const [config, setConfig] = useState<BoardSuggestConfig | null>(null);
-  const [enabled, setEnabled] = useState(true);
-  const [threshold, setThreshold] = useState("0.7");
+}: BranchTodoSettingsDialogProps) {
+  const [config, setConfig] = useState<BranchTodoConfig | null>(null);
   const [todoEnabled, setTodoEnabled] = useState(true);
   const [todoThreshold, setTodoThreshold] = useState("0.7");
   const [apiKey, setApiKey] = useState("");
@@ -60,10 +58,8 @@ export function BoardSuggestSettingsDialog({
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const applyConfig = useCallback((next: BoardSuggestConfig) => {
+  const applyConfig = useCallback((next: BranchTodoConfig) => {
     setConfig(next);
-    setEnabled(next.enabled);
-    setThreshold(String(next.threshold));
     setTodoEnabled(next.todoEnabled);
     setTodoThreshold(String(next.todoThreshold));
     setApiKey("");
@@ -89,7 +85,7 @@ export function BoardSuggestSettingsDialog({
     };
   }, [open, onLoad, applyConfig]);
 
-  const save = (patch: BoardSuggestConfigPatch) => {
+  const save = (patch: BranchTodoConfigPatch) => {
     setBusy(true);
     setError(null);
     setSaved(false);
@@ -105,15 +101,12 @@ export function BoardSuggestSettingsDialog({
   };
 
   const submit = () => {
-    const parsed = Number(threshold);
     const parsedTodo = Number(todoThreshold);
-    if ([parsed, parsedTodo].some(v => !Number.isFinite(v) || v < 0 || v > 1)) {
+    if (!Number.isFinite(parsedTodo) || parsedTodo < 0 || parsedTodo > 1) {
       setError("閾値は 0〜1 の数値です");
       return;
     }
-    const patch: BoardSuggestConfigPatch = {
-      enabled,
-      threshold: parsed,
+    const patch: BranchTodoConfigPatch = {
       todoEnabled,
       todoThreshold: parsedTodo,
     };
@@ -129,13 +122,12 @@ export function BoardSuggestSettingsDialog({
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>ボード提案と分岐TODOの設定</DialogTitle>
+          <DialogTitle>分岐TODOの設定</DialogTitle>
           <DialogDescription>
-            Claude の返答が終わるたびに Jev (TypeSafe の決定モデル) が
-            「チャットよりボードのほうが読みやすいか」を判定し、そうなら Claude
-            に続けてその返答を図解させ、ボードに開きます。判定には OpenRouter の
-            API キーが要ります (1 回 0.002 円ほど)。作図は Claude
-            のプラン枠を使います。分岐TODOの検出も同じ鍵を使います。
+            Claude の返答が終わるたびに Jev (TypeSafe の決定モデル)
+            が「保留にした話題があるか」を判定し、あれば Claude に TODO
+            へ足させます。判定には OpenRouter の API キーが要ります (1 回 0.002
+            円ほど)。
           </DialogDescription>
         </DialogHeader>
 
@@ -148,22 +140,10 @@ export function BoardSuggestSettingsDialog({
             submit();
           }}
         >
-          <div className="flex items-center gap-2 text-sm">
-            <Checkbox
-              id="board-suggest-enabled"
-              checked={enabled}
-              onCheckedChange={value => setEnabled(value === true)}
-              disabled={busy}
-            />
-            <Label htmlFor="board-suggest-enabled">
-              ボード提案を有効にする
-            </Label>
-          </div>
-
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="board-suggest-api-key">OpenRouter API キー</Label>
+            <Label htmlFor="branch-todo-api-key">OpenRouter API キー</Label>
             <Input
-              id="board-suggest-api-key"
+              id="branch-todo-api-key"
               type="password"
               autoComplete="off"
               value={apiKey}
@@ -178,47 +158,26 @@ export function BoardSuggestSettingsDialog({
             </p>
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="board-suggest-threshold">
-              閾値 (この確率以上で図解させる)
-            </Label>
-            <Input
-              id="board-suggest-threshold"
-              type="number"
-              inputMode="decimal"
-              min={0}
-              max={1}
-              step={0.05}
-              value={threshold}
-              onChange={e => setThreshold(e.target.value)}
-              disabled={busy}
-            />
-            <p className="text-xs text-muted-foreground">
-              既定 0.7。0.5 付近は「分からない」。うるさければ上げる
-            </p>
-          </div>
-
           <div className="flex flex-col gap-1.5 border-t pt-4">
             <div className="flex items-center gap-2 text-sm">
               <Checkbox
-                id="board-suggest-todo-enabled"
+                id="branch-todo-enabled"
                 checked={todoEnabled}
                 onCheckedChange={value => setTodoEnabled(value === true)}
                 disabled={busy}
               />
-              <Label htmlFor="board-suggest-todo-enabled">
+              <Label htmlFor="branch-todo-enabled">
                 分岐TODOの検出を有効にする
               </Label>
             </div>
             <p className="text-xs text-muted-foreground">
-              返答のたびに、保留にした話題があるかを判定し、あれば Claude に
-              TODO へ足させます。鍵はボード提案と共用です
+              既定 0.7。0.5 付近は「分からない」。うるさければ上げる
             </p>
-            <Label htmlFor="board-suggest-todo-threshold">
+            <Label htmlFor="branch-todo-threshold">
               閾値 (この確率以上でTODOに足させる)
             </Label>
             <Input
-              id="board-suggest-todo-threshold"
+              id="branch-todo-threshold"
               type="number"
               inputMode="decimal"
               min={0}

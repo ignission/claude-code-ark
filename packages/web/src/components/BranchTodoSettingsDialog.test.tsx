@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 
 import type {
-  BoardSuggestConfig,
-  BoardSuggestConfigPatch,
-  BoardSuggestConfigResult,
+  BranchTodoConfig,
+  BranchTodoConfigPatch,
+  BranchTodoConfigResult,
 } from "@ark/shared";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BoardSuggestSettingsDialog } from "./BoardSuggestSettingsDialog";
+import { BranchTodoSettingsDialog } from "./BranchTodoSettingsDialog";
 
 // Radix の Dialog は Portal と pointer イベントが絡むので素通しにする
 // (ScreenManagerDialog.test.tsx と同じ)
@@ -34,27 +34,23 @@ vi.mock("@/components/ui/dialog", () => ({
 }));
 
 /** サーバーの代わり。保存のたびに現在の設定を更新して返す */
-function createBackend(initial: BoardSuggestConfig) {
+function createBackend(initial: BranchTodoConfig) {
   let current = initial;
-  const saved: BoardSuggestConfigPatch[] = [];
+  const saved: BranchTodoConfigPatch[] = [];
   const onLoad = vi.fn(
-    async (): Promise<BoardSuggestConfigResult> => ({
+    async (): Promise<BranchTodoConfigResult> => ({
       ok: true,
       config: current,
     })
   );
   const onSave = vi.fn(
-    async (
-      patch: BoardSuggestConfigPatch
-    ): Promise<BoardSuggestConfigResult> => {
+    async (patch: BranchTodoConfigPatch): Promise<BranchTodoConfigResult> => {
       saved.push(patch);
       if (patch.apiKey === "bad") {
         return { ok: false, error: "API キーの形式が不正です" };
       }
       current = {
         ...current,
-        enabled: patch.enabled ?? current.enabled,
-        threshold: patch.threshold ?? current.threshold,
         todoEnabled: patch.todoEnabled ?? current.todoEnabled,
         todoThreshold: patch.todoThreshold ?? current.todoThreshold,
         ...(patch.apiKey === null
@@ -94,14 +90,14 @@ afterEach(() => {
 });
 
 /** マウントし、onLoad の Promise が反映されるまで待つ */
-async function mountDialog(config: BoardSuggestConfig) {
+async function mountDialog(config: BranchTodoConfig) {
   const backend = createBackend(config);
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
   await act(async () => {
     root.render(
-      <BoardSuggestSettingsDialog
+      <BranchTodoSettingsDialog
         open
         onOpenChange={() => {}}
         onLoad={backend.onLoad}
@@ -144,11 +140,9 @@ async function click(text: string) {
   });
 }
 
-describe("BoardSuggestSettingsDialog", () => {
+describe("BranchTodoSettingsDialog", () => {
   it("開くと設定を取得し、鍵は末尾 4 文字と出どころだけ見せる", async () => {
     const backend = await mountDialog({
-      enabled: true,
-      threshold: 0.7,
       todoEnabled: true,
       todoThreshold: 0.7,
       keyConfigured: true,
@@ -156,79 +150,69 @@ describe("BoardSuggestSettingsDialog", () => {
       keySource: "file",
     });
     expect(backend.onLoad).toHaveBeenCalledTimes(1);
-    expect(input("board-suggest-api-key").value).toBe("");
-    expect(input("board-suggest-api-key").placeholder).toContain("1234");
+    expect(input("branch-todo-api-key").value).toBe("");
+    expect(input("branch-todo-api-key").placeholder).toContain("1234");
     expect(document.body.textContent).toContain("~/.config/openrouter/api-key");
     // ファイル由来の鍵はこの画面から消せない
     expect(document.body.textContent).not.toContain("鍵を削除");
   });
 
-  it("保存で enabled / threshold と、入力したときだけ鍵を送る", async () => {
+  it("保存で設定と、入力したときだけ鍵を送る", async () => {
     const backend = await mountDialog({
-      enabled: true,
-      threshold: 0.7,
       todoEnabled: true,
       todoThreshold: 0.7,
       keyConfigured: false,
       keyHint: null,
       keySource: null,
     });
-    setValue(input("board-suggest-threshold"), "0.85");
+    setValue(input("branch-todo-threshold"), "0.85");
     await click("保存");
     expect(backend.saved[0]).toEqual({
-      enabled: true,
-      threshold: 0.85,
       todoEnabled: true,
-      todoThreshold: 0.7,
+      todoThreshold: 0.85,
     });
 
-    setValue(input("board-suggest-api-key"), "sk-or-v1-abcdef9876");
+    setValue(input("branch-todo-api-key"), "sk-or-v1-abcdef9876");
     await click("保存");
     expect(backend.saved[1]).toEqual({
-      enabled: true,
-      threshold: 0.85,
       todoEnabled: true,
-      todoThreshold: 0.7,
+      todoThreshold: 0.85,
       apiKey: "sk-or-v1-abcdef9876",
     });
     // 保存後は入力欄を空にし、末尾 4 文字だけ出す
-    expect(input("board-suggest-api-key").value).toBe("");
-    expect(input("board-suggest-api-key").placeholder).toContain("9876");
+    expect(input("branch-todo-api-key").value).toBe("");
+    expect(input("branch-todo-api-key").placeholder).toContain("9876");
     expect(document.body.textContent).toContain("保存しました");
     expect(document.body.textContent).toContain("鍵を削除");
   });
 
   it("サーバーの拒否理由を表示し、鍵の削除は apiKey: null を送る", async () => {
     const backend = await mountDialog({
-      enabled: true,
-      threshold: 0.7,
       todoEnabled: true,
       todoThreshold: 0.7,
       keyConfigured: true,
       keyHint: "zzzz",
       keySource: "settings",
     });
-    setValue(input("board-suggest-api-key"), "bad");
+    setValue(input("branch-todo-api-key"), "bad");
     await click("保存");
     expect(document.body.textContent).toContain("API キーの形式が不正です");
 
     await click("鍵を削除");
     expect(backend.saved.at(-1)).toEqual({ apiKey: null });
     expect(document.body.textContent).not.toContain("鍵を削除");
-    expect(input("board-suggest-api-key").placeholder).toBe("sk-or-v1-…");
+    expect(input("branch-todo-api-key").placeholder).toBe("sk-or-v1-…");
   });
 
   it("閾値が範囲外なら送らずに理由を出す", async () => {
     const backend = await mountDialog({
-      enabled: true,
-      threshold: 0.7,
       todoEnabled: true,
       todoThreshold: 0.7,
       keyConfigured: false,
       keyHint: null,
       keySource: null,
     });
-    setValue(input("board-suggest-threshold"), "1.5");
+    setValue(input("branch-todo-threshold"), "1.5");
     await click("保存");
     expect(backend.saved).toEqual([]);
     expect(document.body.textContent).toContain("閾値は 0〜1 の数値です");
@@ -236,22 +220,19 @@ describe("BoardSuggestSettingsDialog", () => {
 
   it("分岐TODOのスイッチと閾値を保存で送る", async () => {
     const backend = await mountDialog({
-      enabled: true,
-      threshold: 0.7,
       todoEnabled: true,
       todoThreshold: 0.7,
       keyConfigured: false,
       keyHint: null,
       keySource: null,
     });
-    const toggle = document.getElementById("board-suggest-todo-enabled");
+    const toggle = document.getElementById("branch-todo-enabled");
     await act(async () => {
       toggle?.click();
     });
-    setValue(input("board-suggest-todo-threshold"), "0.9");
+    setValue(input("branch-todo-threshold"), "0.9");
     await click("保存");
-    expect(backend.saved[0]).toMatchObject({
-      enabled: true,
+    expect(backend.saved[0]).toEqual({
       todoEnabled: false,
       todoThreshold: 0.9,
     });

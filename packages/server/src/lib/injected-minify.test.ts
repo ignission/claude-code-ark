@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  COMMENT_LAYER,
-  DIAGRAM_COMMENT_LAYER_MARKER,
-  injectDiagramCommentLayer,
-} from "./diagram-comment-layer.js";
+  DIAGRAM_KEYNAV_LAYER_MARKER,
+  injectDiagramKeynavLayer,
+  KEYNAV_LAYER,
+} from "./diagram-keynav-layer.js";
 import {
-  DIAGRAM_HARNESS_MARKER,
-  DIAGRAM_HARNESS_SOURCE,
-  injectHarness,
-} from "./diagram-harness.js";
+  DIAGRAM_LINK_LAYER_MARKER,
+  injectDiagramLinkLayer,
+  LINK_LAYER,
+} from "./diagram-link-layer.js";
 import { createCachedMinifier } from "./injected-minify.js";
 
 const byteLength = (value: string) => Buffer.byteLength(value, "utf8");
@@ -16,40 +16,39 @@ const occurrences = (value: string, token: string) =>
   value.split(token).length - 1;
 
 describe("注入コードの minify", () => {
-  it("ハーネスとコメント層をソースより明確に小さくする", () => {
-    const harness = injectHarness("");
-    const commentLayer = injectDiagramCommentLayer("");
-
-    expect(byteLength(harness)).toBeLessThan(
-      byteLength(DIAGRAM_HARNESS_SOURCE) * 0.8
+  it("リンク層とキーの層をソースより小さくする", () => {
+    expect(byteLength(injectDiagramLinkLayer(""))).toBeLessThan(
+      byteLength(LINK_LAYER)
     );
-    expect(byteLength(commentLayer)).toBeLessThan(
-      byteLength(COMMENT_LAYER) * 0.8
+    expect(byteLength(injectDiagramKeynavLayer(""))).toBeLessThan(
+      byteLength(KEYNAV_LAYER)
     );
   });
 
   it("marker と port protocol を minify 後も維持する", () => {
-    const harness = injectHarness("");
-    const commentLayer = injectDiagramCommentLayer("");
+    const link = injectDiagramLinkLayer("");
+    const keynav = injectDiagramKeynavLayer("");
 
-    expect(occurrences(harness, DIAGRAM_HARNESS_MARKER)).toBe(1);
-    expect(occurrences(commentLayer, DIAGRAM_COMMENT_LAYER_MARKER)).toBe(1);
-    for (const protocol of ["ark:diagram-submit", "ark:diagram-pinch"]) {
-      expect(harness).toContain(protocol);
+    expect(occurrences(link, DIAGRAM_LINK_LAYER_MARKER)).toBe(1);
+    expect(occurrences(keynav, DIAGRAM_KEYNAV_LAYER_MARKER)).toBe(1);
+    for (const protocol of ["ark:diagram-init", "ark:diagram-open-link"]) {
+      expect(link).toContain(protocol);
     }
     for (const protocol of [
       "ark:diagram-init",
-      "ark:diagram-comments-load",
-      "ark:diagram-comments-result",
+      "ark:diagram-keynav-leader",
+      "ark:diagram-keynav-scroll",
       "ark:diagram-pinch",
-      "ark:diagram-comments-changed",
     ]) {
-      expect(commentLayer).toContain(protocol);
+      expect(keynav).toContain(protocol);
     }
   });
 
   it("minify 後も CSP 禁止 token を含まない", () => {
-    for (const injected of [injectHarness(""), injectDiagramCommentLayer("")]) {
+    for (const injected of [
+      injectDiagramLinkLayer(""),
+      injectDiagramKeynavLayer(""),
+    ]) {
       for (const forbidden of [
         "fetch(",
         "import(",
@@ -62,9 +61,6 @@ describe("注入コードの minify", () => {
       ]) {
         expect(injected).not.toContain(forbidden);
       }
-      expect(injected).not.toMatch(
-        /<link\b[^>]*rel=["']?stylesheet|@import\s/iu
-      );
     }
   });
 });

@@ -55,9 +55,7 @@ Arkはエージェントを作り直していません。各セッションは�
 
 ### 長い説明は、会話ではなくボードに出る
 
-Claudeは、シーケンス図、差分量つきの呼び出しツリー、複数ページのデッキを、会話の隣のボードに描きます。図の中のリンクを押すと、図を見たまま横にコードが開きます。ボードの文書はその場で書き換えられ、本文を選んでコメントを付け、会話へ送り返せます。
-
-[OpenRouter](https://openrouter.ai/) のキーを入れると、どの返答をボードに出すかの判断もArkに任せられます。[ボード提案](#ボード提案と分岐todo)を参照してください。
+Claudeは、図、画面のイメージ、触れるモックなど、文章より絵のほうが伝わるものを、決まった形式なしのHTMLで会話の隣のボードに描きます。図の中のリンクを押すと、図を見たまま横にコードが開きます。
 
 ### 画面を離れずにレビューできる
 
@@ -91,7 +89,7 @@ Claudeは、シーケンス図、差分量つきの呼び出しツリー、複�
 - サーバーのマシンでheadlessのChromiumを1つ動かし、画面と入力をChrome DevTools Protocolで中継して、Arkの画面に出せます。必要なのはChromiumの実行ファイルだけです。`~/.cache/ms-playwright` にPlaywrightで入れたものを先に探し、なければPATHの `chromium-browser` / `chromium` / `google-chrome` を使います。見つからないときは、この機能だけが無効になります。
 - SSHで届くホストのVNC画面 (macOSの画面共有など) を、ブラウザで開けます。Arkはサーバーの実行ユーザーで `ssh -o BatchMode=yes` を起動するので、そのユーザーにパスフレーズ無しの鍵 (またはssh-agentに登録済みの鍵) があり、接続先が `known_hosts` に登録済みである必要があります。
 - リポジトリごとに別のClaudeアカウントを使えます (Linuxのみ)。
-- 会話の途中で保留にした話題を、TODOタブに残せます。Claudeが「あとで」「別件で」と脇へ置いたとArkが判定すると、ClaudeがTODOとして書き留めます。完了と削除は人間だけが行います。[ボード提案と分岐TODO](#ボード提案と分岐todo)を参照してください。
+- 会話の途中で保留にした話題を、TODOタブに残せます。Claudeが「あとで」「別件で」と脇へ置いたとArkが判定すると、ClaudeがTODOとして書き留めます。完了と削除は人間だけが行います。[分岐TODO](#分岐todo)を参照してください。
 
 ## 仕組み
 
@@ -174,27 +172,20 @@ cd claude-code-ark
 
 ターミナルにQRコードと一時URL (`*.trycloudflare.com`) が表示されます。URLはランダムなトークンで保護されます。Cloudflare Accessつきの固定ドメインを使う場合は、`ARK_PUBLIC_DOMAIN` を設定して `pnpm start:remote` で起動します。
 
-## ボード提案と分岐TODO
+## 分岐TODO
 
-長い説明を会話の中で読むのは疲れます。ボード提案を有効にすると、Claudeが返答を終えるたびに、Arkが [Jev](https://openrouter.ai/docs/guides/community/jev) へ「この返答は会話よりボードのほうが読みやすいか」を問い合わせます。Jevは確率だけを返す分類器で、文章を生成しません。確率が閾値以上なら、Claudeは止まらずに続け、その返答をデッキにしてボードに開きます。
+会話の途中で保留にした話題を、TODOとして残します。Claudeが返答を終えるたびに、Arkは人の発話と返答を [Jev](https://openrouter.ai/docs/guides/community/jev) に問い合わせ、「別の話題を保留・後回し・対象外にした」確率が閾値以上なら、ClaudeにMCPツール `todo_add` で書き留めさせます。Jevは確率だけを返す分類器で、文章を生成しません。TODOは右ペインのTODOタブ、サイドバーの件数、モバイルのTODO表示に出ます。ClaudeはTODOを完了も削除もできません。
 
 - 判定は1回200〜400msで、費用は入力100万トークンあたり$0.042です。
-- Arkが送るのは返答の末尾6,000文字だけで、`data_collection: "deny"` を付けます。
-- デッキを描くのはClaudeなので、ほかのターンと同じくClaudeのプランを使います。
+- Arkが送るのは発話と返答の末尾を合わせて6,000文字までで、`data_collection: "deny"` を付けます。
 
 有効にする手順は次のとおりです。
 
 1. [OpenRouter](https://openrouter.ai/settings/keys) でAPIキーを発行します。
-2. 左上のArkメニュー (スマホではセッション一覧のスライダーアイコン) から「ボード提案と分岐TODOの設定」を開き、キーを貼って保存します。
-3. 提案が多すぎる場合は、同じ画面で閾値 (既定0.7) を上げるか、無効にします。
+2. 左上のArkメニュー (スマホではセッション一覧のスライダーアイコン) から「分岐TODOの設定」を開き、キーを貼って保存します。
+3. TODOが多すぎる場合は、同じ画面で閾値 (既定0.7) を上げるか、無効にします。
 
 キーはArkのデータベースに保存され、画面には末尾4文字しか表示されません。環境変数 `OPENROUTER_API_KEY` か `~/.config/openrouter/api-key` でも渡せますが、設定画面のキーが優先されます。キーが無い間は何もしません。
-
-設定の変更は次のターンから反映されます。例外は、この機能が入る前の版のArkが `claude` を起動したセッションです。そのセッションでは、`claude` を起動し直すまでボード提案が動きません。
-
-### 分岐TODO
-
-同じ設定画面で有効にでき、同じキーを使います。Claudeが返答を終えるたびに、Arkは人の発話と返答を別の1問で [Jev](https://openrouter.ai/docs/guides/community/jev) に問い合わせ、「別の話題を保留・後回し・対象外にした」確率が閾値以上なら、ClaudeにMCPツール `todo_add` で書き留めさせます。TODOは右ペインのTODOタブ、サイドバーの件数、モバイルのTODO表示に出ます。ClaudeはTODOを完了も削除もできません。
 
 TODOの行からは、その話題の会話を元のセッションか新しいworktreeで始められます。新しいworktreeのブランチ名は、ClaudeがTODOを足すときに付けた英語の名前が入ります (付いていなければ `todo-<id先頭6文字>`)。チャットの入力欄に下書きが入るだけで、送信は人間が押します。始めた先はTODOの行に残ります。
 
@@ -215,8 +206,8 @@ TODOの行からは、その話題の会話を元のセッションか新しいw
 | `SKIP_PERMISSIONS`          | `true` で権限確認をスキップ                       |
 | `ARK_PUBLIC_DOMAIN`         | Named Tunnel用の固定ドメイン                      |
 | `ARK_TUNNEL_NAME`           | Named Tunnelの名前 (既定: `claude-code-ark`)      |
-| `OPENROUTER_API_KEY`        | ボード提案のAPIキー。設定画面のキーが優先される   |
-| `ARK_FEATURE_BOARD_SUGGEST` | `false` でボード提案と分岐TODOを止める            |
+| `OPENROUTER_API_KEY`        | 分岐TODOのAPIキー。設定画面のキーが優先される     |
+| `ARK_FEATURE_BRANCH_TODO`   | `false` で分岐TODOを止める                        |
 
 ## 分かっている制限
 

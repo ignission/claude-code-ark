@@ -56,7 +56,7 @@ function setup(overrides: Partial<CommandPaletteProps> = {}) {
     onOpenFile: vi.fn(),
     onAsk: vi.fn(),
     onOpenAskWindow: vi.fn(),
-    onOpenBoardSuggestSettings: vi.fn(),
+    onOpenBranchTodoSettings: vi.fn(),
     ...overrides,
   };
   act(() => root.render(<CommandPalette {...props} />));
@@ -187,12 +187,12 @@ describe("CommandPalette", () => {
     expect(closed[0].command).toEqual({ type: "work-tab", tab: "git" });
   });
 
-  it("ボード提案と分岐TODOの設定は、フォーカスをそのダイアログに任せる", async () => {
+  it("分岐TODOの設定は、フォーカスをそのダイアログに任せる", async () => {
     const props = setup();
     await open();
-    await type("ボード提案");
+    await type("分岐TODOの設定");
     await press("Enter");
-    expect(props.onOpenBoardSuggestSettings).toHaveBeenCalled();
+    expect(props.onOpenBranchTodoSettings).toHaveBeenCalled();
     expect(closed[0].handoff).toBe(true);
   });
 

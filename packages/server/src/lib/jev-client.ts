@@ -3,9 +3,8 @@
  *
  * Jev は文章を生成しない。テキストと型付きの質問を渡すと、選択肢の中から
  * 1 つを確率付きで返すだけの分類器で、1 回 200〜400ms・入力 100 万トークンで
- * $0.042 (出力は無料)。Ark はこれを「Claude の返答を図解させるべきか」と
- * 「このターンに保留した話題があるか」の 2 つの判定に使う。図を描くのは Claude 自身
- * (board-suggest-stop-hook.ts)。
+ * $0.042 (出力は無料)。Ark はこれを「このターンに保留した話題があるか」の判定に使う
+ * (branch-todo-stop-hook.ts)。TODO を書くのは Claude 自身。
  *
  * Decisions API は alpha (`/api/alpha/decisions`) で、パスやスキーマが変わりうる。
  * 変更点をここ 1 ファイルに閉じ込めるため、endpoint と model は定数にする。
@@ -23,13 +22,6 @@ export const JEV_MODEL = "~typesafe/jev-latest";
 export const JEV_MAX_STATE_CHARS = 6000;
 
 const REQUEST_TIMEOUT_MS = 5000;
-
-export interface BoardDecision {
-  /** 「チャットよりボードのほうが読みやすい」の確率 (0〜1) */
-  board: number;
-  /** この呼び出しの費用 (USD)。usage が無ければ 0 */
-  cost: number;
-}
 
 /**
  * API キーの所在。環境変数 OPENROUTER_API_KEY が優先、無ければ
@@ -53,20 +45,6 @@ export function loadOpenRouterApiKey(
     return null;
   }
 }
-
-/** Jev へ送る質問。文言は検証スクリプトで 197 ターンに掛けて決めた */
-export const BOARD_QUESTIONS = {
-  board: {
-    type: "noul",
-    instructions:
-      "This is one reply from an AI coding assistant in a chat. Would the reader understand it faster as a diagram or a structured document on a board than as chat text?",
-    criteria: {
-      true: "Explains relations among several components, a flow with branches, a comparison of options, or a multi-step plan; long enough that reading it as chat is tiring",
-      false:
-        "A short answer, a status update, a single conclusion, a question, or a code snippet that is fine as chat text",
-    },
-  },
-} as const;
 
 function asProbability(value: unknown): number | null {
   return typeof value === "number" &&
@@ -158,30 +136,8 @@ async function callDecisions(
 }
 
 /**
- * 1 ターン分の返答本文を Jev に判定させる。
- * 失敗 (HTTP エラー・timeout・想定外のレスポンス) は throw する。呼び出し側で握る。
- */
-export async function decideBoardSuggestion(
-  text: string,
-  apiKey: string,
-  fetchImpl: FetchLike = fetch as unknown as FetchLike
-): Promise<BoardDecision> {
-  const { answers, cost, raw } = await callDecisions(
-    text,
-    BOARD_QUESTIONS,
-    apiKey,
-    fetchImpl
-  );
-  const board = asProbability(answers.board?.noul);
-  if (board === null) {
-    throw new Error(`Jev の応答が想定外です: ${raw.slice(0, 200)}`);
-  }
-  return { board, cost };
-}
-
-/**
  * 1 ターン (人の発話 + 返答) に保留した話題があるかを Jev に判定させる。
- * ボードの判定とは別の呼び出しにする (ボードの質問は返答だけで検証したので、人の発話を混ぜない)
+ * 失敗 (HTTP エラー・timeout・想定外のレスポンス) は throw する。呼び出し側で握る。
  */
 export async function decideDeferredTopic(
   prompt: string,

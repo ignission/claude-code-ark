@@ -13,7 +13,6 @@ import type {
   BridgeSessionStatus,
   BrowserSession,
   ClientToServerEvents,
-  DiagramCommentsResponse,
   DiagramDeleteResponse,
   DiagramListItem,
   ManagedSession,
@@ -123,51 +122,8 @@ interface MobileLayoutProps {
     relPath: string,
     expectedTracked: boolean
   ) => Promise<DiagramDeleteResponse>;
-  getDiagramComments: (
-    sessionId: string,
-    relPath: string
-  ) => Promise<DiagramCommentsResponse>;
-  createDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    anchorId: string,
-    body: string,
-    anchorQuote?: string,
-    anchorOccurrence?: number
-  ) => Promise<DiagramCommentsResponse>;
-  resolveDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string
-  ) => Promise<DiagramCommentsResponse>;
-  replyDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string,
-    body: string
-  ) => Promise<DiagramCommentsResponse>;
-  deleteDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string
-  ) => Promise<DiagramCommentsResponse>;
-  sendDiagramComment: (
-    sessionId: string,
-    relPath: string,
-    operationId: string,
-    threadId: string
-  ) => Promise<DiagramCommentsResponse>;
   /** Socket.IO 接続状態 */
   isSocketConnected: boolean;
-  diagramCommentsUpdate: {
-    worktreePath: string;
-    relPath: string;
-    sequence: number;
-  } | null;
   // ブラウザ
   activeBrowserSession: BrowserSession | null;
   onSelectBrowser: () => void;
@@ -177,7 +133,7 @@ interface MobileLayoutProps {
   requestScreenCredentials: (id: string) => Promise<ScreenCredentialsResult>;
   setScreenClipboard: (id: string, text: string) => Promise<ScreenPasteResult>;
   onOpenScreenManager: () => void;
-  onOpenBoardSuggestSettings: () => void;
+  onOpenBranchTodoSettings: () => void;
   // メッセージショートカット
   messageShortcuts: MessageShortcut[];
   onCreateShortcut: (message: string) => void;
@@ -266,14 +222,7 @@ export function MobileLayout({
   chatViewRequest,
   listDiagrams,
   deleteDiagram,
-  getDiagramComments,
-  createDiagramComment,
-  resolveDiagramComment,
-  replyDiagramComment,
-  deleteDiagramComment,
-  sendDiagramComment,
   isSocketConnected,
-  diagramCommentsUpdate,
   activeBrowserSession,
   onSelectBrowser,
   isRemote,
@@ -281,7 +230,7 @@ export function MobileLayout({
   requestScreenCredentials,
   setScreenClipboard,
   onOpenScreenManager,
-  onOpenBoardSuggestSettings,
+  onOpenBranchTodoSettings,
   messageShortcuts,
   onCreateShortcut,
   onUpdateShortcut,
@@ -479,7 +428,7 @@ export function MobileLayout({
       >
         <MobileSessionList
           onOpenScreenManager={onOpenScreenManager}
-          onOpenBoardSuggestSettings={onOpenBoardSuggestSettings}
+          onOpenBranchTodoSettings={onOpenBranchTodoSettings}
           sessions={sessions}
           worktrees={worktrees}
           repoList={repoList}
@@ -593,15 +542,8 @@ export function MobileLayout({
                 onTabSelect={idx => handleTabSelect(sessionId, idx)}
                 onTabClose={idx => handleTabClose(sessionId, idx)}
                 isConnected={isSocketConnected}
-                diagramCommentsUpdate={diagramCommentsUpdate}
                 listDiagrams={listDiagrams}
                 deleteDiagram={deleteDiagram}
-                getDiagramComments={getDiagramComments}
-                createDiagramComment={createDiagramComment}
-                replyDiagramComment={replyDiagramComment}
-                resolveDiagramComment={resolveDiagramComment}
-                deleteDiagramComment={deleteDiagramComment}
-                sendDiagramComment={sendDiagramComment}
                 onSelectDiagram={(relPath, worktreePath) =>
                   openDiagramTab(sessionId, worktreePath, relPath)
                 }
