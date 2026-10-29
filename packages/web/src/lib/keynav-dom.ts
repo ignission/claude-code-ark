@@ -10,6 +10,7 @@
  * 「見えているもの」から探す (`hidden` の祖先を持たないもの)。
  */
 
+import { CHAT_QUICK_ACTION_LABEL } from "./chat-quick-actions";
 import type { KeyNavCommand, KeyNavRegion, KeyNavWorkTab } from "./keynav";
 import { KEYNAV_REGIONS } from "./keynav";
 
@@ -424,6 +425,14 @@ export function executeKeyNavCommand(
       if (!panel) return { region };
       panel.click();
       return region === "work" ? { region: "left", refocus: true } : { region };
+    }
+    case "chat-action": {
+      // 入力欄の左のボタンを押す。送る文はボタンが組む (chat-quick-actions.ts)
+      visibleOne(
+        root,
+        `button[aria-label="${CHAT_QUICK_ACTION_LABEL[command.action]}"]`
+      )?.click();
+      return { region };
     }
     case "help":
     case "palette":

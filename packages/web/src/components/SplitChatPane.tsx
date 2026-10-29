@@ -88,6 +88,11 @@ import {
 } from "@/lib/ask-user-question-state";
 import { subscribeChatDraft, takeChatDraft } from "@/lib/chat-draft-store";
 import {
+  buildChatQuickActionMessage,
+  CHAT_QUICK_ACTION_LABEL,
+  type ChatQuickAction,
+} from "@/lib/chat-quick-actions";
+import {
   groupSidechain,
   groupToolCalls,
   type ToolCallEvent,
@@ -107,6 +112,7 @@ import {
 } from "@/lib/reconcile-local-slash";
 import { reconcilePending } from "@/lib/reconcile-pending";
 import { cn } from "@/lib/utils";
+import { VIEW_MODE_ICONS } from "@/lib/view-mode-icons";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -186,7 +192,7 @@ export interface SplitChatPaneHandle {
   pasteImage: () => void;
 }
 
-/** 入力欄の横の丸いアイコンボタン (添付)。大きさはCOMPOSER_SIZEで足す */
+/** 入力欄の横の丸いアイコンボタン (添付・図解・TODO)。大きさはCOMPOSER_SIZEで足す */
 const ROUND_ICON_BUTTON =
   "inline-flex shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50";
 
@@ -1624,7 +1630,15 @@ export function SplitChatPane({
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    const value = inputValue.trim();
+    submitText(inputValue.trim());
+  };
+
+  // 入力欄の左のボタン。入力欄の文があれば、それを対象にして送る
+  const sendQuickAction = (action: ChatQuickAction) => {
+    submitText(buildChatQuickActionMessage(action, inputValue));
+  };
+
+  const submitText = (value: string) => {
     if (!value) return;
     lastSubmittedRef.current = value;
     onSendMessage(value);
@@ -1916,6 +1930,25 @@ export function SplitChatPane({
           </button>
         </>
       )}
+      {(["diagram", "todo"] as const).map(action => {
+        const Icon =
+          action === "diagram" ? VIEW_MODE_ICONS.board : VIEW_MODE_ICONS.todo;
+        const label = CHAT_QUICK_ACTION_LABEL[action];
+        return (
+          <button
+            key={action}
+            type="button"
+            onClick={() => sendQuickAction(action)}
+            className={`${ROUND_ICON_BUTTON} ${composerSize.button}`}
+            aria-label={label}
+            // 添付の途中で送ると、あとから入力欄に足される @path が届かない
+            disabled={uploadingCount > 0}
+            title={`${label} (入力欄の文が対象。Ctrl+; → ${action === "diagram" ? "d" : "T"})`}
+          >
+            <Icon className="size-5" />
+          </button>
+        );
+      })}
       <textarea
         ref={inputRef}
         value={inputValue}

@@ -36,6 +36,8 @@ function mountApp({
         <button aria-label="パネル"></button>
         <div data-keynav="chat-scroll"></div>
         <button aria-label="端末を開く"></button>
+        <button aria-label="ボードに図解させる"></button>
+        <button aria-label="TODOに残させる"></button>
         <textarea data-keynav="chat-input" id="input"></textarea>
       </div>
       <div class="${terminalOpen ? "" : "hidden"}">
@@ -323,6 +325,15 @@ describe("どこでも効く指示", () => {
     document.querySelector('#active button[aria-label="端末を開く"]')?.remove();
     expect(run({ type: "toggle-terminal" }).result).toEqual({ region: "left" });
     expect(clicks).toEqual([]);
+  });
+
+  it("d / T は入力欄の図解 / TODO のボタンを押す", () => {
+    mountApp();
+    expect(run({ type: "chat-action", action: "diagram" }).result).toEqual({
+      region: "left",
+    });
+    run({ type: "chat-action", action: "todo" });
+    expect(clicks).toEqual(["ボードに図解させる", "TODOに残させる"]);
   });
 
   it("p は作業エリアを開閉する", () => {

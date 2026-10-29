@@ -100,7 +100,7 @@ describe("rankPalette", () => {
     const got = rankPalette("login", sources);
     expect(got.map(i => i.kind).sort()).toEqual(["diagram", "file", "session"]);
     expect(titles("git")).toContain("Git のタブを開く");
-    expect(titles("分岐TODO")).toEqual(["分岐TODOの設定"]);
+    expect(titles("TODOに残させる")).toEqual(["TODOに残させる"]);
   });
 
   it("題での一致を、補足での一致より上に置く", () => {

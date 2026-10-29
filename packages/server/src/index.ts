@@ -43,20 +43,6 @@ import {
   BoardSessionRegistry,
 } from "./lib/board-mcp-server.js";
 import {
-  isSecretSettingKey,
-  readBranchTodoConfig,
-  readBranchTodoEnabled,
-  readBranchTodoThreshold,
-  resolveBranchTodoApiKey,
-  validateBranchTodoPatch,
-} from "./lib/branch-todo-config.js";
-import {
-  BranchTodoStopHandler,
-  parseStopHookInput,
-  readTranscriptTail,
-  STOP_HOOK_PATH,
-} from "./lib/branch-todo-stop-hook.js";
-import {
   buildTunnelEntries,
   collectBridgeSessions,
   collectGridSnapshots,
@@ -97,7 +83,6 @@ import { createGitViewHandlers } from "./lib/git-view-handlers.js";
 import { hostMetrics } from "./lib/host-metrics.js";
 import { validateHtmlPath } from "./lib/html-path-validator.js";
 import { htmlScreenshotter } from "./lib/html-screenshotter.js";
-import { decideDeferredTopic } from "./lib/jev-client.js";
 import { jsonlTailManager } from "./lib/jsonl-tail-manager.js";
 import {
   checkManagedWorktree,
@@ -122,6 +107,10 @@ import {
   validateScreenInput,
   validateScreenPatch,
 } from "./lib/screen-input.js";
+import {
+  isSecretSettingKey,
+  RETIRED_SETTING_KEYS,
+} from "./lib/secret-settings.js";
 import {
   attachmentDispositionForPath,
   buildAllowlistFromTranscriptFiles,
@@ -483,13 +472,8 @@ export async function startServer(
     );
   }
 
-  // JSON body parser（Settings API用）。分岐TODOの Stop hook は返答の本文
-  // (last_assistant_message) を載せてくるので、10kb では長い返答ほど 413 で落ちる。
-  // その 1 経路だけ上限を広げた parser を route 側で当てる
-  const smallJson = express.json({ limit: "10kb" });
-  app.use((req, res, next) =>
-    req.path === STOP_HOOK_PATH ? next() : smallJson(req, res, next)
-  );
+  // JSON body parser（Settings API用）
+  app.use(express.json({ limit: "10kb" }));
 
   // ===== AskUserQuestion hook 受け口 =====
   // セッション内 claude の PreToolUse hook (auq-hook-bridge が --settings で
@@ -542,67 +526,8 @@ export async function startServer(
     res.status(204).end();
   });
 
-  // ===== 分岐TODO (Jev 判定) の Stop hook 受け口 =====
-  // Claude が返答を終えるたびに Stop hook (auq-hook-bridge が注入) から POST される。
-  // Jev が「このターンに保留した話題がある」と判定したら block を返し、Claude 自身に
-  // todo_add させる (tmux には何も送らない)。有効/閾値/鍵は設定画面
-  // (branch-todo:get/set) で変えられ、次のターンから効く。鍵が無い間は何もしない。
-  const branchTodoFeatureOn = process.env.ARK_FEATURE_BRANCH_TODO !== "false";
-  const branchTodoStop = new BranchTodoStopHandler({
-    apiKey: () => resolveBranchTodoApiKey(db)?.key ?? null,
-    todoEnabled: () => branchTodoFeatureOn && readBranchTodoEnabled(db),
-    todoThreshold: () => readBranchTodoThreshold(db),
-    decideDeferred: (prompt, reply, apiKey) =>
-      decideDeferredTopic(prompt, reply, apiKey),
-    readTranscript: transcriptPath => readTranscriptTail(transcriptPath),
-  });
-  app.post(
-    STOP_HOOK_PATH,
-    // 大きい body を読む前に token を確かめる (tunnel 経由の偽装 POST に 4mb を読ませない)
-    (req, res, next) => {
-      if (!auqHookBridge.verifyToken(req.headers[AUQ_TOKEN_HEADER])) {
-        console.warn("[BranchTodo] 403: token 不一致の hook を拒否しました");
-        res.status(403).json({ error: "forbidden" });
-        return;
-      }
-      next();
-    },
-    express.json({ limit: "4mb" }),
-    async (req, res) => {
-      const input = parseStopHookInput(req.body);
-      if (!input) {
-        res.status(400).json({ error: "bad request" });
-        return;
-      }
-      // Ark 管理外の claude (ユーザーが手動起動した等) には何もしない
-      const session = sessionOrchestrator.getSessionByWorktree(input.cwd);
-      if (!session) {
-        res.status(204).end();
-        return;
-      }
-      try {
-        const output = await branchTodoStop.handle(session.id, input);
-        if (output) res.json(output);
-        else res.status(204).end();
-      } catch (e) {
-        console.error(
-          "[BranchTodo] Stop hook の処理に失敗:",
-          getErrorMessage(e)
-        );
-        res.status(204).end();
-      }
-    }
-  );
-  if (branchTodoFeatureOn) {
-    const startupConfig = readBranchTodoConfig(db);
-    console.log(
-      startupConfig.keyConfigured
-        ? `[BranchTodo] 鍵あり (${startupConfig.keySource}) / ${startupConfig.todoEnabled ? "有効" : "設定で無効"} / 閾値 ${startupConfig.todoThreshold}`
-        : "[BranchTodo] 鍵が無いので待機中 (設定画面「分岐TODOの設定」か OPENROUTER_API_KEY / ~/.config/openrouter/api-key で有効になる)"
-    );
-  } else {
-    console.log("[BranchTodo] 無効 (ARK_FEATURE_BRANCH_TODO=false)");
-  }
+  // 撤去した Jev 判定の設定 (OpenRouter の鍵を含む) を消す
+  for (const key of RETIRED_SETTING_KEYS) db.deleteSetting(key);
 
   // セキュリティヘッダー
   app.use((_req, res, next) => {
@@ -1056,7 +981,7 @@ export async function startServer(
         return;
       }
       for (const key of keys) {
-        // 秘密の設定は専用の socket イベント (branch-todo:set) からだけ書く
+        // 秘密の設定はブラウザから書かせない
         if (!isValidSettingKey(key) || isSecretSettingKey(key)) {
           res.status(400).json({ error: "Invalid setting key" });
           return;
@@ -2858,39 +2783,6 @@ export async function startServer(
         () => callback({ ok: true }),
         e => callback({ ok: false, error: getErrorMessage(e) })
       );
-    });
-
-    // ===== 分岐TODOの設定 (鍵は末尾 4 文字だけ返す) =====
-    socket.on("branch-todo:get", callback => {
-      if (typeof callback !== "function") return;
-      try {
-        callback({ ok: true, config: readBranchTodoConfig(db) });
-      } catch (e) {
-        console.error("[BranchTodo] 設定の取得に失敗:", getErrorMessage(e));
-        callback({ ok: false, error: "設定を読めませんでした" });
-      }
-    });
-    socket.on("branch-todo:set", (patch, callback) => {
-      if (typeof callback !== "function") return;
-      const validated = validateBranchTodoPatch(patch);
-      if (!validated.ok) {
-        callback({ ok: false, error: validated.error });
-        return;
-      }
-      try {
-        if (Object.keys(validated.set).length > 0) {
-          db.setSettings(validated.set);
-        }
-        for (const key of validated.remove) db.deleteSetting(key);
-        const config = readBranchTodoConfig(db);
-        console.log(
-          `[BranchTodo] 設定を更新: ${config.todoEnabled ? "有効" : "無効"} (閾値 ${config.todoThreshold}) / 鍵 ${config.keyConfigured ? `あり (${config.keySource})` : "なし"}`
-        );
-        callback({ ok: true, config });
-      } catch (e) {
-        console.error("[BranchTodo] 設定の保存に失敗:", getErrorMessage(e));
-        callback({ ok: false, error: "設定を保存できませんでした" });
-      }
     });
 
     // パスワードはこの callback でだけ配る (一覧には載せない)

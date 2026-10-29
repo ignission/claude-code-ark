@@ -7,8 +7,6 @@
  */
 
 import type {
-  BranchTodoConfigPatch,
-  BranchTodoConfigResult,
   BridgeSessionStatus,
   BrowserSession,
   ClientToServerEvents,
@@ -282,12 +280,6 @@ interface UseSocketReturn {
   requestScreenCredentials: (id: string) => Promise<ScreenCredentialsResult>;
   /** リモート画面のクリップボードを書き換える。届かなければ reason つきで失敗する */
   setScreenClipboard: (id: string, text: string) => Promise<ScreenPasteResult>;
-
-  // 分岐TODO (Jev 判定) の設定。鍵は末尾 4 文字だけ返る
-  getBranchTodoConfig: () => Promise<BranchTodoConfigResult>;
-  setBranchTodoConfig: (
-    patch: BranchTodoConfigPatch
-  ) => Promise<BranchTodoConfigResult>;
 
   // メッセージショートカット
   messageShortcuts: MessageShortcut[];
@@ -1603,49 +1595,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     []
   );
 
-  // 分岐TODOの設定。socket が無い / ack が返らないときは理由つきで失敗させる
-  const getBranchTodoConfig = useCallback(
-    () =>
-      new Promise<BranchTodoConfigResult>(resolve => {
-        const socket = socketRef.current;
-        if (!socket) {
-          resolve({ ok: false, error: "サーバーに接続していません" });
-          return;
-        }
-        socket
-          .timeout(SCREEN_CREDENTIALS_ACK_TIMEOUT_MS)
-          .emit("branch-todo:get", (err, result) => {
-            resolve(
-              err
-                ? { ok: false, error: "設定を読めませんでした (応答なし)" }
-                : result
-            );
-          });
-      }),
-    []
-  );
-
-  const setBranchTodoConfig = useCallback(
-    (patch: BranchTodoConfigPatch) =>
-      new Promise<BranchTodoConfigResult>(resolve => {
-        const socket = socketRef.current;
-        if (!socket) {
-          resolve({ ok: false, error: "サーバーに接続していません" });
-          return;
-        }
-        socket
-          .timeout(SCREEN_CREDENTIALS_ACK_TIMEOUT_MS)
-          .emit("branch-todo:set", patch, (err, result) => {
-            resolve(
-              err
-                ? { ok: false, error: "保存できませんでした (応答なし)" }
-                : result
-            );
-          });
-      }),
-    []
-  );
-
   const setRepoProfile = useCallback(
     (repoPath: string, profileId: string | null) => {
       socketRef.current?.emit("repo:set-profile", {
@@ -1821,9 +1770,6 @@ export function useSocket(options: UseSocketOptions = {}): UseSocketReturn {
     deleteScreen,
     requestScreenCredentials,
     setScreenClipboard,
-    // 分岐TODOの設定
-    getBranchTodoConfig,
-    setBranchTodoConfig,
     // メッセージショートカット
     messageShortcuts,
     createShortcut,

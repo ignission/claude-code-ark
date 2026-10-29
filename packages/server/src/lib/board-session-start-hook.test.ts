@@ -28,10 +28,9 @@ describe("BOARD_SESSION_CONTEXT の分岐TODO", () => {
     expect(BOARD_SESSION_CONTEXT).toContain("todo_list");
   });
 
-  it("Claude 自身の判断では足さず、ユーザーの頼みか Ark の判定のときだけ足す", () => {
+  it("Claude 自身の判断では足さず、ユーザーに頼まれたときだけ足す", () => {
     expect(BOARD_SESSION_CONTEXT).not.toContain("保留・後回し・別件にしたとき");
-    expect(BOARD_SESSION_CONTEXT).toContain(
-      "Ark の分岐TODOの判定に頼まれたとき"
-    );
+    expect(BOARD_SESSION_CONTEXT).not.toContain("分岐TODOの判定");
+    expect(BOARD_SESSION_CONTEXT).toContain("と言われたときは、todo_add");
   });
 });

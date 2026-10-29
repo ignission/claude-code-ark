@@ -1031,15 +1031,6 @@ export interface ClientToServerEvents {
   "screen:update": (data: { id: string } & ScreenPatch) => void;
   "screen:delete": (data: { id: string }) => void;
   /** 接続直前に 1 回だけ呼ぶ。未登録なら null */
-  /** 分岐TODOの設定を取得 (鍵は末尾 4 文字だけ) */
-  "branch-todo:get": (
-    callback: (result: BranchTodoConfigResult) => void
-  ) => void;
-  /** 分岐TODOの設定を変更。保存後の設定を返す */
-  "branch-todo:set": (
-    patch: BranchTodoConfigPatch,
-    callback: (result: BranchTodoConfigResult) => void
-  ) => void;
   "screen:credentials": (
     id: string,
     callback: (creds: ScreenCredentials | null) => void
@@ -1178,30 +1169,6 @@ export type TodoListResponse =
   | { ok: false; error: string };
 
 export type TodoOpResponse = { ok: true } | { ok: false; error: string };
-
-/** 分岐TODOの設定。鍵そのものは含めない (末尾 4 文字と出どころだけ) */
-export interface BranchTodoConfig {
-  keyConfigured: boolean;
-  /** 設定済みの鍵の末尾 4 文字。未設定は null */
-  keyHint: string | null;
-  /** settings: 設定画面 / env: OPENROUTER_API_KEY / file: ~/.config/openrouter/api-key */
-  keySource: "settings" | "env" | "file" | null;
-  /** 分岐TODOの検出 (保留にした話題を Claude に TODO へ足させる) */
-  todoEnabled: boolean;
-  /** Jev の「保留にした話題がある」確率がこの値以上なら動く (0〜1) */
-  todoThreshold: number;
-}
-
-/** 設定画面からの変更。apiKey は文字列で保存、null で設定側の鍵を削除、未指定で変更なし */
-export interface BranchTodoConfigPatch {
-  apiKey?: string | null;
-  todoEnabled?: boolean;
-  todoThreshold?: number;
-}
-
-export type BranchTodoConfigResult =
-  | { ok: true; config: BranchTodoConfig }
-  | { ok: false; error: string };
 
 export type BridgeSessionStatus =
   | "TOOL" // ツール実行中 (⏺ Tool(...) 直近、⎿ 結果未到着)

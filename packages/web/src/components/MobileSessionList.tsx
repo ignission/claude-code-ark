@@ -5,7 +5,7 @@
  * RepoGridViewはPCだけなので、「このリポジトリの全セッションを並べて見る」は渡さない。
  */
 
-import { Monitor, Plus, SlidersHorizontal } from "lucide-react";
+import { Monitor, Plus } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,15 +20,12 @@ type MobileSessionListProps = Omit<
   onNewSession: () => void;
   /** 画面の管理ダイアログを開く。画面が未登録でも一覧の見出しから登録できるようにする */
   onOpenScreenManager?: () => void;
-  /** 分岐TODO (Jev 判定) の設定ダイアログを開く */
-  onOpenBranchTodoSettings?: () => void;
   notificationControl?: ReactNode;
 };
 
 export function MobileSessionList({
   onNewSession,
   onOpenScreenManager,
-  onOpenBranchTodoSettings,
   notificationControl,
   ...listProps
 }: MobileSessionListProps) {
@@ -39,18 +36,6 @@ export function MobileSessionList({
           Ark
         </h1>
         {notificationControl}
-        {onOpenBranchTodoSettings && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-12 w-12"
-            onClick={onOpenBranchTodoSettings}
-            aria-label="分岐TODOの設定"
-            title="分岐TODOの設定"
-          >
-            <SlidersHorizontal className="size-6" />
-          </Button>
-        )}
         {onOpenScreenManager && (
           <Button
             variant="ghost"
